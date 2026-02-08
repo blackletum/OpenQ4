@@ -46,6 +46,82 @@ bool rvSegmentTemplate::DetailCull() const
 	return (mDetail > 0.0f) && (bse_scale.GetFloat() < mDetail);
 }
 
+float rvSegmentTemplate::CalculateBounds(void)
+{
+	switch (mSegType)
+	{
+	case SEG_EMITTER:
+	case SEG_SPAWNER:
+	case SEG_TRAIL: {
+		const float maxSize = mParticleTemplate.GetMaxSize();
+		const float maxDist = mParticleTemplate.GetFurthestDistance();
+		float maxLength = 0.0f;
+		const int particleType = mParticleTemplate.GetType();
+		if (particleType == PTYPE_LINE || particleType == PTYPE_ELECTRICITY) {
+			maxLength = mParticleTemplate.GetMaxLength();
+		}
+		return maxSize + maxDist + maxLength + mParticleTemplate.GetMaxOffset();
+	}
+	case SEG_LIGHT:
+		return mParticleTemplate.GetMaxSize();
+	default:
+		return 8.0f;
+	}
+}
+
+bool rvSegmentTemplate::Compare(const rvSegmentTemplate& a) const
+{
+	if (mSegmentName.Icmp(a.mSegmentName) != 0) {
+		return false;
+	}
+
+	if (((mFlags ^ a.mFlags) & ~STFLAG_LOCKED) != 0) {
+		return false;
+	}
+
+	if (mSegType != a.mSegType) {
+		return false;
+	}
+
+	// Sound segments intentionally ignore local time ranges.
+	if (mSegType != SEG_SOUND) {
+		if (mLocalStartTime != a.mLocalStartTime || mLocalDuration != a.mLocalDuration) {
+			return false;
+		}
+	}
+
+	if (mScale != a.mScale || mDetail != a.mDetail || mAttenuation != a.mAttenuation) {
+		return false;
+	}
+
+	if (mDensity.y == 0.0f) {
+		if (mCount != a.mCount) {
+			return false;
+		}
+	}
+	else {
+		if (mDensity != a.mDensity || mParticleCap != a.mParticleCap) {
+			return false;
+		}
+	}
+
+	if (mTrailSegmentIndex != a.mTrailSegmentIndex || mNumEffects != a.mNumEffects) {
+		return false;
+	}
+
+	for (int i = 0; i < mNumEffects; ++i) {
+		if (mEffects[i] != a.mEffects[i]) {
+			return false;
+		}
+	}
+
+	if (mSoundShader != a.mSoundShader || mSoundVolume != a.mSoundVolume || mFreqShift != a.mFreqShift) {
+		return false;
+	}
+
+	return mParticleTemplate == a.mParticleTemplate;
+}
+
 float rvSegmentTemplate::EvaluateCost(int activeParticles) const
 {
 	float v4; // [esp+8h] [ebp-4h]
@@ -468,10 +544,14 @@ bool rvSegmentTemplate::Parse(rvDeclEffect* effect, int segmentType, idParser* l
 					return false;
 				}
 				mSoundShader = (idSoundShader*)declManager->FindSound(token);
-				// jmarshall: legacy sound engine didn't expose gettimelength!
-								//float effecta = mSoundShader->(double)v11->GetTimeLength((idSoundShader*)v11) * 0.001;
-				float effecta = 1.0f;
-				// jmarshall end
+				float effecta = 0.0f;
+				if (mSoundShader) {
+					effecta = mSoundShader->GetTimeLength();
+				}
+				// Preserve a sane non-zero fallback for missing/streamed metadata.
+				if (effecta <= BSE_TIME_EPSILON) {
+					effecta = 1.0f;
+				}
 				mLocalDuration.x = effecta;
 				mLocalDuration.y = effecta;
 			}

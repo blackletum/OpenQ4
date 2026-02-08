@@ -33,6 +33,46 @@ If you have questions concerning this license or the applicable additional terms
 
 idCVar	idSessionLocal::gui_configServerRate( "gui_configServerRate", "0", CVAR_GUI | CVAR_ARCHIVE | CVAR_ROM | CVAR_INTEGER, "" );
 
+/*
+=================
+MapSupportsStartServerGameType
+=================
+*/
+static bool MapSupportsStartServerGameType( const idDict *dict, const char *gameType ) {
+	if ( !dict || !gameType || !gameType[0] ) {
+		return false;
+	}
+
+	// Match the multiplayer vote/admin behavior so DM and Team DM can use any standard MP map type.
+	if ( !idStr::Icmp( gameType, "DM" ) || !idStr::Icmp( gameType, "Team DM" ) ) {
+		return dict->GetBool( "DM" ) ||
+			dict->GetBool( "Team DM" ) ||
+			dict->GetBool( "CTF" ) ||
+			dict->GetBool( "Tourney" ) ||
+			dict->GetBool( "Arena CTF" );
+	}
+
+	return dict->GetBool( gameType );
+}
+
+/*
+=================
+MapSupportsAnyMPGameType
+=================
+*/
+static bool MapSupportsAnyMPGameType( const idDict *dict ) {
+	if ( !dict ) {
+		return false;
+	}
+
+	return dict->GetBool( "DM" ) ||
+		dict->GetBool( "Team DM" ) ||
+		dict->GetBool( "CTF" ) ||
+		dict->GetBool( "Tourney" ) ||
+		dict->GetBool( "Arena CTF" ) ||
+		dict->GetBool( "DeadZone" );
+}
+
 // implements the setup for, and commands from, the main menu
 
 /*
@@ -681,56 +721,93 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 			return;
 		}
 
-		if ( !idStr::Icmp( cmd, "MAPScan" ) ) {
-// jmarshall - server scan fix
-/*
+		if ( !idStr::Icmp( cmd, "MAPScan" ) || !idStr::Icmp( cmd, "initCreateServerSettings" ) ) {
 			const char *gametype = cvarSystem->GetCVarString( "si_gameType" );
 			if ( gametype == NULL || *gametype == 0 || idStr::Icmp( gametype, "singleplayer" ) == 0 ) {
-				gametype = "Deathmatch";
+				gametype = "DM";
 			}
 
 			int i, num;
-			idStr si_map = cvarSystem->GetCVarString("si_map");
-			const idDict *dict;
+			int numMapsAdded = 0;
+			int selectedIndex = -1;
+			idStr si_map = cvarSystem->GetCVarString( "si_map" );
+			const idDict *dict = NULL;
 
-			guiMainMenu_MapList->Clear();
-			guiMainMenu_MapList->SetSelection( 0 );
 			num = fileSystem->GetNumMaps();
 			for ( i = 0; i < num; i++ ) {
 				dict = fileSystem->GetMapDecl( i );
-				if ( dict && dict->GetBool( gametype ) ) {
+				if ( !MapSupportsStartServerGameType( dict, gametype ) ) {
+					continue;
+				}
+
+				const char *mapName = dict->GetString( "name" );
+				if ( mapName[ 0 ] == '\0' ) {
+					mapName = dict->GetString( "path" );
+				}
+				mapName = common->GetLanguageDict()->GetString( mapName );
+				guiMainMenu->SetStateString( va( "mapList_item_%d", numMapsAdded ), mapName );
+				guiMainMenu->SetStateInt( va( "mapList_item_%d_id", numMapsAdded ), i );
+				if ( !si_map.Icmp( dict->GetString( "path" ) ) ) {
+					selectedIndex = numMapsAdded;
+				}
+				numMapsAdded++;
+			}
+
+			// If the requested gametype has no explicit flags in current content, keep the list usable.
+			if ( numMapsAdded == 0 ) {
+				for ( i = 0; i < num; i++ ) {
+					dict = fileSystem->GetMapDecl( i );
+					if ( !MapSupportsAnyMPGameType( dict ) ) {
+						continue;
+					}
+
 					const char *mapName = dict->GetString( "name" );
 					if ( mapName[ 0 ] == '\0' ) {
 						mapName = dict->GetString( "path" );
 					}
 					mapName = common->GetLanguageDict()->GetString( mapName );
-					guiMainMenu_MapList->Add( i, mapName );
+					guiMainMenu->SetStateString( va( "mapList_item_%d", numMapsAdded ), mapName );
+					guiMainMenu->SetStateInt( va( "mapList_item_%d_id", numMapsAdded ), i );
 					if ( !si_map.Icmp( dict->GetString( "path" ) ) ) {
-						guiMainMenu_MapList->SetSelection( guiMainMenu_MapList->Num() - 1 );
+						selectedIndex = numMapsAdded;
 					}
+					numMapsAdded++;
 				}
 			}
-			i = guiMainMenu_MapList->GetSelection( NULL, 0 );
-			if ( i >= 0 ) {
-				dict = fileSystem->GetMapDecl( i);
+
+			guiMainMenu->DeleteStateVar( va( "mapList_item_%d", numMapsAdded ) );
+			guiMainMenu->DeleteStateVar( va( "mapList_item_%d_id", numMapsAdded ) );
+
+			if ( numMapsAdded > 0 ) {
+				if ( selectedIndex < 0 ) {
+					selectedIndex = 0;
+				}
+				guiMainMenu->SetStateInt( "mapList_sel_0", selectedIndex );
+				int mapNum = guiMainMenu->State().GetInt( va( "mapList_item_%d_id", selectedIndex ) );
+				dict = fileSystem->GetMapDecl( mapNum );
 			} else {
+				guiMainMenu->SetStateInt( "mapList_sel_0", -1 );
 				dict = NULL;
 			}
 			cvarSystem->SetCVarString( "si_map", ( dict ? dict->GetString( "path" ) : "" ) );
 
 			// set the current level shot
 			UpdateMPLevelShot();
-*/
+			guiMainMenu->StateChanged( com_frameTime );
 			continue;
 		}
 
 		if ( !idStr::Icmp( cmd, "click_mapList" ) ) {
-			int mapNum = guiMainMenu_MapList->GetSelection( NULL, 0 );
-			const idDict *dict = fileSystem->GetMapDecl( mapNum );
-			if ( dict ) {
-				cvarSystem->SetCVarString( "si_map", dict->GetString( "path" ) );
+			int uiMapSelection = guiMainMenu->State().GetInt( "mapList_sel_0" );
+			if ( uiMapSelection >= 0 ) {
+				int mapNum = guiMainMenu->State().GetInt( va( "mapList_item_%d_id", uiMapSelection ) );
+				const idDict *dict = fileSystem->GetMapDecl( mapNum );
+				if ( dict ) {
+					cvarSystem->SetCVarString( "si_map", dict->GetString( "path" ) );
+				}
 			}
 			UpdateMPLevelShot();
+			guiMainMenu->StateChanged( com_frameTime );
 			continue;
 		}
 

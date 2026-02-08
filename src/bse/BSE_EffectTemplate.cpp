@@ -106,6 +106,33 @@ int rvDeclEffect::GetTrailSegmentIndex(const idStr& name)
 	return result;
 }
 
+bool rvDeclEffect::Compare(const rvDeclEffect& comp) const
+{
+	if (mSegmentTemplates.Num() != comp.mSegmentTemplates.Num()) {
+		return false;
+	}
+
+	for (int i = 0; i < mSegmentTemplates.Num(); ++i) {
+		if (!(mSegmentTemplates[i] == comp.mSegmentTemplates[i])) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+float rvDeclEffect::CalculateBounds(void)
+{
+	float size = 0.0f;
+	for (int i = 0; i < mSegmentTemplates.Num(); ++i) {
+		const float segmentSize = mSegmentTemplates[i].CalculateBounds();
+		if (segmentSize > size) {
+			size = segmentSize;
+		}
+	}
+	return idMath::Ceil(size);
+}
+
 float rvDeclEffect::EvaluateCost(int activeParticles, int segment) const
 {
 	int v5; // edi
@@ -202,6 +229,10 @@ void rvDeclEffect::Finish() {
 			segment->SetMaxDuration(this);
 		}
 	}
+
+	// Keep authored size as a lower bound but ensure runtime culling/spawn
+	// has a sane envelope derived from actual segment parameters.
+	mSize = Max(mSize, CalculateBounds());
 }
 
 bool rvDeclEffect::Parse(const char* text, const int textLength) {

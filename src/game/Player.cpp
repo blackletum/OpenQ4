@@ -10622,42 +10622,14 @@ void idPlayer::CalculateViewWeaponPos( idVec3 &origin, idMat3 &axis ) {
 	const idVec3 &viewOrigin = firstPersonViewOrigin;
 	const idMat3 &viewAxis = firstPersonViewAxis;
 
-	float projectionScaleHorizontal = 1.0f;
-	float projectionScaleVertical = 1.0f;
-	if ( g_weaponFovEffect.GetBool() ) {
-		// View-weapon offsets were authored around a 90 degree horizontal FOV at 4:3.
-		// Reproject the offset so placement tracks both the active FOV and current aspect.
-		float viewFovX = 90.0f;
-		float viewFovY = RAD2DEG( 2.0f * idMath::ATan( 0.75f ) );
-		if ( renderView && renderView->fov_x > 0.0f && renderView->fov_y > 0.0f ) {
-			viewFovX = renderView->fov_x;
-			viewFovY = renderView->fov_y;
-		} else {
-			gameLocal.CalcFov( CalcFov( true ), viewFovX, viewFovY );
-		}
-
-		const float clampedFovX = idMath::ClampFloat( 1.0f, 179.0f, viewFovX );
-		const float clampedFovY = idMath::ClampFloat( 1.0f, 179.0f, viewFovY );
-		const float currentTanHalfFovX = idMath::Tan( DEG2RAD( clampedFovX * 0.5f ) );
-		const float currentTanHalfFovY = idMath::Tan( DEG2RAD( clampedFovY * 0.5f ) );
-
-		const float referenceTanHalfFovX = 1.0f;		// tan( 90 * 0.5 )
-		const float referenceTanHalfFovY = 0.75f;		// 4:3 vertical companion to 90 horizontal
-
-		projectionScaleHorizontal = idMath::ClampFloat( 0.25f, 4.0f, currentTanHalfFovX / referenceTanHalfFovX );
-		projectionScaleVertical = idMath::ClampFloat( 0.25f, 4.0f, currentTanHalfFovY / referenceTanHalfFovY );
-	}
-
 	// these cvars are just for hand tweaking before moving a value to the weapon def
-	idVec3	gunpos( g_gun_x.GetFloat(), g_gun_y.GetFloat(), g_gun_z.GetFloat() );
+	idVec3	gunpos( g_gun_x.GetFloat() + cl_gun_x.GetFloat(),
+					g_gun_y.GetFloat() + cl_gun_y.GetFloat(),
+					g_gun_z.GetFloat() + cl_gun_z.GetFloat() );
 	gunpos += weapon->GetViewModelOffset ( );
-	gunpos[1] *= projectionScaleHorizontal;
-	gunpos[2] *= projectionScaleVertical;
 
 	// as the player changes direction, the gun will take a small lag
 	idVec3	gunOfs = GunAcceleratingOffset();
-	gunOfs[1] *= projectionScaleHorizontal;
-	gunOfs[2] *= projectionScaleVertical;
 	origin = viewOrigin + ( gunpos + gunOfs ) * viewAxis;
 
 	// on odd legs, invert some angles

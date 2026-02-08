@@ -31,3 +31,13 @@ if build_game_mp
     install_dir: install_openbase_dir,
   )
 endif
+
+install_subdir(
+  'materials',
+  install_dir: install_openbase_dir,
+)
+
+install_subdir(
+  'glprogs',
+  install_dir: install_openbase_dir,
+)

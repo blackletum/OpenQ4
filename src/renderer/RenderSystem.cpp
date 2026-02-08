@@ -702,6 +702,7 @@ void idRenderSystemLocal::EndFrame( int *frontEndMsec, int *backEndMsec ) {
 
 	// start the back end up again with the new command list
 	R_IssueRenderCommands();
+	ProcessPendingRenderTextureDeletes();
 
 	// use the other buffers next frame, because another CPU
 	// may still be rendering into the current buffers
@@ -718,6 +719,23 @@ void idRenderSystemLocal::EndFrame( int *frontEndMsec, int *backEndMsec ) {
 		}
 	}
 
+}
+
+/*
+===============
+idRenderSystemLocal::ProcessPendingRenderTextureDeletes
+===============
+*/
+void idRenderSystemLocal::ProcessPendingRenderTextureDeletes( void ) {
+	if ( pendingRenderTextureDeletes.Num() <= 0 ) {
+		return;
+	}
+
+	for ( int i = 0; i < pendingRenderTextureDeletes.Num(); i++ ) {
+		delete pendingRenderTextureDeletes[i];
+	}
+
+	pendingRenderTextureDeletes.Clear();
 }
 
 /*
@@ -1012,6 +1030,11 @@ idRenderSystemLocal::BindRenderTexture
 void idRenderSystemLocal::BindRenderTexture(idRenderTexture* renderTexture, idRenderTexture* feedbackRenderTexture) {
 	setRenderTargetCommand_t* cmd;
 
+	// DrawStretchPic batches into guiModel; flush pending surfaces before
+	// switching FBO targets so post-process passes execute on the intended target.
+	guiModel->EmitFullScreen();
+	guiModel->Clear();
+
 	cmd = (setRenderTargetCommand_t*)R_GetCommandBuffer(sizeof(*cmd));
 	cmd->commandId = RC_SET_RENDERTEXTURE;
 
@@ -1042,7 +1065,7 @@ void idRenderSystemLocal::ClearRenderTarget(bool clearColor, bool clearDepth, fl
 idRenderSystemLocal::ResolveMSAA
 ===============
 */
-void idRenderSystemLocal::ResolveMSAA(idRenderTexture* msaaRenderTexture, idRenderTexture* destRenderTexture) {
+void idRenderSystemLocal::ResolveMSAA(idRenderTexture* msaaRenderTexture, idRenderTexture* destRenderTexture, bool resolveDepth) {
 	resolveRenderTargetCommand_t* cmd;
 
 	cmd = (resolveRenderTargetCommand_t*)R_GetCommandBuffer(sizeof(*cmd));
@@ -1050,6 +1073,7 @@ void idRenderSystemLocal::ResolveMSAA(idRenderTexture* msaaRenderTexture, idRend
 
 	cmd->msaaRenderTexture = msaaRenderTexture;
 	cmd->destRenderTexture = destRenderTexture;
+	cmd->resolveDepth = resolveDepth;
 }
 
 /*
@@ -1126,4 +1150,32 @@ idRenderTexture* idRenderSystemLocal::CreateRenderTexture(idImage* albedoImage, 
 	renderTexture->InitRenderTexture();
 
 	return renderTexture;
+}
+
+/*
+===============
+idRenderSystemLocal::DestroyRenderTexture
+===============
+*/
+void idRenderSystemLocal::DestroyRenderTexture( idRenderTexture* renderTexture ) {
+	if ( renderTexture == nullptr ) {
+		return;
+	}
+
+	if ( !glConfig.isInitialized ) {
+		delete renderTexture;
+		return;
+	}
+
+	for ( int i = 0; i < pendingRenderTextureDeletes.Num(); i++ ) {
+		if ( pendingRenderTextureDeletes[i] == renderTexture ) {
+			return;
+		}
+	}
+
+	if ( backEnd.renderTexture == renderTexture ) {
+		backEnd.renderTexture = NULL;
+	}
+
+	pendingRenderTextureDeletes.Append( renderTexture );
 }

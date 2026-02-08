@@ -271,6 +271,20 @@ void idGameLocal::Clear( void ) {
 	world = NULL;
 	frameCommandThread = NULL;
 	testmodel = NULL;
+
+	gameRender.forwardRenderPassRT = NULL;
+	gameRender.postProcessRT[0] = NULL;
+	gameRender.postProcessRT[1] = NULL;
+	gameRender.forwardRenderPassResolvedRT = NULL;
+	gameRender.noPostProcessMaterial = NULL;
+	gameRender.casPostProcessMaterial = NULL;
+	gameRender.blackPostProcessMaterial = NULL;
+	gameRender.resolvePostProcessMaterial = NULL;
+	gameRender.smaaEdgePostProcessMaterial = NULL;
+	gameRender.smaaBlendPostProcessMaterial = NULL;
+	gameRender.postProcessAvailable = false;
+	gameRender.smaaAvailable = false;
+	gameRender.videoRestartCount = 0;
 // RAVEN BEGIN
 // bdube: not using id effects
 //	testFx = NULL;
@@ -666,6 +680,7 @@ void idGameLocal::Shutdown( void ) {
 	networkSystem->RemoveSortFunction( filterByMod );
 
 	mpGame.Shutdown();
+	ShutdownGameRenderSystem();
 
 	MapShutdown();
 

@@ -6,6 +6,47 @@
 
 idCVar g_renderCasUpscale("g_renderCasUpscale", "1", CVAR_BOOL, "jmarshall: toggles cas upscaling");
 
+static const idMaterial* FindPostProcessMaterial( const char* primaryName, const char* fallbackName ) {
+	const idMaterial* material = declManager->FindMaterial( primaryName, false );
+	if ( material != NULL || fallbackName == NULL ) {
+		return material;
+	}
+	return declManager->FindMaterial( fallbackName, false );
+}
+
+/*
+========================
+idGameLocal::ShutdownGameRenderSystem
+========================
+*/
+void idGameLocal::ShutdownGameRenderSystem( void ) {
+	for ( int i = 0; i < 2; i++ ) {
+		if ( gameRender.postProcessRT[i] != NULL ) {
+			renderSystem->DestroyRenderTexture( gameRender.postProcessRT[i] );
+			gameRender.postProcessRT[i] = NULL;
+		}
+	}
+
+	if ( gameRender.forwardRenderPassRT != NULL ) {
+		renderSystem->DestroyRenderTexture( gameRender.forwardRenderPassRT );
+		gameRender.forwardRenderPassRT = NULL;
+	}
+	if ( gameRender.forwardRenderPassResolvedRT != NULL ) {
+		renderSystem->DestroyRenderTexture( gameRender.forwardRenderPassResolvedRT );
+		gameRender.forwardRenderPassResolvedRT = NULL;
+	}
+
+	gameRender.noPostProcessMaterial = NULL;
+	gameRender.casPostProcessMaterial = NULL;
+	gameRender.blackPostProcessMaterial = NULL;
+	gameRender.resolvePostProcessMaterial = NULL;
+	gameRender.smaaEdgePostProcessMaterial = NULL;
+	gameRender.smaaBlendPostProcessMaterial = NULL;
+	gameRender.postProcessAvailable = false;
+	gameRender.smaaAvailable = false;
+	gameRender.videoRestartCount = ( renderSystem != NULL ) ? renderSystem->GetVideoRestartCount() : 0;
+}
+
 /*
 =======================================
 
@@ -24,21 +65,13 @@ idGameLocal::InitGameRenderSystem
 ========================
 */
 void idGameLocal::InitGameRenderSystem(void) {
-	gameRender.forwardRenderPassRT = NULL;
-	gameRender.postProcessRT[0] = NULL;
-	gameRender.postProcessRT[1] = NULL;
-	gameRender.forwardRenderPassResolvedRT = NULL;
-	gameRender.noPostProcessMaterial = NULL;
-	gameRender.casPostProcessMaterial = NULL;
-	gameRender.blackPostProcessMaterial = NULL;
-	gameRender.resolvePostProcessMaterial = NULL;
-	gameRender.postProcessAvailable = false;
+	ShutdownGameRenderSystem();
 
 	if ( !renderSystem->IsOpenGLRunning() ) {
 		return;
 	}
 
-	const int msaaSamples = Max( 0, cvarSystem->GetCVarInteger( "r_multiSamples" ) );
+	const int requestedMsaaSamples = Max( 0, cvarSystem->GetCVarInteger( "r_multiSamples" ) );
 
 	{
 		idImageOpts opts;
@@ -49,12 +82,12 @@ void idGameLocal::InitGameRenderSystem(void) {
 		opts.isPersistant = true;
 		opts.width = renderSystem->GetScreenWidth();
 		opts.height = renderSystem->GetScreenHeight();
-		opts.numMSAASamples = msaaSamples; // renderSystem->GetNumMSAASamples();
+		opts.numMSAASamples = requestedMsaaSamples;
 
 		idImage *albedoImage = renderSystem->CreateImage("_forwardRenderAlbedo", &opts, TF_LINEAR);
 		idImage *emissiveImage = renderSystem->CreateImage("_forwardRenderEmissive", &opts, TF_LINEAR);
 
-		opts.numMSAASamples = msaaSamples; // renderSystem->GetNumMSAASamples();
+		opts.numMSAASamples = requestedMsaaSamples;
 		opts.format = FMT_DEPTH_STENCIL;
 		idImage *depthImage = renderSystem->CreateImage("_forwardRenderDepth", &opts, TF_LINEAR);
 
@@ -71,11 +104,9 @@ void idGameLocal::InitGameRenderSystem(void) {
 		opts.isPersistant = true;
 		opts.width = renderSystem->GetScreenWidth();
 		opts.height = renderSystem->GetScreenHeight();
-		opts.numMSAASamples = msaaSamples; // renderSystem->GetNumMSAASamples();
+		opts.numMSAASamples = 0;
 
 		idImage* albedoImage = renderSystem->CreateImage(va("_postProcessAlbedo%d", i), &opts, TF_LINEAR);
-
-		opts.numMSAASamples = msaaSamples; // renderSystem->GetNumMSAASamples();
 		opts.format = FMT_DEPTH_STENCIL;
 		idImage* depthImage = renderSystem->CreateImage(va("_postProcessDepth%d", i), &opts, TF_LINEAR);
 
@@ -101,15 +132,26 @@ void idGameLocal::InitGameRenderSystem(void) {
 		gameRender.forwardRenderPassResolvedRT = renderSystem->CreateRenderTexture(albedoImage, depthImage, emissiveImage);
 	}
 
-	gameRender.blackPostProcessMaterial = declManager->FindMaterial("postprocess/black", false);
-	gameRender.noPostProcessMaterial = declManager->FindMaterial("postprocess/nopostprocess", false);
-	gameRender.casPostProcessMaterial = declManager->FindMaterial("postprocess/casupscale", false);
-	gameRender.resolvePostProcessMaterial = declManager->FindMaterial("postprocess/resolvepostprocess", false);
+	gameRender.blackPostProcessMaterial = FindPostProcessMaterial( "postprocess/black", "postprocess/openq4_black" );
+	gameRender.noPostProcessMaterial = FindPostProcessMaterial( "postprocess/nopostprocess", "postprocess/openq4_nopostprocess" );
+	gameRender.casPostProcessMaterial = FindPostProcessMaterial( "postprocess/casupscale", "postprocess/openq4_casupscale" );
+	gameRender.resolvePostProcessMaterial = FindPostProcessMaterial( "postprocess/resolvepostprocess", "postprocess/openq4_resolvepostprocess" );
+	gameRender.smaaEdgePostProcessMaterial = FindPostProcessMaterial( "postprocess/smaa_edge", "postprocess/openq4_smaa_edge" );
+	gameRender.smaaBlendPostProcessMaterial = FindPostProcessMaterial( "postprocess/smaa_blend", "postprocess/openq4_smaa_blend" );
 	gameRender.postProcessAvailable = (gameRender.noPostProcessMaterial != NULL) &&
-		(gameRender.casPostProcessMaterial != NULL) &&
 		(gameRender.resolvePostProcessMaterial != NULL);
+	gameRender.smaaAvailable = (gameRender.smaaEdgePostProcessMaterial != NULL) &&
+		(gameRender.smaaBlendPostProcessMaterial != NULL);
 	if (!gameRender.postProcessAvailable) {
 		common->Warning("Postprocess materials missing; falling back to direct render.");
+	}
+
+	if ( cvarSystem->GetCVarInteger( "r_postAA" ) == 1 && !gameRender.smaaAvailable ) {
+		common->Warning( "SMAA is enabled (r_postAA = 1), but SMAA materials are missing. Falling back to no post AA." );
+	}
+
+	if ( requestedMsaaSamples > 0 ) {
+		common->Printf( "MSAA requested %d samples\n", requestedMsaaSamples );
 	}
 }
 
@@ -120,8 +162,17 @@ idGameLocal::ResizeRenderTextures
 */
 void idGameLocal::ResizeRenderTextures(int width, int height) {
 	// Resize all of the different render textures.
-	renderSystem->ResizeRenderTexture(gameRender.forwardRenderPassRT, width, height);
-	renderSystem->ResizeRenderTexture(gameRender.forwardRenderPassResolvedRT, width, height);
+	if ( gameRender.forwardRenderPassRT != NULL ) {
+		renderSystem->ResizeRenderTexture( gameRender.forwardRenderPassRT, width, height );
+	}
+	if ( gameRender.forwardRenderPassResolvedRT != NULL ) {
+		renderSystem->ResizeRenderTexture( gameRender.forwardRenderPassResolvedRT, width, height );
+	}
+	for ( int i = 0; i < 2; i++ ) {
+		if ( gameRender.postProcessRT[i] != NULL ) {
+			renderSystem->ResizeRenderTexture( gameRender.postProcessRT[i], width, height );
+		}
+	}
 }
 
 /*
@@ -130,8 +181,18 @@ idGameLocal::RenderScene
 ====================
 */
 void idGameLocal::RenderScene(const renderView_t *view, idRenderWorld *renderWorld, idCamera* portalSky) {
-	if (!gameRender.postProcessAvailable || gameRender.forwardRenderPassRT == NULL || gameRender.forwardRenderPassResolvedRT == NULL) {
+	const int currentVideoRestartCount = renderSystem->GetVideoRestartCount();
+	if ( gameRender.videoRestartCount != currentVideoRestartCount ) {
+		common->Printf( "Reinitializing game render targets after vid_restart (%d -> %d)\n",
+			gameRender.videoRestartCount, currentVideoRestartCount );
+		InitGameRenderSystem();
+	}
+
+	if (!gameRender.postProcessAvailable || gameRender.forwardRenderPassRT == NULL ||
+		gameRender.forwardRenderPassResolvedRT == NULL || gameRender.postProcessRT[0] == NULL ||
+		gameRender.resolvePostProcessMaterial == NULL) {
 		// Fallback for stock Quake 4 assets: render directly to the backbuffer.
+		renderSystem->BindRenderTexture( nullptr, nullptr );
 		if (portalSky) {
 			renderView_t portalSkyView = *view;
 			portalSky->GetViewParms(&portalSkyView);
@@ -180,21 +241,51 @@ void idGameLocal::RenderScene(const renderView_t *view, idRenderWorld *renderWor
 	renderSystem->BindRenderTexture(nullptr, nullptr);
 
 	// Resolve our MSAA buffer.
-	renderSystem->ResolveMSAA(gameRender.forwardRenderPassRT, gameRender.forwardRenderPassResolvedRT);
+	renderSystem->ResolveMSAA(
+		gameRender.forwardRenderPassRT,
+		gameRender.forwardRenderPassResolvedRT,
+		cvarSystem->GetCVarBool( "r_msaaResolveDepth" ) );
 
-	// Render the resolved buffer to the screen.
+	// Resolve pass writes scene color to the post-process source buffer.
 	renderSystem->BindRenderTexture(gameRender.postProcessRT[0], nullptr);
+		renderSystem->ClearRenderTarget( true, true, 1.0f, 0.0f, 0.0f, 0.0f );
 		renderSystem->DrawStretchPic(0.0f, 0.0f, SCREEN_WIDTH, SCREEN_HEIGHT, 0.0f, 1.0f, 1.0f, 0.0f, gameRender.resolvePostProcessMaterial);
-	renderSystem->BindRenderTexture(nullptr, nullptr);
+	renderSystem->BindRenderTexture( nullptr, nullptr );
 
-	// Now render CaS
-	if (g_renderCasUpscale.GetBool())
-	{
-		renderSystem->DrawStretchPic(0.0f, 0.0f, SCREEN_WIDTH, SCREEN_HEIGHT, 0.0f, 1.0f, 1.0f, 0.0f, gameRender.casPostProcessMaterial);
+	const bool useSMAA = ( cvarSystem->GetCVarInteger( "r_postAA" ) == 1 ) &&
+		gameRender.smaaAvailable &&
+		gameRender.postProcessRT[1] != NULL;
+	if ( useSMAA ) {
+		// Pass 1: edge detection into _postProcessAlbedo1.
+		renderSystem->BindRenderTexture( gameRender.postProcessRT[1], nullptr );
+		renderSystem->ClearRenderTarget( true, true, 1.0f, 0.0f, 0.0f, 0.0f );
+		renderSystem->DrawStretchPic(
+			0.0f, 0.0f, SCREEN_WIDTH, SCREEN_HEIGHT,
+			0.0f, 1.0f, 1.0f, 0.0f,
+			gameRender.smaaEdgePostProcessMaterial );
+
+		// Pass 2: neighborhood blending back into _postProcessAlbedo0.
+		renderSystem->BindRenderTexture( gameRender.postProcessRT[0], nullptr );
+		renderSystem->ClearRenderTarget( true, true, 1.0f, 0.0f, 0.0f, 0.0f );
+		renderSystem->DrawStretchPic(
+			0.0f, 0.0f, SCREEN_WIDTH, SCREEN_HEIGHT,
+			0.0f, 1.0f, 1.0f, 0.0f,
+			gameRender.smaaBlendPostProcessMaterial );
+		renderSystem->BindRenderTexture( nullptr, nullptr );
 	}
-	else
-	{
-		renderSystem->DrawStretchPic(0.0f, 0.0f, SCREEN_WIDTH, SCREEN_HEIGHT, 0.0f, 1.0f, 1.0f, 0.0f, gameRender.noPostProcessMaterial);
+
+	const idMaterial* finalMaterial = gameRender.noPostProcessMaterial;
+	if ( g_renderCasUpscale.GetBool() && gameRender.casPostProcessMaterial != NULL ) {
+		finalMaterial = gameRender.casPostProcessMaterial;
+	}
+	if ( finalMaterial != NULL ) {
+		// SS_POST_PROCESS stages use depth testing; reset backbuffer depth each frame
+		// so final full-screen composition is deterministic across drivers/devices.
+		renderSystem->ClearRenderTarget( false, true, 1.0f, 0.0f, 0.0f, 0.0f );
+		renderSystem->DrawStretchPic(
+			0.0f, 0.0f, SCREEN_WIDTH, SCREEN_HEIGHT,
+			0.0f, 1.0f, 1.0f, 0.0f,
+			finalMaterial );
 	}
 
 	// Copy everything to _currentRender

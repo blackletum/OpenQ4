@@ -182,34 +182,25 @@ float rvBSE::GetOriginAttenuation(rvSegmentTemplate* st) const
 
 void rvBSE::UpdateSoundEmitter(rvSegmentTemplate* st, rvSegment* seg)
 {
-	idSoundEmitter* v4; // ecx
-	soundShaderParms_t parms; // [esp+0h] [ebp-28h] BYREF
-	int v6; // [esp+24h] [ebp-4h]
-
-	parms.maxDistance = 0.0;
-	//parms.farDistance = 0.0;
-	parms.volume = 0.0;
-	parms.shakes = 0.0;
-	parms.soundShaderFlags = 0;
-	//parms.pitchShift = 0.0;
-	parms.soundClass = 0;
-	//parms.soundArea = 0;
-	v6 = 0;
-	if (!this->mReferenceSound) {
+	if (!st || !seg || !mReferenceSound) {
 		return;
 	}
-	if ((this->mFlags & 8) != 0)
-	{
-		if (st->GetSoundLooping() && (seg->mFlags & 2) != 0)
-			this->mReferenceSound->StopSound(seg->mSegmentTemplateHandle + 1);
+
+	if (GetStopped()) {
+		// Stop looping sounds when the owning effect is stopped.
+		if (st->GetSoundLooping() && (seg->mFlags & 2) != 0) {
+			mReferenceSound->StopSound(static_cast<s_channelType>(seg->mSegmentTemplateHandle + SCHANNEL_ONE));
+		}
+		return;
 	}
-	else
-	{
-		v4 = this->mReferenceSound;
-		parms.shakes = seg->mSoundVolume;
-		parms.frequencyShift = seg->mFreqShift;
-		v4->UpdateEmitter(mCurrentOrigin, 0, (soundShaderParms_t*)&parms.maxDistance);
-	}
+
+	soundShaderParms_t parms = {};
+	parms.volume = seg->mSoundVolume;
+	parms.frequencyShift = seg->mFreqShift;
+
+	// Keep the emitter spatialized at the current effect origin so sound
+	// tracks moving/attached effects correctly.
+	mReferenceSound->UpdateEmitter(mCurrentOrigin, mCurrentVelocity, 0, &parms);
 }
 const idVec3 rvBSE::GetInterpolatedOffset(float time) const
 {

@@ -95,6 +95,7 @@ public:
 
 	bool				IsActive( void ) const { return active; }
 	int					GetLocalClientNum( void ) const { return clientNum; }
+	const netadr_t&		GetServerAddress( void ) const { return serverAddress; }
 	int					GetPrediction( void ) const;
 	int					GetTimeSinceLastPacket( void ) const;
 	int					GetOutgoingRate( void ) const;

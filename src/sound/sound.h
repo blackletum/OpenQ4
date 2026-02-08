@@ -71,11 +71,11 @@ static const int	SSF_VO =				BIT( 10 ); // VO - direct a portion of the sound th
 static const int	SSF_MUSIC =				BIT( 11 ); // Music - Muted when the player is playing his own music
 
 // RAVEN BEGIN
-static const int	SSF_USEDOPPLER = BIT(10);	// allow doppler pitch shifting effects
-static const int	SSF_NO_RANDOMSTART = BIT(11);	// don't offset the start position for looping sounds
-static const int	SSF_VO_FOR_PLAYER = BIT(12);	// Notifies a funcRadioChatter that this shader is directed at the player
-static const int	SSF_IS_VO = BIT(13);	// this sound is VO
-static const int	SSF_CAUSE_RUMBLE = BIT(14);	// causes joystick rumble
+	static const int	SSF_USEDOPPLER = BIT(17);	// allow doppler pitch shifting effects
+	static const int	SSF_NO_RANDOMSTART = BIT(18);	// don't offset the start position for looping sounds
+	static const int	SSF_VO_FOR_PLAYER = BIT(12);	// Notifies a funcRadioChatter that this shader is directed at the player
+	static const int	SSF_IS_VO = BIT(13);	// this sound is VO
+	static const int	SSF_CAUSE_RUMBLE = BIT(14);	// causes joystick rumble
 static const int	SSF_CENTER = BIT(15);	// sound through center channel only
 static const int	SSF_HILITE = BIT(16);	// display debug info for this emitter
 // RAVEN END
@@ -85,7 +85,7 @@ typedef struct
 {
 	float					minDistance;
 	float					maxDistance;
-	float					volume;					// in dB.  Negative values get quieter
+	float					volume;					// linear scale (1.0 = nominal)
 	float					shakes;
 	int						soundShaderFlags;		// SSF_* bit flags
 	int						soundClass;				// for global fading of sounds
@@ -119,7 +119,7 @@ public:
 	virtual void			List() const;
 
 // jmarshall: eval
-	virtual bool			IsVO_ForPlayer(void) const { return false; }
+	virtual bool			IsVO_ForPlayer(void) const;
 // jmarshall end
 
 	// so the editor can draw correct default sound spheres
@@ -136,6 +136,7 @@ public:
 	virtual const soundShaderParms_t* GetParms() const;
 	virtual int				GetNumSounds() const;
 	virtual const char* 	GetSound( int index ) const;
+	virtual float			GetTimeLength() const;
 
 private:
 	friend class idSoundWorldLocal;
@@ -148,10 +149,11 @@ private:
 	int						speakerMask;
 	const idSoundShader* 	altSound;
 
-	bool					leadin;			// true if this sound has a leadin
 	float					leadinVolume;	// allows light breaking leadin sounds to be much louder than the broken loop
 
+	idList<idSoundSample*>	leadins;
 	idList<idSoundSample*>	entries;
+	idStrList				shakes;
 
 private:
 	void					Init();

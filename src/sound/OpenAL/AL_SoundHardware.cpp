@@ -39,6 +39,55 @@ idCVar s_meterPosition( "s_meterPosition", "100 100 20 200", CVAR_ARCHIVE, "VU m
 idCVar s_device( "s_device", "-1", CVAR_INTEGER | CVAR_ARCHIVE, "Which audio device to use (listDevices to list, -1 for default)" );
 idCVar s_showPerfData( "s_showPerfData", "0", CVAR_BOOL, "Show XAudio2 Performance data" );
 extern idCVar s_volume_dB;
+extern idCVar s_useEAXReverb;
+
+#if defined( AL_EFFECTSLOT_EFFECT ) && defined( AL_EFFECT_NULL ) && defined( AL_AUXILIARY_SEND_FILTER )
+	#define OPENQ4_OPENAL_EFX_SUPPORTED 1
+#else
+	#define OPENQ4_OPENAL_EFX_SUPPORTED 0
+#endif
+
+#if OPENQ4_OPENAL_EFX_SUPPORTED
+typedef void ( AL_APIENTRY *openq4_alGenEffects_t )( ALsizei n, ALuint *effects );
+typedef void ( AL_APIENTRY *openq4_alDeleteEffects_t )( ALsizei n, const ALuint *effects );
+typedef void ( AL_APIENTRY *openq4_alEffecti_t )( ALuint effect, ALenum param, ALint iValue );
+typedef void ( AL_APIENTRY *openq4_alGenAuxiliaryEffectSlots_t )( ALsizei n, ALuint *effectslots );
+typedef void ( AL_APIENTRY *openq4_alDeleteAuxiliaryEffectSlots_t )( ALsizei n, const ALuint *effectslots );
+typedef void ( AL_APIENTRY *openq4_alAuxiliaryEffectSloti_t )( ALuint effectslot, ALenum param, ALint iValue );
+
+static openq4_alGenEffects_t qalGenEffects = NULL;
+static openq4_alDeleteEffects_t qalDeleteEffects = NULL;
+static openq4_alEffecti_t qalEffecti = NULL;
+static openq4_alGenAuxiliaryEffectSlots_t qalGenAuxiliaryEffectSlots = NULL;
+static openq4_alDeleteAuxiliaryEffectSlots_t qalDeleteAuxiliaryEffectSlots = NULL;
+static openq4_alAuxiliaryEffectSloti_t qalAuxiliaryEffectSloti = NULL;
+
+static bool OpenQ4_LoadHardwareEfxProcs() {
+	static bool initialized = false;
+	static bool available = false;
+
+	if ( initialized ) {
+		return available;
+	}
+	initialized = true;
+
+	qalGenEffects = reinterpret_cast<openq4_alGenEffects_t>( alGetProcAddress( "alGenEffects" ) );
+	qalDeleteEffects = reinterpret_cast<openq4_alDeleteEffects_t>( alGetProcAddress( "alDeleteEffects" ) );
+	qalEffecti = reinterpret_cast<openq4_alEffecti_t>( alGetProcAddress( "alEffecti" ) );
+	qalGenAuxiliaryEffectSlots = reinterpret_cast<openq4_alGenAuxiliaryEffectSlots_t>( alGetProcAddress( "alGenAuxiliaryEffectSlots" ) );
+	qalDeleteAuxiliaryEffectSlots = reinterpret_cast<openq4_alDeleteAuxiliaryEffectSlots_t>( alGetProcAddress( "alDeleteAuxiliaryEffectSlots" ) );
+	qalAuxiliaryEffectSloti = reinterpret_cast<openq4_alAuxiliaryEffectSloti_t>( alGetProcAddress( "alAuxiliaryEffectSloti" ) );
+
+	available =
+		( qalGenEffects != NULL ) &&
+		( qalDeleteEffects != NULL ) &&
+		( qalEffecti != NULL ) &&
+		( qalGenAuxiliaryEffectSlots != NULL ) &&
+		( qalDeleteAuxiliaryEffectSlots != NULL ) &&
+		( qalAuxiliaryEffectSloti != NULL );
+	return available;
+}
+#endif
 
 
 /*
@@ -50,6 +99,9 @@ idSoundHardware_OpenAL::idSoundHardware_OpenAL()
 {
 	openalDevice = NULL;
 	openalContext = NULL;
+	efxEnabled = false;
+	auxEffectSlot = 0;
+	auxReverbEffect = 0;
 
 	//vuMeterRMS = NULL;
 	//vuMeterPeak = NULL;
@@ -192,6 +244,69 @@ void idSoundHardware_OpenAL::Init()
 	common->Printf( "OpenAL version: %s\n", alGetString( AL_VERSION ) );
 	common->Printf( "OpenAL extensions: %s\n", alGetString( AL_EXTENSIONS ) );
 
+	efxEnabled = false;
+	auxEffectSlot = 0;
+	auxReverbEffect = 0;
+#if OPENQ4_OPENAL_EFX_SUPPORTED
+	if( s_useEAXReverb.GetBool() && alcIsExtensionPresent( openalDevice, "ALC_EXT_EFX" ) == AL_TRUE && OpenQ4_LoadHardwareEfxProcs() )
+	{
+		qalGenEffects( 1, &auxReverbEffect );
+		if( CheckALErrors() == AL_NO_ERROR && auxReverbEffect != 0 )
+		{
+#if defined( AL_EFFECT_EAXREVERB )
+			qalEffecti( auxReverbEffect, AL_EFFECT_TYPE, AL_EFFECT_EAXREVERB );
+			if( CheckALErrors() != AL_NO_ERROR )
+#endif
+			{
+#if defined( AL_EFFECT_REVERB )
+				qalEffecti( auxReverbEffect, AL_EFFECT_TYPE, AL_EFFECT_REVERB );
+				CheckALErrors();
+#endif
+			}
+
+			qalGenAuxiliaryEffectSlots( 1, &auxEffectSlot );
+			if( CheckALErrors() == AL_NO_ERROR && auxEffectSlot != 0 )
+			{
+				qalAuxiliaryEffectSloti( auxEffectSlot, AL_EFFECTSLOT_EFFECT, auxReverbEffect );
+				if( CheckALErrors() == AL_NO_ERROR )
+				{
+					efxEnabled = true;
+					common->Printf( "OpenAL EFX reverb send enabled.\n" );
+				}
+			}
+		}
+
+		if( !efxEnabled )
+		{
+			if( auxEffectSlot != 0 )
+			{
+				qalDeleteAuxiliaryEffectSlots( 1, &auxEffectSlot );
+				auxEffectSlot = 0;
+			}
+			if( auxReverbEffect != 0 )
+			{
+				qalDeleteEffects( 1, &auxReverbEffect );
+				auxReverbEffect = 0;
+			}
+			CheckALErrors();
+			common->Warning( "OpenAL EFX requested but unavailable; wet send disabled." );
+		}
+	}
+	else if( s_useEAXReverb.GetBool() && alcIsExtensionPresent( openalDevice, "ALC_EXT_EFX" ) == AL_TRUE )
+	{
+		common->Warning( "OpenAL EFX extension reported but required EFX entry points are missing; wet send disabled." );
+	}
+	else if( s_useEAXReverb.GetBool() )
+	{
+		common->Warning( "OpenAL EFX extension not reported by device; wet send disabled." );
+	}
+#else
+	if( s_useEAXReverb.GetBool() )
+	{
+		common->Warning( "OpenAL EFX requested but this build does not expose EFX symbols; wet send disabled." );
+	}
+#endif
+
 	//pMasterVoice->SetVolume( DBtoLinear( s_volume_dB.GetFloat() ) );
 
 	//outputChannels = deviceDetails.OutputFormat.Format.nChannels;
@@ -282,6 +397,27 @@ void idSoundHardware_OpenAL::Shutdown()
 	voices.Clear();
 	freeVoices.Clear();
 	zombieVoices.Clear();
+
+	#if OPENQ4_OPENAL_EFX_SUPPORTED
+		if( auxEffectSlot != 0 )
+		{
+			if ( qalAuxiliaryEffectSloti != NULL ) {
+				qalAuxiliaryEffectSloti( auxEffectSlot, AL_EFFECTSLOT_EFFECT, AL_EFFECT_NULL );
+			}
+			if ( qalDeleteAuxiliaryEffectSlots != NULL ) {
+				qalDeleteAuxiliaryEffectSlots( 1, &auxEffectSlot );
+			}
+			auxEffectSlot = 0;
+		}
+		if( auxReverbEffect != 0 )
+		{
+			if ( qalDeleteEffects != NULL ) {
+				qalDeleteEffects( 1, &auxReverbEffect );
+			}
+			auxReverbEffect = 0;
+		}
+	#endif
+	efxEnabled = false;
 
 #if defined(USE_DOOMCLASSIC)
 	// ---------------------

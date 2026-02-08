@@ -52,8 +52,7 @@ public:
 	void					SetGain( float gain )
 	{
 		idSoundVoice_Base::SetGain( gain );
-
-		alSourcef( openalSource, AL_GAIN, ( gain ) < ( 1.0f ) ? ( gain ) : ( 1.0f ) );
+		ApplyWetDryRouting();
 	}
 
 	void		SetPitch( float p )
@@ -61,6 +60,16 @@ public:
 		idSoundVoice_Base::SetPitch( p );
 
 		alSourcef( openalSource, AL_PITCH, p );
+	}
+	void		SetWetLevel( float wet ) override
+	{
+		idSoundVoice_Base::SetWetLevel( wet );
+		ApplyWetDryRouting();
+	}
+	void		SetDryLevel( float dry ) override
+	{
+		idSoundVoice_Base::SetDryLevel( dry );
+		ApplyWetDryRouting();
 	}
 
 	void					Create( const idSoundSample* leadinSample, const idSoundSample* loopingSample );
@@ -114,6 +123,9 @@ private:
 
 	// Adjust the voice frequency based on the new sample rate for the buffer
 	void					SetSampleRate( uint32 newSampleRate, uint32 operationSet );
+	void					ApplyWetDryRouting();
+	void					CreateWetDryFilters();
+	void					DestroyWetDryFilters();
 
 	//IXAudio2SourceVoice* 	pSourceVoice;
 	bool					triggered;
@@ -121,6 +133,8 @@ private:
 	ALuint					openalStreamingOffset;
 	ALuint					openalStreamingBuffer[3];
 	ALuint					lastopenalStreamingBuffer[3];
+	ALuint					openalDirectFilter;
+	ALuint					openalAuxFilter;
 
 	idSoundSample_OpenAL*	leadinSample;
 	idSoundSample_OpenAL*	loopingSample;

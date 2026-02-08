@@ -48,6 +48,9 @@ idCVar r_inhibitFragmentProgram( "r_inhibitFragmentProgram", "0", CVAR_RENDERER 
 idCVar r_glDriver( "r_glDriver", "", CVAR_RENDERER, "\"opengl32\", etc." );
 idCVar r_useLightPortalFlow( "r_useLightPortalFlow", "1", CVAR_RENDERER | CVAR_BOOL, "use a more precise area reference determination" );
 idCVar r_multiSamples( "r_multiSamples", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "number of antialiasing samples" );
+idCVar r_postAA( "r_postAA", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "post AA mode: 0 = off, 1 = SMAA 1x", 0, 1, idCmdSystem::ArgCompletion_Integer<0,1> );
+idCVar r_msaaResolveDepth( "r_msaaResolveDepth", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "resolve depth when blitting MSAA render targets" );
+idCVar r_msaaAlphaToCoverage( "r_msaaAlphaToCoverage", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable alpha-to-coverage for perforated materials on MSAA render targets" );
 idCVar r_mode( "r_mode", "3", CVAR_ARCHIVE | CVAR_RENDERER | CVAR_INTEGER, "video mode number" );
 idCVar r_displayRefresh( "r_displayRefresh", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NOCHEAT, "optional display refresh rate option for vid mode", 0.0f, 200.0f );
 idCVar r_fullscreen( "r_fullscreen", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "0 = windowed, 1 = full screen" );
@@ -83,6 +86,8 @@ idCVar r_useStateCaching( "r_useStateCaching", "1", CVAR_RENDERER | CVAR_BOOL, "
 idCVar r_useInfiniteFarZ( "r_useInfiniteFarZ", "1", CVAR_RENDERER | CVAR_BOOL, "use the no-far-clip-plane trick" );
 
 idCVar r_znear( "r_znear", "0.5", CVAR_RENDERER | CVAR_FLOAT, "near Z clip plane distance", 0.001f, 200.0f );
+idCVar cl_gunfov( "cl_gunfov", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT | CVAR_NOCHEAT, "first-person weapon FOV override (0 = follow current view FOV)", 0.0f, 179.0f );
+idCVar cl_gunfov_adjust( "cl_gunfov_adjust", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_NOCHEAT, "when cl_gunfov is set, keep weapon FOV aspect-correct across screen ratios" );
 
 idCVar r_ignoreGLErrors( "r_ignoreGLErrors", "1", CVAR_RENDERER | CVAR_BOOL, "ignore GL errors" );
 idCVar r_finish( "r_finish", "0", CVAR_RENDERER | CVAR_BOOL, "force a call to glFinish() every frame" );
@@ -1747,6 +1752,10 @@ R_VidRestart_f
 =================
 */
 static void R_PerformFullVidRestart( bool forceWindow ) {
+	backEnd.renderTexture = NULL;
+	idRenderTexture::BindNull();
+	tr.ProcessPendingRenderTextureDeletes();
+
 	// Input is tied to the native window/context lifecycle.
 	Sys_ShutdownInput();
 
@@ -1762,6 +1771,7 @@ static void R_PerformFullVidRestart( bool forceWindow ) {
 
 	R_InitOpenGL();
 	cvarSystem->SetCVarBool( "r_fullscreen", latchedFullscreen );
+	backEnd.renderTexture = NULL;
 
 	globalImages->ReloadImages( true );
 }
@@ -1836,6 +1846,13 @@ void R_VidRestart_f( const idCmdArgs &args ) {
 		}
 	}
 
+	// Mark a renderer restart generation so higher-level systems can rebuild
+	// restart-sensitive resources (for example custom game render targets).
+	if ( tr.videoRestartCount < 0x7fffffff ) {
+		tr.videoRestartCount++;
+	} else {
+		tr.videoRestartCount = 1;
+	}
 
 
 	// make sure the regeneration doesn't use anything no longer valid
@@ -1980,6 +1997,7 @@ void idRenderSystemLocal::Clear( void ) {
 	registered = false;
 	frameCount = 0;
 	viewCount = 0;
+	videoRestartCount = 0;
 	staticAllocCount = 0;
 	frameShaderTime = 0.0f;
 	viewportOffset[0] = 0;
@@ -2010,6 +2028,7 @@ void idRenderSystemLocal::Clear( void ) {
 	guiRecursionLevel = 0;
 	guiModel = NULL;
 	demoGuiModel = NULL;
+	pendingRenderTextureDeletes.Clear();
 	memset( gammaTable, 0, sizeof( gammaTable ) );
 	takingScreenshot = false;
 }
@@ -2108,6 +2127,8 @@ void idRenderSystemLocal::Shutdown( void ) {
 
 	RB_ShutdownDebugTools();
 
+	ProcessPendingRenderTextureDeletes();
+
 	delete guiModel;
 	delete demoGuiModel;
 
@@ -2166,10 +2187,13 @@ idRenderSystemLocal::ShutdownOpenGL
 ========================
 */
 void idRenderSystemLocal::ShutdownOpenGL( void ) {
+	ProcessPendingRenderTextureDeletes();
+
 	// free the context and close the window
 	R_ShutdownFrameData();
 	GLimp_Shutdown();
 	glConfig.isInitialized = false;
+	backEnd.renderTexture = NULL;
 }
 
 /*
@@ -2209,6 +2233,15 @@ idRenderSystemLocal::GetScreenHeight
 */
 int idRenderSystemLocal::GetScreenHeight( void ) const {
 	return glConfig.vidHeight;
+}
+
+/*
+========================
+idRenderSystemLocal::GetVideoRestartCount
+========================
+*/
+int idRenderSystemLocal::GetVideoRestartCount( void ) const {
+	return videoRestartCount;
 }
 
 /*

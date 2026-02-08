@@ -26,6 +26,28 @@ This guide covers OpenQ4 display/window settings for end users, including multi-
 | `r_displayRefresh` | `0` | Requested fullscreen refresh rate (0 = default/driver choice). |
 | `r_screen` | `-1` | SDL3 monitor target (`-1` auto/current, `0..N` explicit index). |
 
+## Anti-Aliasing Settings (New)
+
+| Setting | Default | What it does |
+|---|---:|---|
+| `r_multiSamples` | `0` | MSAA sample count for the main scene render target (`0`, `2`, `4`, `8`, `16`; `0` = off). |
+| `r_postAA` | `0` | Post AA mode (`0` = off, `1` = SMAA 1x). |
+| `r_msaaAlphaToCoverage` | `1` | Enables alpha-to-coverage for perforated/alpha-tested materials when MSAA is active. Helps foliage/fences look cleaner. |
+| `r_msaaResolveDepth` | `0` | Also resolves depth during MSAA resolve. Usually leave this off unless debugging a depth-dependent edge case. |
+
+`r_multiSamples` value guide:
+- `0`: disabled (fastest, most aliasing).
+- `2`: low-cost MSAA uplift for modest GPUs.
+- `4`: recommended default quality/performance balance.
+- `8`: high quality, noticeably higher GPU cost.
+- `16`: enthusiast/high-end setting where supported.
+- `1` usually provides no meaningful benefit and is not recommended.
+
+Notes:
+- `r_multiSamples` is hardware-limited and may be clamped by the driver/GPU.
+- Changing `r_multiSamples` should be followed by `vid_restart`.
+- `r_postAA`, `r_msaaAlphaToCoverage`, and `r_msaaResolveDepth` can be changed at runtime, but a `vid_restart` is still safe if behavior looks stale.
+
 ## Fullscreen Policy (Desktop vs Exclusive)
 
 - Default behavior is **desktop-native fullscreen** (`r_fullscreenDesktop 1`): fullscreen matches your current desktop resolution and does not change Windows display mode.
@@ -47,6 +69,23 @@ Notes:
 ## Aspect Ratio and FOV
 
 - `r_aspectRatio` is **deprecated/ignored**. Aspect ratio and FOV behavior are derived automatically from the current render size, so the game follows any aspect ratio without manual selection.
+
+## View Weapon FOV and Placement (New)
+
+These settings control first-person viewmodel rendering (the weapon on screen). They are client-side tuning controls and are not gameplay/network authority cvars.
+
+| Setting | Default | What it does |
+|---|---:|---|
+| `cl_gunfov` | `0` | View-weapon FOV override (`0` = follow current view FOV). |
+| `cl_gunfov_adjust` | `1` | Aspect policy for `cl_gunfov`: `1` keeps classic 4:3-style weapon framing across screen ratios, `0` uses direct viewport-based FOV conversion. |
+| `cl_gun_x` | `0` | Client weapon X/right offset. |
+| `cl_gun_y` | `0` | Client weapon Y/forward offset. |
+| `cl_gun_z` | `0` | Client weapon Z/up offset. |
+
+Notes:
+- `cl_gunfov` values above `0` are clamped to a safe range internally for weapon projection.
+- Weapon projection is handled in renderer weapon-depth path, so narrow/wide aspect changes are handled consistently.
+- `cl_gun_x/y/z` are additive with legacy `g_gunX/Y/Z` offsets. Prefer `cl_gun_*` for user config.
 
 ## UI Aspect Correction (New)
 
@@ -74,6 +113,9 @@ When the render surface spans multiple monitors:
 seta r_screen -1
 seta r_fullscreenDesktop 1
 seta r_fullscreen 1
+seta r_multiSamples 4
+seta r_postAA 1
+seta r_msaaAlphaToCoverage 1
 seta ui_aspectCorrection 1
 vid_restart
 ```
@@ -104,9 +146,45 @@ vid_restart
 seta ui_aspectCorrection 0
 ```
 
+### View Weapon: Classic Framing + Slight Lowering
+
+```cfg
+seta cl_gunfov 90
+seta cl_gunfov_adjust 1
+seta cl_gun_z -1
+```
+
+### View Weapon: Match World FOV, Personal Position Offset
+
+```cfg
+seta cl_gunfov 0
+seta cl_gun_x 0.5
+seta cl_gun_y -0.5
+seta cl_gun_z -0.5
+```
+
+### Performance-Focused AA Preset
+
+```cfg
+seta r_multiSamples 2
+seta r_postAA 1
+seta r_msaaAlphaToCoverage 1
+vid_restart
+```
+
+### Maximum Clarity (Higher GPU Cost)
+
+```cfg
+seta r_multiSamples 8
+seta r_postAA 1
+seta r_msaaAlphaToCoverage 1
+vid_restart
+```
+
 ## Troubleshooting
 
 - If a display change does not apply, run `vid_restart`.
 - If monitor targeting looks wrong, run `listDisplays`, then set `r_screen` to the correct index and restart video.
 - If UI appears too centered/boxed on wide displays, set `ui_aspectCorrection 0`.
 - If the window opens off-screen after a monitor change, set `r_screen` explicitly to the target monitor and restart video; OpenQ4 will also attempt to recover automatically.
+- If AA settings seem unchanged, check values with `r_multiSamples`, `r_postAA`, and `r_msaaAlphaToCoverage`, then run `vid_restart`.

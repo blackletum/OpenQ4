@@ -195,6 +195,56 @@ static void Session_DrawFallbackLoadingScreen() {
 	renderSystem->SetColor( colorWhite );
 }
 
+static const char *Session_GetLongMPGameTypeName( const char *gametype ) {
+	if ( !gametype || !gametype[ 0 ] ) {
+		return "";
+	}
+
+	if ( !idStr::Icmp( gametype, "Tourney" ) ) {
+		return common->GetLocalizedString( "#str_107676" );
+	}
+	if ( !idStr::Icmp( gametype, "Team DM" ) ) {
+		return common->GetLocalizedString( "#str_107677" );
+	}
+	if ( !idStr::Icmp( gametype, "CTF" ) ) {
+		return common->GetLocalizedString( "#str_107678" );
+	}
+	if ( !idStr::Icmp( gametype, "DM" ) ) {
+		return common->GetLocalizedString( "#str_107679" );
+	}
+	if ( !idStr::Icmp( gametype, "One Flag CTF" ) ) {
+		return common->GetLocalizedString( "#str_107680" );
+	}
+	if ( !idStr::Icmp( gametype, "Arena CTF" ) ) {
+		return common->GetLocalizedString( "#str_107681" );
+	}
+	if ( !idStr::Icmp( gametype, "Arena One Flag CTF" ) ) {
+		return common->GetLocalizedString( "#str_107682" );
+	}
+	if ( !idStr::Icmp( gametype, "DeadZone" ) ) {
+		return common->GetLocalizedString( "#str_122001" );
+	}
+
+	return gametype;
+}
+
+static idStr Session_GetMPLoadLimitString( const idDict &serverInfo ) {
+	const char *gameType = serverInfo.GetString( "si_gameType" );
+	const bool useCaptureLimit =
+		( !idStr::Icmp( gameType, "CTF" ) ) ||
+		( !idStr::Icmp( gameType, "Arena CTF" ) ) ||
+		( !idStr::Icmp( gameType, "One Flag CTF" ) ) ||
+		( !idStr::Icmp( gameType, "Arena One Flag CTF" ) );
+
+	const int limit = useCaptureLimit ? serverInfo.GetInt( "si_captureLimit" ) : serverInfo.GetInt( "si_fragLimit" );
+	if ( limit <= 0 ) {
+		return "";
+	}
+
+	const char *label = common->GetLocalizedString( useCaptureLimit ? "#str_107661" : "#str_107660" );
+	return va( "%s %d", label, limit );
+}
+
 void RandomizeStack( void ) {
 	// attempt to force uninitialized stack memory bugs
 	int		bytes = 4000000;
@@ -1666,6 +1716,39 @@ void idSessionLocal::LoadLoadingGui( const char *mapName ) {
 		guiLoading->SetStateString( "loading_bkgnd", loadingBackground );
 		guiLoading->SetStateString( "loading_levelname", loadingLevelName );
 		guiLoading->SetStateString( "loading_objectives", loadingObjectives );
+		guiLoading->SetStateString( "loading_message", "" );
+		guiLoading->SetStateString( "server_loadinfo", "" );
+		guiLoading->SetStateString( "server_name", "" );
+		guiLoading->SetStateString( "server_ip", "" );
+		guiLoading->SetStateString( "server_gametype", "" );
+		guiLoading->SetStateString( "server_limit", "" );
+
+		if ( idAsyncNetwork::IsActive() ) {
+			const char *serverName = mapSpawnData.serverInfo.GetString( "si_name", "" );
+			const char *serverAddress = networkSystem->GetServerAddress();
+			const char *gameType = mapSpawnData.serverInfo.GetString( "si_gameType", "" );
+			const char *localizedGameType = Session_GetLongMPGameTypeName( gameType );
+			const idStr limitText = Session_GetMPLoadLimitString( mapSpawnData.serverInfo );
+
+			if ( serverName && serverName[ 0 ] ) {
+				guiLoading->SetStateString( "server_name", serverName );
+			}
+			if ( serverAddress && serverAddress[ 0 ] ) {
+				guiLoading->SetStateString( "server_ip", serverAddress );
+			}
+			if ( localizedGameType && localizedGameType[ 0 ] ) {
+				guiLoading->SetStateString( "server_gametype", localizedGameType );
+			}
+			if ( limitText.Length() ) {
+				guiLoading->SetStateString( "server_limit", limitText.c_str() );
+			}
+		}
+
+		guiLoading->SetStateInt( "load_icons", 0 );
+		for ( int i = 1; i <= 20; i++ ) {
+			guiLoading->SetStateInt( va( "load_icon_%d", i ), 0 );
+			guiLoading->SetStateString( va( "load_icon_img_%d", i ), "" );
+		}
 		guiLoading->StateChanged( com_frameTime );
 
 		const idMaterial *mat = declManager->FindMaterial( loadingBackground );

@@ -117,13 +117,13 @@ public:
 	// RAVEN BEGIN
 // ddynerman: added some utility functions
 	// uses a static buffer, copy it before calling in game again
-	virtual const char* GetServerAddress(void) { return 0; }
+	virtual const char* GetServerAddress(void);
 	virtual const char* GetClientAddress(int clientNum) { return 0; }
 	virtual	void			AddFriend(int clientNum) { }
 	virtual void			RemoveFriend(int clientNum) { }
 	// for MP games
-	virtual void			SetLoadingText(const char* loadingText) { }
-	virtual void			AddLoadingIcon(const char* icon) { }
+	virtual void			SetLoadingText(const char* loadingText);
+	virtual void			AddLoadingIcon(const char* icon);
 	virtual const char* GetClientGUID(int clientNum) { return 0; }
 	// RAVEN END
 

@@ -49,9 +49,11 @@ idSoundShader::Init
 */
 void idSoundShader::Init()
 {
-	leadin = false;
 	leadinVolume = 0;
 	altSound = NULL;
+	leadins.Clear();
+	entries.Clear();
+	shakes.Clear();
 }
 
 /*
@@ -172,17 +174,24 @@ bool idSoundShader::ParseShader( idLexer& src )
 {
 	idToken		token;
 
-	parms.minDistance = 1;
-	parms.maxDistance = 10;
+	// Quake 4 shaders author these distances in world units; keep stock defaults.
+	parms.minDistance = 40.0f;
+	parms.maxDistance = 400.0f;
 	parms.volume = 1;
 	parms.shakes = 0;
 	parms.soundShaderFlags = 0;
 	parms.soundClass = 0;
+	parms.frequencyShift = 1.0f;
+	parms.wetLevel = 0.0f;
+	parms.dryLevel = 1.0f;
 
 	speakerMask = 0;
 	altSound = NULL;
+	leadinVolume = 1.0f;
 
+	leadins.Clear();
 	entries.Clear();
+	shakes.Clear();
 
 	while( 1 )
 	{
@@ -206,45 +215,61 @@ bool idSoundShader::ParseShader( idLexer& src )
 			src.ReadTokenOnLine( &token );
 		}
 		else if (!token.Icmp("mindistance")) {
-			parms.minDistance = src.ParseFloat() / 100.0f; // jmarshall: scale to doom 3 distance
+			parms.minDistance = src.ParseFloat();
 		}
 		// maxdistance
 		else if (!token.Icmp("maxdistance")) {
-			parms.maxDistance = src.ParseFloat() / 100.0f; // jmarshall: scale to doom 3 distance
+			parms.maxDistance = src.ParseFloat();
 		}
 // jmarshall - quake 4 sound shader
 		else if (!token.Icmp("frequencyshift")) {
-			float shiftVal = src.ParseFloat();
+			const float minShift = src.ParseFloat();
 			src.ExpectTokenString(",");
-			float shiftVal2 = src.ParseFloat();
+			const float maxShift = src.ParseFloat();
+			parms.frequencyShift = 0.5f * (minShift + maxShift);
 		}
 		else if (!token.Icmp("volumeDb")) {
 			float db = src.ParseFloat();
 			parms.volume = idMath::dBToScale(db);
 		}
 		else if (!token.Icmp("useDoppler")) {
-
+			parms.soundShaderFlags |= SSF_USEDOPPLER;
 		}
 		else if (!token.Icmp("noRandomStart")) {
-
+			parms.soundShaderFlags |= SSF_NO_RANDOMSTART;
 		}
 		else if (!token.Icmp("voForPlayer")) {
-
+			parms.soundShaderFlags |= SSF_VO_FOR_PLAYER;
 		}
 		else if (!token.Icmp("frequentlyUsed")) {
 
 		}
 		else if (!token.Icmp("causeRumble")) {
-
+			parms.soundShaderFlags |= SSF_CAUSE_RUMBLE;
 		}
 		else if (!token.Icmp("center")) {
-
+			parms.soundShaderFlags |= SSF_CENTER;
 		}
 // jmarshall end
 		else if (!token.Icmp("shakeData"))
 		{
-			src.ExpectAnyToken(&token);
-			src.ExpectAnyToken(&token);
+			const int shakeIndex = src.ParseInt();
+			if( !src.ExpectAnyToken( &token ) )
+			{
+				return false;
+			}
+			if( shakeIndex < 0 )
+			{
+				src.Warning( "shakeData index out of range" );
+			}
+			else
+			{
+				if( shakes.Num() <= shakeIndex )
+				{
+					shakes.SetNum( shakeIndex + 1 );
+				}
+				shakes[shakeIndex] = token.c_str();
+			}
 		}
 		else if( !token.Icmp( "shakes" ) )
 		{
@@ -262,14 +287,13 @@ bool idSoundShader::ParseShader( idLexer& src )
 		// reverb
 		else if( !token.Icmp( "reverb" ) )
 		{
-			src.ParseFloat();
+			parms.wetLevel = src.ParseFloat();
 			if( !src.ExpectTokenString( "," ) )
 			{
 				src.FreeSource();
 				return false;
 			}
-			src.ParseFloat();
-			// no longer supported
+			parms.dryLevel = src.ParseFloat();
 		}
 		// volume
 		else if( !token.Icmp( "volume" ) )
@@ -280,7 +304,6 @@ bool idSoundShader::ParseShader( idLexer& src )
 		else if( !token.Icmp( "leadinVolume" ) )
 		{
 			leadinVolume = src.ParseFloat();
-			leadin = true;
 		}
 		// speaker mask
 		else if( !token.Icmp( "mask_center" ) )
@@ -402,16 +425,36 @@ bool idSoundShader::ParseShader( idLexer& src )
 		// the wave files
 		else if( !token.Icmp( "leadin" ) )
 		{
-			leadin = true;
-		}
-		else 
-		{
-// jmarshall
-			token.SetFileExtension(".wav");
-// jmarshall end
+			if( !src.ExpectAnyToken( &token ) )
+			{
+				src.Warning( "Expected sound after leadin" );
+				return false;
+			}
+
+			token.SetFileExtension( ".wav" );
+
 			if( token.IcmpPrefixPath( "sound/vo/" ) == 0 || token.IcmpPrefixPath( "sound/guis/" ) == 0 )
 			{
 				parms.soundShaderFlags |= SSF_VO;
+				parms.soundShaderFlags |= SSF_IS_VO;
+			}
+			if( token.IcmpPrefixPath( "sound/musical/" ) == 0 )
+			{
+				parms.soundShaderFlags |= SSF_MUSIC;
+			}
+
+			if( s_maxSamples.GetInteger() == 0 || ( s_maxSamples.GetInteger() > 0 && leadins.Num() < s_maxSamples.GetInteger() ) )
+			{
+				leadins.Append( soundSystemLocal.LoadSample( token.c_str() ) );
+			}
+		}
+		else 
+		{
+			token.SetFileExtension( ".wav" );
+			if( token.IcmpPrefixPath( "sound/vo/" ) == 0 || token.IcmpPrefixPath( "sound/guis/" ) == 0 )
+			{
+				parms.soundShaderFlags |= SSF_VO;
+				parms.soundShaderFlags |= SSF_IS_VO;
 			}
 			if( token.IcmpPrefixPath( "sound/musical/" ) == 0 )
 			{
@@ -443,6 +486,14 @@ void idSoundShader::List() const
 	idStrList	shaders;
 
 	common->Printf( "%4i: %s\n", Index(), GetName() );
+	for( int k = 0; k < leadins.Num(); k++ )
+	{
+		const idSoundSample* objectp = leadins[k];
+		if( objectp )
+		{
+			common->Printf( "      %5dms %4dKb leadin %s\n", objectp->LengthInMsec(), ( objectp->BufferSize() / 1024 ), objectp->GetName() );
+		}
+	}
 	for( int k = 0; k < entries.Num(); k++ )
 	{
 		const idSoundSample* objectp = entries[k];
@@ -490,6 +541,13 @@ idSoundShader::HasDefaultSound
 */
 bool idSoundShader::HasDefaultSound() const
 {
+	for( int i = 0; i < leadins.Num(); i++ )
+	{
+		if( leadins[i] && leadins[i]->IsDefault() )
+		{
+			return true;
+		}
+	}
 	for( int i = 0; i < entries.Num(); i++ )
 	{
 		if( entries[i] && entries[i]->IsDefault() )
@@ -517,7 +575,7 @@ idSoundShader::GetNumSounds
 */
 int idSoundShader::GetNumSounds() const
 {
-	return entries.Num();
+	return leadins.Num() + entries.Num();
 }
 
 /*
@@ -527,9 +585,53 @@ idSoundShader::GetSound
 */
 const char* idSoundShader::GetSound( int index ) const
 {
+	if( index >= 0 && index < leadins.Num() )
+	{
+		return leadins[index]->GetName();
+	}
+
+	index -= leadins.Num();
 	if( index >= 0 && index < entries.Num() )
 	{
 		return entries[index]->GetName();
 	}
 	return "";
+}
+
+/*
+===============
+idSoundShader::GetTimeLength
+===============
+*/
+float idSoundShader::GetTimeLength() const
+{
+	int maxLengthMs = 0;
+	for( int i = 0; i < leadins.Num(); ++i )
+	{
+		if( !leadins[i] )
+		{
+			continue;
+		}
+		maxLengthMs = Max( maxLengthMs, leadins[i]->LengthInMsec() );
+	}
+	for( int i = 0; i < entries.Num(); ++i )
+	{
+		if( !entries[i] )
+		{
+			continue;
+		}
+		maxLengthMs = Max( maxLengthMs, entries[i]->LengthInMsec() );
+	}
+
+	return maxLengthMs * 0.001f;
+}
+
+/*
+===============
+idSoundShader::IsVO_ForPlayer
+===============
+*/
+bool idSoundShader::IsVO_ForPlayer() const
+{
+	return (parms.soundShaderFlags & SSF_VO_FOR_PLAYER) != 0;
 }

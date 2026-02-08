@@ -84,6 +84,44 @@ void rvEnvParms::operator=(const rvEnvParms& copy)
 	mRate = copy.mRate;
 }
 
+void rvEnvParms::CalcRate(float* rate, float duration, int count)
+{
+	if (!rate || count <= 0) {
+		return;
+	}
+
+	const float safeDuration = Max(0.002f, duration);
+	for (int i = 0; i < count; ++i) {
+		rate[i] = mIsCount ? (rate[i] / safeDuration) : rate[i];
+	}
+}
+
+void rvEnvParms::Evaluate3(const float time, const float* start, const float* rate, const float* end, float* dest)
+{
+	if (!start || !rate || !end || !dest) {
+		return;
+	}
+
+	if (mTable) {
+		const float tx = rate[0] * time + mEnvOffset.x;
+		const float ty = rate[1] * time + mEnvOffset.y;
+		const float tz = rate[2] * time + mEnvOffset.z;
+
+		const float vx = mTable->TableLookup(tx);
+		const float vy = mTable->TableLookup(ty);
+		const float vz = mTable->TableLookup(tz);
+
+		dest[0] = (end[0] - start[0]) * vx + start[0];
+		dest[1] = (end[1] - start[1]) * vy + start[1];
+		dest[2] = (end[2] - start[2]) * vz + start[2];
+	}
+	else {
+		dest[0] = start[0];
+		dest[1] = start[1];
+		dest[2] = start[2];
+	}
+}
+
 void rvEnvParms::Evaluate(class rvEnvParms1Particle& env, float time, float oneOverDuration, float* dest)
 {
 

@@ -68,6 +68,14 @@ public:
 	{
 		return freeVoices.Num();
 	}
+	bool			HasEFX() const
+	{
+		return efxEnabled;
+	}
+	ALuint			GetAuxEffectSlot() const
+	{
+		return auxEffectSlot;
+	}
 
 	// OpenAL info
 	static void		PrintDeviceList( const char* list );
@@ -91,6 +99,9 @@ private:
 	ALCcontext*			openalContext;
 
 	int					lastResetTime;
+	bool				efxEnabled;
+	ALuint				auxEffectSlot;
+	ALuint				auxReverbEffect;
 
 	//int				outputChannels;
 	//int				channelMask;

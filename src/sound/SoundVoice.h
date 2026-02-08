@@ -59,6 +59,16 @@ public:
 	{
 		pitch = p;
 	}
+
+	virtual void	SetWetLevel( float wet )
+	{
+		wetLevel = wet;
+	}
+
+	virtual void	SetDryLevel( float dry )
+	{
+		dryLevel = dry;
+	}
 	// RB end
 
 	void		SetCenterChannel( float c )
@@ -91,12 +101,22 @@ public:
 	{
 		return pitch;
 	}
+	float		GetWetLevel() const
+	{
+		return wetLevel;
+	}
+	float		GetDryLevel() const
+	{
+		return dryLevel;
+	}
 
 protected:
 	idVec3		position;			// Position of the sound relative to listener
 	float		gain;				// Volume (0-1)
 	float		centerChannel;		// Value (0-1) which indicates how much of this voice goes to the center channel
 	float		pitch;				// Pitch multiplier
+	float		wetLevel;			// Aux send level (0-1)
+	float		dryLevel;			// Direct path level (0-1)
 	float		innerRadius;		// Anything closer than this is omni
 	float		occlusion;			// How much of this sound is occluded (0-1)
 	uint32		channelMask;		// Set to override the default channel mask

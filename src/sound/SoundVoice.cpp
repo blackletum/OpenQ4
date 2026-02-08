@@ -50,6 +50,8 @@ idSoundVoice_Base::idSoundVoice_Base() :
 	gain( 1.0f ),
 	centerChannel( 0.0f ),
 	pitch( 1.0f ),
+	wetLevel( 0.0f ),
+	dryLevel( 1.0f ),
 	innerRadius( 32.0f ),
 	occlusion( 0.0f ),
 	channelMask( 0 ),

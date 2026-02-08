@@ -39,6 +39,19 @@ idImageManager * globalImages = &imageManager;
 
 idCVar preLoad_Images( "preLoad_Images", "1", CVAR_SYSTEM | CVAR_BOOL, "preload images during beginlevelload" );
 
+static void R_NormalizeInternalImageName( idStr& name ) {
+	// Runtime render targets are referenced from materials with option hashes
+	// (for example _postProcessAlbedo0#__0200). Treat those as the same image.
+	if ( name.IsEmpty() || name[0] != '_' ) {
+		return;
+	}
+
+	const int optionsPos = name.Find( "#__" );
+	if ( optionsPos >= 0 ) {
+		name.CapLength( optionsPos );
+	}
+}
+
 /*
 ===============
 R_ReloadImages_f
@@ -276,6 +289,7 @@ idImage *idImageManager::ImageFromFunction( const char *_name, void (*generatorF
 	idStr name = _name;
 	name.Replace( ".tga", "" );
 	name.BackSlashesToSlashes();
+	R_NormalizeInternalImageName( name );
 
 	// see if the image already exists
 	int hash = name.FileNameHash();
@@ -322,6 +336,7 @@ idImage	*idImageManager::GetImageWithParameters( const char *_name, textureFilte
 	idStr name = _name;
 	name.Replace( ".tga", "" );
 	name.BackSlashesToSlashes();
+	R_NormalizeInternalImageName( name );
 	int hash = name.FileNameHash();
 	for ( int i = imageHash.First( hash ); i != -1; i = imageHash.Next( i ) ) {
 		idImage	* image = images[i];
@@ -373,6 +388,7 @@ idImage	*idImageManager::ImageFromFile( const char *_name, textureFilter_t filte
 	idStr name = _name;
 	name.Replace( ".tga", "" );
 	name.BackSlashesToSlashes();
+	R_NormalizeInternalImageName( name );
 
 	//
 	// see if the image is already loaded, unless we
@@ -450,6 +466,8 @@ idImage * idImageManager::ScratchImage( const char *_name, idImageOpts *imgOpts,
 	}
 
 	idStr name = _name;
+	name.BackSlashesToSlashes();
+	R_NormalizeInternalImageName( name );
 
 	//
 	// see if the image is already loaded, unless we
@@ -513,6 +531,7 @@ idImage *idImageManager::GetImage( const char *_name ) const {
 	idStr name = _name;
 	name.Replace( ".tga", "" );
 	name.BackSlashesToSlashes();
+	R_NormalizeInternalImageName( name );
 
 	//
 	// look in loaded images

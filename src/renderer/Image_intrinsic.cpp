@@ -644,6 +644,7 @@ void idImageManager::CreateIntrinsicImages() {
 
 	// placeholders for runtime render targets referenced by materials
 	ImageFromFunction("_forwardRenderResolvedAlbedo", R_RGBA8Image);
+	ImageFromFunction("_postProcessAlbedo0", R_RGBA8Image);
 	ImageFromFunction("_postProcessAlbedo1", R_RGBA8Image);
 
 

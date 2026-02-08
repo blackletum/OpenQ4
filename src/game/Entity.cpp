@@ -1439,21 +1439,65 @@ void idEntity::UpdateVisuals( void ) {
 
 /*
 ================
+IsValidPVSBounds
+================
+*/
+static bool IsValidPVSBounds( const idBounds &bounds ) {
+	for ( int axis = 0; axis < 3; axis++ ) {
+		const float mins = bounds[0][axis];
+		const float maxs = bounds[1][axis];
+		const float extent = maxs - mins;
+
+		if ( mins != mins || maxs != maxs ) {
+			return false;
+		}
+		if ( mins <= -idMath::INFINITY || mins >= idMath::INFINITY || maxs <= -idMath::INFINITY || maxs >= idMath::INFINITY ) {
+			return false;
+		}
+		if ( mins > maxs ) {
+			return false;
+		}
+		if ( extent < 0.0f || extent >= 1e4f ) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+/*
+================
 idEntity::UpdatePVSAreas
 ================
 */
 void idEntity::UpdatePVSAreas( void ) {
 	int localNumPVSAreas, localPVSAreas[32];
 	idBounds modelAbsBounds;
+	const idPhysics *physicsObj = GetPhysics();
+	const idBounds fallbackBounds = idBounds( renderEntity.origin ).Expand( 64.0f );
 	int i;
 
-	modelAbsBounds.FromTransformedBounds( renderEntity.bounds, renderEntity.origin, renderEntity.axis );
+	if ( IsValidPVSBounds( renderEntity.bounds ) ) {
+		modelAbsBounds.FromTransformedBounds( renderEntity.bounds, renderEntity.origin, renderEntity.axis );
+	} else if ( physicsObj != NULL ) {
+		modelAbsBounds = physicsObj->GetAbsBounds();
+	} else {
+		modelAbsBounds = fallbackBounds;
+	}
+
+	if ( !IsValidPVSBounds( modelAbsBounds ) && physicsObj != NULL ) {
+		modelAbsBounds = physicsObj->GetAbsBounds();
+	}
+	if ( !IsValidPVSBounds( modelAbsBounds ) ) {
+		modelAbsBounds = fallbackBounds;
+	}
+
 	localNumPVSAreas = gameLocal.pvs.GetPVSAreas( modelAbsBounds, localPVSAreas, sizeof( localPVSAreas ) / sizeof( localPVSAreas[0] ) );
 
 	// FIXME: some particle systems may have huge bounds and end up in many PVS areas
 	// the first MAX_PVS_AREAS may not be visible to a network client and as a result the particle system may not show up when it should
 	if ( localNumPVSAreas > MAX_PVS_AREAS ) {
-		localNumPVSAreas = gameLocal.pvs.GetPVSAreas( idBounds( renderEntity.origin ).Expand( 64.0f ), localPVSAreas, sizeof( localPVSAreas ) / sizeof( localPVSAreas[0] ) );
+		localNumPVSAreas = gameLocal.pvs.GetPVSAreas( fallbackBounds, localPVSAreas, sizeof( localPVSAreas ) / sizeof( localPVSAreas[0] ) );
 	}
 
 	for ( numPVSAreas = 0; numPVSAreas < MAX_PVS_AREAS && numPVSAreas < localNumPVSAreas; numPVSAreas++ ) {

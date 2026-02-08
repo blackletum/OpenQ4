@@ -68,6 +68,7 @@ void RB_SetDefaultGLState( void ) {
 	glEnable( GL_BLEND );
 	glEnable( GL_SCISSOR_TEST );
 	glEnable( GL_CULL_FACE );
+	glDisable( GL_SAMPLE_ALPHA_TO_COVERAGE );
 	glDisable( GL_LIGHTING );
 	glDisable( GL_LINE_STIPPLE );
 	glDisable( GL_STENCIL_TEST );
@@ -576,6 +577,9 @@ static void RB_ResolveMSAA(const void* data) {
 
 	cmd = (resolveRenderTargetCommand_t*)data;
 
+	cmd->msaaRenderTexture->EnsureDeviceHandle();
+	cmd->destRenderTexture->EnsureDeviceHandle();
+
 	int width = cmd->msaaRenderTexture->GetWidth();
 	int height = cmd->msaaRenderTexture->GetHeight();
 
@@ -592,12 +596,14 @@ static void RB_ResolveMSAA(const void* data) {
 
 	GL_CheckErrors();
 
-	// Resolve the Depth Buffer
-	glReadBuffer(GL_NONE);
-	glDrawBuffer(GL_NONE);
-	glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+	// Resolve the depth buffer only when explicitly requested.
+	if ( cmd->resolveDepth ) {
+		glReadBuffer( GL_NONE );
+		glDrawBuffer( GL_NONE );
+		glBlitFramebuffer( 0, 0, width, height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT, GL_NEAREST );
 
-	GL_CheckErrors();
+		GL_CheckErrors();
+	}
 
 	glReadBuffer(GL_COLOR_ATTACHMENT0);
 	glDrawBuffer(GL_COLOR_ATTACHMENT0);
@@ -654,6 +660,8 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 
 	// needed for editor rendering
 	RB_SetDefaultGLState();
+	backEnd.renderTexture = NULL;
+	idRenderTexture::BindNull();
 
 	// upload any image loads that have completed
 	//globalImages->CompleteBackgroundImageLoads();

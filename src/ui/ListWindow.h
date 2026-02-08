@@ -43,6 +43,7 @@ struct idTabRect {
 	int	type;
 	idVec2 iconSize;
 	float iconVOffset;
+	float textScale;
 };
 
 class idListWindow : public idWindow {
@@ -79,6 +80,7 @@ private:
 	idStr				tabAlignStr;
 	idStr				tabVAlignStr;
 	idStr				tabTypeStr;
+	idStr				tabTextScaleStr;
 	idStr				tabIconSizeStr;
 	idStr				tabIconVOffsetStr;
 	idHashTable<const idMaterial*> iconMaterials;						

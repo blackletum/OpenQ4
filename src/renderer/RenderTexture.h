@@ -56,6 +56,7 @@ public:
 	int						GetNumColorImages() const { return colorImages.Num(); }
 
 	void					Resize( int width, int height );
+	void					EnsureDeviceHandle( void );
 
 	void					MakeCurrent( void );
 	static void				BindNull(void);

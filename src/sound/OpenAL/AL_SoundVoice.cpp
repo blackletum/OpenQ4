@@ -30,6 +30,47 @@ If you have questions concerning this license or the applicable additional terms
 #include "../snd_local.h"
 
 extern idCVar s_warnOnMissingSamples;
+extern idCVar s_openALEfxDebugMode;
+
+#if defined( AL_AUXILIARY_SEND_FILTER ) && defined( AL_DIRECT_FILTER ) && defined( AL_FILTER_LOWPASS ) && defined( AL_EFFECTSLOT_NULL ) && defined( AL_FILTER_NULL )
+	#define OPENQ4_OPENAL_EFX_SUPPORTED 1
+#else
+	#define OPENQ4_OPENAL_EFX_SUPPORTED 0
+#endif
+
+#if OPENQ4_OPENAL_EFX_SUPPORTED
+typedef void ( AL_APIENTRY *openq4_alGenFilters_t )( ALsizei n, ALuint *filters );
+typedef void ( AL_APIENTRY *openq4_alDeleteFilters_t )( ALsizei n, const ALuint *filters );
+typedef void ( AL_APIENTRY *openq4_alFilteri_t )( ALuint filter, ALenum param, ALint iValue );
+typedef void ( AL_APIENTRY *openq4_alFilterf_t )( ALuint filter, ALenum param, ALfloat flValue );
+
+static openq4_alGenFilters_t qalGenFilters = NULL;
+static openq4_alDeleteFilters_t qalDeleteFilters = NULL;
+static openq4_alFilteri_t qalFilteri = NULL;
+static openq4_alFilterf_t qalFilterf = NULL;
+
+static bool OpenQ4_LoadVoiceEfxProcs() {
+	static bool initialized = false;
+	static bool available = false;
+
+	if ( initialized ) {
+		return available;
+	}
+	initialized = true;
+
+	qalGenFilters = reinterpret_cast<openq4_alGenFilters_t>( alGetProcAddress( "alGenFilters" ) );
+	qalDeleteFilters = reinterpret_cast<openq4_alDeleteFilters_t>( alGetProcAddress( "alDeleteFilters" ) );
+	qalFilteri = reinterpret_cast<openq4_alFilteri_t>( alGetProcAddress( "alFilteri" ) );
+	qalFilterf = reinterpret_cast<openq4_alFilterf_t>( alGetProcAddress( "alFilterf" ) );
+
+	available =
+		( qalGenFilters != NULL ) &&
+		( qalDeleteFilters != NULL ) &&
+		( qalFilteri != NULL ) &&
+		( qalFilterf != NULL );
+	return available;
+}
+#endif
 
 idCVar s_skipHardwareSets( "s_skipHardwareSets", "0", CVAR_BOOL, "Do all calculation, but skip XA2 calls" );
 idCVar s_debugHardware( "s_debugHardware", "0", CVAR_BOOL, "Print a message any time a hardware voice changes" );
@@ -51,6 +92,8 @@ idSoundVoice_OpenAL::idSoundVoice_OpenAL()
 	openalSource( 0 ),
 	leadinSample( NULL ),
 	loopingSample( NULL ),
+	openalDirectFilter( 0 ),
+	openalAuxFilter( 0 ),
 	formatTag( 0 ),
 	numChannels( 0 ),
 	sampleRate( 0 ),
@@ -189,6 +232,8 @@ void idSoundVoice_OpenAL::Create( const idSoundSample* leadinSample_, const idSo
 
 	// RB: FIXME 0.0f ?
 	alSourcef( openalSource, AL_GAIN, 1.0f );
+	CreateWetDryFilters();
+	ApplyWetDryRouting();
 
 	//OnBufferStart( leadinSample, 0 );
 }
@@ -238,6 +283,7 @@ void idSoundVoice_OpenAL::DestroyInternal()
 
 		hasVUMeter = false;
 	}
+	DestroyWetDryFilters();
 }
 
 /*
@@ -775,6 +821,145 @@ void idSoundVoice_OpenAL::SetSampleRate( uint32 newSampleRate, uint32 operationS
 
 	pSourceVoice->SetFrequencyRatio( freqRatio, operationSet );
 	*/
+}
+
+/*
+========================
+idSoundVoice_OpenAL::CreateWetDryFilters
+========================
+*/
+void idSoundVoice_OpenAL::CreateWetDryFilters()
+{
+#if OPENQ4_OPENAL_EFX_SUPPORTED
+	if( !soundSystemLocal.hardware.HasEFX() || !OpenQ4_LoadVoiceEfxProcs() || !alIsSource( openalSource ) )
+	{
+		return;
+	}
+	if( openalDirectFilter == 0 )
+	{
+		qalGenFilters( 1, &openalDirectFilter );
+		if( CheckALErrors() == AL_NO_ERROR && openalDirectFilter != 0 )
+		{
+			qalFilteri( openalDirectFilter, AL_FILTER_TYPE, AL_FILTER_LOWPASS );
+			qalFilterf( openalDirectFilter, AL_LOWPASS_GAIN, 1.0f );
+			qalFilterf( openalDirectFilter, AL_LOWPASS_GAINHF, 1.0f );
+			CheckALErrors();
+		}
+		else
+		{
+			openalDirectFilter = 0;
+		}
+	}
+	if( openalAuxFilter == 0 )
+	{
+		qalGenFilters( 1, &openalAuxFilter );
+		if( CheckALErrors() == AL_NO_ERROR && openalAuxFilter != 0 )
+		{
+			qalFilteri( openalAuxFilter, AL_FILTER_TYPE, AL_FILTER_LOWPASS );
+			qalFilterf( openalAuxFilter, AL_LOWPASS_GAIN, 1.0f );
+			qalFilterf( openalAuxFilter, AL_LOWPASS_GAINHF, 1.0f );
+			CheckALErrors();
+		}
+		else
+		{
+			openalAuxFilter = 0;
+		}
+	}
+#endif
+}
+
+/*
+========================
+idSoundVoice_OpenAL::DestroyWetDryFilters
+========================
+*/
+void idSoundVoice_OpenAL::DestroyWetDryFilters()
+{
+#if OPENQ4_OPENAL_EFX_SUPPORTED
+	if( openalDirectFilter != 0 )
+	{
+		if( qalDeleteFilters != NULL )
+		{
+			qalDeleteFilters( 1, &openalDirectFilter );
+		}
+		openalDirectFilter = 0;
+	}
+	if( openalAuxFilter != 0 )
+	{
+		if( qalDeleteFilters != NULL )
+		{
+			qalDeleteFilters( 1, &openalAuxFilter );
+		}
+		openalAuxFilter = 0;
+	}
+#endif
+}
+
+/*
+========================
+idSoundVoice_OpenAL::ApplyWetDryRouting
+========================
+*/
+void idSoundVoice_OpenAL::ApplyWetDryRouting()
+{
+	if( !alIsSource( openalSource ) )
+	{
+		return;
+	}
+
+	float effectiveDry = Max( 0.0f, dryLevel );
+	float effectiveWet = Max( 0.0f, wetLevel );
+
+	switch( s_openALEfxDebugMode.GetInteger() )
+	{
+		case 1:
+			effectiveDry = 0.0f;
+			effectiveWet = 1.0f;
+			break;
+		case 2:
+			effectiveDry = 1.0f;
+			effectiveWet = 0.0f;
+			break;
+		default:
+			break;
+	}
+
+	effectiveDry = idMath::ClampFloat( 0.0f, 1.0f, effectiveDry );
+	effectiveWet = idMath::ClampFloat( 0.0f, 1.0f, effectiveWet );
+	const float effectiveGain = Max( 0.0f, gain );
+
+#if OPENQ4_OPENAL_EFX_SUPPORTED
+	const bool hasEfx = soundSystemLocal.hardware.HasEFX() && OpenQ4_LoadVoiceEfxProcs();
+	if( hasEfx )
+	{
+		CreateWetDryFilters();
+	}
+
+	if( hasEfx && openalDirectFilter != 0 )
+	{
+		qalFilterf( openalDirectFilter, AL_LOWPASS_GAIN, effectiveDry );
+		qalFilterf( openalDirectFilter, AL_LOWPASS_GAINHF, 1.0f );
+		alSourcei( openalSource, AL_DIRECT_FILTER, openalDirectFilter );
+		alSourcef( openalSource, AL_GAIN, effectiveGain );
+	}
+	else
+	{
+		alSourcef( openalSource, AL_GAIN, effectiveGain * effectiveDry );
+	}
+
+	if( hasEfx && openalAuxFilter != 0 && soundSystemLocal.hardware.GetAuxEffectSlot() != 0 && effectiveWet > 0.0f )
+	{
+		qalFilterf( openalAuxFilter, AL_LOWPASS_GAIN, effectiveWet );
+		qalFilterf( openalAuxFilter, AL_LOWPASS_GAINHF, 1.0f );
+		alSource3i( openalSource, AL_AUXILIARY_SEND_FILTER, soundSystemLocal.hardware.GetAuxEffectSlot(), 0, openalAuxFilter );
+	}
+	else if( hasEfx )
+	{
+		alSource3i( openalSource, AL_AUXILIARY_SEND_FILTER, AL_EFFECTSLOT_NULL, 0, AL_FILTER_NULL );
+	}
+#else
+	alSourcef( openalSource, AL_GAIN, effectiveGain * effectiveDry );
+#endif
 }
 
 /*

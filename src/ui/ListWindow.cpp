@@ -46,6 +46,17 @@ static const int tabBorder = 4;
 // Time in milliseconds between clicks to register as a double-click
 static const int doubleClickSpeed = 300;
 
+static const idMaterial *OpenQ4_ListMaterial( const char *name ) {
+	if ( name == NULL || name[ 0 ] == '\0' ) {
+		return NULL;
+	}
+	const idMaterial *mat = declManager->FindMaterial( name );
+	if ( mat && !mat->TestMaterialFlag( MF_DEFAULTED ) ) {
+		mat->SetSort( SS_GUI );
+	}
+	return mat;
+}
+
 void idListWindow::CommonInit() {
 	typed = "";
 	typedTime = 0;
@@ -97,8 +108,14 @@ const char *idListWindow::HandleEvent(const sysEvent_t *event, bool *updateVisua
 	// need to call this to allow proper focus and capturing on embedded children
 	const char *ret = idWindow::HandleEvent(event, updateVisuals);
 
-	float vert = GetMaxCharHeight();
-	int numVisibleLines = textRect.h / vert;
+	float lineHeight = Max( GetMaxCharHeight(), static_cast<float>( itemheight ) );
+	if ( lineHeight <= 0.0f ) {
+		lineHeight = 1.0f;
+	}
+	int numVisibleLines = textRect.h / lineHeight;
+	if ( numVisibleLines <= 0 ) {
+		numVisibleLines = 1;
+	}
 
 	int key = event->evValue;
 
@@ -128,7 +145,7 @@ const char *idListWindow::HandleEvent(const sysEvent_t *event, bool *updateVisua
 
 		if ( key == K_MOUSE1) {
 			if (Contains(gui->CursorX(), gui->CursorY())) {
-				int cur = ( int )( ( gui->CursorY() - actualY - pixelOffset ) / vert ) + top;
+				int cur = ( int )( ( gui->CursorY() - actualY - pixelOffset ) / lineHeight ) + top;
 				if ( cur >= 0 && cur < listItems.Num() ) {
 					if ( multipleSel && idKeyInput::IsDown( K_CTRL ) ) {
 						if ( IsSelected( cur ) ) {
@@ -269,6 +286,10 @@ bool idListWindow::ParseInternalVar(const char *_name, idParser *src) {
 		ParseString(src, tabTypeStr);
 		return true;
 	}
+	if(idStr::Icmp(_name, "tabTextScales") == 0) {
+		ParseString(src, tabTextScaleStr);
+		return true;
+	}
 	if(idStr::Icmp(_name, "tabIconSizes") == 0) {
 		ParseString(src, tabIconSizeStr);
 		return true;
@@ -350,6 +371,17 @@ void idListWindow::PostParse() {
 			tabTypes.Append(atoi(tok));
 		}
 	}
+	idList<float> tabTextScales;
+	if (tabTextScaleStr.Length()) {
+		idParser src(tabTextScaleStr, tabTextScaleStr.Length(), "tabtextscales", LEXFL_NOFATALERRORS | LEXFL_NOSTRINGCONCAT | LEXFL_NOSTRINGESCAPECHARS);
+		idToken tok;
+		while (src.ReadToken(&tok)) {
+			if (tok == ",") {
+				continue;
+			}
+			tabTextScales.Append(atof(tok));
+		}
+	}
 	idList<idVec2> tabSizes;
 	if (tabIconSizeStr.Length()) {
 		idParser src(tabIconSizeStr, tabIconSizeStr.Length(), "tabiconsizes", LEXFL_NOFATALERRORS | LEXFL_NOSTRINGCONCAT | LEXFL_NOSTRINGESCAPECHARS);
@@ -400,6 +432,11 @@ void idListWindow::PostParse() {
 		} else {
 			r.type = TAB_TYPE_TEXT;
 		}
+		if (tabTextScales.Num() > i) {
+			r.textScale = tabTextScales[i];
+		} else {
+			r.textScale = textScale;
+		}
 		if(tabSizes.Num() > 0) {
 			r.iconSize = tabSizes[i];
 		} else {
@@ -424,12 +461,12 @@ This is the same as in idEditWindow
 */
 void idListWindow::InitScroller( bool horizontal )
 {
-	const char *thumbImage = "guis/assets/scrollbar_thumb.tga";
-	const char *barImage = "guis/assets/scrollbarv.tga";
+	const char *thumbImage = "gfx/guis/scrollbar_thumb";
+	const char *barImage = "gfx/guis/scrollbarv";
 	const char *scrollerName = "_scrollerWinV";
 
 	if (horizontal) {
-		barImage = "guis/assets/scrollbarh.tga";
+		barImage = "gfx/guis/scrollbarh";
 		scrollerName = "_scrollerWinH";
 	}
 
@@ -462,7 +499,10 @@ void idListWindow::Draw(int time, float x, float y) {
 	int count = listItems.Num();
 	idRectangle rect = textRect;
 	float scale = textScale;
-	float lineHeight = GetMaxCharHeight();
+	float lineHeight = Max( GetMaxCharHeight(), static_cast<float>( itemheight ) );
+	if ( lineHeight <= 0.0f ) {
+		return;
+	}
 
 	float bottom = textRect.Bottom();
 	float width = textRect.w;
@@ -476,29 +516,55 @@ void idListWindow::Draw(int time, float x, float y) {
 		}
 	}
 
+	const idMaterial *matFocus = OpenQ4_ListMaterial( backgroundFocus.c_str() );
+	const idMaterial *matLine = OpenQ4_ListMaterial( backgroundLine.c_str() );
+	const idMaterial *matHover = OpenQ4_ListMaterial( backgroundHover.c_str() );
+	const idMaterial *matGreyed = OpenQ4_ListMaterial( backgroundGreyed.c_str() );
+	gui->SetStateInt( va( "%s_hover", listName.c_str() ), -1 );
+
 	if ( noEvents || !Contains(gui->CursorX(), gui->CursorY()) ) {
 		hover = false;
 	}
 
 	for (int i = top; i < count; i++) {
-		if ( IsSelected( i ) ) {
-			rect.h = lineHeight;
-			dc->DrawFilledRect(rect.x, rect.y + pixelOffset, rect.w, rect.h, borderColor);
+		idRectangle rowRect = rect;
+		rowRect.h = lineHeight;
+		const bool selected = IsSelected( i );
+		const bool rowHovered = hover && !noEvents && Contains( rowRect, gui->CursorX(), gui->CursorY() );
+		if ( rowHovered ) {
+			gui->SetStateInt( va( "%s_hover", listName.c_str() ), i );
+		}
+
+		const idMaterial *rowMaterial = NULL;
+		if ( selected ) {
+			rowMaterial = matFocus;
+		} else if ( rowHovered ) {
+			rowMaterial = matHover;
+		} else if ( noEvents ) {
+			rowMaterial = matGreyed;
+		} else {
+			rowMaterial = matLine;
+		}
+
+		if ( rowMaterial != NULL ) {
+			dc->DrawMaterial( rowRect.x, rowRect.y + pixelOffset, rowRect.w, rowRect.h, rowMaterial, colorWhite, 1.0f, 1.0f );
+		} else if ( selected ) {
+			dc->DrawFilledRect( rowRect.x, rowRect.y + pixelOffset, rowRect.w, rowRect.h, borderColor );
 			if ( flags & WIN_FOCUS ) {
-				idVec4 color = borderColor;
-				color.w = 1.0f;
-				dc->DrawRect(rect.x, rect.y + pixelOffset, rect.w, rect.h, 1.0f, color );
+				idVec4 focusColor = borderColor;
+				focusColor.w = 1.0f;
+				dc->DrawRect( rowRect.x, rowRect.y + pixelOffset, rowRect.w, rowRect.h, 1.0f, focusColor );
 			}
 		}
-		rect.y ++;
-		rect.h = lineHeight - 1;
-		if ( hover && !noEvents && Contains(rect, gui->CursorX(), gui->CursorY()) ) {
+
+		if ( rowHovered ) {
 			color = hoverColor;
 		} else {
 			color = foreColor;
 		}
+
+		rect.y++;
 		rect.h = lineHeight + pixelOffset;
-		rect.y --;
 
 		if ( tabInfo.Num() > 0 ) {
 			int start = 0;
@@ -516,7 +582,8 @@ void idListWindow::Draw(int time, float x, float y) {
 				dc->PushClipRect( rect );
 
 				if ( tabInfo[tab].type == TAB_TYPE_TEXT ) {
-					dc->DrawText(work, scale, tabInfo[tab].align, color, rect, false, -1);
+					const float tabScale = ( tabInfo[tab].textScale > 0.0f ) ? tabInfo[tab].textScale : scale;
+					dc->DrawText(work, tabScale, tabInfo[tab].align, color, rect, false, -1);
 				} else if (tabInfo[tab].type == TAB_TYPE_ICON) {
 					
 					const idMaterial	**hashMat;
@@ -570,6 +637,7 @@ void idListWindow::Draw(int time, float x, float y) {
 		} else {
 			dc->DrawText(listItems[i], scale, 0, color, rect, false, -1);
 		}
+		rect.y--;
 		rect.y += lineHeight;
 		if ( rect.y > bottom ) {
 			break;
@@ -590,7 +658,7 @@ void idListWindow::HandleBuddyUpdate(idWindow *buddy) {
 }
 
 void idListWindow::UpdateList() {
-	idStr str, strName;
+	idStr str;
 	listItems.Clear();
 	for (int i = 0; i < MAX_LIST_ITEMS; i++) {
 		if (gui->State().GetString( va("%s_item_%i", listName.c_str(), i), "", str) ) {
@@ -601,12 +669,17 @@ void idListWindow::UpdateList() {
 			break;
 		}
 	}
-	float vert = GetMaxCharHeight();
-	int fit = textRect.h / vert;
-	if ( listItems.Num() < fit ) {
+	gui->SetStateInt( va( "%s_num", listName.c_str() ), listItems.Num() );
+
+	float lineHeight = Max( GetMaxCharHeight(), static_cast<float>( itemheight ) );
+	if ( lineHeight <= 0.0f ) {
+		lineHeight = 1.0f;
+	}
+	int fit = textRect.h / lineHeight;
+	if ( fit <= 0 || listItems.Num() <= fit ) {
 		scroller->SetRange(0.0f, 0.0f, 1.0f);
 	} else {
-		scroller->SetRange(0.0f, (listItems.Num() - fit) + 1.0f, 1.0f);
+		scroller->SetRange(0.0f, static_cast<float>( listItems.Num() - fit ), 1.0f);
 	}
 
 	SetCurrentSel( gui->State().GetInt( va( "%s_sel_0", listName.c_str() ) ) );

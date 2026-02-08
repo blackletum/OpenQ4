@@ -32,9 +32,30 @@ If you have questions concerning this license or the applicable additional terms
 #include "NetworkSystem.h"
 #include "AsyncServer.h"
 #include "AsyncNetwork.h"
+#ifndef ID_DEDICATED
+#include "../Session_local.h"
+#endif
 
 idNetworkSystem		networkSystemLocal;
 idNetworkSystem *	networkSystem = &networkSystemLocal;
+
+/*
+==================
+idNetworkSystem::GetServerAddress
+==================
+*/
+const char* idNetworkSystem::GetServerAddress( void ) {
+	static char serverAddress[ MAX_STRING_CHARS ];
+	serverAddress[ 0 ] = '\0';
+
+	if ( idAsyncNetwork::client.IsActive() ) {
+		idStr::Copynz( serverAddress, Sys_NetAdrToString( idAsyncNetwork::client.GetServerAddress() ), sizeof( serverAddress ) );
+	} else if ( idAsyncNetwork::server.IsActive() ) {
+		idStr::Copynz( serverAddress, Sys_NetAdrToString( idAsyncNetwork::server.GetBoundAdr() ), sizeof( serverAddress ) );
+	}
+
+	return serverAddress;
+}
 
 
 /*
@@ -241,4 +262,59 @@ idNetworkSystem::ServerSetBotUserName
 */
 int idNetworkSystem::ServerSetBotUserName(int clientNum, const char* playerName) {
 	return 0;
+}
+
+/*
+==================
+idNetworkSystem::SetLoadingText
+==================
+*/
+void idNetworkSystem::SetLoadingText( const char *loadingText ) {
+#ifndef ID_DEDICATED
+	if ( !sessLocal.guiLoading ) {
+		return;
+	}
+
+	const char *text = loadingText ? loadingText : "";
+	sessLocal.guiLoading->SetStateString( "loading_message", text );
+	sessLocal.guiLoading->SetStateString( "server_loadinfo", text );
+
+	// New map load starts with a path (mp/... or game/...), so reset icon state once here.
+	if ( text[ 0 ] != '\0' && ( strchr( text, '/' ) || strchr( text, '\\' ) ) ) {
+		sessLocal.guiLoading->SetStateInt( "load_icons", 0 );
+		for ( int i = 1; i <= 20; i++ ) {
+			sessLocal.guiLoading->SetStateInt( va( "load_icon_%d", i ), 0 );
+			sessLocal.guiLoading->SetStateString( va( "load_icon_img_%d", i ), "" );
+		}
+	}
+
+	sessLocal.guiLoading->StateChanged( com_frameTime );
+#endif
+}
+
+/*
+==================
+idNetworkSystem::AddLoadingIcon
+==================
+*/
+void idNetworkSystem::AddLoadingIcon( const char *icon ) {
+#ifndef ID_DEDICATED
+	if ( !sessLocal.guiLoading || !icon || !icon[ 0 ] ) {
+		return;
+	}
+
+	int numIcons = sessLocal.guiLoading->State().GetInt( "load_icons" );
+	if ( numIcons < 0 ) {
+		numIcons = 0;
+	}
+	if ( numIcons >= 20 ) {
+		return;
+	}
+
+	numIcons++;
+	sessLocal.guiLoading->SetStateInt( "load_icons", numIcons );
+	sessLocal.guiLoading->SetStateInt( va( "load_icon_%d", numIcons ), 1 );
+	sessLocal.guiLoading->SetStateString( va( "load_icon_img_%d", numIcons ), icon );
+	sessLocal.guiLoading->StateChanged( com_frameTime );
+#endif
 }

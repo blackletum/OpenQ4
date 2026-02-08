@@ -229,6 +229,7 @@ public:
 	virtual bool			IsFullScreen( void ) const = 0;
 	virtual int				GetScreenWidth( void ) const = 0;
 	virtual int				GetScreenHeight( void ) const = 0;
+	virtual int				GetVideoRestartCount( void ) const = 0;
 
 	// allocate a renderWorld to be used for drawing
 	virtual idRenderWorld *	AllocRenderWorld( void ) = 0;
@@ -384,6 +385,7 @@ public:
 
 	// Creates a render texture given a albedo and depth image.
 	virtual idRenderTexture* CreateRenderTexture(idImage* albedoImage, idImage* depthImage, idImage* albedoImage2 = nullptr, idImage* albedoImage3 = nullptr) = 0;
+	virtual void			DestroyRenderTexture(idRenderTexture* renderTexture) = 0;
 
 	// Resizes a image to the specified width and height.
 	virtual void			ResizeImage(idImage* image, int width, int height) = 0;
@@ -395,7 +397,7 @@ public:
 	virtual void			BindRenderTexture(idRenderTexture* renderTexture, idRenderTexture* feedbackRenderTexture) = 0;
 
 	// Resolves a msaa render texture to the blit render texture.
-	virtual void			ResolveMSAA(idRenderTexture* msaaRenderTexture, idRenderTexture* destRenderTexture) = 0;
+	virtual void			ResolveMSAA(idRenderTexture* msaaRenderTexture, idRenderTexture* destRenderTexture, bool resolveDepth = false) = 0;
 
 	// Clears the current render target
 	virtual void			ClearRenderTarget(bool clearColor, bool clearDepth, float depthValue, float red, float green, float blue) = 0;

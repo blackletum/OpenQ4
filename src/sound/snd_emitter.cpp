@@ -38,6 +38,15 @@ idCVar s_centerFractionVO( "s_centerFractionVO", "0.75", CVAR_FLOAT, "Portion of
 extern idCVar s_playDefaultSound;
 extern idCVar s_noSound;
 
+static ID_INLINE float VolumeScaleToDB( const float volumeScale )
+{
+	if( volumeScale <= 0.0f )
+	{
+		return DB_SILENCE;
+	}
+	return LinearToDB( volumeScale );
+}
+
 /*
 ================================================================================================
 
@@ -259,7 +268,18 @@ void idSoundChannel::UpdateVolume( int currentTime )
 	}
 
 	// volume fading
-	float newVolumeDB = parms.volume;
+	float baseVolumeScale = parms.volume;
+	if( soundShader != NULL && leadinSample != NULL && soundShader->leadinVolume != 1.0f )
+	{
+		const int leadinLength = leadinSample->LengthInMsec();
+		const int relativeTime = currentTime - startTime;
+		if( relativeTime >= 0 && relativeTime < leadinLength )
+		{
+			baseVolumeScale = soundShader->leadinVolume;
+		}
+	}
+
+	float newVolumeDB = VolumeScaleToDB( baseVolumeScale );
 	newVolumeDB += volumeFade.GetVolume( currentTime );
 	newVolumeDB += soundWorld->volumeFade.GetVolume( currentTime );
 	newVolumeDB += soundWorld->pauseFade.GetVolume( currentTime );
@@ -379,7 +399,11 @@ void idSoundChannel::UpdateHardware( float volumeAdd, int currentTime )
 	{
 		hardwareVoice->SetPosition( ( emitter->spatializedOrigin - soundWorld->listener.pos ) * soundWorld->listener.axis.Transpose() );
 	}
-	if( parms.soundShaderFlags & SSF_VO )
+	if( parms.soundShaderFlags & SSF_CENTER )
+	{
+		hardwareVoice->SetCenterChannel( 1.0f );
+	}
+	else if( ( parms.soundShaderFlags & SSF_VO ) || ( parms.soundShaderFlags & SSF_IS_VO ) )
 	{
 		hardwareVoice->SetCenterChannel( s_centerFractionVO.GetFloat() );
 	}
@@ -392,7 +416,13 @@ void idSoundChannel::UpdateHardware( float volumeAdd, int currentTime )
 
 	hardwareVoice->SetGain( volume );
 	hardwareVoice->SetInnerRadius( parms.minDistance * METERS_TO_DOOM );
-	hardwareVoice->SetPitch( soundWorld->slowmoSpeed * idMath::ClampFloat( 0.2f, 5.0f, com_timescale.GetFloat() ) );
+	const float pitchScale = idMath::ClampFloat( 0.2f, 5.0f, com_timescale.GetFloat() );
+	const float frequencyShift = (parms.frequencyShift > 0.0f) ? parms.frequencyShift : 1.0f;
+	const float wetLevel = Max( 0.0f, parms.wetLevel );
+	const float dryLevel = Max( 0.0f, parms.dryLevel );
+	hardwareVoice->SetWetLevel( wetLevel );
+	hardwareVoice->SetDryLevel( dryLevel );
+	hardwareVoice->SetPitch( soundWorld->slowmoSpeed * pitchScale * frequencyShift );
 
 	if( soundWorld->enviroSuitActive )
 	{
@@ -539,6 +569,30 @@ void idSoundEmitterLocal::OverrideParms( const soundShaderParms_t* base, const s
 	else
 	{
 		out->soundClass = base->soundClass;
+	}
+	if( over->frequencyShift )
+	{
+		out->frequencyShift = over->frequencyShift;
+	}
+	else
+	{
+		out->frequencyShift = base->frequencyShift;
+	}
+	if( over->wetLevel )
+	{
+		out->wetLevel = over->wetLevel;
+	}
+	else
+	{
+		out->wetLevel = base->wetLevel;
+	}
+	if( over->dryLevel )
+	{
+		out->dryLevel = over->dryLevel;
+	}
+	else
+	{
+		out->dryLevel = base->dryLevel;
 	}
 	out->soundShaderFlags = base->soundShaderFlags | over->soundShaderFlags;
 }
@@ -731,6 +785,9 @@ void idSoundEmitterLocal::UpdateEmitter( const idVec3& origin, int listenerId, c
 		soundWorld->writeDemo->WriteFloat( parms->shakes );
 		soundWorld->writeDemo->WriteInt( parms->soundShaderFlags );
 		soundWorld->writeDemo->WriteInt( parms->soundClass );
+		soundWorld->writeDemo->WriteFloat( parms->frequencyShift );
+		soundWorld->writeDemo->WriteFloat( parms->wetLevel );
+		soundWorld->writeDemo->WriteFloat( parms->dryLevel );
 	}
 
 	this->origin = origin;
@@ -853,51 +910,44 @@ int idSoundEmitterLocal::StartSound( const idSoundShader* shader, const s_channe
 
 	idSoundSample* leadinSample = NULL;
 	idSoundSample* loopingSample = NULL;
+	int choice = idMath::ClampInt( 0, shader->entries.Num() - 1, ( int )( diversity * shader->entries.Num() ) );
 
-	if( shader->leadin && ( chanParms.soundShaderFlags & SSF_LOOPING ) )
+	if( ( chanParms.soundShaderFlags & SSF_NO_DUPS ) && shader->entries.Num() > 1 )
 	{
-		leadinSample = shader->entries[0];
-		loopingSample = shader->entries.Num() > 1 ? shader->entries[1] : NULL;
-	}
-	else
-	{
-		if( shader->entries.Num() == 1 )
+		idSoundSample* selectedSample = NULL;
+		if( choice < shader->leadins.Num() && shader->leadins[choice] != NULL )
 		{
-			leadinSample = shader->entries[0];
+			selectedSample = shader->leadins[choice];
 		}
 		else
 		{
-			int choice;
-			if( chanParms.soundShaderFlags & SSF_NO_DUPS )
-			{
-				// Don't select the most recently played entry
-				int mostRecentTime = 0;
-				int mostRecent = 0;
-				for( int i = 0; i < shader->entries.Num(); i++ )
-				{
-					int entryTime = shader->entries[i]->GetLastPlayedTime();
-					if( entryTime > mostRecentTime )
-					{
-						mostRecentTime = entryTime;
-						mostRecent = i;
-					}
-				}
-				choice = ( int )( diversity * ( shader->entries.Num() - 1 ) );
-				if( choice >= mostRecent )
-				{
-					choice++;
-				}
-			}
-			else
-			{
-				// pick a sound from the list based on the passed diversity
-				choice = ( int )( diversity * shader->entries.Num() );
-			}
-			choice = idMath::ClampInt( 0, shader->entries.Num() - 1, choice );
-			leadinSample = shader->entries[choice];
-			leadinSample->SetLastPlayedTime( soundWorld->GetSoundTime() );
+			selectedSample = shader->entries[choice];
 		}
-		if( chanParms.soundShaderFlags & SSF_LOOPING )
+
+		for( int i = 0; i < channels.Num(); i++ )
+		{
+			if( channels[i]->leadinSample == selectedSample )
+			{
+				choice = ( choice + 1 ) % shader->entries.Num();
+				break;
+			}
+		}
+	}
+
+	if( choice < shader->leadins.Num() && shader->leadins[choice] != NULL )
+	{
+		leadinSample = shader->leadins[choice];
+	}
+	else
+	{
+		leadinSample = shader->entries[choice];
+	}
+	leadinSample->SetLastPlayedTime( soundWorld->GetSoundTime() );
+
+	if( chanParms.soundShaderFlags & SSF_LOOPING )
+	{
+		loopingSample = shader->entries[choice];
+		if( loopingSample == NULL )
 		{
 			loopingSample = leadinSample;
 		}
@@ -941,7 +991,7 @@ int idSoundEmitterLocal::StartSound( const idSoundShader* shader, const s_channe
 	// adjust the start time based on diversity for looping sounds, so they don't all start at the same point
 	int startOffset = 0;
 
-	if( chan->IsLooping() && !shader->leadin )
+	if( chan->IsLooping() && loopingSample == leadinSample && ( ( chanParms.soundShaderFlags & SSF_NO_RANDOMSTART ) == 0 ) )
 	{
 		// looping sounds start at a random point...
 		startOffset = soundSystemLocal.random.RandomInt( length );
@@ -1048,6 +1098,9 @@ void idSoundEmitterLocal::ModifySound( const s_channelType channel, const soundS
 		soundWorld->writeDemo->WriteFloat( parms->shakes );
 		soundWorld->writeDemo->WriteInt( parms->soundShaderFlags );
 		soundWorld->writeDemo->WriteInt( parms->soundClass );
+		soundWorld->writeDemo->WriteFloat( parms->frequencyShift );
+		soundWorld->writeDemo->WriteFloat( parms->wetLevel );
+		soundWorld->writeDemo->WriteFloat( parms->dryLevel );
 	}
 
 	for( int i = channels.Num() - 1; i >= 0; i-- )
@@ -1101,7 +1154,7 @@ void idSoundEmitterLocal::FadeSound( const s_channelType channel, float to, floa
 		}
 
 		// fade it
-		chan->volumeFade.Fade( to - chan->parms.volume, overMSec, soundWorld->GetSoundTime() );
+		chan->volumeFade.Fade( to - VolumeScaleToDB( chan->parms.volume ), overMSec, soundWorld->GetSoundTime() );
 	}
 }
 

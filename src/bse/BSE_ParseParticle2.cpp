@@ -96,6 +96,165 @@ static void BSE_DeleteOwnedEnv(rvEnvParms*& value, rvEnvParms** seen, int& seenC
 }
 }
 
+namespace {
+ID_INLINE void BSE_UpdateExtents(const idVec3& sample, idVec3& mins, idVec3& maxs) {
+	mins.x = Min(mins.x, sample.x);
+	mins.y = Min(mins.y, sample.y);
+	mins.z = Min(mins.z, sample.z);
+	maxs.x = Max(maxs.x, sample.x);
+	maxs.y = Max(maxs.y, sample.y);
+	maxs.z = Max(maxs.z, sample.z);
+}
+}
+
+float rvParticleTemplate::GetSpawnVolume(rvBSE* effect) {
+	if (!mpSpawnPosition) {
+		return 1.0f;
+	}
+
+	float xExtent = 0.0f;
+	if ((mpSpawnPosition->mFlags & PPFLAG_USEENDORIGIN) && effect) {
+		const idVec3 delta = effect->GetOriginalEndOrigin() - effect->GetOriginalOrigin();
+		xExtent = delta.Length() - mpSpawnPosition->mMins.x;
+	}
+	else {
+		xExtent = mpSpawnPosition->mMaxs.x - mpSpawnPosition->mMins.x;
+	}
+
+	const float yExtent = mpSpawnPosition->mMaxs.y - mpSpawnPosition->mMins.y;
+	const float zExtent = mpSpawnPosition->mMaxs.z - mpSpawnPosition->mMins.z;
+	const float volume = (idMath::Fabs(xExtent) + idMath::Fabs(yExtent) + idMath::Fabs(zExtent)) * 0.01f;
+	return Max(0.0f, volume);
+}
+
+float rvParticleTemplate::GetMaxParmValue(rvParticleParms& spawn, rvParticleParms& death, rvEnvParms& envelope) {
+	idVec3 spawnMins;
+	idVec3 spawnMaxs;
+	idVec3 deathMins;
+	idVec3 deathMaxs;
+	spawn.GetMinsMaxs(spawnMins, spawnMaxs);
+	death.GetMinsMaxs(deathMins, deathMaxs);
+
+	idBounds bounds;
+	bounds.Clear();
+
+	float envMin = 0.0f;
+	float envMax = 0.0f;
+	if (envelope.GetMinMax(envMin, envMax)) {
+		const idVec3 samples[] = {
+			spawnMins * envMin, spawnMaxs * envMin, spawnMins * envMax, spawnMaxs * envMax,
+			deathMins * envMin, deathMaxs * envMin, deathMins * envMax, deathMaxs * envMax
+		};
+		for (int i = 0; i < 8; ++i) {
+			bounds.AddPoint(samples[i]);
+		}
+	}
+	else {
+		bounds.AddPoint(spawnMins);
+		bounds.AddPoint(spawnMaxs);
+		bounds.AddPoint(deathMins);
+		bounds.AddPoint(deathMaxs);
+	}
+
+	return Max(bounds[0].Length(), bounds[1].Length());
+}
+
+float rvParticleTemplate::GetMaxSize(void) {
+	if (!mpSpawnSize || !mpDeathSize || !mpSizeEnvelope) {
+		return 0.0f;
+	}
+	return GetMaxParmValue(*mpSpawnSize, *mpDeathSize, *mpSizeEnvelope);
+}
+
+float rvParticleTemplate::GetMaxOffset(void) {
+	if (!mpSpawnOffset || !mpDeathOffset || !mpOffsetEnvelope) {
+		return 0.0f;
+	}
+	return GetMaxParmValue(*mpSpawnOffset, *mpDeathOffset, *mpOffsetEnvelope);
+}
+
+float rvParticleTemplate::GetMaxLength(void) {
+	if (!mpSpawnLength || !mpDeathLength || !mpLengthEnvelope) {
+		return 0.0f;
+	}
+	return GetMaxParmValue(*mpSpawnLength, *mpDeathLength, *mpLengthEnvelope);
+}
+
+void rvParticleTemplate::EvaluateSimplePosition(
+	idVec3& pos,
+	float time,
+	float lifeTime,
+	idVec3& initPos,
+	idVec3& velocity,
+	idVec3& acceleration,
+	idVec3& friction) {
+	const float t = time;
+	const float halfT2 = 0.5f * t * t;
+
+	pos.x = initPos.x + velocity.x * t + acceleration.x * halfT2;
+	pos.y = initPos.y + velocity.y * t + acceleration.y * halfT2;
+	pos.z = initPos.z + velocity.z * t + acceleration.z * halfT2;
+
+	const float safeLifetime = Max(BSE_TIME_EPSILON, lifeTime);
+	const float expFactor = idMath::Exp((safeLifetime - halfT2) / safeLifetime) - 1.0f;
+	const float frictionScale = (halfT2 * halfT2 * expFactor) / 3.0f;
+
+	pos += friction * frictionScale;
+}
+
+float rvParticleTemplate::GetFurthestDistance(void) {
+	if (!mpSpawnPosition || !mpSpawnVelocity || !mpSpawnAcceleration || !mpSpawnFriction) {
+		return 0.0f;
+	}
+
+	idVec3 minPos;
+	idVec3 maxPos;
+	idVec3 minVel;
+	idVec3 maxVel;
+	idVec3 minAccel;
+	idVec3 maxAccel;
+	idVec3 minFriction;
+	idVec3 maxFriction;
+	mpSpawnPosition->GetMinsMaxs(minPos, maxPos);
+	mpSpawnVelocity->GetMinsMaxs(minVel, maxVel);
+	mpSpawnAcceleration->GetMinsMaxs(minAccel, maxAccel);
+	mpSpawnFriction->GetMinsMaxs(minFriction, maxFriction);
+
+	const bool multiplayer = (game != NULL) ? game->IsMultiplayer() : false;
+	const float gravityMagnitude = cvarSystem->GetCVarFloat(multiplayer ? "g_mp_gravity" : "g_gravity");
+	const float gravityScale = Max(idMath::Fabs(mGravity.x), idMath::Fabs(mGravity.y));
+	const idVec3 gravityVec(0.0f, 0.0f, -gravityMagnitude * gravityScale);
+	minAccel -= gravityVec;
+	maxAccel -= gravityVec;
+
+	const float duration = Max(BSE_TIME_EPSILON, mDuration.y);
+	const float step = duration * 0.125f;
+
+	idVec3 overallMins(1.0e30f, 1.0e30f, 1.0e30f);
+	idVec3 overallMaxs(-1.0e30f, -1.0e30f, -1.0e30f);
+	idVec3 pos;
+
+	for (int i = 0; i < 8; ++i) {
+		const float sampleTime = i * step;
+		for (int p = 0; p < 2; ++p) {
+			idVec3 initPos = p ? maxPos : minPos;
+			for (int v = 0; v < 2; ++v) {
+				idVec3 velocity = v ? maxVel : minVel;
+				for (int a = 0; a < 2; ++a) {
+					idVec3 accel = a ? maxAccel : minAccel;
+					for (int f = 0; f < 2; ++f) {
+						idVec3 friction = f ? maxFriction : minFriction;
+						EvaluateSimplePosition(pos, sampleTime, duration, initPos, velocity, accel, friction);
+						BSE_UpdateExtents(pos, overallMins, overallMaxs);
+					}
+				}
+			}
+		}
+	}
+
+	return Max(overallMins.Length() * 0.5f, overallMaxs.Length() * 0.5f);
+}
+
 void rvParticleTemplate::AllocTrail()
 {
 	if (mTrailInfo != NULL && !mTrailInfo->mStatic) {

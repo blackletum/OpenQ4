@@ -301,8 +301,11 @@ void rvSegment::GetSecondsPerParticle(rvBSE* effect, rvSegmentTemplate* st, rvPa
 		mCount = st->mCount;
 	}
 	else {
-		float volume = Max(1.0f, mEffectDecl ? mEffectDecl->GetSize() * 0.025f : 1.0f);
-		volume = idMath::ClampFloat(0.002f, 2048.0f, volume);
+		float volume = 1.0f;
+		if (pt) {
+			volume = pt->GetSpawnVolume(effect);
+		}
+		volume = idMath::ClampFloat(BSE_TIME_EPSILON, 1000.0f, volume);
 		mCount.x = st->mDensity.x * volume;
 		mCount.y = st->mDensity.y * volume;
 		if (st->mParticleCap > 0.0f) {

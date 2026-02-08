@@ -527,6 +527,7 @@ typedef struct {
 	renderCommand_t		commandId, * next;
 	idRenderTexture* msaaRenderTexture;
 	idRenderTexture* destRenderTexture;
+	bool resolveDepth;
 } resolveRenderTargetCommand_t;
 // jmarshall end
 
@@ -727,6 +728,7 @@ public:
 	virtual bool			IsFullScreen( void ) const;
 	virtual int				GetScreenWidth( void ) const;
 	virtual int				GetScreenHeight( void ) const;
+	virtual int				GetVideoRestartCount( void ) const;
 	virtual idRenderWorld *	AllocRenderWorld( void );
 	virtual void			FreeRenderWorld( idRenderWorld *rw );
 	virtual void			BeginLevelLoad( void );
@@ -763,10 +765,11 @@ public:
 	virtual idImage*		CreateImage(const char* name, idImageOpts* opts, textureFilter_t textureFilter);
 	virtual idImage*		FindImage(const char* name);
 	virtual idRenderTexture* CreateRenderTexture(idImage* albedoImage, idImage* depthImage, idImage* albedoImage2 = nullptr, idImage* albedoImage3 = nullptr);
+	virtual void			DestroyRenderTexture(idRenderTexture* renderTexture);
 	virtual void			ResizeImage(idImage* image, int width, int height);
 	virtual void			ResizeRenderTexture(idRenderTexture* renderTexture, int width, int height);
 	virtual void			BindRenderTexture(idRenderTexture* renderTexture, idRenderTexture* feedbackRenderTexture);
-	virtual void			ResolveMSAA(idRenderTexture* msaaRenderTexture, idRenderTexture* destRenderTexture);
+	virtual void			ResolveMSAA(idRenderTexture* msaaRenderTexture, idRenderTexture* destRenderTexture, bool resolveDepth = false);
 	virtual void			ClearRenderTarget(bool clearColor, bool clearDepth, float depthValue, float red, float green, float blue);
 	virtual void			GetImageSize(idImage* image, int& imageWidth, int& imageHeight);
 public:
@@ -776,6 +779,7 @@ public:
 
 	void					Clear( void );
 	void					SetBackEndRenderer();			// sets tr.backEndRenderer based on cvars
+	void					ProcessPendingRenderTextureDeletes( void );
 	void					RenderViewToViewport( const renderView_t *renderView, idScreenRect *viewport );
 
 public:
@@ -787,6 +791,7 @@ public:
 	int						frameCount;		// incremented every frame
 	int						viewCount;		// incremented every view (twice a scene if subviewed)
 											// and every R_MarkFragments call
+	int						videoRestartCount; // incremented after successful vid_restart operations
 
 	int						staticAllocCount;	// running total of bytes allocated
 
@@ -838,6 +843,7 @@ public:
 	int						guiRecursionLevel;		// to prevent infinite overruns
 	class idGuiModel *		guiModel;
 	class idGuiModel *		demoGuiModel;
+	idList<idRenderTexture*> pendingRenderTextureDeletes;
 
 	unsigned short			gammaTable[256];	// brightness / gamma modify this
 };
@@ -861,10 +867,15 @@ extern idCVar r_borderless;				// 1 = borderless window when r_fullscreen is 0
 extern idCVar r_windowWidth;				// windowed mode width
 extern idCVar r_windowHeight;				// windowed mode height
 extern idCVar r_multiSamples;			// number of antialiasing samples
+extern idCVar r_postAA;					// post AA mode: 0 = off, 1 = SMAA 1x
+extern idCVar r_msaaResolveDepth;		// include depth when resolving MSAA render targets
+extern idCVar r_msaaAlphaToCoverage;	// alpha-to-coverage for perforated materials on MSAA targets
 
 extern idCVar r_ignore;					// used for random debugging without defining new vars
 extern idCVar r_ignore2;				// used for random debugging without defining new vars
 extern idCVar r_znear;					// near Z clip plane
+extern idCVar cl_gunfov;				// first-person weapon FOV override
+extern idCVar cl_gunfov_adjust;		// weapon FOV aspect policy
 
 extern idCVar r_finish;					// force a call to glFinish() every frame
 extern idCVar r_frontBuffer;			// draw to front buffer for debugging

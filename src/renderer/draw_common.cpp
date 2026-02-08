@@ -40,6 +40,31 @@ static inline void RB_SetStageVertexColorPointer( const drawSurf_t *surf, int st
 	glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), (void *)&ac->color );
 }
 
+static bool RB_UseAlphaToCoverage( const idMaterial *shader ) {
+	if ( !r_msaaAlphaToCoverage.GetBool() ) {
+		return false;
+	}
+
+	if ( shader == NULL || shader->Coverage() != MC_PERFORATED ) {
+		return false;
+	}
+
+	if ( !( GLEW_ARB_multisample || GLEW_VERSION_1_3 ) ) {
+		return false;
+	}
+
+	if ( backEnd.renderTexture == NULL || backEnd.renderTexture->GetNumColorImages() <= 0 ) {
+		return false;
+	}
+
+	idImage *colorImage = backEnd.renderTexture->GetColorImage( 0 );
+	if ( colorImage == NULL ) {
+		return false;
+	}
+
+	return colorImage->GetOpts().numMSAASamples > 1;
+}
+
 /*
 =====================
 RB_BakeTextureMatrixIntoTexgen
@@ -403,6 +428,8 @@ void RB_T_FillDepthBuffer( const drawSurf_t *surf ) {
 	// get the expressions for conditionals / color / texcoords
 	regs = surf->shaderRegisters;
 
+	const bool useAlphaToCoverage = RB_UseAlphaToCoverage( shader );
+
 	// if all stages of a material have been conditioned off, don't do anything
 	for ( stage = 0; stage < shader->GetNumStages() ; stage++ ) {		
 		pStage = shader->GetStage(stage);
@@ -419,6 +446,10 @@ void RB_T_FillDepthBuffer( const drawSurf_t *surf ) {
 	if ( shader->TestMaterialFlag(MF_POLYGONOFFSET) ) {
 		glEnable( GL_POLYGON_OFFSET_FILL );
 		glPolygonOffset( r_offsetFactor.GetFloat(), r_offsetUnits.GetFloat() * shader->GetPolygonOffset() );
+	}
+
+	if ( useAlphaToCoverage ) {
+		glEnable( GL_SAMPLE_ALPHA_TO_COVERAGE );
 	}
 
 	// subviews will just down-modulate the color buffer by overbright
@@ -516,6 +547,10 @@ void RB_T_FillDepthBuffer( const drawSurf_t *surf ) {
 	// reset blending
 	if ( shader->GetSort() == SS_SUBVIEW ) {
 		GL_State( GLS_DEPTHFUNC_LESS );
+	}
+
+	if ( useAlphaToCoverage ) {
+		glDisable( GL_SAMPLE_ALPHA_TO_COVERAGE );
 	}
 
 }
@@ -755,6 +790,11 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 		glEnable( GL_POLYGON_OFFSET_FILL );
 		glPolygonOffset( r_offsetFactor.GetFloat(), r_offsetUnits.GetFloat() * shader->GetPolygonOffset() );
 	}
+
+	const bool useAlphaToCoverage = RB_UseAlphaToCoverage( shader );
+	if ( useAlphaToCoverage ) {
+		glEnable( GL_SAMPLE_ALPHA_TO_COVERAGE );
+	}
 	
 	if ( surf->space->weaponDepthHack ) {
 		RB_EnterWeaponDepthHack();
@@ -969,6 +1009,10 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 	}
 	if ( surf->space->weaponDepthHack || surf->space->modelDepthHack != 0.0f ) {
 		RB_LeaveDepthHack();
+	}
+
+	if ( useAlphaToCoverage ) {
+		glDisable( GL_SAMPLE_ALPHA_TO_COVERAGE );
 	}
 }
 

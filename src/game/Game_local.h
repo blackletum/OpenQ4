@@ -325,7 +325,11 @@ struct rvmGameRender_t {
 	const idMaterial* casPostProcessMaterial;
 	const idMaterial* blackPostProcessMaterial;
 	const idMaterial* resolvePostProcessMaterial;
+	const idMaterial* smaaEdgePostProcessMaterial;
+	const idMaterial* smaaBlendPostProcessMaterial;
 	bool postProcessAvailable;
+	bool smaaAvailable;
+	int videoRestartCount;
 };
 // jmarshall end
 
@@ -1170,6 +1174,7 @@ public:
 private:	
 	void					ResizeRenderTextures(int width, int height);
 	void					InitGameRenderSystem(void);
+	void					ShutdownGameRenderSystem(void);
 // jmarshall end
 private:
 	char					clientGuids[ MAX_CLIENTS ][ CLIENT_GUID_LENGTH ];

@@ -985,6 +985,9 @@ void idSoundWorldLocal::ProcessDemoCommand( idDemoFile* readDemo )
 			readDemo->ReadFloat( parms.shakes );
 			readDemo->ReadInt( parms.soundShaderFlags );
 			readDemo->ReadInt( parms.soundClass );
+			readDemo->ReadFloat( parms.frequencyShift );
+			readDemo->ReadFloat( parms.wetLevel );
+			readDemo->ReadFloat( parms.dryLevel );
 			EmitterForIndex( index )->UpdateEmitter( origin, listenerId, &parms );
 		}
 		break;
@@ -1016,6 +1019,9 @@ void idSoundWorldLocal::ProcessDemoCommand( idDemoFile* readDemo )
 			readDemo->ReadFloat( parms.shakes );
 			readDemo->ReadInt( parms.soundShaderFlags );
 			readDemo->ReadInt( parms.soundClass );
+			readDemo->ReadFloat( parms.frequencyShift );
+			readDemo->ReadFloat( parms.wetLevel );
+			readDemo->ReadFloat( parms.dryLevel );
 			EmitterForIndex( index )->ModifySound( ( s_channelType )channel, &parms );
 		}
 		break;
@@ -1085,6 +1091,9 @@ void idSoundWorldLocal::WriteToSaveGame( idFile* savefile )
 			savefile->WriteFloat( parms.shakes );
 			savefile->WriteInt( parms.soundShaderFlags );
 			savefile->WriteInt( parms.soundClass );
+			savefile->WriteFloat( parms.frequencyShift );
+			savefile->WriteFloat( parms.wetLevel );
+			savefile->WriteFloat( parms.dryLevel );
 		}
 	};
 	savefile->WriteInt( GetSoundTime() );
@@ -1138,6 +1147,18 @@ void idSoundWorldLocal::WriteToSaveGame( idFile* savefile )
 					looping = i;
 				}
 			}
+			if( leadin == -1 )
+			{
+				for( int i = 0; i < channel->soundShader->leadins.Num(); i++ )
+				{
+					if( channel->soundShader->leadins[i] == channel->leadinSample )
+					{
+						// Negative values below -1 encode a leadin-list index.
+						leadin = -2 - i;
+						break;
+					}
+				}
+			}
 			savefile->WriteInt( leadin );
 			savefile->WriteInt( looping );
 		}
@@ -1173,6 +1194,9 @@ void idSoundWorldLocal::ReadFromSaveGame( idFile* savefile )
 			savefile->ReadFloat( parms.shakes );
 			savefile->ReadInt( parms.soundShaderFlags );
 			savefile->ReadInt( parms.soundClass );
+			savefile->ReadFloat( parms.frequencyShift );
+			savefile->ReadFloat( parms.wetLevel );
+			savefile->ReadFloat( parms.dryLevel );
 		}
 	};
 	int oldSoundTime = 0;
@@ -1230,19 +1254,28 @@ void idSoundWorldLocal::ReadFromSaveGame( idFile* savefile )
 			int looping = 0;
 			savefile->ReadInt( leadin );
 			savefile->ReadInt( looping );
-			// If the leadin entry is not valid (possible if the shader changed after saving) then the looping entry can't be valid either
+			// If the leadin sample is not valid (possible if the shader changed after saving) then the looping entry can't be valid either.
+			channel->leadinSample = NULL;
+			channel->loopingSample = NULL;
 			if( leadin >= 0 && leadin < channel->soundShader->entries.Num() )
 			{
 				channel->leadinSample = channel->soundShader->entries[ leadin ];
-				if( looping >= 0 && looping < channel->soundShader->entries.Num() )
+			}
+			else if( leadin <= -2 )
+			{
+				const int leadinIndex = -2 - leadin;
+				if( leadinIndex >= 0 && leadinIndex < channel->soundShader->leadins.Num() )
 				{
-					channel->loopingSample = channel->soundShader->entries[ looping ];
+					channel->leadinSample = channel->soundShader->leadins[ leadinIndex ];
 				}
 			}
-			else
+			if( channel->leadinSample != NULL && looping >= 0 && looping < channel->soundShader->entries.Num() )
 			{
-				channel->leadinSample = NULL;
-				channel->loopingSample = NULL;
+				channel->loopingSample = channel->soundShader->entries[ looping ];
+			}
+			else if( channel->leadinSample != NULL && ( channel->parms.soundShaderFlags & SSF_LOOPING ) != 0 )
+			{
+				channel->loopingSample = channel->leadinSample;
 			}
 			channel->startTime += timeDelta;
 			if( channel->endTime == 0 )

@@ -71,6 +71,156 @@ int CompareTeamsByScore( const void* left, const void* right ) {
 
 /*
 ================
+MapSupportsVoteGameType
+================
+*/
+static bool MapSupportsVoteGameType( const idDict *dict, const char *gameType ) {
+	if ( !dict || !gameType || !gameType[ 0 ] ) {
+		return false;
+	}
+
+	// DM and Team DM can run on any standard MP map type.
+	if ( !idStr::Icmp( gameType, "DM" ) || !idStr::Icmp( gameType, "Team DM" ) ) {
+		return dict->GetBool( "DM" ) ||
+			dict->GetBool( "Team DM" ) ||
+			dict->GetBool( "CTF" ) ||
+			dict->GetBool( "Tourney" ) ||
+			dict->GetBool( "Arena CTF" );
+	}
+
+	return dict->GetBool( gameType );
+}
+
+/*
+================
+MapSupportsAnyMPGameType
+================
+*/
+static bool MapSupportsAnyMPGameType( const idDict *dict ) {
+	if ( !dict ) {
+		return false;
+	}
+
+	return dict->GetBool( "DM" ) ||
+		dict->GetBool( "Team DM" ) ||
+		dict->GetBool( "CTF" ) ||
+		dict->GetBool( "Tourney" ) ||
+		dict->GetBool( "Arena CTF" ) ||
+		dict->GetBool( "DeadZone" );
+}
+
+/*
+================
+PopulateMapListForGameType
+================
+*/
+static int PopulateMapListForGameType( idUserInterface *gui, const char *listName, const char *gameType,
+		const char *selectedMapPath, bool fallbackToAnyMPGameType, int *selectedIndexOut ) {
+	if ( selectedIndexOut ) {
+		*selectedIndexOut = -1;
+	}
+	if ( !gui || !listName || !listName[ 0 ] ) {
+		return 0;
+	}
+
+	const char *resolvedGameType = gameType;
+	if ( !resolvedGameType || !resolvedGameType[ 0 ] || !idStr::Icmp( resolvedGameType, "singleplayer" ) ) {
+		resolvedGameType = "DM";
+	}
+
+	int numMapsAdded = 0;
+	int selectedIndex = -1;
+	const int numMaps = fileSystem->GetNumMaps();
+	const idDict *dict = NULL;
+
+	for ( int i = 0; i < numMaps; i++ ) {
+		dict = fileSystem->GetMapDecl( i );
+		if ( !MapSupportsVoteGameType( dict, resolvedGameType ) ) {
+			continue;
+		}
+
+		const char *mapName = dict->GetString( "name" );
+		if ( mapName[ 0 ] == '\0' ) {
+			mapName = dict->GetString( "path" );
+		}
+		mapName = common->GetLocalizedString( mapName );
+		gui->SetStateString( va( "%s_item_%d", listName, numMapsAdded ), mapName );
+		gui->SetStateInt( va( "%s_item_%d_id", listName, numMapsAdded ), i );
+		if ( selectedMapPath && selectedMapPath[ 0 ] && !idStr::Icmp( selectedMapPath, dict->GetString( "path" ) ) ) {
+			selectedIndex = numMapsAdded;
+		}
+		numMapsAdded++;
+	}
+
+	if ( fallbackToAnyMPGameType && numMapsAdded == 0 ) {
+		for ( int i = 0; i < numMaps; i++ ) {
+			dict = fileSystem->GetMapDecl( i );
+			if ( !MapSupportsAnyMPGameType( dict ) ) {
+				continue;
+			}
+
+			const char *mapName = dict->GetString( "name" );
+			if ( mapName[ 0 ] == '\0' ) {
+				mapName = dict->GetString( "path" );
+			}
+			mapName = common->GetLocalizedString( mapName );
+			gui->SetStateString( va( "%s_item_%d", listName, numMapsAdded ), mapName );
+			gui->SetStateInt( va( "%s_item_%d_id", listName, numMapsAdded ), i );
+			if ( selectedMapPath && selectedMapPath[ 0 ] && !idStr::Icmp( selectedMapPath, dict->GetString( "path" ) ) ) {
+				selectedIndex = numMapsAdded;
+			}
+			numMapsAdded++;
+		}
+	}
+
+	gui->DeleteStateVar( va( "%s_item_%d", listName, numMapsAdded ) );
+	gui->DeleteStateVar( va( "%s_item_%d_id", listName, numMapsAdded ) );
+
+	if ( selectedIndexOut ) {
+		*selectedIndexOut = selectedIndex;
+	}
+
+	return numMapsAdded;
+}
+
+/*
+================
+GetSelectedMapDeclFromList
+================
+*/
+static bool GetSelectedMapDeclFromList( idUserInterface *gui, const char *listName, const idDict *&dictOut ) {
+	dictOut = NULL;
+
+	if ( !gui || !listName || !listName[ 0 ] ) {
+		return false;
+	}
+
+	const int selection = gui->State().GetInt( va( "%s_sel_0", listName ) );
+	if ( selection < 0 ) {
+		return false;
+	}
+
+	const char *mapId = gui->State().GetString( va( "%s_item_%d_id", listName, selection ), "" );
+	if ( !mapId || mapId[ 0 ] == '\0' ) {
+		return false;
+	}
+
+	const int mapNum = atoi( mapId );
+	if ( mapNum < 0 ) {
+		return false;
+	}
+
+	const idDict *dict = fileSystem->GetMapDecl( mapNum );
+	if ( !dict ) {
+		return false;
+	}
+
+	dictOut = dict;
+	return true;
+}
+
+/*
+================
 idMultiplayerGame::idMultiplayerGame
 ================
 */
@@ -3753,11 +3903,8 @@ void idMultiplayerGame::SetMapShot( void ) {
 	assert( 0 );
 #else
 	char screenshot[ MAX_STRING_CHARS ];
-	int mapNum = mapList->GetSelection( NULL, 0 );
 	const idDict *dict = NULL;
-	if ( mapNum >= 0 ) {
-		dict = fileSystem->GetMapDecl( mapNum );
-	}
+	GetSelectedMapDeclFromList( mainGui, "mapList", dict );
 	fileSystem->FindMapScreenshot( dict ? dict->GetString( "path" ) : "", screenshot, MAX_STRING_CHARS );
 	mainGui->SetStateString( "current_levelshot", screenshot );
 // RAVEN BEGIN
@@ -4028,12 +4175,9 @@ const char* idMultiplayerGame::HandleGuiCommands( const char *_menuCommand ) {
 				voteData.m_fieldFlags |= VOTEFLAG_SHUFFLE;
 			}
 			// map
-			int uiMapSelection = mainGui->State().GetInt( "mapList_sel_0" );
-			if ( -1 != uiMapSelection ) {
-// rjohnson: code commented out below would get the text friendly name of the map and not the file name
-				int mapNum = mainGui->State().GetInt( va( "mapList_item_%d_id", uiMapSelection ) );
-				if ( mapNum >= 0 ) {
-					const idDict *dict = fileSystem->GetMapDecl( mapNum );
+			{
+				const idDict *dict = NULL;
+				if ( GetSelectedMapDeclFromList( mainGui, "mapList", dict ) ) {
 					voteData.m_map = dict->GetString( "path" );
 					voteData.m_fieldFlags |= VOTEFLAG_MAP;
 				}
@@ -4164,16 +4308,13 @@ const char* idMultiplayerGame::HandleGuiCommands( const char *_menuCommand ) {
 			} else {
 				mainGui->SetStateString( "mapName", mainGui->GetStateString( va( "mapList_item_%d", sel ) ) );
 			}
+			mainGui->StateChanged( gameLocal.time );
 			continue;
 		} else if ( !idStr::Icmp( cmd, "setVoteMapList" ) ) {
 #ifdef _XENON
 			// Xenon should not get here
 			assert( 0 );
 #else
-			int numMaps = fileSystem->GetNumMaps();
-			const idDict *dict;
-			int numMapsAdded = 0;
-			int i;
 			int gameTypeInt = mainGui->GetStateInt( "currentGametype" );
 			const char *gameType = NULL;
 			switch ( gameTypeInt ) {
@@ -4203,54 +4344,20 @@ const char* idMultiplayerGame::HandleGuiCommands( const char *_menuCommand ) {
 			idStr originalMapName = gameLocal.serverInfo.GetString( "si_map" );
 			originalMapName.StripFileExtension();
 			
-			bool foundOriginalMap = false;
 			int originalMapIndex = -1;
+			const int numMapsAdded = PopulateMapListForGameType( mainGui, "mapList", gameType, originalMapName.c_str(), true, &originalMapIndex );
 			
-			for ( i = 0; i < numMaps; i++ ) {
-				dict = fileSystem->GetMapDecl( i );
-				bool mapOk = false;
-				//if the gametype is DM, check for any of these types...
-				if( !(strcmp( gameType, "DM")) || !(strcmp( gameType, "Team DM")) )	{
-					if ( dict && ( 
-						dict->GetBool( "DM" ) || 
-						dict->GetBool( "Team DM" ) || 
-						dict->GetBool( "CTF" ) || 
-						dict->GetBool( "Tourney" ) ||
-						dict->GetBool( "Arena CTF" ))
-						) {
-							mapOk = true;
-						}
-						//but if not, match the gametype.
-				} else if ( dict && dict->GetBool( gameType ) ) { 
-					mapOk = true;			
-				}
-				if( mapOk )	{
-					const char *mapName = dict->GetString( "name" );
-					if ( '\0' == mapName[ 0 ] ) {
-						mapName = dict->GetString( "path" );
-					}
-					mapName = common->GetLocalizedString( mapName );
-					
-					if ( idStr::Icmp(dict->GetString( "path" ), originalMapName) == 0 ) {
-						foundOriginalMap = true;
-						originalMapIndex = numMapsAdded;
-					}
-					
-					mainGui->SetStateString( va( "mapList_item_%d", numMapsAdded), mapName );
-					mainGui->SetStateInt( va( "mapList_item_%d_id", numMapsAdded), i );
-					
-					numMapsAdded++;
-				}
-			}
-			mainGui->DeleteStateVar( va( "mapList_item_%d", numMapsAdded ) );
-			
-			if ( !foundOriginalMap ) {
+			if ( numMapsAdded <= 0 ) {
+				mainGui->SetStateInt( "mapList_sel_0", -1 );
+				mainGui->SetStateString( "mapName", "" );
+			} else if ( originalMapIndex < 0 ) {
 				mainGui->SetStateInt( "mapList_sel_0", 0 );
 				mainGui->SetStateString( "mapName", mainGui->GetStateString( "mapList_item_0" ) );
 			} else {
 				mainGui->SetStateInt( "mapList_sel_0", originalMapIndex );
 				mainGui->SetStateString( "mapName", mainGui->GetStateString( va( "mapList_item_%d", originalMapIndex ) ) );
 			}
+			mainGui->StateChanged( gameLocal.time );
 			
 #endif
 			continue;
@@ -4280,46 +4387,8 @@ const char* idMultiplayerGame::HandleGuiCommands( const char *_menuCommand ) {
 			}
 			mainGui->SetStateString( "mapName", mapName );
 // RAVEN END
-			int numMaps = fileSystem->GetNumMaps();
-			const idDict *dict;
-			int numMapsAdded = 0;
-			int i;
 			const char *gameType = gameLocal.serverInfo.GetString( "si_gametype" ); // this will need to change for multi-votes
-			if ( NULL == gameType || 0 == *gameType || 0 == idStr::Icmp( gameType, "singleplayer" ) ) {
-				gameType = "DM";
-			}
-// RAVEN BEGIN
-// jshepard: if gametype is DM, then we can play on DM, TeamDM, Tourney or CTF maps. So, all of them, basically.
-
-			for ( i = 0; i < numMaps; i++ ) {
-				dict = fileSystem->GetMapDecl( i );
-				bool mapOk = false;
-				//if the gametype is DM, check for any of these types...
-				if( !(strcmp( gameType, "DM")) || !(strcmp( gameType, "Team DM")) )	{
-					if ( dict && ( 
-						dict->GetBool( "DM" ) || 
-						dict->GetBool( "Team DM" ) || 
-						dict->GetBool( "CTF" ) || 
-						dict->GetBool( "Tourney" ) ||
-						dict->GetBool( "Arena CTF" ))
-						) {
-					mapOk = true;
-					}
-				//but if not, match the gametype.
-				} else if ( dict && dict->GetBool( gameType ) ) { 
-					mapOk = true;			
-				}
-				if( mapOk )	{
-					const char *mapName = dict->GetString( "name" );
-					if ( '\0' == mapName[ 0 ] ) {
-						mapName = dict->GetString( "path" );
-					}
-					mapName = common->GetLocalizedString( mapName );
-					mainGui->SetStateString( va( "mapList_item_%d", numMapsAdded), mapName );
-					numMapsAdded++;
-				}
-			}
-			mainGui->DeleteStateVar( va( "mapList_item_%d", numMapsAdded ) );
+			PopulateMapListForGameType( mainGui, "mapList", gameType, gameLocal.serverInfo.GetString( "si_map" ), true, NULL );
 			mainGui->SetStateString( "mapList_sel_0", "-1" );
 			const char *currentGameTypeString = gameLocal.serverInfo.GetString( "si_gameType" );
 			int uiGameTypeInt = GameTypeToVote( currentGameTypeString );
@@ -4416,10 +4485,6 @@ const char* idMultiplayerGame::HandleGuiCommands( const char *_menuCommand ) {
 			}
 			mainGui->SetStateString( "sa_mapName", mapName );
 // RAVEN END
-			int numMaps = fileSystem->GetNumMaps();
-			const idDict *dict;
-			int numMapsAdded = 0;
-			int i;
 			const char *gameType = "DM";
 
 			int gameTypeInt = mainGui->GetStateInt( "adminCurrentGametype" );
@@ -4441,44 +4506,15 @@ const char* idMultiplayerGame::HandleGuiCommands( const char *_menuCommand ) {
 			if ( NULL == gameType || 0 == *gameType || 0 == idStr::Icmp( gameType, "singleplayer" ) ) {
 				gameType = "DM";
 			}
-			for ( i = 0; i < numMaps; i++ ) {
-				dict = fileSystem->GetMapDecl( i );
-				bool mapOk = false;
-				//if the gametype is DM, check for any of these types...
-				if( !(strcmp( gameType, "DM")) || !(strcmp( gameType, "Team DM")) )	{
-					if ( dict && ( 
-						dict->GetBool( "DM" ) || 
-						dict->GetBool( "Team DM" ) || 
-						dict->GetBool( "CTF" ) || 
-						dict->GetBool( "Tourney" ) ||
-						dict->GetBool( "Arena CTF" ))
-						) {
-							mapOk = true;
-						}
-						//but if not, match the gametype.
-				} else if ( dict && dict->GetBool( gameType ) ) { 
-					mapOk = true;			
-				}
-				if ( mapOk ) { 
-					const char *mapName = dict->GetString( "name" );
-					if ( '\0' == mapName[ 0 ] ) {
-						mapName = dict->GetString( "path" );
-					}
-					mapName = common->GetLocalizedString( mapName );
-					mainGui->SetStateString( va( "sa_mapList_item_%d", numMapsAdded), mapName );
-					mainGui->SetStateInt( va( "sa_mapList_item_%d_id", numMapsAdded), i );
-					numMapsAdded++;
-				}
-			}
-			mainGui->DeleteStateVar( va( "sa_mapList_item_%d", numMapsAdded ) );
+			PopulateMapListForGameType( mainGui, "sa_mapList", gameType, gameLocal.serverInfo.GetString( "si_map" ), true, NULL );
 			mainGui->SetStateString( "sa_mapList_sel_0", "-1" );
+			mainGui->StateChanged( gameLocal.time );
 #endif
 			continue;
 		// handler for updating the current map in the name
 		} else if ( !idStr::Icmp( cmd, "serverAdminUpdateMap" ) ) {
-			int mapSelection = mainGui->GetStateInt( "sa_mapList_sel_0" );
-			if ( -1 == mapSelection ) {
-				
+			const idDict *dict = NULL;
+			if ( !GetSelectedMapDeclFromList( mainGui, "sa_mapList", dict ) ) {
 				idDecl *mapDecl = const_cast<idDecl *>(declManager->FindType( DECL_MAPDEF, gameLocal.serverInfo.GetString( "si_map" ), false ));
 				if ( mapDecl ) {
 					idDeclEntityDef *mapDef = static_cast<idDeclEntityDef *>( mapDecl );				
@@ -4486,13 +4522,8 @@ const char* idMultiplayerGame::HandleGuiCommands( const char *_menuCommand ) {
 				} else {
 					mainGui->SetStateString( "sa_mapName", gameLocal.serverInfo.GetString( "si_map" ) );
 				}
-			
 			} else {
-				int mapNum = mainGui->State().GetInt( va( "sa_mapList_item_%d_id", mapSelection ) );
-				if ( mapNum >= 0 ) {
-					const idDict *dict = fileSystem->GetMapDecl( mapNum );
-					mainGui->SetStateString( "sa_mapName", common->GetLocalizedString( dict->GetString( "name" )) );
-				}
+				mainGui->SetStateString( "sa_mapName", common->GetLocalizedString( dict->GetString( "name" )) );
 			}
 			continue;
 		// handler for initializing the player list on the admin player tab
@@ -4514,15 +4545,9 @@ const char* idMultiplayerGame::HandleGuiCommands( const char *_menuCommand ) {
 			memset( &data, 0, sizeof( data ) );
 			data.restartMap = 0 != mainGui->GetStateInt( "admin_server_val1_sel" );
 			// map list here
-			int uiMapSelection = mainGui->State().GetInt( "sa_mapList_sel_0" );
-			if (-1 != uiMapSelection ) {
-				int mapNum = mainGui->State().GetInt( va( "sa_mapList_item_%d_id", uiMapSelection ) );
-				if ( mapNum >= 0 ) {
-					const idDict *dict = fileSystem->GetMapDecl( mapNum );
-					data.mapName = common->GetLocalizedString( dict->GetString( "path" ));
-				} else { 
-					data.mapName = gameLocal.serverInfo.GetString( "si_map" );
-				}		
+			const idDict *dict = NULL;
+			if ( GetSelectedMapDeclFromList( mainGui, "sa_mapList", dict ) ) {
+				data.mapName = common->GetLocalizedString( dict->GetString( "path" ));
 			} else { 
 				data.mapName = gameLocal.serverInfo.GetString( "si_map" );
 			}
@@ -4646,49 +4671,35 @@ const char* idMultiplayerGame::HandleGuiCommands( const char *_menuCommand ) {
 				gametype = "DM";
 			}
 
-			int i, num;
-			idStr si_map = gameLocal.serverInfo.GetString("si_map");
-			const idDict *dict;
+			int selectedIndex = -1;
+			idStr si_map = gameLocal.serverInfo.GetString( "si_map" );
+			const int numMapsAdded = PopulateMapListForGameType( mainGui, "mapList", gametype, si_map.c_str(), true, &selectedIndex );
 
-			mapList->Clear();
-			mapList->SetSelection( -1 );
-			num = fileSystem->GetNumMaps();
-			for ( i = 0; i < num; i++ ) {
-				dict = fileSystem->GetMapDecl( i );
-				if ( dict ) {
-// jmarshall - mp game list
-/*
-					// any MP gametype supported
-					bool isMP = false;
-					int igt = GAME_SP + 1;
-					while ( si_gameTypeArgs[ igt ] ) {
-						if ( dict->GetBool( si_gameTypeArgs[ igt ] ) ) {
-							isMP = true;
-							break;
-						}
-						igt++;
-					}
-					if ( isMP ) {
-						const char *mapName = dict->GetString( "name" );
-						if ( mapName[0] == '\0' ) {
-							mapName = dict->GetString( "path" );
-						}
-						mapName = common->GetLocalizedString( mapName );
-						mapList->Add( i, mapName );
-						if ( !si_map.Icmp( dict->GetString( "path" ) ) ) {
-							mapList->SetSelection( mapList->Num() - 1 );
-						}
-					}
-*/
-// jmarshall end
+			if ( numMapsAdded > 0 ) {
+				if ( selectedIndex < 0 ) {
+					selectedIndex = 0;
 				}
+				mainGui->SetStateInt( "mapList_sel_0", selectedIndex );
+				mainGui->SetStateString( "mapName", mainGui->GetStateString( va( "mapList_item_%d", selectedIndex ) ) );
+			} else {
+				mainGui->SetStateInt( "mapList_sel_0", -1 );
+				mainGui->SetStateString( "mapName", "" );
 			}
+
 			// set the current level shot
 			SetMapShot(	);
+			mainGui->StateChanged( gameLocal.time );
 #endif
 			return "continue";
 		} else if (	!idStr::Icmp( cmd, "click_maplist" ) ) {
+			int mapSelection = mainGui->GetStateInt( "mapList_sel_0" );
+			if ( mapSelection < 0 ) {
+				mainGui->SetStateString( "mapName", "" );
+			} else {
+				mainGui->SetStateString( "mapName", mainGui->GetStateString( va( "mapList_item_%d", mapSelection ) ) );
+			}
 			SetMapShot(	);
+			mainGui->StateChanged( gameLocal.time );
 			return "continue";
 		} else if ( !idStr::Icmp( cmd, "sm_select_player" ) ) {
 			idStr vcmd;

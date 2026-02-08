@@ -5,13 +5,25 @@
 
 #include "../tr_local.h"
 
+static const GLuint INVALID_RENDER_TEXTURE_HANDLE = static_cast<GLuint>( -1 );
+
+static bool R_IsRenderTextureHandleValid( GLuint handle ) {
+	if ( !glConfig.isInitialized ) {
+		return false;
+	}
+	if ( handle == INVALID_RENDER_TEXTURE_HANDLE ) {
+		return false;
+	}
+	return glIsFramebuffer( handle ) == GL_TRUE;
+}
+
 /*
 ========================
 idRenderTexture::idRenderTexture
 ========================
 */
 idRenderTexture::idRenderTexture(idImage *colorImage, idImage *depthImage) {
-	deviceHandle = -1;
+	deviceHandle = INVALID_RENDER_TEXTURE_HANDLE;
 	if (colorImage != nullptr)
 	{
 		AddRenderImage(colorImage);
@@ -25,10 +37,12 @@ idRenderTexture::~idRenderTexture
 ========================
 */
 idRenderTexture::~idRenderTexture() {
-	if (deviceHandle != -1)
+	if ( deviceHandle != INVALID_RENDER_TEXTURE_HANDLE )
 	{
-		glDeleteFramebuffers(1, &deviceHandle);
-		deviceHandle = -1;
+		if ( R_IsRenderTextureHandleValid( deviceHandle ) ) {
+			glDeleteFramebuffers( 1, &deviceHandle );
+		}
+		deviceHandle = INVALID_RENDER_TEXTURE_HANDLE;
 	}
 }
 /*
@@ -37,7 +51,7 @@ idRenderTexture::AddRenderImage
 ================
 */
 void idRenderTexture::AddRenderImage(idImage *image) {
-	if (deviceHandle != -1) {
+	if (deviceHandle != INVALID_RENDER_TEXTURE_HANDLE) {
 		common->FatalError("idRenderTexture::AddRenderImage: Can't add render image after FBO has been created!");
 	}
 
@@ -46,10 +60,37 @@ void idRenderTexture::AddRenderImage(idImage *image) {
 
 /*
 ================
+idRenderTexture::EnsureDeviceHandle
+================
+*/
+void idRenderTexture::EnsureDeviceHandle( void ) {
+	if ( R_IsRenderTextureHandleValid( deviceHandle ) ) {
+		return;
+	}
+
+	if ( deviceHandle != INVALID_RENDER_TEXTURE_HANDLE ) {
+		glDeleteFramebuffers( 1, &deviceHandle );
+		deviceHandle = INVALID_RENDER_TEXTURE_HANDLE;
+	}
+
+	InitRenderTexture();
+}
+
+/*
+================
 idRenderTexture::InitRenderTexture
 ================
 */
 void idRenderTexture::InitRenderTexture(void) {
+	if ( !glConfig.isInitialized ) {
+		return;
+	}
+
+	if ( deviceHandle != INVALID_RENDER_TEXTURE_HANDLE ) {
+		glDeleteFramebuffers( 1, &deviceHandle );
+		deviceHandle = INVALID_RENDER_TEXTURE_HANDLE;
+	}
+
 	glGenFramebuffers(1, &deviceHandle);
 	glBindFramebuffer(GL_FRAMEBUFFER, deviceHandle);
 
@@ -134,6 +175,7 @@ idRenderTexture::MakeCurrent
 ================
 */
 void idRenderTexture::MakeCurrent(void) {
+	EnsureDeviceHandle();
 	glBindFramebuffer(GL_FRAMEBUFFER, deviceHandle);
 }
 
@@ -162,6 +204,7 @@ void idRenderTexture::Resize(int width, int height) {
 	}
 
 	if (target->GetOpts().width == width && target->GetOpts().height == height) {
+		EnsureDeviceHandle();
 		return;
 	}
 
@@ -171,12 +214,6 @@ void idRenderTexture::Resize(int width, int height) {
 
 	if (depthImage != nullptr) {
 		depthImage->Resize(width, height);
-	}
-
-	if (deviceHandle != -1)
-	{
-		glDeleteFramebuffers(1, &deviceHandle);
-		deviceHandle = -1;
 	}
 
 	InitRenderTexture();

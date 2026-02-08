@@ -168,17 +168,46 @@ void RB_T_RenderTriangleSurface( const drawSurf_t *surf ) {
 	RB_RenderTriangleSurface( surf->geo );
 }
 
+static float RB_CalcFovForAspect( float fovX, float width, float height ) {
+	const float clampedFovX = idMath::ClampFloat( 0.75f, 179.0f, fovX );
+	const float safeWidth = Max( width, 1.0f );
+	const float safeHeight = Max( height, 1.0f );
+	const float x = safeWidth / idMath::Tan( DEG2RAD( clampedFovX ) * 0.5f );
+	return RAD2DEG( idMath::ATan( safeHeight / Max( x, idMath::FLOAT_EPSILON ) ) ) * 2.0f;
+}
+
 /*
 ===============
 RB_EnterWeaponDepthHack
 ===============
 */
 void RB_EnterWeaponDepthHack() {
-	glDepthRange( 0, 0.5 );
+	glDepthRange( 0.0f, 0.5f );
 
 	float	matrix[16];
 
 	memcpy( matrix, backEnd.viewDef->projectionMatrix, sizeof( matrix ) );
+
+	const float weaponFovOverride = cl_gunfov.GetFloat();
+	if ( weaponFovOverride > 0.0f ) {
+		const float viewportWidth = static_cast<float>( Max( 1, backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1 ) );
+		const float viewportHeight = static_cast<float>( Max( 1, backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1 ) );
+
+		float weaponFovX = idMath::ClampFloat( 30.0f, 160.0f, weaponFovOverride );
+		float weaponFovY = 0.0f;
+		if ( cl_gunfov_adjust.GetBool() ) {
+			weaponFovY = RB_CalcFovForAspect( weaponFovX, 4.0f, 3.0f );
+			weaponFovX = RB_CalcFovForAspect( weaponFovY, viewportHeight, viewportWidth );
+		} else {
+			weaponFovY = RB_CalcFovForAspect( weaponFovX, viewportWidth, viewportHeight );
+		}
+
+		weaponFovX = idMath::ClampFloat( 1.0f, 179.0f, weaponFovX );
+		weaponFovY = idMath::ClampFloat( 1.0f, 179.0f, weaponFovY );
+
+		matrix[0] = 1.0f / idMath::Tan( DEG2RAD( weaponFovX ) * 0.5f );
+		matrix[5] = 1.0f / idMath::Tan( DEG2RAD( weaponFovY ) * 0.5f );
+	}
 
 	matrix[14] *= 0.25;
 

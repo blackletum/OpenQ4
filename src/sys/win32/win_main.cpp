@@ -53,6 +53,14 @@ If you have questions concerning this license or the applicable additional terms
 bool Sys_SDL_PumpEvents(void);
 #endif
 
+#if !defined(ID_DEDICATED)
+// Ask hybrid-GPU Windows drivers to prefer the high-performance adapter.
+extern "C" {
+__declspec(dllexport) unsigned long NvOptimusEnablement = 0x00000001;
+__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 0x00000001;
+}
+#endif
+
 idCVar Win32Vars_t::sys_arch("sys_arch", "", CVAR_SYSTEM | CVAR_INIT, "");
 idCVar Win32Vars_t::sys_cpustring("sys_cpustring", "detect", CVAR_SYSTEM | CVAR_INIT, "");
 idCVar Win32Vars_t::in_mouse("in_mouse", "1", CVAR_SYSTEM | CVAR_BOOL, "enable mouse input");

@@ -1314,6 +1314,20 @@ void idForceField::Event_FindTargets( void ) {
 
 const int JUMPPAD_EFFECT_DELAY	= 100;
 
+namespace {
+static idVec3 JumpPadEffectOrigin(const rvJumpPad* pad) {
+	if (!pad || !pad->GetPhysics()) {
+		return vec3_origin;
+	}
+
+	idVec3 origin = pad->GetPhysics()->GetOrigin();
+	if (pad->GetPhysics()->GetNumClipModels() > 0) {
+		origin += pad->GetPhysics()->GetBounds().GetCenter();
+	}
+	return origin;
+}
+}
+
 CLASS_DECLARATION( idForceField, rvJumpPad )
 	EVENT( EV_FindTargets,	rvJumpPad::Event_FindTargets )
 END_CLASS
@@ -1340,10 +1354,12 @@ void rvJumpPad::Think( void ) {
 		// If force has been applied to an entity and jump pad effect hasnt been played for a bit
 		// then play it now.
 		if ( forceField.GetLastApplyTime ( ) - lastEffectTime > JUMPPAD_EFFECT_DELAY ) {
+			const idVec3 fxOrigin = JumpPadEffectOrigin(this);
+
 			// start locally
 			StartSound( "snd_jump", SND_CHANNEL_ITEM, 0, false, NULL );
 			if ( spawnArgs.GetString( "fx_jump" )[ 0 ] ) {
-				PlayEffect( "fx_jump", renderEntity.origin, effectAxis, false, vec3_origin, false );
+				PlayEffect( "fx_jump", fxOrigin, effectAxis, false, vec3_origin, false );
 			}
 
 			// send through unreliable
@@ -1355,7 +1371,7 @@ void rvJumpPad::Think( void ) {
 				msg.WriteByte( GAME_UNRELIABLE_MESSAGE_EVENT );
 				msg.WriteBits( gameLocal.GetSpawnId( this ), 32 );
 				msg.WriteByte( EVENT_JUMPFX );
-				gameLocal.SendUnreliableMessagePVS( msg, this, gameLocal.pvs.GetPVSArea( renderEntity.origin ) );
+				gameLocal.SendUnreliableMessagePVS( msg, this, gameLocal.pvs.GetPVSArea( fxOrigin ) );
 			}
 			
 			lastEffectTime = forceField.GetLastApplyTime( );
@@ -1431,8 +1447,10 @@ rvJumpPad::ClientReceiveEvent
 bool rvJumpPad::ClientReceiveEvent( int event, int time, const idBitMsg &msg ) {
 	switch ( event ) {
 	case EVENT_JUMPFX: {
+		const idVec3 fxOrigin = JumpPadEffectOrigin(this);
+
 		if ( spawnArgs.GetString( "fx_jump" )[ 0 ] ) {
-			PlayEffect( "fx_jump", renderEntity.origin, effectAxis, false, vec3_origin, false );
+			PlayEffect( "fx_jump", fxOrigin, effectAxis, false, vec3_origin, false );
 		}
 		StartSound( "snd_jump", SND_CHANNEL_ITEM, 0, false, NULL );
 		return true;
