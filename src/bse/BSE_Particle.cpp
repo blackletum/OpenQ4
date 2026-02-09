@@ -293,6 +293,11 @@ void rvParticle::SetOriginUsingEndOrigin(rvBSE* effect, rvParticleTemplate* pt, 
 		return;
 	}
 
+	// Match vanilla end-origin spawn behavior:
+	// 1) seed/randomize once, 2) force fraction in X and resample.
+	// Domains with linearSpacing consume that pre-seeded X value.
+	pt->mpSpawnPosition->Spawn(mInitPos.ToFloatPtr(), *pt->mpSpawnPosition, NULL, NULL);
+	mInitPos.x = mFraction;
 	pt->mpSpawnPosition->Spawn(mInitPos.ToFloatPtr(), *pt->mpSpawnPosition, normal, centre);
 
 	if (!effect->GetHasEndOrigin()) {
@@ -300,9 +305,9 @@ void rvParticle::SetOriginUsingEndOrigin(rvBSE* effect, rvParticleTemplate* pt, 
 	}
 
 	const idVec3 endLocal = effect->GetCurrentAxisTransposed() * (effect->GetCurrentEndOrigin() - effect->GetCurrentOrigin());
-	const float t = Clamp01(mInitPos.x);
 	idVec3 forward = endLocal;
-	if (forward.LengthSqr() <= 1e-8f) {
+	const float endLenSqr = forward.LengthSqr();
+	if (endLenSqr <= 1e-8f) {
 		return;
 	}
 	forward.NormalizeFast();
@@ -311,9 +316,47 @@ void rvParticle::SetOriginUsingEndOrigin(rvBSE* effect, rvParticleTemplate* pt, 
 	idVec3 up;
 	BuildPerpBasis(forward, right, up);
 
-	const float lateralY = mInitPos.y;
-	const float lateralZ = mInitPos.z;
-	mInitPos = endLocal * t + right * lateralY + up * lateralZ;
+	const bool linearSpacing = (pt->mpSpawnPosition->mFlags & PPFLAG_LINEARSPACING) != 0;
+	const float t = linearSpacing ? Clamp01(mFraction) : Clamp01(mInitPos.x);
+	const int spawnShape = pt->mpSpawnPosition->mSpawnType & ~0x3;
+
+	// Spiral domains authored with `useEndOrigin linearSpacing` expect their
+	// lateral offset to advance around the beam as spacing advances.
+	const float range = pt->mpSpawnPosition->mRange;
+	const bool spiralTwist = linearSpacing && (spawnShape == SPF_SPIRAL_0) && (idMath::Fabs(range) > BSE_TIME_EPSILON);
+	float twistS = 0.0f;
+	float twistC = 1.0f;
+	if (spiralTwist) {
+		const float endLength = idMath::Sqrt(endLenSqr);
+		const float twist = idMath::TWO_PI * ((t * endLength) / range);
+		idMath::SinCos(twist, twistS, twistC);
+	}
+
+	idVec3 local = mInitPos;
+	if (spiralTwist) {
+		const float y = local.y * twistC - local.z * twistS;
+		const float z = local.y * twistS + local.z * twistC;
+		local.y = y;
+		local.z = z;
+	}
+	mInitPos = endLocal * t + forward * local.x + right * local.y + up * local.z;
+
+	if (normal) {
+		idVec3 localNormal = *normal;
+		if (spiralTwist) {
+			const float y = localNormal.y * twistC - localNormal.z * twistS;
+			const float z = localNormal.y * twistS + localNormal.z * twistC;
+			localNormal.y = y;
+			localNormal.z = z;
+		}
+		*normal = forward * localNormal.x + right * localNormal.y + up * localNormal.z;
+		if (normal->LengthSqr() > 1e-8f) {
+			normal->NormalizeFast();
+		}
+		else {
+			*normal = forward;
+		}
+	}
 }
 
 void rvParticle::HandleEndOrigin(rvBSE* effect, rvParticleTemplate* pt, idVec3* normal, idVec3* centre) {
@@ -396,9 +439,25 @@ void rvParticle::FinishSpawn(rvBSE* effect, rvSegment* segment, float birthTime,
 	mInitAxis = mat3_identity;
 	mTrailRepeat = pt->GetTrailRepeat();
 
-	idVec3 normal(vec3_origin);
-	idVec3 centre = pt->mCentre;
-	HandleEndOrigin(effect, pt, &normal, &centre);
+	const bool generatedOriginNormal = pt->GetGeneratedOriginNormal();
+	const bool generatedNormal = pt->GetGeneratedNormal();
+	const bool transformByNormal = generatedOriginNormal || generatedNormal;
+	const bool flipNormal = pt->GetFlippedNormal();
+
+	idVec3 normal(1.0f, 0.0f, 0.0f);
+	if (generatedOriginNormal) {
+		HandleEndOrigin(effect, pt, &normal, NULL);
+	}
+	else if (generatedNormal) {
+		idVec3 centre = pt->mCentre;
+		HandleEndOrigin(effect, pt, &normal, &centre);
+	}
+	else {
+		HandleEndOrigin(effect, pt, NULL, NULL);
+		if (pt->GetCalculatedNormal() && pt->mpSpawnDirection) {
+			pt->mpSpawnDirection->Spawn(normal.ToFloatPtr(), *pt->mpSpawnDirection, NULL, NULL);
+		}
+	}
 
 	SetLocked(st->GetLocked());
 	// Legacy particle flag bit 0x80000 is set for trail-child segments in
@@ -425,18 +484,20 @@ void rvParticle::FinishSpawn(rvBSE* effect, rvSegment* segment, float birthTime,
 		SetFlag(true, PTFLAG_GENERATED_LINE);
 	}
 
-	idVec3 direction(1.0f, 0.0f, 0.0f);
-	if (pt->mpSpawnDirection) {
-		pt->mpSpawnDirection->Spawn(direction.ToFloatPtr(), *pt->mpSpawnDirection, &normal, &centre);
-		if (direction.LengthSqr() > 1e-6f) {
-			direction.NormalizeFast();
-		}
+	idVec3 direction = normal;
+	if (direction.LengthSqr() > 1e-6f) {
+		direction.NormalizeFast();
+	}
+	else {
+		direction.Set(1.0f, 0.0f, 0.0f);
 	}
 
 	if (pt->mpSpawnVelocity) {
-		pt->mpSpawnVelocity->Spawn(mVelocity.ToFloatPtr(), *pt->mpSpawnVelocity, &normal, &centre);
+		pt->mpSpawnVelocity->Spawn(mVelocity.ToFloatPtr(), *pt->mpSpawnVelocity, NULL, NULL);
 		if (IsScalarDomain(pt->mpSpawnVelocity)) {
-			mVelocity = direction * mVelocity.x;
+			if (!transformByNormal) {
+				mVelocity = direction * mVelocity.x;
+			}
 		}
 		if (transformParent) {
 			mVelocity = initAxis * mVelocity;
@@ -447,18 +508,50 @@ void rvParticle::FinishSpawn(rvBSE* effect, rvSegment* segment, float birthTime,
 	}
 
 	if (pt->mpSpawnAcceleration) {
-		pt->mpSpawnAcceleration->Spawn(mAcceleration.ToFloatPtr(), *pt->mpSpawnAcceleration, &normal, &centre);
+		pt->mpSpawnAcceleration->Spawn(mAcceleration.ToFloatPtr(), *pt->mpSpawnAcceleration, NULL, NULL);
 		if (IsScalarDomain(pt->mpSpawnAcceleration)) {
-			mAcceleration = direction * mAcceleration.x;
+			if (!transformByNormal) {
+				mAcceleration = direction * mAcceleration.x;
+			}
 		}
 	}
 	else {
 		mAcceleration.Zero();
 	}
 
+	if (transformByNormal) {
+		if (normal.LengthSqr() > 1e-8f) {
+			normal.NormalizeFast();
+		}
+		else {
+			normal.Set(0.0f, 0.0f, 1.0f);
+		}
+
+		const idMat3 normalAxis = normal.ToMat3();
+		mVelocity = normalAxis * mVelocity;
+		mAcceleration = normalAxis * mAcceleration;
+	}
+
+	if (flipNormal) {
+		mVelocity = -mVelocity;
+	}
+
+	if (normal.LengthSqr() <= 1e-8f) {
+		normal = mVelocity;
+		if (normal.LengthSqr() <= 1e-8f) {
+			normal = mAcceleration;
+		}
+		if (normal.LengthSqr() <= 1e-8f) {
+			normal.Set(0.0f, 0.0f, 1.0f);
+		}
+		else {
+			normal.NormalizeFast();
+		}
+	}
+
 	if (pt->mpSpawnFriction) {
 		float frictionParms[3] = { 0.0f, 0.0f, 0.0f };
-		pt->mpSpawnFriction->Spawn(frictionParms, *pt->mpSpawnFriction, &normal, &centre);
+		pt->mpSpawnFriction->Spawn(frictionParms, *pt->mpSpawnFriction, NULL, NULL);
 		mFriction = Max(0.0f, frictionParms[0]);
 	}
 	else {
@@ -534,6 +627,9 @@ void rvParticle::FinishSpawn(rvBSE* effect, rvSegment* segment, float birthTime,
 	// Angles/rotation in decls are specified in turns; runtime evaluates radians.
 	ScaleRotation(idMath::TWO_PI);
 	ScaleAngle(idMath::TWO_PI);
+	const idAngles normalAngles = normal.ToAngles();
+	rvAngles orient(DEG2RAD(normalAngles.pitch), DEG2RAD(normalAngles.yaw), DEG2RAD(normalAngles.roll));
+	HandleOrientation(orient);
 
 	if (float* initLength = GetInitLength()) {
 		if (pt->mpSpawnLength) {
@@ -545,6 +641,13 @@ void rvParticle::FinishSpawn(rvBSE* effect, rvSegment* segment, float birthTime,
 				pt->mpDeathLength->HandleRelativeParms(destLength, initLength, 3);
 			}
 		}
+	}
+
+	if (transformByNormal) {
+		TransformLength(normal);
+	}
+	if (flipNormal) {
+		ScaleLength(-1.0f);
 	}
 
 	mTrailTime = pt->GetTrailTime();
@@ -645,10 +748,31 @@ void rvLineParticle::Refresh(rvBSE* effect, rvSegmentTemplate* st, rvParticleTem
 	if (!effect || !pt || !pt->UsesEndOrigin()) {
 		return;
 	}
-	float* initLength = GetInitLength();
-	if (initLength && pt->mpSpawnLength) {
-		HandleEndLength(effect, pt, *pt->mpSpawnLength, initLength);
+	if (float* initLength = GetInitLength()) {
+		if (pt->mpSpawnLength) {
+			HandleEndLength(effect, pt, *pt->mpSpawnLength, initLength);
+		}
+		if (float* destLength = GetDestLength()) {
+			if (pt->mpDeathLength) {
+				if ((pt->mpDeathLength->mFlags & PPFLAG_USEENDORIGIN) != 0) {
+					SetLengthUsingEndOrigin(effect, *pt->mpDeathLength, destLength);
+				}
+				else {
+					pt->mpDeathLength->Spawn(destLength, *pt->mpDeathLength, NULL, NULL);
+				}
+				pt->mpDeathLength->HandleRelativeParms(destLength, initLength, 3);
+			}
+		}
 	}
+
+	HandleTiling(pt);
+	const float attenuation = effect->GetAttenuation(st);
+	if (pt->mpSpawnLength) {
+		AttenuateLength(attenuation, *pt->mpSpawnLength);
+	}
+	// Keep the refreshed start/end length values intact. Re-initializing the
+	// particle length envelope here can zero out the freshly recomputed
+	// useEndOrigin vector and collapse the beam to fallback directions.
 }
 
 // ---------------------------------------------------------------------------
@@ -1209,13 +1333,44 @@ bool rvLineParticle::Render(const rvBSE* effect, rvParticleTemplate* pt, const i
 	const idVec3 end = pos + length;
 	const idVec3 toView = view[0] - (pos + length * 0.5f);
 	idVec3 side = length.Cross(toView);
-	if (side.LengthSqr() > 1e-6f) {
-		side.NormalizeFast();
+	float sideLenSqr = side.LengthSqr();
+	if (sideLenSqr <= 1e-8f) {
+		side = length.Cross(view[2]);
+		sideLenSqr = side.LengthSqr();
+		if (sideLenSqr <= 1e-8f) {
+			side = length.Cross(view[1]);
+			sideLenSqr = side.LengthSqr();
+		}
+	}
+	if (sideLenSqr > 1e-8f) {
+		side *= idMath::InvSqrt(sideLenSqr);
+	}
+	else {
+		side.Set(0.0f, 1.0f, 0.0f);
 	}
 	side *= width;
 
 	dword rgba = HandleTint(effect, color, 1.0f);
-	AppendQuad(tri, pos + side, pos - side, end - side, end + side, rgba);
+	const int base = tri->numVerts;
+	SetDrawVert(tri->verts[base + 0], pos + side, 0.0f, 0.0f, rgba);
+	SetDrawVert(tri->verts[base + 1], pos - side, 0.0f, 1.0f, rgba);
+	SetDrawVert(tri->verts[base + 2], end - side, mTextureScale, 1.0f, rgba);
+	SetDrawVert(tri->verts[base + 3], end + side, mTextureScale, 0.0f, rgba);
+
+	tri->verts[base + 0].normal = pos;
+	tri->verts[base + 1].normal = pos;
+	tri->verts[base + 2].normal = pos;
+	tri->verts[base + 3].normal = pos;
+
+	const int indexBase = tri->numIndexes;
+	tri->indexes[indexBase + 0] = base + 0;
+	tri->indexes[indexBase + 1] = base + 1;
+	tri->indexes[indexBase + 2] = base + 2;
+	tri->indexes[indexBase + 3] = base + 0;
+	tri->indexes[indexBase + 4] = base + 2;
+	tri->indexes[indexBase + 5] = base + 3;
+	tri->numVerts += 4;
+	tri->numIndexes += 6;
 	return true;
 }
 
@@ -1250,14 +1405,16 @@ bool rvLinkedParticle::Render(const rvBSE* effect, rvParticleTemplate* pt, const
 	const int base = tri->numVerts;
 	SetDrawVert(tri->verts[base + 0], pos + up, mFraction * mTextureScale, 0.0f, rgba);
 	SetDrawVert(tri->verts[base + 1], pos - up, mFraction * mTextureScale, 1.0f, rgba);
+	tri->verts[base + 0].normal = pos;
+	tri->verts[base + 1].normal = pos;
 	if (base > 0) {
 		const int indexBase = tri->numIndexes;
 		tri->indexes[indexBase + 0] = base - 2;
 		tri->indexes[indexBase + 1] = base - 1;
 		tri->indexes[indexBase + 2] = base + 0;
 		tri->indexes[indexBase + 3] = base - 1;
-		tri->indexes[indexBase + 4] = base + 0;
-		tri->indexes[indexBase + 5] = base + 1;
+		tri->indexes[indexBase + 4] = base + 1;
+		tri->indexes[indexBase + 5] = base + 0;
 		tri->numIndexes += 6;
 	}
 	tri->numVerts += 2;

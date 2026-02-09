@@ -8654,6 +8654,10 @@ bool idPlayer::HandleESC( void ) {
 // jdischler: Straight from the top, cinematic skipping on xenon is OFFICIALLY OUT.  Too many problems with it and not enough time to properly address them.
 #ifndef _XENON
 	if ( gameLocal.inCinematic ) {
+		if ( gameLocal.time < gameLocal.cinematicSkipTime ) {
+			// ignore skip input briefly when a cinematic starts
+			return true;
+		}
 		return SkipCinematic();
 	}
 #endif
@@ -9366,15 +9370,6 @@ void idPlayer::Think( void ) {
 	usercmd = gameLocal.usercmds[ entityNumber ];
 	buttonMask &= usercmd.buttons;
 	usercmd.buttons &= ~buttonMask;
-
-#ifndef _XENON
-	if ( gameLocal.inCinematic && !gameLocal.skipCinematic ) {
-		const int cinematicSkipButtons = BUTTON_ATTACK | BUTTON_RUN | BUTTON_ZOOM | BUTTON_SCORES | BUTTON_MLOOK | BUTTON_STRAFE;
-		if ( ( usercmd.buttons & cinematicSkipButtons ) && !( oldButtons & cinematicSkipButtons ) ) {
-			SkipCinematic();
-		}
-	}
-#endif
 
 	HandleObjectiveInput();
 	if ( objectiveSystemOpen ) {

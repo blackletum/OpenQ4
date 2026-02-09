@@ -523,6 +523,9 @@ void idRenderSystemLocal::SetBackEndRenderer() {
 		common->Printf( "using ARB2 renderSystem\n" );
 		backEndRendererHasVertexPrograms = true;
 		backEndRendererMaxLight = 999;
+		if ( !glConfig.preferSimpleLighting ) {
+			r_lightDetailLevel.SetFloat( 0.0f );
+		}
 		break;
 	default:
 		common->FatalError( "SetbackEndRenderer: bad back end" );

@@ -75,6 +75,7 @@ if build_games
     meson.project_source_root(),
     'src/game',
     'src/game/Callbacks.cpp',
+    'src/game/gamesys/Callbacks.cpp',
     check: true,
   )
   game_source_paths = game_source_discovery.stdout().strip().split('\n')

@@ -408,21 +408,50 @@ void SpawnSurfaceCylinder3(float* result, const rvParticleParms& parms, idVec3* 
 }
 
 void SpawnSpiral2(float* result, const rvParticleParms& parms, idVec3* normal, const idVec3* centre) {
-	const float x = rvRandom::flrand(parms.mMins.x, parms.mMaxs.x);
-	const float range = (parms.mRange > 0.0001f) ? parms.mRange : 1.0f;
-	const float theta = idMath::TWO_PI * (x / range);
-	result[0] = x;
+	if (parms.mFlags & PPFLAG_LINEARSPACING) {
+		result[0] = SpawnLerp(parms.mMins.x, parms.mMaxs.x, result[0]);
+	}
+	else {
+		result[0] = rvRandom::flrand(parms.mMins.x, parms.mMaxs.x);
+	}
+
+	const float range = (idMath::Fabs(parms.mRange) > BSE_TIME_EPSILON) ? parms.mRange : 1.0f;
+	const float theta = idMath::TWO_PI * (result[0] / range);
 	result[1] = idMath::Cos(theta) * rvRandom::flrand(parms.mMins.y, parms.mMaxs.y);
 }
 
 void SpawnSpiral3(float* result, const rvParticleParms& parms, idVec3* normal, const idVec3* centre) {
 	idVec3& out = *reinterpret_cast<idVec3*>(result);
-	const float range = (parms.mRange > 0.0001f) ? parms.mRange : 1.0f;
-	out.x = rvRandom::flrand(parms.mMins.x, parms.mMaxs.x);
+	if (parms.mFlags & PPFLAG_LINEARSPACING) {
+		out.x = SpawnLerp(parms.mMins.x, parms.mMaxs.x, out.x);
+	}
+	else {
+		out.x = rvRandom::flrand(parms.mMins.x, parms.mMaxs.x);
+	}
+
+	const float range = (idMath::Fabs(parms.mRange) > BSE_TIME_EPSILON) ? parms.mRange : 1.0f;
 	const float theta = idMath::TWO_PI * (out.x / range);
-	out.y = idMath::Cos(theta) * rvRandom::flrand(parms.mMins.y, parms.mMaxs.y);
-	out.z = idMath::Sin(theta) * rvRandom::flrand(parms.mMins.z, parms.mMaxs.z);
-	SpawnGetNormalInternal(normal, out, centre);
+	const float c = idMath::Cos(theta);
+	const float s = idMath::Sin(theta);
+	const float ry = rvRandom::flrand(parms.mMins.y, parms.mMaxs.y);
+	const float rz = rvRandom::flrand(parms.mMins.z, parms.mMaxs.z);
+
+	out.y = c * ry - s * rz;
+	out.z = c * rz + s * ry;
+
+	if (normal) {
+		normal->x = centre ? 0.0f : out.x;
+		normal->y = out.y;
+		normal->z = out.z;
+
+		const float lenSqr = normal->LengthSqr();
+		if (lenSqr > 1e-6f) {
+			normal->NormalizeFast();
+		}
+		else {
+			normal->Set(0.0f, 0.0f, 1.0f);
+		}
+	}
 }
 
 void SpawnModel3(float* result, const rvParticleParms& parms, idVec3* normal, const idVec3* centre) {

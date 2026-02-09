@@ -34,6 +34,11 @@ If you have questions concerning this license or the applicable additional terms
 frameData_t		*frameData;
 backEndState_t	backEnd;
 
+static ID_INLINE GLint R_SafeStencilClearValue() {
+	const int stencilBits = idMath::ClampInt( 1, 30, ( glConfig.stencilBits > 0 ) ? glConfig.stencilBits : 8 );
+	return 1 << ( stencilBits - 1 );
+}
+
 
 /*
 ======================
@@ -624,7 +629,7 @@ static void RB_ClearRenderTarget(const void* data) {
 		glStencilMask(0xff);
 		// some cards may have 7 bit stencil buffers, so don't assume this
 		// should be 128
-		glClearStencil(1 << (glConfig.stencilBits - 1));
+		glClearStencil( R_SafeStencilClearValue() );
 		glClearDepth(cmd->clearDepthValue);
 		glClear(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 	}

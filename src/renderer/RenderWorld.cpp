@@ -511,7 +511,8 @@ void idRenderWorldLocal::UpdateLightDef( qhandle_t lightHandle, const renderLigh
 		// any of our derived data, because shader parms are calculated every frame
 		if ( rlight->axis == light->parms.axis && rlight->end == light->parms.end &&
 			 rlight->lightCenter == light->parms.lightCenter && rlight->lightRadius == light->parms.lightRadius &&
-			 rlight->noShadows == light->parms.noShadows && rlight->origin == light->parms.origin &&
+			 rlight->noShadows == light->parms.noShadows && rlight->noDynamicShadows == light->parms.noDynamicShadows &&
+			 rlight->origin == light->parms.origin &&
 			 rlight->parallel == light->parms.parallel && rlight->pointLight == light->parms.pointLight &&
 			 rlight->right == light->parms.right && rlight->start == light->parms.start &&
 			 rlight->target == light->parms.target && rlight->up == light->parms.up && 

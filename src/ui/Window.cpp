@@ -728,6 +728,12 @@ idWindow::RunTimeEvents
 ================
 */
 bool idWindow::RunTimeEvents(int time) {
+	if ( parent && parent->GetGui() && gui != parent->GetGui() ) {
+		gui = parent->GetGui();
+	}
+	if ( gui == NULL ) {
+		return false;
+	}
 
 	if ( time - lastTimeRun < USERCMD_MSEC ) {
 		//common->Printf("Skipping gui time events at %i\n", time);
@@ -846,6 +852,13 @@ idWindow::HandleEvent
 const char *idWindow::HandleEvent(const sysEvent_t *event, bool *updateVisuals) {
 	static bool actionDownRun;
 	static bool actionUpRun;
+
+	if ( parent && parent->GetGui() && gui != parent->GetGui() ) {
+		gui = parent->GetGui();
+	}
+	if ( gui == NULL ) {
+		return "";
+	}
 
 	cmd = "";
 
@@ -1096,6 +1109,14 @@ const char *idWindow::HandleEvent(const sysEvent_t *event, bool *updateVisuals) 
 		}
 	}
 
+	if ( parent && parent->GetGui() && gui != parent->GetGui() ) {
+		gui = parent->GetGui();
+	}
+	if ( gui == NULL ) {
+		cmd = "";
+		return "";
+	}
+
 	gui->GetReturnCmd() = cmd;
 	if ( gui->GetPendingCmd().Length() ) {
 		gui->GetReturnCmd() += " ; ";
@@ -1212,6 +1233,12 @@ idWindow::Time
 ================
 */
 void idWindow::Time() {
+	if ( parent && parent->GetGui() && gui != parent->GetGui() ) {
+		gui = parent->GetGui();
+	}
+	if ( gui == NULL ) {
+		return;
+	}
 	
 	if ( noTime ) {
 		return;
@@ -1237,7 +1264,13 @@ void idWindow::Time() {
 		}
 	}
 	if ( gui->Active() ) {
-		gui->GetPendingCmd() += cmd;
+		if ( cmd.Length() ) {
+			idStr& pendingCmd = gui->GetPendingCmd();
+			if ( pendingCmd.Length() ) {
+				pendingCmd += " ; ";
+			}
+			pendingCmd += cmd;
+		}
 	}
 }
 
@@ -1363,6 +1396,16 @@ idWindow::Redraw
 */
 void idWindow::Redraw(float x, float y) {
 	idStr str;
+
+	if ( parent && parent->GetGui() && gui != parent->GetGui() ) {
+		gui = parent->GetGui();
+	}
+	if ( parent && parent->GetDC() && dc != parent->GetDC() ) {
+		dc = parent->GetDC();
+	}
+	if ( gui == NULL ) {
+		return;
+	}
 
 	if (r_skipGuiShaders.GetInteger() == 1 || dc == NULL ) {
 		return;
@@ -1710,6 +1753,13 @@ idWindow::SetParent
 */
 void idWindow::SetParent(idWindow *w) {
 	parent = w;
+	if ( w ) {
+		// Child windows must share the same GUI and device context as their parent.
+		gui = w->gui;
+		if ( dc == NULL ) {
+			dc = w->dc;
+		}
+	}
 }
 
 /*
@@ -4247,6 +4297,10 @@ idWindow::AddChild
 ===============
 */
 void idWindow::AddChild(idWindow *win) {
+	if ( win == NULL ) {
+		return;
+	}
+	win->SetParent( this );
 	win->childID = children.Append(win);
 }
 
@@ -4510,9 +4564,11 @@ Inserts the given window as a child into the given location in the zorder.
 */
 bool idWindow::InsertChild ( idWindow *win, idWindow* before )
 {
+	if ( win == NULL ) {
+		return false;
+	}
+
 	AddChild ( win );
-		
-	win->parent = this;
 
 	drawWin_t dwt;
 	dwt.simp = NULL;

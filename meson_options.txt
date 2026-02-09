@@ -16,7 +16,7 @@ option(
   'build_games',
   type: 'boolean',
   value: true,
-  description: 'Build game modules (game_sp/game_mp).',
+  description: 'Build game modules (game_sp/game_mp) from the synchronized game source mirror.',
 )
 
 option(

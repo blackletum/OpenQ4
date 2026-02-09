@@ -79,6 +79,7 @@ void idRenderEntityLocal::RemoveDecals() {
 
 idRenderLightLocal::idRenderLightLocal() {
 	memset( &parms, 0, sizeof( parms ) );
+	parms.detailLevel			= DEFAULT_LIGHT_DETAIL_LEVEL;
 	memset( modelMatrix, 0, sizeof( modelMatrix ) );
 	memset( shadowFrustums, 0, sizeof( shadowFrustums ) );
 	memset( lightProject, 0, sizeof( lightProject ) );

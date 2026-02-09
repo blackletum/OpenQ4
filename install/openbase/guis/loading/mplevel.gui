@@ -156,7 +156,7 @@ windowDef Desktop
 	windowDef t_message_grad
 	{
 		rect	291,36,349,18
-		visible	1
+		visible	"gui::loading_author_visible"
 		background	"gfx/guis/common/gradient3"
 		matcolor	0,0,0,.5
 		matscalex	-1
@@ -164,10 +164,10 @@ windowDef Desktop
 	windowDef t_message
 	{	
 		rect	290,35,336,16
-		visible	1
+		visible	"gui::loading_author_visible"
 		notime	1
 		forecolor	1,1,1,0.52
-		text "gui::loading_message"		
+		text "gui::loading_author"		
 		textscale	0.225
 		font	"fonts/lowpixel"
 		textalign	2

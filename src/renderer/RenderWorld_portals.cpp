@@ -745,7 +745,7 @@ void idRenderWorldLocal::AddAreaLightRefs( int areaNum, const portalStack_t *ps 
 		}
 
 		// cull frustum
-		if ( CullLightByPortals( light, ps ) ) {
+		if ( !light->parms.globalLight && CullLightByPortals( light, ps ) ) {
 			// we are culled out through this portal chain, but it might
 			// still be visible through others
 			continue;

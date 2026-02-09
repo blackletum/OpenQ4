@@ -11,6 +11,7 @@ OpenQ4 is moving toward a **complete code replacement** (engine + game code) to 
 - Modernize rendering, audio, and platform support while preserving shipped-content behavior where practical.
 - Keep documentation current as significant changes land.
 - Reach full support for modern systems across Windows, Linux, and macOS with x64 as the active baseline architecture.
+- Keep Quake4SDK-derived game-library development coordinated with the companion repository (`../OpenQ4-GameLibs`).
 
 **Non-Goals**
 - Compatibility with the proprietary Quake 4 game DLLs (or third-party game DLLs built against the original SDK). OpenQ4 intentionally keeps full freedom to evolve the project.
@@ -37,6 +38,7 @@ OpenQ4 is moving toward a **complete code replacement** (engine + game code) to 
 **Build (Meson + Ninja)**
 - Install Meson and Ninja.
 - Current actively validated target is Windows x64 with Microsoft `cl.exe`.
+- Companion SDK/game-library repository expected at `../OpenQ4-GameLibs` (default local layout).
 - Language baseline target is C++23 semantics (`cpp_std=vc++latest` on MSVC).
 - Toolchain direction is MSVC 19.46+ (Visual Studio 2026 baseline), with compatibility fallback to older installed MSVC when strict enforcement is disabled.
 - MSVC strict string-literal conformance is temporarily disabled (`/Zc:strictStrings-`) to keep legacy idTech4-era code building during migration.
@@ -44,6 +46,7 @@ OpenQ4 is moving toward a **complete code replacement** (engine + game code) to 
 - Recommended workflow (inspired by WORR-2):
   - `powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 setup --wipe builddir . --backend ninja --buildtype debug --wrap-mode=forcefallback`
   - `powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 compile -C builddir`
+  - Optional companion SDK/game-lib build: `powershell -ExecutionPolicy Bypass -File tools/build/build_gamelibs.ps1`
 - Build toggles:
   - `-Dbuild_engine=true|false` (build `OpenQ4` / `OpenQ4-ded`)
   - `-Dbuild_games=true|false` (build game modules)
@@ -54,6 +57,9 @@ OpenQ4 is moving toward a **complete code replacement** (engine + game code) to 
   - Stages a release-style package tree under `install/`.
   - `install/` is intended to be the complete distributable root for OpenQ4 binaries, with future project-owned assets added under `install/openbase/`.
 - `tools/build/meson_setup.ps1` auto-loads Visual Studio build tools when needed (prefers VS 2026+/major 18 when available), and exports `WINDRES` via `tools/build/rc.cmd`.
+- `tools/build/meson_setup.ps1` synchronizes `src/game` from `../OpenQ4-GameLibs/source/game` before `setup`/`compile`/`install` (set `OPENQ4_SKIP_GAMELIBS_SYNC=1` to bypass).
+- Set `OPENQ4_BUILD_GAMELIBS=1` to have `tools/build/meson_setup.ps1 compile` delegate SDK game-library builds to `../OpenQ4-GameLibs` via `tools/build/build_gamelibs.ps1` (optional; can still be bypassed with `OPENQ4_SKIP_GAMELIBS_BUILD=1`).
+- Override companion repo discovery with `OPENQ4_GAMELIBS_REPO=<absolute-or-relative-path>`.
 - `tools/build/meson_setup.ps1 compile` now auto-regenerates `builddir` if it is missing or stale, which resolves "not a meson build directory" errors.
 - Non-Windows wrapper: `tools/build/meson_setup.sh` (passes through to `meson`).
 - For manual Windows shells, bootstrap MSVC first with `tools/build/openq4_devcmd.cmd`.

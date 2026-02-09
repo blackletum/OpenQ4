@@ -1283,7 +1283,7 @@ const float DEFAULT_GRAVITY_MP		= 800.0f;
 #define DEFAULT_MP_GRAVITY_STRING	"800"
 const idVec3 DEFAULT_GRAVITY_VEC3( 0, 0, -DEFAULT_GRAVITY );
 
-const int	CINEMATIC_SKIP_DELAY	= SEC2MS( 2.0f );
+const int	CINEMATIC_SKIP_DELAY	= SEC2MS( 1.0f );
 
 //============================================================================
 

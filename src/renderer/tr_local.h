@@ -888,6 +888,7 @@ extern idCVar r_clear;					// force screen clear every frame
 extern idCVar r_shadows;				// enable shadows
 extern idCVar r_subviewOnly;			// 1 = don't render main view, allowing subviews to be debugged
 extern idCVar r_lightScale;				// all light intensities are multiplied by this, which is normally 2
+extern idCVar r_lightDetailLevel;		// minimum light detailLevel to include in view lists
 extern idCVar r_flareSize;				// scale the flare deforms from the material def
 
 extern idCVar r_gamma;					// changes gamma tables

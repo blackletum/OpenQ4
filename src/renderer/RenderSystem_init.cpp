@@ -155,6 +155,7 @@ idCVar r_testGamma( "r_testGamma", "0", CVAR_RENDERER | CVAR_FLOAT, "if > 0 draw
 idCVar r_testGammaBias( "r_testGammaBias", "0", CVAR_RENDERER | CVAR_FLOAT, "if > 0 draw a grid pattern to test gamma levels" );
 idCVar r_testStepGamma( "r_testStepGamma", "0", CVAR_RENDERER | CVAR_FLOAT, "if > 0 draw a grid pattern to test gamma levels" );
 idCVar r_lightScale( "r_lightScale", "2", CVAR_RENDERER | CVAR_FLOAT, "all light intensities are multiplied by this" );
+idCVar r_lightDetailLevel( "r_lightDetailLevel", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "minimum light detail level to render", 0.0f, 10.0f );
 idCVar r_lightSourceRadius( "r_lightSourceRadius", "0", CVAR_RENDERER | CVAR_FLOAT, "for soft-shadow sampling" );
 idCVar r_flareSize( "r_flareSize", "1", CVAR_RENDERER | CVAR_FLOAT, "scale the flare deforms from the material def" ); 
 
@@ -638,6 +639,47 @@ void R_InitOpenGL( void ) {
 	glConfig.renderer_string = (const char *)glGetString(GL_RENDERER);
 	glConfig.version_string = (const char *)glGetString(GL_VERSION);
 	glConfig.extensions_string = (const char *)glGetString(GL_EXTENSIONS);
+
+	// Query the actual framebuffer bit depths from the active context.
+	// Some platform backends don't populate these fields directly.
+	GLint redBits = 0;
+	GLint greenBits = 0;
+	GLint blueBits = 0;
+	GLint alphaBits = 0;
+	GLint depthBits = 0;
+	GLint stencilBits = 0;
+	glGetIntegerv( GL_RED_BITS, &redBits );
+	glGetIntegerv( GL_GREEN_BITS, &greenBits );
+	glGetIntegerv( GL_BLUE_BITS, &blueBits );
+	glGetIntegerv( GL_ALPHA_BITS, &alphaBits );
+	glGetIntegerv( GL_DEPTH_BITS, &depthBits );
+	glGetIntegerv( GL_STENCIL_BITS, &stencilBits );
+
+	if ( redBits < 0 ) {
+		redBits = 0;
+	}
+	if ( greenBits < 0 ) {
+		greenBits = 0;
+	}
+	if ( blueBits < 0 ) {
+		blueBits = 0;
+	}
+	if ( alphaBits < 0 ) {
+		alphaBits = 0;
+	}
+	if ( depthBits < 0 ) {
+		depthBits = 0;
+	}
+	if ( stencilBits < 0 ) {
+		stencilBits = 0;
+	}
+
+	glConfig.alphaBits = ( alphaBits > 0 ) ? alphaBits : 8;
+
+	const int queriedColorBits = redBits + greenBits + blueBits + alphaBits;
+	glConfig.colorBits = ( queriedColorBits > 0 ) ? queriedColorBits : 32;
+	glConfig.depthBits = ( depthBits > 0 ) ? depthBits : 24;
+	glConfig.stencilBits = ( stencilBits > 0 ) ? stencilBits : 8;
 
 	// OpenGL driver constants
 	glGetIntegerv( GL_MAX_TEXTURE_SIZE, &temp );

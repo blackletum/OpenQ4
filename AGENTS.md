@@ -9,6 +9,7 @@ This file describes project goals, rules, and upstream credits for anyone workin
 - Version: 0.0.1
 - Website: `www.darkmatter-quake.com`
 - Repository: `https://github.com/themuffinator/OpenQ4`
+- Companion GameLibs Repo (local): `E:\Repositories\OpenQ4-GameLibs`
 
 **Goals**
 - Deliver a complete, open-source code replacement for Quake 4 (engine + game code).
@@ -17,9 +18,12 @@ This file describes project goals, rules, and upstream credits for anyone workin
 - Modernize the engine and game code while keeping stock-asset compatibility as a guiding constraint.
 - Package both SP/MP under one unified game directory (`openbase/`) with `game_sp` + `game_mp`.
 - Establish a cross-platform foundation targeting modern systems (Windows, Linux, macOS; x64 first) through SDL3 and Meson.
+- Keep Quake4SDK-derived game-library source ownership in `OpenQ4-GameLibs`, with OpenQ4 consuming synchronized mirrors for local engine/game builds.
 
 **Rules**
 - Do not target compatibility with the proprietary Quake 4 game DLLs; OpenQ4 ships its own game modules and keeps full freedom to evolve the project.
+- Treat `E:\Repositories\OpenQ4-GameLibs` as part of the same development workspace for planning, edits, and validation.
+- For SDK/game-library work, make canonical source edits in `OpenQ4-GameLibs` first; OpenQ4 `src/game` is synchronized from that repo via `tools/build/sync_gamelibs.ps1`.
 - Keep `openbase/` as the single unified game directory; do not split SP/MP into separate mod folders.
 - Prefer changes that match Quake 4 SDK expectations and shipped content behavior.
 - Document significant changes in the documentation and keep `README.md` accurate.
@@ -30,6 +34,7 @@ This file describes project goals, rules, and upstream credits for anyone workin
 - Do not rely on `install/` as a linker artifact store; keep compiler/linker intermediates and development-only outputs in `builddir/`.
 - MSVC import libraries (`*.lib`) are not runtime requirements for OpenQ4 execution; prefer keeping them in `builddir/` (or other developer artifact output), not in release-style `install/` packages.
 - Use `meson install -C builddir --no-rebuild --skip-subprojects` (via `tools/build/meson_setup.ps1`) when staging `install/` to avoid third-party subproject installs outside the package tree.
+- `tools/build/meson_setup.ps1` now coordinates companion repo workflows: it syncs game sources from `../OpenQ4-GameLibs`, and can trigger SDK/game-library builds there during `compile` when `OPENQ4_BUILD_GAMELIBS=1`.
 - On Windows, do not invoke raw `meson ...` from an arbitrary shell; use `tools/build/meson_setup.ps1 ...` (or run `tools/build/openq4_devcmd.cmd` first) so `cl.exe`/MSVC tools are always available.
 - Prefer platform abstractions through SDL3 and avoid introducing new platform-specific dependencies in shared engine code when an SDL3 path exists.
 - Keep Meson as the primary build entry point and keep dependency management through Meson subprojects.
@@ -68,6 +73,7 @@ This file describes project goals, rules, and upstream credits for anyone workin
 - Upstream engine base (local folder name retained): `E:\_SOURCE\_CODE\Quake4Doom-master`
 - Quake 4 BSE (Basic Set of Effects): `E:\_SOURCE\_CODE\Quake4BSE-master`
 - Quake 4 engine decompiled (Hex-Rays): `E:\_SOURCE\_CODE\Quake4Decompiled-main`
+- Quake 4 installation (Steam): `C:\Program Files (x86)\Steam\steamapps\common\Quake 4`
 
 **Upstream Credits**
 - Justin Marshall.

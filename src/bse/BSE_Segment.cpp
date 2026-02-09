@@ -731,7 +731,7 @@ void rvSegment::CreateDecal(rvBSE* effect, float time) {
 	}
 
 	rvSegmentTemplate* st = GetSegmentTemplate();
-	if (!st || !st->GetHasParticles()) {
+	if (!st || st->GetType() != SEG_DECAL) {
 		return;
 	}
 
@@ -740,8 +740,16 @@ void rvSegment::CreateDecal(rvBSE* effect, float time) {
 		return;
 	}
 
-	// Keep stock decal projection winding texcoords so renderer-side
-	// texture-axis generation remains valid.
+	idVec3 size(16.0f, 16.0f, 0.0f);
+	idVec3 rotate(vec3_origin);
+
+	if (rvParticle* sample = SpawnParticle(effect, st, time, vec3_origin, mat3_identity)) {
+		idVec4 tint;
+		sample->GetSpawnInfo(tint, size, rotate);
+	}
+
+	// Keep stock decal projection winding texcoords so renderer-side texture-axis
+	// generation remains valid.
 	static const idVec3 decalWinding[4] = {
 		idVec3(1.0f, 1.0f, 0.0f),
 		idVec3(-1.0f, 1.0f, 0.0f),
@@ -749,71 +757,38 @@ void rvSegment::CreateDecal(rvBSE* effect, float time) {
 		idVec3(1.0f, -1.0f, 0.0f)
 	};
 
-	float sizeParms[3] = { 32.0f, 32.0f, 8.0f };
-	if (pt->mpSpawnSize) {
-		pt->mpSpawnSize->Spawn(sizeParms, *pt->mpSpawnSize, NULL, NULL);
-	}
-
-	sizeParms[0] = Max(1.0f, idMath::Fabs(sizeParms[0]));
-	sizeParms[1] = Max(1.0f, idMath::Fabs(sizeParms[1]));
-	sizeParms[2] = Max(1.0f, idMath::Fabs(sizeParms[2]));
-
-	float rotateParms[3] = { 0.0f, 0.0f, 0.0f };
-	if (pt->mpSpawnRotate) {
-		pt->mpSpawnRotate->Spawn(rotateParms, *pt->mpSpawnRotate, NULL, NULL);
-	}
-	const float rotateRad = rotateParms[0] * idMath::TWO_PI;
-
-	idVec3 origin = effect->GetCurrentOrigin();
-	idMat3 axis = effect->GetCurrentAxis();
-
 	const int decalAxis = idMath::ClampInt(0, 2, st->mDecalAxis);
-	idVec3 normal = axis[decalAxis];
+	const idVec3 origin = effect->GetCurrentOrigin();
+	const idMat3 effectAxis = effect->GetCurrentAxis();
+	idVec3 normal = effectAxis[decalAxis];
 	if (normal.LengthSqr() <= 1e-8f) {
 		return;
 	}
 	normal.NormalizeFast();
 
-	idVec3 baseRight;
-	idVec3 baseUp;
-	const int tangentAxis0 = (decalAxis + 1) % 3;
-	const int tangentAxis1 = (decalAxis + 2) % 3;
-	baseRight = axis[tangentAxis0];
-	baseRight -= normal * (baseRight * normal);
-	if (baseRight.LengthSqr() <= 1e-8f) {
-		normal.NormalVectors(baseRight, baseUp);
-	}
-	else {
-		baseRight.NormalizeFast();
-		baseUp = normal.Cross(baseRight);
-		baseUp.NormalizeFast();
+	idMat3 axis;
+	idMat3 tangent;
+	axis[2] = normal;
+	axis[2].NormalVectors(tangent[0], tangent[1]);
 
-		// Keep decal winding orientation aligned with the effect axis when possible.
-		if ((baseUp * axis[tangentAxis1]) < 0.0f) {
-			baseRight = -baseRight;
-			baseUp = -baseUp;
-		}
-	}
-
-	// Match world decal projector tangent orientation so BSE decals
-	// stay stable under arbitrary owner/effect matrix basis.
+	const float rotateRad = (idMath::Fabs(rotate.z) > BSE_TIME_EPSILON) ? rotate.z : rotate.x;
 	float s = 0.0f;
 	float c = 1.0f;
-	idMath::SinCos(rotateRad, s, c);
-	const idVec3 right = baseRight * c + baseUp * -s;
-	const idVec3 up = baseRight * -s + baseUp * -c;
+	idMath::SinCos16(rotateRad, s, c);
+	axis[0] = tangent[0] * c + tangent[1] * -s;
+	axis[1] = tangent[0] * -s + tangent[1] * -c;
 
-	const float halfWidth = sizeParms[0] * 0.5f;
-	const float halfHeight = sizeParms[1] * 0.5f;
-	const float depth = sizeParms[2];
+	const float halfWidth = Max(1.0f, idMath::Fabs(size.x) * 0.5f);
+	const float halfHeight = Max(1.0f, (idMath::Fabs(size.y) > BSE_TIME_EPSILON) ? idMath::Fabs(size.y) * 0.5f : halfWidth);
+	const float depth = Max(8.0f, idMath::Fabs(size.z));
 
 	const idVec3 windingOrigin = origin + normal * depth;
 	idFixedWinding winding;
 	winding.Clear();
-	winding += idVec5(windingOrigin + (right * decalWinding[0].x) * halfWidth + (up * decalWinding[0].y) * halfHeight, idVec2(1.0f, 1.0f));
-	winding += idVec5(windingOrigin + (right * decalWinding[1].x) * halfWidth + (up * decalWinding[1].y) * halfHeight, idVec2(0.0f, 1.0f));
-	winding += idVec5(windingOrigin + (right * decalWinding[2].x) * halfWidth + (up * decalWinding[2].y) * halfHeight, idVec2(0.0f, 0.0f));
-	winding += idVec5(windingOrigin + (right * decalWinding[3].x) * halfWidth + (up * decalWinding[3].y) * halfHeight, idVec2(1.0f, 0.0f));
+	winding += idVec5(windingOrigin + axis[0] * (decalWinding[0].x * halfWidth) + axis[1] * (decalWinding[0].y * halfHeight), idVec2(1.0f, 1.0f));
+	winding += idVec5(windingOrigin + axis[0] * (decalWinding[1].x * halfWidth) + axis[1] * (decalWinding[1].y * halfHeight), idVec2(0.0f, 1.0f));
+	winding += idVec5(windingOrigin + axis[0] * (decalWinding[2].x * halfWidth) + axis[1] * (decalWinding[2].y * halfHeight), idVec2(0.0f, 0.0f));
+	winding += idVec5(windingOrigin + axis[0] * (decalWinding[3].x * halfWidth) + axis[1] * (decalWinding[3].y * halfHeight), idVec2(1.0f, 0.0f));
 
 	const idVec3 projectionOrigin = origin - normal * depth;
 	const int startTimeMs = static_cast<int>(time * 1000.0f);
@@ -821,7 +796,7 @@ void rvSegment::CreateDecal(rvBSE* effect, float time) {
 		winding,
 		projectionOrigin,
 		true,
-		depth * 0.5f,
+		depth,
 		pt->GetMaterial(),
 		startTimeMs);
 }

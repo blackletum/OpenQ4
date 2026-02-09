@@ -185,6 +185,7 @@ bool idGameEdit::ParseSpawnArgsToRenderLight( const idDict *args, renderLight_t 
 // RAVEN END
 	args->GetBool( "nospecular", "0", renderLight->noSpecular );
 	args->GetBool( "parallel", "0", renderLight->parallel );
+	args->GetBool( "globalLight", "0", renderLight->globalLight );
 
 	args->GetString( "texture", "lights/squarelight1", &texture );
 	// allow this to be NULL

@@ -1691,6 +1691,7 @@ void idSessionLocal::LoadLoadingGui( const char *mapName ) {
 
 	const char *loadingLevelName = mapName;
 	const char *loadingObjectives = "";
+	const char *loadingAuthor = "";
 	const char *loadingBackground = "gfx/guis/loadscreens/generic";
 	const char *loadGuiOverride = "";
 	const char *spawnGameType = mapSpawnData.serverInfo.GetString( "si_gameType", cvarSystem->GetCVarString( "si_gameType" ) );
@@ -1703,6 +1704,7 @@ void idSessionLocal::LoadLoadingGui( const char *mapName ) {
 	if ( mapDef ) {
 		loadingLevelName = common->GetLanguageDict()->GetString( mapDef->dict.GetString( "name", mapName ) );
 		loadingObjectives = common->GetLanguageDict()->GetString( mapDef->dict.GetString( "objectives", "" ) );
+		loadingAuthor = common->GetLanguageDict()->GetString( mapDef->dict.GetString( "author", "" ) );
 
 		const char *loadImage = mapDef->dict.GetString( "loadimage", "" );
 		if ( loadImage[0] ) {
@@ -1734,6 +1736,8 @@ void idSessionLocal::LoadLoadingGui( const char *mapName ) {
 		guiLoading->SetStateString( "loading_bkgnd", loadingBackground );
 		guiLoading->SetStateString( "loading_levelname", loadingLevelName );
 		guiLoading->SetStateString( "loading_objectives", loadingObjectives );
+		guiLoading->SetStateString( "loading_author", loadingAuthor );
+		guiLoading->SetStateInt( "loading_author_visible", loadingAuthor[ 0 ] ? 1 : 0 );
 		guiLoading->SetStateString( "loading_message", "" );
 		guiLoading->SetStateString( "server_loadinfo", "" );
 		guiLoading->SetStateString( "server_name", "" );
@@ -2550,7 +2554,8 @@ idSessionLocal::ProcessEvent
 */
 bool idSessionLocal::ProcessEvent( const sysEvent_t *event ) {
 	// hitting escape anywhere brings up the menu
-	if ( !guiActive && event->evType == SE_KEY && event->evValue2 == 1 && event->evValue == K_ESCAPE ) {
+	if ( !guiActive && event->evType == SE_KEY && event->evValue2 == 1 &&
+		( event->evValue == K_ESCAPE || event->evValue == K_JOY8 ) ) {
 		console->Close();
 		if ( game ) {
 			idUserInterface	*gui = NULL;
