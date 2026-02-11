@@ -7796,7 +7796,7 @@ Get the handle of the effect with the given name
 */
 const idDecl *idGameLocal::GetEffect ( const idDict& args, const char* effectName, const rvDeclMatType* materialType ) {
 	const char *effectFile = NULL;
-	const idDecl* effectDecl = NULL;
+	const rvDeclEffect *resolvedEffect = NULL;
 
 	float chance = args.GetFloat ( idStr("effectchance ") + effectName, "1" );	
 	if ( random.RandomFloat ( ) > chance ) {
@@ -7825,75 +7825,35 @@ const idDecl *idGameLocal::GetEffect ( const idDict& args, const char* effectNam
 		if ( !result || !*result ) {
 			result = args.GetString( temp );
 		}
-		if ( result && *result) {
-			effectDecl = ( const idDecl * )declManager->FindEffect( result, false );
-			if ( effectDecl ) {
-				return effectDecl;
+		if ( result && *result ) {
+			resolvedEffect = declManager->FindEffect( result, false );
+			if ( resolvedEffect ) {
+				return ( const idDecl * )resolvedEffect;
 			}
 		}
 	}	
 
 	// grab the non material effect name
 	if ( isMultiplayer ) {
-		idStr alternateEffect = effectName;
-		alternateEffect += "_mp";
-	
-		idStr classname = args.GetString( "classname" );
-		if ( !alternateEffect.Icmp( "fx_fly_mp" ) ) {
-			if ( 
-				( !g_nailTrail.GetBool() && !classname.Icmpn( "projectile_nail", 15   ) ) ||
-				( !g_rocketTrail.GetBool() && !classname.Icmpn( "projectile_rocket", 17 ) ) || 
-				( !g_napalmTrail.GetBool() && !classname.Icmpn( "projectile_napalm", 17 ) ) ) 
-			{
-				alternateEffect += "_low";
-			} else if ( !g_grenadeTrail.GetBool() && !classname.Icmpn( "projectile_grenade", 18 ) ) 
-			{
-				return NULL;
-			}
-		} else if ( !alternateEffect.Icmp( "fx_path_mp" ) ) 
-		{
-			if ( !g_railTrail.GetBool() && !classname.Icmpn( "hitscan_railgun", 15 ) ) 
-			{
-				alternateEffect += "_low";
-			}
-		}
+		idStr	testMP = effectName;
+		testMP += "_mp";
 
-		effectFile = args.GetString( alternateEffect );
+		effectFile = args.GetString( testMP );
 		if ( effectFile && *effectFile ) {
-			effectDecl = ( const idDecl * )declManager->FindEffect( effectFile, false );
-			if ( effectDecl ) {
-				return effectDecl;
+			resolvedEffect = declManager->FindEffect( effectFile, false );
+			if ( resolvedEffect ) {
+				return ( const idDecl * )resolvedEffect;
 			}
 		}
 	}
 
 	effectFile = args.GetString( effectName );
-	const idStr classname = args.GetString( "classname" );
-	if ( effectFile && *effectFile ) {
-		effectDecl = ( const idDecl * )declManager->FindEffect( effectFile, false );
-		if ( effectDecl ) {
-			return effectDecl;
-		}
-	}
-
-	// Compatibility fallback: keep grenade launcher smoke trails available even
-	// when projectile defs omit fx_fly/fx_fly_mp or point at a missing decl.
-	if ( !classname.Icmpn( "projectile_grenade", 18 ) &&
-		 ( !idStr::Icmp( effectName, "fx_fly" ) || !idStr::Icmp( effectName, "fx_fly_mp" ) ) ) {
-		effectDecl = ( const idDecl * )declManager->FindEffect( "effects/weapons/grenadelauncher/trail_mp", false );
-		if ( !effectDecl ) {
-			effectDecl = ( const idDecl * )declManager->FindEffect( "effects/weapons/grenadelauncher/trail", false );
-		}
-		if ( effectDecl ) {
-			return effectDecl;
-		}
-	}
 
 	if ( !effectFile || !*effectFile ) {
 		return NULL;
 	}
 
-	return( ( const idDecl * )declManager->FindEffect( effectFile ) );
+	return ( const idDecl * )declManager->FindEffect( effectFile, false );
 }
 
 /*
@@ -8089,7 +8049,6 @@ idEntity* idGameLocal::HitScan(
 	fxOrigin	 = origFxOrigin;
 	dir			 = origDir;
 	tracerChance = ((g_perfTest_weaponNoFX.GetBool())?0:hitscanDict.GetFloat( "tracerchance", "0" ));
-	const rvDeclMatType* waterMaterialType = declManager->FindMaterialType( "water", false );
 
 	// Apply player powerups
 	if ( owner && owner->IsType( idPlayer::GetClassType() ) ) {
@@ -8197,12 +8156,10 @@ idEntity* idGameLocal::HitScan(
 
 				if ( !g_perfTest_weaponNoFX.GetBool() ) {
 					if ( ent->CanPlayImpactEffect( owner, ent ) ) {
-						const rvDeclMatType* impactMatType = tr.c.materialType ? tr.c.materialType : waterMaterialType;
-						const idDecl* impactEffect = GetEffect( hitscanDict, "fx_impact", impactMatType );
 						if ( ent->IsType( idMover::GetClassType( ) ) ) {
-							ent->PlayEffect( impactEffect, collisionPoint, tr.c.normal.ToMat3(), false, vec3_origin, false, EC_IMPACT, hitscanTint );
+							ent->PlayEffect( GetEffect( hitscanDict, "fx_impact", tr.c.materialType ), collisionPoint, tr.c.normal.ToMat3(), false, vec3_origin, false, EC_IMPACT, hitscanTint );
 						} else {
-							gameLocal.PlayEffect( impactEffect, collisionPoint, tr.c.normal.ToMat3(), false, vec3_origin, false, false, EC_IMPACT, hitscanTint );
+							gameLocal.PlayEffect( GetEffect( hitscanDict, "fx_impact", tr.c.materialType ), collisionPoint, tr.c.normal.ToMat3(), false, vec3_origin, false, false, EC_IMPACT, hitscanTint );
 						}
 					}
 				}
@@ -8337,11 +8294,10 @@ idEntity* idGameLocal::HitScan(
 			
 			if ( !g_perfTest_weaponNoFX.GetBool() ) {
 				if ( ent->CanPlayImpactEffect( owner, ent ) ) {
-					const idDecl* impactEffect = GetEffect( hitscanDict, "fx_impact", tr.c.materialType );
 					if ( ent->IsType( idMover::GetClassType( ) ) ) {
-						ent->PlayEffect( impactEffect, collisionPoint, axis, false, vec3_origin, false, EC_IMPACT, hitscanTint );					
+						ent->PlayEffect( GetEffect( hitscanDict, "fx_impact", tr.c.materialType ), collisionPoint, axis, false, vec3_origin, false, EC_IMPACT, hitscanTint );					
 					} else {
-						gameLocal.PlayEffect( impactEffect, collisionPoint, axis, false, vec3_origin, false, false, EC_IMPACT, hitscanTint );
+						gameLocal.PlayEffect( GetEffect( hitscanDict, "fx_impact", tr.c.materialType ), collisionPoint, axis, false, vec3_origin, false, false, EC_IMPACT, hitscanTint );
 					}
 				}
 			}

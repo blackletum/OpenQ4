@@ -92,8 +92,8 @@ ID_INLINE void AppendQuad(srfTriangles_t* tri, const idVec3& p0, const idVec3& p
 	const int indexBase = tri->numIndexes;
 	tri->indexes[indexBase + 0] = base + 0;
 	tri->indexes[indexBase + 1] = base + 1;
-	tri->indexes[indexBase + 2] = base + 3;
-	tri->indexes[indexBase + 3] = base + 1;
+	tri->indexes[indexBase + 2] = base + 2;
+	tri->indexes[indexBase + 3] = base + 0;
 	tri->indexes[indexBase + 4] = base + 2;
 	tri->indexes[indexBase + 5] = base + 3;
 	tri->numVerts += 4;
@@ -1133,7 +1133,7 @@ void rvParticle::RenderQuadTrail(const rvBSE* effect, srfTriangles_t* tri, idVec
 	tri->numVerts += 2;
 }
 
-void rvParticle::RenderMotion(rvBSE* effect, rvParticleTemplate* pt, srfTriangles_t* tri, const renderEffect_s* owner, float time, float trailScale) {
+void rvParticle::RenderMotion(rvBSE* effect, rvParticleTemplate* pt, srfTriangles_t* tri, const renderEffect_s* owner, float time) {
 	if (!effect || !pt || !tri || !owner) {
 		return;
 	}
@@ -1152,8 +1152,9 @@ void rvParticle::RenderMotion(rvBSE* effect, rvParticleTemplate* pt, srfTriangle
 	idVec4 color;
 	EvaluateTint(pt->mpTintEnvelope, pt->mpFadeEnvelope, evalTime, oneOverDuration, color);
 
-	float width = 1.0f;
-	EvaluateSize(pt->mpSizeEnvelope, evalTime, oneOverDuration, &width);
+	idVec3 size(1.0f, 1.0f, 1.0f);
+	EvaluateSize(pt->mpSizeEnvelope, evalTime, oneOverDuration, size.ToFloatPtr());
+	const float width = size.x;
 
 	idVec3 position;
 	EvaluatePosition(effect, pt, position, time);
@@ -1169,8 +1170,7 @@ void rvParticle::RenderMotion(rvBSE* effect, rvParticleTemplate* pt, srfTriangle
 	if (motionDir.LengthSqr() > 1e-6f) {
 		motionDir.NormalizeFast();
 	}
-	const float motionTrailScale = (trailScale > BSE_TIME_EPSILON) ? trailScale : 1.0f;
-	const idVec3 halfWidth = motionDir * (idMath::Fabs(width) * 0.5f * motionTrailScale);
+	const idVec3 halfWidth = motionDir * (width * 0.5f);
 
 	for (int segment = 0; segment < mTrailCount; ++segment) {
 		const float t = static_cast<float>(segment) / static_cast<float>(mTrailCount);
@@ -1289,20 +1289,24 @@ bool rvSpriteParticle::Render(const rvBSE* effect, rvParticleTemplate* pt, const
 
 	float s, c;
 	idMath::SinCos(rotation, s, c);
-	idVec3 up = view[1] * c + view[2] * s;
-	idVec3 right = view[1] * -s + view[2] * c;
-
-	const idVec3 halfRight = right * (idMath::Fabs(size[0]) * 0.5f);
-	const idVec3 halfUp = up * (idMath::Fabs(size[1]) * 0.5f);
+	idVec3 left = view[1] * c - view[2] * s;
+	idVec3 up = view[1] * s + view[2] * c;
+	left *= idMath::Fabs(size[0]);
+	up *= idMath::Fabs(size[1]);
 
 	dword rgba = HandleTint(effect, color, 1.0f);
+	const int baseVert = tri->numVerts;
 	AppendQuad(
 		tri,
-		pos - halfRight - halfUp,
-		pos + halfRight - halfUp,
-		pos + halfRight + halfUp,
-		pos - halfRight + halfUp,
+		pos - left,
+		pos - up,
+		pos + left,
+		pos + up,
 		rgba);
+	tri->verts[baseVert + 0].normal = pos;
+	tri->verts[baseVert + 1].normal = pos;
+	tri->verts[baseVert + 2].normal = pos;
+	tri->verts[baseVert + 3].normal = pos;
 	return true;
 }
 

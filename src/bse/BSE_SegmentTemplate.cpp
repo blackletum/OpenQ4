@@ -491,7 +491,8 @@ bool rvSegmentTemplate::Parse(rvDeclEffect* effect, int segmentType, idParser* l
 			}
 			else if (token == "inverseAttenuateEmitter")
 			{
-				mFlags |= STFLAG_INVERSE_ATTENUATE;
+				// Stock parser behavior enables attenuation when inverse attenuation is requested.
+				mFlags |= STFLAG_ATTENUATE_EMITTER | STFLAG_INVERSE_ATTENUATE;
 			}
 			else if (token == "attenuateEmitter")
 			{

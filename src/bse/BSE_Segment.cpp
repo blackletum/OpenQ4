@@ -803,6 +803,22 @@ void rvSegment::CreateDecal(rvBSE* effect, float time) {
 
 	const idVec3 projectionOrigin = origin - normal * depth;
 	const int startTimeMs = static_cast<int>(time * 1000.0f);
+	if ( bse_debug.GetInteger() > 0 ) {
+		static int decalTraceCount = 0;
+		if ( decalTraceCount < 64 ) {
+			const char *effectName = effect->GetDeclName();
+			const char *materialName = pt->GetMaterial() ? pt->GetMaterial()->GetName() : "<null>";
+			common->Printf(
+				"BSE decal %d: effect='%s' segment=%d material='%s' size=(%.1f %.1f %.1f) depth=%.1f\n",
+				decalTraceCount,
+				effectName ? effectName : "<null>",
+				mSegmentTemplateHandle,
+				materialName,
+				size.x, size.y, size.z,
+				depth );
+			++decalTraceCount;
+		}
+	}
 	renderWorld->ProjectDecalOntoWorld(
 		winding,
 		projectionOrigin,

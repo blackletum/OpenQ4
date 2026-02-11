@@ -526,22 +526,62 @@ CopyFramebuffer
 ====================
 */
 void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight ) {
-
-
 	glBindTexture( ( opts.textureType == TT_CUBIC ) ? GL_TEXTURE_CUBE_MAP_EXT : GL_TEXTURE_2D, texnum );
 
-	glReadBuffer( GL_BACK );
+	const bool readingFromRenderTexture = ( backEnd.renderTexture != NULL ) && ( backEnd.renderTexture->GetNumColorImages() > 0 );
+	const bool readingMSAAColor = readingFromRenderTexture &&
+		( backEnd.renderTexture->GetColorImage( 0 )->GetOpts().numMSAASamples > 0 );
 
 	opts.width = imageWidth;
 	opts.height = imageHeight;
-	glCopyTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA8, x, y, imageWidth, imageHeight, 0 );
 
-	// these shouldn't be necessary if the image was initialized properly
-	glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
-	glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+	if ( readingMSAAColor && ( GLEW_EXT_framebuffer_blit || GLEW_VERSION_3_0 ) ) {
+		GLint previousReadFbo = 0;
+		GLint previousDrawFbo = 0;
+		GLint previousReadBuffer = GL_BACK;
+		GLint previousDrawBuffer = GL_BACK;
 
-	glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
-	glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+		glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &previousReadFbo );
+		glGetIntegerv( GL_DRAW_FRAMEBUFFER_BINDING, &previousDrawFbo );
+		glGetIntegerv( GL_READ_BUFFER, &previousReadBuffer );
+		glGetIntegerv( GL_DRAW_BUFFER, &previousDrawBuffer );
+
+		static GLuint copyFbo = 0;
+		if ( copyFbo == 0 ) {
+			glGenFramebuffers( 1, &copyFbo );
+		}
+
+		glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA8, imageWidth, imageHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL );
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+
+		glBindFramebuffer( GL_READ_FRAMEBUFFER, backEnd.renderTexture->GetDeviceHandle() );
+		glReadBuffer( GL_COLOR_ATTACHMENT0 );
+
+		glBindFramebuffer( GL_DRAW_FRAMEBUFFER, copyFbo );
+		glFramebufferTexture2D( GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texnum, 0 );
+		glDrawBuffer( GL_COLOR_ATTACHMENT0 );
+
+		glBlitFramebuffer( x, y, x + imageWidth, y + imageHeight, 0, 0, imageWidth, imageHeight, GL_COLOR_BUFFER_BIT, GL_NEAREST );
+
+		glFramebufferTexture2D( GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0 );
+
+		glBindFramebuffer( GL_READ_FRAMEBUFFER, previousReadFbo );
+		glBindFramebuffer( GL_DRAW_FRAMEBUFFER, previousDrawFbo );
+		glReadBuffer( previousReadBuffer );
+		glDrawBuffer( previousDrawBuffer );
+	} else {
+		glReadBuffer( readingFromRenderTexture ? GL_COLOR_ATTACHMENT0 : GL_BACK );
+		glCopyTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA8, x, y, imageWidth, imageHeight, 0 );
+
+		// these shouldn't be necessary if the image was initialized properly
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+	}
 
 //	backEnd.pc.c_copyFrameBuffer++;
 }

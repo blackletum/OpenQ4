@@ -464,7 +464,7 @@ void rvSegment::RenderMotion(rvBSE* effect, const renderEffect_s* owner, idRende
 	}
 
 	for (rvParticle* p = mUsedHead; p; p = p->GetNext()) {
-		p->RenderMotion(effect, pt, tri, owner, time, pt->GetTrailScale());
+		p->RenderMotion(effect, pt, tri, owner, time);
 	}
 
 	R_BoundTriSurf(tri);

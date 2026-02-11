@@ -43,6 +43,9 @@ This file describes project goals, rules, and upstream credits for anyone workin
 - Avoid adding engine-side content files (e.g., custom material scripts) unless absolutely required for compatibility; the goal is to run with the original game assets and only OpenQ4 binaries (engine + game modules, plus minimal external libs).
 - Any existing custom `q4base/` content is treated as an expedient bootstrap, not a long-term solution. The goal is to remove this reliance by fixing engine compatibility issues rather than shipping replacement assets.
 - For investigations, reference the log file written by `logFileName` (VS Code launch uses `logs/openq4.log`), located under `fs_savepath\<gameDir>\` (e.g. `%LOCALAPPDATA%\OpenQ4\openbase\logs\openq4.log`).
+- For runtime validation, use mode-specific launch tasks: use the SP launch task for single-player testing and the MP launch task for multiplayer testing.
+- Do not treat main-menu startup as sufficient validation; enter in-game/map gameplay relevant to the change before concluding tests.
+- Use 'tmp/` dir in repository for any temporary files required for tasks.
 
 **install/ Folder Layout (Staging Target)**
 - `install/` is the runtime package root used by local staging and `fs_devpath` overlays.
@@ -58,7 +61,7 @@ This file describes project goals, rules, and upstream credits for anyone workin
 5. Re-run Procedure 1 after each fix to verify clean initialization without custom content.
 
 **Procedure 1 (Debug Loop)**
-1. Launch the game via the default launch task.
+1. Launch using the correct mode-specific task (`SP` launch task for single-player, `MP` launch task for multiplayer).
 2. Close the game after 3 seconds.
 3. Read `fs_savepath\<gameDir>\logs\openq4.log` (commonly `%LOCALAPPDATA%\OpenQ4\openbase\logs\openq4.log`).
 4. Identify errors and warnings to resolve.

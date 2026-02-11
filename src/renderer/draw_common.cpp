@@ -904,19 +904,21 @@ void RB_SetProgramEnvironment( void ) {
 	pot = globalImages->currentRenderImage->GetOpts().height;
 	parm[1] = (float)h / pot;
 
-	parm[2] = renderSystem->GetScreenWidth();
-	parm[3] = renderSystem->GetScreenHeight();
+	parm[2] = 0.0f;
+	parm[3] = 1.0f;
 	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, 0, parm );
 #endif
 
-	glProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, parm );
+	if ( glConfig.ARBFragmentProgramAvailable ) {
+		glProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, parm );
 
-	// window coord to 0.0 to 1.0 conversion
-	parm[0] = 1.0 / w;
-	parm[1] = 1.0 / h;
-	parm[2] = 0;
-	parm[3] = 1;
-	glProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, parm );
+		// window coord to 0.0 to 1.0 conversion
+		parm[0] = 1.0f / w;
+		parm[1] = 1.0f / h;
+		parm[2] = 0.0f;
+		parm[3] = 1.0f;
+		glProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, parm );
+	}
 
 	//
 	// set eye position in global space

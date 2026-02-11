@@ -891,23 +891,29 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 							maxclients = 4;
 							break;
 						case 4:
-							// 512 and above..
-							cvarSystem->SetCVarInteger( "net_serverMaxClientRate", 14000 );
-							maxclients = 4;
+							// highest internet preset: treat as modern high-bandwidth connection
+							cvarSystem->SetCVarInteger( "net_serverMaxClientRate", 25600 );
+							maxclients = 16;
+							break;
+						default:
+							// unknown preset: fall back to modern defaults
+							cvarSystem->SetCVarInteger( "net_serverMaxClientRate", 16000 );
+							maxclients = 16;
 							break;
 					}
 					if ( n_clients > maxclients ) {
-						if ( MessageBox( MSG_OKCANCEL, va( common->GetLanguageDict()->GetString( "#str_04315" ), dedicated ? maxclients : Min( 8, maxclients + 1 ) ), common->GetLanguageDict()->GetString( "#str_04316" ), true, "OK" )[ 0 ] == '\0' ) {
+						const int adjustedMaxClients = dedicated ? maxclients : Min( 16, maxclients + 1 );
+						if ( MessageBox( MSG_OKCANCEL, va( common->GetLanguageDict()->GetString( "#str_04315" ), adjustedMaxClients ), common->GetLanguageDict()->GetString( "#str_04316" ), true, "OK" )[ 0 ] == '\0' ) {
 							continue;
 						}
-						cvarSystem->SetCVarInteger( "si_maxPlayers", dedicated ? maxclients : Min( 8, maxclients + 1 ) );
+						cvarSystem->SetCVarInteger( "si_maxPlayers", adjustedMaxClients );
 					}
 				}
 			}
 
 			if ( !dedicated && !cvarSystem->GetCVarBool( "net_LANServer" ) && cvarSystem->GetCVarInteger("si_maxPlayers") > 4 ) {
 				// "Dedicated server mode is recommended for internet servers with more than 4 players. Continue in listen mode?"
-				if ( !MessageBox( MSG_YESNO, common->GetLanguageDict()->GetString ( "#str_100625" ), common->GetLanguageDict()->GetString ( "#str_100626" ), true, "yes" )[ 0 ] ) {
+				if ( !MessageBox( MSG_YESNO, va( common->GetLanguageDict()->GetString( "#str_100625" ), 4 ), common->GetLanguageDict()->GetString ( "#str_100626" ), true, "yes" )[ 0 ] ) {
 					continue;
 				}
 			}

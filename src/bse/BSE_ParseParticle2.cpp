@@ -1744,7 +1744,13 @@ void rvParticleTemplate::InitStatic()
 		rvParticleTemplate::sTrailInfo.mStatic = 1;
 		rvParticleTemplate::sTrailInfo.mPad = 0;
 		rvParticleTemplate::sTrailInfo.mTrailTypeName = "";
-		rvParticleTemplate::sTrailInfo.mTrailMaterial = declManager->FindMaterial("_default");
+		// Match stock Q4 behavior: motion trails default to the motionblur
+		// material when trailMaterial isn't authored.
+		const idMaterial* defaultTrailMaterial = declManager->FindMaterial("gfx/effects/particles_shapes/motionblur", false);
+		if (defaultTrailMaterial == NULL) {
+			defaultTrailMaterial = declManager->FindMaterial("_default");
+		}
+		rvParticleTemplate::sTrailInfo.mTrailMaterial = defaultTrailMaterial;
 		rvParticleTemplate::sTrailInfo.mTrailTime.x = 0.0f;
 		rvParticleTemplate::sTrailInfo.mTrailTime.y = 0.0f;
 		rvParticleTemplate::sTrailInfo.mTrailCount.x = 0.0f;

@@ -85,7 +85,10 @@ idCVar r_useSmp( "r_useSmp", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use
 idCVar r_useStateCaching( "r_useStateCaching", "1", CVAR_RENDERER | CVAR_BOOL, "avoid redundant state changes in GL_*() calls" );
 idCVar r_useInfiniteFarZ( "r_useInfiniteFarZ", "1", CVAR_RENDERER | CVAR_BOOL, "use the no-far-clip-plane trick" );
 
-idCVar r_znear( "r_znear", "0.5", CVAR_RENDERER | CVAR_FLOAT, "near Z clip plane distance", 0.001f, 200.0f );
+// Quake 4 gameplay code assumes 3.0f as the normal baseline outside cinematics.
+// Keeping the default too low significantly reduces distant depth precision and
+// causes polygon-offset surfaces (decals/overlays) to z-fight at range.
+idCVar r_znear( "r_znear", "3.0", CVAR_RENDERER | CVAR_FLOAT, "near Z clip plane distance", 0.001f, 200.0f );
 idCVar cl_gunfov( "cl_gunfov", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT | CVAR_NOCHEAT, "first-person weapon FOV override (0 = follow current view FOV)", 0.0f, 179.0f );
 idCVar cl_gunfov_adjust( "cl_gunfov_adjust", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_NOCHEAT, "when cl_gunfov is set, keep weapon FOV aspect-correct across screen ratios" );
 

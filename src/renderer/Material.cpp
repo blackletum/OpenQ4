@@ -658,9 +658,10 @@ int idMaterial::ParseTerm( idLexer &src ) {
 		return GetExpressionConstant( (float) glConfig.ARBFragmentProgramAvailable );
 	}
 	if ( !token.Icmp( "glslPrograms" ) ) {
-		// Quake 4 content expects fixed-function/ARB fallback stages by default.
-		// Returning 0 keeps stock material branch selection until GLSL parity is complete.
-		return GetExpressionConstant( 0.0f );
+		// Quake 4 materials gate GLSL-specific stages through this expression.
+		// Use actual runtime capability so decal materials can pick the authored
+		// GLSL branch when available and fall back otherwise.
+		return GetExpressionConstant( glConfig.GLSLProgramAvailable ? 1.0f : 0.0f );
 	}
 	if ( !token.Icmp( "POTCorrectionX" ) ) {
 		const int width = Max( 1, glConfig.vidWidth );

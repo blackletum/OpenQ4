@@ -179,7 +179,7 @@
 	"#str_200176"	"RECOMMENDED QUALITY SELECTED"
 	"#str_200177"	"Please wait..."
 	"#str_200178"	"Abort"
-	"#str_200179"	"128 kbits;256 kbits;384 kbits;512 kbits;768 kbits;LAN"
+	"#str_200179"	"Manual;Low Upload;Balanced Upload;High Upload;Fiber/Modern;LAN"
 	"#str_200180"	"your ip address:"
 	"#str_200181"	""
 	"#str_200182"	"FIND PLAYER/CLAN"

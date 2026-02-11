@@ -205,7 +205,7 @@ public:
 	virtual		bool			Render( const rvBSE *effect, rvParticleTemplate *pt, const idMat3 &view, srfTriangles_t *tri, float time, float override = 1.0f ) { return( false ); }
 				void			DoRenderBurnTrail( rvBSE *effect, rvParticleTemplate *st, const idMat3 &view, srfTriangles_t *tri, float time );
 	virtual		void			RenderBurnTrail( rvBSE *effect, rvParticleTemplate *pt, const idMat3 &view, srfTriangles_t *tri, float time ) {}
-	virtual		void			RenderMotion( rvBSE *effect, rvParticleTemplate *pt, srfTriangles_t *tri, const struct renderEffect_s *owner, float time, float trailScale );
+	virtual		void			RenderMotion( rvBSE *effect, rvParticleTemplate *pt, srfTriangles_t *tri, const struct renderEffect_s *owner, float time );
 	virtual		bool			InitLight( rvBSE *effect, rvSegmentTemplate *st, float time ) { return( false ); }
 	virtual		bool			PresentLight( rvBSE *effect, rvParticleTemplate *pt, float time, bool infinite ) { return( false ); }
 	virtual		bool			Destroy( void ) { return( false ); }
