@@ -21,22 +21,22 @@
 
 ---
 
-## 🎮 About
+## About
 
 OpenQ4 is a complete open-source replacement for the Quake 4 engine and game code. Built on the foundation of [Quake4Doom](https://github.com/idSoftware/Quake4Doom), this project aims to modernize and preserve one of the classic id Tech 4 games for current and future generations of gamers.
 
 **What makes OpenQ4 special?**
-- ✅ Works with your existing Quake 4 game files (no redistribution needed)
-- ✅ Complete single-player and multiplayer support
-- ✅ Modern rendering, audio, and platform improvements
-- ✅ Cross-platform support (Windows, Linux, macOS)
-- ✅ Open source under GPLv3
-- ✅ Active development and community-driven improvements
+- Works with your existing Quake 4 game files (no redistribution needed)
+- Complete single-player and multiplayer support
+- Modern rendering, audio, and platform improvements
+- Cross-platform support (Windows, Linux, macOS)
+- Open source under GPLv3
+- Active development and community-driven improvements
 
 ### What You Need
 
 To play OpenQ4, you need:
-- A legitimate copy of Quake 4 (Steam or GOG version recommended)
+- A legitimate copy of [Quake 4](https://store.steampowered.com/app/2210/) ([Steam](https://store.steampowered.com/app/2210/) or [GOG](https://www.gog.com/game/quake_iv) version recommended)
 - The OpenQ4 engine (from this repository)
 - A modern 64-bit operating system
 
@@ -44,7 +44,7 @@ To play OpenQ4, you need:
 
 ---
 
-## ✨ Features
+## Features
 
 ### Core Features
 - **Full Game Support**: Complete single-player campaign and multiplayer modes
@@ -57,23 +57,23 @@ To play OpenQ4, you need:
 - **Controller Support**: Full gamepad/joystick support with hotplug and analog controls
 - **Multi-Monitor**: Configure display output across multiple monitors
 - **Display Modes**: Fullscreen, borderless windowed, and desktop-native modes
-- **Audio**: Support for WAV and Ogg Vorbis formats with OpenAL Soft
+- **Audio**: Support for WAV and Ogg Vorbis formats with [OpenAL Soft](https://openal-soft.org/)
 - **Dynamic UI**: Responsive interface that adapts to any aspect ratio
 
 ### Technical Improvements
 - **C++23**: Modern C++ standards for better performance and maintainability
 - **Meson Build System**: Fast, reliable builds with dependency management
 - **Crash Diagnostics**: Automatic crash dumps and logs for debugging
-- **OpenGL Rendering**: Enhanced rendering with GLEW 2.3.1
+- **OpenGL Rendering**: Enhanced rendering with [GLEW](http://glew.sourceforge.net/) 2.3.1
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
-- **Quake 4** installed (Steam or GOG)
+- **Quake 4** installed ([Steam](https://store.steampowered.com/app/2210/) or [GOG](https://www.gog.com/game/quake_iv))
 - **Windows**: Visual Studio 2026+ (or MSVC 19.46+)
-- **Build Tools**: Meson and Ninja
+- **Build Tools**: [Meson](https://mesonbuild.com/) and [Ninja](https://ninja-build.org/)
 
 ### Installation
 
@@ -104,7 +104,7 @@ The engine will automatically find your Quake 4 installation and validate the ga
 
 ---
 
-## 🔧 Building from Source
+## Building from Source
 
 <details>
 <summary><b>Detailed Build Instructions</b></summary>
@@ -160,7 +160,7 @@ meson compile -C builddir
 
 ---
 
-## 📋 Game Directory Structure
+## Game Directory Structure
 
 OpenQ4 uses a unified game directory approach:
 
@@ -181,34 +181,62 @@ No need for separate mod folders or manual switching!
 
 ---
 
-## 🎯 Project Goals
+## SDK and Game Library
+
+The game code in OpenQ4 is derived from the [Quake 4 SDK](https://www.moddb.com/games/quake-4/downloads/quake-4-sdk-v15), which is distributed under id Software's End User License Agreement. The SDK source code is maintained in the companion [OpenQ4-GameLibs](https://github.com/themuffinator/OpenQ4-GameLibs) repository.
+
+### SDK EULA Summary
+
+The Quake 4 SDK is provided under id Software's EULA, which permits:
+- Modification of the SDK code for use with Quake 4
+- Creation of custom game modifications
+- Non-commercial distribution of modifications
+
+**Important Restrictions:**
+- SDK code cannot be used for commercial purposes without id Software permission
+- SDK code cannot be used to create standalone games
+- Modified code must be used only with a legitimate copy of Quake 4
+- Original id Software and Raven Software copyrights must be preserved
+
+For complete terms, refer to the EULA distributed with the [official Quake 4 SDK](https://www.moddb.com/games/quake-4/downloads/quake-4-sdk-v15).
+
+### Game Library Repository
+
+The [OpenQ4-GameLibs](https://github.com/themuffinator/OpenQ4-GameLibs) repository contains:
+- SDK-derived game code for single-player and multiplayer
+- Synchronized automatically during OpenQ4 builds
+- Maintained separately to clearly identify SDK-licensed components
+
+---
+
+## Project Goals
 
 ### Primary Objectives
-- ✅ Complete code replacement for Quake 4 (engine + game code)
-- ✅ Support genuine Quake 4 assets without redistribution
-- ✅ Feature parity for single-player and multiplayer
-- ✅ Modernize rendering, audio, and platform support
-- ✅ Full support for Windows, Linux, and macOS (x64 baseline)
+- Complete code replacement for Quake 4 (engine + game code)
+- Support genuine Quake 4 assets without redistribution
+- Feature parity for single-player and multiplayer
+- Modernize rendering, audio, and platform support
+- Full support for Windows, Linux, and macOS (x64 baseline)
 
 ### Non-Goals
-- ❌ Binary compatibility with proprietary Quake 4 DLLs
-- ❌ Support for third-party mods built against original SDK
+- Binary compatibility with proprietary Quake 4 DLLs
+- Support for third-party mods built against original SDK
 
 OpenQ4 maintains complete freedom to evolve independently while preserving compatibility with official Quake 4 content.
 
 ---
 
-## 📚 Documentation
+## Documentation
 
-- **[Platform Support](doc/platform-support.md)** - Cross-platform roadmap and status
-- **[Display Settings](user-docs/display-settings.md)** - Multi-monitor and display configuration
-- **[Input Key Matrix](doc/input-key-matrix.md)** - Keyboard and controller input reference
-- **[Official PK4 Checksums](doc/official-pk4-checksums.md)** - Asset validation reference
-- **[Release Completion](doc/release-completion.md)** - Release checklist and changelog
+- [Platform Support](doc/platform-support.md) - Cross-platform roadmap and status
+- [Display Settings](user-docs/display-settings.md) - Multi-monitor and display configuration
+- [Input Key Matrix](doc/input-key-matrix.md) - Keyboard and controller input reference
+- [Official PK4 Checksums](doc/official-pk4-checksums.md) - Asset validation reference
+- [Release Completion](doc/release-completion.md) - Release checklist and changelog
 
 ---
 
-## 🔒 Asset Validation
+## Asset Validation
 
 OpenQ4 automatically validates your Quake 4 installation to ensure you have legitimate, unmodified game files. This protects the multiplayer experience and ensures compatibility.
 
@@ -224,7 +252,7 @@ OpenQ4 automatically validates your Quake 4 installation to ensure you have legi
 
 ---
 
-## 🛠️ Advanced Configuration
+## Advanced Configuration
 
 <details>
 <summary><b>Display and Graphics Settings</b></summary>
@@ -287,22 +315,22 @@ OpenQ4 automatically validates your Quake 4 installation to ensure you have legi
 
 ---
 
-## 🧰 Dependencies
+## Dependencies
 
 OpenQ4 manages dependencies through Meson subprojects:
 
 | Library | Version | Purpose |
 |---------|---------|---------|
-| **SDL3** | 3.4.0 | Cross-platform window/input/display |
-| **GLEW** | 2.3.1 | OpenGL extension wrangler |
-| **OpenAL Soft** | 1.25.1 | 3D audio rendering |
-| **stb_vorbis** | 1.22 | Ogg Vorbis audio decoding |
+| [SDL3](https://www.libsdl.org/) | 3.4.0 | Cross-platform window/input/display |
+| [GLEW](http://glew.sourceforge.net/) | 2.3.1 | OpenGL extension wrangler |
+| [OpenAL Soft](https://openal-soft.org/) | 1.25.1 | 3D audio rendering |
+| [stb_vorbis](https://github.com/nothings/stb) | 1.22 | Ogg Vorbis audio decoding |
 
 All dependencies are automatically handled during the build process - no manual setup required!
 
 ---
 
-## 🐛 Debugging and Development
+## Debugging and Development
 
 ### Crash Diagnostics
 Debug builds (`buildtype=debug`) include automatic crash handling:
@@ -311,10 +339,10 @@ Debug builds (`buildtype=debug`) include automatic crash handling:
 - Timestamps included for easy identification
 
 ### Companion Repository
-The game library source code is maintained separately:
-- Repository: `OpenQ4-GameLibs` (expected at `../OpenQ4-GameLibs`)
-- Sync: Automatic sync via `tools/build/meson_setup.ps1`
-- Build: Optional game library builds with `OPENQ4_BUILD_GAMELIBS=1`
+The game library source code is maintained separately in [OpenQ4-GameLibs](https://github.com/themuffinator/OpenQ4-GameLibs):
+- Expected location: `../OpenQ4-GameLibs`
+- Automatic sync via `tools/build/meson_setup.ps1`
+- Optional game library builds with `OPENQ4_BUILD_GAMELIBS=1`
 
 ### Build Automation
 - Missing or stale build directories are auto-regenerated
@@ -324,7 +352,7 @@ The game library source code is maintained separately:
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 OpenQ4 is an open-source project and welcomes contributions! Whether you're fixing bugs, adding features, or improving documentation, your help is appreciated.
 
@@ -344,37 +372,37 @@ OpenQ4 is an open-source project and welcomes contributions! Whether you're fixi
 
 ---
 
-## 📜 License
+## License
 
-OpenQ4 is licensed under the **GNU General Public License v3.0** (GPLv3).
+OpenQ4 is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0) (GPLv3).
 
 This means you are free to:
-- ✅ Use the software for any purpose
-- ✅ Modify the source code
-- ✅ Distribute copies
-- ✅ Distribute modified versions
+- Use the software for any purpose
+- Modify the source code
+- Distribute copies
+- Distribute modified versions
 
 See the [LICENSE](LICENSE) file for full details.
 
-> **Note:** The GPLv3 license applies to OpenQ4's code only. Quake 4 game assets remain the property of id Software and ZeniMax Media.
+> **Note:** The GPLv3 license applies to OpenQ4's engine code only. The game library code in [OpenQ4-GameLibs](https://github.com/themuffinator/OpenQ4-GameLibs) is derived from the Quake 4 SDK and subject to id Software's EULA. Quake 4 game assets remain the property of id Software and ZeniMax Media.
 
 ---
 
-## 🙏 Credits
+## Credits
 
 OpenQ4 builds upon the work of many talented developers and projects:
 
 ### Core Contributors
 - **themuffinator** - OpenQ4 development and maintenance
-- **Justin Marshall** - Quake4Doom, BSE reverse engineering
-- **Robert Backebans** - RBDOOM3 modernization work
+- **Justin Marshall** - [Quake4Doom](https://github.com/idSoftware/Quake4Doom), BSE reverse engineering
+- **Robert Backebans** - [RBDOOM3](https://github.com/RobertBeckebans/RBDOOM-3-BFG) modernization work
 
 ### Original Developers
 - **id Software** - idTech 4 engine and Quake 4
 - **Raven Software** - Quake 4 game development
 
 ### Third-Party Libraries
-- **Sean Barrett** - stb_vorbis audio codec
+- **Sean Barrett** - [stb_vorbis](https://github.com/nothings/stb) audio codec
 - **GLEW Team** - Nigel Stewart, Milan Ikits, Marcelo E. Magallon, Lev Povalahev
 - **OpenAL Soft Contributors** - 3D audio implementation
 - **SDL Team** - Cross-platform framework
@@ -385,16 +413,18 @@ OpenQ4 builds upon the work of many talented developers and projects:
 
 ---
 
-## 🔗 Links
+## Links
 
 - **Website:** [darkmatter-quake.com](https://www.darkmatter-quake.com)
 - **Repository:** [github.com/themuffinator/OpenQ4](https://github.com/themuffinator/OpenQ4)
 - **Game Library:** [github.com/themuffinator/OpenQ4-GameLibs](https://github.com/themuffinator/OpenQ4-GameLibs)
 - **Issue Tracker:** [github.com/themuffinator/OpenQ4/issues](https://github.com/themuffinator/OpenQ4/issues)
+- **Quake 4 on Steam:** [store.steampowered.com/app/2210](https://store.steampowered.com/app/2210/)
+- **Quake 4 on GOG:** [gog.com/game/quake_iv](https://www.gog.com/game/quake_iv)
 
 ---
 
-## ⚠️ Disclaimer
+## Disclaimer
 
 OpenQ4 is an independent project and is not affiliated with, endorsed by, or sponsored by id Software, Raven Software, Bethesda, or ZeniMax Media. Quake 4 is a trademark of ZeniMax Media Inc.
 
@@ -404,22 +434,22 @@ You must own a legitimate copy of Quake 4 to use this software. OpenQ4 does not 
 
 <div align="center">
 
-**Made with ❤️ by the OpenQ4 community**
+**Made with care by the OpenQ4 community**
 
 ---
 
-### ⚠️ Use At Your Own Risk
+### Use At Your Own Risk
 
 **THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.**
 
 OpenQ4 is experimental software under active development. Use at your own risk. The developers and contributors are not responsible for any damage, data loss, or issues that may arise from using this software.
 
-**Copyright © 2024-2026 The OpenQ4 Project**
+**Copyright © 2026 The OpenQ4 Project**
 
 All rights reserved. Licensed under GPLv3. See [LICENSE](LICENSE) for details.
 
 ---
 
-[⬆ Back to Top](#openq4)
+[Back to Top](#openq4)
 
 </div>
