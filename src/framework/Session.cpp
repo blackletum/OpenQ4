@@ -49,6 +49,11 @@ idCVar	idSessionLocal::com_aviDemoTics( "com_aviDemoTics", "2", CVAR_SYSTEM | CV
 idCVar	idSessionLocal::com_wipeSeconds( "com_wipeSeconds", "1", CVAR_SYSTEM, "" );
 idCVar	idSessionLocal::com_guid( "com_guid", "", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_ROM, "" );
 idCVar	com_skipLoadingContinue( "com_skipLoadingContinue", "0", CVAR_SYSTEM | CVAR_BOOL, "skip the single-player loading-screen continue gate (testing)" );
+idCVar	s_muteUnfocused( "s_muteUnfocused", "1", CVAR_ARCHIVE | CVAR_BOOL, "mute all audio when the application is out of focus" );
+
+#if defined( _WIN32 )
+bool Sys_IsGameWindowFocused( void );
+#endif
 
 idSessionLocal		sessLocal;
 idSession			*session = &sessLocal;
@@ -241,6 +246,14 @@ static bool Session_IsLoadingContinueKey( int key ) {
 		return true;
 	}
 	return false;
+}
+
+static bool Session_ShouldSilenceAudioWhenUnfocused() {
+#if defined( _WIN32 )
+	return s_muteUnfocused.GetBool() && !Sys_IsGameWindowFocused();
+#else
+	return false;
+#endif
 }
 
 void RandomizeStack( void ) {
@@ -627,7 +640,7 @@ void idSessionLocal::Shutdown() {
 
 	// Sound worlds must be released through soundSystem so the internal
 	// soundWorlds registry is updated before soundSystem shutdown walks it.
-	soundSystem->SetPlayingSoundWorld( NULL );
+	SetPlayingSoundWorld( NULL );
 
 	if ( sw ) {
 		soundSystem->FreeSoundWorld( sw );
@@ -1071,7 +1084,7 @@ void idSessionLocal::StopPlayingRenderDemo() {
 	readDemo->Close();
 
 	sw->StopAllSounds();
-	soundSystem->SetPlayingSoundWorld( menuSoundWorld );
+	SetPlayingSoundWorld( menuSoundWorld );
 
 	common->Printf( "stopped playing %s.\n", readDemo->GetName() );
 	delete readDemo;
@@ -1856,7 +1869,7 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 
 	if ( !noFadeWipe ) {
 		// capture the current screen and start a wipe
-		StartWipe( "wipeMaterial", true );
+		StartWipe( "gfx/wipes/fade", true );
 
 		// immediately complete the wipe to fade out the level transition
 		// run the wipe to completion
@@ -2065,7 +2078,7 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 	}
 
 	// capture the current screen and start a wipe
-	StartWipe( "wipe2Material" );
+	StartWipe( "gfx/wipes/fade_blend" );
 
 	usercmdGen->Clear();
 
@@ -2086,7 +2099,7 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 	Sys_SetPhysicalWorkMemory( -1, -1 );
 
 	// set the game sound world for playback
-	soundSystem->SetPlayingSoundWorld( sw );
+	SetPlayingSoundWorld( sw );
 
 	// when loading a save game the sound is paused
 	if ( sw->IsPaused() ) {
@@ -2300,7 +2313,7 @@ bool idSessionLocal::SaveGame( const char *saveName, bool autosave ) {
 	idSoundWorld *pauseWorld = soundSystem->GetPlayingSoundWorld();
 	if ( pauseWorld ) {
 		pauseWorld->Pause();
-		soundSystem->SetPlayingSoundWorld( NULL );
+		SetPlayingSoundWorld( NULL );
 	}
 
 	// setup up filenames and paths
@@ -2321,7 +2334,7 @@ bool idSessionLocal::SaveGame( const char *saveName, bool autosave ) {
 	if ( fileOut == NULL ) {
 		common->Warning( "Failed to open save file '%s'\n", gameFile.c_str() );
 		if ( pauseWorld ) {
-			soundSystem->SetPlayingSoundWorld( pauseWorld );
+			SetPlayingSoundWorld( pauseWorld );
 			pauseWorld->UnPause();
 		}
 		return false;
@@ -2367,7 +2380,7 @@ bool idSessionLocal::SaveGame( const char *saveName, bool autosave ) {
 	if ( fileDesc == NULL ) {
 		common->Warning( "Failed to open description file '%s'\n", descriptionFile.c_str() );
 		if ( pauseWorld ) {
-			soundSystem->SetPlayingSoundWorld( pauseWorld );
+			SetPlayingSoundWorld( pauseWorld );
 			pauseWorld->UnPause();
 		}
 		return false;
@@ -2397,7 +2410,7 @@ bool idSessionLocal::SaveGame( const char *saveName, bool autosave ) {
 	fileSystem->CloseFile( fileDesc );
 
 	if ( pauseWorld ) {
-		soundSystem->SetPlayingSoundWorld( pauseWorld );
+		SetPlayingSoundWorld( pauseWorld );
 		pauseWorld->UnPause();
 	}
 
@@ -3358,11 +3371,21 @@ int idSessionLocal::GetLocalClientNum() {
 idSessionLocal::SetPlayingSoundWorld
 ===============
 */
+void idSessionLocal::SetPlayingSoundWorld( idSoundWorld *soundWorld ) {
+	idSoundWorld *targetSoundWorld = soundWorld;
+
+	if ( targetSoundWorld != NULL && Session_ShouldSilenceAudioWhenUnfocused() ) {
+		targetSoundWorld = NULL;
+	}
+
+	soundSystem->SetPlayingSoundWorld( targetSoundWorld );
+}
+
 void idSessionLocal::SetPlayingSoundWorld() {
 	if ( guiActive && ( guiActive == guiMainMenu || guiActive == guiIntro || guiActive == guiLoading || ( guiActive == guiMsg && !mapSpawned ) ) ) {
-		soundSystem->SetPlayingSoundWorld( menuSoundWorld );
+		SetPlayingSoundWorld( menuSoundWorld );
 	} else {
-		soundSystem->SetPlayingSoundWorld( sw );
+		SetPlayingSoundWorld( sw );
 	}
 }
 

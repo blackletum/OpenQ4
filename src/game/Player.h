@@ -743,7 +743,7 @@ public:
 	rvClientEntityPtr<rvClientModel> AddClientModel ( const char* entityDefName, const char* shaderName = NULL );
 
 	void					ClientGib			( const idVec3& dir );
-	void					ClientDamageEffects ( const idDict& damageDef, const idVec3& dir, int damage );
+	void					ClientDamageEffects ( const idDict& damageDef, const idVec3& dir, int damage, const char *damageDefName = NULL );
 
 
 	void					ApplyImpulse( idEntity *ent, int id, const idVec3 &point, const idVec3 &impulse, bool splash = false );

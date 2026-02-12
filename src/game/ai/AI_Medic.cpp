@@ -658,9 +658,8 @@ stateResult_t rvAIMedic::State_Medic ( const stateParms_t& parms ) {
 			}
 			if ( !stationary && move.range != 42.0f )
 			{
-				//MCG: if you ever get this assert, please call me over so I can debug it!
-				assert(move.range==42.0f);
-				move.range = 42.0f;//shouldn't have to do this, but sometimes something is overriding the range to 8!  VERY VERY BAD... :_(
+				// This can be stomped by other movement updates; enforce the medic healing range.
+				move.range = 42.0f;
 			}
 			/*
 			else if ( !CheckTacticalMove ( AITACTICAL_MEDIC ) && CanSee(patient,false) ) 

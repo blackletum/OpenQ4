@@ -850,8 +850,7 @@ bool idAF::Load( idEntity *ent, const char *fileName, bool purgeAF /* = false */
 	physicsObj.SetSelfCollision( file->selfCollision );
 // RAVEN BEGIN
 // rjohnson: fast AF eval to skip some things that are not needed for specific circumstances
-// jmarshall: fastEval is it needed?
-//	physicsObj.SetFastEval( file->fastEval );
+	physicsObj.SetFastEval( file->fastEval );
 // RAVEN END
 
 	// clear the list with transforms from joints to bodies
@@ -1013,11 +1012,11 @@ void idAF::StartFromCurrentPose( int inheritVelocityTime ) {
 		return;
 	}
 
+	// reset the AF state so Start() primes gravity on first evaluation
+	physicsObj.PutToRest();
+
 	// if the ragdoll should inherit velocity from the animation
 	if ( inheritVelocityTime > 0 ) {
-
-		// make sure the ragdoll is at rest
-		physicsObj.PutToRest();
 
 		// set the pose for some time back
 		SetupPose( self, gameLocal.time - inheritVelocityTime );

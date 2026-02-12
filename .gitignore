@@ -44,3 +44,4 @@
 /subprojects/SDL3-*/
 /install/crashes/
 _tmp_*
+/tmp/

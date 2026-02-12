@@ -69,6 +69,7 @@ Notes:
 ## Aspect Ratio and FOV
 
 - `r_aspectRatio` is **deprecated/ignored**. Aspect ratio and FOV behavior are derived automatically from the current render size, so the game follows any aspect ratio without manual selection.
+- Weapon gameplay zoom uses the same gameplay FOV conversion path as normal view FOV, so authored weapon zoom values keep consistent framing/magnification across aspect ratios.
 
 ## View Weapon FOV and Placement (New)
 

@@ -1362,6 +1362,10 @@ void idMaterial::ParseStage( idLexer &src, const textureRepeat_t trpDefault ) {
 	ss = &pd->parseStages[numStages];
 	ts = &ss->texture;
 
+	// Parse-stage structs are reused from a stack aggregate. Clear every field
+	// first so stale stage state cannot leak into materials that omit tokens.
+	memset( ss, 0, sizeof( *ss ) );
+
 	ClearStage( ss );
 
 	while ( 1 ) {

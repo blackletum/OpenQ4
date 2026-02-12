@@ -881,15 +881,15 @@ int idDeclFile::LoadAndParse() {
 
 		name = token;
 
-		idStr guideDefinition;
-		bool usedGuideDefinition = false;
+		idStr declDefinition;
+		bool useExpandedDefinition = false;
 		if ( guide ) {
-			if ( !declManagerLocal.EvaluateGuide( name, &src, guideDefinition ) ) {
+			if ( !declManagerLocal.EvaluateGuide( name, &src, declDefinition ) ) {
 				continue;
 			}
-			declManagerLocal.EvaluateInlineGuide( name, guideDefinition );
-			usedGuideDefinition = true;
-			size = guideDefinition.Length();
+			declManagerLocal.EvaluateInlineGuide( name, declDefinition );
+			useExpandedDefinition = true;
+			size = declDefinition.Length();
 		} else {
 			// make sure there's a '{'
 			if ( !src.ReadToken( &token ) ) {
@@ -905,6 +905,11 @@ int idDeclFile::LoadAndParse() {
 			// now take everything until a matched closing brace
 			src.SkipBracedSection();
 			size = src.GetFileOffset() - startMarker;
+			declDefinition = finalPreprocessedBuffer.Mid( startMarker, size );
+			if ( declManagerLocal.EvaluateInlineGuide( name, declDefinition ) ) {
+				useExpandedDefinition = true;
+				size = declDefinition.Length();
+			}
 		}
 
 		// look it up, possibly getting a newly created default decl
@@ -915,7 +920,7 @@ int idDeclFile::LoadAndParse() {
 			if ( newDecl->sourceFile != this || newDecl->redefinedInReload ) {
 				bool suppressWarning = false;
 				if ( newDecl->textSource != NULL && newDecl->textLength == size ) {
-					const char *newText = usedGuideDefinition ? guideDefinition.c_str() : ( finalPreprocessedBuffer.c_str() + startMarker );
+					const char *newText = useExpandedDefinition ? declDefinition.c_str() : ( finalPreprocessedBuffer.c_str() + startMarker );
 					const int newChecksum = MD5_BlockChecksum( newText, size );
 					if ( newChecksum == newDecl->checksum ) {
 						suppressWarning = true;
@@ -944,8 +949,8 @@ int idDeclFile::LoadAndParse() {
 			newDecl->textSource = NULL;
 		}
 
-		if ( usedGuideDefinition ) {
-			newDecl->SetTextLocal( guideDefinition.c_str(), size );
+		if ( useExpandedDefinition ) {
+			newDecl->SetTextLocal( declDefinition.c_str(), size );
 		} else {
 			newDecl->SetTextLocal( finalPreprocessedBuffer.c_str() + startMarker, size );
 		}

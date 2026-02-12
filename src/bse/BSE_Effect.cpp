@@ -633,13 +633,16 @@ void rvBSE::DisplayDebugInfo(const struct renderEffect_s* parms, const struct vi
 	if (!parms || !view || !view->renderWorld) {
 		return;
 	}
-	if (!bse_debug.GetInteger() && !bse_showBounds.GetBool()) {
+	const int debugLevel = bse_debug.GetInteger();
+	if (!debugLevel && !bse_showBounds.GetBool()) {
 		return;
 	}
 
 	idRenderWorld* rw = view->renderWorld;
 
-	if (bse_debug.GetInteger()) {
+	// Keep level-1 debug useful for logging without polluting gameplay visuals.
+	// Level 2 enables heavy on-screen BSE overlays.
+	if (debugLevel >= 2) {
 		const char* effectName = "<unknown>";
 		if (mDeclEffect && mDeclEffect->base) {
 			effectName = mDeclEffect->base->GetName();

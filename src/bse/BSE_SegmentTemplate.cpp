@@ -343,6 +343,9 @@ bool rvSegmentTemplate::Finish(rvDeclEffect* effect)
 		mParticleTemplate.mFlags |= 0x80000u;
 	LABEL_25:
 		v5 = mParticleTemplate.mType;
+		if (v5 != PTYPE_NONE) {
+			mFlags |= STFLAG_HASPARTICLES;
+		}
 		if (v5 == 10)
 			mFlags = mFlags & 0xFFFFFFFB | 0x100;
 		if ((mFlags & 0x20) != 0

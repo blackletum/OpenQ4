@@ -8606,7 +8606,34 @@ int idGameLocal::ClipModelsTouchingBounds( const idEntity* ent, const idBounds &
 	const idClip* clipWorld = GetEntityClipWorld( ent );
 	
 	if( clipWorld ) {
-		return clipWorld->ClipModelsTouchingBounds( bounds, contentMask, clipModelList, maxCount );
+		int count = clipWorld->ClipModelsTouchingBounds( bounds, contentMask, clipModelList, maxCount );
+
+		// OpenQ4 has multi-instance clip worlds; retail behavior is effectively world 0 only.
+		// If we're querying triggers and found nothing in a non-zero clip world, fall back to
+		// world 0 so instance routing doesn't starve door/trigger touches.
+		if ( count == 0 && ent && ent->GetClipWorld() != 0 && ( contentMask & CONTENTS_TRIGGER ) != 0 &&
+			 clip.Num() > 0 && clip[0] != NULL && clipWorld != clip[0] ) {
+			idClipModel *fallbackList[ MAX_GENTITIES ];
+			const int fallbackCount = clip[0]->ClipModelsTouchingBounds( bounds, contentMask, fallbackList, MAX_GENTITIES );
+
+			for ( int i = 0; i < fallbackCount && count < maxCount; i++ ) {
+				idClipModel *cm = fallbackList[i];
+				bool duplicate = false;
+
+				for ( int j = 0; j < count; j++ ) {
+					if ( clipModelList[j] == cm ) {
+						duplicate = true;
+						break;
+					}
+				}
+
+				if ( !duplicate ) {
+					clipModelList[count++] = cm;
+				}
+			}
+		}
+
+		return count;
 	}
 
 	return 0;

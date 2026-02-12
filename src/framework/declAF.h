@@ -186,6 +186,7 @@ public:
 	int						contents;
 	int						clipMask;
 	bool					selfCollision;
+	bool					fastEval;
 	idList<idDeclAF_Body *>			bodies;
 	idList<idDeclAF_Constraint *>	constraints;
 

@@ -145,7 +145,7 @@ void idSessionLocal::StartMenu( bool playIntro ) {
 	}
 
 	// start playing the menu sounds
-	soundSystem->SetPlayingSoundWorld( menuSoundWorld );
+	SetPlayingSoundWorld( menuSoundWorld );
 
 	SetGUI( guiMainMenu, NULL );
 	guiMainMenu->HandleNamedEvent( playIntro ? "playIntro" : "noIntro" );
@@ -203,7 +203,7 @@ void idSessionLocal::ExitMenu( void ) {
 	guiActive = NULL;
 
 	// go back to the game sounds
-	soundSystem->SetPlayingSoundWorld( sw );
+	SetPlayingSoundWorld( sw );
 
 	// unpause the game sound world
 	if ( sw != NULL && sw->IsPaused() ) {
@@ -678,7 +678,7 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 			SetGUI( guiIntro, NULL );
 			guiIntro->StateChanged( com_frameTime, true );
 			// stop playing the game sounds
-			soundSystem->SetPlayingSoundWorld( menuSoundWorld );
+			SetPlayingSoundWorld( menuSoundWorld );
 
 			continue;
 		}

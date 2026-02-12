@@ -186,6 +186,16 @@ rvParticle* rvSegment::GetFreeParticle(rvBSE* effect) {
 		return NULL;
 	}
 
+	// Decal/effect paths can request a spawn before explicit segment particle
+	// initialization runs. Lazily allocate from precomputed counts so authored
+	// spawn data (size/rotation/tint) is available instead of default fallbacks.
+	if (mParticles == NULL) {
+		InitParticleArray(effect);
+	}
+	if (mParticles == NULL) {
+		return NULL;
+	}
+
 	rvParticle* particle = NULL;
 	if (st->GetTemporary()) {
 		particle = mParticles;

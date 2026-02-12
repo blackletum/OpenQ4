@@ -114,6 +114,7 @@ public:
 	virtual void		StopBox( void );
 	virtual void		DownloadProgressBox( backgroundDownload_t *bgl, const char *title, int progress_start = 0, int progress_end = 100 );
 	virtual void		SetPlayingSoundWorld();
+	void				SetPlayingSoundWorld( idSoundWorld *soundWorld );
 
 	virtual void		TimeHitch( int msec );
 

@@ -15,7 +15,7 @@ extern idCVar bse_frameCounters;
 idCVar bse_speeds("bse_speeds", "0", CVAR_INTEGER, "print bse frame statistics");
 idCVar bse_enabled("bse_enabled", "1", CVAR_BOOL, "set to false to disable all effects");
 idCVar bse_render("bse_render", "1", CVAR_BOOL, "disable effect rendering");
-idCVar bse_debug("bse_debug", "0", CVAR_INTEGER, "display debug info about effect");
+idCVar bse_debug("bse_debug", "0", CVAR_INTEGER, "BSE debug level (0=off, 1=log, 2=log+onscreen)");
 idCVar bse_showBounds("bse_showbounds", "0", CVAR_BOOL, "display debug bounding boxes effect");
 idCVar bse_physics("bse_physics", "1", CVAR_BOOL, "disable effect physics");
 idCVar bse_debris("bse_debris", "1", CVAR_BOOL, "disable effect debris");

@@ -1853,6 +1853,9 @@ static void SDL3_HandleWindowEvent(const SDL_WindowEvent &event, int eventTime) 
 			s_menuMouseInsideWindow = false;
 			SDL3_InvalidateMenuMouseRouting();
 			SDL3_UpdateCursorVisibility();
+			if (session != NULL) {
+				session->SetPlayingSoundWorld();
+			}
 			break;
 
 		case SDL_EVENT_WINDOW_RESTORED:
@@ -1861,6 +1864,9 @@ static void SDL3_HandleWindowEvent(const SDL_WindowEvent &event, int eventTime) 
 			SDL3_RefreshWindowPlacement();
 			SDL3_InvalidateMenuMouseRouting();
 			SDL3_UpdateCursorVisibility();
+			if (session != NULL) {
+				session->SetPlayingSoundWorld();
+			}
 			break;
 
 		case SDL_EVENT_WINDOW_RESIZED:

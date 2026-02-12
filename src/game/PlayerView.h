@@ -39,7 +39,7 @@ public:
 
 // RAVEN BEGIN
 // jnewquist: Controller rumble
-	void				DamageImpulse( idVec3 localKickDir, const idDict *damageDef, int damage );
+	void				DamageImpulse( idVec3 localKickDir, const idDict *damageDef, int damage, const char *damageDefName = NULL );
 // RAVEN END
 
 	void				WeaponFireFeedback( const idDict *weaponDef );

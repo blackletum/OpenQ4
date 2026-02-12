@@ -786,22 +786,24 @@ void rvSegment::CreateDecal(rvBSE* effect, float time) {
 	axis[0] = tangent[0] * c + tangent[1] * -s;
 	axis[1] = tangent[0] * -s + tangent[1] * -c;
 
-	const float decalWidth = Max(1.0f, idMath::Fabs(size.x));
-	const float decalHeight = (idMath::Fabs(size.y) > BSE_TIME_EPSILON) ? Max(1.0f, idMath::Fabs(size.y)) : decalWidth;
-	const float halfWidth = decalWidth * 0.5f;
-	const float halfHeight = decalHeight * 0.5f;
-	const float depthSource = (idMath::Fabs(size.z) > BSE_TIME_EPSILON) ? idMath::Fabs(size.z) : Max(decalWidth, decalHeight);
-	const float depth = idMath::ClampFloat(1.0f, 512.0f, depthSource);
+	// Keep Quake 4 decal projection volume shallow; tying depth to authored
+	// scorch size over-projects onto unrelated nearby surfaces.
+	float decalSize = idMath::Fabs(size.z);
+	if (decalSize <= BSE_TIME_EPSILON) {
+		decalSize = Max(idMath::Fabs(size.x), idMath::Fabs(size.y));
+	}
+	decalSize = Max(1.0f, decalSize);
+	const float projectionDepth = 8.0f;
 
-	const idVec3 windingOrigin = origin + normal * depth;
+	const idVec3 windingOrigin = origin + normal * projectionDepth;
 	idFixedWinding winding;
 	winding.Clear();
-	winding += idVec5(windingOrigin + axis[0] * (decalWinding[0].x * halfWidth) + axis[1] * (decalWinding[0].y * halfHeight), idVec2(1.0f, 1.0f));
-	winding += idVec5(windingOrigin + axis[0] * (decalWinding[1].x * halfWidth) + axis[1] * (decalWinding[1].y * halfHeight), idVec2(0.0f, 1.0f));
-	winding += idVec5(windingOrigin + axis[0] * (decalWinding[2].x * halfWidth) + axis[1] * (decalWinding[2].y * halfHeight), idVec2(0.0f, 0.0f));
-	winding += idVec5(windingOrigin + axis[0] * (decalWinding[3].x * halfWidth) + axis[1] * (decalWinding[3].y * halfHeight), idVec2(1.0f, 0.0f));
+	winding += idVec5(windingOrigin + axis[0] * (decalWinding[0].x * decalSize) + axis[1] * (decalWinding[0].y * decalSize), idVec2(1.0f, 1.0f));
+	winding += idVec5(windingOrigin + axis[0] * (decalWinding[1].x * decalSize) + axis[1] * (decalWinding[1].y * decalSize), idVec2(0.0f, 1.0f));
+	winding += idVec5(windingOrigin + axis[0] * (decalWinding[2].x * decalSize) + axis[1] * (decalWinding[2].y * decalSize), idVec2(0.0f, 0.0f));
+	winding += idVec5(windingOrigin + axis[0] * (decalWinding[3].x * decalSize) + axis[1] * (decalWinding[3].y * decalSize), idVec2(1.0f, 0.0f));
 
-	const idVec3 projectionOrigin = origin - normal * depth;
+	const idVec3 projectionOrigin = origin - normal * projectionDepth;
 	const int startTimeMs = static_cast<int>(time * 1000.0f);
 	if ( bse_debug.GetInteger() > 0 ) {
 		static int decalTraceCount = 0;
@@ -815,7 +817,7 @@ void rvSegment::CreateDecal(rvBSE* effect, float time) {
 				mSegmentTemplateHandle,
 				materialName,
 				size.x, size.y, size.z,
-				depth );
+				projectionDepth );
 			++decalTraceCount;
 		}
 	}
@@ -823,7 +825,7 @@ void rvSegment::CreateDecal(rvBSE* effect, float time) {
 		winding,
 		projectionOrigin,
 		true,
-		depth * 0.5f,
+		projectionDepth,
 		pt->GetMaterial(),
 		startTimeMs);
 }

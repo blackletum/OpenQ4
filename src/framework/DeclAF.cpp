@@ -589,6 +589,7 @@ bool idDeclAF::WriteSettings( idFile *f ) const {
 	f->WriteFloatString( "\tcontents %s\n", ContentsToString( contents, str ) );
 	f->WriteFloatString( "\tclipMask %s\n", ContentsToString( clipMask, str ) );
 	f->WriteFloatString( "\tselfCollision %d\n", selfCollision );
+	f->WriteFloatString( "\tfastEval %d\n", fastEval );
 	f->WriteFloatString( "}\n" );
 	return true;
 }
@@ -1411,6 +1412,24 @@ bool idDeclAF::ParseSettings( idLexer &src ) {
 			ParseContents( src, clipMask );
 		} else if ( !token.Icmp( "selfCollision" ) ) {
 			selfCollision = src.ParseBool();
+		} else if ( !token.Icmp( "fastEval" ) ) {
+			idToken valueToken;
+			if ( !src.ReadToken( &valueToken ) ) {
+				return false;
+			}
+
+			// Compatibility: some stock AFs use a bare "fastEval" token (no explicit value).
+			if ( valueToken == "}" ) {
+				fastEval = true;
+				src.UnreadToken( &valueToken );
+			} else if ( !valueToken.Icmp( "1" ) || !valueToken.Icmp( "true" ) ) {
+				fastEval = true;
+			} else if ( !valueToken.Icmp( "0" ) || !valueToken.Icmp( "false" ) ) {
+				fastEval = false;
+			} else {
+				src.Error( "expected boolean value for fastEval" );
+				return false;
+			}
 		} else if ( token == "}" ) {
 			break;
 		} else {
@@ -1540,6 +1559,7 @@ const char *idDeclAF::DefaultDefinition( void ) const {
 	"\t\t"		"contents corpse\n"
 	"\t\t"		"clipMask solid, corpse\n"
 	"\t\t"		"selfCollision 1\n"
+	"\t\t"		"fastEval 0\n"
 	"\t"	"}\n"
 	"\t"	"body \"body\" {\n"
 	"\t\t"		"joint \"origin\"\n"
@@ -1576,6 +1596,7 @@ void idDeclAF::FreeData( void ) {
 	minMoveTime = -1.0f;
 	maxMoveTime = -1.0f;
 	selfCollision = true;
+	fastEval = false;
 	contents = CONTENTS_CORPSE;
 	clipMask = CONTENTS_SOLID | CONTENTS_CORPSE;
 	bodies.DeleteContents( true );
