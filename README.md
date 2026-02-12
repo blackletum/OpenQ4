@@ -16,6 +16,11 @@
 
 ---
 
+> [!WARNING]
+> **Development Notice:** This project is largely developed through exploratory "vibe coding" practices, prioritizing rapid iteration and creative problem-solving over strict formal methodologies. If you prefer projects with rigorous development processes, extensive documentation, or conventional software engineering practices, this project may not align with your expectations.
+
+---
+
 ## 🎮 About
 
 OpenQ4 is a complete open-source replacement for the Quake 4 engine and game code. Built on the foundation of [Quake4Doom](https://github.com/idSoftware/Quake4Doom), this project aims to modernize and preserve one of the classic id Tech 4 games for current and future generations of gamers.
@@ -400,6 +405,20 @@ You must own a legitimate copy of Quake 4 to use this software. OpenQ4 does not 
 <div align="center">
 
 **Made with ❤️ by the OpenQ4 community**
+
+---
+
+### ⚠️ Use At Your Own Risk
+
+**THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.**
+
+OpenQ4 is experimental software under active development. Use at your own risk. The developers and contributors are not responsible for any damage, data loss, or issues that may arise from using this software.
+
+**Copyright © 2024-2026 The OpenQ4 Project**
+
+All rights reserved. Licensed under GPLv3. See [LICENSE](LICENSE) for details.
+
+---
 
 [⬆ Back to Top](#openq4)
 
