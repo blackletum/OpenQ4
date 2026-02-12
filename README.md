@@ -17,30 +17,22 @@
 ---
 
 > [!WARNING]
-> **Development Notice:** This project is largely developed through exploratory "vibe coding" practices, prioritizing rapid iteration and creative problem-solving over strict formal methodologies. If you prefer projects with rigorous development processes, extensive documentation, or conventional software engineering practices, this project may not align with your expectations.
+> **Development Notice:** This project is largely developed through exploratory "vibe coding" practices, prioritizing rapid iteration and creative problem-solving over strict formal methodologies. If you prefer projects with rigorous development processes or conventional software engineering practices, OpenQ4 will not align with your expectations and you are therefore encouraged to avoid this project altogether.
 
 ---
 
 ## About
 
-OpenQ4 is a complete open-source replacement for the Quake 4 engine and game code. Built on the foundation of [Quake4Doom](https://github.com/idSoftware/Quake4Doom), this project aims to modernize and preserve one of the classic id Tech 4 games for current and future generations of gamers.
-
-**What makes OpenQ4 special?**
-- Works with your existing Quake 4 game files (no redistribution needed)
-- Complete single-player and multiplayer support
-- Modern rendering, audio, and platform improvements
-- Cross-platform support (Windows, Linux, macOS)
-- Open source under GPLv3
-- Active development and community-driven improvements
+**OpenQ4** is a complete replacement for the Quake 4 engine and game binaries. Built on the foundation of [Quake4Doom](https://github.com/idSoftware/Quake4Doom), this project aims to modernize and preserve the classic id Tech 4 title for current and future generations of gamers and provide a platform for future development.
 
 ### What You Need
 
 To play OpenQ4, you need:
-- A legitimate copy of [Quake 4](https://store.steampowered.com/app/2210/) ([Steam](https://store.steampowered.com/app/2210/) or [GOG](https://www.gog.com/game/quake_iv) version recommended)
-- The OpenQ4 engine (from this repository)
+- A legitimate copy of Quake 4 ([Steam](https://store.steampowered.com/app/2210/) or [GOG](https://www.gog.com/game/quake_iv) version recommended)
+- The latest OpenQ4 release (from this repository)
 - A modern 64-bit operating system
 
-> **Note:** OpenQ4 does NOT include game assets. You must own Quake 4 to play. The engine will automatically detect your Quake 4 installation from Steam or GOG.
+> **Note:** OpenQ4 does NOT include game assets. You must own Quake 4 to play. The engine will automatically detect your Quake 4 installation from Steam or GOG. OpenQ4 is not compatible with legacy Quake 4 game mods.
 
 ---
 
@@ -48,7 +40,7 @@ To play OpenQ4, you need:
 
 ### Core Features
 - **Full Game Support**: Complete single-player campaign and multiplayer modes
-- **Unified Game Directory**: Single `openbase/` directory for both SP and MP content
+- **Unified Game Directory**: Single `openbase/` directory for both SP and MP game binaries
 - **Asset Validation**: Automatic verification of official Quake 4 assets to ensure authenticity
 - **Auto-Discovery**: Smart detection of your Quake 4 installation (Steam/GOG)
 
@@ -198,7 +190,7 @@ The Quake 4 SDK is provided under id Software's EULA, which permits:
 - Modified code must be used only with a legitimate copy of Quake 4
 - Original id Software and Raven Software copyrights must be preserved
 
-For complete terms, refer to the EULA distributed with the [official Quake 4 SDK](https://www.moddb.com/games/quake-4/downloads/quake-4-sdk-v15).
+For complete terms, refer to the [EULA](https://github.com/themuffinator/OpenQ4-GameLibs/blob/main/doc/legacy/EULA.Development%20Kit.rtf).
 
 ### Game Library Repository
 
@@ -231,7 +223,6 @@ OpenQ4 maintains complete freedom to evolve independently while preserving compa
 - [Platform Support](doc/platform-support.md) - Cross-platform roadmap and status
 - [Display Settings](user-docs/display-settings.md) - Multi-monitor and display configuration
 - [Input Key Matrix](doc/input-key-matrix.md) - Keyboard and controller input reference
-- [Official PK4 Checksums](doc/official-pk4-checksums.md) - Asset validation reference
 - [Release Completion](doc/release-completion.md) - Release checklist and changelog
 
 ---
@@ -334,8 +325,8 @@ All dependencies are automatically handled during the build process - no manual 
 
 ### Crash Diagnostics
 Debug builds (`buildtype=debug`) include automatic crash handling:
-- Crash logs saved to `builddir/crashes/*.log`
-- Memory dumps saved to `builddir/crashes/*.dmp`
+- Crash logs saved to `crashes/*.log`
+- Memory dumps saved to `crashes/*.dmp`
 - Timestamps included for easy identification
 
 ### Companion Repository
@@ -432,21 +423,13 @@ You must own a legitimate copy of Quake 4 to use this software. OpenQ4 does not 
 
 ---
 
-<div align="center">
-
-**Made with care by the OpenQ4 community**
-
----
-
 ### Use At Your Own Risk
 
 **THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.**
-
 OpenQ4 is experimental software under active development. Use at your own risk. The developers and contributors are not responsible for any damage, data loss, or issues that may arise from using this software.
 
 **Copyright © 2026 The OpenQ4 Project**
-
-All rights reserved. Licensed under GPLv3. See [LICENSE](LICENSE) for details.
+All rights reserved. Licensed under [GPLv3](LICENSE).
 
 ---
 
