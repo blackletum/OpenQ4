@@ -151,6 +151,10 @@ void idImage::SetTexParameters() {
 			return;
 	}
 
+	// Quake 4 normal maps are typically sampled from RGB, but some legacy ARB programs
+	// read Nx from alpha. Keep alpha in sync for TD_BUMP without altering RGB channels.
+	const bool duplicateBumpXToAlpha = ( usage == TD_BUMP && opts.colorFormat != CFM_NORMAL_DXT5 );
+
 	// ALPHA, LUMINANCE, LUMINANCE_ALPHA, and INTENSITY have been removed
 	// in OpenGL 3.2. In order to mimic those modes, we use the swizzle operators
 #if defined( USE_CORE_PROFILE )
@@ -179,6 +183,11 @@ void idImage::SetTexParameters() {
 		glTexParameteri( target, GL_TEXTURE_SWIZZLE_G, GL_RED );
 		glTexParameteri( target, GL_TEXTURE_SWIZZLE_B, GL_RED );
 		glTexParameteri( target, GL_TEXTURE_SWIZZLE_A, GL_RED );
+	} else if ( duplicateBumpXToAlpha ) {
+		glTexParameteri( target, GL_TEXTURE_SWIZZLE_R, GL_RED );
+		glTexParameteri( target, GL_TEXTURE_SWIZZLE_G, GL_GREEN );
+		glTexParameteri( target, GL_TEXTURE_SWIZZLE_B, GL_BLUE );
+		glTexParameteri( target, GL_TEXTURE_SWIZZLE_A, GL_RED );
 	} else {
 		glTexParameteri( target, GL_TEXTURE_SWIZZLE_R, GL_RED );
 		glTexParameteri( target, GL_TEXTURE_SWIZZLE_G, GL_GREEN );
@@ -195,6 +204,11 @@ void idImage::SetTexParameters() {
 		glTexParameteri( target, GL_TEXTURE_SWIZZLE_R, GL_ONE );
 		glTexParameteri( target, GL_TEXTURE_SWIZZLE_G, GL_ONE );
 		glTexParameteri( target, GL_TEXTURE_SWIZZLE_B, GL_ONE );
+		glTexParameteri( target, GL_TEXTURE_SWIZZLE_A, GL_RED );
+	} else if ( duplicateBumpXToAlpha ) {
+		glTexParameteri( target, GL_TEXTURE_SWIZZLE_R, GL_RED );
+		glTexParameteri( target, GL_TEXTURE_SWIZZLE_G, GL_GREEN );
+		glTexParameteri( target, GL_TEXTURE_SWIZZLE_B, GL_BLUE );
 		glTexParameteri( target, GL_TEXTURE_SWIZZLE_A, GL_RED );
 	}
 #endif

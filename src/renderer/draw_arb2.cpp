@@ -32,9 +32,144 @@ If you have questions concerning this license or the applicable additional terms
 #include "tr_local.h"
 
 #include "cg_explicit.h"
+#include <ctype.h>
 
 CGcontext cg_context;
-static bool g_interactionVertexProgramPackedColorParams = false;
+
+typedef enum {
+	ICM_PACKED,
+	ICM_VECTOR
+} interactionColorMode_t;
+
+static interactionColorMode_t g_interactionVertexProgramAutoColorMode = ICM_PACKED;
+static interactionColorMode_t g_interactionVertexProgramColorMode = ICM_PACKED;
+static int g_interactionVertexProgramOverride = 0;
+
+static const char *RB_InteractionColorModeName( interactionColorMode_t mode ) {
+	switch ( mode ) {
+	case ICM_PACKED:
+		return "packed env16.xy";
+	case ICM_VECTOR:
+		return "vector env16/env17";
+	default:
+		return "unknown";
+	}
+}
+
+static const char *RB_InteractionColorOverrideName( int modeOverride ) {
+	switch ( modeOverride ) {
+	case 0:
+		return "auto";
+	case 1:
+		return "packed";
+	case 2:
+		return "vector";
+	default:
+		return "invalid";
+	}
+}
+
+static void RB_StripARBProgramCommentsAndWhitespace( const char *source, idStr &normalizedSource ) {
+	normalizedSource.Empty();
+	if ( source == NULL ) {
+		return;
+	}
+
+	bool inComment = false;
+	for ( const char *p = source; *p != '\0'; ++p ) {
+		const char c = *p;
+		if ( c == '\r' || c == '\n' ) {
+			inComment = false;
+			continue;
+		}
+
+		if ( inComment ) {
+			continue;
+		}
+
+		if ( c == '#' ) {
+			inComment = true;
+			continue;
+		}
+
+		if ( c == ' ' || c == '\t' ) {
+			continue;
+		}
+
+		normalizedSource.Append( (char)tolower( (unsigned char)c ) );
+	}
+}
+
+static bool RB_DetectInteractionColorMode( const char *programSource, interactionColorMode_t &modeOut ) {
+	idStr normalizedProgram;
+	RB_StripARBProgramCommentsAndWhitespace( programSource, normalizedProgram );
+	const char *normalized = normalizedProgram.c_str();
+
+	if ( strstr( normalized, "madresult.color,vertex.color,program.env[16].x,program.env[16].y;" ) != NULL ) {
+		modeOut = ICM_PACKED;
+		return true;
+	}
+
+	if ( strstr( normalized, "madresult.color,vertex.color,program.env[16],program.env[17];" ) != NULL ) {
+		modeOut = ICM_VECTOR;
+		return true;
+	}
+
+	const bool packedHints = strstr( normalized, "program.env[16].x" ) != NULL &&
+		strstr( normalized, "program.env[16].y" ) != NULL;
+	const bool usesEnv17 = strstr( normalized, "program.env[17]" ) != NULL;
+
+	if ( packedHints && !usesEnv17 ) {
+		modeOut = ICM_PACKED;
+		return true;
+	}
+
+	if ( usesEnv17 ) {
+		modeOut = ICM_VECTOR;
+		return true;
+	}
+
+	return false;
+}
+
+static void RB_UpdateInteractionColorMode( bool forcePrint ) {
+	const int modeOverride = idMath::ClampInt( 0, 2, r_interactionColorMode.GetInteger() );
+	interactionColorMode_t requestedMode = g_interactionVertexProgramAutoColorMode;
+	interactionColorMode_t effectiveMode = g_interactionVertexProgramAutoColorMode;
+
+	if ( modeOverride == 1 ) {
+		requestedMode = ICM_PACKED;
+	} else if ( modeOverride == 2 ) {
+		requestedMode = ICM_VECTOR;
+	}
+
+	if ( modeOverride != 0 && requestedMode != g_interactionVertexProgramAutoColorMode ) {
+		effectiveMode = g_interactionVertexProgramAutoColorMode;
+		if ( forcePrint ||
+			modeOverride != g_interactionVertexProgramOverride ||
+			effectiveMode != g_interactionVertexProgramColorMode ) {
+			common->Warning( "r_interactionColorMode=%d (%s) is incompatible with interaction.vfp (%s); forcing compatible mode",
+				modeOverride,
+				RB_InteractionColorModeName( requestedMode ),
+				RB_InteractionColorModeName( g_interactionVertexProgramAutoColorMode ) );
+		}
+	} else {
+		effectiveMode = requestedMode;
+	}
+
+	const bool changed = effectiveMode != g_interactionVertexProgramColorMode ||
+		modeOverride != g_interactionVertexProgramOverride;
+
+	g_interactionVertexProgramColorMode = effectiveMode;
+	g_interactionVertexProgramOverride = modeOverride;
+
+	if ( forcePrint || changed ) {
+		common->Printf( ": interaction color mode = %s (auto=%s, override=%s)\n",
+			RB_InteractionColorModeName( g_interactionVertexProgramColorMode ),
+			RB_InteractionColorModeName( g_interactionVertexProgramAutoColorMode ),
+			RB_InteractionColorOverrideName( g_interactionVertexProgramOverride ) );
+	}
+}
 
 static void cg_error_callback( void ) {
 	CGerror i = cgGetError();
@@ -105,7 +240,7 @@ void	RB_ARB2_DrawInteraction( const drawInteraction_t *din ) {
 		break;
 	}
 
-	if ( g_interactionVertexProgramPackedColorParams ) {
+	if ( g_interactionVertexProgramColorMode == ICM_PACKED ) {
 		// Stock Quake 4 interaction.vfp packs vertex-color mode as env[16].xy.
 		const float packed[4] = { modulate, add, 0.0f, 0.0f };
 		glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_COLOR_MODULATE, packed );
@@ -263,6 +398,11 @@ RB_ARB2_DrawInteractions
 void RB_ARB2_DrawInteractions( void ) {
 	viewLight_t		*vLight;
 	const idMaterial	*lightShader;
+
+	if ( r_interactionColorMode.IsModified() ) {
+		r_interactionColorMode.ClearModified();
+		RB_UpdateInteractionColorMode( true );
+	}
 
 	GL_SelectTexture( 0 );
 	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
@@ -448,11 +588,14 @@ void R_LoadARBProgram( int progIndex ) {
 	end[3] = 0;
 
 	if ( progs[progIndex].ident == VPROG_INTERACTION ) {
-		g_interactionVertexProgramPackedColorParams =
-			( strstr( start, "program.env[16].x" ) != NULL ) &&
-			( strstr( start, "program.env[16].y" ) != NULL );
-		common->Printf( ": interaction color mode = %s\n",
-			g_interactionVertexProgramPackedColorParams ? "packed env16.xy" : "vector env16/env17" );
+		interactionColorMode_t detectedMode = ICM_PACKED;
+		if ( !RB_DetectInteractionColorMode( start, detectedMode ) ) {
+			common->Warning( "R_LoadARBProgram: failed to infer interaction color mode from %s, defaulting auto mode to %s",
+				fullPath.c_str(), RB_InteractionColorModeName( ICM_PACKED ) );
+			detectedMode = ICM_PACKED;
+		}
+		g_interactionVertexProgramAutoColorMode = detectedMode;
+		RB_UpdateInteractionColorMode( true );
 	}
 
 	glBindProgramARB( progs[progIndex].target, progs[progIndex].ident );

@@ -97,6 +97,7 @@ OpenQ4 is moving toward a **complete code replacement** (engine + game code) to 
 - Controller tuning cvars: `in_joystick`, `in_joystickDeadZone`, `in_joystickTriggerThreshold`.
 - SDL3 multi-monitor selection is configurable through `r_screen` (`-1` auto/current display, `0..N` explicit display index); use `listDisplays` to inspect available monitor indices.
 - Display mode cvars: `r_fullscreen` (`0/1`) and `r_fullscreenDesktop` (`1` = default/native desktop fullscreen, `0` = exclusive fullscreen using `r_mode`/`r_custom*`), with `r_borderless` for windowed borderless mode. Windowed sizing uses `r_windowWidth`/`r_windowHeight`. `r_aspectRatio` is deprecated; aspect handling is automatic from current render size.
+- Interaction shader compatibility cvar: `r_interactionColorMode` (`0` = auto-detect from `interaction.vfp`, `1` = packed `env16.xy`, `2` = vector `env16/env17`); incompatible overrides are ignored with a warning to keep lighting valid.
 - Use `listDisplays` and `listDisplayModes [displayIndex]` to inspect monitor indices and available exclusive fullscreen modes on SDL3 builds.
 - x64 (`x86_64`) is the active architecture baseline.
 - Cross-platform goal is full support on Windows, Linux, and macOS.

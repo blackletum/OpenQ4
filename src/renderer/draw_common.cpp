@@ -1482,6 +1482,13 @@ static void RB_T_Shadow( const drawSurf_t *surf ) {
 		numIndexes = tri->numIndexes;
 	}
 
+	// If this surface could not use external shadow optimizations, the caller will
+	// have already forced the "no caps" index counts back to the full index count.
+	// In that case treat it as an internal volume so we keep the robust stencil path.
+	if ( numIndexes == tri->numIndexes ) {
+		external = false;
+	}
+
 	// set depth bounds
 	if( glConfig.depthBoundsTestAvailable && r_useDepthBoundsTest.GetBool() ) {
 		glDepthBoundsEXT( surf->scissorRect.zmin, surf->scissorRect.zmax );

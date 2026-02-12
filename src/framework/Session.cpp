@@ -123,10 +123,6 @@ static void Session_DrawScaledSmallString( float x, float y, float charWidth, fl
 
 static void Session_DrawFallbackLoadingScreen() {
 	static const idVec4 loadingTextColor( 0.94f, 0.62f, 0.05f, 1.0f );
-	const char *loadingText = common->GetLanguageDict()->GetString( "#str_200938" );
-	if ( !( loadingText && loadingText[0] ) ) {
-		loadingText = "LOADING";
-	}
 
 	const float virtualWidth = static_cast<float>( SCREEN_WIDTH );
 	const float virtualHeight = static_cast<float>( SCREEN_HEIGHT );
@@ -179,18 +175,6 @@ static void Session_DrawFallbackLoadingScreen() {
 	if ( splashMaterial ) {
 		renderSystem->SetColor( colorWhite );
 		renderSystem->DrawStretchPic( splashX, splashY, splashW, splashH, 0, 0, 1, 1, splashMaterial );
-	}
-
-	const idMaterial *fontMaterial = declManager->FindMaterial( "fonts/english/bigchars", false );
-	if ( fontMaterial ) {
-		const int charCount = Session_CountVisibleSmallChars( loadingText );
-		const float charWidth = SMALLCHAR_WIDTH * textScaleX;
-		const float charHeight = SMALLCHAR_HEIGHT * textScaleY;
-		const float textWidth = charCount * charWidth;
-		const float textX = correctedX + ( correctedW - textWidth ) * 0.5f;
-		const float textY = correctedY + 410.0f * textScaleY;
-		Session_DrawScaledSmallString( textX, textY, charWidth, charHeight, loadingText,
-			loadingTextColor, true, fontMaterial );
 	}
 
 	renderSystem->SetColor( colorWhite );

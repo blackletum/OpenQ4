@@ -895,6 +895,7 @@ extern idCVar r_gamma;					// changes gamma tables
 extern idCVar r_brightness;				// changes gamma tables
 
 extern idCVar r_renderer;				// arb, nv10, nv20, r200, gl2, etc
+extern idCVar r_interactionColorMode;	// interaction color mode: 0 auto, 1 packed env16.xy, 2 vector env16/env17
 
 extern idCVar r_cgVertexProfile;		// arbvp1, vp20, vp30
 extern idCVar r_cgFragmentProfile;		// arbfp1, fp30
