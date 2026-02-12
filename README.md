@@ -8,7 +8,7 @@
 [![Architecture](https://img.shields.io/badge/arch-x64-orange.svg)](https://github.com/themuffinator/OpenQ4)
 [![Build System](https://img.shields.io/badge/build-Meson%20%2B%20Ninja-yellow.svg)](https://mesonbuild.com/)
 
-**A modern, open-source engine replacement for Quake 4**
+**A modern, full binary replacement for Quake 4**
 
 [Features](#features) • [Quick Start](#quick-start) • [Building](#building-from-source) • [Documentation](#documentation) • [Credits](#credits)
 
