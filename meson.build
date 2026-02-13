@@ -35,16 +35,43 @@ endif
 
 python_mod = import('python')
 py = python_mod.find_installation('python3', required: true)
+fs_mod = import('fs')
 
 build_engine = get_option('build_engine')
 build_games = get_option('build_games')
 build_game_sp = get_option('build_game_sp')
 build_game_mp = get_option('build_game_mp')
+build_libbse = build_engine and get_option('build_libbse')
+needs_bse_sources = build_libbse
 install_root_dir = meson.project_source_root() / 'install'
 install_openbase_dir = install_root_dir / 'openbase'
+bse_repo_root = ''
+bse_source_root = ''
+bse_repo_summary = 'not required'
 
 if not build_engine and not build_games
   error('At least one build target must be enabled. Use -Dbuild_engine=true and/or -Dbuild_games=true.')
+endif
+
+if needs_bse_sources
+  bse_repo_discovery = run_command(
+    py,
+    '-c',
+    'import os, pathlib, sys; root = pathlib.Path(sys.argv[1]); raw = os.environ.get("OPENQ4_BSE_REPO", "").strip(); repo = pathlib.Path(raw) if raw else (root / ".." / "OpenQ4-BSE"); print(repo.resolve().as_posix())',
+    meson.project_source_root(),
+    check: true,
+  )
+  bse_repo_root = bse_repo_discovery.stdout().strip()
+  if bse_repo_root == ''
+    error('Failed to resolve the OpenQ4-BSE repository path. Set OPENQ4_BSE_REPO or place it at ../OpenQ4-BSE.')
+  endif
+
+  bse_source_root = bse_repo_root / 'src' / 'bse'
+  if not fs_mod.is_dir(bse_source_root)
+    error('OpenQ4-BSE source directory not found: ' + bse_source_root)
+  endif
+
+  bse_repo_summary = bse_repo_root
 endif
 
 engine_source_discovery = run_command(
@@ -67,6 +94,7 @@ endif
 openq4_engine_sources = files(engine_source_paths)
 
 game_sources = []
+bse_sources = []
 game_idlib_sources = []
 if build_games
   game_source_discovery = run_command(
@@ -83,7 +111,30 @@ if build_games
     error('tools/build/list_sources.py returned no game source files.')
   endif
   game_sources = files(game_source_paths)
+endif
 
+if build_libbse
+  bse_source_discovery = run_command(
+    py,
+    meson.project_source_root() / 'tools' / 'build' / 'list_sources.py',
+    bse_repo_root,
+    'src/bse',
+    check: true,
+  )
+  bse_source_paths = bse_source_discovery.stdout().strip().split('\n')
+  if bse_source_paths.length() == 0
+    error('tools/build/list_sources.py returned no BSE source files.')
+  endif
+
+  bse_absolute_paths = []
+  foreach rel_path : bse_source_paths
+    bse_absolute_paths += [bse_repo_root / rel_path]
+  endforeach
+
+  bse_sources = files(bse_absolute_paths)
+endif
+
+if build_engine or build_games
   game_idlib_discovery = run_command(
     py,
     meson.project_source_root() / 'tools' / 'build' / 'list_sources.py',
@@ -206,6 +257,18 @@ endif
 game_pch_headers = ['src/idlib/precompiled.h']
 
 src_include_dir = include_directories('src')
+engine_include_dirs = [src_include_dir]
+bse_module_include_dirs = [src_include_dir]
+
+if needs_bse_sources
+  bse_source_include_dir = include_directories(bse_source_root)
+  # Compatibility include anchor for legacy relative includes inside BSE sources
+  # (for example: "../renderer/ModelManager.h").
+  bse_legacy_include_anchor = include_directories('src/bse_api')
+  if build_libbse
+    bse_module_include_dirs += [bse_source_include_dir, bse_legacy_include_anchor]
+  endif
+endif
 
 engine_cpp_args = shared_cpp_args + ['-D__DOOM_DLL__']
 engine_c_args = shared_c_args
@@ -214,7 +277,7 @@ if build_engine
   executable(
     'OpenQ4',
     openq4_engine_sources,
-    include_directories: src_include_dir,
+    include_directories: engine_include_dirs,
     dependencies: deps,
     cpp_args: engine_cpp_args,
     c_args: engine_c_args,
@@ -231,7 +294,7 @@ if build_engine
   executable(
     'OpenQ4-ded',
     openq4_engine_sources,
-    include_directories: src_include_dir,
+    include_directories: engine_include_dirs,
     dependencies: deps,
     cpp_args: dedicated_cpp_args,
     c_args: dedicated_c_args,
@@ -245,6 +308,8 @@ endif
 
 game_common_cpp_args = shared_cpp_args + ['-DGAME_DLL']
 game_common_c_args = shared_c_args
+bse_common_cpp_args = shared_cpp_args + ['-DGAME_DLL', '-DBSE_DLL']
+bse_common_c_args = shared_c_args
 game_module_link_args = ['/FIXED:NO', '/BASE:0x20000000', '/LARGEADDRESSAWARE']
 release_like = ['release', 'debugoptimized', 'minsize'].contains(get_option('buildtype'))
 if release_like
@@ -254,7 +319,7 @@ else
 endif
 
 game_idlib_library = disabler()
-if build_games
+if build_engine or build_games
   game_idlib_library = static_library(
     'openq4_game_idlib',
     game_idlib_sources,
@@ -264,10 +329,26 @@ if build_games
     cpp_pch: game_pch_headers,
     install: false,
   )
+endif
 
-  if build_game_sp or build_game_mp
-    subdir('openbase')
-  endif
+if build_libbse
+  shared_module(
+    'libbse-q4',
+    bse_sources,
+    include_directories: bse_module_include_dirs,
+    link_with: game_idlib_library,
+    cpp_args: bse_common_cpp_args,
+    c_args: bse_common_c_args,
+    cpp_pch: game_pch_headers,
+    link_args: game_module_link_args,
+    name_prefix: '',
+    install: true,
+    install_dir: install_root_dir,
+  )
+endif
+
+if build_engine or (build_games and (build_game_sp or build_game_mp))
+  subdir('openbase')
 endif
 
 summary(
@@ -280,6 +361,8 @@ summary(
     'C++ standard': get_option('cpp_std'),
     'Platform backend': platform_backend,
     'Build engine': build_engine,
+    'Build BSE DLL': build_libbse,
+    'BSE source repo': bse_repo_summary,
     'Build games': build_games,
     'Build game_sp': build_games and build_game_sp,
     'Build game_mp': build_games and build_game_mp,

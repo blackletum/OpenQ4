@@ -261,7 +261,7 @@ Tasks:
 - effect parse success/failure
 - `AddEffectDef`/`UpdateEffectDef`/`FreeEffectDef`
 - manager `PlayEffect`/`ServiceEffect` decisions
-3. Ensure `fs_devpath` does not depend on repo `q4base/` content during validation runs.
+3. Ensure `fs_cdpath` (locked to launch working directory) does not depend on repo `q4base/` content during validation runs.
 
 Acceptance:
 
@@ -474,7 +474,7 @@ This order minimizes hidden coupling: parse/template correctness first, then run
 - Current blocker for strict Procedure 1 path: startup can fatal early with `Couldn't load default.cfg` when savepath config is absent/non-writable; validation was completed using the configured writable savepath.
 - Phase 6 (game-lib parity): restored network/entity event effect safety paths by removing the `EVENT_PLAYEFFECT_JOINT` assert placeholder, adding null-decl + `Filtered` + rate-limit guards on receive paths, and restoring gravity assignment for unreliable/world and entity-bound event effects.
 - Phase 6 (save/restore parity): `rvClientEffect::Restore` now clears `referenceSoundHandle` so active effects rebind a valid emitter after load instead of reusing stale handles.
-- Phase 7 (hardening pass): repeated Procedure 1 launch/short-run/log checks with stock assets (`fs_devpath` empty) and confirmed zero BSE parser/runtime tokens (`BSE`, `rvBSE`, invalid segment/motion/effect parse errors, asserts/fatals) in `fs_savepath\<gameDir>\logs\openq4.log`.
+- Phase 7 (hardening pass): repeated Procedure 1 launch/short-run/log checks with stock assets (`fs_cdpath` launch directory set to stock assets) and confirmed zero BSE parser/runtime tokens (`BSE`, `rvBSE`, invalid segment/motion/effect parse errors, asserts/fatals) in `fs_savepath\<gameDir>\logs\openq4.log`.
 - Interim visibility step: added `bse_fallbackSprite` (default `1`) to draw a temporary sprite-backed `renderEntity_t` for active client effects while full BSE particle surface generation is still being restored.
 - Phase 4/5 parity continuation: restored active segment spawn scheduling in `rvSegment::Check` for `SEG_EMITTER`, `SEG_TRAIL`, and `SEG_SPAWNER`, including attenuation-driven interval/count handling and loop-safe time progression (`mLastTime`) so particle segments no longer remain effectively inert.
 - Phase 4 parity correction: removed the erroneous large negative spawn offset in `rvBSE::Service` (`-10.0f * segmentIndex` equivalent), which had been delaying segment start checks by whole seconds; segment checks now run on current frame time.

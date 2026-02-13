@@ -314,10 +314,29 @@ void idPlayerView::DamageImpulse( idVec3 localKickDir, const idDict *damageDef, 
 		meleeDamageDef = idStr::Icmpn( damageDefName, "melee_", 6 ) == 0;
 	}
 
+	const char *configuredBlobMaterial = damageDef->GetString( "mtr_blob" );
+	if ( !configuredBlobMaterial[0] ) {
+		configuredBlobMaterial = damageDef->GetString( "blob_material" );
+	}
+	const float configuredBlobX = damageDef->GetFloat( "blob_x" );
+	const float configuredBlobY = damageDef->GetFloat( "blob_y" );
+	const float configuredBlobOffsetX = damageDef->GetFloat( "blob_offset_x" );
+	const float configuredBlobOffsetY = damageDef->GetFloat( "blob_offset_y" );
+	const float configuredBlobWidth = damageDef->GetFloat( "blob_width" );
+	const float configuredBlobHeight = damageDef->GetFloat( "blob_height" );
+	const float configuredBlobSize = damageDef->GetFloat( "blob_size" );
+	const bool hasBlobConfig = configuredBlobMaterial[0] ||
+		( configuredBlobX != 0.0f ) || ( configuredBlobY != 0.0f ) ||
+		( configuredBlobOffsetX != 0.0f ) || ( configuredBlobOffsetY != 0.0f ) ||
+		( configuredBlobWidth > 0.0f ) || ( configuredBlobHeight > 0.0f ) ||
+		( configuredBlobSize > 0.0f );
+
 	float blobTime = damageDef->GetFloat( "blob_time" );
-	if ( blobTime <= 0.0f && meleeDamageDef ) {
-		// Some stock melee defs leave blob_time at 0 while still defining blob visuals.
+	bool synthesizedMeleeBlob = false;
+	if ( blobTime <= 0.0f && meleeDamageDef && !hasBlobConfig ) {
+		// Compatibility fallback for melee defs that never configured blob visuals.
 		blobTime = 500.0f;
+		synthesizedMeleeBlob = true;
 	}
 
 	if ( blobTime > 0.0f ) {
@@ -325,10 +344,7 @@ void idPlayerView::DamageImpulse( idVec3 localKickDir, const idDict *damageDef, 
 		blob->startFadeTime = gameLocal.time;
 		blob->finishTime = gameLocal.time + blobTime * g_blobTime.GetFloat();
 
-		const char *materialName = damageDef->GetString( "mtr_blob" );
-		if ( !materialName[0] ) {
-			materialName = damageDef->GetString( "blob_material" );
-		}
+		const char *materialName = configuredBlobMaterial;
 
 		const idMaterial *blobMaterial = NULL;
 		if ( materialName[0] ) {
@@ -339,39 +355,47 @@ void idPlayerView::DamageImpulse( idVec3 localKickDir, const idDict *damageDef, 
 			}
 		}
 		if ( blobMaterial == NULL ) {
-			blobMaterial = declManager->FindMaterial( "textures/decals/genericdamage" );
+			if ( synthesizedMeleeBlob && bloodSprayMaterial != NULL ) {
+				blobMaterial = bloodSprayMaterial;
+			} else {
+				blobMaterial = declManager->FindMaterial( "textures/decals/genericdamage" );
+			}
 		}
 		blob->material = blobMaterial;
 
-		float blobX = damageDef->GetFloat( "blob_x" );
+		float blobX = configuredBlobX;
 		if ( blobX == 0.0f ) {
-			blobX = damageDef->GetFloat( "blob_offset_x" );
+			blobX = configuredBlobOffsetX;
 		}
 		blob->x = blobX;
 		blob->x += ( gameLocal.random.RandomInt()&63 ) - 32;
-		float blobY = damageDef->GetFloat( "blob_y" );
+		float blobY = configuredBlobY;
 		if ( blobY == 0.0f ) {
-			blobY = damageDef->GetFloat( "blob_offset_y" );
+			blobY = configuredBlobOffsetY;
 		}
 		blob->y = blobY;
 		blob->y += ( gameLocal.random.RandomInt()&63 ) - 32;
 
-		float blobWidth = damageDef->GetFloat( "blob_width" );
-		float blobHeight = damageDef->GetFloat( "blob_height" );
+		float blobWidth = configuredBlobWidth;
+		float blobHeight = configuredBlobHeight;
 		if ( blobWidth <= 0.0f || blobHeight <= 0.0f ) {
-			const float blobSize = damageDef->GetFloat( "blob_size" );
-			if ( blobSize > 0.0f ) {
+			if ( configuredBlobSize > 0.0f ) {
 				if ( blobWidth <= 0.0f ) {
-					blobWidth = blobSize;
+					blobWidth = configuredBlobSize;
 				}
 				if ( blobHeight <= 0.0f ) {
-					blobHeight = blobSize;
+					blobHeight = configuredBlobSize;
 				}
 			}
 		}
 		if ( blobWidth <= 0.0f || blobHeight <= 0.0f ) {
-			blobWidth = 400.0f;
-			blobHeight = 400.0f;
+			if ( synthesizedMeleeBlob && bloodSprayMaterial != NULL ) {
+				blobWidth = 600.0f;
+				blobHeight = 480.0f;
+			} else {
+				blobWidth = 400.0f;
+				blobHeight = 400.0f;
+			}
 		}
 		
 		float scale = ( 256 + ( ( gameLocal.random.RandomInt()&63 ) - 32 ) ) / 256.0f;
@@ -675,8 +699,8 @@ void idPlayerView::DoubleVision( idUserInterface *hud, const renderView_t *view,
 	float shift = scale * idMath::Sin( idMath::Sqrt ( offset ) * g_dvFrequency.GetFloat() );
 	shift = fabs( shift );
 
-	// if double vision, render to a texture
-	renderSystem->CropRenderSize( 512, 256, true );
+	// Render full virtual resolution into _scratch to avoid aspect/crop artifacts.
+	renderSystem->CropRenderSize( 640, 480, false, true );
 	SingleView( hud, view, RF_NO_GUI );
 	renderSystem->CaptureRenderToImage( "_scratch" );
 	renderSystem->UnCrop();

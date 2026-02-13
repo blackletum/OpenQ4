@@ -30,6 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 //#include "../renderer/Image.h"
+#include "../bse_api/BSE_API.h"
 
 #define	MAX_PRINT_MSG_SIZE	4096
 #define MAX_WARNING_LIST	256
@@ -115,6 +116,65 @@ idGame *		game = NULL;
 idGameEdit *	gameEdit = NULL;
 #endif
 
+class rvBSEManagerDisabled : public rvBSEManager {
+public:
+	virtual bool				Init( void ) { return true; }
+	virtual bool				Shutdown( void ) {
+		for ( int i = 0; i < traceModels.Num(); ++i ) {
+			delete traceModels[i];
+		}
+		traceModels.Clear();
+		return true;
+	}
+
+	virtual bool				PlayEffect( class rvRenderEffectLocal *def, float time ) { return false; }
+	virtual bool				ServiceEffect( class rvRenderEffectLocal *def, float time ) { return false; }
+	virtual idRenderModel *		RenderEffect( class rvRenderEffectLocal *def, const struct viewDef_s *view ) { return NULL; }
+	virtual void				StopEffect( rvRenderEffectLocal *def ) { }
+	virtual void				FreeEffect( rvRenderEffectLocal *def ) { }
+	virtual float				EffectDuration( const rvRenderEffectLocal *def ) { return 0.0f; }
+
+	virtual bool				CheckDefForSound( const renderEffect_t *def ) { return false; }
+
+	virtual void				BeginLevelLoad( void ) { }
+	virtual void				EndLevelLoad( void ) { }
+
+	virtual void				StartFrame( void ) { }
+	virtual void				EndFrame( void ) { }
+	virtual bool				Filtered( const char *name, effectCategory_t category ) { return true; }
+
+	virtual void				UpdateRateTimes( void ) { }
+	virtual bool				CanPlayRateLimited( effectCategory_t category ) { return false; }
+
+	virtual int					AddTraceModel( idTraceModel *model ) {
+		traceModels.Append( model );
+		return traceModels.Num() - 1;
+	}
+
+	virtual idTraceModel *		GetTraceModel( int index ) {
+		if ( index < 0 || index >= traceModels.Num() ) {
+			return NULL;
+		}
+		return traceModels[index];
+	}
+
+	virtual void				FreeTraceModel( int index ) {
+		if ( index < 0 || index >= traceModels.Num() ) {
+			return;
+		}
+		delete traceModels[index];
+		traceModels[index] = NULL;
+	}
+
+private:
+	idList<idTraceModel *>		traceModels;
+};
+
+static rvBSEManagerDisabled	bseDisabledLocal;
+rvBSEManager *	bse = &bseDisabledLocal;
+rvDeclEffectEdit *declEffectEdit = NULL;
+BSE_AllocDeclEffect_t bseAllocDeclEffect = NULL;
+
 // writes si_version to the config file - in a kinda obfuscated way
 //#define ID_WRITE_VERSION
 
@@ -178,6 +238,9 @@ private:
 	void						WriteConfiguration( void );
 	void						DumpWarnings( void );
 	void						SingleAsyncTic( void );
+	void						LoadBSEDLL( void );
+	void						UnloadBSEDLL( void );
+	void						RefreshBSEBindings( void );
 	void						LoadGameDLL( void );
 	void						UnloadGameDLL( void );
 	void						PrintLoadingMessage( const char *msg );
@@ -201,6 +264,8 @@ private:
 	idStrList					errorList;
 
 	INT_PTR						gameDLL;
+	INT_PTR						bseDLL;
+	BSE_SetRuntimePointers_t	bseSetRuntimePointers;
 
 	idLangDict					languageDict;
 
@@ -233,6 +298,8 @@ idCommonLocal::idCommonLocal( void ) {
 	rd_flush = NULL;
 
 	gameDLL = 0;
+	bseDLL = 0;
+	bseSetRuntimePointers = NULL;
 
 #ifdef ID_WRITE_VERSION
 	config_compressor = NULL;
@@ -2780,6 +2847,145 @@ static const char *OpenQ4_SelectGameModuleBaseName( void ) {
 	return OpenQ4_IsMultiplayerGameType( gameType ) ? "game_mp" : "game_sp";
 }
 
+static void OpenQ4_DisableBSEWithWarning( const char *reason ) {
+	static bool warnedConsole = false;
+	if ( !warnedConsole ) {
+		warnedConsole = true;
+		common->Warning( "BSE unavailable (%s). Effects will be disabled.", reason ? reason : "unknown reason" );
+	}
+
+#if defined( _WIN32 ) && !defined( ID_DEDICATED )
+	static bool warnedDialog = false;
+	if ( !warnedDialog ) {
+		warnedDialog = true;
+
+		char message[1024];
+		idStr::snPrintf(
+			message,
+			sizeof( message ),
+			"Could not load BSE runtime library (libbse-q4).\n\nReason: %s\n\nEffects will be disabled.",
+			reason ? reason : "unknown reason"
+		);
+		::MessageBoxA( NULL, message, "OpenQ4 Warning", MB_OK | MB_ICONWARNING | MB_SYSTEMMODAL );
+	}
+#endif
+
+	::declEffectEdit = NULL;
+	::bse = &bseDisabledLocal;
+}
+
+/*
+=================
+idCommonLocal::RefreshBSEBindings
+=================
+*/
+void idCommonLocal::RefreshBSEBindings( void ) {
+#ifdef __DOOM_DLL__
+	if ( bseSetRuntimePointers ) {
+		bseSetRuntimePointers( ::game, ::gameEdit, ::session );
+	}
+#endif
+}
+
+/*
+=================
+idCommonLocal::LoadBSEDLL
+=================
+*/
+void idCommonLocal::LoadBSEDLL( void ) {
+#ifdef __DOOM_DLL__
+	char			dllPath[ MAX_OSPATH ];
+
+	bseImport_t		bseImport;
+	bseExport_t		bseExport;
+	GetBSEAPI_t		GetBSEAPI;
+
+	// Default to the disabled fallback unless a valid external module is loaded.
+	bseSetRuntimePointers = NULL;
+	::bse = &bseDisabledLocal;
+	::declEffectEdit = NULL;
+	::bseAllocDeclEffect = NULL;
+
+	fileSystem->FindDLL( "libbse-q4", dllPath, false );
+	if ( !dllPath[ 0 ] ) {
+		OpenQ4_DisableBSEWithWarning( "couldn't find dynamic library 'libbse-q4'" );
+		return;
+	}
+
+	common->DPrintf( "Loading BSE DLL: '%s'\n", dllPath );
+	bseDLL = sys->DLL_Load( dllPath );
+	if ( !bseDLL ) {
+		OpenQ4_DisableBSEWithWarning( "couldn't load dynamic library 'libbse-q4'" );
+		return;
+	}
+
+	GetBSEAPI = (GetBSEAPI_t) Sys_DLL_GetProcAddress( bseDLL, "GetBSEAPI" );
+	if ( !GetBSEAPI ) {
+		Sys_DLL_Unload( bseDLL );
+		bseDLL = NULL;
+		OpenQ4_DisableBSEWithWarning( "couldn't find BSE DLL API entry point" );
+		return;
+	}
+
+	bseImport.version					= BSE_API_VERSION;
+	bseImport.sys						= ::sys;
+	bseImport.common					= ::common;
+	bseImport.cmdSystem					= ::cmdSystem;
+	bseImport.cvarSystem				= ::cvarSystem;
+	bseImport.fileSystem				= ::fileSystem;
+	bseImport.networkSystem				= ::networkSystem;
+	bseImport.renderSystem				= ::renderSystem;
+	bseImport.soundSystem				= ::soundSystem;
+	bseImport.renderModelManager		= ::renderModelManager;
+	bseImport.uiManager					= ::uiManager;
+	bseImport.declManager				= ::declManager;
+	bseImport.AASFileManager			= ::AASFileManager;
+	bseImport.collisionModelManager		= ::collisionModelManager;
+	bseImport.game						= ::game;
+	bseImport.gameEdit					= ::gameEdit;
+	bseImport.session					= ::session;
+
+	bseExport_t *bseExportPtr = GetBSEAPI( &bseImport );
+	if ( !bseExportPtr ) {
+		Sys_DLL_Unload( bseDLL );
+		bseDLL = NULL;
+		OpenQ4_DisableBSEWithWarning( "BSE DLL API handshake failed" );
+		return;
+	}
+	bseExport = *bseExportPtr;
+	if ( bseExport.version != BSE_API_VERSION || !bseExport.bse || !bseExport.AllocDeclEffect ) {
+		Sys_DLL_Unload( bseDLL );
+		bseDLL = NULL;
+		OpenQ4_DisableBSEWithWarning( "BSE DLL API version mismatch" );
+		return;
+	}
+
+	::bse = bseExport.bse;
+	::declEffectEdit = bseExport.declEffectEdit;
+	::bseAllocDeclEffect = bseExport.AllocDeclEffect;
+	bseSetRuntimePointers = bseExport.SetRuntimePointers;
+	RefreshBSEBindings();
+#endif
+}
+
+/*
+=================
+idCommonLocal::UnloadBSEDLL
+=================
+*/
+void idCommonLocal::UnloadBSEDLL( void ) {
+#ifdef __DOOM_DLL__
+	if ( bseDLL ) {
+		Sys_DLL_Unload( bseDLL );
+		bseDLL = NULL;
+	}
+	bseSetRuntimePointers = NULL;
+	::bse = &bseDisabledLocal;
+	::declEffectEdit = NULL;
+	::bseAllocDeclEffect = NULL;
+#endif
+}
+
 /*
 =================
 idCommonLocal::LoadGameDLL
@@ -2844,6 +3050,7 @@ void idCommonLocal::LoadGameDLL( void ) {
 	gameEdit							= gameExport.gameEdit;
 	com_activeGameModule.SetString( gameModuleBaseName );
 	com_nextGameModule.SetString( "" );
+	RefreshBSEBindings();
 
 #endif
 
@@ -2874,6 +3081,7 @@ void idCommonLocal::UnloadGameDLL( void ) {
 	game = NULL;
 	gameEdit = NULL;
 	com_activeGameModule.SetString( "" );
+	RefreshBSEBindings();
 
 #endif
 }
@@ -3106,6 +3314,10 @@ void idCommonLocal::InitGame( void ) {
 	// initialize the file system
 	fileSystem->Init();
 
+	// load the external BSE module before decl initialization so DECL_EFFECT
+	// allocation can be provided by the runtime DLL.
+	LoadBSEDLL();
+
 	// initialize the declaration manager
 	declManager->Init();
 
@@ -3208,8 +3420,7 @@ void idCommonLocal::InitGame( void ) {
 
 	// initialize the BSE system before the game DLL starts creating effects
 	if ( bse && !bse->Init() ) {
-		common->FatalError( "couldn't initialize BSE system" );
-		return;
+		OpenQ4_DisableBSEWithWarning( "BSE initialization failed" );
 	}
 
 	// startup the script debugger
@@ -3288,6 +3499,7 @@ void idCommonLocal::ShutdownGame( bool reloading ) {
 	if ( bse ) {
 		bse->Shutdown();
 	}
+	UnloadBSEDLL();
 
 	// dump warnings to "warnings.txt"
 #ifdef DEBUG

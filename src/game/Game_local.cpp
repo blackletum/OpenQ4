@@ -4,7 +4,7 @@
 #include "Game_local.h"
 
 // RAVEN BEGIN
-#include "../bse/BSEInterface.h"
+#include "../bse_api/BSEInterface.h"
 #include "Projectile.h"
 #include "client/ClientEffect.h"
 #include "ai/AI.h"

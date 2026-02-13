@@ -31,9 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 // jmarshall - Raven Decl Support
 #include "../renderer/tr_local.h"
-#include "../bse/BSE_Envelope.h"
-#include "../bse/BSE_Particle.h"
-#include "../bse/BSE.h"
+#include "../bse_api/BSE_API.h"
 // jmarshall end
 
 /*
@@ -70,6 +68,16 @@ missing reload over a previously explicit definition
 
 #define USE_COMPRESSED_DECLS
 //#define GET_HUFFMAN_FREQUENCIES
+
+static idDecl *OpenQ4_AllocEffectDecl( void ) {
+	if ( bseAllocDeclEffect ) {
+		idDecl *decl = bseAllocDeclEffect();
+		if ( decl ) {
+			return decl;
+		}
+	}
+	return new idDecl();
+}
 
 class idDeclType {
 public:
@@ -1027,7 +1035,7 @@ void idDeclManagerLocal::Init( void ) {
 	RegisterDeclType(  "materialType",		DECL_MATERIALTYPE,  idDeclAllocator<rvDeclMatType>);
 	RegisterDeclType(  "lipSync",			DECL_LIPSYNC,		idDeclAllocator<rvDeclLipSync>);
 	RegisterDeclType(  "playback",			DECL_PLAYBACK,		idDeclAllocator<rvDeclPlayback>);
-	RegisterDeclType(	"effect",			DECL_EFFECT,		idDeclAllocator<rvDeclEffect>);
+	RegisterDeclType(	"effect",			DECL_EFFECT,		OpenQ4_AllocEffectDecl);
 	RegisterDeclType(	"playerModel",		DECL_PLAYER_MODEL, idDeclAllocator<rvDeclPlayerModel>);
 // jmarshall end
 
@@ -2037,7 +2045,7 @@ const rvDeclPlayback* idDeclManagerLocal::FindPlayback(const char* name, bool ma
 	return static_cast<const rvDeclPlayback*>(FindType(DECL_PLAYBACK, name, makeDefault));
 }
 const rvDeclEffect* idDeclManagerLocal::FindEffect(const char* name, bool makeDefault) {
-	return static_cast<const rvDeclEffect*>(FindType(DECL_EFFECT, name, makeDefault));
+	return (const rvDeclEffect*)FindType(DECL_EFFECT, name, makeDefault);
 }
 
 const idDeclTable* idDeclManagerLocal::FindTable(const char* name, bool makeDefault) {
@@ -2057,7 +2065,7 @@ const rvDeclPlayback* idDeclManagerLocal::PlaybackByIndex(int index, bool forceP
 }
 
 const rvDeclEffect* idDeclManagerLocal::EffectByIndex(int index, bool forceParse) {
-	return static_cast<const rvDeclEffect*>(DeclByIndex(DECL_EFFECT, index, forceParse));
+	return (const rvDeclEffect*)DeclByIndex(DECL_EFFECT, index, forceParse);
 }
 const idDeclTable* idDeclManagerLocal::TableByIndex(int index, bool forceParse) {
 	return static_cast<const idDeclTable*>(DeclByIndex(DECL_TABLE, index, forceParse));
@@ -2504,7 +2512,7 @@ bool idDeclLocal::ReplaceSourceFileText( void ) {
 	memcpy( buffer + sourceTextOffset, declText, textLength );
 
 	// write out new file
-	file = fileSystem->OpenFileWrite( GetFileName(), "fs_devpath" );
+	file = fileSystem->OpenFileWrite( GetFileName(), "fs_cdpath" );
 	if ( !file ) {
 		Mem_Free( buffer );
 		common->Warning( "Couldn't open %s for writing.", GetFileName() );

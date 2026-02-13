@@ -310,7 +310,7 @@ void idAsyncServer::ExecuteMapChange( void ) {
 
 	serverTime = 0;
 
-	// OpenQ4 dev/staging runs from directory overrides (fs_devpath). Keep
+	// OpenQ4 dev/staging runs from directory overrides (fs_cdpath). Keep
 	// multiplayer server startup non-pure to avoid pure-lockdown failures.
 	if ( sessLocal.mapSpawnData.serverInfo.GetInt( "si_pure" ) ) {
 		sessLocal.mapSpawnData.serverInfo.SetInt( "si_pure", 0 );

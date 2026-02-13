@@ -146,7 +146,7 @@ meson compile -C builddir
 
 **Install directory** (`install/`):
 - Complete distributable package with all binaries
-- Ready for deployment or testing with `fs_devpath`
+- Ready for deployment or testing with `fs_cdpath`
 
 </details>
 
@@ -300,7 +300,7 @@ OpenQ4 automatically validates your Quake 4 installation to ensure you have legi
 - `fs_basepath` - Game installation directory (auto-detected)
 - `fs_homepath` - Writable user directory
 - `fs_savepath` - Save games and configs (defaults to `fs_homepath`)
-- `fs_devpath` - Development overlay path (use `install/` for testing)
+- `fs_cdpath` - Locked runtime overlay path (current working directory; use `install/` as launch dir for testing)
 
 </details>
 

@@ -25,6 +25,8 @@ windowDef Desktop
 		visible	1
 		background	"gfx/guis/mainmenu/load_top_edge"
 		matcolor	0,0,0,0.8
+		screenalignx	left
+		screenaligny	top
 	}
 	windowDef btm_edge
 	{
@@ -32,6 +34,8 @@ windowDef Desktop
 		visible	1
 		background	"gfx/guis/mainmenu/load_btm_edge"
 		matcolor	0,0,0,0.8
+		screenalignx	right
+		screenaligny	bottom
 	}
 	windowDef top_edgeadd
 	{
@@ -39,6 +43,8 @@ windowDef Desktop
 		visible	1
 		background	"gfx/guis/mainmenu/load_top_edgeadd"
 		matcolor	0.0941,0.113,0.0392,1
+		screenalignx	left
+		screenaligny	top
 	}
 	windowDef btm_edgeadd
 	{
@@ -46,6 +52,8 @@ windowDef Desktop
 		visible	1
 		background	"gfx/guis/mainmenu/load_btm_edgeadd"
 		matcolor	0.0941,0.113,0.0392,1
+		screenalignx	right
+		screenaligny	bottom
 	}
 	windowDef bar
 	{
@@ -53,12 +61,16 @@ windowDef Desktop
 		visible	1
 		background	"gfx/guis/mainmenu/load_bar"
 		matcolor	0.878,0.423,0,0.3
+		screenalignx	right
+		screenaligny	bottom
 	}
 	windowDef p_load_bar
 	{
 		rect	235,431,( "gui::map_loading" * 405 ),26
 		visible	1
 		windowDef load_bar
+		screenalignx	right
+		screenaligny	bottom
 		{
 			rect	0,0,405,26
 			visible	1
@@ -72,6 +84,8 @@ windowDef Desktop
 		visible	0
 		background	"gfx/guis/mainmenu/load_bar"
 		matcolor	0.878,0.423,0,0.5
+		screenalignx	right
+		screenaligny	bottom
 	}
 	windowDef load_text
 	{
@@ -84,6 +98,8 @@ windowDef Desktop
 		font	"fonts/marine"
 		textalign	2
 		textstyle	1
+		screenalignx	right
+		screenaligny	bottom
 
 		onTime 0 {
 			transition "forecolor" "1,1,1,1" "0.5,0.5,0.5,1" "500" ;
@@ -104,11 +120,15 @@ windowDef Desktop
 		visible	1
 		background	"gfx/guis/mainmenu/load_dots"
 		matcolor	0.109,0.145,0.0745,1
+		screenalignx	left
+		screenaligny	top
 	}
 	windowDef button
 	{
 		rect	0,0,640,480
 		visible	0
+		screenalignx	right
+		screenaligny	bottom
 
 		onAction {
 			set "cmd" "unmute" ;

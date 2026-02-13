@@ -34,6 +34,13 @@ option(
 )
 
 option(
+  'build_libbse',
+  type: 'boolean',
+  value: true,
+  description: 'Build the external BSE runtime module (libbse-q4) from OpenQ4-BSE.',
+)
+
+option(
   'platform_backend',
   type: 'combo',
   choices: ['sdl3', 'legacy_win32'],

@@ -122,7 +122,7 @@ void CEditViewDlg::OnBnClickedButtonSave() {
 	if (fileName.Length()) {
 		CString text;
         editInfo.GetWindowText(text);
-		fileSystem->WriteFile(fileName, text.GetBuffer(0), text.GetLength(), "fs_devpath");
+		fileSystem->WriteFile(fileName, text.GetBuffer(0), text.GetLength(), "fs_cdpath");
 		if (mode == MATERIALS) {
 			declManager->Reload( false );
 		} else {

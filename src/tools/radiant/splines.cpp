@@ -1328,7 +1328,7 @@ idCameraDef::save
 ================
 */
 void idCameraDef::save(const char *filename) {
-	idFile *f = fileSystem->OpenFileWrite( filename, "fs_devpath" );
+	idFile *f = fileSystem->OpenFileWrite( filename, "fs_cdpath" );
 	if ( f ) {
 		int i;
 		f->Printf( "cameraPathDef { \n" );

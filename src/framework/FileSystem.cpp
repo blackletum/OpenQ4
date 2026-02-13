@@ -77,12 +77,7 @@ be created reletive to the save path.
 The "cd path" is the path to an alternate hierarchy that will be searched if a file
 is not located in the base path. A user can do a partial install that copies some
 data to a base path created on their hard drive and leave the rest on the cd. It defaults
-to the current directory, but it can be overridden with "+set fs_cdpath g:\doom" on the
-command line.
-
-The "dev path" is the path to an alternate hierarchy where the editors and tools used
-during development (Radiant, AF editor, dmap, runAAS) will write files to. It defaults to
-the cd path, but can be overridden with a "+set fs_devpath c:\doom" on the command line.
+to the process current directory and is locked at startup.
 
 If a user runs the game directly from a CD, the base path would be on the CD. This
 should still function correctly, but all file writes will fail (harmlessly).
@@ -138,7 +133,7 @@ copied files may change casing when copied over.
 
 The relative path "sound/newstuff/test.wav" would be searched for in the following places:
 
-for save path, dev path, base path, cd path:
+for save path, base path, cd path:
 	for current game, base game:
 		search directory
 		search zip files
@@ -802,7 +797,6 @@ private:
 	static idCVar			fs_homepath;
 	static idCVar			fs_savepath;
 	static idCVar			fs_cdpath;
-	static idCVar			fs_devpath;
 	static idCVar			fs_game;
 	static idCVar			fs_game_base;
 	static idCVar			fs_caseSensitiveOS;
@@ -874,7 +868,6 @@ idCVar	idFileSystemLocal::fs_basepath( "fs_basepath", "", CVAR_SYSTEM | CVAR_INI
 idCVar	idFileSystemLocal::fs_homepath( "fs_homepath", "", CVAR_SYSTEM | CVAR_INIT, "" );
 idCVar	idFileSystemLocal::fs_savepath( "fs_savepath", "", CVAR_SYSTEM | CVAR_INIT, "" );
 idCVar	idFileSystemLocal::fs_cdpath( "fs_cdpath", "", CVAR_SYSTEM | CVAR_INIT, "" );
-idCVar	idFileSystemLocal::fs_devpath( "fs_devpath", "", CVAR_SYSTEM | CVAR_INIT, "" );
 idCVar	idFileSystemLocal::fs_game( "fs_game", OPENQ4_GAMEDIR, CVAR_SYSTEM | CVAR_INIT | CVAR_SERVERINFO, "mod path" );
 idCVar  idFileSystemLocal::fs_game_base( "fs_game_base", "", CVAR_SYSTEM | CVAR_INIT | CVAR_SERVERINFO, "alternate mod path, searched after the main fs_game path, before the basedir" );
 #ifdef WIN32
@@ -1358,13 +1351,15 @@ idFileSystemLocal::RemoveFile
 void idFileSystemLocal::RemoveFile( const char *relativePath ) {
 	idStr OSPath;
 
-	if ( fs_devpath.GetString()[0] ) {
-		OSPath = BuildOSPath( fs_devpath.GetString(), gameFolder, relativePath );
+	if ( fs_cdpath.GetString()[0] ) {
+		OSPath = BuildOSPath( fs_cdpath.GetString(), gameFolder, relativePath );
 		remove( OSPath );
 	}
 
-	OSPath = BuildOSPath( fs_savepath.GetString(), gameFolder, relativePath );
-	remove( OSPath );
+	if ( fs_savepath.GetString()[0] && idStr::Icmp( fs_savepath.GetString(), fs_cdpath.GetString() ) != 0 ) {
+		OSPath = BuildOSPath( fs_savepath.GetString(), gameFolder, relativePath );
+		remove( OSPath );
+	}
 
 	ClearDirCache();
 }
@@ -2119,15 +2114,14 @@ idModList *idFileSystemLocal::ListMods( void ) {
 
 	idModList	*list = new idModList;
 
-	const char	*search[ 4 ];
+	const char	*search[ 3 ];
 	int			isearch;
 
-	search[0] = fs_savepath.GetString();
-	search[1] = fs_devpath.GetString();
-	search[2] = fs_basepath.GetString();
-	search[3] = fs_cdpath.GetString();
+	search[0] = fs_cdpath.GetString();
+	search[1] = fs_basepath.GetString();
+	search[2] = fs_savepath.GetString();
 
-	for ( isearch = 0; isearch < 4; isearch++ ) {
+	for ( isearch = 0; isearch < 3; isearch++ ) {
 		if ( !search[ isearch ] || !search[ isearch ][ 0 ] ) {
 			continue;
 		}
@@ -2169,7 +2163,7 @@ idModList *idFileSystemLocal::ListMods( void ) {
 	// read the descriptions for each mod - search all paths
 	for ( i = 0; i < list->mods.Num(); i++ ) {
 
-		for ( isearch = 0; isearch < 4; isearch++ ) {
+		for ( isearch = 0; isearch < 3; isearch++ ) {
 
 			idStr descfile = BuildOSPath( search[ isearch ], list->mods[ i ], "description.txt" );
 			FILE *f = OpenOSFile( descfile, "r" );
@@ -2186,7 +2180,7 @@ idModList *idFileSystemLocal::ListMods( void ) {
 			}
 		}
 
-		if ( isearch == 4 ) {
+		if ( isearch == 3 ) {
 			list->descriptions.Append( list->mods[ i ] );
 		}
 	}
@@ -2583,9 +2577,9 @@ idFileSystemLocal::SetupGameDirectories
 ================
 */
 void idFileSystemLocal::SetupGameDirectories( const char *gameName ) {
-	// setup cdpath
-	if ( fs_cdpath.GetString()[0] ) {
-		AddGameDirectory( fs_cdpath.GetString(), gameName );
+	// setup savepath
+	if ( fs_savepath.GetString()[0] ) {
+		AddGameDirectory( fs_savepath.GetString(), gameName );
 	}
 
 	// setup basepath
@@ -2593,14 +2587,9 @@ void idFileSystemLocal::SetupGameDirectories( const char *gameName ) {
 		AddGameDirectory( fs_basepath.GetString(), gameName );
 	}
 
-	// setup devpath
-	if ( fs_devpath.GetString()[0] ) {
-		AddGameDirectory( fs_devpath.GetString(), gameName );
-	}
-
-	// setup savepath
-	if ( fs_savepath.GetString()[0] ) {
-		AddGameDirectory( fs_savepath.GetString(), gameName );
+	// setup cdpath last so it has highest search priority
+	if ( fs_cdpath.GetString()[0] ) {
+		AddGameDirectory( fs_cdpath.GetString(), gameName );
 	}
 }
 
@@ -2743,7 +2732,7 @@ void idFileSystemLocal::Startup( void ) {
 		if ( !ValidateRequiredOfficialPaks( validationErrors ) ) {
 			common->FatalError(
 				"Required official Quake 4 pk4 files are missing or modified.\n\n%s\n"
-				"Install/verify the original q4base assets and remove overrides from fs_savepath/fs_devpath.",
+				"Install/verify the original q4base assets and remove overrides from fs_savepath/fs_cdpath.",
 				validationErrors.c_str() );
 		}
 	}
@@ -3080,10 +3069,9 @@ int idFileSystemLocal::ValidateDownloadPakForChecksum( int checksum, char path[ 
 	}
 
 	// extract a path that includes the fs_game: != OSPathToRelativePath
-	testList.Append( fs_savepath.GetString() );
-	testList.Append( fs_devpath.GetString() );
-	testList.Append( fs_basepath.GetString() );
 	testList.Append( fs_cdpath.GetString() );
+	testList.Append( fs_basepath.GetString() );
+	testList.Append( fs_savepath.GetString() );
 	for ( i = 0; i < testList.Num(); i ++ ) {
 		if ( testList[ i ].Length() && !testList[ i ].Icmpn( pak->pakFilename, testList[ i ].Length() ) ) {
 			relativePath = pak->pakFilename.c_str() + testList[ i ].Length() + 1;
@@ -3332,8 +3320,6 @@ void idFileSystemLocal::Init( void ) {
 	common->StartupVariable( "fs_basepath", false );
 	common->StartupVariable( "fs_homepath", false );
 	common->StartupVariable( "fs_savepath", false );
-	common->StartupVariable( "fs_cdpath", false );
-	common->StartupVariable( "fs_devpath", false );
 	common->StartupVariable( "fs_game", false );
 	common->StartupVariable( "fs_game_base", false );
 	common->StartupVariable( "fs_copyfiles", false );
@@ -3381,17 +3367,8 @@ void idFileSystemLocal::Init( void ) {
 	if ( fs_savepath.GetString()[0] == '\0' ) {
 		fs_savepath.SetString( fs_homepath.GetString() );
 	}
-	if ( fs_cdpath.GetString()[0] == '\0' ) {
-		fs_cdpath.SetString( Sys_DefaultCDPath() );
-	}
-
-	if ( fs_devpath.GetString()[0] == '\0' ) {
-#ifdef WIN32
-		fs_devpath.SetString( fs_cdpath.GetString()[0] ? fs_cdpath.GetString() : fs_basepath.GetString() );
-#else
-		fs_devpath.SetString( fs_savepath.GetString() );
-#endif
-	}
+	// fs_cdpath is locked to the process current directory.
+	fs_cdpath.SetString( Sys_DefaultCDPath() );
 
 	// try to start up normally
 	Startup( );
@@ -4390,13 +4367,21 @@ void idFileSystemLocal::FindDLL( const char *name, char _dllPath[ MAX_OSPATH ], 
 		idStr exeDir = Sys_EXEPath();
 		exeDir.StripFilename();
 
+		const bool preferExeDirFirst = idStr::Icmp( name, "libbse-q4" ) == 0;
+		if ( preferExeDirFirst ) {
+			// Keep libbse-q4 next to the engine executable.
+			dllPath = exeDir;
+			dllPath.AppendPath( dllName );
+			dllFile = OpenExplicitFileRead( dllPath );
+		}
+
 		// Stage game modules under builddir/<gamedir>/ so the engine can load them
 		// without requiring copies into the executable root.
 		const char *moduleGameDir = fs_game.GetString();
 		if ( !moduleGameDir[0] ) {
 			moduleGameDir = OPENQ4_GAMEDIR;
 		}
-		if ( moduleGameDir[0] ) {
+		if ( !dllFile && moduleGameDir[0] ) {
 			dllPath = exeDir;
 			dllPath.AppendPath( moduleGameDir );
 			dllPath.AppendPath( dllName );
@@ -4404,7 +4389,7 @@ void idFileSystemLocal::FindDLL( const char *name, char _dllPath[ MAX_OSPATH ], 
 		}
 
 		// Fallback: check the executable directory itself.
-		if ( !dllFile ) {
+		if ( !dllFile && !preferExeDirFirst ) {
 			dllPath = exeDir;
 			dllPath.AppendPath( dllName );
 			dllFile = OpenExplicitFileRead( dllPath );
@@ -4537,13 +4522,15 @@ bool idFileSystemLocal::HasD3XP( void ) {
 	// check for d3xp's d3xp/pak000.pk4 in any search path
 	// checking wether the pak is loaded by checksum wouldn't be enough:
 	// we may have a different fs_game right now but still need to reply that it's installed
-	const char	*search[4];
+	const char	*search[3];
 	idFile	  	*pakfile;
-	search[0] = fs_savepath.GetString();
-	search[1] = fs_devpath.GetString();
-	search[2] = fs_basepath.GetString();
-	search[3] = fs_cdpath.GetString();
-	for ( i = 0; i < 4; i++ ) {
+	search[0] = fs_cdpath.GetString();
+	search[1] = fs_basepath.GetString();
+	search[2] = fs_savepath.GetString();
+	for ( i = 0; i < 3; i++ ) {
+		if ( !search[ i ] || !search[ i ][ 0 ] ) {
+			continue;
+		}
 		pakfile = OpenExplicitFileRead( BuildOSPath( search[ i ], "d3xp", "pak000.pk4" ) );
 		if ( pakfile ) {
 			CloseFile( pakfile );

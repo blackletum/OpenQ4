@@ -55,7 +55,6 @@ GAME_SOURCES = [
 
 ENGINE_SOURCE_GLOBS = [
     "aas/*.cpp",
-    "bse/*.cpp",
     "cm/*.cpp",
     "framework/*.cpp",
     "framework/async/*.cpp",

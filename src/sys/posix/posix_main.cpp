@@ -427,7 +427,7 @@ void Sys_ShowConsole( int visLevel, bool quitOnClose ) { }
 
 // only relevant when specified on command line
 const char *Sys_DefaultCDPath( void ) {
-	return "";
+	return Posix_Cwd();
 }
 
 long Sys_FileTimeStamp(FILE * fp) {

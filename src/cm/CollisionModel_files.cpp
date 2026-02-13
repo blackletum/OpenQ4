@@ -241,7 +241,7 @@ void idCollisionModelManagerLocal::WriteCollisionModelsToFile( const char *filen
 
 	common->Printf( "writing %s\n", name.c_str() );
 	// _D3XP was saving to fs_cdpath
-	fp = fileSystem->OpenFileWrite( name, "fs_devpath" );
+	fp = fileSystem->OpenFileWrite( name, "fs_cdpath" );
 	if ( !fp ) {
 		common->Warning( "idCollisionModelManagerLocal::WriteCollisionModelsToFile: Error opening file %s\n", name.c_str() );
 		return;
@@ -278,7 +278,7 @@ bool idCollisionModelManagerLocal::WriteCollisionModelForMapEntity( const idMapE
 	name.SetFileExtension( CM_FILE_EXT );
 
 	common->Printf( "writing %s\n", name.c_str() );
-	fp = fileSystem->OpenFileWrite( name, "fs_devpath" );
+	fp = fileSystem->OpenFileWrite( name, "fs_cdpath" );
 	if ( !fp ) {
 		common->Printf( "idCollisionModelManagerLocal::WriteCollisionModelForMapEntity: Error opening file %s\n", name.c_str() );
 		FreeModel( model );

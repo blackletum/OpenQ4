@@ -16,6 +16,7 @@ windowDef Desktop
 		background	"gfx/guis/mainmenu/load_top_edge"
 		matcolor	0,0,0,0.8
 		screenalignx	left
+		screenaligny	top
 	}
 	windowDef btm_edge
 	{
@@ -24,6 +25,7 @@ windowDef Desktop
 		background	"gfx/guis/mainmenu/load_btm_edge"
 		matcolor	0,0,0,0.8
 		screenalignx	right
+		screenaligny	bottom
 	}
 	windowDef top_edgeadd
 	{
@@ -32,6 +34,7 @@ windowDef Desktop
 		background	"gfx/guis/mainmenu/load_top_edgeadd"
 		matcolor	0.0941,0.113,0.0392,1
 		screenalignx	left
+		screenaligny	top
 	}
 	windowDef btm_edgeadd
 	{
@@ -40,6 +43,7 @@ windowDef Desktop
 		background	"gfx/guis/mainmenu/load_btm_edgeadd"
 		matcolor	0.0941,0.113,0.0392,1
 		screenalignx	right
+		screenaligny	bottom
 	}
 	windowDef grid1
 	{
@@ -62,6 +66,7 @@ windowDef Desktop
 		background	"gfx/guis/mainmenu/load_bar"
 		matcolor	0.878,0.423,0,0.3
 		screenalignx	right
+		screenaligny	bottom
 	}
 	windowDef p_load_bar
 	{
@@ -69,6 +74,7 @@ windowDef Desktop
 		visible	1
 		windowDef load_bar
 		screenalignx	right
+		screenaligny	bottom
 		{
 			rect	0,0,405,26
 			visible	1
@@ -88,6 +94,7 @@ windowDef Desktop
 		textalign	2
 		textstyle	1
 		screenalignx	right
+		screenaligny	bottom
 
 		onTime 0 {
 			transition "forecolor" "1,1,1,1" "0.5,0.5,0.5,1" "500" ;
@@ -109,6 +116,7 @@ windowDef Desktop
 		background	"gfx/guis/mainmenu/load_corner"
 		matcolor	0.227,0.227,0.227,1
 		screenalignx	left
+		screenaligny	top
 	}
 	windowDef bl_corner
 	{
@@ -118,6 +126,7 @@ windowDef Desktop
 		matcolor	0.227,0.227,0.227,1
 		matscaley	-1
 		screenalignx	left
+		screenaligny	bottom
 	}
 	windowDef tr_corner
 	{
@@ -127,6 +136,7 @@ windowDef Desktop
 		matcolor	0.227,0.227,0.227,1
 		matscalex	-1
 		screenalignx	right
+		screenaligny	top
 	}
 	windowDef br_corner
 	{
@@ -137,6 +147,7 @@ windowDef Desktop
 		matscaley	-1
 		matscalex	-1
 		screenalignx	right
+		screenaligny	bottom
 	}
 	windowDef t_levelname_grad
 	{
@@ -146,6 +157,7 @@ windowDef Desktop
 		matcolor	0,0,0,1
 		matscalex	-1
 		screenalignx	right
+		screenaligny	top
 	}
 	windowDef load_dots
 	{
@@ -154,6 +166,7 @@ windowDef Desktop
 		background	"gfx/guis/mainmenu/load_dots"
 		matcolor	0.109,0.145,0.0745,1
 		screenalignx	left
+		screenaligny	top
 	}
 	windowDef t_levelname
 	{
@@ -166,6 +179,7 @@ windowDef Desktop
 		textspacing	-2
 		textalign	2
 		screenalignx	right
+		screenaligny	top
 	}
 	windowDef t_message_grad
 	{
@@ -174,6 +188,7 @@ windowDef Desktop
 		background	"gfx/guis/common/gradient3"
 		matcolor	0,0,0,.5
 		matscalex	-1
+		screenaligny	top
 	}
 	windowDef t_message
 	{	
@@ -186,6 +201,7 @@ windowDef Desktop
 		font	"fonts/lowpixel"
 		textalign	2
 		screenalignx	right
+		screenaligny	top
 	}
 	windowDef server_name
 	{
@@ -198,6 +214,7 @@ windowDef Desktop
 		font	"fonts/lowpixel"
 		textalign	2
 		screenalignx	right
+		screenaligny	bottom
 	}
 	windowDef server_ip
 	{
@@ -210,6 +227,7 @@ windowDef Desktop
 		font	"fonts/lowpixel"
 		textalign	2
 		screenalignx	right
+		screenaligny	bottom
 	}
 	windowDef server_gametype
 	{
@@ -222,6 +240,7 @@ windowDef Desktop
 		font	"fonts/lowpixel"
 		textalign	2
 		screenalignx	right
+		screenaligny	bottom
 	}
 	windowDef server_limit
 	{
@@ -234,6 +253,7 @@ windowDef Desktop
 		font	"fonts/lowpixel"
 		textalign	2
 		screenalignx	right
+		screenaligny	bottom
 	}
 	windowDef server_loadinfo
 	{
@@ -245,13 +265,14 @@ windowDef Desktop
 		textscale	0.25
 		font	"fonts/lowpixel"
 		textalign	1
-		screenalignx	right
+		screenaligny	bottom
 	}
 	windowDef load_icons
 	{
 		rect	0,419,640,54
 		visible	1
 		windowDef load_icon_1
+		screenaligny	bottom
 		{
 			rect	"desktop::iconOffset",11,24,24
 			visible	"gui::load_icon_1"

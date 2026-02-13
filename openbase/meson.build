@@ -1,4 +1,4 @@
-if build_game_sp
+if build_games and build_game_sp
   shared_module(
     'game_sp',
     game_sources,
@@ -15,7 +15,7 @@ if build_game_sp
   )
 endif
 
-if build_game_mp
+if build_games and build_game_mp
   shared_module(
     'game_mp',
     game_sources,

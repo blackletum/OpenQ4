@@ -45,10 +45,9 @@ If you have questions concerning this license or the applicable additional terms
 	"fs_basepath"		path to local install, read-only
 	"fs_homepath"		user-writable home path root
 	"fs_savepath"		path to config, save game, etc. files, read & write
-	"fs_cdpath"			path to cd, read-only
-	"fs_devpath"		path to files created during development, read & write
+	"fs_cdpath"			locked path to the executable current working directory
 
-	The base path for file saving can be set to "fs_savepath" or "fs_devpath".
+	The base path for file saving can be set to "fs_savepath" or "fs_cdpath".
 
 ===============================================================================
 */
@@ -181,7 +180,7 @@ public:
 							// Converts a relative path to a full OS path.
 	virtual const char *	OSPathToRelativePath( const char *OSPath ) = 0;
 							// Converts a full OS path to a relative path.
-	virtual const char *	RelativePathToOSPath( const char *relativePath, const char *basePath = "fs_devpath" ) = 0;
+	virtual const char *	RelativePathToOSPath( const char *relativePath, const char *basePath = "fs_cdpath" ) = 0;
 							// Builds a full OS path from the given components.
 	virtual const char *	BuildOSPath( const char *base, const char *game, const char *relativePath ) = 0;
 							// Creates the given OS path for as far as it doesn't exist already.

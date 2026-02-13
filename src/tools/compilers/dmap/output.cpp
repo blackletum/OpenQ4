@@ -656,7 +656,7 @@ void WriteOutputFile( void ) {
 
 	common->Printf( "writing %s\n", qpath.c_str() );
 	// _D3XP used fs_cdpath
-	procFile = fileSystem->OpenFileWrite( qpath, "fs_devpath" );
+	procFile = fileSystem->OpenFileWrite( qpath, "fs_cdpath" );
 	if ( !procFile ) {
 		common->Error( "Error opening %s", qpath.c_str() );
 	}

@@ -531,7 +531,7 @@ Sys_DefaultCDPath
 ==============
 */
 const char* Sys_DefaultCDPath(void) {
-	return "";
+	return Sys_Cwd();
 }
 
 /*

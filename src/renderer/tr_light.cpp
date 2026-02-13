@@ -1684,12 +1684,8 @@ void R_AddEffectSurfaces(void) {
 			}
 			vertexCache.Touch(tri->ambientCache);
 
-			if (r_useIndexBuffers.GetBool() && !tri->indexCache) {
-				vertexCache.Alloc(tri->indexes, tri->numIndexes * sizeof(tri->indexes[0]), &tri->indexCache, true);
-			}
-			if (tri->indexCache) {
-				vertexCache.Touch(tri->indexCache);
-			}
+			// BSE dynamic surfaces rebuild index data every frame; keep them on the CPU index path.
+			tri->indexCache = NULL;
 
 			R_AddDrawSurf(tri, vEffect, &renderParms, shader, vEffect->scissorRect);
 			tri->ambientViewCount = tr.viewCount;
