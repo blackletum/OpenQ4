@@ -30,6 +30,52 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "tr_local.h"
 
+static bool RB_ImageIsCurrentRender( const idImage *image ) {
+	if ( image == NULL ) {
+		return false;
+	}
+
+	if ( image == globalImages->currentRenderImage || image == globalImages->originalCurrentRenderImage ) {
+		return true;
+	}
+
+	const char *name = image->GetName();
+	if ( name == NULL ) {
+		return false;
+	}
+
+	return idStr::Icmpn( name, "_currentRender", 14 ) == 0;
+}
+
+static bool RB_StageUsesCurrentRender( const shaderStage_t *stage ) {
+	if ( stage == NULL ) {
+		return false;
+	}
+
+	if ( RB_ImageIsCurrentRender( stage->texture.image ) ) {
+		return true;
+	}
+
+	const newShaderStage_t *newStage = stage->newStage;
+	if ( newStage == NULL ) {
+		return false;
+	}
+
+	for ( int i = 0; i < newStage->numFragmentProgramImages; i++ ) {
+		if ( RB_ImageIsCurrentRender( newStage->fragmentProgramImages[i] ) ) {
+			return true;
+		}
+	}
+
+	for ( int i = 0; i < newStage->numShaderTextures; i++ ) {
+		if ( RB_ImageIsCurrentRender( newStage->shaderTextureImages[i] ) ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 static inline void RB_SetStageVertexColorPointer( const drawSurf_t *surf, int stage, idDrawVert *ac ) {
 	if ( surf->decalColorCache != NULL && stage >= 0 && stage < surf->decalColorStageCount && surf->decalColorStride > 0 ) {
 		byte *colorData = (byte *)vertexCache.Position( surf->decalColorCache );
@@ -1070,6 +1116,14 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 			continue;
 		}
 
+		// Fallback for materials that reference _currentRender but were not sorted as post-process.
+		if ( !backEnd.currentRenderCopied && RB_StageUsesCurrentRender( pStage ) ) {
+			globalImages->currentRenderImage->CopyFramebuffer( backEnd.viewDef->viewport.x1,
+				backEnd.viewDef->viewport.y1, backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1,
+				backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1 );
+			backEnd.currentRenderCopied = true;
+		}
+
 		// see if we are a new-style stage
 		newShaderStage_t *newStage = pStage->newStage;
 		if ( newStage ) {
@@ -1368,12 +1422,11 @@ int RB_STD_DrawShaderPasses( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 			return 0;
 		}
 
-		// only dump if in a 3d view
-		if ( backEnd.viewDef->viewEntitys && tr.backEndRenderer == BE_ARB2 ) {
-			globalImages->currentRenderImage->CopyFramebuffer( backEnd.viewDef->viewport.x1,
-				backEnd.viewDef->viewport.y1,  backEnd.viewDef->viewport.x2 -  backEnd.viewDef->viewport.x1 + 1,
-				backEnd.viewDef->viewport.y2 -  backEnd.viewDef->viewport.y1 + 1 );
-		}
+		// Copy the current view for any post-process material sampling _currentRender.
+		// Do not gate this on viewEntitys: world-only views may still contain post-process surfaces.
+		globalImages->currentRenderImage->CopyFramebuffer( backEnd.viewDef->viewport.x1,
+			backEnd.viewDef->viewport.y1,  backEnd.viewDef->viewport.x2 -  backEnd.viewDef->viewport.x1 + 1,
+			backEnd.viewDef->viewport.y2 -  backEnd.viewDef->viewport.y1 + 1 );
 		backEnd.currentRenderCopied = true;
 	}
 

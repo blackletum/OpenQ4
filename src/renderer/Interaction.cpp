@@ -1185,6 +1185,12 @@ void idInteraction::AddActiveInteraction( void ) {
 					entityDef->parms.suppressShadowInLightID == lightDef->parms.lightId ) {
 					continue;
 				}
+				if ( entityDef->parms.suppressSurfaceInViewID &&
+					entityDef->parms.suppressSurfaceInViewID == tr.viewDef->renderView.viewID ) {
+					// Surfaces intentionally hidden in this view (typically local first-person body/weapon models)
+					// should not contribute shadow volumes for that same view.
+					continue;
+				}
 			}
 
 			// cull static shadows that have a non-empty bounds
@@ -1230,13 +1236,6 @@ void idInteraction::AddActiveInteraction( void ) {
 
 			// see if we can avoid using the shadow volume caps
 			bool inside = R_PotentiallyInsideInfiniteShadow( sint->ambientTris, localViewOrigin, localLightOrigin );
-			if ( !r_skipSuppress.GetBool()
-				&& entityDef->parms.suppressSurfaceInViewID
-				&& entityDef->parms.suppressSurfaceInViewID == tr.viewDef->renderView.viewID ) {
-				// First-person hidden caster surfaces (player/weapon world models) can intersect nearby world geometry.
-				// Force the robust inside-shadow path so clipped/intersecting sections remain part of a closed stencil volume.
-				inside = true;
-			}
 
 			if ( sint->shader->TestMaterialFlag( MF_NOSELFSHADOW ) ) {
 				R_LinkLightSurf( &vLight->localShadows,

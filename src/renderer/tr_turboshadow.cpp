@@ -50,14 +50,9 @@ srfTriangles_t *R_CreateVertexProgramTurboShadowVolume( const idRenderEntityLoca
 	silEdge_t	*sil;
 	const glIndex_t *indexes;
 	const byte *facing;
-	const bool suppressSurfaceInCurrentView = ( !r_skipSuppress.GetBool()
-		&& tr.viewDef
-		&& ent->parms.suppressSurfaceInViewID
-		&& ent->parms.suppressSurfaceInViewID == tr.viewDef->renderView.viewID );
-	const bool useProjectedCull = r_useShadowProjectedCull.GetBool() && !suppressSurfaceInCurrentView;
 
 	R_CalcInteractionFacing( ent, tri, light, cullInfo );
-	if ( useProjectedCull ) {
+	if ( r_useShadowProjectedCull.GetBool() ) {
 		R_CalcInteractionCullBits( ent, tri, light, cullInfo );
 	}
 
@@ -66,7 +61,7 @@ srfTriangles_t *R_CreateVertexProgramTurboShadowVolume( const idRenderEntityLoca
 	facing = cullInfo.facing;
 
 	// if all the triangles are inside the light frustum
-	if ( cullInfo.cullBits == LIGHT_CULL_ALL_FRONT || !useProjectedCull ) {
+	if ( cullInfo.cullBits == LIGHT_CULL_ALL_FRONT || !r_useShadowProjectedCull.GetBool() ) {
 
 		// count the number of shadowing faces
 		for ( i = 0; i < numFaces; i++ ) {
@@ -198,14 +193,9 @@ srfTriangles_t *R_CreateTurboShadowVolume( const idRenderEntityLocal *ent,
 	silEdge_t	*sil;
 	const glIndex_t *indexes;
 	const byte *facing;
-	const bool suppressSurfaceInCurrentView = ( !r_skipSuppress.GetBool()
-		&& tr.viewDef
-		&& ent->parms.suppressSurfaceInViewID
-		&& ent->parms.suppressSurfaceInViewID == tr.viewDef->renderView.viewID );
-	const bool useProjectedCull = r_useShadowProjectedCull.GetBool() && !suppressSurfaceInCurrentView;
 
 	R_CalcInteractionFacing( ent, tri, light, cullInfo );
-	if ( useProjectedCull ) {
+	if ( r_useShadowProjectedCull.GetBool() ) {
 		R_CalcInteractionCullBits( ent, tri, light, cullInfo );
 	}
 
@@ -214,7 +204,7 @@ srfTriangles_t *R_CreateTurboShadowVolume( const idRenderEntityLocal *ent,
 	facing = cullInfo.facing;
 
 	// if all the triangles are inside the light frustum
-	if ( cullInfo.cullBits == LIGHT_CULL_ALL_FRONT || !useProjectedCull ) {
+	if ( cullInfo.cullBits == LIGHT_CULL_ALL_FRONT || !r_useShadowProjectedCull.GetBool() ) {
 
 		// count the number of shadowing faces
 		for ( i = 0; i < numFaces; i++ ) {
