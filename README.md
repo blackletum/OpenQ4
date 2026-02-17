@@ -365,17 +365,18 @@ OpenQ4 is an open-source project and welcomes contributions! Whether you're fixi
 
 ## License
 
-OpenQ4 is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0) (GPLv3).
-
-This means you are free to:
-- Use the software for any purpose
-- Modify the source code
-- Distribute copies
-- Distribute modified versions
-
-See the [LICENSE](LICENSE) file for full details.
-
-> **Note:** The GPLv3 license applies to OpenQ4's engine code only. The game library code in [OpenQ4-GameLibs](https://github.com/themuffinator/OpenQ4-GameLibs) is derived from the Quake 4 SDK and subject to id Software's EULA. Quake 4 game assets remain the property of id Software and ZeniMax Media.
+<small>
+<p>OpenQ4 is licensed under the <a href="https://www.gnu.org/licenses/gpl-3.0">GNU General Public License v3.0</a> (GPLv3).</p>
+<p>This means you are free to:</p>
+<ul>
+  <li>Use the software for any purpose</li>
+  <li>Modify the source code</li>
+  <li>Distribute copies</li>
+  <li>Distribute modified versions</li>
+</ul>
+<p>See the <a href="LICENSE">LICENSE</a> file for full details.</p>
+<p><strong>Note:</strong> The GPLv3 license applies to OpenQ4's engine code only. The game library code in <a href="https://github.com/themuffinator/OpenQ4-GameLibs">OpenQ4-GameLibs</a> is derived from the Quake 4 SDK and subject to id Software's EULA. Quake 4 game assets remain the property of id Software and ZeniMax Media.</p>
+</small>
 
 ---
 
@@ -406,30 +407,30 @@ OpenQ4 builds upon the work of many talented developers and projects:
 
 ## Links
 
-- **Website:** [darkmatter-quake.com](https://www.darkmatter-quake.com)
-- **Repository:** [github.com/themuffinator/OpenQ4](https://github.com/themuffinator/OpenQ4)
-- **Game Library:** [github.com/themuffinator/OpenQ4-GameLibs](https://github.com/themuffinator/OpenQ4-GameLibs)
-- **Issue Tracker:** [github.com/themuffinator/OpenQ4/issues](https://github.com/themuffinator/OpenQ4/issues)
-- **Quake 4 on Steam:** [store.steampowered.com/app/2210](https://store.steampowered.com/app/2210/)
-- **Quake 4 on GOG:** [gog.com/game/quake_iv](https://www.gog.com/game/quake_iv)
+- [Website](https://www.darkmatter-quake.com)
+- [Repository](https://github.com/themuffinator/OpenQ4)
+- [Game Library](https://github.com/themuffinator/OpenQ4-GameLibs)
+- [Issue Tracker](https://github.com/themuffinator/OpenQ4/issues)
+- [Quake 4 on Steam](https://store.steampowered.com/app/2210/)
+- [Quake 4 on GOG](https://www.gog.com/game/quake_iv)
 
 ---
 
 ## Disclaimer
 
-OpenQ4 is an independent project and is not affiliated with, endorsed by, or sponsored by id Software, Raven Software, Bethesda, or ZeniMax Media. Quake 4 is a trademark of ZeniMax Media Inc.
-
-You must own a legitimate copy of Quake 4 to use this software. OpenQ4 does not include any copyrighted game assets.
+<small>
+<p>OpenQ4 is an independent project and is not affiliated with, endorsed by, or sponsored by id Software, Raven Software, Bethesda, or ZeniMax Media. Quake 4 is a trademark of ZeniMax Media Inc.</p>
+<p>You must own a legitimate copy of Quake 4 to use this software. OpenQ4 does not include any copyrighted game assets.</p>
+</small>
 
 ---
 
 ### Use At Your Own Risk
 
-**THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.**
-OpenQ4 is experimental software under active development. Use at your own risk. The developers and contributors are not responsible for any damage, data loss, or issues that may arise from using this software.
-
-**Copyright © 2026 The OpenQ4 Project**
-All rights reserved. Licensed under [GPLv3](LICENSE).
+<small>
+<p><strong>THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.</strong> OpenQ4 is experimental software under active development. Use at your own risk. The developers and contributors are not responsible for any damage, data loss, or issues that may arise from using this software.</p>
+<p><strong>Copyright &copy; 2026 The OpenQ4 Project</strong><br>All rights reserved. Licensed under <a href="LICENSE">GPLv3</a>.</p>
+</small>
 
 ---
 
