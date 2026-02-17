@@ -1,6 +1,6 @@
 <div align="center">
 
-# OpenQ4
+<img src="assets/img/banner.png" alt="OpenQ4 banner">
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Version](https://img.shields.io/badge/version-0.0.1-green.svg)](https://github.com/themuffinator/OpenQ4)
