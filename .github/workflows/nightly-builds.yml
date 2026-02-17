@@ -1,0 +1,105 @@
+name: Nightly Builds
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nightly:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.platform != 'windows' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+            label: Windows
+          - os: ubuntu-latest
+            platform: linux
+            label: Linux
+          - os: macos-latest
+            platform: macos
+            label: macOS
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Meson and Ninja
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install meson ninja
+
+      - name: Build and install (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $env:OPENQ4_SKIP_GAMELIBS_SYNC = "1"
+
+          powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 setup --wipe builddir . --backend ninja --buildtype release --wrap-mode=forcefallback -Dbuild_libbse=false
+          powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 compile -C builddir
+          powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects
+
+      - name: Build and install (Linux/macOS, best effort)
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: |
+          set +e
+          export OPENQ4_SKIP_GAMELIBS_SYNC=1
+
+          tools/build/meson_setup.sh setup --wipe builddir . --backend ninja --buildtype release --wrap-mode=forcefallback -Dbuild_libbse=false
+          if [ $? -eq 0 ]; then
+            tools/build/meson_setup.sh compile -C builddir
+            tools/build/meson_setup.sh install -C builddir --no-rebuild --skip-subprojects
+          else
+            echo "::warning::Build is currently expected to fail on ${RUNNER_OS} until non-Windows host support is enabled in meson.build."
+          fi
+          exit 0
+
+      - name: Prepare package (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $pkgRoot = Join-Path $env:RUNNER_TEMP "openq4-nightly-${{ matrix.platform }}"
+          $zipPath = Join-Path $env:RUNNER_TEMP "openq4-nightly-${{ matrix.platform }}.zip"
+
+          New-Item -ItemType Directory -Force -Path $pkgRoot | Out-Null
+          Copy-Item README.md (Join-Path $pkgRoot "README.md") -Force
+          Copy-Item install (Join-Path $pkgRoot "install") -Recurse -Force
+
+          if (Test-Path $zipPath) {
+            Remove-Item $zipPath -Force
+          }
+          Compress-Archive -Path (Join-Path $pkgRoot "*") -DestinationPath $zipPath
+
+      - name: Prepare package (Linux/macOS)
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: |
+          pkg_root="${RUNNER_TEMP}/openq4-nightly-${{ matrix.platform }}"
+          zip_path="${RUNNER_TEMP}/openq4-nightly-${{ matrix.platform }}.zip"
+
+          rm -rf "${pkg_root}"
+          mkdir -p "${pkg_root}"
+          cp README.md "${pkg_root}/README.md"
+          cp -R install "${pkg_root}/install"
+
+          (cd "${pkg_root}" && zip -r "${zip_path}" .)
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openq4-nightly-${{ matrix.platform }}
+          path: ${{ runner.temp }}/openq4-nightly-${{ matrix.platform }}.zip
+          if-no-files-found: error
