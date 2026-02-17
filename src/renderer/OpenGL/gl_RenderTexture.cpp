@@ -7,6 +7,11 @@
 
 static const GLuint INVALID_RENDER_TEXTURE_HANDLE = static_cast<GLuint>( -1 );
 
+static GLenum R_CubeFaceTarget( int cubeFace ) {
+	const int clampedFace = idMath::ClampInt( 0, 5, cubeFace );
+	return GL_TEXTURE_CUBE_MAP_POSITIVE_X + clampedFace;
+}
+
 static bool R_IsRenderTextureHandleValid( GLuint handle ) {
 	if ( !glConfig.isInitialized ) {
 		return false;
@@ -140,13 +145,16 @@ void idRenderTexture::InitRenderTexture(void) {
 			}
 		}
 
-		if (colorImages.Num() > 0)
-		{
+		if ( colorImages.Num() > 0 ) {
 			GLenum DrawBuffers[5] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4 };
 			if (colorImages.Num() >= 5) {
 				common->FatalError("InitRenderTextures: Too many render targets!");
 			}
 			glDrawBuffers(colorImages.Num(), &DrawBuffers[0]);
+		} else {
+			// Required for depth-only FBO completeness on strict drivers.
+			glDrawBuffer( GL_NONE );
+			glReadBuffer( GL_NONE );
 		}
 	}
 	else
@@ -154,6 +162,11 @@ void idRenderTexture::InitRenderTexture(void) {
 		if (colorImages.Num() > 0)
 		{
 			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X, colorImages[0]->GetDeviceHandle(), 0);
+		}
+		else
+		{
+			glDrawBuffer( GL_NONE );
+			glReadBuffer( GL_NONE );
 		}
 
 		if (depthImage != nullptr) {
@@ -177,6 +190,35 @@ idRenderTexture::MakeCurrent
 void idRenderTexture::MakeCurrent(void) {
 	EnsureDeviceHandle();
 	glBindFramebuffer(GL_FRAMEBUFFER, deviceHandle);
+}
+
+/*
+================
+idRenderTexture::MakeCurrent
+================
+*/
+void idRenderTexture::MakeCurrent( int cubeFace ) {
+	EnsureDeviceHandle();
+	glBindFramebuffer( GL_FRAMEBUFFER, deviceHandle );
+
+	const GLenum faceTarget = R_CubeFaceTarget( cubeFace );
+	if ( colorImages.Num() > 0 && colorImages[0]->GetOpts().textureType == TT_CUBIC ) {
+		glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, faceTarget, colorImages[0]->GetDeviceHandle(), 0 );
+	}
+
+	if ( depthImage != nullptr && depthImage->GetOpts().textureType == TT_CUBIC ) {
+		if ( depthImage->GetOpts().format == FMT_DEPTH ) {
+			glFramebufferTexture2D( GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, faceTarget, depthImage->GetDeviceHandle(), 0 );
+		} else if ( depthImage->GetOpts().format == FMT_DEPTH_STENCIL ) {
+			glFramebufferTexture2D( GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, faceTarget, depthImage->GetDeviceHandle(), 0 );
+		} else {
+			common->FatalError( "idRenderTexture::MakeCurrent: Unknown depth buffer format for cubemap target!" );
+		}
+	}
+
+	if ( glCheckFramebufferStatus( GL_FRAMEBUFFER ) != GL_FRAMEBUFFER_COMPLETE ) {
+		common->FatalError( "idRenderTexture::MakeCurrent: Cubemap framebuffer face is incomplete!" );
+	}
 }
 
 /*

@@ -275,6 +275,7 @@ public:
 
 	// Loads unloaded level images
 	int					LoadLevelImages(bool pacifier);
+	int					CountPendingLevelLoads() const;
 
 	// used to clear and then write the dds conversion batch file
 	void				StartBuild();

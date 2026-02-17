@@ -52,6 +52,7 @@ public:
 	virtual void			WritePrecacheCommands( idFile *file );
 	virtual void			BeginLevelLoad();
 	virtual void			EndLevelLoad();
+	virtual int				CountPendingLevelLoads() const;
 
 	virtual	void			PrintMemInfo( MemInfo_t *mi );
 
@@ -551,6 +552,7 @@ void idRenderModelManagerLocal::EndLevelLoad() {
 
 			loadCount++;
 			model->LoadModel();
+			session->AdvanceLoadingAssetQueue( 1 );
 
 			if ( ( loadCount & 15 ) == 0 ) {
 				session->PacifierUpdate();
@@ -566,6 +568,24 @@ void idRenderModelManagerLocal::EndLevelLoad() {
 		common->Printf( "%5i new models loaded in %5.1f seconds\n", loadCount, (end-start) * 0.001 );
 	}
 	common->Printf( "---------------------------------------------------\n" );
+}
+
+/*
+=================
+idRenderModelManagerLocal::CountPendingLevelLoads
+=================
+*/
+int idRenderModelManagerLocal::CountPendingLevelLoads() const {
+	int pendingCount = 0;
+
+	for ( int i = 0; i < models.Num(); i++ ) {
+		idRenderModel *model = models[ i ];
+		if ( model->IsLevelLoadReferenced() && !model->IsLoaded() && model->IsReloadable() ) {
+			pendingCount++;
+		}
+	}
+
+	return pendingCount;
 }
 
 /*

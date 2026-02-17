@@ -794,9 +794,31 @@ int idImageManager::LoadLevelImages( bool pacifier ) {
 		if ( image->levelLoadReferenced && !image->IsLoaded() ) {
 			loadCount++;
 			image->ActuallyLoadImage( false );
+			session->AdvanceLoadingAssetQueue( 1 );
 		}
 	}
 	return loadCount;
+}
+
+/*
+===============
+idImageManager::CountPendingLevelLoads
+===============
+*/
+int idImageManager::CountPendingLevelLoads() const {
+	int pendingCount = 0;
+
+	for ( int i = 0; i < images.Num(); i++ ) {
+		const idImage *image = images[ i ];
+		if ( image->generatorFunction ) {
+			continue;
+		}
+		if ( image->levelLoadReferenced && !image->IsLoaded() ) {
+			pendingCount++;
+		}
+	}
+
+	return pendingCount;
 }
 
 /*

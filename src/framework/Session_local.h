@@ -95,6 +95,9 @@ public:
 	virtual void		UpdateScreen( bool outOfSequence = true );
 
 	virtual void		PacifierUpdate();
+	virtual void		BeginLoadingAssetQueue( int totalAssets );
+	virtual void		AdvanceLoadingAssetQueue( int loadedAssets = 1 );
+	virtual void		EndLoadingAssetQueue();
 
 	virtual void		Frame();
 
@@ -189,6 +192,10 @@ public:
 	// we don't want to redraw the loading screen for every single
 	// console print that happens
 	int					lastPacifierTime;
+	bool				loadingAssetQueueActive;
+	int					loadingAssetQueueTotal;
+	int					loadingAssetQueueLoaded;
+	float				loadingAssetQueueStartPct;
 
 	// this is the information required to be set before ExecuteMapChange() is called,
 	// which can be saved off at any time with the following commands so it can all be played back

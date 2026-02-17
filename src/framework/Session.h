@@ -86,6 +86,12 @@ public:
 	// to redraw if enough time has passed.
 	virtual void	PacifierUpdate() = 0;
 
+	// Register and track asset-queue work during level load so loading
+	// progress can account for queued assets, not only file byte reads.
+	virtual void	BeginLoadingAssetQueue( int totalAssets ) = 0;
+	virtual void	AdvanceLoadingAssetQueue( int loadedAssets = 1 ) = 0;
+	virtual void	EndLoadingAssetQueue() = 0;
+
 	// Called every frame, possibly spinning in place if we are
 	// above maxFps, or we haven't advanced at least one demo frame.
 	// Returns the number of milliseconds since the last frame.

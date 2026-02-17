@@ -506,6 +506,9 @@ viewLight_t *R_SetLightDefViewLight( idRenderLightLocal *light ) {
 
 	// copy data used by backend
 	vLight->globalLightOrigin = light->globalLightOrigin;
+	vLight->pointLight = light->parms.pointLight;
+	vLight->parallel = light->parms.parallel;
+	vLight->lightRadius = light->parms.lightRadius;
 	vLight->lightProject[0] = light->lightProject[0];
 	vLight->lightProject[1] = light->lightProject[1];
 	vLight->lightProject[2] = light->lightProject[2];

@@ -550,6 +550,10 @@ void idSessionLocal::Clear() {
 	timeDemo = TD_NO;
 	waitingOnBind = false;
 	lastPacifierTime = 0;
+	loadingAssetQueueActive = false;
+	loadingAssetQueueTotal = 0;
+	loadingAssetQueueLoaded = 0;
+	loadingAssetQueueStartPct = 0.0f;
 	
 	msgRunning = false;
 	guiMsgRestore = NULL;
@@ -1792,14 +1796,22 @@ idSessionLocal::GetBytesNeededForMapLoad
 int idSessionLocal::GetBytesNeededForMapLoad( const char *mapName ) {
 	const idDecl *mapDecl = declManager->FindType( DECL_MAPDEF, mapName, false );
 	const idDeclEntityDef *mapDef = static_cast<const idDeclEntityDef *>( mapDecl );
+	const int machineSpec = idMath::ClampInt( 0, 3, com_machineSpec.GetInteger() );
+	const int fallbackBytes = ( machineSpec < 2 ) ? ( 200 * 1024 * 1024 ) : ( 400 * 1024 * 1024 );
+
 	if ( mapDef ) {
-		return mapDef->dict.GetInt( va("size%d", Max( 0, com_machineSpec.GetInteger() ) ) );
-	} else {
-		if ( com_machineSpec.GetInteger() < 2 ) {
-			return 200 * 1024 * 1024;
-		} else {
-			return 400 * 1024 * 1024;
+		// Stock map defs commonly provide size0..size2 only, so for ultra-spec
+		// systems (or missing entries) walk down to the closest available key.
+		for ( int spec = machineSpec; spec >= 0; --spec ) {
+			const int bytesNeeded = mapDef->dict.GetInt( va( "size%d", spec ), "0" );
+			if ( bytesNeeded > 0 ) {
+				return bytesNeeded;
+			}
 		}
+
+		return fallbackBytes;
+	} else {
+		return fallbackBytes;
 	}
 }
 
@@ -1845,6 +1857,11 @@ Exits with mapSpawned = true
 void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 	int		i;
 	bool	reloadingSameMap;
+
+	loadingAssetQueueActive = false;
+	loadingAssetQueueTotal = 0;
+	loadingAssetQueueLoaded = 0;
+	loadingAssetQueueStartPct = 0.0f;
 
 	// close console and remove any prints from the notify lines
 	console->Close();
@@ -2013,17 +2030,18 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 
 	common->PrintWarnings();
 
-	if ( guiLoading && bytesNeededForMapLoad ) {
-		float pct = guiLoading->State().GetFloat( "map_loading" );
-		if ( pct < 0.0f ) {
-			pct = 0.0f;
-		}
+	if ( guiLoading ) {
+		float pct = idMath::ClampFloat( 0.0f, 1.0f, guiLoading->State().GetFloat( "map_loading" ) );
 		while ( pct < 1.0f ) {
+			// Ease out quickly to full once loading has completed while keeping the motion smooth.
+			const float remaining = 1.0f - pct;
+			const float step = Max( 0.01f, remaining * 0.25f );
+			pct = Min( 1.0f, pct + step );
+
 			guiLoading->SetStateFloat( "map_loading", pct );
 			guiLoading->StateChanged( com_frameTime );
 			Sys_GenerateEvents();
 			UpdateScreen();
-			pct += 0.05f;
 		}
 	}
 
@@ -2729,6 +2747,57 @@ void idSessionLocal::DrawCmdGraph() {
 
 /*
 ===============
+idSessionLocal::BeginLoadingAssetQueue
+===============
+*/
+void idSessionLocal::BeginLoadingAssetQueue( int totalAssets ) {
+	loadingAssetQueueActive = false;
+	loadingAssetQueueTotal = 0;
+	loadingAssetQueueLoaded = 0;
+
+	if ( totalAssets <= 0 || !insideExecuteMapChange || guiLoading == NULL ) {
+		return;
+	}
+
+	loadingAssetQueueActive = true;
+	loadingAssetQueueTotal = totalAssets;
+	loadingAssetQueueStartPct = idMath::ClampFloat( 0.0f, 1.0f, guiLoading->State().GetFloat( "map_loading" ) );
+}
+
+/*
+===============
+idSessionLocal::AdvanceLoadingAssetQueue
+===============
+*/
+void idSessionLocal::AdvanceLoadingAssetQueue( int loadedAssets ) {
+	if ( !loadingAssetQueueActive || loadedAssets <= 0 ) {
+		return;
+	}
+
+	loadingAssetQueueLoaded = Min( loadingAssetQueueTotal, loadingAssetQueueLoaded + loadedAssets );
+	PacifierUpdate();
+}
+
+/*
+===============
+idSessionLocal::EndLoadingAssetQueue
+===============
+*/
+void idSessionLocal::EndLoadingAssetQueue() {
+	if ( !loadingAssetQueueActive ) {
+		return;
+	}
+
+	loadingAssetQueueLoaded = loadingAssetQueueTotal;
+	PacifierUpdate();
+
+	loadingAssetQueueActive = false;
+	loadingAssetQueueTotal = 0;
+	loadingAssetQueueLoaded = 0;
+}
+
+/*
+===============
 idSessionLocal::PacifierUpdate
 ===============
 */
@@ -2743,18 +2812,61 @@ void idSessionLocal::PacifierUpdate() {
 		return;
 	}
 
-	int	time = eventLoop->Milliseconds();
-
-	if ( time - lastPacifierTime < 100 ) {
+	const int time = eventLoop->Milliseconds();
+	const int minPacifierIntervalMs = 16; // ~60 Hz UI refresh while loading.
+	int elapsedMs = time - lastPacifierTime;
+	if ( lastPacifierTime != 0 && elapsedMs < minPacifierIntervalMs ) {
 		return;
+	}
+	if ( elapsedMs < minPacifierIntervalMs ) {
+		elapsedMs = minPacifierIntervalMs;
 	}
 	lastPacifierTime = time;
 
-	if ( guiLoading && bytesNeededForMapLoad ) {
-		float n = fileSystem->GetReadCount();
-		float pct = ( n / bytesNeededForMapLoad );
-		// pct = idMath::ClampFloat( 0.0f, 100.0f, pct );
-		guiLoading->SetStateFloat( "map_loading", pct );
+	if ( guiLoading ) {
+		float shownPct = idMath::ClampFloat( 0.0f, 1.0f, guiLoading->State().GetFloat( "map_loading" ) );
+		float targetPct = shownPct;
+		float byteTargetPct = shownPct;
+		bool hasByteTarget = false;
+
+		if ( bytesNeededForMapLoad > 0 ) {
+			const float n = Max( 0.0f, static_cast<float>( fileSystem->GetReadCount() ) );
+			byteTargetPct = idMath::ClampFloat( 0.0f, 1.0f, n / bytesNeededForMapLoad );
+			targetPct = byteTargetPct;
+			hasByteTarget = true;
+		}
+
+		if ( loadingAssetQueueActive && loadingAssetQueueTotal > 0 ) {
+			const float queueFloorFraction = idMath::ClampFloat( 0.0f, 1.0f,
+				static_cast<float>( loadingAssetQueueLoaded ) / static_cast<float>( loadingAssetQueueTotal ) );
+			const int nextLoaded = Min( loadingAssetQueueTotal, loadingAssetQueueLoaded + 1 );
+			const float queueCeilFraction = idMath::ClampFloat( 0.0f, 1.0f,
+				static_cast<float>( nextLoaded ) / static_cast<float>( loadingAssetQueueTotal ) );
+			const float queueFloor = loadingAssetQueueStartPct + ( 1.0f - loadingAssetQueueStartPct ) * queueFloorFraction;
+			const float queueCeil = loadingAssetQueueStartPct + ( 1.0f - loadingAssetQueueStartPct ) * queueCeilFraction;
+
+			// Keep queue accounting authoritative, but allow byte-read progress to animate
+			// smoothly within the current queued-asset bucket.
+			if ( hasByteTarget ) {
+				targetPct = idMath::ClampFloat( queueFloor, queueCeil, byteTargetPct );
+			} else {
+				targetPct = queueFloor;
+			}
+		}
+
+		// Loading bars should be monotonic.
+		targetPct = Max( targetPct, shownPct );
+
+		// Keep progress accurate, but smooth visual jumps when read-count deltas arrive in bursts.
+		const float alpha = idMath::ClampFloat( 0.0f, 1.0f, ( elapsedMs * 0.001f ) * 20.0f );
+		if ( targetPct >= shownPct ) {
+			shownPct += ( targetPct - shownPct ) * alpha;
+			if ( ( targetPct - shownPct ) < 0.002f ) {
+				shownPct = targetPct;
+			}
+		}
+
+		guiLoading->SetStateFloat( "map_loading", shownPct );
 		guiLoading->StateChanged( com_frameTime );
 	}
 

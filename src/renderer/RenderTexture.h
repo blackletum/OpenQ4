@@ -59,6 +59,7 @@ public:
 	void					EnsureDeviceHandle( void );
 
 	void					MakeCurrent( void );
+	void					MakeCurrent( int cubeFace );
 	static void				BindNull(void);
 
 	GLuint					GetDeviceHandle(void) { return deviceHandle; }

@@ -41,3 +41,8 @@ install_subdir(
   'glprogs',
   install_dir: install_openbase_dir,
 )
+
+install_data(
+  'shadowmapping.cfg',
+  install_dir: install_openbase_dir,
+)

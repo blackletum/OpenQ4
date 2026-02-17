@@ -755,7 +755,17 @@ public:
 	virtual void			CloseFile( idFile *f );
 	virtual void			BackgroundDownload( backgroundDownload_t *bgl );
 	virtual void			ResetReadCount( void ) { readCount = 0; }
-	virtual void			AddToReadCount( int c ) { readCount += c; }
+	virtual void			AddToReadCount( int c ) {
+		if ( c <= 0 ) {
+			return;
+		}
+
+		readCount += c;
+
+		// Keep loading progress responsive on PC as data is read.
+		// idSessionLocal::PacifierUpdate is internally throttled and no-ops outside map load.
+		session->PacifierUpdate();
+	}
 	virtual int				GetReadCount( void ) { return readCount; }
 	virtual void			FindDLL( const char *basename, char dllPath[ MAX_OSPATH ], bool updateChecksum );
 	virtual void			ClearDirCache( void );

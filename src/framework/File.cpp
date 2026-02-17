@@ -1071,6 +1071,7 @@ int idFile_Permanent::Read( void *buffer, int len ) {
 	int		read;
 	byte *	buf;
 	int		tries;
+	static const int readChunkBytes = 64 * 1024;
 
 	if ( !(mode & ( 1 << FS_READ ) ) ) {
 		common->FatalError( "idFile_Permanent::Read: %s not opened in read mode", name.c_str() );
@@ -1086,7 +1087,7 @@ int idFile_Permanent::Read( void *buffer, int len ) {
 	remaining = len;
 	tries = 0;
 	while( remaining ) {
-		block = remaining;
+		block = Min( remaining, readChunkBytes );
 		read = fread( buf, 1, block, o );
 		if ( read == 0 ) {
 			// we might have been trying to read from a CD, which
@@ -1095,7 +1096,6 @@ int idFile_Permanent::Read( void *buffer, int len ) {
 				tries = 1;
 			}
 			else {
-				fileSystem->AddToReadCount( len - remaining );
 				return len-remaining;
 			}
 		}
@@ -1106,8 +1106,9 @@ int idFile_Permanent::Read( void *buffer, int len ) {
 
 		remaining -= read;
 		buf += read;
+		fileSystem->AddToReadCount( read );
 	}
-	fileSystem->AddToReadCount( len );
+
 	return len;
 }
 
@@ -1282,9 +1283,31 @@ Properly handles partial reads
 =================
 */
 int idFile_InZip::Read( void *buffer, int len ) {
-	int l = unzReadCurrentFile( z, buffer, len );
-	fileSystem->AddToReadCount( l );
-	return l;
+	static const int readChunkBytes = 64 * 1024;
+	byte *buf = static_cast<byte *>( buffer );
+	int totalRead = 0;
+
+	while ( totalRead < len ) {
+		const int block = Min( len - totalRead, readChunkBytes );
+		const int l = unzReadCurrentFile( z, buf + totalRead, block );
+
+		if ( l <= 0 ) {
+			// Preserve error behavior for the first failed read.
+			if ( totalRead == 0 ) {
+				return l;
+			}
+			break;
+		}
+
+		totalRead += l;
+		fileSystem->AddToReadCount( l );
+
+		if ( l < block ) {
+			break;
+		}
+	}
+
+	return totalRead;
 }
 
 /*

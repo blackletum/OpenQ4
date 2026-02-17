@@ -73,13 +73,13 @@ windowDef Desktop
 		rect	235,313,( "gui::map_loading" * 405 ),26
 		visible	1
 		windowDef load_bar
-		screenalignx	right
-		screenaligny	bottom
 		{
 			rect	0,0,405,26
 			visible	1
 			background	"gfx/guis/mainmenu/load_bar"
 			matcolor	0.878,0.423,0,0.5
+			screenalignx	right
+			screenaligny	bottom
 		}
 	}
 	windowDef load_text
@@ -272,12 +272,12 @@ windowDef Desktop
 		rect	0,419,640,54
 		visible	1
 		windowDef load_icon_1
-		screenaligny	bottom
 		{
 			rect	"desktop::iconOffset",11,24,24
 			visible	"gui::load_icon_1"
 			background	"gui::load_icon_img_1"
 			matcolor	1,1,1,1
+			screenaligny	bottom
 		}
 		windowDef load_icon_2
 		{

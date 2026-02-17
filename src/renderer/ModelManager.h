@@ -43,6 +43,7 @@ public:
 
 	// called only by renderer::EndLevelLoad
 	virtual void			EndLevelLoad() = 0;
+	virtual int				CountPendingLevelLoads() const = 0;
 
 	// allocates a new empty render model.
 	virtual idRenderModel *	AllocModel() = 0;
