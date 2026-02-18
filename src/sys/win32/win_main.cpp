@@ -380,7 +380,11 @@ void Sys_Error(const char* error, ...) {
 
 	Sys_ShutdownInput();
 
-	GLimp_Shutdown();
+	// Common::Shutdown may already have torn down the renderer path.
+	// Avoid forcing GL shutdown when there is no active GL context.
+	if ( renderSystem->IsOpenGLRunning() ) {
+		GLimp_Shutdown();
+	}
 
 	// wait for the user to quit
 	while (1) {

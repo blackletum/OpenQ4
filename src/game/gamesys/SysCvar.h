@@ -78,6 +78,7 @@ extern idCVar	g_showAreaClipSectors;
 extern idCVar	g_maxShowDistance;
 extern idCVar	g_showEntityInfo;
 extern idCVar	g_showviewpos;
+extern idCVar	g_debugYawHud;
 extern idCVar	g_showcamerainfo;
 extern idCVar	g_showTestModelFrame;
 extern idCVar	g_showActiveEntities;

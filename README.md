@@ -17,7 +17,7 @@
 ---
 
 > [!WARNING]
-> **Development Notice:** This project is largely developed through the latest exploratory and agentic AI "vibe coding" practices, prioritizing rapid development and creative problem-solving over strict formal methodologies. If you prefer projects with rigorous development processes or conventional software engineering practices, OpenQ4 will not align with your expectations and you are therefore encouraged to avoid this project entirely.
+> **Development Notice:** This project leans heavily on exploratory, agentic AI "vibe coding" for speed. If you want a strictly engineered, process-heavy codebase, this probably isn't for you.
 
 ---
 

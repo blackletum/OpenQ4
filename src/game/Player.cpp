@@ -3661,6 +3661,100 @@ void idPlayer::DrawHUD( idUserInterface *_hud ) {
 		return;
 	}
 
+	{
+		enum yawDebugField_t {
+			YAWDBG_VIEW = 0,
+			YAWDBG_CMD,
+			YAWDBG_USERCMD,
+			YAWDBG_DELTA,
+			YAWDBG_PREDICTED,
+			YAWDBG_VIEWBOB,
+			YAWDBG_VIEWOFFSET,
+			YAWDBG_COMBINED,
+			YAWDBG_VIEWAXIS,
+			YAWDBG_FIRSTPERSON,
+			YAWDBG_RENDERVIEW,
+			YAWDBG_SCOPEGUI,
+			YAWDBG_GRAVITYAXIS,
+			YAWDBG_COUNT
+		};
+
+		static bool yawDebugVisible = false;
+		static int yawDebugEntity = -1;
+		static float yawDebugPrev[YAWDBG_COUNT] = { 0.0f };
+
+		if ( g_debugYawHud.GetBool() ) {
+			float yawCurrent[YAWDBG_COUNT];
+			yawCurrent[YAWDBG_VIEW] = idMath::AngleNormalize180( viewAngles.yaw );
+			yawCurrent[YAWDBG_CMD] = idMath::AngleNormalize180( cmdAngles.yaw );
+			yawCurrent[YAWDBG_USERCMD] = idMath::AngleNormalize180( SHORT2ANGLE( usercmd.angles[YAW] ) );
+			yawCurrent[YAWDBG_DELTA] = idMath::AngleNormalize180( deltaViewAngles[YAW] );
+			yawCurrent[YAWDBG_PREDICTED] = idMath::AngleNormalize180( predictedAngles.yaw );
+			yawCurrent[YAWDBG_VIEWBOB] = idMath::AngleNormalize180( viewBobAngles.yaw );
+			yawCurrent[YAWDBG_VIEWOFFSET] = idMath::AngleNormalize180( playerView.AngleOffset().yaw );
+			yawCurrent[YAWDBG_COMBINED] = idMath::AngleNormalize180( ( viewAngles + viewBobAngles + playerView.AngleOffset() ).yaw );
+			yawCurrent[YAWDBG_VIEWAXIS] = idMath::AngleNormalize180( viewAxis[0].ToYaw() );
+			yawCurrent[YAWDBG_FIRSTPERSON] = idMath::AngleNormalize180( firstPersonViewAxis.ToAngles().yaw );
+
+			const bool hasRenderView = ( renderView != NULL );
+			yawCurrent[YAWDBG_RENDERVIEW] = hasRenderView ? idMath::AngleNormalize180( renderView->viewaxis.ToAngles().yaw ) : 0.0f;
+
+			const bool hasScopeGui = ( weapon != NULL && weapon->GetZoomGui() != NULL );
+			yawCurrent[YAWDBG_SCOPEGUI] = hasScopeGui ? idMath::AngleNormalize180( weapon->GetZoomGui()->State().GetFloat( "playerYaw" ) ) : 0.0f;
+			yawCurrent[YAWDBG_GRAVITYAXIS] = idMath::AngleNormalize180( physicsObj.GetGravityAxis()[0].ToYaw() );
+
+			const bool yawDebugReset = !yawDebugVisible || yawDebugEntity != entityNumber;
+			if ( yawDebugReset ) {
+				for ( int i = 0; i < YAWDBG_COUNT; ++i ) {
+					yawDebugPrev[i] = yawCurrent[i];
+				}
+			}
+
+			idStr yawDebugText;
+			yawDebugText += va( "YawDbg t:%d zoom:%d pmz:%d\n",
+								gameLocal.time,
+								zoomed ? 1 : 0,
+								pm_isZoomed.GetInteger() );
+			yawDebugText += va( "view %7.3f (%+7.3f) cmd %7.3f (%+7.3f)\n",
+								yawCurrent[YAWDBG_VIEW], idMath::AngleDelta( yawCurrent[YAWDBG_VIEW], yawDebugPrev[YAWDBG_VIEW] ),
+								yawCurrent[YAWDBG_CMD], idMath::AngleDelta( yawCurrent[YAWDBG_CMD], yawDebugPrev[YAWDBG_CMD] ) );
+			yawDebugText += va( "raw  %7.3f (%+7.3f) dlt %7.3f (%+7.3f)\n",
+								yawCurrent[YAWDBG_USERCMD], idMath::AngleDelta( yawCurrent[YAWDBG_USERCMD], yawDebugPrev[YAWDBG_USERCMD] ),
+								yawCurrent[YAWDBG_DELTA], idMath::AngleDelta( yawCurrent[YAWDBG_DELTA], yawDebugPrev[YAWDBG_DELTA] ) );
+			yawDebugText += va( "prd  %7.3f (%+7.3f) bob %7.3f (%+7.3f)\n",
+								yawCurrent[YAWDBG_PREDICTED], idMath::AngleDelta( yawCurrent[YAWDBG_PREDICTED], yawDebugPrev[YAWDBG_PREDICTED] ),
+								yawCurrent[YAWDBG_VIEWBOB], idMath::AngleDelta( yawCurrent[YAWDBG_VIEWBOB], yawDebugPrev[YAWDBG_VIEWBOB] ) );
+			yawDebugText += va( "off  %7.3f (%+7.3f) cmb %7.3f (%+7.3f)\n",
+								yawCurrent[YAWDBG_VIEWOFFSET], idMath::AngleDelta( yawCurrent[YAWDBG_VIEWOFFSET], yawDebugPrev[YAWDBG_VIEWOFFSET] ),
+								yawCurrent[YAWDBG_COMBINED], idMath::AngleDelta( yawCurrent[YAWDBG_COMBINED], yawDebugPrev[YAWDBG_COMBINED] ) );
+			yawDebugText += va( "vax  %7.3f (%+7.3f) fpa %7.3f (%+7.3f)\n",
+								yawCurrent[YAWDBG_VIEWAXIS], idMath::AngleDelta( yawCurrent[YAWDBG_VIEWAXIS], yawDebugPrev[YAWDBG_VIEWAXIS] ),
+								yawCurrent[YAWDBG_FIRSTPERSON], idMath::AngleDelta( yawCurrent[YAWDBG_FIRSTPERSON], yawDebugPrev[YAWDBG_FIRSTPERSON] ) );
+			yawDebugText += va( "rva  %7.3f (%+7.3f) gui %7.3f (%+7.3f)\n",
+								yawCurrent[YAWDBG_RENDERVIEW], idMath::AngleDelta( yawCurrent[YAWDBG_RENDERVIEW], yawDebugPrev[YAWDBG_RENDERVIEW] ),
+								yawCurrent[YAWDBG_SCOPEGUI], idMath::AngleDelta( yawCurrent[YAWDBG_SCOPEGUI], yawDebugPrev[YAWDBG_SCOPEGUI] ) );
+			yawDebugText += va( "grav %7.3f (%+7.3f) rv? %d gui? %d weap %s",
+								yawCurrent[YAWDBG_GRAVITYAXIS], idMath::AngleDelta( yawCurrent[YAWDBG_GRAVITYAXIS], yawDebugPrev[YAWDBG_GRAVITYAXIS] ),
+								hasRenderView ? 1 : 0,
+								hasScopeGui ? 1 : 0,
+								weapon ? weapon->GetClassname() : "<none>" );
+
+			_hud->SetStateString( "viewcomments", yawDebugText.c_str() );
+			_hud->HandleNamedEvent( "showViewComments" );
+
+			for ( int i = 0; i < YAWDBG_COUNT; ++i ) {
+				yawDebugPrev[i] = yawCurrent[i];
+			}
+			yawDebugVisible = true;
+			yawDebugEntity = entityNumber;
+		} else if ( yawDebugVisible ) {
+			_hud->SetStateString( "viewcomments", "" );
+			_hud->HandleNamedEvent( "hideViewComments" );
+			yawDebugVisible = false;
+			yawDebugEntity = -1;
+		}
+	}
+
 	if ( objectiveSystemOpen ) {
 		if ( !GuiActive() ) {
 			// showing weapon zoom gui when objectives are open because that's the way I'z told to make it werkz
@@ -10934,10 +11028,18 @@ void idPlayer::GetViewPos( idVec3 &origin, idMat3 &axis ) const {
   		idVec3		shakeOffset;
   		idAngles	shakeAngleOffset;
 	   	idBounds	relBounds(idVec3(0, 0, 0), idVec3(0, 0, 0));
+		const bool lockZoomToViewAngles = zoomed;
 
-  		playerView.ShakeOffsets( shakeOffset, shakeAngleOffset, relBounds );
-  		origin = GetEyePosition() + viewBob + shakeOffset;  		
-		angles = viewAngles + viewBobAngles + shakeAngleOffset + playerView.AngleOffset();
+		if ( lockZoomToViewAngles ) {
+			shakeOffset.Zero();
+			shakeAngleOffset.Zero();
+			origin = GetEyePosition();
+			angles = viewAngles;
+		} else {
+  			playerView.ShakeOffsets( shakeOffset, shakeAngleOffset, relBounds );
+  			origin = GetEyePosition() + viewBob + shakeOffset;  		
+			angles = viewAngles + viewBobAngles + shakeAngleOffset + playerView.AngleOffset();
+		}
 
 		axis = angles.ToMat3() * physicsObj.GetGravityAxis();
 
@@ -10953,7 +11055,8 @@ idPlayer::CalculateFirstPersonView
 ===============
 */
 void idPlayer::CalculateFirstPersonView( void ) {
-	if ( ( pm_modelView.GetInteger() == 1 ) || ( ( pm_modelView.GetInteger() == 2 ) && ( health <= 0 ) ) ) {
+	const bool useModelCameraView = !zoomed && ( ( pm_modelView.GetInteger() == 1 ) || ( ( pm_modelView.GetInteger() == 2 ) && ( health <= 0 ) ) );
+	if ( useModelCameraView ) {
 		//	Displays the view from the point of view of the "camera" joint in the player model
 
 		idMat3 axis;
@@ -11119,6 +11222,14 @@ void idPlayer::CalculateRenderView( void ) {
 				// allow the right player view weapons
 				renderView->viewID = entityNumber + 1;
 			}
+		}
+
+		// Final zoom lock: guarantee rendered first-person view axis matches gameplay viewAngles.
+		if ( zoomed && !pm_thirdPerson.GetBool() && !pm_thirdPersonDeath.GetBool() && !IsInVehicle() && health > 0 ) {
+			const idMat3 zoomViewAxis = viewAngles.ToMat3() * physicsObj.GetGravityAxis();
+			firstPersonViewAxis = zoomViewAxis;
+			renderView->viewaxis = zoomViewAxis;
+			renderView->vieworg = firstPersonViewOrigin;
 		}
 		
 		// field of view

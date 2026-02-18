@@ -43,6 +43,7 @@ void SCR_DrawTextRightAlign( float &y, const char *text, ... ) id_attribute((for
 #define CONSOLE_REPEAT			100
 
 #define	COMMAND_HISTORY			64
+static const char *kConsoleHistoryFileName = "consolehistory.dat";
 
 static const idVec4 kConsoleBorderColor( 0.9411765f, 0.6196079f, 0.0509804f, 1.0f ); // #f09e0d
 static const idVec4 kConsoleVersionColor( 0.4509804f, 0.4509804f, 0.4509804f, 1.0f ); // #737373
@@ -96,6 +97,8 @@ private:
 	const short *		LinePtr( int line ) const;
 	void				PrintToBuffer( const char *txt, bool markNotifyTime );
 	void				RebuildBufferFromHistory( void );
+	void				LoadCommandHistory( void );
+	void				SaveCommandHistory( void );
 
 	//============================
 
@@ -123,6 +126,7 @@ private:
 	int					nextHistoryLine;// the last line in the history buffer, not masked
 	int					historyLine;	// the line being displayed from history buffer
 									// will be <= nextHistoryLine
+	bool				commandHistoryLoaded;
 
 	idEditField			consoleField;
 
@@ -627,11 +631,15 @@ void idConsoleLocal::Init( void ) {
 	printHistory.Clear();
 
 	consoleField.Clear();
+	nextHistoryLine = 0;
+	historyLine = 0;
+	commandHistoryLoaded = false;
 
 	for ( i = 0 ; i < COMMAND_HISTORY ; i++ ) {
 		historyEditLines[i].Clear();
 	}
 	UpdateLayoutMetrics( true );
+	LoadCommandHistory();
 
 	cmdSystem->AddCommand( "clear", Con_Clear_f, CMD_FL_SYSTEM, "clears the console" );
 	cmdSystem->AddCommand( "conDump", Con_Dump_f, CMD_FL_SYSTEM, "dumps the console text to a file" );
@@ -643,6 +651,7 @@ idConsoleLocal::Shutdown
 ==============
 */
 void idConsoleLocal::Shutdown( void ) {
+	SaveCommandHistory();
 	cmdSystem->RemoveCommand( "clear" );
 	cmdSystem->RemoveCommand( "conDump" );
 }
@@ -774,6 +783,88 @@ void idConsoleLocal::Dump( const char *fileName ) {
 
 /*
 ================
+idConsoleLocal::LoadCommandHistory
+================
+*/
+void idConsoleLocal::LoadCommandHistory( void ) {
+	if ( commandHistoryLoaded ) {
+		return;
+	}
+	if ( fileSystem == NULL || !fileSystem->IsInitialized() ) {
+		return;
+	}
+	commandHistoryLoaded = true;
+
+	const char *fileBuffer = NULL;
+	const int fileLength = fileSystem->ReadFile( kConsoleHistoryFileName, ( void ** )&fileBuffer );
+	if ( fileLength < 0 || fileBuffer == NULL ) {
+		return;
+	}
+	if ( fileLength == 0 ) {
+		fileSystem->FreeFile( ( void * )fileBuffer );
+		return;
+	}
+
+	int lineStart = 0;
+	for ( int i = 0; i <= fileLength; ++i ) {
+		const bool atEnd = ( i == fileLength );
+		if ( atEnd && lineStart >= fileLength ) {
+			break;
+		}
+		if ( !atEnd && fileBuffer[i] != '\n' ) {
+			continue;
+		}
+
+		int lineLength = i - lineStart;
+		if ( lineLength > 0 && fileBuffer[lineStart + lineLength - 1] == '\r' ) {
+			lineLength--;
+		}
+
+		idStr line;
+		if ( lineLength > 0 ) {
+			line.Append( fileBuffer + lineStart, lineLength );
+		}
+
+		historyEditLines[nextHistoryLine % COMMAND_HISTORY].SetBuffer( line.c_str() );
+		nextHistoryLine++;
+		lineStart = i + 1;
+	}
+
+	historyLine = nextHistoryLine;
+	fileSystem->FreeFile( ( void * )fileBuffer );
+}
+
+/*
+================
+idConsoleLocal::SaveCommandHistory
+================
+*/
+void idConsoleLocal::SaveCommandHistory( void ) {
+	if ( fileSystem == NULL || !fileSystem->IsInitialized() ) {
+		return;
+	}
+
+	idFile *historyFile = fileSystem->OpenFileWrite( kConsoleHistoryFileName, "fs_savepath" );
+	if ( historyFile == NULL ) {
+		return;
+	}
+
+	const int historyCount = Min( nextHistoryLine, COMMAND_HISTORY );
+	const int startLine = nextHistoryLine - historyCount;
+
+	for ( int i = 0; i < historyCount; ++i ) {
+		const char *line = historyEditLines[( startLine + i ) % COMMAND_HISTORY].GetBuffer();
+		if ( line[0] != '\0' ) {
+			historyFile->Write( line, strlen( line ) );
+		}
+		historyFile->Write( "\n", 1 );
+	}
+
+	fileSystem->CloseFile( historyFile );
+}
+
+/*
+================
 idConsoleLocal::PageUp
 ================
 */
@@ -831,6 +922,9 @@ Handles history and console scrollback
 ====================
 */
 void idConsoleLocal::KeyDownEvent( int key ) {
+	if ( !commandHistoryLoaded ) {
+		LoadCommandHistory();
+	}
 	
 	// Execute F key bindings
 	if ( key >= K_F1 && key <= K_F12 ) {
@@ -856,6 +950,7 @@ void idConsoleLocal::KeyDownEvent( int key ) {
 		historyEditLines[nextHistoryLine % COMMAND_HISTORY] = consoleField;
 		nextHistoryLine++;
 		historyLine = nextHistoryLine;
+		SaveCommandHistory();
 
 		consoleField.Clear();
 		consoleField.SetWidthInChars( lineWidth );

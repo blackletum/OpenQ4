@@ -796,7 +796,8 @@ void idCommonLocal::Error( const char *fmt, ... ) {
 		Printf( "********************\nERROR: %s\n********************\n", errorMessage );
 	}
 
-	if ( cvarSystem->GetCVarBool( "r_fullscreen" ) ) {
+	// Only attempt a renderer restart fallback when GL is actually live.
+	if ( renderSystem->IsOpenGLRunning() && cvarSystem->GetCVarBool( "r_fullscreen" ) ) {
 		cmdSystem->BufferCommandText( CMD_EXEC_NOW, "vid_restart partial windowed\n" );
 	}
 
@@ -842,7 +843,8 @@ void idCommonLocal::FatalError( const char *fmt, ... ) {
 	va_end( argptr );
 	errorMessage[sizeof(errorMessage)-1] = '\0';
 
-	if ( cvarSystem->GetCVarBool( "r_fullscreen" ) ) {
+	// Only attempt a renderer restart fallback when GL is actually live.
+	if ( renderSystem->IsOpenGLRunning() && cvarSystem->GetCVarBool( "r_fullscreen" ) ) {
 		cmdSystem->BufferCommandText( CMD_EXEC_NOW, "vid_restart partial windowed\n" );
 	}
 

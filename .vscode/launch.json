@@ -5,7 +5,6 @@
       "name": "Launch OpenQ4 MP (Meson Debug)",
       "type": "cppvsdbg",
       "request": "launch",
-      "preLaunchTask": "Build OpenQ4 (Meson Debug)",
       "program": "${workspaceFolder}\\install\\OpenQ4.exe",
       "args": [
         "+set",
@@ -34,7 +33,7 @@
         "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Quake 4",
         "+set",
         "fs_savepath",
-        "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Quake 4",
+        "${env:LOCALAPPDATA}\\OpenQ4",
         "+set",
         "fs_devpath",
         "${workspaceFolder}\\install",
@@ -69,7 +68,6 @@
       "name": "Launch OpenQ4 SP (Meson Debug)",
       "type": "cppvsdbg",
       "request": "launch",
-      "preLaunchTask": "Build OpenQ4 (Meson Debug)",
       "program": "${workspaceFolder}\\install\\OpenQ4.exe",
       "args": [
         "+set",
@@ -101,7 +99,7 @@
         "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Quake 4",
         "+set",
         "fs_savepath",
-        "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Quake 4",
+        "${env:LOCALAPPDATA}\\OpenQ4",
         "+set",
         "fs_devpath",
         "${workspaceFolder}\\install",

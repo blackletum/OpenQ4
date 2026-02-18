@@ -209,6 +209,7 @@ idCVar g_showAreaClipSectors(		"g_showAreaClipSectors",	"0",			CVAR_GAME | CVAR_
 idCVar g_maxShowDistance(			"g_maxShowDistance",		"128",			CVAR_GAME | CVAR_FLOAT, "Distance at which to draw clipmodels and clipworld - Will significantly hurt performance at values above 512" );
 idCVar g_showEntityInfo(			"g_showEntityInfo",			"0",			CVAR_GAME | CVAR_BOOL, "" );
 idCVar g_showviewpos(				"g_showviewpos",			"0",			CVAR_GAME | CVAR_BOOL, "" );
+idCVar g_debugYawHud(				"g_debugYawHud",			"0",			CVAR_GAME | CVAR_BOOL | CVAR_NOCHEAT, "shows per-frame yaw diagnostics in the HUD viewcomments channel" );
 idCVar g_showcamerainfo(			"g_showcamerainfo",			"0",			CVAR_GAME | PC_CVAR_ARCHIVE, "displays the current frame # for the camera when playing cinematics" );
 idCVar g_showTestModelFrame(		"g_showTestModelFrame",		"0",			CVAR_GAME | CVAR_BOOL, "displays the current animation and frame # for testmodels" );
 idCVar g_showActiveEntities(		"g_showActiveEntities",		"0",			CVAR_GAME | CVAR_BOOL, "draws boxes around thinking entities.  dormant entities (outside of pvs) are drawn yellow.  non-dormant are green." );
