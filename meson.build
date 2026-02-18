@@ -8,12 +8,24 @@ project(
 
 host_system = host_machine.system()
 host_cpu_family = host_machine.cpu_family()
+binary_arch = host_cpu_family
+if host_cpu_family == 'x86_64'
+  binary_arch = 'x64'
+elif host_cpu_family == 'x86'
+  binary_arch = 'x86'
+elif host_cpu_family == 'aarch64'
+  binary_arch = 'arm64'
+endif
+game_sp_binary_name = 'game-sp_' + binary_arch
+game_mp_binary_name = 'game-mp_' + binary_arch
+engine_client_binary_name = meson.project_name() + '-client_' + binary_arch
+engine_ded_binary_name = meson.project_name() + '-ded_' + binary_arch
 
 if host_system != 'windows'
   error(
     'Meson host bring-up is staged. '
     + 'Current actively validated host is Windows x64. '
-    + 'See doc/platform-support.md for Linux/macOS roadmap.'
+    + 'See docs-dev/platform-support.md for Linux/macOS roadmap.'
   )
 endif
 
@@ -43,7 +55,7 @@ build_game_sp = get_option('build_game_sp')
 build_game_mp = get_option('build_game_mp')
 build_libbse = build_engine and get_option('build_libbse')
 needs_bse_sources = build_libbse
-install_root_dir = meson.project_source_root() / 'install'
+install_root_dir = meson.project_source_root() / '.install'
 install_openbase_dir = install_root_dir / 'openbase'
 bse_repo_root = ''
 bse_source_root = ''
@@ -275,7 +287,7 @@ engine_c_args = shared_c_args
 
 if build_engine
   executable(
-    'OpenQ4',
+    engine_client_binary_name,
     openq4_engine_sources,
     include_directories: engine_include_dirs,
     dependencies: deps,
@@ -292,7 +304,7 @@ if build_engine
   dedicated_c_args = engine_c_args + ['-DID_DEDICATED']
 
   executable(
-    'OpenQ4-ded',
+    engine_ded_binary_name,
     openq4_engine_sources,
     include_directories: engine_include_dirs,
     dependencies: deps,
@@ -361,11 +373,15 @@ summary(
     'C++ standard': get_option('cpp_std'),
     'Platform backend': platform_backend,
     'Build engine': build_engine,
+    'engine client binary': engine_client_binary_name,
+    'engine dedicated binary': engine_ded_binary_name,
     'Build BSE DLL': build_libbse,
     'BSE source repo': bse_repo_summary,
     'Build games': build_games,
     'Build game_sp': build_games and build_game_sp,
     'Build game_mp': build_games and build_game_mp,
+    'game_sp binary': game_sp_binary_name,
+    'game_mp binary': game_mp_binary_name,
     'Resource compiler': resource_compiler.found(),
     'SDL3': use_sdl3_backend and sdl3_dep.found(),
     'GLEW': glew_dep.found(),

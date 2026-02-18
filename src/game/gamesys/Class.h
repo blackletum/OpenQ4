@@ -41,10 +41,14 @@ public:
 	idEventArg(const idStr& data) { type = D_EVENT_STRING; value = reinterpret_cast<intptr_t>(data.c_str()); };
 	idEventArg(const char* data) { type = D_EVENT_STRING; value = reinterpret_cast<intptr_t>(data); };
 	idEventArg(const class idEntity* data) { type = D_EVENT_ENTITY; value = reinterpret_cast<intptr_t>(data); };
-	idEventArg(const struct trace_s* data) { type = D_EVENT_TRACE; value = reinterpret_cast<intptr_t>(data); };
+	idEventArg(const trace_t* data) { type = D_EVENT_TRACE; value = reinterpret_cast<intptr_t>(data); };
 
 // jmarshall - this can't be called from doomscript!
+#if defined(_WIN64) || defined(__x86_64__) || defined(__aarch64__)
 	idEventArg(intptr_t data) { type = D_EVENT_INTEGER64bit; value = data; };
+#else
+	idEventArg(long long data) { type = D_EVENT_INTEGER64bit; value = static_cast<intptr_t>(data); };
+#endif
 // jmarshall end
 };
 

@@ -45,7 +45,16 @@
 #define	DEMO_GAMEDIR					"demo"
 
 // filenames
-#define	CD_EXE							"OpenQ4.exe"
+#if defined( _M_X64 ) || defined( __x86_64__ )
+	#define OPENQ4_BINARY_ARCH			"x64"
+#elif defined( _M_IX86 ) || defined( __i386__ )
+	#define OPENQ4_BINARY_ARCH			"x86"
+#elif defined( _M_ARM64 ) || defined( __aarch64__ )
+	#define OPENQ4_BINARY_ARCH			"arm64"
+#else
+	#define OPENQ4_BINARY_ARCH			"unknown"
+#endif
+#define	CD_EXE							PROJECT_NAME "-client_" OPENQ4_BINARY_ARCH ".exe"
 
 #ifdef _XENON
 #define CONFIG_FILE						"save:/OpenQ4Config.cfg"

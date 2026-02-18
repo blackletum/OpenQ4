@@ -10,10 +10,19 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 
-ROOT_BINARIES = {
-    "windows": ("OpenQ4.exe", "OpenQ4-ded.exe", "libbse-q4.dll"),
-    "linux": ("OpenQ4", "OpenQ4-ded", "libbse-q4.so"),
-    "macos": ("OpenQ4", "OpenQ4-ded", "libbse-q4.dylib"),
+PRODUCT_NAME = "OpenQ4"
+SUPPORTED_ARCHES = ("x64", "x86", "arm64")
+
+PLATFORM_EXECUTABLE_EXT = {
+    "windows": ".exe",
+    "linux": "",
+    "macos": "",
+}
+
+PLATFORM_BSE_BINARY = {
+    "windows": "libbse-q4.dll",
+    "linux": "libbse-q4.so",
+    "macos": "libbse-q4.dylib",
 }
 
 OPENBASE_EXCLUDED_DIRS = {"logs", "screenshots"}
@@ -27,8 +36,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--platform",
         required=True,
-        choices=sorted(ROOT_BINARIES.keys()),
+        choices=sorted(PLATFORM_BSE_BINARY.keys()),
         help="Target runner platform (windows/linux/macos).",
+    )
+    parser.add_argument(
+        "--arch",
+        default="x64",
+        choices=SUPPORTED_ARCHES,
+        help="Target binary architecture tag (default: x64).",
     )
     parser.add_argument(
         "--version",
@@ -48,7 +63,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--install-dir",
         default=None,
-        help="Install directory to package (defaults to <source-root>/install).",
+        help="Install directory to package (defaults to <source-root>/.install).",
     )
     parser.add_argument(
         "--output-dir",
@@ -58,8 +73,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv[1:])
 
 
-def copy_required_binaries(platform: str, install_dir: Path, package_root: Path) -> None:
-    for filename in ROOT_BINARIES[platform]:
+def get_root_binaries(platform: str, arch: str) -> tuple[str, str, str]:
+    exe_ext = PLATFORM_EXECUTABLE_EXT[platform]
+    return (
+        f"{PRODUCT_NAME}-client_{arch}{exe_ext}",
+        f"{PRODUCT_NAME}-ded_{arch}{exe_ext}",
+        PLATFORM_BSE_BINARY[platform],
+    )
+
+
+def copy_required_binaries(platform: str, arch: str, install_dir: Path, package_root: Path) -> None:
+    for filename in get_root_binaries(platform, arch):
         source = install_dir / filename
         if not source.is_file():
             raise FileNotFoundError(f"required distributable not found: {source}")
@@ -114,7 +138,7 @@ def main(argv: list[str]) -> int:
     install_dir = (
         Path(args.install_dir).resolve()
         if args.install_dir is not None
-        else (source_root / "install").resolve()
+        else (source_root / ".install").resolve()
     )
     output_dir = Path(args.output_dir).resolve()
 
@@ -141,7 +165,7 @@ def main(argv: list[str]) -> int:
     package_root.mkdir(parents=True, exist_ok=True)
 
     shutil.copy2(readme_path, package_root / "README.md")
-    copy_required_binaries(args.platform, install_dir, package_root)
+    copy_required_binaries(args.platform, args.arch, install_dir, package_root)
 
     openbase_package_dir = package_root / "openbase"
     openbase_package_dir.mkdir(parents=True, exist_ok=True)

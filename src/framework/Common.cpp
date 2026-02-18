@@ -2849,6 +2849,21 @@ static const char *OpenQ4_SelectGameModuleBaseName( void ) {
 	return OpenQ4_IsMultiplayerGameType( gameType ) ? "game_mp" : "game_sp";
 }
 
+#if defined( _M_X64 ) || defined( __x86_64__ )
+	#define OPENQ4_MODULE_ARCH_TAG "x64"
+#elif defined( _M_IX86 ) || defined( __i386__ )
+	#define OPENQ4_MODULE_ARCH_TAG "x86"
+#elif defined( _M_ARM64 ) || defined( __aarch64__ )
+	#define OPENQ4_MODULE_ARCH_TAG "arm64"
+#else
+	#define OPENQ4_MODULE_ARCH_TAG "unknown"
+#endif
+
+static void OpenQ4_BuildGameModuleBinaryName( const char *moduleName, char outName[ MAX_OSPATH ] ) {
+	const char *variant = ( moduleName && idStr::Icmp( moduleName, "game_mp" ) == 0 ) ? "mp" : "sp";
+	idStr::snPrintf( outName, MAX_OSPATH, "game-%s_%s", variant, OPENQ4_MODULE_ARCH_TAG );
+}
+
 static void OpenQ4_DisableBSEWithWarning( const char *reason ) {
 	static bool warnedConsole = false;
 	if ( !warnedConsole ) {
@@ -2996,22 +3011,36 @@ idCommonLocal::LoadGameDLL
 void idCommonLocal::LoadGameDLL( void ) {
 #ifdef __DOOM_DLL__
 	char			dllPath[ MAX_OSPATH ];
+	char			preferredGameModuleBinary[ MAX_OSPATH ];
+	const char *	selectedModuleBinary;
 
 	gameImport_t	gameImport;
 	gameExport_t	gameExport;
 	GetGameAPI_t	GetGameAPI;
 
 	const char *gameModuleBaseName = OpenQ4_SelectGameModuleBaseName();
-	fileSystem->FindDLL( gameModuleBaseName, dllPath, true );
+	OpenQ4_BuildGameModuleBinaryName( gameModuleBaseName, preferredGameModuleBinary );
+	selectedModuleBinary = preferredGameModuleBinary;
+	fileSystem->FindDLL( selectedModuleBinary, dllPath, true );
 
 	if ( !dllPath[ 0 ] ) {
-		common->FatalError( "couldn't find game dynamic library '%s'", gameModuleBaseName );
+		// Legacy fallback for existing installs that still ship game_sp/game_mp.
+		selectedModuleBinary = gameModuleBaseName;
+		fileSystem->FindDLL( selectedModuleBinary, dllPath, true );
+	}
+
+	if ( !dllPath[ 0 ] ) {
+		common->FatalError(
+			"couldn't find game dynamic library '%s' (or legacy '%s')",
+			preferredGameModuleBinary,
+			gameModuleBaseName
+		);
 		return;
 	}
 	common->DPrintf( "Loading game DLL: '%s'\n", dllPath );
 	gameDLL = sys->DLL_Load( dllPath );
 	if ( !gameDLL ) {
-		common->FatalError( "couldn't load game dynamic library '%s'", gameModuleBaseName );
+		common->FatalError( "couldn't load game dynamic library '%s'", selectedModuleBinary );
 		return;
 	}
 

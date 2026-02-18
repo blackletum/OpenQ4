@@ -147,17 +147,17 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
 
     repo_root = pathlib.Path(__file__).resolve().parents[2]
-    src_root = repo_root / "src"
+    source_root = repo_root / "src"
 
-    if not src_root.is_dir():
-        print(f"Missing source root: {src_root}", file=sys.stderr)
+    if not source_root.is_dir():
+        print(f"Missing source root: {source_root}", file=sys.stderr)
         return 1
 
     if args.host_system != "windows":
         print(
             "Meson source selection for this host is staged. "
             "Current active target is Windows x64. "
-            "See doc/platform-support.md for Linux/macOS roadmap.",
+            "See docs-dev/platform-support.md for Linux/macOS roadmap.",
             file=sys.stderr,
         )
         return 1
@@ -169,31 +169,31 @@ def main(argv: list[str]) -> int:
 
     if include_game:
         for rel in GAME_SOURCES:
-            path = src_root / rel
+            path = source_root / rel
             if not path.is_file():
                 print(f"Missing expected source file: {path}", file=sys.stderr)
                 return 1
             add_source(source_set, ordered_sources, pathlib.Path("src") / rel)
 
     for pattern in ENGINE_SOURCE_GLOBS:
-        matches = sorted(src_root.glob(pattern))
+        matches = sorted(source_root.glob(pattern))
         for match in matches:
             if match.is_file():
                 add_source(
                     source_set,
                     ordered_sources,
-                    pathlib.Path("src") / match.relative_to(src_root),
+                    pathlib.Path("src") / match.relative_to(source_root),
                 )
 
     if include_game:
         for pattern in GAME_SOURCE_GLOBS:
-            matches = sorted(src_root.glob(pattern))
+            matches = sorted(source_root.glob(pattern))
             for match in matches:
                 if match.is_file():
                     add_source(
                         source_set,
                         ordered_sources,
-                        pathlib.Path("src") / match.relative_to(src_root),
+                        pathlib.Path("src") / match.relative_to(source_root),
                     )
 
     if args.platform_backend == "sdl3":

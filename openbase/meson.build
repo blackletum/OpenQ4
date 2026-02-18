@@ -1,6 +1,6 @@
 if build_games and build_game_sp
   shared_module(
-    'game_sp',
+    game_sp_binary_name,
     game_sources,
     include_directories: src_include_dir,
     link_with: game_idlib_library,
@@ -17,7 +17,7 @@ endif
 
 if build_games and build_game_mp
   shared_module(
-    'game_mp',
+    game_mp_binary_name,
     game_sources,
     include_directories: src_include_dir,
     link_with: game_idlib_library,

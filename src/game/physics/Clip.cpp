@@ -1213,7 +1213,7 @@ int idClip::PointContents(const idVec3 p)
 {
 	int contents = -1;
 
-	contents = collisionModelManager->PointContents(p, world);
+	contents = collisionModelManager->Contents( p, NULL, mat3_identity, -1, world, vec3_origin, mat3_identity );
 	if (contents > 0)
 	{
 		return contents;

@@ -31,6 +31,7 @@ inline void operator delete[]( void *p ) { Memory::Free(p); }
 	#define ASYNC_WRITE_PVS 0
 #endif
 
+class idRenderWorld;
 extern idRenderWorld *				gameRenderWorld;
 
 #include "../sys/AutoVersion.h"
@@ -46,6 +47,7 @@ class idWorldspawn;
 class idTestModel;
 class idAAS;
 class idAI;
+class idRenderTexture;
 // jmarshall
 class rvmBot;
 // jmarshall end

@@ -13,34 +13,57 @@ if ([string]::IsNullOrWhiteSpace($GameLibsRepo)) {
 }
 
 $gameLibsRoot = [System.IO.Path]::GetFullPath($GameLibsRepo)
-$gameLibsGameDir = Join-Path $gameLibsRoot "source\game"
-$openQ4GameDir = Join-Path $openQ4Root "src\game"
-$excludedGameLibsCallbacks = Join-Path $gameLibsGameDir "gamesys\Callbacks.cpp"
+$syncMappings = @(
+    @{
+        Name = "game sources"
+        Source = Join-Path $gameLibsRoot "src\game"
+        Destination = Join-Path $openQ4Root "src\game"
+        Excludes = @("Callbacks.cpp", "gamesys\Callbacks.cpp")
+    }
+)
 
 if (-not (Test-Path $gameLibsRoot)) {
     throw "OpenQ4-GameLibs repository not found at '$gameLibsRoot'. Set OPENQ4_GAMELIBS_REPO or pass -GameLibsRepo."
 }
 
-if (-not (Test-Path $gameLibsGameDir)) {
-    throw "GameLibs source path not found: '$gameLibsGameDir'."
+$hasChanges = $false
+foreach ($mapping in $syncMappings) {
+    $sourceDir = [System.IO.Path]::GetFullPath($mapping.Source)
+    $destinationDir = [System.IO.Path]::GetFullPath($mapping.Destination)
+
+    if (-not (Test-Path $sourceDir)) {
+        throw "GameLibs source path not found: '$sourceDir'."
+    }
+
+    Write-Host "Syncing $($mapping.Name):"
+    Write-Host "  From: $sourceDir"
+    Write-Host "    To: $destinationDir"
+
+    $excludeArgs = @()
+    if ($mapping.ContainsKey("Excludes")) {
+        $excludeArgs = @($mapping.Excludes)
+    }
+
+    if ($excludeArgs.Count -gt 0) {
+        & robocopy $sourceDir $destinationDir /MIR /R:2 /W:1 /NFL /NDL /NP /NJH /NJS /NC /NS /XF @excludeArgs
+    } else {
+        & robocopy $sourceDir $destinationDir /MIR /R:2 /W:1 /NFL /NDL /NP /NJH /NJS /NC /NS
+    }
+    $robocopyExit = [int]$LASTEXITCODE
+    if ($robocopyExit -ge 8) {
+        throw "robocopy failed while syncing '$sourceDir' -> '$destinationDir' (exit code $robocopyExit)."
+    }
+
+    if ($robocopyExit -ne 0) {
+        $hasChanges = $true
+    }
 }
 
-if (-not (Test-Path $openQ4GameDir)) {
-    throw "OpenQ4 game source path not found: '$openQ4GameDir'."
-}
-
-Write-Host "Syncing GameLibs game sources:"
-Write-Host "  From: $gameLibsGameDir"
-Write-Host "    To: $openQ4GameDir"
-
-& robocopy $gameLibsGameDir $openQ4GameDir /MIR /R:2 /W:1 /NFL /NDL /NP /NJH /NJS /NC /NS /XF $excludedGameLibsCallbacks
-$robocopyExit = [int]$LASTEXITCODE
-if ($robocopyExit -ge 8) {
-    throw "robocopy failed while syncing GameLibs (exit code $robocopyExit)."
-}
-
-if ($robocopyExit -eq 0) {
-    Write-Host "GameLibs sync complete (no changes)."
-} else {
+if ($hasChanges) {
     Write-Host "GameLibs sync complete (changes applied)."
+} else {
+    Write-Host "GameLibs sync complete (no changes)."
 }
+
+$global:LASTEXITCODE = 0
+exit 0

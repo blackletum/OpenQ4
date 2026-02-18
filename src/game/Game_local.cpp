@@ -4,7 +4,15 @@
 #include "Game_local.h"
 
 // RAVEN BEGIN
-#include "../bse_api/BSEInterface.h"
+#if defined( __has_include )
+	#if __has_include( "../bse_api/BSEInterface.h" )
+		#include "../bse_api/BSEInterface.h"
+	#else
+		#include "../bse/BSEInterface.h"
+	#endif
+#else
+	#include "../bse/BSEInterface.h"
+#endif
 #include "Projectile.h"
 #include "client/ClientEffect.h"
 #include "ai/AI.h"
@@ -2013,6 +2021,8 @@ void idGameLocal::InitFromNewMap( const char *mapName, idRenderWorld *renderWorl
 	gamestate = GAMESTATE_STARTUP;
 
 	gameRenderWorld = renderWorld;
+	// Ensure render targets/material handles are fresh for each map transition.
+	InitGameRenderSystem();
 
 // RAVEN BEGIN
 // mwhitlock: Dynamic memory consolidation
@@ -2110,6 +2120,8 @@ bool idGameLocal::InitFromSaveGame( const char *mapName, idRenderWorld *renderWo
 	gamestate = GAMESTATE_STARTUP;
 
 	gameRenderWorld = renderWorld;
+	// Ensure render targets/material handles are fresh for each map transition.
+	InitGameRenderSystem();
 
 	idRestoreGame savegame( saveGameFile );
 
@@ -4710,7 +4722,7 @@ void idGameLocal::RunDebugInfo( void ) {
 		}
 	}
 
-	// collision map debug output
+// collision map debug output
 // jmarshall - debug output
 	collisionModelManager->DebugOutput( player->GetEyePosition() );
 // jmarshall end

@@ -5,7 +5,7 @@
       "name": "Launch OpenQ4 MP (Meson Debug)",
       "type": "cppvsdbg",
       "request": "launch",
-      "program": "${workspaceFolder}\\install\\OpenQ4.exe",
+      "program": "${workspaceFolder}\\.install\\OpenQ4-client_x64.exe",
       "args": [
         "+set",
         "logFile",
@@ -33,10 +33,10 @@
         "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Quake 4",
         "+set",
         "fs_savepath",
-        "${env:LOCALAPPDATA}\\OpenQ4",
+        "${workspaceFolder}\\.home",
         "+set",
         "fs_devpath",
-        "${workspaceFolder}\\install",
+        "${workspaceFolder}\\.install",
         "+set",
         "fs_game",
         "openbase",
@@ -61,14 +61,14 @@
         "+spawnServer",
         "mp/q4dm1"
       ],
-      "cwd": "${workspaceFolder}\\install",
+      "cwd": "${workspaceFolder}\\.install",
       "console": "integratedTerminal"
     },
     {
       "name": "Launch OpenQ4 SP (Meson Debug)",
       "type": "cppvsdbg",
       "request": "launch",
-      "program": "${workspaceFolder}\\install\\OpenQ4.exe",
+      "program": "${workspaceFolder}\\.install\\OpenQ4-client_x64.exe",
       "args": [
         "+set",
         "logFile",
@@ -99,10 +99,10 @@
         "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Quake 4",
         "+set",
         "fs_savepath",
-        "${env:LOCALAPPDATA}\\OpenQ4",
+        "${workspaceFolder}\\.home",
         "+set",
         "fs_devpath",
-        "${workspaceFolder}\\install",
+        "${workspaceFolder}\\.install",
         "+set",
         "fs_game",
         "openbase",
@@ -112,7 +112,7 @@
         "+map",
         "game/airdefense1"
       ],
-      "cwd": "${workspaceFolder}\\install",
+      "cwd": "${workspaceFolder}\\.install",
       "console": "integratedTerminal"
     }
   ]

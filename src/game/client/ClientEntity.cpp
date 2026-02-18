@@ -457,15 +457,24 @@ void rvClientEntity::InitDefaultPhysics( const idVec3 &origin, const idMat3 &axi
 
 	// check if a clipmodel key/value pair is set
 	if ( spawnArgs.GetString( "clipmodel", "", &temp ) ) {
+		if ( temp != NULL && temp[ 0 ] == '\0' ) {
+			temp = NULL;
+		}
+		if ( temp != NULL ) {
 		// RAVEN BEGIN
 		// mwhitlock: Dynamic memory consolidation
 		RV_PUSH_HEAP_MEM(this);
 		// RAVEN END
-		clipModel = new idClipModel( temp );
+		clipModel = new idClipModel();
+		if ( !clipModel->LoadModel( temp ) ) {
+			delete clipModel;
+			clipModel = NULL;
+		}
 		// RAVEN BEGIN
 		// mwhitlock: Dynamic memory consolidation
 		RV_POP_HEAP();
 		// RAVEN END
+		}
 	}
 
 	if ( !spawnArgs.GetBool( "noclipmodel", "0" ) ) {

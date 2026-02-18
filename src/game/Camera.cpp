@@ -1460,7 +1460,6 @@ bool idDeclCameraDef::Parse( const char *text, const int textLength ) {
 	int					numDefaultAnims;
 	
 	TIME_THIS_SCOPE( __FUNCLINE__);	
-
 	src.LoadMemory( text, textLength, GetFileName(), GetLineNum() );
 	src.SetFlags( DECL_LEXER_FLAGS );
 	src.SkipUntilString( "{" );

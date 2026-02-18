@@ -107,7 +107,8 @@ void rvWeaponMachinegun::Think()
 {
 	rvWeapon::Think();
 	if ( zoomGui && owner == gameLocal.GetLocalPlayer( ) ) {
-		zoomGui->SetStateFloat( "playerYaw", playerViewAxis.ToAngles().yaw );
+		// Scope yaw should track gameplay view yaw exactly, not a derived matrix yaw.
+		zoomGui->SetStateFloat( "playerYaw", owner->viewAngles.yaw );
 	}
 }
 

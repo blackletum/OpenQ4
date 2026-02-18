@@ -100,7 +100,7 @@ To play OpenQ4, you need:
 
 3. **Run the game**
    ```powershell
-   builddir/OpenQ4.exe
+   builddir/OpenQ4-client_x64.exe
    ```
 
 The engine will automatically find your Quake 4 installation and validate the game files.
@@ -120,7 +120,7 @@ The engine will automatically find your Quake 4 installation and validate the ga
 
 ### Build Options
 ```
--Dbuild_engine=true|false     # Build OpenQ4 and OpenQ4-ded executables
+-Dbuild_engine=true|false     # Build OpenQ4-client_<arch> and OpenQ4-ded_<arch> executables
 -Dbuild_games=true|false      # Build game modules
 -Dbuild_game_sp=true|false    # Build single-player module
 -Dbuild_game_mp=true|false    # Build multiplayer module
@@ -150,12 +150,12 @@ meson compile -C builddir
 ### Output Files
 
 **Build directory** (`builddir/`):
-- `OpenQ4.exe` - Main engine executable
-- `OpenQ4-ded.exe` - Dedicated server
-- `openbase/game_sp.dll` - Single-player game module
-- `openbase/game_mp.dll` - Multiplayer game module
+- `OpenQ4-client_x64.exe` - Main engine executable
+- `OpenQ4-ded_x64.exe` - Dedicated server
+- `openbase/game-sp_x64.dll` - Single-player game module
+- `openbase/game-mp_x64.dll` - Multiplayer game module
 
-**Install directory** (`install/`):
+**Install directory** (`.install/`):
 - Complete distributable package with all binaries
 - Ready for deployment or testing with `fs_cdpath`
 
@@ -169,16 +169,16 @@ OpenQ4 uses a unified game directory approach:
 
 ```
 OpenQ4/
-├── OpenQ4.exe              # Main executable
-├── OpenQ4-ded.exe          # Dedicated server
+├── OpenQ4-client_x64.exe   # Main executable
+├── OpenQ4-ded_x64.exe      # Dedicated server
 └── openbase/               # Unified game directory
-    ├── game_sp.dll         # Single-player module
-    └── game_mp.dll         # Multiplayer module
+    ├── game-sp_x64.dll     # Single-player module
+    └── game-mp_x64.dll     # Multiplayer module
 ```
 
 The engine automatically selects the correct module based on game mode:
-- **Single-player**: Loads `game_sp.dll`
-- **Multiplayer**: Loads `game_mp.dll`
+- **Single-player**: Loads `game-sp_<arch>.dll` (for example `game-sp_x64.dll`)
+- **Multiplayer**: Loads `game-mp_<arch>.dll` (for example `game-mp_x64.dll`)
 
 No need for separate mod folders or manual switching!
 
@@ -231,10 +231,10 @@ OpenQ4 maintains complete freedom to evolve independently while preserving compa
 
 ## Documentation
 
-- [Platform Support](doc/platform-support.md) - Cross-platform roadmap and status
-- [Display Settings](user-docs/display-settings.md) - Multi-monitor and display configuration
-- [Input Key Matrix](doc/input-key-matrix.md) - Keyboard and controller input reference
-- [Release Completion](doc/release-completion.md) - Release checklist and changelog
+- [Platform Support](docs-dev/platform-support.md) - Cross-platform roadmap and status
+- [Display Settings](docs-user/display-settings.md) - Multi-monitor and display configuration
+- [Input Key Matrix](docs-dev/input-key-matrix.md) - Keyboard and controller input reference
+- [Release Completion](docs-dev/release-completion.md) - Release checklist and changelog
 - [Project TODO](TODO.md) - Known issues and upcoming features
 
 ---
@@ -251,7 +251,7 @@ OpenQ4 automatically validates your Quake 4 installation to ensure you have legi
 
 **Configuration:**
 - `fs_validateOfficialPaks 1` (default) - Enable asset validation
-- See [official-pk4-checksums.md](doc/official-pk4-checksums.md) for checksum reference
+- See [official-pk4-checksums.md](docs-dev/official-pk4-checksums.md) for checksum reference
 
 ---
 
@@ -312,7 +312,7 @@ OpenQ4 automatically validates your Quake 4 installation to ensure you have legi
 - `fs_basepath` - Game installation directory (auto-detected)
 - `fs_homepath` - Writable user directory
 - `fs_savepath` - Save games and configs (defaults to `fs_homepath`)
-- `fs_cdpath` - Locked runtime overlay path (current working directory; use `install/` as launch dir for testing)
+- `fs_cdpath` - Locked runtime overlay path (current working directory; use `.install/` as launch dir for testing)
 
 </details>
 
@@ -454,3 +454,4 @@ OpenQ4 builds upon the work of many talented developers and projects:
 [Back to Top](#openq4)
 
 </div>
+

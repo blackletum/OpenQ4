@@ -39,12 +39,13 @@
 /build_meson_msvc/
 /build_meson_clangcl/
 /_save/
-/tmp/meson_extref_test*/
+/.tmp/meson_extref_test*/
 /subprojects/.wraplock
 /subprojects/packagecache/
 /subprojects/SDL3-*/
-/install/crashes/
-/install/openbase/*.cfg
+/.install/crashes/
+/.install/openbase/*.cfg
 _tmp_*
-/tmp/
+/.tmp/
+/.home/
 *.pdb

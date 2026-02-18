@@ -3,6 +3,8 @@
 
 
 #include "Game_local.h"
+#include "../renderer/Image.h"
+#include "../renderer/RenderTexture.h"
 
 idCVar g_renderCasUpscale("g_renderCasUpscale", "1", CVAR_BOOL, "jmarshall: toggles cas upscaling");
 
@@ -12,6 +14,18 @@ static const idMaterial* FindPostProcessMaterial( const char* primaryName, const
 		return material;
 	}
 	return declManager->FindMaterial( fallbackName, false );
+}
+
+static void OpenQ4_RenderSceneDirect( const renderView_t *view, idRenderWorld *renderWorld, idCamera *portalSky ) {
+	renderSystem->BindRenderTexture( nullptr, nullptr );
+
+	if ( portalSky ) {
+		renderView_t portalSkyView = *view;
+		portalSky->GetViewParms( &portalSkyView );
+		renderWorld->RenderScene( &portalSkyView );
+	}
+
+	renderWorld->RenderScene( view );
 }
 
 /*
@@ -183,6 +197,10 @@ idGameLocal::RenderScene
 ====================
 */
 void idGameLocal::RenderScene(const renderView_t *view, idRenderWorld *renderWorld, idCamera* portalSky) {
+	if ( view == NULL || renderWorld == NULL ) {
+		return;
+	}
+
 	const bool previousUIViewportMode = renderSystem->GetUseUIViewportFor2D();
 	renderSystem->SetUseUIViewportFor2D( false );
 
@@ -193,17 +211,43 @@ void idGameLocal::RenderScene(const renderView_t *view, idRenderWorld *renderWor
 		InitGameRenderSystem();
 	}
 
-	if (!gameRender.postProcessAvailable || gameRender.forwardRenderPassRT == NULL ||
-		gameRender.forwardRenderPassResolvedRT == NULL || gameRender.postProcessRT[0] == NULL ||
-		gameRender.resolvePostProcessMaterial == NULL) {
-		// Fallback for stock Quake 4 assets: render directly to the backbuffer.
-		renderSystem->BindRenderTexture( nullptr, nullptr );
-		if (portalSky) {
-			renderView_t portalSkyView = *view;
-			portalSky->GetViewParms(&portalSkyView);
-			gameRenderWorld->RenderScene(&portalSkyView);
+	const int screenWidth = renderSystem->GetScreenWidth();
+	const int screenHeight = renderSystem->GetScreenHeight();
+	const bool haveScreenDimensions = ( screenWidth > 0 ) && ( screenHeight > 0 );
+
+	bool needsTargetReinit = false;
+	if ( haveScreenDimensions &&
+		gameRender.forwardRenderPassRT != NULL &&
+		gameRender.forwardRenderPassResolvedRT != NULL &&
+		gameRender.postProcessRT[0] != NULL ) {
+		if ( gameRender.forwardRenderPassRT->GetWidth() != screenWidth ||
+			gameRender.forwardRenderPassRT->GetHeight() != screenHeight ||
+			gameRender.forwardRenderPassResolvedRT->GetWidth() != screenWidth ||
+			gameRender.forwardRenderPassResolvedRT->GetHeight() != screenHeight ||
+			gameRender.postProcessRT[0]->GetWidth() != screenWidth ||
+			gameRender.postProcessRT[0]->GetHeight() != screenHeight ) {
+			needsTargetReinit = true;
 		}
-		renderWorld->RenderScene(view);
+	}
+
+	if ( needsTargetReinit ) {
+		common->Printf(
+			"Reinitializing game render targets after dimension/state change (%d x %d)\n",
+			screenWidth,
+			screenHeight );
+		InitGameRenderSystem();
+	}
+
+	const bool canUsePostProcess = haveScreenDimensions &&
+		gameRender.postProcessAvailable &&
+		gameRender.forwardRenderPassRT != NULL &&
+		gameRender.forwardRenderPassResolvedRT != NULL &&
+		gameRender.postProcessRT[0] != NULL &&
+		gameRender.resolvePostProcessMaterial != NULL;
+
+	if ( !canUsePostProcess ) {
+		// Fallback for stock Quake 4 assets or transient render-target invalidation.
+		OpenQ4_RenderSceneDirect( view, renderWorld, portalSky );
 		renderSystem->SetUseUIViewportFor2D( previousUIViewportMode );
 		return;
 	}
@@ -238,7 +282,7 @@ void idGameLocal::RenderScene(const renderView_t *view, idRenderWorld *renderWor
 		if (portalSky) {
 			renderView_t portalSkyView = *view;
 			portalSky->GetViewParms(&portalSkyView);
-			gameRenderWorld->RenderScene(&portalSkyView);
+			renderWorld->RenderScene(&portalSkyView);
 		}
 	
 		// Render the current world.
@@ -289,15 +333,19 @@ void idGameLocal::RenderScene(const renderView_t *view, idRenderWorld *renderWor
 	} else if ( g_renderCasUpscale.GetBool() && gameRender.casPostProcessMaterial != NULL ) {
 		finalMaterial = gameRender.casPostProcessMaterial;
 	}
-	if ( finalMaterial != NULL ) {
-		// SS_POST_PROCESS stages use depth testing; reset backbuffer depth each frame
-		// so final full-screen composition is deterministic across drivers/devices.
-		renderSystem->ClearRenderTarget( false, true, 1.0f, 0.0f, 0.0f, 0.0f );
-		renderSystem->DrawStretchPic(
-			0.0f, 0.0f, SCREEN_WIDTH, SCREEN_HEIGHT,
-			0.0f, 1.0f, 1.0f, 0.0f,
-			finalMaterial );
+	if ( finalMaterial == NULL ) {
+		OpenQ4_RenderSceneDirect( view, renderWorld, portalSky );
+		renderSystem->SetUseUIViewportFor2D( previousUIViewportMode );
+		return;
 	}
+
+	// SS_POST_PROCESS stages use depth testing; reset backbuffer depth each frame
+	// so final full-screen composition is deterministic across drivers/devices.
+	renderSystem->ClearRenderTarget( false, true, 1.0f, 0.0f, 0.0f, 0.0f );
+	renderSystem->DrawStretchPic(
+		0.0f, 0.0f, SCREEN_WIDTH, SCREEN_HEIGHT,
+		0.0f, 1.0f, 1.0f, 0.0f,
+		finalMaterial );
 
 	// Copy everything to _currentRender
 	renderSystem->CaptureRenderToImage("_currentRender");
