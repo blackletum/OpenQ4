@@ -73,11 +73,17 @@ jobs:
         if: matrix.platform == 'windows'
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           $env:OPENQ4_SKIP_GAMELIBS_SYNC = "1"
 
-          powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 setup --wipe builddir . --backend ninja --buildtype release --wrap-mode=forcefallback
+          powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 setup --wipe builddir . --backend ninja --buildtype=release --wrap-mode=forcefallback -Dbuild_libbse=false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
           powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 compile -C builddir
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
           powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build and install (Linux/macOS, best effort)
         if: matrix.platform != 'windows'
@@ -86,16 +92,19 @@ jobs:
           set +e
           export OPENQ4_SKIP_GAMELIBS_SYNC=1
 
-          tools/build/meson_setup.sh setup --wipe builddir . --backend ninja --buildtype release --wrap-mode=forcefallback
+          bash tools/build/meson_setup.sh setup --wipe builddir . --backend ninja --buildtype=release --wrap-mode=forcefallback
           if [ $? -eq 0 ]; then
-            tools/build/meson_setup.sh compile -C builddir
-            tools/build/meson_setup.sh install -C builddir --no-rebuild --skip-subprojects
+            bash tools/build/meson_setup.sh compile -C builddir
+            if [ $? -eq 0 ]; then
+              bash tools/build/meson_setup.sh install -C builddir --no-rebuild --skip-subprojects
+            fi
           else
-            echo "::warning::Build is currently expected to fail on ${RUNNER_OS} until non-Windows host support is enabled in meson.build."
+            echo "Non-Windows host build is best-effort on ${RUNNER_OS}; skipping package generation."
           fi
           exit 0
 
       - name: Prepare package
+        if: matrix.platform == 'windows'
         id: package
         shell: bash
         run: |
@@ -110,6 +119,7 @@ jobs:
           echo "zip_path=${RUNNER_TEMP}/openq4-${{ steps.version.outputs.version_tag }}-${{ matrix.platform }}.zip" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
+        if: matrix.platform == 'windows'
         uses: actions/upload-artifact@v4
         with:
           name: openq4-nightly-${{ steps.version.outputs.version_tag }}-${{ matrix.platform }}

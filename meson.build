@@ -56,7 +56,7 @@ build_game_mp = get_option('build_game_mp')
 build_libbse = build_engine and get_option('build_libbse')
 needs_bse_sources = build_libbse
 install_root_dir = meson.project_source_root() / '.install'
-install_openbase_dir = install_root_dir / 'openbase'
+install_openq4_dir = install_root_dir / 'openq4'
 bse_repo_root = ''
 bse_source_root = ''
 bse_repo_summary = 'not required'
@@ -260,6 +260,22 @@ endif
 if cpp.get_argument_syntax() == 'msvc'
   shared_cpp_args += ['/J', '/FS', '/source-charset:windows-1252', '/execution-charset:windows-1252', '/Zc:strictStrings-']
   shared_c_args += ['/FS', '/source-charset:windows-1252', '/execution-charset:windows-1252']
+
+  # Quake 4 legacy code (and companion BSE sources) currently relies on
+  # pointer-sized casts and old C/C++ constructs that trigger noisy warnings
+  # under modern MSVC defaults.
+  msvc_suppressed_warnings = [
+    '/wd4091', # typedef enum pattern without declarator
+    '/wd4302', # truncation on legacy pointer/int casts
+    '/wd4305', # double -> float literal truncation
+    '/wd4311', # pointer truncation in legacy alloc/index paths
+    '/wd4312', # integer/pointer size widening in legacy alloc/index paths
+    '/wd4838', # narrowing in legacy list constructors
+    '/wd5033', # register keyword used in imported legacy code
+    '/wd5055', # enum/float comparison in legacy declarations
+  ]
+  shared_cpp_args += msvc_suppressed_warnings
+  shared_c_args += msvc_suppressed_warnings
 endif
 
 pch_headers = []
@@ -322,7 +338,12 @@ game_common_cpp_args = shared_cpp_args + ['-DGAME_DLL']
 game_common_c_args = shared_c_args
 bse_common_cpp_args = shared_cpp_args + ['-DGAME_DLL', '-DBSE_DLL']
 bse_common_c_args = shared_c_args
-game_module_link_args = ['/FIXED:NO', '/BASE:0x20000000', '/LARGEADDRESSAWARE']
+game_module_link_args = ['/FIXED:NO', '/LARGEADDRESSAWARE']
+if host_cpu_family == 'x86_64'
+  game_module_link_args += ['/BASE:0x180000000']
+else
+  game_module_link_args += ['/BASE:0x20000000']
+endif
 release_like = ['release', 'debugoptimized', 'minsize'].contains(get_option('buildtype'))
 if release_like
   game_module_link_args += ['/STACK:4194304', '/OPT:REF', '/OPT:ICF', '/MAP']
@@ -360,7 +381,7 @@ if build_libbse
 endif
 
 if build_engine or (build_games and (build_game_sp or build_game_mp))
-  subdir('openbase')
+  subdir('openq4')
 endif
 
 summary(

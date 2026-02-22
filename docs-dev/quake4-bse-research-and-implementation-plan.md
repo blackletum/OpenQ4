@@ -256,7 +256,7 @@ Tasks:
 1. Run Procedure 1 loop against installed Quake 4 assets:
 - launch default task
 - close after ~3s
-- inspect `fs_savepath\<gameDir>\logs\openq4.log` (commonly `${workspaceFolder}\\.home\\openbase\\logs\\openq4.log`)
+- inspect `fs_savepath\<gameDir>\logs\openq4.log` (commonly `${workspaceFolder}\\.home\\openq4\\logs\\openq4.log`)
 2. Add temporary logging hooks (guarded by cvars/dev flags) for:
 - effect parse success/failure
 - `AddEffectDef`/`UpdateEffectDef`/`FreeEffectDef`

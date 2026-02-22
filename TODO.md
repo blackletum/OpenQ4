@@ -4,7 +4,7 @@ This file tracks current known issues and upcoming features.
 
 ## Known Issues
 
-- [ ] Viewport sometimes remains black when changing between SP and MP; investigate update/refresh logic during module transitions.
+- [x] Viewport sometimes remains black when changing between SP and MP; investigate update/refresh logic during module transitions.
 - [ ] Menu cursor handling needs improvement (focus, capture, and consistency across input modes and resolutions).
 - [ ] The locked door bug inherited from Quake4Doom still persists and needs a root-cause fix.
 - [ ] Machinegun zoom projection yaw differs from viewangles yaw.

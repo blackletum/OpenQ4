@@ -11,7 +11,7 @@ if build_games and build_game_sp
     vs_module_defs: '../src/game/Game.def',
     name_prefix: '',
     install: true,
-    install_dir: install_openbase_dir,
+    install_dir: install_openq4_dir,
   )
 endif
 
@@ -28,16 +28,16 @@ if build_games and build_game_mp
     vs_module_defs: '../src/game/Game.def',
     name_prefix: '',
     install: true,
-    install_dir: install_openbase_dir,
+    install_dir: install_openq4_dir,
   )
 endif
 
 install_subdir(
   'materials',
-  install_dir: install_openbase_dir,
+  install_dir: install_openq4_dir,
 )
 
 install_subdir(
   'glprogs',
-  install_dir: install_openbase_dir,
+  install_dir: install_openq4_dir,
 )

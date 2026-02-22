@@ -22,7 +22,7 @@ function Get-VsDevCmdPath {
         $installPathRaw = & $vswhere -latest -prerelease -products * -requires $component -property installationPath
         $installPath = if ($null -eq $installPathRaw) { "" } else { "$installPathRaw".Trim() }
         if (-not [string]::IsNullOrWhiteSpace($installPath)) {
-            Write-Warning "Visual Studio 2026+ was not found. Falling back to latest available toolchain at '$installPath'."
+            Write-Host "Visual Studio 2026+ was not found. Falling back to latest available toolchain at '$installPath'."
         }
     }
 
@@ -174,8 +174,7 @@ if ($effectiveArgs.Length -gt 0 -and ($effectiveArgs[0] -eq "compile" -or $effec
             $repoRoot,
             "--backend",
             "ninja",
-            "--buildtype",
-            "debug",
+            "--buildtype=debug",
             "--wrap-mode=forcefallback"
         )
         Invoke-Meson -MesonArgs $setupArgs -VsDevCmdPath $vsDevCmd

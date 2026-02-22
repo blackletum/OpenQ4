@@ -9,7 +9,7 @@ Bring OpenQ4 to the same technical standard as modern RBDOOM-3-BFG, with special
 
 - stock Quake 4 asset compatibility first
 - no reliance on shipping custom `q4base/` content
-- unified `openbase/` runtime layout
+- unified `openq4/` runtime layout
 - Meson + SDL3 cross platform direction
 
 ## 2. Baseline and Evidence
@@ -193,7 +193,7 @@ Tasks:
 Exit criteria:
 
 - No regressions on stock Quake 4 assets.
-- Optional PBR overrides function through `openbase` staged content without requiring repo `q4base`.
+- Optional PBR overrides function through `openq4` staged content without requiring repo `q4base`.
 
 ## Phase 4: Indirect Lighting Stack (Env Probes + Light Grids) (8-12 weeks)
 
@@ -207,7 +207,7 @@ Tasks:
 
 - Implement probe placement policy using portal-area topology.
 - Implement light grid data structures and interpolation for dynamic models and surfaces.
-- Add cache format under `fs_savepath/openbase` (not packaged custom assets by default).
+- Add cache format under `fs_savepath/openq4` (not packaged custom assets by default).
 - Provide background bake jobs and resumable cache generation.
 
 Exit criteria:

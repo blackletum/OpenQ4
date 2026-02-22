@@ -45,7 +45,7 @@ To play OpenQ4, you need:
 
 ### Core Features
 - **Full Game Support**: Complete single-player campaign and multiplayer modes
-- **Unified Game Directory**: Single `openbase/` directory for both SP and MP game binaries
+- **Unified Game Directory**: Single `openq4/` directory for both SP and MP game binaries
 - **Asset Validation**: Automatic verification of official Quake 4 assets to ensure authenticity
 - **Auto-Discovery**: Smart detection of your Quake 4 installation (Steam/GOG)
 
@@ -89,7 +89,7 @@ To play OpenQ4, you need:
 2. **Build the engine** (Windows)
    ```powershell
    # Setup the build
-   powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 setup --wipe builddir . --backend ninja --buildtype debug --wrap-mode=forcefallback
+   powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 setup --wipe builddir . --backend ninja --buildtype=debug --wrap-mode=forcefallback
    
    # Compile
    powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 compile -C builddir
@@ -132,7 +132,7 @@ The engine will automatically find your Quake 4 installation and validate the ga
 **Windows (PowerShell)**
 ```powershell
 # Configure
-powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 setup builddir . --backend ninja --buildtype release
+powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 setup builddir . --backend ninja --buildtype=release
 
 # Build
 powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 compile -C builddir
@@ -143,7 +143,7 @@ powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 install -C 
 
 **From Visual Studio Developer Command Prompt**
 ```batch
-meson setup builddir . --backend ninja --buildtype release
+meson setup builddir . --backend ninja --buildtype=release
 meson compile -C builddir
 ```
 
@@ -152,8 +152,8 @@ meson compile -C builddir
 **Build directory** (`builddir/`):
 - `OpenQ4-client_x64.exe` - Main engine executable
 - `OpenQ4-ded_x64.exe` - Dedicated server
-- `openbase/game-sp_x64.dll` - Single-player game module
-- `openbase/game-mp_x64.dll` - Multiplayer game module
+- `openq4/game-sp_x64.dll` - Single-player game module
+- `openq4/game-mp_x64.dll` - Multiplayer game module
 
 **Install directory** (`.install/`):
 - Complete distributable package with all binaries
@@ -171,7 +171,7 @@ OpenQ4 uses a unified game directory approach:
 OpenQ4/
 ├── OpenQ4-client_x64.exe   # Main executable
 ├── OpenQ4-ded_x64.exe      # Dedicated server
-└── openbase/               # Unified game directory
+└── openq4/               # Unified game directory
     ├── game-sp_x64.dll     # Single-player module
     └── game-mp_x64.dll     # Multiplayer module
 ```

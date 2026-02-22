@@ -25,8 +25,8 @@ PLATFORM_BSE_BINARY = {
     "macos": "libbse-q4.dylib",
 }
 
-OPENBASE_EXCLUDED_DIRS = {"logs", "screenshots"}
-OPENBASE_EXCLUDED_SUFFIXES = {".pdb", ".lib", ".exp", ".ilk"}
+OPENQ4_EXCLUDED_DIRS = {"logs", "screenshots"}
+OPENQ4_EXCLUDED_SUFFIXES = {".pdb", ".lib", ".exp", ".ilk"}
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -73,43 +73,54 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv[1:])
 
 
-def get_root_binaries(platform: str, arch: str) -> tuple[str, str, str]:
+def get_required_root_binaries(platform: str, arch: str) -> tuple[str, str]:
     exe_ext = PLATFORM_EXECUTABLE_EXT[platform]
     return (
         f"{PRODUCT_NAME}-client_{arch}{exe_ext}",
         f"{PRODUCT_NAME}-ded_{arch}{exe_ext}",
-        PLATFORM_BSE_BINARY[platform],
     )
 
 
-def copy_required_binaries(platform: str, arch: str, install_dir: Path, package_root: Path) -> None:
-    for filename in get_root_binaries(platform, arch):
+def copy_required_binaries(
+    platform: str, arch: str, install_dir: Path, package_root: Path
+) -> list[str]:
+    copied_optional: list[str] = []
+
+    for filename in get_required_root_binaries(platform, arch):
         source = install_dir / filename
         if not source.is_file():
             raise FileNotFoundError(f"required distributable not found: {source}")
         shutil.copy2(source, package_root / filename)
 
+    optional_bse = PLATFORM_BSE_BINARY[platform]
+    optional_bse_source = install_dir / optional_bse
+    if optional_bse_source.is_file():
+        shutil.copy2(optional_bse_source, package_root / optional_bse)
+        copied_optional.append(optional_bse)
 
-def create_openbase_pk4(
-    install_openbase_dir: Path, destination_pk4: Path
+    return copied_optional
+
+
+def create_openq4_pk4(
+    install_openq4_dir: Path, destination_pk4: Path
 ) -> tuple[int, list[str]]:
     added_files = 0
     skipped_samples: list[str] = []
 
     with ZipFile(destination_pk4, "w", compression=ZIP_DEFLATED, compresslevel=9) as pk4:
-        for path in sorted(install_openbase_dir.rglob("*")):
+        for path in sorted(install_openq4_dir.rglob("*")):
             if not path.is_file():
                 continue
 
-            rel = path.relative_to(install_openbase_dir)
+            rel = path.relative_to(install_openq4_dir)
             rel_parts_lower = {part.lower() for part in rel.parts}
 
-            if rel_parts_lower & OPENBASE_EXCLUDED_DIRS:
+            if rel_parts_lower & OPENQ4_EXCLUDED_DIRS:
                 if len(skipped_samples) < 5:
                     skipped_samples.append(rel.as_posix())
                 continue
 
-            if path.suffix.lower() in OPENBASE_EXCLUDED_SUFFIXES:
+            if path.suffix.lower() in OPENQ4_EXCLUDED_SUFFIXES:
                 if len(skipped_samples) < 5:
                     skipped_samples.append(rel.as_posix())
                 continue
@@ -151,9 +162,9 @@ def main(argv: list[str]) -> int:
         print(f"error: README.md not found at {readme_path}", file=sys.stderr)
         return 1
 
-    install_openbase_dir = install_dir / "openbase"
-    if not install_openbase_dir.is_dir():
-        print(f"error: openbase directory not found: {install_openbase_dir}", file=sys.stderr)
+    install_openq4_dir = install_dir / "openq4"
+    if not install_openq4_dir.is_dir():
+        print(f"error: openq4 directory not found: {install_openq4_dir}", file=sys.stderr)
         return 1
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -165,19 +176,19 @@ def main(argv: list[str]) -> int:
     package_root.mkdir(parents=True, exist_ok=True)
 
     shutil.copy2(readme_path, package_root / "README.md")
-    copy_required_binaries(args.platform, args.arch, install_dir, package_root)
+    copied_optional = copy_required_binaries(args.platform, args.arch, install_dir, package_root)
 
-    openbase_package_dir = package_root / "openbase"
-    openbase_package_dir.mkdir(parents=True, exist_ok=True)
-    openbase_pk4_name = f"openq4-openbase-{args.version_tag}.pk4"
-    openbase_pk4_path = openbase_package_dir / openbase_pk4_name
+    openq4_package_dir = package_root / "openq4"
+    openq4_package_dir.mkdir(parents=True, exist_ok=True)
+    openq4_pk4_name = f"openq4-openq4-{args.version_tag}.pk4"
+    openq4_pk4_path = openq4_package_dir / openq4_pk4_name
 
-    added_files, skipped_samples = create_openbase_pk4(
-        install_openbase_dir, openbase_pk4_path
+    added_files, skipped_samples = create_openq4_pk4(
+        install_openq4_dir, openq4_pk4_path
     )
     if added_files == 0:
         print(
-            "error: openbase pk4 packaging found no eligible files after filtering",
+            "error: openq4 pk4 packaging found no eligible files after filtering",
             file=sys.stderr,
         )
         return 1
@@ -188,7 +199,9 @@ def main(argv: list[str]) -> int:
     print(f"Packaged OpenQ4 nightly {args.version} for {args.platform}")
     print(f"Package directory: {package_root}")
     print(f"Release archive: {zip_path}")
-    print(f"Openbase pk4: {openbase_pk4_path} ({added_files} files)")
+    print(f"OpenQ4 pk4: {openq4_pk4_path} ({added_files} files)")
+    if not copied_optional:
+        print("Optional runtime omitted: libbse-q4 was not present in install directory.")
     if skipped_samples:
         print("Filtered sample paths:")
         for rel in skipped_samples:
