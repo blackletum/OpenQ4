@@ -2356,8 +2356,9 @@ rvVehicleUserAnimated::SetFrame
 ================
 */
 void rvVehicleUserAnimated::SetFrame( const rvUserAnimatedAnim_t & anim ) {
-	float lerp				= anim.frame - int( anim.frame );
-	frameBlend_t frameBlend	= { 0, anim.frame, anim.frame + 1.0f, 1.0f - lerp, lerp };
+	const int frame			= int( anim.frame );
+	float lerp				= anim.frame - frame;
+	frameBlend_t frameBlend	= { 0, frame, frame + 1, 1.0f - lerp, lerp };
 	position->GetParent()->GetAnimator()->SetFrame( anim.channel, anim.index, frameBlend );
 }
 
