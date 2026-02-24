@@ -996,7 +996,7 @@ void rvCameraAnimation::CallFrameCommands( idEntity *ent, int from, int to ) con
 // abahr:
 				case FC_EVENTFUNCTION_ARGS: {
 					assert( command.event );
-					ent->ProcessEvent( command.event, (int)command.parmList );
+					ent->ProcessEvent( command.event, (intptr_t)command.parmList );
 					break;
 				}
 // bdube: support indirection and simplify
