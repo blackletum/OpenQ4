@@ -2696,8 +2696,9 @@ int lwResolvePolySurfaces( lwPolygonList *polygon, lwTagList *tlist,
    }
 
    for ( i = 0; i < polygon->count; i++ ) {
-      index = ( int ) polygon->pol[ i ].surf;
-      if ( index < 0 || index > tlist->count ) return 0;
+      const intptr_t surfIndex = reinterpret_cast<intptr_t>( polygon->pol[ i ].surf );
+      if ( surfIndex < 0 || surfIndex >= tlist->count ) return 0;
+      index = static_cast<int>( surfIndex );
       if ( !s[ index ] ) {
          s[ index ] = lwDefaultSurface();
          if ( !s[ index ] ) return 0;
