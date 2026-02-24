@@ -39,6 +39,7 @@ If you have questions concerning this license or the applicable additional terms
 #import <unistd.h>
 
 #import "macosx_local.h"
+#import "macosx_sys.h"
 
 static idStr	basepath;
 static idStr	savepath;
