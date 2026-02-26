@@ -32,6 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "Unzip.h"
 
 #ifdef WIN32
+	#include <windows.h>
 	#include <io.h>	// for _read
 	#include <direct.h> // for _getcwd
 #else
@@ -352,21 +353,63 @@ static void FS_AddUniquePath( idStrList &paths, const char *path ) {
 	paths.Append( normalized );
 }
 
-static bool FS_HasGameFilesAtBasePath( const char *basePath ) {
+static bool FS_HasGameFilesAtGameDirPath( const char *gameDirPath ) {
 	idStr pakPath;
 	idStr gamePath;
 
-	if ( !basePath || !basePath[ 0 ] ) {
+	if ( !gameDirPath || !gameDirPath[ 0 ] ) {
 		return false;
 	}
 
-	pakPath = basePath;
-	pakPath.AppendPath( BASE_GAMEDIR );
+	pakPath = gameDirPath;
 	pakPath.AppendPath( "pak001.pk4" );
-	gamePath = basePath;
-	gamePath.AppendPath( BASE_GAMEDIR );
+	gamePath = gameDirPath;
 	gamePath.AppendPath( "game000.pk4" );
 	return ( FS_FileExists( pakPath.c_str() ) && FS_FileExists( gamePath.c_str() ) );
+}
+
+static bool FS_TryResolveBasePathCandidate( const char *candidatePath, idStr &resolvedBasePath ) {
+	idStr normalized;
+	idStr gameDirPath;
+	idStr parentPath;
+
+	if ( !candidatePath || !candidatePath[ 0 ] ) {
+		return false;
+	}
+
+	normalized = candidatePath;
+	normalized.Replace( "\\\\", "\\" );
+	normalized.BackSlashesToSlashes();
+	normalized.StripTrailing( '/' );
+	if ( !normalized.Length() ) {
+		return false;
+	}
+
+	// Candidate is an install root containing BASE_GAMEDIR.
+	gameDirPath = normalized;
+	gameDirPath.AppendPath( BASE_GAMEDIR );
+	if ( FS_HasGameFilesAtGameDirPath( gameDirPath.c_str() ) ) {
+		resolvedBasePath = normalized;
+		return true;
+	}
+
+	// Candidate may already point directly at BASE_GAMEDIR.
+	if ( FS_HasGameFilesAtGameDirPath( normalized.c_str() ) ) {
+		parentPath = normalized;
+		parentPath.StripFilename();
+		parentPath.StripTrailing( '/' );
+		if ( parentPath.Length() ) {
+			resolvedBasePath = parentPath;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static bool FS_HasGameFilesAtBasePath( const char *basePath ) {
+	idStr resolvedBasePath;
+	return FS_TryResolveBasePathCandidate( basePath, resolvedBasePath );
 }
 
 static bool FS_GetCurrentWorkingDirectory( idStr &cwd ) {
@@ -416,6 +459,166 @@ static void FS_ExtractQuotedTokens( const char *line, idStrList &tokens ) {
 		p++;
 	}
 }
+
+#ifdef WIN32
+static bool FS_ReadRegistryString( HKEY root, const char *subKey, const char *valueName, REGSAM accessFlags, idStr &result ) {
+	HKEY	hKey;
+	LONG	status;
+	BYTE	buffer[ 4096 ];
+	DWORD	type;
+	DWORD	size;
+
+	result.Clear();
+	if ( !subKey || !subKey[ 0 ] || !valueName || !valueName[ 0 ] ) {
+		return false;
+	}
+
+	status = RegOpenKeyExA( root, subKey, 0, KEY_READ | accessFlags, &hKey );
+	if ( status != ERROR_SUCCESS ) {
+		return false;
+	}
+
+	type = 0;
+	size = sizeof( buffer ) - 1;
+	status = RegQueryValueExA( hKey, valueName, NULL, &type, buffer, &size );
+	RegCloseKey( hKey );
+	if ( status != ERROR_SUCCESS || size == 0 ) {
+		return false;
+	}
+	if ( type != REG_SZ && type != REG_EXPAND_SZ ) {
+		return false;
+	}
+
+	buffer[ size < sizeof( buffer ) ? size : ( sizeof( buffer ) - 1 ) ] = '\0';
+	result = (const char *)buffer;
+	if ( type == REG_EXPAND_SZ ) {
+		char expanded[ 4096 ];
+		DWORD expandedLen = ExpandEnvironmentStringsA( result.c_str(), expanded, sizeof( expanded ) );
+		if ( expandedLen > 0 && expandedLen <= sizeof( expanded ) ) {
+			expanded[ sizeof( expanded ) - 1 ] = '\0';
+			result = expanded;
+		}
+	}
+	result.Replace( "\\\\", "\\" );
+	result.BackSlashesToSlashes();
+	result.StripTrailing( '/' );
+	return result.Length() > 0;
+}
+
+static void FS_AppendGogPathsFromRegistryGamesBranch( HKEY root, const char *branch, idStrList &candidates, REGSAM accessFlags ) {
+	HKEY	hKey;
+	LONG	status;
+	DWORD	index;
+	char	subKeyName[ 256 ];
+	DWORD	subKeyNameLen;
+	idStr	subKeyPath;
+	idStr	pathValue;
+
+	if ( !branch || !branch[ 0 ] ) {
+		return;
+	}
+
+	status = RegOpenKeyExA( root, branch, 0, KEY_READ | accessFlags, &hKey );
+	if ( status != ERROR_SUCCESS ) {
+		return;
+	}
+
+	index = 0;
+	for ( ;; ) {
+		subKeyNameLen = sizeof( subKeyName );
+		status = RegEnumKeyExA( hKey, index, subKeyName, &subKeyNameLen, NULL, NULL, NULL, NULL );
+		if ( status != ERROR_SUCCESS ) {
+			break;
+		}
+
+		subKeyPath = branch;
+		subKeyPath += "\\";
+		subKeyPath += subKeyName;
+		if ( FS_ReadRegistryString( root, subKeyPath.c_str(), "path", accessFlags, pathValue ) ) {
+			FS_AddUniquePath( candidates, pathValue.c_str() );
+		}
+
+		index++;
+	}
+
+	RegCloseKey( hKey );
+}
+
+static void FS_AppendGogPathsFromRegistryUninstallBranch( HKEY root, const char *branch, idStrList &candidates, REGSAM accessFlags ) {
+	HKEY	hKey;
+	LONG	status;
+	DWORD	index;
+	char	subKeyName[ 256 ];
+	DWORD	subKeyNameLen;
+	idStr	subKeyPath;
+	idStr	displayName;
+	idStr	publisher;
+	idStr	installLocation;
+	bool	matchesQuake4;
+	bool	matchesGog;
+
+	if ( !branch || !branch[ 0 ] ) {
+		return;
+	}
+
+	status = RegOpenKeyExA( root, branch, 0, KEY_READ | accessFlags, &hKey );
+	if ( status != ERROR_SUCCESS ) {
+		return;
+	}
+
+	index = 0;
+	for ( ;; ) {
+		subKeyNameLen = sizeof( subKeyName );
+		status = RegEnumKeyExA( hKey, index, subKeyName, &subKeyNameLen, NULL, NULL, NULL, NULL );
+		if ( status != ERROR_SUCCESS ) {
+			break;
+		}
+
+		subKeyPath = branch;
+		subKeyPath += "\\";
+		subKeyPath += subKeyName;
+		if ( !FS_ReadRegistryString( root, subKeyPath.c_str(), "InstallLocation", accessFlags, installLocation ) ) {
+			index++;
+			continue;
+		}
+
+		displayName.Clear();
+		publisher.Clear();
+		FS_ReadRegistryString( root, subKeyPath.c_str(), "DisplayName", accessFlags, displayName );
+		FS_ReadRegistryString( root, subKeyPath.c_str(), "Publisher", accessFlags, publisher );
+
+		matchesQuake4 =
+			( displayName.Find( "Quake 4", false ) >= 0 ) ||
+			( displayName.Find( "Quake IV", false ) >= 0 ) ||
+			( subKeyPath.Find( "Quake 4", false ) >= 0 ) ||
+			( subKeyPath.Find( "Quake IV", false ) >= 0 );
+		matchesGog =
+			( publisher.Find( "GOG", false ) >= 0 ) ||
+			( subKeyPath.Find( "GOG", false ) >= 0 );
+
+		if ( matchesQuake4 || ( matchesGog && installLocation.Find( "Quake", false ) >= 0 ) ) {
+			FS_AddUniquePath( candidates, installLocation.c_str() );
+		}
+
+		index++;
+	}
+
+	RegCloseKey( hKey );
+}
+
+static void FS_AppendGogInstallCandidatesFromRegistry( idStrList &candidates ) {
+	FS_AppendGogPathsFromRegistryGamesBranch( HKEY_LOCAL_MACHINE, "SOFTWARE\\GOG.com\\Games", candidates, KEY_WOW64_64KEY );
+	FS_AppendGogPathsFromRegistryGamesBranch( HKEY_LOCAL_MACHINE, "SOFTWARE\\GOG.com\\Games", candidates, KEY_WOW64_32KEY );
+	FS_AppendGogPathsFromRegistryGamesBranch( HKEY_LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\GOG.com\\Games", candidates, 0 );
+	FS_AppendGogPathsFromRegistryGamesBranch( HKEY_CURRENT_USER, "SOFTWARE\\GOG.com\\Games", candidates, KEY_WOW64_64KEY );
+	FS_AppendGogPathsFromRegistryGamesBranch( HKEY_CURRENT_USER, "SOFTWARE\\GOG.com\\Games", candidates, KEY_WOW64_32KEY );
+
+	FS_AppendGogPathsFromRegistryUninstallBranch( HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall", candidates, KEY_WOW64_64KEY );
+	FS_AppendGogPathsFromRegistryUninstallBranch( HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall", candidates, KEY_WOW64_32KEY );
+	FS_AppendGogPathsFromRegistryUninstallBranch( HKEY_CURRENT_USER, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall", candidates, KEY_WOW64_64KEY );
+	FS_AppendGogPathsFromRegistryUninstallBranch( HKEY_CURRENT_USER, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall", candidates, KEY_WOW64_32KEY );
+}
+#endif
 
 static void FS_AppendSteamLibrariesFromVdf( const char *steamRoot, idStrList &libraryRoots ) {
 	idStr		vdfPath;
@@ -552,6 +755,8 @@ static void FS_BuildGogInstallCandidates( idStrList &candidates ) {
 	candidates.Clear();
 
 #ifdef WIN32
+	FS_AppendGogInstallCandidatesFromRegistry( candidates );
+
 	FS_AddUniquePath( candidates, "C:/Program Files (x86)/GOG Galaxy/Games/Quake 4" );
 	FS_AddUniquePath( candidates, "C:/Program Files/GOG Galaxy/Games/Quake 4" );
 	FS_AddUniquePath( candidates, "C:/GOG Games/Quake 4" );
@@ -597,9 +802,11 @@ static void FS_BuildGogInstallCandidates( idStrList &candidates ) {
 }
 
 static bool FS_FindFirstValidInstallPath( const idStrList &candidates, idStr &result ) {
+	idStr resolvedBasePath;
+
 	for ( int i = 0; i < candidates.Num(); i++ ) {
-		if ( FS_HasGameFilesAtBasePath( candidates[ i ] ) ) {
-			result = candidates[ i ];
+		if ( FS_TryResolveBasePathCandidate( candidates[ i ], resolvedBasePath ) ) {
+			result = resolvedBasePath;
 			return true;
 		}
 	}
@@ -609,9 +816,10 @@ static bool FS_FindFirstValidInstallPath( const idStrList &candidates, idStr &re
 static bool FS_AutoDiscoverBasePath( idStr &basePath ) {
 	idStr		cwd;
 	idStrList	candidates;
+	idStr		resolvedBasePath;
 
-	if ( FS_GetCurrentWorkingDirectory( cwd ) && FS_HasGameFilesAtBasePath( cwd.c_str() ) ) {
-		basePath = cwd;
+	if ( FS_GetCurrentWorkingDirectory( cwd ) && FS_TryResolveBasePathCandidate( cwd.c_str(), resolvedBasePath ) ) {
+		basePath = resolvedBasePath;
 		return true;
 	}
 
