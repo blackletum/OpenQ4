@@ -380,6 +380,11 @@ extern idCVar	aas_showRevReach;
 // RAVEN END
 
 extern idCVar	net_clientPredictGUI;
+extern idCVar	net_mpLagCompensation;
+extern idCVar	net_mpLagCompMaxMS;
+extern idCVar	net_mpLagCompBiasMS;
+extern idCVar	net_mpLagCompDebug;
+extern idCVar	net_mpPredictMode;
 
 extern idCVar	si_voteFlags;
 extern idCVar	g_mapCycle;

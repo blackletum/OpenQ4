@@ -404,6 +404,7 @@ void idGameLocal::Clear( void ) {
 	currentThinkingEntity = NULL;
 
 	memset( lagometer, 0, sizeof( lagometer ) );
+	ResetMPLagCompensationHistory();
 
 	demoState = DEMO_NONE;
 	serverDemo = false;
@@ -3848,6 +3849,8 @@ TIME_THIS_SCOPE("idGameLocal::RunFrame - gameDebug.BeginFrame()");
 			mpGame.Run();
 		}
 
+		CaptureMPLagCompensationFrame();
+
 		if ( gameRenderWorld && !mpInteractionsGenerated ) {
 			if ( developer.GetBool() ) {
 				common->Printf( "Deferred GenerateAllInteractions (RunFrame)\n" );
@@ -3938,6 +3941,39 @@ TIME_THIS_SCOPE("idGameLocal::RunFrame - gameDebug.BeginFrame()");
 
 /*
 ====================
+idGameLocal::GetScreenAspectRatio
+====================
+*/
+float idGameLocal::GetScreenAspectRatio( void ) const {
+	int screenWidth = ( renderSystem != NULL ) ? renderSystem->GetScreenWidth() : 0;
+	int screenHeight = ( renderSystem != NULL ) ? renderSystem->GetScreenHeight() : 0;
+
+	if ( screenWidth > 0 && screenHeight > 0 ) {
+		return ( float )screenWidth / ( float )screenHeight;
+	}
+
+	if ( cvarSystem != NULL ) {
+		screenWidth = cvarSystem->GetCVarInteger( "r_customWidth" );
+		screenHeight = cvarSystem->GetCVarInteger( "r_customHeight" );
+		if ( screenWidth > 0 && screenHeight > 0 ) {
+			return ( float )screenWidth / ( float )screenHeight;
+		}
+
+		switch ( cvarSystem->GetCVarInteger( "r_aspectRatio" ) ) {
+		case 1:
+			return 16.0f / 9.0f;
+		case 2:
+			return 16.0f / 10.0f;
+		default:
+			break;
+		}
+	}
+
+	return 4.0f / 3.0f;
+}
+
+/*
+====================
 idGameLocal::CalcFov
 
 Calculates the horizontal and vertical field of view based on a horizontal field of view and custom aspect ratio
@@ -3946,42 +3982,51 @@ Calculates the horizontal and vertical field of view based on a horizontal field
 void idGameLocal::CalcFov( float base_fov, float &fov_x, float &fov_y ) const {
 	float	x;
 	float	y;
-	float	ratio_x = 4.0f;
-	float	ratio_y = 3.0f;
+	const float referenceAspect = 4.0f / 3.0f;
+	const float aspectRatio = idMath::ClampFloat( 0.1f, 10.0f, GetScreenAspectRatio() );
 
-	// first, calculate the vertical fov based on a 640x480 view
-	x = SCREEN_WIDTH / tan(base_fov / 360.0f * idMath::PI);
-	y = atan2(SCREEN_HEIGHT, x);
+// RAVEN BEGIN
+// jnewquist: Option to adjust vertical fov instead of horizontal for non 4:3 modes
+	if ( g_fixedHorizFOV.GetBool() ) {
+		x = aspectRatio / idMath::Tan( base_fov / 360.0f * idMath::PI );
+		y = idMath::ATan( 1.0f, x );
+		fov_y = y * 360.0f / idMath::PI;
+		fov_x = base_fov;
+		return;
+	}
+// RAVEN END
+
+	// first, calculate the vertical fov from the legacy 4:3 baseline.
+	x = referenceAspect / idMath::Tan( base_fov / 360.0f * idMath::PI );
+	y = idMath::ATan( 1.0f, x );
 	fov_y = y * 360.0f / idMath::PI;
 
 	// FIXME: somehow, this is happening occasionally
-	assert(fov_y > 0);
-	if (fov_y <= 0) {
-		Printf(sys->FPU_GetState());
-		Error("idGameLocal::CalcFov: bad result");
-	}
-	// Aspect ratio is always automatic and follows the current render size.
-	const int screenWidth = renderSystem->GetScreenWidth();
-	const int screenHeight = renderSystem->GetScreenHeight();
-	if ( screenWidth > 0 && screenHeight > 0 ) {
-		ratio_x = static_cast<float>( screenWidth );
-		ratio_y = static_cast<float>( screenHeight );
+	assert( fov_y > 0 );
+	if ( fov_y <= 0 ) {
+		Printf( sys->FPU_GetState() );
+		Error( "idGameLocal::CalcFov: bad result" );
 	}
 
-	y = ratio_y / tan(fov_y / 360.0f * idMath::PI);
-	fov_x = atan2(ratio_x, y) * 360.0f / idMath::PI;
-
-	if (fov_x < base_fov) {
+	if ( idMath::Fabs( aspectRatio - referenceAspect ) < 0.001f ) {
 		fov_x = base_fov;
-		x = ratio_x / tan(fov_x / 360.0f * idMath::PI);
-		fov_y = atan2(ratio_y, x) * 360.0f / idMath::PI;
+		return;
+	}
+
+	y = 1.0f / idMath::Tan( fov_y / 360.0f * idMath::PI );
+	fov_x = idMath::ATan( aspectRatio, y ) * 360.0f / idMath::PI;
+
+	if ( fov_x < base_fov ) {
+		fov_x = base_fov;
+		x = aspectRatio / idMath::Tan( fov_x / 360.0f * idMath::PI );
+		fov_y = idMath::ATan( 1.0f, x ) * 360.0f / idMath::PI;
 	}
 
 	// FIXME: somehow, this is happening occasionally
-	assert((fov_x > 0) && (fov_y > 0));
-	if ((fov_y <= 0) || (fov_x <= 0)) {
-		Printf(sys->FPU_GetState());
-		Error("idGameLocal::CalcFov: bad result");
+	assert( ( fov_x > 0 ) && ( fov_y > 0 ) );
+	if ( ( fov_y <= 0 ) || ( fov_x <= 0 ) ) {
+		Printf( sys->FPU_GetState() );
+		Error( "idGameLocal::CalcFov: bad result" );
 	}
 }
 
@@ -7969,6 +8014,211 @@ rvClientEffect* idGameLocal::PlayEffect(
 	return clientEffect;
 }
 
+/*
+================
+idGameLocal::ResetMPLagCompensationHistory
+================
+*/
+void idGameLocal::ResetMPLagCompensationHistory( void ) {
+	mpLagCompHistoryHead = -1;
+	for ( int clientNum = 0; clientNum < MAX_CLIENTS; clientNum++ ) {
+		for ( int i = 0; i < MP_LAGCOMP_HISTORY; i++ ) {
+			mpLagCompHistory[ clientNum ][ i ].time = 0;
+			mpLagCompHistory[ clientNum ][ i ].origin = vec3_origin;
+			mpLagCompHistory[ clientNum ][ i ].axis = mat3_identity;
+			mpLagCompHistory[ clientNum ][ i ].valid = false;
+		}
+	}
+}
+
+/*
+================
+idGameLocal::CaptureMPLagCompensationFrame
+================
+*/
+void idGameLocal::CaptureMPLagCompensationFrame( void ) {
+	if ( !isServer || !isMultiplayer ) {
+		return;
+	}
+
+	mpLagCompHistoryHead = ( mpLagCompHistoryHead + 1 ) % MP_LAGCOMP_HISTORY;
+
+	for ( int clientNum = 0; clientNum < MAX_CLIENTS; clientNum++ ) {
+		mpLagCompFrame_t &frame = mpLagCompHistory[ clientNum ][ mpLagCompHistoryHead ];
+		frame.time = time;
+		frame.valid = false;
+
+		idEntity *ent = entities[ clientNum ];
+		if ( !ent || !ent->IsType( idPlayer::GetClassType() ) ) {
+			continue;
+		}
+
+		idPlayer *player = static_cast< idPlayer * >( ent );
+		if ( player->spectating ) {
+			continue;
+		}
+
+		frame.origin = player->GetPhysics()->GetOrigin();
+		frame.axis = player->GetPhysics()->GetAxis();
+		frame.valid = true;
+	}
+}
+
+/*
+================
+idGameLocal::SelectMPLagCompensationFrame
+================
+*/
+bool idGameLocal::SelectMPLagCompensationFrame( int clientNum, int targetTime, mpLagCompFrame_t &outFrame ) const {
+	if ( mpLagCompHistoryHead < 0 || clientNum < 0 || clientNum >= MAX_CLIENTS ) {
+		return false;
+	}
+
+	const mpLagCompFrame_t *oldestFrame = NULL;
+
+	for ( int i = 0; i < MP_LAGCOMP_HISTORY; i++ ) {
+		const int index = ( mpLagCompHistoryHead - i + MP_LAGCOMP_HISTORY ) % MP_LAGCOMP_HISTORY;
+		const mpLagCompFrame_t &frame = mpLagCompHistory[ clientNum ][ index ];
+		if ( !frame.valid ) {
+			continue;
+		}
+
+		oldestFrame = &frame;
+		if ( frame.time <= targetTime ) {
+			outFrame = frame;
+			return true;
+		}
+	}
+
+	if ( oldestFrame ) {
+		outFrame = *oldestFrame;
+		return true;
+	}
+
+	return false;
+}
+
+/*
+================
+idGameLocal::ComputeMPLagCompensationRewind
+================
+*/
+bool idGameLocal::ComputeMPLagCompensationRewind( const idPlayer *shooter, int &rewindMS ) const {
+	rewindMS = 0;
+
+	if ( !isServer || !isMultiplayer || !shooter || !net_mpLagCompensation.GetBool() ) {
+		return false;
+	}
+
+	const int maxRewindMS = idMath::ClampInt( 0, 1000, net_mpLagCompMaxMS.GetInteger() );
+	if ( maxRewindMS <= 0 ) {
+		return false;
+	}
+
+	int rewindEstimateMS = 0;
+
+	// Prefer authoritative command-age because it captures the real end-to-end pipeline.
+	if ( shooter->usercmd.gameTime > 0 ) {
+		rewindEstimateMS = time - shooter->usercmd.gameTime;
+	}
+
+	// Fall back to one-way ping adjusted by client prediction if command timing is unavailable.
+	if ( rewindEstimateMS <= 0 ) {
+		int pingMS = 0;
+		int predictionMS = 0;
+		if ( shooter->entityNumber >= 0 && shooter->entityNumber < MAX_CLIENTS ) {
+			pingMS = networkSystem->ServerGetClientPing( shooter->entityNumber );
+			predictionMS = networkSystem->ServerGetClientPrediction( shooter->entityNumber );
+		}
+
+		if ( pingMS < 0 || pingMS >= 99999 ) {
+			pingMS = 0;
+		}
+		if ( predictionMS < 0 || predictionMS >= 99999 ) {
+			predictionMS = 0;
+		}
+
+		rewindEstimateMS = ( pingMS / 2 ) - predictionMS;
+	}
+
+	rewindEstimateMS += net_mpLagCompBiasMS.GetInteger();
+	rewindMS = idMath::ClampInt( 0, maxRewindMS, rewindEstimateMS );
+	return rewindMS > 0;
+}
+
+/*
+================
+idGameLocal::BeginMPLagCompensation
+================
+*/
+bool idGameLocal::BeginMPLagCompensation( const idPlayer *shooter, mpLagCompRestore_t restoreState[MAX_CLIENTS], int &restoreCount ) {
+	restoreCount = 0;
+
+	int rewindMS = 0;
+	if ( !ComputeMPLagCompensationRewind( shooter, rewindMS ) ) {
+		return false;
+	}
+
+	const int targetTime = time - rewindMS;
+
+	for ( int clientNum = 0; clientNum < MAX_CLIENTS; clientNum++ ) {
+		if ( clientNum == shooter->entityNumber ) {
+			continue;
+		}
+
+		idEntity *ent = entities[ clientNum ];
+		if ( !ent || !ent->IsType( idPlayer::GetClassType() ) ) {
+			continue;
+		}
+
+		idPlayer *player = static_cast< idPlayer * >( ent );
+		if ( player->spectating || player->GetInstance() != shooter->GetInstance() ) {
+			continue;
+		}
+
+		mpLagCompFrame_t rewoundFrame;
+		if ( !SelectMPLagCompensationFrame( clientNum, targetTime, rewoundFrame ) ) {
+			continue;
+		}
+
+		mpLagCompRestore_t &restore = restoreState[ restoreCount ];
+		restore.player = player;
+		restore.originalOrigin = player->GetPhysics()->GetOrigin();
+		restore.originalAxis = player->GetPhysics()->GetAxis();
+		restore.rewoundOrigin = rewoundFrame.origin;
+		restoreCount++;
+
+		player->GetPhysics()->SetOrigin( rewoundFrame.origin );
+		player->GetPhysics()->SetAxis( rewoundFrame.axis );
+	}
+
+	if ( net_mpLagCompDebug.GetInteger() > 0 ) {
+		common->DPrintf( "MPLagComp: shooter=%d rewind=%dms targetTime=%d rewound=%d\n",
+			shooter->entityNumber, rewindMS, targetTime, restoreCount );
+	}
+
+	return restoreCount > 0;
+}
+
+/*
+================
+idGameLocal::EndMPLagCompensation
+================
+*/
+void idGameLocal::EndMPLagCompensation( mpLagCompRestore_t restoreState[MAX_CLIENTS], int restoreCount ) {
+	for ( int i = restoreCount - 1; i >= 0; i-- ) {
+		mpLagCompRestore_t &restore = restoreState[ i ];
+		if ( !restore.player ) {
+			continue;
+		}
+
+		// Preserve any intentional translation that happened while rewound (rare but possible).
+		idVec3 translated = restore.player->GetPhysics()->GetOrigin() - restore.rewoundOrigin;
+		restore.player->GetPhysics()->SetOrigin( restore.originalOrigin + translated );
+		restore.player->GetPhysics()->SetAxis( restore.originalAxis );
+	}
+}
+
 void idGameLocal::CheckPlayerWhizzBy( idVec3 start, idVec3 end, idEntity* hitEnt, idEntity *attacker )
 {
 	//FIXME: make this client-side?  Work in MP?
@@ -8039,6 +8289,10 @@ idEntity* idGameLocal::HitScan(
 	float		tracerChance;
 	idEntity*	ignore;
 	float		penetrate;
+	idEntity *	hitResult = NULL;
+	mpLagCompRestore_t lagCompRestore[ MAX_CLIENTS ];
+	int			lagCompRestoreCount = 0;
+	bool		lagCompApplied = false;
 
 	if ( areas ) {
 		areas[ 0 ] = pvs.GetPVSArea( origFxOrigin );
@@ -8048,7 +8302,11 @@ idEntity* idGameLocal::HitScan(
 	ignore    = owner;
 	penetrate = hitscanDict.GetFloat( "penetrate" );
 
-	if( hitscanDict.GetBool( "hitscanTint" ) && owner->IsType( idPlayer::GetClassType() ) ) {
+	if ( isServer && isMultiplayer && owner && owner->IsType( idPlayer::GetClassType() ) ) {
+		lagCompApplied = BeginMPLagCompensation( static_cast<idPlayer *>( owner ), lagCompRestore, lagCompRestoreCount );
+	}
+
+	if( owner && hitscanDict.GetBool( "hitscanTint" ) && owner->IsType( idPlayer::GetClassType() ) ) {
 		hitscanTint = ((idPlayer*)owner)->GetHitscanTint();
 	}
 
@@ -8144,7 +8402,8 @@ idEntity* idGameLocal::HitScan(
 					}
 				}
 
-				return NULL;
+				hitResult = NULL;
+				goto hitScanDone;
 			}
 
 			// computing the collisionArea from the collisionPoint fails sometimes
@@ -8315,7 +8574,8 @@ idEntity* idGameLocal::HitScan(
 			}
 			
 			// End of reflection
-			return ent;
+			hitResult = ent;
+			goto hitScanDone;
 		} else {
 			PlayEffect( GetEffect( hitscanDict, "fx_reflect", tr.c.materialType ), collisionPoint, tr.c.normal.ToMat3() );
 		}
@@ -8331,8 +8591,12 @@ idEntity* idGameLocal::HitScan(
 	}	
 	
 	assert( false );
-	
-	return NULL;
+
+hitScanDone:
+	if ( lagCompApplied ) {
+		EndMPLagCompensation( lagCompRestore, lagCompRestoreCount );
+	}
+	return hitResult;
 }
 
 /*

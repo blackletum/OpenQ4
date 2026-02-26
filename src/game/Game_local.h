@@ -761,6 +761,7 @@ public:
 	void					SetPortalSky( idCamera *cam );
 // RAVEN END
 
+	float					GetScreenAspectRatio( void ) const;
 	void					CalcFov( float base_fov, float &fov_x, float &fov_y ) const;
 
 	void					AddEntityToHash( const char *name, idEntity *ent );
@@ -1081,6 +1082,25 @@ private:
 
 	byte					lagometer[ LAGO_IMG_HEIGHT ][ LAGO_IMG_WIDTH ][ 4 ];
 
+	enum { MP_LAGCOMP_HISTORY = 64 };
+
+	struct mpLagCompFrame_t {
+		int					time;
+		idVec3				origin;
+		idMat3				axis;
+		bool				valid;
+	};
+
+	struct mpLagCompRestore_t {
+		idPlayer *			player;
+		idVec3				originalOrigin;
+		idMat3				originalAxis;
+		idVec3				rewoundOrigin;
+	};
+
+	mpLagCompFrame_t		mpLagCompHistory[MAX_CLIENTS][MP_LAGCOMP_HISTORY];
+	int						mpLagCompHistoryHead;
+
 	idMsgQueue				unreliableMessages[ MAX_CLIENTS+1 ];	// MAX_CLIENTS slot for server demo recording
 
 	demoState_t				demoState;
@@ -1143,6 +1163,12 @@ private:
 	bool					ValidateServerSettings( const char *map, const char *gametype );
 
 	void					Tokenize( idStrList &out, const char *in );
+	void					ResetMPLagCompensationHistory( void );
+	void					CaptureMPLagCompensationFrame( void );
+	bool					SelectMPLagCompensationFrame( int clientNum, int targetTime, mpLagCompFrame_t &outFrame ) const;
+	bool					ComputeMPLagCompensationRewind( const idPlayer *shooter, int &rewindMS ) const;
+	bool					BeginMPLagCompensation( const idPlayer *shooter, mpLagCompRestore_t restoreState[MAX_CLIENTS], int &restoreCount );
+	void					EndMPLagCompensation( mpLagCompRestore_t restoreState[MAX_CLIENTS], int restoreCount );
 
 // RAVEN BEGIN
 // ddynerman: multiple clip worlds

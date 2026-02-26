@@ -117,9 +117,21 @@ const idEventDef EV_Player_AllowNewObjectives( "<allownewobjectives>" );
 // RAVEN END
 
 static float Player_CalcAspectAgnosticZoomFov( float zoomFov ) {
-	// Weapon zoom defs are authored for the gameplay FOV path (4:3 baseline via CalcFov),
-	// so preserve the authored value and only clamp to a safe runtime range.
-	return idMath::ClampFloat( 1.0f, 179.0f, zoomFov );
+	// Weapon zoom defs are authored against the 4:3 gameplay FOV baseline.
+	// Convert to the active aspect so scoped horizontal magnification stays consistent.
+	const float clampedZoomFov = idMath::ClampFloat( 1.0f, 179.0f, zoomFov );
+	const float referenceAspect = 4.0f / 3.0f;
+	const float currentAspect = idMath::ClampFloat( 0.1f, 10.0f, gameLocal.GetScreenAspectRatio() );
+
+	if ( idMath::Fabs( currentAspect - referenceAspect ) < 0.001f ) {
+		return clampedZoomFov;
+	}
+
+	const float halfZoomFov = DEG2RAD( clampedZoomFov * 0.5f );
+	const float aspectScale = referenceAspect / currentAspect;
+	const float adjustedHalfFov = idMath::ATan( idMath::Tan( halfZoomFov ) * aspectScale );
+
+	return idMath::ClampFloat( 1.0f, 179.0f, RAD2DEG( adjustedHalfFov ) * 2.0f );
 }
 
 static float Player_CalcZoomFraction( float currentFov, float defaultFov, float zoomFov ) {
@@ -3931,13 +3943,7 @@ void idPlayer::EnterCinematic( void ) {
 		cinematicHud->HandleNamedEvent ( "showLetterbox" );
 // RAVEN BEGIN
 // jnewquist: Option to adjust vertical fov instead of horizontal for non 4:3 modes
-		bool hideLetterbox = false;
-		const int screenWidth = renderSystem->GetScreenWidth();
-		const int screenHeight = renderSystem->GetScreenHeight();
-		if ( screenWidth > 0 && screenHeight > 0 ) {
-			hideLetterbox = ( static_cast<float>( screenWidth ) / static_cast<float>( screenHeight ) ) > ( 4.0f / 3.0f );
-		}
-		if ( hideLetterbox ) {
+		if ( gameLocal.GetScreenAspectRatio() > ( 4.0f / 3.0f ) ) {
 			cinematicHud->HandleNamedEvent ( "hideLetterbox" );
 		}
 // RAVEN END
@@ -7757,12 +7763,11 @@ void idPlayer::BobCycle( const idVec3 &pushVelocity ) {
 	// calculate angles for view bobbing
 	viewBobAngles.Zero();
 
-	// Keep zoom anchored to the current view angles by removing angular/positional bob while zoomed.
-	if( IsZoomed() ) {
+	// no view bob at all in MP while zoomed in
+	if( gameLocal.isMultiplayer && IsZoomed() ) {
 		bobCycle = 0;
 		bobFoot = 0;
 		bobfracsin = 0;	
-		viewBob.Zero();
 		return;
 	}
 
@@ -11028,18 +11033,9 @@ void idPlayer::GetViewPos( idVec3 &origin, idMat3 &axis ) const {
   		idVec3		shakeOffset;
   		idAngles	shakeAngleOffset;
 	   	idBounds	relBounds(idVec3(0, 0, 0), idVec3(0, 0, 0));
-		const bool lockZoomToViewAngles = zoomed;
-
-		if ( lockZoomToViewAngles ) {
-			shakeOffset.Zero();
-			shakeAngleOffset.Zero();
-			origin = GetEyePosition();
-			angles = viewAngles;
-		} else {
-  			playerView.ShakeOffsets( shakeOffset, shakeAngleOffset, relBounds );
-  			origin = GetEyePosition() + viewBob + shakeOffset;  		
-			angles = viewAngles + viewBobAngles + shakeAngleOffset + playerView.AngleOffset();
-		}
+  		playerView.ShakeOffsets( shakeOffset, shakeAngleOffset, relBounds );
+  		origin = GetEyePosition() + viewBob + shakeOffset;  		
+		angles = viewAngles + viewBobAngles + shakeAngleOffset + playerView.AngleOffset();
 
 		axis = angles.ToMat3() * physicsObj.GetGravityAxis();
 
@@ -11055,8 +11051,7 @@ idPlayer::CalculateFirstPersonView
 ===============
 */
 void idPlayer::CalculateFirstPersonView( void ) {
-	const bool useModelCameraView = !zoomed && ( ( pm_modelView.GetInteger() == 1 ) || ( ( pm_modelView.GetInteger() == 2 ) && ( health <= 0 ) ) );
-	if ( useModelCameraView ) {
+	if ( ( pm_modelView.GetInteger() == 1 ) || ( ( pm_modelView.GetInteger() == 2 ) && ( health <= 0 ) ) ) {
 		//	Displays the view from the point of view of the "camera" joint in the player model
 
 		idMat3 axis;
@@ -11224,14 +11219,6 @@ void idPlayer::CalculateRenderView( void ) {
 			}
 		}
 
-		// Final zoom lock: guarantee rendered first-person view axis matches gameplay viewAngles.
-		if ( zoomed && !pm_thirdPerson.GetBool() && !pm_thirdPersonDeath.GetBool() && !IsInVehicle() && health > 0 ) {
-			const idMat3 zoomViewAxis = viewAngles.ToMat3() * physicsObj.GetGravityAxis();
-			firstPersonViewAxis = zoomViewAxis;
-			renderView->viewaxis = zoomViewAxis;
-			renderView->vieworg = firstPersonViewOrigin;
-		}
-		
 		// field of view
  		gameLocal.CalcFov( CalcFov( true ), renderView->fov_x, renderView->fov_y );
 
@@ -12115,10 +12102,9 @@ void idPlayer::LocalClientPredictionThink( void ) {
 idPlayer::NonLocalClientPredictionThink
 ===============
 */
-#define LIMITED_PREDICTION		1
-
 void idPlayer::NonLocalClientPredictionThink( void ) {
 	renderEntity_t *headRenderEnt;
+	const bool fullRemotePrediction = gameLocal.isMultiplayer && net_mpPredictMode.GetBool();
 
 	oldFlags = usercmd.flags;
 	oldButtons = usercmd.buttons;
@@ -12158,8 +12144,7 @@ void idPlayer::NonLocalClientPredictionThink( void ) {
 		}
 	}
 
-#if !LIMITED_PREDICTION
-	if ( IsInVehicle ( ) ) {	
+	if ( fullRemotePrediction && IsInVehicle ( ) ) {	
 		vehicleController.SetInput ( usercmd, viewAngles );
 
 		// calculate the exact bobbed view position, which is used to
@@ -12178,7 +12163,6 @@ void idPlayer::NonLocalClientPredictionThink( void ) {
 		
 		return;
 	}
-#endif
 
 	AdjustSpeed();
 
@@ -12195,17 +12179,20 @@ void idPlayer::NonLocalClientPredictionThink( void ) {
 	if ( !isLagged ) {
  		// don't allow client to move when lagged
 		predictedUpdated = false;
-		// NOTE: only running on new frames causes prediction errors even when the input does not change!
-		if ( gameLocal.isNewFrame ) {
+		if ( fullRemotePrediction || gameLocal.isNewFrame ) {
  			Move();
 		} else {
 			PredictionErrorDecay();
 		}
  	}
 
-#if defined( _XENON ) || !LIMITED_PREDICTION
-	// update GUIs, Items, and character interactions
+#if defined( _XENON )
 	UpdateFocus();
+#else
+	if ( fullRemotePrediction ) {
+		// update GUIs, Items, and character interactions
+		UpdateFocus();
+	}
 #endif
 
 	// service animations
@@ -12238,11 +12225,9 @@ void idPlayer::NonLocalClientPredictionThink( void ) {
  		UpdatePowerUps();
  	}
 
-//#if !LIMITED_PREDICTION
  	UpdateDeathSkin( false );
 
 	UpdateDeathShader( deathStateHitch );
-//#endif
 
 	if( gameLocal.isMultiplayer ) {
 		if ( clientHead.GetEntity() ) {

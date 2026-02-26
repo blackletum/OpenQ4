@@ -59,7 +59,7 @@
         "si_pure",
         "0",
         "+spawnServer",
-        "mp/q4dm1"
+        "mp/q4dm2"
       ],
       "cwd": "${workspaceFolder}\\.install",
       "console": "integratedTerminal"

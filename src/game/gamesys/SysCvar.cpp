@@ -583,6 +583,11 @@ idCVar password(					"password",					"",				CVAR_GAME | CVAR_NOCHEAT, "client pa
 idCVar g_gameReviewPause(			"g_gameReviewPause",		"30",			CVAR_GAME | CVAR_NETWORKSYNC | CVAR_INTEGER | PC_CVAR_ARCHIVE, "scores review time in seconds (at end game)", 2, 3600 );
 // RAVEN END
 idCVar net_clientPredictGUI(		"net_clientPredictGUI",		"1",			CVAR_GAME | CVAR_BOOL, "test guis in networking without prediction" );
+idCVar net_mpLagCompensation(		"net_mpLagCompensation",	"1",			CVAR_GAME | CVAR_BOOL | CVAR_NOCHEAT, "enable server-side multiplayer lag compensation for hitscan traces" );
+idCVar net_mpLagCompMaxMS(			"net_mpLagCompMaxMS",		"200",			CVAR_GAME | CVAR_INTEGER | CVAR_NOCHEAT, "maximum rewind window in milliseconds for multiplayer lag compensation", 0, 1000 );
+idCVar net_mpLagCompBiasMS(			"net_mpLagCompBiasMS",		"0",			CVAR_GAME | CVAR_INTEGER | CVAR_NOCHEAT, "additional rewind bias in milliseconds applied to multiplayer lag compensation", -200, 200 );
+idCVar net_mpLagCompDebug(			"net_mpLagCompDebug",		"0",			CVAR_GAME | CVAR_INTEGER | CVAR_NOCHEAT, "multiplayer lag compensation debug output (0=off, 1=summary, 2=verbose)", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
+idCVar net_mpPredictMode(			"net_mpPredictMode",		"1",			CVAR_GAME | CVAR_INTEGER | CVAR_NOCHEAT, "multiplayer remote-client prediction mode (0=legacy limited, 1=enhanced per-frame)" , 0, 1, idCmdSystem::ArgCompletion_Integer<0,1> );
 idCVar net_menulanserver(			"net_menulanserver",		"0",			CVAR_GAME | CVAR_ARCHIVE | CVAR_BOOL, "treat menu server list as LAN only" );
 idCVar net_serverMenuDedicated(	"net_serverMenuDedicated",	"0",			CVAR_GAME | CVAR_ARCHIVE | CVAR_BOOL, "menu dedicated server toggle" );
 
