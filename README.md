@@ -86,9 +86,10 @@ This status focuses on compatibility with official Quake 4 assets (`q4base` PK4s
 - ✅ **Screen Effects**: BSE-driven screen/camera effect paths used by stock content are operational in current OpenQ4 builds.
 - ✅ **Material Shaders**: Material handling compatibility has been restored to remove startup reliance on custom repo-side `q4base` material overrides.
 - ✅ **Stock-Asset Validation Path**: Repeated validation loops with stock assets have been used to keep parser/runtime compatibility regressions visible and actionable.
+- ✅ **Door/Trigger Script Progression Stability (OpenD3 Parity)**: Right-associative script compiler pointer-temp handling now guards x64 storage width mismatches (4-byte object-ref temp vs 8-byte pointer temp) by allocating pointer-sized result defs when required, preventing interpreter write corruption in affected trigger/door event chains.
 
 ### Unresolved
-- ❌ **Triggering Issues (Doors, Scripted Interactions)**: A known inherited issue still causes some trigger/door logic to fail in gameplay, and root-cause parity work is still in progress.
+- ❌ **Ongoing Compatibility Sweep**: Additional map-by-map gameplay validation remains in progress to catch residual non-script regressions.
 
 Current known compatibility regressions and follow-up work are tracked in [TODO.md](TODO.md) and [docs-dev/release-completion.md](docs-dev/release-completion.md).
 

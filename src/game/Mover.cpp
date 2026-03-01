@@ -3291,6 +3291,22 @@ void idMover_Binary::SetMoverState( moverState_t newstate, int time ) {
 
 	moverState = newstate;
 	move_thread = 0;
+	delta = pos2 - pos1;
+
+	if ( ( name == "func_door_63" ) || ( name == "func_door_64" ) ) {
+		const idVec3 currentOrigin = GetPhysics()->GetOrigin();
+		gameLocal.Printf(
+			"DBG door setstate name='%s' state=%d time=%d duration=%d pos1=(%.1f %.1f %.1f) pos2=(%.1f %.1f %.1f) delta=(%.1f %.1f %.1f) current=(%.1f %.1f %.1f)\n",
+			name.c_str(),
+			static_cast<int>( newstate ),
+			time,
+			duration,
+			pos1.x, pos1.y, pos1.z,
+			pos2.x, pos2.y, pos2.z,
+			delta.x, delta.y, delta.z,
+			currentOrigin.x, currentOrigin.y, currentOrigin.z
+		);
+	}
 
 	UpdateMoverSound( newstate );
 
@@ -3351,6 +3367,16 @@ idMover_Binary::Enable
 ================
 */
 void idMover_Binary::Enable( bool b ) {
+	if ( ( name == "func_door_63" ) || ( name == "func_door_64" ) ) {
+		gameLocal.Printf(
+			"DBG door enable name='%s' from=%d to=%d state=%d now=%d\n",
+			name.c_str(),
+			enabled ? 1 : 0,
+			b ? 1 : 0,
+			GetMoverState(),
+			gameLocal.time
+		);
+	}
 	enabled = b;
 }
 
@@ -4242,6 +4268,19 @@ void idDoor::Spawn( void ) {
 
 	enabled = true;
 	blocked = false;
+
+	if ( ( name == "func_door_63" ) || ( name == "func_door_64" ) ) {
+		gameLocal.Printf(
+			"DBG door spawn name='%s' team='%s' locked=%d noTouch=%d moveMaster='%s' triggerSize=%.1f clipWorld=%d\n",
+			name.c_str(),
+			team.c_str(),
+			spawnArgs.GetInt( "locked" ),
+			noTouch ? 1 : 0,
+			moveMaster ? moveMaster->name.c_str() : "<null>",
+			triggersize,
+			GetClipWorld()
+		);
+	}
 	
 // RAVEN BEGIN
 // bdube: added
@@ -4260,6 +4299,7 @@ idDoor::Think
 void idDoor::Think( void ) {
 	idVec3 masterOrigin;
 	idMat3 masterAxis;
+	static int doorThinkDebugCount = 0;
 
 	idMover_Binary::Think();
 
@@ -4277,6 +4317,17 @@ void idDoor::Think( void ) {
 // ddynerman: multiple clip worlds
 				sndTrigger->Link( this, 0, masterOrigin + localTriggerOrigin * masterAxis, localTriggerAxis * masterAxis );
 // RAVEN END
+			}
+			if ( trigger && ( ( name == "func_door_63" ) || ( name == "func_door_64" ) ) && ( doorThinkDebugCount < 24 ) ) {
+				const idBounds b = trigger->GetAbsBounds();
+				gameLocal.Printf(
+					"DBG door thinkTrigger name='%s' now=%d boundsMins=(%.1f %.1f %.1f) boundsMaxs=(%.1f %.1f %.1f)\n",
+					name.c_str(),
+					gameLocal.time,
+					b[0].x, b[0].y, b[0].z,
+					b[1].x, b[1].y, b[1].z
+				);
+				doorThinkDebugCount++;
 			}
 		}
 	}
@@ -4413,7 +4464,19 @@ idDoor::Use
 ================
 */
 void idDoor::Use( idEntity *other, idEntity *activator ) {
-	if ( gameLocal.RequirementMet( activator, requirement, removeItem ) ) {
+	const bool requirementMet = gameLocal.RequirementMet( activator, requirement, removeItem );
+	if ( ( name == "func_door_63" ) || ( name == "func_door_64" ) ) {
+		gameLocal.Printf(
+			"DBG door use name='%s' requirementMet=%d requirement='%s' locked=%d noTouch=%d state=%d\n",
+			name.c_str(),
+			requirementMet ? 1 : 0,
+			requirement.c_str(),
+			IsLocked(),
+			IsNoTouch() ? 1 : 0,
+			GetMoverState()
+		);
+	}
+	if ( requirementMet ) {
 		if ( syncLock.Length() ) {
 			idEntity *sync = gameLocal.FindEntity( syncLock );
 			if ( sync && sync->IsType( idDoor::Type ) ) {
@@ -4671,6 +4734,17 @@ void idDoor::Event_SpawnDoorTrigger( void ) {
 	GetLocalTriggerPosition( trigger );
 
 	MatchActivateTeam( moverState, gameLocal.time );
+
+	if ( ( name == "func_door_63" ) || ( name == "func_door_64" ) ) {
+		const idBounds triggerBounds = trigger ? trigger->GetAbsBounds() : idBounds();
+		gameLocal.Printf(
+			"DBG door triggerSpawn name='%s' triggerId=%d boundsMins=(%.1f %.1f %.1f) boundsMaxs=(%.1f %.1f %.1f)\n",
+			name.c_str(),
+			trigger ? trigger->GetId() : -1,
+			triggerBounds[0].x, triggerBounds[0].y, triggerBounds[0].z,
+			triggerBounds[1].x, triggerBounds[1].y, triggerBounds[1].z
+		);
+	}
 }
 
 /*
@@ -4838,10 +4912,35 @@ void idDoor::Event_Touch( idEntity *other, trace_t *trace ) {
 	idBounds	bounds;
 
 	if ( !enabled ) {
+		if ( ( name == "func_door_63" ) || ( name == "func_door_64" ) ) {
+			gameLocal.Printf(
+				"DBG door touchIgnoredDisabled name='%s' by='%s' state=%d locked=%d noTouch=%d now=%d\n",
+				name.c_str(),
+				other ? other->name.c_str() : "<null>",
+				GetMoverState(),
+				IsLocked(),
+				IsNoTouch() ? 1 : 0,
+				gameLocal.time
+			);
+		}
 		return;
 	}
 
 	if ( trigger && trace->c.id == trigger->GetId() ) {
+		if ( ( name == "func_door_63" ) || ( name == "func_door_64" ) ) {
+			gameLocal.Printf(
+				"DBG door touch name='%s' by='%s' triggerId=%d state=%d locked=%d noTouch=%d enabled=%d doorWorld=%d otherWorld=%d\n",
+				name.c_str(),
+				other ? other->name.c_str() : "<null>",
+				trace->c.id,
+				GetMoverState(),
+				IsLocked(),
+				IsNoTouch() ? 1 : 0,
+				enabled ? 1 : 0,
+				GetClipWorld(),
+				other ? other->GetClipWorld() : -1
+			);
+		}
 		if ( !IsNoTouch() && !IsLocked() && GetMoverState() != MOVER_1TO2 ) {
 // RAVEN BEGIN
 // abahr: allowing animated door frames
@@ -4907,6 +5006,16 @@ idDoor::Event_Activate
 */
 void idDoor::Event_Activate( idEntity *activator ) {
 	int old_lock;
+
+	if ( ( name == "func_door_63" ) || ( name == "func_door_64" ) ) {
+		gameLocal.Printf(
+			"DBG door activate name='%s' activator='%s' locked=%d state=%d\n",
+			name.c_str(),
+			activator ? activator->name.c_str() : "<null>",
+			IsLocked(),
+			GetMoverState()
+		);
+	}
 
 	if ( spawnArgs.GetInt( "locked" ) ) {
 		if ( !trigger ) {

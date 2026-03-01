@@ -1063,6 +1063,48 @@ void Cmd_SetViewpos_f( const idCmdArgs &args ) {
 	origin.z -= pm_normalviewheight.GetFloat() - 0.25f;
 
 	player->Teleport( origin, angles, NULL );
+	// Keep cheat teleports useful for trigger/door debugging by forcing
+	// an immediate trigger pass at the new location.
+	const bool touchedTriggers = player->TouchTriggers();
+	const idBounds playerBounds = player->GetPhysics()->GetAbsBounds();
+	gameLocal.Printf(
+		"DBG setviewpos raw=(%.1f %.1f %.1f) origin=(%.1f %.1f %.1f) yaw=%.1f touched=%d clipWorld=%d boundsMins=(%.1f %.1f %.1f) boundsMaxs=(%.1f %.1f %.1f)\n",
+		atof( args.Argv( 1 ) ),
+		atof( args.Argv( 2 ) ),
+		atof( args.Argv( 3 ) ),
+		origin.x, origin.y, origin.z,
+		angles.yaw,
+		touchedTriggers ? 1 : 0,
+		player->GetClipWorld(),
+		playerBounds[0].x, playerBounds[0].y, playerBounds[0].z,
+		playerBounds[1].x, playerBounds[1].y, playerBounds[1].z
+	);
+	if ( !touchedTriggers ) {
+		idClipModel *clipModels[64];
+		const int numClipModels = gameLocal.ClipModelsTouchingBounds( player, playerBounds, CONTENTS_TRIGGER, clipModels, 64 );
+		gameLocal.Printf( "DBG setviewpos triggerCandidates=%d\n", numClipModels );
+		for ( int j = 0; j < numClipModels; j++ ) {
+			idClipModel *cm = clipModels[ j ];
+			idEntity *ent = cm ? cm->GetEntity() : NULL;
+			if ( !ent ) {
+				continue;
+			}
+			if ( ( ent->name == "func_door_63" ) || ( ent->name == "func_door_64" ) || ( ent->name == "trigger_once_47" ) ) {
+				const bool clipHit = player->GetPhysics()->ClipContents( cm );
+				const idBounds triggerBounds = cm->GetAbsBounds();
+				gameLocal.Printf(
+					"DBG setviewpos candidate name='%s' class='%s' clipHit=%d triggerId=%d owner='%s' boundsMins=(%.1f %.1f %.1f) boundsMaxs=(%.1f %.1f %.1f)\n",
+					ent->name.c_str(),
+					ent->GetClassname(),
+					clipHit ? 1 : 0,
+					cm->GetId(),
+					cm->GetOwner() ? cm->GetOwner()->name.c_str() : "<null>",
+					triggerBounds[0].x, triggerBounds[0].y, triggerBounds[0].z,
+					triggerBounds[1].x, triggerBounds[1].y, triggerBounds[1].z
+				);
+			}
+		}
+	}
 }
 
 /*

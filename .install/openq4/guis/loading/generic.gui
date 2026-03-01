@@ -109,6 +109,9 @@ windowDef Desktop
 		visible	1
 		background	"gfx/guis/mainmenu/bg_grid"
 		matcolor	1,1,1,0.04
+		naturalmatscale	1
+		screenalignx	left
+		screenaligny	top
 	}
 	windowDef grid2
 	{
@@ -116,6 +119,9 @@ windowDef Desktop
 		visible	1
 		background	"gfx/guis/mainmenu/bg_grid"
 		matcolor	1,1,1,0.04
+		naturalmatscale	1
+		screenalignx	left
+		screenaligny	top
 	}
 	windowDef bar
 	{
@@ -123,12 +129,16 @@ windowDef Desktop
 		visible	1
 		background	"gfx/guis/mainmenu/load_bar"
 		matcolor	0.878,0.423,0,0.3
+		screenalignx	right
+		screenaligny	bottom
 	}
 	windowDef p_load_bar
 	{
 		rect	235,431,( "gui::map_loading" * 405 ),26
 		visible	1
 		windowDef load_bar
+		screenalignx	right
+		screenaligny	bottom
 		{
 			rect	0,0,405,26
 			visible	1
@@ -142,6 +152,8 @@ windowDef Desktop
 		visible	0
 		background	"gfx/guis/mainmenu/load_bar"
 		matcolor	0.878,0.423,0,0.5
+		screenalignx	right
+		screenaligny	bottom
 	}
 	windowDef load_text
 	{
@@ -154,6 +166,8 @@ windowDef Desktop
 		font	"fonts/marine"
 		textalign	2
 		textstyle	1
+		screenalignx	right
+		screenaligny	bottom
 
 		onTime 0 {
 			transition "forecolor" "1,1,1,1" "0.5,0.5,0.5,1" "500" ;
@@ -174,6 +188,8 @@ windowDef Desktop
 		visible	1
 		background	"gfx/guis/mainmenu/load_corner"
 		matcolor	0.227,0.227,0.227,1
+		screenalignx	left
+		screenaligny	top
 	}
 	windowDef bl_corner
 	{
@@ -182,6 +198,8 @@ windowDef Desktop
 		background	"gfx/guis/mainmenu/load_corner"
 		matcolor	0.227,0.227,0.227,1
 		matscaley	-1
+		screenalignx	left
+		screenaligny	bottom
 	}
 	windowDef tr_corner
 	{
@@ -190,6 +208,8 @@ windowDef Desktop
 		background	"gfx/guis/mainmenu/load_corner"
 		matcolor	0.227,0.227,0.227,1
 		matscalex	-1
+		screenalignx	right
+		screenaligny	top
 	}
 	windowDef br_corner
 	{
@@ -199,6 +219,8 @@ windowDef Desktop
 		matcolor	0.227,0.227,0.227,1
 		matscaley	-1
 		matscalex	-1
+		screenalignx	right
+		screenaligny	bottom
 	}
 	windowDef t_levelname_grad
 	{
@@ -207,6 +229,8 @@ windowDef Desktop
 		background	"gfx/guis/common/gradient3"
 		matcolor	0,0,0,1
 		matscalex	-1
+		screenalignx	right
+		screenaligny	top
 	}
 	windowDef load_dots
 	{
@@ -214,6 +238,8 @@ windowDef Desktop
 		visible	1
 		background	"gfx/guis/mainmenu/load_dots"
 		matcolor	0.109,0.145,0.0745,1
+		screenalignx	left
+		screenaligny	top
 	}
 	windowDef t_levelname
 	{
@@ -225,6 +251,8 @@ windowDef Desktop
 		font	"fonts/marine"
 		textspacing	-2
 		textalign	2
+		screenalignx	right
+		screenaligny	top
 	}
 	windowDef button
 	{

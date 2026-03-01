@@ -60,6 +60,7 @@ Process:
 - [x] Multiplayer server-side hitscan lag compensation added with configurable rewind controls (`net_mpLagCompensation`, `net_mpLagCompMaxMS`, `net_mpLagCompBiasMS`) and server diagnostics (`net_mpLagCompDebug`).
 - [x] Multiplayer non-local prediction mode is now runtime-selectable through `net_mpPredictMode` (`0` legacy limited behavior, `1` enhanced per-frame prediction).
 - [x] Scope/zoom handling documentation updated to reflect multiplayer zoom stability and scope yaw alignment behavior.
+- [x] Script compiler x64 pointer-temp parity fix ported from OpenD3: right-associative indirect-expression retagging now guards 4-byte object-ref temp vs 8-byte pointer temp storage mismatch by allocating pointer-sized result defs when needed, preventing trigger/door script chain corruption.
 
 ## Carry Forward
 

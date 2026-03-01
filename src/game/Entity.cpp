@@ -4689,11 +4689,17 @@ bool idEntity::TouchTriggers( const idTypeInfo* ownerType ) const {
 
 // RAVEN BEGIN
 // abahr: needed so tram car can has collision model and touch triggers
-		bool useSimpleClip = spawnArgs.GetBool("useSimpleTriggerClip");
-		if ( !useSimpleClip && !GetPhysics()->ClipContents( cm ) ) {
+			bool useSimpleClip = spawnArgs.GetBool("useSimpleTriggerClip");
+			bool triggerHit = useSimpleClip || ( GetPhysics()->ClipContents( cm ) != 0 );
+			if ( !triggerHit && IsType( idPlayer::GetClassType() ) ) {
+				// x64 can miss some trigger contacts in precise clip tests for player hulls.
+				// Fall back to bounds overlap for players to keep trigger/door activation reliable.
+				triggerHit = GetPhysics()->GetAbsBounds().IntersectsBounds( cm->GetAbsBounds() );
+			}
+			if ( !triggerHit ) {
 // RAVEN END
-			continue;
-		}
+				continue;
+			}
 
 		numEntities++;
 

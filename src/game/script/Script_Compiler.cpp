@@ -1508,7 +1508,18 @@ idVarDef *idCompiler::GetExpression( int priority ) {
 				if ( ( statement.op >= OP_INDIRECT_F ) && ( statement.op < OP_ADDRESS ) ) {
 					statement.op = OP_ADDRESS;
 					type_pointer.SetPointerType( e->TypeDef() );
-					e->SetTypeDef( &type_pointer );
+
+					// On 64-bit, some indirect result temps are only 4 bytes (float/entity/object/bool).
+					// Re-typing those defs to "pointer" in-place can truncate/corrupt evalPtr writes.
+					const int eStorageSize = e->TypeDef()->Inherits( &type_object ) ? type_object.Size() : e->TypeDef()->Size();
+					if ( eStorageSize < type_pointer.Size() ) {
+						idVarDef *pointerResult = gameLocal.program.FindFreeResultDef( &type_pointer, RESULT_STRING, scope, statement.a, statement.b );
+						pointerResult->numUsers = 1;
+						statement.c = pointerResult;
+						e = pointerResult;
+					} else {
+						e->SetTypeDef( &type_pointer );
+					}
 				}
 			}
 
