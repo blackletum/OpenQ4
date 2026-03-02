@@ -37,7 +37,7 @@ option(
   'build_libbse',
   type: 'boolean',
   value: true,
-  description: 'Build the external BSE runtime module (libbse-q4) from OpenQ4-BSE.',
+  description: 'Build the external BSE runtime module (OpenQ4-BSE_<arch>) from OpenQ4-BSE.',
 )
 
 option(

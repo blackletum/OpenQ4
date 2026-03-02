@@ -2858,6 +2858,7 @@ static const char *OpenQ4_SelectGameModuleBaseName( void ) {
 #else
 	#define OPENQ4_MODULE_ARCH_TAG "unknown"
 #endif
+#define OPENQ4_BSE_MODULE_BASENAME "OpenQ4-BSE_" OPENQ4_MODULE_ARCH_TAG
 
 static void OpenQ4_BuildGameModuleBinaryName( const char *moduleName, char outName[ MAX_OSPATH ] ) {
 	const char *variant = ( moduleName && idStr::Icmp( moduleName, "game_mp" ) == 0 ) ? "mp" : "sp";
@@ -2880,7 +2881,7 @@ static void OpenQ4_DisableBSEWithWarning( const char *reason, bool showDialog = 
 		idStr::snPrintf(
 			message,
 			sizeof( message ),
-			"Could not load BSE runtime library (libbse-q4).\n\nReason: %s\n\nEffects will be disabled.",
+			"Could not load BSE runtime library (" OPENQ4_BSE_MODULE_BASENAME ").\n\nReason: %s\n\nEffects will be disabled.",
 			reason ? reason : "unknown reason"
 		);
 		::MessageBoxA( NULL, message, "OpenQ4 Warning", MB_OK | MB_ICONWARNING | MB_SYSTEMMODAL );
@@ -3010,15 +3011,15 @@ void idCommonLocal::LoadBSEDLL( void ) {
 	const bool hadDebugCRTBeforeBSE = OpenQ4_IsDebugCRTLoaded();
 #endif
 
-	fileSystem->FindDLL( "libbse-q4", dllPath, false );
+	fileSystem->FindDLL( OPENQ4_BSE_MODULE_BASENAME, dllPath, false );
 	if ( !dllPath[ 0 ] ) {
-		OpenQ4_DisableBSEWithWarning( "couldn't find dynamic library 'libbse-q4'" );
+		OpenQ4_DisableBSEWithWarning( "couldn't find dynamic library '" OPENQ4_BSE_MODULE_BASENAME "'" );
 		return;
 	}
 
 #if defined( _WIN32 ) && !defined( _DEBUG )
 	if ( OpenQ4_DllImageMentionsDebugCRT( dllPath ) ) {
-		OpenQ4_DisableBSEWithWarning( "libbse-q4 depends on the MSVC debug CRT in a non-debug engine build", false );
+		OpenQ4_DisableBSEWithWarning( OPENQ4_BSE_MODULE_BASENAME " depends on the MSVC debug CRT in a non-debug engine build", false );
 		return;
 	}
 #endif
@@ -3026,7 +3027,7 @@ void idCommonLocal::LoadBSEDLL( void ) {
 	common->DPrintf( "Loading BSE DLL: '%s'\n", dllPath );
 	bseDLL = sys->DLL_Load( dllPath );
 	if ( !bseDLL ) {
-		OpenQ4_DisableBSEWithWarning( "couldn't load dynamic library 'libbse-q4'" );
+		OpenQ4_DisableBSEWithWarning( "couldn't load dynamic library '" OPENQ4_BSE_MODULE_BASENAME "'" );
 		return;
 	}
 
@@ -3034,7 +3035,7 @@ void idCommonLocal::LoadBSEDLL( void ) {
 	if ( !hadDebugCRTBeforeBSE && OpenQ4_IsDebugCRTLoaded() ) {
 		Sys_DLL_Unload( bseDLL );
 		bseDLL = NULL;
-		OpenQ4_DisableBSEWithWarning( "libbse-q4 depends on the MSVC debug CRT in a non-debug engine build", false );
+		OpenQ4_DisableBSEWithWarning( OPENQ4_BSE_MODULE_BASENAME " depends on the MSVC debug CRT in a non-debug engine build", false );
 		return;
 	}
 #endif

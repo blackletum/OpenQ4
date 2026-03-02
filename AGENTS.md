@@ -29,15 +29,15 @@ This file describes project goals, rules, and upstream credits for anyone workin
 - Treat `E:\Repositories\OpenQ4-BSE` as the canonical BSE source location.
 - For BSE work, make canonical edits in `OpenQ4-BSE` first; OpenQ4 builds BSE directly from that repo and does not mirror BSE implementation sources in-tree.
 - OpenQ4 may only contain BSE API wiring (`src/bse_api/`); do not add closed-source BSE implementation code to this repository.
-- Use Meson option `-Dbuild_libbse=true|false` (default `true`) to control whether `libbse-q4` is built in OpenQ4.
+- Use Meson option `-Dbuild_libbse=true|false` (default `true`) to control whether `OpenQ4-BSE_<arch>` is built in OpenQ4.
 - Use `OPENQ4_BSE_REPO=<path>` to override the default companion BSE repository location (`../OpenQ4-BSE`) when configuring/building OpenQ4.
 - Keep `openq4/` as the single unified game directory; do not split SP/MP into separate mod folders.
 - Prefer changes that match Quake 4 SDK expectations and shipped content behavior.
 - Document significant changes in the documentation and keep `README.md` accurate.
 - Use `builddir/` as the standard Meson build output directory for local builds, VS Code tasks, and launch configurations.
 - Treat `.install/` as the release-style package root; stage built binaries into `.install/` and `.install/openq4/`.
-- Keep game-module outputs available under both `builddir/openq4/` (direct run) and `.install/openq4/` (staged package); keep `libbse-q4` next to engine executables in `builddir/` and `.install/`.
-- Keep `.install/` focused on runtime/staged content: engine executables and `libbse-q4` in `.install/`, game DLLs and staged overrides/assets in `.install/openq4/`.
+- Keep game-module outputs available under both `builddir/openq4/` (direct run) and `.install/openq4/` (staged package); keep `OpenQ4-BSE_<arch>` next to engine executables in `builddir/` and `.install/`.
+- Keep `.install/` focused on runtime/staged content: engine executables and `OpenQ4-BSE_<arch>` in `.install/`, game DLLs and staged overrides/assets in `.install/openq4/`.
 - Do not rely on `.install/` as a linker artifact store; keep compiler/linker intermediates and development-only outputs in `builddir/`.
 - MSVC import libraries (`*.lib`) are not runtime requirements for OpenQ4 execution; prefer keeping them in `builddir/` (or other developer artifact output), not in release-style `.install/` packages.
 - Use `meson install -C builddir --no-rebuild --skip-subprojects` (via `tools/build/meson_setup.ps1`) when staging `.install/` to avoid third-party subproject installs outside the package tree.
@@ -56,7 +56,7 @@ This file describes project goals, rules, and upstream credits for anyone workin
 
 **.install/ Folder Layout (Staging Target)**
 - `.install/` is the runtime package root used by local staging and `fs_cdpath` overlays.
-- Keep executable/runtime artifacts here (for example `.install/OpenQ4-client_x64.exe`, `.install/OpenQ4-ded_x64.exe`, `.install/libbse-q4.dll`, `.install/openq4/game-sp_x64.dll`, `.install/openq4/game-mp_x64.dll`).
+- Keep executable/runtime artifacts here (for example `.install/OpenQ4-client_x64.exe`, `.install/OpenQ4-ded_x64.exe`, `.install/OpenQ4-BSE_x64.dll`, `.install/openq4/game-sp_x64.dll`, `.install/openq4/game-mp_x64.dll`).
 - Stage editable override content under `.install/openq4/` (for example GUI scripts in `.install/openq4/guis/`).
 - Avoid shipping build-only linker artifacts in `.install/`; keep `*.lib` in `builddir/` unless intentionally producing a developer SDK artifact set.
 

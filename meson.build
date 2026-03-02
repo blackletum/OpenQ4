@@ -24,6 +24,7 @@ game_sp_binary_name = 'game-sp_' + binary_arch
 game_mp_binary_name = 'game-mp_' + binary_arch
 engine_client_binary_name = meson.project_name() + '-client_' + binary_arch
 engine_ded_binary_name = meson.project_name() + '-ded_' + binary_arch
+bse_binary_name = 'OpenQ4-BSE_' + binary_arch
 
 if host_cpu_family != 'x86_64'
   warning(
@@ -456,7 +457,7 @@ endif
 
 if build_libbse
   shared_module(
-    'libbse-q4',
+    bse_binary_name,
     bse_sources,
     include_directories: bse_module_include_dirs,
     link_with: game_idlib_library,
@@ -487,6 +488,7 @@ summary(
     'engine client binary': engine_client_binary_name,
     'engine dedicated binary': engine_ded_binary_name,
     'Build BSE DLL': build_libbse,
+    'BSE binary': bse_binary_name,
     'BSE source repo': bse_repo_summary,
     'Build games': build_games,
     'Build game_sp': build_games and build_game_sp,

@@ -126,7 +126,7 @@ void idSysLocal::DLL_GetFileName( const char *baseName, char *dllName, int maxLe
 	const bool explicitGameModuleName =
 		idStr::Icmpn( baseName, "game_", 5 ) == 0 ||
 		idStr::Icmpn( baseName, "game-", 5 ) == 0;
-	const bool explicitBSEModuleName = idStr::Icmp( baseName, "libbse-q4" ) == 0;
+	const bool explicitBSEModuleName = idStr::Icmpn( baseName, "OpenQ4-BSE_", 11 ) == 0;
 #ifdef _WIN32
 	if ( explicitGameModuleName || explicitBSEModuleName ) {
 		idStr::snPrintf( dllName, maxLength, "%s.dll", baseName );

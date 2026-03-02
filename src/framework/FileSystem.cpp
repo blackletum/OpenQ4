@@ -4585,9 +4585,9 @@ void idFileSystemLocal::FindDLL( const char *name, char _dllPath[ MAX_OSPATH ], 
 		idStr exeDir = Sys_EXEPath();
 		exeDir.StripFilename();
 
-		const bool preferExeDirFirst = idStr::Icmp( name, "libbse-q4" ) == 0;
+		const bool preferExeDirFirst = idStr::Icmpn( name, "OpenQ4-BSE_", 11 ) == 0;
 		if ( preferExeDirFirst ) {
-			// Keep libbse-q4 next to the engine executable.
+			// Keep OpenQ4-BSE_<arch> next to the engine executable.
 			dllPath = exeDir;
 			dllPath.AppendPath( dllName );
 			dllFile = OpenExplicitFileRead( dllPath );

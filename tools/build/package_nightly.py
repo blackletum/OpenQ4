@@ -20,12 +20,6 @@ PLATFORM_EXECUTABLE_EXT = {
     "macos": "",
 }
 
-PLATFORM_BSE_BINARY = {
-    "windows": "libbse-q4.dll",
-    "linux": "libbse-q4.so",
-    "macos": "libbse-q4.dylib",
-}
-
 PLATFORM_GAME_MODULE_EXT = {
     "windows": ".dll",
     "linux": ".so",
@@ -63,7 +57,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--platform",
         required=True,
-        choices=sorted(PLATFORM_BSE_BINARY.keys()),
+        choices=sorted(PLATFORM_GAME_MODULE_EXT.keys()),
         help="Target runner platform (windows/linux/macos).",
     )
     parser.add_argument(
@@ -133,13 +127,18 @@ def get_required_game_module_binaries(platform: str, arch: str) -> tuple[str, st
     )
 
 
+def get_optional_bse_binary(platform: str, arch: str) -> str:
+    module_ext = PLATFORM_GAME_MODULE_EXT[platform]
+    return f"OpenQ4-BSE_{arch}{module_ext}"
+
+
 def copy_required_binaries(
     platform: str,
     arch: str,
     install_dir: Path,
     package_root: Path,
     allow_missing_binaries: bool,
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], str]:
     copied_optional: list[str] = []
     missing_required: list[str] = []
 
@@ -152,13 +151,13 @@ def copy_required_binaries(
             raise FileNotFoundError(f"required distributable not found: {source}")
         shutil.copy2(source, package_root / filename)
 
-    optional_bse = PLATFORM_BSE_BINARY[platform]
+    optional_bse = get_optional_bse_binary(platform, arch)
     optional_bse_source = install_dir / optional_bse
     if optional_bse_source.is_file():
         shutil.copy2(optional_bse_source, package_root / optional_bse)
         copied_optional.append(optional_bse)
 
-    return copied_optional, missing_required
+    return copied_optional, missing_required, optional_bse
 
 
 def copy_required_game_binaries(
@@ -273,7 +272,7 @@ def main(argv: list[str]) -> int:
     package_root.mkdir(parents=True, exist_ok=True)
 
     shutil.copy2(readme_path, package_root / "README.md")
-    copied_optional, missing_required = copy_required_binaries(
+    copied_optional, missing_required, expected_optional_bse = copy_required_binaries(
         args.platform,
         args.arch,
         install_dir,
@@ -321,7 +320,9 @@ def main(argv: list[str]) -> int:
         for filename in missing_game_modules:
             print(f"  - {filename}")
     if not copied_optional:
-        print("Optional runtime omitted: libbse-q4 was not present in install directory.")
+        print(
+            f"Optional runtime omitted: {expected_optional_bse} was not present in install directory."
+        )
     if skipped_samples:
         print("Filtered sample paths:")
         for rel in skipped_samples:

@@ -213,6 +213,7 @@ meson install -C builddir --no-rebuild --skip-subprojects
 **Build directory** (`builddir/`):
 - `OpenQ4-client_x64` (`.exe` on Windows) - Main engine executable
 - `OpenQ4-ded_x64` (`.exe` on Windows) - Dedicated server
+- `OpenQ4-BSE_x64` (`.dll` / `.so` / `.dylib`) - BSE runtime module (when `-Dbuild_libbse=true`)
 - `openq4/game-sp_x64` (`.dll` / `.so` / `.dylib`) - Single-player game module
 - `openq4/game-mp_x64` (`.dll` / `.so` / `.dylib`) - Multiplayer game module
 
@@ -232,6 +233,7 @@ OpenQ4 uses a unified game directory approach:
 OpenQ4/
 ├── OpenQ4-client_x64      # Main executable (.exe on Windows)
 ├── OpenQ4-ded_x64         # Dedicated server (.exe on Windows)
+├── OpenQ4-BSE_x64         # BSE runtime module (.dll / .so / .dylib)
 └── openq4/                # Unified game directory
     ├── game-sp_x64        # Single-player module (.dll / .so / .dylib)
     └── game-mp_x64        # Multiplayer module (.dll / .so / .dylib)
@@ -240,6 +242,7 @@ OpenQ4/
 The engine automatically selects the correct module based on game mode:
 - **Single-player**: Loads `game-sp_<arch>` (for example `game-sp_x64`)
 - **Multiplayer**: Loads `game-mp_<arch>` (for example `game-mp_x64`)
+- **BSE runtime**: Loads `OpenQ4-BSE_<arch>` from the executable directory when available
 
 No need for separate mod folders or manual switching!
 
