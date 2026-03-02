@@ -539,6 +539,13 @@ bool idCollisionModelManagerLocal::ParseCollisionModel( idLexer *src ) {
 	idCollisionModelLocal *model;
 	idToken token;
 
+	// LoadModel() can parse standalone .cm files before LoadMap() allocates
+	// the model pointer table.
+	if ( models == NULL ) {
+		maxModels = MAX_SUBMODELS;
+		models = (idCollisionModelLocal **) Mem_ClearedAlloc( (maxModels + 1) * sizeof( idCollisionModelLocal * ) );
+	}
+
 	if ( numModels >= MAX_SUBMODELS ) {
 		common->Error( "LoadModel: no free slots" );
 		return false;

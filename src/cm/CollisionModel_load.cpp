@@ -3568,6 +3568,13 @@ idCollisionModelManagerLocal::LoadModel
 idCollisionModel *idCollisionModelManagerLocal::LoadModel(const char* mapName, const char *modelName, const bool precache ) {
 	idCollisionModel *handle;
 
+	// LoadModel can be called before LoadMap initializes the model table.
+	if ( models == NULL ) {
+		maxModels = MAX_SUBMODELS;
+		numModels = 0;
+		models = (idCollisionModelLocal **) Mem_ClearedAlloc( (maxModels + 1) * sizeof( idCollisionModelLocal * ) );
+	}
+
 	handle = FindModel( modelName );
 	if ( handle != NULL ) {
 		return handle;

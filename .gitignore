@@ -13,8 +13,11 @@
 
 # Compiled Dynamic libraries
 *.so
+!/.install/OpenQ4-BSE_*.so
 *.dylib
+!/.install/OpenQ4-BSE_*.dylib
 *.dll
+!/.install/OpenQ4-BSE_*.dll
 
 # Fortran module files
 *.mod
