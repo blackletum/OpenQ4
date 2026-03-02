@@ -112,3 +112,51 @@ gfx/guis/mainmenu/load_btm_edgetile
 		colored
 	}
 }
+
+gfx/guis/mainmenu/topbar_tile_left
+{
+	noshadows
+	translucent
+	{
+		nopicmip
+		blend blend
+		map gfx/guis/mainmenu/topbar_tile_left.tga
+		colored
+	}
+}
+
+gfx/guis/mainmenu/topbar_tile_right
+{
+	noshadows
+	translucent
+	{
+		nopicmip
+		blend blend
+		map gfx/guis/mainmenu/topbar_tile_right.tga
+		colored
+	}
+}
+
+gfx/guis/mainmenu/btmbar_tile_left
+{
+	noshadows
+	translucent
+	{
+		nopicmip
+		blend blend
+		map gfx/guis/mainmenu/btmbar_tile_left.tga
+		colored
+	}
+}
+
+gfx/guis/mainmenu/btmbar_tile_right
+{
+	noshadows
+	translucent
+	{
+		nopicmip
+		blend blend
+		map gfx/guis/mainmenu/btmbar_tile_right.tga
+		colored
+	}
+}

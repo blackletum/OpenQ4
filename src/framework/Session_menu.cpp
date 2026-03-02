@@ -503,6 +503,10 @@ void idSessionLocal::StartMenu( bool playIntro ) {
 
 	SetGUI( guiMainMenu, NULL );
 	guiMainMenu->HandleNamedEvent( playIntro ? "playIntro" : "noIntro" );
+	if ( !playIntro ) {
+		// Ensure menu music always restarts when returning from gameplay.
+		guiMainMenu->HandleNamedEvent( "MusicRestart" );
+	}
 
 
 	if(fileSystem->HasD3XP()) {
