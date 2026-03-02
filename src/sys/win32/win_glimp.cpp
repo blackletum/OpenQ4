@@ -795,6 +795,7 @@ bool GLimp_Init( glimpParms_t parms ) {
 	HDC		hDC;
 
 	common->Printf( "Initializing OpenGL subsystem\n" );
+	Sys_DestroySplash();
 
 	// check our desktop attributes
 	hDC = GetDC( GetDesktopWindow() );

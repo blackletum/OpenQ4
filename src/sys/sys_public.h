@@ -392,6 +392,8 @@ void			Sys_GrabMouseCursor( bool grabIt );
 void			Sys_ShowWindow( bool show );
 bool			Sys_IsWindowVisible( void );
 void			Sys_ShowConsole( int visLevel, bool quitOnClose );
+void			Sys_ShowSplash( void );
+void			Sys_DestroySplash( void );
 
 
 void			Sys_Mkdir( const char *path );

@@ -589,12 +589,14 @@ int main(int argc, const char **argv) {
 	
 	Posix_EarlyInit( );
 	Sys_ReportWaylandRuntime();
+	Sys_ShowSplash();
 
 	if ( argc > 1 ) {
 		common->Init( argc-1, &argv[1], NULL );
 	} else {
 		common->Init( 0, NULL, NULL );
 	}
+	Sys_DestroySplash();
 
 	Posix_LateInit( );
 

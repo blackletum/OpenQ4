@@ -427,6 +427,20 @@ Sys_ShowConsole
 */
 void Sys_ShowConsole( int visLevel, bool quitOnClose ) { }
 
+/*
+================
+Sys_ShowSplash
+================
+*/
+void Sys_ShowSplash( void ) { }
+
+/*
+================
+Sys_DestroySplash
+================
+*/
+void Sys_DestroySplash( void ) { }
+
 // ---------------------------------------------------------------------------
 
 // only relevant when specified on command line

@@ -2640,6 +2640,7 @@ bool GLimp_Init(glimpParms_t parms) {
 	const char *driverName;
 
 	common->Printf("Initializing OpenGL subsystem (SDL3 backend)\n");
+	Sys_DestroySplash();
 
 	if (!s_sdlVideoActive) {
 		if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {

@@ -72,6 +72,7 @@ If you have questions concerning this license or the applicable additional terms
 
 typedef struct {
 	HWND		hWnd;
+	HWND		hWndSplash;
 	HWND		hwndBuffer;
 
 	HWND		hwndButtonClear;
@@ -111,6 +112,142 @@ typedef struct {
 } WinConData;
 
 static WinConData s_wcd;
+
+static LONG WINAPI SplashWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+	switch (uMsg) {
+	case WM_ERASEBKGND:
+		// Avoid background clears that can cause visible flicker on startup.
+		return 1;
+	case WM_PAINT:
+	{
+		PAINTSTRUCT ps;
+		HDC hdc = BeginPaint(hWnd, &ps);
+		if (s_wcd.hbmLogo) {
+			BITMAP bitmapInfo;
+			if (GetObject(s_wcd.hbmLogo, sizeof(bitmapInfo), &bitmapInfo) == sizeof(bitmapInfo)) {
+				HDC hdcBitmap = CreateCompatibleDC(hdc);
+				if (hdcBitmap) {
+					HGDIOBJ oldBitmap = SelectObject(hdcBitmap, s_wcd.hbmLogo);
+					if (oldBitmap) {
+						RECT clientRect;
+						GetClientRect(hWnd, &clientRect);
+						const int clientWidth = clientRect.right - clientRect.left;
+						const int clientHeight = clientRect.bottom - clientRect.top;
+						int drawX = 0;
+						int drawY = 0;
+						if (clientWidth > bitmapInfo.bmWidth) {
+							drawX = (clientWidth - bitmapInfo.bmWidth) / 2;
+						}
+						if (clientHeight > bitmapInfo.bmHeight) {
+							drawY = (clientHeight - bitmapInfo.bmHeight) / 2;
+						}
+						BitBlt(
+							hdc,
+							drawX,
+							drawY,
+							bitmapInfo.bmWidth,
+							bitmapInfo.bmHeight,
+							hdcBitmap,
+							0,
+							0,
+							SRCCOPY
+						);
+						SelectObject(hdcBitmap, oldBitmap);
+					}
+					DeleteDC(hdcBitmap);
+				}
+			}
+		}
+		EndPaint(hWnd, &ps);
+		return 0;
+	}
+	case WM_CLOSE:
+		return 0;
+	default:
+		break;
+	}
+
+	return DefWindowProc(hWnd, uMsg, wParam, lParam);
+}
+
+void Sys_ShowSplash(void) {
+	if (s_wcd.hWndSplash) {
+		return;
+	}
+
+	if (!s_wcd.hbmLogo) {
+		s_wcd.hbmLogo = LoadBitmap(win32.hInstance, MAKEINTRESOURCE(IDB_BITMAP_LOGO));
+	}
+	if (!s_wcd.hbmLogo) {
+		return;
+	}
+
+	BITMAP bitmapInfo;
+	if (GetObject(s_wcd.hbmLogo, sizeof(bitmapInfo), &bitmapInfo) != sizeof(bitmapInfo)) {
+		return;
+	}
+
+	WNDCLASS wc;
+	memset(&wc, 0, sizeof(wc));
+	wc.style = 0;
+	wc.lpfnWndProc = (WNDPROC)SplashWndProc;
+	wc.cbClsExtra = 0;
+	wc.cbWndExtra = 0;
+	wc.hInstance = win32.hInstance;
+	wc.hIcon = LoadIcon(win32.hInstance, MAKEINTRESOURCE(IDI_ICON1));
+	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+	wc.hbrBackground = (struct HBRUSH__*)COLOR_WINDOW;
+	wc.lpszMenuName = 0;
+	wc.lpszClassName = WIN32_SPLASH_CLASS;
+
+	if (!RegisterClass(&wc)) {
+		DWORD errorCode = GetLastError();
+		if (errorCode != ERROR_CLASS_ALREADY_EXISTS) {
+			return;
+		}
+	}
+
+	const int swidth = GetSystemMetrics(SM_CXSCREEN);
+	const int sheight = GetSystemMetrics(SM_CYSCREEN);
+	int splashX = (swidth - bitmapInfo.bmWidth) / 2;
+	int splashY = (sheight - bitmapInfo.bmHeight) / 2;
+	if (splashX < 0) {
+		splashX = 0;
+	}
+	if (splashY < 0) {
+		splashY = 0;
+	}
+
+	s_wcd.hWndSplash = CreateWindowEx(
+		WS_EX_TOOLWINDOW,
+		WIN32_SPLASH_CLASS,
+		GAME_NAME,
+		WS_POPUP,
+		splashX,
+		splashY,
+		bitmapInfo.bmWidth,
+		bitmapInfo.bmHeight,
+		NULL,
+		NULL,
+		win32.hInstance,
+		NULL
+	);
+
+	if (!s_wcd.hWndSplash) {
+		return;
+	}
+
+	ShowWindow(s_wcd.hWndSplash, SW_SHOWNORMAL);
+	UpdateWindow(s_wcd.hWndSplash);
+}
+
+void Sys_DestroySplash(void) {
+	if (s_wcd.hWndSplash) {
+		ShowWindow(s_wcd.hWndSplash, SW_HIDE);
+		DestroyWindow(s_wcd.hWndSplash);
+		s_wcd.hWndSplash = NULL;
+	}
+}
 
 static LONG WINAPI ConWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 	char* cmdString;
@@ -345,7 +482,9 @@ void Sys_CreateConsole(void) {
 	s_wcd.windowWidth = rect.right - rect.left + 1;
 	s_wcd.windowHeight = rect.bottom - rect.top + 1;
 
-	//s_wcd.hbmLogo = LoadBitmap( win32.hInstance, MAKEINTRESOURCE( IDB_BITMAP_LOGO) );
+	if (!s_wcd.hbmLogo) {
+		s_wcd.hbmLogo = LoadBitmap(win32.hInstance, MAKEINTRESOURCE(IDB_BITMAP_LOGO));
+	}
 
 	s_wcd.hWnd = CreateWindowEx(0,
 		DEDCLASS,
@@ -420,8 +559,11 @@ void Sys_CreateConsole(void) {
 	s_wcd.SysInputLineWndProc = (WNDPROC)SetWindowLong(s_wcd.hwndInputLine, GWL_WNDPROC, (LONG_PTR)InputLineWndProc);
 	SendMessage(s_wcd.hwndInputLine, WM_SETFONT, (WPARAM)s_wcd.hfBufferFont, 0);
 
+	Sys_ShowSplash();
+
 	// don't show it now that we have a splash screen up
 	if (win32.win_viewlog.GetBool()) {
+		Sys_DestroySplash();
 		ShowWindow(s_wcd.hWnd, SW_SHOWDEFAULT);
 		UpdateWindow(s_wcd.hWnd);
 		SetForegroundWindow(s_wcd.hWnd);
@@ -441,11 +583,18 @@ void Sys_CreateConsole(void) {
 ** Sys_DestroyConsole
 */
 void Sys_DestroyConsole(void) {
+	Sys_DestroySplash();
+
 	if (s_wcd.hWnd) {
 		ShowWindow(s_wcd.hWnd, SW_HIDE);
 		CloseWindow(s_wcd.hWnd);
 		DestroyWindow(s_wcd.hWnd);
 		s_wcd.hWnd = 0;
+	}
+
+	if (s_wcd.hbmLogo) {
+		DeleteObject(s_wcd.hbmLogo);
+		s_wcd.hbmLogo = NULL;
 	}
 }
 
@@ -453,6 +602,7 @@ void Sys_DestroyConsole(void) {
 ** Sys_ShowConsole
 */
 void Sys_ShowConsole(int visLevel, bool quitOnClose) {
+	Sys_DestroySplash();
 
 	s_wcd.quitOnClose = quitOnClose;
 
