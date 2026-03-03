@@ -126,7 +126,7 @@
         "si_gameType",
         "singleplayer",
         "+map",
-        "game/airdefense1"
+        "game/convoy1"
       ],
       "cwd": "${workspaceFolder}\\.install",
       "console": "integratedTerminal"

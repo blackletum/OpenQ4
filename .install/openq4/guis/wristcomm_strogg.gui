@@ -215,6 +215,8 @@ windowDef Desktop
 		windowDef p_objectives
 		{
 			rect	0,0,640,480
+			screenalignx	left
+			screenaligny	top
 			visible	1
 
 			windowDef d_obj_backbar
@@ -310,6 +312,8 @@ windowDef Desktop
 		windowDef p_compobjectives
 		{
 			rect	0,0,640,480
+			screenalignx	right
+			screenaligny	top
 			visible	1
 
 			windowDef d_compobj_backbar

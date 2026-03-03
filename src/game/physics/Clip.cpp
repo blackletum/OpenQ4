@@ -257,7 +257,21 @@ idClipModel::GetCachedTraceModel
 ===============
 */
 idCollisionModel *idClipModel::GetCachedCollisionModel( int traceModelIndex ) {
-	return traceModelCache[traceModelIndex]->collisionModel;
+	trmCache_t *entry = traceModelCache[ traceModelIndex ];
+	if ( entry == NULL ) {
+		return NULL;
+	}
+
+	// CollisionModelManager uses a shared TRM conversion buffer internally.
+	// Rebuild from the requested trace model on access so traces always use
+	// the correct hull instead of whichever TRM was converted most recently.
+	entry->collisionModel = collisionModelManager->ModelFromTrm(
+		gameLocal.GetMapName(),
+		va( "traceModel%d", traceModelIndex ),
+		entry->trm,
+		entry->material
+	);
+	return entry->collisionModel;
 }
 
 /*

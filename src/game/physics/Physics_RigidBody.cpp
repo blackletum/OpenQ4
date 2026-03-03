@@ -894,6 +894,37 @@ bool idPhysics_RigidBody::Evaluate( int timeStepMSec, int endTimeMSec ) {
 // ddynerman: multiple clip worlds
 		clipModel->Link( self, clipModel->GetId(), current.i.position, current.i.orientation );
 // RAVEN END
+
+		const bool movedWithMaster = ( current.i.position != oldOrigin || current.i.orientation != oldAxis );
+		if ( movedWithMaster ) {
+			// Bound rigid bodies do not normally run pusher logic. For scripted
+			// convoy vehicles this can leave the visible vehicle body non-pushing
+			// because the bind master is either non-solid or uses a tiny proxy clip.
+			// In that case, run a proxy push from the rigid body's actual motion.
+			bool needsProxyPush = true;
+			idEntity *bindMaster = self->GetBindMaster();
+			if ( bindMaster && bindMaster->GetPhysics() ) {
+				const idPhysics *masterPhysics = bindMaster->GetPhysics();
+				const idClipModel *masterClip = masterPhysics->GetClipModel();
+				const float selfVolume = clipModel->GetBounds().GetVolume();
+				const float masterVolume = masterClip ? masterClip->GetBounds().GetVolume() : 0.0f;
+
+				if ( masterPhysics->GetContents() != 0 &&
+					 masterVolume > 0.0f &&
+					 ( selfVolume <= 0.0f || masterVolume >= selfVolume * 0.25f ) ) {
+					needsProxyPush = false;
+				}
+			}
+
+			if ( needsProxyPush ) {
+				trace_t pushResults;
+				idVec3 pushedOrigin = current.i.position;
+				idMat3 pushedAxis = current.i.orientation;
+				memset( &pushResults, 0, sizeof( pushResults ) );
+				gameLocal.push.ClipPush( pushResults, self, 0, oldOrigin, oldAxis, pushedOrigin, pushedAxis );
+			}
+		}
+
 		current.i.linearMomentum = mass * ( ( current.i.position - oldOrigin ) / timeStep );
 		current.i.angularMomentum = inertiaTensor * ( ( current.i.orientation * oldAxis.Transpose() ).ToAngularVelocity() / timeStep );
 		current.externalForce.Zero();

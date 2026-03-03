@@ -596,18 +596,18 @@ void idGameLocal::Init( void ) {
 // jmarshall
 	// 	   
 	// load in the bot itemtable.
-	botItemTable = FindEntityDef("bot_itemtable", false);
-	if (botItemTable == NULL)
-	{
-		common->Warning("bot_itemtable decl not found. Bot support disabled.\n");
-	}
-	else
-	{
-		// init all the bot systems.
-		botCharacterStatsManager.Init();
-		botFuzzyWeightManager.Init();
-		botWeaponInfoManager.Init();
-		botGoalManager.BotSetupGoalAI();
+	botItemTable = NULL;
+	if ( isMultiplayer ) {
+		botItemTable = FindEntityDef( "bot_itemtable", false );
+		if ( botItemTable == NULL ) {
+			common->Warning( "bot_itemtable decl not found. Bot support disabled.\n" );
+		} else {
+			// init all the bot systems.
+			botCharacterStatsManager.Init();
+			botFuzzyWeightManager.Init();
+			botWeaponInfoManager.Init();
+			botGoalManager.BotSetupGoalAI();
+		}
 	}
 // jmarshall end
 
