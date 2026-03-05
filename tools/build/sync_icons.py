@@ -8,8 +8,6 @@ import struct
 import sys
 from pathlib import Path
 
-from PIL import Image
-
 PNG_SIZES = (16, 20, 24, 32, 40, 48, 64, 128, 256, 512, 1024)
 
 
@@ -69,6 +67,14 @@ def highest_png_source(icon_dir: Path) -> Path:
 
 
 def resize_png(src_png: Path, dst_png: Path, size: int) -> bool:
+    try:
+        from PIL import Image
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Pillow is required to generate missing PNG icons. "
+            "Install it with `python -m pip install Pillow`."
+        ) from exc
+
     with Image.open(src_png) as image:
         if image.mode not in ("RGBA", "LA"):
             image = image.convert("RGBA")
