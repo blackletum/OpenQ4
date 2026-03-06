@@ -1,0 +1,13 @@
+// string table
+// spanish
+//
+
+{
+	"#str_41081"	"POSTPROCESADO"
+	"#str_41082"	"BLOOM"
+	"#str_41083"	"INTENSIDAD BLOOM"
+	"#str_41084"	"TONEMAP HDR"
+	"#str_41085"	"AUTO DETECT"
+	"#str_41086"	"DETECTADO"
+	"#str_41087"	"AVANZADAS"
+}

@@ -1,0 +1,13 @@
+// string table
+// italian
+//
+
+{
+	"#str_41081"	"POST-EFFETTI"
+	"#str_41082"	"BLOOM"
+	"#str_41083"	"INTENSITA BLOOM"
+	"#str_41084"	"TONEMAP HDR"
+	"#str_41085"	"AUTO DETECT"
+	"#str_41086"	"RILEVATO"
+	"#str_41087"	"AVANZATE"
+}

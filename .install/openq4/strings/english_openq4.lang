@@ -1,0 +1,13 @@
+// string table
+// english
+//
+
+{
+	"#str_41081"	"POST PROCESSING"
+	"#str_41082"	"BLOOM"
+	"#str_41083"	"BLOOM INTENSITY"
+	"#str_41084"	"HDR TONEMAP"
+	"#str_41085"	"AUTO DETECT"
+	"#str_41086"	"DETECTED"
+	"#str_41087"	"ADVANCED"
+}

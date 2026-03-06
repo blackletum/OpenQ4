@@ -73,3 +73,13 @@ install_subdir(
   'glprogs',
   install_dir: install_openq4_dir,
 )
+
+install_subdir(
+  'guis',
+  install_dir: install_openq4_dir,
+)
+
+install_subdir(
+  'strings',
+  install_dir: install_openq4_dir,
+)
