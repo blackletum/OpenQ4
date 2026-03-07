@@ -236,7 +236,10 @@ def create_release_archive(
             archive.add(path, arcname=arcname, recursive=False)
 
 
-def copy_optional_share_tree(install_dir: Path, package_root: Path) -> bool:
+def copy_optional_share_tree(platform: str, install_dir: Path, package_root: Path) -> bool:
+    if platform != "linux":
+        return False
+
     share_source = install_dir / "share"
     if not share_source.is_dir():
         return False
@@ -388,7 +391,7 @@ def main(argv: list[str]) -> int:
         )
         return 1
 
-    copied_share = copy_optional_share_tree(install_dir, package_root)
+    copied_share = copy_optional_share_tree(args.platform, install_dir, package_root)
 
     macos_app_bundle = None
     if args.platform == "macos":

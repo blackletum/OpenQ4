@@ -587,27 +587,27 @@ if host_system == 'linux'
     linux_desktop_entry,
     install_dir: install_root_dir / 'share' / 'applications',
   )
-endif
 
-if fs_mod.is_file('assets/icons/quake4.svg')
-  install_data(
-    'assets/icons/quake4.svg',
-    install_dir: install_root_dir / 'share' / 'icons' / 'hicolor' / 'scalable' / 'apps',
-    rename: 'openq4.svg',
-  )
-endif
-
-icon_sizes = ['16', '20', '24', '32', '40', '48', '64', '128', '256', '512', '1024']
-foreach icon_size : icon_sizes
-  icon_png = 'assets/icons/quake4_' + icon_size + '.png'
-  if fs_mod.is_file(icon_png)
+  if fs_mod.is_file('assets/icons/quake4.svg')
     install_data(
-      icon_png,
-      install_dir: install_root_dir / 'share' / 'icons' / 'hicolor' / (icon_size + 'x' + icon_size) / 'apps',
-      rename: 'openq4.png',
+      'assets/icons/quake4.svg',
+      install_dir: install_root_dir / 'share' / 'icons' / 'hicolor' / 'scalable' / 'apps',
+      rename: 'openq4.svg',
     )
   endif
-endforeach
+
+  icon_sizes = ['16', '20', '24', '32', '40', '48', '64', '128', '256', '512', '1024']
+  foreach icon_size : icon_sizes
+    icon_png = 'assets/icons/quake4_' + icon_size + '.png'
+    if fs_mod.is_file(icon_png)
+      install_data(
+        icon_png,
+        install_dir: install_root_dir / 'share' / 'icons' / 'hicolor' / (icon_size + 'x' + icon_size) / 'apps',
+        rename: 'openq4.png',
+      )
+    endif
+  endforeach
+endif
 
 summary(
   {

@@ -47,6 +47,7 @@
 /subprojects/packagecache/
 /subprojects/SDL3-*/
 /.install/crashes/
+/.install/share/
 /.install/openq4/*.cfg
 _tmp_*
 /.tmp/
