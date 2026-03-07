@@ -2909,7 +2909,7 @@ static void OpenQ4_DisableBSEWithWarning( const char *reason, bool showDialog = 
 	::bse = &bseDisabledLocal;
 }
 
-#if defined( _WIN32 ) && !defined( _DEBUG )
+#if defined( _WIN32 )
 static bool OpenQ4_BufferContainsTokenNoCase( const unsigned char *buffer, const size_t bufferSize, const char *token ) {
 	if ( !buffer || !token || !token[0] ) {
 		return false;
@@ -2943,7 +2943,7 @@ static bool OpenQ4_BufferContainsTokenNoCase( const unsigned char *buffer, const
 	return false;
 }
 
-static bool OpenQ4_DllImageMentionsDebugCRT( const char *dllPath ) {
+static bool OpenQ4_DllImageMentionsRuntimeImports( const char *dllPath, const char *const *runtimeImports, const int runtimeImportCount ) {
 	if ( !dllPath || !dllPath[ 0 ] ) {
 		return false;
 	}
@@ -2961,14 +2961,8 @@ static bool OpenQ4_DllImageMentionsDebugCRT( const char *dllPath ) {
 			if ( fileData ) {
 				const size_t bytesRead = fread( fileData, 1, static_cast<size_t>( fileSize ), file );
 				if ( bytesRead == static_cast<size_t>( fileSize ) ) {
-					static const char *debugCRTImports[] = {
-						"ucrtbased.dll",
-						"vcruntime140d.dll",
-						"vcruntime140_1d.dll",
-						"msvcp140d.dll"
-					};
-					for ( int i = 0; i < static_cast<int>( sizeof( debugCRTImports ) / sizeof( debugCRTImports[0] ) ); ++i ) {
-						if ( OpenQ4_BufferContainsTokenNoCase( fileData, bytesRead, debugCRTImports[ i ] ) ) {
+					for ( int i = 0; i < runtimeImportCount; ++i ) {
+						if ( OpenQ4_BufferContainsTokenNoCase( fileData, bytesRead, runtimeImports[ i ] ) ) {
 							hasDebugCRTImport = true;
 							break;
 						}
@@ -2983,6 +2977,37 @@ static bool OpenQ4_DllImageMentionsDebugCRT( const char *dllPath ) {
 	return hasDebugCRTImport;
 }
 
+static bool OpenQ4_DllImageMentionsDebugCRT( const char *dllPath ) {
+	static const char *debugCRTImports[] = {
+		"ucrtbased.dll",
+		"vcruntime140d.dll",
+		"vcruntime140_1d.dll",
+		"msvcp140d.dll"
+	};
+
+	return OpenQ4_DllImageMentionsRuntimeImports(
+		dllPath,
+		debugCRTImports,
+		static_cast<int>( sizeof( debugCRTImports ) / sizeof( debugCRTImports[0] ) )
+	);
+}
+
+static bool OpenQ4_DllImageMentionsReleaseCRT( const char *dllPath ) {
+	static const char *releaseCRTImports[] = {
+		"ucrtbase.dll",
+		"vcruntime140.dll",
+		"vcruntime140_1.dll",
+		"msvcp140.dll"
+	};
+
+	return OpenQ4_DllImageMentionsRuntimeImports(
+		dllPath,
+		releaseCRTImports,
+		static_cast<int>( sizeof( releaseCRTImports ) / sizeof( releaseCRTImports[0] ) )
+	);
+}
+
+#if !defined( _DEBUG )
 static bool OpenQ4_IsDebugCRTLoaded( void ) {
 	// Mixing a release engine with a debug-built module can corrupt allocator state.
 	return	::GetModuleHandleA( "ucrtbased.dll" ) != NULL ||
@@ -2990,6 +3015,7 @@ static bool OpenQ4_IsDebugCRTLoaded( void ) {
 			::GetModuleHandleA( "vcruntime140_1d.dll" ) != NULL ||
 			::GetModuleHandleA( "msvcp140d.dll" ) != NULL;
 }
+#endif
 #endif
 
 /*
@@ -3034,11 +3060,20 @@ void idCommonLocal::LoadBSEDLL( void ) {
 		return;
 	}
 
-#if defined( _WIN32 ) && !defined( _DEBUG )
-	if ( OpenQ4_DllImageMentionsDebugCRT( dllPath ) ) {
-		OpenQ4_DisableBSEWithWarning( OPENQ4_BSE_MODULE_BASENAME " depends on the MSVC debug CRT in a non-debug engine build", false );
+#if defined( _WIN32 )
+	const bool bseMentionsDebugCRT = OpenQ4_DllImageMentionsDebugCRT( dllPath );
+	const bool bseMentionsReleaseCRT = OpenQ4_DllImageMentionsReleaseCRT( dllPath );
+#if defined( _DEBUG )
+	if ( !bseMentionsDebugCRT || bseMentionsReleaseCRT ) {
+		OpenQ4_DisableBSEWithWarning( OPENQ4_BSE_MODULE_BASENAME " must be built with the MSVC debug CRT for a debug engine build", false );
 		return;
 	}
+#else
+	if ( bseMentionsDebugCRT || !bseMentionsReleaseCRT ) {
+		OpenQ4_DisableBSEWithWarning( OPENQ4_BSE_MODULE_BASENAME " must be built with the MSVC release CRT for a non-debug engine build", false );
+		return;
+	}
+#endif
 #endif
 
 	common->DPrintf( "Loading BSE DLL: '%s'\n", dllPath );

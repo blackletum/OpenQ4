@@ -249,6 +249,7 @@ The engine automatically selects the correct module based on game mode:
 - **Single-player**: Loads `game-sp_<arch>` (for example `game-sp_x64`)
 - **Multiplayer**: Loads `game-mp_<arch>` (for example `game-mp_x64`)
 - **BSE runtime**: Loads `OpenQ4-BSE_<arch>` from the executable directory when available
+- **Windows BSE compatibility**: `OpenQ4-BSE_<arch>` must be built with the same MSVC CRT flavor as the engine build (`/MDd` debug, `/MD` non-debug)
 
 No need for separate mod folders or manual switching!
 
