@@ -80,6 +80,11 @@ install_subdir(
 )
 
 install_subdir(
+  'gfx',
+  install_dir: install_openq4_dir,
+)
+
+install_subdir(
   'strings',
   install_dir: install_openq4_dir,
 )

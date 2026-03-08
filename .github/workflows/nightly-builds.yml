@@ -54,6 +54,8 @@ jobs:
     name: ${{ matrix.label }}
     needs: metadata
     runs-on: ${{ matrix.os }}
+    env:
+      OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/OpenQ4-GameLibs
     strategy:
       fail-fast: false
       matrix:
@@ -83,6 +85,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Fetch OpenQ4-GameLibs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/themuffinator/OpenQ4-GameLibs.git OpenQ4-GameLibs
 
       - name: Setup Python
         uses: actions/setup-python@v5
