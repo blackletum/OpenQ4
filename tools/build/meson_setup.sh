@@ -135,11 +135,27 @@ PY
 }
 
 desired_build_libbse() {
-    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
-        printf '%s\n' "false"
-    else
+    local configured="${OPENQ4_BUILD_LIBBSE:-}"
+    local normalized
+
+    if [[ -z "${configured}" ]]; then
         printf '%s\n' "true"
+        return
     fi
+
+    normalized="$(printf '%s' "${configured}" | tr '[:upper:]' '[:lower:]')"
+    case "${normalized}" in
+        1|true|yes|on)
+            printf '%s\n' "true"
+            ;;
+        0|false|no|off)
+            printf '%s\n' "false"
+            ;;
+        *)
+            echo "Invalid OPENQ4_BUILD_LIBBSE value '${configured}'. Use true/false, 1/0, yes/no, or on/off." >&2
+            exit 1
+            ;;
+    esac
 }
 
 set_build_libbse_arg() {

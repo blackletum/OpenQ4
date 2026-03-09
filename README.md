@@ -169,7 +169,7 @@ The engine will automatically find your Quake 4 installation and validate the ga
 
 > [!NOTE]
 > `tools/build/meson_setup.ps1` automatically runs `tools/build/sync_icons.py` before `setup`, `compile`, and `install` to validate and generate the canonical icon set in `assets/icons/` (including required PNG sizes). Set `OPENQ4_SKIP_ICON_SYNC=1` to bypass this in local workflows.
-> Local wrapper-driven builds always enable `build_libbse`; GitHub Actions builds always force it off.
+> Wrapper-driven builds enable `build_libbse` by default. Set `OPENQ4_BUILD_LIBBSE=false` to force it off explicitly.
 
 ---
 

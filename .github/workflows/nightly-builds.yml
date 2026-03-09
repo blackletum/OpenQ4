@@ -56,6 +56,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/OpenQ4-GameLibs
+      OPENQ4_BSE_REPO: ${{ github.workspace }}/OpenQ4-BSE
     strategy:
       fail-fast: false
       matrix:
@@ -67,6 +68,7 @@ jobs:
             platform_backend: sdl3
             archive_format: zip
             archive_ext: .zip
+            bse_ext: .dll
           - os: ubuntu-latest
             platform: linux
             label: Linux
@@ -74,6 +76,7 @@ jobs:
             platform_backend: sdl3
             archive_format: tar.xz
             archive_ext: .tar.xz
+            bse_ext: .so
           - os: macos-latest
             platform: macos
             label: macOS
@@ -81,6 +84,7 @@ jobs:
             platform_backend: sdl3
             archive_format: tar.gz
             archive_ext: .tar.gz
+            bse_ext: .dylib
 
     steps:
       - name: Checkout
@@ -91,6 +95,12 @@ jobs:
         run: |
           set -euo pipefail
           git clone --depth 1 https://github.com/themuffinator/OpenQ4-GameLibs.git OpenQ4-GameLibs
+
+      - name: Fetch OpenQ4-BSE
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/themuffinator/OpenQ4-BSE.git OpenQ4-BSE
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -137,7 +147,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $env:OPENQ4_SKIP_GAMELIBS_SYNC = "1"
 
-          powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 setup --wipe builddir . --backend ninja --buildtype=release --wrap-mode=forcefallback "-Dbuild_libbse=false" "-Dplatform_backend=${{ matrix.platform_backend }}" "-Dversion_track=nightly" "-Dversion_iteration=${{ needs.metadata.outputs.version_iteration }}"
+          powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 setup --wipe builddir . --backend ninja --buildtype=release --wrap-mode=forcefallback "-Dbuild_libbse=true" "-Dplatform_backend=${{ matrix.platform_backend }}" "-Dversion_track=nightly" "-Dversion_iteration=${{ needs.metadata.outputs.version_iteration }}"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 compile -C builddir
@@ -153,7 +163,7 @@ jobs:
           set -euo pipefail
           export OPENQ4_SKIP_GAMELIBS_SYNC=1
 
-          bash tools/build/meson_setup.sh setup --wipe builddir . --backend ninja --buildtype=release --wrap-mode=default -Dbuild_libbse=false -Dplatform_backend=${{ matrix.platform_backend }} -Dversion_track=nightly -Dversion_iteration=${{ needs.metadata.outputs.version_iteration }}
+          bash tools/build/meson_setup.sh setup --wipe builddir . --backend ninja --buildtype=release --wrap-mode=default -Dbuild_libbse=true -Dplatform_backend=${{ matrix.platform_backend }} -Dversion_track=nightly -Dversion_iteration=${{ needs.metadata.outputs.version_iteration }}
           bash tools/build/meson_setup.sh compile -C builddir
           bash tools/build/meson_setup.sh install -C builddir --no-rebuild --skip-subprojects
 
@@ -170,6 +180,12 @@ jobs:
           has_payload_files="$(find ".install/openq4" -type f -print -quit 2>/dev/null || true)"
           if [ -z "${has_payload_files}" ]; then
             echo "Staged openq4 payload directory has no files."
+            exit 1
+          fi
+
+          expected_bse=".install/OpenQ4-BSE_${{ matrix.binary_arch }}${{ matrix.bse_ext }}"
+          if [ ! -f "${expected_bse}" ]; then
+            echo "Missing staged BSE runtime: ${expected_bse}"
             exit 1
           fi
 
@@ -207,6 +223,11 @@ jobs:
           fi
           if [ ! -d "${package_dir}" ]; then
             echo "Expected package directory not found: ${package_dir}"
+            exit 1
+          fi
+          expected_packaged_bse="${package_dir}/OpenQ4-BSE_${{ matrix.binary_arch }}${{ matrix.bse_ext }}"
+          if [ ! -f "${expected_packaged_bse}" ]; then
+            echo "Expected packaged BSE runtime not found: ${expected_packaged_bse}"
             exit 1
           fi
           echo "archive_path=${archive_path}" >> "$GITHUB_OUTPUT"

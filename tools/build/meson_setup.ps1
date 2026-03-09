@@ -156,11 +156,18 @@ function Test-GitHubActionsEnvironment {
 }
 
 function Get-DesiredBuildLibBSEValue {
-    if (Test-GitHubActionsEnvironment) {
-        return $false
+    $configured = $env:OPENQ4_BUILD_LIBBSE
+    if ([string]::IsNullOrWhiteSpace($configured)) {
+        return $true
     }
 
-    return $true
+    switch ($configured.Trim().ToLowerInvariant()) {
+        { $_ -in @("1", "true", "yes", "on") } { return $true }
+        { $_ -in @("0", "false", "no", "off") } { return $false }
+        default {
+            throw "Invalid OPENQ4_BUILD_LIBBSE value '$configured'. Use true/false, 1/0, yes/no, or on/off."
+        }
+    }
 }
 
 function Get-DesiredBuildLibBSEMesonValue {
