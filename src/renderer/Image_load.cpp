@@ -557,7 +557,7 @@ void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight ) {
 	opts.width = imageWidth;
 	opts.height = imageHeight;
 
-	if ( readingFromRenderTexture && ( GLEW_EXT_framebuffer_blit || GLEW_VERSION_3_0 ) ) {
+	if ( readingFromRenderTexture && ( GLEW_EXT_framebuffer_blit || GLEW_ARB_framebuffer_object || GLEW_VERSION_3_0 ) ) {
 		GLint previousReadFbo = 0;
 		GLint previousDrawFbo = 0;
 		GLint previousReadBuffer = GL_BACK;
@@ -607,8 +607,35 @@ void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight ) {
 		glReadBuffer( previousReadBuffer );
 		glDrawBuffer( previousDrawBuffer );
 	} else {
-		glReadBuffer( readingFromRenderTexture ? readAttachment : GL_BACK );
+		GLint previousReadFbo = 0;
+		GLint previousReadBuffer = GL_BACK;
+		glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &previousReadFbo );
+		glGetIntegerv( GL_READ_BUFFER, &previousReadBuffer );
+
+		if ( readingFromRenderTexture ) {
+			glBindFramebuffer( GL_READ_FRAMEBUFFER, backEnd.renderTexture->GetDeviceHandle() );
+			glReadBuffer( readAttachment );
+		} else {
+			glBindFramebuffer( GL_READ_FRAMEBUFFER, 0 );
+			glReadBuffer( GL_BACK );
+		}
+
+		const GLboolean scissorWasEnabled = glIsEnabled( GL_SCISSOR_TEST );
+		GLint previousScissorBox[4] = { 0, 0, 0, 0 };
+		if ( scissorWasEnabled ) {
+			glGetIntegerv( GL_SCISSOR_BOX, previousScissorBox );
+			glDisable( GL_SCISSOR_TEST );
+		}
+
 		glCopyTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA8, x, y, imageWidth, imageHeight, 0 );
+
+		if ( scissorWasEnabled ) {
+			glScissor( previousScissorBox[0], previousScissorBox[1], previousScissorBox[2], previousScissorBox[3] );
+			glEnable( GL_SCISSOR_TEST );
+		}
+
+		glBindFramebuffer( GL_READ_FRAMEBUFFER, previousReadFbo );
+		glReadBuffer( previousReadBuffer );
 
 		// these shouldn't be necessary if the image was initialized properly
 		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
@@ -632,7 +659,72 @@ void idImage::CopyDepthbuffer( int x, int y, int imageWidth, int imageHeight ) {
 	opts.height = imageHeight;
 
 	const bool readingFromRenderTexture = ( backEnd.renderTexture != NULL ) && ( backEnd.renderTexture->GetDepthImage() != NULL );
-	if ( readingFromRenderTexture && ( GLEW_EXT_framebuffer_blit || GLEW_VERSION_3_0 ) ) {
+	const bool sourceDepthIsMSAA =
+		readingFromRenderTexture
+		? ( backEnd.renderTexture->GetDepthImage()->GetOpts().numMSAASamples > 1 )
+		: ( r_multiSamples.GetInteger() > 1 );
+
+	// Depth blits from MSAA sources to single-sample textures are not consistently
+	// supported across drivers. Resolve via depth readback so SSAO samples stable depth.
+	if ( sourceDepthIsMSAA ) {
+		static bool msaaDepthReadbackReported = false;
+		if ( !msaaDepthReadbackReported ) {
+			common->Printf( "CopyDepthbuffer: using MSAA depth readback resolve path\n" );
+			msaaDepthReadbackReported = true;
+		}
+
+		const int pixelCount = imageWidth * imageHeight;
+		if ( pixelCount <= 0 ) {
+			return;
+		}
+
+		GLint previousReadFbo = 0;
+		GLint previousDrawFbo = 0;
+		GLint previousReadBuffer = GL_BACK;
+		GLint previousDrawBuffer = GL_BACK;
+
+		glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &previousReadFbo );
+		glGetIntegerv( GL_DRAW_FRAMEBUFFER_BINDING, &previousDrawFbo );
+		glGetIntegerv( GL_READ_BUFFER, &previousReadBuffer );
+		glGetIntegerv( GL_DRAW_BUFFER, &previousDrawBuffer );
+
+		if ( readingFromRenderTexture ) {
+			glBindFramebuffer( GL_READ_FRAMEBUFFER, backEnd.renderTexture->GetDeviceHandle() );
+		} else {
+			glBindFramebuffer( GL_READ_FRAMEBUFFER, 0 );
+			glReadBuffer( GL_BACK );
+		}
+
+		const GLboolean scissorWasEnabled = glIsEnabled( GL_SCISSOR_TEST );
+		GLint previousScissorBox[4] = { 0, 0, 0, 0 };
+		if ( scissorWasEnabled ) {
+			glGetIntegerv( GL_SCISSOR_BOX, previousScissorBox );
+			glDisable( GL_SCISSOR_TEST );
+		}
+
+		static idList<float> resolvedDepthBuffer;
+		resolvedDepthBuffer.SetNum( pixelCount, false );
+		glReadPixels( x, y, imageWidth, imageHeight, GL_DEPTH_COMPONENT, GL_FLOAT, resolvedDepthBuffer.Ptr() );
+
+		if ( scissorWasEnabled ) {
+			glScissor( previousScissorBox[0], previousScissorBox[1], previousScissorBox[2], previousScissorBox[3] );
+			glEnable( GL_SCISSOR_TEST );
+		}
+
+		glTexImage2D( GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, imageWidth, imageHeight, 0, GL_DEPTH_COMPONENT, GL_FLOAT, resolvedDepthBuffer.Ptr() );
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+
+		glBindFramebuffer( GL_READ_FRAMEBUFFER, previousReadFbo );
+		glBindFramebuffer( GL_DRAW_FRAMEBUFFER, previousDrawFbo );
+		glReadBuffer( previousReadBuffer );
+		glDrawBuffer( previousDrawBuffer );
+		return;
+	}
+
+	if ( readingFromRenderTexture && ( GLEW_EXT_framebuffer_blit || GLEW_ARB_framebuffer_object || GLEW_VERSION_3_0 ) ) {
 		GLint previousReadFbo = 0;
 		GLint previousDrawFbo = 0;
 		GLint previousReadBuffer = GL_BACK;
@@ -681,7 +773,33 @@ void idImage::CopyDepthbuffer( int x, int y, int imageWidth, int imageHeight ) {
 		glReadBuffer( previousReadBuffer );
 		glDrawBuffer( previousDrawBuffer );
 	} else {
+		GLint previousReadFbo = 0;
+		GLint previousReadBuffer = GL_BACK;
+		glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &previousReadFbo );
+		glGetIntegerv( GL_READ_BUFFER, &previousReadBuffer );
+
+		if ( readingFromRenderTexture ) {
+			glBindFramebuffer( GL_READ_FRAMEBUFFER, backEnd.renderTexture->GetDeviceHandle() );
+		} else {
+			glBindFramebuffer( GL_READ_FRAMEBUFFER, 0 );
+		}
+
+		const GLboolean scissorWasEnabled = glIsEnabled( GL_SCISSOR_TEST );
+		GLint previousScissorBox[4] = { 0, 0, 0, 0 };
+		if ( scissorWasEnabled ) {
+			glGetIntegerv( GL_SCISSOR_BOX, previousScissorBox );
+			glDisable( GL_SCISSOR_TEST );
+		}
+
 		glCopyTexImage2D( GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, x, y, imageWidth, imageHeight, 0 );
+
+		if ( scissorWasEnabled ) {
+			glScissor( previousScissorBox[0], previousScissorBox[1], previousScissorBox[2], previousScissorBox[3] );
+			glEnable( GL_SCISSOR_TEST );
+		}
+
+		glBindFramebuffer( GL_READ_FRAMEBUFFER, previousReadFbo );
+		glReadBuffer( previousReadBuffer );
 	}
 
 	//backEnd.pc.c_copyFrameBuffer++;
@@ -897,3 +1015,4 @@ void idImage::SetSamplerState( textureFilter_t tf, textureRepeat_t tr ) {
 	glBindTexture( ( opts.textureType == TT_CUBIC ) ? GL_TEXTURE_CUBE_MAP_EXT : GL_TEXTURE_2D, texnum );
 	SetTexParameters();
 }
+

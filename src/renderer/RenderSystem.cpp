@@ -638,8 +638,10 @@ void idRenderSystemLocal::BeginFrame( int windowWidth, int windowHeight ) {
 	renderCrops[0].height = windowHeight;
 	currentRenderCrop = 0;
 
-	// screenFraction is just for quickly testing fill rate limitations
-	if ( r_screenFraction.GetInteger() != 100 ) {
+	// screenFraction mode 0 keeps the legacy cropped-viewport behavior used for
+	// quick fill-rate testing. Modes 1/2 render full-size and apply a final
+	// fullscreen resolution-scale pass in the backend.
+	if ( r_screenFraction.GetInteger() != 100 && r_resolutionScaleMode.GetInteger() == 0 ) {
 		int	w = SCREEN_WIDTH * r_screenFraction.GetInteger() / 100.0f;
 		int h = SCREEN_HEIGHT * r_screenFraction.GetInteger() / 100.0f;
 		CropRenderSize( w, h );

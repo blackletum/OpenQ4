@@ -365,9 +365,9 @@ static bool RB_IsMainScenePostProcessView( void ) {
 }
 
 static void RB_BeginFullscreenPostProcessPass( int scissorX, int scissorY, int scissorWidth, int scissorHeight ) {
-	if ( r_useScissor.GetBool() ) {
-		glScissor( scissorX, scissorY, scissorWidth, scissorHeight );
-	}
+	// Fullscreen post-process passes must never inherit stale light/material scissors.
+	glEnable( GL_SCISSOR_TEST );
+	glScissor( scissorX, scissorY, scissorWidth, scissorHeight );
 
 	glMatrixMode( GL_MODELVIEW );
 	glLoadIdentity();
@@ -378,6 +378,22 @@ static void RB_BeginFullscreenPostProcessPass( int scissorX, int scissorY, int s
 
 	GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO );
 	GL_Cull( CT_TWO_SIDED );
+	GL_SelectTexture( 0 );
+	glDisable( GL_TEXTURE_GEN_S );
+	glDisable( GL_TEXTURE_GEN_T );
+	glDisable( GL_TEXTURE_GEN_R );
+	glDisable( GL_TEXTURE_GEN_Q );
+	glMatrixMode( GL_TEXTURE );
+	glLoadIdentity();
+	glMatrixMode( GL_MODELVIEW );
+	GL_SelectTexture( 1 );
+	glDisable( GL_TEXTURE_GEN_S );
+	glDisable( GL_TEXTURE_GEN_T );
+	glDisable( GL_TEXTURE_GEN_R );
+	glDisable( GL_TEXTURE_GEN_Q );
+	glMatrixMode( GL_TEXTURE );
+	glLoadIdentity();
+	glMatrixMode( GL_MODELVIEW );
 	GL_SelectTexture( 0 );
 	globalImages->BindNull();
 	glDisable( GL_DEPTH_TEST );
@@ -397,6 +413,20 @@ static void RB_DrawFullscreenPostProcessQuad( int viewportWidth, int viewportHei
 	glTexCoord2f( maxS, maxT );
 	glVertex2f( 1.0f, 1.0f );
 	glTexCoord2f( maxS, 0.0f );
+	glVertex2f( 1.0f, 0.0f );
+	glEnd();
+}
+
+static void RB_DrawFullscreenPostProcessQuadUnitUV( void ) {
+	glColor4f( 1.0f, 1.0f, 1.0f, 1.0f );
+	glBegin( GL_QUADS );
+	glTexCoord2f( 0.0f, 0.0f );
+	glVertex2f( 0.0f, 0.0f );
+	glTexCoord2f( 0.0f, 1.0f );
+	glVertex2f( 0.0f, 1.0f );
+	glTexCoord2f( 1.0f, 1.0f );
+	glVertex2f( 1.0f, 1.0f );
+	glTexCoord2f( 1.0f, 0.0f );
 	glVertex2f( 1.0f, 0.0f );
 	glEnd();
 }
@@ -827,6 +857,146 @@ static void RB_STD_Bloom( void ) {
 	RB_EndFullscreenPostProcessPass();
 }
 
+enum rbResolutionScaleUniformIndex_t {
+	RB_RES_SCALE_UNIFORM_INV_TEX_SIZE = 0,
+	RB_RES_SCALE_UNIFORM_INV_LOW_RES_SIZE,
+	RB_RES_SCALE_UNIFORM_SHARPEN_AMOUNT,
+	RB_RES_SCALE_UNIFORM_COUNT
+};
+
+static newShaderStage_t rbResolutionScaleStage;
+static bool rbResolutionScaleStageInitialized = false;
+
+static void RB_InitResolutionScaleStage( void ) {
+	if ( rbResolutionScaleStageInitialized ) {
+		return;
+	}
+
+	memset( &rbResolutionScaleStage, 0, sizeof( rbResolutionScaleStage ) );
+	rbResolutionScaleStage.glslProgram = true;
+	idStr::Copynz( rbResolutionScaleStage.glslProgramName, "openq4_resolutionscale.fs", sizeof( rbResolutionScaleStage.glslProgramName ) );
+
+	static const rbBuiltinUniformDef_t uniforms[RB_RES_SCALE_UNIFORM_COUNT] = {
+		{ "invTexSize", 2 },
+		{ "invLowResSize", 2 },
+		{ "sharpenAmount", 1 }
+	};
+
+	rbResolutionScaleStage.numShaderParms = RB_RES_SCALE_UNIFORM_COUNT;
+	for ( int i = 0; i < RB_RES_SCALE_UNIFORM_COUNT; i++ ) {
+		idStr::Copynz( rbResolutionScaleStage.shaderParmNames[i], uniforms[i].name, sizeof( rbResolutionScaleStage.shaderParmNames[i] ) );
+		rbResolutionScaleStage.shaderParmNumRegisters[i] = uniforms[i].components;
+	}
+
+	rbResolutionScaleStage.numShaderTextures = 1;
+	idStr::Copynz( rbResolutionScaleStage.shaderTextureNames[0], "Scene", sizeof( rbResolutionScaleStage.shaderTextureNames[0] ) );
+
+	rbResolutionScaleStageInitialized = true;
+}
+
+void RB_ApplyResolutionScaleToBackBuffer( void ) {
+	if ( r_skipPostProcess.GetBool() ) {
+		return;
+	}
+
+	const int scalePercent = idMath::ClampInt( 10, 100, r_screenFraction.GetInteger() );
+	if ( scalePercent >= 100 ) {
+		return;
+	}
+
+	int mode = idMath::ClampInt( 0, 2, r_resolutionScaleMode.GetInteger() );
+	if ( mode == 0 ) {
+		// Legacy path: BeginFrame crop mode without fullscreen upscale.
+		return;
+	}
+
+	const int viewportWidth = glConfig.vidWidth;
+	const int viewportHeight = glConfig.vidHeight;
+	if ( viewportWidth <= 0 || viewportHeight <= 0 ) {
+		return;
+	}
+
+	const int sourceWidth = idMath::ClampInt( 1, viewportWidth,
+		idMath::Ftoi( static_cast<float>( viewportWidth ) * ( static_cast<float>( scalePercent ) * 0.01f ) + 0.5f ) );
+	const int sourceHeight = idMath::ClampInt( 1, viewportHeight,
+		idMath::Ftoi( static_cast<float>( viewportHeight ) * ( static_cast<float>( scalePercent ) * 0.01f ) + 0.5f ) );
+	if ( sourceWidth <= 0 || sourceHeight <= 0 ) {
+		return;
+	}
+
+	if ( !glConfig.GLSLProgramAvailable ) {
+		return;
+	}
+
+	RB_InitResolutionScaleStage();
+	if ( !RB_ResolveGLSLProgram( &rbResolutionScaleStage ) ) {
+		return;
+	}
+
+	idImage *sceneImage = globalImages->currentRenderImage;
+	if ( sceneImage == NULL ) {
+		return;
+	}
+
+	RB_LogComment( "---------- RB_ApplyResolutionScaleToBackBuffer ----------\n" );
+
+	idRenderTexture::BindNull();
+	backEnd.renderTexture = NULL;
+	glDrawBuffer( GL_BACK );
+	glReadBuffer( GL_BACK );
+	glViewport( 0, 0, viewportWidth, viewportHeight );
+	glScissor( 0, 0, viewportWidth, viewportHeight );
+
+	// Copy the full back buffer; the resolution-scale shader samples this image
+	// on a reduced grid so output always fills the screen.
+	sceneImage->CopyFramebuffer( 0, 0, viewportWidth, viewportHeight );
+
+	const int textureWidth = sceneImage->GetOpts().width;
+	const int textureHeight = sceneImage->GetOpts().height;
+	if ( textureWidth <= 0 || textureHeight <= 0 ) {
+		return;
+	}
+
+	RB_BeginFullscreenPostProcessPass( 0, 0, viewportWidth, viewportHeight );
+	GL_SelectTexture( 0 );
+	sceneImage->Bind();
+	GL_TexEnv( GL_MODULATE );
+
+	glUseProgramObjectARB( (GLhandleARB)rbResolutionScaleStage.glslProgramObject );
+
+	const int sceneLocation = rbResolutionScaleStage.shaderTextureLocations[0];
+	if ( sceneLocation >= 0 ) {
+		glUniform1iARB( sceneLocation, 0 );
+	}
+
+	const GLfloat invTexSize[2] = {
+		1.0f / static_cast<GLfloat>( textureWidth ),
+		1.0f / static_cast<GLfloat>( textureHeight )
+	};
+	const GLfloat invLowResSize[2] = {
+		1.0f / static_cast<GLfloat>( sourceWidth ),
+		1.0f / static_cast<GLfloat>( sourceHeight )
+	};
+	const GLfloat sharpenAmount = ( mode == 2 )
+		? idMath::ClampFloat( 0.0f, 1.5f, r_resolutionScaleSharpness.GetFloat() )
+		: 0.0f;
+
+	if ( rbResolutionScaleStage.shaderParmLocations[RB_RES_SCALE_UNIFORM_INV_TEX_SIZE] >= 0 ) {
+		glUniform2fvARB( rbResolutionScaleStage.shaderParmLocations[RB_RES_SCALE_UNIFORM_INV_TEX_SIZE], 1, invTexSize );
+	}
+	if ( rbResolutionScaleStage.shaderParmLocations[RB_RES_SCALE_UNIFORM_INV_LOW_RES_SIZE] >= 0 ) {
+		glUniform2fvARB( rbResolutionScaleStage.shaderParmLocations[RB_RES_SCALE_UNIFORM_INV_LOW_RES_SIZE], 1, invLowResSize );
+	}
+	if ( rbResolutionScaleStage.shaderParmLocations[RB_RES_SCALE_UNIFORM_SHARPEN_AMOUNT] >= 0 ) {
+		glUniform1fARB( rbResolutionScaleStage.shaderParmLocations[RB_RES_SCALE_UNIFORM_SHARPEN_AMOUNT], sharpenAmount );
+	}
+
+	RB_DrawFullscreenPostProcessQuadUnitUV();
+	glUseProgramObjectARB( 0 );
+	globalImages->BindNull();
+	RB_EndFullscreenPostProcessPass();
+}
+
 enum rbCRTUniformIndex_t {
 	RB_CRT_UNIFORM_INV_TEX_SIZE = 0,
 	RB_CRT_UNIFORM_AMOUNT,
@@ -908,6 +1078,8 @@ void RB_ApplyCRTToBackBuffer( void ) {
 	backEnd.renderTexture = NULL;
 	glDrawBuffer( GL_BACK );
 	glReadBuffer( GL_BACK );
+	glViewport( 0, 0, viewportWidth, viewportHeight );
+	glScissor( 0, 0, viewportWidth, viewportHeight );
 
 	sceneImage->CopyFramebuffer( 0, 0, viewportWidth, viewportHeight );
 

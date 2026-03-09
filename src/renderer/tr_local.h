@@ -1024,6 +1024,8 @@ extern idCVar r_ignoreGLErrors;
 extern idCVar r_forceLoadImages;		// draw all images to screen after registration
 extern idCVar r_demonstrateBug;			// used during development to show IHV's their problems
 extern idCVar r_screenFraction;			// for testing fill rate, the resolution of the entire screen can be changed
+extern idCVar r_resolutionScaleMode;		// upscale path when r_screenFraction < 100
+extern idCVar r_resolutionScaleSharpness;	// sharpen amount for HQ resolution scaling
 
 extern idCVar r_showUnsmoothedTangents;	// highlight geometry rendered with unsmoothed tangents
 extern idCVar r_showSilhouette;			// highlight edges that are casting shadow planes
@@ -1375,6 +1377,7 @@ void RB_CreateSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInterac
 const shaderStage_t *RB_SetLightTexture( const idRenderLightLocal *light );
 
 void RB_DrawView( const void *data );
+void RB_ApplyResolutionScaleToBackBuffer( void );
 void RB_ApplyCRTToBackBuffer( void );
 
 void RB_DetermineLightScale( void );

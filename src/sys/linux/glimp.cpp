@@ -287,6 +287,30 @@ bool GLimp_OpenDisplay( void ) {
 }
 
 /*
+================
+Sys_GetDesktopResolution
+================
+*/
+bool Sys_GetDesktopResolution( int *width, int *height ) {
+	if ( width == NULL || height == NULL ) {
+		return false;
+	}
+	if ( !GLimp_OpenDisplay() || dpy == NULL ) {
+		return false;
+	}
+
+	const int desktopWidth = DisplayWidth( dpy, scrnum );
+	const int desktopHeight = DisplayHeight( dpy, scrnum );
+	if ( desktopWidth <= 0 || desktopHeight <= 0 ) {
+		return false;
+	}
+
+	*width = desktopWidth;
+	*height = desktopHeight;
+	return true;
+}
+
+/*
 ===============
 GLX_Init
 ===============

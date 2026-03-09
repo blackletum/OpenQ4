@@ -325,6 +325,8 @@ int				Sys_GetSystemRam( void );
 
 // returns amount of video ram
 int				Sys_GetVideoRam( void );
+// queries the current desktop resolution for the active display selection
+bool			Sys_GetDesktopResolution( int *width, int *height );
 
 // returns amount of drive space in path
 int				Sys_GetDriveFreeSpace( const char *path );

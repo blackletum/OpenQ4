@@ -141,6 +141,40 @@ int Sys_GetVideoRam(void) {
 
 /*
 ================
+Sys_GetDesktopResolution
+================
+*/
+bool Sys_GetDesktopResolution( int *width, int *height ) {
+	if ( width == NULL || height == NULL ) {
+		return false;
+	}
+
+	int desktopWidth = win32.desktopWidth;
+	int desktopHeight = win32.desktopHeight;
+
+	if ( desktopWidth <= 0 || desktopHeight <= 0 ) {
+		HDC hDC = GetDC( GetDesktopWindow() );
+		if ( hDC == NULL ) {
+			return false;
+		}
+		desktopWidth = GetDeviceCaps( hDC, HORZRES );
+		desktopHeight = GetDeviceCaps( hDC, VERTRES );
+		ReleaseDC( GetDesktopWindow(), hDC );
+	}
+
+	if ( desktopWidth <= 0 || desktopHeight <= 0 ) {
+		return false;
+	}
+
+	win32.desktopWidth = desktopWidth;
+	win32.desktopHeight = desktopHeight;
+	*width = desktopWidth;
+	*height = desktopHeight;
+	return true;
+}
+
+/*
+================
 Sys_GetCurrentMemoryStatus
 
 	returns OS mem info

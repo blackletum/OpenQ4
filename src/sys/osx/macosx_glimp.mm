@@ -55,6 +55,28 @@ CGDisplayErr		Sys_CaptureActiveDisplays(void);
 glwstate_t glw_state;
 static bool isHidden = false;
 
+/*
+================
+Sys_GetDesktopResolution
+================
+*/
+bool Sys_GetDesktopResolution( int *width, int *height ) {
+	if ( width == NULL || height == NULL ) {
+		return false;
+	}
+
+	const CGDirectDisplayID display = Sys_DisplayToUse();
+	const int desktopWidth = static_cast<int>( CGDisplayPixelsWide( display ) );
+	const int desktopHeight = static_cast<int>( CGDisplayPixelsHigh( display ) );
+	if ( desktopWidth <= 0 || desktopHeight <= 0 ) {
+		return false;
+	}
+
+	*width = desktopWidth;
+	*height = desktopHeight;
+	return true;
+}
+
 @interface NSOpenGLContext (CGLContextAccess)
 - (CGLContextObj) cglContext;
 @end

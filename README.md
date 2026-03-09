@@ -367,6 +367,11 @@ OpenQ4 automatically validates your Quake 4 installation to ensure you have legi
   - `0` - Auto-detect from interaction.vfp
   - `1` - Packed env16.xy
   - `2` - Vector env16/env17
+- Resolution scaling (`r_screenFraction < 100`)
+  - `r_resolutionScaleMode 0` - Legacy viewport scaling (default)
+  - `r_resolutionScaleMode 1` - Bilinear fullscreen upscale
+  - `r_resolutionScaleMode 2` - High-quality fullscreen upscale + sharpening
+  - `r_resolutionScaleSharpness` - HQ sharpen strength (`0.0` to `1.5`)
 
 </details>
 
