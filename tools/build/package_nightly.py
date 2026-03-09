@@ -133,6 +133,48 @@ def get_optional_bse_binary(platform: str, arch: str) -> str:
     return f"OpenQ4-BSE_{arch}{module_ext}"
 
 
+def write_text_file(path: Path, lines: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_version_manifest(
+    destination: Path,
+    *,
+    version: str,
+    version_tag: str,
+    platform: str,
+    arch: str,
+) -> None:
+    write_text_file(
+        destination,
+        [
+            PRODUCT_NAME,
+            f"version={version}",
+            f"version_tag={version_tag}",
+            f"platform={platform}",
+            f"arch={arch}",
+        ],
+    )
+
+
+def write_macos_localized_info_strings(app_contents: Path, version: str) -> None:
+    localized_info_lines = [
+        "/* Localized versions of Info.plist keys */",
+        "",
+        'CFBundleName = "OpenQ4";',
+        f'CFBundleShortVersionString = "{version}";',
+        f'CFBundleGetInfoString = "OpenQ4 version {version}, Copyright 2026 DarkMatter Productions";',
+        'NSHumanReadableCopyright = "Copyright 2026 DarkMatter Productions";',
+    ]
+
+    for locale in ("English", "French"):
+        write_text_file(
+            app_contents / "Resources" / f"{locale}.lproj" / "InfoPlist.strings",
+            localized_info_lines,
+        )
+
+
 def copy_required_binaries(
     platform: str,
     arch: str,
@@ -250,7 +292,11 @@ def copy_optional_share_tree(platform: str, install_dir: Path, package_root: Pat
 
 
 def create_macos_app_bundle(
-    package_root: Path, install_dir: Path, arch: str, version: str
+    package_root: Path,
+    install_dir: Path,
+    arch: str,
+    version: str,
+    version_tag: str,
 ) -> Path:
     app_root = package_root / "OpenQ4.app"
     app_contents = app_root / "Contents"
@@ -261,17 +307,14 @@ def create_macos_app_bundle(
     app_resources.mkdir(parents=True, exist_ok=True)
 
     launcher = app_macos / "OpenQ4"
-    launcher.write_text(
-        "\n".join(
-            [
-                "#!/bin/sh",
-                'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
-                'APP_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)"',
-                f'exec "$APP_ROOT/{PRODUCT_NAME}-client_{arch}" "$@"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
+    write_text_file(
+        launcher,
+        [
+            "#!/bin/sh",
+            'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
+            'APP_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)"',
+            f'exec "$APP_ROOT/{PRODUCT_NAME}-client_{arch}" "$@"',
+        ],
     )
     os.chmod(launcher, 0o755)
 
@@ -285,39 +328,44 @@ def create_macos_app_bundle(
             break
 
     info_plist = app_contents / "Info.plist"
-    info_plist.write_text(
-        "\n".join(
-            [
-                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
-                "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
-                "<plist version=\"1.0\">",
-                "<dict>",
-                "<key>CFBundleDevelopmentRegion</key>",
-                "<string>English</string>",
-                "<key>CFBundleExecutable</key>",
-                "<string>OpenQ4</string>",
-                "<key>CFBundleIconFile</key>",
-                "<string>OpenQ4.icns</string>",
-                "<key>CFBundleIdentifier</key>",
-                "<string>com.darkmatter.openq4</string>",
-                "<key>CFBundleInfoDictionaryVersion</key>",
-                "<string>6.0</string>",
-                "<key>CFBundleName</key>",
-                "<string>OpenQ4</string>",
-                "<key>CFBundlePackageType</key>",
-                "<string>APPL</string>",
-                "<key>CFBundleShortVersionString</key>",
-                f"<string>{version}</string>",
-                "<key>CFBundleVersion</key>",
-                f"<string>{version}</string>",
-                "<key>LSMinimumSystemVersion</key>",
-                "<string>12.0</string>",
-                "</dict>",
-                "</plist>",
-                "",
-            ]
-        ),
-        encoding="utf-8",
+    write_text_file(
+        info_plist,
+        [
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+            "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
+            "<plist version=\"1.0\">",
+            "<dict>",
+            "<key>CFBundleDevelopmentRegion</key>",
+            "<string>English</string>",
+            "<key>CFBundleExecutable</key>",
+            "<string>OpenQ4</string>",
+            "<key>CFBundleIconFile</key>",
+            "<string>OpenQ4.icns</string>",
+            "<key>CFBundleIdentifier</key>",
+            "<string>com.darkmatter.openq4</string>",
+            "<key>CFBundleInfoDictionaryVersion</key>",
+            "<string>6.0</string>",
+            "<key>CFBundleName</key>",
+            "<string>OpenQ4</string>",
+            "<key>CFBundlePackageType</key>",
+            "<string>APPL</string>",
+            "<key>CFBundleShortVersionString</key>",
+            f"<string>{version}</string>",
+            "<key>CFBundleVersion</key>",
+            f"<string>{version}</string>",
+            "<key>LSMinimumSystemVersion</key>",
+            "<string>12.0</string>",
+            "</dict>",
+            "</plist>",
+        ],
+    )
+    write_macos_localized_info_strings(app_contents, version)
+    write_version_manifest(
+        app_resources / "VERSION.txt",
+        version=version,
+        version_tag=version_tag,
+        platform="macos",
+        arch=arch,
     )
 
     return app_root
@@ -360,6 +408,13 @@ def main(argv: list[str]) -> int:
     package_root.mkdir(parents=True, exist_ok=True)
 
     shutil.copy2(readme_path, package_root / "README.md")
+    write_version_manifest(
+        package_root / "VERSION.txt",
+        version=args.version,
+        version_tag=args.version_tag,
+        platform=args.platform,
+        arch=args.arch,
+    )
     copied_optional, missing_required, expected_optional_bse = copy_required_binaries(
         args.platform,
         args.arch,
@@ -400,6 +455,7 @@ def main(argv: list[str]) -> int:
             install_dir,
             args.arch,
             args.version,
+            args.version_tag,
         )
 
     archive_path = output_dir / f"{package_stem}{archive_suffix}"
@@ -409,6 +465,7 @@ def main(argv: list[str]) -> int:
     print(f"Package directory: {package_root}")
     print(f"Release archive: {archive_path}")
     print(f"Archive format: {archive_format}")
+    print(f"Version manifest: {package_root / 'VERSION.txt'}")
     print(f"OpenQ4 pk4: {openq4_pk4_path} ({added_files} files)")
     if copied_share:
         print(f"Share payload: {package_root / 'share'}")

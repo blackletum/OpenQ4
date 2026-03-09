@@ -3,7 +3,7 @@
 <img src="assets/img/banner.png" alt="OpenQ4 banner">
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Version](https://img.shields.io/badge/version-0.0.1-green.svg)](https://github.com/themuffinator/OpenQ4)
+[![Versioning](https://img.shields.io/badge/versioning-semver%20%2B%20tracks-green.svg)](https://github.com/themuffinator/OpenQ4)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](https://github.com/themuffinator/OpenQ4)
 [![Architecture](https://img.shields.io/badge/arch-x64-orange.svg)](https://github.com/themuffinator/OpenQ4)
 [![Build System](https://img.shields.io/badge/build-Meson%20%2B%20Ninja-yellow.svg)](https://mesonbuild.com/)
@@ -29,11 +29,13 @@ The **OpenQ4 Project** is a complete replacement for the Quake 4 engine and game
 
 OpenQ4 uses semantic base versions from `meson.build` and appends an explicit build track:
 
-- `stable`: release builds such as `0.0.1`
-- `dev`: default local builds such as `0.0.1-dev+gabcdef12`
-- prerelease labels like `nightly`, `beta`, or `rc`: for example `0.0.1-nightly.20260307.1+gabcdef12`
+- `stable`: release builds such as `X.Y.Z`
+- `dev`: default local builds such as `X.Y.Z-dev+gabcdef12`
+- prerelease labels like `nightly`, `beta`, or `rc`: for example `X.Y.Z-nightly.20260307.1+gabcdef12`
 
 Meson exposes this through `-Dversion_track=<label>` and `-Dversion_iteration=<dot-separated-iteration>`. Local builds default to `dev`; CI nightlies set `version_track=nightly`.
+
+The base semantic version stays intentionally manual and must be bumped in `meson.build` when OpenQ4 moves to the next release line. Track labels, iterations, git metadata, and resource build numbers are generated automatically.
 
 ### What You Need
 

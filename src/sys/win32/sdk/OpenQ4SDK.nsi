@@ -2,7 +2,12 @@ SetCompressor lzma
 
 ; HM NIS Edit Wizard helper defines
 !define PRODUCT_NAME "OpenQ4 SDK"
-!define PRODUCT_VERSION "0.0.1"
+!ifndef PRODUCT_VERSION
+!searchparse /file /noerrors "..\..\..\..\meson.build" `version: '` PRODUCT_VERSION `'`
+!endif
+!ifndef PRODUCT_VERSION
+!error "Failed to determine PRODUCT_VERSION from meson.build. Pass /DPRODUCT_VERSION=<version> to makensis."
+!endif
 !define PRODUCT_PUBLISHER "DarkMatter Productions"
 !define PRODUCT_WEB_SITE "www.darkmatter-quake.com"
 

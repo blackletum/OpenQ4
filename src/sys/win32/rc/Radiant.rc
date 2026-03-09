@@ -1,6 +1,9 @@
 // Microsoft Visual C++ generated resource script.
 //
 #include "Radiant_resource.h"
+#include "../../AutoVersion.h"
+
+#define OPENQ4_RADIANT_ABOUT_TEXT "OpenQ4 Radiant " VERSION_PRODUCT_STRING "\nCopyright (C) 1999-2003 id Software, Inc. and 2026 DarkMatter Productions\n\n"
 
 #define APSTUDIO_READONLY_SYMBOLS
 /////////////////////////////////////////////////////////////////////////////
@@ -1057,7 +1060,7 @@ BEGIN
     LTEXT           "Version:\t\t1.1",IDC_ABOUT_GLVERSION,10,111,249,10
     LTEXT           "Renderer:\tWHATEVER",IDC_ABOUT_GLRENDERER,10,121,253,24
     GROUPBOX        "OpenGL Extensions",IDC_STATIC,5,152,265,65
-    CONTROL         "OpenQ4 Radiant 0.0.1 build 199\nCopyright (C) 1999-2003 id Software, Inc. and 2026 DarkMatter Productions\n\n",
+    CONTROL         OPENQ4_RADIANT_ABOUT_TEXT,
                     IDC_STATIC,"Static",SS_LEFTNOWORDWRAP | WS_GROUP,99,7,
                     132,78
     EDITTEXT        IDC_ABOUT_GLEXTENSIONS,10,162,256,53,ES_MULTILINE | 
