@@ -447,6 +447,43 @@ void Script_ResetVideo(idWindow* window, idList<idGSWinVar>* src) {
 
 /*
 ===================
+Script_VideoCompleteEvent
+===================
+*/
+void Script_VideoCompleteEvent( idWindow *window, idList<idGSWinVar> *src ) {
+	idWinStr *windowName = dynamic_cast<idWinStr *>( (*src)[0].var );
+	idWinStr *eventName = dynamic_cast<idWinStr *>( (*src)[1].var );
+
+	if ( windowName == NULL || eventName == NULL || window == NULL || window->GetGui() == NULL ) {
+		return;
+	}
+
+	drawWin_t *childWindow = NULL;
+	idWindow *desktop = window->GetGui()->GetDesktop();
+	if ( desktop ) {
+		childWindow = desktop->FindChildByName( windowName->c_str() );
+	}
+	if ( childWindow == NULL ) {
+		childWindow = window->FindChildByName( windowName->c_str() );
+	}
+	if ( childWindow == NULL ) {
+		return;
+	}
+
+	bool completed = false;
+	if ( childWindow->win ) {
+		completed = childWindow->win->IsBackgroundCinematicComplete();
+	} else if ( childWindow->simp ) {
+		completed = childWindow->simp->IsBackgroundCinematicComplete();
+	}
+
+	if ( completed ) {
+		window->GetGui()->HandleNamedEvent( eventName->c_str() );
+	}
+}
+
+/*
+===================
 Script_NonInteractive
 ===================
 */
@@ -482,6 +519,7 @@ guiCommandDef_t commandList[] = {
 	{ "stoptransitions", Script_StopTransitions, 1, 1},
 	{ "consolecmd", Script_ConsoleCmd, 1, 1},
 	{ "resetVideo", Script_ResetVideo, 1, 1},
+	{ "videoCompleteEvent", Script_VideoCompleteEvent, 2, 2},
 	{ "nonInteractive", Script_NonInteractive, 1, 1}
 // jmarshall end
 };

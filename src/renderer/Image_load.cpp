@@ -663,14 +663,72 @@ void idImage::CopyDepthbuffer( int x, int y, int imageWidth, int imageHeight ) {
 		readingFromRenderTexture
 		? ( backEnd.renderTexture->GetDepthImage()->GetOpts().numMSAASamples > 1 )
 		: ( r_multiSamples.GetInteger() > 1 );
+	const bool canBlitDepth = ( GLEW_EXT_framebuffer_blit || GLEW_ARB_framebuffer_object || GLEW_VERSION_3_0 );
 
-	// Depth blits from MSAA sources to single-sample textures are not consistently
-	// supported across drivers. Resolve via depth readback so SSAO samples stable depth.
+	// Prefer depth blits when sampling depth for SSAO, especially for MSAA sources.
+	// glReadPixels from multisampled depth buffers is invalid on many drivers.
+	if ( canBlitDepth && ( readingFromRenderTexture || sourceDepthIsMSAA ) ) {
+		GLint previousReadFbo = 0;
+		GLint previousDrawFbo = 0;
+		GLint previousReadBuffer = GL_BACK;
+		GLint previousDrawBuffer = GL_BACK;
+
+		glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &previousReadFbo );
+		glGetIntegerv( GL_DRAW_FRAMEBUFFER_BINDING, &previousDrawFbo );
+		glGetIntegerv( GL_READ_BUFFER, &previousReadBuffer );
+		glGetIntegerv( GL_DRAW_BUFFER, &previousDrawBuffer );
+
+		static GLuint copyDepthFbo = 0;
+		if ( copyDepthFbo == 0 ) {
+			glGenFramebuffers( 1, &copyDepthFbo );
+		}
+
+		glTexImage2D( GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, imageWidth, imageHeight, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL );
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+
+		if ( readingFromRenderTexture ) {
+			glBindFramebuffer( GL_READ_FRAMEBUFFER, backEnd.renderTexture->GetDeviceHandle() );
+		} else {
+			glBindFramebuffer( GL_READ_FRAMEBUFFER, 0 );
+			glReadBuffer( GL_BACK );
+		}
+
+		glBindFramebuffer( GL_DRAW_FRAMEBUFFER, copyDepthFbo );
+		glFramebufferTexture2D( GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, texnum, 0 );
+		glReadBuffer( GL_NONE );
+		glDrawBuffer( GL_NONE );
+
+		const GLboolean scissorWasEnabled = glIsEnabled( GL_SCISSOR_TEST );
+		GLint previousScissorBox[4] = { 0, 0, 0, 0 };
+		if ( scissorWasEnabled ) {
+			glGetIntegerv( GL_SCISSOR_BOX, previousScissorBox );
+			glDisable( GL_SCISSOR_TEST );
+		}
+
+		glBlitFramebuffer( x, y, x + imageWidth, y + imageHeight, 0, 0, imageWidth, imageHeight, GL_DEPTH_BUFFER_BIT, GL_NEAREST );
+
+		if ( scissorWasEnabled ) {
+			glScissor( previousScissorBox[0], previousScissorBox[1], previousScissorBox[2], previousScissorBox[3] );
+			glEnable( GL_SCISSOR_TEST );
+		}
+
+		glFramebufferTexture2D( GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, 0, 0 );
+
+		glBindFramebuffer( GL_READ_FRAMEBUFFER, previousReadFbo );
+		glBindFramebuffer( GL_DRAW_FRAMEBUFFER, previousDrawFbo );
+		glReadBuffer( previousReadBuffer );
+		glDrawBuffer( previousDrawBuffer );
+		return;
+	}
+
 	if ( sourceDepthIsMSAA ) {
-		static bool msaaDepthReadbackReported = false;
-		if ( !msaaDepthReadbackReported ) {
-			common->Printf( "CopyDepthbuffer: using MSAA depth readback resolve path\n" );
-			msaaDepthReadbackReported = true;
+		static bool msaaDepthFallbackWarned = false;
+		if ( !msaaDepthFallbackWarned ) {
+			common->Warning( "CopyDepthbuffer: missing framebuffer blit support for MSAA depth resolve; using readback fallback" );
+			msaaDepthFallbackWarned = true;
 		}
 
 		const int pixelCount = imageWidth * imageHeight;
@@ -682,7 +740,6 @@ void idImage::CopyDepthbuffer( int x, int y, int imageWidth, int imageHeight ) {
 		GLint previousDrawFbo = 0;
 		GLint previousReadBuffer = GL_BACK;
 		GLint previousDrawBuffer = GL_BACK;
-
 		glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &previousReadFbo );
 		glGetIntegerv( GL_DRAW_FRAMEBUFFER_BINDING, &previousDrawFbo );
 		glGetIntegerv( GL_READ_BUFFER, &previousReadBuffer );
@@ -716,57 +773,6 @@ void idImage::CopyDepthbuffer( int x, int y, int imageWidth, int imageHeight ) {
 		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
 		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
 		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
-
-		glBindFramebuffer( GL_READ_FRAMEBUFFER, previousReadFbo );
-		glBindFramebuffer( GL_DRAW_FRAMEBUFFER, previousDrawFbo );
-		glReadBuffer( previousReadBuffer );
-		glDrawBuffer( previousDrawBuffer );
-		return;
-	}
-
-	if ( readingFromRenderTexture && ( GLEW_EXT_framebuffer_blit || GLEW_ARB_framebuffer_object || GLEW_VERSION_3_0 ) ) {
-		GLint previousReadFbo = 0;
-		GLint previousDrawFbo = 0;
-		GLint previousReadBuffer = GL_BACK;
-		GLint previousDrawBuffer = GL_BACK;
-
-		glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &previousReadFbo );
-		glGetIntegerv( GL_DRAW_FRAMEBUFFER_BINDING, &previousDrawFbo );
-		glGetIntegerv( GL_READ_BUFFER, &previousReadBuffer );
-		glGetIntegerv( GL_DRAW_BUFFER, &previousDrawBuffer );
-
-		static GLuint copyDepthFbo = 0;
-		if ( copyDepthFbo == 0 ) {
-			glGenFramebuffers( 1, &copyDepthFbo );
-		}
-
-		glTexImage2D( GL_TEXTURE_2D, 0, internalFormat, imageWidth, imageHeight, 0, dataFormat, dataType, NULL );
-		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
-		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
-		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
-		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
-
-		glBindFramebuffer( GL_READ_FRAMEBUFFER, backEnd.renderTexture->GetDeviceHandle() );
-		glBindFramebuffer( GL_DRAW_FRAMEBUFFER, copyDepthFbo );
-		glFramebufferTexture2D( GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, texnum, 0 );
-		glReadBuffer( GL_NONE );
-		glDrawBuffer( GL_NONE );
-
-		const GLboolean scissorWasEnabled = glIsEnabled( GL_SCISSOR_TEST );
-		GLint previousScissorBox[4] = { 0, 0, 0, 0 };
-		if ( scissorWasEnabled ) {
-			glGetIntegerv( GL_SCISSOR_BOX, previousScissorBox );
-			glDisable( GL_SCISSOR_TEST );
-		}
-
-		glBlitFramebuffer( x, y, x + imageWidth, y + imageHeight, 0, 0, imageWidth, imageHeight, GL_DEPTH_BUFFER_BIT, GL_NEAREST );
-
-		if ( scissorWasEnabled ) {
-			glScissor( previousScissorBox[0], previousScissorBox[1], previousScissorBox[2], previousScissorBox[3] );
-			glEnable( GL_SCISSOR_TEST );
-		}
-
-		glFramebufferTexture2D( GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, 0, 0 );
 
 		glBindFramebuffer( GL_READ_FRAMEBUFFER, previousReadFbo );
 		glBindFramebuffer( GL_DRAW_FRAMEBUFFER, previousDrawFbo );

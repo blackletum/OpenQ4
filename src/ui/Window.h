@@ -337,6 +337,7 @@ public:
 	void AddTransition(idWinVar *dest, idVec4 from, idVec4 to, int time, float accelTime, float decelTime);
 	void ResetTime(int time);
 	void ResetCinematics();
+	bool IsBackgroundCinematicComplete() const;
 
 	int NumTransitions();
 

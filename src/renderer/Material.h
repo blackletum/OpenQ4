@@ -613,6 +613,9 @@ public:
 						// or zero if it doesn't have one
 	int					CinematicLength(void) const;
 
+	// Returns the current cinematic status enum value (see cinStatus_t in Cinematic.h).
+	int					CinematicStatus( int time ) const;
+
 	void				CloseCinematic(void) const;
 
 	void				ResetCinematicTime(int time) const;

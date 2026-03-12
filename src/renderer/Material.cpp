@@ -3010,6 +3010,20 @@ int	idMaterial::CinematicLength() const {
 
 /*
 =============
+idMaterial::CinematicStatus
+=============
+*/
+int idMaterial::CinematicStatus( int time ) const {
+	if ( !stages || !stages[0].texture.cinematic ) {
+		return FMV_IDLE;
+	}
+
+	cinData_t cin = stages[0].texture.cinematic->ImageForTime( time );
+	return cin.status;
+}
+
+/*
+=============
 idMaterial::UpdateCinematic
 =============
 */

@@ -58,6 +58,7 @@ public:
 	virtual void	ReadFromSaveGame( idFile *savefile );
 // jmarshall - quake 4 gui
 	void			ResetCinematics(void);
+	bool			IsBackgroundCinematicComplete() const;
 // jmarshall end
 protected:
 	void 			CalcClientRect(float xofs, float yofs);

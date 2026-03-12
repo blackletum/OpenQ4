@@ -658,4 +658,13 @@ void idSimpleWindow::ResetCinematics(void) {
 		background->ResetCinematicTime(gui->GetTime());
 	}
 }
+
+bool idSimpleWindow::IsBackgroundCinematicComplete() const {
+	if ( background == NULL || gui == NULL || background->CinematicLength() <= 0 ) {
+		return false;
+	}
+
+	const int status = background->CinematicStatus( gui->GetTime() );
+	return ( status == FMV_EOF || status == FMV_IDLE || status == FMV_LOOPED );
+}
 // jmarshall end
