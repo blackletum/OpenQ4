@@ -197,7 +197,7 @@ idCVar r_useScissor( "r_useScissor", "1", CVAR_RENDERER | CVAR_BOOL, "scissor cl
 idCVar r_useCombinerDisplayLists( "r_useCombinerDisplayLists", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NOCHEAT, "put all nvidia register combiner programming in display lists" );
 idCVar r_useDepthBoundsTest( "r_useDepthBoundsTest", "1", CVAR_RENDERER | CVAR_BOOL, "use depth bounds test to reduce shadow fill" );
 
-idCVar r_screenFraction( "r_screenFraction", "100", CVAR_RENDERER | CVAR_INTEGER, "for testing fill rate, the resolution of the entire screen can be changed" );
+idCVar r_screenFraction( "r_screenFraction", "100", CVAR_ARCHIVE | CVAR_RENDERER | CVAR_INTEGER, "for testing fill rate, the resolution of the entire screen can be changed" );
 idCVar r_resolutionScaleMode( "r_resolutionScaleMode", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "screen-fraction mode when r_screenFraction < 100: 0 = legacy cropped viewport, 1 = bilinear upscale, 2 = high-quality upscale", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 idCVar r_resolutionScaleSharpness( "r_resolutionScaleSharpness", "0.4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "sharpening amount for high-quality resolution scaling", 0.0f, 1.5f );
 idCVar r_demonstrateBug( "r_demonstrateBug", "0", CVAR_RENDERER | CVAR_BOOL, "used during development to show IHV's their problems" );

@@ -38,7 +38,7 @@ If you have questions concerning this license or the applicable additional terms
 #endif
 
 idCVar	idSessionLocal::gui_configServerRate( "gui_configServerRate", "0", CVAR_GUI | CVAR_ARCHIVE | CVAR_ROM | CVAR_INTEGER, "" );
-idCVar gui_set_sys_scroll( "gui_set_sys_scroll", "0", CVAR_GUI | CVAR_INTEGER, "display menu scroll step", 0, 9 );
+idCVar gui_set_sys_scroll( "gui_set_sys_scroll", "0", CVAR_GUI | CVAR_INTEGER, "display menu scroll step", 0, 17 );
 idCVar gui_set_audio_scroll( "gui_set_audio_scroll", "0", CVAR_GUI | CVAR_INTEGER, "audio menu scroll step", 0, 2 );
 idCVar gui_set_game_scroll( "gui_set_game_scroll", "0", CVAR_GUI | CVAR_INTEGER, "game menu scroll step", 0, 6 );
 
@@ -78,9 +78,10 @@ static void BuildMainMenuAudioDeviceChoices( idStr &choiceNames, idStr &choiceVa
 BuildMainMenuDisplayChoices
 =================
 */
-static void BuildMainMenuDisplayChoices( idStr &choiceNames, idStr &choiceValues ) {
+static void BuildMainMenuDisplayChoices( idStr &choiceNames, idStr &choiceValues, int &displayCountOut ) {
 	choiceNames = common->GetLanguageDict()->GetString( "#str_229914" );
 	choiceValues = "-1";
+	displayCountOut = 0;
 
 #if defined( _WIN32 )
 	int displayCount = 0;
@@ -91,6 +92,7 @@ static void BuildMainMenuDisplayChoices( idStr &choiceNames, idStr &choiceValues
 		}
 		return;
 	}
+	displayCountOut = displayCount;
 
 	for ( int i = 0; i < displayCount; ++i ) {
 		const char *displayName = SDL_GetDisplayName( displays[i] );
@@ -960,9 +962,11 @@ void idSessionLocal::SetMainMenuGuiVars( void ) {
 
 	idStr displayNames;
 	idStr displayValues;
-	BuildMainMenuDisplayChoices( displayNames, displayValues );
+	int displayCount = 0;
+	BuildMainMenuDisplayChoices( displayNames, displayValues, displayCount );
 	guiMainMenu->SetStateString( "display_names", displayNames.c_str() );
 	guiMainMenu->SetStateString( "display_values", displayValues.c_str() );
+	guiMainMenu->SetStateInt( "display_count", displayCount );
 	SetMainMenuVideoGuiVars( guiMainMenu );
 	SyncMainMenuAspectVisibility( guiMainMenu );
 	guiMainMenu->SetStateInt( "gui_set_sys_scroll", 0 );
@@ -1887,11 +1891,63 @@ idSessionLocal::MenuEvent
 Executes any commands returned by the gui
 ==============
 */
+static bool AdjustMainMenuPageScroll( idUserInterface *gui, const char *pageVisibleState, idCVar &scrollCvar, const char *scrollStateName, int minValue, int maxValue, const char *applyEvent, int delta ) {
+	if ( !gui->State().GetBool( pageVisibleState ) ) {
+		return false;
+	}
+
+	const int current = scrollCvar.GetInteger();
+	const int next = idMath::ClampInt( minValue, maxValue, current + delta );
+	if ( next != current ) {
+		scrollCvar.SetInteger( next );
+		gui->SetStateInt( scrollStateName, next );
+		gui->HandleNamedEvent( applyEvent );
+	}
+
+	return true;
+}
+
+static bool HandleMainMenuSettingsScrollInput( idUserInterface *gui, int key ) {
+	int delta = 0;
+	switch ( key ) {
+		case K_MWHEELUP:
+		case K_PGUP:
+		case K_JOY1:
+			delta = -1;
+			break;
+		case K_MWHEELDOWN:
+		case K_PGDN:
+		case K_JOY2:
+			delta = 1;
+			break;
+		default:
+			return false;
+	}
+
+	if ( AdjustMainMenuPageScroll( gui, "p_settings_sys::visible", gui_set_sys_scroll, "gui_set_sys_scroll", 0, 17, "applySetSystemScroll", delta ) ) {
+		return true;
+	}
+	if ( AdjustMainMenuPageScroll( gui, "p_settings_audio::visible", gui_set_audio_scroll, "gui_set_audio_scroll", 0, 2, "applySetAudioScroll", delta ) ) {
+		return true;
+	}
+	if ( AdjustMainMenuPageScroll( gui, "p_settings_game::visible", gui_set_game_scroll, "gui_set_game_scroll", 0, 6, "applySetGameScroll", delta ) ) {
+		return true;
+	}
+
+	return false;
+}
+
 void idSessionLocal::MenuEvent( const sysEvent_t *event ) {
 	const char	*menuCommand;
 
 	if ( guiActive == NULL ) {
 		return;
+	}
+
+	if ( guiActive == guiMainMenu && event->evType == SE_KEY && event->evValue2 == 1 ) {
+		if ( HandleMainMenuSettingsScrollInput( guiActive, event->evValue ) ) {
+			return;
+		}
 	}
 
 	menuCommand = guiActive->HandleEvent( event, com_frameTime );
