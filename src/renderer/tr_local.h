@@ -1087,8 +1087,10 @@ extern idCVar r_singleSurface;			// suppress all but one surface on each entity
 extern idCVar r_shadowPolygonOffset;	// bias value added to depth test for stencil shadow drawing
 extern idCVar r_shadowPolygonFactor;	// scale value for stencil shadow drawing
 extern idCVar r_shadowMapSize;			// square resolution used for simple shadow maps
-extern idCVar r_shadowMapBias;			// receiver depth bias used by projected shadow maps
-extern idCVar r_shadowMapPointBias;		// receiver depth bias used by point-light shadow maps
+extern idCVar r_shadowMapBias;			// constant receiver depth bias used by projected shadow maps
+extern idCVar r_shadowMapNormalBias;		// slope-aware receiver bias used by projected shadow maps
+extern idCVar r_shadowMapPointBias;		// constant receiver depth bias used by point-light shadow maps
+extern idCVar r_shadowMapPointNormalBias;	// slope-aware receiver bias used by point-light shadow maps
 extern idCVar r_shadowMapFilterRadius;	// projected-light PCF radius in texels used by simple shadow maps
 extern idCVar r_shadowMapPointFilterRadius;	// point-light PCF radius in texels used by simple shadow maps
 extern idCVar r_shadowMapProjectionPad;	// normalized padding applied around projected-light shadow-map coverage

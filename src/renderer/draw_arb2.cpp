@@ -225,6 +225,7 @@ typedef struct {
 	GLint			specularColor;
 	GLint			shadowTexelSize;
 	GLint			shadowBias;
+	GLint			shadowNormalBias;
 	GLint			shadowFilterRadius;
 
 	GLint			bumpMap;
@@ -263,6 +264,7 @@ typedef struct {
 	GLint			diffuseColor;
 	GLint			specularColor;
 	GLint			shadowBias;
+	GLint			shadowNormalBias;
 	GLint			shadowFilterRadius;
 	GLint			pointShadowTexelScale;
 
@@ -595,6 +597,7 @@ static bool RB_ShadowMapLoadProgram( void ) {
 	g_shadowMapProgram.specularColor = glGetUniformLocationARB( programObject, "uSpecularColor" );
 	g_shadowMapProgram.shadowTexelSize = glGetUniformLocationARB( programObject, "uShadowTexelSize" );
 	g_shadowMapProgram.shadowBias = glGetUniformLocationARB( programObject, "uShadowBias" );
+	g_shadowMapProgram.shadowNormalBias = glGetUniformLocationARB( programObject, "uShadowNormalBias" );
 	g_shadowMapProgram.shadowFilterRadius = glGetUniformLocationARB( programObject, "uShadowFilterRadius" );
 	g_shadowMapProgram.bumpMap = glGetUniformLocationARB( programObject, "uBumpMap" );
 	g_shadowMapProgram.lightFalloffMap = glGetUniformLocationARB( programObject, "uLightFalloffMap" );
@@ -722,6 +725,7 @@ static bool RB_PointShadowMapLoadProgram( void ) {
 	g_pointShadowMapProgram.diffuseColor = glGetUniformLocationARB( programObject, "uDiffuseColor" );
 	g_pointShadowMapProgram.specularColor = glGetUniformLocationARB( programObject, "uSpecularColor" );
 	g_pointShadowMapProgram.shadowBias = glGetUniformLocationARB( programObject, "uShadowBias" );
+	g_pointShadowMapProgram.shadowNormalBias = glGetUniformLocationARB( programObject, "uShadowNormalBias" );
 	g_pointShadowMapProgram.shadowFilterRadius = glGetUniformLocationARB( programObject, "uShadowFilterRadius" );
 	g_pointShadowMapProgram.pointShadowTexelScale = glGetUniformLocationARB( programObject, "uPointShadowTexelScale" );
 	g_pointShadowMapProgram.bumpMap = glGetUniformLocationARB( programObject, "uBumpMap" );
@@ -836,9 +840,12 @@ static bool RB_PointShadowMapLoadCasterProgram( void ) {
 }
 
 static void RB_ShadowMapBuildClipPlanes( const idPlane lightProject[4], idPlane clipPlanes[4] ) {
+	const float projectionPad = Max( 0.0f, r_shadowMapProjectionPad.GetFloat() );
+	const float projectionScale = 1.0f / ( 1.0f + projectionPad * 2.0f );
+
 	for ( int i = 0; i < 4; i++ ) {
-		clipPlanes[0][i] = lightProject[0][i] * 2.0f - lightProject[2][i];
-		clipPlanes[1][i] = lightProject[1][i] * 2.0f - lightProject[2][i];
+		clipPlanes[0][i] = ( lightProject[0][i] * 2.0f - lightProject[2][i] ) * projectionScale;
+		clipPlanes[1][i] = ( lightProject[1][i] * 2.0f - lightProject[2][i] ) * projectionScale;
 		clipPlanes[2][i] = lightProject[3][i] * 2.0f - lightProject[2][i];
 		clipPlanes[3][i] = lightProject[2][i];
 	}
@@ -1668,6 +1675,9 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 	if ( g_shadowMapProgram.shadowBias >= 0 ) {
 		glUniform1fARB( g_shadowMapProgram.shadowBias, r_shadowMapBias.GetFloat() );
 	}
+	if ( g_shadowMapProgram.shadowNormalBias >= 0 ) {
+		glUniform1fARB( g_shadowMapProgram.shadowNormalBias, r_shadowMapNormalBias.GetFloat() );
+	}
 	if ( g_shadowMapProgram.shadowFilterRadius >= 0 ) {
 		glUniform1fARB( g_shadowMapProgram.shadowFilterRadius, r_shadowMapFilterRadius.GetFloat() );
 	}
@@ -1754,6 +1764,9 @@ static bool RB_GLSLPointShadowMap_CreateDrawInteractions( const drawSurf_t *surf
 	}
 	if ( g_pointShadowMapProgram.shadowBias >= 0 ) {
 		glUniform1fARB( g_pointShadowMapProgram.shadowBias, r_shadowMapPointBias.GetFloat() );
+	}
+	if ( g_pointShadowMapProgram.shadowNormalBias >= 0 ) {
+		glUniform1fARB( g_pointShadowMapProgram.shadowNormalBias, r_shadowMapPointNormalBias.GetFloat() );
 	}
 	if ( g_pointShadowMapProgram.shadowFilterRadius >= 0 ) {
 		glUniform1fARB( g_pointShadowMapProgram.shadowFilterRadius, r_shadowMapPointFilterRadius.GetFloat() );

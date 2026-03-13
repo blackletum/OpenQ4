@@ -30,6 +30,7 @@ varying vec3 vLightVector;
 varying vec3 vHalfAngleVector;
 varying vec4 vShadowCoord;
 varying vec3 vVertexColor;
+varying float vShadowLightCos;
 
 vec3 TangentSpaceVector( vec3 objectVector ) {
 	return vec3(
@@ -44,6 +45,7 @@ void main() {
 
 	vec3 toLight = uLocalLightOrigin.xyz - position.xyz;
 	vec3 toView = uLocalViewOrigin.xyz - position.xyz;
+	vec3 localLightDir = normalize( toLight );
 
 	vLightVector = TangentSpaceVector( toLight );
 	vHalfAngleVector = TangentSpaceVector( normalize( toLight ) + normalize( toView ) );
@@ -65,6 +67,7 @@ void main() {
 		dot( position, uShadowRow3 ) );
 
 	vVertexColor = gl_Color.rgb * uVertexColorParams.x + vec3( uVertexColorParams.y );
+	vShadowLightCos = max( dot( normalize( attr_Normal ), localLightDir ), 0.0 );
 
 	gl_Position = ftransform();
 }

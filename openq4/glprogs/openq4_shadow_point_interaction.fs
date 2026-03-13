@@ -9,6 +9,7 @@ uniform vec4 uDiffuseColor;
 uniform vec4 uSpecularColor;
 uniform float uPointShadowFar;
 uniform float uShadowBias;
+uniform float uShadowNormalBias;
 uniform float uShadowFilterRadius;
 uniform float uPointShadowTexelScale;
 
@@ -21,9 +22,16 @@ varying vec3 vLightVector;
 varying vec3 vHalfAngleVector;
 varying vec3 vPointShadowVector;
 varying vec3 vVertexColor;
+varying float vShadowLightCos;
 
 vec3 SafeNormalize( vec3 value ) {
 	return value * inversesqrt( max( dot( value, value ), 1.0e-8 ) );
+}
+
+float ShadowReceiverBias() {
+	float lightCos = clamp( vShadowLightCos, 0.0, 1.0 );
+	float slopeBias = sqrt( max( 1.0 - lightCos * lightCos, 0.0 ) );
+	return uShadowBias + uShadowNormalBias * slopeBias;
 }
 
 float UnpackDepth16( vec2 rg ) {
@@ -31,8 +39,9 @@ float UnpackDepth16( vec2 rg ) {
 }
 
 float SamplePointShadowCompare( vec3 direction, float depth ) {
+	float bias = ShadowReceiverBias();
 	float storedDepth = UnpackDepth16( textureCube( uPointShadowMap, direction ).rg );
-	return ( depth - uShadowBias <= storedDepth ) ? 1.0 : 0.0;
+	return ( depth - bias <= storedDepth ) ? 1.0 : 0.0;
 }
 
 float SamplePointShadow() {

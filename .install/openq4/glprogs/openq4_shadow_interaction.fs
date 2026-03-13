@@ -9,6 +9,7 @@ uniform vec4 uDiffuseColor;
 uniform vec4 uSpecularColor;
 uniform vec2 uShadowTexelSize;
 uniform float uShadowBias;
+uniform float uShadowNormalBias;
 uniform float uShadowFilterRadius;
 
 varying vec2 vBumpTexCoord;
@@ -20,14 +21,22 @@ varying vec3 vLightVector;
 varying vec3 vHalfAngleVector;
 varying vec4 vShadowCoord;
 varying vec3 vVertexColor;
+varying float vShadowLightCos;
 
 vec3 SafeNormalize( vec3 value ) {
 	return value * inversesqrt( max( dot( value, value ), 1.0e-8 ) );
 }
 
+float ShadowReceiverBias() {
+	float lightCos = clamp( vShadowLightCos, 0.0, 1.0 );
+	float slopeBias = sqrt( max( 1.0 - lightCos * lightCos, 0.0 ) );
+	return uShadowBias + uShadowNormalBias * slopeBias;
+}
+
 float SampleShadowCompare( vec2 uv, float depth ) {
+	float bias = ShadowReceiverBias();
 	float storedDepth = texture2D( uShadowMap, uv ).r;
-	return ( depth - uShadowBias <= storedDepth ) ? 1.0 : 0.0;
+	return ( depth - bias <= storedDepth ) ? 1.0 : 0.0;
 }
 
 float SampleShadow( vec4 shadowCoord ) {
