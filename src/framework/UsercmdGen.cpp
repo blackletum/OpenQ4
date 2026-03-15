@@ -348,6 +348,9 @@ private:
 	void			InitCurrent( void );
 
 	bool			Inhibited( void );
+	void			MigrateLegacyRunDefaults( void );
+	bool			IsRunButtonActive( void ) const;
+	bool			ShouldToggleRun( void ) const;
 	void			AdjustAngles( void );
 	void			KeyMove( void );
 	void			JoystickMove( void );
@@ -407,7 +410,8 @@ idCVar idUsercmdGenLocal::in_yawSpeed( "in_yawspeed", "140", CVAR_SYSTEM | CVAR_
 idCVar idUsercmdGenLocal::in_pitchSpeed( "in_pitchspeed", "140", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "pitch change speed when holding down look _lookUp or _lookDown button" );
 idCVar idUsercmdGenLocal::in_angleSpeedKey( "in_anglespeedkey", "1.5", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "angle change scale when holding down _speed button" );
 idCVar idUsercmdGenLocal::in_freeLook( "in_freeLook", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "look around with mouse (reverse _mlook button)" );
-idCVar idUsercmdGenLocal::in_alwaysRun( "in_alwaysRun", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "always run (reverse _speed button) - only in MP" );
+idCVar idUsercmdGenLocal::in_alwaysRun( "in_alwaysRun", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "always run (reverse _speed button)" );
+static idCVar in_runDefaultMigrated( "in_runDefaultMigrated", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "one-time migration flag for legacy OpenQ4 run defaults" );
 idCVar idUsercmdGenLocal::in_toggleRun( "in_toggleRun", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "pressing _speed button toggles run on/off - only in MP" );
 idCVar idUsercmdGenLocal::in_toggleCrouch( "in_toggleCrouch", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "pressing _movedown button toggles player crouching/standing" );
 idCVar idUsercmdGenLocal::in_toggleZoom( "in_toggleZoom", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "pressing _zoom button toggles zoom on/off" );
@@ -523,6 +527,51 @@ bool idUsercmdGenLocal::Inhibited( void ) {
 
 /*
 ================
+idUsercmdGenLocal::MigrateLegacyRunDefaults
+
+Older OpenQ4 builds archived in_alwaysRun as 0, which leaves retail Quake 4's
+footstep-authored run animations unused until the player manually corrects the
+setting. Migrate those profiles once so existing installs regain retail input
+and movement behavior automatically.
+================
+*/
+void idUsercmdGenLocal::MigrateLegacyRunDefaults( void ) {
+	if ( in_runDefaultMigrated.GetBool() ) {
+		return;
+	}
+
+	if ( !in_alwaysRun.GetBool() && !in_toggleRun.GetBool() ) {
+		common->Printf( "Migrating legacy input config: restoring retail in_alwaysRun 1\n" );
+		in_alwaysRun.SetBool( true );
+	}
+
+	in_runDefaultMigrated.SetBool( true );
+}
+
+/*
+================
+idUsercmdGenLocal::IsRunButtonActive
+
+Retail Quake 4 treats _speed as an inversion of in_alwaysRun in both SP and MP.
+The player footstep events are authored on the run anims, so honoring that logic
+is required to reach the retail movement/sound path.
+================
+*/
+bool idUsercmdGenLocal::IsRunButtonActive( void ) const {
+	return ( toggled_run.on != 0 ) != in_alwaysRun.GetBool();
+}
+
+/*
+================
+idUsercmdGenLocal::ShouldToggleRun
+================
+*/
+bool idUsercmdGenLocal::ShouldToggleRun( void ) const {
+	return in_toggleRun.GetBool() && idAsyncNetwork::IsActive();
+}
+
+/*
+================
 idUsercmdGenLocal::AdjustAngles
 
 Moves the local angle positions
@@ -531,7 +580,7 @@ Moves the local angle positions
 void idUsercmdGenLocal::AdjustAngles( void ) {
 	float	speed;
 	
-	if ( toggled_run.on ^ ( in_alwaysRun.GetBool() && idAsyncNetwork::IsActive() ) ) {
+	if ( IsRunButtonActive() ) {
 		speed = idMath::M_MS2SEC * USERCMD_MSEC * in_angleSpeedKey.GetFloat();
 	} else {
 		speed = idMath::M_MS2SEC * USERCMD_MSEC;
@@ -686,7 +735,7 @@ void idUsercmdGenLocal::JoystickMove( void ) {
 	const int moveAxisX = joystickAxis[AXIS_YAW];
 	const int moveAxisY = joystickAxis[AXIS_PITCH];
 
-	if ( toggled_run.on ^ ( in_alwaysRun.GetBool() && idAsyncNetwork::IsActive() ) ) {
+	if ( IsRunButtonActive() ) {
 		anglespeed = idMath::M_MS2SEC * USERCMD_MSEC * in_angleSpeedKey.GetFloat();
 	} else {
 		anglespeed = idMath::M_MS2SEC * USERCMD_MSEC;
@@ -733,7 +782,7 @@ void idUsercmdGenLocal::CmdButtons( void ) {
 	}
 
 	// check the run button
-	if ( toggled_run.on ^ ( in_alwaysRun.GetBool() && idAsyncNetwork::IsActive() ) ) {
+	if ( IsRunButtonActive() ) {
 		cmd.buttons |= BUTTON_RUN;
 	}
 
@@ -770,7 +819,7 @@ void idUsercmdGenLocal::InitCurrent( void ) {
 	memset( &cmd, 0, sizeof( cmd ) );
 	cmd.flags = flags;
 	cmd.impulse = impulse;
-	cmd.buttons |= ( in_alwaysRun.GetBool() && idAsyncNetwork::IsActive() ) ? BUTTON_RUN : 0;
+	cmd.buttons |= in_alwaysRun.GetBool() ? BUTTON_RUN : 0;
 	cmd.buttons |= in_freeLook.GetBool() ? BUTTON_MLOOK : 0;
 }
 
@@ -790,7 +839,7 @@ void idUsercmdGenLocal::MakeCurrent( void ) {
 	if ( !Inhibited() ) {
 		// update toggled key states
 		toggled_crouch.SetKeyState( ButtonState( UB_DOWN ), in_toggleCrouch.GetBool() );
-		toggled_run.SetKeyState( ButtonState( UB_SPEED ), in_toggleRun.GetBool() && idAsyncNetwork::IsActive() );
+		toggled_run.SetKeyState( ButtonState( UB_SPEED ), ShouldToggleRun() );
 		toggled_zoom.SetKeyState( ButtonState( UB_ZOOM ), in_toggleZoom.GetBool() );
 
 		// keyboard angle adjustment
@@ -877,6 +926,8 @@ idUsercmdGenLocal::Init
 ================
 */
 void idUsercmdGenLocal::Init( void ) {
+	MigrateLegacyRunDefaults();
+	toggled_run.on = in_alwaysRun.GetBool();
 	initialized = true;
 }
 
