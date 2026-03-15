@@ -8,7 +8,7 @@
 [![Architecture](https://img.shields.io/badge/arch-x64-orange.svg)](https://github.com/themuffinator/OpenQ4)
 [![Build System](https://img.shields.io/badge/build-Meson%20%2B%20Ninja-yellow.svg)](https://mesonbuild.com/)
 
-**A modern, full binary replacement for Quake 4**
+**A modern, full binary replacement for Quake 4 with contemporary rendering and display support**
 
 [Features](#features) • [Compatibility](#quake-4-compatibility-status) • [Quick Start](#quick-start) • [Building](#building-from-source) • [Documentation](#documentation) • [TODO](TODO.md) • [Credits](#credits)
 
@@ -23,7 +23,7 @@
 
 ## About
 
-The **OpenQ4 Project** is a complete replacement for the Quake 4 engine and game binaries. Built on the foundation of [Quake4Doom](https://github.com/idSoftware/Quake4Doom), this project aims to provide enhanced compaitibility and QoL to the classic id Tech 4 title for current and future generations of gamers. It provides a platform for future development. Whilst the project aims to be as open-source as possible, the BSE library will remain closed-source for legal reasons.
+The **OpenQ4 Project** is a complete replacement for the Quake 4 engine and game binaries. Built on the foundation of [Quake4Doom](https://github.com/idSoftware/Quake4Doom), OpenQ4 is focused on making Quake 4 feel native on modern hardware without losing stock-asset compatibility. Current work already brings in bloom, HDR tone mapping, SSAO, automatic aspect-ratio handling, multi-monitor support, and an in-progress shadow-mapping path with CSM work underway, alongside broader platform and tooling modernization. While the project aims to be as open-source as possible, the BSE library will remain closed-source for legal reasons.
 
 ## Versioning
 
@@ -61,30 +61,41 @@ To play OpenQ4, you need:
 ## Features
 
 ### Core Features
-- **Full Game Support**: Complete single-player campaign and multiplayer modes
+- **Full Game Support**: Complete single-player campaign and multiplayer modes in one engine stack
 - **Unified Game Directory**: Single `openq4/` directory for both SP and MP game binaries
-- **Asset Validation**: Automatic verification of official Quake 4 assets to ensure authenticity
-- **Auto-Discovery**: Smart detection of your Quake 4 installation (Steam/GOG)
+- **Stock Asset Compatibility**: Built to run against official Quake 4 assets instead of shipping replacement content
+- **Auto-Discovery and Validation**: Smart Steam/GOG detection plus official asset verification
 
-### Modern Enhancements
-- **SDL3 Backend**: Modern cross-platform input and display handling
+### Rendering Upgrades
+- **Bloom**: Tunable post-process bloom for stronger highlights and a more modern presentation
+- **HDR Tone Mapping**: Filmic-style HDR tonemapping and color controls for exposure, contrast, saturation, and vibrance
+- **SSAO**: Screen-space ambient occlusion for added depth and contact shadowing in the final frame
+- **CRT Emulation**: Optional CRT post-process with scanlines, mask, curvature, and chromatic offset controls
+- **Shadow Mapping Pipeline**: Experimental shadow-map support for projected and point lights, with cascaded shadow maps (CSM) actively under development
+- **Resolution Scaling and Supersample Controls**: Screen-fraction rendering supports lower-resolution upscale modes and menu-exposed supersample-style presets for image-quality tuning
+- **Modern AA and Upscaling**: MSAA, SMAA, and high-quality resolution-scaling paths for cleaner output across a wide range of hardware
+
+### Display and UX Improvements
+- **Automatic Aspect-Ratio Management**: UI, FOV, zoom behavior, and view-weapon framing adapt from live render size instead of legacy manual aspect toggles
+- **Multi-Monitor and Multi-Screen Support**: Target specific displays, auto-detect the active monitor, and keep window/UI behavior sane across modern desktop setups
+- **Modern Display Modes**: Fullscreen, borderless windowed, exclusive fullscreen, and desktop-native fullscreen paths
 - **Controller Support**: Full gamepad/joystick support with hotplug and analog controls
-- **Multi-Monitor**: Configure display output across multiple monitors
-- **Display Modes**: Fullscreen, borderless windowed, and desktop-native modes
-- **Audio**: Support for WAV and Ogg Vorbis formats with [OpenAL Soft](https://openal-soft.org/)
-- **Dynamic UI**: Responsive interface that adapts to any aspect ratio
+- **Responsive UI**: Interface scaling and layout behavior that hold up on 4:3, widescreen, ultrawide, and multi-screen environments
 
-### Technical Improvements
+### Platform and Engine Modernization
+- **SDL3 Backend**: Modern cross-platform input, windowing, and display handling
+- **Modern System Compatibility**: 64-bit-first runtime and build targets for current Windows, Linux, and macOS environments
+- **Audio**: Support for WAV and Ogg Vorbis formats with [OpenAL Soft](https://openal-soft.org/)
 - **C++23**: Modern C++ standards for better performance and maintainability
 - **Meson Build System**: Fast, reliable builds with dependency management
 - **Crash Diagnostics**: Automatic crash dumps and logs for debugging
-- **OpenGL Rendering**: Enhanced rendering with [GLEW](http://glew.sourceforge.net/) 2.3.1
+- **OpenGL Renderer Modernization**: Expanded renderer paths and post-processing while preserving classic Quake 4 behavior
 
 <p align="center">
   <img src="assets/img/shot2.png" alt="OpenQ4 gameplay screenshot showing dynamic combat scene" width="49%">
   <img src="assets/img/shot3.png" alt="OpenQ4 gameplay screenshot showing environment detail and lighting" width="49%">
 </p>
-<p align="center"><sub>Modernized engine behavior while preserving classic Quake 4 gameplay.</sub></p>
+<p align="center"><sub>Modern renderer upgrades and modern-system support while preserving classic Quake 4 gameplay.</sub></p>
 
 ---
 
@@ -97,6 +108,7 @@ This status focuses on compatibility with official Quake 4 assets (`q4base` PK4s
 - ✅ **Sound Shaders**: Effect-driven sound shader paths are restored, including effect sound capability checks and runtime playback behavior.
 - ✅ **Screen Effects**: BSE-driven screen/camera effect paths used by stock content are operational in current OpenQ4 builds.
 - ✅ **Material Shaders**: Material handling compatibility has been restored to remove startup reliance on custom repo-side `q4base` material overrides.
+- ✅ **Modern Display Handling**: Automatic aspect-ratio/FOV behavior, multi-monitor targeting, and desktop-native fullscreen paths are integrated into the compatibility baseline for current systems.
 - ✅ **Stock-Asset Validation Path**: Repeated validation loops with stock assets have been used to keep parser/runtime compatibility regressions visible and actionable.
 - ✅ **Door/Trigger Script Progression Stability (OpenD3 Parity)**: Right-associative script compiler pointer-temp handling now guards x64 storage width mismatches (4-byte object-ref temp vs 8-byte pointer temp) by allocating pointer-sized result defs when required, preventing interpreter write corruption in affected trigger/door event chains.
 
@@ -360,14 +372,22 @@ OpenQ4 automatically validates your Quake 4 installation to ensure you have legi
 
 ### Window Settings
 - `r_windowWidth` / `r_windowHeight` - Window dimensions
-- Aspect ratio is automatically handled from render size
+- Aspect ratio, FOV behavior, and UI framing are automatically derived from render size
 
 ### Advanced Graphics
+- `r_bloom 0|1` - Toggle bloom post-processing
+- `r_hdrToneMap 0|1` - Toggle HDR tonemapping and color correction
+- `r_ssao 0|1` - Toggle screen-space ambient occlusion
+- `r_crt 0|1` - Toggle CRT emulation post-processing
+- `r_useShadowMap 0|1` - Enable the experimental shadow-map path
+- `r_shadowMapCSM 0|1` - Enable experimental projected-light cascaded shadow maps when shadow maps are active
 - `r_interactionColorMode` - Shader compatibility mode
   - `0` - Auto-detect from interaction.vfp
   - `1` - Packed env16.xy
   - `2` - Vector env16/env17
-- Resolution scaling (`r_screenFraction < 100`)
+- Screen-fraction scaling (`r_screenFraction`)
+  - Values below `100` reduce internal resolution for performance
+  - Values above `100` are exposed as supersample-style presets in the video settings for image-quality tuning
   - `r_resolutionScaleMode 0` - Legacy viewport scaling (default)
   - `r_resolutionScaleMode 1` - Bilinear fullscreen upscale
   - `r_resolutionScaleMode 2` - High-quality fullscreen upscale + sharpening
@@ -383,7 +403,7 @@ OpenQ4 automatically validates your Quake 4 installation to ensure you have legi
 - `in_joystickDeadZone` - Analog stick dead zone
 - `in_joystickTriggerThreshold` - Trigger sensitivity
 
-### Features
+### Controller Features
 - Hotplug support (connect/disconnect anytime)
 - Dual-stick analog movement and look
 - Full button mapping support
@@ -410,7 +430,7 @@ OpenQ4 automatically validates your Quake 4 installation to ensure you have legi
 <p align="center">
   <img src="assets/img/shot4.png" alt="OpenQ4 gameplay screenshot showing atmospheric environment" width="92%">
 </p>
-<p align="center"><sub>Built for modern systems without changing the original game feel.</sub></p>
+<p align="center"><sub>Built for modern displays, modern GPUs, and modern systems without changing the original game feel.</sub></p>
 
 ---
 
