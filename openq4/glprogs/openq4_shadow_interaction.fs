@@ -13,6 +13,7 @@ uniform float uShadowNormalBias;
 uniform float uShadowFilterRadius;
 uniform vec4 uShadowAtlasRect[4];
 uniform float uShadowSplitDepths[4];
+uniform float uShadowCascadeBiasScale[4];
 uniform int uShadowCascadeCount;
 uniform float uShadowCascadeBlend;
 uniform float uShadowDebugMode;
@@ -54,19 +55,33 @@ vec3 SafeNormalize( vec3 value ) {
 	return value * inversesqrt( max( dot( value, value ), 1.0e-8 ) );
 }
 
-float ShadowReceiverBias() {
-	float lightCos = clamp( vShadowLightCos, 0.0, 1.0 );
-	float slopeBias = sqrt( max( 1.0 - lightCos * lightCos, 0.0 ) );
-	return uShadowBias + uShadowNormalBias * slopeBias;
+float CascadeBiasScale( int cascadeIndex ) {
+	if ( cascadeIndex <= 0 ) {
+		return uShadowCascadeBiasScale[0];
+	}
+	if ( cascadeIndex == 1 ) {
+		return uShadowCascadeBiasScale[1];
+	}
+	if ( cascadeIndex == 2 ) {
+		return uShadowCascadeBiasScale[2];
+	}
+	return uShadowCascadeBiasScale[3];
 }
 
-float SampleShadowCompare( vec2 uv, float depth ) {
-	float bias = ShadowReceiverBias();
+float ShadowReceiverBias( int cascadeIndex ) {
+	float lightCos = clamp( vShadowLightCos, 0.0, 1.0 );
+	float slopeBias = sqrt( max( 1.0 - lightCos * lightCos, 0.0 ) );
+	float cascadeScale = CascadeBiasScale( cascadeIndex );
+	return ( uShadowBias + uShadowNormalBias * slopeBias ) * cascadeScale;
+}
+
+float SampleShadowCompare( vec2 uv, float depth, int cascadeIndex ) {
+	float bias = ShadowReceiverBias( cascadeIndex );
 	float storedDepth = texture2D( uShadowMap, uv ).r;
 	return ( depth - bias <= storedDepth ) ? 1.0 : 0.0;
 }
 
-vec4 SampleShadowCascade( vec4 shadowCoord, vec4 atlasRect ) {
+vec4 SampleShadowCascade( vec4 shadowCoord, vec4 atlasRect, int cascadeIndex ) {
 	float absW = abs( shadowCoord.w );
 	if ( shadowCoord.w != shadowCoord.w || absW < kShadowCoordWEpsilon || absW > kShadowCoordMaxMagnitude ) {
 		gShadowDebugState = max( gShadowDebugState, 1.0 );
@@ -98,24 +113,24 @@ vec4 SampleShadowCascade( vec4 shadowCoord, vec4 atlasRect ) {
 	uv = clamp( uv, clampMin, clampMax );
 
 	if ( uShadowFilterRadius <= 0.0 ) {
-		return vec4( SampleShadowCompare( uv, depth ), localUv.x, localUv.y, depth );
+		return vec4( SampleShadowCompare( uv, depth, cascadeIndex ), localUv.x, localUv.y, depth );
 	}
 
 	vec2 tap = uShadowTexelSize * uShadowFilterRadius;
 	float shadow = 0.0;
-	shadow += SampleShadowCompare( uv, depth );
-	shadow += SampleShadowCompare( clamp( uv + vec2( -0.326212, -0.405805 ) * tap, clampMin, clampMax ), depth );
-	shadow += SampleShadowCompare( clamp( uv + vec2( -0.840144, -0.073580 ) * tap, clampMin, clampMax ), depth );
-	shadow += SampleShadowCompare( clamp( uv + vec2( -0.695914, 0.457137 ) * tap, clampMin, clampMax ), depth );
-	shadow += SampleShadowCompare( clamp( uv + vec2( -0.203345, 0.620716 ) * tap, clampMin, clampMax ), depth );
-	shadow += SampleShadowCompare( clamp( uv + vec2( 0.962340, -0.194983 ) * tap, clampMin, clampMax ), depth );
-	shadow += SampleShadowCompare( clamp( uv + vec2( 0.473434, -0.480026 ) * tap, clampMin, clampMax ), depth );
-	shadow += SampleShadowCompare( clamp( uv + vec2( 0.519456, 0.767022 ) * tap, clampMin, clampMax ), depth );
-	shadow += SampleShadowCompare( clamp( uv + vec2( 0.185461, -0.893124 ) * tap, clampMin, clampMax ), depth );
-	shadow += SampleShadowCompare( clamp( uv + vec2( 0.507431, 0.064425 ) * tap, clampMin, clampMax ), depth );
-	shadow += SampleShadowCompare( clamp( uv + vec2( 0.896420, 0.412458 ) * tap, clampMin, clampMax ), depth );
-	shadow += SampleShadowCompare( clamp( uv + vec2( -0.321940, -0.932615 ) * tap, clampMin, clampMax ), depth );
-	shadow += SampleShadowCompare( clamp( uv + vec2( -0.791559, -0.597705 ) * tap, clampMin, clampMax ), depth );
+	shadow += SampleShadowCompare( uv, depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + vec2( -0.326212, -0.405805 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + vec2( -0.840144, -0.073580 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + vec2( -0.695914, 0.457137 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + vec2( -0.203345, 0.620716 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + vec2( 0.962340, -0.194983 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + vec2( 0.473434, -0.480026 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + vec2( 0.519456, 0.767022 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + vec2( 0.185461, -0.893124 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + vec2( 0.507431, 0.064425 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + vec2( 0.896420, 0.412458 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + vec2( -0.321940, -0.932615 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + vec2( -0.791559, -0.597705 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
 	return vec4( shadow * ( 1.0 / 13.0 ), localUv.x, localUv.y, depth );
 }
 
@@ -134,15 +149,15 @@ float CascadeSplitDepth( int index ) {
 
 vec4 SampleCascadeByIndex( int index ) {
 	if ( index <= 0 ) {
-		return SampleShadowCascade( vShadowCoord0, uShadowAtlasRect[0] );
+		return SampleShadowCascade( vShadowCoord0, uShadowAtlasRect[0], 0 );
 	}
 	if ( index == 1 ) {
-		return SampleShadowCascade( vShadowCoord1, uShadowAtlasRect[1] );
+		return SampleShadowCascade( vShadowCoord1, uShadowAtlasRect[1], 1 );
 	}
 	if ( index == 2 ) {
-		return SampleShadowCascade( vShadowCoord2, uShadowAtlasRect[2] );
+		return SampleShadowCascade( vShadowCoord2, uShadowAtlasRect[2], 2 );
 	}
-	return SampleShadowCascade( vShadowCoord3, uShadowAtlasRect[3] );
+	return SampleShadowCascade( vShadowCoord3, uShadowAtlasRect[3], 3 );
 }
 
 vec4 ShadowCoordByIndex( int index ) {
