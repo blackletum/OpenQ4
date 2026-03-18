@@ -229,6 +229,7 @@ typedef struct {
 	GLint			shadowFilterRadius;
 	GLint			shadowAtlasRect;
 	GLint			shadowSplitDepths;
+	GLint			shadowCascadeBiasScale;
 	GLint			shadowCascadeCount;
 	GLint			shadowCascadeBlend;
 	GLint			shadowDebugMode;
@@ -303,6 +304,9 @@ typedef struct {
 	int				atlasDiv;
 	int				tileSize;
 	float			splitDepths[SHADOWMAP_MAX_CASCADES];
+	float			biasScale[SHADOWMAP_MAX_CASCADES];
+	float			depthRange[SHADOWMAP_MAX_CASCADES];
+	float			clipZExtent[SHADOWMAP_MAX_CASCADES];
 	idPlane			clipPlanes[SHADOWMAP_MAX_CASCADES][4];
 	idVec4			atlasRect[SHADOWMAP_MAX_CASCADES];
 } projectedShadowMapState_t;
@@ -471,6 +475,11 @@ static bool RB_ShadowMapShouldReport( void ) {
 	return true;
 }
 
+/*
+=============
+RB_ShadowMapResetProjectedState
+=============
+*/
 static void RB_ShadowMapResetProjectedState( void ) {
 	memset( &g_projectedShadowMapState, 0, sizeof( g_projectedShadowMapState ) );
 	g_projectedShadowMapState.cascadeCount = 1;
@@ -478,6 +487,9 @@ static void RB_ShadowMapResetProjectedState( void ) {
 	g_projectedShadowMapState.atlasRect[0].Set( 0.0f, 0.0f, 1.0f, 1.0f );
 	for ( int i = 0; i < SHADOWMAP_MAX_CASCADES; i++ ) {
 		g_projectedShadowMapState.splitDepths[i] = 1.0e30f;
+		g_projectedShadowMapState.biasScale[i] = 1.0f;
+		g_projectedShadowMapState.depthRange[i] = 0.0f;
+		g_projectedShadowMapState.clipZExtent[i] = 0.0f;
 	}
 }
 
@@ -644,6 +656,22 @@ static idVec4 RB_ShadowMapBuildAtlasRect( const int cascadeIndex, const int atla
 
 /*
 =============
+RB_ShadowMapCascadeBiasScale
+
+Derives a receiver-bias multiplier from the fitted clip-space footprint and depth extent of a cascade.
+=============
+*/
+static float RB_ShadowMapCascadeBiasScale( const idVec3 &ndcMins, const idVec3 &ndcMaxs ) {
+	const float xyExtent = Max( ndcMaxs.x - ndcMins.x, ndcMaxs.y - ndcMins.y );
+	const float zExtent = ndcMaxs.z - ndcMins.z;
+	const float footprintScale = xyExtent * 0.5f;
+	const float depthScale = zExtent * 0.5f;
+	const float combinedScale = Max( footprintScale, depthScale );
+	return idMath::ClampFloat( 0.35f, 3.0f, combinedScale );
+}
+
+/*
+=============
 RB_ShadowMapReportProjectedSplits
 =============
 */
@@ -712,11 +740,25 @@ static void RB_ShadowMapBuildProjectedState( const viewLight_t *vLight, const id
 		idVec3 ndcMaxs;
 		if ( RB_ShadowMapBuildCascadeBounds( baseClipPlanes, viewDef, sliceNear, sliceFar, tileSize, ndcMins, ndcMaxs ) ) {
 			RB_ShadowMapBuildCascadeClipPlanes( baseClipPlanes, ndcMins, ndcMaxs, g_projectedShadowMapState.clipPlanes[cascadeIndex] );
+			g_projectedShadowMapState.biasScale[cascadeIndex] = RB_ShadowMapCascadeBiasScale( ndcMins, ndcMaxs );
+			g_projectedShadowMapState.clipZExtent[cascadeIndex] = ndcMaxs.z - ndcMins.z;
 		}
+		g_projectedShadowMapState.depthRange[cascadeIndex] = sliceFar - sliceNear;
 		sliceNear = sliceFar;
 	}
 
 	RB_ShadowMapReportProjectedSplits( vLight, zNear, maxDistance, cascadeCount );
+	if ( idMath::ClampInt( 0, 2, r_shadowMapReport.GetInteger() ) >= 2 && g_shadowMapReportThisFrame && vLight != NULL ) {
+		const char *shaderName = vLight->lightShader != NULL ? vLight->lightShader->GetName() : "<null>";
+		common->Printf( "SM csm bias '%s'", shaderName );
+		for ( int cascadeIndex = 0; cascadeIndex < cascadeCount; cascadeIndex++ ) {
+			common->Printf( " [%d]=%.3f depth=%.2f clipZ=%.3f", cascadeIndex,
+				g_projectedShadowMapState.biasScale[cascadeIndex],
+				g_projectedShadowMapState.depthRange[cascadeIndex],
+				g_projectedShadowMapState.clipZExtent[cascadeIndex] );
+		}
+		common->Printf( "\n" );
+	}
 }
 
 static void RB_ShadowMapFreeProgram( void ) {
@@ -900,6 +942,7 @@ static bool RB_ShadowMapLoadProgram( void ) {
 	g_shadowMapProgram.shadowFilterRadius = glGetUniformLocationARB( programObject, "uShadowFilterRadius" );
 	g_shadowMapProgram.shadowAtlasRect = glGetUniformLocationARB( programObject, "uShadowAtlasRect[0]" );
 	g_shadowMapProgram.shadowSplitDepths = glGetUniformLocationARB( programObject, "uShadowSplitDepths[0]" );
+	g_shadowMapProgram.shadowCascadeBiasScale = glGetUniformLocationARB( programObject, "uShadowCascadeBiasScale[0]" );
 	g_shadowMapProgram.shadowCascadeCount = glGetUniformLocationARB( programObject, "uShadowCascadeCount" );
 	g_shadowMapProgram.shadowCascadeBlend = glGetUniformLocationARB( programObject, "uShadowCascadeBlend" );
 	g_shadowMapProgram.shadowDebugMode = glGetUniformLocationARB( programObject, "uShadowDebugMode" );
@@ -2029,6 +2072,9 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 	}
 	if ( g_shadowMapProgram.shadowSplitDepths >= 0 ) {
 		glUniform1fvARB( g_shadowMapProgram.shadowSplitDepths, SHADOWMAP_MAX_CASCADES, g_projectedShadowMapState.splitDepths );
+	}
+	if ( g_shadowMapProgram.shadowCascadeBiasScale >= 0 ) {
+		glUniform1fvARB( g_shadowMapProgram.shadowCascadeBiasScale, SHADOWMAP_MAX_CASCADES, g_projectedShadowMapState.biasScale );
 	}
 	if ( g_shadowMapProgram.shadowCascadeCount >= 0 ) {
 		glUniform1iARB( g_shadowMapProgram.shadowCascadeCount, g_projectedShadowMapState.cascadeCount );
