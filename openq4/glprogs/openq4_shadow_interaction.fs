@@ -15,6 +15,7 @@ uniform vec4 uShadowAtlasRect[4];
 uniform float uShadowSplitDepths[4];
 uniform int uShadowCascadeCount;
 uniform float uShadowCascadeBlend;
+uniform float uShadowDebugMode;
 
 varying vec2 vBumpTexCoord;
 varying vec2 vDiffuseTexCoord;
@@ -30,6 +31,19 @@ varying vec4 vShadowCoord3;
 varying vec3 vVertexColor;
 varying float vShadowLightCos;
 varying float vViewDepth;
+
+const float kShadowCoordWEpsilon = 1.0e-5;
+const float kShadowCoordMaxMagnitude = 65536.0;
+
+float gShadowDebugState = 0.0;
+
+bool ShadowCoordComponentInvalid( float value ) {
+	return value != value || abs( value ) > kShadowCoordMaxMagnitude;
+}
+
+bool ShadowCoordProjectedInvalid( vec3 value ) {
+	return ShadowCoordComponentInvalid( value.x ) || ShadowCoordComponentInvalid( value.y ) || ShadowCoordComponentInvalid( value.z );
+}
 
 vec3 SafeNormalize( vec3 value ) {
 	return value * inversesqrt( max( dot( value, value ), 1.0e-8 ) );
@@ -48,11 +62,18 @@ float SampleShadowCompare( vec2 uv, float depth ) {
 }
 
 float SampleShadowCascade( vec4 shadowCoord, vec4 atlasRect ) {
-	if ( shadowCoord.w <= 0.0 ) {
+	float absW = abs( shadowCoord.w );
+	if ( shadowCoord.w != shadowCoord.w || absW < kShadowCoordWEpsilon || absW > kShadowCoordMaxMagnitude ) {
+		gShadowDebugState = max( gShadowDebugState, 1.0 );
 		return 1.0;
 	}
 
 	vec3 projected = shadowCoord.xyz / shadowCoord.w;
+	if ( ShadowCoordProjectedInvalid( projected ) ) {
+		gShadowDebugState = max( gShadowDebugState, 2.0 );
+		return 1.0;
+	}
+
 	vec2 localUv = projected.xy * 0.5 + 0.5;
 	float depth = projected.z * 0.5 + 0.5;
 
@@ -163,6 +184,8 @@ void main() {
 	vec3 lightDir = SafeNormalize( vLightVector );
 	float ndotl = max( dot( lightDir, localNormal ), 0.0 );
 
+	gShadowDebugState = 0.0;
+
 	vec3 light = vec3( ndotl );
 	light *= texture2DProj( uLightFalloffMap, vLightFalloffTexCoord ).rgb;
 	light *= texture2DProj( uLightProjectionMap, vLightProjectionTexCoord ).rgb;
@@ -177,5 +200,15 @@ void main() {
 	vec3 specular = texture2D( uSpecularMap, vSpecularTexCoord ).rgb * uSpecularColor.rgb * specularTerm;
 
 	vec3 color = ( diffuse + specular ) * light * vVertexColor;
+	if ( uShadowDebugMode > 0.5 ) {
+		if ( gShadowDebugState > 1.5 ) {
+			gl_FragColor = vec4( 1.0, 0.0, 1.0, 1.0 );
+			return;
+		}
+		if ( gShadowDebugState > 0.5 ) {
+			gl_FragColor = vec4( 1.0, 0.0, 0.0, 1.0 );
+			return;
+		}
+	}
 	gl_FragColor = vec4( color, 0.0 );
 }

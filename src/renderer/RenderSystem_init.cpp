@@ -192,6 +192,7 @@ idCVar r_shadowMapCascadeCount( "r_shadowMapCascadeCount", "4", CVAR_RENDERER | 
 idCVar r_shadowMapCascadeDistance( "r_shadowMapCascadeDistance", "1536", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "camera-space distance covered by the cropped projected-light cascades", 64.0f, 8192.0f );
 idCVar r_shadowMapCascadeLambda( "r_shadowMapCascadeLambda", "0.75", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "blend factor between uniform and logarithmic projected-light cascade splits", 0.0f, 1.0f );
 idCVar r_shadowMapCascadeBlend( "r_shadowMapCascadeBlend", "0.15", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "fraction of each projected-light cascade range used to blend into the next cascade", 0.0f, 0.5f );
+idCVar r_shadowMapDebugCoords( "r_shadowMapDebugCoords", "0", CVAR_RENDERER | CVAR_BOOL, "visualize invalid projected-light shadow coordinates in the GLSL interaction path" );
 idCVar r_shadowMapCascadeStabilize( "r_shadowMapCascadeStabilize", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "snap projected-light cascade bounds to texels to reduce shimmering" );
 idCVar r_shadowMapPointFarScale( "r_shadowMapPointFarScale", "1.25", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "padding multiplier applied to point-light shadow-map range", 1.0f, 4.0f );
 idCVar r_shadowMapPolygonFactor( "r_shadowMapPolygonFactor", "2.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "slope-scale depth bias used when rendering the simple projected-light shadow map", 0.0f, 16.0f );

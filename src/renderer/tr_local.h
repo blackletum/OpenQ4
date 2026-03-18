@@ -1099,6 +1099,7 @@ extern idCVar r_shadowMapCascadeCount;		// number of projected-light cascades us
 extern idCVar r_shadowMapCascadeDistance;	// camera distance covered by cropped projected-light cascades
 extern idCVar r_shadowMapCascadeLambda;		// uniform/log split blend for projected-light cascades
 extern idCVar r_shadowMapCascadeBlend;		// transition width between projected-light cascades
+extern idCVar r_shadowMapDebugCoords;		// visualize invalid projected-light shadow coordinates
 extern idCVar r_shadowMapCascadeStabilize;	// snap projected-light cascade bounds to texels
 extern idCVar r_shadowMapPointFarScale;	// range padding multiplier used by point-light shadow maps
 extern idCVar r_shadowMapPolygonFactor;	// slope-scale bias used when rendering simple shadow maps

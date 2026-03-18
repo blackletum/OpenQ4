@@ -231,6 +231,7 @@ typedef struct {
 	GLint			shadowSplitDepths;
 	GLint			shadowCascadeCount;
 	GLint			shadowCascadeBlend;
+	GLint			shadowDebugMode;
 
 	GLint			bumpMap;
 	GLint			lightFalloffMap;
@@ -867,6 +868,7 @@ static bool RB_ShadowMapLoadProgram( void ) {
 	g_shadowMapProgram.shadowSplitDepths = glGetUniformLocationARB( programObject, "uShadowSplitDepths[0]" );
 	g_shadowMapProgram.shadowCascadeCount = glGetUniformLocationARB( programObject, "uShadowCascadeCount" );
 	g_shadowMapProgram.shadowCascadeBlend = glGetUniformLocationARB( programObject, "uShadowCascadeBlend" );
+	g_shadowMapProgram.shadowDebugMode = glGetUniformLocationARB( programObject, "uShadowDebugMode" );
 	g_shadowMapProgram.bumpMap = glGetUniformLocationARB( programObject, "uBumpMap" );
 	g_shadowMapProgram.lightFalloffMap = glGetUniformLocationARB( programObject, "uLightFalloffMap" );
 	g_shadowMapProgram.lightProjectionMap = glGetUniformLocationARB( programObject, "uLightProjectionMap" );
@@ -1995,6 +1997,9 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 	}
 	if ( g_shadowMapProgram.shadowCascadeBlend >= 0 ) {
 		glUniform1fARB( g_shadowMapProgram.shadowCascadeBlend, idMath::ClampFloat( 0.0f, 0.5f, r_shadowMapCascadeBlend.GetFloat() ) );
+	}
+	if ( g_shadowMapProgram.shadowDebugMode >= 0 ) {
+		glUniform1fARB( g_shadowMapProgram.shadowDebugMode, r_shadowMapDebugCoords.GetBool() ? 1.0f : 0.0f );
 	}
 
 	glStencilMask( 255 );
