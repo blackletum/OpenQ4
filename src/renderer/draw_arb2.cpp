@@ -414,6 +414,39 @@ static const char *RB_ShadowMapPassResultName( shadowMapPassResult_t result ) {
 	}
 }
 
+/*
+=============
+RB_ShadowMapDebugMode
+=============
+*/
+static shadowMapDebugMode_t RB_ShadowMapDebugMode( void ) {
+	return static_cast<shadowMapDebugMode_t>( idMath::ClampInt( SHADOWMAP_DEBUGMODE_OFF, SHADOWMAP_DEBUGMODE_COUNT - 1, r_shadowMapDebugMode.GetInteger() ) );
+}
+
+/*
+=============
+RB_ShadowMapDebugModeName
+=============
+*/
+static const char *RB_ShadowMapDebugModeName( shadowMapDebugMode_t mode ) {
+	switch ( mode ) {
+	case SHADOWMAP_DEBUGMODE_OFF:
+		return "off";
+	case SHADOWMAP_DEBUGMODE_ATLAS:
+		return "atlas-depth";
+	case SHADOWMAP_DEBUGMODE_CASCADE_INDEX:
+		return "cascade-index";
+	case SHADOWMAP_DEBUGMODE_PROJECTED_UV:
+		return "projected-uv";
+	case SHADOWMAP_DEBUGMODE_PROJECTED_DEPTH:
+		return "projected-depth";
+	case SHADOWMAP_DEBUGMODE_INVALID_MASK:
+		return "invalid-mask";
+	default:
+		return "unknown";
+	}
+}
+
 static int RB_CountDrawSurfChain( const drawSurf_t *surf ) {
 	int count = 0;
 	for ( ; surf != NULL; surf = surf->nextOnLight ) {
@@ -620,7 +653,8 @@ static void RB_ShadowMapReportProjectedSplits( const viewLight_t *vLight, const 
 	}
 
 	const char *shaderName = vLight->lightShader != NULL ? vLight->lightShader->GetName() : "<null>";
-	common->Printf( "SM csm '%s' zNear=%.2f max=%.2f cascades=%d splits", shaderName, zNear, maxDistance, cascadeCount );
+	common->Printf( "SM csm '%s' zNear=%.2f max=%.2f cascades=%d debug=%s splits",
+		shaderName, zNear, maxDistance, cascadeCount, RB_ShadowMapDebugModeName( RB_ShadowMapDebugMode() ) );
 	for ( int splitIndex = 0; splitIndex < cascadeCount - 1; splitIndex++ ) {
 		common->Printf( " [%d]=%.2f", splitIndex, g_projectedShadowMapState.splitDepths[splitIndex] );
 	}
@@ -1296,7 +1330,7 @@ static void RB_ShadowMapStatsReport( void ) {
 
 	if ( unsupportedSummary.Length() > 0 ) {
 		common->Printf(
-			"SM summary: lights=%d supported=%d point=%d projected=%d parallel=%d mapped(local=%d global=%d) unshadowed(local=%d global=%d) fallback(local=%d global=%d) unsupported[%s]\n",
+			"SM summary: lights=%d supported=%d point=%d projected=%d parallel=%d mapped(local=%d global=%d) unshadowed(local=%d global=%d) fallback(local=%d global=%d) debug=%s unsupported[%s]\n",
 			g_shadowMapStats.totalLights,
 			g_shadowMapStats.supportedLights,
 			g_shadowMapStats.pointLights,
@@ -1308,6 +1342,7 @@ static void RB_ShadowMapStatsReport( void ) {
 			g_shadowMapStats.unshadowedGlobalPasses,
 			g_shadowMapStats.fallbackLocalPasses,
 			g_shadowMapStats.fallbackGlobalPasses,
+			RB_ShadowMapDebugModeName( RB_ShadowMapDebugMode() ),
 			unsupportedSummary.c_str() );
 		common->Printf(
 			"SM detail: failures(render local=%d global=%d, mask local=%d global=%d)\n",
@@ -1317,7 +1352,7 @@ static void RB_ShadowMapStatsReport( void ) {
 			g_shadowMapStats.maskFailGlobalPasses );
 	} else {
 		common->Printf(
-			"SM summary: lights=%d supported=%d point=%d projected=%d parallel=%d mapped(local=%d global=%d) unshadowed(local=%d global=%d) fallback(local=%d global=%d)\n",
+			"SM summary: lights=%d supported=%d point=%d projected=%d parallel=%d mapped(local=%d global=%d) unshadowed(local=%d global=%d) fallback(local=%d global=%d) debug=%s\n",
 			g_shadowMapStats.totalLights,
 			g_shadowMapStats.supportedLights,
 			g_shadowMapStats.pointLights,
@@ -1328,7 +1363,8 @@ static void RB_ShadowMapStatsReport( void ) {
 			g_shadowMapStats.unshadowedLocalPasses,
 			g_shadowMapStats.unshadowedGlobalPasses,
 			g_shadowMapStats.fallbackLocalPasses,
-			g_shadowMapStats.fallbackGlobalPasses );
+			g_shadowMapStats.fallbackGlobalPasses,
+			RB_ShadowMapDebugModeName( RB_ShadowMapDebugMode() ) );
 		common->Printf(
 			"SM detail: failures(render local=%d global=%d, mask local=%d global=%d)\n",
 			g_shadowMapStats.renderFailLocalPasses,
@@ -1350,7 +1386,7 @@ static void RB_ShadowMapLightReport( const viewLight_t *vLight, shadowMapLightSu
 		origin = vLight->globalLightOrigin;
 	}
 	common->Printf(
-		"SM light '%s' origin=(%.1f %.1f %.1f) type=%s%s interactions(local=%d global=%d) shadows(local=%d global=%d) support=%s\n",
+		"SM light '%s' origin=(%.1f %.1f %.1f) type=%s%s interactions(local=%d global=%d) shadows(local=%d global=%d) debug=%s support=%s\n",
 		shaderName,
 		origin[0], origin[1], origin[2],
 		( vLight != NULL && vLight->pointLight ) ? "point" : "projected",
@@ -1359,6 +1395,7 @@ static void RB_ShadowMapLightReport( const viewLight_t *vLight, shadowMapLightSu
 		RB_CountDrawSurfChain( vLight != NULL ? vLight->globalInteractions : NULL ),
 		RB_CountDrawSurfChain( vLight != NULL ? vLight->localShadows : NULL ),
 		RB_CountDrawSurfChain( vLight != NULL ? vLight->globalShadows : NULL ),
+		RB_ShadowMapDebugModeName( RB_ShadowMapDebugMode() ),
 		RB_ShadowMapSupportReasonName( reason ) );
 }
 
@@ -1369,10 +1406,11 @@ static void RB_ShadowMapPassReport( const viewLight_t *vLight, shadowMapPassKind
 
 	const char *shaderName = ( vLight != NULL && vLight->lightShader != NULL ) ? vLight->lightShader->GetName() : "<null>";
 	common->Printf(
-		"SM pass %s '%s' type=%s result=%s casters(a=%d b=%d c=%d d=%d) shadowSurfs(primary=%d secondary=%d) receivers=%d\n",
+		"SM pass %s '%s' type=%s debug=%s result=%s casters(a=%d b=%d c=%d d=%d) shadowSurfs(primary=%d secondary=%d) receivers=%d\n",
 		RB_ShadowMapPassName( passKind ),
 		shaderName,
 		pointLight ? "point" : "projected",
+		RB_ShadowMapDebugModeName( RB_ShadowMapDebugMode() ),
 		RB_ShadowMapPassResultName( result ),
 		RB_CountDrawSurfChain( primaryCasters ),
 		RB_CountDrawSurfChain( secondaryCasters ),
@@ -1999,7 +2037,7 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 		glUniform1fARB( g_shadowMapProgram.shadowCascadeBlend, idMath::ClampFloat( 0.0f, 0.5f, r_shadowMapCascadeBlend.GetFloat() ) );
 	}
 	if ( g_shadowMapProgram.shadowDebugMode >= 0 ) {
-		glUniform1fARB( g_shadowMapProgram.shadowDebugMode, r_shadowMapDebugCoords.GetBool() ? 1.0f : 0.0f );
+		glUniform1fARB( g_shadowMapProgram.shadowDebugMode, (float)RB_ShadowMapDebugMode() );
 	}
 
 	glStencilMask( 255 );
@@ -2795,4 +2833,3 @@ void R_ARB2_Init( void ) {
 
 	glConfig.allowARB2Path = true;
 }
-
