@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage self-contained Windows runtime payloads into OpenQ4 output directories."""
+"""Validate Windows CRT linkage and stage non-CRT runtime payloads into OpenQ4 output directories."""
 
 from __future__ import annotations
 
@@ -8,12 +8,12 @@ import json
 import sys
 from pathlib import Path
 
-from windows_runtime import RuntimeFlavor, is_windows_host, stage_runtime_payloads
+from windows_runtime import is_windows_host, stage_runtime_payloads
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Stage OpenQ4 Windows runtime payloads into build and install directories."
+        description="Validate Windows CRT linkage and stage non-CRT OpenQ4 runtime payloads into build and install directories."
     )
     parser.add_argument("--source-root", required=True, help="OpenQ4 repository root.")
     parser.add_argument("--build-dir", required=True, help="Meson build directory.")
@@ -36,14 +36,6 @@ def main(argv: list[str]) -> int:
     build_dir = Path(args.build_dir)
     targets = [build_dir] + [Path(path) for path in args.install_dir]
     result = stage_runtime_payloads(source_root, build_dir, targets)
-
-    if result["runtime_flavor"] == RuntimeFlavor.DEBUG.value:
-        print(
-            "Staged local debug CRT files for a debug build. "
-            "These files are for local developer use and must not be redistributed.",
-            file=sys.stderr,
-        )
-
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 

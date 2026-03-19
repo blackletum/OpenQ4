@@ -126,7 +126,11 @@ Current known compatibility regressions and follow-up work are tracked in [TODO.
 - **Windows**: Visual Studio 2026+ (or MSVC 19.46+)
 - **Linux**: GCC 13+ or Clang 17+
 - **macOS**: Xcode 16+ (Clang 17+)
+
 - **Build Tools**: [Meson](https://mesonbuild.com/) and [Ninja](https://ninja-build.org/)
+
+> [!NOTE]
+> Windows release packaging is intended to use the static MSVC CRT so end users do not need separate Visual C++ redistributable installs for OpenQ4 itself.
 
 > [!NOTE]
 > Linux runtime currently uses an X11/GLX platform path. On Wayland desktops, run OpenQ4 through XWayland (`DISPLAY` must be available).
@@ -197,6 +201,9 @@ The engine will automatically find your Quake 4 installation and validate the ga
   - **Windows**: Visual Studio 2026 (MSVC 19.46+)
   - **Linux**: GCC 13+ or Clang 17+
   - **macOS**: Xcode 16+ (Clang 17+)
+
+> [!NOTE]
+> Windows release packaging is intended to use the static MSVC CRT so end users do not need separate Visual C++ redistributable installs for OpenQ4 itself.
 
 ### Build Options
 ```

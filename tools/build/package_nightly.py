@@ -19,7 +19,6 @@ from windows_runtime import (
     RuntimeFlavor,
     infer_runtime_flavor,
     list_staged_runtime_files,
-    required_runtime_file_names,
 )
 
 
@@ -222,14 +221,13 @@ def copy_required_windows_runtime(
     copied_names: set[str] = set()
 
     runtime_flavor = infer_runtime_flavor(install_dir)
-    if runtime_flavor == RuntimeFlavor.DEBUG:
+    if runtime_flavor != RuntimeFlavor.NONE:
         raise RuntimeError(
-            "Windows package staging detected debug CRT imports. "
-            "Public OpenQ4 packages must be built with a non-debug CRT."
+            "Windows package staging detected MSVC/UCRT runtime imports. "
+            "Public OpenQ4 packages must be built with the static CRT policy."
         )
 
     required_names = {"OpenAL32.dll"}
-    required_names.update(required_runtime_file_names(runtime_flavor))
 
     for filename in sorted(required_names):
         source = runtime_by_name.get(filename.lower())
