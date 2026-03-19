@@ -42,6 +42,34 @@ extern idCVar s_volume;
 extern idCVar s_useEAXReverb;
 extern idCVar s_deviceName;
 
+static const char* OPENQ4_AUDIO_DEVICE_DEFAULT_CHOICE = "__OPENQ4_DEFAULT_AUDIO_DEVICE__";
+
+static bool OpenQ4_UseEnumerateAllDevices( ALCdevice* device ) {
+#if defined( ALC_ALL_DEVICES_SPECIFIER ) && defined( ALC_DEFAULT_ALL_DEVICES_SPECIFIER )
+	return alcIsExtensionPresent( device, "ALC_ENUMERATE_ALL_EXT" ) != AL_FALSE;
+#else
+	return false;
+#endif
+}
+
+static ALCenum OpenQ4_GetPlaybackDevicesToken( ALCdevice* device ) {
+#if defined( ALC_ALL_DEVICES_SPECIFIER )
+	if( OpenQ4_UseEnumerateAllDevices( device ) ) {
+		return ALC_ALL_DEVICES_SPECIFIER;
+	}
+#endif
+	return ALC_DEVICE_SPECIFIER;
+}
+
+static ALCenum OpenQ4_GetDefaultPlaybackDeviceToken( ALCdevice* device ) {
+#if defined( ALC_DEFAULT_ALL_DEVICES_SPECIFIER )
+	if( OpenQ4_UseEnumerateAllDevices( device ) ) {
+		return ALC_DEFAULT_ALL_DEVICES_SPECIFIER;
+	}
+#endif
+	return ALC_DEFAULT_DEVICE_SPECIFIER;
+}
+
 #if defined( AL_EFFECTSLOT_EFFECT ) && defined( AL_EFFECT_NULL ) && defined( AL_AUXILIARY_SEND_FILTER )
 	#define OPENQ4_OPENAL_EFX_SUPPORTED 1
 #else
@@ -103,6 +131,8 @@ idSoundHardware_OpenAL::idSoundHardware_OpenAL()
 	efxEnabled = false;
 	auxEffectSlot = 0;
 	auxReverbEffect = 0;
+	lastDeviceCheckTime = 0;
+	openedWithDefaultFallback = false;
 
 	//vuMeterRMS = NULL;
 	//vuMeterPeak = NULL;
@@ -115,6 +145,214 @@ idSoundHardware_OpenAL::idSoundHardware_OpenAL()
 	freeVoices.SetNum( 0 );
 
 	lastResetTime = 0;
+}
+
+bool idSoundHardware_OpenAL::IsDefaultDeviceChoiceValue( const char* deviceName ) {
+	return deviceName != NULL && idStr::Icmp( deviceName, OPENQ4_AUDIO_DEVICE_DEFAULT_CHOICE ) == 0;
+}
+
+idStr idSoundHardware_OpenAL::NormalizeRequestedDeviceName( const char* deviceName ) {
+	if( deviceName == NULL || IsDefaultDeviceChoiceValue( deviceName ) ) {
+		return "";
+	}
+
+	return deviceName;
+}
+
+idStr idSoundHardware_OpenAL::SanitizeDeviceLabel( const char* deviceName ) {
+	idStr sanitized = ( deviceName != NULL ) ? deviceName : "";
+	sanitized.Replace( "\r", " " );
+	sanitized.Replace( "\n", " " );
+	sanitized.Replace( "\t", " " );
+	sanitized.StripLeading( ' ' );
+	sanitized.StripTrailingWhitespace();
+	return sanitized;
+}
+
+void idSoundHardware_OpenAL::AppendChoiceItem( idStr& list, const char* item ) {
+	if( list.Length() > 0 ) {
+		list += ";";
+	}
+
+	list += "\"";
+	for( const char* it = item; it != NULL && *it != '\0'; ++it ) {
+		if( *it == '\\' || *it == '"' ) {
+			list += "\\";
+		}
+		list += *it;
+	}
+	list += "\"";
+}
+
+bool idSoundHardware_OpenAL::DeviceListContains( const idStrList& deviceNames, const char* deviceName ) {
+	if( deviceName == NULL || deviceName[0] == '\0' ) {
+		return false;
+	}
+
+	for( int i = 0; i < deviceNames.Num(); ++i ) {
+		if( deviceNames[i].Icmp( deviceName ) == 0 ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+void idSoundHardware_OpenAL::GetAvailablePlaybackDevices( idStrList& deviceNames, idStr& defaultDeviceName ) {
+	deviceNames.Clear();
+	defaultDeviceName.Clear();
+
+	const ALCchar* defaultDevice = alcGetString( NULL, OpenQ4_GetDefaultPlaybackDeviceToken( NULL ) );
+	if( defaultDevice != NULL && defaultDevice[0] != '\0' ) {
+		defaultDeviceName = reinterpret_cast<const char*>( defaultDevice );
+	}
+
+	const ALCchar* deviceList = alcGetString( NULL, OpenQ4_GetPlaybackDevicesToken( NULL ) );
+	if( deviceList == NULL || deviceList[0] == '\0' ) {
+		return;
+	}
+
+	for( const ALCchar* it = deviceList; *it != '\0'; it += strlen( it ) + 1 ) {
+		idStr deviceName = reinterpret_cast<const char*>( it );
+		deviceName.StripLeading( ' ' );
+		deviceName.StripTrailingWhitespace();
+		if( !deviceName.Length() || DeviceListContains( deviceNames, deviceName.c_str() ) ) {
+			continue;
+		}
+
+		deviceNames.Append( deviceName );
+	}
+}
+
+idStr idSoundHardware_OpenAL::GetActivePlaybackDeviceName( ALCdevice* device ) {
+	idStr activeDeviceName;
+	if( device == NULL ) {
+		return activeDeviceName;
+	}
+
+	const ALCchar* activeDevice = NULL;
+#if defined( ALC_ALL_DEVICES_SPECIFIER )
+	if( OpenQ4_UseEnumerateAllDevices( device ) ) {
+		activeDevice = alcGetString( device, ALC_ALL_DEVICES_SPECIFIER );
+	}
+#endif
+	if( CheckALCErrors( device ) != ALC_NO_ERROR || activeDevice == NULL || activeDevice[0] == '\0' ) {
+		activeDevice = alcGetString( device, ALC_DEVICE_SPECIFIER );
+		CheckALCErrors( device );
+	}
+
+	if( activeDevice != NULL && activeDevice[0] != '\0' ) {
+		activeDeviceName = reinterpret_cast<const char*>( activeDevice );
+	}
+
+	return activeDeviceName;
+}
+
+void idSoundHardware_OpenAL::BuildDeviceChoiceStrings( const char* requestedDeviceName, idStr& choiceNames, idStr& choiceValues ) {
+	const idStr normalizedRequestedDeviceName = NormalizeRequestedDeviceName( requestedDeviceName );
+	const idStr defaultLabel = common->GetLanguageDict()->GetString( "#str_229913" );
+	const idStr unavailableLabel = common->GetLanguageDict()->GetString( "#str_41105" );
+
+	idStrList deviceNames;
+	idStr defaultDeviceName;
+	GetAvailablePlaybackDevices( deviceNames, defaultDeviceName );
+
+	idStr displayDefaultLabel = defaultLabel;
+	const idStr sanitizedDefaultDeviceName = SanitizeDeviceLabel( defaultDeviceName.c_str() );
+	if( sanitizedDefaultDeviceName.Length() ) {
+		displayDefaultLabel = va( "%s (%s)", defaultLabel.c_str(), sanitizedDefaultDeviceName.c_str() );
+	}
+
+	choiceNames.Clear();
+	choiceValues.Clear();
+	AppendChoiceItem( choiceNames, displayDefaultLabel.c_str() );
+	AppendChoiceItem( choiceValues, OPENQ4_AUDIO_DEVICE_DEFAULT_CHOICE );
+
+	bool requestedDeviceFound = normalizedRequestedDeviceName.IsEmpty();
+	for( int i = 0; i < deviceNames.Num(); ++i ) {
+		const idStr& deviceName = deviceNames[i];
+		const idStr deviceLabel = SanitizeDeviceLabel( deviceName.c_str() );
+		if( !deviceLabel.Length() ) {
+			continue;
+		}
+
+		AppendChoiceItem( choiceNames, deviceLabel.c_str() );
+		AppendChoiceItem( choiceValues, deviceName.c_str() );
+		if( deviceName.Icmp( normalizedRequestedDeviceName ) == 0 ) {
+			requestedDeviceFound = true;
+		}
+	}
+
+	if( !requestedDeviceFound && normalizedRequestedDeviceName.Length() ) {
+		idStr requestedLabel = SanitizeDeviceLabel( normalizedRequestedDeviceName.c_str() );
+		if( unavailableLabel.Length() ) {
+			requestedLabel = va( "%s (%s)", requestedLabel.c_str(), unavailableLabel.c_str() );
+		}
+
+		AppendChoiceItem( choiceNames, requestedLabel.c_str() );
+		AppendChoiceItem( choiceValues, normalizedRequestedDeviceName.c_str() );
+	}
+}
+
+void idSoundHardware_OpenAL::CaptureOpenedDeviceState( const char* requestedDeviceName ) {
+	idStrList deviceNames;
+	GetAvailablePlaybackDevices( deviceNames, openedDefaultDeviceName );
+
+	openedRequestedDeviceName = NormalizeRequestedDeviceName( requestedDeviceName );
+	openedActiveDeviceName = GetActivePlaybackDeviceName( openalDevice );
+	openedWithDefaultFallback = openedRequestedDeviceName.Length() > 0 && openedActiveDeviceName.Icmp( openedRequestedDeviceName ) != 0;
+	lastDeviceCheckTime = Sys_Milliseconds();
+}
+
+bool idSoundHardware_OpenAL::UpdateDeviceMonitoring() {
+	const int nowTime = Sys_Milliseconds();
+	if( lastDeviceCheckTime + 1000 > nowTime ) {
+		return false;
+	}
+	lastDeviceCheckTime = nowTime;
+
+	const idStr requestedDeviceName = NormalizeRequestedDeviceName( s_deviceName.GetString() );
+	if( requestedDeviceName.Icmp( openedRequestedDeviceName ) != 0 ) {
+		if( requestedDeviceName.Length() == 0 ) {
+			common->Printf( "OpenAL requested device changed to system default; restarting sound system.\n" );
+		} else if( openedRequestedDeviceName.Length() == 0 ) {
+			common->Printf( "OpenAL requested device changed to '%s'; restarting sound system.\n", requestedDeviceName.c_str() );
+		} else {
+			common->Printf( "OpenAL requested device changed from '%s' to '%s'; restarting sound system.\n", openedRequestedDeviceName.c_str(), requestedDeviceName.c_str() );
+		}
+		soundSystemLocal.SetNeedsRestart();
+		return true;
+	}
+
+#if defined( ALC_CONNECTED )
+	if( alcIsExtensionPresent( openalDevice, "ALC_EXT_disconnect" ) == AL_TRUE ) {
+		ALCint connected = ALC_TRUE;
+		alcGetIntegerv( openalDevice, ALC_CONNECTED, 1, &connected );
+		if( CheckALCErrors( openalDevice ) == ALC_NO_ERROR && connected == ALC_FALSE ) {
+			common->Warning( "OpenAL device '%s' disconnected; restarting sound system.", openedActiveDeviceName.c_str() );
+			soundSystemLocal.SetNeedsRestart();
+			return true;
+		}
+	}
+#endif
+
+	idStrList deviceNames;
+	idStr defaultDeviceName;
+	GetAvailablePlaybackDevices( deviceNames, defaultDeviceName );
+
+	if( openedWithDefaultFallback && DeviceListContains( deviceNames, openedRequestedDeviceName.c_str() ) ) {
+		common->Printf( "OpenAL requested device '%s' is available again; restarting sound system.\n", openedRequestedDeviceName.c_str() );
+		soundSystemLocal.SetNeedsRestart();
+		return true;
+	}
+
+	if( ( openedRequestedDeviceName.IsEmpty() || openedWithDefaultFallback ) && defaultDeviceName.Length() > 0 && defaultDeviceName.Icmp( openedDefaultDeviceName ) != 0 ) {
+		common->Printf( "OpenAL system default device changed from '%s' to '%s'; restarting sound system.\n", openedDefaultDeviceName.c_str(), defaultDeviceName.c_str() );
+		soundSystemLocal.SetNeedsRestart();
+		return true;
+	}
+
+	return false;
 }
 
 void idSoundHardware_OpenAL::PrintDeviceList( const char* list )
@@ -140,19 +378,9 @@ void idSoundHardware_OpenAL::PrintALCInfo( ALCdevice* device )
 
 	if( device )
 	{
-		const ALCchar* devname = NULL;
 		idLib::Printf( "\n" );
-		if( alcIsExtensionPresent( device, "ALC_ENUMERATE_ALL_EXT" ) != AL_FALSE )
-		{
-			devname = alcGetString( device, ALC_ALL_DEVICES_SPECIFIER );
-		}
-
-		if( CheckALCErrors( device ) != ALC_NO_ERROR || !devname )
-		{
-			devname = alcGetString( device, ALC_DEVICE_SPECIFIER );
-		}
-
-		idLib::Printf( "** Info for device \"%s\" **\n", devname );
+		const idStr devname = GetActivePlaybackDeviceName( device );
+		idLib::Printf( "** Info for device \"%s\" **\n", devname.Length() ? devname.c_str() : "<unknown>" );
 	}
 	alcGetIntegerv( device, ALC_MAJOR_VERSION, 1, &major );
 	alcGetIntegerv( device, ALC_MINOR_VERSION, 1, &minor );
@@ -184,27 +412,25 @@ void idSoundHardware_OpenAL::PrintALInfo()
 
 void listDevices_f( const idCmdArgs& args )
 {
+	idStrList deviceNames;
+	idStr defaultDeviceName;
+	idSoundHardware_OpenAL::GetAvailablePlaybackDevices( deviceNames, defaultDeviceName );
+
 	idLib::Printf( "Available playback devices:\n" );
-	if( alcIsExtensionPresent( NULL, "ALC_ENUMERATE_ALL_EXT" ) != AL_FALSE )
-	{
-		idSoundHardware_OpenAL::PrintDeviceList( alcGetString( NULL, ALC_ALL_DEVICES_SPECIFIER ) );
-	}
-	else
-	{
-		idSoundHardware_OpenAL::PrintDeviceList( alcGetString( NULL, ALC_DEVICE_SPECIFIER ) );
+	if( deviceNames.Num() == 0 ) {
+		idLib::Printf( "    !!! none !!!\n" );
+	} else {
+		for( int i = 0; i < deviceNames.Num(); ++i ) {
+			idLib::Printf( "    %s\n", deviceNames[i].c_str() );
+		}
 	}
 
 	//idLib::Printf("Available capture devices:\n");
 	//printDeviceList(alcGetString(NULL, ALC_CAPTURE_DEVICE_SPECIFIER));
 
-	if( alcIsExtensionPresent( NULL, "ALC_ENUMERATE_ALL_EXT" ) != AL_FALSE )
-	{
-		idLib::Printf( "Default playback device: %s\n", alcGetString( NULL, ALC_DEFAULT_ALL_DEVICES_SPECIFIER ) );
-	}
-	else
-	{
-		idLib::Printf( "Default playback device: %s\n",  alcGetString( NULL, ALC_DEFAULT_DEVICE_SPECIFIER ) );
-	}
+	idLib::Printf( "Default playback device: %s\n", defaultDeviceName.Length() ? defaultDeviceName.c_str() : "<unknown>" );
+	const idStr requestedDeviceName = idSoundHardware_OpenAL::IsDefaultDeviceChoiceValue( s_deviceName.GetString() ) ? "" : s_deviceName.GetString();
+	idLib::Printf( "Requested playback device: %s\n", requestedDeviceName.Length() ? requestedDeviceName.c_str() : "<system default>" );
 
 	//idLib::Printf("Default capture device: %s\n", alcGetString(NULL, ALC_CAPTURE_DEFAULT_DEVICE_SPECIFIER));
 
@@ -224,13 +450,17 @@ void idSoundHardware_OpenAL::Init()
 
 	common->Printf( "Setup OpenAL device and context... " );
 
-	const char* requestedDeviceName = s_deviceName.GetString();
-	if( requestedDeviceName != NULL && requestedDeviceName[0] != '\0' )
+	if( IsDefaultDeviceChoiceValue( s_deviceName.GetString() ) ) {
+		s_deviceName.SetString( "" );
+	}
+
+	const idStr requestedDeviceName = NormalizeRequestedDeviceName( s_deviceName.GetString() );
+	if( requestedDeviceName.Length() > 0 )
 	{
-		openalDevice = alcOpenDevice( requestedDeviceName );
+		openalDevice = alcOpenDevice( requestedDeviceName.c_str() );
 		if( openalDevice == NULL )
 		{
-			common->Warning( "OpenAL device '%s' unavailable, falling back to default device.", requestedDeviceName );
+			common->Warning( "OpenAL device '%s' unavailable, falling back to the system default device.", requestedDeviceName.c_str() );
 		}
 	}
 
@@ -273,24 +503,20 @@ void idSoundHardware_OpenAL::Init()
 	common->Printf( "OpenAL version: %s\n", alGetString( AL_VERSION ) );
 	common->Printf( "OpenAL extensions: %s\n", alGetString( AL_EXTENSIONS ) );
 
-	const ALCchar* activeDeviceName = NULL;
-	if( alcIsExtensionPresent( openalDevice, "ALC_ENUMERATE_ALL_EXT" ) != AL_FALSE )
-	{
-		activeDeviceName = alcGetString( openalDevice, ALC_ALL_DEVICES_SPECIFIER );
+	CaptureOpenedDeviceState( requestedDeviceName.c_str() );
+	if( openedRequestedDeviceName.Length() == 0 ) {
+		common->Printf( "OpenAL requested device: system default\n" );
+	} else {
+		common->Printf( "OpenAL requested device: %s\n", openedRequestedDeviceName.c_str() );
 	}
-	if( CheckALCErrors( openalDevice ) != ALC_NO_ERROR || activeDeviceName == NULL || activeDeviceName[0] == '\0' )
-	{
-		activeDeviceName = alcGetString( openalDevice, ALC_DEVICE_SPECIFIER );
-		CheckALCErrors( openalDevice );
+	if( openedDefaultDeviceName.Length() > 0 ) {
+		common->Printf( "OpenAL default device: %s\n", openedDefaultDeviceName.c_str() );
 	}
-	if( activeDeviceName != NULL )
-	{
-		common->Printf( "OpenAL active device: %s\n", activeDeviceName );
-		idStr configuredDevice = s_deviceName.GetString();
-		if( configuredDevice.Icmp( activeDeviceName ) != 0 )
-		{
-			s_deviceName.SetString( activeDeviceName );
-		}
+	if( openedActiveDeviceName.Length() > 0 ) {
+		common->Printf( "OpenAL active device: %s\n", openedActiveDeviceName.c_str() );
+	}
+	if( openedWithDefaultFallback ) {
+		common->Warning( "OpenAL requested device '%s' is unavailable; using '%s' until it returns.", openedRequestedDeviceName.c_str(), openedActiveDeviceName.c_str() );
 	}
 
 	efxEnabled = false;
@@ -486,6 +712,11 @@ void idSoundHardware_OpenAL::Shutdown()
 
 	alcCloseDevice( openalDevice );
 	openalDevice = NULL;
+	lastDeviceCheckTime = 0;
+	openedWithDefaultFallback = false;
+	openedRequestedDeviceName.Clear();
+	openedActiveDeviceName.Clear();
+	openedDefaultDeviceName.Clear();
 
 	/*
 	if( vuMeterRMS != NULL )
@@ -575,6 +806,10 @@ void idSoundHardware_OpenAL::Update()
 			lastResetTime = nowTime;
 			Init();
 		}
+		return;
+	}
+
+	if( UpdateDeviceMonitoring() ) {
 		return;
 	}
 

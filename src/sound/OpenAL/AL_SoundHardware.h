@@ -54,6 +54,9 @@ public:
 	idSoundVoice* 	AllocateVoice( const idSoundSample* leadinSample, const idSoundSample* loopingSample );
 	void			FreeVoice( idSoundVoice* voice );
 
+	static bool		IsDefaultDeviceChoiceValue( const char* deviceName );
+	static void		BuildDeviceChoiceStrings( const char* requestedDeviceName, idStr& choiceNames, idStr& choiceValues );
+
 	// listDevices needs this
 	ALCdevice* 		GetOpenALDevice() const
 	{
@@ -82,6 +85,9 @@ public:
 	static void		PrintALCInfo( ALCdevice* device );
 	static void		PrintALInfo();
 
+	static void		GetAvailablePlaybackDevices( idStrList& deviceNames, idStr& defaultDeviceName );
+	static idStr		GetActivePlaybackDeviceName( ALCdevice* device );
+
 protected:
 	friend class idSoundSample_OpenAL;
 	friend class idSoundVoice_OpenAL;
@@ -99,9 +105,14 @@ private:
 	ALCcontext*			openalContext;
 
 	int					lastResetTime;
+	int					lastDeviceCheckTime;
 	bool				efxEnabled;
 	ALuint				auxEffectSlot;
 	ALuint				auxReverbEffect;
+	bool				openedWithDefaultFallback;
+	idStr				openedRequestedDeviceName;
+	idStr				openedActiveDeviceName;
+	idStr				openedDefaultDeviceName;
 
 	//int				outputChannels;
 	//int				channelMask;
@@ -114,6 +125,14 @@ private:
 	idStaticList<idSoundVoice_OpenAL, MAX_HARDWARE_VOICES * 2 > voices;
 	idStaticList<idSoundVoice_OpenAL*, MAX_HARDWARE_VOICES * 2 > zombieVoices;
 	idStaticList<idSoundVoice_OpenAL*, MAX_HARDWARE_VOICES * 2 > freeVoices;
+
+	static void		AppendChoiceItem( idStr& list, const char* item );
+	static bool		DeviceListContains( const idStrList& deviceNames, const char* deviceName );
+	static idStr		NormalizeRequestedDeviceName( const char* deviceName );
+	static idStr		SanitizeDeviceLabel( const char* deviceName );
+
+	void			CaptureOpenedDeviceState( const char* requestedDeviceName );
+	bool			UpdateDeviceMonitoring();
 };
 
 /*

@@ -48,28 +48,11 @@ BuildMainMenuAudioDeviceChoices
 =================
 */
 static void BuildMainMenuAudioDeviceChoices( idStr &choiceNames, idStr &choiceValues ) {
+#if defined( USE_OPENAL )
+	idSoundHardware_OpenAL::BuildDeviceChoiceStrings( cvarSystem->GetCVarString( "s_deviceName" ), choiceNames, choiceValues );
+#else
 	choiceNames = common->GetLanguageDict()->GetString( "#str_229913" );
 	choiceValues = "";
-
-#if defined( USE_OPENAL )
-	const ALCenum listToken = ( alcIsExtensionPresent( NULL, "ALC_ENUMERATE_ALL_EXT" ) != AL_FALSE ) ? ALC_ALL_DEVICES_SPECIFIER : ALC_DEVICE_SPECIFIER;
-	const ALCchar *deviceList = alcGetString( NULL, listToken );
-	if ( deviceList == NULL || deviceList[0] == '\0' ) {
-		return;
-	}
-
-	for ( const ALCchar *it = deviceList; *it != '\0'; it += strlen( it ) + 1 ) {
-		idStr deviceName = reinterpret_cast<const char *>( it );
-		deviceName.Replace( ";", "," );
-		if ( !deviceName.Length() ) {
-			continue;
-		}
-
-		choiceNames += ";";
-		choiceNames += deviceName;
-		choiceValues += ";";
-		choiceValues += deviceName;
-	}
 #endif
 }
 
@@ -1638,6 +1621,9 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 				}
 			}
 			if ( !vcmd.Icmp( "drivar" ) ) {
+				if ( idSoundHardware_OpenAL::IsDefaultDeviceChoiceValue( cvarSystem->GetCVarString( "s_deviceName" ) ) ) {
+					cvarSystem->SetCVarString( "s_deviceName", "" );
+				}
 				cmdSystem->BufferCommandText( CMD_EXEC_NOW, "s_restart\n" );				
 			}
 			continue;
