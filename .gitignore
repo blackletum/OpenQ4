@@ -49,6 +49,8 @@
 /.install/crashes/
 /.install/share/
 /.install/openq4/*.cfg
+__pycache__/
+*.pyc
 _tmp_*
 /.tmp/
 /.home/

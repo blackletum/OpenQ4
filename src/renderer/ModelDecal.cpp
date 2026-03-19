@@ -32,6 +32,34 @@ If you have questions concerning this license or the applicable additional terms
 #include "tr_local.h"
 #include "Model_local.h"
 
+namespace {
+
+void R_WriteDrawVertToDemo( idDemoFile *f, const idDrawVert &vert ) {
+	f->WriteVec3( vert.xyz );
+	f->WriteVec2( vert.st );
+	f->WriteVec3( vert.normal );
+	f->WriteVec3( vert.tangents[0] );
+	f->WriteVec3( vert.tangents[1] );
+	f->WriteUnsignedChar( vert.color[0] );
+	f->WriteUnsignedChar( vert.color[1] );
+	f->WriteUnsignedChar( vert.color[2] );
+	f->WriteUnsignedChar( vert.color[3] );
+}
+
+void R_ReadDrawVertFromDemo( idDemoFile *f, idDrawVert &vert ) {
+	f->ReadVec3( vert.xyz );
+	f->ReadVec2( vert.st );
+	f->ReadVec3( vert.normal );
+	f->ReadVec3( vert.tangents[0] );
+	f->ReadVec3( vert.tangents[1] );
+	f->ReadUnsignedChar( vert.color[0] );
+	f->ReadUnsignedChar( vert.color[1] );
+	f->ReadUnsignedChar( vert.color[2] );
+	f->ReadUnsignedChar( vert.color[3] );
+}
+
+}
+
 // decalFade	filter 5 0.1
 // polygonOffset
 // {
@@ -553,7 +581,69 @@ idRenderModelDecal::ReadFromDemoFile
 ====================
 */
 void idRenderModelDecal::ReadFromDemoFile( idDemoFile *f ) {
-	// FIXME: implement
+	int numDecals;
+	idRenderModelDecal *decal;
+
+	while ( nextDecal != NULL ) {
+		idRenderModelDecal *next = nextDecal->nextDecal;
+		idRenderModelDecal::Free( nextDecal );
+		nextDecal = next;
+	}
+
+	memset( &tri, 0, sizeof( tri ) );
+	memset( verts, 0, sizeof( verts ) );
+	memset( vertDepthFade, 0, sizeof( vertDepthFade ) );
+	memset( vertStartTime, 0, sizeof( vertStartTime ) );
+	memset( indexes, 0, sizeof( indexes ) );
+	memset( indexStartTime, 0, sizeof( indexStartTime ) );
+	tri.verts = verts;
+	tri.indexes = indexes;
+	material = NULL;
+
+	f->ReadInt( numDecals );
+	if ( numDecals < 0 || numDecals > 1024 ) {
+		common->Error( "idRenderModelDecal::ReadFromDemoFile: bad decal count %d", numDecals );
+	}
+
+	if ( numDecals == 0 ) {
+		return;
+	}
+
+	decal = this;
+	for ( int decalIndex = 0; decalIndex < numDecals; decalIndex++ ) {
+		const char *materialName = f->ReadHashString();
+
+		decal->material = ( materialName[0] != '\0' ) ? declManager->FindMaterial( materialName ) : NULL;
+
+		f->ReadInt( decal->tri.numVerts );
+		if ( decal->tri.numVerts < 0 || decal->tri.numVerts > MAX_DECAL_VERTS ) {
+			common->Error( "idRenderModelDecal::ReadFromDemoFile: bad vert count %d", decal->tri.numVerts );
+		}
+
+		for ( int vertIndex = 0; vertIndex < decal->tri.numVerts; vertIndex++ ) {
+			R_ReadDrawVertFromDemo( f, decal->tri.verts[vertIndex] );
+			f->ReadFloat( decal->vertDepthFade[vertIndex] );
+			f->ReadFloat( decal->vertStartTime[vertIndex] );
+		}
+
+		f->ReadInt( decal->tri.numIndexes );
+		if ( decal->tri.numIndexes < 0 || decal->tri.numIndexes > MAX_DECAL_INDEXES ) {
+			common->Error( "idRenderModelDecal::ReadFromDemoFile: bad index count %d", decal->tri.numIndexes );
+		}
+
+		for ( int index = 0; index < decal->tri.numIndexes; index++ ) {
+			int storedIndex;
+
+			f->ReadInt( storedIndex );
+			decal->tri.indexes[index] = storedIndex;
+			f->ReadInt( decal->indexStartTime[index] );
+		}
+
+		if ( decalIndex + 1 < numDecals ) {
+			decal->nextDecal = idRenderModelDecal::Alloc();
+			decal = decal->nextDecal;
+		}
+	}
 }
 
 /*
@@ -562,5 +652,31 @@ idRenderModelDecal::WriteToDemoFile
 ====================
 */
 void idRenderModelDecal::WriteToDemoFile( idDemoFile *f ) const {
-	// FIXME: implement
+	int numDecals;
+	const idRenderModelDecal *decal;
+
+	numDecals = 0;
+	for ( decal = this; decal != NULL; decal = decal->nextDecal ) {
+		numDecals++;
+	}
+
+	f->WriteInt( numDecals );
+
+	for ( decal = this; decal != NULL; decal = decal->nextDecal ) {
+		const char *materialName = ( decal->material != NULL ) ? decal->material->GetName() : "";
+
+		f->WriteHashString( materialName );
+		f->WriteInt( decal->tri.numVerts );
+		for ( int vertIndex = 0; vertIndex < decal->tri.numVerts; vertIndex++ ) {
+			R_WriteDrawVertToDemo( f, decal->tri.verts[vertIndex] );
+			f->WriteFloat( decal->vertDepthFade[vertIndex] );
+			f->WriteFloat( decal->vertStartTime[vertIndex] );
+		}
+
+		f->WriteInt( decal->tri.numIndexes );
+		for ( int index = 0; index < decal->tri.numIndexes; index++ ) {
+			f->WriteInt( decal->tri.indexes[index] );
+			f->WriteInt( decal->indexStartTime[index] );
+		}
+	}
 }

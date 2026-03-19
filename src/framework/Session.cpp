@@ -35,7 +35,7 @@ If you have questions concerning this license or the applicable additional terms
 void *R_StaticAlloc( int bytes );
 void R_StaticFree( void *data );
 
-#define RENDERDEMO_VERSION 1 
+#define RENDERDEMO_VERSION 3
 #define USERCMD_MSEC common->GetUserCmdMSec()
 
 extern glconfig_t	glConfig;

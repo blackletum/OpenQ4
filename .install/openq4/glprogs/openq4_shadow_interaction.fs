@@ -39,7 +39,8 @@ const float kShadowDebugAtlas = 1.0;
 const float kShadowDebugCascadeIndex = 2.0;
 const float kShadowDebugProjectedUV = 3.0;
 const float kShadowDebugProjectedDepth = 4.0;
-const float kShadowDebugInvalidMask = 5.0;
+const float kShadowDebugProjectedW = 5.0;
+const float kShadowDebugInvalidMask = 6.0;
 
 float gShadowDebugState = 0.0;
 
@@ -245,6 +246,19 @@ vec4 CascadeDebugColor( float cascadeIndex ) {
 	return vec4( 1.0, 0.85, 0.2, 1.0 );
 }
 
+vec4 ShadowCoordWDebugOutput( vec4 shadowCoord ) {
+	if ( shadowCoord.w != shadowCoord.w ) {
+		return vec4( 1.0, 0.0, 1.0, 1.0 );
+	}
+
+	float absW = abs( shadowCoord.w );
+	float danger = 1.0 - clamp( absW / 0.25, 0.0, 1.0 );
+	float intensity = 0.3 + 0.7 * clamp( absW / 4.0, 0.0, 1.0 );
+	vec3 signColor = ( shadowCoord.w < 0.0 ) ? vec3( 1.0, 0.2, 0.2 ) : vec3( 0.2, 0.6, 1.0 );
+	vec3 color = mix( signColor, vec3( 1.0, 1.0, 0.0 ), danger );
+	return vec4( color * intensity, 1.0 );
+}
+
 vec4 ShadowDebugOutput( vec4 shadowInfo ) {
 	if ( uShadowDebugMode < 0.5 ) {
 		return vec4( 0.0 );
@@ -286,6 +300,10 @@ vec4 ShadowDebugOutput( vec4 shadowInfo ) {
 			return vec4( 1.0, 0.0, 1.0, 1.0 );
 		}
 		return vec4( vec3( depth ), 1.0 );
+	}
+
+	if ( uShadowDebugMode < kShadowDebugProjectedW + 0.5 ) {
+		return ShadowCoordWDebugOutput( ShadowCoordByIndex( int( shadowInfo.y + 0.5 ) ) );
 	}
 
 	vec3 invalidColor = vec3( 0.0 );

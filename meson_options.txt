@@ -34,13 +34,6 @@ option(
 )
 
 option(
-  'build_libbse',
-  type: 'boolean',
-  value: true,
-  description: 'Internal BSE rebuild toggle. OpenQ4-BSE_<arch> remains mandatory runtime content for staged installs, nightlies, and releases.',
-)
-
-option(
   'platform_backend',
   type: 'combo',
   choices: ['sdl3', 'legacy_win32', 'native'],

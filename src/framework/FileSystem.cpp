@@ -4585,14 +4585,6 @@ void idFileSystemLocal::FindDLL( const char *name, char _dllPath[ MAX_OSPATH ], 
 		idStr exeDir = Sys_EXEPath();
 		exeDir.StripFilename();
 
-		const bool preferExeDirFirst = idStr::Icmpn( name, "OpenQ4-BSE_", 11 ) == 0;
-		if ( preferExeDirFirst ) {
-			// Keep OpenQ4-BSE_<arch> next to the engine executable.
-			dllPath = exeDir;
-			dllPath.AppendPath( dllName );
-			dllFile = OpenExplicitFileRead( dllPath );
-		}
-
 		// Stage game modules under builddir/<gamedir>/ so the engine can load them
 		// without requiring copies into the executable root.
 		const char *moduleGameDir = fs_game.GetString();
@@ -4607,7 +4599,7 @@ void idFileSystemLocal::FindDLL( const char *name, char _dllPath[ MAX_OSPATH ], 
 		}
 
 		// Fallback: check the executable directory itself.
-		if ( !dllFile && !preferExeDirFirst ) {
+		if ( !dllFile ) {
 			dllPath = exeDir;
 			dllPath.AppendPath( dllName );
 			dllFile = OpenExplicitFileRead( dllPath );

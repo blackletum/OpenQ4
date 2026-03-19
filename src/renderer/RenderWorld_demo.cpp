@@ -39,6 +39,20 @@ typedef struct {
 	char	mapname[256];
 } demoHeader_t;
 
+static const int OPENQ4_RENDERDEMO_ENTITY_EXTRAS_VERSION = 3;
+
+namespace {
+
+void R_FreeRenderDemoDecalChain( idRenderModelDecal *decal ) {
+	while ( decal != NULL ) {
+		idRenderModelDecal *next = decal->Next();
+		idRenderModelDecal::Free( decal );
+		decal = next;
+	}
+}
+
+}
+
 
 /*
 ==============
@@ -445,6 +459,7 @@ void	idRenderWorldLocal::WriteRenderLight( qhandle_t handle, const renderLight_t
 	session->writeDemo->WriteInt( (int&)light->shader );
 	for ( int i = 0; i < MAX_ENTITY_SHADER_PARMS; i++)
 		session->writeDemo->WriteFloat( light->shaderParms[i] );
+	session->writeDemo->WriteInt( light->referenceSoundHandle );
 	session->writeDemo->WriteInt( (int&)light->referenceSound );
 
 	if ( light->prelightModel ) {
@@ -469,7 +484,7 @@ ReadRenderLight
 ================
 */
 void	idRenderWorldLocal::ReadRenderLight( ) {
-	renderLight_t	light;
+	renderLight_t	light = {};
 	int				index;
 
 	session->readDemo->ReadInt( index );
@@ -497,6 +512,9 @@ void	idRenderWorldLocal::ReadRenderLight( ) {
 	session->readDemo->ReadInt( (int&)light.shader );
 	for ( int i = 0; i < MAX_ENTITY_SHADER_PARMS; i++)
 		session->readDemo->ReadFloat( light.shaderParms[i] );
+	if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_ENTITY_EXTRAS_VERSION ) {
+		session->readDemo->ReadInt( light.referenceSoundHandle );
+	}
 	session->readDemo->ReadInt( (int&)light.referenceSound );
 	if ( light.prelightModel ) {
 		light.prelightModel = renderModelManager->FindModel( session->readDemo->ReadHashString() );
@@ -504,12 +522,6 @@ void	idRenderWorldLocal::ReadRenderLight( ) {
 	if ( light.shader ) {
 		light.shader = declManager->FindMaterial( session->readDemo->ReadHashString() );
 	}
-	if ( light.referenceSound ) {
-		int	index;
-		session->readDemo->ReadInt( index );
-	//	light.referenceSound = session->sw->EmitterForIndex( index );
-	}
-
 	UpdateLightDef( index, &light );
 
 	if ( r_showDemo.GetBool() ) {
@@ -523,12 +535,15 @@ WriteRenderEntity
 ================
 */
 void	idRenderWorldLocal::WriteRenderEntity( qhandle_t handle, const renderEntity_t *ent ) {
+	idRenderEntityLocal *localEnt;
 
 	// only the main renderWorld writes stuff to demos, not the wipes or
 	// menu renders
 	if ( this != session->rw ) {
 		return;
 	}
+
+	localEnt = ( handle >= 0 && handle < entityDefs.Num() ) ? entityDefs[handle] : NULL;
 
 	session->writeDemo->WriteInt( DS_RENDER );
 	session->writeDemo->WriteInt( DC_UPDATE_ENTITYDEF );
@@ -577,10 +592,6 @@ void	idRenderWorldLocal::WriteRenderEntity( qhandle_t handle, const renderEntity
 	if ( ent->referenceShader ) {
 		session->writeDemo->WriteHashString( ent->referenceShader->GetName() );
 	}
-	if ( ent->referenceSound ) {
-		//int	index = ent->referenceSound->Index();
-		//session->writeDemo->WriteInt( index );
-	}
 	if ( ent->numJoints ) {
 		for ( int i = 0; i < ent->numJoints; i++) {
 			float *data = ent->joints[i].ToFloatPtr();
@@ -589,14 +600,23 @@ void	idRenderWorldLocal::WriteRenderEntity( qhandle_t handle, const renderEntity
 		}
 	}
 
-	/*
-	if ( ent->decals ) {
-		ent->decals->WriteToDemoFile( session->readDemo );
+	session->writeDemo->WriteInt( ent->weaponDepthHackInViewID );
+	session->writeDemo->WriteFloat( ent->shadowLODDistance );
+	session->writeDemo->WriteInt( ent->suppressLOD );
+	session->writeDemo->WriteInt( ent->referenceSoundHandle );
+	session->writeDemo->WriteBool( ent->overlayShader != NULL );
+	if ( ent->overlayShader != NULL ) {
+		session->writeDemo->WriteHashString( ent->overlayShader->GetName() );
 	}
-	if ( ent->overlay ) {
-		ent->overlay->WriteToDemoFile( session->writeDemo );
+
+	session->writeDemo->WriteBool( localEnt != NULL && localEnt->decals != NULL );
+	if ( localEnt != NULL && localEnt->decals != NULL ) {
+		localEnt->decals->WriteToDemoFile( session->writeDemo );
 	}
-	*/
+	session->writeDemo->WriteBool( localEnt != NULL && localEnt->overlay != NULL );
+	if ( localEnt != NULL && localEnt->overlay != NULL ) {
+		localEnt->overlay->WriteToDemoFile( session->writeDemo );
+	}
 
 #ifdef WRITE_GUIS
 	if ( ent->gui ) {
@@ -625,7 +645,9 @@ ReadRenderEntity
 ================
 */
 void	idRenderWorldLocal::ReadRenderEntity() {
-	renderEntity_t		ent;
+	renderEntity_t		ent = {};
+	idRenderModelDecal *demoDecals = NULL;
+	idRenderModelOverlay *demoOverlay = NULL;
 	int				index, i;
 
 	session->readDemo->ReadInt( index );
@@ -663,8 +685,11 @@ void	idRenderWorldLocal::ReadRenderEntity() {
 	session->readDemo->ReadBool( ent.noSelfShadow );
 	session->readDemo->ReadBool( ent.noShadow );
 	session->readDemo->ReadBool( ent.noDynamicInteractions );
-	//session->readDemo->ReadBool( ent.weaponDepthHack );
-	//session->readDemo->ReadInt( ent.forceUpdate );
+	{
+		int forceUpdate;
+		session->readDemo->ReadInt( forceUpdate );
+		ent.forceUpdate = ( forceUpdate != 0 );
+	}
 	ent.callback = NULL;
 	if ( ent.customShader ) {
 		ent.customShader = declManager->FindMaterial( session->readDemo->ReadHashString() );
@@ -678,11 +703,6 @@ void	idRenderWorldLocal::ReadRenderEntity() {
 	if ( ent.referenceShader ) {
 		ent.referenceShader = declManager->FindMaterial( session->readDemo->ReadHashString() );
 	}
-	if ( ent.referenceSound ) {
-		int	index;
-		session->readDemo->ReadInt( index );
-		//ent.referenceSound = session->sw->EmitterForIndex( index );
-	}
 	if ( ent.numJoints ) {
 		ent.joints = (idJointMat *)Mem_Alloc16( ent.numJoints * sizeof( ent.joints[0] ) ); 
 		for ( int i = 0; i < ent.numJoints; i++) {
@@ -692,18 +712,34 @@ void	idRenderWorldLocal::ReadRenderEntity() {
 		}
 	}
 
-	ent.callbackData = NULL;
+	if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_ENTITY_EXTRAS_VERSION ) {
+		bool hasOverlayShader;
+		bool hasDecals;
+		bool hasOverlay;
 
-	/*
-	if ( ent.decals ) {
-		ent.decals = idRenderModelDecal::Alloc();
-		ent.decals->ReadFromDemoFile( session->readDemo );
+		session->readDemo->ReadInt( ent.weaponDepthHackInViewID );
+		session->readDemo->ReadFloat( ent.shadowLODDistance );
+		session->readDemo->ReadInt( ent.suppressLOD );
+		session->readDemo->ReadInt( ent.referenceSoundHandle );
+		session->readDemo->ReadBool( hasOverlayShader );
+		if ( hasOverlayShader ) {
+			ent.overlayShader = declManager->FindMaterial( session->readDemo->ReadHashString() );
+		}
+
+		session->readDemo->ReadBool( hasDecals );
+		if ( hasDecals ) {
+			demoDecals = idRenderModelDecal::Alloc();
+			demoDecals->ReadFromDemoFile( session->readDemo );
+		}
+
+		session->readDemo->ReadBool( hasOverlay );
+		if ( hasOverlay ) {
+			demoOverlay = idRenderModelOverlay::Alloc();
+			demoOverlay->ReadFromDemoFile( session->readDemo );
+		}
 	}
-	if ( ent.overlay ) {
-		ent.overlay = idRenderModelOverlay::Alloc();
-		ent.overlay->ReadFromDemoFile( session->readDemo );
-	}
-	*/
+
+	ent.callbackData = NULL;
 
 	for ( i = 0; i < MAX_RENDERENTITY_GUI; i++ ) {
 		if ( ent.gui[ i ] ) {
@@ -724,6 +760,29 @@ void	idRenderWorldLocal::ReadRenderEntity() {
 	//}
 
 	UpdateEntityDef( index, &ent );
+
+	if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_ENTITY_EXTRAS_VERSION ) {
+		idRenderEntityLocal *def = ( index >= 0 && index < entityDefs.Num() ) ? entityDefs[index] : NULL;
+
+		if ( def != NULL ) {
+			R_FreeRenderDemoDecalChain( def->decals );
+			if ( def->overlay != NULL ) {
+				idRenderModelOverlay::Free( def->overlay );
+			}
+
+			def->decals = demoDecals;
+			def->overlay = demoOverlay;
+			demoDecals = NULL;
+			demoOverlay = NULL;
+		}
+	}
+
+	if ( demoDecals != NULL ) {
+		R_FreeRenderDemoDecalChain( demoDecals );
+	}
+	if ( demoOverlay != NULL ) {
+		idRenderModelOverlay::Free( demoOverlay );
+	}
 
 	if ( r_showDemo.GetBool() ) {
 		common->Printf( "DC_UPDATE_ENTITYDEF: %i = %s\n", index, ent.hModel ? ent.hModel->Name() : "NULL" );

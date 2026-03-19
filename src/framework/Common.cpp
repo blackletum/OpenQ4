@@ -30,7 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 //#include "../renderer/Image.h"
-#include "../bse_api/BSE_API.h"
+#include "../bse/BSE_API.h"
 
 #define	MAX_PRINT_MSG_SIZE	4096
 #define MAX_WARNING_LIST	256
@@ -243,9 +243,8 @@ private:
 	void						WriteConfiguration( void );
 	void						DumpWarnings( void );
 	void						SingleAsyncTic( void );
-	void						LoadBSEDLL( void );
-	void						UnloadBSEDLL( void );
-	void						RefreshBSEBindings( void );
+	void						AttachBSE( void );
+	void						DetachBSE( void );
 	void						LoadGameDLL( void );
 	void						UnloadGameDLL( void );
 	void						PrintLoadingMessage( const char *msg );
@@ -269,8 +268,6 @@ private:
 	idStrList					errorList;
 
 	intptr_t					gameDLL;
-	intptr_t					bseDLL;
-	BSE_SetRuntimePointers_t	bseSetRuntimePointers;
 
 	idLangDict					languageDict;
 
@@ -303,8 +300,6 @@ idCommonLocal::idCommonLocal( void ) {
 	rd_flush = NULL;
 
 	gameDLL = 0;
-	bseDLL = 0;
-	bseSetRuntimePointers = NULL;
 
 #ifdef ID_WRITE_VERSION
 	config_compressor = NULL;
@@ -2879,8 +2874,6 @@ static const char *OpenQ4_SelectGameModuleBaseName( void ) {
 #else
 	#define OPENQ4_MODULE_ARCH_TAG "unknown"
 #endif
-#define OPENQ4_BSE_MODULE_BASENAME "OpenQ4-BSE_" OPENQ4_MODULE_ARCH_TAG
-
 static void OpenQ4_BuildGameModuleBinaryName( const char *moduleName, char outName[ MAX_OSPATH ] ) {
 	const char *variant = ( moduleName && idStr::Icmp( moduleName, "game_mp" ) == 0 ) ? "mp" : "sp";
 	idStr::snPrintf( outName, MAX_OSPATH, "game-%s_%s", variant, OPENQ4_MODULE_ARCH_TAG );
@@ -2902,7 +2895,7 @@ static void OpenQ4_DisableBSEWithWarning( const char *reason, bool showDialog = 
 		idStr::snPrintf(
 			message,
 			sizeof( message ),
-			"Could not load BSE runtime library (" OPENQ4_BSE_MODULE_BASENAME ").\n\nReason: %s\n\nEffects will be disabled.",
+			"BSE initialization failed.\n\nReason: %s\n\nEffects will be disabled.",
 			reason ? reason : "unknown reason"
 		);
 		::MessageBoxA( NULL, message, "OpenQ4 Warning", MB_OK | MB_ICONWARNING | MB_SYSTEMMODAL );
@@ -2910,253 +2903,36 @@ static void OpenQ4_DisableBSEWithWarning( const char *reason, bool showDialog = 
 #endif
 
 	::declEffectEdit = NULL;
+	::bseAllocDeclEffect = NULL;
 	::bse = &bseDisabledLocal;
 }
 
-#if defined( _WIN32 )
-static bool OpenQ4_BufferContainsTokenNoCase( const unsigned char *buffer, const size_t bufferSize, const char *token ) {
-	if ( !buffer || !token || !token[0] ) {
-		return false;
-	}
-
-	const size_t tokenLength = strlen( token );
-	if ( tokenLength == 0 || tokenLength > bufferSize ) {
-		return false;
-	}
-
-	for ( size_t i = 0; i + tokenLength <= bufferSize; ++i ) {
-		size_t j = 0;
-		for ( ; j < tokenLength; ++j ) {
-			unsigned char a = buffer[ i + j ];
-			unsigned char b = static_cast<unsigned char>( token[ j ] );
-			if ( a >= 'A' && a <= 'Z' ) {
-				a = static_cast<unsigned char>( a + ( 'a' - 'A' ) );
-			}
-			if ( b >= 'A' && b <= 'Z' ) {
-				b = static_cast<unsigned char>( b + ( 'a' - 'A' ) );
-			}
-			if ( a != b ) {
-				break;
-			}
-		}
-		if ( j == tokenLength ) {
-			return true;
-		}
-	}
-
-	return false;
-}
-
-static bool OpenQ4_DllImageMentionsRuntimeImports( const char *dllPath, const char *const *runtimeImports, const int runtimeImportCount ) {
-	if ( !dllPath || !dllPath[ 0 ] ) {
-		return false;
-	}
-
-	FILE *file = fopen( dllPath, "rb" );
-	if ( !file ) {
-		return false;
-	}
-
-	bool hasDebugCRTImport = false;
-	if ( fseek( file, 0, SEEK_END ) == 0 ) {
-		const long fileSize = ftell( file );
-		if ( fileSize > 0 && fileSize <= ( 64L * 1024L * 1024L ) && fseek( file, 0, SEEK_SET ) == 0 ) {
-			unsigned char *fileData = static_cast<unsigned char *>( malloc( static_cast<size_t>( fileSize ) ) );
-			if ( fileData ) {
-				const size_t bytesRead = fread( fileData, 1, static_cast<size_t>( fileSize ), file );
-				if ( bytesRead == static_cast<size_t>( fileSize ) ) {
-					for ( int i = 0; i < runtimeImportCount; ++i ) {
-						if ( OpenQ4_BufferContainsTokenNoCase( fileData, bytesRead, runtimeImports[ i ] ) ) {
-							hasDebugCRTImport = true;
-							break;
-						}
-					}
-				}
-				free( fileData );
-			}
-		}
-	}
-
-	fclose( file );
-	return hasDebugCRTImport;
-}
-
-static bool OpenQ4_DllImageMentionsDebugCRT( const char *dllPath ) {
-	static const char *debugCRTImports[] = {
-		"ucrtbased.dll",
-		"vcruntime140d.dll",
-		"vcruntime140_1d.dll",
-		"msvcp140d.dll"
-	};
-
-	return OpenQ4_DllImageMentionsRuntimeImports(
-		dllPath,
-		debugCRTImports,
-		static_cast<int>( sizeof( debugCRTImports ) / sizeof( debugCRTImports[0] ) )
-	);
-}
-
-static bool OpenQ4_DllImageMentionsReleaseCRT( const char *dllPath ) {
-	static const char *releaseCRTImports[] = {
-		"ucrtbase.dll",
-		"vcruntime140.dll",
-		"vcruntime140_1.dll",
-		"msvcp140.dll"
-	};
-
-	return OpenQ4_DllImageMentionsRuntimeImports(
-		dllPath,
-		releaseCRTImports,
-		static_cast<int>( sizeof( releaseCRTImports ) / sizeof( releaseCRTImports[0] ) )
-	);
-}
-
-#if !defined( _DEBUG )
-static bool OpenQ4_IsDebugCRTLoaded( void ) {
-	// Mixing a release engine with a debug-built module can corrupt allocator state.
-	return	::GetModuleHandleA( "ucrtbased.dll" ) != NULL ||
-			::GetModuleHandleA( "vcruntime140d.dll" ) != NULL ||
-			::GetModuleHandleA( "vcruntime140_1d.dll" ) != NULL ||
-			::GetModuleHandleA( "msvcp140d.dll" ) != NULL;
-}
-#endif
-#endif
-
 /*
 =================
-idCommonLocal::RefreshBSEBindings
+idCommonLocal::AttachBSE
 =================
 */
-void idCommonLocal::RefreshBSEBindings( void ) {
+void idCommonLocal::AttachBSE( void ) {
 #ifdef __DOOM_DLL__
-	if ( bseSetRuntimePointers ) {
-		bseSetRuntimePointers( ::game, ::gameEdit, ::session );
-	}
-#endif
-}
-
-/*
-=================
-idCommonLocal::LoadBSEDLL
-=================
-*/
-void idCommonLocal::LoadBSEDLL( void ) {
-#ifdef __DOOM_DLL__
-	char			dllPath[ MAX_OSPATH ];
-
-	bseImport_t		bseImport;
-	bseExport_t		bseExport;
-	GetBSEAPI_t		GetBSEAPI;
-
-	// Default to the disabled fallback unless a valid external module is loaded.
-	bseSetRuntimePointers = NULL;
 	::bse = &bseDisabledLocal;
 	::declEffectEdit = NULL;
 	::bseAllocDeclEffect = NULL;
 
-#if defined( _WIN32 ) && !defined( _DEBUG )
-	const bool hadDebugCRTBeforeBSE = OpenQ4_IsDebugCRTLoaded();
+#if !defined( ID_DEDICATED )
+	common->DPrintf( "Attaching integrated BSE.\n" );
+	::bse = OpenQ4_GetIntegratedBSEManager();
+	::bseAllocDeclEffect = OpenQ4_AllocIntegratedBSEDeclEffect;
 #endif
-
-	fileSystem->FindDLL( OPENQ4_BSE_MODULE_BASENAME, dllPath, false );
-	if ( !dllPath[ 0 ] ) {
-		OpenQ4_DisableBSEWithWarning( "couldn't find dynamic library '" OPENQ4_BSE_MODULE_BASENAME "'" );
-		return;
-	}
-
-#if defined( _WIN32 )
-	const bool bseMentionsDebugCRT = OpenQ4_DllImageMentionsDebugCRT( dllPath );
-	const bool bseMentionsReleaseCRT = OpenQ4_DllImageMentionsReleaseCRT( dllPath );
-#if defined( _DEBUG )
-	if ( !bseMentionsDebugCRT || bseMentionsReleaseCRT ) {
-		OpenQ4_DisableBSEWithWarning( OPENQ4_BSE_MODULE_BASENAME " must be built with the MSVC debug CRT for a debug engine build", false );
-		return;
-	}
-#else
-	if ( bseMentionsDebugCRT || !bseMentionsReleaseCRT ) {
-		OpenQ4_DisableBSEWithWarning( OPENQ4_BSE_MODULE_BASENAME " must be built with the MSVC release CRT for a non-debug engine build", false );
-		return;
-	}
-#endif
-#endif
-
-	common->DPrintf( "Loading BSE DLL: '%s'\n", dllPath );
-	bseDLL = sys->DLL_Load( dllPath );
-	if ( !bseDLL ) {
-		OpenQ4_DisableBSEWithWarning( "couldn't load dynamic library '" OPENQ4_BSE_MODULE_BASENAME "'" );
-		return;
-	}
-
-#if defined( _WIN32 ) && !defined( _DEBUG )
-	if ( !hadDebugCRTBeforeBSE && OpenQ4_IsDebugCRTLoaded() ) {
-		Sys_DLL_Unload( bseDLL );
-		bseDLL = NULL;
-		OpenQ4_DisableBSEWithWarning( OPENQ4_BSE_MODULE_BASENAME " depends on the MSVC debug CRT in a non-debug engine build", false );
-		return;
-	}
-#endif
-
-	GetBSEAPI = (GetBSEAPI_t) Sys_DLL_GetProcAddress( bseDLL, "GetBSEAPI" );
-	if ( !GetBSEAPI ) {
-		Sys_DLL_Unload( bseDLL );
-		bseDLL = NULL;
-		OpenQ4_DisableBSEWithWarning( "couldn't find BSE DLL API entry point" );
-		return;
-	}
-
-	bseImport.version					= BSE_API_VERSION;
-	bseImport.sys						= ::sys;
-	bseImport.common					= ::common;
-	bseImport.cmdSystem					= ::cmdSystem;
-	bseImport.cvarSystem				= ::cvarSystem;
-	bseImport.fileSystem				= ::fileSystem;
-	bseImport.networkSystem				= ::networkSystem;
-	bseImport.renderSystem				= ::renderSystem;
-	bseImport.soundSystem				= ::soundSystem;
-	bseImport.renderModelManager		= ::renderModelManager;
-	bseImport.uiManager					= ::uiManager;
-	bseImport.declManager				= ::declManager;
-	bseImport.AASFileManager			= ::AASFileManager;
-	bseImport.collisionModelManager		= ::collisionModelManager;
-	bseImport.game						= ::game;
-	bseImport.gameEdit					= ::gameEdit;
-	bseImport.session					= ::session;
-
-	bseExport_t *bseExportPtr = GetBSEAPI( &bseImport );
-	if ( !bseExportPtr ) {
-		Sys_DLL_Unload( bseDLL );
-		bseDLL = NULL;
-		OpenQ4_DisableBSEWithWarning( "BSE DLL API handshake failed" );
-		return;
-	}
-	bseExport = *bseExportPtr;
-	if ( bseExport.version != BSE_API_VERSION || !bseExport.bse || !bseExport.AllocDeclEffect ) {
-		Sys_DLL_Unload( bseDLL );
-		bseDLL = NULL;
-		OpenQ4_DisableBSEWithWarning( "BSE DLL API version mismatch" );
-		return;
-	}
-
-	::bse = bseExport.bse;
-	::declEffectEdit = bseExport.declEffectEdit;
-	::bseAllocDeclEffect = bseExport.AllocDeclEffect;
-	bseSetRuntimePointers = bseExport.SetRuntimePointers;
-	RefreshBSEBindings();
 #endif
 }
 
 /*
 =================
-idCommonLocal::UnloadBSEDLL
+idCommonLocal::DetachBSE
 =================
 */
-void idCommonLocal::UnloadBSEDLL( void ) {
+void idCommonLocal::DetachBSE( void ) {
 #ifdef __DOOM_DLL__
-	if ( bseDLL ) {
-		Sys_DLL_Unload( bseDLL );
-		bseDLL = NULL;
-	}
-	bseSetRuntimePointers = NULL;
 	::bse = &bseDisabledLocal;
 	::declEffectEdit = NULL;
 	::bseAllocDeclEffect = NULL;
@@ -3241,7 +3017,6 @@ void idCommonLocal::LoadGameDLL( void ) {
 	gameEdit							= gameExport.gameEdit;
 	com_activeGameModule.SetString( gameModuleBaseName );
 	com_nextGameModule.SetString( "" );
-	RefreshBSEBindings();
 
 #endif
 
@@ -3272,7 +3047,6 @@ void idCommonLocal::UnloadGameDLL( void ) {
 	game = NULL;
 	gameEdit = NULL;
 	com_activeGameModule.SetString( "" );
-	RefreshBSEBindings();
 
 #endif
 }
@@ -3500,9 +3274,9 @@ void idCommonLocal::InitGame( void ) {
 	// initialize the file system
 	fileSystem->Init();
 
-	// load the external BSE module before decl initialization so DECL_EFFECT
-	// allocation can be provided by the runtime DLL.
-	LoadBSEDLL();
+	// attach the integrated BSE manager before decl initialization so DECL_EFFECT
+	// allocation is available when effect declarations are parsed.
+	AttachBSE();
 
 	// initialize the declaration manager
 	declManager->Init();
@@ -3685,7 +3459,7 @@ void idCommonLocal::ShutdownGame( bool reloading ) {
 	if ( bse ) {
 		bse->Shutdown();
 	}
-	UnloadBSEDLL();
+	DetachBSE();
 
 	// dump warnings to "warnings.txt"
 #ifdef DEBUG

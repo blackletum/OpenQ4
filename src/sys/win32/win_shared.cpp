@@ -33,11 +33,89 @@ If you have questions concerning this license or the applicable additional terms
 #include <lmerr.h>
 #include <lmcons.h>
 #include <lmwksta.h>
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <direct.h>
 #include <io.h>
+
+namespace {
+
+bool Sys_TryGetDriveFreeSpaceBytes( const char *path, DWORDLONG &freeBytes ) {
+	DWORDLONG bytesAvailable;
+	DWORDLONG totalBytes;
+	DWORDLONG totalFreeBytes;
+
+	if ( path == NULL || path[0] == '\0' ) {
+		return false;
+	}
+
+	if ( ::GetDiskFreeSpaceExA(
+			path,
+			(PULARGE_INTEGER)&bytesAvailable,
+			(PULARGE_INTEGER)&totalBytes,
+			(PULARGE_INTEGER)&totalFreeBytes ) ) {
+		freeBytes = bytesAvailable;
+		return true;
+	}
+
+	return false;
+}
+
+void Sys_NormalizeDriveProbePath( char *path ) {
+	if ( path == NULL ) {
+		return;
+	}
+
+	for ( char *p = path; *p != '\0'; p++ ) {
+		if ( *p == '/' ) {
+			*p = '\\';
+		}
+	}
+
+	const size_t len = strlen( path );
+	if ( len >= 2 && path[0] == '"' && path[len - 1] == '"' ) {
+		memmove( path, path + 1, len - 2 );
+		path[len - 2] = '\0';
+	}
+}
+
+bool Sys_ResolveDriveProbePath( const char *path, char *resolvedPath, size_t resolvedPathSize ) {
+	char normalizedPath[MAX_OSPATH];
+	char fullPath[MAX_OSPATH];
+	char volumePath[MAX_OSPATH];
+	DWORD fullPathLen;
+
+	if ( path == NULL || path[0] == '\0' ) {
+		return false;
+	}
+
+	idStr::Copynz( normalizedPath, path, sizeof( normalizedPath ) );
+	Sys_NormalizeDriveProbePath( normalizedPath );
+
+	fullPathLen = ::GetFullPathNameA( normalizedPath, sizeof( fullPath ), fullPath, NULL );
+	if ( fullPathLen > 0 && fullPathLen < sizeof( fullPath ) ) {
+		Sys_NormalizeDriveProbePath( fullPath );
+
+		if ( ::GetVolumePathNameA( fullPath, volumePath, sizeof( volumePath ) ) ) {
+			idStr::Copynz( resolvedPath, volumePath, resolvedPathSize );
+			return true;
+		}
+
+		idStr::Copynz( resolvedPath, fullPath, resolvedPathSize );
+		return true;
+	}
+
+	if ( isalpha( (unsigned char)normalizedPath[0] ) && normalizedPath[1] == ':' ) {
+		idStr::snPrintf( resolvedPath, resolvedPathSize, "%c:\\", normalizedPath[0] );
+		return true;
+	}
+
+	return false;
+}
+
+}
 #include <conio.h>
 
 #ifndef	ID_DEDICATED
@@ -117,15 +195,19 @@ returns in megabytes
 ================
 */
 int Sys_GetDriveFreeSpace(const char* path) {
-	DWORDLONG lpFreeBytesAvailable;
-	DWORDLONG lpTotalNumberOfBytes;
-	DWORDLONG lpTotalNumberOfFreeBytes;
-	int ret = 26;
-	//FIXME: see why this is failing on some machines
-	if (::GetDiskFreeSpaceEx(path, (PULARGE_INTEGER)&lpFreeBytesAvailable, (PULARGE_INTEGER)&lpTotalNumberOfBytes, (PULARGE_INTEGER)&lpTotalNumberOfFreeBytes)) {
-		ret = (double)(lpFreeBytesAvailable) / (1024.0 * 1024.0);
+	DWORDLONG freeBytes;
+	char probePath[MAX_OSPATH];
+
+	if ( Sys_TryGetDriveFreeSpaceBytes( path, freeBytes ) ) {
+		return (double)freeBytes / ( 1024.0 * 1024.0 );
 	}
-	return ret;
+
+	if ( Sys_ResolveDriveProbePath( path, probePath, sizeof( probePath ) ) &&
+			Sys_TryGetDriveFreeSpaceBytes( probePath, freeBytes ) ) {
+		return (double)freeBytes / ( 1024.0 * 1024.0 );
+	}
+
+	return 26;
 }
 
 

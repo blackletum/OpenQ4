@@ -12,7 +12,7 @@ OPENQ4_SUPPORT_DIRS = (
     "renderer",
     "ui",
     "sys",
-    "bse_api",
+    "bse",
     "MayaImport",
 )
 

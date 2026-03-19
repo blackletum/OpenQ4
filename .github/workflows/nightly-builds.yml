@@ -56,8 +56,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/OpenQ4-GameLibs
-      OPENQ4_BSE_REPO: ${{ github.workspace }}/OpenQ4-BSE
-      OPENQ4_PRESERVE_STAGED_BSE: "true"
     strategy:
       fail-fast: false
       matrix:
@@ -69,7 +67,6 @@ jobs:
             platform_backend: sdl3
             archive_format: zip
             archive_ext: .zip
-            bse_ext: .dll
           - os: ubuntu-latest
             platform: linux
             label: Linux
@@ -77,7 +74,6 @@ jobs:
             platform_backend: sdl3
             archive_format: tar.xz
             archive_ext: .tar.xz
-            bse_ext: .so
           - os: macos-latest
             platform: macos
             label: macOS
@@ -85,79 +81,16 @@ jobs:
             platform_backend: sdl3
             archive_format: tar.gz
             archive_ext: .tar.gz
-            bse_ext: .dylib
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-
-      - name: Require staged BSE runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          shopt -s nullglob
-          candidates=(.install/OpenQ4-BSE_*${{ matrix.bse_ext }})
-          shopt -u nullglob
-          if [ "${#candidates[@]}" -lt 1 ]; then
-            echo "Nightly releases require a staged BSE runtime committed in the repository for ${{ matrix.platform }} (*${{ matrix.bse_ext }})."
-            exit 1
-          fi
 
       - name: Fetch OpenQ4-GameLibs
         shell: bash
         run: |
           set -euo pipefail
           git clone --depth 1 https://github.com/themuffinator/OpenQ4-GameLibs.git OpenQ4-GameLibs
-
-      - name: Fetch OpenQ4-BSE
-        id: fetch_bse
-        env:
-          OPENQ4_BSE_REPO_TOKEN: ${{ secrets.OPENQ4_BSE_REPO_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          clone_bse_repo() {
-            local auth_header="${1:-}"
-            if [ -n "${auth_header}" ]; then
-              git -c "http.extraheader=AUTHORIZATION: basic ${auth_header}" clone --depth 1 https://github.com/themuffinator/OpenQ4-BSE.git OpenQ4-BSE
-              return
-            fi
-
-            git clone --depth 1 https://github.com/themuffinator/OpenQ4-BSE.git OpenQ4-BSE
-          }
-
-          bse_available=false
-          if [ -n "${OPENQ4_BSE_REPO_TOKEN:-}" ]; then
-            auth_header="$(printf 'x-access-token:%s' "${OPENQ4_BSE_REPO_TOKEN}" | base64 | tr -d '\n')"
-            if clone_bse_repo "${auth_header}"; then
-              bse_available=true
-            else
-              echo "OpenQ4-BSE fetch with OPENQ4_BSE_REPO_TOKEN failed; continuing without rebuilding BSE." >&2
-              rm -rf OpenQ4-BSE
-            fi
-          elif clone_bse_repo ""; then
-            bse_available=true
-          else
-            echo "OpenQ4-BSE repository is not accessible from this workflow run; continuing without rebuilding BSE." >&2
-            rm -rf OpenQ4-BSE
-          fi
-
-          echo "available=${bse_available}" >> "$GITHUB_OUTPUT"
-
-      - name: Configure BSE rebuild policy
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [ "${{ steps.fetch_bse.outputs.available }}" = "true" ]; then
-            echo "Nightly build will rebuild OpenQ4-BSE and package the staged runtime."
-            exit 0
-          fi
-
-          echo "OPENQ4_SKIP_BSE_REBUILD=true" >> "$GITHUB_ENV"
-          echo "Nightly build will package the staged BSE runtime from .install and skip only the private-source rebuild."
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -240,14 +173,6 @@ jobs:
             exit 1
           fi
 
-          shopt -s nullglob
-          candidates=(.install/OpenQ4-BSE_*${{ matrix.bse_ext }})
-          shopt -u nullglob
-          if [ "${#candidates[@]}" -lt 1 ]; then
-            echo "Missing staged BSE runtime for ${{ matrix.platform }} (*${{ matrix.bse_ext }})."
-            exit 1
-          fi
-
           if [ "${{ matrix.platform }}" = "linux" ]; then
             if [ ! -f ".install/share/applications/openq4.desktop" ]; then
               echo "Missing Linux desktop entry in staged payload."
@@ -282,11 +207,6 @@ jobs:
           fi
           if [ ! -d "${package_dir}" ]; then
             echo "Expected package directory not found: ${package_dir}"
-            exit 1
-          fi
-          expected_packaged_bse="${package_dir}/OpenQ4-BSE_${{ matrix.binary_arch }}${{ matrix.bse_ext }}"
-          if [ ! -f "${expected_packaged_bse}" ]; then
-            echo "Expected packaged BSE runtime not found: ${expected_packaged_bse}"
             exit 1
           fi
           echo "archive_path=${archive_path}" >> "$GITHUB_OUTPUT"

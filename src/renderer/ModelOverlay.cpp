@@ -32,6 +32,39 @@ If you have questions concerning this license or the applicable additional terms
 #include "Model_local.h"
 #include "tr_local.h"
 
+namespace {
+
+void R_ClearOverlayMaterials( idList<overlayMaterial_t *> &materials ) {
+	for ( int k = 0; k < materials.Num(); k++ ) {
+		overlayMaterial_t *material = materials[k];
+		if ( material == NULL ) {
+			continue;
+		}
+
+		for ( int i = 0; i < material->surfaces.Num(); i++ ) {
+			overlaySurface_t *surface = material->surfaces[i];
+			if ( surface == NULL ) {
+				continue;
+			}
+
+			if ( surface->verts != NULL ) {
+				Mem_Free( surface->verts );
+			}
+			if ( surface->indexes != NULL ) {
+				Mem_Free( surface->indexes );
+			}
+			Mem_Free( surface );
+		}
+
+		material->surfaces.Clear();
+		delete material;
+	}
+
+	materials.Clear();
+}
+
+}
+
 
 /*
 ====================
@@ -47,16 +80,7 @@ idRenderModelOverlay::~idRenderModelOverlay
 ====================
 */
 idRenderModelOverlay::~idRenderModelOverlay() {
-	int i, k;
-
-	for ( k = 0; k < materials.Num(); k++ ) {
-		for ( i = 0; i < materials[k]->surfaces.Num(); i++ ) {
-			FreeSurface( materials[k]->surfaces[i] );
-		}
-		materials[k]->surfaces.Clear();
-		delete materials[k];
-	}
-	materials.Clear();
+	R_ClearOverlayMaterials( materials );
 }
 
 /*
@@ -373,7 +397,78 @@ idRenderModelOverlay::ReadFromDemoFile
 ====================
 */
 void idRenderModelOverlay::ReadFromDemoFile( idDemoFile *f ) {
-	// FIXME: implement
+	int numMaterials;
+
+	R_ClearOverlayMaterials( materials );
+
+	f->ReadInt( numMaterials );
+	if ( numMaterials < 0 || numMaterials > 1024 ) {
+		common->Error( "idRenderModelOverlay::ReadFromDemoFile: bad material count %d", numMaterials );
+	}
+
+	for ( int materialIndex = 0; materialIndex < numMaterials; materialIndex++ ) {
+		overlayMaterial_t *material = new overlayMaterial_t;
+		const char *materialName = f->ReadHashString();
+		int numSurfaces;
+
+		material->material = ( materialName[0] != '\0' ) ? declManager->FindMaterial( materialName ) : NULL;
+
+		f->ReadInt( numSurfaces );
+		if ( numSurfaces < 0 || numSurfaces > MAX_OVERLAY_SURFACES ) {
+			delete material;
+			common->Error( "idRenderModelOverlay::ReadFromDemoFile: bad surface count %d", numSurfaces );
+		}
+
+		material->surfaces.SetNum( numSurfaces );
+		for ( int surfaceIndex = 0; surfaceIndex < numSurfaces; surfaceIndex++ ) {
+			overlaySurface_t *surface = (overlaySurface_t *)Mem_Alloc( sizeof( *surface ) );
+			int numVerts;
+			int numIndexes;
+
+			memset( surface, 0, sizeof( *surface ) );
+
+			f->ReadInt( surface->surfaceNum );
+			f->ReadInt( surface->surfaceId );
+			f->ReadInt( numVerts );
+			f->ReadInt( numIndexes );
+
+			if ( numVerts < 0 || numVerts > 1 << 20 || numIndexes < 0 || numIndexes > 1 << 21 ) {
+				Mem_Free( surface );
+				delete material;
+				common->Error(
+					"idRenderModelOverlay::ReadFromDemoFile: invalid surface payload verts=%d indexes=%d",
+					numVerts,
+					numIndexes
+				);
+			}
+
+			surface->numVerts = numVerts;
+			surface->numIndexes = numIndexes;
+
+			if ( surface->numVerts > 0 ) {
+				surface->verts = (overlayVertex_t *)Mem_Alloc( surface->numVerts * sizeof( surface->verts[0] ) );
+				for ( int vertIndex = 0; vertIndex < surface->numVerts; vertIndex++ ) {
+					f->ReadInt( surface->verts[vertIndex].vertexNum );
+					f->ReadFloat( surface->verts[vertIndex].st[0] );
+					f->ReadFloat( surface->verts[vertIndex].st[1] );
+				}
+			}
+
+			if ( surface->numIndexes > 0 ) {
+				surface->indexes = (glIndex_t *)Mem_Alloc( surface->numIndexes * sizeof( surface->indexes[0] ) );
+				for ( int index = 0; index < surface->numIndexes; index++ ) {
+					int storedIndex;
+
+					f->ReadInt( storedIndex );
+					surface->indexes[index] = storedIndex;
+				}
+			}
+
+			material->surfaces[surfaceIndex] = surface;
+		}
+
+		materials.Append( material );
+	}
 }
 
 /*
@@ -382,5 +477,33 @@ idRenderModelOverlay::WriteToDemoFile
 ====================
 */
 void idRenderModelOverlay::WriteToDemoFile( idDemoFile *f ) const {
-	// FIXME: implement
+	f->WriteInt( materials.Num() );
+
+	for ( int materialIndex = 0; materialIndex < materials.Num(); materialIndex++ ) {
+		const overlayMaterial_t *material = materials[materialIndex];
+		const char *materialName = ( material != NULL && material->material != NULL ) ? material->material->GetName() : "";
+		const int numSurfaces = ( material != NULL ) ? material->surfaces.Num() : 0;
+
+		f->WriteHashString( materialName );
+		f->WriteInt( numSurfaces );
+
+		for ( int surfaceIndex = 0; surfaceIndex < numSurfaces; surfaceIndex++ ) {
+			const overlaySurface_t *surface = material->surfaces[surfaceIndex];
+
+			f->WriteInt( surface->surfaceNum );
+			f->WriteInt( surface->surfaceId );
+			f->WriteInt( surface->numVerts );
+			f->WriteInt( surface->numIndexes );
+
+			for ( int vertIndex = 0; vertIndex < surface->numVerts; vertIndex++ ) {
+				f->WriteInt( surface->verts[vertIndex].vertexNum );
+				f->WriteFloat( surface->verts[vertIndex].st[0] );
+				f->WriteFloat( surface->verts[vertIndex].st[1] );
+			}
+
+			for ( int index = 0; index < surface->numIndexes; index++ ) {
+				f->WriteInt( surface->indexes[index] );
+			}
+		}
+	}
 }

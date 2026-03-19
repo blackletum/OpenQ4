@@ -370,7 +370,7 @@ const float MAX_BOUND_SIZE = 65536.0f;
 
 // RAVEN BEGIN
 // jscott: Effects system interface
-#include "../bse_api/BSEInterface.h"
+#include "../bse/BSEInterface.h"
 // RAVEN END
 
 // asynchronous networking

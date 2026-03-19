@@ -11,6 +11,17 @@ import tarfile
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from windows_runtime import (
+    RuntimeFlavor,
+    infer_runtime_flavor,
+    list_staged_runtime_files,
+    required_runtime_file_names,
+)
+
 
 PRODUCT_NAME = "OpenQ4"
 SUPPORTED_ARCHES = ("x64", "x86", "arm64")
@@ -128,29 +139,6 @@ def get_required_game_module_binaries(platform: str, arch: str) -> tuple[str, st
     )
 
 
-def get_required_bse_binary(platform: str, arch: str) -> str:
-    module_ext = PLATFORM_GAME_MODULE_EXT[platform]
-    return f"OpenQ4-BSE_{arch}{module_ext}"
-
-
-def resolve_required_bse_source(
-    install_dir: Path, platform: str, arch: str
-) -> tuple[Path | None, str]:
-    required_bse = get_required_bse_binary(platform, arch)
-    exact_match = install_dir / required_bse
-    if exact_match.is_file():
-        return exact_match, required_bse
-
-    module_ext = PLATFORM_GAME_MODULE_EXT[platform]
-    fallback_candidates = sorted(
-        path for path in install_dir.glob(f"OpenQ4-BSE_*{module_ext}") if path.is_file()
-    )
-    if len(fallback_candidates) == 1:
-        return fallback_candidates[0], required_bse
-
-    return None, required_bse
-
-
 def write_text_file(path: Path, lines: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -211,16 +199,54 @@ def copy_required_binaries(
             raise FileNotFoundError(f"required distributable not found: {source}")
         shutil.copy2(source, package_root / filename)
 
-    bse_source, required_bse = resolve_required_bse_source(install_dir, platform, arch)
-    if bse_source is None:
-        if allow_missing_binaries:
-            missing_required.append(required_bse)
-        else:
-            raise FileNotFoundError(
-                f"required BSE runtime not found for {platform}/{arch}: expected {install_dir / required_bse}"
+    if platform == "windows":
+        missing_required.extend(
+            copy_required_windows_runtime(
+                install_dir=install_dir,
+                package_root=package_root,
+                allow_missing_binaries=allow_missing_binaries,
             )
-    else:
-        shutil.copy2(bse_source, package_root / required_bse)
+        )
+
+    return missing_required
+
+
+def copy_required_windows_runtime(
+    install_dir: Path,
+    package_root: Path,
+    allow_missing_binaries: bool,
+) -> list[str]:
+    missing_required: list[str] = []
+    runtime_files = list_staged_runtime_files(install_dir)
+    runtime_by_name = {path.name.lower(): path for path in runtime_files}
+    copied_names: set[str] = set()
+
+    runtime_flavor = infer_runtime_flavor(install_dir)
+    if runtime_flavor == RuntimeFlavor.DEBUG:
+        raise RuntimeError(
+            "Windows package staging detected debug CRT imports. "
+            "Public OpenQ4 packages must be built with a non-debug CRT."
+        )
+
+    required_names = {"OpenAL32.dll"}
+    required_names.update(required_runtime_file_names(runtime_flavor))
+
+    for filename in sorted(required_names):
+        source = runtime_by_name.get(filename.lower())
+        if source is None:
+            if allow_missing_binaries:
+                missing_required.append(filename)
+                continue
+            raise FileNotFoundError(f"required Windows runtime file not found: {install_dir / filename}")
+
+        shutil.copy2(source, package_root / source.name)
+        copied_names.add(source.name.lower())
+
+    for source in runtime_files:
+        source_name_lower = source.name.lower()
+        if source_name_lower in copied_names:
+            continue
+        shutil.copy2(source, package_root / source.name)
 
     return missing_required
 

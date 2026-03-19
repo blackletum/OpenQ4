@@ -31,7 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 // jmarshall - Raven Decl Support
 #include "../renderer/tr_local.h"
-#include "../bse_api/BSE_API.h"
+#include "../bse/BSE_API.h"
 // jmarshall end
 
 /*

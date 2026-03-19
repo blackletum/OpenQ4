@@ -23,7 +23,7 @@
 
 ## About
 
-The **OpenQ4 Project** is a complete replacement for the Quake 4 engine and game binaries. Built on the foundation of [Quake4Doom](https://github.com/idSoftware/Quake4Doom), OpenQ4 is focused on making Quake 4 feel native on modern hardware without losing stock-asset compatibility. Current work already brings in bloom, HDR tone mapping, SSAO, automatic aspect-ratio handling, multi-monitor support, and an in-progress shadow-mapping path with CSM work underway, alongside broader platform and tooling modernization. While the project aims to be as open-source as possible, the BSE library will remain closed-source for legal reasons.
+The **OpenQ4 Project** is a complete replacement for the Quake 4 engine and game binaries. Built on the foundation of [Quake4Doom](https://github.com/idSoftware/Quake4Doom), OpenQ4 is focused on making Quake 4 feel native on modern hardware without losing stock-asset compatibility. Current work already brings in bloom, HDR tone mapping, SSAO, automatic aspect-ratio handling, multi-monitor support, and an in-progress shadow-mapping path with CSM work underway, alongside broader platform and tooling modernization.
 
 ## Versioning
 
@@ -181,7 +181,7 @@ The engine will automatically find your Quake 4 installation and validate the ga
 
 > [!NOTE]
 > `tools/build/meson_setup.ps1` automatically runs `tools/build/sync_icons.py` before `setup`, `compile`, and `install` to validate and generate the canonical icon set in `assets/icons/` (including required PNG sizes). Set `OPENQ4_SKIP_ICON_SYNC=1` to bypass this in local workflows.
-> `OpenQ4-BSE_<arch>` is mandatory runtime content for OpenQ4. Staged installs, nightlies, and release packages must include it; wrapper-driven builds no longer support disabling BSE.
+> BSE is built into `OpenQ4-client_<arch>`. Public Windows packages should still be self-contained by shipping the required runtime DLLs next to the executable.
 
 ---
 
@@ -244,13 +244,15 @@ bash tools/build/meson_setup.sh install -C builddir --no-rebuild --skip-subproje
 **Build directory** (`builddir/`):
 - `OpenQ4-client_x64` (`.exe` on Windows) - Main engine executable
 - `OpenQ4-ded_x64` (`.exe` on Windows) - Dedicated server
-- `OpenQ4-BSE_x64` (`.dll` / `.so` / `.dylib`) - Mandatory BSE runtime module
 - `openq4/game-sp_x64` (`.dll` / `.so` / `.dylib`) - Single-player game module
 - `openq4/game-mp_x64` (`.dll` / `.so` / `.dylib`) - Multiplayer game module
+- BSE is linked into `OpenQ4-client_x64`; the dedicated server keeps the disabled stub path and does not ship a separate BSE binary.
+- On Windows, wrapper-driven builds also stage `OpenAL32.dll` and the required MSVC/UCRT runtime DLLs next to the executables so the tree is runnable without installing extra redistributables.
 
 **Install directory** (`.install/`):
 - Complete distributable package with all binaries
 - Ready for deployment or testing with `fs_cdpath`
+- On Windows, `.install/` is intended to be self-contained for end users. Do not require separate VC++ Redistributable or OpenAL installs for public builds.
 
 </details>
 
@@ -264,7 +266,6 @@ OpenQ4 uses a unified game directory approach:
 OpenQ4/
 ├── OpenQ4-client_x64      # Main executable (.exe on Windows)
 ├── OpenQ4-ded_x64         # Dedicated server (.exe on Windows)
-├── OpenQ4-BSE_x64         # BSE runtime module (.dll / .so / .dylib)
 └── openq4/                # Unified game directory
     ├── game-sp_x64        # Single-player module (.dll / .so / .dylib)
     └── game-mp_x64        # Multiplayer module (.dll / .so / .dylib)
@@ -273,8 +274,8 @@ OpenQ4/
 The engine automatically selects the correct module based on game mode:
 - **Single-player**: Loads `game-sp_<arch>` (for example `game-sp_x64`)
 - **Multiplayer**: Loads `game-mp_<arch>` (for example `game-mp_x64`)
-- **BSE runtime**: Loads `OpenQ4-BSE_<arch>` from the executable directory when available
-- **Windows BSE compatibility**: `OpenQ4-BSE_<arch>` must be built with the same MSVC CRT flavor as the engine build (`/MDd` debug, `/MD` non-debug)
+- **BSE runtime**: Linked directly into `OpenQ4-client_<arch>`; dedicated server builds keep the disabled/stub manager path because effect playback depends on client-side renderer/audio state
+- **Windows runtime UX**: Public Windows packages must be self-contained. Ship the required runtime DLLs in the package; do not expect users to install VC++ or OpenAL separately. Do not distribute raw `buildtype=debug` artifacts.
 
 No need for separate mod folders or manual switching!
 

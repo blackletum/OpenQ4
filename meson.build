@@ -24,7 +24,6 @@ game_sp_binary_name = 'game-sp_' + binary_arch
 game_mp_binary_name = 'game-mp_' + binary_arch
 engine_client_binary_name = meson.project_name() + '-client_' + binary_arch
 engine_ded_binary_name = meson.project_name() + '-ded_' + binary_arch
-bse_binary_name = 'OpenQ4-BSE_' + binary_arch
 
 if host_cpu_family != 'x86_64'
   warning(
@@ -136,8 +135,6 @@ build_engine = get_option('build_engine')
 build_games = get_option('build_games')
 build_game_sp = get_option('build_game_sp')
 build_game_mp = get_option('build_game_mp')
-build_libbse = build_engine and get_option('build_libbse')
-needs_bse_sources = build_libbse
 needs_game_headers = build_engine or build_games
 install_root_dir = meson.project_source_root() / '.install'
 install_openq4_dir = install_root_dir / 'openq4'
@@ -147,9 +144,7 @@ game_libs_repo_summary = 'not required'
 game_stage_root = ''
 game_stage_game_root = ''
 game_stage_game_include_rel = '.tmp/gamelibs_stage/src/game'
-bse_repo_root = ''
-bse_source_root = ''
-bse_repo_summary = 'not required'
+bse_source_root = meson.project_source_root() / 'src' / 'bse'
 game_module_defs_file = ''
 
 if not build_engine and not build_games
@@ -200,25 +195,8 @@ if needs_game_headers
   game_libs_repo_summary = game_libs_repo_root
 endif
 
-if needs_bse_sources
-  bse_repo_discovery = run_command(
-    py,
-    '-c',
-    'import os, pathlib, sys; root = pathlib.Path(sys.argv[1]); raw = os.environ.get("OPENQ4_BSE_REPO", "").strip(); repo = pathlib.Path(raw) if raw else (root / ".." / "OpenQ4-BSE"); print(repo.resolve().as_posix())',
-    meson.project_source_root(),
-    check: true,
-  )
-  bse_repo_root = bse_repo_discovery.stdout().strip()
-  if bse_repo_root == ''
-    error('Failed to resolve the OpenQ4-BSE repository path. Set OPENQ4_BSE_REPO or place it at ../OpenQ4-BSE.')
-  endif
-
-  bse_source_root = bse_repo_root / 'src' / 'bse'
-  if not fs_mod.is_dir(bse_source_root)
-    error('OpenQ4-BSE source directory not found: ' + bse_source_root)
-  endif
-
-  bse_repo_summary = bse_repo_root
+if build_engine and not fs_mod.is_dir(bse_source_root)
+  error('Integrated BSE source directory not found: ' + bse_source_root)
 endif
 
 engine_source_discovery = run_command(
@@ -266,11 +244,11 @@ if build_games
   game_sources = files(game_absolute_paths)
 endif
 
-if build_libbse
+if build_engine
   bse_source_discovery = run_command(
     py,
     meson.project_source_root() / 'tools' / 'build' / 'list_sources.py',
-    bse_repo_root,
+    meson.project_source_root(),
     'src/bse',
     check: true,
   )
@@ -278,13 +256,7 @@ if build_libbse
   if bse_source_paths.length() == 0
     error('tools/build/list_sources.py returned no BSE source files.')
   endif
-
-  bse_absolute_paths = []
-  foreach rel_path : bse_source_paths
-    bse_absolute_paths += [bse_repo_root / rel_path]
-  endforeach
-
-  bse_sources = files(bse_absolute_paths)
+  bse_sources = files(bse_source_paths)
 endif
 
 if build_engine or build_games
@@ -444,7 +416,7 @@ if cpp.get_argument_syntax() == 'msvc'
   shared_cpp_args += ['/J', '/FS', '/source-charset:windows-1252', '/execution-charset:windows-1252', '/Zc:strictStrings-']
   shared_c_args += ['/FS', '/source-charset:windows-1252', '/execution-charset:windows-1252']
 
-  # Quake 4 legacy code (and companion BSE sources) currently relies on
+  # Quake 4 legacy code (including integrated BSE sources) currently relies on
   # pointer-sized casts and old C/C++ constructs that trigger noisy warnings
   # under modern MSVC defaults.
   msvc_suppressed_warnings = [
@@ -477,7 +449,7 @@ src_idlib_include_dir = include_directories('src/idlib')
 src_renderer_include_dir = include_directories('src/renderer')
 src_ui_include_dir = include_directories('src/ui')
 src_sys_include_dir = include_directories('src/sys')
-src_bse_api_include_dir = include_directories('src/bse_api')
+src_bse_include_dir = include_directories('src/bse')
 src_maya_import_include_dir = include_directories('src/MayaImport')
 game_include_dirs = [
   root_include_dir,
@@ -486,41 +458,49 @@ game_include_dirs = [
   src_renderer_include_dir,
   src_ui_include_dir,
   src_sys_include_dir,
-  src_bse_api_include_dir,
+  src_bse_include_dir,
   src_maya_import_include_dir,
 ]
 engine_include_dirs = [root_include_dir, src_include_dir]
 game_idlib_include_dirs = [root_include_dir, src_include_dir]
-bse_module_include_dirs = [root_include_dir, src_include_dir]
+bse_client_include_dirs = [root_include_dir, src_include_dir, src_bse_include_dir]
 
 if needs_game_headers
   staged_game_include_dir = include_directories(game_stage_game_include_rel)
   engine_include_dirs += [staged_game_include_dir]
   game_idlib_include_dirs += [staged_game_include_dir]
   game_include_dirs += [staged_game_include_dir]
-  bse_module_include_dirs += [staged_game_include_dir]
-endif
-
-if needs_bse_sources
-  bse_source_include_dir = include_directories(bse_source_root)
-  # Compatibility include anchor for legacy relative includes inside BSE sources
-  # (for example: "../renderer/ModelManager.h").
-  bse_legacy_include_anchor = include_directories('src/bse_api')
-  if build_libbse
-    bse_module_include_dirs += [bse_source_include_dir, bse_legacy_include_anchor]
-  endif
+  bse_client_include_dirs += [staged_game_include_dir]
 endif
 
 engine_cpp_args = shared_cpp_args + ['-D__DOOM_DLL__']
 engine_c_args = shared_c_args
+bse_cpp_args = shared_cpp_args
+bse_c_args = shared_c_args
+bse_library = disabler()
 
 if build_engine
+  bse_library = static_library(
+    'openq4_bse',
+    bse_sources,
+    include_directories: bse_client_include_dirs,
+    cpp_args: bse_cpp_args,
+    c_args: bse_c_args,
+    cpp_pch: pch_headers,
+    install: false,
+  )
+endif
+
+if build_engine
+  client_link_with = [bse_library]
+
   if host_system == 'windows'
     executable(
       engine_client_binary_name,
       openq4_engine_sources,
       include_directories: engine_include_dirs,
       dependencies: deps,
+      link_with: client_link_with,
       cpp_args: engine_cpp_args,
       c_args: engine_c_args,
       cpp_pch: pch_headers,
@@ -535,6 +515,7 @@ if build_engine
       openq4_engine_sources,
       include_directories: engine_include_dirs,
       dependencies: deps,
+      link_with: client_link_with,
       cpp_args: engine_cpp_args,
       c_args: engine_c_args,
       cpp_pch: pch_headers,
@@ -579,8 +560,6 @@ endif
 
 game_common_cpp_args = shared_cpp_args + ['-DGAME_DLL']
 game_common_c_args = shared_c_args
-bse_common_cpp_args = shared_cpp_args + ['-DGAME_DLL', '-DBSE_DLL']
-bse_common_c_args = shared_c_args
 game_module_link_args = []
 if host_system == 'windows'
   game_module_link_args = ['/FIXED:NO', '/LARGEADDRESSAWARE']
@@ -610,24 +589,18 @@ if build_engine or build_games
   )
 endif
 
-if build_libbse
-  shared_module(
-    bse_binary_name,
-    bse_sources,
-    include_directories: bse_module_include_dirs,
-    link_with: game_idlib_library,
-    cpp_args: bse_common_cpp_args,
-    c_args: bse_common_c_args,
-    cpp_pch: game_idlib_pch_headers,
-    link_args: game_module_link_args,
-    name_prefix: '',
-    install: true,
-    install_dir: install_root_dir,
-  )
-endif
-
 if build_engine or (build_games and (build_game_sp or build_game_mp))
   subdir('openq4')
+endif
+
+if host_system == 'windows' and host_cpu_family == 'x86_64'
+  openal_runtime_dll = 'src/external/openal-soft/bin/win64/OpenAL32.dll'
+  if fs_mod.is_file(openal_runtime_dll)
+    install_data(
+      openal_runtime_dll,
+      install_dir: install_root_dir,
+    )
+  endif
 endif
 
 install_data(
@@ -710,9 +683,8 @@ summary(
     'Build engine': build_engine,
     'engine client binary': engine_client_binary_name,
     'engine dedicated binary': engine_ded_binary_name,
-    'Build BSE DLL': build_libbse,
-    'BSE binary': bse_binary_name,
-    'BSE source repo': bse_repo_summary,
+    'Integrated BSE in client': build_engine,
+    'Integrated BSE source dir': bse_source_root,
     'Build games': build_games,
     'GameLibs source repo': game_libs_repo_summary,
     'Build game_sp': build_games and build_game_sp,
