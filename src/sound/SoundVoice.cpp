@@ -59,6 +59,7 @@ idSoundVoice_Base::idSoundVoice_Base() :
 	outerSampleRangeSqr( 0.0f )
 {
 	position.Zero();
+	velocity.Zero();
 }
 
 /*

@@ -394,10 +394,20 @@ void idSoundChannel::UpdateHardware( float volumeAdd, int currentTime )
 	if( omni || global || emitterIsListener )
 	{
 		hardwareVoice->SetPosition( vec3_zero );
+		hardwareVoice->SetVelocity( vec3_zero );
 	}
 	else
 	{
 		hardwareVoice->SetPosition( ( emitter->spatializedOrigin - soundWorld->listener.pos ) * soundWorld->listener.axis.Transpose() );
+		if( ( parms.soundShaderFlags & SSF_USEDOPPLER ) != 0 )
+		{
+			// OpenAL expects relative sources to provide velocity in listener space too.
+			hardwareVoice->SetVelocity( emitter->velocity * soundWorld->listener.axis.Transpose() );
+		}
+		else
+		{
+			hardwareVoice->SetVelocity( vec3_zero );
+		}
 	}
 	if( parms.soundShaderFlags & SSF_CENTER )
 	{
@@ -486,6 +496,7 @@ void idSoundEmitterLocal::Init( int i, idSoundWorldLocal* sw )
 
 	canFree = false;
 	origin.Zero();
+	velocity.Zero();
 	emitterId = 0;
 
 	directDistance = 0.0f;
@@ -769,6 +780,16 @@ idSoundEmitterLocal::UpdateEmitter
 */
 void idSoundEmitterLocal::UpdateEmitter( const idVec3& origin, int listenerId, const soundShaderParms_t* parms )
 {
+	UpdateEmitter( origin, vec3_zero, listenerId, parms );
+}
+
+/*
+========================
+idSoundEmitterLocal::UpdateEmitter
+========================
+*/
+void idSoundEmitterLocal::UpdateEmitter( const idVec3& origin, const idVec3& velocity, int listenerId, const soundShaderParms_t* parms )
+{
 	assert( soundWorld != NULL );
 	assert( soundWorld->emitters[this->index] == this );
 
@@ -778,6 +799,7 @@ void idSoundEmitterLocal::UpdateEmitter( const idVec3& origin, int listenerId, c
 		soundWorld->writeDemo->WriteInt( SCMD_UPDATE );
 		soundWorld->writeDemo->WriteInt( index );
 		soundWorld->writeDemo->WriteVec3( origin );
+		soundWorld->writeDemo->WriteVec3( velocity );
 		soundWorld->writeDemo->WriteInt( listenerId );
 		soundWorld->writeDemo->WriteFloat( parms->minDistance );
 		soundWorld->writeDemo->WriteFloat( parms->maxDistance );
@@ -791,6 +813,7 @@ void idSoundEmitterLocal::UpdateEmitter( const idVec3& origin, int listenerId, c
 	}
 
 	this->origin = origin;
+	this->velocity = velocity;
 	this->emitterId = listenerId;
 	this->parms = *parms;
 }

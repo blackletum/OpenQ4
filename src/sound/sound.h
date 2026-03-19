@@ -187,13 +187,10 @@ public:
 
 	// the parms specified will be the default overrides for all sounds started on this emitter.
 	// NULL is acceptable for parms
-	virtual void			UpdateEmitter( const idVec3& origin, int listenerId, const soundShaderParms_t* parms ) = 0;
-
-// jmarshall - todo add velocity
-	virtual void			UpdateEmitter(const idVec3& origin, const idVec3& velocity, int listenerId, const soundShaderParms_t* parms) {
-		UpdateEmitter(origin, listenerId, parms);
+	virtual void			UpdateEmitter( const idVec3& origin, int listenerId, const soundShaderParms_t* parms ) {
+		UpdateEmitter( origin, vec3_zero, listenerId, parms );
 	}
-// jmarshalll end
+	virtual void			UpdateEmitter( const idVec3& origin, const idVec3& velocity, int listenerId, const soundShaderParms_t* parms ) = 0;
 
 	// returns the length of the started sound in msec
 	virtual int				StartSound( const idSoundShader* shader, const s_channelType channel, float diversity = 0, int shaderFlags = 0, bool allowSlow = true ) = 0;

@@ -973,11 +973,13 @@ void idSoundWorldLocal::ProcessDemoCommand( idDemoFile* readDemo )
 		case SCMD_UPDATE:
 		{
 			idVec3 origin;
+			idVec3 velocity;
 			int listenerId;
 			soundShaderParms_t parms;
 
 			readDemo->ReadInt( index );
 			readDemo->ReadVec3( origin );
+			readDemo->ReadVec3( velocity );
 			readDemo->ReadInt( listenerId );
 			readDemo->ReadFloat( parms.minDistance );
 			readDemo->ReadFloat( parms.maxDistance );
@@ -988,7 +990,7 @@ void idSoundWorldLocal::ProcessDemoCommand( idDemoFile* readDemo )
 			readDemo->ReadFloat( parms.frequencyShift );
 			readDemo->ReadFloat( parms.wetLevel );
 			readDemo->ReadFloat( parms.dryLevel );
-			EmitterForIndex( index )->UpdateEmitter( origin, listenerId, &parms );
+			EmitterForIndex( index )->UpdateEmitter( origin, velocity, listenerId, &parms );
 		}
 		break;
 		case SCMD_START:

@@ -229,6 +229,7 @@ void idSoundVoice_OpenAL::Create( const idSoundSample* leadinSample_, const idSo
 
 	alSourcei( openalSource, AL_SOURCE_RELATIVE, AL_TRUE );
 	alSource3f( openalSource, AL_POSITION, 0.0f, 0.0f, 0.0f );
+	alSource3f( openalSource, AL_VELOCITY, 0.0f, 0.0f, 0.0f );
 
 	// RB: FIXME 0.0f ?
 	alSourcef( openalSource, AL_GAIN, 1.0f );

@@ -49,6 +49,13 @@ public:
 		alSource3f( openalSource, AL_POSITION, -p.y, p.z, -p.x );
 	}
 
+	void					SetVelocity( const idVec3& v ) override
+	{
+		idSoundVoice_Base::SetVelocity( v );
+
+		alSource3f( openalSource, AL_VELOCITY, -v.y, v.z, -v.x );
+	}
+
 	void					SetGain( float gain )
 	{
 		idSoundVoice_Base::SetGain( gain );

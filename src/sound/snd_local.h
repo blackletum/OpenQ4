@@ -399,6 +399,7 @@ public:
 	virtual void	Reset();
 
 	virtual void	UpdateEmitter( const idVec3& origin, int listenerId, const soundShaderParms_t* parms );
+	virtual void	UpdateEmitter( const idVec3& origin, const idVec3& velocity, int listenerId, const soundShaderParms_t* parms );
 
 	virtual int		StartSound( const idSoundShader* shader, const s_channelType channel, float diversity = 0, int shaderFlags = 0, bool allowSlow = true );
 
@@ -437,6 +438,7 @@ public:
 
 	//----- set by UpdateEmitter -----
 	idVec3				origin;
+	idVec3				velocity;
 	soundShaderParms_t	parms;
 	int					emitterId;						// sounds will be full volume when emitterId == listenerId
 

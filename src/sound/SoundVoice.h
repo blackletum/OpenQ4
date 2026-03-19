@@ -50,6 +50,11 @@ public:
 		position = p;
 	}
 
+	virtual void	SetVelocity( const idVec3& v )
+	{
+		velocity = v;
+	}
+
 	virtual void	SetGain( float g )
 	{
 		gain = g;
@@ -112,6 +117,7 @@ public:
 
 protected:
 	idVec3		position;			// Position of the sound relative to listener
+	idVec3		velocity;			// Velocity of the sound relative to listener
 	float		gain;				// Volume (0-1)
 	float		centerChannel;		// Value (0-1) which indicates how much of this voice goes to the center channel
 	float		pitch;				// Pitch multiplier
