@@ -135,9 +135,15 @@ PY
 }
 
 desired_build_libbse() {
-    local configured="${OPENQ4_BUILD_LIBBSE:-}"
+    local configured
     local normalized
 
+    if [[ -n "${OPENQ4_BUILD_LIBBSE:-}" ]]; then
+        echo "OPENQ4_BUILD_LIBBSE is no longer supported. OpenQ4-BSE is mandatory runtime content; use OPENQ4_SKIP_BSE_REBUILD=true only when preserving the staged BSE runtime from .install." >&2
+        exit 1
+    fi
+
+    configured="${OPENQ4_SKIP_BSE_REBUILD:-}"
     if [[ -z "${configured}" ]]; then
         printf '%s\n' "true"
         return
@@ -146,13 +152,13 @@ desired_build_libbse() {
     normalized="$(printf '%s' "${configured}" | tr '[:upper:]' '[:lower:]')"
     case "${normalized}" in
         1|true|yes|on)
-            printf '%s\n' "true"
-            ;;
-        0|false|no|off)
             printf '%s\n' "false"
             ;;
+        0|false|no|off)
+            printf '%s\n' "true"
+            ;;
         *)
-            echo "Invalid OPENQ4_BUILD_LIBBSE value '${configured}'. Use true/false, 1/0, yes/no, or on/off." >&2
+            echo "Invalid OPENQ4_SKIP_BSE_REBUILD value '${configured}'. Use true/false, 1/0, yes/no, or on/off." >&2
             exit 1
             ;;
     esac

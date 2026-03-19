@@ -156,16 +156,35 @@ function Test-GitHubActionsEnvironment {
 }
 
 function Get-DesiredBuildLibBSEValue {
-    $configured = $env:OPENQ4_BUILD_LIBBSE
+    if (-not [string]::IsNullOrWhiteSpace($env:OPENQ4_BUILD_LIBBSE)) {
+        throw "OPENQ4_BUILD_LIBBSE is no longer supported. OpenQ4-BSE is mandatory runtime content; use OPENQ4_SKIP_BSE_REBUILD=true only when preserving the staged BSE runtime from .install."
+    }
+
+    $configured = $env:OPENQ4_SKIP_BSE_REBUILD
     if ([string]::IsNullOrWhiteSpace($configured)) {
         return $true
+    }
+
+    switch ($configured.Trim().ToLowerInvariant()) {
+        { $_ -in @("1", "true", "yes", "on") } { return $false }
+        { $_ -in @("0", "false", "no", "off") } { return $true }
+        default {
+            throw "Invalid OPENQ4_SKIP_BSE_REBUILD value '$configured'. Use true/false, 1/0, yes/no, or on/off."
+        }
+    }
+}
+
+function Get-PreserveStagedBSEArtifacts {
+    $configured = $env:OPENQ4_PRESERVE_STAGED_BSE
+    if ([string]::IsNullOrWhiteSpace($configured)) {
+        return $false
     }
 
     switch ($configured.Trim().ToLowerInvariant()) {
         { $_ -in @("1", "true", "yes", "on") } { return $true }
         { $_ -in @("0", "false", "no", "off") } { return $false }
         default {
-            throw "Invalid OPENQ4_BUILD_LIBBSE value '$configured'. Use true/false, 1/0, yes/no, or on/off."
+            throw "Invalid OPENQ4_PRESERVE_STAGED_BSE value '$configured'. Use true/false, 1/0, yes/no, or on/off."
         }
     }
 }
@@ -325,7 +344,11 @@ function Sync-BSEArtifactsForCurrentConfig {
 
     Remove-BSEArtifacts -DirectoryPath $BuildDir
     if ($IncludeInstallRoot) {
-        Remove-BSEArtifacts -DirectoryPath (Join-Path $RepoRoot ".install")
+        if (Get-PreserveStagedBSEArtifacts) {
+            Write-Host "Preserving staged BSE artifacts in '$RepoRoot\\.install' because OPENQ4_PRESERVE_STAGED_BSE=true."
+        } else {
+            Remove-BSEArtifacts -DirectoryPath (Join-Path $RepoRoot ".install")
+        }
     }
 }
 

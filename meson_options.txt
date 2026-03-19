@@ -37,7 +37,7 @@ option(
   'build_libbse',
   type: 'boolean',
   value: true,
-  description: 'Build the external BSE runtime module (OpenQ4-BSE_<arch>) from OpenQ4-BSE.',
+  description: 'Internal BSE rebuild toggle. OpenQ4-BSE_<arch> remains mandatory runtime content for staged installs, nightlies, and releases.',
 )
 
 option(

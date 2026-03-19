@@ -181,7 +181,7 @@ The engine will automatically find your Quake 4 installation and validate the ga
 
 > [!NOTE]
 > `tools/build/meson_setup.ps1` automatically runs `tools/build/sync_icons.py` before `setup`, `compile`, and `install` to validate and generate the canonical icon set in `assets/icons/` (including required PNG sizes). Set `OPENQ4_SKIP_ICON_SYNC=1` to bypass this in local workflows.
-> Wrapper-driven builds enable `build_libbse` by default. Set `OPENQ4_BUILD_LIBBSE=false` to force it off explicitly.
+> `OpenQ4-BSE_<arch>` is mandatory runtime content for OpenQ4. Staged installs, nightlies, and release packages must include it; wrapper-driven builds no longer support disabling BSE.
 
 ---
 
@@ -244,7 +244,7 @@ bash tools/build/meson_setup.sh install -C builddir --no-rebuild --skip-subproje
 **Build directory** (`builddir/`):
 - `OpenQ4-client_x64` (`.exe` on Windows) - Main engine executable
 - `OpenQ4-ded_x64` (`.exe` on Windows) - Dedicated server
-- `OpenQ4-BSE_x64` (`.dll` / `.so` / `.dylib`) - BSE runtime module (when `-Dbuild_libbse=true`)
+- `OpenQ4-BSE_x64` (`.dll` / `.so` / `.dylib`) - Mandatory BSE runtime module
 - `openq4/game-sp_x64` (`.dll` / `.so` / `.dylib`) - Single-player game module
 - `openq4/game-mp_x64` (`.dll` / `.so` / `.dylib`) - Multiplayer game module
 

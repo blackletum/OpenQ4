@@ -128,9 +128,27 @@ def get_required_game_module_binaries(platform: str, arch: str) -> tuple[str, st
     )
 
 
-def get_optional_bse_binary(platform: str, arch: str) -> str:
+def get_required_bse_binary(platform: str, arch: str) -> str:
     module_ext = PLATFORM_GAME_MODULE_EXT[platform]
     return f"OpenQ4-BSE_{arch}{module_ext}"
+
+
+def resolve_required_bse_source(
+    install_dir: Path, platform: str, arch: str
+) -> tuple[Path | None, str]:
+    required_bse = get_required_bse_binary(platform, arch)
+    exact_match = install_dir / required_bse
+    if exact_match.is_file():
+        return exact_match, required_bse
+
+    module_ext = PLATFORM_GAME_MODULE_EXT[platform]
+    fallback_candidates = sorted(
+        path for path in install_dir.glob(f"OpenQ4-BSE_*{module_ext}") if path.is_file()
+    )
+    if len(fallback_candidates) == 1:
+        return fallback_candidates[0], required_bse
+
+    return None, required_bse
 
 
 def write_text_file(path: Path, lines: list[str]) -> None:
@@ -181,8 +199,7 @@ def copy_required_binaries(
     install_dir: Path,
     package_root: Path,
     allow_missing_binaries: bool,
-) -> tuple[list[str], list[str], str]:
-    copied_optional: list[str] = []
+) -> list[str]:
     missing_required: list[str] = []
 
     for filename in get_required_root_binaries(platform, arch):
@@ -194,13 +211,18 @@ def copy_required_binaries(
             raise FileNotFoundError(f"required distributable not found: {source}")
         shutil.copy2(source, package_root / filename)
 
-    optional_bse = get_optional_bse_binary(platform, arch)
-    optional_bse_source = install_dir / optional_bse
-    if optional_bse_source.is_file():
-        shutil.copy2(optional_bse_source, package_root / optional_bse)
-        copied_optional.append(optional_bse)
+    bse_source, required_bse = resolve_required_bse_source(install_dir, platform, arch)
+    if bse_source is None:
+        if allow_missing_binaries:
+            missing_required.append(required_bse)
+        else:
+            raise FileNotFoundError(
+                f"required BSE runtime not found for {platform}/{arch}: expected {install_dir / required_bse}"
+            )
+    else:
+        shutil.copy2(bse_source, package_root / required_bse)
 
-    return copied_optional, missing_required, optional_bse
+    return missing_required
 
 
 def copy_required_game_binaries(
@@ -415,7 +437,7 @@ def main(argv: list[str]) -> int:
         platform=args.platform,
         arch=args.arch,
     )
-    copied_optional, missing_required, expected_optional_bse = copy_required_binaries(
+    missing_required = copy_required_binaries(
         args.platform,
         args.arch,
         install_dir,
@@ -479,10 +501,6 @@ def main(argv: list[str]) -> int:
         print("Missing required game modules:")
         for filename in missing_game_modules:
             print(f"  - {filename}")
-    if not copied_optional:
-        print(
-            f"Optional runtime omitted: {expected_optional_bse} was not present in install directory."
-        )
     if skipped_samples:
         print("Filtered sample paths:")
         for rel in skipped_samples:

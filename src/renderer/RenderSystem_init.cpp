@@ -193,7 +193,7 @@ idCVar r_shadowMapCascadeDistance( "r_shadowMapCascadeDistance", "1536", CVAR_RE
 idCVar r_shadowMapCascadeLambda( "r_shadowMapCascadeLambda", "0.75", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "blend factor between uniform and logarithmic projected-light cascade splits", 0.0f, 1.0f );
 idCVar r_shadowMapCascadeBlend( "r_shadowMapCascadeBlend", "0.15", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "fraction of each projected-light cascade range used to blend into the next cascade", 0.0f, 0.5f );
 idCVar r_shadowMapDebugMode( "r_shadowMapDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
-	"projected shadow-map debug mode: 0 = off, 1 = atlas/depth, 2 = cascade index, 3 = projected UV, 4 = projected depth, 5 = invalid mask",
+	"projected shadow-map debug mode: 0 = off, 1 = atlas/depth, 2 = cascade index, 3 = projected UV, 4 = projected depth, 5 = projected w, 6 = invalid mask",
 	0, SHADOWMAP_DEBUGMODE_COUNT - 1, idCmdSystem::ArgCompletion_Integer<0, SHADOWMAP_DEBUGMODE_COUNT - 1> );
 idCVar r_shadowMapCascadeStabilize( "r_shadowMapCascadeStabilize", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "snap projected-light cascade bounds to texels to reduce shimmering" );
 idCVar r_shadowMapPointFarScale( "r_shadowMapPointFarScale", "1.25", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "padding multiplier applied to point-light shadow-map range", 1.0f, 4.0f );

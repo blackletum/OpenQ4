@@ -29,7 +29,8 @@ This file describes project goals, rules, and upstream credits for anyone workin
 - Treat `E:\Repositories\OpenQ4-BSE` as the canonical BSE source location.
 - For BSE work, make canonical edits in `OpenQ4-BSE` first; OpenQ4 builds BSE directly from that repo and does not mirror BSE implementation sources in-tree.
 - OpenQ4 may only contain BSE API wiring (`src/bse_api/`); do not add closed-source BSE implementation code to this repository.
-- Use Meson option `-Dbuild_libbse=true|false` (default `true`) to control whether `OpenQ4-BSE_<arch>` is built in OpenQ4.
+- Treat `OpenQ4-BSE_<arch>` as mandatory runtime content for OpenQ4; staged installs, nightlies, and releases must include it and validation should fail if it is absent.
+- Do not disable BSE in wrapper-driven builds; only skip a private-source BSE rebuild when intentionally preserving a committed staged runtime in `.install/`.
 - Use `OPENQ4_BSE_REPO=<path>` to override the default companion BSE repository location (`../OpenQ4-BSE`) when configuring/building OpenQ4.
 - Keep `openq4/` as the single unified game directory; do not split SP/MP into separate mod folders.
 - Prefer changes that match Quake 4 SDK expectations and shipped content behavior.

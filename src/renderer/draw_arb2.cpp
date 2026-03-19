@@ -444,6 +444,8 @@ static const char *RB_ShadowMapDebugModeName( shadowMapDebugMode_t mode ) {
 		return "projected-uv";
 	case SHADOWMAP_DEBUGMODE_PROJECTED_DEPTH:
 		return "projected-depth";
+	case SHADOWMAP_DEBUGMODE_PROJECTED_W:
+		return "projected-w";
 	case SHADOWMAP_DEBUGMODE_INVALID_MASK:
 		return "invalid-mask";
 	default:
@@ -490,6 +492,23 @@ static void RB_ShadowMapResetProjectedState( void ) {
 		g_projectedShadowMapState.biasScale[i] = 1.0f;
 		g_projectedShadowMapState.depthRange[i] = 0.0f;
 		g_projectedShadowMapState.clipZExtent[i] = 0.0f;
+	}
+}
+
+static idVec4 RB_ShadowMapBuildAtlasRect( const int cascadeIndex, const int atlasDiv );
+
+static void RB_ShadowMapInitializeProjectedState( const idPlane baseClipPlanes[4], const int cascadeCount, const int tileSize ) {
+	g_projectedShadowMapState.valid = true;
+	g_projectedShadowMapState.cascadeCount = cascadeCount;
+	g_projectedShadowMapState.atlasDiv = cascadeCount > 1 ? 2 : 1;
+	g_projectedShadowMapState.tileSize = tileSize;
+
+	for ( int cascadeIndex = 0; cascadeIndex < SHADOWMAP_MAX_CASCADES; cascadeIndex++ ) {
+		for ( int planeIndex = 0; planeIndex < 4; planeIndex++ ) {
+			g_projectedShadowMapState.clipPlanes[cascadeIndex][planeIndex] = baseClipPlanes[planeIndex];
+		}
+		g_projectedShadowMapState.atlasRect[cascadeIndex] = RB_ShadowMapBuildAtlasRect( cascadeIndex, g_projectedShadowMapState.atlasDiv );
+		g_projectedShadowMapState.splitDepths[cascadeIndex] = 1.0e30f;
 	}
 }
 
@@ -563,32 +582,38 @@ static void RB_ShadowMapTransformPointToClip( const idVec3 &point, const idPlane
 	}
 }
 
-static bool RB_ShadowMapBuildCascadeBounds( const idPlane baseClipPlanes[4], const viewDef_t *viewDef, const float sliceNear, const float sliceFar, const int tileSize, idVec3 &ndcMins, idVec3 &ndcMaxs ) {
+static bool RB_ShadowMapBuildCascadeBounds( const idPlane baseClipPlanes[4], const viewDef_t *viewDef, const float sliceNear, const float sliceFar, const int tileSize, int &validPointsOut, int &skippedPointsOut, idVec3 &ndcMins, idVec3 &ndcMaxs ) {
 	idVec3 corners[8];
 	RB_ShadowMapBuildSliceCorners( viewDef, sliceNear, sliceFar, corners );
 
-	int validPoints = 0;
+	validPointsOut = 0;
+	skippedPointsOut = 0;
 	ndcMins.Set( 1.0e30f, 1.0e30f, 1.0e30f );
 	ndcMaxs.Set( -1.0e30f, -1.0e30f, -1.0e30f );
 
 	for ( int i = 0; i < 8; i++ ) {
 		idVec4 clip;
 		RB_ShadowMapTransformPointToClip( corners[i], baseClipPlanes, clip );
-		if ( idMath::Fabs( clip.w ) <= 1.0e-5f ) {
+		if ( clip.w != clip.w || idMath::Fabs( clip.w ) <= 1.0e-5f ) {
+			skippedPointsOut++;
 			continue;
 		}
 
 		const float invW = 1.0f / clip.w;
 		idVec3 ndc( clip.x * invW, clip.y * invW, clip.z * invW );
+		if ( ndc.x != ndc.x || ndc.y != ndc.y || ndc.z != ndc.z ) {
+			skippedPointsOut++;
+			continue;
+		}
 
 		for ( int axis = 0; axis < 3; axis++ ) {
 			ndcMins[axis] = Min( ndcMins[axis], ndc[axis] );
 			ndcMaxs[axis] = Max( ndcMaxs[axis], ndc[axis] );
 		}
-		validPoints++;
+		validPointsOut++;
 	}
 
-	if ( validPoints < 4 ) {
+	if ( validPointsOut < 4 ) {
 		return false;
 	}
 
@@ -689,6 +714,40 @@ static void RB_ShadowMapReportProjectedSplits( const viewLight_t *vLight, const 
 	common->Printf( "\n" );
 }
 
+static void RB_ShadowMapReportProjectedCascadeFit( const viewLight_t *vLight, const int cascadeIndex, const int cascadeCount, const float sliceNear, const float sliceFar, const int validPoints, const int skippedPoints ) {
+	if ( skippedPoints <= 0 || idMath::ClampInt( 0, 2, r_shadowMapReport.GetInteger() ) < 2 || !g_shadowMapReportThisFrame || vLight == NULL ) {
+		return;
+	}
+
+	const char *shaderName = vLight->lightShader != NULL ? vLight->lightShader->GetName() : "<null>";
+	common->Printf(
+		"SM csm fit '%s' cascade=%d/%d range=[%.2f %.2f] validCorners=%d skippedW=%d\n",
+		shaderName,
+		cascadeIndex,
+		cascadeCount,
+		sliceNear,
+		sliceFar,
+		validPoints,
+		skippedPoints );
+}
+
+static void RB_ShadowMapReportProjectedCascadeFallback( const viewLight_t *vLight, const int requestedCascadeCount, const int cascadeIndex, const float sliceNear, const float sliceFar, const int validPoints, const int skippedPoints ) {
+	if ( idMath::ClampInt( 0, 2, r_shadowMapReport.GetInteger() ) < 2 || !g_shadowMapReportThisFrame || vLight == NULL ) {
+		return;
+	}
+
+	const char *shaderName = vLight->lightShader != NULL ? vLight->lightShader->GetName() : "<null>";
+	common->Printf(
+		"SM csm fallback '%s' requested=%d failedCascade=%d range=[%.2f %.2f] validCorners=%d skippedW=%d -> single-cascade\n",
+		shaderName,
+		requestedCascadeCount,
+		cascadeIndex,
+		sliceNear,
+		sliceFar,
+		validPoints,
+		skippedPoints );
+}
+
 /*
 =============
 RB_ShadowMapBuildProjectedState
@@ -699,21 +758,10 @@ Builds projected-light shadow-map state, including interior cascade split planes
 static void RB_ShadowMapBuildProjectedState( const viewLight_t *vLight, const idPlane baseClipPlanes[4], const int tileSize ) {
 	RB_ShadowMapResetProjectedState();
 
-	const int cascadeCount = RB_ShadowMapCascadeCountForLight( vLight );
-	g_projectedShadowMapState.valid = true;
-	g_projectedShadowMapState.cascadeCount = cascadeCount;
-	g_projectedShadowMapState.atlasDiv = cascadeCount > 1 ? 2 : 1;
-	g_projectedShadowMapState.tileSize = tileSize;
+	const int requestedCascadeCount = RB_ShadowMapCascadeCountForLight( vLight );
+	RB_ShadowMapInitializeProjectedState( baseClipPlanes, requestedCascadeCount, tileSize );
 
-	for ( int cascadeIndex = 0; cascadeIndex < SHADOWMAP_MAX_CASCADES; cascadeIndex++ ) {
-		for ( int planeIndex = 0; planeIndex < 4; planeIndex++ ) {
-			g_projectedShadowMapState.clipPlanes[cascadeIndex][planeIndex] = baseClipPlanes[planeIndex];
-		}
-		g_projectedShadowMapState.atlasRect[cascadeIndex] = RB_ShadowMapBuildAtlasRect( cascadeIndex, g_projectedShadowMapState.atlasDiv );
-		g_projectedShadowMapState.splitDepths[cascadeIndex] = 1.0e30f;
-	}
-
-	if ( cascadeCount <= 1 || backEnd.viewDef == NULL ) {
+	if ( requestedCascadeCount <= 1 || backEnd.viewDef == NULL ) {
 		return;
 	}
 
@@ -724,34 +772,44 @@ static void RB_ShadowMapBuildProjectedState( const viewLight_t *vLight, const id
 	const float range = maxDistance - zNear;
 	const float ratio = maxDistance / zNear;
 
-	for ( int splitIndex = 0; splitIndex < cascadeCount - 1; splitIndex++ ) {
-		const float p = float( splitIndex + 1 ) / float( cascadeCount );
+	for ( int splitIndex = 0; splitIndex < requestedCascadeCount - 1; splitIndex++ ) {
+		const float p = float( splitIndex + 1 ) / float( requestedCascadeCount );
 		const float uniformSplit = zNear + range * p;
 		const float logSplit = zNear * pow( ratio, p );
 		g_projectedShadowMapState.splitDepths[splitIndex] = uniformSplit + ( logSplit - uniformSplit ) * lambda;
 	}
 
 	float sliceNear = zNear;
-	for ( int cascadeIndex = 0; cascadeIndex < cascadeCount; cascadeIndex++ ) {
-		const bool finalCascade = cascadeIndex == cascadeCount - 1;
+	for ( int cascadeIndex = 0; cascadeIndex < requestedCascadeCount; cascadeIndex++ ) {
+		const bool finalCascade = cascadeIndex == requestedCascadeCount - 1;
 		const float targetFar = finalCascade ? maxDistance : g_projectedShadowMapState.splitDepths[cascadeIndex];
 		const float sliceFar = Max( targetFar, sliceNear + 1.0f );
 		idVec3 ndcMins;
 		idVec3 ndcMaxs;
-		if ( RB_ShadowMapBuildCascadeBounds( baseClipPlanes, viewDef, sliceNear, sliceFar, tileSize, ndcMins, ndcMaxs ) ) {
+		int validPoints = 0;
+		int skippedPoints = 0;
+		if ( RB_ShadowMapBuildCascadeBounds( baseClipPlanes, viewDef, sliceNear, sliceFar, tileSize, validPoints, skippedPoints, ndcMins, ndcMaxs ) ) {
 			RB_ShadowMapBuildCascadeClipPlanes( baseClipPlanes, ndcMins, ndcMaxs, g_projectedShadowMapState.clipPlanes[cascadeIndex] );
 			g_projectedShadowMapState.biasScale[cascadeIndex] = RB_ShadowMapCascadeBiasScale( ndcMins, ndcMaxs );
 			g_projectedShadowMapState.clipZExtent[cascadeIndex] = ndcMaxs.z - ndcMins.z;
+			RB_ShadowMapReportProjectedCascadeFit( vLight, cascadeIndex, requestedCascadeCount, sliceNear, sliceFar, validPoints, skippedPoints );
+		} else {
+			RB_ShadowMapReportProjectedCascadeFallback( vLight, requestedCascadeCount, cascadeIndex, sliceNear, sliceFar, validPoints, skippedPoints );
+			RB_ShadowMapResetProjectedState();
+			RB_ShadowMapInitializeProjectedState( baseClipPlanes, 1, tileSize );
+			g_projectedShadowMapState.depthRange[0] = Max( maxDistance - zNear, 0.0f );
+			g_projectedShadowMapState.clipZExtent[0] = 2.0f;
+			return;
 		}
 		g_projectedShadowMapState.depthRange[cascadeIndex] = sliceFar - sliceNear;
 		sliceNear = sliceFar;
 	}
 
-	RB_ShadowMapReportProjectedSplits( vLight, zNear, maxDistance, cascadeCount );
+	RB_ShadowMapReportProjectedSplits( vLight, zNear, maxDistance, requestedCascadeCount );
 	if ( idMath::ClampInt( 0, 2, r_shadowMapReport.GetInteger() ) >= 2 && g_shadowMapReportThisFrame && vLight != NULL ) {
 		const char *shaderName = vLight->lightShader != NULL ? vLight->lightShader->GetName() : "<null>";
 		common->Printf( "SM csm bias '%s'", shaderName );
-		for ( int cascadeIndex = 0; cascadeIndex < cascadeCount; cascadeIndex++ ) {
+		for ( int cascadeIndex = 0; cascadeIndex < requestedCascadeCount; cascadeIndex++ ) {
 			common->Printf( " [%d]=%.3f depth=%.2f clipZ=%.3f", cascadeIndex,
 				g_projectedShadowMapState.biasScale[cascadeIndex],
 				g_projectedShadowMapState.depthRange[cascadeIndex],
@@ -1464,39 +1522,97 @@ static void RB_ShadowMapPassReport( const viewLight_t *vLight, shadowMapPassKind
 		RB_CountDrawSurfChain( interactions ) );
 }
 
+static void RB_ShadowMapReportCasterSkip( const drawSurf_t *surf, const srfTriangles_t *casterGeo, const char *reason ) {
+	if ( idMath::ClampInt( 0, 2, r_shadowMapReport.GetInteger() ) < 2 || !g_shadowMapReportThisFrame ) {
+		return;
+	}
+
+	const char *lightShader = ( backEnd.vLight != NULL && backEnd.vLight->lightShader != NULL ) ? backEnd.vLight->lightShader->GetName() : "<null>";
+	const char *surfaceShader = ( surf != NULL && surf->material != NULL ) ? surf->material->GetName() : "<null>";
+	const srfTriangles_t *tri = casterGeo != NULL ? casterGeo : ( surf != NULL ? surf->geo : NULL );
+	const int numVerts = tri != NULL ? tri->numVerts : 0;
+	const int numIndexes = tri != NULL ? tri->numIndexes : 0;
+
+	common->Printf(
+		"SM caster-skip light='%s' type=%s surf='%s' reason=%s verts=%d indexes=%d\n",
+		lightShader,
+		( backEnd.vLight != NULL && backEnd.vLight->pointLight ) ? "point" : "projected",
+		surfaceShader,
+		reason,
+		numVerts,
+		numIndexes );
+}
+
+static bool RB_ShadowMapResolveCasterDrawData( const drawSurf_t *surf, srfTriangles_t *&casterGeoOut, vertCache_s *&ambientCacheOut ) {
+	casterGeoOut = NULL;
+	ambientCacheOut = NULL;
+
+	if ( surf == NULL || surf->geo == NULL ) {
+		RB_ShadowMapReportCasterSkip( surf, NULL, "no-geometry" );
+		return false;
+	}
+
+	const srfTriangles_t *casterGeo = surf->geo;
+	if ( casterGeo->ambientSurface != NULL ) {
+		casterGeo = casterGeo->ambientSurface;
+	}
+
+	if ( casterGeo == NULL ) {
+		RB_ShadowMapReportCasterSkip( surf, surf->geo, "no-ambient-surface" );
+		return false;
+	}
+
+	srfTriangles_t *ambientGeo = const_cast<srfTriangles_t *>( casterGeo );
+	if ( ambientGeo->numVerts <= 0 || ambientGeo->numIndexes <= 0 ) {
+		RB_ShadowMapReportCasterSkip( surf, ambientGeo, "empty-geometry" );
+		return false;
+	}
+
+	if ( ambientGeo->ambientCache == NULL ) {
+		if ( ambientGeo->verts == NULL ) {
+			RB_ShadowMapReportCasterSkip( surf, ambientGeo, "no-vertex-data" );
+			return false;
+		}
+		if ( !R_CreateAmbientCache( ambientGeo, false ) ) {
+			RB_ShadowMapReportCasterSkip( surf, ambientGeo, "ambient-cache-create-failed" );
+			return false;
+		}
+	}
+
+	vertCache_s *ambientCache = ambientGeo->ambientCache;
+	if ( ambientCache == NULL ) {
+		ambientCache = surf->geo->ambientCache;
+	}
+	if ( ambientCache == NULL ) {
+		RB_ShadowMapReportCasterSkip( surf, ambientGeo, "no-ambient-cache" );
+		return false;
+	}
+
+	if ( ambientGeo->indexCache == NULL && ambientGeo->indexes == NULL ) {
+		RB_ShadowMapReportCasterSkip( surf, ambientGeo, "no-index-data" );
+		return false;
+	}
+
+	casterGeoOut = ambientGeo;
+	ambientCacheOut = ambientCache;
+	return true;
+}
+
 static void RB_ShadowMapDrawCasterChain( const drawSurf_t *surf ) {
 	for ( ; surf != NULL; surf = surf->nextOnLight ) {
-		const srfTriangles_t *casterGeo = surf->geo;
-		if ( casterGeo == NULL ) {
+		srfTriangles_t *casterGeo = NULL;
+		vertCache_s *ambientCache = NULL;
+		if ( !RB_ShadowMapResolveCasterDrawData( surf, casterGeo, ambientCache ) ) {
 			continue;
 		}
-
-		if ( casterGeo->ambientSurface != NULL ) {
-			casterGeo = casterGeo->ambientSurface;
-		}
-
-		if ( casterGeo == NULL ) {
-			continue;
-		}
-
-		srfTriangles_t *ambientGeo = const_cast<srfTriangles_t *>( casterGeo );
-		if ( ambientGeo->ambientCache == NULL && ambientGeo->verts != NULL ) {
-			if ( !R_CreateAmbientCache( ambientGeo, false ) ) {
-				continue;
-			}
-		}
-
-		vertCache_s *ambientCache = ambientGeo->ambientCache;
-		if ( ambientCache == NULL ) {
-			ambientCache = surf->geo->ambientCache;
-		}
-		if ( ambientCache == NULL ) {
+		if ( surf->space == NULL ) {
+			RB_ShadowMapReportCasterSkip( surf, casterGeo, "no-space" );
 			continue;
 		}
 
 		vertexCache.Touch( ambientCache );
-		if ( ambientGeo->indexCache ) {
-			vertexCache.Touch( ambientGeo->indexCache );
+		if ( casterGeo->indexCache ) {
+			vertexCache.Touch( casterGeo->indexCache );
 		}
 
 		if ( surf->space != backEnd.currentSpace ) {
@@ -1596,37 +1712,19 @@ static float RB_PointShadowMapLightFar( const viewLight_t *vLight ) {
 
 static void RB_PointShadowMapDrawCasterChain( const drawSurf_t *surf, const float lightModelViewMatrix[16] ) {
 	for ( ; surf != NULL; surf = surf->nextOnLight ) {
-		const srfTriangles_t *casterGeo = surf->geo;
-		if ( casterGeo == NULL ) {
+		srfTriangles_t *casterGeo = NULL;
+		vertCache_s *ambientCache = NULL;
+		if ( !RB_ShadowMapResolveCasterDrawData( surf, casterGeo, ambientCache ) ) {
 			continue;
 		}
-
-		if ( casterGeo->ambientSurface != NULL ) {
-			casterGeo = casterGeo->ambientSurface;
-		}
-
-		if ( casterGeo == NULL ) {
-			continue;
-		}
-
-		srfTriangles_t *ambientGeo = const_cast<srfTriangles_t *>( casterGeo );
-		if ( ambientGeo->ambientCache == NULL && ambientGeo->verts != NULL ) {
-			if ( !R_CreateAmbientCache( ambientGeo, false ) ) {
-				continue;
-			}
-		}
-
-		vertCache_s *ambientCache = ambientGeo->ambientCache;
-		if ( ambientCache == NULL ) {
-			ambientCache = surf->geo->ambientCache;
-		}
-		if ( ambientCache == NULL ) {
+		if ( surf->space == NULL ) {
+			RB_ShadowMapReportCasterSkip( surf, casterGeo, "no-space" );
 			continue;
 		}
 
 		vertexCache.Touch( ambientCache );
-		if ( ambientGeo->indexCache ) {
-			vertexCache.Touch( ambientGeo->indexCache );
+		if ( casterGeo->indexCache ) {
+			vertexCache.Touch( casterGeo->indexCache );
 		}
 
 		if ( surf->space != backEnd.currentSpace ) {
