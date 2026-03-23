@@ -253,7 +253,7 @@ static bool RB_FindGLSLSourcePair( const char *programName, idStr &vertexPath, i
 	return false;
 }
 
-static bool RB_ResolveGLSLProgram( newShaderStage_t *stage ) {
+bool R_ValidateGLSLProgram( newShaderStage_t *stage ) {
 	if ( !stage->glslProgram ) {
 		return false;
 	}
@@ -345,6 +345,14 @@ static bool RB_ResolveGLSLProgram( newShaderStage_t *stage ) {
 	}
 	for ( int i = 0; i < stage->numShaderTextures; i++ ) {
 		stage->shaderTextureLocations[i] = glGetUniformLocationARB( programObject, stage->shaderTextureNames[i] );
+		if ( stage->shaderTextureLocations[i] < 0 ) {
+			common->Warning(
+				"GLSL program '%s' is missing sampler uniform '%s' declared by the material stage.",
+				stage->glslProgramName,
+				stage->shaderTextureNames[i] );
+			RB_FreeGLSLProgram( stage );
+			return false;
+		}
 	}
 
 	common->Printf( "Loaded GLSL program '%s' (%s, %s)\n",
@@ -519,7 +527,7 @@ static void RB_STD_SSAO( void ) {
 	}
 
 	RB_InitSSAOStage();
-	if ( !RB_ResolveGLSLProgram( &rbSSAOStage ) ) {
+	if ( !R_ValidateGLSLProgram( &rbSSAOStage ) ) {
 		return;
 	}
 
@@ -747,7 +755,7 @@ static void RB_STD_Bloom( void ) {
 	}
 
 	RB_InitBloomStage();
-	if ( !RB_ResolveGLSLProgram( &rbBloomStage ) ) {
+	if ( !R_ValidateGLSLProgram( &rbBloomStage ) ) {
 		return;
 	}
 
@@ -929,7 +937,7 @@ void RB_ApplyResolutionScaleToBackBuffer( void ) {
 	}
 
 	RB_InitResolutionScaleStage();
-	if ( !RB_ResolveGLSLProgram( &rbResolutionScaleStage ) ) {
+	if ( !R_ValidateGLSLProgram( &rbResolutionScaleStage ) ) {
 		return;
 	}
 
@@ -1057,7 +1065,7 @@ void RB_ApplyCRTToBackBuffer( void ) {
 	}
 
 	RB_InitCRTStage();
-	if ( !RB_ResolveGLSLProgram( &rbCRTStage ) ) {
+	if ( !R_ValidateGLSLProgram( &rbCRTStage ) ) {
 		return;
 	}
 
@@ -1914,7 +1922,9 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 		}
 
 		// Fallback for materials that reference _currentRender but were not sorted as post-process.
-		if ( !backEnd.currentRenderCopied && RB_StageUsesCurrentRender( pStage ) ) {
+		// Offscreen render-texture passes manage their own _currentRender capture and must not
+		// overwrite it here after clearing the destination render target.
+		if ( !backEnd.currentRenderCopied && backEnd.renderTexture == NULL && RB_StageUsesCurrentRender( pStage ) ) {
 			globalImages->currentRenderImage->CopyFramebuffer( backEnd.viewDef->viewport.x1,
 				backEnd.viewDef->viewport.y1, backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1,
 				backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1 );
@@ -1935,7 +1945,7 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 			//--------------------------
 
 			if ( newStage->glslProgram ) {
-				if ( !RB_ResolveGLSLProgram( newStage ) ) {
+				if ( !R_ValidateGLSLProgram( newStage ) ) {
 					continue;
 				}
 
@@ -1992,6 +2002,7 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 						continue;
 					}
 					GL_SelectTexture( i );
+					image->SetSamplerState( newStage->shaderTextureFilters[i], newStage->shaderTextureRepeats[i] );
 					image->Bind();
 					if ( newStage->shaderTextureLocations[i] >= 0 ) {
 						glUniform1iARB( newStage->shaderTextureLocations[i], i );
@@ -2280,10 +2291,17 @@ int RB_STD_DrawShaderPasses( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 
 		// Copy the current view for any post-process material sampling _currentRender.
 		// Do not gate this on viewEntitys: world-only views may still contain post-process surfaces.
-		globalImages->currentRenderImage->CopyFramebuffer( backEnd.viewDef->viewport.x1,
-			backEnd.viewDef->viewport.y1,  backEnd.viewDef->viewport.x2 -  backEnd.viewDef->viewport.x1 + 1,
-			backEnd.viewDef->viewport.y2 -  backEnd.viewDef->viewport.y1 + 1 );
-		backEnd.currentRenderCopied = true;
+		// Offscreen render-texture passes capture _currentRender explicitly and must keep that copy.
+		if ( backEnd.renderTexture == NULL ) {
+			globalImages->currentRenderImage->CopyFramebuffer( backEnd.viewDef->viewport.x1,
+				backEnd.viewDef->viewport.y1,  backEnd.viewDef->viewport.x2 -  backEnd.viewDef->viewport.x1 + 1,
+				backEnd.viewDef->viewport.y2 -  backEnd.viewDef->viewport.y1 + 1 );
+			backEnd.currentRenderCopied = true;
+		} else {
+			// Offscreen fullscreen passes are explicitly managed by the caller. Mark the copy as
+			// satisfied so SS_POST_PROCESS surfaces are allowed to draw in this view.
+			backEnd.currentRenderCopied = true;
+		}
 	}
 
 	GL_SelectTexture( 1 );

@@ -73,7 +73,7 @@ To play OpenQ4, you need:
 - **CRT Emulation**: Optional CRT post-process with scanlines, mask, curvature, and chromatic offset controls
 - **Shadow Mapping Pipeline**: Experimental shadow-map support for projected and point lights, with cascaded shadow maps (CSM) actively under development
 - **Resolution Scaling and Supersample Controls**: Screen-fraction rendering supports lower-resolution upscale modes and menu-exposed supersample-style presets for image-quality tuning
-- **Modern AA and Upscaling**: MSAA, SMAA, and high-quality resolution-scaling paths for cleaner output across a wide range of hardware
+- **Modern AA and Upscaling**: MSAA, official SMAA 1x (medium preset), and high-quality resolution-scaling paths for cleaner output across a wide range of hardware
 
 ### Display and UX Improvements
 - **Automatic Aspect-Ratio Management**: UI, FOV, zoom behavior, and view-weapon framing adapt from live render size instead of legacy manual aspect toggles
@@ -555,6 +555,7 @@ OpenQ4 builds upon the work of many talented developers and projects:
 - **GLEW Team** - Nigel Stewart, Milan Ikits, Marcelo E. Magallon, Lev Povalahev
 - **OpenAL Soft Contributors** - 3D audio implementation
 - **SDL Team** - Cross-platform framework
+- **Jorge Jimenez, Jose I. Echevarria, Belen Masia, Fernando Navarro, Diego Gutierrez** - [SMAA](https://www.iryoku.com/smaa/) reference implementation and lookup textures
 
 ### Special Thanks
 - The Quake and id Tech community for continued support and enthusiasm

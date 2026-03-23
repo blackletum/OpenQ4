@@ -592,6 +592,7 @@ void *R_GetCommandBuffer( int bytes );
 
 // this allows a global override of all materials
 bool R_GlobalShaderOverride( const idMaterial **shader );
+bool R_ValidateGLSLProgram( newShaderStage_t *stage );
 
 // this does various checks before calling the idDeclSkin
 const idMaterial *R_RemapShaderBySkin( const idMaterial *shader, const idDeclSkin *customSkin, const idMaterial *customShader );
@@ -769,6 +770,8 @@ public:
 
 	virtual idImage*		CreateImage(const char* name, idImageOpts* opts, textureFilter_t textureFilter);
 	virtual idImage*		FindImage(const char* name);
+	virtual bool			ValidateMaterialArbPrograms( const idMaterial* material );
+	virtual bool			ValidateSMAALookupTextures( void );
 	virtual idRenderTexture* CreateRenderTexture(idImage* albedoImage, idImage* depthImage, idImage* albedoImage2 = nullptr, idImage* albedoImage3 = nullptr);
 	virtual void			DestroyRenderTexture(idRenderTexture* renderTexture);
 	virtual void			ResizeImage(idImage* image, int width, int height);

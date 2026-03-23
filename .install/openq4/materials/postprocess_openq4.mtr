@@ -47,8 +47,23 @@ postprocess/openq4_smaa_edge
 	noShadows
 	{
 		blend gl_one, gl_zero
-		program openq4_smaa_edge.vfp
-		fragmentMap 0 clamp _postProcessAlbedo0
+		glslProgram openq4_smaa_edge.fs
+		shaderParm invTexSize 1.0 / VideoWidth, 1.0 / VideoHeight
+		shaderTexture ColorTex nearest clamp _forwardRenderResolvedAlbedo
+	}
+}
+
+postprocess/openq4_smaa_weights
+{
+	sort postProcess
+	noShadows
+	{
+		blend gl_one, gl_zero
+		glslProgram openq4_smaa_weights.fs
+		shaderParm invTexSize 1.0 / VideoWidth, 1.0 / VideoHeight
+		shaderTexture EdgesTex linear clamp _postProcessAlbedo1
+		shaderTexture AreaTex linear clamp _smaaArea
+		shaderTexture SearchTex linear clamp _smaaSearch
 	}
 }
 
@@ -58,9 +73,10 @@ postprocess/openq4_smaa_blend
 	noShadows
 	{
 		blend gl_one, gl_zero
-		program openq4_smaa_blend.vfp
-		fragmentMap 0 clamp _currentRender
-		fragmentMap 1 clamp _postProcessAlbedo1
+		glslProgram openq4_smaa_blend.fs
+		shaderParm invTexSize 1.0 / VideoWidth, 1.0 / VideoHeight
+		shaderTexture ColorTex linear clamp _forwardRenderResolvedAlbedo
+		shaderTexture BlendTex linear clamp _postProcessAlbedo0
 	}
 }
 

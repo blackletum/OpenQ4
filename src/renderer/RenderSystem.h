@@ -382,6 +382,8 @@ public:
 
 	// Returns the specified image.
 	virtual idImage* FindImage(const char* name) = 0;
+	virtual bool			ValidateMaterialArbPrograms( const idMaterial* material ) = 0;
+	virtual bool			ValidateSMAALookupTextures( void ) = 0;
 
 	// Creates a render texture given a albedo and depth image.
 	virtual idRenderTexture* CreateRenderTexture(idImage* albedoImage, idImage* depthImage, idImage* albedoImage2 = nullptr, idImage* albedoImage3 = nullptr) = 0;

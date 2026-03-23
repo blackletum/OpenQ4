@@ -111,6 +111,8 @@ public:
 	const idImageOpts& GetOpts() const { return opts; }
 	int			GetUploadWidth() const { return opts.width; }
 	int			GetUploadHeight() const { return opts.height; }
+	textureFilter_t GetFilter() const { return filter; }
+	textureRepeat_t GetRepeat() const { return repeat; }
 
 	void		SetReferencedOutsideLevelLoad() { referencedOutsideLevelLoad = true; }
 	void		SetReferencedInsideLevelLoad() { levelLoadReferenced = true; }

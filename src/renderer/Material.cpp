@@ -1168,6 +1168,8 @@ void idMaterial::ParseShaderTexture( idLexer &src, newShaderStage_t *newStage ) 
 	textureUsage_t		td;
 	cubeFiles_t			cubeMap;
 	bool				allowPicmip;
+	bool				explicitFilter;
+	bool				explicitRepeat;
 	idToken				token;
 
 	if ( !newStage->glslProgram ) {
@@ -1195,6 +1197,8 @@ void idMaterial::ParseShaderTexture( idLexer &src, newShaderStage_t *newStage ) 
 	trp = TR_REPEAT;
 	td = TD_DEFAULT;
 	allowPicmip = true;
+	explicitFilter = false;
+	explicitRepeat = false;
 	cubeMap = CF_2D;
 
 	while( 1 ) {
@@ -1215,30 +1219,37 @@ void idMaterial::ParseShaderTexture( idLexer &src, newShaderStage_t *newStage ) 
 		}
 		if ( !token.Icmp( "nearest" ) ) {
 			tf = TF_NEAREST;
+			explicitFilter = true;
 			continue;
 		}
 		if ( !token.Icmp( "linear" ) ) {
 			tf = TF_LINEAR;
+			explicitFilter = true;
 			continue;
 		}
 		if ( !token.Icmp( "clamp" ) ) {
 			trp = TR_CLAMP;
+			explicitRepeat = true;
 			continue;
 		}
 		if ( !token.Icmp( "noclamp" ) ) {
 			trp = TR_REPEAT;
+			explicitRepeat = true;
 			continue;
 		}
 		if ( !token.Icmp( "zeroclamp" ) ) {
 			trp = TR_CLAMP_TO_ZERO;
+			explicitRepeat = true;
 			continue;
 		}
 		if ( !token.Icmp( "alphazeroclamp" ) ) {
 			trp = TR_CLAMP_TO_ZERO_ALPHA;
+			explicitRepeat = true;
 			continue;
 		}
 		if ( !token.Icmp( "mirroredrepeat" ) ) {
 			trp = TR_MIRRORED_REPEAT;
+			explicitRepeat = true;
 			continue;
 		}
 		if ( !token.Icmp( "forceHighQuality" ) ) {
@@ -1266,6 +1277,10 @@ void idMaterial::ParseShaderTexture( idLexer &src, newShaderStage_t *newStage ) 
 	if ( !newStage->shaderTextureImages[slot] ) {
 		newStage->shaderTextureImages[slot] = globalImages->defaultImage;
 	}
+
+	const idImage *image = newStage->shaderTextureImages[slot];
+	newStage->shaderTextureFilters[slot] = explicitFilter ? tf : image->GetFilter();
+	newStage->shaderTextureRepeats[slot] = explicitRepeat ? trp : image->GetRepeat();
 }
 
 /*

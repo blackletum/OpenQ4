@@ -60,8 +60,12 @@ OPENQ4_PK4_EXCLUDED_SUFFIXES = {
     ".ilk",
 }
 OPENQ4_REQUIRED_PK4_FILES = {
-    "glprogs/openq4_smaa_blend.vfp",
-    "glprogs/openq4_smaa_edge.vfp",
+    "glprogs/openq4_smaa_blend.fs",
+    "glprogs/openq4_smaa_blend.vs",
+    "glprogs/openq4_smaa_edge.fs",
+    "glprogs/openq4_smaa_edge.vs",
+    "glprogs/openq4_smaa_weights.fs",
+    "glprogs/openq4_smaa_weights.vs",
     "materials/postprocess_openq4.mtr",
 }
 

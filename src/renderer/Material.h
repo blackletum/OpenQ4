@@ -218,6 +218,8 @@ typedef struct {
 	char				shaderTextureNames[MAX_FRAGMENT_IMAGES][MAX_GLSL_SHADER_PARM_NAME];
 	int					shaderTextureLocations[MAX_FRAGMENT_IMAGES];
 	idImage* shaderTextureImages[MAX_FRAGMENT_IMAGES];
+	textureFilter_t		shaderTextureFilters[MAX_FRAGMENT_IMAGES];
+	textureRepeat_t		shaderTextureRepeats[MAX_FRAGMENT_IMAGES];
 } newShaderStage_t;
 
 typedef struct {

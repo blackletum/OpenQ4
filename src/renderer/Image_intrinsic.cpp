@@ -31,6 +31,8 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "tr_local.h"
+#include "smaa/AreaTex.h"
+#include "smaa/SearchTex.h"
 
 #define	DEFAULT_SIZE	16
 
@@ -602,6 +604,36 @@ static void R_RampImage(idImage* image) {
 		TF_NEAREST, TR_CLAMP, TD_DIFFUSE);
 }
 
+static void R_SMAAAreaImage( idImage *image ) {
+	const int pixelCount = AREATEX_WIDTH * AREATEX_HEIGHT;
+	byte *data = (byte *)Mem_Alloc( pixelCount * 4 );
+
+	for ( int src = 0, dst = 0; src < AREATEX_SIZE; src += 2, dst += 4 ) {
+		data[dst + 0] = areaTexBytes[src + 0];
+		data[dst + 1] = areaTexBytes[src + 1];
+		data[dst + 2] = 0;
+		data[dst + 3] = 255;
+	}
+
+	image->GenerateImage( data, AREATEX_WIDTH, AREATEX_HEIGHT, TF_LINEAR, TR_CLAMP, TD_LOOKUP_TABLE_RGBA );
+	Mem_Free( data );
+}
+
+static void R_SMAASearchImage( idImage *image ) {
+	const int pixelCount = SEARCHTEX_WIDTH * SEARCHTEX_HEIGHT;
+	byte *data = (byte *)Mem_Alloc( pixelCount * 4 );
+
+	for ( int src = 0, dst = 0; src < SEARCHTEX_SIZE; src++, dst += 4 ) {
+		data[dst + 0] = searchTexBytes[src];
+		data[dst + 1] = 0;
+		data[dst + 2] = 0;
+		data[dst + 3] = 255;
+	}
+
+	image->GenerateImage( data, SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT, TF_LINEAR, TR_CLAMP, TD_LOOKUP_TABLE_RGBA );
+	Mem_Free( data );
+}
+
 
 /*
 ================
@@ -641,6 +673,8 @@ void idImageManager::CreateIntrinsicImages() {
 
 	currentRenderImage = ImageFromFunction("_currentRender", R_RGBA8Image);
 	currentDepthImage = ImageFromFunction("_currentDepth", R_DepthImage);
+	ImageFromFunction("_smaaArea", R_SMAAAreaImage);
+	ImageFromFunction("_smaaSearch", R_SMAASearchImage);
 
 	// placeholders for runtime render targets referenced by materials
 	ImageFromFunction("_forwardRenderResolvedAlbedo", R_RGBA8Image);

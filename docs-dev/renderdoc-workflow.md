@@ -4,11 +4,12 @@ This document covers the OpenQ4 RenderDoc status and the March 2026 black-viewpo
 
 ## Root Cause
 
-- The black viewport reports were not caused by missing SMAA assets in the current release package.
-- The actual failure was an undefined OpenGL feedback loop in the SMAA neighborhood-blend pass:
-  - `OpenQ4-GameLibs/src/game/Game_render.cpp` already copies the resolved scene into `_currentRender` before the SMAA passes.
+- The black viewport reports were not caused by missing SMAA assets in the release package.
+- The older two-pass SMAA placeholder path had an undefined OpenGL feedback loop in the neighborhood-blend pass:
+  - `OpenQ4-GameLibs/src/game/Game_render.cpp` already copied the resolved scene into `_currentRender` before the SMAA passes.
   - [`openq4/materials/postprocess_openq4.mtr`](../openq4/materials/postprocess_openq4.mtr) previously drew `postprocess/openq4_smaa_blend` into `_postProcessAlbedo0` while also sampling `_postProcessAlbedo0`.
 - Some drivers preserved the previous texture contents and appeared to work. Others returned black or undefined data. That is why the issue only reproduced for some users and clustered around `r_postAA 1`.
+- Current builds no longer use that path. `r_postAA 1` now runs a three-pass GLSL SMAA 1x implementation: edge detection, blending-weight calculation, and neighborhood blending.
 
 ## Current RenderDoc Limitation
 
@@ -49,23 +50,40 @@ On the current renderer, the launch is still expected to fail before first frame
 
 ## What To Inspect
 
-When reviewing an older or future capture in RenderDoc, find the draw using `postprocess/openq4_smaa_blend`.
+When reviewing an older or future capture in RenderDoc, inspect the three SMAA passes in order:
+
+- `postprocess/openq4_smaa_edge`
+- `postprocess/openq4_smaa_weights`
+- `postprocess/openq4_smaa_blend`
 
 Expected bindings on a fixed build:
 
-- Render target: `_postProcessAlbedo0`
-- Texture slot 0: `_currentRender`
-- Texture slot 1: `_postProcessAlbedo1`
+- `postprocess/openq4_smaa_edge`
+  - Render target: `_postProcessAlbedo1`
+  - Texture slot 0: `_currentRender`
+- `postprocess/openq4_smaa_weights`
+  - Render target: `_postProcessAlbedo0`
+  - Texture slot 0: `_postProcessAlbedo1`
+  - Texture slot 1: `_smaaArea`
+  - Texture slot 2: `_smaaSearch`
+- `postprocess/openq4_smaa_blend`
+  - Render target: `_postProcessAlbedo1`
+  - Texture slot 0: `_currentRender`
+  - Texture slot 1: `_postProcessAlbedo0`
 
-If texture slot 0 matches the render target, the build still contains the broken feedback loop.
+If the blend pass ever samples the same texture it is rendering to, the build still contains a broken feedback loop.
 
 ## Release Package Audit
 
 `tools/build/package_nightly.py` now fails packaging if `pak0.pk4` is missing any of these required runtime files:
 
 - `materials/postprocess_openq4.mtr`
-- `glprogs/openq4_smaa_edge.vfp`
-- `glprogs/openq4_smaa_blend.vfp`
+- `glprogs/openq4_smaa_edge.vs`
+- `glprogs/openq4_smaa_edge.fs`
+- `glprogs/openq4_smaa_weights.vs`
+- `glprogs/openq4_smaa_weights.fs`
+- `glprogs/openq4_smaa_blend.vs`
+- `glprogs/openq4_smaa_blend.fs`
 
 This check is meant to catch packaging regressions in the postprocess stack before release artifacts ship.
 

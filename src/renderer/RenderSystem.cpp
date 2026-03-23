@@ -29,6 +29,8 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "tr_local.h"
+#include "smaa/AreaTex.h"
+#include "smaa/SearchTex.h"
 
 idRenderSystemLocal	tr;
 idRenderSystem	*renderSystem = &tr;
@@ -1126,6 +1128,92 @@ idRenderSystemLocal::FindImage
 */
 idImage* idRenderSystemLocal::FindImage(const char* name) {
 	return globalImages->ImageFromFile(name, TF_DEFAULT, TR_REPEAT, TD_DEFAULT);
+}
+
+/*
+===============
+idRenderSystemLocal::ValidateMaterialArbPrograms
+===============
+*/
+bool idRenderSystemLocal::ValidateMaterialArbPrograms( const idMaterial* material ) {
+	if ( material == NULL ) {
+		return false;
+	}
+
+	for ( int stageIndex = 0; stageIndex < material->GetNumStages(); ++stageIndex ) {
+		const shaderStage_t* stage = material->GetStage( stageIndex );
+		if ( stage == NULL || stage->newStage == NULL ) {
+			continue;
+		}
+
+		const newShaderStage_t* newStage = stage->newStage;
+		if ( newStage->vertexProgram != 0 &&
+			!R_IsARBProgramValid( GL_VERTEX_PROGRAM_ARB, newStage->vertexProgram ) ) {
+			return false;
+		}
+
+		if ( newStage->fragmentProgram != 0 &&
+			!R_IsARBProgramValid( GL_FRAGMENT_PROGRAM_ARB, newStage->fragmentProgram ) ) {
+			return false;
+		}
+
+		if ( newStage->glslProgram && !R_ValidateGLSLProgram( const_cast<newShaderStage_t *>( newStage ) ) ) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+/*
+===============
+idRenderSystemLocal::ValidateSMAALookupTextures
+===============
+*/
+bool idRenderSystemLocal::ValidateSMAALookupTextures( void ) {
+	const idImage *areaImage = globalImages->GetImage( "_smaaArea" );
+	if ( areaImage == NULL ) {
+		common->Warning( "SMAA lookup image '_smaaArea' is unavailable." );
+		return false;
+	}
+
+	if ( !areaImage->IsLoaded() ) {
+		common->Warning( "SMAA lookup image '_smaaArea' exists but is not loaded." );
+		return false;
+	}
+
+	if ( areaImage->GetUploadWidth() != AREATEX_WIDTH || areaImage->GetUploadHeight() != AREATEX_HEIGHT ) {
+		common->Warning(
+			"SMAA lookup image '_smaaArea' has unexpected dimensions %d x %d (expected %d x %d).",
+			areaImage->GetUploadWidth(),
+			areaImage->GetUploadHeight(),
+			AREATEX_WIDTH,
+			AREATEX_HEIGHT );
+		return false;
+	}
+
+	const idImage *searchImage = globalImages->GetImage( "_smaaSearch" );
+	if ( searchImage == NULL ) {
+		common->Warning( "SMAA lookup image '_smaaSearch' is unavailable." );
+		return false;
+	}
+
+	if ( !searchImage->IsLoaded() ) {
+		common->Warning( "SMAA lookup image '_smaaSearch' exists but is not loaded." );
+		return false;
+	}
+
+	if ( searchImage->GetUploadWidth() != SEARCHTEX_WIDTH || searchImage->GetUploadHeight() != SEARCHTEX_HEIGHT ) {
+		common->Warning(
+			"SMAA lookup image '_smaaSearch' has unexpected dimensions %d x %d (expected %d x %d).",
+			searchImage->GetUploadWidth(),
+			searchImage->GetUploadHeight(),
+			SEARCHTEX_WIDTH,
+			SEARCHTEX_HEIGHT );
+		return false;
+	}
+
+	return true;
 }
 
 /*

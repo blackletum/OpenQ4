@@ -31,7 +31,7 @@ This guide covers OpenQ4 display/window settings for end users, including multi-
 | Setting | Default | What it does |
 |---|---:|---|
 | `r_multiSamples` | `0` | MSAA sample count for the main scene render target (`0`, `2`, `4`, `8`, `16`; `0` = off). |
-| `r_postAA` | `0` | Post AA mode (`0` = off, `1` = SMAA 1x). |
+| `r_postAA` | `0` | Post AA mode (`0` = off, `1` = official SMAA 1x using the medium preset). |
 | `r_msaaAlphaToCoverage` | `1` | Enables alpha-to-coverage for perforated/alpha-tested materials when MSAA is active. Helps foliage/fences look cleaner. |
 | `r_msaaResolveDepth` | `0` | Also resolves depth during MSAA resolve. Usually leave this off unless debugging a depth-dependent edge case. |
 
@@ -191,4 +191,4 @@ vid_restart
 - If UI appears too centered/boxed on wide displays, set `ui_aspectCorrection 0`.
 - If the window opens off-screen after a monitor change, set `r_screen` explicitly to the target monitor and restart video; OpenQ4 will also attempt to recover automatically.
 - If AA settings seem unchanged, check values with `r_multiSamples`, `r_postAA`, and `r_msaaAlphaToCoverage`, then run `vid_restart`.
-- If enabling `r_postAA 1` turns the 3D viewport black on an older build, set `r_postAA 0`, run `vid_restart`, and attach `openq4.log` plus the output of `gfxInfo`. RenderDoc capture is not yet supported on the current OpenQ4 renderer.
+- If enabling `r_postAA 1` turns the 3D viewport black on an older build, set `r_postAA 0`, run `vid_restart`, and attach `openq4.log` plus the output of `gfxInfo`. Current builds use a three-pass GLSL SMAA path and should no longer hit the old feedback-loop failure. RenderDoc capture is not yet supported on the current OpenQ4 renderer.
