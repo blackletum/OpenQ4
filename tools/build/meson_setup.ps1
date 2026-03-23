@@ -192,6 +192,58 @@ function Test-GitHubActionsEnvironment {
     return $env:GITHUB_ACTIONS -eq "true"
 }
 
+function Test-WindowsHost {
+    return [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+}
+
+function Get-RequiredWindowsCRTOptionValue {
+    return "static_from_buildtype"
+}
+
+function Ensure-WindowsStaticCRTSetupArgs {
+    param([string[]]$MesonArgs)
+
+    if (-not (Test-WindowsHost)) {
+        return @($MesonArgs)
+    }
+
+    $requiredValue = Get-RequiredWindowsCRTOptionValue
+    $requiredArg = "-Db_vscrt=$requiredValue"
+    $updatedArgs = @()
+    $found = $false
+
+    foreach ($arg in $MesonArgs) {
+        if ($arg -like "-Db_vscrt=*") {
+            $found = $true
+            if ($arg -ne $requiredArg) {
+                Write-Host "Overriding Meson b_vscrt option to '$requiredValue' to satisfy OpenQ4 Windows static CRT policy."
+            }
+            $updatedArgs += $requiredArg
+            continue
+        }
+
+        $updatedArgs += $arg
+    }
+
+    if (-not $found) {
+        $updatedArgs += $requiredArg
+    }
+
+    return @($updatedArgs)
+}
+
+function Test-WindowsStaticCRTReconfigureNeeded {
+    param([string]$BuildDir)
+
+    if (-not (Test-WindowsHost) -or -not (Test-MesonBuildDirectory $BuildDir)) {
+        return $false
+    }
+
+    $configuredValue = Get-MesonBuildOptionValue -BuildDir $BuildDir -OptionName "b_vscrt"
+    $requiredValue = Get-RequiredWindowsCRTOptionValue
+    return [string]$configuredValue -ne $requiredValue
+}
+
 function Test-ObsoleteBSEBuildOptionPresent {
     param([string]$BuildDir)
 
@@ -262,7 +314,7 @@ function Get-SetupArgsForExistingBuildDir {
         $setupArgs += "-D$optionName=$formattedValue"
     }
 
-    return $setupArgs
+    return @(Ensure-WindowsStaticCRTSetupArgs -MesonArgs $setupArgs)
 }
 
 function Recreate-MesonBuildDirectory {
@@ -507,6 +559,10 @@ $buildGameLibsScript = Join-Path $scriptDir "build_gamelibs.ps1"
 $stageWindowsRuntimeScript = Join-Path $scriptDir "stage_windows_runtime.py"
 $syncIconsScript = Join-Path $scriptDir "sync_icons.py"
 
+if ($commandName -eq "setup") {
+    $effectiveArgs = Ensure-WindowsStaticCRTSetupArgs -MesonArgs $effectiveArgs
+}
+
 if ($commandName -eq "setup" -and ($effectiveArgs -contains "--reconfigure")) {
     $reconfigureIndex = [Array]::IndexOf($effectiveArgs, "--reconfigure")
     if ($reconfigureIndex -ge 0 -and ($reconfigureIndex + 1) -lt $effectiveArgs.Length) {
@@ -560,6 +616,7 @@ if ($effectiveArgs.Length -gt 0 -and ($effectiveArgs[0] -eq "compile" -or $effec
                 "--wrap-mode=forcefallback"
             )
         }
+        $setupArgs = Ensure-WindowsStaticCRTSetupArgs -MesonArgs $setupArgs
 
         if (Test-ObsoleteBSEBuildOptionPresent -BuildDir $buildInfo.BuildDir) {
             $setupCode = Recreate-MesonBuildDirectory -BuildDir $buildInfo.BuildDir -SetupArgs $setupArgs -VsDevCmdPath $vsDevCmd -MesonCommand $mesonCommand
@@ -581,17 +638,31 @@ if ($effectiveArgs.Length -gt 0 -and ($effectiveArgs[0] -eq "compile" -or $effec
         }
     }
 
+    $reconfigureReasons = @()
+    $needsWindowsStaticCRTRefresh = Test-WindowsStaticCRTReconfigureNeeded -BuildDir $buildInfo.BuildDir
+    if ($needsWindowsStaticCRTRefresh) {
+        $configuredCRT = Get-MesonBuildOptionValue -BuildDir $buildInfo.BuildDir -OptionName "b_vscrt"
+        if ([string]::IsNullOrWhiteSpace([string]$configuredCRT)) {
+            $configuredCRT = "unset"
+        }
+        Write-Host "Meson build directory '$($buildInfo.BuildDir)' uses b_vscrt='$configuredCRT'. Reconfiguring for OpenQ4's required Windows static CRT policy..."
+        $reconfigureReasons += "Windows static CRT policy"
+    }
+
     $needsGameLibsRefresh = Test-GamelibsStageRefreshNeeded -BuildDir $buildInfo.BuildDir -RepoRoot $repoRoot -GameLibsRepo $gameLibsRepo
     if ($needsGameLibsRefresh) {
-        if ($needsGameLibsRefresh) {
-            Write-Host "OpenQ4-GameLibs sources changed since the last staged snapshot. Reconfiguring '$($buildInfo.BuildDir)'..."
-        }
+        Write-Host "OpenQ4-GameLibs sources changed since the last staged snapshot. Reconfiguring '$($buildInfo.BuildDir)'..."
+        $reconfigureReasons += "staged OpenQ4-GameLibs refresh"
+    }
+
+    if ($reconfigureReasons.Count -gt 0) {
         $reconfigureArgs = @(
             "setup",
             "--reconfigure",
             $buildInfo.BuildDir,
             $repoRoot
         )
+        $reconfigureArgs = Ensure-WindowsStaticCRTSetupArgs -MesonArgs $reconfigureArgs
         Invoke-Meson -MesonArgs $reconfigureArgs -VsDevCmdPath $vsDevCmd -MesonCommand $mesonCommand
         $reconfigureCode = [int]$LASTEXITCODE
         if ($reconfigureCode -ne 0) {

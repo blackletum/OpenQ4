@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "tr_local.h"
 #include "DXT/DXTCodec.h"
+#include "../framework/RenderDoc.h"
 
 // Vista OpenGL wrapper check
 #ifdef _WIN32
@@ -38,6 +39,55 @@ If you have questions concerning this license or the applicable additional terms
 #endif
 
 // functions that are not called every frame
+
+static void R_ErrorForUnsupportedCompatibilityOpenGL( void ) {
+	common->Error( common->GetLanguageDict()->GetString( "#str_41106" ) );
+}
+
+bool R_CheckExtension( char *name );
+
+static idStr g_missingRequiredOpenGLFeatures;
+
+static void R_ClearMissingRequiredOpenGLFeatures( void ) {
+	g_missingRequiredOpenGLFeatures.Clear();
+}
+
+static void R_RecordMissingRequiredOpenGLFeature( const char *name ) {
+	if ( name == NULL || name[0] == '\0' ) {
+		return;
+	}
+
+	if ( g_missingRequiredOpenGLFeatures.Length() > 0 ) {
+		g_missingRequiredOpenGLFeatures += ", ";
+	}
+	g_missingRequiredOpenGLFeatures += name;
+}
+
+static bool R_CheckRequiredExtension( const char *name ) {
+	const bool available = R_CheckExtension( const_cast<char *>( name ) );
+	if ( !available ) {
+		R_RecordMissingRequiredOpenGLFeature( name );
+	}
+	return available;
+}
+
+static void R_ErrorForMissingRequiredOpenGLFeatures( void ) {
+	if ( g_missingRequiredOpenGLFeatures.Length() > 0 ) {
+		common->Printf(
+			"Missing required OpenGL features: %s\n",
+			g_missingRequiredOpenGLFeatures.c_str() );
+	}
+
+	if ( RenderDoc_IsInjected() ) {
+		common->Printf(
+			"RenderDoc detected during OpenGL initialization.\n"
+			"OpenQ4 currently requires OpenGL compatibility / ARB2-era features "
+			"that are unavailable in the injected context.\n" );
+		R_ErrorForUnsupportedCompatibilityOpenGL();
+	}
+
+	common->Error( common->GetLanguageDict()->GetString( "#str_06780" ) );
+}
 
 glconfig_t	glConfig;
 
@@ -317,6 +367,7 @@ R_CheckPortableExtensions
 */
 static void R_CheckPortableExtensions( void ) {
 	glConfig.glVersion = atof( glConfig.version_string );
+	R_ClearMissingRequiredOpenGLFeatures();
 
 	common->Printf("Init Glew...\n");
 
@@ -324,7 +375,7 @@ static void R_CheckPortableExtensions( void ) {
 		common->FatalError("Failed to init glew!\n");
 
 	// GL_ARB_multitexture
-	glConfig.multitextureAvailable = R_CheckExtension( "GL_ARB_multitexture" );
+	glConfig.multitextureAvailable = R_CheckRequiredExtension( "GL_ARB_multitexture" );
 	if ( glConfig.multitextureAvailable ) {
 		//glGetIntegerv( GL_MAX_TEXTURE_UNITS_ARB, (GLint *)&glConfig.maxTextureUnits );
 		//if ( glConfig.maxTextureUnits > MAX_MULTITEXTURE_UNITS ) {
@@ -339,13 +390,13 @@ static void R_CheckPortableExtensions( void ) {
 	}
 
 	// GL_ARB_texture_env_combine
-	glConfig.textureEnvCombineAvailable = R_CheckExtension( "GL_ARB_texture_env_combine" );
+	glConfig.textureEnvCombineAvailable = R_CheckRequiredExtension( "GL_ARB_texture_env_combine" );
 
 	// GL_ARB_texture_cube_map
-	glConfig.cubeMapAvailable = R_CheckExtension( "GL_ARB_texture_cube_map" );
+	glConfig.cubeMapAvailable = R_CheckRequiredExtension( "GL_ARB_texture_cube_map" );
 
 	// GL_ARB_texture_env_dot3
-	glConfig.envDot3Available = R_CheckExtension( "GL_ARB_texture_env_dot3" );
+	glConfig.envDot3Available = R_CheckRequiredExtension( "GL_ARB_texture_env_dot3" );
 
 	// GL_ARB_texture_env_add
 	glConfig.textureEnvAddAvailable = R_CheckExtension( "GL_ARB_texture_env_add" );
@@ -450,13 +501,13 @@ static void R_CheckPortableExtensions( void ) {
 	glConfig.ARBVertexBufferObjectAvailable = R_CheckExtension( "GL_ARB_vertex_buffer_object" );
 
 	// ARB_vertex_program
-	glConfig.ARBVertexProgramAvailable = R_CheckExtension( "GL_ARB_vertex_program" );
+	glConfig.ARBVertexProgramAvailable = R_CheckRequiredExtension( "GL_ARB_vertex_program" );
 
 	// ARB_fragment_program
 	if ( r_inhibitFragmentProgram.GetBool() ) {
 		glConfig.ARBFragmentProgramAvailable = false;
 	} else {
-		glConfig.ARBFragmentProgramAvailable = R_CheckExtension( "GL_ARB_fragment_program" );
+		glConfig.ARBFragmentProgramAvailable = R_CheckRequiredExtension( "GL_ARB_fragment_program" );
 
 	}
 
@@ -475,7 +526,7 @@ static void R_CheckPortableExtensions( void ) {
 	// check for minimum set
 	if ( !glConfig.multitextureAvailable || !glConfig.textureEnvCombineAvailable || !glConfig.cubeMapAvailable
 		|| !glConfig.envDot3Available ) {
-			common->Error( common->GetLanguageDict()->GetString( "#str_06780" ) );
+			R_ErrorForMissingRequiredOpenGLFeatures();
 	}
 
  	// GL_EXT_depth_bounds_test
@@ -788,6 +839,9 @@ void R_InitOpenGL( void ) {
 	// parse our vertex and fragment programs, possibly disably support for
 	// one of the paths if there was an error
 	R_ARB2_Init();
+	if ( !glConfig.allowARB2Path ) {
+		R_ErrorForMissingRequiredOpenGLFeatures();
+	}
 
 	cmdSystem->AddCommand( "reloadARBprograms", R_ReloadARBPrograms_f, CMD_FL_RENDERER, "reloads ARB programs" );
 	R_ReloadARBPrograms_f( idCmdArgs() );

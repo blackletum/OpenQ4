@@ -191,3 +191,4 @@ vid_restart
 - If UI appears too centered/boxed on wide displays, set `ui_aspectCorrection 0`.
 - If the window opens off-screen after a monitor change, set `r_screen` explicitly to the target monitor and restart video; OpenQ4 will also attempt to recover automatically.
 - If AA settings seem unchanged, check values with `r_multiSamples`, `r_postAA`, and `r_msaaAlphaToCoverage`, then run `vid_restart`.
+- If enabling `r_postAA 1` turns the 3D viewport black on an older build, set `r_postAA 0`, run `vid_restart`, and attach `openq4.log` plus the output of `gfxInfo`. RenderDoc capture is not yet supported on the current OpenQ4 renderer.

@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 //#include "../renderer/Image.h"
 #include "../bse/BSE_API.h"
+#include "RenderDoc.h"
 
 #define	MAX_PRINT_MSG_SIZE	4096
 #define MAX_WARNING_LIST	256
@@ -2490,6 +2491,7 @@ void idCommonLocal::InitCommands( void ) {
 	// build helpers
 	cmdSystem->AddCommand( "startBuild", Com_StartBuild_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "prepares to make a build" );
 	cmdSystem->AddCommand( "finishBuild", Com_FinishBuild_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "finishes the build process" );
+	RenderDoc_RegisterCommands();
 
 #ifdef ID_DEDICATED
 	cmdSystem->AddCommand( "help", Com_Help_f, CMD_FL_SYSTEM, "shows help" );
@@ -3232,6 +3234,7 @@ void idCommonLocal::Shutdown( void ) {
 
 	// shut down non-portable system services
 	Sys_Shutdown();
+	RenderDoc_Shutdown();
 
 	// shut down the console
 	console->Shutdown();

@@ -338,6 +338,7 @@ OpenQ4 maintains complete freedom to evolve independently while preserving compa
 - [Platform Support](docs-dev/platform-support.md) - Cross-platform roadmap and status
 - [SDL3 Linux/macOS Migration](docs-dev/sdl3-linux-macos-migration.md) - Staged backend convergence plan for non-Windows platforms
 - [Display Settings](docs-user/display-settings.md) - Multi-monitor and display configuration
+- [RenderDoc Workflow](docs-dev/renderdoc-workflow.md) - Current RenderDoc limitation status and black-viewport triage
 - [Multiplayer Networking](docs-user/multiplayer-networking.md) - MP lag compensation and prediction cvars
 - [Input Key Matrix](docs-dev/input-key-matrix.md) - Keyboard and controller input reference
 - [Release Completion](docs-dev/release-completion.md) - Release checklist and changelog

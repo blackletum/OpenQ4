@@ -59,6 +59,11 @@ OPENQ4_PK4_EXCLUDED_SUFFIXES = {
     ".exp",
     ".ilk",
 }
+OPENQ4_REQUIRED_PK4_FILES = {
+    "glprogs/openq4_smaa_blend.vfp",
+    "glprogs/openq4_smaa_edge.vfp",
+    "materials/postprocess_openq4.mtr",
+}
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -259,9 +264,10 @@ def copy_required_game_binaries(
 
 def create_openq4_pk4(
     install_openq4_dir: Path, destination_pk4: Path
-) -> tuple[int, list[str]]:
+) -> tuple[int, list[str], list[str]]:
     added_files = 0
     skipped_samples: list[str] = []
+    added_paths: set[str] = set()
 
     with ZipFile(destination_pk4, "w", compression=ZIP_DEFLATED, compresslevel=9) as pk4:
         for path in sorted(install_openq4_dir.rglob("*")):
@@ -281,10 +287,18 @@ def create_openq4_pk4(
                     skipped_samples.append(rel.as_posix())
                 continue
 
-            pk4.write(path, arcname=rel.as_posix())
+            arcname = rel.as_posix()
+            pk4.write(path, arcname=arcname)
+            added_paths.add(arcname.lower())
             added_files += 1
 
-    return added_files, skipped_samples
+    missing_required = sorted(
+        required_path
+        for required_path in OPENQ4_REQUIRED_PK4_FILES
+        if required_path.lower() not in added_paths
+    )
+
+    return added_files, skipped_samples, missing_required
 
 
 def create_release_archive(
@@ -469,7 +483,7 @@ def main(argv: list[str]) -> int:
     openq4_pk4_name = "pak0.pk4"
     openq4_pk4_path = openq4_package_dir / openq4_pk4_name
 
-    added_files, skipped_samples = create_openq4_pk4(
+    added_files, skipped_samples, missing_required_pk4_files = create_openq4_pk4(
         install_openq4_dir, openq4_pk4_path
     )
     if added_files == 0:
@@ -477,6 +491,14 @@ def main(argv: list[str]) -> int:
             "error: openq4 pk4 packaging found no eligible files after filtering",
             file=sys.stderr,
         )
+        return 1
+    if missing_required_pk4_files:
+        print(
+            "error: openq4 pk4 packaging is missing required runtime files:",
+            file=sys.stderr,
+        )
+        for rel in missing_required_pk4_files:
+            print(f"  - {rel}", file=sys.stderr)
         return 1
 
     copied_share = copy_optional_share_tree(args.platform, install_dir, package_root)

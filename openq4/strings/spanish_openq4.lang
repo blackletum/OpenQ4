@@ -28,4 +28,5 @@
 	"#str_41103"	"Dispositivo grafico"
 	"#str_41104"	"BEST;ARB;ARB2;CG;EXP;NV10;NV20;R200"
 	"#str_41105"	"No disponible"
+	"#str_41106"	"La captura con RenderDoc todavia no es compatible con el renderizador actual de OpenQ4. El contexto OpenGL inyectado no proporciona las funciones de compatibilidad que OpenQ4 todavia necesita."
 }
