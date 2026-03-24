@@ -65,6 +65,9 @@ Create it if needed
 ==================
 */
 bool R_CreateAmbientCache( srfTriangles_t *tri, bool needsLighting ) {
+	if ( tri == NULL || tri->verts == NULL || tri->numVerts <= 0 ) {
+		return false;
+	}
 	if ( tri->ambientCache ) {
 		return true;
 	}
@@ -89,6 +92,10 @@ Returns false if the cache couldn't be allocated, in which case the surface shou
 */
 bool R_CreateLightingCache( const idRenderEntityLocal *ent, const idRenderLightLocal *light, srfTriangles_t *tri ) {
 	idVec3		localLightOrigin;
+
+	if ( tri == NULL || tri->ambientSurface == NULL || tri->ambientSurface->verts == NULL || tri->ambientSurface->numVerts <= 0 ) {
+		return false;
+	}
 
 	// fogs and blends don't need light vectors
 	if ( light->lightShader->IsFogLight() || light->lightShader->IsBlendLight() ) {
@@ -153,7 +160,7 @@ This is used only for a specific light
 ==================
 */
 void R_CreatePrivateShadowCache( srfTriangles_t *tri ) {
-	if ( !tri->shadowVertexes ) {
+	if ( tri == NULL || !tri->shadowVertexes || tri->numVerts <= 0 ) {
 		return;
 	}
 
@@ -169,7 +176,7 @@ takes care of projecting the verts to infinity.
 ==================
 */
 void R_CreateVertexProgramShadowCache( srfTriangles_t *tri ) {
-	if ( tri->verts == NULL ) {
+	if ( tri == NULL || tri->verts == NULL || tri->numVerts <= 0 ) {
 		return;
 	}
 
@@ -212,6 +219,10 @@ void R_SkyboxTexGen( drawSurf_t *surf, const idVec3 &viewOrg ) {
 	R_GlobalPointToLocal( surf->space->modelMatrix, viewOrg, localViewOrigin );
 
 	int numVerts = surf->geo->numVerts;
+	if ( numVerts <= 0 ) {
+		surf->dynamicTexCoords = NULL;
+		return;
+	}
 	int size = numVerts * sizeof( idVec3 );
 	idVec3 *texCoords = (idVec3 *) _alloca16( size );
 
@@ -290,6 +301,10 @@ void R_WobbleskyTexGen( drawSurf_t *surf, const idVec3 &viewOrg ) {
 	R_GlobalPointToLocal( surf->space->modelMatrix, viewOrg, localViewOrigin );
 
 	int numVerts = surf->geo->numVerts;
+	if ( numVerts <= 0 ) {
+		surf->dynamicTexCoords = NULL;
+		return;
+	}
 	int size = numVerts * sizeof( idVec3 );
 	idVec3 *texCoords = (idVec3 *) _alloca16( size );
 
@@ -323,6 +338,10 @@ static void R_SpecularTexGen( drawSurf_t *surf, const idVec3 &globalLightOrigin,
 	R_GlobalPointToLocal( surf->space->modelMatrix, viewOrg, localViewOrigin );
 
 	tri = surf->geo;
+	if ( tri->numVerts <= 0 ) {
+		surf->dynamicTexCoords = NULL;
+		return;
+	}
 
 	// FIXME: change to 3 component?
 	int	size = tri->numVerts * sizeof( idVec4 );
@@ -1063,7 +1082,7 @@ void R_AddLightSurfaces( void ) {
 			// touch the shadow surface so it won't get purged
 			vertexCache.Touch( tri->shadowCache );
 
-			if ( !tri->indexCache && r_useIndexBuffers.GetBool() ) {
+			if ( !tri->indexCache && r_useIndexBuffers.GetBool() && tri->numIndexes > 0 ) {
 				vertexCache.Alloc( tri->indexes, tri->numIndexes * sizeof( tri->indexes[0] ), &tri->indexCache, true );
 			}
 			if ( tri->indexCache ) {
@@ -1446,7 +1465,7 @@ static void R_AddAmbientDrawsurfs( viewEntity_t *vEntity ) {
 			// touch it so it won't get purged
 			vertexCache.Touch( tri->ambientCache );
 
-			if ( r_useIndexBuffers.GetBool() && !tri->indexCache ) {
+			if ( r_useIndexBuffers.GetBool() && !tri->indexCache && tri->numIndexes > 0 ) {
 				vertexCache.Alloc( tri->indexes, tri->numIndexes * sizeof( tri->indexes[0] ), &tri->indexCache, true );
 			}
 			if ( tri->indexCache ) {

@@ -1141,7 +1141,7 @@ void idInteraction::AddActiveInteraction( void ) {
 						vertexCache.Touch( lightTris->lightingCache );
 					}
 
-					if ( !lightTris->indexCache && r_useIndexBuffers.GetBool() ) {
+					if ( !lightTris->indexCache && r_useIndexBuffers.GetBool() && lightTris->numIndexes > 0 ) {
 						vertexCache.Alloc( lightTris->indexes, lightTris->numIndexes * sizeof( lightTris->indexes[0] ), &lightTris->indexCache, true );
 					}
 					if ( lightTris->indexCache ) {
@@ -1215,7 +1215,7 @@ void idInteraction::AddActiveInteraction( void ) {
 			if ( haveCasterGeometry ) {
 				vertexCache.Touch( casterTris->ambientCache );
 
-				if ( !casterTris->indexCache && r_useIndexBuffers.GetBool() ) {
+				if ( !casterTris->indexCache && r_useIndexBuffers.GetBool() && casterTris->numIndexes > 0 ) {
 					vertexCache.Alloc( casterTris->indexes, casterTris->numIndexes * sizeof( casterTris->indexes[0] ), &casterTris->indexCache, true );
 				}
 				if ( casterTris->indexCache ) {
@@ -1274,8 +1274,10 @@ void idInteraction::AddActiveInteraction( void ) {
 			// touch the shadow surface so it won't get purged
 			vertexCache.Touch( shadowTris->shadowCache );
 
-			if ( !shadowTris->indexCache && r_useIndexBuffers.GetBool() ) {
+			if ( !shadowTris->indexCache && r_useIndexBuffers.GetBool() && shadowTris->numIndexes > 0 ) {
 				vertexCache.Alloc( shadowTris->indexes, shadowTris->numIndexes * sizeof( shadowTris->indexes[0] ), &shadowTris->indexCache, true );
+			}
+			if ( shadowTris->indexCache ) {
 				vertexCache.Touch( shadowTris->indexCache );
 			}
 

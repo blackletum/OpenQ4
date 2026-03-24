@@ -227,12 +227,15 @@ idVertexCache::Alloc
 void idVertexCache::Alloc( void *data, int size, vertCache_t **buffer, bool indexBuffer ) {
 	vertCache_t	*block;
 
-	if ( size <= 0 ) {
+	if ( size < 0 ) {
 		common->Error( "idVertexCache::Alloc: size = %i\n", size );
 	}
 
 	// if we can't find anything, it will be NULL
 	*buffer = NULL;
+	if ( size == 0 ) {
+		return;
+	}
 
 	// if we don't have any remaining unused headers, allocate some more
 	if ( freeStaticHeaders.next == &freeStaticHeaders ) {
@@ -370,8 +373,11 @@ there may still be future references to dynamically created surfaces.
 vertCache_t	*idVertexCache::AllocFrameTemp( void *data, int size ) {
 	vertCache_t	*block;
 
-	if ( size <= 0 ) {
+	if ( size < 0 ) {
 		common->Error( "idVertexCache::AllocFrameTemp: size = %i\n", size );
+	}
+	if ( size == 0 ) {
+		return NULL;
 	}
 
 	if ( dynamicAllocThisFrame + size > frameBytes ) {

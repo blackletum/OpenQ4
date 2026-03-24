@@ -41,7 +41,7 @@ to it that would try to be freed later.  Create the ambientCache immediately.
 =================
 */
 static void R_FinishDeform( drawSurf_t *drawSurf, srfTriangles_t *newTri, idDrawVert *ac ) {
-	if ( !newTri ) {
+	if ( !newTri || !ac || newTri->numVerts <= 0 ) {
 		return;
 	}
 

@@ -493,7 +493,7 @@ idRenderModelDecal::AddDecalDrawSurf
 =====================
 */
 void idRenderModelDecal::AddDecalDrawSurf( viewEntity_t *space ) {
-	if ( tri.numIndexes == 0 ) {
+	if ( tri.numIndexes == 0 || tri.numVerts == 0 ) {
 		return;
 	}
 
