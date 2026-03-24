@@ -1406,9 +1406,10 @@ windowDef Desktop
 			{
 				rect	0,0,640,480
 				visible	0
+				noclip	1
 				windowDef pop_savedel_black
 				{
-					rect	0,0,640,480
+					rect	( 0 - "gui::virtual_screen_x_expand" ),( 0 - "gui::virtual_screen_y_expand" ),( 640 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 480 + ( "gui::virtual_screen_y_expand" * 2 ) )
 					visible	1
 					backcolor	0,0,0,0
 				}
@@ -1444,6 +1445,7 @@ windowDef Desktop
 				{
 					rect	0,0,640,480
 					visible	0
+					noclip	1
 					windowDef pop_savedel_title
 					{
 						rect	180,151,146,17
@@ -1515,9 +1517,10 @@ windowDef Desktop
 			{
 				rect	0,0,640,480
 				visible	0
+				noclip	1
 				windowDef pop_overwrite_black
 				{
-					rect	0,0,640,480
+					rect	( 0 - "gui::virtual_screen_x_expand" ),( 0 - "gui::virtual_screen_y_expand" ),( 640 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 480 + ( "gui::virtual_screen_y_expand" * 2 ) )
 					visible	1
 					backcolor	0,0,0,0
 				}
@@ -1553,6 +1556,7 @@ windowDef Desktop
 				{
 					rect	0,0,640,480
 					visible	0
+					noclip	1
 					windowDef pop_overwrite_title
 					{
 						rect	180,149,209,17
@@ -1855,9 +1859,10 @@ windowDef Desktop
 			{
 				rect	0,0,640,480
 				visible	0
+				noclip	1
 				windowDef pop_loaddel_black
 				{
-					rect	0,0,640,480
+					rect	( 0 - "gui::virtual_screen_x_expand" ),( 0 - "gui::virtual_screen_y_expand" ),( 640 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 480 + ( "gui::virtual_screen_y_expand" * 2 ) )
 					visible	1
 					backcolor	0,0,0,0
 				}
@@ -1893,6 +1898,7 @@ windowDef Desktop
 				{
 					rect	0,0,640,480
 					visible	0
+					noclip	1
 					windowDef pop_loaddel_title
 					{
 						rect	180,151,146,17
@@ -2829,9 +2835,10 @@ windowDef Desktop
 			{
 				rect	0,0,640,480
 				visible	0
+				noclip	1
 				windowDef pop_fpc_black
 				{
-					rect	0,0,640,480
+					rect	( 0 - "gui::virtual_screen_x_expand" ),( 0 - "gui::virtual_screen_y_expand" ),( 640 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 480 + ( "gui::virtual_screen_y_expand" * 2 ) )
 					visible	1
 					backcolor	0,0,0,0
 				}
@@ -2867,6 +2874,7 @@ windowDef Desktop
 				{
 					rect	0,0,640,480
 					visible	0
+					noclip	1
 					windowDef pop_fpc_title
 					{
 						rect	180,169,210,17
@@ -4043,9 +4051,10 @@ windowDef Desktop
 			{
 				rect	0,0,640,480
 				visible	0
+				noclip	1
 				windowDef pop_createAdv_black
 				{
-					rect	0,0,640,480
+					rect	( 0 - "gui::virtual_screen_x_expand" ),( 0 - "gui::virtual_screen_y_expand" ),( 640 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 480 + ( "gui::virtual_screen_y_expand" * 2 ) )
 					visible	1
 					backcolor	0,0,0,0
 				}
@@ -4081,6 +4090,7 @@ windowDef Desktop
 				{
 					rect	0,0,640,480
 					visible	0
+					noclip	1
 					windowDef pop_createAdv_title
 					{
 						rect	131,46,286,17
@@ -4590,9 +4600,10 @@ windowDef Desktop
 				{
 					rect	0,0,640,480
 					visible	0
+					noclip	1
 					windowDef pop_createAdv_banlist_black
 					{
-						rect	0,0,640,480
+						rect	( 0 - "gui::virtual_screen_x_expand" ),( 0 - "gui::virtual_screen_y_expand" ),( 640 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 480 + ( "gui::virtual_screen_y_expand" * 2 ) )
 						visible	1
 						backcolor	0,0,0,0
 					}
@@ -4628,6 +4639,7 @@ windowDef Desktop
 					{
 						rect	0,0,640,480
 						visible	0
+						noclip	1
 						windowDef pop_createAdv_banlist_title
 						{
 							rect	155,124,243,17
@@ -8173,9 +8185,10 @@ windowDef Desktop
 			{
 				rect	0,0,640,480
 				visible	0
+				noclip	1
 				windowDef pop_defaults_black
 				{
-					rect	0,0,640,480
+					rect	( 0 - "gui::virtual_screen_x_expand" ),( 0 - "gui::virtual_screen_y_expand" ),( 640 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 480 + ( "gui::virtual_screen_y_expand" * 2 ) )
 					visible	1
 					backcolor	0,0,0,0
 				}
@@ -8211,6 +8224,7 @@ windowDef Desktop
 				{
 					rect	0,0,640,480
 					visible	0
+					noclip	1
 					windowDef pop_defaults_title
 					{
 						rect	180,149,146,17
@@ -8282,9 +8296,10 @@ windowDef Desktop
 			{
 				rect	0,0,640,480
 				visible	0
+				noclip	1
 				windowDef pop_setAdv_black
 				{
-					rect	0,0,640,480
+					rect	( 0 - "gui::virtual_screen_x_expand" ),( 0 - "gui::virtual_screen_y_expand" ),( 640 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 480 + ( "gui::virtual_screen_y_expand" * 2 ) )
 					visible	1
 					backcolor	0,0,0,0
 				}
@@ -8320,6 +8335,7 @@ windowDef Desktop
 				{
 					rect	0,0,640,480
 					visible	0
+					noclip	1
 					windowDef pop_setAdv_title
 					{
 						rect	141,86,267,17
@@ -8746,9 +8762,10 @@ windowDef Desktop
 			{
 				rect	0,0,640,480
 				visible	0
+				noclip	1
 				windowDef pop_auto_black
 				{
-					rect	0,0,640,480
+					rect	( 0 - "gui::virtual_screen_x_expand" ),( 0 - "gui::virtual_screen_y_expand" ),( 640 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 480 + ( "gui::virtual_screen_y_expand" * 2 ) )
 					visible	1
 					backcolor	0,0,0,0
 				}
@@ -8784,6 +8801,7 @@ windowDef Desktop
 				{
 					rect	0,0,640,480
 					visible	0
+					noclip	1
 					windowDef pop_auto_title
 					{
 						rect	180,149,208,17
@@ -8864,9 +8882,10 @@ windowDef Desktop
 			{
 				rect	0,0,640,480
 				visible	0
+				noclip	1
 				windowDef pop_ultrawarn_black
 				{
-					rect	0,0,640,480
+					rect	( 0 - "gui::virtual_screen_x_expand" ),( 0 - "gui::virtual_screen_y_expand" ),( 640 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 480 + ( "gui::virtual_screen_y_expand" * 2 ) )
 					visible	1
 					backcolor	0,0,0,0
 				}
@@ -8902,6 +8921,7 @@ windowDef Desktop
 				{
 					rect	0,0,640,480
 					visible	0
+					noclip	1
 					windowDef pop_ultrawarn_title
 					{
 						rect	180,151,208,17
@@ -8973,9 +8993,10 @@ windowDef Desktop
 			{
 				rect	0,0,640,480
 				visible	0
+				noclip	1
 				windowDef pop_set_sndAdv_black
 				{
-					rect	0,0,640,480
+					rect	( 0 - "gui::virtual_screen_x_expand" ),( 0 - "gui::virtual_screen_y_expand" ),( 640 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 480 + ( "gui::virtual_screen_y_expand" * 2 ) )
 					visible	1
 					backcolor	0,0,0,0
 				}
@@ -9061,6 +9082,7 @@ windowDef Desktop
 				{
 					rect	0,0,640,480
 					visible	0
+					noclip	1
 
 					onNamedEvent openALchange {
 						if ( "gui::s_loadOpenALFailed" == 1 ) {
@@ -9327,9 +9349,10 @@ windowDef Desktop
 		{
 			rect	0,0,640,480
 			visible	0
+			noclip	1
 			windowDef pop_mods_black
 			{
-				rect	0,0,640,480
+				rect	( 0 - "gui::virtual_screen_x_expand" ),( 0 - "gui::virtual_screen_y_expand" ),( 640 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 480 + ( "gui::virtual_screen_y_expand" * 2 ) )
 				visible	1
 				backcolor	0,0,0,0
 			}
@@ -9365,6 +9388,7 @@ windowDef Desktop
 			{
 				rect	0,0,640,480
 				visible	0
+				noclip	1
 				windowDef pop_mods_title
 				{
 					rect	177,127,213,17
@@ -15586,9 +15610,10 @@ windowDef Desktop
 		{
 			rect	0,0,640,480
 			visible	0
+			noclip	1
 			windowDef pop_exit_black
 			{
-				rect	0,0,640,480
+				rect	( 0 - "gui::virtual_screen_x_expand" ),( 0 - "gui::virtual_screen_y_expand" ),( 640 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 480 + ( "gui::virtual_screen_y_expand" * 2 ) )
 				visible	1
 				backcolor	0,0,0,0
 			}
@@ -15624,6 +15649,7 @@ windowDef Desktop
 			{
 				rect	0,0,640,480
 				visible	0
+				noclip	1
 				windowDef pop_exit_title
 				{
 					rect	180,149,146,17
@@ -15695,9 +15721,10 @@ windowDef Desktop
 		{
 			rect	0,0,640,480
 			visible	0
+			noclip	1
 			windowDef pop_joinIp_black
 			{
-				rect	0,0,640,480
+				rect	( 0 - "gui::virtual_screen_x_expand" ),( 0 - "gui::virtual_screen_y_expand" ),( 640 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 480 + ( "gui::virtual_screen_y_expand" * 2 ) )
 				visible	1
 				backcolor	0,0,0,0
 			}
@@ -15733,6 +15760,7 @@ windowDef Desktop
 			{
 				rect	0,0,640,480
 				visible	0
+				noclip	1
 				windowDef pop_joinIp_title
 				{
 					rect	180,153,211,17
@@ -15870,9 +15898,10 @@ windowDef Desktop
 		{
 			rect	0,0,640,480
 			visible	0
+			noclip	1
 			windowDef pop_disc_black
 			{
-				rect	0,0,640,480
+				rect	( 0 - "gui::virtual_screen_x_expand" ),( 0 - "gui::virtual_screen_y_expand" ),( 640 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 480 + ( "gui::virtual_screen_y_expand" * 2 ) )
 				visible	1
 				backcolor	0,0,0,0
 			}
@@ -15908,6 +15937,7 @@ windowDef Desktop
 			{
 				rect	0,0,640,480
 				visible	0
+				noclip	1
 				windowDef pop_disc_title
 				{
 					rect	180,151,206,17
@@ -15979,9 +16009,10 @@ windowDef Desktop
 		{
 			rect	0,0,640,480
 			visible	0
+			noclip	1
 			windowDef pop_vidwarn_black
 			{
-				rect	0,0,640,480
+				rect	( 0 - "gui::virtual_screen_x_expand" ),( 0 - "gui::virtual_screen_y_expand" ),( 640 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 480 + ( "gui::virtual_screen_y_expand" * 2 ) )
 				visible	1
 				backcolor	0,0,0,0
 			}
@@ -16017,6 +16048,7 @@ windowDef Desktop
 			{
 				rect	0,0,640,480
 				visible	0
+				noclip	1
 				windowDef pop_vidwarn_title
 				{
 					rect	180,149,146,17

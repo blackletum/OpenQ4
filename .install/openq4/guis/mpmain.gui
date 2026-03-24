@@ -3744,9 +3744,10 @@ windowDef Desktop
 	{
 		rect	0,0,640,480
 		visible	0
+		noclip	1
 		windowDef pop_banlist_black
 		{
-			rect	0,0,640,480
+			rect	( 0 - "gui::virtual_screen_x_expand" ),( 0 - "gui::virtual_screen_y_expand" ),( 640 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 480 + ( "gui::virtual_screen_y_expand" * 2 ) )
 			visible	1
 			backcolor	0,0,0,0
 		}
@@ -3782,6 +3783,7 @@ windowDef Desktop
 		{
 			rect	0,0,640,480
 			visible	0
+			noclip	1
 			windowDef pop_banlist_title
 			{
 				rect	155,126,243,17
