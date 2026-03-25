@@ -151,6 +151,10 @@ idCVar r_useShadowProjectedCull( "r_useShadowProjectedCull", "1", CVAR_RENDERER 
 idCVar r_useShadowVertexProgram( "r_useShadowVertexProgram", "1", CVAR_RENDERER | CVAR_BOOL, "do the shadow projection in the vertex program on capable cards" );
 idCVar r_useShadowMap( "r_useShadowMap", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use a simple shadow-map path for projected and point lights when supported" );
 idCVar r_shadowMapCSM( "r_shadowMapCSM", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use projected-light cascaded shadow maps when shadow maps are enabled" );
+idCVar r_shadowMapHashedAlpha( "r_shadowMapHashedAlpha", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use hashed alpha testing for perforated shadow-map casters when supported" );
+idCVar r_shadowMapTranslucentMoments( "r_shadowMapTranslucentMoments", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "accumulate experimental translucent shadow moments for blended casters" );
+idCVar r_shadowMapTranslucentDensity( "r_shadowMapTranslucentDensity", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "density scale applied when resolving translucent shadow moments", 0.0f, 8.0f );
+idCVar r_shadowMapTranslucentMinAlpha( "r_shadowMapTranslucentMinAlpha", "0.02", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "minimum per-stage alpha considered by translucent shadow moments", 0.0f, 1.0f );
 idCVar r_shadowMapReport( "r_shadowMapReport", "0", CVAR_RENDERER | CVAR_INTEGER, "shadow-map diagnostics: 0 = off, 1 = per-view summary, 2 = per-light decisions", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 idCVar r_shadowMapReportInterval( "r_shadowMapReportInterval", "30", CVAR_RENDERER | CVAR_INTEGER, "frames between shadow-map diagnostic reports when r_shadowMapReport is enabled", 1, 3600 );
 idCVar r_useShadowSurfaceScissor( "r_useShadowSurfaceScissor", "1", CVAR_RENDERER | CVAR_BOOL, "scissor shadows by the scissor rect of the interaction surfaces" );

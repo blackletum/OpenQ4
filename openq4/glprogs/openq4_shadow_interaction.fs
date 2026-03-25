@@ -1,9 +1,12 @@
+#version 110
+
 uniform sampler2D uBumpMap;
 uniform sampler2D uLightFalloffMap;
 uniform sampler2D uLightProjectionMap;
 uniform sampler2D uDiffuseMap;
 uniform sampler2D uSpecularMap;
 uniform sampler2D uShadowMap;
+uniform sampler2D uTranslucentShadowMap;
 
 uniform vec4 uDiffuseColor;
 uniform vec4 uSpecularColor;
@@ -17,6 +20,8 @@ uniform float uShadowCascadeBiasScale[4];
 uniform int uShadowCascadeCount;
 uniform float uShadowCascadeBlend;
 uniform float uShadowDebugMode;
+uniform float uTranslucentShadowEnabled;
+uniform float uTranslucentShadowDensity;
 
 varying vec2 vBumpTexCoord;
 varying vec2 vDiffuseTexCoord;
@@ -41,8 +46,11 @@ const float kShadowDebugProjectedUV = 3.0;
 const float kShadowDebugProjectedDepth = 4.0;
 const float kShadowDebugProjectedW = 5.0;
 const float kShadowDebugInvalidMask = 6.0;
+const float kTranslucentMomentMinVariance = 1.0e-5;
 
 float gShadowDebugState = 0.0;
+
+bool ProjectShadowCoord( vec4 shadowCoord, out vec2 localUv, out float depth );
 
 bool ShadowCoordComponentInvalid( float value ) {
 	return value != value || abs( value ) > kShadowCoordMaxMagnitude;
@@ -54,6 +62,35 @@ bool ShadowCoordProjectedInvalid( vec3 value ) {
 
 vec3 SafeNormalize( vec3 value ) {
 	return value * inversesqrt( max( dot( value, value ), 1.0e-8 ) );
+}
+
+float ApproxErf( float x ) {
+	float s = sign( x );
+	float ax = abs( x );
+	float t = 1.0 / ( 1.0 + 0.3275911 * ax );
+	float y = 1.0 - ( ( ( ( ( 1.061405429 * t - 1.453152027 ) * t ) + 1.421413741 ) * t - 0.284496736 ) * t + 0.254829592 ) * t * exp( -ax * ax );
+	return s * y;
+}
+
+float NormalCdf( float x ) {
+	return 0.5 * ( 1.0 + ApproxErf( x * 0.70710678 ) );
+}
+
+float ResolveTranslucentShadowMoments( vec4 moments, float depth ) {
+	if ( uTranslucentShadowEnabled < 0.5 ) {
+		return 1.0;
+	}
+
+	float totalTau = max( moments.x, 0.0 );
+	if ( totalTau <= 1.0e-4 ) {
+		return 1.0;
+	}
+
+	float mean = moments.y / totalTau;
+	float variance = max( moments.z / totalTau - mean * mean, kTranslucentMomentMinVariance );
+	float sigma = sqrt( variance );
+	float tau = totalTau * clamp( NormalCdf( ( depth - mean ) / sigma ), 0.0, 1.0 );
+	return exp( -min( tau * max( uTranslucentShadowDensity, 0.0 ), 16.0 ) );
 }
 
 float CascadeBiasScale( int cascadeIndex ) {
@@ -135,6 +172,34 @@ vec4 SampleShadowCascade( vec4 shadowCoord, vec4 atlasRect, int cascadeIndex ) {
 	return vec4( shadow * ( 1.0 / 13.0 ), localUv.x, localUv.y, depth );
 }
 
+float SampleTranslucentShadowCascade( vec4 shadowCoord, vec4 atlasRect ) {
+	if ( uTranslucentShadowEnabled < 0.5 ) {
+		return 1.0;
+	}
+
+	vec2 localUv;
+	float depth;
+	if ( !ProjectShadowCoord( shadowCoord, localUv, depth ) ) {
+		return 1.0;
+	}
+	if ( localUv.x <= 0.0 || localUv.x >= 1.0 || localUv.y <= 0.0 || localUv.y >= 1.0 ) {
+		return 1.0;
+	}
+	if ( depth <= 0.0 || depth >= 1.0 ) {
+		return 1.0;
+	}
+
+	vec2 atlasMin = atlasRect.xy;
+	vec2 atlasMax = atlasRect.zw;
+	vec2 uv = atlasMin + localUv * ( atlasMax - atlasMin );
+	vec2 clampMin = atlasMin + uShadowTexelSize * 0.5;
+	vec2 clampMax = atlasMax - uShadowTexelSize * 0.5;
+	clampMin = min( clampMin, clampMax );
+	uv = clamp( uv, clampMin, clampMax );
+
+	return ResolveTranslucentShadowMoments( texture2D( uTranslucentShadowMap, uv ), depth );
+}
+
 float CascadeSplitDepth( int index ) {
 	if ( index <= 0 ) {
 		return uShadowSplitDepths[0];
@@ -197,7 +262,7 @@ bool ProjectShadowCoord( vec4 shadowCoord, out vec2 localUv, out float depth ) {
 }
 
 int SelectCascade( float viewDepth ) {
-	int interiorSplitCount = max( uShadowCascadeCount - 1, 0 );
+	int interiorSplitCount = ( uShadowCascadeCount > 1 ) ? ( uShadowCascadeCount - 1 ) : 0;
 	if ( interiorSplitCount <= 0 || viewDepth < uShadowSplitDepths[0] ) {
 		return 0;
 	}
@@ -279,7 +344,8 @@ vec4 ShadowDebugOutput( vec4 shadowInfo ) {
 		}
 		vec4 cascadeColor = CascadeDebugColor( float( cascadeIndex ) );
 		if ( shadowInfo.z > 0.0 ) {
-			cascadeColor.rgb = mix( cascadeColor.rgb, CascadeDebugColor( float( min( cascadeIndex + 1, uShadowCascadeCount - 1 ) ) ).rgb, shadowInfo.z );
+			int nextCascadeIndex = ( cascadeIndex + 1 < uShadowCascadeCount ) ? ( cascadeIndex + 1 ) : ( uShadowCascadeCount - 1 );
+			cascadeColor.rgb = mix( cascadeColor.rgb, CascadeDebugColor( float( nextCascadeIndex ) ).rgb, shadowInfo.z );
 		}
 		return cascadeColor;
 	}
@@ -324,6 +390,45 @@ vec4 ShadowDebugOutput( vec4 shadowInfo ) {
 	return vec4( invalidColor, 1.0 );
 }
 
+float SampleTranslucentShadowCascadeByIndex( int index ) {
+	if ( index <= 0 ) {
+		return SampleTranslucentShadowCascade( vShadowCoord0, uShadowAtlasRect[0] );
+	}
+	if ( index == 1 ) {
+		return SampleTranslucentShadowCascade( vShadowCoord1, uShadowAtlasRect[1] );
+	}
+	if ( index == 2 ) {
+		return SampleTranslucentShadowCascade( vShadowCoord2, uShadowAtlasRect[2] );
+	}
+	return SampleTranslucentShadowCascade( vShadowCoord3, uShadowAtlasRect[3] );
+}
+
+float SampleTranslucentShadow() {
+	if ( uTranslucentShadowEnabled < 0.5 ) {
+		return 1.0;
+	}
+
+	int cascadeIndex = SelectCascade( vViewDepth );
+	float shadow = SampleTranslucentShadowCascadeByIndex( cascadeIndex );
+	int lastInteriorIndex = uShadowCascadeCount - 2;
+
+	if ( cascadeIndex > lastInteriorIndex || uShadowCascadeBlend <= 0.0 ) {
+		return shadow;
+	}
+
+	float previousSplit = ( cascadeIndex == 0 ) ? 0.0 : CascadeSplitDepth( cascadeIndex - 1 );
+	float currentSplit = CascadeSplitDepth( cascadeIndex );
+	float blendWidth = max( 1.0, ( currentSplit - previousSplit ) * uShadowCascadeBlend );
+	float blendStart = currentSplit - blendWidth;
+	if ( vViewDepth <= blendStart ) {
+		return shadow;
+	}
+
+	float nextShadow = SampleTranslucentShadowCascadeByIndex( cascadeIndex + 1 );
+	float blend = clamp( ( vViewDepth - blendStart ) / blendWidth, 0.0, 1.0 );
+	return mix( shadow, nextShadow, blend );
+}
+
 void main() {
 	vec4 bumpSample = texture2D( uBumpMap, vBumpTexCoord );
 	vec3 localNormal = vec3( bumpSample.a, bumpSample.g, bumpSample.b ) * 2.0 - 1.0;
@@ -339,6 +444,7 @@ void main() {
 	light *= texture2DProj( uLightProjectionMap, vLightProjectionTexCoord ).rgb;
 	vec4 shadowInfo = SampleShadow();
 	light *= shadowInfo.x;
+	light *= SampleTranslucentShadow();
 
 	vec3 diffuse = texture2D( uDiffuseMap, vDiffuseTexCoord ).rgb * uDiffuseColor.rgb;
 

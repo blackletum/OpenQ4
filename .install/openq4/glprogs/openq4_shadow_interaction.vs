@@ -1,3 +1,5 @@
+#version 110
+
 attribute vec2 attr_TexCoord0;
 attribute vec3 attr_Tangent;
 attribute vec3 attr_Bitangent;

@@ -237,6 +237,8 @@ typedef struct {
 	GLint			shadowCascadeCount;
 	GLint			shadowCascadeBlend;
 	GLint			shadowDebugMode;
+	GLint			translucentShadowEnabled;
+	GLint			translucentShadowDensity;
 
 	GLint			bumpMap;
 	GLint			lightFalloffMap;
@@ -244,7 +246,39 @@ typedef struct {
 	GLint			diffuseMap;
 	GLint			specularMap;
 	GLint			shadowMap;
+	GLint			translucentShadowMap;
 } shadowMapProgram_t;
+
+typedef struct {
+	GLhandleARB		programObject;
+	GLhandleARB		vertexShaderObject;
+	GLhandleARB		fragmentShaderObject;
+	int				programGeneration;
+	bool			programValid;
+
+	GLint			alphaTexCoordS;
+	GLint			alphaTexCoordT;
+	GLint			alphaRef;
+	GLint			alphaScale;
+	GLint			alphaHashEnabled;
+	GLint			alphaMap;
+} shadowMapCasterProgram_t;
+
+typedef struct {
+	GLhandleARB		programObject;
+	GLhandleARB		vertexShaderObject;
+	GLhandleARB		fragmentShaderObject;
+	int				programGeneration;
+	bool			programValid;
+
+	GLint			alphaTexCoordS;
+	GLint			alphaTexCoordT;
+	GLint			alphaScale;
+	GLint			opacitySourceMode;
+	GLint			vertexAlphaParams;
+	GLint			translucentMinAlpha;
+	GLint			alphaMap;
+} translucentShadowCasterProgram_t;
 
 typedef struct {
 	GLhandleARB		programObject;
@@ -277,6 +311,8 @@ typedef struct {
 	GLint			shadowNormalBias;
 	GLint			shadowFilterRadius;
 	GLint			pointShadowTexelScale;
+	GLint			translucentShadowEnabled;
+	GLint			translucentShadowDensity;
 
 	GLint			bumpMap;
 	GLint			lightFalloffMap;
@@ -284,6 +320,7 @@ typedef struct {
 	GLint			diffuseMap;
 	GLint			specularMap;
 	GLint			pointShadowMap;
+	GLint			translucentShadowMap;
 } pointShadowMapProgram_t;
 
 typedef struct {
@@ -298,7 +335,42 @@ typedef struct {
 	GLint			modelMatrixRow2;
 	GLint			globalLightOrigin;
 	GLint			pointShadowFar;
+	GLint			alphaTexCoordS;
+	GLint			alphaTexCoordT;
+	GLint			alphaRef;
+	GLint			alphaScale;
+	GLint			alphaTestEnabled;
+	GLint			alphaHashEnabled;
+	GLint			alphaMap;
 } pointShadowCasterProgram_t;
+
+typedef struct {
+	GLhandleARB		programObject;
+	GLhandleARB		vertexShaderObject;
+	GLhandleARB		fragmentShaderObject;
+	int				programGeneration;
+	bool			programValid;
+
+	GLint			modelMatrixRow0;
+	GLint			modelMatrixRow1;
+	GLint			modelMatrixRow2;
+	GLint			globalLightOrigin;
+	GLint			pointShadowFar;
+	GLint			alphaTexCoordS;
+	GLint			alphaTexCoordT;
+	GLint			alphaScale;
+	GLint			opacitySourceMode;
+	GLint			vertexAlphaParams;
+	GLint			translucentMinAlpha;
+	GLint			alphaMap;
+} pointTranslucentShadowCasterProgram_t;
+
+typedef enum {
+	TRANSLUCENT_SHADOW_STAGE_NONE = 0,
+	TRANSLUCENT_SHADOW_STAGE_TEXTURE_ALPHA,
+	TRANSLUCENT_SHADOW_STAGE_TEXTURE_ADDITIVE,
+	TRANSLUCENT_SHADOW_STAGE_CONSTANT_ADDITIVE
+} translucentShadowStageMode_t;
 
 static const int SHADOWMAP_MAX_CASCADES = 4;
 
@@ -316,14 +388,23 @@ typedef struct {
 } projectedShadowMapState_t;
 
 static shadowMapProgram_t	g_shadowMapProgram = { 0, 0, 0, -1, false };
+static shadowMapCasterProgram_t	g_shadowMapCasterProgram = { 0, 0, 0, -1, false };
+static translucentShadowCasterProgram_t	g_translucentShadowCasterProgram = { 0, 0, 0, -1, false };
 static pointShadowMapProgram_t	g_pointShadowMapProgram = { 0, 0, 0, -1, false };
 static pointShadowCasterProgram_t	g_pointShadowCasterProgram = { 0, 0, 0, -1, false };
+static pointTranslucentShadowCasterProgram_t	g_pointTranslucentShadowCasterProgram = { 0, 0, 0, -1, false };
 static idImage *			g_shadowMapDepthImage = NULL;
 static idRenderTexture *	g_shadowMapRenderTexture = NULL;
+static idImage *			g_translucentShadowMapImage = NULL;
+static idRenderTexture *	g_translucentShadowMapRenderTexture = NULL;
 static idImage *			g_pointShadowMapColorImage = NULL;
 static idImage *			g_pointShadowMapDepthImage = NULL;
 static idRenderTexture *	g_pointShadowMapRenderTexture = NULL;
+static idImage *			g_pointTranslucentShadowMapImage = NULL;
+static idRenderTexture *	g_pointTranslucentShadowMapRenderTexture = NULL;
 static projectedShadowMapState_t	g_projectedShadowMapState = { 0 };
+static bool				g_projectedTranslucentShadowPassReady = false;
+static bool				g_pointTranslucentShadowPassReady = false;
 
 typedef enum {
 	SHADOWMAP_SUPPORT_OK = 0,
@@ -429,6 +510,29 @@ RB_ShadowMapDebugMode
 */
 static shadowMapDebugMode_t RB_ShadowMapDebugMode( void ) {
 	return static_cast<shadowMapDebugMode_t>( idMath::ClampInt( SHADOWMAP_DEBUGMODE_OFF, SHADOWMAP_DEBUGMODE_COUNT - 1, r_shadowMapDebugMode.GetInteger() ) );
+}
+
+static bool RB_ShadowMapHashedAlphaEnabled( void ) {
+	return r_shadowMapHashedAlpha.GetBool();
+}
+
+static bool RB_TranslucentShadowMomentsRequested( void ) {
+	return r_shadowMapTranslucentMoments.GetBool();
+}
+
+static bool RB_TranslucentShadowMomentsSupported( void ) {
+	return RB_TranslucentShadowMomentsRequested() &&
+		glConfig.GLSLProgramAvailable &&
+		glConfig.maxTextureUnits >= 7 &&
+		glConfig.maxTextureImageUnits >= 7;
+}
+
+static bool RB_ProjectedTranslucentShadowEnabled( void ) {
+	return RB_TranslucentShadowMomentsSupported() && g_projectedTranslucentShadowPassReady && g_translucentShadowMapImage != NULL;
+}
+
+static bool RB_PointTranslucentShadowEnabled( void ) {
+	return RB_TranslucentShadowMomentsSupported() && g_pointTranslucentShadowPassReady && g_pointTranslucentShadowMapImage != NULL;
 }
 
 /*
@@ -839,6 +943,38 @@ static void RB_ShadowMapFreeProgram( void ) {
 	memset( &g_shadowMapProgram, 0, sizeof( g_shadowMapProgram ) );
 }
 
+static void RB_ShadowMapFreeCasterProgram( void ) {
+	if ( g_shadowMapCasterProgram.programObject != 0 ) {
+		if ( g_shadowMapCasterProgram.vertexShaderObject != 0 ) {
+			glDetachObjectARB( g_shadowMapCasterProgram.programObject, g_shadowMapCasterProgram.vertexShaderObject );
+			glDeleteObjectARB( g_shadowMapCasterProgram.vertexShaderObject );
+		}
+		if ( g_shadowMapCasterProgram.fragmentShaderObject != 0 ) {
+			glDetachObjectARB( g_shadowMapCasterProgram.programObject, g_shadowMapCasterProgram.fragmentShaderObject );
+			glDeleteObjectARB( g_shadowMapCasterProgram.fragmentShaderObject );
+		}
+		glDeleteObjectARB( g_shadowMapCasterProgram.programObject );
+	}
+
+	memset( &g_shadowMapCasterProgram, 0, sizeof( g_shadowMapCasterProgram ) );
+}
+
+static void RB_TranslucentShadowMapFreeCasterProgram( void ) {
+	if ( g_translucentShadowCasterProgram.programObject != 0 ) {
+		if ( g_translucentShadowCasterProgram.vertexShaderObject != 0 ) {
+			glDetachObjectARB( g_translucentShadowCasterProgram.programObject, g_translucentShadowCasterProgram.vertexShaderObject );
+			glDeleteObjectARB( g_translucentShadowCasterProgram.vertexShaderObject );
+		}
+		if ( g_translucentShadowCasterProgram.fragmentShaderObject != 0 ) {
+			glDetachObjectARB( g_translucentShadowCasterProgram.programObject, g_translucentShadowCasterProgram.fragmentShaderObject );
+			glDeleteObjectARB( g_translucentShadowCasterProgram.fragmentShaderObject );
+		}
+		glDeleteObjectARB( g_translucentShadowCasterProgram.programObject );
+	}
+
+	memset( &g_translucentShadowCasterProgram, 0, sizeof( g_translucentShadowCasterProgram ) );
+}
+
 static void RB_PointShadowMapFreeProgram( void ) {
 	if ( g_pointShadowMapProgram.programObject != 0 ) {
 		if ( g_pointShadowMapProgram.vertexShaderObject != 0 ) {
@@ -869,6 +1005,22 @@ static void RB_PointShadowMapFreeCasterProgram( void ) {
 	}
 
 	memset( &g_pointShadowCasterProgram, 0, sizeof( g_pointShadowCasterProgram ) );
+}
+
+static void RB_PointTranslucentShadowMapFreeCasterProgram( void ) {
+	if ( g_pointTranslucentShadowCasterProgram.programObject != 0 ) {
+		if ( g_pointTranslucentShadowCasterProgram.vertexShaderObject != 0 ) {
+			glDetachObjectARB( g_pointTranslucentShadowCasterProgram.programObject, g_pointTranslucentShadowCasterProgram.vertexShaderObject );
+			glDeleteObjectARB( g_pointTranslucentShadowCasterProgram.vertexShaderObject );
+		}
+		if ( g_pointTranslucentShadowCasterProgram.fragmentShaderObject != 0 ) {
+			glDetachObjectARB( g_pointTranslucentShadowCasterProgram.programObject, g_pointTranslucentShadowCasterProgram.fragmentShaderObject );
+			glDeleteObjectARB( g_pointTranslucentShadowCasterProgram.fragmentShaderObject );
+		}
+		glDeleteObjectARB( g_pointTranslucentShadowCasterProgram.programObject );
+	}
+
+	memset( &g_pointTranslucentShadowCasterProgram, 0, sizeof( g_pointTranslucentShadowCasterProgram ) );
 }
 
 static void RB_ShadowMapPrintInfoLog( GLhandleARB object, const char *label, const char *name ) {
@@ -1008,12 +1160,218 @@ static bool RB_ShadowMapLoadProgram( void ) {
 	g_shadowMapProgram.shadowCascadeCount = glGetUniformLocationARB( programObject, "uShadowCascadeCount" );
 	g_shadowMapProgram.shadowCascadeBlend = glGetUniformLocationARB( programObject, "uShadowCascadeBlend" );
 	g_shadowMapProgram.shadowDebugMode = glGetUniformLocationARB( programObject, "uShadowDebugMode" );
+	g_shadowMapProgram.translucentShadowEnabled = glGetUniformLocationARB( programObject, "uTranslucentShadowEnabled" );
+	g_shadowMapProgram.translucentShadowDensity = glGetUniformLocationARB( programObject, "uTranslucentShadowDensity" );
 	g_shadowMapProgram.bumpMap = glGetUniformLocationARB( programObject, "uBumpMap" );
 	g_shadowMapProgram.lightFalloffMap = glGetUniformLocationARB( programObject, "uLightFalloffMap" );
 	g_shadowMapProgram.lightProjectionMap = glGetUniformLocationARB( programObject, "uLightProjectionMap" );
 	g_shadowMapProgram.diffuseMap = glGetUniformLocationARB( programObject, "uDiffuseMap" );
 	g_shadowMapProgram.specularMap = glGetUniformLocationARB( programObject, "uSpecularMap" );
 	g_shadowMapProgram.shadowMap = glGetUniformLocationARB( programObject, "uShadowMap" );
+	g_shadowMapProgram.translucentShadowMap = glGetUniformLocationARB( programObject, "uTranslucentShadowMap" );
+
+	common->Printf( "Loaded GLSL program '%s'\n", programBaseName );
+	return true;
+}
+
+static bool RB_ShadowMapLoadCasterProgram( void ) {
+	static const char *programBaseName = "glprogs/openq4_shadow_proj_caster";
+
+	if ( !glConfig.GLSLProgramAvailable ) {
+		return false;
+	}
+
+	if ( g_shadowMapCasterProgram.programObject != 0 && g_shadowMapCasterProgram.programGeneration == tr.videoRestartCount ) {
+		return g_shadowMapCasterProgram.programValid;
+	}
+
+	RB_ShadowMapFreeCasterProgram();
+
+	idStr vertexPath = idStr( programBaseName ) + ".vs";
+	idStr fragmentPath = idStr( programBaseName ) + ".fs";
+
+	char *vertexBuffer = NULL;
+	char *fragmentBuffer = NULL;
+	fileSystem->ReadFile( vertexPath.c_str(), (void **)&vertexBuffer, NULL );
+	fileSystem->ReadFile( fragmentPath.c_str(), (void **)&fragmentBuffer, NULL );
+	if ( vertexBuffer == NULL || fragmentBuffer == NULL ) {
+		if ( vertexBuffer != NULL ) {
+			fileSystem->FreeFile( vertexBuffer );
+		}
+		if ( fragmentBuffer != NULL ) {
+			fileSystem->FreeFile( fragmentBuffer );
+		}
+		common->Warning( "Couldn't load shadow caster GLSL sources '%s' and '%s'", vertexPath.c_str(), fragmentPath.c_str() );
+		g_shadowMapCasterProgram.programGeneration = tr.videoRestartCount;
+		g_shadowMapCasterProgram.programValid = false;
+		return false;
+	}
+
+	GLhandleARB vertexShader = glCreateShaderObjectARB( GL_VERTEX_SHADER_ARB );
+	GLhandleARB fragmentShader = glCreateShaderObjectARB( GL_FRAGMENT_SHADER_ARB );
+	const GLcharARB *vertexSource = (const GLcharARB *)vertexBuffer;
+	const GLcharARB *fragmentSource = (const GLcharARB *)fragmentBuffer;
+	glShaderSourceARB( vertexShader, 1, &vertexSource, NULL );
+	glShaderSourceARB( fragmentShader, 1, &fragmentSource, NULL );
+	glCompileShaderARB( vertexShader );
+	glCompileShaderARB( fragmentShader );
+
+	fileSystem->FreeFile( vertexBuffer );
+	fileSystem->FreeFile( fragmentBuffer );
+
+	GLint status = GL_FALSE;
+	glGetObjectParameterivARB( vertexShader, GL_OBJECT_COMPILE_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_ShadowMapPrintInfoLog( vertexShader, "vertex shader compile", programBaseName );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		g_shadowMapCasterProgram.programGeneration = tr.videoRestartCount;
+		g_shadowMapCasterProgram.programValid = false;
+		return false;
+	}
+
+	glGetObjectParameterivARB( fragmentShader, GL_OBJECT_COMPILE_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_ShadowMapPrintInfoLog( fragmentShader, "fragment shader compile", programBaseName );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		g_shadowMapCasterProgram.programGeneration = tr.videoRestartCount;
+		g_shadowMapCasterProgram.programValid = false;
+		return false;
+	}
+
+	GLhandleARB programObject = glCreateProgramObjectARB();
+	glAttachObjectARB( programObject, vertexShader );
+	glAttachObjectARB( programObject, fragmentShader );
+	glLinkProgramARB( programObject );
+
+	glGetObjectParameterivARB( programObject, GL_OBJECT_LINK_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_ShadowMapPrintInfoLog( programObject, "program link", programBaseName );
+		glDetachObjectARB( programObject, vertexShader );
+		glDetachObjectARB( programObject, fragmentShader );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		glDeleteObjectARB( programObject );
+		g_shadowMapCasterProgram.programGeneration = tr.videoRestartCount;
+		g_shadowMapCasterProgram.programValid = false;
+		return false;
+	}
+
+	g_shadowMapCasterProgram.programObject = programObject;
+	g_shadowMapCasterProgram.vertexShaderObject = vertexShader;
+	g_shadowMapCasterProgram.fragmentShaderObject = fragmentShader;
+	g_shadowMapCasterProgram.programGeneration = tr.videoRestartCount;
+	g_shadowMapCasterProgram.programValid = true;
+
+	g_shadowMapCasterProgram.alphaTexCoordS = glGetUniformLocationARB( programObject, "uAlphaTexCoordS" );
+	g_shadowMapCasterProgram.alphaTexCoordT = glGetUniformLocationARB( programObject, "uAlphaTexCoordT" );
+	g_shadowMapCasterProgram.alphaRef = glGetUniformLocationARB( programObject, "uAlphaRef" );
+	g_shadowMapCasterProgram.alphaScale = glGetUniformLocationARB( programObject, "uAlphaScale" );
+	g_shadowMapCasterProgram.alphaHashEnabled = glGetUniformLocationARB( programObject, "uAlphaHashEnabled" );
+	g_shadowMapCasterProgram.alphaMap = glGetUniformLocationARB( programObject, "uAlphaMap" );
+
+	common->Printf( "Loaded GLSL program '%s'\n", programBaseName );
+	return true;
+}
+
+static bool RB_TranslucentShadowMapLoadCasterProgram( void ) {
+	static const char *programBaseName = "glprogs/openq4_shadow_proj_translucent_caster";
+
+	if ( !glConfig.GLSLProgramAvailable ) {
+		return false;
+	}
+
+	if ( g_translucentShadowCasterProgram.programObject != 0 && g_translucentShadowCasterProgram.programGeneration == tr.videoRestartCount ) {
+		return g_translucentShadowCasterProgram.programValid;
+	}
+
+	RB_TranslucentShadowMapFreeCasterProgram();
+
+	idStr vertexPath = idStr( programBaseName ) + ".vs";
+	idStr fragmentPath = idStr( programBaseName ) + ".fs";
+
+	char *vertexBuffer = NULL;
+	char *fragmentBuffer = NULL;
+	fileSystem->ReadFile( vertexPath.c_str(), (void **)&vertexBuffer, NULL );
+	fileSystem->ReadFile( fragmentPath.c_str(), (void **)&fragmentBuffer, NULL );
+	if ( vertexBuffer == NULL || fragmentBuffer == NULL ) {
+		if ( vertexBuffer != NULL ) {
+			fileSystem->FreeFile( vertexBuffer );
+		}
+		if ( fragmentBuffer != NULL ) {
+			fileSystem->FreeFile( fragmentBuffer );
+		}
+		common->Warning( "Couldn't load translucent shadow caster GLSL sources '%s' and '%s'", vertexPath.c_str(), fragmentPath.c_str() );
+		g_translucentShadowCasterProgram.programGeneration = tr.videoRestartCount;
+		g_translucentShadowCasterProgram.programValid = false;
+		return false;
+	}
+
+	GLhandleARB vertexShader = glCreateShaderObjectARB( GL_VERTEX_SHADER_ARB );
+	GLhandleARB fragmentShader = glCreateShaderObjectARB( GL_FRAGMENT_SHADER_ARB );
+	const GLcharARB *vertexSource = (const GLcharARB *)vertexBuffer;
+	const GLcharARB *fragmentSource = (const GLcharARB *)fragmentBuffer;
+	glShaderSourceARB( vertexShader, 1, &vertexSource, NULL );
+	glShaderSourceARB( fragmentShader, 1, &fragmentSource, NULL );
+	glCompileShaderARB( vertexShader );
+	glCompileShaderARB( fragmentShader );
+
+	fileSystem->FreeFile( vertexBuffer );
+	fileSystem->FreeFile( fragmentBuffer );
+
+	GLint status = GL_FALSE;
+	glGetObjectParameterivARB( vertexShader, GL_OBJECT_COMPILE_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_ShadowMapPrintInfoLog( vertexShader, "vertex shader compile", programBaseName );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		g_translucentShadowCasterProgram.programGeneration = tr.videoRestartCount;
+		g_translucentShadowCasterProgram.programValid = false;
+		return false;
+	}
+
+	glGetObjectParameterivARB( fragmentShader, GL_OBJECT_COMPILE_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_ShadowMapPrintInfoLog( fragmentShader, "fragment shader compile", programBaseName );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		g_translucentShadowCasterProgram.programGeneration = tr.videoRestartCount;
+		g_translucentShadowCasterProgram.programValid = false;
+		return false;
+	}
+
+	GLhandleARB programObject = glCreateProgramObjectARB();
+	glAttachObjectARB( programObject, vertexShader );
+	glAttachObjectARB( programObject, fragmentShader );
+	glLinkProgramARB( programObject );
+
+	glGetObjectParameterivARB( programObject, GL_OBJECT_LINK_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_ShadowMapPrintInfoLog( programObject, "program link", programBaseName );
+		glDetachObjectARB( programObject, vertexShader );
+		glDetachObjectARB( programObject, fragmentShader );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		glDeleteObjectARB( programObject );
+		g_translucentShadowCasterProgram.programGeneration = tr.videoRestartCount;
+		g_translucentShadowCasterProgram.programValid = false;
+		return false;
+	}
+
+	g_translucentShadowCasterProgram.programObject = programObject;
+	g_translucentShadowCasterProgram.vertexShaderObject = vertexShader;
+	g_translucentShadowCasterProgram.fragmentShaderObject = fragmentShader;
+	g_translucentShadowCasterProgram.programGeneration = tr.videoRestartCount;
+	g_translucentShadowCasterProgram.programValid = true;
+
+	g_translucentShadowCasterProgram.alphaTexCoordS = glGetUniformLocationARB( programObject, "uAlphaTexCoordS" );
+	g_translucentShadowCasterProgram.alphaTexCoordT = glGetUniformLocationARB( programObject, "uAlphaTexCoordT" );
+	g_translucentShadowCasterProgram.alphaScale = glGetUniformLocationARB( programObject, "uAlphaScale" );
+	g_translucentShadowCasterProgram.opacitySourceMode = glGetUniformLocationARB( programObject, "uOpacitySourceMode" );
+	g_translucentShadowCasterProgram.vertexAlphaParams = glGetUniformLocationARB( programObject, "uVertexAlphaParams" );
+	g_translucentShadowCasterProgram.translucentMinAlpha = glGetUniformLocationARB( programObject, "uTranslucentMinAlpha" );
+	g_translucentShadowCasterProgram.alphaMap = glGetUniformLocationARB( programObject, "uAlphaMap" );
 
 	common->Printf( "Loaded GLSL program '%s'\n", programBaseName );
 	return true;
@@ -1137,12 +1495,15 @@ static bool RB_PointShadowMapLoadProgram( void ) {
 	g_pointShadowMapProgram.shadowNormalBias = glGetUniformLocationARB( programObject, "uShadowNormalBias" );
 	g_pointShadowMapProgram.shadowFilterRadius = glGetUniformLocationARB( programObject, "uShadowFilterRadius" );
 	g_pointShadowMapProgram.pointShadowTexelScale = glGetUniformLocationARB( programObject, "uPointShadowTexelScale" );
+	g_pointShadowMapProgram.translucentShadowEnabled = glGetUniformLocationARB( programObject, "uTranslucentShadowEnabled" );
+	g_pointShadowMapProgram.translucentShadowDensity = glGetUniformLocationARB( programObject, "uTranslucentShadowDensity" );
 	g_pointShadowMapProgram.bumpMap = glGetUniformLocationARB( programObject, "uBumpMap" );
 	g_pointShadowMapProgram.lightFalloffMap = glGetUniformLocationARB( programObject, "uLightFalloffMap" );
 	g_pointShadowMapProgram.lightProjectionMap = glGetUniformLocationARB( programObject, "uLightProjectionMap" );
 	g_pointShadowMapProgram.diffuseMap = glGetUniformLocationARB( programObject, "uDiffuseMap" );
 	g_pointShadowMapProgram.specularMap = glGetUniformLocationARB( programObject, "uSpecularMap" );
 	g_pointShadowMapProgram.pointShadowMap = glGetUniformLocationARB( programObject, "uPointShadowMap" );
+	g_pointShadowMapProgram.translucentShadowMap = glGetUniformLocationARB( programObject, "uPointTranslucentShadowMap" );
 
 	common->Printf( "Loaded GLSL program '%s'\n", programBaseName );
 	return true;
@@ -1243,6 +1604,120 @@ static bool RB_PointShadowMapLoadCasterProgram( void ) {
 	g_pointShadowCasterProgram.modelMatrixRow2 = glGetUniformLocationARB( programObject, "uModelMatrixRow2" );
 	g_pointShadowCasterProgram.globalLightOrigin = glGetUniformLocationARB( programObject, "uGlobalLightOrigin" );
 	g_pointShadowCasterProgram.pointShadowFar = glGetUniformLocationARB( programObject, "uPointShadowFar" );
+	g_pointShadowCasterProgram.alphaTexCoordS = glGetUniformLocationARB( programObject, "uAlphaTexCoordS" );
+	g_pointShadowCasterProgram.alphaTexCoordT = glGetUniformLocationARB( programObject, "uAlphaTexCoordT" );
+	g_pointShadowCasterProgram.alphaRef = glGetUniformLocationARB( programObject, "uAlphaRef" );
+	g_pointShadowCasterProgram.alphaScale = glGetUniformLocationARB( programObject, "uAlphaScale" );
+	g_pointShadowCasterProgram.alphaTestEnabled = glGetUniformLocationARB( programObject, "uAlphaTestEnabled" );
+	g_pointShadowCasterProgram.alphaHashEnabled = glGetUniformLocationARB( programObject, "uAlphaHashEnabled" );
+	g_pointShadowCasterProgram.alphaMap = glGetUniformLocationARB( programObject, "uAlphaMap" );
+
+	common->Printf( "Loaded GLSL program '%s'\n", programBaseName );
+	return true;
+}
+
+static bool RB_PointTranslucentShadowMapLoadCasterProgram( void ) {
+	static const char *programBaseName = "glprogs/openq4_shadow_point_translucent_caster";
+
+	if ( !glConfig.GLSLProgramAvailable ) {
+		return false;
+	}
+
+	if ( g_pointTranslucentShadowCasterProgram.programObject != 0 && g_pointTranslucentShadowCasterProgram.programGeneration == tr.videoRestartCount ) {
+		return g_pointTranslucentShadowCasterProgram.programValid;
+	}
+
+	RB_PointTranslucentShadowMapFreeCasterProgram();
+
+	idStr vertexPath = idStr( programBaseName ) + ".vs";
+	idStr fragmentPath = idStr( programBaseName ) + ".fs";
+
+	char *vertexBuffer = NULL;
+	char *fragmentBuffer = NULL;
+	fileSystem->ReadFile( vertexPath.c_str(), (void **)&vertexBuffer, NULL );
+	fileSystem->ReadFile( fragmentPath.c_str(), (void **)&fragmentBuffer, NULL );
+	if ( vertexBuffer == NULL || fragmentBuffer == NULL ) {
+		if ( vertexBuffer != NULL ) {
+			fileSystem->FreeFile( vertexBuffer );
+		}
+		if ( fragmentBuffer != NULL ) {
+			fileSystem->FreeFile( fragmentBuffer );
+		}
+		common->Warning( "Couldn't load point translucent shadow caster GLSL sources '%s' and '%s'", vertexPath.c_str(), fragmentPath.c_str() );
+		g_pointTranslucentShadowCasterProgram.programGeneration = tr.videoRestartCount;
+		g_pointTranslucentShadowCasterProgram.programValid = false;
+		return false;
+	}
+
+	GLhandleARB vertexShader = glCreateShaderObjectARB( GL_VERTEX_SHADER_ARB );
+	GLhandleARB fragmentShader = glCreateShaderObjectARB( GL_FRAGMENT_SHADER_ARB );
+	const GLcharARB *vertexSource = (const GLcharARB *)vertexBuffer;
+	const GLcharARB *fragmentSource = (const GLcharARB *)fragmentBuffer;
+	glShaderSourceARB( vertexShader, 1, &vertexSource, NULL );
+	glShaderSourceARB( fragmentShader, 1, &fragmentSource, NULL );
+	glCompileShaderARB( vertexShader );
+	glCompileShaderARB( fragmentShader );
+
+	fileSystem->FreeFile( vertexBuffer );
+	fileSystem->FreeFile( fragmentBuffer );
+
+	GLint status = GL_FALSE;
+	glGetObjectParameterivARB( vertexShader, GL_OBJECT_COMPILE_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_ShadowMapPrintInfoLog( vertexShader, "vertex shader compile", programBaseName );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		g_pointTranslucentShadowCasterProgram.programGeneration = tr.videoRestartCount;
+		g_pointTranslucentShadowCasterProgram.programValid = false;
+		return false;
+	}
+
+	glGetObjectParameterivARB( fragmentShader, GL_OBJECT_COMPILE_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_ShadowMapPrintInfoLog( fragmentShader, "fragment shader compile", programBaseName );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		g_pointTranslucentShadowCasterProgram.programGeneration = tr.videoRestartCount;
+		g_pointTranslucentShadowCasterProgram.programValid = false;
+		return false;
+	}
+
+	GLhandleARB programObject = glCreateProgramObjectARB();
+	glAttachObjectARB( programObject, vertexShader );
+	glAttachObjectARB( programObject, fragmentShader );
+	glLinkProgramARB( programObject );
+
+	glGetObjectParameterivARB( programObject, GL_OBJECT_LINK_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_ShadowMapPrintInfoLog( programObject, "program link", programBaseName );
+		glDetachObjectARB( programObject, vertexShader );
+		glDetachObjectARB( programObject, fragmentShader );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		glDeleteObjectARB( programObject );
+		g_pointTranslucentShadowCasterProgram.programGeneration = tr.videoRestartCount;
+		g_pointTranslucentShadowCasterProgram.programValid = false;
+		return false;
+	}
+
+	g_pointTranslucentShadowCasterProgram.programObject = programObject;
+	g_pointTranslucentShadowCasterProgram.vertexShaderObject = vertexShader;
+	g_pointTranslucentShadowCasterProgram.fragmentShaderObject = fragmentShader;
+	g_pointTranslucentShadowCasterProgram.programGeneration = tr.videoRestartCount;
+	g_pointTranslucentShadowCasterProgram.programValid = true;
+
+	g_pointTranslucentShadowCasterProgram.modelMatrixRow0 = glGetUniformLocationARB( programObject, "uModelMatrixRow0" );
+	g_pointTranslucentShadowCasterProgram.modelMatrixRow1 = glGetUniformLocationARB( programObject, "uModelMatrixRow1" );
+	g_pointTranslucentShadowCasterProgram.modelMatrixRow2 = glGetUniformLocationARB( programObject, "uModelMatrixRow2" );
+	g_pointTranslucentShadowCasterProgram.globalLightOrigin = glGetUniformLocationARB( programObject, "uGlobalLightOrigin" );
+	g_pointTranslucentShadowCasterProgram.pointShadowFar = glGetUniformLocationARB( programObject, "uPointShadowFar" );
+	g_pointTranslucentShadowCasterProgram.alphaTexCoordS = glGetUniformLocationARB( programObject, "uAlphaTexCoordS" );
+	g_pointTranslucentShadowCasterProgram.alphaTexCoordT = glGetUniformLocationARB( programObject, "uAlphaTexCoordT" );
+	g_pointTranslucentShadowCasterProgram.alphaScale = glGetUniformLocationARB( programObject, "uAlphaScale" );
+	g_pointTranslucentShadowCasterProgram.opacitySourceMode = glGetUniformLocationARB( programObject, "uOpacitySourceMode" );
+	g_pointTranslucentShadowCasterProgram.vertexAlphaParams = glGetUniformLocationARB( programObject, "uVertexAlphaParams" );
+	g_pointTranslucentShadowCasterProgram.translucentMinAlpha = glGetUniformLocationARB( programObject, "uTranslucentMinAlpha" );
+	g_pointTranslucentShadowCasterProgram.alphaMap = glGetUniformLocationARB( programObject, "uAlphaMap" );
 
 	common->Printf( "Loaded GLSL program '%s'\n", programBaseName );
 	return true;
@@ -1319,6 +1794,14 @@ static bool RB_ShadowMapEnsureResources( const viewLight_t *vLight ) {
 	GL_SelectTextureNoClient( 5 );
 	g_shadowMapDepthImage->Bind();
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE );
+	if ( glConfig.maxTextureUnits >= 7 ) {
+		GL_SelectTextureNoClient( 6 );
+		if ( RB_ProjectedTranslucentShadowEnabled() ) {
+			g_translucentShadowMapImage->Bind();
+		} else {
+			globalImages->BindNull();
+		}
+	}
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL );
 	backEnd.glState.currenttmu = -1;
 
@@ -1364,6 +1847,66 @@ static bool RB_PointShadowMapEnsureResources( void ) {
 	}
 
 	return g_pointShadowMapColorImage != NULL && g_pointShadowMapDepthImage != NULL && g_pointShadowMapRenderTexture != NULL;
+}
+
+static bool RB_ShadowMapEnsureTranslucentResources( const viewLight_t *vLight ) {
+	if ( !RB_TranslucentShadowMomentsSupported() || !RB_TranslucentShadowMapLoadCasterProgram() ) {
+		return false;
+	}
+
+	const int shadowMapTileSize = RB_ShadowMapTileSizeForLight( vLight );
+	if ( shadowMapTileSize <= 0 ) {
+		return false;
+	}
+
+	const int shadowMapAtlasDiv = RB_ShadowMapAtlasDivForLight( vLight );
+	const int shadowMapSize = shadowMapTileSize * shadowMapAtlasDiv;
+
+	if ( g_translucentShadowMapImage == NULL ) {
+		idImageOpts opts;
+		opts.textureType = TT_2D;
+		opts.format = FMT_RGBA16F;
+		opts.width = shadowMapSize;
+		opts.height = shadowMapSize;
+		opts.numLevels = 1;
+		opts.isPersistant = true;
+		g_translucentShadowMapImage = globalImages->ScratchImage( "_translucentShadowMap", &opts, TF_LINEAR, TR_CLAMP, TD_DEFAULT );
+	}
+
+	if ( g_translucentShadowMapRenderTexture == NULL ) {
+		g_translucentShadowMapRenderTexture = tr.CreateRenderTexture( g_translucentShadowMapImage, NULL );
+	} else if ( g_translucentShadowMapRenderTexture->GetWidth() != shadowMapSize || g_translucentShadowMapRenderTexture->GetHeight() != shadowMapSize ) {
+		tr.ResizeRenderTexture( g_translucentShadowMapRenderTexture, shadowMapSize, shadowMapSize );
+	}
+
+	return g_translucentShadowMapImage != NULL && g_translucentShadowMapRenderTexture != NULL;
+}
+
+static bool RB_PointShadowMapEnsureTranslucentResources( void ) {
+	if ( !glConfig.cubeMapAvailable || !RB_TranslucentShadowMomentsSupported() || !RB_PointTranslucentShadowMapLoadCasterProgram() ) {
+		return false;
+	}
+
+	const int shadowMapSize = idMath::ClampInt( 128, 2048, r_shadowMapSize.GetInteger() );
+
+	if ( g_pointTranslucentShadowMapImage == NULL ) {
+		idImageOpts opts;
+		opts.textureType = TT_CUBIC;
+		opts.format = FMT_RGBA16F;
+		opts.width = shadowMapSize;
+		opts.height = shadowMapSize;
+		opts.numLevels = 1;
+		opts.isPersistant = true;
+		g_pointTranslucentShadowMapImage = globalImages->ScratchImage( "_pointTranslucentShadowMap", &opts, TF_LINEAR, TR_CLAMP, TD_DEFAULT );
+	}
+
+	if ( g_pointTranslucentShadowMapRenderTexture == NULL ) {
+		g_pointTranslucentShadowMapRenderTexture = tr.CreateRenderTexture( g_pointTranslucentShadowMapImage, NULL );
+	} else if ( g_pointTranslucentShadowMapRenderTexture->GetWidth() != shadowMapSize || g_pointTranslucentShadowMapRenderTexture->GetHeight() != shadowMapSize ) {
+		tr.ResizeRenderTexture( g_pointTranslucentShadowMapRenderTexture, shadowMapSize, shadowMapSize );
+	}
+
+	return g_pointTranslucentShadowMapImage != NULL && g_pointTranslucentShadowMapRenderTexture != NULL;
 }
 
 static shadowMapLightSupportReason_t RB_ShadowMapLightSupportReason( const viewLight_t *vLight ) {
@@ -1602,7 +2145,315 @@ static bool RB_ShadowMapResolveCasterDrawData( const drawSurf_t *surf, srfTriang
 	return true;
 }
 
-static void RB_ShadowMapDrawCasterChain( const drawSurf_t *surf ) {
+static void RB_ShadowMapRestorePolygonOffset( void ) {
+	glEnable( GL_POLYGON_OFFSET_FILL );
+	glPolygonOffset( r_shadowMapPolygonFactor.GetFloat(), r_shadowMapPolygonOffset.GetFloat() );
+}
+
+static bool RB_ShadowMapTextureStageHasBindableImage( const textureStage_t *texture ) {
+	return texture != NULL && ( texture->image != NULL || texture->cinematic != NULL );
+}
+
+static void RB_ShadowMapTouchCache( vertCache_t *cache ) {
+	if ( cache == NULL ) {
+		return;
+	}
+
+	// Shadow caster draw surfs can be finalized through the deform path, which
+	// may replace the geometry with frame-temp vertex cache blocks. Those are
+	// already valid for the current frame and idVertexCache::Touch() rejects them.
+	if ( cache->tag != TAG_TEMP ) {
+		vertexCache.Touch( cache );
+	}
+}
+
+static void RB_ShadowMapDrawPerforatedCasterClassic( const drawSurf_t *surf, const srfTriangles_t *casterGeo, idDrawVert *ac ) {
+	const idMaterial *shader = surf->material;
+	const float *regs = surf->shaderRegisters;
+	float color[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+	bool didDraw = false;
+
+	if ( shader == NULL || regs == NULL ) {
+		RB_DrawElementsWithCounters( casterGeo );
+		return;
+	}
+
+	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
+	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>( &ac->st ) );
+	glEnable( GL_ALPHA_TEST );
+
+	for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
+		const shaderStage_t *pStage = shader->GetStage( stage );
+
+		if ( !pStage->hasAlphaTest ) {
+			continue;
+		}
+
+		if ( regs[ pStage->conditionRegister ] == 0 ) {
+			continue;
+		}
+
+		didDraw = true;
+		color[3] = regs[ pStage->color.registers[3] ];
+		if ( color[3] <= 0.0f ) {
+			continue;
+		}
+
+		glColor4fv( color );
+		glAlphaFunc( GL_GREATER, regs[ pStage->alphaTestRegister ] );
+
+		if ( !RB_ShadowMapTextureStageHasBindableImage( &pStage->texture ) ) {
+			continue;
+		}
+		RB_BindVariableStageImage( &pStage->texture, regs );
+
+		if ( !RB_PrepareStageTexturing( pStage, surf, ac ) ) {
+			RB_FinishStageTexturing( pStage, surf, ac );
+			RB_ShadowMapRestorePolygonOffset();
+			continue;
+		}
+
+		RB_DrawElementsWithCounters( casterGeo );
+		RB_FinishStageTexturing( pStage, surf, ac );
+		RB_ShadowMapRestorePolygonOffset();
+	}
+
+	glDisable( GL_ALPHA_TEST );
+	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
+	GL_SelectTexture( 0 );
+
+	if ( !didDraw ) {
+		RB_DrawElementsWithCounters( casterGeo );
+	}
+}
+
+static bool RB_ShadowMapCanHashPerforatedCaster( const drawSurf_t *surf ) {
+	if ( surf == NULL || surf->material == NULL || surf->shaderRegisters == NULL ) {
+		return false;
+	}
+
+	bool haveActiveStage = false;
+	const idMaterial *shader = surf->material;
+	const float *regs = surf->shaderRegisters;
+	for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
+		const shaderStage_t *pStage = shader->GetStage( stage );
+		if ( !pStage->hasAlphaTest || regs[ pStage->conditionRegister ] == 0 ) {
+			continue;
+		}
+
+		haveActiveStage = true;
+		if ( !RB_ShadowMapTextureStageHasBindableImage( &pStage->texture ) || pStage->texture.texgen != TG_EXPLICIT ) {
+			return false;
+		}
+	}
+
+	return haveActiveStage;
+}
+
+static translucentShadowStageMode_t RB_TranslucentShadowStageMode( const shaderStage_t *pStage ) {
+	if ( pStage == NULL || pStage->newStage != NULL ) {
+		return TRANSLUCENT_SHADOW_STAGE_NONE;
+	}
+
+	const int blendBits = pStage->drawStateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
+	if ( blendBits == ( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA ) ||
+		blendBits == ( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA ) ) {
+		return ( RB_ShadowMapTextureStageHasBindableImage( &pStage->texture ) && pStage->texture.texgen == TG_EXPLICIT ) ?
+			TRANSLUCENT_SHADOW_STAGE_TEXTURE_ALPHA :
+			TRANSLUCENT_SHADOW_STAGE_NONE;
+	}
+
+	if ( blendBits == ( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE ) ) {
+		if ( RB_ShadowMapTextureStageHasBindableImage( &pStage->texture ) && pStage->texture.texgen == TG_EXPLICIT ) {
+			return TRANSLUCENT_SHADOW_STAGE_TEXTURE_ADDITIVE;
+		}
+
+		if ( pStage->texture.texgen == TG_REFLECT_CUBE && glConfig.cubeMapAvailable ) {
+			return TRANSLUCENT_SHADOW_STAGE_CONSTANT_ADDITIVE;
+		}
+	}
+
+	return TRANSLUCENT_SHADOW_STAGE_NONE;
+}
+
+static bool RB_TranslucentShadowStageSupported( const shaderStage_t *pStage, const float *regs ) {
+	return pStage != NULL &&
+		regs != NULL &&
+		regs[ pStage->conditionRegister ] != 0.0f &&
+		RB_TranslucentShadowStageMode( pStage ) != TRANSLUCENT_SHADOW_STAGE_NONE;
+}
+
+static float RB_TranslucentShadowStageOpacityScale( const shaderStage_t *pStage, const float *regs, const translucentShadowStageMode_t mode ) {
+	if ( pStage == NULL || regs == NULL ) {
+		return 0.0f;
+	}
+
+	if ( mode == TRANSLUCENT_SHADOW_STAGE_TEXTURE_ALPHA ) {
+		return regs[ pStage->color.registers[3] ];
+	}
+
+	return regs[ pStage->color.registers[0] ] * 0.2126f +
+		regs[ pStage->color.registers[1] ] * 0.7152f +
+		regs[ pStage->color.registers[2] ] * 0.0722f;
+}
+
+static float RB_TranslucentShadowStageOpacityModeValue( const translucentShadowStageMode_t mode ) {
+	switch ( mode ) {
+	case TRANSLUCENT_SHADOW_STAGE_TEXTURE_ADDITIVE:
+		return 1.0f;
+	case TRANSLUCENT_SHADOW_STAGE_CONSTANT_ADDITIVE:
+		return 2.0f;
+	default:
+		return 0.0f;
+	}
+}
+
+static void RB_TranslucentShadowVertexAlphaParams( const shaderStage_t *pStage, float params[2] ) {
+	params[0] = 0.0f;
+	params[1] = 1.0f;
+
+	if ( pStage == NULL ) {
+		return;
+	}
+
+	if ( pStage->vertexColor == SVC_MODULATE ) {
+		params[0] = 1.0f;
+		params[1] = 0.0f;
+	} else if ( pStage->vertexColor == SVC_INVERSE_MODULATE ) {
+		params[0] = -1.0f;
+		params[1] = 1.0f;
+	}
+}
+
+static void RB_ShadowMapSetAlphaTexCoordIdentity( void ) {
+	static const float rowS[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+	static const float rowT[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
+
+	if ( g_shadowMapCasterProgram.alphaTexCoordS >= 0 ) {
+		glUniform4fvARB( g_shadowMapCasterProgram.alphaTexCoordS, 1, rowS );
+	}
+	if ( g_shadowMapCasterProgram.alphaTexCoordT >= 0 ) {
+		glUniform4fvARB( g_shadowMapCasterProgram.alphaTexCoordT, 1, rowT );
+	}
+}
+
+static void RB_ShadowMapSetAlphaTexCoordMatrix( const float *regs, const textureStage_t *texture ) {
+	float rowS[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+	float rowT[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
+
+	if ( regs != NULL && texture != NULL && texture->hasMatrix ) {
+		float matrix[16];
+		RB_GetShaderTextureMatrix( regs, texture, matrix );
+		rowS[0] = matrix[0];
+		rowS[1] = matrix[4];
+		rowS[2] = matrix[8];
+		rowS[3] = matrix[12];
+		rowT[0] = matrix[1];
+		rowT[1] = matrix[5];
+		rowT[2] = matrix[9];
+		rowT[3] = matrix[13];
+	}
+
+	if ( g_shadowMapCasterProgram.alphaTexCoordS >= 0 ) {
+		glUniform4fvARB( g_shadowMapCasterProgram.alphaTexCoordS, 1, rowS );
+	}
+	if ( g_shadowMapCasterProgram.alphaTexCoordT >= 0 ) {
+		glUniform4fvARB( g_shadowMapCasterProgram.alphaTexCoordT, 1, rowT );
+	}
+}
+
+static void RB_TranslucentShadowMapSetAlphaTexCoordIdentity( void ) {
+	static const float rowS[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+	static const float rowT[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
+
+	if ( g_translucentShadowCasterProgram.alphaTexCoordS >= 0 ) {
+		glUniform4fvARB( g_translucentShadowCasterProgram.alphaTexCoordS, 1, rowS );
+	}
+	if ( g_translucentShadowCasterProgram.alphaTexCoordT >= 0 ) {
+		glUniform4fvARB( g_translucentShadowCasterProgram.alphaTexCoordT, 1, rowT );
+	}
+}
+
+static void RB_TranslucentShadowMapSetAlphaTexCoordMatrix( const float *regs, const textureStage_t *texture ) {
+	float rowS[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+	float rowT[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
+
+	if ( regs != NULL && texture != NULL && texture->hasMatrix ) {
+		float matrix[16];
+		RB_GetShaderTextureMatrix( regs, texture, matrix );
+		rowS[0] = matrix[0];
+		rowS[1] = matrix[4];
+		rowS[2] = matrix[8];
+		rowS[3] = matrix[12];
+		rowT[0] = matrix[1];
+		rowT[1] = matrix[5];
+		rowT[2] = matrix[9];
+		rowT[3] = matrix[13];
+	}
+
+	if ( g_translucentShadowCasterProgram.alphaTexCoordS >= 0 ) {
+		glUniform4fvARB( g_translucentShadowCasterProgram.alphaTexCoordS, 1, rowS );
+	}
+	if ( g_translucentShadowCasterProgram.alphaTexCoordT >= 0 ) {
+		glUniform4fvARB( g_translucentShadowCasterProgram.alphaTexCoordT, 1, rowT );
+	}
+}
+
+static void RB_ShadowMapDrawPerforatedCasterHashed( const drawSurf_t *surf, const srfTriangles_t *casterGeo, idDrawVert *ac ) {
+	const idMaterial *shader = surf->material;
+	const float *regs = surf->shaderRegisters;
+	bool didDraw = false;
+
+	if ( shader == NULL || regs == NULL ) {
+		RB_DrawElementsWithCounters( casterGeo );
+		return;
+	}
+
+	glUseProgramObjectARB( g_shadowMapCasterProgram.programObject );
+	if ( g_shadowMapCasterProgram.alphaMap >= 0 ) {
+		glUniform1iARB( g_shadowMapCasterProgram.alphaMap, 0 );
+	}
+	if ( g_shadowMapCasterProgram.alphaHashEnabled >= 0 ) {
+		glUniform1fARB( g_shadowMapCasterProgram.alphaHashEnabled, RB_ShadowMapHashedAlphaEnabled() ? 1.0f : 0.0f );
+	}
+
+	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
+	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>( &ac->st ) );
+
+	for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
+		const shaderStage_t *pStage = shader->GetStage( stage );
+		if ( !pStage->hasAlphaTest || regs[ pStage->conditionRegister ] == 0 ) {
+			continue;
+		}
+
+		didDraw = true;
+		const float alphaScale = regs[ pStage->color.registers[3] ];
+		if ( alphaScale <= 0.0f ) {
+			continue;
+		}
+
+		if ( g_shadowMapCasterProgram.alphaRef >= 0 ) {
+			glUniform1fARB( g_shadowMapCasterProgram.alphaRef, regs[ pStage->alphaTestRegister ] );
+		}
+		if ( g_shadowMapCasterProgram.alphaScale >= 0 ) {
+			glUniform1fARB( g_shadowMapCasterProgram.alphaScale, alphaScale );
+		}
+		RB_ShadowMapSetAlphaTexCoordMatrix( regs, &pStage->texture );
+		RB_BindVariableStageImage( &pStage->texture, regs );
+		RB_DrawElementsWithCounters( casterGeo );
+	}
+
+	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
+	GL_SelectTexture( 0 );
+	RB_ShadowMapSetAlphaTexCoordIdentity();
+	glUseProgramObjectARB( 0 );
+
+	if ( !didDraw ) {
+		RB_DrawElementsWithCounters( casterGeo );
+	}
+}
+
+static void RB_ShadowMapDrawCasterChain( const drawSurf_t *surf, const bool useHashedAlpha ) {
 	for ( ; surf != NULL; surf = surf->nextOnLight ) {
 		srfTriangles_t *casterGeo = NULL;
 		vertCache_s *ambientCache = NULL;
@@ -1614,10 +2465,8 @@ static void RB_ShadowMapDrawCasterChain( const drawSurf_t *surf ) {
 			continue;
 		}
 
-		vertexCache.Touch( ambientCache );
-		if ( casterGeo->indexCache ) {
-			vertexCache.Touch( casterGeo->indexCache );
-		}
+		RB_ShadowMapTouchCache( ambientCache );
+		RB_ShadowMapTouchCache( casterGeo->indexCache );
 
 		if ( surf->space != backEnd.currentSpace ) {
 			backEnd.currentSpace = surf->space;
@@ -1626,8 +2475,97 @@ static void RB_ShadowMapDrawCasterChain( const drawSurf_t *surf ) {
 
 		idDrawVert *ac = (idDrawVert *)vertexCache.Position( ambientCache );
 		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
+
+		const idMaterial *shader = surf->material;
+		if ( shader != NULL && shader->Coverage() == MC_PERFORATED ) {
+			if ( useHashedAlpha && RB_ShadowMapCanHashPerforatedCaster( surf ) ) {
+				RB_ShadowMapDrawPerforatedCasterHashed( surf, casterGeo, ac );
+			} else {
+				RB_ShadowMapDrawPerforatedCasterClassic( surf, casterGeo, ac );
+			}
+			continue;
+		}
+
 		RB_DrawElementsWithCounters( casterGeo );
 	}
+}
+
+static void RB_ShadowMapDrawTranslucentCasterChain( const drawSurf_t *surf ) {
+	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
+	glEnableClientState( GL_COLOR_ARRAY );
+
+	for ( ; surf != NULL; surf = surf->nextOnLight ) {
+		srfTriangles_t *casterGeo = NULL;
+		vertCache_s *ambientCache = NULL;
+		if ( !RB_ShadowMapResolveCasterDrawData( surf, casterGeo, ambientCache ) ) {
+			continue;
+		}
+		if ( surf->space == NULL || surf->material == NULL || surf->shaderRegisters == NULL ) {
+			RB_ShadowMapReportCasterSkip( surf, casterGeo, "translucent-missing-shader" );
+			continue;
+		}
+
+		RB_ShadowMapTouchCache( ambientCache );
+		RB_ShadowMapTouchCache( casterGeo->indexCache );
+
+		if ( surf->space != backEnd.currentSpace ) {
+			backEnd.currentSpace = surf->space;
+			glLoadMatrixf( surf->space->modelMatrix );
+		}
+
+		idDrawVert *ac = (idDrawVert *)vertexCache.Position( ambientCache );
+		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
+		glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>( &ac->st ) );
+		glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), ac->color );
+
+		const idMaterial *shader = surf->material;
+		const float *regs = surf->shaderRegisters;
+		bool drewStage = false;
+
+		for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
+			const shaderStage_t *pStage = shader->GetStage( stage );
+			if ( !RB_TranslucentShadowStageSupported( pStage, regs ) ) {
+				continue;
+			}
+
+			const translucentShadowStageMode_t stageMode = RB_TranslucentShadowStageMode( pStage );
+			const float alphaScale = RB_TranslucentShadowStageOpacityScale( pStage, regs, stageMode );
+			if ( alphaScale <= r_shadowMapTranslucentMinAlpha.GetFloat() ) {
+				continue;
+			}
+
+			float vertexAlphaParams[2];
+			RB_TranslucentShadowVertexAlphaParams( pStage, vertexAlphaParams );
+
+			if ( g_translucentShadowCasterProgram.alphaScale >= 0 ) {
+				glUniform1fARB( g_translucentShadowCasterProgram.alphaScale, alphaScale );
+			}
+			if ( g_translucentShadowCasterProgram.opacitySourceMode >= 0 ) {
+				glUniform1fARB( g_translucentShadowCasterProgram.opacitySourceMode, RB_TranslucentShadowStageOpacityModeValue( stageMode ) );
+			}
+			if ( g_translucentShadowCasterProgram.vertexAlphaParams >= 0 ) {
+				glUniform2fvARB( g_translucentShadowCasterProgram.vertexAlphaParams, 1, vertexAlphaParams );
+			}
+			if ( stageMode == TRANSLUCENT_SHADOW_STAGE_CONSTANT_ADDITIVE ) {
+				RB_TranslucentShadowMapSetAlphaTexCoordIdentity();
+				globalImages->whiteImage->Bind();
+			} else {
+				RB_TranslucentShadowMapSetAlphaTexCoordMatrix( regs, &pStage->texture );
+				RB_BindVariableStageImage( &pStage->texture, regs );
+			}
+			RB_DrawElementsWithCounters( casterGeo );
+			drewStage = true;
+		}
+
+		if ( !drewStage ) {
+			RB_ShadowMapReportCasterSkip( surf, casterGeo, "no-translucent-shadow-stage" );
+		}
+	}
+
+	glDisableClientState( GL_COLOR_ARRAY );
+	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
+	GL_SelectTexture( 0 );
+	RB_TranslucentShadowMapSetAlphaTexCoordIdentity();
 }
 
 static void RB_ShadowMapModelMatrixRows( const float modelMatrix[16], float row0[4], float row1[4], float row2[4] ) {
@@ -1714,6 +2652,191 @@ static float RB_PointShadowMapLightFar( const viewLight_t *vLight ) {
 	return Max( adjustedRadius.Length() * r_shadowMapPointFarScale.GetFloat(), 1.0f );
 }
 
+static void RB_PointShadowMapSetAlphaTexCoordIdentity( void ) {
+	static const float rowS[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+	static const float rowT[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
+
+	if ( g_pointShadowCasterProgram.alphaTexCoordS >= 0 ) {
+		glUniform4fvARB( g_pointShadowCasterProgram.alphaTexCoordS, 1, rowS );
+	}
+	if ( g_pointShadowCasterProgram.alphaTexCoordT >= 0 ) {
+		glUniform4fvARB( g_pointShadowCasterProgram.alphaTexCoordT, 1, rowT );
+	}
+}
+
+static void RB_PointShadowMapDisableAlphaTest( void ) {
+	if ( g_pointShadowCasterProgram.alphaTestEnabled >= 0 ) {
+		glUniform1fARB( g_pointShadowCasterProgram.alphaTestEnabled, 0.0f );
+	}
+}
+
+static bool RB_PointShadowMapCanProcessPerforatedCaster( const drawSurf_t *surf ) {
+	if ( surf == NULL || surf->material == NULL || surf->shaderRegisters == NULL ) {
+		return false;
+	}
+
+	bool haveActiveStage = false;
+	const idMaterial *shader = surf->material;
+	const float *regs = surf->shaderRegisters;
+	for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
+		const shaderStage_t *pStage = shader->GetStage( stage );
+		if ( !pStage->hasAlphaTest || regs[ pStage->conditionRegister ] == 0 ) {
+			continue;
+		}
+
+		haveActiveStage = true;
+		if ( !RB_ShadowMapTextureStageHasBindableImage( &pStage->texture ) || pStage->texture.texgen != TG_EXPLICIT ) {
+			return false;
+		}
+	}
+
+	return haveActiveStage;
+}
+
+static void RB_PointShadowMapSetAlphaTexCoordMatrix( const float *regs, const textureStage_t *texture ) {
+	float rowS[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+	float rowT[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
+
+	if ( regs != NULL && texture != NULL && texture->hasMatrix ) {
+		float matrix[16];
+		RB_GetShaderTextureMatrix( regs, texture, matrix );
+		rowS[0] = matrix[0];
+		rowS[1] = matrix[4];
+		rowS[2] = matrix[8];
+		rowS[3] = matrix[12];
+		rowT[0] = matrix[1];
+		rowT[1] = matrix[5];
+		rowT[2] = matrix[9];
+		rowT[3] = matrix[13];
+	}
+
+	if ( g_pointShadowCasterProgram.alphaTexCoordS >= 0 ) {
+		glUniform4fvARB( g_pointShadowCasterProgram.alphaTexCoordS, 1, rowS );
+	}
+	if ( g_pointShadowCasterProgram.alphaTexCoordT >= 0 ) {
+		glUniform4fvARB( g_pointShadowCasterProgram.alphaTexCoordT, 1, rowT );
+	}
+}
+
+static void RB_PointTranslucentShadowMapSetAlphaTexCoordIdentity( void ) {
+	static const float rowS[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+	static const float rowT[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
+
+	if ( g_pointTranslucentShadowCasterProgram.alphaTexCoordS >= 0 ) {
+		glUniform4fvARB( g_pointTranslucentShadowCasterProgram.alphaTexCoordS, 1, rowS );
+	}
+	if ( g_pointTranslucentShadowCasterProgram.alphaTexCoordT >= 0 ) {
+		glUniform4fvARB( g_pointTranslucentShadowCasterProgram.alphaTexCoordT, 1, rowT );
+	}
+}
+
+static void RB_PointTranslucentShadowMapSetAlphaTexCoordMatrix( const float *regs, const textureStage_t *texture ) {
+	float rowS[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+	float rowT[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
+
+	if ( regs != NULL && texture != NULL && texture->hasMatrix ) {
+		float matrix[16];
+		RB_GetShaderTextureMatrix( regs, texture, matrix );
+		rowS[0] = matrix[0];
+		rowS[1] = matrix[4];
+		rowS[2] = matrix[8];
+		rowS[3] = matrix[12];
+		rowT[0] = matrix[1];
+		rowT[1] = matrix[5];
+		rowT[2] = matrix[9];
+		rowT[3] = matrix[13];
+	}
+
+	if ( g_pointTranslucentShadowCasterProgram.alphaTexCoordS >= 0 ) {
+		glUniform4fvARB( g_pointTranslucentShadowCasterProgram.alphaTexCoordS, 1, rowS );
+	}
+	if ( g_pointTranslucentShadowCasterProgram.alphaTexCoordT >= 0 ) {
+		glUniform4fvARB( g_pointTranslucentShadowCasterProgram.alphaTexCoordT, 1, rowT );
+	}
+}
+
+static bool RB_PointShadowMapPrepareAlphaTestStage( const shaderStage_t *pStage, idDrawVert *ac, const float *regs, const float alphaScale ) {
+	if ( pStage == NULL || regs == NULL || !RB_ShadowMapTextureStageHasBindableImage( &pStage->texture ) ) {
+		return false;
+	}
+
+	// Phase 1 implements the common explicit-ST cutout path and preserves matrix animation.
+	if ( pStage->texture.texgen != TG_EXPLICIT ) {
+		return false;
+	}
+
+	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
+	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>( &ac->st ) );
+	RB_PointShadowMapSetAlphaTexCoordMatrix( regs, &pStage->texture );
+
+	if ( g_pointShadowCasterProgram.alphaRef >= 0 ) {
+		glUniform1fARB( g_pointShadowCasterProgram.alphaRef, regs[ pStage->alphaTestRegister ] );
+	}
+	if ( g_pointShadowCasterProgram.alphaScale >= 0 ) {
+		glUniform1fARB( g_pointShadowCasterProgram.alphaScale, alphaScale );
+	}
+	if ( g_pointShadowCasterProgram.alphaTestEnabled >= 0 ) {
+		glUniform1fARB( g_pointShadowCasterProgram.alphaTestEnabled, 1.0f );
+	}
+	if ( g_pointShadowCasterProgram.alphaHashEnabled >= 0 ) {
+		glUniform1fARB( g_pointShadowCasterProgram.alphaHashEnabled, RB_ShadowMapHashedAlphaEnabled() ? 1.0f : 0.0f );
+	}
+
+	RB_BindVariableStageImage( &pStage->texture, regs );
+	return true;
+}
+
+static void RB_PointShadowMapFinishAlphaTestStage( void ) {
+	RB_PointShadowMapDisableAlphaTest();
+	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
+	GL_SelectTexture( 0 );
+}
+
+static void RB_PointShadowMapDrawPerforatedCaster( const drawSurf_t *surf, const srfTriangles_t *casterGeo, idDrawVert *ac ) {
+	const idMaterial *shader = surf->material;
+	const float *regs = surf->shaderRegisters;
+	bool didDraw = false;
+
+	if ( shader == NULL || regs == NULL ) {
+		RB_DrawElementsWithCounters( casterGeo );
+		return;
+	}
+
+	for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
+		const shaderStage_t *pStage = shader->GetStage( stage );
+
+		if ( !pStage->hasAlphaTest ) {
+			continue;
+		}
+
+		if ( regs[ pStage->conditionRegister ] == 0 ) {
+			continue;
+		}
+
+		didDraw = true;
+		const float alphaScale = regs[ pStage->color.registers[3] ];
+		if ( alphaScale <= 0.0f ) {
+			continue;
+		}
+
+		if ( !RB_PointShadowMapPrepareAlphaTestStage( pStage, ac, regs, alphaScale ) ) {
+			continue;
+		}
+
+		RB_DrawElementsWithCounters( casterGeo );
+		RB_PointShadowMapFinishAlphaTestStage();
+	}
+
+	RB_PointShadowMapDisableAlphaTest();
+	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
+	GL_SelectTexture( 0 );
+	RB_PointShadowMapSetAlphaTexCoordIdentity();
+
+	if ( !didDraw ) {
+		RB_DrawElementsWithCounters( casterGeo );
+	}
+}
+
 static void RB_PointShadowMapDrawCasterChain( const drawSurf_t *surf, const float lightModelViewMatrix[16] ) {
 	for ( ; surf != NULL; surf = surf->nextOnLight ) {
 		srfTriangles_t *casterGeo = NULL;
@@ -1726,10 +2849,8 @@ static void RB_PointShadowMapDrawCasterChain( const drawSurf_t *surf, const floa
 			continue;
 		}
 
-		vertexCache.Touch( ambientCache );
-		if ( casterGeo->indexCache ) {
-			vertexCache.Touch( casterGeo->indexCache );
-		}
+		RB_ShadowMapTouchCache( ambientCache );
+		RB_ShadowMapTouchCache( casterGeo->indexCache );
 
 		if ( surf->space != backEnd.currentSpace ) {
 			float modelViewMatrix[16];
@@ -1749,8 +2870,114 @@ static void RB_PointShadowMapDrawCasterChain( const drawSurf_t *surf, const floa
 
 		idDrawVert *ac = (idDrawVert *)vertexCache.Position( ambientCache );
 		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
+
+		const idMaterial *shader = surf->material;
+		if ( shader != NULL && shader->Coverage() == MC_PERFORATED ) {
+			if ( RB_PointShadowMapCanProcessPerforatedCaster( surf ) ) {
+				RB_PointShadowMapDrawPerforatedCaster( surf, casterGeo, ac );
+			} else {
+				RB_DrawElementsWithCounters( casterGeo );
+			}
+			continue;
+		}
+
 		RB_DrawElementsWithCounters( casterGeo );
 	}
+}
+
+static void RB_PointShadowMapDrawTranslucentCasterChain( const drawSurf_t *surf, const float lightModelViewMatrix[16] ) {
+	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
+	glEnableClientState( GL_COLOR_ARRAY );
+
+	for ( ; surf != NULL; surf = surf->nextOnLight ) {
+		srfTriangles_t *casterGeo = NULL;
+		vertCache_s *ambientCache = NULL;
+		if ( !RB_ShadowMapResolveCasterDrawData( surf, casterGeo, ambientCache ) ) {
+			continue;
+		}
+		if ( surf->space == NULL || surf->material == NULL || surf->shaderRegisters == NULL ) {
+			RB_ShadowMapReportCasterSkip( surf, casterGeo, "translucent-missing-shader" );
+			continue;
+		}
+
+		RB_ShadowMapTouchCache( ambientCache );
+		RB_ShadowMapTouchCache( casterGeo->indexCache );
+
+		if ( surf->space != backEnd.currentSpace ) {
+			float modelViewMatrix[16];
+			float row0[4];
+			float row1[4];
+			float row2[4];
+
+			backEnd.currentSpace = surf->space;
+			myGlMultMatrix( surf->space->modelMatrix, lightModelViewMatrix, modelViewMatrix );
+			glLoadMatrixf( modelViewMatrix );
+
+			RB_ShadowMapModelMatrixRows( surf->space->modelMatrix, row0, row1, row2 );
+			if ( g_pointTranslucentShadowCasterProgram.modelMatrixRow0 >= 0 ) {
+				glUniform4fvARB( g_pointTranslucentShadowCasterProgram.modelMatrixRow0, 1, row0 );
+			}
+			if ( g_pointTranslucentShadowCasterProgram.modelMatrixRow1 >= 0 ) {
+				glUniform4fvARB( g_pointTranslucentShadowCasterProgram.modelMatrixRow1, 1, row1 );
+			}
+			if ( g_pointTranslucentShadowCasterProgram.modelMatrixRow2 >= 0 ) {
+				glUniform4fvARB( g_pointTranslucentShadowCasterProgram.modelMatrixRow2, 1, row2 );
+			}
+		}
+
+		idDrawVert *ac = (idDrawVert *)vertexCache.Position( ambientCache );
+		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
+		glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>( &ac->st ) );
+		glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), ac->color );
+
+		const idMaterial *shader = surf->material;
+		const float *regs = surf->shaderRegisters;
+		bool drewStage = false;
+
+		for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
+			const shaderStage_t *pStage = shader->GetStage( stage );
+			if ( !RB_TranslucentShadowStageSupported( pStage, regs ) ) {
+				continue;
+			}
+
+			const translucentShadowStageMode_t stageMode = RB_TranslucentShadowStageMode( pStage );
+			const float alphaScale = RB_TranslucentShadowStageOpacityScale( pStage, regs, stageMode );
+			if ( alphaScale <= r_shadowMapTranslucentMinAlpha.GetFloat() ) {
+				continue;
+			}
+
+			float vertexAlphaParams[2];
+			RB_TranslucentShadowVertexAlphaParams( pStage, vertexAlphaParams );
+
+			if ( g_pointTranslucentShadowCasterProgram.alphaScale >= 0 ) {
+				glUniform1fARB( g_pointTranslucentShadowCasterProgram.alphaScale, alphaScale );
+			}
+			if ( g_pointTranslucentShadowCasterProgram.opacitySourceMode >= 0 ) {
+				glUniform1fARB( g_pointTranslucentShadowCasterProgram.opacitySourceMode, RB_TranslucentShadowStageOpacityModeValue( stageMode ) );
+			}
+			if ( g_pointTranslucentShadowCasterProgram.vertexAlphaParams >= 0 ) {
+				glUniform2fvARB( g_pointTranslucentShadowCasterProgram.vertexAlphaParams, 1, vertexAlphaParams );
+			}
+			if ( stageMode == TRANSLUCENT_SHADOW_STAGE_CONSTANT_ADDITIVE ) {
+				RB_PointTranslucentShadowMapSetAlphaTexCoordIdentity();
+				globalImages->whiteImage->Bind();
+			} else {
+				RB_PointTranslucentShadowMapSetAlphaTexCoordMatrix( regs, &pStage->texture );
+				RB_BindVariableStageImage( &pStage->texture, regs );
+			}
+			RB_DrawElementsWithCounters( casterGeo );
+			drewStage = true;
+		}
+
+		if ( !drewStage ) {
+			RB_ShadowMapReportCasterSkip( surf, casterGeo, "no-translucent-shadow-stage" );
+		}
+	}
+
+	glDisableClientState( GL_COLOR_ARRAY );
+	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
+	GL_SelectTexture( 0 );
+	RB_PointTranslucentShadowMapSetAlphaTexCoordIdentity();
 }
 
 static bool RB_RenderShadowMap( const drawSurf_t *primaryCasters, const drawSurf_t *secondaryCasters, const drawSurf_t *tertiaryCasters, const drawSurf_t *quaternaryCasters ) {
@@ -1786,6 +3013,7 @@ static bool RB_RenderShadowMap( const drawSurf_t *primaryCasters, const drawSurf
 	glCullFace( GL_BACK );
 	glEnable( GL_POLYGON_OFFSET_FILL );
 	glPolygonOffset( r_shadowMapPolygonFactor.GetFloat(), r_shadowMapPolygonOffset.GetFloat() );
+	const bool useHashedAlpha = RB_ShadowMapHashedAlphaEnabled() && RB_ShadowMapLoadCasterProgram();
 
 	for ( int cascadeIndex = 0; cascadeIndex < g_projectedShadowMapState.cascadeCount; cascadeIndex++ ) {
 		float clipMatrix[16];
@@ -1802,10 +3030,10 @@ static bool RB_RenderShadowMap( const drawSurf_t *primaryCasters, const drawSurf
 		glMatrixMode( GL_MODELVIEW );
 
 		backEnd.currentSpace = NULL;
-		RB_ShadowMapDrawCasterChain( primaryCasters );
-		RB_ShadowMapDrawCasterChain( secondaryCasters );
-		RB_ShadowMapDrawCasterChain( tertiaryCasters );
-		RB_ShadowMapDrawCasterChain( quaternaryCasters );
+		RB_ShadowMapDrawCasterChain( primaryCasters, useHashedAlpha );
+		RB_ShadowMapDrawCasterChain( secondaryCasters, useHashedAlpha );
+		RB_ShadowMapDrawCasterChain( tertiaryCasters, useHashedAlpha );
+		RB_ShadowMapDrawCasterChain( quaternaryCasters, useHashedAlpha );
 	}
 
 	glDisable( GL_POLYGON_OFFSET_FILL );
@@ -1884,6 +3112,20 @@ static bool RB_RenderPointShadowMap( const drawSurf_t *primaryCasters, const dra
 	glDisable( GL_FRAGMENT_PROGRAM_ARB );
 	glUniform4fvARB( g_pointShadowCasterProgram.globalLightOrigin, 1, globalLightOrigin );
 	glUniform1fARB( g_pointShadowCasterProgram.pointShadowFar, farClip );
+	if ( g_pointShadowCasterProgram.alphaMap >= 0 ) {
+		glUniform1iARB( g_pointShadowCasterProgram.alphaMap, 0 );
+	}
+	if ( g_pointShadowCasterProgram.alphaRef >= 0 ) {
+		glUniform1fARB( g_pointShadowCasterProgram.alphaRef, 0.0f );
+	}
+	if ( g_pointShadowCasterProgram.alphaScale >= 0 ) {
+		glUniform1fARB( g_pointShadowCasterProgram.alphaScale, 1.0f );
+	}
+	RB_PointShadowMapDisableAlphaTest();
+	if ( g_pointShadowCasterProgram.alphaHashEnabled >= 0 ) {
+		glUniform1fARB( g_pointShadowCasterProgram.alphaHashEnabled, RB_ShadowMapHashedAlphaEnabled() ? 1.0f : 0.0f );
+	}
+	RB_PointShadowMapSetAlphaTexCoordIdentity();
 
 	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
 	glEnable( GL_DEPTH_TEST );
@@ -1956,6 +3198,242 @@ static bool RB_RenderPointShadowMap( const drawSurf_t *primaryCasters, const dra
 	GL_ClearStateDelta();
 	GL_SelectTexture( 0 );
 
+	return true;
+}
+
+static bool RB_RenderTranslucentShadowMap( const drawSurf_t *primaryCasters, const drawSurf_t *secondaryCasters ) {
+	g_projectedTranslucentShadowPassReady = false;
+
+	if ( !RB_ShadowMapEnsureTranslucentResources( backEnd.vLight ) ) {
+		return false;
+	}
+	if ( !g_projectedShadowMapState.valid ) {
+		return false;
+	}
+
+	const GLboolean blendWasEnabled = glIsEnabled( GL_BLEND );
+	const GLboolean depthWasEnabled = glIsEnabled( GL_DEPTH_TEST );
+	const GLboolean scissorWasEnabled = glIsEnabled( GL_SCISSOR_TEST );
+	const int savedFaceCulling = backEnd.glState.faceCulling;
+	GLfloat clearColor[4];
+	glGetFloatv( GL_COLOR_CLEAR_VALUE, clearColor );
+
+	g_translucentShadowMapRenderTexture->MakeCurrent();
+	glUseProgramObjectARB( g_translucentShadowCasterProgram.programObject );
+	glDisable( GL_VERTEX_PROGRAM_ARB );
+	glDisable( GL_FRAGMENT_PROGRAM_ARB );
+	if ( g_translucentShadowCasterProgram.alphaMap >= 0 ) {
+		glUniform1iARB( g_translucentShadowCasterProgram.alphaMap, 0 );
+	}
+	if ( g_translucentShadowCasterProgram.translucentMinAlpha >= 0 ) {
+		glUniform1fARB( g_translucentShadowCasterProgram.translucentMinAlpha, r_shadowMapTranslucentMinAlpha.GetFloat() );
+	}
+	RB_TranslucentShadowMapSetAlphaTexCoordIdentity();
+
+	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
+	glDisable( GL_DEPTH_TEST );
+	glDepthMask( GL_FALSE );
+	glDisable( GL_STENCIL_TEST );
+	glEnable( GL_BLEND );
+	glBlendFunc( GL_ONE, GL_ONE );
+	glEnable( GL_SCISSOR_TEST );
+	glEnable( GL_CULL_FACE );
+	glCullFace( GL_BACK );
+	glEnable( GL_POLYGON_OFFSET_FILL );
+	glPolygonOffset( r_shadowMapPolygonFactor.GetFloat(), r_shadowMapPolygonOffset.GetFloat() );
+	glClearColor( 0.0f, 0.0f, 0.0f, 0.0f );
+
+	for ( int cascadeIndex = 0; cascadeIndex < g_projectedShadowMapState.cascadeCount; cascadeIndex++ ) {
+		float clipMatrix[16];
+		const int tileX = ( g_projectedShadowMapState.atlasDiv > 1 ) ? ( cascadeIndex % g_projectedShadowMapState.atlasDiv ) * g_projectedShadowMapState.tileSize : 0;
+		const int tileY = ( g_projectedShadowMapState.atlasDiv > 1 ) ? ( cascadeIndex / g_projectedShadowMapState.atlasDiv ) * g_projectedShadowMapState.tileSize : 0;
+
+		RB_ShadowMapClipPlanesToGLMatrix( g_projectedShadowMapState.clipPlanes[cascadeIndex], clipMatrix );
+		glViewport( tileX, tileY, g_projectedShadowMapState.tileSize, g_projectedShadowMapState.tileSize );
+		glScissor( tileX, tileY, g_projectedShadowMapState.tileSize, g_projectedShadowMapState.tileSize );
+		glClear( GL_COLOR_BUFFER_BIT );
+
+		glMatrixMode( GL_PROJECTION );
+		glLoadMatrixf( clipMatrix );
+		glMatrixMode( GL_MODELVIEW );
+
+		backEnd.currentSpace = NULL;
+		RB_ShadowMapDrawTranslucentCasterChain( primaryCasters );
+		RB_ShadowMapDrawTranslucentCasterChain( secondaryCasters );
+	}
+
+	glDisable( GL_POLYGON_OFFSET_FILL );
+	glUseProgramObjectARB( 0 );
+	glClearColor( clearColor[0], clearColor[1], clearColor[2], clearColor[3] );
+
+	if ( backEnd.renderTexture != NULL ) {
+		backEnd.renderTexture->MakeCurrent();
+	} else {
+		idRenderTexture::BindNull();
+		glDrawBuffer( GL_BACK );
+		glReadBuffer( GL_BACK );
+	}
+
+	glViewport( backEnd.viewDef->viewport.x1, backEnd.viewDef->viewport.y1,
+		backEnd.viewDef->viewport.x2 + 1 - backEnd.viewDef->viewport.x1,
+		backEnd.viewDef->viewport.y2 + 1 - backEnd.viewDef->viewport.y1 );
+	glScissor( backEnd.viewDef->viewport.x1, backEnd.viewDef->viewport.y1,
+		backEnd.viewDef->viewport.x2 + 1 - backEnd.viewDef->viewport.x1,
+		backEnd.viewDef->viewport.y2 + 1 - backEnd.viewDef->viewport.y1 );
+
+	glMatrixMode( GL_PROJECTION );
+	glLoadMatrixf( backEnd.viewDef->projectionMatrix );
+	glMatrixMode( GL_MODELVIEW );
+
+	if ( depthWasEnabled ) {
+		glEnable( GL_DEPTH_TEST );
+	} else {
+		glDisable( GL_DEPTH_TEST );
+	}
+	if ( scissorWasEnabled ) {
+		glEnable( GL_SCISSOR_TEST );
+	} else {
+		glDisable( GL_SCISSOR_TEST );
+	}
+	if ( blendWasEnabled ) {
+		glEnable( GL_BLEND );
+	} else {
+		glDisable( GL_BLEND );
+	}
+	backEnd.glState.faceCulling = -1;
+	if ( savedFaceCulling >= CT_FRONT_SIDED && savedFaceCulling <= CT_TWO_SIDED ) {
+		GL_Cull( savedFaceCulling );
+	}
+
+	backEnd.currentSpace = NULL;
+	backEnd.currentScissor.Clear();
+	backEnd.glState.currenttmu = -1;
+	GL_ClearStateDelta();
+	GL_SelectTexture( 0 );
+
+	g_projectedTranslucentShadowPassReady = true;
+	return true;
+}
+
+static bool RB_RenderPointTranslucentShadowMap( const drawSurf_t *primaryCasters, const drawSurf_t *secondaryCasters ) {
+	g_pointTranslucentShadowPassReady = false;
+
+	if ( !RB_PointShadowMapEnsureTranslucentResources() ) {
+		return false;
+	}
+
+	const GLboolean blendWasEnabled = glIsEnabled( GL_BLEND );
+	const GLboolean depthWasEnabled = glIsEnabled( GL_DEPTH_TEST );
+	const int savedFaceCulling = backEnd.glState.faceCulling;
+	const float farClip = RB_PointShadowMapLightFar( backEnd.vLight );
+	const float nearClip = idMath::ClampFloat( 0.5f, 16.0f, farClip * 0.01f );
+	float projectionMatrix[16];
+	RB_PointShadowMapBuildProjectionMatrix( nearClip, farClip, projectionMatrix );
+
+	const float globalLightOrigin[4] = {
+		backEnd.vLight->globalLightOrigin[0],
+		backEnd.vLight->globalLightOrigin[1],
+		backEnd.vLight->globalLightOrigin[2],
+		1.0f
+	};
+	GLfloat clearColor[4];
+	glGetFloatv( GL_COLOR_CLEAR_VALUE, clearColor );
+
+	const int shadowMapWidth = g_pointTranslucentShadowMapRenderTexture->GetWidth();
+	const int shadowMapHeight = g_pointTranslucentShadowMapRenderTexture->GetHeight();
+
+	glUseProgramObjectARB( g_pointTranslucentShadowCasterProgram.programObject );
+	glDisable( GL_VERTEX_PROGRAM_ARB );
+	glDisable( GL_FRAGMENT_PROGRAM_ARB );
+	if ( g_pointTranslucentShadowCasterProgram.globalLightOrigin >= 0 ) {
+		glUniform4fvARB( g_pointTranslucentShadowCasterProgram.globalLightOrigin, 1, globalLightOrigin );
+	}
+	if ( g_pointTranslucentShadowCasterProgram.pointShadowFar >= 0 ) {
+		glUniform1fARB( g_pointTranslucentShadowCasterProgram.pointShadowFar, farClip );
+	}
+	if ( g_pointTranslucentShadowCasterProgram.alphaMap >= 0 ) {
+		glUniform1iARB( g_pointTranslucentShadowCasterProgram.alphaMap, 0 );
+	}
+	if ( g_pointTranslucentShadowCasterProgram.translucentMinAlpha >= 0 ) {
+		glUniform1fARB( g_pointTranslucentShadowCasterProgram.translucentMinAlpha, r_shadowMapTranslucentMinAlpha.GetFloat() );
+	}
+	RB_PointTranslucentShadowMapSetAlphaTexCoordIdentity();
+
+	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
+	glDisable( GL_DEPTH_TEST );
+	glDepthMask( GL_FALSE );
+	glDisable( GL_STENCIL_TEST );
+	glEnable( GL_BLEND );
+	glBlendFunc( GL_ONE, GL_ONE );
+	glEnable( GL_CULL_FACE );
+	glCullFace( GL_BACK );
+	glEnable( GL_POLYGON_OFFSET_FILL );
+	glPolygonOffset( r_shadowMapPolygonFactor.GetFloat(), r_shadowMapPolygonOffset.GetFloat() );
+	glClearColor( 0.0f, 0.0f, 0.0f, 0.0f );
+
+	glMatrixMode( GL_PROJECTION );
+	glLoadMatrixf( projectionMatrix );
+	glMatrixMode( GL_MODELVIEW );
+
+	for ( int cubeFace = 0; cubeFace < 6; cubeFace++ ) {
+		float lightModelViewMatrix[16];
+		RB_PointShadowMapBuildModelViewMatrix( backEnd.vLight->globalLightOrigin, cubeFace, lightModelViewMatrix );
+
+		g_pointTranslucentShadowMapRenderTexture->MakeCurrent( cubeFace );
+		glViewport( 0, 0, shadowMapWidth, shadowMapHeight );
+		glScissor( 0, 0, shadowMapWidth, shadowMapHeight );
+		glClear( GL_COLOR_BUFFER_BIT );
+
+		backEnd.currentSpace = NULL;
+		RB_PointShadowMapDrawTranslucentCasterChain( primaryCasters, lightModelViewMatrix );
+		RB_PointShadowMapDrawTranslucentCasterChain( secondaryCasters, lightModelViewMatrix );
+	}
+
+	glDisable( GL_POLYGON_OFFSET_FILL );
+	glUseProgramObjectARB( 0 );
+	glClearColor( clearColor[0], clearColor[1], clearColor[2], clearColor[3] );
+
+	if ( backEnd.renderTexture != NULL ) {
+		backEnd.renderTexture->MakeCurrent();
+	} else {
+		idRenderTexture::BindNull();
+		glDrawBuffer( GL_BACK );
+		glReadBuffer( GL_BACK );
+	}
+
+	glViewport( backEnd.viewDef->viewport.x1, backEnd.viewDef->viewport.y1,
+		backEnd.viewDef->viewport.x2 + 1 - backEnd.viewDef->viewport.x1,
+		backEnd.viewDef->viewport.y2 + 1 - backEnd.viewDef->viewport.y1 );
+	glScissor( backEnd.viewDef->viewport.x1, backEnd.viewDef->viewport.y1,
+		backEnd.viewDef->viewport.x2 + 1 - backEnd.viewDef->viewport.x1,
+		backEnd.viewDef->viewport.y2 + 1 - backEnd.viewDef->viewport.y1 );
+
+	glMatrixMode( GL_PROJECTION );
+	glLoadMatrixf( backEnd.viewDef->projectionMatrix );
+	glMatrixMode( GL_MODELVIEW );
+
+	if ( depthWasEnabled ) {
+		glEnable( GL_DEPTH_TEST );
+	} else {
+		glDisable( GL_DEPTH_TEST );
+	}
+	if ( blendWasEnabled ) {
+		glEnable( GL_BLEND );
+	} else {
+		glDisable( GL_BLEND );
+	}
+	backEnd.glState.faceCulling = -1;
+	if ( savedFaceCulling >= CT_FRONT_SIDED && savedFaceCulling <= CT_TWO_SIDED ) {
+		GL_Cull( savedFaceCulling );
+	}
+
+	backEnd.currentSpace = NULL;
+	backEnd.currentScissor.Clear();
+	backEnd.glState.currenttmu = -1;
+	GL_ClearStateDelta();
+	GL_SelectTexture( 0 );
+
+	g_pointTranslucentShadowPassReady = true;
 	return true;
 }
 
@@ -2110,6 +3588,14 @@ static void RB_GLSLPointShadowMap_DrawInteraction( const drawInteraction_t *din 
 	din->specularImage->Bind();
 	GL_SelectTextureNoClient( 5 );
 	g_pointShadowMapColorImage->Bind();
+	if ( glConfig.maxTextureUnits >= 7 ) {
+		GL_SelectTextureNoClient( 6 );
+		if ( RB_PointTranslucentShadowEnabled() ) {
+			g_pointTranslucentShadowMapImage->Bind();
+		} else {
+			globalImages->BindNull();
+		}
+	}
 
 	const idMaterial *surfaceMaterial = din->surf->material;
 	if ( surfaceMaterial && surfaceMaterial->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
@@ -2153,6 +3639,9 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 	if ( g_shadowMapProgram.shadowMap >= 0 ) {
 		glUniform1iARB( g_shadowMapProgram.shadowMap, 5 );
 	}
+	if ( g_shadowMapProgram.translucentShadowMap >= 0 && glConfig.maxTextureUnits >= 7 && glConfig.maxTextureImageUnits >= 7 ) {
+		glUniform1iARB( g_shadowMapProgram.translucentShadowMap, 6 );
+	}
 	if ( g_shadowMapProgram.shadowTexelSize >= 0 ) {
 		const float texelSize[2] = {
 			1.0f / Max( 1, g_shadowMapRenderTexture->GetWidth() ),
@@ -2187,6 +3676,12 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 	if ( g_shadowMapProgram.shadowDebugMode >= 0 ) {
 		glUniform1fARB( g_shadowMapProgram.shadowDebugMode, (float)RB_ShadowMapDebugMode() );
 	}
+	if ( g_shadowMapProgram.translucentShadowEnabled >= 0 ) {
+		glUniform1fARB( g_shadowMapProgram.translucentShadowEnabled, RB_ProjectedTranslucentShadowEnabled() ? 1.0f : 0.0f );
+	}
+	if ( g_shadowMapProgram.translucentShadowDensity >= 0 ) {
+		glUniform1fARB( g_shadowMapProgram.translucentShadowDensity, r_shadowMapTranslucentDensity.GetFloat() );
+	}
 
 	glStencilMask( 255 );
 	glStencilOp( GL_KEEP, GL_KEEP, GL_KEEP );
@@ -2220,6 +3715,10 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 	glDisableVertexAttribArrayARB( 11 );
 	glDisableClientState( GL_COLOR_ARRAY );
 
+	if ( glConfig.maxTextureUnits >= 7 ) {
+		GL_SelectTextureNoClient( 6 );
+		globalImages->BindNull();
+	}
 	GL_SelectTextureNoClient( 5 );
 	globalImages->BindNull();
 	GL_SelectTextureNoClient( 4 );
@@ -2268,6 +3767,9 @@ static bool RB_GLSLPointShadowMap_CreateDrawInteractions( const drawSurf_t *surf
 	if ( g_pointShadowMapProgram.pointShadowMap >= 0 ) {
 		glUniform1iARB( g_pointShadowMapProgram.pointShadowMap, 5 );
 	}
+	if ( g_pointShadowMapProgram.translucentShadowMap >= 0 && glConfig.maxTextureUnits >= 7 && glConfig.maxTextureImageUnits >= 7 ) {
+		glUniform1iARB( g_pointShadowMapProgram.translucentShadowMap, 6 );
+	}
 	if ( g_pointShadowMapProgram.shadowBias >= 0 ) {
 		glUniform1fARB( g_pointShadowMapProgram.shadowBias, r_shadowMapPointBias.GetFloat() );
 	}
@@ -2292,6 +3794,12 @@ static bool RB_GLSLPointShadowMap_CreateDrawInteractions( const drawSurf_t *surf
 	if ( g_pointShadowMapProgram.pointShadowTexelScale >= 0 ) {
 		const float texelScale = 2.0f / Max( 1, g_pointShadowMapRenderTexture->GetWidth() );
 		glUniform1fARB( g_pointShadowMapProgram.pointShadowTexelScale, texelScale );
+	}
+	if ( g_pointShadowMapProgram.translucentShadowEnabled >= 0 ) {
+		glUniform1fARB( g_pointShadowMapProgram.translucentShadowEnabled, RB_PointTranslucentShadowEnabled() ? 1.0f : 0.0f );
+	}
+	if ( g_pointShadowMapProgram.translucentShadowDensity >= 0 ) {
+		glUniform1fARB( g_pointShadowMapProgram.translucentShadowDensity, r_shadowMapTranslucentDensity.GetFloat() );
 	}
 
 	glStencilMask( 255 );
@@ -2326,6 +3834,10 @@ static bool RB_GLSLPointShadowMap_CreateDrawInteractions( const drawSurf_t *surf
 	glDisableVertexAttribArrayARB( 11 );
 	glDisableClientState( GL_COLOR_ARRAY );
 
+	if ( glConfig.maxTextureUnits >= 7 ) {
+		GL_SelectTextureNoClient( 6 );
+		globalImages->BindNull();
+	}
 	GL_SelectTextureNoClient( 5 );
 	globalImages->BindNull();
 	GL_SelectTextureNoClient( 4 );
@@ -2382,7 +3894,17 @@ static void RB_ShadowMapRunPass( const viewLight_t *vLight, shadowMapPassKind_t 
 		return;
 	}
 
-	if ( primaryShadowSurfs == NULL && secondaryShadowSurfs == NULL && primaryCasters == NULL && secondaryCasters == NULL && tertiaryCasters == NULL && quaternaryCasters == NULL ) {
+	if ( pointLight ) {
+		g_pointTranslucentShadowPassReady = false;
+	} else {
+		g_projectedTranslucentShadowPassReady = false;
+	}
+
+	const drawSurf_t *translucentPrimaryCasters = vLight->globalTranslucentShadowMapCasters;
+	const drawSurf_t *translucentSecondaryCasters = ( passKind == SHADOWMAP_PASS_GLOBAL ) ? vLight->localTranslucentShadowMapCasters : NULL;
+	const bool haveTranslucentCasters = translucentPrimaryCasters != NULL || translucentSecondaryCasters != NULL;
+
+	if ( primaryShadowSurfs == NULL && secondaryShadowSurfs == NULL && primaryCasters == NULL && secondaryCasters == NULL && tertiaryCasters == NULL && quaternaryCasters == NULL && !haveTranslucentCasters ) {
 		if ( passKind == SHADOWMAP_PASS_LOCAL ) {
 			g_shadowMapStats.unshadowedLocalPasses++;
 		} else {
@@ -2395,6 +3917,13 @@ static void RB_ShadowMapRunPass( const viewLight_t *vLight, shadowMapPassKind_t 
 	}
 
 	const bool renderOk = pointLight ? RB_RenderPointShadowMap( primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters ) : RB_RenderShadowMap( primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters );
+	if ( renderOk && haveTranslucentCasters && RB_TranslucentShadowMomentsRequested() ) {
+		if ( pointLight ) {
+			RB_RenderPointTranslucentShadowMap( translucentPrimaryCasters, translucentSecondaryCasters );
+		} else {
+			RB_RenderTranslucentShadowMap( translucentPrimaryCasters, translucentSecondaryCasters );
+		}
+	}
 	const bool maskOk = renderOk && ( pointLight ? RB_GLSLPointShadowMap_CreateDrawInteractions( interactions ) : RB_GLSLShadowMap_CreateDrawInteractions( interactions ) );
 	shadowMapPassResult_t passResult = SHADOWMAP_PASS_RESULT_MAPPED;
 	if ( !renderOk ) {
@@ -3150,10 +4679,16 @@ void R_ReportShaderPrograms_f( const idCmdArgs &args ) {
 		RB_CurrentInteractionProgramsValid() ? "off" : "on" );
 	common->Printf( "GLSL shadow projected: %s\n",
 		RB_ShadowProgramStatusName( g_shadowMapProgram.programObject, g_shadowMapProgram.programValid, g_shadowMapProgram.programGeneration ) );
+	common->Printf( "GLSL shadow projected caster: %s\n",
+		RB_ShadowProgramStatusName( g_shadowMapCasterProgram.programObject, g_shadowMapCasterProgram.programValid, g_shadowMapCasterProgram.programGeneration ) );
+	common->Printf( "GLSL shadow projected translucent caster: %s\n",
+		RB_ShadowProgramStatusName( g_translucentShadowCasterProgram.programObject, g_translucentShadowCasterProgram.programValid, g_translucentShadowCasterProgram.programGeneration ) );
 	common->Printf( "GLSL shadow point: %s\n",
 		RB_ShadowProgramStatusName( g_pointShadowMapProgram.programObject, g_pointShadowMapProgram.programValid, g_pointShadowMapProgram.programGeneration ) );
-	common->Printf( "GLSL shadow caster: %s\n",
+	common->Printf( "GLSL shadow point caster: %s\n",
 		RB_ShadowProgramStatusName( g_pointShadowCasterProgram.programObject, g_pointShadowCasterProgram.programValid, g_pointShadowCasterProgram.programGeneration ) );
+	common->Printf( "GLSL shadow point translucent caster: %s\n",
+		RB_ShadowProgramStatusName( g_pointTranslucentShadowCasterProgram.programObject, g_pointTranslucentShadowCasterProgram.programValid, g_pointTranslucentShadowCasterProgram.programGeneration ) );
 	common->Printf( "----------------------------------\n" );
 }
 

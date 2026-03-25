@@ -1,9 +1,12 @@
+#version 110
+
 uniform sampler2D uBumpMap;
 uniform sampler2D uLightFalloffMap;
 uniform sampler2D uLightProjectionMap;
 uniform sampler2D uDiffuseMap;
 uniform sampler2D uSpecularMap;
 uniform samplerCube uPointShadowMap;
+uniform samplerCube uPointTranslucentShadowMap;
 
 uniform vec4 uDiffuseColor;
 uniform vec4 uSpecularColor;
@@ -12,6 +15,10 @@ uniform float uShadowBias;
 uniform float uShadowNormalBias;
 uniform float uShadowFilterRadius;
 uniform float uPointShadowTexelScale;
+uniform float uTranslucentShadowEnabled;
+uniform float uTranslucentShadowDensity;
+
+const float kTranslucentMomentMinVariance = 1.0e-5;
 
 varying vec2 vBumpTexCoord;
 varying vec2 vDiffuseTexCoord;
@@ -26,6 +33,35 @@ varying float vShadowLightCos;
 
 vec3 SafeNormalize( vec3 value ) {
 	return value * inversesqrt( max( dot( value, value ), 1.0e-8 ) );
+}
+
+float ApproxErf( float x ) {
+	float s = sign( x );
+	float ax = abs( x );
+	float t = 1.0 / ( 1.0 + 0.3275911 * ax );
+	float y = 1.0 - ( ( ( ( ( 1.061405429 * t - 1.453152027 ) * t ) + 1.421413741 ) * t - 0.284496736 ) * t + 0.254829592 ) * t * exp( -ax * ax );
+	return s * y;
+}
+
+float NormalCdf( float x ) {
+	return 0.5 * ( 1.0 + ApproxErf( x * 0.70710678 ) );
+}
+
+float ResolveTranslucentShadowMoments( vec4 moments, float depth ) {
+	if ( uTranslucentShadowEnabled < 0.5 ) {
+		return 1.0;
+	}
+
+	float totalTau = max( moments.x, 0.0 );
+	if ( totalTau <= 1.0e-4 ) {
+		return 1.0;
+	}
+
+	float mean = moments.y / totalTau;
+	float variance = max( moments.z / totalTau - mean * mean, kTranslucentMomentMinVariance );
+	float sigma = sqrt( variance );
+	float tau = totalTau * clamp( NormalCdf( ( depth - mean ) / sigma ), 0.0, 1.0 );
+	return exp( -min( tau * max( uTranslucentShadowDensity, 0.0 ), 16.0 ) );
 }
 
 float ShadowReceiverBias() {
@@ -81,6 +117,20 @@ float SamplePointShadow() {
 	return shadow * ( 1.0 / 13.0 );
 }
 
+float SamplePointTranslucentShadow() {
+	if ( uTranslucentShadowEnabled < 0.5 || uPointShadowFar <= 0.0 ) {
+		return 1.0;
+	}
+
+	float depth = length( vPointShadowVector ) / uPointShadowFar;
+	if ( depth <= 0.0 || depth >= 1.0 ) {
+		return 1.0;
+	}
+
+	vec3 direction = SafeNormalize( vPointShadowVector );
+	return ResolveTranslucentShadowMoments( textureCube( uPointTranslucentShadowMap, direction ), depth );
+}
+
 void main() {
 	vec4 bumpSample = texture2D( uBumpMap, vBumpTexCoord );
 	vec3 localNormal = vec3( bumpSample.a, bumpSample.g, bumpSample.b ) * 2.0 - 1.0;
@@ -93,6 +143,7 @@ void main() {
 	light *= texture2DProj( uLightFalloffMap, vLightFalloffTexCoord ).rgb;
 	light *= texture2DProj( uLightProjectionMap, vLightProjectionTexCoord ).rgb;
 	light *= SamplePointShadow();
+	light *= SamplePointTranslucentShadow();
 
 	vec3 diffuse = texture2D( uDiffuseMap, vDiffuseTexCoord ).rgb * uDiffuseColor.rgb;
 

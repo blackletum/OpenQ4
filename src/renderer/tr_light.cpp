@@ -1221,15 +1221,80 @@ idRenderModel *R_EntityDefDynamicModel( idRenderEntityLocal *def ) {
 
 /*
 =================
+R_SetupDrawSurfShaderRegisters
+=================
+*/
+const float *R_SetupDrawSurfShaderRegisters( const viewEntity_t *space, const renderEntity_t *renderEntity,
+		const idMaterial *shader ) {
+	static float refRegs[MAX_EXPRESSION_REGISTERS];	// don't put on stack, or VC++ will do a page touch
+	static const float defaultShaderParms[MAX_ENTITY_SHADER_PARMS] = { 0.0f };
+	const float *shaderParms = defaultShaderParms;
+
+	if ( shader == NULL ) {
+		return NULL;
+	}
+
+	const float *constRegs = shader->ConstantRegisters();
+	if ( constRegs != NULL ) {
+		return constRegs;
+	}
+
+	float *regs = (float *)R_FrameAlloc( shader->GetNumRegisters() * sizeof( float ) );
+
+	if ( renderEntity != NULL ) {
+		shaderParms = renderEntity->shaderParms;
+	} else if ( space != NULL && space->entityDef != NULL ) {
+		shaderParms = space->entityDef->parms.shaderParms;
+	}
+
+	if ( renderEntity != NULL && renderEntity->referenceShader != NULL ) {
+		float generatedShaderParms[MAX_ENTITY_SHADER_PARMS];
+		const shaderStage_t *pStage;
+
+		renderEntity->referenceShader->EvaluateRegisters( refRegs, renderEntity->shaderParms, tr.viewDef, NULL );
+		pStage = renderEntity->referenceShader->GetStage( 0 );
+
+		memcpy( generatedShaderParms, renderEntity->shaderParms, sizeof( generatedShaderParms ) );
+		generatedShaderParms[0] = refRegs[ pStage->color.registers[0] ];
+		generatedShaderParms[1] = refRegs[ pStage->color.registers[1] ];
+		generatedShaderParms[2] = refRegs[ pStage->color.registers[2] ];
+		shaderParms = generatedShaderParms;
+	}
+
+	shader->EvaluateRegisters( regs, shaderParms, tr.viewDef, NULL );
+	return regs;
+}
+
+/*
+=================
+R_FinalizeDrawSurf
+=================
+*/
+void R_FinalizeDrawSurf( drawSurf_t *drawSurf ) {
+	if ( drawSurf == NULL || drawSurf->material == NULL ) {
+		return;
+	}
+
+	R_DeformDrawSurf( drawSurf );
+
+	switch( drawSurf->material->Texgen() ) {
+		case TG_SKYBOX_CUBE:
+			R_SkyboxTexGen( drawSurf, tr.viewDef->renderView.vieworg );
+			break;
+		case TG_WOBBLESKY_CUBE:
+			R_WobbleskyTexGen( drawSurf, tr.viewDef->renderView.vieworg );
+			break;
+	}
+}
+
+/*
+=================
 R_AddDrawSurf
 =================
 */
 void R_AddDrawSurf( const srfTriangles_t *tri, const viewEntity_t *space, const renderEntity_t *renderEntity,
 					const idMaterial *shader, const idScreenRect &scissor ) {
 	drawSurf_t		*drawSurf;
-	const float		*shaderParms;
-	static float	refRegs[MAX_EXPRESSION_REGISTERS];	// don't put on stack, or VC++ will do a page touch
-	float			generatedShaderParms[MAX_ENTITY_SHADER_PARMS];
 
 	drawSurf = (drawSurf_t *)R_FrameAlloc( sizeof( *drawSurf ) );
 	drawSurf->geo = tri;
@@ -1265,69 +1330,10 @@ void R_AddDrawSurf( const srfTriangles_t *tri, const viewEntity_t *space, const 
 	tr.viewDef->drawSurfs[tr.viewDef->numDrawSurfs] = drawSurf;
 	tr.viewDef->numDrawSurfs++;
 
-	// process the shader expressions for conditionals / color / texcoords
-	const float	*constRegs = shader->ConstantRegisters();
-	if ( constRegs ) {
-		// shader only uses constant values
-		drawSurf->shaderRegisters = constRegs;
-	} else {
-		float *regs = (float *)R_FrameAlloc( shader->GetNumRegisters() * sizeof( float ) );
-		drawSurf->shaderRegisters = regs;
+	// Keep shadow-caster and main draw-surf material evaluation on the same code path.
+	drawSurf->shaderRegisters = R_SetupDrawSurfShaderRegisters( space, renderEntity, shader );
 
-		// a reference shader will take the calculated stage color value from another shader
-		// and use that for the parm0-parm3 of the current shader, which allows a stage of
-		// a light model and light flares to pick up different flashing tables from
-		// different light shaders
-		if ( renderEntity->referenceShader ) {
-			// evaluate the reference shader to find our shader parms
-			const shaderStage_t *pStage;
-
-			renderEntity->referenceShader->EvaluateRegisters( refRegs, renderEntity->shaderParms, tr.viewDef, NULL);
-			pStage = renderEntity->referenceShader->GetStage(0);
-
-			memcpy( generatedShaderParms, renderEntity->shaderParms, sizeof( generatedShaderParms ) );
-			generatedShaderParms[0] = refRegs[ pStage->color.registers[0] ];
-			generatedShaderParms[1] = refRegs[ pStage->color.registers[1] ];
-			generatedShaderParms[2] = refRegs[ pStage->color.registers[2] ];
-
-			shaderParms = generatedShaderParms;
-		} else {
-			// evaluate with the entityDef's shader parms
-			shaderParms = renderEntity->shaderParms;
-		}
-
-		float oldFloatTime;
-		int oldTime;
-// jmarshall
-		//if ( space->entityDef && space->entityDef->parms.timeGroup ) {
-		//	oldFloatTime = tr.viewDef->floatTime;
-		//	oldTime = tr.viewDef->renderView.time;
-		//
-		//	tr.viewDef->floatTime = game->GetTimeGroupTime( space->entityDef->parms.timeGroup ) * 0.001;
-		//	tr.viewDef->renderView.time = game->GetTimeGroupTime( space->entityDef->parms.timeGroup );
-		//}
-// jmarshall
-		shader->EvaluateRegisters( regs, shaderParms, tr.viewDef, NULL);
-		// jmarshall
-		//if ( space->entityDef && space->entityDef->parms.timeGroup ) {
-		//	tr.viewDef->floatTime = oldFloatTime;
-		//	tr.viewDef->renderView.time = oldTime;
-		//}
-		// jmarshall
-	}
-
-	// check for deformations
-	R_DeformDrawSurf( drawSurf );
-
-	// skybox surfaces need a dynamic texgen
-	switch( shader->Texgen() ) {
-		case TG_SKYBOX_CUBE:
-			R_SkyboxTexGen( drawSurf, tr.viewDef->renderView.vieworg );
-			break;
-		case TG_WOBBLESKY_CUBE:
-			R_WobbleskyTexGen( drawSurf, tr.viewDef->renderView.vieworg );
-			break;
-	}
+	R_FinalizeDrawSurf( drawSurf );
 
 	// check for gui surfaces
 	idUserInterface	*gui = NULL;

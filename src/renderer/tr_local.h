@@ -340,6 +340,8 @@ typedef struct viewLight_s {
 	const struct drawSurf_s	*globalInteractions;		// get shadows from everything
 	const struct drawSurf_s	*localShadowMapCasters;		// ambient caster geometry that should not shadow local receivers
 	const struct drawSurf_s	*globalShadowMapCasters;	// ambient caster geometry that can shadow all receivers
+	const struct drawSurf_s	*localTranslucentShadowMapCasters;	// blended caster geometry excluded from local-only receivers
+	const struct drawSurf_s	*globalTranslucentShadowMapCasters;	// blended caster geometry that can shadow all receivers
 	const struct drawSurf_s	*translucentInteractions;	// get shadows from everything
 } viewLight_t;
 
@@ -987,6 +989,10 @@ extern idCVar r_useShadowVertexProgram;	// 1 = do the shadow projection in the v
 extern idCVar r_useShadowProjectedCull;	// 1 = discard triangles outside light volume before shadowing
 extern idCVar r_useShadowMap;			// 1 = use a simple shadow-map path for projected and point lights when supported
 extern idCVar r_shadowMapCSM;			// 1 = use projected-light cascaded shadow maps when shadow maps are enabled
+extern idCVar r_shadowMapHashedAlpha;		// 1 = use hashed alpha testing for perforated shadow-map casters when available
+extern idCVar r_shadowMapTranslucentMoments;	// 1 = accumulate experimental translucent shadow moments for blended casters
+extern idCVar r_shadowMapTranslucentDensity;	// density scale applied when resolving translucent shadow moments
+extern idCVar r_shadowMapTranslucentMinAlpha;	// minimum per-stage alpha considered by translucent shadow moments
 extern idCVar r_shadowMapReport;		// 0 = off, 1 = per-view summary, 2 = per-light decisions
 extern idCVar r_shadowMapReportInterval;	// frames between shadow-map diagnostic reports
 extern idCVar r_useDeferredTangents;	// 1 = don't always calc tangents after deform
@@ -1330,6 +1336,9 @@ idRenderModel *R_EntityDefDynamicModel( idRenderEntityLocal *def );
 viewEntity_t *R_SetEntityDefViewEntity( idRenderEntityLocal *def );
 viewLight_t *R_SetLightDefViewLight( idRenderLightLocal *def );
 
+const float *R_SetupDrawSurfShaderRegisters( const viewEntity_t *space, const renderEntity_t *renderEntity,
+					 const idMaterial *shader );
+void R_FinalizeDrawSurf( drawSurf_t *drawSurf );
 void R_AddDrawSurf( const srfTriangles_t *tri, const viewEntity_t *space, const renderEntity_t *renderEntity,
 					const idMaterial *shader, const idScreenRect &scissor );
 
@@ -1435,6 +1444,8 @@ DRAW_STANDARD
 void RB_DrawElementsWithCounters( const srfTriangles_t *tri );
 void RB_DrawShadowElementsWithCounters( const srfTriangles_t *tri, int numIndexes );
 void RB_STD_FillDepthBuffer( drawSurf_t **drawSurfs, int numDrawSurfs );
+bool RB_PrepareStageTexturing( const shaderStage_t *pStage, const drawSurf_t *surf, idDrawVert *ac );
+void RB_FinishStageTexturing( const shaderStage_t *pStage, const drawSurf_t *surf, idDrawVert *ac );
 void RB_BindVariableStageImage( const textureStage_t *texture, const float *shaderRegisters );
 void RB_BindStageTexture( const float *shaderRegisters, const textureStage_t *texture, const drawSurf_t *surf );
 void RB_FinishStageTexture( const textureStage_t *texture, const drawSurf_t *surf );

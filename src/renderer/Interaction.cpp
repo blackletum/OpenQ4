@@ -41,6 +41,41 @@ idInteraction implementation
 
 // FIXME: use private allocator for srfCullInfo_t
 
+static void R_LinkShadowMapCasterSurf( const drawSurf_t **link, const srfTriangles_t *tri, const viewEntity_t *space,
+		const renderEntity_t *renderEntity, const idMaterial *shader, const idScreenRect &scissor ) {
+	if ( !space ) {
+		space = &tr.viewDef->worldSpace;
+	}
+
+	drawSurf_t *drawSurf = (drawSurf_t *)R_FrameAlloc( sizeof( *drawSurf ) );
+	drawSurf->geo = tri;
+	drawSurf->space = space;
+	drawSurf->material = shader;
+	drawSurf->sort = 0.0f;
+	drawSurf->scissorRect = scissor;
+	drawSurf->dsFlags = 0;
+	drawSurf->dynamicTexCoords = NULL;
+	drawSurf->decalColorCache = NULL;
+	drawSurf->decalColorStride = 0;
+	drawSurf->decalColorStageCount = 0;
+
+	drawSurf->shaderRegisters = R_SetupDrawSurfShaderRegisters( space, renderEntity, shader );
+	R_FinalizeDrawSurf( drawSurf );
+
+	drawSurf->nextOnLight = *link;
+	*link = drawSurf;
+}
+
+static void R_TouchShadowMapCache( vertCache_t *cache ) {
+	if ( cache == NULL ) {
+		return;
+	}
+
+	if ( cache->tag != TAG_TEMP ) {
+		vertexCache.Touch( cache );
+	}
+}
+
 /*
 ================
 R_CalcInteractionFacing
@@ -1152,13 +1187,16 @@ void idInteraction::AddActiveInteraction( void ) {
 
 					const idMaterial *shader = sint->shader;
 					R_GlobalShaderOverride( &shader );
+					if ( shader == NULL || !shader->IsDrawn() ) {
+						continue;
+					}
 
 					// there will only be localSurfaces if the light casts shadows and
 					// there are surfaces with NOSELFSHADOW
-					if ( sint->shader->Coverage() == MC_TRANSLUCENT ) {
+					if ( shader->Coverage() == MC_TRANSLUCENT ) {
 						R_LinkLightSurf( &vLight->translucentInteractions, lightTris, 
 							vEntity, lightDef, shader, lightScissor, false );
-					} else if ( !lightDef->parms.noShadows && sint->shader->TestMaterialFlag(MF_NOSELFSHADOW) ) {
+					} else if ( !lightDef->parms.noShadows && shader->TestMaterialFlag(MF_NOSELFSHADOW) ) {
 						R_LinkLightSurf( &vLight->localInteractions, lightTris, 
 							vEntity, lightDef, shader, lightScissor, false );
 					} else {
@@ -1188,6 +1226,12 @@ void idInteraction::AddActiveInteraction( void ) {
 			continue;
 		}
 
+		const idMaterial *shadowShader = sint->shader;
+		R_GlobalShaderOverride( &shadowShader );
+		if ( shadowShader == NULL || !shadowShader->IsDrawn() ) {
+			continue;
+		}
+
 		const bool isViewOnlyEntity =
 			( entityDef->parms.allowSurfaceInViewID != 0 &&
 				entityDef->parms.allowSurfaceInViewID == tr.viewDef->renderView.viewID ) ||
@@ -1195,14 +1239,31 @@ void idInteraction::AddActiveInteraction( void ) {
 				entityDef->parms.weaponDepthHackInViewID == tr.viewDef->renderView.viewID );
 		const bool noSelfShadow =
 			entityDef->parms.noSelfShadow ||
-			sint->shader->TestMaterialFlag( MF_NOSELFSHADOW );
+			shadowShader->TestMaterialFlag( MF_NOSELFSHADOW );
+		const bool translucentShadowMapSupported =
+			r_shadowMapTranslucentMoments.GetBool() &&
+			glConfig.GLSLProgramAvailable &&
+			glConfig.maxTextureUnits >= 7 &&
+			glConfig.maxTextureImageUnits >= 7 &&
+			( !vLight->pointLight || glConfig.cubeMapAvailable );
 		const bool allowShadowMapCaster =
 			!entityDef->parms.noShadow &&
 			!isViewOnlyEntity &&
 			vEntity->modelDepthHack == 0.0f &&
 			sint->ambientTris != NULL &&
-			sint->shader->Coverage() != MC_TRANSLUCENT &&
-			sint->shader->SurfaceCastsShadow();
+			shadowShader->Coverage() != MC_TRANSLUCENT &&
+			shadowShader->SurfaceCastsShadow() &&
+			!shadowShader->HasGui() &&
+			!shadowShader->HasSubview();
+		const bool allowTranslucentShadowMapCaster =
+			translucentShadowMapSupported &&
+			!entityDef->parms.noShadow &&
+			!isViewOnlyEntity &&
+			vEntity->modelDepthHack == 0.0f &&
+			sint->ambientTris != NULL &&
+			shadowShader->Coverage() == MC_TRANSLUCENT &&
+			!shadowShader->HasGui() &&
+			!shadowShader->HasSubview();
 
 		if ( allowShadowMapCaster ) {
 			srfTriangles_t *casterTris = sint->ambientTris;
@@ -1213,21 +1274,45 @@ void idInteraction::AddActiveInteraction( void ) {
 			}
 
 			if ( haveCasterGeometry ) {
-				vertexCache.Touch( casterTris->ambientCache );
+				R_TouchShadowMapCache( casterTris->ambientCache );
 
 				if ( !casterTris->indexCache && r_useIndexBuffers.GetBool() && casterTris->numIndexes > 0 ) {
 					vertexCache.Alloc( casterTris->indexes, casterTris->numIndexes * sizeof( casterTris->indexes[0] ), &casterTris->indexCache, true );
 				}
-				if ( casterTris->indexCache ) {
-					vertexCache.Touch( casterTris->indexCache );
-				}
+				R_TouchShadowMapCache( casterTris->indexCache );
 
 				if ( noSelfShadow ) {
-					R_LinkLightSurf( &vLight->localShadowMapCasters,
-						casterTris, vEntity, lightDef, NULL, shadowScissor, false );
+					R_LinkShadowMapCasterSurf( &vLight->localShadowMapCasters,
+						casterTris, vEntity, &entityDef->parms, shadowShader, shadowScissor );
 				} else {
-					R_LinkLightSurf( &vLight->globalShadowMapCasters,
-						casterTris, vEntity, lightDef, NULL, shadowScissor, false );
+					R_LinkShadowMapCasterSurf( &vLight->globalShadowMapCasters,
+						casterTris, vEntity, &entityDef->parms, shadowShader, shadowScissor );
+				}
+			}
+		}
+
+		if ( allowTranslucentShadowMapCaster ) {
+			srfTriangles_t *casterTris = sint->ambientTris;
+			bool haveCasterGeometry = true;
+
+			if ( !casterTris->ambientCache ) {
+				haveCasterGeometry = R_CreateAmbientCache( casterTris, false );
+			}
+
+			if ( haveCasterGeometry ) {
+				R_TouchShadowMapCache( casterTris->ambientCache );
+
+				if ( !casterTris->indexCache && r_useIndexBuffers.GetBool() && casterTris->numIndexes > 0 ) {
+					vertexCache.Alloc( casterTris->indexes, casterTris->numIndexes * sizeof( casterTris->indexes[0] ), &casterTris->indexCache, true );
+				}
+				R_TouchShadowMapCache( casterTris->indexCache );
+
+				if ( noSelfShadow ) {
+					R_LinkShadowMapCasterSurf( &vLight->localTranslucentShadowMapCasters,
+						casterTris, vEntity, &entityDef->parms, shadowShader, shadowScissor );
+				} else {
+					R_LinkShadowMapCasterSurf( &vLight->globalTranslucentShadowMapCasters,
+						casterTris, vEntity, &entityDef->parms, shadowShader, shadowScissor );
 				}
 			}
 		}

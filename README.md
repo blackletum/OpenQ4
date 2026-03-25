@@ -23,7 +23,7 @@
 
 ## About
 
-The **OpenQ4 Project** is a complete replacement for the Quake 4 engine and game binaries. Built on the foundation of [Quake4Doom](https://github.com/idSoftware/Quake4Doom), OpenQ4 is focused on making Quake 4 feel native on modern hardware without losing stock-asset compatibility. Current work already brings in bloom, filmic tone mapping with FP16 scene targets, SSAO, automatic aspect-ratio handling, multi-monitor support, and an in-progress shadow-mapping path with CSM work underway, alongside broader platform and tooling modernization.
+The **OpenQ4 Project** is a complete replacement for the Quake 4 engine and game binaries. Built on the foundation of [Quake4Doom](https://github.com/idSoftware/Quake4Doom), OpenQ4 is focused on making Quake 4 feel native on modern hardware without losing stock-asset compatibility. Current work already brings in bloom, filmic tone mapping with FP16 scene targets, SSAO, automatic aspect-ratio handling, multi-monitor support, and an experimental shadow-mapping path for projected and point lights with projected-light CSM, alpha-tested transparency shadows, and optional experimental translucent shadowing, alongside broader platform and tooling modernization.
 
 ## Versioning
 
@@ -71,7 +71,7 @@ To play OpenQ4, you need:
 - **Filmic Tone Mapping**: Filmic tone mapping and color controls for exposure, contrast, saturation, and vibrance on FP16 scene/post-process targets
 - **SSAO**: Screen-space ambient occlusion for added depth and contact shadowing in the final frame
 - **CRT Emulation**: Optional CRT post-process with scanlines, mask, curvature, and chromatic offset controls
-- **Shadow Mapping Pipeline**: Experimental shadow-map support for projected and point lights, with cascaded shadow maps (CSM) actively under development
+- **Shadow Mapping Pipeline**: Experimental shadow-map support for projected and point lights, including projected-light CSM, alpha-tested transparency shadows, and optional experimental translucent shadow accumulation
 - **Resolution Scaling and Supersample Controls**: Screen-fraction rendering supports lower-resolution upscale modes and menu-exposed supersample-style presets for image-quality tuning
 - **Modern AA and Upscaling**: MSAA, official SMAA 1x (medium preset), and high-quality resolution-scaling paths for cleaner output across a wide range of hardware
 
@@ -338,6 +338,7 @@ OpenQ4 maintains complete freedom to evolve independently while preserving compa
 - [Platform Support](docs-dev/platform-support.md) - Cross-platform roadmap and status
 - [SDL3 Linux/macOS Migration](docs-dev/sdl3-linux-macos-migration.md) - Staged backend convergence plan for non-Windows platforms
 - [Display Settings](docs-user/display-settings.md) - Multi-monitor and display configuration
+- [Shadow Mapping](docs-user/shadow-mapping.md) - User guide for shadow maps, CSM, transparency shadows, tuning, and troubleshooting
 - [RenderDoc Workflow](docs-dev/renderdoc-workflow.md) - Current RenderDoc limitation status and black-viewport triage
 - [Multiplayer Networking](docs-user/multiplayer-networking.md) - MP lag compensation and prediction cvars
 - [Input Key Matrix](docs-dev/input-key-matrix.md) - Keyboard and controller input reference
@@ -390,6 +391,9 @@ OpenQ4 automatically validates your Quake 4 installation to ensure you have legi
 - `r_crt 0|1` - Toggle CRT emulation post-processing
 - `r_useShadowMap 0|1` - Enable the experimental shadow-map path
 - `r_shadowMapCSM 0|1` - Enable experimental projected-light cascaded shadow maps when shadow maps are active
+- `r_shadowMapHashedAlpha 0|1` - Control hashed alpha testing for cutout/perforated shadow casters
+- `r_shadowMapTranslucentMoments 0|1` - Enable the experimental blended/translucent shadow overlay
+- See [docs-user/shadow-mapping.md](docs-user/shadow-mapping.md) for the full shadow-map CVar set, presets, transparency behavior, debug modes, and troubleshooting
 - `r_interactionColorMode` - Shader compatibility mode
   - `0` - Auto-detect from interaction.vfp
   - `1` - Packed env16.xy
