@@ -205,8 +205,18 @@ void idRenderTexture::MakeCurrent( int cubeFace ) {
 
 	const GLenum faceTarget = R_CubeFaceTarget( cubeFace );
 	if ( colorImages.Num() > 0 && colorImages[0]->GetOpts().textureType == TT_CUBIC ) {
-		glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, faceTarget, colorImages[0]->GetDeviceHandle(), 0 );
-		glDrawBuffer( GL_COLOR_ATTACHMENT0 );
+		GLenum drawBuffers[5] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4 };
+		if ( colorImages.Num() >= 5 ) {
+			common->FatalError( "idRenderTexture::MakeCurrent: Too many cubemap color targets!" );
+		}
+
+		for ( int i = 0; i < colorImages.Num(); i++ ) {
+			if ( colorImages[i]->GetOpts().textureType != TT_CUBIC ) {
+				common->FatalError( "idRenderTexture::MakeCurrent: Mixed cubemap/non-cubemap color targets are unsupported!" );
+			}
+			glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, faceTarget, colorImages[i]->GetDeviceHandle(), 0 );
+		}
+		glDrawBuffers( colorImages.Num(), drawBuffers );
 		glReadBuffer( GL_COLOR_ATTACHMENT0 );
 	} else {
 		glDrawBuffer( GL_NONE );

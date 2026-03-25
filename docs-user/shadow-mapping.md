@@ -153,10 +153,15 @@ Behavior:
 
 Current limits:
 - Supported stages currently include old-style alpha and premultiplied-alpha stages with explicit ST texture coordinates, plus common additive `blend add` / `GL_ONE, GL_ONE` stages.
-- Reflective pickup-orb style `texgen reflect` cubemap stages are approximated as constant-density translucent casters so MP health and megahealth orb shells can participate.
+- When a translucent shell/tint stage is layered on top of a separate explicit-ST coverage stage, OpenQ4 now reuses that coverage stage, including its alpha-test threshold when present, so layered pickup-orb and similar materials can cast shaped transmitted shadows instead of only uniform blobs.
+- Supported translucent casters now derive colored transmission from the material inputs available to that stage: texture alpha, sampled texture RGB, stage color, and applicable vertex color.
+- View-dependent reflection cubemaps are treated as tinted transmissive shells instead of using the reflected sample directly, so pickup orbs can tint transmitted light without camera-dependent shadow color shifts.
+- The current high-quality path stores separate translucent shadow moments for red, green, and blue, so each channel resolves blocker depth independently instead of sharing one grayscale depth distribution.
 - GUI/subview materials are skipped.
 - BSE/FX particles, unusual custom stage setups, and many effect-style materials are intentionally not forced into the translucent shadow pass.
+- Colored transmission is still approximate rather than a full deep-shadow solution, but it is materially closer to real tinted transmission than the earlier scalar/grayscale model.
 - This path adds extra GPU work because eligible lights render an additional translucent caster pass.
+- The feature now expects enough hardware for 3 translucent MRT attachments and 3 extra texture samplers in the receiver path; if that is unavailable, OpenQ4 disables this experimental translucent-shadow feature.
 
 Controls:
 

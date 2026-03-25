@@ -6,7 +6,9 @@ uniform sampler2D uLightProjectionMap;
 uniform sampler2D uDiffuseMap;
 uniform sampler2D uSpecularMap;
 uniform samplerCube uPointShadowMap;
-uniform samplerCube uPointTranslucentShadowMap;
+uniform samplerCube uPointTranslucentShadowMapR;
+uniform samplerCube uPointTranslucentShadowMapG;
+uniform samplerCube uPointTranslucentShadowMapB;
 
 uniform vec4 uDiffuseColor;
 uniform vec4 uSpecularColor;
@@ -60,7 +62,8 @@ float ResolveTranslucentShadowMoments( vec4 moments, float depth ) {
 	float mean = moments.y / totalTau;
 	float variance = max( moments.z / totalTau - mean * mean, kTranslucentMomentMinVariance );
 	float sigma = sqrt( variance );
-	float tau = totalTau * clamp( NormalCdf( ( depth - mean ) / sigma ), 0.0, 1.0 );
+	float fraction = clamp( NormalCdf( ( depth - mean ) / sigma ), 0.0, 1.0 );
+	float tau = totalTau * fraction;
 	return exp( -min( tau * max( uTranslucentShadowDensity, 0.0 ), 16.0 ) );
 }
 
@@ -117,18 +120,21 @@ float SamplePointShadow() {
 	return shadow * ( 1.0 / 13.0 );
 }
 
-float SamplePointTranslucentShadow() {
+vec3 SamplePointTranslucentShadow() {
 	if ( uTranslucentShadowEnabled < 0.5 || uPointShadowFar <= 0.0 ) {
-		return 1.0;
+		return vec3( 1.0 );
 	}
 
 	float depth = length( vPointShadowVector ) / uPointShadowFar;
 	if ( depth <= 0.0 || depth >= 1.0 ) {
-		return 1.0;
+		return vec3( 1.0 );
 	}
 
 	vec3 direction = SafeNormalize( vPointShadowVector );
-	return ResolveTranslucentShadowMoments( textureCube( uPointTranslucentShadowMap, direction ), depth );
+	return vec3(
+		ResolveTranslucentShadowMoments( textureCube( uPointTranslucentShadowMapR, direction ), depth ),
+		ResolveTranslucentShadowMoments( textureCube( uPointTranslucentShadowMapG, direction ), depth ),
+		ResolveTranslucentShadowMoments( textureCube( uPointTranslucentShadowMapB, direction ), depth ) );
 }
 
 void main() {

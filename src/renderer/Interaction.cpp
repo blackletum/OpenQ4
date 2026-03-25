@@ -1243,8 +1243,10 @@ void idInteraction::AddActiveInteraction( void ) {
 		const bool translucentShadowMapSupported =
 			r_shadowMapTranslucentMoments.GetBool() &&
 			glConfig.GLSLProgramAvailable &&
-			glConfig.maxTextureUnits >= 7 &&
-			glConfig.maxTextureImageUnits >= 7 &&
+			glConfig.maxTextureUnits >= 9 &&
+			glConfig.maxTextureImageUnits >= 9 &&
+			glConfig.maxDrawBuffers >= 3 &&
+			glConfig.maxColorAttachments >= 3 &&
 			( !vLight->pointLight || glConfig.cubeMapAvailable );
 		const bool allowShadowMapCaster =
 			!entityDef->parms.noShadow &&

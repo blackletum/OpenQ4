@@ -246,7 +246,7 @@ typedef struct {
 	GLint			diffuseMap;
 	GLint			specularMap;
 	GLint			shadowMap;
-	GLint			translucentShadowMap;
+	GLint			translucentShadowMap[3];
 } shadowMapProgram_t;
 
 typedef struct {
@@ -271,13 +271,26 @@ typedef struct {
 	int				programGeneration;
 	bool			programValid;
 
+	GLint			modelMatrixRow0;
+	GLint			modelMatrixRow1;
+	GLint			modelMatrixRow2;
 	GLint			alphaTexCoordS;
 	GLint			alphaTexCoordT;
-	GLint			alphaScale;
+	GLint			coverageTexCoordS;
+	GLint			coverageTexCoordT;
+	GLint			stageColor;
 	GLint			opacitySourceMode;
+	GLint			vertexColorMode;
 	GLint			vertexAlphaParams;
+	GLint			coverageStageColor;
+	GLint			coverageSourceMode;
+	GLint			coverageVertexColorMode;
+	GLint			coverageVertexAlphaParams;
+	GLint			coverageAlphaTestRef;
+	GLint			coverageAlphaTestEnabled;
 	GLint			translucentMinAlpha;
 	GLint			alphaMap;
+	GLint			coverageMap;
 } translucentShadowCasterProgram_t;
 
 typedef struct {
@@ -320,7 +333,7 @@ typedef struct {
 	GLint			diffuseMap;
 	GLint			specularMap;
 	GLint			pointShadowMap;
-	GLint			translucentShadowMap;
+	GLint			translucentShadowMap[3];
 } pointShadowMapProgram_t;
 
 typedef struct {
@@ -358,18 +371,28 @@ typedef struct {
 	GLint			pointShadowFar;
 	GLint			alphaTexCoordS;
 	GLint			alphaTexCoordT;
-	GLint			alphaScale;
+	GLint			coverageTexCoordS;
+	GLint			coverageTexCoordT;
+	GLint			stageColor;
 	GLint			opacitySourceMode;
+	GLint			vertexColorMode;
 	GLint			vertexAlphaParams;
+	GLint			coverageStageColor;
+	GLint			coverageSourceMode;
+	GLint			coverageVertexColorMode;
+	GLint			coverageVertexAlphaParams;
+	GLint			coverageAlphaTestRef;
+	GLint			coverageAlphaTestEnabled;
 	GLint			translucentMinAlpha;
 	GLint			alphaMap;
+	GLint			coverageMap;
 } pointTranslucentShadowCasterProgram_t;
 
 typedef enum {
 	TRANSLUCENT_SHADOW_STAGE_NONE = 0,
 	TRANSLUCENT_SHADOW_STAGE_TEXTURE_ALPHA,
 	TRANSLUCENT_SHADOW_STAGE_TEXTURE_ADDITIVE,
-	TRANSLUCENT_SHADOW_STAGE_CONSTANT_ADDITIVE
+	TRANSLUCENT_SHADOW_STAGE_CUBEMAP_ADDITIVE
 } translucentShadowStageMode_t;
 
 static const int SHADOWMAP_MAX_CASCADES = 4;
@@ -395,12 +418,12 @@ static pointShadowCasterProgram_t	g_pointShadowCasterProgram = { 0, 0, 0, -1, fa
 static pointTranslucentShadowCasterProgram_t	g_pointTranslucentShadowCasterProgram = { 0, 0, 0, -1, false };
 static idImage *			g_shadowMapDepthImage = NULL;
 static idRenderTexture *	g_shadowMapRenderTexture = NULL;
-static idImage *			g_translucentShadowMapImage = NULL;
+static idImage *			g_translucentShadowMomentImages[3] = { NULL, NULL, NULL };
 static idRenderTexture *	g_translucentShadowMapRenderTexture = NULL;
 static idImage *			g_pointShadowMapColorImage = NULL;
 static idImage *			g_pointShadowMapDepthImage = NULL;
 static idRenderTexture *	g_pointShadowMapRenderTexture = NULL;
-static idImage *			g_pointTranslucentShadowMapImage = NULL;
+static idImage *			g_pointTranslucentShadowMomentImages[3] = { NULL, NULL, NULL };
 static idRenderTexture *	g_pointTranslucentShadowMapRenderTexture = NULL;
 static projectedShadowMapState_t	g_projectedShadowMapState = { 0 };
 static bool				g_projectedTranslucentShadowPassReady = false;
@@ -523,16 +546,22 @@ static bool RB_TranslucentShadowMomentsRequested( void ) {
 static bool RB_TranslucentShadowMomentsSupported( void ) {
 	return RB_TranslucentShadowMomentsRequested() &&
 		glConfig.GLSLProgramAvailable &&
-		glConfig.maxTextureUnits >= 7 &&
-		glConfig.maxTextureImageUnits >= 7;
+		glConfig.maxTextureUnits >= 9 &&
+		glConfig.maxTextureImageUnits >= 9 &&
+		glConfig.maxDrawBuffers >= 3 &&
+		glConfig.maxColorAttachments >= 3;
+}
+
+static bool RB_TranslucentShadowMomentImagesReady( idImage *const images[3] ) {
+	return images[0] != NULL && images[1] != NULL && images[2] != NULL;
 }
 
 static bool RB_ProjectedTranslucentShadowEnabled( void ) {
-	return RB_TranslucentShadowMomentsSupported() && g_projectedTranslucentShadowPassReady && g_translucentShadowMapImage != NULL;
+	return RB_TranslucentShadowMomentsSupported() && g_projectedTranslucentShadowPassReady && RB_TranslucentShadowMomentImagesReady( g_translucentShadowMomentImages );
 }
 
 static bool RB_PointTranslucentShadowEnabled( void ) {
-	return RB_TranslucentShadowMomentsSupported() && g_pointTranslucentShadowPassReady && g_pointTranslucentShadowMapImage != NULL;
+	return RB_TranslucentShadowMomentsSupported() && g_pointTranslucentShadowPassReady && RB_TranslucentShadowMomentImagesReady( g_pointTranslucentShadowMomentImages );
 }
 
 /*
@@ -1168,7 +1197,9 @@ static bool RB_ShadowMapLoadProgram( void ) {
 	g_shadowMapProgram.diffuseMap = glGetUniformLocationARB( programObject, "uDiffuseMap" );
 	g_shadowMapProgram.specularMap = glGetUniformLocationARB( programObject, "uSpecularMap" );
 	g_shadowMapProgram.shadowMap = glGetUniformLocationARB( programObject, "uShadowMap" );
-	g_shadowMapProgram.translucentShadowMap = glGetUniformLocationARB( programObject, "uTranslucentShadowMap" );
+	g_shadowMapProgram.translucentShadowMap[0] = glGetUniformLocationARB( programObject, "uTranslucentShadowMapR" );
+	g_shadowMapProgram.translucentShadowMap[1] = glGetUniformLocationARB( programObject, "uTranslucentShadowMapG" );
+	g_shadowMapProgram.translucentShadowMap[2] = glGetUniformLocationARB( programObject, "uTranslucentShadowMapB" );
 
 	common->Printf( "Loaded GLSL program '%s'\n", programBaseName );
 	return true;
@@ -1365,13 +1396,26 @@ static bool RB_TranslucentShadowMapLoadCasterProgram( void ) {
 	g_translucentShadowCasterProgram.programGeneration = tr.videoRestartCount;
 	g_translucentShadowCasterProgram.programValid = true;
 
+	g_translucentShadowCasterProgram.modelMatrixRow0 = glGetUniformLocationARB( programObject, "uModelMatrixRow0" );
+	g_translucentShadowCasterProgram.modelMatrixRow1 = glGetUniformLocationARB( programObject, "uModelMatrixRow1" );
+	g_translucentShadowCasterProgram.modelMatrixRow2 = glGetUniformLocationARB( programObject, "uModelMatrixRow2" );
 	g_translucentShadowCasterProgram.alphaTexCoordS = glGetUniformLocationARB( programObject, "uAlphaTexCoordS" );
 	g_translucentShadowCasterProgram.alphaTexCoordT = glGetUniformLocationARB( programObject, "uAlphaTexCoordT" );
-	g_translucentShadowCasterProgram.alphaScale = glGetUniformLocationARB( programObject, "uAlphaScale" );
+	g_translucentShadowCasterProgram.coverageTexCoordS = glGetUniformLocationARB( programObject, "uCoverageTexCoordS" );
+	g_translucentShadowCasterProgram.coverageTexCoordT = glGetUniformLocationARB( programObject, "uCoverageTexCoordT" );
+	g_translucentShadowCasterProgram.stageColor = glGetUniformLocationARB( programObject, "uStageColor" );
 	g_translucentShadowCasterProgram.opacitySourceMode = glGetUniformLocationARB( programObject, "uOpacitySourceMode" );
+	g_translucentShadowCasterProgram.vertexColorMode = glGetUniformLocationARB( programObject, "uVertexColorMode" );
 	g_translucentShadowCasterProgram.vertexAlphaParams = glGetUniformLocationARB( programObject, "uVertexAlphaParams" );
+	g_translucentShadowCasterProgram.coverageStageColor = glGetUniformLocationARB( programObject, "uCoverageStageColor" );
+	g_translucentShadowCasterProgram.coverageSourceMode = glGetUniformLocationARB( programObject, "uCoverageSourceMode" );
+	g_translucentShadowCasterProgram.coverageVertexColorMode = glGetUniformLocationARB( programObject, "uCoverageVertexColorMode" );
+	g_translucentShadowCasterProgram.coverageVertexAlphaParams = glGetUniformLocationARB( programObject, "uCoverageVertexAlphaParams" );
+	g_translucentShadowCasterProgram.coverageAlphaTestRef = glGetUniformLocationARB( programObject, "uCoverageAlphaTestRef" );
+	g_translucentShadowCasterProgram.coverageAlphaTestEnabled = glGetUniformLocationARB( programObject, "uCoverageAlphaTestEnabled" );
 	g_translucentShadowCasterProgram.translucentMinAlpha = glGetUniformLocationARB( programObject, "uTranslucentMinAlpha" );
 	g_translucentShadowCasterProgram.alphaMap = glGetUniformLocationARB( programObject, "uAlphaMap" );
+	g_translucentShadowCasterProgram.coverageMap = glGetUniformLocationARB( programObject, "uCoverageMap" );
 
 	common->Printf( "Loaded GLSL program '%s'\n", programBaseName );
 	return true;
@@ -1503,7 +1547,9 @@ static bool RB_PointShadowMapLoadProgram( void ) {
 	g_pointShadowMapProgram.diffuseMap = glGetUniformLocationARB( programObject, "uDiffuseMap" );
 	g_pointShadowMapProgram.specularMap = glGetUniformLocationARB( programObject, "uSpecularMap" );
 	g_pointShadowMapProgram.pointShadowMap = glGetUniformLocationARB( programObject, "uPointShadowMap" );
-	g_pointShadowMapProgram.translucentShadowMap = glGetUniformLocationARB( programObject, "uPointTranslucentShadowMap" );
+	g_pointShadowMapProgram.translucentShadowMap[0] = glGetUniformLocationARB( programObject, "uPointTranslucentShadowMapR" );
+	g_pointShadowMapProgram.translucentShadowMap[1] = glGetUniformLocationARB( programObject, "uPointTranslucentShadowMapG" );
+	g_pointShadowMapProgram.translucentShadowMap[2] = glGetUniformLocationARB( programObject, "uPointTranslucentShadowMapB" );
 
 	common->Printf( "Loaded GLSL program '%s'\n", programBaseName );
 	return true;
@@ -1713,11 +1759,21 @@ static bool RB_PointTranslucentShadowMapLoadCasterProgram( void ) {
 	g_pointTranslucentShadowCasterProgram.pointShadowFar = glGetUniformLocationARB( programObject, "uPointShadowFar" );
 	g_pointTranslucentShadowCasterProgram.alphaTexCoordS = glGetUniformLocationARB( programObject, "uAlphaTexCoordS" );
 	g_pointTranslucentShadowCasterProgram.alphaTexCoordT = glGetUniformLocationARB( programObject, "uAlphaTexCoordT" );
-	g_pointTranslucentShadowCasterProgram.alphaScale = glGetUniformLocationARB( programObject, "uAlphaScale" );
+	g_pointTranslucentShadowCasterProgram.coverageTexCoordS = glGetUniformLocationARB( programObject, "uCoverageTexCoordS" );
+	g_pointTranslucentShadowCasterProgram.coverageTexCoordT = glGetUniformLocationARB( programObject, "uCoverageTexCoordT" );
+	g_pointTranslucentShadowCasterProgram.stageColor = glGetUniformLocationARB( programObject, "uStageColor" );
 	g_pointTranslucentShadowCasterProgram.opacitySourceMode = glGetUniformLocationARB( programObject, "uOpacitySourceMode" );
+	g_pointTranslucentShadowCasterProgram.vertexColorMode = glGetUniformLocationARB( programObject, "uVertexColorMode" );
 	g_pointTranslucentShadowCasterProgram.vertexAlphaParams = glGetUniformLocationARB( programObject, "uVertexAlphaParams" );
+	g_pointTranslucentShadowCasterProgram.coverageStageColor = glGetUniformLocationARB( programObject, "uCoverageStageColor" );
+	g_pointTranslucentShadowCasterProgram.coverageSourceMode = glGetUniformLocationARB( programObject, "uCoverageSourceMode" );
+	g_pointTranslucentShadowCasterProgram.coverageVertexColorMode = glGetUniformLocationARB( programObject, "uCoverageVertexColorMode" );
+	g_pointTranslucentShadowCasterProgram.coverageVertexAlphaParams = glGetUniformLocationARB( programObject, "uCoverageVertexAlphaParams" );
+	g_pointTranslucentShadowCasterProgram.coverageAlphaTestRef = glGetUniformLocationARB( programObject, "uCoverageAlphaTestRef" );
+	g_pointTranslucentShadowCasterProgram.coverageAlphaTestEnabled = glGetUniformLocationARB( programObject, "uCoverageAlphaTestEnabled" );
 	g_pointTranslucentShadowCasterProgram.translucentMinAlpha = glGetUniformLocationARB( programObject, "uTranslucentMinAlpha" );
 	g_pointTranslucentShadowCasterProgram.alphaMap = glGetUniformLocationARB( programObject, "uAlphaMap" );
+	g_pointTranslucentShadowCasterProgram.coverageMap = glGetUniformLocationARB( programObject, "uCoverageMap" );
 
 	common->Printf( "Loaded GLSL program '%s'\n", programBaseName );
 	return true;
@@ -1794,12 +1850,14 @@ static bool RB_ShadowMapEnsureResources( const viewLight_t *vLight ) {
 	GL_SelectTextureNoClient( 5 );
 	g_shadowMapDepthImage->Bind();
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE );
-	if ( glConfig.maxTextureUnits >= 7 ) {
-		GL_SelectTextureNoClient( 6 );
-		if ( RB_ProjectedTranslucentShadowEnabled() ) {
-			g_translucentShadowMapImage->Bind();
-		} else {
-			globalImages->BindNull();
+	for ( int i = 0; i < 3; i++ ) {
+		if ( glConfig.maxTextureUnits >= 7 + i ) {
+			GL_SelectTextureNoClient( 6 + i );
+			if ( RB_ProjectedTranslucentShadowEnabled() ) {
+				g_translucentShadowMomentImages[i]->Bind();
+			} else {
+				globalImages->BindNull();
+			}
 		}
 	}
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL );
@@ -1862,7 +1920,17 @@ static bool RB_ShadowMapEnsureTranslucentResources( const viewLight_t *vLight ) 
 	const int shadowMapAtlasDiv = RB_ShadowMapAtlasDivForLight( vLight );
 	const int shadowMapSize = shadowMapTileSize * shadowMapAtlasDiv;
 
-	if ( g_translucentShadowMapImage == NULL ) {
+	static const char *imageNames[3] = {
+		"_translucentShadowMapR",
+		"_translucentShadowMapG",
+		"_translucentShadowMapB"
+	};
+
+	for ( int i = 0; i < 3; i++ ) {
+		if ( g_translucentShadowMomentImages[i] != NULL ) {
+			continue;
+		}
+
 		idImageOpts opts;
 		opts.textureType = TT_2D;
 		opts.format = FMT_RGBA16F;
@@ -1870,16 +1938,22 @@ static bool RB_ShadowMapEnsureTranslucentResources( const viewLight_t *vLight ) 
 		opts.height = shadowMapSize;
 		opts.numLevels = 1;
 		opts.isPersistant = true;
-		g_translucentShadowMapImage = globalImages->ScratchImage( "_translucentShadowMap", &opts, TF_LINEAR, TR_CLAMP, TD_DEFAULT );
+		g_translucentShadowMomentImages[i] = globalImages->ScratchImage( imageNames[i], &opts, TF_LINEAR, TR_CLAMP, TD_DEFAULT );
+	}
+
+	const int desiredColorAttachments = 3;
+	if ( g_translucentShadowMapRenderTexture != NULL && g_translucentShadowMapRenderTexture->GetNumColorImages() != desiredColorAttachments ) {
+		tr.DestroyRenderTexture( g_translucentShadowMapRenderTexture );
+		g_translucentShadowMapRenderTexture = NULL;
 	}
 
 	if ( g_translucentShadowMapRenderTexture == NULL ) {
-		g_translucentShadowMapRenderTexture = tr.CreateRenderTexture( g_translucentShadowMapImage, NULL );
+		g_translucentShadowMapRenderTexture = tr.CreateRenderTexture( g_translucentShadowMomentImages[0], NULL, g_translucentShadowMomentImages[1], g_translucentShadowMomentImages[2] );
 	} else if ( g_translucentShadowMapRenderTexture->GetWidth() != shadowMapSize || g_translucentShadowMapRenderTexture->GetHeight() != shadowMapSize ) {
 		tr.ResizeRenderTexture( g_translucentShadowMapRenderTexture, shadowMapSize, shadowMapSize );
 	}
 
-	return g_translucentShadowMapImage != NULL && g_translucentShadowMapRenderTexture != NULL;
+	return RB_TranslucentShadowMomentImagesReady( g_translucentShadowMomentImages ) && g_translucentShadowMapRenderTexture != NULL;
 }
 
 static bool RB_PointShadowMapEnsureTranslucentResources( void ) {
@@ -1889,7 +1963,17 @@ static bool RB_PointShadowMapEnsureTranslucentResources( void ) {
 
 	const int shadowMapSize = idMath::ClampInt( 128, 2048, r_shadowMapSize.GetInteger() );
 
-	if ( g_pointTranslucentShadowMapImage == NULL ) {
+	static const char *imageNames[3] = {
+		"_pointTranslucentShadowMapR",
+		"_pointTranslucentShadowMapG",
+		"_pointTranslucentShadowMapB"
+	};
+
+	for ( int i = 0; i < 3; i++ ) {
+		if ( g_pointTranslucentShadowMomentImages[i] != NULL ) {
+			continue;
+		}
+
 		idImageOpts opts;
 		opts.textureType = TT_CUBIC;
 		opts.format = FMT_RGBA16F;
@@ -1897,16 +1981,22 @@ static bool RB_PointShadowMapEnsureTranslucentResources( void ) {
 		opts.height = shadowMapSize;
 		opts.numLevels = 1;
 		opts.isPersistant = true;
-		g_pointTranslucentShadowMapImage = globalImages->ScratchImage( "_pointTranslucentShadowMap", &opts, TF_LINEAR, TR_CLAMP, TD_DEFAULT );
+		g_pointTranslucentShadowMomentImages[i] = globalImages->ScratchImage( imageNames[i], &opts, TF_LINEAR, TR_CLAMP, TD_DEFAULT );
+	}
+
+	const int desiredColorAttachments = 3;
+	if ( g_pointTranslucentShadowMapRenderTexture != NULL && g_pointTranslucentShadowMapRenderTexture->GetNumColorImages() != desiredColorAttachments ) {
+		tr.DestroyRenderTexture( g_pointTranslucentShadowMapRenderTexture );
+		g_pointTranslucentShadowMapRenderTexture = NULL;
 	}
 
 	if ( g_pointTranslucentShadowMapRenderTexture == NULL ) {
-		g_pointTranslucentShadowMapRenderTexture = tr.CreateRenderTexture( g_pointTranslucentShadowMapImage, NULL );
+		g_pointTranslucentShadowMapRenderTexture = tr.CreateRenderTexture( g_pointTranslucentShadowMomentImages[0], NULL, g_pointTranslucentShadowMomentImages[1], g_pointTranslucentShadowMomentImages[2] );
 	} else if ( g_pointTranslucentShadowMapRenderTexture->GetWidth() != shadowMapSize || g_pointTranslucentShadowMapRenderTexture->GetHeight() != shadowMapSize ) {
 		tr.ResizeRenderTexture( g_pointTranslucentShadowMapRenderTexture, shadowMapSize, shadowMapSize );
 	}
 
-	return g_pointTranslucentShadowMapImage != NULL && g_pointTranslucentShadowMapRenderTexture != NULL;
+	return RB_TranslucentShadowMomentImagesReady( g_pointTranslucentShadowMomentImages ) && g_pointTranslucentShadowMapRenderTexture != NULL;
 }
 
 static shadowMapLightSupportReason_t RB_ShadowMapLightSupportReason( const viewLight_t *vLight ) {
@@ -2150,6 +2240,8 @@ static void RB_ShadowMapRestorePolygonOffset( void ) {
 	glPolygonOffset( r_shadowMapPolygonFactor.GetFloat(), r_shadowMapPolygonOffset.GetFloat() );
 }
 
+static void RB_ShadowMapModelMatrixRows( const float modelMatrix[16], float row0[4], float row1[4], float row2[4] );
+
 static bool RB_ShadowMapTextureStageHasBindableImage( const textureStage_t *texture ) {
 	return texture != NULL && ( texture->image != NULL || texture->cinematic != NULL );
 }
@@ -2263,13 +2355,15 @@ static translucentShadowStageMode_t RB_TranslucentShadowStageMode( const shaderS
 			TRANSLUCENT_SHADOW_STAGE_NONE;
 	}
 
-	if ( blendBits == ( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE ) ) {
+		if ( blendBits == ( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE ) ) {
 		if ( RB_ShadowMapTextureStageHasBindableImage( &pStage->texture ) && pStage->texture.texgen == TG_EXPLICIT ) {
 			return TRANSLUCENT_SHADOW_STAGE_TEXTURE_ADDITIVE;
 		}
 
-		if ( pStage->texture.texgen == TG_REFLECT_CUBE && glConfig.cubeMapAvailable ) {
-			return TRANSLUCENT_SHADOW_STAGE_CONSTANT_ADDITIVE;
+		if ( RB_ShadowMapTextureStageHasBindableImage( &pStage->texture ) &&
+			pStage->texture.texgen == TG_REFLECT_CUBE &&
+			glConfig.cubeMapAvailable ) {
+			return TRANSLUCENT_SHADOW_STAGE_CUBEMAP_ADDITIVE;
 		}
 	}
 
@@ -2283,29 +2377,147 @@ static bool RB_TranslucentShadowStageSupported( const shaderStage_t *pStage, con
 		RB_TranslucentShadowStageMode( pStage ) != TRANSLUCENT_SHADOW_STAGE_NONE;
 }
 
+static bool RB_TranslucentShadowStageCanProvideCoverage( const shaderStage_t *pStage, const float *regs ) {
+	return pStage != NULL &&
+		regs != NULL &&
+		pStage->newStage == NULL &&
+		regs[ pStage->conditionRegister ] != 0.0f &&
+		RB_ShadowMapTextureStageHasBindableImage( &pStage->texture ) &&
+		pStage->texture.texgen == TG_EXPLICIT;
+}
+
+static int RB_TranslucentShadowCoverageStagePriority( const shaderStage_t *pStage, const float *regs ) {
+	if ( !RB_TranslucentShadowStageCanProvideCoverage( pStage, regs ) ) {
+		return -1;
+	}
+
+	int priority = 100;
+	if ( pStage->hasAlphaTest ) {
+		priority += 400;
+	}
+
+	switch ( RB_TranslucentShadowStageMode( pStage ) ) {
+	case TRANSLUCENT_SHADOW_STAGE_TEXTURE_ALPHA:
+		priority += 300;
+		break;
+	case TRANSLUCENT_SHADOW_STAGE_TEXTURE_ADDITIVE:
+		priority += 150;
+		break;
+	default:
+		break;
+	}
+
+	if ( pStage->lighting == SL_AMBIENT ) {
+		priority += 20;
+	}
+
+	return priority;
+}
+
+static const shaderStage_t *RB_FindTranslucentShadowCoverageStage( const idMaterial *shader, const float *regs ) {
+	if ( shader == NULL || regs == NULL ) {
+		return NULL;
+	}
+
+	const shaderStage_t *bestStage = NULL;
+	int bestPriority = -1;
+
+	for ( int stage = 0; stage < shader->GetNumStages(); ++stage ) {
+		const shaderStage_t *pStage = shader->GetStage( stage );
+		const int priority = RB_TranslucentShadowCoverageStagePriority( pStage, regs );
+		if ( priority > bestPriority ) {
+			bestPriority = priority;
+			bestStage = pStage;
+		}
+	}
+
+	return bestStage;
+}
+
 static float RB_TranslucentShadowStageOpacityScale( const shaderStage_t *pStage, const float *regs, const translucentShadowStageMode_t mode ) {
 	if ( pStage == NULL || regs == NULL ) {
 		return 0.0f;
 	}
 
+	const float colorLuma = regs[ pStage->color.registers[0] ] * 0.2126f +
+		regs[ pStage->color.registers[1] ] * 0.7152f +
+		regs[ pStage->color.registers[2] ] * 0.0722f;
+
 	if ( mode == TRANSLUCENT_SHADOW_STAGE_TEXTURE_ALPHA ) {
 		return regs[ pStage->color.registers[3] ];
 	}
+	if ( mode == TRANSLUCENT_SHADOW_STAGE_CUBEMAP_ADDITIVE ) {
+		return Max( 0.0f, 1.0f - idMath::ClampFloat( 0.0f, 1.0f, colorLuma ) );
+	}
 
-	return regs[ pStage->color.registers[0] ] * 0.2126f +
-		regs[ pStage->color.registers[1] ] * 0.7152f +
-		regs[ pStage->color.registers[2] ] * 0.0722f;
+	return Max( regs[ pStage->color.registers[3] ], colorLuma );
+}
+
+static float RB_TranslucentShadowCoverageScale( const shaderStage_t *pStage, const float *regs ) {
+	if ( pStage == NULL || regs == NULL ) {
+		return 1.0f;
+	}
+
+	const translucentShadowStageMode_t mode = RB_TranslucentShadowStageMode( pStage );
+	if ( mode != TRANSLUCENT_SHADOW_STAGE_NONE ) {
+		return RB_TranslucentShadowStageOpacityScale( pStage, regs, mode );
+	}
+
+	return Max( regs[ pStage->color.registers[3] ], 0.0f );
 }
 
 static float RB_TranslucentShadowStageOpacityModeValue( const translucentShadowStageMode_t mode ) {
 	switch ( mode ) {
 	case TRANSLUCENT_SHADOW_STAGE_TEXTURE_ADDITIVE:
 		return 1.0f;
-	case TRANSLUCENT_SHADOW_STAGE_CONSTANT_ADDITIVE:
+	case TRANSLUCENT_SHADOW_STAGE_CUBEMAP_ADDITIVE:
 		return 2.0f;
 	default:
 		return 0.0f;
 	}
+}
+
+static float RB_TranslucentShadowCoverageSourceModeValue( const shaderStage_t *pStage ) {
+	if ( pStage == NULL ) {
+		return 0.0f;
+	}
+
+	const translucentShadowStageMode_t mode = RB_TranslucentShadowStageMode( pStage );
+	if ( pStage->hasAlphaTest || mode == TRANSLUCENT_SHADOW_STAGE_TEXTURE_ALPHA ) {
+		return 1.0f;
+	}
+
+	return 2.0f;
+}
+
+static float RB_TranslucentShadowVertexColorModeValue( const shaderStage_t *pStage ) {
+	if ( pStage == NULL ) {
+		return 0.0f;
+	}
+
+	if ( pStage->vertexColor == SVC_MODULATE ) {
+		return 1.0f;
+	}
+	if ( pStage->vertexColor == SVC_INVERSE_MODULATE ) {
+		return 2.0f;
+	}
+	return 0.0f;
+}
+
+static void RB_TranslucentShadowStageColor( const shaderStage_t *pStage, const float *regs, float color[4] ) {
+	color[0] = 1.0f;
+	color[1] = 1.0f;
+	color[2] = 1.0f;
+	color[3] = 1.0f;
+
+	if ( pStage == NULL || regs == NULL ) {
+		return;
+	}
+
+	color[0] = regs[ pStage->color.registers[0] ];
+	color[1] = regs[ pStage->color.registers[1] ];
+	color[2] = regs[ pStage->color.registers[2] ];
+	color[3] = regs[ pStage->color.registers[3] ];
 }
 
 static void RB_TranslucentShadowVertexAlphaParams( const shaderStage_t *pStage, float params[2] ) {
@@ -2325,78 +2537,53 @@ static void RB_TranslucentShadowVertexAlphaParams( const shaderStage_t *pStage, 
 	}
 }
 
-static void RB_ShadowMapSetAlphaTexCoordIdentity( void ) {
-	static const float rowS[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
-	static const float rowT[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
+static void RB_ShadowMapSetTexCoordUniforms( const GLint texCoordS, const GLint texCoordT, const float *regs, const textureStage_t *texture ) {
+	float rowS[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+	float rowT[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
 
-	if ( g_shadowMapCasterProgram.alphaTexCoordS >= 0 ) {
-		glUniform4fvARB( g_shadowMapCasterProgram.alphaTexCoordS, 1, rowS );
+	if ( regs != NULL && texture != NULL && texture->hasMatrix ) {
+		float matrix[16];
+		RB_GetShaderTextureMatrix( regs, texture, matrix );
+		rowS[0] = matrix[0];
+		rowS[1] = matrix[4];
+		rowS[2] = matrix[8];
+		rowS[3] = matrix[12];
+		rowT[0] = matrix[1];
+		rowT[1] = matrix[5];
+		rowT[2] = matrix[9];
+		rowT[3] = matrix[13];
 	}
-	if ( g_shadowMapCasterProgram.alphaTexCoordT >= 0 ) {
-		glUniform4fvARB( g_shadowMapCasterProgram.alphaTexCoordT, 1, rowT );
+
+	if ( texCoordS >= 0 ) {
+		glUniform4fvARB( texCoordS, 1, rowS );
 	}
+	if ( texCoordT >= 0 ) {
+		glUniform4fvARB( texCoordT, 1, rowT );
+	}
+}
+
+static void RB_ShadowMapSetAlphaTexCoordIdentity( void ) {
+	RB_ShadowMapSetTexCoordUniforms( g_shadowMapCasterProgram.alphaTexCoordS, g_shadowMapCasterProgram.alphaTexCoordT, NULL, NULL );
 }
 
 static void RB_ShadowMapSetAlphaTexCoordMatrix( const float *regs, const textureStage_t *texture ) {
-	float rowS[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
-	float rowT[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
-
-	if ( regs != NULL && texture != NULL && texture->hasMatrix ) {
-		float matrix[16];
-		RB_GetShaderTextureMatrix( regs, texture, matrix );
-		rowS[0] = matrix[0];
-		rowS[1] = matrix[4];
-		rowS[2] = matrix[8];
-		rowS[3] = matrix[12];
-		rowT[0] = matrix[1];
-		rowT[1] = matrix[5];
-		rowT[2] = matrix[9];
-		rowT[3] = matrix[13];
-	}
-
-	if ( g_shadowMapCasterProgram.alphaTexCoordS >= 0 ) {
-		glUniform4fvARB( g_shadowMapCasterProgram.alphaTexCoordS, 1, rowS );
-	}
-	if ( g_shadowMapCasterProgram.alphaTexCoordT >= 0 ) {
-		glUniform4fvARB( g_shadowMapCasterProgram.alphaTexCoordT, 1, rowT );
-	}
+	RB_ShadowMapSetTexCoordUniforms( g_shadowMapCasterProgram.alphaTexCoordS, g_shadowMapCasterProgram.alphaTexCoordT, regs, texture );
 }
 
 static void RB_TranslucentShadowMapSetAlphaTexCoordIdentity( void ) {
-	static const float rowS[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
-	static const float rowT[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
-
-	if ( g_translucentShadowCasterProgram.alphaTexCoordS >= 0 ) {
-		glUniform4fvARB( g_translucentShadowCasterProgram.alphaTexCoordS, 1, rowS );
-	}
-	if ( g_translucentShadowCasterProgram.alphaTexCoordT >= 0 ) {
-		glUniform4fvARB( g_translucentShadowCasterProgram.alphaTexCoordT, 1, rowT );
-	}
+	RB_ShadowMapSetTexCoordUniforms( g_translucentShadowCasterProgram.alphaTexCoordS, g_translucentShadowCasterProgram.alphaTexCoordT, NULL, NULL );
 }
 
 static void RB_TranslucentShadowMapSetAlphaTexCoordMatrix( const float *regs, const textureStage_t *texture ) {
-	float rowS[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
-	float rowT[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
+	RB_ShadowMapSetTexCoordUniforms( g_translucentShadowCasterProgram.alphaTexCoordS, g_translucentShadowCasterProgram.alphaTexCoordT, regs, texture );
+}
 
-	if ( regs != NULL && texture != NULL && texture->hasMatrix ) {
-		float matrix[16];
-		RB_GetShaderTextureMatrix( regs, texture, matrix );
-		rowS[0] = matrix[0];
-		rowS[1] = matrix[4];
-		rowS[2] = matrix[8];
-		rowS[3] = matrix[12];
-		rowT[0] = matrix[1];
-		rowT[1] = matrix[5];
-		rowT[2] = matrix[9];
-		rowT[3] = matrix[13];
-	}
+static void RB_TranslucentShadowMapSetCoverageTexCoordIdentity( void ) {
+	RB_ShadowMapSetTexCoordUniforms( g_translucentShadowCasterProgram.coverageTexCoordS, g_translucentShadowCasterProgram.coverageTexCoordT, NULL, NULL );
+}
 
-	if ( g_translucentShadowCasterProgram.alphaTexCoordS >= 0 ) {
-		glUniform4fvARB( g_translucentShadowCasterProgram.alphaTexCoordS, 1, rowS );
-	}
-	if ( g_translucentShadowCasterProgram.alphaTexCoordT >= 0 ) {
-		glUniform4fvARB( g_translucentShadowCasterProgram.alphaTexCoordT, 1, rowT );
-	}
+static void RB_TranslucentShadowMapSetCoverageTexCoordMatrix( const float *regs, const textureStage_t *texture ) {
+	RB_ShadowMapSetTexCoordUniforms( g_translucentShadowCasterProgram.coverageTexCoordS, g_translucentShadowCasterProgram.coverageTexCoordT, regs, texture );
 }
 
 static void RB_ShadowMapDrawPerforatedCasterHashed( const drawSurf_t *surf, const srfTriangles_t *casterGeo, idDrawVert *ac ) {
@@ -2520,6 +2707,7 @@ static void RB_ShadowMapDrawTranslucentCasterChain( const drawSurf_t *surf ) {
 
 		const idMaterial *shader = surf->material;
 		const float *regs = surf->shaderRegisters;
+		const shaderStage_t *coverageStage = RB_FindTranslucentShadowCoverageStage( shader, regs );
 		bool drewStage = false;
 
 		for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
@@ -2529,29 +2717,73 @@ static void RB_ShadowMapDrawTranslucentCasterChain( const drawSurf_t *surf ) {
 			}
 
 			const translucentShadowStageMode_t stageMode = RB_TranslucentShadowStageMode( pStage );
+			const shaderStage_t *stageCoverage = ( coverageStage != NULL ) ? coverageStage :
+				( RB_TranslucentShadowStageCanProvideCoverage( pStage, regs ) ? pStage : NULL );
 			const float alphaScale = RB_TranslucentShadowStageOpacityScale( pStage, regs, stageMode );
-			if ( alphaScale <= r_shadowMapTranslucentMinAlpha.GetFloat() ) {
+			const float combinedScale = alphaScale * RB_TranslucentShadowCoverageScale( stageCoverage, regs );
+			if ( combinedScale <= r_shadowMapTranslucentMinAlpha.GetFloat() ) {
 				continue;
 			}
 
+			float stageColor[4];
 			float vertexAlphaParams[2];
+			float coverageColor[4];
+			float coverageVertexAlphaParams[2];
+			RB_TranslucentShadowStageColor( pStage, regs, stageColor );
 			RB_TranslucentShadowVertexAlphaParams( pStage, vertexAlphaParams );
+			RB_TranslucentShadowStageColor( stageCoverage, regs, coverageColor );
+			RB_TranslucentShadowVertexAlphaParams( stageCoverage, coverageVertexAlphaParams );
 
-			if ( g_translucentShadowCasterProgram.alphaScale >= 0 ) {
-				glUniform1fARB( g_translucentShadowCasterProgram.alphaScale, alphaScale );
+			if ( g_translucentShadowCasterProgram.stageColor >= 0 ) {
+				glUniform4fvARB( g_translucentShadowCasterProgram.stageColor, 1, stageColor );
 			}
 			if ( g_translucentShadowCasterProgram.opacitySourceMode >= 0 ) {
 				glUniform1fARB( g_translucentShadowCasterProgram.opacitySourceMode, RB_TranslucentShadowStageOpacityModeValue( stageMode ) );
 			}
+			if ( g_translucentShadowCasterProgram.vertexColorMode >= 0 ) {
+				glUniform1fARB( g_translucentShadowCasterProgram.vertexColorMode, RB_TranslucentShadowVertexColorModeValue( pStage ) );
+			}
 			if ( g_translucentShadowCasterProgram.vertexAlphaParams >= 0 ) {
 				glUniform2fvARB( g_translucentShadowCasterProgram.vertexAlphaParams, 1, vertexAlphaParams );
 			}
-			if ( stageMode == TRANSLUCENT_SHADOW_STAGE_CONSTANT_ADDITIVE ) {
+			if ( g_translucentShadowCasterProgram.coverageStageColor >= 0 ) {
+				glUniform4fvARB( g_translucentShadowCasterProgram.coverageStageColor, 1, coverageColor );
+			}
+			if ( g_translucentShadowCasterProgram.coverageSourceMode >= 0 ) {
+				glUniform1fARB( g_translucentShadowCasterProgram.coverageSourceMode, RB_TranslucentShadowCoverageSourceModeValue( stageCoverage ) );
+			}
+			if ( g_translucentShadowCasterProgram.coverageVertexColorMode >= 0 ) {
+				glUniform1fARB( g_translucentShadowCasterProgram.coverageVertexColorMode, RB_TranslucentShadowVertexColorModeValue( stageCoverage ) );
+			}
+			if ( g_translucentShadowCasterProgram.coverageVertexAlphaParams >= 0 ) {
+				glUniform2fvARB( g_translucentShadowCasterProgram.coverageVertexAlphaParams, 1, coverageVertexAlphaParams );
+			}
+			if ( g_translucentShadowCasterProgram.coverageAlphaTestEnabled >= 0 ) {
+				glUniform1fARB( g_translucentShadowCasterProgram.coverageAlphaTestEnabled, ( stageCoverage != NULL && stageCoverage->hasAlphaTest ) ? 1.0f : 0.0f );
+			}
+			if ( g_translucentShadowCasterProgram.coverageAlphaTestRef >= 0 ) {
+				const float alphaRef = ( stageCoverage != NULL && stageCoverage->hasAlphaTest ) ? regs[ stageCoverage->alphaTestRegister ] : 0.0f;
+				glUniform1fARB( g_translucentShadowCasterProgram.coverageAlphaTestRef, alphaRef );
+			}
+			if ( stageMode == TRANSLUCENT_SHADOW_STAGE_CUBEMAP_ADDITIVE ) {
 				RB_TranslucentShadowMapSetAlphaTexCoordIdentity();
-				globalImages->whiteImage->Bind();
+				GL_SelectTexture( 0 );
+				RB_BindVariableStageImage( &pStage->texture, regs );
 			} else {
 				RB_TranslucentShadowMapSetAlphaTexCoordMatrix( regs, &pStage->texture );
+				GL_SelectTexture( 0 );
 				RB_BindVariableStageImage( &pStage->texture, regs );
+			}
+			if ( stageCoverage != NULL ) {
+				RB_TranslucentShadowMapSetCoverageTexCoordMatrix( regs, &stageCoverage->texture );
+				GL_SelectTexture( 1 );
+				RB_BindVariableStageImage( &stageCoverage->texture, regs );
+				GL_SelectTexture( 0 );
+			} else {
+				RB_TranslucentShadowMapSetCoverageTexCoordIdentity();
+				GL_SelectTexture( 1 );
+				globalImages->whiteImage->Bind();
+				GL_SelectTexture( 0 );
 			}
 			RB_DrawElementsWithCounters( casterGeo );
 			drewStage = true;
@@ -2564,8 +2796,11 @@ static void RB_ShadowMapDrawTranslucentCasterChain( const drawSurf_t *surf ) {
 
 	glDisableClientState( GL_COLOR_ARRAY );
 	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
+	GL_SelectTexture( 1 );
+	globalImages->BindNull();
 	GL_SelectTexture( 0 );
 	RB_TranslucentShadowMapSetAlphaTexCoordIdentity();
+	RB_TranslucentShadowMapSetCoverageTexCoordIdentity();
 }
 
 static void RB_ShadowMapModelMatrixRows( const float modelMatrix[16], float row0[4], float row1[4], float row2[4] ) {
@@ -2719,40 +2954,19 @@ static void RB_PointShadowMapSetAlphaTexCoordMatrix( const float *regs, const te
 }
 
 static void RB_PointTranslucentShadowMapSetAlphaTexCoordIdentity( void ) {
-	static const float rowS[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
-	static const float rowT[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
-
-	if ( g_pointTranslucentShadowCasterProgram.alphaTexCoordS >= 0 ) {
-		glUniform4fvARB( g_pointTranslucentShadowCasterProgram.alphaTexCoordS, 1, rowS );
-	}
-	if ( g_pointTranslucentShadowCasterProgram.alphaTexCoordT >= 0 ) {
-		glUniform4fvARB( g_pointTranslucentShadowCasterProgram.alphaTexCoordT, 1, rowT );
-	}
+	RB_ShadowMapSetTexCoordUniforms( g_pointTranslucentShadowCasterProgram.alphaTexCoordS, g_pointTranslucentShadowCasterProgram.alphaTexCoordT, NULL, NULL );
 }
 
 static void RB_PointTranslucentShadowMapSetAlphaTexCoordMatrix( const float *regs, const textureStage_t *texture ) {
-	float rowS[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
-	float rowT[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
+	RB_ShadowMapSetTexCoordUniforms( g_pointTranslucentShadowCasterProgram.alphaTexCoordS, g_pointTranslucentShadowCasterProgram.alphaTexCoordT, regs, texture );
+}
 
-	if ( regs != NULL && texture != NULL && texture->hasMatrix ) {
-		float matrix[16];
-		RB_GetShaderTextureMatrix( regs, texture, matrix );
-		rowS[0] = matrix[0];
-		rowS[1] = matrix[4];
-		rowS[2] = matrix[8];
-		rowS[3] = matrix[12];
-		rowT[0] = matrix[1];
-		rowT[1] = matrix[5];
-		rowT[2] = matrix[9];
-		rowT[3] = matrix[13];
-	}
+static void RB_PointTranslucentShadowMapSetCoverageTexCoordIdentity( void ) {
+	RB_ShadowMapSetTexCoordUniforms( g_pointTranslucentShadowCasterProgram.coverageTexCoordS, g_pointTranslucentShadowCasterProgram.coverageTexCoordT, NULL, NULL );
+}
 
-	if ( g_pointTranslucentShadowCasterProgram.alphaTexCoordS >= 0 ) {
-		glUniform4fvARB( g_pointTranslucentShadowCasterProgram.alphaTexCoordS, 1, rowS );
-	}
-	if ( g_pointTranslucentShadowCasterProgram.alphaTexCoordT >= 0 ) {
-		glUniform4fvARB( g_pointTranslucentShadowCasterProgram.alphaTexCoordT, 1, rowT );
-	}
+static void RB_PointTranslucentShadowMapSetCoverageTexCoordMatrix( const float *regs, const textureStage_t *texture ) {
+	RB_ShadowMapSetTexCoordUniforms( g_pointTranslucentShadowCasterProgram.coverageTexCoordS, g_pointTranslucentShadowCasterProgram.coverageTexCoordT, regs, texture );
 }
 
 static bool RB_PointShadowMapPrepareAlphaTestStage( const shaderStage_t *pStage, idDrawVert *ac, const float *regs, const float alphaScale ) {
@@ -2932,6 +3146,7 @@ static void RB_PointShadowMapDrawTranslucentCasterChain( const drawSurf_t *surf,
 
 		const idMaterial *shader = surf->material;
 		const float *regs = surf->shaderRegisters;
+		const shaderStage_t *coverageStage = RB_FindTranslucentShadowCoverageStage( shader, regs );
 		bool drewStage = false;
 
 		for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
@@ -2941,29 +3156,73 @@ static void RB_PointShadowMapDrawTranslucentCasterChain( const drawSurf_t *surf,
 			}
 
 			const translucentShadowStageMode_t stageMode = RB_TranslucentShadowStageMode( pStage );
+			const shaderStage_t *stageCoverage = ( coverageStage != NULL ) ? coverageStage :
+				( RB_TranslucentShadowStageCanProvideCoverage( pStage, regs ) ? pStage : NULL );
 			const float alphaScale = RB_TranslucentShadowStageOpacityScale( pStage, regs, stageMode );
-			if ( alphaScale <= r_shadowMapTranslucentMinAlpha.GetFloat() ) {
+			const float combinedScale = alphaScale * RB_TranslucentShadowCoverageScale( stageCoverage, regs );
+			if ( combinedScale <= r_shadowMapTranslucentMinAlpha.GetFloat() ) {
 				continue;
 			}
 
+			float stageColor[4];
 			float vertexAlphaParams[2];
+			float coverageColor[4];
+			float coverageVertexAlphaParams[2];
+			RB_TranslucentShadowStageColor( pStage, regs, stageColor );
 			RB_TranslucentShadowVertexAlphaParams( pStage, vertexAlphaParams );
+			RB_TranslucentShadowStageColor( stageCoverage, regs, coverageColor );
+			RB_TranslucentShadowVertexAlphaParams( stageCoverage, coverageVertexAlphaParams );
 
-			if ( g_pointTranslucentShadowCasterProgram.alphaScale >= 0 ) {
-				glUniform1fARB( g_pointTranslucentShadowCasterProgram.alphaScale, alphaScale );
+			if ( g_pointTranslucentShadowCasterProgram.stageColor >= 0 ) {
+				glUniform4fvARB( g_pointTranslucentShadowCasterProgram.stageColor, 1, stageColor );
 			}
 			if ( g_pointTranslucentShadowCasterProgram.opacitySourceMode >= 0 ) {
 				glUniform1fARB( g_pointTranslucentShadowCasterProgram.opacitySourceMode, RB_TranslucentShadowStageOpacityModeValue( stageMode ) );
 			}
+			if ( g_pointTranslucentShadowCasterProgram.vertexColorMode >= 0 ) {
+				glUniform1fARB( g_pointTranslucentShadowCasterProgram.vertexColorMode, RB_TranslucentShadowVertexColorModeValue( pStage ) );
+			}
 			if ( g_pointTranslucentShadowCasterProgram.vertexAlphaParams >= 0 ) {
 				glUniform2fvARB( g_pointTranslucentShadowCasterProgram.vertexAlphaParams, 1, vertexAlphaParams );
 			}
-			if ( stageMode == TRANSLUCENT_SHADOW_STAGE_CONSTANT_ADDITIVE ) {
+			if ( g_pointTranslucentShadowCasterProgram.coverageStageColor >= 0 ) {
+				glUniform4fvARB( g_pointTranslucentShadowCasterProgram.coverageStageColor, 1, coverageColor );
+			}
+			if ( g_pointTranslucentShadowCasterProgram.coverageSourceMode >= 0 ) {
+				glUniform1fARB( g_pointTranslucentShadowCasterProgram.coverageSourceMode, RB_TranslucentShadowCoverageSourceModeValue( stageCoverage ) );
+			}
+			if ( g_pointTranslucentShadowCasterProgram.coverageVertexColorMode >= 0 ) {
+				glUniform1fARB( g_pointTranslucentShadowCasterProgram.coverageVertexColorMode, RB_TranslucentShadowVertexColorModeValue( stageCoverage ) );
+			}
+			if ( g_pointTranslucentShadowCasterProgram.coverageVertexAlphaParams >= 0 ) {
+				glUniform2fvARB( g_pointTranslucentShadowCasterProgram.coverageVertexAlphaParams, 1, coverageVertexAlphaParams );
+			}
+			if ( g_pointTranslucentShadowCasterProgram.coverageAlphaTestEnabled >= 0 ) {
+				glUniform1fARB( g_pointTranslucentShadowCasterProgram.coverageAlphaTestEnabled, ( stageCoverage != NULL && stageCoverage->hasAlphaTest ) ? 1.0f : 0.0f );
+			}
+			if ( g_pointTranslucentShadowCasterProgram.coverageAlphaTestRef >= 0 ) {
+				const float alphaRef = ( stageCoverage != NULL && stageCoverage->hasAlphaTest ) ? regs[ stageCoverage->alphaTestRegister ] : 0.0f;
+				glUniform1fARB( g_pointTranslucentShadowCasterProgram.coverageAlphaTestRef, alphaRef );
+			}
+			if ( stageMode == TRANSLUCENT_SHADOW_STAGE_CUBEMAP_ADDITIVE ) {
 				RB_PointTranslucentShadowMapSetAlphaTexCoordIdentity();
-				globalImages->whiteImage->Bind();
+				GL_SelectTexture( 0 );
+				RB_BindVariableStageImage( &pStage->texture, regs );
 			} else {
 				RB_PointTranslucentShadowMapSetAlphaTexCoordMatrix( regs, &pStage->texture );
+				GL_SelectTexture( 0 );
 				RB_BindVariableStageImage( &pStage->texture, regs );
+			}
+			if ( stageCoverage != NULL ) {
+				RB_PointTranslucentShadowMapSetCoverageTexCoordMatrix( regs, &stageCoverage->texture );
+				GL_SelectTexture( 1 );
+				RB_BindVariableStageImage( &stageCoverage->texture, regs );
+				GL_SelectTexture( 0 );
+			} else {
+				RB_PointTranslucentShadowMapSetCoverageTexCoordIdentity();
+				GL_SelectTexture( 1 );
+				globalImages->whiteImage->Bind();
+				GL_SelectTexture( 0 );
 			}
 			RB_DrawElementsWithCounters( casterGeo );
 			drewStage = true;
@@ -2976,8 +3235,11 @@ static void RB_PointShadowMapDrawTranslucentCasterChain( const drawSurf_t *surf,
 
 	glDisableClientState( GL_COLOR_ARRAY );
 	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
+	GL_SelectTexture( 1 );
+	globalImages->BindNull();
 	GL_SelectTexture( 0 );
 	RB_PointTranslucentShadowMapSetAlphaTexCoordIdentity();
+	RB_PointTranslucentShadowMapSetCoverageTexCoordIdentity();
 }
 
 static bool RB_RenderShadowMap( const drawSurf_t *primaryCasters, const drawSurf_t *secondaryCasters, const drawSurf_t *tertiaryCasters, const drawSurf_t *quaternaryCasters ) {
@@ -3225,10 +3487,14 @@ static bool RB_RenderTranslucentShadowMap( const drawSurf_t *primaryCasters, con
 	if ( g_translucentShadowCasterProgram.alphaMap >= 0 ) {
 		glUniform1iARB( g_translucentShadowCasterProgram.alphaMap, 0 );
 	}
+	if ( g_translucentShadowCasterProgram.coverageMap >= 0 ) {
+		glUniform1iARB( g_translucentShadowCasterProgram.coverageMap, 1 );
+	}
 	if ( g_translucentShadowCasterProgram.translucentMinAlpha >= 0 ) {
 		glUniform1fARB( g_translucentShadowCasterProgram.translucentMinAlpha, r_shadowMapTranslucentMinAlpha.GetFloat() );
 	}
 	RB_TranslucentShadowMapSetAlphaTexCoordIdentity();
+	RB_TranslucentShadowMapSetCoverageTexCoordIdentity();
 
 	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
 	glDisable( GL_DEPTH_TEST );
@@ -3354,10 +3620,14 @@ static bool RB_RenderPointTranslucentShadowMap( const drawSurf_t *primaryCasters
 	if ( g_pointTranslucentShadowCasterProgram.alphaMap >= 0 ) {
 		glUniform1iARB( g_pointTranslucentShadowCasterProgram.alphaMap, 0 );
 	}
+	if ( g_pointTranslucentShadowCasterProgram.coverageMap >= 0 ) {
+		glUniform1iARB( g_pointTranslucentShadowCasterProgram.coverageMap, 1 );
+	}
 	if ( g_pointTranslucentShadowCasterProgram.translucentMinAlpha >= 0 ) {
 		glUniform1fARB( g_pointTranslucentShadowCasterProgram.translucentMinAlpha, r_shadowMapTranslucentMinAlpha.GetFloat() );
 	}
 	RB_PointTranslucentShadowMapSetAlphaTexCoordIdentity();
+	RB_PointTranslucentShadowMapSetCoverageTexCoordIdentity();
 
 	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
 	glDisable( GL_DEPTH_TEST );
@@ -3588,12 +3858,14 @@ static void RB_GLSLPointShadowMap_DrawInteraction( const drawInteraction_t *din 
 	din->specularImage->Bind();
 	GL_SelectTextureNoClient( 5 );
 	g_pointShadowMapColorImage->Bind();
-	if ( glConfig.maxTextureUnits >= 7 ) {
-		GL_SelectTextureNoClient( 6 );
-		if ( RB_PointTranslucentShadowEnabled() ) {
-			g_pointTranslucentShadowMapImage->Bind();
-		} else {
-			globalImages->BindNull();
+	for ( int i = 0; i < 3; i++ ) {
+		if ( glConfig.maxTextureUnits >= 7 + i ) {
+			GL_SelectTextureNoClient( 6 + i );
+			if ( RB_PointTranslucentShadowEnabled() ) {
+				g_pointTranslucentShadowMomentImages[i]->Bind();
+			} else {
+				globalImages->BindNull();
+			}
 		}
 	}
 
@@ -3639,8 +3911,10 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 	if ( g_shadowMapProgram.shadowMap >= 0 ) {
 		glUniform1iARB( g_shadowMapProgram.shadowMap, 5 );
 	}
-	if ( g_shadowMapProgram.translucentShadowMap >= 0 && glConfig.maxTextureUnits >= 7 && glConfig.maxTextureImageUnits >= 7 ) {
-		glUniform1iARB( g_shadowMapProgram.translucentShadowMap, 6 );
+	for ( int i = 0; i < 3; i++ ) {
+		if ( g_shadowMapProgram.translucentShadowMap[i] >= 0 && glConfig.maxTextureUnits >= 7 + i && glConfig.maxTextureImageUnits >= 7 + i ) {
+			glUniform1iARB( g_shadowMapProgram.translucentShadowMap[i], 6 + i );
+		}
 	}
 	if ( g_shadowMapProgram.shadowTexelSize >= 0 ) {
 		const float texelSize[2] = {
@@ -3715,9 +3989,11 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 	glDisableVertexAttribArrayARB( 11 );
 	glDisableClientState( GL_COLOR_ARRAY );
 
-	if ( glConfig.maxTextureUnits >= 7 ) {
-		GL_SelectTextureNoClient( 6 );
-		globalImages->BindNull();
+	for ( int i = 0; i < 3; i++ ) {
+		if ( glConfig.maxTextureUnits >= 7 + i ) {
+			GL_SelectTextureNoClient( 6 + i );
+			globalImages->BindNull();
+		}
 	}
 	GL_SelectTextureNoClient( 5 );
 	globalImages->BindNull();
@@ -3767,8 +4043,10 @@ static bool RB_GLSLPointShadowMap_CreateDrawInteractions( const drawSurf_t *surf
 	if ( g_pointShadowMapProgram.pointShadowMap >= 0 ) {
 		glUniform1iARB( g_pointShadowMapProgram.pointShadowMap, 5 );
 	}
-	if ( g_pointShadowMapProgram.translucentShadowMap >= 0 && glConfig.maxTextureUnits >= 7 && glConfig.maxTextureImageUnits >= 7 ) {
-		glUniform1iARB( g_pointShadowMapProgram.translucentShadowMap, 6 );
+	for ( int i = 0; i < 3; i++ ) {
+		if ( g_pointShadowMapProgram.translucentShadowMap[i] >= 0 && glConfig.maxTextureUnits >= 7 + i && glConfig.maxTextureImageUnits >= 7 + i ) {
+			glUniform1iARB( g_pointShadowMapProgram.translucentShadowMap[i], 6 + i );
+		}
 	}
 	if ( g_pointShadowMapProgram.shadowBias >= 0 ) {
 		glUniform1fARB( g_pointShadowMapProgram.shadowBias, r_shadowMapPointBias.GetFloat() );
@@ -3834,9 +4112,11 @@ static bool RB_GLSLPointShadowMap_CreateDrawInteractions( const drawSurf_t *surf
 	glDisableVertexAttribArrayARB( 11 );
 	glDisableClientState( GL_COLOR_ARRAY );
 
-	if ( glConfig.maxTextureUnits >= 7 ) {
-		GL_SelectTextureNoClient( 6 );
-		globalImages->BindNull();
+	for ( int i = 0; i < 3; i++ ) {
+		if ( glConfig.maxTextureUnits >= 7 + i ) {
+			GL_SelectTextureNoClient( 6 + i );
+			globalImages->BindNull();
+		}
 	}
 	GL_SelectTextureNoClient( 5 );
 	globalImages->BindNull();

@@ -6,7 +6,9 @@ uniform sampler2D uLightProjectionMap;
 uniform sampler2D uDiffuseMap;
 uniform sampler2D uSpecularMap;
 uniform sampler2D uShadowMap;
-uniform sampler2D uTranslucentShadowMap;
+uniform sampler2D uTranslucentShadowMapR;
+uniform sampler2D uTranslucentShadowMapG;
+uniform sampler2D uTranslucentShadowMapB;
 
 uniform vec4 uDiffuseColor;
 uniform vec4 uSpecularColor;
@@ -89,7 +91,8 @@ float ResolveTranslucentShadowMoments( vec4 moments, float depth ) {
 	float mean = moments.y / totalTau;
 	float variance = max( moments.z / totalTau - mean * mean, kTranslucentMomentMinVariance );
 	float sigma = sqrt( variance );
-	float tau = totalTau * clamp( NormalCdf( ( depth - mean ) / sigma ), 0.0, 1.0 );
+	float fraction = clamp( NormalCdf( ( depth - mean ) / sigma ), 0.0, 1.0 );
+	float tau = totalTau * fraction;
 	return exp( -min( tau * max( uTranslucentShadowDensity, 0.0 ), 16.0 ) );
 }
 
@@ -172,21 +175,21 @@ vec4 SampleShadowCascade( vec4 shadowCoord, vec4 atlasRect, int cascadeIndex ) {
 	return vec4( shadow * ( 1.0 / 13.0 ), localUv.x, localUv.y, depth );
 }
 
-float SampleTranslucentShadowCascade( vec4 shadowCoord, vec4 atlasRect ) {
+vec3 SampleTranslucentShadowCascade( vec4 shadowCoord, vec4 atlasRect ) {
 	if ( uTranslucentShadowEnabled < 0.5 ) {
-		return 1.0;
+		return vec3( 1.0 );
 	}
 
 	vec2 localUv;
 	float depth;
 	if ( !ProjectShadowCoord( shadowCoord, localUv, depth ) ) {
-		return 1.0;
+		return vec3( 1.0 );
 	}
 	if ( localUv.x <= 0.0 || localUv.x >= 1.0 || localUv.y <= 0.0 || localUv.y >= 1.0 ) {
-		return 1.0;
+		return vec3( 1.0 );
 	}
 	if ( depth <= 0.0 || depth >= 1.0 ) {
-		return 1.0;
+		return vec3( 1.0 );
 	}
 
 	vec2 atlasMin = atlasRect.xy;
@@ -197,7 +200,10 @@ float SampleTranslucentShadowCascade( vec4 shadowCoord, vec4 atlasRect ) {
 	clampMin = min( clampMin, clampMax );
 	uv = clamp( uv, clampMin, clampMax );
 
-	return ResolveTranslucentShadowMoments( texture2D( uTranslucentShadowMap, uv ), depth );
+	return vec3(
+		ResolveTranslucentShadowMoments( texture2D( uTranslucentShadowMapR, uv ), depth ),
+		ResolveTranslucentShadowMoments( texture2D( uTranslucentShadowMapG, uv ), depth ),
+		ResolveTranslucentShadowMoments( texture2D( uTranslucentShadowMapB, uv ), depth ) );
 }
 
 float CascadeSplitDepth( int index ) {
@@ -390,7 +396,7 @@ vec4 ShadowDebugOutput( vec4 shadowInfo ) {
 	return vec4( invalidColor, 1.0 );
 }
 
-float SampleTranslucentShadowCascadeByIndex( int index ) {
+vec3 SampleTranslucentShadowCascadeByIndex( int index ) {
 	if ( index <= 0 ) {
 		return SampleTranslucentShadowCascade( vShadowCoord0, uShadowAtlasRect[0] );
 	}
@@ -403,13 +409,13 @@ float SampleTranslucentShadowCascadeByIndex( int index ) {
 	return SampleTranslucentShadowCascade( vShadowCoord3, uShadowAtlasRect[3] );
 }
 
-float SampleTranslucentShadow() {
+vec3 SampleTranslucentShadow() {
 	if ( uTranslucentShadowEnabled < 0.5 ) {
-		return 1.0;
+		return vec3( 1.0 );
 	}
 
 	int cascadeIndex = SelectCascade( vViewDepth );
-	float shadow = SampleTranslucentShadowCascadeByIndex( cascadeIndex );
+	vec3 shadow = SampleTranslucentShadowCascadeByIndex( cascadeIndex );
 	int lastInteriorIndex = uShadowCascadeCount - 2;
 
 	if ( cascadeIndex > lastInteriorIndex || uShadowCascadeBlend <= 0.0 ) {
@@ -424,7 +430,7 @@ float SampleTranslucentShadow() {
 		return shadow;
 	}
 
-	float nextShadow = SampleTranslucentShadowCascadeByIndex( cascadeIndex + 1 );
+	vec3 nextShadow = SampleTranslucentShadowCascadeByIndex( cascadeIndex + 1 );
 	float blend = clamp( ( vViewDepth - blendStart ) / blendWidth, 0.0, 1.0 );
 	return mix( shadow, nextShadow, blend );
 }

@@ -393,6 +393,15 @@ static void R_CheckPortableExtensions( void ) {
 		glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS_ARB, (GLint*)&glConfig.maxTextureImageUnits);
 	}
 
+	glConfig.maxDrawBuffers = 1;
+	glConfig.maxColorAttachments = 1;
+	if ( GLEW_ARB_draw_buffers || glConfig.glVersion >= 2.0f ) {
+		glGetIntegerv( GL_MAX_DRAW_BUFFERS_ARB, (GLint *)&glConfig.maxDrawBuffers );
+	}
+	if ( GLEW_EXT_framebuffer_object || GLEW_ARB_framebuffer_object || glConfig.glVersion >= 3.0f ) {
+		glGetIntegerv( GL_MAX_COLOR_ATTACHMENTS_EXT, (GLint *)&glConfig.maxColorAttachments );
+	}
+
 	// GL_ARB_texture_env_combine
 	glConfig.textureEnvCombineAvailable = R_CheckRequiredExtension( "GL_ARB_texture_env_combine" );
 
@@ -2178,6 +2187,8 @@ void GfxInfo_f( const idCmdArgs &args ) {
 	common->Printf( "GL_MAX_TEXTURE_UNITS_ARB: %d\n", glConfig.maxTextureUnits );
 	common->Printf( "GL_MAX_TEXTURE_COORDS_ARB: %d\n", glConfig.maxTextureCoords );
 	common->Printf( "GL_MAX_TEXTURE_IMAGE_UNITS_ARB: %d\n", glConfig.maxTextureImageUnits );
+	common->Printf( "GL_MAX_DRAW_BUFFERS_ARB: %d\n", glConfig.maxDrawBuffers );
+	common->Printf( "GL_MAX_COLOR_ATTACHMENTS_EXT: %d\n", glConfig.maxColorAttachments );
 	common->Printf( "\nPIXELFORMAT: color(%d-bits) Z(%d-bit) stencil(%d-bits)\n", glConfig.colorBits, glConfig.depthBits, glConfig.stencilBits );
 	common->Printf( "MODE: %d, %d x %d %s", r_mode.GetInteger(), glConfig.vidWidth, glConfig.vidHeight, modeString );
 	if ( r_fullscreen.GetBool() ) {
