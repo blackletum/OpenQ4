@@ -16,7 +16,7 @@
 
 ## About
 
-**OpenQ4** is a free, open-source replacement for the Quake 4 engine that brings your classic game into the modern era. Built on the shoulders of [Quake4Doom](https://github.com/idSoftware/Quake4Doom), it keeps everything you love about the original — the brutal combat, the tight gameplay, the iconic atmosphere — and layers on a fresh set of visuals and quality-of-life upgrades that make it feel right at home on today's hardware.
+**OpenQ4** is a free, open-source replacement for the Quake 4 engine that brings your classic game into the modern era. Built on the shoulders of [Quake4Doom](https://github.com/jmarshall23/Quake4Doom), it keeps everything you love about the original — the brutal combat, the tight gameplay, the iconic atmosphere — and layers on a fresh set of visuals and quality-of-life upgrades that make it feel right at home on today's hardware.
 
 Plug in a controller and play from the couch, enjoy crisp widescreen and ultrawide support, or push the visuals further with HDR rendering, dynamic shadow maps, and a suite of post-processing effects. The best part? It all runs on your existing copy of Quake 4 — no new assets, no subscription, just your game looking and playing better than ever.
 
@@ -38,12 +38,12 @@ Getting up and running takes just four steps:
 
 ### Step 1 — Get Quake 4
 
-You'll need a copy of Quake 4 installed on your system. Grab it from Steam or GOG if you don't have it yet:
+You'll need a copy of <b>Quake 4</b> installed on your system. Grab it from <b>Steam</b> or <b>GOG</b> if you don't have it yet:
 
 <p>
   <a href="https://store.steampowered.com/app/2210/Quake_4/" target="_blank" rel="noopener noreferrer" aria-label="Purchase Quake 4 on Steam"><img src="https://img.shields.io/badge/Steam-Buy_Now-1b2838?logo=steam&logoColor=white&style=for-the-badge" alt="Buy on Steam"></a>
   &nbsp;&nbsp;
-  <a href="https://www.gog.com/game/quake_iv" target="_blank" rel="noopener noreferrer" aria-label="Purchase Quake 4 on GOG"><img src="https://img.shields.io/badge/GOG-Buy_Now-86328a?logo=gog.com&logoColor=white&style=for-the-badge" alt="Buy on GOG"></a>
+  <a href="https://www.gog.com/en/game/quake_4" target="_blank" rel="noopener noreferrer" aria-label="Purchase Quake 4 on GOG"><img src="https://img.shields.io/badge/GOG-Buy_Now-86328a?logo=gog.com&logoColor=white&style=for-the-badge" alt="Buy on GOG"></a>
 </p>
 
 ### Step 2 — Get the latest OpenQ4 release
@@ -139,25 +139,16 @@ Keep compatibility with official Quake 4 assets in mind, follow the existing cod
 
 ---
 
-## License
-
-<small>
-<p>OpenQ4 is licensed under the <a href="https://www.gnu.org/licenses/gpl-3.0">GNU General Public License v3.0</a> (GPLv3). You are free to use, modify, and distribute the software under its terms.</p>
-<p>See the <a href="LICENSE">LICENSE</a> file for full details.</p>
-<p><strong>Note:</strong> The GPLv3 license applies to OpenQ4's engine code only. Game library code in <a href="https://github.com/themuffinator/OpenQ4-GameLibs">OpenQ4-GameLibs</a> is derived from the Quake 4 SDK and subject to id Software's EULA. Quake 4 game assets remain the property of id Software and ZeniMax Media.</p>
-</small>
-
----
-
 ## Credits
 
-### Core Contributors
+### Project Lead
 - **themuffinator** — OpenQ4 development and maintenance
-- **Justin Marshall** — [Quake4Doom](https://github.com/idSoftware/Quake4Doom), BSE reverse engineering
-- **Robert Backebans** — [RBDOOM3](https://github.com/RobertBeckebans/RBDOOM-3-BFG) modernization work
 
-### Playtesters
-Papaya (`papayathebun` on Discord), JohnnyBoy (`johnnyboy.2000` on Discord), coffee009
+### Upstream Credit
+- **Justin Marshall** — [Quake4Doom](https://github.com/jmarshall23/Quake4Doom), [initial BSE reverse engineering](https://github.com/jmarshall23/Quake4BSE)
+
+### Playtesters / Feedback
+A massive thanks goes out to the [Map-Center](https://www.map-center.com) community for feedback on the project, particularly Papaya, JohnnyBoy and coffee009.
 
 ### Original Developers
 - **id Software** — idTech 4 engine and Quake 4
@@ -175,15 +166,13 @@ The Quake and id Tech community for continued support and enthusiasm, and all co
 
 ---
 
-## Links
+## License
 
-- [Website](https://www.darkmatter-quake.com)
-- [Repository](https://github.com/themuffinator/OpenQ4)
-- [Game Library](https://github.com/themuffinator/OpenQ4-GameLibs)
-- [Issue Tracker](https://github.com/themuffinator/OpenQ4/issues)
-- [Releases](https://github.com/themuffinator/OpenQ4/releases)
-- [Quake 4 on Steam](https://store.steampowered.com/app/2210/)
-- [Quake 4 on GOG](https://www.gog.com/game/quake_iv)
+<small>
+<p>OpenQ4 is licensed under the <a href="https://www.gnu.org/licenses/gpl-3.0">GNU General Public License v3.0</a> (GPLv3). You are free to use, modify, and distribute the software under its terms.</p>
+<p>See the <a href="LICENSE">LICENSE</a> file for full details.</p>
+<p><strong>Note:</strong> The GPLv3 license applies to OpenQ4's engine code only. Game library code in <a href="https://github.com/themuffinator/OpenQ4-GameLibs">OpenQ4-GameLibs</a> is derived from the Quake 4 SDK and subject to id Software's EULA. Quake 4 game assets remain the property of id Software and ZeniMax Media.</p>
+</small>
 
 ---
 
@@ -197,6 +186,13 @@ The Quake and id Tech community for continued support and enthusiasm, and all co
 </small>
 
 ---
+
+---
+
+## Links
+
+[Website](https://www.darkmatter-quake.com) • [Repository](https://github.com/themuffinator/OpenQ4) • [Game Library](https://github.com/themuffinator/OpenQ4-GameLibs) • [Issue Tracker](https://github.com/themuffinator/OpenQ4/issues)
+[Releases](https://github.com/themuffinator/OpenQ4/releases) • [Quake 4 on Steam](https://store.steampowered.com/app/2210/) • [Quake 4 on GOG](https://www.gog.com/game/quake_iv) • [Map-Center on Discord](https://discord.gg/vSvqwys5hB)
 
 [Back to Top](#openq4)
 
