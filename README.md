@@ -16,8 +16,11 @@
 
 ---
 
-> [!WARNING]
-> **Development Notice:** This project leans heavily on exploratory, agentic AI "vibe coding" for speed. If you want a strictly engineered, process-heavy codebase, this probably isn't for you.
+<p align="center">
+  <a href="https://store.steampowered.com/app/2210/Quake_4/" target="_blank" rel="noopener noreferrer" aria-label="Purchase Quake 4 on Steam"><img src="https://img.shields.io/badge/Steam-Buy_Now-1b2838?logo=steam&logoColor=white&style=for-the-badge" alt="Buy on Steam"></a>
+  &nbsp;&nbsp;
+  <a href="https://www.gog.com/game/quake_iv" target="_blank" rel="noopener noreferrer" aria-label="Purchase Quake 4 on GOG"><img src="https://img.shields.io/badge/GOG-Buy_Now-86328a?logo=gog.com&logoColor=white&style=for-the-badge" alt="Buy on GOG"></a>
+</p>
 
 ---
 
@@ -40,7 +43,7 @@ The base semantic version stays intentionally manual and must be bumped in `meso
 ### What You Need
 
 To play OpenQ4, you need:
-- A legitimate copy of Quake 4 ([Steam](https://store.steampowered.com/app/2210/) or [GOG](https://www.gog.com/game/quake_iv) version recommended)
+- A legitimate copy of Quake 4
 - The latest OpenQ4 release (from this repository)
 - A modern 64-bit operating system
 
@@ -122,7 +125,7 @@ Current known compatibility regressions and follow-up work are tracked in [TODO.
 ## Quick Start
 
 ### Prerequisites
-- **Quake 4** installed ([Steam](https://store.steampowered.com/app/2210/) or [GOG](https://www.gog.com/game/quake_iv))
+- **Quake 4** installed
 - **Windows**: Visual Studio 2026+ (or MSVC 19.46+)
 - **Linux**: GCC 13+ or Clang 17+
 - **macOS**: Xcode 16+ (Clang 17+)
