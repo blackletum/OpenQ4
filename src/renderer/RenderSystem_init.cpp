@@ -101,10 +101,11 @@ idCVar r_useLightPortalFlow( "r_useLightPortalFlow", "1", CVAR_RENDERER | CVAR_B
 idCVar r_multiSamples( "r_multiSamples", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "number of antialiasing samples" );
 idCVar r_postAA( "r_postAA", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "post AA mode: 0 = off, 1 = SMAA 1x", 0, 1, idCmdSystem::ArgCompletion_Integer<0,1> );
 idCVar r_bloom( "r_bloom", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable bloom post-process" );
-idCVar r_bloomThreshold( "r_bloomThreshold", "0.72", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "bloom bright-pass threshold", 0.0f, 2.0f );
-idCVar r_bloomSoftKnee( "r_bloomSoftKnee", "0.15", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "relative bloom soft-threshold knee", 0.0f, 1.0f );
+idCVar r_bloomThreshold( "r_bloomThreshold", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "bloom bright-pass threshold in scene-referred units", 0.0f, 16.0f );
+idCVar r_bloomSoftKnee( "r_bloomSoftKnee", "0.25", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "relative bloom soft-threshold knee", 0.0f, 1.0f );
 idCVar r_bloomIntensity( "r_bloomIntensity", "0.45", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "bloom contribution scale", 0.0f, 4.0f );
 idCVar r_bloomRadius( "r_bloomRadius", "1.35", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "bloom sample radius scale", 0.1f, 8.0f );
+idCVar r_bloomMipCount( "r_bloomMipCount", "5", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "number of bloom pyramid levels", 1, 5, idCmdSystem::ArgCompletion_Integer<1,5> );
 idCVar r_ssao( "r_ssao", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable screen-space ambient occlusion" );
 idCVar r_ssaoRadius( "r_ssaoRadius", "36.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "SSAO sampling radius in view-space units", 4.0f, 256.0f );
 idCVar r_ssaoBias( "r_ssaoBias", "2.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "SSAO horizon bias in view-space units", 0.0f, 32.0f );
@@ -113,8 +114,9 @@ idCVar r_ssaoPower( "r_ssaoPower", "1.6", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FL
 idCVar r_ssaoMaxDistance( "r_ssaoMaxDistance", "220.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "fade SSAO out past this view-space distance", 16.0f, 4096.0f );
 idCVar r_ssaoSamples( "r_ssaoSamples", "20", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "number of SSAO spiral samples", 4, 32, idCmdSystem::ArgCompletion_Integer<4,32> );
 idCVar r_ssaoDebug( "r_ssaoDebug", "0", CVAR_RENDERER | CVAR_BOOL, "visualize SSAO only" );
+idCVar r_hdrSceneTarget( "r_hdrSceneTarget", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "render the main scene into an HDR scene target before post-processing" );
 idCVar r_hdrToneMap( "r_hdrToneMap", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable filmic tone mapping and color correction pass" );
-idCVar r_hdrExposure( "r_hdrExposure", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "filmic tone-mapping exposure", 0.1f, 8.0f );
+idCVar r_hdrExposure( "r_hdrExposure", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "manual exposure multiplier applied after auto exposure", 0.1f, 16.0f );
 idCVar r_hdrWhitePoint( "r_hdrWhitePoint", "6.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "filmic white point used by tone mapping", 1.0f, 16.0f );
 idCVar r_hdrLift( "r_hdrLift", "0.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "post-process shadow lift applied when tone mapping is enabled", -0.25f, 0.25f );
 idCVar r_hdrPostGamma( "r_hdrPostGamma", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "post-process gamma curve applied when tone mapping is enabled", 0.5f, 2.5f );
@@ -122,6 +124,17 @@ idCVar r_hdrGain( "r_hdrGain", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
 idCVar r_hdrVibrance( "r_hdrVibrance", "0.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "post-process vibrance applied when tone mapping is enabled", -1.0f, 1.0f );
 idCVar r_hdrSaturation( "r_hdrSaturation", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "post-process saturation applied when tone mapping is enabled", 0.0f, 2.0f );
 idCVar r_hdrContrast( "r_hdrContrast", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "post-process contrast applied when tone mapping is enabled", 0.1f, 3.0f );
+idCVar r_hdrAutoExposure( "r_hdrAutoExposure", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "derive exposure from a log-average scene luminance pyramid" );
+idCVar r_hdrKeyValue( "r_hdrKeyValue", "0.18", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "middle-gray key value used by HDR auto exposure", 0.01f, 1.0f );
+idCVar r_hdrMinExposure( "r_hdrMinExposure", "0.25", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "minimum auto-exposure multiplier", 0.01f, 16.0f );
+idCVar r_hdrMaxExposure( "r_hdrMaxExposure", "8.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "maximum auto-exposure multiplier", 0.01f, 32.0f );
+idCVar r_hdrAdaptUpSpeed( "r_hdrAdaptUpSpeed", "3.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "adaptation speed when exposure needs to brighten", 0.01f, 16.0f );
+idCVar r_hdrAdaptDownSpeed( "r_hdrAdaptDownSpeed", "1.5", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "adaptation speed when exposure needs to darken", 0.01f, 16.0f );
+idCVar r_hdrHighlightDesaturation( "r_hdrHighlightDesaturation", "0.35", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "desaturate tone-mapped highlights before the final clamp", 0.0f, 1.0f );
+idCVar r_hdrGamutCompression( "r_hdrGamutCompression", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "compress saturated highlights before the final clamp", 0.0f, 4.0f );
+idCVar r_hdrSRGBTextures( "r_hdrSRGBTextures", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "experimental strict sRGB texture decode path; disabled by default until the full renderer is linearized" );
+idCVar r_hdrSRGB( "r_hdrSRGB", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "experimental final framebuffer sRGB conversion path; disabled by default until the full renderer is linearized" );
+idCVar r_hdrDebugView( "r_hdrDebugView", "0", CVAR_RENDERER | CVAR_INTEGER, "HDR debug view: 0 = off, 1 = pre-tonemap heatmap, 2 = log-luminance grayscale", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 idCVar r_crt( "r_crt", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable CRT monitor post-process" );
 idCVar r_crtAmount( "r_crtAmount", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "overall blend amount for the CRT monitor post-process", 0.0f, 1.0f );
 idCVar r_crtScanlineStrength( "r_crtScanlineStrength", "0.55", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "scanline intensity for the CRT monitor post-process", 0.0f, 1.0f );
@@ -247,6 +260,9 @@ idCVar r_shadowMapCascadeCount( "r_shadowMapCascadeCount", "4", CVAR_RENDERER | 
 idCVar r_shadowMapCascadeDistance( "r_shadowMapCascadeDistance", "1536", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "camera-space distance covered by the cropped projected-light cascades", 64.0f, 8192.0f );
 idCVar r_shadowMapCascadeLambda( "r_shadowMapCascadeLambda", "0.75", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "blend factor between uniform and logarithmic projected-light cascade splits", 0.0f, 1.0f );
 idCVar r_shadowMapCascadeBlend( "r_shadowMapCascadeBlend", "0.15", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "fraction of each projected-light cascade range used to blend into the next cascade", 0.0f, 0.5f );
+idCVar r_shadowMapDebugOverlay( "r_shadowMapDebugOverlay", "0", CVAR_RENDERER | CVAR_INTEGER,
+	"shadow-map overlay: 0 = off, 1 = show the selected shadow map as a top-left mini-map with stats",
+	0, 1, idCmdSystem::ArgCompletion_Integer<0, 1> );
 idCVar r_shadowMapDebugMode( "r_shadowMapDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
 	"projected shadow-map debug mode: 0 = off, 1 = atlas/depth, 2 = cascade index, 3 = projected UV, 4 = projected depth, 5 = projected w, 6 = invalid mask",
 	0, SHADOWMAP_DEBUGMODE_COUNT - 1, idCmdSystem::ArgCompletion_Integer<0, SHADOWMAP_DEBUGMODE_COUNT - 1> );
@@ -401,12 +417,20 @@ static void R_CheckPortableExtensions( void ) {
 	if ( GLEW_EXT_framebuffer_object || GLEW_ARB_framebuffer_object || glConfig.glVersion >= 3.0f ) {
 		glGetIntegerv( GL_MAX_COLOR_ATTACHMENTS_EXT, (GLint *)&glConfig.maxColorAttachments );
 	}
+	glConfig.textureSRGBAvailable =
+		( GLEW_EXT_texture_sRGB || glConfig.glVersion >= 2.1f );
+	glConfig.framebufferSRGBAvailable =
+		( GLEW_EXT_framebuffer_sRGB || GLEW_ARB_framebuffer_sRGB || glConfig.glVersion >= 3.0f );
 
 	// GL_ARB_texture_env_combine
 	glConfig.textureEnvCombineAvailable = R_CheckRequiredExtension( "GL_ARB_texture_env_combine" );
 
 	// GL_ARB_texture_cube_map
 	glConfig.cubeMapAvailable = R_CheckRequiredExtension( "GL_ARB_texture_cube_map" );
+	if ( glConfig.cubeMapAvailable && ( GLEW_ARB_seamless_cube_map || glConfig.glVersion >= 3.2f ) ) {
+		glEnable( GL_TEXTURE_CUBE_MAP_SEAMLESS );
+		common->Printf( "...enabled GL_TEXTURE_CUBE_MAP_SEAMLESS\n" );
+	}
 
 	// GL_ARB_texture_env_dot3
 	glConfig.envDot3Available = R_CheckRequiredExtension( "GL_ARB_texture_env_dot3" );

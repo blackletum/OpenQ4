@@ -4,7 +4,7 @@ uniform float bloomThreshold;
 uniform float bloomSoftKnee;
 
 float BrightContribution( vec3 color ) {
-	float brightness = max( max( color.r, color.g ), color.b );
+	float brightness = dot( color, vec3( 0.2126, 0.7152, 0.0722 ) );
 	float contribution = max( brightness - bloomThreshold, 0.0 );
 	float knee = max( bloomThreshold * bloomSoftKnee, 0.0 );
 	if ( knee > 0.0001 ) {

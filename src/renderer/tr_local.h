@@ -905,6 +905,7 @@ extern idCVar r_bloomThreshold;			// bloom bright-pass threshold
 extern idCVar r_bloomSoftKnee;			// relative bloom soft threshold knee
 extern idCVar r_bloomIntensity;			// bloom contribution scale
 extern idCVar r_bloomRadius;			// bloom sample radius scale
+extern idCVar r_bloomMipCount;			// number of bloom pyramid levels
 extern idCVar r_ssao;					// enable SSAO post-process
 extern idCVar r_ssaoRadius;			// SSAO sampling radius in view-space units
 extern idCVar r_ssaoBias;				// SSAO horizon bias in view-space units
@@ -913,6 +914,7 @@ extern idCVar r_ssaoPower;				// SSAO response curve
 extern idCVar r_ssaoMaxDistance;		// SSAO far-distance fade
 extern idCVar r_ssaoSamples;			// SSAO spiral sample count
 extern idCVar r_ssaoDebug;				// visualize SSAO only
+extern idCVar r_hdrSceneTarget;			// render the main scene into an HDR scene target before post-processing
 extern idCVar r_hdrToneMap;				// enable filmic tone mapping and color correction
 extern idCVar r_hdrExposure;			// tone-mapping exposure
 extern idCVar r_hdrWhitePoint;			// filmic white point for tone mapping
@@ -922,6 +924,17 @@ extern idCVar r_hdrGain;				// post-process gain when tone mapping is enabled
 extern idCVar r_hdrVibrance;			// post-process vibrance when tone mapping is enabled
 extern idCVar r_hdrSaturation;			// post-process saturation when tone mapping is enabled
 extern idCVar r_hdrContrast;			// post-process contrast when tone mapping is enabled
+extern idCVar r_hdrAutoExposure;		// automatically derive exposure from scene luminance
+extern idCVar r_hdrKeyValue;			// exposure key value used by auto exposure
+extern idCVar r_hdrMinExposure;			// minimum auto-exposure multiplier
+extern idCVar r_hdrMaxExposure;			// maximum auto-exposure multiplier
+extern idCVar r_hdrAdaptUpSpeed;		// adaptation speed when moving toward a brighter exposure
+extern idCVar r_hdrAdaptDownSpeed;		// adaptation speed when moving toward a darker exposure
+extern idCVar r_hdrHighlightDesaturation;	// desaturate highlights before the final clamp
+extern idCVar r_hdrGamutCompression;	// compress saturated highlights before the final clamp
+extern idCVar r_hdrSRGBTextures;		// store diffuse material textures in sRGB formats when available
+extern idCVar r_hdrSRGB;				// enable final framebuffer sRGB conversion when available
+extern idCVar r_hdrDebugView;			// 0 = off, 1 = pre-tonemap heatmap, 2 = log-luminance view
 extern idCVar r_crt;					// enable CRT monitor post-process
 extern idCVar r_crtAmount;				// overall CRT blend amount
 extern idCVar r_crtScanlineStrength;	// scanline intensity
@@ -1112,6 +1125,7 @@ extern idCVar r_shadowMapCascadeCount;		// number of projected-light cascades us
 extern idCVar r_shadowMapCascadeDistance;	// camera distance covered by cropped projected-light cascades
 extern idCVar r_shadowMapCascadeLambda;		// uniform/log split blend for projected-light cascades
 extern idCVar r_shadowMapCascadeBlend;		// transition width between projected-light cascades
+extern idCVar r_shadowMapDebugOverlay;		// 1 = show the selected shadow map as a top-left overlay with frame stats
 typedef enum {
 	SHADOWMAP_DEBUGMODE_OFF = 0,
 	SHADOWMAP_DEBUGMODE_ATLAS,

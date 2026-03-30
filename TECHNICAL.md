@@ -33,6 +33,7 @@ This status reflects compatibility with official Quake 4 assets (`q4base` PK4s),
 - ✅ **Screen Effects**: BSE-driven screen/camera effect paths used by stock content are operational
 - ✅ **Material Shaders**: Material handling compatibility restored to remove startup reliance on custom `q4base` material overrides
 - ✅ **Modern Display Handling**: Automatic aspect-ratio/FOV behavior, multi-monitor targeting, and desktop-native fullscreen paths integrated
+- ✅ **Steam Deck Runtime Path**: Linux SDL3 backend, controller/menu integration, and a dedicated `OpenQ4-steamdeck` launcher/profile are in place as of March 30, 2026
 - ✅ **Stock-Asset Validation Path**: Repeated validation loops with stock assets keep parser/runtime compatibility regressions visible and actionable
 - ✅ **Door/Trigger Script Progression Stability (OpenD3 Parity)**: Right-associative script compiler pointer-temp handling guards x64 storage width mismatches, preventing interpreter write corruption in affected trigger/door event chains
 
@@ -50,6 +51,7 @@ Current known regressions and follow-up work are tracked in [TODO.md](TODO.md) a
 OpenQ4/
 ├── OpenQ4-client_x64      # Main executable (.exe on Windows)
 ├── OpenQ4-ded_x64         # Dedicated server (.exe on Windows)
+├── OpenQ4-steamdeck       # Linux Steam Deck launcher
 └── openq4/                # Unified game directory
     ├── game-sp_x64        # Single-player module (.dll / .so / .dylib)
     └── game-mp_x64        # Multiplayer module (.dll / .so / .dylib)
@@ -131,11 +133,13 @@ OpenQ4 automatically validates your Quake 4 installation to ensure you have legi
 - `in_joystick` — Enable/disable gamepad input
 - `in_joystickDeadZone` — Analog stick dead zone
 - `in_joystickTriggerThreshold` — Trigger sensitivity
+- `com_platformProfile` — Startup profile selector (`default` or `steamdeck`)
 
 ### Features
 - Hotplug support — connect or disconnect a controller at any time
 - Dual-stick analog movement and look
 - Full button mapping support
+- `K_JOY7` and `K_JOY8` both open the in-game menu
 
 </details>
 
@@ -147,6 +151,8 @@ OpenQ4 automatically validates your Quake 4 installation to ensure you have legi
 2. Current working directory
 3. Steam installation
 4. GOG installation
+
+On Linux, Steam auto-discovery checks `~/.steam/steam`, `~/.local/share/Steam`, and the Flatpak Steam root at `~/.var/app/com.valvesoftware.Steam/.local/share/Steam`, then expands any extra libraries listed in `libraryfolders.vdf`.
 
 ### Path Variables
 - `fs_basepath` — Game installation directory (auto-detected)

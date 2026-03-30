@@ -66,6 +66,8 @@ typedef struct glconfig_s {
 	bool				drawRangeElementsAvailable;
 	bool				blendMinMaxAvailable;
 	bool				floatBufferAvailable;
+	bool				textureSRGBAvailable;
+	bool				framebufferSRGBAvailable;
 // RAVEN END
 	bool				ARBVertexBufferObjectAvailable;
 	bool				ARBVertexProgramAvailable;

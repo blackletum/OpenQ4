@@ -99,6 +99,7 @@ Pass any of these with `-D<option>=<value>` on the `meson setup` command line:
 | `build_games` | `true` | Build game modules |
 | `build_game_sp` | `true` | Build single-player game module |
 | `build_game_mp` | `true` | Build multiplayer game module |
+| `platform_backend` | platform-dependent | `sdl3` or `legacy_win32` on Windows, `sdl3` or `native` on Linux, `native` on macOS |
 | `version_track` | `dev` | Build track label (`stable`, `dev`, `nightly`, `beta`, `rc`) |
 | `version_iteration` | *(auto)* | Dot-separated iteration counter for pre-release builds |
 | `enforce_msvc_2026` | `false` | Enforce MSVC 2026+ requirement (Windows only) |
@@ -150,7 +151,7 @@ meson compile -C builddir
 ## Building on Linux / macOS
 
 > [!NOTE]
-> The Linux runtime currently uses an X11/GLX path. On Wayland desktops, run OpenQ4 through XWayland (`DISPLAY` must be set).
+> As of March 30, 2026, Linux defaults to the SDL3 backend. `-Dplatform_backend=native` remains available as the fallback Linux path. On Steam Deck or other mixed Wayland/X11 sessions, `OpenQ4-steamdeck` prefers XWayland when both `WAYLAND_DISPLAY` and `DISPLAY` are present.
 
 ### Debug Build
 
@@ -164,6 +165,8 @@ bash tools/build/meson_setup.sh compile -C builddir
 # 3. Run directly from builddir
 ./builddir/OpenQ4-client_x64
 ```
+
+Use `-Dplatform_backend=native` during setup if you need to compare against the legacy Linux X11/GLX backend.
 
 ### Release Build
 
@@ -200,12 +203,16 @@ After running the install step, `.install/` is a self-contained distributable pa
 
 ```
 .install/
-├── OpenQ4-client_x64.exe       # Main executable
-├── OpenQ4-ded_x64.exe          # Dedicated server
+├── OpenQ4-client_x64[.exe]     # Main executable
+├── OpenQ4-ded_x64[.exe]        # Dedicated server
+├── OpenQ4-steamdeck            # (Linux) Steam Deck launcher
 ├── OpenAL32.dll                # (Windows) runtime dependency
+├── share/applications/         # (Linux) desktop entries
 └── openq4/
-    ├── game-sp_x64.dll         # Single-player module
-    └── game-mp_x64.dll         # Multiplayer module
+    ├── game-sp_x64[.dll/.so/.dylib]   # Single-player module
+    ├── game-mp_x64[.dll/.so/.dylib]   # Multiplayer module
+    ├── openq4_defaults.cfg            # OpenQ4-owned default binds
+    └── openq4_profile_steamdeck.cfg   # Steam Deck profile overrides
 ```
 
 > [!NOTE]

@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "../../sys/win32/rc/guied_resource.h"
 #include "../../renderer/tr_local.h"
+#include "../common/ToolGL.h"
 
 #include "GEApp.h"
 #include "GEViewer.h"
@@ -449,21 +450,8 @@ Setup the pixel format for the opengl context
 */
 bool rvGEViewer::SetupPixelFormat ( void )
 {
-	HDC	 hDC    = GetDC ( mWnd );
-	bool result = true;
-
-	int pixelFormat = ChoosePixelFormat(hDC, &win32.pfd);
-	if (pixelFormat > 0) 
-	{
-		if (SetPixelFormat(hDC, pixelFormat, &win32.pfd) == NULL) 
-		{
-			result = false;
-		}
-	}
-	else 
-	{
-		result = false;
-	}
+	HDC hDC = GetDC( mWnd );
+	const bool result = ToolGL_SetupPixelFormat( hDC, false );
 	
 	ReleaseDC ( mWnd, hDC );
 
@@ -482,6 +470,8 @@ void rvGEViewer::Render	( HDC dc )
 		common->Printf("Please restart Q3Radiant if the Map view is not working\n");
 	    return;
 	}
+
+	const GLboolean multisampleWasEnabled = ToolGL_DisableMultisampleForEditor();
 
 	if ( !mPaused )
 	{
@@ -538,6 +528,7 @@ void rvGEViewer::Render	( HDC dc )
 
 	qglFinish ( );
 	qwglSwapBuffers(dc);
+	ToolGL_RestoreMultisampleForEditor( multisampleWasEnabled );
 }
 
 void rvGEViewer::RunFrame ( void )

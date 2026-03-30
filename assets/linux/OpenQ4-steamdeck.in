@@ -1,0 +1,8 @@
+#!/bin/sh
+
+if [ -z "${SDL_VIDEODRIVER:-}" ] && [ -n "${WAYLAND_DISPLAY:-}" ] && [ -n "${DISPLAY:-}" ]; then
+	export SDL_VIDEODRIVER=x11
+fi
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+exec "$SCRIPT_DIR/@OPENQ4_CLIENT_BINARY@" +set com_platformProfile steamdeck "$@"

@@ -35,6 +35,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "io.h"
 
 #include "../../renderer/tr_local.h"
+#include "../common/ToolGL.h"
 
 #ifdef _DEBUG
 	#define new DEBUG_NEW
@@ -257,6 +258,7 @@ void CNewTexWnd::OnPaint() {
 		common->Printf("ERROR: wglMakeCurrent failed..\n ");
 	}
 	else {
+		const GLboolean multisampleWasEnabled = ToolGL_DisableMultisampleForEditor();
 		const char	*name;
 		qglClearColor
 		(
@@ -362,6 +364,7 @@ void CNewTexWnd::OnPaint() {
 		globalImages->BindNull();
 		qglFinish();
 		qwglSwapBuffers(dc.GetSafeHdc());
+		ToolGL_RestoreMultisampleForEditor( multisampleWasEnabled );
 		TRACE("Texture Paint\n");
 	}
 

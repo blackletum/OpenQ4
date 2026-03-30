@@ -76,6 +76,56 @@ static void R_TouchShadowMapCache( vertCache_t *cache ) {
 	}
 }
 
+static bool R_ShouldSkipPointLightEmitterCaster( const idMaterial *shadowShader, const srfTriangles_t *ambientTris, const idVec3 &localLightOrigin, const idVec3 &localLightRadius ) {
+	if ( shadowShader == NULL || ambientTris == NULL ) {
+		return false;
+	}
+	if ( shadowShader->GetName() == NULL || idStr::Icmpn( shadowShader->GetName(), "textures/common_lights/", 23 ) != 0 ) {
+		return false;
+	}
+	if ( ambientTris->verts == NULL || ambientTris->indexes == NULL || ambientTris->numIndexes < 3 ) {
+		return false;
+	}
+
+	idPlane plane;
+	bool havePlane = false;
+	for ( int i = 0; i + 2 < ambientTris->numIndexes; i += 3 ) {
+		const int i0 = ambientTris->indexes[i + 0];
+		const int i1 = ambientTris->indexes[i + 1];
+		const int i2 = ambientTris->indexes[i + 2];
+		if ( i0 < 0 || i1 < 0 || i2 < 0 || i0 >= ambientTris->numVerts || i1 >= ambientTris->numVerts || i2 >= ambientTris->numVerts ) {
+			continue;
+		}
+
+		const idVec3 &p0 = ambientTris->verts[i0].xyz;
+		const idVec3 &p1 = ambientTris->verts[i1].xyz;
+		const idVec3 &p2 = ambientTris->verts[i2].xyz;
+		idVec3 normal = ( p1 - p0 ).Cross( p2 - p0 );
+		if ( normal.LengthSqr() <= Square( 1.0e-6f ) ) {
+			continue;
+		}
+
+		normal.Normalize();
+		plane.SetNormal( normal );
+		plane[3] = -( normal * p0 );
+		havePlane = true;
+		break;
+	}
+
+	if ( !havePlane ) {
+		return false;
+	}
+
+	const float minLightRadius = Max( 1.0f, Min( localLightRadius.x, Min( localLightRadius.y, localLightRadius.z ) ) );
+	const float emitterPlaneThreshold = idMath::ClampFloat( 24.0f, 192.0f, minLightRadius * 0.75f );
+	const float emitterBoundsPad = idMath::ClampFloat( 16.0f, 64.0f, minLightRadius * 0.25f );
+	if ( idMath::Fabs( plane.Distance( localLightOrigin ) ) > emitterPlaneThreshold ) {
+		return false;
+	}
+
+	return ambientTris->bounds.Expand( emitterBoundsPad ).ContainsPoint( localLightOrigin );
+}
+
 /*
 ================
 R_CalcInteractionFacing
@@ -1253,11 +1303,18 @@ void idInteraction::AddActiveInteraction( void ) {
 			glConfig.maxDrawBuffers >= 3 &&
 			glConfig.maxColorAttachments >= 3 &&
 			( !vLight->pointLight || glConfig.cubeMapAvailable );
+		const bool skipPointLightEmitterCaster =
+			vLight->pointLight &&
+			R_ShouldSkipPointLightEmitterCaster( shadowShader, sint->ambientTris, localLightOrigin, lightDef->parms.lightRadius );
 		const bool allowShadowMapCaster =
 			!entityDef->parms.noShadow &&
 			!isViewOnlyEntity &&
 			vEntity->modelDepthHack == 0.0f &&
 			sint->ambientTris != NULL &&
+			// Thin emissive panels can sit directly on their owning point-light origin,
+			// which creates long bogus wedge occluders. Reject only that geometric case
+			// instead of blanketing the entire textures/common_lights family.
+			!skipPointLightEmitterCaster &&
 			shadowShader->Coverage() != MC_TRANSLUCENT &&
 			shadowShader->SurfaceCastsShadow() &&
 			!shadowShader->HasGui() &&

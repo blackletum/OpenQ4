@@ -93,6 +93,7 @@ idCVar com_updateLoadSize( "com_updateLoadSize", "0", CVAR_BOOL | CVAR_SYSTEM | 
 idCVar com_videoRam( "com_videoRam", "64", CVAR_INTEGER | CVAR_SYSTEM | CVAR_NOCHEAT | CVAR_ARCHIVE, "holds the last amount of detected video ram" );
 idCVar com_activeGameModule( "com_activeGameModule", "", CVAR_SYSTEM, "active game module (game_sp/game_mp)" );
 idCVar com_nextGameModule( "com_nextGameModule", "", CVAR_SYSTEM, "internal one-shot game module override for reloadEngine" );
+idCVar com_platformProfile( "com_platformProfile", "default", CVAR_SYSTEM | CVAR_INIT, "startup platform profile (default or steamdeck)" );
 
 idCVar com_product_lang_ext( "com_product_lang_ext", "1", CVAR_INTEGER | CVAR_SYSTEM | CVAR_ARCHIVE, "Extension to use when creating language files." );
 idCVar r_skipGlowOverlay( "r_skipGlowOverlay", "0", CVAR_ARCHIVE | CVAR_RENDERER, "skip glow overlays when non-zero" );
@@ -239,6 +240,31 @@ private:
 	void						ParseCommandLine( int argc, const char **argv );
 	void						ClearCommandLine( void );
 	bool						SafeMode( void );
+
+static idStr Common_BuildPlatformProfileConfigName( const char *profileName ) {
+	idStr profile = profileName;
+	idStr sanitized;
+
+	for ( int i = 0; i < profile.Length(); ++i ) {
+		const char c = profile[i];
+		if ( ( c >= 'a' && c <= 'z' ) ||
+			( c >= 'A' && c <= 'Z' ) ||
+			( c >= '0' && c <= '9' ) ||
+			c == '_' || c == '-' ) {
+			sanitized.Append( c );
+		}
+	}
+	sanitized.ToLower();
+
+	if ( sanitized.Length() == 0 || sanitized.Icmp( "default" ) == 0 ) {
+		return "";
+	}
+	if ( sanitized.Icmp( "steamdeck" ) != 0 ) {
+		return "";
+	}
+
+	return va( "openq4_profile_%s.cfg", sanitized.c_str() );
+}
 	void						CheckToolMode( void );
 	void						CloseLogFile( void );
 	void						WriteConfiguration( void );
@@ -3323,6 +3349,13 @@ void idCommonLocal::InitGame( void ) {
 		cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "exec editor.cfg\n" );
 	}
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "exec default.cfg\n" );
+	if ( fileSystem->ReadFile( "openq4_defaults.cfg", NULL ) >= 0 ) {
+		cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "exec openq4_defaults.cfg\n" );
+	}
+	const idStr platformProfileConfig = Common_BuildPlatformProfileConfigName( com_platformProfile.GetString() );
+	if ( platformProfileConfig.Length() > 0 && fileSystem->ReadFile( platformProfileConfig, NULL ) >= 0 ) {
+		cmdSystem->BufferCommandText( CMD_EXEC_APPEND, va( "exec %s\n", platformProfileConfig.c_str() ) );
+	}
 
 	// skip the config file if "safe" is on the command line
 	if ( !SafeMode() ) {

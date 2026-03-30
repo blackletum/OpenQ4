@@ -456,7 +456,7 @@ function Remove-NonRuntimeInstallArtifacts {
         }
     }
 
-    foreach ($dirName in @("crashes", "share")) {
+    foreach ($dirName in @("crashes")) {
         $dirPath = Join-Path $InstallRoot $dirName
         if (Test-Path $dirPath) {
             Write-Host "Removing non-runtime staged directory '$dirPath'"
@@ -470,7 +470,6 @@ function Remove-NonRuntimeInstallArtifacts {
     }
 
     $openQ4Patterns = @(
-        "*.cfg",
         "*.pdb",
         "*.lib",
         "*.exp",

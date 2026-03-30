@@ -22,7 +22,12 @@ along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 ===========================================================================
 */
 
+#if defined(OPENQ4_SDL3_LINUX_HOST)
+#include "../linux/local.h"
+#include "../posix/posix_public.h"
+#else
 #include "win_local.h"
+#endif
 #include "../../framework/Common.h"
 #include "../../framework/Session.h"
 #include "../../renderer/tr_local.h"
@@ -32,6 +37,58 @@ along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 #include <cmath>
 #include <cstdint>
 
+#if defined(OPENQ4_SDL3_LINUX_HOST)
+struct LinuxSDL3Compat_t {
+	void *hWnd;
+	void *hDC;
+	void *hGLRC;
+	bool activeApp;
+	bool mouseReleased;
+	bool movingWindow;
+	bool mouseGrabbed;
+	int desktopBitsPixel;
+	int desktopWidth;
+	int desktopHeight;
+	bool cdsFullscreen;
+	void (*glimpRenderThread)(void);
+	void *smpData;
+	int wglErrors;
+	idCVar in_mouse;
+	idCVar win_xpos;
+	idCVar win_ypos;
+
+	LinuxSDL3Compat_t()
+		: hWnd(NULL)
+		, hDC(NULL)
+		, hGLRC(NULL)
+		, activeApp(true)
+		, mouseReleased(false)
+		, movingWindow(false)
+		, mouseGrabbed(false)
+		, desktopBitsPixel(32)
+		, desktopWidth(1920)
+		, desktopHeight(1080)
+		, cdsFullscreen(false)
+		, glimpRenderThread(NULL)
+		, smpData(NULL)
+		, wglErrors(0)
+		, in_mouse("in_mouse", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "enable mouse input")
+		, win_xpos("win_xpos", "50", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER, "horizontal position of window")
+		, win_ypos("win_ypos", "50", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER, "vertical position of window") {
+	}
+};
+
+static LinuxSDL3Compat_t win32;
+
+static inline void Sys_QueEventCompat(int time, sysEventType_t type, int value, int value2, int ptrLength, void *ptr) {
+	(void)time;
+	Posix_QueEvent(type, value, value2, ptrLength, ptr);
+}
+
+#define Sys_QueEvent Sys_QueEventCompat
+#endif
+
+#if !defined(OPENQ4_SDL3_LINUX_HOST)
 // WGL_ARB_extensions_string
 PFNWGLGETEXTENSIONSSTRINGARBPROC wglGetExtensionsStringARB;
 
@@ -54,6 +111,7 @@ PFNWGLQUERYPBUFFERARBPROC wglQueryPbufferARB;
 PFNWGLBINDTEXIMAGEARBPROC wglBindTexImageARB;
 PFNWGLRELEASETEXIMAGEARBPROC wglReleaseTexImageARB;
 PFNWGLSETPBUFFERATTRIBARBPROC wglSetPbufferAttribARB;
+#endif
 
 static SDL_Window *s_sdlWindow = NULL;
 static SDL_GLContext s_sdlContext = NULL;
@@ -199,6 +257,51 @@ static int SDL3_EventMilliseconds(Uint64 timestampNs) {
 		return static_cast<int>(SDL3_MAX_EVENT_MS);
 	}
 	return static_cast<int>(timeMs);
+}
+
+static bool SDL3_DecodeNextUTF8Codepoint(const char *text, int &index, int &codepoint) {
+	const unsigned char lead = static_cast<unsigned char>(text[index]);
+	if (lead == '\0') {
+		codepoint = 0;
+		return false;
+	}
+
+	if (lead < 0x80) {
+		codepoint = lead;
+		++index;
+		return true;
+	}
+
+	int needed = 0;
+	int value = 0;
+	if ((lead & 0xE0) == 0xC0) {
+		needed = 1;
+		value = lead & 0x1F;
+	} else if ((lead & 0xF0) == 0xE0) {
+		needed = 2;
+		value = lead & 0x0F;
+	} else if ((lead & 0xF8) == 0xF0) {
+		needed = 3;
+		value = lead & 0x07;
+	} else {
+		codepoint = lead;
+		++index;
+		return true;
+	}
+
+	for (int i = 1; i <= needed; ++i) {
+		const unsigned char next = static_cast<unsigned char>(text[index + i]);
+		if ((next & 0xC0) != 0x80) {
+			codepoint = lead;
+			++index;
+			return true;
+		}
+		value = (value << 6) | (next & 0x3F);
+	}
+
+	index += needed + 1;
+	codepoint = value;
+	return true;
 }
 
 static void SDL3_ClearInputQueues(void) {
@@ -1857,6 +1960,10 @@ static bool SDL3_ApplyScreenParms(glimpParms_t parms) {
 }
 
 static void SDL3_LoadWGLExtensions(void) {
+#if defined(OPENQ4_SDL3_LINUX_HOST)
+	glConfig.wgl_extensions_string = "";
+	r_swapInterval.SetModified();
+#else
 	wglGetExtensionsStringARB = (PFNWGLGETEXTENSIONSSTRINGARBPROC)GLimp_ExtensionPointer("wglGetExtensionsStringARB");
 	if (wglGetExtensionsStringARB && win32.hDC) {
 		glConfig.wgl_extensions_string = (const char *)wglGetExtensionsStringARB(win32.hDC);
@@ -1880,6 +1987,7 @@ static void SDL3_LoadWGLExtensions(void) {
 	wglBindTexImageARB = (PFNWGLBINDTEXIMAGEARBPROC)GLimp_ExtensionPointer("wglBindTexImageARB");
 	wglReleaseTexImageARB = (PFNWGLRELEASETEXIMAGEARBPROC)GLimp_ExtensionPointer("wglReleaseTexImageARB");
 	wglSetPbufferAttribARB = (PFNWGLSETPBUFFERATTRIBARBPROC)GLimp_ExtensionPointer("wglSetPbufferAttribARB");
+#endif
 }
 
 static void SDL3_InitDesktopMode(void) {
@@ -1898,6 +2006,11 @@ static void SDL3_InitDesktopMode(void) {
 }
 
 static void SDL3_UpdateNativeWindowHandles(void) {
+#if defined(OPENQ4_SDL3_LINUX_HOST)
+	win32.hWnd = NULL;
+	win32.hDC = NULL;
+	win32.hGLRC = s_sdlContext;
+#else
 	win32.hWnd = NULL;
 	win32.hDC = NULL;
 	win32.hGLRC = NULL;
@@ -1913,6 +2026,7 @@ static void SDL3_UpdateNativeWindowHandles(void) {
 
 	win32.hWnd = (HWND)SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
 	win32.hDC = (HDC)SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_HDC_POINTER, NULL);
+#endif
 }
 
 static void SDL3_HandleWindowEvent(const SDL_WindowEvent &event, int eventTime) {
@@ -2062,9 +2176,12 @@ bool Sys_SDL_PumpEvents(void) {
 
 			case SDL_EVENT_TEXT_INPUT: {
 				const char *text = event.text.text;
-				for (int i = 0; text[i] != '\0'; ++i) {
-					const unsigned char ch = static_cast<unsigned char>(text[i]);
-					Sys_QueEvent(eventTime, SE_CHAR, ch, 0, 0, NULL);
+				for (int i = 0; text[i] != '\0'; ) {
+					int codepoint = 0;
+					if (!SDL3_DecodeNextUTF8Codepoint(text, i, codepoint) || codepoint == 0) {
+						break;
+					}
+					Sys_QueEvent(eventTime, SE_CHAR, codepoint, 0, 0, NULL);
 				}
 				break;
 			}
@@ -2566,6 +2683,9 @@ void Sys_EndKeyboardInputEvents(void) {
 }
 
 int Sys_PollMouseInputEvents(void) {
+#if defined(OPENQ4_SDL3_LINUX_HOST)
+	(void)Sys_SDL_PumpEvents();
+#endif
 	Sys_EnterCriticalSection(CRITICAL_SECTION_ONE);
 
 	s_polledMouseCount = 0;
@@ -2726,7 +2846,11 @@ bool GLimp_Init(glimpParms_t parms) {
 		return false;
 	}
 
+#if defined(OPENQ4_SDL3_LINUX_HOST)
+	driverName = r_glDriver.GetString()[0] ? r_glDriver.GetString() : "libGL.so.1";
+#else
 	driverName = r_glDriver.GetString()[0] ? r_glDriver.GetString() : "opengl32";
+#endif
 	if (!QGL_Init(driverName)) {
 		common->Printf("^3GLimp_Init() could not load r_glDriver \"%s\"^0\n", driverName);
 		GLimp_Shutdown();
@@ -2829,6 +2953,10 @@ static void GLimp_RenderThreadWrapper(void) {
 }
 
 bool GLimp_SpawnRenderThread(void (*function)(void)) {
+#if defined(OPENQ4_SDL3_LINUX_HOST)
+	(void)function;
+	return false;
+#else
 	SYSTEM_INFO info;
 
 	GetSystemInfo(&info);
@@ -2855,9 +2983,13 @@ bool GLimp_SpawnRenderThread(void (*function)(void)) {
 
 	SetThreadPriority(win32.renderThreadHandle, THREAD_PRIORITY_ABOVE_NORMAL);
 	return true;
+#endif
 }
 
 void *GLimp_BackEndSleep(void) {
+#if defined(OPENQ4_SDL3_LINUX_HOST)
+	return NULL;
+#else
 	void *data;
 
 	ResetEvent(win32.renderActiveEvent);
@@ -2870,13 +3002,19 @@ void *GLimp_BackEndSleep(void) {
 	SetEvent(win32.renderActiveEvent);
 
 	return data;
+#endif
 }
 
 void GLimp_FrontEndSleep(void) {
+#if !defined(OPENQ4_SDL3_LINUX_HOST)
 	WaitForSingleObject(win32.renderCompletedEvent, INFINITE);
+#endif
 }
 
 void GLimp_WakeBackEnd(void *data) {
+#if defined(OPENQ4_SDL3_LINUX_HOST)
+	(void)data;
+#else
 	int r;
 
 	win32.smpData = data;
@@ -2896,6 +3034,7 @@ void GLimp_WakeBackEnd(void *data) {
 	if (r == WAIT_TIMEOUT) {
 		common->FatalError("GLimp_WakeBackEnd: WAIT_TIMEOUT");
 	}
+#endif
 }
 
 void GLimp_ActivateContext(void) {
@@ -2921,9 +3060,11 @@ void GLimp_DeactivateContext(void) {
 
 void *GLimp_ExtensionPointer(const char *name) {
 	void *proc = (void *)SDL_GL_GetProcAddress(name);
+#if !defined(OPENQ4_SDL3_LINUX_HOST)
 	if (!proc && qwglGetProcAddress) {
 		proc = (void *)qwglGetProcAddress(name);
 	}
+#endif
 
 	if (!proc) {
 		common->Printf("Couldn't find proc address for: %s\n", name);

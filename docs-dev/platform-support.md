@@ -20,7 +20,9 @@ This document defines the long-term platform direction for OpenQ4 and how SDL3 +
 - Platform backend direction: SDL3-first (legacy Win32 backend is transitional only).
 - Language baseline target: C++23 semantics (`vc++latest` on current MSVC Meson front-end).
 - Toolchain baseline direction: MSVC 19.46+ (Visual Studio 2026 generation), with compatibility fallback permitted during migration.
-- Linux runtime stack today is X11/GLX. Wayland sessions currently rely on XWayland.
+- As of March 30, 2026, Linux defaults to the SDL3 backend and keeps `-Dplatform_backend=native` as a fallback path.
+- Steam Deck support is delivered through the explicit `OpenQ4-steamdeck` launcher/profile, not hardware auto-detection.
+- When both `WAYLAND_DISPLAY` and `DISPLAY` are available, the Steam Deck launcher prefers XWayland by exporting `SDL_VIDEODRIVER=x11` unless the user already set an SDL video driver.
 
 ## SDL3 Direction
 
@@ -43,15 +45,15 @@ This document defines the long-term platform direction for OpenQ4 and how SDL3 +
 ## Bring-Up Staging
 
 1. Keep Windows x64 stable with SDL3 default backend.
-2. Incrementally wire Linux build/source selection and validation into Meson.
+2. Keep Linux on the SDL3 backend by default and retain `native` as the rollback path while validation broadens.
 3. Incrementally wire macOS build/source selection and validation into Meson.
 4. Promote Linux and macOS to first-class once they pass consistent compile/link/runtime validation loops.
 
 ## SDL3 Migration Staging (Linux/macOS)
 
-- `-Dplatform_backend=sdl3` is accepted on non-Windows as a staging selector for CI and command-line alignment.
-- Non-Windows currently maps `platform_backend=sdl3` to native platform sources while SDL3 backend migration work is implemented.
-- This keeps one backend vocabulary across platforms without regressing current Linux/macOS runtime behavior.
+- Linux now uses a real SDL3 runtime path when `-Dplatform_backend=sdl3` is selected, and that is the default Linux configuration as of March 30, 2026.
+- macOS still maps `platform_backend=sdl3` to native platform sources until its SDL3 runtime path is implemented.
+- This keeps one backend vocabulary across platforms while allowing Linux to validate the shared SDL3 stack directly.
 
 ## Definition Of Done For First-Class Platform Support
 

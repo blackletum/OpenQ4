@@ -96,6 +96,25 @@ float ResolveTranslucentShadowMoments( vec4 moments, float depth ) {
 	return exp( -min( tau * max( uTranslucentShadowDensity, 0.0 ), 16.0 ) );
 }
 
+vec2 ShadowAtlasGuardBand() {
+	float guardRadius = max( 0.5, uShadowFilterRadius + 0.75 );
+	return uShadowTexelSize * guardRadius;
+}
+
+vec4 SampleFilteredMoments( sampler2D momentMap, vec2 uv, vec2 clampMin, vec2 clampMax ) {
+	if ( uShadowFilterRadius <= 0.0 ) {
+		return texture2D( momentMap, uv );
+	}
+
+	vec2 tap = uShadowTexelSize * max( uShadowFilterRadius, 0.5 );
+	vec4 moments = texture2D( momentMap, uv );
+	moments += texture2D( momentMap, clamp( uv + vec2( -0.5, -0.5 ) * tap, clampMin, clampMax ) );
+	moments += texture2D( momentMap, clamp( uv + vec2( 0.5, -0.5 ) * tap, clampMin, clampMax ) );
+	moments += texture2D( momentMap, clamp( uv + vec2( -0.5, 0.5 ) * tap, clampMin, clampMax ) );
+	moments += texture2D( momentMap, clamp( uv + vec2( 0.5, 0.5 ) * tap, clampMin, clampMax ) );
+	return moments * 0.2;
+}
+
 float CascadeBiasScale( int cascadeIndex ) {
 	if ( cascadeIndex <= 0 ) {
 		return uShadowCascadeBiasScale[0];
@@ -148,8 +167,9 @@ vec4 SampleShadowCascade( vec4 shadowCoord, vec4 atlasRect, int cascadeIndex ) {
 	vec2 atlasMin = atlasRect.xy;
 	vec2 atlasMax = atlasRect.zw;
 	vec2 uv = atlasMin + localUv * ( atlasMax - atlasMin );
-	vec2 clampMin = atlasMin + uShadowTexelSize * 1.5;
-	vec2 clampMax = atlasMax - uShadowTexelSize * 1.5;
+	vec2 guardBand = ShadowAtlasGuardBand();
+	vec2 clampMin = atlasMin + guardBand;
+	vec2 clampMax = atlasMax - guardBand;
 	clampMin = min( clampMin, clampMax );
 	uv = clamp( uv, clampMin, clampMax );
 
@@ -195,15 +215,16 @@ vec3 SampleTranslucentShadowCascade( vec4 shadowCoord, vec4 atlasRect ) {
 	vec2 atlasMin = atlasRect.xy;
 	vec2 atlasMax = atlasRect.zw;
 	vec2 uv = atlasMin + localUv * ( atlasMax - atlasMin );
-	vec2 clampMin = atlasMin + uShadowTexelSize * 0.5;
-	vec2 clampMax = atlasMax - uShadowTexelSize * 0.5;
+	vec2 guardBand = ShadowAtlasGuardBand();
+	vec2 clampMin = atlasMin + guardBand;
+	vec2 clampMax = atlasMax - guardBand;
 	clampMin = min( clampMin, clampMax );
 	uv = clamp( uv, clampMin, clampMax );
 
 	return vec3(
-		ResolveTranslucentShadowMoments( texture2D( uTranslucentShadowMapR, uv ), depth ),
-		ResolveTranslucentShadowMoments( texture2D( uTranslucentShadowMapG, uv ), depth ),
-		ResolveTranslucentShadowMoments( texture2D( uTranslucentShadowMapB, uv ), depth ) );
+		ResolveTranslucentShadowMoments( SampleFilteredMoments( uTranslucentShadowMapR, uv, clampMin, clampMax ), depth ),
+		ResolveTranslucentShadowMoments( SampleFilteredMoments( uTranslucentShadowMapG, uv, clampMin, clampMax ), depth ),
+		ResolveTranslucentShadowMoments( SampleFilteredMoments( uTranslucentShadowMapB, uv, clampMin, clampMax ), depth ) );
 }
 
 float CascadeSplitDepth( int index ) {

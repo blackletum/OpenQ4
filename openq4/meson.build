@@ -64,6 +64,12 @@ if build_games and build_game_mp
   endif
 endif
 
+install_data(
+  'openq4_defaults.cfg',
+  'openq4_profile_steamdeck.cfg',
+  install_dir: install_openq4_dir,
+)
+
 install_subdir(
   'materials',
   install_dir: install_openq4_dir,

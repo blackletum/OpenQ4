@@ -38,6 +38,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "../../ui/BindWindow.h"
 #include "../../ui/RenderWindow.h"
 #include "../../ui/ChoiceWindow.h"
+#include "../common/ToolGL.h"
 
 #include "GEApp.h"
 #include "GEItemPropsDlg.h"
@@ -175,21 +176,8 @@ Setup the pixel format for the opengl context
 */
 bool rvGEWorkspace::SetupPixelFormat ( void )
 {
-	HDC	 hDC    = GetDC ( mWnd );
-	bool result = true;
-
-	int pixelFormat = ChoosePixelFormat(hDC, &win32.pfd);
-	if (pixelFormat > 0) 
-	{
-		if (SetPixelFormat(hDC, pixelFormat, &win32.pfd) == NULL) 
-		{
-			result = false;
-		}
-	}
-	else 
-	{
-		result = false;
-	}
+	HDC hDC = GetDC( mWnd );
+	const bool result = ToolGL_SetupPixelFormat( hDC, false );
 	
 	ReleaseDC ( mWnd, hDC );
 
@@ -278,6 +266,8 @@ void rvGEWorkspace::Render ( HDC hdc )
 	    return;
 	}
 
+	const GLboolean multisampleWasEnabled = ToolGL_DisableMultisampleForEditor();
+
 	// Prepare the view and clear it
 	GL_State( GLS_DEFAULT );
 	qglViewport(0, 0, mWindowWidth, mWindowHeight );
@@ -349,6 +339,7 @@ void rvGEWorkspace::Render ( HDC hdc )
 	
 	qglFinish ( );
 	qwglSwapBuffers(hdc);
+	ToolGL_RestoreMultisampleForEditor( multisampleWasEnabled );
 
 	qglEnable( GL_TEXTURE_CUBE_MAP_EXT );
 	qglEnable( GL_CULL_FACE);

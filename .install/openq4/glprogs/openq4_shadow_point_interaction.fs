@@ -67,6 +67,23 @@ float ResolveTranslucentShadowMoments( vec4 moments, float depth ) {
 	return exp( -min( tau * max( uTranslucentShadowDensity, 0.0 ), 16.0 ) );
 }
 
+vec4 SampleFilteredPointMoments( samplerCube momentMap, vec3 direction ) {
+	if ( uShadowFilterRadius <= 0.0 || uPointShadowTexelScale <= 0.0 ) {
+		return textureCube( momentMap, direction );
+	}
+
+	vec3 up = ( abs( direction.z ) < 0.99 ) ? vec3( 0.0, 0.0, 1.0 ) : vec3( 0.0, 1.0, 0.0 );
+	vec3 tangent = SafeNormalize( cross( up, direction ) );
+	vec3 bitangent = cross( direction, tangent );
+	float tap = uPointShadowTexelScale * max( uShadowFilterRadius, 0.5 );
+	vec4 moments = textureCube( momentMap, direction );
+	moments += textureCube( momentMap, SafeNormalize( direction + ( tangent * -0.5 + bitangent * -0.5 ) * tap ) );
+	moments += textureCube( momentMap, SafeNormalize( direction + ( tangent * 0.5 + bitangent * -0.5 ) * tap ) );
+	moments += textureCube( momentMap, SafeNormalize( direction + ( tangent * -0.5 + bitangent * 0.5 ) * tap ) );
+	moments += textureCube( momentMap, SafeNormalize( direction + ( tangent * 0.5 + bitangent * 0.5 ) * tap ) );
+	return moments * 0.2;
+}
+
 float ShadowReceiverBias() {
 	float lightCos = clamp( vShadowLightCos, 0.0, 1.0 );
 	float slopeBias = sqrt( max( 1.0 - lightCos * lightCos, 0.0 ) );
@@ -132,9 +149,9 @@ vec3 SamplePointTranslucentShadow() {
 
 	vec3 direction = SafeNormalize( vPointShadowVector );
 	return vec3(
-		ResolveTranslucentShadowMoments( textureCube( uPointTranslucentShadowMapR, direction ), depth ),
-		ResolveTranslucentShadowMoments( textureCube( uPointTranslucentShadowMapG, direction ), depth ),
-		ResolveTranslucentShadowMoments( textureCube( uPointTranslucentShadowMapB, direction ), depth ) );
+		ResolveTranslucentShadowMoments( SampleFilteredPointMoments( uPointTranslucentShadowMapR, direction ), depth ),
+		ResolveTranslucentShadowMoments( SampleFilteredPointMoments( uPointTranslucentShadowMapG, direction ), depth ),
+		ResolveTranslucentShadowMoments( SampleFilteredPointMoments( uPointTranslucentShadowMapB, direction ), depth ) );
 }
 
 void main() {

@@ -229,7 +229,7 @@ remove_non_runtime_install_artifacts() {
     [[ -d "${install_openq4_dir}" ]] || return
 
     find "${install_openq4_dir}" -maxdepth 1 -type f \
-        \( -name '*.cfg' -o -name '*.pdb' -o -name '*.lib' -o -name '*.exp' -o -name '*.ilk' -o -name '*.map' \) \
+        \( -name '*.pdb' -o -name '*.lib' -o -name '*.exp' -o -name '*.ilk' -o -name '*.map' \) \
         -print | while IFS= read -r match; do
             [[ -n "${match}" ]] || continue
             echo "Removing non-runtime staged artifact '${match}'"

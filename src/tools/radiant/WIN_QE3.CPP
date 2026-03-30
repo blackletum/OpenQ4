@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "qe3.h"
 #include "mru.h"
+#include "../common/ToolGL.h"
 
 extern CEdit				*g_pEdit;
 
@@ -174,68 +175,12 @@ void PrintPixels(HDC hDC) {
  */
 int WINAPI QEW_SetupPixelFormat(HDC hDC, bool zbuffer)
 {
-#if 1
-
-	int pixelFormat = ChoosePixelFormat(hDC, &win32.pfd);
-	if (pixelFormat > 0) {
-		if (SetPixelFormat(hDC, pixelFormat, &win32.pfd) == NULL) {
-			Error("SetPixelFormat failed.");
-		}
-	}
-	else {
-		Error("ChoosePixelFormat failed.");
+	int pixelFormat = 0;
+	if ( !ToolGL_SetupPixelFormat( hDC, zbuffer, &pixelFormat ) ) {
+		Error( "SetPixelFormat failed." );
 	}
 
 	return pixelFormat;
-#else
-	static PIXELFORMATDESCRIPTOR	pfd = {
-		sizeof(PIXELFORMATDESCRIPTOR),	// size of this pfd
-		1,						// version number
-		PFD_DRAW_TO_WINDOW |	// support window
-		PFD_SUPPORT_OPENGL |	// support OpenGL
-		PFD_DOUBLEBUFFER,		// double buffered
-		PFD_TYPE_RGBA,			// RGBA type
-		24,						// 24-bit color depth
-		0,
-		0,
-		0,
-		0,
-		0,
-		0,						// color bits ignored
-		0,						// no alpha buffer
-		0,						// shift bit ignored
-		0,						// no accumulation buffer
-		0,
-		0,
-		0,
-		0,						// accum bits ignored
-		32,						// depth bits
-		0,						// no stencil buffer
-		0,						// no auxiliary buffer
-		PFD_MAIN_PLANE,			// main layer
-		0,						// reserved
-		0,
-		0,
-		0						// layer masks ignored
-	};
-	int pixelformat = 0;
-
-	zbuffer = true;
-	if (!zbuffer) {
-		pfd.cDepthBits = 0;
-	}
-
-	if ((pixelformat = ChoosePixelFormat(hDC, &pfd)) == 0) {
-		printf("%d", GetLastError());
-		Error("ChoosePixelFormat failed");
-	}
-
-	if (!SetPixelFormat(hDC, pixelformat, &pfd)) {
-		Error("SetPixelFormat failed");
-	}
-
-	return pixelformat;
-#endif
 }
 
 /*
@@ -462,7 +407,7 @@ void SaveAsDialog(bool bRegion) {
 }
 
 /*
- * Menu modifications £
+ * Menu modifications
  * FillBSPMenu
  */
 const char	*bsp_commands[256];

@@ -342,6 +342,22 @@ def copy_optional_share_tree(platform: str, install_dir: Path, package_root: Pat
     return True
 
 
+def copy_optional_linux_launchers(install_dir: Path, package_root: Path) -> list[str]:
+    copied: list[str] = []
+
+    for filename in ("OpenQ4-steamdeck",):
+        source = install_dir / filename
+        if not source.is_file():
+            continue
+
+        destination = package_root / filename
+        shutil.copy2(source, destination)
+        os.chmod(destination, 0o755)
+        copied.append(filename)
+
+    return copied
+
+
 def create_macos_app_bundle(
     package_root: Path,
     install_dir: Path,
@@ -506,6 +522,9 @@ def main(argv: list[str]) -> int:
         return 1
 
     copied_share = copy_optional_share_tree(args.platform, install_dir, package_root)
+    copied_linux_launchers: list[str] = []
+    if args.platform == "linux":
+        copied_linux_launchers = copy_optional_linux_launchers(install_dir, package_root)
 
     macos_app_bundle = None
     if args.platform == "macos":
@@ -528,6 +547,10 @@ def main(argv: list[str]) -> int:
     print(f"OpenQ4 pk4: {openq4_pk4_path} ({added_files} files)")
     if copied_share:
         print(f"Share payload: {package_root / 'share'}")
+    if copied_linux_launchers:
+        print("Linux launchers:")
+        for filename in copied_linux_launchers:
+            print(f"  - {package_root / filename}")
     if macos_app_bundle is not None:
         print(f"macOS app bundle: {macos_app_bundle}")
     if missing_required:

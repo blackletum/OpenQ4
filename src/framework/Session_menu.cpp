@@ -33,7 +33,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "../ui/ListGUILocal.h"
 #include "../sound/snd_local.h"
 
-#if defined( _WIN32 )
+#if defined( USE_SDL3 )
 #include <SDL3/SDL.h>
 #endif
 
@@ -66,7 +66,7 @@ static void BuildMainMenuDisplayChoices( idStr &choiceNames, idStr &choiceValues
 	choiceValues = "-1";
 	displayCountOut = 0;
 
-#if defined( _WIN32 )
+#if defined( USE_SDL3 )
 	int displayCount = 0;
 	SDL_DisplayID *displays = SDL_GetDisplays( &displayCount );
 	if ( displays == NULL || displayCount <= 0 ) {

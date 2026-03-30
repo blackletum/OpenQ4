@@ -35,6 +35,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "DialogInfo.h"
 #include "splines.h"
 #include "../../renderer/tr_local.h"
+#include "../common/ToolGL.h"
 #include "../../renderer/model_local.h"	// for idRenderModelLiquid
 
 #ifdef _DEBUG
@@ -1478,6 +1479,7 @@ void CXYWnd::OnPaint() {
 	}
 
 	if (bPaint) {
+		const GLboolean multisampleWasEnabled = ToolGL_DisableMultisampleForEditor();
 		QE_CheckOpenGLForErrors();
 		XY_Draw();
 		QE_CheckOpenGLForErrors();
@@ -1619,6 +1621,7 @@ void CXYWnd::OnPaint() {
 		}
 
 		qwglSwapBuffers(dc.m_hDC);
+		ToolGL_RestoreMultisampleForEditor( multisampleWasEnabled );
 		TRACE("XY Paint\n");
 	}
 }
@@ -2734,7 +2737,7 @@ bool CXYWnd::XY_MouseMoved(int x, int y, int buttons) {
 
 /*
  =======================================================================================================================
-    DRAWING £
+    DRAWING
     XY_DrawGrid
  =======================================================================================================================
  */
@@ -3306,7 +3309,7 @@ bool FilterBrush(brush_t *pb) {
 
 /*
  =======================================================================================================================
-    PATH LINES £
+    PATH LINES
     DrawPathLines Draws connections between entities. Needs to consider all entities, not just ones on screen, because
     the lines can be visible when neither end is. Called for both camera view and xy view.
  =======================================================================================================================

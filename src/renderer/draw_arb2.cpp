@@ -388,6 +388,26 @@ typedef struct {
 	GLint			coverageMap;
 } pointTranslucentShadowCasterProgram_t;
 
+typedef struct {
+	GLhandleARB		programObject;
+	GLhandleARB		vertexShaderObject;
+	GLhandleARB		fragmentShaderObject;
+	int				programGeneration;
+	bool			programValid;
+
+	GLint			screenSize;
+	GLint			mode;
+	GLint			color;
+	GLint			pointLight;
+	GLint			atlasDiv;
+	GLint			cascadeCount;
+	GLint			passMapped;
+	GLint			glyphCode;
+
+	GLint			shadowAtlasMap;
+	GLint			pointShadowMap;
+} shadowDebugOverlayProgram_t;
+
 typedef enum {
 	TRANSLUCENT_SHADOW_STAGE_NONE = 0,
 	TRANSLUCENT_SHADOW_STAGE_TEXTURE_ALPHA,
@@ -416,6 +436,7 @@ static translucentShadowCasterProgram_t	g_translucentShadowCasterProgram = { 0, 
 static pointShadowMapProgram_t	g_pointShadowMapProgram = { 0, 0, 0, -1, false };
 static pointShadowCasterProgram_t	g_pointShadowCasterProgram = { 0, 0, 0, -1, false };
 static pointTranslucentShadowCasterProgram_t	g_pointTranslucentShadowCasterProgram = { 0, 0, 0, -1, false };
+static shadowDebugOverlayProgram_t	g_shadowDebugOverlayProgram = { 0, 0, 0, -1, false };
 static idImage *			g_shadowMapDepthImage = NULL;
 static idRenderTexture *	g_shadowMapRenderTexture = NULL;
 static idImage *			g_translucentShadowMomentImages[3] = { NULL, NULL, NULL };
@@ -438,7 +459,6 @@ typedef enum {
 	SHADOWMAP_SUPPORT_AMBIENT_LIGHT,
 	SHADOWMAP_SUPPORT_TEXTURE_LIMIT,
 	SHADOWMAP_SUPPORT_NO_INTERACTIONS,
-	SHADOWMAP_SUPPORT_LOCAL_INTERACTION_FALLBACK,
 	SHADOWMAP_SUPPORT_CUBEMAP_UNAVAILABLE,
 	SHADOWMAP_SUPPORT_RESOURCE_FAILURE,
 	SHADOWMAP_SUPPORT_COUNT
@@ -472,6 +492,22 @@ static shadowMapStats_t	g_shadowMapStats;
 static int				g_shadowMapLastReportFrame = -0x3fffffff;
 static bool				g_shadowMapReportThisFrame = false;
 
+typedef struct {
+	bool				valid;
+	bool				pointLight;
+	bool				globalPass;
+	bool				mapped;
+	int					lightDefIndex;
+	int					tileCount;
+	int					atlasDiv;
+	int					cascadeCount;
+	int					casterCount;
+	int					shadowSurfCount;
+	int					interactionCount;
+} shadowMapDebugOverlayState_t;
+
+static shadowMapDebugOverlayState_t	g_shadowMapDebugOverlayState;
+
 typedef enum {
 	SHADOWMAP_PASS_RESULT_MAPPED = 0,
 	SHADOWMAP_PASS_RESULT_NO_SHADOW_SURFS,
@@ -499,8 +535,6 @@ static const char *RB_ShadowMapSupportReasonName( shadowMapLightSupportReason_t 
 		return "texture-limit";
 	case SHADOWMAP_SUPPORT_NO_INTERACTIONS:
 		return "no-interactions";
-	case SHADOWMAP_SUPPORT_LOCAL_INTERACTION_FALLBACK:
-		return "local-interaction-fallback";
 	case SHADOWMAP_SUPPORT_CUBEMAP_UNAVAILABLE:
 		return "cubemap-unavailable";
 	case SHADOWMAP_SUPPORT_RESOURCE_FAILURE:
@@ -601,6 +635,15 @@ static int RB_CountDrawSurfChain( const drawSurf_t *surf ) {
 	return count;
 }
 
+static void RB_ShadowMapDebugOverlayReset( void ) {
+	memset( &g_shadowMapDebugOverlayState, 0, sizeof( g_shadowMapDebugOverlayState ) );
+	g_shadowMapDebugOverlayState.lightDefIndex = -1;
+}
+
+static bool RB_ShadowMapDebugOverlayEnabled( void ) {
+	return glConfig.GLSLProgramAvailable && r_shadowMapDebugOverlay.GetBool();
+}
+
 static bool RB_ShadowMapShouldReport( void ) {
 	if ( !r_useShadowMap.GetBool() ) {
 		return false;
@@ -692,6 +735,8 @@ static float RB_ShadowMapCascadeDistanceForView( const viewDef_t *viewDef ) {
 	return Max( r_shadowMapCascadeDistance.GetFloat(), zNear + 32.0f );
 }
 
+static const int SHADOWMAP_CASCADE_SAMPLE_POINT_COUNT = 23;
+
 static void RB_ShadowMapBuildSliceCorners( const viewDef_t *viewDef, const float sliceNear, const float sliceFar, idVec3 corners[8] ) {
 	const renderView_t &renderView = viewDef->renderView;
 	const float tanHalfFovX = tan( renderView.fov_x * idMath::PI / 360.0f );
@@ -716,24 +761,65 @@ static void RB_ShadowMapBuildSliceCorners( const viewDef_t *viewDef, const float
 	}
 }
 
+static int RB_ShadowMapBuildSliceSamplePoints( const viewDef_t *viewDef, const float sliceNear, const float sliceFar, idVec3 samplePoints[SHADOWMAP_CASCADE_SAMPLE_POINT_COUNT] ) {
+	idVec3 corners[8];
+	RB_ShadowMapBuildSliceCorners( viewDef, sliceNear, sliceFar, corners );
+
+	for ( int i = 0; i < 8; i++ ) {
+		samplePoints[i] = corners[i];
+	}
+
+	const idVec3 nearCenter = ( corners[0] + corners[1] + corners[2] + corners[3] ) * 0.25f;
+	const idVec3 farCenter = ( corners[4] + corners[5] + corners[6] + corners[7] ) * 0.25f;
+	int sampleCount = 8;
+	samplePoints[sampleCount++] = nearCenter;
+	samplePoints[sampleCount++] = farCenter;
+	samplePoints[sampleCount++] = ( nearCenter + farCenter ) * 0.5f;
+
+	for ( int i = 0; i < 4; i++ ) {
+		const int next = ( i + 1 ) & 3;
+		samplePoints[sampleCount++] = ( corners[i] + corners[next] ) * 0.5f;
+		samplePoints[sampleCount++] = ( corners[i + 4] + corners[next + 4] ) * 0.5f;
+		samplePoints[sampleCount++] = ( corners[i] + corners[i + 4] ) * 0.5f;
+	}
+
+	return sampleCount;
+}
+
 static void RB_ShadowMapTransformPointToClip( const idVec3 &point, const idPlane clipPlanes[4], idVec4 &clip ) {
 	for ( int i = 0; i < 4; i++ ) {
 		clip[i] = point[0] * clipPlanes[i][0] + point[1] * clipPlanes[i][1] + point[2] * clipPlanes[i][2] + clipPlanes[i][3];
 	}
 }
 
-static bool RB_ShadowMapBuildCascadeBounds( const idPlane baseClipPlanes[4], const viewDef_t *viewDef, const float sliceNear, const float sliceFar, const int tileSize, int &validPointsOut, int &skippedPointsOut, idVec3 &ndcMins, idVec3 &ndcMaxs ) {
-	idVec3 corners[8];
-	RB_ShadowMapBuildSliceCorners( viewDef, sliceNear, sliceFar, corners );
+static float RB_ShadowMapProjectedKernelGuardNDC( const int tileSize ) {
+	const float texelStep = 2.0f / Max( 1, tileSize );
+	const float kernelRadius = Max( 0.5f, r_shadowMapFilterRadius.GetFloat() + 0.75f );
+	return texelStep * kernelRadius;
+}
+
+static bool RB_ShadowMapBuildCascadeBounds( const idPlane baseClipPlanes[4], const viewDef_t *viewDef, const float sliceNear, const float sliceFar, const int tileSize, int &validPointsOut, int &skippedPointsOut, bool &mixedWSignsOut, idVec3 &ndcMins, idVec3 &ndcMaxs ) {
+	idVec3 samplePoints[SHADOWMAP_CASCADE_SAMPLE_POINT_COUNT];
+	const int sampleCount = RB_ShadowMapBuildSliceSamplePoints( viewDef, sliceNear, sliceFar, samplePoints );
 
 	validPointsOut = 0;
 	skippedPointsOut = 0;
+	mixedWSignsOut = false;
 	ndcMins.Set( 1.0e30f, 1.0e30f, 1.0e30f );
 	ndcMaxs.Set( -1.0e30f, -1.0e30f, -1.0e30f );
+	int positiveWPoints = 0;
+	int negativeWPoints = 0;
 
-	for ( int i = 0; i < 8; i++ ) {
+	for ( int i = 0; i < sampleCount; i++ ) {
 		idVec4 clip;
-		RB_ShadowMapTransformPointToClip( corners[i], baseClipPlanes, clip );
+		RB_ShadowMapTransformPointToClip( samplePoints[i], baseClipPlanes, clip );
+		if ( clip.w == clip.w ) {
+			if ( clip.w > 0.0f ) {
+				positiveWPoints++;
+			} else if ( clip.w < 0.0f ) {
+				negativeWPoints++;
+			}
+		}
 		if ( clip.w != clip.w || idMath::Fabs( clip.w ) <= 1.0e-5f ) {
 			skippedPointsOut++;
 			continue;
@@ -753,16 +839,19 @@ static bool RB_ShadowMapBuildCascadeBounds( const idPlane baseClipPlanes[4], con
 		validPointsOut++;
 	}
 
+	mixedWSignsOut = ( positiveWPoints > 0 && negativeWPoints > 0 );
+
 	if ( validPointsOut < 4 ) {
 		return false;
 	}
 
 	const float pad = Max( 0.0f, r_shadowMapProjectionPad.GetFloat() * 0.5f );
+	const float filterGuard = RB_ShadowMapProjectedKernelGuardNDC( tileSize );
 	idVec3 center = ( ndcMins + ndcMaxs ) * 0.5f;
 	idVec3 extent = ( ndcMaxs - ndcMins ) * 0.5f;
 
-	extent.x = Max( extent.x * ( 1.0f + pad * 2.0f ), 2.0f / Max( 1, tileSize ) );
-	extent.y = Max( extent.y * ( 1.0f + pad * 2.0f ), 2.0f / Max( 1, tileSize ) );
+	extent.x = Max( extent.x * ( 1.0f + pad * 2.0f ) + filterGuard, 2.0f / Max( 1, tileSize ) );
+	extent.y = Max( extent.y * ( 1.0f + pad * 2.0f ) + filterGuard, 2.0f / Max( 1, tileSize ) );
 	extent.z = Max( extent.z * ( 1.0f + pad ), 0.02f );
 
 	if ( r_shadowMapCascadeStabilize.GetBool() ) {
@@ -861,7 +950,7 @@ static void RB_ShadowMapReportProjectedCascadeFit( const viewLight_t *vLight, co
 
 	const char *shaderName = vLight->lightShader != NULL ? vLight->lightShader->GetName() : "<null>";
 	common->Printf(
-		"SM csm fit '%s' cascade=%d/%d range=[%.2f %.2f] validCorners=%d skippedW=%d\n",
+		"SM csm fit '%s' cascade=%d/%d range=[%.2f %.2f] validSamples=%d skippedW=%d\n",
 		shaderName,
 		cascadeIndex,
 		cascadeCount,
@@ -871,21 +960,22 @@ static void RB_ShadowMapReportProjectedCascadeFit( const viewLight_t *vLight, co
 		skippedPoints );
 }
 
-static void RB_ShadowMapReportProjectedCascadeFallback( const viewLight_t *vLight, const int requestedCascadeCount, const int cascadeIndex, const float sliceNear, const float sliceFar, const int validPoints, const int skippedPoints ) {
+static void RB_ShadowMapReportProjectedCascadeFallback( const viewLight_t *vLight, const int requestedCascadeCount, const int cascadeIndex, const float sliceNear, const float sliceFar, const int validPoints, const int skippedPoints, const bool mixedWSigns ) {
 	if ( idMath::ClampInt( 0, 2, r_shadowMapReport.GetInteger() ) < 2 || !g_shadowMapReportThisFrame || vLight == NULL ) {
 		return;
 	}
 
 	const char *shaderName = vLight->lightShader != NULL ? vLight->lightShader->GetName() : "<null>";
 	common->Printf(
-		"SM csm fallback '%s' requested=%d failedCascade=%d range=[%.2f %.2f] validCorners=%d skippedW=%d -> single-cascade\n",
+		"SM csm fallback '%s' requested=%d failedCascade=%d range=[%.2f %.2f] validSamples=%d skippedW=%d mixedW=%d -> single-cascade\n",
 		shaderName,
 		requestedCascadeCount,
 		cascadeIndex,
 		sliceNear,
 		sliceFar,
 		validPoints,
-		skippedPoints );
+		skippedPoints,
+		mixedWSigns ? 1 : 0 );
 }
 
 /*
@@ -928,13 +1018,22 @@ static void RB_ShadowMapBuildProjectedState( const viewLight_t *vLight, const id
 		idVec3 ndcMaxs;
 		int validPoints = 0;
 		int skippedPoints = 0;
-		if ( RB_ShadowMapBuildCascadeBounds( baseClipPlanes, viewDef, sliceNear, sliceFar, tileSize, validPoints, skippedPoints, ndcMins, ndcMaxs ) ) {
+		bool mixedWSigns = false;
+		if ( RB_ShadowMapBuildCascadeBounds( baseClipPlanes, viewDef, sliceNear, sliceFar, tileSize, validPoints, skippedPoints, mixedWSigns, ndcMins, ndcMaxs ) ) {
+			if ( mixedWSigns ) {
+				RB_ShadowMapReportProjectedCascadeFallback( vLight, requestedCascadeCount, cascadeIndex, sliceNear, sliceFar, validPoints, skippedPoints, mixedWSigns );
+				RB_ShadowMapResetProjectedState();
+				RB_ShadowMapInitializeProjectedState( baseClipPlanes, 1, tileSize );
+				g_projectedShadowMapState.depthRange[0] = Max( maxDistance - zNear, 0.0f );
+				g_projectedShadowMapState.clipZExtent[0] = 2.0f;
+				return;
+			}
 			RB_ShadowMapBuildCascadeClipPlanes( baseClipPlanes, ndcMins, ndcMaxs, g_projectedShadowMapState.clipPlanes[cascadeIndex] );
 			g_projectedShadowMapState.biasScale[cascadeIndex] = RB_ShadowMapCascadeBiasScale( ndcMins, ndcMaxs );
 			g_projectedShadowMapState.clipZExtent[cascadeIndex] = ndcMaxs.z - ndcMins.z;
 			RB_ShadowMapReportProjectedCascadeFit( vLight, cascadeIndex, requestedCascadeCount, sliceNear, sliceFar, validPoints, skippedPoints );
 		} else {
-			RB_ShadowMapReportProjectedCascadeFallback( vLight, requestedCascadeCount, cascadeIndex, sliceNear, sliceFar, validPoints, skippedPoints );
+			RB_ShadowMapReportProjectedCascadeFallback( vLight, requestedCascadeCount, cascadeIndex, sliceNear, sliceFar, validPoints, skippedPoints, mixedWSigns );
 			RB_ShadowMapResetProjectedState();
 			RB_ShadowMapInitializeProjectedState( baseClipPlanes, 1, tileSize );
 			g_projectedShadowMapState.depthRange[0] = Max( maxDistance - zNear, 0.0f );
@@ -1053,6 +1152,22 @@ static void RB_PointTranslucentShadowMapFreeCasterProgram( void ) {
 	}
 
 	memset( &g_pointTranslucentShadowCasterProgram, 0, sizeof( g_pointTranslucentShadowCasterProgram ) );
+}
+
+static void RB_ShadowMapDebugOverlayFreeProgram( void ) {
+	if ( g_shadowDebugOverlayProgram.programObject != 0 ) {
+		if ( g_shadowDebugOverlayProgram.vertexShaderObject != 0 ) {
+			glDetachObjectARB( g_shadowDebugOverlayProgram.programObject, g_shadowDebugOverlayProgram.vertexShaderObject );
+			glDeleteObjectARB( g_shadowDebugOverlayProgram.vertexShaderObject );
+		}
+		if ( g_shadowDebugOverlayProgram.fragmentShaderObject != 0 ) {
+			glDetachObjectARB( g_shadowDebugOverlayProgram.programObject, g_shadowDebugOverlayProgram.fragmentShaderObject );
+			glDeleteObjectARB( g_shadowDebugOverlayProgram.fragmentShaderObject );
+		}
+		glDeleteObjectARB( g_shadowDebugOverlayProgram.programObject );
+	}
+
+	memset( &g_shadowDebugOverlayProgram, 0, sizeof( g_shadowDebugOverlayProgram ) );
 }
 
 static void RB_ShadowMapPrintInfoLog( GLhandleARB object, const char *label, const char *name ) {
@@ -1782,6 +1897,111 @@ static bool RB_PointTranslucentShadowMapLoadCasterProgram( void ) {
 	return true;
 }
 
+static bool RB_ShadowMapDebugOverlayLoadProgram( void ) {
+	static const char *programBaseName = "glprogs/openq4_shadow_debug_overlay";
+
+	if ( !glConfig.GLSLProgramAvailable ) {
+		return false;
+	}
+
+	if ( g_shadowDebugOverlayProgram.programObject != 0 && g_shadowDebugOverlayProgram.programGeneration == tr.videoRestartCount ) {
+		return g_shadowDebugOverlayProgram.programValid;
+	}
+
+	RB_ShadowMapDebugOverlayFreeProgram();
+
+	idStr vertexPath = idStr( programBaseName ) + ".vs";
+	idStr fragmentPath = idStr( programBaseName ) + ".fs";
+
+	char *vertexBuffer = NULL;
+	char *fragmentBuffer = NULL;
+	fileSystem->ReadFile( vertexPath.c_str(), (void **)&vertexBuffer, NULL );
+	fileSystem->ReadFile( fragmentPath.c_str(), (void **)&fragmentBuffer, NULL );
+	if ( vertexBuffer == NULL || fragmentBuffer == NULL ) {
+		if ( vertexBuffer != NULL ) {
+			fileSystem->FreeFile( vertexBuffer );
+		}
+		if ( fragmentBuffer != NULL ) {
+			fileSystem->FreeFile( fragmentBuffer );
+		}
+		common->Warning( "Couldn't load shadow debug overlay GLSL sources '%s' and '%s'", vertexPath.c_str(), fragmentPath.c_str() );
+		g_shadowDebugOverlayProgram.programGeneration = tr.videoRestartCount;
+		g_shadowDebugOverlayProgram.programValid = false;
+		return false;
+	}
+
+	GLhandleARB vertexShader = glCreateShaderObjectARB( GL_VERTEX_SHADER_ARB );
+	GLhandleARB fragmentShader = glCreateShaderObjectARB( GL_FRAGMENT_SHADER_ARB );
+	const GLcharARB *vertexSource = (const GLcharARB *)vertexBuffer;
+	const GLcharARB *fragmentSource = (const GLcharARB *)fragmentBuffer;
+	glShaderSourceARB( vertexShader, 1, &vertexSource, NULL );
+	glShaderSourceARB( fragmentShader, 1, &fragmentSource, NULL );
+	glCompileShaderARB( vertexShader );
+	glCompileShaderARB( fragmentShader );
+
+	fileSystem->FreeFile( vertexBuffer );
+	fileSystem->FreeFile( fragmentBuffer );
+
+	GLint status = GL_FALSE;
+	glGetObjectParameterivARB( vertexShader, GL_OBJECT_COMPILE_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_ShadowMapPrintInfoLog( vertexShader, "vertex shader compile", programBaseName );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		g_shadowDebugOverlayProgram.programGeneration = tr.videoRestartCount;
+		g_shadowDebugOverlayProgram.programValid = false;
+		return false;
+	}
+
+	glGetObjectParameterivARB( fragmentShader, GL_OBJECT_COMPILE_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_ShadowMapPrintInfoLog( fragmentShader, "fragment shader compile", programBaseName );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		g_shadowDebugOverlayProgram.programGeneration = tr.videoRestartCount;
+		g_shadowDebugOverlayProgram.programValid = false;
+		return false;
+	}
+
+	GLhandleARB programObject = glCreateProgramObjectARB();
+	glAttachObjectARB( programObject, vertexShader );
+	glAttachObjectARB( programObject, fragmentShader );
+	glLinkProgramARB( programObject );
+
+	glGetObjectParameterivARB( programObject, GL_OBJECT_LINK_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_ShadowMapPrintInfoLog( programObject, "program link", programBaseName );
+		glDetachObjectARB( programObject, vertexShader );
+		glDetachObjectARB( programObject, fragmentShader );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		glDeleteObjectARB( programObject );
+		g_shadowDebugOverlayProgram.programGeneration = tr.videoRestartCount;
+		g_shadowDebugOverlayProgram.programValid = false;
+		return false;
+	}
+
+	g_shadowDebugOverlayProgram.programObject = programObject;
+	g_shadowDebugOverlayProgram.vertexShaderObject = vertexShader;
+	g_shadowDebugOverlayProgram.fragmentShaderObject = fragmentShader;
+	g_shadowDebugOverlayProgram.programGeneration = tr.videoRestartCount;
+	g_shadowDebugOverlayProgram.programValid = true;
+
+	g_shadowDebugOverlayProgram.screenSize = glGetUniformLocationARB( programObject, "uScreenSize" );
+	g_shadowDebugOverlayProgram.mode = glGetUniformLocationARB( programObject, "uMode" );
+	g_shadowDebugOverlayProgram.color = glGetUniformLocationARB( programObject, "uColor" );
+	g_shadowDebugOverlayProgram.pointLight = glGetUniformLocationARB( programObject, "uPointLight" );
+	g_shadowDebugOverlayProgram.atlasDiv = glGetUniformLocationARB( programObject, "uAtlasDiv" );
+	g_shadowDebugOverlayProgram.cascadeCount = glGetUniformLocationARB( programObject, "uCascadeCount" );
+	g_shadowDebugOverlayProgram.passMapped = glGetUniformLocationARB( programObject, "uPassMapped" );
+	g_shadowDebugOverlayProgram.glyphCode = glGetUniformLocationARB( programObject, "uGlyphCode" );
+	g_shadowDebugOverlayProgram.shadowAtlasMap = glGetUniformLocationARB( programObject, "uShadowAtlasMap" );
+	g_shadowDebugOverlayProgram.pointShadowMap = glGetUniformLocationARB( programObject, "uPointShadowMap" );
+
+	common->Printf( "Loaded GLSL program '%s'\n", programBaseName );
+	return true;
+}
+
 static void RB_ShadowMapBuildClipPlanes( const idPlane lightProject[4], idPlane clipPlanes[4] ) {
 	const float projectionPad = Max( 0.0f, r_shadowMapProjectionPad.GetFloat() );
 	const float projectionScale = 1.0f / ( 1.0f + projectionPad * 2.0f );
@@ -2021,12 +2241,6 @@ static shadowMapLightSupportReason_t RB_ShadowMapLightSupportReason( const viewL
 	if ( vLight->globalInteractions == NULL && vLight->localInteractions == NULL ) {
 		return SHADOWMAP_SUPPORT_NO_INTERACTIONS;
 	}
-	// MF_NOSELFSHADOW surfaces rely on the legacy local/global shadow split.
-	// Until the shadow-map path matches retail behavior here, keep those lights
-	// on the stencil path instead of risking self-shadow artifacts.
-	if ( vLight->localInteractions != NULL || vLight->localShadowMapCasters != NULL || vLight->localTranslucentShadowMapCasters != NULL ) {
-		return SHADOWMAP_SUPPORT_LOCAL_INTERACTION_FALLBACK;
-	}
 	if ( vLight->pointLight ) {
 		if ( !glConfig.cubeMapAvailable ) {
 			return SHADOWMAP_SUPPORT_CUBEMAP_UNAVAILABLE;
@@ -2133,7 +2347,8 @@ static void RB_ShadowMapLightReport( const viewLight_t *vLight, shadowMapLightSu
 		origin = vLight->globalLightOrigin;
 	}
 	common->Printf(
-		"SM light '%s' origin=(%.1f %.1f %.1f) type=%s%s interactions(local=%d global=%d) shadows(local=%d global=%d) debug=%s support=%s\n",
+		"SM light[%d] '%s' origin=(%.1f %.1f %.1f) type=%s%s interactions(local=%d global=%d) shadows(local=%d global=%d) debug=%s support=%s\n",
+		( vLight != NULL && vLight->lightDef != NULL ) ? vLight->lightDef->index : -1,
 		shaderName,
 		origin[0], origin[1], origin[2],
 		( vLight != NULL && vLight->pointLight ) ? "point" : "projected",
@@ -2153,8 +2368,9 @@ static void RB_ShadowMapPassReport( const viewLight_t *vLight, shadowMapPassKind
 
 	const char *shaderName = ( vLight != NULL && vLight->lightShader != NULL ) ? vLight->lightShader->GetName() : "<null>";
 	common->Printf(
-		"SM pass %s '%s' type=%s debug=%s result=%s casters(a=%d b=%d c=%d d=%d) shadowSurfs(primary=%d secondary=%d) receivers=%d\n",
+		"SM pass %s[%d] '%s' type=%s debug=%s result=%s casters(a=%d b=%d c=%d d=%d) shadowSurfs(primary=%d secondary=%d) receivers=%d\n",
 		RB_ShadowMapPassName( passKind ),
+		( vLight != NULL && vLight->lightDef != NULL ) ? vLight->lightDef->index : -1,
 		shaderName,
 		pointLight ? "point" : "projected",
 		RB_ShadowMapDebugModeName( RB_ShadowMapDebugMode() ),
@@ -2726,8 +2942,7 @@ static void RB_ShadowMapDrawTranslucentCasterChain( const drawSurf_t *surf ) {
 			}
 
 			const translucentShadowStageMode_t stageMode = RB_TranslucentShadowStageMode( pStage );
-			const shaderStage_t *stageCoverage = ( coverageStage != NULL ) ? coverageStage :
-				( RB_TranslucentShadowStageCanProvideCoverage( pStage, regs ) ? pStage : NULL );
+			const shaderStage_t *stageCoverage = RB_TranslucentShadowStageCanProvideCoverage( pStage, regs ) ? pStage : coverageStage;
 			const float alphaScale = RB_TranslucentShadowStageOpacityScale( pStage, regs, stageMode );
 			const float combinedScale = alphaScale * RB_TranslucentShadowCoverageScale( stageCoverage, regs );
 			if ( combinedScale <= r_shadowMapTranslucentMinAlpha.GetFloat() ) {
@@ -3165,8 +3380,7 @@ static void RB_PointShadowMapDrawTranslucentCasterChain( const drawSurf_t *surf,
 			}
 
 			const translucentShadowStageMode_t stageMode = RB_TranslucentShadowStageMode( pStage );
-			const shaderStage_t *stageCoverage = ( coverageStage != NULL ) ? coverageStage :
-				( RB_TranslucentShadowStageCanProvideCoverage( pStage, regs ) ? pStage : NULL );
+			const shaderStage_t *stageCoverage = RB_TranslucentShadowStageCanProvideCoverage( pStage, regs ) ? pStage : coverageStage;
 			const float alphaScale = RB_TranslucentShadowStageOpacityScale( pStage, regs, stageMode );
 			const float combinedScale = alphaScale * RB_TranslucentShadowCoverageScale( stageCoverage, regs );
 			if ( combinedScale <= r_shadowMapTranslucentMinAlpha.GetFloat() ) {
@@ -4178,6 +4392,313 @@ static void RB_ShadowMapStencilFallback( const drawSurf_t *primaryShadowSurfs, c
 	}
 }
 
+static void RB_ShadowMapDebugOverlayCapture( const viewLight_t *vLight, const shadowMapPassKind_t passKind, const bool pointLight, const bool mapped, const bool renderOk, const drawSurf_t *primaryCasters, const drawSurf_t *secondaryCasters, const drawSurf_t *tertiaryCasters, const drawSurf_t *quaternaryCasters, const drawSurf_t *primaryShadowSurfs, const drawSurf_t *secondaryShadowSurfs, const drawSurf_t *interactions ) {
+	if ( !RB_ShadowMapDebugOverlayEnabled() || !renderOk ) {
+		return;
+	}
+
+	const int lightDefIndex = ( vLight != NULL && vLight->lightDef != NULL ) ? vLight->lightDef->index : -1;
+	const int singleLight = r_singleLight.GetInteger();
+	if ( singleLight >= 0 && lightDefIndex != singleLight ) {
+		return;
+	}
+	if ( g_shadowMapDebugOverlayState.valid && singleLight < 0 && g_shadowMapDebugOverlayState.mapped && !mapped ) {
+		return;
+	}
+
+	g_shadowMapDebugOverlayState.valid = true;
+	g_shadowMapDebugOverlayState.pointLight = pointLight;
+	g_shadowMapDebugOverlayState.globalPass = ( passKind == SHADOWMAP_PASS_GLOBAL );
+	g_shadowMapDebugOverlayState.mapped = mapped;
+	g_shadowMapDebugOverlayState.lightDefIndex = lightDefIndex;
+	g_shadowMapDebugOverlayState.tileCount = pointLight ? 6 : Max( 1, g_projectedShadowMapState.cascadeCount );
+	g_shadowMapDebugOverlayState.atlasDiv = pointLight ? 3 : Max( 1, g_projectedShadowMapState.atlasDiv );
+	g_shadowMapDebugOverlayState.cascadeCount = pointLight ? 1 : Max( 1, g_projectedShadowMapState.cascadeCount );
+	g_shadowMapDebugOverlayState.casterCount =
+		RB_CountDrawSurfChain( primaryCasters ) +
+		RB_CountDrawSurfChain( secondaryCasters ) +
+		RB_CountDrawSurfChain( tertiaryCasters ) +
+		RB_CountDrawSurfChain( quaternaryCasters );
+	g_shadowMapDebugOverlayState.shadowSurfCount =
+		RB_CountDrawSurfChain( primaryShadowSurfs ) +
+		RB_CountDrawSurfChain( secondaryShadowSurfs );
+	g_shadowMapDebugOverlayState.interactionCount = RB_CountDrawSurfChain( interactions );
+}
+
+static void RB_ShadowMapDebugOverlayEnsureFallbackState( void ) {
+	if ( g_shadowMapDebugOverlayState.valid || g_shadowMapStats.supportedLights <= 0 ) {
+		return;
+	}
+
+	const bool preferPointLight = ( g_shadowMapStats.pointLights > 0 ) &&
+		( g_pointShadowMapColorImage != NULL ) &&
+		( g_shadowMapStats.projectedLights == 0 || g_projectedShadowMapState.cascadeCount <= 0 );
+
+	g_shadowMapDebugOverlayState.valid = true;
+	g_shadowMapDebugOverlayState.pointLight = preferPointLight;
+	g_shadowMapDebugOverlayState.globalPass = ( g_shadowMapStats.mappedGlobalPasses >= g_shadowMapStats.mappedLocalPasses );
+	g_shadowMapDebugOverlayState.mapped = ( g_shadowMapStats.mappedLocalPasses + g_shadowMapStats.mappedGlobalPasses ) > 0;
+	g_shadowMapDebugOverlayState.lightDefIndex = -1;
+	g_shadowMapDebugOverlayState.tileCount = preferPointLight ? 6 : Max( 1, g_projectedShadowMapState.cascadeCount );
+	g_shadowMapDebugOverlayState.atlasDiv = preferPointLight ? 3 : Max( 1, g_projectedShadowMapState.atlasDiv );
+	g_shadowMapDebugOverlayState.cascadeCount = preferPointLight ? 1 : Max( 1, g_projectedShadowMapState.cascadeCount );
+	g_shadowMapDebugOverlayState.casterCount = -1;
+	g_shadowMapDebugOverlayState.shadowSurfCount = -1;
+	g_shadowMapDebugOverlayState.interactionCount = -1;
+}
+
+enum {
+	SHADOW_DEBUG_OVERLAY_MODE_PANEL = 0,
+	SHADOW_DEBUG_OVERLAY_MODE_SOLID = 1,
+	SHADOW_DEBUG_OVERLAY_MODE_GLYPH = 2
+};
+
+static void RB_ShadowMapDebugOverlaySubmitQuad( const float x, const float y, const float w, const float h, const float s1, const float t1, const float s2, const float t2 ) {
+	glBegin( GL_QUADS );
+	glTexCoord2f( s1, t1 );
+	glVertex2f( x, y );
+	glTexCoord2f( s2, t1 );
+	glVertex2f( x + w, y );
+	glTexCoord2f( s2, t2 );
+	glVertex2f( x + w, y + h );
+	glTexCoord2f( s1, t2 );
+	glVertex2f( x, y + h );
+	glEnd();
+}
+
+static void RB_ShadowMapDebugOverlaySetMode( const float mode, const idVec4 &color, const float glyphCode ) {
+	if ( g_shadowDebugOverlayProgram.mode >= 0 ) {
+		glUniform1fARB( g_shadowDebugOverlayProgram.mode, mode );
+	}
+	if ( g_shadowDebugOverlayProgram.color >= 0 ) {
+		glUniform4fvARB( g_shadowDebugOverlayProgram.color, 1, color.ToFloatPtr() );
+	}
+	if ( g_shadowDebugOverlayProgram.glyphCode >= 0 ) {
+		glUniform1fARB( g_shadowDebugOverlayProgram.glyphCode, glyphCode );
+	}
+}
+
+static void RB_ShadowMapDebugOverlayDrawString( const float x, const float y, const float scale, const idVec4 &color, const char *text ) {
+	if ( text == NULL || text[0] == '\0' ) {
+		return;
+	}
+
+	const float glyphW = 6.0f * scale;
+	const float glyphH = 9.0f * scale;
+	const float advance = glyphW + scale;
+
+	idVec4 shadowColor( 0.0f, 0.0f, 0.0f, color[3] * 0.85f );
+	for ( int pass = 0; pass < 2; pass++ ) {
+		const idVec4 &passColor = ( pass == 0 ) ? shadowColor : color;
+		const float dx = ( pass == 0 ) ? 1.0f : 0.0f;
+		const float dy = ( pass == 0 ) ? 1.0f : 0.0f;
+		float drawX = x + dx;
+		for ( const char *c = text; *c != '\0'; c++ ) {
+			RB_ShadowMapDebugOverlaySetMode( SHADOW_DEBUG_OVERLAY_MODE_GLYPH, passColor, static_cast<float>( static_cast<unsigned char>( *c ) ) );
+			RB_ShadowMapDebugOverlaySubmitQuad( drawX, y + dy, glyphW, glyphH, 0.0f, 0.0f, 1.0f, 1.0f );
+			drawX += advance;
+		}
+	}
+}
+
+static void RB_ShadowMapDebugOverlayDrawLabels( const float panelX, const float panelY, const float panelW, const float panelH ) {
+	const idVec4 labelColor( 0.95f, 0.95f, 0.95f, 0.95f );
+	char label[8];
+
+	if ( g_shadowMapDebugOverlayState.pointLight ) {
+		const float tileW = panelW / 3.0f;
+		const float tileH = panelH / 2.0f;
+		for ( int faceIndex = 0; faceIndex < 6; faceIndex++ ) {
+			const int col = faceIndex % 3;
+			const int row = faceIndex / 3;
+			idStr::snPrintf( label, sizeof( label ), "%d", faceIndex );
+			RB_ShadowMapDebugOverlayDrawString( panelX + col * tileW + 4.0f, panelY + row * tileH + 4.0f, 0.9f, labelColor, label );
+		}
+		return;
+	}
+
+	const int atlasDiv = Max( 1, g_shadowMapDebugOverlayState.atlasDiv );
+	const float tileW = panelW / atlasDiv;
+	const float tileH = panelH / atlasDiv;
+	for ( int cascadeIndex = 0; cascadeIndex < g_shadowMapDebugOverlayState.tileCount; cascadeIndex++ ) {
+		const int col = cascadeIndex % atlasDiv;
+		const int row = cascadeIndex / atlasDiv;
+		idStr::snPrintf( label, sizeof( label ), "%d", cascadeIndex );
+		RB_ShadowMapDebugOverlayDrawString( panelX + col * tileW + 4.0f, panelY + row * tileH + 4.0f, 0.9f, labelColor, label );
+	}
+}
+
+static void RB_ShadowMapDebugOverlayDraw( void ) {
+	if ( !RB_ShadowMapDebugOverlayEnabled() || !RB_ShadowMapDebugOverlayLoadProgram() ) {
+		return;
+	}
+
+	RB_ShadowMapDebugOverlayEnsureFallbackState();
+
+	const GLboolean depthWasEnabled = glIsEnabled( GL_DEPTH_TEST );
+	const GLboolean blendWasEnabled = glIsEnabled( GL_BLEND );
+	const GLboolean stencilWasEnabled = glIsEnabled( GL_STENCIL_TEST );
+	const GLboolean scissorWasEnabled = glIsEnabled( GL_SCISSOR_TEST );
+	GLint viewport[4] = { 0, 0, 0, 0 };
+	GLint scissorBox[4] = { 0, 0, 0, 0 };
+	glGetIntegerv( GL_VIEWPORT, viewport );
+	glGetIntegerv( GL_SCISSOR_BOX, scissorBox );
+
+	const int savedFaceCulling = backEnd.glState.faceCulling;
+
+	glViewport( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
+	if ( scissorWasEnabled ) {
+		glScissor( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
+	}
+
+	GL_State( GLS_DEPTHFUNC_ALWAYS | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
+	GL_Cull( CT_TWO_SIDED );
+	glDisable( GL_DEPTH_TEST );
+	glDisable( GL_STENCIL_TEST );
+
+	glDisable( GL_VERTEX_PROGRAM_ARB );
+	glDisable( GL_FRAGMENT_PROGRAM_ARB );
+	glUseProgramObjectARB( g_shadowDebugOverlayProgram.programObject );
+
+	if ( g_shadowDebugOverlayProgram.screenSize >= 0 ) {
+		const float screenSize[2] = { static_cast<float>( glConfig.vidWidth ), static_cast<float>( glConfig.vidHeight ) };
+		glUniform2fvARB( g_shadowDebugOverlayProgram.screenSize, 1, screenSize );
+	}
+	if ( g_shadowDebugOverlayProgram.pointLight >= 0 ) {
+		glUniform1fARB( g_shadowDebugOverlayProgram.pointLight, g_shadowMapDebugOverlayState.pointLight ? 1.0f : 0.0f );
+	}
+	if ( g_shadowDebugOverlayProgram.atlasDiv >= 0 ) {
+		glUniform1fARB( g_shadowDebugOverlayProgram.atlasDiv, static_cast<float>( g_shadowMapDebugOverlayState.pointLight ? 3 : Max( 1, g_shadowMapDebugOverlayState.atlasDiv ) ) );
+	}
+	if ( g_shadowDebugOverlayProgram.cascadeCount >= 0 ) {
+		glUniform1fARB( g_shadowDebugOverlayProgram.cascadeCount, static_cast<float>( Max( 1, g_shadowMapDebugOverlayState.tileCount ) ) );
+	}
+	if ( g_shadowDebugOverlayProgram.passMapped >= 0 ) {
+		glUniform1fARB( g_shadowDebugOverlayProgram.passMapped, g_shadowMapDebugOverlayState.mapped ? 1.0f : 0.0f );
+	}
+
+	GL_SelectTextureNoClient( 0 );
+	if ( g_shadowMapDepthImage != NULL ) {
+		g_shadowMapDepthImage->Bind();
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE );
+	} else {
+		globalImages->BindNull();
+	}
+	if ( g_shadowDebugOverlayProgram.shadowAtlasMap >= 0 ) {
+		glUniform1iARB( g_shadowDebugOverlayProgram.shadowAtlasMap, 0 );
+	}
+
+	GL_SelectTextureNoClient( 1 );
+	if ( g_pointShadowMapColorImage != NULL ) {
+		g_pointShadowMapColorImage->Bind();
+	} else {
+		globalImages->BindNull();
+	}
+	if ( g_shadowDebugOverlayProgram.pointShadowMap >= 0 ) {
+		glUniform1iARB( g_shadowDebugOverlayProgram.pointShadowMap, 1 );
+	}
+	GL_SelectTextureNoClient( 0 );
+
+	const float margin = 8.0f;
+	const float panelW = 192.0f;
+	const float panelH = g_shadowMapDebugOverlayState.pointLight ? 128.0f : 192.0f;
+	const float statsH = 40.0f;
+	const float outerW = panelW + 12.0f;
+	const float outerH = panelH + statsH + 18.0f;
+	const float panelX = margin + 6.0f;
+	const float panelY = margin + 6.0f;
+	const float statsY = panelY + panelH + 8.0f;
+	const idVec4 outerColor( 0.02f, 0.03f, 0.04f, 0.78f );
+	const idVec4 panelFrameColor = g_shadowMapDebugOverlayState.pointLight ?
+		idVec4( 0.92f, 0.70f, 0.18f, 0.95f ) :
+		idVec4( 0.15f, 0.78f, 0.95f, 0.95f );
+	const idVec4 failColor( 0.85f, 0.24f, 0.20f, 0.95f );
+	const idVec4 textColor( 0.96f, 0.96f, 0.92f, 0.98f );
+
+	RB_ShadowMapDebugOverlaySetMode( SHADOW_DEBUG_OVERLAY_MODE_SOLID, outerColor, 0.0f );
+	RB_ShadowMapDebugOverlaySubmitQuad( margin, margin, outerW, outerH, 0.0f, 0.0f, 1.0f, 1.0f );
+
+	RB_ShadowMapDebugOverlaySetMode( SHADOW_DEBUG_OVERLAY_MODE_SOLID, g_shadowMapDebugOverlayState.mapped ? panelFrameColor : failColor, 0.0f );
+	RB_ShadowMapDebugOverlaySubmitQuad( panelX - 2.0f, panelY - 2.0f, panelW + 4.0f, panelH + 4.0f, 0.0f, 0.0f, 1.0f, 1.0f );
+
+	if ( g_shadowMapDebugOverlayState.valid ) {
+		RB_ShadowMapDebugOverlaySetMode( SHADOW_DEBUG_OVERLAY_MODE_PANEL, idVec4( 1.0f, 1.0f, 1.0f, 1.0f ), 0.0f );
+		RB_ShadowMapDebugOverlaySubmitQuad( panelX, panelY, panelW, panelH, 0.0f, 0.0f, 1.0f, 1.0f );
+		RB_ShadowMapDebugOverlayDrawLabels( panelX, panelY, panelW, panelH );
+	}
+
+	char line1[96];
+	char line2[96];
+	char line3[96];
+	if ( g_shadowMapDebugOverlayState.valid ) {
+		const char *lightLabel = ( g_shadowMapDebugOverlayState.lightDefIndex >= 0 ) ?
+			va( "L%d", g_shadowMapDebugOverlayState.lightDefIndex ) : "L?";
+		idStr::snPrintf( line1, sizeof( line1 ), "%s %c %s %c%d %s",
+			g_shadowMapDebugOverlayState.pointLight ? "POINT" : "PROJ",
+			g_shadowMapDebugOverlayState.globalPass ? 'G' : 'L',
+			lightLabel,
+			g_shadowMapDebugOverlayState.pointLight ? 'F' : 'C',
+			g_shadowMapDebugOverlayState.pointLight ? 6 : g_shadowMapDebugOverlayState.cascadeCount,
+			g_shadowMapDebugOverlayState.mapped ? "MAP" : "FB" );
+		idStr::snPrintf( line2, sizeof( line2 ), "CAST %s SURF %s INTR %s",
+			( g_shadowMapDebugOverlayState.casterCount >= 0 ) ? va( "%d", g_shadowMapDebugOverlayState.casterCount ) : "?",
+			( g_shadowMapDebugOverlayState.shadowSurfCount >= 0 ) ? va( "%d", g_shadowMapDebugOverlayState.shadowSurfCount ) : "?",
+			( g_shadowMapDebugOverlayState.interactionCount >= 0 ) ? va( "%d", g_shadowMapDebugOverlayState.interactionCount ) : "?" );
+	} else {
+		idStr::snPrintf( line1, sizeof( line1 ), "NO MAP" );
+		idStr::snPrintf( line2, sizeof( line2 ), "SUP %d/%d",
+			g_shadowMapStats.supportedLights,
+			g_shadowMapStats.totalLights );
+	}
+	idStr::snPrintf( line3, sizeof( line3 ), "SUP %d/%d MAP %d/%d FB %d/%d",
+		g_shadowMapStats.supportedLights,
+		g_shadowMapStats.totalLights,
+		g_shadowMapStats.mappedLocalPasses,
+		g_shadowMapStats.mappedGlobalPasses,
+		g_shadowMapStats.fallbackLocalPasses,
+		g_shadowMapStats.fallbackGlobalPasses );
+
+	RB_ShadowMapDebugOverlayDrawString( panelX, statsY, 0.9f, textColor, line1 );
+	RB_ShadowMapDebugOverlayDrawString( panelX, statsY + 10.0f, 0.8f, textColor, line2 );
+	RB_ShadowMapDebugOverlayDrawString( panelX, statsY + 20.0f, 0.8f, textColor, line3 );
+
+	glUseProgramObjectARB( 0 );
+	GL_SelectTextureNoClient( 1 );
+	globalImages->BindNull();
+	GL_SelectTextureNoClient( 0 );
+	globalImages->BindNull();
+
+	if ( depthWasEnabled ) {
+		glEnable( GL_DEPTH_TEST );
+	} else {
+		glDisable( GL_DEPTH_TEST );
+	}
+	if ( blendWasEnabled ) {
+		glEnable( GL_BLEND );
+	} else {
+		glDisable( GL_BLEND );
+	}
+	if ( stencilWasEnabled ) {
+		glEnable( GL_STENCIL_TEST );
+	} else {
+		glDisable( GL_STENCIL_TEST );
+	}
+	if ( scissorWasEnabled ) {
+		glScissor( scissorBox[0], scissorBox[1], scissorBox[2], scissorBox[3] );
+	} else {
+		glDisable( GL_SCISSOR_TEST );
+	}
+	glViewport( viewport[0], viewport[1], viewport[2], viewport[3] );
+
+	backEnd.glState.faceCulling = -1;
+	if ( savedFaceCulling >= CT_FRONT_SIDED && savedFaceCulling <= CT_TWO_SIDED ) {
+		GL_Cull( savedFaceCulling );
+	}
+
+	backEnd.glState.currenttmu = -1;
+	GL_SelectTexture( 0 );
+}
+
 static void RB_ShadowMapRunPass( const viewLight_t *vLight, shadowMapPassKind_t passKind, bool pointLight, const drawSurf_t *primaryCasters, const drawSurf_t *secondaryCasters, const drawSurf_t *tertiaryCasters, const drawSurf_t *quaternaryCasters, const drawSurf_t *primaryShadowSurfs, const drawSurf_t *secondaryShadowSurfs, const drawSurf_t *interactions ) {
 	if ( interactions == NULL ) {
 		return;
@@ -4221,6 +4742,10 @@ static void RB_ShadowMapRunPass( const viewLight_t *vLight, shadowMapPassKind_t 
 		passResult = SHADOWMAP_PASS_RESULT_MASK_FAIL;
 	}
 	const bool mapped = ( passResult == SHADOWMAP_PASS_RESULT_MAPPED );
+
+	RB_ShadowMapDebugOverlayCapture( vLight, passKind, pointLight, mapped, renderOk,
+		primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters,
+		primaryShadowSurfs, secondaryShadowSurfs, interactions );
 
 	if ( mapped ) {
 		if ( passKind == SHADOWMAP_PASS_LOCAL ) {
@@ -4459,6 +4984,7 @@ void RB_ARB2_DrawInteractions( void ) {
 	GL_SelectTexture( 0 );
 	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
 	RB_ShadowMapStatsReset();
+	RB_ShadowMapDebugOverlayReset();
 
 	//
 	// for each light, perform adding and shadowing
@@ -4497,8 +5023,19 @@ void RB_ARB2_DrawInteractions( void ) {
 			glStencilFunc( GL_ALWAYS, 128, 255 );
 
 			if ( vLight->pointLight ) {
-				RB_ShadowMapRunPass( vLight, SHADOWMAP_PASS_LOCAL, true, vLight->globalShadowMapCasters, vLight->globalShadows, NULL, NULL, vLight->globalShadows, NULL, vLight->localInteractions );
-				RB_ShadowMapRunPass( vLight, SHADOWMAP_PASS_GLOBAL, true, vLight->globalShadowMapCasters, vLight->localShadowMapCasters, vLight->globalShadows, vLight->localShadows, vLight->globalShadows, vLight->localShadows, vLight->globalInteractions );
+				const drawSurf_t *pointLocalPrimaryCasters = vLight->globalShadowMapCasters;
+				const drawSurf_t *pointLocalSecondaryCasters = ( pointLocalPrimaryCasters == NULL ) ? vLight->globalShadows : NULL;
+				const bool pointHaveDedicatedGlobalCasters = ( vLight->globalShadowMapCasters != NULL || vLight->localShadowMapCasters != NULL );
+				const drawSurf_t *pointGlobalPrimaryCasters = vLight->globalShadowMapCasters;
+				const drawSurf_t *pointGlobalSecondaryCasters = vLight->localShadowMapCasters;
+				const drawSurf_t *pointGlobalTertiaryCasters = pointHaveDedicatedGlobalCasters ? NULL : vLight->globalShadows;
+				const drawSurf_t *pointGlobalQuaternaryCasters = pointHaveDedicatedGlobalCasters ? NULL : vLight->localShadows;
+
+				// Prefer the dedicated ambient-geometry shadow-map caster lists. The legacy
+				// shadow volume chains are a recovery path only when no dedicated point-light
+				// caster geometry survived interaction building.
+				RB_ShadowMapRunPass( vLight, SHADOWMAP_PASS_LOCAL, true, pointLocalPrimaryCasters, pointLocalSecondaryCasters, NULL, NULL, vLight->globalShadows, NULL, vLight->localInteractions );
+				RB_ShadowMapRunPass( vLight, SHADOWMAP_PASS_GLOBAL, true, pointGlobalPrimaryCasters, pointGlobalSecondaryCasters, pointGlobalTertiaryCasters, pointGlobalQuaternaryCasters, vLight->globalShadows, vLight->localShadows, vLight->globalInteractions );
 			} else {
 				RB_ShadowMapRunPass( vLight, SHADOWMAP_PASS_LOCAL, false, vLight->globalShadowMapCasters, vLight->globalShadows, NULL, NULL, vLight->globalShadows, NULL, vLight->localInteractions );
 				RB_ShadowMapRunPass( vLight, SHADOWMAP_PASS_GLOBAL, false, vLight->globalShadowMapCasters, vLight->localShadowMapCasters, vLight->globalShadows, vLight->localShadows, vLight->globalShadows, vLight->localShadows, vLight->globalInteractions );
@@ -4563,11 +5100,13 @@ void RB_ARB2_DrawInteractions( void ) {
 		RB_ARB2_CreateDrawInteractions( vLight->translucentInteractions );
 
 		backEnd.depthFunc = GLS_DEPTHFUNC_EQUAL;
+		continue;
 	}
 
 	// disable stencil shadow test
 	glStencilFunc( GL_ALWAYS, 128, 255 );
 	RB_ShadowMapStatsReport();
+	RB_ShadowMapDebugOverlayDraw();
 
 	GL_SelectTexture( 0 );
 	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
@@ -4978,6 +5517,8 @@ void R_ReportShaderPrograms_f( const idCmdArgs &args ) {
 		RB_ShadowProgramStatusName( g_pointShadowCasterProgram.programObject, g_pointShadowCasterProgram.programValid, g_pointShadowCasterProgram.programGeneration ) );
 	common->Printf( "GLSL shadow point translucent caster: %s\n",
 		RB_ShadowProgramStatusName( g_pointTranslucentShadowCasterProgram.programObject, g_pointTranslucentShadowCasterProgram.programValid, g_pointTranslucentShadowCasterProgram.programGeneration ) );
+	common->Printf( "GLSL shadow debug overlay: %s\n",
+		RB_ShadowProgramStatusName( g_shadowDebugOverlayProgram.programObject, g_shadowDebugOverlayProgram.programValid, g_shadowDebugOverlayProgram.programGeneration ) );
 	common->Printf( "----------------------------------\n" );
 }
 

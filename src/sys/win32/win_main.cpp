@@ -1002,7 +1002,7 @@ returns true if there is a copy of D3 running already
 bool Sys_AlreadyRunning(void) {
 #ifndef DEBUG
 	if (!win32.win_allowMultipleInstances.GetBool()) {
-		HANDLE hMutexOneInstance = ::CreateMutex(NULL, FALSE, "DOOM3");
+		HANDLE hMutexOneInstance = ::CreateMutex(NULL, FALSE, "OpenQ4");
 		if (::GetLastError() == ERROR_ALREADY_EXISTS || ::GetLastError() == ERROR_ACCESS_DENIED) {
 			return true;
 		}

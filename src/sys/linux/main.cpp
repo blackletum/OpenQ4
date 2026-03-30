@@ -82,9 +82,11 @@ static void Sys_ReportWaylandRuntime( void ) {
 Sys_InitScanTable
 ===========
 */
+#if !defined(USE_SDL3)
 void Sys_InitScanTable( void ) {
 	common->DPrintf( "TODO: Sys_InitScanTable\n" );
 }
+#endif
 
 /*
 =================
@@ -224,9 +226,11 @@ const char *Sys_DefaultBasePath(void) {
 Sys_GetConsoleKey
 ===============
 */
+#if !defined(USE_SDL3)
 unsigned char Sys_GetConsoleKey( bool shifted ) {
 	return shifted ? '~' : '`';
 }
+#endif
 
 /*
 ===============

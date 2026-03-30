@@ -38,21 +38,26 @@ if host_system == 'windows' and platform_backend_requested == 'native'
   error('platform_backend=native is only valid on non-Windows hosts.')
 endif
 
-if host_system != 'windows'
+if host_system == 'linux'
+  if platform_backend_requested == 'legacy_win32'
+    error('platform_backend=legacy_win32 is only valid on Windows hosts.')
+  endif
+elif host_system == 'darwin'
   if platform_backend_requested == 'legacy_win32'
     error('platform_backend=legacy_win32 is only valid on Windows hosts.')
   endif
 
   if platform_backend_requested == 'sdl3'
     message(
-      'platform_backend=sdl3 on non-Windows currently runs in staging mode and maps to native platform sources. '
-      + 'Use this to keep command lines/CI aligned while SDL3 migration is in progress.'
+      'platform_backend=sdl3 on macOS currently maps to native platform sources while SDL3 migration work is implemented.'
     )
+    platform_backend = 'native'
   endif
-  platform_backend = 'native'
+elif host_system != 'windows'
+  error('Unsupported host system for platform backend selection: ' + host_system)
 endif
 
-use_sdl3_backend = host_system == 'windows' and platform_backend_requested == 'sdl3'
+use_sdl3_backend = platform_backend == 'sdl3'
 if host_system == 'windows' and not use_sdl3_backend
   warning(
     'legacy_win32 backend is transitional. '
@@ -377,6 +382,9 @@ if build_engine
       dependency('xxf86vm', required: true),
       cc.find_library('GL', required: true),
     ]
+    if use_sdl3_backend
+      deps += [sdl3_dep]
+    endif
   elif host_system == 'darwin'
     deps += [
       dependency('threads', required: true),
@@ -620,13 +628,32 @@ if host_system == 'linux'
   linux_desktop_conf.set('OPENQ4_CLIENT_BINARY', engine_client_binary_name)
   linux_desktop_conf.set('OPENQ4_PROJECT_VERSION', openq4_version_short)
   linux_desktop_conf.set('OPENQ4_PROJECT_VERSION_FULL', openq4_version_full)
+  linux_steamdeck_launcher = configure_file(
+    input: 'assets/linux/OpenQ4-steamdeck.in',
+    output: 'OpenQ4-steamdeck',
+    configuration: linux_desktop_conf,
+  )
   linux_desktop_entry = configure_file(
     input: 'assets/linux/openq4.desktop.in',
     output: 'openq4.desktop',
     configuration: linux_desktop_conf,
   )
+  linux_steamdeck_desktop_entry = configure_file(
+    input: 'assets/linux/openq4-steamdeck.desktop.in',
+    output: 'openq4-steamdeck.desktop',
+    configuration: linux_desktop_conf,
+  )
+  install_data(
+    linux_steamdeck_launcher,
+    install_dir: install_root_dir,
+    install_mode: 'rwxr-xr-x',
+  )
   install_data(
     linux_desktop_entry,
+    install_dir: install_root_dir / 'share' / 'applications',
+  )
+  install_data(
+    linux_steamdeck_desktop_entry,
     install_dir: install_root_dir / 'share' / 'applications',
   )
 
