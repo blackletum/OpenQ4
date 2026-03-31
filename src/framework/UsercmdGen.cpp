@@ -94,6 +94,7 @@ typedef enum {
 	UB_ZOOM,
 	UB_SHOWSCORES,
 	UB_MLOOK,
+	UB_WEAPONWHEEL,
 
 	UB_IMPULSE0,
 	UB_IMPULSE1,
@@ -187,6 +188,7 @@ userCmdString_t	userCmdStrings[] = {
 	{ "_zoom",			UB_ZOOM },
 	{ "_showScores",	UB_SHOWSCORES },
 	{ "_mlook",			UB_MLOOK },
+	{ "_weaponWheel",	UB_WEAPONWHEEL },
 	{ "_ingameStats",	UB_BUTTON5 },
 	{ "_voiceChat",		UB_BUTTON6 },
 	{ "_tourney",		UB_BUTTON7 },
@@ -805,6 +807,10 @@ void idUsercmdGenLocal::CmdButtons( void ) {
 	// check the mouse look button
 	if ( ButtonState( UB_MLOOK ) ^ in_freeLook.GetInteger() ) {
 		cmd.buttons |= BUTTON_MLOOK;
+	}
+
+	if ( ButtonState( UB_WEAPONWHEEL ) ) {
+		cmd.buttons |= BUTTON_WEAPONWHEEL;
 	}
 }
 

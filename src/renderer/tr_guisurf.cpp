@@ -117,6 +117,40 @@ void R_SurfaceToTextureAxis( const srfTriangles_t *tri, idVec3 &origin, idVec3 a
 	VectorMA( origin, boundsOrg[1] - a->st[1], axis[1], origin );
 }
 
+static void R_UpdateGuiScreenRectState( idUserInterface *gui, const drawSurf_t *drawSurf ) {
+	if ( gui == NULL || drawSurf == NULL || !gui->State().GetBool( "2d_calc" ) ) {
+		return;
+	}
+
+	idScreenRect rect;
+	rect.Clear();
+
+	const srfTriangles_t *geo = drawSurf->geo;
+	const float viewportWidth = Max( 1.0f, static_cast<float>( tr.viewDef->viewport.x2 - tr.viewDef->viewport.x1 ) );
+	const float viewportHeight = Max( 1.0f, static_cast<float>( tr.viewDef->viewport.y2 - tr.viewDef->viewport.y1 ) );
+	for ( int i = 0; i < geo->numVerts; ++i ) {
+		idVec3 global;
+		idVec3 ndc;
+
+		R_LocalPointToGlobal( drawSurf->space->modelMatrix, geo->verts[i].xyz, global );
+		R_GlobalToNormalizedDeviceCoordinates( global, ndc );
+
+		const float x = viewportWidth * ( ndc[0] + 1.0f ) * 0.5f;
+		const float y = viewportHeight * ( 1.0f - ndc[1] ) * 0.5f;
+
+		rect.AddPoint( x, y );
+	}
+
+	const float ratioX = static_cast<float>( SCREEN_WIDTH ) / viewportWidth;
+	const float ratioY = static_cast<float>( SCREEN_HEIGHT ) / viewportHeight;
+
+	gui->SetStateFloat( "2d_min_x", rect.x1 * ratioX );
+	gui->SetStateFloat( "2d_min_y", rect.y1 * ratioY );
+	gui->SetStateFloat( "2d_max_x", rect.x2 * ratioX );
+	gui->SetStateFloat( "2d_max_y", rect.y2 * ratioY );
+	gui->SetStateBool( "2d_calc", false );
+}
+
 /*
 =================
 R_RenderGuiSurf
@@ -173,9 +207,10 @@ void R_RenderGuiSurf( idUserInterface *gui, drawSurf_t *drawSurf ) {
 
 	// call the gui, which will call the 2D drawing functions
 	tr.guiModel->Clear();
-	gui->Redraw( tr.viewDef->renderView.time );
+	gui->Redraw( tr.viewDef->renderView.time, false );
 	tr.guiModel->EmitToCurrentView( modelMatrix, drawSurf->space->weaponDepthHack );
 	tr.guiModel->Clear();
+	R_UpdateGuiScreenRectState( gui, drawSurf );
 
 	tr.guiRecursionLevel--;
 }

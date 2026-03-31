@@ -42,7 +42,7 @@ public:
 	virtual bool				InitFromFile( const char *qpath, bool rebuild = true, bool cache = true );
 	virtual const char *		HandleEvent( const sysEvent_t *event, int time, bool *updateVisuals );
 	virtual void				HandleNamedEvent( const char* namedEvent );
-	virtual void				Redraw( int time );
+	virtual void				Redraw( int time, bool useAspectCorrection = true );
 	virtual void				DrawCursor();
 	virtual const idDict &		State() const;
 	virtual void				DeleteStateVar( const char *varName );

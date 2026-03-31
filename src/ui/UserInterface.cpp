@@ -387,7 +387,7 @@ void idUserInterfaceLocal::HandleNamedEvent ( const char* eventName ) {
 	desktop->RunNamedEvent( eventName );
 }
 
-void idUserInterfaceLocal::Redraw( int _time ) {
+void idUserInterfaceLocal::Redraw( int _time, bool useAspectCorrection ) {
 	SetStateInt( "mousex", (int)CursorX() );
 	SetStateInt( "mousey", (int)CursorY() );
 	if ( r_skipGuiShaders.GetInteger() > 5 ) {
@@ -400,7 +400,7 @@ void idUserInterfaceLocal::Redraw( int _time ) {
 			desktop->Init();
 		}
 
-		const bool aspectCorrect = ui_aspectCorrection.GetBool();
+		const bool aspectCorrect = useAspectCorrection && ui_aspectCorrection.GetBool();
 		uiManagerLocal.SetAspectCorrection( aspectCorrect );
 		uiManagerLocal.SetSize( desktop->forceAspectWidth, desktop->forceAspectHeight );
 		float xExpand = 0.0f;

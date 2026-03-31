@@ -2796,6 +2796,19 @@ asyncStats_t	com_asyncStats[MAX_ASYNC_STATS];		// indexed by com_ticNumber
 int prevAsyncMsec;
 int	lastTicMsec;
 
+static bool OpenQ4_ShouldUseSmoothSingleplayerSlowTime( void ) {
+	if ( cvarSystem == NULL || idAsyncNetwork::IsActive() ) {
+		return false;
+	}
+
+	const char *gameType = cvarSystem->GetCVarString( "si_gameType" );
+	if ( gameType == NULL || idStr::Icmp( gameType, "singleplayer" ) != 0 ) {
+		return false;
+	}
+
+	return com_timescale.GetFloat() < 0.999f;
+}
+
 void idCommonLocal::SingleAsyncTic( void ) {
 	// main thread code can prevent this from happening while modifying
 	// critical data structures
@@ -2854,7 +2867,8 @@ void idCommonLocal::Async( void ) {
 
 	// the number of msec per tic can be varies with the timescale cvar
 	float timescale = com_timescale.GetFloat();
-	if ( timescale != 1.0f ) {
+	const bool smoothSlowTime = OpenQ4_ShouldUseSmoothSingleplayerSlowTime();
+	if ( !smoothSlowTime && timescale != 1.0f ) {
 		ticMsec /= timescale;
 		if ( ticMsec < 1 ) {
 			ticMsec = 1;
@@ -2862,7 +2876,7 @@ void idCommonLocal::Async( void ) {
 	}
 
 	// don't skip too many
-	if ( timescale == 1.0f ) {
+	if ( smoothSlowTime || timescale == 1.0f ) {
 		if ( lastTicMsec + 10 * GetUserCmdMSec() < msec ) {
 			lastTicMsec = msec - 10* GetUserCmdMSec();
 		}

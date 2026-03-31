@@ -491,7 +491,8 @@ void Script_NonInteractive(idWindow* window, idList<idGSWinVar>* src) {
 	idWinStr* parm = dynamic_cast<idWinStr*>((*src)[0].var);
 	int val = atoi(parm->c_str());
 
-	window->GetGui()->SetInteractive(val == 1);
+	// Quake 4 GUI scripts use "nonInteractive 1" to disable input.
+	window->GetGui()->SetInteractive( val == 0 );
 }
 // jmarshall end
 

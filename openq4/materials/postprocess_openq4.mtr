@@ -95,6 +95,7 @@ postprocess/openq4_blur
 		shaderParm approachPercent global6
 		shaderParm distanceScale global7
 		shaderTexture Scene clamp _postProcessAlbedo0
+		shaderTexture DepthTex nearest clamp _forwardRenderResolvedDepth
 	}
 	{
 		if ( glslPrograms ) == 0

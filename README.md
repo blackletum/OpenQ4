@@ -58,6 +58,7 @@ Single-player and multiplayer live under one `openq4/` directory with `game-sp` 
 ### Modern usability
 
 - Automatic aspect-ratio, FOV, zoom, and view-weapon framing from live render size
+- Single-player weapon wheel currently under development, including slow-motion audio/presentation treatment on hold
 - Multi-monitor targeting plus borderless, desktop fullscreen, and exclusive fullscreen paths
 - Controller hotplug and analog input support
 - SDL3-first Linux runtime with an explicit `OpenQ4-steamdeck` launcher/profile for Steam Deck
