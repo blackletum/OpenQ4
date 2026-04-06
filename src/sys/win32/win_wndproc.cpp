@@ -334,6 +334,10 @@ LONG WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam ) {
 
 				if ( fActive == WA_INACTIVE ) {
 					win32.movingWindow = false;
+
+					if ( win32.cdsFullscreen && hWnd != NULL ) {
+						ShowWindow( hWnd, SW_MINIMIZE );
+					}
 				}
 
 				// start playing the game sound world

@@ -117,17 +117,15 @@ void R_SurfaceToTextureAxis( const srfTriangles_t *tri, idVec3 &origin, idVec3 a
 	VectorMA( origin, boundsOrg[1] - a->st[1], axis[1], origin );
 }
 
-static void R_UpdateGuiScreenRectState( idUserInterface *gui, const drawSurf_t *drawSurf ) {
-	if ( gui == NULL || drawSurf == NULL || !gui->State().GetBool( "2d_calc" ) ) {
-		return;
-	}
-
+static idScreenRect R_ScreenRectFromDrawSurf( const drawSurf_t *drawSurf ) {
 	idScreenRect rect;
 	rect.Clear();
 
+	if ( drawSurf == NULL || drawSurf->geo == NULL ) {
+		return rect;
+	}
+
 	const srfTriangles_t *geo = drawSurf->geo;
-	const float viewportWidth = Max( 1.0f, static_cast<float>( tr.viewDef->viewport.x2 - tr.viewDef->viewport.x1 ) );
-	const float viewportHeight = Max( 1.0f, static_cast<float>( tr.viewDef->viewport.y2 - tr.viewDef->viewport.y1 ) );
 	for ( int i = 0; i < geo->numVerts; ++i ) {
 		idVec3 global;
 		idVec3 ndc;
@@ -135,19 +133,79 @@ static void R_UpdateGuiScreenRectState( idUserInterface *gui, const drawSurf_t *
 		R_LocalPointToGlobal( drawSurf->space->modelMatrix, geo->verts[i].xyz, global );
 		R_GlobalToNormalizedDeviceCoordinates( global, ndc );
 
-		const float x = viewportWidth * ( ndc[0] + 1.0f ) * 0.5f;
-		const float y = viewportHeight * ( 1.0f - ndc[1] ) * 0.5f;
+		const float x = static_cast<float>( tr.viewDef->viewport.x2 - tr.viewDef->viewport.x1 ) * ( ndc[0] + 1.0f ) * 0.5f;
+		const float y = static_cast<float>( tr.viewDef->viewport.y2 ) -
+			static_cast<float>( tr.viewDef->viewport.y2 - tr.viewDef->viewport.y1 ) * ( ndc[1] + 1.0f ) * 0.5f;
 
 		rect.AddPoint( x, y );
 	}
 
+	return rect;
+}
+
+static void R_ConvertScreenToHudSpace( float &x, float &y ) {
+	if ( !cvarSystem->GetCVarBool( "ui_aspectCorrection" ) ) {
+		return;
+	}
+
+	float windowWidth = static_cast<float>( glConfig.uiViewportWidth );
+	float windowHeight = static_cast<float>( glConfig.uiViewportHeight );
+	if ( windowWidth <= 0.0f || windowHeight <= 0.0f ) {
+		windowWidth = static_cast<float>( glConfig.vidWidth );
+		windowHeight = static_cast<float>( glConfig.vidHeight );
+	}
+
+	if ( windowWidth <= 0.0f || windowHeight <= 0.0f ) {
+		return;
+	}
+
+	const float targetAspect = static_cast<float>( SCREEN_WIDTH ) / static_cast<float>( SCREEN_HEIGHT );
+	const float windowAspect = windowWidth / windowHeight;
+	const float uniformPhysicalScale = ( windowAspect >= targetAspect ) ?
+		( windowHeight / static_cast<float>( SCREEN_HEIGHT ) ) :
+		( windowWidth / static_cast<float>( SCREEN_WIDTH ) );
+	const float drawWidth = static_cast<float>( SCREEN_WIDTH ) * uniformPhysicalScale;
+	const float drawHeight = static_cast<float>( SCREEN_HEIGHT ) * uniformPhysicalScale;
+	const float virtualPerPhysicalX = static_cast<float>( SCREEN_WIDTH ) / windowWidth;
+	const float virtualPerPhysicalY = static_cast<float>( SCREEN_HEIGHT ) / windowHeight;
+	const float xScale = uniformPhysicalScale * virtualPerPhysicalX;
+	const float yScale = uniformPhysicalScale * virtualPerPhysicalY;
+	const float xOffset = ( windowWidth - drawWidth ) * 0.5f * virtualPerPhysicalX;
+	const float yOffset = ( windowHeight - drawHeight ) * 0.5f * virtualPerPhysicalY;
+
+	if ( xScale != 0.0f ) {
+		x = ( x - xOffset ) / xScale;
+	}
+	if ( yScale != 0.0f ) {
+		y = ( y - yOffset ) / yScale;
+	}
+}
+
+static void R_UpdateGuiScreenRectState( idUserInterface *gui, const drawSurf_t *drawSurf ) {
+	if ( gui == NULL || drawSurf == NULL || !gui->State().GetBool( "2d_calc" ) ) {
+		return;
+	}
+
+	const idScreenRect rect = R_ScreenRectFromDrawSurf( drawSurf );
+	const float viewportWidth = Max( 1.0f, static_cast<float>( tr.viewDef->viewport.x2 - tr.viewDef->viewport.x1 ) );
+	const float viewportHeight = Max( 1.0f, static_cast<float>( tr.viewDef->viewport.y2 - tr.viewDef->viewport.y1 ) );
 	const float ratioX = static_cast<float>( SCREEN_WIDTH ) / viewportWidth;
 	const float ratioY = static_cast<float>( SCREEN_HEIGHT ) / viewportHeight;
+	float minX = rect.x1 * ratioX;
+	float minY = rect.y1 * ratioY;
+	float maxX = rect.x2 * ratioX;
+	float maxY = rect.y2 * ratioY;
 
-	gui->SetStateFloat( "2d_min_x", rect.x1 * ratioX );
-	gui->SetStateFloat( "2d_min_y", rect.y1 * ratioY );
-	gui->SetStateFloat( "2d_max_x", rect.x2 * ratioX );
-	gui->SetStateFloat( "2d_max_y", rect.y2 * ratioY );
+	// Retail Quake 4 writes raw 640x480 HUD coords here. OpenQ4's optional HUD aspect
+	// correction remaps those coords into a centered 4:3 region, so undo that transform
+	// first or the bracket box will be squeezed inward on widescreen displays.
+	R_ConvertScreenToHudSpace( minX, minY );
+	R_ConvertScreenToHudSpace( maxX, maxY );
+
+	gui->SetStateFloat( "2d_min_x", minX );
+	gui->SetStateFloat( "2d_min_y", minY );
+	gui->SetStateFloat( "2d_max_x", maxX );
+	gui->SetStateFloat( "2d_max_y", maxY );
 	gui->SetStateBool( "2d_calc", false );
 }
 

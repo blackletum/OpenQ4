@@ -1786,6 +1786,23 @@ static bool SDL3_LeaveFullscreenAndRestoreDesktopMode(void) {
 	return true;
 }
 
+#if defined(_WIN32)
+static void SDL3_MinimizeOnFullscreenFocusLoss(void) {
+	if (!s_sdlWindow) {
+		return;
+	}
+
+	const SDL_WindowFlags flags = SDL_GetWindowFlags(s_sdlWindow);
+	if ((flags & SDL_WINDOW_FULLSCREEN) == 0) {
+		return;
+	}
+
+	if (!SDL_MinimizeWindow(s_sdlWindow)) {
+		common->DPrintf("SDL3: failed to minimize fullscreen window on focus loss: %s\n", SDL_GetError());
+	}
+}
+#endif
+
 static bool SDL3_ApplyScreenParms(glimpParms_t parms) {
 	if (!s_sdlWindow) {
 		return false;
@@ -2054,6 +2071,11 @@ static void SDL3_HandleWindowEvent(const SDL_WindowEvent &event, int eventTime) 
 			s_menuMouseInsideWindow = false;
 			SDL3_InvalidateMenuMouseRouting();
 			SDL3_UpdateCursorVisibility();
+#if defined(_WIN32)
+			// Match the classic Win32 behavior Warfork uses: minimizing true fullscreen on
+			// deactivation lets system UI like Win+Shift+S / Print Screen take foreground cleanly.
+			SDL3_MinimizeOnFullscreenFocusLoss();
+#endif
 			if (session != NULL) {
 				session->SetPlayingSoundWorld();
 			}
