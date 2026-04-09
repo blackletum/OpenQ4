@@ -85,7 +85,7 @@ To rebuild the game libraries as part of the OpenQ4 build, set `OPENQ4_BUILD_GAM
 
 ## Build Setup
 
-Third-party libraries such as SDL3, GLEW, OpenAL Soft, and stb_vorbis are managed as Meson subprojects. Linux still requires the usual native development packages for X11/OpenGL plus SDL3 runtime integrations (for example `libdbus-1-dev`, `libpipewire-0.3-dev`, `libudev-dev`, `libwayland-dev`, `libx11-dev`, `libxext-dev`, and `libxxf86vm-dev` on Debian/Ubuntu) before the first configure step.
+Third-party libraries such as SDL3, GLEW, OpenAL Soft, and stb_vorbis are managed as Meson subprojects. Linux still requires the usual native development packages for X11/OpenGL plus SDL3 runtime integrations before the first configure step. On current Debian/Ubuntu systems, install the CI-aligned SDL3/Linux package set (`libasound2-dev`, `libdbus-1-dev`, `libdecor-0-dev`, `libdrm-dev`, `libegl1-mesa-dev`, `libfribidi-dev`, `libgbm-dev`, `libgl1-mesa-dev`, `libibus-1.0-dev`, `libjack-dev`, `libopenal-dev`, `libpipewire-0.3-dev`, `libpulse-dev`, `libsndio-dev`, `libthai-dev`, `libudev-dev`, `libwayland-dev`, `libx11-dev`, `libxcursor-dev`, `libxext-dev`, `libxfixes-dev`, `libxi-dev`, `libxkbcommon-dev`, `libxrandr-dev`, `libxss-dev`, `libxtst-dev`, `libxxf86dga-dev`, and `libxxf86vm-dev`).
 
 ---
 
