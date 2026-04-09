@@ -847,6 +847,16 @@ bool idWindow::RunTimeEvents(int time) {
 		return false;
 	}
 
+	// Save/load and other clock resets can move GUI time backwards.
+	// Clamp stale timestamps so timed HUD events can recover instead of
+	// remaining frozen for the rest of the level.
+	if ( lastTimeRun > time ) {
+		lastTimeRun = time - USERCMD_MSEC;
+	}
+	if ( timeLine > time ) {
+		timeLine = time;
+	}
+
 	if ( time - lastTimeRun < USERCMD_MSEC ) {
 		//common->Printf("Skipping gui time events at %i\n", time);
 		return false;
@@ -1354,6 +1364,10 @@ void idWindow::Time() {
 	
 	if ( noTime ) {
 		return;
+	}
+
+	if ( timeLine > gui->GetTime() ) {
+		timeLine = gui->GetTime();
 	}
 
 	if ( timeLine == -1 ) {

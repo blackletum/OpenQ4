@@ -30,6 +30,7 @@
 	"#str_41105"	"Indisponible"
 	"#str_41106"	"La capture RenderDoc n'est pas encore prise en charge avec le moteur de rendu OpenQ4 actuel. Le contexte OpenGL injecte ne fournit pas les fonctions de compatibilite dont OpenQ4 a encore besoin."
 	"#str_41107"	"VOLUMES D'IRRADIANCE"
+	"#str_41108"	"ZOOM A BASCULE"
 	"#str_229900"	"AFFICHAGE"
 	"#str_229901"	"AUDIO"
 	"#str_229902"	"Base"

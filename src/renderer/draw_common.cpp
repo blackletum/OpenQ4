@@ -544,6 +544,16 @@ static void RB_BeginFullscreenPostProcessPass( int scissorX, int scissorY, int s
 	glEnable( GL_SCISSOR_TEST );
 	glScissor( scissorX, scissorY, scissorWidth, scissorHeight );
 
+	// Fullscreen composites must start from a known programmable-pipeline state.
+	// Level changes and SP/MP transitions can leave legacy ARB programs bound or
+	// higher texture units configured by material stages, which causes the
+	// tonemap/bloom fullscreen quad to sample garbage or render solid black.
+	glUseProgramObjectARB( 0 );
+	glDisable( GL_VERTEX_PROGRAM_ARB );
+	glDisable( GL_FRAGMENT_PROGRAM_ARB );
+	glBindProgramARB( GL_VERTEX_PROGRAM_ARB, 0 );
+	glBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, 0 );
+
 	glMatrixMode( GL_MODELVIEW );
 	glLoadIdentity();
 	glMatrixMode( GL_PROJECTION );
@@ -553,24 +563,21 @@ static void RB_BeginFullscreenPostProcessPass( int scissorX, int scissorY, int s
 
 	GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO );
 	GL_Cull( CT_TWO_SIDED );
+
+	const int maxStateUnits = Max( 0, Min( MAX_MULTITEXTURE_UNITS, Min( glConfig.maxTextureUnits, glConfig.maxTextureImageUnits ) ) );
+	for ( int unit = 0; unit < maxStateUnits; unit++ ) {
+		GL_SelectTexture( unit );
+		glDisable( GL_TEXTURE_GEN_S );
+		glDisable( GL_TEXTURE_GEN_T );
+		glDisable( GL_TEXTURE_GEN_R );
+		glDisable( GL_TEXTURE_GEN_Q );
+		glMatrixMode( GL_TEXTURE );
+		glLoadIdentity();
+		glMatrixMode( GL_MODELVIEW );
+		globalImages->BindNull();
+	}
+
 	GL_SelectTexture( 0 );
-	glDisable( GL_TEXTURE_GEN_S );
-	glDisable( GL_TEXTURE_GEN_T );
-	glDisable( GL_TEXTURE_GEN_R );
-	glDisable( GL_TEXTURE_GEN_Q );
-	glMatrixMode( GL_TEXTURE );
-	glLoadIdentity();
-	glMatrixMode( GL_MODELVIEW );
-	GL_SelectTexture( 1 );
-	glDisable( GL_TEXTURE_GEN_S );
-	glDisable( GL_TEXTURE_GEN_T );
-	glDisable( GL_TEXTURE_GEN_R );
-	glDisable( GL_TEXTURE_GEN_Q );
-	glMatrixMode( GL_TEXTURE );
-	glLoadIdentity();
-	glMatrixMode( GL_MODELVIEW );
-	GL_SelectTexture( 0 );
-	globalImages->BindNull();
 	glDisable( GL_DEPTH_TEST );
 	glDisable( GL_STENCIL_TEST );
 }

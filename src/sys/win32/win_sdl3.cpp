@@ -247,6 +247,18 @@ void* GLimp_ExtensionPointer(const char* name);
 bool QGL_Init(const char *dllname);
 void QGL_Shutdown(void);
 
+#if defined(OPENQ4_SDL3_LINUX_HOST)
+// The SDL3 Linux backend reuses this translation unit but does not provide the
+// legacy GL logging hook from the native GLX path.
+void GLimp_EnableLogging(bool enable) {
+	static bool loggingEnabled = false;
+	if (enable != loggingEnabled) {
+		common->DPrintf("GLimp_EnableLogging - unavailable for SDL3 Linux backend\n");
+		loggingEnabled = enable;
+	}
+}
+#endif
+
 static int SDL3_EventMilliseconds(Uint64 timestampNs) {
 	static const Uint64 SDL3_MAX_EVENT_MS = 0x7fffffffULL;
 	if (timestampNs == 0) {

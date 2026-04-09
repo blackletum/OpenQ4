@@ -30,6 +30,7 @@
 	"#str_41105"	"Unavailable"
 	"#str_41106"	"RenderDoc capture is not yet supported with the current OpenQ4 renderer. The injected OpenGL context is missing compatibility features that OpenQ4 still requires."
 	"#str_41107"	"IRRADIANCE VOLUMES"
+	"#str_41108"	"TOGGLE ZOOM"
 	"#str_229900"	"DISPLAY"
 	"#str_229901"	"AUDIO"
 	"#str_229902"	"Basics"

@@ -30,6 +30,7 @@
 	"#str_41105"	"Non disponibile"
 	"#str_41106"	"La cattura RenderDoc non e ancora supportata con il renderer OpenQ4 attuale. Il contesto OpenGL iniettato non fornisce le funzionalita di compatibilita di cui OpenQ4 ha ancora bisogno."
 	"#str_41107"	"VOLUMI DI IRRADIANZA"
+	"#str_41108"	"ZOOM A COMMUTAZIONE"
 	"#str_229900"	"SCHERMO"
 	"#str_229901"	"AUDIO"
 	"#str_229902"	"Base"

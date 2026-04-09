@@ -78,13 +78,37 @@
 
 		}
 	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Toggle Zoom
+	//--------------------------------------------------------------//
+		windowDef set_game_togglezoom_hover
+		{
+			rect	245,121,361,20
+			visible	0
+
+			onMouseEnter {
+				if ("desktop::active" == 0) {
+					stoptransitions "set_game_togglezoom_background" ;
+					set "set_game_togglezoom_background::matcolor_w" "1" ;
+					set "cmd" "play main_menu_mouseover" ;
+				}
+			}
+
+			onMouseExit {
+				if ("desktop::active" == 0) {
+					transition "set_game_togglezoom_background::matcolor_w" "1" "0.4" "300" ;
+				}
+			}
+		}
+	//==============================================================//
 				
 	//==============================================================//
 	// Settings->Game Options->Show Decals
 	//--------------------------------------------------------------//
 		windowDef set_game_showdecals_hover
 		{
-			rect	245,121,361,20
+			rect	245,145,361,20
 			visible	0
 
 			onMouseEnter {
@@ -111,7 +135,7 @@
 	//--------------------------------------------------------------//
 		windowDef set_game_showgun_hover
 		{
-			rect	245,145,361,20
+			rect	245,169,361,20
 			visible	0
 
 			onMouseEnter {
@@ -138,7 +162,7 @@
 	//--------------------------------------------------------------//
 		windowDef set_game_gunXYZ_hover
 		{
-			rect  245,169,361,20
+			rect  245,193,361,20
 			visible 0
 				
 			onMouseEnter {
@@ -161,7 +185,7 @@
 	//--------------------------------------------------------------//
 		windowDef set_game_simpleitems_hover
 		{
-			rect	245,193,361,20
+			rect	245,217,361,20
 			visible	0
 
 			onMouseEnter {
@@ -185,7 +209,7 @@
 	//--------------------------------------------------------------//
 		windowDef set_game_forcemodel_hover
 		{
-			rect	245,217,361,20
+			rect	245,241,361,20
 			visible	0
 
 			onMouseEnter {
@@ -209,7 +233,7 @@
 	//==============================================================//
 		windowDef set_game_mpitch_hover
 		{
-			rect	245,241,361,20
+			rect	245,265,361,20
 			visible	0
 	
 			onMouseEnter {
@@ -233,7 +257,7 @@
 	//==============================================================//			
 		windowDef set_game_msmooth_hover
 		{
-			rect	245,265,361,20
+			rect	245,289,361,20
 			visible	0
 
 			onMouseEnter {
@@ -258,7 +282,7 @@
 	//==============================================================//
 		windowDef set_game_msensitivity_hover
 		{
-			rect	245,289,361,20
+			rect	245,313,361,20
 			visible	0
 
 			onMouseEnter {
@@ -285,7 +309,7 @@
 	//==============================================================//
 		windowDef set_game_customxhair_hover
 		{
-			rect	245,312,361,20
+			rect	245,337,361,20
 			visible	0
 
 			onMouseEnter {
@@ -311,7 +335,7 @@
 	//==============================================================//
 		windowDef set_game_previewxhair_hover
 		{
-			rect	245,335,361,48
+			rect	245,361,361,48
 			visible	0
 
 			onMouseEnter {
@@ -348,7 +372,7 @@
 	//==============================================================//
 		windowDef set_game_xhairsize_hover
 		{
-			rect	245,384,361,20
+			rect	245,409,361,20
 			visible	0
 
 			onMouseEnter {
@@ -375,7 +399,7 @@
 	//==============================================================//
 		windowDef set_game_xhaircolor_hover
 		{
-			rect	245,409,361,20
+			rect	245,434,361,20
 			visible	0
 
 			onMouseEnter {
@@ -619,7 +643,7 @@
 			}
 			windowDef set_game_language_hover
 			{
-				rect	245,435,361,20
+				rect	245,459,361,20
 				visible	0
 
 				onMouseEnter {

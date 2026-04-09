@@ -412,6 +412,7 @@ windowDef Desktop
 	}	
 		
 	onNamedEvent saveMessage {
+		stoptransitions "quicksave_msg" ;
 		set "quicksave_msg::forecolor_w" "1" ;
 		set "quicksave_msg::visible" "1" ;
 		resettime "quicksave_msg" "0" ;

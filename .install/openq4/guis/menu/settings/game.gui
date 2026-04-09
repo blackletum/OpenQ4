@@ -147,6 +147,50 @@
 					}					
 				}
 	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Toggle Zoom
+	//--------------------------------------------------------------//
+
+				windowDef set_game_togglezoom
+				{
+					rect  228,119,403,25
+					visible 1
+
+					windowDef set_game_togglezoom_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+
+					windowDef set_game_togglezoom_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_41108"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					choiceDef set_game_togglezoom_value
+					{
+						rect	240,3,162,18
+						visible	1
+						forecolor	1,0.745,0.137,0.8
+						cvar	in_toggleZoom
+						textscale	0.24
+						font	"fonts/lowpixel"
+						choices	"#str_200059"
+						choiceType	0
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
 				
 	//==============================================================//
 	// Settings->Game Options->Show Decals
@@ -154,7 +198,7 @@
 				
 				windowDef set_game_showdecals
 				{
-					rect  228,119,403,25
+					rect  228,143,403,25
 					visible 1
 											
 					windowDef set_game_showdecals_background
@@ -198,7 +242,7 @@
 				
 				windowDef set_game_showgun
 				{
-					rect  228,143,403,25
+					rect  228,167,403,25
 					visible 1
 											
 					windowDef set_game_showgun_background
@@ -242,7 +286,7 @@
 				
 				windowDef set_game_gunXYZ
 				{
-					rect  228,167,403,25
+					rect  228,191,403,25
 					visible 1
 											
 					windowDef set_game_gunXYZ_background
@@ -302,7 +346,7 @@
 				
 				windowDef set_game_simpleitems
 				{
-					rect  228,191,403,25
+					rect  228,215,403,25
 					visible 1
 											
 					windowDef set_game_simpleitems_background
@@ -345,7 +389,7 @@
 				
 				windowDef set_game_forcemodel
 				{
-					rect  228,215,403,25
+					rect  228,239,403,25
 					visible 1
 					
 					
@@ -400,7 +444,7 @@
 				
 				windowDef set_game_mpitch
 				{
-					rect  228,239,403,25
+					rect  228,263,403,25
 					visible 1
 											
 					windowDef set_game_mpitch_background
@@ -445,7 +489,7 @@
 
 				windowDef set_game_msmooth
 				{
-					rect	228,263,377,25
+					rect	228,287,377,25
 					visible	1
 				
 					windowDef set_game_msmooth_background
@@ -511,7 +555,7 @@
 
 				windowDef set_game_msensitivity
 				{
-					rect	228,287,377,25
+					rect	228,311,377,25
 					visible	1
 				
 					windowDef set_game_msensitivity_background
@@ -577,7 +621,7 @@
 				
 				windowDef set_game_customxhair
 				{
-					rect  228,311,403,25
+					rect  228,335,403,25
 					visible 1
 											
 					windowDef set_game_customxhair_background
@@ -638,7 +682,7 @@
 			
 				windowDef set_game_previewxhair
 				{
-					rect	228,335,377,48
+					rect	228,359,377,48
 					visible	1
 				
 					windowDef set_game_previewxhair_background
@@ -701,7 +745,7 @@
 
 				windowDef set_game_xhairsize
 				{
-					rect  228,383,377,25
+					rect  228,407,377,25
 					visible 1
 											
 					windowDef set_game_xhairsize_background
@@ -759,7 +803,7 @@
 
 				windowDef set_game_xhaircolor
 				{
-					rect  228,408,377,25
+					rect  228,432,377,25
 					visible 1
 											
 					windowDef set_game_xhaircolor_background
@@ -843,7 +887,7 @@
 
 				windowDef set_game_language
 				{
-					rect  228,433,377,25
+					rect  228,457,377,25
 					visible 1
 											
 					windowDef set_game_language_background
@@ -895,7 +939,7 @@
 					forecolor	1,1,1,0.8
 					matcolor	1,1,1,0.4
 					low	0
-					high	6
+					high	7
 					step	1
 					vertical	1
 					scrollbar	1

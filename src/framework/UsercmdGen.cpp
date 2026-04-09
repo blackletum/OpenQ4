@@ -814,6 +814,14 @@ void idUsercmdGenLocal::CmdButtons( void ) {
 	}
 }
 
+static bool IsWeaponSelectionImpulse( int action ) {
+	if ( action >= UB_IMPULSE0 && action <= UB_IMPULSE12 ) {
+		return true;
+	}
+
+	return action == UB_IMPULSE14 || action == UB_IMPULSE15 || action == UB_IMPULSE51;
+}
+
 /*
 ================
 idUsercmdGenLocal::InitCurrent
@@ -973,6 +981,7 @@ void idUsercmdGenLocal::Clear( void ) {
 	// clears all key states 
 	memset( buttonState, 0, sizeof( buttonState ) );
 	memset( keyState, false, sizeof( keyState ) );
+	toggled_zoom.Clear();
 
 	inhibitCommands = false;
 
@@ -1039,6 +1048,9 @@ void idUsercmdGenLocal::Key( int keyNum, bool down ) {
 	}
 
 	if ( down ) {
+		if ( action == UB_WEAPONWHEEL || IsWeaponSelectionImpulse( action ) ) {
+			toggled_zoom.Clear();
+		}
 
 		buttonState[ action ]++;
 

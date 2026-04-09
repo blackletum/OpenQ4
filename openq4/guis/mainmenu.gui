@@ -19638,6 +19638,8 @@ windowDef Desktop
 			set "set_game_autoreload_hover::visible" "1" ;
 			set "set_game_autoswitch::visible" "1" ;
 			set "set_game_autoswitch_hover::visible" "1";
+			set "set_game_togglezoom::visible" "1" ;
+			set "set_game_togglezoom_hover::visible" "1" ;
 			set "set_game_showdecals::visible" "1" ;
 			set "set_game_showdecals_hover::visible" "1" ;
 			set "set_game_showgun::visible" "1" ;
@@ -19689,6 +19691,7 @@ windowDef Desktop
 			set "set_game_freelook_value::noevents" "0" ;
 			set "set_game_autoreload::noevents" "0" ;
 			set "set_game_autoswitch::noevents" "0" ;
+			set "set_game_togglezoom::noevents" "0" ;
 			set "set_game_showdecals::noevents" "0" ;
 			set "set_game_showgun::noevents" "0" ;
 			set "set_game_gunXYZ::noevents" "0" ;
@@ -19713,6 +19716,8 @@ windowDef Desktop
 			set "set_game_autoreload_hover::visible" "0" ;
 			set "set_game_autoswitch::visible" "0" ;
 			set "set_game_autoswitch_hover::visible" "0" ;
+			set "set_game_togglezoom::visible" "0" ;
+			set "set_game_togglezoom_hover::visible" "0" ;
 			set "set_game_showdecals::visible" "0" ;
 			set "set_game_showdecals_hover::visible" "0" ;
 			set "set_game_showgun::visible" "0" ;
@@ -19750,6 +19755,7 @@ windowDef Desktop
 			set "set_game_freelook_value::noevents" "1" ;
 			set "set_game_autoreload::noevents" "1" ;
 			set "set_game_autoswitch::noevents" "1" ;
+			set "set_game_togglezoom::noevents" "1" ;
 			set "set_game_showdecals::noevents" "1" ;
 			set "set_game_showgun::noevents" "1" ;
 			set "set_game_gunXYZ::noevents" "1" ;
@@ -21530,6 +21536,7 @@ windowDef Desktop
 				set "set_game_freelook_background::matcolor_w" "0.4" ;
 				set "set_game_autoreload_background::matcolor_w" "0.4" ;
 				set "set_game_autoswitch_background::matcolor_w" "0.4" ;
+				set "set_game_togglezoom_background::matcolor_w" "0.4" ;
 				set "set_game_showdecals_background::matcolor_w" "0.4" ;
 				set "set_game_showgun_background::matcolor_w" "0.4" ;
 				set "set_game_gunXYZ_background::matcolor_w" "0.4" ;
