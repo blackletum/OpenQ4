@@ -122,6 +122,7 @@ jobs:
               libopenal-dev \
               libpipewire-0.3-dev \
               libudev-dev \
+              libwayland-dev \
               libx11-dev \
               libxext-dev \
               libxxf86dga-dev \
