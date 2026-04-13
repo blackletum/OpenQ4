@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="assets/img/banner.png" alt="OpenQ4 banner">
+<img src="assets/docs/img/banner.png" alt="OpenQ4 banner">
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](https://github.com/themuffinator/OpenQ4)
@@ -30,7 +30,7 @@ Single-player and multiplayer live under one `baseoq4/` directory with `game-sp`
 > OpenQ4 uses its own engine and game modules. It does not target compatibility with the proprietary Quake 4 DLLs and is not a drop-in runtime for legacy mods.
 
 <p align="center">
-  <img src="assets/img/shot1.png" alt="OpenQ4 gameplay screenshot showing stock Quake 4 assets running in OpenQ4" width="92%">
+  <img src="assets/docs/img/shot1.png" alt="OpenQ4 gameplay screenshot showing stock Quake 4 assets running in OpenQ4" width="92%">
 </p>
 <p align="center"><sub>OpenQ4 running against stock Quake 4 content.</sub></p>
 
@@ -67,8 +67,8 @@ Single-player and multiplayer live under one `baseoq4/` directory with `game-sp`
 - **Windows**, **Linux**, and **macOS** targets with x64 as the current active baseline
 
 <p align="center">
-  <img src="assets/img/shot2.png" alt="OpenQ4 gameplay screenshot showing combat and bloom" width="49%">
-  <img src="assets/img/shot3.png" alt="OpenQ4 gameplay screenshot showing environment lighting and shadow detail" width="49%">
+  <img src="assets/docs/img/shot2.png" alt="OpenQ4 gameplay screenshot showing combat and bloom" width="49%">
+  <img src="assets/docs/img/shot3.png" alt="OpenQ4 gameplay screenshot showing environment lighting and shadow detail" width="49%">
 </p>
 <p align="center"><sub>Modern renderer upgrades layered onto the original game assets.</sub></p>
 
@@ -126,6 +126,7 @@ Full setup instructions live in [BUILDING.md](BUILDING.md). The short version:
 - Keep [OpenQ4-GameLibs](https://github.com/themuffinator/OpenQ4-GameLibs) checked out beside this repo at `../OpenQ4-GameLibs`
 - Use `builddir/` for local Meson builds
 - Use `.install/` as the staged runtime package root
+- Author repo-managed runtime overrides under `content/baseoq4/`; Meson stages them into `.install/baseoq4/`
 - On Windows, call `tools/build/meson_setup.ps1` instead of raw `meson` from an arbitrary shell
 - When staging `.install/`, use `meson install -C builddir --no-rebuild --skip-subprojects` or the wrapper equivalent
 
@@ -144,6 +145,7 @@ Set `OPENQ4_BUILD_GAMELIBS=1` if you want the wrapper to trigger game-library bu
 - [BUILDING.md](BUILDING.md) - platform requirements and build workflow
 - [TECHNICAL.md](TECHNICAL.md) - advanced configuration, file layout, dependencies, and compatibility notes
 - [docs-user/display-settings.md](docs-user/display-settings.md) - display, fullscreen, and multi-monitor behavior
+- [docs-user/gameplay-settings.md](docs-user/gameplay-settings.md) - cinematic skip, corpse cleanup, corpse sinking, and music-volume controls
 - [docs-user/light-grids.md](docs-user/light-grids.md) - light-grid baking, runtime toggles, output paths, and troubleshooting
 - [docs-user/steam-deck.md](docs-user/steam-deck.md) - Steam Deck launcher, controls, and asset discovery notes
 - [docs-user/shadow-mapping.md](docs-user/shadow-mapping.md) - shadow-map settings, presets, and troubleshooting
@@ -155,7 +157,7 @@ Set `OPENQ4_BUILD_GAMELIBS=1` if you want the wrapper to trigger game-library bu
 - [TODO.md](TODO.md) - tracked issues and planned tasks
 
 <p align="center">
-  <img src="assets/img/shot4.png" alt="OpenQ4 gameplay screenshot showing atmospheric environment" width="92%">
+  <img src="assets/docs/img/shot4.png" alt="OpenQ4 gameplay screenshot showing atmospheric environment" width="92%">
 </p>
 <p align="center"><sub>Built to preserve the original game feel on modern displays and GPUs.</sub></p>
 

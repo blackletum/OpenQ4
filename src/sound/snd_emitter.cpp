@@ -281,10 +281,6 @@ void idSoundChannel::UpdateVolume( int currentTime )
 	}
 
 	float newVolumeDB = VolumeScaleToDB( baseVolumeScale );
-	if( ( parms.soundShaderFlags & SSF_MUSIC ) != 0 )
-	{
-		newVolumeDB += VolumeScaleToDB( s_musicVolume.GetFloat() );
-	}
 	newVolumeDB += volumeFade.GetVolume( currentTime );
 	newVolumeDB += soundWorld->volumeFade.GetVolume( currentTime );
 	newVolumeDB += soundWorld->pauseFade.GetVolume( currentTime );

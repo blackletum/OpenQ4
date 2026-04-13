@@ -32,6 +32,11 @@ If you have questions concerning this license or the applicable additional terms
 
 extern idCVar s_maxSamples;
 
+static bool SND_IsMusicSamplePath( const idToken &token ) {
+	return token.IcmpPrefixPath( "sound/musical/" ) == 0 ||
+		token.IcmpPrefixPath( "sound/ambience/musical/" ) == 0;
+}
+
 //typedef enum
 //{
 //	SPEAKER_LEFT = 0,
@@ -443,7 +448,7 @@ bool idSoundShader::ParseShader( idLexer& src )
 				parms.soundShaderFlags |= SSF_VO;
 				parms.soundShaderFlags |= SSF_IS_VO;
 			}
-			if( token.IcmpPrefixPath( "sound/musical/" ) == 0 )
+			if( SND_IsMusicSamplePath( token ) )
 			{
 				parms.soundShaderFlags |= SSF_MUSIC;
 			}
@@ -466,7 +471,7 @@ bool idSoundShader::ParseShader( idLexer& src )
 				parms.soundShaderFlags |= SSF_VO;
 				parms.soundShaderFlags |= SSF_IS_VO;
 			}
-			if( token.IcmpPrefixPath( "sound/musical/" ) == 0 )
+			if( SND_IsMusicSamplePath( token ) )
 			{
 				parms.soundShaderFlags |= SSF_MUSIC;
 			}

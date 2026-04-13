@@ -24,6 +24,8 @@ from windows_runtime import (
 
 PRODUCT_NAME = "OpenQ4"
 GAME_DIR_NAME = "baseoq4"
+RELEASE_README_PATH = Path("assets") / "release" / "README.html"
+LICENSE_PATH = Path("LICENSE")
 SUPPORTED_ARCHES = ("x64", "x86", "arm64")
 
 PLATFORM_EXECUTABLE_EXT = {
@@ -188,6 +190,18 @@ def write_macos_localized_info_strings(app_contents: Path, version: str) -> None
             app_contents / "Resources" / f"{locale}.lproj" / "InfoPlist.strings",
             localized_info_lines,
         )
+
+
+def copy_release_collateral(source_root: Path, package_root: Path) -> None:
+    collateral = (
+        (source_root / RELEASE_README_PATH, package_root / "README.html"),
+        (source_root / LICENSE_PATH, package_root / "LICENSE"),
+    )
+
+    for source, destination in collateral:
+        if not source.is_file():
+            raise FileNotFoundError(f"required release collateral not found: {source}")
+        shutil.copy2(source, destination)
 
 
 def copy_required_binaries(
@@ -452,11 +466,6 @@ def main(argv: list[str]) -> int:
         print(f"error: install directory not found: {install_dir}", file=sys.stderr)
         return 1
 
-    readme_path = source_root / "README.md"
-    if not readme_path.is_file():
-        print(f"error: README.md not found at {readme_path}", file=sys.stderr)
-        return 1
-
     install_game_dir = install_dir / GAME_DIR_NAME
     if not install_game_dir.is_dir():
         print(f"error: {GAME_DIR_NAME} directory not found: {install_game_dir}", file=sys.stderr)
@@ -470,7 +479,12 @@ def main(argv: list[str]) -> int:
         shutil.rmtree(package_root)
     package_root.mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2(readme_path, package_root / "README.md")
+    try:
+        copy_release_collateral(source_root, package_root)
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
     write_version_manifest(
         package_root / "VERSION.txt",
         version=args.version,

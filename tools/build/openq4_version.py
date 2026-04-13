@@ -7,12 +7,14 @@ import argparse
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
 SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 IDENTIFIER_RE = re.compile(r"^[0-9A-Za-z-]+$")
 DOT_IDENTIFIERS_RE = re.compile(r"^[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*$")
+DATE_STAMP_RE = re.compile(r"^\d{8}$")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -43,6 +45,22 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help=(
             "Optional dot-separated iteration for prerelease tracks, such as "
             "'20260307.1' or '2'."
+        ),
+    )
+    parser.add_argument(
+        "--auto-iteration",
+        action="store_true",
+        help=(
+            "Automatically derive prerelease iteration as YYYYMMDD.N from "
+            "existing published release tags for the current UTC day."
+        ),
+    )
+    parser.add_argument(
+        "--auto-iteration-date",
+        default="",
+        help=(
+            "Optional UTC date override for --auto-iteration in YYYYMMDD form. "
+            "Defaults to the current UTC date."
         ),
     )
     parser.add_argument(
@@ -102,6 +120,18 @@ def validate_iteration(iteration: str, track: str) -> str:
     return normalized
 
 
+def resolve_auto_iteration_date(auto_iteration_date: str) -> str:
+    normalized = auto_iteration_date.strip()
+    if not normalized:
+        return datetime.now(timezone.utc).strftime("%Y%m%d")
+    if DATE_STAMP_RE.fullmatch(normalized) is None:
+        raise SystemExit(
+            "auto iteration date must be YYYYMMDD, "
+            f"got: {normalized!r}"
+        )
+    return normalized
+
+
 def run_git(source_root: Path, *git_args: str) -> str:
     try:
         completed = subprocess.run(
@@ -114,6 +144,25 @@ def run_git(source_root: Path, *git_args: str) -> str:
     except (OSError, subprocess.CalledProcessError):
         return ""
     return completed.stdout.strip()
+
+
+def compute_auto_iteration(source_root: Path, base_version: str, track: str, auto_iteration_date: str) -> str:
+    if track == "stable":
+        raise SystemExit("auto iteration is only valid for prerelease tracks")
+
+    date_stamp = resolve_auto_iteration_date(auto_iteration_date)
+    tag_prefix = f"{track}-{base_version}-{track}.{date_stamp}."
+    tag_glob = f"{track}-{base_version}-{track}.{date_stamp}*"
+    matching_tags = run_git(source_root, "tag", "--list", tag_glob)
+
+    published_build_count = 0
+    for raw_tag in matching_tags.splitlines():
+        tag = raw_tag.strip()
+        if not tag or not tag.startswith(tag_prefix):
+            continue
+        published_build_count += 1
+
+    return f"{date_stamp}.{published_build_count + 1}"
 
 
 def detect_git_metadata(source_root: Path) -> tuple[str, bool, int]:
@@ -240,10 +289,25 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
 
     source_root = Path(args.source_root).resolve()
+    explicit_iteration = args.iteration.strip()
+    auto_iteration_date = args.auto_iteration_date.strip()
+    if args.auto_iteration and explicit_iteration:
+        raise SystemExit("cannot specify both --iteration and --auto-iteration")
+    if auto_iteration_date and not args.auto_iteration:
+        raise SystemExit("--auto-iteration-date requires --auto-iteration")
+
     base_version = read_base_version(source_root, args.base_version)
     major, minor, patch = validate_base_version(base_version)
     track = validate_track(args.track)
-    iteration = validate_iteration(args.iteration, track)
+    if args.auto_iteration:
+        iteration = compute_auto_iteration(
+            source_root,
+            base_version,
+            track,
+            auto_iteration_date,
+        )
+    else:
+        iteration = validate_iteration(explicit_iteration, track)
 
     git_sha, git_dirty, commit_count = detect_git_metadata(source_root)
     prerelease = compose_prerelease(track, iteration)

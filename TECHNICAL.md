@@ -60,8 +60,9 @@ OpenQ4/
 - **Single-player**: loads `game-sp_<arch>`
 - **Multiplayer**: loads `game-mp_<arch>`
 - **BSE runtime**: linked directly into `OpenQ4-client_<arch>`; dedicated server builds keep a disabled/stub path
-- **Source-owned runtime content**: author repo-managed overrides in `baseoq4/`
+- **Source-owned runtime content**: author repo-managed overrides in `content/baseoq4/`
 - **Generated staging output**: treat `.install/baseoq4/` as build output, not an editing target
+- **Runtime identity**: the in-game directory remains `baseoq4/` even though the repo source path now lives under `content/baseoq4/`
 - No separate mod folders or manual mode switching required
 
 ---
@@ -184,7 +185,7 @@ The game code is derived from the [Quake 4 SDK](https://www.moddb.com/games/quak
 
 | Library | Version | Purpose |
 |---------|---------|---------|
-| [SDL3](https://www.libsdl.org/) | 3.4.0 | Cross-platform window/input/display |
+| [SDL3](https://www.libsdl.org/) | 3.4.4 | Cross-platform window/input/display |
 | [GLEW](http://glew.sourceforge.net/) | 2.3.1 | OpenGL extension wrangler |
 | [OpenAL Soft](https://openal-soft.org/) | 1.25.1 | 3D audio rendering |
 | [stb_vorbis](https://github.com/nothings/stb) | 1.22 | Ogg Vorbis audio decoding |
@@ -201,7 +202,7 @@ OpenQ4 uses semantic base versions from `meson.build` and appends an explicit bu
 - `dev` — default local builds, e.g. `X.Y.Z-dev+gabcdef12`
 - `nightly` / `beta` / `rc` — pre-release labels, e.g. `X.Y.Z-nightly.20260307.1+gabcdef12`
 
-The base version is bumped manually in `meson.build` when advancing to the next release line; track labels, iterations, git metadata, and resource build numbers are generated automatically.
+The base version is bumped manually in `meson.build` when advancing to the next release line; track labels, iterations, git metadata, and resource build numbers are generated automatically. The manual GitHub prerelease workflow increments `nightly.YYYYMMDD.N` by counting existing published tags for that UTC date instead of using workflow run numbers.
 
 ---
 

@@ -531,11 +531,30 @@ const char* Sys_Cwd(void) {
 
 /*
 ==============
+Sys_DefaultRuntimePath
+==============
+*/
+static const char* Sys_DefaultRuntimePath(void) {
+	static idStr runtimePath;
+
+	runtimePath = Sys_EXEPath();
+	if ( runtimePath.Length() > 0 ) {
+		runtimePath.StripFilename();
+	}
+	if ( runtimePath.Length() == 0 ) {
+		runtimePath = Sys_Cwd();
+	}
+
+	return runtimePath.c_str();
+}
+
+/*
+==============
 Sys_DefaultCDPath
 ==============
 */
 const char* Sys_DefaultCDPath(void) {
-	return Sys_Cwd();
+	return Sys_DefaultRuntimePath();
 }
 
 /*
@@ -544,7 +563,7 @@ Sys_DefaultBasePath
 ==============
 */
 const char* Sys_DefaultBasePath(void) {
-	return Sys_Cwd();
+	return Sys_DefaultRuntimePath();
 }
 
 /*

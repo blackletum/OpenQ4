@@ -218,6 +218,8 @@ After running the install step, `.install/` is a self-contained distributable pa
 > [!NOTE]
 > Do not distribute raw `buildtype=debug` artifacts in public packages. MSVC import libraries (`*.lib`) are development-only artifacts and are not required in the package.
 
+Repo-authored runtime overrides live under `content/baseoq4/`. The install step stages that source-owned content into the runtime `baseoq4/` directory inside `.install/`.
+
 ---
 
 ## Packaging a Distributable
@@ -231,7 +233,7 @@ To include the icon set synchronisation step before building (validated and gene
 $env:OPENQ4_SKIP_ICON_SYNC = "1"
 ```
 
-CI nightly builds set `version_track=nightly` to produce a version string such as `X.Y.Z-nightly.20260307.1+gabcdef12`.
+The manually dispatched GitHub prerelease workflow sets `version_track=nightly` and derives `version_iteration` from existing published tags for the current UTC date. That produces versions such as `X.Y.Z-nightly.20260307.1+gabcdef12`, `X.Y.Z-nightly.20260307.2+gabcdef12`, and so on without depending on GitHub run numbers.
 
 ---
 

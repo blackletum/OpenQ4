@@ -343,7 +343,7 @@ if build_engine
   if use_sdl3_backend
     sdl3_dep = dependency(
       'sdl3',
-      version: '>=3.4.0',
+      version: '>=3.4.4',
       required: true,
       fallback: ['sdl3', 'sdl3_dep'],
       default_options: fallback_opt,
@@ -446,7 +446,7 @@ if get_option('use_pch')
   pch_headers = ['src/idlib/precompiled.h']
 endif
 game_idlib_pch_headers = ['src/idlib/precompiled.h']
-game_module_pch_headers = ['../src/idlib/precompiled.h']
+game_module_pch_headers = [meson.project_source_root() / 'src' / 'idlib' / 'precompiled.h']
 
 src_include_dir = include_directories('src')
 src_idlib_include_dir = include_directories('src/idlib')
@@ -594,7 +594,7 @@ if build_engine or build_games
 endif
 
 if build_engine or (build_games and (build_game_sp or build_game_mp))
-  subdir('baseoq4')
+  subdir('content/baseoq4')
 endif
 
 if host_system == 'windows' and host_cpu_family == 'x86_64'

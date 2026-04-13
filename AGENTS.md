@@ -29,6 +29,7 @@ This file describes project goals, rules, and upstream credits for anyone workin
 - Build BSE into the client executable; do not reintroduce an external `OpenQ4-BSE_<arch>` runtime module without an explicit project decision.
 - Dedicated server builds keep the disabled BSE manager path unless a change proves they genuinely need the full effect runtime.
 - Keep `baseoq4/` as the single unified game directory; do not split SP/MP into separate mod folders.
+- Keep repo-authored runtime overrides under `content/baseoq4/`; treat `.install/baseoq4/` as staged output rather than an editing target.
 - Prefer changes that match Quake 4 SDK expectations and shipped content behavior.
 - Document significant changes in the documentation and keep `README.md` accurate.
 - Use `builddir/` as the standard Meson build output directory for local builds, VS Code tasks, and launch configurations.
