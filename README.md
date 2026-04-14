@@ -120,7 +120,7 @@ Project scope is intentionally explicit:
 - Compatibility with proprietary Quake 4 game DLLs is a non-goal
 - The current irradiance-volume path is intentionally non-PBR and LDR: it adds indirect diffuse only, bakes OpenQ4-native `.tga` atlases, and does not bring over the BFG EXR/environment-probe reflection stack
 
-For unattended baking, run the client with startup commands such as `+bakeLightGrids all -quit`, `+bakeLightGrids all-mp -quit`, or `+bakeLightGrids force game/tram1 -quit`. OpenQ4 will switch modules as needed, load each map automatically, skip already-complete targets unless `force` is present, and stream progress to the console/log while writing outputs to `fs_savepath`.
+For unattended baking, run the client with startup commands such as `+bakeLightGrids all -quit`, `+set sv_cheats 1 +bakeLightGrids all-mp -quit`, or `+bakeLightGrids force game/tram1 -quit`. OpenQ4 will switch modules as needed, load each map automatically, skip already-complete targets unless `force` is present, and stream progress to the console/log while writing outputs to `fs_savepath`. Multiplayer-target bakes are cheat-protected, so enable `sv_cheats` or `net_allowCheats` before `bakeLightGrids` when targeting MP maps.
 
 Gameplay parity work is still ongoing. For current follow-up items, see [TODO.md](TODO.md) and [docs-dev/release-completion.md](docs-dev/release-completion.md).
 

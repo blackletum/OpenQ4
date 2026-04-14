@@ -53,6 +53,7 @@ public:
 	virtual void		Draw(int time, float x, float y);
 	virtual void		DrawBackground(const idRectangle &drawRect);
 	virtual const char *RouteMouseCoords(float xd, float yd);
+	virtual void		MouseEnter();
 	virtual void		Activate(bool activate, idStr &act);
 	virtual void		SetBuddy(idWindow *buddy);
 

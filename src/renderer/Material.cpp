@@ -1141,6 +1141,38 @@ idMaterial::ParseShaderParm
 GLSL shader parameter parser used by Quake 4 style "shaderParm" tokens.
 ================
 */
+static glslShaderParmBinding_t R_ParseGLSLShaderParmBinding( const idToken &token ) {
+	if ( !token.Icmp( "viewOrigin" ) ) {
+		return GLSL_SHADERPARM_VIEW_ORIGIN;
+	}
+	if ( !token.Icmp( "colorMatrix0" ) ) {
+		return GLSL_SHADERPARM_COLOR_MATRIX0;
+	}
+	if ( !token.Icmp( "colorMatrix1" ) ) {
+		return GLSL_SHADERPARM_COLOR_MATRIX1;
+	}
+	if ( !token.Icmp( "colorMatrix2" ) ) {
+		return GLSL_SHADERPARM_COLOR_MATRIX2;
+	}
+	if ( !token.Icmp( "gaussianSampleOffsets" ) ) {
+		return GLSL_SHADERPARM_GAUSSIAN_SAMPLE_OFFSETS;
+	}
+	if ( !token.Icmp( "gaussianSampleOffsetsHorizontal" ) ) {
+		return GLSL_SHADERPARM_GAUSSIAN_SAMPLE_OFFSETS_HORIZONTAL;
+	}
+	if ( !token.Icmp( "gaussianSampleOffsetsVertical" ) ) {
+		return GLSL_SHADERPARM_GAUSSIAN_SAMPLE_OFFSETS_VERTICAL;
+	}
+	if ( !token.Icmp( "gaussianSampleWeights" ) ) {
+		return GLSL_SHADERPARM_GAUSSIAN_SAMPLE_WEIGHTS;
+	}
+	if ( !token.Icmp( "gaussianSampleWeights2" ) ) {
+		return GLSL_SHADERPARM_GAUSSIAN_SAMPLE_WEIGHTS2;
+	}
+
+	return GLSL_SHADERPARM_REGISTERS;
+}
+
 void idMaterial::ParseShaderParm( idLexer &src, newShaderStage_t *newStage ) {
 	idToken token;
 
@@ -1164,6 +1196,24 @@ void idMaterial::ParseShaderParm( idLexer &src, newShaderStage_t *newStage ) {
 
 	const int slot = newStage->numShaderParms++;
 	idStr::Copynz( newStage->shaderParmNames[slot], token.c_str(), MAX_GLSL_SHADER_PARM_NAME );
+	newStage->shaderParmBindings[slot] = GLSL_SHADERPARM_REGISTERS;
+	newStage->shaderParmNumRegisters[slot] = 0;
+	memset( newStage->shaderParmRegisters[slot], 0, sizeof( newStage->shaderParmRegisters[slot] ) );
+
+	if ( !src.ReadTokenOnLine( &token ) ) {
+		common->Warning( "missing shaderParm value for '%s' in material '%s'",
+			newStage->shaderParmNames[slot], GetName() );
+		SetMaterialFlag( MF_DEFAULTED );
+		return;
+	}
+
+	const glslShaderParmBinding_t binding = R_ParseGLSLShaderParmBinding( token );
+	if ( binding != GLSL_SHADERPARM_REGISTERS ) {
+		newStage->shaderParmBindings[slot] = binding;
+		return;
+	}
+
+	src.UnreadToken( &token );
 
 	int count = 0;
 	while ( count < 4 ) {

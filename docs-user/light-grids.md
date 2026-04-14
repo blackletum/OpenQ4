@@ -157,6 +157,7 @@ If no map names are given:
 
 If map names, `all`, or `all-mp` are given:
 - OpenQ4 runs in batch mode and loads maps automatically.
+- Multiplayer targets are cheat-protected. Enable cheats first with `sv_cheats 1` or `net_allowCheats 1`.
 
 ### Bake Options
 
@@ -182,6 +183,8 @@ Fast test bake:
 ```text
 OpenQ4-client_x64.exe +bakeLightGrids game/tram1 size64 samples32 limit1024 -quit
 ```
+
+For multiplayer maps or `all-mp`, enable cheats before starting the bake, for example `OpenQ4-client_x64.exe +set sv_cheats 1 +bakeLightGrids all-mp -quit`.
 
 Balanced quality:
 

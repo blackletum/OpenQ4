@@ -137,6 +137,12 @@ const char *idSliderWindow::HandleEvent(const sysEvent_t *event, bool *updateVis
 		return "";
 	} 
 
+	if ( scrollbar && key == K_MWHEELUP ) {
+		value = value - stepSize;
+	} else if ( scrollbar && key == K_MWHEELDOWN ) {
+		value = value + stepSize;
+	}
+
 	if ( key == K_RIGHTARROW || key == K_KP_RIGHTARROW || ( key == K_MOUSE2 && gui->CursorY() > thumbRect.y ) )  {
 		value = value + stepSize;
 	}
@@ -336,6 +342,24 @@ const char *idSliderWindow::RouteMouseCoords(float xd, float yd) {
 	UpdateCvar( false );
 
 	return "";
+}
+
+void idSliderWindow::MouseEnter() {
+	idWindow::MouseEnter();
+
+	if ( !scrollbar || noEvents || gui == NULL ) {
+		return;
+	}
+
+	idWindow *desktop = gui->GetDesktop();
+	if ( desktop == NULL || desktop->GetCaptureChild() != NULL ) {
+		return;
+	}
+
+	idWindow *focusTarget = ( buddyWin != NULL ) ? buddyWin : this;
+	if ( desktop->GetFocusedChild() != focusTarget ) {
+		desktop->SetFocus( focusTarget, false );
+	}
 }
 
 

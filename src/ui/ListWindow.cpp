@@ -57,6 +57,33 @@ static const idMaterial *OpenQ4_ListMaterial( const char *name ) {
 	return mat;
 }
 
+static int OpenQ4_ClampListTop( int top, int fit, int itemCount ) {
+	if ( fit <= 0 ) {
+		fit = 1;
+	}
+	int maxTop = itemCount - fit;
+	if ( maxTop < 0 ) {
+		maxTop = 0;
+	}
+	return idMath::ClampInt( 0, maxTop, top );
+}
+
+static int OpenQ4_EnsureSelectionVisible( int top, int fit, int selection, int itemCount ) {
+	top = OpenQ4_ClampListTop( top, fit, itemCount );
+	if ( selection < 0 || selection >= itemCount ) {
+		return top;
+	}
+	if ( fit <= 0 ) {
+		fit = 1;
+	}
+	if ( selection < top ) {
+		top = selection;
+	} else if ( selection >= top + fit ) {
+		top = selection - fit + 1;
+	}
+	return OpenQ4_ClampListTop( top, fit, itemCount );
+}
+
 void idListWindow::CommonInit() {
 	typed = "";
 	typedTime = 0;
@@ -271,6 +298,8 @@ const char *idListWindow::HandleEvent(const sysEvent_t *event, bool *updateVisua
 		top = 0;
 		scroller->SetValue(0.0f);
 	}
+	const idStr topStateName = va( "%s_top", listName.c_str() );
+	gui->SetStateInt( topStateName.c_str(), top );
 
 	if ( key != K_MOUSE1 ) {
 		// Send a fake mouse click event so onAction gets run in our parents
@@ -729,7 +758,14 @@ void idListWindow::Activate(bool activate, idStr &act) {
 }
 
 void idListWindow::HandleBuddyUpdate(idWindow *buddy) {
+	float lineHeight = Max( GetMaxCharHeight(), static_cast<float>( itemheight ) );
+	if ( lineHeight <= 0.0f ) {
+		lineHeight = 1.0f;
+	}
 	top = scroller->GetValue();
+	top = OpenQ4_ClampListTop( top, textRect.h / lineHeight, listItems.Num() );
+	const idStr topStateName = va( "%s_top", listName.c_str() );
+	gui->SetStateInt( topStateName.c_str(), top );
 }
 
 void idListWindow::UpdateList() {
@@ -760,18 +796,20 @@ void idListWindow::UpdateList() {
 	SetCurrentSel( gui->State().GetInt( va( "%s_sel_0", listName.c_str() ) ) );
 
 	float value = scroller->GetValue();
-	int maxTop = listItems.Num() - fit;
-	if ( maxTop < 0 ) {
-		maxTop = 0;
+	const idStr topStateName = va( "%s_top", listName.c_str() );
+	int requestedTop = 0;
+	const bool hasRequestedTop = gui->State().GetInt( topStateName.c_str(), "0", requestedTop );
+	if ( hasRequestedTop ) {
+		if ( requestedTop < 0 ) {
+			value = static_cast<float>( OpenQ4_EnsureSelectionVisible( idMath::Ftoi( value ), fit, GetCurrentSel(), listItems.Num() ) );
+		} else {
+			value = static_cast<float>( requestedTop );
+		}
 	}
-	if ( value > maxTop ) {
-		value = static_cast<float>( maxTop );
-	}
-	if ( value < 0.0f ) {
-		value = 0.0f;
-	}
-	scroller->SetValue(value);
-	top = idMath::Ftoi( value );
+	top = OpenQ4_ClampListTop( idMath::Ftoi( value ), fit, listItems.Num() );
+	scroller->SetValue( static_cast<float>( top ) );
+	top = OpenQ4_ClampListTop( idMath::Ftoi( scroller->GetValue() ), fit, listItems.Num() );
+	gui->SetStateInt( topStateName.c_str(), top );
 
 	typedTime = 0;
 	clickTime = 0;

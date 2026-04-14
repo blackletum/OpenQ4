@@ -297,6 +297,16 @@ const char *idEditWindow::HandleEvent(const sysEvent_t *event, bool *updateVisua
 			*updateVisuals = true;
 		}
 
+		if ( wrap && key == K_MWHEELUP ) {
+			scroller->SetValue( scroller->GetValue() - 1.0f );
+			return ret;
+		}
+
+		if ( wrap && key == K_MWHEELDOWN ) {
+			scroller->SetValue( scroller->GetValue() + 1.0f );
+			return ret;
+		}
+
 		if ( key == K_DEL ) {
 			if ( readonly ) {
 				return ret;
@@ -447,6 +457,23 @@ void idEditWindow::PostParse() {
 	EnsureCursorVisible();
 
 	flags |= WIN_CANFOCUS;
+}
+
+void idEditWindow::MouseEnter() {
+	idWindow::MouseEnter();
+
+	if ( !wrap || noEvents || gui == NULL ) {
+		return;
+	}
+
+	idWindow *desktop = gui->GetDesktop();
+	if ( desktop == NULL || desktop->GetCaptureChild() != NULL ) {
+		return;
+	}
+
+	if ( desktop->GetFocusedChild() != this ) {
+		desktop->SetFocus( this, false );
+	}
 }
 
 /*

@@ -1435,12 +1435,14 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 				if ( selectedIndex < 0 ) {
 					selectedIndex = 0;
 				}
+				guiMainMenu->SetStateInt( "mapList_top", -1 );
 				mainMenuMapList->SetSelection( selectedIndex );
 				mainMenuMapList->SetStateChanges( true );
 				int mapNum = mainMenuMapList->GetSelection( NULL, 0 );
 				dict = fileSystem->GetMapDecl( mapNum );
 			} else {
 				guiMainMenu->SetStateInt( "mapList_sel_0", -1 );
+				guiMainMenu->SetStateInt( "mapList_top", 0 );
 				mainMenuMapList->SetStateChanges( true );
 				dict = NULL;
 			}

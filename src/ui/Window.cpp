@@ -849,10 +849,9 @@ const char *idWindow::RouteMouseCoords(float xd, float yd) {
 					gui->GetDesktop()->AddCommand(str);
 					overChild->cmd = "";
 				}
-			} else {
-				if (!(child->flags & WIN_HOLDCAPTURE)) {
-					child->RouteMouseCoords(xd, yd);
-				}
+			}
+			if (!(child->flags & WIN_HOLDCAPTURE)) {
+				child->RouteMouseCoords(xd, yd);
 			}
 			return "";
 		}

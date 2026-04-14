@@ -80,6 +80,163 @@ static bool RB_StageUsesCurrentRender( const shaderStage_t *stage ) {
 	return false;
 }
 
+static const int RB_STOCK_GAUSSIAN_SAMPLE_COUNT = 15;
+static const idVec4 RB_STOCK_COLOR_MATRIX_ROWS[3] = {
+	idVec4( 1.0f, 0.0f, 0.0f, 0.0f ),
+	idVec4( 0.0f, 1.0f, 0.0f, 0.0f ),
+	idVec4( 0.0f, 0.0f, 1.0f, 0.0f )
+};
+
+static idVec4 rbStockGaussianSampleOffsets[RB_STOCK_GAUSSIAN_SAMPLE_COUNT];
+static idVec4 rbStockGaussianSampleWeights[RB_STOCK_GAUSSIAN_SAMPLE_COUNT];
+static idVec4 rbStockGaussianSampleOffsetsHorizontal[RB_STOCK_GAUSSIAN_SAMPLE_COUNT];
+static idVec4 rbStockGaussianSampleOffsetsVertical[RB_STOCK_GAUSSIAN_SAMPLE_COUNT];
+static idVec4 rbStockGaussianSampleWeights2[RB_STOCK_GAUSSIAN_SAMPLE_COUNT];
+static int rbStockGaussianViewportWidth = -1;
+static int rbStockGaussianViewportHeight = -1;
+
+static float RB_StockGaussian1D( float offset, float deviation ) {
+	const float variance = deviation * deviation;
+	const float normalization = 1.0f / idMath::Sqrt( 2.0f * idMath::PI * variance );
+	return normalization * idMath::Exp( -( offset * offset ) / ( 2.0f * variance ) );
+}
+
+static void RB_CalculateStockGaussianCoefficients( int width, int height, float multiplier ) {
+	memset( rbStockGaussianSampleOffsets, 0, sizeof( rbStockGaussianSampleOffsets ) );
+	memset( rbStockGaussianSampleWeights, 0, sizeof( rbStockGaussianSampleWeights ) );
+
+	float totalWeight = 0.0f;
+	int count = 0;
+	for ( int y = -2; y <= 2 && count < RB_STOCK_GAUSSIAN_SAMPLE_COUNT; y++ ) {
+		for ( int x = -2; x <= 2 && count < RB_STOCK_GAUSSIAN_SAMPLE_COUNT; x++ ) {
+			if ( abs( x ) + abs( y ) > 2 ) {
+				continue;
+			}
+
+			const float weight = RB_StockGaussian1D( idMath::Sqrt( static_cast<float>( x * x + y * y ) ), 1.0f );
+			rbStockGaussianSampleOffsets[count].Set(
+				static_cast<float>( x ) / static_cast<float>( width ),
+				static_cast<float>( y ) / static_cast<float>( height ),
+				0.0f,
+				0.0f );
+			rbStockGaussianSampleWeights[count].Set( weight, weight, weight, weight );
+			totalWeight += weight;
+			count++;
+		}
+	}
+
+	if ( totalWeight <= 0.0f ) {
+		return;
+	}
+
+	const float scale = multiplier / totalWeight;
+	for ( int i = 0; i < RB_STOCK_GAUSSIAN_SAMPLE_COUNT; i++ ) {
+		rbStockGaussianSampleWeights[i] *= scale;
+	}
+}
+
+static void RB_CalculateStockGaussianCoefficients1D( int size, float multiplier, float deviation,
+	idVec4 *sampleOffsets, idVec4 *sampleWeights ) {
+	const int halfSampleCount = ( RB_STOCK_GAUSSIAN_SAMPLE_COUNT + 1 ) / 2;
+
+	memset( sampleOffsets, 0, sizeof( idVec4 ) * RB_STOCK_GAUSSIAN_SAMPLE_COUNT );
+	if ( sampleWeights != NULL ) {
+		memset( sampleWeights, 0, sizeof( idVec4 ) * RB_STOCK_GAUSSIAN_SAMPLE_COUNT );
+	}
+
+	for ( int i = 0; i < halfSampleCount; i++ ) {
+		const float offset = static_cast<float>( i ) / static_cast<float>( size );
+		sampleOffsets[i].Set( offset, 0.0f, 0.0f, 0.0f );
+
+		if ( sampleWeights != NULL ) {
+			const float weight = RB_StockGaussian1D( static_cast<float>( i ), deviation ) * multiplier;
+			sampleWeights[i].Set( weight, weight, weight, 1.0f );
+		}
+	}
+
+	for ( int i = halfSampleCount; i < RB_STOCK_GAUSSIAN_SAMPLE_COUNT; i++ ) {
+		const int mirrorIndex = RB_STOCK_GAUSSIAN_SAMPLE_COUNT - i;
+		sampleOffsets[i].Set( -sampleOffsets[mirrorIndex].x, 0.0f, 0.0f, 0.0f );
+		if ( sampleWeights != NULL ) {
+			sampleWeights[i] = sampleWeights[mirrorIndex];
+		}
+	}
+}
+
+static void RB_UpdateStockGLSLShaderConstantCache() {
+	if ( backEnd.viewDef == NULL ) {
+		return;
+	}
+
+	const int viewportWidth = Max( 1, backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1 );
+	const int viewportHeight = Max( 1, backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1 );
+	if ( viewportWidth == rbStockGaussianViewportWidth && viewportHeight == rbStockGaussianViewportHeight ) {
+		return;
+	}
+
+	rbStockGaussianViewportWidth = viewportWidth;
+	rbStockGaussianViewportHeight = viewportHeight;
+
+	RB_CalculateStockGaussianCoefficients( viewportWidth, viewportHeight, 1.0f );
+	RB_CalculateStockGaussianCoefficients1D( viewportWidth, 1.0f, 3.0f,
+		rbStockGaussianSampleOffsetsHorizontal, rbStockGaussianSampleWeights2 );
+	RB_CalculateStockGaussianCoefficients1D( viewportWidth, 1.0f, 3.0f,
+		rbStockGaussianSampleOffsetsVertical, NULL );
+
+	for ( int i = 0; i < RB_STOCK_GAUSSIAN_SAMPLE_COUNT; i++ ) {
+		rbStockGaussianSampleOffsetsVertical[i].y = rbStockGaussianSampleOffsetsVertical[i].x;
+		rbStockGaussianSampleOffsetsVertical[i].x = 0.0f;
+	}
+}
+
+static bool RB_BindStockGLSLShaderParm( glslShaderParmBinding_t binding, int location ) {
+	if ( location < 0 || backEnd.viewDef == NULL ) {
+		return false;
+	}
+
+	switch ( binding ) {
+	case GLSL_SHADERPARM_VIEW_ORIGIN: {
+		idVec4 viewOrigin;
+		viewOrigin.ToVec3() = backEnd.viewDef->renderView.vieworg;
+		viewOrigin.w = 1.0f;
+		glUniform4fvARB( location, 1, viewOrigin.ToFloatPtr() );
+		return true;
+	}
+	case GLSL_SHADERPARM_COLOR_MATRIX0:
+		glUniform4fvARB( location, 1, RB_STOCK_COLOR_MATRIX_ROWS[0].ToFloatPtr() );
+		return true;
+	case GLSL_SHADERPARM_COLOR_MATRIX1:
+		glUniform4fvARB( location, 1, RB_STOCK_COLOR_MATRIX_ROWS[1].ToFloatPtr() );
+		return true;
+	case GLSL_SHADERPARM_COLOR_MATRIX2:
+		glUniform4fvARB( location, 1, RB_STOCK_COLOR_MATRIX_ROWS[2].ToFloatPtr() );
+		return true;
+	case GLSL_SHADERPARM_GAUSSIAN_SAMPLE_OFFSETS:
+		RB_UpdateStockGLSLShaderConstantCache();
+		glUniform4fvARB( location, RB_STOCK_GAUSSIAN_SAMPLE_COUNT, rbStockGaussianSampleOffsets[0].ToFloatPtr() );
+		return true;
+	case GLSL_SHADERPARM_GAUSSIAN_SAMPLE_OFFSETS_HORIZONTAL:
+		RB_UpdateStockGLSLShaderConstantCache();
+		glUniform4fvARB( location, RB_STOCK_GAUSSIAN_SAMPLE_COUNT, rbStockGaussianSampleOffsetsHorizontal[0].ToFloatPtr() );
+		return true;
+	case GLSL_SHADERPARM_GAUSSIAN_SAMPLE_OFFSETS_VERTICAL:
+		RB_UpdateStockGLSLShaderConstantCache();
+		glUniform4fvARB( location, RB_STOCK_GAUSSIAN_SAMPLE_COUNT, rbStockGaussianSampleOffsetsVertical[0].ToFloatPtr() );
+		return true;
+	case GLSL_SHADERPARM_GAUSSIAN_SAMPLE_WEIGHTS:
+		RB_UpdateStockGLSLShaderConstantCache();
+		glUniform4fvARB( location, RB_STOCK_GAUSSIAN_SAMPLE_COUNT, rbStockGaussianSampleWeights[0].ToFloatPtr() );
+		return true;
+	case GLSL_SHADERPARM_GAUSSIAN_SAMPLE_WEIGHTS2:
+		RB_UpdateStockGLSLShaderConstantCache();
+		glUniform4fvARB( location, RB_STOCK_GAUSSIAN_SAMPLE_COUNT, rbStockGaussianSampleWeights2[0].ToFloatPtr() );
+		return true;
+	case GLSL_SHADERPARM_REGISTERS:
+	default:
+		return false;
+	}
+}
+
 static inline void RB_SetStageVertexColorPointer( const drawSurf_t *surf, int stage, idDrawVert *ac ) {
 	if ( surf->decalColorCache != NULL && stage >= 0 && stage < surf->decalColorStageCount && surf->decalColorStride > 0 ) {
 		byte *colorData = (byte *)vertexCache.Position( surf->decalColorCache );
@@ -2923,8 +3080,16 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 
 				for ( int i = 0; i < newStage->numShaderParms; i++ ) {
 					const int location = newStage->shaderParmLocations[i];
+					if ( location < 0 ) {
+						continue;
+					}
+
+					if ( RB_BindStockGLSLShaderParm( newStage->shaderParmBindings[i], location ) ) {
+						continue;
+					}
+
 					const int numRegisters = newStage->shaderParmNumRegisters[i];
-					if ( location < 0 || numRegisters <= 0 ) {
+					if ( numRegisters <= 0 ) {
 						continue;
 					}
 

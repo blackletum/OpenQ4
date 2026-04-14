@@ -1083,6 +1083,7 @@ static void Session_PrintLightGridBakeUsage() {
 	common->Printf( "Without 'force', maps whose required .lightgrid metadata and area*_lightgrid_amb.tga atlases already exist are skipped.\n" );
 	common->Printf( "When map names, 'all', or 'all-mp' are given, OpenQ4 loads each map automatically, prints live progress to the console/log, and writes .lightgrid metadata plus area*_lightgrid_amb.tga atlases to fs_savepath.\n" );
 	common->Printf( "'separateAreas' rebuilds one portal-area probe layout at a time and streams .lightgrid metadata during the bake to reduce peak CPU memory usage.\n" );
+	common->Printf( "Multiplayer targets are cheat-protected; enable cheats first with 'sv_cheats 1' or 'net_allowCheats 1'.\n" );
 	common->Printf( "This bake is diffuse-only and LDR. It does not output the BFG EXR/PBR light-grid data path.\n" );
 }
 
@@ -1364,9 +1365,25 @@ static bool Session_LoadLightGridBakeMap( const idStr &mapName ) {
 	return true;
 }
 
+static bool Session_CanBakeLightGridMap( const idStr &mapName ) {
+	if ( !Session_IsLightGridBakeMultiplayerMap( mapName ) || idAsyncNetwork::AreCheatsEnabled() ) {
+		return true;
+	}
+
+	common->Printf(
+		"bakeLightGrids: multiplayer target '%s' is cheat-protected. Set sv_cheats 1 or net_allowCheats 1 before baking.\n",
+		mapName.c_str() );
+	return false;
+}
+
 static bool Session_BakeLightGridCurrentMap( const lightGridBakeOptions_t &options, bool forceBake, bool *wasSkipped = NULL ) {
 	if ( wasSkipped != NULL ) {
 		*wasSkipped = false;
+	}
+
+	if ( sessLocal.IsMultiplayer() && !idAsyncNetwork::AreCheatsEnabled() ) {
+		common->Printf( "bakeLightGrids: the current multiplayer map is cheat-protected. Set sv_cheats 1 or net_allowCheats 1 before baking.\n" );
+		return false;
 	}
 
 	if ( sessLocal.mapSpawned && ( !tr.primaryWorld || !tr.primaryView ) ) {
@@ -1454,6 +1471,10 @@ static void Session_RunLightGridBake( const idCmdArgs &args ) {
 		const bool needsMultiplayerModule = Session_IsLightGridBakeMultiplayerMap( mapName );
 		const char *requiredModule = needsMultiplayerModule ? "game_mp" : "game_sp";
 		const char *activeModule = cvarSystem->GetCVarString( "com_activeGameModule" );
+
+		if ( !Session_CanBakeLightGridMap( mapName ) ) {
+			return;
+		}
 
 		if ( idStr::Icmp( activeModule, requiredModule ) != 0 ) {
 			Session_ReloadLightGridBakeBatch( options, mapTargets, bakeAll, bakeAllMultiplayer, forceBake, autoQuit, mapIndex, needsMultiplayerModule );
@@ -4620,7 +4641,7 @@ void idSessionLocal::Init() {
 
 #ifndef	ID_DEDICATED
 	cmdSystem->AddCommand( "openq4_startSingleplayer", Session_OpenQ4StartSingleplayer_f, CMD_FL_SYSTEM, "internal helper to start singleplayer after game-module switches" );
-	cmdSystem->AddCommand( "openq4_resumeBakeLightGrids", Session_OpenQ4ResumeBakeLightGrids_f, CMD_FL_SYSTEM, "internal helper to continue light-grid baking after game-module switches" );
+	cmdSystem->AddCommand( "openq4_resumeBakeLightGrids", Session_OpenQ4ResumeBakeLightGrids_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "internal helper to continue light-grid baking after game-module switches" );
 	cmdSystem->AddCommand( "openq4_iamtheduke", Session_IAmTheDuke_f, CMD_FL_SYSTEM, "toggles the SP-only iamtheduke cheat" );
 	cmdSystem->AddCommand( "bakeLightGrids", Session_BakeLightGrids_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "bakes OpenQ4-compatible lightgrid metadata and irradiance atlases for the current map or a batch of maps" );
 	cmdSystem->AddCommand( "map", Session_Map_f, CMD_FL_SYSTEM, "loads a map", idCmdSystem::ArgCompletion_MapName );
