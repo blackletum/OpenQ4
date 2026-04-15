@@ -20,6 +20,7 @@ This document defines the long-term platform direction for OpenQ4 and how SDL3 +
 - Build system: Meson + Ninja.
 - Dependency model: Meson subprojects/wraps.
 - Platform backend direction: SDL3-first (legacy Win32 backend is transitional only).
+- Graphics API direction: OpenGL remains the shipping renderer; as of April 15, 2026, DX12/Vulkan bring-up starts through an experimental NVRHI probe utility plus optional engine-side `r_graphicsApi`, `gfxApiProbe`, and persistent `gfxApiProbeStart` / `gfxApiProbeStop` / `gfxApiProbeStatus` reporting that still resolves non-OpenGL requests back to OpenGL.
 - Language baseline target: C++23 semantics (`vc++latest` on current MSVC Meson front-end).
 - Toolchain baseline direction: MSVC 19.46+ (Visual Studio 2026 generation), with compatibility fallback permitted during migration.
 - As of March 30, 2026, Linux defaults to the SDL3 backend and keeps `-Dplatform_backend=native` as a fallback path.
@@ -36,6 +37,13 @@ This document defines the long-term platform direction for OpenQ4 and how SDL3 +
 - New platform-facing work should prefer SDL3 abstractions first.
 - Platform-specific code should be isolated under `src/sys/<platform>/` when SDL3 cannot cover a requirement directly.
 
+## Graphics API Direction
+
+- Keep the gameplay/runtime renderer on the existing OpenGL path until a full migration slice is ready.
+- Use NVRHI for future DX12/Vulkan renderer work so draw code can target a single abstraction instead of duplicating per-API logic.
+- The first landed NVRHI step is `OpenQ4-rhi-probe_<arch>`, a developer-only utility that creates a native DX12 or Vulkan swap chain, wraps it with NVRHI, and repeatedly clears/presents frames.
+- Do not expose DX12/Vulkan as user-facing engine renderers until the engine can render real scenes, not just bootstrap a device/swap chain.
+
 ## Meson Direction
 
 - Meson is the canonical build system going forward.
@@ -49,8 +57,9 @@ This document defines the long-term platform direction for OpenQ4 and how SDL3 +
 
 1. Keep Windows x64 stable with SDL3 default backend.
 2. Keep Linux on the SDL3 backend by default and validate both x64 and arm64 release paths.
-3. Validate Windows arm64 beyond compile/package bring-up, especially runtime audio and in-game coverage.
-4. Promote Linux and macOS to first-class once they pass consistent compile/link/runtime validation loops.
+3. Use the NVRHI probe to validate DX12 on Windows and Vulkan on Windows/Linux before touching gameplay renderer code paths.
+4. Validate Windows arm64 beyond compile/package bring-up, especially runtime audio and in-game coverage.
+5. Promote Linux and macOS to first-class once they pass consistent compile/link/runtime validation loops.
 
 ## SDL3 Migration Staging (Linux/macOS)
 

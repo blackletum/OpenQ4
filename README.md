@@ -120,6 +120,7 @@ Project scope is intentionally explicit:
 - Dedicated server builds keep the disabled BSE manager path unless that changes by design
 - Canonical SDK/game-library edits belong in `../OpenQ4-GameLibs`, not a mirrored `src/game` tree
 - Compatibility with proprietary Quake 4 game DLLs is a non-goal
+- OpenGL remains the only gameplay-ready renderer today; experimental DX12/Vulkan bring-up currently lives in the developer-only `OpenQ4-rhi-probe_<arch>` NVRHI utility plus engine-side `r_graphicsApi` / `listGraphicsApis` reporting, opt-in automatic bootstrap cvars such as `r_graphicsApiBootstrap`, the blocking `gfxApiProbe` smoke test, and the persistent `gfxApiProbeStart` / `gfxApiProbeStop` / `gfxApiProbeStatus` bootstrap session, all of which still resolve real gameplay rendering back to OpenGL
 - The current irradiance-volume path is intentionally non-PBR and LDR: it adds indirect diffuse only, bakes OpenQ4-native `.tga` atlases, and does not bring over the BFG EXR/environment-probe reflection stack
 
 For unattended baking, run the client with startup commands such as `+bakeLightGrids all -quit`, `+set sv_cheats 1 +bakeLightGrids all-mp -quit`, or `+bakeLightGrids force game/tram1 -quit`. OpenQ4 will switch modules as needed, load each map automatically, skip already-complete targets unless `force` is present, and stream progress to the console/log while writing outputs to `fs_savepath`. Multiplayer-target bakes are cheat-protected, so enable `sv_cheats` or `net_allowCheats` before `bakeLightGrids` when targeting MP maps.
@@ -188,6 +189,7 @@ Set `OPENQ4_BUILD_GAMELIBS=1` if you want the wrapper to trigger game-library bu
 - [docs-user/shadow-mapping.md](docs-user/shadow-mapping.md) - shadow-map settings, presets, and troubleshooting
 - [docs-user/multiplayer-networking.md](docs-user/multiplayer-networking.md) - multiplayer networking and lag compensation
 - [docs-dev/platform-support.md](docs-dev/platform-support.md) - platform roadmap and backend status
+- [docs-dev/render-backends-nvrhi.md](docs-dev/render-backends-nvrhi.md) - experimental NVRHI backend plan and probe workflow
 - [docs-dev/official-pk4-checksums.md](docs-dev/official-pk4-checksums.md) - official asset validation reference
 - [docs-dev/input-key-matrix.md](docs-dev/input-key-matrix.md) - keyboard and controller input reference
 - [docs-dev/release-completion.md](docs-dev/release-completion.md) - current release checklist and open work

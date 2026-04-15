@@ -28,10 +28,14 @@ along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 #else
 #include "win_local.h"
 #endif
+#include "../GraphicsWindow.h"
 #include "../../framework/Common.h"
 #include "../../framework/Console.h"
 #include "../../framework/Session.h"
 #include "../../renderer/tr_local.h"
+#if defined( OPENQ4_WITH_ENGINE_NVRHI )
+#include "../../renderer/NVRHI/NvrhiSession.h"
+#endif
 
 #include <SDL3/SDL.h>
 
@@ -117,6 +121,7 @@ PFNWGLSETPBUFFERATTRIBARBPROC wglSetPbufferAttribARB;
 static SDL_Window *s_sdlWindow = NULL;
 static SDL_GLContext s_sdlContext = NULL;
 static bool s_sdlVideoActive = false;
+static bool s_sdlVideoOwned = false;
 static bool s_sdlTextInputActive = false;
 static bool s_sdlGamepadSubsystemActive = false;
 static bool s_sdlJoystickSubsystemActive = false;
@@ -2084,6 +2089,65 @@ static void SDL3_UpdateNativeWindowHandles(void) {
 #endif
 }
 
+static SDL_WindowID SDL3_GetMainWindowId(void) {
+	if (!s_sdlWindow) {
+		return 0;
+	}
+
+	return SDL_GetWindowID(s_sdlWindow);
+}
+
+static SDL_WindowID SDL3_GetEventWindowId(const SDL_Event &event) {
+	switch (event.type) {
+		case SDL_EVENT_WINDOW_SHOWN:
+		case SDL_EVENT_WINDOW_HIDDEN:
+		case SDL_EVENT_WINDOW_EXPOSED:
+		case SDL_EVENT_WINDOW_MOVED:
+		case SDL_EVENT_WINDOW_RESIZED:
+		case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+		case SDL_EVENT_WINDOW_METAL_VIEW_RESIZED:
+		case SDL_EVENT_WINDOW_MINIMIZED:
+		case SDL_EVENT_WINDOW_MAXIMIZED:
+		case SDL_EVENT_WINDOW_RESTORED:
+		case SDL_EVENT_WINDOW_MOUSE_ENTER:
+		case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+		case SDL_EVENT_WINDOW_FOCUS_GAINED:
+		case SDL_EVENT_WINDOW_FOCUS_LOST:
+		case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+		case SDL_EVENT_WINDOW_HIT_TEST:
+		case SDL_EVENT_WINDOW_ICCPROF_CHANGED:
+		case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+		case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+		case SDL_EVENT_WINDOW_SAFE_AREA_CHANGED:
+		case SDL_EVENT_WINDOW_OCCLUDED:
+		case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+		case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
+		case SDL_EVENT_WINDOW_DESTROYED:
+		case SDL_EVENT_WINDOW_HDR_STATE_CHANGED:
+			return event.window.windowID;
+
+		case SDL_EVENT_KEY_DOWN:
+		case SDL_EVENT_KEY_UP:
+			return event.key.windowID;
+
+		case SDL_EVENT_TEXT_INPUT:
+			return event.text.windowID;
+
+		case SDL_EVENT_MOUSE_MOTION:
+			return event.motion.windowID;
+
+		case SDL_EVENT_MOUSE_BUTTON_DOWN:
+		case SDL_EVENT_MOUSE_BUTTON_UP:
+			return event.button.windowID;
+
+		case SDL_EVENT_MOUSE_WHEEL:
+			return event.wheel.windowID;
+
+		default:
+			return 0;
+	}
+}
+
 static void SDL3_HandleWindowEvent(const SDL_WindowEvent &event, int eventTime) {
 	switch (event.type) {
 		case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
@@ -2192,6 +2256,28 @@ bool Sys_SDL_PumpEvents(void) {
 	SDL_Event event;
 	while (SDL_PollEvent(&event)) {
 		const int eventTime = SDL3_EventMilliseconds(event.common.timestamp);
+		const SDL_WindowID mainWindowId = SDL3_GetMainWindowId();
+		const SDL_WindowID eventWindowId = SDL3_GetEventWindowId(event);
+
+		if (eventWindowId != 0 && mainWindowId != 0 && eventWindowId != mainWindowId) {
+#if defined( OPENQ4_WITH_ENGINE_NVRHI )
+			const unsigned int sessionWindowId = OpenQ4_GetNvrhiBootstrapSessionWindowId();
+			if (sessionWindowId != 0 && sessionWindowId == static_cast<unsigned int>(eventWindowId)) {
+				if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
+					const int renderedFrames = OpenQ4_GetNvrhiBootstrapSessionFrameCount();
+					const char *backendName = OpenQ4_GetNvrhiBootstrapSessionBackendName();
+					const openq4GraphicsApi_t sessionApi = OpenQ4_GetNvrhiBootstrapSessionApi();
+					OpenQ4_StopNvrhiBootstrapSession();
+					common->Printf(
+						"Engine NVRHI bootstrap session window closed after %d frame(s) on %s (%s).\n",
+						renderedFrames,
+						backendName != NULL ? backendName : "unknown backend",
+						OpenQ4_GraphicsApiName( sessionApi ) );
+				}
+			}
+#endif
+			continue;
+		}
 
 		if (event.type >= SDL_EVENT_WINDOW_FIRST && event.type <= SDL_EVENT_WINDOW_LAST) {
 			if (event.window.type == SDL_EVENT_WINDOW_RESIZED) {
@@ -2840,14 +2926,15 @@ void GLimp_SetGamma(unsigned short red[256], unsigned short green[256], unsigned
 }
 
 bool GLimp_Init(glimpParms_t parms) {
+	const char *error = NULL;
 	const char *driverName;
 
 	common->Printf("Initializing OpenGL subsystem (SDL3 backend)\n");
 	Sys_DestroySplash();
 
 	if (!s_sdlVideoActive) {
-		if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
-			common->Printf("SDL3: failed to initialize video subsystem: %s\n", SDL_GetError());
+		if (!OpenQ4_EnsureGraphicsVideoSubsystem(s_sdlVideoOwned, error)) {
+			common->Printf("%s\n", error != NULL ? error : "SDL3: failed to initialize video subsystem.");
 			return false;
 		}
 		s_sdlVideoActive = true;
@@ -2882,13 +2969,12 @@ bool GLimp_Init(glimpParms_t parms) {
 		(void)SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, parms.multiSamples);
 	}
 
-	SDL_WindowFlags flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+	SDL_WindowFlags flags = 0;
 	if (!parms.fullScreen && parms.borderless) {
 		flags |= SDL_WINDOW_BORDERLESS;
 	}
-	s_sdlWindow = SDL_CreateWindow(GAME_NAME, parms.width, parms.height, flags);
-	if (!s_sdlWindow) {
-		common->Printf("SDL3: could not create window: %s\n", SDL_GetError());
+	if (!OpenQ4_CreateGraphicsWindow(GAME_NAME, openq4GraphicsApi_t::OpenGL, parms.width, parms.height, flags, s_sdlWindow, error)) {
+		common->Printf("%s\n", error != NULL ? error : "SDL3: could not create window.");
 		return false;
 	}
 
@@ -2915,17 +3001,15 @@ bool GLimp_Init(glimpParms_t parms) {
 	s_sdlContext = SDL_GL_CreateContext(s_sdlWindow);
 	if (!s_sdlContext) {
 		common->Printf("SDL3: could not create OpenGL context: %s\n", SDL_GetError());
-		SDL_DestroyWindow(s_sdlWindow);
-		s_sdlWindow = NULL;
+		OpenQ4_DestroyGraphicsWindow(s_sdlWindow);
 		return false;
 	}
 
 	if (!SDL_GL_MakeCurrent(s_sdlWindow, s_sdlContext)) {
 		common->Printf("SDL3: could not make context current: %s\n", SDL_GetError());
 		(void)SDL_GL_DestroyContext(s_sdlContext);
-		SDL_DestroyWindow(s_sdlWindow);
 		s_sdlContext = NULL;
-		s_sdlWindow = NULL;
+		OpenQ4_DestroyGraphicsWindow(s_sdlWindow);
 		return false;
 	}
 
@@ -2947,6 +3031,7 @@ bool GLimp_Init(glimpParms_t parms) {
 
 	SDL3_UpdateNativeWindowHandles();
 	SDL3_LoadWGLExtensions();
+	OpenQ4_SetPrimaryGraphicsWindow( s_sdlWindow );
 
 	win32.activeApp = true;
 	win32.wglErrors = 0;
@@ -2989,14 +3074,13 @@ void GLimp_Shutdown(void) {
 		s_sdlContext = NULL;
 	}
 
-	if (s_sdlWindow) {
-		SDL_DestroyWindow(s_sdlWindow);
-		s_sdlWindow = NULL;
-	}
+	OpenQ4_SetPrimaryGraphicsWindow( NULL );
+	OpenQ4_DestroyGraphicsWindow(s_sdlWindow);
 
 	if (s_sdlVideoActive) {
-		SDL_QuitSubSystem(SDL_INIT_VIDEO);
+		OpenQ4_ReleaseGraphicsVideoSubsystem(s_sdlVideoOwned);
 		s_sdlVideoActive = false;
+		s_sdlVideoOwned = false;
 	}
 
 	win32.hWnd = NULL;

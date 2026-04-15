@@ -40,6 +40,7 @@ This status reflects compatibility with official Quake 4 assets (`q4base` PK4s),
 ### In Progress
 
 - ❌ **Ongoing Compatibility Sweep**: Additional map-by-map gameplay validation remains in progress to catch residual regressions
+- ❌ **Renderer API Migration**: OpenGL remains the gameplay-ready renderer; DX12/Vulkan bring-up currently exists as the experimental `OpenQ4-rhi-probe_<arch>` NVRHI bootstrap utility plus optional engine-side `gfxApiProbe`, visible-or-hidden `gfxApiProbeStart` / `gfxApiProbeStop` / `gfxApiProbeStatus`, and `r_graphicsApi` bootstrap reporting that still falls back to OpenGL
 
 Current known regressions and follow-up work are tracked in [TODO.md](TODO.md) and [docs-dev/release-completion.md](docs-dev/release-completion.md).
 
@@ -189,8 +190,9 @@ The game code is derived from the [Quake 4 SDK](https://www.moddb.com/games/quak
 | [GLEW](http://glew.sourceforge.net/) | 2.3.1 | OpenGL extension wrangler |
 | [OpenAL Soft](https://openal-soft.org/) | 1.25.1 | 3D audio rendering |
 | [stb_vorbis](https://github.com/nothings/stb) | 1.22 | Ogg Vorbis audio decoding |
+| [NVRHI](https://github.com/NVIDIA-RTX/NVRHI) | external checkout | Optional DX12/Vulkan bootstrap dependency for the experimental `OpenQ4-rhi-probe_<arch>` target |
 
-All dependencies are automatically fetched and built during the Meson configure step.
+Core engine dependencies are automatically fetched and built during the Meson configure step. The NVRHI probe is currently an opt-in developer target that consumes a separate recursive NVRHI checkout while renderer migration work is still in bootstrap.
 
 ---
 

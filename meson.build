@@ -145,6 +145,10 @@ build_engine = get_option('build_engine')
 build_games = get_option('build_games')
 build_game_sp = get_option('build_game_sp')
 build_game_mp = get_option('build_game_mp')
+build_nvrhi_probe = get_option('build_nvrhi_probe')
+build_engine_nvrhi = get_option('build_engine_nvrhi')
+nvrhi_repo_override = get_option('nvrhi_repo_override').strip()
+needs_nvrhi = build_nvrhi_probe or build_engine_nvrhi
 needs_game_headers = build_engine or build_games
 install_root_dir = meson.project_source_root() / '.install'
 install_game_dir = install_root_dir / 'baseoq4'
@@ -156,9 +160,24 @@ game_stage_game_root = ''
 game_stage_game_include_rel = '.tmp/gamelibs_stage/src/game'
 bse_source_root = meson.project_source_root() / 'src' / 'bse'
 game_module_defs_file = ''
+nvrhi_repo_root = ''
+nvrhi_repo_root_rel = ''
+nvrhi_repo_summary = 'disabled'
 
-if not build_engine and not build_games
-  error('At least one build target must be enabled. Use -Dbuild_engine=true and/or -Dbuild_games=true.')
+if not build_engine and not build_games and not build_nvrhi_probe
+  error('At least one build target must be enabled. Use -Dbuild_engine=true, -Dbuild_games=true, and/or -Dbuild_nvrhi_probe=true.')
+endif
+
+if build_engine_nvrhi and not build_engine
+  error('build_engine_nvrhi=true requires build_engine=true because the NVRHI bootstrap is compiled into the client executable.')
+endif
+
+if build_engine_nvrhi and not use_sdl3_backend
+  error('build_engine_nvrhi=true currently requires -Dplatform_backend=sdl3 so the client and bootstrap path share SDL3 windowing.')
+endif
+
+if needs_nvrhi and host_system == 'darwin'
+  error('Experimental NVRHI bring-up is currently supported on Windows (DX12/Vulkan) and Linux (Vulkan) only.')
 endif
 
 if needs_game_headers
@@ -285,6 +304,50 @@ if build_engine or build_games
   game_idlib_sources = files(game_idlib_paths)
 endif
 
+if needs_nvrhi
+  nvrhi_repo_candidates = []
+  if nvrhi_repo_override != ''
+    nvrhi_repo_candidates += [nvrhi_repo_override]
+  endif
+  nvrhi_repo_candidates += [
+    meson.project_source_root() / '.tmp' / 'nvrhi',
+    meson.project_source_root() / '.tmp' / 'nvrhi-inspect',
+    meson.project_source_root() / 'subprojects' / 'nvrhi',
+  ]
+
+  foreach candidate : nvrhi_repo_candidates
+    if fs_mod.is_file(candidate / 'include' / 'nvrhi' / 'nvrhi.h') and fs_mod.is_dir(candidate / 'src')
+      nvrhi_repo_root = candidate
+      break
+    endif
+  endforeach
+
+  if nvrhi_repo_root == ''
+    error(
+      'Experimental NVRHI builds require a recursive NVRHI checkout. '
+      + 'Set -Dnvrhi_repo_override=<path> or clone https://github.com/NVIDIA-RTX/NVRHI into .tmp/nvrhi.'
+    )
+  endif
+
+  if not fs_mod.is_dir(nvrhi_repo_root / 'thirdparty' / 'Vulkan-Headers' / 'include')
+    error('NVRHI checkout is missing Vulkan-Headers submodule content: ' + nvrhi_repo_root)
+  endif
+
+  if host_system == 'windows' and not fs_mod.is_dir(nvrhi_repo_root / 'thirdparty' / 'DirectX-Headers' / 'include')
+    error('NVRHI checkout is missing DirectX-Headers submodule content: ' + nvrhi_repo_root)
+  endif
+
+  nvrhi_repo_root_rel = run_command(
+    py,
+    '-c',
+    'import os, sys; print(os.path.relpath(sys.argv[1], sys.argv[2]).replace("\\\\", "/"))',
+    nvrhi_repo_root,
+    meson.project_source_root(),
+    check: true,
+  ).stdout().strip()
+  nvrhi_repo_summary = nvrhi_repo_root
+endif
+
 resource_compiler = find_program('rc', 'windres', required: false)
 if host_system == 'windows' and resource_compiler.found()
   windows_mod = import('windows')
@@ -319,6 +382,17 @@ stb_vorbis_dep = disabler()
 openal_dep = disabler()
 sdl3_dep = disabler()
 deps = []
+
+if use_sdl3_backend or build_nvrhi_probe
+  sdl3_dep = dependency(
+    'sdl3',
+    version: '>=3.4.4',
+    required: true,
+    fallback: ['sdl3', 'sdl3_dep'],
+    default_options: fallback_opt,
+  )
+endif
+
 if build_engine
   glew_dep = dependency(
     'glew',
@@ -357,16 +431,6 @@ if build_engine
         default_options: fallback_opt,
       )
     endif
-  endif
-
-  if use_sdl3_backend
-    sdl3_dep = dependency(
-      'sdl3',
-      version: '>=3.4.4',
-      required: true,
-      fallback: ['sdl3', 'sdl3_dep'],
-      default_options: fallback_opt,
-    )
   endif
 
   deps = [glew_dep, openal_dep, stb_vorbis_dep]
@@ -496,6 +560,190 @@ if needs_game_headers
   bse_client_include_dirs += [staged_game_include_dir]
 endif
 
+nvrhi_probe_binary_name = meson.project_name() + '-rhi-probe_' + binary_arch
+nvrhi_probe_include_dirs = [
+  root_include_dir,
+  src_include_dir,
+  include_directories('src/tools/rhi_probe'),
+]
+nvrhi_include_dirs = []
+nvrhi_probe_cpp_args = shared_cpp_args + ['-DOPENQ4_NVRHI_PROBE=1']
+nvrhi_probe_c_args = shared_c_args
+nvrhi_probe_deps = []
+nvrhi_probe_link_with = []
+nvrhi_probe_sources = files(
+  'src/renderer/GraphicsAPI.cpp',
+  'src/renderer/NVRHI/NvrhiBootstrap.cpp',
+  'src/renderer/NVRHI/NvrhiBootstrapD3D12.cpp',
+  'src/renderer/NVRHI/NvrhiBootstrapVulkan.cpp',
+  'src/renderer/NVRHI/NvrhiSession.cpp',
+  'src/sys/GraphicsWindow.cpp',
+  'src/tools/rhi_probe/main.cpp',
+  'src/tools/rhi_probe/NvrhiProbe.cpp',
+)
+engine_nvrhi_client_sources = files(
+  'src/renderer/NVRHI/NvrhiBootstrap.cpp',
+  'src/renderer/NVRHI/NvrhiBootstrapD3D12.cpp',
+  'src/renderer/NVRHI/NvrhiBootstrapVulkan.cpp',
+  'src/renderer/NVRHI/NvrhiCommand.cpp',
+  'src/renderer/NVRHI/NvrhiSession.cpp',
+)
+engine_nvrhi_client_include_dirs = []
+engine_nvrhi_client_cpp_args = []
+engine_nvrhi_client_c_args = []
+engine_nvrhi_client_deps = []
+engine_nvrhi_client_link_with = []
+engine_nvrhi_library = disabler()
+nvrhi_common_library = disabler()
+nvrhi_d3d12_library = disabler()
+nvrhi_vulkan_library = disabler()
+have_nvrhi_d3d12 = needs_nvrhi and host_system == 'windows'
+have_nvrhi_vulkan = needs_nvrhi and ['windows', 'linux'].contains(host_system)
+
+if needs_nvrhi
+  nvrhi_include_dirs = [
+    include_directories(nvrhi_repo_root_rel / 'include'),
+    include_directories(nvrhi_repo_root_rel / 'src'),
+    include_directories(nvrhi_repo_root_rel / 'thirdparty' / 'Vulkan-Headers' / 'include'),
+  ]
+  if host_system == 'windows'
+    nvrhi_include_dirs += [
+      include_directories(nvrhi_repo_root_rel / 'thirdparty' / 'DirectX-Headers' / 'include'),
+    ]
+  endif
+
+  if build_nvrhi_probe
+    nvrhi_probe_include_dirs += nvrhi_include_dirs
+  endif
+
+  nvrhi_common_source_discovery = run_command(
+    py,
+    meson.project_source_root() / 'tools' / 'build' / 'list_sources.py',
+    nvrhi_repo_root,
+    'src/common',
+    check: true,
+  )
+  nvrhi_common_source_paths = []
+  foreach rel_path : nvrhi_common_source_discovery.stdout().strip().split('\n')
+    if rel_path != ''
+      nvrhi_common_source_paths += [nvrhi_repo_root_rel / rel_path]
+    endif
+  endforeach
+  if nvrhi_common_source_paths.length() == 0
+    error('Failed to enumerate NVRHI common sources from: ' + nvrhi_repo_root)
+  endif
+
+  nvrhi_common_library = static_library(
+    'openq4_nvrhi_common',
+    files(nvrhi_common_source_paths),
+    include_directories: nvrhi_include_dirs,
+    cpp_args: shared_cpp_args + ['-DNVRHI_WITH_AFTERMATH=0'],
+    c_args: shared_c_args,
+    install: false,
+  )
+  if build_nvrhi_probe
+    nvrhi_probe_link_with += [nvrhi_common_library]
+    nvrhi_probe_deps += [sdl3_dep]
+  endif
+  if build_engine_nvrhi
+    engine_nvrhi_client_link_with += [nvrhi_common_library]
+    engine_nvrhi_client_include_dirs += nvrhi_include_dirs
+  endif
+
+  if host_system == 'windows'
+    nvrhi_d3d12_deps = [
+      cc.find_library('d3d12', required: true),
+      cc.find_library('dxgi', required: true),
+      cc.find_library('dxguid', required: true),
+    ]
+    if build_nvrhi_probe
+      nvrhi_probe_deps += nvrhi_d3d12_deps
+    endif
+    if build_engine_nvrhi
+      engine_nvrhi_client_deps += nvrhi_d3d12_deps
+    endif
+
+    nvrhi_d3d12_source_discovery = run_command(
+      py,
+      meson.project_source_root() / 'tools' / 'build' / 'list_sources.py',
+      nvrhi_repo_root,
+      'src/d3d12',
+      check: true,
+    )
+    nvrhi_d3d12_source_paths = []
+    foreach rel_path : nvrhi_d3d12_source_discovery.stdout().strip().split('\n')
+      if rel_path != ''
+        nvrhi_d3d12_source_paths += [nvrhi_repo_root_rel / rel_path]
+      endif
+    endforeach
+    if nvrhi_d3d12_source_paths.length() == 0
+      error('Failed to enumerate NVRHI D3D12 sources from: ' + nvrhi_repo_root)
+    endif
+
+    nvrhi_d3d12_library = static_library(
+      'openq4_nvrhi_d3d12',
+      files(nvrhi_d3d12_source_paths),
+      include_directories: nvrhi_include_dirs,
+      cpp_args: shared_cpp_args + [
+        '-DNVRHI_WITH_AFTERMATH=0',
+        '-DNVRHI_D3D12_WITH_DXR12_OPACITY_MICROMAP=0',
+        '-DNVRHI_D3D12_WITH_NVAPI=0',
+      ],
+      c_args: shared_c_args,
+      install: false,
+    )
+    if build_nvrhi_probe
+      nvrhi_probe_link_with += [nvrhi_d3d12_library]
+      nvrhi_probe_cpp_args += ['-DOPENQ4_NVRHI_HAS_D3D12=1']
+    endif
+    if build_engine_nvrhi
+      engine_nvrhi_client_link_with += [nvrhi_d3d12_library]
+      engine_nvrhi_client_cpp_args += ['-DOPENQ4_NVRHI_HAS_D3D12=1']
+    endif
+  endif
+
+  if have_nvrhi_vulkan
+    nvrhi_vulkan_source_discovery = run_command(
+      py,
+      meson.project_source_root() / 'tools' / 'build' / 'list_sources.py',
+      nvrhi_repo_root,
+      'src/vulkan',
+      check: true,
+    )
+    nvrhi_vulkan_source_paths = []
+    foreach rel_path : nvrhi_vulkan_source_discovery.stdout().strip().split('\n')
+      if rel_path != ''
+        nvrhi_vulkan_source_paths += [nvrhi_repo_root_rel / rel_path]
+      endif
+    endforeach
+    if nvrhi_vulkan_source_paths.length() == 0
+      error('Failed to enumerate NVRHI Vulkan sources from: ' + nvrhi_repo_root)
+    endif
+
+    nvrhi_vulkan_cpp_args = shared_cpp_args + ['-DNVRHI_WITH_AFTERMATH=0']
+    if host_system == 'windows'
+      nvrhi_vulkan_cpp_args += ['-DVK_USE_PLATFORM_WIN32_KHR', '-DNOMINMAX']
+    endif
+
+    nvrhi_vulkan_library = static_library(
+      'openq4_nvrhi_vk',
+      files(nvrhi_vulkan_source_paths),
+      include_directories: nvrhi_include_dirs,
+      cpp_args: nvrhi_vulkan_cpp_args,
+      c_args: shared_c_args,
+      install: false,
+    )
+    if build_nvrhi_probe
+      nvrhi_probe_link_with += [nvrhi_vulkan_library]
+      nvrhi_probe_cpp_args += ['-DOPENQ4_NVRHI_HAS_VULKAN=1']
+    endif
+    if build_engine_nvrhi
+      engine_nvrhi_client_link_with += [nvrhi_vulkan_library]
+      engine_nvrhi_client_cpp_args += ['-DOPENQ4_NVRHI_HAS_VULKAN=1']
+    endif
+  endif
+endif
+
 engine_cpp_args = shared_cpp_args + ['-D__DOOM_DLL__']
 engine_c_args = shared_c_args
 bse_cpp_args = shared_cpp_args
@@ -514,18 +762,41 @@ if build_engine
   )
 endif
 
+if build_engine_nvrhi
+  engine_nvrhi_library = static_library(
+    'openq4_engine_nvrhi',
+    engine_nvrhi_client_sources,
+    include_directories: [root_include_dir, src_include_dir] + engine_nvrhi_client_include_dirs,
+    dependencies: [sdl3_dep] + engine_nvrhi_client_deps,
+    link_with: engine_nvrhi_client_link_with,
+    cpp_args: shared_cpp_args + engine_nvrhi_client_cpp_args,
+    c_args: shared_c_args + engine_nvrhi_client_c_args,
+    install: false,
+  )
+endif
+
 if build_engine
+  client_sources = openq4_engine_sources
+  client_include_dirs = engine_include_dirs
+  client_deps = deps
   client_link_with = [bse_library]
+  client_cpp_args = engine_cpp_args
+  client_c_args = engine_c_args
+
+  if build_engine_nvrhi
+    client_link_with += [engine_nvrhi_library]
+    client_cpp_args += ['-DOPENQ4_WITH_ENGINE_NVRHI=1']
+  endif
 
   if host_system == 'windows'
     executable(
       engine_client_binary_name,
-      openq4_engine_sources,
-      include_directories: engine_include_dirs,
-      dependencies: deps,
+      client_sources,
+      include_directories: client_include_dirs,
+      dependencies: client_deps,
       link_with: client_link_with,
-      cpp_args: engine_cpp_args,
-      c_args: engine_c_args,
+      cpp_args: client_cpp_args,
+      c_args: client_c_args,
       cpp_pch: pch_headers,
       win_subsystem: 'windows',
       link_args: engine_link_args,
@@ -535,12 +806,12 @@ if build_engine
   else
     executable(
       engine_client_binary_name,
-      openq4_engine_sources,
-      include_directories: engine_include_dirs,
-      dependencies: deps,
+      client_sources,
+      include_directories: client_include_dirs,
+      dependencies: client_deps,
       link_with: client_link_with,
-      cpp_args: engine_cpp_args,
-      c_args: engine_c_args,
+      cpp_args: client_cpp_args,
+      c_args: client_c_args,
       cpp_pch: pch_headers,
       link_args: engine_link_args,
       install: true,
@@ -577,6 +848,33 @@ if build_engine
       link_args: engine_link_args,
       install: true,
       install_dir: install_root_dir,
+    )
+  endif
+endif
+
+if build_nvrhi_probe
+  if host_system == 'windows'
+    executable(
+      nvrhi_probe_binary_name,
+      nvrhi_probe_sources,
+      include_directories: nvrhi_probe_include_dirs,
+      dependencies: nvrhi_probe_deps,
+      link_with: nvrhi_probe_link_with,
+      cpp_args: nvrhi_probe_cpp_args,
+      c_args: nvrhi_probe_c_args,
+      win_subsystem: 'console',
+      install: false,
+    )
+  else
+    executable(
+      nvrhi_probe_binary_name,
+      nvrhi_probe_sources,
+      include_directories: nvrhi_probe_include_dirs,
+      dependencies: nvrhi_probe_deps,
+      link_with: nvrhi_probe_link_with,
+      cpp_args: nvrhi_probe_cpp_args,
+      c_args: nvrhi_probe_c_args,
+      install: false,
     )
   endif
 endif
@@ -726,6 +1024,12 @@ summary(
     'Build engine': build_engine,
     'engine client binary': engine_client_binary_name,
     'engine dedicated binary': engine_ded_binary_name,
+    'Build engine NVRHI bootstrap': build_engine and build_engine_nvrhi,
+    'Build NVRHI probe': build_nvrhi_probe,
+    'NVRHI source repo': nvrhi_repo_summary,
+    'NVRHI probe binary': build_nvrhi_probe ? nvrhi_probe_binary_name : 'not built',
+    'NVRHI D3D12 backend': needs_nvrhi and have_nvrhi_d3d12,
+    'NVRHI Vulkan backend': needs_nvrhi and have_nvrhi_vulkan,
     'Integrated BSE in client': build_engine,
     'Integrated BSE source dir': bse_source_root,
     'Build games': build_games,

@@ -89,6 +89,8 @@ To rebuild the game libraries as part of the OpenQ4 build, set `OPENQ4_BUILD_GAM
 
 Third-party libraries such as SDL3, GLEW, OpenAL Soft, and stb_vorbis are managed as Meson subprojects. Linux still requires the usual native development packages for X11/OpenGL plus SDL3 runtime integrations before the first configure step. On current Debian/Ubuntu systems, install the CI-aligned SDL3/Linux package set (`libasound2-dev`, `libdbus-1-dev`, `libdecor-0-dev`, `libdrm-dev`, `libegl1-mesa-dev`, `libfribidi-dev`, `libgbm-dev`, `libgl1-mesa-dev`, `libibus-1.0-dev`, `libjack-dev`, `libopenal-dev`, `libpipewire-0.3-dev`, `libpulse-dev`, `libsndio-dev`, `libthai-dev`, `libudev-dev`, `libwayland-dev`, `libx11-dev`, `libxcursor-dev`, `libxext-dev`, `libxfixes-dev`, `libxi-dev`, `libxkbcommon-dev`, `libxrandr-dev`, `libxss-dev`, `libxtst-dev`, `libxxf86dga-dev`, and `libxxf86vm-dev`).
 
+The experimental `OpenQ4-rhi-probe_<arch>` target is the current exception: it compiles NVRHI directly from a recursive NVRHI checkout instead of an in-repo Meson subproject while backend migration work is still in bootstrap.
+
 ---
 
 ## Build Options
@@ -102,6 +104,9 @@ Pass any of these with `-D<option>=<value>` on the `meson setup` command line:
 | `build_game_sp` | `true` | Build single-player game module |
 | `build_game_mp` | `true` | Build multiplayer game module |
 | `platform_backend` | platform-dependent | `sdl3` or `legacy_win32` on Windows, `sdl3` or `native` on Linux, `native` on macOS |
+| `build_nvrhi_probe` | `false` | Build the experimental `OpenQ4-rhi-probe_<arch>` DX12/Vulkan bootstrap utility through NVRHI |
+| `build_engine_nvrhi` | `false` | Compile the experimental NVRHI bootstrap path into `OpenQ4-client_<arch>` and expose developer smoke-test commands such as `gfxApiProbe` and `gfxApiProbeStart` |
+| `nvrhi_repo_override` | *(empty)* | Optional path to a recursive NVRHI checkout for the probe; if empty, Meson looks in `.tmp/nvrhi`, `.tmp/nvrhi-inspect`, and `subprojects/nvrhi` |
 | `version_track` | `dev` | Build track label (`stable`, `dev`, `beta`, `rc`) |
 | `version_iteration` | *(empty)* | Dot-separated iteration counter for pre-release builds |
 | `version_base_override` | *(empty)* | Override the generated release version without editing `meson.build` |
@@ -194,6 +199,7 @@ bash tools/build/meson_setup.sh install -C builddir --no-rebuild --skip-subproje
 |------|-------------|
 | `OpenQ4-client_<arch>[.exe]` | Main engine executable |
 | `OpenQ4-ded_<arch>[.exe]` | Dedicated server |
+| `OpenQ4-rhi-probe_<arch>[.exe]` | Experimental NVRHI DX12/Vulkan bootstrap utility when `-Dbuild_nvrhi_probe=true` |
 | `baseoq4/game-sp_<arch>[.dll/.so/.dylib]` | Single-player game module |
 | `baseoq4/game-mp_<arch>[.dll/.so/.dylib]` | Multiplayer game module |
 
@@ -222,6 +228,66 @@ After running the install step, `.install/` is a self-contained distributable pa
 > Do not distribute raw `buildtype=debug` artifacts in public packages. MSVC import libraries (`*.lib`) are development-only artifacts and are not required in the package.
 
 Repo-authored runtime overrides live under `content/baseoq4/`. The install step stages that source-owned content into the runtime `baseoq4/` directory inside `.install/`.
+
+---
+
+## Experimental NVRHI Probe
+
+`OpenQ4-rhi-probe_<arch>` is a developer bring-up harness, not a gameplay-ready renderer. It creates a native DX12 or Vulkan swap chain, wraps that swap chain through NVRHI, and repeatedly clears/presents frames so backend initialization problems can be isolated before the engine renderer is migrated.
+
+The optional `-Dbuild_engine_nvrhi=true` path extends that bootstrap into the main client executable. When enabled on an SDL3 build, `OpenQ4-client_<arch>` exposes:
+
+- `r_graphicsApi` / `listGraphicsApis` / `gfxInfo` reporting for requested vs runtime API state
+- `r_graphicsApiBootstrap`, `r_graphicsApiBootstrapFrames`, `r_graphicsApiBootstrapHidden`, and `r_graphicsApiBootstrapVsync` for opt-in automatic engine-side bootstrap when `r_graphicsApi` requests `d3d12` or `vulkan`
+- `gfxApiProbe [auto|d3d12|vulkan] [frames] [hidden 0|1] [vsync 0|1]` for an engine-side NVRHI smoke test
+- `gfxApiProbeStart [auto|d3d12|vulkan] [hidden 0|1] [vsync 0|1]`, `gfxApiProbeStop`, and `gfxApiProbeStatus` for a persistent NVRHI bootstrap session that ticks once per engine frame
+
+This still does not make gameplay rendering run on DX12/Vulkan. The real renderer continues to fall back to OpenGL.
+
+Clone NVRHI recursively into `.tmp/nvrhi` or another path before enabling the target:
+
+```powershell
+git clone --depth 1 --recursive https://github.com/NVIDIA-RTX/NVRHI .tmp\nvrhi
+```
+
+Windows DX12 probe-only configure/build:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 setup --wipe .tmp\builddir-nvrhi-probe . --backend ninja --buildtype=debug --wrap-mode=forcefallback -Dbuild_engine=false -Dbuild_games=false -Dbuild_nvrhi_probe=true -Dnvrhi_repo_override=.tmp\nvrhi
+powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 compile -C .tmp\builddir-nvrhi-probe
+.tmp\builddir-nvrhi-probe\OpenQ4-rhi-probe_<arch>.exe --api=d3d12 --frames=300
+```
+
+Windows client build with engine-side NVRHI bootstrap enabled:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 setup --wipe .tmp\builddir-engine-nvrhi . --backend ninja --buildtype=debug --wrap-mode=forcefallback -Dbuild_games=false -Dbuild_engine_nvrhi=true -Dnvrhi_repo_override=.tmp\nvrhi
+powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 compile -C .tmp\builddir-engine-nvrhi OpenQ4-client_<arch>
+.tmp\builddir-engine-nvrhi\OpenQ4-client_<arch>.exe +gfxApiProbe d3d12 120 1 1
+.tmp\builddir-engine-nvrhi\OpenQ4-client_<arch>.exe +gfxApiProbeStart d3d12 0 1
+.tmp\builddir-engine-nvrhi\OpenQ4-client_<arch>.exe +set r_graphicsApi d3d12 +set r_graphicsApiBootstrap session
+.tmp\builddir-engine-nvrhi\OpenQ4-client_<arch>.exe +set r_graphicsApi vulkan +set r_graphicsApiBootstrap probe +set r_graphicsApiBootstrapFrames 300 +set r_graphicsApiBootstrapHidden 1
+```
+
+Linux Vulkan probe-only configure/build:
+
+```bash
+git clone --depth 1 --recursive https://github.com/NVIDIA-RTX/NVRHI .tmp/nvrhi
+bash tools/build/meson_setup.sh setup --wipe .tmp/builddir-nvrhi-probe . --backend ninja --buildtype=debug --wrap-mode=forcefallback -Dbuild_engine=false -Dbuild_games=false -Dbuild_nvrhi_probe=true -Dnvrhi_repo_override=.tmp/nvrhi
+bash tools/build/meson_setup.sh compile -C .tmp/builddir-nvrhi-probe
+./.tmp/builddir-nvrhi-probe/OpenQ4-rhi-probe_<arch> --api=vulkan --frames=300
+```
+
+Notes:
+
+- Windows can build the DX12 and Vulkan NVRHI probe paths without `vulkan-1.lib`; Vulkan is loaded at runtime through SDL/NVRHI instead of a configure-time import-library dependency.
+- Linux can also compile the Vulkan NVRHI probe path without `libvulkan` development files, but running it still requires a working Vulkan loader/driver installation on the target machine.
+- `build_engine_nvrhi=true` currently requires `-Dplatform_backend=sdl3` so the client and bootstrap path share SDL3 window management.
+- The SDL3 backend now filters keyboard, mouse, text, and window events by window ID, so a visible `gfxApiProbeStart` session no longer drives the main game window. Closing the bootstrap window stops that session without quitting the game.
+- Visible `gfxApiProbeStart` windows now try to open beside the main SDL3/OpenGL client window, which makes side-by-side DX12/Vulkan bring-up easier during live engine runs.
+- Engine-side `gfxApiProbe` and `gfxApiProbeStart` now default their bootstrap window size to the live SDL3/OpenGL client pixel size when available, and `gfxApiProbeStatus` reports the active bootstrap window ID plus current size.
+- `r_graphicsApiBootstrap=probe|session` is opt-in and only runs when `r_graphicsApi` explicitly requests `d3d12` or `vulkan`; the gameplay renderer still falls back to OpenGL after the bootstrap work completes or starts.
+- The main OpenQ4 client still renders through the existing OpenGL renderer. The probe and engine-side bootstrap command are phase 1/2 bring-up work for a later renderer migration.
 
 ---
 

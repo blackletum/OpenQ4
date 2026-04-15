@@ -333,6 +333,7 @@ function Get-SetupArgsForExistingBuildDir {
         "build_games",
         "build_game_sp",
         "build_game_mp",
+        "build_engine_nvrhi",
         "enforce_msvc_2026"
     )
 

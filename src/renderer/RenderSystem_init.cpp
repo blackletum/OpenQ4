@@ -30,8 +30,15 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "tr_local.h"
+#include "GraphicsAPI.h"
 #include "DXT/DXTCodec.h"
 #include "../framework/RenderDoc.h"
+#include "../sys/GraphicsWindow.h"
+#if defined( OPENQ4_WITH_ENGINE_NVRHI )
+#include "NVRHI/NvrhiBootstrap.h"
+#include "NVRHI/NvrhiCommand.h"
+#include "NVRHI/NvrhiSession.h"
+#endif
 
 // Vista OpenGL wrapper check
 #ifdef _WIN32
@@ -91,12 +98,29 @@ static void R_ErrorForMissingRequiredOpenGLFeatures( void ) {
 
 glconfig_t	glConfig;
 
-static void GfxInfo_f( void );
+static void GfxInfo_f( const idCmdArgs &args );
+static void R_ListGraphicsApis_f( const idCmdArgs &args );
+#if defined( OPENQ4_WITH_ENGINE_NVRHI )
+static void R_GfxApiProbe_f( const idCmdArgs &args );
+static void R_GfxApiProbeStart_f( const idCmdArgs &args );
+static void R_GfxApiProbeStop_f( const idCmdArgs &args );
+static void R_GfxApiProbeStatus_f( const idCmdArgs &args );
+#endif
 
 const char *r_rendererArgs[] = { "best", "arb", "arb2", "Cg", "exp", "nv10", "nv20", "r200", NULL };
+#if defined( OPENQ4_WITH_ENGINE_NVRHI )
+static const char *r_graphicsApiBootstrapModeArgs[] = { "off", "probe", "session", NULL };
+#endif
 
 idCVar r_inhibitFragmentProgram( "r_inhibitFragmentProgram", "0", CVAR_RENDERER | CVAR_BOOL, "ignore the fragment program extension" );
 idCVar r_glDriver( "r_glDriver", "", CVAR_RENDERER, "\"opengl32\", etc." );
+idCVar r_graphicsApi( "r_graphicsApi", "opengl", CVAR_RENDERER | CVAR_ARCHIVE, "graphics API selection: opengl = gameplay renderer, d3d12/vulkan = planned NVRHI backends that currently fall back to opengl", openq4GraphicsApiRuntimeArgs, idCmdSystem::ArgCompletion_String<openq4GraphicsApiRuntimeArgs> );
+#if defined( OPENQ4_WITH_ENGINE_NVRHI )
+idCVar r_graphicsApiBootstrap( "r_graphicsApiBootstrap", "off", CVAR_RENDERER | CVAR_ARCHIVE, "automatic engine-side NVRHI bootstrap when r_graphicsApi requests d3d12/vulkan: off, probe, session", r_graphicsApiBootstrapModeArgs, idCmdSystem::ArgCompletion_String<r_graphicsApiBootstrapModeArgs> );
+idCVar r_graphicsApiBootstrapFrames( "r_graphicsApiBootstrapFrames", "120", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "frame count for automatic graphics API bootstrap when r_graphicsApiBootstrap=probe", 1, 36000 );
+idCVar r_graphicsApiBootstrapHidden( "r_graphicsApiBootstrapHidden", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "start automatic engine-side graphics API bootstrap with a hidden window" );
+idCVar r_graphicsApiBootstrapVsync( "r_graphicsApiBootstrapVsync", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use v-sync for automatic engine-side graphics API bootstrap" );
+#endif
 idCVar r_useLightPortalFlow( "r_useLightPortalFlow", "1", CVAR_RENDERER | CVAR_BOOL, "use a more precise area reference determination" );
 idCVar r_multiSamples( "r_multiSamples", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "number of antialiasing samples" );
 idCVar r_postAA( "r_postAA", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "post AA mode: 0 = off, 1 = SMAA 1x", 0, 1, idCmdSystem::ArgCompletion_Integer<0,1> );
@@ -203,6 +227,341 @@ idCVar r_brightness( "r_brightness", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FL
 idCVar r_renderer( "r_renderer", "best", CVAR_RENDERER | CVAR_ARCHIVE, "hardware specific renderer path to use", r_rendererArgs, idCmdSystem::ArgCompletion_String<r_rendererArgs> );
 idCVar r_interactionColorMode( "r_interactionColorMode", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "interaction vertex-color mode: 0 = auto, 1 = packed env16.xy, 2 = vector env16/env17", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 idCVar r_shaderReport( "r_shaderReport", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "shader diagnostics: 0 = off, 1 = startup/vid_restart summary, 2 = also warn on invalid program use", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
+
+static openq4GraphicsApi_t g_requestedGraphicsApi = openq4GraphicsApi_t::OpenGL;
+static openq4GraphicsApi_t g_runtimeGraphicsApi = openq4GraphicsApi_t::OpenGL;
+
+static openq4GraphicsApi_t R_ParseRequestedGraphicsApi( void ) {
+	openq4GraphicsApi_t requestedApi = openq4GraphicsApi_t::OpenGL;
+	if ( OpenQ4_ParseGraphicsApi( r_graphicsApi.GetString(), requestedApi ) ) {
+		return requestedApi;
+	}
+
+	common->Printf( "^3Unknown r_graphicsApi value \"%s\"; using opengl\n", r_graphicsApi.GetString() );
+	r_graphicsApi.SetString( "opengl" );
+	r_graphicsApi.ClearModified();
+	return openq4GraphicsApi_t::OpenGL;
+}
+
+static void R_ResolveGraphicsApiForOpenGLRenderer( void ) {
+	g_requestedGraphicsApi = R_ParseRequestedGraphicsApi();
+	g_runtimeGraphicsApi = openq4GraphicsApi_t::OpenGL;
+
+	if ( g_requestedGraphicsApi != openq4GraphicsApi_t::Auto
+		&& g_requestedGraphicsApi != openq4GraphicsApi_t::OpenGL ) {
+		common->Printf(
+			"^3r_graphicsApi=%s requested, but the gameplay renderer is still OpenGL-only. Falling back to opengl.\n",
+			OpenQ4_GraphicsApiName( g_requestedGraphicsApi ) );
+	}
+
+	r_graphicsApi.ClearModified();
+}
+
+#if defined( OPENQ4_WITH_ENGINE_NVRHI )
+enum class openq4GraphicsApiBootstrapMode_t {
+	Off,
+	Probe,
+	Session,
+};
+
+static const char *R_GraphicsApiBootstrapModeName( openq4GraphicsApiBootstrapMode_t mode ) {
+	switch ( mode ) {
+		case openq4GraphicsApiBootstrapMode_t::Off:
+			return "off";
+		case openq4GraphicsApiBootstrapMode_t::Probe:
+			return "probe";
+		case openq4GraphicsApiBootstrapMode_t::Session:
+			return "session";
+		default:
+			return "unknown";
+	}
+}
+
+static openq4GraphicsApiBootstrapMode_t R_ParseGraphicsApiBootstrapMode( void ) {
+	const char *value = r_graphicsApiBootstrap.GetString();
+
+	if ( idStr::Icmp( value, "off" ) == 0 ) {
+		return openq4GraphicsApiBootstrapMode_t::Off;
+	}
+	if ( idStr::Icmp( value, "probe" ) == 0 ) {
+		return openq4GraphicsApiBootstrapMode_t::Probe;
+	}
+	if ( idStr::Icmp( value, "session" ) == 0 ) {
+		return openq4GraphicsApiBootstrapMode_t::Session;
+	}
+
+	common->Printf( "^3Unknown r_graphicsApiBootstrap value \"%s\"; using off\n", value );
+	r_graphicsApiBootstrap.SetString( "off" );
+	r_graphicsApiBootstrap.ClearModified();
+	return openq4GraphicsApiBootstrapMode_t::Off;
+}
+
+static void R_GetDefaultNvrhiBootstrapWindowSize( int &width, int &height ) {
+	width = glConfig.vidWidth > 0 ? glConfig.vidWidth : 1280;
+	height = glConfig.vidHeight > 0 ? glConfig.vidHeight : 720;
+
+	const char *error = NULL;
+	int primaryWidth = 0;
+	int primaryHeight = 0;
+	if ( OpenQ4_GetPrimaryGraphicsWindowSizeInPixels( primaryWidth, primaryHeight, error ) && primaryWidth > 0 && primaryHeight > 0 ) {
+		width = primaryWidth;
+		height = primaryHeight;
+	}
+}
+
+static void R_PrintGraphicsApiBootstrapConfig( void ) {
+	const openq4GraphicsApiBootstrapMode_t mode = R_ParseGraphicsApiBootstrapMode();
+	common->Printf(
+		"Automatic engine NVRHI bootstrap: mode=%s hidden=%d vsync=%d frames=%d\n",
+		R_GraphicsApiBootstrapModeName( mode ),
+		r_graphicsApiBootstrapHidden.GetBool() ? 1 : 0,
+		r_graphicsApiBootstrapVsync.GetBool() ? 1 : 0,
+		r_graphicsApiBootstrapFrames.GetInteger() );
+}
+
+static void R_PrintGfxApiProbeSessionStatus( void ) {
+	if ( !OpenQ4_IsNvrhiBootstrapSessionActive() ) {
+		common->Printf( "Persistent engine NVRHI session: inactive\n" );
+		return;
+	}
+
+	int sessionWidth = 0;
+	int sessionHeight = 0;
+	if ( OpenQ4_GetNvrhiBootstrapSessionWindowSizeInPixels( sessionWidth, sessionHeight ) ) {
+		common->Printf(
+			"Persistent engine NVRHI session: active (backend=%s, api=%s, frames=%d, hidden=%d, windowId=%u, size=%dx%d)\n",
+			OpenQ4_GetNvrhiBootstrapSessionBackendName() != NULL ? OpenQ4_GetNvrhiBootstrapSessionBackendName() : "unknown",
+			OpenQ4_GraphicsApiName( OpenQ4_GetNvrhiBootstrapSessionApi() ),
+			OpenQ4_GetNvrhiBootstrapSessionFrameCount(),
+			OpenQ4_IsNvrhiBootstrapSessionHidden() ? 1 : 0,
+			OpenQ4_GetNvrhiBootstrapSessionWindowId(),
+			sessionWidth,
+			sessionHeight );
+		return;
+	}
+
+	common->Printf(
+		"Persistent engine NVRHI session: active (backend=%s, api=%s, frames=%d, hidden=%d, windowId=%u, size=unknown)\n",
+		OpenQ4_GetNvrhiBootstrapSessionBackendName() != NULL ? OpenQ4_GetNvrhiBootstrapSessionBackendName() : "unknown",
+		OpenQ4_GraphicsApiName( OpenQ4_GetNvrhiBootstrapSessionApi() ),
+		OpenQ4_GetNvrhiBootstrapSessionFrameCount(),
+		OpenQ4_IsNvrhiBootstrapSessionHidden() ? 1 : 0,
+		OpenQ4_GetNvrhiBootstrapSessionWindowId() );
+}
+
+static void R_RunAutomaticGraphicsApiBootstrap( void ) {
+	const openq4GraphicsApiBootstrapMode_t mode = R_ParseGraphicsApiBootstrapMode();
+	if ( mode == openq4GraphicsApiBootstrapMode_t::Off ) {
+		return;
+	}
+
+	if ( g_requestedGraphicsApi == openq4GraphicsApi_t::Auto || g_requestedGraphicsApi == openq4GraphicsApi_t::OpenGL ) {
+		return;
+	}
+
+	if ( !OpenQ4_NvrhiBootstrapIsApiCompiled( g_requestedGraphicsApi ) ) {
+		common->Printf(
+			"^3Automatic engine NVRHI bootstrap skipped: requested %s backend is not compiled into this client build.\n",
+			OpenQ4_GraphicsApiName( g_requestedGraphicsApi ) );
+		return;
+	}
+
+	const bool hidden = r_graphicsApiBootstrapHidden.GetBool();
+	const bool vsync = r_graphicsApiBootstrapVsync.GetBool();
+	int width = 1280;
+	int height = 720;
+	R_GetDefaultNvrhiBootstrapWindowSize( width, height );
+
+	openq4GraphicsApi_t resolvedApi = openq4GraphicsApi_t::Auto;
+	const char *error = NULL;
+	switch ( mode ) {
+		case openq4GraphicsApiBootstrapMode_t::Probe:
+		{
+			const int frames = r_graphicsApiBootstrapFrames.GetInteger();
+			common->Printf(
+				"Automatic engine NVRHI bootstrap probe: api=%s size=%dx%d frames=%d hidden=%d vsync=%d\n",
+				OpenQ4_GraphicsApiName( g_requestedGraphicsApi ),
+				width,
+				height,
+				frames,
+				hidden ? 1 : 0,
+				vsync ? 1 : 0 );
+
+			if ( !OpenQ4_RunNvrhiBootstrapFrames( g_requestedGraphicsApi, frames, hidden, vsync, resolvedApi, error ) ) {
+				common->Printf( "^3Automatic engine NVRHI bootstrap probe failed: %s\n", error != NULL ? error : "Unknown error." );
+				return;
+			}
+
+			common->Printf(
+				"Automatic engine NVRHI bootstrap probe completed successfully with %s for %d frame(s).\n",
+				OpenQ4_GraphicsApiName( resolvedApi ),
+				frames );
+			return;
+		}
+
+		case openq4GraphicsApiBootstrapMode_t::Session:
+			common->Printf(
+				"Automatic engine NVRHI bootstrap session: api=%s size=%dx%d hidden=%d vsync=%d\n",
+				OpenQ4_GraphicsApiName( g_requestedGraphicsApi ),
+				width,
+				height,
+				hidden ? 1 : 0,
+				vsync ? 1 : 0 );
+
+			if ( !OpenQ4_StartNvrhiBootstrapSession( g_requestedGraphicsApi, width, height, hidden, vsync, resolvedApi, error ) ) {
+				common->Printf( "^3Automatic engine NVRHI bootstrap session failed: %s\n", error != NULL ? error : "Unknown error." );
+				return;
+			}
+
+			common->Printf(
+				"Automatic engine NVRHI bootstrap session active on %s (%s, hidden=%d).\n",
+				OpenQ4_GetNvrhiBootstrapSessionBackendName() != NULL ? OpenQ4_GetNvrhiBootstrapSessionBackendName() : "unknown backend",
+				OpenQ4_GraphicsApiName( resolvedApi ),
+				hidden ? 1 : 0 );
+			return;
+
+		case openq4GraphicsApiBootstrapMode_t::Off:
+		default:
+			return;
+	}
+}
+
+static void R_GfxApiProbe_f( const idCmdArgs &args ) {
+	openq4GraphicsApi_t requestedApi = ( g_requestedGraphicsApi == openq4GraphicsApi_t::OpenGL )
+		? openq4GraphicsApi_t::Auto
+		: g_requestedGraphicsApi;
+	int frames = 120;
+	bool hidden = true;
+	bool vsync = true;
+	const char *error = NULL;
+
+	if ( args.Argc() > 1 ) {
+		if ( !OpenQ4_ParseGraphicsApi( args.Argv( 1 ), requestedApi ) || requestedApi == openq4GraphicsApi_t::OpenGL ) {
+			common->Printf( "USAGE: gfxApiProbe [auto|d3d12|vulkan] [frames] [hidden 0|1] [vsync 0|1]\n" );
+			return;
+		}
+	}
+
+	if ( args.Argc() > 2 ) {
+		frames = atoi( args.Argv( 2 ) );
+	}
+	if ( args.Argc() > 3 ) {
+		hidden = atoi( args.Argv( 3 ) ) != 0;
+	}
+	if ( args.Argc() > 4 ) {
+		vsync = atoi( args.Argv( 4 ) ) != 0;
+	}
+
+	if ( frames <= 0 ) {
+		common->Printf( "^3gfxApiProbe requires frames > 0\n" );
+		return;
+	}
+
+	if ( OpenQ4_IsNvrhiBootstrapSessionActive() ) {
+		common->Printf( "^3Stopping the persistent engine NVRHI bootstrap session before running blocking gfxApiProbe.\n" );
+		OpenQ4_StopNvrhiBootstrapSession();
+	}
+
+	openq4GraphicsApi_t resolvedApi = openq4GraphicsApi_t::Auto;
+	common->Printf(
+		"Running engine-side NVRHI bootstrap probe: api=%s frames=%d hidden=%d vsync=%d\n",
+		OpenQ4_GraphicsApiName( requestedApi ),
+		frames,
+		hidden ? 1 : 0,
+		vsync ? 1 : 0 );
+
+	if ( !OpenQ4_RunNvrhiBootstrapFrames( requestedApi, frames, hidden, vsync, resolvedApi, error ) ) {
+		common->Printf( "^3gfxApiProbe failed: %s\n", error != NULL ? error : "Unknown error." );
+		return;
+	}
+
+	common->Printf(
+		"gfxApiProbe completed successfully with %s for %d frame(s).\n",
+		OpenQ4_GraphicsApiName( resolvedApi ),
+		frames );
+}
+
+static void R_GfxApiProbeStart_f( const idCmdArgs &args ) {
+	openq4GraphicsApi_t requestedApi = ( g_requestedGraphicsApi == openq4GraphicsApi_t::OpenGL )
+		? openq4GraphicsApi_t::Auto
+		: g_requestedGraphicsApi;
+	bool hidden = false;
+	bool vsync = true;
+	const char *error = NULL;
+
+	if ( args.Argc() > 1 ) {
+		if ( !OpenQ4_ParseGraphicsApi( args.Argv( 1 ), requestedApi ) || requestedApi == openq4GraphicsApi_t::OpenGL ) {
+			common->Printf( "USAGE: gfxApiProbeStart [auto|d3d12|vulkan] [hidden 0|1] [vsync 0|1]\n" );
+			return;
+		}
+	}
+
+	if ( args.Argc() > 2 ) {
+		hidden = atoi( args.Argv( 2 ) ) != 0;
+	}
+
+	if ( args.Argc() > 3 ) {
+		vsync = atoi( args.Argv( 3 ) ) != 0;
+	}
+
+	if ( !glConfig.isInitialized ) {
+		common->Printf( "^3gfxApiProbeStart requires an initialized renderer window.\n" );
+		return;
+	}
+
+	if ( OpenQ4_IsNvrhiBootstrapSessionActive() ) {
+		common->Printf( "^3Restarting the active engine NVRHI bootstrap session.\n" );
+		OpenQ4_StopNvrhiBootstrapSession();
+	}
+
+	openq4GraphicsApi_t resolvedApi = openq4GraphicsApi_t::Auto;
+	int width = 1280;
+	int height = 720;
+	R_GetDefaultNvrhiBootstrapWindowSize( width, height );
+	common->Printf(
+		"Starting persistent engine NVRHI bootstrap session: api=%s size=%dx%d hidden=%d vsync=%d\n",
+		OpenQ4_GraphicsApiName( requestedApi ),
+		width,
+		height,
+		hidden ? 1 : 0,
+		vsync ? 1 : 0 );
+
+	if ( !OpenQ4_StartNvrhiBootstrapSession( requestedApi, width, height, hidden, vsync, resolvedApi, error ) ) {
+		common->Printf( "^3gfxApiProbeStart failed: %s\n", error != NULL ? error : "Unknown error." );
+		return;
+	}
+
+	common->Printf(
+		"Persistent engine NVRHI bootstrap session active on %s (%s, hidden=%d).\n",
+		OpenQ4_GetNvrhiBootstrapSessionBackendName() != NULL ? OpenQ4_GetNvrhiBootstrapSessionBackendName() : "unknown backend",
+		OpenQ4_GraphicsApiName( resolvedApi ),
+		hidden ? 1 : 0 );
+}
+
+static void R_GfxApiProbeStop_f( const idCmdArgs &args ) {
+	(void)args;
+
+	if ( !OpenQ4_IsNvrhiBootstrapSessionActive() ) {
+		common->Printf( "Persistent engine NVRHI bootstrap session is not active.\n" );
+		return;
+	}
+
+	const int renderedFrames = OpenQ4_GetNvrhiBootstrapSessionFrameCount();
+	const char *backendName = OpenQ4_GetNvrhiBootstrapSessionBackendName();
+	const openq4GraphicsApi_t sessionApi = OpenQ4_GetNvrhiBootstrapSessionApi();
+	OpenQ4_StopNvrhiBootstrapSession();
+	common->Printf(
+		"Persistent engine NVRHI bootstrap session stopped after %d frame(s) on %s (%s).\n",
+		renderedFrames,
+		backendName != NULL ? backendName : "unknown backend",
+		OpenQ4_GraphicsApiName( sessionApi ) );
+}
+
+static void R_GfxApiProbeStatus_f( const idCmdArgs &args ) {
+	(void)args;
+	R_PrintGfxApiProbeSessionStatus();
+}
+#endif
 
 idCVar r_jitter( "r_jitter", "0", CVAR_RENDERER | CVAR_BOOL, "randomly subpixel jitter the projection matrix" );
 
@@ -781,6 +1140,11 @@ void R_InitOpenGL( void ) {
 	tr.viewportOffset[1] = 0;
 
 	R_NormalizeDisplayCvars();
+	R_ResolveGraphicsApiForOpenGLRenderer();
+	common->Printf(
+		"Graphics API: requested=%s, runtime=%s\n",
+		OpenQ4_GraphicsApiName( g_requestedGraphicsApi ),
+		OpenQ4_GraphicsApiName( g_runtimeGraphicsApi ) );
 
 	//
 	// initialize OS specific portions of the renderSystem
@@ -926,6 +1290,10 @@ void R_InitOpenGL( void ) {
 			}
 		}
 	}
+#endif
+
+#if defined( OPENQ4_WITH_ENGINE_NVRHI )
+	R_RunAutomaticGraphicsApiBootstrap();
 #endif
 }
 
@@ -2198,6 +2566,35 @@ void R_SetColorMappings( void ) {
 
 /*
 ================
+R_ListGraphicsApis_f
+================
+*/
+static void R_ListGraphicsApis_f( const idCmdArgs &args ) {
+	(void)args;
+
+	common->Printf( "\nGraphics API selection:\n" );
+	common->Printf( "  opengl : current gameplay renderer\n" );
+	common->Printf( "  d3d12  : planned NVRHI backend, currently resolves to opengl in the engine\n" );
+	common->Printf( "  vulkan : planned NVRHI backend, currently resolves to opengl in the engine\n" );
+	common->Printf( "Requested API: %s\n", OpenQ4_GraphicsApiName( g_requestedGraphicsApi ) );
+	common->Printf( "Runtime API: %s\n", OpenQ4_GraphicsApiName( g_runtimeGraphicsApi ) );
+#if defined( OPENQ4_WITH_ENGINE_NVRHI )
+	common->Printf(
+		"Engine NVRHI bootstrap: compiled (d3d12=%s, vulkan=%s)\n",
+		OpenQ4_NvrhiBootstrapIsApiCompiled( openq4GraphicsApi_t::D3D12 ) ? "yes" : "no",
+		OpenQ4_NvrhiBootstrapIsApiCompiled( openq4GraphicsApi_t::Vulkan ) ? "yes" : "no" );
+	R_PrintGraphicsApiBootstrapConfig();
+	common->Printf( "Engine smoke test command: gfxApiProbe [auto|d3d12|vulkan] [frames] [hidden 0|1] [vsync 0|1]\n" );
+	common->Printf( "Persistent engine session commands: gfxApiProbeStart [auto|d3d12|vulkan] [hidden 0|1] [vsync 0|1], gfxApiProbeStop, gfxApiProbeStatus\n" );
+	R_PrintGfxApiProbeSessionStatus();
+#else
+	common->Printf( "Engine NVRHI bootstrap: not compiled into this client build\n" );
+#endif
+	common->Printf( "Standalone smoke test: OpenQ4-rhi-probe_<arch>\n" );
+}
+
+/*
+================
 GfxInfo_f
 ================
 */
@@ -2213,6 +2610,20 @@ void GfxInfo_f( const idCmdArgs &args ) {
 	}
 	const char *fullscreenPolicy = r_fullscreenDesktop.GetBool() ? "desktop" : "exclusive";
 
+	common->Printf(
+		"\nGRAPHICS_API: requested=%s runtime=%s\n",
+		OpenQ4_GraphicsApiName( g_requestedGraphicsApi ),
+		OpenQ4_GraphicsApiName( g_runtimeGraphicsApi ) );
+#if defined( OPENQ4_WITH_ENGINE_NVRHI )
+	common->Printf(
+		"NVRHI_BOOTSTRAP: d3d12=%s vulkan=%s\n",
+		OpenQ4_NvrhiBootstrapIsApiCompiled( openq4GraphicsApi_t::D3D12 ) ? "yes" : "no",
+		OpenQ4_NvrhiBootstrapIsApiCompiled( openq4GraphicsApi_t::Vulkan ) ? "yes" : "no" );
+	R_PrintGraphicsApiBootstrapConfig();
+	R_PrintGfxApiProbeSessionStatus();
+#else
+	common->Printf( "NVRHI_BOOTSTRAP: not compiled into this client build\n" );
+#endif
 	common->Printf( "\nGL_VENDOR: %s\n", glConfig.vendor_string );
 	common->Printf( "GL_RENDERER: %s\n", glConfig.renderer_string );
 	common->Printf( "GL_VERSION: %s\n", glConfig.version_string );
@@ -2516,6 +2927,13 @@ void R_InitCommands( void ) {
 	cmdSystem->AddCommand( "envshot", R_EnvShot_f, CMD_FL_RENDERER, "takes an environment shot" );
 	cmdSystem->AddCommand( "makeAmbientMap", R_MakeAmbientMap_f, CMD_FL_RENDERER|CMD_FL_CHEAT, "makes an ambient map" );
 	cmdSystem->AddCommand( "benchmark", R_Benchmark_f, CMD_FL_RENDERER, "benchmark" );
+	cmdSystem->AddCommand( "listGraphicsApis", R_ListGraphicsApis_f, CMD_FL_RENDERER, "lists graphics API selection and migration status" );
+#if defined( OPENQ4_WITH_ENGINE_NVRHI )
+	cmdSystem->AddCommand( "gfxApiProbe", R_GfxApiProbe_f, CMD_FL_RENDERER, "runs the experimental engine-side NVRHI bootstrap smoke test", idCmdSystem::ArgCompletion_String<openq4GraphicsApiNvrhiArgs> );
+	cmdSystem->AddCommand( "gfxApiProbeStart", R_GfxApiProbeStart_f, CMD_FL_RENDERER, "starts a persistent NVRHI bootstrap session that ticks once per engine frame", idCmdSystem::ArgCompletion_String<openq4GraphicsApiNvrhiArgs> );
+	cmdSystem->AddCommand( "gfxApiProbeStop", R_GfxApiProbeStop_f, CMD_FL_RENDERER, "stops the persistent engine-side NVRHI bootstrap session" );
+	cmdSystem->AddCommand( "gfxApiProbeStatus", R_GfxApiProbeStatus_f, CMD_FL_RENDERER, "shows the persistent engine-side NVRHI bootstrap session status" );
+#endif
 	cmdSystem->AddCommand( "gfxInfo", GfxInfo_f, CMD_FL_RENDERER, "show graphics info" );
 	cmdSystem->AddCommand( "modulateLights", R_ModulateLights_f, CMD_FL_RENDERER | CMD_FL_CHEAT, "modifies shader parms on all lights" );
 	cmdSystem->AddCommand( "testImage", R_TestImage_f, CMD_FL_RENDERER | CMD_FL_CHEAT, "displays the given image centered on screen", idCmdSystem::ArgCompletion_ImageName );
@@ -2759,6 +3177,9 @@ idRenderSystemLocal::ShutdownOpenGL
 void idRenderSystemLocal::ShutdownOpenGL( void ) {
 	ShutdownSpecialEffects();
 	ProcessPendingRenderTextureDeletes();
+#if defined( OPENQ4_WITH_ENGINE_NVRHI )
+	OpenQ4_StopNvrhiBootstrapSession();
+#endif
 
 	// free the context and close the window
 	R_ShutdownFrameData();

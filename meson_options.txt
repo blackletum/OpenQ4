@@ -70,6 +70,27 @@ option(
 )
 
 option(
+  'build_nvrhi_probe',
+  type: 'boolean',
+  value: false,
+  description: 'Build the experimental OpenQ4-rhi-probe_<arch> utility that boots DX12/Vulkan through NVRHI. This does not replace the main OpenGL renderer.',
+)
+
+option(
+  'build_engine_nvrhi',
+  type: 'boolean',
+  value: false,
+  description: 'Compile the experimental NVRHI bootstrap path into the client and expose developer smoke-test commands. This does not enable gameplay rendering on DX12/Vulkan.',
+)
+
+option(
+  'nvrhi_repo_override',
+  type: 'string',
+  value: '',
+  description: 'Optional path to a recursive NVRHI source checkout used by the experimental probe. If empty, OpenQ4 probes .tmp/nvrhi, .tmp/nvrhi-inspect, and subprojects/nvrhi.',
+)
+
+option(
   'enforce_msvc_2026',
   type: 'boolean',
   value: false,

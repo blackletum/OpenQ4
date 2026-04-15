@@ -31,6 +31,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "tr_local.h"
 #include "smaa/AreaTex.h"
 #include "smaa/SearchTex.h"
+#if defined( OPENQ4_WITH_ENGINE_NVRHI )
+#include "NVRHI/NvrhiSession.h"
+#endif
 
 idRenderSystemLocal	tr;
 idRenderSystem	*renderSystem = &tr;
@@ -943,6 +946,23 @@ void idRenderSystemLocal::EndFrame( int *frontEndMsec, int *backEndMsec ) {
 
 	// start the back end up again with the new command list
 	R_IssueRenderCommands();
+#if defined( OPENQ4_WITH_ENGINE_NVRHI )
+	if ( OpenQ4_IsNvrhiBootstrapSessionActive() ) {
+		const char *error = NULL;
+		if ( !OpenQ4_TickNvrhiBootstrapSession( error ) ) {
+			const int renderedFrames = OpenQ4_GetNvrhiBootstrapSessionFrameCount();
+			const char *backendName = OpenQ4_GetNvrhiBootstrapSessionBackendName();
+			const openq4GraphicsApi_t sessionApi = OpenQ4_GetNvrhiBootstrapSessionApi();
+			OpenQ4_StopNvrhiBootstrapSession();
+			common->Printf(
+				"^3Engine NVRHI bootstrap session stopped after %d frame(s) on %s (%s): %s\n",
+				renderedFrames,
+				backendName != NULL ? backendName : "unknown backend",
+				OpenQ4_GraphicsApiName( sessionApi ),
+				error != NULL ? error : "Unknown error." );
+		}
+	}
+#endif
 	ProcessPendingRenderTextureDeletes();
 
 	// use the other buffers next frame, because another CPU
