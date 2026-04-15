@@ -17,10 +17,6 @@ uniform vec4 uDiffuseMatrixS;
 uniform vec4 uDiffuseMatrixT;
 uniform vec4 uSpecularMatrixS;
 uniform vec4 uSpecularMatrixT;
-uniform vec4 uModelMatrixRow0;
-uniform vec4 uModelMatrixRow1;
-uniform vec4 uModelMatrixRow2;
-uniform vec4 uGlobalLightOrigin;
 uniform vec2 uVertexColorParams;
 
 varying vec2 vBumpTexCoord;
@@ -31,9 +27,7 @@ varying vec4 vLightProjectionTexCoord;
 varying vec3 vLightVector;
 varying vec3 vHalfAngleVector;
 varying vec3 vViewVector;
-varying vec3 vPointShadowVector;
 varying vec3 vVertexColor;
-varying float vShadowLightCos;
 
 vec3 TangentSpaceVector( vec3 objectVector ) {
 	return vec3(
@@ -48,16 +42,10 @@ void main() {
 
 	vec3 toLight = uLocalLightOrigin.xyz - position.xyz;
 	vec3 toView = uLocalViewOrigin.xyz - position.xyz;
-	vec3 localLightDir = normalize( toLight );
-	vec3 worldPos = vec3(
-		dot( position, uModelMatrixRow0 ),
-		dot( position, uModelMatrixRow1 ),
-		dot( position, uModelMatrixRow2 ) );
 
 	vLightVector = TangentSpaceVector( toLight );
 	vHalfAngleVector = TangentSpaceVector( normalize( toLight ) + normalize( toView ) );
 	vViewVector = TangentSpaceVector( toView );
-	vPointShadowVector = worldPos - uGlobalLightOrigin.xyz;
 
 	vBumpTexCoord = vec2( dot( texCoord, uBumpMatrixS ), dot( texCoord, uBumpMatrixT ) );
 	vDiffuseTexCoord = vec2( dot( texCoord, uDiffuseMatrixS ), dot( texCoord, uDiffuseMatrixT ) );
@@ -71,7 +59,6 @@ void main() {
 		dot( position, uLightProjectionQ ) );
 
 	vVertexColor = gl_Color.rgb * uVertexColorParams.x + vec3( uVertexColorParams.y );
-	vShadowLightCos = max( dot( normalize( attr_Normal ), localLightDir ), 0.0 );
 
 	gl_Position = ftransform();
 }

@@ -28,14 +28,14 @@ windowDef Desktop
 
 	windowDef scope_glow_top
 	{
-		rect	0,( 0 - "gui::virtual_screen_y_expand" ),640,( "gui::virtual_screen_y_expand" )
+		rect	0,-480,640,480
 		visible	1
 		background	"gfx/guis/hud/reticles/railgun_scope_glow_top"
 		matcolor	1,1,1,1
 	}
 	windowDef scope_glow_left
 	{
-		rect	( 0 - "gui::virtual_screen_x_expand" ),0,( "gui::virtual_screen_x_expand" ),480
+		rect	-640,0,640,480
 		visible	1
 		background	"gfx/guis/hud/reticles/railgun_scope_glow_left"
 		matcolor	1,1,1,1
@@ -49,28 +49,28 @@ windowDef Desktop
 	}
 	windowDef scope_glow_right
 	{
-		rect	640,0,( "gui::virtual_screen_x_expand" ),480
+		rect	640,0,640,480
 		visible	1
 		background	"gfx/guis/hud/reticles/railgun_scope_glow_right"
 		matcolor	1,1,1,1
 	}
 	windowDef scope_glow_bottom
 	{
-		rect	0,480,640,( "gui::virtual_screen_y_expand" )
+		rect	0,480,640,480
 		visible	1
 		background	"gfx/guis/hud/reticles/railgun_scope_glow_bottom"
 		matcolor	1,1,1,1
 	}
 	windowDef scope_top
 	{
-		rect	0,( 0 - "gui::virtual_screen_y_expand" ),640,( "gui::virtual_screen_y_expand" )
+		rect	0,-480,640,480
 		visible	1
 		background	"gfx/guis/hud/reticles/railgun_scope_top"
 		matcolor	1,1,1,1
 	}
 	windowDef scope_left
 	{
-		rect	( 0 - "gui::virtual_screen_x_expand" ),0,( "gui::virtual_screen_x_expand" ),480
+		rect	-640,0,640,480
 		visible	1
 		background	"gfx/guis/hud/reticles/railgun_scope_left"
 		matcolor	1,1,1,1
@@ -84,14 +84,14 @@ windowDef Desktop
 	}
 	windowDef scope_right
 	{
-		rect	640,0,( "gui::virtual_screen_x_expand" ),480
+		rect	640,0,640,480
 		visible	1
 		background	"gfx/guis/hud/reticles/railgun_scope_right"
 		matcolor	1,1,1,1
 	}
 	windowDef scope_bottom
 	{
-		rect	0,480,640,( "gui::virtual_screen_y_expand" )
+		rect	0,480,640,480
 		visible	1
 		background	"gfx/guis/hud/reticles/railgun_scope_bottom"
 		matcolor	1,1,1,1

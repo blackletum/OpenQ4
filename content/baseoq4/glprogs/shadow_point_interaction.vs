@@ -30,6 +30,7 @@ varying vec4 vLightFalloffTexCoord;
 varying vec4 vLightProjectionTexCoord;
 varying vec3 vLightVector;
 varying vec3 vHalfAngleVector;
+varying vec3 vViewVector;
 varying vec3 vPointShadowVector;
 varying vec3 vVertexColor;
 varying float vShadowLightCos;
@@ -55,6 +56,7 @@ void main() {
 
 	vLightVector = TangentSpaceVector( toLight );
 	vHalfAngleVector = TangentSpaceVector( normalize( toLight ) + normalize( toView ) );
+	vViewVector = TangentSpaceVector( toView );
 	vPointShadowVector = worldPos - uGlobalLightOrigin.xyz;
 
 	vBumpTexCoord = vec2( dot( texCoord, uBumpMatrixS ), dot( texCoord, uBumpMatrixT ) );

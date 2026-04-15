@@ -112,6 +112,11 @@ OpenQ4 automatically validates your Quake 4 installation to ensure you have legi
 - `r_shadowMapCSM 0|1` — Enable projected-light cascaded shadow maps (when shadow maps are active)
 - `r_shadowMapHashedAlpha 0|1` — Hashed alpha testing for cutout/perforated shadow casters
 - `r_shadowMapTranslucentMoments 0|1` — Experimental blended/translucent shadow overlay
+- `r_stencilTranslucentShadows 0|1` — Let translucent materials cast and receive stencil shadows in the classic shadow-volume path (`regenerateWorld` or a map reload is required after toggling)
+- `r_enhancedMaterials 0|1` — Route stock material interactions through the enhanced GLSL shading path
+- `r_enhancedMaterialNormalScale` — Boost tangent-space normal detail when enhanced materials are active
+- `r_enhancedMaterialSpecularBoost` — Increase specular intensity when enhanced materials are active
+- `r_enhancedMaterialFresnel` — Add grazing-angle fresnel to existing materials when enhanced materials are active
 - See [docs-user/shadow-mapping.md](docs-user/shadow-mapping.md) for the full shadow-map CVar reference, presets, transparency behavior, and debug modes
 
 ### Resolution Scaling
@@ -125,7 +130,7 @@ OpenQ4 automatically validates your Quake 4 installation to ensure you have legi
 - `r_interactionColorMode` — Interaction shader mode (`0` auto, `1` packed env16.xy, `2` vector env16/env17)
 - `r_shaderReport 1` — Print shader summaries after startup and `vid_restart`
 - `r_shaderReport 2` — Also warn when invalid ARB programs are skipped at runtime
-- `reportShaderPrograms` — Print current ARB program validity plus shadow GLSL load state
+- `reportShaderPrograms` — Print current ARB program validity plus material/shadow GLSL load state
 
 </details>
 

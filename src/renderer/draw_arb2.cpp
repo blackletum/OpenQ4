@@ -227,6 +227,9 @@ typedef struct {
 	GLint			vertexColorParams;
 	GLint			diffuseColor;
 	GLint			specularColor;
+	GLint			materialNormalScale;
+	GLint			materialSpecularBoost;
+	GLint			materialFresnel;
 	GLint			shadowTexelSize;
 	GLint			shadowBias;
 	GLint			shadowNormalBias;
@@ -320,6 +323,9 @@ typedef struct {
 	GLint			vertexColorParams;
 	GLint			diffuseColor;
 	GLint			specularColor;
+	GLint			materialNormalScale;
+	GLint			materialSpecularBoost;
+	GLint			materialFresnel;
 	GLint			shadowBias;
 	GLint			shadowNormalBias;
 	GLint			shadowFilterRadius;
@@ -335,6 +341,39 @@ typedef struct {
 	GLint			pointShadowMap;
 	GLint			translucentShadowMap[3];
 } pointShadowMapProgram_t;
+
+typedef struct {
+	GLhandleARB		programObject;
+	GLhandleARB		vertexShaderObject;
+	GLhandleARB		fragmentShaderObject;
+	int				programGeneration;
+	bool			programValid;
+
+	GLint			localLightOrigin;
+	GLint			localViewOrigin;
+	GLint			lightProjectionS;
+	GLint			lightProjectionT;
+	GLint			lightProjectionQ;
+	GLint			lightFalloffS;
+	GLint			bumpMatrixS;
+	GLint			bumpMatrixT;
+	GLint			diffuseMatrixS;
+	GLint			diffuseMatrixT;
+	GLint			specularMatrixS;
+	GLint			specularMatrixT;
+	GLint			vertexColorParams;
+	GLint			diffuseColor;
+	GLint			specularColor;
+	GLint			materialNormalScale;
+	GLint			materialSpecularBoost;
+	GLint			materialFresnel;
+
+	GLint			bumpMap;
+	GLint			lightFalloffMap;
+	GLint			lightProjectionMap;
+	GLint			diffuseMap;
+	GLint			specularMap;
+} materialInteractionProgram_t;
 
 typedef struct {
 	GLhandleARB		programObject;
@@ -433,6 +472,7 @@ typedef struct {
 static shadowMapProgram_t	g_shadowMapProgram = { 0, 0, 0, -1, false };
 static shadowMapCasterProgram_t	g_shadowMapCasterProgram = { 0, 0, 0, -1, false };
 static translucentShadowCasterProgram_t	g_translucentShadowCasterProgram = { 0, 0, 0, -1, false };
+static materialInteractionProgram_t	g_materialInteractionProgram = { 0, 0, 0, -1, false };
 static pointShadowMapProgram_t	g_pointShadowMapProgram = { 0, 0, 0, -1, false };
 static pointShadowCasterProgram_t	g_pointShadowCasterProgram = { 0, 0, 0, -1, false };
 static pointTranslucentShadowCasterProgram_t	g_pointTranslucentShadowCasterProgram = { 0, 0, 0, -1, false };
@@ -1132,6 +1172,22 @@ static void RB_TranslucentShadowMapFreeCasterProgram( void ) {
 	memset( &g_translucentShadowCasterProgram, 0, sizeof( g_translucentShadowCasterProgram ) );
 }
 
+static void RB_MaterialInteractionFreeProgram( void ) {
+	if ( g_materialInteractionProgram.programObject != 0 ) {
+		if ( g_materialInteractionProgram.vertexShaderObject != 0 ) {
+			glDetachObjectARB( g_materialInteractionProgram.programObject, g_materialInteractionProgram.vertexShaderObject );
+			glDeleteObjectARB( g_materialInteractionProgram.vertexShaderObject );
+		}
+		if ( g_materialInteractionProgram.fragmentShaderObject != 0 ) {
+			glDetachObjectARB( g_materialInteractionProgram.programObject, g_materialInteractionProgram.fragmentShaderObject );
+			glDeleteObjectARB( g_materialInteractionProgram.fragmentShaderObject );
+		}
+		glDeleteObjectARB( g_materialInteractionProgram.programObject );
+	}
+
+	memset( &g_materialInteractionProgram, 0, sizeof( g_materialInteractionProgram ) );
+}
+
 static void RB_PointShadowMapFreeProgram( void ) {
 	if ( g_pointShadowMapProgram.programObject != 0 ) {
 		if ( g_pointShadowMapProgram.vertexShaderObject != 0 ) {
@@ -1208,6 +1264,128 @@ static void RB_ShadowMapPrintInfoLog( GLhandleARB object, const char *label, con
 	GLsizei written = 0;
 	glGetInfoLogARB( object, logLength, &written, logBuffer );
 	common->Warning( "GLSL %s error in '%s':\n%s", label, name, logBuffer );
+}
+
+static bool RB_MaterialInteractionLoadProgram( void ) {
+	static const char *programBaseName = "glprogs/material_interaction";
+
+	if ( !glConfig.GLSLProgramAvailable ) {
+		return false;
+	}
+
+	if ( g_materialInteractionProgram.programObject != 0 && g_materialInteractionProgram.programGeneration == tr.videoRestartCount ) {
+		return g_materialInteractionProgram.programValid;
+	}
+
+	RB_MaterialInteractionFreeProgram();
+
+	idStr vertexPath = idStr( programBaseName ) + ".vs";
+	idStr fragmentPath = idStr( programBaseName ) + ".fs";
+
+	char *vertexBuffer = NULL;
+	char *fragmentBuffer = NULL;
+	fileSystem->ReadFile( vertexPath.c_str(), (void **)&vertexBuffer, NULL );
+	fileSystem->ReadFile( fragmentPath.c_str(), (void **)&fragmentBuffer, NULL );
+	if ( vertexBuffer == NULL || fragmentBuffer == NULL ) {
+		if ( vertexBuffer != NULL ) {
+			fileSystem->FreeFile( vertexBuffer );
+		}
+		if ( fragmentBuffer != NULL ) {
+			fileSystem->FreeFile( fragmentBuffer );
+		}
+		common->Warning( "Couldn't load enhanced material GLSL sources '%s' and '%s'", vertexPath.c_str(), fragmentPath.c_str() );
+		g_materialInteractionProgram.programGeneration = tr.videoRestartCount;
+		g_materialInteractionProgram.programValid = false;
+		return false;
+	}
+
+	GLhandleARB vertexShader = glCreateShaderObjectARB( GL_VERTEX_SHADER_ARB );
+	GLhandleARB fragmentShader = glCreateShaderObjectARB( GL_FRAGMENT_SHADER_ARB );
+	const GLcharARB *vertexSource = (const GLcharARB *)vertexBuffer;
+	const GLcharARB *fragmentSource = (const GLcharARB *)fragmentBuffer;
+	glShaderSourceARB( vertexShader, 1, &vertexSource, NULL );
+	glShaderSourceARB( fragmentShader, 1, &fragmentSource, NULL );
+	glCompileShaderARB( vertexShader );
+	glCompileShaderARB( fragmentShader );
+
+	fileSystem->FreeFile( vertexBuffer );
+	fileSystem->FreeFile( fragmentBuffer );
+
+	GLint status = GL_FALSE;
+	glGetObjectParameterivARB( vertexShader, GL_OBJECT_COMPILE_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_ShadowMapPrintInfoLog( vertexShader, "vertex shader compile", programBaseName );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		g_materialInteractionProgram.programGeneration = tr.videoRestartCount;
+		g_materialInteractionProgram.programValid = false;
+		return false;
+	}
+
+	glGetObjectParameterivARB( fragmentShader, GL_OBJECT_COMPILE_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_ShadowMapPrintInfoLog( fragmentShader, "fragment shader compile", programBaseName );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		g_materialInteractionProgram.programGeneration = tr.videoRestartCount;
+		g_materialInteractionProgram.programValid = false;
+		return false;
+	}
+
+	GLhandleARB programObject = glCreateProgramObjectARB();
+	glAttachObjectARB( programObject, vertexShader );
+	glAttachObjectARB( programObject, fragmentShader );
+	glBindAttribLocationARB( programObject, 8, "attr_TexCoord0" );
+	glBindAttribLocationARB( programObject, 9, "attr_Tangent" );
+	glBindAttribLocationARB( programObject, 10, "attr_Bitangent" );
+	glBindAttribLocationARB( programObject, 11, "attr_Normal" );
+	glLinkProgramARB( programObject );
+
+	glGetObjectParameterivARB( programObject, GL_OBJECT_LINK_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_ShadowMapPrintInfoLog( programObject, "program link", programBaseName );
+		glDetachObjectARB( programObject, vertexShader );
+		glDetachObjectARB( programObject, fragmentShader );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		glDeleteObjectARB( programObject );
+		g_materialInteractionProgram.programGeneration = tr.videoRestartCount;
+		g_materialInteractionProgram.programValid = false;
+		return false;
+	}
+
+	g_materialInteractionProgram.programObject = programObject;
+	g_materialInteractionProgram.vertexShaderObject = vertexShader;
+	g_materialInteractionProgram.fragmentShaderObject = fragmentShader;
+	g_materialInteractionProgram.programGeneration = tr.videoRestartCount;
+	g_materialInteractionProgram.programValid = true;
+
+	g_materialInteractionProgram.localLightOrigin = glGetUniformLocationARB( programObject, "uLocalLightOrigin" );
+	g_materialInteractionProgram.localViewOrigin = glGetUniformLocationARB( programObject, "uLocalViewOrigin" );
+	g_materialInteractionProgram.lightProjectionS = glGetUniformLocationARB( programObject, "uLightProjectionS" );
+	g_materialInteractionProgram.lightProjectionT = glGetUniformLocationARB( programObject, "uLightProjectionT" );
+	g_materialInteractionProgram.lightProjectionQ = glGetUniformLocationARB( programObject, "uLightProjectionQ" );
+	g_materialInteractionProgram.lightFalloffS = glGetUniformLocationARB( programObject, "uLightFalloffS" );
+	g_materialInteractionProgram.bumpMatrixS = glGetUniformLocationARB( programObject, "uBumpMatrixS" );
+	g_materialInteractionProgram.bumpMatrixT = glGetUniformLocationARB( programObject, "uBumpMatrixT" );
+	g_materialInteractionProgram.diffuseMatrixS = glGetUniformLocationARB( programObject, "uDiffuseMatrixS" );
+	g_materialInteractionProgram.diffuseMatrixT = glGetUniformLocationARB( programObject, "uDiffuseMatrixT" );
+	g_materialInteractionProgram.specularMatrixS = glGetUniformLocationARB( programObject, "uSpecularMatrixS" );
+	g_materialInteractionProgram.specularMatrixT = glGetUniformLocationARB( programObject, "uSpecularMatrixT" );
+	g_materialInteractionProgram.vertexColorParams = glGetUniformLocationARB( programObject, "uVertexColorParams" );
+	g_materialInteractionProgram.diffuseColor = glGetUniformLocationARB( programObject, "uDiffuseColor" );
+	g_materialInteractionProgram.specularColor = glGetUniformLocationARB( programObject, "uSpecularColor" );
+	g_materialInteractionProgram.materialNormalScale = glGetUniformLocationARB( programObject, "uMaterialNormalScale" );
+	g_materialInteractionProgram.materialSpecularBoost = glGetUniformLocationARB( programObject, "uMaterialSpecularBoost" );
+	g_materialInteractionProgram.materialFresnel = glGetUniformLocationARB( programObject, "uMaterialFresnel" );
+	g_materialInteractionProgram.bumpMap = glGetUniformLocationARB( programObject, "uBumpMap" );
+	g_materialInteractionProgram.lightFalloffMap = glGetUniformLocationARB( programObject, "uLightFalloffMap" );
+	g_materialInteractionProgram.lightProjectionMap = glGetUniformLocationARB( programObject, "uLightProjectionMap" );
+	g_materialInteractionProgram.diffuseMap = glGetUniformLocationARB( programObject, "uDiffuseMap" );
+	g_materialInteractionProgram.specularMap = glGetUniformLocationARB( programObject, "uSpecularMap" );
+
+	common->Printf( "Loaded GLSL program '%s'\n", programBaseName );
+	return true;
 }
 
 static bool RB_ShadowMapLoadProgram( void ) {
@@ -1323,6 +1501,9 @@ static const char *programBaseName = "glprogs/shadow_interaction";
 	g_shadowMapProgram.vertexColorParams = glGetUniformLocationARB( programObject, "uVertexColorParams" );
 	g_shadowMapProgram.diffuseColor = glGetUniformLocationARB( programObject, "uDiffuseColor" );
 	g_shadowMapProgram.specularColor = glGetUniformLocationARB( programObject, "uSpecularColor" );
+	g_shadowMapProgram.materialNormalScale = glGetUniformLocationARB( programObject, "uMaterialNormalScale" );
+	g_shadowMapProgram.materialSpecularBoost = glGetUniformLocationARB( programObject, "uMaterialSpecularBoost" );
+	g_shadowMapProgram.materialFresnel = glGetUniformLocationARB( programObject, "uMaterialFresnel" );
 	g_shadowMapProgram.shadowTexelSize = glGetUniformLocationARB( programObject, "uShadowTexelSize" );
 	g_shadowMapProgram.shadowBias = glGetUniformLocationARB( programObject, "uShadowBias" );
 	g_shadowMapProgram.shadowNormalBias = glGetUniformLocationARB( programObject, "uShadowNormalBias" );
@@ -1679,6 +1860,9 @@ static const char *programBaseName = "glprogs/shadow_point_interaction";
 	g_pointShadowMapProgram.vertexColorParams = glGetUniformLocationARB( programObject, "uVertexColorParams" );
 	g_pointShadowMapProgram.diffuseColor = glGetUniformLocationARB( programObject, "uDiffuseColor" );
 	g_pointShadowMapProgram.specularColor = glGetUniformLocationARB( programObject, "uSpecularColor" );
+	g_pointShadowMapProgram.materialNormalScale = glGetUniformLocationARB( programObject, "uMaterialNormalScale" );
+	g_pointShadowMapProgram.materialSpecularBoost = glGetUniformLocationARB( programObject, "uMaterialSpecularBoost" );
+	g_pointShadowMapProgram.materialFresnel = glGetUniformLocationARB( programObject, "uMaterialFresnel" );
 	g_pointShadowMapProgram.shadowBias = glGetUniformLocationARB( programObject, "uShadowBias" );
 	g_pointShadowMapProgram.shadowNormalBias = glGetUniformLocationARB( programObject, "uShadowNormalBias" );
 	g_pointShadowMapProgram.shadowFilterRadius = glGetUniformLocationARB( programObject, "uShadowFilterRadius" );
@@ -3956,6 +4140,92 @@ static bool RB_RenderPointTranslucentShadowMap( const drawSurf_t *primaryCasters
 	return true;
 }
 
+static bool RB_EnhancedMaterialShadingActive( void ) {
+	return glConfig.GLSLProgramAvailable && r_enhancedMaterials.GetBool();
+}
+
+static float RB_EnhancedMaterialNormalScaleValue( void ) {
+	return RB_EnhancedMaterialShadingActive() ? idMath::ClampFloat( 0.5f, 2.0f, r_enhancedMaterialNormalScale.GetFloat() ) : 1.0f;
+}
+
+static float RB_EnhancedMaterialSpecularBoostValue( void ) {
+	return RB_EnhancedMaterialShadingActive() ? Max( 0.0f, r_enhancedMaterialSpecularBoost.GetFloat() ) : 1.0f;
+}
+
+static float RB_EnhancedMaterialFresnelValue( void ) {
+	return RB_EnhancedMaterialShadingActive() ? idMath::ClampFloat( 0.0f, 1.0f, r_enhancedMaterialFresnel.GetFloat() ) : 0.0f;
+}
+
+static void RB_MaterialInteractionSetEnhancementUniforms( const GLint normalScaleLocation, const GLint specularBoostLocation, const GLint fresnelLocation ) {
+	if ( normalScaleLocation >= 0 ) {
+		glUniform1fARB( normalScaleLocation, RB_EnhancedMaterialNormalScaleValue() );
+	}
+	if ( specularBoostLocation >= 0 ) {
+		glUniform1fARB( specularBoostLocation, RB_EnhancedMaterialSpecularBoostValue() );
+	}
+	if ( fresnelLocation >= 0 ) {
+		glUniform1fARB( fresnelLocation, RB_EnhancedMaterialFresnelValue() );
+	}
+}
+
+static void RB_GLSLMaterial_DrawInteraction( const drawInteraction_t *din ) {
+	glUniform4fvARB( g_materialInteractionProgram.localLightOrigin, 1, din->localLightOrigin.ToFloatPtr() );
+	glUniform4fvARB( g_materialInteractionProgram.localViewOrigin, 1, din->localViewOrigin.ToFloatPtr() );
+	glUniform4fvARB( g_materialInteractionProgram.lightProjectionS, 1, din->lightProjection[0].ToFloatPtr() );
+	glUniform4fvARB( g_materialInteractionProgram.lightProjectionT, 1, din->lightProjection[1].ToFloatPtr() );
+	glUniform4fvARB( g_materialInteractionProgram.lightProjectionQ, 1, din->lightProjection[2].ToFloatPtr() );
+	glUniform4fvARB( g_materialInteractionProgram.lightFalloffS, 1, din->lightProjection[3].ToFloatPtr() );
+	glUniform4fvARB( g_materialInteractionProgram.bumpMatrixS, 1, din->bumpMatrix[0].ToFloatPtr() );
+	glUniform4fvARB( g_materialInteractionProgram.bumpMatrixT, 1, din->bumpMatrix[1].ToFloatPtr() );
+	glUniform4fvARB( g_materialInteractionProgram.diffuseMatrixS, 1, din->diffuseMatrix[0].ToFloatPtr() );
+	glUniform4fvARB( g_materialInteractionProgram.diffuseMatrixT, 1, din->diffuseMatrix[1].ToFloatPtr() );
+	glUniform4fvARB( g_materialInteractionProgram.specularMatrixS, 1, din->specularMatrix[0].ToFloatPtr() );
+	glUniform4fvARB( g_materialInteractionProgram.specularMatrixT, 1, din->specularMatrix[1].ToFloatPtr() );
+	glUniform4fvARB( g_materialInteractionProgram.diffuseColor, 1, din->diffuseColor.ToFloatPtr() );
+	glUniform4fvARB( g_materialInteractionProgram.specularColor, 1, din->specularColor.ToFloatPtr() );
+
+	float modulate = 0.0f;
+	float add = 1.0f;
+	switch ( din->vertexColor ) {
+	case SVC_MODULATE:
+		modulate = 1.0f;
+		add = 0.0f;
+		break;
+	case SVC_INVERSE_MODULATE:
+		modulate = -1.0f;
+		add = 1.0f;
+		break;
+	case SVC_IGNORE:
+	default:
+		break;
+	}
+	const float vertexColorParams[2] = { modulate, add };
+	glUniform2fvARB( g_materialInteractionProgram.vertexColorParams, 1, vertexColorParams );
+
+	GL_SelectTextureNoClient( 0 );
+	din->bumpImage->Bind();
+	GL_SelectTextureNoClient( 1 );
+	din->lightFalloffImage->Bind();
+	GL_SelectTextureNoClient( 2 );
+	din->lightImage->Bind();
+	GL_SelectTextureNoClient( 3 );
+	din->diffuseImage->Bind();
+	GL_SelectTextureNoClient( 4 );
+	din->specularImage->Bind();
+
+	const idMaterial *surfaceMaterial = din->surf->material;
+	if ( surfaceMaterial && surfaceMaterial->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
+		glEnable( GL_POLYGON_OFFSET_FILL );
+		glPolygonOffset( r_offsetFactor.GetFloat(), r_offsetUnits.GetFloat() * surfaceMaterial->GetPolygonOffset() );
+	}
+
+	RB_DrawElementsWithCounters( din->surf->geo );
+
+	if ( surfaceMaterial && surfaceMaterial->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
+		glDisable( GL_POLYGON_OFFSET_FILL );
+	}
+}
+
 static void RB_GLSLShadowMap_DrawInteraction( const drawInteraction_t *din ) {
 	idPlane shadowClipLocal[SHADOWMAP_MAX_CASCADES][4];
 	float shadowRow0[SHADOWMAP_MAX_CASCADES * 4];
@@ -4131,6 +4401,94 @@ static void RB_GLSLPointShadowMap_DrawInteraction( const drawInteraction_t *din 
 	}
 }
 
+static bool RB_GLSLMaterial_CreateDrawInteractions( const drawSurf_t *surf ) {
+	if ( surf == NULL || !RB_MaterialInteractionLoadProgram() ) {
+		return false;
+	}
+
+	GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHMASK | backEnd.depthFunc );
+
+	glDisable( GL_VERTEX_PROGRAM_ARB );
+	glDisable( GL_FRAGMENT_PROGRAM_ARB );
+	glUseProgramObjectARB( g_materialInteractionProgram.programObject );
+
+	if ( g_materialInteractionProgram.bumpMap >= 0 ) {
+		glUniform1iARB( g_materialInteractionProgram.bumpMap, 0 );
+	}
+	if ( g_materialInteractionProgram.lightFalloffMap >= 0 ) {
+		glUniform1iARB( g_materialInteractionProgram.lightFalloffMap, 1 );
+	}
+	if ( g_materialInteractionProgram.lightProjectionMap >= 0 ) {
+		glUniform1iARB( g_materialInteractionProgram.lightProjectionMap, 2 );
+	}
+	if ( g_materialInteractionProgram.diffuseMap >= 0 ) {
+		glUniform1iARB( g_materialInteractionProgram.diffuseMap, 3 );
+	}
+	if ( g_materialInteractionProgram.specularMap >= 0 ) {
+		glUniform1iARB( g_materialInteractionProgram.specularMap, 4 );
+	}
+	RB_MaterialInteractionSetEnhancementUniforms(
+		g_materialInteractionProgram.materialNormalScale,
+		g_materialInteractionProgram.materialSpecularBoost,
+		g_materialInteractionProgram.materialFresnel );
+
+	glEnableVertexAttribArrayARB( 8 );
+	glEnableVertexAttribArrayARB( 9 );
+	glEnableVertexAttribArrayARB( 10 );
+	glEnableVertexAttribArrayARB( 11 );
+	glEnableClientState( GL_COLOR_ARRAY );
+
+	for ( ; surf != NULL; surf = surf->nextOnLight ) {
+		if ( surf->geo == NULL || surf->geo->ambientCache == NULL ) {
+			continue;
+		}
+
+		idDrawVert *ac = (idDrawVert *)vertexCache.Position( surf->geo->ambientCache );
+		glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), ac->color );
+		glVertexAttribPointerARB( 11, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->normal.ToFloatPtr() );
+		glVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[1].ToFloatPtr() );
+		glVertexAttribPointerARB( 9, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[0].ToFloatPtr() );
+		glVertexAttribPointerARB( 8, 2, GL_FLOAT, false, sizeof( idDrawVert ), ac->st.ToFloatPtr() );
+		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
+
+		RB_CreateSingleDrawInteractions( surf, RB_GLSLMaterial_DrawInteraction );
+	}
+
+	glDisableVertexAttribArrayARB( 8 );
+	glDisableVertexAttribArrayARB( 9 );
+	glDisableVertexAttribArrayARB( 10 );
+	glDisableVertexAttribArrayARB( 11 );
+	glDisableClientState( GL_COLOR_ARRAY );
+
+	GL_SelectTextureNoClient( 4 );
+	globalImages->BindNull();
+	GL_SelectTextureNoClient( 3 );
+	globalImages->BindNull();
+	GL_SelectTextureNoClient( 2 );
+	globalImages->BindNull();
+	GL_SelectTextureNoClient( 1 );
+	globalImages->BindNull();
+	GL_SelectTextureNoClient( 0 );
+	globalImages->BindNull();
+
+	glUseProgramObjectARB( 0 );
+	backEnd.glState.currenttmu = -1;
+	GL_SelectTexture( 0 );
+	return true;
+}
+
+static void RB_DrawMaterialInteractions( const drawSurf_t *surf ) {
+	if ( surf == NULL ) {
+		return;
+	}
+
+	if ( RB_EnhancedMaterialShadingActive() && RB_GLSLMaterial_CreateDrawInteractions( surf ) ) {
+		return;
+	}
+
+	RB_ARB2_CreateDrawInteractions( surf );
+}
+
 static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 	if ( surf == NULL || !RB_ShadowMapLoadProgram() || !g_projectedShadowMapState.valid ) {
 		return false;
@@ -4205,6 +4563,10 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 	if ( g_shadowMapProgram.translucentShadowDensity >= 0 ) {
 		glUniform1fARB( g_shadowMapProgram.translucentShadowDensity, r_shadowMapTranslucentDensity.GetFloat() );
 	}
+	RB_MaterialInteractionSetEnhancementUniforms(
+		g_shadowMapProgram.materialNormalScale,
+		g_shadowMapProgram.materialSpecularBoost,
+		g_shadowMapProgram.materialFresnel );
 
 	glStencilMask( 255 );
 	glStencilOp( GL_KEEP, GL_KEEP, GL_KEEP );
@@ -4328,6 +4690,10 @@ static bool RB_GLSLPointShadowMap_CreateDrawInteractions( const drawSurf_t *surf
 	if ( g_pointShadowMapProgram.translucentShadowDensity >= 0 ) {
 		glUniform1fARB( g_pointShadowMapProgram.translucentShadowDensity, r_shadowMapTranslucentDensity.GetFloat() );
 	}
+	RB_MaterialInteractionSetEnhancementUniforms(
+		g_pointShadowMapProgram.materialNormalScale,
+		g_pointShadowMapProgram.materialSpecularBoost,
+		g_pointShadowMapProgram.materialFresnel );
 
 	glStencilMask( 255 );
 	glStencilOp( GL_KEEP, GL_KEEP, GL_KEEP );
@@ -4405,16 +4771,16 @@ static void RB_ShadowMapStencilFallback( const drawSurf_t *primaryShadowSurfs, c
 			glEnable( GL_VERTEX_PROGRAM_ARB );
 			RB_StencilShadowPass( primaryShadowSurfs );
 			RB_StencilShadowPass( secondaryShadowSurfs );
-			RB_ARB2_CreateDrawInteractions( interactions );
+			RB_DrawMaterialInteractions( interactions );
 			glDisable( GL_VERTEX_PROGRAM_ARB );
 		} else {
 			RB_StencilShadowPass( primaryShadowSurfs );
 			RB_StencilShadowPass( secondaryShadowSurfs );
-			RB_ARB2_CreateDrawInteractions( interactions );
+			RB_DrawMaterialInteractions( interactions );
 		}
 	} else {
 		glStencilFunc( GL_ALWAYS, 128, 255 );
-		RB_ARB2_CreateDrawInteractions( interactions );
+		RB_DrawMaterialInteractions( interactions );
 	}
 }
 
@@ -4748,7 +5114,7 @@ static void RB_ShadowMapRunPass( const viewLight_t *vLight, shadowMapPassKind_t 
 		}
 		RB_ShadowMapPassReport( vLight, passKind, pointLight, SHADOWMAP_PASS_RESULT_NO_SHADOW_SURFS, primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters, primaryShadowSurfs, secondaryShadowSurfs, interactions );
 		glStencilFunc( GL_ALWAYS, 128, 255 );
-		RB_ARB2_CreateDrawInteractions( interactions );
+		RB_DrawMaterialInteractions( interactions );
 		return;
 	}
 
@@ -5070,7 +5436,7 @@ void RB_ARB2_DrawInteractions( void ) {
 			if ( !r_skipTranslucent.GetBool() ) {
 				glStencilFunc( GL_ALWAYS, 128, 255 );
 				backEnd.depthFunc = GLS_DEPTHFUNC_LESS;
-				RB_ARB2_CreateDrawInteractions( vLight->translucentInteractions );
+				RB_DrawMaterialInteractions( vLight->translucentInteractions );
 				backEnd.depthFunc = GLS_DEPTHFUNC_EQUAL;
 			}
 
@@ -5102,28 +5468,34 @@ void RB_ARB2_DrawInteractions( void ) {
 		if ( r_useShadowVertexProgram.GetBool() && R_BindARBProgram( GL_VERTEX_PROGRAM_ARB, VPROG_STENCIL_SHADOW, "stencil shadow vertex program", false ) ) {
 			glEnable( GL_VERTEX_PROGRAM_ARB );
 			RB_StencilShadowPass( vLight->globalShadows );
-			RB_ARB2_CreateDrawInteractions( vLight->localInteractions );
+			RB_DrawMaterialInteractions( vLight->localInteractions );
 			glEnable( GL_VERTEX_PROGRAM_ARB );
 			R_BindARBProgram( GL_VERTEX_PROGRAM_ARB, VPROG_STENCIL_SHADOW, "stencil shadow vertex program", false );
 			RB_StencilShadowPass( vLight->localShadows );
-			RB_ARB2_CreateDrawInteractions( vLight->globalInteractions );
+			RB_DrawMaterialInteractions( vLight->globalInteractions );
 			glDisable( GL_VERTEX_PROGRAM_ARB );	// if there weren't any globalInteractions, it would have stayed on
 		} else {
 			RB_StencilShadowPass( vLight->globalShadows );
-			RB_ARB2_CreateDrawInteractions( vLight->localInteractions );
+			RB_DrawMaterialInteractions( vLight->localInteractions );
 			RB_StencilShadowPass( vLight->localShadows );
-			RB_ARB2_CreateDrawInteractions( vLight->globalInteractions );
+			RB_DrawMaterialInteractions( vLight->globalInteractions );
 		}
 
-		// translucent surfaces never get stencil shadowed
 		if ( r_skipTranslucent.GetBool() ) {
 			continue;
 		}
 
-		glStencilFunc( GL_ALWAYS, 128, 255 );
+		const bool shadowTranslucentInteractions =
+			r_stencilTranslucentShadows.GetBool() &&
+			r_shadows.GetBool() &&
+			( vLight->globalShadows != NULL || vLight->localShadows != NULL );
+
+		// Keep the legacy unshadowed path available, but default translucent receivers
+		// to the same stencil test as opaque interactions when a stencil shadow exists.
+		glStencilFunc( shadowTranslucentInteractions ? GL_GEQUAL : GL_ALWAYS, 128, 255 );
 
 		backEnd.depthFunc = GLS_DEPTHFUNC_LESS;
-		RB_ARB2_CreateDrawInteractions( vLight->translucentInteractions );
+		RB_DrawMaterialInteractions( vLight->translucentInteractions );
 
 		backEnd.depthFunc = GLS_DEPTHFUNC_EQUAL;
 		continue;
@@ -5533,6 +5905,8 @@ void R_ReportShaderPrograms_f( const idCmdArgs &args ) {
 		RB_CurrentInteractionProgramsValid() ? "off" : "on" );
 	common->Printf( "GLSL shadow projected: %s\n",
 		RB_ShadowProgramStatusName( g_shadowMapProgram.programObject, g_shadowMapProgram.programValid, g_shadowMapProgram.programGeneration ) );
+	common->Printf( "GLSL material interaction: %s\n",
+		RB_ShadowProgramStatusName( g_materialInteractionProgram.programObject, g_materialInteractionProgram.programValid, g_materialInteractionProgram.programGeneration ) );
 	common->Printf( "GLSL shadow projected caster: %s\n",
 		RB_ShadowProgramStatusName( g_shadowMapCasterProgram.programObject, g_shadowMapCasterProgram.programValid, g_shadowMapCasterProgram.programGeneration ) );
 	common->Printf( "GLSL shadow projected translucent caster: %s\n",

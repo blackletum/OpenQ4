@@ -1049,9 +1049,14 @@ extern idCVar r_shadowMapTranslucentDensity;	// density scale applied when resol
 extern idCVar r_shadowMapTranslucentMinAlpha;	// minimum per-stage alpha considered by translucent shadow moments
 extern idCVar r_shadowMapReport;		// 0 = off, 1 = per-view summary, 2 = per-light decisions
 extern idCVar r_shadowMapReportInterval;	// frames between shadow-map diagnostic reports
+extern idCVar r_enhancedMaterials;		// 1 = use enhanced GLSL interaction shading for stock materials when supported
+extern idCVar r_enhancedMaterialNormalScale;	// tangent-space normal XY scale when enhanced material shading is enabled
+extern idCVar r_enhancedMaterialSpecularBoost;	// specular intensity scale when enhanced material shading is enabled
+extern idCVar r_enhancedMaterialFresnel;	// grazing-angle fresnel contribution when enhanced material shading is enabled
 extern idCVar r_useDeferredTangents;	// 1 = don't always calc tangents after deform
 extern idCVar r_useCachedDynamicModels;	// 1 = cache snapshots of dynamic models
 extern idCVar r_useTwoSidedStencil;		// 1 = do stencil shadows in one pass with different ops on each side
+extern idCVar r_stencilTranslucentShadows;	// 1 = let translucent materials cast and receive stencil shadows in the stencil-volume path
 extern idCVar r_useInfiniteFarZ;		// 1 = use the no-far-clip-plane trick
 extern idCVar r_useScissor;				// 1 = scissor clip as portals and lights are processed
 extern idCVar r_usePortals;				// 1 = use portals to perform area culling, otherwise draw everything

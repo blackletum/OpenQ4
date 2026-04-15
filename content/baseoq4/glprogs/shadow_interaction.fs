@@ -12,6 +12,9 @@ uniform sampler2D uTranslucentShadowMapB;
 
 uniform vec4 uDiffuseColor;
 uniform vec4 uSpecularColor;
+uniform float uMaterialNormalScale;
+uniform float uMaterialSpecularBoost;
+uniform float uMaterialFresnel;
 uniform vec2 uShadowTexelSize;
 uniform float uShadowBias;
 uniform float uShadowNormalBias;
@@ -32,6 +35,7 @@ varying vec4 vLightFalloffTexCoord;
 varying vec4 vLightProjectionTexCoord;
 varying vec3 vLightVector;
 varying vec3 vHalfAngleVector;
+varying vec3 vViewVector;
 varying vec4 vShadowCoord0;
 varying vec4 vShadowCoord1;
 varying vec4 vShadowCoord2;
@@ -64,6 +68,30 @@ bool ShadowCoordProjectedInvalid( vec3 value ) {
 
 vec3 SafeNormalize( vec3 value ) {
 	return value * inversesqrt( max( dot( value, value ), 1.0e-8 ) );
+}
+
+vec3 DecodeLocalNormal( vec4 bumpSample ) {
+	vec2 localNormalXY = vec2( bumpSample.a, bumpSample.g ) * 2.0 - 1.0;
+	localNormalXY *= max( uMaterialNormalScale, 0.0 );
+
+	float xyLengthSq = dot( localNormalXY, localNormalXY );
+	if ( xyLengthSq > 1.0 ) {
+		localNormalXY *= inversesqrt( xyLengthSq );
+		xyLengthSq = 1.0;
+	}
+
+	float encodedZ = max( bumpSample.b * 2.0 - 1.0, 0.0 );
+	float reconstructedZ = sqrt( max( 1.0 - xyLengthSq, 0.0 ) );
+	return SafeNormalize( vec3( localNormalXY, mix( encodedZ, reconstructedZ, 0.75 ) ) );
+}
+
+float EnhancedSpecularTerm( vec3 halfAngle, vec3 viewDir, vec3 localNormal, vec3 specularSample ) {
+	float ndoth = max( dot( halfAngle, localNormal ), 0.0 );
+	float ndotv = max( dot( viewDir, localNormal ), 0.0 );
+	float gloss = clamp( max( max( specularSample.r, specularSample.g ), specularSample.b ), 0.0, 1.0 );
+	float specularPower = mix( 10.0, 40.0, gloss );
+	float fresnel = 1.0 + ( pow( 1.0 - ndotv, 5.0 ) * 2.0 * clamp( uMaterialFresnel, 0.0, 1.0 ) );
+	return pow( ndoth, specularPower ) * max( uMaterialSpecularBoost, 0.0 ) * fresnel;
 }
 
 float ApproxErf( float x ) {
@@ -458,8 +486,7 @@ vec3 SampleTranslucentShadow() {
 
 void main() {
 	vec4 bumpSample = texture2D( uBumpMap, vBumpTexCoord );
-	vec3 localNormal = vec3( bumpSample.a, bumpSample.g, bumpSample.b ) * 2.0 - 1.0;
-	localNormal = SafeNormalize( localNormal );
+	vec3 localNormal = DecodeLocalNormal( bumpSample );
 
 	vec3 lightDir = SafeNormalize( vLightVector );
 	float ndotl = max( dot( lightDir, localNormal ), 0.0 );
@@ -475,11 +502,11 @@ void main() {
 
 	vec3 diffuse = texture2D( uDiffuseMap, vDiffuseTexCoord ).rgb * uDiffuseColor.rgb;
 
+	vec3 specularSample = texture2D( uSpecularMap, vSpecularTexCoord ).rgb;
 	vec3 halfAngle = SafeNormalize( vHalfAngleVector );
-	float ndoth = max( dot( halfAngle, localNormal ), 0.0 );
-	float specularTerm = clamp( ndoth * 4.0 - 3.0, 0.0, 1.0 );
-	specularTerm *= specularTerm;
-	vec3 specular = texture2D( uSpecularMap, vSpecularTexCoord ).rgb * uSpecularColor.rgb * specularTerm;
+	vec3 viewDir = SafeNormalize( vViewVector );
+	float specularTerm = EnhancedSpecularTerm( halfAngle, viewDir, localNormal, specularSample );
+	vec3 specular = specularSample * uSpecularColor.rgb * specularTerm;
 
 	vec3 color = ( diffuse + specular ) * light * vVertexColor;
 	if ( uShadowDebugMode > 0.5 ) {

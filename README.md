@@ -54,7 +54,8 @@ Single-player and multiplayer live under one `baseoq4/` directory with `game-sp`
 - Multi-scale **bloom** with luminance-based extraction
 - **FP16 HDR** scene targets, filmic tone mapping, color controls, and log-average auto exposure
 - **SSAO** and optional **CRT** post-processing
-- Experimental **shadow mapping** for projected and point lights, projected-light CSM, alpha-tested transparency shadows, and optional translucent shadow accumulation
+- Classic **stencil shadows** remain the default and now include translucent material caster/receiver support by default, with experimental **shadow mapping** for projected and point lights, projected-light CSM, alpha-tested transparency shadows, and optional translucent shadow accumulation
+- Optional **enhanced material shading** upgrades stock normal/specular response through a renderer-only GLSL path, with no asset or material script changes required
 - Experimental **irradiance-volume** indirect diffuse from [RBDOOM-3-BFG](https://github.com/RobertBeckebans/RBDOOM-3-BFG)-inspired `.lightgrid` data and per-area atlases, including native `bakeLightGrids` generation for OpenQ4-compatible assets with batch/CLI map loading and live console progress. See the [Light Grid Guide](docs-user/light-grids.md).
 - Screen-fraction scaling, supersample-style presets, **MSAA**, and **SMAA**
 

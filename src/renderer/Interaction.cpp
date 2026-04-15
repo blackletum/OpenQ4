@@ -989,7 +989,14 @@ void idInteraction::CreateInteraction( const idRenderModel *model ) {
 			interactionGenerated = true;
 		}
 
-		if ( HasShadows() && shader->SurfaceCastsShadow() && tri->silEdges != NULL ) {
+		const bool allowTranslucentStencilShadowCaster =
+			r_stencilTranslucentShadows.GetBool() &&
+			shader->Coverage() == MC_TRANSLUCENT &&
+			shader->ReceivesLighting() &&
+			!shader->HasGui() &&
+			!shader->HasSubview();
+
+		if ( HasShadows() && tri->silEdges != NULL && ( shader->SurfaceCastsShadow() || allowTranslucentStencilShadowCaster ) ) {
 
 			// if the light has an optimized shadow volume, don't create shadows for any models that are part of the base areas
 			if ( lightDef->parms.prelightModel == NULL || !model->IsStaticWorldModel() || !r_useOptimizedShadows.GetBool() ) {
