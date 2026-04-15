@@ -51,6 +51,23 @@ static bool RB_ImageIsCurrentRender( const idImage *image ) {
 	return idStr::Icmpn( name, "_currentRender", 14 ) == 0;
 }
 
+static bool RB_ImageIsCurrentDepth( const idImage *image ) {
+	if ( image == NULL ) {
+		return false;
+	}
+
+	if ( image == globalImages->currentDepthImage ) {
+		return true;
+	}
+
+	const char *name = image->GetName();
+	if ( name == NULL ) {
+		return false;
+	}
+
+	return idStr::Icmpn( name, "_currentDepth", 13 ) == 0;
+}
+
 static bool RB_StageUsesCurrentRender( const shaderStage_t *stage ) {
 	if ( stage == NULL ) {
 		return false;
@@ -73,6 +90,49 @@ static bool RB_StageUsesCurrentRender( const shaderStage_t *stage ) {
 
 	for ( int i = 0; i < newStage->numShaderTextures; i++ ) {
 		if ( RB_ImageIsCurrentRender( newStage->shaderTextureImages[i] ) ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static bool RB_StageUsesCurrentDepth( const shaderStage_t *stage ) {
+	if ( stage == NULL ) {
+		return false;
+	}
+
+	if ( RB_ImageIsCurrentDepth( stage->texture.image ) ) {
+		return true;
+	}
+
+	const newShaderStage_t *newStage = stage->newStage;
+	if ( newStage == NULL ) {
+		return false;
+	}
+
+	for ( int i = 0; i < newStage->numFragmentProgramImages; i++ ) {
+		if ( RB_ImageIsCurrentDepth( newStage->fragmentProgramImages[i] ) ) {
+			return true;
+		}
+	}
+
+	for ( int i = 0; i < newStage->numShaderTextures; i++ ) {
+		if ( RB_ImageIsCurrentDepth( newStage->shaderTextureImages[i] ) ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static bool RB_MaterialUsesCurrentDepth( const idMaterial *material ) {
+	if ( material == NULL ) {
+		return false;
+	}
+
+	for ( int i = 0; i < material->GetNumStages(); i++ ) {
+		if ( RB_StageUsesCurrentDepth( material->GetStage( i ) ) ) {
 			return true;
 		}
 	}
@@ -617,6 +677,28 @@ static void RB_CaptureCurrentRenderImage( int viewportWidth, int viewportHeight 
 	backEnd.currentRenderCopied = true;
 }
 
+static void RB_CaptureCurrentDepthImage( int viewportWidth, int viewportHeight ) {
+	idImage *depthImage = globalImages->currentDepthImage;
+	if ( depthImage == NULL || viewportWidth <= 0 || viewportHeight <= 0 ) {
+		return;
+	}
+
+	if ( backEnd.renderTexture != NULL ) {
+		idImage *renderDepthImage = backEnd.renderTexture->GetDepthImage();
+		if ( renderDepthImage == depthImage ) {
+			backEnd.currentDepthCopied = true;
+			return;
+		}
+	}
+
+	depthImage->CopyDepthbuffer(
+		backEnd.viewDef->viewport.x1,
+		backEnd.viewDef->viewport.y1,
+		viewportWidth,
+		viewportHeight );
+	backEnd.currentDepthCopied = true;
+}
+
 static bool RB_EnsureSceneRenderTexture( void ) {
 	if ( !backEnd.viewDef ) {
 		return false;
@@ -777,99 +859,6 @@ static void RB_EndFullscreenPostProcessPass( void ) {
 	glEnable( GL_STENCIL_TEST );
 	glMatrixMode( GL_MODELVIEW );
 	GL_Cull( CT_FRONT_SIDED );
-}
-
-static void RB_T_MarkIAmTheDukeTerrainStencil( const drawSurf_t *surf ) {
-	if ( surf == NULL || ( surf->dsFlags & DSF_IAMTHEDUKE_TERRAIN ) == 0 ) {
-		return;
-	}
-
-	const srfTriangles_t *tri = surf->geo;
-	const idMaterial *shader = surf->material;
-	if ( tri == NULL || shader == NULL || !shader->IsDrawn() ) {
-		return;
-	}
-	if ( !tri->numIndexes || shader->Coverage() == MC_TRANSLUCENT ) {
-		return;
-	}
-	if ( !tri->ambientCache ) {
-		common->Printf( "RB_T_MarkIAmTheDukeTerrainStencil: !tri->ambientCache\n" );
-		return;
-	}
-
-	const float *regs = surf->shaderRegisters;
-	if ( regs == NULL ) {
-		return;
-	}
-
-	int stage = 0;
-	for ( ; stage < shader->GetNumStages(); stage++ ) {
-		const shaderStage_t *pStage = shader->GetStage( stage );
-		if ( regs[ pStage->conditionRegister ] != 0 ) {
-			break;
-		}
-	}
-	if ( stage == shader->GetNumStages() ) {
-		return;
-	}
-
-	RB_SimpleSurfaceSetup( surf );
-	GL_Cull( shader->GetCullType() );
-
-	if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
-		glEnable( GL_POLYGON_OFFSET_FILL );
-		glPolygonOffset( r_offsetFactor.GetFloat(), r_offsetUnits.GetFloat() * shader->GetPolygonOffset() );
-	}
-
-	idDrawVert *ac = (idDrawVert *)vertexCache.Position( tri->ambientCache );
-	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
-	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>( &ac->st ) );
-
-	bool drawSolid = ( shader->Coverage() == MC_OPAQUE );
-
-	if ( shader->Coverage() == MC_PERFORATED ) {
-		bool drewAlphaStage = false;
-		glEnable( GL_ALPHA_TEST );
-
-		for ( stage = 0; stage < shader->GetNumStages(); stage++ ) {
-			const shaderStage_t *pStage = shader->GetStage( stage );
-			if ( !pStage->hasAlphaTest || regs[ pStage->conditionRegister ] == 0 ) {
-				continue;
-			}
-
-			drewAlphaStage = true;
-			const float stageAlpha = regs[ pStage->color.registers[3] ];
-			if ( stageAlpha <= 0.0f ) {
-				continue;
-			}
-
-			glColor4f( 1.0f, 1.0f, 1.0f, stageAlpha );
-			glAlphaFunc( GL_GREATER, regs[ pStage->alphaTestRegister ] );
-			pStage->texture.image->Bind();
-
-			if ( !RB_PrepareStageTexturing( pStage, surf, ac ) ) {
-				RB_FinishStageTexturing( pStage, surf, ac );
-				continue;
-			}
-
-			RB_DrawElementsWithCounters( tri );
-			RB_FinishStageTexturing( pStage, surf, ac );
-		}
-
-		glDisable( GL_ALPHA_TEST );
-		if ( !drewAlphaStage ) {
-			drawSolid = true;
-		}
-	}
-
-	if ( drawSolid ) {
-		globalImages->whiteImage->Bind();
-		RB_DrawElementsWithCounters( tri );
-	}
-
-	if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
-		glDisable( GL_POLYGON_OFFSET_FILL );
-	}
 }
 
 struct rbBuiltinUniformDef_t {
@@ -2047,120 +2036,6 @@ static void RB_InitCRTStage( void ) {
 	rbCRTStageInitialized = true;
 }
 
-static newShaderStage_t rbIAmTheDukeSnowStage;
-static bool rbIAmTheDukeSnowStageInitialized = false;
-
-static void RB_InitIAmTheDukeSnowStage( void ) {
-	if ( rbIAmTheDukeSnowStageInitialized ) {
-		return;
-	}
-
-	memset( &rbIAmTheDukeSnowStage, 0, sizeof( rbIAmTheDukeSnowStage ) );
-	rbIAmTheDukeSnowStage.glslProgram = true;
-	idStr::Copynz( rbIAmTheDukeSnowStage.glslProgramName, "duke_snow.fs", sizeof( rbIAmTheDukeSnowStage.glslProgramName ) );
-	rbIAmTheDukeSnowStage.numShaderTextures = 1;
-	idStr::Copynz( rbIAmTheDukeSnowStage.shaderTextureNames[0], "Scene", sizeof( rbIAmTheDukeSnowStage.shaderTextureNames[0] ) );
-	rbIAmTheDukeSnowStageInitialized = true;
-}
-
-static void RB_STD_ApplyIAmTheDukeTerrainSnow( drawSurf_t **drawSurfs, const int numDrawSurfs ) {
-	if ( !session || !session->IsIAmTheDukeActive() || !glConfig.GLSLProgramAvailable || !backEnd.viewDef->viewEntitys ) {
-		return;
-	}
-	if ( drawSurfs == NULL || numDrawSurfs <= 0 ) {
-		return;
-	}
-
-	bool hasTerrain = false;
-	for ( int i = 0; i < numDrawSurfs; i++ ) {
-		if ( drawSurfs[i] != NULL && ( drawSurfs[i]->dsFlags & DSF_IAMTHEDUKE_TERRAIN ) != 0 ) {
-			hasTerrain = true;
-			break;
-		}
-	}
-	if ( !hasTerrain ) {
-		return;
-	}
-
-	RB_InitIAmTheDukeSnowStage();
-	if ( !R_ValidateGLSLProgram( &rbIAmTheDukeSnowStage ) ) {
-		return;
-	}
-
-	const int viewportWidth = backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1;
-	const int viewportHeight = backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1;
-	if ( viewportWidth <= 0 || viewportHeight <= 0 ) {
-		return;
-	}
-
-	idImage *sceneImage = globalImages->currentRenderImage;
-	if ( sceneImage == NULL ) {
-		return;
-	}
-
-	RB_LogComment( "---------- RB_STD_ApplyIAmTheDukeTerrainSnow ----------\n" );
-
-	GL_SelectTexture( 0 );
-	glEnableClientState( GL_VERTEX_ARRAY );
-	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
-	glEnable( GL_DEPTH_TEST );
-	backEnd.currentSpace = NULL;
-
-	glColorMask( GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE );
-	glDepthMask( GL_FALSE );
-	glEnable( GL_STENCIL_TEST );
-	glStencilMask( 0xFF );
-	glClear( GL_STENCIL_BUFFER_BIT );
-	glStencilFunc( GL_ALWAYS, 1, 0xFF );
-	glStencilOp( GL_KEEP, GL_KEEP, GL_REPLACE );
-	GL_State( GLS_DEPTHFUNC_EQUAL );
-
-	RB_RenderDrawSurfListWithFunction( drawSurfs, numDrawSurfs, RB_T_MarkIAmTheDukeTerrainStencil );
-
-	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
-	glDepthMask( GL_TRUE );
-	glStencilOp( GL_KEEP, GL_KEEP, GL_KEEP );
-
-	sceneImage->CopyFramebuffer( 0, 0, viewportWidth, viewportHeight );
-
-	const int textureWidth = sceneImage->GetOpts().width;
-	const int textureHeight = sceneImage->GetOpts().height;
-	if ( textureWidth <= 0 || textureHeight <= 0 ) {
-		glStencilMask( 0xFF );
-		glStencilFunc( GL_ALWAYS, 128, 255 );
-		return;
-	}
-
-	RB_BeginFullscreenPostProcessPass(
-		backEnd.viewDef->viewport.x1 + backEnd.viewDef->scissor.x1,
-		backEnd.viewDef->viewport.y1 + backEnd.viewDef->scissor.y1,
-		backEnd.viewDef->scissor.x2 - backEnd.viewDef->scissor.x1 + 1,
-		backEnd.viewDef->scissor.y2 - backEnd.viewDef->scissor.y1 + 1 );
-
-	GL_SelectTexture( 0 );
-	sceneImage->Bind();
-	glUseProgramObjectARB( (GLhandleARB)rbIAmTheDukeSnowStage.glslProgramObject );
-
-	const int sceneLocation = rbIAmTheDukeSnowStage.shaderTextureLocations[0];
-	if ( sceneLocation >= 0 ) {
-		glUniform1iARB( sceneLocation, 0 );
-	}
-
-	glEnable( GL_STENCIL_TEST );
-	glStencilMask( 0x00 );
-	glStencilFunc( GL_EQUAL, 1, 0xFF );
-	glStencilOp( GL_KEEP, GL_KEEP, GL_KEEP );
-
-	RB_DrawFullscreenPostProcessQuad( viewportWidth, viewportHeight, textureWidth, textureHeight );
-
-	glUseProgramObjectARB( 0 );
-	globalImages->BindNull();
-	RB_EndFullscreenPostProcessPass();
-
-	glStencilMask( 0xFF );
-	glStencilFunc( GL_ALWAYS, 128, 255 );
-}
-
 void RB_ApplyCRTToBackBuffer( void ) {
 	if ( r_skipPostProcess.GetBool() || !r_crt.GetBool() ) {
 		return;
@@ -2569,6 +2444,302 @@ void RB_FinishStageTexturing( const shaderStage_t *pStage, const drawSurf_t *sur
 	}
 }
 
+enum rbRVSpecialDepthUniformIndex_t {
+	RB_RVSPECIAL_DEPTH_UNIFORM_DISTANCE_SCALE = 0,
+	RB_RVSPECIAL_DEPTH_UNIFORM_COUNT
+};
+
+enum rbRVSpecialBlurUniformIndex_t {
+	RB_RVSPECIAL_BLUR_UNIFORM_TEXTURE_SCALE = 0,
+	RB_RVSPECIAL_BLUR_UNIFORM_SAMPLE_DIST,
+	RB_RVSPECIAL_BLUR_UNIFORM_COUNT
+};
+
+enum rbRVSpecialMedLabsUniformIndex_t {
+	RB_RVSPECIAL_MEDLABS_UNIFORM_RANGE = 0,
+	RB_RVSPECIAL_MEDLABS_UNIFORM_FOCUS,
+	RB_RVSPECIAL_MEDLABS_UNIFORM_SCROLL,
+	RB_RVSPECIAL_MEDLABS_UNIFORM_APPROACH_COLOR,
+	RB_RVSPECIAL_MEDLABS_UNIFORM_APPROACH_PERCENT,
+	RB_RVSPECIAL_MEDLABS_UNIFORM_COUNT
+};
+
+enum rbRVSpecialALUniformIndex_t {
+	RB_RVSPECIAL_AL_UNIFORM_DISTANCE_SCALE = 0,
+	RB_RVSPECIAL_AL_UNIFORM_LIGHT_LOC,
+	RB_RVSPECIAL_AL_UNIFORM_LIGHT_COLOR,
+	RB_RVSPECIAL_AL_UNIFORM_LIGHT_SIZE,
+	RB_RVSPECIAL_AL_UNIFORM_LIGHT_MIN_DISTANCE,
+	RB_RVSPECIAL_AL_UNIFORM_COUNT
+};
+
+static newShaderStage_t rbRVSpecialDepthStage;
+static newShaderStage_t rbRVSpecialBlurStage;
+static newShaderStage_t rbRVSpecialMedLabsStage;
+static newShaderStage_t rbRVSpecialALStage;
+static bool rbRVSpecialStagesInitialized = false;
+static bool rbRVSpecialBlurPrepared = false;
+static bool rbRVSpecialALPrepared = false;
+static bool rbRVSpecialCaptureUsesDiffuseImage = false;
+static int rbRVSpecialActiveMask = 0;
+
+static void RB_InitRVSpecialStages( void ) {
+	if ( rbRVSpecialStagesInitialized ) {
+		return;
+	}
+
+	memset( &rbRVSpecialDepthStage, 0, sizeof( rbRVSpecialDepthStage ) );
+	rbRVSpecialDepthStage.glslProgram = true;
+	idStr::Copynz( rbRVSpecialDepthStage.glslProgramName, "rvspecial_depth.fs", sizeof( rbRVSpecialDepthStage.glslProgramName ) );
+	rbRVSpecialDepthStage.numShaderParms = RB_RVSPECIAL_DEPTH_UNIFORM_COUNT;
+	idStr::Copynz( rbRVSpecialDepthStage.shaderParmNames[RB_RVSPECIAL_DEPTH_UNIFORM_DISTANCE_SCALE], "distanceScale",
+		sizeof( rbRVSpecialDepthStage.shaderParmNames[RB_RVSPECIAL_DEPTH_UNIFORM_DISTANCE_SCALE] ) );
+	rbRVSpecialDepthStage.shaderParmNumRegisters[RB_RVSPECIAL_DEPTH_UNIFORM_DISTANCE_SCALE] = 1;
+	rbRVSpecialDepthStage.numShaderTextures = 1;
+	idStr::Copynz( rbRVSpecialDepthStage.shaderTextureNames[0], "Image", sizeof( rbRVSpecialDepthStage.shaderTextureNames[0] ) );
+
+	memset( &rbRVSpecialBlurStage, 0, sizeof( rbRVSpecialBlurStage ) );
+	rbRVSpecialBlurStage.glslProgram = true;
+	idStr::Copynz( rbRVSpecialBlurStage.glslProgramName, "rvspecial_blur.fs", sizeof( rbRVSpecialBlurStage.glslProgramName ) );
+	static const rbBuiltinUniformDef_t blurUniforms[RB_RVSPECIAL_BLUR_UNIFORM_COUNT] = {
+		{ "textureScale", 2 },
+		{ "sampleDist", 1 }
+	};
+	rbRVSpecialBlurStage.numShaderParms = RB_RVSPECIAL_BLUR_UNIFORM_COUNT;
+	for ( int i = 0; i < RB_RVSPECIAL_BLUR_UNIFORM_COUNT; i++ ) {
+		idStr::Copynz( rbRVSpecialBlurStage.shaderParmNames[i], blurUniforms[i].name,
+			sizeof( rbRVSpecialBlurStage.shaderParmNames[i] ) );
+		rbRVSpecialBlurStage.shaderParmNumRegisters[i] = blurUniforms[i].components;
+	}
+	rbRVSpecialBlurStage.numShaderTextures = 1;
+	idStr::Copynz( rbRVSpecialBlurStage.shaderTextureNames[0], "Image", sizeof( rbRVSpecialBlurStage.shaderTextureNames[0] ) );
+
+	memset( &rbRVSpecialMedLabsStage, 0, sizeof( rbRVSpecialMedLabsStage ) );
+	rbRVSpecialMedLabsStage.glslProgram = true;
+	idStr::Copynz( rbRVSpecialMedLabsStage.glslProgramName, "rvspecial_medlabs.fs", sizeof( rbRVSpecialMedLabsStage.glslProgramName ) );
+	static const rbBuiltinUniformDef_t medlabsUniforms[RB_RVSPECIAL_MEDLABS_UNIFORM_COUNT] = {
+		{ "effectRange", 1 },
+		{ "focus", 1 },
+		{ "scroll", 1 },
+		{ "approachColor", 4 },
+		{ "approachPercent", 1 }
+	};
+	rbRVSpecialMedLabsStage.numShaderParms = RB_RVSPECIAL_MEDLABS_UNIFORM_COUNT;
+	for ( int i = 0; i < RB_RVSPECIAL_MEDLABS_UNIFORM_COUNT; i++ ) {
+		idStr::Copynz( rbRVSpecialMedLabsStage.shaderParmNames[i], medlabsUniforms[i].name,
+			sizeof( rbRVSpecialMedLabsStage.shaderParmNames[i] ) );
+		rbRVSpecialMedLabsStage.shaderParmNumRegisters[i] = medlabsUniforms[i].components;
+	}
+	rbRVSpecialMedLabsStage.numShaderTextures = 2;
+	idStr::Copynz( rbRVSpecialMedLabsStage.shaderTextureNames[0], "Depth", sizeof( rbRVSpecialMedLabsStage.shaderTextureNames[0] ) );
+	idStr::Copynz( rbRVSpecialMedLabsStage.shaderTextureNames[1], "Blur1", sizeof( rbRVSpecialMedLabsStage.shaderTextureNames[1] ) );
+
+	memset( &rbRVSpecialALStage, 0, sizeof( rbRVSpecialALStage ) );
+	rbRVSpecialALStage.glslProgram = true;
+	idStr::Copynz( rbRVSpecialALStage.glslProgramName, "rvspecial_al.fs", sizeof( rbRVSpecialALStage.glslProgramName ) );
+	static const rbBuiltinUniformDef_t alUniforms[RB_RVSPECIAL_AL_UNIFORM_COUNT] = {
+		{ "distanceScale", 1 },
+		{ "LightLoc", 3 },
+		{ "LightColor", 4 },
+		{ "LightSize", 1 },
+		{ "LightMinDistance", 1 }
+	};
+	rbRVSpecialALStage.numShaderParms = RB_RVSPECIAL_AL_UNIFORM_COUNT;
+	for ( int i = 0; i < RB_RVSPECIAL_AL_UNIFORM_COUNT; i++ ) {
+		idStr::Copynz( rbRVSpecialALStage.shaderParmNames[i], alUniforms[i].name,
+			sizeof( rbRVSpecialALStage.shaderParmNames[i] ) );
+		rbRVSpecialALStage.shaderParmNumRegisters[i] = alUniforms[i].components;
+	}
+	rbRVSpecialALStage.numShaderTextures = 2;
+	idStr::Copynz( rbRVSpecialALStage.shaderTextureNames[0], "RT", sizeof( rbRVSpecialALStage.shaderTextureNames[0] ) );
+	idStr::Copynz( rbRVSpecialALStage.shaderTextureNames[1], "LightImage", sizeof( rbRVSpecialALStage.shaderTextureNames[1] ) );
+
+	rbRVSpecialStagesInitialized = true;
+}
+
+static idImage *RB_CreateOrUpdateSpecialImage( const char *name, int width, int height, textureFormat_t format, textureFilter_t filter ) {
+	idImageOpts opts;
+	memset( &opts, 0, sizeof( opts ) );
+	opts.textureType = TT_2D;
+	opts.format = format;
+	opts.width = width;
+	opts.height = height;
+	opts.numLevels = 1;
+	opts.numMSAASamples = 0;
+	opts.isPersistant = true;
+	return tr.CreateImage( name, &opts, filter );
+}
+
+static bool RB_EnsureRVSpecialBlurResources( void ) {
+	const int width = 256;
+	const int height = 256;
+
+	tr.specialBlurDepthImage = RB_CreateOrUpdateSpecialImage( "DepthTexture", width, height, FMT_RGBA16F, TF_LINEAR );
+	tr.specialBlurDepthStencilImage = RB_CreateOrUpdateSpecialImage( "_rvspecialBlurDepthDS", width, height, FMT_DEPTH_STENCIL, TF_NEAREST );
+	tr.specialBlurImage = RB_CreateOrUpdateSpecialImage( "BlurTexture1", width, height, FMT_RGBA16F, TF_LINEAR );
+	if ( tr.specialBlurDepthImage == NULL || tr.specialBlurDepthStencilImage == NULL || tr.specialBlurImage == NULL ) {
+		return false;
+	}
+
+	if ( tr.specialBlurDepthRenderTexture == NULL ) {
+		tr.specialBlurDepthRenderTexture = tr.CreateRenderTexture( tr.specialBlurDepthImage, tr.specialBlurDepthStencilImage );
+	} else if ( tr.specialBlurDepthRenderTexture->GetWidth() != width || tr.specialBlurDepthRenderTexture->GetHeight() != height ) {
+		tr.ResizeRenderTexture( tr.specialBlurDepthRenderTexture, width, height );
+	}
+
+	if ( tr.specialBlurRenderTexture == NULL ) {
+		tr.specialBlurRenderTexture = tr.CreateRenderTexture( tr.specialBlurImage, NULL );
+	} else if ( tr.specialBlurRenderTexture->GetWidth() != width || tr.specialBlurRenderTexture->GetHeight() != height ) {
+		tr.ResizeRenderTexture( tr.specialBlurRenderTexture, width, height );
+	}
+
+	return tr.specialBlurDepthRenderTexture != NULL && tr.specialBlurRenderTexture != NULL;
+}
+
+static bool RB_EnsureRVSpecialALResources( void ) {
+	const int width = 512;
+	const int height = 512;
+
+	tr.specialALDepthImage = RB_CreateOrUpdateSpecialImage( "_rvspecialALDepth", width, height, FMT_RGBA16F, TF_NEAREST );
+	tr.specialALDepthStencilImage = RB_CreateOrUpdateSpecialImage( "_rvspecialALDepthDS", width, height, FMT_DEPTH_STENCIL, TF_NEAREST );
+	if ( tr.specialALDepthImage == NULL || tr.specialALDepthStencilImage == NULL ) {
+		return false;
+	}
+
+	if ( tr.specialALDepthRenderTexture == NULL ) {
+		tr.specialALDepthRenderTexture = tr.CreateRenderTexture( tr.specialALDepthImage, tr.specialALDepthStencilImage );
+	} else if ( tr.specialALDepthRenderTexture->GetWidth() != width || tr.specialALDepthRenderTexture->GetHeight() != height ) {
+		tr.ResizeRenderTexture( tr.specialALDepthRenderTexture, width, height );
+	}
+
+	if ( tr.specialALLightImage == NULL ) {
+		tr.specialALLightImage = globalImages->ImageFromFile( "gfx/lights/round.tga", TF_LINEAR, TR_CLAMP, TD_DEFAULT );
+	}
+
+	return tr.specialALDepthRenderTexture != NULL && tr.specialALLightImage != NULL;
+}
+
+static void RB_RVSpecialRestoreDrawingView( void ) {
+	const int viewportWidth = backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1;
+	const int viewportHeight = backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1;
+
+	glMatrixMode( GL_PROJECTION );
+	glLoadMatrixf( backEnd.viewDef->projectionMatrix );
+	glMatrixMode( GL_MODELVIEW );
+	glLoadIdentity();
+	backEnd.currentSpace = NULL;
+
+	glViewport(
+		tr.viewportOffset[0] + backEnd.viewDef->viewport.x1,
+		tr.viewportOffset[1] + backEnd.viewDef->viewport.y1,
+		viewportWidth,
+		viewportHeight );
+	glScissor(
+		tr.viewportOffset[0] + backEnd.viewDef->viewport.x1 + backEnd.viewDef->scissor.x1,
+		tr.viewportOffset[1] + backEnd.viewDef->viewport.y1 + backEnd.viewDef->scissor.y1,
+		backEnd.viewDef->scissor.x2 - backEnd.viewDef->scissor.x1 + 1,
+		backEnd.viewDef->scissor.y2 - backEnd.viewDef->scissor.y1 + 1 );
+	backEnd.currentScissor = backEnd.viewDef->scissor;
+
+	GL_State( GLS_DEPTHFUNC_EQUAL );
+	if ( backEnd.viewDef->viewEntitys ) {
+		glEnable( GL_DEPTH_TEST );
+		glEnable( GL_STENCIL_TEST );
+	} else {
+		glDisable( GL_DEPTH_TEST );
+		glDisable( GL_STENCIL_TEST );
+	}
+
+	backEnd.glState.faceCulling = -1;
+	GL_Cull( CT_FRONT_SIDED );
+	backEnd.glState.forceGlState = true;
+}
+
+static void RB_RVSpecialBeginCapture( idRenderTexture *renderTexture, int width, int height ) {
+	RB_BindPostProcessRenderTexture( renderTexture, width, height );
+
+	glMatrixMode( GL_PROJECTION );
+	glLoadMatrixf( backEnd.viewDef->projectionMatrix );
+	glMatrixMode( GL_MODELVIEW );
+	glLoadIdentity();
+
+	glClearColor( 0.0f, 0.0f, 0.0f, 0.0f );
+	glClearDepth( 1.0f );
+	glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT );
+
+	GL_State( GLS_DEFAULT );
+	glDisable( GL_BLEND );
+	glDisable( GL_CULL_FACE );
+	glEnable( GL_DEPTH_TEST );
+	glDisable( GL_STENCIL_TEST );
+	glDepthFunc( GL_LEQUAL );
+	glColor4f( 1.0f, 1.0f, 1.0f, 1.0f );
+	glEnableClientState( GL_VERTEX_ARRAY );
+	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
+	backEnd.currentSpace = NULL;
+}
+
+static void RB_RVSpecialEndCapture( idRenderTexture *previousRenderTexture ) {
+	const int viewportWidth = backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1;
+	const int viewportHeight = backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1;
+
+	glUseProgramObjectARB( 0 );
+	RB_RestorePostProcessTarget( previousRenderTexture, viewportWidth, viewportHeight );
+
+	const int maxStateUnits = Max( 0, Min( MAX_MULTITEXTURE_UNITS, Min( glConfig.maxTextureUnits, glConfig.maxTextureImageUnits ) ) );
+	for ( int i = 0; i < maxStateUnits; i++ ) {
+		GL_SelectTexture( i );
+		glDisable( GL_TEXTURE_GEN_S );
+		glDisable( GL_TEXTURE_GEN_T );
+		glDisable( GL_TEXTURE_GEN_R );
+		glDisable( GL_TEXTURE_GEN_Q );
+		glMatrixMode( GL_TEXTURE );
+		glLoadIdentity();
+		glMatrixMode( GL_MODELVIEW );
+		glDisable( GL_TEXTURE_CUBE_MAP_EXT );
+		glDisable( GL_TEXTURE_3D );
+		glDisable( GL_TEXTURE_2D );
+		backEnd.glState.tmu[i].textureType = TT_DISABLED;
+		backEnd.glState.tmu[i].current2DMap = -1;
+		backEnd.glState.tmu[i].current3DMap = -1;
+		backEnd.glState.tmu[i].currentCubeMap = -1;
+		globalImages->whiteImage->Bind();
+	}
+
+	GL_SelectTexture( 0 );
+	backEnd.glState.forceGlState = true;
+}
+
+static bool RB_RVSpecialPrepareSolidStageTexturing( const drawSurf_t *surf, idDrawVert *ac, const shaderStage_t **diffuseStageOut ) {
+	const idMaterial *shader = surf->material;
+	const float *regs = surf->shaderRegisters;
+
+	if ( diffuseStageOut != NULL ) {
+		*diffuseStageOut = NULL;
+	}
+
+	if ( !rbRVSpecialCaptureUsesDiffuseImage ) {
+		globalImages->whiteImage->Bind();
+		return true;
+	}
+
+	for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
+		const shaderStage_t *pStage = shader->GetStage( stage );
+		if ( pStage->lighting != SL_DIFFUSE || regs[ pStage->conditionRegister ] == 0.0f ) {
+			continue;
+		}
+
+		pStage->texture.image->Bind();
+		if ( diffuseStageOut != NULL ) {
+			*diffuseStageOut = pStage;
+		}
+		return RB_PrepareStageTexturing( pStage, surf, ac );
+	}
+
+	globalImages->whiteImage->Bind();
+	return true;
+}
+
 /*
 =============================================================================================
 
@@ -2583,6 +2754,497 @@ FILL DEPTH BUFFER
 RB_T_FillDepthBuffer
 ==================
 */
+static void RB_T_CaptureRVSpecialDepth( const drawSurf_t *surf ) {
+	const srfTriangles_t *tri = surf->geo;
+	const idMaterial *shader = surf->material;
+	const float *regs;
+	const shaderStage_t *pStage = NULL;
+	float color[4];
+
+	if ( !shader->IsDrawn() || !tri->numIndexes || shader->Coverage() == MC_TRANSLUCENT ) {
+		return;
+	}
+	if ( !tri->ambientCache ) {
+		common->Printf( "RB_T_CaptureRVSpecialDepth: !tri->ambientCache\n" );
+		return;
+	}
+
+	regs = surf->shaderRegisters;
+	for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
+		pStage = shader->GetStage( stage );
+		if ( regs[ pStage->conditionRegister ] != 0.0f ) {
+			break;
+		}
+	}
+	if ( pStage == NULL || regs[ pStage->conditionRegister ] == 0.0f ) {
+		return;
+	}
+
+	if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
+		glEnable( GL_POLYGON_OFFSET_FILL );
+		glPolygonOffset( r_offsetFactor.GetFloat(), r_offsetUnits.GetFloat() * shader->GetPolygonOffset() );
+	}
+
+	const bool useAlphaToCoverage = RB_UseAlphaToCoverage( shader );
+	if ( useAlphaToCoverage ) {
+		glEnable( GL_SAMPLE_ALPHA_TO_COVERAGE );
+	}
+
+	color[0] = 1.0f;
+	color[1] = 1.0f;
+	color[2] = 1.0f;
+	color[3] = 1.0f;
+
+	idDrawVert *ac = (idDrawVert *)vertexCache.Position( tri->ambientCache );
+	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
+	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>( &ac->st ) );
+
+	bool drawSolid = ( shader->Coverage() == MC_OPAQUE );
+
+	if ( shader->Coverage() == MC_PERFORATED ) {
+		bool didDraw = false;
+
+		glEnable( GL_ALPHA_TEST );
+		for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
+			pStage = shader->GetStage( stage );
+			if ( !pStage->hasAlphaTest || regs[ pStage->conditionRegister ] == 0.0f ) {
+				continue;
+			}
+			if ( pStage->texture.dynamic == DI_REFLECTION_RENDER || pStage->texture.dynamic == DI_REFRACTION_RENDER ) {
+				continue;
+			}
+
+			didDraw = true;
+			color[3] = regs[ pStage->color.registers[3] ];
+			if ( color[3] <= 0.0f ) {
+				continue;
+			}
+
+			glColor4fv( color );
+			glAlphaFunc( GL_GREATER, regs[ pStage->alphaTestRegister ] );
+			pStage->texture.image->Bind();
+			if ( !RB_PrepareStageTexturing( pStage, surf, ac ) ) {
+				RB_FinishStageTexturing( pStage, surf, ac );
+				continue;
+			}
+
+			RB_DrawElementsWithCounters( tri );
+			RB_FinishStageTexturing( pStage, surf, ac );
+		}
+		glDisable( GL_ALPHA_TEST );
+
+		if ( !didDraw ) {
+			drawSolid = true;
+		}
+	}
+
+	if ( drawSolid ) {
+		const shaderStage_t *diffuseStage = NULL;
+		glColor4fv( color );
+		if ( RB_RVSpecialPrepareSolidStageTexturing( surf, ac, &diffuseStage ) ) {
+			RB_DrawElementsWithCounters( tri );
+		}
+		if ( diffuseStage != NULL ) {
+			RB_FinishStageTexturing( diffuseStage, surf, ac );
+		}
+	}
+
+	if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
+		glDisable( GL_POLYGON_OFFSET_FILL );
+	}
+	if ( useAlphaToCoverage ) {
+		glDisable( GL_SAMPLE_ALPHA_TO_COVERAGE );
+	}
+}
+
+static bool RB_CaptureRVSpecialDepth( idRenderTexture *target, int width, int height, bool useDiffuseImage, float distanceScale ) {
+	RB_InitRVSpecialStages();
+	if ( !R_ValidateGLSLProgram( &rbRVSpecialDepthStage ) ) {
+		return false;
+	}
+
+	const GLfloat safeDistanceScale = Max( distanceScale, 1.0f );
+	idRenderTexture *previousRenderTexture = backEnd.renderTexture;
+	rbRVSpecialCaptureUsesDiffuseImage = useDiffuseImage;
+
+	RB_RVSpecialBeginCapture( target, width, height );
+
+	glUseProgramObjectARB( (GLhandleARB)rbRVSpecialDepthStage.glslProgramObject );
+	if ( rbRVSpecialDepthStage.shaderTextureLocations[0] >= 0 ) {
+		glUniform1iARB( rbRVSpecialDepthStage.shaderTextureLocations[0], 0 );
+	}
+	if ( rbRVSpecialDepthStage.shaderParmLocations[RB_RVSPECIAL_DEPTH_UNIFORM_DISTANCE_SCALE] >= 0 ) {
+		glUniform1fARB( rbRVSpecialDepthStage.shaderParmLocations[RB_RVSPECIAL_DEPTH_UNIFORM_DISTANCE_SCALE], safeDistanceScale );
+	}
+
+	RB_RenderDrawSurfListWithFunctionIgnoreScissor(
+		(drawSurf_t **)&backEnd.viewDef->drawSurfs[0],
+		backEnd.viewDef->numDrawSurfs,
+		RB_T_CaptureRVSpecialDepth );
+
+	RB_RVSpecialEndCapture( previousRenderTexture );
+	rbRVSpecialCaptureUsesDiffuseImage = false;
+	return true;
+}
+
+static bool RB_PrepareRVSpecialBlurImage( void ) {
+	if ( !rbRVSpecialBlurPrepared || tr.specialBlurDepthImage == NULL || tr.specialBlurRenderTexture == NULL ) {
+		return false;
+	}
+
+	RB_InitRVSpecialStages();
+	if ( !R_ValidateGLSLProgram( &rbRVSpecialBlurStage ) ) {
+		return false;
+	}
+
+	idRenderTexture *previousRenderTexture = backEnd.renderTexture;
+	const int blurWidth = tr.specialBlurRenderTexture->GetWidth();
+	const int blurHeight = tr.specialBlurRenderTexture->GetHeight();
+	const int viewportWidth = backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1;
+	const int viewportHeight = backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1;
+
+	RB_CaptureCurrentRenderImage( viewportWidth, viewportHeight );
+	if ( !backEnd.currentRenderCopied || globalImages->currentRenderImage == NULL ) {
+		return false;
+	}
+
+	RB_BindPostProcessRenderTexture( tr.specialBlurRenderTexture, blurWidth, blurHeight );
+	RB_BeginFullscreenPostProcessPass( 0, 0, blurWidth, blurHeight );
+
+	GL_SelectTexture( 0 );
+	globalImages->currentRenderImage->Bind();
+	glUseProgramObjectARB( (GLhandleARB)rbRVSpecialBlurStage.glslProgramObject );
+	if ( rbRVSpecialBlurStage.shaderTextureLocations[0] >= 0 ) {
+		glUniform1iARB( rbRVSpecialBlurStage.shaderTextureLocations[0], 0 );
+	}
+
+	const GLfloat textureScale[2] = { 1.0f, 1.0f };
+	const GLfloat sampleDist = 0.00620f;
+	if ( rbRVSpecialBlurStage.shaderParmLocations[RB_RVSPECIAL_BLUR_UNIFORM_TEXTURE_SCALE] >= 0 ) {
+		glUniform2fvARB( rbRVSpecialBlurStage.shaderParmLocations[RB_RVSPECIAL_BLUR_UNIFORM_TEXTURE_SCALE], 1, textureScale );
+	}
+	if ( rbRVSpecialBlurStage.shaderParmLocations[RB_RVSPECIAL_BLUR_UNIFORM_SAMPLE_DIST] >= 0 ) {
+		glUniform1fARB( rbRVSpecialBlurStage.shaderParmLocations[RB_RVSPECIAL_BLUR_UNIFORM_SAMPLE_DIST], sampleDist );
+	}
+
+	RB_DrawFullscreenPostProcessQuadUnitUV();
+
+	glUseProgramObjectARB( 0 );
+	globalImages->BindNull();
+	RB_EndFullscreenPostProcessPass();
+	RB_RestorePostProcessTarget(
+		previousRenderTexture,
+		backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1,
+		backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1 );
+	backEnd.glState.forceGlState = true;
+	return true;
+}
+
+static bool RB_CompositeRVSpecialBlur( void ) {
+	if ( !rbRVSpecialBlurPrepared || tr.specialBlurDepthImage == NULL || tr.specialBlurImage == NULL ) {
+		return false;
+	}
+
+	RB_InitRVSpecialStages();
+	if ( !R_ValidateGLSLProgram( &rbRVSpecialMedLabsStage ) ) {
+		return false;
+	}
+
+	const GLfloat effectRange = Max( tr.specialEffectParms[ SPECIAL_EFFECT_BLUR ][4], 0.01f );
+	const GLfloat focus = idMath::ClampFloat( 0.0f, 1.0f, tr.specialEffectParms[ SPECIAL_EFFECT_BLUR ][5] );
+	const GLfloat scroll = static_cast<GLfloat>( backEnd.viewDef->renderView.time ) * 0.001f * 0.25f;
+	const GLfloat approachPercent = idMath::ClampFloat( 0.0f, 1.0f, tr.specialEffectParms[ SPECIAL_EFFECT_BLUR ][6] );
+	const GLfloat approachColor[4] = {
+		tr.specialEffectParms[ SPECIAL_EFFECT_BLUR ][0],
+		tr.specialEffectParms[ SPECIAL_EFFECT_BLUR ][1],
+		tr.specialEffectParms[ SPECIAL_EFFECT_BLUR ][2],
+		tr.specialEffectParms[ SPECIAL_EFFECT_BLUR ][3]
+	};
+
+	backEnd.currentScissor = backEnd.viewDef->scissor;
+	RB_BeginFullscreenPostProcessPass(
+		backEnd.viewDef->viewport.x1 + backEnd.viewDef->scissor.x1,
+		backEnd.viewDef->viewport.y1 + backEnd.viewDef->scissor.y1,
+		backEnd.viewDef->scissor.x2 - backEnd.viewDef->scissor.x1 + 1,
+		backEnd.viewDef->scissor.y2 - backEnd.viewDef->scissor.y1 + 1 );
+
+	GL_State( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
+	GL_SelectTexture( 0 );
+	tr.specialBlurDepthImage->Bind();
+	GL_SelectTexture( 1 );
+	tr.specialBlurImage->Bind();
+	GL_SelectTexture( 0 );
+
+	glUseProgramObjectARB( (GLhandleARB)rbRVSpecialMedLabsStage.glslProgramObject );
+	if ( rbRVSpecialMedLabsStage.shaderTextureLocations[0] >= 0 ) {
+		glUniform1iARB( rbRVSpecialMedLabsStage.shaderTextureLocations[0], 0 );
+	}
+	if ( rbRVSpecialMedLabsStage.shaderTextureLocations[1] >= 0 ) {
+		glUniform1iARB( rbRVSpecialMedLabsStage.shaderTextureLocations[1], 1 );
+	}
+	if ( rbRVSpecialMedLabsStage.shaderParmLocations[RB_RVSPECIAL_MEDLABS_UNIFORM_RANGE] >= 0 ) {
+		glUniform1fARB( rbRVSpecialMedLabsStage.shaderParmLocations[RB_RVSPECIAL_MEDLABS_UNIFORM_RANGE], effectRange );
+	}
+	if ( rbRVSpecialMedLabsStage.shaderParmLocations[RB_RVSPECIAL_MEDLABS_UNIFORM_FOCUS] >= 0 ) {
+		glUniform1fARB( rbRVSpecialMedLabsStage.shaderParmLocations[RB_RVSPECIAL_MEDLABS_UNIFORM_FOCUS], focus );
+	}
+	if ( rbRVSpecialMedLabsStage.shaderParmLocations[RB_RVSPECIAL_MEDLABS_UNIFORM_SCROLL] >= 0 ) {
+		glUniform1fARB( rbRVSpecialMedLabsStage.shaderParmLocations[RB_RVSPECIAL_MEDLABS_UNIFORM_SCROLL], scroll );
+	}
+	if ( rbRVSpecialMedLabsStage.shaderParmLocations[RB_RVSPECIAL_MEDLABS_UNIFORM_APPROACH_COLOR] >= 0 ) {
+		glUniform4fvARB( rbRVSpecialMedLabsStage.shaderParmLocations[RB_RVSPECIAL_MEDLABS_UNIFORM_APPROACH_COLOR], 1, approachColor );
+	}
+	if ( rbRVSpecialMedLabsStage.shaderParmLocations[RB_RVSPECIAL_MEDLABS_UNIFORM_APPROACH_PERCENT] >= 0 ) {
+		glUniform1fARB( rbRVSpecialMedLabsStage.shaderParmLocations[RB_RVSPECIAL_MEDLABS_UNIFORM_APPROACH_PERCENT], approachPercent );
+	}
+
+	RB_DrawFullscreenPostProcessQuadUnitUV();
+
+	glUseProgramObjectARB( 0 );
+	GL_SelectTexture( 1 );
+	globalImages->BindNull();
+	GL_SelectTexture( 0 );
+	globalImages->BindNull();
+	RB_EndFullscreenPostProcessPass();
+	backEnd.glState.forceGlState = true;
+	return true;
+}
+
+static bool RB_SetRVSpecialOrthoForView( void ) {
+	if ( backEnd.viewDef == NULL ) {
+		return false;
+	}
+
+	const int viewportWidth = backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1;
+	const int viewportHeight = backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1;
+	if ( viewportWidth <= 0 || viewportHeight <= 0 ) {
+		return false;
+	}
+
+	glViewport(
+		tr.viewportOffset[0] + backEnd.viewDef->viewport.x1,
+		tr.viewportOffset[1] + backEnd.viewDef->viewport.y1,
+		viewportWidth,
+		viewportHeight );
+	glScissor(
+		tr.viewportOffset[0] + backEnd.viewDef->viewport.x1 + backEnd.viewDef->scissor.x1,
+		tr.viewportOffset[1] + backEnd.viewDef->viewport.y1 + backEnd.viewDef->scissor.y1,
+		backEnd.viewDef->scissor.x2 - backEnd.viewDef->scissor.x1 + 1,
+		backEnd.viewDef->scissor.y2 - backEnd.viewDef->scissor.y1 + 1 );
+	backEnd.currentScissor = backEnd.viewDef->scissor;
+
+	glMatrixMode( GL_PROJECTION );
+	glLoadIdentity();
+	glOrtho( 0, viewportWidth, viewportHeight, 0, -1, 1 );
+	glMatrixMode( GL_MODELVIEW );
+	glLoadIdentity();
+
+	GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE );
+	GL_Cull( CT_TWO_SIDED );
+	glDisable( GL_DEPTH_TEST );
+	glDisable( GL_STENCIL_TEST );
+	return true;
+}
+
+static bool RB_DrawRVSpecialALLight( const idVec3 &origin, float size, const idVec3 &color ) {
+	idPlane eye;
+	idPlane clip;
+	idVec3 ndc;
+	idVec3 points[4];
+	idVec3 eyePoint;
+	const int viewportWidth = backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1;
+	const int viewportHeight = backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1;
+	const float distanceScale = 2000.0f;
+
+	R_TransformModelToClip( origin, backEnd.viewDef->worldSpace.modelViewMatrix, backEnd.viewDef->projectionMatrix, eye, clip );
+	if ( clip[3] <= 0.0f ) {
+		return false;
+	}
+
+	const float lightDepth = -eye[2];
+	if ( lightDepth <= 0.0f ) {
+		return false;
+	}
+
+	const idVec3 right = backEnd.viewDef->renderView.viewaxis[1] * size;
+	const idVec3 up = backEnd.viewDef->renderView.viewaxis[2] * size;
+	points[0] = origin + right + up;
+	points[1] = origin - right + up;
+	points[2] = origin - right - up;
+	points[3] = origin + right - up;
+
+	float x1 = idMath::INFINITY;
+	float y1 = idMath::INFINITY;
+	float x2 = -idMath::INFINITY;
+	float y2 = -idMath::INFINITY;
+
+	for ( int i = 0; i < 4; i++ ) {
+		R_TransformModelToClip( points[i], backEnd.viewDef->worldSpace.modelViewMatrix, backEnd.viewDef->projectionMatrix, eye, clip );
+		if ( clip[3] <= 0.0f ) {
+			return false;
+		}
+
+		R_TransformClipToDevice( clip, backEnd.viewDef, ndc );
+		const float sx = ( ndc.x * 0.5f + 0.5f ) * viewportWidth;
+		const float sy = ( 1.0f - ( ndc.y * 0.5f + 0.5f ) ) * viewportHeight;
+		x1 = Min( x1, sx );
+		y1 = Min( y1, sy );
+		x2 = Max( x2, sx );
+		y2 = Max( y2, sy );
+	}
+
+	if ( x2 < 0.0f || y2 < 0.0f || x1 > viewportWidth || y1 > viewportHeight ) {
+		return false;
+	}
+
+	R_LocalPointToGlobal( backEnd.viewDef->worldSpace.modelViewMatrix, origin, eyePoint );
+
+	const GLfloat lightColor[4] = { color.x, color.y, color.z, 1.0f };
+	if ( rbRVSpecialALStage.shaderParmLocations[RB_RVSPECIAL_AL_UNIFORM_DISTANCE_SCALE] >= 0 ) {
+		glUniform1fARB( rbRVSpecialALStage.shaderParmLocations[RB_RVSPECIAL_AL_UNIFORM_DISTANCE_SCALE], distanceScale );
+	}
+	if ( rbRVSpecialALStage.shaderParmLocations[RB_RVSPECIAL_AL_UNIFORM_LIGHT_LOC] >= 0 ) {
+		glUniform3fvARB( rbRVSpecialALStage.shaderParmLocations[RB_RVSPECIAL_AL_UNIFORM_LIGHT_LOC], 1, eyePoint.ToFloatPtr() );
+	}
+	if ( rbRVSpecialALStage.shaderParmLocations[RB_RVSPECIAL_AL_UNIFORM_LIGHT_COLOR] >= 0 ) {
+		glUniform4fvARB( rbRVSpecialALStage.shaderParmLocations[RB_RVSPECIAL_AL_UNIFORM_LIGHT_COLOR], 1, lightColor );
+	}
+	if ( rbRVSpecialALStage.shaderParmLocations[RB_RVSPECIAL_AL_UNIFORM_LIGHT_SIZE] >= 0 ) {
+		glUniform1fARB( rbRVSpecialALStage.shaderParmLocations[RB_RVSPECIAL_AL_UNIFORM_LIGHT_SIZE], size );
+	}
+	if ( rbRVSpecialALStage.shaderParmLocations[RB_RVSPECIAL_AL_UNIFORM_LIGHT_MIN_DISTANCE] >= 0 ) {
+		glUniform1fARB( rbRVSpecialALStage.shaderParmLocations[RB_RVSPECIAL_AL_UNIFORM_LIGHT_MIN_DISTANCE], lightDepth );
+	}
+
+	const float s1 = x1 / viewportWidth;
+	const float s2 = x2 / viewportWidth;
+	const float t1 = 1.0f - ( y1 / viewportHeight );
+	const float t2 = 1.0f - ( y2 / viewportHeight );
+
+	glBegin( GL_QUADS );
+	glTexCoord2f( s1, t1 );
+	glMultiTexCoord2fARB( GL_TEXTURE1, 0.0f, 0.0f );
+	glVertex2f( x1, y1 );
+	glTexCoord2f( s2, t1 );
+	glMultiTexCoord2fARB( GL_TEXTURE1, 1.0f, 0.0f );
+	glVertex2f( x2, y1 );
+	glTexCoord2f( s2, t2 );
+	glMultiTexCoord2fARB( GL_TEXTURE1, 1.0f, 1.0f );
+	glVertex2f( x2, y2 );
+	glTexCoord2f( s1, t2 );
+	glMultiTexCoord2fARB( GL_TEXTURE1, 0.0f, 1.0f );
+	glVertex2f( x1, y2 );
+	glEnd();
+
+	return true;
+}
+
+void RB_DrawSpecialEffects( const void *data ) {
+	const drawSurfsCommand_t *cmd = (const drawSurfsCommand_t *)data;
+
+	backEnd.viewDef = cmd->viewDef;
+	rbRVSpecialBlurPrepared = false;
+	rbRVSpecialALPrepared = false;
+	rbRVSpecialActiveMask = tr.specialEffectsEnabled;
+	if ( r_forceSpecialEffects.GetInteger() > 0 ) {
+		rbRVSpecialActiveMask = r_forceSpecialEffects.GetInteger();
+	}
+
+	if ( backEnd.viewDef == NULL || backEnd.viewDef->renderWorld == NULL || backEnd.viewDef->numDrawSurfs <= 0 ) {
+		return;
+	}
+	if ( !glConfig.GLSLProgramAvailable ) {
+		return;
+	}
+
+	if ( ( rbRVSpecialActiveMask & SPECIAL_EFFECT_BLUR ) != 0 && RB_EnsureRVSpecialBlurResources() ) {
+		rbRVSpecialBlurPrepared = RB_CaptureRVSpecialDepth(
+			tr.specialBlurDepthRenderTexture,
+			tr.specialBlurDepthRenderTexture->GetWidth(),
+			tr.specialBlurDepthRenderTexture->GetHeight(),
+			false,
+			Max( tr.specialEffectParms[ SPECIAL_EFFECT_BLUR ][7], 1.0f ) );
+	}
+
+	if ( ( rbRVSpecialActiveMask & SPECIAL_EFFECT_AL ) != 0 && RB_EnsureRVSpecialALResources() ) {
+		rbRVSpecialALPrepared = RB_CaptureRVSpecialDepth(
+			tr.specialALDepthRenderTexture,
+			tr.specialALDepthRenderTexture->GetWidth(),
+			tr.specialALDepthRenderTexture->GetHeight(),
+			true,
+			2000.0f );
+	}
+}
+
+static void RB_DisplaySpecialEffects( const viewEntity_t *viewEnts, bool prePass ) {
+	if ( backEnd.viewDef == NULL || !glConfig.GLSLProgramAvailable ) {
+		return;
+	}
+
+	if ( prePass ) {
+		// Legacy blur is authored as a fullscreen 2D overlay. The 3D pass only captures
+		// its depth mask; the blur image itself is generated from the resolved scene when
+		// the later HUD/UI view starts.
+		if ( viewEnts == NULL && ( rbRVSpecialActiveMask & SPECIAL_EFFECT_BLUR ) != 0 ) {
+			bool restoredView = false;
+			if ( RB_PrepareRVSpecialBlurImage() ) {
+				restoredView |= RB_CompositeRVSpecialBlur();
+			}
+			if ( restoredView ) {
+				RB_RVSpecialRestoreDrawingView();
+			}
+		}
+		return;
+	}
+
+	bool restoredView = false;
+
+	if ( viewEnts != NULL && ( rbRVSpecialActiveMask & SPECIAL_EFFECT_AL ) != 0 && rbRVSpecialALPrepared && tr.primaryWorld != NULL ) {
+		RB_InitRVSpecialStages();
+		if ( R_ValidateGLSLProgram( &rbRVSpecialALStage ) && RB_SetRVSpecialOrthoForView() ) {
+			GL_SelectTexture( 0 );
+			tr.specialALDepthImage->Bind();
+			GL_SelectTexture( 1 );
+			tr.specialALLightImage->Bind();
+			GL_SelectTexture( 0 );
+
+			glUseProgramObjectARB( (GLhandleARB)rbRVSpecialALStage.glslProgramObject );
+			if ( rbRVSpecialALStage.shaderTextureLocations[0] >= 0 ) {
+				glUniform1iARB( rbRVSpecialALStage.shaderTextureLocations[0], 0 );
+			}
+			if ( rbRVSpecialALStage.shaderTextureLocations[1] >= 0 ) {
+				glUniform1iARB( rbRVSpecialALStage.shaderTextureLocations[1], 1 );
+			}
+
+			for ( int i = 0; i < tr.primaryWorld->lightDefs.Num(); i++ ) {
+				idRenderLightLocal *light = tr.primaryWorld->lightDefs[i];
+				if ( light == NULL ) {
+					continue;
+				}
+
+				idVec3 lightColor( light->parms.shaderParms[0], light->parms.shaderParms[1], light->parms.shaderParms[2] );
+				if ( lightColor.LengthSqr() <= idMath::FLOAT_EPSILON ) {
+					continue;
+				}
+				lightColor.Normalize();
+
+				RB_DrawRVSpecialALLight( light->globalLightOrigin, 300.0f, lightColor );
+			}
+
+			glUseProgramObjectARB( 0 );
+			GL_SelectTexture( 1 );
+			globalImages->BindNull();
+			GL_SelectTexture( 0 );
+			globalImages->BindNull();
+			restoredView = true;
+		}
+	}
+
+	if ( restoredView ) {
+		RB_RVSpecialRestoreDrawingView();
+	}
+}
+
 void RB_T_FillDepthBuffer( const drawSurf_t *surf ) {
 	int			stage;
 	const idMaterial	*shader;
@@ -3032,11 +3694,16 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 			continue;
 		}
 
-		// Fallback for materials that reference _currentRender but were not sorted as post-process.
-		// Offscreen render-texture passes manage their own _currentRender capture and must not
-		// overwrite it here after clearing the destination render target.
+		// Fallback for materials that reference captured scene buffers but were not sorted as
+		// post-process. Offscreen render-texture passes manage their own captures and must not
+		// overwrite them here after clearing the destination render target.
 		if ( !backEnd.currentRenderCopied && RB_AutomaticCurrentRenderCaptureAllowed() && RB_StageUsesCurrentRender( pStage ) ) {
 			RB_CaptureCurrentRenderImage(
+				backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1,
+				backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1 );
+		}
+		if ( !backEnd.currentDepthCopied && RB_AutomaticCurrentRenderCaptureAllowed() && RB_StageUsesCurrentDepth( pStage ) ) {
+			RB_CaptureCurrentDepthImage(
 				backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1,
 				backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1 );
 		}
@@ -3276,6 +3943,13 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 		//
 		//--------------------------
 
+		// Dynamic reflection/refraction stages exist only to refresh offscreen render targets.
+		// The captured images are sampled by later stages via _reflectionRender/_refractionRender.
+		if ( pStage->texture.dynamic == DI_REFLECTION_RENDER
+			|| pStage->texture.dynamic == DI_REFRACTION_RENDER ) {
+			continue;
+		}
+
 		// set the color
 		color[0] = regs[ pStage->color.registers[0] ];
 		color[1] = regs[ pStage->color.registers[1] ];
@@ -3407,6 +4081,14 @@ int RB_STD_DrawShaderPasses( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 			return 0;
 		}
 
+		bool needsCurrentDepth = false;
+		for ( int surfIndex = 0; surfIndex < numDrawSurfs; surfIndex++ ) {
+			if ( RB_MaterialUsesCurrentDepth( drawSurfs[surfIndex]->material ) ) {
+				needsCurrentDepth = true;
+				break;
+			}
+		}
+
 		// Copy the current view for any post-process material sampling _currentRender.
 		// Do not gate this on viewEntitys: world-only views may still contain post-process surfaces.
 		// Offscreen render-texture passes capture _currentRender explicitly and must keep that copy.
@@ -3414,6 +4096,11 @@ int RB_STD_DrawShaderPasses( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 			RB_CaptureCurrentRenderImage(
 				backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1,
 				backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1 );
+			if ( needsCurrentDepth ) {
+				RB_CaptureCurrentDepthImage(
+					backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1,
+					backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1 );
+			}
 		} else {
 			// Offscreen fullscreen passes are explicitly managed by the caller. Mark the copy as
 			// satisfied so SS_POST_PROCESS surfaces are allowed to draw in this view.
@@ -4531,8 +5218,6 @@ void	RB_STD_DrawView( void ) {
 	if ( processed < numDrawSurfs ) {
 		RB_STD_DrawShaderPasses( drawSurfs+processed, numDrawSurfs-processed );
 	}
-
-	RB_STD_ApplyIAmTheDukeTerrainSnow( drawSurfs, numDrawSurfs );
 
 	RB_RenderDebugTools( drawSurfs, numDrawSurfs );
 

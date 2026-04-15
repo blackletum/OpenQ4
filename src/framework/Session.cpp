@@ -187,6 +187,55 @@ static bool Session_FileExistsInSearchPaths( const char *path ) {
 	return ( fileSystem->ReadFile( path, NULL, NULL ) != -1 );
 }
 
+static void Session_NormalizeMapDeclPath( const char *mapPath, idStr &normalizedPath ) {
+	normalizedPath = ( mapPath != NULL ) ? mapPath : "";
+	normalizedPath.BackSlashesToSlashes();
+	normalizedPath.StripFileExtension();
+
+	if ( !idStr::Icmpn( normalizedPath.c_str(), "maps/", 5 ) ) {
+		normalizedPath = normalizedPath.c_str() + 5;
+	}
+}
+
+static bool Session_GetMapDeclDict( const char *mapPath, idDict &outMapDecl ) {
+	outMapDecl.Clear();
+
+	idStr normalizedPath;
+	Session_NormalizeMapDeclPath( mapPath, normalizedPath );
+	if ( normalizedPath.IsEmpty() ) {
+		return false;
+	}
+
+	const idDecl *mapDecl = declManager->FindType( DECL_MAPDEF, normalizedPath.c_str(), false );
+	const idDeclEntityDef *mapDef = static_cast<const idDeclEntityDef *>( mapDecl );
+	if ( mapDef != NULL ) {
+		outMapDecl = mapDef->dict;
+		outMapDecl.Set( "path", mapDef->GetName() );
+		return true;
+	}
+
+	const int numMaps = fileSystem->GetNumMaps();
+	for ( int i = 0; i < numMaps; ++i ) {
+		const idDict *candidate = fileSystem->GetMapDecl( i );
+		if ( candidate == NULL ) {
+			continue;
+		}
+
+		idStr candidatePath;
+		Session_NormalizeMapDeclPath( candidate->GetString( "path" ), candidatePath );
+		if ( candidatePath.IsEmpty() ) {
+			continue;
+		}
+
+		if ( !fileSystem->FilenameCompare( normalizedPath.c_str(), candidatePath.c_str() ) ) {
+			outMapDecl = *candidate;
+			return true;
+		}
+	}
+
+	return false;
+}
+
 static bool Session_ResolveImageFilePath( const idStr &imagePath, idStr &resolvedPath ) {
 	if ( imagePath.Length() <= 0 ) {
 		return false;
@@ -1542,8 +1591,8 @@ static void Session_Map_f( const idCmdArgs &args ) {
 		break;
 	}
 
-	cvarSystem->SetCVarBool( "developer", false );
-	sessLocal.StartNewGame( map, true );
+	const bool developerMapStart = cvarSystem->GetCVarBool( "developer" );
+	sessLocal.StartNewGame( map, developerMapStart );
 }
 
 /*
@@ -1849,16 +1898,29 @@ bool	idSessionLocal::IsMultiplayer() {
 	return idAsyncNetwork::IsActive();
 }
 
-bool idSessionLocal::IsIAmTheDukeActive() const {
+bool idSessionLocal::IsIAmTheDukeActive( void ) const {
 	return iamTheDukeActive && mapSpawned && !idAsyncNetwork::IsActive();
 }
 
 void idSessionLocal::ToggleIAmTheDuke( void ) {
-	if ( !mapSpawned || idAsyncNetwork::IsActive() ) {
+	if ( idAsyncNetwork::IsActive() || !OpenQ4_IsSingleplayerGameType() ) {
+		common->Printf( "iamtheduke is single-player only.\n" );
+		return;
+	}
+
+	if ( !mapSpawned || !gameEdit || !gameEdit->PlayerIsValid() ) {
+		common->Printf( "You must be in a single-player game to use this command.\n" );
+		return;
+	}
+
+	idPlayer *player = static_cast<idPlayer *>( OpenQ4_FindSpawnedEntityByBaseClass( "idPlayer" ) );
+	if ( player != NULL && player->health <= 0 ) {
+		common->Printf( "You must be alive to use this command.\n" );
 		return;
 	}
 
 	iamTheDukeActive = !iamTheDukeActive;
+	common->Printf( "iamtheduke %s\n", iamTheDukeActive ? "ON" : "OFF" );
 }
 
 void idSessionLocal::DrawIAmTheDukeOverlay( void ) const {
@@ -2909,14 +2971,20 @@ void idSessionLocal::LoadLoadingGui( const char *mapName ) {
 	const bool mapLooksMultiplayer = !idStr::Icmpn( spawnMapPath, "mp/", 3 );
 	const bool isMultiplayerLoad = mapLooksMultiplayer || ( spawnGameType[ 0 ] != '\0' && idStr::Icmp( spawnGameType, "singleplayer" ) != 0 );
 
-	const idDecl *mapDecl = declManager->FindType( DECL_MAPDEF, mapName, false );
-	const idDeclEntityDef *mapDef = static_cast<const idDeclEntityDef *>( mapDecl );
+	idDict mapDeclDict;
+	const idDict *mapDef = Session_GetMapDeclDict( spawnMapPath, mapDeclDict ) ? &mapDeclDict : NULL;
 	if ( mapDef ) {
-		loadingLevelName = common->GetLanguageDict()->GetString( mapDef->dict.GetString( "name", mapName ) );
-		loadingObjectives = common->GetLanguageDict()->GetString( mapDef->dict.GetString( "objectives", "" ) );
-		loadingAuthor = common->GetLanguageDict()->GetString( mapDef->dict.GetString( "author", "" ) );
+		loadingLevelName = common->GetLanguageDict()->GetString( mapDef->GetString( "name", spawnMapPath ) );
+		loadingObjectives = common->GetLanguageDict()->GetString( mapDef->GetString( "objectives", "" ) );
 
-		const char *loadImage = mapDef->dict.GetString( "loadimage", "" );
+		const char *loadingAuthorKey = mapDef->GetString( "author", "" );
+		if ( loadingAuthorKey[ 0 ] == '\0' ) {
+			// Add-on packs commonly store the loadscreen subtitle under `loading_message`.
+			loadingAuthorKey = mapDef->GetString( "loading_message", "" );
+		}
+		loadingAuthor = common->GetLanguageDict()->GetString( loadingAuthorKey );
+
+		const char *loadImage = mapDef->GetString( "loadimage", "" );
 		if ( loadImage[0] ) {
 			loadingBackground = loadImage;
 		} else {
@@ -2926,7 +2994,7 @@ void idSessionLocal::LoadLoadingGui( const char *mapName ) {
 			loadingBackground = screenshot;
 		}
 
-		loadGuiOverride = mapDef->dict.GetString( "loadgui", "" );
+		loadGuiOverride = mapDef->GetString( "loadgui", "" );
 	} else {
 		// Keep non-mapDef paths consistent with MP levelshot handling.
 		char screenshot[ MAX_STRING_CHARS ];
@@ -4220,7 +4288,7 @@ void idSessionLocal::Draw() {
 		}
 	} else {
 #if ID_CONSOLE_LOCK
-		if ( com_allowConsole.GetBool() ) {
+		if ( con_allowConsole.GetBool() ) {
 			Session_DrawFallbackLoadingScreen();
 		} else {
 			emptyDrawCount++;
@@ -4642,7 +4710,7 @@ void idSessionLocal::Init() {
 #ifndef	ID_DEDICATED
 	cmdSystem->AddCommand( "openq4_startSingleplayer", Session_OpenQ4StartSingleplayer_f, CMD_FL_SYSTEM, "internal helper to start singleplayer after game-module switches" );
 	cmdSystem->AddCommand( "openq4_resumeBakeLightGrids", Session_OpenQ4ResumeBakeLightGrids_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "internal helper to continue light-grid baking after game-module switches" );
-	cmdSystem->AddCommand( "openq4_iamtheduke", Session_IAmTheDuke_f, CMD_FL_SYSTEM, "toggles the SP-only iamtheduke cheat" );
+	cmdSystem->AddCommand( "iamtheduke", Session_IAmTheDuke_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "toggles the SP-only iamtheduke cheat text overlay" );
 	cmdSystem->AddCommand( "bakeLightGrids", Session_BakeLightGrids_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "bakes OpenQ4-compatible lightgrid metadata and irradiance atlases for the current map or a batch of maps" );
 	cmdSystem->AddCommand( "map", Session_Map_f, CMD_FL_SYSTEM, "loads a map", idCmdSystem::ArgCompletion_MapName );
 	cmdSystem->AddCommand( "devmap", Session_DevMap_f, CMD_FL_SYSTEM, "loads a map in developer mode", idCmdSystem::ArgCompletion_MapName );

@@ -735,29 +735,55 @@ static float RB_ShadowMapCascadeDistanceForView( const viewDef_t *viewDef ) {
 	return Max( r_shadowMapCascadeDistance.GetFloat(), zNear + 32.0f );
 }
 
+static void RB_ShadowMapGetViewExtents( const viewDef_t *viewDef, float &zNear, float &xmin, float &xmax, float &ymin, float &ymax ) {
+	const renderView_t &renderView = viewDef->renderView;
+
+	zNear = RB_ShadowMapViewNear( viewDef );
+	ymax = zNear * tan( renderView.fov_y * idMath::PI / 360.0f );
+	ymin = -ymax;
+
+	xmax = zNear * tan( renderView.fov_x * idMath::PI / 360.0f );
+	xmin = -xmax;
+
+	if ( tr_levelshotProjectionShiftActive ) {
+		const float width = xmax - xmin;
+		const float height = ymax - ymin;
+		const float xShift = 0.5f * width * tr_levelshotProjectionShiftX;
+		const float yShift = 0.5f * height * tr_levelshotProjectionShiftY;
+		xmin += xShift;
+		xmax += xShift;
+		ymin += yShift;
+		ymax += yShift;
+	}
+}
+
 static const int SHADOWMAP_CASCADE_SAMPLE_POINT_COUNT = 23;
 
 static void RB_ShadowMapBuildSliceCorners( const viewDef_t *viewDef, const float sliceNear, const float sliceFar, idVec3 corners[8] ) {
 	const renderView_t &renderView = viewDef->renderView;
-	const float tanHalfFovX = tan( renderView.fov_x * idMath::PI / 360.0f );
-	const float tanHalfFovY = tan( renderView.fov_y * idMath::PI / 360.0f );
 	const idVec3 &origin = renderView.vieworg;
 	const idVec3 &forward = renderView.viewaxis[0];
 	const idVec3 &left = renderView.viewaxis[1];
 	const idVec3 &up = renderView.viewaxis[2];
+	float zNear, xmin, xmax, ymin, ymax;
+
+	RB_ShadowMapGetViewExtents( viewDef, zNear, xmin, xmax, ymin, ymax );
 
 	const float depths[2] = { sliceNear, sliceFar };
 	for ( int depthIndex = 0; depthIndex < 2; depthIndex++ ) {
 		const float depth = depths[depthIndex];
 		const idVec3 center = origin + forward * depth;
-		const float halfWidth = tanHalfFovX * depth;
-		const float halfHeight = tanHalfFovY * depth;
+		const float depthScale = depth / Max( zNear, idMath::FLOAT_EPSILON );
+		const float leftExtent = xmax * depthScale;
+		const float rightExtent = xmin * depthScale;
+		const float topExtent = ymax * depthScale;
+		const float bottomExtent = ymin * depthScale;
 		const int baseIndex = depthIndex * 4;
 
-		corners[baseIndex + 0] = center + left * halfWidth + up * halfHeight;
-		corners[baseIndex + 1] = center - left * halfWidth + up * halfHeight;
-		corners[baseIndex + 2] = center - left * halfWidth - up * halfHeight;
-		corners[baseIndex + 3] = center + left * halfWidth - up * halfHeight;
+		corners[baseIndex + 0] = center + left * leftExtent + up * topExtent;
+		corners[baseIndex + 1] = center + left * rightExtent + up * topExtent;
+		corners[baseIndex + 2] = center + left * rightExtent + up * bottomExtent;
+		corners[baseIndex + 3] = center + left * leftExtent + up * bottomExtent;
 	}
 }
 

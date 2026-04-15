@@ -53,6 +53,7 @@ Notes:
 - Default behavior is **desktop-native fullscreen** (`r_fullscreenDesktop 1`): fullscreen matches your current desktop resolution and does not change Windows display mode.
 - For **exclusive fullscreen** (explicit mode switch), set `r_fullscreenDesktop 0`. In this mode, `r_mode`/`r_customWidth`/`r_customHeight` control the requested fullscreen resolution.
 - On Windows, fullscreen windows minimize on focus loss so system UI such as Alt+Tab and the Snipping Tool overlay can take foreground cleanly.
+- On Windows, `PrintScreen` yields to the system snipping UI by default (`win_printScreenToSystemTool 1`). Use `F12` for the built-in OpenQ4 screenshot command, or set that cvar to `0` if you explicitly want `PrintScreen` available for in-engine binds again.
 
 Notes:
 - When `r_fullscreenDesktop 1`, `r_mode` and `r_custom*` are ignored for fullscreen sizing (they still exist for legacy configs and exclusive mode).

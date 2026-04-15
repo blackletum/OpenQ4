@@ -764,6 +764,15 @@ Called every frame, even if not generating commands
 void IN_Frame( void ) {
 	bool	shouldGrab = true;
 
+	if ( win32.printScreenFocusReleaseUntil != 0 ) {
+		const DWORD now = GetTickCount();
+		if ( static_cast<LONG>( win32.printScreenFocusReleaseUntil - now ) > 0 ) {
+			shouldGrab = false;
+		} else {
+			win32.printScreenFocusReleaseUntil = 0;
+		}
+	}
+
 	if ( !win32.in_mouse.GetBool() ) {
 		shouldGrab = false;
 	}
@@ -934,6 +943,11 @@ Sys_PollKeyboardInputEvents
 int Sys_ReturnKeyboardInputEvent( const int n, int &ch, bool &state ) {
 	ch = IN_DIMapKey( polled_didod[ n ].dwOfs );
 	state = (polled_didod[ n ].dwData & 0x80) == 0x80;
+	if ( ch == K_PRINT_SCR ) {
+		if ( Sys_HandlePrintScreenHotkey( state ) ) {
+			return 0;
+		}
+	}
 	if ( ch == K_PRINT_SCR || ch == K_CTRL || ch == K_ALT || ch == K_RIGHT_ALT ) {
 		// for windows, add a keydown event for print screen here, since
 		// windows doesn't send keydown events to the WndProc for this key.

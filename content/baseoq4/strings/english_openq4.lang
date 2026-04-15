@@ -61,4 +61,6 @@
 	"#str_229919"	"Stock;Never;5 sec;10 sec;15 sec;30 sec;60 sec;Custom"
 	"#str_229920"	"WEAPON WHEEL"
 	"#str_229921"	"Off;Ragdoll;No Ragdoll"
+	"#str_229922"	"CONSOLE ACCESS"
+	"#str_229923"	"Ctrl+Alt+Tilde;Tilde"
 }

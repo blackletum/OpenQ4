@@ -40,7 +40,7 @@ If you have questions concerning this license or the applicable additional terms
 idCVar	idSessionLocal::gui_configServerRate( "gui_configServerRate", "0", CVAR_GUI | CVAR_ARCHIVE | CVAR_ROM | CVAR_INTEGER, "" );
 idCVar gui_set_sys_scroll( "gui_set_sys_scroll", "0", CVAR_GUI | CVAR_INTEGER, "display menu scroll step", 0, 17 );
 idCVar gui_set_audio_scroll( "gui_set_audio_scroll", "0", CVAR_GUI | CVAR_INTEGER, "audio menu scroll step", 0, 2 );
-idCVar gui_set_game_scroll( "gui_set_game_scroll", "0", CVAR_GUI | CVAR_INTEGER, "game menu scroll step", 0, 6 );
+idCVar gui_set_game_scroll( "gui_set_game_scroll", "0", CVAR_GUI | CVAR_INTEGER, "game menu scroll step", 0, 10 );
 
 /*
 =================
@@ -1969,7 +1969,7 @@ static bool HandleMainMenuSettingsScrollInput( idUserInterface *gui, int key ) {
 	if ( AdjustMainMenuPageScroll( gui, "p_settings_audio::visible", gui_set_audio_scroll, "gui_set_audio_scroll", 0, 2, "applySetAudioScroll", delta ) ) {
 		return true;
 	}
-	if ( AdjustMainMenuPageScroll( gui, "p_settings_game::visible", gui_set_game_scroll, "gui_set_game_scroll", 0, 6, "applySetGameScroll", delta ) ) {
+	if ( AdjustMainMenuPageScroll( gui, "p_settings_game::visible", gui_set_game_scroll, "gui_set_game_scroll", 0, 10, "applySetGameScroll", delta ) ) {
 		return true;
 	}
 

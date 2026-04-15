@@ -68,6 +68,63 @@ typedef struct mtrParsingData_s {
 	bool			forceOverlays;
 } mtrParsingData_t;
 
+static const char *R_ResolveQ4SpecialImageName( const char *name ) {
+	if ( name == NULL ) {
+		return NULL;
+	}
+
+	if ( !idStr::Icmp( name, "DepthTexture" ) ) {
+		if ( globalImages->GetImage( "DepthTexture" ) != NULL ) {
+			return "DepthTexture";
+		}
+		return "_currentDepth";
+	}
+
+	if ( !idStr::Icmp( name, "BlurTexture1" ) ) {
+		if ( globalImages->GetImage( "BlurTexture1" ) != NULL ) {
+			return "BlurTexture1";
+		}
+		return "_currentRender";
+	}
+
+	if ( !idStr::Icmp( name, "ambientNormalMap" ) ) {
+		return "_ambient";
+	}
+	if ( !idStr::Icmp( name, "normalCubeMap" ) ) {
+		return "_normalCubeMap";
+	}
+	if ( !idStr::Icmp( name, "specularTableImage" ) ) {
+		return "_specularTable";
+	}
+
+	return name;
+}
+
+static idImage *R_LoadMaterialImage( const char *name, textureFilter_t filter, textureRepeat_t repeat,
+	textureUsage_t usage, cubeFiles_t cubeMap = CF_2D ) {
+	return globalImages->ImageFromFile( R_ResolveQ4SpecialImageName( name ), filter, repeat, usage, cubeMap );
+}
+
+static bool R_IsSceneCaptureImage( const idImage *image ) {
+	if ( image == NULL ) {
+		return false;
+	}
+
+	if ( image == globalImages->currentRenderImage
+		|| image == globalImages->originalCurrentRenderImage
+		|| image == globalImages->currentDepthImage ) {
+		return true;
+	}
+
+	const char *name = image->GetName();
+	if ( name == NULL ) {
+		return false;
+	}
+
+	return idStr::Icmpn( name, "_currentRender", 14 ) == 0
+		|| idStr::Icmpn( name, "_currentDepth", 13 ) == 0;
+}
+
 
 /*
 =============
@@ -1128,7 +1185,7 @@ void idMaterial::ParseFragmentMap( idLexer &src, newShaderStage_t *newStage ) {
 	str = R_ParsePastImageProgram( src );
 
 	newStage->fragmentProgramImages[unit] = 
-		globalImages->ImageFromFile( str, tf, trp, td, cubeMap );
+		R_LoadMaterialImage( str, tf, trp, td, cubeMap );
 	if ( !newStage->fragmentProgramImages[unit] ) {
 		newStage->fragmentProgramImages[unit] = globalImages->defaultImage;
 	}
@@ -1356,7 +1413,7 @@ void idMaterial::ParseShaderTexture( idLexer &src, newShaderStage_t *newStage ) 
 
 	str = R_ParsePastImageProgram( src );
 	newStage->shaderTextureImages[slot] =
-		globalImages->ImageFromFile( str, tf, trp, td, cubeMap );
+		R_LoadMaterialImage( str, tf, trp, td, cubeMap );
 	if ( !newStage->shaderTextureImages[slot] ) {
 		newStage->shaderTextureImages[slot] = globalImages->defaultImage;
 	}
@@ -1519,6 +1576,21 @@ void idMaterial::ParseStage( idLexer &src, const textureRepeat_t trpDefault ) {
 
 		if (  !token.Icmp( "mirrorRenderMap" ) ) {
 			ts->dynamic = DI_MIRROR_RENDER;
+			ts->width = src.ParseInt();
+			ts->height = src.ParseInt();
+			ts->texgen = TG_SCREEN;
+			continue;
+		}
+
+		if ( !token.Icmp( "reflectionRenderMap" ) ) {
+			ts->dynamic = DI_REFLECTION_RENDER;
+			ts->width = src.ParseInt();
+			ts->height = src.ParseInt();
+			continue;
+		}
+
+		if ( !token.Icmp( "refractionRenderMap" ) ) {
+			ts->dynamic = DI_REFRACTION_RENDER;
 			ts->width = src.ParseInt();
 			ts->height = src.ParseInt();
 			ts->texgen = TG_SCREEN;
@@ -1971,7 +2043,7 @@ void idMaterial::ParseStage( idLexer &src, const textureRepeat_t trpDefault ) {
 
 	// now load the image with all the parms we parsed
 	if ( imageName[0] ) {
-		ts->image = globalImages->ImageFromFile( imageName, tf, trp, td, cubeMap );
+		ts->image = R_LoadMaterialImage( imageName, tf, trp, td, cubeMap );
 		if ( !ts->image ) {
 			ts->image = globalImages->defaultImage;
 		}
@@ -2286,7 +2358,7 @@ void idMaterial::ParseMaterial( idLexer &src ) {
 				src.Warning( "missing parameter for 'portalImage' in '%s'", GetName() );
 				continue;
 			}
-			portalImage = globalImages->ImageFromFile( token.c_str(), TF_DEFAULT, TR_REPEAT, TD_DEFAULT );
+			portalImage = R_LoadMaterialImage( token.c_str(), TF_DEFAULT, TR_REPEAT, TD_DEFAULT );
 			src.SkipRestOfLine();
 			continue;
 		}
@@ -2404,7 +2476,7 @@ void idMaterial::ParseMaterial( idLexer &src ) {
 			idStr	copy;
 
 			copy = str;	// so other things don't step on it
-			lightFalloffImage = globalImages->ImageFromFile( copy, TF_DEFAULT, TR_CLAMP /* TR_CLAMP_TO_ZERO */, TD_DEFAULT );
+			lightFalloffImage = R_LoadMaterialImage( copy, TF_DEFAULT, TR_CLAMP /* TR_CLAMP_TO_ZERO */, TD_DEFAULT );
 			continue;
 		}
 		// guisurf <guifile> | guisurf entity
@@ -2764,12 +2836,12 @@ bool idMaterial::Parse( const char *text, const int textLength ) {
 		}
 	}
 
-	// anything that references _currentRender will automatically get sort = SS_POST_PROCESS
-	// and coverage = MC_TRANSLUCENT
+	// anything that references a captured scene buffer such as _currentRender or
+	// _currentDepth will automatically get sort = SS_POST_PROCESS and coverage = MC_TRANSLUCENT
 
 	for ( i = 0 ; i < numStages ; i++ ) {
 		shaderStage_t	*pStage = &pd->parseStages[i];
-		if ( pStage->texture.image == globalImages->currentRenderImage ) {
+		if ( R_IsSceneCaptureImage( pStage->texture.image ) ) {
 			if ( sort != SS_PORTAL_SKY ) {
 				sort = SS_POST_PROCESS;
 				coverage = MC_TRANSLUCENT;
@@ -2778,7 +2850,7 @@ bool idMaterial::Parse( const char *text, const int textLength ) {
 		}
 		if ( pStage->newStage ) {
 			for ( int j = 0 ; j < pStage->newStage->numFragmentProgramImages ; j++ ) {
-				if ( pStage->newStage->fragmentProgramImages[j] == globalImages->currentRenderImage ) {
+				if ( R_IsSceneCaptureImage( pStage->newStage->fragmentProgramImages[j] ) ) {
 					if ( sort != SS_PORTAL_SKY ) {
 						sort = SS_POST_PROCESS;
 						coverage = MC_TRANSLUCENT;
@@ -2788,7 +2860,7 @@ bool idMaterial::Parse( const char *text, const int textLength ) {
 				}
 			}
 			for ( int j = 0 ; j < pStage->newStage->numShaderTextures ; j++ ) {
-				if ( pStage->newStage->shaderTextureImages[j] == globalImages->currentRenderImage ) {
+				if ( R_IsSceneCaptureImage( pStage->newStage->shaderTextureImages[j] ) ) {
 					if ( sort != SS_PORTAL_SKY ) {
 						sort = SS_POST_PROCESS;
 						coverage = MC_TRANSLUCENT;

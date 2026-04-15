@@ -50,6 +50,9 @@ If you have questions concerning this license or the applicable additional terms
 	#include "../curl/include/curl/curl.h"
 #endif
 
+int Com_GetNumStartupCommandLines( void );
+const idCmdArgs *Com_GetStartupCommandLine( int index );
+
 /*
 =============================================================================
 
@@ -1078,6 +1081,10 @@ private:
 	bool					ReadModManifestFromSearchPath( const char *searchPath, const char *modDir, idModInfo &modInfo, idStr *reason = NULL );
 	bool					ReadModManifestFile( const char *manifestPath, idModInfo &modInfo, idStr *reason = NULL );
 	bool					ValidateConfiguredGameDir( const char *gameDir, idStr *reason = NULL );
+	bool					NormalizeMapPath( const char *mapName, idStr &relativePath ) const;
+	bool					AddonPackProvidesMap( const pack_t *pak, const char *relativeMapPath ) const;
+	void					FreePack( pack_t *pack ) const;
+	void					StageStartupAddonPaks( void );
 
 	static size_t			CurlWriteFunction( void *ptr, size_t size, size_t nmemb, void *stream );
 							// curl_progress_callback in curl.h
@@ -3184,6 +3191,176 @@ void idFileSystemLocal::SetupGameDirectories( const char *gameName ) {
 
 /*
 ================
+idFileSystemLocal::NormalizeMapPath
+================
+*/
+bool idFileSystemLocal::NormalizeMapPath( const char *mapName, idStr &relativePath ) const {
+	relativePath.Clear();
+
+	if ( !mapName || !mapName[0] ) {
+		return false;
+	}
+
+	relativePath = mapName;
+	relativePath.BackSlashesToSlashes();
+	relativePath.StripFileExtension();
+	if ( relativePath.Length() <= 0 ) {
+		return false;
+	}
+
+	if ( idStr::Icmpn( relativePath.c_str(), "maps/", 5 ) != 0 ) {
+		relativePath = va( "maps/%s", relativePath.c_str() );
+	}
+
+	relativePath += ".map";
+	relativePath.ToLower();
+	return true;
+}
+
+/*
+================
+idFileSystemLocal::AddonPackProvidesMap
+================
+*/
+bool idFileSystemLocal::AddonPackProvidesMap( const pack_t *pak, const char *relativeMapPath ) const {
+	if ( !pak || !pak->addon || !relativeMapPath || !relativeMapPath[0] ) {
+		return false;
+	}
+
+	const long hash = HashFileName( relativeMapPath );
+	for ( const fileInPack_t *pakFile = pak->hashTable[ hash ]; pakFile; pakFile = pakFile->next ) {
+		if ( !FilenameCompare( pakFile->name, relativeMapPath ) ) {
+			return true;
+		}
+	}
+
+	if ( !pak->addon_info ) {
+		return false;
+	}
+
+	for ( int i = 0; i < pak->addon_info->mapDecls.Num(); ++i ) {
+		const idDict *mapDecl = pak->addon_info->mapDecls[ i ];
+		if ( mapDecl == NULL ) {
+			continue;
+		}
+
+		const char *mapPath = mapDecl->GetString( "path" );
+		if ( mapPath[ 0 ] && !FilenameCompare( mapPath, relativeMapPath ) ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/*
+================
+idFileSystemLocal::FreePack
+================
+*/
+void idFileSystemLocal::FreePack( pack_t *pack ) const {
+	if ( pack == NULL ) {
+		return;
+	}
+
+	if ( pack->handle ) {
+		unzClose( pack->handle );
+	}
+
+	delete[] pack->buildBuffer;
+	if ( pack->addon_info ) {
+		pack->addon_info->mapDecls.DeleteContents( true );
+		delete pack->addon_info;
+	}
+	delete pack;
+}
+
+/*
+================
+idFileSystemLocal::StageStartupAddonPaks
+================
+*/
+void idFileSystemLocal::StageStartupAddonPaks( void ) {
+	if ( fs_searchAddons.GetBool() ) {
+		return;
+	}
+
+	idStrList startupMaps;
+	idStr pendingServerMap;
+	const int numStartupCommands = Com_GetNumStartupCommandLines();
+
+	for ( int i = 0; i < numStartupCommands; ++i ) {
+		const idCmdArgs *args = Com_GetStartupCommandLine( i );
+		if ( args == NULL || args->Argc() <= 0 ) {
+			continue;
+		}
+
+		const char *command = args->Argv( 0 );
+		if ( !idStr::Icmp( command, "set" ) ) {
+			if ( args->Argc() >= 3 && !idStr::Icmp( args->Argv( 1 ), "si_map" ) ) {
+				NormalizeMapPath( args->Argv( 2 ), pendingServerMap );
+			}
+			continue;
+		}
+
+		idStr relativeMapPath;
+		if ( !idStr::Icmp( command, "spawnServer" ) ) {
+			if ( args->Argc() > 1 ) {
+				NormalizeMapPath( args->Argv( 1 ), relativeMapPath );
+			} else if ( pendingServerMap.Length() > 0 ) {
+				relativeMapPath = pendingServerMap;
+			}
+		} else if ( !idStr::Icmp( command, "map" ) ||
+					!idStr::Icmp( command, "devmap" ) ||
+					!idStr::Icmp( command, "testmap" ) ||
+					!idStr::Icmp( command, "openq4_startSingleplayer" ) ) {
+			if ( args->Argc() > 1 ) {
+				NormalizeMapPath( args->Argv( 1 ), relativeMapPath );
+			}
+		}
+
+		if ( relativeMapPath.Length() <= 0 ) {
+			continue;
+		}
+
+		bool duplicate = false;
+		for ( int j = 0; j < startupMaps.Num(); ++j ) {
+			if ( !FilenameCompare( startupMaps[ j ], relativeMapPath ) ) {
+				duplicate = true;
+				break;
+			}
+		}
+		if ( !duplicate ) {
+			startupMaps.Append( relativeMapPath );
+		}
+	}
+
+	if ( startupMaps.Num() <= 0 ) {
+		return;
+	}
+
+	for ( searchpath_t *search = searchPaths; search; search = search->next ) {
+		if ( !search->pack || !search->pack->addon ) {
+			continue;
+		}
+
+		for ( int mapIndex = 0; mapIndex < startupMaps.Num(); ++mapIndex ) {
+			if ( !AddonPackProvidesMap( search->pack, startupMaps[ mapIndex ] ) ) {
+				continue;
+			}
+
+			if ( addonChecksums.FindIndex( search->pack->checksum ) < 0 ) {
+				addonChecksums.Append( search->pack->checksum );
+				common->Printf( "Queued addon pk4 %s with checksum 0x%x for startup map %s\n",
+					search->pack->pakFilename.c_str(), search->pack->checksum, startupMaps[ mapIndex ].c_str() );
+			}
+			break;
+		}
+	}
+}
+
+/*
+================
 idFileSystemLocal::IsBaseGamePack
 ================
 */
@@ -3344,6 +3521,10 @@ void idFileSystemLocal::Startup( void ) {
 				validationErrors.c_str() );
 		}
 	}
+
+	// Startup map commands run after initialization, but addon filtering happens here.
+	// Pre-stage any addon pk4s that contain those maps before the search list is finalized.
+	StageStartupAddonPaks();
 
 	// currently all addons are in the search list - deal with filtering out and dependencies now
 	// scan through and deal with dependencies
@@ -4031,6 +4212,16 @@ void idFileSystemLocal::Shutdown( bool reloading ) {
 	gameFolder.Clear();
 
 	serverPaks.Clear();
+	if ( reloading && addonChecksums.Num() == 0 ) {
+		for ( sp = searchPaths; sp; sp = sp->next ) {
+			if ( sp->pack && sp->pack->addon && sp->pack->addon_search &&
+				 addonChecksums.FindIndex( sp->pack->checksum ) < 0 ) {
+				addonChecksums.Append( sp->pack->checksum );
+				common->Printf( "Preserving addon pk4 %s with checksum 0x%x for reload\n",
+					sp->pack->pakFilename.c_str(), sp->pack->checksum );
+			}
+		}
+	}
 	if ( !reloading ) {
 		restartChecksums.Clear();
 		addonChecksums.Clear();
@@ -4047,13 +4238,7 @@ void idFileSystemLocal::Shutdown( bool reloading ) {
 			next = sp->next;
 
 			if ( sp->pack ) {
-				unzClose( sp->pack->handle );
-				delete [] sp->pack->buildBuffer;
-				if ( sp->pack->addon_info ) {
-					sp->pack->addon_info->mapDecls.DeleteContents( true );
-					delete sp->pack->addon_info;
-				}
-				delete sp->pack;
+				FreePack( sp->pack );
 			}
 			if ( sp->dir ) {
 				delete sp->dir;

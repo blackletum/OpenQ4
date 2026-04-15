@@ -560,7 +560,11 @@ const void	RB_CopyRender( const void *data ) {
     RB_LogComment( "***************** RB_CopyRender *****************\n" );
 
 	if (cmd->image) {
-		cmd->image->CopyFramebuffer( cmd->x, cmd->y, cmd->imageWidth, cmd->imageHeight );
+		if ( cmd->copyDepth ) {
+			cmd->image->CopyDepthbuffer( cmd->x, cmd->y, cmd->imageWidth, cmd->imageHeight );
+		} else {
+			cmd->image->CopyFramebuffer( cmd->x, cmd->y, cmd->imageWidth, cmd->imageHeight );
+		}
 	}
 }
 
@@ -695,6 +699,9 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 			else {
 				c_draw2d++;
 			}
+			break;
+		case RC_DRAW_SPECIAL_EFFECTS:
+			RB_DrawSpecialEffects( cmds );
 			break;
 // jmarshall
 		case RC_SET_RENDERTEXTURE:

@@ -395,6 +395,99 @@ void R_MirrorRender( drawSurf_t *surf, textureStage_t *stage, idScreenRect sciss
 
 /*
 =================
+R_ReflectionRender
+=================
+*/
+void R_ReflectionRender( drawSurf_t *surf, textureStage_t *stage, idScreenRect scissor ) {
+	viewDef_t		*parms;
+
+	if ( stage->dynamicFrameCount == tr.frameCount ) {
+		return;
+	}
+
+	parms = R_MirrorViewBySurface( surf );
+	if ( !parms ) {
+		return;
+	}
+
+	tr.CropRenderSize( stage->width, stage->height, true );
+
+	parms->renderView.x = 0;
+	parms->renderView.y = 0;
+	parms->renderView.width = SCREEN_WIDTH;
+	parms->renderView.height = SCREEN_HEIGHT;
+
+	tr.RenderViewToViewport( &parms->renderView, &parms->viewport );
+
+	parms->scissor.x1 = 0;
+	parms->scissor.y1 = 0;
+	parms->scissor.x2 = parms->viewport.x2 - parms->viewport.x1;
+	parms->scissor.y2 = parms->viewport.y2 - parms->viewport.y1;
+
+	parms->superView = tr.viewDef;
+	parms->subviewSurface = surf;
+	parms->isMirror = ( ( (int)parms->isMirror ^ (int)tr.viewDef->isMirror ) != 0 );
+
+	R_RenderView( parms );
+
+	stage->dynamicFrameCount = tr.frameCount;
+	stage->image = globalImages->ImageFromFile( "_reflectionRender", TF_DEFAULT, TR_REPEAT, TD_DEFAULT );
+
+	tr.CaptureRenderToImage( stage->image->GetName() );
+	tr.UnCrop();
+}
+
+/*
+=================
+R_RefractionRender
+=================
+*/
+static void R_RefractionRender( drawSurf_t *surf, textureStage_t *stage, idScreenRect scissor ) {
+	viewDef_t		*parms;
+
+	if ( stage->dynamicFrameCount == tr.frameCount ) {
+		return;
+	}
+
+	// Raven exposes refractionRenderMap as a distinct dynamic image from reflection.
+	// The legacy implementation rendered through a removed special-effects path, so
+	// preserve the material contract by capturing the current view into a dedicated
+	// _refractionRender image without introducing that obsolete system.
+	parms = (viewDef_t *)R_FrameAlloc( sizeof( *parms ) );
+	*parms = *tr.viewDef;
+	parms->renderView.viewID = 0;
+	parms->isSubview = true;
+	parms->isMirror = false;
+	parms->initialViewAreaOrigin = parms->renderView.vieworg;
+
+	tr.CropRenderSize( stage->width, stage->height, true );
+
+	parms->renderView.x = 0;
+	parms->renderView.y = 0;
+	parms->renderView.width = SCREEN_WIDTH;
+	parms->renderView.height = SCREEN_HEIGHT;
+
+	tr.RenderViewToViewport( &parms->renderView, &parms->viewport );
+
+	parms->scissor.x1 = 0;
+	parms->scissor.y1 = 0;
+	parms->scissor.x2 = parms->viewport.x2 - parms->viewport.x1;
+	parms->scissor.y2 = parms->viewport.y2 - parms->viewport.y1;
+
+	parms->superView = tr.viewDef;
+	parms->subviewSurface = surf;
+
+	R_RenderView( parms );
+
+	stage->dynamicFrameCount = tr.frameCount;
+	stage->image = globalImages->ImageFromFile( "_refractionRender", TF_DEFAULT, TR_REPEAT, TD_DEFAULT );
+
+	tr.CaptureRenderToImage( stage->image->GetName() );
+	tr.UnCrop();
+}
+
+/*
+=================
 R_XrayRender
 =================
 */
@@ -506,6 +599,12 @@ bool	R_GenerateSurfaceSubview( drawSurf_t *drawSurf ) {
 				break;
 			case DI_MIRROR_RENDER:
 				R_MirrorRender( drawSurf, const_cast<textureStage_t *>(&stage->texture), scissor );
+				break;
+			case DI_REFLECTION_RENDER:
+				R_ReflectionRender( drawSurf, const_cast<textureStage_t *>(&stage->texture), scissor );
+				break;
+			case DI_REFRACTION_RENDER:
+				R_RefractionRender( drawSurf, const_cast<textureStage_t *>(&stage->texture), scissor );
 				break;
 			case DI_XRAY_RENDER:
 				R_XrayRender( drawSurf, const_cast<textureStage_t *>(&stage->texture), scissor );

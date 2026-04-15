@@ -5868,7 +5868,7 @@ windowDef Desktop
 						rect	452,119,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	_impulse0
+						bind	weapon_blastergauntlet
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -5882,7 +5882,7 @@ windowDef Desktop
 						rect	452,143,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	_impulse1
+						bind	weapon_machinegun
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -5896,7 +5896,7 @@ windowDef Desktop
 						rect	452,167,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	_impulse2
+						bind	weapon_shotgun
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -5910,7 +5910,7 @@ windowDef Desktop
 						rect	452,191,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	_impulse3
+						bind	weapon_hyperblaster
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -5924,7 +5924,7 @@ windowDef Desktop
 						rect	452,215,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	_impulse4
+						bind	weapon_grenadelauncher
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -5938,7 +5938,7 @@ windowDef Desktop
 						rect	452,239,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	_impulse5
+						bind	weapon_nailgun
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -5952,7 +5952,7 @@ windowDef Desktop
 						rect	452,263,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	_impulse6
+						bind	weapon_rocketlauncher
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -5966,7 +5966,7 @@ windowDef Desktop
 						rect	452,287,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	_impulse7
+						bind	weapon_railgun
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -5980,7 +5980,7 @@ windowDef Desktop
 						rect	452,311,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	_impulse8
+						bind	weapon_lightninggun
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -5994,7 +5994,7 @@ windowDef Desktop
 						rect	452,335,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	_impulse9
+						bind	weapon_darkmattergun
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -6008,7 +6008,7 @@ windowDef Desktop
 						rect	452,359,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	_impulse10
+						bind	weapon_napalmlauncher
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -6163,7 +6163,7 @@ windowDef Desktop
 						rect	452,143,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	_impulse15
+						bind	prevweapon
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -6177,7 +6177,7 @@ windowDef Desktop
 						rect	452,167,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	_impulse14
+						bind	nextweapon
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -6191,7 +6191,7 @@ windowDef Desktop
 						rect	452,191,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	_impulse13
+						bind	reload
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -6247,7 +6247,7 @@ windowDef Desktop
 						rect	452,287,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	_impulse18
+						bind	centerview
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -6275,7 +6275,7 @@ windowDef Desktop
 						rect	452,335,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	_impulse19
+						bind	showobjectives
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -6289,7 +6289,7 @@ windowDef Desktop
 						rect	452,359,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	_impulse50
+						bind	flashlight
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -6509,7 +6509,7 @@ windowDef Desktop
 						rect	452,215,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	_impulse28
+						bind	voteyes
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -6523,7 +6523,7 @@ windowDef Desktop
 						rect	452,239,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	_impulse29
+						bind	voteno
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -6551,7 +6551,7 @@ windowDef Desktop
 						rect	452,287,149,17
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	_impulse17
+						bind	ready
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -19922,6 +19922,8 @@ windowDef Desktop
 			set "set_game_corpsetime_hover::visible" "1" ;
 			set "set_game_language::visible" "1" ;
 			set "set_game_language_hover::visible" "1" ;
+			set "set_game_consoleaccess::visible" "1" ;
+			set "set_game_consoleaccess_hover::visible" "1" ;
 			set "set_game_xhaircolor_hover_xcolor0::visible" "1" ;
 			set "set_game_xhaircolor_hover_xcolor1::visible" "1" ;
 			set "set_game_xhaircolor_hover_xcolor2::visible" "1" ;
@@ -19949,6 +19951,7 @@ windowDef Desktop
 			set "set_game_corpsesink::noevents" "0" ;
 			set "set_game_corpsetime::noevents" "0" ;
 			set "set_game_language_value::noevents" "0" ;
+			set "set_game_consoleaccess::noevents" "0" ;
 	
 
 		}
@@ -19992,6 +19995,8 @@ windowDef Desktop
 			set "set_game_corpsetime_hover::visible" "0" ;
 			set "set_game_language::visible" "0" ;
 			set "set_game_language_hover::visible" "0" ;
+			set "set_game_consoleaccess::visible" "0" ;
+			set "set_game_consoleaccess_hover::visible" "0" ;
 			set "set_game_xhaircolor_hover_xcolor0::visible" "0" ;
 			set "set_game_xhaircolor_hover_xcolor1::visible" "0" ;
 			set "set_game_xhaircolor_hover_xcolor2::visible" "0" ;
@@ -20019,6 +20024,7 @@ windowDef Desktop
 			set "set_game_corpsesink::noevents" "1" ;
 			set "set_game_corpsetime::noevents" "1" ;
 			set "set_game_language_value::noevents" "1" ;
+			set "set_game_consoleaccess::noevents" "1" ;
 			set "set_game_scroll_thumb::visible" "0" ;
 			set "set_game_scroll_thumb::noevents" "1" ;
 		}
@@ -20276,8 +20282,10 @@ windowDef Desktop
 				set "set_game_content::rect" "-24,-215,640,608" ;
 			} else if ( "gui::gui_set_game_scroll" < 8.5 ) {
 				set "set_game_content::rect" "-24,-239,640,608" ;
-			} else {
+			} else if ( "gui::gui_set_game_scroll" < 9.5 ) {
 				set "set_game_content::rect" "-24,-263,640,608" ;
+			} else {
+				set "set_game_content::rect" "-24,-287,640,608" ;
 			}
 		}
 

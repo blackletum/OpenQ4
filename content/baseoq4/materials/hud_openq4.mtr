@@ -1,0 +1,47 @@
+gfx/guis/hud/reticles/railgun_scope_glow_left
+{
+	noShadows
+	translucent
+	{
+		blend add
+		Map gfx/guis/hud/reticles/railgun_scope_glow_left.tga
+		colored
+		clamp
+	}
+}
+
+gfx/guis/hud/reticles/railgun_scope_glow_right
+{
+	noShadows
+	translucent
+	{
+		blend add
+		Map gfx/guis/hud/reticles/railgun_scope_glow_right.tga
+		colored
+		clamp
+	}
+}
+
+gfx/guis/hud/reticles/railgun_scope_glow_top
+{
+	noShadows
+	translucent
+	{
+		blend add
+		Map gfx/guis/hud/reticles/railgun_scope_glow_top.tga
+		colored
+		clamp
+	}
+}
+
+gfx/guis/hud/reticles/railgun_scope_glow_bottom
+{
+	noShadows
+	translucent
+	{
+		blend add
+		Map gfx/guis/hud/reticles/railgun_scope_glow_bottom.tga
+		colored
+		clamp
+	}
+}

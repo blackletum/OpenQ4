@@ -170,6 +170,11 @@ typedef struct {
 	usercmdButton_t	button;
 } userCmdString_t;
 
+typedef struct {
+	const char *string;
+	int impulse;
+} impulseAliasString_t;
+
 userCmdString_t	userCmdStrings[] = {
 	{ "_moveUp",		UB_UP },
 	{ "_moveDown",		UB_DOWN },
@@ -269,6 +274,108 @@ userCmdString_t	userCmdStrings[] = {
 
 	{ NULL,				UB_NONE },
 };
+
+static const impulseAliasString_t impulseAliasStrings[] = {
+	{ "weapon_blastergauntlet",			0 },
+	{ "weapon_blaster",					0 },
+	{ "weapon_gauntlet",				0 },
+	{ "weapon_machinegun",				1 },
+	{ "weapon_shotgun",					2 },
+	{ "weapon_hyperblaster",			3 },
+	{ "weapon_grenadelauncher",			4 },
+	{ "weapon_nailgun",					5 },
+	{ "weapon_rocketlauncher",			6 },
+	{ "weapon_railgun",					7 },
+	{ "weapon_lightninggun",			8 },
+	{ "weapon_darkmattergun",			9 },
+	{ "weapon_darkmattergenerator",		9 },
+	{ "weapon_dmg",						9 },
+	{ "weapon_napalmlauncher",			10 },
+	{ "weapon_napalmgun",				10 },
+	{ "reload",							13 },
+	{ "nextweapon",						14 },
+	{ "prevweapon",						15 },
+	{ "previousweapon",					15 },
+	{ "ready",							17 },
+	{ "toggleready",					17 },
+	{ "centerview",						18 },
+	{ "showobjectives",					19 },
+	{ "showscores",						19 },
+	{ "objectives",						19 },
+	{ "toggleteam",						20 },
+	{ "togglewaitingroom",				21 },
+	{ "toggletourneywaitingroom",		21 },
+	{ "spectate",						22 },
+	{ "voteyes",						28 },
+	{ "voteno",							29 },
+	{ "repeatlastradio",				40 },
+	{ "repeatlastradiochatter",			40 },
+	{ "flashlight",						50 },
+	{ "toggleflashlight",				50 },
+	{ "lastweapon",						51 },
+	{ "mpstatistics",					52 },
+	{ "multiplayerstatistics",			52 },
+	{ "weaponswitchup",					70 },
+	{ "weaponswitchdown",				71 },
+	{ "weaponswitchright",				72 },
+	{ "weaponswitchleft",				73 },
+	{ "buy_shotgun",					100 },
+	{ "buy_machinegun",					101 },
+	{ "buy_hyperblaster",				102 },
+	{ "buy_grenadelauncher",			103 },
+	{ "buy_nailgun",					104 },
+	{ "buy_rocketlauncher",				105 },
+	{ "buy_railgun",					106 },
+	{ "buy_lightninggun",				107 },
+	{ "buy_napalmgun",					109 },
+	{ "buy_napalmlauncher",				109 },
+	{ "buy_dmg",						110 },
+	{ "buy_darkmattergun",				110 },
+	{ "buy_smallarmor",					118 },
+	{ "buy_largearmor",					119 },
+	{ "buy_ammorefill",					120 },
+	{ "buy_ammoregen",					123 },
+	{ "buy_healthregen",				124 },
+	{ "buy_damageboost",				125 },
+	{ NULL,								0 }
+};
+
+static bool ParseImpulseCommand( const char *cmdString, const char *prefix, int &impulseNum ) {
+	if ( idStr::Icmpn( cmdString, prefix, static_cast<int>( strlen( prefix ) ) ) != 0 ) {
+		return false;
+	}
+
+	const char *impulseSuffix = cmdString + strlen( prefix );
+	if ( impulseSuffix[0] == '\0' ) {
+		return false;
+	}
+
+	for ( const char *c = impulseSuffix; *c != '\0'; ++c ) {
+		if ( *c < '0' || *c > '9' ) {
+			return false;
+		}
+	}
+
+	impulseNum = atoi( impulseSuffix );
+	return impulseNum >= IMPULSE_0 && impulseNum <= IMPULSE_127;
+}
+
+static int ResolveImpulseCommand( const char *cmdString ) {
+	for ( const impulseAliasString_t *alias = impulseAliasStrings; alias->string != NULL; ++alias ) {
+		if ( idStr::Icmp( cmdString, alias->string ) == 0 ) {
+			return UB_IMPULSE0 + alias->impulse;
+		}
+	}
+
+	int impulseNum = 0;
+	if ( ParseImpulseCommand( cmdString, "_impulse", impulseNum ) ||
+		 ParseImpulseCommand( cmdString, "impulse_", impulseNum ) ||
+		 ParseImpulseCommand( cmdString, "impulse", impulseNum ) ) {
+		return UB_IMPULSE0 + impulseNum;
+	}
+
+	return UB_NONE;
+}
 
  class buttonState_t {
  public:
@@ -911,27 +1018,7 @@ int	idUsercmdGenLocal::CommandStringUsercmdData( const char *cmdString ) {
 		}
 	}
 
-	if ( idStr::Icmpn( cmdString, "_impulse", 8 ) == 0 ) {
-		const char* impulseSuffix = cmdString + 8;
-		if ( impulseSuffix[0] != '\0' ) {
-			bool validDigits = true;
-			for ( const char* c = impulseSuffix; *c != '\0'; ++c ) {
-				if ( *c < '0' || *c > '9' ) {
-					validDigits = false;
-					break;
-				}
-			}
-
-			if ( validDigits ) {
-				const int impulseNum = atoi( impulseSuffix );
-				if ( impulseNum >= IMPULSE_0 && impulseNum <= IMPULSE_127 ) {
-					return UB_IMPULSE0 + impulseNum;
-				}
-			}
-		}
-	}
-
-	return UB_NONE;
+	return ResolveImpulseCommand( cmdString );
 }
 
 /*

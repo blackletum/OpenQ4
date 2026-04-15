@@ -102,7 +102,6 @@ public:
 	virtual void		Frame();
 
 	virtual bool		IsMultiplayer();
-	virtual bool		IsIAmTheDukeActive() const;
 	virtual bool		IsLoadingSaveGame() const { return loadingSaveGame; }
 	virtual bool		IsGUIActive() const { return ( guiActive != NULL ) || ( guiTest != NULL ); }
 	virtual idUserInterface *GetActiveGUI() const { return ( guiTest != NULL ) ? guiTest : guiActive; }
@@ -351,6 +350,7 @@ public:
 private:
 	bool				BoxDialogSanityCheck( void );
 	void				EmitGameAuth( void );
+	bool				IsIAmTheDukeActive( void ) const;
 	void				DrawIAmTheDukeOverlay( void ) const;
 	
 	typedef enum {

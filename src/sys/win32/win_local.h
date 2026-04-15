@@ -148,6 +148,7 @@ struct Win32Vars_t {
 	static idCVar	win_viewlog;
 	static idCVar	win_timerUpdate;
 	static idCVar	win_allowMultipleInstances;
+	static idCVar	win_printScreenToSystemTool;
 
 	CRITICAL_SECTION criticalSections[MAX_CRITICAL_SECTIONS];
 	HANDLE			backgroundDownloadSemaphore;
@@ -166,9 +167,12 @@ struct Win32Vars_t {
 	void			(*glimpRenderThread)( void );
 	void			*smpData;
 	int				wglErrors;
+	DWORD			printScreenFocusReleaseUntil;
 	// SMP acceleration vars
 };
 
 extern Win32Vars_t	win32;
+
+bool	Sys_HandlePrintScreenHotkey( bool pressed );
 
 #endif /* !__WIN_LOCAL_H__ */

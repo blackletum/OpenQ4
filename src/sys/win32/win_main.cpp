@@ -74,10 +74,35 @@ idCVar Win32Vars_t::win_outputEditString("win_outputEditString", "1", CVAR_SYSTE
 idCVar Win32Vars_t::win_viewlog("win_viewlog", "0", CVAR_SYSTEM | CVAR_INTEGER, "");
 idCVar Win32Vars_t::win_timerUpdate("win_timerUpdate", "0", CVAR_SYSTEM | CVAR_BOOL, "allows the game to be updated while dragging the window");
 idCVar Win32Vars_t::win_allowMultipleInstances("win_allowMultipleInstances", "0", CVAR_SYSTEM | CVAR_BOOL, "allow multiple instances running concurrently");
+idCVar Win32Vars_t::win_printScreenToSystemTool("win_printScreenToSystemTool", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "yield PrintScreen to the Windows snipping UI instead of routing it into the engine");
 
 Win32Vars_t	win32;
 
 static char		sys_cmdline[MAX_STRING_CHARS];
+
+bool Sys_HandlePrintScreenHotkey( bool pressed ) {
+	if ( !win32.win_printScreenToSystemTool.GetBool() ) {
+		return false;
+	}
+
+	if ( !pressed ) {
+		return true;
+	}
+
+	// Give the Windows snipping UI a short window to take foreground before we
+	// consider recapturing the mouse again.
+	win32.printScreenFocusReleaseUntil = GetTickCount() + 1500u;
+	win32.mouseReleased = true;
+	IN_DeactivateMouse();
+	idKeyInput::ClearStates();
+
+	if ( win32.hWnd != NULL ) {
+		ReleaseCapture();
+		SendMessage( win32.hWnd, WM_CANCELMODE, 0, 0 );
+	}
+
+	return true;
+}
 
 static int Sys_OpenQ4ProtocolHexValue( const char c ) {
 	if ( c >= '0' && c <= '9' ) {

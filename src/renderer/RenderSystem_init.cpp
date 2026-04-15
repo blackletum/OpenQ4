@@ -114,6 +114,8 @@ idCVar r_ssaoPower( "r_ssaoPower", "1.6", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FL
 idCVar r_ssaoMaxDistance( "r_ssaoMaxDistance", "220.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "fade SSAO out past this view-space distance", 16.0f, 4096.0f );
 idCVar r_ssaoSamples( "r_ssaoSamples", "20", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "number of SSAO spiral samples", 4, 32, idCmdSystem::ArgCompletion_Integer<4,32> );
 idCVar r_ssaoDebug( "r_ssaoDebug", "0", CVAR_RENDERER | CVAR_BOOL, "visualize SSAO only" );
+idCVar r_forceSpecialEffects( "r_forceSpecialEffects", "0", CVAR_RENDERER | CVAR_INTEGER,
+	"force legacy special-effect bitmask for debugging (1=blur, 2=AL, 3=both)", 0, 3, idCmdSystem::ArgCompletion_Integer<0,3> );
 idCVar r_hdrSceneTarget( "r_hdrSceneTarget", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "render the main scene into an HDR scene target before post-processing" );
 idCVar r_hdrToneMap( "r_hdrToneMap", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable filmic tone mapping and color correction pass" );
 idCVar r_hdrExposure( "r_hdrExposure", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "manual exposure multiplier applied after auto exposure", 0.1f, 16.0f );
@@ -1596,11 +1598,14 @@ static bool R_ResampleLevelShotTileRGBA( const byte *src, int srcWidth, int srcH
 
 static void R_CaptureLevelShotTileRGBA( int width, int height, int blends, const renderView_t &sourceView,
 	float projectionShiftX, float projectionShiftY, byte *rgbaOut ) {
+	const bool previousDisableLevelshotEntityCulling = tr.disableLevelshotEntityCulling;
 	tr_levelshotProjectionShiftActive = true;
 	tr_levelshotProjectionShiftX = projectionShiftX;
 	tr_levelshotProjectionShiftY = projectionShiftY;
+	tr.disableLevelshotEntityCulling = true;
 	renderView_t captureView = sourceView;
 	R_CaptureTiledPixelsRGBA( width, height, blends, &captureView, rgbaOut );
+	tr.disableLevelshotEntityCulling = previousDisableLevelshotEntityCulling;
 	tr_levelshotProjectionShiftActive = false;
 	tr_levelshotProjectionShiftX = 0.0f;
 	tr_levelshotProjectionShiftY = 0.0f;
@@ -2507,7 +2512,7 @@ void R_InitCommands( void ) {
 	cmdSystem->AddCommand( "listGuis", R_ListGuis_f, CMD_FL_RENDERER, "lists guis" );
 	cmdSystem->AddCommand( "touchGui", R_TouchGui_f, CMD_FL_RENDERER, "touches a gui" );
 	cmdSystem->AddCommand( "screenshot", R_ScreenShot_f, CMD_FL_RENDERER, "takes a screenshot" );
-	cmdSystem->AddCommand( "levelshot", R_LevelShot_f, CMD_FL_RENDERER, "captures a 5-tile levelshot set" );
+	cmdSystem->AddCommand( "levelshot", R_LevelShot_f, CMD_FL_RENDERER | CMD_FL_CHEAT, "captures a 5-tile levelshot set" );
 	cmdSystem->AddCommand( "envshot", R_EnvShot_f, CMD_FL_RENDERER, "takes an environment shot" );
 	cmdSystem->AddCommand( "makeAmbientMap", R_MakeAmbientMap_f, CMD_FL_RENDERER|CMD_FL_CHEAT, "makes an ambient map" );
 	cmdSystem->AddCommand( "benchmark", R_Benchmark_f, CMD_FL_RENDERER, "benchmark" );
@@ -2553,6 +2558,16 @@ void idRenderSystemLocal::Clear( void ) {
 	primaryWorld = NULL;
 	memset( &primaryRenderView, 0, sizeof( primaryRenderView ) );
 	primaryView = NULL;
+	ResetSpecialEffects();
+	specialBlurDepthImage = NULL;
+	specialBlurDepthStencilImage = NULL;
+	specialBlurImage = NULL;
+	specialBlurDepthRenderTexture = NULL;
+	specialBlurRenderTexture = NULL;
+	specialALDepthImage = NULL;
+	specialALDepthStencilImage = NULL;
+	specialALDepthRenderTexture = NULL;
+	specialALLightImage = NULL;
 	defaultMaterial = NULL;
 	testImage = NULL;
 	ambientCubeImage = NULL;
@@ -2572,6 +2587,7 @@ void idRenderSystemLocal::Clear( void ) {
 	useUIViewportFor2D = true;
 	activeRenderTexture = NULL;
 	suppressLevelshotViewModels = false;
+	disableLevelshotEntityCulling = false;
 	memset( gammaTable, 0, sizeof( gammaTable ) );
 	takingScreenshot = false;
 }
@@ -2675,6 +2691,7 @@ void idRenderSystemLocal::Shutdown( void ) {
 	delete guiModel;
 	delete demoGuiModel;
 
+	ShutdownSpecialEffects();
 	Clear();
 
 	ShutdownOpenGL();
@@ -2740,6 +2757,7 @@ idRenderSystemLocal::ShutdownOpenGL
 ========================
 */
 void idRenderSystemLocal::ShutdownOpenGL( void ) {
+	ShutdownSpecialEffects();
 	ProcessPendingRenderTextureDeletes();
 
 	// free the context and close the window

@@ -770,29 +770,6 @@ static const portalArea_t *R_ResolveDrawSurfArea( const srfTriangles_t *tri, con
 	return R_FallbackDrawSurfArea( space );
 }
 
-static bool R_DrawSurfLooksLikeTerrain( const viewEntity_t *space, const renderEntity_t *renderEntity, const idMaterial *shader ) {
-	if ( shader != NULL ) {
-		const char *shaderName = shader->GetName();
-		if ( shaderName != NULL && idStr::FindText( shaderName, "terrain", false ) >= 0 ) {
-			return true;
-		}
-	}
-
-	const renderEntity_t *entity = renderEntity;
-	if ( entity == NULL && space != NULL && space->entityDef != NULL ) {
-		entity = &space->entityDef->parms;
-	}
-
-	if ( entity != NULL && entity->hModel != NULL ) {
-		const char *modelName = entity->hModel->Name();
-		if ( modelName != NULL && idStr::FindText( modelName, "terrain", false ) >= 0 ) {
-			return true;
-		}
-	}
-
-	return false;
-}
-
 /*
 ======================
 R_ClippedLightScissorRectangle
@@ -884,7 +861,7 @@ idScreenRect	R_CalcLightScissorRectangle( viewLight_t *vLight ) {
 	idPlane			eye, clip;
 	idVec3			ndc;
 
-	if ( vLight->lightDef->parms.pointLight ) {
+	if ( vLight->lightDef->parms.pointLight && !tr_levelshotProjectionShiftActive ) {
 		idBounds bounds;
 		idRenderLightLocal *lightDef = vLight->lightDef;
 		tr.viewDef->viewFrustum.ProjectionBounds( idBox( lightDef->parms.origin, lightDef->parms.lightRadius, lightDef->parms.axis ), bounds );
@@ -1358,9 +1335,6 @@ void R_AddDrawSurf( const srfTriangles_t *tri, const viewEntity_t *space, const 
 	drawSurf->decalColorCache = NULL;
 	drawSurf->decalColorStride = 0;
 	drawSurf->decalColorStageCount = 0;
-	if ( session != NULL && session->IsIAmTheDukeActive() && R_DrawSurfLooksLikeTerrain( space, renderEntity, shader ) ) {
-		drawSurf->dsFlags |= DSF_IAMTHEDUKE_TERRAIN;
-	}
 
 	// bumping this offset each time causes surfaces with equal sort orders to still
 	// deterministically draw in the order they are added
@@ -1514,7 +1488,7 @@ static void R_AddAmbientDrawsurfs( viewEntity_t *vEntity ) {
 			}
 		}
 
-		if ( !R_CullLocalBox( tri->bounds, vEntity->modelMatrix, 5, tr.viewDef->frustum ) ) {
+		if ( R_ShouldDisableEntityCullingForLevelshot() || !R_CullLocalBox( tri->bounds, vEntity->modelMatrix, 5, tr.viewDef->frustum ) ) {
 
 			def->visibleCount = tr.viewCount;
 
@@ -1705,7 +1679,7 @@ void R_AddEffectSurfaces(void) {
 		R_AxisToModelMatrix(def->parms.axis, def->parms.origin, vEffect->modelMatrix);
 		myGlMultMatrix(vEffect->modelMatrix, tr.viewDef->worldSpace.modelViewMatrix, vEffect->modelViewMatrix);
 
-		if (bse_useFrustumCull.GetBool()) {
+		if (bse_useFrustumCull.GetBool() && !R_ShouldDisableEntityCullingForLevelshot()) {
 			if (R_CullLocalBox(localBounds, vEffect->modelMatrix, 5, tr.viewDef->frustum)) {
 				++dropFrustumCull;
 				continue;
@@ -1760,7 +1734,7 @@ void R_AddEffectSurfaces(void) {
 			}
 
 			srfTriangles_t* tri = surf->geometry;
-			if (bse_useFrustumCull.GetBool()) {
+			if (bse_useFrustumCull.GetBool() && !R_ShouldDisableEntityCullingForLevelshot()) {
 				if (R_CullLocalBox(tri->bounds, vEffect->modelMatrix, 5, tr.viewDef->frustum)) {
 					++surfaceFrustumCull;
 					continue;
@@ -1875,7 +1849,7 @@ void R_AddModelSurfaces( void ) {
 	// any light that intersects the view (for shadows)
 	for ( vEntity = tr.viewDef->viewEntitys; vEntity; vEntity = vEntity->next ) {
 
-		if ( r_useEntityScissors.GetBool() ) {
+		if ( r_useEntityScissors.GetBool() && !R_ShouldDisableEntityCullingForLevelshot() ) {
 			// calculate the screen area covered by the entity
 			idScreenRect scissorRect = R_CalcEntityScissorRectangle( vEntity );
 			// intersect with the portal crossing scissor rectangle

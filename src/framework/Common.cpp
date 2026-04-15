@@ -77,7 +77,7 @@ idCVar com_productionMode("com_productionMode", "0", CVAR_SYSTEM | CVAR_BOOL, "0
 
 idCVar com_forceGenericSIMD( "com_forceGenericSIMD", "0", CVAR_BOOL | CVAR_SYSTEM | CVAR_NOCHEAT, "force generic platform independent SIMD" );
 idCVar com_developer( "developer", "0", CVAR_BOOL|CVAR_SYSTEM|CVAR_NOCHEAT, "developer mode" );
-idCVar com_allowConsole( "com_allowConsole", "0", CVAR_BOOL | CVAR_SYSTEM | CVAR_NOCHEAT, "allow toggling console with the tilde key" );
+idCVar con_allowConsole( "con_allowConsole", "1", CVAR_BOOL | CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_NOCHEAT, "allow toggling the console with the tilde key; set to 0 to require Ctrl+Alt+Tilde" );
 idCVar com_speeds( "com_speeds", "0", CVAR_BOOL|CVAR_SYSTEM|CVAR_NOCHEAT, "show engine timings" );
 idCVar com_showFPS( "com_showFPS", "0", CVAR_BOOL|CVAR_SYSTEM|CVAR_ARCHIVE|CVAR_NOCHEAT, "show frames rendered per second" );
 idCVar com_showMemoryUsage( "com_showMemoryUsage", "0", CVAR_BOOL|CVAR_SYSTEM|CVAR_NOCHEAT, "show total and per frame memory usage" );
@@ -97,6 +97,24 @@ idCVar com_platformProfile( "com_platformProfile", "default", CVAR_SYSTEM | CVAR
 
 idCVar com_product_lang_ext( "com_product_lang_ext", "1", CVAR_INTEGER | CVAR_SYSTEM | CVAR_ARCHIVE, "Extension to use when creating language files." );
 idCVar r_skipGlowOverlay( "r_skipGlowOverlay", "0", CVAR_ARCHIVE | CVAR_RENDERER, "skip glow overlays when non-zero" );
+
+static void Common_MigrateLegacyConsoleAllowCVar( void ) {
+	idCVar *legacyAllowConsole = cvarSystem->Find( "com_allowConsole" );
+	if ( legacyAllowConsole == NULL || ( legacyAllowConsole->GetFlags() & CVAR_STATIC ) != 0 ) {
+		return;
+	}
+
+	if ( idStr::Cmp( con_allowConsole.GetString(), "1" ) != 0 ) {
+		return;
+	}
+
+	if ( idStr::Cmp( legacyAllowConsole->GetString(), con_allowConsole.GetString() ) == 0 ) {
+		return;
+	}
+
+	common->Printf( "Migrating legacy console config: copying com_allowConsole to con_allowConsole (%s)\n", legacyAllowConsole->GetString() );
+	con_allowConsole.SetString( legacyAllowConsole->GetString() );
+}
 
 // com_speeds times
 int				time_gameFrame;
@@ -925,6 +943,17 @@ doom set test blah + map test
 #define		MAX_CONSOLE_LINES	32
 int			com_numConsoleLines;
 idCmdArgs	com_consoleLines[MAX_CONSOLE_LINES];
+
+int Com_GetNumStartupCommandLines( void ) {
+	return com_numConsoleLines;
+}
+
+const idCmdArgs *Com_GetStartupCommandLine( int index ) {
+	if ( index < 0 || index >= com_numConsoleLines ) {
+		return NULL;
+	}
+	return &com_consoleLines[ index ];
+}
 
 /*
 ==================
@@ -3393,6 +3422,8 @@ void idCommonLocal::InitGame( void ) {
 
 	// re-override anything from the config files with command line args
 	StartupVariable( NULL, false );
+
+	Common_MigrateLegacyConsoleAllowCVar();
 
 	// if any archived cvars are modified after this, we will trigger a writing of the config file
 	cvarSystem->ClearModifiedFlags( CVAR_ARCHIVE );

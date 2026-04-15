@@ -200,6 +200,27 @@ public:
 bool		key_overstrikeMode = false;
 idKey *		keys = NULL;
 
+static bool BindingsEquivalent( const char *lhs, const char *rhs ) {
+	if ( !lhs || !rhs || !lhs[0] || !rhs[0] ) {
+		return false;
+	}
+
+	if ( idStr::Icmp( lhs, rhs ) == 0 ) {
+		return true;
+	}
+
+	if ( usercmdGen == NULL ) {
+		return false;
+	}
+
+	const int lhsAction = usercmdGen->CommandStringUsercmdData( lhs );
+	if ( lhsAction == 0 ) {
+		return false;
+	}
+
+	return lhsAction == usercmdGen->CommandStringUsercmdData( rhs );
+}
+
 #define ID_DOOM_LEGACY
 
 #ifdef ID_DOOM_LEGACY
@@ -211,7 +232,6 @@ const char *		cheatCodes[] = {
 	"idspispopd",	// Walk through walls
 	"idclip",		// Walk through walls
 	"idchoppers",	// Chainsaw
-	"iamtheduke",	// Snow terrain and giant text
 /*
 	"idbeholds",	// Berserker strength
 	"idbeholdv",	// Temporary invincibility
@@ -617,7 +637,7 @@ const char *idKeyInput::KeysFromBinding( const char *bind ) {
 	keyName[0] = '\0';
 	if ( bind && *bind ) {
 		for ( i = 0; i < MAX_KEYS; i++ ) {
-			if ( keys[i].binding.Icmp( bind ) == 0 ) {
+			if ( BindingsEquivalent( keys[i].binding.c_str(), bind ) ) {
 				if ( keyName[0] != '\0' ) {
 					idStr::Append( keyName, sizeof( keyName ), common->GetLanguageDict()->GetString( "#str_07183" ) );
 				} 
@@ -657,7 +677,7 @@ bool idKeyInput::UnbindBinding( const char *binding ) {
 
 	if ( binding && *binding ) {
 		for ( i = 0; i < MAX_KEYS; i++ ) {
-			if ( keys[i].binding.Icmp( binding ) == 0 ) {
+			if ( BindingsEquivalent( keys[i].binding.c_str(), binding ) ) {
 				SetBinding( i, "" );
 				unbound = true;
 			}
@@ -676,7 +696,7 @@ int idKeyInput::NumBinds( const char *binding ) {
 
 	if ( binding && *binding ) {
 		for ( i = 0; i < MAX_KEYS; i++ ) {
-			if ( keys[i].binding.Icmp( binding ) == 0 ) {
+			if ( BindingsEquivalent( keys[i].binding.c_str(), binding ) ) {
 				count++;
 			}
 		}
@@ -691,7 +711,7 @@ idKeyInput::KeyIsBountTo
 */
 bool idKeyInput::KeyIsBoundTo( int keynum, const char *binding ) {
 	if ( keynum >= 0 && keynum < MAX_KEYS ) {
-		return ( keys[keynum].binding.Icmp( binding ) == 0 );
+		return BindingsEquivalent( keys[keynum].binding.c_str(), binding );
 	}
 	return false;
 }
@@ -716,11 +736,7 @@ void idKeyInput::PreliminaryKeyEvent( int keynum, bool down ) {
 			int l = strlen( cheatCodes[i] );
 			assert( l <= 16 );
 			if ( idStr::Icmpn( lastKeys + 16 + ( lastKeyIndex & 15 ) - l, cheatCodes[i], l ) == 0 ) {
-				if ( idStr::Icmp( cheatCodes[i], "iamtheduke" ) == 0 ) {
-					cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "openq4_iamtheduke\n" );
-				} else {
-					common->Printf( "your memory serves you well!\n" );
-				}
+				common->Printf( "your memory serves you well!\n" );
 				break;
 			}
 		}

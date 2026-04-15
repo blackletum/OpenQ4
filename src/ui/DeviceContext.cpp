@@ -1054,6 +1054,14 @@ int idDeviceContext::TextWidth( const char *text, float scale, int limit, int ad
 	int count = 0;
 	const unsigned char *s = reinterpret_cast<const unsigned char *>( text );
 	while ( *s != '\0' && ( limit <= 0 || count < limit ) ) {
+		const int colorEscapeLength = idStr::ColorEscapeLength( reinterpret_cast<const char *>( s ) );
+		if ( colorEscapeLength > 0 ) {
+			// Width calculations must ignore inline color formatting just like DrawText().
+			s += colorEscapeLength;
+			count += colorEscapeLength;
+			continue;
+		}
+
 		int escapeType = 0;
 		const int escapeLength = idStr::IsEscape( reinterpret_cast<const char *>( s ), &escapeType );
 		if ( escapeLength > 0 ) {

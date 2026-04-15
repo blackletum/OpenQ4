@@ -121,7 +121,6 @@ SURFACES
 
 // drawSurf_t are always allocated and freed every frame, they are never cached
 static const int	DSF_VIEW_INSIDE_SHADOW	= 1;
-static const int	DSF_IAMTHEDUKE_TERRAIN	= 2;
 
 typedef struct drawSurf_s {
 	const srfTriangles_t	*geo;
@@ -498,6 +497,7 @@ TR_CMDS
 typedef enum {
 	RC_NOP,
 	RC_DRAW_VIEW,
+	RC_DRAW_SPECIAL_EFFECTS,
 	RC_SET_BUFFER,
 	RC_COPY_RENDER,
 	RC_SET_RENDERTEXTURE,
@@ -527,6 +527,7 @@ typedef struct {
 	int		x, y, imageWidth, imageHeight;
 	idImage	*image;
 	int		cubeFace;					// when copying to a cubeMap
+	bool	copyDepth;					// copy the depth buffer instead of color
 } copyRenderCommand_t;
 
 // jmarshall
@@ -601,6 +602,7 @@ extern	frameData_t	*frameData;
 void R_LockSurfaceScene( viewDef_t *parms );
 void R_ClearCommandChain( void );
 void R_AddDrawViewCmd( viewDef_t *parms );
+void R_AddSpecialEffects( viewDef_t *parms );
 
 void R_ReloadGuis_f( const idCmdArgs &args );
 void R_ListGuis_f( const idCmdArgs &args );
@@ -713,6 +715,7 @@ typedef struct {
 											// A high dynamic range card will have this set to 1.0.
 
 	bool				currentRenderCopied;	// true if any material has already referenced _currentRender
+	bool				currentDepthCopied;	// true if any material has already referenced _currentDepth
 
 	// our OpenGL state deltas
 	glstate_t			glState;
@@ -775,6 +778,9 @@ public:
 	virtual void			WriteDemoPics();
 	virtual void			DrawDemoPics();
 	virtual void			BeginFrame( int windowWidth, int windowHeight );
+	virtual void			SetSpecialEffect( ESpecialEffectType Which, bool Enabled );
+	virtual void			SetSpecialEffectParm( ESpecialEffectType Which, int Parm, float Value );
+	virtual void			ShutdownSpecialEffects( void );
 	virtual void			EndFrame( int *frontEndMsec, int *backEndMsec );
 	virtual void			TakeScreenshot( int width, int height, const char *fileName, int downSample, renderView_t *ref );
 	virtual void			CropRenderSize( int width, int height, bool makePowerOfTwo = false, bool forceDimensions = false );
@@ -805,9 +811,12 @@ public:
 							~idRenderSystemLocal( void );
 
 	void					Clear( void );
+	void					ResetSpecialEffects( void );
 	void					SetBackEndRenderer();			// sets tr.backEndRenderer based on cvars
 	void					ProcessPendingRenderTextureDeletes( void );
 	void					RenderViewToViewport( const renderView_t *renderView, idScreenRect *viewport );
+	void					CaptureDepthRenderToImage( const char *imageName );
+	void					EmitFullscreenSpecialEffects( const renderView_t *renderView );
 
 public:
 	// renderer globals
@@ -844,6 +853,17 @@ public:
 	renderView_t			primaryRenderView;
 	viewDef_t *				primaryView;
 	// many console commands need to know which world they should operate on
+	int						specialEffectsEnabled;
+	float					specialEffectParms[ SPECIAL_EFFECT_MAX ][ MAX_ENTITY_SHADER_PARMS ];
+	idImage *				specialBlurDepthImage;
+	idImage *				specialBlurDepthStencilImage;
+	idImage *				specialBlurImage;
+	idRenderTexture *		specialBlurDepthRenderTexture;
+	idRenderTexture *		specialBlurRenderTexture;
+	idImage *				specialALDepthImage;
+	idImage *				specialALDepthStencilImage;
+	idRenderTexture *		specialALDepthRenderTexture;
+	idImage *				specialALLightImage;
 
 	const idMaterial *		defaultMaterial;
 	idImage *				testImage;
@@ -874,6 +894,7 @@ public:
 	bool					useUIViewportFor2D;
 	idRenderTexture *		activeRenderTexture;
 	bool					suppressLevelshotViewModels;
+	bool					disableLevelshotEntityCulling;
 
 	unsigned short			gammaTable[256];	// brightness / gamma modify this
 };
@@ -897,6 +918,10 @@ static ID_INLINE bool R_ShouldSuppressViewLightForLevelshot( int viewID, int all
 		&& viewID != 0
 		&& allowLightInViewID != 0
 		&& allowLightInViewID == viewID;
+}
+
+static ID_INLINE bool R_ShouldDisableEntityCullingForLevelshot( void ) {
+	return tr.disableLevelshotEntityCulling;
 }
 
 
@@ -929,6 +954,7 @@ extern idCVar r_ssaoPower;				// SSAO response curve
 extern idCVar r_ssaoMaxDistance;		// SSAO far-distance fade
 extern idCVar r_ssaoSamples;			// SSAO spiral sample count
 extern idCVar r_ssaoDebug;				// visualize SSAO only
+extern idCVar r_forceSpecialEffects;	// force legacy special-effect bitmask for debugging
 extern idCVar r_hdrSceneTarget;			// render the main scene into an HDR scene target before post-processing
 extern idCVar r_hdrToneMap;				// enable filmic tone mapping and color correction
 extern idCVar r_hdrExposure;			// tone-mapping exposure
@@ -1451,6 +1477,8 @@ void RB_RenderTriangleSurface( const srfTriangles_t *tri );
 void RB_T_RenderTriangleSurface( const drawSurf_t *surf );
 void RB_RenderDrawSurfListWithFunction( drawSurf_t **drawSurfs, int numDrawSurfs, 
 					  void (*triFunc_)( const drawSurf_t *) );
+void RB_RenderDrawSurfListWithFunctionIgnoreScissor( drawSurf_t **drawSurfs, int numDrawSurfs,
+					  void (*triFunc_)( const drawSurf_t *) );
 void RB_RenderDrawSurfChainWithFunction( const drawSurf_t *drawSurfs, 
 										void (*triFunc_)( const drawSurf_t *) );
 void RB_DrawShaderPasses( drawSurf_t **drawSurfs, int numDrawSurfs );
@@ -1463,6 +1491,7 @@ void R_SetDrawInteraction( const shaderStage_t *surfaceStage, const float *surfa
 const shaderStage_t *RB_SetLightTexture( const idRenderLightLocal *light );
 
 void RB_DrawView( const void *data );
+void RB_DrawSpecialEffects( const void *data );
 void RB_ApplyResolutionScaleToBackBuffer( void );
 void RB_ApplyCRTToBackBuffer( void );
 

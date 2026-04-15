@@ -103,7 +103,7 @@ extern idCVar		com_asyncSound;
 extern idCVar		com_machineSpec;
 extern idCVar		com_purgeAll;
 extern idCVar		com_developer;
-extern idCVar		com_allowConsole;
+extern idCVar		con_allowConsole;
 extern idCVar		com_speeds;
 extern idCVar		com_showFPS;
 extern idCVar		com_showMemoryUsage;

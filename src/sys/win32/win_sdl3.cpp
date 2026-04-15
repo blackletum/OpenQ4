@@ -219,6 +219,7 @@ static bool s_haveAbsoluteMousePosition = false;
 static int s_absoluteMouseX = 0;
 static int s_absoluteMouseY = 0;
 static bool s_menuMouseRouteActive = false;
+static idUserInterface *s_trackedMenuGui = NULL;
 static bool s_haveMenuMousePosition = false;
 static float s_menuMouseX = 0.0f;
 static float s_menuMouseY = 0.0f;
@@ -2068,6 +2069,7 @@ static void SDL3_HandleWindowEvent(const SDL_WindowEvent &event, int eventTime) 
 
 		case SDL_EVENT_WINDOW_FOCUS_GAINED:
 			win32.activeApp = true;
+			win32.printScreenFocusReleaseUntil = 0;
 			idKeyInput::ClearStates();
 			com_editorActive = false;
 			s_menuMouseInsideWindow = true;
@@ -2189,6 +2191,10 @@ bool Sys_SDL_PumpEvents(void) {
 				if (down && !event.key.repeat && key == K_ENTER && (event.key.mod & SDL_KMOD_ALT) != 0) {
 					cvarSystem->SetCVarBool("r_fullscreen", !renderSystem->IsFullScreen());
 					cmdSystem->BufferCommandText(CMD_EXEC_APPEND, "vid_restart partial\n");
+					break;
+				}
+
+				if (key == K_PRINT_SCR && Sys_HandlePrintScreenHotkey(down)) {
 					break;
 				}
 
@@ -2580,6 +2586,23 @@ void IN_Frame(void) {
 
 	bool shouldGrab = true;
 	const bool routeMenuMouse = SDL3_ShouldRouteMenuMouse();
+	idUserInterface *activeMenuGui = routeMenuMouse ? session->GetActiveGUI() : NULL;
+
+	if (activeMenuGui != s_trackedMenuGui) {
+		// Match the Alt+Tab recovery path when gameplay/menu transitions swap the
+		// active GUI without generating a focus event.
+		SDL3_InvalidateMenuMouseRouting();
+		s_trackedMenuGui = activeMenuGui;
+	}
+
+	if (win32.printScreenFocusReleaseUntil != 0) {
+		const DWORD now = GetTickCount();
+		if (static_cast<LONG>(win32.printScreenFocusReleaseUntil - now) > 0) {
+			shouldGrab = false;
+		} else {
+			win32.printScreenFocusReleaseUntil = 0;
+		}
+	}
 
 	if (!win32.in_mouse.GetBool()) {
 		shouldGrab = false;
@@ -2636,6 +2659,7 @@ void Sys_InitInput(void) {
 	win32.movingWindow = false;
 	win32.mouseGrabbed = SDL3_IsMouseCaptured();
 	s_menuMouseRouteActive = false;
+	s_trackedMenuGui = NULL;
 	SDL3_ResetMenuMouseTracking();
 	s_menuMouseInsideWindow = true;
 	SDL3_UpdateCursorVisibility();

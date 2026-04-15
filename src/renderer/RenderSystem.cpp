@@ -197,6 +197,39 @@ void	R_AddDrawViewCmd( viewDef_t *parms ) {
 	R_ViewStatistics( parms );
 }
 
+/*
+=============
+R_AddSpecialEffects
+=============
+*/
+void R_AddSpecialEffects( viewDef_t *parms ) {
+	drawSurfsCommand_t *cmd;
+	int activeMask;
+
+	if ( parms == NULL ) {
+		return;
+	}
+
+	activeMask = tr.specialEffectsEnabled;
+	if ( r_forceSpecialEffects.GetInteger() > 0 ) {
+		activeMask = r_forceSpecialEffects.GetInteger();
+	}
+
+	if ( ( activeMask & ( SPECIAL_EFFECT_BLUR | SPECIAL_EFFECT_AL ) ) == 0 ) {
+		return;
+	}
+
+	// Portal-sky cameras and other negative view IDs submit their own scene renders and
+	// should never inherit fullscreen player special effects.
+	if ( parms->renderView.viewID < 0 ) {
+		return;
+	}
+
+	cmd = (drawSurfsCommand_t *)R_GetCommandBuffer( sizeof( *cmd ) );
+	cmd->commandId = RC_DRAW_SPECIAL_EFFECTS;
+	cmd->viewDef = parms;
+}
+
 
 //=================================================================================
 
@@ -274,6 +307,180 @@ idRenderSystemLocal::~idRenderSystemLocal
 =============
 */
 idRenderSystemLocal::~idRenderSystemLocal( void ) {
+}
+
+/*
+=============
+idRenderSystemLocal::ResetSpecialEffects
+=============
+*/
+void idRenderSystemLocal::ResetSpecialEffects( void ) {
+	specialEffectsEnabled = 0;
+	memset( specialEffectParms, 0, sizeof( specialEffectParms ) );
+
+	// Stock Quake 4 blur defaults from the legacy rvspecial pipeline.
+	specialEffectParms[ SPECIAL_EFFECT_BLUR ][0] = 0.694f;
+	specialEffectParms[ SPECIAL_EFFECT_BLUR ][1] = 0.694f;
+	specialEffectParms[ SPECIAL_EFFECT_BLUR ][2] = 0.694f;
+	specialEffectParms[ SPECIAL_EFFECT_BLUR ][3] = 1.0f;
+	specialEffectParms[ SPECIAL_EFFECT_BLUR ][4] = 4.0f;
+	specialEffectParms[ SPECIAL_EFFECT_BLUR ][5] = 0.31f;
+	specialEffectParms[ SPECIAL_EFFECT_BLUR ][6] = 0.5f;
+	specialEffectParms[ SPECIAL_EFFECT_BLUR ][7] = 500.0f;
+}
+
+/*
+=============
+idRenderSystemLocal::SetSpecialEffect
+=============
+*/
+void idRenderSystemLocal::SetSpecialEffect( ESpecialEffectType Which, bool Enabled ) {
+	if ( Which <= SPECIAL_EFFECT_NONE || Which >= SPECIAL_EFFECT_MAX ) {
+		return;
+	}
+
+	if ( Enabled ) {
+		specialEffectsEnabled |= Which;
+	} else {
+		specialEffectsEnabled &= ~Which;
+	}
+}
+
+/*
+=============
+idRenderSystemLocal::SetSpecialEffectParm
+=============
+*/
+void idRenderSystemLocal::SetSpecialEffectParm( ESpecialEffectType Which, int Parm, float Value ) {
+	if ( Which <= SPECIAL_EFFECT_NONE || Which >= SPECIAL_EFFECT_MAX ) {
+		return;
+	}
+	if ( Parm < 0 || Parm >= MAX_ENTITY_SHADER_PARMS ) {
+		return;
+	}
+
+	specialEffectParms[ Which ][ Parm ] = Value;
+}
+
+/*
+=============
+idRenderSystemLocal::ShutdownSpecialEffects
+=============
+*/
+void idRenderSystemLocal::ShutdownSpecialEffects( void ) {
+	if ( specialBlurDepthRenderTexture != NULL ) {
+		DestroyRenderTexture( specialBlurDepthRenderTexture );
+		specialBlurDepthRenderTexture = NULL;
+	}
+	if ( specialBlurRenderTexture != NULL ) {
+		DestroyRenderTexture( specialBlurRenderTexture );
+		specialBlurRenderTexture = NULL;
+	}
+	if ( specialALDepthRenderTexture != NULL ) {
+		DestroyRenderTexture( specialALDepthRenderTexture );
+		specialALDepthRenderTexture = NULL;
+	}
+
+	specialBlurDepthImage = NULL;
+	specialBlurDepthStencilImage = NULL;
+	specialBlurImage = NULL;
+	specialALDepthImage = NULL;
+	specialALDepthStencilImage = NULL;
+	specialALLightImage = NULL;
+
+	ResetSpecialEffects();
+}
+
+/*
+=============
+idRenderSystemLocal::CaptureDepthRenderToImage
+=============
+*/
+void idRenderSystemLocal::CaptureDepthRenderToImage( const char *imageName ) {
+	if ( !glConfig.isInitialized ) {
+		return;
+	}
+
+	guiModel->EmitFullScreen();
+	guiModel->Clear();
+
+	idImage *image = globalImages->GetImage( imageName );
+	if ( image == NULL ) {
+		idImageOpts opts;
+		memset( &opts, 0, sizeof( opts ) );
+		opts.textureType = TT_2D;
+		opts.format = FMT_DEPTH_STENCIL;
+		opts.width = Max( 1, renderCrops[ currentRenderCrop ].width );
+		opts.height = Max( 1, renderCrops[ currentRenderCrop ].height );
+		opts.numLevels = 1;
+		opts.numMSAASamples = 0;
+		opts.isPersistant = true;
+		image = CreateImage( imageName, &opts, TF_NEAREST );
+	}
+	if ( image == NULL ) {
+		return;
+	}
+
+	renderCrop_t *rc = &renderCrops[currentRenderCrop];
+
+	copyRenderCommand_t *cmd = (copyRenderCommand_t *)R_GetCommandBuffer( sizeof( *cmd ) );
+	cmd->commandId = RC_COPY_RENDER;
+	cmd->x = rc->x;
+	cmd->y = rc->y;
+	cmd->imageWidth = rc->width;
+	cmd->imageHeight = rc->height;
+	cmd->image = image;
+	cmd->cubeFace = 0;
+	cmd->copyDepth = true;
+
+	guiModel->Clear();
+}
+
+/*
+=============
+idRenderSystemLocal::EmitFullscreenSpecialEffects
+=============
+*/
+void idRenderSystemLocal::EmitFullscreenSpecialEffects( const renderView_t *renderView ) {
+	if ( !glConfig.isInitialized || renderView == NULL || guiModel == NULL ) {
+		return;
+	}
+
+	// Portal-sky cameras submit their own RenderScene calls and should never inherit
+	// fullscreen player post-process.
+	if ( renderView->viewID < 0 ) {
+		return;
+	}
+
+	if ( ( specialEffectsEnabled & SPECIAL_EFFECT_BLUR ) == 0 ) {
+		return;
+	}
+
+	const idMaterial *blurMaterial = declManager->FindMaterial( "postprocess/blur", false );
+	if ( blurMaterial == NULL || blurMaterial->TestMaterialFlag( MF_DEFAULTED ) || !blurMaterial->IsDrawn() ) {
+		return;
+	}
+
+	const bool previousUIViewportMode = GetUseUIViewportFor2D();
+	SetUseUIViewportFor2D( false );
+
+	CaptureRenderToImage( "_postProcessAlbedo0" );
+	CaptureDepthRenderToImage( "_forwardRenderResolvedDepth" );
+	ClearRenderTarget( false, true, 1.0f, 0.0f, 0.0f, 0.0f );
+
+	float savedShaderParms[ MAX_GLOBAL_SHADER_PARMS ];
+	memcpy( savedShaderParms, primaryRenderView.shaderParms, sizeof( savedShaderParms ) );
+	memcpy( primaryRenderView.shaderParms, specialEffectParms[ SPECIAL_EFFECT_BLUR ], sizeof( primaryRenderView.shaderParms ) );
+
+	DrawStretchPic(
+		0.0f, 0.0f, SCREEN_WIDTH, SCREEN_HEIGHT,
+		0.0f, 1.0f, 1.0f, 0.0f,
+		blurMaterial );
+	guiModel->EmitFullScreen();
+	guiModel->Clear();
+
+	memcpy( primaryRenderView.shaderParms, savedShaderParms, sizeof( savedShaderParms ) );
+	SetUseUIViewportFor2D( previousUIViewportMode );
 }
 
 /*
@@ -954,6 +1161,8 @@ void idRenderSystemLocal::CaptureRenderToImage( const char *imageName ) {
 	cmd->imageWidth = rc->width;
 	cmd->imageHeight = rc->height;
 	cmd->image = image;
+	cmd->cubeFace = 0;
+	cmd->copyDepth = false;
 
 	guiModel->Clear();
 }

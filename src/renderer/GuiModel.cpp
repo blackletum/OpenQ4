@@ -292,6 +292,8 @@ void idGuiModel::EmitFullScreen( void ) {
 		viewDef->scissor.y2 = tr.viewDef->scissor.y2;
 	}
 
+	viewDef->renderView.time = tr.primaryRenderView.time;
+	memcpy( viewDef->renderView.shaderParms, tr.primaryRenderView.shaderParms, sizeof( viewDef->renderView.shaderParms ) );
 	viewDef->floatTime = tr.frameShaderTime;
 
 	// glOrtho( 0, 640, 480, 0, 0, 1 );		// always assume 640x480 virtual coordinates

@@ -688,6 +688,8 @@ void idImageManager::CreateIntrinsicImages() {
 	scratchImage = ImageFromFunction("_scratch", R_RGBA8Image);
 	scratchImage2 = ImageFromFunction("_scratch2", R_RGBA8Image);
 	accumImage = ImageFromFunction("_accum", R_RGBA8Image);
+	ImageFromFunction("_reflectionRender", R_RGBA8Image);
+	ImageFromFunction("_refractionRender", R_RGBA8Image);
 	//scratchCubeMapImage = ImageFromFunction("_scratchCubeMap", makeNormalizeVectorCubeMap);
 
 	currentRenderImage = ImageFromFunction("_currentRender", R_RGBA16FImage);
@@ -697,6 +699,7 @@ void idImageManager::CreateIntrinsicImages() {
 
 	// placeholders for runtime render targets referenced by materials
 	ImageFromFunction("_forwardRenderResolvedAlbedo", R_RGBA16FImage);
+	ImageFromFunction("_forwardRenderResolvedDepth", R_DepthImage);
 	ImageFromFunction("_postProcessAlbedo0", R_RGBA16FImage);
 	ImageFromFunction("_postProcessAlbedo1", R_RGBA16FImage);
 

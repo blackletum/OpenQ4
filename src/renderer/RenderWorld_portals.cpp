@@ -562,6 +562,9 @@ Return true if the entity reference bounds do not intersect the current portal c
 ================
 */
 bool idRenderWorldLocal::CullEntityByPortals( const idRenderEntityLocal *entity, const portalStack_t *ps ) {
+	if ( R_ShouldDisableEntityCullingForLevelshot() ) {
+		return false;
+	}
 
 	if ( !r_useEntityCulling.GetBool() ) {
 		return false;
@@ -889,6 +892,17 @@ void idRenderWorldLocal::FindViewLightsAndEntities( void ) {
 		// be a different point than initialViewAreaOrigin for subviews that
 		// may have the viewOrigin in a solid/invalid area
 		FlowViewThroughPortals( tr.viewDef->renderView.vieworg, 5, tr.viewDef->frustum );
+	}
+
+	if ( R_ShouldDisableEntityCullingForLevelshot() ) {
+		portalStack_t ps;
+
+		memset( &ps, 0, sizeof( ps ) );
+		ps.rect = tr.viewDef->scissor;
+
+		for ( int i = 0; i < numPortalAreas; i++ ) {
+			AddAreaEntityRefs( i, &ps );
+		}
 	}
 }
 

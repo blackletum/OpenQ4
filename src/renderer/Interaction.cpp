@@ -1201,7 +1201,7 @@ void idInteraction::AddActiveInteraction( void ) {
 				// try to cull before adding
 				// FIXME: this may not be worthwhile. We have already done culling on the ambient,
 				// but individual surfaces may still be cropped somewhat more
-				if ( lightDef->parms.globalLight || !R_CullLocalBox( lightTris->bounds, vEntity->modelMatrix, 5, tr.viewDef->frustum ) ) {
+				if ( lightDef->parms.globalLight || R_ShouldDisableEntityCullingForLevelshot() || !R_CullLocalBox( lightTris->bounds, vEntity->modelMatrix, 5, tr.viewDef->frustum ) ) {
 
 					// make sure the original surface has its ambient cache created
 					srfTriangles_t *tri = sint->ambientTris;
@@ -1390,7 +1390,7 @@ void idInteraction::AddActiveInteraction( void ) {
 			// cull static shadows that have a non-empty bounds
 			// dynamic shadows that use the turboshadow code will not have valid
 			// bounds, because the perspective projection extends them to infinity
-			if ( r_useShadowCulling.GetBool() && !shadowTris->bounds.IsCleared() ) {
+			if ( r_useShadowCulling.GetBool() && !R_ShouldDisableEntityCullingForLevelshot() && !shadowTris->bounds.IsCleared() ) {
 				if ( R_CullLocalBox( shadowTris->bounds, vEntity->modelMatrix, 5, tr.viewDef->frustum ) ) {
 					continue;
 				}

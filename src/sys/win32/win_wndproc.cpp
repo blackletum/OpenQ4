@@ -327,6 +327,7 @@ LONG WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam ) {
 
 				win32.activeApp = (fActive != WA_INACTIVE);
 				if ( win32.activeApp ) {
+					win32.printScreenFocusReleaseUntil = 0;
 					idKeyInput::ClearStates();
 					com_editorActive = false;
 					Sys_GrabMouseCursor( true );

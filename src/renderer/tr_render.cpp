@@ -307,6 +307,46 @@ void RB_RenderDrawSurfListWithFunction( drawSurf_t **drawSurfs, int numDrawSurfs
 }
 
 /*
+====================
+RB_RenderDrawSurfListWithFunctionIgnoreScissor
+
+Special-effect capture passes render into fixed-size offscreen targets, so they must
+not inherit per-surface screen scissors from the main framebuffer view.
+====================
+*/
+void RB_RenderDrawSurfListWithFunctionIgnoreScissor( drawSurf_t **drawSurfs, int numDrawSurfs,
+											  void (*triFunc_)( const drawSurf_t *) ) {
+	int i;
+	const drawSurf_t *drawSurf;
+
+	backEnd.currentSpace = NULL;
+
+	for ( i = 0; i < numDrawSurfs; i++ ) {
+		drawSurf = drawSurfs[i];
+
+		if ( drawSurf->space != backEnd.currentSpace ) {
+			glLoadMatrixf( drawSurf->space->modelViewMatrix );
+		}
+
+		if ( drawSurf->space->weaponDepthHack ) {
+			RB_EnterWeaponDepthHack();
+		}
+
+		if ( drawSurf->space->modelDepthHack != 0.0f ) {
+			RB_EnterModelDepthHack( drawSurf->space->modelDepthHack );
+		}
+
+		triFunc_( drawSurf );
+
+		if ( drawSurf->space->weaponDepthHack || drawSurf->space->modelDepthHack != 0.0f ) {
+			RB_LeaveDepthHack();
+		}
+
+		backEnd.currentSpace = drawSurf->space;
+	}
+}
+
+/*
 ======================
 RB_RenderDrawSurfChainWithFunction
 ======================
@@ -890,6 +930,7 @@ void RB_DrawView( const void *data ) {
 	// we will need to do a new copyTexSubImage of the screen
 	// when a SS_POST_PROCESS material is used
 	backEnd.currentRenderCopied = false;
+	backEnd.currentDepthCopied = false;
 
 	// if there aren't any drawsurfs, do nothing
 	if ( !backEnd.viewDef->numDrawSurfs ) {

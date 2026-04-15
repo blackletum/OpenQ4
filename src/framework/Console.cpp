@@ -1110,14 +1110,13 @@ bool	idConsoleLocal::ProcessEvent( const sysEvent_t *event, bool forceAccept ) {
 	bool consoleKey;
 	consoleKey = event->evType == SE_KEY && ( event->evValue == Sys_GetConsoleKey( false ) || event->evValue == Sys_GetConsoleKey( true ) );
 
-#if ID_CONSOLE_LOCK
-	// If the console's not already down, and we have it turned off, check for ctrl+alt
-	if ( !keyCatching && !com_allowConsole.GetBool() ) {
+	// When disabled, keep the legacy retail requirement to hold Ctrl+Alt while
+	// pressing the console key to open the console.
+	if ( !keyCatching && !con_allowConsole.GetBool() ) {
 		if ( !idKeyInput::IsDown( K_CTRL ) || !idKeyInput::IsDown( K_ALT ) ) {
 			consoleKey = false;
 		}
 	}
-#endif
 
 	// we always catch the console key event
 	if ( !forceAccept && consoleKey ) {

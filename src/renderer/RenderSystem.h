@@ -338,9 +338,9 @@ public:
 
 // RAVEN BEGIN
 // rjohnson: new blur special effect
-	//virtual void			SetSpecialEffect( ESpecialEffectType Which, bool Enabled ) = 0;
-	//virtual void			SetSpecialEffectParm( ESpecialEffectType Which, int Parm, float Value ) = 0;
-	//virtual void			ShutdownSpecialEffects( void ) = 0;
+	virtual void			SetSpecialEffect( ESpecialEffectType Which, bool Enabled ) = 0;
+	virtual void			SetSpecialEffectParm( ESpecialEffectType Which, int Parm, float Value ) = 0;
+	virtual void			ShutdownSpecialEffects( void ) = 0;
 // RAVEN END
 
 	// if the pointers are not NULL, timing info will be returned

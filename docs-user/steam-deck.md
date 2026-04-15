@@ -10,7 +10,7 @@ OpenQ4 supports Steam Deck through the dedicated `OpenQ4-steamdeck` launcher shi
 
 ## Controls
 
-Default gameplay bindings shipped through `openq4_defaults.cfg`:
+Default gameplay bindings shipped by the stock OpenQ4 config:
 
 - `JOY15` = attack
 - `JOY16` = zoom
@@ -18,10 +18,10 @@ Default gameplay bindings shipped through `openq4_defaults.cfg`:
 - `JOY4` = crouch
 - `JOY6` = reload
 - `JOY5` = flashlight
-- `JOY1` = previous weapon
-- `JOY2` = next weapon
+- `JOY1` = weapon wheel
+- `JOY2` = last weapon
 - `JOY13` = run toggle / walk modifier
-- `JOY18` = impulse 19
+- `JOY18` = show objectives / scores
 
 Menu behavior:
 

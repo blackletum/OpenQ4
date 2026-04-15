@@ -970,6 +970,30 @@ void R_SetupProjection( void ) {
 	tr.viewDef->projectionMatrix[15] = 0;
 }
 
+static void R_GetViewFrustumExtents( float &zNear, float &xmin, float &xmax, float &ymin, float &ymax ) {
+	zNear = r_znear.GetFloat();
+	if ( tr.viewDef->renderView.cramZNear ) {
+		zNear *= 0.25f;
+	}
+
+	ymax = zNear * tan( tr.viewDef->renderView.fov_y * idMath::PI / 360.0f );
+	ymin = -ymax;
+
+	xmax = zNear * tan( tr.viewDef->renderView.fov_x * idMath::PI / 360.0f );
+	xmin = -xmax;
+
+	if ( tr_levelshotProjectionShiftActive ) {
+		const float width = xmax - xmin;
+		const float height = ymax - ymin;
+		const float xShift = 0.5f * width * tr_levelshotProjectionShiftX;
+		const float yShift = 0.5f * height * tr_levelshotProjectionShiftY;
+		xmin += xShift;
+		xmax += xShift;
+		ymin += yShift;
+		ymax += yShift;
+	}
+}
+
 /*
 =================
 R_SetupViewFrustum
@@ -980,23 +1004,44 @@ FIXME: derive from modelview matrix times projection matrix
 */
 static void R_SetupViewFrustum( void ) {
 	int		i;
+	float	zNear;
+	float	xmin, xmax, ymin, ymax;
 	float	xs, xc;
 	float	ang;
 
-	ang = DEG2RAD( tr.viewDef->renderView.fov_x ) * 0.5f;
-	idMath::SinCos( ang, xs, xc );
+	if ( tr_levelshotProjectionShiftActive ) {
+		const idVec3 &forward = tr.viewDef->renderView.viewaxis[0];
+		const idVec3 &horizontal = tr.viewDef->renderView.viewaxis[1];
+		const idVec3 &vertical = tr.viewDef->renderView.viewaxis[2];
 
-	tr.viewDef->frustum[0] = xs * tr.viewDef->renderView.viewaxis[0] + xc * tr.viewDef->renderView.viewaxis[1];
-	tr.viewDef->frustum[1] = xs * tr.viewDef->renderView.viewaxis[0] - xc * tr.viewDef->renderView.viewaxis[1];
+		R_GetViewFrustumExtents( zNear, xmin, xmax, ymin, ymax );
 
-	ang = DEG2RAD( tr.viewDef->renderView.fov_y ) * 0.5f;
-	idMath::SinCos( ang, xs, xc );
+		// Off-axis levelshot tiles need frustum planes that match the shifted
+		// projection. Keep this branch isolated so ordinary gameplay stays on the
+		// stock frustum setup.
+		tr.viewDef->frustum[0] = xmax * forward + zNear * horizontal;
+		tr.viewDef->frustum[1] = -xmin * forward - zNear * horizontal;
+		tr.viewDef->frustum[2] = ymax * forward + zNear * vertical;
+		tr.viewDef->frustum[3] = -ymin * forward - zNear * vertical;
 
-	tr.viewDef->frustum[2] = xs * tr.viewDef->renderView.viewaxis[0] + xc * tr.viewDef->renderView.viewaxis[2];
-	tr.viewDef->frustum[3] = xs * tr.viewDef->renderView.viewaxis[0] - xc * tr.viewDef->renderView.viewaxis[2];
+		// plane four is the front clipping plane
+		tr.viewDef->frustum[4] = /* vec3_origin - */ forward;
+	} else {
+		ang = DEG2RAD( tr.viewDef->renderView.fov_x ) * 0.5f;
+		idMath::SinCos( ang, xs, xc );
 
-	// plane four is the front clipping plane
-	tr.viewDef->frustum[4] = /* vec3_origin - */ tr.viewDef->renderView.viewaxis[0];
+		tr.viewDef->frustum[0] = xs * tr.viewDef->renderView.viewaxis[0] + xc * tr.viewDef->renderView.viewaxis[1];
+		tr.viewDef->frustum[1] = xs * tr.viewDef->renderView.viewaxis[0] - xc * tr.viewDef->renderView.viewaxis[1];
+
+		ang = DEG2RAD( tr.viewDef->renderView.fov_y ) * 0.5f;
+		idMath::SinCos( ang, xs, xc );
+
+		tr.viewDef->frustum[2] = xs * tr.viewDef->renderView.viewaxis[0] + xc * tr.viewDef->renderView.viewaxis[2];
+		tr.viewDef->frustum[3] = xs * tr.viewDef->renderView.viewaxis[0] - xc * tr.viewDef->renderView.viewaxis[2];
+
+		// plane four is the front clipping plane
+		tr.viewDef->frustum[4] = /* vec3_origin - */ tr.viewDef->renderView.viewaxis[0];
+	}
 
 	for ( i = 0; i < 5; i++ ) {
 		// flip direction so positive side faces out (FIXME: globally unify this)
@@ -1012,10 +1057,14 @@ static void R_SetupViewFrustum( void ) {
 	if ( tr.viewDef->renderView.cramZNear ) {
 		dNear *= 0.25f;
 	}
-
 	dFar = MAX_WORLD_SIZE;
-	dLeft = dFar * tan( DEG2RAD( tr.viewDef->renderView.fov_x * 0.5f ) );
-	dUp = dFar * tan( DEG2RAD( tr.viewDef->renderView.fov_y * 0.5f ) );
+	if ( tr_levelshotProjectionShiftActive ) {
+		dLeft = dFar * Max( idMath::Fabs( xmin ), idMath::Fabs( xmax ) ) / Max( dNear, idMath::FLOAT_EPSILON );
+		dUp = dFar * Max( idMath::Fabs( ymin ), idMath::Fabs( ymax ) ) / Max( dNear, idMath::FLOAT_EPSILON );
+	} else {
+		dLeft = dFar * tan( DEG2RAD( tr.viewDef->renderView.fov_x * 0.5f ) );
+		dUp = dFar * tan( DEG2RAD( tr.viewDef->renderView.fov_y * 0.5f ) );
+	}
 	tr.viewDef->viewFrustum.SetOrigin( tr.viewDef->renderView.vieworg );
 	tr.viewDef->viewFrustum.SetAxis( tr.viewDef->renderView.viewaxis );
 	tr.viewDef->viewFrustum.SetSize( dNear, dFar, dLeft, dUp );

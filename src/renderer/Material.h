@@ -83,6 +83,8 @@ typedef enum {
 	DI_SCRATCH,		// video, screen wipe, etc
 	DI_CUBE_RENDER,
 	DI_MIRROR_RENDER,
+	DI_REFLECTION_RENDER,
+	DI_REFRACTION_RENDER,
 	DI_XRAY_RENDER,
 	DI_REMOTE_RENDER
 } dynamicidImage_t;
