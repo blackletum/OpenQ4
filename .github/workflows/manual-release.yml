@@ -209,8 +209,8 @@ jobs:
           set -euo pipefail
           echo "Using bundled Meson fallbacks for macOS third-party libraries."
 
-      - name: Prepare OpenAL Soft (Windows ARM64)
-        if: matrix.platform == 'windows' && matrix.binary_arch == 'arm64'
+      - name: Prepare OpenAL Soft (Windows)
+        if: matrix.platform == 'windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"

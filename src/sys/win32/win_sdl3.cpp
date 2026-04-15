@@ -87,6 +87,11 @@ static inline void Sys_QueEventCompat(int time, sysEventType_t type, int value, 
 }
 
 #define Sys_QueEvent Sys_QueEventCompat
+
+static inline bool Sys_HandlePrintScreenHotkey(bool pressed) {
+	(void)pressed;
+	return false;
+}
 #endif
 
 #if !defined(OPENQ4_SDL3_LINUX_HOST)
@@ -2092,7 +2097,9 @@ static void SDL3_HandleWindowEvent(const SDL_WindowEvent &event, int eventTime) 
 
 		case SDL_EVENT_WINDOW_FOCUS_GAINED:
 			win32.activeApp = true;
+#if !defined(OPENQ4_SDL3_LINUX_HOST)
 			win32.printScreenFocusReleaseUntil = 0;
+#endif
 			idKeyInput::ClearStates();
 			com_editorActive = false;
 			s_menuMouseInsideWindow = true;
@@ -2618,14 +2625,16 @@ void IN_Frame(void) {
 		s_trackedMenuGui = activeMenuGui;
 	}
 
+#if !defined(OPENQ4_SDL3_LINUX_HOST)
 	if (win32.printScreenFocusReleaseUntil != 0) {
-		const DWORD now = GetTickCount();
-		if (static_cast<LONG>(win32.printScreenFocusReleaseUntil - now) > 0) {
+		const uint32_t now = static_cast<uint32_t>(GetTickCount());
+		if (static_cast<int32_t>(win32.printScreenFocusReleaseUntil - now) > 0) {
 			shouldGrab = false;
 		} else {
 			win32.printScreenFocusReleaseUntil = 0;
 		}
 	}
+#endif
 
 	if (!win32.in_mouse.GetBool()) {
 		shouldGrab = false;
