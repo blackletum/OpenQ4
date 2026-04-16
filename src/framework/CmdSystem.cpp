@@ -334,6 +334,19 @@ void idCmdSystemLocal::Parse_f( const idCmdArgs &args ) {
 	}
 }
 
+static void Flashlight_f( const idCmdArgs &args ) {
+	if ( args.Argc() != 1 ) {
+		common->Printf( "usage: flashlight\n" );
+		return;
+	}
+
+	if ( usercmdGen == NULL ) {
+		return;
+	}
+
+	usercmdGen->TriggerImpulse( IMPULSE_50 );
+}
+
 /*
 ============
 idCmdSystemLocal::Init
@@ -352,6 +365,7 @@ void idCmdSystemLocal::Init( void ) {
 	AddCommand( "echo", Echo_f, CMD_FL_SYSTEM, "prints text" );
 	AddCommand( "parse", Parse_f, CMD_FL_SYSTEM, "prints tokenized string" );
 	AddCommand( "wait", Wait_f, CMD_FL_SYSTEM, "delays remaining buffered commands one or more frames" );
+	AddCommand( "flashlight", Flashlight_f, CMD_FL_SYSTEM, "toggles the flashlight" );
 
 	completionString = "*";
 

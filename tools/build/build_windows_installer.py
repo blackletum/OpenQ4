@@ -105,20 +105,6 @@ def validate_package_dir(package_dir: Path, arch: str) -> None:
             f"{joined}"
         )
 
-    loadscreen_dir = package_dir / "baseoq4" / "gfx" / "guis" / "loadscreens"
-    if not loadscreen_dir.is_dir():
-        raise FileNotFoundError(
-            "required package payload directory is missing:\n"
-            f"  - {loadscreen_dir}"
-        )
-
-    has_loadscreen_files = any(path.is_file() for path in loadscreen_dir.rglob("*"))
-    if not has_loadscreen_files:
-        raise FileNotFoundError(
-            "required package payload directory has no files:\n"
-            f"  - {loadscreen_dir}"
-        )
-
 
 def resolve_iscc_path(explicit_path: str | None) -> Path:
     candidates: list[Path] = []

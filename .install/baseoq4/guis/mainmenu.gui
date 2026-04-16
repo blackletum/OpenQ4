@@ -5868,7 +5868,7 @@ windowDef Desktop
 						rect	452,119,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	weapon_blastergauntlet
+						bind	_impulse0
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -5882,7 +5882,7 @@ windowDef Desktop
 						rect	452,143,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	weapon_machinegun
+						bind	_impulse1
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -5896,7 +5896,7 @@ windowDef Desktop
 						rect	452,167,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	weapon_shotgun
+						bind	_impulse2
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -5910,7 +5910,7 @@ windowDef Desktop
 						rect	452,191,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	weapon_hyperblaster
+						bind	_impulse3
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -5924,7 +5924,7 @@ windowDef Desktop
 						rect	452,215,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	weapon_grenadelauncher
+						bind	_impulse4
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -5938,7 +5938,7 @@ windowDef Desktop
 						rect	452,239,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	weapon_nailgun
+						bind	_impulse5
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -5952,7 +5952,7 @@ windowDef Desktop
 						rect	452,263,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	weapon_rocketlauncher
+						bind	_impulse6
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -5966,7 +5966,7 @@ windowDef Desktop
 						rect	452,287,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	weapon_railgun
+						bind	_impulse7
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -5980,7 +5980,7 @@ windowDef Desktop
 						rect	452,311,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	weapon_lightninggun
+						bind	_impulse8
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -5994,7 +5994,7 @@ windowDef Desktop
 						rect	452,335,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	weapon_darkmattergun
+						bind	_impulse9
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -6008,7 +6008,7 @@ windowDef Desktop
 						rect	452,359,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	weapon_napalmlauncher
+						bind	_impulse10
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -6163,7 +6163,7 @@ windowDef Desktop
 						rect	452,143,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	prevweapon
+						bind	_impulse15
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -6177,7 +6177,7 @@ windowDef Desktop
 						rect	452,167,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	nextweapon
+						bind	_impulse14
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -6191,7 +6191,7 @@ windowDef Desktop
 						rect	452,191,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	reload
+						bind	_impulse13
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -6275,7 +6275,7 @@ windowDef Desktop
 						rect	452,335,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	showobjectives
+						bind	_impulse19
 						textscale	0.24
 						font	"fonts/lowpixel"
 
@@ -6289,7 +6289,7 @@ windowDef Desktop
 						rect	452,359,149,18
 						visible	1
 						forecolor	1,0.745,0.137,0.8
-						bind	flashlight
+						bind	_impulse50
 						textscale	0.24
 						font	"fonts/lowpixel"
 

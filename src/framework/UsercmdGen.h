@@ -160,7 +160,7 @@ public:
 	// Set a value that can safely be referenced by UsercmdInterrupt() for each key binding.
 	virtual	int			CommandStringUsercmdData( const char *cmdString ) = 0;
 
-	// Resolve a console token to an impulse number, or -1 if it is not an impulse alias.
+	// Resolve a console token to an impulse number, or -1 if it is not an impulse command.
 	virtual int			ResolveImpulseCommand( const char *cmdString ) const = 0;
 
 	// Returns the number of user commands.
