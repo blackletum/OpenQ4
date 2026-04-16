@@ -574,12 +574,46 @@ static bool SDL3_MapWindowMouseToGuiCursor(float windowMouseX, float windowMouse
 	return true;
 }
 
+static bool SDL3_MapWindowMouseToConsoleCursor(float windowMouseX, float windowMouseY, float &cursorX, float &cursorY) {
+	sdl3GuiMouseTransform_t transform;
+	if (!SDL3_BuildGuiMouseTransform(transform)) {
+		return false;
+	}
+
+	float pixelMouseX = windowMouseX * transform.windowToPixelX - transform.drawAreaX;
+	float pixelMouseY = windowMouseY * transform.windowToPixelY - transform.drawAreaY;
+	pixelMouseX = idMath::ClampFloat(0.0f, transform.drawAreaWidth, pixelMouseX);
+	pixelMouseY = idMath::ClampFloat(0.0f, transform.drawAreaHeight, pixelMouseY);
+
+	cursorX = pixelMouseX * (static_cast<float>(SCREEN_WIDTH) / transform.drawAreaWidth);
+	cursorY = pixelMouseY * (static_cast<float>(SCREEN_HEIGHT) / transform.drawAreaHeight);
+
+	if (console != NULL) {
+		console->ClampMousePosition(cursorX, cursorY);
+	}
+
+	return true;
+}
+
+static bool SDL3_MapWindowMouseToRoutedCursor(float windowMouseX, float windowMouseY, float &cursorX, float &cursorY) {
+	idUserInterface *activeGui = (session != NULL) ? session->GetActiveGUI() : NULL;
+	if (activeGui != NULL) {
+		return SDL3_MapWindowMouseToGuiCursor(windowMouseX, windowMouseY, cursorX, cursorY);
+	}
+
+	if (console != NULL && console->Active()) {
+		return SDL3_MapWindowMouseToConsoleCursor(windowMouseX, windowMouseY, cursorX, cursorY);
+	}
+
+	return false;
+}
+
 static void SDL3_SyncSystemMouseToActiveCursor(void) {
 	if (!SDL3_ShouldRouteMenuMouse() || !s_sdlWindow) {
 		return;
 	}
 
-	idUserInterface *activeGui = session->GetActiveGUI();
+	idUserInterface *activeGui = (session != NULL) ? session->GetActiveGUI() : NULL;
 	if (activeGui != NULL) {
 		sdl3GuiMouseTransform_t transform;
 		if (!SDL3_BuildGuiMouseTransform(transform)) {
@@ -624,7 +658,7 @@ static void SDL3_SyncSystemMouseToActiveCursor(void) {
 
 	float consoleMouseX = 0.0f;
 	float consoleMouseY = 0.0f;
-	if (!SDL3_MapWindowMouseToGuiCursor(windowMouseX, windowMouseY, consoleMouseX, consoleMouseY)) {
+	if (!SDL3_MapWindowMouseToConsoleCursor(windowMouseX, windowMouseY, consoleMouseX, consoleMouseY)) {
 		return;
 	}
 
@@ -2278,7 +2312,7 @@ bool Sys_SDL_PumpEvents(void) {
 
 					if (warpMotionEvent) {
 						s_ignoreNextMenuWarpMotion = false;
-						if (SDL3_MapWindowMouseToGuiCursor(event.motion.x, event.motion.y, menuMouseX, menuMouseY)) {
+						if (SDL3_MapWindowMouseToRoutedCursor(event.motion.x, event.motion.y, menuMouseX, menuMouseY)) {
 							s_menuMouseX = menuMouseX;
 							s_menuMouseY = menuMouseY;
 							s_haveMenuMousePosition = true;
@@ -2291,7 +2325,7 @@ bool Sys_SDL_PumpEvents(void) {
 							s_ignoreNextMenuWarpMotion = false;
 						}
 
-						if (SDL3_MapWindowMouseToGuiCursor(event.motion.x, event.motion.y, menuMouseX, menuMouseY)) {
+						if (SDL3_MapWindowMouseToRoutedCursor(event.motion.x, event.motion.y, menuMouseX, menuMouseY)) {
 							if (!s_haveMenuMousePosition) {
 								s_menuMouseX = menuMouseX;
 								s_menuMouseY = menuMouseY;

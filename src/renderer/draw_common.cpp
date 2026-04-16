@@ -779,8 +779,12 @@ static bool RB_SceneRenderTargetRequested( void ) {
 		return false;
 	}
 
-	return RB_PostProcessBloomRequested()
-		|| r_ssao.GetBool()
+	// Plain bloom can run from a _currentRender capture of the resolved scene.
+	// Forcing the whole world view through the FP16 scene target just for bloom
+	// currently breaks some stock Quake 4 post/depth-aware effects during map
+	// transitions (for example the airdefense1 -> airdefense2 handoff). Keep the
+	// scene target reserved for passes that actually require an offscreen scene RT.
+	return r_ssao.GetBool()
 		|| r_hdrToneMap.GetBool()
 		|| RB_HDRAutoExposureEnabled()
 		|| ( RB_HDRDebugViewValue() > 0 );
@@ -2661,6 +2665,451 @@ static void RB_RVSpecialRestoreDrawingView( void ) {
 	backEnd.glState.faceCulling = -1;
 	GL_Cull( CT_FRONT_SIDED );
 	backEnd.glState.forceGlState = true;
+}
+
+static bool RB_SetRVSpecialOrthoForView( void );
+
+enum rbLensFlareUniformIndex_t {
+	RB_LENSFLARE_UNIFORM_INV_DEPTH_TEX_SIZE = 0,
+	RB_LENSFLARE_UNIFORM_VIEWPORT_TEX_SCALE,
+	RB_LENSFLARE_UNIFORM_LIGHT_CENTER_UV,
+	RB_LENSFLARE_UNIFORM_LIGHT_COLOR,
+	RB_LENSFLARE_UNIFORM_LIGHT_DEPTH,
+	RB_LENSFLARE_UNIFORM_OCCLUSION_RADIUS,
+	RB_LENSFLARE_UNIFORM_FLARE_AXIS,
+	RB_LENSFLARE_UNIFORM_ELEMENT_KIND,
+	RB_LENSFLARE_UNIFORM_ELEMENT_PARAMS,
+	RB_LENSFLARE_UNIFORM_COUNT
+};
+
+static newShaderStage_t rbLensFlareStage;
+static bool rbLensFlareStageInitialized = false;
+
+static const int RB_LENSFLARE_MAX_LIGHTS = 8;
+
+typedef struct rbLensFlareCandidate_s {
+	float	score;
+	float	screenX;
+	float	screenY;
+	float	screenU;
+	float	screenV;
+	float	lightDepth;
+	float	sourceRadiusPixels;
+	float	coronaRadiusPixels;
+	idVec2	axis;
+	idVec4	color;
+} rbLensFlareCandidate_t;
+
+static void RB_InitLensFlareStage( void ) {
+	if ( rbLensFlareStageInitialized ) {
+		return;
+	}
+
+	memset( &rbLensFlareStage, 0, sizeof( rbLensFlareStage ) );
+	rbLensFlareStage.glslProgram = true;
+	idStr::Copynz( rbLensFlareStage.glslProgramName, "lensflare.fs", sizeof( rbLensFlareStage.glslProgramName ) );
+
+	static const rbBuiltinUniformDef_t lensFlareUniforms[RB_LENSFLARE_UNIFORM_COUNT] = {
+		{ "invDepthTexSize", 2 },
+		{ "viewportTexScale", 2 },
+		{ "lightCenterUV", 2 },
+		{ "lightColor", 4 },
+		{ "lightDepth", 1 },
+		{ "occlusionRadiusPixels", 1 },
+		{ "flareAxis", 2 },
+		{ "elementKind", 1 },
+		{ "elementParams", 4 }
+	};
+
+	rbLensFlareStage.numShaderParms = RB_LENSFLARE_UNIFORM_COUNT;
+	for ( int i = 0; i < RB_LENSFLARE_UNIFORM_COUNT; i++ ) {
+		idStr::Copynz( rbLensFlareStage.shaderParmNames[i], lensFlareUniforms[i].name, sizeof( rbLensFlareStage.shaderParmNames[i] ) );
+		rbLensFlareStage.shaderParmNumRegisters[i] = lensFlareUniforms[i].components;
+	}
+
+	rbLensFlareStage.numShaderTextures = 1;
+	idStr::Copynz( rbLensFlareStage.shaderTextureNames[0], "DepthBuffer", sizeof( rbLensFlareStage.shaderTextureNames[0] ) );
+	rbLensFlareStageInitialized = true;
+}
+
+static bool RB_ProjectLensFlarePoint( const idVec3 &origin, int viewportWidth, int viewportHeight, float &screenX, float &screenY, float &depth01 ) {
+	idPlane eye;
+	idPlane clip;
+	idVec3 ndc;
+
+	R_TransformModelToClip( origin, backEnd.viewDef->worldSpace.modelViewMatrix, backEnd.viewDef->projectionMatrix, eye, clip );
+	if ( clip[3] <= 0.001f ) {
+		return false;
+	}
+
+	R_TransformClipToDevice( clip, backEnd.viewDef, ndc );
+	screenX = ( ndc.x * 0.5f + 0.5f ) * viewportWidth;
+	screenY = ( 1.0f - ( ndc.y * 0.5f + 0.5f ) ) * viewportHeight;
+	depth01 = idMath::ClampFloat( 0.0f, 1.0f, ( clip[2] + clip[3] ) / ( 2.0f * clip[3] ) );
+	return true;
+}
+
+static bool RB_EvaluateLensFlareLightColor( const viewLight_t *vLight, idVec4 &lightColor ) {
+	if ( vLight == NULL || vLight->lightShader == NULL || vLight->shaderRegisters == NULL ) {
+		return false;
+	}
+	if ( vLight->lightShader->IsFogLight() || vLight->lightShader->IsBlendLight() ) {
+		return false;
+	}
+
+	lightColor.Set( 0.0f, 0.0f, 0.0f, 1.0f );
+	const float *regs = vLight->shaderRegisters;
+	const idMaterial *lightShader = vLight->lightShader;
+
+	for ( int lightStageNum = 0; lightStageNum < lightShader->GetNumStages(); lightStageNum++ ) {
+		const shaderStage_t *lightStage = lightShader->GetStage( lightStageNum );
+		if ( lightStage == NULL || !regs[ lightStage->conditionRegister ] ) {
+			continue;
+		}
+
+		lightColor[0] += Max( 0.0f, r_lightScale.GetFloat() * regs[ lightStage->color.registers[0] ] );
+		lightColor[1] += Max( 0.0f, r_lightScale.GetFloat() * regs[ lightStage->color.registers[1] ] );
+		lightColor[2] += Max( 0.0f, r_lightScale.GetFloat() * regs[ lightStage->color.registers[2] ] );
+		lightColor[3] = Max( lightColor[3], Max( 0.0f, regs[ lightStage->color.registers[3] ] ) );
+	}
+
+	const float brightness = Max( lightColor[0], Max( lightColor[1], lightColor[2] ) );
+	return brightness > 0.02f;
+}
+
+static float RB_EstimateLensFlareWorldRadius( const viewLight_t *vLight ) {
+	if ( vLight == NULL || vLight->lightDef == NULL ) {
+		return 0.0f;
+	}
+
+	if ( vLight->pointLight ) {
+		return Max( vLight->lightRadius.x, Max( vLight->lightRadius.y, vLight->lightRadius.z ) );
+	}
+
+	const renderLight_t &parms = vLight->lightDef->parms;
+	return Max( parms.right.Length(), Max( parms.up.Length(), parms.target.Length() ) ) * 0.35f;
+}
+
+static float RB_EstimateLensFlareRadiusPixels( const viewLight_t *vLight, float centerX, float centerY, int viewportWidth, int viewportHeight ) {
+	float radiusPixels = 0.0f;
+	const float worldRadius = RB_EstimateLensFlareWorldRadius( vLight );
+
+	if ( worldRadius > 0.0f ) {
+		const idVec3 offsetPoint = vLight->globalLightOrigin + backEnd.viewDef->renderView.viewaxis[1] * worldRadius;
+		float offsetX = 0.0f;
+		float offsetY = 0.0f;
+		float depth01 = 0.0f;
+		if ( RB_ProjectLensFlarePoint( offsetPoint, viewportWidth, viewportHeight, offsetX, offsetY, depth01 ) ) {
+			const float dx = offsetX - centerX;
+			const float dy = offsetY - centerY;
+			radiusPixels = idMath::Sqrt( dx * dx + dy * dy );
+		}
+	}
+
+	if ( radiusPixels <= 1.0f ) {
+		const float scissorWidth = Max( 1.0f, static_cast<float>( vLight->scissorRect.x2 - vLight->scissorRect.x1 + 1 ) );
+		const float scissorHeight = Max( 1.0f, static_cast<float>( vLight->scissorRect.y2 - vLight->scissorRect.y1 + 1 ) );
+		radiusPixels = idMath::Sqrt( scissorWidth * scissorHeight ) * 0.12f;
+	}
+
+	return radiusPixels;
+}
+
+static void RB_InsertLensFlareCandidate( rbLensFlareCandidate_t candidates[RB_LENSFLARE_MAX_LIGHTS], int &candidateCount,
+		const rbLensFlareCandidate_t &candidate ) {
+	int insertIndex = candidateCount;
+
+	for ( int i = 0; i < candidateCount; i++ ) {
+		if ( candidate.score > candidates[i].score ) {
+			insertIndex = i;
+			break;
+		}
+	}
+
+	if ( insertIndex >= RB_LENSFLARE_MAX_LIGHTS ) {
+		return;
+	}
+
+	if ( candidateCount < RB_LENSFLARE_MAX_LIGHTS ) {
+		candidateCount++;
+	}
+
+	for ( int i = candidateCount - 1; i > insertIndex; i-- ) {
+		candidates[i] = candidates[i - 1];
+	}
+
+	candidates[insertIndex] = candidate;
+}
+
+static int RB_CollectLensFlareCandidates( rbLensFlareCandidate_t candidates[RB_LENSFLARE_MAX_LIGHTS], int viewportWidth, int viewportHeight,
+		int depthTextureWidth, int depthTextureHeight ) {
+	int candidateCount = 0;
+	const float screenCenterX = viewportWidth * 0.5f;
+	const float screenCenterY = viewportHeight * 0.5f;
+
+	for ( const viewLight_t *vLight = backEnd.viewDef->viewLights; vLight != NULL; vLight = vLight->next ) {
+		if ( vLight->lightDef == NULL || !vLight->viewSeesGlobalLightOrigin || vLight->scissorRect.IsEmpty() ) {
+			continue;
+		}
+		if ( vLight->lightDef->parms.parallel || vLight->lightDef->parms.globalLight ) {
+			continue;
+		}
+		if ( !vLight->localInteractions && !vLight->globalInteractions && !vLight->translucentInteractions ) {
+			continue;
+		}
+
+		idVec4 lightColor;
+		if ( !RB_EvaluateLensFlareLightColor( vLight, lightColor ) ) {
+			continue;
+		}
+
+		float screenX = 0.0f;
+		float screenY = 0.0f;
+		float lightDepth = 0.0f;
+		if ( !RB_ProjectLensFlarePoint( vLight->globalLightOrigin, viewportWidth, viewportHeight, screenX, screenY, lightDepth ) ) {
+			continue;
+		}
+
+		float projectedRadius = RB_EstimateLensFlareRadiusPixels( vLight, screenX, screenY, viewportWidth, viewportHeight );
+		if ( projectedRadius <= 2.0f ) {
+			continue;
+		}
+
+		const float brightness = Max( lightColor[0], Max( lightColor[1], lightColor[2] ) );
+		const float borderDistanceX = Min( screenX, viewportWidth - screenX );
+		const float borderDistanceY = Min( screenY, viewportHeight - screenY );
+		const float borderFade = idMath::ClampFloat( 0.25f, 1.0f, Min( borderDistanceX, borderDistanceY ) / 96.0f );
+
+		rbLensFlareCandidate_t candidate;
+		memset( &candidate, 0, sizeof( candidate ) );
+		candidate.score = brightness * projectedRadius * borderFade;
+		candidate.screenX = screenX;
+		candidate.screenY = screenY;
+		candidate.screenU = idMath::ClampFloat( 0.0f, static_cast<float>( viewportWidth ) / depthTextureWidth, screenX / depthTextureWidth );
+		candidate.screenV = idMath::ClampFloat( 0.0f, static_cast<float>( viewportHeight ) / depthTextureHeight, 1.0f - ( screenY / depthTextureHeight ) );
+		candidate.lightDepth = lightDepth;
+		candidate.sourceRadiusPixels = idMath::ClampFloat( 2.0f, 12.0f, projectedRadius * 0.18f );
+		candidate.coronaRadiusPixels = idMath::ClampFloat( 18.0f, 160.0f, projectedRadius * 0.85f + 14.0f );
+		candidate.axis.Set( screenCenterX - screenX, screenCenterY - screenY );
+		if ( candidate.axis.LengthSqr() <= 0.0001f ) {
+			candidate.axis.Set( 1.0f, 0.0f );
+		} else {
+			candidate.axis.Normalize();
+		}
+		candidate.color = lightColor;
+		candidate.color[0] = Min( candidate.color[0], 4.0f );
+		candidate.color[1] = Min( candidate.color[1], 4.0f );
+		candidate.color[2] = Min( candidate.color[2], 4.0f );
+		candidate.color *= borderFade;
+		candidate.color[3] = 1.0f;
+
+		RB_InsertLensFlareCandidate( candidates, candidateCount, candidate );
+	}
+
+	return candidateCount;
+}
+
+static bool RB_DrawLensFlareQuad( const rbLensFlareCandidate_t &candidate, int viewportWidth, int viewportHeight, int depthTextureWidth,
+		int depthTextureHeight, float centerX, float centerY, float halfWidth, float halfHeight, const idVec3 &colorScale,
+		float elementKind, const idVec4 &elementParams ) {
+	if ( halfWidth <= 0.0f || halfHeight <= 0.0f ) {
+		return false;
+	}
+
+	const float x1 = centerX - halfWidth;
+	const float y1 = centerY - halfHeight;
+	const float x2 = centerX + halfWidth;
+	const float y2 = centerY + halfHeight;
+
+	if ( x2 < 0.0f || y2 < 0.0f || x1 > viewportWidth || y1 > viewportHeight ) {
+		return false;
+	}
+
+	const GLfloat lightCenterUv[2] = { candidate.screenU, candidate.screenV };
+	const GLfloat lightColor[4] = {
+		candidate.color[0] * colorScale.x,
+		candidate.color[1] * colorScale.y,
+		candidate.color[2] * colorScale.z,
+		1.0f
+	};
+	const GLfloat flareAxis[2] = { candidate.axis.x, candidate.axis.y };
+
+	if ( rbLensFlareStage.shaderParmLocations[RB_LENSFLARE_UNIFORM_LIGHT_CENTER_UV] >= 0 ) {
+		glUniform2fvARB( rbLensFlareStage.shaderParmLocations[RB_LENSFLARE_UNIFORM_LIGHT_CENTER_UV], 1, lightCenterUv );
+	}
+	if ( rbLensFlareStage.shaderParmLocations[RB_LENSFLARE_UNIFORM_LIGHT_COLOR] >= 0 ) {
+		glUniform4fvARB( rbLensFlareStage.shaderParmLocations[RB_LENSFLARE_UNIFORM_LIGHT_COLOR], 1, lightColor );
+	}
+	if ( rbLensFlareStage.shaderParmLocations[RB_LENSFLARE_UNIFORM_LIGHT_DEPTH] >= 0 ) {
+		glUniform1fARB( rbLensFlareStage.shaderParmLocations[RB_LENSFLARE_UNIFORM_LIGHT_DEPTH], candidate.lightDepth );
+	}
+	if ( rbLensFlareStage.shaderParmLocations[RB_LENSFLARE_UNIFORM_OCCLUSION_RADIUS] >= 0 ) {
+		glUniform1fARB( rbLensFlareStage.shaderParmLocations[RB_LENSFLARE_UNIFORM_OCCLUSION_RADIUS], candidate.sourceRadiusPixels );
+	}
+	if ( rbLensFlareStage.shaderParmLocations[RB_LENSFLARE_UNIFORM_FLARE_AXIS] >= 0 ) {
+		glUniform2fvARB( rbLensFlareStage.shaderParmLocations[RB_LENSFLARE_UNIFORM_FLARE_AXIS], 1, flareAxis );
+	}
+	if ( rbLensFlareStage.shaderParmLocations[RB_LENSFLARE_UNIFORM_ELEMENT_KIND] >= 0 ) {
+		glUniform1fARB( rbLensFlareStage.shaderParmLocations[RB_LENSFLARE_UNIFORM_ELEMENT_KIND], elementKind );
+	}
+	if ( rbLensFlareStage.shaderParmLocations[RB_LENSFLARE_UNIFORM_ELEMENT_PARAMS] >= 0 ) {
+		glUniform4fvARB( rbLensFlareStage.shaderParmLocations[RB_LENSFLARE_UNIFORM_ELEMENT_PARAMS], 1, elementParams.ToFloatPtr() );
+	}
+
+	const float s1 = x1 / depthTextureWidth;
+	const float s2 = x2 / depthTextureWidth;
+	const float t1 = 1.0f - ( y1 / depthTextureHeight );
+	const float t2 = 1.0f - ( y2 / depthTextureHeight );
+
+	glBegin( GL_QUADS );
+	glTexCoord2f( s1, t1 );
+	glMultiTexCoord2fARB( GL_TEXTURE1, 0.0f, 0.0f );
+	glVertex2f( x1, y1 );
+	glTexCoord2f( s2, t1 );
+	glMultiTexCoord2fARB( GL_TEXTURE1, 1.0f, 0.0f );
+	glVertex2f( x2, y1 );
+	glTexCoord2f( s2, t2 );
+	glMultiTexCoord2fARB( GL_TEXTURE1, 1.0f, 1.0f );
+	glVertex2f( x2, y2 );
+	glTexCoord2f( s1, t2 );
+	glMultiTexCoord2fARB( GL_TEXTURE1, 0.0f, 1.0f );
+	glVertex2f( x1, y2 );
+	glEnd();
+
+	return true;
+}
+
+static void RB_STD_LensFlare( void ) {
+	if ( r_skipPostProcess.GetBool() ) {
+		return;
+	}
+
+	const int lensFlareQuality = r_lensFlare.GetInteger();
+	if ( lensFlareQuality <= 0 ) {
+		return;
+	}
+
+	if ( !glConfig.GLSLProgramAvailable || !RB_IsMainScenePostProcessView() ) {
+		return;
+	}
+
+	RB_InitLensFlareStage();
+	if ( !R_ValidateGLSLProgram( &rbLensFlareStage ) ) {
+		return;
+	}
+
+	const int viewportWidth = backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1;
+	const int viewportHeight = backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1;
+	if ( viewportWidth <= 0 || viewportHeight <= 0 ) {
+		return;
+	}
+
+	idImage *depthImage = globalImages->currentDepthImage;
+	if ( depthImage == NULL ) {
+		return;
+	}
+
+	RB_CaptureCurrentDepthImage( viewportWidth, viewportHeight );
+
+	const int depthTextureWidth = depthImage->GetOpts().width;
+	const int depthTextureHeight = depthImage->GetOpts().height;
+	if ( depthTextureWidth <= 0 || depthTextureHeight <= 0 ) {
+		return;
+	}
+
+	rbLensFlareCandidate_t candidates[RB_LENSFLARE_MAX_LIGHTS];
+	const int candidateCount = RB_CollectLensFlareCandidates( candidates, viewportWidth, viewportHeight, depthTextureWidth, depthTextureHeight );
+	if ( candidateCount <= 0 ) {
+		return;
+	}
+
+	if ( !RB_SetRVSpecialOrthoForView() ) {
+		return;
+	}
+
+	GL_SelectTexture( 0 );
+	depthImage->Bind();
+	GL_SelectTexture( 1 );
+	globalImages->BindNull();
+	GL_SelectTexture( 0 );
+
+	glUseProgramObjectARB( (GLhandleARB)rbLensFlareStage.glslProgramObject );
+	if ( rbLensFlareStage.shaderTextureLocations[0] >= 0 ) {
+		glUniform1iARB( rbLensFlareStage.shaderTextureLocations[0], 0 );
+	}
+
+	const GLfloat invDepthTexSize[2] = {
+		1.0f / static_cast<GLfloat>( Max( 1, depthTextureWidth ) ),
+		1.0f / static_cast<GLfloat>( Max( 1, depthTextureHeight ) )
+	};
+	const GLfloat viewportTexScale[2] = {
+		static_cast<GLfloat>( viewportWidth ) / static_cast<GLfloat>( Max( 1, depthTextureWidth ) ),
+		static_cast<GLfloat>( viewportHeight ) / static_cast<GLfloat>( Max( 1, depthTextureHeight ) )
+	};
+
+	if ( rbLensFlareStage.shaderParmLocations[RB_LENSFLARE_UNIFORM_INV_DEPTH_TEX_SIZE] >= 0 ) {
+		glUniform2fvARB( rbLensFlareStage.shaderParmLocations[RB_LENSFLARE_UNIFORM_INV_DEPTH_TEX_SIZE], 1, invDepthTexSize );
+	}
+	if ( rbLensFlareStage.shaderParmLocations[RB_LENSFLARE_UNIFORM_VIEWPORT_TEX_SCALE] >= 0 ) {
+		glUniform2fvARB( rbLensFlareStage.shaderParmLocations[RB_LENSFLARE_UNIFORM_VIEWPORT_TEX_SCALE], 1, viewportTexScale );
+	}
+
+	for ( int i = 0; i < candidateCount; i++ ) {
+		const rbLensFlareCandidate_t &candidate = candidates[i];
+		const float coronaRadius = candidate.coronaRadiusPixels;
+		const idVec4 coronaParams( 4.5f, 0.58f, 0.16f, 0.85f );
+		const idVec4 haloParams( 2.2f, 0.72f, 0.14f, 0.38f );
+		const idVec3 haloScale( 0.85f, 0.85f, 0.85f );
+
+		RB_DrawLensFlareQuad( candidate, viewportWidth, viewportHeight, depthTextureWidth, depthTextureHeight,
+			candidate.screenX, candidate.screenY, coronaRadius, coronaRadius, idVec3( 1.0f, 1.0f, 1.0f ), 0.0f, coronaParams );
+		RB_DrawLensFlareQuad( candidate, viewportWidth, viewportHeight, depthTextureWidth, depthTextureHeight,
+			candidate.screenX, candidate.screenY, coronaRadius * 1.55f, coronaRadius * 1.55f, haloScale, 1.0f, haloParams );
+
+		if ( lensFlareQuality >= 2 ) {
+			const idVec2 centerDelta( viewportWidth * 0.5f - candidate.screenX, viewportHeight * 0.5f - candidate.screenY );
+
+			if ( centerDelta.LengthSqr() > 256.0f ) {
+				static const float ghostFactors[3] = { 0.35f, 1.15f, 1.8f };
+				static const float ghostSizeScales[3] = { 0.60f, 0.42f, 0.78f };
+				// Keep flare hue driven by the light itself. Hard-coded chromatic
+				// tints here created artificial blue lighting from warm/neutral lights.
+				static const float ghostIntensityScales[3] = { 0.95f, 0.90f, 0.82f };
+				static const idVec4 ghostParams[3] = {
+					idVec4( 3.8f, 0.52f, 0.16f, 0.34f ),
+					idVec4( 4.4f, 0.48f, 0.12f, 0.27f ),
+					idVec4( 2.6f, 0.60f, 0.18f, 0.32f )
+				};
+
+				for ( int ghostIndex = 0; ghostIndex < 3; ghostIndex++ ) {
+					const float ghostX = candidate.screenX + centerDelta.x * ghostFactors[ghostIndex];
+					const float ghostY = candidate.screenY + centerDelta.y * ghostFactors[ghostIndex];
+					const float ghostRadius = coronaRadius * ghostSizeScales[ghostIndex];
+					const idVec3 ghostScale(
+						ghostIntensityScales[ghostIndex],
+						ghostIntensityScales[ghostIndex],
+						ghostIntensityScales[ghostIndex] );
+
+					RB_DrawLensFlareQuad( candidate, viewportWidth, viewportHeight, depthTextureWidth, depthTextureHeight,
+						ghostX, ghostY, ghostRadius, ghostRadius, ghostScale, 1.0f, ghostParams[ghostIndex] );
+				}
+			}
+
+			const float streakHalfWidth = coronaRadius * 4.2f;
+			const float streakHalfHeight = Max( 4.0f, coronaRadius * 0.14f );
+			const idVec4 streakParams( 1.15f, 5.5f, 4.0f, 0.24f );
+			const idVec3 streakScale( 0.95f, 0.95f, 0.95f );
+			RB_DrawLensFlareQuad( candidate, viewportWidth, viewportHeight, depthTextureWidth, depthTextureHeight,
+				candidate.screenX, candidate.screenY, streakHalfWidth, streakHalfHeight, streakScale, 2.0f, streakParams );
+		}
+	}
+
+	glUseProgramObjectARB( 0 );
+	GL_SelectTexture( 1 );
+	globalImages->BindNull();
+	GL_SelectTexture( 0 );
+	globalImages->BindNull();
+	RB_RVSpecialRestoreDrawingView();
 }
 
 static void RB_RVSpecialBeginCapture( idRenderTexture *renderTexture, int width, int height ) {
@@ -5185,6 +5634,8 @@ void	RB_STD_DrawView( void ) {
 		backEnd.renderTexture->MakeCurrent();
 	}
 
+	RB_DisplaySpecialEffects( backEnd.viewDef->viewEntitys, true );
+
 	// clear the z buffer, set the projection matrix, etc
 	RB_BeginDrawingView();
 
@@ -5194,6 +5645,7 @@ void	RB_STD_DrawView( void ) {
 	// fill the depth buffer and clear color buffer to black except on
 	// subviews
 	RB_STD_FillDepthBuffer( drawSurfs, numDrawSurfs );
+	RB_DisplaySpecialEffects( backEnd.viewDef->viewEntitys, false );
 
 	// main light renderer
 	RB_ARB2_DrawInteractions();
@@ -5207,6 +5659,10 @@ void	RB_STD_DrawView( void ) {
 	// uplight the entire screen to crutch up not having better blending range
 	RB_STD_LightScale();
 
+	if ( r_portalsDistanceCull.GetBool() && backEnd.viewDef->viewEntitys && backEnd.viewDef->renderWorld != NULL ) {
+		backEnd.viewDef->renderWorld->RenderPortalFades();
+	}
+
 	// now draw any non-light dependent shading passes
 	int	processed = RB_STD_DrawShaderPasses( drawSurfs, numDrawSurfs );
 
@@ -5218,6 +5674,9 @@ void	RB_STD_DrawView( void ) {
 
 	// Apply SSAO before bloom and tonemapping so indirect shadowing modulates the lit scene.
 	RB_STD_SSAO();
+
+	// Draw depth-aware coronas and optional lens ghosts before bloom so they participate in the post stack.
+	RB_STD_LensFlare();
 
 	// Apply scene bloom before authored post-process overlays that sample _currentRender.
 	RB_STD_Bloom();

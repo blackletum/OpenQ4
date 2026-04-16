@@ -236,6 +236,7 @@ windowDef Desktop
 		background	"gfx/guis/common/gradient3"
 		matcolor	0,0,0,.5
 		matscalex	-1
+		screenalignx	right
 		screenaligny	top
 	}
 	windowDef t_message

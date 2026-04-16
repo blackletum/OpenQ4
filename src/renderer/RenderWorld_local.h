@@ -259,6 +259,7 @@ public:
 
 	idScreenRect			ScreenRectFromWinding( const idWinding *w, viewEntity_t *space );
 	bool					PortalIsFoggedOut( const portal_t *p );
+	virtual void			RenderPortalFades( void );
 	void					FloodViewThroughArea_r( const idVec3 origin, int areaNum, const struct portalStack_s *ps );
 	void					FlowViewThroughPortals( const idVec3 origin, int numPlanes, const idPlane *planes );
 	void					FloodLightThroughArea_r( idRenderLightLocal *light, int areaNum, const struct portalStack_s *ps );

@@ -64,19 +64,30 @@ static void R_FinishDeform( drawSurf_t *drawSurf, srfTriangles_t *newTri, idDraw
 	}
 }
 
+static ID_INLINE idVec3 R_DeformQuadVertexPosition( const srfTriangles_t *tri, int index ) {
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	if ( tri->silTraceVerts != NULL ) {
+		const rvSilTraceVertT *silTraceVerts = reinterpret_cast<const rvSilTraceVertT *>( tri->silTraceVerts );
+		return silTraceVerts[index].xyzw.ToVec3();
+	}
+#endif
+	return tri->verts[index].xyz;
+}
+
 /*
 =====================
-R_AutospriteDeform
+R_SpriteDeform
 
-Assuming all the triangles for this shader are independant
-quads, rebuild them as forward facing sprites
+Assuming all the triangles for this shader are independent quads,
+rebuild them as forward facing sprites. When radiusDimension is true,
+the resulting sprite is square; otherwise it preserves the authored
+rectangular aspect used by Quake 4's rectsprite materials.
 =====================
 */
-static void R_AutospriteDeform( drawSurf_t *surf ) {
+static void R_SpriteDeform( drawSurf_t *surf, bool radiusDimension ) {
 	int		i;
-	const idDrawVert	*v;
 	idVec3	mid, delta;
-	float	radius;
+	float	halfWidth, halfHeight;
 	idVec3	left, up;
 	idVec3	leftDir, upDir;
 	const srfTriangles_t	*tri;
@@ -110,18 +121,33 @@ static void R_AutospriteDeform( drawSurf_t *surf ) {
 	idDrawVert	*ac = (idDrawVert *)_alloca16( newTri->numVerts * sizeof( idDrawVert ) );
 
 	for ( i = 0 ; i < tri->numVerts ; i+=4 ) {
-		// find the midpoint
-		v = &tri->verts[i];
+		idVec3 positions[4];
+		for ( int j = 0; j < 4; ++j ) {
+			positions[j] = R_DeformQuadVertexPosition( tri, i + j );
+			ac[i + j] = tri->verts[i + j];
+		}
 
-		mid[0] = 0.25 * (v->xyz[0] + (v+1)->xyz[0] + (v+2)->xyz[0] + (v+3)->xyz[0]);
-		mid[1] = 0.25 * (v->xyz[1] + (v+1)->xyz[1] + (v+2)->xyz[1] + (v+3)->xyz[1]);
-		mid[2] = 0.25 * (v->xyz[2] + (v+1)->xyz[2] + (v+2)->xyz[2] + (v+3)->xyz[2]);
+		// Match retail's square autosprite mode but preserve the authored
+		// rectangular dimensions for rectsprite materials.
+		mid = ( positions[0] + positions[1] + positions[2] + positions[3] ) * 0.25f;
+		if ( radiusDimension ) {
+			delta = positions[0] - mid;
+			halfWidth = delta.Length() * idMath::SQRT_1OVER2;
+			halfHeight = halfWidth;
+		} else {
+			halfWidth = 0.5f * ( positions[2] - positions[0] ).Length();
+			halfHeight = 0.5f * ( positions[1] - positions[0] ).Length();
 
-		delta = v->xyz - mid;
-		radius = delta.Length() * 0.707;		// / sqrt(2)
+			// Fall back to symmetric sizing if the authored quad is degenerate.
+			if ( halfWidth <= 0.0f || halfHeight <= 0.0f ) {
+				delta = positions[0] - mid;
+				halfWidth = delta.Length() * idMath::SQRT_1OVER2;
+				halfHeight = halfWidth;
+			}
+		}
 
-		left = leftDir * radius;
-		up = upDir * radius;
+		left = leftDir * halfWidth;
+		up = upDir * halfHeight;
 
 		ac[i+0].xyz = mid + left + up;
 		ac[i+0].st[0] = 0;
@@ -146,6 +172,17 @@ static void R_AutospriteDeform( drawSurf_t *surf ) {
 	}
 
 	R_FinishDeform( surf, newTri, ac );
+}
+
+/*
+=====================
+R_AutospriteDeform
+
+Square autosprite helper retained for the legacy DFRM_SPRITE path.
+=====================
+*/
+static void R_AutospriteDeform( drawSurf_t *surf ) {
+	R_SpriteDeform( surf, true );
 }
 
 /*
@@ -1039,6 +1076,9 @@ void R_DeformDrawSurf( drawSurf_t *drawSurf ) {
 		return;
 	case DFRM_SPRITE:
 		R_AutospriteDeform( drawSurf );
+		break;
+	case DFRM_RECTSPRITE:
+		R_SpriteDeform( drawSurf, false );
 		break;
 	case DFRM_TUBE:
 		R_TubeDeform( drawSurf );

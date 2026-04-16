@@ -37,6 +37,8 @@ If you have questions concerning this license or the applicable additional terms
 #include <SDL3/SDL.h>
 #endif
 
+extern idCVar com_skipLogoVideos;
+
 idCVar	idSessionLocal::gui_configServerRate( "gui_configServerRate", "0", CVAR_GUI | CVAR_ARCHIVE | CVAR_ROM | CVAR_INTEGER, "" );
 idCVar gui_set_sys_scroll( "gui_set_sys_scroll", "0", CVAR_GUI | CVAR_INTEGER, "display menu scroll step", 0, 17 );
 idCVar gui_set_audio_scroll( "gui_set_audio_scroll", "0", CVAR_GUI | CVAR_INTEGER, "audio menu scroll step", 0, 2 );
@@ -631,6 +633,8 @@ idSessionLocal::StartMainMenu
 ==============
 */
 void idSessionLocal::StartMenu( bool playIntro ) {
+	const bool shouldPlayIntro = playIntro && !com_skipLogoVideos.GetBool();
+
 	if ( guiActive == guiMainMenu ) {
 		return;
 	}
@@ -649,11 +653,12 @@ void idSessionLocal::StartMenu( bool playIntro ) {
 	SetPlayingSoundWorld( menuSoundWorld );
 
 	SetGUI( guiMainMenu, NULL );
-	guiMainMenu->HandleNamedEvent( playIntro ? "playIntro" : "noIntro" );
-	menuIntroBlackoutActive = playIntro;
-	menuIntroBlackoutAwaitMenuMusic = playIntro;
+	guiMainMenu->HandleNamedEvent( shouldPlayIntro ? "playIntro" : "noIntro" );
+	menuIntroBlackoutActive = true;
+	menuIntroBlackoutAwaitMenuMusic = shouldPlayIntro;
 	menuIntroBlackoutFadeStart = -1;
-	if ( !playIntro ) {
+	fallbackMenuStartTime = -1;
+	if ( !shouldPlayIntro ) {
 		// Ensure menu music always restarts when returning from gameplay.
 		guiMainMenu->HandleNamedEvent( "MusicRestart" );
 	}
@@ -667,6 +672,12 @@ void idSessionLocal::StartMenu( bool playIntro ) {
 
 	console->Close();
 
+}
+
+bool idSessionLocal::IsMainMenuIntroPlaying() const {
+	return guiActive == guiMainMenu &&
+		guiMainMenu != NULL &&
+		guiMainMenu->GetStateInt( "desktop::video_check", "0" ) != 0;
 }
 
 /*
@@ -944,6 +955,7 @@ void idSessionLocal::SetMainMenuGuiVars( void ) {
 	guiMainMenu->SetStateString( "nightmare", cvarSystem->GetCVarBool( "g_nightmare" ) ? "1" : "0" );
 #endif
 	guiMainMenu->SetStateString( "browser_levelshot", "gfx/guis/loadscreens/generic" );
+	SetMainMenuBackgroundMontageGuiVars();
 
 	idStr audioDeviceNames;
 	idStr audioDeviceValues;

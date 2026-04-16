@@ -76,7 +76,7 @@ public:
 	void						DeleteClusters( void );
 
 private:
-	bool						ParseIndex( idLexer &src, idList<aasIndex_t> &indexes );
+	bool						ParseIndex( idLexer &src, idList<aasIndex_t> &indexes, aasDummySection_t dummySection );
 	bool						ParsePlanes( idLexer &src );
 	bool						ParseVertices( idLexer &src );
 	bool						ParseEdges( idLexer &src );

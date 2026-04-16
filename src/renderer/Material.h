@@ -68,6 +68,7 @@ typedef struct {
 typedef enum {
 	DFRM_NONE,
 	DFRM_SPRITE,
+	DFRM_RECTSPRITE,
 	DFRM_TUBE,
 	DFRM_FLARE,
 	DFRM_EXPAND,

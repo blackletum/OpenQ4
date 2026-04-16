@@ -105,6 +105,7 @@ public:
 	virtual bool		IsLoadingSaveGame() const { return loadingSaveGame; }
 	virtual bool		IsGUIActive() const { return ( guiActive != NULL ) || ( guiTest != NULL ); }
 	virtual idUserInterface *GetActiveGUI() const { return ( guiTest != NULL ) ? guiTest : guiActive; }
+	virtual bool		IsMainMenuIntroPlaying() const;
 
 	virtual bool		ProcessEvent( const sysEvent_t *event );
 
@@ -262,6 +263,7 @@ public:
 	bool				menuIntroBlackoutActive;
 	bool				menuIntroBlackoutAwaitMenuMusic;
 	int					menuIntroBlackoutFadeStart;
+	int					fallbackMenuStartTime;
 	
 	bool				waitingOnBind;
 
@@ -343,6 +345,7 @@ public:
 
 	void				SetSaveGameGuiVars( void );
 	void				SetMainMenuGuiVars( void );
+	void				SetMainMenuBackgroundMontageGuiVars( void );
 	void				SetModsMenuGuiVars( void );
 	void				UpdateModsMenuGuiVars( void );
 	void				SetMainMenuSkin( void );

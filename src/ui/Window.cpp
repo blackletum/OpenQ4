@@ -2058,9 +2058,12 @@ idWindow::SetupBackground
 ================
 */
 void idWindow::SetupBackground() {
+	background = NULL;
 	if (backGroundName.Length()) {
 		background = declManager->FindMaterial(backGroundName);
-		background->SetImageClassifications( 1 );	// just for resource tracking
+		if ( background ) {
+			background->SetImageClassifications( 1 );	// just for resource tracking
+		}
 		if ( background && !background->TestMaterialFlag( MF_DEFAULTED ) ) {
 			background->SetSort(SS_GUI );
 		}

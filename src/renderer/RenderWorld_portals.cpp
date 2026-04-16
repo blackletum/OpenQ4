@@ -146,6 +146,101 @@ bool idRenderWorldLocal::PortalIsFoggedOut( const portal_t *p ) {
 
 /*
 ===================
+idRenderWorldLocal::RenderPortalFades
+===================
+*/
+void idRenderWorldLocal::RenderPortalFades( void ) {
+	backEnd.currentSpace = &backEnd.viewDef->worldSpace;
+	glLoadMatrixf( backEnd.viewDef->worldSpace.modelViewMatrix );
+
+	backEnd.currentScissor = backEnd.viewDef->scissor;
+	glScissor( backEnd.viewDef->viewport.x1 + backEnd.currentScissor.x1,
+		backEnd.viewDef->viewport.y1 + backEnd.currentScissor.y1,
+		backEnd.currentScissor.x2 + 1 - backEnd.currentScissor.x1,
+		backEnd.currentScissor.y2 + 1 - backEnd.currentScissor.y1 );
+
+	GL_State( GLS_DEPTHMASK | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
+	GL_Cull( CT_FRONT_SIDED );
+	GL_SelectTexture( 0 );
+
+	for ( int areaIndex = 0; areaIndex < numPortalAreas; areaIndex++ ) {
+		portalArea_t *area = &portalAreas[areaIndex];
+		if ( area->viewCount != tr.viewCount ) {
+			continue;
+		}
+
+		for ( portal_t *portal = area->portals; portal; portal = portal->next ) {
+			const idWinding *w = portal->w;
+			if ( w == NULL || w->GetNumPoints() < 2 || portal->image == NULL ) {
+				continue;
+			}
+
+			const float d = portal->plane.Distance( backEnd.viewDef->renderView.vieworg );
+			if ( d <= portal->cullNear ) {
+				continue;
+			}
+
+			float alpha = 1.0f;
+			if ( d < portal->cullFar && portal->cullFar > portal->cullNear ) {
+				alpha = 1.0f - ( portal->cullFar - d ) / ( portal->cullFar - portal->cullNear );
+			}
+			alpha = idMath::ClampFloat( 0.0f, 1.0f, alpha );
+
+			const idVec3 &origin = ( *w )[0].ToVec3();
+			const idVec3 edge = ( *w )[1].ToVec3() - origin;
+			if ( edge.LengthSqr() <= idMath::FLOAT_EPSILON ) {
+				continue;
+			}
+			const idVec3 vAxis = portal->plane.Normal().Cross( edge );
+			if ( vAxis.LengthSqr() <= idMath::FLOAT_EPSILON ) {
+				continue;
+			}
+
+			float minU = idMath::INFINITY;
+			float maxU = -idMath::INFINITY;
+			float minV = idMath::INFINITY;
+			float maxV = -idMath::INFINITY;
+
+			for ( int pointIndex = 0; pointIndex < w->GetNumPoints(); pointIndex++ ) {
+				const idVec3 delta = ( *w )[pointIndex].ToVec3() - origin;
+				const float u = delta * edge;
+				const float v = delta * vAxis;
+
+				minU = Min( minU, u );
+				maxU = Max( maxU, u );
+				minV = Min( minV, v );
+				maxV = Max( maxV, v );
+			}
+
+			const float uRange = maxU - minU;
+			const float vRange = maxV - minV;
+			if ( uRange <= idMath::FLOAT_EPSILON || vRange <= idMath::FLOAT_EPSILON ) {
+				continue;
+			}
+
+			glColor4f( 1.0f, 1.0f, 1.0f, alpha );
+			portal->image->Bind();
+
+			glBegin( GL_POLYGON );
+			for ( int pointIndex = 0; pointIndex < w->GetNumPoints(); pointIndex++ ) {
+				const idVec3 &point = ( *w )[pointIndex].ToVec3();
+				const idVec3 delta = point - origin;
+				const float u = ( ( delta * edge ) - minU ) / uRange;
+				const float v = 1.0f - ( ( delta * vAxis ) - minV ) / vRange;
+
+				glTexCoord2f( u, v );
+				glVertex3fv( point.ToFloatPtr() );
+			}
+			glEnd();
+		}
+	}
+
+	glColor4f( 1.0f, 1.0f, 1.0f, 1.0f );
+	globalImages->BindNull();
+}
+
+/*
+===================
 FloodViewThroughArea_r
 ===================
 */

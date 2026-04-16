@@ -368,6 +368,316 @@ void RB_ShowOverdraw( void ) {
 	}
 }
 
+static int RB_CountDebugDrawSurfChain( const drawSurf_t *surf ) {
+	int count = 0;
+	for ( ; surf != NULL; surf = surf->nextOnLight ) {
+		count++;
+	}
+	return count;
+}
+
+struct viewLightDebugVisual_t {
+	int		lightIndex;
+	bool	affecting;
+	idVec3	lightOrigin;
+	idVec3	boxCenter;
+	idVec3	lightRadius;
+	idMat3	boxAxis;
+	idVec4	drawColor;
+	idStr	label;
+};
+
+static idList<viewLightDebugVisual_t> rb_viewLightDebugVisuals;
+
+static void RB_ClearViewLightDebugVisuals( void ) {
+	rb_viewLightDebugVisuals.Clear();
+}
+
+static idVec4 RB_ViewLightDebugColor( const renderLight_t *parms ) {
+	idVec4 color( 1.0f, 1.0f, 1.0f, 1.0f );
+
+	if ( parms != NULL ) {
+		color[0] = parms->shaderParms[0];
+		color[1] = parms->shaderParms[1];
+		color[2] = parms->shaderParms[2];
+	}
+
+	float maxComponent = Max( color[0], Max( color[1], color[2] ) );
+	if ( maxComponent <= 0.0f ) {
+		color[0] = 1.0f;
+		color[1] = 0.25f;
+		color[2] = 0.25f;
+		return color;
+	}
+
+	if ( maxComponent > 1.0f ) {
+		color *= 1.0f / maxComponent;
+	}
+
+	maxComponent = Max( color[0], Max( color[1], color[2] ) );
+	if ( maxComponent < 0.25f ) {
+		color *= 0.25f / maxComponent;
+	}
+
+	color[3] = 1.0f;
+	return color;
+}
+
+static void RB_AppendViewLightDebugVisual( const viewLight_t *vLight, bool affecting ) {
+	viewLightDebugVisual_t visual;
+	const idRenderLightLocal *light = vLight != NULL ? vLight->lightDef : NULL;
+	const renderLight_t *parms = light != NULL ? &light->parms : NULL;
+
+	visual.lightIndex = light != NULL ? light->index : -1;
+	visual.affecting = affecting;
+	visual.lightOrigin = light != NULL ? light->globalLightOrigin : vec3_origin;
+	visual.boxCenter = parms != NULL ? parms->origin : visual.lightOrigin;
+	visual.lightRadius = parms != NULL ? parms->lightRadius : vec3_origin;
+	visual.boxAxis = parms != NULL ? parms->axis : mat3_identity;
+	visual.drawColor = RB_ViewLightDebugColor( parms );
+	visual.label = va(
+		"%s[%d] rgb=(%.2f %.2f %.2f) radius=(%.1f %.1f %.1f)",
+		affecting ? "affect" : "visible",
+		visual.lightIndex,
+		parms != NULL ? parms->shaderParms[0] : 0.0f,
+		parms != NULL ? parms->shaderParms[1] : 0.0f,
+		parms != NULL ? parms->shaderParms[2] : 0.0f,
+		visual.lightRadius[0],
+		visual.lightRadius[1],
+		visual.lightRadius[2] );
+	rb_viewLightDebugVisuals.Append( visual );
+}
+
+static const char *RB_ViewLightDebugTypeName( const viewLight_t *vLight ) {
+	if ( vLight == NULL || vLight->lightShader == NULL ) {
+		return "<null>";
+	}
+	if ( vLight->lightShader->IsFogLight() ) {
+		return "fog";
+	}
+	if ( vLight->lightShader->IsBlendLight() ) {
+		return "blend";
+	}
+	if ( vLight->lightShader->IsAmbientLight() ) {
+		return "ambient";
+	}
+	if ( vLight->pointLight ) {
+		return vLight->parallel ? "point/parallel" : "point";
+	}
+	return vLight->parallel ? "projected/parallel" : "projected";
+}
+
+static unsigned int RB_ViewLightDebugHashStep( unsigned int hash, int value ) {
+	hash ^= static_cast<unsigned int>( value );
+	hash *= 16777619u;
+	return hash;
+}
+
+static void RB_DrawViewLightDebugBox( const idBox &box ) {
+	idVec3 points[8];
+
+	box.ToPoints( points );
+
+	glBegin( GL_LINES );
+	for ( int i = 0; i < 4; i++ ) {
+		glVertex3fv( points[i].ToFloatPtr() );
+		glVertex3fv( points[( i + 1 ) & 3].ToFloatPtr() );
+
+		glVertex3fv( points[4 + i].ToFloatPtr() );
+		glVertex3fv( points[4 + ( ( i + 1 ) & 3 )].ToFloatPtr() );
+
+		glVertex3fv( points[i].ToFloatPtr() );
+		glVertex3fv( points[4 + i].ToFloatPtr() );
+	}
+	glEnd();
+}
+
+static void RB_DrawViewLightDebugCross( const idVec3 &origin, float halfSize ) {
+	glBegin( GL_LINES );
+	glVertex3f( origin[0] - halfSize, origin[1], origin[2] );
+	glVertex3f( origin[0] + halfSize, origin[1], origin[2] );
+	glVertex3f( origin[0], origin[1] - halfSize, origin[2] );
+	glVertex3f( origin[0], origin[1] + halfSize, origin[2] );
+	glVertex3f( origin[0], origin[1], origin[2] - halfSize );
+	glVertex3f( origin[0], origin[1], origin[2] + halfSize );
+	glEnd();
+}
+
+static void RB_DrawCachedViewLightDebugVisuals( void ) {
+	if ( !r_showViewLightsVisuals.GetBool() ) {
+		return;
+	}
+	if ( idMath::ClampInt( 0, 3, r_showViewLights.GetInteger() ) <= 0 ) {
+		return;
+	}
+	if ( backEnd.viewDef == NULL || backEnd.viewDef != tr.primaryView || backEnd.viewDef->viewEntitys == NULL || rb_viewLightDebugVisuals.Num() <= 0 ) {
+		return;
+	}
+
+	RB_SimpleWorldSetup();
+
+	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
+	globalImages->BindNull();
+	glDisable( GL_STENCIL_TEST );
+	glDisable( GL_DEPTH_TEST );
+	GL_Cull( CT_TWO_SIDED );
+	GL_State( GLS_POLYMODE_LINE );
+	glLineWidth( 2.0f );
+
+	for ( int i = 0; i < rb_viewLightDebugVisuals.Num(); i++ ) {
+		const viewLightDebugVisual_t &visual = rb_viewLightDebugVisuals[i];
+		const float maxRadius = Max( visual.lightRadius[0], Max( visual.lightRadius[1], visual.lightRadius[2] ) );
+		const float markerHalfSize = idMath::ClampFloat( 8.0f, 64.0f, maxRadius * 0.15f );
+		const float labelOffset = idMath::ClampFloat( 10.0f, 96.0f, maxRadius * 0.25f );
+		const float labelScale = idMath::ClampFloat( 0.015f, 0.05f, maxRadius * 0.00025f );
+		const idVec3 labelOrigin = visual.lightOrigin + idVec3( 0.0f, 0.0f, labelOffset );
+
+		glColor4fv( visual.drawColor.ToFloatPtr() );
+		RB_DrawViewLightDebugCross( visual.lightOrigin, markerHalfSize );
+
+		if ( visual.lightRadius.LengthSqr() > 0.0f ) {
+			RB_DrawViewLightDebugBox( idBox( visual.boxCenter, visual.lightRadius, visual.boxAxis ) );
+		}
+
+		if ( ( visual.boxCenter - visual.lightOrigin ).LengthSqr() > 1.0f ) {
+			glBegin( GL_LINES );
+			glVertex3fv( visual.lightOrigin.ToFloatPtr() );
+			glVertex3fv( visual.boxCenter.ToFloatPtr() );
+			glEnd();
+		}
+
+		RB_DrawText( visual.label.c_str(), labelOrigin, labelScale, visual.drawColor, backEnd.viewDef->renderView.viewaxis, 1 );
+	}
+
+	glLineWidth( 1.0f );
+	glEnable( GL_DEPTH_TEST );
+	GL_State( GLS_DEFAULT );
+	GL_Cull( CT_FRONT_SIDED );
+}
+
+/*
+=================
+RB_ReportViewLights
+
+Structured console report for lights affecting the current view origin.
+=================
+*/
+static void RB_ReportViewLights( void ) {
+	static int lastReportFrame = -1;
+	static unsigned int lastAffectingHash = 0;
+	static int lastAffectingCount = -1;
+	static bool wasEnabled = false;
+
+	const int reportMode = idMath::ClampInt( 0, 3, r_showViewLights.GetInteger() );
+	if ( reportMode <= 0 ) {
+		wasEnabled = false;
+		RB_ClearViewLightDebugVisuals();
+		return;
+	}
+	if ( backEnd.viewDef == NULL || backEnd.viewDef != tr.primaryView || backEnd.viewDef->viewEntitys == NULL || backEnd.viewDef->renderWorld == NULL ) {
+		return;
+	}
+
+	const idVec3 &viewOrigin = backEnd.viewDef->renderView.vieworg;
+	const int viewArea = backEnd.viewDef->renderWorld->PointInArea( viewOrigin );
+
+	int visibleCount = 0;
+	int affectingCount = 0;
+	unsigned int affectingHash = 2166136261u;
+
+	for ( const viewLight_t *vLight = backEnd.viewDef->viewLights; vLight != NULL; vLight = vLight->next ) {
+		visibleCount++;
+		if ( !vLight->viewInsideLight ) {
+			continue;
+		}
+
+		affectingCount++;
+		affectingHash = RB_ViewLightDebugHashStep( affectingHash, vLight->lightDef != NULL ? vLight->lightDef->index : -1 );
+	}
+
+	const bool affectingSetChanged = !wasEnabled || affectingCount != lastAffectingCount || affectingHash != lastAffectingHash;
+	if ( reportMode == 1 && !affectingSetChanged ) {
+		return;
+	}
+
+	const int reportInterval = Max( 1, r_showViewLightsInterval.GetInteger() );
+	if ( reportMode >= 2 && wasEnabled && lastReportFrame >= 0 && tr.frameCount - lastReportFrame < reportInterval ) {
+		return;
+	}
+
+	lastReportFrame = tr.frameCount;
+	lastAffectingHash = affectingHash;
+	lastAffectingCount = affectingCount;
+	wasEnabled = true;
+	RB_ClearViewLightDebugVisuals();
+
+	common->Printf(
+		"ViewLights frame=%d origin=(%.1f %.1f %.1f) area=%d affecting=%d visible=%d\n",
+		tr.frameCount,
+		viewOrigin[0], viewOrigin[1], viewOrigin[2],
+		viewArea,
+		affectingCount,
+		visibleCount );
+
+	if ( reportMode < 3 && visibleCount > affectingCount ) {
+		common->Printf(
+			"  note: %d additional visible lights do not contain the view origin and can still light surfaces in view; use r_showViewLights 3 to list them\n",
+			visibleCount - affectingCount );
+	}
+
+	if ( visibleCount <= 0 ) {
+		common->Printf( "  <no visible lights>\n" );
+		return;
+	}
+	if ( affectingCount <= 0 && reportMode < 3 ) {
+		common->Printf( "  <no lights affecting current view origin>\n" );
+		return;
+	}
+
+	for ( const viewLight_t *vLight = backEnd.viewDef->viewLights; vLight != NULL; vLight = vLight->next ) {
+		const bool affecting = vLight->viewInsideLight;
+		if ( !affecting && reportMode < 3 ) {
+			continue;
+		}
+
+		const idRenderLightLocal *light = vLight->lightDef;
+		const renderLight_t *parms = light != NULL ? &light->parms : NULL;
+		const char *shaderName = ( light != NULL && light->lightShader != NULL ) ? light->lightShader->GetName() : "<null>";
+		const idVec3 lightOrigin = light != NULL ? light->globalLightOrigin : vec3_origin;
+		const idVec3 lightRadius = parms != NULL ? parms->lightRadius : vec3_origin;
+		const idVec3 lightCenter = parms != NULL ? parms->lightCenter : vec3_origin;
+		const int localInteractions = RB_CountDebugDrawSurfChain( vLight->localInteractions );
+		const int globalInteractions = RB_CountDebugDrawSurfChain( vLight->globalInteractions );
+		const int translucentInteractions = RB_CountDebugDrawSurfChain( vLight->translucentInteractions );
+		const int localShadows = RB_CountDebugDrawSurfChain( vLight->localShadows );
+		const int globalShadows = RB_CountDebugDrawSurfChain( vLight->globalShadows );
+
+		common->Printf(
+			"  %s[%d] shader='%s' kind=%s origin=(%.1f %.1f %.1f) radius=(%.1f %.1f %.1f) center=(%.1f %.1f %.1f) color=(%.2f %.2f %.2f %.2f) area=%d shadows=%s seesOrigin=%d surfs(l=%d g=%d t=%d) shadowSurfs(l=%d g=%d)\n",
+			affecting ? "affect" : "visible",
+			light != NULL ? light->index : -1,
+			shaderName,
+			RB_ViewLightDebugTypeName( vLight ),
+			lightOrigin[0], lightOrigin[1], lightOrigin[2],
+			lightRadius[0], lightRadius[1], lightRadius[2],
+			lightCenter[0], lightCenter[1], lightCenter[2],
+			parms != NULL ? parms->shaderParms[0] : 0.0f,
+			parms != NULL ? parms->shaderParms[1] : 0.0f,
+			parms != NULL ? parms->shaderParms[2] : 0.0f,
+			parms != NULL ? parms->shaderParms[3] : 0.0f,
+			light != NULL ? light->areaNum : -1,
+			( parms != NULL && parms->noShadows ) ? "off" : "on",
+			vLight->viewSeesGlobalLightOrigin ? 1 : 0,
+			localInteractions,
+			globalInteractions,
+			translucentInteractions,
+			localShadows,
+			globalShadows );
+
+		RB_AppendViewLightDebugVisual( vLight, affecting );
+	}
+}
+
 /*
 ===================
 RB_ShowIntensity
@@ -2413,6 +2723,8 @@ void RB_RenderDebugTools( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 	RB_ShowNormals( drawSurfs, numDrawSurfs );
 	RB_ShowViewEntitys( backEnd.viewDef->viewEntitys );
 	RB_ShowLights();
+	RB_ReportViewLights();
+	RB_DrawCachedViewLightDebugVisuals();
 	RB_ShowLightGrid();
 	RB_ShowTextureVectors( drawSurfs, numDrawSurfs );
 	RB_ShowDominantTris( drawSurfs, numDrawSurfs );
@@ -2442,4 +2754,5 @@ void RB_ShutdownDebugTools( void ) {
 	for ( int i = 0; i < MAX_DEBUG_POLYGONS; i++ ) {
 		rb_debugPolygons[i].winding.Clear();
 	}
+	RB_ClearViewLightDebugVisuals();
 }

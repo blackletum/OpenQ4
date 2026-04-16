@@ -101,6 +101,7 @@ idCVar r_useLightPortalFlow( "r_useLightPortalFlow", "1", CVAR_RENDERER | CVAR_B
 idCVar r_multiSamples( "r_multiSamples", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "number of antialiasing samples" );
 idCVar r_postAA( "r_postAA", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "post AA mode: 0 = off, 1 = SMAA 1x", 0, 1, idCmdSystem::ArgCompletion_Integer<0,1> );
 idCVar r_bloom( "r_bloom", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable bloom post-process" );
+idCVar r_lensFlare( "r_lensFlare", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "light corona / lens flare quality: 0 = off, 1 = coronas, 2 = high quality", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 idCVar r_bloomThreshold( "r_bloomThreshold", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "bloom bright-pass threshold in scene-referred units", 0.0f, 16.0f );
 idCVar r_bloomSoftKnee( "r_bloomSoftKnee", "0.25", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "relative bloom soft-threshold knee", 0.0f, 1.0f );
 idCVar r_bloomIntensity( "r_bloomIntensity", "0.45", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "bloom contribution scale", 0.0f, 4.0f );
@@ -332,6 +333,9 @@ idCVar r_showIntensity( "r_showIntensity", "0", CVAR_RENDERER | CVAR_BOOL, "draw
 idCVar r_showImages( "r_showImages", "0", CVAR_RENDERER | CVAR_INTEGER, "1 = show all images instead of rendering, 2 = show in proportional size", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 idCVar r_showSmp( "r_showSmp", "0", CVAR_RENDERER | CVAR_BOOL, "show which end (front or back) is blocking" );
 idCVar r_showLights( "r_showLights", "0", CVAR_RENDERER | CVAR_INTEGER, "1 = just print volumes numbers, highlighting ones covering the view, 2 = also draw planes of each volume, 3 = also draw edges of each volume", 0, 3, idCmdSystem::ArgCompletion_Integer<0,3> );
+idCVar r_showViewLights( "r_showViewLights", "0", CVAR_RENDERER | CVAR_INTEGER, "view-origin light diagnostics: 0 = off, 1 = print affecting lights when the set changes, 2 = print affecting lights every interval, 3 = also include visible non-affecting lights", 0, 3, idCmdSystem::ArgCompletion_Integer<0,3> );
+idCVar r_showViewLightsInterval( "r_showViewLightsInterval", "10", CVAR_RENDERER | CVAR_INTEGER, "frames between repeated view-origin light reports when r_showViewLights is 2 or 3", 1, 3600 );
+idCVar r_showViewLightsVisuals( "r_showViewLightsVisuals", "0", CVAR_RENDERER | CVAR_BOOL, "draw persistent origin/color/radius overlays for the lights most recently reported by r_showViewLights" );
 idCVar r_showLightGrid( "r_showLightGrid", "0", CVAR_RENDERER | CVAR_INTEGER, "irradiance-volume debug: 0 = off, 1 = current area valid probes, 2 = all valid probes, 3 = include invalid probes", 0, 3, idCmdSystem::ArgCompletion_Integer<0,3> );
 idCVar r_showShadows( "r_showShadows", "0", CVAR_RENDERER | CVAR_INTEGER, "1 = visualize the stencil shadow volumes, 2 = draw filled in", 0, 3, idCmdSystem::ArgCompletion_Integer<0,3> );
 idCVar r_showShadowCount( "r_showShadowCount", "0", CVAR_RENDERER | CVAR_INTEGER, "colors screen based on shadow volume depth complexity, >= 2 = print overdraw count based on stencil index values, 3 = only show turboshadows, 4 = only show static shadows", 0, 4, idCmdSystem::ArgCompletion_Integer<0,4> );

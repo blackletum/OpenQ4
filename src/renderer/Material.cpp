@@ -2073,6 +2073,12 @@ void idMaterial::ParseDeform( idLexer &src ) {
 		SetMaterialFlag( MF_NOSHADOWS );
 		return;
 	}
+	if ( !token.Icmp( "rectsprite" ) ) {
+		deform = DFRM_RECTSPRITE;
+		cullType = CT_TWO_SIDED;
+		SetMaterialFlag( MF_NOSHADOWS );
+		return;
+	}
 	if ( !token.Icmp( "tube" ) ) {
 		deform = DFRM_TUBE;
 		cullType = CT_TWO_SIDED;

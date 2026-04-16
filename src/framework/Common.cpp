@@ -1577,6 +1577,7 @@ void Com_ExecMachineSpec_f( const idCmdArgs &args ) {
 		cvarSystem->SetCVarInteger( "image_useNormalCompression", 0, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "r_multiSamples", 8, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "r_postAA", 1, CVAR_ARCHIVE );
+		cvarSystem->SetCVarInteger( "r_lensFlare", 2, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "r_screenFraction", 125, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "r_swapInterval", 0, CVAR_ARCHIVE );
 		cvarSystem->SetCVarFloat( "r_forceAmbient", 0.0f, CVAR_ARCHIVE );
@@ -1602,6 +1603,7 @@ void Com_ExecMachineSpec_f( const idCmdArgs &args ) {
 		cvarSystem->SetCVarInteger( "r_mode", 4, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "r_multiSamples", 4, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "r_postAA", 1, CVAR_ARCHIVE );
+		cvarSystem->SetCVarInteger( "r_lensFlare", 1, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "r_screenFraction", 100, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "r_swapInterval", 0, CVAR_ARCHIVE );
 		cvarSystem->SetCVarFloat( "r_forceAmbient", 0.0f, CVAR_ARCHIVE );
@@ -1624,6 +1626,7 @@ void Com_ExecMachineSpec_f( const idCmdArgs &args ) {
 		cvarSystem->SetCVarInteger( "r_mode", 3, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "r_multiSamples", 2, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "r_postAA", 1, CVAR_ARCHIVE );
+		cvarSystem->SetCVarInteger( "r_lensFlare", 1, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "r_screenFraction", 100, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "r_swapInterval", 0, CVAR_ARCHIVE );
 		cvarSystem->SetCVarFloat( "r_forceAmbient", 0.0f, CVAR_ARCHIVE );
@@ -1648,6 +1651,7 @@ void Com_ExecMachineSpec_f( const idCmdArgs &args ) {
 		cvarSystem->SetCVarInteger( "image_useNormalCompression", 2, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "r_multiSamples", 0, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "r_postAA", 0, CVAR_ARCHIVE );
+		cvarSystem->SetCVarInteger( "r_lensFlare", 0, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "r_screenFraction", 85, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "r_swapInterval", 0, CVAR_ARCHIVE );
 		cvarSystem->SetCVarFloat( "r_forceAmbient", 0.0f, CVAR_ARCHIVE );

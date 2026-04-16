@@ -105,6 +105,8 @@ public:
 	virtual bool	IsGUIActive() const = 0;
 	// Returns the GUI currently receiving input, or NULL when none is active.
 	virtual idUserInterface *GetActiveGUI() const = 0;
+	// Returns true while the main-menu logo intro sequence is playing.
+	virtual bool	IsMainMenuIntroPlaying() const = 0;
 
 	// Processes the given event.
 	virtual	bool	ProcessEvent( const sysEvent_t *event ) = 0;

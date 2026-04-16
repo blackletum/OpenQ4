@@ -4,12 +4,20 @@ Use this file as the source list for release changelog entries.
 
 Process:
 1. Add completed work under "Ready For Changelog".
-2. When cutting a release, copy relevant entries into that release section in `CHANGELOG.md` (or release notes).
-3. Move shipped items into a historical release section here (optional), and keep remaining work in "Carry Forward".
+2. When cutting a release with curated notes, save them in `docs-dev/releases/vX.Y.Z.md`; the manual release workflow will use that tracked file instead of the auto-generated history summary.
+3. If no tracked release file exists, the workflow falls back to the generated release notes from commit history.
+4. Move shipped items into a historical release section here (optional), and keep remaining work in "Carry Forward".
 
 ## Ready For Changelog
 
+- [x] Main menu placeholder art rotation now uses a randomized montage of eligible loadscreen levelshots, with proper wide/tall expansion-tile composition and slow zoom transitions per shot.
+- [x] Startup/loadscreen placeholder now hands off to the main menu automatically after 3 seconds, main-menu entry transitions use a short black fade-in stretched to native screen extents, and startup logo videos can be skipped with default-on `com_skipLogoVideos 1`.
+- [x] Added a depth-aware `r_lensFlare` graphics option with quality levels for lightweight light coronas and high-quality lens ghost/streak overlays.
 - [x] Material handling fixes completed; engine startup no longer depends on custom material script overrides in repo `q4base/`.
+- [x] Retail lighting parity restored for distance-cull portal fades, Raven special-effect pass ordering, ARB2 specular scaling, and `noSelfShadow` stencil-shadow routing.
+- [x] Added a live renderer light-report tool (`r_showViewLights`) that prints detailed per-light diagnostics for lights affecting the current view origin/player position.
+- [x] Added a persistent visual overlay for `r_showViewLights` (`r_showViewLightsVisuals`) that draws each last-reported light's origin marker, color, and radius volume in-world until the next report refresh.
+- [x] Retail `deform rectsprite` material support restored so shipped Quake 4 multiplayer flag-display shaders follow the renderer's rectangular autosprite path.
 - [x] Menu rendering issues fixed.
 - [x] SDL3 backend integrated as the default platform path (legacy Win32 backend remains transitional).
 - [x] Meson + Ninja build system introduced as canonical build path.
@@ -25,6 +33,7 @@ Process:
 - [x] Manual key matrix audit completed and documented for console, GUI edit fields, chat, binds, numpad, and modifiers.
 - [x] GUI scaling behavior updated to preserve uniform/aspect-correct rendering on window resize.
 - [x] Engine-side console/UI relayout now handles wide and narrow/tall aspect ratios, with live updates on screen size/aspect changes.
+- [x] Console mouse handling now uses native console-space cursor routing/drawing bounded to the live console rect, and adds archived `con_height` control for the console open height (`0.1` to `1.0`, default `0.5`).
 - [x] Platform/architecture roadmap documentation added for Windows/Linux/macOS direction with x64 baseline.
 - [x] Legacy/redundant build-system artifacts reduced (CMake path retired from active source tree).
 - [x] BSE manager/renderer lifecycle contract restored: effect completion now propagates correctly through `ServiceEffect` -> `UpdateEffectDef`, preventing immediate client-effect teardown and enabling proper expiry reporting.
@@ -60,7 +69,10 @@ Process:
 - [x] Multiplayer server-side hitscan lag compensation added with configurable rewind controls (`net_mpLagCompensation`, `net_mpLagCompMaxMS`, `net_mpLagCompBiasMS`) and server diagnostics (`net_mpLagCompDebug`).
 - [x] Multiplayer non-local prediction mode is now runtime-selectable through `net_mpPredictMode` (`0` legacy limited behavior, `1` enhanced per-frame prediction).
 - [x] Scope/zoom handling documentation updated to reflect multiplayer zoom stability and scope yaw alignment behavior.
+- [x] Ragdoll activation quality improved without changing the fixed 60 Hz simulation cadence: startup now keeps owner/world motion, handles initial penetrations more cleanly, and preserves slightly richer contact support for grounded corpses.
+- [x] Rigid-body physics timing-safe quality pass applied without changing the fixed simulation cadence: angular velocity handoff now respects world inertia, water is handled as drag instead of a one-time collision-state hack, rigid-body contacts keep richer deduplicated support points, and impacts now preserve time-of-impact momentum while consuming a small bounded amount of leftover fixed-step time.
 - [x] Script compiler x64 pointer-temp parity fix ported from OpenD3: right-associative indirect-expression retagging now guards 4-byte object-ref temp vs 8-byte pointer temp storage mismatch by allocating pointer-sized result defs when needed, preventing trigger/door script chain corruption.
+- [x] Retail AAS placeholder parity restored: stock dummy `.aas` files now load/discard like retail instead of warning-spamming and failing stock map init, and AAS tactical data is cleared correctly between loads.
 
 ## Carry Forward
 

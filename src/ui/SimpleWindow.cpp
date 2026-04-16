@@ -186,10 +186,13 @@ idSimpleWindow::idSimpleWindow(idWindow *win) {
 	rotate = win->rotate;
 	shear = win->shear;
 	backGroundName = win->backGroundName;
+	background = NULL;
 	if (backGroundName.Length()) {
 		background = declManager->FindMaterial(backGroundName);
-		background->SetSort( SS_GUI );
-		background->SetImageClassifications( 1 );	// just for resource tracking
+		if ( background ) {
+			background->SetSort( SS_GUI );
+			background->SetImageClassifications( 1 );	// just for resource tracking
+		}
 	}
 	backGroundName.SetMaterialPtr(&background);
 
@@ -702,7 +705,9 @@ void idSimpleWindow::ReadFromSaveGame( idFile *savefile ) {
 		savefile->Read( &(backName)[0], stringLen );
 
 		background = declManager->FindMaterial( backName );
-		background->SetSort( SS_GUI );
+		if ( background ) {
+			background->SetSort( SS_GUI );
+		}
 	} else {
 		background = NULL;
 	}

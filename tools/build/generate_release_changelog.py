@@ -85,6 +85,83 @@ def select_highlights(commits: list[tuple[str, str, str, str]], max_items: int) 
     return highlights
 
 
+def find_tracked_release_notes(
+    source_root: Path,
+    release_tag: str,
+    version_tag: str,
+) -> Path | None:
+    candidates = (
+        Path("docs-dev") / "releases" / f"{release_tag}.md",
+        Path("docs-dev") / "releases" / f"{version_tag}.md",
+    )
+    for relative in candidates:
+        if (source_root / relative).is_file():
+            return relative
+    return None
+
+
+def sanitize_release_notes_override(body: str, version_tag: str, release_tag: str) -> str:
+    lines = body.splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+
+    if lines:
+        title_pattern = re.compile(
+            rf"^#{1,6}\s+OpenQ4\s+(?:{re.escape(version_tag)}|{re.escape(release_tag)})"
+            rf"(?:\s+Release(?:\s+Notes)?)?\s*$",
+            re.IGNORECASE,
+        )
+        if title_pattern.fullmatch(lines[0].strip()):
+            lines.pop(0)
+            while lines and not lines[0].strip():
+                lines.pop(0)
+
+    return "\n".join(lines).strip()
+
+
+def build_release_header(
+    *,
+    version: str,
+    version_tag: str,
+    release_tag: str,
+    release_scale: str,
+    release_reason: str,
+    repo_url: str,
+    head_sha: str,
+    generated_at: str,
+    run_id: str,
+    run_url: str,
+    previous_tag: str | None,
+) -> list[str]:
+    short_sha = head_sha[:8]
+    previous_tag_link = ""
+    compare_link = ""
+    if previous_tag:
+        previous_tag_link = f"[`{previous_tag}`]({repo_url}/releases/tag/{previous_tag})"
+        compare_link = f"[compare]({repo_url}/compare/{previous_tag}...{head_sha})"
+
+    lines: list[str] = []
+    lines.append(f"## OpenQ4 {version_tag}")
+    lines.append("")
+    lines.append("| Field | Value |")
+    lines.append("| --- | --- |")
+    lines.append(f"| Version | `{version}` |")
+    lines.append(f"| Release tag | `{release_tag}` |")
+    lines.append(f"| Commit | [`{short_sha}`]({repo_url}/commit/{head_sha}) |")
+    lines.append(f"| Generated | `{generated_at}` |")
+    if release_scale:
+        lines.append(f"| Release scale | `{release_scale}` |")
+    if release_reason:
+        lines.append(f"| Version decision | {release_reason} |")
+    if run_url:
+        run_label = run_id if run_id else "Workflow run"
+        lines.append(f"| Workflow | [{run_label}]({run_url}) |")
+    if previous_tag:
+        lines.append(f"| Since | {previous_tag_link} ({compare_link}) |")
+    lines.append("")
+    return lines
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate OpenQ4 release notes.")
     parser.add_argument("--version", required=True, help="Human-readable release version.")
@@ -94,6 +171,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--release-reason", default="", help="Release-version rationale emitted by the version helper.")
     parser.add_argument("--repo", required=True, help="GitHub repository slug (owner/name).")
     parser.add_argument("--output", required=True, help="Output markdown path.")
+    parser.add_argument(
+        "--source-root",
+        default=".",
+        help="Repository root used to resolve tracked release-notes overrides (default: current directory).",
+    )
     parser.add_argument("--run-id", default="", help="GitHub workflow run ID.")
     parser.add_argument("--run-url", default="", help="GitHub workflow run URL.")
     parser.add_argument(
@@ -114,64 +196,76 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
 
+    source_root = Path(args.source_root).resolve()
     repo_url = f"https://github.com/{args.repo}"
     head_sha = run_git(["rev-parse", "HEAD"])
-    short_sha = head_sha[:8]
     previous_tag = find_previous_release_tag(args.release_tag)
-
-    commit_range = f"{previous_tag}..HEAD" if previous_tag else None
-    commits = collect_commits(commit_range, args.max_commits)
-    if not commits:
-        commits = collect_commits(None, args.max_commits)
-
-    highlights = select_highlights(commits, args.max_highlights)
-
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    previous_tag_link = ""
-    compare_link = ""
-    if previous_tag:
-        previous_tag_link = f"[`{previous_tag}`]({repo_url}/releases/tag/{previous_tag})"
-        compare_link = f"[compare]({repo_url}/compare/{previous_tag}...{head_sha})"
+    lines = build_release_header(
+        version=args.version,
+        version_tag=args.version_tag,
+        release_tag=args.release_tag,
+        release_scale=args.release_scale,
+        release_reason=args.release_reason,
+        repo_url=repo_url,
+        head_sha=head_sha,
+        generated_at=generated_at,
+        run_id=args.run_id,
+        run_url=args.run_url,
+        previous_tag=previous_tag,
+    )
 
-    lines: list[str] = []
-    lines.append(f"## OpenQ4 {args.version_tag}")
-    lines.append("")
-    lines.append("| Field | Value |")
-    lines.append("| --- | --- |")
-    lines.append(f"| Version | `{args.version}` |")
-    lines.append(f"| Release tag | `{args.release_tag}` |")
-    lines.append(f"| Commit | [`{short_sha}`]({repo_url}/commit/{head_sha}) |")
-    lines.append(f"| Generated | `{generated_at}` |")
-    if args.release_scale:
-        lines.append(f"| Release scale | `{args.release_scale}` |")
-    if args.release_reason:
-        lines.append(f"| Version decision | {args.release_reason} |")
-    if args.run_url:
-        run_label = args.run_id if args.run_id else "Workflow run"
-        lines.append(f"| Workflow | [{run_label}]({args.run_url}) |")
-    if previous_tag:
-        lines.append(f"| Since | {previous_tag_link} ({compare_link}) |")
-    lines.append("")
-
-    lines.append("### Highlights")
-    lines.append("")
-    if highlights:
-        for subject in highlights:
-            lines.append(f"- {subject}")
-    else:
-        lines.append("- Maintenance and release integration updates.")
-    lines.append("")
-
-    lines.append("### Change Log")
-    lines.append("")
-    if commits:
-        for full_sha, short, date, subject in commits[: args.max_commits]:
-            lines.append(
-                f"- {subject} ([`{short}`]({repo_url}/commit/{full_sha}), {date})"
+    release_notes_override = find_tracked_release_notes(
+        source_root,
+        args.release_tag,
+        args.version_tag,
+    )
+    used_override = False
+    if release_notes_override is not None:
+        override_path = source_root / release_notes_override
+        override_body = sanitize_release_notes_override(
+            override_path.read_text(encoding="utf-8"),
+            args.version_tag,
+            args.release_tag,
+        )
+        if override_body:
+            lines.extend(override_body.splitlines())
+            lines.append("")
+            used_override = True
+            print(f"Using tracked release notes from {release_notes_override.as_posix()}")
+        else:
+            print(
+                f"Tracked release notes file {release_notes_override.as_posix()} was empty; "
+                "falling back to generated commit history."
             )
-    else:
-        lines.append("- No commit metadata was available for this release.")
-    lines.append("")
+
+    if not used_override:
+        commit_range = f"{previous_tag}..HEAD" if previous_tag else None
+        commits = collect_commits(commit_range, args.max_commits)
+        if not commits:
+            commits = collect_commits(None, args.max_commits)
+
+        highlights = select_highlights(commits, args.max_highlights)
+
+        lines.append("### Highlights")
+        lines.append("")
+        if highlights:
+            for subject in highlights:
+                lines.append(f"- {subject}")
+        else:
+            lines.append("- Maintenance and release integration updates.")
+        lines.append("")
+
+        lines.append("### Change Log")
+        lines.append("")
+        if commits:
+            for full_sha, short, date, subject in commits[: args.max_commits]:
+                lines.append(
+                    f"- {subject} ([`{short}`]({repo_url}/commit/{full_sha}), {date})"
+                )
+        else:
+            lines.append("- No commit metadata was available for this release.")
+        lines.append("")
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)

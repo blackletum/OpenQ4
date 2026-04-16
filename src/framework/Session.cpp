@@ -40,7 +40,7 @@ If you have questions concerning this license or the applicable additional terms
 void *R_StaticAlloc( int bytes );
 void R_StaticFree( void *data );
 
-#define RENDERDEMO_VERSION 3
+#define RENDERDEMO_VERSION 4
 #define USERCMD_MSEC common->GetUserCmdMSec()
 
 extern glconfig_t	glConfig;
@@ -58,6 +58,7 @@ idCVar	idSessionLocal::com_aviDemoTics( "com_aviDemoTics", "2", CVAR_SYSTEM | CV
 idCVar	idSessionLocal::com_wipeSeconds( "com_wipeSeconds", "1", CVAR_SYSTEM, "" );
 idCVar	idSessionLocal::com_guid( "com_guid", "", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_ROM, "" );
 idCVar	com_skipLoadingContinue( "com_skipLoadingContinue", "0", CVAR_SYSTEM | CVAR_BOOL, "skip the single-player loading-screen continue gate (testing)" );
+idCVar	com_skipLogoVideos( "com_skipLogoVideos", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "skip startup logo videos and go straight to the main menu" );
 idCVar	com_showLevelshotBounds( "com_showLevelshotBounds", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "draw a centered 4:3 frame guide for levelshot composition" );
 idCVar	s_muteUnfocused( "s_muteUnfocused", "1", CVAR_ARCHIVE | CVAR_BOOL, "mute all audio when the application is out of focus" );
 
@@ -675,6 +676,167 @@ static bool Session_PrepareExpandedLoadingBackground( const idStr &backgroundPat
 	}
 
 	return true;
+}
+
+static bool Session_EndsWithIgnoreCase( const idStr &value, const char *suffix ) {
+	if ( suffix == NULL || suffix[ 0 ] == '\0' ) {
+		return false;
+	}
+
+	const int valueLength = value.Length();
+	const int suffixLength = idStr::Length( suffix );
+	if ( valueLength < suffixLength ) {
+		return false;
+	}
+
+	return idStr::Icmp( value.c_str() + valueLength - suffixLength, suffix ) == 0;
+}
+
+static bool Session_IsMainMenuMontageLevelshotExcluded( const idStr &baseName ) {
+	return baseName.Icmp( "generic" ) == 0 ||
+		baseName.Icmp( "e3_load" ) == 0 ||
+		Session_EndsWithIgnoreCase( baseName, "_left" ) ||
+		Session_EndsWithIgnoreCase( baseName, "_right" ) ||
+		Session_EndsWithIgnoreCase( baseName, "_top" ) ||
+		Session_EndsWithIgnoreCase( baseName, "_bottom" );
+}
+
+static bool Session_StringListContainsNoCase( const idStrList &list, const idStr &value ) {
+	for ( int i = 0; i < list.Num(); i++ ) {
+		if ( list[ i ].Icmp( value ) == 0 ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static void Session_AppendMainMenuMontageCandidatesForExtension( const char *extension, idStrList &candidates ) {
+	idFileList *fileList = fileSystem->ListFiles( "gfx/guis/loadscreens", extension, true, true );
+	if ( fileList == NULL ) {
+		return;
+	}
+
+	for ( int i = 0; i < fileList->GetNumFiles(); i++ ) {
+		idStr levelshotPath = fileList->GetFile( i );
+		levelshotPath.BackSlashesToSlashes();
+		levelshotPath.StripFileExtension();
+
+		idStr baseName = levelshotPath;
+		baseName.StripPath();
+		if ( baseName.IsEmpty() || Session_IsMainMenuMontageLevelshotExcluded( baseName ) ) {
+			continue;
+		}
+		if ( Session_StringListContainsNoCase( candidates, levelshotPath ) ) {
+			continue;
+		}
+
+		idStr resolvedCenterPath;
+		if ( !Session_ResolveImageFilePath( levelshotPath, resolvedCenterPath ) ) {
+			continue;
+		}
+
+		idStr resolvedLeftPath;
+		idStr resolvedRightPath;
+		idStr resolvedTopPath;
+		idStr resolvedBottomPath;
+		if ( !Session_ResolveSiblingImageFilePath( resolvedCenterPath, "_left", resolvedLeftPath ) ||
+			!Session_ResolveSiblingImageFilePath( resolvedCenterPath, "_right", resolvedRightPath ) ||
+			!Session_ResolveSiblingImageFilePath( resolvedCenterPath, "_top", resolvedTopPath ) ||
+			!Session_ResolveSiblingImageFilePath( resolvedCenterPath, "_bottom", resolvedBottomPath ) ) {
+			continue;
+		}
+
+		candidates.Append( levelshotPath );
+	}
+
+	fileSystem->FreeFileList( fileList );
+}
+
+static void Session_BuildMainMenuMontageCandidates( idStrList &candidates ) {
+	static const char *supportedExtensions[] = { ".tga", ".dds", ".jpg", NULL };
+
+	candidates.Clear();
+	for ( int i = 0; supportedExtensions[ i ] != NULL; i++ ) {
+		Session_AppendMainMenuMontageCandidatesForExtension( supportedExtensions[ i ], candidates );
+	}
+}
+
+static bool Session_ResolveMainMenuMontageTileSet( const idStr &backgroundPath, idStr &centerPath, idStr &leftPath, idStr &rightPath, idStr &topPath, idStr &bottomPath ) {
+	if ( !Session_ResolveImageFilePath( backgroundPath, centerPath ) ) {
+		return false;
+	}
+
+	if ( !Session_ResolveSiblingImageFilePath( centerPath, "_left", leftPath ) ||
+		!Session_ResolveSiblingImageFilePath( centerPath, "_right", rightPath ) ||
+		!Session_ResolveSiblingImageFilePath( centerPath, "_top", topPath ) ||
+		!Session_ResolveSiblingImageFilePath( centerPath, "_bottom", bottomPath ) ) {
+		return false;
+	}
+
+	return true;
+}
+
+void idSessionLocal::SetMainMenuBackgroundMontageGuiVars( void ) {
+	static const int maxMontageShots = 5;
+	static const char *fallbackBackground = "gfx/guis/loadscreens/generic";
+
+	if ( guiMainMenu == NULL ) {
+		return;
+	}
+
+	idStrList candidates;
+	Session_BuildMainMenuMontageCandidates( candidates );
+
+	idStrList selected;
+	selected = candidates;
+
+	if ( selected.Num() > 1 ) {
+		idRandom random( Sys_Milliseconds() ^ com_frameTime ^ selected.Num() );
+		for ( int i = selected.Num() - 1; i > 0; --i ) {
+			const int swapIndex = random.RandomInt( i + 1 );
+			if ( swapIndex == i ) {
+				continue;
+			}
+
+			idStr temp = selected[ i ];
+			selected[ i ] = selected[ swapIndex ];
+			selected[ swapIndex ] = temp;
+		}
+	}
+
+	const int uniqueShotCount = Min( maxMontageShots, selected.Num() );
+	for ( int i = 0; i < maxMontageShots; i++ ) {
+		idStr backgroundPath = fallbackBackground;
+		if ( uniqueShotCount > 0 ) {
+			backgroundPath = selected[ i % uniqueShotCount ];
+		}
+
+		idStr centerPath;
+		idStr leftPath;
+		idStr rightPath;
+		idStr topPath;
+		idStr bottomPath;
+		if ( !Session_ResolveMainMenuMontageTileSet( backgroundPath, centerPath, leftPath, rightPath, topPath, bottomPath ) ) {
+			if ( !Session_ResolveMainMenuMontageTileSet( fallbackBackground, centerPath, leftPath, rightPath, topPath, bottomPath ) ) {
+				continue;
+			}
+		}
+
+		guiMainMenu->SetStateString( va( "menu_bg_%d", i + 1 ), centerPath.c_str() );
+		guiMainMenu->SetStateString( va( "menu_bg_%d_left", i + 1 ), leftPath.c_str() );
+		guiMainMenu->SetStateString( va( "menu_bg_%d_right", i + 1 ), rightPath.c_str() );
+		guiMainMenu->SetStateString( va( "menu_bg_%d_top", i + 1 ), topPath.c_str() );
+		guiMainMenu->SetStateString( va( "menu_bg_%d_bottom", i + 1 ), bottomPath.c_str() );
+		guiMainMenu->SetStateInt( va( "menu_bg_%d_canvasfill", i + 1 ), 0 );
+		declManager->FindMaterial( centerPath.c_str() )->SetSort( SS_GUI );
+		declManager->FindMaterial( leftPath.c_str() )->SetSort( SS_GUI );
+		declManager->FindMaterial( rightPath.c_str() )->SetSort( SS_GUI );
+		declManager->FindMaterial( topPath.c_str() )->SetSort( SS_GUI );
+		declManager->FindMaterial( bottomPath.c_str() )->SetSort( SS_GUI );
+	}
+
+	guiMainMenu->SetStateInt( "menu_bg_count", Max( uniqueShotCount, 1 ) );
 }
 
 static void Session_DrawFallbackLoadingScreen() {
@@ -1696,6 +1858,7 @@ void idSessionLocal::Clear() {
 	menuIntroBlackoutActive = false;
 	menuIntroBlackoutAwaitMenuMusic = false;
 	menuIntroBlackoutFadeStart = -1;
+	fallbackMenuStartTime = -1;
 
 	bytesNeededForMapLoad = 0;
 
@@ -3030,8 +3193,27 @@ void idSessionLocal::LoadLoadingGui( const char *mapName ) {
 		}
 		guiLoading->StateChanged( com_frameTime );
 
+		const char *fallbackLoadingBackground = "gfx/guis/loadscreens/generic";
 		const idMaterial *mat = declManager->FindMaterial( loadingBackground.c_str() );
-		mat->SetSort( SS_GUI );
+		if ( mat == NULL || mat->TestMaterialFlag( MF_DEFAULTED ) ) {
+			// Keep loading-screen redraw on a known-good GUI material if a map-specific
+			// levelshot or generated expansion could not be resolved at runtime.
+			if ( idStr::Icmp( loadingBackground, fallbackLoadingBackground ) != 0 &&
+				 idStr::Icmp( loadingBackground, "gfx/guis/loadscreens/generic.tga" ) != 0 ) {
+				common->Warning( "Loading GUI background '%s' could not be resolved, falling back to '%s'",
+					loadingBackground.c_str(), fallbackLoadingBackground );
+				loadingBackground = fallbackLoadingBackground;
+				loadingBackgroundCanvasFill = false;
+				guiLoading->SetStateString( "loading_bkgnd", loadingBackground.c_str() );
+				guiLoading->SetStateInt( "loading_bkgnd_canvasfill", 0 );
+				guiLoading->SetStateInt( "loading_bkgnd_wide", 0 );
+				guiLoading->StateChanged( com_frameTime );
+				mat = declManager->FindMaterial( loadingBackground.c_str() );
+			}
+		}
+		if ( mat != NULL && !mat->TestMaterialFlag( MF_DEFAULTED ) ) {
+			mat->SetSort( SS_GUI );
+		}
 	}
 }
 
@@ -4143,8 +4325,11 @@ idSessionLocal::Draw
 ===============
 */
 void idSessionLocal::Draw() {
+	static const int fallbackMenuDelayMs = 3000;
+
 	bool fullConsole = false;
 	float menuIntroBlackoutAlpha = 0.0f;
+	bool drawingFallbackLoadingScreen = false;
 
 	if ( insideExecuteMapChange ) {
 		if ( guiLoading ) {
@@ -4239,7 +4424,14 @@ void idSessionLocal::Draw() {
 	} else {
 #if ID_CONSOLE_LOCK
 		if ( con_allowConsole.GetBool() ) {
+			drawingFallbackLoadingScreen = true;
+			if ( fallbackMenuStartTime < 0 ) {
+				fallbackMenuStartTime = Sys_Milliseconds();
+			}
 			Session_DrawFallbackLoadingScreen();
+			if ( guiMainMenu != NULL && ( Sys_Milliseconds() - fallbackMenuStartTime ) >= fallbackMenuDelayMs ) {
+				StartMenu();
+			}
 		} else {
 			emptyDrawCount++;
 			if ( emptyDrawCount > 5 ) {
@@ -4254,9 +4446,20 @@ void idSessionLocal::Draw() {
 		}
 #else
 		// when this fallback branch is hit, show loading instead of a full-screen console
+		drawingFallbackLoadingScreen = true;
+		if ( fallbackMenuStartTime < 0 ) {
+			fallbackMenuStartTime = Sys_Milliseconds();
+		}
 		Session_DrawFallbackLoadingScreen();
+		if ( guiMainMenu != NULL && ( Sys_Milliseconds() - fallbackMenuStartTime ) >= fallbackMenuDelayMs ) {
+			StartMenu();
+		}
 #endif
 		fullConsole = true;
+	}
+
+	if ( !drawingFallbackLoadingScreen ) {
+		fallbackMenuStartTime = -1;
 	}
 
 	if ( menuIntroBlackoutAlpha > 0.0f ) {
@@ -4290,7 +4493,7 @@ void idSessionLocal::Draw() {
 	DrawCmdGraph();
 
 	// draw the half console / notify console on top of everything
-	if ( !fullConsole ) {
+	if ( !fullConsole && !IsMainMenuIntroPlaying() ) {
 		console->Draw( false );
 	}
 }

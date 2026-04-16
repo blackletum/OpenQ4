@@ -5226,8 +5226,14 @@ void	RB_ARB2_DrawInteraction( const drawInteraction_t *din ) {
 	}
 
 	// set the constant colors
+	const float specularColorX2[4] = {
+		din->specularColor[0] * 2.0f,
+		din->specularColor[1] * 2.0f,
+		din->specularColor[2] * 2.0f,
+		din->specularColor[3] * 2.0f
+	};
 	glProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, din->diffuseColor.ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, din->specularColor.ToFloatPtr() );
+	glProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, specularColorX2 );
 
 	// set the textures
 

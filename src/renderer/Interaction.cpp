@@ -1004,15 +1004,10 @@ void idInteraction::CreateInteraction( const idRenderModel *model ) {
 				// this is the only place during gameplay (outside the utilities) that R_CreateShadowVolume() is called
 				sint->shadowTris = R_CreateShadowVolume( entityDef, tri, lightDef, shadowGen, sint->cullInfo );
 				if ( sint->shadowTris ) {
-					const bool noSelfShadow =
-						entityDef->parms.noSelfShadow ||
-						shader->TestMaterialFlag( MF_NOSELFSHADOW );
-					if ( noSelfShadow || shader->Coverage() != MC_OPAQUE || ( !r_skipSuppress.GetBool() && entityDef->parms.suppressSurfaceInViewID ) ) {
+					if ( shader->Coverage() != MC_OPAQUE || ( !r_skipSuppress.GetBool() && entityDef->parms.suppressSurfaceInViewID ) ) {
 						// if any surface is a shadow-casting perforated or translucent surface, or the
 						// base surface is suppressed in the view (world weapon shadows) we can't use
 						// the external shadow optimizations because we can see through some of the faces.
-						// MF_NOSELFSHADOW surfaces also rely on the local/global shadow split, which
-						// is unsafe with open shadow volumes and shows up as crate self-shadow artifacts.
 						sint->shadowTris->numShadowIndexesNoCaps = sint->shadowTris->numIndexes;
 						sint->shadowTris->numShadowIndexesNoFrontCaps = sint->shadowTris->numIndexes;
 					}
@@ -1299,9 +1294,8 @@ void idInteraction::AddActiveInteraction( void ) {
 				entityDef->parms.allowSurfaceInViewID == tr.viewDef->renderView.viewID ) ||
 			( entityDef->parms.weaponDepthHackInViewID != 0 &&
 				entityDef->parms.weaponDepthHackInViewID == tr.viewDef->renderView.viewID );
-		const bool noSelfShadow =
-			entityDef->parms.noSelfShadow ||
-			shadowShader->TestMaterialFlag( MF_NOSELFSHADOW );
+		const bool materialNoSelfShadow = shadowShader->TestMaterialFlag( MF_NOSELFSHADOW );
+		const bool shadowMapNoSelfShadow = entityDef->parms.noSelfShadow || materialNoSelfShadow;
 		const bool translucentShadowMapSupported =
 			r_shadowMapTranslucentMoments.GetBool() &&
 			glConfig.GLSLProgramAvailable &&
@@ -1352,7 +1346,7 @@ void idInteraction::AddActiveInteraction( void ) {
 				}
 				R_TouchShadowMapCache( casterTris->indexCache );
 
-				if ( noSelfShadow ) {
+				if ( shadowMapNoSelfShadow ) {
 					R_LinkShadowMapCasterSurf( &vLight->localShadowMapCasters,
 						casterTris, vEntity, &entityDef->parms, shadowShader, shadowScissor );
 				} else {
@@ -1378,7 +1372,7 @@ void idInteraction::AddActiveInteraction( void ) {
 				}
 				R_TouchShadowMapCache( casterTris->indexCache );
 
-				if ( noSelfShadow ) {
+				if ( shadowMapNoSelfShadow ) {
 					R_LinkShadowMapCasterSurf( &vLight->localTranslucentShadowMapCasters,
 						casterTris, vEntity, &entityDef->parms, shadowShader, shadowScissor );
 				} else {
@@ -1440,7 +1434,7 @@ void idInteraction::AddActiveInteraction( void ) {
 			// see if we can avoid using the shadow volume caps
 			bool inside = R_PotentiallyInsideInfiniteShadow( sint->ambientTris, localViewOrigin, localLightOrigin );
 
-			if ( noSelfShadow ) {
+			if ( materialNoSelfShadow ) {
 				R_LinkLightSurf( &vLight->localShadows,
 					shadowTris, vEntity, lightDef, NULL, shadowScissor, inside );
 			} else {

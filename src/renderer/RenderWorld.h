@@ -561,7 +561,7 @@ public:
 	virtual bool			HasSkybox( int areaNum ) = 0;
 	//virtual void			FindVisibleAreas( idVec3 origin, int areaNum, bool *visibleAreas ) = 0;
 // AReis: This is where we draw the portal fadeout polygon
-	//virtual void			RenderPortalFades( void ) = 0;
+	virtual void			RenderPortalFades( void ) = 0;
 // ddynerman: Helper function
 	//virtual idVec3			WorldToScreen( renderView_t* view, idVec3 point ) = 0;
 	//virtual idBounds		WorldToScreen( renderView_t* view, idBounds bounds ) = 0;

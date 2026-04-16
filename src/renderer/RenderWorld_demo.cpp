@@ -40,6 +40,7 @@ typedef struct {
 } demoHeader_t;
 
 static const int OPENQ4_RENDERDEMO_ENTITY_EXTRAS_VERSION = 3;
+static const int OPENQ4_RENDERDEMO_LIGHT_EXTRAS_VERSION = 4;
 
 namespace {
 
@@ -473,6 +474,11 @@ void	idRenderWorldLocal::WriteRenderLight( qhandle_t handle, const renderLight_t
 		//session->writeDemo->WriteInt( index );
 	}
 
+	// Preserve Quake 4-era light flags without disturbing the older serialized prefix.
+	session->writeDemo->WriteBool( light->noDynamicShadows );
+	session->writeDemo->WriteBool( light->globalLight );
+	session->writeDemo->WriteFloat( light->detailLevel );
+
 	if ( r_showDemo.GetBool() ) {
 		common->Printf( "write DC_UPDATE_LIGHTDEF: %i\n", handle );
 	}
@@ -486,6 +492,8 @@ ReadRenderLight
 void	idRenderWorldLocal::ReadRenderLight( ) {
 	renderLight_t	light = {};
 	int				index;
+
+	light.detailLevel = DEFAULT_LIGHT_DETAIL_LEVEL;
 
 	session->readDemo->ReadInt( index );
 	if ( index < 0 ) {
@@ -521,6 +529,11 @@ void	idRenderWorldLocal::ReadRenderLight( ) {
 	}
 	if ( light.shader ) {
 		light.shader = declManager->FindMaterial( session->readDemo->ReadHashString() );
+	}
+	if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_LIGHT_EXTRAS_VERSION ) {
+		session->readDemo->ReadBool( light.noDynamicShadows );
+		session->readDemo->ReadBool( light.globalLight );
+		session->readDemo->ReadFloat( light.detailLevel );
 	}
 	UpdateLightDef( index, &light );
 

@@ -81,6 +81,7 @@ public:
 	virtual	void		ClearNotifyLines( void );
 	virtual	void		Close( void );
 	virtual	void		SetMousePosition( float x, float y );
+	virtual void		ClampMousePosition( float &x, float &y ) const;
 	virtual	void		Print( const char *text );
 	virtual	void		Draw( bool forceFullScreen );
 
@@ -106,6 +107,7 @@ private:
 
 	void				ClampDisplay( void );
 	void				UpdateDisplayLine( void );
+	float				GetOpenFraction( bool reduced ) const;
 	int					GetFooterRows( void ) const;
 	int					GetLogRowCount( void ) const;
 	bool				GetScrollRange( int &minDisplay, int &maxDisplay, int *filled = NULL ) const;
@@ -307,6 +309,7 @@ private:
 	char				completionFuzzyNeedle[MAX_EDIT_LINE];
 
 	static idCVar		con_speed;
+	static idCVar		con_height;
 	static idCVar		con_notifyTime;
 	static idCVar		con_noPrint;
 	static idCVar		con_scrollSmooth;
@@ -323,6 +326,8 @@ static idConsoleLocal localConsole;
 idConsole	*console = &localConsole;
 
 idCVar idConsoleLocal::con_speed( "con_speed", "3", CVAR_SYSTEM, "speed at which the console moves up and down" );
+idCVar idConsoleLocal::con_height( "con_height", "0.5", CVAR_FLOAT | CVAR_SYSTEM | CVAR_ARCHIVE,
+	"maximum open height fraction for the console", 0.1f, 1.0f );
 idCVar idConsoleLocal::con_notifyTime( "con_notifyTime", "3", CVAR_SYSTEM, "time messages are displayed onscreen when console is pulled up" );
 #ifdef DEBUG
 idCVar idConsoleLocal::con_noPrint( "con_noPrint", "0", CVAR_BOOL|CVAR_SYSTEM|CVAR_NOCHEAT, "print on the console but not onscreen when console is pulled up" );
@@ -1324,7 +1329,22 @@ void idConsoleLocal::SetMousePosition( float x, float y ) {
 	mouseX = x;
 	mouseY = y;
 	mouseInitialized = true;
-	ClampMouseToConsole();
+	ClampMousePosition( mouseX, mouseY );
+}
+
+/*
+================
+idConsoleLocal::ClampMousePosition
+================
+*/
+void idConsoleLocal::ClampMousePosition( float &x, float &y ) const {
+	float consoleX, consoleY, consoleW, consoleH;
+	GetConsoleRect( consoleX, consoleY, consoleW, consoleH );
+
+	const float maxX = Max( consoleX, consoleX + consoleW - 1.0f );
+	const float maxY = Max( consoleY, consoleY + consoleH - 1.0f );
+	x = idMath::ClampFloat( consoleX, maxX, x );
+	y = idMath::ClampFloat( consoleY, maxY, y );
 }
 
 /*
@@ -1550,6 +1570,16 @@ void idConsoleLocal::UpdateDisplayLine( void ) {
 
 /*
 ================
+idConsoleLocal::GetOpenFraction
+================
+*/
+float idConsoleLocal::GetOpenFraction( bool reduced ) const {
+	const float maxFrac = con_height.GetFloat();
+	return reduced ? Min( 0.2f, maxFrac ) : maxFrac;
+}
+
+/*
+================
 idConsoleLocal::GetFooterRows
 ================
 */
@@ -1604,8 +1634,8 @@ void idConsoleLocal::GetConsoleRect( float &x, float &y, float &w, float &h ) co
 	h = static_cast<float>( vislines );
 	if ( h <= 0.0f ) {
 		h = SCREEN_HEIGHT * displayFrac;
-		if ( keyCatching && h < SCREEN_HEIGHT * 0.5f ) {
-			h = SCREEN_HEIGHT * 0.5f;
+		if ( keyCatching && finalFrac > 0.0f && h < SCREEN_HEIGHT * finalFrac ) {
+			h = SCREEN_HEIGHT * finalFrac;
 		}
 		if ( h > SCREEN_HEIGHT ) {
 			h = SCREEN_HEIGHT;
@@ -1747,10 +1777,7 @@ void idConsoleLocal::ClampMouseToConsole( void ) {
 		mouseInitialized = true;
 	}
 
-	const float maxX = Max( consoleX, consoleX + consoleW - 1.0f );
-	const float maxY = Max( consoleY, consoleY + consoleH - 1.0f );
-	mouseX = idMath::ClampFloat( consoleX, maxX, mouseX );
-	mouseY = idMath::ClampFloat( consoleY, maxY, mouseY );
+	ClampMousePosition( mouseX, mouseY );
 }
 
 /*
@@ -4050,6 +4077,15 @@ bool	idConsoleLocal::ProcessEvent( const sysEvent_t *event, bool forceAccept ) {
 	bool consoleKey;
 	consoleKey = event->evType == SE_KEY && ( event->evValue == Sys_GetConsoleKey( false ) || event->evValue == Sys_GetConsoleKey( true ) );
 
+	if ( session != NULL && session->IsMainMenuIntroPlaying() ) {
+		if ( keyCatching ) {
+			Close();
+			Sys_GrabMouseCursor( false );
+			cvarSystem->SetCVarBool( "ui_chat", false );
+		}
+		return consoleKey;
+	}
+
 	// When disabled, keep the legacy retail requirement to hold Ctrl+Alt while
 	// pressing the console key to open the console.
 	if ( !keyCatching && !con_allowConsole.GetBool() ) {
@@ -4083,12 +4119,8 @@ bool	idConsoleLocal::ProcessEvent( const sysEvent_t *event, bool forceAccept ) {
 			ClearLogSelection();
 			ClearTextDragState();
 			InvalidateCompletionState();
-			if ( idKeyInput::IsDown( K_SHIFT ) ) {
-				// if the shift key is down, don't open the console as much
-				SetDisplayFraction( 0.2f );
-			} else {
-				SetDisplayFraction( 0.5f );
-			}
+			// Holding Shift keeps the reduced-open behavior without exceeding the configured console height.
+			SetDisplayFraction( GetOpenFraction( idKeyInput::IsDown( K_SHIFT ) ) );
 			cvarSystem->SetCVarBool( "ui_chat", true );
 			Sys_GrabMouseCursor( false );
 		}
@@ -4392,9 +4424,11 @@ void idConsoleLocal::DrawMouseCursor( void ) {
 	}
 
 	ClampMouseToConsole();
+
 	if ( mouseCursorShader != NULL ) {
+		const float cursorWidth = CON_MOUSE_CURSOR_SIZE * Con_GetConsoleXScale();
 		renderSystem->SetColor( colorWhite );
-		renderSystem->DrawStretchPic( mouseX, mouseY, CON_MOUSE_CURSOR_SIZE, CON_MOUSE_CURSOR_SIZE,
+		renderSystem->DrawStretchPic( mouseX, mouseY, cursorWidth, CON_MOUSE_CURSOR_SIZE,
 			0.0f, 0.0f, 1.0f, 1.0f, mouseCursorShader );
 		return;
 	}

@@ -32,6 +32,8 @@ This file describes project goals, rules, and upstream credits for anyone workin
 - Keep repo-authored runtime overrides under `content/baseoq4/`; treat `.install/baseoq4/` as staged output rather than an editing target.
 - Prefer changes that match Quake 4 SDK expectations and shipped content behavior.
 - Document significant changes in the documentation and keep `README.md` accurate.
+- Treat release changelog maintenance as part of feature completion. User-facing curated release notes belong in `docs-dev/releases/vX.Y.Z.md`, and the manual release workflow will publish that file when it exists.
+- Write release notes for end users first: lead with the visible benefit, call out any action or compatibility note the reader needs, and avoid dumping internal implementation trivia unless it materially helps the audience.
 - Use `builddir/` as the standard Meson build output directory for local builds, VS Code tasks, and launch configurations.
 - Treat `.install/` as the release-style package root; stage built binaries into `.install/` and `.install/baseoq4/`.
 - Keep game-module outputs available under both `builddir/baseoq4/` (direct run) and `.install/baseoq4/` (staged package).
@@ -65,6 +67,15 @@ This file describes project goals, rules, and upstream credits for anyone workin
 3. If something is missing or broken, fix the engine/game/loader/parser rather than shipping new material/decl/shader assets.
 4. If engine-side shaders are needed, prefer internal defaults or generated resources that ship with the executable.
 5. Re-run Procedure 1 after each fix to verify clean initialization without custom content.
+
+**Release Changelog Workflow**
+1. Treat release-note maintenance as part of the definition of done for any shipped user-facing, packaging, compatibility, input, rendering, or platform change.
+2. Keep candidate release material current in `docs-dev/release-completion.md` while work is in progress.
+3. Before cutting or re-cutting a release, create or update `docs-dev/releases/vX.Y.Z.md` with polished release notes intended to be read directly by players and package users.
+4. Prefer a clean Markdown structure with short sections such as `Highlights`, `Upgrade Notes`, and `Change Log`, using concise bullets that scan well on GitHub releases.
+5. Write in benefit-first language: explain what changed, why it matters, and whether the reader needs to reinstall, replace files, or rebind anything.
+6. Keep curated notes free of internal-only clutter such as source paths, temporary investigation details, or commit-by-commit noise unless that detail is genuinely useful to the release audience.
+7. If no curated file exists, the manual release workflow falls back to the generated commit-history notes; treat that fallback as a safety net, not the preferred release presentation.
 
 **Procedure 1 (Debug Loop)**
 1. Launch using the correct mode-specific task (`SP` launch task for single-player, `MP` launch task for multiplayer).

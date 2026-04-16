@@ -468,6 +468,7 @@ jobs:
             --release-scale "${{ needs.metadata.outputs.release_scale }}" \
             --release-reason "${{ needs.metadata.outputs.release_reason }}" \
             --repo "${GITHUB_REPOSITORY}" \
+            --source-root "${GITHUB_WORKSPACE}" \
             --run-id "${GITHUB_RUN_ID}" \
             --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             --output "${RUNNER_TEMP}/release-changelog.md"

@@ -55,7 +55,6 @@ void idReachability::CopyBase(idReachability& reach) {
 	travelTime = reach.travelTime;
 }
 
-
 /*
 ================
 Reachability_Write
@@ -609,6 +608,7 @@ idAASFileLocal::idAASFileLocal( void ) {
 	portals.SetGranularity( AAS_LIST_GRANULARITY );
 	portalIndex.SetGranularity( AAS_INDEX_GRANULARITY );
 	clusters.SetGranularity( AAS_LIST_GRANULARITY );
+	memset( isDummy, 0, sizeof( isDummy ) );
 }
 
 /*
@@ -645,6 +645,9 @@ void idAASFileLocal::Clear( void ) {
 	portals.Clear();
 	portalIndex.Clear();
 	clusters.Clear();
+	featureIndexes.Clear();
+	features.Clear();
+	memset( isDummy, 0, sizeof( isDummy ) );
 }
 
 /*
@@ -786,7 +789,7 @@ bool idAASFileLocal::Write( const idStr &fileName, unsigned int mapFileCRC ) {
 idAASFileLocal::ParseIndex
 ================
 */
-bool idAASFileLocal::ParseIndex( idLexer &src, idList<aasIndex_t> &indexes ) {
+bool idAASFileLocal::ParseIndex( idLexer &src, idList<aasIndex_t> &indexes, aasDummySection_t dummySection ) {
 	int numIndexes, i;
 	aasIndex_t index;
 
@@ -805,6 +808,7 @@ bool idAASFileLocal::ParseIndex( idLexer &src, idList<aasIndex_t> &indexes ) {
 	if ( !src.ExpectTokenString( "}" ) ) {
 		return false;
 	}
+	isDummy[dummySection] = ( numIndexes == 0 );
 	return true;
 }
 
@@ -835,6 +839,7 @@ bool idAASFileLocal::ParsePlanes( idLexer &src ) {
 	if ( !src.ExpectTokenString( "}" ) ) {
 		return false;
 	}
+	isDummy[AAS_DUMMY_PLANES] = ( numPlanes == 0 );
 	return true;
 }
 
@@ -862,6 +867,7 @@ bool idAASFileLocal::ParseVertices( idLexer &src ) {
 	if ( !src.ExpectTokenString( "}" ) ) {
 		return false;
 	}
+	isDummy[AAS_DUMMY_VERTICES] = ( numVertices == 0 );
 	return true;
 }
 
@@ -890,6 +896,7 @@ bool idAASFileLocal::ParseEdges( idLexer &src ) {
 	if ( !src.ExpectTokenString( "}" ) ) {
 		return false;
 	}
+	isDummy[AAS_DUMMY_EDGES] = ( numEdges == 0 );
 	return true;
 }
 
@@ -922,6 +929,7 @@ bool idAASFileLocal::ParseFaces( idLexer &src ) {
 	if ( !src.ExpectTokenString( "}" ) ) {
 		return false;
 	}
+	isDummy[AAS_DUMMY_FACES] = ( numFaces == 0 );
 	return true;
 }
 
@@ -1015,6 +1023,7 @@ bool idAASFileLocal::ParseAreas( idLexer &src ) {
 	if ( !src.ExpectTokenString( "}" ) ) {
 		return false;
 	}
+	isDummy[AAS_DUMMY_AREAS] = ( numAreas == 0 );
 
 	LinkReversedReachability();
 
@@ -1031,11 +1040,6 @@ bool idAASFileLocal::ParseNodes( idLexer &src ) {
 	aasNode_t node;
 
 	numNodes = src.ParseInt();
-	// AAS node 0 is always a dummy/solid leaf sentinel. If we only have that
-	// entry (or fewer), there is no traversable BSP tree, so reject this file.
-	if ( numNodes <= 1 ) {
-		return false;
-	}
 	if ( !src.ExpectTokenString( "{" ) ) {
 		return false;
 	}
@@ -1051,6 +1055,7 @@ bool idAASFileLocal::ParseNodes( idLexer &src ) {
 	if ( !src.ExpectTokenString( "}" ) ) {
 		return false;
 	}
+	isDummy[AAS_DUMMY_NODES] = ( numNodes == 0 );
 
 	return true;
 }
@@ -1083,6 +1088,7 @@ bool idAASFileLocal::ParsePortals( idLexer &src ) {
 	if ( !src.ExpectTokenString( "}" ) ) {
 		return false;
 	}
+	isDummy[AAS_DUMMY_PORTALS] = ( numPortals == 0 );
 	return true;
 }
 
@@ -1113,6 +1119,7 @@ bool idAASFileLocal::ParseClusters( idLexer &src ) {
 	if ( !src.ExpectTokenString( "}" ) ) {
 		return false;
 	}
+	isDummy[AAS_DUMMY_CLUSTERS] = ( numClusters == 0 );
 	return true;
 }
 
@@ -1194,13 +1201,13 @@ bool idAASFileLocal::Load( const idStr &fileName, unsigned int mapFileCRC ) {
 			if ( !ParseEdges( src ) ) { return false; }
 		}
 		else if ( token == "edgeIndex" ) {
-			if ( !ParseIndex( src, edgeIndex ) ) { return false; }
+			if ( !ParseIndex( src, edgeIndex, AAS_DUMMY_EDGE_INDEX ) ) { return false; }
 		}
 		else if ( token == "faces" ) {
 			if ( !ParseFaces( src ) ) { return false; }
 		}
 		else if ( token == "faceIndex" ) {
-			if ( !ParseIndex( src, faceIndex ) ) { return false; }
+			if ( !ParseIndex( src, faceIndex, AAS_DUMMY_FACE_INDEX ) ) { return false; }
 		}
 		else if ( token == "areas" ) {
 			if ( !ParseAreas( src ) ) { return false; }
@@ -1212,7 +1219,7 @@ bool idAASFileLocal::Load( const idStr &fileName, unsigned int mapFileCRC ) {
 			if ( !ParsePortals( src ) ) { return false; }
 		}
 		else if ( token == "portalIndex" ) {
-			if ( !ParseIndex( src, portalIndex ) ) { return false; }
+			if ( !ParseIndex( src, portalIndex, AAS_DUMMY_PORTAL_INDEX ) ) { return false; }
 		}
 		else if ( token == "clusters" ) {
 			if ( !ParseClusters( src ) ) { return false; }
@@ -1265,12 +1272,19 @@ bool idAASFileLocal::Load( const idStr &fileName, unsigned int mapFileCRC ) {
 
 	FinishAreas();
 
-	depth = MaxTreeDepth();
-	if ( depth > MAX_AAS_TREE_DEPTH ) {
-		src.Error( "idAASFileLocal::Load: tree depth = %d", depth );
-	}
+	if ( !IsDummyFile( mapFileCRC ) ) {
+		if ( vertices.Num() == 0 || edges.Num() == 0 || faces.Num() == 0 ) {
+			common->Warning( "error loading %s (invalid data).", name.c_str() );
+			return false;
+		}
 
-	common->Printf( "done.\n" );
+		depth = MaxTreeDepth();
+		if ( depth > MAX_AAS_TREE_DEPTH ) {
+			src.Error( "idAASFileLocal::Load: tree depth = %d", depth );
+		}
+
+		common->Printf( "done.\n" );
+	}
 
 	return true;
 }

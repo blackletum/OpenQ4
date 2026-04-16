@@ -941,6 +941,7 @@ extern idCVar r_windowHeight;				// windowed mode height
 extern idCVar r_multiSamples;			// number of antialiasing samples
 extern idCVar r_postAA;					// post AA mode: 0 = off, 1 = SMAA 1x
 extern idCVar r_bloom;					// enable bloom post-process
+extern idCVar r_lensFlare;				// light corona / lens flare quality
 extern idCVar r_bloomThreshold;			// bloom bright-pass threshold
 extern idCVar r_bloomSoftKnee;			// relative bloom soft threshold knee
 extern idCVar r_bloomIntensity;			// bloom contribution scale
@@ -1133,6 +1134,9 @@ extern idCVar r_showTangentSpace;		// shade triangles by tangent space
 extern idCVar r_showDominantTri;		// draw lines from vertexes to center of dominant triangles
 extern idCVar r_showTextureVectors;		// draw each triangles texture (tangent) vectors
 extern idCVar r_showLights;				// 1 = print light info, 2 = also draw volumes
+extern idCVar r_showViewLights;			// print detailed light info for lights affecting the current view origin
+extern idCVar r_showViewLightsInterval;	// frames between repeated view-origin light reports
+extern idCVar r_showViewLightsVisuals;	// draw persistent debug overlays for the last reported view-origin lights
 extern idCVar r_showLightGrid;			// show loaded irradiance-volume probe positions
 extern idCVar r_showLightCount;			// colors surfaces based on light count
 extern idCVar r_showShadows;			// visualize the stencil shadow volumes
