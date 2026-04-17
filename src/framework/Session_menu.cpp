@@ -709,8 +709,8 @@ void idSessionLocal::SetGUI( idUserInterface *gui, HandleGuiCommand_t handle ) {
 	memset( &ev, 0, sizeof( ev ) );
 	ev.evType = SE_NONE;
 
-	cmd = guiActive->HandleEvent( &ev, com_frameTime );
-	guiActive->Activate( true, com_frameTime );
+	cmd = guiActive->HandleEvent( &ev, common->GetPresentationTime() );
+	guiActive->Activate( true, common->GetPresentationTime() );
 }
 
 /*
@@ -1054,7 +1054,7 @@ bool idSessionLocal::HandleSaveGameMenuCommand( idCmdArgs &args, int &icmd ) {
 
 			sessLocal.SaveGame( saveGameName );
 			SetSaveGameGuiVars( );
-			guiActive->StateChanged( com_frameTime );
+			guiActive->StateChanged( common->GetPresentationTime() );
 		}
 		return true;
 	}
@@ -1066,7 +1066,7 @@ bool idSessionLocal::HandleSaveGameMenuCommand( idCmdArgs &args, int &icmd ) {
 			fileSystem->RemoveFile( va("savegames/%s.tga", loadGameList[choice].c_str()) );
 			fileSystem->RemoveFile( va("savegames/%s.txt", loadGameList[choice].c_str()) );
 			SetSaveGameGuiVars( );
-			guiActive->StateChanged( com_frameTime );
+			guiActive->StateChanged( common->GetPresentationTime() );
 		}
 		return true;
 	}
@@ -1277,11 +1277,11 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 				StartNewGame( "game/demo_mars_city1" );
 #endif
 			}
-			// need to do this here to make sure com_frameTime is correct or the gui activates with a time that 
+			// need to do this here to make sure presentation time is current or the gui activates with a time that 
 			// is "however long map load took" time in the past
 			common->GUIFrame( false, false );
 			SetGUI( guiIntro, NULL );
-			guiIntro->StateChanged( com_frameTime, true );
+			guiIntro->StateChanged( common->GetPresentationTime(), true );
 			// stop playing the game sounds
 			SetPlayingSoundWorld( menuSoundWorld );
 
@@ -1305,7 +1305,7 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 
 		if ( !idStr::Icmp( cmd, "updateModInfo" ) ) {
 			UpdateModsMenuGuiVars();
-			guiActive->StateChanged( com_frameTime );
+			guiActive->StateChanged( common->GetPresentationTime() );
 			continue;
 		}
 
@@ -1449,14 +1449,14 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 
 			// set the current level shot
 			UpdateMPLevelShot();
-			guiMainMenu->StateChanged( com_frameTime );
+			guiMainMenu->StateChanged( common->GetPresentationTime() );
 			continue;
 		}
 
 		if ( !idStr::Icmp( cmd, "click_mapList" ) ) {
 			CommitStartServerMapSelection( guiMainMenu );
 			UpdateMPLevelShot();
-			guiMainMenu->StateChanged( com_frameTime );
+			guiMainMenu->StateChanged( common->GetPresentationTime() );
 			continue;
 		}
 
@@ -1705,7 +1705,7 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 				cmdSystem->BufferCommandText( CMD_EXEC_NOW, "execMachineSpec\n" );
 				SetMainMenuVideoGuiVars( guiActive );
 				SyncMainMenuAspectVisibility( guiActive );
-				guiActive->StateChanged( com_frameTime );
+				guiActive->StateChanged( common->GetPresentationTime() );
 			}
 
 			if ( idStr::Icmp( vcmd, "restart" )  == 0) {
@@ -1784,7 +1784,7 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 			idUserInterface *targetGui = guiActive ? guiActive : guiMainMenu;
 			SetMainMenuMPModelVars( targetGui );
 			if ( targetGui ) {
-				targetGui->StateChanged( com_frameTime );
+				targetGui->StateChanged( common->GetPresentationTime() );
 			}
 			continue;
 		}
@@ -1793,7 +1793,7 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 			idUserInterface *targetGui = guiActive ? guiActive : guiMainMenu;
 			SetMainMenuMPModelVars( targetGui );
 			if ( targetGui ) {
-				targetGui->StateChanged( com_frameTime );
+				targetGui->StateChanged( common->GetPresentationTime() );
 			}
 			continue;
 		}
@@ -1861,8 +1861,8 @@ void idSessionLocal::HandleInGameCommands( const char *menuCommand ) {
 			sysEvent_t  ev;
 			ev.evType = SE_NONE;
 			const char	*cmd;
-			cmd = guiActive->HandleEvent( &ev, com_frameTime );
-			guiActive->Activate( false, com_frameTime );
+			cmd = guiActive->HandleEvent( &ev, common->GetPresentationTime() );
+			guiActive->Activate( false, common->GetPresentationTime() );
 			guiActive = NULL;
 		}
 	}
@@ -1987,7 +1987,7 @@ void idSessionLocal::MenuEvent( const sysEvent_t *event ) {
 		}
 	}
 
-	menuCommand = guiActive->HandleEvent( event, com_frameTime );
+	menuCommand = guiActive->HandleEvent( event, common->GetPresentationTime() );
 
 	if ( !menuCommand || !menuCommand[0] ) {
 		// If the menu didn't handle the event, and it's a key down event for an F key, run the bind
@@ -2029,7 +2029,7 @@ void idSessionLocal::GuiFrameEvents() {
 	memset( &ev, 0, sizeof( ev ) );
 
 	ev.evType = SE_NONE;
-	cmd = gui->HandleEvent( &ev, com_frameTime );
+	cmd = gui->HandleEvent( &ev, common->GetPresentationTime() );
 	if ( cmd && cmd[0] ) {
 		DispatchCommand( guiActive, cmd );
 	}
@@ -2136,7 +2136,7 @@ const char* idSessionLocal::MessageBox( msgBoxType_t type, const char *message, 
 	guiMsgRestore = guiActive;
 	guiActive = guiMsg;
 	guiMsg->SetCursor( 325, 290 );
-	guiActive->Activate( true, com_frameTime );
+	guiActive->Activate( true, common->GetPresentationTime() );
 	msgRunning = true;
 	msgRetIndex = -1;
 	
@@ -2164,6 +2164,78 @@ const char* idSessionLocal::MessageBox( msgBoxType_t type, const char *message, 
 		}
 	}
 	return NULL;
+}
+
+void idSessionLocal::RunTimedWaitBoxPacingTest( int durationMsec, bool network, const char *reason ) {
+	const int clampedDurationMsec = idMath::ClampInt( 1, 60000, durationMsec );
+	const char *snapshotReason = ( reason != NULL && reason[ 0 ] != '\0' ) ? reason : "testWaitBox";
+
+	if ( !BoxDialogSanityCheck() ) {
+		common->Warning( "RunTimedWaitBoxPacingTest: message box path is unavailable in the current session state\n" );
+		return;
+	}
+
+	ResetFramePacingStats();
+
+	MessageBox( MSG_WAIT, "", "", false, NULL, NULL, network );
+	if ( !msgRunning || guiActive != guiMsg ) {
+		common->Warning( "RunTimedWaitBoxPacingTest: failed to activate wait box\n" );
+		return;
+	}
+
+	// Keep pumping the modal loop on the normal GUI presentation path, but do
+	// not execute queued console commands from inside the automated test itself.
+	common->GUIFrame( false, network );
+	const int endTime = common->GetPresentationTime() + clampedDurationMsec;
+
+	while ( msgRunning && common->GetPresentationTime() < endTime ) {
+		common->GUIFrame( false, network );
+	}
+
+	if ( msgRunning ) {
+		StopBox();
+	}
+	while ( msgRunning ) {
+		common->GUIFrame( false, network );
+	}
+
+	PrintFramePacingSnapshot( snapshotReason );
+}
+
+void idSessionLocal::RunTimedMessageBoxPacingTest( int durationMsec, bool network, const char *reason ) {
+	const int clampedDurationMsec = idMath::ClampInt( 1, 60000, durationMsec );
+	const char *snapshotReason = ( reason != NULL && reason[ 0 ] != '\0' ) ? reason : "testMessageBox";
+
+	if ( !BoxDialogSanityCheck() ) {
+		common->Warning( "RunTimedMessageBoxPacingTest: message box path is unavailable in the current session state\n" );
+		return;
+	}
+
+	ResetFramePacingStats();
+
+	MessageBox( MSG_OK, "", "", false, NULL, NULL, network );
+	if ( !msgRunning || guiActive != guiMsg ) {
+		common->Warning( "RunTimedMessageBoxPacingTest: failed to activate message box\n" );
+		return;
+	}
+
+	// Keep pumping the modal loop on the normal GUI presentation path, but do
+	// not execute queued console commands from inside the automated test itself.
+	common->GUIFrame( false, network );
+	const int endTime = common->GetPresentationTime() + clampedDurationMsec;
+
+	while ( msgRunning && common->GetPresentationTime() < endTime ) {
+		common->GUIFrame( false, network );
+	}
+
+	if ( msgRunning ) {
+		HandleMsgCommands( "mid" );
+	}
+	while ( msgRunning ) {
+		common->GUIFrame( false, network );
+	}
+
+	PrintFramePacingSnapshot( snapshotReason );
 }
 
 /*

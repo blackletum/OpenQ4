@@ -43,11 +43,11 @@ If you have questions concerning this license or the applicable additional terms
 static	int		frameNum;
 
 int Sys_Milliseconds( void ) {
-	return frameNum * 16;
+	return common->GetUserCmdTime( frameNum );
 }
 
 double Sys_GetClockTicks( void ) {
-	return frameNum * 16.0;
+	return static_cast<double>( common->GetUserCmdTime( frameNum ) );
 }
 
 double Sys_ClockTicksPerSecond( void ) {

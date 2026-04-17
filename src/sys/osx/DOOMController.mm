@@ -985,9 +985,12 @@ Sys_AsyncThread
 */
 void Sys_AsyncThread( void ) {
 	while ( 1 ) {
-		usleep( 16666 );
+		usleep( 1000 );
+		const int previousTicNumber = com_ticNumber;
 		common->Async();
-		Sys_TriggerEvent( TRIGGER_EVENT_ONE );
+		for ( int tic = previousTicNumber; tic < com_ticNumber; ++tic ) {
+			Sys_TriggerEvent( TRIGGER_EVENT_ONE );
+		}
 		pthread_testcancel();
 	}
 }

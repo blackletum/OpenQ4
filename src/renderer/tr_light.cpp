@@ -1608,8 +1608,9 @@ void R_AddEffectSurfaces(void) {
 
 		// Keep simulation/sound state moving even when the effect isn't rendered this frame.
 		++serviced;
-		const float serviceTimeSeconds = static_cast<float>(def->gameTime) * 0.001f;
-		if (bse->ServiceEffect(def, serviceTimeSeconds)) {
+		const float ownerTimeSeconds = static_cast<float>(def->gameTime) * 0.001f;
+		const float presentationTimeSeconds = tr.viewDef->floatTime;
+		if (bse->ServiceEffect(def, ownerTimeSeconds, presentationTimeSeconds)) {
 			++expired;
 			if (def->dynamicModel) {
 				delete def->dynamicModel;

@@ -614,11 +614,12 @@ Moves the local angle positions
 */
 void idUsercmdGenLocal::AdjustAngles( void ) {
 	float	speed;
+	const float usercmdSeconds = common->GetUserCmdSec();
 	
 	if ( IsRunButtonActive() ) {
-		speed = idMath::M_MS2SEC * USERCMD_MSEC * in_angleSpeedKey.GetFloat();
+		speed = usercmdSeconds * in_angleSpeedKey.GetFloat();
 	} else {
-		speed = idMath::M_MS2SEC * USERCMD_MSEC;
+		speed = usercmdSeconds;
 	}
 
 	if ( !ButtonState( UB_STRAFE ) ) {
@@ -763,6 +764,7 @@ idUsercmdGenLocal::JoystickMove
 */
 void idUsercmdGenLocal::JoystickMove( void ) {
 	float	anglespeed;
+	const float usercmdSeconds = common->GetUserCmdSec();
 	// AXIS_ROLL is used as a backend capability flag: non-zero means dedicated look axes are available.
 	const bool hasDedicatedLookAxis = joystickAxis[AXIS_ROLL] != 0;
 	const int lookAxisX = hasDedicatedLookAxis ? joystickAxis[AXIS_SIDE] : joystickAxis[AXIS_YAW];
@@ -771,9 +773,9 @@ void idUsercmdGenLocal::JoystickMove( void ) {
 	const int moveAxisY = joystickAxis[AXIS_PITCH];
 
 	if ( IsRunButtonActive() ) {
-		anglespeed = idMath::M_MS2SEC * USERCMD_MSEC * in_angleSpeedKey.GetFloat();
+		anglespeed = usercmdSeconds * in_angleSpeedKey.GetFloat();
 	} else {
-		anglespeed = idMath::M_MS2SEC * USERCMD_MSEC;
+		anglespeed = usercmdSeconds;
 	}
 
 	if ( hasDedicatedLookAxis || !ButtonState( UB_STRAFE ) ) {

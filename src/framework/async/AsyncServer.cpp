@@ -33,6 +33,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "../Session_local.h"
 
+static ID_INLINE int AsyncServer_NextGameFrameMsec( int gameFrame ) {
+	return common->GetUserCmdDeltaMsec( gameFrame + 1 );
+}
+
 const int MIN_RECONNECT_TIME			= 2000;
 const int EMPTY_RESEND_TIME				= 500;
 const int PING_RESEND_TIME				= 500;
@@ -2341,7 +2345,7 @@ int idAsyncServer::UpdateTime( int clamp ) {
 idAsyncServer::RunFrame
 ==================
 */
-void idAsyncServer::RunFrame( void ) {
+void idAsyncServer::RunFrame( bool allowBlocking ) {
 	int			i, msec, size;
 	bool		newPacket;
 	idBitMsg	msg;
@@ -2367,9 +2371,12 @@ void idAsyncServer::RunFrame( void ) {
 	do {
 
 		do {
+			const int nextGameFrameMsec = AsyncServer_NextGameFrameMsec( gameFrame );
+			const int packetTimeout = allowBlocking ? ( nextGameFrameMsec - gameTimeResidual - 1 ) : -1;
 
-			// blocking read with game time residual timeout
-			newPacket = serverPort.GetPacketBlocking( from, msgBuf, size, sizeof( msgBuf ), USERCMD_MSEC - gameTimeResidual - 1 );
+			// Foreground listen-server play polls instead of blocking so the render loop can
+			// present repeated-state frames between authoritative server game ticks.
+			newPacket = serverPort.GetPacketBlocking( from, msgBuf, size, sizeof( msgBuf ), packetTimeout );
 			if ( newPacket ) {
 				msg.Init( msgBuf, sizeof( msgBuf ) );
 				msg.SetSize( size );
@@ -2384,7 +2391,11 @@ void idAsyncServer::RunFrame( void ) {
 
 		} while( newPacket );
 
-	} while( gameTimeResidual < USERCMD_MSEC );
+		if ( !allowBlocking ) {
+			break;
+		}
+
+	} while( gameTimeResidual < AsyncServer_NextGameFrameMsec( gameFrame ) );
 
 	// send heart beat to master servers
 	MasterHeartbeat();
@@ -2425,7 +2436,8 @@ void idAsyncServer::RunFrame( void ) {
 	}
 
 	// advance the server game
-	while( gameTimeResidual >= USERCMD_MSEC ) {
+	while( gameTimeResidual >= AsyncServer_NextGameFrameMsec( gameFrame ) ) {
+		const int nextGameFrameMsec = AsyncServer_NextGameFrameMsec( gameFrame );
 
 		// sample input for the local client
 		LocalClientInput();
@@ -2440,8 +2452,8 @@ void idAsyncServer::RunFrame( void ) {
 
 		// update time
 		gameFrame++;
-		gameTime += USERCMD_MSEC;
-		gameTimeResidual -= USERCMD_MSEC;
+		gameTime = common->GetUserCmdTime( gameFrame );
+		gameTimeResidual -= nextGameFrameMsec;
 	}
 
 	// duplicate usercmds so there is always at least one available to send with snapshots

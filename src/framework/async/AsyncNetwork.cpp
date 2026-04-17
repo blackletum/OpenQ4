@@ -52,7 +52,7 @@ idCVar				idAsyncNetwork::serverClientTimeout( "net_serverClientTimeout", "40", 
 idCVar				idAsyncNetwork::clientServerTimeout( "net_clientServerTimeout", "40", CVAR_SYSTEM | CVAR_INTEGER | CVAR_NOCHEAT, "server time out in seconds" );
 idCVar				idAsyncNetwork::serverDrawClient( "net_serverDrawClient", "-1", CVAR_SYSTEM | CVAR_INTEGER, "number of client for which to draw view on server" );
 idCVar				idAsyncNetwork::serverRemoteConsolePassword( "net_serverRemoteConsolePassword", "", CVAR_SYSTEM | CVAR_NOCHEAT, "remote console password" );
-idCVar				idAsyncNetwork::clientPrediction( "net_clientPrediction", "16", CVAR_SYSTEM | CVAR_INTEGER | CVAR_NOCHEAT, "additional client side prediction in milliseconds" );
+idCVar				idAsyncNetwork::clientPrediction( "net_clientPrediction", "16", CVAR_SYSTEM | CVAR_INTEGER | CVAR_NOCHEAT, "additional client side prediction in milliseconds (legacy value 16 follows one exact base tic)" );
 idCVar				idAsyncNetwork::clientMaxPrediction( "net_clientMaxPrediction", "1000", CVAR_SYSTEM | CVAR_INTEGER | CVAR_NOCHEAT, "maximum number of milliseconds a client can predict ahead of server." );
 idCVar				idAsyncNetwork::clientUsercmdBackup( "net_clientUsercmdBackup", "5", CVAR_SYSTEM | CVAR_INTEGER | CVAR_NOCHEAT, "number of usercmds to resend" );
 idCVar				idAsyncNetwork::clientRemoteConsoleAddress( "net_clientRemoteConsoleAddress", "localhost", CVAR_SYSTEM | CVAR_NOCHEAT, "remote console address" );
@@ -178,8 +178,13 @@ void idAsyncNetwork::RunFrame( void ) {
 		Sys_GrabMouseCursor( true );
 		usercmdGen->InhibitUsercmd( INHIBIT_ASYNC, false );
 	}
-	client.RunFrame();
-	server.RunFrame();
+
+	// Phase 2 decouples presentation from the 60 Hz net game frames in foreground play.
+	// Dedicated-style paths can keep blocking until the next game frame because they are not
+	// trying to present repeated-state render frames in between async ticks.
+	const bool allowBlocking = ( idAsyncNetwork::serverDedicated.GetInteger() != 0 );
+	client.RunFrame( allowBlocking );
+	server.RunFrame( allowBlocking );
 }
 
 /*

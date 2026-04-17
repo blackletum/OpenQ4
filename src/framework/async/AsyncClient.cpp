@@ -33,6 +33,18 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "../Session_local.h"
 
+static ID_INLINE int AsyncClient_NextGameFrameMsec( int gameFrame ) {
+	return common->GetUserCmdDeltaMsec( gameFrame + 1 );
+}
+
+static ID_INLINE int AsyncClient_ConfiguredPredictionMsec( int gameFrame ) {
+	// Preserve the legacy default as "one exact tic" instead of a literal 16 ms.
+	if ( idAsyncNetwork::clientPrediction.GetInteger() == 16 ) {
+		return AsyncClient_NextGameFrameMsec( gameFrame );
+	}
+	return Max( 0, idAsyncNetwork::clientPrediction.GetInteger() );
+}
+
 const int SETUP_CONNECTION_RESEND_TIME	= 1000;
 const int EMPTY_RESEND_TIME				= 500;
 const int PREDICTION_FAST_ADJUST		= 4;
@@ -846,8 +858,9 @@ void idAsyncClient::ProcessUnreliableServerMessage( const idBitMsg &msg ) {
 			}
 
 			// adjust the client prediction time based on the snapshot time
-			clientPrediction -= ( 1 - ( INTSIGNBITSET( aheadOfServer - idAsyncNetwork::clientPrediction.GetInteger() ) << 1 ) );
-			clientPrediction = idMath::ClampInt( idAsyncNetwork::clientPrediction.GetInteger(), idAsyncNetwork::clientMaxPrediction.GetInteger(), clientPrediction );
+			const int configuredPredictionMsec = AsyncClient_ConfiguredPredictionMsec( gameFrame );
+			clientPrediction -= ( 1 - ( INTSIGNBITSET( aheadOfServer - configuredPredictionMsec ) << 1 ) );
+			clientPrediction = idMath::ClampInt( configuredPredictionMsec, idAsyncNetwork::clientMaxPrediction.GetInteger(), clientPrediction );
 			delta = gameTime - ( snapshotGameTime + clientPrediction );
 			clientPredictTime -= ( delta / PREDICTION_FAST_ADJUST ) + ( 1 - ( INTSIGNBITSET( delta ) << 1 ) );
 
@@ -1683,7 +1696,7 @@ int idAsyncClient::UpdateTime( int clamp ) {
 idAsyncClient::RunFrame
 ==================
 */
-void idAsyncClient::RunFrame( void ) {
+void idAsyncClient::RunFrame( bool allowBlocking ) {
 	int			msec, size;
 	bool		newPacket;
 	idBitMsg	msg;
@@ -1705,9 +1718,12 @@ void idAsyncClient::RunFrame( void ) {
 	do {
 
 		do {
+			const int nextGameFrameMsec = AsyncClient_NextGameFrameMsec( gameFrame );
+			const int packetTimeout = allowBlocking ? ( nextGameFrameMsec - ( gameTimeResidual + clientPredictTime ) - 1 ) : -1;
 
-			// blocking read with game time residual timeout
-			newPacket = clientPort.GetPacketBlocking( from, msgBuf, size, sizeof( msgBuf ), USERCMD_MSEC - ( gameTimeResidual + clientPredictTime ) - 1 );
+			// Foreground high-refresh netplay polls instead of blocking so presentation can
+			// continue between the authoritative 60 Hz client/server game frames.
+			newPacket = clientPort.GetPacketBlocking( from, msgBuf, size, sizeof( msgBuf ), packetTimeout );
 			if ( newPacket ) {
 				msg.Init( msgBuf, sizeof( msgBuf ) );
 				msg.SetSize( size );
@@ -1720,14 +1736,18 @@ void idAsyncClient::RunFrame( void ) {
 
 		} while( newPacket );
 
-	} while( gameTimeResidual + clientPredictTime < USERCMD_MSEC );
+		if ( !allowBlocking ) {
+			break;
+		}
+
+	} while( gameTimeResidual + clientPredictTime < AsyncClient_NextGameFrameMsec( gameFrame ) );
 
 	// update server list
 	serverList.RunFrame();
 
 	if ( clientState == CS_DISCONNECTED ) {
 		usercmdGen->GetDirectUsercmd();
-		gameTimeResidual = USERCMD_MSEC - 1;
+		gameTimeResidual = AsyncClient_NextGameFrameMsec( gameFrame ) - 1;
 		clientPredictTime = 0;
 		return;
 	}
@@ -1735,7 +1755,7 @@ void idAsyncClient::RunFrame( void ) {
 	if ( clientState == CS_PURERESTART ) {
 		clientState = CS_DISCONNECTED;
 		Reconnect();
-		gameTimeResidual = USERCMD_MSEC - 1;
+		gameTimeResidual = AsyncClient_NextGameFrameMsec( gameFrame ) - 1;
 		clientPredictTime = 0;
 		return;
 	}
@@ -1745,7 +1765,7 @@ void idAsyncClient::RunFrame( void ) {
 		// also need to read mouse for the connecting guis
 		usercmdGen->GetDirectUsercmd();
 		SetupConnection();
-		gameTimeResidual = USERCMD_MSEC - 1;
+		gameTimeResidual = AsyncClient_NextGameFrameMsec( gameFrame ) - 1;
 		clientPredictTime = 0;
 		return;
 	}
@@ -1769,20 +1789,21 @@ void idAsyncClient::RunFrame( void ) {
 		cvarSystem->ClearModifiedFlags( CVAR_USERINFO );
 	}
 
-	if ( gameTimeResidual + clientPredictTime >= USERCMD_MSEC ) {
+	if ( gameTimeResidual + clientPredictTime >= AsyncClient_NextGameFrameMsec( gameFrame ) ) {
 		lastFrameDelta = 0;
 	}
 
 	// generate user commands for the predicted time
-	while ( gameTimeResidual + clientPredictTime >= USERCMD_MSEC ) {
+	while ( gameTimeResidual + clientPredictTime >= AsyncClient_NextGameFrameMsec( gameFrame ) ) {
+		const int nextGameFrameMsec = AsyncClient_NextGameFrameMsec( gameFrame );
 
 		// send the user commands of this client to the server
 		SendUsercmdsToServer();
 
 		// update time
 		gameFrame++;
-		gameTime += USERCMD_MSEC;
-		gameTimeResidual -= USERCMD_MSEC;
+		gameTime = common->GetUserCmdTime( gameFrame );
+		gameTimeResidual -= nextGameFrameMsec;
 
 		// run from the snapshot up to the local game frame
 		while ( snapshotGameFrame < gameFrame ) {
@@ -1793,7 +1814,7 @@ void idAsyncClient::RunFrame( void ) {
 			DuplicateUsercmds( snapshotGameFrame, snapshotGameTime );
 
 			// indicate the last prediction frame before a render
-			bool lastPredictFrame = ( snapshotGameFrame + 1 >= gameFrame && gameTimeResidual + clientPredictTime < USERCMD_MSEC );
+			bool lastPredictFrame = ( snapshotGameFrame + 1 >= gameFrame && gameTimeResidual + clientPredictTime < AsyncClient_NextGameFrameMsec( gameFrame ) );
 
 			// run client prediction
 			gameReturn_t ret = game->ClientPrediction( clientNum, userCmds[ snapshotGameFrame & ( MAX_USERCMD_BACKUP - 1 ) ], lastPredictFrame );
@@ -1801,7 +1822,7 @@ void idAsyncClient::RunFrame( void ) {
 			idAsyncNetwork::ExecuteSessionCommand( ret.sessionCommand );
 
 			snapshotGameFrame++;
-			snapshotGameTime += USERCMD_MSEC;
+			snapshotGameTime = common->GetUserCmdTime( snapshotGameFrame );
 		}
 	}
 }

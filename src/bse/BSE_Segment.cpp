@@ -624,7 +624,7 @@ void rvSegment::CalcCounts(rvBSE* effect, float time) {
 	}
 
 	const int particleType = st->mParticleTemplate.GetType();
-	const float particleMaxDuration = st->mParticleTemplate.GetMaxDuration() + 0.016f;
+	const float particleMaxDuration = st->mParticleTemplate.GetMaxDuration() + BSE_FUTURE;
 	const float effectMinDuration = mEffectDecl ? mEffectDecl->GetMinDuration() : 0.0f;
 	const int particleCap = GetSegmentParticleCap();
 	float trailDuration = 0.0f;
@@ -638,7 +638,7 @@ void rvSegment::CalcCounts(rvBSE* effect, float time) {
 			loopCount = 1;
 		}
 		else if (mSecondsPerParticle.y > BSE_TIME_EPSILON) {
-			const float baseDuration = Min(particleMaxDuration, st->mLocalDuration.y) + 0.016f;
+			const float baseDuration = Min(particleMaxDuration, st->mLocalDuration.y) + BSE_FUTURE;
 			trailDuration = baseDuration;
 			count = static_cast<int>(idMath::Ceil(baseDuration / mSecondsPerParticle.y)) + 1;
 			loopCount = count;

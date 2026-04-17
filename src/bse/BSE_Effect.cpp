@@ -356,7 +356,7 @@ void rvBSE::LoopLooping(float time)
 		++this->mDeclEffect->mLoopCount;
 	}
 }
-bool rvBSE::Service(renderEffect_t* parms, float time, bool spawn, bool& forcePush)
+bool rvBSE::Service(renderEffect_t* parms, float ownerTime, float presentationTime, bool spawn, bool& forcePush)
 {
 	renderEffect_s* v5; // ebp
 	int v7; // edi
@@ -371,7 +371,9 @@ bool rvBSE::Service(renderEffect_t* parms, float time, bool spawn, bool& forcePu
 	float spawnd; // [esp+24h] [ebp+Ch]
 
 	v5 = parms;
-	UpdateFromOwner(parms, time, 0);
+	// Keep owner interpolation keyed to authoritative snapshot time while the
+	// particle runtime/lifetime advances on the current presentation frame.
+	UpdateFromOwner(parms, ownerTime, 0);
 	UpdateAttenuation();
 	if (spawn)
 	{
@@ -382,7 +384,7 @@ bool rvBSE::Service(renderEffect_t* parms, float time, bool spawn, bool& forcePu
 			do
 			{
 				spawna = 0.0f;
-				mSegments[v8].Check(this, time, spawna);
+				mSegments[v8].Check(this, ownerTime, spawna);
 				++v7;
 				++v8;
 			} while (v7 < this->mSegments.Num());
@@ -391,8 +393,8 @@ bool rvBSE::Service(renderEffect_t* parms, float time, bool spawn, bool& forcePu
 	if ((this->mFlags & 8) == 0 && parms->loop)
 	{
 		spawnb = this->mDuration + this->mStartTime;
-		if (spawnb < (double)time)
-			LoopLooping(time);
+		if (spawnb < (double)presentationTime)
+			LoopLooping(presentationTime);
 	}
 	v9 = 0;
 	v10 = 0;
@@ -401,7 +403,7 @@ bool rvBSE::Service(renderEffect_t* parms, float time, bool spawn, bool& forcePu
 		v11 = 0;
 		do
 		{
-			if (mSegments[v11].UpdateParticles(this, time))
+			if (mSegments[v11].UpdateParticles(this, presentationTime))
 				v10 = 1;
 			++v9;
 			++v11;
@@ -417,13 +419,13 @@ bool rvBSE::Service(renderEffect_t* parms, float time, bool spawn, bool& forcePu
 	if (v5->loop)
 	{
 		spawnc = this->mDuration + this->mStartTime;
-		if (spawnc < (double)time)
-			LoopInstant(time);
+		if (spawnc < (double)presentationTime)
+			LoopInstant(presentationTime);
 		if (v5->loop)
 			return 0;
 	}
 	spawnd = this->mDuration + this->mStartTime;
-	return spawnd < (double)time;
+	return spawnd < (double)presentationTime;
 }
 
 float rvBSE::EvaluateCost(int segment)

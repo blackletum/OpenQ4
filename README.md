@@ -53,6 +53,7 @@ Single-player and multiplayer live under one `baseoq4/` directory with `game-sp`
 
 - Multi-scale **bloom** with luminance-based extraction
 - **FP16 HDR** scene targets, filmic tone mapping, color controls, and log-average auto exposure
+- Depth-aware **lens flares** with lightweight corona and high-quality ghost/streak modes
 - **SSAO** and optional **CRT** post-processing
 - Classic **stencil shadows** remain the default and now include translucent material caster/receiver support by default, with experimental **shadow mapping** for projected and point lights, projected-light CSM, alpha-tested transparency shadows, and optional translucent shadow accumulation
 - Optional **enhanced material shading** upgrades stock normal/specular response through a renderer-only GLSL path, with no asset or material script changes required
@@ -189,6 +190,7 @@ Set `OPENQ4_BUILD_GAMELIBS=1` if you want the wrapper to trigger game-library bu
 - [docs-user/shadow-mapping.md](docs-user/shadow-mapping.md) - shadow-map settings, presets, and troubleshooting
 - [docs-user/multiplayer-networking.md](docs-user/multiplayer-networking.md) - multiplayer networking and lag compensation
 - [docs-dev/platform-support.md](docs-dev/platform-support.md) - platform roadmap and backend status
+- [docs-dev/high-framerate-rendering-plan.md](docs-dev/high-framerate-rendering-plan.md) - staged plan for 240 FPS presentation support
 - [docs-dev/official-pk4-checksums.md](docs-dev/official-pk4-checksums.md) - official asset validation reference
 - [docs-dev/input-key-matrix.md](docs-dev/input-key-matrix.md) - keyboard and controller input reference
 - [docs-dev/release-completion.md](docs-dev/release-completion.md) - current release checklist and open work

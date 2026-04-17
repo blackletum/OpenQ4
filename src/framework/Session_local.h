@@ -76,6 +76,37 @@ typedef enum {
 	TD_YES_THEN_QUIT
 } timeDemo_t;
 
+typedef enum {
+	OPENQ4_FRAME_BOUND_UNKNOWN,
+	OPENQ4_FRAME_BOUND_SIMULATION,
+	OPENQ4_FRAME_BOUND_VSYNC,
+	OPENQ4_FRAME_BOUND_PRESENTATION_CAP,
+	OPENQ4_FRAME_BOUND_UNCAPPED
+} openq4FramePacingBound_t;
+
+typedef struct {
+	bool						valid;
+	bool						multiplayer;
+	int							frameSampleCount;
+	int							lastFrameMsec;
+	float						avgFrameMsec;
+	float						avgFrameHz;
+	int							lastTicDelta;
+	float						avgTicsPerFrame;
+	int							lastGameTics;
+	float						avgGameTicsPerFrame;
+	int							lastRequestedWaitMsec;
+	int							lastWaitMsec;
+	int							lastWaitOvershootMsec;
+	int							lastWakeJitterMsec;
+	float						avgWaitOvershootMsec;
+	float						avgWakeJitterMsec;
+	int							swapInterval;
+	int							presentationCap;
+	openq4AsyncTimingStats_t	asyncStats;
+	openq4FramePacingBound_t	boundMode;
+} openq4FramePacingStats_t;
+
 const int USERCMD_PER_DEMO_FRAME	= 2;
 const int CONNECT_TRANSMIT_TIME		= 1000;
 const int MAX_LOGGED_USERCMDS		= 60*60*60;	// one hour of single player, 15 minutes of four player
@@ -134,6 +165,11 @@ public:
 	virtual int			GetSaveGameVersion( void );
 
 	virtual const char *GetCurrentMapName();
+	const openq4FramePacingStats_t &GetFramePacingStats( void ) const { return framePacingStats; }
+	void				PrintFramePacingSnapshot( const char *reason = NULL ) const;
+	void				SampleMultiplayerFramePacing( int frameStartMsec );
+	void				RunTimedWaitBoxPacingTest( int durationMsec, bool network, const char *reason = NULL );
+	void				RunTimedMessageBoxPacingTest( int durationMsec, bool network, const char *reason = NULL );
 
 	//=====================================
 
@@ -225,6 +261,14 @@ public:
 	int					lastGameTic;		// while latchedTicNumber > lastGameTic, run game frames
 	int					lastDemoTic;
 	bool				syncNextGameFrame;
+	bool				syncNextGameFrameAwaitingAsyncTicLog;
+	bool				cinematicStateValid;
+	bool				cinematicActive;
+	openq4FramePacingStats_t framePacingStats;
+	int					framePacingLastFrameMsec;
+	int					framePacingLastLatchedTic;
+	openq4FramePacingBound_t framePacingLastLoggedBound;
+	int					framePacingLastLoggedSampleCount;
 
 
 	bool				aviCaptureMode;		// if true, screenshots will be taken and sound captured
@@ -355,6 +399,8 @@ private:
 	void				EmitGameAuth( void );
 	bool				IsIAmTheDukeActive( void ) const;
 	void				DrawIAmTheDukeOverlay( void ) const;
+	void				ResetFramePacingStats( void );
+	void				UpdateFramePacingStats( int frameStartMsec, int requestedWaitMsec, int actualWaitMsec, int gameTicsToRun );
 	
 	typedef enum {
 		CDKEY_UNKNOWN,	// need to perform checks on the key

@@ -41,8 +41,6 @@ void *R_StaticAlloc( int bytes );
 void R_StaticFree( void *data );
 
 #define RENDERDEMO_VERSION 4
-#define USERCMD_MSEC common->GetUserCmdMSec()
-
 extern glconfig_t	glConfig;
 
 idCVar	idSessionLocal::com_showAngles( "com_showAngles", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
@@ -57,6 +55,7 @@ idCVar	idSessionLocal::com_aviDemoHeight( "com_aviDemoHeight", "256", CVAR_SYSTE
 idCVar	idSessionLocal::com_aviDemoTics( "com_aviDemoTics", "2", CVAR_SYSTEM | CVAR_INTEGER, "", 1, 60 );
 idCVar	idSessionLocal::com_wipeSeconds( "com_wipeSeconds", "1", CVAR_SYSTEM, "" );
 idCVar	idSessionLocal::com_guid( "com_guid", "", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_ROM, "" );
+idCVar	com_loadingContinueAutoAdvance( "com_loadingContinueAutoAdvance", "0", CVAR_SYSTEM | CVAR_INTEGER, "auto-accept the single-player loading-screen continue gate after N msec (testing), 0 = off", 0, 60000, idCmdSystem::ArgCompletion_Integer<0,60000> );
 idCVar	com_skipLoadingContinue( "com_skipLoadingContinue", "0", CVAR_SYSTEM | CVAR_BOOL, "skip the single-player loading-screen continue gate (testing)" );
 idCVar	com_skipLogoVideos( "com_skipLogoVideos", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "skip startup logo videos and go straight to the main menu" );
 idCVar	com_showLevelshotBounds( "com_showLevelshotBounds", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "draw a centered 4:3 frame guide for levelshot composition" );
@@ -68,6 +67,148 @@ bool Sys_IsGameWindowFocused( void );
 
 idSessionLocal		sessLocal;
 idSession			*session = &sessLocal;
+
+static float Session_UpdateMetricAverage( float currentAverage, float sample, int sampleCount ) {
+	const int averagingWindow = idMath::ClampInt( 1, 120, sampleCount );
+	if ( averagingWindow <= 1 ) {
+		return sample;
+	}
+	return currentAverage + ( sample - currentAverage ) / static_cast<float>( averagingWindow );
+}
+
+static int Session_FindPresentationCap( void ) {
+	if ( cvarSystem == NULL ) {
+		return 0;
+	}
+
+	return Max( 0, cvarSystem->GetCVarInteger( "com_maxfps" ) );
+}
+
+static float Session_GetBlockingLoadFrameIntervalMsec( void ) {
+	const int presentationCap = Session_FindPresentationCap();
+	if ( presentationCap > 0 ) {
+		return 1000.0f / static_cast<float>( presentationCap );
+	}
+
+	// Uncapped blocking load hooks can fire extremely often during asset I/O.
+	// Keep the legacy one-tic pacing as the conservative fallback in that mode.
+	return common->GetUserCmdMsecFloat();
+}
+
+static void Session_BeginBlockingLoadPresentationFrame( void ) {
+	if ( Session_FindPresentationCap() > 0 ) {
+		OpenQ4_BeginPresentationFrame();
+	} else {
+		com_frameRealTime = Sys_Milliseconds();
+	}
+}
+
+static const char *Session_GetFramePacingBoundName( openq4FramePacingBound_t boundMode ) {
+	switch ( boundMode ) {
+		case OPENQ4_FRAME_BOUND_SIMULATION:
+			return "simulation";
+		case OPENQ4_FRAME_BOUND_VSYNC:
+			return "vsync";
+		case OPENQ4_FRAME_BOUND_PRESENTATION_CAP:
+			return "presentation-cap";
+		case OPENQ4_FRAME_BOUND_UNCAPPED:
+			return "uncapped";
+		default:
+			return "collecting";
+	}
+}
+
+static void Session_PrintFramePacingSummary( const openq4FramePacingStats_t &stats, const char *reason ) {
+	common->Printf(
+		"Frame pacing%s (%s): bound=%s, samples=%d, present=%.2f ms (%.1f Hz), async=%.2f ms (%.1f Hz), ticDelta/frame=%.2f, gameTics/frame=%.2f, wait overshoot=%.2f ms, wake jitter=%.2f ms\n",
+		reason != NULL ? reason : "",
+		stats.multiplayer ? "MP" : "SP",
+		Session_GetFramePacingBoundName( stats.boundMode ),
+		stats.frameSampleCount,
+		stats.avgFrameMsec,
+		stats.avgFrameHz,
+		stats.asyncStats.avgDeltaMsec,
+		stats.asyncStats.avgHz,
+		stats.avgTicsPerFrame,
+		stats.avgGameTicsPerFrame,
+		stats.avgWaitOvershootMsec,
+		stats.avgWakeJitterMsec );
+}
+
+static void Session_FramePacingSnapshot_f( const idCmdArgs &args ) {
+	const char *reason = NULL;
+	idStr reasonText;
+	if ( args.Argc() > 1 ) {
+		reasonText = args.Args( 1, -1 );
+		reason = reasonText.c_str();
+	}
+
+	sessLocal.PrintFramePacingSnapshot( reason );
+}
+
+static void Session_TestWaitBox_f( const idCmdArgs &args ) {
+	int durationMsec = 2000;
+	bool network = false;
+	const char *reason = NULL;
+	idStr reasonText;
+
+	if ( args.Argc() > 1 ) {
+		durationMsec = atoi( args.Argv( 1 ) );
+	}
+	if ( args.Argc() > 2 ) {
+		network = ( atoi( args.Argv( 2 ) ) != 0 );
+	}
+	if ( args.Argc() > 3 ) {
+		reasonText = args.Args( 3, -1 );
+		reason = reasonText.c_str();
+	}
+
+	sessLocal.RunTimedWaitBoxPacingTest( durationMsec, network, reason );
+}
+
+static void Session_TestMessageBox_f( const idCmdArgs &args ) {
+	int durationMsec = 2000;
+	bool network = false;
+	const char *reason = NULL;
+	idStr reasonText;
+
+	if ( args.Argc() > 1 ) {
+		durationMsec = atoi( args.Argv( 1 ) );
+	}
+	if ( args.Argc() > 2 ) {
+		network = ( atoi( args.Argv( 2 ) ) != 0 );
+	}
+	if ( args.Argc() > 3 ) {
+		reasonText = args.Args( 3, -1 );
+		reason = reasonText.c_str();
+	}
+
+	sessLocal.RunTimedMessageBoxPacingTest( durationMsec, network, reason );
+}
+
+static openq4FramePacingBound_t Session_ClassifyFramePacing( const openq4FramePacingStats_t &stats ) {
+	if ( !stats.valid || stats.avgFrameMsec <= 0.0f ) {
+		return OPENQ4_FRAME_BOUND_UNKNOWN;
+	}
+
+	const float ticMsec = 1000.0f / static_cast<float>( USERCMD_HZ );
+	if ( stats.presentationCap > 0 ) {
+		const float capMsec = 1000.0f / static_cast<float>( stats.presentationCap );
+		if ( capMsec > ticMsec * 1.10f && stats.avgFrameMsec >= capMsec * 0.95f ) {
+			return OPENQ4_FRAME_BOUND_PRESENTATION_CAP;
+		}
+	}
+
+	if ( stats.swapInterval > 0 && stats.avgFrameMsec > ticMsec * 1.10f ) {
+		return OPENQ4_FRAME_BOUND_VSYNC;
+	}
+
+	if ( stats.avgTicsPerFrame >= 0.90f || stats.avgGameTicsPerFrame >= 0.90f || stats.lastRequestedWaitMsec > 0 ) {
+		return OPENQ4_FRAME_BOUND_SIMULATION;
+	}
+
+	return OPENQ4_FRAME_BOUND_UNCAPPED;
+}
 
 // these must be kept up to date with window Levelshot in guis/mainmenu.gui
 const int PREVIEW_X = 211;
@@ -89,6 +230,93 @@ static bool Session_IsSupportedSaveGameName( const idStr &gameName ) {
 
 static bool Session_SaveGameHeaderUsesEntityFilter( const idStr &gameName ) {
 	return Session_IsRetailSaveGameName( gameName );
+}
+
+void idSessionLocal::ResetFramePacingStats( void ) {
+	memset( &framePacingStats, 0, sizeof( framePacingStats ) );
+	framePacingStats.boundMode = OPENQ4_FRAME_BOUND_UNKNOWN;
+	framePacingLastFrameMsec = 0;
+	framePacingLastLatchedTic = -1;
+	framePacingLastLoggedBound = OPENQ4_FRAME_BOUND_UNKNOWN;
+	framePacingLastLoggedSampleCount = 0;
+}
+
+void idSessionLocal::PrintFramePacingSnapshot( const char *reason ) const {
+	idStr reasonText = " snapshot";
+	if ( reason != NULL && reason[ 0 ] != '\0' ) {
+		reasonText += " ";
+		reasonText += reason;
+	}
+
+	if ( !framePacingStats.valid ) {
+		common->Printf( "Frame pacing%s unavailable: no samples collected yet\n", reasonText.c_str() );
+		return;
+	}
+
+	Session_PrintFramePacingSummary( framePacingStats, reasonText.c_str() );
+}
+
+void idSessionLocal::SampleMultiplayerFramePacing( int frameStartMsec ) {
+	latchedTicNumber = com_ticNumber;
+	UpdateFramePacingStats( frameStartMsec, 0, 0, 0 );
+}
+
+void OpenQ4_PrintFramePacingSnapshot( const char *reason ) {
+	sessLocal.PrintFramePacingSnapshot( reason );
+}
+
+void OpenQ4_RecordMultiplayerFramePacing( int frameStartMsec ) {
+	sessLocal.SampleMultiplayerFramePacing( frameStartMsec );
+}
+
+void idSessionLocal::UpdateFramePacingStats( int frameStartMsec, int requestedWaitMsec, int actualWaitMsec, int gameTicsToRun ) {
+	openq4AsyncTimingStats_t asyncStats;
+	OpenQ4_GetAsyncTimingStats( asyncStats, 120 );
+
+	const int sampleCount = Max( framePacingStats.frameSampleCount, 1 );
+
+	if ( framePacingLastFrameMsec > 0 ) {
+		const int frameDeltaMsec = Max( 0, frameStartMsec - framePacingLastFrameMsec );
+		framePacingStats.lastFrameMsec = frameDeltaMsec;
+		++framePacingStats.frameSampleCount;
+		framePacingStats.avgFrameMsec = Session_UpdateMetricAverage( framePacingStats.avgFrameMsec, static_cast<float>( frameDeltaMsec ), framePacingStats.frameSampleCount );
+		framePacingStats.avgFrameHz = framePacingStats.avgFrameMsec > 0.0f ? 1000.0f / framePacingStats.avgFrameMsec : 0.0f;
+	}
+	framePacingLastFrameMsec = frameStartMsec;
+
+	if ( framePacingLastLatchedTic >= 0 ) {
+		const int ticDelta = Max( 0, latchedTicNumber - framePacingLastLatchedTic );
+		framePacingStats.lastTicDelta = ticDelta;
+		framePacingStats.avgTicsPerFrame = Session_UpdateMetricAverage( framePacingStats.avgTicsPerFrame, static_cast<float>( ticDelta ), sampleCount );
+	}
+	framePacingLastLatchedTic = latchedTicNumber;
+
+	framePacingStats.multiplayer = idAsyncNetwork::IsActive();
+	framePacingStats.lastGameTics = Max( 0, gameTicsToRun );
+	framePacingStats.avgGameTicsPerFrame = Session_UpdateMetricAverage( framePacingStats.avgGameTicsPerFrame, static_cast<float>( framePacingStats.lastGameTics ), sampleCount );
+
+	framePacingStats.lastRequestedWaitMsec = Max( 0, requestedWaitMsec );
+	framePacingStats.lastWaitMsec = Max( 0, actualWaitMsec );
+	framePacingStats.lastWaitOvershootMsec = Max( 0, framePacingStats.lastWaitMsec - framePacingStats.lastRequestedWaitMsec );
+	framePacingStats.lastWakeJitterMsec = abs( framePacingStats.lastWaitMsec - framePacingStats.lastRequestedWaitMsec );
+	framePacingStats.avgWaitOvershootMsec = Session_UpdateMetricAverage( framePacingStats.avgWaitOvershootMsec, static_cast<float>( framePacingStats.lastWaitOvershootMsec ), sampleCount );
+	framePacingStats.avgWakeJitterMsec = Session_UpdateMetricAverage( framePacingStats.avgWakeJitterMsec, static_cast<float>( framePacingStats.lastWakeJitterMsec ), sampleCount );
+
+	framePacingStats.swapInterval = cvarSystem != NULL ? cvarSystem->GetCVarInteger( "r_swapInterval" ) : 0;
+	framePacingStats.presentationCap = Session_FindPresentationCap();
+	framePacingStats.asyncStats = asyncStats;
+	framePacingStats.valid = ( framePacingStats.frameSampleCount > 0 ) || asyncStats.valid;
+	framePacingStats.boundMode = Session_ClassifyFramePacing( framePacingStats );
+
+	const bool shouldPeriodicLog = framePacingStats.frameSampleCount >= ( framePacingLastLoggedSampleCount + 120 );
+	if ( com_showFramePacing.GetInteger() >= 2
+		&& framePacingStats.valid
+		&& framePacingStats.frameSampleCount >= 8
+		&& ( framePacingStats.boundMode != framePacingLastLoggedBound || shouldPeriodicLog ) ) {
+		Session_PrintFramePacingSummary( framePacingStats, "" );
+		framePacingLastLoggedBound = framePacingStats.boundMode;
+		framePacingLastLoggedSampleCount = framePacingStats.frameSampleCount;
+	}
 }
 
 static bool Session_IsCompatibleSaveGameVersion( const int version ) {
@@ -1830,6 +2058,7 @@ void idSessionLocal::Clear() {
 	msgFireBack[ 1 ].Clear();
 
 	timeHitch = 0;
+	ResetFramePacingStats();
 
 	rw = NULL;
 	sw = NULL;
@@ -1840,6 +2069,9 @@ void idSessionLocal::Clear() {
 	cmdDemoFile = NULL;
 
 	syncNextGameFrame = false;
+	syncNextGameFrameAwaitingAsyncTicLog = false;
+	cinematicStateValid = false;
+	cinematicActive = false;
 	mapSpawned = false;
 	guiActive = NULL;
 	aviCaptureMode = false;
@@ -2086,7 +2318,8 @@ void idSessionLocal::StartWipe( const char *_wipeMaterial, bool hold ) {
 	wipeMaterial = declManager->FindMaterial( _wipeMaterial, false );
 
 	wipeStartTic = com_ticNumber;
-	wipeStopTic = wipeStartTic + 1000.0f / USERCMD_MSEC * com_wipeSeconds.GetFloat();
+	const int wipeDurationMsec = idMath::Ftoi( com_wipeSeconds.GetFloat() * 1000.0f + 0.5f );
+	wipeStopTic = wipeStartTic + common->GetUserCmdTicsForMsecCeil( wipeDurationMsec );
 	wipeHold = hold;
 }
 
@@ -2106,6 +2339,7 @@ void idSessionLocal::CompleteWipe() {
 #if ID_CONSOLE_LOCK
 		emptyDrawCount = 0;
 #endif
+		Session_BeginBlockingLoadPresentationFrame();
 		UpdateScreen( true );
 	}
 }
@@ -2127,14 +2361,16 @@ void idSessionLocal::ShowLoadingGui() {
 	int stop = Sys_Milliseconds() + 1000;
 	int force = 10;
 	while ( Sys_Milliseconds() < stop || force-- > 0 ) {
-		com_frameTime = com_ticNumber * USERCMD_MSEC;
+		OpenQ4_BeginPresentationFrame();
+		com_frameTime = common->GetUserCmdTime( com_ticNumber );
 		session->Frame();
 		session->UpdateScreen( false );
 	}
 #else
-	int stop = com_ticNumber + 1000.0f / USERCMD_MSEC * 1.0f;
+	int stop = com_ticNumber + common->GetUserCmdTicsForMsecCeil( 1000 );
 	while ( com_ticNumber < stop ) {
-		com_frameTime = com_ticNumber * USERCMD_MSEC;
+		OpenQ4_BeginPresentationFrame();
+		com_frameTime = common->GetUserCmdTime( com_ticNumber );
 		session->Frame();
 		session->UpdateScreen( false );
 	}
@@ -2602,7 +2838,7 @@ void idSessionLocal::TimeRenderDemo( const char *demoName, bool twice ) {
 	if ( twice && readDemo ) {
 		// cycle through once to precache everything
 		guiLoading->SetStateString( "demo", common->GetLanguageDict()->GetString( "#str_04852" ) );
-		guiLoading->StateChanged( com_frameTime );
+		guiLoading->StateChanged( common->GetPresentationTime() );
 		while ( readDemo ) {
 			insideExecuteMapChange = true;
 			UpdateScreen();
@@ -3044,6 +3280,10 @@ Exits with mapSpawned = false
 void idSessionLocal::UnloadMap() {
 	StopPlayingRenderDemo();
 
+	if ( com_showFramePacing.GetInteger() >= 2 && framePacingStats.valid ) {
+		Session_PrintFramePacingSummary( framePacingStats, " final" );
+	}
+
 	// end the current map in the game
 	if ( game ) {
 		game->MapShutdown();
@@ -3191,7 +3431,7 @@ void idSessionLocal::LoadLoadingGui( const char *mapName ) {
 			guiLoading->SetStateInt( va( "load_icon_%d", i ), 0 );
 			guiLoading->SetStateString( va( "load_icon_img_%d", i ), "" );
 		}
-		guiLoading->StateChanged( com_frameTime );
+		guiLoading->StateChanged( common->GetPresentationTime() );
 
 		const char *fallbackLoadingBackground = "gfx/guis/loadscreens/generic";
 		const idMaterial *mat = declManager->FindMaterial( loadingBackground.c_str() );
@@ -3207,7 +3447,7 @@ void idSessionLocal::LoadLoadingGui( const char *mapName ) {
 				guiLoading->SetStateString( "loading_bkgnd", loadingBackground.c_str() );
 				guiLoading->SetStateInt( "loading_bkgnd_canvasfill", 0 );
 				guiLoading->SetStateInt( "loading_bkgnd_wide", 0 );
-				guiLoading->StateChanged( com_frameTime );
+				guiLoading->StateChanged( common->GetPresentationTime() );
 				mat = declManager->FindMaterial( loadingBackground.c_str() );
 			}
 		}
@@ -3462,31 +3702,51 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 	if ( guiLoading ) {
 		float pct = idMath::ClampFloat( 0.0f, 1.0f, guiLoading->State().GetFloat( "map_loading" ) );
 		while ( pct < 1.0f ) {
+			Session_BeginBlockingLoadPresentationFrame();
+
 			// Ease out quickly to full once loading has completed while keeping the motion smooth.
 			const float remaining = 1.0f - pct;
 			const float step = Max( 0.01f, remaining * 0.25f );
 			pct = Min( 1.0f, pct + step );
 
 			guiLoading->SetStateFloat( "map_loading", pct );
-			guiLoading->StateChanged( com_frameTime );
+			guiLoading->StateChanged( common->GetPresentationTime() );
 			Sys_GenerateEvents();
 			UpdateScreen();
 		}
 	}
 
+	const int loadingContinueAutoAdvanceMsec = idMath::ClampInt( 0, 60000, com_loadingContinueAutoAdvance.GetInteger() );
+	const bool logLoadingContinueGate = ( loadingContinueAutoAdvanceMsec > 0 ) || ( com_showFramePacing.GetInteger() >= 2 );
 	const bool waitForSPContinue =
 		guiLoading &&
 		!IsMultiplayer() &&
 		!idAsyncNetwork::IsActive() &&
 		!loadingSaveGame &&
 		!com_skipLoadingContinue.GetBool();
+	if ( !waitForSPContinue && logLoadingContinueGate ) {
+		common->Printf( "Loading continue gate skipped (guiLoading=%d, isMultiplayer=%d, async=%d, loadingSaveGame=%d, skipCvar=%d)\n",
+			guiLoading != NULL ? 1 : 0,
+			IsMultiplayer() ? 1 : 0,
+			idAsyncNetwork::IsActive() ? 1 : 0,
+			loadingSaveGame ? 1 : 0,
+			com_skipLoadingContinue.GetBool() ? 1 : 0 );
+	}
 	if ( waitForSPContinue ) {
+		Session_BeginBlockingLoadPresentationFrame();
 		guiLoading->HandleNamedEvent( "FinishedLoading" );
-		guiLoading->StateChanged( com_frameTime );
+		guiLoading->StateChanged( common->GetPresentationTime() );
 		UpdateScreen();
+
+		if ( logLoadingContinueGate ) {
+			common->Printf( "Loading continue gate entered%s\n",
+				loadingContinueAutoAdvanceMsec > 0 ? va( " (auto-advance %d ms)", loadingContinueAutoAdvanceMsec ) : "" );
+		}
 
 		bool waitingForContinue = true;
 		bool acceptContinueInput = false;
+		bool loadingContinueAutoAdvanced = false;
+		const int loadingContinueStartTime = common->GetPresentationTime();
 		while ( waitingForContinue ) {
 			Sys_GenerateEvents();
 
@@ -3512,11 +3772,31 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 				}
 			}
 
+			if ( waitingForContinue && loadingContinueAutoAdvanceMsec > 0 ) {
+				const int elapsedMsec = Max( 0, common->GetPresentationTime() - loadingContinueStartTime );
+				if ( elapsedMsec >= loadingContinueAutoAdvanceMsec ) {
+					loadingContinueAutoAdvanced = true;
+					waitingForContinue = false;
+				}
+			}
+
 			if ( waitingForContinue ) {
+				if ( Session_FindPresentationCap() > 0 ) {
+					Session_BeginBlockingLoadPresentationFrame();
+				}
 				UpdateScreen();
-				Sys_Sleep( 16 );
+				if ( Session_FindPresentationCap() <= 0 ) {
+					Sys_Sleep( static_cast<int>( idMath::Ceil( common->GetUserCmdMsecFloat() ) ) );
+					com_frameRealTime = Sys_Milliseconds();
+				}
 				acceptContinueInput = true;
 			}
+		}
+
+		if ( logLoadingContinueGate ) {
+			const int loadingContinueElapsedMsec = Max( 0, common->GetPresentationTime() - loadingContinueStartTime );
+			common->Printf( "Loading continue gate completed via %s after %d ms\n",
+				loadingContinueAutoAdvanced ? "auto-advance" : "input", loadingContinueElapsedMsec );
 		}
 
 		// The same key/button used to continue would otherwise remain latched into
@@ -3559,6 +3839,7 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 
 	// we are valid for game draws now
 	mapSpawned = true;
+	ResetFramePacingStats();
 	Sys_ClearEvents();
 }
 
@@ -4042,7 +4323,7 @@ bool idSessionLocal::ProcessEvent( const sysEvent_t *event ) {
 		}
 		
 		static const char *cmd;
-		cmd = guiTest->HandleEvent( event, com_frameTime );
+		cmd = guiTest->HandleEvent( event, common->GetPresentationTime() );
 		if ( cmd && cmd[0] ) {
 			common->Printf( "testGui event returned: '%s'\n", cmd );
 		}
@@ -4253,16 +4534,21 @@ void idSessionLocal::PacifierUpdate() {
 		return;
 	}
 
-	const int time = eventLoop->Milliseconds();
-	const int minPacifierIntervalMs = 16; // ~60 Hz UI refresh while loading.
+	const int time = Sys_Milliseconds();
+	const float minPacifierIntervalMs = Session_GetBlockingLoadFrameIntervalMsec();
 	int elapsedMs = time - lastPacifierTime;
-	if ( lastPacifierTime != 0 && elapsedMs < minPacifierIntervalMs ) {
+	if ( lastPacifierTime != 0 && static_cast<float>( elapsedMs ) < minPacifierIntervalMs ) {
 		return;
 	}
-	if ( elapsedMs < minPacifierIntervalMs ) {
-		elapsedMs = minPacifierIntervalMs;
+
+	Session_BeginBlockingLoadPresentationFrame();
+
+	const int presentationTime = common->GetPresentationTime();
+	elapsedMs = presentationTime - lastPacifierTime;
+	if ( static_cast<float>( elapsedMs ) < minPacifierIntervalMs ) {
+		elapsedMs = static_cast<int>( idMath::Ceil( minPacifierIntervalMs ) );
 	}
-	lastPacifierTime = time;
+	lastPacifierTime = presentationTime;
 
 	if ( guiLoading ) {
 		float shownPct = idMath::ClampFloat( 0.0f, 1.0f, guiLoading->State().GetFloat( "map_loading" ) );
@@ -4308,7 +4594,7 @@ void idSessionLocal::PacifierUpdate() {
 		}
 
 		guiLoading->SetStateFloat( "map_loading", shownPct );
-		guiLoading->StateChanged( com_frameTime );
+		guiLoading->StateChanged( presentationTime );
 	}
 
 	Sys_GenerateEvents();
@@ -4326,6 +4612,7 @@ idSessionLocal::Draw
 */
 void idSessionLocal::Draw() {
 	static const int fallbackMenuDelayMs = 3000;
+	const int presentationTime = common->GetPresentationTime();
 
 	bool fullConsole = false;
 	float menuIntroBlackoutAlpha = 0.0f;
@@ -4333,23 +4620,23 @@ void idSessionLocal::Draw() {
 
 	if ( insideExecuteMapChange ) {
 		if ( guiLoading ) {
-			guiLoading->Redraw( com_frameTime );
+			guiLoading->Redraw( presentationTime );
 		}
 		if ( guiActive == guiMsg ) {
-			guiMsg->Redraw( com_frameTime );
+			guiMsg->Redraw( presentationTime );
 		} 
 	} else if ( guiTest ) {
 		// if testing a gui, clear the screen and draw it
 		// clear the background, in case the tested gui is transparent
-		// NOTE that you can't use this for aviGame recording, it will tick at real com_frameTime between screenshots..
+		// NOTE that you can't use this for aviGame recording, it will tick at real presentation time between screenshots..
 		renderSystem->SetColor( colorBlack );
 		renderSystem->DrawStretchPic( 0, 0, 640, 480, 0, 0, 1, 1, declManager->FindMaterial( "_white" ) );
-		guiTest->Redraw( com_frameTime );
+		guiTest->Redraw( presentationTime );
 	} else if ( guiActive ) {
 		
 		// draw the frozen gui in the background
 		if ( guiActive == guiMsg && guiMsgRestore ) {
-			guiMsgRestore->Redraw( com_frameTime );
+			guiMsgRestore->Redraw( presentationTime );
 		}
 		
 		// draw the menus full screen
@@ -4370,7 +4657,7 @@ void idSessionLocal::Draw() {
 			}
 		}
 
-		guiActive->Redraw( com_frameTime );
+		guiActive->Redraw( presentationTime );
 
 		if ( guiActive == guiMainMenu ) {
 			if ( menuIntroBlackoutActive ) {
@@ -4378,10 +4665,10 @@ void idSessionLocal::Draw() {
 					menuIntroBlackoutAlpha = 1.0f;
 				} else {
 				if ( menuIntroBlackoutFadeStart < 0 ) {
-					menuIntroBlackoutFadeStart = com_frameTime;
+					menuIntroBlackoutFadeStart = presentationTime;
 				}
 
-				const float fadeElapsed = static_cast<float>( com_frameTime - menuIntroBlackoutFadeStart );
+				const float fadeElapsed = static_cast<float>( presentationTime - menuIntroBlackoutFadeStart );
 				const float fadeDurationMs = 350.0f;
 				const float t = idMath::ClampFloat( 0.0f, 1.0f, fadeElapsed / fadeDurationMs );
 				menuIntroBlackoutAlpha = 1.0f - t;
@@ -4554,6 +4841,8 @@ void idSessionLocal::Frame() {
 		return;
 	}
 
+	const int frameStartMsec = Sys_Milliseconds();
+
 	// if the console is down, we don't need to hold
 	// the mouse cursor
 	if ( console->Active() || com_editorActive ) {
@@ -4568,7 +4857,8 @@ void idSessionLocal::Frame() {
 
 		name = va("demos/%s/%s_%05i.tga", aviDemoShortName.c_str(), aviDemoShortName.c_str(), aviTicStart );
 
-		float ratio = 30.0f / ( 1000.0f / USERCMD_MSEC / com_aviDemoTics.GetInteger() );
+		const float demoFrameRate = static_cast<float>( common->GetUserCmdHz() ) / static_cast<float>( com_aviDemoTics.GetInteger() );
+		float ratio = 30.0f / demoFrameRate;
 		aviDemoFrameCount += ratio;
 		if ( aviTicStart + 1 != ( int )aviDemoFrameCount ) {
 			// skipped frames so write them out
@@ -4591,9 +4881,11 @@ void idSessionLocal::Frame() {
 	if ( latchedTicNumber > com_ticNumber ) {
 		latchedTicNumber = com_ticNumber;
 	}
+	const int previousLatchedTicNumber = latchedTicNumber;
 
-	// se how many tics we should have before continuing
-	int	minTic = latchedTicNumber + 1;
+	// Phase 2 decouples presentation from simulation: only demos / fixed-rate capture
+	// still wait for a new tic before the foreground frame proceeds.
+	int	minTic = previousLatchedTicNumber + 1;
 	if ( com_minTics.GetInteger() > 1 ) {
 		minTic = lastGameTic + com_minTics.GetInteger();
 	}
@@ -4612,36 +4904,49 @@ void idSessionLocal::Frame() {
 	
 	// fixedTic lets us run a forced number of usercmd each frame without timing
 	if ( com_fixedTic.GetInteger() ) {
-		minTic = latchedTicNumber;
+		minTic = previousLatchedTicNumber;
 	}
 
-	// FIXME: deserves a cleanup and abstraction
+	int requestedWaitMsec = 0;
+	int actualWaitMsec = 0;
+	const bool shouldWaitForGameTic = readDemo || writeDemo;
+	const int latchedTicBeforeWait = previousLatchedTicNumber;
+
+	if ( shouldWaitForGameTic && minTic > latchedTicBeforeWait ) {
+		requestedWaitMsec = common->GetUserCmdTime( minTic ) - common->GetUserCmdTime( latchedTicBeforeWait );
+	}
+
+	if ( shouldWaitForGameTic ) {
+		const int waitStartMsec = Sys_Milliseconds();
 #if defined( _WIN32 )
-	// Spin in place if needed.  The game should yield the cpu if
-	// it is running over 60 hz, because there is fundamentally
-	// nothing useful for it to do.
-	while( 1 ) {
-		latchedTicNumber = com_ticNumber;
-		if ( latchedTicNumber >= minTic ) {
-			break;
+		// Demo / capture playback still consumes exact tics instead of repeated-state presentation.
+		while( 1 ) {
+			latchedTicNumber = com_ticNumber;
+			if ( latchedTicNumber >= minTic ) {
+				break;
+			}
+			Sys_Sleep( 1 );
 		}
-		Sys_Sleep( 1 );
-	}
 #else
-	while( 1 ) {
-		latchedTicNumber = com_ticNumber;
-		if ( latchedTicNumber >= minTic ) {
-			break;
+		while( 1 ) {
+			latchedTicNumber = com_ticNumber;
+			if ( latchedTicNumber >= minTic ) {
+				break;
+			}
+			Sys_WaitForEvent( TRIGGER_EVENT_ONE );
 		}
-		Sys_WaitForEvent( TRIGGER_EVENT_ONE );
-	}
 #endif
+		actualWaitMsec = Max( 0, Sys_Milliseconds() - waitStartMsec );
+	} else {
+		latchedTicNumber = com_ticNumber;
+	}
 
 	// send frame and mouse events to active guis
 	GuiFrameEvents();
 
 	// advance demos
 	if ( readDemo ) {
+		UpdateFramePacingStats( frameStartMsec, requestedWaitMsec, actualWaitMsec, 0 );
 		AdvanceRenderDemo( false );
 		return;
 	}
@@ -4656,17 +4961,20 @@ void idSessionLocal::Frame() {
 	}
 
 	if ( !mapSpawned ) {
+		UpdateFramePacingStats( frameStartMsec, requestedWaitMsec, actualWaitMsec, 0 );
 		return;
 	}
 
 	if ( guiActive ) {
 		lastGameTic = latchedTicNumber;
+		UpdateFramePacingStats( frameStartMsec, requestedWaitMsec, actualWaitMsec, 0 );
 		return;
 	}
 
 	// in message box / GUIFrame, idSessionLocal::Frame is used for GUI interactivity
 	// but we early exit to avoid running game frames
 	if ( idAsyncNetwork::IsActive() ) {
+		UpdateFramePacingStats( frameStartMsec, requestedWaitMsec, actualWaitMsec, 0 );
 		return;
 	}
 
@@ -4679,10 +4987,13 @@ void idSessionLocal::Frame() {
 
 	// see how many usercmds we are going to run
 	int	numCmdsToRun = latchedTicNumber - lastGameTic;
+	if ( !shouldWaitForGameTic && latchedTicNumber < minTic ) {
+		numCmdsToRun = 0;
+	}
 
 	// don't let a long onDemand sound load unsync everything
 	if ( timeHitch ) {
-		int	skip = timeHitch / USERCMD_MSEC;
+		int	skip = common->GetUserCmdTicsForMsecFloor( timeHitch );
 		lastGameTic += skip;
 		numCmdsToRun -= skip;
 		timeHitch = 0;
@@ -4715,8 +5026,21 @@ void idSessionLocal::Frame() {
 	// so we come back immediately after the cinematic is done instead of a few frames later which can
 	// cause sounds played right after the cinematic to not play.
 	if ( syncNextGameFrame ) {
-		lastGameTic = latchedTicNumber - 1;
-		syncNextGameFrame = false;
+		if ( latchedTicNumber > lastGameTic ) {
+			if ( com_showFramePacing.GetInteger() >= 2 ) {
+				common->Printf( "syncNextGameFrame consuming next async tic (latched=%d, lastGameTic=%d)\n",
+					latchedTicNumber, lastGameTic );
+			}
+			lastGameTic = latchedTicNumber - 1;
+			syncNextGameFrame = false;
+			syncNextGameFrameAwaitingAsyncTicLog = false;
+		} else if ( com_showFramePacing.GetInteger() >= 2 && !syncNextGameFrameAwaitingAsyncTicLog ) {
+			common->Printf( "syncNextGameFrame waiting for next async tic (latched=%d, lastGameTic=%d)\n",
+				latchedTicNumber, lastGameTic );
+			syncNextGameFrameAwaitingAsyncTicLog = true;
+		}
+	} else {
+		syncNextGameFrameAwaitingAsyncTicLog = false;
 	}
 
 	// create client commands, which will be sent directly
@@ -4738,6 +5062,8 @@ void idSessionLocal::Frame() {
 			break;
 		}
 	}
+
+	UpdateFramePacingStats( frameStartMsec, requestedWaitMsec, actualWaitMsec, i );
 }
 
 /*
@@ -4812,6 +5138,21 @@ void idSessionLocal::RunGameTic() {
 	}
 
 	syncNextGameFrame = ret.syncNextGameFrame;
+	const bool gameInCinematic = game->InCinematic();
+	if ( com_showFramePacing.GetInteger() >= 2 && ( !cinematicStateValid || gameInCinematic != cinematicActive ) ) {
+		common->Printf(
+			"cinematic %s (latched=%d, lastGameTic=%d, syncNextGameFrame=%d)\n",
+			gameInCinematic ? "entered" : "exited",
+			latchedTicNumber,
+			lastGameTic,
+			syncNextGameFrame ? 1 : 0 );
+	}
+	cinematicStateValid = true;
+	cinematicActive = gameInCinematic;
+	if ( syncNextGameFrame && com_showFramePacing.GetInteger() >= 2 ) {
+		common->Printf( "syncNextGameFrame requested by game code (latched=%d, lastGameTic=%d)\n",
+			latchedTicNumber, lastGameTic );
+	}
 
 	if ( ret.sessionCommand[0] ) {
 		idCmdArgs args;
@@ -4868,6 +5209,9 @@ void idSessionLocal::Init() {
 	cmdSystem->AddCommand( "map", Session_Map_f, CMD_FL_SYSTEM, "loads a map", idCmdSystem::ArgCompletion_MapName );
 	cmdSystem->AddCommand( "devmap", Session_DevMap_f, CMD_FL_SYSTEM, "loads a map in developer mode", idCmdSystem::ArgCompletion_MapName );
 	cmdSystem->AddCommand( "testmap", Session_TestMap_f, CMD_FL_SYSTEM, "tests a map", idCmdSystem::ArgCompletion_MapName );
+	cmdSystem->AddCommand( "framePacingSnapshot", Session_FramePacingSnapshot_f, CMD_FL_SYSTEM, "prints the current frame-pacing diagnostics summary" );
+	cmdSystem->AddCommand( "testWaitBox", Session_TestWaitBox_f, CMD_FL_SYSTEM | CMD_FL_CHEAT, "opens a timed wait box and prints frame-pacing stats: testWaitBox <msec> [network 0/1] [reason]" );
+	cmdSystem->AddCommand( "testMessageBox", Session_TestMessageBox_f, CMD_FL_SYSTEM | CMD_FL_CHEAT, "opens a timed message box and prints frame-pacing stats: testMessageBox <msec> [network 0/1] [reason]" );
 
 	cmdSystem->AddCommand( "writeCmdDemo", Session_WriteCmdDemo_f, CMD_FL_SYSTEM, "writes a command demo" );
 	cmdSystem->AddCommand( "playCmdDemo", Session_PlayCmdDemo_f, CMD_FL_SYSTEM, "plays back a command demo" );

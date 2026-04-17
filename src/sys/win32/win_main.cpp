@@ -1153,7 +1153,7 @@ static void Sys_AsyncThread(void* parm) {
 
 	while (1) {
 #ifdef WIN32	
-		// this will trigger 60 times a second
+		// Wake frequently enough that common->Async can service the exact 60 Hz schedule.
 		int r = WaitForSingleObject(hTimer, 100);
 		if (r != WAIT_OBJECT_0) {
 			OutputDebugString("idPacketServer::PacketServerInterrupt: bad wait return");
@@ -1184,7 +1184,7 @@ Start the thread that will call idCommon::Async()
 ==============
 */
 void Sys_StartAsyncThread(void) {
-	// create an auto-reset event that happens 60 times a second
+	// Wake at a fine enough cadence that common->Async can hit the exact 60 Hz schedule.
 	hTimer = CreateWaitableTimer(NULL, false, NULL);
 	if (!hTimer) {
 		common->Error("idPacketServer::Spawn: CreateWaitableTimer failed");
@@ -1192,7 +1192,7 @@ void Sys_StartAsyncThread(void) {
 
 	LARGE_INTEGER	t;
 	t.HighPart = t.LowPart = 0;
-	SetWaitableTimer(hTimer, &t, USERCMD_MSEC, NULL, NULL, TRUE);
+	SetWaitableTimer(hTimer, &t, 1, NULL, NULL, TRUE);
 
 	Sys_CreateThread((xthread_t)Sys_AsyncThread, NULL, THREAD_ABOVE_NORMAL, threadInfo, "Async", g_threads, &g_thread_count);
 

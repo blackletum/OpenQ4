@@ -105,7 +105,7 @@ public:
 	float				GetIncomingPacketLoss( void ) const;
 	int					GetPredictedFrames( void ) const { return lastFrameDelta; }
 
-	void				RunFrame( void );
+	void				RunFrame( bool allowBlocking = true );
 	void				SendReliableGameMessage( const idBitMsg &msg );
 
 	void				SendVersionCheck( bool fromMenu = false );

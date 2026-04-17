@@ -158,7 +158,7 @@ public:
 	int					GetNumIdleClients( void ) const;
 	int					GetLocalClientNum( void ) const { return localClientNum; }
 
-	void				RunFrame( void );
+	void				RunFrame( bool allowBlocking = true );
 	void				ProcessConnectionLessMessages( void );
 	void				RemoteConsoleOutput( const char *string );
 	void				SendReliableGameMessage( int clientNum, const idBitMsg &msg );

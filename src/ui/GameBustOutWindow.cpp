@@ -594,8 +594,8 @@ void idGameBustOutWindow::ResetGameState() {
 	onNewGame = false;
 	onNewLevel = false;
 
-	// Game moves forward 16 milliseconds every frame
-	timeSlice = 0.016f;
+	// Keep the mini-game aligned to an exact 60 Hz step.
+	timeSlice = 1.0f / 60.0f;
 	ballsRemaining = 3;
 	ballSpeed = BALL_SPEED;
 	ballsInPlay = 0;

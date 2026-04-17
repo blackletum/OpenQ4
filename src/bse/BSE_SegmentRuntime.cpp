@@ -444,7 +444,7 @@ void rvSegment::AddToParticleCount(rvBSE* effect, int count, int loopCount, floa
 		duration = st->mParticleTemplate.GetMaxDuration();
 	}
 
-	const float countDuration = duration + 0.016f;
+	const float countDuration = duration + BSE_FUTURE;
 	if (mSecondsPerParticle.y > BSE_TIME_EPSILON) {
 		const int mult = static_cast<int>(ceilf(countDuration / mSecondsPerParticle.y)) + 1;
 		mLoopParticleCount += loopCount * mult;

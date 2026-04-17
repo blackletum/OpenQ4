@@ -176,7 +176,7 @@ bool rvBSEManagerLocal::PlayEffect(class rvRenderEffectLocal* def, float time) {
 	return true;
 }
 
-bool rvBSEManagerLocal::ServiceEffect(class rvRenderEffectLocal* def, float time) {
+bool rvBSEManagerLocal::ServiceEffect(class rvRenderEffectLocal* def, float ownerTime, float presentationTime) {
 	BSE_AddServiced(1);
 
 	if (!def || !def->effect) {
@@ -194,7 +194,7 @@ bool rvBSEManagerLocal::ServiceEffect(class rvRenderEffectLocal* def, float time
 	bool forcePush = false;
 
 	if (pauseTime >= 0.0f) {
-		time = pauseTime;
+		presentationTime = pauseTime;
 	}
 
 	const idStr effectName = def->parms.declEffect ? def->parms.declEffect->GetName() : "";
@@ -205,7 +205,7 @@ bool rvBSEManagerLocal::ServiceEffect(class rvRenderEffectLocal* def, float time
 
 	def->effect->SetRenderWorld( reinterpret_cast<idRenderWorld*>(def->world) );
 
-	if (def->effect->Service(&def->parms, time, def->gameTime > def->serviceTime, forcePush)) {
+	if (def->effect->Service(&def->parms, ownerTime, presentationTime, def->gameTime > def->serviceTime, forcePush)) {
 		def->expired = true;
 		return true;
 	}

@@ -1266,6 +1266,7 @@ void idGameSSDWindow::ReadFromSaveGame( idFile *savefile ) {
 
 
 	savefile->Read(&ssdTime, sizeof(ssdTime));
+	ssdTimeAccumulator = static_cast<double>( ssdTime );
 
 	beginLevel.ReadFromSaveGame(savefile);
 	resetGame.ReadFromSaveGame(savefile);
@@ -1607,6 +1608,7 @@ void idGameSSDWindow::CommonInit() {
 	refreshGuiData = false;
 
 	ssdTime = 0;
+	ssdTimeAccumulator = 0.0;
 	levelCount = 0;
 	weaponCount = 0;
 	screenBounds = idBounds(idVec3(-320,-240,0), idVec3(320,240,0));
@@ -1778,8 +1780,10 @@ void idGameSSDWindow::UpdateGame() {
 
 	if(gameStats.gameRunning) {
 
-		//We assume an upate every 16 milliseconds
-		ssdTime += 16;
+		// The current UI frame loop still advances once per game tic, so keep
+		// the mini-game clock on the exact 60 Hz cadence instead of 16 ms.
+		ssdTimeAccumulator += static_cast<double>( common->GetUserCmdMsecFloat() );
+		ssdTime = static_cast<int>( ssdTimeAccumulator );
 
 		if(superBlasterTimeout && ssdTime > superBlasterTimeout) {
 			StopSuperBlaster();

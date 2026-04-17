@@ -50,27 +50,12 @@ Sys_AsyncThread
 =================
 */
 void Sys_AsyncThread( void ) {
-	int now;
-	int next;
-	int want_sleep;
-	int ticked;
-	int to_ticked;
-
-	now = Sys_Milliseconds();
-	ticked = now >> 4;
 	while ( 1 ) {
-		now = Sys_Milliseconds();
-		next = ( now & 0xFFFFFFF0 ) + 0x10;
-		want_sleep = ( next - now - 1 ) * 1000;
-		if ( want_sleep > 0 ) {
-			usleep( want_sleep );
-		}
+		usleep( 1000 );
 
-		now = Sys_Milliseconds();
-		to_ticked = now >> 4;
-		while ( ticked < to_ticked ) {
-			common->Async();
-			ticked++;
+		const int previousTicNumber = com_ticNumber;
+		common->Async();
+		for ( int tic = previousTicNumber; tic < com_ticNumber; ++tic ) {
 			Sys_TriggerEvent( TRIGGER_EVENT_ONE );
 		}
 

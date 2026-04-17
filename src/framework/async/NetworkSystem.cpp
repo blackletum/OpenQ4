@@ -361,7 +361,7 @@ void idNetworkSystem::SetLoadingText( const char *loadingText ) {
 		}
 	}
 
-	sessLocal.guiLoading->StateChanged( com_frameTime );
+	sessLocal.guiLoading->StateChanged( common->GetPresentationTime() );
 #endif
 }
 
@@ -388,6 +388,6 @@ void idNetworkSystem::AddLoadingIcon( const char *icon ) {
 	sessLocal.guiLoading->SetStateInt( "load_icons", numIcons );
 	sessLocal.guiLoading->SetStateInt( va( "load_icon_%d", numIcons ), 1 );
 	sessLocal.guiLoading->SetStateString( va( "load_icon_img_%d", numIcons ), icon );
-	sessLocal.guiLoading->StateChanged( com_frameTime );
+	sessLocal.guiLoading->StateChanged( common->GetPresentationTime() );
 #endif
 }

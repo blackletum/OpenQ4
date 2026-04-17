@@ -29,6 +29,8 @@ If you have questions concerning this license or the applicable additional terms
 
 
 
+#include "Session_local.h"
+
 void SCR_DrawTextLeftAlign( float &y, const char *text, ... ) id_attribute((format(printf,2,3)));
 void SCR_DrawTextRightAlign( float &y, const char *text, ... ) id_attribute((format(printf,2,3)));
 
@@ -828,7 +830,7 @@ void idConsoleLocal::PrintToBuffer( const char *txt, bool markNotifyTime ) {
 	}
 
 	if ( markNotifyTime && current >= 0 ) {
-		times[current % NUM_CON_TIMES] = com_frameTime;
+		times[current % NUM_CON_TIMES] = common->GetPresentationTime();
 	}
 }
 
@@ -862,7 +864,7 @@ void idConsoleLocal::RebuildBufferFromHistory( void ) {
 
 	ClearNotifyLines();
 	if ( current >= 0 ) {
-		times[current % NUM_CON_TIMES] = com_frameTime;
+		times[current % NUM_CON_TIMES] = common->GetPresentationTime();
 	}
 }
 
@@ -1067,6 +1069,79 @@ float SCR_DrawMemoryUsage( float y ) {
 	SCR_DrawTextRightAlign( y, "frame alloc: %4d, %4dkB  frame free: %4d, %4dkB", allocs.num, allocs.totalSize>>10, frees.num, frees.totalSize>>10 );
 
 	Mem_ClearFrameStats();
+
+	return y;
+}
+
+static const char *SCR_FramePacingBoundLabel( openq4FramePacingBound_t boundMode ) {
+	switch ( boundMode ) {
+		case OPENQ4_FRAME_BOUND_SIMULATION:
+			return "simulation";
+		case OPENQ4_FRAME_BOUND_VSYNC:
+			return "vsync";
+		case OPENQ4_FRAME_BOUND_PRESENTATION_CAP:
+			return "presentation-cap";
+		case OPENQ4_FRAME_BOUND_UNCAPPED:
+			return "uncapped";
+		default:
+			return "collecting";
+	}
+}
+
+float SCR_DrawFramePacing( float y ) {
+	const openq4FramePacingStats_t &stats = sessLocal.GetFramePacingStats();
+
+	if ( !stats.valid ) {
+		SCR_DrawTextRightAlign( y, "frame pacing: collecting samples" );
+		return y;
+	}
+
+	if ( stats.presentationCap > 0 ) {
+		SCR_DrawTextRightAlign(
+			y,
+			"frame pacing = %s (%s, r_swapInterval=%d, com_maxfps=%d)",
+			SCR_FramePacingBoundLabel( stats.boundMode ),
+			stats.multiplayer ? "MP" : "SP",
+			stats.swapInterval,
+			stats.presentationCap );
+	} else {
+		SCR_DrawTextRightAlign(
+			y,
+			"frame pacing = %s (%s, r_swapInterval=%d)",
+			SCR_FramePacingBoundLabel( stats.boundMode ),
+			stats.multiplayer ? "MP" : "SP",
+			stats.swapInterval );
+	}
+
+	SCR_DrawTextRightAlign(
+		y,
+		"present avg = %.2f ms (%.1f Hz), last = %d ms, async avg = %.2f ms (%.1f Hz)",
+		stats.avgFrameMsec,
+		stats.avgFrameHz,
+		stats.lastFrameMsec,
+		stats.asyncStats.avgDeltaMsec,
+		stats.asyncStats.avgHz );
+	SCR_DrawTextRightAlign(
+		y,
+		"async jitter = %.2f ms, min/max = %d/%d ms, async work = %.2f ms",
+		stats.asyncStats.avgJitterMsec,
+		stats.asyncStats.minDeltaMsec,
+		stats.asyncStats.maxDeltaMsec,
+		stats.asyncStats.avgTimeConsumedMsec );
+	SCR_DrawTextRightAlign(
+		y,
+		"tic delta/frame avg = %.2f (last %d), game tics/frame avg = %.2f (last %d)",
+		stats.avgTicsPerFrame,
+		stats.lastTicDelta,
+		stats.avgGameTicsPerFrame,
+		stats.lastGameTics );
+	SCR_DrawTextRightAlign(
+		y,
+		"wait req = %d ms, actual = %d ms, overshoot avg = %.2f ms, wake jitter avg = %.2f ms",
+		stats.lastRequestedWaitMsec,
+		stats.lastWaitMsec,
+		stats.avgWaitOvershootMsec,
+		stats.avgWakeJitterMsec );
 
 	return y;
 }
@@ -4035,7 +4110,7 @@ Causes the console to start opening the desired amount.
 */
 void idConsoleLocal::SetDisplayFraction( float frac ) {
 	finalFrac = frac;
-	fracTime = com_frameTime;
+	fracTime = common->GetPresentationTime();
 }
 
 /*
@@ -4047,24 +4122,24 @@ Scrolls the console up or down based on conspeed
 */
 void idConsoleLocal::UpdateDisplayFraction( void ) {
 	if ( con_speed.GetFloat() <= 0.1f ) {
-		fracTime = com_frameTime;
+		fracTime = common->GetPresentationTime();
 		displayFrac = finalFrac;
 		return;
 	}
 
 	// scroll towards the destination height
 	if ( finalFrac < displayFrac ) {
-		displayFrac -= con_speed.GetFloat() * ( com_frameTime - fracTime ) * 0.001f;
+		displayFrac -= con_speed.GetFloat() * ( common->GetPresentationTime() - fracTime ) * 0.001f;
 		if ( finalFrac > displayFrac ) {
 			displayFrac = finalFrac;
 		}
-		fracTime = com_frameTime;
+		fracTime = common->GetPresentationTime();
 	} else if ( finalFrac > displayFrac ) {
-		displayFrac += con_speed.GetFloat() * ( com_frameTime - fracTime ) * 0.001f;
+		displayFrac += con_speed.GetFloat() * ( common->GetPresentationTime() - fracTime ) * 0.001f;
 		if ( finalFrac < displayFrac ) {
 			displayFrac = finalFrac;
 		}
-		fracTime = com_frameTime;
+		fracTime = common->GetPresentationTime();
 	}
 }
 
@@ -4182,7 +4257,7 @@ void idConsoleLocal::Linefeed() {
 
 	// mark time for transparent overlay
 	if ( current >= 0 ) {
-		times[current % NUM_CON_TIMES] = com_frameTime;
+		times[current % NUM_CON_TIMES] = common->GetPresentationTime();
 	}
 
 	x = 0;
@@ -4491,7 +4566,7 @@ void idConsoleLocal::DrawNotify() {
 		if ( time == 0 ) {
 			continue;
 		}
-		time = com_frameTime - time;
+		time = common->GetPresentationTime() - time;
 		if ( time > con_notifyTime.GetFloat() * 1000 ) {
 			continue;
 		}
@@ -4672,6 +4747,10 @@ void	idConsoleLocal::Draw( bool forceFullScreen ) {
 
 	if ( com_showFPS.GetBool() ) {
 		y = SCR_DrawFPS( 0 );
+	}
+
+	if ( com_showFramePacing.GetInteger() > 0 ) {
+		y = SCR_DrawFramePacing( y );
 	}
 
 	if ( com_showMemoryUsage.GetBool() ) {

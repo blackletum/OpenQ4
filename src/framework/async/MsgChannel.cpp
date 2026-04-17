@@ -196,7 +196,7 @@ bool idMsgChannel::ReadMessageData( idBitMsg &out, const idBitMsg &msg ) {
 
 	// remove acknowledged reliable messages
 	while( reliableSend.GetFirst() <= reliableAcknowledge ) {
-		if ( !reliableSend.Get( NULL, 0, reliableMessageSize, false ) ) {
+		if ( !reliableSend.Get( NULL, 0, reliableMessageSize, true ) ) {
 			break;
 		}
 	}
@@ -494,7 +494,7 @@ bool idMsgChannel::SendReliableMessage( const idBitMsg &msg ) {
 	if ( remoteAddress.type == NA_BAD ) {
 		return false;
 	}
-	result = reliableSend.Add( msg.GetData(), msg.GetSize(), false );
+	result = reliableSend.Add( msg.GetData(), msg.GetSize(), true );
 	if ( !result ) {
 		common->Warning( "idMsgChannel::SendReliableMessage: overflowed" );
 		return false;
@@ -511,7 +511,7 @@ bool idMsgChannel::GetReliableMessage( idBitMsg &msg ) {
 	int size;
 	bool result;
 // jmarshall
-	result = reliableReceive.Get( msg.GetData(), msg.GetSize(), size, false );
+	result = reliableReceive.Get( msg.GetData(), msg.GetMaxSize(), size, false );
 // jmarshall end
 	msg.SetSize( size );
 	msg.BeginReading();

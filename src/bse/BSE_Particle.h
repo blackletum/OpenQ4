@@ -8,7 +8,7 @@
 #include "../renderer/ModelManager.h"
 #include "../renderer/RenderWorld.h"
 
-#define BSE_FUTURE				( 0.016f )			// How far into the future to check for particle spawning
+#define BSE_FUTURE				( 1.0f / 60.0f )	// How far into the future to check for particle spawning
 #define BSE_TIME_EPSILON		( 0.002f )			// Edge condition checks
 #define BSE_PHYSICS_TIME_SAMPLE	( 0.1f )			// Number of seconds to check the position delta for physics
 #define BSE_MINIMUM_TRACE_DIST	( 16.0f )			// The square of the distance below which physics will not check

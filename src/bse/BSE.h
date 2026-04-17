@@ -476,7 +476,7 @@ public:
 	void					UpdateFromOwner(renderEffect_t* parms, float time, bool init = false);
 	void					LoopInstant(float time);
 	void					LoopLooping(float time);
-	virtual bool			Service(renderEffect_t* parms, float time, bool spawn, bool& forcePush);
+	virtual bool			Service(renderEffect_t* parms, float ownerTime, float presentationTime, bool spawn, bool& forcePush);
 	void					UpdateSoundEmitter(rvSegmentTemplate* st, rvSegment* seg);
 
 	virtual void			DisplayDebugInfo(const struct renderEffect_s* parms, const struct viewDef_s* view, idBounds& bounds);
@@ -579,7 +579,7 @@ public:
 	virtual	bool				Shutdown(void);
 
 	virtual	bool				PlayEffect(class rvRenderEffectLocal* def, float time);
-	virtual	bool				ServiceEffect(class rvRenderEffectLocal* def, float time);
+	virtual	bool				ServiceEffect(class rvRenderEffectLocal* def, float ownerTime, float presentationTime);
 	virtual idRenderModel*		RenderEffect(class rvRenderEffectLocal* def, const struct viewDef_s* view);
 	virtual	void				StopEffect(rvRenderEffectLocal* def);
 	virtual	void				FreeEffect(rvRenderEffectLocal* def);
