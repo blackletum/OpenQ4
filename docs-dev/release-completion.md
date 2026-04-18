@@ -10,6 +10,7 @@ Process:
 
 ## Ready For Changelog
 
+- [x] MCC med-bed intro overlay now keeps its retail 128x128 ambient data/static layers tiled at native scale across the expanded GUI canvas, and edge-hugging detail widgets anchor to the appropriate wide/tall screen sides.
 - [x] Main menu placeholder art rotation now uses a randomized montage of eligible loadscreen levelshots, with proper wide/tall expansion-tile composition and slow zoom transitions per shot.
 - [x] Startup/loadscreen placeholder now hands off to the main menu automatically after 3 seconds, main-menu entry transitions use a short black fade-in stretched to native screen extents, and startup logo videos can be skipped with default-on `com_skipLogoVideos 1`.
 - [x] Added a depth-aware `r_lensFlare` graphics option with quality levels for lightweight light coronas and high-quality lens ghost/streak overlays.
