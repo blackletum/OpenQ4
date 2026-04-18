@@ -37,6 +37,10 @@ typedef struct {
 	idMat3		axis;
 } orientation_t;
 
+static ID_INLINE void R_SyncSubviewTime( viewDef_t *parms ) {
+	parms->floatTime = parms->renderView.time * 0.001f;
+}
+
 
 /*
 =================
@@ -226,6 +230,7 @@ static viewDef_t *R_MirrorViewBySurface( drawSurf_t *drawSurf ) {
 
 	parms->isSubview = true;
 	parms->isMirror = true;
+	R_SyncSubviewTime( parms );
 
 	// create plane axis for the portal we are seeing
 	R_PlaneForSurface( drawSurf->geo, originalPlane );
@@ -280,6 +285,7 @@ static viewDef_t *R_XrayViewBySurface( drawSurf_t *drawSurf ) {
 
 	parms->isSubview = true;
 	parms->isXraySubview = true;
+	R_SyncSubviewTime( parms );
 
 	return parms;
 }
@@ -311,6 +317,7 @@ static void R_RemoteRender( drawSurf_t *surf, textureStage_t *stage ) {
 
 	parms->renderView = *surf->space->entityDef->parms.remoteRenderView;
 	parms->renderView.viewID = 0;	// clear to allow player bodies to show up, and suppress view weapons
+	R_SyncSubviewTime( parms );
 	parms->initialViewAreaOrigin = parms->renderView.vieworg;
 
 	tr.CropRenderSize( stage->width, stage->height, true );
@@ -458,6 +465,7 @@ static void R_RefractionRender( drawSurf_t *surf, textureStage_t *stage, idScree
 	parms->renderView.viewID = 0;
 	parms->isSubview = true;
 	parms->isMirror = false;
+	R_SyncSubviewTime( parms );
 	parms->initialViewAreaOrigin = parms->renderView.vieworg;
 
 	tr.CropRenderSize( stage->width, stage->height, true );

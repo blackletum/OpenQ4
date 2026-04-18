@@ -142,6 +142,7 @@ idRenderWorldLocal::idRenderWorldLocal() {
 	interactionTable = 0;
 	interactionTableWidth = 0;
 	interactionTableHeight = 0;
+	pendingDemoTimeOffset = false;
 }
 
 /*
@@ -182,29 +183,7 @@ qhandle_t idRenderWorldLocal::AddEffectDef(const renderEffect_t* reffect, int ti
 	if (effectHandle == -1) {
 		effectHandle = effectsDef.Append(NULL);
 	}
-
-	if (effectsDef[effectHandle] == NULL) {
-		effectsDef[effectHandle] = new rvRenderEffectLocal();
-	}
-
-	rvRenderEffectLocal* def = effectsDef[effectHandle];
-	def->parms = *reffect;
-	def->gameTime = time;
-	def->serviceTime = time - 1;
-	def->newEffect = true;
-	def->expired = false;
-	def->effect = NULL;
-	def->index = effectHandle;
-	def->world = this;
-	def->dynamicModel = NULL;
-	def->dynamicModelFrameCount = 0;
-	def->referenceBounds.Clear();
-
-	const float startTimeSeconds = static_cast<float>(time) * 0.001f;
-	if (!bse->PlayEffect(def, startTimeSeconds)) {
-		def->expired = true;
-	}
-
+	UpdateEffectDef( effectHandle, reffect, time );
 	return effectHandle;
 }
 
@@ -218,13 +197,58 @@ bool idRenderWorldLocal::UpdateEffectDef(qhandle_t effectHandle, const renderEff
 	if (effectHandle < 0 || effectHandle > LUDICROUS_INDEX) {
 		common->Error("idRenderWorld::UpdateEffectDef: index = %i", effectHandle);
 	}
-	if (effectHandle >= effectsDef.Num() || effectsDef[effectHandle] == NULL) {
-		return true;
+	while ( effectHandle >= effectsDef.Num() ) {
+		effectsDef.Append( NULL );
 	}
 
+	bool createNew = false;
 	rvRenderEffectLocal* def = effectsDef[effectHandle];
+	if ( def == NULL ) {
+		def = new rvRenderEffectLocal();
+		effectsDef[effectHandle] = def;
+		def->index = effectHandle;
+		def->world = this;
+		def->dynamicModel = NULL;
+		def->dynamicModelFrameCount = 0;
+		def->updateFramenum = -1;
+		def->newEffect = false;
+		def->expired = true;
+		def->archived = false;
+		def->referenceBounds.Clear();
+		def->effect = NULL;
+		createNew = true;
+	}
+
+	const idDecl *previousDeclEffect = def->parms.declEffect;
 	def->parms = *reffect;
 	def->gameTime = time;
+	def->lastModifiedFrameNum = tr.frameCount;
+	if ( session->writeDemo ) {
+		def->archived = false;
+	}
+
+	const bool declChanged = ( !createNew && previousDeclEffect != reffect->declEffect );
+	// Expiry is a terminal state for the current effect instance. Callers such as
+	// rvClientEffect expect UpdateEffectDef() to report that completion so they can
+	// free the handle; auto-recreating an expired one-shot effect turns impact
+	// sounds/decals into per-frame replays as long as the owner keeps updating it.
+	const bool recreateEffect = createNew || declChanged || def->effect == NULL;
+	if ( recreateEffect ) {
+		if ( def->effect != NULL ) {
+			bse->FreeEffect( def );
+			def->effect = NULL;
+		}
+		def->serviceTime = time - 1;
+		def->updateFramenum = -1;
+		def->newEffect = true;
+		def->expired = false;
+		def->referenceBounds.Clear();
+
+		const float startTimeSeconds = static_cast<float>( time ) * 0.001f;
+		if ( !bse->PlayEffect( def, startTimeSeconds ) ) {
+			def->expired = true;
+		}
+	}
 
 	return def->expired;
 }
@@ -235,6 +259,10 @@ void idRenderWorldLocal::FreeEffectDef(qhandle_t effectHandle) {
 	}
 	if (effectsDef[effectHandle] == NULL) {
 		return;
+	}
+
+	if ( session->writeDemo && effectsDef[effectHandle]->archived ) {
+		WriteFreeEffect( effectHandle );
 	}
 
 	if (effectsDef[effectHandle]->dynamicModel) {
@@ -257,6 +285,11 @@ void idRenderWorldLocal::StopEffectDef(qhandle_t effectHandle) {
 	}
 	if (effectsDef[effectHandle] == NULL)
 		return;
+
+	if ( session->writeDemo ) {
+		WriteStopEffect( effectHandle );
+		effectsDef[effectHandle]->archived = false;
+	}
 
 	bse->StopEffect(effectsDef[effectHandle]);
 }
@@ -423,6 +456,10 @@ void idRenderWorldLocal::FreeEntityDef( qhandle_t entityHandle ) {
 	def->parms.gui[ 0 ] = NULL;
 	def->parms.gui[ 1 ] = NULL;
 	def->parms.gui[ 2 ] = NULL;
+	if ( def->demoRemoteRenderView != NULL ) {
+		delete def->demoRemoteRenderView;
+		def->demoRemoteRenderView = NULL;
+	}
 
 	delete def;
 	entityDefs[ entityHandle ] = NULL;

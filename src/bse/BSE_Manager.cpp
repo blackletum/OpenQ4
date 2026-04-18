@@ -258,6 +258,16 @@ void rvBSEManagerLocal::StopEffect(rvRenderEffectLocal* def) {
 	}
 }
 
+bool rvBSEManagerLocal::IsEffectStopped(const rvRenderEffectLocal* def) const {
+	return ( def != NULL && def->effect != NULL ) ? def->effect->GetStopped() : false;
+}
+
+void rvBSEManagerLocal::SetEffectStopped(rvRenderEffectLocal* def, bool stopped) {
+	if ( def != NULL && def->effect != NULL ) {
+		def->effect->SetStopped( stopped );
+	}
+}
+
 void rvBSEManagerLocal::FreeEffect(rvRenderEffectLocal* def) {
 	if (def && def->index >= 0 && def->effect)
 	{

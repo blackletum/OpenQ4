@@ -96,7 +96,10 @@ typedef enum {
 	DC_DEFINE_MODEL,
 	DC_SET_PORTAL_STATE,
 	DC_UPDATE_SOUNDOCCLUSION,
-	DC_GUI_MODEL
+	DC_GUI_MODEL,
+	DC_UPDATE_EFFECTDEF,
+	DC_STOP_EFFECTDEF,
+	DC_DELETE_EFFECTDEF
 } demoCommand_t;
 
 /*
@@ -267,6 +270,7 @@ public:
 	virtual void			RemoveDecals();
 
 	renderEntity_t			parms;
+	struct renderView_s *	demoRemoteRenderView;	// owned storage for render-demo remote views
 
 	float					modelMatrix[16];		// this is just a rearrangement of parms.axis and parms.origin
 
@@ -277,6 +281,7 @@ public:
 													// and should go in the dynamic frame memory, or kept
 													// in the cached memory
 	bool					archived;				// for demo writing
+	bool					hasDemoRemoteRenderView;
 
 	idRenderModel *			dynamicModel;			// if parms.model->IsDynamicModel(), this is the generated data
 	int						dynamicModelFrameCount;	// continuously animating dynamic models will recreate

@@ -40,7 +40,6 @@ If you have questions concerning this license or the applicable additional terms
 void *R_StaticAlloc( int bytes );
 void R_StaticFree( void *data );
 
-#define RENDERDEMO_VERSION 4
 extern glconfig_t	glConfig;
 
 idCVar	idSessionLocal::com_showAngles( "com_showAngles", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
@@ -2676,7 +2675,7 @@ void idSessionLocal::StartRecordingRenderDemo( const char *demoName ) {
 	common->Printf( "recording to %s\n", writeDemo->GetName() );
 
 	writeDemo->WriteInt( DS_VERSION );
-	writeDemo->WriteInt( RENDERDEMO_VERSION );
+	writeDemo->WriteInt( OPENQ4_RENDERDEMO_CURRENT_VERSION );
 
 	// if we are in a map already, dump the current state
 	sw->StartWritingDemo( writeDemo );
@@ -4412,13 +4411,11 @@ void idSessionLocal::AdvanceRenderDemo( bool singleFrameOnly ) {
 			break;
 		}
 		if ( ds == DS_RENDER ) {
-// jmarshall - demos
-			//if ( rw->ProcessDemoCommand( readDemo, &currentDemoRenderView, NULL, &demoTimeOffset ) ) {
-			//	// a view is ready to render
-			//	skipFrames--;
-			//	numDemoFrames++;
-			//}
-// jmarshall end
+			if ( rw->ProcessDemoCommand( readDemo, &currentDemoRenderView, &demoTimeOffset ) ) {
+				// The render world returns true once the full frame payload has been consumed.
+				skipFrames--;
+				numDemoFrames++;
+			}
 			continue;
 		}
 		if ( ds == DS_SOUND ) {

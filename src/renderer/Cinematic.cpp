@@ -374,7 +374,7 @@ idCinematicLocal::ResetTime
 ==============
 */
 void idCinematicLocal::ResetTime(int time) {
-	startTime = (backEnd.viewDef) ? 1000 * backEnd.viewDef->floatTime : -1;
+	startTime = time;
 	status = FMV_PLAY;
 }
 

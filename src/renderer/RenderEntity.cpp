@@ -39,6 +39,8 @@ idRenderEntityLocal::idRenderEntityLocal() {
 	index					= 0;
 	lastModifiedFrameNum	= 0;
 	archived				= false;
+	hasDemoRemoteRenderView	= false;
+	demoRemoteRenderView	= NULL;
 	dynamicModel			= NULL;
 	dynamicModelFrameCount	= 0;
 	cachedDynamicModel		= NULL;

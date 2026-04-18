@@ -637,7 +637,7 @@ public:
 	// is less than 30hz
 	// demoTimeOffset will be set if a new map load command was processed before
 	// the next renderScene
-	//virtual bool			ProcessDemoCommand( idDemoFile *readDemo, renderView_t *demoRenderView, renderView_t *portalSkyRenderView, int *demoTimeOffset ) = 0;
+	virtual bool			ProcessDemoCommand( idDemoFile *readDemo, renderView_t *demoRenderView, int *demoTimeOffset ) = 0;
 
 	// this is used to regenerate all interactions ( which is currently only done during influences ), there may be a less 
 	// expensive way to do it

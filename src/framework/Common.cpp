@@ -256,6 +256,8 @@ public:
 	virtual bool				ServiceEffect( class rvRenderEffectLocal *def, float ownerTime, float presentationTime ) { return false; }
 	virtual idRenderModel *		RenderEffect( class rvRenderEffectLocal *def, const struct viewDef_s *view ) { return NULL; }
 	virtual void				StopEffect( rvRenderEffectLocal *def ) { }
+	virtual bool				IsEffectStopped( const rvRenderEffectLocal *def ) const { return false; }
+	virtual void				SetEffectStopped( rvRenderEffectLocal *def, bool stopped ) { }
 	virtual void				FreeEffect( rvRenderEffectLocal *def ) { }
 	virtual float				EffectDuration( const rvRenderEffectLocal *def ) { return 0.0f; }
 

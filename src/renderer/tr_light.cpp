@@ -1606,17 +1606,24 @@ void R_AddEffectSurfaces(void) {
 			++serviceSpawnGateFalse;
 		}
 
-		// Keep simulation/sound state moving even when the effect isn't rendered this frame.
-		++serviced;
-		const float ownerTimeSeconds = static_cast<float>(def->gameTime) * 0.001f;
-		const float presentationTimeSeconds = tr.viewDef->floatTime;
-		if (bse->ServiceEffect(def, ownerTimeSeconds, presentationTimeSeconds)) {
-			++expired;
-			if (def->dynamicModel) {
-				delete def->dynamicModel;
-				def->dynamicModel = NULL;
-				def->dynamicModelFrameCount = 0;
+		if ( def->updateFramenum != tr.frameCount ) {
+			// Effect servicing is view-independent. Run it once per rendered frame,
+			// then let each view reuse the resulting particle state/model rebuild.
+			++serviced;
+			const float ownerTimeSeconds = static_cast<float>(def->gameTime) * 0.001f;
+			const float presentationTimeSeconds = tr.viewDef->floatTime;
+			def->updateFramenum = tr.frameCount;
+			if (bse->ServiceEffect(def, ownerTimeSeconds, presentationTimeSeconds)) {
+				++expired;
+				if (def->dynamicModel) {
+					delete def->dynamicModel;
+					def->dynamicModel = NULL;
+					def->dynamicModelFrameCount = 0;
+				}
+				continue;
 			}
+		} else if ( def->expired ) {
+			++expired;
 			continue;
 		}
 		++alive;

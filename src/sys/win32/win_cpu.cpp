@@ -48,8 +48,11 @@ Sys_GetClockTicks
 double Sys_GetClockTicks(void) {
 	LARGE_INTEGER li;
 
-	QueryPerformanceCounter(&li);
-	return (double)li.LowPart + (double)0xFFFFFFFF * li.HighPart;
+	if ( !QueryPerformanceCounter( &li ) ) {
+		return 0.0;
+	}
+
+	return static_cast<double>( li.QuadPart );
 }
 
 /*
@@ -58,41 +61,16 @@ Sys_ClockTicksPerSecond
 ================
 */
 double Sys_ClockTicksPerSecond(void) {
-	static double ticks = 0;
-#if 0
+	static double ticks = 0.0;
 
-	if (!ticks) {
+	if ( ticks <= 0.0 ) {
 		LARGE_INTEGER li;
-		QueryPerformanceFrequency(&li);
-		ticks = li.QuadPart;
-	}
 
-#else
-
-	if (!ticks) {
-		HKEY hKey;
-		LPBYTE ProcSpeed;
-		DWORD buflen, ret;
-
-		if (!RegOpenKeyEx(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", 0, KEY_READ, &hKey)) {
-			ProcSpeed = 0;
-			buflen = sizeof(ProcSpeed);
-			ret = RegQueryValueEx(hKey, "~MHz", NULL, NULL, (LPBYTE)&ProcSpeed, &buflen);
-			// If we don't succeed, try some other spellings.
-			if (ret != ERROR_SUCCESS) {
-				ret = RegQueryValueEx(hKey, "~Mhz", NULL, NULL, (LPBYTE)&ProcSpeed, &buflen);
-			}
-			if (ret != ERROR_SUCCESS) {
-				ret = RegQueryValueEx(hKey, "~mhz", NULL, NULL, (LPBYTE)&ProcSpeed, &buflen);
-			}
-			RegCloseKey(hKey);
-			if (ret == ERROR_SUCCESS) {
-				ticks = (double)((unsigned long)ProcSpeed) * 1000000;
-			}
+		if ( QueryPerformanceFrequency( &li ) ) {
+			ticks = static_cast<double>( li.QuadPart );
 		}
 	}
 
-#endif
 	return ticks;
 }
 

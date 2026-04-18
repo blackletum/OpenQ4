@@ -582,6 +582,8 @@ public:
 	virtual	bool				ServiceEffect(class rvRenderEffectLocal* def, float ownerTime, float presentationTime);
 	virtual idRenderModel*		RenderEffect(class rvRenderEffectLocal* def, const struct viewDef_s* view);
 	virtual	void				StopEffect(rvRenderEffectLocal* def);
+	virtual bool				IsEffectStopped(const rvRenderEffectLocal* def) const;
+	virtual void				SetEffectStopped(rvRenderEffectLocal* def, bool stopped);
 	virtual	void				FreeEffect(rvRenderEffectLocal* def);
 	virtual	float				EffectDuration(const rvRenderEffectLocal* def);
 

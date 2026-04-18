@@ -90,7 +90,7 @@ void idGuiModel::WriteToDemo( idDemoFile *demo ) {
 	for ( j = 0 ; j < i ; j++ ) {
 		guiModelSurface_t	*surf = &surfaces[j];
 		
-		demo->WriteInt( (int&)surf->material );
+		demo->WriteBool( surf->material != NULL );
 		demo->WriteFloat( surf->color[0] );
 		demo->WriteFloat( surf->color[1] );
 		demo->WriteFloat( surf->color[2] );
@@ -99,7 +99,9 @@ void idGuiModel::WriteToDemo( idDemoFile *demo ) {
 		demo->WriteInt( surf->numVerts );
 		demo->WriteInt( surf->firstIndex );
 		demo->WriteInt( surf->numIndexes );
-		demo->WriteHashString( surf->material->GetName() );
+		if ( surf->material != NULL ) {
+			demo->WriteHashString( surf->material->GetName() );
+		}
 	}
 }
 
@@ -139,8 +141,14 @@ void idGuiModel::ReadFromDemo( idDemoFile *demo ) {
 	surfaces.SetNum( i, false );
 	for ( j = 0 ; j < i ; j++ ) {
 		guiModelSurface_t	*surf = &surfaces[j];
+		bool				hasMaterial = false;
 		
-		demo->ReadInt( (int&)surf->material );
+		if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_POINTER_FREE_VERSION ) {
+			demo->ReadBool( hasMaterial );
+		} else {
+			demo->ReadInt( (int&)surf->material );
+			hasMaterial = ( surf->material != NULL );
+		}
 		demo->ReadFloat( surf->color[0] );
 		demo->ReadFloat( surf->color[1] );
 		demo->ReadFloat( surf->color[2] );
@@ -149,7 +157,7 @@ void idGuiModel::ReadFromDemo( idDemoFile *demo ) {
 		demo->ReadInt( surf->numVerts );
 		demo->ReadInt( surf->firstIndex );
 		demo->ReadInt( surf->numIndexes );
-		surf->material = declManager->FindMaterial( demo->ReadHashString() );
+		surf->material = hasMaterial ? declManager->FindMaterial( demo->ReadHashString() ) : NULL;
 	}
 }
 

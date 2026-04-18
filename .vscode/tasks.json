@@ -10,16 +10,8 @@
         "-ExecutionPolicy",
         "Bypass",
         "-File",
-        "${workspaceFolder}\\tools\\build\\meson_setup.ps1",
-        "setup",
-        "--wipe",
-        "${workspaceFolder}\\builddir",
-        "${workspaceFolder}",
-        "--backend",
-        "ninja",
-        "--buildtype",
-        "debug",
-        "--wrap-mode=forcefallback"
+        "${workspaceFolder}\\.vscode\\meson-task.ps1",
+        "setup"
       ],
       "problemMatcher": []
     },
@@ -32,10 +24,8 @@
         "-ExecutionPolicy",
         "Bypass",
         "-File",
-        "${workspaceFolder}\\tools\\build\\meson_setup.ps1",
-        "compile",
-        "-C",
-        "${workspaceFolder}\\builddir"
+        "${workspaceFolder}\\.vscode\\meson-task.ps1",
+        "compile"
       ],
       "problemMatcher": [
         "$msCompile"
@@ -50,12 +40,8 @@
         "-ExecutionPolicy",
         "Bypass",
         "-File",
-        "${workspaceFolder}\\tools\\build\\meson_setup.ps1",
-        "install",
-        "-C",
-        "${workspaceFolder}\\builddir",
-        "--no-rebuild",
-        "--skip-subprojects"
+        "${workspaceFolder}\\.vscode\\meson-task.ps1",
+        "install"
       ],
       "problemMatcher": []
     },
@@ -63,6 +49,7 @@
       "label": "Build OpenQ4 (Meson Debug)",
       "dependsOrder": "sequence",
       "dependsOn": [
+        "Configure OpenQ4 (Meson Debug)",
         "Compile OpenQ4 (Meson Debug)",
         "Stage OpenQ4 Install Tree (Meson Debug)"
       ],

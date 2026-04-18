@@ -1018,32 +1018,43 @@ SCR_DrawFPS
 float SCR_DrawFPS( float y ) {
 	char		*s;
 	float		w;
-	static int	previousTimes[FPS_FRAMES];
+	static double	previousTimes[FPS_FRAMES];
 	static int	index;
-	int		i, total;
+	int		i;
 	int		fps;
-	static	int	previous;
-	int		t, frameTime;
+	static	double	previous;
+	double	t;
+	double	frameTime;
+	double	total;
+	const double clockTicksPerSecond = Sys_ClockTicksPerSecond();
 
 	// don't use serverTime, because that will be drifting to
 	// correct for internet lag changes, timescales, timedemos, etc
-	t = Sys_Milliseconds();
-	frameTime = t - previous;
+	if ( clockTicksPerSecond <= 0.0 ) {
+		return y + BIGCHAR_HEIGHT + 4;
+	}
+
+	t = Sys_GetClockTicks();
+	if ( previous <= 0.0 || t <= previous ) {
+		previous = t;
+		return y + BIGCHAR_HEIGHT + 4;
+	}
+
+	frameTime = ( t - previous ) * 1000.0 / clockTicksPerSecond;
 	previous = t;
 
 	previousTimes[index % FPS_FRAMES] = frameTime;
 	index++;
 	if ( index > FPS_FRAMES ) {
 		// average multiple frames together to smooth changes out a bit
-		total = 0;
+		total = 0.0;
 		for ( i = 0 ; i < FPS_FRAMES ; i++ ) {
 			total += previousTimes[i];
 		}
-		if ( !total ) {
-			total = 1;
+		if ( total <= 0.0 ) {
+			total = 1.0;
 		}
-		fps = 10000 * FPS_FRAMES / total;
-		fps = (fps + 5)/10;
+		fps = idMath::FtoiFast( ( 1000.0 * FPS_FRAMES / total ) + 0.5 );
 
 		s = va( "%ifps", fps );
 		w = strlen( s ) * localConsole.GetBigCharWidth();
