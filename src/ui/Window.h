@@ -389,6 +389,10 @@ protected:
 	friend class idSimpleWindow;
 	friend class idUserInterfaceLocal;
 	bool IsSimple();
+	bool HasDirectChildReference( const idWindow *window ) const;
+	bool HasDescendantReference( const idWindow *window ) const;
+	void ClearTrackedWindowReference( const idWindow *window );
+	void ValidateTrackedWindowPointers();
 	void UpdateWinVars();
 	void DisableRegister(const char *_name);
 	void Transition();

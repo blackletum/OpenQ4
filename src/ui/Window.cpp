@@ -655,6 +655,13 @@ idWindow::CleanUp
 ================
 */
 void idWindow::CleanUp() {
+	if ( gui != NULL ) {
+		idWindow *desktop = gui->GetDesktop();
+		if ( desktop != NULL && desktop != this ) {
+			desktop->ClearTrackedWindowReference( this );
+		}
+	}
+
 	int i, c = drawWindows.Num();
 	for (i = 0; i < c; i++) {
 		delete drawWindows[i].simp;
@@ -840,6 +847,8 @@ idWindow::RouteMouseCoords
 */
 const char *idWindow::RouteMouseCoords(float xd, float yd) {
 	idStr str;
+	ValidateTrackedWindowPointers();
+
 	if (GetCaptureChild()) {
 		//FIXME: unkludge this whole mechanism
 		return GetCaptureChild()->RouteMouseCoords(xd, yd);
@@ -2188,6 +2197,11 @@ idWindow::GetCaptureChild
 */
 idWindow *idWindow::GetCaptureChild() {
 	if (flags & WIN_DESKTOP) {
+		ValidateTrackedWindowPointers();
+		return captureChild;
+	}
+	if ( gui && gui->GetDesktop() ) {
+		gui->GetDesktop()->ValidateTrackedWindowPointers();
 		return gui->GetDesktop()->captureChild;
 	}
 	return NULL;
@@ -2200,6 +2214,11 @@ idWindow::GetFocusedChild
 */
 idWindow *idWindow::GetFocusedChild() {
 	if (flags & WIN_DESKTOP) {
+		ValidateTrackedWindowPointers();
+		return focusedChild;
+	}
+	if ( gui && gui->GetDesktop() ) {
+		gui->GetDesktop()->ValidateTrackedWindowPointers();
 		return gui->GetDesktop()->focusedChild;
 	}
 	return NULL;
@@ -2213,9 +2232,16 @@ idWindow::SetFocus
 */
 idWindow *idWindow::SetFocus(idWindow *w, bool scripts) {
 	// only one child can have the focus
+	if ( gui == NULL || gui->GetDesktop() == NULL || w == NULL ) {
+		return NULL;
+	}
+
+	idWindow *desktop = gui->GetDesktop();
+	desktop->ValidateTrackedWindowPointers();
+
 	idWindow *lastFocus = NULL;
 	if (w->flags & WIN_CANFOCUS) {
-		lastFocus = gui->GetDesktop()->focusedChild;
+		lastFocus = desktop->focusedChild;
 		if ( lastFocus ) {
 			lastFocus->flags &= ~WIN_FOCUS;
 			lastFocus->LoseFocus();
@@ -2234,10 +2260,80 @@ idWindow *idWindow::SetFocus(idWindow *w, bool scripts) {
 
 		w->flags |= WIN_FOCUS;
 		w->GainFocus();
-		gui->GetDesktop()->focusedChild = w;
+		desktop->focusedChild = w;
 	}
 
 	return lastFocus;
+}
+
+bool idWindow::HasDirectChildReference( const idWindow *window ) const {
+	if ( window == NULL ) {
+		return false;
+	}
+
+	for ( int i = 0; i < children.Num(); ++i ) {
+		if ( children[i] == window ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool idWindow::HasDescendantReference( const idWindow *window ) const {
+	if ( window == NULL ) {
+		return false;
+	}
+	if ( this == window ) {
+		return true;
+	}
+
+	for ( int i = 0; i < children.Num(); ++i ) {
+		idWindow *child = children[i];
+		if ( child != NULL && child->HasDescendantReference( window ) ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+void idWindow::ClearTrackedWindowReference( const idWindow *window ) {
+	if ( window == NULL ) {
+		return;
+	}
+
+	if ( focusedChild == window ) {
+		focusedChild = NULL;
+	}
+	if ( captureChild == window ) {
+		captureChild = NULL;
+	}
+	if ( overChild == window ) {
+		overChild = NULL;
+	}
+
+	for ( int i = 0; i < children.Num(); ++i ) {
+		idWindow *child = children[i];
+		if ( child != NULL && child != window ) {
+			child->ClearTrackedWindowReference( window );
+		}
+	}
+}
+
+void idWindow::ValidateTrackedWindowPointers() {
+	if ( overChild != NULL && !HasDirectChildReference( overChild ) ) {
+		overChild = NULL;
+	}
+
+	if ( ( flags & WIN_DESKTOP ) != 0 ) {
+		if ( focusedChild != NULL && !HasDescendantReference( focusedChild ) ) {
+			focusedChild = NULL;
+		}
+		if ( captureChild != NULL && !HasDescendantReference( captureChild ) ) {
+			captureChild = NULL;
+		}
+	}
 }
 
 /*
