@@ -249,6 +249,7 @@ public:
 	void					AddWorldModelEntities();
 	void					ClearPortalStates();
 	virtual	bool			InitFromMap( const char *mapName );
+	bool					WriteMD5R( bool compressed );
 	void					SetupLightGrid();
 	void					LoadLightGridImages( bool forceReloadLoaded = false );
 	bool					LoadLightGridFile( const char *name );

@@ -481,6 +481,33 @@ void idRenderWorldLocal::ClearWorld() {
 }
 
 /*
+===========================
+idRenderWorldLocal::WriteMD5R
+
+Retail Quake 4 writes converted MD5R proc worlds from here. OpenQ4 keeps the
+same seam in place so the export command follows the retail call flow even
+before the packed MD5R runtime is ported.
+===========================
+*/
+bool idRenderWorldLocal::WriteMD5R( bool compressed ) {
+	(void)compressed;
+
+	const char *worldName = mapName.Length() > 0 ? mapName.c_str() : "<unnamed>";
+
+	if ( !R_IsMD5RWriteAvailable() ) {
+		common->Warning(
+			"idRenderWorldLocal::WriteMD5R: packed MD5R proc export is not compiled into this build for world '%s'",
+			worldName );
+		return false;
+	}
+
+	common->Warning(
+		"idRenderWorldLocal::WriteMD5R: MD5R proc export is not implemented in OpenQ4 yet for world '%s'",
+		worldName );
+	return false;
+}
+
+/*
 =================
 idRenderWorldLocal::FreeDefs
 

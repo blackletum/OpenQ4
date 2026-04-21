@@ -261,9 +261,10 @@ public:
 #endif
 // RAVEN END
 
+	virtual	void			ExportMD5R( bool compressed ) = 0;
+
 #ifdef Q4SDK_MD5R
 
-	virtual	void			ExportMD5R( bool compressed ) = 0;
 	virtual void			CopyPrimBatchTriangles( idDrawVert *destDrawVerts, glIndex_t *destIndices, void *primBatchMesh, void *silTraceVerts ) = 0;
 
 #else	// Q4SDK_MD5R
@@ -272,9 +273,6 @@ public:
 // dluetscher: added call to write out the MD5R models that have been converted at load,
 //			   also added call to retrieve idDrawVert geometry from a MD5R primitive batch 
 //			   from the game DLL
-#if defined( _MD5R_WRITE_SUPPORT ) && defined( _MD5R_SUPPORT )
-	virtual	void			ExportMD5R( bool compressed ) = 0;
-#endif
 #if defined( _MD5R_SUPPORT )
 	virtual void			CopyPrimBatchTriangles( idDrawVert *destDrawVerts, glIndex_t *destIndices, rvMesh *primBatchMesh, const rvSilTraceVertT *silTraceVerts ) = 0;
 #endif
