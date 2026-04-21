@@ -37,6 +37,28 @@ typedef struct {
 	idMat3		axis;
 } orientation_t;
 
+static ID_INLINE bool R_GetSubviewVertexPosition( const srfTriangles_t *tri, int index, idVec3 &position ) {
+	if ( tri == NULL || index < 0 || index >= tri->numVerts ) {
+		position.Zero();
+		return false;
+	}
+
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	if ( tri->silTraceVerts != NULL ) {
+		position = reinterpret_cast<const rvSilTraceVertT *>( tri->silTraceVerts )[index].xyzw.ToVec3();
+		return true;
+	}
+#endif
+
+	if ( tri->verts == NULL ) {
+		position.Zero();
+		return false;
+	}
+
+	position = tri->verts[index].xyz;
+	return true;
+}
+
 static ID_INLINE void R_SyncSubviewTime( viewDef_t *parms ) {
 	parms->floatTime = parms->renderView.time * 0.001f;
 }
@@ -89,12 +111,18 @@ FIXME: check for degenerate triangle?
 =============
 */
 static void R_PlaneForSurface( const srfTriangles_t *tri, idPlane &plane ) {
-	idDrawVert		*v1, *v2, *v3;
+	idVec3 v1, v2, v3;
 
-	v1 = tri->verts + tri->indexes[0];
-	v2 = tri->verts + tri->indexes[1];
-	v3 = tri->verts + tri->indexes[2];
-	plane.FromPoints( v1->xyz, v2->xyz, v3->xyz );
+	if ( tri == NULL || tri->numIndexes < 3
+		|| !R_GetSubviewVertexPosition( tri, tri->indexes[0], v1 )
+		|| !R_GetSubviewVertexPosition( tri, tri->indexes[1], v2 )
+		|| !R_GetSubviewVertexPosition( tri, tri->indexes[2], v3 ) ) {
+		plane.SetNormal( idVec3( 0.0f, 0.0f, 1.0f ) );
+		plane[3] = 0.0f;
+		return;
+	}
+
+	plane.FromPoints( v1, v2, v3 );
 }
 
 /*
@@ -115,14 +143,12 @@ bool R_PreciseCullSurface( const drawSurf_t *drawSurf, idBounds &ndcBounds ) {
 	int numTriangles;
 	idPlane clip, eye;
 	int i, j;
-	unsigned int pointOr;
 	unsigned int pointAnd;
 	idVec3 localView;
 	idFixedWinding w;
 
 	tri = drawSurf->geo;
 
-	pointOr = 0;
 	pointAnd = (unsigned int)~0;
 
 	// get an exact bounds of the triangles for scissor cropping
@@ -131,8 +157,13 @@ bool R_PreciseCullSurface( const drawSurf_t *drawSurf, idBounds &ndcBounds ) {
 	for ( i = 0; i < tri->numVerts; i++ ) {
 		int j;
 		unsigned int pointFlags;
+		idVec3 localPoint;
 
-		R_TransformModelToClip( tri->verts[i].xyz, drawSurf->space->modelViewMatrix,
+		if ( !R_GetSubviewVertexPosition( tri, i, localPoint ) ) {
+			return true;
+		}
+
+		R_TransformModelToClip( localPoint, drawSurf->space->modelViewMatrix,
 			tr.viewDef->projectionMatrix, eye, clip );
 
 		pointFlags = 0;
@@ -145,7 +176,6 @@ bool R_PreciseCullSurface( const drawSurf_t *drawSurf, idBounds &ndcBounds ) {
 		}
 
 		pointAnd &= pointFlags;
-		pointOr |= pointFlags;
 	}
 
 	// trivially reject
@@ -162,10 +192,13 @@ bool R_PreciseCullSurface( const drawSurf_t *drawSurf, idBounds &ndcBounds ) {
 		idVec3	dir, normal;
 		float	dot;
 		idVec3	d1, d2;
+		idVec3	v1, v2, v3;
 
-		const idVec3 &v1 = tri->verts[tri->indexes[i]].xyz;
-		const idVec3 &v2 = tri->verts[tri->indexes[i+1]].xyz;
-		const idVec3 &v3 = tri->verts[tri->indexes[i+2]].xyz;
+		if ( !R_GetSubviewVertexPosition( tri, tri->indexes[i], v1 )
+			|| !R_GetSubviewVertexPosition( tri, tri->indexes[i+1], v2 )
+			|| !R_GetSubviewVertexPosition( tri, tri->indexes[i+2], v3 ) ) {
+			continue;
+		}
 
 		// this is a hack, because R_GlobalPointToLocal doesn't work with the non-normalized
 		// axis that we get from the gui view transform.  It doesn't hurt anything, because

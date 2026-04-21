@@ -30,6 +30,35 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "tr_local.h"
 
+static ID_INLINE void R_ClearGuiTextureAxes( idVec3 &origin, idVec3 axis[3] ) {
+	origin.Zero();
+	axis[0].Zero();
+	axis[1].Zero();
+	axis[2].Zero();
+}
+
+static ID_INLINE bool R_GetGuiVertexPosition( const srfTriangles_t *tri, int index, idVec3 &position ) {
+	if ( tri == NULL || index < 0 || index >= tri->numVerts ) {
+		position.Zero();
+		return false;
+	}
+
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	if ( tri->silTraceVerts != NULL ) {
+		position = reinterpret_cast<const rvSilTraceVertT *>( tri->silTraceVerts )[index].xyzw.ToVec3();
+		return true;
+	}
+#endif
+
+	if ( tri->verts == NULL ) {
+		position.Zero();
+		return false;
+	}
+
+	position = tri->verts[index].xyz;
+	return true;
+}
+
 /*
 ==========================================================================================
 
@@ -54,6 +83,12 @@ void R_SurfaceToTextureAxis( const srfTriangles_t *tri, idVec3 &origin, idVec3 a
 	float		boundsOrg[2];
 	int			i, j;
 	float		v;
+	idVec3		aPos, bPos, cPos;
+
+	if ( tri == NULL || tri->verts == NULL || tri->numVerts <= 0 || tri->numIndexes < 3 ) {
+		R_ClearGuiTextureAxes( origin, axis );
+		return;
+	}
 	
 	// find the bounds of the texture
 	bounds[0][0] = bounds[0][1] = 999999;
@@ -81,19 +116,23 @@ void R_SurfaceToTextureAxis( const srfTriangles_t *tri, idVec3 &origin, idVec3 a
 	a = tri->verts + tri->indexes[0];
 	b = tri->verts + tri->indexes[1];
 	c = tri->verts + tri->indexes[2];
+	if ( !R_GetGuiVertexPosition( tri, tri->indexes[0], aPos )
+		|| !R_GetGuiVertexPosition( tri, tri->indexes[1], bPos )
+		|| !R_GetGuiVertexPosition( tri, tri->indexes[2], cPos ) ) {
+		R_ClearGuiTextureAxes( origin, axis );
+		return;
+	}
 
-	VectorSubtract( b->xyz, a->xyz, d0 );
+	VectorSubtract( bPos, aPos, d0 );
 	d0[3] = b->st[0] - a->st[0];
 	d0[4] = b->st[1] - a->st[1];
-	VectorSubtract( c->xyz, a->xyz, d1 );
+	VectorSubtract( cPos, aPos, d1 );
 	d1[3] = c->st[0] - a->st[0];
 	d1[4] = c->st[1] - a->st[1];
 
 	area = d0[3] * d1[4] - d0[4] * d1[3];
 	if ( area == 0.0 ) {
-		axis[0].Zero();
-		axis[1].Zero();
-		axis[2].Zero();
+		R_ClearGuiTextureAxes( origin, axis );
 		return;	// degenerate
 	}
 	inva = 1.0 / area;
@@ -107,14 +146,14 @@ void R_SurfaceToTextureAxis( const srfTriangles_t *tri, idVec3 &origin, idVec3 a
     axis[1][2] = (d0[3] * d1[2] - d0[2] * d1[3]) * inva;
 
 	idPlane plane;
-	plane.FromPoints( a->xyz, b->xyz, c->xyz );
+	plane.FromPoints( aPos, bPos, cPos );
 	axis[2][0] = plane[0];
 	axis[2][1] = plane[1];
 	axis[2][2] = plane[2];
 
 	// take point 0 and project the vectors to the texture origin
-	VectorMA( a->xyz, boundsOrg[0] - a->st[0], axis[0], origin );
-	VectorMA( origin, boundsOrg[1] - a->st[1], axis[1], origin );
+	origin = aPos + ( boundsOrg[0] - a->st[0] ) * axis[0];
+	origin += ( boundsOrg[1] - a->st[1] ) * axis[1];
 }
 
 static idScreenRect R_ScreenRectFromDrawSurf( const drawSurf_t *drawSurf ) {
@@ -127,10 +166,15 @@ static idScreenRect R_ScreenRectFromDrawSurf( const drawSurf_t *drawSurf ) {
 
 	const srfTriangles_t *geo = drawSurf->geo;
 	for ( int i = 0; i < geo->numVerts; ++i ) {
+		idVec3 local;
 		idVec3 global;
 		idVec3 ndc;
 
-		R_LocalPointToGlobal( drawSurf->space->modelMatrix, geo->verts[i].xyz, global );
+		if ( !R_GetGuiVertexPosition( geo, i, local ) ) {
+			continue;
+		}
+
+		R_LocalPointToGlobal( drawSurf->space->modelMatrix, local, global );
 		R_GlobalToNormalizedDeviceCoordinates( global, ndc );
 
 		const float x = static_cast<float>( tr.viewDef->viewport.x2 - tr.viewDef->viewport.x1 ) * ( ndc[0] + 1.0f ) * 0.5f;

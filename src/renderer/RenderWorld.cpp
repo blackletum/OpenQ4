@@ -1182,6 +1182,9 @@ guiPoint_t	idRenderWorldLocal::GuiTrace( qhandle_t entityHandle, const idVec3 st
 
 			axisLen[0] = axis[0].Length();
 			axisLen[1] = axis[1].Length();
+			if ( axisLen[0] <= 0.0f || axisLen[1] <= 0.0f ) {
+				continue;
+			}
 
 			pt.x = ( cursor * axis[0] ) / ( axisLen[0] * axisLen[0] );
 			pt.y = ( cursor * axis[1] ) / ( axisLen[1] * axisLen[1] );
@@ -1204,7 +1207,7 @@ static const rvDeclMatType *R_GetMaterialTypeForTrace( const idMaterial *shader,
 		return NULL;
 	}
 
-	if ( shader->GetMaterialTypeArray() == NULL ) {
+	if ( shader->GetMaterialTypeArray() == NULL || tri == NULL || tri->verts == NULL ) {
 		return shader->GetMaterialType();
 	}
 
