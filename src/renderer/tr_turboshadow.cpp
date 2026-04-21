@@ -34,6 +34,34 @@ If you have questions concerning this license or the applicable additional terms
 int	c_turboUsedVerts;
 int c_turboUnusedVerts;
 
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+static int R_CreateShadowCacheFromSilTraceVerts( idVec4 *vertexCache, int *vertRemap, const idVec3 &lightOrigin, const rvSilTraceVertT *silTraceVerts, int numVerts ) {
+	int outVerts = 0;
+
+	for ( int i = 0; i < numVerts; ++i ) {
+		if ( vertRemap[i] ) {
+			continue;
+		}
+
+		const idVec4 &position = silTraceVerts[i].xyzw;
+		vertexCache[outVerts + 0][0] = position.x;
+		vertexCache[outVerts + 0][1] = position.y;
+		vertexCache[outVerts + 0][2] = position.z;
+		vertexCache[outVerts + 0][3] = 1.0f;
+
+		vertexCache[outVerts + 1][0] = position.x - lightOrigin[0];
+		vertexCache[outVerts + 1][1] = position.y - lightOrigin[1];
+		vertexCache[outVerts + 1][2] = position.z - lightOrigin[2];
+		vertexCache[outVerts + 1][3] = 0.0f;
+
+		vertRemap[i] = outVerts;
+		outVerts += 2;
+	}
+
+	return outVerts;
+}
+#endif
+
 
 /*
 =====================
@@ -263,7 +291,22 @@ srfTriangles_t *R_CreateTurboShadowVolume( const idRenderEntityLocal *ent,
 		vertRemap[tri->silIndexes[i+2]] = 0;
 	}
 
-	newTri->numVerts = SIMDProcessor->CreateShadowCache( &shadowVerts->xyz, vertRemap, localLightOrigin, tri->verts, tri->numVerts );
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	if ( tri->silTraceVerts != NULL ) {
+		newTri->numVerts = R_CreateShadowCacheFromSilTraceVerts(
+			&shadowVerts->xyz,
+			vertRemap,
+			localLightOrigin,
+			reinterpret_cast<const rvSilTraceVertT *>( tri->silTraceVerts ),
+			tri->numVerts );
+	} else
+#endif
+	if ( tri->verts != NULL ) {
+		newTri->numVerts = SIMDProcessor->CreateShadowCache( &shadowVerts->xyz, vertRemap, localLightOrigin, tri->verts, tri->numVerts );
+	} else {
+		R_ReallyFreeStaticTriSurf( newTri );
+		return NULL;
+	}
 
 	c_turboUsedVerts += newTri->numVerts;
 	c_turboUnusedVerts += tri->numVerts * 2 - newTri->numVerts;

@@ -48,6 +48,22 @@ idCVar bse_useFrustumCull(
 	CVAR_RENDERER | CVAR_BOOL,
 	"if 1, apply renderer frustum culling to BSE effect defs/surfaces");
 
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+static void R_CreateVertexProgramShadowCacheFromSilTraceVerts( shadowCache_t *temp, const rvSilTraceVertT *silTraceVerts, int numVerts ) {
+	for ( int i = 0; i < numVerts; ++i ) {
+		const idVec4 &position = silTraceVerts[i].xyzw;
+		temp[i * 2 + 0].xyz[0] = position.x;
+		temp[i * 2 + 1].xyz[0] = position.x;
+		temp[i * 2 + 0].xyz[1] = position.y;
+		temp[i * 2 + 1].xyz[1] = position.y;
+		temp[i * 2 + 0].xyz[2] = position.z;
+		temp[i * 2 + 1].xyz[2] = position.z;
+		temp[i * 2 + 0].xyz[3] = 1.0f;
+		temp[i * 2 + 1].xyz[3] = 0.0f;
+	}
+}
+#endif
+
 
 /*
 ===========================================================================================
@@ -176,15 +192,25 @@ takes care of projecting the verts to infinity.
 ==================
 */
 void R_CreateVertexProgramShadowCache( srfTriangles_t *tri ) {
-	if ( tri == NULL || tri->verts == NULL || tri->numVerts <= 0 ) {
+	if ( tri == NULL || tri->numVerts <= 0 ) {
 		return;
 	}
 
 	shadowCache_t *temp = (shadowCache_t *)_alloca16( tri->numVerts * 2 * sizeof( shadowCache_t ) );
 
 #if 1
-
-	SIMDProcessor->CreateVertexProgramShadowCache( &temp->xyz, tri->verts, tri->numVerts );
+	if ( tri->verts != NULL ) {
+		SIMDProcessor->CreateVertexProgramShadowCache( &temp->xyz, tri->verts, tri->numVerts );
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	} else if ( tri->silTraceVerts != NULL ) {
+		R_CreateVertexProgramShadowCacheFromSilTraceVerts(
+			temp,
+			reinterpret_cast<const rvSilTraceVertT *>( tri->silTraceVerts ),
+			tri->numVerts );
+#endif
+	} else {
+		return;
+	}
 
 #else
 

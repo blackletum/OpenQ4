@@ -126,6 +126,35 @@ static bool R_ShouldSkipPointLightEmitterCaster( const idMaterial *shadowShader,
 	return ambientTris->bounds.Expand( emitterBoundsPad ).ContainsPoint( localLightOrigin );
 }
 
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+static ID_INLINE const rvSilTraceVertT *R_GetInteractionSilTraceVerts( const srfTriangles_t *tri ) {
+	return ( tri != NULL && tri->silTraceVerts != NULL )
+		? reinterpret_cast<const rvSilTraceVertT *>( tri->silTraceVerts )
+		: NULL;
+}
+#endif
+
+static void R_BoundInteractionSurface( const srfTriangles_t *tri, const glIndex_t *indexes, int numIndexes, idBounds &bounds ) {
+	if ( numIndexes <= 0 ) {
+		bounds.Clear();
+		return;
+	}
+
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	if ( const rvSilTraceVertT *silTraceVerts = R_GetInteractionSilTraceVerts( tri ) ) {
+		const idVec3 firstPoint = silTraceVerts[indexes[0]].xyzw.ToVec3();
+		bounds[0] = firstPoint;
+		bounds[1] = firstPoint;
+		for ( int i = 1; i < numIndexes; ++i ) {
+			bounds.AddPoint( silTraceVerts[indexes[i]].xyzw.ToVec3() );
+		}
+		return;
+	}
+#endif
+
+	SIMDProcessor->MinMax( bounds[0], bounds[1], tri->verts, indexes, numIndexes );
+}
+
 /*
 ================
 R_CalcInteractionFacing
@@ -204,12 +233,22 @@ void R_CalcInteractionCullBits( const idRenderEntityLocal *ent, const srfTriangl
 	SIMDProcessor->Memset( cullInfo.cullBits, 0, tri->numVerts * sizeof( cullInfo.cullBits[0] ) );
 
 	float *planeSide = (float *) _alloca16( tri->numVerts * sizeof( float ) );
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	const rvSilTraceVertT *silTraceVerts = R_GetInteractionSilTraceVerts( tri );
+#endif
 
 	for ( i = 0; i < 6; i++ ) {
 		// if completely infront of this clipping plane
 		if ( frontBits & ( 1 << i ) ) {
 			continue;
 		}
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+		if ( silTraceVerts != NULL ) {
+			for ( int vertNum = 0; vertNum < tri->numVerts; ++vertNum ) {
+				planeSide[vertNum] = cullInfo.localClipPlanes[i].Distance( silTraceVerts[vertNum].xyzw.ToVec3() );
+			}
+		} else
+#endif
 		SIMDProcessor->Dot( planeSide, cullInfo.localClipPlanes[i], tri->verts, tri->numVerts );
 		SIMDProcessor->CmpLT( cullInfo.cullBits, i, planeSide, LIGHT_CLIP_EPSILON, tri->numVerts );
 	}
@@ -440,7 +479,7 @@ static srfTriangles_t *R_CreateLightTris( const idRenderEntityLocal *ent,
 			}
 
 			// get bounds for the surface
-			SIMDProcessor->MinMax( bounds[0], bounds[1], tri->verts, indexes, numIndexes );
+			R_BoundInteractionSurface( tri, indexes, numIndexes, bounds );
 
 			// decrease the size of the memory block to the size of the number of used indexes
 			R_ResizeStaticTriSurfIndexes( newTri, numIndexes );
@@ -499,7 +538,7 @@ static srfTriangles_t *R_CreateLightTris( const idRenderEntityLocal *ent,
 		}
 
 		// get bounds for the surface
-		SIMDProcessor->MinMax( bounds[0], bounds[1], tri->verts, indexes, numIndexes );
+		R_BoundInteractionSurface( tri, indexes, numIndexes, bounds );
 
 		// decrease the size of the memory block to the size of the number of used indexes
 		R_ResizeStaticTriSurfIndexes( newTri, numIndexes );

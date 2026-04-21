@@ -921,6 +921,22 @@ void R_DeriveFacePlanes( srfTriangles_t *tri ) {
 	planes = tri->facePlanes;
 
 #if 1
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	if ( tri->silTraceVerts != NULL ) {
+		const rvSilTraceVertT *silTraceVerts = reinterpret_cast<const rvSilTraceVertT *>( tri->silTraceVerts );
+		for ( int i = 0; i < tri->numIndexes; i += 3, ++planes ) {
+			const int i1 = tri->indexes[i + 0];
+			const int i2 = tri->indexes[i + 1];
+			const int i3 = tri->indexes[i + 2];
+			planes->FromPoints(
+				silTraceVerts[i1].xyzw.ToVec3(),
+				silTraceVerts[i2].xyzw.ToVec3(),
+				silTraceVerts[i3].xyzw.ToVec3() );
+		}
+		tri->facePlanesCalculated = true;
+		return;
+	}
+#endif
 
 	SIMDProcessor->DeriveTriPlanes( planes, tri->verts, tri->numVerts, tri->indexes, tri->numIndexes );
 
