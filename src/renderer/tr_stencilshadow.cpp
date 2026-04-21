@@ -1189,6 +1189,24 @@ void R_MakeShadowFrustums( idRenderLightLocal *light ) {
 }
 
 /*
+=====================
+R_CreateTurboShadowVolumeForSurface
+
+Packed MD5R prim-batch surfaces only participate in the infinite turbo-shadow
+path. The classic capped stencil builder below assumes ordinary tri-surf
+geometry and should never be fed packed surfaces directly.
+=====================
+*/
+static srfTriangles_t *R_CreateTurboShadowVolumeForSurface( const idRenderEntityLocal *ent,
+		const srfTriangles_t *tri, const idRenderLightLocal *light, srfCullInfo_t &cullInfo ) {
+	if ( tr.backEndRendererHasVertexPrograms && r_useShadowVertexProgram.GetBool() ) {
+		return R_CreateVertexProgramTurboShadowVolume( ent, tri, light, cullInfo );
+	}
+
+	return R_CreateTurboShadowVolume( ent, tri, light, cullInfo );
+}
+
+/*
 =================
 R_CreateShadowVolume
 
@@ -1244,12 +1262,16 @@ srfTriangles_t *R_CreateShadowVolume( const idRenderEntityLocal *ent,
 	// trades somewhat more overdraw and no cap optimizations for
 	// a very simple generation process
 	if ( optimize == SG_DYNAMIC && r_useTurboShadow.GetBool() ) {
-		if ( tr.backEndRendererHasVertexPrograms && r_useShadowVertexProgram.GetBool() ) {
-			return R_CreateVertexProgramTurboShadowVolume( ent, tri, light, cullInfo );
-		} else {
-			return R_CreateTurboShadowVolume( ent, tri, light, cullInfo );
-		}
+		return R_CreateTurboShadowVolumeForSurface( ent, tri, light, cullInfo );
 	}
+
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	if ( tri->primBatchMesh != NULL ) {
+		// Packed surfaces have turbo-shadow builders only; the clipped capped
+		// volume path below still assumes classic tri-surf vertex data.
+		return NULL;
+	}
+#endif
 
 	R_CalcInteractionFacing( ent, tri, light, cullInfo );
 
