@@ -136,6 +136,10 @@ static idDynamicBlockAlloc<silEdge_t, 1<<17, 1<<10, 0>		triSilEdgeAllocator;
 static idDynamicBlockAlloc<dominantTri_t, 1<<16, 1<<10, 0>	triDominantTrisAllocator;
 static idDynamicBlockAlloc<int, 1<<16, 1<<10, 0>			triMirroredVertAllocator;
 static idDynamicBlockAlloc<int, 1<<16, 1<<10, 0>			triDupVertAllocator;
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+static idDynamicBlockAlloc<rvSilTraceVertT, 1<<18, 1<<10, 0>	silTraceVertexAllocator;
+static idDynamicBlockAlloc<float, 1<<16, 1<<10, 0>			skinToModelTransformAllocator;
+#endif
 #else
 static idDynamicAlloc<idDrawVert, 1<<20, 1<<10>			triVertexAllocator;
 static idDynamicAlloc<glIndex_t, 1<<18, 1<<10>			triIndexAllocator;
@@ -146,6 +150,10 @@ static idDynamicAlloc<silEdge_t, 1<<17, 1<<10>			triSilEdgeAllocator;
 static idDynamicAlloc<dominantTri_t, 1<<16, 1<<10>		triDominantTrisAllocator;
 static idDynamicAlloc<int, 1<<16, 1<<10>				triMirroredVertAllocator;
 static idDynamicAlloc<int, 1<<16, 1<<10>				triDupVertAllocator;
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+static idDynamicAlloc<rvSilTraceVertT, 1<<18, 1<<10>	silTraceVertexAllocator;
+static idDynamicAlloc<float, 1<<16, 1<<10>				skinToModelTransformAllocator;
+#endif
 #endif
 
 
@@ -167,6 +175,10 @@ void R_InitTriSurfData( void ) {
 	triDominantTrisAllocator.Init();
 	triMirroredVertAllocator.Init();
 	triDupVertAllocator.Init();
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	silTraceVertexAllocator.Init();
+	skinToModelTransformAllocator.Init();
+#endif
 
 	// never swap out triangle surfaces
 	triVertexAllocator.SetLockMemory( true );
@@ -178,6 +190,10 @@ void R_InitTriSurfData( void ) {
 	triDominantTrisAllocator.SetLockMemory( true );
 	triMirroredVertAllocator.SetLockMemory( true );
 	triDupVertAllocator.SetLockMemory( true );
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	silTraceVertexAllocator.SetLockMemory( true );
+	skinToModelTransformAllocator.SetLockMemory( true );
+#endif
 }
 
 /*
@@ -198,6 +214,10 @@ void R_ShutdownTriSurfData( void ) {
 	triDominantTrisAllocator.Shutdown();
 	triMirroredVertAllocator.Shutdown();
 	triDupVertAllocator.Shutdown();
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	silTraceVertexAllocator.Shutdown();
+	skinToModelTransformAllocator.Shutdown();
+#endif
 }
 
 /*
@@ -219,6 +239,10 @@ void R_PurgeTriSurfData( frameData_t *frame ) {
 	triDominantTrisAllocator.FreeEmptyBaseBlocks();
 	triMirroredVertAllocator.FreeEmptyBaseBlocks();
 	triDupVertAllocator.FreeEmptyBaseBlocks();
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	silTraceVertexAllocator.FreeEmptyBaseBlocks();
+	skinToModelTransformAllocator.FreeEmptyBaseBlocks();
+#endif
 }
 
 /*
@@ -341,6 +365,12 @@ R_FreeStaticTriSurfVertexCaches
 ==============
 */
 void R_FreeStaticTriSurfVertexCaches( srfTriangles_t *tri ) {
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	if ( tri->primBatchMesh != NULL ) {
+		tri->primBatchMesh = NULL;
+		tri->silEdges = NULL;
+	} else
+#endif
 	if ( tri->ambientSurface == NULL ) {
 		// this is a real model surface
 		vertexCache.Free( tri->ambientCache );
@@ -384,6 +414,21 @@ void R_ReallyFreeStaticTriSurf( srfTriangles_t *tri ) {
 			triVertexAllocator.Free( tri->verts );
 		}
 	}
+
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	if ( tri->silTraceVertsAlloc != NULL ) {
+		silTraceVertexAllocator.Free( reinterpret_cast<rvSilTraceVertT *>( tri->silTraceVertsAlloc ) );
+		tri->silTraceVertsAlloc = NULL;
+		tri->silTraceVerts = NULL;
+	}
+
+	if ( tri->skinToModelTransformsAlloc != NULL ) {
+		skinToModelTransformAllocator.Free( tri->skinToModelTransformsAlloc );
+		tri->skinToModelTransformsAlloc = NULL;
+		tri->skinToModelTransforms = NULL;
+		tri->numSkinToModelTransforms = 0;
+	}
+#endif
 
 	if ( !tri->deformedSurface ) {
 		if ( tri->indexes != NULL ) {
@@ -578,6 +623,43 @@ void R_AllocStaticTriSurfShadowVerts( srfTriangles_t *tri, int numVerts ) {
 	assert( tri->shadowVertexes == NULL );
 	tri->shadowVertexes = triShadowVertexAllocator.Alloc( numVerts );
 }
+
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+/*
+=================
+R_AllocStaticTriSurfSilTraceVerts
+=================
+*/
+void R_AllocStaticTriSurfSilTraceVerts( srfTriangles_t *tri, int numVerts ) {
+	if ( tri->silTraceVertsAlloc != NULL ) {
+		silTraceVertexAllocator.Free( reinterpret_cast<rvSilTraceVertT *>( tri->silTraceVertsAlloc ) );
+	}
+
+	tri->silTraceVertsAlloc = silTraceVertexAllocator.Alloc( numVerts );
+	tri->silTraceVerts = tri->silTraceVertsAlloc;
+	tri->numAllocedVerts = numVerts;
+}
+
+/*
+=================
+R_AllocStaticSkinToModelTransforms
+=================
+*/
+void R_AllocStaticSkinToModelTransforms( srfTriangles_t *tri, int numTransforms ) {
+	if ( tri->skinToModelTransformsAlloc != NULL ) {
+		if ( tri->numSkinToModelTransforms >= numTransforms ) {
+			tri->skinToModelTransforms = tri->skinToModelTransformsAlloc;
+			return;
+		}
+
+		skinToModelTransformAllocator.Free( tri->skinToModelTransformsAlloc );
+	}
+
+	tri->skinToModelTransformsAlloc = skinToModelTransformAllocator.Alloc( 16 * numTransforms );
+	tri->skinToModelTransforms = tri->skinToModelTransformsAlloc;
+	tri->numSkinToModelTransforms = numTransforms;
+}
+#endif
 
 /*
 =================

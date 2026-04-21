@@ -1733,6 +1733,10 @@ srfTriangles_t *	R_CopyStaticTriSurf( const srfTriangles_t *tri );
 void				R_AllocStaticTriSurfVerts( srfTriangles_t *tri, int numVerts );
 void				R_AllocStaticTriSurfIndexes( srfTriangles_t *tri, int numIndexes );
 void				R_AllocStaticTriSurfShadowVerts( srfTriangles_t *tri, int numVerts );
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+void				R_AllocStaticTriSurfSilTraceVerts( srfTriangles_t *tri, int numVerts );
+void				R_AllocStaticSkinToModelTransforms( srfTriangles_t *tri, int numTransforms );
+#endif
 void				R_AllocStaticTriSurfPlanes( srfTriangles_t *tri, int numIndexes );
 void				R_ResizeStaticTriSurfVerts( srfTriangles_t *tri, int numVerts );
 void				R_ResizeStaticTriSurfIndexes( srfTriangles_t *tri, int numIndexes );
