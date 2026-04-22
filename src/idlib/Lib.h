@@ -281,7 +281,7 @@ bool IsSignedType(const _type_ t) {
 
 // RAVEN BEGIN
 // dluetscher: added some headers for new vertex formats
-#ifdef _MD5R_SUPPORT
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
 #include "geometry/rvVertex.h"
 #endif
 // RAVEN END

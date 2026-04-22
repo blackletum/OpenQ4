@@ -672,7 +672,7 @@ bool rvRenderModelMD5R::CopyPrimBatchTriangles( const rvMD5RMesh &mesh, idDrawVe
 	return destVertexBase == mesh.numDrawVertices && destIndexBase == mesh.numDrawIndices;
 }
 
-#if defined( _MD5R_SUPPORT )
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
 /*
 ===========================
 R_MD5R_CopyPrimBatchTriangles
@@ -1689,6 +1689,260 @@ static bool R_MD5R_SkinVertexPosition(
 
 /*
 ========================
+R_MD5R_GetPackedTransformCount
+========================
+*/
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+static int R_MD5R_GetPackedTransformCount( const rvMD5RMesh &mesh ) {
+	int totalTransformCount = 0;
+
+	for ( int primBatchIndex = 0; primBatchIndex < mesh.primBatches.Num(); ++primBatchIndex ) {
+		totalTransformCount += Max( mesh.primBatches[ primBatchIndex ].numTransforms, 1 );
+	}
+
+	return totalTransformCount;
+}
+
+/*
+========================
+R_MD5R_CanUsePackedDynamicSurface
+========================
+*/
+static bool R_MD5R_CanUsePackedDynamicSurface(
+	const rvMD5RMesh &mesh,
+	const idList<rvMD5RVertexBufferDesc> &vertexBuffers,
+	const idList<rvMD5RIndexBufferDesc> &indexBuffers ) {
+	if ( mesh.numDrawVertices <= 0
+		|| mesh.numDrawIndices <= 0
+		|| mesh.numSilTraceVertices <= 0
+		|| mesh.numSilTraceIndices <= 0
+		|| mesh.numDrawVertices != mesh.numSilTraceVertices
+		|| mesh.numDrawIndices != mesh.numSilTraceIndices
+		|| mesh.primBatches.Num() <= 0 ) {
+		return false;
+	}
+
+	if ( mesh.drawVertexBuffer < 0 || mesh.drawVertexBuffer >= vertexBuffers.Num()
+		|| mesh.silTraceVertexBuffer < 0 || mesh.silTraceVertexBuffer >= vertexBuffers.Num()
+		|| mesh.drawIndexBuffer < 0 || mesh.drawIndexBuffer >= indexBuffers.Num()
+		|| mesh.silTraceIndexBuffer < 0 || mesh.silTraceIndexBuffer >= indexBuffers.Num() ) {
+		return false;
+	}
+
+	const rvMD5RVertexBufferDesc &drawVertexBuffer = vertexBuffers[ mesh.drawVertexBuffer ];
+	const rvMD5RVertexBufferDesc &silTraceVertexBuffer = vertexBuffers[ mesh.silTraceVertexBuffer ];
+	const rvMD5RIndexBufferDesc &drawIndexBuffer = indexBuffers[ mesh.drawIndexBuffer ];
+	const rvMD5RIndexBufferDesc &silTraceIndexBuffer = indexBuffers[ mesh.silTraceIndexBuffer ];
+
+	if ( drawVertexBuffer.positions.Num() != drawVertexBuffer.numVertices
+		|| silTraceVertexBuffer.positions.Num() != silTraceVertexBuffer.numVertices
+		|| drawIndexBuffer.indices.Num() != drawIndexBuffer.numIndices
+		|| silTraceIndexBuffer.indices.Num() != silTraceIndexBuffer.numIndices ) {
+		return false;
+	}
+
+	int totalDrawVertices = 0;
+	int totalDrawIndices = 0;
+	int totalSilTraceVertices = 0;
+	int totalSilTraceIndices = 0;
+
+	for ( int primBatchIndex = 0; primBatchIndex < mesh.primBatches.Num(); ++primBatchIndex ) {
+		const rvMD5RPrimBatch &primBatch = mesh.primBatches[ primBatchIndex ];
+		if ( !primBatch.hasDrawGeoSpec || !primBatch.hasSilTraceGeoSpec ) {
+			return false;
+		}
+
+		const int drawIndexCount = primBatch.drawGeoSpec.primitiveCount * 3;
+		const int silTraceIndexCount = primBatch.silTraceGeoSpec.primitiveCount * 3;
+		if ( primBatch.drawGeoSpec.vertexCount != primBatch.silTraceGeoSpec.vertexCount
+			|| drawIndexCount != silTraceIndexCount ) {
+			return false;
+		}
+
+		if ( primBatch.drawGeoSpec.vertexStart < 0
+			|| primBatch.drawGeoSpec.vertexCount < 0
+			|| primBatch.drawGeoSpec.vertexStart + primBatch.drawGeoSpec.vertexCount > drawVertexBuffer.numVertices
+			|| primBatch.drawGeoSpec.indexStart < 0
+			|| primBatch.drawGeoSpec.indexStart + drawIndexCount > drawIndexBuffer.numIndices
+			|| primBatch.silTraceGeoSpec.vertexStart < 0
+			|| primBatch.silTraceGeoSpec.vertexCount < 0
+			|| primBatch.silTraceGeoSpec.vertexStart + primBatch.silTraceGeoSpec.vertexCount > silTraceVertexBuffer.numVertices
+			|| primBatch.silTraceGeoSpec.indexStart < 0
+			|| primBatch.silTraceGeoSpec.indexStart + silTraceIndexCount > silTraceIndexBuffer.numIndices ) {
+			return false;
+		}
+
+		totalDrawVertices += primBatch.drawGeoSpec.vertexCount;
+		totalDrawIndices += drawIndexCount;
+		totalSilTraceVertices += primBatch.silTraceGeoSpec.vertexCount;
+		totalSilTraceIndices += silTraceIndexCount;
+	}
+
+	return totalDrawVertices == mesh.numDrawVertices
+		&& totalDrawIndices == mesh.numDrawIndices
+		&& totalSilTraceVertices == mesh.numSilTraceVertices
+		&& totalSilTraceIndices == mesh.numSilTraceIndices;
+}
+
+/*
+========================
+R_MD5R_WriteSkinToModelTransform
+========================
+*/
+static ID_INLINE void R_MD5R_WriteSkinToModelTransform( const idJointMat &skinToModel, float *packedTransform ) {
+	memcpy( packedTransform, skinToModel.ToFloatPtr(), 12 * sizeof( packedTransform[ 0 ] ) );
+	packedTransform[ 12 ] = 0.0f;
+	packedTransform[ 13 ] = 0.0f;
+	packedTransform[ 14 ] = 0.0f;
+	packedTransform[ 15 ] = 1.0f;
+}
+
+/*
+========================
+rvRenderModelMD5R::UpdatePackedDynamicSurface
+========================
+*/
+static bool R_MD5R_UpdatePackedDynamicSurface(
+	const rvMD5RMesh &mesh,
+	const idJointMat *entJoints,
+	const idList<rvMD5RVertexBufferDesc> &vertexBuffers,
+	const idList<rvMD5RIndexBufferDesc> &indexBuffers,
+	const idList<silEdge_t> &silEdges,
+	int numJoints,
+	modelSurface_t &surface,
+	bool calculateTangents ) {
+	if ( entJoints == NULL || !R_MD5R_CanUsePackedDynamicSurface( mesh, vertexBuffers, indexBuffers ) ) {
+		return false;
+	}
+
+	const rvMD5RVertexBufferDesc &drawVertexBuffer = vertexBuffers[ mesh.drawVertexBuffer ];
+	const rvMD5RVertexBufferDesc &silTraceVertexBuffer = vertexBuffers[ mesh.silTraceVertexBuffer ];
+	const int totalTransformCount = R_MD5R_GetPackedTransformCount( mesh );
+
+	srfTriangles_t *tri = surface.geometry;
+	if ( tri != NULL ) {
+		if ( tri->numVerts == mesh.numDrawVertices
+			&& tri->numIndexes == mesh.numDrawIndices
+			&& tri->primBatchMesh != NULL ) {
+			R_FreeStaticTriSurfVertexCaches( tri );
+		} else {
+			R_FreeStaticTriSurf( tri );
+			tri = NULL;
+		}
+	}
+
+	if ( tri == NULL ) {
+		tri = R_AllocStaticTriSurf();
+		surface.geometry = tri;
+	}
+
+	const bool hasNormals = ( drawVertexBuffer.normals.Num() == drawVertexBuffer.numVertices );
+	const bool hasTangents = ( drawVertexBuffer.tangents.Num() == drawVertexBuffer.numVertices );
+	const bool hasBinormals = ( drawVertexBuffer.binormals.Num() == drawVertexBuffer.numVertices );
+
+	tri->deformedSurface = true;
+	tri->generateNormals = !hasNormals;
+	tri->tangentsCalculated = hasNormals && hasTangents && hasBinormals;
+	tri->facePlanesCalculated = false;
+	tri->numVerts = mesh.numDrawVertices;
+	tri->numIndexes = mesh.numDrawIndices;
+	tri->silIndexes = NULL;
+	tri->numMirroredVerts = 0;
+	tri->mirroredVerts = NULL;
+	tri->numDupVerts = 0;
+	tri->dupVerts = NULL;
+	tri->dominantTris = NULL;
+	tri->numSilEdges = 0;
+	tri->silEdges = NULL;
+
+	if ( tri->verts == NULL ) {
+		R_AllocStaticTriSurfVerts( tri, tri->numVerts );
+	}
+	if ( tri->indexes == NULL ) {
+		R_AllocStaticTriSurfIndexes( tri, tri->numIndexes );
+	}
+	R_AllocStaticTriSurfSilTraceVerts( tri, tri->numVerts );
+	R_AllocStaticSkinToModelTransforms( tri, totalTransformCount );
+
+#if defined( _MD5R_SUPPORT )
+	tri->primBatchMesh = const_cast<rvMesh *>( reinterpret_cast<const rvMesh *>( &mesh ) );
+#else
+	tri->primBatchMesh = const_cast<void *>( reinterpret_cast<const void *>( &mesh ) );
+#endif
+
+	if ( mesh.numSilEdges > 0 && mesh.primBatches.Num() > 0 ) {
+		const int silEdgeStart = mesh.primBatches[ 0 ].silEdgeStart;
+		if ( silEdgeStart >= 0 && silEdgeStart + mesh.numSilEdges <= silEdges.Num() ) {
+			tri->numSilEdges = mesh.numSilEdges;
+			tri->silEdges = const_cast<silEdge_t *>( silEdges.Ptr() + silEdgeStart );
+		}
+	}
+
+	rvSilTraceVertT *dynamicSilTraceVerts = reinterpret_cast<rvSilTraceVertT *>( tri->silTraceVerts );
+	idBounds bounds;
+	bounds.Clear();
+
+	int silTraceVertexBase = 0;
+	int transformBase = 0;
+	for ( int primBatchIndex = 0; primBatchIndex < mesh.primBatches.Num(); ++primBatchIndex ) {
+		const rvMD5RPrimBatch &primBatch = mesh.primBatches[ primBatchIndex ];
+		const int primBatchTransformCount = Max( primBatch.numTransforms, 1 );
+
+		for ( int transformIndex = 0; transformIndex < primBatchTransformCount; ++transformIndex ) {
+			int jointIndex = 0;
+			if ( !R_MD5R_ResolveBlendJoint( primBatch, transformIndex, numJoints, jointIndex ) ) {
+				return false;
+			}
+
+			R_MD5R_WriteSkinToModelTransform(
+				entJoints[ jointIndex ],
+				tri->skinToModelTransforms + ( ( transformBase + transformIndex ) * 16 ) );
+		}
+
+		for ( int localVertexIndex = 0; localVertexIndex < primBatch.silTraceGeoSpec.vertexCount; ++localVertexIndex ) {
+			const int destVertexIndex = silTraceVertexBase + localVertexIndex;
+			const int sourceVertexIndex = primBatch.silTraceGeoSpec.vertexStart + localVertexIndex;
+			if ( destVertexIndex < 0 || destVertexIndex >= tri->numVerts ) {
+				return false;
+			}
+
+			idVec3 skinnedPosition;
+			if ( !R_MD5R_SkinVertexPosition( silTraceVertexBuffer, sourceVertexIndex, primBatch, entJoints, numJoints, skinnedPosition ) ) {
+				return false;
+			}
+
+			dynamicSilTraceVerts[ destVertexIndex ].xyzw.Set( skinnedPosition.x, skinnedPosition.y, skinnedPosition.z, 1.0f );
+			bounds.AddPoint( skinnedPosition );
+		}
+
+		silTraceVertexBase += primBatch.silTraceGeoSpec.vertexCount;
+		transformBase += primBatchTransformCount;
+	}
+
+	if ( silTraceVertexBase != tri->numVerts || transformBase != totalTransformCount ) {
+		return false;
+	}
+
+	if ( !R_MD5R_CopyPrimBatchTriangles(
+		tri->verts,
+		tri->indexes,
+		reinterpret_cast<const rvMesh *>( tri->primBatchMesh ),
+		dynamicSilTraceVerts ) ) {
+		return false;
+	}
+
+	tri->bounds = bounds;
+
+	if ( calculateTangents && !tri->tangentsCalculated && !r_useDeferredTangents.GetBool() ) {
+		R_DeriveTangents( tri );
+	}
+
+	return true;
+}
+#endif
+
+/*
+========================
 rvRenderModelMD5R::BuildDynamicMeshTemplate
 ========================
 */
@@ -1743,6 +1997,12 @@ rvRenderModelMD5R::UpdateDynamicSurface
 ========================
 */
 bool rvRenderModelMD5R::UpdateDynamicSurface( const rvMD5RMesh &mesh, const idJointMat *entJoints, modelSurface_t &surface, bool calculateTangents ) const {
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	if ( R_MD5R_UpdatePackedDynamicSurface( mesh, entJoints, vertexBuffers, indexBuffers, silEdges, joints.Num(), surface, calculateTangents ) ) {
+		return true;
+	}
+#endif
+
 	if ( mesh.deformInfo == NULL
 		|| mesh.baseDrawVerts.Num() != mesh.deformInfo->numSourceVerts
 		|| mesh.drawVertexBuffer < 0
@@ -1854,6 +2114,11 @@ bool rvRenderModelMD5R::GenerateDynamicSurface( idRenderModelStatic &staticModel
 
 	const bool collisionOnly = ( surfMask & SURF_COLLISION ) != 0;
 	const idMaterial *shader = R_RemapShaderBySkin( mesh.material, ent.customSkin, ent.customShader );
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	const bool canUsePackedDynamicSurface = R_MD5R_CanUsePackedDynamicSurface( mesh, vertexBuffers, indexBuffers );
+#else
+	const bool canUsePackedDynamicSurface = false;
+#endif
 
 	if ( collisionOnly ) {
 		if ( shader == NULL || ( shader->GetSurfaceFlags() & SURF_COLLISION ) == 0 ) {
@@ -1869,11 +2134,13 @@ bool rvRenderModelMD5R::GenerateDynamicSurface( idRenderModelStatic &staticModel
 		return false;
 	}
 
-	if ( !BuildDynamicMeshTemplate( mesh ) ) {
-		staticModel.DeleteSurfaceWithId( mesh.meshIdentifier );
-		staticModel.DeleteSurfaceWithId( mesh.meshIdentifier + MD5R_BackSideSurfaceIdOffset );
-		mesh.surfaceNum = -1;
-		return false;
+	if ( !canUsePackedDynamicSurface ) {
+		if ( !BuildDynamicMeshTemplate( mesh ) ) {
+			staticModel.DeleteSurfaceWithId( mesh.meshIdentifier );
+			staticModel.DeleteSurfaceWithId( mesh.meshIdentifier + MD5R_BackSideSurfaceIdOffset );
+			mesh.surfaceNum = -1;
+			return false;
+		}
 	}
 
 	modelSurface_t *surface = NULL;

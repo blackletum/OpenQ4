@@ -19,7 +19,7 @@
 
 // RAVEN BEGIN
 // dluetscher: declare some classes for MD5R support
-#ifdef _MD5R_SUPPORT
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
 class rvMesh;
 #endif
 // RAVEN END

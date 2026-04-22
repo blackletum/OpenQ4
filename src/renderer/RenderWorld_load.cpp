@@ -31,6 +31,318 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "tr_local.h"
 
+static const unsigned int R_RenderWorld_FakeMD5RProcCRC = 1105723392u;
+
+/*
+================
+R_RenderWorld_IsShadowModel
+================
+*/
+static bool R_RenderWorld_IsShadowModel( const idRenderModel &model ) {
+	if ( model.NumSurfaces() <= 0 ) {
+		return false;
+	}
+
+	for ( int surfaceIndex = 0; surfaceIndex < model.NumSurfaces(); ++surfaceIndex ) {
+		const modelSurface_t *surface = model.Surface( surfaceIndex );
+		if ( surface == NULL || surface->geometry == NULL ) {
+			continue;
+		}
+
+		const srfTriangles_t *tri = surface->geometry;
+		if ( tri->shadowVertexes != NULL && tri->verts == NULL ) {
+			return true;
+		}
+
+		if ( tri->verts != NULL ) {
+			return false;
+		}
+	}
+
+	return false;
+}
+
+/*
+================
+R_RenderWorld_WriteClassicMD5RProcModel
+================
+*/
+static void R_RenderWorld_WriteClassicMD5RProcModel( idFile &outFile, const idRenderModel &model ) {
+	int numExportableSurfaces = 0;
+	for ( int surfaceIndex = 0; surfaceIndex < model.NumSurfaces(); ++surfaceIndex ) {
+		const modelSurface_t *surface = model.Surface( surfaceIndex );
+		if ( surface == NULL || surface->geometry == NULL || surface->shader == NULL ) {
+			continue;
+		}
+
+		const srfTriangles_t *tri = surface->geometry;
+		if ( tri->verts == NULL || tri->indexes == NULL ) {
+			continue;
+		}
+
+		++numExportableSurfaces;
+	}
+
+	outFile.WriteFloatString( "model {\n" );
+	outFile.WriteFloatString( "\"%s\"\n", model.Name() );
+	outFile.WriteFloatString( "%d\n", numExportableSurfaces );
+	outFile.WriteFloatString( "0\n" );
+
+	for ( int surfaceIndex = 0; surfaceIndex < model.NumSurfaces(); ++surfaceIndex ) {
+		const modelSurface_t *surface = model.Surface( surfaceIndex );
+		if ( surface == NULL || surface->geometry == NULL || surface->shader == NULL ) {
+			continue;
+		}
+
+		const srfTriangles_t *tri = surface->geometry;
+		if ( tri->verts == NULL || tri->indexes == NULL ) {
+			continue;
+		}
+
+		outFile.WriteFloatString( "{\n" );
+		outFile.WriteFloatString( "\"%s\"\n", surface->shader->GetName() );
+		outFile.WriteFloatString( "%d %d\n", tri->numVerts, tri->numIndexes );
+
+		for ( int vertexIndex = 0; vertexIndex < tri->numVerts; ++vertexIndex ) {
+			const idDrawVert &vert = tri->verts[ vertexIndex ];
+			outFile.WriteFloatString(
+				"( %f %f %f %f %f %f %f %f %d %d %d %d )\n",
+				vert.xyz.x, vert.xyz.y, vert.xyz.z,
+				vert.st.x, vert.st.y,
+				vert.normal.x, vert.normal.y, vert.normal.z,
+				static_cast<int>( vert.color[ 0 ] ),
+				static_cast<int>( vert.color[ 1 ] ),
+				static_cast<int>( vert.color[ 2 ] ),
+				static_cast<int>( vert.color[ 3 ] ) );
+		}
+
+		for ( int index = 0; index < tri->numIndexes; ++index ) {
+			outFile.WriteFloatString( "%d\n", tri->indexes[ index ] );
+		}
+
+		outFile.WriteFloatString( "}\n" );
+	}
+
+	outFile.WriteFloatString( "}\n\n" );
+}
+
+/*
+================
+R_RenderWorld_WriteClassicMD5RProcShadowModel
+================
+*/
+static void R_RenderWorld_WriteClassicMD5RProcShadowModel( idFile &outFile, const idRenderModel &model ) {
+	if ( model.NumSurfaces() <= 0 ) {
+		return;
+	}
+
+	const modelSurface_t *surface = model.Surface( 0 );
+	if ( surface == NULL || surface->geometry == NULL ) {
+		return;
+	}
+
+	const srfTriangles_t *tri = surface->geometry;
+	outFile.WriteFloatString( "shadowModel {\n" );
+	outFile.WriteFloatString( "\"%s\"\n", model.Name() );
+	outFile.WriteFloatString(
+		"%d %d %d %d %d\n",
+		tri->numVerts,
+		tri->numShadowIndexesNoCaps,
+		tri->numShadowIndexesNoFrontCaps,
+		tri->numIndexes,
+		tri->shadowCapPlaneBits );
+
+	for ( int vertexIndex = 0; vertexIndex < tri->numVerts; ++vertexIndex ) {
+		outFile.WriteFloatString(
+			"( %f %f %f )\n",
+			tri->shadowVertexes[ vertexIndex ].xyz[ 0 ],
+			tri->shadowVertexes[ vertexIndex ].xyz[ 1 ],
+			tri->shadowVertexes[ vertexIndex ].xyz[ 2 ] );
+	}
+
+	for ( int index = 0; index < tri->numIndexes; ++index ) {
+		outFile.WriteFloatString( "%d\n", tri->indexes[ index ] );
+	}
+
+	outFile.WriteFloatString( "}\n\n" );
+}
+
+/*
+================
+R_RenderWorld_WriteClassicMD5RProcInterAreaPortals
+================
+*/
+static void R_RenderWorld_WriteClassicMD5RProcInterAreaPortals( const idRenderWorldLocal &world, idFile &outFile ) {
+	if ( world.numPortalAreas <= 0 ) {
+		return;
+	}
+
+	outFile.WriteFloatString( "interAreaPortals {\n" );
+	outFile.WriteFloatString( "%d\n", world.numPortalAreas );
+	outFile.WriteFloatString( "%d\n", world.numInterAreaPortals );
+
+	for ( int portalIndex = 0; portalIndex < world.numInterAreaPortals; ++portalIndex ) {
+		const doublePortal_t &doublePortal = world.doublePortals[ portalIndex ];
+		const portal_t *positivePortal = doublePortal.portals[ 0 ];
+		const portal_t *negativePortal = doublePortal.portals[ 1 ];
+		const idWinding *winding = ( positivePortal != NULL ) ? positivePortal->w : NULL;
+		if ( positivePortal == NULL || negativePortal == NULL || winding == NULL ) {
+			continue;
+		}
+
+		outFile.WriteFloatString(
+			"%d %d %d ",
+			winding->GetNumPoints(),
+			negativePortal->intoArea,
+			positivePortal->intoArea );
+
+		for ( int pointIndex = 0; pointIndex < winding->GetNumPoints(); ++pointIndex ) {
+			outFile.WriteFloatString(
+				"( %f %f %f ) ",
+				( *winding )[ pointIndex ].x,
+				( *winding )[ pointIndex ].y,
+				( *winding )[ pointIndex ].z );
+		}
+
+		if ( positivePortal->image != NULL ) {
+			outFile.WriteFloatString(
+				"( \"%s\" %.2f %.2f )",
+				positivePortal->image->GetName(),
+				positivePortal->cullNear,
+				positivePortal->cullFar );
+		}
+
+		outFile.WriteFloatString( "\n" );
+	}
+
+	outFile.WriteFloatString( "}\n\n" );
+}
+
+/*
+================
+R_RenderWorld_WriteClassicMD5RProcNodes
+================
+*/
+static void R_RenderWorld_WriteClassicMD5RProcNodes( const idRenderWorldLocal &world, idFile &outFile ) {
+	if ( world.areaNodes == NULL || world.numAreaNodes <= 0 ) {
+		return;
+	}
+
+	outFile.WriteFloatString( "nodes {\n" );
+	outFile.WriteFloatString( "%d\n", world.numAreaNodes );
+
+	for ( int nodeIndex = 0; nodeIndex < world.numAreaNodes; ++nodeIndex ) {
+		const areaNode_t &node = world.areaNodes[ nodeIndex ];
+		outFile.WriteFloatString(
+			"( %f %f %f %f ) %d %d\n",
+			node.plane[ 0 ],
+			node.plane[ 1 ],
+			node.plane[ 2 ],
+			node.plane[ 3 ],
+			node.children[ 0 ],
+			node.children[ 1 ] );
+	}
+
+	outFile.WriteFloatString( "}\n" );
+}
+
+/*
+================
+R_RenderWorld_FinalizeLoadedWorld
+================
+*/
+static void R_RenderWorld_FinalizeLoadedWorld( idRenderWorldLocal &world ) {
+	if ( !world.numPortalAreas || world.areaNodes == NULL ) {
+		world.ClearWorld();
+	}
+
+	world.CommonChildrenArea_r( &world.areaNodes[ 0 ] );
+	world.AddWorldModelEntities();
+	world.SetupLightGrid();
+	world.ClearPortalStates();
+}
+
+/*
+================
+R_RenderWorld_ParseSupportedMD5RProc
+
+OpenQ4 can currently consume an interim MD5RProc companion that keeps the
+classic model / shadowModel / portal / node sections under the MD5RProc header.
+If the file contains the retail packed VertexBuffer / Model blocks, fall back to
+the classic .proc world until the full packed-world runtime is ported.
+================
+*/
+static bool R_RenderWorld_ParseSupportedMD5RProc( idRenderWorldLocal &world, Lexer &src, const char *fileName ) {
+	idToken token;
+
+	if ( !src.ReadToken( &token ) || token.Icmp( MD5R_PROC_FILE_ID ) != 0 ) {
+		common->Warning(
+			"idRenderWorldLocal::InitFromMap: bad MD5RProc id '%s' in '%s' instead of '%s'",
+			token.c_str(),
+			fileName,
+			MD5R_PROC_FILE_ID );
+		return false;
+	}
+
+	if ( src.ParseInt() != MD5R_PROC_FILEVERSION ) {
+		common->Warning(
+			"idRenderWorldLocal::InitFromMap: unsupported MD5RProc version in '%s' (expected %d)",
+			fileName,
+			MD5R_PROC_FILEVERSION );
+		return false;
+	}
+
+	if ( !src.ReadToken( &token ) ) {
+		common->Warning( "idRenderWorldLocal::InitFromMap: '%s' has no MD5RProc CRC token", fileName );
+		return false;
+	}
+
+	while ( src.ReadToken( &token ) ) {
+		if ( token == "model" ) {
+			idRenderModel *model = world.ParseModel( &src );
+			renderModelManager->AddModel( model );
+			world.localModels.Append( model );
+			continue;
+		}
+
+		if ( token == "shadowModel" ) {
+			idRenderModel *model = world.ParseShadowModel( &src );
+			renderModelManager->AddModel( model );
+			world.localModels.Append( model );
+			continue;
+		}
+
+		if ( token == "interAreaPortals" ) {
+			world.ParseInterAreaPortals( &src );
+			continue;
+		}
+
+		if ( token == "nodes" ) {
+			world.ParseNodes( &src );
+			continue;
+		}
+
+		if ( token == "VertexBuffer"
+			|| token == "IndexBuffer"
+			|| token == "SilhouetteEdge"
+			|| token == "Model" ) {
+			common->Warning(
+				"idRenderWorldLocal::InitFromMap: '%s' uses packed MD5RProc section '%s', which OpenQ4 does not load yet; falling back to the classic .proc world if available",
+				fileName,
+				token.c_str() );
+			return false;
+		}
+
+		common->Warning(
+			"idRenderWorldLocal::InitFromMap: unsupported token '%s' in MD5RProc companion '%s'; falling back to the classic .proc world if available",
+			token.c_str(),
+			fileName );
+		return false;
+	}
+
+	return true;
+}
+
 
 /*
 ================
@@ -484,27 +796,70 @@ void idRenderWorldLocal::ClearWorld() {
 ===========================
 idRenderWorldLocal::WriteMD5R
 
-Retail Quake 4 writes converted MD5R proc worlds from here. OpenQ4 keeps the
-same seam in place so the export command follows the retail call flow even
-before the packed MD5R runtime is ported.
+Retail Quake 4 writes fully packed MD5RProc worlds from here. OpenQ4 doesn't
+have the packed world-buffer runtime yet, so export an interim companion that
+uses the MD5RProc header while preserving the classic model / shadowModel
+payloads. That keeps the companion path testable end to end today and gives the
+future packed-world port a stable file-discovery seam to replace.
 ===========================
 */
 bool idRenderWorldLocal::WriteMD5R( bool compressed ) {
-	(void)compressed;
-
 	const char *worldName = mapName.Length() > 0 ? mapName.c_str() : "<unnamed>";
 
 	if ( !R_IsMD5RWriteAvailable() ) {
 		common->Warning(
-			"idRenderWorldLocal::WriteMD5R: packed MD5R proc export is not compiled into this build for world '%s'",
+			"idRenderWorldLocal::WriteMD5R: MD5R export is not available in this build for world '%s'",
 			worldName );
 		return false;
 	}
 
-	common->Warning(
-		"idRenderWorldLocal::WriteMD5R: MD5R proc export is not implemented in OpenQ4 yet for world '%s'",
+	if ( mapName.Length() == 0 || mapName == "<FREED>" ) {
+		common->Warning( "idRenderWorldLocal::WriteMD5R: no active world is loaded" );
+		return false;
+	}
+
+	idStr exportFilename = mapName;
+	exportFilename.SetFileExtension( MD5R_PROC_FILE_EXT );
+
+	idFile *outFile = fileSystem->OpenFileWrite( exportFilename.c_str(), "fs_savepath" );
+	if ( outFile == NULL ) {
+		common->Warning(
+			"idRenderWorldLocal::WriteMD5R: couldn't open '%s' for MD5RProc export from world '%s'",
+			exportFilename.c_str(),
+			worldName );
+		return false;
+	}
+
+	common->Printf( "writing %s\n", exportFilename.c_str() );
+	outFile->WriteFloatString( "%s %d\n", MD5R_PROC_FILE_ID, MD5R_PROC_FILEVERSION );
+	outFile->WriteFloatString( "%u\n\n", R_RenderWorld_FakeMD5RProcCRC );
+
+	for ( int modelIndex = 0; modelIndex < localModels.Num(); ++modelIndex ) {
+		idRenderModel *model = localModels[ modelIndex ];
+		if ( model == NULL ) {
+			continue;
+		}
+
+		if ( R_RenderWorld_IsShadowModel( *model ) ) {
+			R_RenderWorld_WriteClassicMD5RProcShadowModel( *outFile, *model );
+		} else {
+			R_RenderWorld_WriteClassicMD5RProcModel( *outFile, *model );
+		}
+	}
+
+	R_RenderWorld_WriteClassicMD5RProcInterAreaPortals( *this, *outFile );
+	R_RenderWorld_WriteClassicMD5RProcNodes( *this, *outFile );
+	fileSystem->CloseFile( outFile );
+
+	if ( compressed ) {
+		idLexer::WriteBinaryFile( exportFilename.c_str() );
+	}
+
+	common->Printf(
+		"idRenderWorldLocal::WriteMD5R: wrote interim MD5RProc companion '%s' for world '%s'\n",
+		exportFilename.c_str(),
 		worldName );
-	return false;
+	return true;
 }
 
 /*
@@ -603,9 +958,12 @@ Retail prefers a compiled MD5RProc companion when binary reads are enabled, then
 falls back to the text MD5RProc file before using the classic .proc world.
 =================
 */
-static bool R_RenderWorld_HasMD5RProcCompanion( const char *mapName, idStr &md5rProcFilename ) {
+static bool R_RenderWorld_HasMD5RProcCompanion( const char *mapName, idStr &md5rProcFilename, ID_TIME_T *timeStamp = NULL ) {
 	if ( r_forceConvertMD5R.GetBool() ) {
 		md5rProcFilename.Clear();
+		if ( timeStamp != NULL ) {
+			*timeStamp = FILE_NOT_FOUND_TIMESTAMP;
+		}
 		return false;
 	}
 
@@ -613,6 +971,9 @@ static bool R_RenderWorld_HasMD5RProcCompanion( const char *mapName, idStr &md5r
 	md5rProcFilename.SetFileExtension( MD5R_PROC_FILE_EXT );
 
 	const ID_TIME_T md5rProcTimeStamp = R_RenderWorld_ReadBinaryAwareTimestamp( md5rProcFilename, &md5rProcFilename );
+	if ( timeStamp != NULL ) {
+		*timeStamp = md5rProcTimeStamp;
+	}
 	if ( md5rProcTimeStamp == FILE_NOT_FOUND_TIMESTAMP ) {
 		md5rProcFilename.Clear();
 		return false;
@@ -633,7 +994,10 @@ bool idRenderWorldLocal::InitFromMap( const char *name ) {
 	Lexer *			src;
 	idToken			token;
 	idStr			filename;
+	idStr			resolvedProcFilename;
 	idStr			md5rProcFilename;
+	ID_TIME_T		procTimeStamp;
+	ID_TIME_T		md5rProcTimeStamp = FILE_NOT_FOUND_TIMESTAMP;
 	idRenderModel *	lastModel;
 
 	// if this is an empty world, initialize manually
@@ -648,13 +1012,14 @@ bool idRenderWorldLocal::InitFromMap( const char *name ) {
 	// load it
 	filename = name;
 	filename.SetFileExtension( PROC_FILE_EXT );
+	procTimeStamp = R_RenderWorld_ReadBinaryAwareTimestamp( filename, &resolvedProcFilename );
 
 	R_DisableUnavailableMD5RCVar( r_convertProcToMD5R, "the MD5R proc-world runtime" );
 
-	const bool hasMD5RProcCompanion = R_RenderWorld_HasMD5RProcCompanion( name, md5rProcFilename );
+	const bool hasMD5RProcCompanion = R_RenderWorld_HasMD5RProcCompanion( name, md5rProcFilename, &md5rProcTimeStamp );
 	if ( hasMD5RProcCompanion ) {
 		common->DPrintf(
-			"Found MD5RProc companion '%s' for map '%s', but this build does not include MD5RProc loading; loading classic proc world '%s' instead.\n",
+			"Found MD5RProc companion '%s' for map '%s'; OpenQ4 will prefer it before the classic proc world '%s'.\n",
 			md5rProcFilename.c_str(),
 			name,
 			filename.c_str() );
@@ -662,7 +1027,7 @@ bool idRenderWorldLocal::InitFromMap( const char *name ) {
 
 	// if we are reloading the same map, check the timestamp
 	// and try to skip all the work
-	const ID_TIME_T currentTimeStamp = R_RenderWorld_ReadBinaryAwareTimestamp( filename );
+	const ID_TIME_T currentTimeStamp = hasMD5RProcCompanion ? md5rProcTimeStamp : procTimeStamp;
 
 	if ( name == mapName ) {
 		if ( currentTimeStamp != FILE_NOT_FOUND_TIMESTAMP && currentTimeStamp == mapTimeStamp ) {
@@ -679,12 +1044,43 @@ bool idRenderWorldLocal::InitFromMap( const char *name ) {
 
 	FreeWorld();
 
-	src = LexerFactory::MakeLexer( filename.c_str(), LEXFL_NOSTRINGCONCAT | LEXFL_NODOLLARPRECOMPILE, false );
+	if ( hasMD5RProcCompanion ) {
+		src = LexerFactory::MakeLexer( md5rProcFilename.c_str(), LEXFL_NOSTRINGCONCAT | LEXFL_NODOLLARPRECOMPILE, false );
+		if ( src->IsLoaded() && R_RenderWorld_ParseSupportedMD5RProc( *this, *src, md5rProcFilename.c_str() ) ) {
+			delete src;
+
+			mapName = name;
+			mapTimeStamp = md5rProcTimeStamp;
+			common->Printf(
+				"idRenderWorldLocal::InitFromMap: loaded MD5RProc companion '%s' for map '%s'\n",
+				md5rProcFilename.c_str(),
+				name );
+
+			if ( session->writeDemo ) {
+				WriteLoadMap();
+			}
+
+			R_RenderWorld_FinalizeLoadedWorld( *this );
+			return true;
+		}
+
+		delete src;
+		FreeWorld();
+		common->Warning(
+			"idRenderWorldLocal::InitFromMap: falling back to classic proc '%s' after MD5RProc companion '%s'",
+			filename.c_str(),
+			md5rProcFilename.c_str() );
+	}
+
+	src = LexerFactory::MakeLexer(
+		resolvedProcFilename.Length() > 0 ? resolvedProcFilename.c_str() : filename.c_str(),
+		LEXFL_NOSTRINGCONCAT | LEXFL_NODOLLARPRECOMPILE,
+		false );
 	if ( !src->IsLoaded() ) {
 		delete src;
 		if ( hasMD5RProcCompanion ) {
 			common->Printf(
-				"idRenderWorldLocal::InitFromMap: classic proc '%s' not found, and MD5RProc companion '%s' can't be loaded in this build\n",
+				"idRenderWorldLocal::InitFromMap: classic proc '%s' not found, and MD5RProc companion '%s' could not be loaded\n",
 				filename.c_str(),
 				md5rProcFilename.c_str() );
 		} else {
@@ -696,7 +1092,7 @@ bool idRenderWorldLocal::InitFromMap( const char *name ) {
 
 
 	mapName = name;
-	mapTimeStamp = currentTimeStamp;
+	mapTimeStamp = procTimeStamp;
 
 	// if we are writing a demo, archive the load command
 	if ( session->writeDemo ) {
@@ -763,17 +1159,7 @@ bool idRenderWorldLocal::InitFromMap( const char *name ) {
 
 	delete src;
 
-	// if it was a trivial map without any areas, create a single area
-	if ( !numPortalAreas ) {
-		ClearWorld();
-	}
-
-	// find the points where we can early-our of reference pushing into the BSP tree
-	CommonChildrenArea_r( &areaNodes[0] );
-
-	AddWorldModelEntities();
-	SetupLightGrid();
-	ClearPortalStates();
+	R_RenderWorld_FinalizeLoadedWorld( *this );
 
 	// done!
 	return true;

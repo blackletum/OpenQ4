@@ -3,6 +3,7 @@
 
 
 #include "Simd_generic.h"
+#include <float.h>
 
 
 //===============================================================
@@ -3355,7 +3356,7 @@ void VPCALL idSIMD_Generic::MixedSoundToSamples( short * RESTRICT samples, const
 
 // RAVEN BEGIN
 // dluetscher: added support for operations on idSilTraceVerts and idJointMats
-#ifdef _MD5R_SUPPORT
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
 /*
 ============
 idSIMD_Generic::JointMat_MultiplyMats
@@ -3420,7 +3421,7 @@ void VPCALL idSIMD_Generic::JointMat_MultiplyMats( float * RESTRICT destMats,
 // RAVEN BEGIN
 // dluetscher: added TransformVertsMinMax to transform an array of index-weighted vertices into 
 //			   an array of idSilTraceVerts, while simulatenously calculating the bounds
-#ifdef _MD5R_SUPPORT
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
 void VPCALL idSIMD_Generic::TransformVertsMinMax4Bone( rvSilTraceVertT * RESTRICT silTraceVertOutputData, 
 													   idVec3 &min, idVec3 &max, 
 													   byte * RESTRICT vertexInputData, 
@@ -3796,4 +3797,4 @@ void VPCALL idSIMD_Generic::MinMax( idVec3 &min, idVec3 &max, const rvSilTraceVe
 	UNROLL1(OPER)
 #undef OPER
 }
-#endif	// #ifdef _MD5R_SUPPORT
+#endif	// #if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )

@@ -32,6 +32,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "BinaryImage.h"
 #include "Image.h"
 #include "RenderTexture.h"
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+#include "../idlib/geometry/rvVertex.h"
+#endif
 
 class idRenderWorldLocal;
 

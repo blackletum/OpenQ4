@@ -55,8 +55,9 @@ R_IsMD5RWriteAvailable
 
 OpenQ4's text/binary MD5R model writer is now implemented in the parser-backed
 rvRenderModelMD5R path, so it no longer depends on the original retail
-_MD5R_WRITE_SUPPORT macro. Proc-world export still warns until the separate
-MD5RProc writer is ported, but the command itself is a valid capability again.
+_MD5R_WRITE_SUPPORT macro. World export now writes an interim MD5RProc
+companion that preserves classic proc payloads until the packed-world runtime
+is ported, so the export command is a valid end-to-end capability again.
 =======================
 */
 bool R_IsMD5RWriteAvailable( void ) {
@@ -93,11 +94,15 @@ idRenderSystemLocal::ExportMD5R
 */
 void idRenderSystemLocal::ExportMD5R( bool compressed ) {
 	if ( !R_IsMD5RWriteAvailable() ) {
-		common->Warning( "idRenderSystemLocal::ExportMD5R: packed MD5R export support is not compiled into this build" );
+		common->Warning( "idRenderSystemLocal::ExportMD5R: MD5R export is not available in this build" );
 		return;
 	}
 
 	for ( int i = 0; i < worlds.Num(); ++i ) {
+		if ( worlds[i] == NULL || worlds[i]->mapName.Length() == 0 || worlds[i]->mapName == "<FREED>" ) {
+			continue;
+		}
+
 		worlds[i]->WriteMD5R( compressed );
 	}
 

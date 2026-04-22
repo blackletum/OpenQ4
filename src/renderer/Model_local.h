@@ -419,7 +419,7 @@ struct rvMD5RIndexBufferDesc {
 	idList<glIndex_t>			indices;
 };
 
-#if defined( _MD5R_SUPPORT )
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
 bool							R_MD5R_CopyPrimBatchTriangles( idDrawVert *destDrawVerts, glIndex_t *destIndices, const rvMesh *primBatchMesh, const rvSilTraceVertT *silTraceVerts );
 #endif
 
@@ -485,7 +485,7 @@ private:
 	bool						CopyPrimBatchTriangles( const rvMD5RMesh &mesh, idDrawVert *destDrawVerts, glIndex_t *destIndices, const rvSilTraceVertT *silTraceVerts ) const;
 	bool						GenerateStaticSurfaces();
 	srfTriangles_t *			GenerateStaticTriSurface( const rvMD5RMesh &mesh ) const;
-#if defined( _MD5R_SUPPORT )
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
 	friend bool					R_MD5R_CopyPrimBatchTriangles( idDrawVert *destDrawVerts, glIndex_t *destIndices, const rvMesh *primBatchMesh, const rvSilTraceVertT *silTraceVerts );
 #endif
 	static void					RemoveFromList( rvRenderModelMD5R &model );
