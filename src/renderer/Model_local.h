@@ -138,6 +138,7 @@ protected:
 
 class idMD5Mesh {
 	friend class				idRenderModelMD5;
+	friend class				rvRenderModelMD5R;
 
 public:
 								idMD5Mesh();
@@ -171,6 +172,8 @@ private:
 };
 
 class idRenderModelMD5 : public idRenderModelStatic {
+	friend class				rvRenderModelMD5R;
+
 public:
 								idRenderModelMD5();
 	virtual void				InitFromFile( const char *fileName );
@@ -445,20 +448,37 @@ public:
 	virtual const char *		GetJointName( jointHandle_t handle ) const;
 	virtual const idJointQuat *	GetDefaultPose( void ) const;
 	virtual const idJointMat *	GetSkinSpaceToLocalMats( void ) const;
+	virtual int					NearestJoint( int surfaceNum, int a, int b, int c ) const;
 	virtual int					GetSurfaceMask( const char *surface ) const;
 	virtual int					Memory() const;
 
+	bool						InitFromMD5Model( const idRenderModelMD5 &sourceModel );
+	bool						InitFromStaticModel( const idRenderModelStatic &sourceModel, rvMD5RSource_t sourceType );
+	bool						InitFromProcWorldStaticModel( const idRenderModelStatic &sourceModel, idList<rvMD5RVertexBufferDesc> &sharedVertexBuffers, idList<rvMD5RIndexBufferDesc> &sharedIndexBuffers, idList<silEdge_t> &sharedSilEdges );
+
+	void						InitFromProcWorldModel( Lexer &parser, const idList<rvMD5RVertexBufferDesc> &sharedVertexBuffers, const idList<rvMD5RIndexBufferDesc> &sharedIndexBuffers, const idList<silEdge_t> &sharedSilEdges );
+	void						WriteSansBuffers( idFile &outFile, const char *prepend ) const;
+	static void					ParseSharedVertexBuffers( Lexer &parser, idList<rvMD5RVertexBufferDesc> &vertexBuffers );
+	static void					ParseSharedIndexBuffers( Lexer &parser, idList<rvMD5RIndexBufferDesc> &indexBuffers );
+	static void					ParseSharedSilhouetteEdges( Lexer &parser, idList<silEdge_t> &silEdges );
+	static void					WriteSharedVertexBuffers( idFile &outFile, const idList<rvMD5RVertexBufferDesc> &vertexBuffers, const char *prepend );
+	static void					WriteSharedIndexBuffers( idFile &outFile, const idList<rvMD5RIndexBufferDesc> &indexBuffers, const char *prepend );
+	static void					WriteSharedSilhouetteEdges( idFile &outFile, const idList<silEdge_t> &silEdges, const char *prepend );
 	static void					WriteAll( bool compressed );
 
 private:
+	bool						InitFromStaticModelInternal( const idRenderModelStatic &sourceModel, rvMD5RSource_t sourceType, idList<rvMD5RVertexBufferDesc> *sharedVertexBuffers, idList<rvMD5RIndexBufferDesc> *sharedIndexBuffers, idList<silEdge_t> *sharedSilEdges );
+	const idList<rvMD5RVertexBufferDesc> &GetVertexBuffers() const;
+	const idList<rvMD5RIndexBufferDesc> &GetIndexBuffers() const;
+	const idList<silEdge_t> &GetSilhouetteEdges() const;
 	idStr						BuildExportFileName() const;
 	bool						CanWriteModelData( idStr &reason ) const;
 	bool						WriteFile( const char *fileName, bool compressed ) const;
 	void						WriteModel( idFile &outFile ) const;
-	void						WriteVertexFormat( idFile &outFile, const rvMD5RVertexFormatDesc &vertexFormat, const char *prepend ) const;
-	void						WriteVertexBuffer( idFile &outFile, const rvMD5RVertexBufferDesc &vertexBuffer, const char *prepend ) const;
+	static void					WriteVertexFormat( idFile &outFile, const rvMD5RVertexFormatDesc &vertexFormat, const char *prepend );
+	static void					WriteVertexBuffer( idFile &outFile, const rvMD5RVertexBufferDesc &vertexBuffer, const char *prepend );
 	void						WriteVertexBuffers( idFile &outFile, const char *prepend ) const;
-	void						WriteIndexBuffer( idFile &outFile, const rvMD5RIndexBufferDesc &indexBuffer, const char *prepend ) const;
+	static void					WriteIndexBuffer( idFile &outFile, const rvMD5RIndexBufferDesc &indexBuffer, const char *prepend );
 	void						WriteIndexBuffers( idFile &outFile, const char *prepend ) const;
 	void						WriteSilhouetteEdges( idFile &outFile, const char *prepend ) const;
 	void						WriteLevelsOfDetail( idFile &outFile, const char *prepend ) const;
@@ -466,11 +486,11 @@ private:
 	void						WriteMesh( idFile &outFile, const rvMD5RMesh &mesh, const char *prepend ) const;
 	void						WriteMeshes( idFile &outFile, const char *prepend ) const;
 	void						WriteJoints( idFile &outFile, const char *prepend ) const;
-	void						ParseVertexFormat( Lexer &parser, rvMD5RVertexFormatDesc &vertexFormat );
+	static void					ParseVertexFormat( Lexer &parser, rvMD5RVertexFormatDesc &vertexFormat );
 	void						ParseVertexBuffers( Lexer &parser );
-	void						ParseVertexBuffer( Lexer &parser, rvMD5RVertexBufferDesc &vertexBuffer );
+	static void					ParseVertexBuffer( Lexer &parser, rvMD5RVertexBufferDesc &vertexBuffer );
 	void						ParseIndexBuffers( Lexer &parser );
-	void						ParseIndexBuffer( Lexer &parser, rvMD5RIndexBufferDesc &indexBuffer );
+	static void					ParseIndexBuffer( Lexer &parser, rvMD5RIndexBufferDesc &indexBuffer );
 	void						ParseSilhouetteEdges( Lexer &parser );
 	void						ParseLevelOfDetail( Lexer &parser );
 	void						ParseMeshes( Lexer &parser );
@@ -506,6 +526,9 @@ private:
 	bool						hasSky;
 	rvMD5RSource_t				source;
 	rvRenderModelMD5R *			next;
+	const idList<rvMD5RVertexBufferDesc> *sharedVertexBuffers;
+	const idList<rvMD5RIndexBufferDesc> *sharedIndexBuffers;
+	const idList<silEdge_t> *	sharedSilEdges;
 
 	static rvRenderModelMD5R *	modelList;
 };

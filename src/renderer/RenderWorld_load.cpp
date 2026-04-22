@@ -30,8 +30,53 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "tr_local.h"
+#include "Model_local.h"
 
 static const unsigned int R_RenderWorld_FakeMD5RProcCRC = 1105723392u;
+
+class idRenderWorldMD5RProcData {
+public:
+	idList<rvMD5RVertexBufferDesc>	vertexBuffers;
+	idList<rvMD5RIndexBufferDesc>	indexBuffers;
+	idList<silEdge_t>				silEdges;
+	idList<rvRenderModelMD5R *>		models;
+
+	void Clear() {
+		vertexBuffers.Clear();
+		indexBuffers.Clear();
+		silEdges.Clear();
+		models.Clear();
+	}
+
+	bool HasPackedWorldData() const {
+		return vertexBuffers.Num() > 0 || indexBuffers.Num() > 0 || silEdges.Num() > 0 || models.Num() > 0;
+	}
+};
+
+/*
+================
+R_RenderWorld_EnsureMD5RProcData
+================
+*/
+static idRenderWorldMD5RProcData &R_RenderWorld_EnsureMD5RProcData( idRenderWorldLocal &world ) {
+	if ( world.md5rProcData == NULL ) {
+		world.md5rProcData = new idRenderWorldMD5RProcData;
+	}
+
+	return *world.md5rProcData;
+}
+
+/*
+================
+R_RenderWorld_ClearMD5RProcData
+================
+*/
+static void R_RenderWorld_ClearMD5RProcData( idRenderWorldLocal &world ) {
+	if ( world.md5rProcData != NULL ) {
+		delete world.md5rProcData;
+		world.md5rProcData = NULL;
+	}
+}
 
 /*
 ================
@@ -56,6 +101,31 @@ static bool R_RenderWorld_IsShadowModel( const idRenderModel &model ) {
 
 		if ( tri->verts != NULL ) {
 			return false;
+		}
+	}
+
+	return false;
+}
+
+/*
+================
+R_RenderWorld_HasRenderableSurfaces
+================
+*/
+static bool R_RenderWorld_HasRenderableSurfaces( const idRenderModel &model ) {
+	if ( model.NumSurfaces() <= 0 ) {
+		return false;
+	}
+
+	for ( int surfaceIndex = 0; surfaceIndex < model.NumSurfaces(); ++surfaceIndex ) {
+		const modelSurface_t *surface = model.Surface( surfaceIndex );
+		if ( surface == NULL || surface->geometry == NULL || surface->shader == NULL ) {
+			continue;
+		}
+
+		const srfTriangles_t *tri = surface->geometry;
+		if ( tri->verts != NULL && tri->indexes != NULL && tri->numVerts > 0 && tri->numIndexes > 0 ) {
+			return true;
 		}
 	}
 
@@ -248,6 +318,116 @@ static void R_RenderWorld_WriteClassicMD5RProcNodes( const idRenderWorldLocal &w
 
 /*
 ================
+R_RenderWorld_WritePackedMD5RProcModels
+================
+*/
+static void R_RenderWorld_WritePackedMD5RProcModels( idFile &outFile, const idRenderWorldMD5RProcData &md5rProcData ) {
+	if ( md5rProcData.models.Num() == 0 ) {
+		return;
+	}
+
+	outFile.WriteFloatString( "Model[ %d ]\n", md5rProcData.models.Num() );
+	outFile.WriteFloatString( "{\n" );
+
+	for ( int modelIndex = 0; modelIndex < md5rProcData.models.Num(); ++modelIndex ) {
+		const rvRenderModelMD5R *model = md5rProcData.models[ modelIndex ];
+		if ( model == NULL ) {
+			continue;
+		}
+
+		outFile.WriteFloatString( "\tModel \"%s\"\n", model->Name() );
+		outFile.WriteFloatString( "\t{\n" );
+		model->WriteSansBuffers( outFile, "\t\t" );
+		outFile.WriteFloatString( "\t}\n" );
+	}
+
+	outFile.WriteFloatString( "}\n\n" );
+}
+
+/*
+================
+idRenderWorldLocal::ConvertProcToMD5R
+================
+*/
+void idRenderWorldLocal::ConvertProcToMD5R() {
+	idRenderWorldMD5RProcData &md5rProcData = R_RenderWorld_EnsureMD5RProcData( *this );
+	md5rProcData.Clear();
+
+	idList<int> convertedIndexes;
+	idList<rvRenderModelMD5R *> convertedModels;
+
+	for ( int modelIndex = 0; modelIndex < localModels.Num(); ++modelIndex ) {
+		idRenderModel *model = localModels[ modelIndex ];
+		if ( model == NULL || R_RenderWorld_IsShadowModel( *model ) ) {
+			continue;
+		}
+		if ( !R_RenderWorld_HasRenderableSurfaces( *model ) ) {
+			continue;
+		}
+
+		idRenderModelStatic *staticModel = dynamic_cast<idRenderModelStatic *>( model );
+		if ( staticModel == NULL || staticModel->IsDefaultModel() ) {
+			common->Warning(
+				"idRenderWorldLocal::ConvertProcToMD5R: can't convert proc model '%s' to MD5R",
+				( model != NULL ) ? model->Name() : "<null>" );
+			goto conversionFailed;
+		}
+
+		rvRenderModelMD5R *convertedModel = new rvRenderModelMD5R;
+		if ( convertedModel == NULL ) {
+			common->Error( "idRenderWorldLocal::ConvertProcToMD5R: out of memory" );
+			goto conversionFailed;
+		}
+
+		if ( !convertedModel->InitFromProcWorldStaticModel(
+			*staticModel,
+			md5rProcData.vertexBuffers,
+			md5rProcData.indexBuffers,
+			md5rProcData.silEdges ) ) {
+			common->Warning(
+				"idRenderWorldLocal::ConvertProcToMD5R: failed to convert proc model '%s' to shared MD5R data",
+				model->Name() );
+			delete convertedModel;
+			goto conversionFailed;
+		}
+
+		convertedIndexes.Append( modelIndex );
+		convertedModels.Append( convertedModel );
+	}
+
+	if ( convertedModels.Num() <= 0 ) {
+		R_RenderWorld_ClearMD5RProcData( *this );
+		return;
+	}
+
+	for ( int convertedIndex = 0; convertedIndex < convertedIndexes.Num(); ++convertedIndex ) {
+		const int modelIndex = convertedIndexes[ convertedIndex ];
+		idRenderModel *oldModel = localModels[ modelIndex ];
+		rvRenderModelMD5R *convertedModel = convertedModels[ convertedIndex ];
+
+		renderModelManager->RemoveModel( oldModel );
+		delete oldModel;
+
+		renderModelManager->AddModel( convertedModel );
+		localModels[ modelIndex ] = convertedModel;
+		md5rProcData.models.Append( convertedModel );
+	}
+
+	common->Printf(
+		"idRenderWorldLocal::ConvertProcToMD5R: converted %d proc model(s) to shared MD5R data for '%s'\n",
+		convertedModels.Num(),
+		mapName.c_str() );
+	return;
+
+conversionFailed:
+	for ( int convertedModelIndex = 0; convertedModelIndex < convertedModels.Num(); ++convertedModelIndex ) {
+		delete convertedModels[ convertedModelIndex ];
+	}
+	md5rProcData.Clear();
+}
+
+/*
+================
 R_RenderWorld_FinalizeLoadedWorld
 ================
 */
@@ -266,10 +446,10 @@ static void R_RenderWorld_FinalizeLoadedWorld( idRenderWorldLocal &world ) {
 ================
 R_RenderWorld_ParseSupportedMD5RProc
 
-OpenQ4 can currently consume an interim MD5RProc companion that keeps the
-classic model / shadowModel / portal / node sections under the MD5RProc header.
-If the file contains the retail packed VertexBuffer / Model blocks, fall back to
-the classic .proc world until the full packed-world runtime is ported.
+Retail Quake 4 MD5RProc companions serialize shared packed buffers first and
+then attach per-area Model blocks that reference those shared arrays. OpenQ4
+now mirrors that layout directly while still accepting the older classic
+model / shadowModel fallback sections for compatibility.
 ================
 */
 static bool R_RenderWorld_ParseSupportedMD5RProc( idRenderWorldLocal &world, Lexer &src, const char *fileName ) {
@@ -297,7 +477,60 @@ static bool R_RenderWorld_ParseSupportedMD5RProc( idRenderWorldLocal &world, Lex
 		return false;
 	}
 
+	idRenderWorldMD5RProcData &md5rProcData = R_RenderWorld_EnsureMD5RProcData( world );
+	md5rProcData.Clear();
+
 	while ( src.ReadToken( &token ) ) {
+		if ( token == "VertexBuffer" ) {
+			rvRenderModelMD5R::ParseSharedVertexBuffers( src, md5rProcData.vertexBuffers );
+			continue;
+		}
+
+		if ( token == "IndexBuffer" ) {
+			rvRenderModelMD5R::ParseSharedIndexBuffers( src, md5rProcData.indexBuffers );
+			continue;
+		}
+
+		if ( token == "SilhouetteEdge" ) {
+			rvRenderModelMD5R::ParseSharedSilhouetteEdges( src, md5rProcData.silEdges );
+			continue;
+		}
+
+		if ( token == "Model" ) {
+			src.ExpectTokenString( "[" );
+			const int numModels = src.ParseInt();
+			src.ExpectTokenString( "]" );
+			src.ExpectTokenString( "{" );
+
+			if ( numModels < 0 ) {
+				common->Warning(
+					"idRenderWorldLocal::InitFromMap: invalid packed MD5RProc model count %d in '%s'",
+					numModels,
+					fileName );
+				return false;
+			}
+
+			for ( int modelIndex = 0; modelIndex < numModels; ++modelIndex ) {
+				idToken modelName;
+				src.ExpectTokenString( "Model" );
+				src.ExpectAnyToken( &modelName );
+
+				rvRenderModelMD5R *model = new rvRenderModelMD5R;
+				model->InitEmpty( modelName );
+
+				src.ExpectTokenString( "{" );
+				model->InitFromProcWorldModel( src, md5rProcData.vertexBuffers, md5rProcData.indexBuffers, md5rProcData.silEdges );
+				src.ExpectTokenString( "}" );
+
+				renderModelManager->AddModel( model );
+				world.localModels.Append( model );
+				md5rProcData.models.Append( model );
+			}
+
+			src.ExpectTokenString( "}" );
+			continue;
+		}
+
 		if ( token == "model" ) {
 			idRenderModel *model = world.ParseModel( &src );
 			renderModelManager->AddModel( model );
@@ -320,17 +553,6 @@ static bool R_RenderWorld_ParseSupportedMD5RProc( idRenderWorldLocal &world, Lex
 		if ( token == "nodes" ) {
 			world.ParseNodes( &src );
 			continue;
-		}
-
-		if ( token == "VertexBuffer"
-			|| token == "IndexBuffer"
-			|| token == "SilhouetteEdge"
-			|| token == "Model" ) {
-			common->Warning(
-				"idRenderWorldLocal::InitFromMap: '%s' uses packed MD5RProc section '%s', which OpenQ4 does not load yet; falling back to the classic .proc world if available",
-				fileName,
-				token.c_str() );
-			return false;
 		}
 
 		common->Warning(
@@ -402,6 +624,7 @@ void idRenderWorldLocal::FreeWorld() {
 		delete localModels[i];
 	}
 	localModels.Clear();
+	R_RenderWorld_ClearMD5RProcData( *this );
 
 	areaReferenceAllocator.Shutdown();
 	interactionAllocator.Shutdown();
@@ -796,11 +1019,10 @@ void idRenderWorldLocal::ClearWorld() {
 ===========================
 idRenderWorldLocal::WriteMD5R
 
-Retail Quake 4 writes fully packed MD5RProc worlds from here. OpenQ4 doesn't
-have the packed world-buffer runtime yet, so export an interim companion that
-uses the MD5RProc header while preserving the classic model / shadowModel
-payloads. That keeps the companion path testable end to end today and gives the
-future packed-world port a stable file-discovery seam to replace.
+Retail Quake 4 writes fully packed MD5RProc worlds from here. OpenQ4 now does
+the same when the world was loaded from an MD5RProc companion and still has the
+shared packed buffer state resident. Classic .proc worlds still fall back to
+the interim classic export path until the actual conversion path is finished.
 ===========================
 */
 bool idRenderWorldLocal::WriteMD5R( bool compressed ) {
@@ -834,16 +1056,34 @@ bool idRenderWorldLocal::WriteMD5R( bool compressed ) {
 	outFile->WriteFloatString( "%s %d\n", MD5R_PROC_FILE_ID, MD5R_PROC_FILEVERSION );
 	outFile->WriteFloatString( "%u\n\n", R_RenderWorld_FakeMD5RProcCRC );
 
-	for ( int modelIndex = 0; modelIndex < localModels.Num(); ++modelIndex ) {
-		idRenderModel *model = localModels[ modelIndex ];
-		if ( model == NULL ) {
-			continue;
+	const idRenderWorldMD5RProcData *md5rProcData = this->md5rProcData;
+	if ( md5rProcData != NULL && md5rProcData->HasPackedWorldData() && md5rProcData->models.Num() > 0 ) {
+		rvRenderModelMD5R::WriteSharedVertexBuffers( *outFile, md5rProcData->vertexBuffers, "" );
+		if ( md5rProcData->indexBuffers.Num() > 0 ) {
+			rvRenderModelMD5R::WriteSharedIndexBuffers( *outFile, md5rProcData->indexBuffers, "" );
 		}
+		if ( md5rProcData->silEdges.Num() > 0 ) {
+			rvRenderModelMD5R::WriteSharedSilhouetteEdges( *outFile, md5rProcData->silEdges, "" );
+		}
+		R_RenderWorld_WritePackedMD5RProcModels( *outFile, *md5rProcData );
+		for ( int modelIndex = 0; modelIndex < localModels.Num(); ++modelIndex ) {
+			idRenderModel *model = localModels[ modelIndex ];
+			if ( model != NULL && R_RenderWorld_IsShadowModel( *model ) ) {
+				R_RenderWorld_WriteClassicMD5RProcShadowModel( *outFile, *model );
+			}
+		}
+	} else {
+		for ( int modelIndex = 0; modelIndex < localModels.Num(); ++modelIndex ) {
+			idRenderModel *model = localModels[ modelIndex ];
+			if ( model == NULL ) {
+				continue;
+			}
 
-		if ( R_RenderWorld_IsShadowModel( *model ) ) {
-			R_RenderWorld_WriteClassicMD5RProcShadowModel( *outFile, *model );
-		} else {
-			R_RenderWorld_WriteClassicMD5RProcModel( *outFile, *model );
+			if ( R_RenderWorld_IsShadowModel( *model ) ) {
+				R_RenderWorld_WriteClassicMD5RProcShadowModel( *outFile, *model );
+			} else {
+				R_RenderWorld_WriteClassicMD5RProcModel( *outFile, *model );
+			}
 		}
 	}
 
@@ -856,7 +1096,8 @@ bool idRenderWorldLocal::WriteMD5R( bool compressed ) {
 	}
 
 	common->Printf(
-		"idRenderWorldLocal::WriteMD5R: wrote interim MD5RProc companion '%s' for world '%s'\n",
+		"idRenderWorldLocal::WriteMD5R: wrote %sMD5RProc companion '%s' for world '%s'\n",
+		( md5rProcData != NULL && md5rProcData->HasPackedWorldData() && md5rProcData->models.Num() > 0 ) ? "packed " : "interim ",
 		exportFilename.c_str(),
 		worldName );
 	return true;
@@ -970,7 +1211,7 @@ static bool R_RenderWorld_HasMD5RProcCompanion( const char *mapName, idStr &md5r
 	md5rProcFilename = mapName;
 	md5rProcFilename.SetFileExtension( MD5R_PROC_FILE_EXT );
 
-	const ID_TIME_T md5rProcTimeStamp = R_RenderWorld_ReadBinaryAwareTimestamp( md5rProcFilename, &md5rProcFilename );
+	const ID_TIME_T md5rProcTimeStamp = R_RenderWorld_ReadBinaryAwareTimestamp( md5rProcFilename );
 	if ( timeStamp != NULL ) {
 		*timeStamp = md5rProcTimeStamp;
 	}
@@ -994,7 +1235,6 @@ bool idRenderWorldLocal::InitFromMap( const char *name ) {
 	Lexer *			src;
 	idToken			token;
 	idStr			filename;
-	idStr			resolvedProcFilename;
 	idStr			md5rProcFilename;
 	ID_TIME_T		procTimeStamp;
 	ID_TIME_T		md5rProcTimeStamp = FILE_NOT_FOUND_TIMESTAMP;
@@ -1012,7 +1252,7 @@ bool idRenderWorldLocal::InitFromMap( const char *name ) {
 	// load it
 	filename = name;
 	filename.SetFileExtension( PROC_FILE_EXT );
-	procTimeStamp = R_RenderWorld_ReadBinaryAwareTimestamp( filename, &resolvedProcFilename );
+	procTimeStamp = R_RenderWorld_ReadBinaryAwareTimestamp( filename );
 
 	R_DisableUnavailableMD5RCVar( r_convertProcToMD5R, "the MD5R proc-world runtime" );
 
@@ -1073,7 +1313,7 @@ bool idRenderWorldLocal::InitFromMap( const char *name ) {
 	}
 
 	src = LexerFactory::MakeLexer(
-		resolvedProcFilename.Length() > 0 ? resolvedProcFilename.c_str() : filename.c_str(),
+		filename.c_str(),
 		LEXFL_NOSTRINGCONCAT | LEXFL_NODOLLARPRECOMPILE,
 		false );
 	if ( !src->IsLoaded() ) {
@@ -1158,6 +1398,10 @@ bool idRenderWorldLocal::InitFromMap( const char *name ) {
 	}
 
 	delete src;
+
+	if ( r_convertProcToMD5R.GetBool() ) {
+		ConvertProcToMD5R();
+	}
 
 	R_RenderWorld_FinalizeLoadedWorld( *this );
 

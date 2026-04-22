@@ -103,14 +103,13 @@ static void R_ModelManager_BuildMD5RName( idStr &md5rName, const idStr &canonica
 =================
 R_ModelManager_FindLoadablePrebuiltMD5R
 
-Retail prefers a compiled .md5rc companion when present, then falls back to
-the plain .md5r file. OpenQ4 keeps the same probe order, but for now can only
-instantiate the text .md5r variant.
+ Retail prefers a compiled .md5rc companion when present, then falls back to
+ the plain .md5r file. OpenQ4 mirrors that probe order and always hands the
+ canonical .md5r name to the binary-aware lexer so it can resolve either form.
 =================
 */
-static bool R_ModelManager_FindLoadablePrebuiltMD5R( const idStr &md5rName, idStr &loadableName, bool &hasCompiledCompanion ) {
+static bool R_ModelManager_FindLoadablePrebuiltMD5R( const idStr &md5rName, idStr &loadableName ) {
 	loadableName.Clear();
-	hasCompiledCompanion = false;
 
 	if ( r_forceConvertMD5R.GetBool() ) {
 		return false;
@@ -121,7 +120,8 @@ static bool R_ModelManager_FindLoadablePrebuiltMD5R( const idStr &md5rName, idSt
 
 	if ( idFile *compiledFile = fileSystem->OpenFileRead( compiledName ) ) {
 		fileSystem->CloseFile( compiledFile );
-		hasCompiledCompanion = true;
+		loadableName = md5rName;
+		return true;
 	}
 
 	if ( idFile *sourceFile = fileSystem->OpenFileRead( md5rName ) ) {
@@ -137,9 +137,7 @@ static bool R_ModelManager_FindLoadablePrebuiltMD5R( const idStr &md5rName, idSt
 =================
 R_ModelManager_MaybeConvertMD5ToMD5R
 
-Retail Quake 4 can swap authored MD5 assets over to rvRenderModelMD5R here.
-Keep the loader seam explicit in OpenQ4 so the packed-mesh backend can drop
-in later without another control-flow rewrite.
+ Retail Quake 4 can swap authored MD5 assets over to rvRenderModelMD5R here.
 =================
 */
 static idRenderModel *R_ModelManager_MaybeConvertMD5ToMD5R( idRenderModelMD5 *sourceModel ) {
@@ -158,15 +156,27 @@ static idRenderModel *R_ModelManager_MaybeConvertMD5ToMD5R( idRenderModelMD5 *so
 		return sourceModel;
 	}
 
-	return sourceModel;
+	rvRenderModelMD5R *convertedModel = new rvRenderModelMD5R;
+	if ( convertedModel == NULL ) {
+		common->Error( "ModelManager: out of memory" );
+		return sourceModel;
+	}
+
+	if ( !convertedModel->InitFromMD5Model( *sourceModel ) ) {
+		common->Warning( "Failed to convert the MD5 '%s' to an MD5R", sourceModel->Name() );
+		delete convertedModel;
+		return sourceModel;
+	}
+
+	delete sourceModel;
+	return convertedModel;
 }
 
 /*
 =================
 R_ModelManager_MaybeConvertStaticToMD5R
 
-This mirrors the loader-side seam retail uses for static-model MD5R conversion.
-For now OpenQ4 keeps the original model until rvRenderModelMD5R exists in-tree.
+ This mirrors the loader-side seam retail uses for static-model MD5R conversion.
 =================
 */
 static idRenderModel *R_ModelManager_MaybeConvertStaticToMD5R( idRenderModelStatic *sourceModel ) {
@@ -184,7 +194,21 @@ static idRenderModel *R_ModelManager_MaybeConvertStaticToMD5R( idRenderModelStat
 		return sourceModel;
 	}
 
-	return sourceModel;
+	rvRenderModelMD5R *convertedModel = new rvRenderModelMD5R;
+	if ( convertedModel == NULL ) {
+		common->Error( "ModelManager: out of memory" );
+		return sourceModel;
+	}
+
+	if ( !convertedModel->InitFromStaticModel( *sourceModel, MD5R_SOURCE_LWO_ASE_FLT ) ) {
+		common->Warning( "Failed to convert the static model '%s' to an MD5R", sourceModel->Name() );
+		delete convertedModel;
+		return sourceModel;
+	}
+
+	collisionModelManager->ExtractCollisionModel( sourceModel, sourceModel->Name() );
+	delete sourceModel;
+	return convertedModel;
 }
 
 /*
@@ -366,7 +390,6 @@ idRenderModel *idRenderModelManagerLocal::GetModel( const char *modelName, bool 
 	idStr		extension;
 	idStr		md5rName;
 	idStr		loadableMD5RName;
-	bool		hasCompiledMD5RCompanion = false;
 
 	if ( !modelName || !modelName[0] ) {
 		return NULL;
@@ -424,24 +447,7 @@ idRenderModel *idRenderModelManagerLocal::GetModel( const char *modelName, bool 
 			}
 		}
 
-		if ( R_ModelManager_FindLoadablePrebuiltMD5R( md5rName, loadableMD5RName, hasCompiledMD5RCompanion ) ) {
-			if ( hasCompiledMD5RCompanion ) {
-				idStr compiledName = md5rName;
-				compiledName += "c";
-				common->DPrintf(
-					"Found compiled MD5R companion '%s' for '%s', but binary MD5RC loading is not implemented yet; loading text companion '%s' instead.\n",
-					compiledName.c_str(),
-					canonical.c_str(),
-					loadableMD5RName.c_str() );
-			}
-		} else if ( hasCompiledMD5RCompanion ) {
-			idStr compiledName = md5rName;
-			compiledName += "c";
-			common->DPrintf(
-				"Found compiled MD5R companion '%s' for '%s', but binary MD5RC loading is not implemented in this build yet; loading the source asset instead.\n",
-				compiledName.c_str(),
-				canonical.c_str() );
-		}
+		R_ModelManager_FindLoadablePrebuiltMD5R( md5rName, loadableMD5RName );
 	}
 
 	if ( loadableMD5RName.Length() != 0 ) {

@@ -42,7 +42,7 @@ R_IsMD5RRuntimeAvailable
 =========================
 */
 bool R_IsMD5RRuntimeAvailable( void ) {
-#if defined( _MD5R_SUPPORT )
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
 	return true;
 #else
 	return false;
@@ -55,9 +55,10 @@ R_IsMD5RWriteAvailable
 
 OpenQ4's text/binary MD5R model writer is now implemented in the parser-backed
 rvRenderModelMD5R path, so it no longer depends on the original retail
-_MD5R_WRITE_SUPPORT macro. World export now writes an interim MD5RProc
-companion that preserves classic proc payloads until the packed-world runtime
-is ported, so the export command is a valid end-to-end capability again.
+_MD5R_WRITE_SUPPORT macro. World export now round-trips packed MD5RProc
+companions when that shared world-buffer state is loaded, while classic .proc
+worlds still fall back to the interim classic-payload export until the actual
+conversion path is finished.
 =======================
 */
 bool R_IsMD5RWriteAvailable( void ) {

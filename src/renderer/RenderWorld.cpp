@@ -138,6 +138,7 @@ idRenderWorldLocal::idRenderWorldLocal() {
 
 	doublePortals = NULL;
 	numInterAreaPortals = 0;
+	md5rProcData = NULL;
 
 	interactionTable = 0;
 	interactionTableWidth = 0;
@@ -1474,7 +1475,8 @@ bool idRenderWorldLocal::Trace( modelTrace_t &trace, const idVec3 &start, const 
 					trace.material = shader;
 					trace.materialType = R_GetMaterialTypeForTrace( trace.material, surf->geometry, localTrace );
 					trace.entity = &def->parms;
-					trace.jointNumber = model->NearestJoint( j, localTrace.indexes[0], localTrace.indexes[1], localTrace.indexes[2] );
+					// Dynamic snapshots don't own joint-weight metadata; ask the source model.
+					trace.jointNumber = def->parms.hModel->NearestJoint( j, localTrace.indexes[0], localTrace.indexes[1], localTrace.indexes[2] );
 
 					traceBounds.Clear();
 					traceBounds.AddPoint( start );

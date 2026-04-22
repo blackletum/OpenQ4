@@ -35,6 +35,63 @@ rvRenderModelMD5R *rvRenderModelMD5R::modelList = NULL;
 
 static const char *MD5R_SnapshotName = "_MD5R_Snapshot_";
 static const int MD5R_BackSideSurfaceIdOffset = 1000;
+// Retail MD5R synthesizes omitted LOD ranges from this table, doubling after the third entry.
+static const float MD5R_DefaultLODRanges[] = { 100.0f, 250.0f, 500.0f };
+
+/*
+========================
+R_MD5R_ReadBinaryAwareTimestamp
+========================
+*/
+static ID_TIME_T R_MD5R_ReadBinaryAwareTimestamp( const idStr &filename, idStr *resolvedFilename = NULL ) {
+	if ( resolvedFilename != NULL ) {
+		resolvedFilename->Clear();
+	}
+
+	if ( cvarSystem->GetCVarBool( "com_binaryRead" ) ) {
+		idStr compiledFilename = filename;
+		compiledFilename += Lexer::sCompiledFileSuffix;
+
+		ID_TIME_T compiledTimeStamp;
+		fileSystem->ReadFile( compiledFilename, NULL, &compiledTimeStamp );
+		if ( compiledTimeStamp != FILE_NOT_FOUND_TIMESTAMP ) {
+			if ( resolvedFilename != NULL ) {
+				*resolvedFilename = compiledFilename;
+			}
+			return compiledTimeStamp;
+		}
+	}
+
+	ID_TIME_T sourceTimeStamp;
+	fileSystem->ReadFile( filename, NULL, &sourceTimeStamp );
+	if ( resolvedFilename != NULL && sourceTimeStamp != FILE_NOT_FOUND_TIMESTAMP ) {
+		*resolvedFilename = filename;
+	}
+
+	return sourceTimeStamp;
+}
+
+/*
+========================
+R_MD5R_GetDefaultLODRange
+========================
+*/
+static float R_MD5R_GetDefaultLODRange( int lodIndex ) {
+	const int numDefaultRanges = static_cast<int>( sizeof( MD5R_DefaultLODRanges ) / sizeof( MD5R_DefaultLODRanges[ 0 ] ) );
+	if ( lodIndex < 0 ) {
+		return 0.0f;
+	}
+	if ( lodIndex < numDefaultRanges ) {
+		return MD5R_DefaultLODRanges[ lodIndex ];
+	}
+
+	float rangeEnd = MD5R_DefaultLODRanges[ numDefaultRanges - 1 ];
+	for ( int i = numDefaultRanges; i <= lodIndex; ++i ) {
+		rangeEnd *= 2.0f;
+	}
+
+	return rangeEnd;
+}
 
 /*
 ========================
@@ -116,6 +173,164 @@ static void R_MD5R_ParseFlexibleBounds( Lexer &parser, idBounds &bounds ) {
 	R_MD5R_ParseFlexibleVec3( parser, maxs );
 	bounds[ 0 ] = mins;
 	bounds[ 1 ] = maxs;
+}
+
+/*
+========================
+R_MD5R_ModelHasSky
+========================
+*/
+static bool R_MD5R_ModelHasSky( const idRenderModelStatic &model ) {
+	for ( int surfaceIndex = 0; surfaceIndex < model.surfaces.Num(); ++surfaceIndex ) {
+		const modelSurface_t &surface = model.surfaces[ surfaceIndex ];
+		if ( surface.shader != NULL && idStr::Icmp( surface.shader->GetName(), "textures/smf/portal_sky" ) == 0 ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/*
+========================
+R_MD5R_PackBlendIndices
+========================
+*/
+static dword R_MD5R_PackBlendIndices( const int blendIndices[ 4 ] ) {
+	return static_cast<dword>( blendIndices[ 0 ] & 0xFF )
+		| ( static_cast<dword>( blendIndices[ 1 ] & 0xFF ) << 8 )
+		| ( static_cast<dword>( blendIndices[ 2 ] & 0xFF ) << 16 )
+		| ( static_cast<dword>( blendIndices[ 3 ] & 0xFF ) << 24 );
+}
+
+/*
+========================
+R_MD5R_InitStaticVertexFormat
+========================
+*/
+static void R_MD5R_InitStaticVertexFormat( rvMD5RVertexFormatDesc &vertexFormat ) {
+	vertexFormat = rvMD5RVertexFormatDesc();
+	vertexFormat.hasPosition = true;
+	vertexFormat.positionDim = 3;
+	vertexFormat.positionTokenType = TT_FLOAT;
+	vertexFormat.hasNormal = true;
+	vertexFormat.normalTokenType = TT_FLOAT;
+	vertexFormat.hasTangent = true;
+	vertexFormat.tangentTokenType = TT_FLOAT;
+	vertexFormat.hasBinormal = true;
+	vertexFormat.binormalTokenType = TT_FLOAT;
+	vertexFormat.hasDiffuseColor = true;
+	vertexFormat.diffuseColorTokenType = 0;
+	vertexFormat.hasTexCoord[ 0 ] = true;
+	vertexFormat.texCoordDim[ 0 ] = 2;
+	vertexFormat.texCoordTokenType[ 0 ] = TT_FLOAT;
+}
+
+/*
+========================
+R_MD5R_InitSkinnedVertexFormat
+========================
+*/
+static void R_MD5R_InitSkinnedVertexFormat( rvMD5RVertexFormatDesc &vertexFormat ) {
+	vertexFormat = rvMD5RVertexFormatDesc();
+	vertexFormat.hasPosition = true;
+	vertexFormat.positionDim = 3;
+	vertexFormat.positionTokenType = TT_FLOAT;
+	vertexFormat.hasBlendIndex = true;
+	vertexFormat.blendIndexTokenType = 0;
+	vertexFormat.hasBlendWeight = true;
+	vertexFormat.blendWeightDim = 4;
+	vertexFormat.blendWeightTransformCount = 4;
+	vertexFormat.blendWeightTokenType = TT_FLOAT;
+	vertexFormat.hasTexCoord[ 0 ] = true;
+	vertexFormat.texCoordDim[ 0 ] = 2;
+	vertexFormat.texCoordTokenType[ 0 ] = TT_FLOAT;
+}
+
+/*
+========================
+R_MD5R_InitVertexBufferDesc
+========================
+*/
+static void R_MD5R_InitVertexBufferDesc( rvMD5RVertexBufferDesc &vertexBuffer, const rvMD5RVertexFormatDesc &vertexFormat, int numVertices ) {
+	vertexBuffer = rvMD5RVertexBufferDesc();
+	vertexBuffer.numVertices = numVertices;
+	vertexBuffer.systemMemory = true;
+	vertexBuffer.videoMemory = true;
+	vertexBuffer.soA = false;
+	vertexBuffer.hasVertexFormat = true;
+	vertexBuffer.hasLoadVertexFormat = true;
+	vertexBuffer.vertexFormat = vertexFormat;
+	vertexBuffer.loadVertexFormat = vertexFormat;
+	vertexBuffer.positions.SetNum( numVertices );
+
+	if ( vertexFormat.hasBlendIndex ) {
+		vertexBuffer.blendIndices.SetNum( numVertices );
+	}
+	if ( vertexFormat.hasBlendWeight ) {
+		vertexBuffer.blendWeights.SetNum( numVertices );
+	}
+	if ( vertexFormat.hasNormal ) {
+		vertexBuffer.normals.SetNum( numVertices );
+	}
+	if ( vertexFormat.hasTangent ) {
+		vertexBuffer.tangents.SetNum( numVertices );
+	}
+	if ( vertexFormat.hasBinormal ) {
+		vertexBuffer.binormals.SetNum( numVertices );
+	}
+	if ( vertexFormat.hasDiffuseColor ) {
+		vertexBuffer.diffuseColors.SetNum( numVertices );
+	}
+
+	for ( int texCoordSet = 0; texCoordSet < 7; ++texCoordSet ) {
+		if ( vertexFormat.hasTexCoord[ texCoordSet ] ) {
+			vertexBuffer.texCoords[ texCoordSet ].SetNum( numVertices );
+		}
+	}
+}
+
+/*
+========================
+R_MD5R_InitIndexBufferDesc
+========================
+*/
+static void R_MD5R_InitIndexBufferDesc( rvMD5RIndexBufferDesc &indexBuffer, int numIndices ) {
+	indexBuffer = rvMD5RIndexBufferDesc();
+	indexBuffer.numIndices = numIndices;
+	indexBuffer.bitDepth = 32;
+	indexBuffer.systemMemory = true;
+	indexBuffer.videoMemory = true;
+	indexBuffer.indices.SetNum( numIndices );
+}
+
+/*
+========================
+R_MD5R_FillStaticVertexBuffer
+========================
+*/
+static void R_MD5R_FillStaticVertexBuffer( rvMD5RVertexBufferDesc &vertexBuffer, const srfTriangles_t &tri ) {
+	for ( int vertexIndex = 0; vertexIndex < tri.numVerts; ++vertexIndex ) {
+		const idDrawVert &sourceVert = tri.verts[ vertexIndex ];
+
+		vertexBuffer.positions[ vertexIndex ].Set( sourceVert.xyz.x, sourceVert.xyz.y, sourceVert.xyz.z, 1.0f );
+		vertexBuffer.normals[ vertexIndex ] = sourceVert.normal;
+		vertexBuffer.tangents[ vertexIndex ] = sourceVert.tangents[ 0 ];
+		vertexBuffer.binormals[ vertexIndex ] = sourceVert.tangents[ 1 ];
+		vertexBuffer.diffuseColors[ vertexIndex ] = sourceVert.GetColor();
+		vertexBuffer.texCoords[ 0 ][ vertexIndex ].Set( sourceVert.st.x, sourceVert.st.y, 0.0f, 0.0f );
+	}
+}
+
+/*
+========================
+R_MD5R_CopyIndexes
+========================
+*/
+static void R_MD5R_CopyIndexes( rvMD5RIndexBufferDesc &indexBuffer, const glIndex_t *indices, int numIndices ) {
+	for ( int index = 0; index < numIndices; ++index ) {
+		indexBuffer.indices[ index ] = indices[ index ];
+	}
 }
 
 /*
@@ -591,6 +806,9 @@ bool rvRenderModelMD5R::CopyPrimBatchTriangles( const rvMD5RMesh &mesh, idDrawVe
 		return false;
 	}
 
+	const idList<rvMD5RVertexBufferDesc> &vertexBuffers = GetVertexBuffers();
+	const idList<rvMD5RIndexBufferDesc> &indexBuffers = GetIndexBuffers();
+
 	if ( mesh.drawVertexBuffer < 0 || mesh.drawVertexBuffer >= vertexBuffers.Num()
 		|| mesh.drawIndexBuffer < 0 || mesh.drawIndexBuffer >= indexBuffers.Num()
 		|| mesh.silTraceIndexBuffer < 0 || mesh.silTraceIndexBuffer >= indexBuffers.Num() ) {
@@ -726,7 +944,10 @@ rvRenderModelMD5R::rvRenderModelMD5R() :
 	geometrySectionsSkipped( false ),
 	hasSky( false ),
 	source( MD5R_SOURCE_FILE ),
-	next( modelList ) {
+	next( modelList ),
+	sharedVertexBuffers( NULL ),
+	sharedIndexBuffers( NULL ),
+	sharedSilEdges( NULL ) {
 	modelList = this;
 }
 
@@ -741,6 +962,33 @@ rvRenderModelMD5R::~rvRenderModelMD5R() {
 
 /*
 ========================
+rvRenderModelMD5R::GetVertexBuffers
+========================
+*/
+const idList<rvMD5RVertexBufferDesc> &rvRenderModelMD5R::GetVertexBuffers() const {
+	return ( sharedVertexBuffers != NULL ) ? *sharedVertexBuffers : vertexBuffers;
+}
+
+/*
+========================
+rvRenderModelMD5R::GetIndexBuffers
+========================
+*/
+const idList<rvMD5RIndexBufferDesc> &rvRenderModelMD5R::GetIndexBuffers() const {
+	return ( sharedIndexBuffers != NULL ) ? *sharedIndexBuffers : indexBuffers;
+}
+
+/*
+========================
+rvRenderModelMD5R::GetSilhouetteEdges
+========================
+*/
+const idList<silEdge_t> &rvRenderModelMD5R::GetSilhouetteEdges() const {
+	return ( sharedSilEdges != NULL ) ? *sharedSilEdges : silEdges;
+}
+
+/*
+========================
 rvRenderModelMD5R::InitFromFile
 ========================
 */
@@ -749,6 +997,380 @@ void rvRenderModelMD5R::InitFromFile( const char *fileName ) {
 	source = MD5R_SOURCE_FILE;
 	reloadable = true;
 	LoadModel();
+}
+
+/*
+========================
+rvRenderModelMD5R::InitFromMD5Model
+========================
+*/
+bool rvRenderModelMD5R::InitFromMD5Model( const idRenderModelMD5 &sourceModel ) {
+	PurgeModel();
+	idRenderModelStatic::InitEmpty( sourceModel.Name() );
+	source = MD5R_SOURCE_MD5;
+	reloadable = true;
+	purged = false;
+	md5rVersion = MD5R_VERSION;
+
+	if ( sourceModel.IsDefaultModel()
+		|| sourceModel.meshes.Num() <= 0
+		|| sourceModel.joints.Num() <= 0
+		|| sourceModel.joints.Num() > 255 ) {
+		return false;
+	}
+
+	joints = sourceModel.joints;
+	defaultPose = sourceModel.defaultPose;
+	skinSpaceToLocalMats = sourceModel.skinSpaceToLocalMats;
+	bounds = sourceModel.bounds;
+	hasSky = false;
+
+	for ( int jointIndex = 0; jointIndex < joints.Num(); ++jointIndex ) {
+		const idMD5Joint *sourceParent = sourceModel.joints[ jointIndex ].parent;
+		if ( sourceParent == NULL ) {
+			joints[ jointIndex ].parent = NULL;
+			continue;
+		}
+
+		const int parentIndex = static_cast<int>( sourceParent - sourceModel.joints.Ptr() );
+		if ( parentIndex < 0 || parentIndex >= jointIndex ) {
+			return false;
+		}
+
+		joints[ jointIndex ].parent = &joints[ parentIndex ];
+	}
+
+	idList<idJointMat> bindPoseJoints;
+	bindPoseJoints.SetNum( skinSpaceToLocalMats.Num() );
+	for ( int jointIndex = 0; jointIndex < skinSpaceToLocalMats.Num(); ++jointIndex ) {
+		bindPoseJoints[ jointIndex ] = skinSpaceToLocalMats[ jointIndex ];
+		bindPoseJoints[ jointIndex ].Invert();
+	}
+
+	rvMD5RVertexFormatDesc vertexFormat;
+	R_MD5R_InitSkinnedVertexFormat( vertexFormat );
+
+	for ( int meshIndex = 0; meshIndex < sourceModel.meshes.Num(); ++meshIndex ) {
+		const idMD5Mesh &sourceMesh = sourceModel.meshes[ meshIndex ];
+		if ( sourceMesh.shader == NULL
+			|| sourceMesh.deformInfo == NULL
+			|| sourceMesh.baseVectors == NULL
+			|| sourceMesh.weightIndex == NULL
+			|| sourceMesh.scaledWeights == NULL
+			|| sourceMesh.deformInfo->numOutputVerts <= 0
+			|| sourceMesh.deformInfo->numIndexes <= 0 ) {
+			return false;
+		}
+
+		idList<dword> sourceBlendIndices;
+		idList<idVec4> sourceBlendWeights;
+		const int numSourceVerts = sourceMesh.deformInfo->numSourceVerts;
+		if ( numSourceVerts <= 0 || sourceMesh.weightIndex == NULL || sourceMesh.scaledWeights == NULL || sourceMesh.numWeights <= 0 ) {
+			return false;
+		}
+		sourceBlendIndices.SetNum( numSourceVerts );
+		sourceBlendWeights.SetNum( numSourceVerts );
+
+		int weightCursor = 0;
+		for ( int sourceVertexIndex = 0; sourceVertexIndex < numSourceVerts; ++sourceVertexIndex ) {
+			idVec4 vertexBlendWeights;
+			vertexBlendWeights.Zero();
+			int vertexBlendIndices[ 4 ] = { 0, 0, 0, 0 };
+			int influenceCount = 0;
+
+			while ( weightCursor < sourceMesh.numWeights ) {
+				const int jointOffset = sourceMesh.weightIndex[ weightCursor * 2 + 0 ];
+				const int jointIndex = jointOffset / static_cast<int>( sizeof( idJointMat ) );
+				if ( influenceCount >= 4 || jointIndex < 0 || jointIndex > 255 ) {
+					return false;
+				}
+
+				vertexBlendIndices[ influenceCount ] = jointIndex;
+				vertexBlendWeights[ influenceCount ] = sourceMesh.scaledWeights[ weightCursor ].w;
+
+				const bool lastWeightForVertex = ( sourceMesh.weightIndex[ weightCursor * 2 + 1 ] != 0 );
+				++weightCursor;
+				++influenceCount;
+
+				if ( lastWeightForVertex ) {
+					break;
+				}
+			}
+
+			if ( influenceCount <= 0 ) {
+				return false;
+			}
+
+			sourceBlendIndices[ sourceVertexIndex ] = R_MD5R_PackBlendIndices( vertexBlendIndices );
+			sourceBlendWeights[ sourceVertexIndex ] = vertexBlendWeights;
+		}
+
+		if ( weightCursor != sourceMesh.numWeights ) {
+			return false;
+		}
+
+		modelSurface_t tempSurface;
+		memset( &tempSurface, 0, sizeof( tempSurface ) );
+		const_cast<idMD5Mesh &>( sourceMesh ).UpdateSurface( NULL, bindPoseJoints.Ptr(), &tempSurface, false );
+
+		const srfTriangles_t *tri = tempSurface.geometry;
+		if ( tri == NULL || tri->verts == NULL || tri->numVerts != sourceMesh.deformInfo->numOutputVerts ) {
+			if ( tempSurface.geometry != NULL ) {
+				R_FreeStaticTriSurf( tempSurface.geometry );
+			}
+			return false;
+		}
+
+		const int vertexBufferIndex = vertexBuffers.Num();
+		const int indexBufferIndex = indexBuffers.Num();
+
+		rvMD5RVertexBufferDesc vertexBuffer;
+		R_MD5R_InitVertexBufferDesc( vertexBuffer, vertexFormat, tri->numVerts );
+		for ( int vertexIndex = 0; vertexIndex < tri->numVerts; ++vertexIndex ) {
+			int sourceVertexIndex = vertexIndex;
+			if ( vertexIndex >= sourceMesh.deformInfo->numSourceVerts ) {
+				const int mirrorIndex = vertexIndex - sourceMesh.deformInfo->numSourceVerts;
+				if ( mirrorIndex < 0 || mirrorIndex >= sourceMesh.deformInfo->numMirroredVerts ) {
+					R_FreeStaticTriSurf( tempSurface.geometry );
+					return false;
+				}
+				sourceVertexIndex = sourceMesh.deformInfo->mirroredVerts[ mirrorIndex ];
+			}
+
+			if ( sourceVertexIndex < 0 || sourceVertexIndex >= sourceBlendIndices.Num() ) {
+				R_FreeStaticTriSurf( tempSurface.geometry );
+				return false;
+			}
+
+			vertexBuffer.positions[ vertexIndex ] = sourceMesh.baseVectors[ vertexIndex * 4 + 0 ];
+			vertexBuffer.blendIndices[ vertexIndex ] = sourceBlendIndices[ sourceVertexIndex ];
+			vertexBuffer.blendWeights[ vertexIndex ] = sourceBlendWeights[ sourceVertexIndex ];
+			vertexBuffer.texCoords[ 0 ][ vertexIndex ].Set( tri->verts[ vertexIndex ].st.x, tri->verts[ vertexIndex ].st.y, 0.0f, 0.0f );
+		}
+		vertexBuffers.Append( vertexBuffer );
+
+		rvMD5RIndexBufferDesc indexBuffer;
+		R_MD5R_InitIndexBufferDesc( indexBuffer, sourceMesh.deformInfo->numIndexes );
+		R_MD5R_CopyIndexes( indexBuffer, sourceMesh.deformInfo->indexes, sourceMesh.deformInfo->numIndexes );
+		indexBuffers.Append( indexBuffer );
+
+		rvMD5RPrimBatch primBatch;
+		primBatch.numTransforms = joints.Num();
+		primBatch.transformPalette.SetNum( joints.Num() );
+		for ( int jointIndex = 0; jointIndex < joints.Num(); ++jointIndex ) {
+			primBatch.transformPalette[ jointIndex ] = jointIndex;
+		}
+		primBatch.silTraceGeoSpec.vertexStart = 0;
+		primBatch.silTraceGeoSpec.vertexCount = tri->numVerts;
+		primBatch.silTraceGeoSpec.indexStart = 0;
+		primBatch.silTraceGeoSpec.primitiveCount = sourceMesh.deformInfo->numIndexes / 3;
+		primBatch.hasSilTraceGeoSpec = true;
+		primBatch.drawGeoSpec = primBatch.silTraceGeoSpec;
+		primBatch.hasDrawGeoSpec = true;
+
+		rvMD5RMesh mesh;
+		mesh.renderModel = this;
+		mesh.material = sourceMesh.shader;
+		mesh.materialName = sourceMesh.shader->GetName();
+		mesh.bounds = tri->bounds;
+		mesh.meshIdentifier = meshIndex;
+		mesh.silTraceVertexBuffer = vertexBufferIndex;
+		mesh.silTraceIndexBuffer = indexBufferIndex;
+		mesh.drawVertexBuffer = vertexBufferIndex;
+		mesh.drawIndexBuffer = indexBufferIndex;
+		mesh.primBatches.Append( primBatch );
+		R_MD5R_CalcMeshGeometryProfile( mesh );
+		meshes.Append( mesh );
+
+		R_FreeStaticTriSurf( tempSurface.geometry );
+	}
+
+	if ( meshes.Num() <= 0 ) {
+		return false;
+	}
+
+	BuildLevelsOfDetail();
+
+	for ( int meshIndex = 0; meshIndex < meshes.Num(); ++meshIndex ) {
+		if ( !BuildDynamicMeshTemplate( meshes[ meshIndex ] ) ) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+/*
+========================
+rvRenderModelMD5R::InitFromStaticModel
+========================
+*/
+bool rvRenderModelMD5R::InitFromStaticModel( const idRenderModelStatic &sourceModel, rvMD5RSource_t sourceType ) {
+	return InitFromStaticModelInternal( sourceModel, sourceType, NULL, NULL, NULL );
+}
+
+/*
+========================
+rvRenderModelMD5R::InitFromProcWorldStaticModel
+========================
+*/
+bool rvRenderModelMD5R::InitFromProcWorldStaticModel(
+	const idRenderModelStatic &sourceModel,
+	idList<rvMD5RVertexBufferDesc> &sharedVertexBuffers,
+	idList<rvMD5RIndexBufferDesc> &sharedIndexBuffers,
+	idList<silEdge_t> &sharedSilEdges ) {
+	return InitFromStaticModelInternal( sourceModel, MD5R_SOURCE_PROC, &sharedVertexBuffers, &sharedIndexBuffers, &sharedSilEdges );
+}
+
+/*
+========================
+rvRenderModelMD5R::InitFromStaticModelInternal
+========================
+*/
+bool rvRenderModelMD5R::InitFromStaticModelInternal(
+	const idRenderModelStatic &sourceModel,
+	rvMD5RSource_t sourceType,
+	idList<rvMD5RVertexBufferDesc> *sharedVertexBuffers,
+	idList<rvMD5RIndexBufferDesc> *sharedIndexBuffers,
+	idList<silEdge_t> *sharedSilEdges ) {
+	PurgeModel();
+	idRenderModelStatic::InitEmpty( sourceModel.Name() );
+	source = sourceType;
+	reloadable = ( sourceType != MD5R_SOURCE_PROC );
+	purged = false;
+	md5rVersion = MD5R_VERSION;
+	bounds = sourceModel.bounds;
+	hasSky = ( sourceType == MD5R_SOURCE_PROC ) && R_MD5R_ModelHasSky( sourceModel );
+
+	idList<rvMD5RVertexBufferDesc> *targetVertexBuffers = &vertexBuffers;
+	idList<rvMD5RIndexBufferDesc> *targetIndexBuffers = &indexBuffers;
+	idList<silEdge_t> *targetSilEdges = &silEdges;
+
+	if ( sharedVertexBuffers != NULL && sharedIndexBuffers != NULL && sharedSilEdges != NULL ) {
+		this->sharedVertexBuffers = sharedVertexBuffers;
+		this->sharedIndexBuffers = sharedIndexBuffers;
+		this->sharedSilEdges = sharedSilEdges;
+		targetVertexBuffers = sharedVertexBuffers;
+		targetIndexBuffers = sharedIndexBuffers;
+		targetSilEdges = sharedSilEdges;
+	}
+
+	rvMD5RVertexFormatDesc vertexFormat;
+	R_MD5R_InitStaticVertexFormat( vertexFormat );
+
+	for ( int surfaceIndex = 0; surfaceIndex < sourceModel.surfaces.Num(); ++surfaceIndex ) {
+		const modelSurface_t &sourceSurface = sourceModel.surfaces[ surfaceIndex ];
+		const srfTriangles_t *tri = sourceSurface.geometry;
+		if ( tri == NULL || tri->verts == NULL || tri->indexes == NULL || sourceSurface.shader == NULL ) {
+			continue;
+		}
+		if ( tri->numVerts <= 0 || tri->numIndexes <= 0 ) {
+			continue;
+		}
+
+		const int vertexBufferIndex = targetVertexBuffers->Num();
+		const int indexBufferIndex = targetIndexBuffers->Num();
+		const int silEdgeStart = targetSilEdges->Num();
+
+		rvMD5RVertexBufferDesc vertexBuffer;
+		R_MD5R_InitVertexBufferDesc( vertexBuffer, vertexFormat, tri->numVerts );
+		R_MD5R_FillStaticVertexBuffer( vertexBuffer, *tri );
+		targetVertexBuffers->Append( vertexBuffer );
+
+		rvMD5RIndexBufferDesc indexBuffer;
+		R_MD5R_InitIndexBufferDesc( indexBuffer, tri->numIndexes );
+		R_MD5R_CopyIndexes( indexBuffer, tri->indexes, tri->numIndexes );
+		targetIndexBuffers->Append( indexBuffer );
+
+		if ( tri->numSilEdges > 0 && tri->silEdges != NULL ) {
+			for ( int silEdgeIndex = 0; silEdgeIndex < tri->numSilEdges; ++silEdgeIndex ) {
+				targetSilEdges->Append( tri->silEdges[ silEdgeIndex ] );
+			}
+		}
+
+		rvMD5RPrimBatch primBatch;
+		primBatch.silTraceGeoSpec.vertexStart = 0;
+		primBatch.silTraceGeoSpec.vertexCount = tri->numVerts;
+		primBatch.silTraceGeoSpec.indexStart = 0;
+		primBatch.silTraceGeoSpec.primitiveCount = tri->numIndexes / 3;
+		primBatch.hasSilTraceGeoSpec = true;
+		primBatch.drawGeoSpec = primBatch.silTraceGeoSpec;
+		primBatch.hasDrawGeoSpec = true;
+		if ( tri->numSilEdges > 0 ) {
+			primBatch.silEdgeStart = silEdgeStart;
+			primBatch.silEdgeCount = tri->numSilEdges;
+		}
+
+		rvMD5RMesh mesh;
+		mesh.renderModel = this;
+		mesh.material = sourceSurface.shader;
+		mesh.materialName = sourceSurface.shader->GetName();
+		mesh.bounds = tri->bounds;
+		mesh.meshIdentifier = surfaceIndex;
+		mesh.silTraceVertexBuffer = vertexBufferIndex;
+		mesh.silTraceIndexBuffer = indexBufferIndex;
+		mesh.drawVertexBuffer = vertexBufferIndex;
+		mesh.drawIndexBuffer = indexBufferIndex;
+		mesh.primBatches.Append( primBatch );
+		R_MD5R_CalcMeshGeometryProfile( mesh );
+		meshes.Append( mesh );
+	}
+
+	if ( meshes.Num() <= 0 ) {
+		return false;
+	}
+
+	BuildLevelsOfDetail();
+	if ( !GenerateStaticSurfaces() || geometrySectionsSkipped ) {
+		return false;
+	}
+
+	return true;
+}
+
+/*
+========================
+rvRenderModelMD5R::InitFromProcWorldModel
+========================
+*/
+void rvRenderModelMD5R::InitFromProcWorldModel(
+	Lexer &parser,
+	const idList<rvMD5RVertexBufferDesc> &sharedVertexBuffers,
+	const idList<rvMD5RIndexBufferDesc> &sharedIndexBuffers,
+	const idList<silEdge_t> &sharedSilEdges ) {
+	PurgeModel();
+	purged = false;
+	reloadable = false;
+	source = MD5R_SOURCE_PROC;
+	md5rVersion = MD5R_VERSION;
+	this->sharedVertexBuffers = &sharedVertexBuffers;
+	this->sharedIndexBuffers = &sharedIndexBuffers;
+	this->sharedSilEdges = &sharedSilEdges;
+
+	parser.ExpectTokenString( "Mesh" );
+	ParseMeshes( parser );
+	BuildLevelsOfDetail();
+
+	bounds.Clear();
+	if ( parser.PeekTokenString( "Bounds" ) ) {
+		parser.ExpectTokenString( "Bounds" );
+		R_MD5R_ParseFlexibleBounds( parser, bounds );
+	}
+
+	if ( parser.PeekTokenString( "HasSky" ) ) {
+		parser.ExpectTokenString( "HasSky" );
+		hasSky = true;
+	}
+
+	if ( joints.Num() == 0 && GetVertexBuffers().Num() > 0 && meshes.Num() > 0 ) {
+		if ( !GenerateStaticSurfaces() ) {
+			metadataOnly = true;
+			geometrySectionsSkipped = true;
+			common->Warning(
+				"rvRenderModelMD5R::InitFromProcWorldModel: parsed packed proc-world model '%s', but static MD5R surface generation could not decode the current buffer layout",
+				name.c_str() );
+		}
+	}
 }
 
 /*
@@ -970,7 +1592,7 @@ void rvRenderModelMD5R::ParseVertexBuffer( Lexer &parser, rvMD5RVertexBufferDesc
 	if ( vertexBuffer.soA && vertexBuffer.loadVertexFormat.positionSwizzled ) {
 		common->Warning(
 			"rvRenderModelMD5R::ParseVertexBuffer: '%s' uses SoA swizzled MD5R positions, which are not decoded yet; static surface generation will be skipped for this buffer",
-			name.c_str() );
+			parser.GetFileName() );
 		vertexBuffer.positions.Clear();
 		vertexBuffer.blendIndices.Clear();
 		vertexBuffer.blendWeights.Clear();
@@ -1000,7 +1622,7 @@ void rvRenderModelMD5R::ParseVertexBuffer( Lexer &parser, rvMD5RVertexBufferDesc
 rvRenderModelMD5R::ParseVertexBuffers
 ========================
 */
-void rvRenderModelMD5R::ParseVertexBuffers( Lexer &parser ) {
+void rvRenderModelMD5R::ParseSharedVertexBuffers( Lexer &parser, idList<rvMD5RVertexBufferDesc> &vertexBuffers ) {
 	parser.ExpectTokenString( "[" );
 	const int numVertexBuffers = parser.ParseInt();
 	parser.ExpectTokenString( "]" );
@@ -1017,6 +1639,15 @@ void rvRenderModelMD5R::ParseVertexBuffers( Lexer &parser ) {
 	}
 
 	parser.ExpectTokenString( "}" );
+}
+
+/*
+========================
+rvRenderModelMD5R::ParseVertexBuffers
+========================
+*/
+void rvRenderModelMD5R::ParseVertexBuffers( Lexer &parser ) {
+	ParseSharedVertexBuffers( parser, vertexBuffers );
 }
 
 /*
@@ -1082,7 +1713,7 @@ void rvRenderModelMD5R::ParseIndexBuffer( Lexer &parser, rvMD5RIndexBufferDesc &
 rvRenderModelMD5R::ParseIndexBuffers
 ========================
 */
-void rvRenderModelMD5R::ParseIndexBuffers( Lexer &parser ) {
+void rvRenderModelMD5R::ParseSharedIndexBuffers( Lexer &parser, idList<rvMD5RIndexBufferDesc> &indexBuffers ) {
 	parser.ExpectTokenString( "[" );
 	const int numIndexBuffers = parser.ParseInt();
 	parser.ExpectTokenString( "]" );
@@ -1103,10 +1734,19 @@ void rvRenderModelMD5R::ParseIndexBuffers( Lexer &parser ) {
 
 /*
 ========================
+rvRenderModelMD5R::ParseIndexBuffers
+========================
+*/
+void rvRenderModelMD5R::ParseIndexBuffers( Lexer &parser ) {
+	ParseSharedIndexBuffers( parser, indexBuffers );
+}
+
+/*
+========================
 rvRenderModelMD5R::ParseSilhouetteEdges
 ========================
 */
-void rvRenderModelMD5R::ParseSilhouetteEdges( Lexer &parser ) {
+void rvRenderModelMD5R::ParseSharedSilhouetteEdges( Lexer &parser, idList<silEdge_t> &silEdges ) {
 	parser.ExpectTokenString( "[" );
 	const int numSilEdges = parser.ParseInt();
 	parser.ExpectTokenString( "]" );
@@ -1125,6 +1765,15 @@ void rvRenderModelMD5R::ParseSilhouetteEdges( Lexer &parser ) {
 	}
 
 	parser.ExpectTokenString( "}" );
+}
+
+/*
+========================
+rvRenderModelMD5R::ParseSilhouetteEdges
+========================
+*/
+void rvRenderModelMD5R::ParseSilhouetteEdges( Lexer &parser ) {
+	ParseSharedSilhouetteEdges( parser, silEdges );
 }
 
 /*
@@ -1171,10 +1820,6 @@ void rvRenderModelMD5R::ParsePrimBatch( Lexer &parser, rvMD5RPrimBatch &primBatc
 		primBatch.numTransforms = parser.ParseInt();
 		parser.ExpectTokenString( "]" );
 		parser.ExpectTokenString( "{" );
-
-		if ( primBatch.numTransforms > 25 ) {
-			parser.Error( "Primitive batch initialization failed - too many transforms per batch" );
-		}
 
 		if ( primBatch.numTransforms < 0 ) {
 			parser.Error( "Primitive batch initialization failed - invalid transform count %d", primBatch.numTransforms );
@@ -1258,6 +1903,8 @@ void rvRenderModelMD5R::ParseMesh( Lexer &parser, int meshIndex ) {
 	idToken token;
 	idToken materialToken;
 	rvMD5RMesh &mesh = meshes[ meshIndex ];
+	const idList<rvMD5RVertexBufferDesc> &vertexBuffers = GetVertexBuffers();
+	const idList<rvMD5RIndexBufferDesc> &indexBuffers = GetIndexBuffers();
 
 	mesh = rvMD5RMesh();
 	mesh.renderModel = this;
@@ -1407,13 +2054,9 @@ void rvRenderModelMD5R::BuildLevelsOfDetail() {
 	if ( lods.Num() == 0 && maxReferencedLOD >= 0 ) {
 		lods.SetNum( maxReferencedLOD + 1 );
 		for ( int i = 0; i < lods.Num(); ++i ) {
-			lods[ i ].rangeEnd = idMath::INFINITY;
-			lods[ i ].rangeEndSquared = idMath::INFINITY;
+			lods[ i ].rangeEnd = R_MD5R_GetDefaultLODRange( i );
+			lods[ i ].rangeEndSquared = lods[ i ].rangeEnd * lods[ i ].rangeEnd;
 		}
-
-		common->DPrintf(
-			"rvRenderModelMD5R::BuildLevelsOfDetail: '%s' referenced LODs without explicit ranges; synthetic ranges default to infinity until rvMesh runtime support is ported\n",
-			name.c_str() );
 	}
 
 	for ( int i = 0; i < meshes.Num(); ++i ) {
@@ -1433,6 +2076,9 @@ rvRenderModelMD5R::GenerateStaticTriSurface
 ========================
 */
 srfTriangles_t *rvRenderModelMD5R::GenerateStaticTriSurface( const rvMD5RMesh &mesh ) const {
+	const idList<rvMD5RVertexBufferDesc> &vertexBuffers = GetVertexBuffers();
+	const idList<rvMD5RIndexBufferDesc> &indexBuffers = GetIndexBuffers();
+
 	if ( mesh.drawVertexBuffer < 0 || mesh.drawVertexBuffer >= vertexBuffers.Num()
 		|| mesh.drawIndexBuffer < 0 || mesh.drawIndexBuffer >= indexBuffers.Num() ) {
 		return NULL;
@@ -1689,6 +2335,78 @@ static bool R_MD5R_SkinVertexPosition(
 
 /*
 ========================
+R_MD5R_MapMeshVertexToSourceVertex
+========================
+*/
+static bool R_MD5R_MapMeshVertexToSourceVertex(
+	const rvMD5RMesh &mesh,
+	int meshVertexIndex,
+	int &sourceVertexIndex,
+	const rvMD5RPrimBatch *&sourcePrimBatch ) {
+	int destVertexBase = 0;
+
+	for ( int primBatchIndex = 0; primBatchIndex < mesh.primBatches.Num(); ++primBatchIndex ) {
+		const rvMD5RPrimBatch &primBatch = mesh.primBatches[ primBatchIndex ];
+		if ( !primBatch.hasDrawGeoSpec ) {
+			continue;
+		}
+
+		if ( meshVertexIndex >= destVertexBase && meshVertexIndex < destVertexBase + primBatch.drawGeoSpec.vertexCount ) {
+			sourceVertexIndex = primBatch.drawGeoSpec.vertexStart + ( meshVertexIndex - destVertexBase );
+			sourcePrimBatch = &primBatch;
+			return true;
+		}
+
+		destVertexBase += primBatch.drawGeoSpec.vertexCount;
+	}
+
+	sourceVertexIndex = -1;
+	sourcePrimBatch = NULL;
+	return false;
+}
+
+/*
+========================
+R_MD5R_GetDominantBlendJoint
+========================
+*/
+static int R_MD5R_GetDominantBlendJoint(
+	const rvMD5RVertexBufferDesc &vertexBuffer,
+	int sourceVertexIndex,
+	const rvMD5RPrimBatch &primBatch,
+	int numJoints ) {
+	if ( sourceVertexIndex < 0 || sourceVertexIndex >= vertexBuffer.numVertices ) {
+		return 0;
+	}
+
+	const bool hasBlendIndices = ( vertexBuffer.blendIndices.Num() == vertexBuffer.numVertices );
+	const bool hasBlendWeights = ( vertexBuffer.blendWeights.Num() == vertexBuffer.numVertices );
+	const dword packedBlendIndices = hasBlendIndices ? vertexBuffer.blendIndices[ sourceVertexIndex ] : 0u;
+
+	int bestInfluence = 0;
+	if ( hasBlendWeights ) {
+		float bestWeight = -1.0f;
+		const idVec4 &blendWeights = vertexBuffer.blendWeights[ sourceVertexIndex ];
+		for ( int influenceIndex = 0; influenceIndex < 4; ++influenceIndex ) {
+			const float weight = idMath::Fabs( blendWeights[ influenceIndex ] );
+			if ( weight > bestWeight ) {
+				bestWeight = weight;
+				bestInfluence = influenceIndex;
+			}
+		}
+	}
+
+	int jointIndex = 0;
+	const int localTransformIndex = hasBlendIndices ? R_MD5R_GetBlendIndex( packedBlendIndices, bestInfluence ) : 0;
+	if ( !R_MD5R_ResolveBlendJoint( primBatch, localTransformIndex, numJoints, jointIndex ) ) {
+		return 0;
+	}
+
+	return jointIndex;
+}
+
+/*
+========================
 R_MD5R_GetPackedTransformCount
 ========================
 */
@@ -1716,8 +2434,6 @@ static bool R_MD5R_CanUsePackedDynamicSurface(
 		|| mesh.numDrawIndices <= 0
 		|| mesh.numSilTraceVertices <= 0
 		|| mesh.numSilTraceIndices <= 0
-		|| mesh.numDrawVertices != mesh.numSilTraceVertices
-		|| mesh.numDrawIndices != mesh.numSilTraceIndices
 		|| mesh.primBatches.Num() <= 0 ) {
 		return false;
 	}
@@ -1754,8 +2470,7 @@ static bool R_MD5R_CanUsePackedDynamicSurface(
 
 		const int drawIndexCount = primBatch.drawGeoSpec.primitiveCount * 3;
 		const int silTraceIndexCount = primBatch.silTraceGeoSpec.primitiveCount * 3;
-		if ( primBatch.drawGeoSpec.vertexCount != primBatch.silTraceGeoSpec.vertexCount
-			|| drawIndexCount != silTraceIndexCount ) {
+		if ( drawIndexCount != silTraceIndexCount ) {
 			return false;
 		}
 
@@ -1878,9 +2593,11 @@ static bool R_MD5R_UpdatePackedDynamicSurface(
 		}
 	}
 
-	rvSilTraceVertT *dynamicSilTraceVerts = reinterpret_cast<rvSilTraceVertT *>( tri->silTraceVerts );
-	idBounds bounds;
-	bounds.Clear();
+	// Keep a raw per-prim-batch sil-trace working set so CopyPrimBatchTriangles can
+	// rematerialize draw verts even when the draw mesh has extra split vertices.
+	idList<rvSilTraceVertT> skinnedSilTraceVerts;
+	skinnedSilTraceVerts.SetNum( mesh.numSilTraceVertices );
+	rvSilTraceVertT *rawSilTraceVerts = skinnedSilTraceVerts.Ptr();
 
 	int silTraceVertexBase = 0;
 	int transformBase = 0;
@@ -1902,7 +2619,7 @@ static bool R_MD5R_UpdatePackedDynamicSurface(
 		for ( int localVertexIndex = 0; localVertexIndex < primBatch.silTraceGeoSpec.vertexCount; ++localVertexIndex ) {
 			const int destVertexIndex = silTraceVertexBase + localVertexIndex;
 			const int sourceVertexIndex = primBatch.silTraceGeoSpec.vertexStart + localVertexIndex;
-			if ( destVertexIndex < 0 || destVertexIndex >= tri->numVerts ) {
+			if ( destVertexIndex < 0 || destVertexIndex >= mesh.numSilTraceVertices ) {
 				return false;
 			}
 
@@ -1911,15 +2628,14 @@ static bool R_MD5R_UpdatePackedDynamicSurface(
 				return false;
 			}
 
-			dynamicSilTraceVerts[ destVertexIndex ].xyzw.Set( skinnedPosition.x, skinnedPosition.y, skinnedPosition.z, 1.0f );
-			bounds.AddPoint( skinnedPosition );
+			rawSilTraceVerts[ destVertexIndex ].xyzw.Set( skinnedPosition.x, skinnedPosition.y, skinnedPosition.z, 1.0f );
 		}
 
 		silTraceVertexBase += primBatch.silTraceGeoSpec.vertexCount;
 		transformBase += primBatchTransformCount;
 	}
 
-	if ( silTraceVertexBase != tri->numVerts || transformBase != totalTransformCount ) {
+	if ( silTraceVertexBase != mesh.numSilTraceVertices || transformBase != totalTransformCount ) {
 		return false;
 	}
 
@@ -1927,8 +2643,17 @@ static bool R_MD5R_UpdatePackedDynamicSurface(
 		tri->verts,
 		tri->indexes,
 		reinterpret_cast<const rvMesh *>( tri->primBatchMesh ),
-		dynamicSilTraceVerts ) ) {
+		rawSilTraceVerts ) ) {
 		return false;
+	}
+
+	rvSilTraceVertT *dynamicSilTraceVerts = reinterpret_cast<rvSilTraceVertT *>( tri->silTraceVerts );
+	idBounds bounds;
+	bounds.Clear();
+	for ( int vertIndex = 0; vertIndex < tri->numVerts; ++vertIndex ) {
+		const idVec3 &position = tri->verts[ vertIndex ].xyz;
+		dynamicSilTraceVerts[ vertIndex ].xyzw.Set( position.x, position.y, position.z, 1.0f );
+		bounds.AddPoint( position );
 	}
 
 	tri->bounds = bounds;
@@ -1997,6 +2722,10 @@ rvRenderModelMD5R::UpdateDynamicSurface
 ========================
 */
 bool rvRenderModelMD5R::UpdateDynamicSurface( const rvMD5RMesh &mesh, const idJointMat *entJoints, modelSurface_t &surface, bool calculateTangents ) const {
+	const idList<rvMD5RVertexBufferDesc> &vertexBuffers = GetVertexBuffers();
+	const idList<rvMD5RIndexBufferDesc> &indexBuffers = GetIndexBuffers();
+	const idList<silEdge_t> &silEdges = GetSilhouetteEdges();
+
 #if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
 	if ( R_MD5R_UpdatePackedDynamicSurface( mesh, entJoints, vertexBuffers, indexBuffers, silEdges, joints.Num(), surface, calculateTangents ) ) {
 		return true;
@@ -2102,6 +2831,9 @@ rvRenderModelMD5R::GenerateDynamicSurface
 ========================
 */
 bool rvRenderModelMD5R::GenerateDynamicSurface( idRenderModelStatic &staticModel, rvMD5RMesh &mesh, const renderEntity_s &ent, const idJointMat *entJoints, dword surfMask ) {
+	const idList<rvMD5RVertexBufferDesc> &vertexBuffers = GetVertexBuffers();
+	const idList<rvMD5RIndexBufferDesc> &indexBuffers = GetIndexBuffers();
+
 	if ( !r_skipSuppress.GetBool()
 		&& mesh.meshIdentifier >= 0
 		&& mesh.meshIdentifier < static_cast<int>( sizeof( unsigned int ) * 8 )
@@ -2115,7 +2847,7 @@ bool rvRenderModelMD5R::GenerateDynamicSurface( idRenderModelStatic &staticModel
 	const bool collisionOnly = ( surfMask & SURF_COLLISION ) != 0;
 	const idMaterial *shader = R_RemapShaderBySkin( mesh.material, ent.customSkin, ent.customShader );
 #if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
-	const bool canUsePackedDynamicSurface = R_MD5R_CanUsePackedDynamicSurface( mesh, vertexBuffers, indexBuffers );
+	bool canUsePackedDynamicSurface = R_MD5R_CanUsePackedDynamicSurface( mesh, vertexBuffers, indexBuffers );
 #else
 	const bool canUsePackedDynamicSurface = false;
 #endif
@@ -2133,6 +2865,18 @@ bool rvRenderModelMD5R::GenerateDynamicSurface( idRenderModelStatic &staticModel
 		mesh.surfaceNum = -1;
 		return false;
 	}
+
+	// The current hybrid MD5R path can safely rematerialize split draw/sil-trace
+	// meshes for ordinary rendering, but shadow and collision consumers still
+	// assume the classic tri-surf silhouette topology. Keep those cases on the
+	// legacy path until the native rvMesh shadow/trace path is finished.
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	if ( canUsePackedDynamicSurface
+		&& mesh.numDrawVertices != mesh.numSilTraceVertices
+		&& ( collisionOnly || ( shader != NULL && shader->SurfaceCastsShadow() ) ) ) {
+		canUsePackedDynamicSurface = false;
+	}
+#endif
 
 	if ( !canUsePackedDynamicSurface ) {
 		if ( !BuildDynamicMeshTemplate( mesh ) ) {
@@ -2278,9 +3022,36 @@ surfaces without the retail rvMesh runtime.
 ========================
 */
 void rvRenderModelMD5R::LoadModel() {
+	const rvMD5RSource_t loadSource = source;
+
 	PurgeModel();
 	purged = false;
 	reloadable = true;
+
+	if ( loadSource == MD5R_SOURCE_MD5 ) {
+		idAutoPtr<idRenderModelMD5> sourceModel( new idRenderModelMD5 );
+		sourceModel->InitFromFile( name.c_str() );
+
+		if ( sourceModel->IsDefaultModel() || !InitFromMD5Model( *sourceModel ) ) {
+			MakeDefaultModel();
+		}
+
+		fileSystem->ReadFile( name.c_str(), NULL, &timeStamp );
+		return;
+	}
+
+	if ( loadSource == MD5R_SOURCE_LWO_ASE_FLT ) {
+		idAutoPtr<idRenderModelStatic> sourceModel( new idRenderModelStatic );
+		sourceModel->InitFromFile( name.c_str() );
+
+		if ( sourceModel->IsDefaultModel() || !InitFromStaticModel( *sourceModel, MD5R_SOURCE_LWO_ASE_FLT ) ) {
+			MakeDefaultModel();
+		}
+
+		fileSystem->ReadFile( name.c_str(), NULL, &timeStamp );
+		return;
+	}
+
 	source = MD5R_SOURCE_FILE;
 
 	idAutoPtr<Lexer> parser( LexerFactory::MakeLexer( name.c_str(), LEXFL_ALLOWPATHNAMES | LEXFL_NOSTRINGESCAPECHARS ) );
@@ -2348,7 +3119,7 @@ void rvRenderModelMD5R::LoadModel() {
 		parser->Warning( "Ignoring unexpected trailing token '%s' in '%s'", token.c_str(), name.c_str() );
 	}
 
-	const bool hasGeometrySections = ( vertexBuffers.Num() > 0 || indexBuffers.Num() > 0 || meshes.Num() > 0 );
+	const bool hasGeometrySections = ( GetVertexBuffers().Num() > 0 || GetIndexBuffers().Num() > 0 || meshes.Num() > 0 );
 	metadataOnly = false;
 	geometrySectionsSkipped = false;
 
@@ -2387,7 +3158,7 @@ void rvRenderModelMD5R::LoadModel() {
 		}
 	}
 
-	fileSystem->ReadFile( name.c_str(), NULL, &timeStamp );
+	timeStamp = R_MD5R_ReadBinaryAwareTimestamp( name );
 }
 
 /*
@@ -2418,6 +3189,9 @@ void rvRenderModelMD5R::PurgeModel() {
 	metadataOnly = false;
 	geometrySectionsSkipped = false;
 	hasSky = false;
+	sharedVertexBuffers = NULL;
+	sharedIndexBuffers = NULL;
+	sharedSilEdges = NULL;
 }
 
 /*
@@ -2740,6 +3514,55 @@ const idJointMat *rvRenderModelMD5R::GetSkinSpaceToLocalMats() const {
 
 /*
 ========================
+rvRenderModelMD5R::NearestJoint
+========================
+*/
+int rvRenderModelMD5R::NearestJoint( int surfaceNum, int a, int b, int c ) const {
+	if ( surfaceNum > meshes.Num() ) {
+		common->Error( "rvRenderModelMD5R::NearestJoint: surfaceNum > meshes.Num()" );
+	}
+
+	const idList<rvMD5RVertexBufferDesc> &vertexBuffers = GetVertexBuffers();
+
+	for ( int meshIndex = 0; meshIndex < meshes.Num(); ++meshIndex ) {
+		const rvMD5RMesh &mesh = meshes[ meshIndex ];
+		if ( mesh.surfaceNum != surfaceNum ) {
+			continue;
+		}
+
+		if ( mesh.drawVertexBuffer < 0 || mesh.drawVertexBuffer >= vertexBuffers.Num() ) {
+			return 0;
+		}
+
+		int meshVertexIndex = -1;
+		if ( a >= 0 && a < mesh.numDrawVertices ) {
+			meshVertexIndex = a;
+		} else if ( b >= 0 && b < mesh.numDrawVertices ) {
+			meshVertexIndex = b;
+		} else if ( c >= 0 && c < mesh.numDrawVertices ) {
+			meshVertexIndex = c;
+		} else {
+			return 0;
+		}
+
+		int sourceVertexIndex = -1;
+		const rvMD5RPrimBatch *sourcePrimBatch = NULL;
+		if ( !R_MD5R_MapMeshVertexToSourceVertex( mesh, meshVertexIndex, sourceVertexIndex, sourcePrimBatch ) || sourcePrimBatch == NULL ) {
+			return 0;
+		}
+
+		return R_MD5R_GetDominantBlendJoint(
+			vertexBuffers[ mesh.drawVertexBuffer ],
+			sourceVertexIndex,
+			*sourcePrimBatch,
+			joints.Num() );
+	}
+
+	return 0;
+}
+
+/*
+========================
 rvRenderModelMD5R::GetSurfaceMask
 ========================
 */
@@ -2770,10 +3593,12 @@ rvRenderModelMD5R::Memory
 ========================
 */
 int rvRenderModelMD5R::Memory() const {
+	const idList<rvMD5RVertexBufferDesc> &vertexBuffers = GetVertexBuffers();
+	const idList<rvMD5RIndexBufferDesc> &indexBuffers = GetIndexBuffers();
+	const idList<silEdge_t> &silEdges = GetSilhouetteEdges();
+	const bool ownsPackedBuffers = ( sharedVertexBuffers == NULL && sharedIndexBuffers == NULL && sharedSilEdges == NULL );
+
 	int total = idRenderModelStatic::Memory();
-	total += vertexBuffers.MemoryUsed();
-	total += indexBuffers.MemoryUsed();
-	total += silEdges.MemoryUsed();
 	total += lods.MemoryUsed();
 	total += allLODMeshes.MemoryUsed();
 	total += meshes.MemoryUsed();
@@ -2781,6 +3606,12 @@ int rvRenderModelMD5R::Memory() const {
 	total += defaultPose.MemoryUsed();
 	total += skinSpaceToLocalMats.MemoryUsed();
 	total += commandLine.DynamicMemoryUsed();
+
+	if ( ownsPackedBuffers ) {
+		total += vertexBuffers.MemoryUsed();
+		total += indexBuffers.MemoryUsed();
+		total += silEdges.MemoryUsed();
+	}
 
 	for ( int i = 0; i < lods.Num(); ++i ) {
 		total += lods[ i ].meshIndexes.MemoryUsed();
@@ -2799,21 +3630,23 @@ int rvRenderModelMD5R::Memory() const {
 		total += joints[ i ].name.DynamicMemoryUsed();
 	}
 
-	for ( int i = 0; i < vertexBuffers.Num(); ++i ) {
-		total += vertexBuffers[ i ].positions.MemoryUsed();
-		total += vertexBuffers[ i ].blendIndices.MemoryUsed();
-		total += vertexBuffers[ i ].blendWeights.MemoryUsed();
-		total += vertexBuffers[ i ].normals.MemoryUsed();
-		total += vertexBuffers[ i ].tangents.MemoryUsed();
-		total += vertexBuffers[ i ].binormals.MemoryUsed();
-		total += vertexBuffers[ i ].diffuseColors.MemoryUsed();
-		for ( int texCoordSet = 0; texCoordSet < 7; ++texCoordSet ) {
-			total += vertexBuffers[ i ].texCoords[ texCoordSet ].MemoryUsed();
+	if ( ownsPackedBuffers ) {
+		for ( int i = 0; i < vertexBuffers.Num(); ++i ) {
+			total += vertexBuffers[ i ].positions.MemoryUsed();
+			total += vertexBuffers[ i ].blendIndices.MemoryUsed();
+			total += vertexBuffers[ i ].blendWeights.MemoryUsed();
+			total += vertexBuffers[ i ].normals.MemoryUsed();
+			total += vertexBuffers[ i ].tangents.MemoryUsed();
+			total += vertexBuffers[ i ].binormals.MemoryUsed();
+			total += vertexBuffers[ i ].diffuseColors.MemoryUsed();
+			for ( int texCoordSet = 0; texCoordSet < 7; ++texCoordSet ) {
+				total += vertexBuffers[ i ].texCoords[ texCoordSet ].MemoryUsed();
+			}
 		}
-	}
 
-	for ( int i = 0; i < indexBuffers.Num(); ++i ) {
-		total += indexBuffers[ i ].indices.MemoryUsed();
+		for ( int i = 0; i < indexBuffers.Num(); ++i ) {
+			total += indexBuffers[ i ].indices.MemoryUsed();
+		}
 	}
 
 	for ( int i = 0; i < meshes.Num(); ++i ) {
@@ -2870,6 +3703,9 @@ bool rvRenderModelMD5R::CanWriteModelData( idStr &reason ) const {
 		reason = "some packed geometry sections could not be decoded into canonical CPU data";
 		return false;
 	}
+
+	const idList<rvMD5RVertexBufferDesc> &vertexBuffers = GetVertexBuffers();
+	const idList<rvMD5RIndexBufferDesc> &indexBuffers = GetIndexBuffers();
 
 	for ( int vertexBufferIndex = 0; vertexBufferIndex < vertexBuffers.Num(); ++vertexBufferIndex ) {
 		const rvMD5RVertexBufferDesc &vertexBuffer = vertexBuffers[ vertexBufferIndex ];
@@ -2969,7 +3805,7 @@ bool rvRenderModelMD5R::CanWriteModelData( idStr &reason ) const {
 rvRenderModelMD5R::WriteVertexFormat
 ========================
 */
-void rvRenderModelMD5R::WriteVertexFormat( idFile &outFile, const rvMD5RVertexFormatDesc &vertexFormat, const char *prepend ) const {
+void rvRenderModelMD5R::WriteVertexFormat( idFile &outFile, const rvMD5RVertexFormatDesc &vertexFormat, const char *prepend ) {
 	idStr innerIndent = prepend;
 	innerIndent += "\t";
 
@@ -3031,7 +3867,7 @@ void rvRenderModelMD5R::WriteVertexFormat( idFile &outFile, const rvMD5RVertexFo
 rvRenderModelMD5R::WriteVertexBuffer
 ========================
 */
-void rvRenderModelMD5R::WriteVertexBuffer( idFile &outFile, const rvMD5RVertexBufferDesc &vertexBuffer, const char *prepend ) const {
+void rvRenderModelMD5R::WriteVertexBuffer( idFile &outFile, const rvMD5RVertexBufferDesc &vertexBuffer, const char *prepend ) {
 	const rvMD5RVertexFormatDesc &format = vertexBuffer.loadVertexFormat;
 	idStr innerIndent = prepend;
 	idStr vertexIndent;
@@ -3123,7 +3959,7 @@ void rvRenderModelMD5R::WriteVertexBuffer( idFile &outFile, const rvMD5RVertexBu
 rvRenderModelMD5R::WriteVertexBuffers
 ========================
 */
-void rvRenderModelMD5R::WriteVertexBuffers( idFile &outFile, const char *prepend ) const {
+void rvRenderModelMD5R::WriteSharedVertexBuffers( idFile &outFile, const idList<rvMD5RVertexBufferDesc> &vertexBuffers, const char *prepend ) {
 	idStr innerIndent = prepend;
 	innerIndent += "\t";
 
@@ -3137,10 +3973,19 @@ void rvRenderModelMD5R::WriteVertexBuffers( idFile &outFile, const char *prepend
 
 /*
 ========================
+rvRenderModelMD5R::WriteVertexBuffers
+========================
+*/
+void rvRenderModelMD5R::WriteVertexBuffers( idFile &outFile, const char *prepend ) const {
+	WriteSharedVertexBuffers( outFile, GetVertexBuffers(), prepend );
+}
+
+/*
+========================
 rvRenderModelMD5R::WriteIndexBuffer
 ========================
 */
-void rvRenderModelMD5R::WriteIndexBuffer( idFile &outFile, const rvMD5RIndexBufferDesc &indexBuffer, const char *prepend ) const {
+void rvRenderModelMD5R::WriteIndexBuffer( idFile &outFile, const rvMD5RIndexBufferDesc &indexBuffer, const char *prepend ) {
 	idStr innerIndent = prepend;
 	idStr indexIndent;
 
@@ -3173,7 +4018,7 @@ void rvRenderModelMD5R::WriteIndexBuffer( idFile &outFile, const rvMD5RIndexBuff
 rvRenderModelMD5R::WriteIndexBuffers
 ========================
 */
-void rvRenderModelMD5R::WriteIndexBuffers( idFile &outFile, const char *prepend ) const {
+void rvRenderModelMD5R::WriteSharedIndexBuffers( idFile &outFile, const idList<rvMD5RIndexBufferDesc> &indexBuffers, const char *prepend ) {
 	idStr innerIndent = prepend;
 	innerIndent += "\t";
 
@@ -3187,10 +4032,19 @@ void rvRenderModelMD5R::WriteIndexBuffers( idFile &outFile, const char *prepend 
 
 /*
 ========================
+rvRenderModelMD5R::WriteIndexBuffers
+========================
+*/
+void rvRenderModelMD5R::WriteIndexBuffers( idFile &outFile, const char *prepend ) const {
+	WriteSharedIndexBuffers( outFile, GetIndexBuffers(), prepend );
+}
+
+/*
+========================
 rvRenderModelMD5R::WriteSilhouetteEdges
 ========================
 */
-void rvRenderModelMD5R::WriteSilhouetteEdges( idFile &outFile, const char *prepend ) const {
+void rvRenderModelMD5R::WriteSharedSilhouetteEdges( idFile &outFile, const idList<silEdge_t> &silEdges, const char *prepend ) {
 	if ( silEdges.Num() == 0 ) {
 		return;
 	}
@@ -3214,11 +4068,34 @@ void rvRenderModelMD5R::WriteSilhouetteEdges( idFile &outFile, const char *prepe
 
 /*
 ========================
+rvRenderModelMD5R::WriteSilhouetteEdges
+========================
+*/
+void rvRenderModelMD5R::WriteSilhouetteEdges( idFile &outFile, const char *prepend ) const {
+	WriteSharedSilhouetteEdges( outFile, GetSilhouetteEdges(), prepend );
+}
+
+/*
+========================
 rvRenderModelMD5R::WriteLevelsOfDetail
 ========================
 */
 void rvRenderModelMD5R::WriteLevelsOfDetail( idFile &outFile, const char *prepend ) const {
 	if ( lods.Num() == 0 ) {
+		return;
+	}
+
+	const int numDefaultRanges = static_cast<int>( sizeof( MD5R_DefaultLODRanges ) / sizeof( MD5R_DefaultLODRanges[ 0 ] ) );
+	bool writeLODSection = ( lods.Num() > numDefaultRanges );
+	if ( !writeLODSection ) {
+		for ( int i = 0; i < lods.Num(); ++i ) {
+			if ( lods[ i ].rangeEnd != R_MD5R_GetDefaultLODRange( i ) ) {
+				writeLODSection = true;
+				break;
+			}
+		}
+	}
+	if ( !writeLODSection ) {
 		return;
 	}
 
@@ -3437,6 +4314,32 @@ void rvRenderModelMD5R::WriteJoints( idFile &outFile, const char *prepend ) cons
 
 /*
 ========================
+rvRenderModelMD5R::WriteSansBuffers
+========================
+*/
+void rvRenderModelMD5R::WriteSansBuffers( idFile &outFile, const char *prepend ) const {
+	if ( meshes.Num() == 0 ) {
+		return;
+	}
+
+	WriteMeshes( outFile, prepend );
+	outFile.WriteFloatString(
+		"%sBounds %f %f %f  %f %f %f\n",
+		prepend,
+		bounds[ 0 ].x,
+		bounds[ 0 ].y,
+		bounds[ 0 ].z,
+		bounds[ 1 ].x,
+		bounds[ 1 ].y,
+		bounds[ 1 ].z );
+
+	if ( hasSky ) {
+		outFile.WriteFloatString( "%sHasSky\n", prepend );
+	}
+}
+
+/*
+========================
 rvRenderModelMD5R::WriteModel
 ========================
 */
@@ -3445,10 +4348,10 @@ void rvRenderModelMD5R::WriteModel( idFile &outFile ) const {
 	WriteJoints( outFile, "" );
 	WriteVertexBuffers( outFile, "" );
 
-	if ( indexBuffers.Num() > 0 ) {
+	if ( GetIndexBuffers().Num() > 0 ) {
 		WriteIndexBuffers( outFile, "" );
 	}
-	if ( silEdges.Num() > 0 ) {
+	if ( GetSilhouetteEdges().Num() > 0 ) {
 		WriteSilhouetteEdges( outFile, "" );
 	}
 	if ( lods.Num() > 0 ) {

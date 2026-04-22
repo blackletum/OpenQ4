@@ -112,6 +112,8 @@ typedef struct {
 										// this is the area number, else CHILDREN_HAVE_MULTIPLE_AREAS
 } areaNode_t;
 
+class idRenderWorldMD5RProcData;
+
 
 class idRenderWorldLocal : public idRenderWorld {
 public:
@@ -209,6 +211,7 @@ public:
 	int						numInterAreaPortals;
 
 	idList<idRenderModel *>	localModels;
+	idRenderWorldMD5RProcData *	md5rProcData;
 
 	idList<idRenderEntityLocal*>	entityDefs;
 	idList<idRenderLightLocal*>		lightDefs;
@@ -247,6 +250,7 @@ public:
 	void					FreeDefs();
 	void					TouchWorldModels( void );
 	void					AddWorldModelEntities();
+	void					ConvertProcToMD5R();
 	void					ClearPortalStates();
 	virtual	bool			InitFromMap( const char *mapName );
 	bool					WriteMD5R( bool compressed );
