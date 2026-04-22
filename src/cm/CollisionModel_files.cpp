@@ -265,9 +265,8 @@ void idCollisionModelManagerLocal::WriteCollisionModelsToFile( const char *filen
 	}
 
 	common->Printf( "writing %s\n", name.c_str() );
-	// Keep runtime-generated collision caches out of fs_cdpath so packaged
-	// collision assets remain authoritative on subsequent runs.
-	fp = fileSystem->OpenFileWrite( name, "fs_savepath" );
+	// Retail Q4 writes generated collision caches on fs_devpath.
+	fp = fileSystem->OpenFileWrite( name, "fs_devpath" );
 	if ( !fp ) {
 		common->Warning( "idCollisionModelManagerLocal::WriteCollisionModelsToFile: Error opening file %s\n", name.c_str() );
 		return;

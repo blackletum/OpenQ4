@@ -3500,8 +3500,7 @@ idCollisionModelLocal *idCollisionModelManagerLocal::LoadRenderModel( const char
 	// only load static source render models that retail Q4 authored collision caches for
 	idStr( fileName ).ExtractFileExtension( extension );
 	if ( ( extension.Icmp( "ase" ) != 0 ) && ( extension.Icmp( "lwo" ) != 0 ) &&
-		 ( extension.Icmp( "mdr" ) != 0 ) && ( extension.Icmp( "obj" ) != 0 ) &&
-		 ( extension.Icmp( "dae" ) != 0 ) ) {
+		 ( extension.Icmp( "obj" ) != 0 ) ) {
 		return NULL;
 	}
 
