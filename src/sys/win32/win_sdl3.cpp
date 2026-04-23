@@ -1106,7 +1106,7 @@ static void SDL3_ShutdownControllerSubsystems(void) {
 	SDL3_ClearJoystickState();
 }
 
-static int SDL3_MapScancode(SDL_Scancode scancode) {
+static int SDL3_MapPhysicalScancode(SDL_Scancode scancode) {
 	switch (scancode) {
 		case SDL_SCANCODE_ESCAPE: return K_ESCAPE;
 		case SDL_SCANCODE_RETURN: return K_ENTER;
@@ -1233,6 +1233,104 @@ static int SDL3_MapScancode(SDL_Scancode scancode) {
 		case SDL_SCANCODE_SLASH: return '/';
 		default: return 0;
 	}
+}
+
+static int SDL3_MapKeycode(SDL_Keycode keycode) {
+	switch (keycode) {
+		case SDLK_ESCAPE: return K_ESCAPE;
+		case SDLK_RETURN: return K_ENTER;
+		case SDLK_TAB: return K_TAB;
+		case SDLK_BACKSPACE: return K_BACKSPACE;
+		case SDLK_SPACE: return K_SPACE;
+
+		case SDLK_LCTRL:
+		case SDLK_RCTRL: return K_CTRL;
+		case SDLK_LSHIFT:
+		case SDLK_RSHIFT: return K_SHIFT;
+		case SDLK_LALT: return K_ALT;
+		case SDLK_RALT: return s_rightAltKey;
+		case SDLK_LGUI: return K_LWIN;
+		case SDLK_RGUI: return K_RWIN;
+		case SDLK_APPLICATION:
+		case SDLK_MENU: return K_MENU;
+		case SDLK_POWER: return K_POWER;
+
+		case SDLK_CAPSLOCK: return K_CAPSLOCK;
+		case SDLK_SCROLLLOCK: return K_SCROLL;
+		case SDLK_PAUSE: return K_PAUSE;
+		case SDLK_PRINTSCREEN: return K_PRINT_SCR;
+
+		case SDLK_UP: return K_UPARROW;
+		case SDLK_DOWN: return K_DOWNARROW;
+		case SDLK_LEFT: return K_LEFTARROW;
+		case SDLK_RIGHT: return K_RIGHTARROW;
+		case SDLK_INSERT: return K_INS;
+		case SDLK_DELETE: return K_DEL;
+		case SDLK_HOME: return K_HOME;
+		case SDLK_END: return K_END;
+		case SDLK_PAGEUP: return K_PGUP;
+		case SDLK_PAGEDOWN: return K_PGDN;
+
+		case SDLK_F1: return K_F1;
+		case SDLK_F2: return K_F2;
+		case SDLK_F3: return K_F3;
+		case SDLK_F4: return K_F4;
+		case SDLK_F5: return K_F5;
+		case SDLK_F6: return K_F6;
+		case SDLK_F7: return K_F7;
+		case SDLK_F8: return K_F8;
+		case SDLK_F9: return K_F9;
+		case SDLK_F10: return K_F10;
+		case SDLK_F11: return K_F11;
+		case SDLK_F12: return K_F12;
+		case SDLK_F13: return K_F13;
+		case SDLK_F14: return K_F14;
+		case SDLK_F15: return K_F15;
+
+		case SDLK_NUMLOCKCLEAR: return K_KP_NUMLOCK;
+		case SDLK_KP_DIVIDE: return K_KP_SLASH;
+		case SDLK_KP_MULTIPLY: return K_KP_STAR;
+		case SDLK_KP_MINUS: return K_KP_MINUS;
+		case SDLK_KP_PLUS: return K_KP_PLUS;
+		case SDLK_KP_ENTER:
+		case SDLK_RETURN2: return K_KP_ENTER;
+		case SDLK_KP_1: return K_KP_END;
+		case SDLK_KP_2: return K_KP_DOWNARROW;
+		case SDLK_KP_3: return K_KP_PGDN;
+		case SDLK_KP_4: return K_KP_LEFTARROW;
+		case SDLK_KP_5: return K_KP_5;
+		case SDLK_KP_6: return K_KP_RIGHTARROW;
+		case SDLK_KP_7: return K_KP_HOME;
+		case SDLK_KP_8: return K_KP_UPARROW;
+		case SDLK_KP_9: return K_KP_PGUP;
+		case SDLK_KP_0: return K_KP_INS;
+		case SDLK_KP_PERIOD: return K_KP_DEL;
+		case SDLK_KP_COMMA: return ',';
+		case SDLK_KP_EQUALS:
+		case SDLK_KP_EQUALSAS400: return K_KP_EQUALS;
+		default:
+			break;
+	}
+
+	if ((keycode & (SDLK_SCANCODE_MASK | SDLK_EXTENDED_MASK)) != 0) {
+		return 0;
+	}
+
+	if (keycode > 0 && keycode <= 255) {
+		return static_cast<unsigned char>(keycode);
+	}
+
+	return 0;
+}
+
+static int SDL3_MapScancode(SDL_Scancode scancode) {
+	const SDL_Keycode translatedKeycode = SDL_GetKeyFromScancode(scancode, SDL_KMOD_NONE, false);
+	const int translatedKey = SDL3_MapKeycode(translatedKeycode);
+	if (translatedKey != 0) {
+		return translatedKey;
+	}
+
+	return SDL3_MapPhysicalScancode(scancode);
 }
 
 static int SDL3_MapControlChar(int key, bool down, SDL_Keymod modState) {
@@ -2593,6 +2691,14 @@ const unsigned char *Sys_GetScanTable(void) {
 }
 
 unsigned char Sys_GetConsoleKey(bool shifted) {
+	const SDL_Keymod modState = shifted ? SDL_KMOD_SHIFT : SDL_KMOD_NONE;
+	const SDL_Keycode translatedKeycode = SDL_GetKeyFromScancode(SDL_SCANCODE_GRAVE, modState, false);
+	const int translatedKey = SDL3_MapKeycode(translatedKeycode);
+
+	if (translatedKey > 0 && translatedKey <= 255) {
+		return static_cast<unsigned char>(translatedKey);
+	}
+
 	return shifted ? s_scantoshift[41] : s_scantokey[41];
 }
 
