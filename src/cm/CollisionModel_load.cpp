@@ -3348,6 +3348,52 @@ void idCollisionModelManagerLocal::UpdateModelPrimitiveCount( idCollisionModelLo
 
 /*
 ================
+idCollisionModelManagerLocal::AssignPolygonFeatureIndices_r
+================
+*/
+void idCollisionModelManagerLocal::AssignPolygonFeatureIndices_r( cm_node_t *node, int &nextFeatureIndex ) {
+	cm_polygonRef_t *pref;
+
+	if ( node == NULL ) {
+		return;
+	}
+
+	while ( 1 ) {
+		for ( pref = node->polygons; pref; pref = pref->next ) {
+			if ( pref->p == NULL || pref->p->checkcount == checkCount ) {
+				continue;
+			}
+			pref->p->checkcount = checkCount;
+			pref->p->featureIndex = nextFeatureIndex++;
+		}
+
+		if ( node->planeType == -1 ) {
+			break;
+		}
+
+		AssignPolygonFeatureIndices_r( node->children[0], nextFeatureIndex );
+		node = node->children[1];
+	}
+}
+
+/*
+================
+idCollisionModelManagerLocal::AssignPolygonFeatureIndices
+================
+*/
+void idCollisionModelManagerLocal::AssignPolygonFeatureIndices( idCollisionModelLocal *model ) {
+	int nextFeatureIndex = 1;
+
+	if ( model == NULL || model->node == NULL ) {
+		return;
+	}
+
+	checkCount++;
+	AssignPolygonFeatureIndices_r( model->node, nextFeatureIndex );
+}
+
+/*
+================
 idCollisionModelManagerLocal::FinishModel
 ================
 */
@@ -3373,6 +3419,9 @@ void idCollisionModelManagerLocal::FinishModel( idCollisionModelLocal *model, bo
 	model->contents = CM_GetNodeContents( model->node );
 	// keep the primitive count in sync with merged / parsed collision data
 	UpdateModelPrimitiveCount( model );
+	// Use stable per-polygon feature ids so CONTACT_TRMVERTEX can survive 64-bit
+	// builds and save/restore without relying on truncated raw pointers.
+	AssignPolygonFeatureIndices( model );
 	// total memory used by this model
 	model->usedMemory = model->numVertices * sizeof(cm_vertex_t) +
 						model->numEdges * sizeof(cm_edge_t) +

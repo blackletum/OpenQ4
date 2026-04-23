@@ -106,6 +106,7 @@ typedef struct cm_polygon_s {
 	int						contents;			// contents behind polygon
 	const idMaterial *		material;			// material
 	int						primitiveNum;		// source primitive number
+	int						featureIndex;		// stable contact feature identifier for this polygon
 	idPlane					plane;				// polygon plane
 	idVec2					texBounds[3];		// texture coordinates used for hit material lookups
 	int						numEdges;			// number of edges
@@ -544,6 +545,8 @@ private:			// CollisionMap_load.cpp
 	void			ConvertBrush( idCollisionModelLocal *model, const idMapBrush *mapBrush, int primitiveNum );
 	void			UpdatePrimitiveCount_r( cm_node_t *node, int &maxPrimitive );
 	void			UpdateModelPrimitiveCount( idCollisionModelLocal *model );
+	void			AssignPolygonFeatureIndices_r( cm_node_t *node, int &nextFeatureIndex );
+	void			AssignPolygonFeatureIndices( idCollisionModelLocal *model );
 	void			PrintModelInfo( const idCollisionModelLocal *model );
 	void			AccumulateModelInfo( idCollisionModelLocal *model );
 	int				FindModelIndex( const char *name ) const;

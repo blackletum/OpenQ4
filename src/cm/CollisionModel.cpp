@@ -6,6 +6,29 @@
 
 #include "CollisionModel_local.h"
 
+static const cm_polygon_t *CM_FindPolygonByFeatureIndex_r( const cm_node_t *node, int featureIndex ) {
+	if ( node == NULL || featureIndex <= 0 ) {
+		return NULL;
+	}
+
+	for ( const cm_polygonRef_t *pref = node->polygons; pref != NULL; pref = pref->next ) {
+		if ( pref->p != NULL && pref->p->featureIndex == featureIndex ) {
+			return pref->p;
+		}
+	}
+
+	if ( node->planeType == -1 ) {
+		return NULL;
+	}
+
+	const cm_polygon_t *polygon = CM_FindPolygonByFeatureIndex_r( node->children[0], featureIndex );
+	if ( polygon != NULL ) {
+		return polygon;
+	}
+
+	return CM_FindPolygonByFeatureIndex_r( node->children[1], featureIndex );
+}
+
 /*
 ==========================
 idCollisionModelLocal::GetName
@@ -76,9 +99,14 @@ idCollisionModelLocal::GetPolygon
 */
 bool idCollisionModelLocal::GetPolygon(int polygonNum, idFixedWinding& winding) const {
 	int i, edgeNum;
-	cm_polygon_t* poly;
+	const cm_polygon_t *poly;
 
-	poly = *reinterpret_cast<cm_polygon_t**>(&polygonNum);
+	poly = CM_FindPolygonByFeatureIndex_r( node, polygonNum );
+	if ( poly == NULL ) {
+		common->Printf( "idCollisionModelManagerLocal::GetModelPolygon: invalid polygon feature %d\n", polygonNum );
+		return false;
+	}
+
 	winding.Clear();
 	for (i = 0; i < poly->numEdges; i++) {
 		edgeNum = poly->edges[i];

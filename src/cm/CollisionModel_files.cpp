@@ -661,6 +661,7 @@ bool idCollisionModelManagerLocal::ParseCollisionModel( Lexer *src, const char *
 	if ( model->numPrimitives <= 0 ) {
 		UpdateModelPrimitiveCount( model );
 	}
+	AssignPolygonFeatureIndices( model );
 	// total memory used by this model
 	model->usedMemory = model->numVertices * sizeof(cm_vertex_t) +
 						model->numEdges * sizeof(cm_edge_t) +

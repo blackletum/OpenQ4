@@ -7831,7 +7831,7 @@ windowDef Desktop
 					rect	259,364,172,18
 					visible	1
 					forecolor	1,1,1,0.8
-					text	"#str_229904"
+					text	"#str_41091"
 					textscale	0.24
 					font	"fonts/lowpixel"
 				}
@@ -7841,8 +7841,8 @@ windowDef Desktop
 					visible	1
 					forecolor	1,0.745,0.137,0.8
 					choiceType	1
-					choices	"75%;85%;100%;110%;125%;150%"
-					values	"75;85;100;110;125;150"
+					choices	"75%;85%;100%"
+					values	"75;85;100"
 					cvar	"r_screenFraction"
 					textscale	0.24
 					font	"fonts/lowpixel"
