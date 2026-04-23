@@ -151,13 +151,14 @@ only be called when the back end thread is idle.
 */
 static void R_PerformanceCounters( void ) {
 	if ( r_showDynamic.GetBool() ) {
-		common->Printf( "callback:%i md5:%i dfrmVerts:%i dfrmTris:%i tangTris:%i guis:%i\n",
+		common->Printf( "callback:%i md5:%i dfrmVerts:%i dfrmTris:%i tangTris:%i guis:%i decals:%i\n",
 			tr.pc.c_entityDefCallbacks,
 			tr.pc.c_generateMd5,
 			tr.pc.c_deformedVerts,
 			tr.pc.c_deformedIndexes/3,
 			tr.pc.c_tangentIndexes/3,
-			tr.pc.c_guiSurfs
+			tr.pc.c_guiSurfs,
+			tr.pc.c_numDecalIndexes/3
 			); 
 	}
 

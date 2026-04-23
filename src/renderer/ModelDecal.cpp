@@ -58,6 +58,40 @@ void R_ReadDrawVertFromDemo( idDemoFile *f, idDrawVert &vert ) {
 	f->ReadUnsignedChar( vert.color[3] );
 }
 
+bool R_MaterializePrimBatchDecalTriangles( const srfTriangles_t &sourceTri, srfTriangles_t &tempTri, idDrawVert *tempVerts, glIndex_t *tempIndexes ) {
+	memset( &tempTri, 0, sizeof( tempTri ) );
+	tempTri.bounds = sourceTri.bounds;
+	tempTri.facePlanesCalculated = sourceTri.facePlanesCalculated;
+	tempTri.facePlanes = sourceTri.facePlanes;
+	tempTri.numVerts = sourceTri.numVerts;
+	tempTri.verts = tempVerts;
+	tempTri.numIndexes = sourceTri.numIndexes;
+	tempTri.indexes = tempIndexes;
+
+	if ( sourceTri.numVerts <= 0 || sourceTri.numIndexes <= 0 ) {
+		return false;
+	}
+
+	// If the packed surface already exposed a live classic tri view, prefer it
+	// for fallback decal projection so dynamic MD5R recipients stay on their
+	// current skinned pose instead of reconstructing from packed bind-pose data.
+	if ( sourceTri.verts != NULL && sourceTri.indexes != NULL ) {
+		memcpy( tempVerts, sourceTri.verts, sourceTri.numVerts * sizeof( tempVerts[0] ) );
+		memcpy( tempIndexes, sourceTri.indexes, sourceTri.numIndexes * sizeof( tempIndexes[0] ) );
+		return true;
+	}
+
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	return R_MD5R_CopyPrimBatchTriangles(
+		tempVerts,
+		tempIndexes,
+		reinterpret_cast<const rvMesh *>( sourceTri.primBatchMesh ),
+		reinterpret_cast<const rvSilTraceVertT *>( sourceTri.silTraceVerts ) );
+#else
+	return false;
+#endif
+}
+
 }
 
 // decalFade	filter 5 0.1
@@ -267,7 +301,7 @@ void idRenderModelDecal::AddWinding( const idWinding &w, const idMaterial *decal
 			}
 			fade = 1.0f - fade;
 			vertDepthFade[tri.numVerts + i] = fade;
-			vertStartTime[tri.numVerts + i] = (float)startTime;
+			vertLifeSpan[tri.numVerts + i] = 0.0f;
 			tri.verts[tri.numVerts + i].Clear();
 			tri.verts[tri.numVerts + i].xyz = w[i].ToVec3();
 			tri.verts[tri.numVerts + i].st[0] = w[i].s;
@@ -283,7 +317,7 @@ void idRenderModelDecal::AddWinding( const idWinding &w, const idMaterial *decal
 			tri.indexes[tri.numIndexes + 2] = tri.numVerts + i;
 			indexStartTime[tri.numIndexes] =
 			indexStartTime[tri.numIndexes + 1] =
-			indexStartTime[tri.numIndexes + 2] = startTime;
+			indexStartTime[tri.numIndexes + 2] = (float)startTime;
 			tri.numIndexes += 3;
 		}
 		tri.numVerts += w.GetNumPoints();
@@ -348,8 +382,26 @@ void idRenderModelDecal::CreateDecal( const idRenderModel *model, const decalPro
 			continue;
 		}
 
+		// Packed MD5R surfaces keep their canonical draw data in the prim batch.
+		// Prefer the native sil-trace projector when the packed mesh state is
+		// usable; fall back to a transient classic view otherwise.
+		if ( stri->primBatchMesh != NULL ) {
+			if ( R_MD5R_CreateDecalTriangles( this, *stri, localInfo ) ) {
+				continue;
+			}
+
+			srfTriangles_t tempTri;
+			idDrawVert *tempVerts = (idDrawVert *)_alloca16( stri->numVerts * sizeof( tempVerts[0] ) );
+			glIndex_t *tempIndexes = (glIndex_t *)_alloca16( stri->numIndexes * sizeof( tempIndexes[0] ) );
+			if ( !R_MaterializePrimBatchDecalTriangles( *stri, tempTri, tempVerts, tempIndexes ) ) {
+				continue;
+			}
+			stri = &tempTri;
+		}
+
 		// allocate memory for the cull bits
-		byte *cullBits = (byte *)_alloca16( stri->numVerts * sizeof( cullBits[0] ) );
+		const int cullByteCount = ( stri->numVerts + 3 ) & ~3;
+		byte *cullBits = (byte *)_alloca16( cullByteCount );
 
 		// catagorize all points by the planes
 		SIMDProcessor->DecalPointCull( cullBits, localInfo.boundingPlanes, stri->verts, stri->numVerts );
@@ -366,9 +418,11 @@ void idRenderModelDecal::CreateDecal( const idRenderModel *model, const decalPro
 			}
 
 			// skip back facing triangles
-			if ( stri->facePlanes && stri->facePlanesCalculated &&
-					idMath::Fabs( stri->facePlanes[triNum].Normal() * localInfo.boundingPlanes[NUM_DECAL_BOUNDING_PLANES - 2].Normal() ) < localInfo.maxAngle ) {
-				continue;
+			if ( stri->facePlanes && stri->facePlanesCalculated ) {
+				const float facing = stri->facePlanes[triNum].Normal() * localInfo.boundingPlanes[NUM_DECAL_BOUNDING_PLANES - 2].Normal();
+				if ( facing < localInfo.maxAngle ) {
+					continue;
+				}
 			}
 
 			// create a winding with texture coordinates for the triangle
@@ -444,7 +498,7 @@ idRenderModelDecal *idRenderModelDecal::RemoveFadedDecals( idRenderModelDecal *d
 
 	newNumIndexes = 0;
 	for ( i = 0; i < decals->tri.numIndexes; i += 3 ) {
-		if ( decals->indexStartTime[i] > minTime ) {
+		if ( decals->indexStartTime[i] > (float)minTime ) {
 			// keep this triangle
 			if ( newNumIndexes != i ) {
 				for ( j = 0; j < 3; j++ ) {
@@ -477,7 +531,7 @@ idRenderModelDecal *idRenderModelDecal::RemoveFadedDecals( idRenderModelDecal *d
 		}
 		decals->tri.verts[newNumVerts] = decals->tri.verts[i];
 		decals->vertDepthFade[newNumVerts] = decals->vertDepthFade[i];
-		decals->vertStartTime[newNumVerts] = decals->vertStartTime[i];
+		decals->vertLifeSpan[newNumVerts] = decals->vertLifeSpan[i];
 		inUse[i] = newNumVerts;
 		newNumVerts++;
 	}
@@ -499,12 +553,14 @@ idRenderModelDecal::AddDecalDrawSurf
 =====================
 */
 void idRenderModelDecal::AddDecalDrawSurf( viewEntity_t *space ) {
-	if ( tri.numIndexes == 0 || tri.numVerts == 0 ) {
+	if ( r_skipDecals.GetBool() || tri.numIndexes == 0 || tri.numVerts == 0 ) {
 		return;
 	}
 
 	const decalInfo_t decalInfo = material->GetDecalInfo();
 	const int stayTime = ( decalInfo.stayTime > 0 ) ? decalInfo.stayTime : 1;
+	const float stayTimeFloat = (float)stayTime;
+	const float renderTime = (float)tr.viewDef->renderView.time;
 	const int numStages = material->GetNumStages();
 	vertCache_s *decalColorCache = NULL;
 	int decalColorStride = 0;
@@ -516,6 +572,23 @@ void idRenderModelDecal::AddDecalDrawSurf( viewEntity_t *space ) {
 		R_DeriveTangents( &tri, false );
 	}
 
+	memset( vertLifeSpan, 0, tri.numVerts * sizeof( vertLifeSpan[0] ) );
+	for ( int indexBase = 0; indexBase < tri.numIndexes; indexBase += 3 ) {
+		float life = renderTime - indexStartTime[indexBase];
+		if ( life > stayTimeFloat ) {
+			continue;
+		}
+		if ( life < 0.0f ) {
+			life = 0.0f;
+		}
+		life /= stayTimeFloat;
+		vertLifeSpan[tri.indexes[indexBase + 0]] = life;
+		vertLifeSpan[tri.indexes[indexBase + 1]] = life;
+		vertLifeSpan[tri.indexes[indexBase + 2]] = life;
+	}
+
+	tr.pc.c_numDecalIndexes += tri.numIndexes;
+
 	if ( numStages > 0 && tri.numVerts > 0 ) {
 		const int numRegisters = ( material->GetNumRegisters() > EXP_REG_NUM_PREDEFINED ) ? material->GetNumRegisters() : EXP_REG_NUM_PREDEFINED;
 		const int colorStride = tri.numVerts * 4;
@@ -524,35 +597,31 @@ void idRenderModelDecal::AddDecalDrawSurf( viewEntity_t *space ) {
 		float *regs = (float *)_alloca16( numRegisters * sizeof( regs[0] ) );
 		float shaderParms[MAX_ENTITY_SHADER_PARMS];
 
+		memset( stageColors, 0, totalColorBytes );
 		memset( shaderParms, 0, sizeof( shaderParms ) );
-		// Match stock render-entity defaults so decal stages that rely on Parm0..3
-		// (without explicit rgb/rgba terms) still evaluate to visible colors.
-		shaderParms[SHADERPARM_RED] = 1.0f;
-		shaderParms[SHADERPARM_GREEN] = 1.0f;
-		shaderParms[SHADERPARM_BLUE] = 1.0f;
-		shaderParms[SHADERPARM_ALPHA] = 1.0f;
-		shaderParms[SHADERPARM_BRIGHTNESS] = 1.0f;
 
-		for ( int v = 0; v < tri.numVerts; v++ ) {
-			float life = (float)( tr.viewDef->renderView.time - vertStartTime[v] ) / (float)stayTime;
-			life = idMath::ClampFloat( 0.0f, 1.0f, life );
-			shaderParms[4] = life;
-			shaderParms[5] = vertStartTime[v];
+		for ( int stage = 0; stage < numStages; stage++ ) {
+			const shaderStage_t *pStage = material->GetStage( stage );
+			byte *stageColor = stageColors + stage * colorStride;
 
-			material->EvaluateRegisters( regs, shaderParms, tr.viewDef, NULL );
+			for ( int indexBase = 0; indexBase < tri.numIndexes; indexBase += 3 ) {
+				const glIndex_t triVertIndex0 = tri.indexes[indexBase + 0];
+				const glIndex_t triVertIndex1 = tri.indexes[indexBase + 1];
+				const glIndex_t triVertIndex2 = tri.indexes[indexBase + 2];
 
-			for ( int stage = 0; stage < numStages; stage++ ) {
-				const shaderStage_t *pStage = material->GetStage( stage );
-				byte *vertexColor = stageColors + stage * colorStride + v * 4;
+				// DecalLife / DecalSpawn map to parm4 / parm5 and are evaluated per
+				// triangle before the stage colors are baked into the draw surf.
+				shaderParms[4] = vertLifeSpan[triVertIndex0];
+				shaderParms[5] = indexStartTime[indexBase];
+				material->EvaluateStageRegisters( stage, regs, shaderParms, tr.frameShaderTime );
 
+				const float colorScale = vertDepthFade[triVertIndex0] * 255.0f;
 				for ( int k = 0; k < 4; k++ ) {
-					int icolor = idMath::FtoiFast( regs[pStage->color.registers[k]] * vertDepthFade[v] * 255.0f );
-					if ( icolor < 0 ) {
-						icolor = 0;
-					} else if ( icolor > 255 ) {
-						icolor = 255;
-					}
-					vertexColor[k] = (byte)icolor;
+					const int icolor = idMath::FtoiFast( regs[pStage->color.registers[k]] * colorScale );
+					const byte colorByte = (byte)idMath::ClampInt( 0, 255, icolor );
+					stageColor[triVertIndex0 * 4 + k] = colorByte;
+					stageColor[triVertIndex1 * 4 + k] = colorByte;
+					stageColor[triVertIndex2 * 4 + k] = colorByte;
 				}
 			}
 		}
@@ -560,10 +629,9 @@ void idRenderModelDecal::AddDecalDrawSurf( viewEntity_t *space ) {
 		// Keep the first stage color in the vertices as a fallback path.
 		for ( int v = 0; v < tri.numVerts; v++ ) {
 			const byte *vertexColor = stageColors + v * 4;
-			tri.verts[v].color[0] = vertexColor[0];
-			tri.verts[v].color[1] = vertexColor[1];
-			tri.verts[v].color[2] = vertexColor[2];
-			tri.verts[v].color[3] = vertexColor[3];
+			for ( int k = 0; k < 4; k++ ) {
+				tri.verts[v].color[k] = vertexColor[k];
+			}
 		}
 
 		decalColorCache = vertexCache.AllocFrameTemp( stageColors, totalColorBytes );
@@ -606,7 +674,7 @@ void idRenderModelDecal::ReadFromDemoFile( idDemoFile *f ) {
 	memset( &tri, 0, sizeof( tri ) );
 	memset( verts, 0, sizeof( verts ) );
 	memset( vertDepthFade, 0, sizeof( vertDepthFade ) );
-	memset( vertStartTime, 0, sizeof( vertStartTime ) );
+	memset( vertLifeSpan, 0, sizeof( vertLifeSpan ) );
 	memset( indexes, 0, sizeof( indexes ) );
 	memset( indexStartTime, 0, sizeof( indexStartTime ) );
 	tri.verts = verts;
@@ -636,7 +704,7 @@ void idRenderModelDecal::ReadFromDemoFile( idDemoFile *f ) {
 		for ( int vertIndex = 0; vertIndex < decal->tri.numVerts; vertIndex++ ) {
 			R_ReadDrawVertFromDemo( f, decal->tri.verts[vertIndex] );
 			f->ReadFloat( decal->vertDepthFade[vertIndex] );
-			f->ReadFloat( decal->vertStartTime[vertIndex] );
+			f->ReadFloat( decal->vertLifeSpan[vertIndex] );
 		}
 
 		f->ReadInt( decal->tri.numIndexes );
@@ -646,10 +714,12 @@ void idRenderModelDecal::ReadFromDemoFile( idDemoFile *f ) {
 
 		for ( int index = 0; index < decal->tri.numIndexes; index++ ) {
 			int storedIndex;
+			int storedStartTime;
 
 			f->ReadInt( storedIndex );
 			decal->tri.indexes[index] = storedIndex;
-			f->ReadInt( decal->indexStartTime[index] );
+			f->ReadInt( storedStartTime );
+			decal->indexStartTime[index] = (float)storedStartTime;
 		}
 
 		if ( decalIndex + 1 < numDecals ) {
@@ -683,13 +753,13 @@ void idRenderModelDecal::WriteToDemoFile( idDemoFile *f ) const {
 		for ( int vertIndex = 0; vertIndex < decal->tri.numVerts; vertIndex++ ) {
 			R_WriteDrawVertToDemo( f, decal->tri.verts[vertIndex] );
 			f->WriteFloat( decal->vertDepthFade[vertIndex] );
-			f->WriteFloat( decal->vertStartTime[vertIndex] );
+			f->WriteFloat( decal->vertLifeSpan[vertIndex] );
 		}
 
 		f->WriteInt( decal->tri.numIndexes );
 		for ( int index = 0; index < decal->tri.numIndexes; index++ ) {
 			f->WriteInt( decal->tri.indexes[index] );
-			f->WriteInt( decal->indexStartTime[index] );
+			f->WriteInt( idMath::FtoiFast( decal->indexStartTime[index] ) );
 		}
 	}
 }

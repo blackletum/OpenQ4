@@ -904,6 +904,10 @@ idMaterial::ClearStage
 */
 void idMaterial::ClearStage( shaderStage_t *ss ) {
 	ss->drawStateBits = 0;
+	ss->mStageRegisterStart = numRegisters;
+	ss->mNumStageRegisters = 0;
+	ss->mStageOpsStart = numOps;
+	ss->mNumStageOps = 0;
 	ss->conditionRegister = GetExpressionConstant( 1 );
 	ss->color.registers[0] =
 	ss->color.registers[1] =
@@ -2021,6 +2025,9 @@ void idMaterial::ParseStage( idLexer &src, const textureRepeat_t trpDefault ) {
 		*(ss->newStage) = newStage;
 	}
 
+	ss->mNumStageRegisters = numRegisters - ss->mStageRegisterStart;
+	ss->mNumStageOps = numOps - ss->mStageOpsStart;
+
 	// successfully parsed a stage
 	numStages++;
 
@@ -3136,6 +3143,114 @@ void idMaterial::EvaluateRegisters( float *registers, const float shaderParms[MA
 		}
 	}
 
+}
+
+/*
+===============
+idMaterial::EvaluateStageRegisters
+
+Decal submission in Quake 4 evaluates only the expression ops owned by the
+current stage, with explicit parm inputs and no view-global shader parms.
+===============
+*/
+void idMaterial::EvaluateStageRegisters( int stageIndex, float *registers,
+										const float shaderParms[MAX_ENTITY_SHADER_PARMS], float floatTime ) const {
+	int		i, b;
+	expOp_t	*op;
+
+	if ( stages == NULL || stageIndex < 0 || stageIndex >= numStages ) {
+		return;
+	}
+
+	const shaderStage_t *stage = &stages[stageIndex];
+
+	// copy the material constants
+	for ( i = EXP_REG_NUM_PREDEFINED ; i < numRegisters ; i++ ) {
+		registers[i] = expressionRegisters[i];
+	}
+
+	// seed the explicit stage-local parameters; decal stages do not consult the
+	// current view's global shader parm block when evaluating their baked colors
+	registers[EXP_REG_TIME] = floatTime;
+	registers[EXP_REG_PARM0] = shaderParms[0];
+	registers[EXP_REG_PARM1] = shaderParms[1];
+	registers[EXP_REG_PARM2] = shaderParms[2];
+	registers[EXP_REG_PARM3] = shaderParms[3];
+	registers[EXP_REG_PARM4] = shaderParms[4];
+	registers[EXP_REG_PARM5] = shaderParms[5];
+	registers[EXP_REG_PARM6] = shaderParms[6];
+	registers[EXP_REG_PARM7] = shaderParms[7];
+	registers[EXP_REG_PARM8] = shaderParms[8];
+	registers[EXP_REG_PARM9] = shaderParms[9];
+	registers[EXP_REG_PARM10] = shaderParms[10];
+	registers[EXP_REG_PARM11] = shaderParms[11];
+	registers[EXP_REG_GLOBAL0] = 0.0f;
+	registers[EXP_REG_GLOBAL1] = 0.0f;
+	registers[EXP_REG_GLOBAL2] = 0.0f;
+	registers[EXP_REG_GLOBAL3] = 0.0f;
+	registers[EXP_REG_GLOBAL4] = 0.0f;
+	registers[EXP_REG_GLOBAL5] = 0.0f;
+	registers[EXP_REG_GLOBAL6] = 0.0f;
+	registers[EXP_REG_GLOBAL7] = 0.0f;
+	registers[EXP_REG_VERTEX_RANDOM] = shaderParms[SHADERPARM_DIVERSITY];
+
+	op = ops + stage->mStageOpsStart;
+	for ( i = 0 ; i < stage->mNumStageOps ; i++, op++ ) {
+		switch( op->opType ) {
+		case OP_TYPE_ADD:
+			registers[op->c] = registers[op->a] + registers[op->b];
+			break;
+		case OP_TYPE_SUBTRACT:
+			registers[op->c] = registers[op->a] - registers[op->b];
+			break;
+		case OP_TYPE_MULTIPLY:
+			registers[op->c] = registers[op->a] * registers[op->b];
+			break;
+		case OP_TYPE_DIVIDE:
+			registers[op->c] = registers[op->a] / registers[op->b];
+			break;
+		case OP_TYPE_MOD:
+			b = (int)registers[op->b];
+			b = b != 0 ? b : 1;
+			registers[op->c] = (int)registers[op->a] % b;
+			break;
+		case OP_TYPE_TABLE:
+			{
+				const idDeclTable *table = static_cast<const idDeclTable *>( declManager->DeclByIndex( DECL_TABLE, op->a ) );
+				registers[op->c] = table->TableLookup( registers[op->b] );
+			}
+			break;
+		case OP_TYPE_SOUND:
+			registers[op->c] = 0.0f;
+			break;
+		case OP_TYPE_GT:
+			registers[op->c] = registers[ op->a ] > registers[op->b];
+			break;
+		case OP_TYPE_GE:
+			registers[op->c] = registers[ op->a ] >= registers[op->b];
+			break;
+		case OP_TYPE_LT:
+			registers[op->c] = registers[ op->a ] < registers[op->b];
+			break;
+		case OP_TYPE_LE:
+			registers[op->c] = registers[ op->a ] <= registers[op->b];
+			break;
+		case OP_TYPE_EQ:
+			registers[op->c] = registers[ op->a ] == registers[op->b];
+			break;
+		case OP_TYPE_NE:
+			registers[op->c] = registers[ op->a ] != registers[op->b];
+			break;
+		case OP_TYPE_AND:
+			registers[op->c] = registers[ op->a ] && registers[op->b];
+			break;
+		case OP_TYPE_OR:
+			registers[op->c] = registers[ op->a ] || registers[op->b];
+			break;
+		default:
+			common->FatalError( "R_EvaluateExpression: bad opcode" );
+		}
+	}
 }
 
 /*

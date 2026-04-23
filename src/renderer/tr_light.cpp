@@ -30,6 +30,15 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "tr_local.h"
+#include "../sound/sound.h"
+
+static ID_INLINE idSoundEmitter *R_GetShaderSoundEmitter( int soundEmitterHandle ) {
+	if ( soundEmitterHandle == 0 || soundSystem == NULL ) {
+		return NULL;
+	}
+
+	return soundSystem->EmitterForIndex( SOUNDWORLD_GAME, soundEmitterHandle );
+}
 
 static const float CHECK_BOUNDS_EPSILON = 1.0f;
 idCVar bse_frameCounters(
@@ -813,8 +822,14 @@ void R_LinkLightSurf( const drawSurf_t **link, const srfTriangles_t *tri, const 
 		} else {
 			// FIXME: share with the ambient surface?
 			float *regs = (float *)R_FrameAlloc( shader->GetNumRegisters() * sizeof( float ) );
+			idSoundEmitter *soundEmitter = NULL;
+
+			if ( space->entityDef != NULL ) {
+				soundEmitter = R_GetShaderSoundEmitter( space->entityDef->parms.referenceSoundHandle );
+			}
+
 			drawSurf->shaderRegisters = regs;
-			shader->EvaluateRegisters( regs, space->entityDef->parms.shaderParms, tr.viewDef, NULL );
+			shader->EvaluateRegisters( regs, space->entityDef->parms.shaderParms, tr.viewDef, soundEmitter );
 		}
 
 		// calculate the specular coordinates if we aren't using vertex programs
@@ -1065,8 +1080,9 @@ void R_AddLightSurfaces( void ) {
 
 		// evaluate the light shader registers
 		float *lightRegs =(float *)R_FrameAlloc( lightShader->GetNumRegisters() * sizeof( float ) );
+		idSoundEmitter *lightSoundEmitter = R_GetShaderSoundEmitter( light->parms.referenceSoundHandle );
 		vLight->shaderRegisters = lightRegs;
-		lightShader->EvaluateRegisters( lightRegs, light->parms.shaderParms, tr.viewDef, NULL);
+		lightShader->EvaluateRegisters( lightRegs, light->parms.shaderParms, tr.viewDef, lightSoundEmitter );
 
 		// if this is a purely additive light and no stage in the light shader evaluates
 		// to a positive light value, we can completely skip the light
@@ -1368,6 +1384,7 @@ const float *R_SetupDrawSurfShaderRegisters( const viewEntity_t *space, const re
 	static float refRegs[MAX_EXPRESSION_REGISTERS];	// don't put on stack, or VC++ will do a page touch
 	static const float defaultShaderParms[MAX_ENTITY_SHADER_PARMS] = { 0.0f };
 	const float *shaderParms = defaultShaderParms;
+	idSoundEmitter *soundEmitter = NULL;
 
 	if ( shader == NULL ) {
 		return NULL;
@@ -1382,15 +1399,17 @@ const float *R_SetupDrawSurfShaderRegisters( const viewEntity_t *space, const re
 
 	if ( renderEntity != NULL ) {
 		shaderParms = renderEntity->shaderParms;
+		soundEmitter = R_GetShaderSoundEmitter( renderEntity->referenceSoundHandle );
 	} else if ( space != NULL && space->entityDef != NULL ) {
 		shaderParms = space->entityDef->parms.shaderParms;
+		soundEmitter = R_GetShaderSoundEmitter( space->entityDef->parms.referenceSoundHandle );
 	}
 
 	if ( renderEntity != NULL && renderEntity->referenceShader != NULL ) {
 		float generatedShaderParms[MAX_ENTITY_SHADER_PARMS];
 		const shaderStage_t *pStage;
 
-		renderEntity->referenceShader->EvaluateRegisters( refRegs, renderEntity->shaderParms, tr.viewDef, NULL );
+		renderEntity->referenceShader->EvaluateRegisters( refRegs, renderEntity->shaderParms, tr.viewDef, soundEmitter );
 		pStage = renderEntity->referenceShader->GetStage( 0 );
 
 		memcpy( generatedShaderParms, renderEntity->shaderParms, sizeof( generatedShaderParms ) );
@@ -1400,7 +1419,7 @@ const float *R_SetupDrawSurfShaderRegisters( const viewEntity_t *space, const re
 		shaderParms = generatedShaderParms;
 	}
 
-	shader->EvaluateRegisters( regs, shaderParms, tr.viewDef, NULL );
+	shader->EvaluateRegisters( regs, shaderParms, tr.viewDef, soundEmitter );
 	return regs;
 }
 
@@ -1969,6 +1988,8 @@ void R_AddModelSurfaces( void ) {
 	viewEntity_t		*vEntity;
 	idInteraction		*inter, *next;
 	idRenderModel		*model;
+	const bool			lodEntities = r_lod_entities.GetBool();
+	const float			lodEntitiesPercent = r_lod_entities_percent.GetFloat();
 
 	// clear the ambient surface list
 	tr.viewDef->numDrawSurfs = 0;
@@ -1995,6 +2016,10 @@ void R_AddModelSurfaces( void ) {
 			const float sizeY = static_cast<float>( vEntity->scissorRect.y2 - vEntity->scissorRect.y1 );
 			const float sizeX = static_cast<float>( vEntity->scissorRect.x2 - vEntity->scissorRect.x1 );
 			vEntity->screenCoverage = 0.5f * ( sizeY / glConfig.vidHeight + sizeX / glConfig.vidWidth );
+		}
+
+		if ( lodEntities && vEntity->screenCoverage < lodEntitiesPercent ) {
+			vEntity->scissorRect.Clear();
 		}
 
 		float oldFloatTime;

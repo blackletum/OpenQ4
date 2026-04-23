@@ -203,6 +203,8 @@ static dword R_MD5R_PackBlendIndices( const int blendIndices[ 4 ] ) {
 		| ( static_cast<dword>( blendIndices[ 3 ] & 0xFF ) << 24 );
 }
 
+static ID_INLINE int R_MD5R_GetBlendIndex( dword packedBlendIndices, int component );
+
 /*
 ========================
 R_MD5R_InitStaticVertexFormat
@@ -829,6 +831,263 @@ static bool R_MD5R_CopyDrawIndices( const rvMD5RIndexBufferDesc &drawIndexBuffer
 
 	return true;
 }
+
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+static ID_INLINE idVec3 R_MD5R_TransformPackedPosition( const float *transform, const idVec4 &position ) {
+	return idVec3(
+		transform[0] * position.x + transform[1] * position.y + transform[2] * position.z + transform[3] * position.w,
+		transform[4] * position.x + transform[5] * position.y + transform[6] * position.z + transform[7] * position.w,
+		transform[8] * position.x + transform[9] * position.y + transform[10] * position.z + transform[11] * position.w );
+}
+
+static bool R_MD5R_SkinVertexPositionFromPackedTransforms(
+	const rvMD5RVertexBufferDesc &vertexBuffer,
+	int sourceVertexIndex,
+	const rvMD5RPrimBatch &primBatch,
+	const float *skinToModelTransforms,
+	int numSkinToModelTransforms,
+	int transformBase,
+	idVec3 &skinnedPosition ) {
+	if ( skinToModelTransforms == NULL
+		|| sourceVertexIndex < 0
+		|| sourceVertexIndex >= vertexBuffer.numVertices
+		|| vertexBuffer.positions.Num() != vertexBuffer.numVertices ) {
+		return false;
+	}
+
+	const bool hasBlendIndices = ( vertexBuffer.blendIndices.Num() == vertexBuffer.numVertices );
+	const bool hasBlendWeights = ( vertexBuffer.blendWeights.Num() == vertexBuffer.numVertices );
+	const int primBatchTransformCount = Max( primBatch.numTransforms, 1 );
+	const idVec4 &sourcePosition = vertexBuffer.positions[ sourceVertexIndex ];
+	const dword packedBlendIndices = hasBlendIndices ? vertexBuffer.blendIndices[ sourceVertexIndex ] : 0u;
+
+	idVec4 blendWeights;
+	blendWeights.Zero();
+	blendWeights.x = 1.0f;
+	if ( hasBlendWeights ) {
+		blendWeights = vertexBuffer.blendWeights[ sourceVertexIndex ];
+	}
+
+	skinnedPosition.Zero();
+	float totalWeight = 0.0f;
+
+	for ( int influenceIndex = 0; influenceIndex < 4; ++influenceIndex ) {
+		const float weight = idMath::Fabs( blendWeights[ influenceIndex ] );
+		if ( weight <= 0.0f ) {
+			continue;
+		}
+
+		const int localTransformIndex = hasBlendIndices ? R_MD5R_GetBlendIndex( packedBlendIndices, influenceIndex ) : 0;
+		if ( localTransformIndex < 0 || localTransformIndex >= primBatchTransformCount ) {
+			return false;
+		}
+
+		const int transformIndex = transformBase + localTransformIndex;
+		if ( transformIndex < 0 || transformIndex >= numSkinToModelTransforms ) {
+			return false;
+		}
+
+		skinnedPosition += weight * R_MD5R_TransformPackedPosition(
+			skinToModelTransforms + transformIndex * 16,
+			sourcePosition );
+		totalWeight += weight;
+	}
+
+	if ( totalWeight <= 0.0f ) {
+		const int localTransformIndex = hasBlendIndices ? R_MD5R_GetBlendIndex( packedBlendIndices, 0 ) : 0;
+		if ( localTransformIndex < 0 || localTransformIndex >= primBatchTransformCount ) {
+			return false;
+		}
+
+		const int transformIndex = transformBase + localTransformIndex;
+		if ( transformIndex < 0 || transformIndex >= numSkinToModelTransforms ) {
+			return false;
+		}
+
+		skinnedPosition = R_MD5R_TransformPackedPosition(
+			skinToModelTransforms + transformIndex * 16,
+			sourcePosition );
+	}
+
+	return true;
+}
+
+bool R_MD5R_CreateDecalTriangles( idRenderModelDecal *decalModel, const srfTriangles_t &sourceTri, const decalProjectionInfo_t &localInfo ) {
+	if ( decalModel == NULL || sourceTri.primBatchMesh == NULL ) {
+		return false;
+	}
+
+	const rvMD5RMesh *mesh = reinterpret_cast<const rvMD5RMesh *>( sourceTri.primBatchMesh );
+	if ( mesh == NULL || mesh->renderModel == NULL || mesh->primBatches.Num() <= 0 ) {
+		return false;
+	}
+
+	const rvRenderModelMD5R *renderModel = mesh->renderModel;
+	const idList<rvMD5RVertexBufferDesc> &vertexBuffers = renderModel->GetVertexBuffers();
+	const idList<rvMD5RIndexBufferDesc> &indexBuffers = renderModel->GetIndexBuffers();
+
+	if ( mesh->silTraceIndexBuffer < 0 || mesh->silTraceIndexBuffer >= indexBuffers.Num() ) {
+		return false;
+	}
+
+	const rvMD5RIndexBufferDesc &silTraceIndexBuffer = indexBuffers[ mesh->silTraceIndexBuffer ];
+	const rvMD5RVertexBufferDesc *silTraceVertexBuffer = NULL;
+	if ( mesh->silTraceVertexBuffer >= 0 && mesh->silTraceVertexBuffer < vertexBuffers.Num() ) {
+		const rvMD5RVertexBufferDesc &decodedSilTraceVertexBuffer = vertexBuffers[ mesh->silTraceVertexBuffer ];
+		if ( decodedSilTraceVertexBuffer.positions.Num() == decodedSilTraceVertexBuffer.numVertices ) {
+			silTraceVertexBuffer = &decodedSilTraceVertexBuffer;
+		}
+	}
+
+	const bool usePackedSkinning =
+		( sourceTri.skinToModelTransforms != NULL
+			&& sourceTri.numSkinToModelTransforms > 0
+			&& silTraceVertexBuffer != NULL );
+
+	// Retail rvMesh::CreateDecalTriangles walks the compact sil-trace topology.
+	// OpenQ4's tri->silTraceVerts on packed surfaces mirrors the materialized
+	// draw-vertex order instead, so only use the true packed sil-trace buffers
+	// here and let the classic fallback handle anything else.
+	if ( silTraceVertexBuffer == NULL ) {
+		return false;
+	}
+
+	const idPlane *facePlanes = ( sourceTri.facePlanes != NULL && sourceTri.facePlanesCalculated ) ? sourceTri.facePlanes : NULL;
+	const int totalFacePlanes = sourceTri.numIndexes / 3;
+	int facePlaneBase = 0;
+	int transformBase = 0;
+
+	for ( int primBatchIndex = 0; primBatchIndex < mesh->primBatches.Num(); ++primBatchIndex ) {
+		const rvMD5RPrimBatch &primBatch = mesh->primBatches[ primBatchIndex ];
+		if ( !primBatch.hasSilTraceGeoSpec ) {
+			return false;
+		}
+
+		const int primBatchVertCount = primBatch.silTraceGeoSpec.vertexCount;
+		const int primBatchIndexCount = primBatch.silTraceGeoSpec.primitiveCount * 3;
+		const int primBatchTransformCount = Max( primBatch.numTransforms, 1 );
+
+		if ( primBatchVertCount <= 0 || primBatchIndexCount <= 0
+			|| primBatch.silTraceGeoSpec.indexStart < 0
+			|| primBatch.silTraceGeoSpec.indexStart + primBatchIndexCount > silTraceIndexBuffer.numIndices
+			|| silTraceIndexBuffer.indices.Num() < silTraceIndexBuffer.numIndices ) {
+			return false;
+		}
+
+		const idPlane *batchFacePlanes = NULL;
+		if ( facePlanes != NULL ) {
+			if ( facePlaneBase + primBatch.silTraceGeoSpec.primitiveCount > totalFacePlanes ) {
+				return false;
+			}
+			batchFacePlanes = facePlanes + facePlaneBase;
+		}
+
+		rvSilTraceVertT *batchSilTraceVerts = (rvSilTraceVertT *)_alloca16( primBatchVertCount * sizeof( batchSilTraceVerts[0] ) );
+		if ( usePackedSkinning ) {
+			if ( transformBase + primBatchTransformCount > sourceTri.numSkinToModelTransforms
+				|| primBatch.silTraceGeoSpec.vertexStart < 0
+				|| primBatch.silTraceGeoSpec.vertexStart + primBatchVertCount > silTraceVertexBuffer->numVertices ) {
+				return false;
+			}
+
+			for ( int localVertexIndex = 0; localVertexIndex < primBatchVertCount; ++localVertexIndex ) {
+				const int sourceVertexIndex = primBatch.silTraceGeoSpec.vertexStart + localVertexIndex;
+				idVec3 skinnedPosition;
+				if ( !R_MD5R_SkinVertexPositionFromPackedTransforms(
+						*silTraceVertexBuffer,
+						sourceVertexIndex,
+						primBatch,
+						sourceTri.skinToModelTransforms,
+						sourceTri.numSkinToModelTransforms,
+						transformBase,
+						skinnedPosition ) ) {
+					return false;
+				}
+
+				batchSilTraceVerts[ localVertexIndex ].xyzw.Set(
+					skinnedPosition.x,
+					skinnedPosition.y,
+					skinnedPosition.z,
+					1.0f );
+			}
+		} else {
+			if ( primBatch.silTraceGeoSpec.vertexStart < 0
+				|| primBatch.silTraceGeoSpec.vertexStart + primBatchVertCount > silTraceVertexBuffer->numVertices ) {
+				return false;
+			}
+
+			for ( int localVertexIndex = 0; localVertexIndex < primBatchVertCount; ++localVertexIndex ) {
+				const idVec4 &position = silTraceVertexBuffer->positions[ primBatch.silTraceGeoSpec.vertexStart + localVertexIndex ];
+				batchSilTraceVerts[ localVertexIndex ].xyzw = position;
+			}
+		}
+
+		const int cullByteCount = ( primBatchVertCount + 3 ) & ~3;
+		byte *cullBits = (byte *)_alloca16( cullByteCount );
+		SIMDProcessor->DecalPointCull( cullBits, localInfo.boundingPlanes, batchSilTraceVerts, primBatchVertCount );
+
+		for ( int indexBase = 0, triNum = 0; indexBase < primBatchIndexCount; indexBase += 3, ++triNum ) {
+			const int v1 = silTraceIndexBuffer.indices[ primBatch.silTraceGeoSpec.indexStart + indexBase + 0 ];
+			const int v2 = silTraceIndexBuffer.indices[ primBatch.silTraceGeoSpec.indexStart + indexBase + 1 ];
+			const int v3 = silTraceIndexBuffer.indices[ primBatch.silTraceGeoSpec.indexStart + indexBase + 2 ];
+
+			if ( v1 < 0 || v2 < 0 || v3 < 0
+				|| v1 >= primBatchVertCount || v2 >= primBatchVertCount || v3 >= primBatchVertCount ) {
+				return false;
+			}
+
+			if ( cullBits[v1] & cullBits[v2] & cullBits[v3] ) {
+				continue;
+			}
+
+			if ( batchFacePlanes != NULL ) {
+				const float facing = batchFacePlanes[triNum].Normal() * localInfo.boundingPlanes[NUM_DECAL_BOUNDING_PLANES - 2].Normal();
+				if ( facing < localInfo.maxAngle ) {
+					continue;
+				}
+			}
+
+			idFixedWinding fw;
+			fw.SetNumPoints( 3 );
+			const int localIndices[3] = { v1, v2, v3 };
+			for ( int pointNum = 0; pointNum < 3; ++pointNum ) {
+				const idVec3 position = batchSilTraceVerts[ localIndices[pointNum] ].xyzw.ToVec3();
+				fw[pointNum] = position;
+
+				if ( localInfo.parallel ) {
+					fw[pointNum].s = localInfo.textureAxis[0].Distance( position );
+					fw[pointNum].t = localInfo.textureAxis[1].Distance( position );
+				} else {
+					const idVec3 dir = position - localInfo.projectionOrigin;
+					float scale = 0.0f;
+					localInfo.boundingPlanes[NUM_DECAL_BOUNDING_PLANES - 1].RayIntersection( position, dir, scale );
+					const idVec3 projectedPoint = position + scale * dir;
+					fw[pointNum].s = localInfo.textureAxis[0].Distance( projectedPoint );
+					fw[pointNum].t = localInfo.textureAxis[1].Distance( projectedPoint );
+				}
+			}
+
+			const int orBits = cullBits[v1] | cullBits[v2] | cullBits[v3];
+			for ( int planeNum = 0; planeNum < NUM_DECAL_BOUNDING_PLANES; ++planeNum ) {
+				if ( orBits & ( 1 << planeNum ) ) {
+					if ( !fw.ClipInPlace( -localInfo.boundingPlanes[planeNum] ) ) {
+						break;
+					}
+				}
+			}
+
+			if ( fw.GetNumPoints() != 0 ) {
+				decalModel->AddDepthFadedWinding( fw, localInfo.material, localInfo.fadePlanes, localInfo.fadeDepth, localInfo.startTime );
+			}
+		}
+
+		facePlaneBase += primBatch.silTraceGeoSpec.primitiveCount;
+		transformBase += primBatchTransformCount;
+	}
+
+	return true;
+}
+#endif
 
 /*
 ===========================

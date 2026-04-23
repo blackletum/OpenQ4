@@ -41,6 +41,42 @@ idInteraction implementation
 
 // FIXME: use private allocator for srfCullInfo_t
 
+static bool R_SurfaceShaderCreatesLightTris( const idMaterial *surfaceShader, const idMaterial *lightShader ) {
+	// Retail Quake 4 uses `noFog` / ReceivesFog() for fog and blend lights
+	// instead of the normal lighting-stage contract.
+	if ( lightShader->IsFogLight() || lightShader->IsBlendLight() ) {
+		return surfaceShader->ReceivesFog();
+	}
+
+	return surfaceShader->ReceivesLighting();
+}
+
+static bool R_ShouldCreateInteractionShadow( idRenderEntityLocal *entityDef ) {
+	// Quake 4 adds a screen-coverage / distance gate on top of the usual
+	// light/material shadow eligibility checks. The randomized frame hold keeps
+	// crowds from all toggling shadow state on the same frame.
+	if ( entityDef == NULL || entityDef->parms.shadowLODDistance < 1.0f || !r_lod_shadows.GetBool() ) {
+		return true;
+	}
+
+	viewEntity_t *viewEntity = entityDef->viewEntity;
+	if ( viewEntity == NULL ) {
+		return true;
+	}
+
+	if ( entityDef->parms.suppressLOD == 1
+		|| entityDef->LODModificationFrame > idLib::frameNumber
+		|| viewEntity->screenCoverage >= r_lod_shadows_percent.GetFloat()
+		|| viewEntity->distanceToCamera < entityDef->parms.shadowLODDistance ) {
+		if ( entityDef->LODModificationFrame < idLib::frameNumber ) {
+			entityDef->LODModificationFrame = idLib::frameNumber + static_cast<int>( ( rand() / static_cast<float>( RAND_MAX ) ) * 1000.0f );
+		}
+		return true;
+	}
+
+	return false;
+}
+
 static void R_LinkShadowMapCasterSurf( const drawSurf_t **link, const srfTriangles_t *tri, const viewEntity_t *space,
 		const renderEntity_t *renderEntity, const idMaterial *shader, const idScreenRect &scissor ) {
 	if ( !space ) {
@@ -838,7 +874,10 @@ idInteraction::HasShadows
 ===============
 */
 ID_INLINE bool idInteraction::HasShadows( void ) const {
-	return ( !lightDef->parms.noShadows && !entityDef->parms.noShadow && lightDef->lightShader->LightCastsShadows() );
+	return ( !lightDef->parms.noShadows
+		&& !lightDef->parms.noDynamicShadows
+		&& !entityDef->parms.noShadow
+		&& lightDef->lightShader->LightCastsShadows() );
 }
 
 /*
@@ -1077,8 +1116,8 @@ void idInteraction::CreateInteraction( const idRenderModel *model ) {
 			continue;
 		}
 
-		// generate a lighted surface and add it
-		if ( shader->ReceivesLighting() ) {
+		// Fog and blend lights follow the separate `noFog` interaction path.
+		if ( R_SurfaceShaderCreatesLightTris( shader, lightShader ) ) {
 			if ( tri->ambientViewCount == tr.viewCount ) {
 				sint->lightTris = R_CreateLightTris( entityDef, tri, lightDef, shader, sint->cullInfo );
 			} else {
@@ -1100,18 +1139,20 @@ void idInteraction::CreateInteraction( const idRenderModel *model ) {
 			// if the light has an optimized shadow volume, don't create shadows for any models that are part of the base areas
 			if ( lightDef->parms.prelightModel == NULL || !model->IsStaticWorldModel() || !r_useOptimizedShadows.GetBool() ) {
 
-				// this is the only place during gameplay (outside the utilities) that R_CreateShadowVolume() is called
-				sint->shadowTris = R_CreateShadowVolume( entityDef, tri, lightDef, shadowGen, sint->cullInfo );
-				if ( sint->shadowTris ) {
-					if ( shader->Coverage() != MC_OPAQUE || ( !r_skipSuppress.GetBool() && entityDef->parms.suppressSurfaceInViewID ) ) {
-						// if any surface is a shadow-casting perforated or translucent surface, or the
-						// base surface is suppressed in the view (world weapon shadows) we can't use
-						// the external shadow optimizations because we can see through some of the faces.
-						sint->shadowTris->numShadowIndexesNoCaps = sint->shadowTris->numIndexes;
-						sint->shadowTris->numShadowIndexesNoFrontCaps = sint->shadowTris->numIndexes;
+				if ( R_ShouldCreateInteractionShadow( entityDef ) ) {
+					// this is the only place during gameplay (outside the utilities) that R_CreateShadowVolume() is called
+					sint->shadowTris = R_CreateShadowVolume( entityDef, tri, lightDef, shadowGen, sint->cullInfo );
+					if ( sint->shadowTris ) {
+						if ( shader->Coverage() != MC_OPAQUE || ( !r_skipSuppress.GetBool() && entityDef->parms.suppressSurfaceInViewID ) ) {
+							// if any surface is a shadow-casting perforated or translucent surface, or the
+							// base surface is suppressed in the view (world weapon shadows) we can't use
+							// the external shadow optimizations because we can see through some of the faces.
+							sint->shadowTris->numShadowIndexesNoCaps = sint->shadowTris->numIndexes;
+							sint->shadowTris->numShadowIndexesNoFrontCaps = sint->shadowTris->numIndexes;
+						}
+						interactionGenerated = true;
 					}
 				}
-				interactionGenerated = true;
 			}
 		}
 
@@ -1218,12 +1259,13 @@ void idInteraction::AddActiveInteraction( void ) {
 	idScreenRect	lightScissor;
 	idVec3			localLightOrigin;
 	idVec3			localViewOrigin;
+	const bool		interactionHasShadows = HasShadows();
 
 	vLight = lightDef->viewLight;
 	vEntity = entityDef->viewEntity;
 
 	// do not waste time culling the interaction frustum if there will be no shadows
-	if ( !HasShadows() ) {
+	if ( !interactionHasShadows ) {
 
 		// use the entity scissor rectangle
 		shadowScissor = vEntity->scissorRect;
@@ -1354,18 +1396,22 @@ void idInteraction::AddActiveInteraction( void ) {
 
 					// add the surface to the light list
 
-					const idMaterial *shader = sint->shader;
+					const idMaterial *surfaceShader = sint->shader;
+					const bool materialNoSelfShadow = surfaceShader->TestMaterialFlag( MF_NOSELFSHADOW );
+					const materialCoverage_t surfaceCoverage = surfaceShader->Coverage();
+					const idMaterial *shader = surfaceShader;
 					R_GlobalShaderOverride( &shader );
 					if ( shader == NULL || !shader->IsDrawn() ) {
 						continue;
 					}
 
-					// there will only be localSurfaces if the light casts shadows and
-					// there are surfaces with NOSELFSHADOW
-					if ( shader->Coverage() == MC_TRANSLUCENT ) {
+					// Retail Quake 4 keeps the interaction ownership split anchored to
+					// the original surface material, even if a global shader override
+					// swaps the shader that will actually be drawn for the light pass.
+					if ( surfaceCoverage == MC_TRANSLUCENT ) {
 						R_LinkLightSurf( &vLight->translucentInteractions, lightTris, 
 							vEntity, lightDef, shader, lightScissor, false );
-					} else if ( !lightDef->parms.noShadows && shader->TestMaterialFlag(MF_NOSELFSHADOW) ) {
+					} else if ( !lightDef->parms.noShadows && materialNoSelfShadow ) {
 						R_LinkLightSurf( &vLight->localInteractions, lightTris, 
 							vEntity, lightDef, shader, lightScissor, false );
 					} else {
@@ -1374,6 +1420,10 @@ void idInteraction::AddActiveInteraction( void ) {
 					}
 				}
 			}
+		}
+
+		if ( !interactionHasShadows ) {
+			continue;
 		}
 
 		bool shadowSuppressed = false;
@@ -1396,16 +1446,15 @@ void idInteraction::AddActiveInteraction( void ) {
 		}
 
 		const idMaterial *shadowShader = sint->shader;
-		R_GlobalShaderOverride( &shadowShader );
-		if ( shadowShader == NULL || !shadowShader->IsDrawn() ) {
-			continue;
-		}
 
 		const bool isViewOnlyEntity =
 			( entityDef->parms.allowSurfaceInViewID != 0 &&
 				entityDef->parms.allowSurfaceInViewID == tr.viewDef->renderView.viewID ) ||
 			( entityDef->parms.weaponDepthHackInViewID != 0 &&
 				entityDef->parms.weaponDepthHackInViewID == tr.viewDef->renderView.viewID );
+		// Shadow ownership and shadow-admission policy stay tied to the original
+		// interaction material. Retail does not let global shader overrides change
+		// whether a surface casts or locally routes its shadows.
 		const bool materialNoSelfShadow = shadowShader->TestMaterialFlag( MF_NOSELFSHADOW );
 		const bool shadowMapNoSelfShadow = entityDef->parms.noSelfShadow || materialNoSelfShadow;
 		const bool translucentShadowMapSupported =

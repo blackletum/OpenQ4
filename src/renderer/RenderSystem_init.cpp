@@ -194,6 +194,10 @@ idCVar r_convertProcToMD5R( "r_convertProcToMD5R", "0", CVAR_RENDERER | CVAR_BOO
 idCVar r_lod_animations_distance( "r_lod_animations_distance", "0", CVAR_RENDERER | CVAR_FLOAT, "distance threshold for MD5 animation-update LOD", 0.0f, 1000000.0f );
 idCVar r_lod_animations_wait( "r_lod_animations_wait", "0.25", CVAR_RENDERER | CVAR_FLOAT, "time before a low-coverage MD5 surface is forced to refresh", 0.0f, 10.0f );
 idCVar r_lod_animations_coverage( "r_lod_animations_coverage", "0.01", CVAR_RENDERER | CVAR_FLOAT, "screen-coverage threshold for MD5 animation-update LOD", 0.0f, 1.0f );
+idCVar r_lod_entities( "r_lod_entities", "1", CVAR_RENDERER | CVAR_BOOL, "enable retail-style entity scissor LOD gating" );
+idCVar r_lod_entities_percent( "r_lod_entities_percent", "0.01", CVAR_RENDERER | CVAR_FLOAT, "screen-coverage threshold for keeping entity ambient submissions active", 0.0f, 1.0f );
+idCVar r_lod_shadows( "r_lod_shadows", "1", CVAR_RENDERER | CVAR_BOOL, "enable retail-style interaction shadow LOD gating" );
+idCVar r_lod_shadows_percent( "r_lod_shadows_percent", "0.01", CVAR_RENDERER | CVAR_FLOAT, "screen-coverage threshold for keeping interaction shadows active", 0.0f, 1.0f );
 
 idCVar r_useVertexBuffers( "r_useVertexBuffers", "1", CVAR_RENDERER | CVAR_INTEGER, "use ARB_vertex_buffer_object for vertexes", 0, 1, idCmdSystem::ArgCompletion_Integer<0,1>  );
 idCVar r_useIndexBuffers( "r_useIndexBuffers", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "use ARB_vertex_buffer_object for indexes", 0, 1, idCmdSystem::ArgCompletion_Integer<0,1>  );
@@ -246,6 +250,7 @@ idCVar r_skipFogLights( "r_skipFogLights", "0", CVAR_RENDERER | CVAR_BOOL, "skip
 idCVar r_skipDeforms( "r_skipDeforms", "0", CVAR_RENDERER | CVAR_BOOL, "leave all deform materials in their original state" );
 idCVar r_skipFrontEnd( "r_skipFrontEnd", "0", CVAR_RENDERER | CVAR_BOOL, "bypasses all front end work, but 2D gui rendering still draws" );
 idCVar r_skipUpdates( "r_skipUpdates", "0", CVAR_RENDERER | CVAR_BOOL, "1 = don't accept any entity or light updates, making everything static" );
+idCVar r_skipDecals( "r_skipDecals", "0", CVAR_RENDERER | CVAR_BOOL, "skip decal surfaces" );
 idCVar r_skipOverlays( "r_skipOverlays", "0", CVAR_RENDERER | CVAR_BOOL, "skip overlay surfaces" );
 idCVar r_skipSpecular( "r_skipSpecular", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_CHEAT | CVAR_ARCHIVE, "use black for specular1" );
 idCVar r_skipBump( "r_skipBump", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE, "uses a flat surface instead of the bump map" );
@@ -304,7 +309,7 @@ idCVar r_testGamma( "r_testGamma", "0", CVAR_RENDERER | CVAR_FLOAT, "if > 0 draw
 idCVar r_testGammaBias( "r_testGammaBias", "0", CVAR_RENDERER | CVAR_FLOAT, "if > 0 draw a grid pattern to test gamma levels" );
 idCVar r_testStepGamma( "r_testStepGamma", "0", CVAR_RENDERER | CVAR_FLOAT, "if > 0 draw a grid pattern to test gamma levels" );
 idCVar r_lightScale( "r_lightScale", "2", CVAR_RENDERER | CVAR_FLOAT, "all light intensities are multiplied by this" );
-idCVar r_lightDetailLevel( "r_lightDetailLevel", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "minimum light detail level to render", 0.0f, 10.0f );
+idCVar r_lightDetailLevel( "r_lightDetailLevel", "9", CVAR_RENDERER | CVAR_FLOAT, "minimum light detail level to render" );
 idCVar r_lightSourceRadius( "r_lightSourceRadius", "0", CVAR_RENDERER | CVAR_FLOAT, "for soft-shadow sampling" );
 idCVar r_flareSize( "r_flareSize", "1", CVAR_RENDERER | CVAR_FLOAT, "scale the flare deforms from the material def" ); 
 

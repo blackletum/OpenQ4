@@ -243,6 +243,10 @@ typedef struct {
 	int					conditionRegister;	// if registers[conditionRegister] == 0, skip stage
 	stageLighting_t		lighting;			// determines which passes interact with lights
 	int					drawStateBits;
+	int					mStageRegisterStart;	// first register allocated while parsing this stage
+	int					mNumStageRegisters;		// number of registers allocated while parsing this stage
+	int					mStageOpsStart;			// first material op emitted while parsing this stage
+	int					mNumStageOps;			// number of material ops emitted while parsing this stage
 	colorStage_t		color;
 	bool				hasAlphaTest;
 	int					alphaTestRegister;
@@ -661,6 +665,8 @@ public:
 	// regs should point to a float array large enough to hold GetNumRegisters() floats
 	void				EvaluateRegisters(float* regs, const float entityParms[MAX_ENTITY_SHADER_PARMS],
 		const struct viewDef_s* view, idSoundEmitter* soundEmitter = NULL) const;
+	void				EvaluateStageRegisters(int stageIndex, float* regs, const float entityParms[MAX_ENTITY_SHADER_PARMS],
+		float floatTime) const;
 
 	// if a material only uses constants (no entityParm or globalparm references), this
 	// will return a pointer to an internal table, and EvaluateRegisters will not need

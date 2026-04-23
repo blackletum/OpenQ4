@@ -50,6 +50,7 @@ idRenderEntityLocal::idRenderEntityLocal() {
 	viewCount				= 0;
 	viewEntity				= NULL;
 	visibleCount			= 0;
+	LODModificationFrame	= 0;
 	decals					= NULL;
 	overlay					= NULL;
 	entityRefs				= NULL;

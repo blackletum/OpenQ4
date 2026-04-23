@@ -30,6 +30,15 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "tr_local.h"
+#include "../sound/sound.h"
+
+static ID_INLINE idSoundEmitter *R_GetPortalShaderSoundEmitter( int soundEmitterHandle ) {
+	if ( soundEmitterHandle == 0 || soundSystem == NULL ) {
+		return NULL;
+	}
+
+	return soundSystem->EmitterForIndex( SOUNDWORLD_GAME, soundEmitterHandle );
+}
 
 /*
 
@@ -108,8 +117,9 @@ bool idRenderWorldLocal::PortalIsFoggedOut( const portal_t *p ) {
 	const idMaterial	*lightShader = ldef->lightShader;
 	int		size = sizeof( float ) *lightShader->GetNumRegisters();
 	float	*regs =(float *)_alloca( size );
+	idSoundEmitter *soundEmitter = R_GetPortalShaderSoundEmitter( ldef->parms.referenceSoundHandle );
 
-	lightShader->EvaluateRegisters( regs, ldef->parms.shaderParms, tr.viewDef, NULL);
+	lightShader->EvaluateRegisters( regs, ldef->parms.shaderParms, tr.viewDef, soundEmitter );
 
 	const shaderStage_t	*stage = lightShader->GetStage(0);
 
@@ -835,6 +845,10 @@ void idRenderWorldLocal::AddAreaLightRefs( int areaNum, const portalStack_t *ps 
 
 		// debug tool to allow viewing of only one light at a time
 		if ( r_singleLight.GetInteger() >= 0 && r_singleLight.GetInteger() != light->index ) {
+			continue;
+		}
+
+		if ( light->parms.detailLevel < r_lightDetailLevel.GetFloat() ) {
 			continue;
 		}
 

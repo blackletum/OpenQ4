@@ -271,6 +271,12 @@ struct rvMD5RLevelOfDetail {
 
 class rvRenderModelMD5R;
 class rvSilTraceVertT;
+class idRenderModelDecal;
+struct decalProjectionInfo_s;
+
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+bool							R_MD5R_CreateDecalTriangles( idRenderModelDecal *decalModel, const srfTriangles_t &sourceTri, const decalProjectionInfo_s &localInfo );
+#endif
 
 struct rvMD5RMesh {
 								rvMD5RMesh() :
@@ -509,6 +515,7 @@ private:
 	srfTriangles_t *			GenerateStaticTriSurface( const rvMD5RMesh &mesh ) const;
 #if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
 	friend bool					R_MD5R_CopyPrimBatchTriangles( idDrawVert *destDrawVerts, glIndex_t *destIndices, const rvMesh *primBatchMesh, const rvSilTraceVertT *silTraceVerts );
+	friend bool					R_MD5R_CreateDecalTriangles( idRenderModelDecal *decalModel, const srfTriangles_t &sourceTri, const decalProjectionInfo_s &localInfo );
 #endif
 	static void					RemoveFromList( rvRenderModelMD5R &model );
 

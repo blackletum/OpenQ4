@@ -307,6 +307,7 @@ public:
 	// surface has actually been added by R_AddAmbientDrawsurfs
 	// note that an entity could still be in the view frustum and not be visible due
 	// to portal passing
+	int						LODModificationFrame;	// retail shadow LOD frame-hold gate for interaction shadows
 
 	idRenderModelDecal *	decals;					// chain of decals that have been projected on this model
 	idRenderModelOverlay *	overlay;				// blood overlays on animated models
@@ -653,6 +654,7 @@ typedef struct {
 	int		c_deformedVerts;	// idMD5Mesh::GenerateSurface
 	int		c_deformedIndexes;	// idMD5Mesh::GenerateSurface
 	int		c_tangentIndexes;	// R_DeriveTangents()
+	int		c_numDecalIndexes;	// idRenderModelDecal::AddDecalDrawSurf
 	int		c_entityUpdates, c_lightUpdates, c_entityReferences, c_lightReferences;
 	int		c_guiSurfs;
 	int		frontEndMsec;		// sum of time in all RE_RenderScene's in a frame
@@ -1094,6 +1096,10 @@ void					R_DisableUnavailableMD5RCVar( idCVar &cvar, const char *capabilityName 
 extern idCVar r_lod_animations_distance;	// distance gate for animation-update LOD
 extern idCVar r_lod_animations_wait;	// delay before reusing the last animated pose when LODing
 extern idCVar r_lod_animations_coverage;	// screen-coverage threshold for animation-update LOD
+extern idCVar r_lod_entities;			// 1 = enable retail-style entity scissor LOD gating
+extern idCVar r_lod_entities_percent;	// screen-coverage threshold for retaining ambient entity submissions
+extern idCVar r_lod_shadows;			// 1 = enable retail-style shadow LOD gating
+extern idCVar r_lod_shadows_percent;	// screen-coverage threshold for retaining interaction shadows
 extern idCVar r_useTwoSidedStencil;		// 1 = do stencil shadows in one pass with different ops on each side
 extern idCVar r_stencilTranslucentShadows;	// 1 = let translucent materials cast and receive stencil shadows in the stencil-volume path
 extern idCVar r_useInfiniteFarZ;		// 1 = use the no-far-clip-plane trick
@@ -1138,6 +1144,7 @@ extern idCVar r_skipLightScale;			// don't do any post-interaction light scaling
 extern idCVar r_skipBump;				// uses a flat surface instead of the bump map
 extern idCVar r_skipSpecular;			// use black for specular
 extern idCVar r_skipDiffuse;			// use black for diffuse
+extern idCVar r_skipDecals;			// skip decal surfaces
 extern idCVar r_skipOverlays;			// skip overlay surfaces
 extern idCVar r_skipROQ;
 
