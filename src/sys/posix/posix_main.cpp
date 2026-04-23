@@ -66,11 +66,53 @@ static struct termios	tty_tc;
 
 // pid - useful when you attach to gdb..
 idCVar com_pid( "com_pid", "0", CVAR_INTEGER | CVAR_INIT | CVAR_SYSTEM, "process id" );
+idCVar sys_allowMultipleInstances( "sys_allowMultipleInstances", "0", CVAR_SYSTEM | CVAR_BOOL, "allow multiple instances running concurrently" );
 
 // exit - quit - error --------------------------------------------------------
 
 static int set_exit = 0;
 static char exit_spawn[ 1024 ];
+// Keep the descriptor open for the life of the process so the advisory lock stays held.
+static int posix_instanceLockFd = -1;
+
+static const char *Posix_InstanceLockPath( void ) {
+	static char lockPath[ 1024 ];
+	const char *runtimeDir = getenv( "XDG_RUNTIME_DIR" );
+
+	if ( runtimeDir == NULL || runtimeDir[0] == '\0' ) {
+		runtimeDir = getenv( "TMPDIR" );
+	}
+	if ( runtimeDir == NULL || runtimeDir[0] == '\0' ) {
+		runtimeDir = "/tmp";
+	}
+
+	idStr::snPrintf( lockPath, sizeof( lockPath ), "%s/openq4-%u.lock", runtimeDir, static_cast<unsigned int>( geteuid() ) );
+	return lockPath;
+}
+
+static void Posix_ReleaseInstanceLock( void ) {
+	if ( posix_instanceLockFd != -1 ) {
+		close( posix_instanceLockFd );
+		posix_instanceLockFd = -1;
+	}
+}
+
+static void Posix_WriteInstanceLockPid( const int fd ) {
+	char pidBuffer[ 32 ];
+	const int pidLength = idStr::snPrintf( pidBuffer, sizeof( pidBuffer ), "%ld\n", static_cast<long>( getpid() ) );
+
+	if ( pidLength <= 0 ) {
+		return;
+	}
+	if ( ftruncate( fd, 0 ) == -1 ) {
+		return;
+	}
+	if ( lseek( fd, 0, SEEK_SET ) == -1 ) {
+		return;
+	}
+
+	write( fd, pidBuffer, pidLength );
+}
 
 /*
 ================
@@ -89,6 +131,7 @@ void Posix_Exit(int ret) {
 	if ( asyncThread.threadHandle ) {
 		Sys_DestroyThread( asyncThread );
 	}
+	Posix_ReleaseInstanceLock();
 	// process spawning. it's best when it happens after everything has shut down
 	if ( exit_spawn[0] ) {
 		Sys_DoStartProcess( exit_spawn, false );
@@ -378,6 +421,7 @@ Posix_Shutdown
 =================
 */
 void Posix_Shutdown( void ) {
+	Posix_ReleaseInstanceLock();
 	for ( int i = 0; i < COMMAND_HISTORY; i++ ) {
 		history[ i ].Clear();
 	}
@@ -547,10 +591,47 @@ int Sys_GetDriveFreeSpace( const char *path ) {
 /*
 ================
 Sys_AlreadyRunning
-return true if there is a copy of D3 running already
+return true if there is a copy of OpenQ4 running already
 ================
 */
 bool Sys_AlreadyRunning( void ) {
+#ifndef DEBUG
+	if ( sys_allowMultipleInstances.GetBool() || posix_instanceLockFd != -1 ) {
+		return false;
+	}
+
+	const char *lockPath = Posix_InstanceLockPath();
+	int openFlags = O_RDWR | O_CREAT;
+	struct flock lock;
+
+#ifdef O_CLOEXEC
+	openFlags |= O_CLOEXEC;
+#endif
+
+	posix_instanceLockFd = open( lockPath, openFlags, 0600 );
+	if ( posix_instanceLockFd == -1 ) {
+		common->Printf( "WARNING: failed to open instance lock '%s': %s\n", lockPath, strerror( errno ) );
+		return false;
+	}
+
+	memset( &lock, 0, sizeof( lock ) );
+	lock.l_type = F_WRLCK;
+	lock.l_whence = SEEK_SET;
+	if ( fcntl( posix_instanceLockFd, F_SETLK, &lock ) == -1 ) {
+		const int lockError = errno;
+
+		Posix_ReleaseInstanceLock();
+		if ( lockError == EACCES || lockError == EAGAIN ) {
+			common->Printf( "another OpenQ4 instance is already running\n" );
+			return true;
+		}
+
+		common->Printf( "WARNING: failed to lock instance file '%s': %s\n", lockPath, strerror( lockError ) );
+		return false;
+	}
+
+	Posix_WriteInstanceLockPid( posix_instanceLockFd );
+#endif
 	return false;
 }
 

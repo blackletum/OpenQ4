@@ -165,7 +165,7 @@ is stored all lowercase.
 "additional mod path search":
 fs_game_base can be used to set an additional search path
 in search order, fs_game, fs_game_base, BASEGAME
-for instance to base a mod of D3 + D3XP assets, fs_game mymod, fs_game_base d3xp
+for instance to base a mod of OpenQ4 + D3XP assets, fs_game mymod, fs_game_base baseoq4
 
 =============================================================================
 */

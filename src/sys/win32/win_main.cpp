@@ -1360,7 +1360,7 @@ void Sys_StartAsyncThread(void) {
 ================
 Sys_AlreadyRunning
 
-returns true if there is a copy of D3 running already
+returns true if there is a copy of OpenQ4 running already
 ================
 */
 bool Sys_AlreadyRunning(void) {
