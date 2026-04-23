@@ -116,6 +116,7 @@ private:
 	int					GetLogRowCount( void ) const;
 	bool				GetScrollRange( int &minDisplay, int &maxDisplay, int *filled = NULL ) const;
 	void				GetConsoleRect( float &x, float &y, float &w, float &h ) const;
+	bool				IsPointInConsoleRect( float x, float y ) const;
 	void				GetLogAreaRect( float &x, float &y, float &w, float &h ) const;
 	bool				GetInputAreaRect( float &x, float &y, float &w, float &h ) const;
 	void				GetInputDrawInfo( int &prestep, int &drawLen ) const;
@@ -131,6 +132,7 @@ private:
 							float &thumbY, float &thumbH, float *hitX = NULL, float *hitW = NULL ) const;
 	bool				GetCompletionPopupGeometry( float &popupX, float &popupY, float &popupW, float &popupH,
 							int &first, int &visibleCount );
+	bool				IsPointInCompletionPopup( float x, float y );
 	bool				GetCompletionScrollbarGeometry( float hoverFrac, float &trackX, float &trackY, float &trackW, float &trackH,
 							float &thumbY, float &thumbH, float *hitX = NULL, float *hitW = NULL );
 	bool				GetCompletionSelectionFromMouse( int &selection );
@@ -1448,13 +1450,8 @@ idConsoleLocal::ClampMousePosition
 ================
 */
 void idConsoleLocal::ClampMousePosition( float &x, float &y ) const {
-	float consoleX, consoleY, consoleW, consoleH;
-	GetConsoleRect( consoleX, consoleY, consoleW, consoleH );
-
-	const float maxX = Max( consoleX, consoleX + consoleW - 1.0f );
-	const float maxY = Max( consoleY, consoleY + consoleH - 1.0f );
-	x = idMath::ClampFloat( consoleX, maxX, x );
-	y = idMath::ClampFloat( consoleY, maxY, y );
+	x = idMath::ClampFloat( 0.0f, static_cast<float>( SCREEN_WIDTH ), x );
+	y = idMath::ClampFloat( 0.0f, static_cast<float>( SCREEN_HEIGHT ), y );
 }
 
 /*
@@ -3010,11 +3007,11 @@ idConsoleLocal::ShouldHideMatchedCompletionPopup
 ================
 */
 bool idConsoleLocal::ShouldHideMatchedCompletionPopup( void ) const {
-	if ( completionCount < 1 || completionSelection < 0 || completionSelection >= completionCount ) {
-		return false;
-	}
+	char currentToken[MAX_EDIT_LINE];
+	bool hasExactMatch = false;
+	bool hasExtendedMatch = false;
 
-	if ( !IsCurrentSegmentCompletionMatch( completionMatches[completionSelection] ) ) {
+	if ( completionCount < 1 || completionReplaceLength <= 0 || completionReplaceOffset < 0 ) {
 		return false;
 	}
 
@@ -3023,8 +3020,37 @@ bool idConsoleLocal::ShouldHideMatchedCompletionPopup( void ) const {
 		return false;
 	}
 
-	const char next = consoleField.GetBuffer()[cursor];
-	return next == '\0' || next <= ' ' || next == ';';
+	const char *buffer = consoleField.GetBuffer();
+	const int bufferLen = consoleField.GetLength();
+	if ( completionReplaceOffset + completionReplaceLength > bufferLen ) {
+		return false;
+	}
+
+	const char next = buffer[cursor];
+	if ( next != '\0' && next > ' ' && next != ';' ) {
+		return false;
+	}
+
+	const int tokenLen = idMath::ClampInt( 0, MAX_EDIT_LINE - 1, completionReplaceLength );
+	memcpy( currentToken, buffer + completionReplaceOffset, tokenLen );
+	currentToken[tokenLen] = '\0';
+
+	for ( int i = 0; i < completionCount; ++i ) {
+		const char *match = completionMatches[i];
+		const int matchLen = static_cast<int>( strlen( match ) );
+
+		if ( idStr::Icmp( match, currentToken ) == 0 ) {
+			hasExactMatch = true;
+			continue;
+		}
+
+		if ( matchLen > tokenLen && idStr::Icmpn( match, currentToken, tokenLen ) == 0 ) {
+			hasExtendedMatch = true;
+			break;
+		}
+	}
+
+	return hasExactMatch && !hasExtendedMatch;
 }
 
 /*
@@ -3487,6 +3513,22 @@ bool idConsoleLocal::GetCompletionPopupGeometry( float &popupX, float &popupY, f
 
 /*
 ================
+idConsoleLocal::IsPointInCompletionPopup
+================
+*/
+bool idConsoleLocal::IsPointInCompletionPopup( float x, float y ) {
+	float popupX, popupY, popupW, popupH;
+	int first, visibleCount;
+
+	if ( !GetCompletionPopupGeometry( popupX, popupY, popupW, popupH, first, visibleCount ) ) {
+		return false;
+	}
+
+	return x >= popupX && x <= popupX + popupW && y >= popupY && y <= popupY + popupH;
+}
+
+/*
+================
 idConsoleLocal::GetCompletionScrollbarGeometry
 ================
 */
@@ -3883,6 +3925,8 @@ bool idConsoleLocal::MouseKeyEvent( int key, bool down ) {
 	float thumbY, thumbH;
 	float hitX, hitW;
 	float inputX, inputY, inputW, inputH;
+	bool dismissedCompletionPopup;
+	bool popupActive;
 	int completionHit;
 	int line, column;
 
@@ -3911,8 +3955,23 @@ bool idConsoleLocal::MouseKeyEvent( int key, bool down ) {
 	}
 
 	ClampMouseToConsole();
+	dismissedCompletionPopup = false;
+	popupActive = HasActiveCompletionPopup();
 
-	if ( key == K_MOUSE1 &&
+	if ( key == K_MOUSE1 && !IsPointInConsoleRect( mouseX, mouseY ) ) {
+		Close();
+		Sys_GrabMouseCursor( true );
+		cvarSystem->SetCVarBool( "ui_chat", false );
+		return true;
+	}
+
+	if ( key == K_MOUSE1 && popupActive && !IsPointInCompletionPopup( mouseX, mouseY ) ) {
+		DismissCompletionPopup();
+		dismissedCompletionPopup = true;
+		popupActive = false;
+	}
+
+	if ( key == K_MOUSE1 && popupActive &&
 		GetCompletionScrollbarGeometry( completionScrollbarHover, trackX, trackY, trackW, trackH, thumbY, thumbH, &hitX, &hitW ) &&
 		mouseX >= hitX && mouseX <= hitX + hitW && mouseY >= trackY && mouseY <= trackY + trackH ) {
 		ClearTextDragState();
@@ -3925,7 +3984,7 @@ bool idConsoleLocal::MouseKeyEvent( int key, bool down ) {
 		return true;
 	}
 
-	if ( key == K_MOUSE1 && GetCompletionSelectionFromMouse( completionHit ) ) {
+	if ( key == K_MOUSE1 && popupActive && GetCompletionSelectionFromMouse( completionHit ) ) {
 		ClearTextDragState();
 		scrollbarDragging = false;
 		completionScrollbarDragging = false;
@@ -3946,6 +4005,9 @@ bool idConsoleLocal::MouseKeyEvent( int key, bool down ) {
 		logSelecting = false;
 		scrollbarDragOffset = ( mouseY >= thumbY && mouseY <= thumbY + thumbH ) ? ( mouseY - thumbY ) : ( thumbH * 0.5f );
 		UpdateScrollbarDrag();
+		if ( dismissedCompletionPopup ) {
+			DismissCompletionPopup();
+		}
 		return true;
 	}
 
@@ -3962,6 +4024,9 @@ bool idConsoleLocal::MouseKeyEvent( int key, bool down ) {
 			inputSelecting = false;
 			logSelecting = false;
 			focus = CON_FOCUS_INPUT;
+			if ( dismissedCompletionPopup ) {
+				DismissCompletionPopup();
+			}
 			return true;
 		}
 
@@ -3972,6 +4037,9 @@ bool idConsoleLocal::MouseKeyEvent( int key, bool down ) {
 		}
 		inputSelecting = true;
 		logSelecting = false;
+		if ( dismissedCompletionPopup ) {
+			DismissCompletionPopup();
+		}
 		return true;
 	}
 
@@ -3983,6 +4051,9 @@ bool idConsoleLocal::MouseKeyEvent( int key, bool down ) {
 			textDragStartMouseY = mouseY;
 			inputSelecting = false;
 			logSelecting = false;
+			if ( dismissedCompletionPopup ) {
+				DismissCompletionPopup();
+			}
 			return true;
 		}
 
@@ -3991,9 +4062,15 @@ bool idConsoleLocal::MouseKeyEvent( int key, bool down ) {
 		SetLogCursor( line, column, idKeyInput::IsDown( K_SHIFT ) && focus == CON_FOCUS_LOG );
 		inputSelecting = false;
 		logSelecting = true;
+		if ( dismissedCompletionPopup ) {
+			DismissCompletionPopup();
+		}
 		return true;
 	}
 
+	if ( dismissedCompletionPopup ) {
+		DismissCompletionPopup();
+	}
 	return true;
 }
 
@@ -4807,4 +4884,15 @@ void	idConsoleLocal::Draw( bool forceFullScreen ) {
 	if ( !idAsyncNetwork::client.IsActive() && !idAsyncNetwork::server.IsActive() && aasFileOutOfDate ) {
 		SCR_DrawTextRightAlign( y, "AAS" );
 	}
+}
+
+/*
+================
+idConsoleLocal::IsPointInConsoleRect
+================
+*/
+bool idConsoleLocal::IsPointInConsoleRect( float x, float y ) const {
+	float consoleX, consoleY, consoleW, consoleH;
+	GetConsoleRect( consoleX, consoleY, consoleW, consoleH );
+	return x >= consoleX && x <= consoleX + consoleW && y >= consoleY && y <= consoleY + consoleH;
 }
