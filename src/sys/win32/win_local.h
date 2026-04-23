@@ -71,6 +71,7 @@ char	*Sys_GetCurrentUser( void );
 void	Win_SetErrorText( const char *text );
 
 cpuid_t	Sys_GetCPUId( void );
+void	Sys_CPUCount( int &numLogicalCPUCores, int &numPhysicalCPUCores, int &numCPUPackages );
 
 int		MapKey (int key);
 

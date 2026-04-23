@@ -40,6 +40,153 @@ idCVar sys_lang( "sys_lang", "english", CVAR_SYSTEM | CVAR_ARCHIVE,  "", sysLang
 idSysLocal			sysLocal;
 idSys *				sys = &sysLocal;
 
+static idStr Sys_FormatDecimalUnit( double value, const char *unit, int decimals ) {
+	char buffer[64];
+	idStr result;
+
+	idStr::snPrintf( buffer, sizeof( buffer ), "%.*f", decimals, value );
+	result = buffer;
+	if ( result.Find( '.' ) >= 0 ) {
+		result.StripTrailing( "0" );
+		result.StripTrailing( "." );
+	}
+	result += " ";
+	result += unit;
+
+	return result;
+}
+
+static void Sys_NormalizeWhitespace( const char *text, idStr &normalized ) {
+	bool pendingSpace = false;
+
+	normalized.Clear();
+
+	if ( text == NULL ) {
+		return;
+	}
+
+	for ( int i = 0; text[ i ] != '\0'; ++i ) {
+		const char c = text[ i ];
+		const bool isWhitespace = c == ' ' || c == '\t' || c == '\r' || c == '\n';
+
+		if ( isWhitespace ) {
+			if ( normalized.Length() > 0 ) {
+				pendingSpace = true;
+			}
+			continue;
+		}
+
+		if ( pendingSpace ) {
+			normalized.Append( ' ' );
+			pendingSpace = false;
+		}
+
+		normalized.Append( c );
+	}
+}
+
+static void Sys_AppendProcessorSummaryDetail( idStr &details, bool &hasDetail, const char *detail ) {
+	if ( detail == NULL || detail[ 0 ] == '\0' ) {
+		return;
+	}
+
+	if ( hasDetail ) {
+		details += ", ";
+	}
+
+	details += detail;
+	hasDetail = true;
+}
+
+idStr Sys_FormatFrequency( double hertz ) {
+	if ( hertz >= 1000000000.0 ) {
+		return Sys_FormatDecimalUnit( hertz / 1000000000.0, "GHz", 2 );
+	}
+	if ( hertz >= 1000000.0 ) {
+		return Sys_FormatDecimalUnit( hertz / 1000000.0, "MHz", 2 );
+	}
+	if ( hertz >= 1000.0 ) {
+		return Sys_FormatDecimalUnit( hertz / 1000.0, "kHz", 2 );
+	}
+	return Sys_FormatDecimalUnit( hertz, "Hz", 0 );
+}
+
+idStr Sys_FormatMemoryMB( int megabytes ) {
+	if ( megabytes >= ( 1024 * 1024 ) ) {
+		return Sys_FormatDecimalUnit( static_cast<double>( megabytes ) / ( 1024.0 * 1024.0 ), "TB", 2 );
+	}
+	if ( megabytes >= 1024 ) {
+		return Sys_FormatDecimalUnit( static_cast<double>( megabytes ) / 1024.0, "GB", 2 );
+	}
+	return Sys_FormatDecimalUnit( static_cast<double>( megabytes ), "MB", 0 );
+}
+
+idStr Sys_FormatProcessorSummary( const char *modelName, const char *architecture, int physicalCores, int logicalCores, int packages, double hertz ) {
+	idStr normalizedName;
+	idStr details;
+	idStr summary;
+	bool hasDetail = false;
+	const char *effectiveArchitecture = architecture;
+
+	if ( effectiveArchitecture == NULL || effectiveArchitecture[ 0 ] == '\0' ) {
+		effectiveArchitecture = CPUSTRING;
+	}
+
+	Sys_NormalizeWhitespace( modelName, normalizedName );
+
+	if ( normalizedName.Length() > 0 ) {
+		summary = normalizedName;
+		if ( effectiveArchitecture != NULL && effectiveArchitecture[ 0 ] != '\0' ) {
+			Sys_AppendProcessorSummaryDetail( details, hasDetail, effectiveArchitecture );
+		}
+	} else if ( effectiveArchitecture != NULL && effectiveArchitecture[ 0 ] != '\0' ) {
+		summary = effectiveArchitecture;
+		summary += " CPU";
+	} else {
+		summary = "generic CPU";
+	}
+
+	if ( packages > 1 ) {
+		Sys_AppendProcessorSummaryDetail( details, hasDetail, va( "%d package%s", packages, packages == 1 ? "" : "s" ) );
+	}
+
+	if ( physicalCores > 0 ) {
+		if ( logicalCores > physicalCores ) {
+			Sys_AppendProcessorSummaryDetail(
+				details,
+				hasDetail,
+				va( "%d core%s / %d thread%s",
+					physicalCores,
+					physicalCores == 1 ? "" : "s",
+					logicalCores,
+					logicalCores == 1 ? "" : "s" ) );
+		} else {
+			Sys_AppendProcessorSummaryDetail(
+				details,
+				hasDetail,
+				va( "%d core%s", physicalCores, physicalCores == 1 ? "" : "s" ) );
+		}
+	} else if ( logicalCores > 0 ) {
+		Sys_AppendProcessorSummaryDetail(
+			details,
+			hasDetail,
+			va( "%d thread%s", logicalCores, logicalCores == 1 ? "" : "s" ) );
+	}
+
+	if ( hasDetail ) {
+		summary += " (";
+		summary += details;
+		summary += ")";
+	}
+
+	if ( hertz > 0.0 ) {
+		summary += " @ ";
+		summary += Sys_FormatFrequency( hertz );
+	}
+
+	return summary;
+}
+
 void idSysLocal::DebugPrintf( const char *fmt, ... ) {
 	va_list argptr;
 

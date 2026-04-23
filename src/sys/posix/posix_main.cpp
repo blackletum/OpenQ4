@@ -577,9 +577,12 @@ void Posix_LateInit( void ) {
 	Posix_InitConsoleInput();
 	com_pid.SetInteger( getpid() );
 	common->Printf( "pid: %d\n", com_pid.GetInteger() );
-	common->Printf( "%d MB System Memory\n", Sys_GetSystemRam() );
+#ifdef __linux__
+	common->Printf( "CPU: %s\n", Sys_GetProcessorString() );
+#endif
+	common->Printf( "System memory: %s\n", Sys_FormatMemoryMB( Sys_GetSystemRam() ).c_str() );
 #ifndef ID_DEDICATED
-	common->Printf( "%d MB Video Memory\n", Sys_GetVideoRam() );
+	common->Printf( "Video memory: %s\n", Sys_FormatMemoryMB( Sys_GetVideoRam() ).c_str() );
 #endif
 	Posix_StartAsyncThread( );
 }

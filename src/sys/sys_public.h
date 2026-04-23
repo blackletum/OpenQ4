@@ -31,6 +31,8 @@ If you have questions concerning this license or the applicable additional terms
 
 #include <stdint.h>
 
+class idStr;
+
 /*
 ===============================================================================
 
@@ -302,6 +304,9 @@ int				Sys_Milliseconds( void );
 // for accurate performance testing
 double			Sys_GetClockTicks( void );
 double			Sys_ClockTicksPerSecond( void );
+idStr			Sys_FormatFrequency( double hertz );
+idStr			Sys_FormatMemoryMB( int megabytes );
+idStr			Sys_FormatProcessorSummary( const char *modelName, const char *architecture, int physicalCores, int logicalCores, int packages, double hertz );
 
 // returns a selection of the CPUID_* flags
 cpuid_t			Sys_GetProcessorId( void );

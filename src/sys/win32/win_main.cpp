@@ -80,6 +80,33 @@ Win32Vars_t	win32;
 
 static char		sys_cmdline[MAX_STRING_CHARS];
 
+static bool Sys_ReadProcessorRegistryString( const char *valueName, idStr &value ) {
+	HKEY hKey;
+	char buffer[ 256 ];
+	DWORD type = 0;
+	DWORD buflen = sizeof( buffer );
+	LSTATUS ret;
+
+	value.Clear();
+
+	if ( RegOpenKeyExA( HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", 0, KEY_READ, &hKey ) != ERROR_SUCCESS ) {
+		return false;
+	}
+
+	ret = RegQueryValueExA( hKey, valueName, NULL, &type, reinterpret_cast<LPBYTE>( buffer ), &buflen );
+	RegCloseKey( hKey );
+
+	if ( ret != ERROR_SUCCESS || ( type != REG_SZ && type != REG_EXPAND_SZ ) ) {
+		return false;
+	}
+
+	buffer[ sizeof( buffer ) - 1 ] = '\0';
+	value = buffer;
+	value.StripTrailingWhitespace();
+
+	return value.Length() > 0;
+}
+
 static double Sys_GetApproximateProcessorFrequencyHz( void ) {
 	HKEY hKey;
 	DWORD procSpeedMHz = 0;
@@ -107,6 +134,42 @@ static double Sys_GetApproximateProcessorFrequencyHz( void ) {
 	}
 
 	return static_cast<double>( procSpeedMHz ) * 1000000.0;
+}
+
+static const char *Sys_GetFallbackProcessorName( const cpuid_t cpuid ) {
+	if ( cpuid & CPUID_AMD ) {
+		return "AMD processor";
+	}
+	if ( cpuid & CPUID_INTEL ) {
+		return "Intel processor";
+	}
+	if ( cpuid & CPUID_UNSUPPORTED ) {
+		return "unsupported CPU";
+	}
+	return "generic CPU";
+}
+
+static void Sys_GetProcessorTopology( int &logicalCores, int &physicalCores, int &packages ) {
+	SYSTEM_INFO systemInfo;
+
+	logicalCores = 0;
+	physicalCores = 0;
+	packages = 0;
+
+	Sys_CPUCount( logicalCores, physicalCores, packages );
+
+	if ( logicalCores <= 0 ) {
+		GetNativeSystemInfo( &systemInfo );
+		logicalCores = static_cast<int>( systemInfo.dwNumberOfProcessors );
+	}
+
+	if ( physicalCores <= 0 ) {
+		physicalCores = logicalCores;
+	}
+
+	if ( packages <= 0 && logicalCores > 0 ) {
+		packages = 1;
+	}
 }
 
 bool Sys_HandlePrintScreenHotkey( bool pressed ) {
@@ -1354,56 +1417,27 @@ void Sys_Init(void) {
 	//
 	// CPU type
 	//
+	bool forcedCpuType = false;
 	if (!idStr::Icmp(win32.sys_cpustring.GetString(), "detect")) {
 		idStr string;
+		idStr processorName;
+		int logicalCores = 0;
+		int physicalCores = 0;
+		int cpuPackages = 0;
 		const double processorFrequencyHz = Sys_GetApproximateProcessorFrequencyHz();
 
-		if ( processorFrequencyHz > 0.0 ) {
-			common->Printf("%1.0f MHz ", processorFrequencyHz / 1000000.0f);
-		}
-
 		win32.cpuid = Sys_GetCPUId();
+		Sys_GetProcessorTopology( logicalCores, physicalCores, cpuPackages );
 
-		string.Clear();
-
-		if (win32.cpuid & CPUID_AMD) {
-			string += "AMD CPU";
-		}
-		else if (win32.cpuid & CPUID_INTEL) {
-			string += "Intel CPU";
-		}
-		else if (win32.cpuid & CPUID_UNSUPPORTED) {
-			string += "unsupported CPU";
-		}
-		else {
-			string += "generic CPU";
+		if ( !Sys_ReadProcessorRegistryString( "ProcessorNameString", processorName ) ) {
+			processorName = Sys_GetFallbackProcessorName( win32.cpuid );
 		}
 
-		string += " with ";
-		if (win32.cpuid & CPUID_MMX) {
-			string += "MMX & ";
-		}
-		if (win32.cpuid & CPUID_3DNOW) {
-			string += "3DNow! & ";
-		}
-		if (win32.cpuid & CPUID_SSE) {
-			string += "SSE & ";
-		}
-		if (win32.cpuid & CPUID_SSE2) {
-			string += "SSE2 & ";
-		}
-		if (win32.cpuid & CPUID_SSE3) {
-			string += "SSE3 & ";
-		}
-		if (win32.cpuid & CPUID_HTT) {
-			string += "HTT & ";
-		}
-		string.StripTrailing(" & ");
-		string.StripTrailing(" with ");
+		string = Sys_FormatProcessorSummary( processorName.c_str(), CPUSTRING, physicalCores, logicalCores, cpuPackages, processorFrequencyHz );
 		win32.sys_cpustring.SetString(string);
 	}
 	else {
-		common->Printf("forcing CPU type to ");
+		forcedCpuType = true;
 		idLexer src(win32.sys_cpustring.GetString(), idStr::Length(win32.sys_cpustring.GetString()), "sys_cpustring");
 		idToken token;
 
@@ -1444,9 +1478,16 @@ void Sys_Init(void) {
 		win32.cpuid = (cpuid_t)id;
 	}
 
-	common->Printf("%s\n", win32.sys_cpustring.GetString());
-	common->Printf("%d MB System Memory\n", Sys_GetSystemRam());
-	common->Printf("%d MB Video Memory\n", Sys_GetVideoRam());
+	idStr cpuSummary = win32.sys_cpustring.GetString();
+
+	if ( forcedCpuType ) {
+		common->Printf( "CPU type override: %s\n", cpuSummary.c_str() );
+	} else {
+		common->Printf( "CPU: %s\n", cpuSummary.c_str() );
+	}
+
+	common->Printf( "System memory: %s\n", Sys_FormatMemoryMB( Sys_GetSystemRam() ).c_str() );
+	common->Printf( "Video memory: %s\n", Sys_FormatMemoryMB( Sys_GetVideoRam() ).c_str() );
 }
 
 /*

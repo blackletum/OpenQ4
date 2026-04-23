@@ -48,6 +48,147 @@ If you have questions concerning this license or the applicable additional terms
 static idStr	basepath;
 static idStr	savepath;
 
+static void Sys_AddUniqueCpuInfoValue( idStrList &values, const idStr &value ) {
+	if ( value.Length() <= 0 ) {
+		return;
+	}
+
+	for ( int i = 0; i < values.Num(); ++i ) {
+		if ( values[ i ].Icmp( value.c_str() ) == 0 ) {
+			return;
+		}
+	}
+
+	values.Append( value );
+}
+
+static void Sys_FinalizeLinuxCpuInfoBlock( const idStr &physicalId, const idStr &coreId, idStrList &packageIds, idStrList &coreIds ) {
+	if ( physicalId.Length() > 0 ) {
+		Sys_AddUniqueCpuInfoValue( packageIds, physicalId );
+		if ( coreId.Length() > 0 ) {
+			Sys_AddUniqueCpuInfoValue( coreIds, physicalId + ":" + coreId );
+		}
+	}
+}
+
+static bool Sys_ReadLinuxCpuInfo( idStr &cpuInfoText ) {
+	char buffer[ 4096 ];
+	int fd;
+	int bytesRead;
+
+	cpuInfoText.Clear();
+
+	fd = open( "/proc/cpuinfo", O_RDONLY );
+	if ( fd == -1 ) {
+		return false;
+	}
+
+	while ( ( bytesRead = read( fd, buffer, sizeof( buffer ) ) ) > 0 ) {
+		cpuInfoText.Append( buffer, bytesRead );
+	}
+
+	close( fd );
+
+	return cpuInfoText.Length() > 0;
+}
+
+static bool Sys_GetLinuxProcessorInfo( idStr &processorName, int &logicalCount, int &physicalCount, int &packageCount ) {
+	idStr cpuInfoText;
+	idStr currentCoreId;
+	idStr currentPhysicalId;
+	idStrList coreIds;
+	idStrList packageIds;
+	int fallbackCpuCores = 0;
+	int fallbackSiblings = 0;
+	int start = 0;
+
+	processorName.Clear();
+	logicalCount = static_cast<int>( sysconf( _SC_NPROCESSORS_ONLN ) );
+	physicalCount = 0;
+	packageCount = 0;
+
+	if ( !Sys_ReadLinuxCpuInfo( cpuInfoText ) ) {
+		if ( logicalCount > 0 ) {
+			physicalCount = logicalCount;
+			packageCount = 1;
+		}
+		return logicalCount > 0;
+	}
+
+	while ( start <= cpuInfoText.Length() ) {
+		idStr key;
+		idStr line;
+		idStr value;
+		const int end = cpuInfoText.Find( '\n', start );
+		const int lineLength = ( end >= 0 ) ? end - start : cpuInfoText.Length() - start;
+
+		line = cpuInfoText.Mid( start, lineLength );
+		line.StripTrailing( '\r' );
+		line.StripTrailingWhitespace();
+
+		if ( line.Length() == 0 ) {
+			Sys_FinalizeLinuxCpuInfoBlock( currentPhysicalId, currentCoreId, packageIds, coreIds );
+			currentPhysicalId.Clear();
+			currentCoreId.Clear();
+		} else {
+			const int delimiter = line.Find( ':' );
+			if ( delimiter >= 0 ) {
+				key = line.Left( delimiter );
+				value = line.Mid( delimiter + 1, line.Length() - delimiter - 1 );
+				key.StripTrailingWhitespace();
+				value.StripLeading( ' ' );
+				value.StripLeading( '\t' );
+				value.StripTrailingWhitespace();
+
+				if ( processorName.Length() == 0
+					&& ( key.Icmp( "model name" ) == 0 || key.Icmp( "Hardware" ) == 0 || key.Icmp( "Processor" ) == 0 )
+					&& value.Length() > 0 ) {
+					processorName = value;
+				} else if ( key.Icmp( "physical id" ) == 0 ) {
+					currentPhysicalId = value;
+				} else if ( key.Icmp( "core id" ) == 0 ) {
+					currentCoreId = value;
+				} else if ( key.Icmp( "cpu cores" ) == 0 && fallbackCpuCores <= 0 ) {
+					fallbackCpuCores = atoi( value.c_str() );
+				} else if ( key.Icmp( "siblings" ) == 0 && fallbackSiblings <= 0 ) {
+					fallbackSiblings = atoi( value.c_str() );
+				}
+			}
+		}
+
+		if ( end < 0 ) {
+			break;
+		}
+		start = end + 1;
+	}
+
+	Sys_FinalizeLinuxCpuInfoBlock( currentPhysicalId, currentCoreId, packageIds, coreIds );
+
+	if ( packageIds.Num() > 0 ) {
+		packageCount = packageIds.Num();
+	}
+
+	if ( coreIds.Num() > 0 ) {
+		physicalCount = coreIds.Num();
+	} else if ( fallbackCpuCores > 0 ) {
+		physicalCount = fallbackCpuCores * Max( 1, packageCount );
+	}
+
+	if ( logicalCount <= 0 && fallbackSiblings > 0 ) {
+		logicalCount = fallbackSiblings * Max( 1, packageCount );
+	}
+
+	if ( logicalCount <= 0 ) {
+		logicalCount = physicalCount;
+	}
+
+	if ( packageCount <= 0 && physicalCount > 0 ) {
+		packageCount = 1;
+	}
+
+	return processorName.Length() > 0 || logicalCount > 0 || physicalCount > 0;
+}
+
 /*
 ==========================
 Sys_ReportWaylandRuntime
@@ -220,7 +361,21 @@ Sys_GetProcessorString
 ===============
 */
 const char *Sys_GetProcessorString( void ) {
-	return "generic";
+	static bool initialized = false;
+	static idStr processorString;
+
+	if ( !initialized ) {
+		idStr processorName;
+		int logicalCount = 0;
+		int physicalCount = 0;
+		int packageCount = 0;
+
+		Sys_GetLinuxProcessorInfo( processorName, logicalCount, physicalCount, packageCount );
+		processorString = Sys_FormatProcessorSummary( processorName.c_str(), CPUSTRING, physicalCount, logicalCount, packageCount, Sys_ClockTicksPerSecond() );
+		initialized = true;
+	}
+
+	return processorString.c_str();
 }
 
 /*
@@ -300,7 +455,7 @@ double Sys_ClockTicksPerSecond(void) {
 		common->Printf( "couldn't read /proc/cpuinfo\n" );
 		ret = MeasureClockTicks();
 		init = true;
-		common->Printf( "measured CPU frequency: %g MHz\n", ret / 1000000.0 );
+		common->Printf( "Measured CPU frequency: %s\n", Sys_FormatFrequency( ret ).c_str() );
 		return ret;		
 	}
 	len = read( fd, buf, 4096 );
@@ -317,10 +472,10 @@ double Sys_ClockTicksPerSecond(void) {
 				common->Printf( "failed parsing /proc/cpuinfo\n" );
 				ret = MeasureClockTicks();
 				init = true;
-				common->Printf( "measured CPU frequency: %g MHz\n", ret / 1000000.0 );
+				common->Printf( "Measured CPU frequency: %s\n", Sys_FormatFrequency( ret ).c_str() );
 				return ret;		
 			}
-			common->Printf( "/proc/cpuinfo CPU frequency: %g MHz\n", ret );
+			common->Printf( "/proc/cpuinfo CPU frequency: %s\n", Sys_FormatFrequency( ret * 1000000.0 ).c_str() );
 			ret *= 1000000;
 			init = true;
 			return ret;
@@ -330,7 +485,7 @@ double Sys_ClockTicksPerSecond(void) {
 	common->Printf( "failed parsing /proc/cpuinfo\n" );
 	ret = MeasureClockTicks();
 	init = true;
-	common->Printf( "measured CPU frequency: %g MHz\n", ret / 1000000.0 );
+	common->Printf( "Measured CPU frequency: %s\n", Sys_FormatFrequency( ret ).c_str() );
 	return ret;		
 }
 
