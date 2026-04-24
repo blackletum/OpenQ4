@@ -644,6 +644,37 @@ static bool RB_PostProcessBloomRequested( void ) {
 	return r_bloom.GetBool();
 }
 
+static bool RB_IsMainMotionBlurView( void ) {
+	if ( !RB_IsMainScenePostProcessView() ) {
+		return false;
+	}
+	if ( backEnd.viewDef->isSubview || backEnd.viewDef->superView != NULL ) {
+		return false;
+	}
+	if ( backEnd.viewDef->renderView.viewID < 0 ) {
+		return false;
+	}
+	return true;
+}
+
+static bool RB_PostProcessMotionBlurRequested( void ) {
+	if ( !r_motionBlur.GetBool() ) {
+		return false;
+	}
+	if ( !RB_IsMainMotionBlurView() ) {
+		return false;
+	}
+	if ( r_jitter.GetBool() ) {
+		return false;
+	}
+	if ( r_motionBlurDebug.GetBool() ) {
+		return true;
+	}
+	return r_motionBlurStrength.GetFloat() > 0.0f
+		&& r_motionBlurMaxPixels.GetFloat() > 0.0f
+		&& r_motionBlurSamples.GetInteger() > 0;
+}
+
 static int RB_HDRDebugViewValue( void ) {
 	return idMath::ClampInt( 0, 2, r_hdrDebugView.GetInteger() );
 }
@@ -731,7 +762,8 @@ static bool RB_EnsureSceneRenderTexture( void ) {
 
 	const int targetWidth = Max( glConfig.vidWidth, backEnd.viewDef->viewport.x2 + 1 );
 	const int targetHeight = Max( glConfig.vidHeight, backEnd.viewDef->viewport.y2 + 1 );
-	const int sceneSamples = Max( 0, r_multiSamples.GetInteger() );
+	const int requestedSamples = Max( 0, r_multiSamples.GetInteger() );
+	const int sceneSamples = ( requestedSamples > 1 ) ? requestedSamples : 0;
 
 	if ( targetWidth <= 0 || targetHeight <= 0 ) {
 		return false;
@@ -790,7 +822,8 @@ static bool RB_SceneRenderTargetRequested( void ) {
 		return false;
 	}
 	const bool bloomRequested = RB_PostProcessBloomRequested();
-	if ( !bloomRequested && !r_hdrSceneTarget.GetBool() ) {
+	const bool motionBlurRequested = RB_PostProcessMotionBlurRequested();
+	if ( !bloomRequested && !motionBlurRequested && !r_hdrSceneTarget.GetBool() ) {
 		return false;
 	}
 	if ( backEnd.renderTexture != NULL ) {
@@ -801,6 +834,7 @@ static bool RB_SceneRenderTargetRequested( void ) {
 	// back-buffer capture path was fragile when toggling bloom live and during
 	// map handoffs, and it also clipped highlight energy before the bright-pass.
 	return bloomRequested
+		|| motionBlurRequested
 		|| r_ssao.GetBool()
 		|| r_hdrToneMap.GetBool()
 		|| RB_HDRAutoExposureEnabled()
@@ -1159,6 +1193,348 @@ static void RB_STD_SSAO( void ) {
 	globalImages->BindNull();
 	GL_SelectTexture( 0 );
 	RB_EndFullscreenPostProcessPass();
+}
+
+enum rbMotionBlurUniformIndex_t {
+	RB_MOTION_BLUR_UNIFORM_INV_TEX_SIZE = 0,
+	RB_MOTION_BLUR_UNIFORM_VIEWPORT_SIZE,
+	RB_MOTION_BLUR_UNIFORM_CURRENT_RECONSTRUCT_INFO,
+	RB_MOTION_BLUR_UNIFORM_PREVIOUS_PROJECT_INFO,
+	RB_MOTION_BLUR_UNIFORM_DEPTH_PROJECTION,
+	RB_MOTION_BLUR_UNIFORM_CURRENT_VIEW_ORIGIN,
+	RB_MOTION_BLUR_UNIFORM_CURRENT_VIEW_AXIS0,
+	RB_MOTION_BLUR_UNIFORM_CURRENT_VIEW_AXIS1,
+	RB_MOTION_BLUR_UNIFORM_CURRENT_VIEW_AXIS2,
+	RB_MOTION_BLUR_UNIFORM_PREVIOUS_VIEW_ORIGIN,
+	RB_MOTION_BLUR_UNIFORM_PREVIOUS_VIEW_AXIS0,
+	RB_MOTION_BLUR_UNIFORM_PREVIOUS_VIEW_AXIS1,
+	RB_MOTION_BLUR_UNIFORM_PREVIOUS_VIEW_AXIS2,
+	RB_MOTION_BLUR_UNIFORM_PARAMS,
+	RB_MOTION_BLUR_UNIFORM_COUNT
+};
+
+struct rbMotionBlurViewState_t {
+	const idRenderWorldLocal *renderWorld;
+	idStr mapName;
+	int videoRestartCount;
+	int viewportWidth;
+	int viewportHeight;
+	int renderTime;
+	float fovX;
+	float fovY;
+	idVec3 viewOrigin;
+	idVec3 viewAxis[3];
+	float reconstructInfo[4];
+	float projectInfo[4];
+	float depthProjection[2];
+};
+
+static newShaderStage_t rbMotionBlurStage;
+static bool rbMotionBlurStageInitialized = false;
+static rbMotionBlurViewState_t rbMotionBlurHistory;
+static bool rbMotionBlurHistoryValid = false;
+
+static void RB_ResetMotionBlurHistory( void ) {
+	rbMotionBlurHistoryValid = false;
+}
+
+static void RB_InitMotionBlurStage( void ) {
+	if ( rbMotionBlurStageInitialized ) {
+		return;
+	}
+
+	memset( &rbMotionBlurStage, 0, sizeof( rbMotionBlurStage ) );
+	rbMotionBlurStage.glslProgram = true;
+	idStr::Copynz( rbMotionBlurStage.glslProgramName, "motionblur.fs", sizeof( rbMotionBlurStage.glslProgramName ) );
+
+	static const rbBuiltinUniformDef_t uniforms[RB_MOTION_BLUR_UNIFORM_COUNT] = {
+		{ "invTexSize", 2 },
+		{ "viewportSize", 2 },
+		{ "currentReconstructInfo", 4 },
+		{ "previousProjectInfo", 4 },
+		{ "depthProjection", 2 },
+		{ "currentViewOrigin", 4 },
+		{ "currentViewAxis0", 4 },
+		{ "currentViewAxis1", 4 },
+		{ "currentViewAxis2", 4 },
+		{ "previousViewOrigin", 4 },
+		{ "previousViewAxis0", 4 },
+		{ "previousViewAxis1", 4 },
+		{ "previousViewAxis2", 4 },
+		{ "motionBlurParams", 4 }
+	};
+
+	rbMotionBlurStage.numShaderParms = RB_MOTION_BLUR_UNIFORM_COUNT;
+	for ( int i = 0; i < RB_MOTION_BLUR_UNIFORM_COUNT; i++ ) {
+		idStr::Copynz( rbMotionBlurStage.shaderParmNames[i], uniforms[i].name, sizeof( rbMotionBlurStage.shaderParmNames[i] ) );
+		rbMotionBlurStage.shaderParmNumRegisters[i] = uniforms[i].components;
+	}
+
+	rbMotionBlurStage.numShaderTextures = 2;
+	idStr::Copynz( rbMotionBlurStage.shaderTextureNames[0], "Scene", sizeof( rbMotionBlurStage.shaderTextureNames[0] ) );
+	idStr::Copynz( rbMotionBlurStage.shaderTextureNames[1], "DepthBuffer", sizeof( rbMotionBlurStage.shaderTextureNames[1] ) );
+
+	rbMotionBlurStageInitialized = true;
+}
+
+static bool RB_BuildMotionBlurViewState( rbMotionBlurViewState_t &state, int viewportWidth, int viewportHeight ) {
+	const float projX = backEnd.viewDef->projectionMatrix[0];
+	const float projY = backEnd.viewDef->projectionMatrix[5];
+	if ( idMath::Fabs( projX ) <= 0.00001f || idMath::Fabs( projY ) <= 0.00001f ) {
+		return false;
+	}
+
+	state.renderWorld = backEnd.viewDef->renderWorld;
+	state.mapName.Clear();
+	if ( state.renderWorld != NULL ) {
+		state.mapName = state.renderWorld->mapName;
+	}
+	state.videoRestartCount = tr.videoRestartCount;
+	state.viewportWidth = viewportWidth;
+	state.viewportHeight = viewportHeight;
+	state.renderTime = backEnd.viewDef->renderView.time;
+	state.fovX = backEnd.viewDef->renderView.fov_x;
+	state.fovY = backEnd.viewDef->renderView.fov_y;
+	state.viewOrigin = backEnd.viewDef->renderView.vieworg;
+	state.viewAxis[0] = backEnd.viewDef->renderView.viewaxis[0];
+	state.viewAxis[1] = backEnd.viewDef->renderView.viewaxis[1];
+	state.viewAxis[2] = backEnd.viewDef->renderView.viewaxis[2];
+	state.reconstructInfo[0] = 1.0f / projX;
+	state.reconstructInfo[1] = 1.0f / projY;
+	state.reconstructInfo[2] = backEnd.viewDef->projectionMatrix[8];
+	state.reconstructInfo[3] = backEnd.viewDef->projectionMatrix[9];
+	state.projectInfo[0] = projX;
+	state.projectInfo[1] = projY;
+	state.projectInfo[2] = backEnd.viewDef->projectionMatrix[8];
+	state.projectInfo[3] = backEnd.viewDef->projectionMatrix[9];
+	state.depthProjection[0] = backEnd.viewDef->projectionMatrix[10];
+	state.depthProjection[1] = backEnd.viewDef->projectionMatrix[14];
+	return true;
+}
+
+static bool RB_MotionBlurProjectionChanged( const rbMotionBlurViewState_t &current, const rbMotionBlurViewState_t &previous ) {
+	if ( idMath::Fabs( current.fovX - previous.fovX ) > 0.01f || idMath::Fabs( current.fovY - previous.fovY ) > 0.01f ) {
+		return true;
+	}
+	for ( int i = 0; i < 4; i++ ) {
+		if ( idMath::Fabs( current.projectInfo[i] - previous.projectInfo[i] ) > 0.0001f ) {
+			return true;
+		}
+	}
+	for ( int i = 0; i < 2; i++ ) {
+		if ( idMath::Fabs( current.depthProjection[i] - previous.depthProjection[i] ) > 0.0001f ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool RB_MotionBlurCameraMovedEnough( const rbMotionBlurViewState_t &current, const rbMotionBlurViewState_t &previous ) {
+	if ( ( current.viewOrigin - previous.viewOrigin ).LengthSqr() >= Square( 0.10f ) ) {
+		return true;
+	}
+
+	const float axisEpsilonSqr = Square( 0.00075f );
+	for ( int i = 0; i < 3; i++ ) {
+		if ( ( current.viewAxis[i] - previous.viewAxis[i] ).LengthSqr() >= axisEpsilonSqr ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static bool RB_MotionBlurHistoryUsable( const rbMotionBlurViewState_t &current, const rbMotionBlurViewState_t &previous ) {
+	if ( !rbMotionBlurHistoryValid ) {
+		return false;
+	}
+	if ( r_jitter.GetBool() ) {
+		return false;
+	}
+	if ( current.videoRestartCount != previous.videoRestartCount ) {
+		return false;
+	}
+	if ( current.renderWorld != previous.renderWorld || current.mapName.Icmp( previous.mapName ) != 0 ) {
+		return false;
+	}
+	if ( current.viewportWidth != previous.viewportWidth || current.viewportHeight != previous.viewportHeight ) {
+		return false;
+	}
+	if ( current.renderTime <= previous.renderTime ) {
+		return false;
+	}
+	if ( current.renderTime - previous.renderTime > 100 ) {
+		return false;
+	}
+	if ( !RB_MotionBlurCameraMovedEnough( current, previous ) ) {
+		return false;
+	}
+	if ( ( current.viewOrigin - previous.viewOrigin ).LengthSqr() > Square( 512.0f ) ) {
+		return false;
+	}
+	if ( RB_MotionBlurProjectionChanged( current, previous ) ) {
+		return false;
+	}
+	return true;
+}
+
+static void RB_UploadMotionBlurVec4( rbMotionBlurUniformIndex_t index, const idVec3 &value ) {
+	if ( rbMotionBlurStage.shaderParmLocations[index] < 0 ) {
+		return;
+	}
+	const GLfloat vector[4] = { value.x, value.y, value.z, 0.0f };
+	glUniform4fvARB( rbMotionBlurStage.shaderParmLocations[index], 1, vector );
+}
+
+static void RB_STD_MotionBlur( void ) {
+	if ( r_skipPostProcess.GetBool() || !r_motionBlur.GetBool() || !glConfig.GLSLProgramAvailable ) {
+		RB_ResetMotionBlurHistory();
+		return;
+	}
+
+	if ( !RB_IsMainMotionBlurView() ) {
+		if ( backEnd.viewDef != NULL && backEnd.viewDef->viewEntitys != NULL ) {
+			RB_ResetMotionBlurHistory();
+		}
+		return;
+	}
+
+	if ( !r_motionBlurDebug.GetBool() &&
+		( r_motionBlurStrength.GetFloat() <= 0.0f || r_motionBlurMaxPixels.GetFloat() <= 0.0f || r_motionBlurSamples.GetInteger() <= 0 ) ) {
+		RB_ResetMotionBlurHistory();
+		return;
+	}
+
+	if ( r_jitter.GetBool() ) {
+		RB_ResetMotionBlurHistory();
+		return;
+	}
+
+	RB_InitMotionBlurStage();
+	if ( !R_ValidateGLSLProgram( &rbMotionBlurStage ) ) {
+		RB_ResetMotionBlurHistory();
+		return;
+	}
+
+	const int viewportWidth = backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1;
+	const int viewportHeight = backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1;
+	if ( viewportWidth <= 0 || viewportHeight <= 0 ) {
+		RB_ResetMotionBlurHistory();
+		return;
+	}
+
+	rbMotionBlurViewState_t currentState;
+	if ( !RB_BuildMotionBlurViewState( currentState, viewportWidth, viewportHeight ) ) {
+		RB_ResetMotionBlurHistory();
+		return;
+	}
+
+	const rbMotionBlurViewState_t previousState = rbMotionBlurHistory;
+	const bool historyUsable = RB_MotionBlurHistoryUsable( currentState, previousState );
+	rbMotionBlurHistory = currentState;
+	rbMotionBlurHistoryValid = true;
+	if ( !historyUsable ) {
+		return;
+	}
+
+	idImage *sceneImage = globalImages->currentRenderImage;
+	idImage *depthImage = globalImages->currentDepthImage;
+	if ( sceneImage == NULL || depthImage == NULL ) {
+		RB_ResetMotionBlurHistory();
+		return;
+	}
+
+	RB_LogComment( "---------- RB_STD_MotionBlur ----------\n" );
+
+	RB_CaptureCurrentRenderImage( viewportWidth, viewportHeight );
+	RB_CaptureCurrentDepthImage( viewportWidth, viewportHeight );
+
+	const int textureWidth = sceneImage->GetOpts().width;
+	const int textureHeight = sceneImage->GetOpts().height;
+	const int depthTextureWidth = depthImage->GetOpts().width;
+	const int depthTextureHeight = depthImage->GetOpts().height;
+	if ( textureWidth <= 0 || textureHeight <= 0 || depthTextureWidth <= 0 || depthTextureHeight <= 0 ) {
+		return;
+	}
+
+	backEnd.currentScissor = backEnd.viewDef->scissor;
+
+	RB_BeginFullscreenPostProcessPass(
+		backEnd.viewDef->viewport.x1 + backEnd.viewDef->scissor.x1,
+		backEnd.viewDef->viewport.y1 + backEnd.viewDef->scissor.y1,
+		backEnd.viewDef->scissor.x2 - backEnd.viewDef->scissor.x1 + 1,
+		backEnd.viewDef->scissor.y2 - backEnd.viewDef->scissor.y1 + 1 );
+
+	GL_SelectTexture( 0 );
+	sceneImage->Bind();
+	GL_SelectTexture( 1 );
+	depthImage->Bind();
+	GL_SelectTexture( 0 );
+
+	glUseProgramObjectARB( (GLhandleARB)rbMotionBlurStage.glslProgramObject );
+
+	for ( int i = 0; i < rbMotionBlurStage.numShaderTextures; i++ ) {
+		if ( rbMotionBlurStage.shaderTextureLocations[i] >= 0 ) {
+			glUniform1iARB( rbMotionBlurStage.shaderTextureLocations[i], i );
+		}
+	}
+
+	const GLfloat invTexSize[2] = {
+		1.0f / static_cast<GLfloat>( textureWidth ),
+		1.0f / static_cast<GLfloat>( textureHeight )
+	};
+	const GLfloat viewportSize[2] = {
+		static_cast<GLfloat>( viewportWidth ),
+		static_cast<GLfloat>( viewportHeight )
+	};
+	const GLfloat params[4] = {
+		idMath::ClampFloat( 0.0f, 2.0f, r_motionBlurStrength.GetFloat() ),
+		idMath::ClampFloat( 0.0f, 64.0f, r_motionBlurMaxPixels.GetFloat() ),
+		static_cast<GLfloat>( idMath::ClampInt( 1, 16, r_motionBlurSamples.GetInteger() ) ),
+		r_motionBlurDebug.GetBool() ? 1.0f : 0.0f
+	};
+
+	if ( rbMotionBlurStage.shaderParmLocations[RB_MOTION_BLUR_UNIFORM_INV_TEX_SIZE] >= 0 ) {
+		glUniform2fvARB( rbMotionBlurStage.shaderParmLocations[RB_MOTION_BLUR_UNIFORM_INV_TEX_SIZE], 1, invTexSize );
+	}
+	if ( rbMotionBlurStage.shaderParmLocations[RB_MOTION_BLUR_UNIFORM_VIEWPORT_SIZE] >= 0 ) {
+		glUniform2fvARB( rbMotionBlurStage.shaderParmLocations[RB_MOTION_BLUR_UNIFORM_VIEWPORT_SIZE], 1, viewportSize );
+	}
+	if ( rbMotionBlurStage.shaderParmLocations[RB_MOTION_BLUR_UNIFORM_CURRENT_RECONSTRUCT_INFO] >= 0 ) {
+		glUniform4fvARB( rbMotionBlurStage.shaderParmLocations[RB_MOTION_BLUR_UNIFORM_CURRENT_RECONSTRUCT_INFO], 1, currentState.reconstructInfo );
+	}
+	if ( rbMotionBlurStage.shaderParmLocations[RB_MOTION_BLUR_UNIFORM_PREVIOUS_PROJECT_INFO] >= 0 ) {
+		glUniform4fvARB( rbMotionBlurStage.shaderParmLocations[RB_MOTION_BLUR_UNIFORM_PREVIOUS_PROJECT_INFO], 1, previousState.projectInfo );
+	}
+	if ( rbMotionBlurStage.shaderParmLocations[RB_MOTION_BLUR_UNIFORM_DEPTH_PROJECTION] >= 0 ) {
+		glUniform2fvARB( rbMotionBlurStage.shaderParmLocations[RB_MOTION_BLUR_UNIFORM_DEPTH_PROJECTION], 1, currentState.depthProjection );
+	}
+
+	RB_UploadMotionBlurVec4( RB_MOTION_BLUR_UNIFORM_CURRENT_VIEW_ORIGIN, currentState.viewOrigin );
+	RB_UploadMotionBlurVec4( RB_MOTION_BLUR_UNIFORM_CURRENT_VIEW_AXIS0, currentState.viewAxis[0] );
+	RB_UploadMotionBlurVec4( RB_MOTION_BLUR_UNIFORM_CURRENT_VIEW_AXIS1, currentState.viewAxis[1] );
+	RB_UploadMotionBlurVec4( RB_MOTION_BLUR_UNIFORM_CURRENT_VIEW_AXIS2, currentState.viewAxis[2] );
+	RB_UploadMotionBlurVec4( RB_MOTION_BLUR_UNIFORM_PREVIOUS_VIEW_ORIGIN, previousState.viewOrigin );
+	RB_UploadMotionBlurVec4( RB_MOTION_BLUR_UNIFORM_PREVIOUS_VIEW_AXIS0, previousState.viewAxis[0] );
+	RB_UploadMotionBlurVec4( RB_MOTION_BLUR_UNIFORM_PREVIOUS_VIEW_AXIS1, previousState.viewAxis[1] );
+	RB_UploadMotionBlurVec4( RB_MOTION_BLUR_UNIFORM_PREVIOUS_VIEW_AXIS2, previousState.viewAxis[2] );
+
+	if ( rbMotionBlurStage.shaderParmLocations[RB_MOTION_BLUR_UNIFORM_PARAMS] >= 0 ) {
+		glUniform4fvARB( rbMotionBlurStage.shaderParmLocations[RB_MOTION_BLUR_UNIFORM_PARAMS], 1, params );
+	}
+
+	RB_DrawFullscreenPostProcessQuad( viewportWidth, viewportHeight, textureWidth, textureHeight );
+
+	glUseProgramObjectARB( 0 );
+	GL_SelectTexture( 1 );
+	globalImages->BindNull();
+	GL_SelectTexture( 0 );
+	globalImages->BindNull();
+	RB_EndFullscreenPostProcessPass();
+
+	// The destination changed after the pre-blur capture. Let any later pass that
+	// samples the current scene take a fresh copy of the blurred image.
+	backEnd.currentRenderCopied = false;
 }
 
 enum rbBloomExtractUniformIndex_t {
@@ -1840,12 +2216,34 @@ static void RB_PresentSceneRenderTargetToBackBuffer( void ) {
 		return;
 	}
 
-	idImage *sceneImage = globalImages->currentRenderImage;
-	if ( sceneImage == NULL ) {
+	idImage *presentImage = NULL;
+	idImage *copyImage = globalImages->currentRenderImage;
+	idImage *sceneColorImage = backEnd.renderTexture->GetNumColorImages() > 0
+		? backEnd.renderTexture->GetColorImage( 0 )
+		: NULL;
+
+	const bool canPresentSceneColorDirectly =
+		sceneColorImage != NULL &&
+		sceneColorImage->GetOpts().numMSAASamples <= 1 &&
+		backEnd.viewDef->viewport.x1 == 0 &&
+		backEnd.viewDef->viewport.y1 == 0;
+
+	if ( canPresentSceneColorDirectly ) {
+		presentImage = sceneColorImage;
+	} else if ( copyImage != NULL ) {
+		RB_CaptureCurrentRenderImage( viewportWidth, viewportHeight );
+		presentImage = copyImage;
+	}
+
+	if ( presentImage == NULL ) {
 		return;
 	}
 
-	RB_CaptureCurrentRenderImage( viewportWidth, viewportHeight );
+	const int textureWidth = presentImage->GetOpts().width;
+	const int textureHeight = presentImage->GetOpts().height;
+	if ( textureWidth <= 0 || textureHeight <= 0 ) {
+		return;
+	}
 
 	idRenderTexture::BindNull();
 	backEnd.renderTexture = NULL;
@@ -1869,11 +2267,11 @@ static void RB_PresentSceneRenderTargetToBackBuffer( void ) {
 		backEnd.viewDef->scissor.x2 - backEnd.viewDef->scissor.x1 + 1,
 		backEnd.viewDef->scissor.y2 - backEnd.viewDef->scissor.y1 + 1 );
 	GL_SelectTexture( 0 );
-	sceneImage->Bind();
+	presentImage->Bind();
 	GL_TexEnv( GL_MODULATE );
 
 	RB_SetFramebufferSRGBEnabled( true );
-	RB_DrawFullscreenPostProcessQuadUnitUV();
+	RB_DrawFullscreenPostProcessQuad( viewportWidth, viewportHeight, textureWidth, textureHeight );
 	RB_SetFramebufferSRGBEnabled( false );
 
 	globalImages->BindNull();
@@ -5823,6 +6221,9 @@ void	RB_STD_DrawView( void ) {
 
 	// Apply SSAO before bloom and tonemapping so indirect shadowing modulates the lit scene.
 	RB_STD_SSAO();
+
+	// Apply camera motion blur before screen-space flare overlays and bloom.
+	RB_STD_MotionBlur();
 
 	// Draw depth-aware coronas and optional lens ghosts before bloom so they participate in the post stack.
 	RB_STD_LensFlare();

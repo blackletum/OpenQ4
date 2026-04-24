@@ -992,6 +992,11 @@ extern idCVar r_ssaoPower;				// SSAO response curve
 extern idCVar r_ssaoMaxDistance;		// SSAO far-distance fade
 extern idCVar r_ssaoSamples;			// SSAO spiral sample count
 extern idCVar r_ssaoDebug;				// visualize SSAO only
+extern idCVar r_motionBlur;				// enable camera motion blur post-process
+extern idCVar r_motionBlurStrength;		// motion blur strength multiplier
+extern idCVar r_motionBlurMaxPixels;	// maximum motion blur radius in pixels
+extern idCVar r_motionBlurSamples;		// motion blur gather sample count
+extern idCVar r_motionBlurDebug;		// visualize motion blur vectors
 extern idCVar r_forceSpecialEffects;	// force legacy special-effect bitmask for debugging
 extern idCVar r_hdrSceneTarget;			// render the main scene into an HDR scene target before post-processing
 extern idCVar r_hdrToneMap;				// enable filmic tone mapping and color correction
