@@ -82,6 +82,8 @@ static int g_interactionVertexProgramOverride = 0;
 static bool g_interactionShaderRescueWarned = false;
 static const drawSurf_t *g_packedInteractionSurf = NULL;
 static int g_packedInteractionVertexFormatIndex = -1;
+static const drawSurf_t *g_packedDirectDrawSurf = NULL;
+static int g_packedDirectDrawVertexFormatIndex = -1;
 static const drawSurf_t *g_packedStageSurf = NULL;
 static int g_packedStageVertexFormatIndex = -1;
 
@@ -569,6 +571,37 @@ bool RB_ARB2_PreparePackedMD5RProgramStageDraw( const drawSurf_t *surf ) {
 	return true;
 }
 
+bool RB_ARB2_PreparePackedMD5RDirectDraw( const drawSurf_t *surf ) {
+	const srfTriangles_t *tri = ( surf != NULL ) ? surf->geo : NULL;
+	const rvMD5RVertexBufferDesc *drawVertexBuffer = ( tri != NULL ) ? R_MD5R_GetDrawVertexBufferForTri( tri ) : NULL;
+	const int vertexFormatIndex = ( drawVertexBuffer != NULL ) ? RB_ARB2_GetMD5RVertexFormatIndex( *drawVertexBuffer ) : -1;
+
+	g_packedDirectDrawSurf = NULL;
+	g_packedDirectDrawVertexFormatIndex = -1;
+
+	if ( tri == NULL
+		|| drawVertexBuffer == NULL
+		|| vertexFormatIndex < 0
+		|| !RB_ARB2_CanDrawPackedMD5RStageBatches( surf, vertexFormatIndex )
+		|| !RB_ARB2_BindPackedMD5RDrawVertexData( *drawVertexBuffer, vertexFormatIndex ) ) {
+		return false;
+	}
+
+	g_packedDirectDrawSurf = surf;
+	g_packedDirectDrawVertexFormatIndex = vertexFormatIndex;
+	return true;
+}
+
+void RB_ARB2_ClearPreparedPackedMD5RDirectDraw( void ) {
+	if ( g_packedDirectDrawSurf != NULL ) {
+		RB_ARB2_UnbindPackedMD5RDrawVertexData( g_packedDirectDrawVertexFormatIndex );
+	}
+	g_packedDirectDrawSurf = NULL;
+	g_packedDirectDrawVertexFormatIndex = -1;
+	glBindBufferARB( GL_ARRAY_BUFFER_ARB, 0 );
+	vertexCache.UnbindIndex();
+}
+
 void RB_ARB2_ClearPreparedPackedMD5RDraw( void ) {
 	if ( g_packedStageSurf != NULL ) {
 		RB_ARB2_UnbindPackedMD5RStageVertexData();
@@ -603,6 +636,51 @@ bool RB_ARB2_DrawPreparedPackedMD5RStageBatches( const srfTriangles_t *tri ) {
 		const int primBatchTransformCount = Max( primBatch.numTransforms, 1 );
 
 		if ( g_packedStageVertexFormatIndex > 0 ) {
+			for ( int transformIndex = 0; transformIndex < primBatchTransformCount; ++transformIndex ) {
+				RB_ARB2_LoadMD5RPaletteTransformRows(
+					transformIndex * 3,
+					tri->skinToModelTransforms + ( ( transformBase + transformIndex ) * 16 ) );
+			}
+		}
+
+		backEnd.pc.c_drawElements++;
+		backEnd.pc.c_drawIndexes += primBatchIndexCount;
+		backEnd.pc.c_drawVertexes += primBatch.drawGeoSpec.vertexCount;
+
+		glDrawElements(
+			GL_TRIANGLES,
+			r_singleTriangle.GetBool() ? 3 : primBatchIndexCount,
+			GL_INDEX_TYPE,
+			drawIndexBuffer->indices.Ptr() + primBatch.drawGeoSpec.indexStart );
+
+		transformBase += primBatchTransformCount;
+	}
+
+	return true;
+}
+
+bool RB_ARB2_DrawPreparedPackedMD5RDirectBatches( const srfTriangles_t *tri ) {
+	if ( g_packedDirectDrawSurf == NULL || g_packedDirectDrawSurf->geo != tri ) {
+		return false;
+	}
+
+	const drawSurf_t *surf = g_packedDirectDrawSurf;
+	const rvMD5RMesh *mesh = R_MD5R_GetMeshForTri( tri );
+	const rvMD5RIndexBufferDesc *drawIndexBuffer = R_MD5R_GetDrawIndexBufferForTri( tri );
+	if ( mesh == NULL || drawIndexBuffer == NULL || !RB_ARB2_CanDrawPackedMD5RStageBatches( surf, g_packedDirectDrawVertexFormatIndex ) ) {
+		RB_ARB2_ClearPreparedPackedMD5RDirectDraw();
+		return false;
+	}
+
+	vertexCache.UnbindIndex();
+
+	int transformBase = 0;
+	for ( int primBatchIndex = 0; primBatchIndex < mesh->primBatches.Num(); ++primBatchIndex ) {
+		const rvMD5RPrimBatch &primBatch = mesh->primBatches[ primBatchIndex ];
+		const int primBatchIndexCount = primBatch.drawGeoSpec.primitiveCount * 3;
+		const int primBatchTransformCount = Max( primBatch.numTransforms, 1 );
+
+		if ( g_packedDirectDrawVertexFormatIndex > 0 ) {
 			for ( int transformIndex = 0; transformIndex < primBatchTransformCount; ++transformIndex ) {
 				RB_ARB2_LoadMD5RPaletteTransformRows(
 					transformIndex * 3,
@@ -795,10 +873,8 @@ static bool RB_ARB2_DrawPackedMD5RInteractionBatches( const drawInteraction_t *d
 
 static bool RB_ARB2_DrawPackedMD5RDepthBatches( const drawSurf_t *surf ) {
 	const srfTriangles_t *tri = ( surf != NULL ) ? surf->geo : NULL;
-	const rvMD5RMesh *mesh = ( tri != NULL ) ? R_MD5R_GetMeshForTri( tri ) : NULL;
 	const rvMD5RVertexBufferDesc *drawVertexBuffer = ( tri != NULL ) ? R_MD5R_GetDrawVertexBufferForTri( tri ) : NULL;
-	const rvMD5RIndexBufferDesc *drawIndexBuffer = ( tri != NULL ) ? R_MD5R_GetDrawIndexBufferForTri( tri ) : NULL;
-	if ( tri == NULL || mesh == NULL || drawVertexBuffer == NULL || drawIndexBuffer == NULL ) {
+	if ( tri == NULL || drawVertexBuffer == NULL ) {
 		return false;
 	}
 
@@ -812,35 +888,8 @@ static bool RB_ARB2_DrawPackedMD5RDepthBatches( const drawSurf_t *surf ) {
 		return false;
 	}
 
-	if ( drawIndexBuffer->numIndices <= 0 || drawIndexBuffer->indices.Num() != drawIndexBuffer->numIndices || mesh->primBatches.Num() <= 0 ) {
+	if ( !RB_ARB2_CanDrawPackedMD5RStageBatches( surf, vertexFormatIndex ) ) {
 		return false;
-	}
-
-	int transformBase = 0;
-	for ( int primBatchIndex = 0; primBatchIndex < mesh->primBatches.Num(); ++primBatchIndex ) {
-		const rvMD5RPrimBatch &primBatch = mesh->primBatches[ primBatchIndex ];
-		const int primBatchTransformCount = Max( primBatch.numTransforms, 1 );
-		const int indexCount = primBatch.drawGeoSpec.primitiveCount * 3;
-
-		if ( !primBatch.hasDrawGeoSpec
-			|| primBatch.drawGeoSpec.vertexStart < 0
-			|| primBatch.drawGeoSpec.vertexCount < 0
-			|| primBatch.drawGeoSpec.vertexStart + primBatch.drawGeoSpec.vertexCount > drawVertexBuffer->numVertices
-			|| primBatch.drawGeoSpec.indexStart < 0
-			|| primBatch.drawGeoSpec.indexStart + indexCount > drawIndexBuffer->numIndices ) {
-			return false;
-		}
-
-		if ( vertexFormatIndex > 0 ) {
-			if ( tri->skinToModelTransforms == NULL
-				|| tri->numSkinToModelTransforms <= 0
-				|| primBatchTransformCount > ARB2_MD5R_MAX_PALETTE_TRANSFORMS
-				|| transformBase + primBatchTransformCount > tri->numSkinToModelTransforms ) {
-				return false;
-			}
-		}
-
-		transformBase += primBatchTransformCount;
 	}
 
 	if ( !R_BindARBProgram( GL_VERTEX_PROGRAM_ARB, depthProgram, "packed depth vertex program", false ) ) {
@@ -850,42 +899,14 @@ static bool RB_ARB2_DrawPackedMD5RDepthBatches( const drawSurf_t *surf ) {
 	glEnable( GL_VERTEX_PROGRAM_ARB );
 	RB_ARB2_LoadMD5RMVPMatrix( surf );
 
-	if ( !RB_ARB2_BindPackedMD5RDrawVertexData( *drawVertexBuffer, vertexFormatIndex ) ) {
+	if ( !RB_ARB2_PreparePackedMD5RDirectDraw( surf ) ) {
 		glBindProgramARB( GL_VERTEX_PROGRAM_ARB, 0 );
 		glDisable( GL_VERTEX_PROGRAM_ARB );
 		return false;
 	}
 
-	vertexCache.UnbindIndex();
-
-	transformBase = 0;
-	for ( int primBatchIndex = 0; primBatchIndex < mesh->primBatches.Num(); ++primBatchIndex ) {
-		const rvMD5RPrimBatch &primBatch = mesh->primBatches[ primBatchIndex ];
-		const int primBatchTransformCount = Max( primBatch.numTransforms, 1 );
-		const int indexCount = primBatch.drawGeoSpec.primitiveCount * 3;
-
-		if ( vertexFormatIndex > 0 ) {
-			for ( int transformIndex = 0; transformIndex < primBatchTransformCount; ++transformIndex ) {
-				RB_ARB2_LoadMD5RPaletteTransformRows(
-					transformIndex * 3,
-					tri->skinToModelTransforms + ( ( transformBase + transformIndex ) * 16 ) );
-			}
-		}
-
-		backEnd.pc.c_drawElements++;
-		backEnd.pc.c_drawIndexes += indexCount;
-		backEnd.pc.c_drawVertexes += primBatch.drawGeoSpec.vertexCount;
-
-		glDrawElements(
-			GL_TRIANGLES,
-			r_singleTriangle.GetBool() ? 3 : indexCount,
-			GL_INDEX_TYPE,
-			drawIndexBuffer->indices.Ptr() + primBatch.drawGeoSpec.indexStart );
-
-		transformBase += primBatchTransformCount;
-	}
-
-	RB_ARB2_UnbindPackedMD5RDrawVertexData( vertexFormatIndex );
+	RB_DrawElementsWithCounters( tri );
+	RB_ARB2_ClearPreparedPackedMD5RDirectDraw();
 	glBindProgramARB( GL_VERTEX_PROGRAM_ARB, 0 );
 	glDisable( GL_VERTEX_PROGRAM_ARB );
 	return true;
@@ -893,10 +914,8 @@ static bool RB_ARB2_DrawPackedMD5RDepthBatches( const drawSurf_t *surf ) {
 
 static bool RB_ARB2_DrawPackedMD5RFogBatches( const drawSurf_t *surf ) {
 	const srfTriangles_t *tri = ( surf != NULL ) ? surf->geo : NULL;
-	const rvMD5RMesh *mesh = ( tri != NULL ) ? R_MD5R_GetMeshForTri( tri ) : NULL;
 	const rvMD5RVertexBufferDesc *drawVertexBuffer = ( tri != NULL ) ? R_MD5R_GetDrawVertexBufferForTri( tri ) : NULL;
-	const rvMD5RIndexBufferDesc *drawIndexBuffer = ( tri != NULL ) ? R_MD5R_GetDrawIndexBufferForTri( tri ) : NULL;
-	if ( tri == NULL || mesh == NULL || drawVertexBuffer == NULL || drawIndexBuffer == NULL ) {
+	if ( tri == NULL || drawVertexBuffer == NULL ) {
 		return false;
 	}
 
@@ -910,35 +929,8 @@ static bool RB_ARB2_DrawPackedMD5RFogBatches( const drawSurf_t *surf ) {
 		return false;
 	}
 
-	if ( drawIndexBuffer->numIndices <= 0 || drawIndexBuffer->indices.Num() != drawIndexBuffer->numIndices || mesh->primBatches.Num() <= 0 ) {
+	if ( !RB_ARB2_CanDrawPackedMD5RStageBatches( surf, vertexFormatIndex ) ) {
 		return false;
-	}
-
-	int transformBase = 0;
-	for ( int primBatchIndex = 0; primBatchIndex < mesh->primBatches.Num(); ++primBatchIndex ) {
-		const rvMD5RPrimBatch &primBatch = mesh->primBatches[ primBatchIndex ];
-		const int primBatchTransformCount = Max( primBatch.numTransforms, 1 );
-		const int indexCount = primBatch.drawGeoSpec.primitiveCount * 3;
-
-		if ( !primBatch.hasDrawGeoSpec
-			|| primBatch.drawGeoSpec.vertexStart < 0
-			|| primBatch.drawGeoSpec.vertexCount < 0
-			|| primBatch.drawGeoSpec.vertexStart + primBatch.drawGeoSpec.vertexCount > drawVertexBuffer->numVertices
-			|| primBatch.drawGeoSpec.indexStart < 0
-			|| primBatch.drawGeoSpec.indexStart + indexCount > drawIndexBuffer->numIndices ) {
-			return false;
-		}
-
-		if ( vertexFormatIndex > 0 ) {
-			if ( tri->skinToModelTransforms == NULL
-				|| tri->numSkinToModelTransforms <= 0
-				|| primBatchTransformCount > ARB2_MD5R_MAX_PALETTE_TRANSFORMS
-				|| transformBase + primBatchTransformCount > tri->numSkinToModelTransforms ) {
-				return false;
-			}
-		}
-
-		transformBase += primBatchTransformCount;
 	}
 
 	if ( !R_BindARBProgram( GL_VERTEX_PROGRAM_ARB, fogProgram, "packed fog vertex program", false ) ) {
@@ -966,42 +958,14 @@ static bool RB_ARB2_DrawPackedMD5RFogBatches( const drawSurf_t *surf ) {
 	R_GlobalPlaneToLocal( surf->space->modelMatrix, fogTexGenPlanes[FOG_ENTER_PLANE_S], local );
 	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, ARB2_MD5R_FOG_ENTER_PLANE_S, local.ToFloatPtr() );
 
-	if ( !RB_ARB2_BindPackedMD5RDrawVertexData( *drawVertexBuffer, vertexFormatIndex ) ) {
+	if ( !RB_ARB2_PreparePackedMD5RDirectDraw( surf ) ) {
 		glBindProgramARB( GL_VERTEX_PROGRAM_ARB, 0 );
 		glDisable( GL_VERTEX_PROGRAM_ARB );
 		return false;
 	}
 
-	vertexCache.UnbindIndex();
-
-	transformBase = 0;
-	for ( int primBatchIndex = 0; primBatchIndex < mesh->primBatches.Num(); ++primBatchIndex ) {
-		const rvMD5RPrimBatch &primBatch = mesh->primBatches[ primBatchIndex ];
-		const int primBatchTransformCount = Max( primBatch.numTransforms, 1 );
-		const int indexCount = primBatch.drawGeoSpec.primitiveCount * 3;
-
-		if ( vertexFormatIndex > 0 ) {
-			for ( int transformIndex = 0; transformIndex < primBatchTransformCount; ++transformIndex ) {
-				RB_ARB2_LoadMD5RPaletteTransformRows(
-					transformIndex * 3,
-					tri->skinToModelTransforms + ( ( transformBase + transformIndex ) * 16 ) );
-			}
-		}
-
-		backEnd.pc.c_drawElements++;
-		backEnd.pc.c_drawIndexes += indexCount;
-		backEnd.pc.c_drawVertexes += primBatch.drawGeoSpec.vertexCount;
-
-		glDrawElements(
-			GL_TRIANGLES,
-			r_singleTriangle.GetBool() ? 3 : indexCount,
-			GL_INDEX_TYPE,
-			drawIndexBuffer->indices.Ptr() + primBatch.drawGeoSpec.indexStart );
-
-		transformBase += primBatchTransformCount;
-	}
-
-	RB_ARB2_UnbindPackedMD5RDrawVertexData( vertexFormatIndex );
+	RB_DrawElementsWithCounters( tri );
+	RB_ARB2_ClearPreparedPackedMD5RDirectDraw();
 	glBindProgramARB( GL_VERTEX_PROGRAM_ARB, 0 );
 	glDisable( GL_VERTEX_PROGRAM_ARB );
 	return true;
@@ -1244,11 +1208,15 @@ void RB_ARB2_PrepareStageTexturing( const shaderStage_t *pStage, const drawSurf_
 }
 
 void RB_ARB2_MD5R_DrawDepthElements( const drawSurf_t *surf ) {
-	if ( surf == NULL || surf->geo == NULL || surf->geo->ambientCache == NULL ) {
+	if ( surf == NULL || surf->geo == NULL ) {
 		return;
 	}
 
 	if ( RB_ARB2_DrawPackedMD5RDepthBatches( surf ) ) {
+		return;
+	}
+
+	if ( surf->geo->ambientCache == NULL ) {
 		return;
 	}
 
@@ -1310,11 +1278,15 @@ void RB_ARB2_MD5R_DrawShadowElements( const drawSurf_t *surf, int numIndexes ) {
 }
 
 void RB_ARB2_MD5R_DrawBasicFog( const drawSurf_t *surf ) {
-	if ( surf == NULL || surf->geo == NULL || surf->geo->ambientCache == NULL ) {
+	if ( surf == NULL || surf->geo == NULL ) {
 		return;
 	}
 
 	if ( RB_ARB2_DrawPackedMD5RFogBatches( surf ) ) {
+		return;
+	}
+
+	if ( surf->geo->ambientCache == NULL ) {
 		return;
 	}
 
@@ -5718,6 +5690,64 @@ static void RB_GLSLPointShadowMap_DrawInteraction( const drawInteraction_t *din 
 	}
 }
 
+static idDrawVert *RB_GLSLPrepareInteractionVertexCache( const drawSurf_t *surf ) {
+	if ( surf == NULL || surf->geo == NULL ) {
+		return NULL;
+	}
+
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	const srfTriangles_t *tri = surf->geo;
+	if ( tri->primBatchMesh != NULL ) {
+		srfTriangles_t *mutableTri = const_cast<srfTriangles_t *>( tri );
+		srfTriangles_t *ambientTri =
+			( tri->ambientSurface != NULL ) ? tri->ambientSurface : mutableTri;
+		const bool needsLighting =
+			( surf->material != NULL ) ? surf->material->ReceivesLighting() : false;
+
+		if ( ambientTri != NULL && ambientTri->ambientCache == NULL ) {
+			if ( ambientTri->primBatchMesh != NULL ) {
+				if ( !R_CreatePackedSurfaceFrameCaches( ambientTri, needsLighting, false ) ) {
+					return NULL;
+				}
+			} else if ( ambientTri->verts != NULL ) {
+				if ( !R_CreateAmbientCache( ambientTri, needsLighting ) ) {
+					return NULL;
+				}
+			}
+		}
+
+		if ( mutableTri->ambientCache == NULL && ambientTri != NULL && ambientTri->ambientCache != NULL ) {
+			mutableTri->ambientCache = ambientTri->ambientCache;
+			mutableTri->tempAmbientCache = ambientTri->tempAmbientCache;
+		}
+
+		if ( mutableTri->ambientCache == NULL ) {
+			return NULL;
+		}
+
+		if ( mutableTri->indexCache == NULL
+			&& r_useIndexBuffers.GetBool()
+			&& mutableTri->indexes != NULL
+			&& mutableTri->numIndexes > 0 ) {
+			mutableTri->indexCache = vertexCache.AllocFrameTemp(
+				mutableTri->indexes,
+				mutableTri->numIndexes * sizeof( mutableTri->indexes[0] ) );
+		}
+
+		R_TouchVertexCache( mutableTri->ambientCache );
+		if ( mutableTri->indexCache != NULL ) {
+			R_TouchVertexCache( mutableTri->indexCache );
+		}
+	}
+#endif
+
+	if ( surf->geo->ambientCache == NULL ) {
+		return NULL;
+	}
+
+	return (idDrawVert *)vertexCache.Position( surf->geo->ambientCache );
+}
+
 static bool RB_GLSLMaterial_CreateDrawInteractions( const drawSurf_t *surf ) {
 	if ( surf == NULL || !RB_MaterialInteractionLoadProgram() ) {
 		return false;
@@ -5756,11 +5786,11 @@ static bool RB_GLSLMaterial_CreateDrawInteractions( const drawSurf_t *surf ) {
 	glEnableClientState( GL_COLOR_ARRAY );
 
 	for ( ; surf != NULL; surf = surf->nextOnLight ) {
-		if ( surf->geo == NULL || surf->geo->ambientCache == NULL ) {
+		idDrawVert *ac = RB_GLSLPrepareInteractionVertexCache( surf );
+		if ( ac == NULL ) {
 			continue;
 		}
 
-		idDrawVert *ac = (idDrawVert *)vertexCache.Position( surf->geo->ambientCache );
 		glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), ac->color );
 		glVertexAttribPointerARB( 11, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->normal.ToFloatPtr() );
 		glVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[1].ToFloatPtr() );
@@ -5896,11 +5926,11 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 	glEnableClientState( GL_COLOR_ARRAY );
 
 	for ( ; surf != NULL; surf = surf->nextOnLight ) {
-		if ( surf->geo == NULL || surf->geo->ambientCache == NULL ) {
+		idDrawVert *ac = RB_GLSLPrepareInteractionVertexCache( surf );
+		if ( ac == NULL ) {
 			continue;
 		}
 
-		idDrawVert *ac = (idDrawVert *)vertexCache.Position( surf->geo->ambientCache );
 		glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), ac->color );
 		glVertexAttribPointerARB( 11, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->normal.ToFloatPtr() );
 		glVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[1].ToFloatPtr() );
@@ -6023,11 +6053,11 @@ static bool RB_GLSLPointShadowMap_CreateDrawInteractions( const drawSurf_t *surf
 	glEnableClientState( GL_COLOR_ARRAY );
 
 	for ( ; surf != NULL; surf = surf->nextOnLight ) {
-		if ( surf->geo == NULL || surf->geo->ambientCache == NULL ) {
+		idDrawVert *ac = RB_GLSLPrepareInteractionVertexCache( surf );
+		if ( ac == NULL ) {
 			continue;
 		}
 
-		idDrawVert *ac = (idDrawVert *)vertexCache.Position( surf->geo->ambientCache );
 		glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), ac->color );
 		glVertexAttribPointerARB( 11, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->normal.ToFloatPtr() );
 		glVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[1].ToFloatPtr() );

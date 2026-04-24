@@ -52,6 +52,26 @@ This should never happen if the vertex cache is operating properly.
 =================
 */
 void RB_DrawElementsImmediate( const srfTriangles_t *tri ) {
+	const idDrawVert *drawVerts = tri->verts;
+	const glIndex_t *drawIndexes = tri->indexes;
+
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	if ( tri->primBatchMesh != NULL && ( drawVerts == NULL || drawIndexes == NULL ) ) {
+		if ( tri->numVerts <= 0 || tri->numIndexes <= 0 ) {
+			return;
+		}
+
+		idDrawVert *tempVerts = (idDrawVert *)R_FrameAlloc( tri->numVerts * sizeof( tempVerts[0] ) );
+		glIndex_t *tempIndexes = (glIndex_t *)R_FrameAlloc( tri->numIndexes * sizeof( tempIndexes[0] ) );
+		renderSystem->CopyPrimBatchTriangles( tempVerts, tempIndexes, tri->primBatchMesh, tri->silTraceVerts );
+		drawVerts = tempVerts;
+		drawIndexes = tempIndexes;
+	}
+#endif
+
+	if ( drawVerts == NULL || drawIndexes == NULL ) {
+		return;
+	}
 
 	backEnd.pc.c_drawElements++;
 	backEnd.pc.c_drawIndexes += tri->numIndexes;
@@ -68,8 +88,8 @@ void RB_DrawElementsImmediate( const srfTriangles_t *tri ) {
 
 	glBegin( GL_TRIANGLES );
 	for ( int i = 0 ; i < tri->numIndexes ; i++ ) {
-		glTexCoord2fv( tri->verts[ tri->indexes[i] ].st.ToFloatPtr() );
-		glVertex3fv( tri->verts[ tri->indexes[i] ].xyz.ToFloatPtr() );
+		glTexCoord2fv( drawVerts[ drawIndexes[i] ].st.ToFloatPtr() );
+		glVertex3fv( drawVerts[ drawIndexes[i] ].xyz.ToFloatPtr() );
 	}
 	glEnd();
 }
@@ -110,6 +130,9 @@ RB_DrawElementsWithCounters
 void RB_DrawElementsWithCounters( const srfTriangles_t *tri ) {
 	if ( tri->primBatchMesh != NULL && tr.backEndRenderer == BE_ARB2 ) {
 		if ( RB_ARB2_DrawPreparedPackedMD5RStageBatches( tri ) ) {
+			return;
+		}
+		if ( RB_ARB2_DrawPreparedPackedMD5RDirectBatches( tri ) ) {
 			return;
 		}
 	}

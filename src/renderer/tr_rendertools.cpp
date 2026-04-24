@@ -30,6 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "tr_local.h"
+#include "Model_local.h"
 #include "simplex.h"	// line font definition
 
 #define MAX_DEBUG_LINES			16384
@@ -153,6 +154,188 @@ void RB_SimpleWorldSetup( void ) {
 		backEnd.viewDef->viewport.y1 + backEnd.currentScissor.y1,
 		backEnd.currentScissor.x2 + 1 - backEnd.currentScissor.x1,
 		backEnd.currentScissor.y2 + 1 - backEnd.currentScissor.y1 );
+}
+
+static bool RB_RendertoolsGetTriDebugGeometry( const srfTriangles_t *tri, const idDrawVert *&vertsOut, const glIndex_t *&indexesOut ) {
+	vertsOut = NULL;
+	indexesOut = NULL;
+
+	if ( tri == NULL ) {
+		return false;
+	}
+
+	vertsOut = tri->verts;
+	indexesOut = tri->indexes;
+
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	if ( tri->primBatchMesh != NULL && ( vertsOut == NULL || indexesOut == NULL ) ) {
+		if ( tri->numVerts <= 0 || tri->numIndexes <= 0 ) {
+			return false;
+		}
+
+		idDrawVert *tempVerts = (idDrawVert *)R_FrameAlloc( tri->numVerts * sizeof( tempVerts[0] ) );
+		glIndex_t *tempIndexes = (glIndex_t *)R_FrameAlloc( tri->numIndexes * sizeof( tempIndexes[0] ) );
+		renderSystem->CopyPrimBatchTriangles( tempVerts, tempIndexes, tri->primBatchMesh, tri->silTraceVerts );
+		vertsOut = tempVerts;
+		indexesOut = tempIndexes;
+	}
+#endif
+
+	return vertsOut != NULL && indexesOut != NULL;
+}
+
+static bool RB_RendertoolsPrepareInteractionVertexCache( const drawSurf_t *surf ) {
+	if ( surf == NULL || surf->geo == NULL ) {
+		return false;
+	}
+
+	const srfTriangles_t *tri = surf->geo;
+	srfTriangles_t *mutableTri = const_cast<srfTriangles_t *>( tri );
+	srfTriangles_t *ambientTri = ( tri->ambientSurface != NULL ) ? tri->ambientSurface : mutableTri;
+	const bool needsLighting = ( surf->material != NULL ) ? surf->material->ReceivesLighting() : false;
+
+	if ( ambientTri != NULL && ambientTri->ambientCache == NULL ) {
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+		if ( ambientTri->primBatchMesh != NULL ) {
+			if ( !R_CreatePackedSurfaceFrameCaches( ambientTri, needsLighting, false ) ) {
+				return false;
+			}
+		} else
+#endif
+		if ( ambientTri->verts != NULL ) {
+			if ( !R_CreateAmbientCache( ambientTri, needsLighting ) ) {
+				return false;
+			}
+		}
+	}
+
+	if ( mutableTri->ambientCache == NULL && ambientTri != NULL && ambientTri->ambientCache != NULL ) {
+		mutableTri->ambientCache = ambientTri->ambientCache;
+		mutableTri->tempAmbientCache = ambientTri->tempAmbientCache;
+	}
+
+	if ( mutableTri->ambientCache == NULL ) {
+		return false;
+	}
+
+	R_TouchVertexCache( mutableTri->ambientCache );
+	return true;
+}
+
+static bool RB_RendertoolsGetInteractionDrawIndexes( const srfTriangles_t *tri, const glIndex_t *&indexesOut, int &numIndexesOut ) {
+	indexesOut = NULL;
+	numIndexesOut = 0;
+
+	if ( tri == NULL || tri->indexes == NULL || tri->numIndexes <= 0 ) {
+		return false;
+	}
+
+	indexesOut = tri->indexes;
+	numIndexesOut = tri->numIndexes;
+
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	if ( tri->primBatchMesh == NULL || tri->ambientSurface == NULL ) {
+		return true;
+	}
+
+	const rvMD5RMesh *mesh = R_MD5R_GetMeshForTri( tri );
+	if ( mesh == NULL || mesh->primBatches.Num() <= 0 ) {
+		return true;
+	}
+
+	const int numPrimBatches = mesh->primBatches.Num();
+	bool hasHeaderedLightTris = ( tri->numAllocedIndices >= tri->numIndexes + numPrimBatches );
+	if ( hasHeaderedLightTris ) {
+		int headerIndexCount = 0;
+		for ( int primBatchIndex = 0; primBatchIndex < numPrimBatches; ++primBatchIndex ) {
+			const int batchIndexCount = tri->indexes[ primBatchIndex ];
+			if ( batchIndexCount < 0
+				|| ( batchIndexCount % 3 ) != 0
+				|| batchIndexCount > tri->numIndexes - headerIndexCount ) {
+				hasHeaderedLightTris = false;
+				break;
+			}
+			headerIndexCount += batchIndexCount;
+		}
+		hasHeaderedLightTris = hasHeaderedLightTris && ( headerIndexCount == tri->numIndexes );
+	}
+
+	if ( !hasHeaderedLightTris ) {
+		return true;
+	}
+
+	glIndex_t *flattenedIndexes = (glIndex_t *)R_FrameAlloc( tri->numIndexes * sizeof( flattenedIndexes[0] ) );
+	const glIndex_t *batchHeader = tri->indexes;
+	const glIndex_t *batchIndexes = tri->indexes + numPrimBatches;
+	int destVertexBase = 0;
+	int flattenedIndexCount = 0;
+
+	for ( int primBatchIndex = 0; primBatchIndex < numPrimBatches; ++primBatchIndex ) {
+		const rvMD5RPrimBatch &primBatch = mesh->primBatches[ primBatchIndex ];
+		const int batchIndexCount = batchHeader[ primBatchIndex ];
+		if ( !primBatch.hasDrawGeoSpec
+			|| primBatch.drawGeoSpec.vertexStart < 0
+			|| primBatch.drawGeoSpec.vertexCount < 0 ) {
+			return false;
+		}
+
+		for ( int batchIndex = 0; batchIndex < batchIndexCount; ++batchIndex ) {
+			const int drawIndex = batchIndexes[ batchIndex ];
+			if ( drawIndex < primBatch.drawGeoSpec.vertexStart
+				|| drawIndex >= primBatch.drawGeoSpec.vertexStart + primBatch.drawGeoSpec.vertexCount ) {
+				return false;
+			}
+
+			const int localIndex = drawIndex - primBatch.drawGeoSpec.vertexStart + destVertexBase;
+			if ( localIndex < 0 || localIndex >= tri->ambientSurface->numVerts ) {
+				return false;
+			}
+
+			flattenedIndexes[ flattenedIndexCount++ ] = localIndex;
+		}
+
+		batchIndexes += batchIndexCount;
+		destVertexBase += primBatch.drawGeoSpec.vertexCount;
+	}
+
+	indexesOut = flattenedIndexes;
+	numIndexesOut = flattenedIndexCount;
+#endif
+
+	return true;
+}
+
+static void RB_RendertoolsDrawLightCountSurface( const drawSurf_t *surf ) {
+	const srfTriangles_t *tri = ( surf != NULL ) ? surf->geo : NULL;
+	if ( tri == NULL || !RB_RendertoolsPrepareInteractionVertexCache( surf ) ) {
+		return;
+	}
+
+	const idDrawVert *ambientCache = (idDrawVert *)vertexCache.Position( tri->ambientCache );
+	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), &ambientCache->xyz );
+
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	if ( tri->primBatchMesh != NULL && tri->ambientSurface != NULL ) {
+		const glIndex_t *drawIndexes = NULL;
+		int drawIndexCount = 0;
+		if ( !RB_RendertoolsGetInteractionDrawIndexes( tri, drawIndexes, drawIndexCount ) || drawIndexCount <= 0 ) {
+			return;
+		}
+
+		backEnd.pc.c_drawElements++;
+		backEnd.pc.c_drawIndexes += drawIndexCount;
+		backEnd.pc.c_drawVertexes += tri->numVerts;
+
+		vertexCache.UnbindIndex();
+		glDrawElements( GL_TRIANGLES,
+			r_singleTriangle.GetBool() ? 3 : drawIndexCount,
+			GL_INDEX_TYPE,
+			drawIndexes );
+		return;
+	}
+#endif
+
+	RB_DrawElementsWithCounters( tri );
 }
 
 /*
@@ -824,13 +1007,7 @@ void RB_ShowLightCount( void ) {
 		for ( i = 0 ; i < 2 ; i++ ) {
 			for ( surf = i ? vLight->localInteractions: vLight->globalInteractions; surf; surf = (drawSurf_t *)surf->nextOnLight ) {
 				RB_SimpleSurfaceSetup( surf );
-				if ( !surf->geo->ambientCache ) {
-					continue;
-				}
-
-				const idDrawVert	*ac = (idDrawVert *)vertexCache.Position( surf->geo->ambientCache );
-				glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), &ac->xyz );
-				RB_DrawElementsWithCounters( surf->geo );
+				RB_RendertoolsDrawLightCountSurface( surf );
 			}
 		}
 	}
@@ -1018,8 +1195,15 @@ RB_T_RenderTriangleSurfaceAsLines
 */
 void RB_T_RenderTriangleSurfaceAsLines( const drawSurf_t *surf ) {
 	const srfTriangles_t *tri = surf->geo;
+	const idDrawVert *verts = NULL;
+	const glIndex_t *indexes = NULL;
 
-	if ( !tri->verts ) {
+	if ( !RB_RendertoolsGetTriDebugGeometry( tri, verts, indexes ) ) {
+		return;
+	}
+
+	const glIndex_t *lineIndexes = ( tri->silIndexes != NULL ) ? tri->silIndexes : indexes;
+	if ( lineIndexes == NULL ) {
 		return;
 	}
 
@@ -1027,8 +1211,8 @@ void RB_T_RenderTriangleSurfaceAsLines( const drawSurf_t *surf ) {
 	for ( int i = 0 ; i < tri->numIndexes ; i+= 3 ) {
 		for ( int j = 0 ; j < 3 ; j++ ) {
 			int k = ( j + 1 ) % 3;
-			glVertex3fv( tri->verts[ tri->silIndexes[i+j] ].xyz.ToFloatPtr() );
-			glVertex3fv( tri->verts[ tri->silIndexes[i+k] ].xyz.ToFloatPtr() );
+			glVertex3fv( verts[ lineIndexes[i+j] ].xyz.ToFloatPtr() );
+			glVertex3fv( verts[ lineIndexes[i+k] ].xyz.ToFloatPtr() );
 		}
 	}
 	glEnd();
@@ -1235,7 +1419,9 @@ static void RB_ShowTexturePolarity( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 	for ( i = 0 ; i < numDrawSurfs ; i++ ) {
 		drawSurf = drawSurfs[i];
 		tri = drawSurf->geo;
-		if ( !tri->verts ) {
+		const idDrawVert *verts = NULL;
+		const glIndex_t *indexes = NULL;
+		if ( !RB_RendertoolsGetTriDebugGeometry( tri, verts, indexes ) ) {
 			continue;
 		}
 
@@ -1243,13 +1429,13 @@ static void RB_ShowTexturePolarity( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 
 		glBegin( GL_TRIANGLES );
 		for ( j = 0 ; j < tri->numIndexes ; j+=3 ) {
-			idDrawVert	*a, *b, *c;
+			const idDrawVert	*a, *b, *c;
 			float		d0[5], d1[5];
 			float		area;
 
-			a = tri->verts + tri->indexes[j];
-			b = tri->verts + tri->indexes[j+1];
-			c = tri->verts + tri->indexes[j+2];
+			a = verts + indexes[j];
+			b = verts + indexes[j+1];
+			c = verts + indexes[j+2];
 
 			// VectorSubtract( b->xyz, a->xyz, d0 );
 			d0[3] = b->st[0] - a->st[0];
@@ -1311,13 +1497,18 @@ static void RB_ShowUnsmoothedTangents( drawSurf_t **drawSurfs, int numDrawSurfs 
 		RB_SimpleSurfaceSetup( drawSurf );
 
 		tri = drawSurf->geo;
+		const idDrawVert *verts = NULL;
+		const glIndex_t *indexes = NULL;
+		if ( !RB_RendertoolsGetTriDebugGeometry( tri, verts, indexes ) ) {
+			continue;
+		}
 		glBegin( GL_TRIANGLES );
 		for ( j = 0 ; j < tri->numIndexes ; j+=3 ) {
-			idDrawVert	*a, *b, *c;
+			const idDrawVert	*a, *b, *c;
 
-			a = tri->verts + tri->indexes[j];
-			b = tri->verts + tri->indexes[j+1];
-			c = tri->verts + tri->indexes[j+2];
+			a = verts + indexes[j];
+			b = verts + indexes[j+1];
+			c = verts + indexes[j+2];
 
 			glVertex3fv( a->xyz.ToFloatPtr() );
 			glVertex3fv( b->xyz.ToFloatPtr() );
@@ -1360,14 +1551,16 @@ static void RB_ShowTangentSpace( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 		RB_SimpleSurfaceSetup( drawSurf );
 
 		tri = drawSurf->geo;
-		if ( !tri->verts ) {
+		const idDrawVert *verts = NULL;
+		const glIndex_t *indexes = NULL;
+		if ( !RB_RendertoolsGetTriDebugGeometry( tri, verts, indexes ) ) {
 			continue;
 		}
 		glBegin( GL_TRIANGLES );
 		for ( j = 0 ; j < tri->numIndexes ; j++ ) {
 			const idDrawVert *v;
 
-			v = &tri->verts[tri->indexes[j]];
+			v = &verts[indexes[j]];
 
 			if ( r_showTangentSpace.GetInteger() == 1 ) {
 				glColor4f( 0.5 + 0.5 * v->tangents[0][0],  0.5 + 0.5 * v->tangents[0][1],  
@@ -1414,14 +1607,16 @@ static void RB_ShowVertexColor( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 		RB_SimpleSurfaceSetup( drawSurf );
 
 		tri = drawSurf->geo;
-		if ( !tri->verts ) {
+		const idDrawVert *verts = NULL;
+		const glIndex_t *indexes = NULL;
+		if ( !RB_RendertoolsGetTriDebugGeometry( tri, verts, indexes ) ) {
 			continue;
 		}
 		glBegin( GL_TRIANGLES );
 		for ( j = 0 ; j < tri->numIndexes ; j++ ) {
 			const idDrawVert *v;
 
-			v = &tri->verts[tri->indexes[j]];
+			v = &verts[indexes[j]];
 			glColor4ubv( v->color );
 			glVertex3fv( v->xyz.ToFloatPtr() );
 		}
@@ -1477,25 +1672,27 @@ static void RB_ShowNormals( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 		RB_SimpleSurfaceSetup( drawSurf );
 
 		tri = drawSurf->geo;
-		if ( !tri->verts ) {
+		const idDrawVert *verts = NULL;
+		const glIndex_t *indexes = NULL;
+		if ( !RB_RendertoolsGetTriDebugGeometry( tri, verts, indexes ) ) {
 			continue;
 		}
 
 		glBegin( GL_LINES );
 		for ( j = 0 ; j < tri->numVerts ; j++ ) {
 			glColor3f( 0, 0, 1 );
-			glVertex3fv( tri->verts[j].xyz.ToFloatPtr() );
-			VectorMA( tri->verts[j].xyz, size, tri->verts[j].normal, end );
+			glVertex3fv( verts[j].xyz.ToFloatPtr() );
+			VectorMA( verts[j].xyz, size, verts[j].normal, end );
 			glVertex3fv( end.ToFloatPtr() );
 
 			glColor3f( 1, 0, 0 );
-			glVertex3fv( tri->verts[j].xyz.ToFloatPtr() );
-			VectorMA( tri->verts[j].xyz, size, tri->verts[j].tangents[0], end );
+			glVertex3fv( verts[j].xyz.ToFloatPtr() );
+			VectorMA( verts[j].xyz, size, verts[j].tangents[0], end );
 			glVertex3fv( end.ToFloatPtr() );
 
 			glColor3f( 0, 1, 0 );
-			glVertex3fv( tri->verts[j].xyz.ToFloatPtr() );
-			VectorMA( tri->verts[j].xyz, size, tri->verts[j].tangents[1], end );
+			glVertex3fv( verts[j].xyz.ToFloatPtr() );
+			VectorMA( verts[j].xyz, size, verts[j].tangents[1], end );
 			glVertex3fv( end.ToFloatPtr() );
 		}
 		glEnd();
@@ -1506,17 +1703,19 @@ static void RB_ShowNormals( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 		for ( i = 0 ; i < numDrawSurfs ; i++ ) {
 			drawSurf = drawSurfs[i];
 			tri = drawSurf->geo;
-			if ( !tri->verts ) {
+			const idDrawVert *verts = NULL;
+			const glIndex_t *indexes = NULL;
+			if ( !RB_RendertoolsGetTriDebugGeometry( tri, verts, indexes ) ) {
 				continue;
 			}
 			
 			for ( j = 0 ; j < tri->numVerts ; j++ ) {
-				R_LocalPointToGlobal( drawSurf->space->modelMatrix, tri->verts[j].xyz + tri->verts[j].tangents[0] + tri->verts[j].normal * 0.2f, pos );
+				R_LocalPointToGlobal( drawSurf->space->modelMatrix, verts[j].xyz + verts[j].tangents[0] + verts[j].normal * 0.2f, pos );
 				RB_DrawText( va( "%d", j ), pos, 0.01f, colorWhite, backEnd.viewDef->renderView.viewaxis, 1 );
 			}
 
 			for ( j = 0 ; j < tri->numIndexes; j += 3 ) {
-				R_LocalPointToGlobal( drawSurf->space->modelMatrix, ( tri->verts[ tri->indexes[ j + 0 ] ].xyz + tri->verts[ tri->indexes[ j + 1 ] ].xyz + tri->verts[ tri->indexes[ j + 2 ] ].xyz ) * ( 1.0f / 3.0f ) + tri->verts[ tri->indexes[ j + 0 ] ].normal * 0.2f, pos );
+				R_LocalPointToGlobal( drawSurf->space->modelMatrix, ( verts[ indexes[ j + 0 ] ].xyz + verts[ indexes[ j + 1 ] ].xyz + verts[ indexes[ j + 2 ] ].xyz ) * ( 1.0f / 3.0f ) + verts[ indexes[ j + 0 ] ].normal * 0.2f, pos );
 				RB_DrawText( va( "%d", j / 3 ), pos, 0.01f, colorCyan, backEnd.viewDef->renderView.viewaxis, 1 );
 			}
 		}
@@ -1556,14 +1755,19 @@ static void RB_AltShowNormals( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 		RB_SimpleSurfaceSetup( drawSurf );
 
 		tri = drawSurf->geo;
+		const idDrawVert *verts = NULL;
+		const glIndex_t *indexes = NULL;
+		if ( !RB_RendertoolsGetTriDebugGeometry( tri, verts, indexes ) || tri->facePlanes == NULL ) {
+			continue;
+		}
 		glBegin( GL_LINES );
 		for ( j = 0 ; j < tri->numIndexes ; j += 3 ) {
 			const idDrawVert *v[3];
 			idVec3		mid;
 
-			v[0] = &tri->verts[tri->indexes[j+0]];
-			v[1] = &tri->verts[tri->indexes[j+1]];
-			v[2] = &tri->verts[tri->indexes[j+2]];
+			v[0] = &verts[indexes[j+0]];
+			v[1] = &verts[indexes[j+1]];
+			v[2] = &verts[indexes[j+2]];
 
 			// make the midpoint slightly above the triangle
 			mid = ( v[0]->xyz + v[1]->xyz + v[2]->xyz ) * ( 1.0f / 3.0f );
@@ -1629,7 +1833,9 @@ static void RB_ShowTextureVectors( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 
 		tri = drawSurf->geo;
 
-		if ( !tri->verts ) {
+		const idDrawVert *verts = NULL;
+		const glIndex_t *indexes = NULL;
+		if ( !RB_RendertoolsGetTriDebugGeometry( tri, verts, indexes ) ) {
 			continue;
 		}
 		if ( !tri->facePlanes ) {
@@ -1648,9 +1854,9 @@ static void RB_ShowTextureVectors( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 			idVec3		mid;
 			idVec3		tangents[2];
 
-			a = &tri->verts[tri->indexes[j+0]];
-			b = &tri->verts[tri->indexes[j+1]];
-			c = &tri->verts[tri->indexes[j+2]];
+			a = &verts[indexes[j+0]];
+			b = &verts[indexes[j+1]];
+			c = &verts[indexes[j+2]];
 
 			// make the midpoint slightly above the triangle
 			mid = ( a->xyz + b->xyz + c->xyz ) * ( 1.0f / 3.0f );
@@ -1728,7 +1934,9 @@ static void RB_ShowDominantTris( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 
 		tri = drawSurf->geo;
 
-		if ( !tri->verts ) {
+		const idDrawVert *verts = NULL;
+		const glIndex_t *indexes = NULL;
+		if ( !RB_RendertoolsGetTriDebugGeometry( tri, verts, indexes ) ) {
 			continue;
 		}
 		if ( !tri->dominantTris ) {
@@ -1745,9 +1953,9 @@ static void RB_ShowDominantTris( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 
 			// find the midpoint of the dominant tri
 
-			a = &tri->verts[j];
-			b = &tri->verts[tri->dominantTris[j].v2];
-			c = &tri->verts[tri->dominantTris[j].v3];
+			a = &verts[j];
+			b = &verts[tri->dominantTris[j].v2];
+			c = &verts[tri->dominantTris[j].v3];
 
 			mid = ( a->xyz + b->xyz + c->xyz ) * ( 1.0f / 3.0f );
 
@@ -1789,8 +1997,9 @@ static void RB_ShowEdges( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 
 		tri = drawSurf->geo;
 
-		idDrawVert *ac = (idDrawVert *)tri->verts;
-		if ( !ac ) {
+		const idDrawVert *verts = NULL;
+		const glIndex_t *indexes = NULL;
+		if ( !RB_RendertoolsGetTriDebugGeometry( tri, verts, indexes ) ) {
 			continue;
 		}
 
@@ -1804,14 +2013,14 @@ static void RB_ShowEdges( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 			for ( k = 0 ; k < 3 ; k++ ) {
 				int		l, i1, i2;
 				l = ( k == 2 ) ? 0 : k + 1;
-				i1 = tri->indexes[j+k];
-				i2 = tri->indexes[j+l];
+				i1 = indexes[j+k];
+				i2 = indexes[j+l];
 
 				// if these are used backwards, the edge is shared
 				for ( m = 0 ; m < tri->numIndexes ; m += 3 ) {
 					for ( n = 0 ; n < 3 ; n++ ) {
 						o = ( n == 2 ) ? 0 : n + 1;
-						if ( tri->indexes[m+n] == i2 && tri->indexes[m+o] == i1 ) {
+						if ( indexes[m+n] == i2 && indexes[m+o] == i1 ) {
 							break;
 						}
 					}
@@ -1822,8 +2031,8 @@ static void RB_ShowEdges( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 
 				// if we didn't find a backwards listing, draw it in yellow
 				if ( m == tri->numIndexes ) {
-					glVertex3fv( ac[ i1 ].xyz.ToFloatPtr() );
-					glVertex3fv( ac[ i2 ].xyz.ToFloatPtr() );
+					glVertex3fv( verts[ i1 ].xyz.ToFloatPtr() );
+					glVertex3fv( verts[ i2 ].xyz.ToFloatPtr() );
 				}
 
 			}
@@ -1850,8 +2059,8 @@ static void RB_ShowEdges( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 				continue;
 			}
 
-			glVertex3fv( ac[ edge->v1 ].xyz.ToFloatPtr() );
-			glVertex3fv( ac[ edge->v2 ].xyz.ToFloatPtr() );
+			glVertex3fv( verts[ edge->v1 ].xyz.ToFloatPtr() );
+			glVertex3fv( verts[ edge->v2 ].xyz.ToFloatPtr() );
 		}
 		glEnd();
 	}
