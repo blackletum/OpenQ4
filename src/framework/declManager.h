@@ -109,7 +109,7 @@ public:
 	virtual void			MakeDefault( void ) = 0;
 	virtual bool			EverReferenced( void ) const = 0;
 // RAVEN BEGIN
-	//virtual void			SetReferencedThisLevel( void ) = 0;
+	virtual void			SetReferencedThisLevel( void ) = 0;
 // RAVEN END
 	virtual bool			SetDefaultText( void ) = 0;
 	virtual const char *	DefaultDefinition( void ) const = 0;
@@ -218,6 +218,8 @@ public:
 	// Returns true if the decl was ever referenced.
 	bool					EverReferenced(void) const { return base->EverReferenced(); }
 
+	void					SetReferencedThisLevel( void ) { base->SetReferencedThisLevel(); }
+
 public:
 	// Sets textSource to a default text if necessary.
 	// This may be overridden to provide a default definition based on the
@@ -237,8 +239,8 @@ public:
 	// The manager will have called FreeData() before issuing a Parse().
 	// The subclass can call MakeDefault() internally at any point if
 	// there are parse errors.
-	virtual bool			Parse(const char* text, const int textLength) { return Parse(text, textLength, false); }
-	virtual bool			Parse(const char* text, const int textLength, bool noCaching) { return base->Parse(text, textLength, noCaching); }
+	virtual bool			Parse(const char* text, const int textLength) { return base->Parse(text, textLength, false); }
+	virtual bool			Parse(const char* text, const int textLength, bool noCaching) { return Parse(text, textLength); }
 
 	// Frees any pointers held by the subclass. This may be called before
 	// any Parse(), so the constructor must have set sane values. The decl will be
@@ -328,7 +330,7 @@ public:
 // RAVEN BEGIN
 // jscott: for timing
 							// Registers a new folder with decl files.
-	//virtual void			RegisterDeclFolderWrapper( const char *folder, const char *extension, declType_t defaultType, bool unique = false, bool norecurse = false ) = 0;
+	virtual void			RegisterDeclFolderWrapper( const char *folder, const char *extension, declType_t defaultType, bool unique = false, bool norecurse = false ) = 0;
 // RAVEN END
 
 	virtual void			RegisterDeclFolder(const char* folder, const char* extension, declType_t defaultType) = 0;

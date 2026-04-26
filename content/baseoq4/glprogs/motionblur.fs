@@ -1,5 +1,6 @@
 uniform sampler2D Scene;
 uniform sampler2D DepthBuffer;
+uniform sampler2D VelocityBuffer;
 uniform vec2 invTexSize;
 uniform vec2 viewportSize;
 uniform vec4 currentReconstructInfo;
@@ -14,6 +15,7 @@ uniform vec4 previousViewAxis0;
 uniform vec4 previousViewAxis1;
 uniform vec4 previousViewAxis2;
 uniform vec4 motionBlurParams;
+uniform vec4 motionBlurObjectParams;
 
 const int kMaxSamples = 16;
 const float kFarFadeStart = 2048.0;
@@ -72,9 +74,13 @@ vec2 ProjectPreviousViewToUV( vec3 previousViewPos ) {
 
 vec3 MotionDebugColor( vec2 velocityPixels, float speedPixels ) {
 	float maxPixels = max( motionBlurParams.y, 1.0 );
-	vec2 direction = clamp( velocityPixels / maxPixels, vec2( -1.0 ), vec2( 1.0 ) );
 	float magnitude = clamp( speedPixels / maxPixels, 0.0, 1.0 );
-	return vec3( direction * 0.5 + 0.5, magnitude );
+	if ( magnitude <= 0.001 ) {
+		return vec3( 0.0 );
+	}
+
+	vec2 direction = clamp( velocityPixels / maxPixels, vec2( -1.0 ), vec2( 1.0 ) );
+	return vec3( direction * 0.5 + 0.5, 1.0 ) * magnitude;
 }
 
 void main() {
@@ -94,8 +100,11 @@ void main() {
 	vec3 worldPos = CurrentViewToWorld( currentViewPos );
 	vec3 previousViewPos = WorldToPreviousView( worldPos );
 	vec2 previousUV = ProjectPreviousViewToUV( previousViewPos );
-	vec2 velocityUV = uv - previousUV;
-	vec2 velocityPixels = velocityUV * viewportSize;
+	vec2 cameraVelocityPixels = ( uv - previousUV ) * viewportSize;
+	vec4 objectVelocity = texture2D( VelocityBuffer, uv );
+	bool objectVectorValid = motionBlurObjectParams.x > 0.5 && objectVelocity.a > 0.5;
+	bool cameraVectorValid = motionBlurObjectParams.y > 0.5;
+	vec2 velocityPixels = objectVectorValid ? objectVelocity.xy : ( cameraVectorValid ? cameraVelocityPixels : vec2( 0.0 ) );
 	float speedPixels = length( velocityPixels );
 
 	if ( debugView ) {
@@ -114,7 +123,8 @@ void main() {
 	float farDepthFade = 1.0 - smoothstep( kFarDepthFadeStart, kFarDepthFadeEnd, centerDepth );
 	float farFade = clamp( min( farViewFade, farDepthFade ), 0.0, 1.0 );
 
-	float radiusPixels = clamp( speedPixels * motionBlurParams.x * farFade, 0.0, motionBlurParams.y );
+	float vectorFade = objectVectorValid ? 1.0 : farFade;
+	float radiusPixels = clamp( speedPixels * motionBlurParams.x * vectorFade, 0.0, motionBlurParams.y );
 	if ( radiusPixels < 0.5 ) {
 		gl_FragColor = scene;
 		return;

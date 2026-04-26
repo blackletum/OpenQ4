@@ -129,22 +129,22 @@ public:
 			bool			ParseData( idLexer *src );
 			void			ParseButton( idLexer *src, byte &button, rvButtonState &state );
 			bool			ParseSequence( idLexer *src );
-			//bool			ParseButtons( idLexer *src );
+			bool			ParseButtons( idLexer *src );
 
-			//void			Copy( rvDeclPlayback *pb );
-			//void			SetOrigin( void );
-			//void			Start( void );
-			//bool			Finish( float desiredDuration = -1.0f );
-			//
-			//bool			SetCurrentData( float localTime, int control, rvDeclPlaybackData *pbd );
-			//bool			GetCurrentOffset( float localTime, idVec3 &pos ) const;
-			//bool			GetCurrentAngles( float localTime, idAngles &ang ) const;
-			//bool			GetCurrentData( int control, float localTime, float lastTime, rvDeclPlaybackData *pbd ) const;
+			void			Copy( rvDeclPlayback *pb );
+			void			SetOrigin( void );
+			void			Start( void );
+			bool			Finish( float desiredDuration = -1.0f );
+
+			bool			SetCurrentData( float localTime, int control, rvDeclPlaybackData *pbd );
+			bool			GetCurrentOffset( float localTime, idVec3 &pos ) const;
+			bool			GetCurrentAngles( float localTime, idAngles &ang ) const;
+			bool			GetCurrentData( int control, float localTime, float lastTime, rvDeclPlaybackData *pbd ) const;
 
 	virtual const char		*DefaultDefinition( void ) const;
 	virtual bool			Parse( const char *text, const int textLength ) override;
 	virtual void			FreeData( void );
-	//virtual	bool			RebuildTextSource( void ) ;
+	virtual	bool			RebuildTextSource( void );
 	virtual size_t			Size( void ) const;
 
 // RAVEN BEGIN

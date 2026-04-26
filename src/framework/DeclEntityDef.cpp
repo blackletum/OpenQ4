@@ -54,6 +54,15 @@ idDeclEntityDef::Parse
 ================
 */
 bool idDeclEntityDef::Parse( const char *text, const int textLength ) {
+	return Parse( text, textLength, false );
+}
+
+/*
+================
+idDeclEntityDef::Parse
+================
+*/
+bool idDeclEntityDef::Parse( const char *text, const int textLength, bool noCaching ) {
 	idLexer src;
 	idToken	token, token2;
 
@@ -104,7 +113,7 @@ bool idDeclEntityDef::Parse( const char *text, const int textLength ) {
 			break;
 		}
 
-		const idDeclEntityDef *copy = static_cast<const idDeclEntityDef *>( declManager->FindType( DECL_ENTITYDEF, kv->GetValue(), false ) );
+		const idDeclEntityDef *copy = static_cast<const idDeclEntityDef *>( declManager->FindType( DECL_ENTITYDEF, kv->GetValue(), true, noCaching ) );
 		if ( !copy ) {
 			src.Warning( "Unknown entityDef '%s' inherited by '%s'", kv->GetValue().c_str(), GetName() );
 		} else {
@@ -122,7 +131,7 @@ bool idDeclEntityDef::Parse( const char *text, const int textLength ) {
 
 	// precache all referenced media
 	// do this as long as we arent in modview
-	if ( !( com_editors & (EDITOR_RADIANT|EDITOR_AAS) ) ) {
+	if ( !noCaching && !( com_editors & (EDITOR_RADIANT|EDITOR_AAS) ) ) {
 		game->CacheDictionaryMedia( &dict );
 	}
 

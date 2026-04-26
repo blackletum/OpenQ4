@@ -1210,6 +1210,7 @@ enum rbMotionBlurUniformIndex_t {
 	RB_MOTION_BLUR_UNIFORM_PREVIOUS_VIEW_AXIS1,
 	RB_MOTION_BLUR_UNIFORM_PREVIOUS_VIEW_AXIS2,
 	RB_MOTION_BLUR_UNIFORM_PARAMS,
+	RB_MOTION_BLUR_UNIFORM_OBJECT_PARAMS,
 	RB_MOTION_BLUR_UNIFORM_COUNT
 };
 
@@ -1227,15 +1228,38 @@ struct rbMotionBlurViewState_t {
 	float reconstructInfo[4];
 	float projectInfo[4];
 	float depthProjection[2];
+	float projectionMatrix[16];
+	float worldModelViewMatrix[16];
+};
+
+enum rbMotionVectorUniformIndex_t {
+	RB_MOTION_VECTOR_UNIFORM_PREVIOUS_MODEL_VIEW_PROJECTION = 0,
+	RB_MOTION_VECTOR_UNIFORM_VIEWPORT_SIZE,
+	RB_MOTION_VECTOR_UNIFORM_COUNT
+};
+
+struct rbMotionBlurEntityHistory_t {
+	int entityIndex;
+	float modelMatrix[16];
 };
 
 static newShaderStage_t rbMotionBlurStage;
 static bool rbMotionBlurStageInitialized = false;
+static newShaderStage_t rbMotionVectorStage;
+static bool rbMotionVectorStageInitialized = false;
 static rbMotionBlurViewState_t rbMotionBlurHistory;
 static bool rbMotionBlurHistoryValid = false;
+static idList<rbMotionBlurEntityHistory_t> rbMotionBlurEntityHistory;
+static idList<rbMotionBlurEntityHistory_t> rbMotionBlurNextEntityHistory;
+static idImage *rbMotionVectorImage = NULL;
+static idRenderTexture *rbMotionVectorRenderTexture = NULL;
+static bool rbMotionVectorImageValid = false;
 
 static void RB_ResetMotionBlurHistory( void ) {
 	rbMotionBlurHistoryValid = false;
+	rbMotionVectorImageValid = false;
+	rbMotionBlurEntityHistory.Clear();
+	rbMotionBlurNextEntityHistory.Clear();
 }
 
 static void RB_InitMotionBlurStage( void ) {
@@ -1261,7 +1285,8 @@ static void RB_InitMotionBlurStage( void ) {
 		{ "previousViewAxis0", 4 },
 		{ "previousViewAxis1", 4 },
 		{ "previousViewAxis2", 4 },
-		{ "motionBlurParams", 4 }
+		{ "motionBlurParams", 4 },
+		{ "motionBlurObjectParams", 4 }
 	};
 
 	rbMotionBlurStage.numShaderParms = RB_MOTION_BLUR_UNIFORM_COUNT;
@@ -1270,11 +1295,38 @@ static void RB_InitMotionBlurStage( void ) {
 		rbMotionBlurStage.shaderParmNumRegisters[i] = uniforms[i].components;
 	}
 
-	rbMotionBlurStage.numShaderTextures = 2;
+	rbMotionBlurStage.numShaderTextures = 3;
 	idStr::Copynz( rbMotionBlurStage.shaderTextureNames[0], "Scene", sizeof( rbMotionBlurStage.shaderTextureNames[0] ) );
 	idStr::Copynz( rbMotionBlurStage.shaderTextureNames[1], "DepthBuffer", sizeof( rbMotionBlurStage.shaderTextureNames[1] ) );
+	idStr::Copynz( rbMotionBlurStage.shaderTextureNames[2], "VelocityBuffer", sizeof( rbMotionBlurStage.shaderTextureNames[2] ) );
 
 	rbMotionBlurStageInitialized = true;
+}
+
+static void RB_InitMotionVectorStage( void ) {
+	if ( rbMotionVectorStageInitialized ) {
+		return;
+	}
+
+	memset( &rbMotionVectorStage, 0, sizeof( rbMotionVectorStage ) );
+	rbMotionVectorStage.glslProgram = true;
+	idStr::Copynz( rbMotionVectorStage.glslProgramName, "motionvectors.fs", sizeof( rbMotionVectorStage.glslProgramName ) );
+
+	static const rbBuiltinUniformDef_t uniforms[RB_MOTION_VECTOR_UNIFORM_COUNT] = {
+		{ "previousModelViewProjection", 16 },
+		{ "viewportSize", 2 }
+	};
+
+	rbMotionVectorStage.numShaderParms = RB_MOTION_VECTOR_UNIFORM_COUNT;
+	for ( int i = 0; i < RB_MOTION_VECTOR_UNIFORM_COUNT; i++ ) {
+		idStr::Copynz( rbMotionVectorStage.shaderParmNames[i], uniforms[i].name, sizeof( rbMotionVectorStage.shaderParmNames[i] ) );
+		rbMotionVectorStage.shaderParmNumRegisters[i] = uniforms[i].components;
+	}
+
+	rbMotionVectorStage.numShaderTextures = 1;
+	idStr::Copynz( rbMotionVectorStage.shaderTextureNames[0], "DepthBuffer", sizeof( rbMotionVectorStage.shaderTextureNames[0] ) );
+
+	rbMotionVectorStageInitialized = true;
 }
 
 static bool RB_BuildMotionBlurViewState( rbMotionBlurViewState_t &state, int viewportWidth, int viewportHeight ) {
@@ -1309,6 +1361,8 @@ static bool RB_BuildMotionBlurViewState( rbMotionBlurViewState_t &state, int vie
 	state.projectInfo[3] = backEnd.viewDef->projectionMatrix[9];
 	state.depthProjection[0] = backEnd.viewDef->projectionMatrix[10];
 	state.depthProjection[1] = backEnd.viewDef->projectionMatrix[14];
+	memcpy( state.projectionMatrix, backEnd.viewDef->projectionMatrix, sizeof( state.projectionMatrix ) );
+	memcpy( state.worldModelViewMatrix, backEnd.viewDef->worldSpace.modelViewMatrix, sizeof( state.worldModelViewMatrix ) );
 	return true;
 }
 
@@ -1329,6 +1383,12 @@ static bool RB_MotionBlurProjectionChanged( const rbMotionBlurViewState_t &curre
 	return false;
 }
 
+static bool RB_MotionBlurObjectVectorsRequested( void ) {
+	return r_motionBlur.GetBool()
+		&& r_motionBlurObjectVectors.GetBool()
+		&& glConfig.GLSLProgramAvailable;
+}
+
 static bool RB_MotionBlurCameraMovedEnough( const rbMotionBlurViewState_t &current, const rbMotionBlurViewState_t &previous ) {
 	if ( ( current.viewOrigin - previous.viewOrigin ).LengthSqr() >= Square( 0.10f ) ) {
 		return true;
@@ -1344,7 +1404,7 @@ static bool RB_MotionBlurCameraMovedEnough( const rbMotionBlurViewState_t &curre
 	return false;
 }
 
-static bool RB_MotionBlurHistoryUsable( const rbMotionBlurViewState_t &current, const rbMotionBlurViewState_t &previous ) {
+static bool RB_MotionBlurHistoryUsable( const rbMotionBlurViewState_t &current, const rbMotionBlurViewState_t &previous, bool allowStillCameraObjectVectors ) {
 	if ( !rbMotionBlurHistoryValid ) {
 		return false;
 	}
@@ -1366,7 +1426,7 @@ static bool RB_MotionBlurHistoryUsable( const rbMotionBlurViewState_t &current, 
 	if ( current.renderTime - previous.renderTime > 100 ) {
 		return false;
 	}
-	if ( !RB_MotionBlurCameraMovedEnough( current, previous ) ) {
+	if ( !allowStillCameraObjectVectors && !RB_MotionBlurCameraMovedEnough( current, previous ) ) {
 		return false;
 	}
 	if ( ( current.viewOrigin - previous.viewOrigin ).LengthSqr() > Square( 512.0f ) ) {
@@ -1384,6 +1444,235 @@ static void RB_UploadMotionBlurVec4( rbMotionBlurUniformIndex_t index, const idV
 	}
 	const GLfloat vector[4] = { value.x, value.y, value.z, 0.0f };
 	glUniform4fvARB( rbMotionBlurStage.shaderParmLocations[index], 1, vector );
+}
+
+static bool RB_EnsurePackedClassicDrawCaches( const drawSurf_t *surf, bool needsLighting, bool createIndexCache );
+static void RB_BindPostProcessRenderTexture( idRenderTexture *renderTexture, int width, int height );
+static void RB_RestorePostProcessTarget( idRenderTexture *renderTexture, int viewportWidth, int viewportHeight );
+
+static bool RB_MotionVectorSurfaceEligible( const drawSurf_t *surf ) {
+	if ( surf == NULL || surf->geo == NULL || surf->material == NULL || surf->space == NULL || surf->space->entityDef == NULL ) {
+		return false;
+	}
+
+	const srfTriangles_t *tri = surf->geo;
+	const idMaterial *shader = surf->material;
+	const idRenderEntityLocal *entity = surf->space->entityDef;
+	if ( !shader->IsDrawn() || !shader->HasAmbient() || shader->IsPortalSky() || shader->SuppressInSubview() ) {
+		return false;
+	}
+	if ( shader->Coverage() != MC_OPAQUE || shader->GetSort() >= SS_POST_PROCESS ) {
+		return false;
+	}
+	if ( tri->numIndexes <= 0 || tri->primBatchMesh != NULL || tri->deformedSurface ) {
+		return false;
+	}
+	if ( surf->space->weaponDepthHack || surf->space->modelDepthHack != 0.0f ) {
+		return false;
+	}
+	if ( entity->index < 0 || entity->parms.callback != NULL || entity->parms.hModel == NULL ) {
+		return false;
+	}
+	if ( entity->parms.hModel->IsDynamicModel() != DM_STATIC || entity->dynamicModel != NULL ) {
+		return false;
+	}
+	return true;
+}
+
+static bool RB_FindMotionBlurEntityHistory( int entityIndex, float previousModelMatrix[16] ) {
+	for ( int i = 0; i < rbMotionBlurEntityHistory.Num(); i++ ) {
+		if ( rbMotionBlurEntityHistory[i].entityIndex == entityIndex ) {
+			memcpy( previousModelMatrix, rbMotionBlurEntityHistory[i].modelMatrix, sizeof( rbMotionBlurEntityHistory[i].modelMatrix ) );
+			return true;
+		}
+	}
+	return false;
+}
+
+static void RB_StoreMotionBlurEntityHistory( idList<rbMotionBlurEntityHistory_t> &history, int entityIndex, const float modelMatrix[16] ) {
+	for ( int i = 0; i < history.Num(); i++ ) {
+		if ( history[i].entityIndex == entityIndex ) {
+			return;
+		}
+	}
+
+	rbMotionBlurEntityHistory_t &entry = history.Alloc();
+	entry.entityIndex = entityIndex;
+	memcpy( entry.modelMatrix, modelMatrix, sizeof( entry.modelMatrix ) );
+}
+
+static void RB_UpdateMotionBlurEntityHistory( drawSurf_t **drawSurfs, int numDrawSurfs ) {
+	rbMotionBlurNextEntityHistory.Clear();
+	for ( int i = 0; i < numDrawSurfs; i++ ) {
+		const drawSurf_t *surf = drawSurfs[i];
+		if ( !RB_MotionVectorSurfaceEligible( surf ) ) {
+			continue;
+		}
+		RB_StoreMotionBlurEntityHistory(
+			rbMotionBlurNextEntityHistory,
+			surf->space->entityDef->index,
+			surf->space->modelMatrix );
+	}
+	rbMotionBlurEntityHistory.Swap( rbMotionBlurNextEntityHistory );
+	rbMotionBlurNextEntityHistory.Clear();
+}
+
+static bool RB_EnsureMotionVectorRenderTexture( int viewportWidth, int viewportHeight ) {
+	if ( viewportWidth <= 0 || viewportHeight <= 0 ) {
+		return false;
+	}
+
+	idImageOpts opts;
+	opts.textureType = TT_2D;
+	opts.format = FMT_RGBA16F;
+	opts.width = viewportWidth;
+	opts.height = viewportHeight;
+	opts.numLevels = 1;
+	opts.numMSAASamples = 0;
+	opts.isPersistant = true;
+
+	rbMotionVectorImage = globalImages->ScratchImage( "_motionVector", &opts, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+	if ( rbMotionVectorImage == NULL ) {
+		return false;
+	}
+
+	if ( rbMotionVectorRenderTexture == NULL ) {
+		rbMotionVectorRenderTexture = tr.CreateRenderTexture( rbMotionVectorImage, NULL );
+	} else if ( rbMotionVectorRenderTexture->GetWidth() != viewportWidth || rbMotionVectorRenderTexture->GetHeight() != viewportHeight ) {
+		tr.ResizeRenderTexture( rbMotionVectorRenderTexture, viewportWidth, viewportHeight );
+	}
+
+	return rbMotionVectorRenderTexture != NULL;
+}
+
+static const rbMotionBlurViewState_t *rbMotionVectorPreviousState = NULL;
+static bool rbMotionVectorDrewSurface = false;
+
+static void RB_T_RenderMotionVectorSurface( const drawSurf_t *surf ) {
+	if ( !RB_MotionVectorSurfaceEligible( surf ) || rbMotionVectorPreviousState == NULL ) {
+		return;
+	}
+
+	float previousModelMatrix[16];
+	if ( !RB_FindMotionBlurEntityHistory( surf->space->entityDef->index, previousModelMatrix ) ) {
+		return;
+	}
+
+	const srfTriangles_t *tri = surf->geo;
+	if ( !RB_EnsurePackedClassicDrawCaches( surf, false, true ) || tri->ambientCache == NULL ) {
+		return;
+	}
+
+	float previousModelView[16];
+	float previousModelViewProjection[16];
+	myGlMultMatrix( previousModelMatrix, rbMotionVectorPreviousState->worldModelViewMatrix, previousModelView );
+	myGlMultMatrix( previousModelView, rbMotionVectorPreviousState->projectionMatrix, previousModelViewProjection );
+
+	const int previousMatrixLocation = rbMotionVectorStage.shaderParmLocations[RB_MOTION_VECTOR_UNIFORM_PREVIOUS_MODEL_VIEW_PROJECTION];
+	if ( previousMatrixLocation >= 0 ) {
+		glUniformMatrix4fvARB( previousMatrixLocation, 1, GL_FALSE, previousModelViewProjection );
+	}
+
+	GL_Cull( surf->material->GetCullType() );
+
+	idDrawVert *ac = (idDrawVert *)vertexCache.Position( tri->ambientCache );
+	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
+	RB_DrawElementsWithCounters( tri );
+	rbMotionVectorDrewSurface = true;
+}
+
+static bool RB_RenderMotionVectorBuffer( drawSurf_t **drawSurfs, int numDrawSurfs, const rbMotionBlurViewState_t &previousState, int viewportWidth, int viewportHeight ) {
+	if ( !RB_MotionBlurObjectVectorsRequested() ) {
+		return false;
+	}
+	if ( globalImages->currentDepthImage == NULL ) {
+		return false;
+	}
+
+	RB_InitMotionVectorStage();
+	if ( !R_ValidateGLSLProgram( &rbMotionVectorStage ) ) {
+		return false;
+	}
+
+	if ( !RB_EnsureMotionVectorRenderTexture( viewportWidth, viewportHeight ) ) {
+		return false;
+	}
+
+	idRenderTexture *previousRenderTexture = backEnd.renderTexture;
+	rbMotionVectorImageValid = false;
+	rbMotionVectorDrewSurface = false;
+	rbMotionVectorPreviousState = &previousState;
+
+	RB_BindPostProcessRenderTexture( rbMotionVectorRenderTexture, viewportWidth, viewportHeight );
+	GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO | GLS_DEPTHMASK | GLS_DEPTHFUNC_ALWAYS );
+	glClearColor( 0.0f, 0.0f, 0.0f, 0.0f );
+	glClear( GL_COLOR_BUFFER_BIT );
+
+	glMatrixMode( GL_PROJECTION );
+	glLoadMatrixf( backEnd.viewDef->projectionMatrix );
+	glMatrixMode( GL_MODELVIEW );
+
+	glDisable( GL_DEPTH_TEST );
+	glDisable( GL_STENCIL_TEST );
+	GL_SelectTexture( 0 );
+	globalImages->currentDepthImage->Bind();
+	glUseProgramObjectARB( (GLhandleARB)rbMotionVectorStage.glslProgramObject );
+
+	for ( int i = 0; i < rbMotionVectorStage.numShaderTextures; i++ ) {
+		if ( rbMotionVectorStage.shaderTextureLocations[i] >= 0 ) {
+			glUniform1iARB( rbMotionVectorStage.shaderTextureLocations[i], i );
+		}
+	}
+
+	const int viewportLocation = rbMotionVectorStage.shaderParmLocations[RB_MOTION_VECTOR_UNIFORM_VIEWPORT_SIZE];
+	if ( viewportLocation >= 0 ) {
+		const GLfloat viewportSize[2] = {
+			static_cast<GLfloat>( viewportWidth ),
+			static_cast<GLfloat>( viewportHeight )
+		};
+		glUniform2fvARB( viewportLocation, 1, viewportSize );
+	}
+
+	glEnableClientState( GL_VERTEX_ARRAY );
+	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
+	glDisableClientState( GL_COLOR_ARRAY );
+
+	backEnd.currentSpace = NULL;
+	backEnd.currentScissor.Clear();
+	for ( int i = 0; i < numDrawSurfs; i++ ) {
+		const drawSurf_t *surf = drawSurfs[i];
+		if ( !RB_MotionVectorSurfaceEligible( surf ) ) {
+			continue;
+		}
+		if ( surf->space != backEnd.currentSpace ) {
+			glLoadMatrixf( surf->space->modelViewMatrix );
+			backEnd.currentSpace = surf->space;
+		}
+		if ( r_useScissor.GetBool() && !backEnd.currentScissor.Equals( surf->scissorRect ) ) {
+			backEnd.currentScissor = surf->scissorRect;
+			glScissor(
+				backEnd.currentScissor.x1,
+				backEnd.currentScissor.y1,
+				backEnd.currentScissor.x2 + 1 - backEnd.currentScissor.x1,
+				backEnd.currentScissor.y2 + 1 - backEnd.currentScissor.y1 );
+		}
+		RB_T_RenderMotionVectorSurface( surf );
+	}
+
+	glUseProgramObjectARB( 0 );
+	GL_Cull( CT_FRONT_SIDED );
+	GL_SelectTexture( 0 );
+	globalImages->BindNull();
+	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
+	rbMotionVectorPreviousState = NULL;
+
+	RB_RestorePostProcessTarget( previousRenderTexture, viewportWidth, viewportHeight );
+	glMatrixMode( GL_PROJECTION );
+	glLoadMatrixf( backEnd.viewDef->projectionMatrix );
+	glMatrixMode( GL_MODELVIEW );
+
+	rbMotionVectorImageValid = rbMotionVectorDrewSurface;
+	return rbMotionVectorImageValid;
 }
 
 static void RB_STD_MotionBlur( void ) {
@@ -1430,10 +1719,17 @@ static void RB_STD_MotionBlur( void ) {
 	}
 
 	const rbMotionBlurViewState_t previousState = rbMotionBlurHistory;
-	const bool historyUsable = RB_MotionBlurHistoryUsable( currentState, previousState );
+	const bool objectVectorsRequested = RB_MotionBlurObjectVectorsRequested();
+	const bool cameraMovedEnough = rbMotionBlurHistoryValid && RB_MotionBlurCameraMovedEnough( currentState, previousState );
+	const bool historyUsable = RB_MotionBlurHistoryUsable( currentState, previousState, objectVectorsRequested );
 	rbMotionBlurHistory = currentState;
 	rbMotionBlurHistoryValid = true;
+
+	drawSurf_t **drawSurfs = (drawSurf_t **)&backEnd.viewDef->drawSurfs[0];
+	const int numDrawSurfs = backEnd.viewDef->numDrawSurfs;
 	if ( !historyUsable ) {
+		rbMotionVectorImageValid = false;
+		RB_UpdateMotionBlurEntityHistory( drawSurfs, numDrawSurfs );
 		return;
 	}
 
@@ -1448,6 +1744,11 @@ static void RB_STD_MotionBlur( void ) {
 
 	RB_CaptureCurrentRenderImage( viewportWidth, viewportHeight );
 	RB_CaptureCurrentDepthImage( viewportWidth, viewportHeight );
+	rbMotionVectorImageValid = false;
+	if ( objectVectorsRequested ) {
+		RB_RenderMotionVectorBuffer( drawSurfs, numDrawSurfs, previousState, viewportWidth, viewportHeight );
+	}
+	RB_UpdateMotionBlurEntityHistory( drawSurfs, numDrawSurfs );
 
 	const int textureWidth = sceneImage->GetOpts().width;
 	const int textureHeight = sceneImage->GetOpts().height;
@@ -1469,6 +1770,12 @@ static void RB_STD_MotionBlur( void ) {
 	sceneImage->Bind();
 	GL_SelectTexture( 1 );
 	depthImage->Bind();
+	GL_SelectTexture( 2 );
+	if ( rbMotionVectorImageValid && rbMotionVectorImage != NULL ) {
+		rbMotionVectorImage->Bind();
+	} else {
+		globalImages->blackImage->Bind();
+	}
 	GL_SelectTexture( 0 );
 
 	glUseProgramObjectARB( (GLhandleARB)rbMotionBlurStage.glslProgramObject );
@@ -1522,10 +1829,21 @@ static void RB_STD_MotionBlur( void ) {
 	if ( rbMotionBlurStage.shaderParmLocations[RB_MOTION_BLUR_UNIFORM_PARAMS] >= 0 ) {
 		glUniform4fvARB( rbMotionBlurStage.shaderParmLocations[RB_MOTION_BLUR_UNIFORM_PARAMS], 1, params );
 	}
+	if ( rbMotionBlurStage.shaderParmLocations[RB_MOTION_BLUR_UNIFORM_OBJECT_PARAMS] >= 0 ) {
+		const GLfloat objectParams[4] = {
+			rbMotionVectorImageValid ? 1.0f : 0.0f,
+			cameraMovedEnough ? 1.0f : 0.0f,
+			0.0f,
+			0.0f
+		};
+		glUniform4fvARB( rbMotionBlurStage.shaderParmLocations[RB_MOTION_BLUR_UNIFORM_OBJECT_PARAMS], 1, objectParams );
+	}
 
 	RB_DrawFullscreenPostProcessQuad( viewportWidth, viewportHeight, textureWidth, textureHeight );
 
 	glUseProgramObjectARB( 0 );
+	GL_SelectTexture( 2 );
+	globalImages->BindNull();
 	GL_SelectTexture( 1 );
 	globalImages->BindNull();
 	GL_SelectTexture( 0 );

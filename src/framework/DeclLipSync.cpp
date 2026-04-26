@@ -9,12 +9,19 @@ rvDeclPlayerModel::SetLipSyncData
 ===================
 */
 void rvDeclLipSync::SetLipSyncData(const char* lsd, const char* lang) {
-	if (!strchr(lsd, 37)) {
-		mLipSyncData.Set(lsd, lang);
+	if ( lsd == NULL ) {
+		lsd = "";
+	}
+	if ( lang == NULL ) {
+		lang = "";
+	}
+
+	if ( !strchr( lsd, '%' ) ) {
+		mLipSyncData.Set(lang, lsd);
 		return;
 	}
 
-	common->Warning("SetLipSyncData: language %s for lipsync '%s' has invalid character %% in it", lsd, base->GetType());
+	common->Warning("SetLipSyncData: language %s for lipsync '%s' has invalid character %% in it", lang, GetName());
 }
 
 /*
@@ -23,7 +30,11 @@ rvDeclPlayerModel::Size
 ===================
 */
 size_t rvDeclLipSync::Size(void) const {
-	return sizeof(rvDeclLipSync);
+	return sizeof(rvDeclLipSync)
+		+ mDescription.Allocated()
+		+ mTranscribeText.Allocated()
+		+ mHMM.Allocated()
+		+ mLipSyncData.Allocated();
 }
 
 /*
@@ -43,6 +54,9 @@ rvDeclPlayerModel::FreeData
 bool rvDeclLipSync::Parse(const char* text, const int textLength) {
 	idLexer src;
 	idToken	token, token2;
+
+	FreeData();
+	mHMM = "male";
 
 	src.LoadMemory(text, textLength, GetFileName(), GetLineNum());
 	src.SetFlags(DECL_LEXER_FLAGS);
@@ -65,7 +79,7 @@ bool rvDeclLipSync::Parse(const char* text, const int textLength) {
 			src.ReadToken(&lang);
 			src.ReadToken(&data);
 
-			SetLipSyncData(lang.c_str(), data.c_str());
+			SetLipSyncData(data.c_str(), lang.c_str());
 			continue;
 		}
 		else if (token == "hmm")
@@ -101,5 +115,8 @@ rvDeclLipSync::FreeData
 ===================
 */
 void rvDeclLipSync::FreeData(void) {
-
+	mDescription.Clear();
+	mTranscribeText.Clear();
+	mHMM.Clear();
+	mLipSyncData.Clear();
 }

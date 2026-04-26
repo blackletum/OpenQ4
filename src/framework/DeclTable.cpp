@@ -30,7 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 idDeclTable::idDeclTable() {
-
+	FreeData();
 }
 
 /*
@@ -95,6 +95,8 @@ idDeclTable::FreeData
 void idDeclTable::FreeData( void ) {
 	snap = false;
 	clamp = false;
+	minValue = idMath::INFINITY;
+	maxValue = -idMath::INFINITY;
 	values.Clear();
 }
 
@@ -123,6 +125,8 @@ bool idDeclTable::Parse( const char *text, const int textLength ) {
 
 	snap = false;
 	clamp = false;
+	minValue = idMath::INFINITY;
+	maxValue = -idMath::INFINITY;
 	values.Clear();
 
 	while ( 1 ) {
@@ -151,6 +155,12 @@ bool idDeclTable::Parse( const char *text, const int textLength ) {
 				}
 
 				values.Append( v );
+				if ( v < minValue ) {
+					minValue = v;
+				}
+				if ( v > maxValue ) {
+					maxValue = v;
+				}
 
 				src.ReadToken( &token );
 				if ( token == "}" ) {
@@ -169,6 +179,12 @@ bool idDeclTable::Parse( const char *text, const int textLength ) {
 			MakeDefault();
 			return false;
 		}
+	}
+
+	if ( values.Num() == 0 ) {
+		src.Warning( "table '%s' has no values", GetName() );
+		MakeDefault();
+		return false;
 	}
 
 	// copy the 0 element to the end, so lerping doesn't

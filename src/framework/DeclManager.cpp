@@ -130,6 +130,7 @@ public:
 	virtual bool				SourceFileChanged( void ) const;
 	virtual void				MakeDefault( void );
 	virtual bool				EverReferenced( void ) const;
+	virtual void				SetReferencedThisLevel( void );
 
 protected:
 	virtual bool				SetDefaultText( void );
@@ -144,7 +145,7 @@ protected:
 
 								// Parses the decl definition.
 								// After calling parse, a decl will be guaranteed usable.
-	void						ParseLocal( void );
+	void						ParseLocal( bool noCaching = false );
 
 								// Does a MakeDefualt, but flags the decl so that it
 								// will Parse() the next time the decl is found.
@@ -183,7 +184,7 @@ public:
 								idDeclFile( const char *fileName, declType_t defaultType );
 
 	void						Reload( bool force );
-	int							LoadAndParse();
+	int							LoadAndParse( bool unique = false );
 
 public:
 	idStr						fileName;
@@ -220,6 +221,7 @@ public:
 	virtual void				BeginLevelLoad();
 	virtual void				EndLevelLoad();
 	virtual void				RegisterDeclType( const char *typeName, declType_t type, idDecl *(*allocator)( void ) );
+	virtual void				RegisterDeclFolderWrapper( const char *folder, const char *extension, declType_t defaultType, bool unique = false, bool norecurse = false );
 	virtual void				RegisterDeclFolder( const char *folder, const char *extension, declType_t defaultType );
 	virtual int					GetChecksum( void ) const;
 	virtual int					GetNumDeclTypes( void ) const;
@@ -267,6 +269,11 @@ public:
 	virtual	const rvDeclPlayback *	PlaybackByIndex( int index, bool forceParse = true );
 	virtual const rvDeclEffect *	EffectByIndex( int index, bool forceParse = true );
 
+	virtual void					StartPlaybackRecord( rvDeclPlayback *playback );
+	virtual bool					SetPlaybackData( rvDeclPlayback *playback, int now, int control, class rvDeclPlaybackData *pbd );
+	virtual bool					GetPlaybackData( const rvDeclPlayback *playback, int control, int now, int last, class rvDeclPlaybackData *pbd );
+	virtual bool					FinishPlayback( rvDeclPlayback *playback );
+
 public:
 	static void					MakeNameCanonical( const char *name, char *result, int maxLength );
 	idDeclLocal *				FindTypeWithoutParsing( declType_t type, const char *name, bool makeDefault = true );
@@ -279,7 +286,7 @@ public:
 // jmarshall end
 private:
 // jmarshall
-	void						RegisterDeclSubFolder(const char* folder, const char* extension, idList<idStr>& fileList);
+	void						RegisterDeclSubFolder(const char* folder, const char* extension, idList<idStr>& fileList, bool norecurse = false);
 // jmarshall end
 
 	idList<idDeclType *>		declTypes;
@@ -779,7 +786,7 @@ This is used during both the initial load, and any reloads
 */
 int c_savedMemory = 0;
 
-int idDeclFile::LoadAndParse() {
+int idDeclFile::LoadAndParse( bool unique ) {
 	int			i, numTypes;
 	idLexer		src;
 	idToken		token;
@@ -788,6 +795,7 @@ int idDeclFile::LoadAndParse() {
 	int			length, size;
 	int			sourceLine;
 	idStr		name;
+	idStr		strippedName;
 	idDeclLocal *newDecl;
 	bool		reparse;
 
@@ -800,6 +808,9 @@ int idDeclFile::LoadAndParse() {
 	}
 	idStr finalPreprocessedBuffer = buffer;
 	Mem_Free(buffer);
+
+	strippedName = fileName;
+	strippedName.StripFileExtension();
 
 	if ( !src.LoadMemory(finalPreprocessedBuffer.c_str(), finalPreprocessedBuffer.Length(), fileName ) ) {
 		common->Error( "Couldn't parse %s", fileName.c_str() );
@@ -888,6 +899,9 @@ int idDeclFile::LoadAndParse() {
 		}
 
 		name = token;
+		if ( unique && strippedName.Cmp( name ) != 0 ) {
+			src.Warning( "%s must be in a file of the same name", name.c_str() );
+		}
 
 		idStr declDefinition;
 		bool useExpandedDefinition = false;
@@ -1052,15 +1066,15 @@ void idDeclManagerLocal::Init( void ) {
 	//RegisterDeclType( "audio",				DECL_AUDIO,			idDeclAllocator<idDeclAudio> );
 // jmarshall end
 
-	RegisterDeclFolder( "materials",		".mtr",				DECL_MATERIAL );
-	RegisterDeclFolder( "skins",			".skin",			DECL_SKIN );
-	RegisterDeclFolder( "sound",			".sndshd",			DECL_SOUND );
+	RegisterDeclFolderWrapper( "materials",		".mtr",			DECL_MATERIAL );
+	RegisterDeclFolderWrapper( "skins",			".skin",		DECL_SKIN );
+	RegisterDeclFolderWrapper( "sound",			".sndshd",		DECL_SOUND, false, true );
 
 	// jmarshall: Raven Decl Support
-	RegisterDeclFolder("materials/types",	".mtt",				DECL_MATERIALTYPE);
-	RegisterDeclFolder("lipsync",			".lipsync",			DECL_LIPSYNC);
-	RegisterDeclFolder("playbacks",			".playback",		DECL_PLAYBACK);
-	RegisterDeclFolder("effects",			".fx",				DECL_EFFECT);
+	RegisterDeclFolderWrapper( "materials/types",	".mtt",			DECL_MATERIALTYPE );
+	RegisterDeclFolderWrapper( "lipsync",			".lipsync",		DECL_LIPSYNC );
+	RegisterDeclFolderWrapper( "playbacks",			".playback",	DECL_PLAYBACK, true );
+	RegisterDeclFolderWrapper( "effects",			".fx",			DECL_EFFECT, true );
 // jmarshall end
 
 	// add console commands
@@ -1078,6 +1092,10 @@ void idDeclManagerLocal::Init( void ) {
 	//cmdSystem->AddCommand( "listFX", idListDecls_f<DECL_FX>, CMD_FL_SYSTEM, "lists FX systems", idCmdSystem::ArgCompletion_String<listDeclStrings> );
 	//cmdSystem->AddCommand( "listParticles", idListDecls_f<DECL_PARTICLE>, CMD_FL_SYSTEM, "lists particle systems", idCmdSystem::ArgCompletion_String<listDeclStrings> //);
 	cmdSystem->AddCommand( "listAF", idListDecls_f<DECL_AF>, CMD_FL_SYSTEM, "lists articulated figures", idCmdSystem::ArgCompletion_String<listDeclStrings>);
+	cmdSystem->AddCommand( "listMaterialTypes", idListDecls_f<DECL_MATERIALTYPE>, CMD_FL_SYSTEM, "lists material types", idCmdSystem::ArgCompletion_String<listDeclStrings> );
+	cmdSystem->AddCommand( "listLipsyncs", idListDecls_f<DECL_LIPSYNC>, CMD_FL_SYSTEM, "lists lip sync decls", idCmdSystem::ArgCompletion_String<listDeclStrings> );
+	cmdSystem->AddCommand( "listPlaybacks", idListDecls_f<DECL_PLAYBACK>, CMD_FL_SYSTEM, "lists playback decls", idCmdSystem::ArgCompletion_String<listDeclStrings> );
+	cmdSystem->AddCommand( "listEffects", idListDecls_f<DECL_EFFECT>, CMD_FL_SYSTEM, "lists effects", idCmdSystem::ArgCompletion_String<listDeclStrings> );
 
 	//cmdSystem->AddCommand( "listPDAs", idListDecls_f<DECL_PDA>, CMD_FL_SYSTEM, "lists PDAs", idCmdSystem::ArgCompletion_String<listDeclStrings> );
 	//cmdSystem->AddCommand( "listEmails", idListDecls_f<DECL_EMAIL>, CMD_FL_SYSTEM, "lists Emails", idCmdSystem::ArgCompletion_String<listDeclStrings> );
@@ -1093,11 +1111,10 @@ void idDeclManagerLocal::Init( void ) {
 	//cmdSystem->AddCommand( "printFX", idPrintDecls_f<DECL_FX>, CMD_FL_SYSTEM, "prints an FX system", idCmdSystem::ArgCompletion_Decl<DECL_FX> );
 //	cmdSystem->AddCommand( "printParticle", idPrintDecls_f<DECL_PARTICLE>, CMD_FL_SYSTEM, "prints a particle system", idCmdSystem::ArgCompletion_Decl<DECL_PARTICLE> );
 	cmdSystem->AddCommand( "printAF", idPrintDecls_f<DECL_AF>, CMD_FL_SYSTEM, "prints an articulated figure", idCmdSystem::ArgCompletion_Decl<DECL_AF> );
-
-	cmdSystem->AddCommand( "printPDA", idPrintDecls_f<DECL_PDA>, CMD_FL_SYSTEM, "prints an PDA", idCmdSystem::ArgCompletion_Decl<DECL_PDA> );
-	cmdSystem->AddCommand( "printEmail", idPrintDecls_f<DECL_EMAIL>, CMD_FL_SYSTEM, "prints an Email", idCmdSystem::ArgCompletion_Decl<DECL_EMAIL> );
-	cmdSystem->AddCommand( "printVideo", idPrintDecls_f<DECL_VIDEO>, CMD_FL_SYSTEM, "prints a Audio", idCmdSystem::ArgCompletion_Decl<DECL_VIDEO> );
-	cmdSystem->AddCommand( "printAudio", idPrintDecls_f<DECL_AUDIO>, CMD_FL_SYSTEM, "prints an Video", idCmdSystem::ArgCompletion_Decl<DECL_AUDIO> );
+	cmdSystem->AddCommand( "printMaterialTypes", idPrintDecls_f<DECL_MATERIALTYPE>, CMD_FL_SYSTEM, "prints material types", idCmdSystem::ArgCompletion_Decl<DECL_MATERIALTYPE> );
+	cmdSystem->AddCommand( "printLipsyncs", idPrintDecls_f<DECL_LIPSYNC>, CMD_FL_SYSTEM, "prints lip syncs", idCmdSystem::ArgCompletion_Decl<DECL_LIPSYNC> );
+	cmdSystem->AddCommand( "printPlaybacks", idPrintDecls_f<DECL_PLAYBACK>, CMD_FL_SYSTEM, "prints playbacks", idCmdSystem::ArgCompletion_Decl<DECL_PLAYBACK> );
+	cmdSystem->AddCommand( "printEffects", idPrintDecls_f<DECL_EFFECT>, CMD_FL_SYSTEM, "prints effects", idCmdSystem::ArgCompletion_Decl<DECL_EFFECT> );
 
 	cmdSystem->AddCommand( "listHuffmanFrequencies", ListHuffmanFrequencies_f, CMD_FL_SYSTEM, "lists decl text character frequencies" );
 
@@ -1423,7 +1440,7 @@ RegisterDeclSubFolder
 ===================
 */
 // jmarshall
-void idDeclManagerLocal::RegisterDeclSubFolder(const char* folder, const char* extension, idList<idStr>& fileList) {
+void idDeclManagerLocal::RegisterDeclSubFolder(const char* folder, const char* extension, idList<idStr>& fileList, bool norecurse) {
 	// Find all 
 	{		
 		idFileList* list = fileSystem->ListFiles(folder, extension, true);
@@ -1436,14 +1453,21 @@ void idDeclManagerLocal::RegisterDeclSubFolder(const char* folder, const char* e
 		fileSystem->FreeFileList(list);
 	}
 	
-	idFileList* dirList = fileSystem->ListFiles(folder, "/", true);
-	for (int i = 0; i < dirList->GetNumFiles(); i++)
-	{		
-		idStr dir = va("%s/%s", folder, dirList->GetFile(i));
-		RegisterDeclSubFolder(dir, extension, fileList);
-	}
+	if ( !norecurse ) {
+		idFileList* dirList = fileSystem->ListFiles(folder, "/", true);
+		for (int i = 0; i < dirList->GetNumFiles(); i++)
+		{
+			const char *dirName = dirList->GetFile(i);
+			if ( dirName[0] == '.' ) {
+				continue;
+			}
 
-	fileSystem->FreeFileList(dirList);
+			idStr dir = va("%s/%s", folder, dirName);
+			RegisterDeclSubFolder(dir, extension, fileList, false);
+		}
+
+		fileSystem->FreeFileList(dirList);
+	}
 }
 // jmarshall end
 /*
@@ -1452,6 +1476,15 @@ idDeclManagerLocal::RegisterDeclFolder
 ===================
 */
 void idDeclManagerLocal::RegisterDeclFolder( const char *folder, const char *extension, declType_t defaultType ) {
+	RegisterDeclFolderWrapper( folder, extension, defaultType, false, false );
+}
+
+/*
+===================
+idDeclManagerLocal::RegisterDeclFolderWrapper
+===================
+*/
+void idDeclManagerLocal::RegisterDeclFolderWrapper( const char *folder, const char *extension, declType_t defaultType, bool unique, bool norecurse ) {
 	int i, j;
 	idStr fileName;
 	idDeclFolder* declFolder;
@@ -1477,7 +1510,7 @@ void idDeclManagerLocal::RegisterDeclFolder( const char *folder, const char *ext
 	}
 
 // jmarshall - decls subfolders	
-	RegisterDeclSubFolder(declFolder->folder, declFolder->extension, fileList);
+	RegisterDeclSubFolder(declFolder->folder, declFolder->extension, fileList, norecurse);
 // jmarshall end
 
 	// load and parse decl files
@@ -1499,7 +1532,7 @@ void idDeclManagerLocal::RegisterDeclFolder( const char *folder, const char *ext
 			df = new idDeclFile( fileName, defaultType );
 			loadedFiles.Append( df );
 		}
-		df->LoadAndParse();
+		df->LoadAndParse( unique );
 	}
 }
 
@@ -1610,7 +1643,7 @@ const idDecl *idDeclManagerLocal::FindType( declType_t type, const char *name, b
 
 	// if it hasn't been parsed yet, parse it now
 	if ( decl->declState == DS_UNPARSED ) {
-		decl->ParseLocal();
+		decl->ParseLocal( noCaching );
 	}
 
 	// mark it as referenced
@@ -2033,6 +2066,8 @@ const idSoundShader *idDeclManagerLocal::SoundByIndex( int index, bool forcePars
 
 // RAVEN BEGIN
 // jscott: for new Raven decls
+static const float DECL_MSEC_TO_SEC = 0.001f;
+
 const rvDeclMatType* idDeclManagerLocal::FindMaterialType(const char* name, bool makeDefault) {
 	return static_cast<const rvDeclMatType*>(FindType(DECL_MATERIALTYPE, name, makeDefault));
 }
@@ -2062,6 +2097,34 @@ const rvDeclLipSync* idDeclManagerLocal::LipSyncByIndex(int index, bool forcePar
 
 const rvDeclPlayback* idDeclManagerLocal::PlaybackByIndex(int index, bool forceParse) {
 	return static_cast<const rvDeclPlayback*>(DeclByIndex(DECL_PLAYBACK, index, forceParse));
+}
+
+void idDeclManagerLocal::StartPlaybackRecord(rvDeclPlayback* playback) {
+	if (playback == NULL) {
+		return;
+	}
+	playback->Start();
+}
+
+bool idDeclManagerLocal::SetPlaybackData(rvDeclPlayback* playback, int now, int control, rvDeclPlaybackData* pbd) {
+	if (playback == NULL) {
+		return false;
+	}
+	return playback->SetCurrentData(now * DECL_MSEC_TO_SEC, control, pbd);
+}
+
+bool idDeclManagerLocal::GetPlaybackData(const rvDeclPlayback* playback, int control, int now, int last, rvDeclPlaybackData* pbd) {
+	if (playback == NULL) {
+		return true;
+	}
+	return playback->GetCurrentData(control, now * DECL_MSEC_TO_SEC, last * DECL_MSEC_TO_SEC, pbd);
+}
+
+bool idDeclManagerLocal::FinishPlayback(rvDeclPlayback* playback) {
+	if (playback == NULL) {
+		return false;
+	}
+	return playback->Finish(-1.0f);
 }
 
 const rvDeclEffect* idDeclManagerLocal::EffectByIndex(int index, bool forceParse) {
@@ -2682,7 +2745,7 @@ void idDeclLocal::AllocateSelf( void ) {
 idDeclLocal::ParseLocal
 =================
 */
-void idDeclLocal::ParseLocal( void ) {
+void idDeclLocal::ParseLocal( bool noCaching ) {
 	bool generatedDefaultText = false;
 
 	AllocateSelf();
@@ -2712,7 +2775,7 @@ void idDeclLocal::ParseLocal( void ) {
 	// parse
 	char *declText = (char *) _alloca( ( GetTextLength() + 1 ) * sizeof( char ) );
 	GetText( declText );
-	self->Parse( declText, GetTextLength() );
+	self->Parse( declText, GetTextLength(), noCaching );
 
 	// free generated text
 	if ( generatedDefaultText ) {
@@ -2750,4 +2813,14 @@ idDeclLocal::EverReferenced
 */
 bool idDeclLocal::EverReferenced( void ) const {
 	return everReferenced;
+}
+
+/*
+=================
+idDeclLocal::SetReferencedThisLevel
+=================
+*/
+void idDeclLocal::SetReferencedThisLevel( void ) {
+	referencedThisLevel = true;
+	everReferenced = true;
 }

@@ -5,8 +5,20 @@
 
 void R_StaticFree( void *data );
 
+static idCVar mat_useHitMaterials( "mat_useHitMaterials", "1", CVAR_SYSTEM | CVAR_BOOL, "use cached .hit material type maps when available" );
+static idCVar mat_writeHitMaterials( "mat_writeHitMaterials", "0", CVAR_SYSTEM | CVAR_BOOL, "write generated .hit material type maps to fs_savepath" );
+
+static int MT_PackTint( const byte *tint ) {
+	return static_cast<int>(
+		static_cast<unsigned int>( tint[0] ) |
+		( static_cast<unsigned int>( tint[1] ) << 8 ) |
+		( static_cast<unsigned int>( tint[2] ) << 16 ) |
+		( static_cast<unsigned int>( tint[3] ) << 24 ) );
+}
+
 static const rvDeclMatType* MT_FindMaterialTypeByTint( const byte *tint ) {
 	const int count = declManager->GetNumDecls( DECL_MATERIALTYPE );
+	const int tintPacked = MT_PackTint( tint );
 
 	for ( int i = 0; i < count; ++i ) {
 		const rvDeclMatType *materialType = declManager->MaterialTypeByIndex( i, true );
@@ -14,10 +26,7 @@ static const rvDeclMatType* MT_FindMaterialTypeByTint( const byte *tint ) {
 			continue;
 		}
 
-		const int packedTint = materialType->GetTint();
-		if ( ( packedTint & 0xFF ) == tint[0]
-			&& ( ( packedTint >> 8 ) & 0xFF ) == tint[1]
-			&& ( ( packedTint >> 16 ) & 0xFF ) == tint[2] ) {
+		if ( materialType->GetTint() == tintPacked ) {
 			return materialType;
 		}
 	}
@@ -54,27 +63,29 @@ byte *MT_GetMaterialTypeArray( idStr image, int &width, int &height ) {
 	idStr hitImage = image;
 	hitImage.SetFileExtension( ".hit" );
 
-	if ( idFile *file = fileSystem->OpenFileRead( hitImage.c_str(), true ) ) {
-		int cachedHeight = 0;
-		int cachedWidth = 0;
-		file->ReadInt( cachedHeight );
-		file->ReadInt( cachedWidth );
+	if ( mat_useHitMaterials.GetBool() ) {
+		if ( idFile *file = fileSystem->OpenFileRead( hitImage.c_str(), true ) ) {
+			int cachedHeight = 0;
+			int cachedWidth = 0;
+			file->ReadInt( cachedHeight );
+			file->ReadInt( cachedWidth );
 
-		if ( cachedWidth > 0 && cachedHeight > 0 ) {
-			const int pixelCount = cachedWidth * cachedHeight;
-			byte *array = static_cast<byte *>( Mem_Alloc( pixelCount ) );
-			const int bytesRead = file->Read( array, pixelCount );
-			fileSystem->CloseFile( file );
+			if ( cachedWidth > 0 && cachedHeight > 0 ) {
+				const int pixelCount = cachedWidth * cachedHeight;
+				byte *array = static_cast<byte *>( Mem_Alloc( pixelCount ) );
+				const int bytesRead = file->Read( array, pixelCount );
+				fileSystem->CloseFile( file );
 
-			if ( bytesRead == pixelCount ) {
-				width = cachedWidth;
-				height = cachedHeight;
-				return array;
+				if ( bytesRead == pixelCount ) {
+					width = cachedWidth;
+					height = cachedHeight;
+					return array;
+				}
+
+				Mem_Free( array );
+			} else {
+				fileSystem->CloseFile( file );
 			}
-
-			Mem_Free( array );
-		} else {
-			fileSystem->CloseFile( file );
 		}
 	}
 
@@ -99,6 +110,18 @@ byte *MT_GetMaterialTypeArray( idStr image, int &width, int &height ) {
 	}
 
 	R_StaticFree( pic );
+
+	if ( mat_writeHitMaterials.GetBool() ) {
+		hitImage = image;
+		hitImage.SetFileExtension( ".hit" );
+		if ( idFile *file = fileSystem->OpenFileWrite( hitImage.c_str() ) ) {
+			file->WriteInt( height );
+			file->WriteInt( width );
+			file->Write( array, pixelCount );
+			fileSystem->CloseFile( file );
+		}
+	}
+
 	return array;
 }
 
@@ -120,6 +143,10 @@ bool rvDeclMatType::Parse(const char* text, const int textLength) {
 	idLexer src;
 	idToken	token, token2;
 
+	mDescription.Clear();
+	memset( mTint, 0, sizeof( mTint ) );
+	mTint[3] = 0xFF;
+
 	src.LoadMemory(text, textLength, GetFileName(), GetLineNum());
 	src.SetFlags(DECL_LEXER_FLAGS);
 	src.SkipUntilString("{");
@@ -139,6 +166,7 @@ bool rvDeclMatType::Parse(const char* text, const int textLength) {
 			mTint[1] = src.ParseInt();
 			src.ExpectTokenString(",");
 			mTint[2] = src.ParseInt();
+			mTint[3] = 0xFF;
 		}
 		else if (token == "description")
 		{
@@ -148,8 +176,7 @@ bool rvDeclMatType::Parse(const char* text, const int textLength) {
 		}
 		else
 		{
-			src.Error("rvDeclMatType::Parse: Invalid or unexpected token %s\n", token.c_str());
-			return false;
+			src.Warning("rvDeclMatType::Parse: ignoring unexpected token %s\n", token.c_str());
 		}
 	}
 	return true;
@@ -161,7 +188,7 @@ rvDeclMatType::FreeData
 =======================
 */
 void rvDeclMatType::FreeData(void) {
-
+	mDescription.Clear();
 }
 
 /*
@@ -170,5 +197,5 @@ rvDeclMatType::Size
 =======================
 */
 size_t rvDeclMatType::Size(void) const {
-	return sizeof(rvDeclMatType);
+	return sizeof(rvDeclMatType) + mDescription.Allocated();
 }
