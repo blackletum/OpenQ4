@@ -6,6 +6,15 @@
 			{
 				rect	0,0,640,480
 				visible	0
+				windowDef set_game_title
+				{
+					rect	259,82,326,13
+					visible	1
+					forecolor	1,1,1,0.4
+					text	"#str_200084"
+					textscale	0.2
+					font	"fonts/lowpixel"
+				}
 				windowDef set_game_canvas
 				{
 					rect	0,104,640,280
@@ -13,7 +22,7 @@
 					noclip	0
 					windowDef set_game_content
 					{
-						rect	-24,-47,640,608
+						rect	-24,-47,640,560
 						visible	1
 
 	//--------------------------------------------------------------//

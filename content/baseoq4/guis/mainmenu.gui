@@ -8238,7 +8238,7 @@ windowDef Desktop
 					forecolor	1,1,1,0.8
 					matcolor	1,1,1,0.4
 					low	0
-					high	18
+					high	19
 					step	1
 					vertical	1
 					scrollbar	1
@@ -8687,7 +8687,7 @@ windowDef Desktop
 					forecolor	1,1,1,0.8
 					matcolor	1,1,1,0.4
 					low	0
-					high	2
+					high	0
 					step	1
 					vertical	1
 					scrollbar	1
@@ -20618,6 +20618,7 @@ windowDef Desktop
 				set "set_sys_multiscreen::visible" "1" ;
 				set "set_sys_multiscreen_val::visible" "1" ;
 				set "set_sys_multiscreen_val::noevents" "0" ;
+				namedevent "layoutSetSystemFull" ;
 			} else {
 				set "set_sys_cat_render::visible" "0" ;
 				set "set_sys_b8::visible" "0" ;
@@ -20628,6 +20629,7 @@ windowDef Desktop
 				set "set_sys_multiscreen::visible" "0" ;
 				set "set_sys_multiscreen_val::visible" "0" ;
 				set "set_sys_multiscreen_val::noevents" "1" ;
+				namedevent "layoutSetSystemCompact" ;
 			}
 			set "set_sys_bloom_val::noevents" "0" ;
 			set "set_sys_lensflare_val::noevents" "0" ;
@@ -20753,47 +20755,205 @@ windowDef Desktop
 			set "set_audio_scroll_thumb::noevents" "1" ;
 		}
 
+		onNamedEvent layoutSetSystemFull {
+			set "set_sys_cat_advanced::rect" "259,348,327,13" ;
+			set "set_sys_cat_quality::rect" "259,456,327,13" ;
+			set "set_sys_b10::rect" "228,362,377,25" ;
+			set "set_sys_supersample::rect" "259,364,172,18" ;
+			set "set_sys_supersample_val::rect" "468,364,160,15" ;
+			set "set_sys_b11::rect" "228,384,377,25" ;
+			set "set_sys_msaa::rect" "259,386,172,18" ;
+			set "set_sys_msaa_val::rect" "468,386,160,15" ;
+			set "set_sys_b12::rect" "228,406,377,25" ;
+			set "set_sys_postaa::rect" "259,408,172,18" ;
+			set "set_sys_postaa_val::rect" "468,408,160,15" ;
+			set "set_sys_b13::rect" "228,428,377,25" ;
+			set "set_sys_vsync::rect" "259,430,172,18" ;
+			set "set_sys_vsync_val::rect" "468,430,160,15" ;
+			set "set_sys_b14::rect" "228,470,377,25" ;
+			set "set_sys_shadows::rect" "259,472,172,18" ;
+			set "set_sys_shadows_val::rect" "468,472,160,15" ;
+			set "set_sys_b15::rect" "228,492,377,25" ;
+			set "set_sys_specular::rect" "259,494,172,18" ;
+			set "set_sys_specular_val::rect" "468,494,160,15" ;
+			set "set_sys_b16::rect" "228,514,377,25" ;
+			set "set_sys_bump::rect" "259,516,172,18" ;
+			set "set_sys_bump_val::rect" "468,516,160,15" ;
+			set "set_sys_b17::rect" "228,536,377,25" ;
+			set "set_sys_sky::rect" "259,538,172,18" ;
+			set "set_sys_sky_val::rect" "468,538,160,15" ;
+			set "set_sys_b18::rect" "228,558,377,25" ;
+			set "set_sys_ambient::rect" "259,560,172,18" ;
+			set "set_sys_ambient_val::rect" "468,560,160,15" ;
+			set "set_sys_b19::rect" "228,580,377,25" ;
+			set "set_sys_ambientbr::rect" "259,582,172,18" ;
+			set "set_sys_ambientbr_bg::rect" "472,586,128,16" ;
+			set "set_sys_ambientbr_val::rect" "472,587,71,8" ;
+			set "set_sys_ambientbr_valnum::rect" "550,582,100,18" ;
+			set "set_sys_postfx::rect" "259,608,327,13" ;
+			set "set_sys_b20::rect" "228,622,377,25" ;
+			set "set_sys_irradiance::rect" "259,624,172,18" ;
+			set "set_sys_irradiance_val::rect" "468,624,160,15" ;
+			set "set_sys_b21::rect" "228,644,377,25" ;
+			set "set_sys_bloom::rect" "259,646,172,18" ;
+			set "set_sys_bloom_val::rect" "468,646,160,15" ;
+			set "set_sys_b21a::rect" "228,666,377,25" ;
+			set "set_sys_lensflare::rect" "259,668,172,18" ;
+			set "set_sys_lensflare_val::rect" "468,668,160,15" ;
+			set "set_sys_b22::rect" "228,688,377,25" ;
+			set "set_sys_ssao::rect" "259,690,172,18" ;
+			set "set_sys_ssao_val::rect" "468,690,160,15" ;
+			set "set_sys_b23::rect" "228,710,377,25" ;
+			set "set_sys_tonemap::rect" "259,712,172,18" ;
+			set "set_sys_tonemap_val::rect" "468,712,160,15" ;
+			set "set_sys_b24::rect" "228,732,377,25" ;
+			set "set_sys_crt::rect" "259,734,172,18" ;
+			set "set_sys_crt_val::rect" "468,734,160,15" ;
+		}
+
+		onNamedEvent layoutSetSystemCompact {
+			set "set_sys_cat_advanced::rect" "259,284,327,13" ;
+			set "set_sys_cat_quality::rect" "259,392,327,13" ;
+			set "set_sys_b10::rect" "228,298,377,25" ;
+			set "set_sys_supersample::rect" "259,300,172,18" ;
+			set "set_sys_supersample_val::rect" "468,300,160,15" ;
+			set "set_sys_b11::rect" "228,320,377,25" ;
+			set "set_sys_msaa::rect" "259,322,172,18" ;
+			set "set_sys_msaa_val::rect" "468,322,160,15" ;
+			set "set_sys_b12::rect" "228,342,377,25" ;
+			set "set_sys_postaa::rect" "259,344,172,18" ;
+			set "set_sys_postaa_val::rect" "468,344,160,15" ;
+			set "set_sys_b13::rect" "228,364,377,25" ;
+			set "set_sys_vsync::rect" "259,366,172,18" ;
+			set "set_sys_vsync_val::rect" "468,366,160,15" ;
+			set "set_sys_b14::rect" "228,406,377,25" ;
+			set "set_sys_shadows::rect" "259,408,172,18" ;
+			set "set_sys_shadows_val::rect" "468,408,160,15" ;
+			set "set_sys_b15::rect" "228,428,377,25" ;
+			set "set_sys_specular::rect" "259,430,172,18" ;
+			set "set_sys_specular_val::rect" "468,430,160,15" ;
+			set "set_sys_b16::rect" "228,450,377,25" ;
+			set "set_sys_bump::rect" "259,452,172,18" ;
+			set "set_sys_bump_val::rect" "468,452,160,15" ;
+			set "set_sys_b17::rect" "228,472,377,25" ;
+			set "set_sys_sky::rect" "259,474,172,18" ;
+			set "set_sys_sky_val::rect" "468,474,160,15" ;
+			set "set_sys_b18::rect" "228,494,377,25" ;
+			set "set_sys_ambient::rect" "259,496,172,18" ;
+			set "set_sys_ambient_val::rect" "468,496,160,15" ;
+			set "set_sys_b19::rect" "228,516,377,25" ;
+			set "set_sys_ambientbr::rect" "259,518,172,18" ;
+			set "set_sys_ambientbr_bg::rect" "472,522,128,16" ;
+			set "set_sys_ambientbr_val::rect" "472,523,71,8" ;
+			set "set_sys_ambientbr_valnum::rect" "550,518,100,18" ;
+			set "set_sys_postfx::rect" "259,544,327,13" ;
+			set "set_sys_b20::rect" "228,558,377,25" ;
+			set "set_sys_irradiance::rect" "259,560,172,18" ;
+			set "set_sys_irradiance_val::rect" "468,560,160,15" ;
+			set "set_sys_b21::rect" "228,580,377,25" ;
+			set "set_sys_bloom::rect" "259,582,172,18" ;
+			set "set_sys_bloom_val::rect" "468,582,160,15" ;
+			set "set_sys_b21a::rect" "228,602,377,25" ;
+			set "set_sys_lensflare::rect" "259,604,172,18" ;
+			set "set_sys_lensflare_val::rect" "468,604,160,15" ;
+			set "set_sys_b22::rect" "228,624,377,25" ;
+			set "set_sys_ssao::rect" "259,626,172,18" ;
+			set "set_sys_ssao_val::rect" "468,626,160,15" ;
+			set "set_sys_b23::rect" "228,646,377,25" ;
+			set "set_sys_tonemap::rect" "259,648,172,18" ;
+			set "set_sys_tonemap_val::rect" "468,648,160,15" ;
+			set "set_sys_b24::rect" "228,668,377,25" ;
+			set "set_sys_crt::rect" "259,670,172,18" ;
+			set "set_sys_crt_val::rect" "468,670,160,15" ;
+		}
+
 		onNamedEvent applySetSystemScroll {
 			set "set_sys_scroll_thumb::visible" "1" ;
 			set "set_sys_scroll_thumb::noevents" "0" ;
-			if ( "gui::gui_set_sys_scroll" <= 0 ) {
-				set "set_sys_content::rect" "-24,-88,640,760" ;
-			} else if ( "gui::gui_set_sys_scroll" < 1.5 ) {
-				set "set_sys_content::rect" "-24,-110,640,760" ;
-			} else if ( "gui::gui_set_sys_scroll" < 2.5 ) {
-				set "set_sys_content::rect" "-24,-132,640,760" ;
-			} else if ( "gui::gui_set_sys_scroll" < 3.5 ) {
-				set "set_sys_content::rect" "-24,-154,640,760" ;
-			} else if ( "gui::gui_set_sys_scroll" < 4.5 ) {
-				set "set_sys_content::rect" "-24,-176,640,760" ;
-			} else if ( "gui::gui_set_sys_scroll" < 5.5 ) {
-				set "set_sys_content::rect" "-24,-198,640,760" ;
-			} else if ( "gui::gui_set_sys_scroll" < 6.5 ) {
-				set "set_sys_content::rect" "-24,-220,640,760" ;
-			} else if ( "gui::gui_set_sys_scroll" < 7.5 ) {
-				set "set_sys_content::rect" "-24,-242,640,760" ;
-			} else if ( "gui::gui_set_sys_scroll" < 8.5 ) {
-				set "set_sys_content::rect" "-24,-264,640,760" ;
-			} else if ( "gui::gui_set_sys_scroll" < 9.5 ) {
-				set "set_sys_content::rect" "-24,-286,640,760" ;
-			} else if ( "gui::gui_set_sys_scroll" < 10.5 ) {
-				set "set_sys_content::rect" "-24,-308,640,760" ;
-			} else if ( "gui::gui_set_sys_scroll" < 11.5 ) {
-				set "set_sys_content::rect" "-24,-330,640,760" ;
-			} else if ( "gui::gui_set_sys_scroll" < 12.5 ) {
-				set "set_sys_content::rect" "-24,-352,640,760" ;
-			} else if ( "gui::gui_set_sys_scroll" < 13.5 ) {
-				set "set_sys_content::rect" "-24,-374,640,760" ;
-			} else if ( "gui::gui_set_sys_scroll" < 14.5 ) {
-				set "set_sys_content::rect" "-24,-396,640,760" ;
-			} else if ( "gui::gui_set_sys_scroll" < 15.5 ) {
-				set "set_sys_content::rect" "-24,-418,640,760" ;
-			} else if ( "gui::gui_set_sys_scroll" < 16.5 ) {
-				set "set_sys_content::rect" "-24,-440,640,760" ;
-			} else if ( "gui::gui_set_sys_scroll" < 17.5 ) {
-				set "set_sys_content::rect" "-24,-462,640,760" ;
+			if ( "gui::display_count" > 1 ) {
+				if ( "gui::gui_set_sys_scroll" <= 0 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-88,640,760" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 1.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-110,640,760" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 2.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-132,640,760" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 3.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-154,640,760" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 4.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-176,640,760" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 5.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-198,640,760" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 6.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-220,640,760" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 7.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-242,640,760" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 8.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-264,640,760" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 9.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-286,640,760" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 10.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-308,640,760" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 11.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-330,640,760" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 12.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-352,640,760" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 13.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-374,640,760" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 14.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-396,640,760" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 15.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-418,640,760" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 16.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-440,640,760" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 17.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-462,640,760" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 18.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-484,640,760" "120" ;
+				} else {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-506,640,760" "120" ;
+				}
 			} else {
-				set "set_sys_content::rect" "-24,-484,640,760" ;
+				if ( "gui::gui_set_sys_scroll" <= 0 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-88,640,696" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 1.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-107,640,696" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 2.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-125,640,696" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 3.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-144,640,696" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 4.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-162,640,696" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 5.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-181,640,696" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 6.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-199,640,696" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 7.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-218,640,696" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 8.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-236,640,696" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 9.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-255,640,696" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 10.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-273,640,696" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 11.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-292,640,696" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 12.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-310,640,696" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 13.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-329,640,696" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 14.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-347,640,696" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 15.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-366,640,696" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 16.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-384,640,696" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 17.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-403,640,696" "120" ;
+				} else if ( "gui::gui_set_sys_scroll" < 18.5 ) {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-421,640,696" "120" ;
+				} else {
+					transition "set_sys_content::rect" "$set_sys_content::rect" "-24,-440,640,696" "120" ;
+				}
 			}
 		}
 
@@ -20801,34 +20961,34 @@ windowDef Desktop
 			// Audio currently fits the panel; keep a stable single-page layout with no scroll affordance.
 			set "set_audio_scroll_thumb::visible" "0" ;
 			set "set_audio_scroll_thumb::noevents" "1" ;
-			set "set_audio_content::rect" "-24,-90,640,280" ;
+			transition "set_audio_content::rect" "$set_audio_content::rect" "-24,-90,640,280" "120" ;
 		}
 
 		onNamedEvent applySetGameScroll {
 			set "set_game_scroll_thumb::visible" "1" ;
 			set "set_game_scroll_thumb::noevents" "0" ;
 			if ( "gui::gui_set_game_scroll" <= 0 ) {
-				set "set_game_content::rect" "-24,-47,640,608" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-47,640,560" "120" ;
 			} else if ( "gui::gui_set_game_scroll" < 1.5 ) {
-				set "set_game_content::rect" "-24,-71,640,608" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-71,640,560" "120" ;
 			} else if ( "gui::gui_set_game_scroll" < 2.5 ) {
-				set "set_game_content::rect" "-24,-95,640,608" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-95,640,560" "120" ;
 			} else if ( "gui::gui_set_game_scroll" < 3.5 ) {
-				set "set_game_content::rect" "-24,-119,640,608" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-119,640,560" "120" ;
 			} else if ( "gui::gui_set_game_scroll" < 4.5 ) {
-				set "set_game_content::rect" "-24,-143,640,608" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-143,640,560" "120" ;
 			} else if ( "gui::gui_set_game_scroll" < 5.5 ) {
-				set "set_game_content::rect" "-24,-167,640,608" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-167,640,560" "120" ;
 			} else if ( "gui::gui_set_game_scroll" < 6.5 ) {
-				set "set_game_content::rect" "-24,-191,640,608" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-191,640,560" "120" ;
 			} else if ( "gui::gui_set_game_scroll" < 7.5 ) {
-				set "set_game_content::rect" "-24,-215,640,608" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-215,640,560" "120" ;
 			} else if ( "gui::gui_set_game_scroll" < 8.5 ) {
-				set "set_game_content::rect" "-24,-239,640,608" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-239,640,560" "120" ;
 			} else if ( "gui::gui_set_game_scroll" < 9.5 ) {
-				set "set_game_content::rect" "-24,-263,640,608" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-263,640,560" "120" ;
 			} else {
-				set "set_game_content::rect" "-24,-287,640,608" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-287,640,560" "120" ;
 			}
 		}
 

@@ -40,8 +40,8 @@ If you have questions concerning this license or the applicable additional terms
 extern idCVar com_skipLogoVideos;
 
 idCVar	idSessionLocal::gui_configServerRate( "gui_configServerRate", "0", CVAR_GUI | CVAR_ARCHIVE | CVAR_ROM | CVAR_INTEGER, "" );
-idCVar gui_set_sys_scroll( "gui_set_sys_scroll", "0", CVAR_GUI | CVAR_INTEGER, "display menu scroll step", 0, 17 );
-idCVar gui_set_audio_scroll( "gui_set_audio_scroll", "0", CVAR_GUI | CVAR_INTEGER, "audio menu scroll step", 0, 2 );
+idCVar gui_set_sys_scroll( "gui_set_sys_scroll", "0", CVAR_GUI | CVAR_INTEGER, "display menu scroll step", 0, 19 );
+idCVar gui_set_audio_scroll( "gui_set_audio_scroll", "0", CVAR_GUI | CVAR_INTEGER, "audio menu scroll step", 0.0f, 0.0f );
 idCVar gui_set_game_scroll( "gui_set_game_scroll", "0", CVAR_GUI | CVAR_INTEGER, "game menu scroll step", 0, 10 );
 
 /*
@@ -1932,6 +1932,9 @@ static bool AdjustMainMenuPageScroll( idUserInterface *gui, const char *pageVisi
 	if ( !gui->State().GetBool( pageVisibleState ) ) {
 		return false;
 	}
+	if ( maxValue <= minValue ) {
+		return false;
+	}
 
 	const int current = scrollCvar.GetInteger();
 	const int next = idMath::ClampInt( minValue, maxValue, current + delta );
@@ -1961,10 +1964,10 @@ static bool HandleMainMenuSettingsScrollInput( idUserInterface *gui, int key ) {
 			return false;
 	}
 
-	if ( AdjustMainMenuPageScroll( gui, "p_settings_sys::visible", gui_set_sys_scroll, "gui_set_sys_scroll", 0, 17, "applySetSystemScroll", delta ) ) {
+	if ( AdjustMainMenuPageScroll( gui, "p_settings_sys::visible", gui_set_sys_scroll, "gui_set_sys_scroll", 0, 19, "applySetSystemScroll", delta ) ) {
 		return true;
 	}
-	if ( AdjustMainMenuPageScroll( gui, "p_settings_audio::visible", gui_set_audio_scroll, "gui_set_audio_scroll", 0, 2, "applySetAudioScroll", delta ) ) {
+	if ( AdjustMainMenuPageScroll( gui, "p_settings_audio::visible", gui_set_audio_scroll, "gui_set_audio_scroll", 0, 0, "applySetAudioScroll", delta ) ) {
 		return true;
 	}
 	if ( AdjustMainMenuPageScroll( gui, "p_settings_game::visible", gui_set_game_scroll, "gui_set_game_scroll", 0, 10, "applySetGameScroll", delta ) ) {
