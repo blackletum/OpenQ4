@@ -1755,6 +1755,10 @@ srfTriangles_t *R_CreateVertexProgramTurboShadowVolume( const idRenderEntityLoca
 									 const srfTriangles_t *tri, const idRenderLightLocal *light,
 									 srfCullInfo_t &cullInfo );
 
+srfTriangles_t *R_CreatePackedTurboShadowVolume( const idRenderEntityLocal *ent,
+									 const srfTriangles_t *tri, const idRenderLightLocal *light,
+									 srfCullInfo_t &cullInfo );
+
 srfTriangles_t *R_CreateTurboShadowVolume( const idRenderEntityLocal *ent,
 									 const srfTriangles_t *tri, const idRenderLightLocal *light,
 									 srfCullInfo_t &cullInfo );

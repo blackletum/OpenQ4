@@ -138,6 +138,49 @@ static bool R_EnsureShadowMapCasterCaches( srfTriangles_t *casterTris ) {
 	return casterTris->ambientCache != NULL;
 }
 
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+static ID_INLINE const rvSilTraceVertT *R_GetInteractionSilTraceVerts( const srfTriangles_t *tri ) {
+	return ( tri != NULL && tri->silTraceVerts != NULL )
+		? reinterpret_cast<const rvSilTraceVertT *>( tri->silTraceVerts )
+		: NULL;
+}
+
+static bool R_MaterializeInteractionPackedTriangles( const srfTriangles_t *tri, idDrawVert *&tempVerts, glIndex_t *&tempIndexes ) {
+	tempVerts = NULL;
+	tempIndexes = NULL;
+
+	if ( tri == NULL || tri->primBatchMesh == NULL || tri->numVerts <= 0 || tri->numIndexes <= 0 ) {
+		return false;
+	}
+
+	tempVerts = (idDrawVert *)R_FrameAlloc( tri->numVerts * sizeof( tempVerts[0] ) );
+	tempIndexes = (glIndex_t *)R_FrameAlloc( tri->numIndexes * sizeof( tempIndexes[0] ) );
+	renderSystem->CopyPrimBatchTriangles( tempVerts, tempIndexes, tri->primBatchMesh, tri->silTraceVerts );
+	return true;
+}
+#endif
+
+static bool R_GetInteractionSurfacePoint( const srfTriangles_t *tri, const idDrawVert *fallbackVerts, int index, idVec3 &point ) {
+	if ( tri == NULL || index < 0 || index >= tri->numVerts ) {
+		return false;
+	}
+
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	if ( const rvSilTraceVertT *silTraceVerts = R_GetInteractionSilTraceVerts( tri ) ) {
+		point = silTraceVerts[index].xyzw.ToVec3();
+		return true;
+	}
+#endif
+
+	const idDrawVert *sourceVerts = ( fallbackVerts != NULL ) ? fallbackVerts : tri->verts;
+	if ( sourceVerts == NULL ) {
+		return false;
+	}
+
+	point = sourceVerts[index].xyz;
+	return true;
+}
+
 static bool R_ShouldSkipPointLightEmitterCaster( const idMaterial *shadowShader, const srfTriangles_t *ambientTris, const idVec3 &localLightOrigin, const idVec3 &localLightRadius ) {
 	if ( shadowShader == NULL || ambientTris == NULL ) {
 		return false;
@@ -145,23 +188,41 @@ static bool R_ShouldSkipPointLightEmitterCaster( const idMaterial *shadowShader,
 	if ( shadowShader->GetName() == NULL || idStr::Icmpn( shadowShader->GetName(), "textures/common_lights/", 23 ) != 0 ) {
 		return false;
 	}
-	if ( ambientTris->verts == NULL || ambientTris->indexes == NULL || ambientTris->numIndexes < 3 ) {
+	if ( ambientTris->numIndexes < 3 ) {
 		return false;
+	}
+
+	const glIndex_t *sourceIndexes = ambientTris->indexes;
+	idDrawVert *tempVerts = NULL;
+	glIndex_t *tempIndexes = NULL;
+
+	if ( sourceIndexes == NULL ) {
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+		if ( !R_MaterializeInteractionPackedTriangles( ambientTris, tempVerts, tempIndexes ) ) {
+			return false;
+		}
+		sourceIndexes = tempIndexes;
+#else
+		return false;
+#endif
 	}
 
 	idPlane plane;
 	bool havePlane = false;
 	for ( int i = 0; i + 2 < ambientTris->numIndexes; i += 3 ) {
-		const int i0 = ambientTris->indexes[i + 0];
-		const int i1 = ambientTris->indexes[i + 1];
-		const int i2 = ambientTris->indexes[i + 2];
-		if ( i0 < 0 || i1 < 0 || i2 < 0 || i0 >= ambientTris->numVerts || i1 >= ambientTris->numVerts || i2 >= ambientTris->numVerts ) {
+		const int i0 = sourceIndexes[i + 0];
+		const int i1 = sourceIndexes[i + 1];
+		const int i2 = sourceIndexes[i + 2];
+
+		idVec3 p0;
+		idVec3 p1;
+		idVec3 p2;
+		if ( !R_GetInteractionSurfacePoint( ambientTris, tempVerts, i0, p0 )
+			|| !R_GetInteractionSurfacePoint( ambientTris, tempVerts, i1, p1 )
+			|| !R_GetInteractionSurfacePoint( ambientTris, tempVerts, i2, p2 ) ) {
 			continue;
 		}
 
-		const idVec3 &p0 = ambientTris->verts[i0].xyz;
-		const idVec3 &p1 = ambientTris->verts[i1].xyz;
-		const idVec3 &p2 = ambientTris->verts[i2].xyz;
 		idVec3 normal = ( p1 - p0 ).Cross( p2 - p0 );
 		if ( normal.LengthSqr() <= Square( 1.0e-6f ) ) {
 			continue;
@@ -187,14 +248,6 @@ static bool R_ShouldSkipPointLightEmitterCaster( const idMaterial *shadowShader,
 
 	return ambientTris->bounds.Expand( emitterBoundsPad ).ContainsPoint( localLightOrigin );
 }
-
-#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
-static ID_INLINE const rvSilTraceVertT *R_GetInteractionSilTraceVerts( const srfTriangles_t *tri ) {
-	return ( tri != NULL && tri->silTraceVerts != NULL )
-		? reinterpret_cast<const rvSilTraceVertT *>( tri->silTraceVerts )
-		: NULL;
-}
-#endif
 
 static void R_BoundInteractionSurface( const srfTriangles_t *tri, const glIndex_t *indexes, int numIndexes, idBounds &bounds ) {
 	if ( numIndexes <= 0 ) {

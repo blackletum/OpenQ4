@@ -1199,6 +1199,14 @@ geometry and should never be fed packed surfaces directly.
 */
 static srfTriangles_t *R_CreateTurboShadowVolumeForSurface( const idRenderEntityLocal *ent,
 		const srfTriangles_t *tri, const idRenderLightLocal *light, srfCullInfo_t &cullInfo ) {
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	if ( tri->primBatchMesh != NULL ) {
+		if ( srfTriangles_t *packedShadowTri = R_CreatePackedTurboShadowVolume( ent, tri, light, cullInfo ) ) {
+			return packedShadowTri;
+		}
+	}
+#endif
+
 	if ( tr.backEndRendererHasVertexPrograms && r_useShadowVertexProgram.GetBool() ) {
 		return R_CreateVertexProgramTurboShadowVolume( ent, tri, light, cullInfo );
 	}

@@ -30,6 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "tr_local.h"
+#include "Model_local.h"
 
 int	c_turboUsedVerts;
 int c_turboUnusedVerts;
@@ -59,6 +60,266 @@ static int R_CreateShadowCacheFromSilTraceVerts( idVec4 *vertexCache, int *vertR
 	}
 
 	return outVerts;
+}
+
+static ID_INLINE bool R_PackedShadowVertsMatchTurboLayout( const rvMD5RPrimBatch &primBatch ) {
+	return primBatch.hasSilTraceGeoSpec
+		&& primBatch.hasShadowGeoSpec
+		&& primBatch.shadowVolGeoSpec.vertexStart >= 0
+		&& ( primBatch.shadowVolGeoSpec.vertexStart & 1 ) == 0
+		&& primBatch.shadowVolGeoSpec.indexStart == 0
+		&& primBatch.shadowVolGeoSpec.primitiveCount == 0
+		&& primBatch.shadowVolGeoSpec.vertexCount == primBatch.silTraceGeoSpec.vertexCount * 2;
+}
+
+static int R_CountPackedTurboShadowingFaces( const rvMD5RMesh &mesh, const rvMD5RIndexBufferDesc &silTraceIndexBuffer, srfCullInfo_t &cullInfo ) {
+	if ( cullInfo.facing == NULL ) {
+		return -1;
+	}
+
+	if ( cullInfo.cullBits == LIGHT_CULL_ALL_FRONT || !r_useShadowProjectedCull.GetBool() ) {
+		int numShadowingFaces = 0;
+		const byte *batchFacing = cullInfo.facing;
+
+		for ( int primBatchIndex = 0; primBatchIndex < mesh.primBatches.Num(); ++primBatchIndex ) {
+			const rvMD5RPrimBatch &primBatch = mesh.primBatches[ primBatchIndex ];
+			for ( int triNum = 0; triNum < primBatch.silTraceGeoSpec.primitiveCount; ++triNum ) {
+				numShadowingFaces += ( batchFacing[ triNum ] == 0 );
+			}
+			batchFacing += primBatch.silTraceGeoSpec.primitiveCount;
+		}
+
+		return numShadowingFaces;
+	}
+
+	byte *modifyFacing = cullInfo.facing;
+	const byte *batchCullBits = cullInfo.cullBits;
+	int numShadowingFaces = 0;
+
+	for ( int primBatchIndex = 0; primBatchIndex < mesh.primBatches.Num(); ++primBatchIndex ) {
+		const rvMD5RPrimBatch &primBatch = mesh.primBatches[ primBatchIndex ];
+		const int batchTriangleCount = primBatch.silTraceGeoSpec.primitiveCount;
+		const glIndex_t *batchSilTraceSource = silTraceIndexBuffer.indices.Ptr() + primBatch.silTraceGeoSpec.indexStart;
+
+		for ( int triNum = 0; triNum < batchTriangleCount; ++triNum ) {
+			if ( !modifyFacing[ triNum ] ) {
+				const int silTraceIndex0 = batchSilTraceSource[ triNum * 3 + 0 ];
+				const int silTraceIndex1 = batchSilTraceSource[ triNum * 3 + 1 ];
+				const int silTraceIndex2 = batchSilTraceSource[ triNum * 3 + 2 ];
+				if ( silTraceIndex0 < 0 || silTraceIndex1 < 0 || silTraceIndex2 < 0
+					|| silTraceIndex0 >= primBatch.silTraceGeoSpec.vertexCount
+					|| silTraceIndex1 >= primBatch.silTraceGeoSpec.vertexCount
+					|| silTraceIndex2 >= primBatch.silTraceGeoSpec.vertexCount ) {
+					return -1;
+				}
+
+				if ( batchCullBits[ silTraceIndex0 ] & batchCullBits[ silTraceIndex1 ] & batchCullBits[ silTraceIndex2 ] ) {
+					modifyFacing[ triNum ] = 1;
+				} else {
+					++numShadowingFaces;
+				}
+			}
+		}
+
+		modifyFacing += batchTriangleCount;
+		batchCullBits += primBatch.silTraceGeoSpec.vertexCount;
+	}
+
+	return numShadowingFaces;
+}
+
+static int R_CreatePackedTurboShadowSideWalls( const rvMD5RPrimBatch &primBatch, const silEdge_t *batchSilEdges, glIndex_t *shadowIndices, const byte *batchFacing ) {
+	int emittedIndexCount = 0;
+
+	for ( int silEdgeIndex = 0; silEdgeIndex < primBatch.silEdgeCount; ++silEdgeIndex ) {
+		const silEdge_t &sil = batchSilEdges[ silEdgeIndex ];
+		if ( sil.p1 < 0 || sil.p2 < 0
+			|| sil.p1 >= primBatch.silTraceGeoSpec.primitiveCount
+			|| sil.p2 >= primBatch.silTraceGeoSpec.primitiveCount
+			|| sil.v1 < 0 || sil.v2 < 0
+			|| sil.v1 >= primBatch.silTraceGeoSpec.vertexCount
+			|| sil.v2 >= primBatch.silTraceGeoSpec.vertexCount ) {
+			return -1;
+		}
+
+		const int f1 = batchFacing[ sil.p1 ];
+		const int f2 = batchFacing[ sil.p2 ];
+		if ( !( f1 ^ f2 ) ) {
+			continue;
+		}
+
+		const int v1 = primBatch.shadowVolGeoSpec.vertexStart + ( sil.v1 << 1 );
+		const int v2 = primBatch.shadowVolGeoSpec.vertexStart + ( sil.v2 << 1 );
+
+		shadowIndices[ emittedIndexCount + 0 ] = v1;
+		shadowIndices[ emittedIndexCount + 1 ] = v2 ^ f1;
+		shadowIndices[ emittedIndexCount + 2 ] = v2 ^ f2;
+		shadowIndices[ emittedIndexCount + 3 ] = v1 ^ f2;
+		shadowIndices[ emittedIndexCount + 4 ] = v1 ^ f1;
+		shadowIndices[ emittedIndexCount + 5 ] = v2 ^ 1;
+		emittedIndexCount += 6;
+	}
+
+	return emittedIndexCount;
+}
+
+static int R_CreatePackedTurboShadowCaps( const rvMD5RPrimBatch &primBatch, const rvMD5RIndexBufferDesc &silTraceIndexBuffer, glIndex_t *shadowIndices, const byte *batchFacing ) {
+	const int batchTriangleCount = primBatch.silTraceGeoSpec.primitiveCount;
+	const glIndex_t *batchSilTraceSource = silTraceIndexBuffer.indices.Ptr() + primBatch.silTraceGeoSpec.indexStart;
+	int emittedIndexCount = 0;
+
+	for ( int triNum = 0; triNum < batchTriangleCount; ++triNum ) {
+		if ( batchFacing[ triNum ] ) {
+			continue;
+		}
+
+		const int silTraceIndex0 = batchSilTraceSource[ triNum * 3 + 0 ];
+		const int silTraceIndex1 = batchSilTraceSource[ triNum * 3 + 1 ];
+		const int silTraceIndex2 = batchSilTraceSource[ triNum * 3 + 2 ];
+		if ( silTraceIndex0 < 0 || silTraceIndex1 < 0 || silTraceIndex2 < 0
+			|| silTraceIndex0 >= primBatch.silTraceGeoSpec.vertexCount
+			|| silTraceIndex1 >= primBatch.silTraceGeoSpec.vertexCount
+			|| silTraceIndex2 >= primBatch.silTraceGeoSpec.vertexCount ) {
+			return -1;
+		}
+
+		const int i0 = primBatch.shadowVolGeoSpec.vertexStart + ( silTraceIndex0 << 1 );
+		const int i1 = primBatch.shadowVolGeoSpec.vertexStart + ( silTraceIndex1 << 1 );
+		const int i2 = primBatch.shadowVolGeoSpec.vertexStart + ( silTraceIndex2 << 1 );
+
+		shadowIndices[ emittedIndexCount + 0 ] = i2;
+		shadowIndices[ emittedIndexCount + 1 ] = i1;
+		shadowIndices[ emittedIndexCount + 2 ] = i0;
+		shadowIndices[ emittedIndexCount + 3 ] = i0 ^ 1;
+		shadowIndices[ emittedIndexCount + 4 ] = i1 ^ 1;
+		shadowIndices[ emittedIndexCount + 5 ] = i2 ^ 1;
+		emittedIndexCount += 6;
+	}
+
+	return emittedIndexCount;
+}
+
+srfTriangles_t *R_CreatePackedTurboShadowVolume( const idRenderEntityLocal *ent,
+		const srfTriangles_t *tri, const idRenderLightLocal *light, srfCullInfo_t &cullInfo ) {
+	if ( tr.backEndRenderer != BE_ARB2 || !tr.backEndRendererHasVertexPrograms ) {
+		return NULL;
+	}
+
+	const rvMD5RMesh *mesh = R_MD5R_GetMeshForTri( tri );
+	const rvMD5RVertexBufferDesc *shadowVertexBuffer = R_MD5R_GetShadowVertexBufferForTri( tri );
+	const idList<silEdge_t> *silhouetteEdges = R_MD5R_GetSilhouetteEdgeListForTri( tri );
+	const rvMD5RIndexBufferDesc *silTraceIndexBuffer = R_MD5R_GetSilTraceIndexBufferForTri( tri );
+	if ( mesh == NULL || shadowVertexBuffer == NULL || silhouetteEdges == NULL || silTraceIndexBuffer == NULL
+		|| mesh->primBatches.Num() <= 0
+		|| shadowVertexBuffer->numVertices <= 0
+		|| shadowVertexBuffer->positions.Num() != shadowVertexBuffer->numVertices
+		|| silTraceIndexBuffer->numIndices <= 0
+		|| silTraceIndexBuffer->indices.Num() != silTraceIndexBuffer->numIndices
+		|| tri->numVerts <= 0
+		|| tri->numIndexes <= 0 ) {
+		return NULL;
+	}
+
+	int totalSilTraceVertices = 0;
+	int totalSilTraceTriangles = 0;
+	int totalSilEdges = 0;
+	int maxShadowVertexCount = 0;
+
+	for ( int primBatchIndex = 0; primBatchIndex < mesh->primBatches.Num(); ++primBatchIndex ) {
+		const rvMD5RPrimBatch &primBatch = mesh->primBatches[ primBatchIndex ];
+		const int batchSilTraceIndexCount = primBatch.silTraceGeoSpec.primitiveCount * 3;
+		if ( !R_PackedShadowVertsMatchTurboLayout( primBatch )
+			|| primBatch.silTraceGeoSpec.vertexCount < 0
+			|| primBatch.silTraceGeoSpec.primitiveCount < 0
+			|| primBatch.silTraceGeoSpec.indexStart < 0
+			|| primBatch.silTraceGeoSpec.indexStart + batchSilTraceIndexCount > silTraceIndexBuffer->numIndices
+			|| primBatch.shadowVolGeoSpec.vertexStart + primBatch.shadowVolGeoSpec.vertexCount > shadowVertexBuffer->numVertices ) {
+			return NULL;
+		}
+
+		if ( primBatch.silEdgeCount < 0 ) {
+			return NULL;
+		}
+		if ( primBatch.silEdgeCount > 0 ) {
+			if ( primBatch.silEdgeStart < 0
+				|| primBatch.silEdgeStart + primBatch.silEdgeCount > silhouetteEdges->Num() ) {
+				return NULL;
+			}
+		}
+
+		totalSilTraceVertices += primBatch.silTraceGeoSpec.vertexCount;
+		totalSilTraceTriangles += primBatch.silTraceGeoSpec.primitiveCount;
+		totalSilEdges += primBatch.silEdgeCount;
+		maxShadowVertexCount = Max( maxShadowVertexCount, primBatch.shadowVolGeoSpec.vertexStart + primBatch.shadowVolGeoSpec.vertexCount );
+	}
+
+	// The current hybrid interaction cull helpers still operate on the surfaced
+	// tri-surf view, so only keep the packed path when the packed sil-trace view
+	// matches the materialized CPU topology exactly.
+	if ( totalSilTraceVertices != tri->numVerts
+		|| totalSilTraceTriangles != tri->numIndexes / 3
+		|| ( mesh->numSilTraceVertices > 0 && totalSilTraceVertices != mesh->numSilTraceVertices )
+		|| ( mesh->numSilTracePrimitives > 0 && totalSilTraceTriangles != mesh->numSilTracePrimitives ) ) {
+		return NULL;
+	}
+
+	R_CalcInteractionFacing( ent, tri, light, cullInfo );
+	if ( r_useShadowProjectedCull.GetBool() ) {
+		R_CalcInteractionCullBits( ent, tri, light, cullInfo );
+	}
+
+	const int numShadowingFaces = R_CountPackedTurboShadowingFaces( *mesh, *silTraceIndexBuffer, cullInfo );
+	if ( numShadowingFaces <= 0 ) {
+		return NULL;
+	}
+
+	srfTriangles_t *newTri = R_AllocStaticTriSurf();
+	newTri->numVerts = maxShadowVertexCount;
+	newTri->primBatchMesh = tri->primBatchMesh;
+	newTri->skinToModelTransforms = tri->skinToModelTransforms;
+	newTri->skinToModelTransformsAlloc = NULL;
+	newTri->numSkinToModelTransforms = tri->numSkinToModelTransforms;
+
+	const int numPrimBatches = mesh->primBatches.Num();
+	R_AllocStaticTriSurfIndexes( newTri, ( 2 * numPrimBatches ) + ( 6 * ( numShadowingFaces + totalSilEdges ) ) );
+
+	glIndex_t *batchHeader = newTri->indexes;
+	glIndex_t *shadowIndices = batchHeader + ( 2 * numPrimBatches );
+	const byte *batchFacing = cullInfo.facing;
+	newTri->numIndexes = 0;
+	newTri->numShadowIndexesNoCaps = 0;
+
+	for ( int primBatchIndex = 0; primBatchIndex < numPrimBatches; ++primBatchIndex ) {
+		const rvMD5RPrimBatch &primBatch = mesh->primBatches[ primBatchIndex ];
+		const silEdge_t *batchSilEdges = silhouetteEdges->Ptr() + primBatch.silEdgeStart;
+
+		const int sideWallIndexCount = R_CreatePackedTurboShadowSideWalls( primBatch, batchSilEdges, shadowIndices, batchFacing );
+		if ( sideWallIndexCount < 0 ) {
+			R_ReallyFreeStaticTriSurf( newTri );
+			return NULL;
+		}
+		shadowIndices += sideWallIndexCount;
+
+		const int capIndexCount = R_CreatePackedTurboShadowCaps( primBatch, *silTraceIndexBuffer, shadowIndices, batchFacing );
+		if ( capIndexCount < 0 ) {
+			R_ReallyFreeStaticTriSurf( newTri );
+			return NULL;
+		}
+		const int totalIndexCount = sideWallIndexCount + capIndexCount;
+		shadowIndices += capIndexCount;
+
+		batchHeader[ primBatchIndex * 2 + 0 ] = sideWallIndexCount;
+		batchHeader[ primBatchIndex * 2 + 1 ] = totalIndexCount;
+		newTri->numIndexes += totalIndexCount;
+		newTri->numShadowIndexesNoCaps += sideWallIndexCount;
+		batchFacing += primBatch.silTraceGeoSpec.primitiveCount;
+	}
+
+	newTri->numShadowIndexesNoFrontCaps = newTri->numIndexes;
+	R_ResizeStaticTriSurfIndexes( newTri, newTri->numIndexes + ( 2 * numPrimBatches ) );
+	newTri->shadowCapPlaneBits = SHADOW_CAP_INFINITE;
+	newTri->bounds.Clear();
+	return newTri;
 }
 #endif
 

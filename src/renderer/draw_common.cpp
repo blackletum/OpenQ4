@@ -5697,11 +5697,13 @@ static void RB_T_Shadow( const drawSurf_t *surf ) {
 
 	tri = surf->geo;
 
-	if ( !tri->shadowCache ) {
-		return;
-	}
+	if ( tri->primBatchMesh == NULL ) {
+		if ( !tri->shadowCache ) {
+			return;
+		}
 
-	glVertexPointer( 4, GL_FLOAT, sizeof( shadowCache_t ), vertexCache.Position(tri->shadowCache) );
+		glVertexPointer( 4, GL_FLOAT, sizeof( shadowCache_t ), vertexCache.Position(tri->shadowCache) );
+	}
 
 	// we always draw the sil planes, but we may not need to draw the front or rear caps
 	int	numIndexes;

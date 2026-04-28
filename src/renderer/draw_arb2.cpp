@@ -1242,9 +1242,178 @@ void RB_ARB2_MD5R_DrawDepthElements( const drawSurf_t *surf ) {
 	glDisable( GL_VERTEX_PROGRAM_ARB );
 }
 
+static bool RB_ARB2_PackedShadowHeaderedIndexesValid( const srfTriangles_t *tri, int numPrimBatches ) {
+	if ( tri == NULL || tri->indexes == NULL || numPrimBatches <= 0 ) {
+		return false;
+	}
+
+	if ( tri->numAllocedIndices < tri->numIndexes + ( 2 * numPrimBatches ) ) {
+		return false;
+	}
+
+	int headerIndexCount = 0;
+	for ( int primBatchIndex = 0; primBatchIndex < numPrimBatches; ++primBatchIndex ) {
+		const int noCapsIndexCount = tri->indexes[ primBatchIndex * 2 + 0 ];
+		const int totalIndexCount = tri->indexes[ primBatchIndex * 2 + 1 ];
+		if ( noCapsIndexCount < 0
+			|| totalIndexCount < 0
+			|| ( noCapsIndexCount % 3 ) != 0
+			|| ( totalIndexCount % 3 ) != 0
+			|| noCapsIndexCount > totalIndexCount
+			|| headerIndexCount + totalIndexCount > tri->numIndexes ) {
+			return false;
+		}
+
+		headerIndexCount += totalIndexCount;
+	}
+
+	return ( headerIndexCount == tri->numIndexes );
+}
+
+static bool RB_ARB2_DrawPackedMD5RShadowBatches( const drawSurf_t *surf, int numIndexes ) {
+	const srfTriangles_t *tri = ( surf != NULL ) ? surf->geo : NULL;
+	const rvMD5RMesh *mesh = ( tri != NULL ) ? R_MD5R_GetMeshForTri( tri ) : NULL;
+	const rvMD5RVertexBufferDesc *shadowVertexBuffer = ( tri != NULL ) ? R_MD5R_GetShadowVertexBufferForTri( tri ) : NULL;
+	if ( tri == NULL || mesh == NULL || shadowVertexBuffer == NULL || mesh->primBatches.Num() <= 0 ) {
+		return false;
+	}
+
+	const int vertexFormatIndex = RB_ARB2_GetMD5RVertexFormatIndex( *shadowVertexBuffer );
+	if ( vertexFormatIndex < 0 || !RB_ARB2_BindPackedMD5RDrawVertexData( *shadowVertexBuffer, vertexFormatIndex ) ) {
+		return false;
+	}
+
+	const bool vertexProgramWasEnabled = ( glIsEnabled( GL_VERTEX_PROGRAM_ARB ) == GL_TRUE );
+	if ( !R_BindARBProgram( GL_VERTEX_PROGRAM_ARB, ARB2_MD5R_SHADOW_VOLUME_VPROG_BASE, "packed shadow vertex program", false ) ) {
+		RB_ARB2_UnbindPackedMD5RDrawVertexData( vertexFormatIndex );
+		return false;
+	}
+
+	idVec4 localLight;
+	R_GlobalPointToLocal( surf->space->modelMatrix, backEnd.vLight->globalLightOrigin, localLight.ToVec3() );
+	localLight.w = 0.0f;
+
+	glEnable( GL_VERTEX_PROGRAM_ARB );
+	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, ARB2_MD5R_LOCAL_LIGHT_ORIGIN, localLight.ToFloatPtr() );
+	RB_ARB2_LoadMD5RMVPMatrix( surf );
+
+	const bool drawCaps = ( numIndexes == tri->numIndexes );
+	const int numPrimBatches = mesh->primBatches.Num();
+	const bool hasHeaderedShadowIndexes = RB_ARB2_PackedShadowHeaderedIndexesValid( tri, numPrimBatches );
+	const rvMD5RIndexBufferDesc *shadowIndexBuffer = hasHeaderedShadowIndexes ? NULL : R_MD5R_GetShadowIndexBufferForTri( tri );
+	if ( !hasHeaderedShadowIndexes && ( shadowIndexBuffer == NULL
+		|| shadowIndexBuffer->numIndices <= 0
+		|| shadowIndexBuffer->indices.Num() != shadowIndexBuffer->numIndices ) ) {
+		RB_ARB2_UnbindPackedMD5RDrawVertexData( vertexFormatIndex );
+		glBindBufferARB( GL_ARRAY_BUFFER_ARB, 0 );
+		vertexCache.UnbindIndex();
+		if ( vertexProgramWasEnabled ) {
+			glBindProgramARB( GL_VERTEX_PROGRAM_ARB, VPROG_STENCIL_SHADOW );
+		} else {
+			glBindProgramARB( GL_VERTEX_PROGRAM_ARB, 0 );
+			glDisable( GL_VERTEX_PROGRAM_ARB );
+		}
+		return false;
+	}
+
+	vertexCache.UnbindIndex();
+
+	const glIndex_t *batchHeader = hasHeaderedShadowIndexes ? tri->indexes : NULL;
+	const glIndex_t *batchIndices = hasHeaderedShadowIndexes ? ( tri->indexes + ( 2 * numPrimBatches ) ) : NULL;
+	int transformBase = 0;
+	bool drewAnything = false;
+
+	for ( int primBatchIndex = 0; primBatchIndex < numPrimBatches; ++primBatchIndex ) {
+		const rvMD5RPrimBatch &primBatch = mesh->primBatches[ primBatchIndex ];
+		const int primBatchTransformCount = Max( primBatch.numTransforms, 1 );
+		const int shadowVertexCount = primBatch.shadowVolGeoSpec.vertexCount;
+		int shadowIndexCount = 0;
+		const glIndex_t *indexSource = NULL;
+
+		if ( shadowVertexCount <= 0
+			|| !primBatch.hasShadowGeoSpec
+			|| primBatch.shadowVolGeoSpec.vertexStart < 0
+			|| primBatch.shadowVolGeoSpec.vertexStart + shadowVertexCount > shadowVertexBuffer->numVertices ) {
+			break;
+		}
+
+		if ( vertexFormatIndex > 0 ) {
+			if ( tri->skinToModelTransforms == NULL
+				|| tri->numSkinToModelTransforms <= 0
+				|| primBatchTransformCount > ARB2_MD5R_MAX_PALETTE_TRANSFORMS
+				|| transformBase + primBatchTransformCount > tri->numSkinToModelTransforms ) {
+				break;
+			}
+
+			for ( int transformIndex = 0; transformIndex < primBatchTransformCount; ++transformIndex ) {
+				RB_ARB2_LoadMD5RPaletteTransformRows(
+					transformIndex * 3,
+					tri->skinToModelTransforms + ( ( transformBase + transformIndex ) * 16 ) );
+			}
+		}
+
+		if ( hasHeaderedShadowIndexes ) {
+			const int noCapsIndexCount = batchHeader[ primBatchIndex * 2 + 0 ];
+			const int totalIndexCount = batchHeader[ primBatchIndex * 2 + 1 ];
+			shadowIndexCount = drawCaps ? totalIndexCount : noCapsIndexCount;
+			indexSource = batchIndices;
+			batchIndices += totalIndexCount;
+		} else {
+			const int totalIndexCount = primBatch.shadowVolGeoSpec.primitiveCount * 3;
+			const int noCapsIndexCount = primBatch.numShadowPrimitivesNoCaps * 3;
+			if ( primBatch.shadowVolGeoSpec.indexStart < 0
+				|| totalIndexCount < 0
+				|| noCapsIndexCount < 0
+				|| noCapsIndexCount > totalIndexCount
+				|| primBatch.shadowVolGeoSpec.indexStart + totalIndexCount > shadowIndexBuffer->numIndices ) {
+				break;
+			}
+
+			shadowIndexCount = drawCaps ? totalIndexCount : noCapsIndexCount;
+			indexSource = shadowIndexBuffer->indices.Ptr() + primBatch.shadowVolGeoSpec.indexStart;
+		}
+
+		if ( shadowIndexCount > 0 && indexSource != NULL ) {
+			backEnd.pc.c_shadowElements++;
+			backEnd.pc.c_shadowIndexes += shadowIndexCount;
+			backEnd.pc.c_shadowVertexes += shadowVertexCount;
+
+			glDrawElements(
+				GL_TRIANGLES,
+				r_singleTriangle.GetBool() ? 3 : shadowIndexCount,
+				GL_INDEX_TYPE,
+				indexSource );
+			drewAnything = true;
+		}
+
+		transformBase += primBatchTransformCount;
+	}
+
+	RB_ARB2_UnbindPackedMD5RDrawVertexData( vertexFormatIndex );
+	glBindBufferARB( GL_ARRAY_BUFFER_ARB, 0 );
+	vertexCache.UnbindIndex();
+
+	if ( vertexProgramWasEnabled ) {
+		glBindProgramARB( GL_VERTEX_PROGRAM_ARB, VPROG_STENCIL_SHADOW );
+	} else {
+		glBindProgramARB( GL_VERTEX_PROGRAM_ARB, 0 );
+		glDisable( GL_VERTEX_PROGRAM_ARB );
+	}
+
+	return drewAnything;
+}
+
 void RB_ARB2_MD5R_DrawShadowElements( const drawSurf_t *surf, int numIndexes ) {
 	const srfTriangles_t *tri = ( surf != NULL ) ? surf->geo : NULL;
-	if ( tri == NULL || tri->shadowCache == NULL ) {
+	if ( tri == NULL ) {
+		return;
+	}
+
+	if ( tri->primBatchMesh != NULL && RB_ARB2_DrawPackedMD5RShadowBatches( surf, numIndexes ) ) {
+		return;
+	}
+
+	if ( tri->shadowCache == NULL ) {
 		return;
 	}
 
@@ -1795,7 +1964,9 @@ typedef enum {
 	SHADOWMAP_SUPPORT_SHADOWS_DISABLED,
 	SHADOWMAP_SUPPORT_NULL_LIGHT,
 	SHADOWMAP_SUPPORT_NO_SHADOWS_FLAG,
+	SHADOWMAP_SUPPORT_NO_DYNAMIC_SHADOWS_FLAG,
 	SHADOWMAP_SUPPORT_AMBIENT_LIGHT,
+	SHADOWMAP_SUPPORT_LIGHT_SHADER_NO_SHADOWS,
 	SHADOWMAP_SUPPORT_TEXTURE_LIMIT,
 	SHADOWMAP_SUPPORT_NO_INTERACTIONS,
 	SHADOWMAP_SUPPORT_CUBEMAP_UNAVAILABLE,
@@ -1868,8 +2039,12 @@ static const char *RB_ShadowMapSupportReasonName( shadowMapLightSupportReason_t 
 		return "null-light";
 	case SHADOWMAP_SUPPORT_NO_SHADOWS_FLAG:
 		return "noShadows-flag";
+	case SHADOWMAP_SUPPORT_NO_DYNAMIC_SHADOWS_FLAG:
+		return "noDynamicShadows-flag";
 	case SHADOWMAP_SUPPORT_AMBIENT_LIGHT:
 		return "ambient-light";
+	case SHADOWMAP_SUPPORT_LIGHT_SHADER_NO_SHADOWS:
+		return "lightShader-noShadows";
 	case SHADOWMAP_SUPPORT_TEXTURE_LIMIT:
 		return "texture-limit";
 	case SHADOWMAP_SUPPORT_NO_INTERACTIONS:
@@ -3731,18 +3906,40 @@ static bool RB_PointShadowMapEnsureTranslucentResources( void ) {
 	return RB_TranslucentShadowMomentImagesReady( g_pointTranslucentShadowMomentImages ) && g_pointTranslucentShadowMapRenderTexture != NULL;
 }
 
+// Keep shadow-map support reporting aligned with the interaction shadow admission rules.
+static shadowMapLightSupportReason_t RB_ShadowMapLightPolicySupportReason( const viewLight_t *vLight ) {
+	if ( vLight == NULL ) {
+		return SHADOWMAP_SUPPORT_NULL_LIGHT;
+	}
+
+	if ( vLight->lightDef != NULL ) {
+		if ( vLight->lightDef->parms.noShadows ) {
+			return SHADOWMAP_SUPPORT_NO_SHADOWS_FLAG;
+		}
+		if ( vLight->lightDef->parms.noDynamicShadows ) {
+			return SHADOWMAP_SUPPORT_NO_DYNAMIC_SHADOWS_FLAG;
+		}
+	}
+
+	if ( vLight->lightShader == NULL || vLight->lightShader->IsAmbientLight() ) {
+		return SHADOWMAP_SUPPORT_AMBIENT_LIGHT;
+	}
+
+	if ( !vLight->lightShader->LightCastsShadows() ) {
+		return SHADOWMAP_SUPPORT_LIGHT_SHADER_NO_SHADOWS;
+	}
+
+	return SHADOWMAP_SUPPORT_OK;
+}
+
 static shadowMapLightSupportReason_t RB_ShadowMapLightSupportReason( const viewLight_t *vLight ) {
 	if ( !r_useShadowMap.GetBool() || !r_shadows.GetBool() ) {
 		return !r_useShadowMap.GetBool() ? SHADOWMAP_SUPPORT_DISABLED : SHADOWMAP_SUPPORT_SHADOWS_DISABLED;
 	}
-	if ( vLight == NULL ) {
-		return SHADOWMAP_SUPPORT_NULL_LIGHT;
-	}
-	if ( vLight->lightDef != NULL && vLight->lightDef->parms.noShadows ) {
-		return SHADOWMAP_SUPPORT_NO_SHADOWS_FLAG;
-	}
-	if ( vLight->lightShader == NULL || vLight->lightShader->IsAmbientLight() ) {
-		return SHADOWMAP_SUPPORT_AMBIENT_LIGHT;
+
+	const shadowMapLightSupportReason_t policyReason = RB_ShadowMapLightPolicySupportReason( vLight );
+	if ( policyReason != SHADOWMAP_SUPPORT_OK ) {
+		return policyReason;
 	}
 	if ( glConfig.maxTextureUnits < 6 || glConfig.maxTextureImageUnits < 6 ) {
 		return SHADOWMAP_SUPPORT_TEXTURE_LIMIT;

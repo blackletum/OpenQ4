@@ -1244,6 +1244,40 @@ const rvMD5RVertexBufferDesc *R_MD5R_GetDrawVertexBufferForTri( const srfTriangl
 
 /*
 ===========================
+R_MD5R_GetShadowVertexBufferForTri
+===========================
+*/
+const rvMD5RVertexBufferDesc *R_MD5R_GetShadowVertexBufferForTri( const srfTriangles_t *tri ) {
+	const rvMD5RMesh *mesh = R_MD5R_GetMeshForTri( tri );
+	if ( mesh == NULL || mesh->shadowVolVertexBuffer < 0 ) {
+		return NULL;
+	}
+
+	const rvRenderModelMD5R *renderModel = mesh->renderModel;
+	const idList<rvMD5RVertexBufferDesc> &vertexBuffers = renderModel->GetVertexBuffers();
+	if ( mesh->shadowVolVertexBuffer >= vertexBuffers.Num() ) {
+		return NULL;
+	}
+
+	return &vertexBuffers[ mesh->shadowVolVertexBuffer ];
+}
+
+/*
+===========================
+R_MD5R_GetSilhouetteEdgeListForTri
+===========================
+*/
+const idList<silEdge_t> *R_MD5R_GetSilhouetteEdgeListForTri( const srfTriangles_t *tri ) {
+	const rvMD5RMesh *mesh = R_MD5R_GetMeshForTri( tri );
+	if ( mesh == NULL || mesh->renderModel == NULL ) {
+		return NULL;
+	}
+
+	return &mesh->renderModel->GetSilhouetteEdges();
+}
+
+/*
+===========================
 R_MD5R_GetSilTraceIndexBufferForTri
 ===========================
 */
@@ -1280,6 +1314,26 @@ const rvMD5RIndexBufferDesc *R_MD5R_GetDrawIndexBufferForTri( const srfTriangles
 	}
 
 	return &indexBuffers[ mesh->drawIndexBuffer ];
+}
+
+/*
+===========================
+R_MD5R_GetShadowIndexBufferForTri
+===========================
+*/
+const rvMD5RIndexBufferDesc *R_MD5R_GetShadowIndexBufferForTri( const srfTriangles_t *tri ) {
+	const rvMD5RMesh *mesh = R_MD5R_GetMeshForTri( tri );
+	if ( mesh == NULL || mesh->shadowVolIndexBuffer < 0 ) {
+		return NULL;
+	}
+
+	const rvRenderModelMD5R *renderModel = mesh->renderModel;
+	const idList<rvMD5RIndexBufferDesc> &indexBuffers = renderModel->GetIndexBuffers();
+	if ( mesh->shadowVolIndexBuffer >= indexBuffers.Num() ) {
+		return NULL;
+	}
+
+	return &indexBuffers[ mesh->shadowVolIndexBuffer ];
 }
 
 /*
