@@ -590,6 +590,7 @@ struct rvTrailInfo {
 	byte					mStatic;
 	byte					mPad;
 	idStr					mTrailTypeName;
+	idStr					mTrailMaterialName;
 	const idMaterial		*mTrailMaterial;
 	idVec2					mTrailTime;								// Length of trial in seconds
 	idVec2					mTrailCount;							// Number of particles in trail

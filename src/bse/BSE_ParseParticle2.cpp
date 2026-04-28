@@ -97,6 +97,8 @@ static void BSE_DeleteOwnedEnv(rvEnvParms*& value, rvEnvParms** seen, int& seenC
 }
 
 namespace {
+static const char* BSE_DEFAULT_TRAIL_MATERIAL = "gfx/effects/particles_shapes/motionblur";
+
 ID_INLINE const char* BSE_ResolveEffectCompatAlias(const char* effectName) {
 	// Stock splash FX reference "effects/ambient/drip_ring", but the shipped
 	// data only provides "effects/ambient/drip_splash". Remap at parse-time to
@@ -105,6 +107,19 @@ ID_INLINE const char* BSE_ResolveEffectCompatAlias(const char* effectName) {
 		return "effects/ambient/drip_splash";
 	}
 	return effectName;
+}
+
+ID_INLINE const idMaterial* BSE_ResolveTrailMaterialByName(const idStr& materialName, bool allowDefaultFallback) {
+	if (materialName.IsEmpty()) {
+		return allowDefaultFallback ? declManager->FindMaterial("_default") : NULL;
+	}
+
+	const idMaterial* material = declManager->FindMaterial(materialName.c_str(), false);
+	if (material == NULL && allowDefaultFallback) {
+		material = declManager->FindMaterial("_default");
+	}
+
+	return material;
 }
 
 ID_INLINE void BSE_UpdateExtents(const idVec3& sample, idVec3& mins, idVec3& maxs) {
@@ -1355,6 +1370,7 @@ bool rvParticleTemplate::Parse(rvDeclEffect* effect, idParser* src) {
 			if (!src->ReadToken(&token)) {
 				return false;
 			}
+			mTrailInfo->mTrailMaterialName = token;
 			mTrailInfo->mTrailMaterial = declManager->FindMaterial(token);
 		}
 		else if (!token.Icmp("trailType")) {
@@ -1615,6 +1631,12 @@ void  rvParticleTemplate::Finish()
 	v3 = this;
 	v3->mFlags |= 0x100u;
 	v4 = this->mTrailInfo;
+	if (v4->mTrailType == TRAIL_MOTION) {
+		if (v4->mTrailMaterialName.IsEmpty()) {
+			v4->mTrailMaterialName = BSE_DEFAULT_TRAIL_MATERIAL;
+		}
+		v4->mTrailMaterial = BSE_ResolveTrailMaterialByName(v4->mTrailMaterialName, true);
+	}
 	if ((!v4->mTrailType || v4->mTrailType == 3) && !v4->mStatic)
 	{
 		v4->mTrailTime.y = 0.0;
@@ -1778,13 +1800,8 @@ void rvParticleTemplate::InitStatic()
 		rvParticleTemplate::sTrailInfo.mStatic = 1;
 		rvParticleTemplate::sTrailInfo.mPad = 0;
 		rvParticleTemplate::sTrailInfo.mTrailTypeName = "";
-		// Match stock Q4 behavior: motion trails default to the motionblur
-		// material when trailMaterial isn't authored.
-		const idMaterial* defaultTrailMaterial = declManager->FindMaterial("gfx/effects/particles_shapes/motionblur", false);
-		if (defaultTrailMaterial == NULL) {
-			defaultTrailMaterial = declManager->FindMaterial("_default");
-		}
-		rvParticleTemplate::sTrailInfo.mTrailMaterial = defaultTrailMaterial;
+		rvParticleTemplate::sTrailInfo.mTrailMaterialName = BSE_DEFAULT_TRAIL_MATERIAL;
+		rvParticleTemplate::sTrailInfo.mTrailMaterial = NULL;
 		rvParticleTemplate::sTrailInfo.mTrailTime.x = 0.0f;
 		rvParticleTemplate::sTrailInfo.mTrailTime.y = 0.0f;
 		rvParticleTemplate::sTrailInfo.mTrailCount.x = 0.0f;
@@ -2224,7 +2241,7 @@ bool rvParticleTemplate::Compare(const rvParticleTemplate& a) const {
 		}
 		if (mTrailInfo->mTrailType != a.mTrailInfo->mTrailType ||
 			mTrailInfo->mTrailTypeName != a.mTrailInfo->mTrailTypeName ||
-			mTrailInfo->mTrailMaterial != a.mTrailInfo->mTrailMaterial ||
+			mTrailInfo->mTrailMaterialName != a.mTrailInfo->mTrailMaterialName ||
 			mTrailInfo->mTrailTime != a.mTrailInfo->mTrailTime ||
 			mTrailInfo->mTrailCount != a.mTrailInfo->mTrailCount ||
 			mTrailInfo->mTrailScale != a.mTrailInfo->mTrailScale) {
@@ -2313,6 +2330,7 @@ void rvParticleTemplate::ShutdownStatic(void) {
 
 	sInited = false;
 	sTrailInfo.mTrailTypeName = "";
+	sTrailInfo.mTrailMaterialName = "";
 	sTrailInfo.mTrailMaterial = NULL;
 	sTrailInfo.mTrailTime.Zero();
 	sTrailInfo.mTrailCount.Zero();

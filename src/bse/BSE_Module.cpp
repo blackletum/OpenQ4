@@ -160,7 +160,9 @@ public:
 	void SetTrailMaterialName(rvParticleTemplate* edit, const char* name) override {
 		if (edit != NULL) {
 			edit->AllocTrail();
-			edit->mTrailInfo->mTrailMaterial = declManager->FindMaterial(name != NULL ? name : "_default");
+			const char* resolvedName = (name != NULL && name[0] != '\0') ? name : "_default";
+			edit->mTrailInfo->mTrailMaterialName = resolvedName;
+			edit->mTrailInfo->mTrailMaterial = declManager->FindMaterial(resolvedName);
 		}
 	}
 
