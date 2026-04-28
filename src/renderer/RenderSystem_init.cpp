@@ -46,6 +46,7 @@ static void R_ErrorForUnsupportedCompatibilityOpenGL( void ) {
 }
 
 bool R_CheckExtension( char *name );
+extern idCVar r_inhibitFragmentProgram;
 
 static idStr g_missingRequiredOpenGLFeatures;
 
@@ -88,6 +89,29 @@ static void R_ErrorForMissingRequiredOpenGLFeatures( void ) {
 	}
 
 	common->Error( common->GetLanguageDict()->GetString( "#str_06780" ) );
+}
+
+static bool R_CheckGLSLProgramExtensions() {
+	return R_CheckExtension( "GL_ARB_shader_objects" )
+		&& R_CheckExtension( "GL_ARB_vertex_shader" )
+		&& R_CheckExtension( "GL_ARB_fragment_shader" )
+		&& R_CheckExtension( "GL_ARB_shading_language_100" );
+}
+
+static bool R_CanUseGLSLPrograms() {
+	if ( r_inhibitFragmentProgram.GetBool() ) {
+		return false;
+	}
+
+	if ( idAsyncNetwork::serverDedicated.GetBool() ) {
+		return false;
+	}
+
+	if ( !glConfig.ARBVertexProgramAvailable || !glConfig.ARBFragmentProgramAvailable ) {
+		return false;
+	}
+
+	return R_CheckGLSLProgramExtensions();
 }
 
 glconfig_t	glConfig;
@@ -228,6 +252,8 @@ idCVar r_gamma( "r_gamma", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "chan
 idCVar r_brightness( "r_brightness", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "changes gamma tables", 0.5f, 2.0f );
 
 idCVar r_renderer( "r_renderer", "best", CVAR_RENDERER | CVAR_ARCHIVE, "hardware specific renderer path to use", r_rendererArgs, idCmdSystem::ArgCompletion_String<r_rendererArgs> );
+idCVar r_actualRenderer( "r_actualRenderer", "UNINITIALIZED", CVAR_RENDERER | CVAR_ROM, "actual active renderer backend after request/fallback selection" );
+idCVar r_useSimpleInteraction( "r_useSimpleInteraction", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use Quake 4's simpler ARB interaction shader pair as an explicit compatibility fallback; may reduce material lighting quality" );
 idCVar r_interactionColorMode( "r_interactionColorMode", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "interaction vertex-color mode: 0 = auto, 1 = packed env16.xy, 2 = vector env16/env17", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 idCVar r_shaderReport( "r_shaderReport", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "shader diagnostics: 0 = off, 1 = startup/vid_restart summary, 2 = also warn on invalid program use", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 
@@ -593,13 +619,13 @@ static void R_CheckPortableExtensions( void ) {
 	}
 
 	// GL_ARB shader objects / GLSL
-	glConfig.GLSLProgramAvailable =
-		R_CheckExtension( "GL_ARB_shader_objects" ) &&
-		R_CheckExtension( "GL_ARB_vertex_shader" ) &&
-		R_CheckExtension( "GL_ARB_fragment_shader" ) &&
-		R_CheckExtension( "GL_ARB_shading_language_100" );
+	glConfig.GLSLProgramAvailable = R_CanUseGLSLPrograms();
 	if ( glConfig.GLSLProgramAvailable ) {
 		common->Printf( "...using GL_ARB shader objects + GLSL\n" );
+	} else if ( r_inhibitFragmentProgram.GetBool() ) {
+		common->Printf( "X..GLSL shader objects disabled by r_inhibitFragmentProgram\n" );
+	} else if ( idAsyncNetwork::serverDedicated.GetBool() ) {
+		common->Printf( "X..GLSL shader objects disabled on dedicated server\n" );
 	} else {
 		common->Printf( "X..GLSL shader objects not found\n" );
 	}
@@ -2276,10 +2302,20 @@ void GfxInfo_f( const idCmdArgs &args ) {
 
 	const char *active[2] = { "", " (ACTIVE)" };
 
+	common->Printf( "Requested renderer path: %s\n", r_renderer.GetString() );
+	common->Printf( "Active renderer path: %s\n", r_actualRenderer.GetString() );
+
 	if ( glConfig.allowARB2Path ) {
 		common->Printf( "ARB2 path ENABLED%s\n", active[tr.backEndRenderer == BE_ARB2] );
 	} else {
 		common->Printf( "ARB2 path disabled\n" );
+	}
+
+	if ( glConfig.preferNV20Path && !glConfig.allowNV20Path ) {
+		common->Printf( "Legacy NV20 compatibility preference detected, but no NV20 backend is available in this build\n" );
+	}
+	if ( glConfig.preferSimpleLighting ) {
+		common->Printf( "Simple lighting compatibility mode preferred for this renderer\n" );
 	}
 
 	//=============================

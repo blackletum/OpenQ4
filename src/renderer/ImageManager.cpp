@@ -38,6 +38,11 @@ idImageManager	imageManager;
 idImageManager * globalImages = &imageManager;
 
 idCVar preLoad_Images( "preLoad_Images", "1", CVAR_SYSTEM | CVAR_BOOL, "preload images during beginlevelload" );
+idCVar image_ignoreHighQuality(
+	"image_ignoreHighQuality",
+	"0",
+	CVAR_RENDERER | CVAR_BOOL,
+	"ignore material highquality / uncompressed image usage hints" );
 
 static void R_NormalizeInternalImageName( idStr& name ) {
 	// Runtime render targets are referenced from materials with option hashes
@@ -327,16 +332,18 @@ idImage *idImageManager::ImageFromFunction( const char *_name, void (*generatorF
 GetImageWithParameters
 ==============
 */
-idImage	*idImageManager::GetImageWithParameters( const char *_name, textureFilter_t filter, textureRepeat_t repeat, textureUsage_t usage, cubeFiles_t cubeMap ) const {
+idImage	*idImageManager::GetImageWithParameters( const char *_name, textureFilter_t filter, textureRepeat_t repeat, textureUsage_t usage, cubeFiles_t cubeMap, bool allowDownSize, unsigned int flags ) const {
 	if ( !_name || !_name[0] || idStr::Icmp( _name, "default" ) == 0 || idStr::Icmp( _name, "_default" ) == 0 ) {
 		declManager->MediaPrint( "DEFAULTED\n" );
 		return globalImages->defaultImage;
 	}
-	if ( idStr::Icmpn( _name, "fonts", 5 ) == 0 || idStr::Icmpn( _name, "newfonts", 8 ) == 0 ) {
-		usage = TD_FONT;
-	}
-	if ( R_IsQ4LightImageNamespace( _name ) ) {
-		usage = TD_LIGHT;
+	if ( usage == TD_DEFAULT ) {
+		if ( idStr::Icmpn( _name, "fonts", 5 ) == 0 || idStr::Icmpn( _name, "newfonts", 8 ) == 0 ) {
+			usage = TD_FONT;
+		}
+		if ( R_IsQ4LightImageNamespace( _name ) ) {
+			usage = TD_LIGHT;
+		}
 	}
 	// strip any .tga file extensions from anywhere in the _name, including image program parameters
 	idStr name = _name;
@@ -359,7 +366,7 @@ idImage	*idImageManager::GetImageWithParameters( const char *_name, textureFilte
 				// share the image data
 				continue;
 			}
-			if ( image->usage != usage ) {
+			if ( image->usage != usage || image->allowDownSize != allowDownSize || image->flags != flags ) {
 				// If an image is used differently then we need 2 copies of it because usage affects the way it's compressed and swizzled
 				continue;
 			}
@@ -377,7 +384,7 @@ Loading of the image may be deferred for dynamic loading.
 ==============
 */
 idImage	*idImageManager::ImageFromFile( const char *_name, textureFilter_t filter, 
-						 textureRepeat_t repeat, textureUsage_t usage, cubeFiles_t cubeMap ) {
+						 textureRepeat_t repeat, textureUsage_t usage, cubeFiles_t cubeMap, bool allowDownSize, unsigned int flags ) {
 
 	if ( !_name || !_name[0] || idStr::Icmp( _name, "default" ) == 0 || idStr::Icmp( _name, "_default" ) == 0 ) {
 		declManager->MediaPrint( "DEFAULTED\n" );
@@ -417,15 +424,18 @@ idImage	*idImageManager::ImageFromFile( const char *_name, textureFilter_t filte
 				// share the image data
 				continue;
 			}
-			if ( image->usage != usage ) {
+			if ( image->usage != usage || image->flags != flags ) {
 				// If an image is used differently then we need 2 copies of it because usage affects the way it's compressed and swizzled
 				continue;
 			}
 
+			const bool mergedAllowDownSize = image->allowDownSize && allowDownSize;
+			const bool allowDownSizeChanged = image->allowDownSize != mergedAllowDownSize;
+			image->allowDownSize = mergedAllowDownSize;
 			image->usage = usage;
 			image->levelLoadReferenced = true;
 
-			if ( ( !insideLevelLoad  || preloadingMapImages ) && !image->IsLoaded() ) {
+			if ( ( !insideLevelLoad  || preloadingMapImages ) && ( !image->IsLoaded() || allowDownSizeChanged ) ) {
 				image->referencedOutsideLevelLoad = ( !insideLevelLoad && !preloadingMapImages );
 				image->ActuallyLoadImage( false );	// load is from front end
 				declManager->MediaPrint( "%ix%i %s (reload for mixed referneces)\n", image->GetUploadWidth(), image->GetUploadHeight(), image->GetName() );
@@ -442,6 +452,8 @@ idImage	*idImageManager::ImageFromFile( const char *_name, textureFilter_t filte
 	image->usage = usage;
 	image->filter = filter;
 	image->repeat = repeat;
+	image->allowDownSize = allowDownSize;
+	image->flags = flags;
 
 	image->levelLoadReferenced = true;
 
@@ -466,17 +478,21 @@ The texture can then be streamed in lazily on first bind.
 ===============
 */
 idImage *idImageManager::ImageHandleDeferred( const char *_name, textureFilter_t filter,
-						 textureRepeat_t repeat, textureUsage_t usage, cubeFiles_t cubeMap ) {
+						 textureRepeat_t repeat, textureUsage_t usage, cubeFiles_t cubeMap, bool allowDownSize, unsigned int flags ) {
 
 	if ( !_name || !_name[0] || idStr::Icmp( _name, "default" ) == 0 || idStr::Icmp( _name, "_default" ) == 0 ) {
 		declManager->MediaPrint( "DEFAULTED\n" );
 		return globalImages->defaultImage;
 	}
-	if ( idStr::Icmpn( _name, "fonts", 5 ) == 0 || idStr::Icmpn( _name, "newfonts", 8 ) == 0 ) {
-		usage = TD_FONT;
-	}
-	if ( R_IsQ4LightImageNamespace( _name ) ) {
-		usage = TD_LIGHT;
+	if ( usage == TD_DEFAULT ) {
+		// Keep the legacy convenience remap for generic callers, but preserve any
+		// explicit material-requested usage class such as TD_HIGH_QUALITY.
+		if ( idStr::Icmpn( _name, "fonts", 5 ) == 0 || idStr::Icmpn( _name, "newfonts", 8 ) == 0 ) {
+			usage = TD_FONT;
+		}
+		if ( R_IsQ4LightImageNamespace( _name ) ) {
+			usage = TD_LIGHT;
+		}
 	}
 
 	idStr name = _name;
@@ -497,9 +513,10 @@ idImage *idImageManager::ImageHandleDeferred( const char *_name, textureFilter_t
 			if ( image->filter != filter || image->repeat != repeat ) {
 				continue;
 			}
-			if ( image->usage != usage ) {
+			if ( image->usage != usage || image->flags != flags ) {
 				continue;
 			}
+			image->allowDownSize = image->allowDownSize && allowDownSize;
 			return image;
 		}
 	}
@@ -509,6 +526,8 @@ idImage *idImageManager::ImageHandleDeferred( const char *_name, textureFilter_t
 	image->usage = usage;
 	image->filter = filter;
 	image->repeat = repeat;
+	image->allowDownSize = allowDownSize;
+	image->flags = flags;
 	return image;
 }
 

@@ -101,8 +101,18 @@ static const char *R_ResolveQ4SpecialImageName( const char *name ) {
 }
 
 static idImage *R_LoadMaterialImage( const char *name, textureFilter_t filter, textureRepeat_t repeat,
-	textureUsage_t usage, cubeFiles_t cubeMap = CF_2D ) {
-	return globalImages->ImageFromFile( R_ResolveQ4SpecialImageName( name ), filter, repeat, usage, cubeMap );
+	textureUsage_t usage, cubeFiles_t cubeMap = CF_2D, bool allowDownSize = true, unsigned int flags = 0 ) {
+	return globalImages->ImageFromFile( R_ResolveQ4SpecialImageName( name ), filter, repeat, usage, cubeMap, allowDownSize, flags );
+}
+
+static int R_FindMD5RVertexProgramForStageProgram( const char *programName ) {
+	if ( programName == NULL || programName[0] == '\0' ) {
+		return 0;
+	}
+
+	idStr md5rProgram = "md5r";
+	md5rProgram += programName;
+	return R_FindARBProgram( GL_VERTEX_PROGRAM_ARB, md5rProgram.c_str() );
 }
 
 static bool R_IsQ4LightImageNamespace( const char *name ) {
@@ -119,6 +129,26 @@ static textureUsage_t R_DefaultStageUsageForMaterial( const char *materialName )
 		return TD_LIGHT;
 	}
 	return TD_DEFAULT;
+}
+
+static textureUsage_t R_ApplyMaterialHighQualityUsage( textureUsage_t usage, bool forceHighQuality ) {
+	// Retail Quake 4 routes authored "highquality"/"uncompressed" image hints
+	// through a distinct usage bucket. OpenQ4 keeps that separate identity so
+	// those stages do not collapse onto generic caches, while still letting the
+	// modern loader keep its higher-quality uncompressed binary-image pipeline.
+	if ( forceHighQuality || !image_ignoreHighQuality.GetBool() ) {
+		return TD_HIGH_QUALITY;
+	}
+	return usage;
+}
+
+static unsigned int R_ApplyMaterialNoMipFlags( unsigned int flags ) {
+	// Retail only promoted "nomips" while resource builds were active. OpenQ4's
+	// equivalent build switch is the boolean com_makingBuild cvar.
+	if ( com_makingBuild.GetBool() ) {
+		flags |= IMAGEFLAG_NOMIPS;
+	}
+	return flags;
 }
 
 static bool R_IsSceneCaptureImage( const idImage *image ) {
@@ -768,10 +798,11 @@ int idMaterial::ParseTerm( idLexer &src ) {
 		return GetExpressionConstant( (float) glConfig.ARBFragmentProgramAvailable );
 	}
 	if ( !token.Icmp( "glslPrograms" ) ) {
-		// Quake 4 materials gate GLSL-specific stages through this expression.
-		// Use actual runtime capability so decal materials can pick the authored
-		// GLSL branch when available and fall back otherwise.
-		return GetExpressionConstant( glConfig.GLSLProgramAvailable ? 1.0f : 0.0f );
+		// Retail Quake 4 keeps glslPrograms as a runtime capability opcode so
+		// authored branches evaluate against the active backend state instead of
+		// being folded to a parse-time constant.
+		pd->registersAreConstant = false;
+		return EmitOp( 0, 0, OP_TYPE_GLSL_ENABLED );
 	}
 	if ( !token.Icmp( "POTCorrectionX" ) ) {
 		const int width = Max( 1, glConfig.vidWidth );
@@ -1177,12 +1208,14 @@ void idMaterial::ParseFragmentMap( idLexer &src, newShaderStage_t *newStage ) {
 	textureUsage_t		td;
 	cubeFiles_t			cubeMap;
 	bool				allowPicmip;
+	unsigned int		imageFlags;
 	idToken				token;
 
 	tf = TF_DEFAULT;
 	trp = TR_REPEAT;
 	td = TD_DEFAULT;
 	allowPicmip = true;
+	imageFlags = 0;
 	cubeMap = CF_2D;
 
 	src.ReadTokenOnLine( &token );
@@ -1242,18 +1275,20 @@ void idMaterial::ParseFragmentMap( idLexer &src, newShaderStage_t *newStage ) {
 			continue;
 		}
 		if ( !token.Icmp( "forceHighQuality" ) ) {
-			//td = TD_HIGH_QUALITY;
+			td = R_ApplyMaterialHighQualityUsage( td, true );
 			continue;
 		}
 
 		if ( !token.Icmp( "uncompressed" ) || !token.Icmp( "highquality" ) ) {
-			//if ( !globalImages->image_ignoreHighQuality.GetInteger() ) {
-			//	td = TD_HIGH_QUALITY;
-			//}
+			td = R_ApplyMaterialHighQualityUsage( td, false );
 			continue;
 		}
 		if ( !token.Icmp( "nopicmip" ) ) {
 			allowPicmip = false;
+			continue;
+		}
+		if ( !token.Icmp( "nomips" ) ) {
+			imageFlags = R_ApplyMaterialNoMipFlags( imageFlags );
 			continue;
 		}
 
@@ -1290,8 +1325,8 @@ void idMaterial::ParseFragmentMap( idLexer &src, newShaderStage_t *newStage ) {
 	str = R_ParsePastImageProgram( src );
 
 	newStage->fragmentProgramBindings[unit] = LEGACY_FRAGMENT_BINDING_NONE;
-	newStage->fragmentProgramImages[unit] = 
-		R_LoadMaterialImage( str, tf, trp, td, cubeMap );
+	newStage->fragmentProgramImages[unit] =
+		R_LoadMaterialImage( str, tf, trp, td, cubeMap, allowPicmip, imageFlags );
 	if ( !newStage->fragmentProgramImages[unit] ) {
 		newStage->fragmentProgramImages[unit] = globalImages->defaultImage;
 	}
@@ -1483,6 +1518,7 @@ void idMaterial::ParseShaderTexture( idLexer &src, newShaderStage_t *newStage ) 
 	textureUsage_t		td;
 	cubeFiles_t			cubeMap;
 	bool				allowPicmip;
+	unsigned int		imageFlags;
 	bool				explicitFilter;
 	bool				explicitRepeat;
 	idToken				token;
@@ -1513,6 +1549,7 @@ void idMaterial::ParseShaderTexture( idLexer &src, newShaderStage_t *newStage ) 
 	trp = TR_REPEAT;
 	td = TD_DEFAULT;
 	allowPicmip = true;
+	imageFlags = 0;
 	explicitFilter = false;
 	explicitRepeat = false;
 	cubeMap = CF_2D;
@@ -1569,9 +1606,11 @@ void idMaterial::ParseShaderTexture( idLexer &src, newShaderStage_t *newStage ) 
 			continue;
 		}
 		if ( !token.Icmp( "forceHighQuality" ) ) {
+			td = R_ApplyMaterialHighQualityUsage( td, true );
 			continue;
 		}
 		if ( !token.Icmp( "uncompressed" ) || !token.Icmp( "highquality" ) ) {
+			td = R_ApplyMaterialHighQualityUsage( td, false );
 			continue;
 		}
 		if ( !token.Icmp( "nopicmip" ) ) {
@@ -1579,6 +1618,7 @@ void idMaterial::ParseShaderTexture( idLexer &src, newShaderStage_t *newStage ) 
 			continue;
 		}
 		if ( !token.Icmp( "nomips" ) ) {
+			imageFlags = R_ApplyMaterialNoMipFlags( imageFlags );
 			continue;
 		}
 
@@ -1625,7 +1665,7 @@ void idMaterial::ParseShaderTexture( idLexer &src, newShaderStage_t *newStage ) 
 
 	str = R_ParsePastImageProgram( src );
 	newStage->shaderTextureImages[slot] =
-		R_LoadMaterialImage( str, tf, trp, td, cubeMap );
+		R_LoadMaterialImage( str, tf, trp, td, cubeMap, allowPicmip, imageFlags );
 	if ( !newStage->shaderTextureImages[slot] ) {
 		newStage->shaderTextureImages[slot] = globalImages->defaultImage;
 	}
@@ -1704,6 +1744,7 @@ void idMaterial::ParseStage( idLexer &src, const textureRepeat_t trpDefault ) {
 	textureUsage_t		td;
 	cubeFiles_t			cubeMap;
 	bool				allowPicmip;
+	unsigned int		imageFlags;
 	char				imageName[MAX_IMAGE_NAME];
 	int					a, b;
 	int					matrix[2][3];
@@ -1719,6 +1760,7 @@ void idMaterial::ParseStage( idLexer &src, const textureRepeat_t trpDefault ) {
 	trp = trpDefault;
 	td = R_DefaultStageUsageForMaterial( GetName() );
 	allowPicmip = true;
+	imageFlags = 0;
 	cubeMap = CF_2D;
 
 	imageName[0] = 0;
@@ -1775,6 +1817,7 @@ void idMaterial::ParseStage( idLexer &src, const textureRepeat_t trpDefault ) {
 
 // jmarshall: quake 4 materials
 		if (!token.Icmp("nomips")) {
+			imageFlags = R_ApplyMaterialNoMipFlags( imageFlags );
 			continue;
 		}
 // jmarshall end
@@ -1906,13 +1949,11 @@ void idMaterial::ParseStage( idLexer &src, const textureRepeat_t trpDefault ) {
 			continue;
 		}
 		if ( !token.Icmp( "uncompressed" ) || !token.Icmp( "highquality" ) ) {
-			//if ( !globalImages->image_ignoreHighQuality.GetInteger() ) {
-			//	td = TD_HIGH_QUALITY;
-			//}
+			td = R_ApplyMaterialHighQualityUsage( td, false );
 			continue;
 		}
 		if ( !token.Icmp( "forceHighQuality" ) ) {
-			//td = TD_HIGH_QUALITY;
+			td = R_ApplyMaterialHighQualityUsage( td, true );
 			continue;
 		}
 		if ( !token.Icmp( "nopicmip" ) ) {
@@ -2173,10 +2214,7 @@ void idMaterial::ParseStage( idLexer &src, const textureRepeat_t trpDefault ) {
 			if ( src.ReadTokenOnLine( &token ) ) {
 				newStage.vertexProgram = R_FindARBProgram( GL_VERTEX_PROGRAM_ARB, token.c_str() );
 				newStage.fragmentProgram = R_FindARBProgram( GL_FRAGMENT_PROGRAM_ARB, token.c_str() );
-
-				idStr md5rProgram = "md5r";
-				md5rProgram += token.c_str();
-				newStage.md5rVertexProgram = R_FindARBProgram( GL_VERTEX_PROGRAM_ARB, md5rProgram.c_str() );
+				newStage.md5rVertexProgram = R_FindMD5RVertexProgramForStageProgram( token.c_str() );
 			}
 			continue;
 		}
@@ -2189,6 +2227,7 @@ void idMaterial::ParseStage( idLexer &src, const textureRepeat_t trpDefault ) {
 		if ( !token.Icmp( "vertexProgram" ) ) {
 			if ( src.ReadTokenOnLine( &token ) ) {
 				newStage.vertexProgram = R_FindARBProgram( GL_VERTEX_PROGRAM_ARB, token.c_str() );
+				newStage.md5rVertexProgram = R_FindMD5RVertexProgramForStageProgram( token.c_str() );
 			}
 			continue;
 		}
@@ -2295,7 +2334,7 @@ void idMaterial::ParseStage( idLexer &src, const textureRepeat_t trpDefault ) {
 
 	// now load the image with all the parms we parsed
 	if ( imageName[0] ) {
-		ts->image = R_LoadMaterialImage( imageName, tf, trp, td, cubeMap );
+		ts->image = R_LoadMaterialImage( imageName, tf, trp, td, cubeMap, allowPicmip, imageFlags );
 		if ( !ts->image ) {
 			ts->image = globalImages->defaultImage;
 		}
@@ -3193,8 +3232,14 @@ char *opNames[] = {
 	"OP_TYPE_EQ",
 	"OP_TYPE_NE",
 	"OP_TYPE_AND",
-	"OP_TYPE_OR"
+	"OP_TYPE_OR",
+	"OP_TYPE_SOUND",
+	"OP_TYPE_GLSL_ENABLED"
 };
+
+static_assert(
+	( sizeof( opNames ) / sizeof( opNames[0] ) ) == ( OP_TYPE_GLSL_ENABLED + 1 ),
+	"opNames must stay in sync with expOpType_t" );
 
 void idMaterial::Print() const {
 	int			i;
@@ -3354,6 +3399,9 @@ void idMaterial::EvaluateRegisters( float *registers, const float shaderParms[MA
 				registers[op->c] = 0;
 			}
 			break;
+		case OP_TYPE_GLSL_ENABLED:
+			registers[op->c] = glConfig.GLSLProgramAvailable ? 1.0f : 0.0f;
+			break;
 		case OP_TYPE_GT:
 			registers[op->c] = registers[ op->a ] > registers[op->b];
 			break;
@@ -3462,6 +3510,9 @@ void idMaterial::EvaluateStageRegisters( int stageIndex, float *registers,
 			break;
 		case OP_TYPE_SOUND:
 			registers[op->c] = 0.0f;
+			break;
+		case OP_TYPE_GLSL_ENABLED:
+			registers[op->c] = glConfig.GLSLProgramAvailable ? 1.0f : 0.0f;
 			break;
 		case OP_TYPE_GT:
 			registers[op->c] = registers[ op->a ] > registers[op->b];

@@ -1056,6 +1056,8 @@ extern idCVar r_gamma;					// changes gamma tables
 extern idCVar r_brightness;				// changes gamma tables
 
 extern idCVar r_renderer;				// arb, nv10, nv20, r200, gl2, etc
+extern idCVar r_actualRenderer;			// actual active renderer backend after fallback
+extern idCVar r_useSimpleInteraction;	// use the simpler Quake 4 interaction program pair as a compatibility fallback
 extern idCVar r_interactionColorMode;	// interaction color mode: 0 auto, 1 packed env16.xy, 2 vector env16/env17
 extern idCVar r_shaderReport;			// shader diagnostics: 0 off, 1 summaries, 2 invalid-use warnings
 
@@ -1171,6 +1173,7 @@ extern idCVar r_skipOverlays;			// skip overlay surfaces
 extern idCVar r_skipROQ;
 
 extern idCVar r_ignoreGLErrors;
+extern idCVar image_ignoreHighQuality;
 
 extern idCVar r_forceLoadImages;		// draw all images to screen after registration
 extern idCVar r_demonstrateBug;			// used during development to show IHV's their problems

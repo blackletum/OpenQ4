@@ -79,6 +79,12 @@ static bool R_ShouldSuppressMissingImageWarning( const char * imageName ) {
 	return false;
 }
 
+static bool R_GetImageDownsizeLimit( textureUsage_t usage, bool allowDownSize, int &limit );
+static void R_ApplyImageDownsizePolicy( textureUsage_t usage, bool allowDownSize, int &width, int &height );
+static unsigned int R_GetImageDownsizeSignature( textureUsage_t usage, bool allowDownSize );
+static void R_DownsizeLoadedImageData( textureUsage_t usage, bool allowDownSize, byte *&pic, int &width, int &height );
+static void R_DownsizeLoadedCubeImageData( textureUsage_t usage, bool allowDownSize, byte *pics[6], int &size );
+
 /*
 ========================
 idImage::DeriveOpts
@@ -120,6 +126,14 @@ ID_INLINE void idImage::DeriveOpts() {
 			break;
 		case TD_LOOKUP_TABLE_RGB1:
 		case TD_LOOKUP_TABLE_RGBA:
+			opts.format = FMT_RGBA8;
+			break;
+		case TD_HIGH_QUALITY:
+			// Preserve Quake 4's distinct "uncompressed/highquality" image bucket,
+			// but keep it on OpenQ4's modern uncompressed RGBA8 path rather than
+			// reviving older compressed-driver behavior.
+			opts.gammaMips = false;
+			opts.colorFormat = CFM_DEFAULT;
 			opts.format = FMT_RGBA8;
 			break;
 		default:
@@ -188,7 +202,10 @@ ID_INLINE void idImage::DeriveOpts() {
 	if ( opts.numLevels == 0 ) {
 		opts.numLevels = 1;
 
-		if ( filter == TF_LINEAR || filter == TF_NEAREST ) {
+		if ( ( flags & IMAGEFLAG_NOMIPS ) != 0 ) {
+			// Keep Quake 4's "nomips" semantic as a single-level texture, but
+			// let the sampler policy decide the best modern filtering for that level.
+		} else if ( filter == TF_LINEAR || filter == TF_NEAREST ) {
 			// don't create mip maps if we aren't going to be using them
 		} else {
 			int	temp_width = opts.width;
@@ -306,13 +323,20 @@ GetGeneratedName
 name contains GetName() upon entry
 ===============
 */
- void idImage::GetGeneratedName( idStr &_name, const textureUsage_t &_usage, const cubeFiles_t &_cube ) {
+ void idImage::GetGeneratedName( idStr &_name, const textureUsage_t &_usage, const cubeFiles_t &_cube, bool allowDownSize, unsigned int flags ) {
 	idStr extension;
 
 	_name.ExtractFileExtension( extension );
 	_name.StripFileExtension();
 
 	_name += va( "#__%02d%02d", (int)_usage, (int)_cube );
+	const unsigned int downsizeSignature = R_GetImageDownsizeSignature( _usage, allowDownSize );
+	if ( downsizeSignature != 0 ) {
+		_name += va( "d%08x", downsizeSignature );
+	}
+	if ( flags != 0 ) {
+		_name += va( "f%08x", flags );
+	}
 	if ( extension.Length() > 0 ) {
 		_name.SetFileExtension( extension );
 	}
@@ -361,7 +385,7 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 	DeriveOpts();
 
 	idStr generatedName = GetName();
-	GetGeneratedName( generatedName, usage, cubeFiles );
+	GetGeneratedName( generatedName, usage, cubeFiles, allowDownSize, flags );
 
 	idBinaryImage im( generatedName );
 	binaryFileTime = im.LoadFromGeneratedFile( sourceFileTime );
@@ -429,6 +453,7 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 				return;
 			}
 
+			R_DownsizeLoadedCubeImageData( usage, allowDownSize, pics, size );
 			opts.textureType = TT_CUBIC;
 			repeat = TR_CLAMP;
 			opts.width = size;
@@ -471,6 +496,7 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 				return;
 			}
 
+			R_DownsizeLoadedImageData( usage, allowDownSize, pic, width, height );
 			opts.width = width;
 			opts.height = height;
 			opts.numLevels = 0;
@@ -557,6 +583,102 @@ int MakePowerOfTwo( int num ) {
 	for ( pot = 1; pot < num; pot <<= 1 ) {
 	}
 	return pot;
+}
+
+static bool R_GetImageDownsizeLimit( textureUsage_t usage, bool allowDownSize, int &limit ) {
+	limit = 0;
+
+	if ( !allowDownSize ) {
+		return false;
+	}
+
+	if ( usage == TD_SPECULAR && cvarSystem->GetCVarInteger( "image_downSizeSpecular" ) != 0 ) {
+		limit = cvarSystem->GetCVarInteger( "image_downSizeSpecularLimit" );
+	} else if ( usage == TD_BUMP && cvarSystem->GetCVarInteger( "image_downSizeBump" ) != 0 ) {
+		limit = cvarSystem->GetCVarInteger( "image_downSizeBumpLimit" );
+	} else if ( cvarSystem->GetCVarInteger( "image_downSize" ) != 0 || cvarSystem->GetCVarInteger( "image_downsize" ) != 0 ) {
+		limit = cvarSystem->GetCVarInteger( "image_downSizeLimit" );
+	}
+
+	return limit > 0;
+}
+
+static void R_ApplyImageDownsizePolicy( textureUsage_t usage, bool allowDownSize, int &width, int &height ) {
+	int limit = 0;
+	if ( !R_GetImageDownsizeLimit( usage, allowDownSize, limit ) ) {
+		return;
+	}
+
+	while ( width > limit || height > limit ) {
+		const int nextWidth = Max( 1, width >> 1 );
+		const int nextHeight = Max( 1, height >> 1 );
+		if ( nextWidth == width && nextHeight == height ) {
+			break;
+		}
+		width = nextWidth;
+		height = nextHeight;
+	}
+}
+
+static unsigned int R_GetImageDownsizeSignature( textureUsage_t usage, bool allowDownSize ) {
+	int limit = 0;
+	if ( !R_GetImageDownsizeLimit( usage, allowDownSize, limit ) ) {
+		return 0;
+	}
+
+	return ( static_cast<unsigned int>( limit ) << 8 ) ^ static_cast<unsigned int>( usage ) ^ 0x6F713400u;
+}
+
+static void R_DownsizeLoadedImageData( textureUsage_t usage, bool allowDownSize, byte *&pic, int &width, int &height ) {
+	if ( pic == NULL || width <= 0 || height <= 0 ) {
+		return;
+	}
+
+	int scaledWidth = width;
+	int scaledHeight = height;
+	R_ApplyImageDownsizePolicy( usage, allowDownSize, scaledWidth, scaledHeight );
+	if ( scaledWidth == width && scaledHeight == height ) {
+		return;
+	}
+
+	byte *resampled = R_ResampleTexture( pic, width, height, scaledWidth, scaledHeight );
+	if ( resampled == NULL ) {
+		return;
+	}
+
+	Mem_Free( pic );
+	pic = resampled;
+	width = scaledWidth;
+	height = scaledHeight;
+}
+
+static void R_DownsizeLoadedCubeImageData( textureUsage_t usage, bool allowDownSize, byte *pics[6], int &size ) {
+	if ( pics == NULL || size <= 0 ) {
+		return;
+	}
+
+	int scaledSize = size;
+	int scaledHeight = size;
+	R_ApplyImageDownsizePolicy( usage, allowDownSize, scaledSize, scaledHeight );
+	if ( scaledSize == size && scaledHeight == size ) {
+		return;
+	}
+
+	for ( int i = 0; i < 6; i++ ) {
+		if ( pics[i] == NULL ) {
+			continue;
+		}
+
+		byte *resampled = R_ResampleTexture( pics[i], size, size, scaledSize, scaledSize );
+		if ( resampled == NULL ) {
+			continue;
+		}
+
+		Mem_Free( pics[i] );
+		pics[i] = resampled;
+	}
+
+	size = scaledSize;
 }
 
 /*

@@ -60,14 +60,23 @@ typedef enum {
 	ARB2_MD5R_MODEL_ROW_0,
 	ARB2_MD5R_MODEL_ROW_1,
 	ARB2_MD5R_MODEL_ROW_2,
-	ARB2_MD5R_STAGE_RESERVED,
+	// Retail md5r*.vp programs read programmable stage vertex-color controls
+	// from c[90]/c[91] and leave c[92] as the preserved reserved slot.
 	ARB2_MD5R_STAGE_VERTEX_COLOR_MODULATE,
 	ARB2_MD5R_STAGE_VERTEX_COLOR_ADD,
+	ARB2_MD5R_STAGE_RESERVED,
 	ARB2_MD5R_FOG_DISTANCE_PLANE,
 	ARB2_MD5R_FOG_DISTANCE_BIAS,
 	ARB2_MD5R_FOG_ENTER_PLANE_T,
 	ARB2_MD5R_FOG_ENTER_PLANE_S
 } arb2ProgramParameter_t;
+
+static_assert(
+	ARB2_MD5R_STAGE_VERTEX_COLOR_MODULATE == 90 &&
+	ARB2_MD5R_STAGE_VERTEX_COLOR_ADD == 91 &&
+	ARB2_MD5R_STAGE_RESERVED == 92 &&
+	ARB2_MD5R_FOG_DISTANCE_PLANE == 93,
+	"Packed MD5R stage/fog registers must stay aligned with retail Quake 4 ARB programs" );
 
 static const int ARB2_MD5R_MAX_PALETTE_TRANSFORMS = ARB2_MD5R_MVP_ROW_0 / 3;
 
@@ -88,6 +97,7 @@ static const drawSurf_t *g_packedStageSurf = NULL;
 static int g_packedStageVertexFormatIndex = -1;
 
 static GLuint RB_CurrentInteractionProgramIdent( GLenum target );
+static const char *RB_CurrentInteractionProgramFamilyName( void );
 static void RB_WarnInteractionShaderRescueMode( void );
 
 static const float RB_ARB2_MD5RIdentityTextureMatrixRows[2][4] = {
@@ -7258,6 +7268,8 @@ static progDef_t	progs[MAX_GLPROGS] = {
 	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_ENVIRONMENT, "environment.vfp" },
 	{ GL_VERTEX_PROGRAM_ARB, VPROG_GLASSWARP, "arbVP_glasswarp.txt" },
 	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_GLASSWARP, "arbFP_glasswarp.txt" },
+	{ GL_VERTEX_PROGRAM_ARB, VPROG_SIMPLE_INTERACTION, "SimpleInteraction.vfp" },
+	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_SIMPLE_INTERACTION, "SimpleInteraction.vfp" },
 	// Retail Quake 4 reserves fixed vertex-program ids for the packed MD5R
 	// families; register the stock glprogs here so dormant bind paths can
 	// resolve those ids without falling back to dynamic PROG_USER entries.
@@ -7350,7 +7362,23 @@ static GLuint RB_CurrentInteractionProgramIdent( GLenum target ) {
 		return ( target == GL_VERTEX_PROGRAM_ARB ) ? VPROG_TEST : FPROG_TEST;
 	}
 
+	if ( r_useSimpleInteraction.GetBool() ) {
+		return ( target == GL_VERTEX_PROGRAM_ARB ) ? VPROG_SIMPLE_INTERACTION : FPROG_SIMPLE_INTERACTION;
+	}
+
 	return ( target == GL_VERTEX_PROGRAM_ARB ) ? VPROG_INTERACTION : FPROG_INTERACTION;
+}
+
+static const char *RB_CurrentInteractionProgramFamilyName( void ) {
+	if ( r_testARBProgram.GetBool() ) {
+		return "test";
+	}
+
+	if ( r_useSimpleInteraction.GetBool() ) {
+		return "simple";
+	}
+
+	return "interaction";
 }
 
 static void RB_WarnInvalidARBProgramUse( progDef_t *prog, GLenum target, GLuint ident, const char *usage, bool required ) {
@@ -7644,6 +7672,7 @@ void R_ReportShaderPrograms_f( const idCmdArgs &args ) {
 		validCount,
 		invalidCount,
 		RB_CurrentInteractionProgramsValid() ? "off" : "on" );
+	common->Printf( "ARB interaction family: %s\n", RB_CurrentInteractionProgramFamilyName() );
 	common->Printf( "GLSL shadow projected: %s\n",
 		RB_ShadowProgramStatusName( g_shadowMapProgram.programObject, g_shadowMapProgram.programValid, g_shadowMapProgram.programGeneration ) );
 	common->Printf( "GLSL material interaction: %s\n",
@@ -7671,6 +7700,8 @@ R_ARB2_Init
 */
 void R_ARB2_Init( void ) {
 	glConfig.allowARB2Path = false;
+	glConfig.preferNV20Path = false;
+	glConfig.preferSimpleLighting = false;
 
 	common->Printf( "---------- R_ARB2_Init ----------\n" );
 
@@ -7680,6 +7711,32 @@ void R_ARB2_Init( void ) {
 	}
 
 	common->Printf( "Available.\n" );
+
+	const idStr renderer = ( glConfig.renderer_string != NULL ) ? glConfig.renderer_string : "";
+	const bool legacyGeForceFX =
+		idStr::FindText( renderer.c_str(), "GeForce", false ) != -1 &&
+		( idStr::FindText( renderer.c_str(), "5200", false ) != -1 ||
+		  idStr::FindText( renderer.c_str(), "5600", false ) != -1 );
+	const bool legacyRadeonSimpleLighting =
+		idStr::FindText( renderer.c_str(), "RADEON", false ) != -1 &&
+		( idStr::FindText( renderer.c_str(), "9700", false ) != -1 ||
+		  idStr::FindText( renderer.c_str(), "9600", false ) != -1 );
+
+	if ( legacyGeForceFX ) {
+		if ( glConfig.allowNV20Path ) {
+			glConfig.preferNV20Path = true;
+			common->Printf( "%s: prefers NV20 compatibility path\n", renderer.c_str() );
+		} else {
+			common->Printf(
+				"%s: retail would prefer the NV20 compatibility path, but OpenQ4 keeps ARB2 because the legacy NV20 backend is not shipped\n",
+				renderer.c_str() );
+		}
+	}
+
+	if ( legacyRadeonSimpleLighting ) {
+		glConfig.preferSimpleLighting = true;
+		common->Printf( "%s: prefers simple lighting\n", renderer.c_str() );
+	}
 
 	common->Printf( "---------------------------------\n" );
 

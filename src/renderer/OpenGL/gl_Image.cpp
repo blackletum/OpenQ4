@@ -221,9 +221,11 @@ void idImage::SetTexParameters() {
 	}
 #endif
 
+	const bool hasMipChain = opts.numLevels > 1;
+
 	switch( filter ) {
 		case TF_DEFAULT:
-			glTexParameterf(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+			glTexParameterf(target, GL_TEXTURE_MIN_FILTER, hasMipChain ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
 			glTexParameterf( target, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
 			break;
 		case TF_LINEAR:
@@ -240,7 +242,7 @@ void idImage::SetTexParameters() {
 
 	{
 		// only do aniso filtering on mip mapped images
-		if ( filter == TF_DEFAULT ) {
+		if ( filter == TF_DEFAULT && hasMipChain ) {
 			int aniso = glConfig.maxTextureAnisotropy;
 			if ( aniso < 0 ) {
 				aniso = 0;

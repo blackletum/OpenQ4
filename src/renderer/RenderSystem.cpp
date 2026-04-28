@@ -37,6 +37,68 @@ idRenderSystemLocal	tr;
 idRenderSystem	*renderSystem = &tr;
 
 /*
+==========================
+R_GetBackEndRendererName
+==========================
+*/
+static const char *R_GetBackEndRendererName( backEndName_t renderer ) {
+	switch ( renderer ) {
+		case BE_ARB2:
+			return "ARB2";
+		default:
+			return "BAD";
+	}
+}
+
+/*
+==============================
+R_IsLegacyBackEndRequest
+==============================
+*/
+static bool R_IsLegacyBackEndRequest( const char *rendererName ) {
+	if ( rendererName == NULL || rendererName[0] == '\0' ) {
+		return false;
+	}
+
+	return idStr::Icmp( rendererName, "arb" ) == 0
+		|| idStr::Icmp( rendererName, "nv10" ) == 0
+		|| idStr::Icmp( rendererName, "nv20" ) == 0
+		|| idStr::Icmp( rendererName, "r200" ) == 0
+		|| idStr::Icmp( rendererName, "Cg" ) == 0
+		|| idStr::Icmp( rendererName, "exp" ) == 0;
+}
+
+/*
+==============================
+R_RequestBackEndRenderer
+==============================
+*/
+static backEndName_t R_RequestBackEndRenderer( const char *rendererName ) {
+	if ( rendererName == NULL || rendererName[0] == '\0' || idStr::Icmp( rendererName, "best" ) == 0 ) {
+		return BE_BAD;
+	}
+
+	if ( idStr::Icmp( rendererName, "arb2" ) == 0 ) {
+		return glConfig.allowARB2Path ? BE_ARB2 : BE_BAD;
+	}
+
+	return BE_BAD;
+}
+
+/*
+===============================
+R_PickBestBackEndRenderer
+===============================
+*/
+static backEndName_t R_PickBestBackEndRenderer() {
+	if ( glConfig.allowARB2Path ) {
+		return BE_ARB2;
+	}
+
+	return BE_BAD;
+}
+
+/*
 =========================
 R_IsMD5RRuntimeAvailable
 =========================
@@ -850,10 +912,27 @@ void idRenderSystemLocal::SetBackEndRenderer() {
 		return;
 	}
 
+	const char *requestedRendererName = r_renderer.GetString();
+
+	if ( !glConfig.isInitialized ) {
+		// idRenderSystemLocal::Init() still calls this before OpenGL capability
+		// probing has run. Preserve the legacy optimistic ARB2 placeholder there
+		// and defer the real request/fallback resolution until R_InitOpenGL().
+		backEndRenderer = BE_ARB2;
+		backEndRendererHasVertexPrograms = true;
+		backEndRendererMaxLight = 999.0f;
+		return;
+	}
+
 	bool oldVPstate = backEndRendererHasVertexPrograms;
 
-	// choose the best
-	backEndRenderer = BE_ARB2;
+	backEndRenderer = R_RequestBackEndRenderer( requestedRendererName );
+	if ( backEndRenderer == BE_BAD ) {
+		backEndRenderer = R_PickBestBackEndRenderer();
+	}
+	if ( backEndRenderer == BE_BAD ) {
+		common->FatalError( "SetBackEndRenderer: no supported renderSystem back end is available" );
+	}
 
 	backEndRendererHasVertexPrograms = false;
 	backEndRendererMaxLight = 1.0;
@@ -871,15 +950,31 @@ void idRenderSystemLocal::SetBackEndRenderer() {
 		common->FatalError( "SetbackEndRenderer: bad back end" );
 	}
 
+	r_actualRenderer.SetString( R_GetBackEndRendererName( backEndRenderer ) );
+
+	if ( requestedRendererName != NULL && requestedRendererName[0] != '\0' ) {
+		if ( R_IsLegacyBackEndRequest( requestedRendererName ) ) {
+			common->Warning(
+				"r_renderer \"%s\" requested, but OpenQ4 only ships the ARB2 backend; using %s instead",
+				requestedRendererName,
+				r_actualRenderer.GetString() );
+		} else if ( idStr::Icmp( requestedRendererName, "best" ) != 0 && idStr::Icmp( requestedRendererName, r_actualRenderer.GetString() ) != 0 ) {
+			common->Warning(
+				"r_renderer \"%s\" is unavailable on this renderer; using %s instead",
+				requestedRendererName,
+				r_actualRenderer.GetString() );
+		}
+	}
+
 	// clear the vertex cache if we are changing between
 	// using vertex programs and not, because specular and
 	// shadows will be different data
-	//if ( oldVPstate != backEndRendererHasVertexPrograms ) {
-	//	vertexCache.PurgeAll();
-	//	if ( primaryWorld ) {
-	//		primaryWorld->FreeInteractions();
-	//	}
-	//}
+	if ( oldVPstate != backEndRendererHasVertexPrograms ) {
+		vertexCache.PurgeAll();
+		if ( primaryWorld ) {
+			primaryWorld->FreeInteractions();
+		}
+	}
 
 	r_renderer.ClearModified();
 }

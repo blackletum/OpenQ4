@@ -57,6 +57,9 @@ typedef enum {
 	TD_LOOKUP_TABLE_RGBA,	// RGBA lookup table
 	TD_COVERAGE,			// coverage map for fill depth pass when YCoCG is used
 	TD_DEPTH,				// depth buffer copy for motion blur
+	// Preserve retail Quake 4's explicit high-quality / uncompressed material
+	// bucket without renumbering the existing generated-image cache keys.
+	TD_HIGH_QUALITY,
 } textureUsage_t;
 
 typedef enum {
@@ -64,6 +67,8 @@ typedef enum {
 	CF_NATIVE,		// _px, _nx, _py, etc, directly sent to GL
 	CF_CAMERA		// _forward, _back, etc, rotated and flipped as needed before sending to GL
 } cubeFiles_t;
+
+static const unsigned int IMAGEFLAG_NOMIPS = BIT( 0 );
 
 #include "ImageOpts.h"
 #include "BinaryImage.h"
@@ -162,7 +167,7 @@ public:
 	bool		IsLoaded() const { return texnum != TEXTURE_NOT_LOADED; }
 	uint64_t	GetStorageGeneration() const { return storageGeneration; }
 
-	static void			GetGeneratedName(idStr& _name, const textureUsage_t& _usage, const cubeFiles_t& _cube);
+	static void			GetGeneratedName(idStr& _name, const textureUsage_t& _usage, const cubeFiles_t& _cube, bool allowDownSize = true, unsigned int flags = 0);
 
 	GLuint		GetDeviceHandle(void) { return texnum; }
 private:
@@ -181,6 +186,8 @@ private:
 	// Sampler settings
 	textureFilter_t		filter;
 	textureRepeat_t		repeat;
+	bool				allowDownSize;
+	unsigned int		flags;
 
 	bool				referencedOutsideLevelLoad;
 	bool				levelLoadReferenced;	// for determining if it needs to be purged
@@ -213,6 +220,8 @@ ID_INLINE idImage::idImage(const char* name) : imgName(name) {
 	generatorFunction = NULL;
 	filter = TF_DEFAULT;
 	repeat = TR_REPEAT;
+	allowDownSize = true;
+	flags = 0;
 	usage = TD_DEFAULT;
 	cubeFiles = CF_2D;
 
@@ -252,18 +261,18 @@ public:
 	// grid pattern.
 	// Will automatically execute image programs if needed.
 	idImage* ImageFromFile(const char* name,
-		textureFilter_t filter, textureRepeat_t repeat, textureUsage_t usage, cubeFiles_t cubeMap = CF_2D);
+		textureFilter_t filter, textureRepeat_t repeat, textureUsage_t usage, cubeFiles_t cubeMap = CF_2D, bool allowDownSize = true, unsigned int flags = 0);
 
 	// Returns an image handle without forcing an immediate file load or level-load preload.
 	// The texture will be loaded on first use or an explicit Reload().
 	idImage* ImageHandleDeferred(const char* name,
-		textureFilter_t filter, textureRepeat_t repeat, textureUsage_t usage, cubeFiles_t cubeMap = CF_2D);
+		textureFilter_t filter, textureRepeat_t repeat, textureUsage_t usage, cubeFiles_t cubeMap = CF_2D, bool allowDownSize = true, unsigned int flags = 0);
 
 	// look for a loaded image, whatever the parameters
 	idImage* GetImage(const char* name) const;
 
 	// look for a loaded image, whatever the parameters
-	idImage* GetImageWithParameters(const char* name, textureFilter_t filter, textureRepeat_t repeat, textureUsage_t usage, cubeFiles_t cubeMap) const;
+	idImage* GetImageWithParameters(const char* name, textureFilter_t filter, textureRepeat_t repeat, textureUsage_t usage, cubeFiles_t cubeMap, bool allowDownSize = true, unsigned int flags = 0) const;
 
 	// The callback will be issued immediately, and later if images are reloaded or vid_restart
 	// The callback function should call one of the idImage::Generate* functions to fill in the data

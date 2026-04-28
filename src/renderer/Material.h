@@ -106,7 +106,8 @@ typedef enum {
 	OP_TYPE_NE,
 	OP_TYPE_AND,
 	OP_TYPE_OR,
-	OP_TYPE_SOUND
+	OP_TYPE_SOUND,
+	OP_TYPE_GLSL_ENABLED
 } expOpType_t;
 
 typedef enum {
