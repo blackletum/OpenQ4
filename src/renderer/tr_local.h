@@ -331,6 +331,23 @@ public:
 };
 
 
+typedef enum {
+	SHADOWMAP_CASTER_REJECT_UNKNOWN = 0,
+	SHADOWMAP_CASTER_REJECT_NO_SHADOW,
+	SHADOWMAP_CASTER_REJECT_VIEW_ONLY,
+	SHADOWMAP_CASTER_REJECT_DEPTH_HACK,
+	SHADOWMAP_CASTER_REJECT_NO_GEOMETRY,
+	SHADOWMAP_CASTER_REJECT_POINT_LIGHT_EMITTER,
+	SHADOWMAP_CASTER_REJECT_TRANSLUCENT_DISABLED,
+	SHADOWMAP_CASTER_REJECT_TRANSLUCENT_UNSUPPORTED,
+	SHADOWMAP_CASTER_REJECT_SURFACE_NO_SHADOW,
+	SHADOWMAP_CASTER_REJECT_GUI,
+	SHADOWMAP_CASTER_REJECT_SUBVIEW,
+	SHADOWMAP_CASTER_REJECT_AREA_DISCONNECTED,
+	SHADOWMAP_CASTER_REJECT_SPECTRUM_MISMATCH,
+	SHADOWMAP_CASTER_REJECT_COUNT
+} shadowMapCasterRejectReason_t;
+
 // viewLights are allocated on the frame temporary stack memory
 // a viewLight contains everything that the back end needs out of an idRenderLightLocal,
 // which the front end may be modifying simultaniously if running in SMP mode.
@@ -379,6 +396,15 @@ typedef struct viewLight_s {
 	const struct drawSurf_s	*globalShadowMapCasters;	// ambient caster geometry that can shadow all receivers
 	const struct drawSurf_s	*localTranslucentShadowMapCasters;	// blended caster geometry excluded from local-only receivers
 	const struct drawSurf_s	*globalTranslucentShadowMapCasters;	// blended caster geometry that can shadow all receivers
+	int						shadowMapCasterCount;
+	int						shadowMapAlphaCasterCount;
+	int						shadowMapTranslucentCasterCount;
+	int						shadowMapStaticCasterCount;
+	int						shadowMapDynamicCasterCount;
+	int						shadowMapRejectedCasterCount;
+	int						shadowMapExpandedCasterCount;
+	int						shadowMapCasterSignature;
+	int						shadowMapRejectedCasterReasons[SHADOWMAP_CASTER_REJECT_COUNT];
 	const struct drawSurf_s	*translucentInteractions;	// get shadows from everything
 } viewLight_t;
 
@@ -1097,8 +1123,35 @@ extern idCVar r_shadowMapHashedAlpha;		// 1 = use hashed alpha testing for perfo
 extern idCVar r_shadowMapTranslucentMoments;	// 1 = accumulate experimental translucent shadow moments for blended casters
 extern idCVar r_shadowMapTranslucentDensity;	// density scale applied when resolving translucent shadow moments
 extern idCVar r_shadowMapTranslucentMinAlpha;	// minimum per-stage alpha considered by translucent shadow moments
-extern idCVar r_shadowMapReport;		// 0 = off, 1 = per-view summary, 2 = per-light decisions
+extern idCVar r_shadowMapReport;		// 0 = off, 1 = per-view summary, 2 = per-light decisions, 3 = verbose receiver-submit decisions
 extern idCVar r_shadowMapReportInterval;	// frames between shadow-map diagnostic reports
+extern idCVar r_shadowMapConservativeCasters;	// 1 = keep shadow-map caster submission independent from visible receiver scissors
+extern idCVar r_shadowMapProjectedCSM;	// 1 = allow ordinary projected lights to use CSM when r_shadowMapCSM is enabled
+extern idCVar r_shadowMapDepthCompare;	// 1 = use sampler2DShadow compare mode for projected depth maps
+extern idCVar r_shadowMapTexelBiasScale;	// texel-aware receiver bias scale
+extern idCVar r_shadowMapReceiverPlaneBias;	// 1 = add derivative receiver-plane depth bias for wider filters
+extern idCVar r_shadowMapFilterTaps;		// projected-light PCF tap budget
+extern idCVar r_shadowMapPointFilterTaps;	// point-light PCF tap budget
+extern idCVar r_shadowMapFilterMode;	// projected-light filter mode
+extern idCVar r_shadowMapPointFilterMode;	// point-light filter mode
+extern idCVar r_shadowMapPCSSLightRadius;	// projected PCSS-lite blocker search radius
+extern idCVar r_shadowMapPCSSMaxRadius;	// projected PCSS-lite maximum filter radius
+extern idCVar r_shadowMapPointHighPrecision;	// 1 = store point shadow depth as high-precision float color
+extern idCVar r_shadowMapPointLights;	// 1 = opt into point-light shadow maps; 0 = legacy stencil fallback for point lights
+extern idCVar r_shadowMapPointDepthCompare;	// 1 = use samplerCubeShadow depth compare for point maps when supported
+extern idCVar r_shadowMapStableAlphaHash;	// 1 = seed hashed alpha from stable world coordinates
+extern idCVar r_shadowMapMaxUpdatesPerView;	// shadow-map pass budget per backend view, 0 = unlimited
+extern idCVar r_shadowMapStaticCache;		// 1 = reuse resident static-only shadow-map passes
+extern idCVar r_shadowMapStaticHysteresisFrames;	// frames after dynamic casters before static reuse
+extern idCVar r_shadowMapResidentFrames;	// frames a resident static shadow map may remain unused
+extern idCVar r_shadowMapProjectedCacheSize;	// projected shadow-map static cache slots
+extern idCVar r_shadowMapPointCacheSize;	// point shadow-map static cache slots
+extern idCVar r_shadowMapCacheCSM;		// 1 = allow CSM/static cache reuse
+extern idCVar r_shadowMapTranslucentFilterRadius;	// translucent moment filter radius, -1 = inherit opaque radius
+extern idCVar r_shadowMapTranslucentMinVariance;	// minimum variance for translucent moment resolve
+extern idCVar r_shadowMapTranslucentBleedReduction;	// moment light-bleed reduction
+extern idCVar r_shadowMapGpuSyncTimings;	// 1 = glFinish-bracket shadow-map passes for GPU-synchronized diagnostics
+extern idCVar r_shadowMapGpuTimerQueries;	// 1 = use GL timer queries for shadow-map GPU diagnostics when available
 extern idCVar r_enhancedMaterials;		// 1 = use enhanced GLSL interaction shading for stock materials when supported
 extern idCVar r_enhancedMaterialNormalScale;	// tangent-space normal XY scale when enhanced material shading is enabled
 extern idCVar r_enhancedMaterialSpecularBoost;	// specular intensity scale when enhanced material shading is enabled
@@ -1260,6 +1313,7 @@ typedef enum {
 	SHADOWMAP_DEBUGMODE_PROJECTED_DEPTH,
 	SHADOWMAP_DEBUGMODE_PROJECTED_W,
 	SHADOWMAP_DEBUGMODE_INVALID_MASK,
+	SHADOWMAP_DEBUGMODE_BIAS_HEATMAP,
 	SHADOWMAP_DEBUGMODE_COUNT
 } shadowMapDebugMode_t;
 extern idCVar r_shadowMapDebugMode;		// projected shadow-map visualization mode

@@ -202,8 +202,35 @@ idCVar r_shadowMapHashedAlpha( "r_shadowMapHashedAlpha", "1", CVAR_RENDERER | CV
 idCVar r_shadowMapTranslucentMoments( "r_shadowMapTranslucentMoments", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "accumulate experimental translucent shadow moments for blended casters" );
 idCVar r_shadowMapTranslucentDensity( "r_shadowMapTranslucentDensity", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "density scale applied when resolving translucent shadow moments", 0.0f, 8.0f );
 idCVar r_shadowMapTranslucentMinAlpha( "r_shadowMapTranslucentMinAlpha", "0.02", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "minimum per-stage alpha considered by translucent shadow moments", 0.0f, 1.0f );
-idCVar r_shadowMapReport( "r_shadowMapReport", "0", CVAR_RENDERER | CVAR_INTEGER, "shadow-map diagnostics: 0 = off, 1 = per-view summary, 2 = per-light decisions", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
+idCVar r_shadowMapReport( "r_shadowMapReport", "0", CVAR_RENDERER | CVAR_INTEGER, "shadow-map diagnostics: 0 = off, 1 = per-view summary, 2 = per-light decisions, 3 = verbose receiver-submit decisions", 0, 3, idCmdSystem::ArgCompletion_Integer<0,3> );
 idCVar r_shadowMapReportInterval( "r_shadowMapReportInterval", "30", CVAR_RENDERER | CVAR_INTEGER, "frames between shadow-map diagnostic reports when r_shadowMapReport is enabled", 1, 3600 );
+idCVar r_shadowMapConservativeCasters( "r_shadowMapConservativeCasters", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "submit shadow-map casters conservatively even when their receiver interaction scissor is not visible" );
+idCVar r_shadowMapProjectedCSM( "r_shadowMapProjectedCSM", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "allow ordinary projected lights to use cascades when r_shadowMapCSM is enabled" );
+idCVar r_shadowMapDepthCompare( "r_shadowMapDepthCompare", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use hardware comparison sampling for projected depth shadow maps when supported" );
+idCVar r_shadowMapTexelBiasScale( "r_shadowMapTexelBiasScale", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "texel-aware receiver bias scale for projected and point shadow maps", 0.0f, 8.0f );
+idCVar r_shadowMapReceiverPlaneBias( "r_shadowMapReceiverPlaneBias", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "add derivative receiver-plane depth bias for wider projected shadow filters" );
+idCVar r_shadowMapFilterTaps( "r_shadowMapFilterTaps", "13", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "projected-light PCF tap budget: 1, 5, 9, or 13", 1, 13, idCmdSystem::ArgCompletion_Integer<1,13> );
+idCVar r_shadowMapPointFilterTaps( "r_shadowMapPointFilterTaps", "13", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "point-light PCF tap budget: 1, 5, 9, or 13", 1, 13, idCmdSystem::ArgCompletion_Integer<1,13> );
+idCVar r_shadowMapFilterMode( "r_shadowMapFilterMode", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "projected-light shadow filter mode: 0 = fixed PCF, 1 = stable rotated Poisson, 2 = PCSS-lite when raw depth is available", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
+idCVar r_shadowMapPointFilterMode( "r_shadowMapPointFilterMode", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "point-light shadow filter mode: 0 = fixed PCF, 1 = stable rotated Poisson", 0, 1, idCmdSystem::ArgCompletion_Integer<0,1> );
+idCVar r_shadowMapPCSSLightRadius( "r_shadowMapPCSSLightRadius", "4.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "projected PCSS-lite blocker search radius in shadow texels", 0.0f, 16.0f );
+idCVar r_shadowMapPCSSMaxRadius( "r_shadowMapPCSSMaxRadius", "8.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "projected PCSS-lite maximum filter radius in shadow texels", 0.0f, 16.0f );
+idCVar r_shadowMapPointHighPrecision( "r_shadowMapPointHighPrecision", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "store point-light shadow depth in a high-precision float color cubemap instead of packed RGBA8 depth" );
+idCVar r_shadowMapPointLights( "r_shadowMapPointLights", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "opt into experimental point-light shadow maps; disabled uses legacy stencil shadows for point lights" );
+idCVar r_shadowMapPointDepthCompare( "r_shadowMapPointDepthCompare", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use hardware comparison sampling for point-light depth cubemaps when GLSL 1.30 support is available" );
+idCVar r_shadowMapStableAlphaHash( "r_shadowMapStableAlphaHash", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "seed shadow-map hashed alpha from stable world coordinates instead of screen-space fragments" );
+idCVar r_shadowMapMaxUpdatesPerView( "r_shadowMapMaxUpdatesPerView", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "maximum shadow-map passes rendered per backend view, 0 = unlimited", 0, 1024, idCmdSystem::ArgCompletion_Integer<0,1024> );
+idCVar r_shadowMapStaticCache( "r_shadowMapStaticCache", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "reuse resident shadow maps for static-only lights instead of rerendering every backend view" );
+idCVar r_shadowMapStaticHysteresisFrames( "r_shadowMapStaticHysteresisFrames", "2", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "frames to wait after dynamic casters disappear before static shadow-map reuse", 0, 120, idCmdSystem::ArgCompletion_Integer<0,120> );
+idCVar r_shadowMapResidentFrames( "r_shadowMapResidentFrames", "120", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "frames a resident static shadow map may remain unused before its cache slot can be expired", 1, 3600, idCmdSystem::ArgCompletion_Integer<1,3600> );
+idCVar r_shadowMapProjectedCacheSize( "r_shadowMapProjectedCacheSize", "4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "static projected-light shadow-map cache slots", 0, 8, idCmdSystem::ArgCompletion_Integer<0,8> );
+idCVar r_shadowMapPointCacheSize( "r_shadowMapPointCacheSize", "4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "static point-light cubemap cache slots", 0, 8, idCmdSystem::ArgCompletion_Integer<0,8> );
+idCVar r_shadowMapCacheCSM( "r_shadowMapCacheCSM", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "allow static-cache reuse for view-fitted CSM/global shadow-map passes" );
+idCVar r_shadowMapTranslucentFilterRadius( "r_shadowMapTranslucentFilterRadius", "-1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "translucent shadow moment filter radius in texels, -1 = inherit opaque shadow radius", -1.0f, 8.0f );
+idCVar r_shadowMapTranslucentMinVariance( "r_shadowMapTranslucentMinVariance", "0.00001", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "minimum variance used when resolving translucent shadow moments", 0.000001f, 0.01f );
+idCVar r_shadowMapTranslucentBleedReduction( "r_shadowMapTranslucentBleedReduction", "0.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "light-bleed reduction applied to translucent shadow moment resolve", 0.0f, 0.95f );
+idCVar r_shadowMapGpuSyncTimings( "r_shadowMapGpuSyncTimings", "0", CVAR_RENDERER | CVAR_BOOL, "diagnostic-only: glFinish around shadow-map passes to report GPU-synchronized milliseconds" );
+idCVar r_shadowMapGpuTimerQueries( "r_shadowMapGpuTimerQueries", "1", CVAR_RENDERER | CVAR_BOOL, "use non-blocking GL timer queries for shadow-map GPU diagnostics when available" );
 idCVar r_enhancedMaterials( "r_enhancedMaterials", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use enhanced GLSL interaction shading for existing materials when supported" );
 idCVar r_enhancedMaterialNormalScale( "r_enhancedMaterialNormalScale", "1.25", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "tangent-space normal XY scale when enhanced material shading is enabled", 0.5f, 2.0f );
 idCVar r_enhancedMaterialSpecularBoost( "r_enhancedMaterialSpecularBoost", "1.15", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "specular intensity scale when enhanced material shading is enabled", 0.0f, 4.0f );
@@ -328,7 +355,7 @@ idCVar r_shadowMapDebugOverlay( "r_shadowMapDebugOverlay", "0", CVAR_RENDERER | 
 	"shadow-map overlay: 0 = off, 1 = show the selected shadow map as a top-left mini-map with stats",
 	0, 1, idCmdSystem::ArgCompletion_Integer<0, 1> );
 idCVar r_shadowMapDebugMode( "r_shadowMapDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
-	"projected shadow-map debug mode: 0 = off, 1 = atlas/depth, 2 = cascade index, 3 = projected UV, 4 = projected depth, 5 = projected w, 6 = invalid mask",
+	"projected shadow-map debug mode: 0 = off, 1 = atlas/depth, 2 = cascade index, 3 = projected UV, 4 = projected depth, 5 = projected w, 6 = invalid mask, 7 = bias heatmap",
 	0, SHADOWMAP_DEBUGMODE_COUNT - 1, idCmdSystem::ArgCompletion_Integer<0, SHADOWMAP_DEBUGMODE_COUNT - 1> );
 idCVar r_shadowMapCascadeStabilize( "r_shadowMapCascadeStabilize", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "snap projected-light cascade bounds to texels to reduce shimmering" );
 idCVar r_shadowMapPointFarScale( "r_shadowMapPointFarScale", "1.25", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "padding multiplier applied to point-light shadow-map range", 1.0f, 4.0f );

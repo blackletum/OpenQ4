@@ -1695,13 +1695,20 @@ typedef struct {
 	GLint			vertexColorParams;
 	GLint			diffuseColor;
 	GLint			specularColor;
+	GLint			materialEnhanced;
 	GLint			materialNormalScale;
 	GLint			materialSpecularBoost;
 	GLint			materialFresnel;
 	GLint			shadowTexelSize;
 	GLint			shadowBias;
 	GLint			shadowNormalBias;
+	GLint			shadowTexelDepthBias;
+	GLint			shadowReceiverPlaneBias;
 	GLint			shadowFilterRadius;
+	GLint			shadowFilterTaps;
+	GLint			shadowFilterMode;
+	GLint			shadowPCSSLightRadius;
+	GLint			shadowPCSSMaxRadius;
 	GLint			shadowAtlasRect;
 	GLint			shadowSplitDepths;
 	GLint			shadowCascadeBiasScale;
@@ -1710,6 +1717,9 @@ typedef struct {
 	GLint			shadowDebugMode;
 	GLint			translucentShadowEnabled;
 	GLint			translucentShadowDensity;
+	GLint			translucentShadowFilterRadius;
+	GLint			translucentShadowMinVariance;
+	GLint			translucentShadowBleedReduction;
 
 	GLint			bumpMap;
 	GLint			lightFalloffMap;
@@ -1718,6 +1728,7 @@ typedef struct {
 	GLint			specularMap;
 	GLint			shadowMap;
 	GLint			translucentShadowMap[3];
+	bool			depthCompareMode;
 } shadowMapProgram_t;
 
 typedef struct {
@@ -1732,6 +1743,10 @@ typedef struct {
 	GLint			alphaRef;
 	GLint			alphaScale;
 	GLint			alphaHashEnabled;
+	GLint			alphaHashStable;
+	GLint			modelMatrixRow0;
+	GLint			modelMatrixRow1;
+	GLint			modelMatrixRow2;
 	GLint			alphaMap;
 } shadowMapCasterProgram_t;
 
@@ -1791,15 +1806,23 @@ typedef struct {
 	GLint			vertexColorParams;
 	GLint			diffuseColor;
 	GLint			specularColor;
+	GLint			materialEnhanced;
 	GLint			materialNormalScale;
 	GLint			materialSpecularBoost;
 	GLint			materialFresnel;
 	GLint			shadowBias;
 	GLint			shadowNormalBias;
+	GLint			pointShadowTexelDepthBias;
 	GLint			shadowFilterRadius;
+	GLint			shadowFilterTaps;
+	GLint			shadowFilterMode;
 	GLint			pointShadowTexelScale;
+	GLint			pointShadowDepthMode;
 	GLint			translucentShadowEnabled;
 	GLint			translucentShadowDensity;
+	GLint			translucentShadowFilterRadius;
+	GLint			translucentShadowMinVariance;
+	GLint			translucentShadowBleedReduction;
 
 	GLint			bumpMap;
 	GLint			lightFalloffMap;
@@ -1808,6 +1831,7 @@ typedef struct {
 	GLint			specularMap;
 	GLint			pointShadowMap;
 	GLint			translucentShadowMap[3];
+	bool			depthCompareMode;
 } pointShadowMapProgram_t;
 
 typedef struct {
@@ -1861,6 +1885,9 @@ typedef struct {
 	GLint			alphaScale;
 	GLint			alphaTestEnabled;
 	GLint			alphaHashEnabled;
+	GLint			alphaHashStable;
+	GLint			pointShadowDepthMode;
+	GLint			pointShadowDepthCompare;
 	GLint			alphaMap;
 } pointShadowCasterProgram_t;
 
@@ -1910,6 +1937,7 @@ typedef struct {
 	GLint			cascadeCount;
 	GLint			passMapped;
 	GLint			glyphCode;
+	GLint			pointShadowDepthMode;
 
 	GLint			shadowAtlasMap;
 	GLint			pointShadowMap;
@@ -1931,6 +1959,10 @@ typedef struct {
 	int				tileSize;
 	float			splitDepths[SHADOWMAP_MAX_CASCADES];
 	float			biasScale[SHADOWMAP_MAX_CASCADES];
+	float			texelDepthBias[SHADOWMAP_MAX_CASCADES];
+	float			worldTexelSize[SHADOWMAP_MAX_CASCADES];
+	float			sliceNear[SHADOWMAP_MAX_CASCADES];
+	float			sliceFar[SHADOWMAP_MAX_CASCADES];
 	float			depthRange[SHADOWMAP_MAX_CASCADES];
 	float			clipZExtent[SHADOWMAP_MAX_CASCADES];
 	idPlane			clipPlanes[SHADOWMAP_MAX_CASCADES][4];
@@ -1947,16 +1979,23 @@ static pointTranslucentShadowCasterProgram_t	g_pointTranslucentShadowCasterProgr
 static shadowDebugOverlayProgram_t	g_shadowDebugOverlayProgram = { 0, 0, 0, -1, false };
 static idImage *			g_shadowMapDepthImage = NULL;
 static idRenderTexture *	g_shadowMapRenderTexture = NULL;
+static idImage *			g_shadowMapScratchDepthImage = NULL;
+static idRenderTexture *	g_shadowMapScratchRenderTexture = NULL;
 static idImage *			g_translucentShadowMomentImages[3] = { NULL, NULL, NULL };
 static idRenderTexture *	g_translucentShadowMapRenderTexture = NULL;
 static idImage *			g_pointShadowMapColorImage = NULL;
 static idImage *			g_pointShadowMapDepthImage = NULL;
 static idRenderTexture *	g_pointShadowMapRenderTexture = NULL;
+static idImage *			g_pointShadowMapScratchColorImage = NULL;
+static idImage *			g_pointShadowMapScratchDepthImage = NULL;
+static idRenderTexture *	g_pointShadowMapScratchRenderTexture = NULL;
 static idImage *			g_pointTranslucentShadowMomentImages[3] = { NULL, NULL, NULL };
 static idRenderTexture *	g_pointTranslucentShadowMapRenderTexture = NULL;
 static projectedShadowMapState_t	g_projectedShadowMapState = { 0 };
 static bool				g_projectedTranslucentShadowPassReady = false;
 static bool				g_pointTranslucentShadowPassReady = false;
+static bool				g_pointShadowMapDepthCompareAvailable = true;
+static int				g_pointShadowMapDepthCompareAvailableGeneration = -1;
 
 typedef enum {
 	SHADOWMAP_SUPPORT_OK = 0,
@@ -1967,6 +2006,7 @@ typedef enum {
 	SHADOWMAP_SUPPORT_NO_DYNAMIC_SHADOWS_FLAG,
 	SHADOWMAP_SUPPORT_AMBIENT_LIGHT,
 	SHADOWMAP_SUPPORT_LIGHT_SHADER_NO_SHADOWS,
+	SHADOWMAP_SUPPORT_POINT_DISABLED,
 	SHADOWMAP_SUPPORT_TEXTURE_LIMIT,
 	SHADOWMAP_SUPPORT_NO_INTERACTIONS,
 	SHADOWMAP_SUPPORT_CUBEMAP_UNAVAILABLE,
@@ -1985,6 +2025,7 @@ typedef struct {
 	int					pointLights;
 	int					projectedLights;
 	int					parallelLights;
+	int					globalLights;
 	int					mappedLocalPasses;
 	int					mappedGlobalPasses;
 	int					unshadowedLocalPasses;
@@ -1995,12 +2036,50 @@ typedef struct {
 	int					renderFailGlobalPasses;
 	int					maskFailLocalPasses;
 	int					maskFailGlobalPasses;
+	int					scheduledSkipPasses;
+	int					shadowMapUpdates;
+	int					cacheHitPasses;
+	int					cacheMissPasses;
+	int					cacheReusePasses;
+	int					cacheBudgetReusePasses;
+	int					cacheEvictions;
+	int					cacheExpired;
+	int					staticHysteresisPasses;
+	int					pointDepthComparePasses;
+	int					projectedAtlasTilesRendered;
+	int					projectedAtlasTilesAllocated;
+	int					projectedCacheSlotsUsed;
+	int					projectedCacheSlotsTotal;
+	int					pointCacheSlotsUsed;
+	int					pointCacheSlotsTotal;
+	int					pointFacesRendered;
+	int					pointHighPrecisionPasses;
+	int					casterCount;
+	int					alphaCasterCount;
+	int					translucentCasterCount;
+	int					staticCasterCount;
+	int					dynamicCasterCount;
+	int					rejectedCasterCount;
+	int					expandedCasterCount;
+	int					casterRejectReasons[SHADOWMAP_CASTER_REJECT_COUNT];
+	float				cpuRenderMilliseconds;
+	float				cpuMaskMilliseconds;
+	float				gpuSyncMilliseconds;
+	float				gpuTimerMilliseconds;
+	float				minWorldTexelSize;
+	float				maxWorldTexelSize;
+	int					gpuTimerSamples;
+	int					gpuTimerPending;
 	int					unsupportedLights[SHADOWMAP_SUPPORT_COUNT];
 } shadowMapStats_t;
 
 static shadowMapStats_t	g_shadowMapStats;
 static int				g_shadowMapLastReportFrame = -0x3fffffff;
 static bool				g_shadowMapReportThisFrame = false;
+
+static bool RB_ShadowMapVerboseReport( void ) {
+	return r_shadowMapReport.GetInteger() >= 3 && g_shadowMapReportThisFrame;
+}
 
 typedef struct {
 	bool				valid;
@@ -2012,18 +2091,110 @@ typedef struct {
 	int					atlasDiv;
 	int					cascadeCount;
 	int					casterCount;
+	int					alphaCasterCount;
+	int					translucentCasterCount;
+	int					rejectedCasterCount;
+	int					expandedCasterCount;
 	int					shadowSurfCount;
 	int					interactionCount;
+	float				cpuMilliseconds;
+	float				gpuMilliseconds;
+	float				worldTexelSize;
 } shadowMapDebugOverlayState_t;
 
 static shadowMapDebugOverlayState_t	g_shadowMapDebugOverlayState;
 
 typedef enum {
 	SHADOWMAP_PASS_RESULT_MAPPED = 0,
+	SHADOWMAP_PASS_RESULT_CACHE_REUSE,
 	SHADOWMAP_PASS_RESULT_NO_SHADOW_SURFS,
 	SHADOWMAP_PASS_RESULT_RENDER_FAIL,
-	SHADOWMAP_PASS_RESULT_MASK_FAIL
+	SHADOWMAP_PASS_RESULT_MASK_FAIL,
+	SHADOWMAP_PASS_RESULT_SCHEDULED_SKIP
 } shadowMapPassResult_t;
+
+typedef enum {
+	SHADOWMAP_LIGHT_PROJECTED = 0,
+	SHADOWMAP_LIGHT_POINT,
+	SHADOWMAP_LIGHT_PARALLEL,
+	SHADOWMAP_LIGHT_GLOBAL
+} shadowMapLightClass_t;
+
+static const int SHADOWMAP_CACHE_MAX_SLOTS = 8;
+static const int SHADOWMAP_LIGHT_HISTORY_SLOTS = 256;
+
+typedef struct {
+	bool						valid;
+	int							lightIndex;
+	int							passKind;
+	int							lightClass;
+	int							signature;
+	int							tileSize;
+	int							atlasDiv;
+	int							cascadeCount;
+	int							lastUsedFrame;
+	int							lastUpdatedFrame;
+	projectedShadowMapState_t	state;
+	idImage *					depthImage;
+	idRenderTexture *			renderTexture;
+} projectedShadowMapCacheEntry_t;
+
+typedef struct {
+	bool						valid;
+	int							lightIndex;
+	int							passKind;
+	int							lightClass;
+	int							signature;
+	int							size;
+	bool						highPrecision;
+	bool						depthCompare;
+	int							lastUsedFrame;
+	int							lastUpdatedFrame;
+	idImage *					colorImage;
+	idImage *					depthImage;
+	idRenderTexture *			renderTexture;
+} pointShadowMapCacheEntry_t;
+
+typedef struct {
+	bool						valid;
+	int							lightIndex;
+	int							lastDynamicFrame;
+	int							lastTouchedFrame;
+} shadowMapLightHistory_t;
+
+typedef struct {
+	bool						active;
+	GLuint						query;
+	int							lightIndex;
+	int							passKind;
+	int							lightClass;
+	int							issuedFrame;
+} shadowMapGpuTimerQuery_t;
+
+static projectedShadowMapCacheEntry_t	g_projectedShadowMapCache[SHADOWMAP_CACHE_MAX_SLOTS];
+static pointShadowMapCacheEntry_t		g_pointShadowMapCache[SHADOWMAP_CACHE_MAX_SLOTS];
+static shadowMapLightHistory_t			g_shadowMapLightHistory[SHADOWMAP_LIGHT_HISTORY_SLOTS];
+static projectedShadowMapCacheEntry_t *	g_activeProjectedShadowMapCache = NULL;
+static pointShadowMapCacheEntry_t *		g_activePointShadowMapCache = NULL;
+static const int						SHADOWMAP_GPU_TIMER_QUERY_SLOTS = 64;
+static shadowMapGpuTimerQuery_t			g_shadowMapGpuTimerQuerySlots[SHADOWMAP_GPU_TIMER_QUERY_SLOTS];
+static int								g_shadowMapGpuTimerQueryCursor = 0;
+
+typedef enum {
+	SHADOWMAP_SCHEDULE_UPDATE = 0,
+	SHADOWMAP_SCHEDULE_REUSE,
+	SHADOWMAP_SCHEDULE_FALLBACK
+} shadowMapScheduleAction_t;
+
+typedef struct {
+	shadowMapScheduleAction_t		action;
+	bool							cacheable;
+	bool							cacheHit;
+	bool							budgetReuse;
+	int								signature;
+	projectedShadowMapCacheEntry_t *	projectedEntry;
+	pointShadowMapCacheEntry_t *		pointEntry;
+} shadowMapSchedule_t;
 
 void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf );
 
@@ -2045,6 +2216,8 @@ static const char *RB_ShadowMapSupportReasonName( shadowMapLightSupportReason_t 
 		return "ambient-light";
 	case SHADOWMAP_SUPPORT_LIGHT_SHADER_NO_SHADOWS:
 		return "lightShader-noShadows";
+	case SHADOWMAP_SUPPORT_POINT_DISABLED:
+		return "point-disabled";
 	case SHADOWMAP_SUPPORT_TEXTURE_LIMIT:
 		return "texture-limit";
 	case SHADOWMAP_SUPPORT_NO_INTERACTIONS:
@@ -2066,12 +2239,89 @@ static const char *RB_ShadowMapPassResultName( shadowMapPassResult_t result ) {
 	switch ( result ) {
 	case SHADOWMAP_PASS_RESULT_MAPPED:
 		return "mapped";
+	case SHADOWMAP_PASS_RESULT_CACHE_REUSE:
+		return "cache-reuse";
 	case SHADOWMAP_PASS_RESULT_NO_SHADOW_SURFS:
 		return "no-shadow-surfs";
 	case SHADOWMAP_PASS_RESULT_RENDER_FAIL:
 		return "render-fail";
 	case SHADOWMAP_PASS_RESULT_MASK_FAIL:
 		return "mask-fail";
+	case SHADOWMAP_PASS_RESULT_SCHEDULED_SKIP:
+		return "scheduled-skip";
+	default:
+		return "unknown";
+	}
+}
+
+static shadowMapLightClass_t RB_ShadowMapLightClass( const viewLight_t *vLight ) {
+	if ( vLight == NULL ) {
+		return SHADOWMAP_LIGHT_PROJECTED;
+	}
+	if ( vLight->lightDef != NULL && vLight->lightDef->parms.globalLight ) {
+		return SHADOWMAP_LIGHT_GLOBAL;
+	}
+	if ( vLight->parallel ) {
+		return SHADOWMAP_LIGHT_PARALLEL;
+	}
+	if ( vLight->pointLight ) {
+		return SHADOWMAP_LIGHT_POINT;
+	}
+	return SHADOWMAP_LIGHT_PROJECTED;
+}
+
+static const char *RB_ShadowMapLightClassName( const viewLight_t *vLight ) {
+	switch ( RB_ShadowMapLightClass( vLight ) ) {
+	case SHADOWMAP_LIGHT_POINT:
+		return "point";
+	case SHADOWMAP_LIGHT_PARALLEL:
+		return "parallel";
+	case SHADOWMAP_LIGHT_GLOBAL:
+		return "global";
+	default:
+		return "projected";
+	}
+}
+
+static const char *RB_ShadowMapLightClassNameByClass( const int lightClass ) {
+	switch ( lightClass ) {
+	case SHADOWMAP_LIGHT_POINT:
+		return "point";
+	case SHADOWMAP_LIGHT_PARALLEL:
+		return "parallel";
+	case SHADOWMAP_LIGHT_GLOBAL:
+		return "global";
+	default:
+		return "projected";
+	}
+}
+
+static const char *RB_ShadowMapCasterRejectReasonName( const shadowMapCasterRejectReason_t reason ) {
+	switch ( reason ) {
+	case SHADOWMAP_CASTER_REJECT_NO_SHADOW:
+		return "noShadow";
+	case SHADOWMAP_CASTER_REJECT_VIEW_ONLY:
+		return "viewOnly";
+	case SHADOWMAP_CASTER_REJECT_DEPTH_HACK:
+		return "depthHack";
+	case SHADOWMAP_CASTER_REJECT_NO_GEOMETRY:
+		return "noGeometry";
+	case SHADOWMAP_CASTER_REJECT_POINT_LIGHT_EMITTER:
+		return "pointEmitter";
+	case SHADOWMAP_CASTER_REJECT_TRANSLUCENT_DISABLED:
+		return "translucentDisabled";
+	case SHADOWMAP_CASTER_REJECT_TRANSLUCENT_UNSUPPORTED:
+		return "translucentUnsupported";
+	case SHADOWMAP_CASTER_REJECT_SURFACE_NO_SHADOW:
+		return "surfaceNoShadow";
+	case SHADOWMAP_CASTER_REJECT_GUI:
+		return "gui";
+	case SHADOWMAP_CASTER_REJECT_SUBVIEW:
+		return "subview";
+	case SHADOWMAP_CASTER_REJECT_AREA_DISCONNECTED:
+		return "areaDisconnected";
+	case SHADOWMAP_CASTER_REJECT_SPECTRUM_MISMATCH:
+		return "spectrumMismatch";
 	default:
 		return "unknown";
 	}
@@ -2088,6 +2338,48 @@ static shadowMapDebugMode_t RB_ShadowMapDebugMode( void ) {
 
 static bool RB_ShadowMapHashedAlphaEnabled( void ) {
 	return r_shadowMapHashedAlpha.GetBool();
+}
+
+static bool RB_ShadowMapDepthCompareEnabled( void ) {
+	const shadowMapDebugMode_t debugMode = RB_ShadowMapDebugMode();
+	if ( debugMode == SHADOWMAP_DEBUGMODE_ATLAS || debugMode == SHADOWMAP_DEBUGMODE_PROJECTED_DEPTH ) {
+		return false;
+	}
+	return r_shadowMapDepthCompare.GetBool();
+}
+
+static bool RB_PointShadowMapHighPrecisionEnabled( void ) {
+	return r_shadowMapPointHighPrecision.GetBool();
+}
+
+static bool RB_PointShadowMapDepthCompareRequested( void ) {
+	return r_shadowMapPointDepthCompare.GetBool() &&
+		glConfig.GLSLProgramAvailable &&
+		glConfig.cubeMapAvailable &&
+		glConfig.glVersion >= 3.0f;
+}
+
+static bool RB_PointShadowMapDepthCompareEnabled( void ) {
+	if ( !RB_PointShadowMapDepthCompareRequested() ) {
+		return false;
+	}
+	if ( g_pointShadowMapDepthCompareAvailableGeneration == tr.videoRestartCount && !g_pointShadowMapDepthCompareAvailable ) {
+		return false;
+	}
+	return true;
+}
+
+static void RB_PointShadowMapDisableDepthCompareForGeneration( void ) {
+	g_pointShadowMapDepthCompareAvailable = false;
+	g_pointShadowMapDepthCompareAvailableGeneration = tr.videoRestartCount;
+}
+
+static float RB_PointShadowMapDepthModeValue( void ) {
+	return RB_PointShadowMapHighPrecisionEnabled() ? 1.0f : 0.0f;
+}
+
+static float RB_PointShadowMapDepthCompareValue( void ) {
+	return RB_PointShadowMapDepthCompareEnabled() ? 1.0f : 0.0f;
 }
 
 static bool RB_TranslucentShadowMomentsRequested( void ) {
@@ -2136,6 +2428,8 @@ static const char *RB_ShadowMapDebugModeName( shadowMapDebugMode_t mode ) {
 		return "projected-w";
 	case SHADOWMAP_DEBUGMODE_INVALID_MASK:
 		return "invalid-mask";
+	case SHADOWMAP_DEBUGMODE_BIAS_HEATMAP:
+		return "bias-heatmap";
 	default:
 		return "unknown";
 	}
@@ -2147,6 +2441,140 @@ static int RB_CountDrawSurfChain( const drawSurf_t *surf ) {
 		count++;
 	}
 	return count;
+}
+
+static void RB_ShadowMapStatsRecordWorldTexelSize( const float worldTexelSize ) {
+	if ( worldTexelSize <= 0.0f ) {
+		return;
+	}
+	if ( g_shadowMapStats.minWorldTexelSize <= 0.0f || worldTexelSize < g_shadowMapStats.minWorldTexelSize ) {
+		g_shadowMapStats.minWorldTexelSize = worldTexelSize;
+	}
+	g_shadowMapStats.maxWorldTexelSize = Max( g_shadowMapStats.maxWorldTexelSize, worldTexelSize );
+}
+
+static int RB_ShadowMapLightIndex( const viewLight_t *vLight );
+
+static void RB_ShadowMapStatsAccumulateCasterPolicy( const viewLight_t *vLight ) {
+	if ( vLight == NULL ) {
+		return;
+	}
+
+	g_shadowMapStats.casterCount += vLight->shadowMapCasterCount;
+	g_shadowMapStats.alphaCasterCount += vLight->shadowMapAlphaCasterCount;
+	g_shadowMapStats.translucentCasterCount += vLight->shadowMapTranslucentCasterCount;
+	g_shadowMapStats.staticCasterCount += vLight->shadowMapStaticCasterCount;
+	g_shadowMapStats.dynamicCasterCount += vLight->shadowMapDynamicCasterCount;
+	g_shadowMapStats.rejectedCasterCount += vLight->shadowMapRejectedCasterCount;
+	g_shadowMapStats.expandedCasterCount += vLight->shadowMapExpandedCasterCount;
+	for ( int i = 0; i < SHADOWMAP_CASTER_REJECT_COUNT; i++ ) {
+		g_shadowMapStats.casterRejectReasons[i] += vLight->shadowMapRejectedCasterReasons[i];
+	}
+}
+
+static bool RB_ShadowMapGpuTimerQueriesAvailable( void ) {
+	if ( !r_shadowMapGpuTimerQueries.GetBool() ) {
+		return false;
+	}
+	if ( !( GLEW_ARB_timer_query || GLEW_VERSION_3_3 ) ) {
+		return false;
+	}
+	return glGenQueries != NULL &&
+		glBeginQuery != NULL &&
+		glEndQuery != NULL &&
+		glGetQueryObjectuiv != NULL &&
+		glGetQueryObjectui64v != NULL;
+}
+
+static void RB_ShadowMapHarvestGpuTimerQueries( void ) {
+	if ( !RB_ShadowMapGpuTimerQueriesAvailable() ) {
+		return;
+	}
+
+	int pending = 0;
+	for ( int i = 0; i < SHADOWMAP_GPU_TIMER_QUERY_SLOTS; i++ ) {
+		shadowMapGpuTimerQuery_t &slot = g_shadowMapGpuTimerQuerySlots[i];
+		if ( !slot.active || slot.query == 0 ) {
+			continue;
+		}
+
+		GLuint available = GL_FALSE;
+		glGetQueryObjectuiv( slot.query, GL_QUERY_RESULT_AVAILABLE, &available );
+		if ( available == GL_FALSE ) {
+			pending++;
+			continue;
+		}
+
+		GLuint64 elapsedNanoseconds = 0;
+		glGetQueryObjectui64v( slot.query, GL_QUERY_RESULT, &elapsedNanoseconds );
+		const float milliseconds = static_cast<float>( static_cast<double>( elapsedNanoseconds ) / 1000000.0 );
+		g_shadowMapStats.gpuTimerMilliseconds += milliseconds;
+		g_shadowMapStats.gpuTimerSamples++;
+
+		if ( idMath::ClampInt( 0, 2, r_shadowMapReport.GetInteger() ) >= 2 && g_shadowMapReportThisFrame ) {
+			common->Printf(
+				"SM gpu-time light=%d pass=%s class=%s frame=%d elapsed=%.3fms\n",
+				slot.lightIndex,
+				RB_ShadowMapPassName( static_cast<shadowMapPassKind_t>( slot.passKind ) ),
+				RB_ShadowMapLightClassNameByClass( slot.lightClass ),
+				slot.issuedFrame,
+				milliseconds );
+		}
+
+		slot.active = false;
+	}
+
+	g_shadowMapStats.gpuTimerPending = pending;
+}
+
+static shadowMapGpuTimerQuery_t *RB_ShadowMapBeginGpuTimerQuery( const viewLight_t *vLight, const shadowMapPassKind_t passKind ) {
+	if ( !RB_ShadowMapGpuTimerQueriesAvailable() ) {
+		return NULL;
+	}
+
+	for ( int attempt = 0; attempt < SHADOWMAP_GPU_TIMER_QUERY_SLOTS; attempt++ ) {
+		shadowMapGpuTimerQuery_t &slot = g_shadowMapGpuTimerQuerySlots[g_shadowMapGpuTimerQueryCursor];
+		g_shadowMapGpuTimerQueryCursor = ( g_shadowMapGpuTimerQueryCursor + 1 ) % SHADOWMAP_GPU_TIMER_QUERY_SLOTS;
+
+		if ( slot.active ) {
+			GLuint available = GL_FALSE;
+			glGetQueryObjectuiv( slot.query, GL_QUERY_RESULT_AVAILABLE, &available );
+			if ( available == GL_FALSE ) {
+				continue;
+			}
+
+			GLuint64 elapsedNanoseconds = 0;
+			glGetQueryObjectui64v( slot.query, GL_QUERY_RESULT, &elapsedNanoseconds );
+			g_shadowMapStats.gpuTimerMilliseconds += static_cast<float>( static_cast<double>( elapsedNanoseconds ) / 1000000.0 );
+			g_shadowMapStats.gpuTimerSamples++;
+			slot.active = false;
+		}
+
+		if ( slot.query == 0 ) {
+			glGenQueries( 1, &slot.query );
+			if ( slot.query == 0 ) {
+				return NULL;
+			}
+		}
+
+		slot.active = true;
+		slot.lightIndex = RB_ShadowMapLightIndex( vLight );
+		slot.passKind = static_cast<int>( passKind );
+		slot.lightClass = static_cast<int>( RB_ShadowMapLightClass( vLight ) );
+		slot.issuedFrame = tr.frameCount;
+		glBeginQuery( GL_TIME_ELAPSED, slot.query );
+		return &slot;
+	}
+
+	g_shadowMapStats.gpuTimerPending++;
+	return NULL;
+}
+
+static void RB_ShadowMapEndGpuTimerQuery( shadowMapGpuTimerQuery_t *slot ) {
+	if ( slot == NULL ) {
+		return;
+	}
+	glEndQuery( GL_TIME_ELAPSED );
 }
 
 static void RB_ShadowMapDebugOverlayReset( void ) {
@@ -2187,6 +2615,10 @@ static void RB_ShadowMapResetProjectedState( void ) {
 	for ( int i = 0; i < SHADOWMAP_MAX_CASCADES; i++ ) {
 		g_projectedShadowMapState.splitDepths[i] = 1.0e30f;
 		g_projectedShadowMapState.biasScale[i] = 1.0f;
+		g_projectedShadowMapState.texelDepthBias[i] = 0.0f;
+		g_projectedShadowMapState.worldTexelSize[i] = 0.0f;
+		g_projectedShadowMapState.sliceNear[i] = 0.0f;
+		g_projectedShadowMapState.sliceFar[i] = 0.0f;
 		g_projectedShadowMapState.depthRange[i] = 0.0f;
 		g_projectedShadowMapState.clipZExtent[i] = 0.0f;
 	}
@@ -2206,11 +2638,19 @@ static void RB_ShadowMapInitializeProjectedState( const idPlane baseClipPlanes[4
 		}
 		g_projectedShadowMapState.atlasRect[cascadeIndex] = RB_ShadowMapBuildAtlasRect( cascadeIndex, g_projectedShadowMapState.atlasDiv );
 		g_projectedShadowMapState.splitDepths[cascadeIndex] = 1.0e30f;
+		g_projectedShadowMapState.biasScale[cascadeIndex] = 1.0f;
+		g_projectedShadowMapState.texelDepthBias[cascadeIndex] = 0.0f;
+		g_projectedShadowMapState.worldTexelSize[cascadeIndex] = 0.0f;
+		g_projectedShadowMapState.sliceNear[cascadeIndex] = 0.0f;
+		g_projectedShadowMapState.sliceFar[cascadeIndex] = 0.0f;
 	}
 }
 
 static bool RB_ShadowMapUseCSM( const viewLight_t *vLight ) {
 	if ( vLight == NULL || vLight->pointLight ) {
+		return false;
+	}
+	if ( RB_ShadowMapLightClass( vLight ) == SHADOWMAP_LIGHT_PROJECTED && !r_shadowMapProjectedCSM.GetBool() ) {
 		return false;
 	}
 	return r_shadowMapCSM.GetBool() && idMath::ClampInt( 1, SHADOWMAP_MAX_CASCADES, r_shadowMapCascadeCount.GetInteger() ) > 1;
@@ -2234,6 +2674,357 @@ static int RB_ShadowMapTileSizeForLight( const viewLight_t *vLight ) {
 		return 0;
 	}
 	return idMath::ClampInt( 128, maxTileSize, r_shadowMapSize.GetInteger() );
+}
+
+static void RB_ShadowMapSelectScratchResources( void ) {
+	g_activeProjectedShadowMapCache = NULL;
+	g_activePointShadowMapCache = NULL;
+	g_shadowMapDepthImage = g_shadowMapScratchDepthImage;
+	g_shadowMapRenderTexture = g_shadowMapScratchRenderTexture;
+	g_pointShadowMapColorImage = g_pointShadowMapScratchColorImage;
+	g_pointShadowMapDepthImage = g_pointShadowMapScratchDepthImage;
+	g_pointShadowMapRenderTexture = g_pointShadowMapScratchRenderTexture;
+}
+
+static int RB_ShadowMapLightIndex( const viewLight_t *vLight ) {
+	return ( vLight != NULL && vLight->lightDef != NULL ) ? vLight->lightDef->index : -1;
+}
+
+static int RB_ShadowMapHashInt( int hash, const int value ) {
+	const unsigned int h = static_cast<unsigned int>( hash );
+	const unsigned int v = static_cast<unsigned int>( value );
+	return static_cast<int>( ( h ^ v ) * 16777619u );
+}
+
+static int RB_ShadowMapHashFloat( int hash, const float value ) {
+	return RB_ShadowMapHashInt( hash, idMath::Ftoi( value * 1024.0f ) );
+}
+
+static int RB_ShadowMapBuildPassSignature( const viewLight_t *vLight, const shadowMapPassKind_t passKind, const bool pointLight ) {
+	int hash = static_cast<int>( 2166136261u );
+	hash = RB_ShadowMapHashInt( hash, RB_ShadowMapLightIndex( vLight ) );
+	hash = RB_ShadowMapHashInt( hash, static_cast<int>( passKind ) );
+	hash = RB_ShadowMapHashInt( hash, static_cast<int>( RB_ShadowMapLightClass( vLight ) ) );
+	hash = RB_ShadowMapHashInt( hash, pointLight ? 1 : 0 );
+	hash = RB_ShadowMapHashInt( hash, vLight != NULL ? vLight->shadowMapCasterCount : 0 );
+	hash = RB_ShadowMapHashInt( hash, vLight != NULL ? vLight->shadowMapAlphaCasterCount : 0 );
+	hash = RB_ShadowMapHashInt( hash, vLight != NULL ? vLight->shadowMapStaticCasterCount : 0 );
+	hash = RB_ShadowMapHashInt( hash, vLight != NULL ? vLight->shadowMapDynamicCasterCount : 0 );
+	hash = RB_ShadowMapHashInt( hash, vLight != NULL ? vLight->shadowMapCasterSignature : 0 );
+	hash = RB_ShadowMapHashInt( hash, idMath::ClampInt( 128, 4096, r_shadowMapSize.GetInteger() ) );
+	hash = RB_ShadowMapHashInt( hash, RB_ShadowMapCascadeCountForLight( vLight ) );
+	hash = RB_ShadowMapHashInt( hash, RB_PointShadowMapHighPrecisionEnabled() ? 1 : 0 );
+	hash = RB_ShadowMapHashInt( hash, RB_PointShadowMapDepthCompareEnabled() ? 1 : 0 );
+	if ( vLight != NULL ) {
+		for ( int i = 0; i < 3; i++ ) {
+			hash = RB_ShadowMapHashFloat( hash, vLight->globalLightOrigin[i] );
+			hash = RB_ShadowMapHashFloat( hash, vLight->lightRadius[i] );
+		}
+		for ( int planeIndex = 0; planeIndex < 4; planeIndex++ ) {
+			for ( int component = 0; component < 4; component++ ) {
+				hash = RB_ShadowMapHashFloat( hash, vLight->lightProject[planeIndex][component] );
+			}
+		}
+	}
+	return hash;
+}
+
+static shadowMapLightHistory_t *RB_ShadowMapFindLightHistory( const int lightIndex ) {
+	if ( lightIndex < 0 ) {
+		return NULL;
+	}
+	shadowMapLightHistory_t *oldest = &g_shadowMapLightHistory[0];
+	for ( int i = 0; i < SHADOWMAP_LIGHT_HISTORY_SLOTS; i++ ) {
+		shadowMapLightHistory_t *history = &g_shadowMapLightHistory[i];
+		if ( history->valid && history->lightIndex == lightIndex ) {
+			return history;
+		}
+		if ( !history->valid ) {
+			oldest = history;
+			break;
+		}
+		if ( history->lastTouchedFrame < oldest->lastTouchedFrame ) {
+			oldest = history;
+		}
+	}
+	memset( oldest, 0, sizeof( *oldest ) );
+	oldest->valid = true;
+	oldest->lightIndex = lightIndex;
+	oldest->lastDynamicFrame = -0x3fffffff;
+	return oldest;
+}
+
+static void RB_ShadowMapInvalidateLightCaches( const int lightIndex ) {
+	if ( lightIndex < 0 ) {
+		return;
+	}
+	for ( int i = 0; i < SHADOWMAP_CACHE_MAX_SLOTS; i++ ) {
+		if ( g_projectedShadowMapCache[i].valid && g_projectedShadowMapCache[i].lightIndex == lightIndex ) {
+			g_projectedShadowMapCache[i].valid = false;
+		}
+		if ( g_pointShadowMapCache[i].valid && g_pointShadowMapCache[i].lightIndex == lightIndex ) {
+			g_pointShadowMapCache[i].valid = false;
+		}
+	}
+}
+
+static bool RB_ShadowMapStaticCacheable( const viewLight_t *vLight, const shadowMapPassKind_t passKind, const bool pointLight, const bool haveTranslucentCasters ) {
+	if ( !r_shadowMapStaticCache.GetBool() || vLight == NULL || RB_ShadowMapLightIndex( vLight ) < 0 ) {
+		return false;
+	}
+	if ( haveTranslucentCasters || vLight->shadowMapDynamicCasterCount > 0 || vLight->shadowMapCasterCount <= 0 ) {
+		const int lightIndex = RB_ShadowMapLightIndex( vLight );
+		shadowMapLightHistory_t *history = RB_ShadowMapFindLightHistory( lightIndex );
+		if ( history != NULL && vLight->shadowMapDynamicCasterCount > 0 ) {
+			history->lastDynamicFrame = tr.frameCount;
+			history->lastTouchedFrame = tr.frameCount;
+			RB_ShadowMapInvalidateLightCaches( lightIndex );
+		}
+		return false;
+	}
+	if ( !pointLight && RB_ShadowMapCascadeCountForLight( vLight ) > 1 && !r_shadowMapCacheCSM.GetBool() ) {
+		return false;
+	}
+	shadowMapLightHistory_t *history = RB_ShadowMapFindLightHistory( RB_ShadowMapLightIndex( vLight ) );
+	if ( history != NULL ) {
+		history->lastTouchedFrame = tr.frameCount;
+		if ( tr.frameCount - history->lastDynamicFrame < Max( 0, r_shadowMapStaticHysteresisFrames.GetInteger() ) ) {
+			g_shadowMapStats.staticHysteresisPasses++;
+			return false;
+		}
+	}
+	return true;
+}
+
+static int RB_ShadowMapProjectedCacheSlotLimit( void ) {
+	return idMath::ClampInt( 0, SHADOWMAP_CACHE_MAX_SLOTS, r_shadowMapProjectedCacheSize.GetInteger() );
+}
+
+static int RB_ShadowMapPointCacheSlotLimit( void ) {
+	return idMath::ClampInt( 0, SHADOWMAP_CACHE_MAX_SLOTS, r_shadowMapPointCacheSize.GetInteger() );
+}
+
+static void RB_ShadowMapExpireCaches( void ) {
+	const int residentFrames = Max( 1, r_shadowMapResidentFrames.GetInteger() );
+	for ( int i = 0; i < SHADOWMAP_CACHE_MAX_SLOTS; i++ ) {
+		if ( g_projectedShadowMapCache[i].valid && tr.frameCount - g_projectedShadowMapCache[i].lastUsedFrame > residentFrames ) {
+			g_projectedShadowMapCache[i].valid = false;
+			g_shadowMapStats.cacheExpired++;
+		}
+		if ( g_pointShadowMapCache[i].valid && tr.frameCount - g_pointShadowMapCache[i].lastUsedFrame > residentFrames ) {
+			g_pointShadowMapCache[i].valid = false;
+			g_shadowMapStats.cacheExpired++;
+		}
+	}
+}
+
+static projectedShadowMapCacheEntry_t *RB_ShadowMapFindProjectedCacheEntry( const int lightIndex, const shadowMapPassKind_t passKind, const int signature ) {
+	const int slotLimit = RB_ShadowMapProjectedCacheSlotLimit();
+	for ( int i = 0; i < slotLimit; i++ ) {
+		projectedShadowMapCacheEntry_t *entry = &g_projectedShadowMapCache[i];
+		if ( entry->valid && entry->lightIndex == lightIndex && entry->passKind == static_cast<int>( passKind ) && entry->signature == signature ) {
+			return entry;
+		}
+	}
+	return NULL;
+}
+
+static pointShadowMapCacheEntry_t *RB_ShadowMapFindPointCacheEntry( const int lightIndex, const shadowMapPassKind_t passKind, const int signature ) {
+	const int slotLimit = RB_ShadowMapPointCacheSlotLimit();
+	for ( int i = 0; i < slotLimit; i++ ) {
+		pointShadowMapCacheEntry_t *entry = &g_pointShadowMapCache[i];
+		if ( entry->valid && entry->lightIndex == lightIndex && entry->passKind == static_cast<int>( passKind ) && entry->signature == signature ) {
+			return entry;
+		}
+	}
+	return NULL;
+}
+
+static projectedShadowMapCacheEntry_t *RB_ShadowMapAllocProjectedCacheEntry( void ) {
+	const int slotLimit = RB_ShadowMapProjectedCacheSlotLimit();
+	if ( slotLimit <= 0 ) {
+		return NULL;
+	}
+	projectedShadowMapCacheEntry_t *oldest = &g_projectedShadowMapCache[0];
+	for ( int i = 0; i < slotLimit; i++ ) {
+		projectedShadowMapCacheEntry_t *entry = &g_projectedShadowMapCache[i];
+		if ( !entry->valid ) {
+			return entry;
+		}
+		if ( entry->lastUsedFrame < oldest->lastUsedFrame ) {
+			oldest = entry;
+		}
+	}
+	oldest->valid = false;
+	g_shadowMapStats.cacheEvictions++;
+	return oldest;
+}
+
+static pointShadowMapCacheEntry_t *RB_ShadowMapAllocPointCacheEntry( void ) {
+	const int slotLimit = RB_ShadowMapPointCacheSlotLimit();
+	if ( slotLimit <= 0 ) {
+		return NULL;
+	}
+	pointShadowMapCacheEntry_t *oldest = &g_pointShadowMapCache[0];
+	for ( int i = 0; i < slotLimit; i++ ) {
+		pointShadowMapCacheEntry_t *entry = &g_pointShadowMapCache[i];
+		if ( !entry->valid ) {
+			return entry;
+		}
+		if ( entry->lastUsedFrame < oldest->lastUsedFrame ) {
+			oldest = entry;
+		}
+	}
+	oldest->valid = false;
+	g_shadowMapStats.cacheEvictions++;
+	return oldest;
+}
+
+static void RB_ShadowMapSelectProjectedCacheEntry( projectedShadowMapCacheEntry_t *entry ) {
+	g_activeProjectedShadowMapCache = entry;
+	if ( entry != NULL ) {
+		g_shadowMapDepthImage = entry->depthImage;
+		g_shadowMapRenderTexture = entry->renderTexture;
+	}
+}
+
+static void RB_ShadowMapSelectPointCacheEntry( pointShadowMapCacheEntry_t *entry ) {
+	g_activePointShadowMapCache = entry;
+	if ( entry != NULL ) {
+		g_pointShadowMapColorImage = entry->colorImage;
+		g_pointShadowMapDepthImage = entry->depthImage;
+		g_pointShadowMapRenderTexture = entry->renderTexture;
+	}
+}
+
+static void RB_ShadowMapCountCacheSlots( void ) {
+	g_shadowMapStats.projectedCacheSlotsUsed = 0;
+	g_shadowMapStats.pointCacheSlotsUsed = 0;
+	g_shadowMapStats.projectedCacheSlotsTotal = RB_ShadowMapProjectedCacheSlotLimit();
+	g_shadowMapStats.pointCacheSlotsTotal = RB_ShadowMapPointCacheSlotLimit();
+	for ( int i = 0; i < g_shadowMapStats.projectedCacheSlotsTotal; i++ ) {
+		if ( g_projectedShadowMapCache[i].valid ) {
+			g_shadowMapStats.projectedCacheSlotsUsed++;
+		}
+	}
+	for ( int i = 0; i < g_shadowMapStats.pointCacheSlotsTotal; i++ ) {
+		if ( g_pointShadowMapCache[i].valid ) {
+			g_shadowMapStats.pointCacheSlotsUsed++;
+		}
+	}
+}
+
+static shadowMapSchedule_t RB_ShadowMapSchedulePass( const viewLight_t *vLight, const shadowMapPassKind_t passKind, const bool pointLight, const bool haveTranslucentCasters ) {
+	shadowMapSchedule_t schedule;
+	memset( &schedule, 0, sizeof( schedule ) );
+	schedule.action = SHADOWMAP_SCHEDULE_UPDATE;
+	schedule.signature = RB_ShadowMapBuildPassSignature( vLight, passKind, pointLight );
+
+	RB_ShadowMapSelectScratchResources();
+	schedule.cacheable = RB_ShadowMapStaticCacheable( vLight, passKind, pointLight, haveTranslucentCasters );
+	const int lightIndex = RB_ShadowMapLightIndex( vLight );
+	if ( schedule.cacheable ) {
+		if ( pointLight ) {
+			schedule.pointEntry = RB_ShadowMapFindPointCacheEntry( lightIndex, passKind, schedule.signature );
+			if ( schedule.pointEntry != NULL ) {
+				schedule.cacheHit = true;
+				schedule.action = SHADOWMAP_SCHEDULE_REUSE;
+				schedule.budgetReuse = r_shadowMapMaxUpdatesPerView.GetInteger() > 0 && g_shadowMapStats.shadowMapUpdates >= r_shadowMapMaxUpdatesPerView.GetInteger();
+				g_shadowMapStats.cacheHitPasses++;
+				g_shadowMapStats.cacheReusePasses++;
+				g_shadowMapStats.cacheBudgetReusePasses += schedule.budgetReuse ? 1 : 0;
+				RB_ShadowMapSelectPointCacheEntry( schedule.pointEntry );
+				return schedule;
+			}
+		} else {
+			schedule.projectedEntry = RB_ShadowMapFindProjectedCacheEntry( lightIndex, passKind, schedule.signature );
+			if ( schedule.projectedEntry != NULL ) {
+				schedule.cacheHit = true;
+				schedule.action = SHADOWMAP_SCHEDULE_REUSE;
+				schedule.budgetReuse = r_shadowMapMaxUpdatesPerView.GetInteger() > 0 && g_shadowMapStats.shadowMapUpdates >= r_shadowMapMaxUpdatesPerView.GetInteger();
+				g_shadowMapStats.cacheHitPasses++;
+				g_shadowMapStats.cacheReusePasses++;
+				g_shadowMapStats.cacheBudgetReusePasses += schedule.budgetReuse ? 1 : 0;
+				g_projectedShadowMapState = schedule.projectedEntry->state;
+				RB_ShadowMapSelectProjectedCacheEntry( schedule.projectedEntry );
+				return schedule;
+			}
+		}
+		g_shadowMapStats.cacheMissPasses++;
+	}
+
+	const int updateBudget = r_shadowMapMaxUpdatesPerView.GetInteger();
+	if ( updateBudget > 0 && g_shadowMapStats.shadowMapUpdates >= updateBudget ) {
+		schedule.action = SHADOWMAP_SCHEDULE_FALLBACK;
+		return schedule;
+	}
+
+	if ( schedule.cacheable ) {
+		if ( pointLight ) {
+			schedule.pointEntry = RB_ShadowMapAllocPointCacheEntry();
+			RB_ShadowMapSelectPointCacheEntry( schedule.pointEntry );
+		} else {
+			schedule.projectedEntry = RB_ShadowMapAllocProjectedCacheEntry();
+			RB_ShadowMapSelectProjectedCacheEntry( schedule.projectedEntry );
+		}
+		if ( ( pointLight && schedule.pointEntry == NULL ) || ( !pointLight && schedule.projectedEntry == NULL ) ) {
+			schedule.cacheable = false;
+		}
+	}
+
+	return schedule;
+}
+
+static void RB_ShadowMapCompleteCacheUpdate( const shadowMapSchedule_t &schedule, const viewLight_t *vLight, const shadowMapPassKind_t passKind, const bool pointLight, const bool renderOk ) {
+	if ( !schedule.cacheable ) {
+		return;
+	}
+	const int lightIndex = RB_ShadowMapLightIndex( vLight );
+	if ( pointLight ) {
+		pointShadowMapCacheEntry_t *entry = schedule.pointEntry;
+		if ( entry == NULL ) {
+			return;
+		}
+		if ( !renderOk ) {
+			entry->valid = false;
+			return;
+		}
+		entry->valid = true;
+		entry->lightIndex = lightIndex;
+		entry->passKind = static_cast<int>( passKind );
+		entry->lightClass = static_cast<int>( RB_ShadowMapLightClass( vLight ) );
+		entry->signature = schedule.signature;
+		entry->size = g_pointShadowMapRenderTexture != NULL ? g_pointShadowMapRenderTexture->GetWidth() : 0;
+		entry->highPrecision = RB_PointShadowMapHighPrecisionEnabled();
+		entry->depthCompare = RB_PointShadowMapDepthCompareEnabled();
+		entry->lastUsedFrame = tr.frameCount;
+		entry->lastUpdatedFrame = tr.frameCount;
+		entry->colorImage = g_pointShadowMapColorImage;
+		entry->depthImage = g_pointShadowMapDepthImage;
+		entry->renderTexture = g_pointShadowMapRenderTexture;
+	} else {
+		projectedShadowMapCacheEntry_t *entry = schedule.projectedEntry;
+		if ( entry == NULL ) {
+			return;
+		}
+		if ( !renderOk ) {
+			entry->valid = false;
+			return;
+		}
+		entry->valid = true;
+		entry->lightIndex = lightIndex;
+		entry->passKind = static_cast<int>( passKind );
+		entry->lightClass = static_cast<int>( RB_ShadowMapLightClass( vLight ) );
+		entry->signature = schedule.signature;
+		entry->tileSize = g_projectedShadowMapState.tileSize;
+		entry->atlasDiv = g_projectedShadowMapState.atlasDiv;
+		entry->cascadeCount = g_projectedShadowMapState.cascadeCount;
+		entry->lastUsedFrame = tr.frameCount;
+		entry->lastUpdatedFrame = tr.frameCount;
+		entry->state = g_projectedShadowMapState;
+		entry->depthImage = g_shadowMapDepthImage;
+		entry->renderTexture = g_shadowMapRenderTexture;
+	}
 }
 
 static float RB_ShadowMapViewNear( const viewDef_t *viewDef ) {
@@ -2324,6 +3115,56 @@ static int RB_ShadowMapBuildSliceSamplePoints( const viewDef_t *viewDef, const f
 	}
 
 	return sampleCount;
+}
+
+static float RB_ShadowMapWorldTexelSizeFromSamples( const idVec3 *samplePoints, const int sampleCount, const int tileSize ) {
+	if ( samplePoints == NULL || sampleCount <= 0 || tileSize <= 0 ) {
+		return 0.0f;
+	}
+
+	idBounds bounds;
+	bounds.Clear();
+	for ( int i = 0; i < sampleCount; i++ ) {
+		bounds.AddPoint( samplePoints[i] );
+	}
+
+	const idVec3 size = bounds[1] - bounds[0];
+	const float maxExtent = Max( Max( idMath::Fabs( size.x ), idMath::Fabs( size.y ) ), idMath::Fabs( size.z ) );
+	return maxExtent / Max( 1, tileSize );
+}
+
+static float RB_ShadowMapSliceWorldTexelSize( const viewDef_t *viewDef, const float sliceNear, const float sliceFar, const int tileSize ) {
+	if ( viewDef == NULL ) {
+		return 0.0f;
+	}
+
+	idVec3 samplePoints[SHADOWMAP_CASCADE_SAMPLE_POINT_COUNT];
+	const int sampleCount = RB_ShadowMapBuildSliceSamplePoints( viewDef, sliceNear, sliceFar, samplePoints );
+	return RB_ShadowMapWorldTexelSizeFromSamples( samplePoints, sampleCount, tileSize );
+}
+
+static float RB_ShadowMapLightWorldTexelSize( const viewLight_t *vLight, const int tileSize ) {
+	if ( vLight == NULL || tileSize <= 0 ) {
+		return 0.0f;
+	}
+
+	idVec3 radius = vLight->lightRadius;
+	if ( vLight->lightDef != NULL ) {
+		const renderLight_t &parms = vLight->lightDef->parms;
+		radius[0] = Max( idMath::Fabs( radius[0] ), idMath::Fabs( parms.lightRadius[0] ) + idMath::Fabs( parms.lightCenter[0] ) );
+		radius[1] = Max( idMath::Fabs( radius[1] ), idMath::Fabs( parms.lightRadius[1] ) + idMath::Fabs( parms.lightCenter[1] ) );
+		radius[2] = Max( idMath::Fabs( radius[2] ), idMath::Fabs( parms.lightRadius[2] ) + idMath::Fabs( parms.lightCenter[2] ) );
+	}
+
+	const float maxExtent = Max( Max( idMath::Fabs( radius.x ), idMath::Fabs( radius.y ) ), idMath::Fabs( radius.z ) ) * 2.0f;
+	return maxExtent / Max( 1, tileSize );
+}
+
+static float RB_ShadowMapTexelDepthBias( const float worldTexelSize, const float depthRange ) {
+	if ( worldTexelSize <= 0.0f || depthRange <= 0.0f ) {
+		return 0.0f;
+	}
+	return Max( 0.0f, r_shadowMapTexelBiasScale.GetFloat() ) * worldTexelSize / Max( depthRange, 1.0f );
 }
 
 static void RB_ShadowMapTransformPointToClip( const idVec3 &point, const idPlane clipPlanes[4], idVec4 &clip ) {
@@ -2532,6 +3373,14 @@ static void RB_ShadowMapBuildProjectedState( const viewLight_t *vLight, const id
 	RB_ShadowMapInitializeProjectedState( baseClipPlanes, requestedCascadeCount, tileSize );
 
 	if ( requestedCascadeCount <= 1 || backEnd.viewDef == NULL ) {
+		const float worldTexelSize = RB_ShadowMapLightWorldTexelSize( vLight, tileSize );
+		const float depthRange = Max( worldTexelSize * Max( 1, tileSize ), 1.0f );
+		g_projectedShadowMapState.worldTexelSize[0] = worldTexelSize;
+		g_projectedShadowMapState.sliceNear[0] = 0.0f;
+		g_projectedShadowMapState.sliceFar[0] = depthRange;
+		g_projectedShadowMapState.depthRange[0] = depthRange;
+		g_projectedShadowMapState.clipZExtent[0] = 2.0f;
+		g_projectedShadowMapState.texelDepthBias[0] = RB_ShadowMapTexelDepthBias( worldTexelSize, depthRange );
 		return;
 	}
 
@@ -2564,23 +3413,35 @@ static void RB_ShadowMapBuildProjectedState( const viewLight_t *vLight, const id
 				RB_ShadowMapReportProjectedCascadeFallback( vLight, requestedCascadeCount, cascadeIndex, sliceNear, sliceFar, validPoints, skippedPoints, mixedWSigns );
 				RB_ShadowMapResetProjectedState();
 				RB_ShadowMapInitializeProjectedState( baseClipPlanes, 1, tileSize );
-				g_projectedShadowMapState.depthRange[0] = Max( maxDistance - zNear, 0.0f );
+				g_projectedShadowMapState.worldTexelSize[0] = RB_ShadowMapLightWorldTexelSize( vLight, tileSize );
+				g_projectedShadowMapState.sliceNear[0] = zNear;
+				g_projectedShadowMapState.sliceFar[0] = maxDistance;
+				g_projectedShadowMapState.depthRange[0] = Max( maxDistance - zNear, 1.0f );
 				g_projectedShadowMapState.clipZExtent[0] = 2.0f;
+				g_projectedShadowMapState.texelDepthBias[0] = RB_ShadowMapTexelDepthBias( g_projectedShadowMapState.worldTexelSize[0], g_projectedShadowMapState.depthRange[0] );
 				return;
 			}
 			RB_ShadowMapBuildCascadeClipPlanes( baseClipPlanes, ndcMins, ndcMaxs, g_projectedShadowMapState.clipPlanes[cascadeIndex] );
 			g_projectedShadowMapState.biasScale[cascadeIndex] = RB_ShadowMapCascadeBiasScale( ndcMins, ndcMaxs );
 			g_projectedShadowMapState.clipZExtent[cascadeIndex] = ndcMaxs.z - ndcMins.z;
+			g_projectedShadowMapState.worldTexelSize[cascadeIndex] = RB_ShadowMapSliceWorldTexelSize( viewDef, sliceNear, sliceFar, tileSize );
 			RB_ShadowMapReportProjectedCascadeFit( vLight, cascadeIndex, requestedCascadeCount, sliceNear, sliceFar, validPoints, skippedPoints );
 		} else {
 			RB_ShadowMapReportProjectedCascadeFallback( vLight, requestedCascadeCount, cascadeIndex, sliceNear, sliceFar, validPoints, skippedPoints, mixedWSigns );
 			RB_ShadowMapResetProjectedState();
 			RB_ShadowMapInitializeProjectedState( baseClipPlanes, 1, tileSize );
-			g_projectedShadowMapState.depthRange[0] = Max( maxDistance - zNear, 0.0f );
+			g_projectedShadowMapState.worldTexelSize[0] = RB_ShadowMapLightWorldTexelSize( vLight, tileSize );
+			g_projectedShadowMapState.sliceNear[0] = zNear;
+			g_projectedShadowMapState.sliceFar[0] = maxDistance;
+			g_projectedShadowMapState.depthRange[0] = Max( maxDistance - zNear, 1.0f );
 			g_projectedShadowMapState.clipZExtent[0] = 2.0f;
+			g_projectedShadowMapState.texelDepthBias[0] = RB_ShadowMapTexelDepthBias( g_projectedShadowMapState.worldTexelSize[0], g_projectedShadowMapState.depthRange[0] );
 			return;
 		}
+		g_projectedShadowMapState.sliceNear[cascadeIndex] = sliceNear;
+		g_projectedShadowMapState.sliceFar[cascadeIndex] = sliceFar;
 		g_projectedShadowMapState.depthRange[cascadeIndex] = sliceFar - sliceNear;
+		g_projectedShadowMapState.texelDepthBias[cascadeIndex] = RB_ShadowMapTexelDepthBias( g_projectedShadowMapState.worldTexelSize[cascadeIndex], g_projectedShadowMapState.depthRange[cascadeIndex] );
 		sliceNear = sliceFar;
 	}
 
@@ -2589,8 +3450,12 @@ static void RB_ShadowMapBuildProjectedState( const viewLight_t *vLight, const id
 		const char *shaderName = vLight->lightShader != NULL ? vLight->lightShader->GetName() : "<null>";
 		common->Printf( "SM csm bias '%s'", shaderName );
 		for ( int cascadeIndex = 0; cascadeIndex < requestedCascadeCount; cascadeIndex++ ) {
-			common->Printf( " [%d]=%.3f depth=%.2f clipZ=%.3f", cascadeIndex,
+			common->Printf( " [%d]=%.3f texel=%.3f texBias=%.6f range=%.2f-%.2f depth=%.2f clipZ=%.3f", cascadeIndex,
 				g_projectedShadowMapState.biasScale[cascadeIndex],
+				g_projectedShadowMapState.worldTexelSize[cascadeIndex],
+				g_projectedShadowMapState.texelDepthBias[cascadeIndex],
+				g_projectedShadowMapState.sliceNear[cascadeIndex],
+				g_projectedShadowMapState.sliceFar[cascadeIndex],
 				g_projectedShadowMapState.depthRange[cascadeIndex],
 				g_projectedShadowMapState.clipZExtent[cascadeIndex] );
 		}
@@ -2869,7 +3734,8 @@ static const char *programBaseName = "glprogs/shadow_interaction";
 		return false;
 	}
 
-	if ( g_shadowMapProgram.programObject != 0 && g_shadowMapProgram.programGeneration == tr.videoRestartCount ) {
+	const bool depthCompareMode = RB_ShadowMapDepthCompareEnabled();
+	if ( g_shadowMapProgram.programObject != 0 && g_shadowMapProgram.programGeneration == tr.videoRestartCount && g_shadowMapProgram.depthCompareMode == depthCompareMode ) {
 		return g_shadowMapProgram.programValid;
 	}
 
@@ -2900,7 +3766,27 @@ static const char *programBaseName = "glprogs/shadow_interaction";
 	const GLcharARB *vertexSource = (const GLcharARB *)vertexBuffer;
 	const GLcharARB *fragmentSource = (const GLcharARB *)fragmentBuffer;
 	glShaderSourceARB( vertexShader, 1, &vertexSource, NULL );
-	glShaderSourceARB( fragmentShader, 1, &fragmentSource, NULL );
+	if ( depthCompareMode ) {
+		const char *fragmentVersionEnd = strchr( fragmentBuffer, '\n' );
+		if ( fragmentVersionEnd != NULL ) {
+			static const GLcharARB compareDefine[] = "#define OPENQ4_SHADOW_COMPARE 1\n";
+			const GLcharARB *fragmentSources[3] = {
+				(const GLcharARB *)fragmentBuffer,
+				compareDefine,
+				(const GLcharARB *)( fragmentVersionEnd + 1 )
+			};
+			const GLint fragmentLengths[3] = {
+				static_cast<GLint>( fragmentVersionEnd - fragmentBuffer + 1 ),
+				static_cast<GLint>( sizeof( compareDefine ) - 1 ),
+				-1
+			};
+			glShaderSourceARB( fragmentShader, 3, fragmentSources, fragmentLengths );
+		} else {
+			glShaderSourceARB( fragmentShader, 1, &fragmentSource, NULL );
+		}
+	} else {
+		glShaderSourceARB( fragmentShader, 1, &fragmentSource, NULL );
+	}
 	glCompileShaderARB( vertexShader );
 	glCompileShaderARB( fragmentShader );
 
@@ -2955,6 +3841,7 @@ static const char *programBaseName = "glprogs/shadow_interaction";
 	g_shadowMapProgram.fragmentShaderObject = fragmentShader;
 	g_shadowMapProgram.programGeneration = tr.videoRestartCount;
 	g_shadowMapProgram.programValid = true;
+	g_shadowMapProgram.depthCompareMode = depthCompareMode;
 
 	g_shadowMapProgram.localLightOrigin = glGetUniformLocationARB( programObject, "uLocalLightOrigin" );
 	g_shadowMapProgram.localViewOrigin = glGetUniformLocationARB( programObject, "uLocalViewOrigin" );
@@ -2975,13 +3862,20 @@ static const char *programBaseName = "glprogs/shadow_interaction";
 	g_shadowMapProgram.vertexColorParams = glGetUniformLocationARB( programObject, "uVertexColorParams" );
 	g_shadowMapProgram.diffuseColor = glGetUniformLocationARB( programObject, "uDiffuseColor" );
 	g_shadowMapProgram.specularColor = glGetUniformLocationARB( programObject, "uSpecularColor" );
+	g_shadowMapProgram.materialEnhanced = glGetUniformLocationARB( programObject, "uMaterialEnhanced" );
 	g_shadowMapProgram.materialNormalScale = glGetUniformLocationARB( programObject, "uMaterialNormalScale" );
 	g_shadowMapProgram.materialSpecularBoost = glGetUniformLocationARB( programObject, "uMaterialSpecularBoost" );
 	g_shadowMapProgram.materialFresnel = glGetUniformLocationARB( programObject, "uMaterialFresnel" );
 	g_shadowMapProgram.shadowTexelSize = glGetUniformLocationARB( programObject, "uShadowTexelSize" );
 	g_shadowMapProgram.shadowBias = glGetUniformLocationARB( programObject, "uShadowBias" );
 	g_shadowMapProgram.shadowNormalBias = glGetUniformLocationARB( programObject, "uShadowNormalBias" );
+	g_shadowMapProgram.shadowTexelDepthBias = glGetUniformLocationARB( programObject, "uShadowTexelDepthBias[0]" );
+	g_shadowMapProgram.shadowReceiverPlaneBias = glGetUniformLocationARB( programObject, "uShadowReceiverPlaneBias" );
 	g_shadowMapProgram.shadowFilterRadius = glGetUniformLocationARB( programObject, "uShadowFilterRadius" );
+	g_shadowMapProgram.shadowFilterTaps = glGetUniformLocationARB( programObject, "uShadowFilterTaps" );
+	g_shadowMapProgram.shadowFilterMode = glGetUniformLocationARB( programObject, "uShadowFilterMode" );
+	g_shadowMapProgram.shadowPCSSLightRadius = glGetUniformLocationARB( programObject, "uShadowPCSSLightRadius" );
+	g_shadowMapProgram.shadowPCSSMaxRadius = glGetUniformLocationARB( programObject, "uShadowPCSSMaxRadius" );
 	g_shadowMapProgram.shadowAtlasRect = glGetUniformLocationARB( programObject, "uShadowAtlasRect[0]" );
 	g_shadowMapProgram.shadowSplitDepths = glGetUniformLocationARB( programObject, "uShadowSplitDepths[0]" );
 	g_shadowMapProgram.shadowCascadeBiasScale = glGetUniformLocationARB( programObject, "uShadowCascadeBiasScale[0]" );
@@ -2990,6 +3884,9 @@ static const char *programBaseName = "glprogs/shadow_interaction";
 	g_shadowMapProgram.shadowDebugMode = glGetUniformLocationARB( programObject, "uShadowDebugMode" );
 	g_shadowMapProgram.translucentShadowEnabled = glGetUniformLocationARB( programObject, "uTranslucentShadowEnabled" );
 	g_shadowMapProgram.translucentShadowDensity = glGetUniformLocationARB( programObject, "uTranslucentShadowDensity" );
+	g_shadowMapProgram.translucentShadowFilterRadius = glGetUniformLocationARB( programObject, "uTranslucentShadowFilterRadius" );
+	g_shadowMapProgram.translucentShadowMinVariance = glGetUniformLocationARB( programObject, "uTranslucentShadowMinVariance" );
+	g_shadowMapProgram.translucentShadowBleedReduction = glGetUniformLocationARB( programObject, "uTranslucentShadowBleedReduction" );
 	g_shadowMapProgram.bumpMap = glGetUniformLocationARB( programObject, "uBumpMap" );
 	g_shadowMapProgram.lightFalloffMap = glGetUniformLocationARB( programObject, "uLightFalloffMap" );
 	g_shadowMapProgram.lightProjectionMap = glGetUniformLocationARB( programObject, "uLightProjectionMap" );
@@ -3099,6 +3996,10 @@ static const char *programBaseName = "glprogs/shadow_proj_caster";
 	g_shadowMapCasterProgram.alphaRef = glGetUniformLocationARB( programObject, "uAlphaRef" );
 	g_shadowMapCasterProgram.alphaScale = glGetUniformLocationARB( programObject, "uAlphaScale" );
 	g_shadowMapCasterProgram.alphaHashEnabled = glGetUniformLocationARB( programObject, "uAlphaHashEnabled" );
+	g_shadowMapCasterProgram.alphaHashStable = glGetUniformLocationARB( programObject, "uAlphaHashStable" );
+	g_shadowMapCasterProgram.modelMatrixRow0 = glGetUniformLocationARB( programObject, "uModelMatrixRow0" );
+	g_shadowMapCasterProgram.modelMatrixRow1 = glGetUniformLocationARB( programObject, "uModelMatrixRow1" );
+	g_shadowMapCasterProgram.modelMatrixRow2 = glGetUniformLocationARB( programObject, "uModelMatrixRow2" );
 	g_shadowMapCasterProgram.alphaMap = glGetUniformLocationARB( programObject, "uAlphaMap" );
 
 	common->Printf( "Loaded GLSL program '%s'\n", programBaseName );
@@ -3227,7 +4128,8 @@ static const char *programBaseName = "glprogs/shadow_point_interaction";
 		return false;
 	}
 
-	if ( g_pointShadowMapProgram.programObject != 0 && g_pointShadowMapProgram.programGeneration == tr.videoRestartCount ) {
+	const bool depthCompareMode = RB_PointShadowMapDepthCompareEnabled();
+	if ( g_pointShadowMapProgram.programObject != 0 && g_pointShadowMapProgram.programGeneration == tr.videoRestartCount && g_pointShadowMapProgram.depthCompareMode == depthCompareMode ) {
 		return g_pointShadowMapProgram.programValid;
 	}
 
@@ -3258,7 +4160,25 @@ static const char *programBaseName = "glprogs/shadow_point_interaction";
 	const GLcharARB *vertexSource = (const GLcharARB *)vertexBuffer;
 	const GLcharARB *fragmentSource = (const GLcharARB *)fragmentBuffer;
 	glShaderSourceARB( vertexShader, 1, &vertexSource, NULL );
-	glShaderSourceARB( fragmentShader, 1, &fragmentSource, NULL );
+	if ( depthCompareMode ) {
+		const char *fragmentVersionEnd = strchr( fragmentBuffer, '\n' );
+		if ( fragmentVersionEnd != NULL ) {
+			static const GLcharARB compareVersion[] = "#version 130\n#define OPENQ4_POINT_SHADOW_COMPARE 1\n";
+			const GLcharARB *fragmentSources[2] = {
+				compareVersion,
+				(const GLcharARB *)( fragmentVersionEnd + 1 )
+			};
+			const GLint fragmentLengths[2] = {
+				static_cast<GLint>( sizeof( compareVersion ) - 1 ),
+				-1
+			};
+			glShaderSourceARB( fragmentShader, 2, fragmentSources, fragmentLengths );
+		} else {
+			glShaderSourceARB( fragmentShader, 1, &fragmentSource, NULL );
+		}
+	} else {
+		glShaderSourceARB( fragmentShader, 1, &fragmentSource, NULL );
+	}
 	glCompileShaderARB( vertexShader );
 	glCompileShaderARB( fragmentShader );
 
@@ -3283,6 +4203,11 @@ static const char *programBaseName = "glprogs/shadow_point_interaction";
 		glDeleteObjectARB( fragmentShader );
 		g_pointShadowMapProgram.programGeneration = tr.videoRestartCount;
 		g_pointShadowMapProgram.programValid = false;
+		if ( depthCompareMode ) {
+			common->Warning( "Point shadow-map depth compare GLSL failed; falling back to color-depth cubemap for this video generation" );
+			RB_PointShadowMapDisableDepthCompareForGeneration();
+			return RB_PointShadowMapLoadProgram();
+		}
 		return false;
 	}
 
@@ -3305,6 +4230,11 @@ static const char *programBaseName = "glprogs/shadow_point_interaction";
 		glDeleteObjectARB( programObject );
 		g_pointShadowMapProgram.programGeneration = tr.videoRestartCount;
 		g_pointShadowMapProgram.programValid = false;
+		if ( depthCompareMode ) {
+			common->Warning( "Point shadow-map depth compare GLSL link failed; falling back to color-depth cubemap for this video generation" );
+			RB_PointShadowMapDisableDepthCompareForGeneration();
+			return RB_PointShadowMapLoadProgram();
+		}
 		return false;
 	}
 
@@ -3313,6 +4243,7 @@ static const char *programBaseName = "glprogs/shadow_point_interaction";
 	g_pointShadowMapProgram.fragmentShaderObject = fragmentShader;
 	g_pointShadowMapProgram.programGeneration = tr.videoRestartCount;
 	g_pointShadowMapProgram.programValid = true;
+	g_pointShadowMapProgram.depthCompareMode = depthCompareMode;
 
 	g_pointShadowMapProgram.localLightOrigin = glGetUniformLocationARB( programObject, "uLocalLightOrigin" );
 	g_pointShadowMapProgram.localViewOrigin = glGetUniformLocationARB( programObject, "uLocalViewOrigin" );
@@ -3334,15 +4265,23 @@ static const char *programBaseName = "glprogs/shadow_point_interaction";
 	g_pointShadowMapProgram.vertexColorParams = glGetUniformLocationARB( programObject, "uVertexColorParams" );
 	g_pointShadowMapProgram.diffuseColor = glGetUniformLocationARB( programObject, "uDiffuseColor" );
 	g_pointShadowMapProgram.specularColor = glGetUniformLocationARB( programObject, "uSpecularColor" );
+	g_pointShadowMapProgram.materialEnhanced = glGetUniformLocationARB( programObject, "uMaterialEnhanced" );
 	g_pointShadowMapProgram.materialNormalScale = glGetUniformLocationARB( programObject, "uMaterialNormalScale" );
 	g_pointShadowMapProgram.materialSpecularBoost = glGetUniformLocationARB( programObject, "uMaterialSpecularBoost" );
 	g_pointShadowMapProgram.materialFresnel = glGetUniformLocationARB( programObject, "uMaterialFresnel" );
 	g_pointShadowMapProgram.shadowBias = glGetUniformLocationARB( programObject, "uShadowBias" );
 	g_pointShadowMapProgram.shadowNormalBias = glGetUniformLocationARB( programObject, "uShadowNormalBias" );
+	g_pointShadowMapProgram.pointShadowTexelDepthBias = glGetUniformLocationARB( programObject, "uPointShadowTexelDepthBias" );
 	g_pointShadowMapProgram.shadowFilterRadius = glGetUniformLocationARB( programObject, "uShadowFilterRadius" );
+	g_pointShadowMapProgram.shadowFilterTaps = glGetUniformLocationARB( programObject, "uShadowFilterTaps" );
+	g_pointShadowMapProgram.shadowFilterMode = glGetUniformLocationARB( programObject, "uShadowFilterMode" );
 	g_pointShadowMapProgram.pointShadowTexelScale = glGetUniformLocationARB( programObject, "uPointShadowTexelScale" );
+	g_pointShadowMapProgram.pointShadowDepthMode = glGetUniformLocationARB( programObject, "uPointShadowDepthMode" );
 	g_pointShadowMapProgram.translucentShadowEnabled = glGetUniformLocationARB( programObject, "uTranslucentShadowEnabled" );
 	g_pointShadowMapProgram.translucentShadowDensity = glGetUniformLocationARB( programObject, "uTranslucentShadowDensity" );
+	g_pointShadowMapProgram.translucentShadowFilterRadius = glGetUniformLocationARB( programObject, "uTranslucentShadowFilterRadius" );
+	g_pointShadowMapProgram.translucentShadowMinVariance = glGetUniformLocationARB( programObject, "uTranslucentShadowMinVariance" );
+	g_pointShadowMapProgram.translucentShadowBleedReduction = glGetUniformLocationARB( programObject, "uTranslucentShadowBleedReduction" );
 	g_pointShadowMapProgram.bumpMap = glGetUniformLocationARB( programObject, "uBumpMap" );
 	g_pointShadowMapProgram.lightFalloffMap = glGetUniformLocationARB( programObject, "uLightFalloffMap" );
 	g_pointShadowMapProgram.lightProjectionMap = glGetUniformLocationARB( programObject, "uLightProjectionMap" );
@@ -3458,6 +4397,9 @@ static const char *programBaseName = "glprogs/shadow_point_caster";
 	g_pointShadowCasterProgram.alphaScale = glGetUniformLocationARB( programObject, "uAlphaScale" );
 	g_pointShadowCasterProgram.alphaTestEnabled = glGetUniformLocationARB( programObject, "uAlphaTestEnabled" );
 	g_pointShadowCasterProgram.alphaHashEnabled = glGetUniformLocationARB( programObject, "uAlphaHashEnabled" );
+	g_pointShadowCasterProgram.alphaHashStable = glGetUniformLocationARB( programObject, "uAlphaHashStable" );
+	g_pointShadowCasterProgram.pointShadowDepthMode = glGetUniformLocationARB( programObject, "uPointShadowDepthMode" );
+	g_pointShadowCasterProgram.pointShadowDepthCompare = glGetUniformLocationARB( programObject, "uPointShadowDepthCompare" );
 	g_pointShadowCasterProgram.alphaMap = glGetUniformLocationARB( programObject, "uAlphaMap" );
 
 	common->Printf( "Loaded GLSL program '%s'\n", programBaseName );
@@ -3679,6 +4621,7 @@ static const char *programBaseName = "glprogs/shadow_debug_overlay";
 	g_shadowDebugOverlayProgram.cascadeCount = glGetUniformLocationARB( programObject, "uCascadeCount" );
 	g_shadowDebugOverlayProgram.passMapped = glGetUniformLocationARB( programObject, "uPassMapped" );
 	g_shadowDebugOverlayProgram.glyphCode = glGetUniformLocationARB( programObject, "uGlyphCode" );
+	g_shadowDebugOverlayProgram.pointShadowDepthMode = glGetUniformLocationARB( programObject, "uPointShadowDepthMode" );
 	g_shadowDebugOverlayProgram.shadowAtlasMap = glGetUniformLocationARB( programObject, "uShadowAtlasMap" );
 	g_shadowDebugOverlayProgram.pointShadowMap = glGetUniformLocationARB( programObject, "uPointShadowMap" );
 
@@ -3732,8 +4675,11 @@ static bool RB_ShadowMapEnsureResources( const viewLight_t *vLight ) {
 
 	const int shadowMapAtlasDiv = RB_ShadowMapAtlasDivForLight( vLight );
 	const int shadowMapSize = shadowMapTileSize * shadowMapAtlasDiv;
+	idImage **depthImage = g_activeProjectedShadowMapCache != NULL ? &g_activeProjectedShadowMapCache->depthImage : &g_shadowMapScratchDepthImage;
+	idRenderTexture **renderTexture = g_activeProjectedShadowMapCache != NULL ? &g_activeProjectedShadowMapCache->renderTexture : &g_shadowMapScratchRenderTexture;
+	const int cacheSlot = g_activeProjectedShadowMapCache != NULL ? static_cast<int>( g_activeProjectedShadowMapCache - g_projectedShadowMapCache ) : -1;
 
-	if ( g_shadowMapDepthImage == NULL ) {
+	if ( *depthImage == NULL ) {
 		idImageOpts opts;
 		opts.textureType = TT_2D;
 		opts.format = FMT_DEPTH;
@@ -3741,14 +4687,16 @@ static bool RB_ShadowMapEnsureResources( const viewLight_t *vLight ) {
 		opts.height = shadowMapSize;
 		opts.numLevels = 1;
 		opts.isPersistant = true;
-		g_shadowMapDepthImage = globalImages->ScratchImage( "_shadowMapDepth", &opts, TF_NEAREST, TR_CLAMP, TD_DEPTH );
+		*depthImage = globalImages->ScratchImage( cacheSlot >= 0 ? va( "_shadowMapDepthCache%d", cacheSlot ) : "_shadowMapDepth", &opts, TF_NEAREST, TR_CLAMP, TD_DEPTH );
 	}
 
-	if ( g_shadowMapRenderTexture == NULL ) {
-		g_shadowMapRenderTexture = tr.CreateRenderTexture( NULL, g_shadowMapDepthImage );
-	} else if ( g_shadowMapRenderTexture->GetWidth() != shadowMapSize || g_shadowMapRenderTexture->GetHeight() != shadowMapSize ) {
-		tr.ResizeRenderTexture( g_shadowMapRenderTexture, shadowMapSize, shadowMapSize );
+	if ( *renderTexture == NULL ) {
+		*renderTexture = tr.CreateRenderTexture( NULL, *depthImage );
+	} else if ( ( *renderTexture )->GetWidth() != shadowMapSize || ( *renderTexture )->GetHeight() != shadowMapSize ) {
+		tr.ResizeRenderTexture( *renderTexture, shadowMapSize, shadowMapSize );
 	}
+	g_shadowMapDepthImage = *depthImage;
+	g_shadowMapRenderTexture = *renderTexture;
 
 	if ( g_shadowMapDepthImage == NULL || g_shadowMapRenderTexture == NULL ) {
 		return false;
@@ -3756,7 +4704,8 @@ static bool RB_ShadowMapEnsureResources( const viewLight_t *vLight ) {
 
 	GL_SelectTextureNoClient( 5 );
 	g_shadowMapDepthImage->Bind();
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, RB_ShadowMapDepthCompareEnabled() ? GL_COMPARE_R_TO_TEXTURE : GL_NONE );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL );
 	for ( int i = 0; i < 3; i++ ) {
 		if ( glConfig.maxTextureUnits >= 7 + i ) {
 			GL_SelectTextureNoClient( 6 + i );
@@ -3767,7 +4716,6 @@ static bool RB_ShadowMapEnsureResources( const viewLight_t *vLight ) {
 			}
 		}
 	}
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL );
 	backEnd.glState.currenttmu = -1;
 
 	return true;
@@ -3782,19 +4730,32 @@ static bool RB_PointShadowMapEnsureResources( void ) {
 	}
 
 	const int shadowMapSize = idMath::ClampInt( 128, 2048, r_shadowMapSize.GetInteger() );
+	idImage **colorImage = g_activePointShadowMapCache != NULL ? &g_activePointShadowMapCache->colorImage : &g_pointShadowMapScratchColorImage;
+	idImage **depthImage = g_activePointShadowMapCache != NULL ? &g_activePointShadowMapCache->depthImage : &g_pointShadowMapScratchDepthImage;
+	idRenderTexture **renderTexture = g_activePointShadowMapCache != NULL ? &g_activePointShadowMapCache->renderTexture : &g_pointShadowMapScratchRenderTexture;
+	const int cacheSlot = g_activePointShadowMapCache != NULL ? static_cast<int>( g_activePointShadowMapCache - g_pointShadowMapCache ) : -1;
 
-	if ( g_pointShadowMapColorImage == NULL ) {
+	if ( *colorImage == NULL ) {
 		idImageOpts opts;
 		opts.textureType = TT_CUBIC;
-		opts.format = FMT_RGBA8;
+		opts.format = RB_PointShadowMapHighPrecisionEnabled() ? FMT_RGBA16F : FMT_RGBA8;
 		opts.width = shadowMapSize;
 		opts.height = shadowMapSize;
 		opts.numLevels = 1;
 		opts.isPersistant = true;
-		g_pointShadowMapColorImage = globalImages->ScratchImage( "_pointShadowMapColor", &opts, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+		*colorImage = globalImages->ScratchImage( cacheSlot >= 0 ? va( "_pointShadowMapColorCache%d", cacheSlot ) : "_pointShadowMapColor", &opts, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+	} else if ( ( *colorImage )->GetOpts().format != ( RB_PointShadowMapHighPrecisionEnabled() ? FMT_RGBA16F : FMT_RGBA8 ) ) {
+		idImageOpts opts;
+		opts.textureType = TT_CUBIC;
+		opts.format = RB_PointShadowMapHighPrecisionEnabled() ? FMT_RGBA16F : FMT_RGBA8;
+		opts.width = shadowMapSize;
+		opts.height = shadowMapSize;
+		opts.numLevels = 1;
+		opts.isPersistant = true;
+		*colorImage = globalImages->ScratchImage( cacheSlot >= 0 ? va( "_pointShadowMapColorCache%d", cacheSlot ) : "_pointShadowMapColor", &opts, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
 	}
 
-	if ( g_pointShadowMapDepthImage == NULL ) {
+	if ( *depthImage == NULL ) {
 		idImageOpts opts;
 		opts.textureType = TT_CUBIC;
 		opts.format = FMT_DEPTH;
@@ -3802,14 +4763,17 @@ static bool RB_PointShadowMapEnsureResources( void ) {
 		opts.height = shadowMapSize;
 		opts.numLevels = 1;
 		opts.isPersistant = true;
-		g_pointShadowMapDepthImage = globalImages->ScratchImage( "_pointShadowMapDepth", &opts, TF_NEAREST, TR_CLAMP, TD_DEPTH );
+		*depthImage = globalImages->ScratchImage( cacheSlot >= 0 ? va( "_pointShadowMapDepthCache%d", cacheSlot ) : "_pointShadowMapDepth", &opts, TF_NEAREST, TR_CLAMP, TD_DEPTH );
 	}
 
-	if ( g_pointShadowMapRenderTexture == NULL ) {
-		g_pointShadowMapRenderTexture = tr.CreateRenderTexture( g_pointShadowMapColorImage, g_pointShadowMapDepthImage );
-	} else if ( g_pointShadowMapRenderTexture->GetWidth() != shadowMapSize || g_pointShadowMapRenderTexture->GetHeight() != shadowMapSize ) {
-		tr.ResizeRenderTexture( g_pointShadowMapRenderTexture, shadowMapSize, shadowMapSize );
+	if ( *renderTexture == NULL ) {
+		*renderTexture = tr.CreateRenderTexture( *colorImage, *depthImage );
+	} else if ( ( *renderTexture )->GetWidth() != shadowMapSize || ( *renderTexture )->GetHeight() != shadowMapSize ) {
+		tr.ResizeRenderTexture( *renderTexture, shadowMapSize, shadowMapSize );
 	}
+	g_pointShadowMapColorImage = *colorImage;
+	g_pointShadowMapDepthImage = *depthImage;
+	g_pointShadowMapRenderTexture = *renderTexture;
 
 	return g_pointShadowMapColorImage != NULL && g_pointShadowMapDepthImage != NULL && g_pointShadowMapRenderTexture != NULL;
 }
@@ -3933,6 +4897,7 @@ static shadowMapLightSupportReason_t RB_ShadowMapLightPolicySupportReason( const
 }
 
 static shadowMapLightSupportReason_t RB_ShadowMapLightSupportReason( const viewLight_t *vLight ) {
+	RB_ShadowMapSelectScratchResources();
 	if ( !r_useShadowMap.GetBool() || !r_shadows.GetBool() ) {
 		return !r_useShadowMap.GetBool() ? SHADOWMAP_SUPPORT_DISABLED : SHADOWMAP_SUPPORT_SHADOWS_DISABLED;
 	}
@@ -3948,6 +4913,9 @@ static shadowMapLightSupportReason_t RB_ShadowMapLightSupportReason( const viewL
 		return SHADOWMAP_SUPPORT_NO_INTERACTIONS;
 	}
 	if ( vLight->pointLight ) {
+		if ( !r_shadowMapPointLights.GetBool() ) {
+			return SHADOWMAP_SUPPORT_POINT_DISABLED;
+		}
 		if ( !glConfig.cubeMapAvailable ) {
 			return SHADOWMAP_SUPPORT_CUBEMAP_UNAVAILABLE;
 		}
@@ -3958,6 +4926,8 @@ static shadowMapLightSupportReason_t RB_ShadowMapLightSupportReason( const viewL
 
 static void RB_ShadowMapStatsReset( void ) {
 	memset( &g_shadowMapStats, 0, sizeof( g_shadowMapStats ) );
+	RB_ShadowMapExpireCaches();
+	RB_ShadowMapCountCacheSlots();
 	g_shadowMapReportThisFrame = false;
 
 	if ( !RB_ShadowMapShouldReport() ) {
@@ -3976,9 +4946,11 @@ static void RB_ShadowMapStatsReset( void ) {
 
 	g_shadowMapLastReportFrame = tr.frameCount;
 	g_shadowMapReportThisFrame = true;
+	RB_ShadowMapHarvestGpuTimerQueries();
 }
 
 static void RB_ShadowMapStatsReport( void ) {
+	RB_ShadowMapCountCacheSlots();
 	const int reportLevel = idMath::ClampInt( 0, 2, r_shadowMapReport.GetInteger() );
 	if ( reportLevel <= 0 || !g_shadowMapReportThisFrame || g_shadowMapStats.totalLights <= 0 ) {
 		return;
@@ -3997,12 +4969,13 @@ static void RB_ShadowMapStatsReport( void ) {
 
 	if ( unsupportedSummary.Length() > 0 ) {
 		common->Printf(
-			"SM summary: lights=%d supported=%d point=%d projected=%d parallel=%d mapped(local=%d global=%d) unshadowed(local=%d global=%d) fallback(local=%d global=%d) debug=%s unsupported[%s]\n",
+			"SM summary: lights=%d supported=%d point=%d projected=%d parallel=%d global=%d mapped(local=%d global=%d) unshadowed(local=%d global=%d) fallback(local=%d global=%d) debug=%s unsupported[%s]\n",
 			g_shadowMapStats.totalLights,
 			g_shadowMapStats.supportedLights,
 			g_shadowMapStats.pointLights,
 			g_shadowMapStats.projectedLights,
 			g_shadowMapStats.parallelLights,
+			g_shadowMapStats.globalLights,
 			g_shadowMapStats.mappedLocalPasses,
 			g_shadowMapStats.mappedGlobalPasses,
 			g_shadowMapStats.unshadowedLocalPasses,
@@ -4019,12 +4992,13 @@ static void RB_ShadowMapStatsReport( void ) {
 			g_shadowMapStats.maskFailGlobalPasses );
 	} else {
 		common->Printf(
-			"SM summary: lights=%d supported=%d point=%d projected=%d parallel=%d mapped(local=%d global=%d) unshadowed(local=%d global=%d) fallback(local=%d global=%d) debug=%s\n",
+			"SM summary: lights=%d supported=%d point=%d projected=%d parallel=%d global=%d mapped(local=%d global=%d) unshadowed(local=%d global=%d) fallback(local=%d global=%d) debug=%s\n",
 			g_shadowMapStats.totalLights,
 			g_shadowMapStats.supportedLights,
 			g_shadowMapStats.pointLights,
 			g_shadowMapStats.projectedLights,
 			g_shadowMapStats.parallelLights,
+			g_shadowMapStats.globalLights,
 			g_shadowMapStats.mappedLocalPasses,
 			g_shadowMapStats.mappedGlobalPasses,
 			g_shadowMapStats.unshadowedLocalPasses,
@@ -4040,6 +5014,62 @@ static void RB_ShadowMapStatsReport( void ) {
 			g_shadowMapStats.maskFailGlobalPasses );
 	}
 
+	common->Printf(
+		"SM metrics: updates=%d scheduledSkip=%d atlasTiles=%d/%d pointFaces=%d pointHiP=%d pointCmp=%d cpu(render=%.2f mask=%.2f) gpuSync=%.2f gpuQuery=%.2f/%d pending=%d texelWorld=[%.3f %.3f]\n",
+		g_shadowMapStats.shadowMapUpdates,
+		g_shadowMapStats.scheduledSkipPasses,
+		g_shadowMapStats.projectedAtlasTilesRendered,
+		g_shadowMapStats.projectedAtlasTilesAllocated,
+		g_shadowMapStats.pointFacesRendered,
+		g_shadowMapStats.pointHighPrecisionPasses,
+		g_shadowMapStats.pointDepthComparePasses,
+		g_shadowMapStats.cpuRenderMilliseconds,
+		g_shadowMapStats.cpuMaskMilliseconds,
+		g_shadowMapStats.gpuSyncMilliseconds,
+		g_shadowMapStats.gpuTimerMilliseconds,
+		g_shadowMapStats.gpuTimerSamples,
+		g_shadowMapStats.gpuTimerPending,
+		g_shadowMapStats.minWorldTexelSize,
+		g_shadowMapStats.maxWorldTexelSize );
+	common->Printf(
+		"SM cache: hit=%d miss=%d reuse=%d budgetReuse=%d evict=%d expired=%d hysteresis=%d projected=%d/%d point=%d/%d\n",
+		g_shadowMapStats.cacheHitPasses,
+		g_shadowMapStats.cacheMissPasses,
+		g_shadowMapStats.cacheReusePasses,
+		g_shadowMapStats.cacheBudgetReusePasses,
+		g_shadowMapStats.cacheEvictions,
+		g_shadowMapStats.cacheExpired,
+		g_shadowMapStats.staticHysteresisPasses,
+		g_shadowMapStats.projectedCacheSlotsUsed,
+		g_shadowMapStats.projectedCacheSlotsTotal,
+		g_shadowMapStats.pointCacheSlotsUsed,
+		g_shadowMapStats.pointCacheSlotsTotal );
+	common->Printf(
+		"SM casters: total=%d static=%d dynamic=%d alpha=%d translucent=%d expanded=%d rejected=%d\n",
+		g_shadowMapStats.casterCount,
+		g_shadowMapStats.staticCasterCount,
+		g_shadowMapStats.dynamicCasterCount,
+		g_shadowMapStats.alphaCasterCount,
+		g_shadowMapStats.translucentCasterCount,
+		g_shadowMapStats.expandedCasterCount,
+		g_shadowMapStats.rejectedCasterCount );
+
+	if ( g_shadowMapStats.rejectedCasterCount > 0 ) {
+		idStr rejectSummary;
+		for ( int i = 0; i < SHADOWMAP_CASTER_REJECT_COUNT; i++ ) {
+			if ( g_shadowMapStats.casterRejectReasons[i] <= 0 ) {
+				continue;
+			}
+			if ( rejectSummary.Length() > 0 ) {
+				rejectSummary += ", ";
+			}
+			rejectSummary += va( "%s=%d", RB_ShadowMapCasterRejectReasonName( static_cast<shadowMapCasterRejectReason_t>( i ) ), g_shadowMapStats.casterRejectReasons[i] );
+		}
+		if ( rejectSummary.Length() > 0 ) {
+			common->Printf( "SM caster-reject: %s\n", rejectSummary.c_str() );
+		}
+	}
+
 }
 
 static void RB_ShadowMapLightReport( const viewLight_t *vLight, shadowMapLightSupportReason_t reason ) {
@@ -4053,16 +5083,20 @@ static void RB_ShadowMapLightReport( const viewLight_t *vLight, shadowMapLightSu
 		origin = vLight->globalLightOrigin;
 	}
 	common->Printf(
-		"SM light[%d] '%s' origin=(%.1f %.1f %.1f) type=%s%s interactions(local=%d global=%d) shadows(local=%d global=%d) debug=%s support=%s\n",
+		"SM light[%d] '%s' origin=(%.1f %.1f %.1f) class=%s interactions(local=%d global=%d) shadows(local=%d global=%d) casters(total=%d alpha=%d trans=%d expanded=%d reject=%d) debug=%s support=%s\n",
 		( vLight != NULL && vLight->lightDef != NULL ) ? vLight->lightDef->index : -1,
 		shaderName,
 		origin[0], origin[1], origin[2],
-		( vLight != NULL && vLight->pointLight ) ? "point" : "projected",
-		( vLight != NULL && vLight->parallel ) ? "/parallel" : "",
+		RB_ShadowMapLightClassName( vLight ),
 		RB_CountDrawSurfChain( vLight != NULL ? vLight->localInteractions : NULL ),
 		RB_CountDrawSurfChain( vLight != NULL ? vLight->globalInteractions : NULL ),
 		RB_CountDrawSurfChain( vLight != NULL ? vLight->localShadows : NULL ),
 		RB_CountDrawSurfChain( vLight != NULL ? vLight->globalShadows : NULL ),
+		vLight != NULL ? vLight->shadowMapCasterCount : 0,
+		vLight != NULL ? vLight->shadowMapAlphaCasterCount : 0,
+		vLight != NULL ? vLight->shadowMapTranslucentCasterCount : 0,
+		vLight != NULL ? vLight->shadowMapExpandedCasterCount : 0,
+		vLight != NULL ? vLight->shadowMapRejectedCasterCount : 0,
 		RB_ShadowMapDebugModeName( RB_ShadowMapDebugMode() ),
 		RB_ShadowMapSupportReasonName( reason ) );
 }
@@ -4074,10 +5108,11 @@ static void RB_ShadowMapPassReport( const viewLight_t *vLight, shadowMapPassKind
 
 	const char *shaderName = ( vLight != NULL && vLight->lightShader != NULL ) ? vLight->lightShader->GetName() : "<null>";
 	common->Printf(
-		"SM pass %s[%d] '%s' type=%s debug=%s result=%s casters(a=%d b=%d c=%d d=%d) shadowSurfs(primary=%d secondary=%d) receivers=%d\n",
+		"SM pass %s[%d] '%s' class=%s type=%s debug=%s result=%s casters(a=%d b=%d c=%d d=%d) shadowSurfs(primary=%d secondary=%d) receivers=%d\n",
 		RB_ShadowMapPassName( passKind ),
 		( vLight != NULL && vLight->lightDef != NULL ) ? vLight->lightDef->index : -1,
 		shaderName,
+		RB_ShadowMapLightClassName( vLight ),
 		pointLight ? "point" : "projected",
 		RB_ShadowMapDebugModeName( RB_ShadowMapDebugMode() ),
 		RB_ShadowMapPassResultName( result ),
@@ -4528,11 +5563,29 @@ static void RB_ShadowMapDrawPerforatedCasterHashed( const drawSurf_t *surf, cons
 	}
 
 	glUseProgramObjectARB( g_shadowMapCasterProgram.programObject );
+	if ( surf->space != NULL ) {
+		float row0[4];
+		float row1[4];
+		float row2[4];
+		RB_ShadowMapModelMatrixRows( surf->space->modelMatrix, row0, row1, row2 );
+		if ( g_shadowMapCasterProgram.modelMatrixRow0 >= 0 ) {
+			glUniform4fvARB( g_shadowMapCasterProgram.modelMatrixRow0, 1, row0 );
+		}
+		if ( g_shadowMapCasterProgram.modelMatrixRow1 >= 0 ) {
+			glUniform4fvARB( g_shadowMapCasterProgram.modelMatrixRow1, 1, row1 );
+		}
+		if ( g_shadowMapCasterProgram.modelMatrixRow2 >= 0 ) {
+			glUniform4fvARB( g_shadowMapCasterProgram.modelMatrixRow2, 1, row2 );
+		}
+	}
 	if ( g_shadowMapCasterProgram.alphaMap >= 0 ) {
 		glUniform1iARB( g_shadowMapCasterProgram.alphaMap, 0 );
 	}
 	if ( g_shadowMapCasterProgram.alphaHashEnabled >= 0 ) {
 		glUniform1fARB( g_shadowMapCasterProgram.alphaHashEnabled, RB_ShadowMapHashedAlphaEnabled() ? 1.0f : 0.0f );
+	}
+	if ( g_shadowMapCasterProgram.alphaHashStable >= 0 ) {
+		glUniform1fARB( g_shadowMapCasterProgram.alphaHashStable, r_shadowMapStableAlphaHash.GetBool() ? 1.0f : 0.0f );
 	}
 
 	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
@@ -4925,6 +5978,9 @@ static bool RB_PointShadowMapPrepareAlphaTestStage( const shaderStage_t *pStage,
 	if ( g_pointShadowCasterProgram.alphaHashEnabled >= 0 ) {
 		glUniform1fARB( g_pointShadowCasterProgram.alphaHashEnabled, RB_ShadowMapHashedAlphaEnabled() ? 1.0f : 0.0f );
 	}
+	if ( g_pointShadowCasterProgram.alphaHashStable >= 0 ) {
+		glUniform1fARB( g_pointShadowCasterProgram.alphaHashStable, r_shadowMapStableAlphaHash.GetBool() ? 1.0f : 0.0f );
+	}
 
 	RB_BindVariableStageImage( &pStage->texture, regs );
 	return true;
@@ -5187,6 +6243,13 @@ static bool RB_RenderShadowMap( const drawSurf_t *primaryCasters, const drawSurf
 		return false;
 	}
 
+	g_shadowMapStats.shadowMapUpdates++;
+	g_shadowMapStats.projectedAtlasTilesRendered += g_projectedShadowMapState.cascadeCount;
+	g_shadowMapStats.projectedAtlasTilesAllocated += Max( 1, g_projectedShadowMapState.atlasDiv * g_projectedShadowMapState.atlasDiv );
+	for ( int cascadeIndex = 0; cascadeIndex < g_projectedShadowMapState.cascadeCount; cascadeIndex++ ) {
+		RB_ShadowMapStatsRecordWorldTexelSize( g_projectedShadowMapState.worldTexelSize[cascadeIndex] );
+	}
+
 	g_shadowMapRenderTexture->MakeCurrent();
 
 	glUseProgramObjectARB( 0 );
@@ -5285,6 +6348,14 @@ static bool RB_RenderPointShadowMap( const drawSurf_t *primaryCasters, const dra
 	const float nearClip = idMath::ClampFloat( 0.5f, 16.0f, farClip * 0.01f );
 	float projectionMatrix[16];
 	RB_PointShadowMapBuildProjectionMatrix( nearClip, farClip, projectionMatrix );
+	g_shadowMapStats.shadowMapUpdates++;
+	g_shadowMapStats.pointFacesRendered += 6;
+	if ( RB_PointShadowMapHighPrecisionEnabled() ) {
+		g_shadowMapStats.pointHighPrecisionPasses++;
+	}
+	if ( RB_PointShadowMapDepthCompareEnabled() ) {
+		g_shadowMapStats.pointDepthComparePasses++;
+	}
 
 	const float globalLightOrigin[4] = {
 		backEnd.vLight->globalLightOrigin[0],
@@ -5303,6 +6374,12 @@ static bool RB_RenderPointShadowMap( const drawSurf_t *primaryCasters, const dra
 	glDisable( GL_FRAGMENT_PROGRAM_ARB );
 	glUniform4fvARB( g_pointShadowCasterProgram.globalLightOrigin, 1, globalLightOrigin );
 	glUniform1fARB( g_pointShadowCasterProgram.pointShadowFar, farClip );
+	if ( g_pointShadowCasterProgram.pointShadowDepthMode >= 0 ) {
+		glUniform1fARB( g_pointShadowCasterProgram.pointShadowDepthMode, RB_PointShadowMapDepthModeValue() );
+	}
+	if ( g_pointShadowCasterProgram.pointShadowDepthCompare >= 0 ) {
+		glUniform1fARB( g_pointShadowCasterProgram.pointShadowDepthCompare, RB_PointShadowMapDepthCompareValue() );
+	}
 	if ( g_pointShadowCasterProgram.alphaMap >= 0 ) {
 		glUniform1iARB( g_pointShadowCasterProgram.alphaMap, 0 );
 	}
@@ -5315,6 +6392,9 @@ static bool RB_RenderPointShadowMap( const drawSurf_t *primaryCasters, const dra
 	RB_PointShadowMapDisableAlphaTest();
 	if ( g_pointShadowCasterProgram.alphaHashEnabled >= 0 ) {
 		glUniform1fARB( g_pointShadowCasterProgram.alphaHashEnabled, RB_ShadowMapHashedAlphaEnabled() ? 1.0f : 0.0f );
+	}
+	if ( g_pointShadowCasterProgram.alphaHashStable >= 0 ) {
+		glUniform1fARB( g_pointShadowCasterProgram.alphaHashStable, r_shadowMapStableAlphaHash.GetBool() ? 1.0f : 0.0f );
 	}
 	RB_PointShadowMapSetAlphaTexCoordIdentity();
 
@@ -5652,7 +6732,14 @@ static float RB_EnhancedMaterialFresnelValue( void ) {
 	return RB_EnhancedMaterialShadingActive() ? idMath::ClampFloat( 0.0f, 1.0f, r_enhancedMaterialFresnel.GetFloat() ) : 0.0f;
 }
 
-static void RB_MaterialInteractionSetEnhancementUniforms( const GLint normalScaleLocation, const GLint specularBoostLocation, const GLint fresnelLocation ) {
+static float RB_EnhancedMaterialEnabledValue( void ) {
+	return RB_EnhancedMaterialShadingActive() ? 1.0f : 0.0f;
+}
+
+static void RB_MaterialInteractionSetEnhancementUniforms( const GLint normalScaleLocation, const GLint specularBoostLocation, const GLint fresnelLocation, const GLint enhancedLocation = -1 ) {
+	if ( enhancedLocation >= 0 ) {
+		glUniform1fARB( enhancedLocation, RB_EnhancedMaterialEnabledValue() );
+	}
 	if ( normalScaleLocation >= 0 ) {
 		glUniform1fARB( normalScaleLocation, RB_EnhancedMaterialNormalScaleValue() );
 	}
@@ -5722,7 +6809,12 @@ static void RB_GLSLMaterial_DrawInteraction( const drawInteraction_t *din ) {
 	}
 }
 
+static int g_shadowMapInteractionDrawCount = 0;
+static int g_pointShadowMapInteractionDrawCount = 0;
+
 static void RB_GLSLShadowMap_DrawInteraction( const drawInteraction_t *din ) {
+	g_shadowMapInteractionDrawCount++;
+
 	idPlane shadowClipLocal[SHADOWMAP_MAX_CASCADES][4];
 	float shadowRow0[SHADOWMAP_MAX_CASCADES * 4];
 	float shadowRow1[SHADOWMAP_MAX_CASCADES * 4];
@@ -5795,7 +6887,8 @@ static void RB_GLSLShadowMap_DrawInteraction( const drawInteraction_t *din ) {
 	din->specularImage->Bind();
 	GL_SelectTextureNoClient( 5 );
 	g_shadowMapDepthImage->Bind();
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, RB_ShadowMapDepthCompareEnabled() ? GL_COMPARE_R_TO_TEXTURE : GL_NONE );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL );
 
 	const idMaterial *surfaceMaterial = din->surf->material;
 	if ( surfaceMaterial && surfaceMaterial->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
@@ -5811,6 +6904,8 @@ static void RB_GLSLShadowMap_DrawInteraction( const drawInteraction_t *din ) {
 }
 
 static void RB_GLSLPointShadowMap_DrawInteraction( const drawInteraction_t *din ) {
+	g_pointShadowMapInteractionDrawCount++;
+
 	const float globalLightOrigin[4] = {
 		backEnd.vLight->globalLightOrigin[0],
 		backEnd.vLight->globalLightOrigin[1],
@@ -5872,7 +6967,14 @@ static void RB_GLSLPointShadowMap_DrawInteraction( const drawInteraction_t *din 
 	GL_SelectTextureNoClient( 4 );
 	din->specularImage->Bind();
 	GL_SelectTextureNoClient( 5 );
-	g_pointShadowMapColorImage->Bind();
+	if ( RB_PointShadowMapDepthCompareEnabled() && g_pointShadowMapDepthImage != NULL ) {
+		g_pointShadowMapDepthImage->Bind();
+		glTexParameteri( GL_TEXTURE_CUBE_MAP, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE );
+		glTexParameteri( GL_TEXTURE_CUBE_MAP, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL );
+	} else {
+		g_pointShadowMapColorImage->Bind();
+		glTexParameteri( GL_TEXTURE_CUBE_MAP, GL_TEXTURE_COMPARE_MODE, GL_NONE );
+	}
 	for ( int i = 0; i < 3; i++ ) {
 		if ( glConfig.maxTextureUnits >= 7 + i ) {
 			GL_SelectTextureNoClient( 6 + i );
@@ -5897,62 +6999,68 @@ static void RB_GLSLPointShadowMap_DrawInteraction( const drawInteraction_t *din 
 	}
 }
 
-static idDrawVert *RB_GLSLPrepareInteractionVertexCache( const drawSurf_t *surf ) {
+static void *RB_DrawVertAttributePointer( const idDrawVert *base, const int byteOffset ) {
+	return reinterpret_cast<void *>( reinterpret_cast<uintptr_t>( base ) + byteOffset );
+}
+
+static bool RB_GLSLPrepareInteractionVertexCache( const drawSurf_t *surf, idDrawVert *&ambientVertexPointer ) {
+	ambientVertexPointer = NULL;
+
 	if ( surf == NULL || surf->geo == NULL ) {
-		return NULL;
+		return false;
 	}
 
-#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
 	const srfTriangles_t *tri = surf->geo;
-	if ( tri->primBatchMesh != NULL ) {
-		srfTriangles_t *mutableTri = const_cast<srfTriangles_t *>( tri );
-		srfTriangles_t *ambientTri =
-			( tri->ambientSurface != NULL ) ? tri->ambientSurface : mutableTri;
-		const bool needsLighting =
-			( surf->material != NULL ) ? surf->material->ReceivesLighting() : false;
+	srfTriangles_t *mutableTri = const_cast<srfTriangles_t *>( tri );
+	srfTriangles_t *ambientTri = ( tri->ambientSurface != NULL ) ? tri->ambientSurface : mutableTri;
+	const bool needsLighting = ( surf->material != NULL ) ? surf->material->ReceivesLighting() : false;
 
-		if ( ambientTri != NULL && ambientTri->ambientCache == NULL ) {
-			if ( ambientTri->primBatchMesh != NULL ) {
-				if ( !R_CreatePackedSurfaceFrameCaches( ambientTri, needsLighting, false ) ) {
-					return NULL;
-				}
-			} else if ( ambientTri->verts != NULL ) {
-				if ( !R_CreateAmbientCache( ambientTri, needsLighting ) ) {
-					return NULL;
-				}
+	if ( mutableTri->ambientCache == NULL ) {
+		if ( ambientTri == NULL ) {
+			return false;
+		}
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+		if ( ambientTri->ambientCache == NULL && ambientTri->primBatchMesh != NULL ) {
+			if ( !R_CreatePackedSurfaceFrameCaches( ambientTri, needsLighting, false ) ) {
+				return false;
+			}
+		}
+#endif
+		if ( ambientTri->ambientCache == NULL && ambientTri->verts != NULL ) {
+			if ( !R_CreateAmbientCache( ambientTri, needsLighting ) ) {
+				return false;
 			}
 		}
 
-		if ( mutableTri->ambientCache == NULL && ambientTri != NULL && ambientTri->ambientCache != NULL ) {
+		if ( ambientTri->ambientCache != NULL ) {
 			mutableTri->ambientCache = ambientTri->ambientCache;
 			mutableTri->tempAmbientCache = ambientTri->tempAmbientCache;
 		}
+	}
 
-		if ( mutableTri->ambientCache == NULL ) {
-			return NULL;
-		}
+	if ( mutableTri->ambientCache == NULL ) {
+		return false;
+	}
 
-		if ( mutableTri->indexCache == NULL
-			&& r_useIndexBuffers.GetBool()
-			&& mutableTri->indexes != NULL
-			&& mutableTri->numIndexes > 0 ) {
-			mutableTri->indexCache = vertexCache.AllocFrameTemp(
-				mutableTri->indexes,
-				mutableTri->numIndexes * sizeof( mutableTri->indexes[0] ) );
-		}
-
-		R_TouchVertexCache( mutableTri->ambientCache );
-		if ( mutableTri->indexCache != NULL ) {
-			R_TouchVertexCache( mutableTri->indexCache );
-		}
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	if ( mutableTri->primBatchMesh != NULL
+		&& mutableTri->indexCache == NULL
+		&& r_useIndexBuffers.GetBool()
+		&& mutableTri->indexes != NULL
+		&& mutableTri->numIndexes > 0 ) {
+		mutableTri->indexCache = vertexCache.AllocFrameTemp(
+			mutableTri->indexes,
+			mutableTri->numIndexes * sizeof( mutableTri->indexes[0] ) );
 	}
 #endif
 
-	if ( surf->geo->ambientCache == NULL ) {
-		return NULL;
+	R_TouchVertexCache( mutableTri->ambientCache );
+	if ( mutableTri->indexCache != NULL ) {
+		R_TouchVertexCache( mutableTri->indexCache );
 	}
 
-	return (idDrawVert *)vertexCache.Position( surf->geo->ambientCache );
+	ambientVertexPointer = (idDrawVert *)vertexCache.Position( mutableTri->ambientCache );
+	return true;
 }
 
 static bool RB_SurfaceHasActiveCustomGLSLLighting( const drawSurf_t *surf ) {
@@ -6219,19 +7327,19 @@ static void RB_ARB2_CreateCustomGLSLDrawInteractions( const drawSurf_t *surf ) {
 			continue;
 		}
 
-		idDrawVert *ac = RB_GLSLPrepareInteractionVertexCache( surf );
-		if ( ac == NULL ) {
+		idDrawVert *ac = NULL;
+		if ( !RB_GLSLPrepareInteractionVertexCache( surf, ac ) ) {
 			continue;
 		}
 
-		glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), ac->color );
-		glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), ac->st.ToFloatPtr() );
-		glNormalPointer( GL_FLOAT, sizeof( idDrawVert ), ac->normal.ToFloatPtr() );
-		glVertexAttribPointerARB( 8, 2, GL_FLOAT, false, sizeof( idDrawVert ), ac->st.ToFloatPtr() );
-		glVertexAttribPointerARB( 9, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[0].ToFloatPtr() );
-		glVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[1].ToFloatPtr() );
-		glVertexAttribPointerARB( 11, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->normal.ToFloatPtr() );
-		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
+		glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_COLOR_OFFSET ) );
+		glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_ST_OFFSET ) );
+		glNormalPointer( GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_NORMAL_OFFSET ) );
+		glVertexAttribPointerARB( 8, 2, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_ST_OFFSET ) );
+		glVertexAttribPointerARB( 9, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_TANGENT0_OFFSET ) );
+		glVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_TANGENT1_OFFSET ) );
+		glVertexAttribPointerARB( 11, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_NORMAL_OFFSET ) );
+		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_XYZ_OFFSET ) );
 
 		RB_ARB2_CreateCustomGLSLDrawInteractionsForSurface( surf );
 	}
@@ -6286,17 +7394,17 @@ static bool RB_GLSLMaterial_CreateDrawInteractions( const drawSurf_t *surf ) {
 	glEnableClientState( GL_COLOR_ARRAY );
 
 	for ( ; surf != NULL; surf = surf->nextOnLight ) {
-		idDrawVert *ac = RB_GLSLPrepareInteractionVertexCache( surf );
-		if ( ac == NULL ) {
+		idDrawVert *ac = NULL;
+		if ( !RB_GLSLPrepareInteractionVertexCache( surf, ac ) ) {
 			continue;
 		}
 
-		glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), ac->color );
-		glVertexAttribPointerARB( 11, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->normal.ToFloatPtr() );
-		glVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[1].ToFloatPtr() );
-		glVertexAttribPointerARB( 9, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[0].ToFloatPtr() );
-		glVertexAttribPointerARB( 8, 2, GL_FLOAT, false, sizeof( idDrawVert ), ac->st.ToFloatPtr() );
-		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
+		glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_COLOR_OFFSET ) );
+		glVertexAttribPointerARB( 11, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_NORMAL_OFFSET ) );
+		glVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_TANGENT1_OFFSET ) );
+		glVertexAttribPointerARB( 9, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_TANGENT0_OFFSET ) );
+		glVertexAttribPointerARB( 8, 2, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_ST_OFFSET ) );
+		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_XYZ_OFFSET ) );
 
 		RB_CreateSingleDrawInteractions( surf, RB_GLSLMaterial_DrawInteraction );
 	}
@@ -6383,8 +7491,26 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 	if ( g_shadowMapProgram.shadowNormalBias >= 0 ) {
 		glUniform1fARB( g_shadowMapProgram.shadowNormalBias, r_shadowMapNormalBias.GetFloat() );
 	}
+	if ( g_shadowMapProgram.shadowTexelDepthBias >= 0 ) {
+		glUniform1fvARB( g_shadowMapProgram.shadowTexelDepthBias, SHADOWMAP_MAX_CASCADES, g_projectedShadowMapState.texelDepthBias );
+	}
+	if ( g_shadowMapProgram.shadowReceiverPlaneBias >= 0 ) {
+		glUniform1fARB( g_shadowMapProgram.shadowReceiverPlaneBias, r_shadowMapReceiverPlaneBias.GetBool() ? 1.0f : 0.0f );
+	}
 	if ( g_shadowMapProgram.shadowFilterRadius >= 0 ) {
 		glUniform1fARB( g_shadowMapProgram.shadowFilterRadius, r_shadowMapFilterRadius.GetFloat() );
+	}
+	if ( g_shadowMapProgram.shadowFilterTaps >= 0 ) {
+		glUniform1fARB( g_shadowMapProgram.shadowFilterTaps, static_cast<float>( idMath::ClampInt( 1, 13, r_shadowMapFilterTaps.GetInteger() ) ) );
+	}
+	if ( g_shadowMapProgram.shadowFilterMode >= 0 ) {
+		glUniform1fARB( g_shadowMapProgram.shadowFilterMode, static_cast<float>( idMath::ClampInt( 0, 2, r_shadowMapFilterMode.GetInteger() ) ) );
+	}
+	if ( g_shadowMapProgram.shadowPCSSLightRadius >= 0 ) {
+		glUniform1fARB( g_shadowMapProgram.shadowPCSSLightRadius, r_shadowMapPCSSLightRadius.GetFloat() );
+	}
+	if ( g_shadowMapProgram.shadowPCSSMaxRadius >= 0 ) {
+		glUniform1fARB( g_shadowMapProgram.shadowPCSSMaxRadius, r_shadowMapPCSSMaxRadius.GetFloat() );
 	}
 	if ( g_shadowMapProgram.shadowAtlasRect >= 0 ) {
 		glUniform4fvARB( g_shadowMapProgram.shadowAtlasRect, SHADOWMAP_MAX_CASCADES, g_projectedShadowMapState.atlasRect[0].ToFloatPtr() );
@@ -6410,10 +7536,30 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 	if ( g_shadowMapProgram.translucentShadowDensity >= 0 ) {
 		glUniform1fARB( g_shadowMapProgram.translucentShadowDensity, r_shadowMapTranslucentDensity.GetFloat() );
 	}
+	if ( g_shadowMapProgram.translucentShadowFilterRadius >= 0 ) {
+		glUniform1fARB( g_shadowMapProgram.translucentShadowFilterRadius, r_shadowMapTranslucentFilterRadius.GetFloat() );
+	}
+	if ( g_shadowMapProgram.translucentShadowMinVariance >= 0 ) {
+		glUniform1fARB( g_shadowMapProgram.translucentShadowMinVariance, r_shadowMapTranslucentMinVariance.GetFloat() );
+	}
+	if ( g_shadowMapProgram.translucentShadowBleedReduction >= 0 ) {
+		glUniform1fARB( g_shadowMapProgram.translucentShadowBleedReduction, r_shadowMapTranslucentBleedReduction.GetFloat() );
+	}
+	for ( int i = 0; i < 3; i++ ) {
+		if ( glConfig.maxTextureUnits >= 7 + i && glConfig.maxTextureImageUnits >= 7 + i ) {
+			GL_SelectTextureNoClient( 6 + i );
+			if ( RB_ProjectedTranslucentShadowEnabled() ) {
+				g_translucentShadowMomentImages[i]->Bind();
+			} else {
+				globalImages->BindNull();
+			}
+		}
+	}
 	RB_MaterialInteractionSetEnhancementUniforms(
 		g_shadowMapProgram.materialNormalScale,
 		g_shadowMapProgram.materialSpecularBoost,
-		g_shadowMapProgram.materialFresnel );
+		g_shadowMapProgram.materialFresnel,
+		g_shadowMapProgram.materialEnhanced );
 
 	glStencilMask( 255 );
 	glStencilOp( GL_KEEP, GL_KEEP, GL_KEEP );
@@ -6425,18 +7571,31 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 	glEnableVertexAttribArrayARB( 11 );
 	glEnableClientState( GL_COLOR_ARRAY );
 
+	const int drawCountStart = g_shadowMapInteractionDrawCount;
+	int debugSurfaceCount = 0;
+	int debugPreparedCount = 0;
+	int debugCustomCount = 0;
+	const char *debugFirstMaterial = NULL;
 	for ( ; surf != NULL; surf = surf->nextOnLight ) {
-		idDrawVert *ac = RB_GLSLPrepareInteractionVertexCache( surf );
-		if ( ac == NULL ) {
+		debugSurfaceCount++;
+		if ( debugFirstMaterial == NULL && surf->material != NULL ) {
+			debugFirstMaterial = surf->material->GetName();
+		}
+		if ( RB_SurfaceHasActiveCustomGLSLLighting( surf ) ) {
+			debugCustomCount++;
+		}
+		idDrawVert *ac = NULL;
+		if ( !RB_GLSLPrepareInteractionVertexCache( surf, ac ) ) {
 			continue;
 		}
+		debugPreparedCount++;
 
-		glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), ac->color );
-		glVertexAttribPointerARB( 11, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->normal.ToFloatPtr() );
-		glVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[1].ToFloatPtr() );
-		glVertexAttribPointerARB( 9, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[0].ToFloatPtr() );
-		glVertexAttribPointerARB( 8, 2, GL_FLOAT, false, sizeof( idDrawVert ), ac->st.ToFloatPtr() );
-		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
+		glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_COLOR_OFFSET ) );
+		glVertexAttribPointerARB( 11, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_NORMAL_OFFSET ) );
+		glVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_TANGENT1_OFFSET ) );
+		glVertexAttribPointerARB( 9, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_TANGENT0_OFFSET ) );
+		glVertexAttribPointerARB( 8, 2, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_ST_OFFSET ) );
+		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_XYZ_OFFSET ) );
 
 		RB_CreateSingleDrawInteractions( surf, RB_GLSLShadowMap_DrawInteraction );
 	}
@@ -6469,7 +7628,17 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 	glUseProgramObjectARB( 0 );
 	backEnd.glState.currenttmu = -1;
 	GL_SelectTexture( 0 );
-	return true;
+	const bool submittedInteractions = g_shadowMapInteractionDrawCount != drawCountStart;
+	const bool processedReceivers = debugPreparedCount > 0;
+	if ( RB_ShadowMapVerboseReport() && !submittedInteractions ) {
+		common->Printf( "SM mask-submit type=projected light=%d submitted=0 surfaces=%d prepared=%d custom=%d firstMaterial='%s'\n",
+			RB_ShadowMapLightIndex( backEnd.vLight ),
+			debugSurfaceCount,
+			debugPreparedCount,
+			debugCustomCount,
+			debugFirstMaterial != NULL ? debugFirstMaterial : "<none>" );
+	}
+	return submittedInteractions || processedReceivers;
 }
 
 static bool RB_GLSLPointShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
@@ -6512,8 +7681,18 @@ static bool RB_GLSLPointShadowMap_CreateDrawInteractions( const drawSurf_t *surf
 	if ( g_pointShadowMapProgram.shadowNormalBias >= 0 ) {
 		glUniform1fARB( g_pointShadowMapProgram.shadowNormalBias, r_shadowMapPointNormalBias.GetFloat() );
 	}
+	if ( g_pointShadowMapProgram.pointShadowTexelDepthBias >= 0 ) {
+		const float texelDepthBias = Max( 0.0f, r_shadowMapTexelBiasScale.GetFloat() ) / Max( 1, g_pointShadowMapRenderTexture->GetWidth() );
+		glUniform1fARB( g_pointShadowMapProgram.pointShadowTexelDepthBias, texelDepthBias );
+	}
 	if ( g_pointShadowMapProgram.shadowFilterRadius >= 0 ) {
 		glUniform1fARB( g_pointShadowMapProgram.shadowFilterRadius, r_shadowMapPointFilterRadius.GetFloat() );
+	}
+	if ( g_pointShadowMapProgram.shadowFilterTaps >= 0 ) {
+		glUniform1fARB( g_pointShadowMapProgram.shadowFilterTaps, static_cast<float>( idMath::ClampInt( 1, 13, r_shadowMapPointFilterTaps.GetInteger() ) ) );
+	}
+	if ( g_pointShadowMapProgram.shadowFilterMode >= 0 ) {
+		glUniform1fARB( g_pointShadowMapProgram.shadowFilterMode, static_cast<float>( idMath::ClampInt( 0, 1, r_shadowMapPointFilterMode.GetInteger() ) ) );
 	}
 	if ( g_pointShadowMapProgram.globalLightOrigin >= 0 ) {
 		const float globalLightOrigin[4] = {
@@ -6531,16 +7710,29 @@ static bool RB_GLSLPointShadowMap_CreateDrawInteractions( const drawSurf_t *surf
 		const float texelScale = 2.0f / Max( 1, g_pointShadowMapRenderTexture->GetWidth() );
 		glUniform1fARB( g_pointShadowMapProgram.pointShadowTexelScale, texelScale );
 	}
+	if ( g_pointShadowMapProgram.pointShadowDepthMode >= 0 ) {
+		glUniform1fARB( g_pointShadowMapProgram.pointShadowDepthMode, RB_PointShadowMapDepthModeValue() );
+	}
 	if ( g_pointShadowMapProgram.translucentShadowEnabled >= 0 ) {
 		glUniform1fARB( g_pointShadowMapProgram.translucentShadowEnabled, RB_PointTranslucentShadowEnabled() ? 1.0f : 0.0f );
 	}
 	if ( g_pointShadowMapProgram.translucentShadowDensity >= 0 ) {
 		glUniform1fARB( g_pointShadowMapProgram.translucentShadowDensity, r_shadowMapTranslucentDensity.GetFloat() );
 	}
+	if ( g_pointShadowMapProgram.translucentShadowFilterRadius >= 0 ) {
+		glUniform1fARB( g_pointShadowMapProgram.translucentShadowFilterRadius, r_shadowMapTranslucentFilterRadius.GetFloat() );
+	}
+	if ( g_pointShadowMapProgram.translucentShadowMinVariance >= 0 ) {
+		glUniform1fARB( g_pointShadowMapProgram.translucentShadowMinVariance, r_shadowMapTranslucentMinVariance.GetFloat() );
+	}
+	if ( g_pointShadowMapProgram.translucentShadowBleedReduction >= 0 ) {
+		glUniform1fARB( g_pointShadowMapProgram.translucentShadowBleedReduction, r_shadowMapTranslucentBleedReduction.GetFloat() );
+	}
 	RB_MaterialInteractionSetEnhancementUniforms(
 		g_pointShadowMapProgram.materialNormalScale,
 		g_pointShadowMapProgram.materialSpecularBoost,
-		g_pointShadowMapProgram.materialFresnel );
+		g_pointShadowMapProgram.materialFresnel,
+		g_pointShadowMapProgram.materialEnhanced );
 
 	glStencilMask( 255 );
 	glStencilOp( GL_KEEP, GL_KEEP, GL_KEEP );
@@ -6552,18 +7744,65 @@ static bool RB_GLSLPointShadowMap_CreateDrawInteractions( const drawSurf_t *surf
 	glEnableVertexAttribArrayARB( 11 );
 	glEnableClientState( GL_COLOR_ARRAY );
 
+	const int drawCountStart = g_pointShadowMapInteractionDrawCount;
+	int pointDebugSurfaceCount = 0;
+	int pointDebugPreparedCount = 0;
+	int pointDebugCustomCount = 0;
+	int pointDebugTriCacheCount = 0;
+	int pointDebugTriVertsCount = 0;
+	int pointDebugTriPrimBatchCount = 0;
+	int pointDebugAmbientSurfaceCount = 0;
+	int pointDebugAmbientCacheCount = 0;
+	int pointDebugAmbientVertsCount = 0;
+	int pointDebugAmbientPrimBatchCount = 0;
+	const char *pointDebugFirstMaterial = NULL;
 	for ( ; surf != NULL; surf = surf->nextOnLight ) {
-		idDrawVert *ac = RB_GLSLPrepareInteractionVertexCache( surf );
-		if ( ac == NULL ) {
+		pointDebugSurfaceCount++;
+		if ( pointDebugFirstMaterial == NULL && surf->material != NULL ) {
+			pointDebugFirstMaterial = surf->material->GetName();
+		}
+		if ( RB_SurfaceHasActiveCustomGLSLLighting( surf ) ) {
+			pointDebugCustomCount++;
+		}
+		if ( surf->geo != NULL ) {
+			if ( surf->geo->ambientCache != NULL ) {
+				pointDebugTriCacheCount++;
+			}
+			if ( surf->geo->verts != NULL ) {
+				pointDebugTriVertsCount++;
+			}
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+			if ( surf->geo->primBatchMesh != NULL ) {
+				pointDebugTriPrimBatchCount++;
+			}
+#endif
+			if ( surf->geo->ambientSurface != NULL ) {
+				pointDebugAmbientSurfaceCount++;
+				if ( surf->geo->ambientSurface->ambientCache != NULL ) {
+					pointDebugAmbientCacheCount++;
+				}
+				if ( surf->geo->ambientSurface->verts != NULL ) {
+					pointDebugAmbientVertsCount++;
+				}
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+				if ( surf->geo->ambientSurface->primBatchMesh != NULL ) {
+					pointDebugAmbientPrimBatchCount++;
+				}
+#endif
+			}
+		}
+		idDrawVert *ac = NULL;
+		if ( !RB_GLSLPrepareInteractionVertexCache( surf, ac ) ) {
 			continue;
 		}
+		pointDebugPreparedCount++;
 
-		glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), ac->color );
-		glVertexAttribPointerARB( 11, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->normal.ToFloatPtr() );
-		glVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[1].ToFloatPtr() );
-		glVertexAttribPointerARB( 9, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[0].ToFloatPtr() );
-		glVertexAttribPointerARB( 8, 2, GL_FLOAT, false, sizeof( idDrawVert ), ac->st.ToFloatPtr() );
-		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
+		glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_COLOR_OFFSET ) );
+		glVertexAttribPointerARB( 11, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_NORMAL_OFFSET ) );
+		glVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_TANGENT1_OFFSET ) );
+		glVertexAttribPointerARB( 9, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_TANGENT0_OFFSET ) );
+		glVertexAttribPointerARB( 8, 2, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_ST_OFFSET ) );
+		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_XYZ_OFFSET ) );
 
 		RB_CreateSingleDrawInteractions( surf, RB_GLSLPointShadowMap_DrawInteraction );
 	}
@@ -6596,7 +7835,24 @@ static bool RB_GLSLPointShadowMap_CreateDrawInteractions( const drawSurf_t *surf
 	glUseProgramObjectARB( 0 );
 	backEnd.glState.currenttmu = -1;
 	GL_SelectTexture( 0 );
-	return true;
+	const bool submittedInteractions = g_pointShadowMapInteractionDrawCount != drawCountStart;
+	const bool processedReceivers = pointDebugPreparedCount > 0;
+	if ( RB_ShadowMapVerboseReport() && !submittedInteractions ) {
+		common->Printf( "SM mask-submit type=point light=%d submitted=0 surfaces=%d prepared=%d custom=%d tri(cache=%d verts=%d prim=%d) ambient(surface=%d cache=%d verts=%d prim=%d) firstMaterial='%s'\n",
+			RB_ShadowMapLightIndex( backEnd.vLight ),
+			pointDebugSurfaceCount,
+			pointDebugPreparedCount,
+			pointDebugCustomCount,
+			pointDebugTriCacheCount,
+			pointDebugTriVertsCount,
+			pointDebugTriPrimBatchCount,
+			pointDebugAmbientSurfaceCount,
+			pointDebugAmbientCacheCount,
+			pointDebugAmbientVertsCount,
+			pointDebugAmbientPrimBatchCount,
+			pointDebugFirstMaterial != NULL ? pointDebugFirstMaterial : "<none>" );
+	}
+	return submittedInteractions || processedReceivers;
 }
 
 static void RB_ShadowMapStencilFallback( const drawSurf_t *primaryShadowSurfs, const drawSurf_t *secondaryShadowSurfs, const drawSurf_t *interactions ) {
@@ -6658,10 +7914,17 @@ static void RB_ShadowMapDebugOverlayCapture( const viewLight_t *vLight, const sh
 		RB_CountDrawSurfChain( secondaryCasters ) +
 		RB_CountDrawSurfChain( tertiaryCasters ) +
 		RB_CountDrawSurfChain( quaternaryCasters );
+	g_shadowMapDebugOverlayState.alphaCasterCount = vLight != NULL ? vLight->shadowMapAlphaCasterCount : 0;
+	g_shadowMapDebugOverlayState.translucentCasterCount = vLight != NULL ? vLight->shadowMapTranslucentCasterCount : 0;
+	g_shadowMapDebugOverlayState.rejectedCasterCount = vLight != NULL ? vLight->shadowMapRejectedCasterCount : 0;
+	g_shadowMapDebugOverlayState.expandedCasterCount = vLight != NULL ? vLight->shadowMapExpandedCasterCount : 0;
 	g_shadowMapDebugOverlayState.shadowSurfCount =
 		RB_CountDrawSurfChain( primaryShadowSurfs ) +
 		RB_CountDrawSurfChain( secondaryShadowSurfs );
 	g_shadowMapDebugOverlayState.interactionCount = RB_CountDrawSurfChain( interactions );
+	g_shadowMapDebugOverlayState.cpuMilliseconds = g_shadowMapStats.cpuRenderMilliseconds + g_shadowMapStats.cpuMaskMilliseconds;
+	g_shadowMapDebugOverlayState.gpuMilliseconds = g_shadowMapStats.gpuSyncMilliseconds;
+	g_shadowMapDebugOverlayState.worldTexelSize = g_shadowMapStats.maxWorldTexelSize;
 }
 
 static void RB_ShadowMapDebugOverlayEnsureFallbackState( void ) {
@@ -6682,6 +7945,10 @@ static void RB_ShadowMapDebugOverlayEnsureFallbackState( void ) {
 	g_shadowMapDebugOverlayState.atlasDiv = preferPointLight ? 3 : Max( 1, g_projectedShadowMapState.atlasDiv );
 	g_shadowMapDebugOverlayState.cascadeCount = preferPointLight ? 1 : Max( 1, g_projectedShadowMapState.cascadeCount );
 	g_shadowMapDebugOverlayState.casterCount = -1;
+	g_shadowMapDebugOverlayState.alphaCasterCount = -1;
+	g_shadowMapDebugOverlayState.translucentCasterCount = -1;
+	g_shadowMapDebugOverlayState.rejectedCasterCount = -1;
+	g_shadowMapDebugOverlayState.expandedCasterCount = -1;
 	g_shadowMapDebugOverlayState.shadowSurfCount = -1;
 	g_shadowMapDebugOverlayState.interactionCount = -1;
 }
@@ -6815,6 +8082,9 @@ static void RB_ShadowMapDebugOverlayDraw( void ) {
 	if ( g_shadowDebugOverlayProgram.passMapped >= 0 ) {
 		glUniform1fARB( g_shadowDebugOverlayProgram.passMapped, g_shadowMapDebugOverlayState.mapped ? 1.0f : 0.0f );
 	}
+	if ( g_shadowDebugOverlayProgram.pointShadowDepthMode >= 0 ) {
+		glUniform1fARB( g_shadowDebugOverlayProgram.pointShadowDepthMode, RB_PointShadowMapDepthModeValue() );
+	}
 
 	GL_SelectTextureNoClient( 0 );
 	if ( g_shadowMapDepthImage != NULL ) {
@@ -6841,7 +8111,7 @@ static void RB_ShadowMapDebugOverlayDraw( void ) {
 	const float margin = 8.0f;
 	const float panelW = 192.0f;
 	const float panelH = g_shadowMapDebugOverlayState.pointLight ? 128.0f : 192.0f;
-	const float statsH = 40.0f;
+	const float statsH = 52.0f;
 	const float outerW = panelW + 12.0f;
 	const float outerH = panelH + statsH + 18.0f;
 	const float panelX = margin + 6.0f;
@@ -6869,6 +8139,7 @@ static void RB_ShadowMapDebugOverlayDraw( void ) {
 	char line1[96];
 	char line2[96];
 	char line3[96];
+	char line4[96];
 	if ( g_shadowMapDebugOverlayState.valid ) {
 		const char *lightLabel = ( g_shadowMapDebugOverlayState.lightDefIndex >= 0 ) ?
 			va( "L%d", g_shadowMapDebugOverlayState.lightDefIndex ) : "L?";
@@ -6883,11 +8154,17 @@ static void RB_ShadowMapDebugOverlayDraw( void ) {
 			( g_shadowMapDebugOverlayState.casterCount >= 0 ) ? va( "%d", g_shadowMapDebugOverlayState.casterCount ) : "?",
 			( g_shadowMapDebugOverlayState.shadowSurfCount >= 0 ) ? va( "%d", g_shadowMapDebugOverlayState.shadowSurfCount ) : "?",
 			( g_shadowMapDebugOverlayState.interactionCount >= 0 ) ? va( "%d", g_shadowMapDebugOverlayState.interactionCount ) : "?" );
+		idStr::snPrintf( line4, sizeof( line4 ), "A %s T %s R %s E %s",
+			( g_shadowMapDebugOverlayState.alphaCasterCount >= 0 ) ? va( "%d", g_shadowMapDebugOverlayState.alphaCasterCount ) : "?",
+			( g_shadowMapDebugOverlayState.translucentCasterCount >= 0 ) ? va( "%d", g_shadowMapDebugOverlayState.translucentCasterCount ) : "?",
+			( g_shadowMapDebugOverlayState.rejectedCasterCount >= 0 ) ? va( "%d", g_shadowMapDebugOverlayState.rejectedCasterCount ) : "?",
+			( g_shadowMapDebugOverlayState.expandedCasterCount >= 0 ) ? va( "%d", g_shadowMapDebugOverlayState.expandedCasterCount ) : "?" );
 	} else {
 		idStr::snPrintf( line1, sizeof( line1 ), "NO MAP" );
 		idStr::snPrintf( line2, sizeof( line2 ), "SUP %d/%d",
 			g_shadowMapStats.supportedLights,
 			g_shadowMapStats.totalLights );
+		idStr::snPrintf( line4, sizeof( line4 ), "NO CAST" );
 	}
 	idStr::snPrintf( line3, sizeof( line3 ), "SUP %d/%d MAP %d/%d FB %d/%d",
 		g_shadowMapStats.supportedLights,
@@ -6900,6 +8177,7 @@ static void RB_ShadowMapDebugOverlayDraw( void ) {
 	RB_ShadowMapDebugOverlayDrawString( panelX, statsY, 0.9f, textColor, line1 );
 	RB_ShadowMapDebugOverlayDrawString( panelX, statsY + 10.0f, 0.8f, textColor, line2 );
 	RB_ShadowMapDebugOverlayDrawString( panelX, statsY + 20.0f, 0.8f, textColor, line3 );
+	RB_ShadowMapDebugOverlayDrawString( panelX, statsY + 30.0f, 0.8f, textColor, line4 );
 
 	glUseProgramObjectARB( 0 );
 	GL_SelectTextureNoClient( 1 );
@@ -6965,7 +8243,75 @@ static void RB_ShadowMapRunPass( const viewLight_t *vLight, shadowMapPassKind_t 
 		return;
 	}
 
+	shadowMapSchedule_t schedule = RB_ShadowMapSchedulePass( vLight, passKind, pointLight, haveTranslucentCasters );
+	if ( schedule.action == SHADOWMAP_SCHEDULE_REUSE ) {
+		idTimer maskTimer;
+		maskTimer.Start();
+		const bool maskOk = pointLight ? RB_GLSLPointShadowMap_CreateDrawInteractions( interactions ) : RB_GLSLShadowMap_CreateDrawInteractions( interactions );
+		maskTimer.Stop();
+		g_shadowMapStats.cpuMaskMilliseconds += maskTimer.Milliseconds();
+		if ( pointLight && schedule.pointEntry != NULL ) {
+			schedule.pointEntry->lastUsedFrame = tr.frameCount;
+		} else if ( schedule.projectedEntry != NULL ) {
+			schedule.projectedEntry->lastUsedFrame = tr.frameCount;
+		}
+		if ( maskOk ) {
+			if ( passKind == SHADOWMAP_PASS_LOCAL ) {
+				g_shadowMapStats.mappedLocalPasses++;
+			} else {
+				g_shadowMapStats.mappedGlobalPasses++;
+			}
+			RB_ShadowMapDebugOverlayCapture( vLight, passKind, pointLight, true, true,
+				primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters,
+				primaryShadowSurfs, secondaryShadowSurfs, interactions );
+			// Preserve custom GLSL material lighting without letting one custom
+			// receiver veto the shadow-mapped standard interactions for the light.
+			RB_ARB2_CreateCustomGLSLDrawInteractions( interactions );
+			RB_ShadowMapPassReport( vLight, passKind, pointLight, SHADOWMAP_PASS_RESULT_CACHE_REUSE, primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters, primaryShadowSurfs, secondaryShadowSurfs, interactions );
+			return;
+		}
+		if ( passKind == SHADOWMAP_PASS_LOCAL ) {
+			g_shadowMapStats.fallbackLocalPasses++;
+			g_shadowMapStats.maskFailLocalPasses++;
+		} else {
+			g_shadowMapStats.fallbackGlobalPasses++;
+			g_shadowMapStats.maskFailGlobalPasses++;
+		}
+		RB_ShadowMapPassReport( vLight, passKind, pointLight, SHADOWMAP_PASS_RESULT_MASK_FAIL, primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters, primaryShadowSurfs, secondaryShadowSurfs, interactions );
+		RB_ShadowMapStencilFallback( primaryShadowSurfs, secondaryShadowSurfs, interactions );
+		return;
+	}
+
+	if ( schedule.action == SHADOWMAP_SCHEDULE_FALLBACK ) {
+		g_shadowMapStats.scheduledSkipPasses++;
+		if ( passKind == SHADOWMAP_PASS_LOCAL ) {
+			g_shadowMapStats.fallbackLocalPasses++;
+		} else {
+			g_shadowMapStats.fallbackGlobalPasses++;
+		}
+		RB_ShadowMapPassReport( vLight, passKind, pointLight, SHADOWMAP_PASS_RESULT_SCHEDULED_SKIP, primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters, primaryShadowSurfs, secondaryShadowSurfs, interactions );
+		RB_ShadowMapStencilFallback( primaryShadowSurfs, secondaryShadowSurfs, interactions );
+		return;
+	}
+
+	idTimer renderTimer;
+	idTimer gpuSyncTimer;
+	renderTimer.Start();
+	if ( r_shadowMapGpuSyncTimings.GetBool() ) {
+		glFinish();
+		gpuSyncTimer.Start();
+	}
+	shadowMapGpuTimerQuery_t *gpuTimerQuery = RB_ShadowMapBeginGpuTimerQuery( vLight, passKind );
 	const bool renderOk = pointLight ? RB_RenderPointShadowMap( primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters ) : RB_RenderShadowMap( primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters );
+	RB_ShadowMapEndGpuTimerQuery( gpuTimerQuery );
+	if ( r_shadowMapGpuSyncTimings.GetBool() ) {
+		glFinish();
+		gpuSyncTimer.Stop();
+		g_shadowMapStats.gpuSyncMilliseconds += gpuSyncTimer.Milliseconds();
+	}
+	renderTimer.Stop();
+	g_shadowMapStats.cpuRenderMilliseconds += renderTimer.Milliseconds();
+	RB_ShadowMapCompleteCacheUpdate( schedule, vLight, passKind, pointLight, renderOk );
 	if ( renderOk && haveTranslucentCasters && RB_TranslucentShadowMomentsRequested() ) {
 		if ( pointLight ) {
 			RB_RenderPointTranslucentShadowMap( translucentPrimaryCasters, translucentSecondaryCasters );
@@ -6973,8 +8319,11 @@ static void RB_ShadowMapRunPass( const viewLight_t *vLight, shadowMapPassKind_t 
 			RB_RenderTranslucentShadowMap( translucentPrimaryCasters, translucentSecondaryCasters );
 		}
 	}
-	const bool customGLSLLighting = RB_DrawSurfChainHasCustomGLSLLighting( interactions );
-	const bool maskOk = renderOk && !customGLSLLighting && ( pointLight ? RB_GLSLPointShadowMap_CreateDrawInteractions( interactions ) : RB_GLSLShadowMap_CreateDrawInteractions( interactions ) );
+	idTimer maskTimer;
+	maskTimer.Start();
+	const bool maskOk = renderOk && ( pointLight ? RB_GLSLPointShadowMap_CreateDrawInteractions( interactions ) : RB_GLSLShadowMap_CreateDrawInteractions( interactions ) );
+	maskTimer.Stop();
+	g_shadowMapStats.cpuMaskMilliseconds += maskTimer.Milliseconds();
 	shadowMapPassResult_t passResult = SHADOWMAP_PASS_RESULT_MAPPED;
 	if ( !renderOk ) {
 		passResult = SHADOWMAP_PASS_RESULT_RENDER_FAIL;
@@ -6993,6 +8342,9 @@ static void RB_ShadowMapRunPass( const viewLight_t *vLight, shadowMapPassKind_t 
 		} else {
 			g_shadowMapStats.mappedGlobalPasses++;
 		}
+		// Custom GLSL material stages are additive and do not currently sample the
+		// shadow map, so draw them after the standard shadow-mapped interactions.
+		RB_ARB2_CreateCustomGLSLDrawInteractions( interactions );
 		RB_ShadowMapPassReport( vLight, passKind, pointLight, passResult, primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters, primaryShadowSurfs, secondaryShadowSurfs, interactions );
 		return;
 	}
@@ -7316,17 +8668,25 @@ void RB_ARB2_DrawInteractions( void ) {
 		}
 
 		g_shadowMapStats.totalLights++;
+		RB_ShadowMapStatsAccumulateCasterPolicy( vLight );
 
 		const shadowMapLightSupportReason_t supportReason = RB_ShadowMapLightSupportReason( vLight );
 		if ( supportReason == SHADOWMAP_SUPPORT_OK ) {
 			g_shadowMapStats.supportedLights++;
-			if ( vLight->pointLight ) {
+			const shadowMapLightClass_t lightClass = RB_ShadowMapLightClass( vLight );
+			switch ( lightClass ) {
+			case SHADOWMAP_LIGHT_POINT:
 				g_shadowMapStats.pointLights++;
-			} else {
-				g_shadowMapStats.projectedLights++;
-			}
-			if ( vLight->parallel ) {
+				break;
+			case SHADOWMAP_LIGHT_PARALLEL:
 				g_shadowMapStats.parallelLights++;
+				break;
+			case SHADOWMAP_LIGHT_GLOBAL:
+				g_shadowMapStats.globalLights++;
+				break;
+			default:
+				g_shadowMapStats.projectedLights++;
+				break;
 			}
 			RB_ShadowMapLightReport( vLight, supportReason );
 
@@ -7334,16 +8694,14 @@ void RB_ARB2_DrawInteractions( void ) {
 
 			if ( vLight->pointLight ) {
 				const drawSurf_t *pointLocalPrimaryCasters = vLight->globalShadowMapCasters;
-				const drawSurf_t *pointLocalSecondaryCasters = ( pointLocalPrimaryCasters == NULL ) ? vLight->globalShadows : NULL;
-				const bool pointHaveDedicatedGlobalCasters = ( vLight->globalShadowMapCasters != NULL || vLight->localShadowMapCasters != NULL );
+				const drawSurf_t *pointLocalSecondaryCasters = NULL;
 				const drawSurf_t *pointGlobalPrimaryCasters = vLight->globalShadowMapCasters;
 				const drawSurf_t *pointGlobalSecondaryCasters = vLight->localShadowMapCasters;
-				const drawSurf_t *pointGlobalTertiaryCasters = pointHaveDedicatedGlobalCasters ? NULL : vLight->globalShadows;
-				const drawSurf_t *pointGlobalQuaternaryCasters = pointHaveDedicatedGlobalCasters ? NULL : vLight->localShadows;
+				const drawSurf_t *pointGlobalTertiaryCasters = NULL;
+				const drawSurf_t *pointGlobalQuaternaryCasters = NULL;
 
-				// Prefer the dedicated ambient-geometry shadow-map caster lists. The legacy
-				// shadow volume chains are a recovery path only when no dedicated point-light
-				// caster geometry survived interaction building.
+				// Point depth cubemaps use dedicated ambient-geometry caster lists. Feeding
+				// legacy shadow-volume geometry into these passes creates false occluders.
 				RB_ShadowMapRunPass( vLight, SHADOWMAP_PASS_LOCAL, true, pointLocalPrimaryCasters, pointLocalSecondaryCasters, NULL, NULL, vLight->globalShadows, NULL, vLight->localInteractions );
 				RB_ShadowMapRunPass( vLight, SHADOWMAP_PASS_GLOBAL, true, pointGlobalPrimaryCasters, pointGlobalSecondaryCasters, pointGlobalTertiaryCasters, pointGlobalQuaternaryCasters, vLight->globalShadows, vLight->localShadows, vLight->globalInteractions );
 			} else {

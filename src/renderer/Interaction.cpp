@@ -138,6 +138,142 @@ static bool R_EnsureShadowMapCasterCaches( srfTriangles_t *casterTris ) {
 	return casterTris->ambientCache != NULL;
 }
 
+static bool R_ShadowMapConservativeCastersEnabled( void ) {
+	return r_useShadowMap.GetBool() && r_shadowMapConservativeCasters.GetBool();
+}
+
+static bool R_ShadowMapEntityTouchesConnectedArea( const idRenderEntityLocal *entityDef ) {
+	if ( entityDef == NULL || tr.viewDef == NULL || tr.viewDef->connectedAreas == NULL ) {
+		return true;
+	}
+
+	bool sawArea = false;
+	for ( const areaReference_t *ref = entityDef->entityRefs; ref != NULL; ref = ref->ownerNext ) {
+		if ( ref->area == NULL ) {
+			continue;
+		}
+		sawArea = true;
+		const int areaNum = ref->area->areaNum;
+		if ( areaNum >= 0 && areaNum < tr.viewDef->renderWorld->NumAreas() && tr.viewDef->connectedAreas[areaNum] ) {
+			return true;
+		}
+	}
+
+	// Entities without area refs are unusual transient cases; keep them conservative.
+	return !sawArea;
+}
+
+static int R_ShadowMapHashInt( int hash, const int value ) {
+	const unsigned int h = static_cast<unsigned int>( hash );
+	const unsigned int v = static_cast<unsigned int>( value );
+	return static_cast<int>( ( h ^ v ) * 16777619u );
+}
+
+static int R_ShadowMapHashFloat( int hash, const float value ) {
+	return R_ShadowMapHashInt( hash, idMath::Ftoi( value * 1024.0f ) );
+}
+
+static bool R_ShadowMapCasterIsDynamic( const idRenderEntityLocal *entityDef ) {
+	if ( entityDef == NULL || entityDef->parms.hModel == NULL ) {
+		return true;
+	}
+	return entityDef->parms.callback != NULL ||
+		entityDef->dynamicModel != NULL ||
+		entityDef->lastModifiedFrameNum >= tr.frameCount - 1 ||
+		entityDef->parms.hModel->IsDynamicModel() != DM_STATIC;
+}
+
+static void R_RecordShadowMapCaster( viewLight_t *vLight, const idRenderEntityLocal *entityDef, const idMaterial *shader, const bool translucent, const bool expandedCaster ) {
+	if ( vLight == NULL ) {
+		return;
+	}
+
+	const bool dynamicCaster = R_ShadowMapCasterIsDynamic( entityDef );
+	vLight->shadowMapCasterCount++;
+	if ( shader != NULL && shader->Coverage() == MC_PERFORATED ) {
+		vLight->shadowMapAlphaCasterCount++;
+	}
+	if ( translucent ) {
+		vLight->shadowMapTranslucentCasterCount++;
+	}
+	if ( dynamicCaster ) {
+		vLight->shadowMapDynamicCasterCount++;
+	} else {
+		vLight->shadowMapStaticCasterCount++;
+	}
+	if ( expandedCaster ) {
+		vLight->shadowMapExpandedCasterCount++;
+	}
+
+	int hash = ( vLight->shadowMapCasterSignature != 0 ) ? vLight->shadowMapCasterSignature : static_cast<int>( 2166136261u );
+	hash = R_ShadowMapHashInt( hash, entityDef != NULL ? entityDef->index : -1 );
+	hash = R_ShadowMapHashInt( hash, shader != NULL ? static_cast<int>( shader->Coverage() ) : -1 );
+	hash = R_ShadowMapHashInt( hash, translucent ? 1 : 0 );
+	hash = R_ShadowMapHashInt( hash, expandedCaster ? 1 : 0 );
+	hash = R_ShadowMapHashInt( hash, dynamicCaster ? 1 : 0 );
+	if ( entityDef != NULL ) {
+		hash = R_ShadowMapHashInt( hash, entityDef->lastModifiedFrameNum );
+		for ( int i = 0; i < 16; i++ ) {
+			hash = R_ShadowMapHashFloat( hash, entityDef->modelMatrix[i] );
+		}
+	}
+	vLight->shadowMapCasterSignature = hash;
+}
+
+static void R_RecordShadowMapRejectedCaster( viewLight_t *vLight, const shadowMapCasterRejectReason_t reason ) {
+	if ( vLight != NULL ) {
+		vLight->shadowMapRejectedCasterCount++;
+		if ( reason >= 0 && reason < SHADOWMAP_CASTER_REJECT_COUNT ) {
+			vLight->shadowMapRejectedCasterReasons[reason]++;
+		} else {
+			vLight->shadowMapRejectedCasterReasons[SHADOWMAP_CASTER_REJECT_UNKNOWN]++;
+		}
+	}
+}
+
+static shadowMapCasterRejectReason_t R_ClassifyShadowMapCasterReject( const idRenderEntityLocal *entityDef, const viewEntity_t *vEntity, const surfaceInteraction_t *sint, const idMaterial *shadowShader, const bool isViewOnlyEntity, const bool translucentShadowMapSupported, const bool skipPointLightEmitterCaster, const bool sameSpectrumShadowMapCaster ) {
+	if ( entityDef == NULL || vEntity == NULL || sint == NULL || shadowShader == NULL ) {
+		return SHADOWMAP_CASTER_REJECT_UNKNOWN;
+	}
+	if ( entityDef->parms.noShadow ) {
+		return SHADOWMAP_CASTER_REJECT_NO_SHADOW;
+	}
+	if ( isViewOnlyEntity ) {
+		return SHADOWMAP_CASTER_REJECT_VIEW_ONLY;
+	}
+	if ( vEntity->modelDepthHack != 0.0f ) {
+		return SHADOWMAP_CASTER_REJECT_DEPTH_HACK;
+	}
+	if ( sint->ambientTris == NULL ) {
+		return SHADOWMAP_CASTER_REJECT_NO_GEOMETRY;
+	}
+	if ( skipPointLightEmitterCaster ) {
+		return SHADOWMAP_CASTER_REJECT_POINT_LIGHT_EMITTER;
+	}
+	if ( shadowShader->HasGui() ) {
+		return SHADOWMAP_CASTER_REJECT_GUI;
+	}
+	if ( shadowShader->HasSubview() ) {
+		return SHADOWMAP_CASTER_REJECT_SUBVIEW;
+	}
+	if ( shadowShader->Coverage() == MC_TRANSLUCENT ) {
+		if ( !r_shadowMapTranslucentMoments.GetBool() ) {
+			return SHADOWMAP_CASTER_REJECT_TRANSLUCENT_DISABLED;
+		}
+		if ( !translucentShadowMapSupported ) {
+			return SHADOWMAP_CASTER_REJECT_TRANSLUCENT_UNSUPPORTED;
+		}
+		return SHADOWMAP_CASTER_REJECT_TRANSLUCENT_UNSUPPORTED;
+	}
+	if ( !shadowShader->SurfaceCastsShadow() ) {
+		return SHADOWMAP_CASTER_REJECT_SURFACE_NO_SHADOW;
+	}
+	if ( !sameSpectrumShadowMapCaster ) {
+		return SHADOWMAP_CASTER_REJECT_SPECTRUM_MISMATCH;
+	}
+	return SHADOWMAP_CASTER_REJECT_UNKNOWN;
+}
+
 #if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
 static ID_INLINE const rvSilTraceVertT *R_GetInteractionSilTraceVerts( const srfTriangles_t *tri ) {
 	return ( tri != NULL && tri->silTraceVerts != NULL )
@@ -1374,9 +1510,19 @@ void idInteraction::AddActiveInteraction( void ) {
 	idVec3			localLightOrigin;
 	idVec3			localViewOrigin;
 	const bool		interactionHasShadows = HasShadows();
+	bool			shadowMapViewFrustumCulled = false;
 
 	vLight = lightDef->viewLight;
 	vEntity = entityDef->viewEntity;
+	const bool		shadowMapConservativeCandidate =
+		interactionHasShadows &&
+		R_ShadowMapConservativeCastersEnabled() &&
+		( vLight == NULL || !vLight->pointLight || r_shadowMapPointLights.GetBool() );
+
+	if ( shadowMapConservativeCandidate && !R_ShadowMapEntityTouchesConnectedArea( entityDef ) ) {
+		R_RecordShadowMapRejectedCaster( vLight, SHADOWMAP_CASTER_REJECT_AREA_DISCONNECTED );
+		return;
+	}
 
 	// do not waste time culling the interaction frustum if there will be no shadows
 	if ( !interactionHasShadows ) {
@@ -1396,16 +1542,31 @@ void idInteraction::AddActiveInteraction( void ) {
 		// this will also cull the case where the light origin is inside the
 		// view frustum and the entity bounds are outside the view frustum
 		if ( CullInteractionByViewFrustum( tr.viewDef->viewFrustum ) ) {
-			return;
+			if ( !shadowMapConservativeCandidate ) {
+				return;
+			}
+			shadowMapViewFrustumCulled = true;
+			shadowScissor.Clear();
+		} else {
+			// calculate the shadow scissor rectangle
+			shadowScissor = CalcInteractionScissorRectangle( tr.viewDef->viewFrustum );
 		}
-
-		// calculate the shadow scissor rectangle
-		shadowScissor = CalcInteractionScissorRectangle( tr.viewDef->viewFrustum );
 	}
 
-	// get out before making the dynamic model if the shadow scissor rectangle is empty
-	if ( shadowScissor.IsEmpty() ) {
-		return;
+	// Shadow maps need caster lists that are not purely receiver-visible.  An
+	// off-screen object can still shadow a visible receiver for the same light,
+	// so keep building a caster-only interaction when the regular shadow scissor
+	// rejected the visible shadow volume.
+	const bool shadowScissorWasEmpty = shadowScissor.IsEmpty();
+	const bool shadowMapCasterOnly = ( shadowScissorWasEmpty || shadowMapViewFrustumCulled ) && shadowMapConservativeCandidate;
+	if ( shadowScissorWasEmpty ) {
+		if ( !shadowMapCasterOnly ) {
+			return;
+		}
+		shadowScissor = vLight->scissorRect;
+		if ( shadowScissor.IsEmpty() ) {
+			shadowScissor = vEntity->scissorRect;
+		}
 	}
 
 	// We will need the dynamic surface created to make interactions, even if the
@@ -1602,11 +1763,15 @@ void idInteraction::AddActiveInteraction( void ) {
 		const bool skipPointLightEmitterCaster =
 			vLight->pointLight &&
 			R_ShouldSkipPointLightEmitterCaster( shadowShader, sint->ambientTris, localLightOrigin, lightDef->parms.lightRadius );
+		const bool sameSpectrumShadowMapCaster =
+			lightDef->lightShader == NULL ||
+			shadowShader->Spectrum() == lightDef->lightShader->Spectrum();
 		const bool allowShadowMapCaster =
 			!entityDef->parms.noShadow &&
 			!isViewOnlyEntity &&
 			vEntity->modelDepthHack == 0.0f &&
 			sint->ambientTris != NULL &&
+			sameSpectrumShadowMapCaster &&
 			// Thin emissive panels can sit directly on their owning point-light origin,
 			// which creates long bogus wedge occluders. Reject only that geometric case
 			// instead of blanketing the entire textures/common_lights family.
@@ -1621,9 +1786,14 @@ void idInteraction::AddActiveInteraction( void ) {
 			!isViewOnlyEntity &&
 			vEntity->modelDepthHack == 0.0f &&
 			sint->ambientTris != NULL &&
+			sameSpectrumShadowMapCaster &&
 			shadowShader->Coverage() == MC_TRANSLUCENT &&
 			!shadowShader->HasGui() &&
 			!shadowShader->HasSubview();
+
+		if ( r_useShadowMap.GetBool() && sint->ambientTris != NULL && !allowShadowMapCaster && !allowTranslucentShadowMapCaster ) {
+			R_RecordShadowMapRejectedCaster( vLight, R_ClassifyShadowMapCasterReject( entityDef, vEntity, sint, shadowShader, isViewOnlyEntity, translucentShadowMapSupported, skipPointLightEmitterCaster, sameSpectrumShadowMapCaster ) );
+		}
 
 		if ( allowShadowMapCaster ) {
 			srfTriangles_t *casterTris = sint->ambientTris;
@@ -1632,6 +1802,7 @@ void idInteraction::AddActiveInteraction( void ) {
 			if ( haveCasterGeometry ) {
 				R_TouchShadowMapCache( casterTris->ambientCache );
 				R_TouchShadowMapCache( casterTris->indexCache );
+				R_RecordShadowMapCaster( vLight, entityDef, shadowShader, false, shadowMapCasterOnly );
 
 				if ( shadowMapNoSelfShadow ) {
 					R_LinkShadowMapCasterSurf( &vLight->localShadowMapCasters,
@@ -1650,6 +1821,7 @@ void idInteraction::AddActiveInteraction( void ) {
 			if ( haveCasterGeometry ) {
 				R_TouchShadowMapCache( casterTris->ambientCache );
 				R_TouchShadowMapCache( casterTris->indexCache );
+				R_RecordShadowMapCaster( vLight, entityDef, shadowShader, true, shadowMapCasterOnly );
 
 				if ( shadowMapNoSelfShadow ) {
 					R_LinkShadowMapCasterSurf( &vLight->localTranslucentShadowMapCasters,
@@ -1665,7 +1837,7 @@ void idInteraction::AddActiveInteraction( void ) {
 
 		// the shadows will always have to be added, unless we can tell they
 		// are from a surface in an unconnected area
-		if ( shadowTris ) {
+		if ( shadowTris && !shadowMapCasterOnly ) {
 
 			// cull static shadows that have a non-empty bounds
 			// dynamic shadows that use the turboshadow code will not have valid

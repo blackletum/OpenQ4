@@ -4,12 +4,19 @@ uniform sampler2D uAlphaMap;
 uniform float uAlphaRef;
 uniform float uAlphaScale;
 uniform float uAlphaHashEnabled;
+uniform float uAlphaHashStable;
 
 varying vec2 vAlphaTexCoord;
+varying vec3 vAlphaHashCoord;
 
 float AlphaHashThreshold( vec2 fragmentCoord ) {
 	vec2 texel = floor( fragmentCoord );
 	return fract( 52.9829189 * fract( texel.x * 0.06711056 + texel.y * 0.00583715 ) );
+}
+
+float StableAlphaHashThreshold( vec3 hashCoord ) {
+	vec3 texel = floor( hashCoord * 0.5 );
+	return fract( 52.9829189 * fract( texel.x * 0.06711056 + texel.y * 0.00583715 + texel.z * 0.01327111 ) );
 }
 
 float AlphaCoverage( float alpha ) {
@@ -22,7 +29,8 @@ void main() {
 	float alpha = texture2D( uAlphaMap, vAlphaTexCoord ).a * uAlphaScale;
 	if ( uAlphaHashEnabled > 0.5 ) {
 		float coverage = AlphaCoverage( alpha );
-		if ( coverage <= 0.0 || coverage <= AlphaHashThreshold( gl_FragCoord.xy ) ) {
+		float threshold = ( uAlphaHashStable > 0.5 ) ? StableAlphaHashThreshold( vAlphaHashCoord ) : AlphaHashThreshold( gl_FragCoord.xy );
+		if ( coverage <= 0.0 || coverage <= threshold ) {
 			discard;
 		}
 	} else {
