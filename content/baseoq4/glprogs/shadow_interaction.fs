@@ -5,20 +5,31 @@ uniform sampler2D uLightFalloffMap;
 uniform sampler2D uLightProjectionMap;
 uniform sampler2D uDiffuseMap;
 uniform sampler2D uSpecularMap;
+#ifdef OPENQ4_SHADOW_COMPARE
+uniform sampler2DShadow uShadowMap;
+#else
 uniform sampler2D uShadowMap;
+#endif
 uniform sampler2D uTranslucentShadowMapR;
 uniform sampler2D uTranslucentShadowMapG;
 uniform sampler2D uTranslucentShadowMapB;
 
 uniform vec4 uDiffuseColor;
 uniform vec4 uSpecularColor;
+uniform float uMaterialEnhanced;
 uniform float uMaterialNormalScale;
 uniform float uMaterialSpecularBoost;
 uniform float uMaterialFresnel;
 uniform vec2 uShadowTexelSize;
 uniform float uShadowBias;
 uniform float uShadowNormalBias;
+uniform float uShadowTexelDepthBias[4];
+uniform float uShadowReceiverPlaneBias;
 uniform float uShadowFilterRadius;
+uniform float uShadowFilterTaps;
+uniform float uShadowFilterMode;
+uniform float uShadowPCSSLightRadius;
+uniform float uShadowPCSSMaxRadius;
 uniform vec4 uShadowAtlasRect[4];
 uniform float uShadowSplitDepths[4];
 uniform float uShadowCascadeBiasScale[4];
@@ -27,6 +38,9 @@ uniform float uShadowCascadeBlend;
 uniform float uShadowDebugMode;
 uniform float uTranslucentShadowEnabled;
 uniform float uTranslucentShadowDensity;
+uniform float uTranslucentShadowFilterRadius;
+uniform float uTranslucentShadowMinVariance;
+uniform float uTranslucentShadowBleedReduction;
 
 varying vec2 vBumpTexCoord;
 varying vec2 vDiffuseTexCoord;
@@ -52,7 +66,7 @@ const float kShadowDebugProjectedUV = 3.0;
 const float kShadowDebugProjectedDepth = 4.0;
 const float kShadowDebugProjectedW = 5.0;
 const float kShadowDebugInvalidMask = 6.0;
-const float kTranslucentMomentMinVariance = 1.0e-5;
+const float kShadowDebugBiasHeatmap = 7.0;
 
 float gShadowDebugState = 0.0;
 
@@ -71,6 +85,10 @@ vec3 SafeNormalize( vec3 value ) {
 }
 
 vec3 DecodeLocalNormal( vec4 bumpSample ) {
+	if ( uMaterialEnhanced < 0.5 ) {
+		return SafeNormalize( vec3( bumpSample.a, bumpSample.g, bumpSample.b ) * 2.0 - 1.0 );
+	}
+
 	vec2 localNormalXY = vec2( bumpSample.a, bumpSample.g ) * 2.0 - 1.0;
 	localNormalXY *= max( uMaterialNormalScale, 0.0 );
 
@@ -94,6 +112,18 @@ float EnhancedSpecularTerm( vec3 halfAngle, vec3 viewDir, vec3 localNormal, vec3
 	return pow( ndoth, specularPower ) * max( uMaterialSpecularBoost, 0.0 ) * fresnel;
 }
 
+float LegacySpecularTerm( vec3 halfAngle, vec3 localNormal ) {
+	float specular = clamp( dot( halfAngle, localNormal ) * 4.0 - 3.0, 0.0, 1.0 );
+	return specular * specular;
+}
+
+vec3 InteractionSpecular( vec3 halfAngle, vec3 viewDir, vec3 localNormal, vec3 specularSample ) {
+	if ( uMaterialEnhanced >= 0.5 ) {
+		return specularSample * uSpecularColor.rgb * EnhancedSpecularTerm( halfAngle, viewDir, localNormal, specularSample );
+	}
+	return specularSample * ( uSpecularColor.rgb * 2.0 ) * LegacySpecularTerm( halfAngle, localNormal );
+}
+
 float ApproxErf( float x ) {
 	float s = sign( x );
 	float ax = abs( x );
@@ -104,6 +134,34 @@ float ApproxErf( float x ) {
 
 float NormalCdf( float x ) {
 	return 0.5 * ( 1.0 + ApproxErf( x * 0.70710678 ) );
+}
+
+float StableShadowHash( vec3 value ) {
+	return fract( sin( dot( value, vec3( 12.9898, 78.233, 37.719 ) ) ) * 43758.5453 );
+}
+
+vec2 RotateShadowOffset( vec2 offset, vec2 uv, float depth ) {
+	if ( uShadowFilterMode < 0.5 ) {
+		return offset;
+	}
+	float angle = StableShadowHash( vec3( floor( uv / max( uShadowTexelSize.x, 1.0e-6 ) ), floor( depth * 1024.0 ) ) ) * 6.2831853;
+	float s = sin( angle );
+	float c = cos( angle );
+	return vec2( c * offset.x - s * offset.y, s * offset.x + c * offset.y );
+}
+
+float TranslucentFilterRadius() {
+	return ( uTranslucentShadowFilterRadius >= 0.0 ) ? uTranslucentShadowFilterRadius : uShadowFilterRadius;
+}
+
+float EffectiveShadowFilterRadius() {
+	float radius = uShadowFilterRadius;
+#ifndef OPENQ4_SHADOW_COMPARE
+	if ( uShadowFilterMode > 1.5 ) {
+		radius = max( radius, min( max( uShadowPCSSMaxRadius, 0.0 ), max( uShadowPCSSLightRadius, 0.0 ) ) );
+	}
+#endif
+	return radius;
 }
 
 float ResolveTranslucentShadowMoments( vec4 moments, float depth ) {
@@ -117,24 +175,27 @@ float ResolveTranslucentShadowMoments( vec4 moments, float depth ) {
 	}
 
 	float mean = moments.y / totalTau;
-	float variance = max( moments.z / totalTau - mean * mean, kTranslucentMomentMinVariance );
+	float variance = max( moments.z / totalTau - mean * mean, max( uTranslucentShadowMinVariance, 1.0e-6 ) );
 	float sigma = sqrt( variance );
 	float fraction = clamp( NormalCdf( ( depth - mean ) / sigma ), 0.0, 1.0 );
+	float bleed = clamp( uTranslucentShadowBleedReduction, 0.0, 0.95 );
+	fraction = clamp( ( fraction - bleed ) / max( 1.0 - bleed, 1.0e-4 ), 0.0, 1.0 );
 	float tau = totalTau * fraction;
 	return exp( -min( tau * max( uTranslucentShadowDensity, 0.0 ), 16.0 ) );
 }
 
 vec2 ShadowAtlasGuardBand() {
-	float guardRadius = max( 0.5, uShadowFilterRadius + 0.75 );
+	float guardRadius = max( 0.5, EffectiveShadowFilterRadius() + 0.75 );
 	return uShadowTexelSize * guardRadius;
 }
 
 vec4 SampleFilteredMoments( sampler2D momentMap, vec2 uv, vec2 clampMin, vec2 clampMax ) {
-	if ( uShadowFilterRadius <= 0.0 ) {
+	float filterRadius = TranslucentFilterRadius();
+	if ( filterRadius <= 0.0 ) {
 		return texture2D( momentMap, uv );
 	}
 
-	vec2 tap = uShadowTexelSize * max( uShadowFilterRadius, 0.5 );
+	vec2 tap = uShadowTexelSize * max( filterRadius, 0.5 );
 	vec4 moments = texture2D( momentMap, uv );
 	moments += texture2D( momentMap, clamp( uv + vec2( -0.5, -0.5 ) * tap, clampMin, clampMax ) );
 	moments += texture2D( momentMap, clamp( uv + vec2( 0.5, -0.5 ) * tap, clampMin, clampMax ) );
@@ -156,18 +217,84 @@ float CascadeBiasScale( int cascadeIndex ) {
 	return uShadowCascadeBiasScale[3];
 }
 
-float ShadowReceiverBias( int cascadeIndex ) {
-	float lightCos = clamp( vShadowLightCos, 0.0, 1.0 );
-	float slopeBias = sqrt( max( 1.0 - lightCos * lightCos, 0.0 ) );
+float CascadeTexelDepthBias( int cascadeIndex ) {
+	if ( cascadeIndex <= 0 ) {
+		return uShadowTexelDepthBias[0];
+	}
+	if ( cascadeIndex == 1 ) {
+		return uShadowTexelDepthBias[1];
+	}
+	if ( cascadeIndex == 2 ) {
+		return uShadowTexelDepthBias[2];
+	}
+	return uShadowTexelDepthBias[3];
+}
+
+float ShadowReceiverBias( int cascadeIndex, float depth ) {
+	float lightCos = clamp( vShadowLightCos, 1.0e-3, 1.0 );
+	float sinTheta = sqrt( max( 1.0 - lightCos * lightCos, 0.0 ) );
+	float slopeBias = sinTheta / lightCos;
 	float cascadeScale = CascadeBiasScale( cascadeIndex );
-	return ( uShadowBias + uShadowNormalBias * slopeBias ) * cascadeScale;
+	float scalarBias = ( uShadowBias + uShadowNormalBias * sinTheta ) * cascadeScale;
+	float texelBias = CascadeTexelDepthBias( cascadeIndex ) * ( 1.0 + slopeBias );
+	float receiverPlaneBias = 0.0;
+	if ( uShadowReceiverPlaneBias > 0.5 ) {
+		receiverPlaneBias = ( abs( dFdx( depth ) ) + abs( dFdy( depth ) ) ) * max( uShadowFilterRadius, 1.0 );
+	}
+	float texelAwareBias = max( texelBias, receiverPlaneBias );
+	return max( max( scalarBias, 0.0 ), max( texelAwareBias, 0.0 ) );
 }
 
 float SampleShadowCompare( vec2 uv, float depth, int cascadeIndex ) {
-	float bias = ShadowReceiverBias( cascadeIndex );
+	float bias = ShadowReceiverBias( cascadeIndex, depth );
+#ifdef OPENQ4_SHADOW_COMPARE
+	return shadow2D( uShadowMap, vec3( uv, depth - bias ) ).r;
+#else
 	float storedDepth = texture2D( uShadowMap, uv ).r;
 	return ( depth - bias <= storedDepth ) ? 1.0 : 0.0;
+#endif
 }
+
+#ifndef OPENQ4_SHADOW_COMPARE
+float RawShadowDepth( vec2 uv ) {
+	return texture2D( uShadowMap, uv ).r;
+}
+
+float ProjectedPCSSRadius( vec2 uv, float depth, int cascadeIndex, vec2 clampMin, vec2 clampMax ) {
+	if ( uShadowFilterMode < 1.5 || uShadowPCSSLightRadius <= 0.0 || uShadowPCSSMaxRadius <= 0.0 ) {
+		return uShadowFilterRadius;
+	}
+
+	float bias = ShadowReceiverBias( cascadeIndex, depth );
+	vec2 searchTap = uShadowTexelSize * max( uShadowPCSSLightRadius, 0.5 );
+	float blockerDepth = 0.0;
+	float blockerCount = 0.0;
+	float d0 = RawShadowDepth( uv );
+	if ( d0 < depth - bias ) {
+		blockerDepth += d0;
+		blockerCount += 1.0;
+	}
+	vec2 o1 = RotateShadowOffset( vec2( -0.5, -0.5 ), uv, depth );
+	vec2 o2 = RotateShadowOffset( vec2( 0.5, -0.5 ), uv, depth );
+	vec2 o3 = RotateShadowOffset( vec2( -0.5, 0.5 ), uv, depth );
+	vec2 o4 = RotateShadowOffset( vec2( 0.5, 0.5 ), uv, depth );
+	float d1 = RawShadowDepth( clamp( uv + o1 * searchTap, clampMin, clampMax ) );
+	float d2 = RawShadowDepth( clamp( uv + o2 * searchTap, clampMin, clampMax ) );
+	float d3 = RawShadowDepth( clamp( uv + o3 * searchTap, clampMin, clampMax ) );
+	float d4 = RawShadowDepth( clamp( uv + o4 * searchTap, clampMin, clampMax ) );
+	if ( d1 < depth - bias ) { blockerDepth += d1; blockerCount += 1.0; }
+	if ( d2 < depth - bias ) { blockerDepth += d2; blockerCount += 1.0; }
+	if ( d3 < depth - bias ) { blockerDepth += d3; blockerCount += 1.0; }
+	if ( d4 < depth - bias ) { blockerDepth += d4; blockerCount += 1.0; }
+	if ( blockerCount <= 0.0 ) {
+		return uShadowFilterRadius;
+	}
+
+	float averageBlocker = blockerDepth / blockerCount;
+	float penumbra = ( depth - averageBlocker ) / max( averageBlocker, 1.0e-4 );
+	return clamp( max( uShadowFilterRadius, penumbra * uShadowPCSSLightRadius ), uShadowFilterRadius, uShadowPCSSMaxRadius );
+}
+#endif
 
 vec4 SampleShadowCascade( vec4 shadowCoord, vec4 atlasRect, int cascadeIndex ) {
 	float absW = abs( shadowCoord.w );
@@ -201,25 +328,50 @@ vec4 SampleShadowCascade( vec4 shadowCoord, vec4 atlasRect, int cascadeIndex ) {
 	clampMin = min( clampMin, clampMax );
 	uv = clamp( uv, clampMin, clampMax );
 
-	if ( uShadowFilterRadius <= 0.0 ) {
+	float filterRadius = uShadowFilterRadius;
+#ifndef OPENQ4_SHADOW_COMPARE
+	filterRadius = ProjectedPCSSRadius( uv, depth, cascadeIndex, clampMin, clampMax );
+#endif
+	if ( filterRadius <= 0.0 ) {
 		return vec4( SampleShadowCompare( uv, depth, cascadeIndex ), localUv.x, localUv.y, depth );
 	}
 
-	vec2 tap = uShadowTexelSize * uShadowFilterRadius;
+	vec2 tap = uShadowTexelSize * filterRadius;
 	float shadow = 0.0;
 	shadow += SampleShadowCompare( uv, depth, cascadeIndex );
-	shadow += SampleShadowCompare( clamp( uv + vec2( -0.326212, -0.405805 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
-	shadow += SampleShadowCompare( clamp( uv + vec2( -0.840144, -0.073580 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
-	shadow += SampleShadowCompare( clamp( uv + vec2( -0.695914, 0.457137 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
-	shadow += SampleShadowCompare( clamp( uv + vec2( -0.203345, 0.620716 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
-	shadow += SampleShadowCompare( clamp( uv + vec2( 0.962340, -0.194983 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
-	shadow += SampleShadowCompare( clamp( uv + vec2( 0.473434, -0.480026 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
-	shadow += SampleShadowCompare( clamp( uv + vec2( 0.519456, 0.767022 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
-	shadow += SampleShadowCompare( clamp( uv + vec2( 0.185461, -0.893124 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
-	shadow += SampleShadowCompare( clamp( uv + vec2( 0.507431, 0.064425 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
-	shadow += SampleShadowCompare( clamp( uv + vec2( 0.896420, 0.412458 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
-	shadow += SampleShadowCompare( clamp( uv + vec2( -0.321940, -0.932615 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
-	shadow += SampleShadowCompare( clamp( uv + vec2( -0.791559, -0.597705 ) * tap, clampMin, clampMax ), depth, cascadeIndex );
+	if ( uShadowFilterTaps <= 1.0 ) {
+		return vec4( shadow, localUv.x, localUv.y, depth );
+	}
+	vec2 o1 = RotateShadowOffset( vec2( -0.326212, -0.405805 ), uv, depth );
+	vec2 o2 = RotateShadowOffset( vec2( -0.840144, -0.073580 ), uv, depth );
+	vec2 o3 = RotateShadowOffset( vec2( -0.695914, 0.457137 ), uv, depth );
+	vec2 o4 = RotateShadowOffset( vec2( -0.203345, 0.620716 ), uv, depth );
+	shadow += SampleShadowCompare( clamp( uv + o1 * tap, clampMin, clampMax ), depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + o2 * tap, clampMin, clampMax ), depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + o3 * tap, clampMin, clampMax ), depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + o4 * tap, clampMin, clampMax ), depth, cascadeIndex );
+	if ( uShadowFilterTaps <= 5.0 ) {
+		return vec4( shadow * ( 1.0 / 5.0 ), localUv.x, localUv.y, depth );
+	}
+	vec2 o5 = RotateShadowOffset( vec2( 0.962340, -0.194983 ), uv, depth );
+	vec2 o6 = RotateShadowOffset( vec2( 0.473434, -0.480026 ), uv, depth );
+	vec2 o7 = RotateShadowOffset( vec2( 0.519456, 0.767022 ), uv, depth );
+	vec2 o8 = RotateShadowOffset( vec2( 0.185461, -0.893124 ), uv, depth );
+	shadow += SampleShadowCompare( clamp( uv + o5 * tap, clampMin, clampMax ), depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + o6 * tap, clampMin, clampMax ), depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + o7 * tap, clampMin, clampMax ), depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + o8 * tap, clampMin, clampMax ), depth, cascadeIndex );
+	if ( uShadowFilterTaps <= 9.0 ) {
+		return vec4( shadow * ( 1.0 / 9.0 ), localUv.x, localUv.y, depth );
+	}
+	vec2 o9 = RotateShadowOffset( vec2( 0.507431, 0.064425 ), uv, depth );
+	vec2 o10 = RotateShadowOffset( vec2( 0.896420, 0.412458 ), uv, depth );
+	vec2 o11 = RotateShadowOffset( vec2( -0.321940, -0.932615 ), uv, depth );
+	vec2 o12 = RotateShadowOffset( vec2( -0.791559, -0.597705 ), uv, depth );
+	shadow += SampleShadowCompare( clamp( uv + o9 * tap, clampMin, clampMax ), depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + o10 * tap, clampMin, clampMax ), depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + o11 * tap, clampMin, clampMax ), depth, cascadeIndex );
+	shadow += SampleShadowCompare( clamp( uv + o12 * tap, clampMin, clampMax ), depth, cascadeIndex );
 	return vec4( shadow * ( 1.0 / 13.0 ), localUv.x, localUv.y, depth );
 }
 
@@ -391,7 +543,11 @@ vec4 ShadowDebugOutput( vec4 shadowInfo ) {
 		bool validCoord = ProjectShadowCoord( ShadowCoordByIndex( cascadeIndex ), localUv, depth );
 		if ( uShadowDebugMode < kShadowDebugAtlas + 0.5 ) {
 			vec2 atlasUv = mix( uShadowAtlasRect[cascadeIndex].xy, uShadowAtlasRect[cascadeIndex].zw, localUv );
+#ifdef OPENQ4_SHADOW_COMPARE
+			float atlasDepth = shadow2D( uShadowMap, vec3( atlasUv, depth ) ).r;
+#else
 			float atlasDepth = texture2D( uShadowMap, atlasUv ).r;
+#endif
 			if ( !validCoord ) {
 				return vec4( 1.0, 0.0, 1.0, 1.0 );
 			}
@@ -425,6 +581,18 @@ vec4 ShadowDebugOutput( vec4 shadowInfo ) {
 
 	if ( uShadowDebugMode < kShadowDebugProjectedW + 0.5 ) {
 		return ShadowCoordWDebugOutput( ShadowCoordByIndex( int( shadowInfo.y + 0.5 ) ) );
+	}
+
+	if ( uShadowDebugMode > kShadowDebugInvalidMask + 0.5 && uShadowDebugMode < kShadowDebugBiasHeatmap + 0.5 ) {
+		int cascadeIndex = int( shadowInfo.y + 0.5 );
+		vec2 localUv;
+		float depth;
+		if ( !ProjectShadowCoord( ShadowCoordByIndex( cascadeIndex ), localUv, depth ) ) {
+			return vec4( 1.0, 0.0, 1.0, 1.0 );
+		}
+		float bias = ShadowReceiverBias( cascadeIndex, depth );
+		float heat = clamp( bias * 400.0, 0.0, 1.0 );
+		return vec4( heat, 1.0 - abs( heat - 0.5 ) * 2.0, 1.0 - heat, 1.0 );
 	}
 
 	vec3 invalidColor = vec3( 0.0 );
@@ -505,8 +673,7 @@ void main() {
 	vec3 specularSample = texture2D( uSpecularMap, vSpecularTexCoord ).rgb;
 	vec3 halfAngle = SafeNormalize( vHalfAngleVector );
 	vec3 viewDir = SafeNormalize( vViewVector );
-	float specularTerm = EnhancedSpecularTerm( halfAngle, viewDir, localNormal, specularSample );
-	vec3 specular = specularSample * uSpecularColor.rgb * specularTerm;
+	vec3 specular = InteractionSpecular( halfAngle, viewDir, localNormal, specularSample );
 
 	vec3 color = ( diffuse + specular ) * light * vVertexColor;
 	if ( uShadowDebugMode > 0.5 ) {

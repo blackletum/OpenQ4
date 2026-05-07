@@ -9,6 +9,7 @@ uniform vec4 uAlphaTexCoordT;
 
 varying vec3 vPointShadowVector;
 varying vec2 vAlphaTexCoord;
+varying vec3 vAlphaHashCoord;
 
 void main() {
 	vec4 position = gl_Vertex;
@@ -19,5 +20,6 @@ void main() {
 		dot( position, uModelMatrixRow2 ) );
 	vPointShadowVector = worldPos - uGlobalLightOrigin.xyz;
 	vAlphaTexCoord = vec2( dot( alphaTexCoord, uAlphaTexCoordS ), dot( alphaTexCoord, uAlphaTexCoordT ) );
+	vAlphaHashCoord = worldPos;
 	gl_Position = ftransform();
 }

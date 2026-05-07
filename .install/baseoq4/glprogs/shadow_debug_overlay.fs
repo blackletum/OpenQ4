@@ -7,6 +7,7 @@ uniform float uAtlasDiv;
 uniform float uCascadeCount;
 uniform float uPassMapped;
 uniform float uGlyphCode;
+uniform float uPointShadowDepthMode;
 
 uniform sampler2D uShadowAtlasMap;
 uniform samplerCube uPointShadowMap;
@@ -19,6 +20,13 @@ const float kModeGlyph = 2.0;
 
 float UnpackDepth16( vec2 rg ) {
 	return rg.x + rg.y * ( 1.0 / 255.0 );
+}
+
+float DecodePointDepth( vec4 encodedDepth ) {
+	if ( uPointShadowDepthMode > 0.5 ) {
+		return encodedDepth.r;
+	}
+	return UnpackDepth16( encodedDepth.rg );
 }
 
 vec3 PointFaceDirection( float faceIndex, vec2 uv ) {
@@ -237,7 +245,7 @@ vec4 PanelColor( vec2 uv ) {
 		}
 
 		vec3 direction = PointFaceDirection( faceIndex, localUv );
-		float depth = UnpackDepth16( textureCube( uPointShadowMap, direction ).rg );
+		float depth = DecodePointDepth( textureCube( uPointShadowMap, direction ) );
 		float shade = clamp( pow( max( 1.0 - depth, 0.0 ), 0.55 ), 0.0, 1.0 );
 		vec3 base = mix( vec3( 0.04, 0.04, 0.05 ), vec3( 0.92 ), shade );
 		float border = max( step( localUv.x, 0.025 ), max( step( localUv.y, 0.025 ), max( step( 0.975, localUv.x ), step( 0.975, localUv.y ) ) ) );
@@ -248,11 +256,11 @@ vec4 PanelColor( vec2 uv ) {
 	float atlasDiv = max( uAtlasDiv, 1.0 );
 	vec2 gridUv = fract( uv * atlasDiv );
 	float tileIndex = floor( uv.x * atlasDiv ) + floor( uv.y * atlasDiv ) * atlasDiv;
-	float active = step( tileIndex + 0.5, uCascadeCount );
+	float activeTile = step( tileIndex + 0.5, uCascadeCount );
 	float depth = texture2D( uShadowAtlasMap, uv ).r;
 	float shade = clamp( pow( max( 1.0 - depth, 0.0 ), 0.55 ), 0.0, 1.0 );
 	vec3 base = mix( vec3( 0.04, 0.04, 0.05 ), vec3( 0.92 ), shade );
-	base *= mix( 0.22, 1.0, active );
+	base *= mix( 0.22, 1.0, activeTile );
 	float border = max( step( gridUv.x, 0.025 ), max( step( gridUv.y, 0.025 ), max( step( 0.975, gridUv.x ), step( 0.975, gridUv.y ) ) ) );
 	base = mix( base, borderColor, border * 0.85 );
 	return vec4( base, 0.95 );
