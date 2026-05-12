@@ -15,6 +15,7 @@ typedef struct rendererBootstrapState_s {
 
 void RendererBootstrap_BeginOpenGL( const renderBackendCaps_t &caps, const char *tierPreference );
 void RendererBootstrap_FinalizeLegacyBridge( bool allowARB2Path );
+void RendererBootstrap_SetModernExecutorAvailable( bool available );
 void RendererBootstrap_Shutdown( void );
 const rendererBootstrapState_t &RendererBootstrap_GetState( void );
 

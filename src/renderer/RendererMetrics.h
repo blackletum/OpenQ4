@@ -15,9 +15,19 @@ enum rendererGpuTimerSlot_t {
 	RENDERER_GPU_TIMER_COUNT
 };
 
+enum rendererModernExecutorMetricsMode_t {
+	RENDERER_MODERN_EXECUTOR_METRICS_OFF = 0,
+	RENDERER_MODERN_EXECUTOR_METRICS_UNAVAILABLE,
+	RENDERER_MODERN_EXECUTOR_METRICS_PREPARED,
+	RENDERER_MODERN_EXECUTOR_METRICS_LEGACY_FALLBACK
+};
+
 void R_RendererMetrics_BeginFrame( int frameCount );
 void R_RendererMetrics_RecordSubmitMsec( int submitMsec );
 void R_RendererMetrics_RecordBackendCommands( int draw3d, int draw2d, int setBuffers, int swapBuffers, int copyRenders, int specialEffects, int renderTargetOps );
+void R_RendererMetrics_RecordScenePackets( int scenePackets, int passPackets, int drawPackets, int clippedDrawPackets, int commandPackets, int legacyDrawViews, int materialRecords, int drawPacketsWithMaterial, int drawPacketsWithResourceRecord, int drawPacketsWithGeometry, int drawPacketsWithShaderRegisters, int drawPacketsWithIndexCache, int drawPacketsWithAmbientCache, bool overflow );
+void R_RendererMetrics_RecordRenderGraph( int graphPasses, int passPackets, int scenePackets, int drawPackets, int commandPackets, bool overflow );
+void R_RendererMetrics_RecordModernExecutor( rendererModernExecutorMetricsMode_t mode, int graphPasses, int preparedPasses, int fallbackPasses, int preparedDrawPackets, int materialDrawPackets, int resourceDrawPackets, int geometryDrawPackets, bool vaoReady, bool frameUBOReady, bool shaderLibraryReady, int shaderProgramCount, int shaderFailureCount, bool drawPlanReady, bool drawPlanOverflow, int drawPlanDraws, int drawPlanDepthDraws, int drawPlanMaterialDraws, int drawPlanFallbackDraws, int drawPlanStateBatches, int drawPlanProgramSwitches, int drawPlanMaterialSwitches, bool submitPlanReady, bool submitPlanOverflow, int submitPlanDraws, int submitPlanFallbackDraws, int submitPlanDepthDraws, int submitPlanMaterialDraws, int submitPlanMissingAmbientDraws, int submitPlanMissingIndexDraws, int submitPlanProgramBatches, int submitPlanVertexBufferBatches, int submitPlanIndexBufferBatches, int submitPlanScissorBatches, int submitPlanMaterialBatches, int submitPlanUniformUpdates, int submitPlanFrameUBOBinds );
 void R_RendererMetrics_AddUploadBytes( int bytes );
 void R_RendererMetrics_AddBufferStall( void );
 void R_RendererMetrics_EndFrame( int frontEndMsec, int backEndMsec, int viewCount, int visibleEntities, int viewLights, int drawElements, int surfaces, int vertexes, int indexes );

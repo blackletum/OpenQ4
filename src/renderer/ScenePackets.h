@@ -15,6 +15,9 @@
 ===============================================================================
 */
 
+class idImage;
+class idMaterial;
+
 enum renderPassCategory_t {
 	RENDER_PASS_DEPTH = 0,
 	RENDER_PASS_STENCIL_SHADOW,
@@ -33,6 +36,22 @@ enum renderPassCategory_t {
 	RENDER_PASS_PRESENT
 };
 
+const int SCENE_PACKET_MAX_SCENES = 64;
+const int SCENE_PACKET_MAX_PASSES = 256;
+const int SCENE_PACKET_MAX_DRAWS = 4096;
+const int SCENE_PACKET_MAX_MATERIAL_RECORDS = 1024;
+
+enum rendererMaterialClass_t {
+	RENDER_MATERIAL_NONE = 0,
+	RENDER_MATERIAL_SHADOW_ONLY,
+	RENDER_MATERIAL_OPAQUE,
+	RENDER_MATERIAL_PERFORATED,
+	RENDER_MATERIAL_TRANSLUCENT,
+	RENDER_MATERIAL_GUI,
+	RENDER_MATERIAL_SUBVIEW,
+	RENDER_MATERIAL_POST_PROCESS
+};
+
 typedef struct rendererPermutationKey_s {
 	unsigned int	materialClass;
 	unsigned int	lightingMode;
@@ -44,9 +63,9 @@ typedef struct rendererPermutationKey_s {
 
 typedef struct materialResourceRecord_s {
 	const idMaterial		*material;
-	int					diffuseImage;
-	int					normalImage;
-	int					specularImage;
+	const idImage			*diffuseImage;
+	const idImage			*normalImage;
+	const idImage			*specularImage;
 	int					resourceTableIndex;
 	rendererPermutationKey_t permutation;
 } materialResourceRecord_t;
@@ -61,11 +80,22 @@ typedef struct drawPacket_s {
 	const materialResourceRecord_t *materialRecord;
 	drawPacketSortKey_t		sortKey;
 	renderPassCategory_t	passCategory;
+	float					legacySort;
+	int						materialRecordIndex;
+	int						vertexCount;
 	int						firstIndex;
 	int						indexCount;
 	int						vertexOffset;
 	int						instanceOffset;
 	int						instanceCount;
+	int						scissorX1;
+	int						scissorY1;
+	int						scissorX2;
+	int						scissorY2;
+	bool					hasGeometry;
+	bool					hasShaderRegisters;
+	bool					hasIndexCache;
+	bool					hasAmbientCache;
 } drawPacket_t;
 
 typedef struct passPacket_s {
@@ -84,6 +114,62 @@ typedef struct scenePacket_s {
 	bool					legacyBridge;
 } scenePacket_t;
 
+typedef struct scenePacketFrameStats_s {
+	int						scenePackets;
+	int						passPackets;
+	int						drawPackets;
+	int						clippedDrawPackets;
+	int						commandPackets;
+	int						legacyDrawViews;
+	int						materialRecords;
+	int						drawPacketsWithMaterial;
+	int						drawPacketsWithResourceRecord;
+	int						drawPacketsWithGeometry;
+	int						drawPacketsWithShaderRegisters;
+	int						drawPacketsWithIndexCache;
+	int						drawPacketsWithAmbientCache;
+	bool					overflow;
+} scenePacketFrameStats_t;
+
+class idScenePacketFrame {
+public:
+	idScenePacketFrame();
+	void Clear( void );
+
+	bool AddScene( const viewDef_t *viewDef, bool legacyBridge );
+	bool AddPass( renderPassCategory_t category, bool enabled );
+	bool AddDrawPacket( const drawSurf_t *drawSurf, renderPassCategory_t category, int drawIndex );
+	void FinishScene( void );
+	void AddCommandPacket( void );
+	void AddLegacyDrawView( void );
+	void AddClippedDrawPackets( int count );
+
+	int NumScenes( void ) const;
+	int NumPasses( void ) const;
+	int NumDrawPackets( void ) const;
+	int NumMaterialRecords( void ) const;
+	const scenePacket_t &Scene( int index ) const;
+	const passPacket_t &Pass( int index ) const;
+	const drawPacket_t &DrawPacket( int index ) const;
+	const materialResourceRecord_t &MaterialRecord( int index ) const;
+	const scenePacketFrameStats_t &Stats( void ) const;
+
+private:
+	int FindOrAddMaterialRecord( const drawSurf_t *drawSurf );
+
+	scenePacket_t			scenes[SCENE_PACKET_MAX_SCENES];
+	passPacket_t			passes[SCENE_PACKET_MAX_PASSES];
+	drawPacket_t			drawPackets[SCENE_PACKET_MAX_DRAWS];
+	materialResourceRecord_t materialRecords[SCENE_PACKET_MAX_MATERIAL_RECORDS];
+	scenePacketFrameStats_t	stats;
+	int						activeScene;
+	int						activePass;
+};
+
 const char *RenderPassCategory_Name( renderPassCategory_t category );
+const char *RendererMaterialClass_Name( rendererMaterialClass_t materialClass );
+void R_ScenePackets_BuildLegacyCommandStream( const emptyCommand_t *cmds, idScenePacketFrame &packetFrame );
+void R_ScenePackets_LogIfVerbose( const idScenePacketFrame &packetFrame );
+bool RendererScenePacket_RunSelfTest( void );
 
 #endif /* !__SCENE_PACKETS_H__ */

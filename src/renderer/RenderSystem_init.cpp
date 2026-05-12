@@ -34,6 +34,12 @@ If you have questions concerning this license or the applicable additional terms
 #include "RendererBootstrap.h"
 #include "RendererMetrics.h"
 #include "RendererUpload.h"
+#include "RenderGraph.h"
+#include "ScenePackets.h"
+#include "ModernGLExecutor.h"
+#include "ModernGLDrawPlan.h"
+#include "ModernGLShaderLibrary.h"
+#include "ModernGLSubmitPlan.h"
 #include "../framework/RenderDoc.h"
 
 // Detect the Microsoft software OpenGL wrapper and guide the user toward
@@ -263,6 +269,7 @@ idCVar r_rendererMetrics( "r_rendererMetrics", "0", CVAR_RENDERER | CVAR_INTEGER
 idCVar r_rendererGpuTimers( "r_rendererGpuTimers", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "sample GL timer queries when r_rendererMetrics is enabled and supported" );
 idCVar r_rendererUploadMegs( "r_rendererUploadMegs", "16", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "dynamic renderer upload stream size in megabytes per frame buffer", 1, 128, idCmdSystem::ArgCompletion_Integer<1,128> );
 idCVar r_rendererUploadPersistent( "r_rendererUploadPersistent", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "allow persistent-mapped dynamic renderer uploads when supported" );
+idCVar r_rendererModernExecutor( "r_rendererModernExecutor", "0", CVAR_RENDERER | CVAR_BOOL, "prepare the opt-in modern GL executor frame contract while legacy ARB2 still executes" );
 idCVar r_useSimpleInteraction( "r_useSimpleInteraction", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use Quake 4's simpler ARB interaction shader pair as an explicit compatibility fallback; may reduce material lighting quality" );
 idCVar r_interactionColorMode( "r_interactionColorMode", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "interaction vertex-color mode: 0 = auto, 1 = packed env16.xy, 2 = vector env16/env17", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 idCVar r_shaderReport( "r_shaderReport", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "shader diagnostics: 0 = off, 1 = startup/vid_restart summary, 2 = also warn on invalid program use", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
@@ -479,6 +486,48 @@ static void R_RendererGpuTimerSelfTest_f( const idCmdArgs &args ) {
 	(void)args;
 	if ( !RendererGpuTimer_RunSelfTest() ) {
 		common->Warning( "Renderer GPU timer self-test failed" );
+	}
+}
+
+static void R_RendererScenePacketSelfTest_f( const idCmdArgs &args ) {
+	(void)args;
+	if ( !RendererScenePacket_RunSelfTest() ) {
+		common->Warning( "Renderer scene-packet self-test failed" );
+	}
+}
+
+static void R_RendererRenderGraphSelfTest_f( const idCmdArgs &args ) {
+	(void)args;
+	if ( !RendererRenderGraph_RunSelfTest() ) {
+		common->Warning( "Renderer render-graph self-test failed" );
+	}
+}
+
+static void R_RendererModernGLExecutorSelfTest_f( const idCmdArgs &args ) {
+	(void)args;
+	if ( !RendererModernGLExecutor_RunSelfTest() ) {
+		common->Warning( "Renderer modern GL executor self-test failed" );
+	}
+}
+
+static void R_RendererModernGLShaderLibrarySelfTest_f( const idCmdArgs &args ) {
+	(void)args;
+	if ( !RendererModernGLShaderLibrary_RunSelfTest() ) {
+		common->Warning( "Renderer modern GL shader-library self-test failed" );
+	}
+}
+
+static void R_RendererModernGLDrawPlanSelfTest_f( const idCmdArgs &args ) {
+	(void)args;
+	if ( !RendererModernGLDrawPlan_RunSelfTest() ) {
+		common->Warning( "Renderer modern GL draw-plan self-test failed" );
+	}
+}
+
+static void R_RendererModernGLSubmitPlanSelfTest_f( const idCmdArgs &args ) {
+	(void)args;
+	if ( !RendererModernGLSubmitPlan_RunSelfTest() ) {
+		common->Warning( "Renderer modern GL submit-plan self-test failed" );
 	}
 }
 
@@ -1025,6 +1074,8 @@ void R_InitOpenGL( void ) {
 	// parse our vertex and fragment programs, possibly disably support for
 	// one of the paths if there was an error
 	R_ARB2_Init();
+	R_ModernGLExecutor_Init( glConfig.backendCaps, glConfig.renderFeatures );
+	RendererBootstrap_SetModernExecutorAvailable( R_ModernGLExecutor_Stats().available );
 	RendererBootstrap_FinalizeLegacyBridge( glConfig.allowARB2Path );
 	glConfig.rendererTier = RendererBootstrap_GetState().selectedTier;
 	glConfig.renderFeatures = RendererBootstrap_GetState().features;
@@ -2417,6 +2468,16 @@ void GfxInfo_f( const idCmdArgs &args ) {
 		R_RendererMetrics_GpuTimersAvailable() ? "available" : "unavailable",
 		r_rendererGpuTimers.GetBool() ? 1 : 0,
 		glConfig.backendCaps.hasTimerQuery ? 1 : 0 );
+	common->Printf(
+		"Renderer scene packets: legacy bridge, maxScenes=%d, maxPasses=%d, maxDrawPackets=%d, maxMaterialRecords=%d\n",
+		SCENE_PACKET_MAX_SCENES,
+		SCENE_PACKET_MAX_PASSES,
+		SCENE_PACKET_MAX_DRAWS,
+		SCENE_PACKET_MAX_MATERIAL_RECORDS );
+	common->Printf(
+		"Renderer graph: packet-driven legacy bridge, maxPasses=%d\n",
+		RENDER_GRAPH_MAX_PASSES );
+	R_ModernGLExecutor_PrintGfxInfo();
 	{
 		const rendererUploadStats_t &uploadStats = R_RendererUpload_Stats();
 		common->Printf(
@@ -2497,6 +2558,7 @@ static void R_PerformFullVidRestart( bool forceWindow ) {
 
 	// Force image/object handles to rebuild against the new context.
 	globalImages->PurgeAllImages();
+	R_ModernGLExecutor_Shutdown();
 	GLimp_Shutdown();
 	glConfig.isInitialized = false;
 
@@ -2714,6 +2776,12 @@ void R_InitCommands( void ) {
 	cmdSystem->AddCommand( "rendererTierSelfTest", R_RendererTierSelfTest_f, CMD_FL_RENDERER, "run renderer tier-selection self tests" );
 	cmdSystem->AddCommand( "rendererUploadSelfTest", R_RendererUploadSelfTest_f, CMD_FL_RENDERER, "run renderer upload stream self tests" );
 	cmdSystem->AddCommand( "rendererGpuTimerSelfTest", R_RendererGpuTimerSelfTest_f, CMD_FL_RENDERER, "run renderer GPU timer query self tests" );
+	cmdSystem->AddCommand( "rendererScenePacketSelfTest", R_RendererScenePacketSelfTest_f, CMD_FL_RENDERER, "run renderer scene-packet bridge self tests" );
+	cmdSystem->AddCommand( "rendererRenderGraphSelfTest", R_RendererRenderGraphSelfTest_f, CMD_FL_RENDERER, "run renderer packet-driven render-graph self tests" );
+	cmdSystem->AddCommand( "rendererModernGLExecutorSelfTest", R_RendererModernGLExecutorSelfTest_f, CMD_FL_RENDERER, "run renderer modern GL executor self tests" );
+	cmdSystem->AddCommand( "rendererModernGLShaderLibrarySelfTest", R_RendererModernGLShaderLibrarySelfTest_f, CMD_FL_RENDERER, "run renderer modern GL shader-library self tests" );
+	cmdSystem->AddCommand( "rendererModernGLDrawPlanSelfTest", R_RendererModernGLDrawPlanSelfTest_f, CMD_FL_RENDERER, "run renderer modern GL draw-plan self tests" );
+	cmdSystem->AddCommand( "rendererModernGLSubmitPlanSelfTest", R_RendererModernGLSubmitPlanSelfTest_f, CMD_FL_RENDERER, "run renderer modern GL submit-plan self tests" );
 	cmdSystem->AddCommand( "modulateLights", R_ModulateLights_f, CMD_FL_RENDERER | CMD_FL_CHEAT, "modifies shader parms on all lights" );
 	cmdSystem->AddCommand( "testImage", R_TestImage_f, CMD_FL_RENDERER | CMD_FL_CHEAT, "displays the given image centered on screen", idCmdSystem::ArgCompletion_ImageName );
 	cmdSystem->AddCommand( "testVideo", R_TestVideo_f, CMD_FL_RENDERER | CMD_FL_CHEAT, "displays the given cinematic", idCmdSystem::ArgCompletion_VideoName );
@@ -2965,6 +3033,7 @@ void idRenderSystemLocal::ShutdownOpenGL( void ) {
 	// free the context and close the window
 	R_ShutdownFrameData();
 	R_RendererMetrics_ShutdownGpuTimers();
+	R_ModernGLExecutor_Shutdown();
 	R_RendererUpload_Shutdown();
 	RendererBootstrap_Shutdown();
 	GLimp_Shutdown();

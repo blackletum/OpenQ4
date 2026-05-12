@@ -30,6 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "tr_local.h"
 #include "RenderGraph.h"
+#include "ModernGLExecutor.h"
 #include "RendererMetrics.h"
 
 
@@ -679,9 +680,39 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 		return;
 	}
 
+	idScenePacketFrame legacyScenePackets;
+	R_ScenePackets_BuildLegacyCommandStream( cmds, legacyScenePackets );
+	R_ScenePackets_LogIfVerbose( legacyScenePackets );
 	idRenderGraph legacyGraph;
-	R_RenderGraph_BuildLegacyFrameGraph( cmds, legacyGraph );
+	R_RenderGraph_BuildFromScenePackets( legacyScenePackets, legacyGraph );
 	R_RenderGraph_LogIfVerbose( legacyGraph );
+	{
+		const scenePacketFrameStats_t &packetStats = legacyScenePackets.Stats();
+		R_RendererMetrics_RecordScenePackets(
+			packetStats.scenePackets,
+			packetStats.passPackets,
+			packetStats.drawPackets,
+			packetStats.clippedDrawPackets,
+			packetStats.commandPackets,
+			packetStats.legacyDrawViews,
+			packetStats.materialRecords,
+			packetStats.drawPacketsWithMaterial,
+			packetStats.drawPacketsWithResourceRecord,
+			packetStats.drawPacketsWithGeometry,
+			packetStats.drawPacketsWithShaderRegisters,
+			packetStats.drawPacketsWithIndexCache,
+			packetStats.drawPacketsWithAmbientCache,
+			packetStats.overflow );
+		const renderGraphStats_t &graphStats = legacyGraph.Stats();
+		R_RendererMetrics_RecordRenderGraph(
+			graphStats.graphPasses,
+			graphStats.passPackets,
+			graphStats.scenePackets,
+			graphStats.drawPackets,
+			graphStats.commandPackets,
+			graphStats.overflow );
+	}
+	R_ModernGLExecutor_PrepareFrame( legacyScenePackets, legacyGraph );
 
 	backEndStartTime = Sys_Milliseconds();
 	R_RendererMetrics_BeginGpuBackendFrame();

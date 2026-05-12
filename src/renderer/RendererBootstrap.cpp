@@ -59,6 +59,11 @@ void RendererBootstrap_FinalizeLegacyBridge( bool allowARB2Path ) {
 	}
 }
 
+void RendererBootstrap_SetModernExecutorAvailable( bool available ) {
+	rg_bootstrapState.modernExecutorAvailable = available;
+	RendererBootstrap_UpdateSummary( glConfig.backendCaps );
+}
+
 void RendererBootstrap_Shutdown( void ) {
 	memset( &rg_bootstrapState, 0, sizeof( rg_bootstrapState ) );
 }
