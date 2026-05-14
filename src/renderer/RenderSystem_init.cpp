@@ -500,6 +500,13 @@ static void R_RendererContextLadderSelfTest_f( const idCmdArgs &args ) {
 	}
 }
 
+static void R_RendererCompatibilityGatesSelfTest_f( const idCmdArgs &args ) {
+	(void)args;
+	if ( !RendererCompatibilityGates_RunSelfTest() ) {
+		common->Warning( "Renderer compatibility gates self-test failed" );
+	}
+}
+
 static void R_RendererUploadSelfTest_f( const idCmdArgs &args ) {
 	(void)args;
 	if ( !RendererUpload_RunSelfTest() ) {
@@ -684,18 +691,6 @@ static void R_CheckPortableExtensions( void ) {
 
 	GLCapabilityProbe_Build( glConfig.backendCaps, glConfig.version_string, glConfig.extensions_string );
 	glConfig.extensions_string = GLCapabilityProbe_ExtensionString();
-	RendererBootstrap_BeginOpenGL( glConfig.backendCaps, r_glTier.GetString() );
-	glConfig.rendererTier = RendererBootstrap_GetState().selectedTier;
-	glConfig.renderFeatures = RendererBootstrap_GetState().features;
-
-	const rendererTierPreference_t requestedTier = RendererTierPreference_FromString( r_glTier.GetString() );
-	const rendererTier_t forcedTier = RendererTierPreference_ToForcedTier( requestedTier );
-	if ( forcedTier != RENDERER_TIER_NULL && forcedTier != glConfig.rendererTier ) {
-		common->Warning(
-			"r_glTier \"%s\" is not fully supported by this context; selected %s instead",
-			r_glTier.GetString(),
-			RendererTier_Name( glConfig.rendererTier ) );
-	}
 
 	// GL_ARB_multitexture
 	glConfig.multitextureAvailable = R_CheckRequiredExtension( "GL_ARB_multitexture" );
@@ -888,6 +883,25 @@ static void R_CheckPortableExtensions( void ) {
 	glConfig.backendCaps.hasSRGBTextures = glConfig.textureSRGBAvailable;
 	glConfig.backendCaps.hasFramebufferSRGB = glConfig.framebufferSRGBAvailable;
 	glConfig.backendCaps.hasMRT = glConfig.maxDrawBuffers >= 4 && glConfig.maxColorAttachments >= 4;
+
+	const rendererDriverInfo_t driverInfo = {
+		glConfig.vendor_string,
+		glConfig.renderer_string,
+		glConfig.version_string
+	};
+	RendererDriverQuirks_Apply( glConfig.backendCaps, driverInfo );
+	RendererBootstrap_BeginOpenGL( glConfig.backendCaps, r_glTier.GetString() );
+	glConfig.rendererTier = RendererBootstrap_GetState().selectedTier;
+	glConfig.renderFeatures = RendererBootstrap_GetState().features;
+
+	const rendererTierPreference_t requestedTier = RendererTierPreference_FromString( r_glTier.GetString() );
+	const rendererTier_t forcedTier = RendererTierPreference_ToForcedTier( requestedTier );
+	if ( forcedTier != RENDERER_TIER_NULL && forcedTier != glConfig.rendererTier ) {
+		common->Warning(
+			"r_glTier \"%s\" is not fully supported by this context; selected %s instead",
+			r_glTier.GetString(),
+			RendererTier_Name( glConfig.rendererTier ) );
+	}
 
 }
 
@@ -2609,6 +2623,7 @@ void GfxInfo_f( const idCmdArgs &args ) {
 		RendererCaps_FormatSummary( glConfig.backendCaps, capsSummary, sizeof( capsSummary ) );
 		common->Printf( "Renderer caps: %s\n", capsSummary );
 	}
+	RendererCompatibilityGates_PrintGfxInfo();
 	common->Printf(
 		"Renderer GPU timers: %s, cvar=%d, timerQuery=%d\n",
 		R_RendererMetrics_GpuTimersAvailable() ? "available" : "unavailable",
@@ -2934,6 +2949,7 @@ void R_InitCommands( void ) {
 	cmdSystem->AddCommand( "gfxInfo", GfxInfo_f, CMD_FL_RENDERER, "show graphics info" );
 	cmdSystem->AddCommand( "rendererTierSelfTest", R_RendererTierSelfTest_f, CMD_FL_RENDERER, "run renderer tier-selection self tests" );
 	cmdSystem->AddCommand( "rendererContextLadderSelfTest", R_RendererContextLadderSelfTest_f, CMD_FL_RENDERER, "run renderer context ladder self tests" );
+	cmdSystem->AddCommand( "rendererCompatibilityGatesSelfTest", R_RendererCompatibilityGatesSelfTest_f, CMD_FL_RENDERER, "run renderer driver-quirk and fallback-gate self tests" );
 	cmdSystem->AddCommand( "rendererUploadSelfTest", R_RendererUploadSelfTest_f, CMD_FL_RENDERER, "run renderer upload stream self tests" );
 	cmdSystem->AddCommand( "rendererGpuTimerSelfTest", R_RendererGpuTimerSelfTest_f, CMD_FL_RENDERER, "run renderer GPU timer query self tests" );
 	cmdSystem->AddCommand( "rendererScenePacketSelfTest", R_RendererScenePacketSelfTest_f, CMD_FL_RENDERER, "run renderer front-end scene-packet self tests" );

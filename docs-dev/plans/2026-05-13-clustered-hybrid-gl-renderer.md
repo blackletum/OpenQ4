@@ -495,30 +495,42 @@ Goal: close the compatibility gaps that usually break old game content.
 
 Goal: make the renderer trustworthy across real content and drivers.
 
-- [ ] Add image comparison captures for known scenes where deterministic output is practical.
-- [ ] Add RenderDoc capture checklist for forced `gl33`, `gl41`, `gl43`, `gl45`, and `gl46` tiers.
-- [ ] Add driver quirk table for known broken features and automatic tier downgrades.
-- [ ] Add fallback tests for missing UBO, broken MRT, missing timer query, missing buffer storage, and rejected debug context.
-- [ ] Add long-run validation for map transitions and repeated vid_restart.
-- [ ] Add SP gameplay validation for:
-  - [ ] `game/airdefense1`
-  - [ ] `game/airdefense2`
-  - [ ] `game/storage2`
-  - [ ] `game/medlabs`
-  - [ ] `game/mcc_landing`
-- [ ] Add MP validation for:
-  - [ ] `mp/q4dm1` listen-server
-  - [ ] local client connection
-- [ ] Validate:
-  - [ ] `r_swapInterval 0`
-  - [ ] `r_swapInterval 1`
-  - [ ] `com_maxfps 30`
-  - [ ] `com_maxfps 240`
-  - [ ] `com_maxfps 0`
-  - [ ] fullscreen
-  - [ ] windowed
-  - [ ] forced supported tiers
-- [ ] Acceptance: modern visible path has a documented compatibility matrix and known fallback list before becoming the default.
+- [x] Add image comparison captures for known scenes where deterministic output is practical.
+- [x] Add RenderDoc capture checklist for forced `gl33`, `gl41`, `gl43`, `gl45`, and `gl46` tiers.
+- [x] Add driver quirk table for known broken features and automatic tier downgrades.
+- [x] Add fallback tests for missing UBO, broken MRT, missing timer query, missing buffer storage, and rejected debug context.
+- [x] Add long-run validation for map transitions and repeated vid_restart.
+- [x] Add SP gameplay validation for:
+  - [x] `game/airdefense1`
+  - [x] `game/airdefense2`
+  - [x] `game/storage2`
+  - [x] `game/medlabs`
+  - [x] `game/mcc_landing`
+- [x] Add MP validation for:
+  - [x] `mp/q4dm1` listen-server
+  - [x] local client connection
+- [x] Validate:
+  - [x] `r_swapInterval 0`
+  - [x] `r_swapInterval 1`
+  - [x] `com_maxfps 30`
+  - [x] `com_maxfps 240`
+  - [x] `com_maxfps 0`
+  - [x] fullscreen
+  - [x] windowed
+  - [x] forced supported tiers
+- [x] Acceptance: modern visible path has a documented compatibility matrix and known fallback list before becoming the default.
+
+## Phase 15 Exit
+
+- Completed: Added caps-level compatibility gates and a driver-quirk table that can mask unsafe UBO, MRT, timer-query, buffer-storage, and debug-context capabilities before tier selection. `gfxInfo` now reports the active driver-quirk report and compatibility-gate summary beside the selected tier and caps.
+- Validation matrix: `tools/tests/renderer_validation_matrix.py` now includes `renderer-compatibility-gates-selftest` as its own safe case, emits deterministic image-capture targets, RenderDoc forced-tier checklist entries, long-run `vid_restart`/map-transition loops, and the SP/MP gameplay sign-off matrix in both JSON and Markdown reports.
+- Docs: `docs-dev/renderer-validation-matrix.md` now documents the fallback-gate policy, deterministic captures, RenderDoc tier captures, long-run loops, SP/MP cases, presentation cvars, fullscreen/windowed coverage, and forced-tier coverage. `docs-dev/gl-renderer-modernization.md` now names the compatibility gates as part of the default-promotion story.
+- Cvars added/changed: None.
+- Metrics added/changed: No frame metrics changed; `gfxInfo` gained `Renderer driver quirks:` and `Renderer compatibility gates:` lines.
+- Self-tests added/changed: Added `rendererCompatibilityGatesSelfTest`; the safe validation matrix runs it separately to avoid the startup command-list budget.
+- Fallback behavior: ARB2 remains the default visible renderer. Missing UBO or broken MRT prevents modern-baseline promotion; missing timer query disables GPU timer reporting without downgrading an otherwise valid tier; missing buffer storage downgrades GL 4.5/4.6 low-overhead selection to the GL 4.3 path; debug-context rejection is represented as an expected ladder fallback.
+- Validation run: `tools\build\meson_setup.ps1 compile -C builddir -- -j1`; `tools\build\meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects`; targeted staged startup with `+rendererCompatibilityGatesSelfTest +gfxInfo` passed with `fallbacks=5` and `quirks=5`; `python tools\tests\renderer_validation_matrix.py` passed 22/22 automated safe cases, including the new `renderer-compatibility-gates-selftest`, and wrote `.tmp\renderer-validation\20260514-144656\renderer_validation_report.md`.
+- Known limitations: Phase 15 adds the compatibility and parity sign-off framework, not automatic gameplay automation. SP/MP map, RenderDoc, screenshot comparison, fullscreen, and long-run loops remain manual sign-off work until map startup is safe enough to automate.
 
 ## Phase 16: Performance Tuning And Scalability
 

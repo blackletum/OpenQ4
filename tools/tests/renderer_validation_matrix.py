@@ -87,6 +87,74 @@ MANUAL_GAMEPLAY_MATRIX = [
     },
 ]
 
+DETERMINISTIC_CAPTURE_MATRIX = [
+    {
+        "id": "capture-startup-mainmenu",
+        "mode": "SP",
+        "scene": "main menu after logo skip",
+        "purpose": "deterministic GUI composition, font/material atlas, and widescreen expansion",
+    },
+    {
+        "id": "capture-renderer-visible-selftest",
+        "mode": "safe startup",
+        "scene": "rendererModernVisibleSelfTest",
+        "purpose": "synthetic modern-visible depth/G-buffer/deferred/forward+/present composition",
+    },
+    {
+        "id": "capture-renderer-compatibility-selftest",
+        "mode": "safe startup",
+        "scene": "rendererModernCompatibilitySelfTest",
+        "purpose": "known fallback inventory for GUI/post/subview/render-demo/BSE categories",
+    },
+    {
+        "id": "capture-sp-airdefense1-static",
+        "mode": "SP",
+        "scene": "game/airdefense1 fixed spawn, no input for 3 seconds",
+        "purpose": "outdoor lighting, terrain decals, BSE smoke, and stock material parity",
+    },
+]
+
+RENDERDOC_TIER_MATRIX = [
+    {
+        "tier": "gl33",
+        "focus": "VAO/VBO/UBO baseline, graph resources, visible-depth/G-buffer/forward+ passes",
+    },
+    {
+        "tier": "gl41",
+        "focus": "macOS-class GLSL path and GL 4.1 context fallback behavior",
+    },
+    {
+        "tier": "gl43",
+        "focus": "SSBO scene records, compute validation dispatch, indirect-command generation",
+    },
+    {
+        "tier": "gl45",
+        "focus": "DSA texture/FBO updates, persistent upload defaults, and multi-bind groups",
+    },
+    {
+        "tier": "gl46",
+        "focus": "top-tier selection plus GL SPIR-V/bindless availability reporting without default use",
+    },
+]
+
+LONG_RUN_VALIDATION_MATRIX = [
+    {
+        "id": "longrun-vid-restart-10x",
+        "mode": "SP",
+        "purpose": "repeat `vid_restart` ten times under `r_glTier auto`, `gl33`, and the highest supported forced tier; inspect logs after each cycle",
+    },
+    {
+        "id": "longrun-map-transition-sp",
+        "mode": "SP",
+        "purpose": "transition between `game/airdefense1`, `game/storage2`, and `game/medlabs` without restarting the process",
+    },
+    {
+        "id": "longrun-mp-listen-reconnect",
+        "mode": "MP",
+        "purpose": "`mp/q4dm1` listen server with local client connect, disconnect, reconnect, then map restart",
+    },
+]
+
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
@@ -437,6 +505,25 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
             ],
         },
         {
+            "id": "renderer-compatibility-gates-selftest",
+            "category": "selftest",
+            "description": "Phase 15 driver-quirk table and fallback-gate coverage for missing UBO, broken MRT, missing timer query, missing buffer storage, and rejected debug context.",
+            "args": [
+                "+set",
+                "r_rendererMetrics",
+                "2",
+                "+rendererCompatibilityGatesSelfTest",
+                "+gfxInfo",
+            ],
+            "checks": [
+                ["RendererCompatibilityGates self-test passed"],
+                ["Renderer driver quirks:"],
+                ["Renderer compatibility gates:"],
+                ["Selected renderer tier:"],
+                ["GL context request:"],
+            ],
+        },
+        {
             "id": "renderer-gpu-driven-selftest",
             "category": "selftest",
             "description": "GL 4.3 GPU-driven compute culling, compacted indirect command generation, CPU-reference validation, and masked multi-draw-indirect execution.",
@@ -712,6 +799,9 @@ def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dic
         "metadata": metadata,
         "results": results,
         "manualGameplayMatrix": MANUAL_GAMEPLAY_MATRIX,
+        "deterministicCaptureMatrix": DETERMINISTIC_CAPTURE_MATRIX,
+        "renderDocTierMatrix": RENDERDOC_TIER_MATRIX,
+        "longRunValidationMatrix": LONG_RUN_VALIDATION_MATRIX,
     }
     report_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -755,6 +845,36 @@ def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dic
     for manual in MANUAL_GAMEPLAY_MATRIX:
         lines.append(f"| `{manual['id']}` | {manual['mode']} | `{manual['map']}` | {manual['purpose']} |")
 
+    lines += [
+        "",
+        "## Deterministic Capture Matrix",
+        "",
+        "| Case | Mode | Scene | Purpose |",
+        "|---|---|---|---|",
+    ]
+    for capture in DETERMINISTIC_CAPTURE_MATRIX:
+        lines.append(f"| `{capture['id']}` | {capture['mode']} | {capture['scene']} | {capture['purpose']} |")
+
+    lines += [
+        "",
+        "## RenderDoc Tier Matrix",
+        "",
+        "| Forced Tier | Capture Focus |",
+        "|---|---|",
+    ]
+    for item in RENDERDOC_TIER_MATRIX:
+        lines.append(f"| `r_glTier {item['tier']}` | {item['focus']} |")
+
+    lines += [
+        "",
+        "## Long-Run Matrix",
+        "",
+        "| Case | Mode | Purpose |",
+        "|---|---|---|",
+    ]
+    for item in LONG_RUN_VALIDATION_MATRIX:
+        lines.append(f"| `{item['id']}` | {item['mode']} | {item['purpose']} |")
+
     report_md.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return report_json, report_md
 
@@ -783,6 +903,15 @@ def main(argv: list[str]) -> int:
         print("\nManual gameplay cases:")
         for case in MANUAL_GAMEPLAY_MATRIX:
             print(f"  {case['id']}: {case['mode']} {case['map']} - {case['purpose']}")
+        print("\nDeterministic capture cases:")
+        for case in DETERMINISTIC_CAPTURE_MATRIX:
+            print(f"  {case['id']}: {case['mode']} {case['scene']} - {case['purpose']}")
+        print("\nRenderDoc tier cases:")
+        for case in RENDERDOC_TIER_MATRIX:
+            print(f"  r_glTier {case['tier']}: {case['focus']}")
+        print("\nLong-run cases:")
+        for case in LONG_RUN_VALIDATION_MATRIX:
+            print(f"  {case['id']}: {case['mode']} - {case['purpose']}")
         return 0
 
     executable = find_client_executable(root)

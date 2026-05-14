@@ -118,6 +118,29 @@ typedef struct renderFeatureSet_s {
 	bool						renderGraph;
 } renderFeatureSet_t;
 
+enum rendererDriverQuirkFlags_t {
+	RENDERER_DRIVER_QUIRK_NONE = 0,
+	RENDERER_DRIVER_QUIRK_FORCE_LEGACY = 1u << 0,
+	RENDERER_DRIVER_QUIRK_DISABLE_UBO = 1u << 1,
+	RENDERER_DRIVER_QUIRK_DISABLE_MRT = 1u << 2,
+	RENDERER_DRIVER_QUIRK_DISABLE_TIMER_QUERY = 1u << 3,
+	RENDERER_DRIVER_QUIRK_DISABLE_BUFFER_STORAGE = 1u << 4,
+	RENDERER_DRIVER_QUIRK_REJECT_DEBUG_CONTEXT = 1u << 5
+};
+
+typedef struct rendererDriverInfo_s {
+	const char					*vendor;
+	const char					*renderer;
+	const char					*version;
+} rendererDriverInfo_t;
+
+typedef struct rendererDriverQuirkReport_s {
+	unsigned int				flags;
+	int							rulesMatched;
+	bool						changedCaps;
+	char						summary[256];
+} rendererDriverQuirkReport_t;
+
 const char *RendererTier_Name( rendererTier_t tier );
 const char *RendererTier_CVarName( rendererTier_t tier );
 const char *RendererContextProfile_Name( rendererContextProfile_t profile );
@@ -130,9 +153,13 @@ rendererTier_t RendererTier_Select( const renderBackendCaps_t &caps, rendererTie
 renderFeatureSet_t RendererFeatureSet_Build( const renderBackendCaps_t &caps, rendererTier_t tier );
 void RendererCaps_FormatSummary( const renderBackendCaps_t &caps, char *buffer, int bufferSize );
 int RendererContextLadder_Build( rendererContextCandidate_t *candidates, int maxCandidates, rendererTierPreference_t preference, bool debugContext, bool keepAutoCompatibility );
+void RendererDriverQuirks_Apply( renderBackendCaps_t &caps, const rendererDriverInfo_t &driverInfo );
+const rendererDriverQuirkReport_t &RendererDriverQuirks_LastReport( void );
+void RendererCompatibilityGates_PrintGfxInfo( void );
 
 bool RendererTierSelect_RunSelfTest( void );
 bool RendererContextLadder_RunSelfTest( void );
+bool RendererCompatibilityGates_RunSelfTest( void );
 
 void GLCapabilityProbe_Build( renderBackendCaps_t &caps, const char *versionString, const char *legacyExtensionsString );
 bool GLCapabilityProbe_HasExtension( const char *name );

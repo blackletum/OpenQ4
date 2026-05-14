@@ -5,12 +5,155 @@
 
 static idStrList		rg_extensionTokens;
 static idStr			rg_extensionString;
+static rendererDriverQuirkReport_t rg_driverQuirkReport;
+
+typedef struct rendererDriverQuirkRule_s {
+	const char					*vendor;
+	const char					*renderer;
+	const char					*version;
+	unsigned int				flags;
+	const char					*summary;
+} rendererDriverQuirkRule_t;
+
+static const rendererDriverQuirkRule_t rg_driverQuirkRules[] = {
+	{
+		"Microsoft",
+		"GDI Generic",
+		"",
+		RENDERER_DRIVER_QUIRK_FORCE_LEGACY,
+		"Microsoft software OpenGL path is limited to the legacy compatibility renderer"
+	},
+	{
+		"Microsoft",
+		"OpenGL-D3D",
+		"",
+		RENDERER_DRIVER_QUIRK_FORCE_LEGACY,
+		"Microsoft OpenGL-D3D translation path is limited to the legacy compatibility renderer"
+	},
+	{
+		"OpenQ4Test",
+		"Missing UBO",
+		"",
+		RENDERER_DRIVER_QUIRK_DISABLE_UBO,
+		"synthetic missing-UBO downgrade"
+	},
+	{
+		"OpenQ4Test",
+		"Broken MRT",
+		"",
+		RENDERER_DRIVER_QUIRK_DISABLE_MRT,
+		"synthetic MRT downgrade"
+	},
+	{
+		"OpenQ4Test",
+		"Missing Timer Query",
+		"",
+		RENDERER_DRIVER_QUIRK_DISABLE_TIMER_QUERY,
+		"synthetic timer-query fallback"
+	},
+	{
+		"OpenQ4Test",
+		"Missing Buffer Storage",
+		"",
+		RENDERER_DRIVER_QUIRK_DISABLE_BUFFER_STORAGE,
+		"synthetic GL45 buffer-storage downgrade"
+	},
+	{
+		"OpenQ4Test",
+		"Rejected Debug Context",
+		"",
+		RENDERER_DRIVER_QUIRK_REJECT_DEBUG_CONTEXT,
+		"synthetic debug-context fallback"
+	}
+};
 
 static bool RendererStringEquals( const char *a, const char *b ) {
 	if ( a == NULL || b == NULL ) {
 		return false;
 	}
 	return idStr::Icmp( a, b ) == 0;
+}
+
+static bool RendererDriverQuirk_MatchesText( const char *value, const char *pattern ) {
+	if ( pattern == NULL || pattern[0] == '\0' ) {
+		return true;
+	}
+	if ( value == NULL || value[0] == '\0' ) {
+		return false;
+	}
+	return idStr::FindText( value, pattern, false ) >= 0;
+}
+
+static void RendererDriverQuirks_AppendSummary( const char *text ) {
+	if ( text == NULL || text[0] == '\0' ) {
+		return;
+	}
+
+	if ( rg_driverQuirkReport.summary[0] == '\0' || idStr::Icmp( rg_driverQuirkReport.summary, "none" ) == 0 ) {
+		idStr::snPrintf( rg_driverQuirkReport.summary, sizeof( rg_driverQuirkReport.summary ), "%s", text );
+		return;
+	}
+
+	const int used = idStr::Length( rg_driverQuirkReport.summary );
+	if ( used >= static_cast<int>( sizeof( rg_driverQuirkReport.summary ) ) - 4 ) {
+		return;
+	}
+	idStr::snPrintf(
+		rg_driverQuirkReport.summary + used,
+		sizeof( rg_driverQuirkReport.summary ) - used,
+		"; %s",
+		text );
+}
+
+static void RendererDriverQuirks_DisableModernBaseline( renderBackendCaps_t &caps ) {
+	caps.hasUBO = false;
+	caps.hasVAO = false;
+	caps.hasInstancing = false;
+	caps.hasTextureArrays = false;
+	caps.hasMRT = false;
+	caps.hasCompute = false;
+	caps.hasSSBO = false;
+	caps.hasDrawIndirect = false;
+	caps.hasMultiDrawIndirect = false;
+	caps.hasTextureViews = false;
+	caps.hasBufferStorage = false;
+	caps.hasDSA = false;
+	caps.hasMultiBind = false;
+	caps.hasGLSpirv = false;
+	caps.hasBindlessTexture = false;
+}
+
+static void RendererDriverQuirks_FormatFlags( unsigned int flags, char *buffer, int bufferSize ) {
+	if ( buffer == NULL || bufferSize <= 0 ) {
+		return;
+	}
+
+	buffer[0] = '\0';
+	struct flagName_t {
+		unsigned int flag;
+		const char *name;
+	};
+	const flagName_t names[] = {
+		{ RENDERER_DRIVER_QUIRK_FORCE_LEGACY, "forceLegacy" },
+		{ RENDERER_DRIVER_QUIRK_DISABLE_UBO, "disableUBO" },
+		{ RENDERER_DRIVER_QUIRK_DISABLE_MRT, "disableMRT" },
+		{ RENDERER_DRIVER_QUIRK_DISABLE_TIMER_QUERY, "disableTimerQuery" },
+		{ RENDERER_DRIVER_QUIRK_DISABLE_BUFFER_STORAGE, "disableBufferStorage" },
+		{ RENDERER_DRIVER_QUIRK_REJECT_DEBUG_CONTEXT, "rejectDebugContext" }
+	};
+
+	if ( flags == RENDERER_DRIVER_QUIRK_NONE ) {
+		idStr::snPrintf( buffer, bufferSize, "none" );
+		return;
+	}
+
+	for ( int i = 0; i < static_cast<int>( sizeof( names ) / sizeof( names[0] ) ); ++i ) {
+		if ( ( flags & names[i].flag ) == 0 ) {
+			continue;
+		}
+		const int used = idStr::Length( buffer );
+		idStr::snPrintf( buffer + used, bufferSize - used, "%s%s", used > 0 ? "," : "", names[i].name );
+	}
 }
 
 const char *RendererTier_Name( rendererTier_t tier ) {
@@ -345,6 +488,94 @@ renderFeatureSet_t RendererFeatureSet_Build( const renderBackendCaps_t &caps, re
 	features.renderGraph = features.modernBaseline || tier == RENDERER_TIER_LEGACY_GL2_COMPAT;
 
 	return features;
+}
+
+void RendererDriverQuirks_Apply( renderBackendCaps_t &caps, const rendererDriverInfo_t &driverInfo ) {
+	memset( &rg_driverQuirkReport, 0, sizeof( rg_driverQuirkReport ) );
+	idStr::snPrintf( rg_driverQuirkReport.summary, sizeof( rg_driverQuirkReport.summary ), "none" );
+
+	const renderBackendCaps_t originalCaps = caps;
+	for ( int i = 0; i < static_cast<int>( sizeof( rg_driverQuirkRules ) / sizeof( rg_driverQuirkRules[0] ) ); ++i ) {
+		const rendererDriverQuirkRule_t &rule = rg_driverQuirkRules[i];
+		if ( !RendererDriverQuirk_MatchesText( driverInfo.vendor, rule.vendor ) ||
+			!RendererDriverQuirk_MatchesText( driverInfo.renderer, rule.renderer ) ||
+			!RendererDriverQuirk_MatchesText( driverInfo.version, rule.version ) ) {
+			continue;
+		}
+
+		rg_driverQuirkReport.flags |= rule.flags;
+		rg_driverQuirkReport.rulesMatched++;
+		RendererDriverQuirks_AppendSummary( rule.summary );
+	}
+
+	if ( ( rg_driverQuirkReport.flags & RENDERER_DRIVER_QUIRK_FORCE_LEGACY ) != 0 ) {
+		RendererDriverQuirks_DisableModernBaseline( caps );
+	}
+	if ( ( rg_driverQuirkReport.flags & RENDERER_DRIVER_QUIRK_DISABLE_UBO ) != 0 ) {
+		caps.hasUBO = false;
+	}
+	if ( ( rg_driverQuirkReport.flags & RENDERER_DRIVER_QUIRK_DISABLE_MRT ) != 0 ) {
+		caps.hasMRT = false;
+		if ( caps.maxDrawBuffers > 1 ) {
+			caps.maxDrawBuffers = 1;
+		}
+		if ( caps.maxColorAttachments > 1 ) {
+			caps.maxColorAttachments = 1;
+		}
+	}
+	if ( ( rg_driverQuirkReport.flags & RENDERER_DRIVER_QUIRK_DISABLE_TIMER_QUERY ) != 0 ) {
+		caps.hasTimerQuery = false;
+	}
+	if ( ( rg_driverQuirkReport.flags & RENDERER_DRIVER_QUIRK_DISABLE_BUFFER_STORAGE ) != 0 ) {
+		caps.hasBufferStorage = false;
+	}
+	if ( ( rg_driverQuirkReport.flags & RENDERER_DRIVER_QUIRK_REJECT_DEBUG_CONTEXT ) != 0 ) {
+		caps.debugContext = false;
+	}
+
+	rg_driverQuirkReport.changedCaps = memcmp( &originalCaps, &caps, sizeof( caps ) ) != 0;
+	if ( rg_driverQuirkReport.rulesMatched > 0 ) {
+		char flags[128];
+		RendererDriverQuirks_FormatFlags( rg_driverQuirkReport.flags, flags, sizeof( flags ) );
+		common->Printf(
+			"Renderer driver quirks: applied rules=%d flags=%s summary='%s'\n",
+			rg_driverQuirkReport.rulesMatched,
+			flags,
+			rg_driverQuirkReport.summary );
+	}
+}
+
+const rendererDriverQuirkReport_t &RendererDriverQuirks_LastReport( void ) {
+	return rg_driverQuirkReport;
+}
+
+void RendererCompatibilityGates_PrintGfxInfo( void ) {
+	char flags[128];
+	RendererDriverQuirks_FormatFlags( rg_driverQuirkReport.flags, flags, sizeof( flags ) );
+
+	const bool forcedTierSupported =
+		RendererTierPreference_ToForcedTier( RendererTierPreference_FromString( r_glTier.GetString() ) ) == RENDERER_TIER_NULL ||
+		RendererTierPreference_ToForcedTier( RendererTierPreference_FromString( r_glTier.GetString() ) ) == glConfig.rendererTier;
+	const bool debugFallback = glConfig.contextRequest.debugContext && !glConfig.backendCaps.debugContext;
+	const bool lowOverheadReady = glConfig.renderFeatures.lowOverhead && glConfig.backendCaps.hasBufferStorage;
+
+	common->Printf(
+		"Renderer driver quirks: rules=%d flags=%s changedCaps=%d summary='%s'\n",
+		rg_driverQuirkReport.rulesMatched,
+		flags,
+		rg_driverQuirkReport.changedCaps ? 1 : 0,
+		rg_driverQuirkReport.summary );
+	common->Printf(
+		"Renderer compatibility gates: selected=%s baseline=%d UBO=%d MRT=%d timerQuery=%d bufferStorage=%d lowOverhead=%d debugFallback=%d forcedTierSupported=%d\n",
+		RendererTier_Name( glConfig.rendererTier ),
+		glConfig.renderFeatures.modernBaseline ? 1 : 0,
+		glConfig.backendCaps.hasUBO ? 1 : 0,
+		glConfig.backendCaps.hasMRT ? 1 : 0,
+		glConfig.backendCaps.hasTimerQuery ? 1 : 0,
+		glConfig.backendCaps.hasBufferStorage ? 1 : 0,
+		lowOverheadReady ? 1 : 0,
+		debugFallback ? 1 : 0,
+		forcedTierSupported ? 1 : 0 );
 }
 
 void RendererCaps_FormatSummary( const renderBackendCaps_t &caps, char *buffer, int bufferSize ) {
@@ -788,5 +1019,125 @@ bool RendererContextLadder_RunSelfTest( void ) {
 	}
 
 	common->Printf( "RendererContextLadder self-test passed (%d cases)\n", static_cast<int>( sizeof( tests ) / sizeof( tests[0] ) ) );
+	return true;
+}
+
+bool RendererCompatibilityGates_RunSelfTest( void ) {
+	const rendererDriverQuirkReport_t restoreReport = rg_driverQuirkReport;
+	bool ok = true;
+	int fallbackCases = 0;
+	int quirkCases = 0;
+
+	renderBackendCaps_t caps = RendererTierSelect_TestCaps( 4, 6, RENDERER_CONTEXT_PROFILE_COMPATIBILITY, true, true, true, true );
+	caps.hasUBO = false;
+	if ( RendererTier_Select( caps, RENDERER_TIER_PREF_AUTO ) != RENDERER_TIER_LEGACY_GL2_COMPAT ) {
+		common->Printf( "RendererCompatibilityGates self-test failed: missing UBO did not downgrade to legacy\n" );
+		ok = false;
+	}
+	fallbackCases++;
+
+	caps = RendererTierSelect_TestCaps( 4, 6, RENDERER_CONTEXT_PROFILE_COMPATIBILITY, true, true, true, true );
+	caps.hasMRT = false;
+	caps.maxDrawBuffers = 1;
+	caps.maxColorAttachments = 1;
+	if ( RendererTier_Select( caps, RENDERER_TIER_PREF_AUTO ) != RENDERER_TIER_LEGACY_GL2_COMPAT ) {
+		common->Printf( "RendererCompatibilityGates self-test failed: broken MRT did not downgrade to legacy\n" );
+		ok = false;
+	}
+	fallbackCases++;
+
+	caps = RendererTierSelect_TestCaps( 4, 6, RENDERER_CONTEXT_PROFILE_CORE, true, true, true, true );
+	caps.hasTimerQuery = false;
+	if ( RendererTier_Select( caps, RENDERER_TIER_PREF_AUTO ) != RENDERER_TIER_TOP_GL46 || caps.hasTimerQuery ) {
+		common->Printf( "RendererCompatibilityGates self-test failed: missing timer query should disable timers without tier downgrade\n" );
+		ok = false;
+	}
+	fallbackCases++;
+
+	caps = RendererTierSelect_TestCaps( 4, 6, RENDERER_CONTEXT_PROFILE_CORE, true, true, true, true );
+	caps.hasBufferStorage = false;
+	if ( RendererTier_Select( caps, RENDERER_TIER_PREF_AUTO ) != RENDERER_TIER_GPU_DRIVEN_GL43 ) {
+		common->Printf( "RendererCompatibilityGates self-test failed: missing buffer storage did not downgrade GL45/46 to GL43\n" );
+		ok = false;
+	}
+	fallbackCases++;
+
+	rendererContextCandidate_t candidates[RENDERER_CONTEXT_LADDER_MAX_CANDIDATES];
+	memset( candidates, 0, sizeof( candidates ) );
+	const int candidateCount = RendererContextLadder_Build(
+		candidates,
+		static_cast<int>( sizeof( candidates ) / sizeof( candidates[0] ) ),
+		RENDERER_TIER_PREF_GL33,
+		true,
+		false );
+	bool hasDebugCandidate = false;
+	bool hasNonDebugFallback = false;
+	for ( int i = 0; i < candidateCount; ++i ) {
+		hasDebugCandidate |= candidates[i].debugContext;
+		hasNonDebugFallback |= !candidates[i].debugContext;
+	}
+	caps = RendererTierSelect_TestCaps( 3, 3, RENDERER_CONTEXT_PROFILE_CORE, true, false, false, false );
+	caps.debugContext = false;
+	rendererContextRequest_t requestedDebug;
+	memset( &requestedDebug, 0, sizeof( requestedDebug ) );
+	requestedDebug.debugContext = true;
+	if ( !hasDebugCandidate || !hasNonDebugFallback || !( requestedDebug.debugContext && !caps.debugContext ) ) {
+		common->Printf( "RendererCompatibilityGates self-test failed: rejected debug-context fallback was not represented in the ladder\n" );
+		ok = false;
+	}
+	fallbackCases++;
+
+	struct quirkCase_t {
+		const char *renderer;
+		unsigned int expectedFlag;
+		rendererTier_t expectedTier;
+		bool expectedTimerQuery;
+		bool expectedDebugContext;
+	};
+	const quirkCase_t quirkCasesTable[] = {
+		{ "Missing UBO", RENDERER_DRIVER_QUIRK_DISABLE_UBO, RENDERER_TIER_LEGACY_GL2_COMPAT, true, true },
+		{ "Broken MRT", RENDERER_DRIVER_QUIRK_DISABLE_MRT, RENDERER_TIER_LEGACY_GL2_COMPAT, true, true },
+		{ "Missing Timer Query", RENDERER_DRIVER_QUIRK_DISABLE_TIMER_QUERY, RENDERER_TIER_TOP_GL46, false, true },
+		{ "Missing Buffer Storage", RENDERER_DRIVER_QUIRK_DISABLE_BUFFER_STORAGE, RENDERER_TIER_GPU_DRIVEN_GL43, true, true },
+		{ "Rejected Debug Context", RENDERER_DRIVER_QUIRK_REJECT_DEBUG_CONTEXT, RENDERER_TIER_TOP_GL46, true, false }
+	};
+
+	for ( int i = 0; i < static_cast<int>( sizeof( quirkCasesTable ) / sizeof( quirkCasesTable[0] ) ); ++i ) {
+		caps = RendererTierSelect_TestCaps( 4, 6, RENDERER_CONTEXT_PROFILE_COMPATIBILITY, true, true, true, true );
+		caps.debugContext = true;
+		caps.hasTimerQuery = true;
+		const rendererDriverInfo_t driverInfo = {
+			"OpenQ4Test",
+			quirkCasesTable[i].renderer,
+			"1.0"
+		};
+		RendererDriverQuirks_Apply( caps, driverInfo );
+		const rendererTier_t selected = RendererTier_Select( caps, RENDERER_TIER_PREF_AUTO );
+		const rendererDriverQuirkReport_t &report = RendererDriverQuirks_LastReport();
+		if ( ( report.flags & quirkCasesTable[i].expectedFlag ) == 0 ||
+			selected != quirkCasesTable[i].expectedTier ||
+			caps.hasTimerQuery != quirkCasesTable[i].expectedTimerQuery ||
+			caps.debugContext != quirkCasesTable[i].expectedDebugContext ) {
+			common->Printf(
+				"RendererCompatibilityGates self-test failed: quirk '%s' selected %s flags=0x%x timer=%d debug=%d\n",
+				quirkCasesTable[i].renderer,
+				RendererTier_Name( selected ),
+				report.flags,
+				caps.hasTimerQuery ? 1 : 0,
+				caps.debugContext ? 1 : 0 );
+			ok = false;
+		}
+		quirkCases++;
+	}
+
+	rg_driverQuirkReport = restoreReport;
+	if ( !ok ) {
+		return false;
+	}
+
+	common->Printf(
+		"RendererCompatibilityGates self-test passed (fallbacks=%d quirks=%d)\n",
+		fallbackCases,
+		quirkCases );
 	return true;
 }
