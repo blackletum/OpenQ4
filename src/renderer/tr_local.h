@@ -1083,6 +1083,8 @@ extern idCVar r_rendererModernDeferred;	// opt-in graph-backed modern deferred l
 extern idCVar r_rendererModernDeferredDebug;	// show graph-backed modern deferred resolve debug output
 extern idCVar r_rendererForwardPlus;	// opt-in graph-backed modern clustered forward+ execution
 extern idCVar r_rendererClusterDebug;	// show modern clustered light bins as a debug overlay
+extern idCVar r_rendererOcclusion;	// enable conservative modern visibility and occlusion culling
+extern idCVar r_rendererHiZ;	// allocate and build the modern scene Hi-Z depth pyramid
 extern idCVar r_useSimpleInteraction;	// use the simpler Quake 4 interaction program pair as a compatibility fallback
 extern idCVar r_interactionColorMode;	// interaction color mode: 0 auto, 1 packed env16.xy, 2 vector env16/env17
 extern idCVar r_shaderReport;			// shader diagnostics: 0 off, 1 summaries, 2 invalid-use warnings

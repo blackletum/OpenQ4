@@ -32,6 +32,7 @@ typedef struct renderGraphResourceHandle_s {
 	int						width;
 	int						height;
 	int						samples;
+	int						mipLevels;
 	GLenum					target;
 	GLenum					internalFormat;
 	GLenum					format;
@@ -95,6 +96,8 @@ typedef struct renderGraphResourceManagerStats_s {
 	int						dsaFramebufferAllocations;
 	int						classicTextureAllocations;
 	int						classicFramebufferAllocations;
+	int						mipmappedTextures;
+	int						totalMipLevels;
 	int						framebufferCount;
 	int						completeFramebuffers;
 	int						incompleteFramebuffers;

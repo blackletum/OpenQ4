@@ -38,6 +38,7 @@ SELFTEST_CHECKS = [
     ["RendererModernGLDrawPlan self-test passed"],
     ["RendererModernGLSubmitPlan self-test passed"],
     ["RendererModernGLExecutor self-test passed"],
+    ["RendererModernVisibility self-test passed"],
     ["RendererShadowPlanner self-test passed"],
 ]
 
@@ -317,6 +318,7 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
         "+rendererGeometryResourceSelfTest",
         "+rendererGLStateCacheSelfTest",
         "+rendererModernGLExecutorSelfTest",
+        "+rendererModernVisibilitySelfTest",
         "+rendererShadowPlannerSelfTest",
         "+gfxInfo",
     ]
@@ -697,6 +699,7 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
                 ["dispatches="],
                 ["rendererMetrics gpuDriven(req=1"],
                 ["Modern GL executor:"],
+                ["Modern visibility:"],
                 ["gpuValidation=1"],
                 ["Requested GL tier: gl43"],
                 ["Selected renderer tier:"],

@@ -297,6 +297,8 @@ idCVar r_rendererModernDeferred( "r_rendererModernDeferred", "0", CVAR_RENDERER 
 idCVar r_rendererModernDeferredDebug( "r_rendererModernDeferredDebug", "0", CVAR_RENDERER | CVAR_INTEGER, "modern deferred resolve debug overlay: 0 = off, 1 = light contribution, 2 = cluster id, 3 = light count, 4 = fallback pressure", 0, 4, idCmdSystem::ArgCompletion_Integer<0,4> );
 idCVar r_rendererForwardPlus( "r_rendererForwardPlus", "0", CVAR_RENDERER | CVAR_BOOL, "execute graph-backed modern clustered forward+ passes while ARB2 remains the visible color path" );
 idCVar r_rendererClusterDebug( "r_rendererClusterDebug", "0", CVAR_RENDERER | CVAR_INTEGER, "modern clustered light debug overlay: 0 = off, 1 = occupancy, 2 = light count, 3 = overflow", 0, 3, idCmdSystem::ArgCompletion_Integer<0,3> );
+idCVar r_rendererOcclusion( "r_rendererOcclusion", "1", CVAR_RENDERER | CVAR_BOOL, "enable conservative modern visibility and occlusion culling for modern renderer passes; 0 disables the culling path instantly for debugging" );
+idCVar r_rendererHiZ( "r_rendererHiZ", "1", CVAR_RENDERER | CVAR_BOOL, "allocate and build the modern scene Hi-Z depth pyramid when visibility culling has a depth producer" );
 idCVar r_useSimpleInteraction( "r_useSimpleInteraction", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use Quake 4's simpler ARB interaction shader pair as an explicit compatibility fallback; may reduce material lighting quality" );
 idCVar r_interactionColorMode( "r_interactionColorMode", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "interaction vertex-color mode: 0 = auto, 1 = packed env16.xy, 2 = vector env16/env17", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 idCVar r_shaderReport( "r_shaderReport", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "shader diagnostics: 0 = off, 1 = startup/vid_restart summary, 2 = also warn on invalid program use", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
@@ -675,6 +677,13 @@ static void R_RendererPassOwnershipSelfTest_f( const idCmdArgs &args ) {
 	(void)args;
 	if ( !RendererPassOwnership_RunSelfTest() ) {
 		common->Warning( "Renderer pass ownership self-test failed" );
+	}
+}
+
+static void R_RendererModernVisibilitySelfTest_f( const idCmdArgs &args ) {
+	(void)args;
+	if ( !RendererModernVisibility_RunSelfTest() ) {
+		common->Warning( "Renderer modern visibility self-test failed" );
 	}
 }
 
@@ -3090,6 +3099,7 @@ void R_InitCommands( void ) {
 	cmdSystem->AddCommand( "rendererModernVisibleSelfTest", R_RendererModernVisibleSelfTest_f, CMD_FL_RENDERER, "run renderer modern visible-frame composition self tests" );
 	cmdSystem->AddCommand( "rendererModernCompatibilitySelfTest", R_RendererModernCompatibilitySelfTest_f, CMD_FL_RENDERER, "run renderer modern compatibility owner self tests" );
 	cmdSystem->AddCommand( "rendererPassOwnershipSelfTest", R_RendererPassOwnershipSelfTest_f, CMD_FL_RENDERER, "run renderer modern/legacy pass ownership self tests" );
+	cmdSystem->AddCommand( "rendererModernVisibilitySelfTest", R_RendererModernVisibilitySelfTest_f, CMD_FL_RENDERER, "run renderer modern visibility and occlusion self tests" );
 	cmdSystem->AddCommand( "rendererLowOverheadSelfTest", R_RendererLowOverheadSelfTest_f, CMD_FL_RENDERER, "run renderer GL45 low-overhead self tests" );
 	cmdSystem->AddCommand( "rendererShaderLibrarySelfTest", R_RendererModernGLShaderLibrarySelfTest_f, CMD_FL_RENDERER, "run renderer modern GL shader-library self tests" );
 	cmdSystem->AddCommand( "rendererModernGLShaderLibrarySelfTest", R_RendererModernGLShaderLibrarySelfTest_f, CMD_FL_RENDERER, "run renderer modern GL shader-library self tests" );

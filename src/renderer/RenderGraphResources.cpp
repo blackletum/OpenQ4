@@ -15,6 +15,7 @@ typedef struct renderGraphPhysicalAllocation_s {
 	int						width;
 	int						height;
 	int						samples;
+	int						mipLevels;
 	GLenum					target;
 	GLenum					internalFormat;
 	GLenum					format;
@@ -131,6 +132,25 @@ static bool R_RenderGraphResources_IsShadowAtlasResource( const char *name ) {
 			|| !idStr::Icmp( name, "pointShadowAtlas" )
 			|| !idStr::Icmp( name, "cascadeShadowAtlas" )
 			|| !idStr::Icmp( name, "translucentShadowMoments" ) );
+}
+
+static int R_RenderGraphResources_MipLevelCount( int width, int height ) {
+	int levels = 1;
+	width = Max( 1, width );
+	height = Max( 1, height );
+	while ( width > 1 || height > 1 ) {
+		width = Max( 1, width >> 1 );
+		height = Max( 1, height >> 1 );
+		levels++;
+	}
+	return idMath::ClampInt( 1, 16, levels );
+}
+
+static bool R_RenderGraphResources_ShouldAllocateMipChain( const char *name, renderGraphResourceType_t type, int samples ) {
+	if ( !r_rendererHiZ.GetBool() || !r_rendererOcclusion.GetBool() || samples > 1 ) {
+		return false;
+	}
+	return type == RENDER_GRAPH_RESOURCE_DEPTH && name != NULL && !idStr::Icmp( name, "sceneHiZ" );
 }
 
 static int R_RenderGraphResources_ShadowResourceSize( void ) {
@@ -259,6 +279,7 @@ static bool R_RenderGraphResources_CompatiblePhysicalSpec( const renderGraphPhys
 		&& allocation.width == handle.width
 		&& allocation.height == handle.height
 		&& allocation.samples == handle.samples
+		&& allocation.mipLevels == handle.mipLevels
 		&& allocation.target == handle.target
 		&& allocation.internalFormat == handle.internalFormat
 		&& allocation.format == handle.format
@@ -401,6 +422,7 @@ static renderGraphResourceHandle_t *R_RenderGraphResources_AddHandle( void ) {
 	handle.firstPass = -1;
 	handle.lastPass = -1;
 	handle.samples = 1;
+	handle.mipLevels = 1;
 	handle.framebufferStatus = 0;
 	return &handle;
 }
@@ -439,6 +461,7 @@ static renderGraphResourceHandle_t *R_RenderGraphResources_AddImportedHandle( co
 	handle->width = width;
 	handle->height = height;
 	handle->samples = 1;
+	handle->mipLevels = 1;
 	handle->imported = true;
 	handle->transient = false;
 	handle->presentable = ( extraFlags & RENDER_GRAPH_RESOURCE_HANDLE_BACKBUFFER ) != 0;
@@ -473,6 +496,9 @@ static bool R_RenderGraphResources_InitHandleFromGraph( const idRenderGraph &gra
 		return false;
 	}
 	handle.target = ( handle.samples > 1 ) ? GL_TEXTURE_2D_MULTISAMPLE : GL_TEXTURE_2D;
+	handle.mipLevels = R_RenderGraphResources_ShouldAllocateMipChain( handle.name, handle.type, handle.samples )
+		? R_RenderGraphResources_MipLevelCount( handle.width, handle.height )
+		: 1;
 	if ( handle.imported && handle.presentable && idStr::Icmp( handle.name, "backBuffer" ) == 0 ) {
 		handle.framebuffer = 0;
 		handle.framebufferStatus = GL_FRAMEBUFFER_COMPLETE;
@@ -543,13 +569,20 @@ static bool R_RenderGraphResources_CreateTextureAndFramebufferDSA( renderGraphPh
 	if ( handle.target == GL_TEXTURE_2D_MULTISAMPLE ) {
 		glTextureStorage2DMultisample( allocation.texture, handle.samples, handle.internalFormat, handle.width, handle.height, GL_TRUE );
 	} else {
-		const GLint filter = ( handle.type == RENDER_GRAPH_RESOURCE_COLOR ) ? GL_LINEAR : GL_NEAREST;
-		glTextureStorage2D( allocation.texture, 1, handle.internalFormat, handle.width, handle.height );
-		glTextureParameteri( allocation.texture, GL_TEXTURE_MIN_FILTER, filter );
-		glTextureParameteri( allocation.texture, GL_TEXTURE_MAG_FILTER, filter );
+		const GLint magFilter = ( handle.type == RENDER_GRAPH_RESOURCE_COLOR ) ? GL_LINEAR : GL_NEAREST;
+		const GLint minFilter = handle.mipLevels > 1 ? GL_NEAREST_MIPMAP_NEAREST : magFilter;
+		glTextureStorage2D( allocation.texture, Max( 1, handle.mipLevels ), handle.internalFormat, handle.width, handle.height );
+		glTextureParameteri( allocation.texture, GL_TEXTURE_MIN_FILTER, minFilter );
+		glTextureParameteri( allocation.texture, GL_TEXTURE_MAG_FILTER, magFilter );
 		glTextureParameteri( allocation.texture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
 		glTextureParameteri( allocation.texture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
-		allocation.textureParameterUpdates = 4;
+		if ( handle.mipLevels > 1 ) {
+			glTextureParameteri( allocation.texture, GL_TEXTURE_BASE_LEVEL, 0 );
+			glTextureParameteri( allocation.texture, GL_TEXTURE_MAX_LEVEL, handle.mipLevels - 1 );
+			allocation.textureParameterUpdates = 6;
+		} else {
+			allocation.textureParameterUpdates = 4;
+		}
 	}
 
 	glCreateFramebuffers( 1, &allocation.framebuffer );
@@ -628,12 +661,26 @@ static bool R_RenderGraphResources_CreateTextureAndFramebufferClassic( renderGra
 	if ( handle.target == GL_TEXTURE_2D_MULTISAMPLE ) {
 		glTexImage2DMultisample( GL_TEXTURE_2D_MULTISAMPLE, handle.samples, handle.internalFormat, handle.width, handle.height, GL_TRUE );
 	} else {
-		glTexImage2D( GL_TEXTURE_2D, 0, handle.internalFormat, handle.width, handle.height, 0, handle.format, handle.dataType, NULL );
-		const GLint filter = ( handle.type == RENDER_GRAPH_RESOURCE_COLOR ) ? GL_LINEAR : GL_NEAREST;
-		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter );
-		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter );
+		int mipWidth = handle.width;
+		int mipHeight = handle.height;
+		for ( int level = 0; level < Max( 1, handle.mipLevels ); ++level ) {
+			glTexImage2D( GL_TEXTURE_2D, level, handle.internalFormat, mipWidth, mipHeight, 0, handle.format, handle.dataType, NULL );
+			mipWidth = Max( 1, mipWidth >> 1 );
+			mipHeight = Max( 1, mipHeight >> 1 );
+		}
+		const GLint magFilter = ( handle.type == RENDER_GRAPH_RESOURCE_COLOR ) ? GL_LINEAR : GL_NEAREST;
+		const GLint minFilter = handle.mipLevels > 1 ? GL_NEAREST_MIPMAP_NEAREST : magFilter;
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, minFilter );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, magFilter );
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+		if ( handle.mipLevels > 1 ) {
+			glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0 );
+			glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, handle.mipLevels - 1 );
+			allocation.textureParameterUpdates = 6;
+		} else {
+			allocation.textureParameterUpdates = 4;
+		}
 	}
 
 	glGenFramebuffers( 1, &allocation.framebuffer );
@@ -720,6 +767,7 @@ static bool R_RenderGraphResources_AssignPhysicalAllocation( renderGraphResource
 		allocation.width = handle.width;
 		allocation.height = handle.height;
 		allocation.samples = handle.samples;
+		allocation.mipLevels = handle.mipLevels;
 		allocation.target = handle.target;
 		allocation.internalFormat = handle.internalFormat;
 		allocation.format = handle.format;
@@ -754,6 +802,10 @@ static bool R_RenderGraphResources_AssignPhysicalAllocation( renderGraphResource
 	handle.framebufferComplete = allocation.framebufferStatus == GL_FRAMEBUFFER_COMPLETE;
 	if ( handle.framebufferComplete ) {
 		handle.flags |= RENDER_GRAPH_RESOURCE_HANDLE_FBO_COMPLETE;
+	}
+	if ( handle.mipLevels > 1 ) {
+		rg_renderGraphResourceStats.mipmappedTextures++;
+		rg_renderGraphResourceStats.totalMipLevels += handle.mipLevels;
 	}
 	return handle.allocated && handle.framebufferComplete;
 }
@@ -892,7 +944,7 @@ const renderGraphResourceHandle_t *R_RenderGraphResources_HandleForGraphResource
 
 void R_RenderGraphResources_PrintGfxInfo( void ) {
 	common->Printf(
-		"Renderer graph resources: initialized=%d available=%d supported=%d lowOverhead=%d handles=%d imported=%d transient=%d textures=%d buffers=%d physical=%d dsa(tex=%d params=%d fbo=%d) classic(tex=%d fbo=%d) fbo=%d/%d status='%s'\n",
+		"Renderer graph resources: initialized=%d available=%d supported=%d lowOverhead=%d handles=%d imported=%d transient=%d textures=%d buffers=%d physical=%d mipmapped=%d/%d dsa(tex=%d params=%d fbo=%d) classic(tex=%d fbo=%d) fbo=%d/%d status='%s'\n",
 		rg_renderGraphResourceStats.initialized ? 1 : 0,
 		rg_renderGraphResourceStats.available ? 1 : 0,
 		rg_renderGraphResourceStats.supported ? 1 : 0,
@@ -903,6 +955,8 @@ void R_RenderGraphResources_PrintGfxInfo( void ) {
 		rg_renderGraphResourceStats.textureHandles,
 		rg_renderGraphResourceStats.bufferHandles,
 		rg_renderGraphResourceStats.physicalAllocations,
+		rg_renderGraphResourceStats.mipmappedTextures,
+		rg_renderGraphResourceStats.totalMipLevels,
 		rg_renderGraphResourceStats.dsaTextureAllocations,
 		rg_renderGraphResourceStats.dsaTextureParameterUpdates,
 		rg_renderGraphResourceStats.dsaFramebufferAllocations,
@@ -915,7 +969,7 @@ void R_RenderGraphResources_PrintGfxInfo( void ) {
 
 void R_RenderGraphResources_DumpLatest( void ) {
 	common->Printf(
-		"RenderGraphResource dump: prepared=%d lowOverhead=%d handles=%d graphResources=%d passes=%d physical=%d new=%d reused=%d aliasReused=%d dsa(tex=%d params=%d fbo=%d) classic(tex=%d fbo=%d) fbo=%d/%d failures=%d overflow=%d status='%s'\n",
+		"RenderGraphResource dump: prepared=%d lowOverhead=%d handles=%d graphResources=%d passes=%d physical=%d new=%d reused=%d aliasReused=%d mipmapped=%d/%d dsa(tex=%d params=%d fbo=%d) classic(tex=%d fbo=%d) fbo=%d/%d failures=%d overflow=%d status='%s'\n",
 		rg_renderGraphResourceStats.prepared ? 1 : 0,
 		rg_renderGraphResourceStats.lowOverheadReady ? 1 : 0,
 		rg_renderGraphResourceStats.handles,
@@ -925,6 +979,8 @@ void R_RenderGraphResources_DumpLatest( void ) {
 		rg_renderGraphResourceStats.newPhysicalAllocations,
 		rg_renderGraphResourceStats.reusedPhysicalAllocations,
 		rg_renderGraphResourceStats.aliasReusedPhysicalAllocations,
+		rg_renderGraphResourceStats.mipmappedTextures,
+		rg_renderGraphResourceStats.totalMipLevels,
 		rg_renderGraphResourceStats.dsaTextureAllocations,
 		rg_renderGraphResourceStats.dsaTextureParameterUpdates,
 		rg_renderGraphResourceStats.dsaFramebufferAllocations,
@@ -960,7 +1016,7 @@ void R_RenderGraphResources_DumpLatest( void ) {
 		const renderGraphResourceHandle_t &handle = rg_renderGraphResourceHandles[i];
 		if ( handle.framebufferStatus == 0 || handle.framebufferStatus == GL_FRAMEBUFFER_COMPLETE ) {
 			common->Printf(
-				"  resource[%d] id=0x%08x graph=%d %s type=%s %dx%d samples=%d fmt=0x%x flags=0x%x life=%d..%d alias=%d phys=%d tex=%u fbo=%u fbo=%s label='%s'\n",
+				"  resource[%d] id=0x%08x graph=%d %s type=%s %dx%d samples=%d mips=%d fmt=0x%x flags=0x%x life=%d..%d alias=%d phys=%d tex=%u fbo=%u fbo=%s label='%s'\n",
 				i,
 				handle.stableId,
 				handle.graphResourceIndex,
@@ -969,6 +1025,7 @@ void R_RenderGraphResources_DumpLatest( void ) {
 				handle.width,
 				handle.height,
 				handle.samples,
+				handle.mipLevels,
 				handle.internalFormat,
 				handle.flags,
 				handle.firstPass,
@@ -981,7 +1038,7 @@ void R_RenderGraphResources_DumpLatest( void ) {
 				handle.debugLabel );
 		} else {
 			common->Printf(
-				"  resource[%d] id=0x%08x graph=%d %s type=%s %dx%d samples=%d fmt=0x%x flags=0x%x life=%d..%d alias=%d phys=%d tex=%u fbo=%u fbo=0x%x label='%s'\n",
+				"  resource[%d] id=0x%08x graph=%d %s type=%s %dx%d samples=%d mips=%d fmt=0x%x flags=0x%x life=%d..%d alias=%d phys=%d tex=%u fbo=%u fbo=0x%x label='%s'\n",
 				i,
 				handle.stableId,
 				handle.graphResourceIndex,
@@ -990,6 +1047,7 @@ void R_RenderGraphResources_DumpLatest( void ) {
 				handle.width,
 				handle.height,
 				handle.samples,
+				handle.mipLevels,
 				handle.internalFormat,
 				handle.flags,
 				handle.firstPass,
@@ -1009,13 +1067,14 @@ void R_RenderGraphResources_DumpLatest( void ) {
 			continue;
 		}
 		common->Printf(
-			"  physical[%d] id=%d type=%s %dx%d samples=%d alias=%d life=%d..%d tex=%u fbo=%u dsa=%d/%d params=%d fbo=%s inUse=%d label='%s'\n",
+			"  physical[%d] id=%d type=%s %dx%d samples=%d mips=%d alias=%d life=%d..%d tex=%u fbo=%u dsa=%d/%d params=%d fbo=%s inUse=%d label='%s'\n",
 			i,
 			allocation.id,
 			R_RenderGraphResources_TypeName( allocation.type ),
 			allocation.width,
 			allocation.height,
 			allocation.samples,
+			allocation.mipLevels,
 			allocation.aliasGroup,
 			allocation.firstPass,
 			allocation.lastPass,

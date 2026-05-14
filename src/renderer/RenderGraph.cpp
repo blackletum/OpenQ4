@@ -314,6 +314,10 @@ static int R_RenderGraph_EnsureSceneDepth( idRenderGraph &graph ) {
 	return R_RenderGraph_EnsureResource( graph, "sceneDepth", RENDER_GRAPH_RESOURCE_DEPTH_STENCIL, false, true, false, 2 );
 }
 
+static int R_RenderGraph_EnsureSceneHiZ( idRenderGraph &graph ) {
+	return R_RenderGraph_EnsureResource( graph, "sceneHiZ", RENDER_GRAPH_RESOURCE_DEPTH, false, true, false, 7 );
+}
+
 static int R_RenderGraph_EnsureBackBuffer( idRenderGraph &graph ) {
 	return R_RenderGraph_EnsureResource( graph, "backBuffer", RENDER_GRAPH_RESOURCE_COLOR, true, false, true, 0 );
 }
@@ -344,6 +348,17 @@ static bool R_RenderGraph_ShouldModelForwardPlus( void ) {
 
 static bool R_RenderGraph_ShouldModelModernVisible( void ) {
 	return r_rendererModernVisible.GetBool();
+}
+
+static bool R_RenderGraph_ShouldModelHiZ( void ) {
+	return r_rendererOcclusion.GetBool()
+		&& r_rendererHiZ.GetBool()
+		&& ( R_RenderGraph_ShouldModelModernVisible()
+			|| R_RenderGraph_ShouldModelGBuffer()
+			|| R_RenderGraph_ShouldModelDeferredResolve()
+			|| R_RenderGraph_ShouldModelForwardPlus()
+			|| r_rendererModernVisibleDepth.GetBool()
+			|| r_rendererGpuValidation.GetBool() );
 }
 
 static void R_RenderGraph_AddSceneColorReadWrite( idRenderGraph &graph, int passIndex, const char *usage );
@@ -388,6 +403,7 @@ static void R_RenderGraph_AddDeferredResolvePass( idRenderGraph &graph ) {
 	}
 	const int passIndex = graph.NumPasses() - 1;
 	const int sceneDepth = R_RenderGraph_EnsureSceneDepth( graph );
+	const int sceneHiZ = R_RenderGraph_ShouldModelHiZ() ? R_RenderGraph_EnsureSceneHiZ( graph ) : -1;
 	const int gbufferAlbedo = R_RenderGraph_EnsureResource( graph, "gbufferAlbedo", RENDER_GRAPH_RESOURCE_COLOR, false, true, false, 3 );
 	const int gbufferNormal = R_RenderGraph_EnsureResource( graph, "gbufferNormal", RENDER_GRAPH_RESOURCE_COLOR, false, true, false, 3 );
 	const int gbufferMaterial = R_RenderGraph_EnsureResource( graph, "gbufferMaterial", RENDER_GRAPH_RESOURCE_COLOR, false, true, false, 3 );
@@ -397,6 +413,7 @@ static void R_RenderGraph_AddDeferredResolvePass( idRenderGraph &graph ) {
 	const int deferredLight = R_RenderGraph_EnsureResource( graph, "deferredLight", RENDER_GRAPH_RESOURCE_COLOR, false, true, false, 4 );
 
 	R_RenderGraph_AddAccess( graph, passIndex, sceneDepth, RENDER_GRAPH_ACCESS_READ, "deferred-depth-read" );
+	R_RenderGraph_AddAccess( graph, passIndex, sceneHiZ, RENDER_GRAPH_ACCESS_READ, "deferred-hiz-read" );
 	R_RenderGraph_AddAccess( graph, passIndex, gbufferAlbedo, RENDER_GRAPH_ACCESS_READ, "deferred-albedo-read" );
 	R_RenderGraph_AddAccess( graph, passIndex, gbufferNormal, RENDER_GRAPH_ACCESS_READ, "deferred-normal-read" );
 	R_RenderGraph_AddAccess( graph, passIndex, gbufferMaterial, RENDER_GRAPH_ACCESS_READ, "deferred-material-read" );
@@ -423,11 +440,13 @@ static void R_RenderGraph_AddForwardPlusPass( idRenderGraph &graph ) {
 	}
 	const int passIndex = graph.NumPasses() - 1;
 	const int sceneDepth = R_RenderGraph_EnsureSceneDepth( graph );
+	const int sceneHiZ = R_RenderGraph_ShouldModelHiZ() ? R_RenderGraph_EnsureSceneHiZ( graph ) : -1;
 	const int clusterGrid = R_RenderGraph_EnsureResource( graph, "clusterGrid", RENDER_GRAPH_RESOURCE_BUFFER, true, false, false, 0 );
 	const int lightGrid = R_RenderGraph_EnsureResource( graph, "lightGrid", RENDER_GRAPH_RESOURCE_BUFFER, true, false, false, 0 );
 	const int deferredLight = graph.FindResource( "deferredLight" );
 
 	R_RenderGraph_AddAccess( graph, passIndex, sceneDepth, RENDER_GRAPH_ACCESS_READ, "forward-plus-depth-read" );
+	R_RenderGraph_AddAccess( graph, passIndex, sceneHiZ, RENDER_GRAPH_ACCESS_READ, "forward-plus-hiz-read" );
 	if ( deferredLight >= 0 ) {
 		R_RenderGraph_AddAccess( graph, passIndex, deferredLight, RENDER_GRAPH_ACCESS_READ, "forward-plus-deferred-read" );
 	}
@@ -467,6 +486,10 @@ static void R_RenderGraph_AddPassResources( idRenderGraph &graph, int passIndex,
 	case RENDER_PASS_DEPTH: {
 		const int sceneDepth = R_RenderGraph_EnsureSceneDepth( graph );
 		R_RenderGraph_AddAccess( graph, passIndex, sceneDepth, RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR, "depth-write" );
+		if ( R_RenderGraph_ShouldModelHiZ() ) {
+			const int sceneHiZ = R_RenderGraph_EnsureSceneHiZ( graph );
+			R_RenderGraph_AddAccess( graph, passIndex, sceneHiZ, RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR, "depth-hiz-write" );
+		}
 		break;
 	}
 	case RENDER_PASS_STENCIL_SHADOW: {

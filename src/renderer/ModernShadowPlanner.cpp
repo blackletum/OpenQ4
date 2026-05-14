@@ -166,6 +166,9 @@ static modernShadowFallbackReason_t R_ModernShadowPlanner_SupportReason( const v
 	if ( !R_ModernShadowPlanner_LightHasReceivers( vLight ) ) {
 		return MODERN_SHADOW_FALLBACK_NO_RECEIVERS;
 	}
+	if ( r_rendererOcclusion.GetBool() && R_ModernShadowPlanner_ScissorArea( vLight->scissorRect ) <= 0 ) {
+		return MODERN_SHADOW_FALLBACK_NO_RECEIVERS;
+	}
 	if ( !r_useShadowMap.GetBool() ) {
 		return MODERN_SHADOW_FALLBACK_SHADOW_MAP_DISABLED;
 	}
@@ -288,6 +291,17 @@ static void R_ModernShadowPlanner_SelectMappedLights( modernShadowPlannerStats_t
 }
 
 static void R_ModernShadowPlanner_CountDescriptor( const modernShadowLightDescriptor_t &descriptor, modernShadowPlannerStats_t &stats ) {
+	const int casterCount = descriptor.localCasterCount + descriptor.globalCasterCount + descriptor.translucentCasterCount;
+	stats.visibilityCasterTests += casterCount;
+	if ( descriptor.fallbackReason == MODERN_SHADOW_FALLBACK_NO_RECEIVERS || descriptor.policy == MODERN_SHADOW_POLICY_SKIPPED ) {
+		if ( casterCount > 0 ) {
+			stats.visibilityCasterRejected += casterCount;
+			stats.visibilityCasterSavedDraws += casterCount;
+		}
+		if ( descriptor.fallbackReason == MODERN_SHADOW_FALLBACK_NO_RECEIVERS ) {
+			stats.visibilityReceiverScissorCulledLights++;
+		}
+	}
 	stats.descriptorCount++;
 	stats.shadowRelevantLights++;
 	stats.localCasterCount += descriptor.localCasterCount;
@@ -383,6 +397,8 @@ void R_ModernShadowPlanner_PrepareFrame( const idScenePacketFrame &packetFrame, 
 	rg_modernShadowPlannerStats.translucentEnabled = R_ModernShadowPlanner_TranslucentMomentsAvailable();
 	rg_modernShadowPlannerStats.debugOverlayRequested = r_shadowMapDebugOverlay.GetInteger() > 0;
 	rg_modernShadowPlannerStats.reportRequested = r_shadowMapReport.GetInteger() > 0;
+	rg_modernShadowPlannerStats.visibilityCasterCullingReady = r_rendererOcclusion.GetBool();
+	rg_modernShadowPlannerStats.visibilityNoQueryStall = true;
 	rg_modernShadowPlannerStats.sceneCount = packetFrame.NumScenes();
 	rg_modernShadowPlannerStats.shadowMapSize = R_ModernShadowPlanner_BudgetedShadowMapSize();
 	const rendererBenchmarkBudget_t &budget = RendererBenchmarks_CurrentBudget();
@@ -430,7 +446,7 @@ void R_ModernShadowPlanner_PrepareFrame( const idScenePacketFrame &packetFrame, 
 
 	if ( ( r_rendererMetrics.GetInteger() >= 2 || rg_modernShadowPlannerStats.reportRequested ) && requested ) {
 		common->Printf(
-			"modernShadowPlan status=%s requested=%d valid=%d scenes=%d lights=%d descriptors=%d mapped=%d fallback=%d skipped=%d types(projected=%d point=%d parallel=%d csm=%d cascades=%d) casters(local=%d global=%d translucent=%d) receivers(local=%d global=%d translucent=%d) budget(lights=%d pixels=%d size=%d update=%d used=%d throttled=%d) cvars(shadows=%d shadowMap=%d csm=%d translucent=%d/%d debug=%d report=%d) fallbacks(texture=%d cubemap=%d noReceivers=%d) build=%dms\n",
+			"modernShadowPlan status=%s requested=%d valid=%d scenes=%d lights=%d descriptors=%d mapped=%d fallback=%d skipped=%d types(projected=%d point=%d parallel=%d csm=%d cascades=%d) casters(local=%d global=%d translucent=%d visibility=%d/%d saved=%d receiverCull=%d noQueryStall=%d) receivers(local=%d global=%d translucent=%d) budget(lights=%d pixels=%d size=%d update=%d used=%d throttled=%d) cvars(shadows=%d shadowMap=%d csm=%d translucent=%d/%d debug=%d report=%d) fallbacks(texture=%d cubemap=%d noReceivers=%d) build=%dms\n",
 			rg_modernShadowPlannerStats.status,
 			rg_modernShadowPlannerStats.requested ? 1 : 0,
 			rg_modernShadowPlannerStats.frameValid ? 1 : 0,
@@ -448,6 +464,11 @@ void R_ModernShadowPlanner_PrepareFrame( const idScenePacketFrame &packetFrame, 
 			rg_modernShadowPlannerStats.localCasterCount,
 			rg_modernShadowPlannerStats.globalCasterCount,
 			rg_modernShadowPlannerStats.translucentCasterCount,
+			rg_modernShadowPlannerStats.visibilityCasterTests,
+			rg_modernShadowPlannerStats.visibilityCasterRejected,
+			rg_modernShadowPlannerStats.visibilityCasterSavedDraws,
+			rg_modernShadowPlannerStats.visibilityReceiverScissorCulledLights,
+			rg_modernShadowPlannerStats.visibilityNoQueryStall ? 1 : 0,
 			rg_modernShadowPlannerStats.localReceiverCount,
 			rg_modernShadowPlannerStats.globalReceiverCount,
 			rg_modernShadowPlannerStats.translucentReceiverCount,
@@ -500,7 +521,7 @@ int R_ModernShadowPlanner_NumDescriptors( void ) {
 
 void R_ModernShadowPlanner_PrintGfxInfo( void ) {
 	common->Printf(
-		"Modern shadow plan: %s, requested=%d valid=%d scenes=%d lights=%d descriptors=%d mapped=%d fallback=%d skipped=%d projected=%d point=%d csm=%d/%d casters(local=%d global=%d translucent=%d) receivers(local=%d global=%d translucent=%d) budget(lights=%d pixels=%d size=%d update=%d used=%d throttled=%d) cvars(shadows=%d shadowMap=%d csm=%d translucent=%d/%d debug=%d report=%d) build=%dms\n",
+		"Modern shadow plan: %s, requested=%d valid=%d scenes=%d lights=%d descriptors=%d mapped=%d fallback=%d skipped=%d projected=%d point=%d csm=%d/%d casters(local=%d global=%d translucent=%d visibility=%d/%d saved=%d receiverCull=%d noQueryStall=%d) receivers(local=%d global=%d translucent=%d) budget(lights=%d pixels=%d size=%d update=%d used=%d throttled=%d) cvars(shadows=%d shadowMap=%d csm=%d translucent=%d/%d debug=%d report=%d) build=%dms\n",
 		rg_modernShadowPlannerStats.available ? "available" : "unavailable",
 		rg_modernShadowPlannerStats.requested ? 1 : 0,
 		rg_modernShadowPlannerStats.frameValid ? 1 : 0,
@@ -517,6 +538,11 @@ void R_ModernShadowPlanner_PrintGfxInfo( void ) {
 		rg_modernShadowPlannerStats.localCasterCount,
 		rg_modernShadowPlannerStats.globalCasterCount,
 		rg_modernShadowPlannerStats.translucentCasterCount,
+		rg_modernShadowPlannerStats.visibilityCasterTests,
+		rg_modernShadowPlannerStats.visibilityCasterRejected,
+		rg_modernShadowPlannerStats.visibilityCasterSavedDraws,
+		rg_modernShadowPlannerStats.visibilityReceiverScissorCulledLights,
+		rg_modernShadowPlannerStats.visibilityNoQueryStall ? 1 : 0,
 		rg_modernShadowPlannerStats.localReceiverCount,
 		rg_modernShadowPlannerStats.globalReceiverCount,
 		rg_modernShadowPlannerStats.translucentReceiverCount,

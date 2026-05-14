@@ -255,6 +255,37 @@ typedef struct rendererMetricsFrame_s {
 	int		gpuDrivenMultiDrawBatches;
 	int		gpuDrivenIndirectFallbacks;
 	int		gpuDrivenComputeDispatches;
+	bool	modernVisibilityRequested;
+	bool	modernVisibilityEnabled;
+	bool	modernVisibilityPortalPVSPreserved;
+	bool	modernVisibilityCpuReady;
+	bool	modernVisibilityGpuReady;
+	bool	modernVisibilityHiZRequested;
+	bool	modernVisibilityHiZReady;
+	bool	modernVisibilityHiZBuilt;
+	bool	modernVisibilityTemporalReady;
+	bool	modernVisibilityNoQueryStall;
+	bool	modernVisibilityShadowCasterReady;
+	int		modernVisibilityScenes;
+	int		modernVisibilityPortalVisibleAreas;
+	int		modernVisibilityPortalRejectedAreas;
+	int		modernVisibilityCpuTested;
+	int		modernVisibilityCpuRejected;
+	int		modernVisibilityGpuTested;
+	int		modernVisibilityGpuRejected;
+	int		modernVisibilityScissorRejected;
+	int		modernVisibilityFrustumRejected;
+	int		modernVisibilityHiZRejected;
+	int		modernVisibilitySavedDraws;
+	int		modernVisibilitySavedTriangles;
+	int		modernVisibilityFalsePositiveFallbacks;
+	int		modernVisibilityTemporalReused;
+	int		modernVisibilityHiZLevels;
+	int		modernVisibilityHiZBuildMsec;
+	int		modernVisibilityShadowCasterTested;
+	int		modernVisibilityShadowCasterRejected;
+	int		modernVisibilityShadowCasterSavedDraws;
+	int		modernVisibilityShadowCasterSavedTriangles;
 	bool	lowOverheadRequested;
 	bool	lowOverheadReady;
 	bool	lowOverheadUsesDSA;
@@ -539,6 +570,40 @@ typedef struct rendererGpuDrivenLatest_s {
 	int		computeDispatches;
 } rendererGpuDrivenLatest_t;
 
+typedef struct rendererModernVisibilityLatest_s {
+	bool	requested;
+	bool	enabled;
+	bool	portalPVSPreserved;
+	bool	cpuReady;
+	bool	gpuReady;
+	bool	hiZRequested;
+	bool	hiZReady;
+	bool	hiZBuilt;
+	bool	temporalReady;
+	bool	noQueryStall;
+	bool	shadowCasterReady;
+	int		scenes;
+	int		portalVisibleAreas;
+	int		portalRejectedAreas;
+	int		cpuTested;
+	int		cpuRejected;
+	int		gpuTested;
+	int		gpuRejected;
+	int		scissorRejected;
+	int		frustumRejected;
+	int		hiZRejected;
+	int		savedDraws;
+	int		savedTriangles;
+	int		falsePositiveFallbacks;
+	int		temporalReused;
+	int		hiZLevels;
+	int		hiZBuildMsec;
+	int		shadowCasterTested;
+	int		shadowCasterRejected;
+	int		shadowCasterSavedDraws;
+	int		shadowCasterSavedTriangles;
+} rendererModernVisibilityLatest_t;
+
 typedef struct rendererLowOverheadLatest_s {
 	bool	requested;
 	bool	ready;
@@ -575,6 +640,7 @@ static rendererDeferredResolveLatest_t rg_deferredResolveLatest;
 static rendererForwardPlusLatest_t rg_forwardPlusLatest;
 static rendererModernVisibleLatest_t rg_modernVisibleLatest;
 static rendererGpuDrivenLatest_t rg_gpuDrivenLatest;
+static rendererModernVisibilityLatest_t rg_modernVisibilityLatest;
 static rendererLowOverheadLatest_t rg_lowOverheadLatest;
 static rendererClusteredLightingStats_t rg_clusteredLightingLatest;
 static rendererGLStateCacheLatest_t rg_glStateCacheLatest;
@@ -949,6 +1015,37 @@ void R_RendererMetrics_BeginFrame( int frameCount ) {
 	rg_rendererMetrics.gpuDrivenMultiDrawBatches = rg_gpuDrivenLatest.multiDrawBatches;
 	rg_rendererMetrics.gpuDrivenIndirectFallbacks = rg_gpuDrivenLatest.indirectFallbacks;
 	rg_rendererMetrics.gpuDrivenComputeDispatches = rg_gpuDrivenLatest.computeDispatches;
+	rg_rendererMetrics.modernVisibilityRequested = rg_modernVisibilityLatest.requested;
+	rg_rendererMetrics.modernVisibilityEnabled = rg_modernVisibilityLatest.enabled;
+	rg_rendererMetrics.modernVisibilityPortalPVSPreserved = rg_modernVisibilityLatest.portalPVSPreserved;
+	rg_rendererMetrics.modernVisibilityCpuReady = rg_modernVisibilityLatest.cpuReady;
+	rg_rendererMetrics.modernVisibilityGpuReady = rg_modernVisibilityLatest.gpuReady;
+	rg_rendererMetrics.modernVisibilityHiZRequested = rg_modernVisibilityLatest.hiZRequested;
+	rg_rendererMetrics.modernVisibilityHiZReady = rg_modernVisibilityLatest.hiZReady;
+	rg_rendererMetrics.modernVisibilityHiZBuilt = rg_modernVisibilityLatest.hiZBuilt;
+	rg_rendererMetrics.modernVisibilityTemporalReady = rg_modernVisibilityLatest.temporalReady;
+	rg_rendererMetrics.modernVisibilityNoQueryStall = rg_modernVisibilityLatest.noQueryStall;
+	rg_rendererMetrics.modernVisibilityShadowCasterReady = rg_modernVisibilityLatest.shadowCasterReady;
+	rg_rendererMetrics.modernVisibilityScenes = rg_modernVisibilityLatest.scenes;
+	rg_rendererMetrics.modernVisibilityPortalVisibleAreas = rg_modernVisibilityLatest.portalVisibleAreas;
+	rg_rendererMetrics.modernVisibilityPortalRejectedAreas = rg_modernVisibilityLatest.portalRejectedAreas;
+	rg_rendererMetrics.modernVisibilityCpuTested = rg_modernVisibilityLatest.cpuTested;
+	rg_rendererMetrics.modernVisibilityCpuRejected = rg_modernVisibilityLatest.cpuRejected;
+	rg_rendererMetrics.modernVisibilityGpuTested = rg_modernVisibilityLatest.gpuTested;
+	rg_rendererMetrics.modernVisibilityGpuRejected = rg_modernVisibilityLatest.gpuRejected;
+	rg_rendererMetrics.modernVisibilityScissorRejected = rg_modernVisibilityLatest.scissorRejected;
+	rg_rendererMetrics.modernVisibilityFrustumRejected = rg_modernVisibilityLatest.frustumRejected;
+	rg_rendererMetrics.modernVisibilityHiZRejected = rg_modernVisibilityLatest.hiZRejected;
+	rg_rendererMetrics.modernVisibilitySavedDraws = rg_modernVisibilityLatest.savedDraws;
+	rg_rendererMetrics.modernVisibilitySavedTriangles = rg_modernVisibilityLatest.savedTriangles;
+	rg_rendererMetrics.modernVisibilityFalsePositiveFallbacks = rg_modernVisibilityLatest.falsePositiveFallbacks;
+	rg_rendererMetrics.modernVisibilityTemporalReused = rg_modernVisibilityLatest.temporalReused;
+	rg_rendererMetrics.modernVisibilityHiZLevels = rg_modernVisibilityLatest.hiZLevels;
+	rg_rendererMetrics.modernVisibilityHiZBuildMsec = rg_modernVisibilityLatest.hiZBuildMsec;
+	rg_rendererMetrics.modernVisibilityShadowCasterTested = rg_modernVisibilityLatest.shadowCasterTested;
+	rg_rendererMetrics.modernVisibilityShadowCasterRejected = rg_modernVisibilityLatest.shadowCasterRejected;
+	rg_rendererMetrics.modernVisibilityShadowCasterSavedDraws = rg_modernVisibilityLatest.shadowCasterSavedDraws;
+	rg_rendererMetrics.modernVisibilityShadowCasterSavedTriangles = rg_modernVisibilityLatest.shadowCasterSavedTriangles;
 	rg_rendererMetrics.lowOverheadRequested = rg_lowOverheadLatest.requested;
 	rg_rendererMetrics.lowOverheadReady = rg_lowOverheadLatest.ready;
 	rg_rendererMetrics.lowOverheadUsesDSA = rg_lowOverheadLatest.usesDSA;
@@ -1360,6 +1457,71 @@ void R_RendererMetrics_RecordGpuDriven( bool requested, bool executed, bool reso
 	rg_rendererMetrics.gpuDrivenMultiDrawBatches = multiDrawBatches;
 	rg_rendererMetrics.gpuDrivenIndirectFallbacks = indirectFallbacks;
 	rg_rendererMetrics.gpuDrivenComputeDispatches = computeDispatches;
+}
+
+void R_RendererMetrics_RecordModernVisibility( bool requested, bool enabled, bool portalPVSPreserved, bool cpuReady, bool gpuReady, bool hiZRequested, bool hiZReady, bool hiZBuilt, bool temporalReady, bool noQueryStall, bool shadowCasterReady, int scenes, int portalVisibleAreas, int portalRejectedAreas, int cpuTested, int cpuRejected, int gpuTested, int gpuRejected, int scissorRejected, int frustumRejected, int hiZRejected, int savedDraws, int savedTriangles, int falsePositiveFallbacks, int temporalReused, int hiZLevels, int hiZBuildMsec, int shadowCasterTested, int shadowCasterRejected, int shadowCasterSavedDraws, int shadowCasterSavedTriangles ) {
+	rg_modernVisibilityLatest.requested = requested;
+	rg_modernVisibilityLatest.enabled = enabled;
+	rg_modernVisibilityLatest.portalPVSPreserved = portalPVSPreserved;
+	rg_modernVisibilityLatest.cpuReady = cpuReady;
+	rg_modernVisibilityLatest.gpuReady = gpuReady;
+	rg_modernVisibilityLatest.hiZRequested = hiZRequested;
+	rg_modernVisibilityLatest.hiZReady = hiZReady;
+	rg_modernVisibilityLatest.hiZBuilt = hiZBuilt;
+	rg_modernVisibilityLatest.temporalReady = temporalReady;
+	rg_modernVisibilityLatest.noQueryStall = noQueryStall;
+	rg_modernVisibilityLatest.shadowCasterReady = shadowCasterReady;
+	rg_modernVisibilityLatest.scenes = scenes;
+	rg_modernVisibilityLatest.portalVisibleAreas = portalVisibleAreas;
+	rg_modernVisibilityLatest.portalRejectedAreas = portalRejectedAreas;
+	rg_modernVisibilityLatest.cpuTested = cpuTested;
+	rg_modernVisibilityLatest.cpuRejected = cpuRejected;
+	rg_modernVisibilityLatest.gpuTested = gpuTested;
+	rg_modernVisibilityLatest.gpuRejected = gpuRejected;
+	rg_modernVisibilityLatest.scissorRejected = scissorRejected;
+	rg_modernVisibilityLatest.frustumRejected = frustumRejected;
+	rg_modernVisibilityLatest.hiZRejected = hiZRejected;
+	rg_modernVisibilityLatest.savedDraws = savedDraws;
+	rg_modernVisibilityLatest.savedTriangles = savedTriangles;
+	rg_modernVisibilityLatest.falsePositiveFallbacks = falsePositiveFallbacks;
+	rg_modernVisibilityLatest.temporalReused = temporalReused;
+	rg_modernVisibilityLatest.hiZLevels = hiZLevels;
+	rg_modernVisibilityLatest.hiZBuildMsec = hiZBuildMsec;
+	rg_modernVisibilityLatest.shadowCasterTested = shadowCasterTested;
+	rg_modernVisibilityLatest.shadowCasterRejected = shadowCasterRejected;
+	rg_modernVisibilityLatest.shadowCasterSavedDraws = shadowCasterSavedDraws;
+	rg_modernVisibilityLatest.shadowCasterSavedTriangles = shadowCasterSavedTriangles;
+	rg_rendererMetrics.modernVisibilityRequested = requested;
+	rg_rendererMetrics.modernVisibilityEnabled = enabled;
+	rg_rendererMetrics.modernVisibilityPortalPVSPreserved = portalPVSPreserved;
+	rg_rendererMetrics.modernVisibilityCpuReady = cpuReady;
+	rg_rendererMetrics.modernVisibilityGpuReady = gpuReady;
+	rg_rendererMetrics.modernVisibilityHiZRequested = hiZRequested;
+	rg_rendererMetrics.modernVisibilityHiZReady = hiZReady;
+	rg_rendererMetrics.modernVisibilityHiZBuilt = hiZBuilt;
+	rg_rendererMetrics.modernVisibilityTemporalReady = temporalReady;
+	rg_rendererMetrics.modernVisibilityNoQueryStall = noQueryStall;
+	rg_rendererMetrics.modernVisibilityShadowCasterReady = shadowCasterReady;
+	rg_rendererMetrics.modernVisibilityScenes = scenes;
+	rg_rendererMetrics.modernVisibilityPortalVisibleAreas = portalVisibleAreas;
+	rg_rendererMetrics.modernVisibilityPortalRejectedAreas = portalRejectedAreas;
+	rg_rendererMetrics.modernVisibilityCpuTested = cpuTested;
+	rg_rendererMetrics.modernVisibilityCpuRejected = cpuRejected;
+	rg_rendererMetrics.modernVisibilityGpuTested = gpuTested;
+	rg_rendererMetrics.modernVisibilityGpuRejected = gpuRejected;
+	rg_rendererMetrics.modernVisibilityScissorRejected = scissorRejected;
+	rg_rendererMetrics.modernVisibilityFrustumRejected = frustumRejected;
+	rg_rendererMetrics.modernVisibilityHiZRejected = hiZRejected;
+	rg_rendererMetrics.modernVisibilitySavedDraws = savedDraws;
+	rg_rendererMetrics.modernVisibilitySavedTriangles = savedTriangles;
+	rg_rendererMetrics.modernVisibilityFalsePositiveFallbacks = falsePositiveFallbacks;
+	rg_rendererMetrics.modernVisibilityTemporalReused = temporalReused;
+	rg_rendererMetrics.modernVisibilityHiZLevels = hiZLevels;
+	rg_rendererMetrics.modernVisibilityHiZBuildMsec = hiZBuildMsec;
+	rg_rendererMetrics.modernVisibilityShadowCasterTested = shadowCasterTested;
+	rg_rendererMetrics.modernVisibilityShadowCasterRejected = shadowCasterRejected;
+	rg_rendererMetrics.modernVisibilityShadowCasterSavedDraws = shadowCasterSavedDraws;
+	rg_rendererMetrics.modernVisibilityShadowCasterSavedTriangles = shadowCasterSavedTriangles;
 }
 
 void R_RendererMetrics_RecordLowOverhead( bool requested, bool ready, bool usesDSA, bool usesMultiBind, bool bindlessRequested, bool bindlessAvailable, bool samplerReady, int dsaUpdates, int framebufferDSAUpdates, int samplerDSACreations, int samplerDSAUpdates, int bufferMultiBindBatches, int textureMultiBindBatches, int samplerMultiBindBatches, int classicTextureBinds, int compactedBatches ) {
@@ -1862,6 +2024,35 @@ void R_RendererMetrics_EndFrame( int frontEndMsec, int backEndMsec, int viewCoun
 			rg_rendererMetrics.gpuDrivenComputeDispatches,
 			rg_rendererMetrics.gpuTimerMsec[RENDERER_GPU_TIMER_GPU_DRIVEN_INDIRECT],
 			rg_rendererMetrics.gpuTimerSamples[RENDERER_GPU_TIMER_GPU_DRIVEN_INDIRECT] );
+		common->Printf(
+			"rendererMetrics modernVisibility(req=%d enabled=%d portalPVS=%d scenes=%d portalAreas=%d rejectedAreas=%d cpu=%d/%d gpu=%d/%d scissor=%d frustum=%d hiz(req=%d ready=%d built=%d levels=%d build=%dms rejected=%d) saved=%d/%d fallback=%d temporal=%d noQueryStall=%d shadowCasters=%d/%d saved=%d/%d)\n",
+			rg_rendererMetrics.modernVisibilityRequested ? 1 : 0,
+			rg_rendererMetrics.modernVisibilityEnabled ? 1 : 0,
+			rg_rendererMetrics.modernVisibilityPortalPVSPreserved ? 1 : 0,
+			rg_rendererMetrics.modernVisibilityScenes,
+			rg_rendererMetrics.modernVisibilityPortalVisibleAreas,
+			rg_rendererMetrics.modernVisibilityPortalRejectedAreas,
+			rg_rendererMetrics.modernVisibilityCpuTested,
+			rg_rendererMetrics.modernVisibilityCpuRejected,
+			rg_rendererMetrics.modernVisibilityGpuTested,
+			rg_rendererMetrics.modernVisibilityGpuRejected,
+			rg_rendererMetrics.modernVisibilityScissorRejected,
+			rg_rendererMetrics.modernVisibilityFrustumRejected,
+			rg_rendererMetrics.modernVisibilityHiZRequested ? 1 : 0,
+			rg_rendererMetrics.modernVisibilityHiZReady ? 1 : 0,
+			rg_rendererMetrics.modernVisibilityHiZBuilt ? 1 : 0,
+			rg_rendererMetrics.modernVisibilityHiZLevels,
+			rg_rendererMetrics.modernVisibilityHiZBuildMsec,
+			rg_rendererMetrics.modernVisibilityHiZRejected,
+			rg_rendererMetrics.modernVisibilitySavedDraws,
+			rg_rendererMetrics.modernVisibilitySavedTriangles,
+			rg_rendererMetrics.modernVisibilityFalsePositiveFallbacks,
+			rg_rendererMetrics.modernVisibilityTemporalReused,
+			rg_rendererMetrics.modernVisibilityNoQueryStall ? 1 : 0,
+			rg_rendererMetrics.modernVisibilityShadowCasterTested,
+			rg_rendererMetrics.modernVisibilityShadowCasterRejected,
+			rg_rendererMetrics.modernVisibilityShadowCasterSavedDraws,
+			rg_rendererMetrics.modernVisibilityShadowCasterSavedTriangles );
 		common->Printf(
 			"rendererMetrics lowOverhead(req=%d ready=%d dsa=%d multiBind=%d bindless=%d/%d sampler=%d dsaUpdates=%d framebufferDSA=%d samplerDSA=%d/%d bufferMultiBind=%d textureMultiBind=%d samplerMultiBind=%d classicTextureBinds=%d compactedBatches=%d graphDSA(tex=%d params=%d fbo=%d) graphClassic(tex=%d fbo=%d) upload(persistent=%d default=%d fences=%d/%d waits=%d sync=%d))\n",
 			rg_rendererMetrics.lowOverheadRequested ? 1 : 0,

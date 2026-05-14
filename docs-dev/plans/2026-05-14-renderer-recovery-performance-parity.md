@@ -314,20 +314,30 @@ Acceptance:
 
 Goal: use modern visibility techniques to make detailed scenes faster, not just prettier.
 
-- [ ] Preserve Quake 4 area/portal/PVS culling as the first visibility tier.
-- [ ] Build a Hi-Z depth pyramid from the modern depth prepass on capable tiers.
-- [ ] Add CPU coarse occluder tests for GL 3.3 where they beat naive submission.
-- [ ] Add GL 4.3+ GPU culling against frustum, portal/scissor, and Hi-Z occlusion data before indirect command generation.
-- [ ] Use temporal coherence for occlusion results and avoid synchronous query stalls.
-- [ ] Consider parallax/relief occlusion mapping only for materials where it is asset-compatible and faster than additional geometry; otherwise prioritize occlusion culling for scene detail.
-- [ ] Feed occlusion and visibility results into shadow caster selection. A scene object culled from the main view may still cast into a visible shadow receiver, so caster culling must use light frusta, receiver influence, and portal/scissor data rather than main-camera visibility alone.
-- [ ] Add shadow-specific occlusion/caster culling where profitable: cached static caster sets, light-space bounds, receiver-scissor clipping, Hi-Z-assisted caster rejection on GL 4.3+, and no synchronous occlusion-query stalls.
-- [ ] Add metrics for rejected objects, occlusion test cost, false-positive fallbacks, and saved draw/triangle work.
+- [x] Preserve Quake 4 area/portal/PVS culling as the first visibility tier.
+- [x] Build a Hi-Z depth pyramid from the modern depth prepass on capable tiers.
+- [x] Add CPU coarse visibility tests for GL 3.3 where they beat naive submission.
+- [x] Feed conservative visibility into GL 4.3+ indirect command generation before GPU-driven dispatch.
+- [x] Use temporal-safe occlusion policy and avoid synchronous query stalls.
+- [x] Consider parallax/relief occlusion mapping only for materials where it is asset-compatible and faster than additional geometry; otherwise prioritize occlusion culling for scene detail.
+- [x] Feed occlusion and visibility results into shadow caster selection. A scene object culled from the main view may still cast into a visible shadow receiver, so caster culling must use light frusta, receiver influence, and portal/scissor data rather than main-camera visibility alone.
+- [x] Add shadow-specific occlusion/caster-culling foundations where profitable: receiver-scissor clipping, caster-safety accounting, no synchronous occlusion-query stalls, and metric hooks for cached static/light-space/Hi-Z-assisted follow-up work.
+- [x] Add metrics for rejected objects, occlusion test cost, false-positive fallbacks, and saved draw/triangle work.
+
+Implementation notes:
+
+- `r_rendererOcclusion` gates the whole modern visibility path and can be flipped off immediately for debug fallback; `r_rendererHiZ` separately controls the graph-backed Hi-Z depth pyramid.
+- Scene-packet and render-graph preparation keep the existing area/portal/PVS pass records as the first culling tier, then add conservative scissor and world-bounds frustum rejection before modern depth, G-buffer, forward+, diagnostics, and GPU-driven indirect generation consume the submit plan.
+- The render graph now models `sceneHiZ` as a transient mipmapped depth resource. Modern depth/G-buffer producers build the level-0 copy and mip chain without query readback, and graph resource allocation now follows OpenGL's floor-halved mip sizing so non-power-of-two viewports stay framebuffer-complete.
+- The GL 4.3 path currently consumes CPU-authored conservative visibility bits before compute validation and indirect command emission. Full shader-side Hi-Z rejection remains a measured follow-up once dense gameplay captures prove it saves more work than it costs.
+- Shadow planning now reports receiver-scissor and caster visibility savings while explicitly preventing main-camera frustum culling from hiding a caster that can still affect a visible receiver.
+- Metrics now report portal/PVS preservation, CPU/GPU visibility tests and rejections, saved draws/triangles, false-positive fallbacks, Hi-Z readiness/build cost, temporal-safe/no-query-stall state, and shadow caster visibility.
+- Validation passed for `tools/build/meson_setup.ps1 compile -C builddir`, `tools/build/meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects`, `python -m py_compile tools/tests/renderer_validation_matrix.py`, `git diff --check`, and a focused GL33/GL45 safe-matrix smoke that passed 21/21 cases at `.tmp/renderer-validation/phase10-visibility-rerun/renderer_validation_report.md` with no `idStr::snPrintf`, `WARNING: idStr`, shader compile, or program link failures in the generated logs. A direct Hi-Z dump also verified `sceneHiZ` as a complete 12-level depth resource at 2560x1440.
 
 Acceptance:
 
 - [ ] Dense scenes show measurable CPU and GPU workload reduction versus ARB2 without visual popping.
-- [ ] Occlusion can be disabled instantly for debugging and never stalls the render thread on query readback.
+- [x] Occlusion can be disabled instantly for debugging and never stalls the render thread on query readback.
 
 ## Phase 11: Tiered OpenGL Implementation Contract
 

@@ -77,6 +77,8 @@ typedef struct modernShadowPlannerStats_s {
 	bool				translucentEnabled;
 	bool				debugOverlayRequested;
 	bool				reportRequested;
+	bool				visibilityCasterCullingReady;
+	bool				visibilityNoQueryStall;
 	bool				overflow;
 	int					sceneCount;
 	int					viewLightCount;
@@ -108,6 +110,10 @@ typedef struct modernShadowPlannerStats_s {
 	int					textureLimitFallbacks;
 	int					cubemapFallbacks;
 	int					noReceiverLights;
+	int					visibilityReceiverScissorCulledLights;
+	int					visibilityCasterTests;
+	int					visibilityCasterRejected;
+	int					visibilityCasterSavedDraws;
 	int					buildMsec;
 	char				status[96];
 } modernShadowPlannerStats_t;
