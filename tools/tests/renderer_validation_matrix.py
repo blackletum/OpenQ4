@@ -159,6 +159,91 @@ LONG_RUN_VALIDATION_MATRIX = [
     },
 ]
 
+GAMEPLAY_BENCHMARK_HARNESS = [
+    {
+        "profile": "smoke",
+        "command": "python tools\\tests\\renderer_gameplay_benchmark.py --profile smoke",
+        "coverage": "bounded SP gameplay smoke with screenshot, rendererBenchmarkCapture, framePacingSnapshot, gfxInfo, and zero-warning log gates",
+    },
+    {
+        "profile": "required",
+        "command": "python tools\\tests\\renderer_gameplay_benchmark.py --profile required",
+        "coverage": "all required SP maps plus the MP q4dm1 listen-server/local-client case using the selected tier and presentation settings",
+    },
+    {
+        "profile": "tiers",
+        "command": "python tools\\tests\\renderer_gameplay_benchmark.py --profile tiers",
+        "coverage": "forced auto/legacy/gl33/gl41/gl43/gl45/gl46 gameplay probes that either reach gameplay or fail closed with logged tier-contract reasons",
+    },
+    {
+        "profile": "presentation",
+        "command": "python tools\\tests\\renderer_gameplay_benchmark.py --profile presentation",
+        "coverage": "windowed/fullscreen coverage for r_swapInterval 0/1 and com_maxfps 0/30/240 while preserving uncapped presentation behavior",
+    },
+    {
+        "profile": "shadows",
+        "command": "python tools\\tests\\renderer_gameplay_benchmark.py --profile shadows",
+        "coverage": "shadow-map correctness scenes with stencil, mapped, CSM, translucent, and debug-overlay/debug-mode presets",
+    },
+]
+
+SHADOW_CORRECTNESS_MATRIX = [
+    {
+        "id": "shadow-projected-airdefense2",
+        "mode": "SP",
+        "map": "game/airdefense2",
+        "purpose": "angled projected-light caster/receiver validation",
+    },
+    {
+        "id": "shadow-point-storage2",
+        "mode": "SP",
+        "map": "game/storage2",
+        "purpose": "point-light face coverage and local-light receiver validation",
+    },
+    {
+        "id": "shadow-csm-airdefense1",
+        "mode": "SP",
+        "map": "game/airdefense1",
+        "purpose": "CSM camera sweep readiness and outdoor directional coverage",
+    },
+    {
+        "id": "shadow-cutout-storage2",
+        "mode": "SP",
+        "map": "game/storage2",
+        "purpose": "hashed-alpha cutout fence/grate caster validation at distance",
+    },
+    {
+        "id": "shadow-character-airdefense2",
+        "mode": "SP",
+        "map": "game/airdefense2",
+        "purpose": "dynamic character shadow caster and receiver validation",
+    },
+    {
+        "id": "shadow-translucent-medlabs",
+        "mode": "SP",
+        "map": "game/medlabs",
+        "purpose": "optional translucent moment caster coverage where the selected tier supports it",
+    },
+]
+
+HUMAN_REVIEW_CHECKLIST = [
+    {
+        "case": "sp-bse-heavy",
+        "focus": "BSE-heavy effects in `game/medlabs`",
+        "checks": "effect sprites/trails animate at the expected cadence, no black quads, no missing additive passes, no warning spam",
+    },
+    {
+        "case": "sp-cinematic-subview",
+        "focus": "cinematic/subview flow in `game/mcc_landing`",
+        "checks": "remote-camera/subview content is visible, GUI overlays composite in the right order, cinematic handoff keeps frame pacing stable",
+    },
+    {
+        "case": "mp-q4dm1-listen",
+        "focus": "local MP listen server plus loopback client",
+        "checks": "client reaches the map, player/world lighting matches host expectations, frame pacing remains uncapped when requested",
+    },
+]
+
 PERF_REGRESSION_THRESHOLDS = [
     {
         "preset": "low",
@@ -945,6 +1030,9 @@ def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dic
         "metadata": metadata,
         "results": results,
         "manualGameplayMatrix": MANUAL_GAMEPLAY_MATRIX,
+        "gameplayBenchmarkHarness": GAMEPLAY_BENCHMARK_HARNESS,
+        "shadowCorrectnessMatrix": SHADOW_CORRECTNESS_MATRIX,
+        "humanReviewChecklist": HUMAN_REVIEW_CHECKLIST,
         "deterministicCaptureMatrix": DETERMINISTIC_CAPTURE_MATRIX,
         "renderDocTierMatrix": RENDERDOC_TIER_MATRIX,
         "longRunValidationMatrix": LONG_RUN_VALIDATION_MATRIX,
@@ -992,6 +1080,38 @@ def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dic
     ]
     for manual in MANUAL_GAMEPLAY_MATRIX:
         lines.append(f"| `{manual['id']}` | {manual['mode']} | `{manual['map']}` | {manual['purpose']} |")
+
+    lines += [
+        "",
+        "## Gameplay Benchmark Harness",
+        "",
+        "`tools/tests/renderer_gameplay_benchmark.py` is the opt-in map-loading runner for Phase 12 evidence. It launches from `.install`, enters SP maps or an MP listen server plus loopback client, waits for streaming, records `rendererBenchmarkCapture`, captures screenshots, optionally compares TGA references, and fails on renderer overflow warnings.",
+        "",
+        "| Profile | Command | Coverage |",
+        "|---|---|---|",
+    ]
+    for item in GAMEPLAY_BENCHMARK_HARNESS:
+        lines.append(f"| `{item['profile']}` | `{item['command']}` | {item['coverage']} |")
+
+    lines += [
+        "",
+        "## Shadow Correctness Matrix",
+        "",
+        "| Case | Mode | Map | Purpose |",
+        "|---|---|---|---|",
+    ]
+    for item in SHADOW_CORRECTNESS_MATRIX:
+        lines.append(f"| `{item['id']}` | {item['mode']} | `{item['map']}` | {item['purpose']} |")
+
+    lines += [
+        "",
+        "## Human Review Checklist",
+        "",
+        "| Case | Focus | Checks |",
+        "|---|---|---|",
+    ]
+    for item in HUMAN_REVIEW_CHECKLIST:
+        lines.append(f"| `{item['case']}` | {item['focus']} | {item['checks']} |")
 
     lines += [
         "",
@@ -1071,6 +1191,15 @@ def main(argv: list[str]) -> int:
         print("\nManual gameplay cases:")
         for case in MANUAL_GAMEPLAY_MATRIX:
             print(f"  {case['id']}: {case['mode']} {case['map']} - {case['purpose']}")
+        print("\nGameplay benchmark harness profiles:")
+        for case in GAMEPLAY_BENCHMARK_HARNESS:
+            print(f"  {case['profile']}: {case['command']} - {case['coverage']}")
+        print("\nShadow correctness cases:")
+        for case in SHADOW_CORRECTNESS_MATRIX:
+            print(f"  {case['id']}: {case['mode']} {case['map']} - {case['purpose']}")
+        print("\nHuman review checklist:")
+        for case in HUMAN_REVIEW_CHECKLIST:
+            print(f"  {case['case']}: {case['focus']} - {case['checks']}")
         print("\nDeterministic capture cases:")
         for case in DETERMINISTIC_CAPTURE_MATRIX:
             print(f"  {case['id']}: {case['mode']} {case['scene']} - {case['purpose']}")

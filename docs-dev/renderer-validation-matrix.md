@@ -136,7 +136,7 @@ These are manual long-run sign-off loops. They are intentionally outside the saf
 
 ## Manual Gameplay Matrix
 
-Gameplay validation remains mandatory before renderer release sign-off, but it is not run by the safe matrix because local map startup is currently freeze-prone. Use the SP launch task for single-player maps and the MP launch task or `tools\debug\start_listen_server_client.ps1` for multiplayer.
+Gameplay validation remains mandatory before renderer release sign-off, but it is not run by the safe matrix by default because map loads need target-hardware supervision. Use the SP launch task for single-player maps, the MP launch task or `tools\debug\start_listen_server_client.ps1` for multiplayer, or the opt-in gameplay benchmark harness below when you want a repeatable logged capture set.
 
 | Case | Mode | Map | Purpose |
 |---|---|---|---|
@@ -159,6 +159,58 @@ For each gameplay case, validate the matrix variants that the hardware supports:
 | renderer diagnostics | `r_rendererMetrics 1`, `r_rendererMetrics 2`, `r_rendererModernAutoPromote 0`, and one signed `r_rendererModernAutoPromote 1` candidate run after the other rows are clean |
 
 After each gameplay smoke, inspect the configured log file under `fs_savepath\<gameDir>\logs\openq4.log` or the case-specific log emitted by the launch tool. Fix errors and warnings, then repeat the loop until the case is clean.
+
+## Gameplay Benchmark Harness
+
+`tools\tests\renderer_gameplay_benchmark.py` is the Phase 12 map-loading runner. It launches the staged client from `.install`, uses isolated save paths under `.tmp\renderer-gameplay\`, enters SP maps or an MP listen server plus loopback client, waits for streaming, runs a fixed static spawn camera path unless a case is later extended with authored poses, captures screenshots, emits `rendererBenchmarkCapture`, `framePacingSnapshot`, and `gfxInfo`, and writes Markdown/JSON reports.
+
+The runner uses the SP/MP `g_autoExecAfterMapLoad` hook to execute its generated cfg after the map is active, not during loading UI. Renderer metrics are enabled only inside the gameplay capture window, which keeps load-screen logs quiet while still producing benchmark samples, GPU timing where available, frame-pacing output, and a screenshot artifact.
+
+Common runs:
+
+```powershell
+python tools\tests\renderer_gameplay_benchmark.py --list
+python tools\tests\renderer_gameplay_benchmark.py --profile smoke
+python tools\tests\renderer_gameplay_benchmark.py --profile required
+python tools\tests\renderer_gameplay_benchmark.py --profile tiers
+python tools\tests\renderer_gameplay_benchmark.py --profile presentation
+python tools\tests\renderer_gameplay_benchmark.py --profile shadows
+```
+
+The runner fails a case when the process times out, no gameplay screenshot is produced, the benchmark/gfxInfo lines are missing, image comparison fails when references are required, or renderer warning markers such as `idStr::snPrintf: overflow`, `WARNING: idStr`, shader compile failures, program link failures, or fatal OpenGL startup failures appear in the log.
+
+| Profile | Coverage |
+|---|---|
+| `smoke` | bounded `game/airdefense1` SP gameplay smoke with screenshot, metrics, frame-pacing snapshot, and zero-warning log gates |
+| `required` | `game/airdefense1`, `game/airdefense2`, `game/storage2`, `game/medlabs`, `game/mcc_landing`, and `mp/q4dm1` listen server plus local client |
+| `tiers` | forced `r_glTier auto`, `legacy`, `gl33`, `gl41`, `gl43`, `gl45`, and `gl46` gameplay probes |
+| `presentation` | `r_swapInterval 0/1`, `com_maxfps 0/30/240`, windowed, and fullscreen coverage for uncapped/high-refresh validation |
+| `shadows` | stencil fallback, mapped shadows, CSM, translucent moments, and debug-overlay modes `1..6` over the shadow correctness scenes |
+
+Optional deterministic image comparison uses TGA references:
+
+```powershell
+python tools\tests\renderer_gameplay_benchmark.py --profile smoke --reference-dir .tmp\renderer-references --require-references
+```
+
+Nondeterministic BSE, cinematic, and MP scenes need human review in addition to the automated log/screenshot gates:
+
+| Case | Focus | Checks |
+|---|---|---|
+| `sp-bse-heavy` | BSE-heavy effects in `game/medlabs` | effect sprites/trails animate at the expected cadence, no black quads, no missing additive passes, no warning spam |
+| `sp-cinematic-subview` | cinematic/subview flow in `game/mcc_landing` | remote-camera/subview content is visible, GUI overlays composite in the right order, cinematic handoff keeps frame pacing stable |
+| `mp-q4dm1-listen` | local MP listen server plus loopback client | client reaches the map, player/world lighting matches host expectations, frame pacing remains uncapped when requested |
+
+## Shadow Correctness Matrix
+
+| Case | Mode | Map | Purpose |
+|---|---|---|---|
+| `shadow-projected-airdefense2` | SP | `game/airdefense2` | angled projected-light caster/receiver validation |
+| `shadow-point-storage2` | SP | `game/storage2` | point-light face coverage and local-light receiver validation |
+| `shadow-csm-airdefense1` | SP | `game/airdefense1` | CSM camera sweep readiness and outdoor directional coverage |
+| `shadow-cutout-storage2` | SP | `game/storage2` | hashed-alpha cutout fence/grate caster validation at distance |
+| `shadow-character-airdefense2` | SP | `game/airdefense2` | dynamic character shadow caster and receiver validation |
+| `shadow-translucent-medlabs` | SP | `game/medlabs` | optional translucent moment caster coverage where the selected tier supports it |
 
 ## Acceptance
 

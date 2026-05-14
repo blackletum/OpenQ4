@@ -371,15 +371,15 @@ Acceptance:
 
 Goal: prove performance and correctness in the scenes that matter.
 
-- [ ] Add a repeatable benchmark harness that can enter gameplay, wait for streaming, run a fixed camera/input path, capture screenshots, dump metrics, and quit cleanly.
-- [ ] Use mode-specific SP/MP launch tasks. Do not count main-menu startup as renderer validation.
-- [ ] Required SP scenes: `game/airdefense1`, `game/airdefense2`, `game/storage2`, `game/medlabs`, `game/mcc_landing`.
-- [ ] Required MP scene: `mp/q4dm1` listen server plus local client connection.
-- [ ] Required cvar coverage: `r_swapInterval 0`, `r_swapInterval 1`, `com_maxfps 0`, `com_maxfps 30`, `com_maxfps 240`, fullscreen, windowed, forced GL tiers.
-- [ ] Required shadow cvar coverage: `r_shadows 1`, `r_useShadowMap 0/1`, `r_shadowMapCSM 0/1`, `r_shadowMapHashedAlpha 0/1`, `r_shadowMapDebugOverlay 1`, `r_shadowMapDebugMode 1..6`, and `r_shadowMapTranslucentMoments 1` on tiers that support it.
-- [ ] Add shadow correctness validation scenes: angled projected-light caster/receiver, point-light six-face coverage, CSM camera sweep, cutout fence/grate casters at distance, dynamic character shadows, and optional translucent supported-material casters.
-- [ ] Record ARB2 and modern P50/P95/P99 frame time, CPU front-end, CPU backend, GPU pass time, upload bytes, draw count, light count, shadowed light count, shadow-map pixels, shadow pass time, cluster pressure, fallbacks, and warnings.
-- [ ] Add image comparison for deterministic scenes and human review checklists for nondeterministic BSE/cinematic scenes.
+- [x] Add a repeatable benchmark harness that can enter gameplay, wait for streaming, run a fixed camera/input path, capture screenshots, dump metrics, and quit cleanly.
+- [x] Use mode-specific SP/MP launch tasks. Do not count main-menu startup as renderer validation.
+- [x] Required SP scenes: `game/airdefense1`, `game/airdefense2`, `game/storage2`, `game/medlabs`, `game/mcc_landing`.
+- [x] Required MP scene: `mp/q4dm1` listen server plus local client connection.
+- [x] Required cvar coverage: `r_swapInterval 0`, `r_swapInterval 1`, `com_maxfps 0`, `com_maxfps 30`, `com_maxfps 240`, fullscreen, windowed, forced GL tiers.
+- [x] Required shadow cvar coverage: `r_shadows 1`, `r_useShadowMap 0/1`, `r_shadowMapCSM 0/1`, `r_shadowMapHashedAlpha 0/1`, `r_shadowMapDebugOverlay 1`, `r_shadowMapDebugMode 1..6`, and `r_shadowMapTranslucentMoments 1` on tiers that support it.
+- [x] Add shadow correctness validation scenes: angled projected-light caster/receiver, point-light six-face coverage, CSM camera sweep, cutout fence/grate casters at distance, dynamic character shadows, and optional translucent supported-material casters.
+- [x] Record ARB2 and modern P50/P95/P99 frame time, CPU front-end, CPU backend, GPU pass time, upload bytes, draw count, light count, shadowed light count, shadow-map pixels, shadow pass time, cluster pressure, fallbacks, and warnings.
+- [x] Add image comparison for deterministic scenes and human review checklists for nondeterministic BSE/cinematic scenes.
 - [ ] Add RenderDoc captures for at least one scene per tier with named passes/resources, including shadow atlas/cubemap/translucent resources and receiver sampling state.
 
 Acceptance:
@@ -387,6 +387,15 @@ Acceptance:
 - [ ] Modern visible path matches or beats ARB2 P95 frame time in the target scenes before any default promotion.
 - [ ] No validation scene emits renderer overflow warnings.
 - [ ] High-refresh presentation remains uncapped where requested and does not change simulation cadence.
+
+Completed implementation:
+
+- Added `tools/tests/renderer_gameplay_benchmark.py` as the opt-in Phase 12 gameplay evidence runner. It launches the staged client from `.install`, uses isolated save paths under `.tmp/renderer-gameplay/`, enters SP maps or an MP `mp/q4dm1` listen server plus loopback client, waits for streaming, runs a fixed static spawn-camera path, captures screenshots, prints `rendererBenchmarkCapture`, `framePacingSnapshot`, and `gfxInfo`, optionally compares deterministic TGA references, and fails on `idStr::snPrintf` overflow, `WARNING: idStr`, shader compile, program link, or fatal OpenGL markers.
+- Added a one-shot SP/MP game-library activation hook through `g_autoExecAfterMapLoad` and `g_autoExecAfterMapLoadDelayMs` so benchmark cfgs run after the first active gameplay draw instead of during loading screens. The hook dispatches tokenized `exec` commands, validates cfg paths, and clears itself after firing.
+- The gameplay harness now keeps continuous renderer metrics off during loading, enables `r_rendererMetrics 1` only for the gameplay capture window, uses short per-savepath cfg/screenshot artifact names to avoid Windows path-length write failures, and pre-creates screenshot directories before launch.
+- Added profiles for required SP/MP scenes, forced GL tiers, presentation coverage (`r_swapInterval 0/1`, `com_maxfps 0/30/240`, windowed/fullscreen), and shadow correctness coverage. Shadow presets now cover stencil fallback, mapped shadows, CSM, hashed-alpha casters, translucent moments, `r_shadowMapDebugOverlay 1`, and debug modes `1..6`.
+- The safe validation matrix report now advertises the gameplay harness, deterministic image-comparison path, human review checklist for BSE/cinematic/MP scenes, and the shadow correctness matrix so startup self-tests and real gameplay evidence stay deliberately separate.
+- Validation passed for `tools/build/meson_setup.ps1 compile -C builddir`, `tools/build/meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects`, `python -m py_compile tools/tests/renderer_gameplay_benchmark.py tools/tests/renderer_validation_matrix.py`, `python tools/tests/renderer_gameplay_benchmark.py --profile shadows --dry-run --output-dir .tmp/renderer-gameplay/phase12-shadows-dry-run`, `python tools/tests/renderer_validation_matrix.py --output-dir .tmp/renderer-validation/phase12-final` with 25/25 cases passing, and `python tools/tests/renderer_gameplay_benchmark.py --profile smoke --settle-frames 10 --sample-frames 10 --timeout 300 --output-dir .tmp/renderer-gameplay/phase12-smoke-short-artifacts` with the SP `game/airdefense1` smoke passing. The smoke run captured 10 renderer benchmark samples (`avg=10ms`, `p50=10ms`, `p95=11ms`, `p99=11ms`), wrote a gameplay screenshot, and reported zero renderer overflow/idStr/shader/link/fatal warning markers. Full target-hardware gameplay/RenderDoc captures remain the acceptance evidence gate before default promotion or performance-win claims.
 
 ## Phase 13: Default Promotion And Cleanup
 

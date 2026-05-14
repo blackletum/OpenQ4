@@ -228,4 +228,16 @@ The automated safe validation matrix lives in [renderer-validation-matrix.md](re
 python tools\tests\renderer_validation_matrix.py
 ```
 
-The runner covers startup, `gfxInfo`, forced `r_glTier` probes, debug-context fallback, presentation cvar probes, compatibility-gate diagnostics, default-promotion diagnostics, benchmark diagnostics, performance-regression thresholds, clustered-light diagnostics, deferred-resolve diagnostics, forward+ diagnostics, modern-visible diagnostics, modern compatibility diagnostics, GPU-driven diagnostics, and all renderer foundation self-tests without entering gameplay. The manual sections of that document remain the release sign-off matrix for deterministic captures, RenderDoc tier captures, long-run `vid_restart`/map-transition loops, and SP/MP map smoke tests once map startup is safe to automate.
+The runner covers startup, `gfxInfo`, forced `r_glTier` probes, debug-context fallback, presentation cvar probes, compatibility-gate diagnostics, default-promotion diagnostics, benchmark diagnostics, performance-regression thresholds, clustered-light diagnostics, deferred-resolve diagnostics, forward+ diagnostics, modern-visible diagnostics, modern compatibility diagnostics, GPU-driven diagnostics, and all renderer foundation self-tests without entering gameplay.
+
+Gameplay and benchmark evidence now has a separate opt-in runner:
+
+```powershell
+python tools\tests\renderer_gameplay_benchmark.py --profile smoke
+python tools\tests\renderer_gameplay_benchmark.py --profile required
+python tools\tests\renderer_gameplay_benchmark.py --profile tiers
+python tools\tests\renderer_gameplay_benchmark.py --profile presentation
+python tools\tests\renderer_gameplay_benchmark.py --profile shadows
+```
+
+That harness launches from `.install`, enters the required SP/MP maps, waits for the active gameplay draw through `g_autoExecAfterMapLoad`, enables metrics only for the capture window, captures screenshots, dumps `rendererBenchmarkCapture`, `framePacingSnapshot`, and `gfxInfo`, optionally compares deterministic TGA references, and fails on renderer overflow/idStr/shader/link/fatal markers. The manual sections of the matrix remain the release sign-off source for human visual review, RenderDoc tier captures, long-run `vid_restart`/map-transition loops, and target-hardware performance claims.
