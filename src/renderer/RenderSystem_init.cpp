@@ -286,6 +286,7 @@ idCVar r_rendererModernSubmit( "r_rendererModernSubmit", "0", CVAR_RENDERER | CV
 idCVar r_rendererGpuValidation( "r_rendererGpuValidation", "0", CVAR_RENDERER | CVAR_BOOL, "compare GL 4.3 GPU-driven compute results against CPU reference data on sampled frames" );
 idCVar r_rendererBindless( "r_rendererBindless", "0", CVAR_RENDERER | CVAR_BOOL, "enable experimental GL 4.5 bindless texture diagnostics without changing visible output" );
 idCVar r_rendererModernVisible( "r_rendererModernVisible", "0", CVAR_RENDERER | CVAR_BOOL, "execute the opt-in modern hybrid visible-frame composition when all required pass owners are modern-safe" );
+idCVar r_rendererModernAutoPromote( "r_rendererModernAutoPromote", "0", CVAR_RENDERER | CVAR_BOOL, "allow r_glTier auto and r_renderer best to request the guarded modern visible path after promotion sign-off; off keeps ARB2 default" );
 idCVar r_rendererShaderReload( "r_rendererShaderReload", "0", CVAR_RENDERER | CVAR_BOOL, "allow runtime reload of the internal modern GL shader library" );
 idCVar r_rendererModernVisibleDepth( "r_rendererModernVisibleDepth", "0", CVAR_RENDERER | CVAR_BOOL, "execute graph-backed modern depth and compatible shadow-depth passes while ARB2 remains the visible color path" );
 idCVar r_rendererModernDepthDebug( "r_rendererModernDepthDebug", "0", CVAR_RENDERER | CVAR_INTEGER, "modern depth debug overlay: 0 = off, 1 = scene depth, 2 = shadow-map depth", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
@@ -518,6 +519,13 @@ static void R_RendererBenchmarkSelfTest_f( const idCmdArgs &args ) {
 	(void)args;
 	if ( !RendererBenchmark_RunSelfTest() ) {
 		common->Warning( "Renderer benchmark self-test failed" );
+	}
+}
+
+static void R_RendererDefaultPromotionSelfTest_f( const idCmdArgs &args ) {
+	(void)args;
+	if ( !RendererDefaultPromotion_RunSelfTest() ) {
+		common->Warning( "Renderer default promotion self-test failed" );
 	}
 }
 
@@ -2714,6 +2722,7 @@ void GfxInfo_f( const idCmdArgs &args ) {
 		common->Printf( "Renderer caps: %s\n", capsSummary );
 	}
 	RendererCompatibilityGates_PrintGfxInfo();
+	RendererBootstrap_PrintGfxInfo();
 	RendererBenchmarks_PrintGfxInfo();
 	common->Printf(
 		"Renderer GPU timers: %s, cvar=%d, timerQuery=%d\n",
@@ -3042,6 +3051,7 @@ void R_InitCommands( void ) {
 	cmdSystem->AddCommand( "rendererContextLadderSelfTest", R_RendererContextLadderSelfTest_f, CMD_FL_RENDERER, "run renderer context ladder self tests" );
 	cmdSystem->AddCommand( "rendererCompatibilityGatesSelfTest", R_RendererCompatibilityGatesSelfTest_f, CMD_FL_RENDERER, "run renderer driver-quirk and fallback-gate self tests" );
 	cmdSystem->AddCommand( "rendererBenchmarkSelfTest", R_RendererBenchmarkSelfTest_f, CMD_FL_RENDERER, "run renderer benchmark capture and percentile self tests" );
+	cmdSystem->AddCommand( "rendererDefaultPromotionSelfTest", R_RendererDefaultPromotionSelfTest_f, CMD_FL_RENDERER, "run renderer default-promotion gate self tests" );
 	cmdSystem->AddCommand( "rendererBenchmarkCapture", R_RendererBenchmarkCapture_f, CMD_FL_RENDERER, "print the latest renderer benchmark capture summary" );
 	cmdSystem->AddCommand( "rendererUploadSelfTest", R_RendererUploadSelfTest_f, CMD_FL_RENDERER, "run renderer upload stream self tests" );
 	cmdSystem->AddCommand( "rendererGpuTimerSelfTest", R_RendererGpuTimerSelfTest_f, CMD_FL_RENDERER, "run renderer GPU timer query self tests" );

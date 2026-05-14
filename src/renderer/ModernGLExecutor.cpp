@@ -11,6 +11,7 @@
 #include "ModernGLShaderLibrary.h"
 #include "ModernGLSubmitPlan.h"
 #include "RenderGraphResources.h"
+#include "RendererBootstrap.h"
 #include "RendererMetrics.h"
 #include "RendererUpload.h"
 
@@ -2945,7 +2946,9 @@ void R_ModernGLExecutor_Shutdown( void ) {
 }
 
 void R_ModernGLExecutor_PrepareFrame( const idScenePacketFrame &packetFrame, const idRenderGraph &graph ) {
-	const bool modernVisibleRequested = r_rendererModernVisible.GetBool();
+	const bool modernVisibleRequested =
+		r_rendererModernVisible.GetBool() ||
+		RendererBootstrap_ShouldAutoPromoteModernVisible();
 	const bool visibleDepthRequested = modernVisibleRequested || r_rendererModernVisibleDepth.GetBool() || r_rendererModernDepthDebug.GetInteger() > 0;
 	const bool deferredResolveRequested = modernVisibleRequested || r_rendererModernDeferred.GetBool() || r_rendererModernDeferredDebug.GetInteger() > 0;
 	const bool forwardPlusRequested = modernVisibleRequested || r_rendererForwardPlus.GetBool();

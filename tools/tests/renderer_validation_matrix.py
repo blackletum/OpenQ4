@@ -182,6 +182,29 @@ PERF_REGRESSION_THRESHOLDS = [
     },
 ]
 
+DEFAULT_PROMOTION_CRITERIA = [
+    {
+        "criterion": "tier",
+        "required": "`r_glTier auto` selects a modern GL 3.3+ tier after driver quirks and compatibility gates are applied",
+    },
+    {
+        "criterion": "renderer escape",
+        "required": "`r_renderer best` leaves promotion available; explicit `r_renderer arb2` keeps the ARB2 bridge",
+    },
+    {
+        "criterion": "compatibility gates",
+        "required": "modern baseline features, UBOs, MRT, render graph, scene packets, and shader library readiness are available",
+    },
+    {
+        "criterion": "fallback escape",
+        "required": "the ARB2 compatibility bridge remains available for rollback and explicit user selection",
+    },
+    {
+        "criterion": "manual sign-off",
+        "required": "`r_rendererModernAutoPromote 1` is set only after SP/MP gameplay, RenderDoc captures, and benchmark captures pass on target hardware",
+    },
+]
+
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
@@ -551,6 +574,25 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
             ],
         },
         {
+            "id": "renderer-default-promotion-selftest",
+            "category": "selftest",
+            "description": "Phase 17 default-promotion gates for r_glTier auto, explicit ARB2 escapes, compatibility gates, legacy fallback availability, and sign-off control.",
+            "args": [
+                "+set",
+                "r_rendererMetrics",
+                "2",
+                "+rendererDefaultPromotionSelfTest",
+                "+gfxInfo",
+            ],
+            "checks": [
+                ["RendererDefaultPromotion self-test passed"],
+                ["Renderer default promotion:"],
+                ["Renderer compatibility gates:"],
+                ["Selected renderer tier:"],
+                ["GL context request:"],
+            ],
+        },
+        {
             "id": "renderer-benchmark-selftest",
             "category": "selftest",
             "description": "Phase 16 benchmark capture format, frame-time percentile, preset budget, and regression-threshold coverage.",
@@ -851,6 +893,7 @@ def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dic
         "renderDocTierMatrix": RENDERDOC_TIER_MATRIX,
         "longRunValidationMatrix": LONG_RUN_VALIDATION_MATRIX,
         "perfRegressionThresholds": PERF_REGRESSION_THRESHOLDS,
+        "defaultPromotionCriteria": DEFAULT_PROMOTION_CRITERIA,
     }
     report_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -934,6 +977,16 @@ def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dic
     for item in PERF_REGRESSION_THRESHOLDS:
         lines.append(f"| `{item['preset']}` | {item['p95Ms']} ms | {item['p99Ms']} ms | {item['budget']} |")
 
+    lines += [
+        "",
+        "## Default Promotion Criteria",
+        "",
+        "| Criterion | Required Evidence |",
+        "|---|---|",
+    ]
+    for item in DEFAULT_PROMOTION_CRITERIA:
+        lines.append(f"| {item['criterion']} | {item['required']} |")
+
     report_md.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return report_json, report_md
 
@@ -974,6 +1027,9 @@ def main(argv: list[str]) -> int:
         print("\nPerformance regression thresholds:")
         for item in PERF_REGRESSION_THRESHOLDS:
             print(f"  {item['preset']}: P95 <= {item['p95Ms']} ms, P99 <= {item['p99Ms']} ms - {item['budget']}")
+        print("\nDefault promotion criteria:")
+        for item in DEFAULT_PROMOTION_CRITERIA:
+            print(f"  {item['criterion']}: {item['required']}")
         return 0
 
     executable = find_client_executable(root)

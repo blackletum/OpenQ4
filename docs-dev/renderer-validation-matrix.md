@@ -42,6 +42,7 @@ Automated coverage:
 | `renderer-modern-visible-selftest` | opt-in `r_rendererModernVisible` coverage for the guarded hybrid visible-frame bridge: graph-backed depth, G-buffer, deferred resolve, forward+ source output, pass-owner/fallback accounting, back-buffer composition, GPU timer coverage, and `gfxInfo` reporting |
 | `renderer-modern-compatibility-selftest` | Phase 14 modern-visible compatibility coverage for command-category ownership inventory, modern fullscreen GUI readiness, light-grid ownership, explicit post/copy/subview/render-demo/BSE fallback buckets, deterministic render-demo accounting, and `gfxInfo` reporting |
 | `renderer-compatibility-gates-selftest` | Phase 15 fallback-gate coverage for missing UBO, broken MRT, missing timer query, missing buffer storage, rejected debug-context fallback, and synthetic driver-quirk downgrades |
+| `renderer-default-promotion-selftest` | Phase 17 default-promotion coverage for `r_glTier auto`, explicit `r_renderer arb2` escape behavior, compatibility gates, modern-executor readiness, ARB2 rollback availability, and `r_rendererModernAutoPromote` sign-off control |
 | `renderer-benchmark-selftest` | Phase 16 benchmark coverage for rolling P50/P95/P99 frame-time capture, CPU front-end/visibility/packet/graph/submit/present timings, GPU pass timing fields, upload/draw/light/cluster/fallback counters, benchmark presets, and performance-threshold reporting |
 | `renderer-gpu-driven-selftest` | forced `r_glTier gl43` coverage for GL 4.3 SSBO submit records, compute scissor culling, clustered-bin validation, compacted indirect command generation, CPU/GPU readback comparison, masked multi-draw indirect execution, GPU timer coverage, and `gfxInfo` reporting |
 | `renderer-low-overhead-selftest` | forced `r_glTier gl45` coverage for GL 4.5 DSA graph texture/FBO allocation, DSA sampler creation, named buffer/FBO updates, UBO/SSBO/texture/sampler multi-bind batches, submit-batch compaction, bindless experiment reporting, persistent upload defaults, fence diagnostics, and `gfxInfo` reporting |
@@ -59,7 +60,7 @@ Automated coverage:
 
 The forced tier cases pass when startup succeeds and the selected tier is reported. If a machine cannot support the forced tier, the log must show the selected fallback tier.
 
-The visible-depth, G-buffer, clustered-light, deferred-resolve, forward+, modern-visible, modern-compatibility, compatibility-gates, benchmark, GPU-driven, and low-overhead self-tests intentionally run as their own safe cases instead of being appended to the foundation self-test startup command, because the engine command parser has a fixed startup command list budget.
+The visible-depth, G-buffer, clustered-light, deferred-resolve, forward+, modern-visible, modern-compatibility, compatibility-gates, default-promotion, benchmark, GPU-driven, and low-overhead self-tests intentionally run as their own safe cases instead of being appended to the foundation self-test startup command, because the engine command parser has a fixed startup command list budget.
 
 ## Compatibility Gates
 
@@ -75,6 +76,18 @@ The visible-depth, G-buffer, clustered-light, deferred-resolve, forward+, modern
 | driver quirk table | known-bad or synthetic driver matches can mask unsafe features before tier selection so `gfxInfo` and renderer bootstrap agree |
 
 `gfxInfo` prints both `Renderer driver quirks:` and `Renderer compatibility gates:`. The quirk line records matched rules and cap changes; the gate line records selected tier, UBO/MRT/timer/buffer-storage readiness, low-overhead readiness, debug fallback, and forced-tier support.
+
+## Default Promotion Criteria
+
+`r_rendererModernAutoPromote` is the Phase 17 sign-off switch for making the guarded modern visible path the automatic choice under `r_glTier auto`. Its default is `0`, so ARB2 remains the default visible renderer until the manual evidence below is complete. `gfxInfo` prints `Renderer default promotion:` with the current reason, and `rendererDefaultPromotionSelfTest` verifies the gate logic without loading a map.
+
+| Criterion | Required evidence |
+|---|---|
+| tier | `r_glTier auto` selects a modern GL 3.3+ tier after driver quirks and compatibility gates are applied |
+| renderer escape | `r_renderer best` leaves promotion available; explicit `r_renderer arb2` keeps the ARB2 bridge |
+| compatibility gates | modern baseline features, UBOs, MRT, scene packets, render graph, and Shader Library V2 readiness are available |
+| fallback escape | the ARB2 compatibility bridge remains selectable through `r_renderer arb2` and `r_glTier legacy` |
+| manual sign-off | SP/MP gameplay, RenderDoc captures, and benchmark captures pass on target hardware before `r_rendererModernAutoPromote 1` is used as a default |
 
 ## Deterministic Capture Matrix
 
@@ -138,10 +151,11 @@ For each gameplay case, validate the matrix variants that the hardware supports:
 | Dimension | Values |
 |---|---|
 | `r_glTier` | `auto`, `legacy`, `gl33`, `gl41`, `gl43`, `gl45`, `gl46` |
+| renderer escape | `r_renderer best`, `r_renderer arb2`, `r_glTier legacy` |
 | `r_swapInterval` | `0`, `1` |
 | `com_maxfps` | `30`, `240`, `0` |
 | display mode | windowed, fullscreen |
-| renderer diagnostics | `r_rendererMetrics 1`, `r_rendererMetrics 2` on at least one representative run |
+| renderer diagnostics | `r_rendererMetrics 1`, `r_rendererMetrics 2`, `r_rendererModernAutoPromote 0`, and one signed `r_rendererModernAutoPromote 1` candidate run after the other rows are clean |
 
 After each gameplay smoke, inspect the configured log file under `fs_savepath\<gameDir>\logs\openq4.log` or the case-specific log emitted by the launch tool. Fix errors and warnings, then repeat the loop until the case is clean.
 
@@ -153,3 +167,4 @@ After each gameplay smoke, inspect the configured log file under `fs_savepath\<g
 - No stock-asset compatibility overrides are added as a validation shortcut.
 - RenderDoc validation remains limited to forced modern/core bring-up paths until the visible renderer no longer depends on ARB2 compatibility features.
 - Benchmark captures report P50/P95/P99 frame pacing, active preset budgets, and threshold pass/fail status before any claim that the modern visible path matches or beats ARB2 on target scenes.
+- `r_rendererModernAutoPromote 1` is used only after the default-promotion criteria pass; `r_renderer arb2` and `r_glTier legacy` remain documented rollback paths.

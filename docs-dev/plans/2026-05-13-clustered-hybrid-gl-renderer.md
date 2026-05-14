@@ -561,13 +561,23 @@ Goal: optimize the renderer only after pass ownership and parity are stable.
 
 Goal: make the modern renderer the default only when it has earned it.
 
-- [ ] Define default promotion criteria in docs.
-- [ ] Make `r_glTier auto` choose a modern visible path only when the selected tier and driver pass compatibility gates.
-- [ ] Keep `r_renderer arb2` and `r_glTier legacy` available.
-- [ ] Remove diagnostic-only transitional code only after equivalent visible functionality exists.
-- [ ] Keep shader/material fallback paths documented.
-- [ ] Update `README.md`, `docs-dev/gl-renderer-modernization.md`, `docs-dev/renderer-validation-matrix.md`, and release notes.
-- [ ] Acceptance: default modern renderer is enabled only after SP/MP validation, RenderDoc workflow, and fallback escape hatches are all documented.
+- [x] Define default promotion criteria in docs.
+- [x] Make `r_glTier auto` choose a modern visible path only when the selected tier and driver pass compatibility gates.
+- [x] Keep `r_renderer arb2` and `r_glTier legacy` available.
+- [x] Remove diagnostic-only transitional code only after equivalent visible functionality exists.
+- [x] Keep shader/material fallback paths documented.
+- [x] Update `README.md`, `docs-dev/gl-renderer-modernization.md`, `docs-dev/renderer-validation-matrix.md`, and release notes.
+- [x] Acceptance: default modern renderer is enabled only after SP/MP validation, RenderDoc workflow, and fallback escape hatches are all documented.
+
+## Phase 17 Exit
+
+- Completed: Added a bootstrap-level default-promotion gate for the guarded modern visible path. `r_glTier auto` can now request modern-visible automatically only when `r_renderer best` leaves promotion available, the selected tier is modern, compatibility gates pass after driver quirks, the modern executor is available, the ARB2 bridge remains a rollback escape, and the explicit sign-off cvar is enabled.
+- Cvars added/changed: Added `r_rendererModernAutoPromote`, default `0`, as the release sign-off switch for automatic modern-visible promotion. `r_rendererModernVisible` remains the manual opt-in; `r_renderer arb2` and `r_glTier legacy` remain explicit fallback escapes.
+- Metrics added/changed: No frame metric counters changed. `gfxInfo` now prints `Renderer default promotion:` with active, eligible, gate, escape, executor, and blocking-reason state.
+- Self-tests added/changed: Added `rendererDefaultPromotionSelfTest` for unsigned eligibility, signed auto promotion, explicit ARB2 escape, forced legacy tier, compatibility-gate block, and missing-legacy-escape block.
+- Fallback behavior: ARB2 remains the default visible renderer because `r_rendererModernAutoPromote` defaults off. Automatic promotion is blocked when a user chooses `r_renderer arb2`, when `r_glTier` is not `auto`, when compatibility gates fail, or when the ARB2 rollback bridge is unavailable.
+- Validation run: `tools\build\meson_setup.ps1 compile -C builddir -- -j1`; `tools\build\meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects`; staged client diagnostics with `rendererDefaultPromotionSelfTest +gfxInfo` in `.home\q4base\logs\openq4_phase17_promotion.log`; explicit `r_renderer arb2` rollback diagnostics in `.home\q4base\logs\openq4_phase17_escape.log`; `python tools\tests\renderer_validation_matrix.py` passed 24/24 and wrote `.tmp\renderer-validation\20260514-152331\renderer_validation_report.md`.
+- Known limitations: Phase 17 creates the promotion contract and rollback controls. It does not claim default modern parity until the documented SP/MP gameplay, RenderDoc, and benchmark sign-off runs are completed on target hardware and the sign-off cvar is deliberately enabled.
 
 ## Suggested New Modules
 
@@ -608,6 +618,7 @@ These names are suggestions, not mandates. Existing local patterns should win wh
 - [x] `r_rendererPerfThresholdP99`: optional local P99 frame-time threshold override for benchmark captures.
 - [x] `r_rendererAdaptiveClusterGrid`: opt-in cluster-grid sizing experiment driven by the active benchmark preset.
 - [x] `r_rendererDynamicResolution`: opt-in dynamic-resolution/screen-percentage reporting hook; inactive by default.
+- [x] `r_rendererModernAutoPromote`: default-off sign-off switch for gated modern-visible promotion under `r_glTier auto`.
 
 Every cvar must print enough context in `gfxInfo` or metrics to explain whether it is active, unavailable, or falling back.
 
@@ -645,6 +656,7 @@ Required self-tests should grow to include:
 - [x] `rendererVisiblePathSelfTest`
 - [x] `rendererLowOverheadSelfTest`
 - [x] `rendererBenchmarkSelfTest`
+- [x] `rendererDefaultPromotionSelfTest`
 
 ## Phase Exit Template
 
@@ -682,7 +694,7 @@ Every phase should end with a short note using this structure:
 - [x] 14. Post, GUI, subviews, render demos, and BSE parity.
 - [x] 15. Compatibility and parity hardening.
 - [x] 16. Performance tuning and scalability.
-- [ ] 17. Default promotion and cleanup.
+- [x] 17. Default promotion and cleanup.
 
 ## Definition Of Done
 
@@ -692,9 +704,9 @@ The modern clustered hybrid renderer is complete when:
 - [ ] GL 4.1 has parity with the GL 3.3 path and no compute dependency.
 - [ ] GL 4.3 can use compute/SSBO/indirect paths with CPU-reference validation.
 - [x] GL 4.5 can use persistent mapped streaming, DSA, multi-bind, and fence diagnostics.
-- [ ] ARB2 remains selectable and useful as a compatibility fallback.
+- [x] ARB2 remains selectable and useful as a compatibility fallback.
 - [ ] Stock SP and MP validation maps reach gameplay without replacement content.
 - [ ] RenderDoc captures are readable and pass/resource names are stable.
-- [ ] `gfxInfo`, metrics, and validation reports explain active features and fallbacks.
-- [ ] The default renderer choice is documented, reversible, and tier-gated.
+- [x] `gfxInfo`, metrics, and validation reports explain active features and fallbacks.
+- [x] The default renderer choice is documented, reversible, and tier-gated.
 - [ ] Release notes describe user-visible benefits and compatibility notes.

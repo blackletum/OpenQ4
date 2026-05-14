@@ -22,6 +22,20 @@ The internal tier names are:
 
 Metal and Vulkan are intentionally out of scope for this track.
 
+## Default Promotion
+
+The visible default remains conservative. `r_glTier auto` can select a modern-capable tier after capability probing, but the automatic visible path stays on the ARB2 compatibility bridge unless every default-promotion gate passes and `r_rendererModernAutoPromote 1` is explicitly set after release sign-off.
+
+Default promotion requires:
+
+- `r_glTier auto`, not a forced modern or legacy tier.
+- `r_renderer best`, so explicit `r_renderer arb2` remains a rollback escape.
+- a selected modern GL 3.3+ tier with baseline gates passing after driver quirks are applied.
+- a live modern executor and the ARB2 bridge still available as an escape hatch.
+- completed SP/MP gameplay smoke, RenderDoc tier captures, and benchmark captures on target hardware.
+
+`gfxInfo` prints `Renderer default promotion:` with active/eligible state and the current blocking reason. `rendererDefaultPromotionSelfTest` covers the signed path, unsigned-but-eligible path, explicit ARB2 escape, forced legacy tier, compatibility-gate block, and missing-legacy-escape block. `r_rendererModernVisible 1` remains the manual opt-in for targeted bring-up; `r_rendererModernAutoPromote 1` is the release sign-off switch that lets `r_glTier auto` request that guarded visible path automatically.
+
 ## Cross-Platform Context Ladder
 
 OpenQ4 now builds context candidates from one shared renderer-side ladder instead of keeping per-platform arrays. Windows SDL3, Linux SDL3, native Linux/GLX, and native macOS/NSOpenGL all record the selected request in `glConfig.contextRequest`, and `gfxInfo` prints both requested and actual debug-context state.
@@ -109,7 +123,7 @@ Scene Packet V2 adds copied geometry and instance records to the packet stream. 
 
 ## Modern GL Executor Bring-Up
 
-`r_rendererModernExecutor 1` enables the first modern-executor entry point. `r_rendererModernSubmit 1` additionally enables the first real GL 3.3 submission path, and `r_rendererModernVisible 1` opts into the guarded hybrid visible-frame bridge:
+`r_rendererModernExecutor 1` enables the first modern-executor entry point. `r_rendererModernSubmit 1` additionally enables the first real GL 3.3 submission path, and `r_rendererModernVisible 1` opts into the guarded hybrid visible-frame bridge. After Phase 17, `r_rendererModernAutoPromote 1` can request the same guarded visible path automatically only when `r_glTier auto`, `r_renderer best`, compatibility gates, executor readiness, and ARB2 rollback availability all pass:
 
 - Requires the selected renderer tier to expose the GL 3.3 baseline feature set, including VAOs, UBOs, and buffer objects.
 - Allocates a starter VAO and frame-constants UBO during OpenGL initialization.
@@ -193,7 +207,7 @@ The active visible renderer remains ARB2 by default. The modern executor is stil
 - `ModernGLSubmitPlan` translates draw-plan entries into submit commands from copied geometry and instance records when the legacy vertex cache exposes VBO-backed ambient buffers and either VBO-backed, frame-temp, generated, or CPU-uploadable index data, carries shader-kind/reflection metadata forward, and records missing-buffer fallback reasons for the GL3 executor.
 - `RendererUpload` owns static vertex/index buffer uploads, the feature-gated dynamic frame-temp stream, GL 4.5 persistent mapped defaulting with fence-retirement diagnostics, and the old vertex-cache path as a fallback.
 
-Use `gfxInfo` to inspect the selected tier, context profile, feature flags, capability summary, driver quirk report, compatibility gates, benchmark preset/threshold state, GPU-timer availability, scene-packet limits/source reporting, geometry/instance record limits, resource-graph limits, render-graph resource ownership, material resource-table readiness, modern-executor availability, visible-depth resource/debug-overlay state, G-buffer resource/MRT/debug-overlay state, deferred resolve resource/debug-overlay state, forward+ resource/program/cluster/draw/fallback state, modern visible-frame owner/composition/fallback state, modern compatibility inventory state, clustered-light UBO/debug-overlay state, GL state-cache/debug-label status, Shader Library V2 status, draw-plan coverage, submit-plan readiness, GL 4.3 GPU-driven resource/validation/indirect status, GL 4.5 DSA/multi-bind/bindless-experiment status, and upload stream/fence diagnostics. Use `rendererContextLadderSelfTest`, `rendererTierSelfTest`, `rendererCompatibilityGatesSelfTest`, `rendererBenchmarkSelfTest`, `rendererBenchmarkCapture`, `rendererUploadSelfTest`, `rendererGpuTimerSelfTest`, `rendererScenePacketSelfTest`, `rendererRenderGraphSelfTest`, `rendererRenderGraphResourceSelfTest`, `rendererMaterialResourceTableSelfTest`, `rendererGeometryResourceSelfTest`, `rendererGLStateCacheSelfTest`, `rendererModernGLExecutorSelfTest`, `rendererGpuDrivenSelfTest`, `rendererLowOverheadSelfTest`, `rendererVisiblePathSelfTest`, `rendererGBufferSelfTest`, `rendererClusterGridSelfTest`, `rendererDeferredResolveSelfTest`, `rendererForwardPlusSelfTest`, `rendererModernVisibleSelfTest`, `rendererModernCompatibilitySelfTest`, `rendererShaderLibrarySelfTest`, `rendererModernGLDrawPlanSelfTest`, and `rendererModernGLSubmitPlanSelfTest` to run the live renderer foundation tests.
+Use `gfxInfo` to inspect the selected tier, context profile, feature flags, capability summary, driver quirk report, compatibility gates, default-promotion state, benchmark preset/threshold state, GPU-timer availability, scene-packet limits/source reporting, geometry/instance record limits, resource-graph limits, render-graph resource ownership, material resource-table readiness, modern-executor availability, visible-depth resource/debug-overlay state, G-buffer resource/MRT/debug-overlay state, deferred resolve resource/debug-overlay state, forward+ resource/program/cluster/draw/fallback state, modern visible-frame owner/composition/fallback state, modern compatibility inventory state, clustered-light UBO/debug-overlay state, GL state-cache/debug-label status, Shader Library V2 status, draw-plan coverage, submit-plan readiness, GL 4.3 GPU-driven resource/validation/indirect status, GL 4.5 DSA/multi-bind/bindless-experiment status, and upload stream/fence diagnostics. Use `rendererContextLadderSelfTest`, `rendererTierSelfTest`, `rendererCompatibilityGatesSelfTest`, `rendererDefaultPromotionSelfTest`, `rendererBenchmarkSelfTest`, `rendererBenchmarkCapture`, `rendererUploadSelfTest`, `rendererGpuTimerSelfTest`, `rendererScenePacketSelfTest`, `rendererRenderGraphSelfTest`, `rendererRenderGraphResourceSelfTest`, `rendererMaterialResourceTableSelfTest`, `rendererGeometryResourceSelfTest`, `rendererGLStateCacheSelfTest`, `rendererModernGLExecutorSelfTest`, `rendererGpuDrivenSelfTest`, `rendererLowOverheadSelfTest`, `rendererVisiblePathSelfTest`, `rendererGBufferSelfTest`, `rendererClusterGridSelfTest`, `rendererDeferredResolveSelfTest`, `rendererForwardPlusSelfTest`, `rendererModernVisibleSelfTest`, `rendererModernCompatibilitySelfTest`, `rendererShaderLibrarySelfTest`, `rendererModernGLDrawPlanSelfTest`, and `rendererModernGLSubmitPlanSelfTest` to run the live renderer foundation tests.
 
 The automated safe validation matrix lives in [renderer-validation-matrix.md](renderer-validation-matrix.md) and can be run with:
 
@@ -201,4 +215,4 @@ The automated safe validation matrix lives in [renderer-validation-matrix.md](re
 python tools\tests\renderer_validation_matrix.py
 ```
 
-The runner covers startup, `gfxInfo`, forced `r_glTier` probes, debug-context fallback, presentation cvar probes, compatibility-gate diagnostics, benchmark diagnostics, performance-regression thresholds, clustered-light diagnostics, deferred-resolve diagnostics, forward+ diagnostics, modern-visible diagnostics, modern compatibility diagnostics, GPU-driven diagnostics, and all renderer foundation self-tests without entering gameplay. The manual sections of that document remain the release sign-off matrix for deterministic captures, RenderDoc tier captures, long-run `vid_restart`/map-transition loops, and SP/MP map smoke tests once map startup is safe to automate.
+The runner covers startup, `gfxInfo`, forced `r_glTier` probes, debug-context fallback, presentation cvar probes, compatibility-gate diagnostics, default-promotion diagnostics, benchmark diagnostics, performance-regression thresholds, clustered-light diagnostics, deferred-resolve diagnostics, forward+ diagnostics, modern-visible diagnostics, modern compatibility diagnostics, GPU-driven diagnostics, and all renderer foundation self-tests without entering gameplay. The manual sections of that document remain the release sign-off matrix for deterministic captures, RenderDoc tier captures, long-run `vid_restart`/map-transition loops, and SP/MP map smoke tests once map startup is safe to automate.
