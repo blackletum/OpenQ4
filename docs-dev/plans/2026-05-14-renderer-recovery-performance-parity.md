@@ -89,19 +89,27 @@ Implementation note 2026-05-14:
 
 Goal: modern opt-in work must be cheap when it cannot become visible.
 
-- [ ] Split the modern executor into explicit modes: `analyze`, `sidecar-diagnostic`, and `visible-replacement`.
-- [ ] Run pass-owner/fallback analysis before executing expensive graph passes.
-- [ ] If `r_rendererModernVisible 1` is blocked by legacy-owned post, subview, BSE, render-demo, shadow ownership, or non-ready GUI work, skip depth/G-buffer/deferred/forward+ execution unless a debug overlay or explicit sidecar cvar requested that pass.
-- [ ] Make auto-promotion and explicit visible requests use the same `modernVisibleRequested` state in stats, owner analysis, execution, metrics, and `gfxInfo`.
-- [ ] Add metrics for `wouldExecute`, `executed`, `skippedBlocked`, `skippedNoConsumer`, and `duplicatedWithLegacy` per pass.
-- [ ] Make `r_rendererModernSubmit` remain a masked diagnostic path only; it must not silently enable the whole visible pipeline.
-- [ ] Treat shadow-map passes as consumers and producers in the skip analysis. Do not render modern shadow maps if the receiver lighting pass will be legacy-owned, unless `r_shadowMapDebugOverlay`, `r_shadowMapReport`, or a shadow validation cvar explicitly requests a sidecar capture.
+- [x] Split the modern executor into explicit modes: `analyze`, `sidecar-diagnostic`, and `visible-replacement`.
+- [x] Run pass-owner/fallback analysis before executing expensive graph passes.
+- [x] If `r_rendererModernVisible 1` is blocked by legacy-owned post, subview, BSE, render-demo, shadow ownership, or non-ready GUI work, skip depth/G-buffer/deferred/forward+ execution unless a debug overlay or explicit sidecar cvar requested that pass.
+- [x] Make auto-promotion and explicit visible requests use the same `modernVisibleRequested` state in stats, owner analysis, execution, metrics, and `gfxInfo`.
+- [x] Add metrics for `wouldExecute`, `executed`, `skippedBlocked`, `skippedNoConsumer`, and `duplicatedWithLegacy` per pass.
+- [x] Make `r_rendererModernSubmit` remain a masked diagnostic path only; it must not silently enable the whole visible pipeline.
+- [x] Treat shadow-map passes as consumers and producers in the skip analysis. Do not render modern shadow maps if the receiver lighting pass will be legacy-owned, unless `r_shadowMapDebugOverlay`, `r_shadowMapReport`, or a shadow validation cvar explicitly requests a sidecar capture.
 
 Acceptance:
 
 - [ ] Enabling `r_rendererModernVisible 1` in a scene with known legacy fallbacks does not execute modern G-buffer/deferred/forward+ work unless composition can occur.
-- [ ] Metrics explain the skip reason in one line.
+- [x] Metrics explain the skip reason in one line.
 - [ ] The previous 5 FPS scene returns near the ARB2 baseline when modern composition is blocked.
+
+Phase 2 implementation notes:
+
+- `ModernGLExecutor` now computes one effective modern-visible request for explicit and auto-promoted frames, then chooses `analyze`, `sidecar-diagnostic`, or `visible-replacement` after compatibility ownership is known.
+- Blocked modern-visible frames stay in analyze-only mode unless an explicit sidecar/debug request exists. Depth/shadow-depth, G-buffer, deferred resolve, forward+, cluster lighting, GPU-driven buffer updates, and indirect submit are no longer executed just because the executor is enabled.
+- Shadow-depth work is gated through the same visible-depth producer path. `r_shadowMapDebugOverlay` and `r_shadowMapReport` request a shadow sidecar only when shadow maps and shadows are enabled; otherwise legacy-owned lighting does not cause modern shadow-map work to duplicate it.
+- `modernPassGate` metrics report per-pass `would`, `exec`, `skipBlocked`, `skipNoConsumer`, and `dupLegacy` counters. `rendererModernCompatibilitySelfTest` now verifies blocked post/subview/render-demo/BSE ownership produces `skipBlocked=1/1/1/1` with no modern pass execution.
+- Validation passed for `tools/build/meson_setup.ps1 compile -C builddir`, `tools/build/meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects`, and the compatibility self-test with zero `idStr::snPrintf` overflow warnings. A bounded SP smoke produced the new gate telemetry but was stopped while loading `game/core2`, so real in-game FPS recovery remains open.
 
 ## Phase 3: Replace Passes Instead Of Duplicating Them
 
