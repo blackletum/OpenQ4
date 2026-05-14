@@ -280,6 +280,24 @@ static int R_MaterialResourceTable_SemanticSlot( materialResourceTextureSemantic
 	}
 }
 
+static int R_MaterialResourceTable_BlendBits( int drawStateBits ) {
+	return drawStateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
+}
+
+static bool R_MaterialResourceTable_IsAdditiveBlend( int drawStateBits ) {
+	return R_MaterialResourceTable_BlendBits( drawStateBits ) == ( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE );
+}
+
+static bool R_MaterialResourceTable_IsFilterBlend( int drawStateBits ) {
+	const int blendBits = R_MaterialResourceTable_BlendBits( drawStateBits );
+	return blendBits == ( GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ZERO )
+		|| blendBits == ( GLS_SRCBLEND_ZERO | GLS_DSTBLEND_SRC_COLOR );
+}
+
+static bool R_MaterialResourceTable_IsAlphaBlend( int drawStateBits ) {
+	return R_MaterialResourceTable_BlendBits( drawStateBits ) == ( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
+}
+
 static void R_MaterialResourceTable_UpdateRecordSemanticFlags( materialResourceTableRecord_t &record, materialResourceTextureSemantic_t semantic, const idImage *image ) {
 	const bool present = image != NULL;
 	switch ( semantic ) {
@@ -304,6 +322,15 @@ static void R_MaterialResourceTable_UpdateRecordSemanticFlags( materialResourceT
 	default:
 		break;
 	}
+}
+
+static int R_MaterialResourceTable_FindTextureBindingIndex( const materialResourceTableRecord_t &record, materialResourceTextureSemantic_t semantic ) {
+	for ( int i = 0; i < record.textureBindingCount; ++i ) {
+		if ( record.textures[i].semantic == semantic ) {
+			return i;
+		}
+	}
+	return -1;
 }
 
 static bool R_MaterialResourceTable_HasSemanticBinding( const materialResourceTableRecord_t &record, materialResourceTextureSemantic_t semantic ) {
@@ -354,7 +381,16 @@ static void R_MaterialResourceTable_AddTextureBinding(
 	binding.stageRegisterCount = stage != NULL ? stage->mNumStageRegisters : 0;
 	binding.drawStateBits = stage != NULL ? stage->drawStateBits : 0;
 	binding.conditionRegister = stage != NULL ? stage->conditionRegister : 0;
+	binding.hasConditionRegister = stage != NULL && stage->mNumStageOps > 0;
+	binding.hasAlphaTest = stage != NULL && stage->hasAlphaTest;
+	binding.alphaTestMode = stage != NULL ? stage->alphaTestMode : 0;
 	binding.alphaTestRegister = stage != NULL ? stage->alphaTestRegister : 0;
+	binding.texgen = stage != NULL ? static_cast<int>( stage->texture.texgen ) : static_cast<int>( TG_EXPLICIT );
+	binding.vertexColorMode = stage != NULL ? static_cast<int>( stage->vertexColor ) : static_cast<int>( SVC_IGNORE );
+	binding.privatePolygonOffset = stage != NULL ? stage->privatePolygonOffset : 0.0f;
+	binding.blendEnabled = stage != NULL && R_MaterialResourceTable_BlendBits( stage->drawStateBits ) != 0;
+	binding.depthWrite = stage != NULL && ( stage->drawStateBits & GLS_DEPTHMASK ) != 0;
+	binding.colorMasked = stage != NULL && ( stage->drawStateBits & GLS_COLORMASK ) != 0;
 	if ( stage != NULL ) {
 		memcpy( binding.colorRegisters, stage->color.registers, sizeof( binding.colorRegisters ) );
 		memcpy( binding.matrixRegisters, stage->texture.matrix, sizeof( binding.matrixRegisters ) );
@@ -498,6 +534,7 @@ static void R_MaterialResourceTable_ScanMaterialStages( materialResourceTableRec
 		R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_MISSING_MATERIAL, MATERIAL_RESOURCE_FALLBACK_FLAG_MISSING_MATERIAL );
 		return;
 	}
+	record.stageCount = material->GetNumStages();
 	if ( !material->IsDrawn() ) {
 		R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_NO_DRAW_STAGES, MATERIAL_RESOURCE_FALLBACK_FLAG_NO_DRAW_STAGES );
 	}
@@ -510,10 +547,27 @@ static void R_MaterialResourceTable_ScanMaterialStages( materialResourceTableRec
 		if ( stage == NULL ) {
 			continue;
 		}
+		record.evaluatedStageCount++;
+		record.hasConditionRegisters |= stage->mNumStageOps > 0;
+		record.hasTextureMatrix |= stage->texture.hasMatrix;
+		record.hasVertexColor |= stage->vertexColor != SVC_IGNORE;
+		record.hasPrivatePolygonOffset |= stage->privatePolygonOffset != 0.0f;
+		if ( R_MaterialResourceTable_IsAdditiveBlend( stage->drawStateBits ) ) {
+			record.additiveStageCount++;
+		} else if ( R_MaterialResourceTable_IsFilterBlend( stage->drawStateBits ) ) {
+			record.filterStageCount++;
+		} else if ( R_MaterialResourceTable_IsAlphaBlend( stage->drawStateBits ) ) {
+			record.blendStageCount++;
+		}
 		if ( stage->hasAlphaTest ) {
 			record.alphaTest = true;
 			record.alphaTestMode = stage->alphaTestMode;
 			record.alphaTestRegister = stage->alphaTestRegister;
+			record.shadowAlphaTest = true;
+			record.shadowAlphaTestMode = stage->alphaTestMode;
+			record.shadowAlphaTestRegister = stage->alphaTestRegister;
+			record.shadowUsesTextureMatrix |= stage->texture.hasMatrix;
+			record.shadowUsesVertexColor |= stage->vertexColor != SVC_IGNORE;
 		}
 		if ( stage->newStage != NULL ) {
 			R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_CUSTOM_PROGRAM, MATERIAL_RESOURCE_FALLBACK_FLAG_CUSTOM_PROGRAM );
@@ -523,7 +577,7 @@ static void R_MaterialResourceTable_ScanMaterialStages( materialResourceTableRec
 			R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_DYNAMIC_IMAGE, MATERIAL_RESOURCE_FALLBACK_FLAG_DYNAMIC_IMAGE );
 			rg_materialResourceTable.stats.unsupportedFeatures++;
 		}
-		if ( stage->texture.texgen != TG_EXPLICIT && stage->texture.texgen != TG_SCREEN && stage->texture.texgen != TG_SCREEN2 ) {
+		if ( stage->texture.texgen != TG_EXPLICIT ) {
 			R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_UNSUPPORTED_TEXGEN, MATERIAL_RESOURCE_FALLBACK_FLAG_UNSUPPORTED_TEXGEN );
 			rg_materialResourceTable.stats.unsupportedFeatures++;
 		}
@@ -532,6 +586,27 @@ static void R_MaterialResourceTable_ScanMaterialStages( materialResourceTableRec
 		if ( !R_MaterialResourceTable_HasSemanticBinding( record, semantic ) ) {
 			R_MaterialResourceTable_AddTextureBinding( record, semantic, stage->texture.image, stage, i );
 		}
+		if ( stage->hasAlphaTest && record.shadowAlphaBindingIndex < 0 ) {
+			record.shadowAlphaBindingIndex = R_MaterialResourceTable_FindTextureBindingIndex( record, semantic );
+		}
+	}
+
+	record.shadowCasterSupported = record.castsShadow && record.fallbackReason == MATERIAL_RESOURCE_FALLBACK_NONE;
+	if ( record.fallbackReason != MATERIAL_RESOURCE_FALLBACK_NONE ) {
+		record.shadowFallbackFlags |= record.fallbackFlags;
+		record.shadowCasterSupported = false;
+	}
+	if ( record.shadowAlphaTest && record.shadowAlphaBindingIndex < 0 ) {
+		record.shadowFallbackFlags |= MATERIAL_RESOURCE_FALLBACK_FLAG_MISSING_IMAGE;
+		record.shadowCasterSupported = false;
+	}
+	if ( record.shadowUsesTextureMatrix ) {
+		record.shadowFallbackFlags |= MATERIAL_RESOURCE_FALLBACK_FLAG_UNSUPPORTED_TEXGEN;
+		record.shadowCasterSupported = false;
+	}
+	if ( record.shadowUsesVertexColor || record.twoSided ) {
+		record.shadowFallbackFlags |= MATERIAL_RESOURCE_FALLBACK_FLAG_CUSTOM_PROGRAM;
+		record.shadowCasterSupported = false;
 	}
 }
 
@@ -550,6 +625,23 @@ static void R_MaterialResourceTable_AddSourceImages( materialResourceTableRecord
 	}
 	if ( sourceRecord.permutation.materialClass == RENDER_MATERIAL_POST_PROCESS && sourceRecord.diffuseImage != NULL ) {
 		R_MaterialResourceTable_AddTextureBinding( record, MATERIAL_RESOURCE_TEXTURE_POST_PROCESS, sourceRecord.diffuseImage, NULL, -1 );
+	}
+}
+
+static void R_MaterialResourceTable_FinalizeShadowContract( materialResourceTableRecord_t &record ) {
+	record.shadowFallbackFlags |= record.fallbackFlags;
+	record.shadowCasterSupported = record.castsShadow && record.fallbackReason == MATERIAL_RESOURCE_FALLBACK_NONE;
+	if ( record.shadowAlphaTest && record.shadowAlphaBindingIndex < 0 ) {
+		record.shadowFallbackFlags |= MATERIAL_RESOURCE_FALLBACK_FLAG_MISSING_IMAGE;
+		record.shadowCasterSupported = false;
+	}
+	if ( record.shadowUsesTextureMatrix ) {
+		record.shadowFallbackFlags |= MATERIAL_RESOURCE_FALLBACK_FLAG_UNSUPPORTED_TEXGEN;
+		record.shadowCasterSupported = false;
+	}
+	if ( record.shadowUsesVertexColor || record.twoSided ) {
+		record.shadowFallbackFlags |= MATERIAL_RESOURCE_FALLBACK_FLAG_CUSTOM_PROGRAM;
+		record.shadowCasterSupported = false;
 	}
 }
 
@@ -574,12 +666,18 @@ static bool R_MaterialResourceTable_AddRecordFromSource( const materialResourceR
 	record.sortGroup = R_MaterialResourceTable_SortGroupForMaterial( sourceRecord.material, record.materialClass );
 	record.blendMode = R_MaterialResourceTable_BlendModeForMaterial( sourceRecord.material, record.materialClass );
 	record.drawn = sourceRecord.material != NULL ? sourceRecord.material->IsDrawn() : false;
+	record.receivesLighting = sourceRecord.material != NULL ? sourceRecord.material->ReceivesLighting() : false;
+	record.castsShadow = sourceRecord.material != NULL ? sourceRecord.material->SurfaceCastsShadow() : false;
+	record.twoSided = sourceRecord.material != NULL ? ( sourceRecord.material->GetCullType() == CT_TWO_SIDED || sourceRecord.material->ShouldCreateBackSides() ) : false;
 	record.alphaTest = sourceRecord.permutation.alphaMode == MC_PERFORATED || record.blendMode == MATERIAL_RESOURCE_BLEND_ALPHA_TEST;
 	record.alphaTestMode = 0;
 	record.alphaTestRegister = 0;
 	record.needsCurrentRender = sourceRecord.material != NULL && sourceRecord.material->TestMaterialFlag( MF_NEED_CURRENT_RENDER );
 	record.hasGui = sourceRecord.material != NULL && sourceRecord.material->HasGui();
 	record.hasSubview = sourceRecord.material != NULL && sourceRecord.material->HasSubview();
+	record.hasMaterialPolygonOffset = sourceRecord.material != NULL && sourceRecord.material->TestMaterialFlag( MF_POLYGONOFFSET );
+	record.polygonOffset = sourceRecord.material != NULL ? sourceRecord.material->GetPolygonOffset() : 0.0f;
+	record.shadowAlphaBindingIndex = -1;
 	record.registerStart = 0;
 	record.registerCount = sourceRecord.material != NULL ? sourceRecord.material->GetNumRegisters() : 0;
 	record.fallbackReason = MATERIAL_RESOURCE_FALLBACK_NONE;
@@ -602,6 +700,11 @@ static bool R_MaterialResourceTable_AddRecordFromSource( const materialResourceR
 		R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_MISSING_IMAGE, MATERIAL_RESOURCE_FALLBACK_FLAG_MISSING_IMAGE );
 		rg_materialResourceTable.stats.missingImages++;
 	}
+	if ( !scanMaterialStages ) {
+		record.shadowCasterSupported = record.castsShadow && record.fallbackReason == MATERIAL_RESOURCE_FALLBACK_NONE;
+		record.shadowFallbackFlags = record.fallbackFlags;
+	}
+	R_MaterialResourceTable_FinalizeShadowContract( record );
 	R_MaterialResourceTable_FinalizeRegisterRange( record );
 	R_MaterialResourceTable_CountClass( record );
 	R_MaterialResourceTable_CountFallbacks( record );
@@ -736,7 +839,7 @@ void R_MaterialResourceTable_DumpLatest( void ) {
 	for ( int i = 0; i < stats.records; ++i ) {
 		const materialResourceTableRecord_t &record = rg_materialResourceTable.records[i];
 		common->Printf(
-			"  material[%d] source=%d id=%d name='%s' class=%s blend=%s sort=%s/%.2f regs=%d+%d stageRegs=%d+%d alpha=%d textures=%d fallback=%s flags=0x%x current=%d gui=%d subview=%d\n",
+			"  material[%d] source=%d id=%d name='%s' class=%s blend=%s sort=%s/%.2f regs=%d+%d stageRegs=%d+%d stages=%d/%d alpha=%d textures=%d fallback=%s flags=0x%x current=%d gui=%d subview=%d light=%d shadow=%d/%d matrix=%d vertexColor=%d offset=%.2f twoSided=%d shadowFlags=0x%x\n",
 			record.tableIndex,
 			record.sourceMaterialRecordIndex,
 			record.materialId,
@@ -749,17 +852,27 @@ void R_MaterialResourceTable_DumpLatest( void ) {
 			record.registerCount,
 			record.stageRegisterStart,
 			record.stageRegisterCount,
+			record.evaluatedStageCount,
+			record.stageCount,
 			record.alphaTest ? 1 : 0,
 			record.textureBindingCount,
 			MaterialResourceFallbackReason_Name( record.fallbackReason ),
 			record.fallbackFlags,
 			record.needsCurrentRender ? 1 : 0,
 			record.hasGui ? 1 : 0,
-			record.hasSubview ? 1 : 0 );
+			record.hasSubview ? 1 : 0,
+			record.receivesLighting ? 1 : 0,
+			record.castsShadow ? 1 : 0,
+			record.shadowCasterSupported ? 1 : 0,
+			record.hasTextureMatrix ? 1 : 0,
+			record.hasVertexColor ? 1 : 0,
+			record.polygonOffset,
+			record.twoSided ? 1 : 0,
+			record.shadowFallbackFlags );
 		for ( int bindingIndex = 0; bindingIndex < record.textureBindingCount; ++bindingIndex ) {
 			const materialResourceTextureBinding_t &binding = record.textures[bindingIndex];
 			common->Printf(
-				"    tex[%d] semantic=%s unit=%d image='%s' handle=%u loaded=%d defaulted=%d filter=%d repeat=%d stage=%d regs=%d+%d matrix=%d array=%d view=%d bindless=%d\n",
+				"    tex[%d] semantic=%s unit=%d image='%s' handle=%u loaded=%d defaulted=%d filter=%d repeat=%d stage=%d regs=%d+%d cond=%d alpha=%d texgen=%d matrix=%d vcolor=%d blend=%d depthWrite=%d offset=%.2f array=%d view=%d bindless=%d\n",
 				bindingIndex,
 				MaterialResourceTextureSemantic_Name( binding.semantic ),
 				binding.classicUnit,
@@ -772,7 +885,14 @@ void R_MaterialResourceTable_DumpLatest( void ) {
 				binding.stageIndex,
 				binding.stageRegisterStart,
 				binding.stageRegisterCount,
+				binding.hasConditionRegister ? 1 : 0,
+				binding.hasAlphaTest ? 1 : 0,
+				binding.texgen,
 				binding.hasTextureMatrix ? 1 : 0,
+				binding.vertexColorMode,
+				binding.blendEnabled ? 1 : 0,
+				binding.depthWrite ? 1 : 0,
+				binding.privatePolygonOffset,
 				binding.textureArrayCandidate ? 1 : 0,
 				binding.textureViewCandidate ? 1 : 0,
 				binding.bindlessEnabled ? 1 : 0 );

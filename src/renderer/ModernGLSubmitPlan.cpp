@@ -134,6 +134,10 @@ bool idModernGLSubmitPlan::AddCommand( const modernGLDrawPlanEntry_t &entry ) {
 	command.debugColorLocation = entry.debugColorLocation;
 	command.localParamsLocation = entry.localParamsLocation;
 	command.mainTextureLocation = entry.mainTextureLocation;
+	command.normalTextureLocation = entry.normalTextureLocation;
+	command.specularTextureLocation = entry.specularTextureLocation;
+	command.emissiveTextureLocation = entry.emissiveTextureLocation;
+	command.materialFlagsLocation = entry.materialFlagsLocation;
 	command.vertexStride = geo->vertexStride;
 	command.indexType = geo->indexType;
 	command.indexCount = entry.indexCount;

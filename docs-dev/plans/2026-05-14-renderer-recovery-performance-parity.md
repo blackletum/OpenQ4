@@ -167,18 +167,26 @@ Phase 4 implementation note:
 
 Goal: replace placeholder shader output with stock-material-compatible rendering.
 
-- [ ] Expand `MaterialResourceTable` from first semantic texture lookup into a stage program contract: conditions, color registers, alpha test registers, texture matrices, texgen, blend/depth state, polygon offset, and sort behavior.
+- [x] Expand `MaterialResourceTable` from first semantic texture lookup into a stage program contract: conditions, color registers, alpha test registers, texture matrices, texgen, blend/depth state, polygon offset, and sort behavior.
 - [ ] Implement GLSL material evaluation for the conservative stock subset first: bump, diffuse, specular, additive, filter, alpha-test, and emissive/light-grid stages.
-- [ ] Implement a matching shadow-caster material contract for promoted materials: alpha-test registers, hashed-alpha coverage, texture matrices, vertex color influence, polygon offset, two-sided/cull behavior, and unsupported-stage fallback must match the visible material path.
-- [ ] Keep `newStage`, dynamic image, `_currentRender`, screen texgen, and complex post stages as explicit fallbacks until promoted.
-- [ ] Add normal/specular map support to G-buffer and forward+ programs.
+- [x] Implement a matching shadow-caster material contract for promoted materials: alpha-test registers, hashed-alpha coverage, texture matrices, vertex color influence, polygon offset, two-sided/cull behavior, and unsupported-stage fallback must match the visible material path.
+- [x] Keep `newStage`, dynamic image, `_currentRender`, screen texgen, and complex post stages as explicit fallbacks until promoted.
+- [x] Add normal/specular map support to G-buffer and forward+ programs.
 - [ ] Preserve gamma/HDR correctness: texture sampling, linear lighting, HDR scene output, tone mapping, and GUI LDR overlay must be ordered correctly.
 - [ ] Add material parity captures for common SP/MP wall, armor, weapon, glass, decal, GUI, and animated material cases.
 
 Acceptance:
 
-- [ ] The modern G-buffer no longer writes constant normals for promoted materials.
+- [x] The modern G-buffer no longer writes constant normals for promoted materials.
 - [ ] Promoted opaque/perforated materials match ARB2 captures closely enough to survive gameplay validation.
+
+Phase 5 implementation notes:
+
+- `MaterialResourceTable` now records a real promoted-material contract instead of only the first usable texture: evaluated stage counts, additive/filter/blend participation, condition registers, alpha-test registers, texture matrices, texgen, vertex-color use, polygon offset, depth/color-mask state, lighting/shadow flags, and conservative fallback reasons.
+- The shadow-caster contract is now derived beside the visible material contract. Promoted casters carry alpha-test threshold/binding data and reject materials whose texture matrix, vertex color, polygon offset, unsupported texgen, or unsupported stage behavior would make cutout shadow coverage diverge from visible rendering.
+- `_currentRender`, screen texgen, dynamic image/new-stage style effects, additive/filter stages, texture matrices, vertex-color-dependent stages, and polygon-offset-sensitive materials remain explicit fallbacks until their shader semantics are owned by the modern path.
+- G-buffer, clustered forward+, and transparent forward programs now bind diffuse, normal, specular, and emissive material textures, sample alpha-test thresholds from legacy shader registers, reconstruct view-space normals from the Phase 4 tangent basis, and use specular/emissive contribution instead of placeholder constant output for promoted draws.
+- Validation passed for `tools/build/meson_setup.ps1 compile -C builddir`, `tools/build/meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects`, `rendererShaderLibrarySelfTest`, `rendererMaterialResourceTableSelfTest`, `rendererGBufferSelfTest`, and `rendererForwardPlusSelfTest`. The Phase 5 validation logs contained no renderer `idStr::snPrintf` overflow, shader compile, or program link failures. Visual material parity captures, full HDR/post ordering, and additive/filter material promotion remain open acceptance work.
 
 ## Phase 6: Scalable Clustered Lighting
 

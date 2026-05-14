@@ -55,6 +55,10 @@ typedef struct modernGLShaderReflection_s {
 	int		debugColorLocation;
 	int		localParamsLocation;
 	int		mainTextureLocation;
+	int		normalTextureLocation;
+	int		specularTextureLocation;
+	int		emissiveTextureLocation;
+	int		materialFlagsLocation;
 	int		positionAttribute;
 	int		colorAttribute;
 	int		texCoordAttribute;
@@ -79,6 +83,8 @@ typedef struct modernGLShaderReflection_s {
 	bool	usesDebugColor;
 	bool	usesLocalParams;
 	bool	usesMainTexture;
+	bool	usesMaterialTextures;
+	bool	usesMaterialFlags;
 	bool	usesTexCoord;
 	bool	usesDrawVertColor;
 	bool	usesDrawVertTangentSpace;
@@ -100,6 +106,10 @@ typedef struct modernGLShaderProgramInfo_s {
 	int							debugColorLocation;
 	int							localParamsLocation;
 	int							mainTextureLocation;
+	int							normalTextureLocation;
+	int							specularTextureLocation;
+	int							emissiveTextureLocation;
+	int							materialFlagsLocation;
 	bool						linked;
 	char						name[64];
 } modernGLShaderProgramInfo_t;

@@ -256,6 +256,11 @@ static void R_ModernGLExecutor_ResetPassOwnershipTable( const char *reason ) {
 }
 
 const int MODERN_GL_DEFERRED_TEXTURE_COUNT = 5;
+const int MODERN_GL_MATERIAL_TEXTURE_MAIN = 0;
+const int MODERN_GL_MATERIAL_TEXTURE_NORMAL = 1;
+const int MODERN_GL_MATERIAL_TEXTURE_SPECULAR = 2;
+const int MODERN_GL_MATERIAL_TEXTURE_EMISSIVE = 3;
+const int MODERN_GL_MATERIAL_TEXTURE_COUNT = 4;
 const int MODERN_GL_CLUSTER_UBO_BINDING_PARAMS = 3;
 const int MODERN_GL_CLUSTER_UBO_BINDING_LIGHTS = 4;
 const int MODERN_GL_CLUSTER_UBO_BINDING_INDICES = 5;
@@ -1509,6 +1514,8 @@ static void R_ModernGLExecutor_SetDebugColor( const modernGLSubmitCommand_t &com
 	}
 }
 
+static float R_ModernGLExecutor_AlphaReferenceForCommand( const modernGLSubmitCommand_t &command );
+
 static void R_ModernGLExecutor_SetLocalParams( const modernGLSubmitCommand_t &command ) {
 	if ( command.localParamsLocation < 0 ) {
 		return;
@@ -1516,7 +1523,7 @@ static void R_ModernGLExecutor_SetLocalParams( const modernGLSubmitCommand_t &co
 	switch ( command.shaderKind ) {
 	case MODERN_GL_SHADER_GBUFFER_ALPHA_TEST:
 	case MODERN_GL_SHADER_CLUSTERED_FORWARD_ALPHA_TEST:
-		glUniform4f( command.localParamsLocation, 0.5f, 0.0f, 0.0f, 0.0f );
+		glUniform4f( command.localParamsLocation, R_ModernGLExecutor_AlphaReferenceForCommand( command ), 0.0f, 0.25f, 0.0f );
 		break;
 	case MODERN_GL_SHADER_GBUFFER_OPAQUE:
 		glUniform4f( command.localParamsLocation, 0.1f, 0.5f, 0.25f, 0.0f );
@@ -1807,27 +1814,138 @@ static const materialResourceTextureBinding_t *R_ModernGLExecutor_FindTextureBin
 	return NULL;
 }
 
-static GLuint R_ModernGLExecutor_TextureForCommand( const modernGLSubmitCommand_t &command ) {
+static GLuint R_ModernGLExecutor_ImageHandleOrZero( const idImage *image ) {
+	if ( image != NULL && image->IsLoaded() ) {
+		return const_cast<idImage *>( image )->GetDeviceHandle();
+	}
+	return 0;
+}
+
+static GLuint R_ModernGLExecutor_FallbackTextureForSemantic( materialResourceTextureSemantic_t semantic ) {
+	if ( globalImages == NULL ) {
+		return 0;
+	}
+	switch ( semantic ) {
+	case MATERIAL_RESOURCE_TEXTURE_BUMP:
+		if ( GLuint handle = R_ModernGLExecutor_ImageHandleOrZero( globalImages->flatNormalMap ) ) {
+			return handle;
+		}
+		break;
+	case MATERIAL_RESOURCE_TEXTURE_SPECULAR:
+	case MATERIAL_RESOURCE_TEXTURE_EMISSIVE:
+		if ( GLuint handle = R_ModernGLExecutor_ImageHandleOrZero( globalImages->blackImage ) ) {
+			return handle;
+		}
+		break;
+	default:
+		break;
+	}
+	if ( GLuint handle = R_ModernGLExecutor_ImageHandleOrZero( globalImages->whiteImage ) ) {
+		return handle;
+	}
+	return R_ModernGLExecutor_ImageHandleOrZero( globalImages->defaultImage );
+}
+
+static GLuint R_ModernGLExecutor_TextureForCommandSemantic( const modernGLSubmitCommand_t &command, materialResourceTextureSemantic_t semantic ) {
 	const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
 	if ( materialRecord != NULL ) {
-		const materialResourceTextureBinding_t *binding = R_ModernGLExecutor_FindTextureBinding( *materialRecord, MATERIAL_RESOURCE_TEXTURE_DIFFUSE );
-		if ( binding == NULL ) {
-			binding = R_ModernGLExecutor_FindTextureBinding( *materialRecord, MATERIAL_RESOURCE_TEXTURE_GUI );
-		}
-		if ( binding == NULL ) {
-			binding = R_ModernGLExecutor_FindTextureBinding( *materialRecord, MATERIAL_RESOURCE_TEXTURE_POST_PROCESS );
-		}
+		const materialResourceTextureBinding_t *binding = R_ModernGLExecutor_FindTextureBinding( *materialRecord, semantic );
 		if ( binding != NULL && binding->textureHandle != 0 ) {
 			return static_cast<GLuint>( binding->textureHandle );
 		}
 	}
-	if ( globalImages != NULL && globalImages->whiteImage != NULL && globalImages->whiteImage->IsLoaded() ) {
-		return globalImages->whiteImage->GetDeviceHandle();
+	return R_ModernGLExecutor_FallbackTextureForSemantic( semantic );
+}
+
+static GLuint R_ModernGLExecutor_TextureForCommand( const modernGLSubmitCommand_t &command ) {
+	const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
+	if ( materialRecord != NULL ) {
+		materialResourceTextureSemantic_t semantics[3] = {
+			MATERIAL_RESOURCE_TEXTURE_DIFFUSE,
+			MATERIAL_RESOURCE_TEXTURE_GUI,
+			MATERIAL_RESOURCE_TEXTURE_POST_PROCESS
+		};
+		for ( int i = 0; i < 3; ++i ) {
+			const materialResourceTextureBinding_t *binding = R_ModernGLExecutor_FindTextureBinding( *materialRecord, semantics[i] );
+			if ( binding != NULL && binding->textureHandle != 0 ) {
+				return static_cast<GLuint>( binding->textureHandle );
+			}
+		}
 	}
-	if ( globalImages != NULL && globalImages->defaultImage != NULL && globalImages->defaultImage->IsLoaded() ) {
-		return globalImages->defaultImage->GetDeviceHandle();
+	return R_ModernGLExecutor_FallbackTextureForSemantic( MATERIAL_RESOURCE_TEXTURE_DIFFUSE );
+}
+
+static bool R_ModernGLExecutor_CommandHasTextureSemantic( const modernGLSubmitCommand_t &command, materialResourceTextureSemantic_t semantic ) {
+	const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
+	if ( materialRecord == NULL ) {
+		return false;
 	}
-	return 0;
+	const materialResourceTextureBinding_t *binding = R_ModernGLExecutor_FindTextureBinding( *materialRecord, semantic );
+	return binding != NULL && binding->textureHandle != 0;
+}
+
+static float R_ModernGLExecutor_ShaderRegisterValue( const modernGLSubmitCommand_t &command, int registerIndex, float fallbackValue ) {
+	const drawPacket_t *draw = command.drawPlanEntry != NULL ? command.drawPlanEntry->drawPacket : NULL;
+	const instanceRecord_t *instance = draw != NULL ? draw->instanceRecord : NULL;
+	if ( instance != NULL && instance->legacyShaderRegisters != NULL && registerIndex >= 0 && registerIndex < instance->shaderRegisterCount ) {
+		return instance->legacyShaderRegisters[registerIndex];
+	}
+	const drawSurf_t *surf = draw != NULL ? draw->legacyDrawSurf : NULL;
+	if ( surf != NULL && surf->shaderRegisters != NULL && surf->material != NULL && registerIndex >= 0 && registerIndex < surf->material->GetNumRegisters() ) {
+		return surf->shaderRegisters[registerIndex];
+	}
+	return fallbackValue;
+}
+
+static float R_ModernGLExecutor_AlphaReferenceForCommand( const modernGLSubmitCommand_t &command ) {
+	const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
+	if ( materialRecord == NULL || !materialRecord->alphaTest ) {
+		return 0.5f;
+	}
+	return idMath::ClampFloat( 0.0f, 1.0f, R_ModernGLExecutor_ShaderRegisterValue( command, materialRecord->alphaTestRegister, 0.5f ) );
+}
+
+static void R_ModernGLExecutor_SetMaterialFlags( const modernGLSubmitCommand_t &command ) {
+	if ( command.materialFlagsLocation < 0 ) {
+		return;
+	}
+	const float hasNormal = R_ModernGLExecutor_CommandHasTextureSemantic( command, MATERIAL_RESOURCE_TEXTURE_BUMP ) ? 1.0f : 0.0f;
+	const float hasSpecular = R_ModernGLExecutor_CommandHasTextureSemantic( command, MATERIAL_RESOURCE_TEXTURE_SPECULAR ) ? 1.0f : 0.0f;
+	const float hasEmissive = R_ModernGLExecutor_CommandHasTextureSemantic( command, MATERIAL_RESOURCE_TEXTURE_EMISSIVE ) ? 1.0f : 0.0f;
+	glUniform4f( command.materialFlagsLocation, hasNormal, hasSpecular, hasEmissive, 0.0f );
+}
+
+static void R_ModernGLExecutor_BindMaterialTextures( const modernGLSubmitCommand_t &command ) {
+	if ( glUniform1i == NULL ) {
+		return;
+	}
+	if ( command.mainTextureLocation >= 0 ) {
+		glUniform1i( command.mainTextureLocation, MODERN_GL_MATERIAL_TEXTURE_MAIN );
+		const GLuint textureHandle = R_ModernGLExecutor_TextureForCommand( command );
+		if ( textureHandle != 0 ) {
+			R_GLStateCache().ActiveTextureUnit( MODERN_GL_MATERIAL_TEXTURE_MAIN );
+			R_GLStateCache().BindTexture( MODERN_GL_MATERIAL_TEXTURE_MAIN, GL_TEXTURE_2D, textureHandle );
+		}
+	}
+	if ( command.normalTextureLocation >= 0 ) {
+		glUniform1i( command.normalTextureLocation, MODERN_GL_MATERIAL_TEXTURE_NORMAL );
+		const GLuint textureHandle = R_ModernGLExecutor_TextureForCommandSemantic( command, MATERIAL_RESOURCE_TEXTURE_BUMP );
+		R_GLStateCache().ActiveTextureUnit( MODERN_GL_MATERIAL_TEXTURE_NORMAL );
+		R_GLStateCache().BindTexture( MODERN_GL_MATERIAL_TEXTURE_NORMAL, GL_TEXTURE_2D, textureHandle );
+	}
+	if ( command.specularTextureLocation >= 0 ) {
+		glUniform1i( command.specularTextureLocation, MODERN_GL_MATERIAL_TEXTURE_SPECULAR );
+		const GLuint textureHandle = R_ModernGLExecutor_TextureForCommandSemantic( command, MATERIAL_RESOURCE_TEXTURE_SPECULAR );
+		R_GLStateCache().ActiveTextureUnit( MODERN_GL_MATERIAL_TEXTURE_SPECULAR );
+		R_GLStateCache().BindTexture( MODERN_GL_MATERIAL_TEXTURE_SPECULAR, GL_TEXTURE_2D, textureHandle );
+	}
+	if ( command.emissiveTextureLocation >= 0 ) {
+		glUniform1i( command.emissiveTextureLocation, MODERN_GL_MATERIAL_TEXTURE_EMISSIVE );
+		const GLuint textureHandle = R_ModernGLExecutor_TextureForCommandSemantic( command, MATERIAL_RESOURCE_TEXTURE_EMISSIVE );
+		R_GLStateCache().ActiveTextureUnit( MODERN_GL_MATERIAL_TEXTURE_EMISSIVE );
+		R_GLStateCache().BindTexture( MODERN_GL_MATERIAL_TEXTURE_EMISSIVE, GL_TEXTURE_2D, textureHandle );
+	}
+	R_GLStateCache().ActiveTextureUnit( 0 );
 }
 
 static void R_ModernGLExecutor_SetUniformBlockBinding( GLuint program, const char *blockName, GLuint binding );
@@ -1891,14 +2009,8 @@ static bool R_ModernGLExecutor_SubmitCommand( const modernGLSubmitCommand_t &com
 	}
 	R_ModernGLExecutor_SetDebugColor( command );
 	R_ModernGLExecutor_SetLocalParams( command );
-	if ( command.mainTextureLocation >= 0 && glUniform1i != NULL ) {
-		glUniform1i( command.mainTextureLocation, 0 );
-		const GLuint textureHandle = R_ModernGLExecutor_TextureForCommand( command );
-		if ( textureHandle != 0 ) {
-			R_GLStateCache().ActiveTextureUnit( 0 );
-			R_GLStateCache().BindTexture( 0, GL_TEXTURE_2D, textureHandle );
-		}
-	}
+	R_ModernGLExecutor_SetMaterialFlags( command );
+	R_ModernGLExecutor_BindMaterialTextures( command );
 
 	R_ModernGLExecutor_SetSubmitScissor( command, command.viewDef );
 	R_GLStateCache().BindBuffer( GL_ARRAY_BUFFER, command.vertexBuffer );
@@ -1936,7 +2048,13 @@ static void R_ModernGLExecutor_RestoreAfterSubmit( void ) {
 	R_ModernGLExecutor_DisableDrawVertLayout();
 	R_GLStateCache().BindBuffer( GL_ARRAY_BUFFER, 0 );
 	R_GLStateCache().BindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
-	R_GLStateCache().BindTexture( 0, GL_TEXTURE_2D, 0 );
+	for ( int unit = 0; unit < MODERN_GL_MATERIAL_TEXTURE_COUNT; ++unit ) {
+		R_GLStateCache().BindTexture( unit, GL_TEXTURE_2D, 0 );
+		if ( glBindSampler != NULL ) {
+			R_GLStateCache().BindSampler( unit, 0 );
+		}
+	}
+	R_GLStateCache().ActiveTextureUnit( 0 );
 	if ( glBindBufferBase != NULL ) {
 		R_GLStateCache().BindBufferBase( GL_UNIFORM_BUFFER, 0, 0 );
 	}
@@ -1990,14 +2108,8 @@ static void R_ModernGLExecutor_SubmitGpuDrivenIndirect( modernGLExecutorStats_t 
 	}
 	R_ModernGLExecutor_SetDebugColor( command );
 	R_ModernGLExecutor_SetLocalParams( command );
-	if ( command.mainTextureLocation >= 0 && glUniform1i != NULL ) {
-		glUniform1i( command.mainTextureLocation, 0 );
-		const GLuint textureHandle = R_ModernGLExecutor_TextureForCommand( command );
-		if ( textureHandle != 0 ) {
-			R_GLStateCache().ActiveTextureUnit( 0 );
-			R_GLStateCache().BindTexture( 0, GL_TEXTURE_2D, textureHandle );
-		}
-	}
+	R_ModernGLExecutor_SetMaterialFlags( command );
+	R_ModernGLExecutor_BindMaterialTextures( command );
 
 	R_ModernGLExecutor_SetSubmitScissor( command, command.viewDef );
 	R_GLStateCache().BindBuffer( GL_ARRAY_BUFFER, command.vertexBuffer );
@@ -2261,6 +2373,23 @@ static void R_ModernGLExecutor_CountGBufferFallback( const modernGLSubmitCommand
 	stats.opaqueGBufferFallbackDraws++;
 }
 
+static bool R_ModernGLExecutor_MaterialContractPromotable( const materialResourceTableRecord_t &materialRecord, bool allowAlphaBlend ) {
+	if ( materialRecord.hasTextureMatrix
+		|| materialRecord.hasVertexColor
+		|| materialRecord.hasConditionRegisters
+		|| materialRecord.hasPrivatePolygonOffset
+		|| materialRecord.hasMaterialPolygonOffset ) {
+		return false;
+	}
+	if ( materialRecord.additiveStageCount > 0 || materialRecord.filterStageCount > 0 ) {
+		return false;
+	}
+	if ( !allowAlphaBlend && materialRecord.blendStageCount > 0 ) {
+		return false;
+	}
+	return true;
+}
+
 static bool R_ModernGLExecutor_GBufferMaterialSupported( const modernGLSubmitCommand_t &command, modernGLExecutorStats_t &stats ) {
 	const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
 	if ( materialRecord == NULL || materialRecord->fallbackReason != MATERIAL_RESOURCE_FALLBACK_NONE ) {
@@ -2268,6 +2397,10 @@ static bool R_ModernGLExecutor_GBufferMaterialSupported( const modernGLSubmitCom
 		return false;
 	}
 	if ( materialRecord->materialClass != RENDER_MATERIAL_OPAQUE && materialRecord->materialClass != RENDER_MATERIAL_PERFORATED && !materialRecord->alphaTest ) {
+		stats.opaqueGBufferMaterialFallbackDraws++;
+		return false;
+	}
+	if ( !R_ModernGLExecutor_MaterialContractPromotable( *materialRecord, false ) ) {
 		stats.opaqueGBufferMaterialFallbackDraws++;
 		return false;
 	}
@@ -2649,6 +2782,12 @@ static bool R_ModernGLExecutor_ForwardPlusMaterialSupported( const modernGLSubmi
 	if ( command.pipeline == MODERN_GL_DRAW_PLAN_PIPELINE_FORWARD_PLUS_TRANSPARENT
 		&& ( materialRecord->blendMode == MATERIAL_RESOURCE_BLEND_ADD || materialRecord->blendMode == MATERIAL_RESOURCE_BLEND_FILTER ) ) {
 		stats.forwardPlusUnsupportedBlendFallbackDraws++;
+		return false;
+	}
+	const bool allowAlphaBlend = command.pipeline == MODERN_GL_DRAW_PLAN_PIPELINE_FORWARD_PLUS_TRANSPARENT
+		&& materialRecord->blendMode == MATERIAL_RESOURCE_BLEND_BLEND;
+	if ( !R_ModernGLExecutor_MaterialContractPromotable( *materialRecord, allowAlphaBlend ) ) {
+		stats.forwardPlusMaterialFallbackDraws++;
 		return false;
 	}
 	if ( command.pipeline == MODERN_GL_DRAW_PLAN_PIPELINE_FORWARD_PLUS_ALPHA_TEST
@@ -5020,7 +5159,10 @@ bool RendererGBuffer_RunSelfTest( void ) {
 		common->Printf( "RendererGBuffer self-test failed: G-buffer programs unavailable\n" );
 		return false;
 	}
-	if ( !opaqueProgram->reflection.usesMainTexture || opaqueProgram->mainTextureLocation < 0 || !alphaProgram->reflection.usesMainTexture || alphaProgram->mainTextureLocation < 0 ) {
+	if ( !opaqueProgram->reflection.usesMainTexture || opaqueProgram->mainTextureLocation < 0
+		|| !opaqueProgram->reflection.usesMaterialTextures || opaqueProgram->normalTextureLocation < 0 || opaqueProgram->specularTextureLocation < 0 || opaqueProgram->emissiveTextureLocation < 0 || opaqueProgram->materialFlagsLocation < 0
+		|| !alphaProgram->reflection.usesMainTexture || alphaProgram->mainTextureLocation < 0
+		|| !alphaProgram->reflection.usesMaterialTextures || alphaProgram->normalTextureLocation < 0 || alphaProgram->specularTextureLocation < 0 || alphaProgram->emissiveTextureLocation < 0 || alphaProgram->materialFlagsLocation < 0 ) {
 		common->Printf( "RendererGBuffer self-test failed: G-buffer texture reflection unavailable\n" );
 		return false;
 	}
