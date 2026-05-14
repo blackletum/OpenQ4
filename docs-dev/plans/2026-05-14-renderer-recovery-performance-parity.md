@@ -115,19 +115,27 @@ Phase 2 implementation notes:
 
 Goal: when a pass is modern-owned, the legacy renderer must not also draw that same pass.
 
-- [ ] Introduce a per-frame pass-owner table with states: `legacy`, `modern`, `mixed`, `disabled`, `blocked`.
-- [ ] Route backend commands through the owner table. Legacy ARB2 should skip only the exact passes whose modern replacement has completed and passed resource/fallback checks.
-- [ ] Add a fail-closed handoff: if a modern-owned pass fails after legacy skip has been armed, restore legacy ownership before drawing the frame.
-- [ ] Ensure present, GUI, and post composition order is explicit. Do not clear the back buffer for modern composition if a legacy fallback frame is the real output.
-- [ ] Add explicit ownership for shadow-caster passes, shadow-map resources, and shadow receiver sampling. The renderer must never both sample a modern shadow map and also apply a legacy shadow/stencil contribution for the same light.
-- [ ] Keep `r_renderer arb2` and `r_glTier legacy` as immediate rollback paths.
-- [ ] Add a `rendererPassOwnershipSelfTest` that constructs mixed modern/legacy ownership and verifies no duplicate draw ownership.
+- [x] Introduce a per-frame pass-owner table with states: `legacy`, `modern`, `mixed`, `disabled`, `blocked`.
+- [x] Route backend commands through the owner table. Legacy ARB2 should skip only the exact passes whose modern replacement has completed and passed resource/fallback checks.
+- [x] Add a fail-closed handoff: if a modern-owned pass fails after legacy skip has been armed, restore legacy ownership before drawing the frame.
+- [x] Ensure present, GUI, and post composition order is explicit. Do not clear the back buffer for modern composition if a legacy fallback frame is the real output.
+- [x] Add explicit ownership for shadow-caster passes, shadow-map resources, and shadow receiver sampling. The renderer must never both sample a modern shadow map and also apply a legacy shadow/stencil contribution for the same light.
+- [x] Keep `r_renderer arb2` and `r_glTier legacy` as immediate rollback paths.
+- [x] Add a `rendererPassOwnershipSelfTest` that constructs mixed modern/legacy ownership and verifies no duplicate draw ownership.
 
 Acceptance:
 
-- [ ] Modern visible frames have `duplicatedWithLegacy=0` for owned passes.
-- [ ] Legacy fallback frames have `modernExecuted=0` for blocked visible passes unless an explicit debug cvar requested a sidecar pass.
+- [x] Modern visible frames have `duplicatedWithLegacy=0` for owned passes.
+- [x] Legacy fallback frames have `modernExecuted=0` for blocked visible passes unless an explicit debug cvar requested a sidecar pass.
 - [ ] ARB2 rollback renders the same frame without stale modern GL state.
+
+Phase 3 implementation notes:
+
+- `ModernGLExecutor` now builds a per-frame pass-ownership table after modern side/visible passes execute. Each graph pass records a state, skip eligibility, legacy-run expectation, reason string, duplicate-hazard flag, and skip accounting.
+- Legacy ARB2 pass calls consult the table for precise skip points: depth fill, ARB2 interaction/shadow work, light-grid indirect, ambient/material passes, fog/blend lights, fullscreen GUI command replay, and standalone special-effect commands. Skips are armed only for `modern` ownership after resource/fallback checks pass; sidecar diagnostics remain `mixed` and do not suppress ARB2.
+- Visible composition now requires the ownership table to be handoff-ready before it can clear the back buffer. If a late readiness check fails, pass ownership is fail-closed back to blocked/legacy ownership before metrics are recorded.
+- Shadow ownership is explicit in the table: a completed modern shadow-map pass can replace legacy stencil-shadow contribution for that frame; otherwise shadow work remains legacy or mixed diagnostic ownership.
+- Validation passed for `tools/build/meson_setup.ps1 compile -C builddir`, `tools/build/meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects`, `rendererPassOwnershipSelfTest`, `rendererModernCompatibilitySelfTest`, and `rendererModernVisibleSelfTest`, all with zero `idStr::snPrintf` overflow warnings in the validation logs. A bounded `game/airdefense1` smoke reached loading/map-initialization frames and confirmed graph-present ownership (`table=4`, `skipArmed=1`) without overflow warnings, but was stopped before gameplay; in-game ARB2 rollback parity still needs a real SP/MP map run.
 
 ## Phase 4: Geometry And Character Correctness
 

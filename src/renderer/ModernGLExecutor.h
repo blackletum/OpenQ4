@@ -62,6 +62,7 @@ typedef struct modernGLExecutorStats_s {
 	bool	forwardPlusClusterReady;
 	bool	modernVisibleRequested;
 	bool	modernVisibleCanReplaceFrame;
+	bool	modernVisibleHandoffReady;
 	bool	modernVisibleExecuted;
 	bool	modernVisibleResourcesReady;
 	bool	modernVisibleProgramReady;
@@ -90,6 +91,20 @@ typedef struct modernGLExecutorStats_s {
 	int		forwardPlusSkippedBlocked;
 	int		forwardPlusSkippedNoConsumer;
 	int		forwardPlusDuplicatedWithLegacy;
+	int		passOwnerTablePasses;
+	int		passOwnerLegacyPasses;
+	int		passOwnerModernPasses;
+	int		passOwnerMixedPasses;
+	int		passOwnerDisabledPasses;
+	int		passOwnerBlockedPasses;
+	int		passOwnerLegacySkipsArmed;
+	int		passOwnerLegacySkipsIssued;
+	int		passOwnerDuplicateHazards;
+	int		passOwnerFailClosedRestores;
+	int		passOwnerShadowModernPasses;
+	int		passOwnerShadowLegacyPasses;
+	int		passOwnerGuiModernPasses;
+	int		passOwnerPostLegacyPasses;
 	int		graphPasses;
 	int		preparedPasses;
 	int		fallbackPasses;
@@ -281,6 +296,8 @@ void R_ModernGLExecutor_DrawGBufferDebugOverlay( void );
 void R_ModernGLExecutor_DrawDeferredDebugOverlay( void );
 void R_ModernGLExecutor_ComposeVisibleFrame( void );
 const modernGLExecutorStats_t &R_ModernGLExecutor_Stats( void );
+bool R_ModernGLExecutor_LegacyPassCanSkip( renderPassCategory_t category );
+void R_ModernGLExecutor_RecordLegacyPassSkipped( renderPassCategory_t category );
 void R_ModernGLExecutor_PrintGfxInfo( void );
 bool RendererModernGLExecutor_RunSelfTest( void );
 bool RendererGpuDriven_RunSelfTest( void );
@@ -291,5 +308,6 @@ bool RendererForwardPlus_RunSelfTest( void );
 bool RendererModernVisible_RunSelfTest( void );
 bool RendererLowOverhead_RunSelfTest( void );
 bool RendererModernCompatibility_RunSelfTest( void );
+bool RendererPassOwnership_RunSelfTest( void );
 
 #endif /* !__MODERN_GL_EXECUTOR_H__ */

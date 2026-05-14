@@ -663,6 +663,13 @@ static void R_RendererModernCompatibilitySelfTest_f( const idCmdArgs &args ) {
 	}
 }
 
+static void R_RendererPassOwnershipSelfTest_f( const idCmdArgs &args ) {
+	(void)args;
+	if ( !RendererPassOwnership_RunSelfTest() ) {
+		common->Warning( "Renderer pass ownership self-test failed" );
+	}
+}
+
 static void R_RendererLowOverheadSelfTest_f( const idCmdArgs &args ) {
 	(void)args;
 	if ( !RendererLowOverhead_RunSelfTest() ) {
@@ -3072,6 +3079,7 @@ void R_InitCommands( void ) {
 	cmdSystem->AddCommand( "rendererForwardPlusSelfTest", R_RendererForwardPlusSelfTest_f, CMD_FL_RENDERER, "run renderer clustered forward+ self tests" );
 	cmdSystem->AddCommand( "rendererModernVisibleSelfTest", R_RendererModernVisibleSelfTest_f, CMD_FL_RENDERER, "run renderer modern visible-frame composition self tests" );
 	cmdSystem->AddCommand( "rendererModernCompatibilitySelfTest", R_RendererModernCompatibilitySelfTest_f, CMD_FL_RENDERER, "run renderer modern compatibility owner self tests" );
+	cmdSystem->AddCommand( "rendererPassOwnershipSelfTest", R_RendererPassOwnershipSelfTest_f, CMD_FL_RENDERER, "run renderer modern/legacy pass ownership self tests" );
 	cmdSystem->AddCommand( "rendererLowOverheadSelfTest", R_RendererLowOverheadSelfTest_f, CMD_FL_RENDERER, "run renderer GL45 low-overhead self tests" );
 	cmdSystem->AddCommand( "rendererShaderLibrarySelfTest", R_RendererModernGLShaderLibrarySelfTest_f, CMD_FL_RENDERER, "run renderer modern GL shader-library self tests" );
 	cmdSystem->AddCommand( "rendererModernGLShaderLibrarySelfTest", R_RendererModernGLShaderLibrarySelfTest_f, CMD_FL_RENDERER, "run renderer modern GL shader-library self tests" );

@@ -29,6 +29,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "tr_local.h"
+#include "ModernGLExecutor.h"
 
 #ifndef GL_FRAMEBUFFER_SRGB
 #define GL_FRAMEBUFFER_SRGB 0x8DB9
@@ -5806,6 +5807,15 @@ static void RB_T_Shadow( const drawSurf_t *surf ) {
 	RB_DrawShadowElementsWithCounters( surf, numIndexes );
 }
 
+static int RB_STD_FindPostProcessStart( drawSurf_t **drawSurfs, int numDrawSurfs ) {
+	for ( int i = 0; i < numDrawSurfs; ++i ) {
+		if ( drawSurfs[i]->material->GetSort() >= SS_POST_PROCESS ) {
+			return i;
+		}
+	}
+	return numDrawSurfs;
+}
+
 /*
 =====================
 RB_StencilShadowPass
@@ -7100,17 +7110,35 @@ void	RB_STD_DrawView( void ) {
 
 	// fill the depth buffer and clear color buffer to black except on
 	// subviews
-	RB_STD_FillDepthBuffer( drawSurfs, numDrawSurfs );
+	if ( R_ModernGLExecutor_LegacyPassCanSkip( RENDER_PASS_DEPTH ) ) {
+		R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_DEPTH );
+	} else {
+		RB_STD_FillDepthBuffer( drawSurfs, numDrawSurfs );
+	}
 	RB_DisplaySpecialEffects( backEnd.viewDef->viewEntitys, false );
 
 	// main light renderer
-	RB_ARB2_DrawInteractions();
+	if ( R_ModernGLExecutor_LegacyPassCanSkip( RENDER_PASS_ARB2_INTERACTION ) ) {
+		R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_ARB2_INTERACTION );
+		if ( R_ModernGLExecutor_LegacyPassCanSkip( RENDER_PASS_SHADOW_MAP ) ) {
+			R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_SHADOW_MAP );
+		}
+		if ( R_ModernGLExecutor_LegacyPassCanSkip( RENDER_PASS_STENCIL_SHADOW ) ) {
+			R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_STENCIL_SHADOW );
+		}
+	} else {
+		RB_ARB2_DrawInteractions();
+	}
 
 	// disable stencil shadow test
 	glStencilFunc( GL_ALWAYS, 128, 255 );
 
 	// add precomputed indirect diffuse from irradiance-volume atlases
-	RB_STD_LightGridIndirect();
+	if ( R_ModernGLExecutor_LegacyPassCanSkip( RENDER_PASS_LIGHT_GRID ) ) {
+		R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_LIGHT_GRID );
+	} else {
+		RB_STD_LightGridIndirect();
+	}
 
 	// uplight the entire screen to crutch up not having better blending range
 	RB_STD_LightScale();
@@ -7120,13 +7148,23 @@ void	RB_STD_DrawView( void ) {
 	}
 
 	// now draw any non-light dependent shading passes
-	int	processed = RB_STD_DrawShaderPasses( drawSurfs, numDrawSurfs );
+	int processed = 0;
+	if ( R_ModernGLExecutor_LegacyPassCanSkip( RENDER_PASS_AMBIENT ) ) {
+		processed = RB_STD_FindPostProcessStart( drawSurfs, numDrawSurfs );
+		R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_AMBIENT );
+	} else {
+		processed = RB_STD_DrawShaderPasses( drawSurfs, numDrawSurfs );
+	}
 
 	// Apply a configurable brightness floor after ambient/material passes.
 	RB_STD_ForceAmbient();
 
 	// fob and blend lights
-	RB_STD_FogAllLights();
+	if ( R_ModernGLExecutor_LegacyPassCanSkip( RENDER_PASS_FOG_BLEND ) ) {
+		R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_FOG_BLEND );
+	} else {
+		RB_STD_FogAllLights();
+	}
 
 	// Apply SSAO before bloom and tonemapping so indirect shadowing modulates the lit scene.
 	RB_STD_SSAO();

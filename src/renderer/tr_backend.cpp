@@ -749,7 +749,11 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 			break;
 		case RC_DRAW_VIEW:
 			R_RendererMetrics_BeginGpuTimer( ((const drawSurfsCommand_t *)cmds)->viewDef->viewEntitys ? RENDERER_GPU_TIMER_DRAW3D : RENDERER_GPU_TIMER_DRAW2D );
-			RB_DrawView( cmds );
+			if ( !((const drawSurfsCommand_t *)cmds)->viewDef->viewEntitys && R_ModernGLExecutor_LegacyPassCanSkip( RENDER_PASS_GUI ) ) {
+				R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_GUI );
+			} else {
+				RB_DrawView( cmds );
+			}
 			R_RendererMetrics_EndGpuTimer();
 			if ( ((const drawSurfsCommand_t *)cmds)->viewDef->viewEntitys ) {
 				c_draw3d++;
@@ -760,7 +764,11 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 			break;
 		case RC_DRAW_SPECIAL_EFFECTS:
 			R_RendererMetrics_BeginGpuTimer( RENDERER_GPU_TIMER_SPECIAL_EFFECTS );
-			RB_DrawSpecialEffects( cmds );
+			if ( R_ModernGLExecutor_LegacyPassCanSkip( RENDER_PASS_SPECIAL_EFFECTS ) ) {
+				R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_SPECIAL_EFFECTS );
+			} else {
+				RB_DrawSpecialEffects( cmds );
+			}
 			R_RendererMetrics_EndGpuTimer();
 			c_specialEffects++;
 			break;
