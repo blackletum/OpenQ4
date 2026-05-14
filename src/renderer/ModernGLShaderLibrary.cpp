@@ -94,11 +94,7 @@ static const modernGLShaderProgramDescriptor_t *R_ModernGLShaderLibrary_Descript
 }
 
 static void R_ModernGLShaderLibrary_SetStatus( const char *status ) {
-	idStr::snPrintf(
-		rg_modernGLShaderLibraryStats.status,
-		sizeof( rg_modernGLShaderLibraryStats.status ),
-		"%s",
-		status ? status : "unknown" );
+	idStr::Copynz( rg_modernGLShaderLibraryStats.status, status ? status : "unknown", sizeof( rg_modernGLShaderLibraryStats.status ) );
 }
 
 static void R_ModernGLShaderLibrary_ResetStats( void ) {

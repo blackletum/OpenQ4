@@ -56,6 +56,8 @@ typedef struct rendererClusteredLightingStats_s {
 	int		indicesUBOBytes;
 	int		debugMode;
 	int		debugOverlayDraws;
+	int		debugStringTruncations;
+	char	debugStringTruncationSource[64];
 	char	status[96];
 } rendererClusteredLightingStats_t;
 

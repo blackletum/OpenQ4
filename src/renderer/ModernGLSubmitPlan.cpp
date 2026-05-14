@@ -12,12 +12,12 @@ idModernGLSubmitPlan::idModernGLSubmitPlan()
 void idModernGLSubmitPlan::Clear( void ) {
 	memset( commands, 0, sizeof( commands ) );
 	memset( &stats, 0, sizeof( stats ) );
-	idStr::snPrintf( stats.status, sizeof( stats.status ), "%s", "empty" );
+	idStr::Copynz( stats.status, "empty", sizeof( stats.status ) );
 	numCommands = 0;
 }
 
 static void R_ModernGLSubmitPlan_SetStatus( modernGLSubmitPlanStats_t &stats, const char *status ) {
-	idStr::snPrintf( stats.status, sizeof( stats.status ), "%s", status ? status : "unknown" );
+	idStr::Copynz( stats.status, status ? status : "unknown", sizeof( stats.status ) );
 }
 
 static bool R_ModernGLSubmitPlan_ScissorEquals( const modernGLSubmitCommand_t &a, const modernGLSubmitCommand_t &b ) {

@@ -6768,6 +6768,13 @@ static void RB_ShadowMapDebugOverlayDrawLabels( const float panelX, const float 
 	}
 }
 
+static void RB_ShadowMapDebugOverlayFormatLine( char *dest, int destSize, const char *fmt, ... ) {
+	va_list argptr;
+	va_start( argptr, fmt );
+	idStr::vsnPrintf( dest, destSize, fmt, argptr );
+	va_end( argptr );
+}
+
 static void RB_ShadowMapDebugOverlayDraw( void ) {
 	if ( !RB_ShadowMapDebugOverlayEnabled() || !RB_ShadowMapDebugOverlayLoadProgram() ) {
 		return;
@@ -6867,30 +6874,30 @@ static void RB_ShadowMapDebugOverlayDraw( void ) {
 		RB_ShadowMapDebugOverlayDrawLabels( panelX, panelY, panelW, panelH );
 	}
 
-	char line1[96];
-	char line2[96];
-	char line3[96];
+	char line1[128];
+	char line2[128];
+	char line3[128];
 	if ( g_shadowMapDebugOverlayState.valid ) {
 		const char *lightLabel = ( g_shadowMapDebugOverlayState.lightDefIndex >= 0 ) ?
 			va( "L%d", g_shadowMapDebugOverlayState.lightDefIndex ) : "L?";
-		idStr::snPrintf( line1, sizeof( line1 ), "%s %c %s %c%d %s",
+		RB_ShadowMapDebugOverlayFormatLine( line1, sizeof( line1 ), "%s %c %s %c%d %s",
 			g_shadowMapDebugOverlayState.pointLight ? "POINT" : "PROJ",
 			g_shadowMapDebugOverlayState.globalPass ? 'G' : 'L',
 			lightLabel,
 			g_shadowMapDebugOverlayState.pointLight ? 'F' : 'C',
 			g_shadowMapDebugOverlayState.pointLight ? 6 : g_shadowMapDebugOverlayState.cascadeCount,
 			g_shadowMapDebugOverlayState.mapped ? "MAP" : "FB" );
-		idStr::snPrintf( line2, sizeof( line2 ), "CAST %s SURF %s INTR %s",
+		RB_ShadowMapDebugOverlayFormatLine( line2, sizeof( line2 ), "CAST %s SURF %s INTR %s",
 			( g_shadowMapDebugOverlayState.casterCount >= 0 ) ? va( "%d", g_shadowMapDebugOverlayState.casterCount ) : "?",
 			( g_shadowMapDebugOverlayState.shadowSurfCount >= 0 ) ? va( "%d", g_shadowMapDebugOverlayState.shadowSurfCount ) : "?",
 			( g_shadowMapDebugOverlayState.interactionCount >= 0 ) ? va( "%d", g_shadowMapDebugOverlayState.interactionCount ) : "?" );
 	} else {
-		idStr::snPrintf( line1, sizeof( line1 ), "NO MAP" );
-		idStr::snPrintf( line2, sizeof( line2 ), "SUP %d/%d",
+		idStr::Copynz( line1, "NO MAP", sizeof( line1 ) );
+		RB_ShadowMapDebugOverlayFormatLine( line2, sizeof( line2 ), "SUP %d/%d",
 			g_shadowMapStats.supportedLights,
 			g_shadowMapStats.totalLights );
 	}
-	idStr::snPrintf( line3, sizeof( line3 ), "SUP %d/%d MAP %d/%d FB %d/%d",
+	RB_ShadowMapDebugOverlayFormatLine( line3, sizeof( line3 ), "SUP %d/%d MAP %d/%d FB %d/%d",
 		g_shadowMapStats.supportedLights,
 		g_shadowMapStats.totalLights,
 		g_shadowMapStats.mappedLocalPasses,

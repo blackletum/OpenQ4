@@ -147,7 +147,7 @@ static ID_INLINE GLint R_ModernGLExecutor_SafeStencilClearValue( void ) {
 }
 
 static void R_ModernGLExecutor_SetStatus( modernGLExecutorStats_t &stats, const char *status ) {
-	idStr::snPrintf( stats.status, sizeof( stats.status ), "%s", status ? status : "unknown" );
+	idStr::Copynz( stats.status, status ? status : "unknown", sizeof( stats.status ) );
 }
 
 static void R_ModernGLExecutor_CopyDrawPlanStats( modernGLExecutorStats_t &stats, const modernGLDrawPlanStats_t &drawPlanStats ) {

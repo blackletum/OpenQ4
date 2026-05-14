@@ -92,7 +92,7 @@ void idGLStateCache::BeginFrame( void ) {
 	const int previousUniformBindings = uniformBufferBindings;
 	const int previousSSBOBindings = shaderStorageBufferBindings;
 	char previousReason[sizeof( stats.lastInvalidationReason )];
-	idStr::snPrintf( previousReason, sizeof( previousReason ), "%s", stats.lastInvalidationReason );
+	idStr::Copynz( previousReason, stats.lastInvalidationReason, sizeof( previousReason ) );
 	memset( &stats, 0, sizeof( stats ) );
 	stats.initialized = wasInitialized;
 	stats.debugGroupsAvailable = debugGroupsAvailable;
@@ -100,11 +100,11 @@ void idGLStateCache::BeginFrame( void ) {
 	stats.textureUnits = previousTextureUnits;
 	stats.uniformBufferBindings = previousUniformBindings;
 	stats.shaderStorageBufferBindings = previousSSBOBindings;
-	idStr::snPrintf( stats.lastInvalidationReason, sizeof( stats.lastInvalidationReason ), "%s", previousReason );
+	idStr::Copynz( stats.lastInvalidationReason, previousReason, sizeof( stats.lastInvalidationReason ) );
 }
 
 void idGLStateCache::SetInvalidationReason( const char *reason ) {
-	idStr::snPrintf( stats.lastInvalidationReason, sizeof( stats.lastInvalidationReason ), "%s", reason != NULL ? reason : "unspecified" );
+	idStr::Copynz( stats.lastInvalidationReason, reason != NULL ? reason : "unspecified", sizeof( stats.lastInvalidationReason ) );
 }
 
 void idGLStateCache::InvalidateAll( const char *reason ) {

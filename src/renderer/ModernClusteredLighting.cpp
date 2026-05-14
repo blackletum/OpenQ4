@@ -120,7 +120,22 @@ static bool rg_clusteredLightingInitialized = false;
 static bool rg_clusteredLightingAvailable = false;
 
 static void R_ModernClusteredLighting_SetStatus( rendererClusteredLightingStats_t &stats, const char *status ) {
-	idStr::snPrintf( stats.status, sizeof( stats.status ), "%s", status ? status : "unknown" );
+	idStr::Copynz( stats.status, status ? status : "unknown", sizeof( stats.status ) );
+}
+
+static void R_ModernClusteredLighting_RecordDebugStringTruncation( rendererClusteredLightingStats_t &stats, const char *source ) {
+	stats.debugStringTruncations++;
+	if ( stats.debugStringTruncationSource[0] == '\0' ) {
+		idStr::Copynz( stats.debugStringTruncationSource, source ? source : "unknown", sizeof( stats.debugStringTruncationSource ) );
+	}
+}
+
+static bool R_ModernClusteredLighting_FormatDebugString( char *dest, int destSize, const char *fmt, ... ) {
+	va_list argptr;
+	va_start( argptr, fmt );
+	const int result = idStr::vsnPrintf( dest, destSize, fmt, argptr );
+	va_end( argptr );
+	return result >= 0;
 }
 
 static const char *R_ModernClusteredLighting_TypeName( modernClusterLightType_t type ) {
@@ -302,7 +317,7 @@ static void R_ModernClusteredLighting_InitGrid( modernClusterGridRecord_t &grid,
 	grid.lightCount = 0;
 	grid.nearZ = viewDef != NULL && viewDef->renderView.cramZNear ? 0.25f : Max( 0.01f, r_znear.GetFloat() );
 	grid.farZ = 4096.0f;
-	idStr::snPrintf( grid.debugName, sizeof( grid.debugName ), "scene%d_%dx%dx%d", sceneIndex, grid.tileCountX, grid.tileCountY, grid.sliceCountZ );
+	R_ModernClusteredLighting_FormatDebugString( grid.debugName, sizeof( grid.debugName ), "scene%d_%dx%dx%d", sceneIndex, grid.tileCountX, grid.tileCountY, grid.sliceCountZ );
 }
 
 static int R_ModernClusteredLighting_ClusterIndex( const modernClusterGridRecord_t &grid, int tileX, int tileY, int sliceZ ) {
@@ -388,8 +403,14 @@ static bool R_ModernClusteredLighting_AddLight( modernClusterGridRecord_t &grid,
 		( vLight->viewSeesGlobalLightOrigin ? 2 : 0 ) |
 		( vLight->parallel ? 4 : 0 ) |
 		( record.fullDepthRange ? 8 : 0 );
-	const char *shaderName = vLight->lightShader != NULL ? vLight->lightShader->GetName() : ( vLight->lightDef != NULL && vLight->lightDef->lightShader != NULL ? vLight->lightDef->lightShader->GetName() : "<light>" );
-	idStr::snPrintf( record.debugName, sizeof( record.debugName ), "%s:%d:%s", R_ModernClusteredLighting_TypeName( record.type ), record.lightDefIndex, shaderName != NULL ? shaderName : "<null>" );
+	if ( r_rendererMetrics.GetInteger() >= 2 || r_rendererClusterDebug.GetInteger() > 0 ) {
+		const char *shaderName = vLight->lightShader != NULL ? vLight->lightShader->GetName() : ( vLight->lightDef != NULL && vLight->lightDef->lightShader != NULL ? vLight->lightDef->lightShader->GetName() : "<light>" );
+		if ( !R_ModernClusteredLighting_FormatDebugString( record.debugName, sizeof( record.debugName ), "%s:%d:%s", R_ModernClusteredLighting_TypeName( record.type ), record.lightDefIndex, shaderName != NULL ? shaderName : "<null>" ) ) {
+			R_ModernClusteredLighting_RecordDebugStringTruncation( stats, "cluster light debugName" );
+		}
+	} else if ( !R_ModernClusteredLighting_FormatDebugString( record.debugName, sizeof( record.debugName ), "%s:%d", R_ModernClusteredLighting_TypeName( record.type ), record.lightDefIndex ) ) {
+		R_ModernClusteredLighting_RecordDebugStringTruncation( stats, "cluster light shortName" );
+	}
 
 	const int lightIndex = rg_clusteredLightingFrame.lightCount++;
 	grid.lightCount++;
@@ -834,7 +855,7 @@ void R_ModernClusteredLighting_PrepareFrame( const idScenePacketFrame &packetFra
 	R_RendererMetrics_RecordClusteredLighting( rg_clusteredLightingStats );
 	if ( r_rendererMetrics.GetInteger() >= 2 && rg_clusteredLightingStats.requested ) {
 		common->Printf(
-			"clusteredLighting status=%s requested=%d valid=%d grids=%d scenes=%d lights=%d point=%d projected=%d fog=%d ambient=%d special=%d clusters=%d active=%d refs=%d overflow=%d/%d overflowRefs=%d maxCluster=%d grid=%dx%dx%d z=%d..%d ubo=%d buffers=%d bytes(params=%d lights=%d indices=%d) debug=%d/%d build=%dms uploads=%d\n",
+			"clusteredLighting status=%s requested=%d valid=%d grids=%d scenes=%d lights=%d point=%d projected=%d fog=%d ambient=%d special=%d clusters=%d active=%d refs=%d overflow=%d/%d overflowRefs=%d maxCluster=%d grid=%dx%dx%d z=%d..%d ubo=%d buffers=%d bytes(params=%d lights=%d indices=%d) debug=%d/%d debugTrunc=%d source='%s' build=%dms uploads=%d\n",
 			rg_clusteredLightingStats.status,
 			rg_clusteredLightingStats.requested ? 1 : 0,
 			rg_clusteredLightingStats.frameValid ? 1 : 0,
@@ -865,6 +886,8 @@ void R_ModernClusteredLighting_PrepareFrame( const idScenePacketFrame &packetFra
 			rg_clusteredLightingStats.indicesUBOBytes,
 			rg_clusteredLightingStats.debugOverlayReady ? 1 : 0,
 			rg_clusteredLightingStats.debugMode,
+			rg_clusteredLightingStats.debugStringTruncations,
+			rg_clusteredLightingStats.debugStringTruncationSource,
 			rg_clusteredLightingStats.buildMsec,
 			rg_clusteredLightingStats.bufferUploads );
 	}
@@ -909,7 +932,7 @@ void R_ModernClusteredLighting_DrawDebugOverlay( void ) {
 
 void R_ModernClusteredLighting_PrintGfxInfo( void ) {
 	common->Printf(
-		"Modern clustered lighting: %s, requested=%d, cvarDebug=%d, grids=%d scenes=%d lights=%d(point=%d projected=%d fog=%d ambient=%d special=%d) clusters=%d active=%d refs=%d overflow=%d/%d overflowRefs=%d maxCluster=%d grid=%dx%dx%d z=%d..%d ubo=%d buffers=%d bytes(params=%d lights=%d indices=%d) overlay=%d/%d texture=%d build=%dms uploads=%d\n",
+		"Modern clustered lighting: %s, requested=%d, cvarDebug=%d, grids=%d scenes=%d lights=%d(point=%d projected=%d fog=%d ambient=%d special=%d) clusters=%d active=%d refs=%d overflow=%d/%d overflowRefs=%d maxCluster=%d grid=%dx%dx%d z=%d..%d ubo=%d buffers=%d bytes(params=%d lights=%d indices=%d) overlay=%d/%d texture=%d debugTrunc=%d source='%s' build=%dms uploads=%d\n",
 		rg_clusteredLightingStats.available ? "available" : "unavailable",
 		rg_clusteredLightingStats.requested ? 1 : 0,
 		r_rendererClusterDebug.GetInteger(),
@@ -941,6 +964,8 @@ void R_ModernClusteredLighting_PrintGfxInfo( void ) {
 		rg_clusteredLightingStats.debugOverlayReady ? 1 : 0,
 		rg_clusteredLightingStats.debugOverlayDraws,
 		rg_clusteredLightingStats.debugTextureReady ? 1 : 0,
+		rg_clusteredLightingStats.debugStringTruncations,
+		rg_clusteredLightingStats.debugStringTruncationSource,
 		rg_clusteredLightingStats.buildMsec,
 		rg_clusteredLightingStats.bufferUploads );
 }

@@ -177,6 +177,8 @@ typedef struct materialResourceTableStats_s {
 	int		fallbackUnsupportedTexgen;
 	int		fallbackNeedsCurrentRender;
 	int		fallbackTooManyTextures;
+	int		debugStringTruncations;
+	char	debugStringTruncationSource[64];
 	char	lastFailure[96];
 } materialResourceTableStats_t;
 

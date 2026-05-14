@@ -102,7 +102,29 @@ static const char *R_MaterialResourceTable_SortGroupName( materialResourceSortGr
 }
 
 static void R_MaterialResourceTable_SetStatus( const char *status ) {
-	idStr::snPrintf( rg_materialResourceTable.stats.lastFailure, sizeof( rg_materialResourceTable.stats.lastFailure ), "%s", status ? status : "unknown" );
+	idStr::Copynz( rg_materialResourceTable.stats.lastFailure, status ? status : "unknown", sizeof( rg_materialResourceTable.stats.lastFailure ) );
+}
+
+static void R_MaterialResourceTable_RecordDebugStringTruncation( const char *source ) {
+	rg_materialResourceTable.stats.debugStringTruncations++;
+	if ( rg_materialResourceTable.stats.debugStringTruncationSource[0] == '\0' ) {
+		idStr::Copynz( rg_materialResourceTable.stats.debugStringTruncationSource, source ? source : "unknown", sizeof( rg_materialResourceTable.stats.debugStringTruncationSource ) );
+	}
+}
+
+static bool R_MaterialResourceTable_CopyDebugString( char *dest, int destSize, const char *source ) {
+	const char *text = source != NULL ? source : "";
+	const int sourceLength = static_cast<int>( strlen( text ) );
+	idStr::Copynz( dest, text, destSize );
+	return sourceLength < destSize;
+}
+
+static bool R_MaterialResourceTable_FormatDebugString( char *dest, int destSize, const char *fmt, ... ) {
+	va_list argptr;
+	va_start( argptr, fmt );
+	const int result = idStr::vsnPrintf( dest, destSize, fmt, argptr );
+	va_end( argptr );
+	return result >= 0;
 }
 
 static void R_MaterialResourceTable_AddFallback( materialResourceTableRecord_t &record, materialResourceFallbackReason_t reason, unsigned int flag ) {
@@ -347,12 +369,19 @@ static void R_MaterialResourceTable_AddTextureBinding(
 	binding.bindlessSupported = rg_materialResourceTable.stats.bindlessSupported;
 	binding.bindlessEnabled = false;
 	binding.bindlessHandle = 0;
-	idStr::snPrintf(
-		binding.debugName,
-		sizeof( binding.debugName ),
-		"%s:%s",
-		MaterialResourceTextureSemantic_Name( semantic ),
-		image->GetName() ? image->GetName() : "<unnamed>" );
+	const char *semanticName = MaterialResourceTextureSemantic_Name( semantic );
+	if ( r_rendererMetrics.GetInteger() >= 2 ) {
+		if ( !R_MaterialResourceTable_FormatDebugString(
+			binding.debugName,
+			sizeof( binding.debugName ),
+			"%s:%s",
+			semanticName,
+			image->GetName() ? image->GetName() : "<unnamed>" ) ) {
+			R_MaterialResourceTable_RecordDebugStringTruncation( "texture binding debugName" );
+		}
+	} else if ( !R_MaterialResourceTable_CopyDebugString( binding.debugName, sizeof( binding.debugName ), semanticName ) ) {
+		R_MaterialResourceTable_RecordDebugStringTruncation( "texture binding semantic" );
+	}
 
 	R_MaterialResourceTable_UpdateRecordSemanticFlags( record, semantic, image );
 	if ( binding.defaulted ) {
@@ -537,11 +566,9 @@ static bool R_MaterialResourceTable_AddRecordFromSource( const materialResourceR
 	record.sourceMaterialRecordIndex = sourceIndex;
 	record.materialId = sourceRecord.material != NULL ? sourceRecord.material->Index() : -1;
 	record.material = sourceRecord.material;
-	idStr::snPrintf(
-		record.materialName,
-		sizeof( record.materialName ),
-		"%s",
-		sourceRecord.material != NULL ? sourceRecord.material->GetName() : "<missing>" );
+	if ( !R_MaterialResourceTable_CopyDebugString( record.materialName, sizeof( record.materialName ), sourceRecord.material != NULL ? sourceRecord.material->GetName() : "<missing>" ) ) {
+		R_MaterialResourceTable_RecordDebugStringTruncation( "material record name" );
+	}
 	record.materialClass = static_cast<rendererMaterialClass_t>( sourceRecord.permutation.materialClass );
 	record.sortValue = sourceRecord.material != NULL ? sourceRecord.material->GetSort() : 0.0f;
 	record.sortGroup = R_MaterialResourceTable_SortGroupForMaterial( sourceRecord.material, record.materialClass );
@@ -668,7 +695,7 @@ const materialResourceTableRecord_t *R_MaterialResourceTable_FindRecordForMateri
 void R_MaterialResourceTable_PrintGfxInfo( void ) {
 	const materialResourceTableStats_t &stats = R_MaterialResourceTable_Stats();
 	common->Printf(
-		"Material resource table: initialized=%d available=%d prepared=%d records=%d source=%d draws=%d textures=%d classic=%d arrays=%d views=%d bindless=%d/%d fallback=%d missing=%d unsupported=%d status='%s'\n",
+		"Material resource table: initialized=%d available=%d prepared=%d records=%d source=%d draws=%d textures=%d classic=%d arrays=%d views=%d bindless=%d/%d fallback=%d missing=%d unsupported=%d debugTrunc=%d source='%s' status='%s'\n",
 		stats.initialized ? 1 : 0,
 		stats.available ? 1 : 0,
 		stats.prepared ? 1 : 0,
@@ -684,13 +711,15 @@ void R_MaterialResourceTable_PrintGfxInfo( void ) {
 		stats.fallbackRecords,
 		stats.missingImages,
 		stats.unsupportedFeatures,
+		stats.debugStringTruncations,
+		stats.debugStringTruncationSource,
 		stats.lastFailure );
 }
 
 void R_MaterialResourceTable_DumpLatest( void ) {
 	const materialResourceTableStats_t &stats = R_MaterialResourceTable_Stats();
 	common->Printf(
-		"MaterialResourceTable dump: prepared=%d available=%d records=%d source=%d draws=%d textures=%d fallback=%d missing=%d defaulted=%d unsupported=%d status='%s'\n",
+		"MaterialResourceTable dump: prepared=%d available=%d records=%d source=%d draws=%d textures=%d fallback=%d missing=%d defaulted=%d unsupported=%d debugTrunc=%d source='%s' status='%s'\n",
 		stats.prepared ? 1 : 0,
 		stats.available ? 1 : 0,
 		stats.records,
@@ -701,6 +730,8 @@ void R_MaterialResourceTable_DumpLatest( void ) {
 		stats.missingImages,
 		stats.defaultedImages,
 		stats.unsupportedFeatures,
+		stats.debugStringTruncations,
+		stats.debugStringTruncationSource,
 		stats.lastFailure );
 	for ( int i = 0; i < stats.records; ++i ) {
 		const materialResourceTableRecord_t &record = rg_materialResourceTable.records[i];

@@ -41,6 +41,13 @@ static int rg_renderGraphResourceHandleCount = 0;
 static int rg_renderGraphResourcePassCount = 0;
 static bool rg_renderGraphResourceInitialized = false;
 
+static void R_RenderGraphResources_FormatDebugLabel( char *dest, int destSize, const char *fmt, ... ) {
+	va_list argptr;
+	va_start( argptr, fmt );
+	idStr::vsnPrintf( dest, destSize, fmt, argptr );
+	va_end( argptr );
+}
+
 static const char *R_RenderGraphResources_TypeName( renderGraphResourceType_t type ) {
 	switch ( type ) {
 	case RENDER_GRAPH_RESOURCE_COLOR:
@@ -80,7 +87,7 @@ static const char *R_RenderGraphResources_FboStatusName( GLenum status ) {
 }
 
 static void R_RenderGraphResources_SetStatus( const char *status ) {
-	idStr::snPrintf( rg_renderGraphResourceStats.lastFailure, sizeof( rg_renderGraphResourceStats.lastFailure ), "%s", status ? status : "" );
+	idStr::Copynz( rg_renderGraphResourceStats.lastFailure, status ? status : "", sizeof( rg_renderGraphResourceStats.lastFailure ) );
 }
 
 static unsigned int R_RenderGraphResources_HashStep( unsigned int hash, unsigned int value ) {
@@ -385,7 +392,7 @@ static renderGraphResourceHandle_t *R_RenderGraphResources_AddImportedHandle( co
 		return NULL;
 	}
 	idStr::Copynz( handle->name, name, sizeof( handle->name ) );
-	idStr::snPrintf( handle->debugLabel, sizeof( handle->debugLabel ), "OpenQ4 graph import: %s", name );
+	R_RenderGraphResources_FormatDebugLabel( handle->debugLabel, sizeof( handle->debugLabel ), "OpenQ4 graph import: %s", name );
 	handle->type = type;
 	handle->width = width;
 	handle->height = height;
@@ -408,7 +415,7 @@ static bool R_RenderGraphResources_InitHandleFromGraph( const idRenderGraph &gra
 	}
 	const renderGraphResource_t &resource = graph.Resource( resourceIndex );
 	idStr::Copynz( handle.name, resource.name ? resource.name : "<unnamed>", sizeof( handle.name ) );
-	idStr::snPrintf( handle.debugLabel, sizeof( handle.debugLabel ), "OpenQ4 graph: %s", handle.name );
+	R_RenderGraphResources_FormatDebugLabel( handle.debugLabel, sizeof( handle.debugLabel ), "OpenQ4 graph: %s", handle.name );
 	handle.type = resource.type;
 	handle.graphResourceIndex = resourceIndex;
 	handle.width = R_RenderGraphResources_IsTextureResource( resource.type ) ? R_RenderGraphResources_FrameWidth( resource ) : 0;

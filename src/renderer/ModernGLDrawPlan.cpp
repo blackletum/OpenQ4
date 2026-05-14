@@ -12,7 +12,7 @@ idModernGLDrawPlan::idModernGLDrawPlan()
 void idModernGLDrawPlan::Clear( void ) {
 	memset( entries, 0, sizeof( entries ) );
 	memset( &stats, 0, sizeof( stats ) );
-	idStr::snPrintf( stats.status, sizeof( stats.status ), "%s", "empty" );
+	idStr::Copynz( stats.status, "empty", sizeof( stats.status ) );
 	numEntries = 0;
 }
 
@@ -45,7 +45,7 @@ const char *ModernGLDrawPlanPipeline_Name( modernGLDrawPlanPipeline_t pipeline )
 }
 
 static void R_ModernGLDrawPlan_SetStatus( modernGLDrawPlanStats_t &stats, const char *status ) {
-	idStr::snPrintf( stats.status, sizeof( stats.status ), "%s", status ? status : "unknown" );
+	idStr::Copynz( stats.status, status ? status : "unknown", sizeof( stats.status ) );
 }
 
 static bool R_ModernGLDrawPlan_CategoryPipeline( renderPassCategory_t category, modernGLDrawPlanPipeline_t &pipeline, modernGLShaderProgramKind_t &shaderKind ) {
