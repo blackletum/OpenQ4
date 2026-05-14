@@ -22,7 +22,8 @@ enum renderGraphResourceAccessBits_t {
 	RENDER_GRAPH_ACCESS_WRITE = 1 << 1,
 	RENDER_GRAPH_ACCESS_CLEAR = 1 << 2,
 	RENDER_GRAPH_ACCESS_RESOLVE = 1 << 3,
-	RENDER_GRAPH_ACCESS_PRESENT = 1 << 4
+	RENDER_GRAPH_ACCESS_PRESENT = 1 << 4,
+	RENDER_GRAPH_ACCESS_INVALIDATE = 1 << 5
 };
 
 typedef struct renderGraphResource_s {
@@ -44,6 +45,7 @@ typedef struct renderGraphResource_s {
 	bool					cleared;
 	bool					resolved;
 	bool					presented;
+	bool					invalidated;
 } renderGraphResource_t;
 
 typedef struct renderGraphResourceAccess_s {
@@ -67,6 +69,7 @@ typedef struct renderGraphPass_s {
 	int						clearCount;
 	int						resolveCount;
 	int						presentCount;
+	int						invalidateCount;
 	bool					enabled;
 	bool					legacyWrapped;
 	bool					packetBacked;
@@ -89,6 +92,7 @@ typedef struct renderGraphStats_s {
 	int						clearOps;
 	int						resolveOps;
 	int						presentOps;
+	int						invalidateOps;
 	bool					overflow;
 } renderGraphStats_t;
 

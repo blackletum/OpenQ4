@@ -10,6 +10,7 @@ const int MODERN_GL_SUBMIT_PLAN_MAX_COMMANDS = MODERN_GL_DRAW_PLAN_MAX_ENTRIES;
 
 typedef struct modernGLSubmitCommand_s {
 	const modernGLDrawPlanEntry_t *drawPlanEntry;
+	const viewDef_t			*viewDef;
 	renderPassCategory_t		passCategory;
 	modernGLDrawPlanPipeline_t	pipeline;
 	modernGLShaderProgramKind_t	shaderKind;
@@ -29,6 +30,11 @@ typedef struct modernGLSubmitCommand_s {
 	int							indexCount;
 	int							vertexCount;
 	int							materialRecordIndex;
+	int							materialTableIndex;
+	int							geometryRecordIndex;
+	int							instanceRecordIndex;
+	unsigned int				materialStableId;
+	float						modelViewMatrix[16];
 	int							scissorX1;
 	int							scissorY1;
 	int							scissorX2;

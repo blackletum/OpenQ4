@@ -168,6 +168,11 @@ bool idRenderGraph::AddPassResource( int passIndex, int resourceIndex, unsigned 
 		stats.presentOps++;
 		resource.presented = true;
 	}
+	if ( ( access & RENDER_GRAPH_ACCESS_INVALIDATE ) != 0 ) {
+		pass.invalidateCount++;
+		stats.invalidateOps++;
+		resource.invalidated = true;
+	}
 
 	numResourceAccesses++;
 	return true;
@@ -311,6 +316,21 @@ static int R_RenderGraph_EnsurePostA( idRenderGraph &graph ) {
 	return R_RenderGraph_EnsureResource( graph, "postA", RENDER_GRAPH_RESOURCE_COLOR, false, true, false, 1 );
 }
 
+static bool R_RenderGraph_ShouldModelGBuffer( void ) {
+	return r_rendererModernOpaque.GetBool() || r_rendererModernGBufferDebug.GetInteger() > 0;
+}
+
+static void R_RenderGraph_AddGBufferWrites( idRenderGraph &graph, int passIndex ) {
+	const int gbufferAlbedo = R_RenderGraph_EnsureResource( graph, "gbufferAlbedo", RENDER_GRAPH_RESOURCE_COLOR, false, true, false, 3 );
+	const int gbufferNormal = R_RenderGraph_EnsureResource( graph, "gbufferNormal", RENDER_GRAPH_RESOURCE_COLOR, false, true, false, 3 );
+	const int gbufferMaterial = R_RenderGraph_EnsureResource( graph, "gbufferMaterial", RENDER_GRAPH_RESOURCE_COLOR, false, true, false, 3 );
+	const int gbufferEmissive = R_RenderGraph_EnsureResource( graph, "gbufferEmissive", RENDER_GRAPH_RESOURCE_COLOR, false, true, false, 3 );
+	R_RenderGraph_AddAccess( graph, passIndex, gbufferAlbedo, RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR | RENDER_GRAPH_ACCESS_INVALIDATE, "gbuffer-albedo-write" );
+	R_RenderGraph_AddAccess( graph, passIndex, gbufferNormal, RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR | RENDER_GRAPH_ACCESS_INVALIDATE, "gbuffer-normal-write" );
+	R_RenderGraph_AddAccess( graph, passIndex, gbufferMaterial, RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR | RENDER_GRAPH_ACCESS_INVALIDATE, "gbuffer-material-write" );
+	R_RenderGraph_AddAccess( graph, passIndex, gbufferEmissive, RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR | RENDER_GRAPH_ACCESS_INVALIDATE, "gbuffer-emissive-write" );
+}
+
 static void R_RenderGraph_AddSceneColorWrite( idRenderGraph &graph, int passIndex, const char *usage ) {
 	const int sceneColor = R_RenderGraph_EnsureSceneColor( graph );
 	unsigned int access = RENDER_GRAPH_ACCESS_WRITE;
@@ -366,6 +386,9 @@ static void R_RenderGraph_AddPassResources( idRenderGraph &graph, int passIndex,
 		const int sceneDepth = R_RenderGraph_EnsureSceneDepth( graph );
 		R_RenderGraph_AddAccess( graph, passIndex, sceneDepth, RENDER_GRAPH_ACCESS_READ, "ambient-depth-read" );
 		R_RenderGraph_AddSceneColorReadWrite( graph, passIndex, "ambient-color" );
+		if ( R_RenderGraph_ShouldModelGBuffer() ) {
+			R_RenderGraph_AddGBufferWrites( graph, passIndex );
+		}
 		break;
 	}
 	case RENDER_PASS_FOG_BLEND: {
@@ -378,7 +401,7 @@ static void R_RenderGraph_AddPassResources( idRenderGraph &graph, int passIndex,
 		const int sceneDepth = R_RenderGraph_EnsureSceneDepth( graph );
 		const int ssao = R_RenderGraph_EnsureResource( graph, "ssao", RENDER_GRAPH_RESOURCE_COLOR, false, true, false, 1 );
 		R_RenderGraph_AddAccess( graph, passIndex, sceneDepth, RENDER_GRAPH_ACCESS_READ, "ssao-depth-read" );
-		R_RenderGraph_AddAccess( graph, passIndex, ssao, RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR, "ssao-write" );
+		R_RenderGraph_AddAccess( graph, passIndex, ssao, RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR | RENDER_GRAPH_ACCESS_INVALIDATE, "ssao-write" );
 		break;
 	}
 	case RENDER_PASS_MOTION_BLUR: {
@@ -389,7 +412,7 @@ static void R_RenderGraph_AddPassResources( idRenderGraph &graph, int passIndex,
 		R_RenderGraph_AddAccess( graph, passIndex, sceneColor, RENDER_GRAPH_ACCESS_READ, "motion-color-read" );
 		R_RenderGraph_AddAccess( graph, passIndex, sceneDepth, RENDER_GRAPH_ACCESS_READ, "motion-depth-read" );
 		R_RenderGraph_AddAccess( graph, passIndex, motionVectors, RENDER_GRAPH_ACCESS_READ, "motion-vector-read" );
-		R_RenderGraph_AddAccess( graph, passIndex, postA, RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR, "motion-post-write" );
+		R_RenderGraph_AddAccess( graph, passIndex, postA, RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR | RENDER_GRAPH_ACCESS_INVALIDATE, "motion-post-write" );
 		break;
 	}
 	case RENDER_PASS_LENS_FLARE: {
@@ -402,7 +425,7 @@ static void R_RenderGraph_AddPassResources( idRenderGraph &graph, int passIndex,
 		const int sceneColor = R_RenderGraph_EnsureSceneColor( graph );
 		const int bloomChain = R_RenderGraph_EnsureResource( graph, "bloomChain", RENDER_GRAPH_RESOURCE_COLOR, false, true, false, 1 );
 		R_RenderGraph_AddAccess( graph, passIndex, sceneColor, RENDER_GRAPH_ACCESS_READ, "bloom-source-read" );
-		R_RenderGraph_AddAccess( graph, passIndex, bloomChain, RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR, "bloom-chain-write" );
+		R_RenderGraph_AddAccess( graph, passIndex, bloomChain, RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR | RENDER_GRAPH_ACCESS_INVALIDATE, "bloom-chain-write" );
 		R_RenderGraph_AddAccess( graph, passIndex, sceneColor, RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_RESOLVE, "bloom-resolve" );
 		break;
 	}
@@ -410,14 +433,14 @@ static void R_RenderGraph_AddPassResources( idRenderGraph &graph, int passIndex,
 		const int sceneColor = R_RenderGraph_EnsureSceneColor( graph );
 		const int postA = R_RenderGraph_EnsurePostA( graph );
 		R_RenderGraph_AddAccess( graph, passIndex, sceneColor, RENDER_GRAPH_ACCESS_READ, "post-source-read" );
-		R_RenderGraph_AddAccess( graph, passIndex, postA, RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR, "post-transient-write" );
+		R_RenderGraph_AddAccess( graph, passIndex, postA, RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR | RENDER_GRAPH_ACCESS_INVALIDATE, "post-transient-write" );
 		R_RenderGraph_AddAccess( graph, passIndex, sceneColor, RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_RESOLVE, "post-resolve" );
 		break;
 	}
 	case RENDER_PASS_SPECIAL_EFFECTS: {
 		const int sceneDepth = R_RenderGraph_EnsureSceneDepth( graph );
 		R_RenderGraph_AddSceneColorReadWrite( graph, passIndex, "special-effects-color" );
-		R_RenderGraph_AddAccess( graph, passIndex, sceneDepth, RENDER_GRAPH_ACCESS_READ, "special-effects-depth-read" );
+		R_RenderGraph_AddAccess( graph, passIndex, sceneDepth, RENDER_GRAPH_ACCESS_READ | RENDER_GRAPH_ACCESS_INVALIDATE, "special-effects-depth-read" );
 		break;
 	}
 	case RENDER_PASS_GUI: {
@@ -433,7 +456,7 @@ static void R_RenderGraph_AddPassResources( idRenderGraph &graph, int passIndex,
 		const int sceneColor = graph.FindResource( "sceneColor" );
 		const int backBuffer = R_RenderGraph_EnsureBackBuffer( graph );
 		if ( sceneColor >= 0 && graph.Resource( sceneColor ).written ) {
-			R_RenderGraph_AddAccess( graph, passIndex, sceneColor, RENDER_GRAPH_ACCESS_READ, "present-scene-read" );
+			R_RenderGraph_AddAccess( graph, passIndex, sceneColor, RENDER_GRAPH_ACCESS_READ | RENDER_GRAPH_ACCESS_INVALIDATE, "present-scene-read" );
 			R_RenderGraph_AddAccess( graph, passIndex, backBuffer, RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_RESOLVE, "present-resolve" );
 		}
 		R_RenderGraph_AddAccess( graph, passIndex, backBuffer, RENDER_GRAPH_ACCESS_READ | RENDER_GRAPH_ACCESS_PRESENT, "present" );
@@ -479,6 +502,7 @@ void R_RenderGraph_BuildLegacyFrameGraph( const emptyCommand_t *cmds, idRenderGr
 			break;
 		}
 	}
+
 }
 
 void R_RenderGraph_BuildFromScenePackets( const idScenePacketFrame &packetFrame, idRenderGraph &graph ) {
@@ -503,7 +527,7 @@ void R_RenderGraph_LogIfVerbose( const idRenderGraph &graph ) {
 
 	const renderGraphStats_t &stats = graph.Stats();
 	common->Printf(
-		"renderGraph resources passes=%d passPackets=%d scenes=%d draws=%d cmds=%d resources=%d imported=%d transient=%d aliasable=%d accesses=%d read=%d write=%d clear=%d resolve=%d present=%d overflow=%d:",
+		"renderGraph resources passes=%d passPackets=%d scenes=%d draws=%d cmds=%d resources=%d imported=%d transient=%d aliasable=%d accesses=%d read=%d write=%d clear=%d resolve=%d invalidate=%d present=%d overflow=%d:",
 		graph.NumPasses(),
 		stats.passPackets,
 		stats.scenePackets,
@@ -518,12 +542,13 @@ void R_RenderGraph_LogIfVerbose( const idRenderGraph &graph ) {
 		stats.writeAccesses,
 		stats.clearOps,
 		stats.resolveOps,
+		stats.invalidateOps,
 		stats.presentOps,
 		stats.overflow ? 1 : 0 );
 	for ( int i = 0; i < graph.NumPasses(); ++i ) {
 		const renderGraphPass_t &pass = graph.Pass( i );
 		common->Printf(
-			" %s%s[p=%d d=%d r=%d w=%d c=%d x=%d]",
+			" %s%s[p=%d d=%d r=%d w=%d c=%d x=%d i=%d]",
 			pass.name ? pass.name : RenderPassCategory_Name( pass.category ),
 			pass.enabled ? "" : "(off)",
 			pass.passPacketCount,
@@ -531,14 +556,15 @@ void R_RenderGraph_LogIfVerbose( const idRenderGraph &graph ) {
 			pass.readResourceCount,
 			pass.writeResourceCount,
 			pass.clearCount,
-			pass.resolveCount );
+			pass.resolveCount,
+			pass.invalidateCount );
 	}
 	common->Printf( "\n" );
 
 	for ( int i = 0; i < graph.NumResources() && i < 12; ++i ) {
 		const renderGraphResource_t &resource = graph.Resource( i );
 		common->Printf(
-			"renderGraph resource[%d]=%s type=%s imported=%d transient=%d presentable=%d alias=%d lifetime=%d..%d producer=%d lastWriter=%d read=%d write=%d clear=%d resolve=%d present=%d\n",
+			"renderGraph resource[%d]=%s type=%s imported=%d transient=%d presentable=%d alias=%d lifetime=%d..%d producer=%d lastWriter=%d read=%d write=%d clear=%d resolve=%d invalidate=%d present=%d\n",
 			i,
 			resource.name ? resource.name : "<unnamed>",
 			R_RenderGraph_ResourceTypeName( resource.type ),
@@ -554,6 +580,7 @@ void R_RenderGraph_LogIfVerbose( const idRenderGraph &graph ) {
 			resource.written ? 1 : 0,
 			resource.cleared ? 1 : 0,
 			resource.resolved ? 1 : 0,
+			resource.invalidated ? 1 : 0,
 			resource.presented ? 1 : 0 );
 	}
 }
@@ -566,7 +593,7 @@ static bool R_RenderGraph_CheckPass( const idRenderGraph &graph, int index, rend
 	return pass.category == category && pass.passPacketCount == passPackets && pass.drawPacketCount == drawPackets && pass.packetBacked && pass.resourceBacked;
 }
 
-static bool R_RenderGraph_CheckResourceStats( const idRenderGraph &graph, int resources, int imported, int transient, int aliasable, int accesses, int reads, int writes, int clears, int resolves, int presents ) {
+static bool R_RenderGraph_CheckResourceStats( const idRenderGraph &graph, int resources, int imported, int transient, int aliasable, int accesses, int reads, int writes, int clears, int resolves, int invalidates, int presents ) {
 	const renderGraphStats_t &stats = graph.Stats();
 	return stats.resources == resources
 		&& stats.importedResources == imported
@@ -577,6 +604,7 @@ static bool R_RenderGraph_CheckResourceStats( const idRenderGraph &graph, int re
 		&& stats.writeAccesses == writes
 		&& stats.clearOps == clears
 		&& stats.resolveOps == resolves
+		&& stats.invalidateOps == invalidates
 		&& stats.presentOps == presents;
 }
 
@@ -658,9 +686,9 @@ static bool R_RenderGraph_RunWorldPacketSelfTest( void ) {
 			stats.overflow ? 1 : 0 );
 		return false;
 	}
-	if ( !R_RenderGraph_CheckResourceStats( graph, 5, 2, 3, 3, 18, 13, 9, 3, 2, 1 ) ) {
+	if ( !R_RenderGraph_CheckResourceStats( graph, 5, 2, 3, 3, 18, 13, 9, 3, 2, 3, 1 ) ) {
 		common->Printf(
-			"RendererRenderGraph self-test detail: world resources res=%d imported=%d transient=%d aliasable=%d access=%d read=%d write=%d clear=%d resolve=%d present=%d\n",
+			"RendererRenderGraph self-test detail: world resources res=%d imported=%d transient=%d aliasable=%d access=%d read=%d write=%d clear=%d resolve=%d invalidate=%d present=%d\n",
 			stats.resources,
 			stats.importedResources,
 			stats.transientResources,
@@ -670,6 +698,7 @@ static bool R_RenderGraph_RunWorldPacketSelfTest( void ) {
 			stats.writeAccesses,
 			stats.clearOps,
 			stats.resolveOps,
+			stats.invalidateOps,
 			stats.presentOps );
 		return false;
 	}
@@ -698,8 +727,11 @@ static bool R_RenderGraph_RunWorldPacketSelfTest( void ) {
 		|| !R_RenderGraph_CheckAccess( graph, 1, "sceneColor", RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR )
 		|| !R_RenderGraph_CheckAccess( graph, 2, "lightGrid", RENDER_GRAPH_ACCESS_READ )
 		|| !R_RenderGraph_CheckAccess( graph, 5, "postA", RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR )
+		|| !R_RenderGraph_CheckAccess( graph, 5, "postA", RENDER_GRAPH_ACCESS_INVALIDATE )
 		|| !R_RenderGraph_CheckAccess( graph, 5, "sceneColor", RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_RESOLVE )
+		|| !R_RenderGraph_CheckAccess( graph, 6, "sceneDepth", RENDER_GRAPH_ACCESS_INVALIDATE )
 		|| !R_RenderGraph_CheckAccess( graph, 7, "sceneColor", RENDER_GRAPH_ACCESS_READ )
+		|| !R_RenderGraph_CheckAccess( graph, 7, "sceneColor", RENDER_GRAPH_ACCESS_INVALIDATE )
 		|| !R_RenderGraph_CheckAccess( graph, 7, "backBuffer", RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_RESOLVE )
 		|| !R_RenderGraph_CheckAccess( graph, 7, "backBuffer", RENDER_GRAPH_ACCESS_READ | RENDER_GRAPH_ACCESS_PRESENT ) ) {
 		common->Printf( "RendererRenderGraph self-test detail: world access edge mismatch\n" );
@@ -745,9 +777,9 @@ static bool R_RenderGraph_RunGuiPacketSelfTest( void ) {
 	if ( graph.NumPasses() != 2 || stats.passPackets != 2 || stats.scenePackets != 2 || stats.drawPackets != 1 || stats.commandPackets != 1 || stats.overflow ) {
 		return false;
 	}
-	if ( !R_RenderGraph_CheckResourceStats( graph, 1, 1, 0, 0, 2, 1, 1, 1, 0, 1 ) ) {
+	if ( !R_RenderGraph_CheckResourceStats( graph, 1, 1, 0, 0, 2, 1, 1, 1, 0, 0, 1 ) ) {
 		common->Printf(
-			"RendererRenderGraph self-test detail: gui resources res=%d imported=%d transient=%d aliasable=%d access=%d read=%d write=%d clear=%d resolve=%d present=%d\n",
+			"RendererRenderGraph self-test detail: gui resources res=%d imported=%d transient=%d aliasable=%d access=%d read=%d write=%d clear=%d resolve=%d invalidate=%d present=%d\n",
 			stats.resources,
 			stats.importedResources,
 			stats.transientResources,
@@ -757,6 +789,7 @@ static bool R_RenderGraph_RunGuiPacketSelfTest( void ) {
 			stats.writeAccesses,
 			stats.clearOps,
 			stats.resolveOps,
+			stats.invalidateOps,
 			stats.presentOps );
 		return false;
 	}

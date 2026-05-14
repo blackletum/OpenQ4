@@ -33,7 +33,10 @@ Automated coverage:
 
 | Case | Coverage |
 |---|---|
-| `renderer-foundation-selftests` | context ladder, tier selector, upload manager, GPU timer, scene packet, render graph, shader library, draw plan, submit plan, and modern executor self-tests |
+| `renderer-foundation-selftests` | context ladder, tier selector, upload manager, GPU timer, scene packet, render graph, render graph resource owner, material resource table, geometry/instance resource records, GL state cache, Shader Library V2 pass-family/permutation/reflection coverage, draw plan, submit plan, and modern executor self-tests |
+| `renderer-visible-depth-selftest` | opt-in `r_rendererModernVisibleDepth` coverage for graph-backed scene depth, compatible shadow-depth resources, fallback accounting, depth-overlay readiness, and `gfxInfo` reporting |
+| `renderer-gbuffer-selftest` | opt-in `r_rendererModernOpaque` coverage for graph-backed G-buffer resources, MRT setup, opaque/alpha-test draw classification, diffuse texture binding, packing assumptions, fallback accounting, bandwidth metrics, attachment debug-overlay readiness, and `gfxInfo` reporting |
+| `renderer-cluster-grid-selftest` | opt-in modern clustered-light preparation coverage for point/projected/fog/ambient/special light classification, 8x6x16 grid slicing, cluster reference packing, overflow accounting, GL 3.3 UBO fallback readiness, cluster debug-overlay texture generation, and `gfxInfo` reporting |
 | `tier-auto` | default compatibility-preserving startup and `gfxInfo` |
 | `tier-legacy` | forced legacy compatibility startup and `gfxInfo` |
 | `tier-gl33` | forced GL 3.3 startup and `gfxInfo` |
@@ -47,6 +50,8 @@ Automated coverage:
 | `present-vsync1-fps30` | low-fps capped presentation startup probe |
 
 The forced tier cases pass when startup succeeds and the selected tier is reported. If a machine cannot support the forced tier, the log must show the selected fallback tier.
+
+The visible-depth, G-buffer, and clustered-light self-tests intentionally run as their own safe cases instead of being appended to the foundation self-test startup command, because the engine command parser has a fixed startup command list budget.
 
 ## Manual Gameplay Matrix
 

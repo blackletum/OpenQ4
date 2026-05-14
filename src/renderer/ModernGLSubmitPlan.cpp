@@ -27,14 +27,6 @@ static bool R_ModernGLSubmitPlan_ScissorEquals( const modernGLSubmitCommand_t &a
 		&& a.scissorY2 == b.scissorY2;
 }
 
-static bool R_ModernGLSubmitPlan_HasVertexBuffer( const vertCache_t *cache ) {
-	return cache != NULL && cache->vbo != 0 && !cache->indexBuffer;
-}
-
-static bool R_ModernGLSubmitPlan_HasIndexBuffer( const vertCache_t *cache ) {
-	return cache != NULL && cache->vbo != 0 && cache->indexBuffer;
-}
-
 static bool R_ModernGLSubmitPlan_EntryNeedsIndexBuffer( const modernGLDrawPlanEntry_t &entry ) {
 	return entry.indexed && entry.indexCount > 0;
 }
@@ -45,6 +37,7 @@ static bool R_ModernGLSubmitPlan_IsDepthPipeline( modernGLDrawPlanPipeline_t pip
 
 static bool R_ModernGLSubmitPlan_IsMaterialPipeline( modernGLDrawPlanPipeline_t pipeline ) {
 	return pipeline == MODERN_GL_DRAW_PLAN_PIPELINE_FLAT_MATERIAL
+		|| pipeline == MODERN_GL_DRAW_PLAN_PIPELINE_GBUFFER
 		|| pipeline == MODERN_GL_DRAW_PLAN_PIPELINE_LIGHT_GRID
 		|| pipeline == MODERN_GL_DRAW_PLAN_PIPELINE_FOG_BLEND;
 }
@@ -82,28 +75,33 @@ bool idModernGLSubmitPlan::AddCommand( const modernGLDrawPlanEntry_t &entry ) {
 		return false;
 	}
 
-	const drawSurf_t *surf = draw->legacyDrawSurf;
-	const srfTriangles_t *geo = surf != NULL ? surf->geo : NULL;
+	const geometryResourceRecord_t *geo = draw->geometryRecord;
+	const instanceRecord_t *instance = draw->instanceRecord;
 	if ( geo == NULL || !draw->hasGeometry ) {
 		stats.missingGeometryDraws++;
+		stats.fallbackDraws++;
+		return false;
+	}
+	if ( instance == NULL || !instance->hasModelMatrix ) {
+		stats.missingDrawPacketDraws++;
 		stats.fallbackDraws++;
 		return false;
 	}
 
 	bool submitReady = true;
 	const bool needsIndexBuffer = R_ModernGLSubmitPlan_EntryNeedsIndexBuffer( entry );
-	const bool hasIndexBuffer = needsIndexBuffer && R_ModernGLSubmitPlan_HasIndexBuffer( geo->indexCache );
-	const bool canUploadIndexes = needsIndexBuffer && !hasIndexBuffer && geo->indexes != NULL && entry.indexCount > 0;
-	if ( !R_ModernGLSubmitPlan_HasVertexBuffer( geo->ambientCache ) ) {
+	const bool hasIndexBuffer = needsIndexBuffer && geo->hasIndexBuffer && geo->indexBuffer != 0;
+	const bool canUploadIndexes = needsIndexBuffer && !hasIndexBuffer && geo->legacyIndexData != NULL && entry.indexCount > 0;
+	if ( !geo->hasAmbientVertexBuffer || geo->ambientVertexBuffer == 0 ) {
 		stats.missingAmbientCacheDraws++;
-		if ( geo->ambientCache != NULL && geo->ambientCache->vbo == 0 ) {
+		if ( geo->ambientVertexBuffer == 0 ) {
 			stats.clientVertexFallbackDraws++;
 		}
 		submitReady = false;
 	}
 	if ( needsIndexBuffer && !hasIndexBuffer && !canUploadIndexes ) {
 		stats.missingIndexCacheDraws++;
-		if ( geo->indexCache != NULL && geo->indexCache->vbo == 0 ) {
+		if ( geo->indexBuffer == 0 ) {
 			stats.clientVertexFallbackDraws++;
 		}
 		submitReady = false;
@@ -116,25 +114,31 @@ bool idModernGLSubmitPlan::AddCommand( const modernGLDrawPlanEntry_t &entry ) {
 	modernGLSubmitCommand_t &command = commands[numCommands];
 	memset( &command, 0, sizeof( command ) );
 	command.drawPlanEntry = &entry;
+	command.viewDef = draw->viewDef;
 	command.passCategory = entry.passCategory;
 	command.pipeline = entry.pipeline;
 	command.shaderKind = entry.shaderKind;
 	command.program = entry.program;
-	command.vertexBuffer = geo->ambientCache->vbo;
-	command.indexBuffer = hasIndexBuffer ? geo->indexCache->vbo : 0;
-	command.clientIndexData = canUploadIndexes ? geo->indexes : NULL;
-	command.ambientCacheOffset = geo->ambientCache->offset;
-	command.indexCacheOffset = hasIndexBuffer ? geo->indexCache->offset : 0;
+	command.vertexBuffer = geo->ambientVertexBuffer;
+	command.indexBuffer = hasIndexBuffer ? geo->indexBuffer : 0;
+	command.clientIndexData = canUploadIndexes ? geo->legacyIndexData : NULL;
+	command.ambientCacheOffset = geo->ambientCacheOffset;
+	command.indexCacheOffset = hasIndexBuffer ? geo->indexCacheOffset : 0;
 	command.clientIndexBytes = canUploadIndexes ? entry.indexCount * static_cast<int>( sizeof( glIndex_t ) ) : 0;
 	command.modelViewProjectionLocation = entry.modelViewProjectionLocation;
 	command.debugColorLocation = entry.debugColorLocation;
 	command.localParamsLocation = entry.localParamsLocation;
 	command.mainTextureLocation = entry.mainTextureLocation;
-	command.vertexStride = sizeof( idDrawVert );
-	command.indexType = GL_INDEX_TYPE;
+	command.vertexStride = geo->vertexStride;
+	command.indexType = geo->indexType;
 	command.indexCount = entry.indexCount;
 	command.vertexCount = entry.vertexCount;
 	command.materialRecordIndex = entry.materialRecordIndex;
+	command.materialTableIndex = entry.materialTableIndex;
+	command.geometryRecordIndex = entry.geometryRecordIndex;
+	command.instanceRecordIndex = entry.instanceRecordIndex;
+	command.materialStableId = entry.materialStableId;
+	memcpy( command.modelViewMatrix, instance->modelViewMatrix, sizeof( command.modelViewMatrix ) );
 	command.scissorX1 = draw->scissorX1;
 	command.scissorY1 = draw->scissorY1;
 	command.scissorX2 = draw->scissorX2;
@@ -155,7 +159,7 @@ bool idModernGLSubmitPlan::AddCommand( const modernGLDrawPlanEntry_t &entry ) {
 	if ( !havePrevious || !R_ModernGLSubmitPlan_ScissorEquals( commands[numCommands - 1], command ) ) {
 		stats.scissorBatches++;
 	}
-	if ( !havePrevious || commands[numCommands - 1].materialRecordIndex != command.materialRecordIndex ) {
+	if ( !havePrevious || commands[numCommands - 1].materialTableIndex != command.materialTableIndex ) {
 		stats.materialBatches++;
 	}
 
@@ -268,6 +272,8 @@ static bool R_ModernGLSubmitPlan_BuildSelfTestDrawPlan( bool ambientCacheReady, 
 	drawSurf_t *drawSurfPtrs[2] = { &drawSurfs[0], &drawSurfs[1] };
 	viewEntity_t viewEntity;
 	memset( &viewEntity, 0, sizeof( viewEntity ) );
+	drawSurfs[0].space = &viewEntity;
+	drawSurfs[1].space = &viewEntity;
 	viewDef_t worldView;
 	memset( &worldView, 0, sizeof( worldView ) );
 	worldView.viewEntitys = &viewEntity;
@@ -286,6 +292,7 @@ static bool R_ModernGLSubmitPlan_BuildSelfTestDrawPlan( bool ambientCacheReady, 
 
 	R_ScenePackets_BuildLegacyCommandStream( reinterpret_cast<const emptyCommand_t *>( &drawCmd ), packetFrame );
 	R_RenderGraph_BuildFromScenePackets( packetFrame, graph );
+	R_MaterialResourceTable_PrepareFrame( packetFrame );
 	return drawPlan.Build( packetFrame, graph );
 }
 
@@ -331,6 +338,10 @@ bool RendererModernGLSubmitPlan_RunSelfTest( void ) {
 		}
 		if ( submitPlan.Command( 0 ).uploadIndexBuffer || submitPlan.Command( 0 ).indexBuffer != 202 ) {
 			common->Printf( "RendererModernGLSubmitPlan self-test failed: ready index-source mismatch\n" );
+			return false;
+		}
+		if ( submitPlan.Command( 0 ).materialTableIndex != submitPlan.Command( 0 ).materialRecordIndex ) {
+			common->Printf( "RendererModernGLSubmitPlan self-test failed: material table index mismatch\n" );
 			return false;
 		}
 	}

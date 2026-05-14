@@ -38,13 +38,29 @@ typedef struct rendererMetricsFrame_s {
 	bool	scenePacketsFrontEndDerived;
 	bool	scenePacketsBackendDerived;
 	bool	scenePacketOverflow;
+	scenePacketOverflowCause_t scenePacketOverflowCause;
 	int		materialRecords;
+	int		geometryRecords;
+	int		instanceRecords;
 	int		drawPacketsWithMaterial;
 	int		drawPacketsWithResourceRecord;
+	int		drawPacketsWithGeometryRecord;
+	int		drawPacketsWithInstanceRecord;
 	int		drawPacketsWithGeometry;
 	int		drawPacketsWithShaderRegisters;
 	int		drawPacketsWithIndexCache;
 	int		drawPacketsWithAmbientCache;
+	int		worldPackets;
+	int		subviewPackets;
+	int		remoteCameraPackets;
+	int		specialEffectPackets;
+	int		viewmodelPackets;
+	int		renderDemoPackets;
+	int		guiPackets;
+	int		postProcessPackets;
+	int		presentPackets;
+	int		commandOnlyPackets;
+	int		sortKeyValidationFailures;
 	int		renderGraphPasses;
 	int		renderGraphPassPackets;
 	int		renderGraphScenePackets;
@@ -59,8 +75,11 @@ typedef struct rendererMetricsFrame_s {
 	int		renderGraphWriteAccesses;
 	int		renderGraphClearOps;
 	int		renderGraphResolveOps;
+	int		renderGraphInvalidateOps;
 	int		renderGraphPresentOps;
 	bool	renderGraphOverflow;
+	renderGraphResourceManagerStats_t renderGraphResourceManager;
+	materialResourceTableStats_t materialResourceTable;
 	rendererModernExecutorMetricsMode_t modernExecutorMode;
 	int		modernExecutorGraphPasses;
 	int		modernExecutorPreparedPasses;
@@ -103,6 +122,31 @@ typedef struct rendererMetricsFrame_s {
 	int		modernExecutorSubmitPlanMaterialBatches;
 	int		modernExecutorSubmitPlanUniformUpdates;
 	int		modernExecutorSubmitPlanFrameUBOBinds;
+	bool	modernExecutorVisibleDepthRequested;
+	bool	modernExecutorVisibleDepthExecuted;
+	bool	modernExecutorVisibleDepthResourceReady;
+	bool	modernExecutorVisibleShadowResourceReady;
+	bool	modernExecutorVisibleDepthDebugOverlayReady;
+	int		modernExecutorVisibleDepthDraws;
+	int		modernExecutorVisibleDepthFallbackDraws;
+	int		modernExecutorVisibleShadowDepthDraws;
+	int		modernExecutorVisibleShadowFallbackDraws;
+	int		modernExecutorVisibleStencilShadowFallbackDraws;
+	int		modernExecutorVisibleDepthMismatchDraws;
+	int		modernExecutorVisibleDepthDebugOverlayDraws;
+	bool	modernExecutorOpaqueGBufferRequested;
+	bool	modernExecutorOpaqueGBufferExecuted;
+	bool	modernExecutorOpaqueGBufferResourcesReady;
+	bool	modernExecutorOpaqueGBufferMRTReady;
+	bool	modernExecutorOpaqueGBufferDebugOverlayReady;
+	int		modernExecutorOpaqueGBufferDraws;
+	int		modernExecutorOpaqueGBufferFallbackDraws;
+	int		modernExecutorOpaqueGBufferAttachmentCount;
+	int		modernExecutorOpaqueGBufferBytesPerPixel;
+	int		modernExecutorOpaqueGBufferBandwidthKB;
+	int		modernExecutorOpaqueGBufferDebugOverlayDraws;
+	rendererClusteredLightingStats_t clusteredLighting;
+	glStateCacheStats_t glStateCache;
 	bool	gpuTimersValid;
 	int		gpuTimerMsec[RENDERER_GPU_TIMER_COUNT];
 	int		gpuTimerSamples[RENDERER_GPU_TIMER_COUNT];
@@ -142,9 +186,25 @@ typedef struct rendererScenePacketLatest_s {
 	int		drawPacketsWithShaderRegisters;
 	int		drawPacketsWithIndexCache;
 	int		drawPacketsWithAmbientCache;
+	int		geometryRecords;
+	int		instanceRecords;
+	int		drawPacketsWithGeometryRecord;
+	int		drawPacketsWithInstanceRecord;
+	int		worldPackets;
+	int		subviewPackets;
+	int		remoteCameraPackets;
+	int		specialEffectPackets;
+	int		viewmodelPackets;
+	int		renderDemoPackets;
+	int		guiPackets;
+	int		postProcessPackets;
+	int		presentPackets;
+	int		commandOnlyPackets;
+	int		sortKeyValidationFailures;
 	bool	frontEndDerived;
 	bool	backendDerived;
 	bool	overflow;
+	scenePacketOverflowCause_t overflowCause;
 } rendererScenePacketLatest_t;
 
 typedef struct rendererRenderGraphLatest_s {
@@ -162,6 +222,7 @@ typedef struct rendererRenderGraphLatest_s {
 	int		writeAccesses;
 	int		clearOps;
 	int		resolveOps;
+	int		invalidateOps;
 	int		presentOps;
 	bool	overflow;
 } rendererRenderGraphLatest_t;
@@ -209,7 +270,34 @@ typedef struct rendererModernExecutorLatest_s {
 	int		submitPlanMaterialBatches;
 	int		submitPlanUniformUpdates;
 	int		submitPlanFrameUBOBinds;
+	bool	visibleDepthRequested;
+	bool	visibleDepthExecuted;
+	bool	visibleDepthResourceReady;
+	bool	visibleShadowResourceReady;
+	bool	visibleDepthDebugOverlayReady;
+	int		visibleDepthDraws;
+	int		visibleDepthFallbackDraws;
+	int		visibleShadowDepthDraws;
+	int		visibleShadowFallbackDraws;
+	int		visibleStencilShadowFallbackDraws;
+	int		visibleDepthMismatchDraws;
+	int		visibleDepthDebugOverlayDraws;
+	bool	opaqueGBufferRequested;
+	bool	opaqueGBufferExecuted;
+	bool	opaqueGBufferResourcesReady;
+	bool	opaqueGBufferMRTReady;
+	bool	opaqueGBufferDebugOverlayReady;
+	int		opaqueGBufferDraws;
+	int		opaqueGBufferFallbackDraws;
+	int		opaqueGBufferAttachmentCount;
+	int		opaqueGBufferBytesPerPixel;
+	int		opaqueGBufferBandwidthKB;
+	int		opaqueGBufferDebugOverlayDraws;
 } rendererModernExecutorLatest_t;
+
+typedef struct rendererGLStateCacheLatest_s {
+	glStateCacheStats_t stats;
+} rendererGLStateCacheLatest_t;
 
 static rendererMetricsFrame_t rg_rendererMetrics;
 static int rg_rendererMetricsLastSummaryFrame = -1;
@@ -217,7 +305,11 @@ static rendererGpuTimerFrame_t rg_gpuTimerFrames[4];
 static rendererGpuTimerLatest_t rg_gpuTimerLatest;
 static rendererScenePacketLatest_t rg_scenePacketLatest;
 static rendererRenderGraphLatest_t rg_renderGraphLatest;
+static renderGraphResourceManagerStats_t rg_renderGraphResourceLatest;
+static materialResourceTableStats_t rg_materialResourceTableLatest;
 static rendererModernExecutorLatest_t rg_modernExecutorLatest;
+static rendererClusteredLightingStats_t rg_clusteredLightingLatest;
+static rendererGLStateCacheLatest_t rg_glStateCacheLatest;
 static int rg_gpuTimerFrameCursor = 0;
 static int rg_gpuTimerBackendFrameCount = 0;
 static bool rg_gpuTimerQueryActive = false;
@@ -368,13 +460,29 @@ void R_RendererMetrics_BeginFrame( int frameCount ) {
 	rg_rendererMetrics.scenePacketsFrontEndDerived = rg_scenePacketLatest.frontEndDerived;
 	rg_rendererMetrics.scenePacketsBackendDerived = rg_scenePacketLatest.backendDerived;
 	rg_rendererMetrics.scenePacketOverflow = rg_scenePacketLatest.overflow;
+	rg_rendererMetrics.scenePacketOverflowCause = rg_scenePacketLatest.overflowCause;
 	rg_rendererMetrics.materialRecords = rg_scenePacketLatest.materialRecords;
+	rg_rendererMetrics.geometryRecords = rg_scenePacketLatest.geometryRecords;
+	rg_rendererMetrics.instanceRecords = rg_scenePacketLatest.instanceRecords;
 	rg_rendererMetrics.drawPacketsWithMaterial = rg_scenePacketLatest.drawPacketsWithMaterial;
 	rg_rendererMetrics.drawPacketsWithResourceRecord = rg_scenePacketLatest.drawPacketsWithResourceRecord;
+	rg_rendererMetrics.drawPacketsWithGeometryRecord = rg_scenePacketLatest.drawPacketsWithGeometryRecord;
+	rg_rendererMetrics.drawPacketsWithInstanceRecord = rg_scenePacketLatest.drawPacketsWithInstanceRecord;
 	rg_rendererMetrics.drawPacketsWithGeometry = rg_scenePacketLatest.drawPacketsWithGeometry;
 	rg_rendererMetrics.drawPacketsWithShaderRegisters = rg_scenePacketLatest.drawPacketsWithShaderRegisters;
 	rg_rendererMetrics.drawPacketsWithIndexCache = rg_scenePacketLatest.drawPacketsWithIndexCache;
 	rg_rendererMetrics.drawPacketsWithAmbientCache = rg_scenePacketLatest.drawPacketsWithAmbientCache;
+	rg_rendererMetrics.worldPackets = rg_scenePacketLatest.worldPackets;
+	rg_rendererMetrics.subviewPackets = rg_scenePacketLatest.subviewPackets;
+	rg_rendererMetrics.remoteCameraPackets = rg_scenePacketLatest.remoteCameraPackets;
+	rg_rendererMetrics.specialEffectPackets = rg_scenePacketLatest.specialEffectPackets;
+	rg_rendererMetrics.viewmodelPackets = rg_scenePacketLatest.viewmodelPackets;
+	rg_rendererMetrics.renderDemoPackets = rg_scenePacketLatest.renderDemoPackets;
+	rg_rendererMetrics.guiPackets = rg_scenePacketLatest.guiPackets;
+	rg_rendererMetrics.postProcessPackets = rg_scenePacketLatest.postProcessPackets;
+	rg_rendererMetrics.presentPackets = rg_scenePacketLatest.presentPackets;
+	rg_rendererMetrics.commandOnlyPackets = rg_scenePacketLatest.commandOnlyPackets;
+	rg_rendererMetrics.sortKeyValidationFailures = rg_scenePacketLatest.sortKeyValidationFailures;
 	rg_rendererMetrics.renderGraphPasses = rg_renderGraphLatest.graphPasses;
 	rg_rendererMetrics.renderGraphPassPackets = rg_renderGraphLatest.passPackets;
 	rg_rendererMetrics.renderGraphScenePackets = rg_renderGraphLatest.scenePackets;
@@ -389,8 +497,11 @@ void R_RendererMetrics_BeginFrame( int frameCount ) {
 	rg_rendererMetrics.renderGraphWriteAccesses = rg_renderGraphLatest.writeAccesses;
 	rg_rendererMetrics.renderGraphClearOps = rg_renderGraphLatest.clearOps;
 	rg_rendererMetrics.renderGraphResolveOps = rg_renderGraphLatest.resolveOps;
+	rg_rendererMetrics.renderGraphInvalidateOps = rg_renderGraphLatest.invalidateOps;
 	rg_rendererMetrics.renderGraphPresentOps = rg_renderGraphLatest.presentOps;
 	rg_rendererMetrics.renderGraphOverflow = rg_renderGraphLatest.overflow;
+	rg_rendererMetrics.renderGraphResourceManager = rg_renderGraphResourceLatest;
+	rg_rendererMetrics.materialResourceTable = rg_materialResourceTableLatest;
 	rg_rendererMetrics.modernExecutorMode = rg_modernExecutorLatest.mode;
 	rg_rendererMetrics.modernExecutorGraphPasses = rg_modernExecutorLatest.graphPasses;
 	rg_rendererMetrics.modernExecutorPreparedPasses = rg_modernExecutorLatest.preparedPasses;
@@ -433,6 +544,31 @@ void R_RendererMetrics_BeginFrame( int frameCount ) {
 	rg_rendererMetrics.modernExecutorSubmitPlanMaterialBatches = rg_modernExecutorLatest.submitPlanMaterialBatches;
 	rg_rendererMetrics.modernExecutorSubmitPlanUniformUpdates = rg_modernExecutorLatest.submitPlanUniformUpdates;
 	rg_rendererMetrics.modernExecutorSubmitPlanFrameUBOBinds = rg_modernExecutorLatest.submitPlanFrameUBOBinds;
+	rg_rendererMetrics.modernExecutorVisibleDepthRequested = rg_modernExecutorLatest.visibleDepthRequested;
+	rg_rendererMetrics.modernExecutorVisibleDepthExecuted = rg_modernExecutorLatest.visibleDepthExecuted;
+	rg_rendererMetrics.modernExecutorVisibleDepthResourceReady = rg_modernExecutorLatest.visibleDepthResourceReady;
+	rg_rendererMetrics.modernExecutorVisibleShadowResourceReady = rg_modernExecutorLatest.visibleShadowResourceReady;
+	rg_rendererMetrics.modernExecutorVisibleDepthDebugOverlayReady = rg_modernExecutorLatest.visibleDepthDebugOverlayReady;
+	rg_rendererMetrics.modernExecutorVisibleDepthDraws = rg_modernExecutorLatest.visibleDepthDraws;
+	rg_rendererMetrics.modernExecutorVisibleDepthFallbackDraws = rg_modernExecutorLatest.visibleDepthFallbackDraws;
+	rg_rendererMetrics.modernExecutorVisibleShadowDepthDraws = rg_modernExecutorLatest.visibleShadowDepthDraws;
+	rg_rendererMetrics.modernExecutorVisibleShadowFallbackDraws = rg_modernExecutorLatest.visibleShadowFallbackDraws;
+	rg_rendererMetrics.modernExecutorVisibleStencilShadowFallbackDraws = rg_modernExecutorLatest.visibleStencilShadowFallbackDraws;
+	rg_rendererMetrics.modernExecutorVisibleDepthMismatchDraws = rg_modernExecutorLatest.visibleDepthMismatchDraws;
+	rg_rendererMetrics.modernExecutorVisibleDepthDebugOverlayDraws = rg_modernExecutorLatest.visibleDepthDebugOverlayDraws;
+	rg_rendererMetrics.modernExecutorOpaqueGBufferRequested = rg_modernExecutorLatest.opaqueGBufferRequested;
+	rg_rendererMetrics.modernExecutorOpaqueGBufferExecuted = rg_modernExecutorLatest.opaqueGBufferExecuted;
+	rg_rendererMetrics.modernExecutorOpaqueGBufferResourcesReady = rg_modernExecutorLatest.opaqueGBufferResourcesReady;
+	rg_rendererMetrics.modernExecutorOpaqueGBufferMRTReady = rg_modernExecutorLatest.opaqueGBufferMRTReady;
+	rg_rendererMetrics.modernExecutorOpaqueGBufferDebugOverlayReady = rg_modernExecutorLatest.opaqueGBufferDebugOverlayReady;
+	rg_rendererMetrics.modernExecutorOpaqueGBufferDraws = rg_modernExecutorLatest.opaqueGBufferDraws;
+	rg_rendererMetrics.modernExecutorOpaqueGBufferFallbackDraws = rg_modernExecutorLatest.opaqueGBufferFallbackDraws;
+	rg_rendererMetrics.modernExecutorOpaqueGBufferAttachmentCount = rg_modernExecutorLatest.opaqueGBufferAttachmentCount;
+	rg_rendererMetrics.modernExecutorOpaqueGBufferBytesPerPixel = rg_modernExecutorLatest.opaqueGBufferBytesPerPixel;
+	rg_rendererMetrics.modernExecutorOpaqueGBufferBandwidthKB = rg_modernExecutorLatest.opaqueGBufferBandwidthKB;
+	rg_rendererMetrics.modernExecutorOpaqueGBufferDebugOverlayDraws = rg_modernExecutorLatest.opaqueGBufferDebugOverlayDraws;
+	rg_rendererMetrics.clusteredLighting = rg_clusteredLightingLatest;
+	rg_rendererMetrics.glStateCache = rg_glStateCacheLatest.stats;
 }
 
 void R_RendererMetrics_RecordSubmitMsec( int submitMsec ) {
@@ -449,26 +585,42 @@ void R_RendererMetrics_RecordBackendCommands( int draw3d, int draw2d, int setBuf
 	rg_rendererMetrics.renderTargetOps += renderTargetOps;
 }
 
-void R_RendererMetrics_RecordScenePackets( int scenePackets, int passPackets, int drawPackets, int clippedDrawPackets, int commandPackets, int legacyDrawViews, int materialRecords, int drawPacketsWithMaterial, int drawPacketsWithResourceRecord, int drawPacketsWithGeometry, int drawPacketsWithShaderRegisters, int drawPacketsWithIndexCache, int drawPacketsWithAmbientCache, bool frontEndDerived, bool backendDerived, bool overflow ) {
-	rg_scenePacketLatest.scenePackets = scenePackets;
-	rg_scenePacketLatest.passPackets = passPackets;
-	rg_scenePacketLatest.drawPackets = drawPackets;
-	rg_scenePacketLatest.clippedDrawPackets = clippedDrawPackets;
-	rg_scenePacketLatest.commandPackets = commandPackets;
-	rg_scenePacketLatest.legacyDrawViews = legacyDrawViews;
-	rg_scenePacketLatest.materialRecords = materialRecords;
-	rg_scenePacketLatest.drawPacketsWithMaterial = drawPacketsWithMaterial;
-	rg_scenePacketLatest.drawPacketsWithResourceRecord = drawPacketsWithResourceRecord;
-	rg_scenePacketLatest.drawPacketsWithGeometry = drawPacketsWithGeometry;
-	rg_scenePacketLatest.drawPacketsWithShaderRegisters = drawPacketsWithShaderRegisters;
-	rg_scenePacketLatest.drawPacketsWithIndexCache = drawPacketsWithIndexCache;
-	rg_scenePacketLatest.drawPacketsWithAmbientCache = drawPacketsWithAmbientCache;
-	rg_scenePacketLatest.frontEndDerived = frontEndDerived;
-	rg_scenePacketLatest.backendDerived = backendDerived;
-	rg_scenePacketLatest.overflow = overflow;
+void R_RendererMetrics_RecordScenePackets( const scenePacketFrameStats_t &stats ) {
+	rg_scenePacketLatest.scenePackets = stats.scenePackets;
+	rg_scenePacketLatest.passPackets = stats.passPackets;
+	rg_scenePacketLatest.drawPackets = stats.drawPackets;
+	rg_scenePacketLatest.clippedDrawPackets = stats.clippedDrawPackets;
+	rg_scenePacketLatest.commandPackets = stats.commandPackets;
+	rg_scenePacketLatest.legacyDrawViews = stats.legacyDrawViews;
+	rg_scenePacketLatest.materialRecords = stats.materialRecords;
+	rg_scenePacketLatest.geometryRecords = stats.geometryRecords;
+	rg_scenePacketLatest.instanceRecords = stats.instanceRecords;
+	rg_scenePacketLatest.drawPacketsWithMaterial = stats.drawPacketsWithMaterial;
+	rg_scenePacketLatest.drawPacketsWithResourceRecord = stats.drawPacketsWithResourceRecord;
+	rg_scenePacketLatest.drawPacketsWithGeometryRecord = stats.drawPacketsWithGeometryRecord;
+	rg_scenePacketLatest.drawPacketsWithInstanceRecord = stats.drawPacketsWithInstanceRecord;
+	rg_scenePacketLatest.drawPacketsWithGeometry = stats.drawPacketsWithGeometry;
+	rg_scenePacketLatest.drawPacketsWithShaderRegisters = stats.drawPacketsWithShaderRegisters;
+	rg_scenePacketLatest.drawPacketsWithIndexCache = stats.drawPacketsWithIndexCache;
+	rg_scenePacketLatest.drawPacketsWithAmbientCache = stats.drawPacketsWithAmbientCache;
+	rg_scenePacketLatest.worldPackets = stats.worldPackets;
+	rg_scenePacketLatest.subviewPackets = stats.subviewPackets;
+	rg_scenePacketLatest.remoteCameraPackets = stats.remoteCameraPackets;
+	rg_scenePacketLatest.specialEffectPackets = stats.specialEffectPackets;
+	rg_scenePacketLatest.viewmodelPackets = stats.viewmodelPackets;
+	rg_scenePacketLatest.renderDemoPackets = stats.renderDemoPackets;
+	rg_scenePacketLatest.guiPackets = stats.guiPackets;
+	rg_scenePacketLatest.postProcessPackets = stats.postProcessPackets;
+	rg_scenePacketLatest.presentPackets = stats.presentPackets;
+	rg_scenePacketLatest.commandOnlyPackets = stats.commandOnlyPackets;
+	rg_scenePacketLatest.sortKeyValidationFailures = stats.sortKeyValidationFailures;
+	rg_scenePacketLatest.frontEndDerived = stats.frontEndDerived;
+	rg_scenePacketLatest.backendDerived = stats.backendDerived;
+	rg_scenePacketLatest.overflow = stats.overflow;
+	rg_scenePacketLatest.overflowCause = stats.overflowCause;
 }
 
-void R_RendererMetrics_RecordRenderGraph( int graphPasses, int passPackets, int scenePackets, int drawPackets, int commandPackets, int resources, int importedResources, int transientResources, int aliasableTransientResources, int resourceAccesses, int readAccesses, int writeAccesses, int clearOps, int resolveOps, int presentOps, bool overflow ) {
+void R_RendererMetrics_RecordRenderGraph( int graphPasses, int passPackets, int scenePackets, int drawPackets, int commandPackets, int resources, int importedResources, int transientResources, int aliasableTransientResources, int resourceAccesses, int readAccesses, int writeAccesses, int clearOps, int resolveOps, int invalidateOps, int presentOps, bool overflow ) {
 	rg_renderGraphLatest.graphPasses = graphPasses;
 	rg_renderGraphLatest.passPackets = passPackets;
 	rg_renderGraphLatest.scenePackets = scenePackets;
@@ -483,11 +635,22 @@ void R_RendererMetrics_RecordRenderGraph( int graphPasses, int passPackets, int 
 	rg_renderGraphLatest.writeAccesses = writeAccesses;
 	rg_renderGraphLatest.clearOps = clearOps;
 	rg_renderGraphLatest.resolveOps = resolveOps;
+	rg_renderGraphLatest.invalidateOps = invalidateOps;
 	rg_renderGraphLatest.presentOps = presentOps;
 	rg_renderGraphLatest.overflow = overflow;
 }
 
-void R_RendererMetrics_RecordModernExecutor( rendererModernExecutorMetricsMode_t mode, int graphPasses, int preparedPasses, int fallbackPasses, int preparedDrawPackets, int materialDrawPackets, int resourceDrawPackets, int geometryDrawPackets, bool vaoReady, bool frameUBOReady, bool shaderLibraryReady, int shaderProgramCount, int shaderFailureCount, bool drawPlanReady, bool drawPlanOverflow, int drawPlanDraws, int drawPlanDepthDraws, int drawPlanMaterialDraws, int drawPlanFallbackDraws, int drawPlanStateBatches, int drawPlanProgramSwitches, int drawPlanMaterialSwitches, bool submitPlanReady, bool submitPlanOverflow, int submitPlanDraws, int submitPlanFallbackDraws, int submitPlanDepthDraws, int submitPlanMaterialDraws, int submitPlanMissingAmbientDraws, int submitPlanMissingIndexDraws, int submitPlanIndexUploadDraws, bool submitExecuted, int submittedDraws, int submittedFallbackDraws, int submittedIndexUploadDraws, int submitPlanProgramBatches, int submitPlanVertexBufferBatches, int submitPlanIndexBufferBatches, int submitPlanScissorBatches, int submitPlanMaterialBatches, int submitPlanUniformUpdates, int submitPlanFrameUBOBinds ) {
+void R_RendererMetrics_RecordRenderGraphResources( const renderGraphResourceManagerStats_t &stats ) {
+	rg_renderGraphResourceLatest = stats;
+	rg_rendererMetrics.renderGraphResourceManager = stats;
+}
+
+void R_RendererMetrics_RecordMaterialResourceTable( const materialResourceTableStats_t &stats ) {
+	rg_materialResourceTableLatest = stats;
+	rg_rendererMetrics.materialResourceTable = stats;
+}
+
+void R_RendererMetrics_RecordModernExecutor( rendererModernExecutorMetricsMode_t mode, int graphPasses, int preparedPasses, int fallbackPasses, int preparedDrawPackets, int materialDrawPackets, int resourceDrawPackets, int geometryDrawPackets, bool vaoReady, bool frameUBOReady, bool shaderLibraryReady, int shaderProgramCount, int shaderFailureCount, bool drawPlanReady, bool drawPlanOverflow, int drawPlanDraws, int drawPlanDepthDraws, int drawPlanMaterialDraws, int drawPlanFallbackDraws, int drawPlanStateBatches, int drawPlanProgramSwitches, int drawPlanMaterialSwitches, bool submitPlanReady, bool submitPlanOverflow, int submitPlanDraws, int submitPlanFallbackDraws, int submitPlanDepthDraws, int submitPlanMaterialDraws, int submitPlanMissingAmbientDraws, int submitPlanMissingIndexDraws, int submitPlanIndexUploadDraws, bool submitExecuted, int submittedDraws, int submittedFallbackDraws, int submittedIndexUploadDraws, int submitPlanProgramBatches, int submitPlanVertexBufferBatches, int submitPlanIndexBufferBatches, int submitPlanScissorBatches, int submitPlanMaterialBatches, int submitPlanUniformUpdates, int submitPlanFrameUBOBinds, bool visibleDepthRequested, bool visibleDepthExecuted, bool visibleDepthResourceReady, bool visibleShadowResourceReady, bool visibleDepthDebugOverlayReady, int visibleDepthDraws, int visibleDepthFallbackDraws, int visibleShadowDepthDraws, int visibleShadowFallbackDraws, int visibleStencilShadowFallbackDraws, int visibleDepthMismatchDraws, int visibleDepthDebugOverlayDraws, bool opaqueGBufferRequested, bool opaqueGBufferExecuted, bool opaqueGBufferResourcesReady, bool opaqueGBufferMRTReady, bool opaqueGBufferDebugOverlayReady, int opaqueGBufferDraws, int opaqueGBufferFallbackDraws, int opaqueGBufferAttachmentCount, int opaqueGBufferBytesPerPixel, int opaqueGBufferBandwidthKB, int opaqueGBufferDebugOverlayDraws ) {
 	rg_modernExecutorLatest.mode = mode;
 	rg_modernExecutorLatest.graphPasses = graphPasses;
 	rg_modernExecutorLatest.preparedPasses = preparedPasses;
@@ -530,6 +693,39 @@ void R_RendererMetrics_RecordModernExecutor( rendererModernExecutorMetricsMode_t
 	rg_modernExecutorLatest.submitPlanMaterialBatches = submitPlanMaterialBatches;
 	rg_modernExecutorLatest.submitPlanUniformUpdates = submitPlanUniformUpdates;
 	rg_modernExecutorLatest.submitPlanFrameUBOBinds = submitPlanFrameUBOBinds;
+	rg_modernExecutorLatest.visibleDepthRequested = visibleDepthRequested;
+	rg_modernExecutorLatest.visibleDepthExecuted = visibleDepthExecuted;
+	rg_modernExecutorLatest.visibleDepthResourceReady = visibleDepthResourceReady;
+	rg_modernExecutorLatest.visibleShadowResourceReady = visibleShadowResourceReady;
+	rg_modernExecutorLatest.visibleDepthDebugOverlayReady = visibleDepthDebugOverlayReady;
+	rg_modernExecutorLatest.visibleDepthDraws = visibleDepthDraws;
+	rg_modernExecutorLatest.visibleDepthFallbackDraws = visibleDepthFallbackDraws;
+	rg_modernExecutorLatest.visibleShadowDepthDraws = visibleShadowDepthDraws;
+	rg_modernExecutorLatest.visibleShadowFallbackDraws = visibleShadowFallbackDraws;
+	rg_modernExecutorLatest.visibleStencilShadowFallbackDraws = visibleStencilShadowFallbackDraws;
+	rg_modernExecutorLatest.visibleDepthMismatchDraws = visibleDepthMismatchDraws;
+	rg_modernExecutorLatest.visibleDepthDebugOverlayDraws = visibleDepthDebugOverlayDraws;
+	rg_modernExecutorLatest.opaqueGBufferRequested = opaqueGBufferRequested;
+	rg_modernExecutorLatest.opaqueGBufferExecuted = opaqueGBufferExecuted;
+	rg_modernExecutorLatest.opaqueGBufferResourcesReady = opaqueGBufferResourcesReady;
+	rg_modernExecutorLatest.opaqueGBufferMRTReady = opaqueGBufferMRTReady;
+	rg_modernExecutorLatest.opaqueGBufferDebugOverlayReady = opaqueGBufferDebugOverlayReady;
+	rg_modernExecutorLatest.opaqueGBufferDraws = opaqueGBufferDraws;
+	rg_modernExecutorLatest.opaqueGBufferFallbackDraws = opaqueGBufferFallbackDraws;
+	rg_modernExecutorLatest.opaqueGBufferAttachmentCount = opaqueGBufferAttachmentCount;
+	rg_modernExecutorLatest.opaqueGBufferBytesPerPixel = opaqueGBufferBytesPerPixel;
+	rg_modernExecutorLatest.opaqueGBufferBandwidthKB = opaqueGBufferBandwidthKB;
+	rg_modernExecutorLatest.opaqueGBufferDebugOverlayDraws = opaqueGBufferDebugOverlayDraws;
+}
+
+void R_RendererMetrics_RecordGLStateCache( const glStateCacheStats_t &stats ) {
+	rg_glStateCacheLatest.stats = stats;
+	rg_rendererMetrics.glStateCache = stats;
+}
+
+void R_RendererMetrics_RecordClusteredLighting( const rendererClusteredLightingStats_t &stats ) {
+	rg_clusteredLightingLatest = stats;
+	rg_rendererMetrics.clusteredLighting = stats;
 }
 
 void R_RendererMetrics_AddUploadBytes( int bytes ) {
@@ -563,7 +759,7 @@ void R_RendererMetrics_EndFrame( int frontEndMsec, int backEndMsec, int viewCoun
 	R_RendererMetrics_FormatGpuMsec( rg_rendererMetrics, gpuText, sizeof( gpuText ) );
 	if ( detail >= 2 ) {
 		common->Printf(
-			"rendererMetrics frame=%d tier=%s fe=%dms submit=%dms be=%dms gpu=%s views=%d ents=%d lights=%d draws=%d surf=%d verts=%d idx=%d uploads=%d stalls=%d ring=%d/%dKB allocs=%d overflow=%d static=%dKB/%d live=%d/%dKB writes(p=%d map=%d sub=%d) packets(source=%s scene=%d pass=%d draw=%d clipped=%d cmd=%d views=%d overflow=%d) resources(materials=%d withMaterial=%d records=%d geometry=%d regs=%d ibo=%d vbo=%d) graph(pass=%d packets=%d scenes=%d draw=%d cmd=%d res=%d imported=%d transient=%d aliasable=%d access=%d read=%d write=%d clear=%d resolve=%d present=%d overflow=%d) modernExec(mode=%s vao=%d ubo=%d shaderLib=%d shaders=%d shaderFails=%d passes=%d/%d fallback=%d draws=%d material=%d resources=%d geometry=%d plan=%d planDraws=%d depth=%d materialFamily=%d planFallback=%d batches=%d switches=%d materialSwitches=%d planOverflow=%d submit=%d submitDraws=%d submitDepth=%d submitMaterial=%d submitFallback=%d missing(vbo=%d ibo=%d) indexUpload=%d submitted=%d/%d submittedFallback=%d submittedUpload=%d submitBatches(program=%d vbo=%d ibo=%d scissor=%d material=%d) uniforms=%d frameUBO=%d submitOverflow=%d) gpuPass(3d=%d/%d 2d=%d/%d rt=%d/%d copy=%d/%d special=%d/%d setbuf=%d/%d dropped=%d) cmds(3d=%d 2d=%d rt=%d copy=%d swap=%d)\n",
+			"rendererMetrics frame=%d tier=%s fe=%dms submit=%dms be=%dms gpu=%s views=%d ents=%d lights=%d draws=%d surf=%d verts=%d idx=%d uploads=%d stalls=%d ring=%d/%dKB allocs=%d overflow=%d static=%dKB/%d live=%d/%dKB writes(p=%d map=%d sub=%d) packets(source=%s scene=%d pass=%d draw=%d clipped=%d cmd=%d views=%d overflow=%d cause=%s sortFailures=%d categories(world=%d subview=%d remote=%d fx=%d viewmodel=%d demo=%d gui=%d post=%d present=%d command=%d)) resources(materials=%d geometryRecords=%d instances=%d withMaterial=%d materialRefs=%d geometryRefs=%d instanceRefs=%d geometry=%d regs=%d ibo=%d vbo=%d) graph(pass=%d packets=%d scenes=%d draw=%d cmd=%d res=%d imported=%d transient=%d aliasable=%d access=%d read=%d write=%d clear=%d resolve=%d invalidate=%d present=%d overflow=%d) graphGL(prepared=%d available=%d handles=%d imported=%d transient=%d textures=%d buffers=%d physical=%d new=%d reuse=%d aliasReuse=%d fbo=%d/%d skipped(imported=%d buffer=%d) lifetimeFailures=%d overflow=%d status='%s') materialTable(prepared=%d available=%d records=%d source=%d draws=%d textures=%d classic=%d arrays=%d views=%d bindless=%d/%d classes(o=%d p=%d t=%d gui=%d post=%d) fallback=%d missing=%d unsupported=%d reasons(matl=%d nodraw=%d image=%d custom=%d dynamic=%d texgen=%d current=%d slots=%d) status='%s') modernExec(mode=%s vao=%d ubo=%d shaderLib=%d shaders=%d shaderFails=%d passes=%d/%d fallback=%d draws=%d material=%d resources=%d geometry=%d plan=%d planDraws=%d depth=%d materialFamily=%d planFallback=%d batches=%d switches=%d materialSwitches=%d planOverflow=%d submit=%d submitDraws=%d submitDepth=%d submitMaterial=%d submitFallback=%d missing(vbo=%d ibo=%d) indexUpload=%d submitted=%d/%d submittedFallback=%d submittedUpload=%d submitBatches(program=%d vbo=%d ibo=%d scissor=%d material=%d) uniforms=%d frameUBO=%d submitOverflow=%d visibleDepth(req=%d exec=%d res=%d/%d draws=%d shadow=%d fallback=%d/%d stencil=%d mismatch=%d overlay=%d/%d) gbuffer(req=%d exec=%d res=%d mrt=%d draws=%d fallback=%d att=%d bpp=%d bw=%dKB overlay=%d/%d) cluster(req=%d valid=%d grids=%d lights=%d p=%d proj=%d fog=%d ambient=%d special=%d clusters=%d active=%d refs=%d overflow=%d/%d overflowRefs=%d max=%d grid=%dx%dx%d build=%dms ubo=%d bytes=%dKB overlay=%d/%d)) stateCache(hits=%d misses=%d invalidations=%d legacyResets=%d labels=%d groups=%d prog=%d vao=%d buf=%d tex=%d sampler=%d fbo=%d blend=%d depth=%d stencil=%d raster=%d viewport=%d scissor=%d color=%d last='%s') gpuPass(3d=%d/%d 2d=%d/%d rt=%d/%d copy=%d/%d special=%d/%d setbuf=%d/%d dropped=%d) cmds(3d=%d 2d=%d rt=%d copy=%d swap=%d)\n",
 			rg_rendererMetrics.frameCount,
 			RendererTier_Name( glConfig.rendererTier ),
 			rg_rendererMetrics.frontEndMsec,
@@ -598,9 +794,25 @@ void R_RendererMetrics_EndFrame( int frontEndMsec, int backEndMsec, int viewCoun
 			rg_rendererMetrics.commandPackets,
 			rg_rendererMetrics.legacyDrawViews,
 			rg_rendererMetrics.scenePacketOverflow ? 1 : 0,
+			ScenePacketOverflowCause_Name( rg_rendererMetrics.scenePacketOverflowCause ),
+			rg_rendererMetrics.sortKeyValidationFailures,
+			rg_rendererMetrics.worldPackets,
+			rg_rendererMetrics.subviewPackets,
+			rg_rendererMetrics.remoteCameraPackets,
+			rg_rendererMetrics.specialEffectPackets,
+			rg_rendererMetrics.viewmodelPackets,
+			rg_rendererMetrics.renderDemoPackets,
+			rg_rendererMetrics.guiPackets,
+			rg_rendererMetrics.postProcessPackets,
+			rg_rendererMetrics.presentPackets,
+			rg_rendererMetrics.commandOnlyPackets,
 			rg_rendererMetrics.materialRecords,
+			rg_rendererMetrics.geometryRecords,
+			rg_rendererMetrics.instanceRecords,
 			rg_rendererMetrics.drawPacketsWithMaterial,
 			rg_rendererMetrics.drawPacketsWithResourceRecord,
+			rg_rendererMetrics.drawPacketsWithGeometryRecord,
+			rg_rendererMetrics.drawPacketsWithInstanceRecord,
 			rg_rendererMetrics.drawPacketsWithGeometry,
 			rg_rendererMetrics.drawPacketsWithShaderRegisters,
 			rg_rendererMetrics.drawPacketsWithIndexCache,
@@ -619,8 +831,55 @@ void R_RendererMetrics_EndFrame( int frontEndMsec, int backEndMsec, int viewCoun
 			rg_rendererMetrics.renderGraphWriteAccesses,
 			rg_rendererMetrics.renderGraphClearOps,
 			rg_rendererMetrics.renderGraphResolveOps,
+			rg_rendererMetrics.renderGraphInvalidateOps,
 			rg_rendererMetrics.renderGraphPresentOps,
 			rg_rendererMetrics.renderGraphOverflow ? 1 : 0,
+			rg_rendererMetrics.renderGraphResourceManager.prepared ? 1 : 0,
+			rg_rendererMetrics.renderGraphResourceManager.available ? 1 : 0,
+			rg_rendererMetrics.renderGraphResourceManager.handles,
+			rg_rendererMetrics.renderGraphResourceManager.importedHandles,
+			rg_rendererMetrics.renderGraphResourceManager.transientHandles,
+			rg_rendererMetrics.renderGraphResourceManager.textureHandles,
+			rg_rendererMetrics.renderGraphResourceManager.bufferHandles,
+			rg_rendererMetrics.renderGraphResourceManager.physicalAllocations,
+			rg_rendererMetrics.renderGraphResourceManager.newPhysicalAllocations,
+			rg_rendererMetrics.renderGraphResourceManager.reusedPhysicalAllocations,
+			rg_rendererMetrics.renderGraphResourceManager.aliasReusedPhysicalAllocations,
+			rg_rendererMetrics.renderGraphResourceManager.completeFramebuffers,
+			rg_rendererMetrics.renderGraphResourceManager.framebufferCount,
+			rg_rendererMetrics.renderGraphResourceManager.skippedImported,
+			rg_rendererMetrics.renderGraphResourceManager.skippedBuffers,
+			rg_rendererMetrics.renderGraphResourceManager.lifetimeValidationFailures,
+			rg_rendererMetrics.renderGraphResourceManager.overflow ? 1 : 0,
+			rg_rendererMetrics.renderGraphResourceManager.lastFailure,
+			rg_rendererMetrics.materialResourceTable.prepared ? 1 : 0,
+			rg_rendererMetrics.materialResourceTable.available ? 1 : 0,
+			rg_rendererMetrics.materialResourceTable.records,
+			rg_rendererMetrics.materialResourceTable.sourceMaterialRecords,
+			rg_rendererMetrics.materialResourceTable.drawPacketReferences,
+			rg_rendererMetrics.materialResourceTable.textureBindings,
+			rg_rendererMetrics.materialResourceTable.classicTextureBindings,
+			rg_rendererMetrics.materialResourceTable.textureArrayDescriptors,
+			rg_rendererMetrics.materialResourceTable.textureViewDescriptors,
+			rg_rendererMetrics.materialResourceTable.bindlessEnabled ? 1 : 0,
+			rg_rendererMetrics.materialResourceTable.bindlessSupported ? 1 : 0,
+			rg_rendererMetrics.materialResourceTable.opaqueRecords,
+			rg_rendererMetrics.materialResourceTable.perforatedRecords,
+			rg_rendererMetrics.materialResourceTable.translucentRecords,
+			rg_rendererMetrics.materialResourceTable.guiRecords,
+			rg_rendererMetrics.materialResourceTable.postProcessRecords,
+			rg_rendererMetrics.materialResourceTable.fallbackRecords,
+			rg_rendererMetrics.materialResourceTable.missingImages,
+			rg_rendererMetrics.materialResourceTable.unsupportedFeatures,
+			rg_rendererMetrics.materialResourceTable.fallbackMissingMaterial,
+			rg_rendererMetrics.materialResourceTable.fallbackNoDrawStages,
+			rg_rendererMetrics.materialResourceTable.fallbackMissingImage,
+			rg_rendererMetrics.materialResourceTable.fallbackCustomProgram,
+			rg_rendererMetrics.materialResourceTable.fallbackDynamicImage,
+			rg_rendererMetrics.materialResourceTable.fallbackUnsupportedTexgen,
+			rg_rendererMetrics.materialResourceTable.fallbackNeedsCurrentRender,
+			rg_rendererMetrics.materialResourceTable.fallbackTooManyTextures,
+			rg_rendererMetrics.materialResourceTable.lastFailure,
 			R_RendererMetrics_ModernExecutorModeName( rg_rendererMetrics.modernExecutorMode ),
 			rg_rendererMetrics.modernExecutorVAOReady ? 1 : 0,
 			rg_rendererMetrics.modernExecutorFrameUBOReady ? 1 : 0,
@@ -663,6 +922,73 @@ void R_RendererMetrics_EndFrame( int frontEndMsec, int backEndMsec, int viewCoun
 			rg_rendererMetrics.modernExecutorSubmitPlanUniformUpdates,
 			rg_rendererMetrics.modernExecutorSubmitPlanFrameUBOBinds,
 			rg_rendererMetrics.modernExecutorSubmitPlanOverflow ? 1 : 0,
+			rg_rendererMetrics.modernExecutorVisibleDepthRequested ? 1 : 0,
+			rg_rendererMetrics.modernExecutorVisibleDepthExecuted ? 1 : 0,
+			rg_rendererMetrics.modernExecutorVisibleDepthResourceReady ? 1 : 0,
+			rg_rendererMetrics.modernExecutorVisibleShadowResourceReady ? 1 : 0,
+			rg_rendererMetrics.modernExecutorVisibleDepthDraws,
+			rg_rendererMetrics.modernExecutorVisibleShadowDepthDraws,
+			rg_rendererMetrics.modernExecutorVisibleDepthFallbackDraws,
+			rg_rendererMetrics.modernExecutorVisibleShadowFallbackDraws,
+			rg_rendererMetrics.modernExecutorVisibleStencilShadowFallbackDraws,
+			rg_rendererMetrics.modernExecutorVisibleDepthMismatchDraws,
+			rg_rendererMetrics.modernExecutorVisibleDepthDebugOverlayReady ? 1 : 0,
+			rg_rendererMetrics.modernExecutorVisibleDepthDebugOverlayDraws,
+			rg_rendererMetrics.modernExecutorOpaqueGBufferRequested ? 1 : 0,
+			rg_rendererMetrics.modernExecutorOpaqueGBufferExecuted ? 1 : 0,
+			rg_rendererMetrics.modernExecutorOpaqueGBufferResourcesReady ? 1 : 0,
+			rg_rendererMetrics.modernExecutorOpaqueGBufferMRTReady ? 1 : 0,
+			rg_rendererMetrics.modernExecutorOpaqueGBufferDraws,
+			rg_rendererMetrics.modernExecutorOpaqueGBufferFallbackDraws,
+			rg_rendererMetrics.modernExecutorOpaqueGBufferAttachmentCount,
+			rg_rendererMetrics.modernExecutorOpaqueGBufferBytesPerPixel,
+			rg_rendererMetrics.modernExecutorOpaqueGBufferBandwidthKB,
+			rg_rendererMetrics.modernExecutorOpaqueGBufferDebugOverlayReady ? 1 : 0,
+			rg_rendererMetrics.modernExecutorOpaqueGBufferDebugOverlayDraws,
+			rg_rendererMetrics.clusteredLighting.requested ? 1 : 0,
+			rg_rendererMetrics.clusteredLighting.frameValid ? 1 : 0,
+			rg_rendererMetrics.clusteredLighting.gridCount,
+			rg_rendererMetrics.clusteredLighting.lightCount,
+			rg_rendererMetrics.clusteredLighting.pointLights,
+			rg_rendererMetrics.clusteredLighting.projectedLights,
+			rg_rendererMetrics.clusteredLighting.fogLights,
+			rg_rendererMetrics.clusteredLighting.ambientLights,
+			rg_rendererMetrics.clusteredLighting.specialLights,
+			rg_rendererMetrics.clusteredLighting.clusterCount,
+			rg_rendererMetrics.clusteredLighting.activeClusters,
+			rg_rendererMetrics.clusteredLighting.lightReferences,
+			rg_rendererMetrics.clusteredLighting.overflow ? 1 : 0,
+			rg_rendererMetrics.clusteredLighting.overflowClusters,
+			rg_rendererMetrics.clusteredLighting.overflowReferences,
+			rg_rendererMetrics.clusteredLighting.maxLightsInCluster,
+			rg_rendererMetrics.clusteredLighting.tileCountX,
+			rg_rendererMetrics.clusteredLighting.tileCountY,
+			rg_rendererMetrics.clusteredLighting.sliceCountZ,
+			rg_rendererMetrics.clusteredLighting.buildMsec,
+			rg_rendererMetrics.clusteredLighting.uboFallbackReady ? 1 : 0,
+			( rg_rendererMetrics.clusteredLighting.paramsUBOBytes + rg_rendererMetrics.clusteredLighting.lightsUBOBytes + rg_rendererMetrics.clusteredLighting.indicesUBOBytes ) / 1024,
+			rg_rendererMetrics.clusteredLighting.debugOverlayReady ? 1 : 0,
+			rg_rendererMetrics.clusteredLighting.debugOverlayDraws,
+			rg_rendererMetrics.glStateCache.hits,
+			rg_rendererMetrics.glStateCache.misses,
+			rg_rendererMetrics.glStateCache.forcedInvalidations,
+			rg_rendererMetrics.glStateCache.legacyHandoffResets,
+			rg_rendererMetrics.glStateCache.objectLabelsAvailable ? 1 : 0,
+			rg_rendererMetrics.glStateCache.debugGroupsAvailable ? 1 : 0,
+			rg_rendererMetrics.glStateCache.programMisses,
+			rg_rendererMetrics.glStateCache.vertexArrayMisses,
+			rg_rendererMetrics.glStateCache.bufferMisses,
+			rg_rendererMetrics.glStateCache.textureMisses,
+			rg_rendererMetrics.glStateCache.samplerMisses,
+			rg_rendererMetrics.glStateCache.framebufferMisses,
+			rg_rendererMetrics.glStateCache.blendMisses,
+			rg_rendererMetrics.glStateCache.depthMisses,
+			rg_rendererMetrics.glStateCache.stencilMisses,
+			rg_rendererMetrics.glStateCache.rasterMisses,
+			rg_rendererMetrics.glStateCache.viewportMisses,
+			rg_rendererMetrics.glStateCache.scissorMisses,
+			rg_rendererMetrics.glStateCache.colorMaskMisses,
+			rg_rendererMetrics.glStateCache.lastInvalidationReason,
 			rg_rendererMetrics.gpuTimerMsec[RENDERER_GPU_TIMER_DRAW3D],
 			rg_rendererMetrics.gpuTimerSamples[RENDERER_GPU_TIMER_DRAW3D],
 			rg_rendererMetrics.gpuTimerMsec[RENDERER_GPU_TIMER_DRAW2D],
@@ -687,7 +1013,7 @@ void R_RendererMetrics_EndFrame( int frontEndMsec, int backEndMsec, int viewCoun
 	if ( rg_rendererMetricsLastSummaryFrame < 0 || rg_rendererMetrics.frameCount - rg_rendererMetricsLastSummaryFrame >= 60 ) {
 		rg_rendererMetricsLastSummaryFrame = rg_rendererMetrics.frameCount;
 		common->Printf(
-			"rendererMetrics summary tier=%s fe=%dms submit=%dms be=%dms gpu=%s views=%d ents=%d lights=%d draws=%d uploads=%dKB stalls=%d ring=%d/%dKB overflow=%dKB static=%dKB/%d live=%d/%dKB packets=%s:%d/%d/%d clipped=%d packetOverflow=%d materials=%d resources=%d geometry=%d graph=%d/%d/%d res=%d/%d/%d aliasable=%d access=%d read=%d write=%d clear=%d resolve=%d present=%d graphOverflow=%d modernExec=%s shaders=%d shaderFails=%d prep=%d/%d fallback=%d draws=%d resources=%d geometry=%d plan=%d/%d depth=%d materialFamily=%d batches=%d switches=%d submit=%d/%d submitFallback=%d missingVBO=%d missingIBO=%d indexUpload=%d submitted=%d/%d submittedFallback=%d submittedUpload=%d submitBatches=%d/%d/%d\n",
+			"rendererMetrics summary tier=%s fe=%dms submit=%dms be=%dms gpu=%s views=%d ents=%d lights=%d draws=%d uploads=%dKB stalls=%d ring=%d/%dKB overflow=%dKB static=%dKB/%d live=%d/%dKB packets=%s:%d/%d/%d clipped=%d packetOverflow=%d cause=%s materials=%d geometryRecords=%d instances=%d resources=%d geometryRefs=%d instanceRefs=%d geometry=%d sort=%d graph=%d/%d/%d res=%d/%d/%d aliasable=%d access=%d read=%d write=%d clear=%d resolve=%d invalidate=%d present=%d graphOverflow=%d graphGL=%d/%d handles=%d fbo=%d/%d materialTable=%d/%d records=%d tex=%d fallback=%d missing=%d modernExec=%s shaders=%d shaderFails=%d prep=%d/%d fallback=%d draws=%d resources=%d geometry=%d plan=%d/%d depth=%d materialFamily=%d batches=%d switches=%d submit=%d/%d submitFallback=%d missingVBO=%d missingIBO=%d indexUpload=%d submitted=%d/%d submittedFallback=%d submittedUpload=%d submitBatches=%d/%d/%d visibleDepth=%d/%d fallback=%d mismatch=%d overlay=%d gbuffer=%d/%d fallback=%d mrt=%d bw=%dKB overlay=%d cluster=%d/%d lights=%d refs=%d overflow=%d/%d build=%dms ubo=%d stateCache=%d/%d invalid=%d legacyReset=%d\n",
 			RendererTier_Name( glConfig.rendererTier ),
 			rg_rendererMetrics.frontEndMsec,
 			rg_rendererMetrics.submitMsec,
@@ -712,9 +1038,15 @@ void R_RendererMetrics_EndFrame( int frontEndMsec, int backEndMsec, int viewCoun
 			rg_rendererMetrics.drawPackets,
 			rg_rendererMetrics.clippedDrawPackets,
 			rg_rendererMetrics.scenePacketOverflow ? 1 : 0,
+			ScenePacketOverflowCause_Name( rg_rendererMetrics.scenePacketOverflowCause ),
 			rg_rendererMetrics.materialRecords,
+			rg_rendererMetrics.geometryRecords,
+			rg_rendererMetrics.instanceRecords,
 			rg_rendererMetrics.drawPacketsWithResourceRecord,
+			rg_rendererMetrics.drawPacketsWithGeometryRecord,
+			rg_rendererMetrics.drawPacketsWithInstanceRecord,
 			rg_rendererMetrics.drawPacketsWithGeometry,
+			rg_rendererMetrics.sortKeyValidationFailures,
 			rg_rendererMetrics.renderGraphPasses,
 			rg_rendererMetrics.renderGraphPassPackets,
 			rg_rendererMetrics.renderGraphDrawPackets,
@@ -727,8 +1059,20 @@ void R_RendererMetrics_EndFrame( int frontEndMsec, int backEndMsec, int viewCoun
 			rg_rendererMetrics.renderGraphWriteAccesses,
 			rg_rendererMetrics.renderGraphClearOps,
 			rg_rendererMetrics.renderGraphResolveOps,
+			rg_rendererMetrics.renderGraphInvalidateOps,
 			rg_rendererMetrics.renderGraphPresentOps,
 			rg_rendererMetrics.renderGraphOverflow ? 1 : 0,
+			rg_rendererMetrics.renderGraphResourceManager.prepared ? 1 : 0,
+			rg_rendererMetrics.renderGraphResourceManager.available ? 1 : 0,
+			rg_rendererMetrics.renderGraphResourceManager.handles,
+			rg_rendererMetrics.renderGraphResourceManager.completeFramebuffers,
+			rg_rendererMetrics.renderGraphResourceManager.framebufferCount,
+			rg_rendererMetrics.materialResourceTable.prepared ? 1 : 0,
+			rg_rendererMetrics.materialResourceTable.available ? 1 : 0,
+			rg_rendererMetrics.materialResourceTable.records,
+			rg_rendererMetrics.materialResourceTable.textureBindings,
+			rg_rendererMetrics.materialResourceTable.fallbackRecords,
+			rg_rendererMetrics.materialResourceTable.missingImages,
 			R_RendererMetrics_ModernExecutorModeName( rg_rendererMetrics.modernExecutorMode ),
 			rg_rendererMetrics.modernExecutorShaderProgramCount,
 			rg_rendererMetrics.modernExecutorShaderFailureCount,
@@ -756,7 +1100,30 @@ void R_RendererMetrics_EndFrame( int frontEndMsec, int backEndMsec, int viewCoun
 			rg_rendererMetrics.modernExecutorSubmittedIndexUploadDraws,
 			rg_rendererMetrics.modernExecutorSubmitPlanProgramBatches,
 			rg_rendererMetrics.modernExecutorSubmitPlanVertexBufferBatches,
-			rg_rendererMetrics.modernExecutorSubmitPlanIndexBufferBatches );
+			rg_rendererMetrics.modernExecutorSubmitPlanIndexBufferBatches,
+			rg_rendererMetrics.modernExecutorVisibleDepthDraws,
+			rg_rendererMetrics.modernExecutorVisibleShadowDepthDraws,
+			rg_rendererMetrics.modernExecutorVisibleDepthFallbackDraws + rg_rendererMetrics.modernExecutorVisibleShadowFallbackDraws,
+			rg_rendererMetrics.modernExecutorVisibleDepthMismatchDraws,
+			rg_rendererMetrics.modernExecutorVisibleDepthDebugOverlayDraws,
+			rg_rendererMetrics.modernExecutorOpaqueGBufferDraws,
+			rg_rendererMetrics.modernExecutorOpaqueGBufferExecuted ? 1 : 0,
+			rg_rendererMetrics.modernExecutorOpaqueGBufferFallbackDraws,
+			rg_rendererMetrics.modernExecutorOpaqueGBufferMRTReady ? 1 : 0,
+			rg_rendererMetrics.modernExecutorOpaqueGBufferBandwidthKB,
+			rg_rendererMetrics.modernExecutorOpaqueGBufferDebugOverlayDraws,
+			rg_rendererMetrics.clusteredLighting.frameValid ? 1 : 0,
+			rg_rendererMetrics.clusteredLighting.gridCount,
+			rg_rendererMetrics.clusteredLighting.lightCount,
+			rg_rendererMetrics.clusteredLighting.lightReferences,
+			rg_rendererMetrics.clusteredLighting.overflow ? 1 : 0,
+			rg_rendererMetrics.clusteredLighting.overflowClusters,
+			rg_rendererMetrics.clusteredLighting.buildMsec,
+			rg_rendererMetrics.clusteredLighting.uboFallbackReady ? 1 : 0,
+			rg_rendererMetrics.glStateCache.hits,
+			rg_rendererMetrics.glStateCache.misses,
+			rg_rendererMetrics.glStateCache.forcedInvalidations,
+			rg_rendererMetrics.glStateCache.legacyHandoffResets );
 	}
 }
 

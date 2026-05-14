@@ -29,8 +29,12 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "tr_local.h"
+#include "GLStateCache.h"
 #include "RenderGraph.h"
+#include "RenderGraphResources.h"
+#include "MaterialResourceTable.h"
 #include "ModernGLExecutor.h"
+#include "ModernClusteredLighting.h"
 #include "RendererMetrics.h"
 
 
@@ -680,6 +684,8 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 		return;
 	}
 
+	R_GLStateCache_BeginFrame();
+
 	idScenePacketFrame backendScenePackets;
 	const idScenePacketFrame *scenePackets = NULL;
 	if ( R_ScenePackets_FrontEndFrameAvailable() ) {
@@ -694,23 +700,7 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 	R_RenderGraph_LogIfVerbose( legacyGraph );
 	{
 		const scenePacketFrameStats_t &packetStats = scenePackets->Stats();
-		R_RendererMetrics_RecordScenePackets(
-			packetStats.scenePackets,
-			packetStats.passPackets,
-			packetStats.drawPackets,
-			packetStats.clippedDrawPackets,
-			packetStats.commandPackets,
-			packetStats.legacyDrawViews,
-			packetStats.materialRecords,
-			packetStats.drawPacketsWithMaterial,
-			packetStats.drawPacketsWithResourceRecord,
-			packetStats.drawPacketsWithGeometry,
-			packetStats.drawPacketsWithShaderRegisters,
-			packetStats.drawPacketsWithIndexCache,
-			packetStats.drawPacketsWithAmbientCache,
-			packetStats.frontEndDerived,
-			packetStats.backendDerived,
-			packetStats.overflow );
+		R_RendererMetrics_RecordScenePackets( packetStats );
 		const renderGraphStats_t &graphStats = legacyGraph.Stats();
 		R_RendererMetrics_RecordRenderGraph(
 			graphStats.graphPasses,
@@ -727,10 +717,16 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 			graphStats.writeAccesses,
 			graphStats.clearOps,
 			graphStats.resolveOps,
+			graphStats.invalidateOps,
 			graphStats.presentOps,
 			graphStats.overflow );
 	}
+	R_RenderGraphResources_PrepareFrame( legacyGraph );
+	R_RendererMetrics_RecordRenderGraphResources( R_RenderGraphResources_Stats() );
+	R_MaterialResourceTable_PrepareFrame( *scenePackets );
+	R_RendererMetrics_RecordMaterialResourceTable( R_MaterialResourceTable_Stats() );
 	R_ModernGLExecutor_PrepareFrame( *scenePackets, legacyGraph );
+	R_GLStateCache_LegacyHandoffReset( "legacy ARB2 backend" );
 
 	backEndStartTime = Sys_Milliseconds();
 	R_RendererMetrics_BeginGpuBackendFrame();
@@ -791,6 +787,9 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 			c_setBuffers++;
 			break;
 		case RC_SWAP_BUFFERS:
+			R_ModernGLExecutor_DrawDepthDebugOverlay();
+			R_ModernGLExecutor_DrawGBufferDebugOverlay();
+			R_ModernClusteredLighting_DrawDebugOverlay();
 			RB_SwapBuffers( cmds );
 			c_swapBuffers++;
 			break;
@@ -814,6 +813,7 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 	R_RendererMetrics_EndGpuBackendFrame();
 	backEndFinishTime = Sys_Milliseconds();
 	backEnd.pc.msec = backEndFinishTime - backEndStartTime;
+	R_RendererMetrics_RecordGLStateCache( R_GLStateCache_Stats() );
 	R_RendererMetrics_RecordBackendCommands( c_draw3d, c_draw2d, c_setBuffers, c_swapBuffers, c_copyRenders, c_specialEffects, c_renderTargetOps );
 
 	if ( r_debugRenderToTexture.GetInteger() == 1 ) {

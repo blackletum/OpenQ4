@@ -24,6 +24,8 @@ const char *ModernGLDrawPlanPipeline_Name( modernGLDrawPlanPipeline_t pipeline )
 		return "shadowDepth";
 	case MODERN_GL_DRAW_PLAN_PIPELINE_FLAT_MATERIAL:
 		return "flatMaterial";
+	case MODERN_GL_DRAW_PLAN_PIPELINE_GBUFFER:
+		return "gbuffer";
 	case MODERN_GL_DRAW_PLAN_PIPELINE_LIGHT_GRID:
 		return "lightGrid";
 	case MODERN_GL_DRAW_PLAN_PIPELINE_FOG_BLEND:
@@ -85,11 +87,21 @@ static bool R_ModernGLDrawPlan_IsDepthPipeline( modernGLDrawPlanPipeline_t pipel
 
 static bool R_ModernGLDrawPlan_IsMaterialPipeline( modernGLDrawPlanPipeline_t pipeline ) {
 	return pipeline == MODERN_GL_DRAW_PLAN_PIPELINE_FLAT_MATERIAL
+		|| pipeline == MODERN_GL_DRAW_PLAN_PIPELINE_GBUFFER
 		|| pipeline == MODERN_GL_DRAW_PLAN_PIPELINE_LIGHT_GRID
 		|| pipeline == MODERN_GL_DRAW_PLAN_PIPELINE_FOG_BLEND;
 }
 
-bool idModernGLDrawPlan::AddEntry( const drawPacket_t &draw, int drawPacketIndex, modernGLDrawPlanPipeline_t pipeline, const modernGLShaderProgramInfo_t &program ) {
+static bool R_ModernGLDrawPlan_ShouldUseGBuffer( const materialResourceTableRecord_t &materialRecord ) {
+	if ( !r_rendererModernOpaque.GetBool() && r_rendererModernGBufferDebug.GetInteger() <= 0 ) {
+		return false;
+	}
+	return materialRecord.materialClass == RENDER_MATERIAL_OPAQUE
+		|| materialRecord.materialClass == RENDER_MATERIAL_PERFORATED
+		|| materialRecord.alphaTest;
+}
+
+bool idModernGLDrawPlan::AddEntry( const drawPacket_t &draw, int drawPacketIndex, const materialResourceTableRecord_t &materialRecord, modernGLDrawPlanPipeline_t pipeline, const modernGLShaderProgramInfo_t &program ) {
 	if ( numEntries >= MODERN_GL_DRAW_PLAN_MAX_ENTRIES ) {
 		stats.overflow = true;
 		stats.fallbackDraws++;
@@ -110,6 +122,11 @@ bool idModernGLDrawPlan::AddEntry( const drawPacket_t &draw, int drawPacketIndex
 	entry.mainTextureLocation = program.mainTextureLocation;
 	entry.drawPacketIndex = drawPacketIndex;
 	entry.materialRecordIndex = draw.materialRecordIndex;
+	entry.materialTableIndex = materialRecord.tableIndex;
+	entry.geometryRecordIndex = draw.geometryRecordIndex;
+	entry.instanceRecordIndex = draw.instanceRecordIndex;
+	entry.materialStableId = materialRecord.materialId >= 0 ? static_cast<unsigned int>( materialRecord.materialId ) : 0xffffffffu;
+	entry.materialFallbackReason = materialRecord.fallbackReason;
 	entry.glslVersion = program.glslVersion;
 	entry.indexCount = draw.indexCount;
 	entry.vertexCount = draw.vertexCount;
@@ -142,6 +159,13 @@ bool idModernGLDrawPlan::Build( const idScenePacketFrame &packetFrame, const idR
 		stats.fallbackDraws = stats.sourceDrawPackets;
 		return false;
 	}
+	const materialResourceTableStats_t &materialStats = R_MaterialResourceTable_Stats();
+	if ( !materialStats.prepared || !materialStats.available ) {
+		R_ModernGLDrawPlan_SetStatus( stats, "material-table-unavailable" );
+		stats.fallbackDraws = stats.sourceDrawPackets;
+		stats.missingMaterialTableDraws = stats.sourceDrawPackets;
+		return false;
+	}
 
 	modernGLDrawPlanPipeline_t previousPipeline = MODERN_GL_DRAW_PLAN_PIPELINE_NONE;
 	renderPassCategory_t previousPass = RENDER_PASS_DEPTH;
@@ -162,9 +186,37 @@ bool idModernGLDrawPlan::Build( const idScenePacketFrame &packetFrame, const idR
 			stats.fallbackDraws++;
 			continue;
 		}
-		if ( !draw.hasGeometry || draw.materialRecordIndex < 0 ) {
+		if ( draw.materialRecordIndex < 0 ) {
 			stats.fallbackDraws++;
 			continue;
+		}
+		if ( draw.geometryRecord == NULL || draw.geometryRecordIndex < 0 ) {
+			stats.fallbackDraws++;
+			stats.missingGeometryRecordDraws++;
+			continue;
+		}
+		if ( draw.instanceRecord == NULL || draw.instanceRecordIndex < 0 ) {
+			stats.fallbackDraws++;
+			stats.missingInstanceRecordDraws++;
+			continue;
+		}
+		const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( draw.materialRecordIndex );
+		if ( materialRecord == NULL || materialRecord->sourceMaterialRecordIndex != draw.materialRecordIndex ) {
+			stats.fallbackDraws++;
+			stats.missingMaterialTableDraws++;
+			continue;
+		}
+		if ( materialRecord->fallbackReason != MATERIAL_RESOURCE_FALLBACK_NONE ) {
+			stats.fallbackDraws++;
+			stats.materialFallbackDraws++;
+			continue;
+		}
+
+		if ( draw.passCategory == RENDER_PASS_AMBIENT && R_ModernGLDrawPlan_ShouldUseGBuffer( *materialRecord ) ) {
+			pipeline = MODERN_GL_DRAW_PLAN_PIPELINE_GBUFFER;
+			shaderKind = ( materialRecord->alphaTest || materialRecord->materialClass == RENDER_MATERIAL_PERFORATED )
+				? MODERN_GL_SHADER_GBUFFER_ALPHA_TEST
+				: MODERN_GL_SHADER_GBUFFER_OPAQUE;
 		}
 
 		const modernGLShaderProgramInfo_t *program = R_ModernGLShaderLibrary_FindProgram( shaderKind, shaderStats.highestGLSLVersion );
@@ -173,7 +225,7 @@ bool idModernGLDrawPlan::Build( const idScenePacketFrame &packetFrame, const idR
 			continue;
 		}
 
-		if ( AddEntry( draw, i, pipeline, *program ) ) {
+		if ( AddEntry( draw, i, *materialRecord, pipeline, *program ) ) {
 			if ( !havePrevious
 				|| previousPipeline != pipeline
 				|| previousPass != draw.passCategory
@@ -236,6 +288,8 @@ bool RendererModernGLDrawPlan_RunSelfTest( void ) {
 	drawSurf_t *drawSurfPtrs[2] = { &drawSurfs[0], &drawSurfs[1] };
 	viewEntity_t viewEntity;
 	memset( &viewEntity, 0, sizeof( viewEntity ) );
+	drawSurfs[0].space = &viewEntity;
+	drawSurfs[1].space = &viewEntity;
 	viewDef_t worldView;
 	memset( &worldView, 0, sizeof( worldView ) );
 	worldView.viewEntitys = &viewEntity;
@@ -261,6 +315,7 @@ bool RendererModernGLDrawPlan_RunSelfTest( void ) {
 	R_ScenePackets_BuildLegacyCommandStream( reinterpret_cast<const emptyCommand_t *>( &drawCmd ), packetFrame );
 	idRenderGraph graph;
 	R_RenderGraph_BuildFromScenePackets( packetFrame, graph );
+	R_MaterialResourceTable_PrepareFrame( packetFrame );
 
 	idModernGLDrawPlan plan;
 	plan.Build( packetFrame, graph );
@@ -293,6 +348,10 @@ bool RendererModernGLDrawPlan_RunSelfTest( void ) {
 			sawFog = sawFog || entry.shaderKind == MODERN_GL_SHADER_FOG_BLEND;
 			if ( entry.modelViewProjectionLocation < 0 || entry.permutation.materialClass == RENDER_MATERIAL_NONE ) {
 				common->Printf( "RendererModernGLDrawPlan self-test failed: shader metadata mismatch\n" );
+				return false;
+			}
+			if ( entry.materialTableIndex < 0 || entry.materialTableIndex != entry.materialRecordIndex || entry.geometryRecordIndex < 0 || entry.instanceRecordIndex < 0 ) {
+				common->Printf( "RendererModernGLDrawPlan self-test failed: material table index mismatch\n" );
 				return false;
 			}
 		}

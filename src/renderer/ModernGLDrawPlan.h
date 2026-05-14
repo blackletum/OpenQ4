@@ -6,6 +6,7 @@
 
 #include "RenderGraph.h"
 #include "ModernGLShaderLibrary.h"
+#include "MaterialResourceTable.h"
 
 const int MODERN_GL_DRAW_PLAN_MAX_ENTRIES = SCENE_PACKET_MAX_DRAWS;
 
@@ -14,6 +15,7 @@ enum modernGLDrawPlanPipeline_t {
 	MODERN_GL_DRAW_PLAN_PIPELINE_DEPTH,
 	MODERN_GL_DRAW_PLAN_PIPELINE_SHADOW_DEPTH,
 	MODERN_GL_DRAW_PLAN_PIPELINE_FLAT_MATERIAL,
+	MODERN_GL_DRAW_PLAN_PIPELINE_GBUFFER,
 	MODERN_GL_DRAW_PLAN_PIPELINE_LIGHT_GRID,
 	MODERN_GL_DRAW_PLAN_PIPELINE_FOG_BLEND
 };
@@ -31,6 +33,11 @@ typedef struct modernGLDrawPlanEntry_s {
 	int							mainTextureLocation;
 	int							drawPacketIndex;
 	int							materialRecordIndex;
+	int							materialTableIndex;
+	int							geometryRecordIndex;
+	int							instanceRecordIndex;
+	unsigned int				materialStableId;
+	materialResourceFallbackReason_t materialFallbackReason;
 	int							glslVersion;
 	int							indexCount;
 	int							vertexCount;
@@ -46,6 +53,10 @@ typedef struct modernGLDrawPlanStats_s {
 	int		depthDraws;
 	int		materialDraws;
 	int		fallbackDraws;
+	int		missingMaterialTableDraws;
+	int		missingGeometryRecordDraws;
+	int		missingInstanceRecordDraws;
+	int		materialFallbackDraws;
 	int		indexedDraws;
 	int		vertexOnlyDraws;
 	int		stateBatches;
@@ -66,7 +77,7 @@ public:
 	const modernGLDrawPlanStats_t &Stats( void ) const;
 
 private:
-	bool AddEntry( const drawPacket_t &draw, int drawPacketIndex, modernGLDrawPlanPipeline_t pipeline, const modernGLShaderProgramInfo_t &program );
+	bool AddEntry( const drawPacket_t &draw, int drawPacketIndex, const materialResourceTableRecord_t &materialRecord, modernGLDrawPlanPipeline_t pipeline, const modernGLShaderProgramInfo_t &program );
 
 	modernGLDrawPlanEntry_t entries[MODERN_GL_DRAW_PLAN_MAX_ENTRIES];
 	modernGLDrawPlanStats_t stats;

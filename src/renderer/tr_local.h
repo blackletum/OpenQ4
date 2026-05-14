@@ -1065,6 +1065,12 @@ extern idCVar r_rendererUploadMegs;		// dynamic upload stream size in megabytes 
 extern idCVar r_rendererUploadPersistent;	// allow persistent-mapped dynamic upload stream
 extern idCVar r_rendererModernExecutor;	// opt-in modern GL executor prepare path
 extern idCVar r_rendererModernSubmit;	// opt-in modern GL draw submission before ARB2 fallback
+extern idCVar r_rendererShaderReload;	// allow runtime reload of the internal modern GL shader library
+extern idCVar r_rendererModernVisibleDepth;	// opt-in graph-backed modern depth/shadow-depth execution
+extern idCVar r_rendererModernDepthDebug;	// show graph-backed modern depth resources as a debug overlay
+extern idCVar r_rendererModernOpaque;	// opt-in graph-backed modern opaque G-buffer execution
+extern idCVar r_rendererModernGBufferDebug;	// show graph-backed modern G-buffer attachments as a debug overlay
+extern idCVar r_rendererClusterDebug;	// show modern clustered light bins as a debug overlay
 extern idCVar r_useSimpleInteraction;	// use the simpler Quake 4 interaction program pair as a compatibility fallback
 extern idCVar r_interactionColorMode;	// interaction color mode: 0 auto, 1 packed env16.xy, 2 vector env16/env17
 extern idCVar r_shaderReport;			// shader diagnostics: 0 off, 1 summaries, 2 invalid-use warnings

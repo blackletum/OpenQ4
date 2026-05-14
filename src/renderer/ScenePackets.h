@@ -40,6 +40,32 @@ const int SCENE_PACKET_MAX_SCENES = 64;
 const int SCENE_PACKET_MAX_PASSES = 256;
 const int SCENE_PACKET_MAX_DRAWS = 4096;
 const int SCENE_PACKET_MAX_MATERIAL_RECORDS = 1024;
+const int SCENE_PACKET_MAX_GEOMETRY_RECORDS = 1024;
+const int SCENE_PACKET_MAX_INSTANCE_RECORDS = 1024;
+
+enum scenePacketCategory_t {
+	SCENE_PACKET_CATEGORY_UNKNOWN = 0,
+	SCENE_PACKET_CATEGORY_WORLD,
+	SCENE_PACKET_CATEGORY_SUBVIEW,
+	SCENE_PACKET_CATEGORY_REMOTE_CAMERA,
+	SCENE_PACKET_CATEGORY_SPECIAL_EFFECTS,
+	SCENE_PACKET_CATEGORY_VIEWMODEL,
+	SCENE_PACKET_CATEGORY_RENDER_DEMO,
+	SCENE_PACKET_CATEGORY_GUI,
+	SCENE_PACKET_CATEGORY_POST_PROCESS,
+	SCENE_PACKET_CATEGORY_PRESENT,
+	SCENE_PACKET_CATEGORY_COMMAND
+};
+
+enum scenePacketOverflowCause_t {
+	SCENE_PACKET_OVERFLOW_NONE = 0,
+	SCENE_PACKET_OVERFLOW_SCENES,
+	SCENE_PACKET_OVERFLOW_PASSES,
+	SCENE_PACKET_OVERFLOW_DRAWS,
+	SCENE_PACKET_OVERFLOW_MATERIALS,
+	SCENE_PACKET_OVERFLOW_GEOMETRY_RECORDS,
+	SCENE_PACKET_OVERFLOW_INSTANCE_RECORDS
+};
 
 enum rendererMaterialClass_t {
 	RENDER_MATERIAL_NONE = 0,
@@ -58,6 +84,10 @@ typedef struct rendererPermutationKey_s {
 	unsigned int	shadowMode;
 	unsigned int	alphaMode;
 	unsigned int	skinningMode;
+	unsigned int	deformMode;
+	unsigned int	lightGridMode;
+	unsigned int	fogMode;
+	unsigned int	debugMode;
 	unsigned int	tier;
 } rendererPermutationKey_t;
 
@@ -70,6 +100,85 @@ typedef struct materialResourceRecord_s {
 	rendererPermutationKey_t permutation;
 } materialResourceRecord_t;
 
+enum geometryUploadLifetime_t {
+	GEOMETRY_UPLOAD_LIFETIME_UNKNOWN = 0,
+	GEOMETRY_UPLOAD_LIFETIME_STATIC,
+	GEOMETRY_UPLOAD_LIFETIME_FRAME_TEMP,
+	GEOMETRY_UPLOAD_LIFETIME_CLIENT_MEMORY,
+	GEOMETRY_UPLOAD_LIFETIME_DYNAMIC_BRIDGE
+};
+
+enum geometrySkinningMode_t {
+	GEOMETRY_SKINNING_NONE = 0,
+	GEOMETRY_SKINNING_CPU,
+	GEOMETRY_SKINNING_GPU_PALETTE
+};
+
+enum geometryDeformMode_t {
+	GEOMETRY_DEFORM_NONE = 0,
+	GEOMETRY_DEFORM_SURFACE,
+	GEOMETRY_DEFORM_MATERIAL
+};
+
+typedef struct geometryResourceRecord_s {
+	const srfTriangles_t		*legacyGeometry;
+	idBounds				bounds;
+	int						recordIndex;
+	int						ambientVertexBuffer;
+	int						indexBuffer;
+	int						ambientCacheOffset;
+	int						indexCacheOffset;
+	int						ambientCacheBytes;
+	int						indexCacheBytes;
+	int						vertexStride;
+	int						indexType;
+	int						vertexCount;
+	int						indexCount;
+	int						firstVertex;
+	int						firstIndex;
+	int						skinningMode;
+	int						deformMode;
+	int						uploadLifetime;
+	int						skinningPaletteOffset;
+	int						skinningPaletteCount;
+	const glIndex_t			*legacyIndexData;
+	bool					hasAmbientVertexBuffer;
+	bool					hasIndexBuffer;
+	bool					hasClientIndexData;
+	bool					hasPrimBatchMesh;
+	bool					hasBounds;
+} geometryResourceRecord_t;
+
+enum instanceVisibilityFlags_t {
+	INSTANCE_VISIBILITY_NONE = 0,
+	INSTANCE_VISIBILITY_WORLD = 1 << 0,
+	INSTANCE_VISIBILITY_GUI = 1 << 1,
+	INSTANCE_VISIBILITY_VIEWMODEL = 1 << 2,
+	INSTANCE_VISIBILITY_SUBVIEW = 1 << 3,
+	INSTANCE_VISIBILITY_REMOTE_CAMERA = 1 << 4,
+	INSTANCE_VISIBILITY_RENDER_DEMO = 1 << 5,
+	INSTANCE_VISIBILITY_LEGACY_BRIDGE = 1 << 6
+};
+
+typedef struct instanceRecord_s {
+	const viewEntity_t		*legacySpace;
+	const float				*legacyShaderRegisters;
+	int						recordIndex;
+	int						entityIndex;
+	int						shaderRegisterBase;
+	int						shaderRegisterCount;
+	int						skinningPaletteOffset;
+	int						visibilityFlags;
+	float					modelMatrix[16];
+	float					previousModelMatrix[16];
+	float					modelViewMatrix[16];
+	float					entityColor[4];
+	bool					hasModelMatrix;
+	bool					hasPreviousModelMatrix;
+	bool					hasShaderRegisters;
+	bool					legacyBridge;
+} instanceRecord_t;
+
 typedef struct drawPacketSortKey_s {
 	unsigned long long	value;
 } drawPacketSortKey_t;
@@ -79,10 +188,15 @@ typedef struct drawPacket_s {
 	const viewDef_t			*viewDef;
 	const viewEntity_t		*space;
 	const materialResourceRecord_t *materialRecord;
+	const geometryResourceRecord_t *geometryRecord;
+	const instanceRecord_t	*instanceRecord;
 	drawPacketSortKey_t		sortKey;
 	renderPassCategory_t	passCategory;
+	scenePacketCategory_t	packetCategory;
 	float					legacySort;
 	int						materialRecordIndex;
+	int						geometryRecordIndex;
+	int						instanceRecordIndex;
 	int						vertexCount;
 	int						firstIndex;
 	int						indexCount;
@@ -101,6 +215,7 @@ typedef struct drawPacket_s {
 
 typedef struct passPacket_s {
 	renderPassCategory_t	passCategory;
+	scenePacketCategory_t	packetCategory;
 	int						firstDrawPacket;
 	int						drawPacketCount;
 	bool					enabled;
@@ -109,6 +224,7 @@ typedef struct passPacket_s {
 
 typedef struct scenePacket_s {
 	const viewDef_t			*viewDef;
+	scenePacketCategory_t	packetCategory;
 	int						firstPassPacket;
 	int						passPacketCount;
 	int						firstDrawPacket;
@@ -124,15 +240,31 @@ typedef struct scenePacketFrameStats_s {
 	int						commandPackets;
 	int						legacyDrawViews;
 	int						materialRecords;
+	int						geometryRecords;
+	int						instanceRecords;
 	int						drawPacketsWithMaterial;
 	int						drawPacketsWithResourceRecord;
+	int						drawPacketsWithGeometryRecord;
+	int						drawPacketsWithInstanceRecord;
 	int						drawPacketsWithGeometry;
 	int						drawPacketsWithShaderRegisters;
 	int						drawPacketsWithIndexCache;
 	int						drawPacketsWithAmbientCache;
+	int						worldPackets;
+	int						subviewPackets;
+	int						remoteCameraPackets;
+	int						specialEffectPackets;
+	int						viewmodelPackets;
+	int						renderDemoPackets;
+	int						guiPackets;
+	int						postProcessPackets;
+	int						presentPackets;
+	int						commandOnlyPackets;
+	int						sortKeyValidationFailures;
 	bool					frontEndDerived;
 	bool					backendDerived;
 	bool					overflow;
+	scenePacketOverflowCause_t overflowCause;
 } scenePacketFrameStats_t;
 
 class idScenePacketFrame {
@@ -144,7 +276,7 @@ public:
 	bool AddPass( renderPassCategory_t category, bool enabled, bool commandOnly = false );
 	bool AddDrawPacket( const drawSurf_t *drawSurf, renderPassCategory_t category, int drawIndex );
 	void FinishScene( void );
-	void AddCommandPacket( void );
+	void AddCommandPacket( scenePacketCategory_t category = SCENE_PACKET_CATEGORY_COMMAND );
 	void AddLegacyDrawView( void );
 	void AddClippedDrawPackets( int count );
 	void MarkFrontEndDerived( void );
@@ -154,25 +286,40 @@ public:
 	int NumPasses( void ) const;
 	int NumDrawPackets( void ) const;
 	int NumMaterialRecords( void ) const;
+	int NumGeometryRecords( void ) const;
+	int NumInstanceRecords( void ) const;
 	const scenePacket_t &Scene( int index ) const;
 	const passPacket_t &Pass( int index ) const;
 	const drawPacket_t &DrawPacket( int index ) const;
 	const materialResourceRecord_t &MaterialRecord( int index ) const;
+	const geometryResourceRecord_t &GeometryRecord( int index ) const;
+	const instanceRecord_t &InstanceRecord( int index ) const;
 	const scenePacketFrameStats_t &Stats( void ) const;
+	bool ValidateSortKeys( void ) const;
 
 private:
 	int FindOrAddMaterialRecord( const drawSurf_t *drawSurf );
+	int FindOrAddGeometryRecord( const drawSurf_t *drawSurf );
+	int FindOrAddInstanceRecord( const drawSurf_t *drawSurf, scenePacketCategory_t packetCategory );
+	void SetOverflow( scenePacketOverflowCause_t cause );
+	void CountCategory( scenePacketCategory_t category );
 
 	scenePacket_t			scenes[SCENE_PACKET_MAX_SCENES];
 	passPacket_t			passes[SCENE_PACKET_MAX_PASSES];
 	drawPacket_t			drawPackets[SCENE_PACKET_MAX_DRAWS];
 	materialResourceRecord_t materialRecords[SCENE_PACKET_MAX_MATERIAL_RECORDS];
+	geometryResourceRecord_t geometryRecords[SCENE_PACKET_MAX_GEOMETRY_RECORDS];
+	instanceRecord_t		instanceRecords[SCENE_PACKET_MAX_INSTANCE_RECORDS];
 	scenePacketFrameStats_t	stats;
 	int						activeScene;
 	int						activePass;
+	unsigned long long		activePassLastSortKey;
+	bool					activePassSortKeyValid;
 };
 
 const char *RenderPassCategory_Name( renderPassCategory_t category );
+const char *ScenePacketCategory_Name( scenePacketCategory_t category );
+const char *ScenePacketOverflowCause_Name( scenePacketOverflowCause_t cause );
 const char *RendererMaterialClass_Name( rendererMaterialClass_t materialClass );
 void R_ScenePackets_BeginFrame( void );
 void R_ScenePackets_EndFrame( void );
