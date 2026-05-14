@@ -22,6 +22,17 @@ The internal tier names are:
 
 Metal and Vulkan are intentionally out of scope for this track.
 
+`gfxInfo` also prints `Renderer tier contract:`. That line is the quick audit for whether the selected tier has the workload model it claims:
+
+- `selectedReady` says the selected tier can run its own contract.
+- `requestedReady` says a forced `r_glTier` request was met exactly.
+- `degraded` and `failClosed` explain forced-tier fallback when the driver cannot satisfy the requested tier.
+- `baseline`, `gl41`, `gpuDriven`, `lowOverhead`, and `top` show which workload rungs are genuinely active.
+- `cpuWorkload` and `gpuWorkload` separate GL 3.3/4.1 CPU-managed paths from GL 4.3+ GPU-driven paths.
+- `missing` lists concise blockers such as `ubo`, `mrt`, `compute`, `buffer-storage`, `gl-spirv`, `rollback`, or `requested-tier`.
+
+Use `rendererTierContractSelfTest` alongside `rendererTierSelfTest` when changing tier selection, capability probing, or renderer workload gates.
+
 ## Default Promotion
 
 The visible default remains conservative. `r_glTier auto` can select a modern-capable tier after capability probing, but the automatic visible path stays on the ARB2 compatibility bridge unless every default-promotion gate passes and `r_rendererModernAutoPromote 1` is explicitly set after release sign-off.

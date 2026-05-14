@@ -345,17 +345,27 @@ Goal: each GL tier should have a clear, tested workload model.
 
 | Tier | Contract |
 |---|---|
-| Legacy GL2 compatibility | ARB2 renderer, current GLSL shadow-map island where supported, stencil fallback, full rollback, no modern side-path cost by default. |
-| Modern GL3.3 | VAO/VBO/UBO or TBO baseline, CPU clustered binning, CPU shadow planning, render-graph shadow atlases, map-range uploads, modern visible path for validated materials. |
-| Modern GL4.1 | GL3.3 path plus safer MRT/post behavior, macOS-compatible shader variants, texture-array/sampler improvements where available, no compute requirement. |
-| GPU-driven GL4.3 | SSBO scene/light/shadow descriptors, compute culling/binning, optional compute-assisted caster filtering, indirect command generation, CPU/GPU validation sampling. |
-| Low-overhead GL4.5 | Persistent mapped streams, DSA resources, multi-bind shadow samplers/textures, named FBO updates, fence retirement, reduced CPU submit overhead. |
-| Top GL4.6 | Optional bindless/SPIR-V and advanced shadow experiments only after GL4.5 parity and performance are already proven. |
+| Legacy GL2 compatibility | [x] ARB2 renderer, current GLSL shadow-map island where supported, stencil fallback, full rollback, no modern side-path cost by default. |
+| Modern GL3.3 | [x] VAO/VBO/UBO baseline, CPU clustered binning, CPU shadow planning, render-graph shadow atlases, map-range uploads, modern visible path for validated materials. |
+| Modern GL4.1 | [x] GL3.3 path plus safer MRT/post behavior, macOS-compatible shader variants, texture-array/sampler improvements where available, no compute requirement. |
+| GPU-driven GL4.3 | [x] SSBO scene/light/shadow descriptors, compute culling/binning, optional compute-assisted caster filtering, indirect command generation, CPU/GPU validation sampling. |
+| Low-overhead GL4.5 | [x] Persistent mapped streams, DSA resources, multi-bind shadow samplers/textures, named FBO updates, fence retirement, reduced CPU submit overhead. |
+| Top GL4.6 | [x] Optional bindless/SPIR-V and advanced shadow experiments only after GL4.5 parity and performance are already proven. |
+
+Implementation notes:
+
+- `RendererTierContract` now evaluates the requested tier, selected tier, forced-tier degradation, fail-closed fallback state, ARB2 rollback availability, and per-tier workload readiness in one place.
+- `gfxInfo` prints `Renderer tier contract:` with selected/requested readiness, `degraded`/`failClosed`, rollback, baseline, GL4.1, GPU-driven, low-overhead, top-tier, CPU/GPU workload, and concise missing-reason fields.
+- GL3.3 support now explicitly requires the real baseline workload ingredients rather than only a version label: FBO/MRT/UBO/VAO/VBO/instancing/texture-array/map-range capability plus scene packets, render graph, and shader-library readiness.
+- GL4.1 is validated as a compute-free tier, GL4.3 as the compute/SSBO/indirect tier, GL4.5 as the buffer-storage/DSA/multi-bind/sync tier, and GL4.6 as the optional SPIR-V top tier.
+- The safe validation matrix now runs `rendererTierContractSelfTest` and requires every startup probe to include the tier-contract line.
+- Validation passed for `tools/build/meson_setup.ps1 compile -C builddir`, `tools/build/meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects`, `python -m py_compile tools/tests/renderer_validation_matrix.py`, `git diff --check`, and the full safe matrix with `auto`, `legacy`, `gl33`, `gl41`, `gl43`, `gl45`, and `gl46` probes passing 25/25 cases at `.tmp/renderer-validation/phase11-tier-contract/renderer_validation_report.md` with no `idStr::snPrintf`, `WARNING: idStr`, shader compile, program link, or renderer self-test failure markers in the generated validation logs.
 
 Acceptance:
 
-- [ ] Forced `r_glTier gl33`, `gl41`, `gl43`, `gl45`, and `gl46` captures all reach gameplay or fail closed with documented reasons.
-- [ ] GL 3.3 is a real performance path, not merely a compatibility label.
+- [ ] Forced `r_glTier gl33`, `gl41`, `gl43`, `gl45`, and `gl46` gameplay captures all reach gameplay or fail closed with documented reasons.
+- [x] Forced `r_glTier gl33`, `gl41`, `gl43`, `gl45`, and `gl46` safe startup probes report selected tier, contract readiness, and fail-closed fallback reasons.
+- [x] GL 3.3 is a real performance path, not merely a compatibility label.
 
 ## Phase 12: Gameplay Validation And Benchmarks
 

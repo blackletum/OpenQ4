@@ -504,6 +504,13 @@ static void R_RendererTierSelfTest_f( const idCmdArgs &args ) {
 	}
 }
 
+static void R_RendererTierContractSelfTest_f( const idCmdArgs &args ) {
+	(void)args;
+	if ( !RendererTierContract_RunSelfTest() ) {
+		common->Warning( "Renderer tier contract self-test failed" );
+	}
+}
+
 static void R_RendererContextLadderSelfTest_f( const idCmdArgs &args ) {
 	(void)args;
 	if ( !RendererContextLadder_RunSelfTest() ) {
@@ -2746,6 +2753,7 @@ void GfxInfo_f( const idCmdArgs &args ) {
 		common->Printf( "Renderer caps: %s\n", capsSummary );
 	}
 	RendererCompatibilityGates_PrintGfxInfo();
+	RendererTierContract_PrintGfxInfo();
 	RendererBootstrap_PrintGfxInfo();
 	RendererBenchmarks_PrintGfxInfo();
 	common->Printf(
@@ -3073,6 +3081,7 @@ void R_InitCommands( void ) {
 	cmdSystem->AddCommand( "benchmark", R_Benchmark_f, CMD_FL_RENDERER, "benchmark" );
 	cmdSystem->AddCommand( "gfxInfo", GfxInfo_f, CMD_FL_RENDERER, "show graphics info" );
 	cmdSystem->AddCommand( "rendererTierSelfTest", R_RendererTierSelfTest_f, CMD_FL_RENDERER, "run renderer tier-selection self tests" );
+	cmdSystem->AddCommand( "rendererTierContractSelfTest", R_RendererTierContractSelfTest_f, CMD_FL_RENDERER, "run renderer tier workload-contract self tests" );
 	cmdSystem->AddCommand( "rendererContextLadderSelfTest", R_RendererContextLadderSelfTest_f, CMD_FL_RENDERER, "run renderer context ladder self tests" );
 	cmdSystem->AddCommand( "rendererCompatibilityGatesSelfTest", R_RendererCompatibilityGatesSelfTest_f, CMD_FL_RENDERER, "run renderer driver-quirk and fallback-gate self tests" );
 	cmdSystem->AddCommand( "rendererBenchmarkSelfTest", R_RendererBenchmarkSelfTest_f, CMD_FL_RENDERER, "run renderer benchmark capture and percentile self tests" );

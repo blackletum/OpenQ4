@@ -197,6 +197,26 @@ const char *RendererTier_CVarName( rendererTier_t tier ) {
 	}
 }
 
+const char *RendererTierPreference_CVarName( rendererTierPreference_t preference ) {
+	switch ( preference ) {
+	case RENDERER_TIER_PREF_LEGACY:
+		return "legacy";
+	case RENDERER_TIER_PREF_GL33:
+		return "gl33";
+	case RENDERER_TIER_PREF_GL41:
+		return "gl41";
+	case RENDERER_TIER_PREF_GL43:
+		return "gl43";
+	case RENDERER_TIER_PREF_GL45:
+		return "gl45";
+	case RENDERER_TIER_PREF_GL46:
+		return "gl46";
+	case RENDERER_TIER_PREF_AUTO:
+	default:
+		return "auto";
+	}
+}
+
 const char *RendererContextProfile_Name( rendererContextProfile_t profile ) {
 	switch ( profile ) {
 	case RENDERER_CONTEXT_PROFILE_COMPATIBILITY:
@@ -412,8 +432,10 @@ bool RendererCaps_SupportsTier( const renderBackendCaps_t &caps, rendererTier_t 
 		caps.hasMRT &&
 		caps.hasUBO &&
 		caps.hasVAO &&
+		caps.hasVBO &&
 		caps.hasInstancing &&
-		caps.hasTextureArrays;
+		caps.hasTextureArrays &&
+		caps.hasMapBufferRange;
 
 	switch ( tier ) {
 	case RENDERER_TIER_NULL:
@@ -431,7 +453,7 @@ bool RendererCaps_SupportsTier( const renderBackendCaps_t &caps, rendererTier_t 
 	case RENDERER_TIER_LOW_OVERHEAD_GL45:
 		return RendererCaps_HasVersion( caps, 4, 5 ) &&
 			RendererCaps_SupportsTier( caps, RENDERER_TIER_GPU_DRIVEN_GL43 ) &&
-			caps.hasBufferStorage && caps.hasDSA && caps.hasMultiBind;
+			caps.hasBufferStorage && caps.hasDSA && caps.hasMultiBind && caps.hasSync;
 	case RENDERER_TIER_TOP_GL46:
 		return RendererCaps_HasVersion( caps, 4, 6 ) &&
 			RendererCaps_SupportsTier( caps, RENDERER_TIER_LOW_OVERHEAD_GL45 ) &&
@@ -488,6 +510,241 @@ renderFeatureSet_t RendererFeatureSet_Build( const renderBackendCaps_t &caps, re
 	features.renderGraph = features.modernBaseline || tier == RENDERER_TIER_LEGACY_GL2_COMPAT;
 
 	return features;
+}
+
+static const char *RendererTierContract_Name( rendererTier_t tier ) {
+	switch ( tier ) {
+	case RENDERER_TIER_LEGACY_GL2_COMPAT:
+		return "legacy-arb2-compat";
+	case RENDERER_TIER_MODERN_GL33:
+		return "modern-gl33-cpu-baseline";
+	case RENDERER_TIER_MODERN_GL41:
+		return "modern-gl41-mrt-post";
+	case RENDERER_TIER_GPU_DRIVEN_GL43:
+		return "gpu-driven-gl43";
+	case RENDERER_TIER_LOW_OVERHEAD_GL45:
+		return "low-overhead-gl45";
+	case RENDERER_TIER_TOP_GL46:
+		return "top-gl46-experimental";
+	case RENDERER_TIER_NULL:
+	default:
+		return "null";
+	}
+}
+
+static void RendererTierContract_AppendMissing( idStr &missing, const char *text ) {
+	if ( text == NULL || text[0] == '\0' ) {
+		return;
+	}
+	if ( missing.Length() > 0 ) {
+		missing += ",";
+	}
+	missing += text;
+}
+
+void RendererTierContract_Evaluate(
+	const renderBackendCaps_t &caps,
+	const renderFeatureSet_t &features,
+	rendererTierPreference_t requestedPreference,
+	rendererTier_t selectedTier,
+	bool legacyBridgeActive,
+	rendererTierContractReport_t &report ) {
+	memset( &report, 0, sizeof( report ) );
+	report.requestedPreference = requestedPreference;
+	report.requestedTier = RendererTierPreference_ToForcedTier( requestedPreference );
+	report.selectedTier = selectedTier;
+	idStr::Copynz( report.contractName, RendererTierContract_Name( selectedTier ), sizeof( report.contractName ) );
+
+	report.legacyBridgeReady =
+		legacyBridgeActive &&
+		features.legacyARB2Bridge &&
+		caps.hasFixedFunctionCompatibility;
+	report.rollbackReady = legacyBridgeActive && features.legacyARB2Bridge;
+	report.baselineReady =
+		features.modernBaseline &&
+		features.shaderLibrary &&
+		features.scenePackets &&
+		features.renderGraph &&
+		RendererCaps_SupportsTier( caps, RENDERER_TIER_MODERN_GL33 ) &&
+		caps.hasVBO &&
+		caps.hasMapBufferRange;
+	report.gl41Ready =
+		selectedTier >= RENDERER_TIER_MODERN_GL41 &&
+		features.modernGL41 &&
+		report.baselineReady &&
+		RendererCaps_SupportsTier( caps, RENDERER_TIER_MODERN_GL41 );
+	report.gpuDrivenReady =
+		selectedTier >= RENDERER_TIER_GPU_DRIVEN_GL43 &&
+		features.gpuDriven &&
+		report.baselineReady &&
+		caps.hasCompute &&
+		caps.hasSSBO &&
+		caps.hasDrawIndirect &&
+		caps.hasMultiDrawIndirect &&
+		caps.hasTextureViews &&
+		RendererCaps_SupportsTier( caps, RENDERER_TIER_GPU_DRIVEN_GL43 );
+	report.lowOverheadReady =
+		selectedTier >= RENDERER_TIER_LOW_OVERHEAD_GL45 &&
+		features.lowOverhead &&
+		features.persistentMappedUploads &&
+		features.directStateAccess &&
+		features.multiBind &&
+		report.gpuDrivenReady &&
+		caps.hasBufferStorage &&
+		caps.hasDSA &&
+		caps.hasMultiBind &&
+		caps.hasSync &&
+		RendererCaps_SupportsTier( caps, RENDERER_TIER_LOW_OVERHEAD_GL45 );
+	report.topReady =
+		selectedTier >= RENDERER_TIER_TOP_GL46 &&
+		report.lowOverheadReady &&
+		caps.hasGLSpirv &&
+		RendererCaps_SupportsTier( caps, RENDERER_TIER_TOP_GL46 );
+	report.cpuWorkloadReady =
+		selectedTier == RENDERER_TIER_LEGACY_GL2_COMPAT
+			? report.legacyBridgeReady
+			: report.baselineReady;
+	report.gpuWorkloadReady =
+		selectedTier == RENDERER_TIER_LEGACY_GL2_COMPAT
+			? report.legacyBridgeReady
+			: ( selectedTier >= RENDERER_TIER_GPU_DRIVEN_GL43
+				? report.gpuDrivenReady
+				: report.baselineReady );
+	report.noComputeRequired = selectedTier <= RENDERER_TIER_MODERN_GL41;
+
+	switch ( selectedTier ) {
+	case RENDERER_TIER_NULL:
+		report.selectedReady = false;
+		break;
+	case RENDERER_TIER_LEGACY_GL2_COMPAT:
+		report.selectedReady = RendererCaps_SupportsTier( caps, selectedTier ) && report.legacyBridgeReady;
+		break;
+	case RENDERER_TIER_MODERN_GL33:
+		report.selectedReady = report.baselineReady;
+		break;
+	case RENDERER_TIER_MODERN_GL41:
+		report.selectedReady = report.gl41Ready && !features.gpuDriven;
+		break;
+	case RENDERER_TIER_GPU_DRIVEN_GL43:
+		report.selectedReady = report.gpuDrivenReady;
+		break;
+	case RENDERER_TIER_LOW_OVERHEAD_GL45:
+		report.selectedReady = report.lowOverheadReady;
+		break;
+	case RENDERER_TIER_TOP_GL46:
+		report.selectedReady = report.topReady;
+		break;
+	default:
+		report.selectedReady = false;
+		break;
+	}
+
+	report.degraded = report.requestedTier != RENDERER_TIER_NULL && report.requestedTier != selectedTier;
+	report.requestedReady = !report.degraded && report.selectedReady;
+	report.failClosed = report.degraded && report.selectedReady;
+
+	idStr missing;
+	if ( !caps.contextCreated ) {
+		RendererTierContract_AppendMissing( missing, "context" );
+	}
+	if ( report.degraded ) {
+		RendererTierContract_AppendMissing( missing, "requested-tier" );
+	}
+	if ( selectedTier == RENDERER_TIER_LEGACY_GL2_COMPAT && !report.legacyBridgeReady ) {
+		RendererTierContract_AppendMissing( missing, "arb2-bridge" );
+	}
+	if ( RendererTier_IsModern( selectedTier ) && !report.baselineReady ) {
+		if ( !features.shaderLibrary ) {
+			RendererTierContract_AppendMissing( missing, "shader-library" );
+		}
+		if ( !features.scenePackets ) {
+			RendererTierContract_AppendMissing( missing, "scene-packets" );
+		}
+		if ( !features.renderGraph ) {
+			RendererTierContract_AppendMissing( missing, "render-graph" );
+		}
+		if ( !caps.hasVBO ) {
+			RendererTierContract_AppendMissing( missing, "vbo" );
+		}
+		if ( !caps.hasVAO ) {
+			RendererTierContract_AppendMissing( missing, "vao" );
+		}
+		if ( !caps.hasUBO ) {
+			RendererTierContract_AppendMissing( missing, "ubo" );
+		}
+		if ( !caps.hasMRT ) {
+			RendererTierContract_AppendMissing( missing, "mrt" );
+		}
+		if ( !caps.hasMapBufferRange ) {
+			RendererTierContract_AppendMissing( missing, "map-range" );
+		}
+	}
+	if ( selectedTier >= RENDERER_TIER_GPU_DRIVEN_GL43 && !report.gpuDrivenReady ) {
+		if ( !caps.hasCompute ) {
+			RendererTierContract_AppendMissing( missing, "compute" );
+		}
+		if ( !caps.hasSSBO ) {
+			RendererTierContract_AppendMissing( missing, "ssbo" );
+		}
+		if ( !caps.hasDrawIndirect || !caps.hasMultiDrawIndirect ) {
+			RendererTierContract_AppendMissing( missing, "indirect" );
+		}
+		if ( !caps.hasTextureViews ) {
+			RendererTierContract_AppendMissing( missing, "texture-view" );
+		}
+	}
+	if ( selectedTier >= RENDERER_TIER_LOW_OVERHEAD_GL45 && !report.lowOverheadReady ) {
+		if ( !caps.hasBufferStorage ) {
+			RendererTierContract_AppendMissing( missing, "buffer-storage" );
+		}
+		if ( !caps.hasDSA ) {
+			RendererTierContract_AppendMissing( missing, "dsa" );
+		}
+		if ( !caps.hasMultiBind ) {
+			RendererTierContract_AppendMissing( missing, "multi-bind" );
+		}
+		if ( !caps.hasSync ) {
+			RendererTierContract_AppendMissing( missing, "sync" );
+		}
+	}
+	if ( selectedTier >= RENDERER_TIER_TOP_GL46 && !report.topReady && !caps.hasGLSpirv ) {
+		RendererTierContract_AppendMissing( missing, "gl-spirv" );
+	}
+	if ( RendererTier_IsModern( selectedTier ) && !report.rollbackReady ) {
+		RendererTierContract_AppendMissing( missing, "rollback" );
+	}
+	idStr::Copynz( report.missing, missing.Length() > 0 ? missing.c_str() : "none", sizeof( report.missing ) );
+}
+
+void RendererTierContract_PrintGfxInfo( void ) {
+	rendererTierContractReport_t report;
+	RendererTierContract_Evaluate(
+		glConfig.backendCaps,
+		glConfig.renderFeatures,
+		RendererTierPreference_FromString( r_glTier.GetString() ),
+		glConfig.rendererTier,
+		glConfig.allowARB2Path,
+		report );
+	common->Printf(
+		"Renderer tier contract: requested=%s selected=%s contract=%s selectedReady=%d requestedReady=%d degraded=%d failClosed=%d rollback=%d legacy=%d baseline=%d gl41=%d gpuDriven=%d lowOverhead=%d top=%d cpuWorkload=%d gpuWorkload=%d noCompute=%d missing=%s\n",
+		RendererTierPreference_CVarName( report.requestedPreference ),
+		RendererTier_Name( report.selectedTier ),
+		report.contractName,
+		report.selectedReady ? 1 : 0,
+		report.requestedReady ? 1 : 0,
+		report.degraded ? 1 : 0,
+		report.failClosed ? 1 : 0,
+		report.rollbackReady ? 1 : 0,
+		report.legacyBridgeReady ? 1 : 0,
+		report.baselineReady ? 1 : 0,
+		report.gl41Ready ? 1 : 0,
+		report.gpuDrivenReady ? 1 : 0,
+		report.lowOverheadReady ? 1 : 0,
+		report.topReady ? 1 : 0,
+		report.cpuWorkloadReady ? 1 : 0,
+		report.gpuWorkloadReady ? 1 : 0,
+		report.noComputeRequired ? 1 : 0,
+		report.missing );
 }
 
 void RendererDriverQuirks_Apply( renderBackendCaps_t &caps, const rendererDriverInfo_t &driverInfo ) {
@@ -586,15 +843,18 @@ void RendererCaps_FormatSummary( const renderBackendCaps_t &caps, char *buffer, 
 	idStr::snPrintf(
 		buffer,
 		bufferSize,
-		"GL %d.%d %s, UBO:%d VAO:%d MRT:%d FBO:%d instancing:%d compute:%d SSBO:%d indirect:%d MDI:%d buffer_storage:%d DSA:%d multi_bind:%d texture_view:%d gl_spirv:%d bindless:%d",
+		"GL %d.%d %s, VBO:%d UBO:%d VAO:%d MRT:%d FBO:%d instancing:%d map_range:%d sync:%d compute:%d SSBO:%d indirect:%d MDI:%d buffer_storage:%d DSA:%d multi_bind:%d texture_view:%d gl_spirv:%d bindless:%d",
 		caps.glMajor,
 		caps.glMinor,
 		RendererContextProfile_Name( caps.profile ),
+		caps.hasVBO ? 1 : 0,
 		caps.hasUBO ? 1 : 0,
 		caps.hasVAO ? 1 : 0,
 		caps.hasMRT ? 1 : 0,
 		caps.hasFBO ? 1 : 0,
 		caps.hasInstancing ? 1 : 0,
+		caps.hasMapBufferRange ? 1 : 0,
+		caps.hasSync ? 1 : 0,
 		caps.hasCompute ? 1 : 0,
 		caps.hasSSBO ? 1 : 0,
 		caps.hasDrawIndirect ? 1 : 0,
@@ -804,12 +1064,15 @@ static renderBackendCaps_t RendererTierSelect_TestCaps(
 	caps.glVersion = static_cast<float>( major ) + static_cast<float>( minor ) * 0.1f;
 	caps.profile = profile;
 	caps.hasFixedFunctionCompatibility = profile != RENDERER_CONTEXT_PROFILE_CORE;
+	caps.hasVBO = baseline;
 	caps.hasFBO = baseline;
 	caps.hasMRT = baseline;
 	caps.hasUBO = baseline;
 	caps.hasVAO = baseline;
 	caps.hasInstancing = baseline;
 	caps.hasTextureArrays = baseline;
+	caps.hasMapBufferRange = baseline;
+	caps.hasSync = lowOverhead || gpuDriven || baseline;
 	caps.hasCompute = gpuDriven;
 	caps.hasSSBO = gpuDriven;
 	caps.hasDrawIndirect = gpuDriven;
@@ -894,6 +1157,178 @@ bool RendererTierSelect_RunSelfTest( void ) {
 	}
 
 	common->Printf( "RendererTierSelect self-test passed (%d cases)\n", static_cast<int>( sizeof( tests ) / sizeof( tests[0] ) ) );
+	return true;
+}
+
+bool RendererTierContract_RunSelfTest( void ) {
+	struct rendererTierContractTestCase_t {
+		const char *name;
+		renderBackendCaps_t caps;
+		rendererTierPreference_t preference;
+		bool legacyBridge;
+		rendererTier_t expectedSelected;
+		bool expectedSelectedReady;
+		bool expectedRequestedReady;
+		bool expectedFailClosed;
+		bool expectedCpuWorkload;
+		bool expectedGpuDriven;
+		bool expectedLowOverhead;
+		bool expectedTop;
+	};
+
+	renderBackendCaps_t legacyCaps = RendererTierSelect_TestCaps( 2, 1, RENDERER_CONTEXT_PROFILE_COMPATIBILITY, false, false, false, false );
+	renderBackendCaps_t gl33Caps = RendererTierSelect_TestCaps( 3, 3, RENDERER_CONTEXT_PROFILE_CORE, true, false, false, false );
+	renderBackendCaps_t gl41Caps = RendererTierSelect_TestCaps( 4, 1, RENDERER_CONTEXT_PROFILE_CORE, true, false, false, false );
+	renderBackendCaps_t gl43Caps = RendererTierSelect_TestCaps( 4, 3, RENDERER_CONTEXT_PROFILE_CORE, true, true, false, false );
+	renderBackendCaps_t gl45Caps = RendererTierSelect_TestCaps( 4, 5, RENDERER_CONTEXT_PROFILE_CORE, true, true, true, false );
+	renderBackendCaps_t gl46Caps = RendererTierSelect_TestCaps( 4, 6, RENDERER_CONTEXT_PROFILE_CORE, true, true, true, true );
+
+	const rendererTierContractTestCase_t tests[] = {
+		{
+			"legacy bridge contract",
+			legacyCaps,
+			RENDERER_TIER_PREF_LEGACY,
+			true,
+			RENDERER_TIER_LEGACY_GL2_COMPAT,
+			true,
+			true,
+			false,
+			true,
+			false,
+			false,
+			false
+		},
+		{
+			"legacy bridge missing fails selected contract",
+			legacyCaps,
+			RENDERER_TIER_PREF_LEGACY,
+			false,
+			RENDERER_TIER_LEGACY_GL2_COMPAT,
+			false,
+			false,
+			false,
+			false,
+			false,
+			false,
+			false
+		},
+		{
+			"GL33 CPU workload baseline",
+			gl33Caps,
+			RENDERER_TIER_PREF_GL33,
+			true,
+			RENDERER_TIER_MODERN_GL33,
+			true,
+			true,
+			false,
+			true,
+			false,
+			false,
+			false
+		},
+		{
+			"GL41 remains compute-free",
+			gl41Caps,
+			RENDERER_TIER_PREF_GL41,
+			true,
+			RENDERER_TIER_MODERN_GL41,
+			true,
+			true,
+			false,
+			true,
+			false,
+			false,
+			false
+		},
+		{
+			"GL43 GPU-driven workload",
+			gl43Caps,
+			RENDERER_TIER_PREF_GL43,
+			true,
+			RENDERER_TIER_GPU_DRIVEN_GL43,
+			true,
+			true,
+			false,
+			true,
+			true,
+			false,
+			false
+		},
+		{
+			"GL45 low-overhead workload",
+			gl45Caps,
+			RENDERER_TIER_PREF_GL45,
+			true,
+			RENDERER_TIER_LOW_OVERHEAD_GL45,
+			true,
+			true,
+			false,
+			true,
+			true,
+			true,
+			false
+		},
+		{
+			"GL46 top workload",
+			gl46Caps,
+			RENDERER_TIER_PREF_GL46,
+			true,
+			RENDERER_TIER_TOP_GL46,
+			true,
+			true,
+			false,
+			true,
+			true,
+			true,
+			true
+		},
+		{
+			"forced GL43 on GL33 fails closed",
+			gl33Caps,
+			RENDERER_TIER_PREF_GL43,
+			true,
+			RENDERER_TIER_MODERN_GL33,
+			true,
+			false,
+			true,
+			true,
+			false,
+			false,
+			false
+		}
+	};
+
+	for ( int i = 0; i < static_cast<int>( sizeof( tests ) / sizeof( tests[0] ) ); ++i ) {
+		const rendererTier_t selected = RendererTier_Select( tests[i].caps, tests[i].preference );
+		renderFeatureSet_t features = RendererFeatureSet_Build( tests[i].caps, selected );
+		features.legacyARB2Bridge = tests[i].legacyBridge;
+		rendererTierContractReport_t report;
+		RendererTierContract_Evaluate( tests[i].caps, features, tests[i].preference, selected, tests[i].legacyBridge, report );
+		if ( selected != tests[i].expectedSelected ||
+			report.selectedReady != tests[i].expectedSelectedReady ||
+			report.requestedReady != tests[i].expectedRequestedReady ||
+			report.failClosed != tests[i].expectedFailClosed ||
+			report.cpuWorkloadReady != tests[i].expectedCpuWorkload ||
+			report.gpuDrivenReady != tests[i].expectedGpuDriven ||
+			report.lowOverheadReady != tests[i].expectedLowOverhead ||
+			report.topReady != tests[i].expectedTop ) {
+			common->Printf(
+				"RendererTierContract self-test failed: %s selected=%s ready=%d request=%d failClosed=%d cpu=%d gpu=%d low=%d top=%d missing=%s\n",
+				tests[i].name,
+				RendererTier_Name( selected ),
+				report.selectedReady ? 1 : 0,
+				report.requestedReady ? 1 : 0,
+				report.failClosed ? 1 : 0,
+				report.cpuWorkloadReady ? 1 : 0,
+				report.gpuDrivenReady ? 1 : 0,
+				report.lowOverheadReady ? 1 : 0,
+				report.topReady ? 1 : 0,
+				report.missing );
+			return false;
+		}
+	}
+
+	common->Printf( "RendererTierContract self-test passed (%d cases)\n", static_cast<int>( sizeof( tests ) / sizeof( tests[0] ) ) );
 	return true;
 }
 

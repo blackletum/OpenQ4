@@ -26,6 +26,7 @@ SAFE_TIERS = ("auto", "legacy", "gl33", "gl41", "gl43", "gl45", "gl46")
 SELFTEST_CHECKS = [
     ["RendererContextLadder self-test passed"],
     ["RendererTierSelect self-test passed"],
+    ["RendererTierContract self-test passed"],
     ["RendererUpload self-test passed"],
     ["RendererGpuTimer self-test passed", "RendererGpuTimer self-test skipped"],
     ["RendererScenePacket self-test passed"],
@@ -48,6 +49,7 @@ STARTUP_CHECKS = [
     ["GL context profile:"],
     ["GL context request:"],
     ["Renderer caps:"],
+    ["Renderer tier contract:"],
 ]
 
 MANUAL_GAMEPLAY_MATRIX = [
@@ -309,6 +311,7 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
         "0",
         "+rendererContextLadderSelfTest",
         "+rendererTierSelfTest",
+        "+rendererTierContractSelfTest",
         "+rendererUploadSelfTest",
         "+rendererGpuTimerSelfTest",
         "+rendererScenePacketSelfTest",
