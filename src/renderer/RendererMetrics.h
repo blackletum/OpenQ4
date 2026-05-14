@@ -17,6 +17,7 @@ enum rendererGpuTimerSlot_t {
 	RENDERER_GPU_TIMER_RENDER_TARGET,
 	RENDERER_GPU_TIMER_COPY_RENDER,
 	RENDERER_GPU_TIMER_SWAP_BUFFERS,
+	RENDERER_GPU_TIMER_MODERN_DEFERRED,
 	RENDERER_GPU_TIMER_COUNT
 };
 
@@ -35,6 +36,7 @@ void R_RendererMetrics_RecordRenderGraph( int graphPasses, int passPackets, int 
 void R_RendererMetrics_RecordRenderGraphResources( const renderGraphResourceManagerStats_t &stats );
 void R_RendererMetrics_RecordMaterialResourceTable( const materialResourceTableStats_t &stats );
 void R_RendererMetrics_RecordModernExecutor( rendererModernExecutorMetricsMode_t mode, int graphPasses, int preparedPasses, int fallbackPasses, int preparedDrawPackets, int materialDrawPackets, int resourceDrawPackets, int geometryDrawPackets, bool vaoReady, bool frameUBOReady, bool shaderLibraryReady, int shaderProgramCount, int shaderFailureCount, bool drawPlanReady, bool drawPlanOverflow, int drawPlanDraws, int drawPlanDepthDraws, int drawPlanMaterialDraws, int drawPlanFallbackDraws, int drawPlanStateBatches, int drawPlanProgramSwitches, int drawPlanMaterialSwitches, bool submitPlanReady, bool submitPlanOverflow, int submitPlanDraws, int submitPlanFallbackDraws, int submitPlanDepthDraws, int submitPlanMaterialDraws, int submitPlanMissingAmbientDraws, int submitPlanMissingIndexDraws, int submitPlanIndexUploadDraws, bool submitExecuted, int submittedDraws, int submittedFallbackDraws, int submittedIndexUploadDraws, int submitPlanProgramBatches, int submitPlanVertexBufferBatches, int submitPlanIndexBufferBatches, int submitPlanScissorBatches, int submitPlanMaterialBatches, int submitPlanUniformUpdates, int submitPlanFrameUBOBinds, bool visibleDepthRequested, bool visibleDepthExecuted, bool visibleDepthResourceReady, bool visibleShadowResourceReady, bool visibleDepthDebugOverlayReady, int visibleDepthDraws, int visibleDepthFallbackDraws, int visibleShadowDepthDraws, int visibleShadowFallbackDraws, int visibleStencilShadowFallbackDraws, int visibleDepthMismatchDraws, int visibleDepthDebugOverlayDraws, bool opaqueGBufferRequested, bool opaqueGBufferExecuted, bool opaqueGBufferResourcesReady, bool opaqueGBufferMRTReady, bool opaqueGBufferDebugOverlayReady, int opaqueGBufferDraws, int opaqueGBufferFallbackDraws, int opaqueGBufferAttachmentCount, int opaqueGBufferBytesPerPixel, int opaqueGBufferBandwidthKB, int opaqueGBufferDebugOverlayDraws );
+void R_RendererMetrics_RecordDeferredResolve( bool requested, bool executed, bool resourcesReady, bool outputReady, bool programReady, bool clusterReady, bool debugOverlayReady, int resolvedPixels, int activeLights, int pointLights, int projectedLights, int lightGridContributions, int clusterReads, int resourceFallbacks, int unsupportedLightFallbacks, int fogFallbackLights, int specialFallbackLights, int overflowClusters, int clearOps, int debugMode, int debugOverlayDraws );
 void R_RendererMetrics_RecordClusteredLighting( const rendererClusteredLightingStats_t &stats );
 void R_RendererMetrics_RecordGLStateCache( const glStateCacheStats_t &stats );
 void R_RendererMetrics_AddUploadBytes( int bytes );

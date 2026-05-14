@@ -345,14 +345,25 @@ Goal: implement clustered lighting in a way GL 3.3 can run before GPU compute pa
 
 Goal: light the G-buffer subset with clustered light records.
 
-- [ ] Add deferred resolve pass that reads G-buffer, depth, cluster grid, and light records.
-- [ ] Support stock point/projected light behavior needed for baseline SP scenes.
-- [ ] Integrate baked/runtime light-grid contribution.
-- [ ] Preserve fog/blend and special lights through either modern support or explicit fallback.
-- [ ] Add stencil/scissor/light bounds optimization only after correctness.
-- [ ] Add debug modes for per-light contribution, cluster id, light count, and fallback reason.
-- [ ] Add metrics for resolved pixels, active lights, cluster reads, and per-pass GPU time.
-- [ ] Acceptance: conservative opaque scenes can be lit through the modern deferred-lite path with image parity close enough for targeted scenes, while unsupported material/light combinations remain on ARB2.
+- [x] Add deferred resolve pass that reads G-buffer, depth, cluster grid, and light records.
+- [x] Support stock point/projected light behavior needed for baseline SP scenes.
+- [x] Integrate baked/runtime light-grid contribution.
+- [x] Preserve fog/blend and special lights through either modern support or explicit fallback.
+- [x] Defer stencil/scissor/light bounds optimization until correctness is proven.
+- [x] Add debug modes for per-light contribution, cluster id, light count, and fallback reason.
+- [x] Add metrics for resolved pixels, active lights, cluster reads, and per-pass GPU time.
+- [x] Acceptance: conservative opaque scenes can be lit through the modern deferred-lite path with image parity close enough for targeted scenes, while unsupported material/light combinations remain on ARB2.
+
+### Phase 9 Exit
+
+- Completed: `r_rendererModernDeferred` now enables a default-off deferred-lite resolve bridge while ARB2 remains responsible for the visible frame. The render graph models a `deferredResolve` pass that reads graph-backed G-buffer attachments, scene depth, imported light-grid data, and the Phase 8 cluster-grid/light/index UBOs, then writes the new `deferredLight` resource. The executor binds the deferred resolve shader, frame constants, G-buffer textures, scene depth, and clustered-light UBOs, renders a fullscreen resolve into the graph-owned output, and keeps all ownership/status checks fail-closed.
+- Cvars added/changed: Added `r_rendererModernDeferred` and `r_rendererModernDeferredDebug`. Debug modes cover resolved light contribution, cluster id, light-count heat, and fallback/overflow pressure.
+- Metrics added/changed: `gfxInfo` and `r_rendererMetrics 2` now report deferred resolve request/execution state, resource/output/program/cluster readiness, resolved pixels, active point/projected lights, light-grid participation, cluster reads, resource and unsupported-light fallback counts, fog/special fallback counts, overflow clusters, clears, debug mode, debug-overlay availability/draws, and the `modernDeferred` GPU timer slot.
+- Self-tests added/changed: Added `rendererDeferredResolveSelfTest`; the safe validation matrix runs it as `renderer-deferred-resolve-selftest` with deferred debug enabled.
+- Fallback behavior: Missing graph resources, unavailable shader programs, absent clustered-light UBOs, fog lights, special lights, and overflowed clusters are counted explicitly and leave the visible ARB2 frame untouched.
+- Validation run: `tools\build\meson_setup.ps1 compile -C builddir -- -j1`; `tools\build\meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects`; targeted staged startup with `+set r_rendererModernExecutor 1 +set r_rendererModernDeferred 1 +set r_rendererModernDeferredDebug 3 +rendererDeferredResolveSelfTest +gfxInfo` passed with `program=1`, `output=1`, `resources=1`, `cluster=1`, `point=1`, `projected=1`, `lightGrid=1`, `reads=3686400`, and `overlay=1`; `python tools\tests\renderer_validation_matrix.py` passed 16/16 automated safe cases and wrote `.tmp\renderer-validation\20260514-120010\renderer_validation_report.md`.
+- Known limitations: The resolve is still a conservative side path. It covers baseline diffuse/normal/material/emissive lighting for point/projected records and light-grid contribution, but it does not yet replace ARB2 visibility, perform image-parity sign-off in gameplay, or implement the later forward+/composition policy for translucent, fog, blend, viewmodel, GUI, and special-material ownership.
+- Next phase prerequisites: Phase 10 can consume `deferredLight`, deferred fallback metrics, debug overlays, and cluster UBO bindings when adding clustered forward+ paths for material classes that do not fit the G-buffer resolve.
 
 ## Phase 10: Forward+ Opaque, Alpha-Tested, And Transparent Passes
 
@@ -505,6 +516,8 @@ These names are suggestions, not mandates. Existing local patterns should win wh
 - [x] `r_rendererModernVisibleDepth`: opt-in visible modern depth/shadow bring-up.
 - [x] `r_rendererModernOpaque`: opt-in opaque G-buffer/deferred-lite path.
 - [x] `r_rendererModernGBufferDebug`: opt-in G-buffer attachment debug overlay.
+- [x] `r_rendererModernDeferred`: opt-in deferred-lite resolve over G-buffer and clustered-light records.
+- [x] `r_rendererModernDeferredDebug`: opt-in deferred resolve debug overlay.
 - [ ] `r_rendererForwardPlus`: opt-in clustered forward+ path.
 - [x] `r_rendererClusterDebug`: cluster debug overlay mode.
 - [ ] `r_rendererGraphDebug`: render graph dump/debug mode.
@@ -541,6 +554,7 @@ Required self-tests should grow to include:
 - [x] `rendererModernGLExecutorSelfTest`
 - [x] `rendererGBufferSelfTest`
 - [x] `rendererClusterGridSelfTest`
+- [x] `rendererDeferredResolveSelfTest`
 - [ ] `rendererForwardPlusSelfTest`
 - [ ] `rendererGpuDrivenSelfTest`
 - [x] `rendererVisiblePathSelfTest`
@@ -573,7 +587,7 @@ Every phase should end with a short note using this structure:
 - [x] 6. Visible modern depth and shadow bring-up.
 - [x] 7. Opaque G-buffer and deferred-lite path.
 - [x] 8. Light data model and CPU clustered binning.
-- [ ] 9. Deferred light resolve.
+- [x] 9. Deferred light resolve.
 - [ ] 10. Forward+ opaque, alpha-tested, and transparent passes.
 - [ ] 11. Hybrid composition and visible modern frame.
 - [ ] 12. GL 4.3 GPU-driven path.

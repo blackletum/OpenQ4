@@ -160,7 +160,31 @@ static int R_ModernGLShaderLibrary_BuildVersionList( const renderBackendCaps_t &
 	return count;
 }
 
-static void R_ModernGLShaderLibrary_BuildVertexSource( int glslVersion, char *buffer, int bufferSize ) {
+static void R_ModernGLShaderLibrary_BuildVertexSource( int glslVersion, modernGLShaderProgramKind_t kind, char *buffer, int bufferSize ) {
+	if ( kind == MODERN_GL_SHADER_DEFERRED_LIGHT_RESOLVE ) {
+		idStr::snPrintf(
+			buffer,
+			bufferSize,
+			"#version %d\n"
+			"layout(std140) uniform ModernFrameConstants {\n"
+			"    vec4 viewport;\n"
+			"    vec4 frame;\n"
+			"    vec4 capabilities;\n"
+			"    vec4 reserved;\n"
+			"} uFrame;\n"
+			"uniform mat4 uModelViewProjection;\n"
+			"out vec2 vTexCoord;\n"
+			"void main() {\n"
+			"    vec2 positions[4] = vec2[](vec2(-1.0, 1.0), vec2(1.0, 1.0), vec2(-1.0, -1.0), vec2(1.0, -1.0));\n"
+			"    vec2 texcoords[4] = vec2[](vec2(0.0, 1.0), vec2(1.0, 1.0), vec2(0.0, 0.0), vec2(1.0, 0.0));\n"
+			"    vTexCoord = texcoords[gl_VertexID];\n"
+			"    vec4 clip = vec4(positions[gl_VertexID] + uFrame.reserved.xy, 0.0, 1.0);\n"
+			"    gl_Position = uModelViewProjection * clip;\n"
+			"}\n",
+			glslVersion );
+		return;
+	}
+
 	idStr::snPrintf(
 		buffer,
 		bufferSize,
@@ -260,19 +284,85 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 			buffer,
 			bufferSize,
 			"#version %d\n"
-			"#define MODERN_HAS_SHADER_STORAGE %d\n"
-			"%s"
-			"#if MODERN_HAS_SHADER_STORAGE\n"
-			"layout(std430, binding = 1) readonly buffer ModernLightRecords { vec4 lightRecords[]; };\n"
-			"#endif\n"
+			"in vec2 vTexCoord;\n"
+			"layout(location = 0) out vec4 out_Color;\n"
+			"uniform vec4 uDebugColor;\n"
+			"uniform vec4 uLocalParams;\n"
+			"uniform sampler2D uMainTexture;\n"
+			"uniform sampler2D uGBufferNormal;\n"
+			"uniform sampler2D uGBufferMaterial;\n"
+			"uniform sampler2D uGBufferEmissive;\n"
+			"uniform sampler2D uSceneDepth;\n"
+			"struct ModernClusterLightRecord {\n"
+			"    vec4 positionRadius;\n"
+			"    vec4 colorType;\n"
+			"    vec4 scissorDepth;\n"
+			"    vec4 flags;\n"
+			"};\n"
+			"layout(std140) uniform ModernClusterGridParams {\n"
+			"    vec4 grid;\n"
+			"    vec4 depth;\n"
+			"    vec4 viewport;\n"
+			"    vec4 counts;\n"
+			"} uClusterGrid;\n"
+			"layout(std140) uniform ModernClusterLightRecords {\n"
+			"    ModernClusterLightRecord lights[128];\n"
+			"} uClusterLights;\n"
+			"layout(std140) uniform ModernClusterIndexRecords {\n"
+			"    uvec4 indices[768];\n"
+			"} uClusterIndices;\n"
 			"void main() {\n"
-			"    vec4 gbuffer = texture(uMainTexture, vTexCoord);\n"
+			"    vec4 albedo = texture(uMainTexture, vTexCoord);\n"
+			"    vec3 normal = normalize(texture(uGBufferNormal, vTexCoord).xyz * 2.0 - 1.0);\n"
+			"    vec4 material = texture(uGBufferMaterial, vTexCoord);\n"
+			"    vec3 lightGrid = texture(uGBufferEmissive, vTexCoord).rgb;\n"
+			"    float rawDepth = texture(uSceneDepth, vTexCoord).r;\n"
+			"    ivec3 grid = ivec3(max(uClusterGrid.grid.xyz, vec3(1.0)));\n"
+			"    int maxLights = int(max(uClusterGrid.grid.w, 1.0));\n"
+			"    int tileX = clamp(int(floor(vTexCoord.x * float(grid.x))), 0, grid.x - 1);\n"
+			"    int tileY = clamp(int(floor((1.0 - vTexCoord.y) * float(grid.y))), 0, grid.y - 1);\n"
+			"    int sliceZ = clamp(int(floor(rawDepth * float(grid.z))), 0, grid.z - 1);\n"
+			"    int clusterIndex = (sliceZ * grid.y + tileY) * grid.x + tileX;\n"
+			"    uvec4 lightIndices = uClusterIndices.indices[clusterIndex];\n"
+			"    vec3 lightAccum = vec3(0.0);\n"
+			"    int contributingLights = 0;\n"
+			"    int scannedLights = 0;\n"
+			"    for (int i = 0; i < 4; ++i) {\n"
+			"        if (i >= maxLights) { break; }\n"
+			"        uint lightIndex = lightIndices[i];\n"
+			"        if (lightIndex == 0xffffffffu || lightIndex >= uint(max(uClusterGrid.counts.x, 0.0))) { continue; }\n"
+			"        ModernClusterLightRecord light = uClusterLights.lights[int(lightIndex)];\n"
+			"        int type = int(floor(light.colorType.w + 0.5));\n"
+			"        bool supported = type == 0 || type == 1;\n"
+			"        vec2 pixel = gl_FragCoord.xy;\n"
+			"        float inX = step(light.scissorDepth.x, pixel.x) * step(pixel.x, light.scissorDepth.z);\n"
+			"        float inY = step(light.scissorDepth.y, pixel.y) * step(pixel.y, light.scissorDepth.w);\n"
+			"        vec3 lightDir = normalize(vec3(0.25, 0.35, 1.0));\n"
+			"        float ndotl = clamp(dot(normal, lightDir) * 0.5 + 0.5, 0.18, 1.0);\n"
+			"        float projectedScale = type == 1 ? 0.85 : 1.0;\n"
+			"        float attenuation = supported ? inX * inY * ndotl * projectedScale : 0.0;\n"
+			"        lightAccum += light.colorType.rgb * attenuation;\n"
+			"        contributingLights += attenuation > 0.001 ? 1 : 0;\n"
+			"        scannedLights++;\n"
+			"    }\n"
 			"    float exposure = max(uLocalParams.x, 0.25);\n"
-			"    out_Color = vec4(gbuffer.rgb * max(uDebugColor.rgb, vec3(0.0)) * exposure, gbuffer.a);\n"
+			"    float debugMode = floor(uLocalParams.y + 0.5);\n"
+			"    float overflowPressure = clamp(uLocalParams.w, 0.0, 1.0);\n"
+			"    vec3 lit = albedo.rgb * (vec3(0.12) + lightGrid + lightAccum * (0.35 + material.g)) * max(uDebugColor.rgb, vec3(0.0)) * exposure;\n"
+			"    if (debugMode == 1.0) {\n"
+			"        out_Color = vec4(clamp(lightAccum, vec3(0.0), vec3(1.0)), 1.0);\n"
+			"    } else if (debugMode == 2.0) {\n"
+			"        out_Color = vec4(fract(vec3(float(tileX) * 0.173, float(tileY) * 0.271, float(sliceZ) * 0.067)), 1.0);\n"
+			"    } else if (debugMode == 3.0) {\n"
+			"        float heat = clamp(float(scannedLights) / max(float(maxLights), 1.0), 0.0, 1.0);\n"
+			"        out_Color = vec4(heat, float(contributingLights) * 0.25, 1.0 - heat, 1.0);\n"
+			"    } else if (debugMode == 4.0) {\n"
+			"        out_Color = vec4(overflowPressure, uLocalParams.z, 0.1, 1.0);\n"
+			"    } else {\n"
+			"        out_Color = vec4(clamp(lit, vec3(0.0), vec3(1.0)), albedo.a);\n"
+			"    }\n"
 			"}\n",
-			glslVersion,
-			hasShaderStorage,
-			sharedHeader );
+			glslVersion );
 		return;
 	}
 
@@ -796,7 +886,7 @@ static bool R_ModernGLShaderLibrary_CreateProgram( int glslVersion, modernGLShad
 
 	char vertexSource[4096];
 	char fragmentSource[8192];
-	R_ModernGLShaderLibrary_BuildVertexSource( glslVersion, vertexSource, sizeof( vertexSource ) );
+	R_ModernGLShaderLibrary_BuildVertexSource( glslVersion, kind, vertexSource, sizeof( vertexSource ) );
 	R_ModernGLShaderLibrary_BuildFragmentSource( glslVersion, kind, fragmentSource, sizeof( fragmentSource ) );
 
 	GLuint vertexShader = R_ModernGLShaderLibrary_CompileShader( GL_VERTEX_SHADER, vertexSource, programContext );

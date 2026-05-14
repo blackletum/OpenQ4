@@ -644,8 +644,8 @@ static bool R_ModernClusteredLighting_UploadBuffers( rendererClusteredLightingSt
 		dst.colorType[3] = static_cast<float>( src.type );
 		dst.scissorDepth[0] = static_cast<float>( src.scissor.x1 );
 		dst.scissorDepth[1] = static_cast<float>( src.scissor.y1 );
-		dst.scissorDepth[2] = src.depthMin;
-		dst.scissorDepth[3] = src.depthMax;
+		dst.scissorDepth[2] = static_cast<float>( src.scissor.x2 );
+		dst.scissorDepth[3] = static_cast<float>( src.scissor.y2 );
 		dst.flags[0] = static_cast<float>( src.flags );
 		dst.flags[1] = static_cast<float>( src.lightDefIndex );
 		dst.flags[2] = static_cast<float>( src.areaNum );

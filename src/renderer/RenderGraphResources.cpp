@@ -116,7 +116,7 @@ static bool R_RenderGraphResources_IsTextureResource( renderGraphResourceType_t 
 static bool R_RenderGraphResources_FormatForType( const char *name, renderGraphResourceType_t type, GLenum &internalFormat, GLenum &format, GLenum &dataType, GLenum &attachment ) {
 	switch ( type ) {
 	case RENDER_GRAPH_RESOURCE_COLOR:
-		if ( name != NULL && !idStr::Icmp( name, "gbufferEmissive" ) && ( rg_renderGraphResourceFeatures.modernGL41 || rg_renderGraphResourceFeatures.gpuDriven || rg_renderGraphResourceFeatures.lowOverhead ) ) {
+		if ( name != NULL && ( !idStr::Icmp( name, "gbufferEmissive" ) || !idStr::Icmp( name, "deferredLight" ) ) && ( rg_renderGraphResourceFeatures.modernGL41 || rg_renderGraphResourceFeatures.gpuDriven || rg_renderGraphResourceFeatures.lowOverhead ) ) {
 			internalFormat = GL_RGBA16F;
 			format = GL_RGBA;
 			dataType = GL_HALF_FLOAT;

@@ -725,11 +725,10 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 	R_RendererMetrics_RecordRenderGraphResources( R_RenderGraphResources_Stats() );
 	R_MaterialResourceTable_PrepareFrame( *scenePackets );
 	R_RendererMetrics_RecordMaterialResourceTable( R_MaterialResourceTable_Stats() );
-	R_ModernGLExecutor_PrepareFrame( *scenePackets, legacyGraph );
-	R_GLStateCache_LegacyHandoffReset( "legacy ARB2 backend" );
-
 	backEndStartTime = Sys_Milliseconds();
 	R_RendererMetrics_BeginGpuBackendFrame();
+	R_ModernGLExecutor_PrepareFrame( *scenePackets, legacyGraph );
+	R_GLStateCache_LegacyHandoffReset( "legacy ARB2 backend" );
 
 	// needed for editor rendering
 	RB_SetDefaultGLState();
@@ -789,6 +788,7 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 		case RC_SWAP_BUFFERS:
 			R_ModernGLExecutor_DrawDepthDebugOverlay();
 			R_ModernGLExecutor_DrawGBufferDebugOverlay();
+			R_ModernGLExecutor_DrawDeferredDebugOverlay();
 			R_ModernClusteredLighting_DrawDebugOverlay();
 			RB_SwapBuffers( cmds );
 			c_swapBuffers++;

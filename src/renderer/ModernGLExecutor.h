@@ -37,6 +37,13 @@ typedef struct modernGLExecutorStats_s {
 	bool	opaqueGBufferResourcesReady;
 	bool	opaqueGBufferMRTReady;
 	bool	opaqueGBufferDebugOverlayReady;
+	bool	deferredResolveRequested;
+	bool	deferredResolveExecuted;
+	bool	deferredResolveResourcesReady;
+	bool	deferredResolveOutputReady;
+	bool	deferredResolveProgramReady;
+	bool	deferredResolveClusterReady;
+	bool	deferredResolveDebugOverlayReady;
 	int		graphPasses;
 	int		preparedPasses;
 	int		fallbackPasses;
@@ -119,6 +126,20 @@ typedef struct modernGLExecutorStats_s {
 	int		opaqueGBufferBytesPerPixel;
 	int		opaqueGBufferBandwidthKB;
 	int		opaqueGBufferDebugOverlayDraws;
+	int		deferredResolvePixels;
+	int		deferredResolveActiveLights;
+	int		deferredResolvePointLights;
+	int		deferredResolveProjectedLights;
+	int		deferredResolveLightGridContributions;
+	int		deferredResolveClusterReads;
+	int		deferredResolveResourceFallbacks;
+	int		deferredResolveUnsupportedLightFallbacks;
+	int		deferredResolveFogFallbackLights;
+	int		deferredResolveSpecialFallbackLights;
+	int		deferredResolveOverflowClusters;
+	int		deferredResolveClearOps;
+	int		deferredResolveDebugMode;
+	int		deferredResolveDebugOverlayDraws;
 	char	status[96];
 } modernGLExecutorStats_t;
 
@@ -127,10 +148,12 @@ void R_ModernGLExecutor_Shutdown( void );
 void R_ModernGLExecutor_PrepareFrame( const idScenePacketFrame &packetFrame, const idRenderGraph &graph );
 void R_ModernGLExecutor_DrawDepthDebugOverlay( void );
 void R_ModernGLExecutor_DrawGBufferDebugOverlay( void );
+void R_ModernGLExecutor_DrawDeferredDebugOverlay( void );
 const modernGLExecutorStats_t &R_ModernGLExecutor_Stats( void );
 void R_ModernGLExecutor_PrintGfxInfo( void );
 bool RendererModernGLExecutor_RunSelfTest( void );
 bool RendererVisiblePath_RunSelfTest( void );
 bool RendererGBuffer_RunSelfTest( void );
+bool RendererDeferredResolve_RunSelfTest( void );
 
 #endif /* !__MODERN_GL_EXECUTOR_H__ */
