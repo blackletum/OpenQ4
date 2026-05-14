@@ -539,6 +539,13 @@ static void R_RendererDefaultPromotionSelfTest_f( const idCmdArgs &args ) {
 	}
 }
 
+static void R_RendererDefaultSafetySelfTest_f( const idCmdArgs &args ) {
+	(void)args;
+	if ( !RendererDefaultSafety_RunSelfTest() ) {
+		common->Warning( "Renderer default safety self-test failed" );
+	}
+}
+
 static void R_RendererBenchmarkCapture_f( const idCmdArgs &args ) {
 	(void)args;
 	RendererBenchmarks_PrintLatestCapture();
@@ -3086,6 +3093,7 @@ void R_InitCommands( void ) {
 	cmdSystem->AddCommand( "rendererCompatibilityGatesSelfTest", R_RendererCompatibilityGatesSelfTest_f, CMD_FL_RENDERER, "run renderer driver-quirk and fallback-gate self tests" );
 	cmdSystem->AddCommand( "rendererBenchmarkSelfTest", R_RendererBenchmarkSelfTest_f, CMD_FL_RENDERER, "run renderer benchmark capture and percentile self tests" );
 	cmdSystem->AddCommand( "rendererDefaultPromotionSelfTest", R_RendererDefaultPromotionSelfTest_f, CMD_FL_RENDERER, "run renderer default-promotion gate self tests" );
+	cmdSystem->AddCommand( "rendererDefaultSafetySelfTest", R_RendererDefaultSafetySelfTest_f, CMD_FL_RENDERER, "run renderer conservative-default safety self tests" );
 	cmdSystem->AddCommand( "rendererBenchmarkCapture", R_RendererBenchmarkCapture_f, CMD_FL_RENDERER, "print the latest renderer benchmark capture summary" );
 	cmdSystem->AddCommand( "rendererUploadSelfTest", R_RendererUploadSelfTest_f, CMD_FL_RENDERER, "run renderer upload stream self tests" );
 	cmdSystem->AddCommand( "rendererGpuTimerSelfTest", R_RendererGpuTimerSelfTest_f, CMD_FL_RENDERER, "run renderer GPU timer query self tests" );

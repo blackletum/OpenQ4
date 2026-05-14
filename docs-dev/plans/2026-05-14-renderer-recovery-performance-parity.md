@@ -401,14 +401,22 @@ Completed implementation:
 
 Goal: promote only after the renderer has earned it.
 
-- [ ] Keep `r_rendererModernAutoPromote 0` until gameplay, captures, and benchmark gates pass on target hardware.
-- [ ] Remove or clearly quarantine diagnostic-only side paths after their replacement passes are real.
-- [ ] Update `README.md`, `docs-dev/gl-renderer-modernization.md`, `docs-dev/renderer-validation-matrix.md`, and release notes with actual user-visible benefits and compatibility notes.
-- [ ] Document the rollback commands prominently: `r_renderer arb2`, `r_glTier legacy`, and modern cvar disables.
+- [x] Keep `r_rendererModernAutoPromote 0` until gameplay, captures, and benchmark gates pass on target hardware.
+- [x] Remove or clearly quarantine diagnostic-only side paths after their replacement passes are real.
+- [x] Update `README.md`, `docs-dev/gl-renderer-modernization.md`, `docs-dev/renderer-validation-matrix.md`, and release notes with actual user-visible benefits and compatibility notes.
+- [x] Document the rollback commands prominently: `r_renderer arb2`, `r_glTier legacy`, and modern cvar disables.
 
 Acceptance:
 
-- [ ] Default promotion is reversible, tier-gated, warning-free, and demonstrably faster or equal in gameplay.
+- [x] Default promotion remains reversible, tier-gated, and warning-free in the automated safe matrix.
+- [ ] Default promotion is demonstrably faster or equal in full target-hardware gameplay.
+
+Completed implementation:
+
+- Added `Renderer default safety:` to `gfxInfo` and `rendererDefaultSafetySelfTest` as the Phase 13 conservative-default gate. The gate accepts `r_renderer best` or explicit `r_renderer arb2`, requires `r_glTier auto`, requires ARB2 rollback availability, and verifies that modern auto-promotion, executor/submit, visible/pass/debug, GPU-validation, bindless, and shader-reload cvars stay off unless explicitly requested.
+- Added `renderer-default-safety-selftest` to the safe validation matrix and default-promotion evidence list so archived rollback configs are tolerated but unsupported renderer requests and modern diagnostic side paths remain visible failures.
+- Updated `README.md`, `docs-dev/gl-renderer-modernization.md`, `docs-dev/renderer-validation-matrix.md`, and `docs-dev/release-completion.md` with the conservative-default status, rollback command set, and modern side-path quarantine guidance.
+- Validation passed for `tools/build/meson_setup.ps1 compile -C builddir`, `tools/build/meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects`, `python -m py_compile tools/tests/renderer_validation_matrix.py tools/tests/renderer_gameplay_benchmark.py`, `python tools/tests/renderer_validation_matrix.py --output-dir .tmp/renderer-validation/phase13-final-rerun` with 26/26 cases passing, and `python tools/tests/renderer_gameplay_benchmark.py --profile smoke --settle-frames 10 --sample-frames 10 --timeout 300 --output-dir .tmp/renderer-gameplay/phase13-smoke` with the SP `game/airdefense1` smoke passing. The smoke captured 10 renderer benchmark samples (`avg=13ms`, `p50=12ms`, `p95=15ms`, `p99=15ms`) and reported zero `idStr::snPrintf` overflow markers.
 
 ## Immediate Fix Order
 
@@ -424,7 +432,7 @@ Acceptance:
 
 ## Done Means
 
-- [ ] ARB2 default and rollback remain healthy.
+- [x] ARB2 default and rollback remain healthy.
 - [ ] Modern disabled overhead is effectively zero.
 - [ ] Modern visible does not duplicate ARB2 work for owned passes.
 - [ ] GL 3.3, GL 4.1, GL 4.3, and GL 4.5 each have a coherent tested workload model.

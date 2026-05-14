@@ -34,6 +34,7 @@ bool RendererBootstrap_ShouldAutoPromoteModernVisible( void );
 void RendererBootstrap_PrintGfxInfo( void );
 void RendererBootstrap_Shutdown( void );
 const rendererBootstrapState_t &RendererBootstrap_GetState( void );
+bool RendererDefaultSafety_RunSelfTest( void );
 bool RendererDefaultPromotion_RunSelfTest( void );
 
 #endif /* !__RENDERER_BOOTSTRAP_H__ */

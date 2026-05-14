@@ -6,8 +6,95 @@
 
 static rendererBootstrapState_t rg_bootstrapState;
 
+typedef struct rendererDefaultSafetyCVar_s {
+	const char *	name;
+	const idCVar *	cvar;
+	int				expectedInteger;
+} rendererDefaultSafetyCVar_t;
+
 static void RendererBootstrap_SetPromotionReason( rendererDefaultPromotionState_t &state, const char *reason ) {
 	idStr::snPrintf( state.reason, sizeof( state.reason ), "%s", reason != NULL ? reason : "unknown" );
+}
+
+static void RendererBootstrap_AppendIssue( idStr &issues, const char *issue ) {
+	if ( issues.Length() > 0 ) {
+		issues.Append( "," );
+	}
+	issues.Append( issue != NULL ? issue : "unknown" );
+}
+
+static bool RendererBootstrap_RendererRequestIsConservative( const char *rendererRequest ) {
+	return rendererRequest == NULL
+		|| rendererRequest[0] == '\0'
+		|| idStr::Icmp( rendererRequest, "best" ) == 0
+		|| idStr::Icmp( rendererRequest, "arb2" ) == 0;
+}
+
+static bool RendererBootstrap_BuildDefaultSafetyReport( idStr &report, idStr &issues ) {
+	static const rendererDefaultSafetyCVar_t guardedCVars[] = {
+		{ "r_rendererModernExecutor", &r_rendererModernExecutor, 0 },
+		{ "r_rendererModernSubmit", &r_rendererModernSubmit, 0 },
+		{ "r_rendererModernAutoPromote", &r_rendererModernAutoPromote, 0 },
+		{ "r_rendererModernVisible", &r_rendererModernVisible, 0 },
+		{ "r_rendererModernVisibleDepth", &r_rendererModernVisibleDepth, 0 },
+		{ "r_rendererModernDepthDebug", &r_rendererModernDepthDebug, 0 },
+		{ "r_rendererModernOpaque", &r_rendererModernOpaque, 0 },
+		{ "r_rendererModernGBufferDebug", &r_rendererModernGBufferDebug, 0 },
+		{ "r_rendererModernDeferred", &r_rendererModernDeferred, 0 },
+		{ "r_rendererModernDeferredDebug", &r_rendererModernDeferredDebug, 0 },
+		{ "r_rendererForwardPlus", &r_rendererForwardPlus, 0 },
+		{ "r_rendererClusterDebug", &r_rendererClusterDebug, 0 },
+		{ "r_rendererGpuValidation", &r_rendererGpuValidation, 0 },
+		{ "r_rendererBindless", &r_rendererBindless, 0 },
+		{ "r_rendererShaderReload", &r_rendererShaderReload, 0 }
+	};
+
+	issues.Clear();
+	bool conservative = true;
+
+	if ( !RendererBootstrap_RendererRequestIsConservative( r_renderer.GetString() ) ) {
+		RendererBootstrap_AppendIssue( issues, "r_renderer" );
+		conservative = false;
+	}
+	if ( idStr::Icmp( r_glTier.GetString(), "auto" ) != 0 ) {
+		RendererBootstrap_AppendIssue( issues, "r_glTier" );
+		conservative = false;
+	}
+	if ( !rg_bootstrapState.legacyBridgeActive ) {
+		RendererBootstrap_AppendIssue( issues, "rollback" );
+		conservative = false;
+	}
+
+	for ( int i = 0; i < static_cast<int>( sizeof( guardedCVars ) / sizeof( guardedCVars[0] ) ); ++i ) {
+		if ( guardedCVars[i].cvar->GetInteger() != guardedCVars[i].expectedInteger ) {
+			RendererBootstrap_AppendIssue( issues, guardedCVars[i].name );
+			conservative = false;
+		}
+	}
+
+	report = va(
+		"renderer=%s glTier=%s executor=%d submit=%d autoPromote=%d visible=%d visibleDepth=%d depthDebug=%d opaque=%d gbufferDebug=%d deferred=%d deferredDebug=%d forwardPlus=%d clusterDebug=%d gpuValidation=%d bindless=%d shaderReload=%d rollback=%s issues=%s",
+		r_renderer.GetString(),
+		r_glTier.GetString(),
+		r_rendererModernExecutor.GetInteger(),
+		r_rendererModernSubmit.GetInteger(),
+		r_rendererModernAutoPromote.GetInteger(),
+		r_rendererModernVisible.GetInteger(),
+		r_rendererModernVisibleDepth.GetInteger(),
+		r_rendererModernDepthDebug.GetInteger(),
+		r_rendererModernOpaque.GetInteger(),
+		r_rendererModernGBufferDebug.GetInteger(),
+		r_rendererModernDeferred.GetInteger(),
+		r_rendererModernDeferredDebug.GetInteger(),
+		r_rendererForwardPlus.GetInteger(),
+		r_rendererClusterDebug.GetInteger(),
+		r_rendererGpuValidation.GetInteger(),
+		r_rendererBindless.GetInteger(),
+		r_rendererShaderReload.GetInteger(),
+		rg_bootstrapState.legacyBridgeActive ? "available" : "missing",
+		issues.Length() > 0 ? issues.c_str() : "none" );
+
+	return conservative;
 }
 
 static const char *RendererBootstrap_PreferenceName( rendererTierPreference_t preference ) {
@@ -170,6 +257,14 @@ void RendererBootstrap_PrintGfxInfo( void ) {
 		promotion.modernExecutorAvailable ? 1 : 0,
 		promotion.legacyEscapeAvailable ? 1 : 0,
 		promotion.reason );
+
+	idStr safetyReport;
+	idStr safetyIssues;
+	const bool conservativeDefaults = RendererBootstrap_BuildDefaultSafetyReport( safetyReport, safetyIssues );
+	common->Printf(
+		"Renderer default safety: conservative=%d %s\n",
+		conservativeDefaults ? 1 : 0,
+		safetyReport.c_str() );
 }
 
 void RendererBootstrap_Shutdown( void ) {
@@ -178,6 +273,27 @@ void RendererBootstrap_Shutdown( void ) {
 
 const rendererBootstrapState_t &RendererBootstrap_GetState( void ) {
 	return rg_bootstrapState;
+}
+
+bool RendererDefaultSafety_RunSelfTest( void ) {
+	idStr report;
+	idStr issues;
+	const bool conservativeDefaults = RendererBootstrap_BuildDefaultSafetyReport( report, issues );
+
+	common->Printf(
+		"Renderer default safety: conservative=%d %s\n",
+		conservativeDefaults ? 1 : 0,
+		report.c_str() );
+
+	if ( !conservativeDefaults ) {
+		common->Printf(
+			"RendererDefaultSafety self-test failed: non-conservative defaults (%s)\n",
+			issues.Length() > 0 ? issues.c_str() : "unknown" );
+		return false;
+	}
+
+	common->Printf( "RendererDefaultSafety self-test passed\n" );
+	return true;
 }
 
 bool RendererDefaultPromotion_RunSelfTest( void ) {

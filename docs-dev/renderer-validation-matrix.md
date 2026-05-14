@@ -44,6 +44,7 @@ Automated coverage:
 | `renderer-modern-compatibility-selftest` | Phase 14 modern-visible compatibility coverage for command-category ownership inventory, modern fullscreen GUI readiness, light-grid ownership, explicit post/copy/subview/render-demo/BSE fallback buckets, deterministic render-demo accounting, and `gfxInfo` reporting |
 | `renderer-compatibility-gates-selftest` | Phase 15 fallback-gate coverage for missing UBO, broken MRT, missing timer query, missing buffer storage, rejected debug-context fallback, and synthetic driver-quirk downgrades |
 | `renderer-default-promotion-selftest` | Phase 17 default-promotion coverage for `r_glTier auto`, explicit `r_renderer arb2` escape behavior, compatibility gates, modern-executor readiness, ARB2 rollback availability, and `r_rendererModernAutoPromote` sign-off control |
+| `renderer-default-safety-selftest` | Phase 13 conservative-default coverage for ARB2 default visibility, `r_renderer best` or explicit `r_renderer arb2`, `r_glTier auto`, rollback availability, and default-off modern executor, visible, diagnostic, GPU-validation, bindless, shader-reload, and auto-promotion cvars |
 | `renderer-benchmark-selftest` | Phase 16 benchmark coverage for rolling P50/P95/P99 frame-time capture, CPU front-end/visibility/packet/graph/submit/present timings, GPU pass timing fields, upload/draw/light/cluster/fallback counters, benchmark presets, and performance-threshold reporting |
 | `renderer-gpu-driven-selftest` | forced `r_glTier gl43` coverage for GL 4.3 SSBO submit records, compute scissor culling, clustered-bin validation, compacted indirect command generation, CPU/GPU readback comparison, masked multi-draw indirect execution, GPU timer coverage, and `gfxInfo` reporting |
 | `renderer-low-overhead-selftest` | forced `r_glTier gl45` coverage for GL 4.5 DSA graph texture/FBO allocation, DSA sampler creation, named buffer/FBO updates, UBO/SSBO/texture/sampler multi-bind batches, submit-batch compaction, bindless experiment reporting, persistent upload defaults, fence diagnostics, and `gfxInfo` reporting |
@@ -61,7 +62,7 @@ Automated coverage:
 
 The forced tier cases pass when startup succeeds and the selected tier is reported. If a machine cannot support the forced tier, the log must show the selected fallback tier and `Renderer tier contract:` must report `degraded=1`, `failClosed=1`, and a concise `missing=` reason.
 
-The visible-depth, G-buffer, clustered-light, deferred-resolve, forward+, modern-visible, modern-compatibility, compatibility-gates, default-promotion, benchmark, GPU-driven, and low-overhead self-tests intentionally run as their own safe cases instead of being appended to the foundation self-test startup command, because the engine command parser has a fixed startup command list budget.
+The visible-depth, G-buffer, clustered-light, deferred-resolve, forward+, modern-visible, modern-compatibility, compatibility-gates, default-promotion, default-safety, benchmark, GPU-driven, and low-overhead self-tests intentionally run as their own safe cases instead of being appended to the foundation self-test startup command, because the engine command parser has a fixed startup command list budget.
 
 ## Compatibility Gates
 
@@ -80,7 +81,7 @@ The visible-depth, G-buffer, clustered-light, deferred-resolve, forward+, modern
 
 ## Default Promotion Criteria
 
-`r_rendererModernAutoPromote` is the Phase 17 sign-off switch for making the guarded modern visible path the automatic choice under `r_glTier auto`. Its default is `0`, so ARB2 remains the default visible renderer until the manual evidence below is complete. `gfxInfo` prints `Renderer default promotion:` with the current reason, and `rendererDefaultPromotionSelfTest` verifies the gate logic without loading a map.
+`r_rendererModernAutoPromote` is the Phase 17 sign-off switch for making the guarded modern visible path the automatic choice under `r_glTier auto`. Its default is `0`, so ARB2 remains the default visible renderer until the manual evidence below is complete. `gfxInfo` prints `Renderer default promotion:` with the current reason and `Renderer default safety:` with the current conservative-default audit. `rendererDefaultPromotionSelfTest` verifies the promotion gate logic without loading a map, while `rendererDefaultSafetySelfTest` verifies the clean-startup default contract.
 
 | Criterion | Required evidence |
 |---|---|
@@ -88,6 +89,7 @@ The visible-depth, G-buffer, clustered-light, deferred-resolve, forward+, modern
 | renderer escape | `r_renderer best` leaves promotion available; explicit `r_renderer arb2` keeps the ARB2 bridge |
 | compatibility gates | modern baseline features, UBOs, MRT, scene packets, render graph, and Shader Library V2 readiness are available |
 | fallback escape | the ARB2 compatibility bridge remains selectable through `r_renderer arb2` and `r_glTier legacy` |
+| conservative defaults | `r_renderer best` or explicit `r_renderer arb2` keeps ARB2 visible; `r_rendererModernAutoPromote`, modern executor/submit/visible/pass/debug paths, GPU validation, bindless, and shader reload all remain off in a clean startup |
 | manual sign-off | SP/MP gameplay, RenderDoc captures, and benchmark captures pass on target hardware before `r_rendererModernAutoPromote 1` is used as a default |
 
 ## Deterministic Capture Matrix
@@ -220,4 +222,5 @@ Nondeterministic BSE, cinematic, and MP scenes need human review in addition to 
 - No stock-asset compatibility overrides are added as a validation shortcut.
 - RenderDoc validation remains limited to forced modern/core bring-up paths until the visible renderer no longer depends on ARB2 compatibility features.
 - Benchmark captures report P50/P95/P99 frame pacing, active preset budgets, and threshold pass/fail status before any claim that the modern visible path matches or beats ARB2 on target scenes.
-- `r_rendererModernAutoPromote 1` is used only after the default-promotion criteria pass; `r_renderer arb2` and `r_glTier legacy` remain documented rollback paths.
+- `rendererDefaultSafetySelfTest` and `rendererDefaultPromotionSelfTest` pass before any default-promotion discussion.
+- `r_rendererModernAutoPromote 1` is used only after the default-promotion criteria pass; `r_renderer arb2`, `r_glTier legacy`, and the modern-disable cvar set remain documented rollback paths.

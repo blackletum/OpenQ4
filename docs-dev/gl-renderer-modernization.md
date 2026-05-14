@@ -47,6 +47,30 @@ Default promotion requires:
 
 `gfxInfo` prints `Renderer default promotion:` with active/eligible state and the current blocking reason. `rendererDefaultPromotionSelfTest` covers the signed path, unsigned-but-eligible path, explicit ARB2 escape, forced legacy tier, compatibility-gate block, and missing-legacy-escape block. `r_rendererModernVisible 1` remains the manual opt-in for targeted bring-up; `r_rendererModernAutoPromote 1` is the release sign-off switch that lets `r_glTier auto` request that guarded visible path automatically.
 
+`gfxInfo` also prints `Renderer default safety:`. That line is the clean-startup audit for Phase 13: `r_renderer best` or explicit `r_renderer arb2`, `r_glTier auto`, auto-promotion disabled, ARB2 rollback available, and all modern executor, submit, visible, debug, validation, bindless, and shader-reload side paths off unless explicitly requested. `rendererDefaultSafetySelfTest` validates that contract before release candidates or benchmark claims are made.
+
+Rollback and quarantine commands:
+
+```cfg
+r_renderer arb2
+r_glTier legacy
+r_rendererModernAutoPromote 0
+r_rendererModernExecutor 0
+r_rendererModernSubmit 0
+r_rendererModernVisible 0
+r_rendererModernVisibleDepth 0
+r_rendererModernDepthDebug 0
+r_rendererModernOpaque 0
+r_rendererModernGBufferDebug 0
+r_rendererModernDeferred 0
+r_rendererModernDeferredDebug 0
+r_rendererForwardPlus 0
+r_rendererClusterDebug 0
+r_rendererGpuValidation 0
+r_rendererBindless 0
+r_rendererShaderReload 0
+```
+
 ## Cross-Platform Context Ladder
 
 OpenQ4 now builds context candidates from one shared renderer-side ladder instead of keeping per-platform arrays. Windows SDL3, Linux SDL3, native Linux/GLX, and native macOS/NSOpenGL all record the selected request in `glConfig.contextRequest`, and `gfxInfo` prints both requested and actual debug-context state.

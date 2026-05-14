@@ -289,6 +289,10 @@ DEFAULT_PROMOTION_CRITERIA = [
         "required": "the ARB2 compatibility bridge remains available for rollback and explicit user selection",
     },
     {
+        "criterion": "conservative defaults",
+        "required": "`r_renderer best` or explicit `r_renderer arb2` keeps ARB2 visible; modern executor, submit, visible, side-path, debug, GPU-validation, bindless, shader-reload, and auto-promotion cvars remain off in a clean startup",
+    },
+    {
         "criterion": "manual sign-off",
         "required": "`r_rendererModernAutoPromote 1` is set only after SP/MP gameplay, RenderDoc captures, and benchmark captures pass on target hardware",
     },
@@ -730,6 +734,21 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
                 ["Renderer compatibility gates:"],
                 ["Selected renderer tier:"],
                 ["GL context request:"],
+            ],
+        },
+        {
+            "id": "renderer-default-safety-selftest",
+            "category": "selftest",
+            "description": "Phase 13 conservative-default safety gate for ARB2 default visibility, rollback escape, and default-off modern diagnostic side paths.",
+            "args": [
+                "+rendererDefaultSafetySelfTest",
+                "+gfxInfo",
+            ],
+            "checks": [
+                ["RendererDefaultSafety self-test passed"],
+                ["Renderer default safety:", "conservative=1", "rollback=available", "issues=none"],
+                ["Renderer default promotion:", "active=0"],
+                ["Renderer bootstrap:", "defaultVisible=ARB2"],
             ],
         },
         {
