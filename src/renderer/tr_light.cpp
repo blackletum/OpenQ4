@@ -1958,6 +1958,16 @@ static bool R_EffectBoundsAreaVisible( const idRenderWorldLocal *world, const rv
 	idBounds worldBounds;
 	worldBounds.FromTransformedBounds( def->referenceBounds, def->parms.origin, def->parms.axis );
 	worldBounds.ExpandSelf( Max( 0.0f, bse_frustumCullExpand.GetFloat() ) );
+	for ( int axis = 0; axis < 3; ++axis ) {
+		const float minValue = worldBounds[0][axis];
+		const float maxValue = worldBounds[1][axis];
+		const float span = maxValue - minValue;
+		if ( FLOAT_IS_NAN( minValue ) || FLOAT_IS_NAN( maxValue ) || minValue > maxValue || span >= 1e4f ) {
+			// BoundsInAreas is intentionally limited to normal portal-sized queries.
+			// Area culling is only an optimization, so keep large sky/smoke effects visible.
+			return true;
+		}
+	}
 
 	int areas[32];
 	const int numAreas = world->BoundsInAreas( worldBounds, areas, sizeof( areas ) / sizeof( areas[0] ) );
