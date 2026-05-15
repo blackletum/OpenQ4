@@ -231,6 +231,14 @@ Acceptance:
 - No visual popping in camera sweeps, doors/portals, dynamic characters, projectiles, cutouts, or shadow casters.
 - Hi-Z rejection counts are nonzero in dense scenes and correspond to saved draw/triangle work.
 
+Round 3 Phase 6 implementation notes:
+
+- Added a cached conservative visibility packet to each modern submit command. The packet carries projected screen bounds, depth range, frustum eligibility/rejection, near-plane fallback state, static/dynamic safety, Hi-Z candidacy, and shadow-caster participation. Invalid bounds, near-plane intersections, subviews, viewmodels, dynamic/deformed/skinned geometry, non-opaque materials, and legacy/fallback-sensitive paths remain fail-open.
+- Reused those packets in the executor for CPU frustum decisions, offscreen-scissor rejection, screen-space scissor tightening before draw submission, Hi-Z candidate accounting, and shadow-caster safety metrics. Main-camera frustum/screen culling is explicitly skipped for shadow-map and stencil-shadow caster commands.
+- Replaced the previous `glGenerateMipmap` Hi-Z build with an explicit max-depth reduction program and executor-owned mip FBO. The build path no longer performs in-frame `glGetIntegerv` state snapshots; it uses the shared GL state cache, copies scene depth into Hi-Z level zero, then reduces each following mip by writing conservative maximum depth.
+- Validation passed for `tools/build/meson_setup.ps1 compile -C builddir`, `tools/build/meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects`, `git diff --check`, and a staged client self-test run covering `rendererModernGLExecutorSelfTest`, `rendererModernVisibilitySelfTest`, `rendererVisiblePathSelfTest`, `rendererGpuDrivenSelfTest`, and `gfxInfo`. The executor self-test now reports `hizReduce=1`, visibility reports scissor/frustum/screen rejections with no query stall, and GPU-driven validation reports zero CPU/GPU mismatches. A bounded SP `game/airdefense1` smoke also passed through `tools/tests/renderer_gameplay_benchmark.py --profile smoke --settle-frames 5 --sample-frames 5 --timeout 300 --limit 1 --output-dir .tmp/renderer-gameplay/phase6-smoke-short`.
+- Dense-scene performance claims and nonzero shader-side Hi-Z rejection remain acceptance-gated on gameplay captures; this phase makes the visibility packet, conservative CPU rejection, Hi-Z resource build, and no-stall diagnostics fit for that measured follow-up without trading away rendering quality.
+
 ### Phase 7: Fit-For-Purpose Pipelines
 
 Goal: execute the minimum correct passes with low driver overhead.

@@ -163,6 +163,7 @@ typedef struct modernGLExecutorStats_s {
 	bool	visibilityTemporalCoherenceReady;
 	bool	visibilityNoQueryStall;
 	bool	visibilityShadowCasterReady;
+	bool	visibilityScreenBoundsReady;
 	int		visibilityScenes;
 	int		visibilityPortalVisibleAreas;
 	int		visibilityPortalRejectedAreas;
@@ -172,6 +173,11 @@ typedef struct modernGLExecutorStats_s {
 	int		visibilityGpuRejected;
 	int		visibilityScissorRejected;
 	int		visibilityFrustumRejected;
+	int		visibilityScreenRectRejected;
+	int		visibilityScreenRectClipped;
+	int		visibilityNearPlaneConservative;
+	int		visibilityDynamicConservative;
+	int		visibilityHiZCandidates;
 	int		visibilityHiZRejected;
 	int		visibilitySavedDraws;
 	int		visibilitySavedTriangles;

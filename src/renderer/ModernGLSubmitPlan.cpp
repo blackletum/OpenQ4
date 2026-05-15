@@ -46,6 +46,164 @@ static bool R_ModernGLSubmitPlan_IsMaterialPipeline( modernGLDrawPlanPipeline_t 
 		|| pipeline == MODERN_GL_DRAW_PLAN_PIPELINE_FORWARD_PLUS_TRANSPARENT;
 }
 
+static int R_ModernGLSubmitPlan_ViewWidth( const viewDef_t *viewDef ) {
+	if ( viewDef == NULL ) {
+		return Max( 1, glConfig.vidWidth );
+	}
+	const int viewportWidth = viewDef->viewport.x2 >= viewDef->viewport.x1 ? viewDef->viewport.x2 + 1 - viewDef->viewport.x1 : 0;
+	if ( viewportWidth > 0 ) {
+		return viewportWidth;
+	}
+	if ( viewDef->renderView.width > 0 ) {
+		return viewDef->renderView.width;
+	}
+	return Max( 1, glConfig.vidWidth );
+}
+
+static int R_ModernGLSubmitPlan_ViewHeight( const viewDef_t *viewDef ) {
+	if ( viewDef == NULL ) {
+		return Max( 1, glConfig.vidHeight );
+	}
+	const int viewportHeight = viewDef->viewport.y2 >= viewDef->viewport.y1 ? viewDef->viewport.y2 + 1 - viewDef->viewport.y1 : 0;
+	if ( viewportHeight > 0 ) {
+		return viewportHeight;
+	}
+	if ( viewDef->renderView.height > 0 ) {
+		return viewDef->renderView.height;
+	}
+	return Max( 1, glConfig.vidHeight );
+}
+
+static bool R_ModernGLSubmitPlan_CommandCanUseMainViewFrustum( const modernGLSubmitCommand_t &command ) {
+	const drawPacket_t *draw = command.drawPlanEntry != NULL ? command.drawPlanEntry->drawPacket : NULL;
+	return draw != NULL
+		&& draw->packetCategory == SCENE_PACKET_CATEGORY_WORLD
+		&& command.passCategory != RENDER_PASS_SHADOW_MAP
+		&& command.passCategory != RENDER_PASS_STENCIL_SHADOW;
+}
+
+static bool R_ModernGLSubmitPlan_CommandIsDynamicVisibility( const modernGLSubmitCommand_t &command, const geometryResourceRecord_t &geo, const instanceRecord_t *instance, const materialResourceTableRecord_t *materialRecord ) {
+	if ( command.passCategory == RENDER_PASS_SHADOW_MAP || command.passCategory == RENDER_PASS_STENCIL_SHADOW ) {
+		return true;
+	}
+	if ( instance == NULL || instance->weaponDepthHack || ( instance->visibilityFlags & ( INSTANCE_VISIBILITY_VIEWMODEL | INSTANCE_VISIBILITY_SUBVIEW | INSTANCE_VISIBILITY_REMOTE_CAMERA | INSTANCE_VISIBILITY_RENDER_DEMO ) ) != 0 ) {
+		return true;
+	}
+	if ( geo.uploadLifetime != GEOMETRY_UPLOAD_LIFETIME_STATIC ) {
+		return true;
+	}
+	if ( geo.deformMode != GEOMETRY_DEFORM_NONE || geo.skinningMode != GEOMETRY_SKINNING_NONE ) {
+		return true;
+	}
+	if ( materialRecord == NULL || materialRecord->alphaTest || materialRecord->materialClass != RENDER_MATERIAL_OPAQUE || materialRecord->blendMode != MATERIAL_RESOURCE_BLEND_OPAQUE ) {
+		return true;
+	}
+	return false;
+}
+
+static void R_ModernGLSubmitPlan_FillVisibilityPacket( modernGLSubmitCommand_t &command, const geometryResourceRecord_t &geo, const instanceRecord_t *instance, const materialResourceTableRecord_t *materialRecord ) {
+	command.visibilityScreenX1 = 0;
+	command.visibilityScreenY1 = 0;
+	command.visibilityScreenX2 = -1;
+	command.visibilityScreenY2 = -1;
+	command.visibilityDepthMin = 1.0f;
+	command.visibilityDepthMax = 0.0f;
+	command.visibilityBoundsValid = false;
+	command.visibilityFrustumEligible = R_ModernGLSubmitPlan_CommandCanUseMainViewFrustum( command );
+	command.visibilityFrustumRejected = false;
+	command.visibilityScreenRectValid = false;
+	command.visibilityNearPlaneClipped = false;
+	command.visibilityShadowCaster = command.passCategory == RENDER_PASS_SHADOW_MAP || command.passCategory == RENDER_PASS_STENCIL_SHADOW;
+	command.visibilityDynamic = R_ModernGLSubmitPlan_CommandIsDynamicVisibility( command, geo, instance, materialRecord );
+	command.visibilityHiZCandidate = false;
+
+	if ( !command.visibilityFrustumEligible || command.viewDef == NULL || !geo.hasBounds || geo.bounds.IsCleared() ) {
+		return;
+	}
+
+	const int viewWidth = R_ModernGLSubmitPlan_ViewWidth( command.viewDef );
+	const int viewHeight = R_ModernGLSubmitPlan_ViewHeight( command.viewDef );
+	if ( viewWidth <= 0 || viewHeight <= 0 ) {
+		return;
+	}
+
+	command.visibilityBoundsValid = true;
+	int outside[6] = { 0, 0, 0, 0, 0, 0 };
+	float minX = 1.0f;
+	float minY = 1.0f;
+	float maxX = -1.0f;
+	float maxY = -1.0f;
+	float minDepth = 1.0f;
+	float maxDepth = 0.0f;
+
+	for ( int i = 0; i < 8; ++i ) {
+		idVec3 corner;
+		corner.x = geo.bounds[( i & 1 ) ? 1 : 0].x;
+		corner.y = geo.bounds[( i & 2 ) ? 1 : 0].y;
+		corner.z = geo.bounds[( i & 4 ) ? 1 : 0].z;
+		idPlane eye;
+		idPlane clip;
+		R_TransformModelToClip( corner, command.modelViewMatrix, command.viewDef->projectionMatrix, eye, clip );
+		if ( clip[3] <= 1.0e-4f ) {
+			command.visibilityNearPlaneClipped = true;
+			continue;
+		}
+		if ( clip[0] < -clip[3] ) {
+			outside[0]++;
+		}
+		if ( clip[0] > clip[3] ) {
+			outside[1]++;
+		}
+		if ( clip[1] < -clip[3] ) {
+			outside[2]++;
+		}
+		if ( clip[1] > clip[3] ) {
+			outside[3]++;
+		}
+		if ( clip[2] < -clip[3] ) {
+			outside[4]++;
+		}
+		if ( clip[2] > clip[3] ) {
+			outside[5]++;
+		}
+
+		const float invW = 1.0f / clip[3];
+		const float ndcX = idMath::ClampFloat( -1.0f, 1.0f, clip[0] * invW );
+		const float ndcY = idMath::ClampFloat( -1.0f, 1.0f, clip[1] * invW );
+		const float ndcZ = idMath::ClampFloat( -1.0f, 1.0f, clip[2] * invW );
+		minX = Min( minX, ndcX );
+		minY = Min( minY, ndcY );
+		maxX = Max( maxX, ndcX );
+		maxY = Max( maxY, ndcY );
+		const float depth = idMath::ClampFloat( 0.0f, 1.0f, ndcZ * 0.5f + 0.5f );
+		minDepth = Min( minDepth, depth );
+		maxDepth = Max( maxDepth, depth );
+	}
+
+	if ( command.visibilityNearPlaneClipped ) {
+		return;
+	}
+	for ( int i = 0; i < 6; ++i ) {
+		if ( outside[i] == 8 ) {
+			command.visibilityFrustumRejected = true;
+			return;
+		}
+	}
+
+	const int screenX1 = idMath::FtoiFast( idMath::Floor( ( minX * 0.5f + 0.5f ) * static_cast<float>( viewWidth - 1 ) ) );
+	const int screenY1 = idMath::FtoiFast( idMath::Floor( ( minY * 0.5f + 0.5f ) * static_cast<float>( viewHeight - 1 ) ) );
+	const int screenX2 = idMath::FtoiFast( idMath::Ceil( ( maxX * 0.5f + 0.5f ) * static_cast<float>( viewWidth - 1 ) ) );
+	const int screenY2 = idMath::FtoiFast( idMath::Ceil( ( maxY * 0.5f + 0.5f ) * static_cast<float>( viewHeight - 1 ) ) );
+	command.visibilityScreenX1 = idMath::ClampInt( 0, viewWidth - 1, screenX1 - 1 );
+	command.visibilityScreenY1 = idMath::ClampInt( 0, viewHeight - 1, screenY1 - 1 );
+	command.visibilityScreenX2 = idMath::ClampInt( 0, viewWidth - 1, screenX2 + 1 );
+	command.visibilityScreenY2 = idMath::ClampInt( 0, viewHeight - 1, screenY2 + 1 );
+	command.visibilityDepthMin = minDepth;
+	command.visibilityDepthMax = maxDepth;
+	command.visibilityScreenRectValid = command.visibilityScreenX1 <= command.visibilityScreenX2 && command.visibilityScreenY1 <= command.visibilityScreenY2;
+	command.visibilityHiZCandidate = command.visibilityScreenRectValid && !command.visibilityDynamic;
+}
+
 static bool R_ModernGLSubmitPlan_RunFrameTempIndexCacheSelfTest( void ) {
 	static glIndex_t indexes[6] = { 0, 1, 2, 0, 2, 1 };
 	vertCache_t *indexBlock = vertexCache.AllocFrameTemp( indexes, sizeof( indexes ), true );
@@ -162,6 +320,7 @@ bool idModernGLSubmitPlan::AddCommand( const modernGLDrawPlanEntry_t &entry ) {
 	command.shouldCreateBackSides = materialRecord != NULL && materialRecord->shouldCreateBackSides;
 	command.weaponDepthHack = instance->weaponDepthHack;
 	command.negativeScale = instance->negativeScale;
+	R_ModernGLSubmitPlan_FillVisibilityPacket( command, *geo, instance, materialRecord );
 
 	const bool havePrevious = numCommands > 0;
 	if ( !havePrevious || commands[numCommands - 1].program != command.program ) {

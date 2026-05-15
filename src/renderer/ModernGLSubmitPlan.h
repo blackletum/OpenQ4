@@ -47,12 +47,26 @@ typedef struct modernGLSubmitCommand_s {
 	int							scissorY1;
 	int							scissorX2;
 	int							scissorY2;
+	int							visibilityScreenX1;
+	int							visibilityScreenY1;
+	int							visibilityScreenX2;
+	int							visibilityScreenY2;
+	float						visibilityDepthMin;
+	float						visibilityDepthMax;
 	bool						indexed;
 	bool						uploadIndexBuffer;
 	bool						twoSided;
 	bool						shouldCreateBackSides;
 	bool						weaponDepthHack;
 	bool						negativeScale;
+	bool						visibilityBoundsValid;
+	bool						visibilityFrustumEligible;
+	bool						visibilityFrustumRejected;
+	bool						visibilityScreenRectValid;
+	bool						visibilityNearPlaneClipped;
+	bool						visibilityHiZCandidate;
+	bool						visibilityDynamic;
+	bool						visibilityShadowCaster;
 } modernGLSubmitCommand_t;
 
 typedef struct modernGLSubmitPlanStats_s {

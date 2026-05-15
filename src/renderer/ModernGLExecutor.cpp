@@ -321,6 +321,8 @@ static int rg_modernGLExecutorLowOverheadSamplerDSAUpdates = 0;
 static GLuint rg_modernGLExecutorGBufferOverlayProgram = 0;
 static GLuint rg_modernGLExecutorDeferredOverlayProgram = 0;
 static GLuint rg_modernGLExecutorVisibleCompositeProgram = 0;
+static GLuint rg_modernGLExecutorHiZReduceProgram = 0;
+static GLuint rg_modernGLExecutorHiZFBO = 0;
 static GLint rg_modernGLExecutorComputeRecordCountLocation = -1;
 static GLint rg_modernGLExecutorDepthOverlayTextureLocation = -1;
 static GLint rg_modernGLExecutorDepthOverlayParamsLocation = -1;
@@ -331,6 +333,8 @@ static GLint rg_modernGLExecutorDeferredOverlayParamsLocation = -1;
 static GLint rg_modernGLExecutorVisibleCompositeDeferredLocation = -1;
 static GLint rg_modernGLExecutorVisibleCompositeForwardLocation = -1;
 static GLint rg_modernGLExecutorVisibleCompositeParamsLocation = -1;
+static GLint rg_modernGLExecutorHiZReduceTextureLocation = -1;
+static GLint rg_modernGLExecutorHiZReduceSourceMipLocation = -1;
 static bool rg_modernGLExecutorInitialized = false;
 static bool rg_modernGLExecutorAvailable = false;
 static bool rg_modernGLExecutorGpuDrivenReady = false;
@@ -896,6 +900,77 @@ static GLuint R_ModernGLExecutor_CompileVisibleCompositeProgram( void ) {
 	return program;
 }
 
+static GLuint R_ModernGLExecutor_CompileHiZReduceProgram( void ) {
+	static const char *vertexSource =
+		"#version 330\n"
+		"out vec2 vTexCoord;\n"
+		"void main() {\n"
+		"	vec2 positions[4] = vec2[]( vec2(-1.0, 1.0), vec2(1.0, 1.0), vec2(-1.0, -1.0), vec2(1.0, -1.0) );\n"
+		"	vec2 texcoords[4] = vec2[]( vec2(0.0, 1.0), vec2(1.0, 1.0), vec2(0.0, 0.0), vec2(1.0, 0.0) );\n"
+		"	vTexCoord = texcoords[gl_VertexID];\n"
+		"	gl_Position = vec4( positions[gl_VertexID], 0.0, 1.0 );\n"
+		"}\n";
+	static const char *fragmentSource =
+		"#version 330\n"
+		"uniform sampler2D uSourceDepth;\n"
+		"uniform int uSourceMip;\n"
+		"void main() {\n"
+		"	ivec2 sourceSize = textureSize( uSourceDepth, uSourceMip );\n"
+		"	ivec2 baseCoord = ivec2( gl_FragCoord.xy ) * 2;\n"
+		"	ivec2 maxCoord = max( sourceSize - ivec2(1), ivec2(0) );\n"
+		"	float d0 = texelFetch( uSourceDepth, clamp( baseCoord + ivec2(0, 0), ivec2(0), maxCoord ), uSourceMip ).r;\n"
+		"	float d1 = texelFetch( uSourceDepth, clamp( baseCoord + ivec2(1, 0), ivec2(0), maxCoord ), uSourceMip ).r;\n"
+		"	float d2 = texelFetch( uSourceDepth, clamp( baseCoord + ivec2(0, 1), ivec2(0), maxCoord ), uSourceMip ).r;\n"
+		"	float d3 = texelFetch( uSourceDepth, clamp( baseCoord + ivec2(1, 1), ivec2(0), maxCoord ), uSourceMip ).r;\n"
+		"	gl_FragDepth = max( max( d0, d1 ), max( d2, d3 ) );\n"
+		"}\n";
+
+	if ( glCreateShader == NULL || glShaderSource == NULL || glCompileShader == NULL || glCreateProgram == NULL || glAttachShader == NULL || glLinkProgram == NULL || glGetProgramiv == NULL ) {
+		return 0;
+	}
+
+	GLuint vertexShader = R_ModernGLExecutor_CompileShaderStage( GL_VERTEX_SHADER, vertexSource, "Hi-Z reduce vertex" );
+	if ( vertexShader == 0 ) {
+		return 0;
+	}
+	GLuint fragmentShader = R_ModernGLExecutor_CompileShaderStage( GL_FRAGMENT_SHADER, fragmentSource, "Hi-Z reduce fragment" );
+	if ( fragmentShader == 0 ) {
+		glDeleteShader( vertexShader );
+		return 0;
+	}
+
+	GLuint program = glCreateProgram();
+	if ( program == 0 ) {
+		glDeleteShader( vertexShader );
+		glDeleteShader( fragmentShader );
+		return 0;
+	}
+	glAttachShader( program, vertexShader );
+	glAttachShader( program, fragmentShader );
+	glLinkProgram( program );
+	glDetachShader( program, vertexShader );
+	glDetachShader( program, fragmentShader );
+	glDeleteShader( vertexShader );
+	glDeleteShader( fragmentShader );
+
+	GLint linked = GL_FALSE;
+	glGetProgramiv( program, GL_LINK_STATUS, &linked );
+	if ( linked != GL_TRUE ) {
+		char log[2048];
+		memset( log, 0, sizeof( log ) );
+		if ( glGetProgramInfoLog != NULL ) {
+			glGetProgramInfoLog( program, sizeof( log ) - 1, NULL, log );
+		}
+		common->Printf( "Modern GL executor: Hi-Z reduce program link failed: %s\n", log );
+		glDeleteProgram( program );
+		return 0;
+	}
+
+	rg_modernGLExecutorHiZReduceTextureLocation = glGetUniformLocation != NULL ? glGetUniformLocation( program, "uSourceDepth" ) : -1;
+	rg_modernGLExecutorHiZReduceSourceMipLocation = glGetUniformLocation != NULL ? glGetUniformLocation( program, "uSourceMip" ) : -1;
+	return program;
+}
+
 static void R_ModernGLExecutor_DestroyGpuDrivenObjects( void ) {
 	if ( rg_modernGLExecutorComputeProgram != 0 && glDeleteProgram != NULL ) {
 		glDeleteProgram( rg_modernGLExecutorComputeProgram );
@@ -911,6 +986,9 @@ static void R_ModernGLExecutor_DestroyGpuDrivenObjects( void ) {
 	}
 	if ( rg_modernGLExecutorVisibleCompositeProgram != 0 && glDeleteProgram != NULL ) {
 		glDeleteProgram( rg_modernGLExecutorVisibleCompositeProgram );
+	}
+	if ( rg_modernGLExecutorHiZReduceProgram != 0 && glDeleteProgram != NULL ) {
+		glDeleteProgram( rg_modernGLExecutorHiZReduceProgram );
 	}
 	GLuint buffers[3];
 	int numBuffers = 0;
@@ -934,6 +1012,7 @@ static void R_ModernGLExecutor_DestroyGpuDrivenObjects( void ) {
 	rg_modernGLExecutorGBufferOverlayProgram = 0;
 	rg_modernGLExecutorDeferredOverlayProgram = 0;
 	rg_modernGLExecutorVisibleCompositeProgram = 0;
+	rg_modernGLExecutorHiZReduceProgram = 0;
 	rg_modernGLExecutorComputeRecordCountLocation = -1;
 	rg_modernGLExecutorDepthOverlayTextureLocation = -1;
 	rg_modernGLExecutorDepthOverlayParamsLocation = -1;
@@ -944,6 +1023,8 @@ static void R_ModernGLExecutor_DestroyGpuDrivenObjects( void ) {
 	rg_modernGLExecutorVisibleCompositeDeferredLocation = -1;
 	rg_modernGLExecutorVisibleCompositeForwardLocation = -1;
 	rg_modernGLExecutorVisibleCompositeParamsLocation = -1;
+	rg_modernGLExecutorHiZReduceTextureLocation = -1;
+	rg_modernGLExecutorHiZReduceSourceMipLocation = -1;
 	rg_modernGLExecutorGpuDrivenReady = false;
 }
 
@@ -1008,6 +1089,7 @@ static void R_ModernGLExecutor_ResetStats( modernGLExecutorStats_t &stats, bool 
 	stats.visibilityTemporalCoherenceReady = stats.visibilityEnabled;
 	stats.visibilityNoQueryStall = true;
 	stats.visibilityShadowCasterReady = stats.visibilityEnabled;
+	stats.visibilityScreenBoundsReady = stats.visibilityEnabled;
 	stats.modernVisibleRequested = R_ModernGLExecutor_ModernVisibleRequested();
 	stats.modernVisibleProgramReady = rg_modernGLExecutorVisibleCompositeProgram != 0;
 	stats.modernVisibleGuiProgramReady = shaderStats.guiProgramReady;
@@ -1645,6 +1727,8 @@ static void R_ModernGLExecutor_DisableDrawVertLayout( void ) {
 	glDisableVertexAttribArray( MODERN_GL_DRAWVERT_ATTR_NORMAL );
 }
 
+static bool R_ModernGLExecutor_CommandEffectiveScissor( const modernGLSubmitCommand_t &command, int &scissorX1, int &scissorY1, int &scissorX2, int &scissorY2, bool &screenClipped );
+
 static void R_ModernGLExecutor_SetSubmitScissor( const modernGLSubmitCommand_t &command, const viewDef_t *viewDef ) {
 	if ( viewDef == NULL ) {
 		R_GLStateCache().SetViewport( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
@@ -1658,11 +1742,12 @@ static void R_ModernGLExecutor_SetSubmitScissor( const modernGLSubmitCommand_t &
 		viewDef->viewport.x2 + 1 - viewDef->viewport.x1,
 		viewDef->viewport.y2 + 1 - viewDef->viewport.y1 );
 
-	int scissorX1 = command.scissorX1;
-	int scissorY1 = command.scissorY1;
-	int scissorX2 = command.scissorX2;
-	int scissorY2 = command.scissorY2;
-	if ( scissorX2 < scissorX1 || scissorY2 < scissorY1 ) {
+	int scissorX1;
+	int scissorY1;
+	int scissorX2;
+	int scissorY2;
+	bool screenClipped = false;
+	if ( !R_ModernGLExecutor_CommandEffectiveScissor( command, scissorX1, scissorY1, scissorX2, scissorY2, screenClipped ) ) {
 		scissorX1 = viewDef->scissor.x1;
 		scissorY1 = viewDef->scissor.y1;
 		scissorX2 = viewDef->scissor.x2;
@@ -1902,7 +1987,8 @@ enum modernGLVisibilityRejectReason_t {
 	MODERN_GL_VISIBILITY_REJECT_NONE = 0,
 	MODERN_GL_VISIBILITY_REJECT_INVALID,
 	MODERN_GL_VISIBILITY_REJECT_SCISSOR,
-	MODERN_GL_VISIBILITY_REJECT_FRUSTUM
+	MODERN_GL_VISIBILITY_REJECT_FRUSTUM,
+	MODERN_GL_VISIBILITY_REJECT_SCREEN_RECT
 };
 
 static int R_ModernGLExecutor_CommandTriangleCount( const modernGLSubmitCommand_t &command ) {
@@ -1918,7 +2004,7 @@ static void R_ModernGLExecutor_CountVisibilityTest( modernGLExecutorStats_t *sta
 	} else {
 		stats->visibilityCpuTested++;
 	}
-	if ( command.passCategory == RENDER_PASS_SHADOW_MAP ) {
+	if ( command.visibilityShadowCaster ) {
 		stats->visibilityShadowCasterTested++;
 	}
 }
@@ -1936,14 +2022,23 @@ static void R_ModernGLExecutor_CountVisibilityReject( modernGLExecutorStats_t *s
 		stats->visibilityScissorRejected++;
 	} else if ( reason == MODERN_GL_VISIBILITY_REJECT_FRUSTUM ) {
 		stats->visibilityFrustumRejected++;
+	} else if ( reason == MODERN_GL_VISIBILITY_REJECT_SCREEN_RECT ) {
+		stats->visibilityScreenRectRejected++;
 	}
 	stats->visibilitySavedDraws++;
 	stats->visibilitySavedTriangles += R_ModernGLExecutor_CommandTriangleCount( command );
-	if ( command.passCategory == RENDER_PASS_SHADOW_MAP ) {
+	if ( command.visibilityShadowCaster ) {
 		stats->visibilityShadowCasterRejected++;
 		stats->visibilityShadowCasterSavedDraws++;
 		stats->visibilityShadowCasterSavedTriangles += R_ModernGLExecutor_CommandTriangleCount( command );
 	}
+}
+
+static bool R_ModernGLExecutor_CommandUsesScreenBounds( const modernGLSubmitCommand_t &command ) {
+	if ( command.passCategory == RENDER_PASS_SHADOW_MAP || command.passCategory == RENDER_PASS_STENCIL_SHADOW ) {
+		return false;
+	}
+	return command.visibilityScreenRectValid;
 }
 
 static int R_ModernGLExecutor_ViewWidth( const viewDef_t *viewDef ) {
@@ -1974,14 +2069,14 @@ static int R_ModernGLExecutor_ViewHeight( const viewDef_t *viewDef ) {
 	return Max( 1, glConfig.vidHeight );
 }
 
-static bool R_ModernGLExecutor_CommandScissorIntersectsView( const modernGLSubmitCommand_t &command ) {
+static bool R_ModernGLExecutor_CommandBaseScissor( const modernGLSubmitCommand_t &command, int &scissorX1, int &scissorY1, int &scissorX2, int &scissorY2 ) {
 	if ( command.viewDef == NULL ) {
 		return false;
 	}
-	int scissorX1 = command.scissorX1;
-	int scissorY1 = command.scissorY1;
-	int scissorX2 = command.scissorX2;
-	int scissorY2 = command.scissorY2;
+	scissorX1 = command.scissorX1;
+	scissorY1 = command.scissorY1;
+	scissorX2 = command.scissorX2;
+	scissorY2 = command.scissorY2;
 	if ( scissorX2 < scissorX1 || scissorY2 < scissorY1 ) {
 		scissorX1 = command.viewDef->scissor.x1;
 		scissorY1 = command.viewDef->scissor.y1;
@@ -1997,64 +2092,46 @@ static bool R_ModernGLExecutor_CommandScissorIntersectsView( const modernGLSubmi
 	if ( viewWidth <= 0 || viewHeight <= 0 ) {
 		return false;
 	}
-	return scissorX2 >= 0 && scissorY2 >= 0 && scissorX1 < viewWidth && scissorY1 < viewHeight;
-}
-
-static bool R_ModernGLExecutor_CommandCanUseMainViewFrustum( const modernGLSubmitCommand_t &command ) {
-	if ( command.passCategory == RENDER_PASS_SHADOW_MAP || command.passCategory == RENDER_PASS_STENCIL_SHADOW ) {
+	if ( scissorX2 < 0 || scissorY2 < 0 || scissorX1 >= viewWidth || scissorY1 >= viewHeight ) {
 		return false;
 	}
-	const drawPacket_t *draw = command.drawPlanEntry != NULL ? command.drawPlanEntry->drawPacket : NULL;
-	return draw != NULL && draw->packetCategory == SCENE_PACKET_CATEGORY_WORLD;
+	scissorX1 = idMath::ClampInt( 0, viewWidth - 1, scissorX1 );
+	scissorY1 = idMath::ClampInt( 0, viewHeight - 1, scissorY1 );
+	scissorX2 = idMath::ClampInt( 0, viewWidth - 1, scissorX2 );
+	scissorY2 = idMath::ClampInt( 0, viewHeight - 1, scissorY2 );
+	return scissorX1 <= scissorX2 && scissorY1 <= scissorY2;
+}
+
+static bool R_ModernGLExecutor_CommandEffectiveScissor( const modernGLSubmitCommand_t &command, int &scissorX1, int &scissorY1, int &scissorX2, int &scissorY2, bool &screenClipped ) {
+	screenClipped = false;
+	if ( !R_ModernGLExecutor_CommandBaseScissor( command, scissorX1, scissorY1, scissorX2, scissorY2 ) ) {
+		return false;
+	}
+	if ( R_ModernGLExecutor_CommandUsesScreenBounds( command ) ) {
+		const int oldX1 = scissorX1;
+		const int oldY1 = scissorY1;
+		const int oldX2 = scissorX2;
+		const int oldY2 = scissorY2;
+		scissorX1 = Max( scissorX1, command.visibilityScreenX1 );
+		scissorY1 = Max( scissorY1, command.visibilityScreenY1 );
+		scissorX2 = Min( scissorX2, command.visibilityScreenX2 );
+		scissorY2 = Min( scissorY2, command.visibilityScreenY2 );
+		screenClipped = scissorX1 != oldX1 || scissorY1 != oldY1 || scissorX2 != oldX2 || scissorY2 != oldY2;
+	}
+	return scissorX1 <= scissorX2 && scissorY1 <= scissorY2;
 }
 
 static bool R_ModernGLExecutor_CommandFrustumVisible( const modernGLSubmitCommand_t &command, modernGLExecutorStats_t *stats ) {
-	if ( !R_ModernGLExecutor_CommandCanUseMainViewFrustum( command ) ) {
+	if ( !command.visibilityFrustumEligible ) {
 		return true;
 	}
-	const drawPacket_t *draw = command.drawPlanEntry != NULL ? command.drawPlanEntry->drawPacket : NULL;
-	const geometryResourceRecord_t *geometry = draw != NULL ? draw->geometryRecord : NULL;
-	if ( geometry == NULL || !geometry->hasBounds || geometry->bounds.IsCleared() || command.viewDef == NULL ) {
+	if ( !command.visibilityBoundsValid ) {
 		if ( stats != NULL ) {
 			stats->visibilityFalsePositiveFallbacks++;
 		}
 		return true;
 	}
-
-	int outside[6] = { 0, 0, 0, 0, 0, 0 };
-	for ( int i = 0; i < 8; ++i ) {
-		idVec3 corner;
-		corner.x = geometry->bounds[( i & 1 ) ? 1 : 0].x;
-		corner.y = geometry->bounds[( i & 2 ) ? 1 : 0].y;
-		corner.z = geometry->bounds[( i & 4 ) ? 1 : 0].z;
-		idPlane eye;
-		idPlane clip;
-		R_TransformModelToClip( corner, command.modelViewMatrix, command.viewDef->projectionMatrix, eye, clip );
-		if ( clip[0] < -clip[3] ) {
-			outside[0]++;
-		}
-		if ( clip[0] > clip[3] ) {
-			outside[1]++;
-		}
-		if ( clip[1] < -clip[3] ) {
-			outside[2]++;
-		}
-		if ( clip[1] > clip[3] ) {
-			outside[3]++;
-		}
-		if ( clip[2] < -clip[3] ) {
-			outside[4]++;
-		}
-		if ( clip[2] > clip[3] ) {
-			outside[5]++;
-		}
-	}
-	for ( int i = 0; i < 6; ++i ) {
-		if ( outside[i] == 8 ) {
-			return false;
-		}
-	}
-	return true;
+	return !command.visibilityFrustumRejected;
 }
 
 static bool R_ModernGLExecutor_CommandVisibleForModernPath( const modernGLSubmitCommand_t &command, modernGLExecutorStats_t *stats, bool gpuDriven ) {
@@ -2067,13 +2144,34 @@ static bool R_ModernGLExecutor_CommandVisibleForModernPath( const modernGLSubmit
 	}
 
 	R_ModernGLExecutor_CountVisibilityTest( stats, command, gpuDriven );
-	if ( !R_ModernGLExecutor_CommandScissorIntersectsView( command ) ) {
+	if ( command.visibilityNearPlaneClipped && stats != NULL ) {
+		stats->visibilityNearPlaneConservative++;
+	}
+	if ( command.visibilityDynamic && stats != NULL ) {
+		stats->visibilityDynamicConservative++;
+	}
+	if ( command.visibilityHiZCandidate && stats != NULL ) {
+		stats->visibilityHiZCandidates++;
+	}
+	int scissorX1;
+	int scissorY1;
+	int scissorX2;
+	int scissorY2;
+	bool screenClipped = false;
+	if ( !R_ModernGLExecutor_CommandBaseScissor( command, scissorX1, scissorY1, scissorX2, scissorY2 ) ) {
 		R_ModernGLExecutor_CountVisibilityReject( stats, command, gpuDriven, MODERN_GL_VISIBILITY_REJECT_SCISSOR );
 		return false;
 	}
 	if ( !R_ModernGLExecutor_CommandFrustumVisible( command, stats ) ) {
 		R_ModernGLExecutor_CountVisibilityReject( stats, command, gpuDriven, MODERN_GL_VISIBILITY_REJECT_FRUSTUM );
 		return false;
+	}
+	if ( !R_ModernGLExecutor_CommandEffectiveScissor( command, scissorX1, scissorY1, scissorX2, scissorY2, screenClipped ) ) {
+		R_ModernGLExecutor_CountVisibilityReject( stats, command, gpuDriven, MODERN_GL_VISIBILITY_REJECT_SCREEN_RECT );
+		return false;
+	}
+	if ( screenClipped && stats != NULL ) {
+		stats->visibilityScreenRectClipped++;
 	}
 	return true;
 }
@@ -2840,6 +2938,66 @@ static void R_ModernGLExecutor_SubmitVisibleDepth( modernGLExecutorStats_t &stat
 	}
 }
 
+static int R_ModernGLExecutor_HiZMipSize( int size, int level ) {
+	size = Max( 1, size );
+	for ( int i = 0; i < level; ++i ) {
+		size = Max( 1, size >> 1 );
+	}
+	return size;
+}
+
+static bool R_ModernGLExecutor_AttachHiZReductionMip( const renderGraphResourceHandle_t &sceneHiZ, int mipLevel ) {
+	if ( rg_modernGLExecutorHiZFBO == 0 || sceneHiZ.texture == 0 || sceneHiZ.target != GL_TEXTURE_2D ) {
+		return false;
+	}
+	if ( rg_modernGLExecutorLowOverheadReady && glNamedFramebufferTexture != NULL && glNamedFramebufferDrawBuffer != NULL && glNamedFramebufferReadBuffer != NULL && glCheckNamedFramebufferStatus != NULL ) {
+		glNamedFramebufferTexture( rg_modernGLExecutorHiZFBO, GL_DEPTH_ATTACHMENT, sceneHiZ.texture, mipLevel );
+		glNamedFramebufferDrawBuffer( rg_modernGLExecutorHiZFBO, GL_NONE );
+		glNamedFramebufferReadBuffer( rg_modernGLExecutorHiZFBO, GL_NONE );
+		return glCheckNamedFramebufferStatus( rg_modernGLExecutorHiZFBO, GL_FRAMEBUFFER ) == GL_FRAMEBUFFER_COMPLETE;
+	}
+	if ( glFramebufferTexture2D == NULL || glCheckFramebufferStatus == NULL ) {
+		return false;
+	}
+	R_GLStateCache().BindFramebuffer( GL_FRAMEBUFFER, rg_modernGLExecutorHiZFBO );
+	glFramebufferTexture2D( GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, sceneHiZ.texture, mipLevel );
+	glDrawBuffer( GL_NONE );
+	glReadBuffer( GL_NONE );
+	return glCheckFramebufferStatus( GL_FRAMEBUFFER ) == GL_FRAMEBUFFER_COMPLETE;
+}
+
+static void R_ModernGLExecutor_DetachHiZReductionMip( void ) {
+	if ( rg_modernGLExecutorHiZFBO == 0 ) {
+		return;
+	}
+	if ( rg_modernGLExecutorLowOverheadReady && glNamedFramebufferTexture != NULL ) {
+		glNamedFramebufferTexture( rg_modernGLExecutorHiZFBO, GL_DEPTH_ATTACHMENT, 0, 0 );
+		return;
+	}
+	if ( glFramebufferTexture2D == NULL ) {
+		return;
+	}
+	R_GLStateCache().BindFramebuffer( GL_FRAMEBUFFER, rg_modernGLExecutorHiZFBO );
+	glFramebufferTexture2D( GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, 0, 0 );
+}
+
+static void R_ModernGLExecutor_RestoreAfterHiZBuild( const char *reason ) {
+	R_GLStateCache().BindTexture( 0, GL_TEXTURE_2D, 0 );
+	R_GLStateCache().UseProgram( 0 );
+	R_GLStateCache().BindVertexArray( 0 );
+	R_GLStateCache().BindFramebuffer( GL_READ_FRAMEBUFFER, 0 );
+	R_GLStateCache().BindFramebuffer( GL_DRAW_FRAMEBUFFER, 0 );
+	glReadBuffer( GL_BACK );
+	glDrawBuffer( GL_BACK );
+	R_GLStateCache().SetViewport( 0, 0, Max( 1, glConfig.vidWidth ), Max( 1, glConfig.vidHeight ) );
+	R_GLStateCache().SetScissor( 0, 0, Max( 1, glConfig.vidWidth ), Max( 1, glConfig.vidHeight ) );
+	R_GLStateCache().SetDepthFunc( GL_LEQUAL );
+	R_GLStateCache().SetDepthMask( GL_TRUE );
+	R_GLStateCache().SetColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
+	R_GLStateCache_InvalidateAll( reason );
+	GL_ClearStateDelta();
+}
+
 static void R_ModernGLExecutor_BuildHiZPyramid( modernGLExecutorStats_t &stats ) {
 	if ( !stats.visibilityHiZRequested || stats.visibilityHiZBuilt || !stats.enabled || !stats.available ) {
 		return;
@@ -2847,7 +3005,7 @@ static void R_ModernGLExecutor_BuildHiZPyramid( modernGLExecutorStats_t &stats )
 	if ( !stats.visibleDepthExecuted && !stats.opaqueGBufferExecuted ) {
 		return;
 	}
-	if ( glBlitFramebuffer == NULL || glGenerateMipmap == NULL || glBindTexture == NULL ) {
+	if ( glBlitFramebuffer == NULL || glBindTexture == NULL || glUniform1i == NULL || rg_modernGLExecutorHiZReduceProgram == 0 || rg_modernGLExecutorHiZFBO == 0 || rg_modernGLExecutorVAO == 0 ) {
 		return;
 	}
 
@@ -2864,21 +3022,10 @@ static void R_ModernGLExecutor_BuildHiZPyramid( modernGLExecutorStats_t &stats )
 	}
 
 	const int startMsec = Sys_Milliseconds();
-	GLint previousReadFramebuffer = 0;
-	GLint previousDrawFramebuffer = 0;
-	GLint previousTexture = 0;
-	GLint previousReadBuffer = GL_BACK;
-	GLint previousDrawBuffer = GL_BACK;
-	glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer );
-	glGetIntegerv( GL_DRAW_FRAMEBUFFER_BINDING, &previousDrawFramebuffer );
-	glGetIntegerv( GL_TEXTURE_BINDING_2D, &previousTexture );
-	glGetIntegerv( GL_READ_BUFFER, &previousReadBuffer );
-	glGetIntegerv( GL_DRAW_BUFFER, &previousDrawBuffer );
-
 	idGLDebugScope scope( "ModernGLExecutor Hi-Z build" );
 	R_GLStateCache().SetScissorTestEnabled( false );
-	glBindFramebuffer( GL_READ_FRAMEBUFFER, sceneDepth->framebuffer );
-	glBindFramebuffer( GL_DRAW_FRAMEBUFFER, sceneHiZ->framebuffer );
+	R_GLStateCache().BindFramebuffer( GL_READ_FRAMEBUFFER, sceneDepth->framebuffer );
+	R_GLStateCache().BindFramebuffer( GL_DRAW_FRAMEBUFFER, sceneHiZ->framebuffer );
 	glReadBuffer( GL_NONE );
 	glDrawBuffer( GL_NONE );
 	glBlitFramebuffer(
@@ -2893,15 +3040,38 @@ static void R_ModernGLExecutor_BuildHiZPyramid( modernGLExecutorStats_t &stats )
 		GL_DEPTH_BUFFER_BIT,
 		GL_NEAREST );
 
-	glBindTexture( GL_TEXTURE_2D, sceneHiZ->texture );
-	glGenerateMipmap( GL_TEXTURE_2D );
-
-	glBindTexture( GL_TEXTURE_2D, previousTexture );
-	glBindFramebuffer( GL_READ_FRAMEBUFFER, previousReadFramebuffer );
-	glBindFramebuffer( GL_DRAW_FRAMEBUFFER, previousDrawFramebuffer );
-	glReadBuffer( previousReadBuffer );
-	glDrawBuffer( previousDrawBuffer );
-	R_GLStateCache_InvalidateAll( "modern visibility hiz build" );
+	R_GLStateCache().BindVertexArray( rg_modernGLExecutorVAO );
+	R_GLStateCache().SetScissorTestEnabled( false );
+	R_GLStateCache().SetDepthTestEnabled( true );
+	R_GLStateCache().SetDepthFunc( GL_ALWAYS );
+	R_GLStateCache().SetDepthMask( GL_TRUE );
+	R_GLStateCache().SetStencilTestEnabled( false );
+	R_GLStateCache().SetBlendEnabled( false );
+	R_GLStateCache().SetCullFaceEnabled( false );
+	R_GLStateCache().SetColorMask( GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE );
+	R_GLStateCache().UseProgram( rg_modernGLExecutorHiZReduceProgram );
+	R_GLStateCache().ActiveTextureUnit( 0 );
+	R_GLStateCache().BindTexture( 0, GL_TEXTURE_2D, sceneHiZ->texture );
+	if ( rg_modernGLExecutorHiZReduceTextureLocation >= 0 ) {
+		glUniform1i( rg_modernGLExecutorHiZReduceTextureLocation, 0 );
+	}
+	for ( int level = 1; level < sceneHiZ->mipLevels; ++level ) {
+		const int mipWidth = R_ModernGLExecutor_HiZMipSize( sceneHiZ->width, level );
+		const int mipHeight = R_ModernGLExecutor_HiZMipSize( sceneHiZ->height, level );
+		if ( !R_ModernGLExecutor_AttachHiZReductionMip( *sceneHiZ, level ) ) {
+			R_ModernGLExecutor_DetachHiZReductionMip();
+			R_ModernGLExecutor_RestoreAfterHiZBuild( "modern visibility hiz build failed" );
+			return;
+		}
+		R_GLStateCache().BindFramebuffer( GL_FRAMEBUFFER, rg_modernGLExecutorHiZFBO );
+		R_GLStateCache().SetViewport( 0, 0, mipWidth, mipHeight );
+		if ( rg_modernGLExecutorHiZReduceSourceMipLocation >= 0 ) {
+			glUniform1i( rg_modernGLExecutorHiZReduceSourceMipLocation, level - 1 );
+		}
+		glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
+	}
+	R_ModernGLExecutor_DetachHiZReductionMip();
+	R_ModernGLExecutor_RestoreAfterHiZBuild( "modern visibility hiz build" );
 
 	stats.visibilityHiZBuilt = true;
 	stats.visibilityHiZLevels = sceneHiZ->mipLevels;
@@ -4320,15 +4490,29 @@ void R_ModernGLExecutor_Init( const renderBackendCaps_t &caps, const renderFeatu
 	} else {
 		common->Printf( "Modern GL executor: visible composite program unavailable, modern visible cvar will fail closed\n" );
 	}
+	rg_modernGLExecutorHiZReduceProgram = R_ModernGLExecutor_CompileHiZReduceProgram();
+	if ( rg_modernGLExecutorHiZReduceProgram != 0 ) {
+		R_GLDebug_LabelProgram( rg_modernGLExecutorHiZReduceProgram, "ModernGLExecutor Hi-Z max-depth reduce" );
+	} else {
+		common->Printf( "Modern GL executor: Hi-Z max-depth reduction unavailable, r_rendererHiZ will remain resource-only\n" );
+	}
 	if ( rg_modernGLExecutorLowOverheadReady && glCreateFramebuffers != NULL ) {
 		glCreateFramebuffers( 1, &rg_modernGLExecutorGBufferFBO );
 		if ( rg_modernGLExecutorGBufferFBO != 0 ) {
 			R_GLDebug_LabelFramebuffer( rg_modernGLExecutorGBufferFBO, "ModernGLExecutor G-buffer MRT" );
 		}
+		glCreateFramebuffers( 1, &rg_modernGLExecutorHiZFBO );
+		if ( rg_modernGLExecutorHiZFBO != 0 ) {
+			R_GLDebug_LabelFramebuffer( rg_modernGLExecutorHiZFBO, "ModernGLExecutor Hi-Z reduce" );
+		}
 	} else if ( glGenFramebuffers != NULL ) {
 		glGenFramebuffers( 1, &rg_modernGLExecutorGBufferFBO );
 		if ( rg_modernGLExecutorGBufferFBO != 0 ) {
 			R_GLDebug_LabelFramebuffer( rg_modernGLExecutorGBufferFBO, "ModernGLExecutor G-buffer MRT" );
+		}
+		glGenFramebuffers( 1, &rg_modernGLExecutorHiZFBO );
+		if ( rg_modernGLExecutorHiZFBO != 0 ) {
+			R_GLDebug_LabelFramebuffer( rg_modernGLExecutorHiZFBO, "ModernGLExecutor Hi-Z reduce" );
 		}
 	}
 
@@ -4359,6 +4543,9 @@ void R_ModernGLExecutor_Shutdown( void ) {
 	if ( rg_modernGLExecutorGBufferFBO != 0 && glDeleteFramebuffers != NULL ) {
 		glDeleteFramebuffers( 1, &rg_modernGLExecutorGBufferFBO );
 	}
+	if ( rg_modernGLExecutorHiZFBO != 0 && glDeleteFramebuffers != NULL ) {
+		glDeleteFramebuffers( 1, &rg_modernGLExecutorHiZFBO );
+	}
 	if ( rg_modernGLExecutorLowOverheadSampler != 0 && glDeleteSamplers != NULL ) {
 		glDeleteSamplers( 1, &rg_modernGLExecutorLowOverheadSampler );
 	}
@@ -4367,6 +4554,7 @@ void R_ModernGLExecutor_Shutdown( void ) {
 	rg_modernGLExecutorVAO = 0;
 	rg_modernGLExecutorFrameUBO = 0;
 	rg_modernGLExecutorGBufferFBO = 0;
+	rg_modernGLExecutorHiZFBO = 0;
 	rg_modernGLExecutorLowOverheadSampler = 0;
 	rg_modernGLExecutorLowOverheadSamplerDSACreations = 0;
 	rg_modernGLExecutorLowOverheadSamplerDSAUpdates = 0;
@@ -4782,7 +4970,7 @@ void R_ModernGLExecutor_PrepareFrame( const idScenePacketFrame &packetFrame, con
 			rg_modernGLExecutorStats.passOwnerPostLegacyPasses,
 			rg_modernGLPassOwnership.failClosedReason );
 		common->Printf(
-			"modernVisibility req=%d enabled=%d portalPVS=%d scenes=%d portalAreas=%d rejectedAreas=%d cpu=%d/%d gpu=%d/%d scissor=%d frustum=%d hiz(req=%d ready=%d built=%d levels=%d build=%dms rejected=%d) saved(draws=%d tris=%d) fallback=%d temporal=%d noQueryStall=%d shadowCasters=%d/%d saved=%d/%d\n",
+			"modernVisibility req=%d enabled=%d portalPVS=%d scenes=%d portalAreas=%d rejectedAreas=%d cpu=%d/%d gpu=%d/%d scissor=%d frustum=%d screen(reject=%d clipped=%d near=%d dynamic=%d) hiz(req=%d ready=%d built=%d levels=%d build=%dms candidates=%d rejected=%d) saved(draws=%d tris=%d) fallback=%d temporal=%d noQueryStall=%d shadowCasters=%d/%d saved=%d/%d\n",
 			rg_modernGLExecutorStats.visibilityRequested ? 1 : 0,
 			rg_modernGLExecutorStats.visibilityEnabled ? 1 : 0,
 			rg_modernGLExecutorStats.visibilityPortalPVSPreserved ? 1 : 0,
@@ -4795,11 +4983,16 @@ void R_ModernGLExecutor_PrepareFrame( const idScenePacketFrame &packetFrame, con
 			rg_modernGLExecutorStats.visibilityGpuRejected,
 			rg_modernGLExecutorStats.visibilityScissorRejected,
 			rg_modernGLExecutorStats.visibilityFrustumRejected,
+			rg_modernGLExecutorStats.visibilityScreenRectRejected,
+			rg_modernGLExecutorStats.visibilityScreenRectClipped,
+			rg_modernGLExecutorStats.visibilityNearPlaneConservative,
+			rg_modernGLExecutorStats.visibilityDynamicConservative,
 			rg_modernGLExecutorStats.visibilityHiZRequested ? 1 : 0,
 			rg_modernGLExecutorStats.visibilityHiZResourceReady ? 1 : 0,
 			rg_modernGLExecutorStats.visibilityHiZBuilt ? 1 : 0,
 			rg_modernGLExecutorStats.visibilityHiZLevels,
 			rg_modernGLExecutorStats.visibilityHiZBuildMsec,
+			rg_modernGLExecutorStats.visibilityHiZCandidates,
 			rg_modernGLExecutorStats.visibilityHiZRejected,
 			rg_modernGLExecutorStats.visibilitySavedDraws,
 			rg_modernGLExecutorStats.visibilitySavedTriangles,
@@ -5450,7 +5643,7 @@ void R_ModernGLExecutor_PrintGfxInfo( void ) {
 		rg_modernGLExecutorStats.lowOverheadClassicTextureBinds,
 		rg_modernGLExecutorStats.lowOverheadCompactedBatches );
 	common->Printf(
-		"Modern visibility: occlusion=%d hiz=%d req=%d enabled=%d portalPVS=%d scenes=%d portalAreas=%d rejectedAreas=%d cpu=%d/%d gpu=%d/%d scissor=%d frustum=%d hizReady=%d built=%d levels=%d build=%dms saved(draws=%d tris=%d) fallback=%d temporal=%d noQueryStall=%d shadowCasters=%d/%d saved=%d/%d\n",
+		"Modern visibility: occlusion=%d hiz=%d req=%d enabled=%d portalPVS=%d scenes=%d portalAreas=%d rejectedAreas=%d cpu=%d/%d gpu=%d/%d scissor=%d frustum=%d screen(reject=%d clipped=%d near=%d dynamic=%d) hizReady=%d built=%d levels=%d build=%dms candidates=%d rejected=%d saved(draws=%d tris=%d) fallback=%d temporal=%d noQueryStall=%d shadowCasters=%d/%d saved=%d/%d\n",
 		r_rendererOcclusion.GetBool() ? 1 : 0,
 		r_rendererHiZ.GetBool() ? 1 : 0,
 		rg_modernGLExecutorStats.visibilityRequested ? 1 : 0,
@@ -5465,10 +5658,16 @@ void R_ModernGLExecutor_PrintGfxInfo( void ) {
 		rg_modernGLExecutorStats.visibilityGpuRejected,
 		rg_modernGLExecutorStats.visibilityScissorRejected,
 		rg_modernGLExecutorStats.visibilityFrustumRejected,
+		rg_modernGLExecutorStats.visibilityScreenRectRejected,
+		rg_modernGLExecutorStats.visibilityScreenRectClipped,
+		rg_modernGLExecutorStats.visibilityNearPlaneConservative,
+		rg_modernGLExecutorStats.visibilityDynamicConservative,
 		rg_modernGLExecutorStats.visibilityHiZResourceReady ? 1 : 0,
 		rg_modernGLExecutorStats.visibilityHiZBuilt ? 1 : 0,
 		rg_modernGLExecutorStats.visibilityHiZLevels,
 		rg_modernGLExecutorStats.visibilityHiZBuildMsec,
+		rg_modernGLExecutorStats.visibilityHiZCandidates,
+		rg_modernGLExecutorStats.visibilityHiZRejected,
 		rg_modernGLExecutorStats.visibilitySavedDraws,
 		rg_modernGLExecutorStats.visibilitySavedTriangles,
 		rg_modernGLExecutorStats.visibilityFalsePositiveFallbacks,
@@ -5764,7 +5963,7 @@ bool RendererModernGLExecutor_RunSelfTest( void ) {
 		common->Printf( "RendererModernGLExecutor self-test passed (analysis only; live GL3 VAO/UBO objects unavailable)\n" );
 		return true;
 	}
-	if ( rg_modernGLExecutorVAO == 0 || rg_modernGLExecutorFrameUBO == 0 ) {
+	if ( rg_modernGLExecutorVAO == 0 || rg_modernGLExecutorFrameUBO == 0 || rg_modernGLExecutorHiZReduceProgram == 0 || rg_modernGLExecutorHiZFBO == 0 ) {
 		common->Printf( "RendererModernGLExecutor self-test failed: live GL object state mismatch\n" );
 		return false;
 	}
@@ -5811,12 +6010,13 @@ bool RendererModernGLExecutor_RunSelfTest( void ) {
 	}
 
 	common->Printf(
-		"RendererModernGLExecutor self-test passed (gpuScene=%d gpuIndirect=%d dispatches=%d dsaUpdates=%d multiBindBatches=%d)\n",
+		"RendererModernGLExecutor self-test passed (gpuScene=%d gpuIndirect=%d dispatches=%d dsaUpdates=%d multiBindBatches=%d hizReduce=%d)\n",
 		stats.gpuDrivenSceneRecords,
 		stats.gpuDrivenIndirectRecords,
 		stats.gpuDrivenComputeDispatches,
 		stats.lowOverheadDSAUpdates,
-		stats.lowOverheadMultiBindBatches );
+		stats.lowOverheadMultiBindBatches,
+		rg_modernGLExecutorHiZReduceProgram != 0 && rg_modernGLExecutorHiZFBO != 0 ? 1 : 0 );
 	return true;
 }
 
@@ -6099,6 +6299,15 @@ bool RendererModernVisibility_RunSelfTest( void ) {
 	for ( int i = 0; i < 16; ++i ) {
 		command.modelViewMatrix[i] = ( i % 5 ) == 0 ? 1.0f : 0.0f;
 	}
+	command.visibilityBoundsValid = true;
+	command.visibilityFrustumEligible = true;
+	command.visibilityFrustumRejected = false;
+	command.visibilityScreenRectValid = true;
+	command.visibilityScreenX1 = 0;
+	command.visibilityScreenY1 = 0;
+	command.visibilityScreenX2 = 127;
+	command.visibilityScreenY2 = 127;
+	command.visibilityHiZCandidate = true;
 
 	modernGLExecutorStats_t stats;
 	R_ModernGLExecutor_ResetStats( stats, true );
@@ -6122,19 +6331,32 @@ bool RendererModernVisibility_RunSelfTest( void ) {
 	command.scissorY2 = 127;
 	geometry.bounds[0].Set( 2.0f, -0.5f, -0.5f );
 	geometry.bounds[1].Set( 3.0f, 0.5f, 0.5f );
+	command.visibilityFrustumRejected = true;
 	if ( R_ModernGLExecutor_CommandVisibleForModernPath( command, &stats, false ) ) {
 		common->Printf( "RendererModernVisibility self-test failed: frustum-culled command accepted\n" );
 		return false;
 	}
 
 	command.passCategory = RENDER_PASS_SHADOW_MAP;
+	command.visibilityFrustumEligible = false;
 	if ( !R_ModernGLExecutor_CommandVisibleForModernPath( command, &stats, false ) ) {
 		common->Printf( "RendererModernVisibility self-test failed: main-view frustum was applied to shadow caster\n" );
 		return false;
 	}
 
-	r_rendererOcclusion.SetBool( false );
 	command.passCategory = RENDER_PASS_AMBIENT;
+	command.visibilityFrustumEligible = true;
+	command.visibilityFrustumRejected = false;
+	command.visibilityScreenX1 = 192;
+	command.visibilityScreenY1 = 192;
+	command.visibilityScreenX2 = 224;
+	command.visibilityScreenY2 = 224;
+	if ( R_ModernGLExecutor_CommandVisibleForModernPath( command, &stats, false ) ) {
+		common->Printf( "RendererModernVisibility self-test failed: projected screen bounds did not reject command\n" );
+		return false;
+	}
+
+	r_rendererOcclusion.SetBool( false );
 	command.scissorX1 = 256;
 	command.scissorY1 = 256;
 	command.scissorX2 = 320;
@@ -6144,27 +6366,32 @@ bool RendererModernVisibility_RunSelfTest( void ) {
 		return false;
 	}
 
-	if ( stats.visibilityCpuTested < 4 || stats.visibilityCpuRejected < 2 || stats.visibilityScissorRejected != 1 || stats.visibilityFrustumRejected != 1 || stats.visibilitySavedDraws < 2 || !stats.visibilityNoQueryStall ) {
+	if ( stats.visibilityCpuTested < 5 || stats.visibilityCpuRejected < 3 || stats.visibilityScissorRejected != 1 || stats.visibilityFrustumRejected != 1 || stats.visibilityScreenRectRejected != 1 || stats.visibilitySavedDraws < 3 || stats.visibilityHiZCandidates <= 0 || !stats.visibilityNoQueryStall ) {
 		common->Printf(
-			"RendererModernVisibility self-test failed: metric mismatch (cpu=%d/%d scissor=%d frustum=%d saved=%d noQuery=%d)\n",
+			"RendererModernVisibility self-test failed: metric mismatch (cpu=%d/%d scissor=%d frustum=%d screen=%d saved=%d hizCandidates=%d noQuery=%d)\n",
 			stats.visibilityCpuTested,
 			stats.visibilityCpuRejected,
 			stats.visibilityScissorRejected,
 			stats.visibilityFrustumRejected,
+			stats.visibilityScreenRectRejected,
 			stats.visibilitySavedDraws,
+			stats.visibilityHiZCandidates,
 			stats.visibilityNoQueryStall ? 1 : 0 );
 		return false;
 	}
 
 	common->Printf(
-		"RendererModernVisibility self-test passed (cpu=%d/%d scissor=%d frustum=%d saved=%d/%d shadowSafe=1 disabled=1 hizReq=%d noQueryStall=%d)\n",
+		"RendererModernVisibility self-test passed (cpu=%d/%d scissor=%d frustum=%d screen=%d clipped=%d saved=%d/%d shadowSafe=1 disabled=1 hizReq=%d candidates=%d noQueryStall=%d)\n",
 		stats.visibilityCpuTested,
 		stats.visibilityCpuRejected,
 		stats.visibilityScissorRejected,
 		stats.visibilityFrustumRejected,
+		stats.visibilityScreenRectRejected,
+		stats.visibilityScreenRectClipped,
 		stats.visibilitySavedDraws,
 		stats.visibilitySavedTriangles,
 		stats.visibilityHiZRequested ? 1 : 0,
+		stats.visibilityHiZCandidates,
 		stats.visibilityNoQueryStall ? 1 : 0 );
 	return true;
 }
