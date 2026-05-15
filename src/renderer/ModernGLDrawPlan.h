@@ -21,7 +21,8 @@ enum modernGLDrawPlanPipeline_t {
 	MODERN_GL_DRAW_PLAN_PIPELINE_GUI,
 	MODERN_GL_DRAW_PLAN_PIPELINE_FORWARD_PLUS_OPAQUE,
 	MODERN_GL_DRAW_PLAN_PIPELINE_FORWARD_PLUS_ALPHA_TEST,
-	MODERN_GL_DRAW_PLAN_PIPELINE_FORWARD_PLUS_TRANSPARENT
+	MODERN_GL_DRAW_PLAN_PIPELINE_FORWARD_PLUS_TRANSPARENT,
+	MODERN_GL_DRAW_PLAN_PIPELINE_COUNT
 };
 
 typedef struct modernGLDrawPlanEntry_s {
@@ -74,6 +75,12 @@ typedef struct modernGLDrawPlanStats_s {
 	int		geometryIndexFallbackDraws;
 	int		indexedDraws;
 	int		vertexOnlyDraws;
+	int		pipelineDraws[MODERN_GL_DRAW_PLAN_PIPELINE_COUNT];
+	int		pipelineBatches;
+	int		geometryBatches;
+	int		textureSetBatches;
+	int		scissorBatches;
+	int		transparentSortBreaks;
 	int		stateBatches;
 	int		programSwitches;
 	int		materialSwitches;

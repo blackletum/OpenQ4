@@ -3,6 +3,7 @@
 
 #include "tr_local.h"
 #include "ModernGLDrawPlan.h"
+#include "RendererBootstrap.h"
 
 idModernGLDrawPlan::idModernGLDrawPlan()
 	: numEntries( 0 ) {
@@ -38,6 +39,7 @@ const char *ModernGLDrawPlanPipeline_Name( modernGLDrawPlanPipeline_t pipeline )
 		return "forwardPlusAlphaTest";
 	case MODERN_GL_DRAW_PLAN_PIPELINE_FORWARD_PLUS_TRANSPARENT:
 		return "forwardPlusTransparent";
+	case MODERN_GL_DRAW_PLAN_PIPELINE_COUNT:
 	case MODERN_GL_DRAW_PLAN_PIPELINE_NONE:
 	default:
 		return "none";
@@ -128,6 +130,10 @@ static geometryResourceFallbackReason_t R_ModernGLDrawPlan_GeometryFallbackReaso
 	return GEOMETRY_RESOURCE_FALLBACK_NONE;
 }
 
+static bool R_ModernGLDrawPlan_ModernVisibleRequested( void ) {
+	return r_rendererModernVisible.GetBool() || RendererBootstrap_ShouldAutoPromoteModernVisible();
+}
+
 static void R_ModernGLDrawPlan_CountGeometryFallback( modernGLDrawPlanStats_t &stats, geometryResourceFallbackReason_t reason ) {
 	stats.fallbackDraws++;
 	stats.geometryFallbackDraws++;
@@ -152,7 +158,7 @@ static void R_ModernGLDrawPlan_CountGeometryFallback( modernGLDrawPlanStats_t &s
 }
 
 static bool R_ModernGLDrawPlan_ShouldUseGBuffer( const materialResourceTableRecord_t &materialRecord ) {
-	if ( !r_rendererModernVisible.GetBool()
+	if ( !R_ModernGLDrawPlan_ModernVisibleRequested()
 		&& !r_rendererModernOpaque.GetBool()
 		&& r_rendererModernGBufferDebug.GetInteger() <= 0
 		&& !r_rendererModernDeferred.GetBool()
@@ -165,7 +171,7 @@ static bool R_ModernGLDrawPlan_ShouldUseGBuffer( const materialResourceTableReco
 }
 
 static bool R_ModernGLDrawPlan_ShouldUseForwardPlus( renderPassCategory_t passCategory, const materialResourceTableRecord_t &materialRecord, modernGLDrawPlanPipeline_t &pipeline, modernGLShaderProgramKind_t &shaderKind ) {
-	if ( !r_rendererModernVisible.GetBool() && !r_rendererForwardPlus.GetBool() ) {
+	if ( !R_ModernGLDrawPlan_ModernVisibleRequested() && !r_rendererForwardPlus.GetBool() ) {
 		return false;
 	}
 	if ( materialRecord.materialClass == RENDER_MATERIAL_GUI
@@ -242,6 +248,9 @@ bool idModernGLDrawPlan::AddEntry( const drawPacket_t &draw, int drawPacketIndex
 	} else {
 		stats.vertexOnlyDraws++;
 	}
+	if ( pipeline > MODERN_GL_DRAW_PLAN_PIPELINE_NONE && pipeline < MODERN_GL_DRAW_PLAN_PIPELINE_COUNT ) {
+		stats.pipelineDraws[pipeline]++;
+	}
 	if ( entry.glslVersion > stats.highestGLSLVersion ) {
 		stats.highestGLSLVersion = entry.glslVersion;
 	}
@@ -269,7 +278,14 @@ bool idModernGLDrawPlan::Build( const idScenePacketFrame &packetFrame, const idR
 	modernGLDrawPlanPipeline_t previousPipeline = MODERN_GL_DRAW_PLAN_PIPELINE_NONE;
 	renderPassCategory_t previousPass = RENDER_PASS_DEPTH;
 	int previousMaterial = -2;
+	int previousGeometry = -2;
+	int previousScissorX1 = 0;
+	int previousScissorY1 = 0;
+	int previousScissorX2 = 0;
+	int previousScissorY2 = 0;
 	unsigned int previousProgram = 0;
+	unsigned long long previousTransparentSortKey = 0;
+	bool haveTransparentSortKey = false;
 	bool havePrevious = false;
 
 	stats.available = true;
@@ -344,6 +360,9 @@ bool idModernGLDrawPlan::Build( const idScenePacketFrame &packetFrame, const idR
 				|| previousProgram != program->program
 				|| previousMaterial != draw.materialRecordIndex ) {
 				stats.stateBatches++;
+				if ( !havePrevious || previousPipeline != pipeline ) {
+					stats.pipelineBatches++;
+				}
 				if ( havePrevious && previousProgram != program->program ) {
 					stats.programSwitches++;
 				}
@@ -351,10 +370,35 @@ bool idModernGLDrawPlan::Build( const idScenePacketFrame &packetFrame, const idR
 					stats.materialSwitches++;
 				}
 			}
+			if ( !havePrevious || previousGeometry != draw.geometryRecordIndex ) {
+				stats.geometryBatches++;
+			}
+			if ( !havePrevious || previousMaterial != draw.materialRecordIndex ) {
+				stats.textureSetBatches++;
+			}
+			if ( !havePrevious
+				|| previousScissorX1 != draw.scissorX1
+				|| previousScissorY1 != draw.scissorY1
+				|| previousScissorX2 != draw.scissorX2
+				|| previousScissorY2 != draw.scissorY2 ) {
+				stats.scissorBatches++;
+			}
+			if ( pipeline == MODERN_GL_DRAW_PLAN_PIPELINE_FORWARD_PLUS_TRANSPARENT ) {
+				if ( haveTransparentSortKey && draw.sortKey.value < previousTransparentSortKey ) {
+					stats.transparentSortBreaks++;
+				}
+				previousTransparentSortKey = draw.sortKey.value;
+				haveTransparentSortKey = true;
+			}
 			previousPipeline = pipeline;
 			previousPass = draw.passCategory;
 			previousProgram = program->program;
 			previousMaterial = draw.materialRecordIndex;
+			previousGeometry = draw.geometryRecordIndex;
+			previousScissorX1 = draw.scissorX1;
+			previousScissorY1 = draw.scissorY1;
+			previousScissorX2 = draw.scissorX2;
+			previousScissorY2 = draw.scissorY2;
 			havePrevious = true;
 		}
 	}
@@ -485,7 +529,7 @@ bool RendererModernGLDrawPlan_RunSelfTest( void ) {
 		for ( int i = 0; i < plan.NumEntries(); ++i ) {
 			const modernGLDrawPlanEntry_t &entry = plan.Entry( i );
 			sawDepth = sawDepth || entry.shaderKind == MODERN_GL_SHADER_DEPTH;
-			sawMaterial = sawMaterial || entry.shaderKind == MODERN_GL_SHADER_FLAT_MATERIAL;
+			sawMaterial = sawMaterial || R_ModernGLDrawPlan_IsMaterialPipeline( entry.pipeline );
 			if ( entry.modelViewProjectionLocation < 0 || entry.permutation.materialClass == RENDER_MATERIAL_NONE ) {
 				common->Printf( "RendererModernGLDrawPlan self-test failed: shader metadata mismatch\n" );
 				return false;

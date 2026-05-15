@@ -80,6 +80,17 @@ const int MODERN_GL_GPU_DRIVEN_VALIDATION_COUNTERS = MODERN_GL_GPU_COUNTER_COUNT
 const int MODERN_GL_GPU_DRIVEN_WORKGROUP_SIZE = 64;
 const int MODERN_GL_GBUFFER_ATTACHMENT_COUNT = 4;
 
+typedef struct modernGLFramebufferAttachmentCache_s {
+	bool	valid;
+	GLuint	framebuffer;
+	GLuint	colorTextures[MODERN_GL_GBUFFER_ATTACHMENT_COUNT];
+	GLuint	depthTexture;
+	GLenum	depthTarget;
+	GLenum	depthAttachment;
+	int		width;
+	int		height;
+} modernGLFramebufferAttachmentCache_t;
+
 enum modernGLDrawVertAttribute_t {
 	MODERN_GL_DRAWVERT_ATTR_POSITION = 0,
 	MODERN_GL_DRAWVERT_ATTR_COLOR = 3,
@@ -339,6 +350,8 @@ static bool rg_modernGLExecutorInitialized = false;
 static bool rg_modernGLExecutorAvailable = false;
 static bool rg_modernGLExecutorGpuDrivenReady = false;
 static bool rg_modernGLExecutorLowOverheadReady = false;
+static modernGLFramebufferAttachmentCache_t rg_modernGLExecutorGBufferAttachmentCache;
+static modernGLFramebufferAttachmentCache_t rg_modernGLExecutorForwardPlusAttachmentCache;
 
 static ID_INLINE GLint R_ModernGLExecutor_SafeStencilClearValue( void ) {
 	const int stencilBits = idMath::ClampInt( 1, 30, ( glConfig.stencilBits > 0 ) ? glConfig.stencilBits : 8 );
@@ -364,6 +377,21 @@ static void R_ModernGLExecutor_CopyDrawPlanStats( modernGLExecutorStats_t &stats
 	stats.drawPlanStateBatches = drawPlanStats.stateBatches;
 	stats.drawPlanProgramSwitches = drawPlanStats.programSwitches;
 	stats.drawPlanMaterialSwitches = drawPlanStats.materialSwitches;
+	stats.pipelinePlanReady = stats.drawPlanReady;
+	stats.pipelineDepthCommands = drawPlanStats.pipelineDraws[MODERN_GL_DRAW_PLAN_PIPELINE_DEPTH];
+	stats.pipelineShadowDepthCommands = drawPlanStats.pipelineDraws[MODERN_GL_DRAW_PLAN_PIPELINE_SHADOW_DEPTH];
+	stats.pipelineGBufferCommands = drawPlanStats.pipelineDraws[MODERN_GL_DRAW_PLAN_PIPELINE_GBUFFER];
+	stats.pipelineForwardPlusCommands =
+		drawPlanStats.pipelineDraws[MODERN_GL_DRAW_PLAN_PIPELINE_FORWARD_PLUS_OPAQUE]
+		+ drawPlanStats.pipelineDraws[MODERN_GL_DRAW_PLAN_PIPELINE_FORWARD_PLUS_ALPHA_TEST]
+		+ drawPlanStats.pipelineDraws[MODERN_GL_DRAW_PLAN_PIPELINE_FORWARD_PLUS_TRANSPARENT];
+	stats.pipelineForwardPlusTransparentCommands = drawPlanStats.pipelineDraws[MODERN_GL_DRAW_PLAN_PIPELINE_FORWARD_PLUS_TRANSPARENT];
+	stats.pipelineGuiCommands = drawPlanStats.pipelineDraws[MODERN_GL_DRAW_PLAN_PIPELINE_GUI];
+	stats.pipelineBatches = drawPlanStats.pipelineBatches;
+	stats.pipelineGeometryBatches = drawPlanStats.geometryBatches;
+	stats.pipelineTextureSetBatches = drawPlanStats.textureSetBatches;
+	stats.pipelineScissorBatches = drawPlanStats.scissorBatches;
+	stats.pipelineStableLayoutReady = drawPlanStats.transparentSortBreaks == 0;
 	if ( drawPlanStats.highestGLSLVersion > stats.highestGLSLVersion ) {
 		stats.highestGLSLVersion = drawPlanStats.highestGLSLVersion;
 	}
@@ -387,6 +415,7 @@ static void R_ModernGLExecutor_CopySubmitPlanStats( modernGLExecutorStats_t &sta
 	stats.submitPlanUniformUpdates = submitPlanStats.uniformUpdates;
 	stats.submitPlanFrameUBOBinds = submitPlanStats.frameUBOBinds;
 	stats.lowOverheadCompactedBatches = stats.tierUsesMultiBind ? ( submitPlanStats.programBatches + submitPlanStats.materialBatches ) : 0;
+	stats.pipelinePlanReady = stats.pipelinePlanReady && stats.submitPlanReady;
 	if ( submitPlanStats.highestGLSLVersion > stats.highestGLSLVersion ) {
 		stats.highestGLSLVersion = submitPlanStats.highestGLSLVersion;
 	}
@@ -1114,6 +1143,11 @@ static void R_ModernGLExecutor_ResetStats( modernGLExecutorStats_t &stats, bool 
 	stats.lowOverheadSamplerDSAUpdates = rg_modernGLExecutorLowOverheadSamplerDSAUpdates;
 	stats.lowOverheadBindlessRequested = r_rendererBindless.GetBool();
 	stats.lowOverheadBindlessAvailable = rg_modernGLExecutorFeatures.bindlessTextures && rg_modernGLExecutorCaps.hasBindlessTexture;
+	stats.pipelineNoHotStateQueries = true;
+	stats.pipelineValidationReadbacksOptIn = !stats.gpuDrivenValidationReadbackReady || stats.gpuDrivenValidationRequested;
+	stats.pipelineGL33CpuBounded = !rg_modernGLExecutorFeatures.gpuDriven || !stats.gpuDrivenValidationRequested;
+	stats.pipelineGL43GpuDrivenFit = !rg_modernGLExecutorFeatures.gpuDriven || ( stats.gpuDrivenReady && stats.sceneSSBOReady && stats.indirectBufferReady && stats.computeValidationReady );
+	stats.pipelineGL45LowOverheadFit = !rg_modernGLExecutorFeatures.lowOverhead || ( stats.lowOverheadReady && stats.tierUsesDSA && stats.tierUsesMultiBind );
 	stats.shaderProgramCount = shaderStats.programCount;
 	stats.shaderFailureCount = shaderStats.failedProgramCount;
 	stats.highestGLSLVersion = shaderStats.highestGLSLVersion;
@@ -1449,6 +1483,41 @@ static void R_ModernGLExecutor_SetEffectivePassRequests(
 	}
 }
 
+static void R_ModernGLExecutor_RecordPipelinePolicy(
+	modernGLExecutorStats_t &stats,
+	bool gpuDrivenWorkRequested ) {
+	const bool hasGBufferWork = stats.pipelineGBufferCommands > 0;
+	const bool hasForwardPlusWork = stats.pipelineForwardPlusCommands > 0;
+	const bool explicitGBufferWork = r_rendererModernGBufferDebug.GetInteger() > 0;
+	const bool explicitDeferredWork = r_rendererModernDeferredDebug.GetInteger() > 0;
+	const bool explicitForwardWork = false;
+
+	stats.pipelineGBufferNeeded = stats.opaqueGBufferRequested && ( hasGBufferWork || explicitGBufferWork || explicitDeferredWork );
+	stats.pipelineDeferredNeeded = stats.deferredResolveRequested && ( hasGBufferWork || explicitDeferredWork );
+	stats.pipelineForwardPlusNeeded = stats.forwardPlusRequested && ( hasForwardPlusWork || explicitForwardWork );
+	stats.pipelineDeferredCommands = stats.pipelineDeferredNeeded ? 1 : 0;
+	stats.pipelineMinimumPassesReady = true;
+	stats.pipelineNoHotStateQueries = true;
+	stats.pipelineValidationReadbacksOptIn = !stats.gpuDrivenValidationReadbackReady || stats.gpuDrivenValidationRequested;
+	stats.pipelineGL33CpuBounded = !rg_modernGLExecutorFeatures.gpuDriven || !stats.gpuDrivenReady || !gpuDrivenWorkRequested || stats.gpuDrivenValidationRequested;
+	stats.pipelineGL43GpuDrivenFit = !rg_modernGLExecutorFeatures.gpuDriven || ( stats.gpuDrivenReady && stats.sceneSSBOReady && stats.indirectBufferReady && stats.computeValidationReady );
+	stats.pipelineGL45LowOverheadFit = !rg_modernGLExecutorFeatures.lowOverhead || ( stats.lowOverheadReady && stats.tierUsesDSA && stats.tierUsesMultiBind );
+
+	if ( stats.opaqueGBufferRequested && !stats.pipelineGBufferNeeded ) {
+		stats.pipelineSkippedEmptyPasses++;
+	}
+	if ( stats.deferredResolveRequested && !stats.pipelineDeferredNeeded ) {
+		stats.pipelineSkippedEmptyPasses++;
+	}
+	if ( stats.forwardPlusRequested && !stats.pipelineForwardPlusNeeded ) {
+		stats.pipelineSkippedEmptyPasses++;
+	}
+
+	stats.opaqueGBufferRequested = stats.opaqueGBufferRequested && stats.pipelineGBufferNeeded;
+	stats.deferredResolveRequested = stats.deferredResolveRequested && stats.pipelineDeferredNeeded;
+	stats.forwardPlusRequested = stats.forwardPlusRequested && stats.pipelineForwardPlusNeeded;
+}
+
 static void R_ModernGLExecutor_RecordPassGate(
 	bool modernVisibleRequested,
 	bool sidecarRequested,
@@ -1561,6 +1630,11 @@ static void R_ModernGLExecutor_AnalyzeFrame(
 	stats.lowOverheadSamplerDSAUpdates = rg_modernGLExecutorLowOverheadSamplerDSAUpdates;
 	stats.lowOverheadBindlessRequested = r_rendererBindless.GetBool();
 	stats.lowOverheadBindlessAvailable = rg_modernGLExecutorFeatures.bindlessTextures && rg_modernGLExecutorCaps.hasBindlessTexture;
+	stats.pipelineNoHotStateQueries = true;
+	stats.pipelineValidationReadbacksOptIn = !stats.gpuDrivenValidationReadbackReady || stats.gpuDrivenValidationRequested;
+	stats.pipelineGL33CpuBounded = !rg_modernGLExecutorFeatures.gpuDriven || !stats.gpuDrivenValidationRequested;
+	stats.pipelineGL43GpuDrivenFit = !rg_modernGLExecutorFeatures.gpuDriven || ( stats.gpuDrivenReady && stats.sceneSSBOReady && stats.indirectBufferReady && stats.computeValidationReady );
+	stats.pipelineGL45LowOverheadFit = !rg_modernGLExecutorFeatures.lowOverhead || ( stats.lowOverheadReady && stats.tierUsesDSA && stats.tierUsesMultiBind );
 	stats.shaderProgramCount = shaderStats.programCount;
 	stats.shaderFailureCount = shaderStats.failedProgramCount;
 	stats.highestGLSLVersion = shaderStats.highestGLSLVersion;
@@ -3097,6 +3171,75 @@ static int R_ModernGLExecutor_GBufferBytesPerPixel( const renderGraphResourceHan
 	}
 }
 
+static void R_ModernGLExecutor_ResetFramebufferAttachmentCache( modernGLFramebufferAttachmentCache_t &cache ) {
+	memset( &cache, 0, sizeof( cache ) );
+}
+
+static bool R_ModernGLExecutor_GBufferAttachmentCacheMatches(
+	const modernGLFramebufferAttachmentCache_t &cache,
+	const renderGraphResourceHandle_t *const colorHandles[MODERN_GL_GBUFFER_ATTACHMENT_COUNT],
+	const renderGraphResourceHandle_t &depthHandle,
+	GLenum depthAttachment ) {
+	if ( !cache.valid || cache.framebuffer != rg_modernGLExecutorGBufferFBO || cache.depthTexture != depthHandle.texture || cache.depthTarget != depthHandle.target || cache.depthAttachment != depthAttachment ) {
+		return false;
+	}
+	for ( int i = 0; i < MODERN_GL_GBUFFER_ATTACHMENT_COUNT; ++i ) {
+		if ( colorHandles[i] == NULL || cache.colorTextures[i] != colorHandles[i]->texture ) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static void R_ModernGLExecutor_RecordGBufferAttachmentCache(
+	modernGLFramebufferAttachmentCache_t &cache,
+	const renderGraphResourceHandle_t *const colorHandles[MODERN_GL_GBUFFER_ATTACHMENT_COUNT],
+	const renderGraphResourceHandle_t &depthHandle,
+	GLenum depthAttachment ) {
+	memset( &cache, 0, sizeof( cache ) );
+	cache.valid = true;
+	cache.framebuffer = rg_modernGLExecutorGBufferFBO;
+	cache.depthTexture = depthHandle.texture;
+	cache.depthTarget = depthHandle.target;
+	cache.depthAttachment = depthAttachment;
+	cache.width = colorHandles[0] != NULL ? colorHandles[0]->width : 0;
+	cache.height = colorHandles[0] != NULL ? colorHandles[0]->height : 0;
+	for ( int i = 0; i < MODERN_GL_GBUFFER_ATTACHMENT_COUNT; ++i ) {
+		cache.colorTextures[i] = colorHandles[i] != NULL ? colorHandles[i]->texture : 0;
+	}
+}
+
+static bool R_ModernGLExecutor_ForwardAttachmentCacheMatches(
+	const modernGLFramebufferAttachmentCache_t &cache,
+	const renderGraphResourceHandle_t &sceneColor,
+	const renderGraphResourceHandle_t &sceneDepth,
+	GLenum depthAttachment ) {
+	return cache.valid
+		&& cache.framebuffer == sceneColor.framebuffer
+		&& cache.colorTextures[0] == sceneColor.texture
+		&& cache.depthTexture == sceneDepth.texture
+		&& cache.depthTarget == sceneDepth.target
+		&& cache.depthAttachment == depthAttachment
+		&& cache.width == sceneColor.width
+		&& cache.height == sceneColor.height;
+}
+
+static void R_ModernGLExecutor_RecordForwardAttachmentCache(
+	modernGLFramebufferAttachmentCache_t &cache,
+	const renderGraphResourceHandle_t &sceneColor,
+	const renderGraphResourceHandle_t &sceneDepth,
+	GLenum depthAttachment ) {
+	memset( &cache, 0, sizeof( cache ) );
+	cache.valid = true;
+	cache.framebuffer = sceneColor.framebuffer;
+	cache.colorTextures[0] = sceneColor.texture;
+	cache.depthTexture = sceneDepth.texture;
+	cache.depthTarget = sceneDepth.target;
+	cache.depthAttachment = depthAttachment;
+	cache.width = sceneColor.width;
+	cache.height = sceneColor.height;
+}
+
 static bool R_ModernGLExecutor_PrepareGBufferFBO( const renderGraphResourceHandle_t *const colorHandles[MODERN_GL_GBUFFER_ATTACHMENT_COUNT], const renderGraphResourceHandle_t &depthHandle, modernGLExecutorStats_t &stats ) {
 	if ( rg_modernGLExecutorGBufferFBO == 0 || glCheckFramebufferStatus == NULL || glDrawBuffers == NULL ) {
 		return false;
@@ -3111,6 +3254,12 @@ static bool R_ModernGLExecutor_PrepareGBufferFBO( const renderGraphResourceHandl
 		}
 	}
 	const GLenum depthAttachment = depthHandle.type == RENDER_GRAPH_RESOURCE_DEPTH_STENCIL ? GL_DEPTH_STENCIL_ATTACHMENT : GL_DEPTH_ATTACHMENT;
+	if ( R_ModernGLExecutor_GBufferAttachmentCacheMatches( rg_modernGLExecutorGBufferAttachmentCache, colorHandles, depthHandle, depthAttachment ) ) {
+		stats.pipelineFramebufferCacheHits++;
+		stats.opaqueGBufferMRTReady = true;
+		R_GLStateCache().BindFramebuffer( GL_FRAMEBUFFER, rg_modernGLExecutorGBufferFBO );
+		return true;
+	}
 	if ( stats.tierUsesDSA && glNamedFramebufferTexture != NULL && glNamedFramebufferDrawBuffers != NULL && glNamedFramebufferReadBuffer != NULL && glCheckNamedFramebufferStatus != NULL ) {
 		for ( int i = 0; i < MODERN_GL_GBUFFER_ATTACHMENT_COUNT; ++i ) {
 			glNamedFramebufferTexture( rg_modernGLExecutorGBufferFBO, rg_modernGLGBufferColorAttachments[i], colorHandles[i]->texture, 0 );
@@ -3120,9 +3269,13 @@ static bool R_ModernGLExecutor_PrepareGBufferFBO( const renderGraphResourceHandl
 		glNamedFramebufferReadBuffer( rg_modernGLExecutorGBufferFBO, GL_COLOR_ATTACHMENT0 );
 		const GLenum status = glCheckNamedFramebufferStatus( rg_modernGLExecutorGBufferFBO, GL_FRAMEBUFFER );
 		stats.lowOverheadFramebufferDSAUpdates++;
+		stats.pipelineFramebufferAttachmentUpdates++;
 		stats.opaqueGBufferMRTReady = status == GL_FRAMEBUFFER_COMPLETE;
 		if ( stats.opaqueGBufferMRTReady ) {
+			R_ModernGLExecutor_RecordGBufferAttachmentCache( rg_modernGLExecutorGBufferAttachmentCache, colorHandles, depthHandle, depthAttachment );
 			R_GLStateCache().BindFramebuffer( GL_FRAMEBUFFER, rg_modernGLExecutorGBufferFBO );
+		} else {
+			R_ModernGLExecutor_ResetFramebufferAttachmentCache( rg_modernGLExecutorGBufferAttachmentCache );
 		}
 		return stats.opaqueGBufferMRTReady;
 	}
@@ -3138,7 +3291,13 @@ static bool R_ModernGLExecutor_PrepareGBufferFBO( const renderGraphResourceHandl
 	glDrawBuffers( MODERN_GL_GBUFFER_ATTACHMENT_COUNT, rg_modernGLGBufferColorAttachments );
 	glReadBuffer( GL_COLOR_ATTACHMENT0 );
 	const GLenum status = glCheckFramebufferStatus( GL_FRAMEBUFFER );
+	stats.pipelineFramebufferAttachmentUpdates++;
 	stats.opaqueGBufferMRTReady = status == GL_FRAMEBUFFER_COMPLETE;
+	if ( stats.opaqueGBufferMRTReady ) {
+		R_ModernGLExecutor_RecordGBufferAttachmentCache( rg_modernGLExecutorGBufferAttachmentCache, colorHandles, depthHandle, depthAttachment );
+	} else {
+		R_ModernGLExecutor_ResetFramebufferAttachmentCache( rg_modernGLExecutorGBufferAttachmentCache );
+	}
 	return stats.opaqueGBufferMRTReady;
 }
 
@@ -3219,6 +3378,10 @@ static bool R_ModernGLExecutor_GBufferMaterialSupported( const modernGLSubmitCom
 
 static void R_ModernGLExecutor_SubmitGBuffer( modernGLExecutorStats_t &stats ) {
 	if ( !stats.opaqueGBufferRequested || !stats.enabled || !stats.available || !stats.submitPlanReady || !rg_modernGLExecutorInitialized || rg_modernGLExecutorVAO == 0 ) {
+		return;
+	}
+	if ( !stats.pipelineGBufferNeeded ) {
+		stats.pipelineSkippedEmptyPasses++;
 		return;
 	}
 
@@ -3417,6 +3580,10 @@ static void R_ModernGLExecutor_BindDeferredResolveTextures( const renderGraphRes
 
 static void R_ModernGLExecutor_SubmitDeferredResolve( modernGLExecutorStats_t &stats ) {
 	if ( !stats.deferredResolveRequested || !stats.enabled || !stats.available || !rg_modernGLExecutorInitialized || rg_modernGLExecutorVAO == 0 ) {
+		return;
+	}
+	if ( !stats.pipelineDeferredNeeded ) {
+		stats.pipelineSkippedEmptyPasses++;
 		return;
 	}
 
@@ -3627,15 +3794,25 @@ static bool R_ModernGLExecutor_PrepareForwardPlusFBO( const renderGraphResourceH
 		return false;
 	}
 	const GLenum depthAttachment = sceneDepth.type == RENDER_GRAPH_RESOURCE_DEPTH_STENCIL ? GL_DEPTH_STENCIL_ATTACHMENT : GL_DEPTH_ATTACHMENT;
+	if ( R_ModernGLExecutor_ForwardAttachmentCacheMatches( rg_modernGLExecutorForwardPlusAttachmentCache, sceneColor, sceneDepth, depthAttachment ) ) {
+		stats.pipelineFramebufferCacheHits++;
+		stats.forwardPlusResourcesReady = true;
+		R_GLStateCache().BindFramebuffer( GL_FRAMEBUFFER, sceneColor.framebuffer );
+		return true;
+	}
 	if ( stats.tierUsesDSA && glNamedFramebufferTexture != NULL && glNamedFramebufferDrawBuffer != NULL && glNamedFramebufferReadBuffer != NULL && glCheckNamedFramebufferStatus != NULL ) {
 		glNamedFramebufferTexture( sceneColor.framebuffer, depthAttachment, sceneDepth.texture, 0 );
 		glNamedFramebufferDrawBuffer( sceneColor.framebuffer, GL_COLOR_ATTACHMENT0 );
 		glNamedFramebufferReadBuffer( sceneColor.framebuffer, GL_COLOR_ATTACHMENT0 );
 		const GLenum status = glCheckNamedFramebufferStatus( sceneColor.framebuffer, GL_FRAMEBUFFER );
 		stats.lowOverheadFramebufferDSAUpdates++;
+		stats.pipelineFramebufferAttachmentUpdates++;
 		stats.forwardPlusResourcesReady = status == GL_FRAMEBUFFER_COMPLETE;
 		if ( stats.forwardPlusResourcesReady ) {
+			R_ModernGLExecutor_RecordForwardAttachmentCache( rg_modernGLExecutorForwardPlusAttachmentCache, sceneColor, sceneDepth, depthAttachment );
 			R_GLStateCache().BindFramebuffer( GL_FRAMEBUFFER, sceneColor.framebuffer );
+		} else {
+			R_ModernGLExecutor_ResetFramebufferAttachmentCache( rg_modernGLExecutorForwardPlusAttachmentCache );
 		}
 		return stats.forwardPlusResourcesReady;
 	}
@@ -3647,12 +3824,22 @@ static bool R_ModernGLExecutor_PrepareForwardPlusFBO( const renderGraphResourceH
 	glDrawBuffer( GL_COLOR_ATTACHMENT0 );
 	glReadBuffer( GL_COLOR_ATTACHMENT0 );
 	const GLenum status = glCheckFramebufferStatus( GL_FRAMEBUFFER );
+	stats.pipelineFramebufferAttachmentUpdates++;
 	stats.forwardPlusResourcesReady = status == GL_FRAMEBUFFER_COMPLETE;
+	if ( stats.forwardPlusResourcesReady ) {
+		R_ModernGLExecutor_RecordForwardAttachmentCache( rg_modernGLExecutorForwardPlusAttachmentCache, sceneColor, sceneDepth, depthAttachment );
+	} else {
+		R_ModernGLExecutor_ResetFramebufferAttachmentCache( rg_modernGLExecutorForwardPlusAttachmentCache );
+	}
 	return stats.forwardPlusResourcesReady;
 }
 
 static void R_ModernGLExecutor_SubmitForwardPlus( modernGLExecutorStats_t &stats ) {
 	if ( !stats.forwardPlusRequested || !stats.enabled || !stats.available || !stats.submitPlanReady || !rg_modernGLExecutorInitialized || rg_modernGLExecutorVAO == 0 ) {
+		return;
+	}
+	if ( !stats.pipelineForwardPlusNeeded ) {
+		stats.pipelineSkippedEmptyPasses++;
 		return;
 	}
 
@@ -3990,11 +4177,12 @@ static bool R_ModernGLExecutor_ModernVisiblePrecomposeReady( modernGLExecutorSta
 			&& stats.forwardPlusShadowSkippedLights == 0
 			&& stats.visibleShadowFallbackDraws == 0
 			&& stats.visibleStencilShadowFallbackDraws == 0 ) );
-	stats.modernVisibleSourceReady = deferredReady && forwardReady;
+	stats.modernVisibleSourceReady = deferredReady || forwardReady;
 	stats.modernVisibleBackBufferReady = backBuffer != NULL && backBuffer->presentable;
 	stats.modernVisibleHybridTargetReady = hybridReady;
 	stats.modernVisibleHDRTargetReady = hybridReady && hybridSceneColor != NULL && hybridSceneColor->internalFormat == GL_RGBA16F;
 	stats.modernVisibleResourcesReady = stats.modernVisibleSourceReady && stats.modernVisibleBackBufferReady && stats.modernVisibleHybridTargetReady;
+	stats.pipelineCompositionSingleSource = stats.modernVisibleSourceReady && ( deferredReady != forwardReady );
 	stats.modernVisibleHandoffReady =
 		stats.modernVisibleRequested &&
 		stats.modernVisibleCanReplaceFrame &&
@@ -4011,11 +4199,9 @@ static bool R_ModernGLExecutor_ModernVisiblePrecomposeReady( modernGLExecutorSta
 		stats.modernVisibleShadowReady &&
 		guiReady &&
 		stats.modernVisibleResourcesReady &&
-		deferredLight != NULL &&
-		sceneColor != NULL &&
+		( deferredLight != NULL || sceneColor != NULL ) &&
 		hybridSceneColor != NULL &&
-		deferredLight->texture != 0 &&
-		sceneColor->texture != 0 &&
+		( ( deferredLight != NULL && deferredLight->texture != 0 ) || ( sceneColor != NULL && sceneColor->texture != 0 ) ) &&
 		hybridSceneColor->texture != 0;
 	return stats.modernVisibleHandoffReady;
 }
@@ -4098,7 +4284,7 @@ static void R_ModernGLExecutor_FinalizePassOwnership( const idRenderGraph &graph
 			stats.forwardPlusShadowSkippedLights == 0;
 		const bool lightingModern =
 			stats.modernVisibleLightingReady &&
-			forwardModern;
+			( deferredModern || forwardModern );
 		const bool lightGridModern =
 			stats.modernVisibleLightGridReady &&
 			( deferredModern || forwardModern );
@@ -4417,6 +4603,38 @@ static void R_ModernGLExecutor_RecordMetrics( const modernGLExecutorStats_t &sta
 		stats.lowOverheadCompactedBatches );
 }
 
+static void R_ModernGLExecutor_PrintPipelineStats( const char *label ) {
+	common->Printf(
+		"%s plan=%d stable=%d minimum=%d needed(gbuf=%d deferred=%d forward=%d) commands(depth=%d shadow=%d gbuf=%d deferred=%d forward=%d transparent=%d gui=%d) batches(pipeline=%d geometry=%d texture=%d scissor=%d) skippedEmpty=%d fbo(cache=%d attach=%d) singleSource=%d noHotQueries=%d validationOptIn=%d fit(gl33=%d gl43=%d gl45=%d)\n",
+		label,
+		rg_modernGLExecutorStats.pipelinePlanReady ? 1 : 0,
+		rg_modernGLExecutorStats.pipelineStableLayoutReady ? 1 : 0,
+		rg_modernGLExecutorStats.pipelineMinimumPassesReady ? 1 : 0,
+		rg_modernGLExecutorStats.pipelineGBufferNeeded ? 1 : 0,
+		rg_modernGLExecutorStats.pipelineDeferredNeeded ? 1 : 0,
+		rg_modernGLExecutorStats.pipelineForwardPlusNeeded ? 1 : 0,
+		rg_modernGLExecutorStats.pipelineDepthCommands,
+		rg_modernGLExecutorStats.pipelineShadowDepthCommands,
+		rg_modernGLExecutorStats.pipelineGBufferCommands,
+		rg_modernGLExecutorStats.pipelineDeferredCommands,
+		rg_modernGLExecutorStats.pipelineForwardPlusCommands,
+		rg_modernGLExecutorStats.pipelineForwardPlusTransparentCommands,
+		rg_modernGLExecutorStats.pipelineGuiCommands,
+		rg_modernGLExecutorStats.pipelineBatches,
+		rg_modernGLExecutorStats.pipelineGeometryBatches,
+		rg_modernGLExecutorStats.pipelineTextureSetBatches,
+		rg_modernGLExecutorStats.pipelineScissorBatches,
+		rg_modernGLExecutorStats.pipelineSkippedEmptyPasses,
+		rg_modernGLExecutorStats.pipelineFramebufferCacheHits,
+		rg_modernGLExecutorStats.pipelineFramebufferAttachmentUpdates,
+		rg_modernGLExecutorStats.pipelineCompositionSingleSource ? 1 : 0,
+		rg_modernGLExecutorStats.pipelineNoHotStateQueries ? 1 : 0,
+		rg_modernGLExecutorStats.pipelineValidationReadbacksOptIn ? 1 : 0,
+		rg_modernGLExecutorStats.pipelineGL33CpuBounded ? 1 : 0,
+		rg_modernGLExecutorStats.pipelineGL43GpuDrivenFit ? 1 : 0,
+		rg_modernGLExecutorStats.pipelineGL45LowOverheadFit ? 1 : 0 );
+}
+
 void R_ModernGLExecutor_Init( const renderBackendCaps_t &caps, const renderFeatureSet_t &features ) {
 	R_ModernGLExecutor_Shutdown();
 	rg_modernGLExecutorCaps = caps;
@@ -4515,6 +4733,8 @@ void R_ModernGLExecutor_Init( const renderBackendCaps_t &caps, const renderFeatu
 			R_GLDebug_LabelFramebuffer( rg_modernGLExecutorHiZFBO, "ModernGLExecutor Hi-Z reduce" );
 		}
 	}
+	R_ModernGLExecutor_ResetFramebufferAttachmentCache( rg_modernGLExecutorGBufferAttachmentCache );
+	R_ModernGLExecutor_ResetFramebufferAttachmentCache( rg_modernGLExecutorForwardPlusAttachmentCache );
 
 	R_ModernGLShaderLibrary_Init( caps, features );
 	if ( !R_ModernGLShaderLibrary_Stats().available ) {
@@ -4558,6 +4778,8 @@ void R_ModernGLExecutor_Shutdown( void ) {
 	rg_modernGLExecutorLowOverheadSampler = 0;
 	rg_modernGLExecutorLowOverheadSamplerDSACreations = 0;
 	rg_modernGLExecutorLowOverheadSamplerDSAUpdates = 0;
+	R_ModernGLExecutor_ResetFramebufferAttachmentCache( rg_modernGLExecutorGBufferAttachmentCache );
+	R_ModernGLExecutor_ResetFramebufferAttachmentCache( rg_modernGLExecutorForwardPlusAttachmentCache );
 	rg_modernGLExecutorInitialized = false;
 	rg_modernGLExecutorAvailable = false;
 	rg_modernGLExecutorLowOverheadReady = false;
@@ -4652,12 +4874,14 @@ void R_ModernGLExecutor_PrepareFrame( const idScenePacketFrame &packetFrame, con
 	const bool deferredResolveRequested = deferredResolveSidecarRequested || visibleReplacementCanConsume;
 	const bool forwardPlusRequested = forwardPlusSidecarRequested || visibleReplacementCanConsume;
 	const bool opaqueGBufferRequested = opaqueGBufferSidecarRequested || deferredResolveRequested;
+	const bool gpuDrivenWorkRequested = gpuDrivenValidationRequested || r_rendererModernSubmit.GetBool();
 	R_ModernGLExecutor_SetEffectivePassRequests(
 		rg_modernGLExecutorStats,
 		visibleDepthRequested,
 		opaqueGBufferRequested,
 		deferredResolveRequested,
 		forwardPlusRequested );
+	R_ModernGLExecutor_RecordPipelinePolicy( rg_modernGLExecutorStats, gpuDrivenWorkRequested );
 	R_ModernGLExecutor_RecordPassGates(
 		rg_modernGLExecutorStats,
 		visibleDepthSidecarRequested,
@@ -4673,14 +4897,13 @@ void R_ModernGLExecutor_PrepareFrame( const idScenePacketFrame &packetFrame, con
 		rg_modernGLExecutorStats.frameMode = MODERN_GL_EXECUTOR_FRAME_ANALYZE;
 	}
 	const bool clusteredLightingRequested =
-		deferredResolveRequested ||
-		forwardPlusRequested ||
+		rg_modernGLExecutorStats.deferredResolveRequested ||
+		rg_modernGLExecutorStats.forwardPlusRequested ||
 		gpuDrivenValidationRequested ||
 		r_rendererClusterDebug.GetInteger() > 0;
 	const bool shadowPlanningRequested =
 		r_shadows.GetBool() &&
-		( clusteredLightingRequested || visibleDepthRequested || R_ModernGLExecutor_ShadowMapSidecarRequested() );
-	const bool gpuDrivenWorkRequested = gpuDrivenValidationRequested || r_rendererModernSubmit.GetBool();
+		( clusteredLightingRequested || rg_modernGLExecutorStats.visibleDepthRequested || R_ModernGLExecutor_ShadowMapSidecarRequested() );
 
 	R_ModernShadowPlanner_PrepareFrame( packetFrame, shadowPlanningRequested );
 	const modernShadowPlannerStats_t &shadowStats = R_ModernShadowPlanner_Stats();
@@ -4705,7 +4928,12 @@ void R_ModernGLExecutor_PrepareFrame( const idScenePacketFrame &packetFrame, con
 	R_ModernGLExecutor_SubmitForwardPlus( rg_modernGLExecutorStats );
 	R_ModernGLExecutor_SubmitPlan( rg_modernGLExecutorStats );
 	R_ModernGLExecutor_FinalizePassOwnership( graph, rg_modernGLExecutorStats );
-	if ( modernVisibleRequested && rg_modernGLExecutorStats.modernVisibleBlockedByLegacy && !visibleDepthRequested && !opaqueGBufferRequested && !deferredResolveRequested && !forwardPlusRequested ) {
+	if ( modernVisibleRequested
+		&& rg_modernGLExecutorStats.modernVisibleBlockedByLegacy
+		&& !rg_modernGLExecutorStats.visibleDepthRequested
+		&& !rg_modernGLExecutorStats.opaqueGBufferRequested
+		&& !rg_modernGLExecutorStats.deferredResolveRequested
+		&& !rg_modernGLExecutorStats.forwardPlusRequested ) {
 		R_ModernGLExecutor_SetStatus( rg_modernGLExecutorStats, "modern-visible-blocked-analyze-only" );
 	} else if ( rg_modernGLExecutorStats.enabled && !preliminaryPlanRequested ) {
 		R_ModernGLExecutor_SetStatus( rg_modernGLExecutorStats, "analyze-only" );
@@ -4855,6 +5083,7 @@ void R_ModernGLExecutor_PrepareFrame( const idScenePacketFrame &packetFrame, con
 			rg_modernGLExecutorStats.lowOverheadSamplerMultiBindBatches,
 			rg_modernGLExecutorStats.lowOverheadClassicTextureBinds,
 			rg_modernGLExecutorStats.lowOverheadCompactedBatches );
+		R_ModernGLExecutor_PrintPipelineStats( "modernPipeline" );
 		common->Printf(
 			"modernForwardPlus req=%d exec=%d res=%d scene=%d depth=%d program=%d cluster=%d draws=%d opaque=%d alpha=%d transparent=%d viewmodel=%d fog=%d batches=%d fallback=%d resource=%d material=%d geometry=%d texture=%d blend=%d effects=%d sort=%d overdraw=%d reads=%d lights=%d point=%d projected=%d lightGrid=%d clear=%d\n",
 			rg_modernGLExecutorStats.forwardPlusRequested ? 1 : 0,
@@ -5070,6 +5299,22 @@ static void R_ModernGLExecutor_VisibleTargetRect( bool useViewRect, int &x, int 
 	height = Max( 1, height );
 }
 
+static GLuint R_ModernGLExecutor_TargetFramebuffer( bool useCurrentFramebuffer ) {
+	if ( !useCurrentFramebuffer || backEnd.renderTexture == NULL ) {
+		return 0;
+	}
+	return backEnd.renderTexture->GetDeviceHandle();
+}
+
+static void R_ModernGLExecutor_RestoreTargetFramebuffer( bool useCurrentFramebuffer ) {
+	if ( useCurrentFramebuffer && backEnd.renderTexture != NULL ) {
+		backEnd.renderTexture->MakeCurrent();
+	} else {
+		idRenderTexture::BindNull();
+	}
+	R_GLStateCache_InvalidateAll( "modern visible framebuffer restore" );
+}
+
 static bool R_ModernGLExecutor_VisibleCompositionReady(
 	modernGLExecutorStats_t &stats,
 	const renderGraphResourceHandle_t *&deferredLight,
@@ -5084,11 +5329,12 @@ static bool R_ModernGLExecutor_VisibleCompositionReady(
 	const bool deferredReady = stats.deferredResolveExecuted && R_ModernGLExecutor_GBufferResourceReady( "deferredLight", deferredLight );
 	const bool forwardReady = stats.forwardPlusExecuted && R_ModernGLExecutor_GBufferResourceReady( "sceneColor", sceneColor );
 	const bool hybridReady = R_ModernGLExecutor_GBufferResourceReady( "hybridSceneColor", hybridSceneColor );
-	stats.modernVisibleSourceReady = deferredReady && forwardReady;
+	stats.modernVisibleSourceReady = deferredReady || forwardReady;
 	stats.modernVisibleBackBufferReady = backBuffer != NULL && backBuffer->presentable;
 	stats.modernVisibleHybridTargetReady = hybridReady;
 	stats.modernVisibleHDRTargetReady = hybridReady && hybridSceneColor != NULL && hybridSceneColor->internalFormat == GL_RGBA16F;
 	stats.modernVisibleResourcesReady = stats.modernVisibleSourceReady && stats.modernVisibleBackBufferReady && stats.modernVisibleHybridTargetReady;
+	stats.pipelineCompositionSingleSource = stats.modernVisibleSourceReady && ( deferredReady != forwardReady );
 
 	if ( !rg_modernGLPassOwnership.valid || !rg_modernGLPassOwnership.handoffReady ) {
 		R_ModernGLExecutor_SetStatus( stats, "modern-visible-handoff-not-armed" );
@@ -5116,6 +5362,12 @@ static bool R_ModernGLExecutor_VisibleCompositionReady(
 		R_ModernGLExecutor_SetStatus( stats, "modern-visible-shadow-fallback" );
 		R_ModernGLExecutor_RecordMetrics( stats );
 		return false;
+	}
+	if ( deferredLight == NULL && forwardReady ) {
+		deferredLight = sceneColor;
+	}
+	if ( sceneColor == NULL && deferredReady ) {
+		sceneColor = deferredLight;
 	}
 	if ( !stats.modernVisibleResourcesReady || deferredLight == NULL || sceneColor == NULL || hybridSceneColor == NULL || deferredLight->texture == 0 || sceneColor->texture == 0 || hybridSceneColor->texture == 0 || hybridSceneColor->framebuffer == 0 ) {
 		R_ModernGLExecutor_FailClosedPassOwnership( stats, "modern-visible-resource-fallback" );
@@ -5171,7 +5423,16 @@ static void R_ModernGLExecutor_RenderHybridScene(
 	glClear( GL_COLOR_BUFFER_BIT );
 	stats.modernVisibleClearOps++;
 
-	R_ModernGLExecutor_DrawVisibleCompositeQuad( stats, deferredLight.texture, sceneColor.texture, 1.0f, 1.0f );
+	const bool deferredContributes = stats.deferredResolveExecuted && deferredLight.texture != 0;
+	const bool forwardContributes = stats.forwardPlusExecuted && sceneColor.texture != 0;
+	const GLuint firstTexture = deferredContributes ? deferredLight.texture : sceneColor.texture;
+	const GLuint secondTexture = forwardContributes ? sceneColor.texture : firstTexture;
+	R_ModernGLExecutor_DrawVisibleCompositeQuad(
+		stats,
+		firstTexture,
+		secondTexture,
+		deferredContributes ? 1.0f : 0.0f,
+		forwardContributes ? 1.0f : 0.0f );
 }
 
 static void R_ModernGLExecutor_BlitVisibleDepthToTarget(
@@ -5284,11 +5545,7 @@ static bool R_ModernGLExecutor_ComposeVisibleSceneToTarget(
 		return false;
 	}
 
-	GLint previousDrawFramebuffer = 0;
-	GLint previousReadFramebuffer = 0;
-	glGetIntegerv( GL_DRAW_FRAMEBUFFER_BINDING, &previousDrawFramebuffer );
-	glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer );
-	const GLuint targetFramebuffer = useCurrentFramebuffer ? static_cast<GLuint>( previousDrawFramebuffer ) : 0;
+	const GLuint targetFramebuffer = R_ModernGLExecutor_TargetFramebuffer( useCurrentFramebuffer );
 	int targetX = 0;
 	int targetY = 0;
 	int targetWidth = 0;
@@ -5310,9 +5567,7 @@ static bool R_ModernGLExecutor_ComposeVisibleSceneToTarget(
 	if ( useGpuTimer ) {
 		R_RendererMetrics_EndGpuTimer();
 	}
-	glBindFramebuffer( GL_READ_FRAMEBUFFER, static_cast<GLuint>( previousReadFramebuffer ) );
-	glBindFramebuffer( GL_DRAW_FRAMEBUFFER, static_cast<GLuint>( previousDrawFramebuffer ) );
-	R_GLStateCache_InvalidateAll( "modern visible framebuffer restore" );
+	R_ModernGLExecutor_RestoreTargetFramebuffer( useCurrentFramebuffer );
 
 	stats.modernVisibleSceneComposited = true;
 	stats.modernVisiblePostProcessHandoff = stats.modernVisiblePostProcessHandoff || postProcessHandoff;
@@ -5642,6 +5897,7 @@ void R_ModernGLExecutor_PrintGfxInfo( void ) {
 		rg_modernGLExecutorStats.lowOverheadSamplerMultiBindBatches,
 		rg_modernGLExecutorStats.lowOverheadClassicTextureBinds,
 		rg_modernGLExecutorStats.lowOverheadCompactedBatches );
+	R_ModernGLExecutor_PrintPipelineStats( "Modern GL pipeline:" );
 	common->Printf(
 		"Modern visibility: occlusion=%d hiz=%d req=%d enabled=%d portalPVS=%d scenes=%d portalAreas=%d rejectedAreas=%d cpu=%d/%d gpu=%d/%d scissor=%d frustum=%d screen(reject=%d clipped=%d near=%d dynamic=%d) hizReady=%d built=%d levels=%d build=%dms candidates=%d rejected=%d saved(draws=%d tris=%d) fallback=%d temporal=%d noQueryStall=%d shadowCasters=%d/%d saved=%d/%d\n",
 		r_rendererOcclusion.GetBool() ? 1 : 0,
@@ -5946,8 +6202,13 @@ bool RendererModernGLExecutor_RunSelfTest( void ) {
 	submitPlan.Build( drawPlan );
 	R_ModernGLExecutor_CopySubmitPlanStats( stats, submitPlan.Stats() );
 
-	if ( !stats.legacyFallback || stats.preparedPasses != graph.NumPasses() || stats.fallbackPasses != 0 ) {
-		common->Printf( "RendererModernGLExecutor self-test failed: pass preparation mismatch\n" );
+	if ( !stats.legacyFallback || stats.preparedPasses <= 0 || stats.preparedPasses + stats.fallbackPasses != graph.NumPasses() ) {
+		common->Printf(
+			"RendererModernGLExecutor self-test failed: pass preparation mismatch (prepared=%d fallback=%d graph=%d legacy=%d)\n",
+			stats.preparedPasses,
+			stats.fallbackPasses,
+			graph.NumPasses(),
+			stats.legacyFallback ? 1 : 0 );
 		return false;
 	}
 	const int expectedResourceDraws = tr.defaultMaterial != NULL ? packetFrame.NumDrawPackets() : 0;
@@ -6840,6 +7101,12 @@ bool RendererDeferredResolve_RunSelfTest( void ) {
 		rg_modernGLExecutorVAO != 0,
 		rg_modernGLExecutorFrameUBO != 0,
 		stats );
+	stats.opaqueGBufferRequested = true;
+	stats.deferredResolveRequested = true;
+	stats.pipelineGBufferNeeded = true;
+	stats.pipelineDeferredNeeded = true;
+	stats.pipelineDeferredCommands = 1;
+	stats.pipelineMinimumPassesReady = true;
 	R_ModernGLExecutor_SubmitDeferredResolve( stats );
 
 	const bool resourcesAvailable = R_RenderGraphResources_Stats().initialized && R_RenderGraphResources_Stats().available && rg_modernGLExecutorAvailable;
@@ -6898,6 +7165,15 @@ bool RendererForwardPlus_RunSelfTest( void ) {
 		common->Printf( "RendererForwardPlus self-test failed: clustered forward programs unavailable\n" );
 		return false;
 	}
+
+	struct rendererForwardPlusBoolCVarRestore_t {
+		idCVar &cvar;
+		bool oldValue;
+		rendererForwardPlusBoolCVarRestore_t( idCVar &value ) : cvar( value ), oldValue( value.GetBool() ) {}
+		~rendererForwardPlusBoolCVarRestore_t() { cvar.SetBool( oldValue ); }
+	};
+	rendererForwardPlusBoolCVarRestore_t restoreOcclusion( r_rendererOcclusion );
+	r_rendererOcclusion.SetBool( false );
 
 	drawSurf_t drawSurfs[3];
 	memset( drawSurfs, 0, sizeof( drawSurfs ) );
@@ -7025,6 +7301,7 @@ bool RendererForwardPlus_RunSelfTest( void ) {
 	R_ModernGLExecutor_CopyDrawPlanStats( stats, rg_modernGLDrawPlan.Stats() );
 	rg_modernGLSubmitPlan.Build( rg_modernGLDrawPlan );
 	R_ModernGLExecutor_CopySubmitPlanStats( stats, rg_modernGLSubmitPlan.Stats() );
+	R_ModernGLExecutor_RecordPipelinePolicy( stats, false );
 	R_ModernGLExecutor_SubmitForwardPlus( stats );
 
 	const bool resourcesAvailable = R_RenderGraphResources_Stats().initialized && R_RenderGraphResources_Stats().available && rg_modernGLExecutorAvailable;
@@ -7236,6 +7513,7 @@ bool RendererModernVisible_RunSelfTest( void ) {
 		rg_modernGLExecutorStats.modernVisibleProgramReady &&
 		!rg_modernGLExecutorStats.modernVisibleBlockedByLegacy;
 	R_ModernGLExecutor_SetEffectivePassRequests( rg_modernGLExecutorStats, true, true, true, true );
+	R_ModernGLExecutor_RecordPipelinePolicy( rg_modernGLExecutorStats, false );
 	R_ModernGLExecutor_RecordPassGates( rg_modernGLExecutorStats, false, false, false, false );
 	R_ModernGLExecutor_UpdateFrameUBO( rg_modernGLExecutorStats );
 	R_ModernGLExecutor_SubmitVisibleDepth( rg_modernGLExecutorStats );
@@ -7271,7 +7549,7 @@ bool RendererModernVisible_RunSelfTest( void ) {
 	}
 
 	const bool resourcesAvailable = R_RenderGraphResources_Stats().initialized && R_RenderGraphResources_Stats().available && rg_modernGLExecutorAvailable;
-	if ( resourcesAvailable && ( !stats.deferredResolveExecuted || !stats.forwardPlusExecuted || !stats.modernVisibleExecuted || !stats.modernVisibleResourcesReady || !stats.modernVisibleSourceReady || !stats.modernVisibleHybridTargetReady || !stats.modernVisibleBackBufferReady || !stats.modernVisibleShadowReady || !stats.modernVisiblePostProcessHandoff || stats.modernVisibleCompositions <= 0 || stats.modernVisibleCompositeCopies <= 0 || stats.modernVisiblePostProcessCompositions <= 0 || stats.modernVisibleDepthCopies <= 0 || stats.modernVisiblePixels <= 0 ) ) {
+	if ( resourcesAvailable && ( !stats.deferredResolveExecuted || ( stats.pipelineForwardPlusNeeded && !stats.forwardPlusExecuted ) || !stats.modernVisibleExecuted || !stats.modernVisibleResourcesReady || !stats.modernVisibleSourceReady || !stats.modernVisibleHybridTargetReady || !stats.modernVisibleBackBufferReady || !stats.modernVisibleShadowReady || !stats.modernVisiblePostProcessHandoff || stats.modernVisibleCompositions <= 0 || stats.modernVisibleCompositeCopies <= 0 || stats.modernVisiblePostProcessCompositions <= 0 || stats.modernVisibleDepthCopies <= 0 || stats.modernVisiblePixels <= 0 ) ) {
 		common->Printf(
 			"RendererModernVisible self-test failed: composition execution mismatch (deferred=%d forward=%d exec=%d res=%d source=%d hybrid=%d backBuffer=%d shadow=%d hdr=%d postHandoff=%d composed=%d copies=%d postComposed=%d depthCopies=%d pixels=%d fallback=%d)\n",
 			stats.deferredResolveExecuted ? 1 : 0,
@@ -7294,7 +7572,7 @@ bool RendererModernVisible_RunSelfTest( void ) {
 	}
 
 	common->Printf(
-		"RendererModernVisible self-test passed (program=%d resources=%d source=%d hybrid=%d backBuffer=%d shadow=%d hdr=%d postHandoff=%d blocked=%d composed=%d copies=%d postComposed=%d depthCopies=%d pixels=%d modern=%d legacy=%d fallback=%d deferred=%d forward=%d present=%d clears=%d)\n",
+		"RendererModernVisible self-test passed (program=%d resources=%d source=%d hybrid=%d backBuffer=%d shadow=%d hdr=%d postHandoff=%d singleSource=%d blocked=%d composed=%d copies=%d postComposed=%d depthCopies=%d pixels=%d modern=%d legacy=%d fallback=%d deferred=%d forward=%d present=%d clears=%d)\n",
 		stats.modernVisibleProgramReady ? 1 : 0,
 		stats.modernVisibleResourcesReady ? 1 : 0,
 		stats.modernVisibleSourceReady ? 1 : 0,
@@ -7303,6 +7581,7 @@ bool RendererModernVisible_RunSelfTest( void ) {
 		stats.modernVisibleShadowReady ? 1 : 0,
 		stats.modernVisibleHDRTargetReady ? 1 : 0,
 		stats.modernVisiblePostProcessHandoff ? 1 : 0,
+		stats.pipelineCompositionSingleSource ? 1 : 0,
 		stats.modernVisibleBlockedByLegacy ? 1 : 0,
 		stats.modernVisibleCompositions,
 		stats.modernVisibleCompositeCopies,
@@ -7843,6 +8122,7 @@ bool RendererLowOverhead_RunSelfTest( void ) {
 	R_ModernGLExecutor_CopyDrawPlanStats( stats, rg_modernGLDrawPlan.Stats() );
 	rg_modernGLSubmitPlan.Build( rg_modernGLDrawPlan );
 	R_ModernGLExecutor_CopySubmitPlanStats( stats, rg_modernGLSubmitPlan.Stats() );
+	R_ModernGLExecutor_RecordPipelinePolicy( stats, false );
 	R_ModernGLExecutor_UpdateFrameUBO( stats );
 	const renderGraphResourceHandle_t *gBufferHandles[MODERN_GL_GBUFFER_ATTACHMENT_COUNT];
 	memset( gBufferHandles, 0, sizeof( gBufferHandles ) );
@@ -7858,6 +8138,7 @@ bool RendererLowOverhead_RunSelfTest( void ) {
 	}
 	const renderGraphResourceHandle_t *sceneDepth = NULL;
 	const bool depthReady = R_ModernGLExecutor_DepthResourceReady( "sceneDepth", sceneDepth );
+	R_ModernGLExecutor_ResetFramebufferAttachmentCache( rg_modernGLExecutorGBufferAttachmentCache );
 	if ( !stats.opaqueGBufferResourcesReady || !depthReady || sceneDepth == NULL || !R_ModernGLExecutor_PrepareGBufferFBO( gBufferHandles, *sceneDepth, stats ) ) {
 		common->Printf(
 			"RendererLowOverhead self-test failed: G-buffer DSA preparation mismatch (res=%d depth=%d fboDSA=%d mrt=%d)\n",
@@ -7865,6 +8146,15 @@ bool RendererLowOverhead_RunSelfTest( void ) {
 			depthReady ? 1 : 0,
 			stats.lowOverheadFramebufferDSAUpdates,
 			stats.opaqueGBufferMRTReady ? 1 : 0 );
+		return false;
+	}
+	const int fboCacheHitsBefore = stats.pipelineFramebufferCacheHits;
+	if ( !R_ModernGLExecutor_PrepareGBufferFBO( gBufferHandles, *sceneDepth, stats ) || stats.pipelineFramebufferCacheHits <= fboCacheHitsBefore ) {
+		common->Printf(
+			"RendererLowOverhead self-test failed: G-buffer FBO cache reuse mismatch (hits=%d before=%d updates=%d)\n",
+			stats.pipelineFramebufferCacheHits,
+			fboCacheHitsBefore,
+			stats.pipelineFramebufferAttachmentUpdates );
 		return false;
 	}
 	R_ModernGLExecutor_SubmitDeferredResolve( stats );
@@ -7897,12 +8187,14 @@ bool RendererLowOverhead_RunSelfTest( void ) {
 
 	const rendererUploadStats_t &uploadStats = R_RendererUpload_Stats();
 	common->Printf(
-		"RendererLowOverhead self-test passed (dsa=1 multiBind=1 sampler=%d textureDSA=%d framebufferDSA=%d dsaUpdates=%d framebufferDSAUpdates=%d bufferMultiBind=%d textureMultiBind=%d samplerMultiBind=%d classicTextureBinds=%d bindless=%d/%d compactedBatches=%d persistent=%d fences=%d/%d waits=%d)\n",
+		"RendererLowOverhead self-test passed (dsa=1 multiBind=1 sampler=%d textureDSA=%d framebufferDSA=%d dsaUpdates=%d framebufferDSAUpdates=%d fboCache=%d/%d bufferMultiBind=%d textureMultiBind=%d samplerMultiBind=%d classicTextureBinds=%d bindless=%d/%d compactedBatches=%d persistent=%d fences=%d/%d waits=%d)\n",
 		stats.lowOverheadSamplerReady ? 1 : 0,
 		graphStats.dsaTextureAllocations,
 		graphStats.dsaFramebufferAllocations,
 		stats.lowOverheadDSAUpdates,
 		stats.lowOverheadFramebufferDSAUpdates,
+		stats.pipelineFramebufferCacheHits,
+		stats.pipelineFramebufferAttachmentUpdates,
 		stats.lowOverheadMultiBindBatches,
 		stats.lowOverheadTextureMultiBindBatches,
 		stats.lowOverheadSamplerMultiBindBatches,

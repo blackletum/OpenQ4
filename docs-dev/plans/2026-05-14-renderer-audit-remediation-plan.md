@@ -264,6 +264,15 @@ Acceptance:
 - GL 4.3 performs real GPU culling and indirect generation.
 - GL 4.5 reduces CPU submit overhead measurably through persistent buffers, DSA, and multi-bind.
 
+Round 3 Phase 7 implementation notes:
+
+- Added a per-frame modern pipeline policy that derives G-buffer, deferred, and forward+ demand from actual submit-plan work plus explicit debug-overlay requests. Empty requested passes are skipped before resource-heavy work, while modern visible ownership can still compose from the single completed lighting source when only deferred or forward+ is genuinely needed.
+- Extended draw-plan and executor stats with pipeline command counts, pipeline/material/geometry/texture/scissor batch transitions, transparent sort-order validation, skipped-pass counts, FBO cache hits, attachment updates, and tier-fit booleans for GL 3.3 CPU, GL 4.3 GPU-driven, and GL 4.5 low-overhead execution.
+- Cached repeated G-buffer MRT and forward+ framebuffer attachment layouts, invalidating the cache on resource changes or incomplete FBOs. The low-overhead self-test now proves the second identical G-buffer bind hits the cache instead of reattaching the full layout.
+- Removed framebuffer readback queries from the visible composition handoff. Composition now targets the known current render texture or default framebuffer through the shared state-cache handoff and keeps validation readbacks opt-in through `r_rendererGpuValidation`.
+- `gfxInfo`, detailed renderer metrics, `rendererModernVisibleSelfTest`, and `rendererLowOverheadSelfTest` now report the Phase 7 pipeline contract so GL 3.3, GL 4.3, and GL 4.5 paths can be checked without assuming one monolithic pass stack.
+- Validation passed for `tools/build/meson_setup.ps1 compile -C builddir`, `tools/build/meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects`, `git diff --check`, a staged client self-test run covering draw-plan, submit-plan, executor, deferred, forward+, modern-visible, low-overhead, visibility, and GPU-driven, plus a bounded SP `game/airdefense1` smoke through `tools/tests/renderer_gameplay_benchmark.py --profile smoke --settle-frames 5 --sample-frames 5 --timeout 300 --limit 1 --output-dir .tmp/renderer-gameplay/phase7-smoke-short` whose `gfxInfo` output included the `Modern GL pipeline` contract.
+
 ### Phase 8: Validation And Promotion Gates
 
 Goal: make "complete" mean visible and fast in gameplay.
