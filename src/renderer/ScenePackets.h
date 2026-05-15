@@ -122,6 +122,23 @@ enum geometryDeformMode_t {
 	GEOMETRY_DEFORM_MATERIAL
 };
 
+enum geometryResourceFallbackReason_t {
+	GEOMETRY_RESOURCE_FALLBACK_NONE = 0,
+	GEOMETRY_RESOURCE_FALLBACK_MISSING_GEOMETRY,
+	GEOMETRY_RESOURCE_FALLBACK_UNSUPPORTED_DEFORM,
+	GEOMETRY_RESOURCE_FALLBACK_UNSUPPORTED_GPU_SKINNING,
+	GEOMETRY_RESOURCE_FALLBACK_MISSING_VERTEX_BUFFER,
+	GEOMETRY_RESOURCE_FALLBACK_MISSING_INDEX_DATA
+};
+
+enum geometryResourceFallbackFlags_t {
+	GEOMETRY_RESOURCE_FALLBACK_FLAG_MISSING_GEOMETRY = 1 << 0,
+	GEOMETRY_RESOURCE_FALLBACK_FLAG_UNSUPPORTED_DEFORM = 1 << 1,
+	GEOMETRY_RESOURCE_FALLBACK_FLAG_UNSUPPORTED_GPU_SKINNING = 1 << 2,
+	GEOMETRY_RESOURCE_FALLBACK_FLAG_MISSING_VERTEX_BUFFER = 1 << 3,
+	GEOMETRY_RESOURCE_FALLBACK_FLAG_MISSING_INDEX_DATA = 1 << 4
+};
+
 typedef struct geometryResourceRecord_s {
 	const srfTriangles_t		*legacyGeometry;
 	idBounds				bounds;
@@ -141,6 +158,8 @@ typedef struct geometryResourceRecord_s {
 	int						skinningMode;
 	int						deformMode;
 	int						uploadLifetime;
+	geometryResourceFallbackReason_t fallbackReason;
+	unsigned int			fallbackFlags;
 	int						skinningPaletteOffset;
 	int						skinningPaletteCount;
 	const glIndex_t			*legacyIndexData;
@@ -175,9 +194,12 @@ typedef struct instanceRecord_s {
 	float					previousModelMatrix[16];
 	float					modelViewMatrix[16];
 	float					entityColor[4];
+	float					modelDepthHack;
 	bool					hasModelMatrix;
 	bool					hasPreviousModelMatrix;
 	bool					hasShaderRegisters;
+	bool					weaponDepthHack;
+	bool					negativeScale;
 	bool					legacyBridge;
 } instanceRecord_t;
 
@@ -323,6 +345,7 @@ const char *RenderPassCategory_Name( renderPassCategory_t category );
 const char *ScenePacketCategory_Name( scenePacketCategory_t category );
 const char *ScenePacketOverflowCause_Name( scenePacketOverflowCause_t cause );
 const char *RendererMaterialClass_Name( rendererMaterialClass_t materialClass );
+const char *GeometryResourceFallbackReason_Name( geometryResourceFallbackReason_t reason );
 void R_ScenePackets_BeginFrame( void );
 void R_ScenePackets_EndFrame( void );
 void R_ScenePackets_AddRenderView( const viewDef_t *viewDef );

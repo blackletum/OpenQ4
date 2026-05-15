@@ -108,6 +108,49 @@ static bool R_ModernGLDrawPlan_IsMaterialPipeline( modernGLDrawPlanPipeline_t pi
 		|| pipeline == MODERN_GL_DRAW_PLAN_PIPELINE_FORWARD_PLUS_TRANSPARENT;
 }
 
+static geometryResourceFallbackReason_t R_ModernGLDrawPlan_GeometryFallbackReason( const drawPacket_t &draw ) {
+	const geometryResourceRecord_t *geometry = draw.geometryRecord;
+	if ( geometry == NULL || draw.geometryRecordIndex < 0 ) {
+		return GEOMETRY_RESOURCE_FALLBACK_MISSING_GEOMETRY;
+	}
+	if ( ( geometry->fallbackFlags & GEOMETRY_RESOURCE_FALLBACK_FLAG_UNSUPPORTED_DEFORM ) != 0 ) {
+		return GEOMETRY_RESOURCE_FALLBACK_UNSUPPORTED_DEFORM;
+	}
+	if ( ( geometry->fallbackFlags & GEOMETRY_RESOURCE_FALLBACK_FLAG_UNSUPPORTED_GPU_SKINNING ) != 0 ) {
+		return GEOMETRY_RESOURCE_FALLBACK_UNSUPPORTED_GPU_SKINNING;
+	}
+	if ( ( geometry->fallbackFlags & GEOMETRY_RESOURCE_FALLBACK_FLAG_MISSING_VERTEX_BUFFER ) != 0 ) {
+		return GEOMETRY_RESOURCE_FALLBACK_MISSING_VERTEX_BUFFER;
+	}
+	if ( ( geometry->fallbackFlags & GEOMETRY_RESOURCE_FALLBACK_FLAG_MISSING_INDEX_DATA ) != 0 ) {
+		return GEOMETRY_RESOURCE_FALLBACK_MISSING_INDEX_DATA;
+	}
+	return GEOMETRY_RESOURCE_FALLBACK_NONE;
+}
+
+static void R_ModernGLDrawPlan_CountGeometryFallback( modernGLDrawPlanStats_t &stats, geometryResourceFallbackReason_t reason ) {
+	stats.fallbackDraws++;
+	stats.geometryFallbackDraws++;
+	switch ( reason ) {
+	case GEOMETRY_RESOURCE_FALLBACK_UNSUPPORTED_DEFORM:
+		stats.geometryDeformFallbackDraws++;
+		break;
+	case GEOMETRY_RESOURCE_FALLBACK_UNSUPPORTED_GPU_SKINNING:
+		stats.geometrySkinnedFallbackDraws++;
+		break;
+	case GEOMETRY_RESOURCE_FALLBACK_MISSING_VERTEX_BUFFER:
+		stats.geometryVertexBufferFallbackDraws++;
+		break;
+	case GEOMETRY_RESOURCE_FALLBACK_MISSING_INDEX_DATA:
+		stats.geometryIndexFallbackDraws++;
+		break;
+	case GEOMETRY_RESOURCE_FALLBACK_MISSING_GEOMETRY:
+	case GEOMETRY_RESOURCE_FALLBACK_NONE:
+	default:
+		break;
+	}
+}
+
 static bool R_ModernGLDrawPlan_ShouldUseGBuffer( const materialResourceTableRecord_t &materialRecord ) {
 	if ( !r_rendererModernVisible.GetBool()
 		&& !r_rendererModernOpaque.GetBool()
@@ -182,6 +225,7 @@ bool idModernGLDrawPlan::AddEntry( const drawPacket_t &draw, int drawPacketIndex
 	entry.instanceRecordIndex = draw.instanceRecordIndex;
 	entry.materialStableId = materialRecord.materialId >= 0 ? static_cast<unsigned int>( materialRecord.materialId ) : 0xffffffffu;
 	entry.materialFallbackReason = materialRecord.fallbackReason;
+	entry.geometryFallbackReason = draw.geometryRecord != NULL ? draw.geometryRecord->fallbackReason : GEOMETRY_RESOURCE_FALLBACK_MISSING_GEOMETRY;
 	entry.glslVersion = program.glslVersion;
 	entry.indexCount = draw.indexCount;
 	entry.vertexCount = draw.vertexCount;
@@ -248,6 +292,11 @@ bool idModernGLDrawPlan::Build( const idScenePacketFrame &packetFrame, const idR
 		if ( draw.geometryRecord == NULL || draw.geometryRecordIndex < 0 ) {
 			stats.fallbackDraws++;
 			stats.missingGeometryRecordDraws++;
+			continue;
+		}
+		const geometryResourceFallbackReason_t geometryFallbackReason = R_ModernGLDrawPlan_GeometryFallbackReason( draw );
+		if ( geometryFallbackReason != GEOMETRY_RESOURCE_FALLBACK_NONE ) {
+			R_ModernGLDrawPlan_CountGeometryFallback( stats, geometryFallbackReason );
 			continue;
 		}
 		if ( draw.instanceRecord == NULL || draw.instanceRecordIndex < 0 ) {
@@ -340,6 +389,24 @@ bool RendererModernGLDrawPlan_RunSelfTest( void ) {
 	memset( &geometry, 0, sizeof( geometry ) );
 	geometry.numVerts = 3;
 	geometry.numIndexes = 6;
+	static glIndex_t indexes[6] = { 0, 1, 2, 0, 2, 1 };
+	static vertCache_t ambientCache;
+	static vertCache_t indexCache;
+	memset( &ambientCache, 0, sizeof( ambientCache ) );
+	memset( &indexCache, 0, sizeof( indexCache ) );
+	ambientCache.vbo = 101;
+	ambientCache.offset = 64;
+	ambientCache.size = geometry.numVerts * static_cast<int>( sizeof( idDrawVert ) );
+	ambientCache.indexBuffer = false;
+	ambientCache.tag = TAG_USED;
+	indexCache.vbo = 202;
+	indexCache.offset = 128;
+	indexCache.size = geometry.numIndexes * static_cast<int>( sizeof( glIndex_t ) );
+	indexCache.indexBuffer = true;
+	indexCache.tag = TAG_USED;
+	geometry.indexes = indexes;
+	geometry.ambientCache = &ambientCache;
+	geometry.indexCache = &indexCache;
 	for ( int i = 0; i < 2; ++i ) {
 		drawSurfs[i].geo = &geometry;
 		if ( tr.defaultMaterial != NULL ) {
@@ -392,8 +459,10 @@ bool RendererModernGLDrawPlan_RunSelfTest( void ) {
 		&& !tr.defaultMaterial->IsPortalSky()
 		&& !tr.defaultMaterial->SuppressInSubview()
 		&& tr.defaultMaterial->GetSort() < SS_POST_PROCESS;
-	const int expectedDepthDraws = expectedDepthEligible ? 2 : 0;
-	const int expectedMaterialDraws = expectedAmbientEligible ? 2 : 0;
+	const materialResourceTableRecord_t *defaultRecord = R_MaterialResourceTable_FindRecordForMaterial( tr.defaultMaterial );
+	const bool materialModernEligible = defaultRecord != NULL && defaultRecord->fallbackReason == MATERIAL_RESOURCE_FALLBACK_NONE;
+	const int expectedDepthDraws = expectedDepthEligible && materialModernEligible ? 2 : 0;
+	const int expectedMaterialDraws = expectedAmbientEligible && materialModernEligible ? 2 : 0;
 	const int expectedPlanned = expectedDepthDraws + expectedMaterialDraws;
 	const int expectedFallback = packetFrame.NumDrawPackets() - expectedPlanned;
 	if ( stats.sourceDrawPackets != packetFrame.NumDrawPackets() || stats.plannedDraws != expectedPlanned || stats.fallbackDraws != expectedFallback ) {

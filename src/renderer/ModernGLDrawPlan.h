@@ -47,6 +47,7 @@ typedef struct modernGLDrawPlanEntry_s {
 	int							instanceRecordIndex;
 	unsigned int				materialStableId;
 	materialResourceFallbackReason_t materialFallbackReason;
+	geometryResourceFallbackReason_t geometryFallbackReason;
 	int							glslVersion;
 	int							indexCount;
 	int							vertexCount;
@@ -66,6 +67,11 @@ typedef struct modernGLDrawPlanStats_s {
 	int		missingGeometryRecordDraws;
 	int		missingInstanceRecordDraws;
 	int		materialFallbackDraws;
+	int		geometryFallbackDraws;
+	int		geometryDeformFallbackDraws;
+	int		geometrySkinnedFallbackDraws;
+	int		geometryVertexBufferFallbackDraws;
+	int		geometryIndexFallbackDraws;
 	int		indexedDraws;
 	int		vertexOnlyDraws;
 	int		stateBatches;

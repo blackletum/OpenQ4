@@ -59,9 +59,17 @@ enum materialResourceFallbackReason_t {
 	MATERIAL_RESOURCE_FALLBACK_NO_DRAW_STAGES,
 	MATERIAL_RESOURCE_FALLBACK_MISSING_IMAGE,
 	MATERIAL_RESOURCE_FALLBACK_CUSTOM_PROGRAM,
+	MATERIAL_RESOURCE_FALLBACK_CUSTOM_GLSL,
 	MATERIAL_RESOURCE_FALLBACK_DYNAMIC_IMAGE,
+	MATERIAL_RESOURCE_FALLBACK_CURRENT_RENDER_IMAGE,
+	MATERIAL_RESOURCE_FALLBACK_SCREEN_TEXGEN,
+	MATERIAL_RESOURCE_FALLBACK_SKY_TEXGEN,
 	MATERIAL_RESOURCE_FALLBACK_UNSUPPORTED_TEXGEN,
 	MATERIAL_RESOURCE_FALLBACK_NEEDS_CURRENT_RENDER,
+	MATERIAL_RESOURCE_FALLBACK_STAGE_CONDITION,
+	MATERIAL_RESOURCE_FALLBACK_TEXTURE_MATRIX,
+	MATERIAL_RESOURCE_FALLBACK_VERTEX_COLOR,
+	MATERIAL_RESOURCE_FALLBACK_POLYGON_OFFSET,
 	MATERIAL_RESOURCE_FALLBACK_TOO_MANY_TEXTURES
 };
 
@@ -73,7 +81,15 @@ enum materialResourceFallbackFlags_t {
 	MATERIAL_RESOURCE_FALLBACK_FLAG_DYNAMIC_IMAGE = 1 << 4,
 	MATERIAL_RESOURCE_FALLBACK_FLAG_UNSUPPORTED_TEXGEN = 1 << 5,
 	MATERIAL_RESOURCE_FALLBACK_FLAG_NEEDS_CURRENT_RENDER = 1 << 6,
-	MATERIAL_RESOURCE_FALLBACK_FLAG_TOO_MANY_TEXTURES = 1 << 7
+	MATERIAL_RESOURCE_FALLBACK_FLAG_TOO_MANY_TEXTURES = 1 << 7,
+	MATERIAL_RESOURCE_FALLBACK_FLAG_CUSTOM_GLSL = 1 << 8,
+	MATERIAL_RESOURCE_FALLBACK_FLAG_CURRENT_RENDER_IMAGE = 1 << 9,
+	MATERIAL_RESOURCE_FALLBACK_FLAG_SCREEN_TEXGEN = 1 << 10,
+	MATERIAL_RESOURCE_FALLBACK_FLAG_SKY_TEXGEN = 1 << 11,
+	MATERIAL_RESOURCE_FALLBACK_FLAG_STAGE_CONDITION = 1 << 12,
+	MATERIAL_RESOURCE_FALLBACK_FLAG_TEXTURE_MATRIX = 1 << 13,
+	MATERIAL_RESOURCE_FALLBACK_FLAG_VERTEX_COLOR = 1 << 14,
+	MATERIAL_RESOURCE_FALLBACK_FLAG_POLYGON_OFFSET = 1 << 15
 };
 
 typedef struct materialResourceTextureBinding_s {
@@ -126,6 +142,7 @@ typedef struct materialResourceTableRecord_s {
 	materialResourceFallbackReason_t		fallbackReason;
 	unsigned int						fallbackFlags;
 	float								sortValue;
+	int									cullType;
 	int									registerStart;
 	int									registerCount;
 	int									stageRegisterStart;
@@ -139,10 +156,12 @@ typedef struct materialResourceTableRecord_s {
 	bool								receivesLighting;
 	bool								castsShadow;
 	bool								twoSided;
+	bool								shouldCreateBackSides;
 	bool								alphaTest;
 	int									alphaTestMode;
 	int									alphaTestRegister;
 	bool								needsCurrentRender;
+	bool								hasSceneCaptureImage;
 	bool								hasGui;
 	bool								hasSubview;
 	bool								hasBump;
@@ -153,6 +172,11 @@ typedef struct materialResourceTableRecord_s {
 	bool								hasConditionRegisters;
 	bool								hasTextureMatrix;
 	bool								hasVertexColor;
+	bool								hasDynamicImage;
+	bool								hasScreenTexgen;
+	bool								hasSkyTexgen;
+	bool								hasCustomProgram;
+	bool								hasCustomGLSL;
 	bool								hasPrivatePolygonOffset;
 	bool								hasMaterialPolygonOffset;
 	float								polygonOffset;
@@ -204,9 +228,17 @@ typedef struct materialResourceTableStats_s {
 	int		fallbackNoDrawStages;
 	int		fallbackMissingImage;
 	int		fallbackCustomProgram;
+	int		fallbackCustomGLSL;
 	int		fallbackDynamicImage;
+	int		fallbackCurrentRenderImage;
+	int		fallbackScreenTexgen;
+	int		fallbackSkyTexgen;
 	int		fallbackUnsupportedTexgen;
 	int		fallbackNeedsCurrentRender;
+	int		fallbackStageCondition;
+	int		fallbackTextureMatrix;
+	int		fallbackVertexColor;
+	int		fallbackPolygonOffset;
 	int		fallbackTooManyTextures;
 	int		debugStringTruncations;
 	char	debugStringTruncationSource[64];

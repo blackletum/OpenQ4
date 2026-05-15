@@ -117,6 +117,14 @@ Acceptance:
 - Alpha-tested decals and cutout surfaces match depth and color behavior.
 - G-buffer depth contains all promoted depth contributors and does not lose fallback depth accidentally.
 
+Round 3 Phase 3 status:
+
+- Added explicit material and geometry promotion contracts so modern draw planning fails closed for scene-capture images, dynamic images, screen/sky texgen, custom GLSL/newStage programs, texture matrices, vertex color, polygon offset, unsupported deforms, unsupported GPU palette skinning, and missing cache-backed geometry.
+- Modern submissions now carry material cull/two-sided state, mirrored-view and negative-transform cull inversion, material color registers, transparent add/filter/blend state, and weapon/model depth hacks instead of treating promoted draws as generic flat debug geometry.
+- Opaque G-buffer setup now preserves a valid populated scene-depth prepass and only clears/rebuilds depth when no reusable modern depth target exists, with counters for depth reuse versus rebuild.
+- Draw/submit/executor self-tests were tightened around the explicit fallback contracts, default-material eligibility, cache-backed geometry readiness, and depth/G-buffer/forward+/visible-frame paths.
+- Validation: `tools/build/meson_setup.ps1 compile -C builddir`, `tools/build/meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects`, targeted Phase 3 self-test launch, and `python tools/tests/renderer_validation_matrix.py --tiers auto --timeout 90 --output-dir .tmp/renderer-validation/phase3-material-geometry`.
+
 ### Phase 4: Real Light Records And Clustered Lighting
 
 Goal: replace lighting placeholders with Quake 4-compatible light evaluation.

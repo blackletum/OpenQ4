@@ -146,14 +146,22 @@ bool idModernGLSubmitPlan::AddCommand( const modernGLDrawPlanEntry_t &entry ) {
 	command.materialTableIndex = entry.materialTableIndex;
 	command.geometryRecordIndex = entry.geometryRecordIndex;
 	command.instanceRecordIndex = entry.instanceRecordIndex;
+	const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( entry.materialTableIndex );
+	command.blendMode = materialRecord != NULL ? materialRecord->blendMode : MATERIAL_RESOURCE_BLEND_OPAQUE;
+	command.cullType = materialRecord != NULL ? materialRecord->cullType : CT_FRONT_SIDED;
 	command.materialStableId = entry.materialStableId;
 	memcpy( command.modelViewMatrix, instance->modelViewMatrix, sizeof( command.modelViewMatrix ) );
+	command.modelDepthHack = instance->modelDepthHack;
 	command.scissorX1 = draw->scissorX1;
 	command.scissorY1 = draw->scissorY1;
 	command.scissorX2 = draw->scissorX2;
 	command.scissorY2 = draw->scissorY2;
 	command.indexed = entry.indexed;
 	command.uploadIndexBuffer = canUploadIndexes;
+	command.twoSided = materialRecord != NULL && materialRecord->twoSided;
+	command.shouldCreateBackSides = materialRecord != NULL && materialRecord->shouldCreateBackSides;
+	command.weaponDepthHack = instance->weaponDepthHack;
+	command.negativeScale = instance->negativeScale;
 
 	const bool havePrevious = numCommands > 0;
 	if ( !havePrevious || commands[numCommands - 1].program != command.program ) {
@@ -332,9 +340,12 @@ bool RendererModernGLSubmitPlan_RunSelfTest( void ) {
 		&& !tr.defaultMaterial->IsPortalSky()
 		&& !tr.defaultMaterial->SuppressInSubview()
 		&& tr.defaultMaterial->GetSort() < SS_POST_PROCESS;
-	const int expectedDepthDraws = expectedDepthEligible ? 2 : 0;
-	const int expectedMaterialDraws = expectedAmbientEligible ? 2 : 0;
+	const materialResourceTableRecord_t *defaultRecord = R_MaterialResourceTable_FindRecordForMaterial( tr.defaultMaterial );
+	const bool materialModernEligible = defaultRecord != NULL && defaultRecord->fallbackReason == MATERIAL_RESOURCE_FALLBACK_NONE;
+	const int expectedDepthDraws = expectedDepthEligible && materialModernEligible ? 2 : 0;
+	const int expectedMaterialDraws = expectedAmbientEligible && materialModernEligible ? 2 : 0;
 	const int expectedReadyDraws = expectedDepthDraws + expectedMaterialDraws;
+	const int expectedGeometryFallbackDraws = ( expectedDepthEligible ? 2 : 0 ) + ( expectedAmbientEligible ? 2 : 0 );
 	if ( readyStats.sourcePlanDraws != expectedReadyDraws || readyStats.readyDraws != expectedReadyDraws || readyStats.fallbackDraws != 0 || readyStats.overflow ) {
 		common->Printf( "RendererModernGLSubmitPlan self-test failed: ready draw count mismatch\n" );
 		return false;
@@ -372,13 +383,16 @@ bool RendererModernGLSubmitPlan_RunSelfTest( void ) {
 	R_ModernGLSubmitPlan_BuildSelfTestDrawPlan( false, false, TAG_FREE, false, missingCacheDrawPlan, missingCachePacketFrame, missingCacheGraph );
 	idModernGLSubmitPlan missingCacheSubmitPlan;
 	missingCacheSubmitPlan.Build( missingCacheDrawPlan );
+	const modernGLDrawPlanStats_t &missingDrawStats = missingCacheDrawPlan.Stats();
 	const modernGLSubmitPlanStats_t &fallbackStats = missingCacheSubmitPlan.Stats();
-	if ( fallbackStats.sourcePlanDraws != expectedReadyDraws || fallbackStats.readyDraws != 0 || fallbackStats.fallbackDraws != expectedReadyDraws ) {
-		common->Printf( "RendererModernGLSubmitPlan self-test failed: fallback draw count mismatch\n" );
-		return false;
-	}
-	if ( expectedReadyDraws > 0 && ( fallbackStats.missingAmbientCacheDraws != expectedReadyDraws || fallbackStats.missingIndexCacheDraws != expectedReadyDraws ) ) {
-		common->Printf( "RendererModernGLSubmitPlan self-test failed: missing-cache reason mismatch\n" );
+	if ( missingDrawStats.sourceDrawPackets != missingCachePacketFrame.NumDrawPackets()
+		|| missingDrawStats.plannedDraws != 0
+		|| missingDrawStats.geometryFallbackDraws != expectedGeometryFallbackDraws
+		|| missingDrawStats.geometryVertexBufferFallbackDraws != expectedGeometryFallbackDraws
+		|| fallbackStats.sourcePlanDraws != 0
+		|| fallbackStats.readyDraws != 0
+		|| fallbackStats.fallbackDraws != 0 ) {
+		common->Printf( "RendererModernGLSubmitPlan self-test failed: early geometry fallback count mismatch\n" );
 		return false;
 	}
 

@@ -38,14 +38,21 @@ typedef struct modernGLSubmitCommand_s {
 	int							materialTableIndex;
 	int							geometryRecordIndex;
 	int							instanceRecordIndex;
+	materialResourceBlendMode_t	blendMode;
+	int							cullType;
 	unsigned int				materialStableId;
 	float						modelViewMatrix[16];
+	float						modelDepthHack;
 	int							scissorX1;
 	int							scissorY1;
 	int							scissorX2;
 	int							scissorY2;
 	bool						indexed;
 	bool						uploadIndexBuffer;
+	bool						twoSided;
+	bool						shouldCreateBackSides;
+	bool						weaponDepthHack;
+	bool						negativeScale;
 } modernGLSubmitCommand_t;
 
 typedef struct modernGLSubmitPlanStats_s {

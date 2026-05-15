@@ -214,6 +214,24 @@ static void R_ScenePackets_CopyIdentityMatrix( float matrix[16] ) {
 	matrix[15] = 1.0f;
 }
 
+static bool R_ScenePackets_MatrixHasNegativeScale( const float matrix[16] ) {
+	const float determinant =
+		matrix[0] * ( matrix[5] * matrix[10] - matrix[9] * matrix[6] )
+		- matrix[4] * ( matrix[1] * matrix[10] - matrix[9] * matrix[2] )
+		+ matrix[8] * ( matrix[1] * matrix[6] - matrix[5] * matrix[2] );
+	return determinant < 0.0f;
+}
+
+static void R_ScenePackets_AddGeometryFallback(
+	geometryResourceRecord_t &record,
+	geometryResourceFallbackReason_t reason,
+	unsigned int flag ) {
+	record.fallbackFlags |= flag;
+	if ( record.fallbackReason == GEOMETRY_RESOURCE_FALLBACK_NONE ) {
+		record.fallbackReason = reason;
+	}
+}
+
 static geometryUploadLifetime_t R_ScenePackets_UploadLifetimeForCache( const vertCache_t *ambientCache, const vertCache_t *indexCache, const srfTriangles_t *geo ) {
 	if ( ( ambientCache != NULL && ambientCache->tag == TAG_TEMP ) || ( indexCache != NULL && indexCache->tag == TAG_TEMP ) ) {
 		return GEOMETRY_UPLOAD_LIFETIME_FRAME_TEMP;
@@ -378,6 +396,7 @@ int idScenePacketFrame::FindOrAddGeometryRecord( const drawSurf_t *drawSurf ) {
 	record.deformMode = geo->deformedSurface ? GEOMETRY_DEFORM_SURFACE :
 		( drawSurf->material != NULL && drawSurf->material->Deform() != DFRM_NONE ? GEOMETRY_DEFORM_MATERIAL : GEOMETRY_DEFORM_NONE );
 	record.uploadLifetime = R_ScenePackets_UploadLifetimeForCache( geo->ambientCache, geo->indexCache, geo );
+	record.fallbackReason = GEOMETRY_RESOURCE_FALLBACK_NONE;
 	record.skinningPaletteOffset = 0;
 #if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
 	record.skinningPaletteCount = geo->numSkinToModelTransforms;
@@ -400,6 +419,30 @@ int idScenePacketFrame::FindOrAddGeometryRecord( const drawSurf_t *drawSurf ) {
 		record.indexCacheOffset = geo->indexCache->offset;
 		record.indexCacheBytes = geo->indexCache->size;
 		record.hasIndexBuffer = geo->indexCache->vbo != 0 && geo->indexCache->indexBuffer;
+	}
+	if ( record.deformMode != GEOMETRY_DEFORM_NONE ) {
+		R_ScenePackets_AddGeometryFallback(
+			record,
+			GEOMETRY_RESOURCE_FALLBACK_UNSUPPORTED_DEFORM,
+			GEOMETRY_RESOURCE_FALLBACK_FLAG_UNSUPPORTED_DEFORM );
+	}
+	if ( record.skinningMode == GEOMETRY_SKINNING_GPU_PALETTE ) {
+		R_ScenePackets_AddGeometryFallback(
+			record,
+			GEOMETRY_RESOURCE_FALLBACK_UNSUPPORTED_GPU_SKINNING,
+			GEOMETRY_RESOURCE_FALLBACK_FLAG_UNSUPPORTED_GPU_SKINNING );
+	}
+	if ( !record.hasAmbientVertexBuffer ) {
+		R_ScenePackets_AddGeometryFallback(
+			record,
+			GEOMETRY_RESOURCE_FALLBACK_MISSING_VERTEX_BUFFER,
+			GEOMETRY_RESOURCE_FALLBACK_FLAG_MISSING_VERTEX_BUFFER );
+	}
+	if ( record.indexCount > 0 && !record.hasIndexBuffer && record.legacyIndexData == NULL ) {
+		R_ScenePackets_AddGeometryFallback(
+			record,
+			GEOMETRY_RESOURCE_FALLBACK_MISSING_INDEX_DATA,
+			GEOMETRY_RESOURCE_FALLBACK_FLAG_MISSING_INDEX_DATA );
 	}
 	return recordIndex;
 }
@@ -436,9 +479,12 @@ int idScenePacketFrame::FindOrAddInstanceRecord( const drawSurf_t *drawSurf, sce
 	memcpy( record.modelMatrix, space->modelMatrix, sizeof( record.modelMatrix ) );
 	memcpy( record.previousModelMatrix, space->modelMatrix, sizeof( record.previousModelMatrix ) );
 	memcpy( record.modelViewMatrix, space->modelViewMatrix, sizeof( record.modelViewMatrix ) );
+	record.modelDepthHack = space->modelDepthHack;
 	record.hasModelMatrix = true;
 	record.hasPreviousModelMatrix = true;
 	record.hasShaderRegisters = shaderRegisters != NULL;
+	record.weaponDepthHack = space->weaponDepthHack;
+	record.negativeScale = R_ScenePackets_MatrixHasNegativeScale( space->modelMatrix );
 	record.legacyBridge = activeScene >= 0 && scenes[activeScene].legacyBridge;
 	if ( shaderRegisters != NULL ) {
 		record.entityColor[0] = shaderRegisters[EXP_REG_PARM0];
@@ -810,6 +856,25 @@ const char *RendererMaterialClass_Name( rendererMaterialClass_t materialClass ) 
 		return "subview";
 	case RENDER_MATERIAL_POST_PROCESS:
 		return "postProcess";
+	default:
+		return "unknown";
+	}
+}
+
+const char *GeometryResourceFallbackReason_Name( geometryResourceFallbackReason_t reason ) {
+	switch ( reason ) {
+	case GEOMETRY_RESOURCE_FALLBACK_NONE:
+		return "none";
+	case GEOMETRY_RESOURCE_FALLBACK_MISSING_GEOMETRY:
+		return "missingGeometry";
+	case GEOMETRY_RESOURCE_FALLBACK_UNSUPPORTED_DEFORM:
+		return "unsupportedDeform";
+	case GEOMETRY_RESOURCE_FALLBACK_UNSUPPORTED_GPU_SKINNING:
+		return "unsupportedGpuSkinning";
+	case GEOMETRY_RESOURCE_FALLBACK_MISSING_VERTEX_BUFFER:
+		return "missingVertexBuffer";
+	case GEOMETRY_RESOURCE_FALLBACK_MISSING_INDEX_DATA:
+		return "missingIndexData";
 	default:
 		return "unknown";
 	}
@@ -1393,7 +1458,7 @@ void R_ScenePackets_LogIfVerbose( const idScenePacketFrame &packetFrame ) {
 	for ( int i = 0; i < packetFrame.NumGeometryRecords() && i < 8; ++i ) {
 		const geometryResourceRecord_t &record = packetFrame.GeometryRecord( i );
 		common->Printf(
-			"scenePackets geometry[%d]=verts:%d indexes:%d vbo:%d@%d ibo:%d@%d lifetime=%d skin=%d deform=%d bounds=%s\n",
+			"scenePackets geometry[%d]=verts:%d indexes:%d vbo:%d@%d ibo:%d@%d lifetime=%d skin=%d deform=%d fallback=%s flags=0x%x bounds=%s\n",
 			i,
 			record.vertexCount,
 			record.indexCount,
@@ -1404,6 +1469,8 @@ void R_ScenePackets_LogIfVerbose( const idScenePacketFrame &packetFrame ) {
 			record.uploadLifetime,
 			record.skinningMode,
 			record.deformMode,
+			GeometryResourceFallbackReason_Name( record.fallbackReason ),
+			record.fallbackFlags,
 			record.hasBounds ? "yes" : "no" );
 	}
 	for ( int i = 0; i < packetFrame.NumInstanceRecords() && i < 8; ++i ) {

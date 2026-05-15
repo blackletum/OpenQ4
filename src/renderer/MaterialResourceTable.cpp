@@ -68,12 +68,28 @@ const char *MaterialResourceFallbackReason_Name( materialResourceFallbackReason_
 		return "missingImage";
 	case MATERIAL_RESOURCE_FALLBACK_CUSTOM_PROGRAM:
 		return "customProgram";
+	case MATERIAL_RESOURCE_FALLBACK_CUSTOM_GLSL:
+		return "customGLSL";
 	case MATERIAL_RESOURCE_FALLBACK_DYNAMIC_IMAGE:
 		return "dynamicImage";
+	case MATERIAL_RESOURCE_FALLBACK_CURRENT_RENDER_IMAGE:
+		return "currentRenderImage";
+	case MATERIAL_RESOURCE_FALLBACK_SCREEN_TEXGEN:
+		return "screenTexgen";
+	case MATERIAL_RESOURCE_FALLBACK_SKY_TEXGEN:
+		return "skyTexgen";
 	case MATERIAL_RESOURCE_FALLBACK_UNSUPPORTED_TEXGEN:
 		return "unsupportedTexgen";
 	case MATERIAL_RESOURCE_FALLBACK_NEEDS_CURRENT_RENDER:
 		return "needsCurrentRender";
+	case MATERIAL_RESOURCE_FALLBACK_STAGE_CONDITION:
+		return "stageCondition";
+	case MATERIAL_RESOURCE_FALLBACK_TEXTURE_MATRIX:
+		return "textureMatrix";
+	case MATERIAL_RESOURCE_FALLBACK_VERTEX_COLOR:
+		return "vertexColor";
+	case MATERIAL_RESOURCE_FALLBACK_POLYGON_OFFSET:
+		return "polygonOffset";
 	case MATERIAL_RESOURCE_FALLBACK_TOO_MANY_TEXTURES:
 		return "tooManyTextures";
 	default:
@@ -146,6 +162,38 @@ static bool R_MaterialResourceTable_ImageIsPostProcess( const idImage *image ) {
 		|| !idStr::Icmp( name, "BlurTexture1" )
 		|| !idStr::Icmp( name, "_currentDepth" )
 		|| !idStr::Icmp( name, "DepthTexture" );
+}
+
+static bool R_MaterialResourceTable_ImageIsSceneCapture( const idImage *image ) {
+	if ( image == NULL ) {
+		return false;
+	}
+	if ( globalImages != NULL
+		&& ( image == globalImages->currentRenderImage
+			|| image == globalImages->originalCurrentRenderImage
+			|| image == globalImages->currentDepthImage ) ) {
+		return true;
+	}
+	const char *name = image->GetName();
+	if ( name == NULL ) {
+		return false;
+	}
+	return idStr::Icmpn( name, "_currentRender", 14 ) == 0
+		|| idStr::Icmpn( name, "_currentDepth", 13 ) == 0;
+}
+
+static bool R_MaterialResourceTable_TexgenIsScreenSpace( texgen_t texgen ) {
+	return texgen == TG_SCREEN
+		|| texgen == TG_SCREEN2
+		|| texgen == TG_GLASSWARP
+		|| texgen == TG_POT_CORRECTION;
+}
+
+static bool R_MaterialResourceTable_TexgenIsCubeOrSky( texgen_t texgen ) {
+	return texgen == TG_DIFFUSE_CUBE
+		|| texgen == TG_REFLECT_CUBE
+		|| texgen == TG_SKYBOX_CUBE
+		|| texgen == TG_WOBBLESKY_CUBE;
 }
 
 static materialResourceTextureSemantic_t R_MaterialResourceTable_StageSemantic( const shaderStage_t &stage, rendererMaterialClass_t materialClass, bool needsCurrentRender ) {
@@ -491,14 +539,38 @@ static void R_MaterialResourceTable_CountFallbacks( const materialResourceTableR
 	if ( ( record.fallbackFlags & MATERIAL_RESOURCE_FALLBACK_FLAG_CUSTOM_PROGRAM ) != 0 ) {
 		rg_materialResourceTable.stats.fallbackCustomProgram++;
 	}
+	if ( ( record.fallbackFlags & MATERIAL_RESOURCE_FALLBACK_FLAG_CUSTOM_GLSL ) != 0 ) {
+		rg_materialResourceTable.stats.fallbackCustomGLSL++;
+	}
 	if ( ( record.fallbackFlags & MATERIAL_RESOURCE_FALLBACK_FLAG_DYNAMIC_IMAGE ) != 0 ) {
 		rg_materialResourceTable.stats.fallbackDynamicImage++;
+	}
+	if ( ( record.fallbackFlags & MATERIAL_RESOURCE_FALLBACK_FLAG_CURRENT_RENDER_IMAGE ) != 0 ) {
+		rg_materialResourceTable.stats.fallbackCurrentRenderImage++;
+	}
+	if ( ( record.fallbackFlags & MATERIAL_RESOURCE_FALLBACK_FLAG_SCREEN_TEXGEN ) != 0 ) {
+		rg_materialResourceTable.stats.fallbackScreenTexgen++;
+	}
+	if ( ( record.fallbackFlags & MATERIAL_RESOURCE_FALLBACK_FLAG_SKY_TEXGEN ) != 0 ) {
+		rg_materialResourceTable.stats.fallbackSkyTexgen++;
 	}
 	if ( ( record.fallbackFlags & MATERIAL_RESOURCE_FALLBACK_FLAG_UNSUPPORTED_TEXGEN ) != 0 ) {
 		rg_materialResourceTable.stats.fallbackUnsupportedTexgen++;
 	}
 	if ( ( record.fallbackFlags & MATERIAL_RESOURCE_FALLBACK_FLAG_NEEDS_CURRENT_RENDER ) != 0 ) {
 		rg_materialResourceTable.stats.fallbackNeedsCurrentRender++;
+	}
+	if ( ( record.fallbackFlags & MATERIAL_RESOURCE_FALLBACK_FLAG_STAGE_CONDITION ) != 0 ) {
+		rg_materialResourceTable.stats.fallbackStageCondition++;
+	}
+	if ( ( record.fallbackFlags & MATERIAL_RESOURCE_FALLBACK_FLAG_TEXTURE_MATRIX ) != 0 ) {
+		rg_materialResourceTable.stats.fallbackTextureMatrix++;
+	}
+	if ( ( record.fallbackFlags & MATERIAL_RESOURCE_FALLBACK_FLAG_VERTEX_COLOR ) != 0 ) {
+		rg_materialResourceTable.stats.fallbackVertexColor++;
+	}
+	if ( ( record.fallbackFlags & MATERIAL_RESOURCE_FALLBACK_FLAG_POLYGON_OFFSET ) != 0 ) {
+		rg_materialResourceTable.stats.fallbackPolygonOffset++;
 	}
 	if ( ( record.fallbackFlags & MATERIAL_RESOURCE_FALLBACK_FLAG_TOO_MANY_TEXTURES ) != 0 ) {
 		rg_materialResourceTable.stats.fallbackTooManyTextures++;
@@ -548,10 +620,26 @@ static void R_MaterialResourceTable_ScanMaterialStages( materialResourceTableRec
 			continue;
 		}
 		record.evaluatedStageCount++;
-		record.hasConditionRegisters |= stage->mNumStageOps > 0;
-		record.hasTextureMatrix |= stage->texture.hasMatrix;
-		record.hasVertexColor |= stage->vertexColor != SVC_IGNORE;
-		record.hasPrivatePolygonOffset |= stage->privatePolygonOffset != 0.0f;
+		if ( stage->mNumStageOps > 0 ) {
+			record.hasConditionRegisters = true;
+			R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_STAGE_CONDITION, MATERIAL_RESOURCE_FALLBACK_FLAG_STAGE_CONDITION );
+			rg_materialResourceTable.stats.unsupportedFeatures++;
+		}
+		if ( stage->texture.hasMatrix ) {
+			record.hasTextureMatrix = true;
+			R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_TEXTURE_MATRIX, MATERIAL_RESOURCE_FALLBACK_FLAG_TEXTURE_MATRIX );
+			rg_materialResourceTable.stats.unsupportedFeatures++;
+		}
+		if ( stage->vertexColor != SVC_IGNORE ) {
+			record.hasVertexColor = true;
+			R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_VERTEX_COLOR, MATERIAL_RESOURCE_FALLBACK_FLAG_VERTEX_COLOR );
+			rg_materialResourceTable.stats.unsupportedFeatures++;
+		}
+		if ( stage->privatePolygonOffset != 0.0f ) {
+			record.hasPrivatePolygonOffset = true;
+			R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_POLYGON_OFFSET, MATERIAL_RESOURCE_FALLBACK_FLAG_POLYGON_OFFSET );
+			rg_materialResourceTable.stats.unsupportedFeatures++;
+		}
 		if ( R_MaterialResourceTable_IsAdditiveBlend( stage->drawStateBits ) ) {
 			record.additiveStageCount++;
 		} else if ( R_MaterialResourceTable_IsFilterBlend( stage->drawStateBits ) ) {
@@ -570,15 +658,35 @@ static void R_MaterialResourceTable_ScanMaterialStages( materialResourceTableRec
 			record.shadowUsesVertexColor |= stage->vertexColor != SVC_IGNORE;
 		}
 		if ( stage->newStage != NULL ) {
-			R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_CUSTOM_PROGRAM, MATERIAL_RESOURCE_FALLBACK_FLAG_CUSTOM_PROGRAM );
+			record.hasCustomProgram = true;
+			if ( stage->newStage->glslProgram ) {
+				record.hasCustomGLSL = true;
+				R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_CUSTOM_GLSL, MATERIAL_RESOURCE_FALLBACK_FLAG_CUSTOM_GLSL | MATERIAL_RESOURCE_FALLBACK_FLAG_CUSTOM_PROGRAM );
+			} else {
+				R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_CUSTOM_PROGRAM, MATERIAL_RESOURCE_FALLBACK_FLAG_CUSTOM_PROGRAM );
+			}
 			rg_materialResourceTable.stats.unsupportedFeatures++;
 		}
 		if ( stage->texture.dynamic != DI_STATIC ) {
+			record.hasDynamicImage = true;
 			R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_DYNAMIC_IMAGE, MATERIAL_RESOURCE_FALLBACK_FLAG_DYNAMIC_IMAGE );
 			rg_materialResourceTable.stats.unsupportedFeatures++;
 		}
+		if ( R_MaterialResourceTable_ImageIsSceneCapture( stage->texture.image ) ) {
+			record.hasSceneCaptureImage = true;
+			R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_CURRENT_RENDER_IMAGE, MATERIAL_RESOURCE_FALLBACK_FLAG_CURRENT_RENDER_IMAGE | MATERIAL_RESOURCE_FALLBACK_FLAG_NEEDS_CURRENT_RENDER );
+			rg_materialResourceTable.stats.unsupportedFeatures++;
+		}
 		if ( stage->texture.texgen != TG_EXPLICIT ) {
-			R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_UNSUPPORTED_TEXGEN, MATERIAL_RESOURCE_FALLBACK_FLAG_UNSUPPORTED_TEXGEN );
+			if ( R_MaterialResourceTable_TexgenIsScreenSpace( stage->texture.texgen ) ) {
+				record.hasScreenTexgen = true;
+				R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_SCREEN_TEXGEN, MATERIAL_RESOURCE_FALLBACK_FLAG_SCREEN_TEXGEN | MATERIAL_RESOURCE_FALLBACK_FLAG_UNSUPPORTED_TEXGEN );
+			} else if ( R_MaterialResourceTable_TexgenIsCubeOrSky( stage->texture.texgen ) ) {
+				record.hasSkyTexgen = true;
+				R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_SKY_TEXGEN, MATERIAL_RESOURCE_FALLBACK_FLAG_SKY_TEXGEN | MATERIAL_RESOURCE_FALLBACK_FLAG_UNSUPPORTED_TEXGEN );
+			} else {
+				R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_UNSUPPORTED_TEXGEN, MATERIAL_RESOURCE_FALLBACK_FLAG_UNSUPPORTED_TEXGEN );
+			}
 			rg_materialResourceTable.stats.unsupportedFeatures++;
 		}
 
@@ -668,7 +776,9 @@ static bool R_MaterialResourceTable_AddRecordFromSource( const materialResourceR
 	record.drawn = sourceRecord.material != NULL ? sourceRecord.material->IsDrawn() : false;
 	record.receivesLighting = sourceRecord.material != NULL ? sourceRecord.material->ReceivesLighting() : false;
 	record.castsShadow = sourceRecord.material != NULL ? sourceRecord.material->SurfaceCastsShadow() : false;
-	record.twoSided = sourceRecord.material != NULL ? ( sourceRecord.material->GetCullType() == CT_TWO_SIDED || sourceRecord.material->ShouldCreateBackSides() ) : false;
+	record.cullType = sourceRecord.material != NULL ? sourceRecord.material->GetCullType() : CT_FRONT_SIDED;
+	record.shouldCreateBackSides = sourceRecord.material != NULL && sourceRecord.material->ShouldCreateBackSides();
+	record.twoSided = sourceRecord.material != NULL ? ( record.cullType == CT_TWO_SIDED || record.shouldCreateBackSides ) : false;
 	record.alphaTest = sourceRecord.permutation.alphaMode == MC_PERFORATED || record.blendMode == MATERIAL_RESOURCE_BLEND_ALPHA_TEST;
 	record.alphaTestMode = 0;
 	record.alphaTestRegister = 0;
@@ -681,6 +791,10 @@ static bool R_MaterialResourceTable_AddRecordFromSource( const materialResourceR
 	record.registerStart = 0;
 	record.registerCount = sourceRecord.material != NULL ? sourceRecord.material->GetNumRegisters() : 0;
 	record.fallbackReason = MATERIAL_RESOURCE_FALLBACK_NONE;
+	if ( record.hasMaterialPolygonOffset ) {
+		R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_POLYGON_OFFSET, MATERIAL_RESOURCE_FALLBACK_FLAG_POLYGON_OFFSET );
+		rg_materialResourceTable.stats.unsupportedFeatures++;
+	}
 
 	if ( scanMaterialStages ) {
 		R_MaterialResourceTable_ScanMaterialStages( record, sourceRecord );
@@ -798,7 +912,7 @@ const materialResourceTableRecord_t *R_MaterialResourceTable_FindRecordForMateri
 void R_MaterialResourceTable_PrintGfxInfo( void ) {
 	const materialResourceTableStats_t &stats = R_MaterialResourceTable_Stats();
 	common->Printf(
-		"Material resource table: initialized=%d available=%d prepared=%d records=%d source=%d draws=%d textures=%d classic=%d arrays=%d views=%d bindless=%d/%d fallback=%d missing=%d unsupported=%d debugTrunc=%d source='%s' status='%s'\n",
+		"Material resource table: initialized=%d available=%d prepared=%d records=%d source=%d draws=%d textures=%d classic=%d arrays=%d views=%d bindless=%d/%d fallback=%d missing=%d unsupported=%d custom=%d/%d dynamic=%d current=%d texgen=%d(screen=%d sky=%d) condition=%d matrix=%d vertexColor=%d offset=%d debugTrunc=%d source='%s' status='%s'\n",
 		stats.initialized ? 1 : 0,
 		stats.available ? 1 : 0,
 		stats.prepared ? 1 : 0,
@@ -814,6 +928,17 @@ void R_MaterialResourceTable_PrintGfxInfo( void ) {
 		stats.fallbackRecords,
 		stats.missingImages,
 		stats.unsupportedFeatures,
+		stats.fallbackCustomProgram,
+		stats.fallbackCustomGLSL,
+		stats.fallbackDynamicImage,
+		stats.fallbackCurrentRenderImage,
+		stats.fallbackUnsupportedTexgen,
+		stats.fallbackScreenTexgen,
+		stats.fallbackSkyTexgen,
+		stats.fallbackStageCondition,
+		stats.fallbackTextureMatrix,
+		stats.fallbackVertexColor,
+		stats.fallbackPolygonOffset,
 		stats.debugStringTruncations,
 		stats.debugStringTruncationSource,
 		stats.lastFailure );
@@ -839,7 +964,7 @@ void R_MaterialResourceTable_DumpLatest( void ) {
 	for ( int i = 0; i < stats.records; ++i ) {
 		const materialResourceTableRecord_t &record = rg_materialResourceTable.records[i];
 		common->Printf(
-			"  material[%d] source=%d id=%d name='%s' class=%s blend=%s sort=%s/%.2f regs=%d+%d stageRegs=%d+%d stages=%d/%d alpha=%d textures=%d fallback=%s flags=0x%x current=%d gui=%d subview=%d light=%d shadow=%d/%d matrix=%d vertexColor=%d offset=%.2f twoSided=%d shadowFlags=0x%x\n",
+			"  material[%d] source=%d id=%d name='%s' class=%s blend=%s sort=%s/%.2f cull=%d regs=%d+%d stageRegs=%d+%d stages=%d/%d alpha=%d textures=%d fallback=%s flags=0x%x current=%d capture=%d gui=%d subview=%d light=%d shadow=%d/%d matrix=%d vertexColor=%d dynamic=%d screenTexgen=%d skyTexgen=%d custom=%d/%d offset=%.2f twoSided=%d backsides=%d shadowFlags=0x%x\n",
 			record.tableIndex,
 			record.sourceMaterialRecordIndex,
 			record.materialId,
@@ -848,6 +973,7 @@ void R_MaterialResourceTable_DumpLatest( void ) {
 			MaterialResourceBlendMode_Name( record.blendMode ),
 			R_MaterialResourceTable_SortGroupName( record.sortGroup ),
 			record.sortValue,
+			record.cullType,
 			record.registerStart,
 			record.registerCount,
 			record.stageRegisterStart,
@@ -859,6 +985,7 @@ void R_MaterialResourceTable_DumpLatest( void ) {
 			MaterialResourceFallbackReason_Name( record.fallbackReason ),
 			record.fallbackFlags,
 			record.needsCurrentRender ? 1 : 0,
+			record.hasSceneCaptureImage ? 1 : 0,
 			record.hasGui ? 1 : 0,
 			record.hasSubview ? 1 : 0,
 			record.receivesLighting ? 1 : 0,
@@ -866,8 +993,14 @@ void R_MaterialResourceTable_DumpLatest( void ) {
 			record.shadowCasterSupported ? 1 : 0,
 			record.hasTextureMatrix ? 1 : 0,
 			record.hasVertexColor ? 1 : 0,
+			record.hasDynamicImage ? 1 : 0,
+			record.hasScreenTexgen ? 1 : 0,
+			record.hasSkyTexgen ? 1 : 0,
+			record.hasCustomProgram ? 1 : 0,
+			record.hasCustomGLSL ? 1 : 0,
 			record.polygonOffset,
 			record.twoSided ? 1 : 0,
+			record.shouldCreateBackSides ? 1 : 0,
 			record.shadowFallbackFlags );
 		for ( int bindingIndex = 0; bindingIndex < record.textureBindingCount; ++bindingIndex ) {
 			const materialResourceTextureBinding_t &binding = record.textures[bindingIndex];

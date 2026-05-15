@@ -123,11 +123,11 @@ static bool R_GeometryResources_RunRecordSelfTest( void ) {
 	const drawPacket_t &draw = packetFrame.DrawPacket( 0 );
 	const geometryResourceRecord_t &geo = packetFrame.GeometryRecord( draw.geometryRecordIndex );
 	const instanceRecord_t &instance = packetFrame.InstanceRecord( draw.instanceRecordIndex );
-	if ( geo.vertexCount != 3 || geo.indexCount != 6 || geo.ambientVertexBuffer != 101 || geo.indexBuffer != 202 || geo.ambientCacheOffset != 64 || geo.indexCacheOffset != 128 || geo.vertexStride != static_cast<int>( sizeof( idDrawVert ) ) || geo.indexType != GL_INDEX_TYPE || !geo.hasAmbientVertexBuffer || !geo.hasIndexBuffer || !geo.hasClientIndexData || geo.uploadLifetime != GEOMETRY_UPLOAD_LIFETIME_STATIC ) {
+	if ( geo.vertexCount != 3 || geo.indexCount != 6 || geo.ambientVertexBuffer != 101 || geo.indexBuffer != 202 || geo.ambientCacheOffset != 64 || geo.indexCacheOffset != 128 || geo.vertexStride != static_cast<int>( sizeof( idDrawVert ) ) || geo.indexType != GL_INDEX_TYPE || !geo.hasAmbientVertexBuffer || !geo.hasIndexBuffer || !geo.hasClientIndexData || geo.uploadLifetime != GEOMETRY_UPLOAD_LIFETIME_STATIC || geo.fallbackReason != GEOMETRY_RESOURCE_FALLBACK_NONE || geo.fallbackFlags != 0 ) {
 		common->Printf( "RendererGeometryResource self-test failed: geometry record mismatch\n" );
 		return false;
 	}
-	if ( instance.modelMatrix[12] != 4.0f || instance.modelViewMatrix[13] != 5.0f || instance.entityColor[0] != 0.20f || instance.entityColor[1] != 0.40f || instance.entityColor[2] != 0.60f || instance.entityColor[3] != 0.80f || ( instance.visibilityFlags & INSTANCE_VISIBILITY_VIEWMODEL ) == 0 || !instance.hasShaderRegisters || !instance.legacyBridge ) {
+	if ( instance.modelMatrix[12] != 4.0f || instance.modelViewMatrix[13] != 5.0f || instance.entityColor[0] != 0.20f || instance.entityColor[1] != 0.40f || instance.entityColor[2] != 0.60f || instance.entityColor[3] != 0.80f || ( instance.visibilityFlags & INSTANCE_VISIBILITY_VIEWMODEL ) == 0 || !instance.weaponDepthHack || instance.modelDepthHack != 0.0f || instance.negativeScale || !instance.hasShaderRegisters || !instance.legacyBridge ) {
 		common->Printf( "RendererGeometryResource self-test failed: instance record mismatch\n" );
 		return false;
 	}

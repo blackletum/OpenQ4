@@ -196,6 +196,9 @@ typedef struct modernGLExecutorStats_s {
 	int		drawPlanDepthDraws;
 	int		drawPlanMaterialDraws;
 	int		drawPlanFallbackDraws;
+	int		drawPlanGeometryFallbackDraws;
+	int		drawPlanGeometryDeformFallbackDraws;
+	int		drawPlanGeometrySkinnedFallbackDraws;
 	int		drawPlanIndexedDraws;
 	int		drawPlanVertexOnlyDraws;
 	int		drawPlanStateBatches;
@@ -251,6 +254,8 @@ typedef struct modernGLExecutorStats_s {
 	int		opaqueGBufferResourceFallbackDraws;
 	int		opaqueGBufferLightGridDraws;
 	int		opaqueGBufferClearOps;
+	int		opaqueGBufferDepthReuseOps;
+	int		opaqueGBufferDepthClearOps;
 	int		opaqueGBufferAttachmentCount;
 	int		opaqueGBufferBytesPerPixel;
 	int		opaqueGBufferBandwidthKB;
