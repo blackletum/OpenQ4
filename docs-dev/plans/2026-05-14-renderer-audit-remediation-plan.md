@@ -153,6 +153,15 @@ Acceptance:
 - GL 3.3 and GL 4.3 cluster lists match in validation.
 - Deferred/forward+ light output matches ARB2 captures for point and projected lights before shadows are enabled.
 
+Round 3 Phase 4 status:
+
+- Added a shared modern light descriptor contract for point, projected, fog, ambient, blend, and special lights. Cluster records now carry world/view origin, radius, evaluated color, falloff scale, view-space projection planes, projection/falloff/cube image handles, sampler state, scissor/depth policy, PVS visibility, and shadow descriptor/fallback metadata for the lighting, forward, deferred, and shadow consumers.
+- Cluster uploads now cover every per-view grid instead of only the first grid. Each grid owns an index-record range, draw consumers bind the grid matching their `viewDef`, and the params UBO updates only when the bound grid changes.
+- The GL 3.3 path remains explicit CPU-binned UBO batches with capacity accounting, while GL 4.3+ uses SSBO light/index records. GL 4.4/4.5-capable drivers use DSA buffer updates and the renderer state-cache multi-bind path for the light/list buffers where available.
+- Cluster spill and capacity loss are now visible correctness states: unsampled spill references mark the frame lossy, deferred/forward+/visible ownership fail closed when light contribution would be dropped, and metrics report lossy clusters/references, uploaded index records, grid switches, and bind failures.
+- Deferred and forward+ clustered shaders now use reconstructed view-space depth for Z-slice lookup and evaluate point/projected light position, radius attenuation, projection masks, diffuse, and specular terms from the uploaded light records instead of fixed placeholder direction/scale math.
+- Validation: `tools/build/meson_setup.ps1 compile -C builddir`, `tools/build/meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects`, and a targeted Phase 4 self-test launch covering clustered lighting, deferred resolve, forward+, and modern visible frame paths. Full safe validation matrix is required before commit.
+
 ### Phase 5: Production Shadow Mapping
 
 Goal: shadows become real lighting data, not metadata.

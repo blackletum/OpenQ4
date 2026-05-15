@@ -3259,7 +3259,8 @@ static void R_ModernGLExecutor_SubmitDeferredResolve( modernGLExecutorStats_t &s
 	}
 
 	const rendererClusteredLightingStats_t &clusterStats = R_ModernClusteredLighting_Stats();
-	stats.deferredResolveClusterReady = clusterStats.requested && clusterStats.frameValid && clusterStats.buffersReady;
+	const bool clusterLightingLossless = R_ModernClusteredLighting_FrameLossless();
+	stats.deferredResolveClusterReady = clusterStats.requested && clusterStats.frameValid && clusterStats.buffersReady && clusterLightingLossless && clusterStats.gridCount == 1;
 	stats.deferredResolveActiveLights = clusterStats.lightCount;
 	stats.deferredResolvePointLights = clusterStats.pointLights;
 	stats.deferredResolveProjectedLights = clusterStats.projectedLights;
@@ -3268,9 +3269,9 @@ static void R_ModernGLExecutor_SubmitDeferredResolve( modernGLExecutorStats_t &s
 	stats.deferredResolveShadowSkippedLights = clusterStats.shadowSkippedLights;
 	stats.deferredResolveShadowDescriptors = clusterStats.shadowDescriptorCount;
 	stats.deferredResolveFogFallbackLights = clusterStats.fogLights;
-	stats.deferredResolveSpecialFallbackLights = clusterStats.specialLights;
-	stats.deferredResolveUnsupportedLightFallbacks = clusterStats.fogLights + clusterStats.specialLights + clusterStats.shadowFallbackLights;
-	stats.deferredResolveOverflowClusters = clusterStats.overflowClusters;
+	stats.deferredResolveSpecialFallbackLights = clusterStats.specialLights + clusterStats.blendLights;
+	stats.deferredResolveUnsupportedLightFallbacks = clusterStats.fogLights + clusterStats.specialLights + clusterStats.blendLights + clusterStats.shadowFallbackLights + clusterStats.lossyReferences + clusterStats.overflowLights + ( clusterStats.gridCount > 1 ? clusterStats.gridCount - 1 : 0 );
+	stats.deferredResolveOverflowClusters = clusterStats.overflowClusters + clusterStats.spillClusters;
 	if ( !stats.deferredResolveClusterReady ) {
 		stats.deferredResolveResourceFallbacks++;
 		return;
@@ -3326,6 +3327,12 @@ static void R_ModernGLExecutor_SubmitDeferredResolve( modernGLExecutorStats_t &s
 		glClearColor( 0.0f, 0.0f, 0.0f, 1.0f );
 		glClear( GL_COLOR_BUFFER_BIT );
 		stats.deferredResolveClearOps++;
+		if ( !R_ModernClusteredLighting_BindGridForView( NULL ) ) {
+			stats.deferredResolveResourceFallbacks++;
+			R_RendererMetrics_EndGpuTimer();
+			R_ModernGLExecutor_RestoreAfterSubmit();
+			return;
+		}
 
 		R_GLStateCache().UseProgram( program->program );
 		R_ModernGLExecutor_BindFrameUniformBufferBase( stats );
@@ -3488,7 +3495,7 @@ static void R_ModernGLExecutor_SubmitForwardPlus( modernGLExecutorStats_t &stats
 	}
 
 	const rendererClusteredLightingStats_t &clusterStats = R_ModernClusteredLighting_Stats();
-	stats.forwardPlusClusterReady = clusterStats.requested && clusterStats.frameValid && clusterStats.buffersReady;
+	stats.forwardPlusClusterReady = clusterStats.requested && clusterStats.frameValid && clusterStats.buffersReady && R_ModernClusteredLighting_FrameLossless();
 	stats.forwardPlusActiveLights = clusterStats.lightCount;
 	stats.forwardPlusPointLights = clusterStats.pointLights;
 	stats.forwardPlusProjectedLights = clusterStats.projectedLights;
@@ -3547,6 +3554,11 @@ static void R_ModernGLExecutor_SubmitForwardPlus( modernGLExecutorStats_t &stats
 				continue;
 			}
 			if ( !R_ModernGLExecutor_ForwardPlusMaterialSupported( command, stats ) ) {
+				R_ModernGLExecutor_CountForwardPlusFallback( command, stats );
+				continue;
+			}
+			if ( !R_ModernClusteredLighting_BindGridForView( command.viewDef ) ) {
+				stats.forwardPlusResourceFallbackDraws++;
 				R_ModernGLExecutor_CountForwardPlusFallback( command, stats );
 				continue;
 			}
