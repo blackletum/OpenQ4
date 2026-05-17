@@ -194,6 +194,7 @@ Set `OPENQ4_BUILD_GAMELIBS=1` if you want the wrapper to trigger game-library bu
 - [docs-user/shadow-mapping.md](docs-user/shadow-mapping.md) - shadow-map settings, presets, and troubleshooting
 - [docs-user/multiplayer-networking.md](docs-user/multiplayer-networking.md) - multiplayer networking and lag compensation
 - [docs-dev/platform-support.md](docs-dev/platform-support.md) - platform roadmap and backend status
+- [docs-dev/issue-triage-automation.md](docs-dev/issue-triage-automation.md) - GitHub issue triage workflow setup and maintenance
 - [docs-dev/high-framerate-rendering-plan.md](docs-dev/high-framerate-rendering-plan.md) - staged plan for 240 FPS presentation support
 - [docs-dev/official-pk4-checksums.md](docs-dev/official-pk4-checksums.md) - official asset validation reference
 - [docs-dev/input-key-matrix.md](docs-dev/input-key-matrix.md) - keyboard and controller input reference

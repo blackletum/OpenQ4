@@ -1,0 +1,95 @@
+{
+  "repositoryContextFiles": [
+    "README.md",
+    "BUILDING.md",
+    "TECHNICAL.md",
+    "TODO.md",
+    "docs-dev/release-completion.md",
+    "docs-dev/platform-support.md"
+  ],
+  "maintainerConventions": [
+    "Be concise, direct, and conservative.",
+    "Thank reporters and ask for concrete reproduction details, logs, crash dumps, screenshots, and environment data when they are missing.",
+    "Do not promise implementation or roadmap commitments unless the repository documentation already supports them.",
+    "When duplicate evidence is incomplete, keep the issue open and ask for maintainer review instead of closing it."
+  ],
+  "commentMarker": "<!-- openq4-issue-triage -->",
+  "duplicateCandidateLimit": 10,
+  "duplicateHeuristics": {
+    "minimumCandidateScore": 0.18,
+    "humanReviewConfidence": 0.45,
+    "closeConfidence": 0.88,
+    "minimumFullDuplicateScore": 0.74,
+    "weights": {
+      "title": 0.34,
+      "body": 0.24,
+      "signals": 0.2,
+      "components": 0.12,
+      "phrases": 0.1
+    }
+  },
+  "responseStyle": {
+    "maxPoints": 8,
+    "maxPlanSteps": 3,
+    "maxRelatedIssues": 4,
+    "maxRepoContextCharsPerFile": 3200
+  },
+  "defaultLabelsOnModelFailure": [
+    "needs-human-review"
+  ],
+  "typeLabelMappings": {
+    "bug": "bug",
+    "feature request": "enhancement",
+    "enhancement": "enhancement",
+    "question": "question",
+    "support request": "question",
+    "documentation": "documentation",
+    "performance": "performance",
+    "security": "security",
+    "regression": "regression",
+    "compatibility": "compatibility",
+    "build/install": "build/install"
+  },
+  "managedLabels": {
+    "needs-info": {
+      "color": "d876e3",
+      "description": "More reporter details are needed before maintainers can act"
+    },
+    "needs-human-review": {
+      "color": "fbca04",
+      "description": "Automation could not safely finish triage without a maintainer review"
+    },
+    "duplicate": {
+      "color": "cfd3d7",
+      "description": "This issue appears to be fully covered by another open issue"
+    },
+    "question": {
+      "color": "d4c5f9",
+      "description": "Reporter is primarily asking a question or support-style request"
+    },
+    "documentation": {
+      "color": "0075ca",
+      "description": "Documentation issue or request"
+    },
+    "security": {
+      "color": "b60205",
+      "description": "Security-sensitive report requiring careful maintainer review"
+    },
+    "build/install": {
+      "color": "5319e7",
+      "description": "Build, packaging, installation, or setup problem"
+    },
+    "compatibility": {
+      "color": "1d76db",
+      "description": "Platform, asset, or compatibility problem"
+    },
+    "performance": {
+      "color": "f9d0c4",
+      "description": "Performance, efficiency, or runtime cost issue"
+    },
+    "regression": {
+      "color": "e99695",
+      "description": "Previously working behavior appears broken"
+    }
+  }
+}
