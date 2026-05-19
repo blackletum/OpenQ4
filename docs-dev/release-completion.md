@@ -164,6 +164,7 @@ Process:
 - [x] Added a persistent visual overlay for `r_showViewLights` (`r_showViewLightsVisuals`) that draws each last-reported light's origin marker, color, and radius volume in-world until the next report refresh.
 - [x] Retail `deform rectsprite` material support restored so shipped Quake 4 multiplayer flag-display shaders follow the renderer's rectangular autosprite path.
 - [x] Menu rendering issues fixed.
+- [x] GUI font rendering now follows retail Quake 4 font metrics more closely: stock `.fontdat` files load with their native glyph bearings, advances, point-size scaling, atlas materials, embedded icon sizing, shared Q4 color/repeat/icon escape parsing, retail-style icon measurement/escape-spanning cursor accounting, chat-window wrapping and parse-flag behavior, field edit spacing behavior, bind/choice/list/edit caller spacing parity, wrapped edit line-height/scrollbar wrapping behavior, text spacing/style save-load persistence, and MP HUD wrap-index support while preserving OpenQ4's wide/tall aspect-correct UI expansion.
 - [x] Settings menus now present cleaner Display/Game pages with compact single-display spacing, smooth clipped scrolling, corrected scroll extents, and Proper Case OpenQ4 setting labels while keeping section headings uppercase.
 - [x] SDL3 backend integrated as the default platform path (legacy Win32 backend remains transitional).
 - [x] Meson + Ninja build system introduced as canonical build path.
