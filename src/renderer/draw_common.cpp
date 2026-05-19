@@ -141,6 +141,27 @@ static bool RB_MaterialUsesCurrentDepth( const idMaterial *material ) {
 	return false;
 }
 
+typedef bool ( *rbShaderPassSurfFilter_t )( const drawSurf_t *surf );
+
+static bool RB_DrawSurfNeedsLegacyFeedback( const drawSurf_t *surf ) {
+	const idMaterial *material = surf != NULL ? surf->material : NULL;
+	if ( material == NULL ) {
+		return false;
+	}
+	return material->TestMaterialFlag( MF_NEED_CURRENT_RENDER )
+		|| material->HasSubview()
+		|| material->GetSort() == SS_SUBVIEW;
+}
+
+static bool RB_HasLegacyFeedbackDrawSurfs( drawSurf_t **drawSurfs, int numDrawSurfs ) {
+	for ( int i = 0; i < numDrawSurfs; ++i ) {
+		if ( RB_DrawSurfNeedsLegacyFeedback( drawSurfs[i] ) ) {
+			return true;
+		}
+	}
+	return false;
+}
+
 static const int RB_STOCK_GAUSSIAN_SAMPLE_COUNT = 15;
 static const idVec4 RB_STOCK_COLOR_MATRIX_ROWS[3] = {
 	idVec4( 1.0f, 0.0f, 0.0f, 0.0f ),
@@ -5822,7 +5843,7 @@ RB_STD_DrawShaderPasses
 Draw non-light dependent passes
 =====================
 */
-int RB_STD_DrawShaderPasses( drawSurf_t **drawSurfs, int numDrawSurfs ) {
+int RB_STD_DrawShaderPasses( drawSurf_t **drawSurfs, int numDrawSurfs, rbShaderPassSurfFilter_t filter = NULL ) {
 	int				i;
 
 	// only obey skipAmbient if we are rendering a view
@@ -5879,6 +5900,9 @@ int RB_STD_DrawShaderPasses( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 	// surfaces won't draw any ambient passes
 	backEnd.currentSpace = NULL;
 	for (i = 0  ; i < numDrawSurfs ; i++ ) {
+		if ( filter != NULL && !filter( drawSurfs[i] ) ) {
+			continue;
+		}
 		if ( drawSurfs[i]->material->SuppressInSubview() ) {
 			continue;
 		}
@@ -7360,7 +7384,7 @@ void	RB_STD_DrawView( void ) {
 
 	// fill the depth buffer and clear color buffer to black except on
 	// subviews
-	if ( R_ModernGLExecutor_LegacyPassCanSkip( RENDER_PASS_DEPTH ) ) {
+	if ( R_ModernGLExecutor_LegacyPassCanSkipForView( RENDER_PASS_DEPTH, backEnd.viewDef ) ) {
 		R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_DEPTH );
 	} else {
 		RB_STD_FillDepthBuffer( drawSurfs, numDrawSurfs );
@@ -7368,12 +7392,12 @@ void	RB_STD_DrawView( void ) {
 	RB_DisplaySpecialEffects( backEnd.viewDef->viewEntitys, false );
 
 	// main light renderer
-	if ( R_ModernGLExecutor_LegacyPassCanSkip( RENDER_PASS_ARB2_INTERACTION ) ) {
+	if ( R_ModernGLExecutor_LegacyPassCanSkipForView( RENDER_PASS_ARB2_INTERACTION, backEnd.viewDef ) ) {
 		R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_ARB2_INTERACTION );
-		if ( R_ModernGLExecutor_LegacyPassCanSkip( RENDER_PASS_SHADOW_MAP ) ) {
+		if ( R_ModernGLExecutor_LegacyPassCanSkipForView( RENDER_PASS_SHADOW_MAP, backEnd.viewDef ) ) {
 			R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_SHADOW_MAP );
 		}
-		if ( R_ModernGLExecutor_LegacyPassCanSkip( RENDER_PASS_STENCIL_SHADOW ) ) {
+		if ( R_ModernGLExecutor_LegacyPassCanSkipForView( RENDER_PASS_STENCIL_SHADOW, backEnd.viewDef ) ) {
 			R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_STENCIL_SHADOW );
 		}
 	} else {
@@ -7384,7 +7408,7 @@ void	RB_STD_DrawView( void ) {
 	glStencilFunc( GL_ALWAYS, 128, 255 );
 
 	// add precomputed indirect diffuse from irradiance-volume atlases
-	if ( R_ModernGLExecutor_LegacyPassCanSkip( RENDER_PASS_LIGHT_GRID ) ) {
+	if ( R_ModernGLExecutor_LegacyPassCanSkipForView( RENDER_PASS_LIGHT_GRID, backEnd.viewDef ) ) {
 		R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_LIGHT_GRID );
 	} else {
 		RB_STD_LightGridIndirect();
@@ -7399,8 +7423,13 @@ void	RB_STD_DrawView( void ) {
 
 	// now draw any non-light dependent shading passes
 	int processed = 0;
-	if ( R_ModernGLExecutor_LegacyPassCanSkip( RENDER_PASS_AMBIENT ) ) {
+	if ( R_ModernGLExecutor_LegacyPassCanSkipForView( RENDER_PASS_AMBIENT, backEnd.viewDef ) ) {
 		processed = RB_STD_FindPostProcessStart( drawSurfs, numDrawSurfs );
+		if ( RB_HasLegacyFeedbackDrawSurfs( drawSurfs, processed ) ) {
+			R_ModernGLExecutor_ComposeVisibleSceneForPost();
+			backEnd.currentRenderCopied = false;
+			RB_STD_DrawShaderPasses( drawSurfs, processed, RB_DrawSurfNeedsLegacyFeedback );
+		}
 		R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_AMBIENT );
 	} else {
 		processed = RB_STD_DrawShaderPasses( drawSurfs, numDrawSurfs );
@@ -7410,7 +7439,7 @@ void	RB_STD_DrawView( void ) {
 	RB_STD_ForceAmbient();
 
 	// fob and blend lights
-	if ( R_ModernGLExecutor_LegacyPassCanSkip( RENDER_PASS_FOG_BLEND ) ) {
+	if ( R_ModernGLExecutor_LegacyPassCanSkipForView( RENDER_PASS_FOG_BLEND, backEnd.viewDef ) ) {
 		R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_FOG_BLEND );
 	} else {
 		RB_STD_FogAllLights();

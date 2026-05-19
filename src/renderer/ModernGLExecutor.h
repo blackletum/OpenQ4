@@ -453,6 +453,7 @@ const modernGLExecutorStats_t &R_ModernGLExecutor_Stats( void );
 bool R_ModernGLExecutor_ModernVisibleRequestedForPost( void );
 bool R_ModernGLExecutor_ModernVisiblePostProcessHandoffActive( void );
 bool R_ModernGLExecutor_LegacyPassCanSkip( renderPassCategory_t category );
+bool R_ModernGLExecutor_LegacyPassCanSkipForView( renderPassCategory_t category, const viewDef_t *viewDef );
 void R_ModernGLExecutor_RecordLegacyPassSkipped( renderPassCategory_t category );
 void R_ModernGLExecutor_PrintGfxInfo( void );
 bool RendererModernGLExecutor_RunSelfTest( void );

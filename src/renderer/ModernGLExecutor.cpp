@@ -1518,13 +1518,15 @@ static void R_ModernGLExecutor_RecomputeModernVisibleFallbacks( modernGLExecutor
 	if ( !stats.modernVisibleRequested ) {
 		return;
 	}
-	// Phase 9 lets legacy post consume the modern scene/depth handoff, so post passes remain reported but no longer block visible replacement.
-	const int blockingLegacyPasses = Max( 0, stats.modernVisibleLegacyPasses - stats.modernVisiblePostGraphPasses );
+	// Legacy post and special-effect passes consume the modern scene/depth handoff,
+	// so they remain reported but do not by themselves block visible replacement.
+	const int nonBlockingLegacyPasses =
+		stats.modernVisiblePostGraphPasses +
+		stats.modernVisibleSpecialLegacyPasses;
+	const int blockingLegacyPasses = Max( 0, stats.modernVisibleLegacyPasses - nonBlockingLegacyPasses );
 	stats.modernVisibleOwnerFallbacks =
 		blockingLegacyPasses
 		+ stats.modernVisibleGuiLegacyPasses
-		+ stats.modernVisibleSpecialLegacyPasses
-		+ stats.modernVisibleSubviewLegacyPasses
 		+ stats.modernVisibleMaterialFallbackDraws
 		+ stats.modernVisibleGeometryFallbackDraws
 		+ stats.modernVisibleLightingFallbackPasses
@@ -1690,10 +1692,26 @@ static int R_ModernGLExecutor_ViewIndexForViewDef( const idScenePacketFrame &pac
 	return -1;
 }
 
+static bool R_ModernGLExecutor_ViewDefUsesLegacySidecar( const viewDef_t *viewDef ) {
+	return viewDef != NULL
+		&& ( viewDef->isSubview
+			|| viewDef->superView != NULL
+			|| viewDef->subviewSurface != NULL
+			|| viewDef->renderView.viewID < 0 );
+}
+
+static bool R_ModernGLExecutor_DrawPacketUsesLegacySidecarView( const drawPacket_t &draw ) {
+	return draw.packetCategory == SCENE_PACKET_CATEGORY_SUBVIEW
+		|| draw.packetCategory == SCENE_PACKET_CATEGORY_REMOTE_CAMERA
+		|| draw.packetCategory == SCENE_PACKET_CATEGORY_RENDER_DEMO
+		|| R_ModernGLExecutor_ViewDefUsesLegacySidecar( draw.viewDef );
+}
+
 static int R_ModernGLExecutor_CountPassDraws( const idScenePacketFrame &packetFrame, renderPassCategory_t category ) {
 	int count = 0;
 	for ( int i = 0; i < packetFrame.NumDrawPackets(); ++i ) {
-		if ( packetFrame.DrawPacket( i ).passCategory == category ) {
+		const drawPacket_t &draw = packetFrame.DrawPacket( i );
+		if ( draw.passCategory == category && !R_ModernGLExecutor_DrawPacketUsesLegacySidecarView( draw ) ) {
 			count++;
 		}
 	}
@@ -1704,7 +1722,7 @@ static int R_ModernGLExecutor_FirstContributingLightIndex( const idScenePacketFr
 	viewIndex = -1;
 	for ( int sceneIndex = 0; sceneIndex < packetFrame.NumScenes(); ++sceneIndex ) {
 		const viewDef_t *viewDef = packetFrame.Scene( sceneIndex ).viewDef;
-		if ( viewDef == NULL ) {
+		if ( viewDef == NULL || R_ModernGLExecutor_ViewDefUsesLegacySidecar( viewDef ) ) {
 			continue;
 		}
 		for ( const viewLight_t *vLight = viewDef->viewLights; vLight != NULL; vLight = vLight->next ) {
@@ -1728,6 +1746,24 @@ static int R_ModernGLExecutor_FirstContributingLightIndex( const idScenePacketFr
 	return -1;
 }
 
+static bool R_ModernGLExecutor_DrawPacketUsesLegacyFeedbackSurface( const drawPacket_t &draw ) {
+	if ( R_ModernGLExecutor_DrawPacketUsesLegacySidecarView( draw ) ) {
+		return true;
+	}
+	if ( draw.passCategory != RENDER_PASS_AMBIENT ) {
+		return false;
+	}
+
+	const idMaterial *material = draw.materialRecord != NULL ? draw.materialRecord->material : NULL;
+	if ( material == NULL ) {
+		return false;
+	}
+
+	return material->TestMaterialFlag( MF_NEED_CURRENT_RENDER )
+		|| material->HasSubview()
+		|| material->GetSort() == SS_SUBVIEW;
+}
+
 static void R_ModernGLExecutor_RecordPacketFallbackBlockers( const idScenePacketFrame &packetFrame, modernGLExecutorStats_t &stats ) {
 	for ( int i = 0; i < packetFrame.NumDrawPackets(); ++i ) {
 		const drawPacket_t &draw = packetFrame.DrawPacket( i );
@@ -1745,12 +1781,19 @@ static void R_ModernGLExecutor_RecordPacketFallbackBlockers( const idScenePacket
 		}
 
 		const int viewIndex = R_ModernGLExecutor_ViewIndexForViewDef( packetFrame, draw.viewDef );
+		const bool legacyFeedbackSurface = R_ModernGLExecutor_DrawPacketUsesLegacyFeedbackSurface( draw );
 		if ( draw.geometryRecord == NULL || draw.instanceRecord == NULL || !draw.hasGeometry || draw.indexCount <= 0 ) {
+			if ( legacyFeedbackSurface ) {
+				continue;
+			}
 			stats.modernVisibleGeometryFallbackDraws++;
 			R_ModernGLExecutor_SetOwnershipBlocker( stats, "draw", viewIndex, draw.passCategory, i, "geometry", "missing-modern-geometry" );
 			continue;
 		}
 		if ( draw.geometryRecord->fallbackReason != GEOMETRY_RESOURCE_FALLBACK_NONE ) {
+			if ( legacyFeedbackSurface ) {
+				continue;
+			}
 			stats.modernVisibleGeometryFallbackDraws++;
 			R_ModernGLExecutor_SetOwnershipBlocker( stats, "geometry", viewIndex, draw.passCategory, draw.geometryRecordIndex, "geometry", GeometryResourceFallbackReason_Name( draw.geometryRecord->fallbackReason ) );
 			continue;
@@ -1761,11 +1804,17 @@ static void R_ModernGLExecutor_RecordPacketFallbackBlockers( const idScenePacket
 			materialRecord = R_MaterialResourceTable_FindRecordForMaterial( draw.materialRecord->material );
 		}
 		if ( materialRecord == NULL ) {
+			if ( legacyFeedbackSurface ) {
+				continue;
+			}
 			stats.modernVisibleMaterialFallbackDraws++;
 			R_ModernGLExecutor_SetOwnershipBlocker( stats, "draw", viewIndex, draw.passCategory, i, "material", "missing-material-record" );
 			continue;
 		}
 		if ( materialRecord->fallbackReason != MATERIAL_RESOURCE_FALLBACK_NONE ) {
+			if ( legacyFeedbackSurface ) {
+				continue;
+			}
 			stats.modernVisibleMaterialFallbackDraws++;
 			R_ModernGLExecutor_SetOwnershipBlocker( stats, "material", viewIndex, draw.passCategory, materialRecord->materialId, materialRecord->materialName, MaterialResourceFallbackReason_Name( materialRecord->fallbackReason ) );
 		}
@@ -6555,6 +6604,19 @@ bool R_ModernGLExecutor_LegacyPassCanSkip( renderPassCategory_t category ) {
 	return slot.present && slot.skipLegacy && !slot.duplicateHazard;
 }
 
+bool R_ModernGLExecutor_LegacyPassCanSkipForView( renderPassCategory_t category, const viewDef_t *viewDef ) {
+	if ( !R_ModernGLExecutor_LegacyPassCanSkip( category ) ) {
+		return false;
+	}
+	if ( viewDef == NULL ) {
+		return true;
+	}
+	if ( R_ModernGLExecutor_ViewDefUsesLegacySidecar( viewDef ) ) {
+		return false;
+	}
+	return true;
+}
+
 void R_ModernGLExecutor_RecordLegacyPassSkipped( renderPassCategory_t category ) {
 	if ( !R_ModernGLExecutor_PassCategoryValid( category ) ) {
 		return;
@@ -9094,6 +9156,25 @@ bool RendererPassOwnership_RunSelfTest( void ) {
 			R_ModernGLExecutor_LegacyPassCanSkip( RENDER_PASS_GUI ) ? 1 : 0,
 			stats.passOwnerDuplicateHazards,
 			stats.passOwnerDroppedByModern );
+		R_ModernGLExecutor_ResetPassOwnershipTable( "pass-ownership-selftest-failed" );
+		return false;
+	}
+
+	viewDef_t mainView;
+	memset( &mainView, 0, sizeof( mainView ) );
+	mainView.renderView.viewID = 1;
+	viewDef_t subview = mainView;
+	subview.isSubview = true;
+	viewDef_t renderDemoView = mainView;
+	renderDemoView.renderView.viewID = -1;
+	if ( !R_ModernGLExecutor_LegacyPassCanSkipForView( RENDER_PASS_DEPTH, &mainView )
+		|| R_ModernGLExecutor_LegacyPassCanSkipForView( RENDER_PASS_DEPTH, &subview )
+		|| R_ModernGLExecutor_LegacyPassCanSkipForView( RENDER_PASS_DEPTH, &renderDemoView ) ) {
+		common->Printf(
+			"RendererPassOwnership self-test failed: view-aware skip mismatch (main=%d subview=%d demo=%d)\n",
+			R_ModernGLExecutor_LegacyPassCanSkipForView( RENDER_PASS_DEPTH, &mainView ) ? 1 : 0,
+			R_ModernGLExecutor_LegacyPassCanSkipForView( RENDER_PASS_DEPTH, &subview ) ? 1 : 0,
+			R_ModernGLExecutor_LegacyPassCanSkipForView( RENDER_PASS_DEPTH, &renderDemoView ) ? 1 : 0 );
 		R_ModernGLExecutor_ResetPassOwnershipTable( "pass-ownership-selftest-failed" );
 		return false;
 	}
