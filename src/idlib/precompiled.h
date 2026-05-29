@@ -145,6 +145,9 @@ public:
 	#define _LITTLE_ENDIAN
 	#define _CASE_SENSITIVE_FILESYSTEM
 	#define _USE_OPENAL
+	#ifndef Q4SDK
+		#define Q4SDK_MD5R
+	#endif
 
 	#define NEWLINE				"\n"
 
@@ -199,6 +202,9 @@ public:
 	#endif
 	#define _CASE_SENSITIVE_FILESYSTEM
 	#define _USE_OPENAL
+	#ifndef Q4SDK
+		#define Q4SDK_MD5R
+	#endif
 	#define ID_INLINE inline
 	#define NEWLINE				"\n"
 

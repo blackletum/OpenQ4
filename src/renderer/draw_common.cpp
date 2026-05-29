@@ -1718,7 +1718,7 @@ static bool RB_MotionVectorSurfaceEligible( const drawSurf_t *surf ) {
 	if ( shader->Coverage() != MC_OPAQUE || shader->GetSort() >= SS_POST_PROCESS ) {
 		return false;
 	}
-	if ( tri->numIndexes <= 0 || tri->primBatchMesh != NULL || tri->deformedSurface ) {
+	if ( tri->numIndexes <= 0 || R_TriHasPrimBatchMesh( tri ) || tri->deformedSurface ) {
 		return false;
 	}
 	if ( surf->space->weaponDepthHack || surf->space->modelDepthHack != 0.0f ) {
@@ -3179,7 +3179,7 @@ RB_PrepareStageTexturing
 */
 static bool RB_PrepareStageTexturing( const shaderStage_t *pStage, const drawSurf_t *surf, idDrawVert *ac,
 	bool fillingDepth ) {
-	if ( surf->geo->primBatchMesh != NULL ) {
+	if ( R_TriHasPrimBatchMesh( surf->geo ) ) {
 		if ( tr.backEndRenderer == BE_ARB2 ) {
 			RB_ARB2_PrepareStageTexturing( pStage, surf, fillingDepth );
 		}
@@ -3375,7 +3375,7 @@ RB_FinishStageTexturing
 ================
 */
 void RB_FinishStageTexturing( const shaderStage_t *pStage, const drawSurf_t *surf, idDrawVert *ac ) {
-	if ( surf->geo->primBatchMesh != NULL ) {
+	if ( R_TriHasPrimBatchMesh( surf->geo ) ) {
 		RB_ARB2_DisableStageTexturing( pStage, surf );
 		return;
 	}
@@ -3527,7 +3527,7 @@ static bool RB_SoftParticleStageEligible( const drawSurf_t *surf, const shaderSt
 	if ( ( surf->dsFlags & DSF_BSE_EFFECT ) == 0 ) {
 		return false;
 	}
-	if ( surf->geo->primBatchMesh != NULL || pStage->newStage != NULL ) {
+	if ( R_TriHasPrimBatchMesh( surf->geo ) || pStage->newStage != NULL ) {
 		return false;
 	}
 	if ( pStage->lighting != SL_AMBIENT || pStage->hasAlphaTest ) {
@@ -4565,7 +4565,7 @@ static void RB_T_CaptureRVSpecialDepth( const drawSurf_t *surf ) {
 		const shaderStage_t *diffuseStage = NULL;
 		glColor4fv( color );
 		if ( RB_RVSpecialPrepareSolidStageTexturing( surf, ac, &diffuseStage ) ) {
-			if ( tri->primBatchMesh != NULL ) {
+			if ( R_TriHasPrimBatchMesh( tri ) ) {
 				RB_ARB2_MD5R_DrawDepthElements( surf );
 			} else {
 				RB_DrawElementsWithCounters( tri );
@@ -5132,7 +5132,7 @@ void RB_T_FillDepthBuffer( const drawSurf_t *surf ) {
 		globalImages->whiteImage->Bind();
 
 		// draw it
-		if ( tri->primBatchMesh != NULL ) {
+		if ( R_TriHasPrimBatchMesh( tri ) ) {
 			RB_ARB2_MD5R_DrawDepthElements( surf );
 		} else {
 			RB_DrawElementsWithCounters( tri );
@@ -5578,7 +5578,7 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 			}
 
 			bool usingPackedMaterialStage = false;
-			if ( tri->primBatchMesh != NULL && newStage->md5rVertexProgram != 0 ) {
+			if ( R_TriHasPrimBatchMesh( tri ) && newStage->md5rVertexProgram != 0 ) {
 				usingPackedMaterialStage = RB_ARB2_PreparePackedMD5RProgramStageDraw( surf );
 			}
 
@@ -5986,7 +5986,7 @@ static void RB_T_Shadow( const drawSurf_t *surf ) {
 
 	// set the light position if we are using a vertex program to project the rear surfaces
 	if ( tr.backEndRendererHasVertexPrograms && r_useShadowVertexProgram.GetBool()
-		&& surf->space != backEnd.currentSpace && surf->geo->primBatchMesh == NULL ) {
+		&& surf->space != backEnd.currentSpace && !R_TriHasPrimBatchMesh( surf->geo ) ) {
 		idVec4 localLight;
 
 		R_GlobalPointToLocal( surf->space->modelMatrix, backEnd.vLight->globalLightOrigin, localLight.ToVec3() );
@@ -5996,7 +5996,7 @@ static void RB_T_Shadow( const drawSurf_t *surf ) {
 
 	tri = surf->geo;
 
-	if ( tri->primBatchMesh == NULL ) {
+	if ( !R_TriHasPrimBatchMesh( tri ) ) {
 		if ( !tri->shadowCache ) {
 			return;
 		}
@@ -6351,7 +6351,7 @@ local[0] = local[1] = local[2] = 0; local[3] = 0.5;
 		glTexGenfv( GL_S, GL_OBJECT_PLANE, local.ToFloatPtr() );
 	}
 
-	if ( surf->geo->primBatchMesh != NULL ) {
+	if ( R_TriHasPrimBatchMesh( surf->geo ) ) {
 		RB_ARB2_MD5R_DrawBasicFog( surf );
 	} else {
 		RB_T_RenderTriangleSurface( surf );

@@ -193,6 +193,15 @@ typedef struct srfTriangles_s {
 // RAVEN END
 } srfTriangles_t;
 
+static ID_INLINE bool R_TriHasPrimBatchMesh( const srfTriangles_t *tri ) {
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	return tri != NULL && tri->primBatchMesh != NULL;
+#else
+	(void)tri;
+	return false;
+#endif
+}
+
 typedef idList<srfTriangles_t *> idTriList;
 
 typedef struct modelSurface_s {

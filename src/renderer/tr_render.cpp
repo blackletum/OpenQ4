@@ -42,6 +42,15 @@ static ID_INLINE GLint R_SafeStencilClearValue() {
 	return 1 << ( stencilBits - 1 );
 }
 
+static ID_INLINE bool RB_HasPackedPrimBatchMesh( const srfTriangles_t *tri ) {
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	return tri != NULL && tri->primBatchMesh != NULL;
+#else
+	(void)tri;
+	return false;
+#endif
+}
+
 
 /*
 =================
@@ -128,7 +137,7 @@ RB_DrawElementsWithCounters
 ================
 */
 void RB_DrawElementsWithCounters( const srfTriangles_t *tri ) {
-	if ( tri->primBatchMesh != NULL && tr.backEndRenderer == BE_ARB2 ) {
+	if ( RB_HasPackedPrimBatchMesh( tri ) && tr.backEndRenderer == BE_ARB2 ) {
 		if ( RB_ARB2_DrawPreparedPackedMD5RStageBatches( tri ) ) {
 			return;
 		}
@@ -177,7 +186,7 @@ May not use all the indexes in the surface if caps are skipped
 void RB_DrawShadowElementsWithCounters( const drawSurf_t *surf, int numIndexes ) {
 	const srfTriangles_t *tri = surf->geo;
 
-	if ( tri->primBatchMesh != NULL ) {
+	if ( RB_HasPackedPrimBatchMesh( tri ) ) {
 		RB_ARB2_MD5R_DrawShadowElements( surf, numIndexes );
 		return;
 	}
@@ -841,7 +850,7 @@ void RB_CreateSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInterac
 	const float			*lightRegs = vLight->shaderRegisters;
 	drawInteraction_t	inter;
 
-	if ( r_skipInteractions.GetBool() || !surf->geo || ( !surf->geo->ambientCache && surf->geo->primBatchMesh == NULL ) ) {
+	if ( r_skipInteractions.GetBool() || !surf->geo || ( !surf->geo->ambientCache && !RB_HasPackedPrimBatchMesh( surf->geo ) ) ) {
 		return;
 	}
 

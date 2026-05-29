@@ -2027,7 +2027,7 @@ static void R_AddAmbientDrawsurfs( viewEntity_t *vEntity ) {
 			def->visibleCount = tr.viewCount;
 			const idScreenRect &surfaceScissor = R_ShouldUseExpandedDeformScissor( shader ) ? tr.viewDef->scissor : vEntity->scissorRect;
 
-			const bool packedSurface = ( tri->primBatchMesh != NULL );
+			const bool packedSurface = R_TriHasPrimBatchMesh( tri );
 			if ( !packedSurface && tri->verts == NULL ) {
 				continue;
 			}

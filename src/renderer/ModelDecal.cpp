@@ -385,6 +385,7 @@ void idRenderModelDecal::CreateDecal( const idRenderModel *model, const decalPro
 		// Packed MD5R surfaces keep their canonical draw data in the prim batch.
 		// Prefer the native sil-trace projector when the packed mesh state is
 		// usable; fall back to a transient classic view otherwise.
+		#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
 		if ( stri->primBatchMesh != NULL ) {
 			if ( R_MD5R_CreateDecalTriangles( this, *stri, localInfo ) ) {
 				continue;
@@ -398,6 +399,7 @@ void idRenderModelDecal::CreateDecal( const idRenderModel *model, const decalPro
 			}
 			stri = &tempTri;
 		}
+		#endif
 
 		// allocate memory for the cull bits
 		const int cullByteCount = ( stri->numVerts + 3 ) & ~3;
