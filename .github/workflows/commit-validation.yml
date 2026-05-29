@@ -1,7 +1,6 @@
 name: Commit Validation
 
 on:
-  push:
   pull_request:
   workflow_dispatch:
 
@@ -39,6 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m py_compile tools/validation/openq4_validate.py
+          bash -n tools/build/meson_setup.sh
           bash -n tools/validation/validate_push.sh
           bash -n tools/validation/validate_pr.sh
           python tools/tests/hdr_postprocess_math.py
@@ -88,14 +88,5 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          $profile = "pr"
-          if ("${{ github.event_name }}" -eq "push" -and "${{ github.ref }}" -ne "refs/heads/main") {
-              $profile = "push"
-          }
-
-          Write-Host "Selected validation profile: $profile"
-          if ($profile -eq "push") {
-              powershell -NoProfile -ExecutionPolicy Bypass -File tools/validation/validate_push.ps1 --fail-on-dirty
-          } else {
-              powershell -NoProfile -ExecutionPolicy Bypass -File tools/validation/validate_pr.ps1 --fail-on-dirty
-          }
+          Write-Host "Selected validation profile: pr"
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools/validation/validate_pr.ps1 --fail-on-dirty
