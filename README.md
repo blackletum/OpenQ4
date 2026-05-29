@@ -174,7 +174,7 @@ Full setup instructions live in [BUILDING.md](BUILDING.md). The short version:
 - Author repo-managed runtime overrides under `content/baseoq4/`; Meson stages them into `.install/baseoq4/`
 - On Windows, call `tools/build/meson_setup.ps1` instead of raw `meson` from an arbitrary shell
 - When staging `.install/`, use `meson install -C builddir --no-rebuild --skip-subprojects` or the wrapper equivalent
-- Use `tools/validation/validate_push.ps1` before pushing and `tools/validation/validate_pr.ps1` before opening or updating PRs; Bash wrappers are available for Linux/macOS
+- Use `tools/validation/validate_push.ps1` before pushing and `tools/validation/validate_pr.ps1` before opening or updating PRs; GitHub Actions runs the same gates on pushed commits and PRs
 - In the Codex app, use the checked-in `.codex/environments/openq4.toml` actions to run the same build and launch entries defined in `.vscode/tasks.json` and `.vscode/launch.json`
 
 ```powershell

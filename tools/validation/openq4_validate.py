@@ -295,6 +295,26 @@ def check_dirty_worktree(args: argparse.Namespace, root: Path, env: dict[str, st
         raise ValidationError("Working tree is dirty; commit, stash, or rerun without --fail-on-dirty.")
 
 
+def git_value(root: Path, env: dict[str, str], *git_args: str) -> str:
+    result = capture_command(["git", *git_args], cwd=root, env=env)
+    if result.returncode != 0:
+        return "unavailable"
+    return result.stdout.strip() or "unavailable"
+
+
+def describe_git_revision(root: Path, env: dict[str, str]) -> str:
+    short_sha = git_value(root, env, "rev-parse", "--short", "HEAD")
+    branch = git_value(root, env, "rev-parse", "--abbrev-ref", "HEAD")
+    status = capture_command(["git", "status", "--short"], cwd=root, env=env)
+    dirty_state = "dirty" if status.returncode == 0 and status.stdout.strip() else "clean"
+
+    github_sha = env.get("GITHUB_SHA", "").strip()
+    if github_sha:
+        return f"{short_sha} ({branch}, {dirty_state}, GitHub SHA {github_sha[:12]})"
+
+    return f"{short_sha} ({branch}, {dirty_state})"
+
+
 def apply_profile_defaults(args: argparse.Namespace, root: Path) -> None:
     defaults = PROFILE_DEFAULTS[args.profile]
     if args.build_dir is None:
@@ -348,6 +368,7 @@ def main(argv: list[str]) -> int:
     started = time.monotonic()
     print(f"OpenQ4 {args.profile} validation", flush=True)
     print(f"Source root: {root}", flush=True)
+    print(f"Git revision: {describe_git_revision(root, env)}", flush=True)
     print(f"Build dir: {build_dir}", flush=True)
     print(f"Build type: {args.buildtype}", flush=True)
     print(f"GameLibs repo: {env['OPENQ4_GAMELIBS_REPO']}", flush=True)

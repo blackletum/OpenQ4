@@ -114,6 +114,8 @@ Pass any of these with `-D<option>=<value>` on the `meson setup` command line:
 
 OpenQ4 includes two local validation profiles under `tools/validation/`. They share one Python runner and use the platform build wrappers so Windows validation still goes through `tools/build/meson_setup.ps1`.
 
+GitHub Actions runs the same validation entrypoints on every pushed commit, pull request, and manual dispatch through `.github/workflows/commit-validation.yml`. Branch pushes run the faster push profile; pull requests, manual dispatches, and direct pushes to `main` run the full PR profile.
+
 ### Push Validation
 
 Use this before pushing local work. It runs lightweight Python checks, reconfigures/reuses `builddir/` as a debug build, and compiles the engine plus game modules.

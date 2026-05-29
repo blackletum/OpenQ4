@@ -1,0 +1,101 @@
+name: Commit Validation
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: openq4-validation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  script-smoke:
+    name: Validation Script Smoke
+    runs-on: ubuntu-24.04
+    env:
+      OPENQ4_GAMELIBS_REPO: ${{ runner.temp }}/OpenQ4-GameLibs
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Fetch OpenQ4-GameLibs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/themuffinator/OpenQ4-GameLibs.git "${OPENQ4_GAMELIBS_REPO}"
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Check validation script syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile tools/validation/openq4_validate.py
+          bash -n tools/validation/validate_push.sh
+          bash -n tools/validation/validate_pr.sh
+          python tools/tests/hdr_postprocess_math.py
+
+      - name: Dry-run validation profiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/validation/validate_push.sh --dry-run
+          bash tools/validation/validate_pr.sh --dry-run
+
+  windows-x64:
+    name: Windows x64 Commit Validation
+    runs-on: windows-2025
+    needs: script-smoke
+    timeout-minutes: 60
+    env:
+      OPENQ4_GAMELIBS_REPO: ${{ runner.temp }}/OpenQ4-GameLibs
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fetch OpenQ4-GameLibs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          git clone --depth 1 https://github.com/themuffinator/OpenQ4-GameLibs.git "$env:OPENQ4_GAMELIBS_REPO"
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+          cache: pip
+
+      - name: Install Meson and Ninja
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m pip install --upgrade pip
+          python -m pip install meson ninja
+
+      - name: Run selected validation profile
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $profile = "pr"
+          if ("${{ github.event_name }}" -eq "push" -and "${{ github.ref }}" -ne "refs/heads/main") {
+              $profile = "push"
+          }
+
+          Write-Host "Selected validation profile: $profile"
+          if ($profile -eq "push") {
+              powershell -NoProfile -ExecutionPolicy Bypass -File tools/validation/validate_push.ps1 --fail-on-dirty
+          } else {
+              powershell -NoProfile -ExecutionPolicy Bypass -File tools/validation/validate_pr.ps1 --fail-on-dirty
+          }
