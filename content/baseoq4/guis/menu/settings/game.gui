@@ -596,9 +596,9 @@
 						rect	244,9,71,8
 						forecolor	1,0.745,0.137,0.8
 						matcolor	1,0.745,0.137,0.8
-						low	1
+						low	0.01
 						high	8
-						step	1
+						step	0.01
 						thumbShader	"gfx/guis/mainmenu/slider_bar"
 						cvar	sensitivity
 						visible	1
@@ -609,7 +609,7 @@
 						visible	1
 						cvar	sensitivity
 						textscale	0.24
-						maxchars	1
+						maxchars	4
 						forecolor	1,0.745,0.137,0.8
 						font	"fonts/lowpixel"
 				

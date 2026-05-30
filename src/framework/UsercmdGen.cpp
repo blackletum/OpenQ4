@@ -438,6 +438,7 @@ private:
 	static idCVar	m_strafeScale;
 	static idCVar	m_smooth;
 	static idCVar	m_strafeSmooth;
+	static idCVar	m_maxMouseDelta;
 	static idCVar	m_showMouseRate;
 };
 
@@ -456,6 +457,7 @@ idCVar idUsercmdGenLocal::m_yaw( "m_yaw", "0.022", CVAR_SYSTEM | CVAR_ARCHIVE | 
 idCVar idUsercmdGenLocal::m_strafeScale( "m_strafeScale", "6.25", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "mouse strafe movement scale" );
 idCVar idUsercmdGenLocal::m_smooth( "m_smooth", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER, "number of samples blended for mouse viewing", 1, 8, idCmdSystem::ArgCompletion_Integer<1,8> );
 idCVar idUsercmdGenLocal::m_strafeSmooth( "m_strafeSmooth", "4", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER, "number of samples blended for mouse moving", 1, 8, idCmdSystem::ArgCompletion_Integer<1,8> );
+idCVar idUsercmdGenLocal::m_maxMouseDelta( "m_maxMouseDelta", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER, "legacy maximum mouse delta after smoothing; 0 disables clamping for high-DPI mice", 0, 65535 );
 idCVar idUsercmdGenLocal::m_showMouseRate( "m_showMouseRate", "0", CVAR_SYSTEM | CVAR_BOOL, "shows mouse movement" );
 
 static idUsercmdGenLocal localUsercmdGen;
@@ -713,8 +715,23 @@ void idUsercmdGenLocal::MouseMove( void ) {
 
 	historyCounter++;
 
-	if ( idMath::Fabs( mx ) > 1000 || idMath::Fabs( my ) > 1000 ) {
-		Sys_DebugPrintf( "idUsercmdGenLocal::MouseMove: Ignoring ridiculous mouse delta.\n" );
+	const bool hasHighDelta = idMath::Fabs( mx ) > 1000.0f || idMath::Fabs( my ) > 1000.0f;
+	if ( hasHighDelta ) {
+		// Modern high-DPI mice can legitimately exceed the old retail cutoff.
+		static bool highDeltaWarningShown = false;
+		if ( !highDeltaWarningShown ) {
+			highDeltaWarningShown = true;
+			Sys_DebugPrintf( "idUsercmdGenLocal::MouseMove: Detected high mouse delta (expected with high-DPI mice). Set m_maxMouseDelta to restore legacy clamping for spurious spikes.\n" );
+		}
+	}
+
+	const int maxMouseDelta = m_maxMouseDelta.GetInteger();
+	if ( maxMouseDelta > 0 && ( idMath::Fabs( mx ) > maxMouseDelta || idMath::Fabs( my ) > maxMouseDelta ) ) {
+		static bool clampedDeltaWarningShown = false;
+		if ( !clampedDeltaWarningShown ) {
+			clampedDeltaWarningShown = true;
+			Sys_DebugPrintf( "idUsercmdGenLocal::MouseMove: Clamping mouse delta above m_maxMouseDelta.\n" );
+		}
 		mx = my = 0;
 	}
 
