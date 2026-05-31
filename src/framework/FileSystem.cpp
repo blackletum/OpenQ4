@@ -263,7 +263,7 @@ typedef struct {
 } officialPk4Info_t;
 
 static officialPk4Info_t officialPk4s[] = {
-	// core media baseline for Quake 4
+	// core retail media baseline for Quake 4
 	{ "pak001.pk4",				0xf2cbc998,	true,	true },
 	{ "pak002.pk4",				0x7f8d80d1,	true,	true },
 	{ "pak003.pk4",				0x1b57b207,	true,	true },
@@ -286,9 +286,11 @@ static officialPk4Info_t officialPk4s[] = {
 	{ "pak020.pk4",				0xce74cda5,	true,	true },
 	{ "pak021.pk4",				0x2ba6e70c,	true,	true },
 	{ "pak022.pk4",				0x4e390eec,	true,	true },
-	{ "pak023.pk4",				0x7c1fd3a5,	true,	true },
-	{ "pak024.pk4",				0x5546d551,	true,	true },
-	{ "pak025.pk4",				0xcaeec1fd,	true,	true },
+
+	// official patch/menu media, but not required by OpenQ4 startup
+	{ "pak023.pk4",				0x7c1fd3a5,	false,	true },
+	{ "pak024.pk4",				0x5546d551,	false,	true },
+	{ "pak025.pk4",				0xcaeec1fd,	false,	true },
 
 	// official but optional
 	{ "q4cmp_pak001.pk4",		0xd0813943,	false,	false },
@@ -298,6 +300,7 @@ static officialPk4Info_t officialPk4s[] = {
 	{ "zpak_english_03.pk4",	0x02eb6ad8,	false,	false },
 	{ "zpak_english_04.pk4",	0xd3fefaa1,	false,	false },
 	{ "zpak_english_05.pk4",	0x8596af60,	false,	false },
+	{ "zpak_spanish.pk4",		0xb706e2b8,	false,	false },
 
 	{ NULL,						0,			false,	false }
 };

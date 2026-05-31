@@ -1,16 +1,17 @@
 # Official Quake 4 PK4 Checksums (q4base)
 
-This table captures the PK4 checksums loaded from the installed game directory:
+This table captures the PK4 checksums loaded from official installed game directories:
 
-- Install path: `C:\Program Files (x86)\Steam\steamapps\common\Quake 4\q4base`
-- Source: `logs/openq4.log` startup lines (`Loaded pk4 ... with checksum ...`) under `fs_savepath\<gameDir>\`
+- Primary install path: `C:\Program Files (x86)\Steam\steamapps\common\Quake 4\q4base`
+- Additional source: issue #54 startup log from a Spanish physical/DVD install
+- Log source: `logs/openq4.log` startup lines (`Loaded pk4 ... with checksum ...`) under `fs_savepath\<gameDir>\`
 - Checksum format: engine PK4 checksum (`MD4` of zip-entry CRC list, as computed in `src/framework/FileSystem.cpp`)
 
 OpenQ4 ignores the retail game-binary PK4 archives (`game000.pk4` through `game300.pk4`, plus `gamex*.pk4` variants) because it ships its own game modules. They are not required and are not verified.
 
 ## Required official baseline
 
-These media PK4s are required by OpenQ4 startup validation (`fs_validateOfficialPaks 1`, default):
+These core retail media PK4s are required by OpenQ4 startup validation (`fs_validateOfficialPaks 1`, default):
 
 | PK4 | Checksum |
 |---|---|
@@ -36,14 +37,16 @@ These media PK4s are required by OpenQ4 startup validation (`fs_validateOfficial
 | `pak020.pk4` | `0xce74cda5` |
 | `pak021.pk4` | `0x2ba6e70c` |
 | `pak022.pk4` | `0x4e390eec` |
-| `pak023.pk4` | `0x7c1fd3a5` |
-| `pak024.pk4` | `0x5546d551` |
-| `pak025.pk4` | `0xcaeec1fd` |
 
-## Additional official PK4s detected
+## Optional official PK4s detected
+
+These PK4s are recognized when present, but missing files do not block startup. `pak023.pk4` through `pak025.pk4` contain official patch/menu splash media rather than core campaign or multiplayer assets required by OpenQ4.
 
 | PK4 | Checksum |
 |---|---|
+| `pak023.pk4` | `0x7c1fd3a5` |
+| `pak024.pk4` | `0x5546d551` |
+| `pak025.pk4` | `0xcaeec1fd` |
 | `q4cmp_pak001.pk4` | `0xd0813943` |
 | `zpak_english.pk4` | `0x5868f530` |
 | `zpak_english_01.pk4` | `0xd9f04b8b` |
@@ -51,3 +54,4 @@ These media PK4s are required by OpenQ4 startup validation (`fs_validateOfficial
 | `zpak_english_03.pk4` | `0x02eb6ad8` |
 | `zpak_english_04.pk4` | `0xd3fefaa1` |
 | `zpak_english_05.pk4` | `0x8596af60` |
+| `zpak_spanish.pk4` | `0xb706e2b8` |
