@@ -894,8 +894,14 @@ static bool RB_IsSceneRenderTexture( const idRenderTexture *renderTexture ) {
 	return renderTexture != NULL && renderTexture == rbSceneRenderTexture;
 }
 
+static bool RB_IsFeedbackSceneRenderTexture( const idRenderTexture *renderTexture ) {
+	return renderTexture != NULL && renderTexture == backEnd.feedbackRenderTexture;
+}
+
 static bool RB_AutomaticCurrentRenderCaptureAllowed( void ) {
-	return backEnd.renderTexture == NULL || RB_IsSceneRenderTexture( backEnd.renderTexture );
+	return backEnd.renderTexture == NULL
+		|| RB_IsSceneRenderTexture( backEnd.renderTexture )
+		|| RB_IsFeedbackSceneRenderTexture( backEnd.renderTexture );
 }
 
 static void RB_SetFramebufferSRGBEnabled( bool enabled ) {

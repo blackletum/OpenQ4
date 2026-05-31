@@ -1852,6 +1852,9 @@ void idRenderSystemLocal::DestroyRenderTexture( idRenderTexture* renderTexture )
 	if ( backEnd.renderTexture == renderTexture ) {
 		backEnd.renderTexture = NULL;
 	}
+	if ( backEnd.feedbackRenderTexture == renderTexture ) {
+		backEnd.feedbackRenderTexture = NULL;
+	}
 	if ( activeRenderTexture == renderTexture ) {
 		activeRenderTexture = NULL;
 	}

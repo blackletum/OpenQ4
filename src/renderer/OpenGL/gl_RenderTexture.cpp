@@ -26,6 +26,20 @@ static GLuint R_GetAttachmentHandle( idImage *image ) {
 	return ( image != nullptr ) ? image->GetDeviceHandle() : INVALID_RENDER_TEXTURE_HANDLE;
 }
 
+static void R_SetRenderTextureDrawBuffers( int colorImageCount ) {
+	if ( colorImageCount > 0 ) {
+		GLenum drawBuffers[5] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4 };
+		if ( colorImageCount > static_cast<int>( sizeof( drawBuffers ) / sizeof( drawBuffers[0] ) ) ) {
+			common->FatalError( "idRenderTexture: Too many render targets!" );
+		}
+		glDrawBuffers( colorImageCount, drawBuffers );
+		glReadBuffer( GL_COLOR_ATTACHMENT0 );
+	} else {
+		glDrawBuffer( GL_NONE );
+		glReadBuffer( GL_NONE );
+	}
+}
+
 static uint64_t R_GetAttachmentGeneration( idImage *image ) {
 	return ( image != nullptr ) ? image->GetStorageGeneration() : 0;
 }
@@ -198,17 +212,7 @@ void idRenderTexture::InitRenderTexture(void) {
 			}
 		}
 
-		if ( colorImages.Num() > 0 ) {
-			GLenum DrawBuffers[5] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4 };
-			if (colorImages.Num() >= 5) {
-				common->FatalError("InitRenderTextures: Too many render targets!");
-			}
-			glDrawBuffers(colorImages.Num(), &DrawBuffers[0]);
-		} else {
-			// Required for depth-only FBO completeness on strict drivers.
-			glDrawBuffer( GL_NONE );
-			glReadBuffer( GL_NONE );
-		}
+		R_SetRenderTextureDrawBuffers( colorImages.Num() );
 	}
 	else
 	{
@@ -256,6 +260,7 @@ idRenderTexture::MakeCurrent
 void idRenderTexture::MakeCurrent(void) {
 	EnsureDeviceHandle();
 	glBindFramebuffer(GL_FRAMEBUFFER, deviceHandle);
+	R_SetRenderTextureDrawBuffers( colorImages.Num() );
 }
 
 /*
@@ -269,22 +274,15 @@ void idRenderTexture::MakeCurrent( int cubeFace ) {
 
 	const GLenum faceTarget = R_CubeFaceTarget( cubeFace );
 	if ( colorImages.Num() > 0 && colorImages[0]->GetOpts().textureType == TT_CUBIC ) {
-		GLenum drawBuffers[5] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4 };
-		if ( colorImages.Num() >= 5 ) {
-			common->FatalError( "idRenderTexture::MakeCurrent: Too many cubemap color targets!" );
-		}
-
 		for ( int i = 0; i < colorImages.Num(); i++ ) {
 			if ( colorImages[i]->GetOpts().textureType != TT_CUBIC ) {
 				common->FatalError( "idRenderTexture::MakeCurrent: Mixed cubemap/non-cubemap color targets are unsupported!" );
 			}
 			glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, faceTarget, colorImages[i]->GetDeviceHandle(), 0 );
 		}
-		glDrawBuffers( colorImages.Num(), drawBuffers );
-		glReadBuffer( GL_COLOR_ATTACHMENT0 );
+		R_SetRenderTextureDrawBuffers( colorImages.Num() );
 	} else {
-		glDrawBuffer( GL_NONE );
-		glReadBuffer( GL_NONE );
+		R_SetRenderTextureDrawBuffers( 0 );
 	}
 
 	if ( depthImage != nullptr && depthImage->GetOpts().textureType == TT_CUBIC ) {

@@ -780,6 +780,22 @@ void rvBSE::UpdateFromOwner(renderEffect_s* parms, float time, bool init)
 	memcpy( mShaderParms, parms->shaderParms, sizeof( mShaderParms ) );
 	mTint.Set(parms->shaderParms[0], parms->shaderParms[1], parms->shaderParms[2], parms->shaderParms[3]);
 	mBrightness = parms->shaderParms[6];
+	const bool zeroRGB = mTint[0] == 0.0f && mTint[1] == 0.0f && mTint[2] == 0.0f;
+	if ( zeroRGB && mTint[3] == 0.0f && mBrightness == 0.0f ) {
+		mTint = vec4_one;
+		mBrightness = 1.0f;
+	} else if ( zeroRGB && ( mDeclEffect->mFlags & ETFLAG_USES_MATERIAL_COLOR ) == 0 ) {
+		// Legacy callers often patched alpha/brightness onto zeroed renderEffect parms.
+		// Ordinary BSE decls expect an unset owner tint to mean white, not black smoke.
+		mTint[0] = 1.0f;
+		mTint[1] = 1.0f;
+		mTint[2] = 1.0f;
+	}
+	mShaderParms[SHADERPARM_RED] = mTint[0];
+	mShaderParms[SHADERPARM_GREEN] = mTint[1];
+	mShaderParms[SHADERPARM_BLUE] = mTint[2];
+	mShaderParms[SHADERPARM_ALPHA] = mTint[3];
+	mShaderParms[SHADERPARM_BRIGHTNESS] = mBrightness;
 	mSpriteSize.x = parms->shaderParms[8];
 	mSpriteSize.y = parms->shaderParms[9];
 	mAttenuation = parms->attenuation;

@@ -588,10 +588,12 @@ static void RB_SetRenderTexture(const void* data) {
 
 	if (cmd->renderTexture) {
 		backEnd.renderTexture = cmd->renderTexture;
+		backEnd.feedbackRenderTexture = cmd->feedbackRenderTexture;
 		backEnd.renderTexture->MakeCurrent();
 	}
 	else {
 		backEnd.renderTexture = nullptr;
+		backEnd.feedbackRenderTexture = nullptr;
 		idRenderTexture::BindNull();
 	}
 }
@@ -649,6 +651,13 @@ static void RB_ClearRenderTarget(const void* data) {
 
 	cmd = (renderClearBufferCommand_t*)data;
 
+	if ( cmd->clearColor ) {
+		glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
+	}
+	if ( cmd->clearDepth ) {
+		glDepthMask( GL_TRUE );
+	}
+
 	if (cmd->clearDepth) {
 		glStencilMask(0xff);
 		// some cards may have 7 bit stencil buffers, so don't assume this
@@ -664,6 +673,7 @@ static void RB_ClearRenderTarget(const void* data) {
 	}
 
 	glClearDepth(1.0f);
+	GL_ClearStateDelta();
 
 }
 // jmarshall end

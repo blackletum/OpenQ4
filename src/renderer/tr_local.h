@@ -599,7 +599,7 @@ typedef struct {
 typedef struct {
 	renderCommand_t		commandId, * next;
 	idRenderTexture* renderTexture;
-	idRenderTexture* feedbackRenderTexture;
+	idRenderTexture* feedbackRenderTexture;	// optional scene target allowed to feed _currentRender
 } setRenderTargetCommand_t;
 
 typedef struct {
@@ -765,6 +765,7 @@ typedef struct {
 	backEndCounters_t	pc;
 
 	idRenderTexture		*renderTexture;
+	idRenderTexture		*feedbackRenderTexture;	// active scene target allowed to feed _currentRender
 
 	const viewEntity_t *currentSpace;		// for detecting when a matrix must change
 	idScreenRect		currentScissor;
