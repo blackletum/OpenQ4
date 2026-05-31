@@ -210,6 +210,12 @@ static bool TranslateControllerMenuKey( const sysEvent_t *sourceEvent, sysEvent_
 	focusDirection = 0;
 
 	switch ( sourceEvent->evValue ) {
+		case K_JOY1:
+			translatedEvent.evValue = K_PGUP;
+			return true;
+		case K_JOY2:
+			translatedEvent.evValue = K_PGDN;
+			return true;
 		case K_JOY3:
 			translatedEvent.evValue = K_ENTER;
 			return true;
@@ -262,7 +268,13 @@ static bool WindowConsumesDirectionalNavigation( idWindow *window, int key ) {
 	return false;
 }
 
-static bool NavigateFocus( idWindow *window, int direction ) {
+static bool WindowHasNativeEnterHandling( idWindow *window ) {
+	return dynamic_cast<idBindWindow *>( window ) != NULL ||
+		dynamic_cast<idEditWindow *>( window ) != NULL ||
+		dynamic_cast<idListWindow *>( window ) != NULL;
+}
+
+static bool NavigateFocus( idWindow *window, int direction, bool runHoverScripts = false ) {
 	if ( window == NULL || direction == 0 ) {
 		return false;
 	}
@@ -289,7 +301,13 @@ static bool NavigateFocus( idWindow *window, int direction ) {
 			}
 			if ( testWindow && !testWindow->HasNoEvents() && testWindow->IsVisible() ) {
 				if ( testWindow->GetFlags() & WIN_CANFOCUS ) {
-					window->SetFocus( testWindow );
+					idWindow *lastFocus = window->SetFocus( testWindow, false );
+					if ( runHoverScripts ) {
+						if ( lastFocus != NULL && lastFocus != testWindow ) {
+							lastFocus->MouseExit();
+						}
+						testWindow->MouseEnter();
+					}
 					foundFocus = true;
 					break;
 				} else if ( testWindow->GetChildCount() > 0 ) {
@@ -1323,8 +1341,9 @@ const char *idWindow::HandleEvent(const sysEvent_t *event, bool *updateVisuals) 
 					}
 				}
 			} else if (event->evValue == K_TAB && event->evValue2) {
-				if (GetFocusedChild()) {
-					const char *childRet = GetFocusedChild()->HandleEvent(event, updateVisuals);
+				idWindow *focusedChild = GetFocusedChild();
+				if (focusedChild && focusedChild != this) {
+					const char *childRet = focusedChild->HandleEvent(event, updateVisuals);
 					if (childRet && *childRet) {
 						return childRet;
 					}
@@ -1332,21 +1351,23 @@ const char *idWindow::HandleEvent(const sysEvent_t *event, bool *updateVisuals) 
 				int direction = idKeyInput::IsDown( K_SHIFT ) ? -1 : 1;
 				NavigateFocus( this, direction );
 			} else if (event->evValue == K_ESCAPE && event->evValue2) {
-				if (GetFocusedChild()) {
-					const char *childRet = GetFocusedChild()->HandleEvent(event, updateVisuals);
+				idWindow *focusedChild = GetFocusedChild();
+				if (focusedChild && focusedChild != this) {
+					const char *childRet = focusedChild->HandleEvent(event, updateVisuals);
 					if (childRet && *childRet) {
 						return childRet;
 					}
 				}
 				RunScript( ON_ESC );
-			} else if (event->evValue == K_ENTER ) {
-				if (GetFocusedChild()) {
-					const char *childRet = GetFocusedChild()->HandleEvent(event, updateVisuals);
+			} else if (event->evValue == K_ENTER || event->evValue == K_KP_ENTER ) {
+				idWindow *focusedChild = GetFocusedChild();
+				if (focusedChild && focusedChild != this) {
+					const char *childRet = focusedChild->HandleEvent(event, updateVisuals);
 					if (childRet && *childRet) {
 						return childRet;
 					}
 				}
-				if ( flags & WIN_WANTENTER ) {
+				if ( ( flags & WIN_WANTENTER ) || ( scripts[ ON_ACTION ] != NULL && !WindowHasNativeEnterHandling( this ) ) ) {
 					if ( event->evValue2 ) {
 						RunScript( ON_ACTION );
 					} else {
@@ -1355,8 +1376,9 @@ const char *idWindow::HandleEvent(const sysEvent_t *event, bool *updateVisuals) 
 				}
 			} else if (controllerFocusDirection != 0 && event->evValue2) {
 				idWindow *focusedChild = GetFocusedChild();
+				const bool selfConsumesDirection = ( focusedChild == this ) && WindowConsumesDirectionalNavigation( this, event->evValue );
 				const bool childConsumesDirection = WindowConsumesDirectionalNavigation( focusedChild, event->evValue );
-				if (focusedChild) {
+				if (focusedChild && focusedChild != this) {
 					const char *childRet = focusedChild->HandleEvent(event, updateVisuals);
 					if (childRet && *childRet) {
 						return childRet;
@@ -1365,10 +1387,13 @@ const char *idWindow::HandleEvent(const sysEvent_t *event, bool *updateVisuals) 
 						return "";
 					}
 				}
-				NavigateFocus( this, controllerFocusDirection );
+				if ( !selfConsumesDirection ) {
+					NavigateFocus( this, controllerFocusDirection, true );
+				}
 			} else {
-				if (GetFocusedChild()) {
-					const char *childRet = GetFocusedChild()->HandleEvent(event, updateVisuals);
+				idWindow *focusedChild = GetFocusedChild();
+				if (focusedChild && focusedChild != this) {
+					const char *childRet = focusedChild->HandleEvent(event, updateVisuals);
 					if (childRet && *childRet) {
 						return childRet;
 					}
@@ -1385,8 +1410,9 @@ const char *idWindow::HandleEvent(const sysEvent_t *event, bool *updateVisuals) 
 			}
 		} else if (event->evType == SE_NONE) {
 		} else if (event->evType == SE_CHAR) {
-			if (GetFocusedChild()) {
-				const char *childRet = GetFocusedChild()->HandleEvent(event, updateVisuals);
+			idWindow *focusedChild = GetFocusedChild();
+			if (focusedChild && focusedChild != this) {
+				const char *childRet = focusedChild->HandleEvent(event, updateVisuals);
 				if (childRet && *childRet) {
 					return childRet;
 				}

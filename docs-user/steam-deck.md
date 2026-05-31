@@ -26,7 +26,15 @@ Default gameplay bindings shipped by the stock openQ4 config:
 Menu behavior:
 
 - `JOY7` and `JOY8` both open the in-game menu.
-- D-pad and rear paddles are left unbound by default for menu navigation and user customization.
+- `JOY3` selects the focused menu item, while `JOY4`, `JOY7`, and `JOY8` back out of menus.
+- The D-pad is reserved for menu focus movement whenever a menu is open, even though those same buttons also have gameplay bindings.
+- The left stick can also move menu focus, and holding the D-pad, left stick, or shoulder buttons repeats navigation/scrolling for longer lists.
+- Rear paddles are left unbound by default for user customization.
+
+Haptics:
+
+- Controller rumble is driven from Quake 4 sound shake/rumble metadata during gameplay.
+- Use `in_joystickRumble 0` to disable motor output, or tune strength with `in_joystickRumbleScale`.
 
 ## Asset Discovery
 

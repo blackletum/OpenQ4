@@ -135,6 +135,8 @@ static bool s_sdlDisplaySummaryLogged = false;
 static idCVar in_joystick("in_joystick", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "enable joystick/gamepad input");
 static idCVar in_joystickDeadZone("in_joystickDeadZone", "0.18", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "joystick axis dead zone", 0.0f, 0.95f);
 static idCVar in_joystickTriggerThreshold("in_joystickTriggerThreshold", "0.35", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "trigger button press threshold", 0.0f, 1.0f);
+static idCVar in_joystickRumble("in_joystickRumble", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "enable controller rumble/haptic feedback");
+static idCVar in_joystickRumbleScale("in_joystickRumbleScale", "1.0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "controller rumble strength scale", 0.0f, 2.0f);
 static idCVar r_screen("r_screen", "-1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "SDL3 display index to target (-1 = auto/current display)");
 static idCVar r_multiScreen("r_multiScreen", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "multi-screen mode (0 = single display, 1 = span all displays)", 0, 1);
 
@@ -218,6 +220,11 @@ static int s_joystickAxisState[MAX_JOYSTICK_AXIS] = { 0 };
 static bool s_gamepadButtonsDown[SDL_GAMEPAD_BUTTON_COUNT] = { false };
 static bool s_gamepadLeftTriggerDown = false;
 static bool s_gamepadRightTriggerDown = false;
+static bool s_joystickRumbleActive = false;
+static Uint16 s_joystickRumbleLow = 0;
+static Uint16 s_joystickRumbleHigh = 0;
+static int s_joystickRumbleUntilTime = 0;
+static int s_joystickRumbleLastUpdateTime = 0;
 static const int SDL3_MAX_JOYSTICK_BUTTONS = 48;
 static bool s_joystickButtonsDown[SDL3_MAX_JOYSTICK_BUTTONS] = { false };
 static Uint8 s_joystickHatState = SDL_HAT_CENTERED;
@@ -682,12 +689,32 @@ static int SDL3_ClampJoystickValue(int value) {
 	return value;
 }
 
+static Uint16 SDL3_ClampRumbleValue(float value) {
+	if (value <= 0.0f) {
+		return 0;
+	}
+	if (value >= 1.0f) {
+		return 0xffff;
+	}
+	return static_cast<Uint16>(value * 65535.0f + 0.5f);
+}
+
 static float SDL3_ClampUnit(float value) {
 	if (value < 0.0f) {
 		return 0.0f;
 	}
 	if (value > 1.0f) {
 		return 1.0f;
+	}
+	return value;
+}
+
+static float SDL3_ClampRumbleScale(float value) {
+	if (value < 0.0f) {
+		return 0.0f;
+	}
+	if (value > 2.0f) {
+		return 2.0f;
 	}
 	return value;
 }
@@ -784,6 +811,23 @@ static int SDL3_MapGamepadButton(Uint8 button) {
 	}
 
 	return 0;
+}
+
+static void SDL3_ResetRumbleState(void) {
+	s_joystickRumbleActive = false;
+	s_joystickRumbleLow = 0;
+	s_joystickRumbleHigh = 0;
+	s_joystickRumbleUntilTime = 0;
+	s_joystickRumbleLastUpdateTime = 0;
+}
+
+static void SDL3_StopControllerRumble(void) {
+	if (s_sdlGamepad) {
+		(void)SDL_RumbleGamepad(s_sdlGamepad, 0, 0, 0);
+	} else if (s_sdlJoystick) {
+		(void)SDL_RumbleJoystick(s_sdlJoystick, 0, 0, 0);
+	}
+	SDL3_ResetRumbleState();
 }
 
 static void SDL3_ClearJoystickStateUnlocked(void) {
@@ -959,6 +1003,7 @@ static void SDL3_CloseGamepad(int eventTime) {
 		return;
 	}
 
+	SDL3_StopControllerRumble();
 	SDL3_ReleaseGamepadState(eventTime);
 	SDL_CloseGamepad(s_sdlGamepad);
 	s_sdlGamepad = NULL;
@@ -971,6 +1016,7 @@ static void SDL3_CloseJoystick(int eventTime) {
 		return;
 	}
 
+	SDL3_StopControllerRumble();
 	SDL3_ReleaseJoystickState(eventTime);
 	SDL_CloseJoystick(s_sdlJoystick);
 	s_sdlJoystick = NULL;
@@ -2326,6 +2372,13 @@ bool Sys_SDL_PumpEvents(void) {
 		}
 		in_joystick.ClearModified();
 	}
+	if (in_joystickRumble.IsModified() || in_joystickRumbleScale.IsModified()) {
+		if (!in_joystickRumble.GetBool() || in_joystickRumbleScale.GetFloat() <= 0.0f) {
+			SDL3_StopControllerRumble();
+		}
+		in_joystickRumble.ClearModified();
+		in_joystickRumbleScale.ClearModified();
+	}
 
 	bool sawResizeEvent = false;
 	SDL_Event event;
@@ -2980,6 +3033,69 @@ int Sys_ReturnJoystickInputEvent(const int n, int &axis, int &value) {
 }
 
 void Sys_EndJoystickInputEvents(void) {
+}
+
+bool Sys_GetJoystickAxisState(int axis, int &value) {
+	if (!in_joystick.GetBool() || axis < 0 || axis >= MAX_JOYSTICK_AXIS) {
+		value = 0;
+		return false;
+	}
+
+	Sys_EnterCriticalSection(CRITICAL_SECTION_ONE);
+	value = s_joystickAxisState[axis];
+	Sys_LeaveCriticalSection(CRITICAL_SECTION_ONE);
+
+	return true;
+}
+
+bool Sys_SetJoystickRumble(float lowFrequency, float highFrequency, int durationMsec) {
+	if (!in_joystick.GetBool() || !in_joystickRumble.GetBool() || durationMsec <= 0) {
+		if (s_joystickRumbleActive) {
+			SDL3_StopControllerRumble();
+		}
+		return false;
+	}
+
+	if (!s_sdlGamepad && !s_sdlJoystick) {
+		SDL3_ResetRumbleState();
+		return false;
+	}
+
+	const float scale = SDL3_ClampRumbleScale(in_joystickRumbleScale.GetFloat());
+	const Uint16 low = SDL3_ClampRumbleValue(SDL3_ClampUnit(lowFrequency) * scale);
+	const Uint16 high = SDL3_ClampRumbleValue(SDL3_ClampUnit(highFrequency) * scale);
+	if (low == 0 && high == 0) {
+		if (s_joystickRumbleActive) {
+			SDL3_StopControllerRumble();
+		}
+		return true;
+	}
+
+	const int now = Sys_Milliseconds();
+	const int untilTime = now + durationMsec;
+	if (s_joystickRumbleActive && s_joystickRumbleLow == low && s_joystickRumbleHigh == high &&
+			now < s_joystickRumbleLastUpdateTime + 40 && untilTime <= s_joystickRumbleUntilTime + 40) {
+		return true;
+	}
+
+	bool result = false;
+	if (s_sdlGamepad) {
+		result = SDL_RumbleGamepad(s_sdlGamepad, low, high, durationMsec);
+	} else if (s_sdlJoystick) {
+		result = SDL_RumbleJoystick(s_sdlJoystick, low, high, durationMsec);
+	}
+
+	if (!result) {
+		SDL3_ResetRumbleState();
+		return false;
+	}
+
+	s_joystickRumbleActive = true;
+	s_joystickRumbleLow = low;
+	s_joystickRumbleHigh = high;
+	s_joystickRumbleUntilTime = untilTime;
+	s_joystickRumbleLastUpdateTime = now;
+	return true;
 }
 
 void GLimp_SetGamma(unsigned short red[256], unsigned short green[256], unsigned short blue[256]) {

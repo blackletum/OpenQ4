@@ -147,3 +147,13 @@ int Sys_ReturnJoystickInputEvent( const int n, int &axis, int &value ) {
 
 void Sys_EndJoystickInputEvents( void ) {
 }
+
+bool Sys_GetJoystickAxisState( int axis, int &value ) {
+	axis = 0;
+	value = 0;
+	return false;
+}
+
+bool Sys_SetJoystickRumble( float lowFrequency, float highFrequency, int durationMsec ) {
+	return false;
+}

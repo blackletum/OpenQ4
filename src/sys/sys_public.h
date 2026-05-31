@@ -401,6 +401,8 @@ void			Sys_EndMouseInputEvents( void );
 int				Sys_PollJoystickInputEvents( void );
 int				Sys_ReturnJoystickInputEvent( const int n, int &axis, int &value );
 void			Sys_EndJoystickInputEvents( void );
+bool			Sys_GetJoystickAxisState( int axis, int &value );
+bool			Sys_SetJoystickRumble( float lowFrequency, float highFrequency, int durationMsec );
 
 // when the console is down, or the game is about to perform a lengthy
 // operation like map loading, the system can release the mouse cursor

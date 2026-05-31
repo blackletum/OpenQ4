@@ -44,6 +44,122 @@ idCVar gui_set_sys_scroll( "gui_set_sys_scroll", "0", CVAR_GUI | CVAR_INTEGER, "
 idCVar gui_set_audio_scroll( "gui_set_audio_scroll", "0", CVAR_GUI | CVAR_INTEGER, "audio menu scroll step", 0.0f, 0.0f );
 idCVar gui_set_game_scroll( "gui_set_game_scroll", "0", CVAR_GUI | CVAR_INTEGER, "game menu scroll step", 0, 10 );
 
+static const int MENU_CONTROLLER_AXIS_THRESHOLD = 50;
+static const int MENU_CONTROLLER_REPEAT_INITIAL_MSEC = 320;
+static const int MENU_CONTROLLER_REPEAT_MSEC = 110;
+
+typedef struct menuControllerRepeat_s {
+	int		key;
+	bool	fromAnalog;
+	int		nextTime;
+} menuControllerRepeat_t;
+
+static menuControllerRepeat_t menuControllerRepeat = { 0, false, 0 };
+
+static int MenuControllerAbs( int value ) {
+	return value < 0 ? -value : value;
+}
+
+static void ClearMenuControllerRepeatState( void ) {
+	menuControllerRepeat.key = 0;
+	menuControllerRepeat.fromAnalog = false;
+	menuControllerRepeat.nextTime = 0;
+}
+
+static int GetHeldControllerMenuKey( void ) {
+	if ( idKeyInput::IsDown( K_JOY9 ) ) {
+		return K_JOY9;
+	}
+	if ( idKeyInput::IsDown( K_JOY10 ) ) {
+		return K_JOY10;
+	}
+	if ( idKeyInput::IsDown( K_JOY12 ) ) {
+		return K_JOY12;
+	}
+	if ( idKeyInput::IsDown( K_JOY11 ) ) {
+		return K_JOY11;
+	}
+	if ( idKeyInput::IsDown( K_JOY1 ) ) {
+		return K_JOY1;
+	}
+	if ( idKeyInput::IsDown( K_JOY2 ) ) {
+		return K_JOY2;
+	}
+	return 0;
+}
+
+static int GetAnalogControllerMenuKey( void ) {
+	int moveX = 0;
+	int moveY = 0;
+	const bool haveX = Sys_GetJoystickAxisState( AXIS_YAW, moveX );
+	const bool haveY = Sys_GetJoystickAxisState( AXIS_PITCH, moveY );
+	if ( !haveX && !haveY ) {
+		return 0;
+	}
+
+	const int absX = MenuControllerAbs( moveX );
+	const int absY = MenuControllerAbs( moveY );
+	if ( absX < MENU_CONTROLLER_AXIS_THRESHOLD && absY < MENU_CONTROLLER_AXIS_THRESHOLD ) {
+		return 0;
+	}
+
+	if ( absX > absY ) {
+		return moveX > 0 ? K_JOY11 : K_JOY12;
+	}
+	return moveY > 0 ? K_JOY9 : K_JOY10;
+}
+
+static int GetControllerMenuNavigationKey( bool &fromAnalog ) {
+	fromAnalog = false;
+
+	const int heldKey = GetHeldControllerMenuKey();
+	if ( heldKey != 0 ) {
+		return heldKey;
+	}
+
+	const int analogKey = GetAnalogControllerMenuKey();
+	if ( analogKey != 0 ) {
+		fromAnalog = true;
+		return analogKey;
+	}
+
+	return 0;
+}
+
+static void PumpControllerMenuNavigation( idSessionLocal *session ) {
+	if ( session == NULL ) {
+		ClearMenuControllerRepeatState();
+		return;
+	}
+
+	bool fromAnalog = false;
+	const int key = GetControllerMenuNavigationKey( fromAnalog );
+	if ( key == 0 ) {
+		ClearMenuControllerRepeatState();
+		return;
+	}
+
+	const int now = common->GetPresentationTime();
+	if ( menuControllerRepeat.key != key || menuControllerRepeat.fromAnalog != fromAnalog ) {
+		menuControllerRepeat.key = key;
+		menuControllerRepeat.fromAnalog = fromAnalog;
+		menuControllerRepeat.nextTime = now + ( fromAnalog ? 0 : MENU_CONTROLLER_REPEAT_INITIAL_MSEC );
+	}
+
+	if ( now < menuControllerRepeat.nextTime ) {
+		return;
+	}
+
+	sysEvent_t event;
+	memset( &event, 0, sizeof( event ) );
+	event.evType = SE_KEY;
+	event.evValue = key;
+	event.evValue2 = 1;
+
+	session->MenuEvent( &event );
+	menuControllerRepeat.nextTime = now + MENU_CONTROLLER_REPEAT_MSEC;
+}
+
 /*
 =================
 BuildMainMenuAudioDeviceChoices
@@ -2026,7 +2142,22 @@ void idSessionLocal::GuiFrameEvents() {
 	} else if ( guiActive ) {
 		gui = guiActive;
 	} else {
+		ClearMenuControllerRepeatState();
 		return;
+	}
+
+	if ( guiActive ) {
+		PumpControllerMenuNavigation( this );
+		if ( guiTest ) {
+			gui = guiTest;
+		} else if ( guiActive ) {
+			gui = guiActive;
+		} else {
+			ClearMenuControllerRepeatState();
+			return;
+		}
+	} else {
+		ClearMenuControllerRepeatState();
 	}
 
 	memset( &ev, 0, sizeof( ev ) );

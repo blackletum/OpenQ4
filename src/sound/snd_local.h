@@ -293,6 +293,7 @@ public:
 
 	// query data from all emitters in the world
 	virtual float			CurrentShakeAmplitude();
+	float					CurrentRumbleAmplitude() const { return rumbleAmp; }
 
 	// where is the camera
 	virtual void			PlaceListener( const idVec3& origin, const idMat3& axis, const int listenerId );
@@ -358,6 +359,7 @@ public:
 
 	float				currentCushionDB;	// channels at or below this level will be faded to 0
 	float				shakeAmp;			// last calculated shake amplitude
+	float				rumbleAmp;			// last calculated controller rumble amplitude
 
 	listener_t			listener;
 	idList<idSoundEmitterLocal*>	emitters;

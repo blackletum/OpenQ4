@@ -68,14 +68,14 @@ const char *idBindWindow::HandleEvent(const sysEvent_t *event, bool *updateVisua
 
 	if (waitingOnKey) {
 		waitingOnKey = false;
-		if (key == K_ESCAPE) {
+		if (key == K_ESCAPE || key == K_JOY7 || key == K_JOY8) {
 			idStr::snPrintf( ret, sizeof( ret ), "clearbind \"%s\"", bindName.GetName());
 		} else {
 			idStr::snPrintf( ret, sizeof( ret ), "bind %i \"%s\"", key, bindName.GetName());
 		}
 		return ret;
 	} else {
-		if (key == K_MOUSE1) {
+		if (key == K_MOUSE1 || key == K_ENTER || key == K_KP_ENTER) {
 			waitingOnKey = true;
 			gui->SetBindHandler(this);
 			return "";

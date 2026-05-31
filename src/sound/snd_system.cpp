@@ -39,6 +39,7 @@ idCVar s_useEAXReverb( "s_useEAXReverb", "1", CVAR_ARCHIVE | CVAR_BOOL, "use EAX
 idCVar s_openALEfxDebugMode( "s_openALEfxDebugMode", "0", CVAR_ARCHIVE | CVAR_INTEGER, "OpenAL wet/dry debug mode (0=normal, 1=wet-only, 2=dry-only)" );
 idCVar s_numberOfSpeakers( "s_numberOfSpeakers", "6", CVAR_ARCHIVE | CVAR_INTEGER, "number of speakers (2 or 6)" );
 idCVar s_warnOnMissingSamples( "s_warnOnMissingSamples", "0", CVAR_ARCHIVE | CVAR_BOOL, "warn when falling back to default sound samples" );
+idCVar s_controllerRumble( "s_controllerRumble", "1", CVAR_ARCHIVE | CVAR_BOOL, "drive controller rumble from sound shakes" );
 
 #ifdef ID_RETAIL
 	idCVar s_useCompression( "s_useCompression", "1", CVAR_BOOL, "Use compressed sound files (mp3/xma)" );
@@ -54,6 +55,27 @@ idCVar preLoad_Samples( "preLoad_Samples", "1", CVAR_SYSTEM | CVAR_BOOL, "preloa
 
 idSoundSystemLocal soundSystemLocal;
 idSoundSystem* soundSystem = &soundSystemLocal;
+
+static const int SOUND_RUMBLE_DURATION_MSEC = 120;
+static const float SOUND_RUMBLE_THRESHOLD = 0.01f;
+
+static void Sound_UpdateControllerRumble( float amplitude )
+{
+	if( !s_controllerRumble.GetBool() )
+	{
+		Sys_SetJoystickRumble( 0.0f, 0.0f, 0 );
+		return;
+	}
+
+	const float strength = idMath::ClampFloat( 0.0f, 1.0f, amplitude );
+	if( strength <= SOUND_RUMBLE_THRESHOLD )
+	{
+		Sys_SetJoystickRumble( 0.0f, 0.0f, 0 );
+		return;
+	}
+
+	Sys_SetJoystickRumble( strength, strength * 0.75f, SOUND_RUMBLE_DURATION_MSEC );
+}
 
 /*
 ================================================================================================
@@ -343,6 +365,7 @@ void idSoundSystemLocal::Render()
 
 	if( s_noSound.GetBool() )
 	{
+		Sound_UpdateControllerRumble( 0.0f );
 		return;
 	}
 
@@ -358,6 +381,10 @@ void idSoundSystemLocal::Render()
 	{
 		currentSoundWorld->Update();
 	}
+
+	const float controllerRumble = ( currentSoundWorld != NULL && session != NULL && currentSoundWorld == session->sw ) ?
+		currentSoundWorld->CurrentRumbleAmplitude() : 0.0f;
+	Sound_UpdateControllerRumble( controllerRumble );
 
 	hardware.Update();
 

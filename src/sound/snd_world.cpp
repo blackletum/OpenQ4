@@ -66,6 +66,7 @@ idSoundWorldLocal::idSoundWorldLocal()
 	listener.area = 0;
 
 	shakeAmp = 0.0f;
+	rumbleAmp = 0.0f;
 	currentCushionDB = DB_SILENCE;
 
 	localSound = AllocSoundEmitter();
@@ -463,6 +464,7 @@ void idSoundWorldLocal::Update()
 	// Update Hardware
 	// ------------------
 	shakeAmp = 0.0f;
+	rumbleAmp = 0.0f;
 
 	idStr showVoiceTable;
 	bool showVoices = s_showVoices.GetBool();
@@ -504,7 +506,19 @@ void idSoundWorldLocal::Update()
 			continue;
 		}
 
-		shakeAmp += chan->parms.shakes * chan->hardwareVoice->GetGain() * chan->currentAmplitude;
+		const float channelAmplitude = chan->hardwareVoice->GetGain() * chan->currentAmplitude;
+		shakeAmp += chan->parms.shakes * channelAmplitude;
+
+		float channelRumble = idMath::Fabs( chan->parms.shakes ) * channelAmplitude;
+		if( ( chan->parms.soundShaderFlags & SSF_CAUSE_RUMBLE ) != 0 )
+		{
+			const float flaggedRumble = 0.35f * channelAmplitude;
+			if( channelRumble < flaggedRumble )
+			{
+				channelRumble = flaggedRumble;
+			}
+		}
+		rumbleAmp += channelRumble;
 	}
 	if( showVoices )
 	{
@@ -608,6 +622,8 @@ idSoundWorldLocal::ClearAllSoundEmitters
 */
 void idSoundWorldLocal::ClearAllSoundEmitters()
 {
+	shakeAmp = 0.0f;
+	rumbleAmp = 0.0f;
 	for( int i = 0; i < emitters.Num(); i++ )
 	{
 		emitters[i]->Reset();
@@ -626,6 +642,8 @@ This is called from the main thread.
 */
 void idSoundWorldLocal::StopAllSounds()
 {
+	shakeAmp = 0.0f;
+	rumbleAmp = 0.0f;
 	for( int i = 0; i < emitters.Num(); i++ )
 	{
 		emitters[i]->Reset();
@@ -1219,6 +1237,7 @@ void idSoundWorldLocal::ReadFromSaveGame( idFile* savefile )
 	savefile->ReadInt( listener.area );
 
 	savefile->ReadFloat( shakeAmp );
+	rumbleAmp = 0.0f;
 
 	int numEmitters = 0;
 	savefile->ReadInt( numEmitters );
