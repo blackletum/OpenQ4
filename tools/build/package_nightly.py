@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import sys
@@ -182,6 +183,53 @@ def write_version_manifest(
             f"arch={arch}",
         ],
     )
+
+
+def parse_stable_base_version(version: str) -> tuple[int, int, int] | None:
+    parts = version.split(".")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        return None
+    return tuple(int(part) for part in parts)
+
+
+def is_stable_base_version(version: str) -> bool:
+    return parse_stable_base_version(version) is not None
+
+
+def validate_packaged_mod_manifest(package_game_dir: Path, version: str) -> None:
+    release_version = parse_stable_base_version(version)
+    if release_version is None:
+        return
+
+    manifest_path = package_game_dir / "mod.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"packaged mod manifest is unreadable: {manifest_path}") from exc
+
+    mismatches = []
+    if manifest.get("version") != version:
+        mismatches.append(f"version={manifest.get('version')!r}")
+
+    required_version_text = manifest.get("requiredOpenQ4Version")
+    required_version = (
+        parse_stable_base_version(required_version_text)
+        if isinstance(required_version_text, str)
+        else None
+    )
+    if required_version is None:
+        mismatches.append(f"requiredOpenQ4Version={required_version_text!r}")
+    elif required_version > release_version:
+        mismatches.append(
+            f"requiredOpenQ4Version={required_version_text!r} "
+            f"(requires newer than package {version})"
+        )
+
+    if mismatches:
+        joined = ", ".join(mismatches)
+        raise RuntimeError(
+            f"packaged {GAME_DIR_NAME}/mod.json does not satisfy release {version}: {joined}"
+        )
 
 
 def write_macos_localized_info_strings(app_contents: Path, version: str) -> None:
@@ -592,6 +640,11 @@ def main(argv: list[str]) -> int:
         package_game_dir,
         args.allow_missing_binaries,
     )
+    try:
+        validate_packaged_mod_manifest(package_game_dir, args.version)
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     game_pk4_path = package_game_dir / "pak0.pk4"
 

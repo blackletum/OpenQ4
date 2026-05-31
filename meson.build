@@ -106,6 +106,7 @@ if version_iteration != ''
 endif
 version_metadata_result = run_command(version_metadata_command, check: true)
 
+openq4_version_base = meson.project_version()
 openq4_version_short = meson.project_version()
 openq4_version_full = meson.project_version()
 openq4_version_tag = meson.project_version()
@@ -129,7 +130,9 @@ foreach version_line : version_metadata_result.stdout().strip().split('\n')
 
   version_key = version_pair[0]
   version_value = version_pair[1]
-  if version_key == 'version_short'
+  if version_key == 'base_version'
+    openq4_version_base = version_value
+  elif version_key == 'version_short'
     openq4_version_short = version_value
   elif version_key == 'version'
     openq4_version_full = version_value
@@ -729,6 +732,7 @@ summary(
     'Host cpu family': host_cpu_family,
     'Version track': version_track,
     'Version iteration': version_iteration_summary,
+    'Version base': openq4_version_base,
     'Version short': openq4_version_short,
     'Version full': openq4_version_full,
     'Version tag': openq4_version_tag,

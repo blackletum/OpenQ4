@@ -64,8 +64,16 @@ if build_games and build_game_mp
   endif
 endif
 
+baseoq4_manifest_conf = configuration_data()
+baseoq4_manifest_conf.set('OPENQ4_VERSION_BASE', openq4_version_base)
+baseoq4_manifest = configure_file(
+  input: 'mod.json.in',
+  output: 'mod.json',
+  configuration: baseoq4_manifest_conf,
+)
+
 install_data(
-  'mod.json',
+  baseoq4_manifest,
   'default.cfg',
   'openq4_defaults.cfg',
   'openq4_profile_steamdeck.cfg',

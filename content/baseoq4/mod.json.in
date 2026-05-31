@@ -1,8 +1,8 @@
 {
   "name": "OpenQ4",
-  "version": "0.1.010",
+  "version": "@OPENQ4_VERSION_BASE@",
   "releaseDate": "2026-04-14",
   "website": "https://www.darkmatter-quake.com",
   "author": "themuffinator / DarkMatter Productions",
-  "requiredOpenQ4Version": "0.1.010"
+  "requiredOpenQ4Version": "@OPENQ4_VERSION_BASE@"
 }

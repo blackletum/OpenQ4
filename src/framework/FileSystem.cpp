@@ -2640,6 +2640,74 @@ static void FS_FinalizeModInfo( idModInfo &modInfo ) {
 	modInfo.listLabel = FS_BuildModListLabel( modInfo );
 }
 
+typedef struct openQ4BaseVersion_s {
+	int major;
+	int minor;
+	int patch;
+} openQ4BaseVersion_t;
+
+/*
+===============
+FS_ParseOpenQ4BaseVersion
+===============
+*/
+static bool FS_ParseOpenQ4BaseVersion( const char *version, openQ4BaseVersion_t &parsed ) {
+	int values[3] = { 0, 0, 0 };
+
+	if ( version == NULL || version[0] == '\0' ) {
+		return false;
+	}
+
+	const char *cursor = version;
+	for ( int part = 0; part < 3; ++part ) {
+		if ( *cursor < '0' || *cursor > '9' ) {
+			return false;
+		}
+
+		int value = 0;
+		while ( *cursor >= '0' && *cursor <= '9' ) {
+			value = ( value * 10 ) + ( *cursor - '0' );
+			++cursor;
+		}
+
+		values[part] = value;
+
+		if ( part < 2 ) {
+			if ( *cursor != '.' ) {
+				return false;
+			}
+			++cursor;
+		}
+	}
+
+	if ( *cursor != '\0' ) {
+		return false;
+	}
+
+	parsed.major = values[0];
+	parsed.minor = values[1];
+	parsed.patch = values[2];
+	return true;
+}
+
+/*
+===============
+FS_CompareOpenQ4BaseVersions
+===============
+*/
+static int FS_CompareOpenQ4BaseVersions( const openQ4BaseVersion_t &left, const openQ4BaseVersion_t &right ) {
+	if ( left.major != right.major ) {
+		return left.major < right.major ? -1 : 1;
+	}
+	if ( left.minor != right.minor ) {
+		return left.minor < right.minor ? -1 : 1;
+	}
+	if ( left.patch != right.patch ) {
+		return left.patch < right.patch ? -1 : 1;
+	}
+	return 0;
+}
+
 /*
 ===============
 FS_ParseModManifest
@@ -2860,10 +2928,29 @@ bool idFileSystemLocal::ReadModManifestFile( const char *manifestPath, idModInfo
 		return false;
 	}
 
-	if ( modInfo.requiredOpenQ4Version.Icmp( OPENQ4_VERSION_BASE ) != 0 ) {
+	openQ4BaseVersion_t requiredVersion;
+	if ( !FS_ParseOpenQ4BaseVersion( modInfo.requiredOpenQ4Version.c_str(), requiredVersion ) ) {
 		if ( reason != NULL ) {
 			*reason = va(
-				"%s requires openQ4 %s but this build is %s",
+				"%s has invalid required openQ4 version '%s' (expected major.minor.patch)",
+				modInfo.displayName.c_str(),
+				modInfo.requiredOpenQ4Version.c_str() );
+		}
+		return false;
+	}
+
+	openQ4BaseVersion_t engineVersion;
+	if ( !FS_ParseOpenQ4BaseVersion( OPENQ4_VERSION_BASE, engineVersion ) ) {
+		if ( reason != NULL ) {
+			*reason = va( "this build has invalid openQ4 version '%s'", OPENQ4_VERSION_BASE );
+		}
+		return false;
+	}
+
+	if ( FS_CompareOpenQ4BaseVersions( engineVersion, requiredVersion ) < 0 ) {
+		if ( reason != NULL ) {
+			*reason = va(
+				"%s requires openQ4 %s or newer but this build is %s",
 				modInfo.displayName.c_str(),
 				modInfo.requiredOpenQ4Version.c_str(),
 				OPENQ4_VERSION_BASE );
