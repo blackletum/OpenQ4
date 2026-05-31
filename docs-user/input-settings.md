@@ -1,6 +1,6 @@
 # Input Settings and Controls Guide
 
-This guide covers the main ways to configure keyboard, mouse, and controller input in openQ4, including the in-game menu, console commands, default binds, and the files that store your changes.
+This guide covers the main ways to configure keyboard, mouse, and controller input in OpenQ4, including the in-game menu, console commands, default binds, and the files that store your changes.
 
 ## Quick Start
 
@@ -10,9 +10,9 @@ This guide covers the main ways to configure keyboard, mouse, and controller inp
 - Run `listBinds` to see your current bindings.
 - Run `writeConfig my-input-backup.cfg` to save a manual backup before large binding changes.
 
-## Where openQ4 Stores Input Settings
+## Where OpenQ4 Stores Input Settings
 
-At startup, openQ4 loads input-related config in this order:
+At startup, OpenQ4 loads input-related config in this order:
 
 1. `default.cfg`
 2. `openq4_defaults.cfg` (if present)
@@ -23,7 +23,7 @@ At startup, openQ4 loads input-related config in this order:
 What this means in practice:
 
 - Stock defaults come from `content/baseoq4/default.cfg`.
-- openQ4-specific overrides can be layered on top through `openq4_defaults.cfg`.
+- OpenQ4-specific overrides can be layered on top through `openq4_defaults.cfg`.
 - Platform-specific overrides can be applied through `com_platformProfile`.
 - Your saved personal changes live in `OpenQ4Config.cfg`.
 - Advanced users can place their own final overrides in `autoexec.cfg`.
@@ -42,7 +42,7 @@ The built-in `Settings -> Game Options` screen exposes these input-related contr
 | Mouse Smooth | `m_smooth` | Blends mouse samples from `1` to `8`. |
 | Mouse Sensitivity | `sensitivity` | Main mouse look sensitivity slider. |
 
-These menu entries cover the most common mouse and zoom preferences, but openQ4 also exposes extra controller and input tuning cvars through the console.
+These menu entries cover the most common mouse and zoom preferences, but OpenQ4 also exposes extra controller and input tuning cvars through the console.
 
 ## Stock Keyboard and Mouse Binds
 
