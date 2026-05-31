@@ -192,6 +192,7 @@ Set `OPENQ4_BUILD_GAMELIBS=1` if you want the wrapper to trigger game-library bu
 - [BUILDING.md](BUILDING.md) - platform requirements and build workflow
 - [TECHNICAL.md](TECHNICAL.md) - advanced configuration, file layout, dependencies, and compatibility notes
 - [docs-user/display-settings.md](docs-user/display-settings.md) - display, fullscreen, and multi-monitor behavior
+- [docs-user/input-settings.md](docs-user/input-settings.md) - keyboard, mouse, controller, binding, and config-file reference
 - [docs-user/gameplay-settings.md](docs-user/gameplay-settings.md) - cinematic skip, corpse cleanup, corpse sinking, and music-volume controls
 - [docs-user/light-grids.md](docs-user/light-grids.md) - light-grid baking, runtime toggles, output paths, and troubleshooting
 - [docs-user/steam-deck.md](docs-user/steam-deck.md) - Steam Deck launcher, controls, and asset discovery notes
