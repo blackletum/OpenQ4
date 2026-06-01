@@ -13,7 +13,7 @@
 
 **Open-source Quake 4 source-port and game-code replacement built for modern systems**
 
-[Quick Start](#quick-start) | [Highlights](#highlights) | [Compatibility](#compatibility-and-scope) | [Building](BUILDING.md) | [Documentation](#documentation) | [Credits](#credits)
+[Getting Started](#getting-started) | [Highlights](#highlights) | [Compatibility](#compatibility-and-scope) | [Building](BUILDING.md) | [Documentation](#documentation) | [Credits](#credits)
 
 </div>
 
@@ -86,17 +86,24 @@ Single-player and multiplayer live under one `baseoq4/` directory with `game-sp`
 
 ---
 
-## Quick Start
+<a id="quick-start"></a>
+
+## Getting Started
 
 1. Install **Quake 4** from [Steam](https://store.steampowered.com/app/2210/Quake_4/) or [GOG](https://www.gog.com/en/game/quake_4).
 2. Download the latest openQ4 release from the [Releases page](https://github.com/themuffinator/OpenQ4/releases).
 3. Choose the asset that matches your CPU architecture (`x64` or `arm64`, the ARM64 release label).
-4. On Windows, use the matching installer (`openq4-<version>-windows-<arch>-setup.exe`) or extract the matching `.zip` package manually. The installer detects existing openQ4 installs, registers a normal Windows uninstaller entry, and can optionally enable `openq4://` browser links.
-5. On Linux and macOS, extract the release archive to a folder of your choice.
+4. Install or extract openQ4 to its own folder when possible:
+   - Windows: use the matching installer (`openq4-<version>-windows-<arch>-setup.exe`) or extract the matching `.zip`. The installer detects existing openQ4 installs, registers a normal Windows uninstaller entry, and can optionally enable `openq4://` browser links.
+   - Linux/macOS: extract the release archive to a folder of your choice.
+5. Use one of these layouts:
+   - Preferred: leave retail Quake 4 in its Steam/GOG folder, with assets under `q4base/`, and keep openQ4 in a separate install folder.
+   - Portable/manual: keep `baseoq4/` and a copied retail `q4base/` side by side in the openQ4 root.
+   - Avoid: never copy retail PK4s into openQ4's `baseoq4/`; `baseoq4/` is only for openQ4 runtime files such as its game modules and packaged overrides.
 6. Launch `openQ4-client_<arch>` (`openQ4-client_<arch>.exe` on Windows).
 7. On Steam Deck, launch `openQ4-steamdeck` instead of the generic client entrypoint.
 
-openQ4 will try to locate your Quake 4 install automatically. If detection fails, set `fs_basepath` manually or see [TECHNICAL.md](TECHNICAL.md#advanced-configuration).
+openQ4 will try to locate your Quake 4 install automatically. If detection fails, launch with `+set fs_basepath "C:\path\to\Quake 4"` and point it at the retail Quake 4 root that contains `q4base/`, not at `q4base/` or `baseoq4/` directly. See [TECHNICAL.md](TECHNICAL.md#advanced-configuration) for the full path reference.
 
 > [!TIP]
 > Windows release packages are intended to be self-contained.

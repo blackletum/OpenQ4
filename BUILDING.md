@@ -7,7 +7,7 @@
 This guide covers everything required to compile openQ4 from source on Windows, Linux, and macOS.
 
 > [!NOTE]
-> **Regular players do not need to build from source.** Download the latest release from the [Releases page](https://github.com/themuffinator/OpenQ4/releases) and follow the [Quick Start instructions](README.md#quick-start) instead.
+> **Regular players do not need to build from source.** Download the latest release from the [Releases page](https://github.com/themuffinator/OpenQ4/releases) and follow the [Getting Started instructions](README.md#getting-started) instead.
 
 ---
 

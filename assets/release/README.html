@@ -132,18 +132,20 @@
       <h2>Requirements</h2>
       <ul>
         <li>A legitimate Quake 4 installation from Steam or GOG.</li>
-        <li>The stock <code>q4base</code> PK4 files available through openQ4's asset discovery or a manual <code>fs_basepath</code> setting.</li>
+        <li>The stock retail PK4 files in a <code>q4base/</code> directory, available through openQ4's asset discovery or a manual <code>fs_basepath</code> setting.</li>
       </ul>
     </section>
 
     <section>
-      <h2>Quick Start</h2>
+      <h2>Getting Started</h2>
       <ol>
-        <li>On Windows, either run the installer executable or extract the archive to a folder of your choice. The installer can detect an existing openQ4 install, adds a standard uninstall entry, and optionally registers <code>openq4://</code> browser links.</li>
+        <li>Install Quake 4 from Steam or GOG and leave its retail <code>q4base/</code> folder intact.</li>
+        <li>Install or extract openQ4 to its own folder when possible. On Windows, either run the installer executable or extract the archive; the installer can detect an existing openQ4 install, adds a standard uninstall entry, and optionally registers <code>openq4://</code> browser links.</li>
+        <li>Use a clean layout: preferably keep retail Quake 4 separate with assets under <code>q4base/</code>; for a portable setup, keep a copied retail <code>q4base/</code> beside openQ4's <code>baseoq4/</code>. Never copy retail PK4s into <code>baseoq4/</code>.</li>
         <li>Run <code>openQ4-client_&lt;arch&gt;</code> or <code>openQ4-client_&lt;arch&gt;.exe</code>.</li>
         <li>On Steam Deck, use <code>openQ4-steamdeck</code> when it is included in the package.</li>
         <li>Open <code>docs/index.html</code> for the full offline documentation set, or use the installer-created Start Menu shortcuts on Windows.</li>
-        <li>If auto-detection fails, launch with <code>+set fs_basepath "path\\to\\Quake 4"</code>.</li>
+        <li>If auto-detection fails, launch with <code>+set fs_basepath "path\\to\\Quake 4"</code>, pointing at the retail root that contains <code>q4base/</code>.</li>
       </ol>
     </section>
 

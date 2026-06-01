@@ -351,7 +351,7 @@
       </div>
 
       <nav class="nav-links" aria-label="Quick links">
-        <a href="#quick-start">Quick Start</a>
+        <a href="#getting-started">Getting Started</a>
         <a href="#highlights">Highlights</a>
         <a href="#compatibility">Compatibility</a>
         <a href="#build">Build</a>
@@ -425,13 +425,14 @@
       <p class="caption">Modern renderer upgrades layered onto the original game assets.</p>
     </section>
 
-    <section class="panel" id="quick-start">
-      <h2>Quick Start</h2>
+    <section class="panel" id="getting-started">
+      <span id="quick-start"></span>
+      <h2>Getting Started</h2>
       <ol class="steps">
         <li>
           <div>
             <h3>Install Quake 4</h3>
-            <p class="muted">Use a legitimate copy from <a href="https://store.steampowered.com/app/2210/Quake_4/">Steam</a> or <a href="https://www.gog.com/en/game/quake_4">GOG</a>.</p>
+            <p class="muted">Use a legitimate copy from <a href="https://store.steampowered.com/app/2210/Quake_4/">Steam</a> or <a href="https://www.gog.com/en/game/quake_4">GOG</a>, and leave its retail <code>q4base/</code> folder intact.</p>
           </div>
         </li>
         <li>
@@ -443,7 +444,13 @@
         <li>
           <div>
             <h3>Extract the archive</h3>
-            <p class="muted">Unpack it anywhere you want to keep your OpenQ4 install.</p>
+            <p class="muted">Install or unpack OpenQ4 to its own folder when possible, separate from the retail Quake 4 install.</p>
+          </div>
+        </li>
+        <li>
+          <div>
+            <h3>Keep folders distinct</h3>
+            <p class="muted">Prefer separate retail and OpenQ4 installs. For a portable setup, keep a copied retail <code>q4base/</code> beside OpenQ4's <code>baseoq4/</code>. Never copy retail PK4s into <code>baseoq4/</code>.</p>
           </div>
         </li>
         <li>
@@ -460,15 +467,15 @@
           <h3>Platform notes</h3>
           <ul>
             <li>Windows release packages are intended to be self-contained.</li>
-            <li>Linux currently uses an X11/GLX runtime path.</li>
-            <li>On Wayland, run through XWayland and make sure <code>DISPLAY</code> is available.</li>
+            <li>Linux packages use the SDL3 backend.</li>
+            <li>On Steam Deck, launch <code>openQ4-steamdeck</code> when it is included in the package.</li>
           </ul>
         </article>
 
         <article class="card">
           <span class="eyebrow">Manual path</span>
           <h3>If auto-detection fails</h3>
-          <p class="muted">Set <code>fs_basepath</code> manually or check <a href="../../TECHNICAL.md">TECHNICAL.md</a> for the full configuration reference.</p>
+          <p class="muted">Set <code>fs_basepath</code> to the retail Quake 4 root that contains <code>q4base/</code>, or check <a href="../../TECHNICAL.md">TECHNICAL.md</a> for the full configuration reference.</p>
           <pre>OpenQ4-client_x64 +set fs_basepath "C:\Program Files (x86)\Steam\steamapps\common\Quake 4"</pre>
         </article>
       </div>
