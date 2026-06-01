@@ -143,6 +143,7 @@ public:
 	virtual bool		IsMultiplayer();
 	virtual bool		IsLoadingSaveGame() const { return loadingSaveGame; }
 	virtual bool		IsGUIActive() const { return ( guiActive != NULL ) || ( guiTest != NULL ); }
+	bool				IsMapSpawned() const { return mapSpawned; }
 	virtual idUserInterface *GetActiveGUI() const { return ( guiTest != NULL ) ? guiTest : guiActive; }
 	virtual bool		IsMainMenuIntroPlaying() const;
 

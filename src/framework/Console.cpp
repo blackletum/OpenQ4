@@ -4857,7 +4857,8 @@ void	idConsoleLocal::Draw( bool forceFullScreen ) {
 		}
 	}
 
-	if ( com_showFPS.GetBool() ) {
+	const int showFPSMode = com_showFPS.GetInteger();
+	if ( showFPSMode == 2 || ( showFPSMode > 0 && sessLocal.IsMapSpawned() && !sessLocal.IsGUIActive() ) ) {
 		y = SCR_DrawFPS( 0 );
 	}
 

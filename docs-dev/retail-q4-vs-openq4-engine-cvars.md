@@ -380,7 +380,7 @@ Generated on 2026-04-19.
 | `bse_scale` | flags | `1` | `1` | `ST AR` | `ST CH` | `float` | `float` |
 | `cm_drawMask` | type/range | `none` | `none` | `GAME ST CH` | `GAME ST CH` | `string [none, solid, opaque, water, playerclip, monsterclip, moveableclip, ikclip, blood, body, corpse, trigger, aas_solid, aas_obstacle, flashlight_trigger, sightClip, largeShotClip, solid, notacticalfeatures, vehicleclip, flyclip, shotClip, itemclip]` | `string [none, solid, opaque, water, playerclip, monsterclip, moveableclip, ikclip, blood, body, shotclip, corpse, rendermodel, trigger, aas_solid, aas_obstacle, flashlight_trigger, sightclip, largeshotclip, notacticalfeatures, vehicleclip, areaportal, nocsg, flyclip, itemclip, projectileclip, fog, lava, slime]` |
 | `cm_drawNormals` | type/range | `0` | `0` | `GAME ST CH` | `GAME ST CH` | `float` | `bool` |
-| `com_showFPS` | type/range | `0` | `0` | `SYS ST AR` | `SYS ST AR` | `int` | `bool` |
+| `com_showFPS` | type/range | `0` | `0` | `SYS ST AR` | `SYS ST AR` | `int` | `int [0, 2]` |
 | `com_videoRam` | flags | `64` | `64` | `SYS ST IN AR` | `SYS ST AR` | `int` | `int` |
 | `fs_game` | default | `q4mp` | `baseoq4` | `SYS SI ST IN` | `SYS SI ST IN` | `string` | `string` |
 | `gui_debug` | type/range | `0` | `0` | `GUI ST CH` | `GUI ST CH` | `int` | `bool` |

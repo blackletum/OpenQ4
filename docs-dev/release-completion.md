@@ -11,6 +11,7 @@ Process:
 ## Ready For Changelog
 
 - [x] Modern visible rendering now preserves scene-referred highlight energy in its FP16 lighting targets, restoring visible bloom extraction and HDR tonemapping/color controls when the hybrid renderer is enabled.
+- [x] The `com_showFPS` overlay now uses explicit modes: `1` draws during active gameplay only, while `2` keeps the legacy always-on behavior for menus, loading, and fallback screens.
 - [x] Bloom bright-pass extraction now preserves saturated HDR highlights without making ordinary saturated LDR textures glow, clamps negative scratch-chain energy out of the bloom pyramid, and skips the bloom pass entirely when the intensity slider is effectively zero.
 - [x] HDR tonemapping and auto exposure now sanitize scene-referred FP input before display mapping or luminance metering, preventing negative scratch-target energy from causing color inversions or exposure pumping; the tone curve uses a monotonic shoulder while preserving midrange SDR contrast, and auto exposure no longer forces the HDR scene-target path when tonemapping is disabled.
 - [x] Linux startup now handles Quake 4 addon metadata and PK4 checksums safely, fixing the launch-time segmentation fault seen when `q4cmp_pak001.pk4` or other addon PK4s trigger lexer punctuation-table setup on GCC/Clang builds and restoring deterministic official-media validation on 64-bit Unix platforms.
