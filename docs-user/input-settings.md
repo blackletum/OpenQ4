@@ -1,12 +1,15 @@
-# Input Settings
+# Input Settings and Controls Guide
 
-This guide covers the input options most players are likely to use: rebinding keys, mouse feel, controller setup, and common troubleshooting.
+This guide covers the main ways to configure keyboard, mouse, and controller input in OpenQ4, including the in-game menu, console commands, default binds, config files, and common troubleshooting.
 
 ## Quick Start
 
 - To rebind actions, open `Settings -> Controls`.
 - To tune mouse and controller feel, open `Settings -> Game Options`.
 - Start with sensitivity and dead zone before changing advanced values.
+- Press `` ` `` or `~` to open the console with the stock default bindings.
+- Run `listBinds` to see your current bindings.
+- Run `writeConfig my-input-backup.cfg` to save a manual backup before large binding changes.
 - Use `Load Defaults` if the controls get into a bad state. This also resets custom binds.
 
 ## Where Things Are
@@ -21,20 +24,44 @@ This guide covers the input options most players are likely to use: rebinding ke
 
 To rebind an action, select its row and press the key, mouse button, or controller button you want to use. Analog sticks are configured through the controller settings instead of being rebound as buttons.
 
+## Where OpenQ4 Stores Input Settings
+
+At startup, OpenQ4 loads input-related config in this order:
+
+1. `default.cfg`
+2. `openq4_defaults.cfg` (if present)
+3. `openq4_profile_<profile>.cfg`, such as `openq4_profile_steamdeck.cfg` when a platform profile is active
+4. `OpenQ4Config.cfg`
+5. `autoexec.cfg` (if present)
+
+What this means in practice:
+
+- Stock defaults come from `content/baseoq4/default.cfg`.
+- OpenQ4-specific overrides can be layered on top through `openq4_defaults.cfg`.
+- Platform-specific overrides can be applied through `com_platformProfile`.
+- Your saved personal changes live in `OpenQ4Config.cfg`.
+- Advanced users can place their own final overrides in `autoexec.cfg`.
+
+`OpenQ4Config.cfg` is the main user config file name, and it is written under the normal writable save/config area (`fs_savepath`, which defaults to `fs_homepath`).
+
 ## Mouse Settings
 
-| Setting | Good starting point | What it changes |
-|---|---:|---|
-| Free Look | On | Lets the mouse control view direction by default. |
-| Mouse Pitch | Normal or Inverted | Flips vertical mouse look. |
-| Mouse Smooth | 1 | Higher values smooth motion but can feel less direct. |
-| Mouse Sensitivity | Personal preference | Main mouse look speed. With Mouse CPI enabled, this is degrees per centimeter. |
-| Mouse CPI | 0 | Set this to your mouse CPI/DPI for physical sensitivity. `0` keeps classic raw-count behavior. |
-| View Filter | 0 | Optional QuakeLive-style view-angle history filtering. Leave it off for the most direct raw input. |
-| Mouse Accel | 0 | QuakeLive-style acceleration. Positive values add sensitivity as movement rate rises; negative values subtract it. |
-| Accel Offset | 0 | Movement-rate threshold before acceleration starts. |
-| Accel Curve | 2 | Acceleration curve shape. `2` matches QuakeLive's default power. |
-| Sensitivity Cap | 0 | Caps accelerated sensitivity when set above `0`. |
+Mouse tuning lives in `Settings -> Game Options`.
+
+| Setting | Backing cvar | Good starting point | What it changes |
+|---|---|---:|---|
+| Free Look | `in_freeLook` | On | Lets the mouse control view direction by default. |
+| Toggle Zoom | `in_toggleZoom` | Off | Makes zoom act as a toggle instead of hold-to-zoom. |
+| Mouse Pitch | `m_pitch` | Normal | Flips vertical mouse look. |
+| Mouse Smooth | `m_smooth` | `1` | Higher values smooth motion but can feel less direct. |
+| Mouse Sensitivity | `sensitivity` | Personal preference | Main mouse look speed. With Mouse CPI enabled, this is degrees per centimeter. |
+| Mouse CPI | `m_cpi` | `0` | Set this to your mouse CPI/DPI for physical sensitivity. `0` keeps classic raw-count behavior. |
+| View Filter | `m_filter` | `0` | Optional QuakeLive-style view-angle history filtering. Leave it off for the most direct raw input. |
+| Mouse Accel | `cl_mouseAccel` | `0` | QuakeLive-style acceleration. Positive values add sensitivity as movement rate rises; negative values subtract it. |
+| Accel Offset | `cl_mouseAccelOffset` | `0` | Movement-rate threshold before acceleration starts. |
+| Accel Curve | `cl_mouseAccelPower` | `2` | Acceleration curve shape. `2` matches QuakeLive's default power. |
+| Sensitivity Cap | `cl_mouseSensCap` | `0` | Caps accelerated sensitivity when set above `0`. |
+| Console Access | `con_allowConsole` | Tilde | Controls whether tilde opens the console directly or requires Ctrl+Alt+Tilde. |
 
 Useful console-only fallback:
 
@@ -43,17 +70,6 @@ seta m_maxMouseDelta 0
 ```
 
 `m_maxMouseDelta 0` keeps the modern high-DPI path unclamped. Set a positive value only if a faulty mouse or driver creates large camera jumps.
-
-These menu controls write the following cvars:
-
-| Cvar | Default | What it changes |
-|---|---:|---|
-| `m_cpi` | `0` | Set this to your mouse CPI/DPI to make `sensitivity` a physical degrees-per-centimeter value. `0` keeps the classic raw-count behavior. |
-| `m_filter` | `0` | Optional QuakeLive-style view-angle history filtering. Leave it off for the most direct raw input. |
-| `cl_mouseAccel` | `0` | QuakeLive-style acceleration. Positive values add sensitivity as movement rate rises; negative values subtract it. |
-| `cl_mouseAccelOffset` | `0` | Movement-rate threshold before acceleration starts. |
-| `cl_mouseAccelPower` | `2` | Acceleration curve shape. `2` matches QuakeLive's default power. |
-| `cl_mouseSensCap` | `0` | Caps accelerated sensitivity when set above `0`. |
 
 Debug-only console fallback:
 
@@ -69,17 +85,17 @@ For CPI-normalized tuning, set `m_cpi` to the mouse hardware value and use `360 
 
 Controller tuning lives in `Settings -> Game Options -> Controller`.
 
-| Setting | Default | What it changes |
-|---|---:|---|
-| Controller | On | Enables SDL3 gamepad/joystick input and hotplug support. |
-| Stick Layout | Default | Use `Southpaw` to swap movement and look sticks. |
-| Stick Dead Zone | `0.18` | Raises or lowers the center area ignored by analog sticks. |
-| Look Sensitivity | `0.75` | Scales controller turn speed. |
-| Look Curve | `1.35` | Higher values damp small aim movements; full-stick turn speed is controlled by Look Sensitivity. |
-| Invert Look | Off | Flips vertical controller look. |
-| Trigger Press | `0.35` | Controls how far LT/RT must be pressed before they count as buttons. |
-| Rumble | On | Enables gameplay rumble when the device supports it. |
-| Rumble Strength | `1.0` | Scales rumble intensity from `0.0` to `2.0`. |
+| Setting | Backing cvar | Default | What it changes |
+|---|---|---:|---|
+| Controller | `in_joystick` | On | Enables SDL3 gamepad/joystick input and hotplug support. |
+| Stick Layout | `in_joystickSouthpaw` | Default | Use `Southpaw` to swap movement and look sticks. |
+| Stick Dead Zone | `in_joystickDeadZone` | `0.18` | Raises or lowers the center area ignored by analog sticks. |
+| Look Sensitivity | `in_joystickLookSensitivity` | `0.75` | Scales controller turn speed. |
+| Look Curve | `in_joystickLookCurve` | `1.35` | Higher values damp small aim movements; full-stick turn speed is controlled by Look Sensitivity. |
+| Invert Look | `in_joystickInvertLook` | Off | Flips vertical controller look. |
+| Trigger Press | `in_joystickTriggerThreshold` | `0.35` | Controls how far LT/RT must be pressed before they count as buttons. |
+| Rumble | `in_joystickRumble` | On | Enables gameplay rumble when the device supports it. |
+| Rumble Strength | `in_joystickRumbleScale` | `1.0` | Scales rumble intensity from `0.0` to `2.0`. |
 
 Suggested adjustments:
 
@@ -97,6 +113,38 @@ seta in_joystickMoveCurve 1.0
 ```
 
 `1.0` is linear movement. Higher values make walking easier near the center of the stick but require more stick travel to reach full movement.
+
+## Stock Keyboard and Mouse Binds
+
+The shipped defaults are defined in `content/baseoq4/default.cfg`.
+
+### Core Movement and Combat
+
+| Action | Default bind |
+|---|---|
+| Move forward / back | `W` / `S`, `Up Arrow` / `Down Arrow` |
+| Move left / right | `A` / `D` |
+| Turn left / right | `Left Arrow` / `Right Arrow` |
+| Jump | `Space` |
+| Crouch | `C` |
+| Attack | `Mouse1`, `LeftCtrl`, `RightCtrl` |
+| Zoom | `Mouse2`, `Mouse3` |
+| Reload | `R` |
+| Flashlight | `F` |
+| Weapon wheel | `E` |
+| Next / previous weapon | `MWHEELDOWN` / `MWHEELUP`, `[` / `]` |
+
+### Common UI and Utility Binds
+
+| Action | Default bind |
+|---|---|
+| Console | `` ` `` and `~` |
+| Menu | `Escape` |
+| Objectives / scores | `Tab` |
+| Chat | `T` |
+| Team chat | `Y` |
+| Quick save / quick load | `F5` / `F9` |
+| Screenshot | `F12` |
 
 ## Default Controller Buttons
 
@@ -127,10 +175,34 @@ Menu behavior:
 - `JOY4`, `JOY7`, and `JOY8` back out of menus.
 - The D-pad and movement stick move menu focus.
 - Holding the D-pad, movement stick, or shoulder buttons repeats navigation for long lists.
+- Steam Deck packages enable the `steamdeck` platform profile, which applies `openq4_profile_steamdeck.cfg` on top of the normal defaults.
 
-## Console Examples
+## Useful Console Commands
 
-You can use these in the console or place them in a config file:
+| Command | What it does |
+|---|---|
+| `bind <key> "<command>"` | Assigns a command to a key or button. |
+| `unbind <key>` | Removes a bind from one key or button. |
+| `unbindall` | Clears all binds. Use with care. |
+| `listBinds` | Prints the current binds. |
+| `writeConfig <filename>` | Writes a config snapshot to a `.cfg` file. |
+
+Examples:
+
+```cfg
+bind mouse2 "_zoom"
+bind JOY4 "_movedown"
+bind q "_weaponWheel"
+unbind JOY18
+listBinds
+writeConfig my-input-backup.cfg
+```
+
+Most input cvars are archived, so changes made through the menu or with `seta` persist after exit.
+
+## Example Tweaks
+
+### CPI-Normalized Mouse With Acceleration Disabled
 
 ```cfg
 seta sensitivity 3.5
@@ -141,26 +213,60 @@ seta cl_mouseAccel 0
 seta cl_mouseAccelOffset 0
 seta cl_mouseAccelPower 2
 seta cl_mouseSensCap 0
-seta in_joystickDeadZone 0.22
-seta in_joystickLookSensitivity 0.75
-seta in_joystickLookCurve 1.35
-seta in_joystickTriggerThreshold 0.45
-seta in_joystickRumbleScale 0.75
 ```
 
-Most input cvars are archived, so changes made through the menu or with `seta` persist after exit.
+### Invert Mouse
+
+```cfg
+seta m_pitch -0.022
+```
+
+### Higher Mouse Sensitivity With Light Smoothing
+
+```cfg
+seta sensitivity 6.50
+seta m_smooth 2
+```
+
+### Toggle Crouch and Toggle Zoom
+
+```cfg
+seta in_toggleCrouch 1
+seta in_toggleZoom 1
+```
+
+### Controller Tuning With a Larger Dead Zone and Weaker Rumble
+
+```cfg
+seta in_joystick 1
+seta in_joystickDeadZone 0.24
+seta in_joystickLookSensitivity 0.75
+seta in_joystickLookCurve 1.35
+seta in_joystickTriggerThreshold 0.40
+seta in_joystickRumbleScale 0.50
+```
+
+### Steam Deck-Style Profile Selection
+
+```cfg
+seta com_platformProfile steamdeck
+```
 
 ## Troubleshooting
 
 | Problem | Try this |
 |---|---|
+| Console does not open | Verify you are using the stock console binds (`` ` `` / `~`) or rebind a key through the Controls screen. |
 | Controller is not detected | Make sure `Controller` is enabled, reconnect the device, and check whether Steam Input is remapping it. |
 | Movement or aim drifts | Raise `Stick Dead Zone` until the drift stops. |
 | Aim feels too slow | Raise `Look Sensitivity`. |
 | Aim feels too twitchy near center | Raise `Look Curve` or `Stick Dead Zone`. |
 | Triggers activate by accident | Raise `Trigger Press`. |
+| Triggers feel unresponsive | Lower `Trigger Press`. |
 | Rumble does not work | Enable `Rumble`, set `Rumble Strength` above `0`, confirm the device supports haptics, and reset `s_controllerRumble` to `1` if it was changed from the console. |
 | Mouse look is backwards vertically | Change `Mouse Pitch` or `Invert Look`, depending on the device. |
-| Console is hard to open | Set `Console Access` in `Settings -> Game Options` to the tilde option you prefer. |
+| Binding change did not stick | Run `writeConfig my-input-backup.cfg` to confirm your commands are valid, then quit normally so `OpenQ4Config.cfg` is rewritten. |
+
+If you want a final personal override layer that survives menu changes, place your preferred `seta` and `bind` commands in `autoexec.cfg`.
 
 For Steam Deck launcher details and Deck-specific notes, see [steam-deck.md](steam-deck.md).
