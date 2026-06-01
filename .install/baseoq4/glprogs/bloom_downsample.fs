@@ -19,5 +19,5 @@ vec3 FilteredScene( vec2 uv ) {
 }
 
 void main() {
-	gl_FragColor = vec4( FilteredScene( gl_TexCoord[0].st ), 1.0 );
+	gl_FragColor = vec4( max( FilteredScene( gl_TexCoord[0].st ), vec3( 0.0 ) ), 1.0 );
 }

@@ -107,6 +107,30 @@ static bool R_TranslucentShadowMapMomentsSupportedForLight( const idRenderLightL
 		( lightDef == NULL || !lightDef->parms.pointLight || glConfig.cubeMapAvailable );
 }
 
+static bool R_ShadowMapShaderCanCastOpaque( const idMaterial *shader ) {
+	// Shadow maps share interaction ownership and material policy with stencil
+	// shadows, but render ambient triangles into depth/moment maps instead of
+	// consuming stencil-volume geometry.
+	return shader != NULL &&
+		!shader->IsDedicatedCollisionSurface() &&
+		shader->Coverage() != MC_TRANSLUCENT &&
+		shader->SurfaceCastsShadow() &&
+		!shader->HasGui() &&
+		!shader->HasSubview();
+}
+
+static bool R_ShadowMapShaderCanCastTranslucent( const idMaterial *shader ) {
+	return shader != NULL &&
+		shader->Coverage() == MC_TRANSLUCENT &&
+		!shader->HasGui() &&
+		!shader->HasSubview();
+}
+
+static bool R_ShadowMapShaderSpectrumMatchesLight( const idMaterial *shader, const idRenderLightLocal *lightDef ) {
+	return shader != NULL &&
+		( lightDef == NULL || lightDef->lightShader == NULL || shader->Spectrum() == lightDef->lightShader->Spectrum() );
+}
+
 static void R_LinkShadowMapCasterSurf( const drawSurf_t **link, const srfTriangles_t *tri, const viewEntity_t *space,
 		const renderEntity_t *renderEntity, const idMaterial *shader, const idScreenRect &scissor ) {
 	if ( !space ) {
@@ -199,6 +223,10 @@ static int R_ShadowMapHashFloat( int hash, const float value ) {
 	return R_ShadowMapHashInt( hash, idMath::Ftoi( value * 1024.0f ) );
 }
 
+static int R_ShadowMapHashString( int hash, const char *value ) {
+	return R_ShadowMapHashInt( hash, value != NULL ? idStr::Hash( value ) : 0 );
+}
+
 static bool R_ShadowMapCasterIsDynamic( const idRenderEntityLocal *entityDef ) {
 	if ( entityDef == NULL || entityDef->parms.hModel == NULL ) {
 		return true;
@@ -234,6 +262,8 @@ static void R_RecordShadowMapCaster( viewLight_t *vLight, const idRenderEntityLo
 	int hash = ( vLight->shadowMapCasterSignature != 0 ) ? vLight->shadowMapCasterSignature : static_cast<int>( 2166136261u );
 	hash = R_ShadowMapHashInt( hash, entityDef != NULL ? entityDef->index : -1 );
 	hash = R_ShadowMapHashInt( hash, shader != NULL ? static_cast<int>( shader->Coverage() ) : -1 );
+	hash = R_ShadowMapHashString( hash, shader != NULL ? shader->GetName() : NULL );
+	hash = R_ShadowMapHashInt( hash, shader != NULL ? shader->GetNumStages() : 0 );
 	hash = R_ShadowMapHashInt( hash, translucent ? 1 : 0 );
 	hash = R_ShadowMapHashInt( hash, expandedCaster ? 1 : 0 );
 	hash = R_ShadowMapHashInt( hash, dynamicCaster ? 1 : 0 );
@@ -1421,16 +1451,10 @@ void idInteraction::CreateInteraction( const idRenderModel *model ) {
 			( shader->SurfaceCastsShadow() || allowTranslucentStencilShadowCaster );
 		const bool surfaceCanCastDedicatedShadowMap =
 			shadowMapsEnabledForInteraction &&
-			!dedicatedCollisionSurface &&
-			shader->Coverage() != MC_TRANSLUCENT &&
-			shader->SurfaceCastsShadow() &&
-			!shader->HasGui() &&
-			!shader->HasSubview();
+			R_ShadowMapShaderCanCastOpaque( shader );
 		const bool surfaceCanCastTranslucentShadowMap =
 			translucentShadowMapsEnabledForInteraction &&
-			shader->Coverage() == MC_TRANSLUCENT &&
-			!shader->HasGui() &&
-			!shader->HasSubview();
+			R_ShadowMapShaderCanCastTranslucent( shader );
 		const bool surfaceCanCastStencilShadowVolume =
 			surfaceCanCastInteractionShadow &&
 			tri->silEdges != NULL;
@@ -1825,8 +1849,7 @@ void idInteraction::AddActiveInteraction( void ) {
 			vLight->pointLight &&
 			R_ShouldSkipPointLightEmitterCaster( shadowShader, sint->ambientTris, localLightOrigin, lightDef->parms.lightRadius );
 		const bool sameSpectrumShadowMapCaster =
-			lightDef->lightShader == NULL ||
-			shadowShader->Spectrum() == lightDef->lightShader->Spectrum();
+			R_ShadowMapShaderSpectrumMatchesLight( shadowShader, lightDef );
 		const bool allowShadowMapCaster =
 			shadowMapsEnabled &&
 			!entityDef->parms.noShadow &&
@@ -1838,11 +1861,7 @@ void idInteraction::AddActiveInteraction( void ) {
 			// which creates long bogus wedge occluders. Reject only that geometric case
 			// instead of blanketing the entire textures/common_lights family.
 			!skipPointLightEmitterCaster &&
-			!shadowShader->IsDedicatedCollisionSurface() &&
-			shadowShader->Coverage() != MC_TRANSLUCENT &&
-			shadowShader->SurfaceCastsShadow() &&
-			!shadowShader->HasGui() &&
-			!shadowShader->HasSubview() &&
+			R_ShadowMapShaderCanCastOpaque( shadowShader ) &&
 			R_CachedInteractionShadowLODAdmitted( sint, entityDef );
 		const bool allowTranslucentShadowMapCaster =
 			translucentShadowMapSupported &&
@@ -1851,9 +1870,7 @@ void idInteraction::AddActiveInteraction( void ) {
 			vEntity->modelDepthHack == 0.0f &&
 			sint->ambientTris != NULL &&
 			sameSpectrumShadowMapCaster &&
-			shadowShader->Coverage() == MC_TRANSLUCENT &&
-			!shadowShader->HasGui() &&
-			!shadowShader->HasSubview() &&
+			R_ShadowMapShaderCanCastTranslucent( shadowShader ) &&
 			R_CachedInteractionShadowLODAdmitted( sint, entityDef );
 
 		if ( r_useShadowMap.GetBool() && sint->ambientTris != NULL && !allowShadowMapCaster && !allowTranslucentShadowMapCaster ) {

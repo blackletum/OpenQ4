@@ -432,6 +432,9 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		"float ModernNormalLightScale(void) {\n"
 		"    vec3 lightDir = normalize(vec3(0.25, 0.35, 1.0));\n"
 		"    return clamp(dot(ModernMaterialNormal(), lightDir) * 0.5 + 0.5, 0.18, 1.0);\n"
+		"}\n"
+		"vec3 ModernSceneReferredColor(vec3 color) {\n"
+		"    return max(color, vec3(0.0));\n"
 		"}\n",
 		hasDrawRecords,
 		materialTextureHeader );
@@ -804,7 +807,7 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 			"    } else if (debugMode == 4.0) {\n"
 			"        out_Color = vec4(overflowPressure, uLocalParams.z, 0.1, 1.0);\n"
 			"    } else {\n"
-			"        out_Color = vec4(clamp(lit, vec3(0.0), vec3(1.0)), albedo.a);\n"
+			"        out_Color = vec4(max(lit, vec3(0.0)), albedo.a);\n"
 			"    }\n"
 			"}\n",
 			glslVersion,
@@ -857,7 +860,7 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 			"    }\n"
 			"    float lightScale = clamp(0.18 + uLocalParams.y + float(scannedLights) * 0.02, 0.18, 2.5);\n"
 			"    vec3 lit = texel.rgb * max(uDebugColor.rgb, vec3(0.0)) * (lightScale + lightAccum * (0.30 + specular * 0.25)) + emissive;\n"
-			"    out_Color = vec4(clamp(lit, vec3(0.0), vec3(1.0)), texel.a * uDebugColor.a);\n"
+			"    out_Color = vec4(ModernSceneReferredColor(lit), texel.a * uDebugColor.a);\n"
 			"}\n",
 			glslVersion,
 			hasShaderStorage,
@@ -906,7 +909,7 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 			"        vec3 contribution = ModernClusterEvaluateLight(light, vViewPosition, materialNormal, specular, ModernMaterialFresnel(), attenuation);\n"
 			"        if (type == 0 || type == 1) { lightAccum += contribution * shadowVisibility; }\n"
 			"    }\n"
-			"    out_Color = vec4(clamp(mix(baseColor, blendColor, blendAmount) + lightAccum + emissive, vec3(0.0), vec3(1.0)), texel.a * uDebugColor.a);\n"
+			"    out_Color = vec4(ModernSceneReferredColor(mix(baseColor, blendColor, blendAmount) + lightAccum + emissive), texel.a * uDebugColor.a);\n"
 			"}\n",
 			glslVersion,
 			hasShaderStorage,

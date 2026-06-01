@@ -44,12 +44,16 @@ vec3 ACESFilm( vec3 x ) {
 
 vec3 SampleBloom( vec2 uv ) {
 	vec3 bloom = vec3( 0.0 );
-	bloom += texture2D( BloomTex0, uv ).rgb * bloomWeight0;
-	bloom += texture2D( BloomTex1, uv ).rgb * bloomWeight1;
-	bloom += texture2D( BloomTex2, uv ).rgb * bloomWeight2;
-	bloom += texture2D( BloomTex3, uv ).rgb * bloomWeight3;
-	bloom += texture2D( BloomTex4, uv ).rgb * bloomWeight4;
-	return bloom;
+	bloom += max( texture2D( BloomTex0, uv ).rgb, vec3( 0.0 ) ) * bloomWeight0;
+	bloom += max( texture2D( BloomTex1, uv ).rgb, vec3( 0.0 ) ) * bloomWeight1;
+	bloom += max( texture2D( BloomTex2, uv ).rgb, vec3( 0.0 ) ) * bloomWeight2;
+	bloom += max( texture2D( BloomTex3, uv ).rgb, vec3( 0.0 ) ) * bloomWeight3;
+	bloom += max( texture2D( BloomTex4, uv ).rgb, vec3( 0.0 ) ) * bloomWeight4;
+	return max( bloom, vec3( 0.0 ) );
+}
+
+vec3 SceneReferredHDRColor( vec3 color ) {
+	return max( color, vec3( 0.0 ) );
 }
 
 vec3 HighlightCompress( vec3 color ) {
@@ -69,15 +73,18 @@ vec3 HighlightCompress( vec3 color ) {
 }
 
 vec3 ToneMapHDR( vec3 color ) {
+	color = SceneReferredHDRColor( color );
 	float safeExposure = max( hdrExposure, 0.001 );
 	vec3 exposedColor = color * safeExposure;
 	float safeWhitePoint = max( hdrWhitePoint, 1.0 );
-	float whiteScale = 1.0 / max( ACESFilmScalar( safeWhitePoint * safeExposure ), 0.0001 );
-	vec3 baselineColor = clamp( exposedColor, 0.0, 1.0 );
-	vec3 filmicColor = HighlightCompress( ACESFilm( exposedColor ) * whiteScale );
-	float scenePeak = max( max( exposedColor.r, exposedColor.g ), exposedColor.b );
-	float shoulderBlend = smoothstep( 0.75, max( 1.25, safeWhitePoint * 0.35 ), scenePeak );
-	return clamp( mix( baselineColor, filmicColor, shoulderBlend ), 0.0, 1.0 );
+	float shoulderStart = 0.75;
+	float exposedWhitePoint = max( safeWhitePoint * safeExposure, shoulderStart + 0.001 );
+	float shoulderRange = max( exposedWhitePoint - shoulderStart, 0.001 );
+	float shoulderNorm = max( 1.0 - exp( -4.0 ), 0.0001 );
+	vec3 shoulderT = max( exposedColor - vec3( shoulderStart ), vec3( 0.0 ) ) / shoulderRange;
+	vec3 shoulderColor = vec3( shoulderStart ) + ( 1.0 - shoulderStart ) * ( vec3( 1.0 ) - exp( -shoulderT * 4.0 ) ) / shoulderNorm;
+	vec3 mappedColor = mix( exposedColor, shoulderColor, step( vec3( shoulderStart ), exposedColor ) );
+	return clamp( HighlightCompress( mappedColor ), 0.0, 1.0 );
 }
 
 vec3 ApplyLiftGammaGain( vec3 color ) {
@@ -130,14 +137,15 @@ vec3 DebugHeatmap( float scenePeak ) {
 void main() {
 	vec2 uv = gl_TexCoord[0].st;
 	vec4 sceneSample = texture2D( Scene, uv );
-	vec3 color = sceneSample.rgb;
+	vec3 sceneColor = SceneReferredHDRColor( sceneSample.rgb );
+	vec3 color = sceneColor;
 
 	if ( bloomEnabled > 0.5 && bloomIntensity > 0.0001 ) {
 		color += SampleBloom( uv ) * bloomIntensity;
 	}
 
 	if ( hdrDebugView > 0.5 ) {
-		float scenePeak = max( max( sceneSample.r, sceneSample.g ), sceneSample.b );
+		float scenePeak = max( max( sceneColor.r, sceneColor.g ), sceneColor.b );
 		if ( hdrDebugView > 1.5 ) {
 			float grayscale = clamp( ( log2( max( scenePeak, 0.0001 ) ) + 10.0 ) / 10.0, 0.0, 1.0 );
 			gl_FragColor = vec4( vec3( grayscale ), sceneSample.a );

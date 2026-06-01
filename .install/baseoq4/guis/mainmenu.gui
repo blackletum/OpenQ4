@@ -20429,12 +20429,44 @@ windowDef Desktop
 			set "set_game_simpleitems_hover::visible" "1" ;
 			set "set_game_forcemodel::visible" "1" ;
 			set "set_game_forcemodel_hover::visible" "1" ;
+			set "set_game_mouse::visible" "1" ;
 			set "set_game_mpitch::visible" "1" ;
 			set "set_game_mpitch_hover::visible" "1" ;
 			set "set_game_msmooth::visible" "1" ;
 			set "set_game_msmooth_hover::visible" "1" ;
 			set "set_game_msensitivity::visible" "1" ;
 			set "set_game_msensitivity_hover::visible" "1" ;
+			set "set_game_mcpi::visible" "1" ;
+			set "set_game_mcpi_hover::visible" "1" ;
+			set "set_game_mfilter::visible" "1" ;
+			set "set_game_mfilter_hover::visible" "1" ;
+			set "set_game_maccel::visible" "1" ;
+			set "set_game_maccel_hover::visible" "1" ;
+			set "set_game_macceloffset::visible" "1" ;
+			set "set_game_macceloffset_hover::visible" "1" ;
+			set "set_game_maccelpower::visible" "1" ;
+			set "set_game_maccelpower_hover::visible" "1" ;
+			set "set_game_msenscap::visible" "1" ;
+			set "set_game_msenscap_hover::visible" "1" ;
+			set "set_game_controller::visible" "1" ;
+			set "set_game_controller_enabled::visible" "1" ;
+			set "set_game_controller_enabled_hover::visible" "1" ;
+			set "set_game_controller_layout::visible" "1" ;
+			set "set_game_controller_layout_hover::visible" "1" ;
+			set "set_game_controller_deadzone::visible" "1" ;
+			set "set_game_controller_deadzone_hover::visible" "1" ;
+			set "set_game_controller_look_sensitivity::visible" "1" ;
+			set "set_game_controller_look_sensitivity_hover::visible" "1" ;
+			set "set_game_controller_look_curve::visible" "1" ;
+			set "set_game_controller_look_curve_hover::visible" "1" ;
+			set "set_game_controller_invert::visible" "1" ;
+			set "set_game_controller_invert_hover::visible" "1" ;
+			set "set_game_controller_trigger::visible" "1" ;
+			set "set_game_controller_trigger_hover::visible" "1" ;
+			set "set_game_controller_rumble::visible" "1" ;
+			set "set_game_controller_rumble_hover::visible" "1" ;
+			set "set_game_controller_rumble_strength::visible" "1" ;
+			set "set_game_controller_rumble_strength_hover::visible" "1" ;
 			set "set_game_customxhair::visible" "1" ;
 			set "set_game_customxhair_hover::visible" "1" ;
 			if ( "gui::g_crosshairCustom" == 1 ) {
@@ -20485,6 +20517,21 @@ windowDef Desktop
 			set "set_game_mpitch::noevents" "0" ;
 			set "set_game_msmooth::noevents" "0" ;
 			set "set_game_msensitivity::noevents" "0" ;
+			set "set_game_mcpi::noevents" "0" ;
+			set "set_game_mfilter::noevents" "0" ;
+			set "set_game_maccel::noevents" "0" ;
+			set "set_game_macceloffset::noevents" "0" ;
+			set "set_game_maccelpower::noevents" "0" ;
+			set "set_game_msenscap::noevents" "0" ;
+			set "set_game_controller_enabled::noevents" "0" ;
+			set "set_game_controller_layout::noevents" "0" ;
+			set "set_game_controller_deadzone::noevents" "0" ;
+			set "set_game_controller_look_sensitivity::noevents" "0" ;
+			set "set_game_controller_look_curve::noevents" "0" ;
+			set "set_game_controller_invert::noevents" "0" ;
+			set "set_game_controller_trigger::noevents" "0" ;
+			set "set_game_controller_rumble::noevents" "0" ;
+			set "set_game_controller_rumble_strength::noevents" "0" ;
 			set "set_game_customxhair::noevents" "0" ;
 			set "set_game_previewxhair::noevents" "0" ;
 			set "set_game_xhairsize::noevents" "0" ;
@@ -20516,12 +20563,44 @@ windowDef Desktop
 			set "set_game_simpleitems_hover::visible" "0" ;
 			set "set_game_forcemodel::visible" "0" ;
 			set "set_game_forcemodel_hover::visible" "0" ;
+			set "set_game_mouse::visible" "0" ;
 			set "set_game_mpitch::visible" "0" ;
 			set "set_game_mpitch_hover::visible" "0" ;
 			set "set_game_msmooth::visible" "0" ;
 			set "set_game_msmooth_hover::visible" "0" ;
 			set "set_game_msensitivity::visible" "0" ;
 			set "set_game_msensitivity_hover::visible" "0" ;
+			set "set_game_mcpi::visible" "0" ;
+			set "set_game_mcpi_hover::visible" "0" ;
+			set "set_game_mfilter::visible" "0" ;
+			set "set_game_mfilter_hover::visible" "0" ;
+			set "set_game_maccel::visible" "0" ;
+			set "set_game_maccel_hover::visible" "0" ;
+			set "set_game_macceloffset::visible" "0" ;
+			set "set_game_macceloffset_hover::visible" "0" ;
+			set "set_game_maccelpower::visible" "0" ;
+			set "set_game_maccelpower_hover::visible" "0" ;
+			set "set_game_msenscap::visible" "0" ;
+			set "set_game_msenscap_hover::visible" "0" ;
+			set "set_game_controller::visible" "0" ;
+			set "set_game_controller_enabled::visible" "0" ;
+			set "set_game_controller_enabled_hover::visible" "0" ;
+			set "set_game_controller_layout::visible" "0" ;
+			set "set_game_controller_layout_hover::visible" "0" ;
+			set "set_game_controller_deadzone::visible" "0" ;
+			set "set_game_controller_deadzone_hover::visible" "0" ;
+			set "set_game_controller_look_sensitivity::visible" "0" ;
+			set "set_game_controller_look_sensitivity_hover::visible" "0" ;
+			set "set_game_controller_look_curve::visible" "0" ;
+			set "set_game_controller_look_curve_hover::visible" "0" ;
+			set "set_game_controller_invert::visible" "0" ;
+			set "set_game_controller_invert_hover::visible" "0" ;
+			set "set_game_controller_trigger::visible" "0" ;
+			set "set_game_controller_trigger_hover::visible" "0" ;
+			set "set_game_controller_rumble::visible" "0" ;
+			set "set_game_controller_rumble_hover::visible" "0" ;
+			set "set_game_controller_rumble_strength::visible" "0" ;
+			set "set_game_controller_rumble_strength_hover::visible" "0" ;
 			set "set_game_customxhair::visible" "0" ;
 			set "set_game_customxhair_hover::visible" "0" ;
 			set "set_game_previewxhair::visible" "0" ;
@@ -20558,6 +20637,21 @@ windowDef Desktop
 			set "set_game_mpitch::noevents" "1" ;
 			set "set_game_msmooth::noevents" "1" ;
 			set "set_game_msensitivity::noevents" "1" ;
+			set "set_game_mcpi::noevents" "1" ;
+			set "set_game_mfilter::noevents" "1" ;
+			set "set_game_maccel::noevents" "1" ;
+			set "set_game_macceloffset::noevents" "1" ;
+			set "set_game_maccelpower::noevents" "1" ;
+			set "set_game_msenscap::noevents" "1" ;
+			set "set_game_controller_enabled::noevents" "1" ;
+			set "set_game_controller_layout::noevents" "1" ;
+			set "set_game_controller_deadzone::noevents" "1" ;
+			set "set_game_controller_look_sensitivity::noevents" "1" ;
+			set "set_game_controller_look_curve::noevents" "1" ;
+			set "set_game_controller_invert::noevents" "1" ;
+			set "set_game_controller_trigger::noevents" "1" ;
+			set "set_game_controller_rumble::noevents" "1" ;
+			set "set_game_controller_rumble_strength::noevents" "1" ;
 			set "set_game_customxhair::noevents" "1" ;
 			set "set_game_previewxhair::noevents" "1" ;
 			set "set_game_xhairsize::noevents" "1" ;
@@ -20968,27 +21062,61 @@ windowDef Desktop
 			set "set_game_scroll_thumb::visible" "1" ;
 			set "set_game_scroll_thumb::noevents" "0" ;
 			if ( "gui::gui_set_game_scroll" <= 0 ) {
-				transition "set_game_content::rect" "$set_game_content::rect" "-24,-47,640,560" "120" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-47,640,984" "120" ;
 			} else if ( "gui::gui_set_game_scroll" < 1.5 ) {
-				transition "set_game_content::rect" "$set_game_content::rect" "-24,-71,640,560" "120" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-71,640,984" "120" ;
 			} else if ( "gui::gui_set_game_scroll" < 2.5 ) {
-				transition "set_game_content::rect" "$set_game_content::rect" "-24,-95,640,560" "120" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-95,640,984" "120" ;
 			} else if ( "gui::gui_set_game_scroll" < 3.5 ) {
-				transition "set_game_content::rect" "$set_game_content::rect" "-24,-119,640,560" "120" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-119,640,984" "120" ;
 			} else if ( "gui::gui_set_game_scroll" < 4.5 ) {
-				transition "set_game_content::rect" "$set_game_content::rect" "-24,-143,640,560" "120" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-143,640,984" "120" ;
 			} else if ( "gui::gui_set_game_scroll" < 5.5 ) {
-				transition "set_game_content::rect" "$set_game_content::rect" "-24,-167,640,560" "120" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-167,640,984" "120" ;
 			} else if ( "gui::gui_set_game_scroll" < 6.5 ) {
-				transition "set_game_content::rect" "$set_game_content::rect" "-24,-191,640,560" "120" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-191,640,984" "120" ;
 			} else if ( "gui::gui_set_game_scroll" < 7.5 ) {
-				transition "set_game_content::rect" "$set_game_content::rect" "-24,-215,640,560" "120" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-215,640,984" "120" ;
 			} else if ( "gui::gui_set_game_scroll" < 8.5 ) {
-				transition "set_game_content::rect" "$set_game_content::rect" "-24,-239,640,560" "120" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-239,640,984" "120" ;
 			} else if ( "gui::gui_set_game_scroll" < 9.5 ) {
-				transition "set_game_content::rect" "$set_game_content::rect" "-24,-263,640,560" "120" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-263,640,984" "120" ;
+			} else if ( "gui::gui_set_game_scroll" < 10.5 ) {
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-287,640,984" "120" ;
+			} else if ( "gui::gui_set_game_scroll" < 11.5 ) {
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-311,640,984" "120" ;
+			} else if ( "gui::gui_set_game_scroll" < 12.5 ) {
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-335,640,984" "120" ;
+			} else if ( "gui::gui_set_game_scroll" < 13.5 ) {
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-359,640,984" "120" ;
+			} else if ( "gui::gui_set_game_scroll" < 14.5 ) {
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-383,640,984" "120" ;
+			} else if ( "gui::gui_set_game_scroll" < 15.5 ) {
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-407,640,984" "120" ;
+			} else if ( "gui::gui_set_game_scroll" < 16.5 ) {
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-431,640,984" "120" ;
+			} else if ( "gui::gui_set_game_scroll" < 17.5 ) {
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-455,640,984" "120" ;
+			} else if ( "gui::gui_set_game_scroll" < 18.5 ) {
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-479,640,984" "120" ;
+			} else if ( "gui::gui_set_game_scroll" < 19.5 ) {
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-503,640,984" "120" ;
+			} else if ( "gui::gui_set_game_scroll" < 20.5 ) {
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-527,640,984" "120" ;
+			} else if ( "gui::gui_set_game_scroll" < 21.5 ) {
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-551,640,984" "120" ;
+			} else if ( "gui::gui_set_game_scroll" < 22.5 ) {
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-575,640,984" "120" ;
+			} else if ( "gui::gui_set_game_scroll" < 23.5 ) {
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-599,640,984" "120" ;
+			} else if ( "gui::gui_set_game_scroll" < 24.5 ) {
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-623,640,984" "120" ;
+			} else if ( "gui::gui_set_game_scroll" < 25.5 ) {
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-647,640,984" "120" ;
+			} else if ( "gui::gui_set_game_scroll" < 26.5 ) {
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-671,640,984" "120" ;
 			} else {
-				transition "set_game_content::rect" "$set_game_content::rect" "-24,-287,640,560" "120" ;
+				transition "set_game_content::rect" "$set_game_content::rect" "-24,-695,640,984" "120" ;
 			}
 		}
 
@@ -22512,6 +22640,12 @@ windowDef Desktop
 				set "set_game_mpitch_background::matcolor_w" "0.4" ;
 				set "set_game_msmooth_background::matcolor_w" "0.4" ;
 				set "set_game_msensitivity_background::matcolor_w" "0.4" ;
+				set "set_game_mcpi_background::matcolor_w" "0.4" ;
+				set "set_game_mfilter_background::matcolor_w" "0.4" ;
+				set "set_game_maccel_background::matcolor_w" "0.4" ;
+				set "set_game_macceloffset_background::matcolor_w" "0.4" ;
+				set "set_game_maccelpower_background::matcolor_w" "0.4" ;
+				set "set_game_msenscap_background::matcolor_w" "0.4" ;
 				set "set_game_customxhair_background::matcolor_w" "0.4" ;
 				set "set_game_corpsesink_background::matcolor_w" "0.4" ;
 				set "set_game_corpsetime_background::matcolor_w" "0.4" ;

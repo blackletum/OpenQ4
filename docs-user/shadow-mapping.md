@@ -165,7 +165,7 @@ openQ4 can keep static-only shadow maps resident and reuse them across backend v
 | `r_shadowMapPointCacheSize` | `4` | `0..8` | Static point-light cubemap cache slots. |
 | `r_shadowMapCacheCSM` | `0` | `0..1` | Allows static-cache reuse for CSM/global shadow-map passes. Leave off unless you are testing a fixed-view or otherwise stable scene. |
 
-`r_shadowMapMaxUpdatesPerView` still limits dynamic shadow-map work. Resident cache hits do not consume that update budget, so static light reuse can reduce update pressure without starving moving lights.
+`r_shadowMapMaxUpdatesPerView` still limits dynamic shadow-map work. Resident cache hits do not consume that update budget, so static light reuse can reduce update pressure without starving moving lights. Cache signatures include caster materials, alpha/hash settings, caster offset settings, point-light range/depth mode, and view-fitted CSM state, so changing those inputs forces a fresh shadow map instead of reusing stale resident data.
 
 ## Transparency Shadowing
 
@@ -180,7 +180,8 @@ These are materials with holes cut by alpha test, such as:
 Behavior:
 - They cast cutout shadows in both projected and point shadow-map paths.
 - `r_shadowMapHashedAlpha 1` is the recommended mode and is enabled by default.
-- If a perforated stage cannot use the hashed path, openQ4 falls back to its classic alpha-test caster behavior instead of dropping the shadow.
+- If a perforated stage uses explicit texture coordinates, OpenQ4 can render it with either hashed alpha or hard alpha-test shadowing; unsupported animated texgen cutouts cast conservative solid depth instead of dropping the shadow.
+- Translucent shadow coverage stages preserve the same material alpha-test mode, so blended foliage/glass masks stay consistent with opaque cutouts.
 
 Hashed alpha notes:
 - Usually gives more stable distant foliage/fence shadows than hard binary alpha test.
@@ -238,14 +239,16 @@ Shadow artifacts are usually one of two classes:
 
 Projected-light tuning:
 
+Projected shadow maps store Quake 4's authored light falloff depth directly, so the projected defaults are intentionally small. Raise them only when you see acne or speckling.
+
 | Setting | Default | Range | What it does |
 |---|---:|---:|---|
-| `r_shadowMapBias` | `0.010` | `0..0.05` | Constant receiver depth bias for projected lights. |
-| `r_shadowMapNormalBias` | `0.020` | `0..0.05` | Extra projected-light bias on sloped receivers. |
+| `r_shadowMapBias` | `0.00035` | `0..0.05` | Constant receiver depth bias for projected lights. |
+| `r_shadowMapNormalBias` | `0.0015` | `0..0.05` | Extra projected-light bias on sloped receivers. |
 | `r_shadowMapTexelBiasScale` | `1.0` | `0..8` | Uses texel-aware receiver bias based on fitted cascade/light footprint. Constant bias acts as a compatibility floor. |
 | `r_shadowMapReceiverPlaneBias` | `0` | `0..1` | Allows derivative receiver-plane bias for wider projected-light filters. |
-| `r_shadowMapPolygonFactor` | `2.0` | `0..16` | Slope-scale caster polygon offset used while rendering projected shadow maps. |
-| `r_shadowMapPolygonOffset` | `4.0` | `0..64` | Constant caster polygon offset used while rendering projected shadow maps. |
+| `r_shadowMapPolygonFactor` | `1.25` | `0..16` | Slope-scale caster polygon offset used while rendering shadow maps. |
+| `r_shadowMapPolygonOffset` | `1.0` | `0..64` | Constant caster polygon offset used while rendering shadow maps. |
 
 Point-light tuning:
 
@@ -307,7 +310,7 @@ Useful workflow:
 
 - If shadows do not appear at all, check `r_shadows 1` and `r_useShadowMap 1`, then run `vid_restart`.
 - If projected-light shadows shimmer while moving, keep `r_shadowMapCSM 1` and `r_shadowMapCascadeStabilize 1`.
-- If cutout materials cast solid-looking shadows, make sure `r_shadowMapHashedAlpha 1` is enabled and the material is actually alpha-tested rather than blended.
+- If cutout materials cast solid-looking shadows, make sure `r_shadowMapHashedAlpha 1` is enabled and the material is actually alpha-tested with explicit texture coordinates. Unusual animated texgen cutouts may cast conservative solid depth until that stage type is supported.
 - If translucent shadows are too strong or too noisy, lower `r_shadowMapTranslucentDensity` or disable `r_shadowMapTranslucentMoments`.
 - If blended materials still do not cast translucent shadows, that material may be outside the currently supported stage set. Common additive pickup orbs are supported, but many particle/effect materials still are not.
 - If point-light shadows look too detached, reduce `r_shadowMapPointBias` or `r_shadowMapPointNormalBias`.

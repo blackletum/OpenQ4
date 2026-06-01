@@ -15,5 +15,5 @@ void main() {
 	color += texture2D( Scene, uv + stepSize * 5.1764706 ).rgb * 0.01038136;
 	color += texture2D( Scene, uv - stepSize * 5.1764706 ).rgb * 0.01038136;
 
-	gl_FragColor = vec4( color, 1.0 );
+	gl_FragColor = vec4( max( color, vec3( 0.0 ) ), 1.0 );
 }

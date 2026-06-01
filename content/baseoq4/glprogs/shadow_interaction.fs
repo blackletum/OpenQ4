@@ -316,20 +316,21 @@ float ProjectedPCSSRadius( vec2 uv, float depth, int cascadeIndex, vec2 clampMin
 #endif
 
 vec4 SampleShadowCascade( vec4 shadowCoord, vec4 atlasRect, int cascadeIndex ) {
-	float absW = abs( shadowCoord.w );
-	if ( shadowCoord.w != shadowCoord.w || absW < kShadowCoordWEpsilon || absW > kShadowCoordMaxMagnitude ) {
+	if ( shadowCoord.w != shadowCoord.w || shadowCoord.w < kShadowCoordWEpsilon || shadowCoord.w > kShadowCoordMaxMagnitude ) {
 		gShadowDebugState = max( gShadowDebugState, 1.0 );
 		return vec4( 1.0, 0.5, 0.5, 1.0 );
 	}
 
-	vec3 projected = shadowCoord.xyz / shadowCoord.w;
+	vec2 projectedXY = shadowCoord.xy / shadowCoord.w;
+	float projectedDepth = shadowCoord.z;
+	vec3 projected = vec3( projectedXY, projectedDepth );
 	if ( ShadowCoordProjectedInvalid( projected ) ) {
 		gShadowDebugState = max( gShadowDebugState, 2.0 );
 		return vec4( 1.0, 0.5, 0.5, 1.0 );
 	}
 
-	vec2 localUv = projected.xy * 0.5 + 0.5;
-	float depth = projected.z * 0.5 + 0.5;
+	vec2 localUv = projectedXY * 0.5 + 0.5;
+	float depth = projectedDepth;
 
 	if ( localUv.x <= 0.0 || localUv.x >= 1.0 || localUv.y <= 0.0 || localUv.y >= 1.0 ) {
 		return vec4( 1.0, localUv.x, localUv.y, depth );
@@ -468,15 +469,16 @@ vec4 ShadowCoordByIndex( int index ) {
 }
 
 bool ProjectShadowCoord( vec4 shadowCoord, out vec2 localUv, out float depth ) {
-	float absW = abs( shadowCoord.w );
-	if ( shadowCoord.w != shadowCoord.w || absW < kShadowCoordWEpsilon || absW > kShadowCoordMaxMagnitude ) {
+	if ( shadowCoord.w != shadowCoord.w || shadowCoord.w < kShadowCoordWEpsilon || shadowCoord.w > kShadowCoordMaxMagnitude ) {
 		gShadowDebugState = max( gShadowDebugState, 1.0 );
 		localUv = vec2( 0.0 );
 		depth = 0.0;
 		return false;
 	}
 
-	vec3 projected = shadowCoord.xyz / shadowCoord.w;
+	vec2 projectedXY = shadowCoord.xy / shadowCoord.w;
+	float projectedDepth = shadowCoord.z;
+	vec3 projected = vec3( projectedXY, projectedDepth );
 	if ( ShadowCoordProjectedInvalid( projected ) ) {
 		gShadowDebugState = max( gShadowDebugState, 2.0 );
 		localUv = vec2( 0.0 );
@@ -484,8 +486,8 @@ bool ProjectShadowCoord( vec4 shadowCoord, out vec2 localUv, out float depth ) {
 		return false;
 	}
 
-	localUv = projected.xy * 0.5 + 0.5;
-	depth = projected.z * 0.5 + 0.5;
+	localUv = projectedXY * 0.5 + 0.5;
+	depth = projectedDepth;
 	return true;
 }
 

@@ -5,6 +5,7 @@ uniform float sourceIsColor;
 float SampleValue( vec2 uv ) {
 	vec3 sampleColor = texture2D( Scene, uv ).rgb;
 	if ( sourceIsColor > 0.5 ) {
+		sampleColor = max( sampleColor, vec3( 0.0 ) );
 		float luminance = dot( sampleColor, vec3( 0.2126, 0.7152, 0.0722 ) );
 		return log( max( luminance, 0.0001 ) );
 	}

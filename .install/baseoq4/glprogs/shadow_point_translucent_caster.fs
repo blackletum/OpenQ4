@@ -10,6 +10,7 @@ uniform float uVertexColorMode;
 uniform float uCoverageSourceMode;
 uniform float uCoverageVertexColorMode;
 uniform float uCoverageAlphaTestRef;
+uniform float uCoverageAlphaTestMode;
 uniform float uCoverageAlphaTestEnabled;
 uniform float uTranslucentMinAlpha;
 
@@ -34,6 +35,16 @@ vec3 VertexColorRgb( float mode ) {
 	return vec3( 1.0 );
 }
 
+bool CoverageAlphaTestPass( float alpha ) {
+	if ( uCoverageAlphaTestMode < -0.5 ) {
+		return alpha < uCoverageAlphaTestRef;
+	}
+	if ( abs( uCoverageAlphaTestMode ) <= 0.5 ) {
+		return abs( alpha - uCoverageAlphaTestRef ) <= ( 0.5 / 255.0 );
+	}
+	return alpha > uCoverageAlphaTestRef;
+}
+
 float CoverageAmount() {
 	if ( uCoverageSourceMode < 0.5 ) {
 		return 1.0;
@@ -42,7 +53,7 @@ float CoverageAmount() {
 	vec4 coverageSample = texture2D( uCoverageMap, vCoverageTexCoord );
 	vec3 coverageTint = clamp( coverageSample.rgb * uCoverageStageColor.rgb * VertexColorRgb( uCoverageVertexColorMode ), 0.0, 1.0 );
 	float coverageAlpha = coverageSample.a * uCoverageStageColor.a * vCoverageVertexAlpha;
-	if ( uCoverageAlphaTestEnabled > 0.5 && coverageAlpha <= uCoverageAlphaTestRef ) {
+	if ( uCoverageAlphaTestEnabled > 0.5 && !CoverageAlphaTestPass( coverageAlpha ) ) {
 		discard;
 	}
 	if ( uCoverageSourceMode > 1.5 ) {
@@ -71,7 +82,14 @@ void main() {
 	}
 
 	vec3 tauColor = vec3( OpticalDepth( absorption.r ), OpticalDepth( absorption.g ), OpticalDepth( absorption.b ) );
-	float depth = clamp( length( vPointShadowVector ) / uPointShadowFar, 0.0, 1.0 );
+	if ( uPointShadowFar <= 0.0 ) {
+		discard;
+	}
+	float rawDepth = length( vPointShadowVector ) / uPointShadowFar;
+	if ( rawDepth <= 0.0 || rawDepth >= 1.0 ) {
+		discard;
+	}
+	float depth = clamp( rawDepth, 0.0, 1.0 );
 	float depth2 = depth * depth;
 	gl_FragData[0] = vec4( tauColor.r, tauColor.r * depth, tauColor.r * depth2, tauColor.r * depth2 * depth );
 	gl_FragData[1] = vec4( tauColor.g, tauColor.g * depth, tauColor.g * depth2, tauColor.g * depth2 * depth );

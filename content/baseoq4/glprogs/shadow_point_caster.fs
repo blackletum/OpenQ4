@@ -3,6 +3,7 @@
 uniform float uPointShadowFar;
 uniform sampler2D uAlphaMap;
 uniform float uAlphaRef;
+uniform float uAlphaTestMode;
 uniform float uAlphaScale;
 uniform float uAlphaTestEnabled;
 uniform float uAlphaHashEnabled;
@@ -36,23 +37,38 @@ float AlphaCoverage( float alpha ) {
 	return clamp( ( scaledAlpha - alphaRef ) / max( 1.0 - alphaRef, 1.0e-4 ), 0.0, 1.0 );
 }
 
+bool AlphaTestPass( float alpha ) {
+	if ( uAlphaTestMode < -0.5 ) {
+		return alpha < uAlphaRef;
+	}
+	if ( abs( uAlphaTestMode ) <= 0.5 ) {
+		return abs( alpha - uAlphaRef ) <= ( 0.5 / 255.0 );
+	}
+	return alpha > uAlphaRef;
+}
+
 void main() {
 	if ( uAlphaTestEnabled > 0.5 ) {
 		float alpha = texture2D( uAlphaMap, vAlphaTexCoord ).a * uAlphaScale;
-		if ( uAlphaHashEnabled > 0.5 ) {
+		if ( uAlphaHashEnabled > 0.5 && uAlphaTestMode > 0.5 ) {
 			float coverage = AlphaCoverage( alpha );
 			float threshold = ( uAlphaHashStable > 0.5 ) ? StableAlphaHashThreshold( vAlphaHashCoord ) : AlphaHashThreshold( gl_FragCoord.xy );
 			if ( coverage <= 0.0 || coverage <= threshold ) {
 				discard;
 			}
-		} else {
-			if ( alpha <= uAlphaRef ) {
-				discard;
-			}
+		} else if ( !AlphaTestPass( alpha ) ) {
+			discard;
 		}
 	}
 
-	float depth = clamp( length( vPointShadowVector ) / uPointShadowFar, 0.0, 1.0 );
+	if ( uPointShadowFar <= 0.0 ) {
+		discard;
+	}
+	float rawDepth = length( vPointShadowVector ) / uPointShadowFar;
+	if ( rawDepth <= 0.0 || rawDepth >= 1.0 ) {
+		discard;
+	}
+	float depth = clamp( rawDepth, 0.0, 1.0 );
 	if ( uPointShadowDepthCompare > 0.5 ) {
 		gl_FragDepth = depth;
 	}

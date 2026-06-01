@@ -22,7 +22,7 @@
 					noclip	0
 					windowDef set_game_content
 					{
-						rect	-24,-47,640,560
+						rect	-24,-47,640,984
 						visible	1
 
 	//--------------------------------------------------------------//
@@ -448,12 +448,28 @@
 	//==============================================================//
 				
 	//==============================================================//
+	// Settings->Game Options->Mouse Input
+	//==============================================================//
+
+				windowDef set_game_mouse
+				{
+					rect	259,273,327,13
+					visible	1
+					forecolor	1,1,1,0.4
+					text	"#str_229935"
+					textscale	0.2
+					font	"fonts/lowpixel"
+				}
+
+	//==============================================================//
+
+	//==============================================================//
 	// Settings->Game Options->Invert Mouse
 	//==============================================================//
-				
+
 				windowDef set_game_mpitch
 				{
-					rect  228,263,403,25
+					rect  228,287,403,25
 					visible 1
 											
 					windowDef set_game_mpitch_background
@@ -498,7 +514,7 @@
 
 				windowDef set_game_msmooth
 				{
-					rect	228,287,377,25
+					rect	228,311,377,25
 					visible	1
 				
 					windowDef set_game_msmooth_background
@@ -564,7 +580,7 @@
 
 				windowDef set_game_msensitivity
 				{
-					rect	228,311,377,25
+					rect	228,335,377,25
 					visible	1
 				
 					windowDef set_game_msensitivity_background
@@ -597,7 +613,7 @@
 						forecolor	1,0.745,0.137,0.8
 						matcolor	1,0.745,0.137,0.8
 						low	0.01
-						high	8
+						high	30
 						step	0.01
 						thumbShader	"gfx/guis/mainmenu/slider_bar"
 						cvar	sensitivity
@@ -609,7 +625,7 @@
 						visible	1
 						cvar	sensitivity
 						textscale	0.24
-						maxchars	4
+						maxchars	5
 						forecolor	1,0.745,0.137,0.8
 						font	"fonts/lowpixel"
 				
@@ -623,6 +639,915 @@
 					}
 				}	
 	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Mouse CPI
+	//==============================================================//
+
+				windowDef set_game_mcpi
+				{
+					rect	228,359,377,25
+					visible	1
+
+					windowDef set_game_mcpi_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_mcpi_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229936"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					windowDef set_game_mcpi_slider_bg
+					{
+						rect	244,8,128,16
+						background	"gfx/guis/mainmenu/slider_bg"
+						matcolor	1,0.745,0.137,0.8
+						noevents	1
+						visible	1
+					}
+					sliderDef set_game_mcpi_slider_bar
+					{
+						rect	244,9,71,8
+						forecolor	1,0.745,0.137,0.8
+						matcolor	1,0.745,0.137,0.8
+						low	0
+						high	32000
+						step	50
+						thumbShader	"gfx/guis/mainmenu/slider_bar"
+						cvar	m_cpi
+						visible	1
+					}
+					editDef set_game_mcpi_value
+					{
+						rect	322,4,100,18
+						visible	1
+						cvar	m_cpi
+						textscale	0.24
+						maxchars	6
+						forecolor	1,0.745,0.137,0.8
+						font	"fonts/lowpixel"
+
+						onEnter {
+							setfocus "set_b_back" ;
+						}
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Mouse View Filter
+	//==============================================================//
+
+				windowDef set_game_mfilter
+				{
+					rect	228,383,377,25
+					visible	1
+
+					windowDef set_game_mfilter_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_mfilter_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229937"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					windowDef set_game_mfilter_slider_bg
+					{
+						rect	244,8,128,16
+						background	"gfx/guis/mainmenu/slider_bg"
+						matcolor	1,0.745,0.137,0.8
+						noevents	1
+						visible	1
+					}
+					sliderDef set_game_mfilter_slider_bar
+					{
+						rect	244,9,71,8
+						forecolor	1,0.745,0.137,0.8
+						matcolor	1,0.745,0.137,0.8
+						low	0
+						high	31
+						step	1
+						thumbShader	"gfx/guis/mainmenu/slider_bar"
+						cvar	m_filter
+						visible	1
+					}
+					editDef set_game_mfilter_value
+					{
+						rect	322,4,100,18
+						visible	1
+						cvar	m_filter
+						textscale	0.24
+						maxchars	2
+						forecolor	1,0.745,0.137,0.8
+						font	"fonts/lowpixel"
+
+						onEnter {
+							setfocus "set_b_back" ;
+						}
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Mouse Accel
+	//==============================================================//
+
+				windowDef set_game_maccel
+				{
+					rect	228,407,377,25
+					visible	1
+
+					windowDef set_game_maccel_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_maccel_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229938"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					windowDef set_game_maccel_slider_bg
+					{
+						rect	244,8,128,16
+						background	"gfx/guis/mainmenu/slider_bg"
+						matcolor	1,0.745,0.137,0.8
+						noevents	1
+						visible	1
+					}
+					sliderDef set_game_maccel_slider_bar
+					{
+						rect	244,9,71,8
+						forecolor	1,0.745,0.137,0.8
+						matcolor	1,0.745,0.137,0.8
+						low	-5
+						high	5
+						step	0.01
+						thumbShader	"gfx/guis/mainmenu/slider_bar"
+						cvar	cl_mouseAccel
+						visible	1
+					}
+					editDef set_game_maccel_value
+					{
+						rect	322,4,100,18
+						visible	1
+						cvar	cl_mouseAccel
+						textscale	0.24
+						maxchars	6
+						forecolor	1,0.745,0.137,0.8
+						font	"fonts/lowpixel"
+
+						onEnter {
+							setfocus "set_b_back" ;
+						}
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Mouse Accel Offset
+	//==============================================================//
+
+				windowDef set_game_macceloffset
+				{
+					rect	228,431,377,25
+					visible	1
+
+					windowDef set_game_macceloffset_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_macceloffset_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229939"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					windowDef set_game_macceloffset_slider_bg
+					{
+						rect	244,8,128,16
+						background	"gfx/guis/mainmenu/slider_bg"
+						matcolor	1,0.745,0.137,0.8
+						noevents	1
+						visible	1
+					}
+					sliderDef set_game_macceloffset_slider_bar
+					{
+						rect	244,9,71,8
+						forecolor	1,0.745,0.137,0.8
+						matcolor	1,0.745,0.137,0.8
+						low	0
+						high	50
+						step	0.1
+						thumbShader	"gfx/guis/mainmenu/slider_bar"
+						cvar	cl_mouseAccelOffset
+						visible	1
+					}
+					editDef set_game_macceloffset_value
+					{
+						rect	322,4,100,18
+						visible	1
+						cvar	cl_mouseAccelOffset
+						textscale	0.24
+						maxchars	5
+						forecolor	1,0.745,0.137,0.8
+						font	"fonts/lowpixel"
+
+						onEnter {
+							setfocus "set_b_back" ;
+						}
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Mouse Accel Curve
+	//==============================================================//
+
+				windowDef set_game_maccelpower
+				{
+					rect	228,455,377,25
+					visible	1
+
+					windowDef set_game_maccelpower_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_maccelpower_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229940"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					windowDef set_game_maccelpower_slider_bg
+					{
+						rect	244,8,128,16
+						background	"gfx/guis/mainmenu/slider_bg"
+						matcolor	1,0.745,0.137,0.8
+						noevents	1
+						visible	1
+					}
+					sliderDef set_game_maccelpower_slider_bar
+					{
+						rect	244,9,71,8
+						forecolor	1,0.745,0.137,0.8
+						matcolor	1,0.745,0.137,0.8
+						low	1
+						high	8
+						step	0.05
+						thumbShader	"gfx/guis/mainmenu/slider_bar"
+						cvar	cl_mouseAccelPower
+						visible	1
+					}
+					editDef set_game_maccelpower_value
+					{
+						rect	322,4,100,18
+						visible	1
+						cvar	cl_mouseAccelPower
+						textscale	0.24
+						maxchars	4
+						forecolor	1,0.745,0.137,0.8
+						font	"fonts/lowpixel"
+
+						onEnter {
+							setfocus "set_b_back" ;
+						}
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Mouse Sensitivity Cap
+	//==============================================================//
+
+				windowDef set_game_msenscap
+				{
+					rect	228,479,377,25
+					visible	1
+
+					windowDef set_game_msenscap_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_msenscap_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229941"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					windowDef set_game_msenscap_slider_bg
+					{
+						rect	244,8,128,16
+						background	"gfx/guis/mainmenu/slider_bg"
+						matcolor	1,0.745,0.137,0.8
+						noevents	1
+						visible	1
+					}
+					sliderDef set_game_msenscap_slider_bar
+					{
+						rect	244,9,71,8
+						forecolor	1,0.745,0.137,0.8
+						matcolor	1,0.745,0.137,0.8
+						low	0
+						high	100
+						step	0.1
+						thumbShader	"gfx/guis/mainmenu/slider_bar"
+						cvar	cl_mouseSensCap
+						visible	1
+					}
+					editDef set_game_msenscap_value
+					{
+						rect	322,4,100,18
+						visible	1
+						cvar	cl_mouseSensCap
+						textscale	0.24
+						maxchars	5
+						forecolor	1,0.745,0.137,0.8
+						font	"fonts/lowpixel"
+
+						onEnter {
+							setfocus "set_b_back" ;
+						}
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Controller
+	//==============================================================//
+
+				windowDef set_game_controller
+				{
+					rect	259,513,327,13
+					visible	1
+					forecolor	1,1,1,0.4
+					text	"#str_229924"
+					textscale	0.2
+					font	"fonts/lowpixel"
+				}
+
+				windowDef set_game_controller_enabled
+				{
+					rect  228,527,377,25
+					visible 1
+
+					windowDef set_game_controller_enabled_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_controller_enabled_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229925"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					choiceDef set_game_controller_enabled_value
+					{
+						rect	240,3,162,18
+						visible	1
+						forecolor	1,0.745,0.137,0.8
+						cvar	in_joystick
+						textscale	0.24
+						font	"fonts/lowpixel"
+						choices	"#str_200059"
+						choiceType	0
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Controller Stick Layout
+	//==============================================================//
+
+				windowDef set_game_controller_layout
+				{
+					rect  228,551,377,25
+					visible 1
+
+					windowDef set_game_controller_layout_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_controller_layout_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229930"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					choiceDef set_game_controller_layout_value
+					{
+						rect	240,3,162,18
+						visible	1
+						forecolor	1,0.745,0.137,0.8
+						cvar	in_joystickSouthpaw
+						textscale	0.24
+						font	"fonts/lowpixel"
+						choices	"#str_229934"
+						values	"0;1"
+						choiceType	1
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Controller Dead Zone
+	//==============================================================//
+
+				windowDef set_game_controller_deadzone
+				{
+					rect	228,575,377,25
+					visible	1
+
+					windowDef set_game_controller_deadzone_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_controller_deadzone_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229926"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					windowDef set_game_controller_deadzone_slider_bg
+					{
+						rect	244,8,128,16
+						background	"gfx/guis/mainmenu/slider_bg"
+						matcolor	1,0.745,0.137,0.8
+						noevents	1
+						visible	1
+					}
+					sliderDef set_game_controller_deadzone_slider_bar
+					{
+						rect	244,9,71,8
+						forecolor	1,0.745,0.137,0.8
+						matcolor	1,0.745,0.137,0.8
+						low	0
+						high	0.95
+						step	0.01
+						thumbShader	"gfx/guis/mainmenu/slider_bar"
+						cvar	in_joystickDeadZone
+						visible	1
+					}
+					editDef set_game_controller_deadzone_value
+					{
+						rect	322,4,100,18
+						visible	1
+						cvar	in_joystickDeadZone
+						textscale	0.24
+						maxchars	4
+						forecolor	1,0.745,0.137,0.8
+						font	"fonts/lowpixel"
+
+						onEnter {
+							setfocus "set_b_back" ;
+						}
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Controller Look Sensitivity
+	//==============================================================//
+
+				windowDef set_game_controller_look_sensitivity
+				{
+					rect	228,599,377,25
+					visible	1
+
+					windowDef set_game_controller_look_sensitivity_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_controller_look_sensitivity_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229931"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					windowDef set_game_controller_look_sensitivity_slider_bg
+					{
+						rect	244,8,128,16
+						background	"gfx/guis/mainmenu/slider_bg"
+						matcolor	1,0.745,0.137,0.8
+						noevents	1
+						visible	1
+					}
+					sliderDef set_game_controller_look_sensitivity_slider_bar
+					{
+						rect	244,9,71,8
+						forecolor	1,0.745,0.137,0.8
+						matcolor	1,0.745,0.137,0.8
+						low	0.1
+						high	4.0
+						step	0.05
+						thumbShader	"gfx/guis/mainmenu/slider_bar"
+						cvar	in_joystickLookSensitivity
+						visible	1
+					}
+					editDef set_game_controller_look_sensitivity_value
+					{
+						rect	322,4,100,18
+						visible	1
+						cvar	in_joystickLookSensitivity
+						textscale	0.24
+						maxchars	4
+						forecolor	1,0.745,0.137,0.8
+						font	"fonts/lowpixel"
+
+						onEnter {
+							setfocus "set_b_back" ;
+						}
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Controller Look Curve
+	//==============================================================//
+
+				windowDef set_game_controller_look_curve
+				{
+					rect	228,623,377,25
+					visible	1
+
+					windowDef set_game_controller_look_curve_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_controller_look_curve_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229932"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					windowDef set_game_controller_look_curve_slider_bg
+					{
+						rect	244,8,128,16
+						background	"gfx/guis/mainmenu/slider_bg"
+						matcolor	1,0.745,0.137,0.8
+						noevents	1
+						visible	1
+					}
+					sliderDef set_game_controller_look_curve_slider_bar
+					{
+						rect	244,9,71,8
+						forecolor	1,0.745,0.137,0.8
+						matcolor	1,0.745,0.137,0.8
+						low	1.0
+						high	3.0
+						step	0.05
+						thumbShader	"gfx/guis/mainmenu/slider_bar"
+						cvar	in_joystickLookCurve
+						visible	1
+					}
+					editDef set_game_controller_look_curve_value
+					{
+						rect	322,4,100,18
+						visible	1
+						cvar	in_joystickLookCurve
+						textscale	0.24
+						maxchars	4
+						forecolor	1,0.745,0.137,0.8
+						font	"fonts/lowpixel"
+
+						onEnter {
+							setfocus "set_b_back" ;
+						}
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Controller Invert Look
+	//==============================================================//
+
+				windowDef set_game_controller_invert
+				{
+					rect  228,647,377,25
+					visible 1
+
+					windowDef set_game_controller_invert_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_controller_invert_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229933"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					choiceDef set_game_controller_invert_value
+					{
+						rect	240,3,162,18
+						visible	1
+						forecolor	1,0.745,0.137,0.8
+						cvar	in_joystickInvertLook
+						textscale	0.24
+						font	"fonts/lowpixel"
+						choices	"#str_200059"
+						choiceType	0
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Controller Trigger Press
+	//==============================================================//
+
+				windowDef set_game_controller_trigger
+				{
+					rect	228,671,377,25
+					visible	1
+
+					windowDef set_game_controller_trigger_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_controller_trigger_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229927"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					windowDef set_game_controller_trigger_slider_bg
+					{
+						rect	244,8,128,16
+						background	"gfx/guis/mainmenu/slider_bg"
+						matcolor	1,0.745,0.137,0.8
+						noevents	1
+						visible	1
+					}
+					sliderDef set_game_controller_trigger_slider_bar
+					{
+						rect	244,9,71,8
+						forecolor	1,0.745,0.137,0.8
+						matcolor	1,0.745,0.137,0.8
+						low	0
+						high	1.0
+						step	0.01
+						thumbShader	"gfx/guis/mainmenu/slider_bar"
+						cvar	in_joystickTriggerThreshold
+						visible	1
+					}
+					editDef set_game_controller_trigger_value
+					{
+						rect	322,4,100,18
+						visible	1
+						cvar	in_joystickTriggerThreshold
+						textscale	0.24
+						maxchars	4
+						forecolor	1,0.745,0.137,0.8
+						font	"fonts/lowpixel"
+
+						onEnter {
+							setfocus "set_b_back" ;
+						}
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Controller Rumble
+	//==============================================================//
+
+				windowDef set_game_controller_rumble
+				{
+					rect  228,695,377,25
+					visible 1
+
+					windowDef set_game_controller_rumble_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_controller_rumble_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229928"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					choiceDef set_game_controller_rumble_value
+					{
+						rect	240,3,162,18
+						visible	1
+						forecolor	1,0.745,0.137,0.8
+						cvar	in_joystickRumble
+						textscale	0.24
+						font	"fonts/lowpixel"
+						choices	"#str_200059"
+						choiceType	0
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Controller Rumble Strength
+	//==============================================================//
+
+				windowDef set_game_controller_rumble_strength
+				{
+					rect	228,719,377,25
+					visible	1
+
+					windowDef set_game_controller_rumble_strength_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_controller_rumble_strength_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229929"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					windowDef set_game_controller_rumble_strength_slider_bg
+					{
+						rect	244,8,128,16
+						background	"gfx/guis/mainmenu/slider_bg"
+						matcolor	1,0.745,0.137,0.8
+						noevents	1
+						visible	1
+					}
+					sliderDef set_game_controller_rumble_strength_slider_bar
+					{
+						rect	244,9,71,8
+						forecolor	1,0.745,0.137,0.8
+						matcolor	1,0.745,0.137,0.8
+						low	0
+						high	2.0
+						step	0.05
+						thumbShader	"gfx/guis/mainmenu/slider_bar"
+						cvar	in_joystickRumbleScale
+						visible	1
+					}
+					editDef set_game_controller_rumble_strength_value
+					{
+						rect	322,4,100,18
+						visible	1
+						cvar	in_joystickRumbleScale
+						textscale	0.24
+						maxchars	4
+						forecolor	1,0.745,0.137,0.8
+						font	"fonts/lowpixel"
+
+						onEnter {
+							setfocus "set_b_back" ;
+						}
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
 				
 	//==============================================================//
 	// Settings->Game Options->Use Custom Crosshair
@@ -630,7 +1555,7 @@
 				
 				windowDef set_game_customxhair
 				{
-					rect  228,335,403,25
+					rect  228,753,403,25
 					visible 1
 											
 					windowDef set_game_customxhair_background
@@ -691,7 +1616,7 @@
 			
 				windowDef set_game_previewxhair
 				{
-					rect	228,359,377,48
+					rect	228,777,377,48
 					visible	1
 				
 					windowDef set_game_previewxhair_background
@@ -754,7 +1679,7 @@
 
 				windowDef set_game_xhairsize
 				{
-					rect  228,407,377,25
+					rect  228,825,377,25
 					visible 1
 											
 					windowDef set_game_xhairsize_background
@@ -812,7 +1737,7 @@
 
 				windowDef set_game_xhaircolor
 				{
-					rect  228,432,377,25
+					rect  228,850,377,25
 					visible 1
 											
 					windowDef set_game_xhaircolor_background
@@ -896,7 +1821,7 @@
 
 				windowDef set_game_corpsesink
 				{
-					rect  228,457,377,25
+					rect  228,875,377,25
 					visible 1
 
 					windowDef set_game_corpsesink_background
@@ -940,7 +1865,7 @@
 
 				windowDef set_game_corpsetime
 				{
-					rect  228,481,377,25
+					rect  228,899,377,25
 					visible 1
 
 					windowDef set_game_corpsetime_background
@@ -1019,7 +1944,7 @@
 
 				windowDef set_game_language
 				{
-					rect  228,505,377,25
+					rect  228,923,377,25
 					visible 1
 											
 					windowDef set_game_language_background
@@ -1067,7 +1992,7 @@
 
 				windowDef set_game_consoleaccess
 				{
-					rect  228,529,377,25
+					rect  228,947,377,25
 					visible 1
 
 					windowDef set_game_consoleaccess_background
@@ -1115,7 +2040,7 @@
 					forecolor	1,1,1,0.8
 					matcolor	1,1,1,0.4
 					low	0
-					high	10
+					high	27
 					step	1
 					vertical	1
 					scrollbar	1

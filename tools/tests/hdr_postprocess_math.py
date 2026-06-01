@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 import math
+from pathlib import Path
 import sys
 
 
 LUMA = (0.2126, 0.7152, 0.0722)
+BLOOM_SATURATION_WEIGHT = 0.25
 
 
 def dot(a, b):
@@ -14,6 +16,13 @@ def clamp(value, low, high):
     return max(low, min(high, value))
 
 
+def smoothstep(edge0, edge1, value):
+    if edge1 <= edge0:
+        return 1.0 if value >= edge1 else 0.0
+    t = clamp((value - edge0) / (edge1 - edge0), 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+
 def mix(a, b, t):
     return tuple(x * (1.0 - t) + y * t for x, y in zip(a, b))
 
@@ -22,8 +31,23 @@ def max_channel(color):
     return max(color[0], color[1], color[2])
 
 
+def scene_referred_bloom_color(color):
+    return tuple(max(channel, 0.0) for channel in color)
+
+
+def scene_referred_hdr_color(color):
+    return tuple(max(channel, 0.0) for channel in color)
+
+
+def bloom_brightness(color):
+    color = scene_referred_bloom_color(color)
+    luminance = dot(color, LUMA)
+    peak = max_channel(color)
+    return luminance * (1.0 - BLOOM_SATURATION_WEIGHT) + peak * BLOOM_SATURATION_WEIGHT
+
+
 def bloom_contribution(color, threshold, soft_knee):
-    brightness = dot(color, LUMA)
+    brightness = bloom_brightness(color)
     if brightness <= 1.0e-4:
         return 0.0
 
@@ -43,6 +67,7 @@ def bloom_contribution(color, threshold, soft_knee):
 
 
 def extract_bloom(color, threshold, soft_knee):
+    color = scene_referred_bloom_color(color)
     contribution = bloom_contribution(color, threshold, soft_knee)
     return tuple(channel * contribution for channel in color)
 
@@ -72,13 +97,30 @@ def highlight_compress(color, highlight_desaturation, gamut_compression):
 
 
 def tone_map_hdr(color, exposure, white_point, highlight_desaturation, gamut_compression):
+    color = scene_referred_hdr_color(color)
     safe_exposure = max(exposure, 1.0e-3)
     exposed = tuple(channel * safe_exposure for channel in color)
     safe_white = max(white_point, 1.0)
-    white_scale = 1.0 / max(aces_film_scalar(safe_white * safe_exposure), 1.0e-4)
-    mapped = tuple(aces_film_scalar(channel) * white_scale for channel in exposed)
-    compressed = highlight_compress(mapped, highlight_desaturation, gamut_compression)
+    shoulder_start = 0.75
+    exposed_white = max(safe_white * safe_exposure, shoulder_start + 1.0e-3)
+    shoulder_range = max(exposed_white - shoulder_start, 1.0e-3)
+    shoulder_norm = max(1.0 - math.exp(-4.0), 1.0e-4)
+    mapped = []
+    for channel in exposed:
+        if channel < shoulder_start:
+            mapped.append(channel)
+            continue
+        shoulder_t = max(channel - shoulder_start, 0.0) / shoulder_range
+        shoulder_value = shoulder_start + (1.0 - shoulder_start) * (1.0 - math.exp(-shoulder_t * 4.0)) / shoulder_norm
+        mapped.append(shoulder_value)
+    compressed = highlight_compress(tuple(mapped), highlight_desaturation, gamut_compression)
     return tuple(clamp(channel, 0.0, 1.0) for channel in compressed)
+
+
+def hdr_log_luminance_sample(color):
+    color = scene_referred_hdr_color(color)
+    luminance = dot(color, LUMA)
+    return math.log(max(luminance, 1.0e-4))
 
 
 def apply_lift_gamma_gain(color, lift, post_gamma, gain):
@@ -131,6 +173,22 @@ def test_bloom_extract_keeps_only_excess_energy():
     assert_true(extracted[0] < color[0], "bloom should keep only energy above threshold")
 
 
+def test_bloom_extract_preserves_saturated_hdr_highlights():
+    red_hdr = extract_bloom((2.0, 0.0, 0.0), 0.7, 0.15)
+    blue_hdr = extract_bloom((0.0, 0.0, 4.0), 0.7, 0.15)
+    red_ldr = extract_bloom((1.0, 0.0, 0.0), 0.7, 0.15)
+
+    assert_true(red_hdr[0] > 0.0, "saturated red HDR highlights should survive the bloom bright-pass")
+    assert_true(blue_hdr[2] > 0.0, "saturated blue HDR highlights should survive the bloom bright-pass")
+    assert_true(max_channel(red_ldr) == 0.0, "ordinary saturated LDR color should remain below the default bloom threshold")
+
+
+def test_bloom_extract_discards_negative_energy():
+    extracted = extract_bloom((-4.0, 2.0, -1.0), 0.7, 0.15)
+    assert_true(extracted[0] == 0.0 and extracted[2] == 0.0, "bloom should not carry negative scene energy")
+    assert_true(extracted[1] >= 0.0, "positive scene energy should remain non-negative")
+
+
 def test_zero_threshold_extracts_full_color():
     color = (0.8, 0.4, 0.2)
     extracted = extract_bloom(color, 0.0, 0.15)
@@ -152,6 +210,22 @@ def test_white_point_near_one():
     assert_true(abs(mapped - 1.0) < 0.05, "white point should map close to display white")
 
 
+def test_tone_map_preserves_midrange_sdr():
+    color = (0.5, 0.5, 0.5)
+    mapped = tone_map_hdr(color, 1.0, 6.0, 0.35, 1.0)
+    for mapped_channel, source_channel in zip(mapped, color):
+        assert_true(abs(mapped_channel - source_channel) < 0.02, "HDR tonemap should preserve midrange SDR contrast before the shoulder")
+
+
+def test_hdr_rejects_negative_scene_energy():
+    mapped = tone_map_hdr((-8.0, 0.5, -0.25), 1.0, 6.0, 0.35, 1.0)
+    assert_true(mapped[0] == 0.0 and mapped[2] == 0.0, "negative HDR color must not create tone-mapped output")
+    assert_true(mapped[1] > 0.0, "positive HDR color should survive negative-channel cleanup")
+
+    dark_log_luma = hdr_log_luminance_sample((-4.0, -2.0, -1.0))
+    assert_true(abs(dark_log_luma - math.log(1.0e-4)) < 1.0e-6, "auto exposure luminance should ignore negative scene energy")
+
+
 def test_no_nan_edge_cases():
     cases = [
         ((0.0, 0.0, 0.0), 0.0, 1.0, 0.0, 0.0),
@@ -165,15 +239,58 @@ def test_no_nan_edge_cases():
             assert_true(math.isfinite(channel), "color adjustment produced a non-finite value")
 
 
+def test_modern_lighting_keeps_scene_referred_energy():
+    shader_library = Path(__file__).resolve().parents[2] / "src" / "renderer" / "ModernGLShaderLibrary.cpp"
+    source = shader_library.read_text(encoding="utf-8")
+
+    blocked_lighting_clamps = [
+        "out_Color = vec4(clamp(lit, vec3(0.0), vec3(1.0))",
+        "out_Color = vec4(clamp(mix(baseColor, blendColor, blendAmount) + lightAccum + emissive, vec3(0.0), vec3(1.0))",
+    ]
+    for snippet in blocked_lighting_clamps:
+        assert_true(snippet not in source, "modern lighting must preserve HDR energy for bloom/tonemap")
+
+    assert_true("ModernSceneReferredColor" in source, "modern shaders should route final scene color through the HDR-safe helper")
+
+
+def test_bloom_shader_uses_saturation_aware_brightness():
+    root = Path(__file__).resolve().parents[2]
+    shader = (root / "content" / "baseoq4" / "glprogs" / "bloom_extract.fs").read_text(encoding="utf-8")
+    draw_common = (root / "src" / "renderer" / "draw_common.cpp").read_text(encoding="utf-8")
+
+    assert_true("BloomBrightness" in shader, "bloom extraction should use an explicit brightness helper")
+    assert_true("mix( luminance, peak, 0.25 )" in shader, "bloom extraction should preserve saturated HDR highlights")
+    assert_true("SceneReferredBloomColor" in shader, "bloom extraction should reject negative scene energy")
+    assert_true("r_bloomIntensity.GetFloat() > 0.0001f" in draw_common, "zero-intensity bloom should not force the bloom pass")
+
+
+def test_hdr_shader_uses_scene_referred_inputs():
+    root = Path(__file__).resolve().parents[2]
+    composite = (root / "content" / "baseoq4" / "glprogs" / "bloom.fs").read_text(encoding="utf-8")
+    luminance = (root / "content" / "baseoq4" / "glprogs" / "hdr_luminance.fs").read_text(encoding="utf-8")
+    draw_common = (root / "src" / "renderer" / "draw_common.cpp").read_text(encoding="utf-8")
+
+    assert_true("SceneReferredHDRColor" in composite, "HDR composite should sanitize scene-referred color before tonemap/debug")
+    assert_true("sampleColor = max( sampleColor, vec3( 0.0 ) );" in luminance, "auto exposure should ignore negative scene energy")
+    assert_true("r_hdrAutoExposure.GetBool() && r_hdrToneMap.GetBool()" in draw_common, "auto exposure should not request HDR work when tonemap is off")
+
+
 def main():
     tests = [
         test_bloom_contribution_monotonic,
         test_bloom_threshold_is_soft,
         test_bloom_extract_keeps_only_excess_energy,
+        test_bloom_extract_preserves_saturated_hdr_highlights,
+        test_bloom_extract_discards_negative_energy,
         test_zero_threshold_extracts_full_color,
         test_tone_map_monotonic,
         test_white_point_near_one,
+        test_tone_map_preserves_midrange_sdr,
+        test_hdr_rejects_negative_scene_energy,
         test_no_nan_edge_cases,
+        test_modern_lighting_keeps_scene_referred_energy,
+        test_bloom_shader_uses_saturation_aware_brightness,
+        test_hdr_shader_uses_scene_referred_inputs,
     ]
 
     for test in tests:

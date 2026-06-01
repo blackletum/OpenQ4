@@ -143,13 +143,19 @@ openQ4 automatically validates your Quake 4 installation to ensure you have legi
 
 ### Controller Support
 - `in_joystick` — Enable/disable gamepad input
-- `in_joystickDeadZone` — Analog stick dead zone
+- `in_joystickDeadZone` — Radial analog stick dead zone
+- `in_joystickLookSensitivity` — Controller look speed scale
+- `in_joystickLookCurve` — Controller look response curve
+- `in_joystickMoveCurve` — Controller movement response curve
+- `in_joystickInvertLook` — Invert controller look pitch
+- `in_joystickSouthpaw` — Swap movement and look sticks
 - `in_joystickTriggerThreshold` — Trigger sensitivity
+- `in_joystickRumble` / `in_joystickRumbleScale` — Enable and scale controller rumble
 - `com_platformProfile` — Startup profile selector (`default` or `steamdeck`)
 
 ### Features
 - Hotplug support — connect or disconnect a controller at any time
-- Dual-stick analog movement and look
+- Dual-stick analog movement and look with radial dead-zone shaping
 - Full button mapping support
 - `K_JOY7` and `K_JOY8` both open the in-game menu
 

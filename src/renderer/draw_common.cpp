@@ -840,7 +840,7 @@ static float rbHDRLastAdaptationTime = -1.0f;
 static bool rbHDRExposureInitialized = false;
 
 static bool RB_PostProcessBloomRequested( void ) {
-	return r_bloom.GetBool();
+	return r_bloom.GetBool() && r_bloomIntensity.GetFloat() > 0.0001f;
 }
 
 static bool RB_IsMainMotionBlurView( void ) {
@@ -883,11 +883,11 @@ static bool RB_ModernVisibleSceneTargetRequested( void ) {
 }
 
 static bool RB_HDRAutoExposureRequested( void ) {
-	return r_hdrAutoExposure.GetBool() && R_ModernGLExecutor_ModernVisibleRequestedForPost();
+	return r_hdrAutoExposure.GetBool() && r_hdrToneMap.GetBool() && R_ModernGLExecutor_ModernVisibleRequestedForPost();
 }
 
 static bool RB_HDRAutoExposureEnabled( void ) {
-	return r_hdrAutoExposure.GetBool() && R_ModernGLExecutor_ModernVisiblePostProcessHandoffActive();
+	return r_hdrAutoExposure.GetBool() && r_hdrToneMap.GetBool() && R_ModernGLExecutor_ModernVisiblePostProcessHandoffActive();
 }
 
 static bool RB_IsSceneRenderTexture( const idRenderTexture *renderTexture ) {
