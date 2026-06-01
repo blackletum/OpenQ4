@@ -10,6 +10,7 @@ Process:
 
 ## Ready For Changelog
 
+- [x] Startup asset handling now gives OpenQ4-style single-digit `pakN.pk4` archives priority over wider retail-style `pakNN.pk4`/`pakNNN.pk4` names in the same directory, and startup now reports a targeted error when official Quake 4 media PK4s are found under `baseoq4` instead of `q4base`.
 - [x] Linux startup now handles Quake 4 addon metadata and PK4 checksums safely, fixing the launch-time segmentation fault seen when `q4cmp_pak001.pk4` or other addon PK4s trigger lexer punctuation-table setup on GCC/Clang builds and restoring deterministic official-media validation on 64-bit Unix platforms.
 - [x] Startup asset validation now accepts physical/DVD-style Quake 4 installs that only include the core retail media set (`pak001.pk4` through `pak022.pk4`), while still recognizing optional official patch/menu packs such as `pak023.pk4` through `pak025.pk4` when present.
 - [x] Release packaging now generates `baseoq4/mod.json` from the effective engine release version, treats `requiredOpenQ4Version` as a minimum compatible engine version, and rejects stable packages whose manifest version drifts, fixing the `v0.2.000` package startup failure where the splash screen appeared and the client exited before normal logging.

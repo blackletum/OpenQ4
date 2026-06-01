@@ -334,6 +334,116 @@ static const officialPk4Info_t *FindOfficialPk4Info( const char *pakName ) {
 	return NULL;
 }
 
+typedef struct {
+	int		number;
+	int		digitCount;
+} numberedPakName_t;
+
+static bool FS_ParseNumberedPakName( const char *pakName, numberedPakName_t &numberedPak ) {
+	const char	*baseName;
+	const char	*digits;
+	const char	*p;
+	int			number;
+	int			digitCount;
+
+	numberedPak.number = 0;
+	numberedPak.digitCount = 0;
+
+	if ( !pakName || !pakName[ 0 ] ) {
+		return false;
+	}
+
+	baseName = pakName;
+	for ( p = pakName; *p != '\0'; p++ ) {
+		if ( *p == '/' || *p == '\\' ) {
+			baseName = p + 1;
+		}
+	}
+	pakName = baseName;
+
+	if ( idStr::Icmpn( pakName, "pak", 3 ) ) {
+		return false;
+	}
+
+	digits = pakName + 3;
+	if ( digits[ 0 ] < '0' || digits[ 0 ] > '9' ) {
+		return false;
+	}
+
+	number = 0;
+	digitCount = 0;
+	for ( p = digits; *p >= '0' && *p <= '9'; p++ ) {
+		if ( number < 1000000 ) {
+			number = ( number * 10 ) + ( *p - '0' );
+		}
+		digitCount++;
+	}
+
+	if ( idStr::Icmp( p, ".pk4" ) ) {
+		return false;
+	}
+
+	numberedPak.number = number;
+	numberedPak.digitCount = digitCount;
+	return true;
+}
+
+static int FS_ComparePk4LoadOrder( const idStrPtr *a, const idStrPtr *b ) {
+	numberedPakName_t	aPak;
+	numberedPakName_t	bPak;
+	const idStr			&aName = **a;
+	const idStr			&bName = **b;
+	const bool			aNumberedPak = FS_ParseNumberedPakName( aName.c_str(), aPak );
+	const bool			bNumberedPak = FS_ParseNumberedPakName( bName.c_str(), bPak );
+
+	if ( aNumberedPak && bNumberedPak ) {
+		// AddGameDirectory inserts each later-loaded archive closer to the head of
+		// the search path. Process wider numbered forms first so pak1.pk4 wins over
+		// pak01.pk4/pak001.pk4 when both naming schemes are present.
+		if ( aPak.digitCount != bPak.digitCount ) {
+			return bPak.digitCount - aPak.digitCount;
+		}
+		if ( aPak.number != bPak.number ) {
+			return aPak.number - bPak.number;
+		}
+	}
+
+	if ( aNumberedPak != bNumberedPak ) {
+		const char *aKey = aNumberedPak ? "pak" : aName.c_str();
+		const char *bKey = bNumberedPak ? "pak" : bName.c_str();
+		const int cmp = idStr::Icmp( aKey, bKey );
+		if ( cmp != 0 ) {
+			return cmp;
+		}
+		return aNumberedPak ? -1 : 1;
+	}
+
+	return aName.Icmp( bName );
+}
+
+static void FS_SortPk4FilesForLoadOrder( idStrList &pakfiles ) {
+	idList<idStr>		other;
+	idList<idStrPtr>	pointerList;
+
+	if ( pakfiles.Num() <= 1 ) {
+		return;
+	}
+
+	pointerList.SetNum( pakfiles.Num() );
+	for ( int i = 0; i < pakfiles.Num(); i++ ) {
+		pointerList[ i ] = &pakfiles[ i ];
+	}
+	pointerList.Sort( FS_ComparePk4LoadOrder );
+
+	other.SetNum( pakfiles.Num() );
+	other.SetGranularity( pakfiles.GetGranularity() );
+	for ( int i = 0; i < other.Num(); i++ ) {
+		other[ i ] = *pointerList[ i ];
+	}
+
+	pakfiles.Swap( other );
+}
+
 static bool FS_FileExists( const char *path ) {
 	FILE *f;
 	if ( !path || !path[ 0 ] ) {
@@ -1090,8 +1200,11 @@ private:
 	pack_t *				LoadZipFile( const char *zipfile );
 	void					AddGameDirectory( const char *path, const char *dir );
 	void					SetupGameDirectories( const char *gameName );
+	bool					IsGameDirPack( const pack_t *pak, const char *gameDir ) const;
 	bool					IsBaseGamePack( const pack_t *pak ) const;
+	pack_t *				FindGamePackByName( const char *name, const char *gameDir ) const;
 	pack_t *				FindBaseGamePackByName( const char *name ) const;
+	bool					FindMisplacedOfficialPaks( idStr &errors ) const;
 	bool					ValidateRequiredOfficialPaks( idStr &errors ) const;
 	void					Startup( void );
 	void					SetRestrictions( void );
@@ -3405,9 +3518,10 @@ void idFileSystemLocal::AddGameDirectory( const char *path, const char *dir ) {
 
 	ListOSFiles( pakfile, ".pk4", pakfiles );
 
-	// sort them so that later alphabetic matches override
-	// earlier ones. This makes pak1.pk4 override pak0.pk4
-	pakfiles.Sort();
+	// Sort them so later entries override earlier ones after they are inserted
+	// into the search path. OpenQ4 reserves short pakN.pk4 names for its own
+	// content, so those win over wider retail-style pakNNN.pk4 names.
+	FS_SortPk4FilesForLoadOrder( pakfiles );
 
 	for ( i = 0; i < pakfiles.Num(); i++ ) {
 		if ( !idStr::Icmp( dir, BASE_GAMEDIR ) && FS_IsIgnoredOfficialGameBinaryPk4( pakfiles[ i ] ) ) {
@@ -3626,31 +3740,54 @@ void idFileSystemLocal::StageStartupAddonPaks( void ) {
 
 /*
 ================
-idFileSystemLocal::IsBaseGamePack
+idFileSystemLocal::IsGameDirPack
 ================
 */
-bool idFileSystemLocal::IsBaseGamePack( const pack_t *pak ) const {
+bool idFileSystemLocal::IsGameDirPack( const pack_t *pak, const char *gameDir ) const {
 	idStr path;
-	if ( !pak ) {
+	idStr gameDirSegment;
+
+	if ( !pak || !gameDir || !gameDir[ 0 ] ) {
 		return false;
 	}
+
 	path = pak->pakFilename;
 	path.BackSlashesToSlashes();
 	path.ToLower();
-	return ( path.Find( "/" BASE_GAMEDIR "/" ) >= 0 );
+
+	gameDirSegment = "/";
+	gameDirSegment += gameDir;
+	gameDirSegment += "/";
+	gameDirSegment.ToLower();
+
+	if ( path.Find( gameDirSegment.c_str() ) >= 0 ) {
+		return true;
+	}
+
+	gameDirSegment.StripLeading( '/' );
+	return !idStr::Icmpn( path.c_str(), gameDirSegment.c_str(), gameDirSegment.Length() );
 }
 
 /*
 ================
-idFileSystemLocal::FindBaseGamePackByName
+idFileSystemLocal::IsBaseGamePack
 ================
 */
-pack_t *idFileSystemLocal::FindBaseGamePackByName( const char *name ) const {
+bool idFileSystemLocal::IsBaseGamePack( const pack_t *pak ) const {
+	return IsGameDirPack( pak, BASE_GAMEDIR );
+}
+
+/*
+================
+idFileSystemLocal::FindGamePackByName
+================
+*/
+pack_t *idFileSystemLocal::FindGamePackByName( const char *name, const char *gameDir ) const {
 	searchpath_t *search;
 	idStr			pakName;
 
 	for ( search = searchPaths; search; search = search->next ) {
-		if ( !search->pack || !IsBaseGamePack( search->pack ) ) {
+		if ( !search->pack || !IsGameDirPack( search->pack, gameDir ) ) {
 			continue;
 		}
 		search->pack->pakFilename.ExtractFileName( pakName );
@@ -3659,6 +3796,46 @@ pack_t *idFileSystemLocal::FindBaseGamePackByName( const char *name ) const {
 		}
 	}
 	return NULL;
+}
+
+/*
+================
+idFileSystemLocal::FindBaseGamePackByName
+================
+*/
+pack_t *idFileSystemLocal::FindBaseGamePackByName( const char *name ) const {
+	return FindGamePackByName( name, BASE_GAMEDIR );
+}
+
+/*
+================
+idFileSystemLocal::FindMisplacedOfficialPaks
+================
+*/
+bool idFileSystemLocal::FindMisplacedOfficialPaks( idStr &errors ) const {
+	const officialPk4Info_t	*info;
+	pack_t					*basePack;
+	pack_t					*openQ4Pack;
+
+	errors.Clear();
+	for ( int i = 0; officialPk4s[ i ].name != NULL; i++ ) {
+		info = &officialPk4s[ i ];
+		basePack = FindGamePackByName( info->name, BASE_GAMEDIR );
+		if ( basePack ) {
+			continue;
+		}
+		openQ4Pack = FindGamePackByName( info->name, OPENQ4_GAMEDIR );
+		if ( !openQ4Pack ) {
+			continue;
+		}
+		if ( (unsigned int)openQ4Pack->checksum != info->checksum ) {
+			continue;
+		}
+		errors += va( "%s was found in %s but is missing from %s (%s)\n",
+			info->name, OPENQ4_GAMEDIR, BASE_GAMEDIR, openQ4Pack->pakFilename.c_str() );
+	}
+
+	return ( errors.Length() != 0 );
 }
 
 /*
@@ -3778,6 +3955,14 @@ void idFileSystemLocal::Startup( void ) {
 	}
 
 	if ( fs_validateOfficialPaks.GetBool() ) {
+		idStr misplacedErrors;
+		if ( FindMisplacedOfficialPaks( misplacedErrors ) ) {
+			common->FatalError(
+				"Official Quake 4 media pk4 files were found in the wrong game directory.\n\n%s\n"
+				"Move the listed files from '%s' to '%s'. Retail Quake 4 assets must live in '%s'; '%s' is reserved for OpenQ4 runtime content.",
+				misplacedErrors.c_str(), OPENQ4_GAMEDIR, BASE_GAMEDIR, BASE_GAMEDIR, OPENQ4_GAMEDIR );
+		}
+
 		idStr validationErrors;
 		if ( !ValidateRequiredOfficialPaks( validationErrors ) ) {
 			common->FatalError(
