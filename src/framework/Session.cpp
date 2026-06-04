@@ -3580,17 +3580,19 @@ void idSessionLocal::LoadLoadingGui( const char *mapName ) {
 		}
 		loadingAuthor = common->GetLanguageDict()->GetString( loadingAuthorKey );
 
+		loadGuiOverride = mapDef->GetString( "loadgui", "" );
 		const char *loadImage = mapDef->GetString( "loadimage", "" );
 		if ( loadImage[0] ) {
 			loadingBackground = loadImage;
+		} else if ( idStr::Icmp( loadGuiOverride, "guis/loading/intro.gui" ) == 0 &&
+				Session_FileExistsInSearchPaths( "gfx/guis/loadscreens/e3_load.tga" ) ) {
+			loadingBackground = "gfx/guis/loadscreens/e3_load";
 		} else {
 			// Match MP levelshot fallback behavior (including addon extraction).
 			char screenshot[ MAX_STRING_CHARS ];
 			fileSystem->FindMapScreenshot( spawnMapPath, screenshot, MAX_STRING_CHARS );
 			loadingBackground = screenshot;
 		}
-
-		loadGuiOverride = mapDef->GetString( "loadgui", "" );
 	} else {
 		// Keep non-mapDef paths consistent with MP levelshot handling.
 		char screenshot[ MAX_STRING_CHARS ];

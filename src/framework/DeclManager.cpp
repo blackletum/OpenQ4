@@ -219,6 +219,16 @@ public:
 	idDeclLocal *				decls;
 };
 
+static bool DeclManager_IsOpenQ4OverrideDeclFile( const idDeclFile *sourceFile ) {
+	if ( sourceFile == NULL ) {
+		return false;
+	}
+
+	idStr fileName = sourceFile->fileName;
+	fileName.BackSlashesToSlashes();
+	return fileName.Icmpn( "def/", 4 ) == 0 && fileName.Find( "_openq4.def", false ) >= 0;
+}
+
 class idDeclManagerLocal : public idDeclManager {
 	friend class idDeclLocal;
 
@@ -1005,8 +1015,10 @@ int idDeclFile::LoadAndParse( bool unique ) {
 			if ( newDecl->sourceFile == this && !newDecl->redefinedInReload ) {
 				referencedThisLevel = newDecl->referencedThisLevel;
 			} else {
-				src.Warning( "%s '%s' previously defined at %s:%i", declManagerLocal.GetDeclNameFromType( identifiedType ),
-								name.c_str(), newDecl->sourceFile->fileName.c_str(), newDecl->sourceLine );
+				if ( !DeclManager_IsOpenQ4OverrideDeclFile( newDecl->sourceFile ) ) {
+					src.Warning( "%s '%s' previously defined at %s:%i", declManagerLocal.GetDeclNameFromType( identifiedType ),
+									name.c_str(), newDecl->sourceFile->fileName.c_str(), newDecl->sourceLine );
+				}
 				continue;
 			}
 		} else {
@@ -1180,11 +1192,13 @@ int idDeclFile::LoadAndParse( idFile *file ) {
 		idDeclLocal *decl = declManagerLocal.FindTypeWithoutParsing( identifiedType, name, false );
 		if ( decl ) {
 			if ( decl->sourceFile != this || decl->redefinedInReload ) {
-				src.Warning( "%s '%s' previously defined at %s:%i",
-					declManagerLocal.GetDeclNameFromType( identifiedType ),
-					name.c_str(),
-					decl->sourceFile ? decl->sourceFile->fileName.c_str() : "*unknown*",
-					decl->sourceLine );
+				if ( !DeclManager_IsOpenQ4OverrideDeclFile( decl->sourceFile ) ) {
+					src.Warning( "%s '%s' previously defined at %s:%i",
+						declManagerLocal.GetDeclNameFromType( identifiedType ),
+						name.c_str(),
+						decl->sourceFile ? decl->sourceFile->fileName.c_str() : "*unknown*",
+						decl->sourceLine );
+				}
 				continue;
 			}
 		} else {

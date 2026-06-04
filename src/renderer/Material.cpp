@@ -158,6 +158,14 @@ static int R_FindMD5RVertexProgramForStageProgram( const char *programName ) {
 
 	idStr md5rProgram = "md5r";
 	md5rProgram += programName;
+
+	idStr md5rPath = "glprogs/";
+	md5rPath += md5rProgram;
+	md5rPath.BackSlashesToSlashes();
+	if ( fileSystem->ReadFile( md5rPath.c_str(), NULL, NULL ) == -1 ) {
+		return 0;
+	}
+
 	return R_FindARBProgram( GL_VERTEX_PROGRAM_ARB, md5rProgram.c_str() );
 }
 
