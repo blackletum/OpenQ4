@@ -192,7 +192,23 @@ build_setup_args_for_existing_build_dir() {
 remove_build_directory() {
     local build_dir="$1"
     [[ -n "${build_dir}" && -d "${build_dir}" ]] || return
-    rm -rf -- "${build_dir}"
+
+    local resolved_build_dir=""
+    local resolved_repo_root=""
+    resolved_build_dir="$(cd -- "${build_dir}" && pwd -P)"
+    resolved_repo_root="$(cd -- "${repo_root}" && pwd -P)"
+
+    if [[ "${resolved_build_dir}" == "/" || "${resolved_build_dir}" == "${resolved_repo_root}" ]]; then
+        echo "Refusing to remove unsafe Meson build directory '${resolved_build_dir}'." >&2
+        exit 1
+    fi
+
+    if [[ ! -f "${resolved_build_dir}/meson-private/coredata.dat" && ! -f "${resolved_build_dir}/build.ninja" ]]; then
+        echo "Refusing to remove '${resolved_build_dir}' because it does not look like a Meson build directory." >&2
+        exit 1
+    fi
+
+    rm -rf -- "${resolved_build_dir}"
 }
 
 remove_stale_bse_artifacts() {

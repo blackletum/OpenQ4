@@ -23,7 +23,7 @@ This document defines the long-term platform direction for OpenQ4 and how SDL3 +
 - Language baseline target: C++23 semantics (`vc++latest` on current MSVC Meson front-end).
 - Toolchain baseline direction: MSVC 19.46+ (Visual Studio 2026 generation), with compatibility fallback permitted during migration.
 - As of March 30, 2026, Linux defaults to the SDL3 backend and keeps `-Dplatform_backend=native` as a fallback path.
-- Steam Deck support is delivered through the explicit `OpenQ4-steamdeck` launcher/profile, not hardware auto-detection.
+- Steam Deck support is delivered through the explicit `openQ4-steamdeck` launcher/profile, not hardware auto-detection.
 - When both `WAYLAND_DISPLAY` and `DISPLAY` are available, the Steam Deck launcher prefers XWayland by exporting `SDL_VIDEODRIVER=x11` unless the user already set an SDL video driver.
 - Windows arm64 currently uses a custom OpenAL Soft package path during bring-up because the in-repo bundled Windows runtime payload is still x64-only.
 
@@ -34,7 +34,7 @@ This document defines the long-term platform direction for OpenQ4 and how SDL3 +
 - Windows 7/8/8.1 are no longer hard-blocked by the current x64 binaries, but they are legacy and outside the actively validated support matrix.
 - macOS packaged compatibility floor for the arm64 release line: `macOS 11` or later. Meson now pins the deployment target to `11.0` so the binary floor matches the documented floor.
 - Linux packaged compatibility floor: release archives are built on pinned `Ubuntu 24.04` runners and should be treated as targeting a comparable modern 64-bit desktop userspace with OpenGL plus X11/GLX or XWayland available.
-- Steam Deck support assumes a SteamOS 3.x style environment and the explicit `OpenQ4-steamdeck` launcher.
+- Steam Deck support assumes a SteamOS 3.x style environment and the explicit `openQ4-steamdeck` launcher.
 
 ## SDL3 Direction
 

@@ -1972,9 +1972,12 @@ static void RB_STD_SSAO( void ) {
 	RB_DrawFullscreenPostProcessQuad( viewportWidth, viewportHeight, textureWidth, textureHeight );
 
 	glUseProgramObjectARB( 0 );
+	GL_SelectTexture( 2 );
+	globalImages->BindNull();
 	GL_SelectTexture( 1 );
 	globalImages->BindNull();
 	GL_SelectTexture( 0 );
+	globalImages->BindNull();
 	RB_EndFullscreenPostProcessPass();
 }
 
@@ -6048,6 +6051,46 @@ static int RB_STD_FillDepthBufferFiltered( drawSurf_t **drawSurfs, int numDrawSu
 	return rendered;
 }
 
+static void RB_RestoreAfterSSAOWorldDepthCapture( void ) {
+	// The SSAO depth snapshot replays alpha-tested material stages before the
+	// real scene render. Scrub legacy material state so that replay cannot tint
+	// or texture later world-model passes.
+	glUseProgramObjectARB( 0 );
+	glDisable( GL_VERTEX_PROGRAM_ARB );
+	glDisable( GL_FRAGMENT_PROGRAM_ARB );
+	glBindProgramARB( GL_VERTEX_PROGRAM_ARB, 0 );
+	glBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, 0 );
+
+	glDisable( GL_ALPHA_TEST );
+	glDisable( GL_SAMPLE_ALPHA_TO_COVERAGE );
+	glDisable( GL_POLYGON_OFFSET_FILL );
+	glDisableClientState( GL_COLOR_ARRAY );
+	glDisableClientState( GL_NORMAL_ARRAY );
+
+	const int maxStateUnits = Max( 0, Min( MAX_MULTITEXTURE_UNITS, Min( glConfig.maxTextureUnits, glConfig.maxTextureImageUnits ) ) );
+	for ( int unit = maxStateUnits - 1; unit >= 0; unit-- ) {
+		GL_SelectTexture( unit );
+		glDisable( GL_TEXTURE_GEN_S );
+		glDisable( GL_TEXTURE_GEN_T );
+		glDisable( GL_TEXTURE_GEN_R );
+		glDisable( GL_TEXTURE_GEN_Q );
+		glMatrixMode( GL_TEXTURE );
+		glLoadIdentity();
+		glMatrixMode( GL_MODELVIEW );
+		GL_TexEnv( GL_MODULATE );
+		globalImages->BindNull();
+		if ( unit != 0 ) {
+			glDisableClientState( GL_TEXTURE_COORD_ARRAY );
+		}
+	}
+
+	GL_SelectTexture( 0 );
+	glEnableClientState( GL_VERTEX_ARRAY );
+	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
+	glColor4f( 1.0f, 1.0f, 1.0f, 1.0f );
+	backEnd.glState.forceGlState = true;
+}
+
 static void RB_CaptureSSAOWorldDepthImage( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 	rbSSAOWorldDepthFrame = -1;
 	rbSSAOWorldDepthWidth = 0;
@@ -6080,6 +6123,8 @@ static void RB_CaptureSSAOWorldDepthImage( drawSurf_t **drawSurfs, int numDrawSu
 		rbSSAOWorldDepthWidth = viewportWidth;
 		rbSSAOWorldDepthHeight = viewportHeight;
 	}
+
+	RB_RestoreAfterSSAOWorldDepthCapture();
 
 	// Restore the view to a clean depth/stencil buffer before the normal renderer
 	// either runs its full depth prepass or accepts the modern visible handoff.

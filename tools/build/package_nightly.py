@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import shutil
 import sys
 import tarfile
@@ -179,6 +180,12 @@ def write_text_file(path: Path, lines: list[str]) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def ensure_posix_executable(path: Path) -> None:
+    if os.name == "nt":
+        return
+    os.chmod(path, path.stat().st_mode | 0o755)
+
+
 def write_version_manifest(
     destination: Path,
     *,
@@ -308,7 +315,10 @@ def copy_required_binaries(
                 missing_required.append(filename)
                 continue
             raise FileNotFoundError(f"required distributable not found: {source}")
-        shutil.copy2(source, package_root / filename)
+        destination = package_root / filename
+        shutil.copy2(source, destination)
+        if platform in ("linux", "macos"):
+            ensure_posix_executable(destination)
 
     if platform == "windows":
         missing_required.extend(
@@ -525,6 +535,66 @@ def copy_optional_linux_launchers(install_dir: Path, package_root: Path) -> list
     return copied
 
 
+def desktop_entry_exec(path: Path) -> str:
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("Exec="):
+                return line[5:].strip()
+    except OSError as exc:
+        raise RuntimeError(f"Linux desktop entry is unreadable: {path}") from exc
+    return ""
+
+
+def desktop_exec_command(exec_line: str) -> str:
+    if not exec_line:
+        return ""
+    try:
+        parts = shlex.split(exec_line, posix=True)
+    except ValueError:
+        parts = exec_line.split()
+    return parts[0] if parts else ""
+
+
+def require_packaged_executable(path: Path, label: str, *, allow_missing: bool = False) -> None:
+    if not path.is_file():
+        if allow_missing:
+            return
+        raise RuntimeError(f"{label} is missing from the Linux package: {path}")
+    if not os.access(path, os.X_OK):
+        raise RuntimeError(f"{label} is not executable in the Linux package: {path}")
+
+
+def validate_linux_package_metadata(package_root: Path, arch: str, *, allow_missing_binaries: bool = False) -> None:
+    require_packaged_executable(
+        package_root / f"{PRODUCT_NAME}-client_{arch}",
+        "Linux client binary",
+        allow_missing=allow_missing_binaries,
+    )
+    require_packaged_executable(
+        package_root / f"{PRODUCT_NAME}-ded_{arch}",
+        "Linux dedicated-server binary",
+        allow_missing=allow_missing_binaries,
+    )
+    require_packaged_executable(package_root / "openQ4-steamdeck", "Linux Steam Deck launcher")
+
+    desktop_dir = package_root / "share" / "applications"
+    expected_exec = {
+        "openq4.desktop": f"{PRODUCT_NAME}-client_{arch}",
+        "openq4-steamdeck.desktop": "openQ4-steamdeck",
+    }
+    for filename, expected_command in expected_exec.items():
+        desktop_path = desktop_dir / filename
+        if not desktop_path.is_file():
+            raise RuntimeError(f"Linux desktop entry is missing from the package: {desktop_path}")
+
+        exec_command = desktop_exec_command(desktop_entry_exec(desktop_path))
+        if exec_command != expected_command:
+            raise RuntimeError(
+                f"Linux desktop entry {desktop_path} points at {exec_command or '<empty>'!r}; "
+                f"expected {expected_command!r}"
+            )
+
+
 def create_macos_app_bundle(
     package_root: Path,
     install_dir: Path,
@@ -725,6 +795,15 @@ def main(argv: list[str]) -> int:
     copied_linux_launchers: list[str] = []
     if args.platform == "linux":
         copied_linux_launchers = copy_optional_linux_launchers(install_dir, package_root)
+        try:
+            validate_linux_package_metadata(
+                package_root,
+                args.arch,
+                allow_missing_binaries=args.allow_missing_binaries,
+            )
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
 
     macos_app_bundle = None
     if args.platform == "macos":

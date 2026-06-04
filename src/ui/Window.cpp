@@ -5139,37 +5139,30 @@ idWindow::IsSimple
 ================
 */
 bool idWindow::IsSimple() {
-// jmarshall - quake 4 guis
-	return false;
-// jmarshall end
-	// dont do simple windows when in gui editor
-	//if ( com_editors & EDITOR_GUI ) {
-	//	return false;
-	//}
-	//
-	//if (numOps) {
-	//	return false;
-	//}
-	//if (flags & (WIN_HCENTER | WIN_VCENTER)) {
-	//	return false;
-	//}
-	//if (children.Num() || drawWindows.Num()) {
-	//	return false;
-	//}
-	//for (int i = 0; i < SCRIPT_COUNT; i++) {
-	//	if (scripts[i]) {
-	//		return false;
-	//	}
-	//}
-	//if (timeLineEvents.Num()) {
-	//	return false;
-	//}
-	//
-	//if ( namedEvents.Num() ) {
-	//	return false;
-	//}
-	//
-	//return true;
+	if ( com_editors & EDITOR_GUI ) {
+		return false;
+	}
+	if ( numOps ) {
+		return false;
+	}
+	if ( flags & ( WIN_HCENTER | WIN_VCENTER ) ) {
+		return false;
+	}
+	if ( children.Num() || drawWindows.Num() ) {
+		return false;
+	}
+	for ( int i = 0; i < SCRIPT_COUNT; i++ ) {
+		if ( scripts[i] ) {
+			return false;
+		}
+	}
+	if ( timeLineEvents.Num() || namedEvents.Num() ) {
+		return false;
+	}
+	if ( forceAspectWidth != 640.0f || forceAspectHeight != 480.0f ) {
+		return false;
+	}
+	return true;
 }
 
 /*

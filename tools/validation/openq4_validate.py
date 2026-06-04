@@ -57,6 +57,10 @@ def host_is_windows() -> bool:
     return platform.system().lower() == "windows"
 
 
+def host_is_linux() -> bool:
+    return platform.system().lower() == "linux"
+
+
 def format_command(command: list[str]) -> str:
     if host_is_windows():
         return subprocess.list2cmdline(command)
@@ -203,6 +207,70 @@ def find_any(root: Path, patterns: tuple[str, ...]) -> list[Path]:
     return matches
 
 
+def find_engine_executables(install_root: Path, stem: str) -> list[Path]:
+    suffix = ".exe" if host_is_windows() else ""
+    return [
+        path
+        for path in sorted(install_root.glob(f"{stem}_*{suffix}"))
+        if path.is_file()
+    ]
+
+
+def is_posix_executable(path: Path) -> bool:
+    return path.is_file() and os.access(path, os.X_OK)
+
+
+def require_posix_executable(path: Path, root: Path, label: str) -> None:
+    if not is_posix_executable(path):
+        raise ValidationError(f"{label} is not executable: {rel(path, root)}")
+
+
+def desktop_entry_exec(path: Path, root: Path) -> str:
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("Exec="):
+                return line[5:].strip()
+    except OSError as exc:
+        raise ValidationError(f"Linux desktop entry is unreadable: {rel(path, root)}") from exc
+    return ""
+
+
+def desktop_exec_command(exec_line: str) -> str:
+    if not exec_line:
+        return ""
+    try:
+        parts = shlex.split(exec_line, posix=True)
+    except ValueError:
+        parts = exec_line.split()
+    return parts[0] if parts else ""
+
+
+def validate_linux_launch_metadata(root: Path, install_root: Path, client_candidates: list[Path]) -> None:
+    steamdeck_launcher = install_root / "openQ4-steamdeck"
+    if not steamdeck_launcher.is_file():
+        raise ValidationError("Linux staged payload is missing openQ4-steamdeck.")
+    require_posix_executable(steamdeck_launcher, root, "Linux Steam Deck launcher")
+
+    desktop_dir = install_root / "share" / "applications"
+    desktop_entries = {
+        "openq4.desktop": {path.name for path in client_candidates},
+        "openq4-steamdeck.desktop": {steamdeck_launcher.name},
+    }
+    for filename, allowed_commands in desktop_entries.items():
+        desktop_path = desktop_dir / filename
+        if not desktop_path.is_file():
+            raise ValidationError(f"Linux staged payload is missing desktop entry: {rel(desktop_path, root)}")
+
+        exec_line = desktop_entry_exec(desktop_path, root)
+        exec_command = desktop_exec_command(exec_line)
+        if exec_command not in allowed_commands:
+            allowed = ", ".join(sorted(allowed_commands))
+            raise ValidationError(
+                f"Linux desktop entry {rel(desktop_path, root)} points at {exec_command or '<empty>'!r}; "
+                f"expected one of: {allowed}"
+            )
+
+
 def validate_staged_payload(root: Path, *, dry_run: bool) -> None:
     section("Validate staged .install payload")
     if dry_run:
@@ -216,12 +284,17 @@ def validate_staged_payload(root: Path, *, dry_run: bool) -> None:
     if not game_dir.is_dir():
         raise ValidationError(f"Staged game directory is missing: {game_dir}")
 
-    client_candidates = sorted(install_root.glob("openQ4-client_*"))
-    dedicated_candidates = sorted(install_root.glob("openQ4-ded_*"))
+    client_candidates = find_engine_executables(install_root, "openQ4-client")
+    dedicated_candidates = find_engine_executables(install_root, "openQ4-ded")
     if not client_candidates:
         raise ValidationError("Staged client executable was not found under .install/.")
     if not dedicated_candidates:
         raise ValidationError("Staged dedicated-server executable was not found under .install/.")
+    if not host_is_windows():
+        require_posix_executable(client_candidates[0], root, "Staged client executable")
+        require_posix_executable(dedicated_candidates[0], root, "Staged dedicated-server executable")
+    if host_is_linux():
+        validate_linux_launch_metadata(root, install_root, client_candidates)
 
     sp_modules = find_any(game_dir, ("game-sp_*.dll", "game-sp_*.so", "game-sp_*.dylib"))
     mp_modules = find_any(game_dir, ("game-mp_*.dll", "game-mp_*.so", "game-mp_*.dylib"))

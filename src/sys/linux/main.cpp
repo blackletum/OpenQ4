@@ -279,6 +279,18 @@ void Sys_AsyncThread( void ) {
  ==============
  */
 const char *Sys_DefaultSavePath(void) {
+	const char *xdgDataHome = getenv( "XDG_DATA_HOME" );
+	if ( xdgDataHome && xdgDataHome[0] == '/' ) {
+		savepath = xdgDataHome;
+		savepath.StripTrailing( '/' );
+#if defined( ID_DEMO_BUILD )
+		savepath += "/openq4-demo";
+#else
+		savepath += "/openq4";
+#endif
+		return savepath.c_str();
+	}
+
 	const char *home = getenv( "HOME" );
 	if ( home && home[0] ) {
 		savepath = home;
@@ -299,7 +311,7 @@ Sys_EXEPath
 ==============
 */
 const char *Sys_EXEPath( void ) {
-	static char	buf[ 1024 ];
+	static char	buf[ 4096 ];
 	int			len;
 	char		linkpath[ 64 ];
 
@@ -308,6 +320,11 @@ const char *Sys_EXEPath( void ) {
 	len = readlink( linkpath, buf, sizeof( buf ) - 1 );
 	if ( len == -1 ) {
 		Sys_Printf("couldn't stat exe path link %s: %s\n", linkpath, strerror( errno ));
+		buf[ 0 ] = '\0';
+		return buf;
+	}
+	if ( len >= static_cast<int>( sizeof( buf ) - 1 ) ) {
+		Sys_Printf( "exe path link %s is too long for the %d byte buffer\n", linkpath, static_cast<int>( sizeof( buf ) ) );
 		buf[ 0 ] = '\0';
 		return buf;
 	}

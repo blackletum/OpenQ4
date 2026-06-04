@@ -260,17 +260,27 @@ def host_arch() -> str:
 def find_client_executable(root: Path) -> Path:
     install_dir = root / ".install"
     suffix = ".exe" if os.name == "nt" else ""
-    preferred = install_dir / f"OpenQ4-client_{host_arch()}{suffix}"
-    if preferred.exists():
-        return preferred
-    candidates = sorted(install_dir.glob("OpenQ4-client_*"))
+    candidate_prefixes = ("openQ4-client", "OpenQ4-client")
+    for prefix in candidate_prefixes:
+        preferred = install_dir / f"{prefix}_{host_arch()}{suffix}"
+        if preferred.exists():
+            return preferred
+
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for prefix in candidate_prefixes:
+        for candidate in sorted(install_dir.glob(f"{prefix}_*{suffix}")):
+            if candidate not in seen:
+                candidates.append(candidate)
+                seen.add(candidate)
+
     for candidate in candidates:
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
     for candidate in candidates:
         if candidate.is_file():
             return candidate
-    raise FileNotFoundError(f"OpenQ4 client executable not found under {install_dir}")
+    raise FileNotFoundError(f"openQ4 client executable not found under {install_dir}")
 
 
 def default_basepath() -> str:
