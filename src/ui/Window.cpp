@@ -5139,30 +5139,11 @@ idWindow::IsSimple
 ================
 */
 bool idWindow::IsSimple() {
-	if ( com_editors & EDITOR_GUI ) {
-		return false;
-	}
-	if ( numOps ) {
-		return false;
-	}
-	if ( flags & ( WIN_HCENTER | WIN_VCENTER ) ) {
-		return false;
-	}
-	if ( children.Num() || drawWindows.Num() ) {
-		return false;
-	}
-	for ( int i = 0; i < SCRIPT_COUNT; i++ ) {
-		if ( scripts[i] ) {
-			return false;
-		}
-	}
-	if ( timeLineEvents.Num() || namedEvents.Num() ) {
-		return false;
-	}
-	if ( forceAspectWidth != 640.0f || forceAspectHeight != 480.0f ) {
-		return false;
-	}
-	return true;
+	// Quake 4 GUI scripts frequently animate per-component aliases such as
+	// "forecolor_w" and "matcolor_w" on otherwise simple leaf windows.  The
+	// compact idSimpleWindow path does not expose the full idWindow alias
+	// surface, so keep retail-style GUI semantics for all windows.
+	return false;
 }
 
 /*

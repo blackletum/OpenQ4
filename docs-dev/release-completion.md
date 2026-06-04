@@ -10,6 +10,7 @@ Process:
 
 ## Ready For Changelog
 
+- [x] Stock GUI popup animations now keep their retail-style button labels and layered panels, fixing the exit-confirmation screen regression where the Yes/No text disappeared and the button backgrounds rendered as faint translucent strips.
 - [x] Linux packaging and launch validation are stricter: staged and packaged engine binaries must remain executable, desktop entries now point at the real case-sensitive launcher names, the Steam Deck desktop entry launches `openQ4-steamdeck` correctly, Linux saves honor valid absolute `XDG_DATA_HOME`, and executable-path discovery fails clearly instead of using a truncated path.
 - [x] Release packages now use debug-built binaries on the stable release track, Windows packages include matching PDB diagnostic symbols, and Windows crashes write `crashes/openq4_crash_*.log` plus `.dmp` minidumps beside the executable for easier issue reports.
 - [x] CRT Emulation no longer enables a heavy chromatic channel offset by default, fixing the red/green edge artifact that could affect gameplay, HUD, and menu output when 0.3.200 users enabled the setting; legacy archived chromatic values are capped to a subtle range.
