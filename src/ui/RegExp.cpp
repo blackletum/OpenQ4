@@ -202,22 +202,43 @@ void idRegister::WriteToSaveGame( idFile *savefile ) {
 	var->WriteToSaveGame( savefile );
 }
 
+static void RegExp_ReadSaveGameBytes( idFile *savefile, void *buffer, int len, const char *detail ) {
+	const int offset = savefile->Tell();
+	const int bytesRead = savefile->Read( buffer, len );
+	if ( bytesRead != len ) {
+		common->Error( "idRegister::ReadFromSaveGame: truncated %s at offset %d (read %d of %d)",
+			detail ? detail : "data", offset, bytesRead, len );
+	}
+}
+
+static void RegExp_ReadSaveGameString( idFile *savefile, idStr &string, const char *detail ) {
+	int len;
+	const int offset = savefile->Tell();
+	RegExp_ReadSaveGameBytes( savefile, &len, sizeof( len ), detail );
+	const int remainingBytes = Max( 0, savefile->Length() - savefile->Tell() );
+	const int maxSavedStringLength = 64 * 1024;
+	if ( len < 0 || len > maxSavedStringLength || len > remainingBytes ) {
+		common->Error( "idRegister::ReadFromSaveGame: invalid %s length %d at offset %d (remaining %d)",
+			detail ? detail : "string", len, offset, remainingBytes );
+	}
+	string.Fill( ' ', len );
+	if ( len > 0 ) {
+		RegExp_ReadSaveGameBytes( savefile, &string[0], len, detail );
+	}
+}
+
 /*
 ================
 idRegister::ReadFromSaveGame
 ================
 */
 void idRegister::ReadFromSaveGame( idFile *savefile ) {
-	int len;
+	RegExp_ReadSaveGameBytes( savefile, &enabled, sizeof( enabled ), "enabled flag" );
+	RegExp_ReadSaveGameBytes( savefile, &type, sizeof( type ), "type" );
+	RegExp_ReadSaveGameBytes( savefile, &regCount, sizeof( regCount ), "register count" );
+	RegExp_ReadSaveGameBytes( savefile, &regs[0], sizeof( regs ), "register indexes" );
 
-	savefile->Read( &enabled, sizeof( enabled ) );
-	savefile->Read( &type, sizeof( type ) );
-	savefile->Read( &regCount, sizeof( regCount ) );
-	savefile->Read( &regs[0], sizeof( regs ) );
-
-	savefile->Read( &len, sizeof( len ) );
-	name.Fill( ' ', len );
-	savefile->Read( &name[0], len );
+	RegExp_ReadSaveGameString( savefile, name, "name" );
 
 	var->ReadFromSaveGame( savefile );
 }
@@ -395,7 +416,11 @@ idRegisterList::ReadFromSaveGame
 void idRegisterList::ReadFromSaveGame( idFile *savefile ) {
 	int i, num;
 
-	savefile->Read( &num, sizeof( num ) );
+	RegExp_ReadSaveGameBytes( savefile, &num, sizeof( num ), "register list count" );
+	if ( num < 0 || num != regs.Num() ) {
+		common->Error( "idRegisterList::ReadFromSaveGame: saved register count %d does not match parsed count %d",
+			num, regs.Num() );
+	}
 	for ( i = 0; i < num; i++ ) {
 		regs[i]->ReadFromSaveGame( savefile );
 	}

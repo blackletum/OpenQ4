@@ -150,7 +150,7 @@ Posix_SetExit
 ================
 */
 void Posix_SetExit(int ret) {
-	set_exit = 0;
+	set_exit = ret;
 }
 
 /*

@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "Session_local.h"
 #include "../ui/ListGUILocal.h"
+#include "../ui/Window.h"
 #include "../sound/snd_local.h"
 
 #if defined( USE_SDL3 )
@@ -42,7 +43,7 @@ extern idCVar com_skipLogoVideos;
 idCVar	idSessionLocal::gui_configServerRate( "gui_configServerRate", "0", CVAR_GUI | CVAR_ARCHIVE | CVAR_ROM | CVAR_INTEGER, "" );
 idCVar gui_set_sys_scroll( "gui_set_sys_scroll", "0", CVAR_GUI | CVAR_INTEGER, "display menu scroll step", 0, 19 );
 idCVar gui_set_audio_scroll( "gui_set_audio_scroll", "0", CVAR_GUI | CVAR_INTEGER, "audio menu scroll step", 0.0f, 0.0f );
-idCVar gui_set_game_scroll( "gui_set_game_scroll", "0", CVAR_GUI | CVAR_INTEGER, "game menu scroll step", 0, 20 );
+idCVar gui_set_game_scroll( "gui_set_game_scroll", "0", CVAR_GUI | CVAR_INTEGER, "game menu scroll step", 0, 27 );
 
 static const int MENU_CONTROLLER_AXIS_THRESHOLD = 50;
 static const int MENU_CONTROLLER_REPEAT_INITIAL_MSEC = 320;
@@ -1154,10 +1155,12 @@ bool idSessionLocal::HandleSaveGameMenuCommand( idCmdArgs &args, int &icmd ) {
 					idLexer src(LEXFL_NOERRORS|LEXFL_NOSTRINGCONCAT);
 					if ( src.LoadFile( saveFileName ) ) {
 						idToken tok;
+						idToken noOverwriteToken;
 						src.ReadToken( &tok ); // Name
 						src.ReadToken( &tok ); // Map
 						src.ReadToken( &tok ); // Screenshot
-						if ( !tok.IsEmpty() ) {
+						src.ReadToken( &noOverwriteToken ); // Optional no-overwrite marker
+						if ( !tok.IsEmpty() || !idStr::Icmp( noOverwriteToken.c_str(), "nooverwrite" ) ) {
 							// NOTE: base/ gui doesn't handle that one
 							guiActive->HandleNamedEvent( "autosaveOverwriteError" );
 							return true;
@@ -1168,7 +1171,7 @@ bool idSessionLocal::HandleSaveGameMenuCommand( idCmdArgs &args, int &icmd ) {
 				}
 			}
 
-			sessLocal.SaveGame( saveGameName );
+			sessLocal.SaveGame( saveGameName, ST_REGULAR );
 			SetSaveGameGuiVars( );
 			guiActive->StateChanged( common->GetPresentationTime() );
 		}
@@ -1178,9 +1181,7 @@ bool idSessionLocal::HandleSaveGameMenuCommand( idCmdArgs &args, int &icmd ) {
 	if ( !idStr::Icmp( cmd, "deleteGame" ) ) {
 		int choice = guiActive->State().GetInt( "loadgame_sel_0" );
 		if ( choice >= 0 && choice < loadGameList.Num() ) {
-			fileSystem->RemoveFile( va("savegames/%s.save", loadGameList[choice].c_str()) );
-			fileSystem->RemoveFile( va("savegames/%s.tga", loadGameList[choice].c_str()) );
-			fileSystem->RemoveFile( va("savegames/%s.txt", loadGameList[choice].c_str()) );
+			DeleteGame( loadGameList[choice] );
 			SetSaveGameGuiVars( );
 			guiActive->StateChanged( common->GetPresentationTime() );
 		}
@@ -1261,8 +1262,15 @@ void idSessionLocal::HandleRestartMenuCommands( const char *menuCommand ) {
 		}
 
 		if ( !idStr::Icmp( cmd, "restart" ) ) {
-			if ( !LoadGame( GetAutoSaveName( mapSpawnData.serverInfo.GetString("si_map") ) ) ) {
-				// If we can't load the autosave then just restart the map
+			idStr loadName;
+			if ( lastCheckPoint != -1 ) {
+				loadName = va( "Checkpoint%d", lastCheckPoint );
+			} else {
+				loadName = GetAutoSaveName( mapSpawnData.serverInfo.GetString("si_map") );
+			}
+
+			if ( !LoadGame( loadName ) ) {
+				// If we can't load the retail restart slot then just restart the map
 				MoveToNewMap( mapSpawnData.serverInfo.GetString("si_map") );
 			}
 			continue;
@@ -2045,14 +2053,19 @@ Executes any commands returned by the gui
 ==============
 */
 static bool AdjustMainMenuPageScroll( idUserInterface *gui, const char *pageVisibleState, idCVar &scrollCvar, const char *scrollStateName, int minValue, int maxValue, const char *applyEvent, int delta ) {
-	if ( !gui->State().GetBool( pageVisibleState ) ) {
+	if ( gui == NULL || gui->GetDesktop() == NULL ) {
+		return false;
+	}
+
+	idWinVar *pageVisible = gui->GetDesktop()->GetWinVarByName( pageVisibleState, true );
+	if ( pageVisible == NULL || !atoi( pageVisible->c_str() ) ) {
 		return false;
 	}
 	if ( maxValue <= minValue ) {
 		return false;
 	}
 
-	const int current = scrollCvar.GetInteger();
+	const int current = idMath::ClampInt( minValue, maxValue, gui->GetStateInt( scrollStateName, va( "%d", scrollCvar.GetInteger() ) ) );
 	const int next = idMath::ClampInt( minValue, maxValue, current + delta );
 	if ( next != current ) {
 		scrollCvar.SetInteger( next );
@@ -2086,7 +2099,7 @@ static bool HandleMainMenuSettingsScrollInput( idUserInterface *gui, int key ) {
 	if ( AdjustMainMenuPageScroll( gui, "p_settings_audio::visible", gui_set_audio_scroll, "gui_set_audio_scroll", 0, 0, "applySetAudioScroll", delta ) ) {
 		return true;
 	}
-	if ( AdjustMainMenuPageScroll( gui, "p_settings_game::visible", gui_set_game_scroll, "gui_set_game_scroll", 0, 10, "applySetGameScroll", delta ) ) {
+	if ( AdjustMainMenuPageScroll( gui, "p_settings_game::visible", gui_set_game_scroll, "gui_set_game_scroll", 0, 27, "applySetGameScroll", delta ) ) {
 		return true;
 	}
 

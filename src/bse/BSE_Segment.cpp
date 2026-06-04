@@ -21,6 +21,14 @@ ID_INLINE int GetSegmentParticleCap() {
 	return idMath::ClampInt(0, MAX_PARTICLES, bse_maxParticles.GetInteger());
 }
 
+ID_INLINE bool BSE_DecalsEnabled() {
+	if (!cvarSystem) {
+		return true;
+	}
+	idCVar* gDecals = cvarSystem->Find("g_decals");
+	return gDecals == NULL || gDecals->GetBool();
+}
+
 ID_INLINE void BSE_BoundTriSurf(srfTriangles_t* tri) {
 	if (!tri) {
 		return;
@@ -558,7 +566,9 @@ bool rvSegment::Check(rvBSE* effect, float time, float offset) {
 		return true;
 	case SEG_DECAL:
 		if (!GetExpired()) {
-			CreateDecal(effect, mSegStartTime);
+			if (BSE_DecalsEnabled()) {
+				CreateDecal(effect, mSegStartTime);
+			}
 			SetExpired(true);
 		}
 		return true;
@@ -788,7 +798,11 @@ void rvSegment::CreateDecal(rvBSE* effect, float time) {
 	const int decalAxis = idMath::ClampInt(0, 2, st->mDecalAxis);
 	const idVec3 origin = effect->GetCurrentOrigin();
 	const idMat3 effectAxis = effect->GetCurrentAxis();
-	idVec3 normal = effectAxis[decalAxis];
+	// Impact effects carry the contact normal on the selected axis. The decal
+	// projector builds its clipping volume from a winding that faces the hit
+	// surface, so flip the outward contact normal before handing it to the
+	// renderer.
+	idVec3 normal = -effectAxis[decalAxis];
 	if (normal.LengthSqr() <= 1e-8f) {
 		return;
 	}
@@ -825,22 +839,6 @@ void rvSegment::CreateDecal(rvBSE* effect, float time) {
 
 	const idVec3 projectionOrigin = origin - normal * projectionDepth;
 	const int startTimeMs = static_cast<int>(time * 1000.0f);
-	if ( bse_debug.GetInteger() > 0 ) {
-		static int decalTraceCount = 0;
-		if ( decalTraceCount < 64 ) {
-			const char *effectName = effect->GetDeclName();
-			const char *materialName = pt->GetMaterial() ? pt->GetMaterial()->GetName() : "<null>";
-			common->Printf(
-				"BSE decal %d: effect='%s' segment=%d material='%s' size=(%.1f %.1f %.1f) depth=%.1f\n",
-				decalTraceCount,
-				effectName ? effectName : "<null>",
-				mSegmentTemplateHandle,
-				materialName,
-				size.x, size.y, size.z,
-				projectionDepth );
-			++decalTraceCount;
-		}
-	}
 	renderWorld->ProjectDecalOntoWorld(
 		winding,
 		projectionOrigin,

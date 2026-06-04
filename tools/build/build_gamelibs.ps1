@@ -38,7 +38,7 @@ Write-Host "  BuildDir: $gameLibsBuildDir"
 if ((Test-Path $gameLibsCoreData) -and (Test-Path $gameLibsBuildNinja)) {
     & $gameLibsMesonSetup setup --reconfigure $gameLibsBuildDir $gameLibsRoot
 } else {
-    & $gameLibsMesonSetup setup --wipe $gameLibsBuildDir $gameLibsRoot --backend ninja --buildtype=release --vsenv
+    & $gameLibsMesonSetup setup --wipe $gameLibsBuildDir $gameLibsRoot --backend ninja --buildtype=debug --vsenv
 }
 $setupExit = [int]$LASTEXITCODE
 if ($setupExit -ne 0) {

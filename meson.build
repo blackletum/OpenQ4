@@ -411,9 +411,11 @@ if build_engine
       cc.find_library('dl', required: true),
       dependency('x11', required: true),
       dependency('xext', required: true),
-      dependency('xxf86vm', required: true),
       cc.find_library('GL', required: true),
     ]
+    if not use_sdl3_backend
+      deps += [dependency('xxf86vm', required: true)]
+    endif
     if use_sdl3_backend
       deps += [sdl3_dep]
     endif

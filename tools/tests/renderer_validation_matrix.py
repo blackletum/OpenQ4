@@ -426,6 +426,7 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
         "+rendererContextLadderSelfTest",
         "+rendererTierSelfTest",
         "+rendererTierContractSelfTest",
+        "+uiFontParitySelfTest",
         "+rendererUploadSelfTest",
         "+rendererGpuTimerSelfTest",
         "+rendererScenePacketSelfTest",

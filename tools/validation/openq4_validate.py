@@ -23,7 +23,7 @@ PROFILE_DEFAULTS = {
     },
     "pr": {
         "build_dir": ".tmp/validation/pr-builddir",
-        "buildtype": "release",
+        "buildtype": "debug",
         "clean": True,
         "install": True,
     },
@@ -41,7 +41,6 @@ NON_RUNTIME_PATTERNS = (
     "*.ilk",
     "*.lib",
     "*.map",
-    "*.pdb",
     "*.zip",
 )
 
@@ -236,8 +235,18 @@ def validate_staged_payload(root: Path, *, dry_run: bool) -> None:
         if not required_file.is_file():
             raise ValidationError(f"Required staged game file is missing: {rel(required_file, root)}")
 
-    if host_is_windows() and not (install_root / "OpenAL32.dll").is_file():
-        raise ValidationError("Windows staged payload is missing OpenAL32.dll.")
+    if host_is_windows():
+        if not (install_root / "OpenAL32.dll").is_file():
+            raise ValidationError("Windows staged payload is missing OpenAL32.dll.")
+
+        required_symbols = (
+            sorted(install_root.glob("openQ4-client_*.pdb")),
+            sorted(install_root.glob("openQ4-ded_*.pdb")),
+            sorted(game_dir.glob("game-sp_*.pdb")),
+            sorted(game_dir.glob("game-mp_*.pdb")),
+        )
+        if any(len(matches) == 0 for matches in required_symbols):
+            raise ValidationError("Windows staged payload is missing one or more required diagnostic PDB files.")
 
     bad_artifacts: list[Path] = []
     for directory in (install_root, game_dir):
@@ -332,7 +341,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("profile", choices=sorted(PROFILE_DEFAULTS), help="Validation profile to run.")
     parser.add_argument("--source-root", default="", help="OpenQ4 source root. Defaults to this script's repository.")
     parser.add_argument("--build-dir", default=None, help="Meson build directory for this validation run.")
-    parser.add_argument("--buildtype", default=None, help="Meson buildtype. Profile default: push=debug, pr=release.")
+    parser.add_argument("--buildtype", default=None, help="Meson buildtype. Profile default: push=debug, pr=debug.")
     parser.add_argument("--platform-backend", default="", help="Optional Meson platform_backend override.")
     parser.add_argument("--clean", dest="clean", action="store_true", default=None, help="Use Meson --wipe for setup.")
     parser.add_argument("--no-clean", dest="clean", action="store_false", help="Reconfigure/reuse an existing build directory.")

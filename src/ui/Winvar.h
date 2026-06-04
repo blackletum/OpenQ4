@@ -238,10 +238,23 @@ public:
 		savefile->Read( &eval, sizeof( eval ) );
 
 		int len;
-		savefile->Read( &len, sizeof( len ) );
+		const int offset = savefile->Tell();
+		if ( savefile->Read( &len, sizeof( len ) ) != sizeof( len ) ) {
+			common->Error( "idWinStr::ReadFromSaveGame: truncated string length at offset %d", offset );
+		}
+		const int remainingBytes = Max( 0, savefile->Length() - savefile->Tell() );
+		const int maxSavedStringLength = 64 * 1024;
+		if ( len < 0 || len > maxSavedStringLength || len > remainingBytes ) {
+			common->Error( "idWinStr::ReadFromSaveGame: invalid string length %d at offset %d (remaining %d)",
+				len, offset, remainingBytes );
+		}
 		if ( len > 0 ) {
 			data.Fill( ' ', len );
-			savefile->Read( &data[0], len );
+			if ( savefile->Read( &data[0], len ) != len ) {
+				common->Error( "idWinStr::ReadFromSaveGame: truncated string at offset %d", savefile->Tell() );
+			}
+		} else {
+			data.Clear();
 		}
 	}
 
@@ -826,10 +839,23 @@ public:
 		savefile->Read( &eval, sizeof( eval ) );
 
 		int len;
-		savefile->Read( &len, sizeof( len ) );
+		const int offset = savefile->Tell();
+		if ( savefile->Read( &len, sizeof( len ) ) != sizeof( len ) ) {
+			common->Error( "idWinBackground::ReadFromSaveGame: truncated material name length at offset %d", offset );
+		}
+		const int remainingBytes = Max( 0, savefile->Length() - savefile->Tell() );
+		const int maxSavedStringLength = 64 * 1024;
+		if ( len < 0 || len > maxSavedStringLength || len > remainingBytes ) {
+			common->Error( "idWinBackground::ReadFromSaveGame: invalid material name length %d at offset %d (remaining %d)",
+				len, offset, remainingBytes );
+		}
 		if ( len > 0 ) {
 			data.Fill( ' ', len );
-			savefile->Read( &data[0], len );
+			if ( savefile->Read( &data[0], len ) != len ) {
+				common->Error( "idWinBackground::ReadFromSaveGame: truncated material name at offset %d", savefile->Tell() );
+			}
+		} else {
+			data.Clear();
 		}
 		if ( mat ) {
 			if ( len > 0 ) {

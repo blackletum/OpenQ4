@@ -206,4 +206,6 @@ private:
 	bool				mbcs;
 };
 
+bool UI_FontParity_RunSelfTest( void );
+
 #endif /* !__DEVICECONTEXT_H__ */

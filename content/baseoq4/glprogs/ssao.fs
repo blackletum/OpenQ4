@@ -1,5 +1,6 @@
 uniform sampler2D Scene;
 uniform sampler2D DepthBuffer;
+uniform sampler2D FinalDepthBuffer;
 uniform vec2 invTexSize;
 uniform vec4 projectionInfo;
 uniform vec2 depthProjection;
@@ -18,6 +19,10 @@ const int kMaxSamples = 32;
 
 float SampleDepth( vec2 uv ) {
 	return texture2D( DepthBuffer, uv ).x;
+}
+
+float SampleFinalDepth( vec2 uv ) {
+	return texture2D( FinalDepthBuffer, uv ).x;
 }
 
 float ViewSpaceZFromDepth( float depth ) {
@@ -124,6 +129,17 @@ float ComputeAmbientOcclusion( vec2 uv, vec3 centerPos, vec3 centerNormal ) {
 	return mix( 1.0, ao, fade );
 }
 
+bool PixelIsForeground( vec2 uv, float sourceDepth ) {
+	float finalDepth = SampleFinalDepth( uv );
+	if ( finalDepth >= 0.99999 || sourceDepth >= 0.99999 ) {
+		return false;
+	}
+
+	float sourceViewDepth = -ViewSpaceZFromDepth( sourceDepth );
+	float finalViewDepth = -ViewSpaceZFromDepth( finalDepth );
+	return finalViewDepth + 1.0 < sourceViewDepth;
+}
+
 void main() {
 	vec2 uv = gl_TexCoord[0].st;
 	vec4 scene = texture2D( Scene, uv );
@@ -131,6 +147,11 @@ void main() {
 
 	if ( depth >= 0.99999 ) {
 		gl_FragColor = scene;
+		return;
+	}
+
+	if ( PixelIsForeground( uv, depth ) ) {
+		gl_FragColor = ( ssaoDebugView > 0.5 ) ? vec4( 1.0, 1.0, 1.0, scene.a ) : scene;
 		return;
 	}
 

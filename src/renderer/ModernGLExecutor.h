@@ -66,6 +66,7 @@ typedef struct modernGLExecutorStats_s {
 	bool	deferredResolveClusterReady;
 	bool	deferredResolveDebugOverlayReady;
 	bool	forwardPlusRequested;
+	bool	forwardPlusDecalOnlyRequested;
 	bool	forwardPlusExecuted;
 	bool	forwardPlusResourcesReady;
 	bool	forwardPlusSceneColorReady;
@@ -113,6 +114,7 @@ typedef struct modernGLExecutorStats_s {
 	int		pipelineDeferredCommands;
 	int		pipelineForwardPlusCommands;
 	int		pipelineForwardPlusTransparentCommands;
+	int		pipelineForwardPlusDecalCommands;
 	int		pipelineGuiCommands;
 	int		pipelineBatches;
 	int		pipelineGeometryBatches;
@@ -447,12 +449,12 @@ void R_ModernGLExecutor_PrepareFrame( const idScenePacketFrame &packetFrame, con
 void R_ModernGLExecutor_DrawDepthDebugOverlay( void );
 void R_ModernGLExecutor_DrawGBufferDebugOverlay( void );
 void R_ModernGLExecutor_DrawDeferredDebugOverlay( void );
+void R_ModernGLExecutor_SubmitForwardPlusDecalOverlay( const viewDef_t *viewDef );
 void R_ModernGLExecutor_ComposeVisibleSceneForPost( void );
 void R_ModernGLExecutor_ComposeVisibleFrame( void );
 const modernGLExecutorStats_t &R_ModernGLExecutor_Stats( void );
 bool R_ModernGLExecutor_ModernVisibleRequestedForPost( void );
 bool R_ModernGLExecutor_ModernVisiblePostProcessHandoffActive( void );
-bool R_ModernGLExecutor_GetDeferredSSAOInputs( GLuint &sceneTexture, GLuint &depthTexture, int &sceneWidth, int &sceneHeight, int &depthWidth, int &depthHeight );
 bool R_ModernGLExecutor_LegacyPassCanSkip( renderPassCategory_t category );
 bool R_ModernGLExecutor_LegacyPassCanSkipForView( renderPassCategory_t category, const viewDef_t *viewDef );
 void R_ModernGLExecutor_RecordLegacyPassSkipped( renderPassCategory_t category );

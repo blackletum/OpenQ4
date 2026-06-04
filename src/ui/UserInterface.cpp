@@ -667,44 +667,85 @@ bool idUserInterfaceLocal::WriteToSaveGame( idFile *savefile ) const {
 	return true;
 }
 
+static bool UI_ReadSaveGameBytes( idFile *savefile, void *buffer, int len, const char *detail ) {
+	const int offset = savefile->Tell();
+	const int bytesRead = savefile->Read( buffer, len );
+	if ( bytesRead != len ) {
+		common->Warning( "idUserInterfaceLocal::ReadFromSaveGame: truncated %s at offset %d (read %d of %d)",
+			detail ? detail : "data", offset, bytesRead, len );
+		return false;
+	}
+	return true;
+}
+
+static bool UI_ReadSaveGameString( idFile *savefile, idStr &string, const char *detail ) {
+	int len = 0;
+	const int offset = savefile->Tell();
+	if ( !UI_ReadSaveGameBytes( savefile, &len, sizeof( len ), detail ) ) {
+		string.Clear();
+		return false;
+	}
+
+	const int remainingBytes = Max( 0, savefile->Length() - savefile->Tell() );
+	const int maxSavedStringLength = 64 * 1024;
+	if ( len < 0 || len > maxSavedStringLength || len > remainingBytes ) {
+		common->Warning( "idUserInterfaceLocal::ReadFromSaveGame: invalid %s length %d at offset %d (remaining %d)",
+			detail ? detail : "string", len, offset, remainingBytes );
+		string.Clear();
+		return false;
+	}
+
+	string.Fill( ' ', len );
+	if ( len > 0 && !UI_ReadSaveGameBytes( savefile, &string[0], len, detail ) ) {
+		string.Clear();
+		return false;
+	}
+	return true;
+}
+
 bool idUserInterfaceLocal::ReadFromSaveGame( idFile *savefile ) {
 	int num;
-	int i, len;
+	int i;
 	idStr key;
 	idStr value;
 
-	savefile->Read( &num, sizeof( num ) );
+	if ( !UI_ReadSaveGameBytes( savefile, &num, sizeof( num ), "state count" ) ) {
+		return false;
+	}
+	if ( num < 0 || num > 16384 ) {
+		common->Warning( "idUserInterfaceLocal::ReadFromSaveGame: invalid state count %d", num );
+		return false;
+	}
 
 	state.Clear();
 	for( i = 0; i < num; i++ ) {
-		savefile->Read( &len, sizeof( len ) );
-		key.Fill( ' ', len );
-		savefile->Read( &key[0], len );
-
-		savefile->Read( &len, sizeof( len ) );
-		value.Fill( ' ', len );
-		savefile->Read( &value[0], len );
+		if ( !UI_ReadSaveGameString( savefile, key, "state key" ) ) {
+			return false;
+		}
+		if ( !UI_ReadSaveGameString( savefile, value, "state value" ) ) {
+			return false;
+		}
 		
 		state.Set( key, value );
 	}
 
-	savefile->Read( &active, sizeof( active ) );
-	savefile->Read( &interactive, sizeof( interactive ) );
-	savefile->Read( &uniqued, sizeof( uniqued ) );
-	savefile->Read( &time, sizeof( time ) );
+	if ( !UI_ReadSaveGameBytes( savefile, &active, sizeof( active ), "active flag" ) ||
+		!UI_ReadSaveGameBytes( savefile, &interactive, sizeof( interactive ), "interactive flag" ) ||
+		!UI_ReadSaveGameBytes( savefile, &uniqued, sizeof( uniqued ), "unique flag" ) ||
+		!UI_ReadSaveGameBytes( savefile, &time, sizeof( time ), "time" ) ) {
+		return false;
+	}
 
-	savefile->Read( &len, sizeof( len ) );
-	activateStr.Fill( ' ', len );
-	savefile->Read( &activateStr[0], len );
-	savefile->Read( &len, sizeof( len ) );
-	pendingCmd.Fill( ' ', len );
-	savefile->Read( &pendingCmd[0], len );
-	savefile->Read( &len, sizeof( len ) );
-	returnCmd.Fill( ' ', len );
-	savefile->Read( &returnCmd[0], len );
+	if ( !UI_ReadSaveGameString( savefile, activateStr, "activate command" ) ||
+		!UI_ReadSaveGameString( savefile, pendingCmd, "pending command" ) ||
+		!UI_ReadSaveGameString( savefile, returnCmd, "return command" ) ) {
+		return false;
+	}
 
-	savefile->Read( &cursorX, sizeof( cursorX ) );
-	savefile->Read( &cursorY, sizeof( cursorY ) );
+	if ( !UI_ReadSaveGameBytes( savefile, &cursorX, sizeof( cursorX ), "cursor x" ) ||
+		!UI_ReadSaveGameBytes( savefile, &cursorY, sizeof( cursorY ), "cursor y" ) ) {
+		return false;
+	}
 
 	desktop->ReadFromSaveGame( savefile );
 

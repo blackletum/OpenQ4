@@ -256,6 +256,8 @@ static materialResourceSortGroup_t R_MaterialResourceTable_SortGroupForMaterial(
 	return MATERIAL_RESOURCE_SORT_UNKNOWN;
 }
 
+static bool R_MaterialResourceTable_IsFilterBlend( int drawStateBits );
+
 static materialResourceBlendMode_t R_MaterialResourceTable_BlendModeForMaterial( const idMaterial *material, rendererMaterialClass_t materialClass ) {
 	if ( materialClass == RENDER_MATERIAL_GUI ) {
 		return MATERIAL_RESOURCE_BLEND_GUI;
@@ -288,14 +290,16 @@ static materialResourceBlendMode_t R_MaterialResourceTable_BlendModeForMaterial(
 		if ( blendBits == ( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE ) ) {
 			return MATERIAL_RESOURCE_BLEND_ADD;
 		}
-		if ( blendBits == ( GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ZERO )
-			|| blendBits == ( GLS_SRCBLEND_ZERO | GLS_DSTBLEND_SRC_COLOR ) ) {
+		if ( firstStage != NULL && R_MaterialResourceTable_IsFilterBlend( firstStage->drawStateBits ) ) {
 			return MATERIAL_RESOURCE_BLEND_FILTER;
 		}
 		return MATERIAL_RESOURCE_BLEND_BLEND;
 	}
 	if ( blendBits == ( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE ) ) {
 		return MATERIAL_RESOURCE_BLEND_ADD;
+	}
+	if ( firstStage != NULL && R_MaterialResourceTable_IsFilterBlend( firstStage->drawStateBits ) ) {
+		return MATERIAL_RESOURCE_BLEND_FILTER;
 	}
 	if ( blendBits == ( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA ) ) {
 		return MATERIAL_RESOURCE_BLEND_BLEND;
@@ -341,7 +345,9 @@ static bool R_MaterialResourceTable_IsAdditiveBlend( int drawStateBits ) {
 static bool R_MaterialResourceTable_IsFilterBlend( int drawStateBits ) {
 	const int blendBits = R_MaterialResourceTable_BlendBits( drawStateBits );
 	return blendBits == ( GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ZERO )
-		|| blendBits == ( GLS_SRCBLEND_ZERO | GLS_DSTBLEND_SRC_COLOR );
+		|| blendBits == ( GLS_SRCBLEND_ZERO | GLS_DSTBLEND_SRC_COLOR )
+		|| blendBits == ( GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_SRC_COLOR )
+		|| blendBits == ( GLS_SRCBLEND_ZERO | GLS_DSTBLEND_ONE_MINUS_SRC_COLOR );
 }
 
 static bool R_MaterialResourceTable_IsAlphaBlend( int drawStateBits ) {
@@ -502,6 +508,9 @@ static void R_MaterialResourceTable_AddTextureBinding(
 	binding.blendEnabled = stage != NULL && R_MaterialResourceTable_BlendBits( stage->drawStateBits ) != 0;
 	binding.depthWrite = stage != NULL && ( stage->drawStateBits & GLS_DEPTHMASK ) != 0;
 	binding.colorMasked = stage != NULL && ( stage->drawStateBits & GLS_COLORMASK ) != 0;
+	for ( int i = 0; i < 4; ++i ) {
+		binding.colorRegisters[i] = -1;
+	}
 	if ( stage != NULL ) {
 		memcpy( binding.colorRegisters, stage->color.registers, sizeof( binding.colorRegisters ) );
 		memcpy( binding.matrixRegisters, stage->texture.matrix, sizeof( binding.matrixRegisters ) );

@@ -214,24 +214,18 @@ remove_non_runtime_install_artifacts() {
     [[ -n "${install_root}" && -d "${install_root}" ]] || return
 
     find "${install_root}" -maxdepth 1 -type f \
-        \( -name '*.pdb' -o -name '*.lib' -o -name '*.exp' -o -name '*.ilk' -o -name '*.map' -o -name '*.zip' -o -name 'mgscope_sendinput.cfg' -o -name 'scope_autotest*.cfg' \) \
+        \( -name '*.lib' -o -name '*.exp' -o -name '*.ilk' -o -name '*.map' -o -name '*.zip' -o -name 'mgscope_sendinput.cfg' -o -name 'scope_autotest*.cfg' \) \
         -print | while IFS= read -r match; do
             [[ -n "${match}" ]] || continue
             echo "Removing non-runtime staged artifact '${match}'"
             rm -f -- "${match}"
         done
 
-    local crashes_dir="${install_root}/crashes"
-    if [[ -d "${crashes_dir}" ]]; then
-        echo "Removing non-runtime staged directory '${crashes_dir}'"
-        rm -rf -- "${crashes_dir}"
-    fi
-
     local install_game_dir="${install_root}/baseoq4"
     [[ -d "${install_game_dir}" ]] || return
 
     find "${install_game_dir}" -maxdepth 1 -type f \
-        \( -name '*.pdb' -o -name '*.lib' -o -name '*.exp' -o -name '*.ilk' -o -name '*.map' \) \
+        \( -name '*.lib' -o -name '*.exp' -o -name '*.ilk' -o -name '*.map' \) \
         -print | while IFS= read -r match; do
             [[ -n "${match}" ]] || continue
             echo "Removing non-runtime staged artifact '${match}'"

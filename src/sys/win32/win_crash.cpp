@@ -34,8 +34,6 @@ along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(_DEBUG)
-
 typedef BOOL(WINAPI* MiniDumpWriteDumpFn)(
 	HANDLE hProcess,
 	DWORD ProcessId,
@@ -356,7 +354,7 @@ static void Sys_WriteCrashLog(
 	Sys_StringPrintf(
 		logBuffer,
 		ARRAYSIZE(logBuffer),
-		"OpenQ4 debug crash report\r\n"
+		"OpenQ4 crash report\r\n"
 		"Timestamp: %04u-%02u-%02u %02u:%02u:%02u.%03u\r\n"
 		"ProcessId: %lu\r\n"
 		"ThreadId: %lu\r\n"
@@ -445,10 +443,10 @@ static void Sys_WriteCrashLog(
 
 /*
 ====================
-Sys_DebugUnhandledExceptionFilter
+Sys_UnhandledExceptionFilter
 ====================
 */
-static LONG WINAPI Sys_DebugUnhandledExceptionFilter(LPEXCEPTION_POINTERS exceptionInfo) {
+static LONG WINAPI Sys_UnhandledExceptionFilter(LPEXCEPTION_POINTERS exceptionInfo) {
 	if (g_prevExceptionFilter) {
 		const LONG prevAction = g_prevExceptionFilter(exceptionInfo);
 		if (prevAction != EXCEPTION_CONTINUE_SEARCH) {
@@ -499,29 +497,22 @@ static LONG WINAPI Sys_DebugUnhandledExceptionFilter(LPEXCEPTION_POINTERS except
 		);
 	}
 
-	MessageBoxA(NULL, message, "OpenQ4 Debug Crash", MB_ICONERROR | MB_OK | MB_SYSTEMMODAL);
+	MessageBoxA(NULL, message, "OpenQ4 Crash", MB_ICONERROR | MB_OK | MB_SYSTEMMODAL);
 
 	return EXCEPTION_EXECUTE_HANDLER;
 }
 
 /*
 ====================
-Sys_InstallDebugCrashHandler
+Sys_InstallCrashHandler
 ====================
 */
-void Sys_InstallDebugCrashHandler(void) {
+void Sys_InstallCrashHandler(void) {
 	_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 	_set_invalid_parameter_handler(Sys_InvalidParameterHandler);
 	_set_purecall_handler(Sys_PurecallHandler);
 	signal(SIGABRT, Sys_AbortSignalHandler);
 	std::set_terminate(Sys_TerminateHandler);
 
-	g_prevExceptionFilter = SetUnhandledExceptionFilter(Sys_DebugUnhandledExceptionFilter);
+	g_prevExceptionFilter = SetUnhandledExceptionFilter(Sys_UnhandledExceptionFilter);
 }
-
-#else
-
-void Sys_InstallDebugCrashHandler(void) {
-}
-
-#endif

@@ -7841,8 +7841,8 @@ windowDef Desktop
 					visible	1
 					forecolor	1,0.745,0.137,0.8
 					choiceType	1
-					choices	"75%;85%;100%"
-					values	"75;85;100"
+					choices	"75%;85%;100%;125%;150%;200%"
+					values	"75;85;100;125;150;200"
 					cvar	"r_screenFraction"
 					textscale	0.24
 					font	"fonts/lowpixel"

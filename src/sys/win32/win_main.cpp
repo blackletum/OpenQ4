@@ -1750,8 +1750,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	// no abort/retry/fail errors
 	SetErrorMode(SEM_FAILCRITICALERRORS);
 
-	// debug builds write crash logs + minidumps for unhandled exceptions.
-	Sys_InstallDebugCrashHandler();
+	// Write crash logs and minidumps for unhandled exceptions.
+	Sys_InstallCrashHandler();
 
 	for (int i = 0; i < MAX_CRITICAL_SECTIONS; i++) {
 		InitializeCriticalSection(&win32.criticalSections[i]);

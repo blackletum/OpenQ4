@@ -68,41 +68,87 @@ typedef struct mtrParsingData_s {
 	bool			forceOverlays;
 } mtrParsingData_t;
 
-static const char *R_ResolveQ4SpecialImageName( const char *name ) {
+struct q4ImplicitGuiAtlasMaterialPrefix_t {
+	const char *prefix;
+	int length;
+};
+
+static const q4ImplicitGuiAtlasMaterialPrefix_t Q4_IMPLICIT_GUI_ATLAS_NOPICMIP_PREFIXES[] = {
+	{ "gfx/guis/", sizeof( "gfx/guis/" ) - 1 },
+	{ "fonts/", sizeof( "fonts/" ) - 1 },
+};
+
+static bool R_MaterialNameStartsWith( const char *name, const q4ImplicitGuiAtlasMaterialPrefix_t &prefix ) {
+	return name != NULL && !idStr::Icmpn( name, prefix.prefix, prefix.length );
+}
+
+static bool R_MaterialNeedsImplicitGuiAtlasNoPicMip( const char *materialName ) {
+	for ( int i = 0; i < static_cast<int>( sizeof( Q4_IMPLICIT_GUI_ATLAS_NOPICMIP_PREFIXES ) / sizeof( Q4_IMPLICIT_GUI_ATLAS_NOPICMIP_PREFIXES[0] ) ); ++i ) {
+		if ( R_MaterialNameStartsWith( materialName, Q4_IMPLICIT_GUI_ATLAS_NOPICMIP_PREFIXES[i] ) ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool R_IsQ4FontDataImageName( const char *name ) {
+	if ( name == NULL || idStr::Icmpn( name, "fonts/", 6 ) != 0 ) {
+		return false;
+	}
+
+	idStr extension;
+	idStr nameStr = name;
+	nameStr.ExtractFileExtension( extension );
+	return !extension.Icmp( "fontdat" );
+}
+
+static void R_ResolveQ4SpecialImageName( const char *name, idStr &resolved ) {
+	resolved = name != NULL ? name : "";
 	if ( name == NULL ) {
-		return NULL;
+		return;
 	}
 
 	if ( !idStr::Icmp( name, "DepthTexture" ) ) {
 		if ( globalImages->GetImage( "DepthTexture" ) != NULL ) {
-			return "DepthTexture";
+			resolved = "DepthTexture";
+			return;
 		}
-		return "_currentDepth";
+		resolved = "_currentDepth";
+		return;
 	}
 
 	if ( !idStr::Icmp( name, "BlurTexture1" ) ) {
 		if ( globalImages->GetImage( "BlurTexture1" ) != NULL ) {
-			return "BlurTexture1";
+			resolved = "BlurTexture1";
+			return;
 		}
-		return "_currentRender";
+		resolved = "_currentRender";
+		return;
 	}
 
 	if ( !idStr::Icmp( name, "ambientNormalMap" ) ) {
-		return "_ambient";
+		resolved = "_ambient";
+		return;
 	}
 	if ( !idStr::Icmp( name, "normalCubeMap" ) ) {
-		return "_normalCubeMap";
+		resolved = "_normalCubeMap";
+		return;
 	}
 	if ( !idStr::Icmp( name, "specularTableImage" ) ) {
-		return "_specularTable";
+		resolved = "_specularTable";
+		return;
 	}
 
-	return name;
+	if ( R_IsQ4FontDataImageName( name ) ) {
+		resolved.StripFileExtension();
+	}
 }
 
 static idImage *R_LoadMaterialImage( const char *name, textureFilter_t filter, textureRepeat_t repeat,
 	textureUsage_t usage, cubeFiles_t cubeMap = CF_2D, bool allowDownSize = true, unsigned int flags = 0 ) {
-	return globalImages->ImageFromFile( R_ResolveQ4SpecialImageName( name ), filter, repeat, usage, cubeMap, allowDownSize, flags );
+	idStr resolvedName;
+	R_ResolveQ4SpecialImageName( name, resolvedName );
+	return globalImages->ImageFromFile( resolvedName.c_str(), filter, repeat, usage, cubeMap, allowDownSize, flags );
 }
 
 static int R_FindMD5RVertexProgramForStageProgram( const char *programName ) {
@@ -3755,6 +3801,7 @@ bool idMaterial::SetDefaultText( void ) {
 	// if there exists an image with the same name
 	if ( 1 ) { //fileSystem->ReadFile( GetName(), NULL ) != -1 ) {
 		char generated[2048];
+		const char *noPicMip = R_MaterialNeedsImplicitGuiAtlasNoPicMip( GetName() ) ? "nopicmip\n" : "";
 		idStr::snPrintf( generated, sizeof( generated ), 
 						"material %s // IMPLICITLY GENERATED\n"
 						"{\n"
@@ -3763,8 +3810,9 @@ bool idMaterial::SetDefaultText( void ) {
 						"colored\n"
 						"map \"%s\"\n"
 						"clamp\n"
+						"%s"
 						"}\n"
-						"}\n", GetName(), GetName() );
+						"}\n", GetName(), GetName(), noPicMip );
 		SetText( generated );
 		return true;
 	} else {

@@ -54,6 +54,7 @@ idCVar	idSessionLocal::com_aviDemoHeight( "com_aviDemoHeight", "256", CVAR_SYSTE
 idCVar	idSessionLocal::com_aviDemoTics( "com_aviDemoTics", "2", CVAR_SYSTEM | CVAR_INTEGER, "", 1, 60 );
 idCVar	idSessionLocal::com_wipeSeconds( "com_wipeSeconds", "1", CVAR_SYSTEM, "" );
 idCVar	idSessionLocal::com_guid( "com_guid", "", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_ROM, "" );
+idCVar	idSessionLocal::com_lastQuicksave( "com_lastQuicksave", "Quicksave0", CVAR_SYSTEM | CVAR_ARCHIVE, "last quicksave slot" );
 idCVar	com_loadingContinueAutoAdvance( "com_loadingContinueAutoAdvance", "0", CVAR_SYSTEM | CVAR_INTEGER, "auto-accept the single-player loading-screen continue gate after N msec (testing), 0 = off", 0, 60000, idCmdSystem::ArgCompletion_Integer<0,60000> );
 idCVar	com_skipLoadingContinue( "com_skipLoadingContinue", "0", CVAR_SYSTEM | CVAR_BOOL, "skip the single-player loading-screen continue gate (testing)" );
 idCVar	com_skipLogoVideos( "com_skipLogoVideos", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "skip startup logo videos and go straight to the main menu" );
@@ -255,6 +256,53 @@ static bool Session_IsSupportedSaveGameName( const idStr &gameName ) {
 
 static bool Session_SaveGameHeaderUsesEntityFilter( const idStr &gameName ) {
 	return Session_IsRetailSaveGameName( gameName );
+}
+
+static bool Session_ReadSaveGameInt( idFile *file, int &value, const char *fieldName, const char *savePath ) {
+	const int offset = file->Tell();
+	const int bytesRead = file->ReadInt( value );
+	if ( bytesRead != sizeof( value ) ) {
+		common->Warning( "Savegame '%s' is truncated while reading %s at offset %d (read %d of %d)",
+			savePath ? savePath : "<unknown>", fieldName ? fieldName : "integer", offset, bytesRead, static_cast<int>( sizeof( value ) ) );
+		return false;
+	}
+	return true;
+}
+
+static bool Session_ReadSaveGameString( idFile *file, idStr &string, int maxLength, const char *fieldName, const char *savePath ) {
+	int len = 0;
+	const int lengthOffset = file->Tell();
+	if ( !Session_ReadSaveGameInt( file, len, fieldName, savePath ) ) {
+		string.Clear();
+		return false;
+	}
+
+	const int remainingBytes = Max( 0, file->Length() - file->Tell() );
+	if ( len < 0 || len > maxLength || len > remainingBytes ) {
+		common->Warning( "Savegame '%s' has invalid %s length %d at offset %d (remaining %d, max %d)",
+			savePath ? savePath : "<unknown>",
+			fieldName ? fieldName : "string",
+			len,
+			lengthOffset,
+			remainingBytes,
+			maxLength );
+		string.Clear();
+		return false;
+	}
+
+	string.Fill( ' ', len );
+	if ( len > 0 ) {
+		const int dataOffset = file->Tell();
+		const int bytesRead = file->Read( &string[0], len );
+		if ( bytesRead != len ) {
+			common->Warning( "Savegame '%s' is truncated while reading %s data at offset %d (read %d of %d)",
+				savePath ? savePath : "<unknown>", fieldName ? fieldName : "string", dataOffset, bytesRead, len );
+			string.Clear();
+			return false;
+		}
+	}
+
+	return true;
 }
 
 void idSessionLocal::ResetFramePacingStats( void ) {
@@ -539,6 +587,92 @@ static bool Session_GetMapDeclDict( const char *mapPath, const char *entityFilte
 	}
 
 	return false;
+}
+
+static const char *SESSION_SAVEGAME_NO_OVERWRITE_TOKEN = "nooverwrite";
+static const char *SESSION_SAVE_DESC_AUTOSAVE_LABEL = "#str_107240";
+static const char *SESSION_SAVE_DESC_QUICKSAVE_LABEL = "#str_107241";
+static const char *SESSION_SAVE_DESC_CHECKPOINT_LABEL = "#str_107656";
+
+static bool Session_GetTrailingDigit( const idStr &value, int &digit ) {
+	if ( value.Length() <= 0 ) {
+		return false;
+	}
+
+	const char ch = value[ value.Length() - 1 ];
+	if ( ch < '0' || ch > '9' ) {
+		return false;
+	}
+
+	digit = ch - '0';
+	return true;
+}
+
+static void Session_GenerateSaveFileName( idSessionLocal &session, idStr &saveName, saveType_t saveType ) {
+	switch ( saveType ) {
+		case ST_AUTO: {
+			const char *mapName = session.mapSpawnData.serverInfo.GetString( "si_map" );
+			const char *entityFilter = session.mapSpawnData.serverInfo.GetString( "si_entityFilter", "" );
+			if ( entityFilter[0] != '\0' ) {
+				saveName = va( "Autosave %s %s", mapName, entityFilter );
+			} else {
+				saveName = va( "Autosave %s", mapName );
+			}
+			break;
+		}
+
+		case ST_CHECKPOINT: {
+			const int checkpointSlot = ( static_cast<unsigned int>( static_cast<unsigned char>( session.lastCheckPoint ) ) - 1 ) & 1;
+			session.lastCheckPoint = checkpointSlot;
+			saveName = va( "Checkpoint%d", checkpointSlot );
+			break;
+		}
+
+		case ST_QUICK: {
+			idStr currentQuickSave = idSessionLocal::com_lastQuicksave.GetString();
+			if ( currentQuickSave.IsEmpty() ) {
+				currentQuickSave = "Quicksave0";
+			}
+
+			int currentSlot = 0;
+			const bool hasSlotSuffix = Session_GetTrailingDigit( currentQuickSave, currentSlot );
+			const int quicksaveSlot = ( currentSlot + 1 ) & 3;
+
+			if ( hasSlotSuffix ) {
+				saveName = currentQuickSave.Left( currentQuickSave.Length() - 1 );
+			} else {
+				saveName = currentQuickSave;
+			}
+			if ( saveName.IsEmpty() ) {
+				saveName = "Quicksave";
+			}
+			saveName += va( "%d", quicksaveSlot );
+			idSessionLocal::com_lastQuicksave.SetString( saveName );
+			break;
+		}
+
+		case ST_REGULAR:
+		default:
+			saveName = "SaveGame";
+			break;
+	}
+}
+
+static const char *Session_GetGeneratedSaveLabel( saveType_t saveType ) {
+	switch ( saveType ) {
+		case ST_AUTO:
+			return SESSION_SAVE_DESC_AUTOSAVE_LABEL;
+		case ST_CHECKPOINT:
+			return SESSION_SAVE_DESC_CHECKPOINT_LABEL;
+		case ST_QUICK:
+		default:
+			return SESSION_SAVE_DESC_QUICKSAVE_LABEL;
+	}
+}
+
+static void Session_EscapeSaveDescription( idStr &description ) {
+	description.Replace( "\\", "\\\\" );
+	description.Replace( "\"", "\\\"" );
 }
 
 static bool Session_ResolveImageFilePath( const idStr &imagePath, idStr &resolvedPath ) {
@@ -2150,11 +2284,14 @@ void idSessionLocal::Clear() {
 	savegameVersion = 0;
 
 	currentMapName.Clear();
+	currentFilterString.Clear();
 	aviDemoShortName.Clear();
 	msgFireBack[ 0 ].Clear();
 	msgFireBack[ 1 ].Clear();
 
 	timeHitch = 0;
+	lastCheckPoint = -1;
+	objectiveFailed = false;
 	ResetFramePacingStats();
 
 	rw = NULL;
@@ -3177,14 +3314,11 @@ idSessionLocal::GetAutoSaveName
 ===============
 */
 idStr idSessionLocal::GetAutoSaveName( const char *mapName ) const {
-	idDict mapDeclDict;
 	const char *entityFilter = mapSpawnData.serverInfo.GetString( "si_entityFilter", "" );
-	const idDict *mapDef = Session_GetMapDeclDict( mapName, entityFilter, mapDeclDict ) ? &mapDeclDict : NULL;
-	if ( mapDef ) {
-		mapName = common->GetLanguageDict()->GetString( mapDef->GetString( "name", mapName ) );
+	if ( entityFilter[0] != '\0' ) {
+		return va( "Autosave %s %s", mapName, entityFilter );
 	}
-	// Fixme: Localization
-	return va( "^3AutoSave:^0 %s", mapName );
+	return va( "Autosave %s", mapName );
 }
 
 /*
@@ -3201,7 +3335,7 @@ void idSessionLocal::MoveToNewMap( const char *mapName ) {
 
 	if ( !mapSpawnData.serverInfo.GetBool("devmap") ) {
 		// Autosave at the beginning of the level
-		SaveGame( GetAutoSaveName( mapName ), true );
+		SaveGame( NULL, ST_AUTO );
 	}
 
 	SetGUI( NULL, NULL );
@@ -3406,6 +3540,7 @@ void idSessionLocal::UnloadMap() {
 	}
 
 	iamTheDukeActive = false;
+	objectiveFailed = false;
 	mapSpawned = false;
 }
 
@@ -3673,6 +3808,7 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 
 	// extract the map name from serverinfo
 	idStr mapString = mapSpawnData.serverInfo.GetString( "si_map" );
+	idStr filterString = mapSpawnData.serverInfo.GetString( "si_entityFilter", "" );
 
 	idStr fullMapName = "maps/";
 	fullMapName += mapString;
@@ -3683,11 +3819,13 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 	console->SetProcFileOutOfDate( false );
 
 	// don't do the deferred caching if we are reloading the same map
-	if ( fullMapName == currentMapName ) {
+	if ( fullMapName == currentMapName && filterString == currentFilterString ) {
 		reloadingSameMap = true;
 	} else {
 		reloadingSameMap = false;
 		currentMapName = fullMapName;
+		currentFilterString = filterString;
+		lastCheckPoint = -1;
 	}
 	fileSystem->SetAssetLogName( fullMapName.c_str() );
 
@@ -3967,14 +4105,31 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 LoadGame_f
 ===============
 */
+static bool Session_CommandRequestsQuickSave( const idCmdArgs &args ) {
+	return args.Argc() < 2 || !idStr::Icmp( args.Argv(1), "quick" );
+}
+
+static const char *Session_CommandLoadGameName( const idCmdArgs &args ) {
+	return Session_CommandRequestsQuickSave( args ) ? NULL : args.Argv(1);
+}
+
+static saveType_t Session_CommandSaveGameType( const idCmdArgs &args ) {
+	if ( Session_CommandRequestsQuickSave( args ) ) {
+		return ST_QUICK;
+	}
+	if ( !idStr::Icmp( args.Argv(1), "checkPoint" ) ) {
+		return ST_CHECKPOINT;
+	}
+	return ST_REGULAR;
+}
+
+static const char *Session_CommandSaveGameName( const idCmdArgs &args ) {
+	return ( Session_CommandSaveGameType( args ) == ST_REGULAR ) ? args.Argv(1) : NULL;
+}
+
 void LoadGame_f( const idCmdArgs &args ) {
 	console->Close();
-	if ( args.Argc() < 2 || idStr::Icmp(args.Argv(1), "quick" ) == 0 ) {
-		idStr saveName = common->GetLanguageDict()->GetString( "#str_07178" );
-		sessLocal.LoadGame( saveName );
-	} else {
-		sessLocal.LoadGame( args.Argv(1) );
-	}
+	sessLocal.LoadGame( Session_CommandLoadGameName( args ) );
 }
 
 /*
@@ -3983,16 +4138,7 @@ SaveGame_f
 ===============
 */
 void SaveGame_f( const idCmdArgs &args ) {
-	if ( args.Argc() < 2 || idStr::Icmp( args.Argv(1), "quick" ) == 0 ) {
-		idStr saveName = common->GetLanguageDict()->GetString( "#str_07178" );
-		if ( sessLocal.SaveGame( saveName ) ) {
-			common->Printf( "%s\n", saveName.c_str() );
-		}
-	} else {
-		if ( sessLocal.SaveGame( args.Argv(1) ) ) {
-			common->Printf( "Saved %s\n", args.Argv(1) );
-		}
-	}
+	sessLocal.SaveGame( Session_CommandSaveGameName( args ), Session_CommandSaveGameType( args ) );
 }
 
 /*
@@ -4127,13 +4273,13 @@ void idSessionLocal::ScrubSaveGameFileName( idStr &saveFileName ) const {
 idSessionLocal::SaveGame
 ===============
 */
-bool idSessionLocal::SaveGame( const char *saveName, bool autosave ) {
+bool idSessionLocal::SaveGame( const char *saveName, saveType_t saveType ) {
 #ifdef	ID_DEDICATED
 	common->Printf( "Dedicated servers cannot save games.\n" );
 	return false;
 #else
 	int i;
-	idStr gameFile, previewFile, descriptionFile, mapName;
+	idStr gameFile, previewFile, descriptionFile, mapName, saveSlotName;
 
 	if ( !mapSpawned ) {
 		common->Printf( "Not playing a game.\n" );
@@ -4146,25 +4292,39 @@ bool idSessionLocal::SaveGame( const char *saveName, bool autosave ) {
 	}
 
 	if ( game->GetPersistentPlayerInfo( 0 ).GetInt( "health" ) <= 0 ) {
-		MessageBox( MSG_OK, common->GetLanguageDict()->GetString ( "#str_04311" ), common->GetLanguageDict()->GetString ( "#str_04312" ), true );
+		MessageBox( MSG_OK, common->GetLanguageDict()->GetString ( "#str_104311" ), common->GetLanguageDict()->GetString ( "#str_104312" ), true );
 		common->Printf( "You must be alive to save the game\n" );
 		return false;
 	}
 
 	if ( Sys_GetDriveFreeSpace( cvarSystem->GetCVarString( "fs_savepath" ) ) < 25 ) {
-		MessageBox( MSG_OK, common->GetLanguageDict()->GetString ( "#str_04313" ), common->GetLanguageDict()->GetString ( "#str_04314" ), true );
+		MessageBox( MSG_OK, common->GetLanguageDict()->GetString ( "#str_104313" ), common->GetLanguageDict()->GetString ( "#str_104314" ), true );
 		common->Printf( "Not enough drive space to save the game\n" );
 		return false;
 	}
 
-	idSoundWorld *pauseWorld = soundSystem->GetPlayingSoundWorld();
-	if ( pauseWorld ) {
-		pauseWorld->Pause();
-		SetPlayingSoundWorld( NULL );
+	if ( objectiveFailed ) {
+		MessageBox( MSG_OK, common->GetLanguageDict()->GetString( "#str_107654" ), common->GetLanguageDict()->GetString( "#str_104312" ), true );
+		common->Printf( "Can't save after failed mission.\n" );
+		return false;
 	}
 
+	if ( game->InCinematic() && saveType != ST_AUTO ) {
+		common->Printf( "Can't save during a cinematic.\n" );
+		return false;
+	}
+
+	const bool explicitSaveName = ( saveName != NULL && saveName[0] != '\0' );
+	if ( explicitSaveName ) {
+		saveSlotName = saveName;
+	} else {
+		Session_GenerateSaveFileName( *this, saveSlotName, saveType );
+	}
+
+	soundSystem->SetMute( true );
+
 	// setup up filenames and paths
-	gameFile = saveName;
+	gameFile = saveSlotName;
 	ScrubSaveGameFileName( gameFile );
 
 	gameFile = "savegames/" + gameFile;
@@ -4180,92 +4340,98 @@ bool idSessionLocal::SaveGame( const char *saveName, bool autosave ) {
 	idFile *fileOut = fileSystem->OpenFileWrite( gameFile );
 	if ( fileOut == NULL ) {
 		common->Warning( "Failed to open save file '%s'\n", gameFile.c_str() );
-		if ( pauseWorld ) {
-			SetPlayingSoundWorld( pauseWorld );
-			pauseWorld->UnPause();
-		}
+		syncNextGameFrame = true;
+		soundSystem->SetMute( insideExecuteMapChange );
 		return false;
 	}
 
-	// Write SaveGame Header:
-	// Game Name / Version / Map Name / Entity Filter / Persistent Player Info
-
-	// game
-	const char *gamename = SAVEGAME_GAME_NAME_RETAIL;
-	fileOut->WriteString( gamename );
-
-	// version
-	fileOut->WriteInt( SAVEGAME_VERSION );
-
-	// map
-	mapName = mapSpawnData.serverInfo.GetString( "si_map" );
-	fileOut->WriteString( mapName );
-
-	// retail Quake 4 also stores the active entity filter in the header.
-	fileOut->WriteString( mapSpawnData.serverInfo.GetString( "si_entityFilter" ) );
-
-	// persistent player info
-	for ( i = 0; i < MAX_ASYNC_CLIENTS; i++ ) {
-		mapSpawnData.persistentPlayerInfo[i] = game->GetPersistentPlayerInfo( i );
-		mapSpawnData.persistentPlayerInfo[i].WriteToFileHandle( fileOut );
-	}
-
-	// let the game save its state
-	game->SaveGame( fileOut );
-
-	// close the sava game file
-	fileSystem->CloseFile( fileOut );
-
 	// Write screenshot
-	if ( !autosave ) {
+	if ( saveType != ST_AUTO ) {
 		renderSystem->CropRenderSize( 320, 240, false );
+		if ( rw ) {
+			rw->PushMarkedDefs();
+		}
+		common->SetRenderableGameFrame( true );
 		game->Draw( 0 );
 		renderSystem->CaptureRenderToFile( previewFile, true );
 		renderSystem->UnCrop();
 	}
 
-	// Write description, which is just a text file with
-	// the unclean save name on line 1, map name on line 2, screenshot on line 3
+	mapName = mapSpawnData.serverInfo.GetString( "si_map" );
+
+	// Write the retail-style description sidecar:
+	// slot name, menu display label, preview material, optional no-overwrite marker.
 	idFile *fileDesc = fileSystem->OpenFileWrite( descriptionFile );
 	if ( fileDesc == NULL ) {
 		common->Warning( "Failed to open description file '%s'\n", descriptionFile.c_str() );
-		if ( pauseWorld ) {
-			SetPlayingSoundWorld( pauseWorld );
-			pauseWorld->UnPause();
-		}
+		fileSystem->CloseFile( fileOut );
+		syncNextGameFrame = true;
+		soundSystem->SetMute( insideExecuteMapChange );
 		return false;
 	}
 
-	idStr description = saveName;
-	description.Replace( "\\", "\\\\" );
-	description.Replace( "\"", "\\\"" );
+	idStr escapedSlotName = saveSlotName;
+	Session_EscapeSaveDescription( escapedSlotName );
 
-	const idDeclEntityDef *mapDef = static_cast<const idDeclEntityDef *>(declManager->FindType( DECL_MAPDEF, mapName, false ));
+	idStr mapDisplayName = mapName;
+	idStr saveImage = "gfx/guis/loadscreens/generic";
+	idDict mapDeclDict;
+	const char *entityFilter = mapSpawnData.serverInfo.GetString( "si_entityFilter", "" );
+	const idDict *mapDef = Session_GetMapDeclDict( mapName, entityFilter, mapDeclDict ) ? &mapDeclDict : NULL;
 	if ( mapDef ) {
-		mapName = common->GetLanguageDict()->GetString( mapDef->dict.GetString( "name", mapName ) );
+		mapDisplayName = common->GetLanguageDict()->GetString( mapDef->GetString( "name", mapName ) );
+		const char *loadImage = mapDef->GetString( "loadimage", "" );
+		if ( loadImage[0] != '\0' ) {
+			saveImage = loadImage;
+		}
 	}
 
-	fileDesc->Printf( "\"%s\"\n", description.c_str() );
-	fileDesc->Printf( "\"%s\"\n", mapName.c_str());
+	idStr menuDescription = "^:";
+	if ( explicitSaveName && saveType == ST_REGULAR ) {
+		menuDescription += saveSlotName;
+	} else {
+		menuDescription += common->GetLanguageDict()->GetString( Session_GetGeneratedSaveLabel( saveType ) );
+	}
+	menuDescription += "\t^0";
+	menuDescription += mapDisplayName;
+	Session_EscapeSaveDescription( menuDescription );
 
-	if ( autosave ) {
-		idStr sshot = mapSpawnData.serverInfo.GetString( "si_map" );
-		sshot.StripPath();
-		sshot.StripFileExtension();
-		fileDesc->Printf( "\"guis/assets/autosave/%s\"\n", sshot.c_str() );
+	fileDesc->Printf( "\"%s\"\n", escapedSlotName.c_str() );
+	fileDesc->Printf( "\"%s\"\n", menuDescription.c_str() );
+
+	if ( saveType == ST_AUTO ) {
+		fileDesc->Printf( "\"%s\"\n", saveImage.c_str() );
 	} else {
 		fileDesc->Printf( "\"\"\n" );
 	}
 
-	fileSystem->CloseFile( fileDesc );
-
-	if ( pauseWorld ) {
-		SetPlayingSoundWorld( pauseWorld );
-		pauseWorld->UnPause();
+	if ( saveType == ST_AUTO || saveType == ST_CHECKPOINT ) {
+		fileDesc->Printf( "%s\n", SESSION_SAVEGAME_NO_OVERWRITE_TOKEN );
 	}
 
-	syncNextGameFrame = true;
+	fileSystem->CloseFile( fileDesc );
 
+	// Write SaveGame Header:
+	// Game Name / Version / Map Name / Entity Filter / Persistent Player Info
+	fileOut->WriteString( SAVEGAME_GAME_NAME_RETAIL );
+	fileOut->WriteInt( SAVEGAME_VERSION );
+	fileOut->WriteString( mapName );
+	fileOut->WriteString( mapSpawnData.serverInfo.GetString( "si_entityFilter" ) );
+
+	for ( i = 0; i < MAX_ASYNC_CLIENTS; i++ ) {
+		mapSpawnData.persistentPlayerInfo[i] = game->GetPersistentPlayerInfo( i );
+		mapSpawnData.persistentPlayerInfo[i].WriteToFileHandle( fileOut );
+	}
+
+	game->SaveGame( fileOut, saveType );
+
+	// close the save game file
+	fileSystem->CloseFile( fileOut );
+
+	syncNextGameFrame = true;
+	soundSystem->SetMute( insideExecuteMapChange );
+
+	common->Printf( "Saved '%s'\n", saveSlotName.c_str() );
 
 	return true;
 #endif
@@ -4282,11 +4448,16 @@ bool idSessionLocal::LoadGame( const char *saveName ) {
 	return false;
 #else
 	int i;
-	idStr in, loadFile, saveMap, gamename, entityFilter;
+	idStr in, loadFile, saveMap, gamename, entityFilter, requestedSaveName;
 
 	if ( IsMultiplayer() ) {
 		common->Printf( "Can't load during net play.\n" );
 		return false;
+	}
+
+	requestedSaveName = ( saveName != NULL && saveName[0] != '\0' ) ? saveName : com_lastQuicksave.GetString();
+	if ( requestedSaveName.IsEmpty() ) {
+		requestedSaveName = "Quicksave0";
 	}
 
 	const char *activeModule = cvarSystem->GetCVarString( "com_activeGameModule" );
@@ -4295,7 +4466,7 @@ bool idSessionLocal::LoadGame( const char *saveName ) {
 		cvarSystem->SetCVarString( "com_nextGameModule", "game_sp" );
 		idCmdArgs reloadArgs;
 		reloadArgs.AppendArg( "loadGame" );
-		reloadArgs.AppendArg( saveName );
+		reloadArgs.AppendArg( requestedSaveName.c_str() );
 		cmdSystem->SetupReloadEngine( reloadArgs );
 		return true;
 	}
@@ -4303,7 +4474,7 @@ bool idSessionLocal::LoadGame( const char *saveName ) {
 	//Hide the dialog box if it is up.
 	StopBox();
 
-	loadFile = saveName;
+	loadFile = requestedSaveName;
 	ScrubSaveGameFileName( loadFile );
 	loadFile.SetFileExtension( ".save" );
 
@@ -4326,7 +4497,12 @@ bool idSessionLocal::LoadGame( const char *saveName ) {
 	// Game Name / Version / Map Name / [Entity Filter] / Persistent Player Info
 
 	// game
-	savegameFile->ReadString( gamename );
+	if ( !Session_ReadSaveGameString( savegameFile, gamename, MAX_STRING_CHARS, "game name", in.c_str() ) ) {
+		loadingSaveGame = false;
+		fileSystem->CloseFile( savegameFile );
+		savegameFile = NULL;
+		return false;
+	}
 
 	// Accept both the retail Quake 4 save header and older OpenQ4-branded headers.
 	if ( !Session_IsSupportedSaveGameName( gamename ) ) {
@@ -4340,15 +4516,30 @@ bool idSessionLocal::LoadGame( const char *saveName ) {
 	}
 
 	// version
-	savegameFile->ReadInt( savegameVersion );
+	if ( !Session_ReadSaveGameInt( savegameFile, savegameVersion, "version", in.c_str() ) ) {
+		loadingSaveGame = false;
+		fileSystem->CloseFile( savegameFile );
+		savegameFile = NULL;
+		return false;
+	}
 
 	// map
-	savegameFile->ReadString( saveMap );
+	if ( !Session_ReadSaveGameString( savegameFile, saveMap, MAX_STRING_CHARS, "map name", in.c_str() ) ) {
+		loadingSaveGame = false;
+		fileSystem->CloseFile( savegameFile );
+		savegameFile = NULL;
+		return false;
+	}
 
 	// retail Quake 4 stores an entity filter after the map name.
 	// Older OpenQ4 saves omitted it, so only consume it from retail-style headers.
 	if ( Session_SaveGameHeaderUsesEntityFilter( gamename ) ) {
-		savegameFile->ReadString( entityFilter );
+		if ( !Session_ReadSaveGameString( savegameFile, entityFilter, MAX_STRING_CHARS, "entity filter", in.c_str() ) ) {
+			loadingSaveGame = false;
+			fileSystem->CloseFile( savegameFile );
+			savegameFile = NULL;
+			return false;
+		}
 	} else {
 		entityFilter.Clear();
 	}
@@ -4401,6 +4592,37 @@ bool idSessionLocal::LoadGame( const char *saveName ) {
 
 	return true;
 #endif
+}
+
+/*
+===============
+idSessionLocal::DeleteGame
+===============
+*/
+bool idSessionLocal::DeleteGame( const char *saveName ) {
+	if ( saveName == NULL || saveName[0] == '\0' ) {
+		return false;
+	}
+
+	idStr quicksaveName = com_lastQuicksave.GetString();
+	if ( !idStr::Icmp( saveName, quicksaveName ) ) {
+		int currentSlot = 0;
+		const bool hasSlotSuffix = Session_GetTrailingDigit( quicksaveName, currentSlot );
+		const int previousSlot = ( currentSlot - 1 ) & 3;
+		if ( hasSlotSuffix ) {
+			quicksaveName = quicksaveName.Left( quicksaveName.Length() - 1 );
+		}
+		if ( quicksaveName.IsEmpty() ) {
+			quicksaveName = "Quicksave";
+		}
+		quicksaveName += va( "%d", previousSlot );
+		com_lastQuicksave.SetString( quicksaveName );
+	}
+
+	fileSystem->RemoveFile( va( "savegames/%s.save", saveName ) );
+	fileSystem->RemoveFile( va( "savegames/%s.tga", saveName ) );
+	fileSystem->RemoveFile( va( "savegames/%s.txt", saveName ) );
+	return true;
 }
 
 /*
@@ -5307,6 +5529,14 @@ void idSessionLocal::RunGameTic() {
 			cmdSystem->BufferCommandText( CMD_EXEC_INSERT, "stoprecording ; disconnect" );
 		} else if ( !idStr::Icmp( args.Argv(0), "endOfDemo" ) ) {
 			cmdSystem->BufferCommandText( CMD_EXEC_NOW, "endOfDemo" );
+		} else if ( !idStr::Icmp( args.Argv(0), "objectiveFailed" ) ) {
+			objectiveFailed = true;
+		} else if ( !idStr::Icmp( args.Argv(0), "endOfGame" ) ) {
+			if ( guiGameOver ) {
+				SetGUI( guiGameOver, NULL );
+			} else {
+				cmdSystem->BufferCommandText( CMD_EXEC_INSERT, "stoprecording ; disconnect" );
+			}
 		}
 	}
 }

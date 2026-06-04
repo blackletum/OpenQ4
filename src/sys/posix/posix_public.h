@@ -42,6 +42,8 @@ void		Posix_LateInit( );
 void		Posix_InitPThreads( );
 void		Posix_InitSigs( );
 void		Posix_ClearSigs( );
+int			Posix_ConsumeQuitSignal( );
+const char *Posix_SignalName( int signum );
 
 void		Posix_Exit( int ret );
 void		Posix_SetExit(int ret); // override the exit code

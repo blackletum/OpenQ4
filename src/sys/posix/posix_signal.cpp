@@ -30,39 +30,85 @@ If you have questions concerning this license or the applicable additional terms
 
 #include <string.h>
 #include <errno.h>
+#include <unistd.h>
 
-const int siglist[] = {
-	SIGHUP,
-	SIGQUIT,
-	SIGILL,
-	SIGTRAP,
-	SIGIOT,
-	SIGBUS,
-	SIGFPE,
-	SIGSEGV,
-	SIGPIPE,
-	SIGABRT,
-	//	SIGTTIN,
-	//	SIGTTOU,
-	-1
-	};
+struct posixSignalRoute_t {
+	int signum;
+	const char *name;
+	bool graceful;
+};
 
-const char *signames[] = {
-	"SIGHUP",
-	"SIGQUIT",
-	"SIGILL",
-	"SIGTRAP",
-	"SIGIOT",
-	"SIGBUS",
-	"SIGFPE",
-	"SIGSEGV",
-	"SIGPIPE",
-	"SIGABRT",
-	//	"SIGTTIN",
-	//	"SIGTTOUT"
+static const posixSignalRoute_t signalRoutes[] = {
+	{ SIGHUP, "SIGHUP", true },
+	{ SIGINT, "SIGINT", true },
+	{ SIGTERM, "SIGTERM", true },
+	{ SIGQUIT, "SIGQUIT", true },
+	{ SIGILL, "SIGILL", false },
+	{ SIGTRAP, "SIGTRAP", false },
+#if defined( SIGIOT ) && SIGIOT != SIGABRT
+	{ SIGIOT, "SIGIOT", false },
+#endif
+	{ SIGBUS, "SIGBUS", false },
+	{ SIGFPE, "SIGFPE", false },
+	{ SIGSEGV, "SIGSEGV", false },
+	{ SIGABRT, "SIGABRT", false },
+	{ -1, NULL, false }
 };
 
 static char fatalError[ 1024 ];
+static volatile sig_atomic_t pendingQuitSignal = 0;
+static volatile sig_atomic_t activeFatalSignal = 0;
+
+static const posixSignalRoute_t *Posix_FindSignalRoute( int signum ) {
+	for ( int i = 0; signalRoutes[ i ].signum != -1; ++i ) {
+		if ( signalRoutes[ i ].signum == signum ) {
+			return &signalRoutes[ i ];
+		}
+	}
+	return NULL;
+}
+
+const char *Posix_SignalName( int signum ) {
+	const posixSignalRoute_t *route = Posix_FindSignalRoute( signum );
+	if ( route != NULL ) {
+		return route->name;
+	}
+	return "unknown signal";
+}
+
+static void Posix_WriteSignalText( const char *text ) {
+	if ( text == NULL ) {
+		return;
+	}
+
+	size_t length = 0;
+	while ( text[ length ] != '\0' ) {
+		length++;
+	}
+	if ( length > 0 ) {
+		write( STDERR_FILENO, text, length );
+	}
+}
+
+static void Posix_WriteSignalNumber( int value ) {
+	char buffer[ 16 ];
+	int pos = sizeof( buffer );
+	unsigned int number;
+
+	if ( value < 0 ) {
+		Posix_WriteSignalText( "-" );
+		number = static_cast<unsigned int>( -value );
+	} else {
+		number = static_cast<unsigned int>( value );
+	}
+
+	do {
+		buffer[ --pos ] = static_cast<char>( '0' + ( number % 10 ) );
+		number /= 10;
+	} while ( number > 0 && pos > 0 );
+
+	write( STDERR_FILENO, buffer + pos, sizeof( buffer ) - pos );
+}
 
 /*
 ================
@@ -71,19 +117,19 @@ Posix_ClearSigs
 */
 void Posix_ClearSigs( ) {
 	struct sigaction action;
-	int i;
 	
 	/* Set up the structure */
 	action.sa_handler = SIG_DFL;
 	sigemptyset( &action.sa_mask );
 	action.sa_flags = 0;
 
-	i = 0;
-	while ( siglist[ i ] != -1 ) {
-		if ( sigaction( siglist[ i ], &action, NULL ) != 0 ) {
-			Sys_Printf( "Failed to reset %s handler: %s\n", signames[ i ], strerror( errno ) );
+	for ( int i = 0; signalRoutes[ i ].signum != -1; ++i ) {
+		if ( sigaction( signalRoutes[ i ].signum, &action, NULL ) != 0 ) {
+			Sys_Printf( "Failed to reset %s handler: %s\n", signalRoutes[ i ].name, strerror( errno ) );
 		}
-		i++;
+	}
+	if ( sigaction( SIGPIPE, &action, NULL ) != 0 ) {
+		Sys_Printf( "Failed to reset SIGPIPE handler: %s\n", strerror( errno ) );
 	}
 }
 
@@ -93,31 +139,34 @@ sig_handler
 ================
 */
 static void sig_handler( int signum, siginfo_t *info, void *context ) {
-	static bool double_fault = false;
-	
-	if ( double_fault ) {
-		Sys_Printf( "double fault %s, bailing out\n", strsignal( signum ) );
-		Posix_Exit( signum );
-	}
-	
-	double_fault = true;
-	
-	// NOTE: see sigaction man page, could verbose the whole siginfo_t and print human readable si_code
-	Sys_Printf( "signal caught: %s\nsi_code %d\n", strsignal( signum ), info->si_code );	
-	
-#ifndef ID_BT_STUB
-	Sys_Printf( "callstack:\n%s", Sys_GetCallStackCurStr( 30 ) );
-#endif
+	(void)info;
+	(void)context;
 
-	if ( fatalError[ 0 ] ) {
-		Sys_Printf( "Was in fatal error shutdown: %s\n", fatalError );
+	const posixSignalRoute_t *route = Posix_FindSignalRoute( signum );
+	if ( route != NULL && route->graceful ) {
+		pendingQuitSignal = signum;
+		Posix_WriteSignalText( "OpenQ4: received " );
+		Posix_WriteSignalText( route->name );
+		Posix_WriteSignalText( ", requesting shutdown\n" );
+		return;
 	}
-	
-	Sys_Printf( "Trying to exit gracefully..\n" );
-	
-	Posix_SetExit( signum );
-	
-	common->Quit();
+
+	if ( activeFatalSignal != 0 ) {
+		Posix_WriteSignalText( "OpenQ4: double fault while handling " );
+		Posix_WriteSignalText( Posix_SignalName( static_cast<int>( activeFatalSignal ) ) );
+		Posix_WriteSignalText( "; second signal " );
+		Posix_WriteSignalText( Posix_SignalName( signum ) );
+		Posix_WriteSignalText( ", bailing out\n" );
+		_exit( 128 + signum );
+	}
+
+	activeFatalSignal = signum;
+	Posix_WriteSignalText( "OpenQ4: fatal signal " );
+	Posix_WriteSignalText( Posix_SignalName( signum ) );
+	Posix_WriteSignalText( " (" );
+	Posix_WriteSignalNumber( signum );
+	Posix_WriteSignalText( "), exiting without unsafe engine shutdown\n" );
+	_exit( 128 + signum );
 }
 
 /*
@@ -127,27 +176,28 @@ Posix_InitSigs
 */
 void Posix_InitSigs( ) {
 	struct sigaction action;
-	int i;
+	struct sigaction ignoreAction;
 
 	fatalError[0] = '\0';
+	pendingQuitSignal = 0;
+	activeFatalSignal = 0;
 	
 	/* Set up the structure */
 	action.sa_sigaction = sig_handler;
 	sigemptyset( &action.sa_mask );
-	action.sa_flags = SA_SIGINFO | SA_NODEFER;
+	action.sa_flags = SA_SIGINFO;
 
-	i = 0;
-	while ( siglist[ i ] != -1 ) {
-		if ( siglist[ i ] == SIGFPE ) {
-			action.sa_sigaction = Sys_FPE_handler;
-			if ( sigaction( siglist[ i ], &action, NULL ) != 0 ) {
-				Sys_Printf( "Failed to set SIGFPE handler: %s\n", strerror( errno ) );
-			}
-			action.sa_sigaction = sig_handler;
-		} else if ( sigaction( siglist[ i ], &action, NULL ) != 0 ) {
-			Sys_Printf( "Failed to set %s handler: %s\n", signames[ i ], strerror( errno ) );
+	for ( int i = 0; signalRoutes[ i ].signum != -1; ++i ) {
+		if ( sigaction( signalRoutes[ i ].signum, &action, NULL ) != 0 ) {
+			Sys_Printf( "Failed to set %s handler: %s\n", signalRoutes[ i ].name, strerror( errno ) );
 		}
-		i++;
+	}
+
+	memset( &ignoreAction, 0, sizeof( ignoreAction ) );
+	ignoreAction.sa_handler = SIG_IGN;
+	sigemptyset( &ignoreAction.sa_mask );
+	if ( sigaction( SIGPIPE, &ignoreAction, NULL ) != 0 ) {
+		Sys_Printf( "Failed to ignore SIGPIPE: %s\n", strerror( errno ) );
 	}
 
 	// if the process is backgrounded (running non interactively)
@@ -157,10 +207,29 @@ void Posix_InitSigs( ) {
 }
 
 /*
+========================
+Posix_ConsumeQuitSignal
+========================
+*/
+int Posix_ConsumeQuitSignal( ) {
+	const int signum = static_cast<int>( pendingQuitSignal );
+	if ( signum != 0 ) {
+		pendingQuitSignal = 0;
+	}
+	return signum;
+}
+
+/*
 ==================
 Sys_SetFatalError
 ==================
 */
 void Sys_SetFatalError( const char *error ) {
-	strncpy( fatalError, error, sizeof( fatalError ) );
+	if ( error == NULL ) {
+		fatalError[0] = '\0';
+		return;
+	}
+
+	strncpy( fatalError, error, sizeof( fatalError ) - 1 );
+	fatalError[sizeof( fatalError ) - 1] = '\0';
 }

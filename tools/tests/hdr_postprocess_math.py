@@ -275,6 +275,15 @@ def test_hdr_shader_uses_scene_referred_inputs():
     assert_true("r_hdrAutoExposure.GetBool() && r_hdrToneMap.GetBool()" in draw_common, "auto exposure should not request HDR work when tonemap is off")
 
 
+def test_scene_post_process_excludes_sidecar_views():
+    draw_common = (Path(__file__).resolve().parents[2] / "src" / "renderer" / "draw_common.cpp").read_text(encoding="utf-8")
+
+    assert_true("backEnd.viewDef->isSubview" in draw_common, "scene post should not run inside nested subviews")
+    assert_true("backEnd.viewDef->superView != NULL" in draw_common, "scene post should not run inside portal/mirror child views")
+    assert_true("backEnd.viewDef->subviewSurface != NULL" in draw_common, "scene post should not run inside render-to-texture sidecar views")
+    assert_true("backEnd.viewDef->renderView.viewID < 0" in draw_common, "scene post should not run inside render demo/cinematic sidecar views")
+
+
 def main():
     tests = [
         test_bloom_contribution_monotonic,
@@ -291,6 +300,7 @@ def main():
         test_modern_lighting_keeps_scene_referred_energy,
         test_bloom_shader_uses_saturation_aware_brightness,
         test_hdr_shader_uses_scene_referred_inputs,
+        test_scene_post_process_excludes_sidecar_views,
     ]
 
     for test in tests:

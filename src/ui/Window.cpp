@@ -771,16 +771,6 @@ void idWindow::Draw( int time, float x, float y ) {
 	const int textAdjust = static_cast<int>( textspacing );
 	const int style = static_cast<int>( textstyle );
 	const bool isChatWindow = ( flags & WIN_CHATWINDOW ) != 0;
-	if ( textShadow ) {
-		idStr shadowText = text;
-		idRectangle shadowRect = textRect;
-
-		shadowText.RemoveColors();
-		shadowRect.x += textShadow;
-		shadowRect.y += textShadow;
-
-		dc->DrawText( shadowText, textScale, textAlign, colorBlack, shadowRect, !( flags & WIN_NOWRAP ), -1, false, NULL, 0, textAdjust, style, isChatWindow );
-	}
 	dc->DrawText( text, textScale, textAlign, foreColor, textRect, !( flags & WIN_NOWRAP ), -1, false, NULL, 0, textAdjust, style, isChatWindow );
 
 	if ( gui_edit.GetBool() ) {
@@ -2102,7 +2092,7 @@ void idWindow::SetupBackground() {
 		if ( background ) {
 			background->SetImageClassifications( 1 );	// just for resource tracking
 		}
-		if ( background && !background->TestMaterialFlag( MF_DEFAULTED ) ) {
+		if ( background && !background->TestMaterialFlag( MF_DEFAULTED ) && background->GetSort() < SS_GUI ) {
 			background->SetSort(SS_GUI );
 		}
 	}
@@ -4762,17 +4752,20 @@ void idWindow::ReadSaveGameString( idStr &string, idFile *savefile ) {
 	int len;
 	const int offset = savefile->Tell();
 
-	savefile->Read( &len, sizeof( len ) );
+	if ( savefile->Read( &len, sizeof( len ) ) != sizeof( len ) ) {
+		common->Error( "idWindow::ReadSaveGameString: truncated length at offset %d", offset );
+	}
 	const int remainingBytes = Max( 0, savefile->Length() - savefile->Tell() );
-	if ( len < 0 || len > remainingBytes ) {
-		common->Warning( "idWindow::ReadSaveGameString: invalid length %d at offset %d (remaining %d)",
+	const int maxSavedStringLength = 64 * 1024;
+	if ( len < 0 || len > maxSavedStringLength || len > remainingBytes ) {
+		common->Error( "idWindow::ReadSaveGameString: invalid length %d at offset %d (remaining %d)",
 			len, offset, remainingBytes );
-		string.Clear();
-		return;
 	}
 
 	string.Fill( ' ', len );
-	savefile->Read( &string[0], len );
+	if ( len > 0 && savefile->Read( &string[0], len ) != len ) {
+		common->Error( "idWindow::ReadSaveGameString: truncated string at offset %d", savefile->Tell() );
+	}
 }
 
 /*
@@ -4888,7 +4881,12 @@ void idWindow::ReadFromSaveGame( idFile *savefile ) {
 
 	// Transitions
 	int num;
-	savefile->Read( &num, sizeof( num ) );
+	if ( savefile->Read( &num, sizeof( num ) ) != sizeof( num ) ) {
+		common->Error( "idWindow::ReadFromSaveGame: truncated transition count for window '%s'", name.c_str() );
+	}
+	if ( num < 0 || num > 4096 ) {
+		common->Error( "idWindow::ReadFromSaveGame: invalid transition count %d for window '%s'", num, name.c_str() );
+	}
 	for ( i = 0; i < num; i++ ) {
 		idTransitionData trans;
 		trans.data = NULL;

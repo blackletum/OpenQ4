@@ -675,9 +675,8 @@ void idListWindow::Draw(int time, float x, float y) {
 				dc->PushClipRect( rect );
 
 				if ( tabInfo[tab].type == TAB_TYPE_TEXT ) {
-					const float tabScale = ( tabInfo[tab].textScale > 0.0f ) ? tabInfo[tab].textScale : scale;
 					idRectangle textRect = rect;
-					const float textHeight = dc->MaxCharHeight( tabScale );
+					const float textHeight = dc->MaxCharHeight( scale );
 					if ( tabInfo[tab].valign == 0 ) {
 						textRect.y += ( lineHeight - textHeight ) * 0.5f + 1.0f;
 					} else if ( tabInfo[tab].valign == 1 ) {
@@ -685,7 +684,7 @@ void idListWindow::Draw(int time, float x, float y) {
 					} else if ( tabInfo[tab].valign == 2 ) {
 						textRect.y += lineHeight - textHeight;
 					}
-					dc->DrawText( work, tabScale, tabInfo[tab].align, color, textRect, false, -1, false, NULL, 0, Q4_LIST_WINDOW_TEXT_SPACING, static_cast<int>( textstyle ) );
+					dc->DrawText( work, tabInfo[tab].textScale, tabInfo[tab].align, color, textRect, false, -1, false, NULL, 0, Q4_LIST_WINDOW_TEXT_SPACING, static_cast<int>( textstyle ) );
 				} else if (tabInfo[tab].type == TAB_TYPE_ICON) {
 					
 					const idMaterial	**hashMat;

@@ -46,7 +46,7 @@ vec3 SampleCRTColor( vec2 uv ) {
 	chromaColor.g = beam.g;
 	chromaColor.b = texture2D( Scene, uv - chroma ).b;
 
-	float mixFactor = clamp( 0.35 + chromaticAberration * 0.12, 0.0, 1.0 );
+	float mixFactor = clamp( chromaticAberration * 0.35, 0.0, 0.35 );
 	return mix( beam, chromaColor, mixFactor );
 }
 

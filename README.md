@@ -77,6 +77,7 @@ Single-player and multiplayer live under one `baseoq4/` directory with `game-sp`
 - **Beta-stage** manual releases for **Windows**, **Linux**, and **macOS**
 - Architecture-qualified release assets for **x64** and **ARM64**
 - Native **Windows installers** ship alongside the Windows `.zip` release packages, with uninstall support and optional `openq4://` browser-link registration
+- Windows release packages include diagnostic symbols and write crash logs plus memory dumps under `crashes/` beside the executable after unhandled crashes
 
 <p align="center">
   <img src="assets/docs/img/shot2.png" alt="openQ4 gameplay screenshot showing combat and bloom" width="49%">
@@ -106,7 +107,7 @@ Single-player and multiplayer live under one `baseoq4/` directory with `game-sp`
 openQ4 will try to locate your Quake 4 install automatically. If detection fails, launch with `+set fs_basepath "C:\path\to\Quake 4"` and point it at the retail Quake 4 root that contains `q4base/`, not at `q4base/` or `baseoq4/` directly. See [TECHNICAL.md](TECHNICAL.md#advanced-configuration) for the full path reference.
 
 > [!TIP]
-> Windows release packages are intended to be self-contained.
+> Windows release packages are intended to be self-contained and include matching PDB diagnostic symbols. If openQ4 crashes, attach the generated `crashes/openq4_crash_*.log` and `.dmp` files when reporting the issue.
 
 > [!TIP]
 > As of March 30, 2026, Linux packages default to the SDL3 backend. On Steam Deck and other Wayland sessions where both `WAYLAND_DISPLAY` and `DISPLAY` are present, `openQ4-steamdeck` prefers XWayland unless you already set `SDL_VIDEODRIVER` yourself.

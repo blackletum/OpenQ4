@@ -80,6 +80,7 @@ typedef struct modernGLDrawPlanStats_s {
 	int		indexedDraws;
 	int		vertexOnlyDraws;
 	int		pipelineDraws[MODERN_GL_DRAW_PLAN_PIPELINE_COUNT];
+	int		forwardPlusDecalDraws;
 	int		pipelineBatches;
 	int		geometryBatches;
 	int		textureSetBatches;

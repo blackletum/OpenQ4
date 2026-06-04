@@ -428,6 +428,8 @@ static void WriteString( const char *s, idFile *f ) {
 	f->Write( s, strlen(s) + 1 );
 }
 
+static const int MAX_DICT_FILE_KV = 16384;
+
 /*
 ================
 idDict::FindKey
@@ -580,7 +582,9 @@ static idStr ReadString( idFile *f ) {
 	int		len;
 
 	for ( len = 0; len < MAX_STRING_CHARS; len++ ) {
-		f->Read( (void *)&str[len], 1 );
+		if ( f->Read( (void *)&str[len], 1 ) != 1 ) {
+			idLib::common->Error( "idDict::ReadFromFileHandle: truncated string" );
+		}
 		if ( str[len] == 0 ) {
 			break;
 		}
@@ -603,8 +607,13 @@ void idDict::ReadFromFileHandle( idFile *f ) {
 
 	Clear();
 
-	f->Read( &c, sizeof( c ) );
+	if ( f->Read( &c, sizeof( c ) ) != sizeof( c ) ) {
+		idLib::common->Error( "idDict::ReadFromFileHandle: truncated key/value count" );
+	}
 	c = LittleLong( c );
+	if ( c < 0 || c > MAX_DICT_FILE_KV ) {
+		idLib::common->Error( "idDict::ReadFromFileHandle: invalid key/value count %d", c );
+	}
 	for ( int i = 0; i < c; i++ ) {
 		key = ReadString( f );
 		val = ReadString( f );

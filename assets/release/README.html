@@ -153,12 +153,18 @@
       <h2>Package Contents</h2>
       <ul>
         <li><code>openQ4-client_&lt;arch&gt;</code> and <code>openQ4-ded_&lt;arch&gt;</code>: engine binaries.</li>
+        <li><code>*.pdb</code> files on Windows: diagnostic symbols that make crash dumps actionable.</li>
         <li><code>baseoq4/pak0.pk4</code>: openQ4-owned runtime content and overrides.</li>
         <li><code>docs/index.html</code>: full packaged HTML documentation portal.</li>
         <li><code>docs/docs-user/</code> and <code>docs/docs-dev/</code>: converted user and developer references.</li>
         <li><code>VERSION.txt</code>: packaged version metadata.</li>
         <li><code>LICENSE</code>: GPLv3 engine license text.</li>
       </ul>
+    </section>
+
+    <section>
+      <h2>Crash Reports</h2>
+      <p>On Windows, unhandled openQ4 crashes write a crash log and memory dump under <code>crashes/</code> beside the executable. Attach both generated files when reporting a crash.</p>
     </section>
 
     <section>

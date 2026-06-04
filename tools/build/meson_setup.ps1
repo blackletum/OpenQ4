@@ -479,7 +479,6 @@ function Remove-NonRuntimeInstallArtifacts {
     }
 
     $rootPatterns = @(
-        "*.pdb",
         "*.lib",
         "*.exp",
         "*.ilk",
@@ -497,21 +496,12 @@ function Remove-NonRuntimeInstallArtifacts {
         }
     }
 
-    foreach ($dirName in @("crashes")) {
-        $dirPath = Join-Path $InstallRoot $dirName
-        if (Test-Path $dirPath) {
-            Write-Host "Removing non-runtime staged directory '$dirPath'"
-            Remove-Item -LiteralPath $dirPath -Recurse -Force
-        }
-    }
-
     $installGameDir = Join-Path $InstallRoot "baseoq4"
     if (-not (Test-Path $installGameDir)) {
         return
     }
 
     $gameDirPatterns = @(
-        "*.pdb",
         "*.lib",
         "*.exp",
         "*.ilk",
@@ -527,6 +517,66 @@ function Remove-NonRuntimeInstallArtifacts {
         foreach ($match in $matches) {
             Write-Host "Removing non-runtime staged artifact '$($match.FullName)'"
             Remove-Item -LiteralPath $match.FullName -Force
+        }
+    }
+}
+
+function Copy-WindowsDiagnosticSymbols {
+    param(
+        [string]$BuildDir,
+        [string]$InstallRoot
+    )
+
+    if (-not (Test-WindowsHost)) {
+        return
+    }
+
+    if ([string]::IsNullOrWhiteSpace($BuildDir) -or -not (Test-Path $BuildDir)) {
+        return
+    }
+
+    if ([string]::IsNullOrWhiteSpace($InstallRoot) -or -not (Test-Path $InstallRoot)) {
+        return
+    }
+
+    $rootPatterns = @(
+        "openQ4-client_*.pdb",
+        "openQ4-ded_*.pdb"
+    )
+
+    foreach ($pattern in $rootPatterns) {
+        $matches = @(Get-ChildItem -Path $BuildDir -Filter $pattern -File -ErrorAction SilentlyContinue)
+        foreach ($match in $matches) {
+            $destination = Join-Path $InstallRoot $match.Name
+            Write-Host "Staging diagnostic symbol '$destination'"
+            Copy-Item -LiteralPath $match.FullName -Destination $destination -Force
+        }
+    }
+
+    $installGameDir = Join-Path $InstallRoot "baseoq4"
+    New-Item -Path $installGameDir -ItemType Directory -Force | Out-Null
+
+    $gameBuildDirs = @(
+        (Join-Path $BuildDir "content\baseoq4"),
+        (Join-Path $BuildDir "baseoq4")
+    )
+    $gamePatterns = @(
+        "game-sp_*.pdb",
+        "game-mp_*.pdb"
+    )
+
+    foreach ($gameBuildDir in $gameBuildDirs) {
+        if (-not (Test-Path $gameBuildDir)) {
+            continue
+        }
+
+        foreach ($pattern in $gamePatterns) {
+            $matches = @(Get-ChildItem -Path $gameBuildDir -Filter $pattern -File -ErrorAction SilentlyContinue)
+            foreach ($match in $matches) {
+                $destination = Join-Path $installGameDir $match.Name
+                Write-Host "Staging diagnostic symbol '$destination'"
+                Copy-Item -LiteralPath $match.FullName -Destination $destination -Force
+            }
         }
     }
 }
@@ -788,6 +838,10 @@ if ($exitCode -eq 0 -and ($commandName -eq "compile" -or $commandName -eq "insta
     $runtimeExit = [int]$LASTEXITCODE
     if ($runtimeExit -ne 0) {
         exit $runtimeExit
+    }
+
+    if ($includeInstallRoot) {
+        Copy-WindowsDiagnosticSymbols -BuildDir $buildInfo.BuildDir -InstallRoot $installRootPath
     }
 }
 

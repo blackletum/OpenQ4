@@ -75,6 +75,7 @@ static bool Sys_ReadLinuxCpuInfo( idStr &cpuInfoText ) {
 	char buffer[ 4096 ];
 	int fd;
 	int bytesRead;
+	bool readFailed = false;
 
 	cpuInfoText.Clear();
 
@@ -86,10 +87,13 @@ static bool Sys_ReadLinuxCpuInfo( idStr &cpuInfoText ) {
 	while ( ( bytesRead = read( fd, buffer, sizeof( buffer ) ) ) > 0 ) {
 		cpuInfoText.Append( buffer, bytesRead );
 	}
+	if ( bytesRead < 0 ) {
+		readFailed = true;
+	}
 
 	close( fd );
 
-	return cpuInfoText.Length() > 0;
+	return !readFailed && cpuInfoText.Length() > 0;
 }
 
 static bool Sys_GetLinuxProcessorInfo( idStr &processorName, int &logicalCount, int &physicalCount, int &packageCount ) {
@@ -195,6 +199,10 @@ Sys_ReportWaylandRuntime
 ==========================
 */
 static void Sys_ReportWaylandRuntime( void ) {
+#if defined( ID_DEDICATED )
+	return;
+#endif
+
 	const char *waylandDisplay = getenv( "WAYLAND_DISPLAY" );
 	const char *x11Display = getenv( "DISPLAY" );
 
@@ -203,19 +211,35 @@ static void Sys_ReportWaylandRuntime( void ) {
 	}
 
 	if ( x11Display == NULL || x11Display[0] == '\0' ) {
-		common->Printf(
+#if defined( USE_SDL3 )
+		Sys_Printf(
+			"Wayland session detected (%s) without X11 DISPLAY. "
+			"OpenQ4 will let SDL3 choose a video driver; if OpenGL startup fails, use an XWayland-enabled session or set SDL_VIDEODRIVER=x11.\n",
+			waylandDisplay
+		);
+#else
+		Sys_Printf(
 			"Wayland session detected (%s) without X11 DISPLAY. "
 			"OpenQ4 currently requires X11/GLX on Linux; launch from an XWayland-enabled session.\n",
 			waylandDisplay
 		);
+#endif
 		return;
 	}
 
-	common->Printf(
+#if defined( USE_SDL3 )
+	Sys_Printf(
+		"Wayland session detected (%s) with X11 DISPLAY=%s available.\n",
+		waylandDisplay,
+		x11Display
+	);
+#else
+	Sys_Printf(
 		"Wayland session detected (%s). OpenQ4 is using X11 via XWayland (DISPLAY=%s).\n",
 		waylandDisplay,
 		x11Display
 	);
+#endif
 }
 
 /*
@@ -257,10 +281,12 @@ void Sys_AsyncThread( void ) {
 const char *Sys_DefaultSavePath(void) {
 	const char *home = getenv( "HOME" );
 	if ( home && home[0] ) {
+		savepath = home;
+		savepath.StripTrailing( '/' );
 #if defined( ID_DEMO_BUILD )
-		sprintf( savepath, "%s/.local/share/openq4-demo", home );
+		savepath += "/.local/share/openq4-demo";
 #else
-		sprintf( savepath, "%s/.local/share/openq4", home );
+		savepath += "/.local/share/openq4";
 #endif
 	} else {
 		savepath = Posix_Cwd();
@@ -274,16 +300,18 @@ Sys_EXEPath
 */
 const char *Sys_EXEPath( void ) {
 	static char	buf[ 1024 ];
-	idStr		linkpath;
 	int			len;
+	char		linkpath[ 64 ];
 
 	buf[ 0 ] = '\0';
-	sprintf( linkpath, "/proc/%d/exe", getpid() );
-	len = readlink( linkpath.c_str(), buf, sizeof( buf ) );
+	idStr::snPrintf( linkpath, sizeof( linkpath ), "/proc/%ld/exe", static_cast<long>( getpid() ) );
+	len = readlink( linkpath, buf, sizeof( buf ) - 1 );
 	if ( len == -1 ) {
-		Sys_Printf("couldn't stat exe path link %s\n", linkpath.c_str());
-		buf[ len ] = '\0';
+		Sys_Printf("couldn't stat exe path link %s: %s\n", linkpath, strerror( errno ));
+		buf[ 0 ] = '\0';
+		return buf;
 	}
+	buf[ len ] = '\0';
 	return buf;
 }
 
@@ -429,6 +457,18 @@ double MeasureClockTicks( void ) {
 	return t1 - t0;
 }
 
+#if defined( __i386__ ) || defined( __x86_64__ )
+static double Sys_MeasureClockTicksFallback( const char *reason ) {
+	if ( reason != NULL && reason[0] != '\0' ) {
+		common->Printf( "%s\n", reason );
+	}
+
+	const double measured = MeasureClockTicks();
+	common->Printf( "Measured CPU frequency: %s\n", Sys_FormatFrequency( measured ).c_str() );
+	return measured;
+}
+#endif
+
 /*
 ===============
 Sys_ClockTicksPerSecond
@@ -443,49 +483,53 @@ double Sys_ClockTicksPerSecond(void) {
 	return ret;
 #endif
 
-	int		fd, len, pos, end;
-	char	buf[ 4096 ];
-
 	if ( init ) {
 		return ret;
 	}
 
-	fd = open( "/proc/cpuinfo", O_RDONLY );
-	if ( fd == -1 ) {
-		common->Printf( "couldn't read /proc/cpuinfo\n" );
-		ret = MeasureClockTicks();
-		init = true;
-		common->Printf( "Measured CPU frequency: %s\n", Sys_FormatFrequency( ret ).c_str() );
-		return ret;		
-	}
-	len = read( fd, buf, 4096 );
-	close( fd );
-	pos = 0;
-	while ( pos < len ) {
-		if ( !idStr::Cmpn( buf + pos, "cpu MHz", 7 ) ) {
-			pos = strchr( buf + pos, ':' ) - buf + 2;
-			end = strchr( buf + pos, '\n' ) - buf;
-			if ( pos < len && end < len ) {
-				buf[end] = '\0';
-				ret = atof( buf + pos );
-			} else {
-				common->Printf( "failed parsing /proc/cpuinfo\n" );
-				ret = MeasureClockTicks();
-				init = true;
-				common->Printf( "Measured CPU frequency: %s\n", Sys_FormatFrequency( ret ).c_str() );
-				return ret;		
+	idStr cpuInfoText;
+	if ( Sys_ReadLinuxCpuInfo( cpuInfoText ) ) {
+		int start = 0;
+		while ( start <= cpuInfoText.Length() ) {
+			idStr key;
+			idStr line;
+			idStr value;
+			const int lineEnd = cpuInfoText.Find( '\n', start );
+			const int lineLength = ( lineEnd >= 0 ) ? lineEnd - start : cpuInfoText.Length() - start;
+
+			line = cpuInfoText.Mid( start, lineLength );
+			line.StripTrailing( '\r' );
+			line.StripTrailingWhitespace();
+
+			const int delimiter = line.Find( ':' );
+			if ( delimiter >= 0 ) {
+				key = line.Left( delimiter );
+				value = line.Mid( delimiter + 1, line.Length() - delimiter - 1 );
+				key.StripTrailingWhitespace();
+				value.StripLeading( ' ' );
+				value.StripLeading( '\t' );
+				value.StripTrailingWhitespace();
+
+				if ( key.Icmp( "cpu MHz" ) == 0 && value.Length() > 0 ) {
+					const double cpuMhz = atof( value.c_str() );
+					if ( cpuMhz > 0.0 ) {
+						ret = cpuMhz * 1000000.0;
+						common->Printf( "/proc/cpuinfo CPU frequency: %s\n", Sys_FormatFrequency( ret ).c_str() );
+						init = true;
+						return ret;
+					}
+				}
 			}
-			common->Printf( "/proc/cpuinfo CPU frequency: %s\n", Sys_FormatFrequency( ret * 1000000.0 ).c_str() );
-			ret *= 1000000;
-			init = true;
-			return ret;
+
+			if ( lineEnd < 0 ) {
+				break;
+			}
+			start = lineEnd + 1;
 		}
-		pos = strchr( buf + pos, '\n' ) - buf + 1;
 	}
-	common->Printf( "failed parsing /proc/cpuinfo\n" );
-	ret = MeasureClockTicks();
+
+	ret = Sys_MeasureClockTicksFallback( "failed parsing /proc/cpuinfo" );
 	init = true;
-	common->Printf( "Measured CPU frequency: %s\n", Sys_FormatFrequency( ret ).c_str() );
 	return ret;		
 }
 
@@ -696,6 +740,17 @@ void abrt_func( mcheck_status status ) {
 
 #endif
 
+static void Sys_HandlePendingQuitSignal( void ) {
+	const int quitSignal = Posix_ConsumeQuitSignal();
+	if ( quitSignal == 0 ) {
+		return;
+	}
+
+	Posix_SetExit( 128 + quitSignal );
+	common->Printf( "Exiting on %s\n", Posix_SignalName( quitSignal ) );
+	common->Quit();
+}
+
 /*
 ===============
 main
@@ -719,9 +774,11 @@ int main(int argc, const char **argv) {
 	}
 	Sys_DestroySplash();
 
+	Sys_HandlePendingQuitSignal();
 	Posix_LateInit( );
 
 	while (1) {
+		Sys_HandlePendingQuitSignal();
 		common->Frame();
 	}
 }

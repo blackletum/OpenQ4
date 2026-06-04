@@ -206,7 +206,8 @@ public:
 	idStr				GetAutoSaveName( const char *mapName ) const;
 
 	bool				LoadGame(const char *saveName);
-	bool				SaveGame(const char *saveName, bool autosave = false);
+	bool				SaveGame(const char *saveName = NULL, saveType_t saveType = ST_REGULAR);
+	bool				DeleteGame(const char *saveName);
 
 	const char			*GetAuthMsg( void );
 
@@ -224,6 +225,7 @@ public:
 	static idCVar		com_aviDemoTics;
 	static idCVar		com_wipeSeconds;
 	static idCVar		com_guid;
+	static idCVar		com_lastQuicksave;
 
 	static idCVar		gui_configServerRate;
 
@@ -248,6 +250,7 @@ public:
 	// which can be saved off at any time with the following commands so it can all be played back
 	mapSpawnData_t		mapSpawnData;
 	idStr				currentMapName;			// for checking reload on same level
+	idStr				currentFilterString;		// for checking reload on same filtered level
 	bool				mapSpawned;				// cleared on Stop()
 
 	int					numClients;				// from serverInfo
@@ -257,6 +260,8 @@ public:
 	int					statIndex;
 	logStats_t			loggedStats[MAX_LOGGED_STATS];
 	int					lastSaveIndex;
+	int					lastCheckPoint;
+	bool				objectiveFailed;
 	// each game tic, numClients usercmds will be added, until full
 
 	bool				insideUpdateScreen;	// true while inside ::UpdateScreen()

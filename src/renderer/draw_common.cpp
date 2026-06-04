@@ -798,16 +798,33 @@ bool R_ValidateGLSLProgram( newShaderStage_t *stage ) {
 	return true;
 }
 
-static bool RB_IsMainScenePostProcessView( void ) {
-	if ( !backEnd.viewDef ) {
+static bool RB_IsMainScenePostProcessView( const viewDef_t *viewDef ) {
+	if ( viewDef == NULL ) {
 		return false;
 	}
 
 	// Fullscreen 2D GUI/menu passes are emitted as standalone views without
 	// view entities. Skip scene post-process passes on those views so menu
-	// assets stay unfiltered while mirrors, cameras, and other 3D subviews
-	// follow the same scene post stack as the main world view.
-	if ( backEnd.viewDef->viewEntitys == NULL ) {
+	// assets stay unfiltered.
+	if ( viewDef->viewEntitys == NULL ) {
+		return false;
+	}
+
+	// Portal-sky views are scene contributors for the following root view.
+	// They must not run SSAO/HDR/bloom or present as an independent final frame.
+	if ( ( viewDef->renderFlags & RF_PORTAL_SKY ) != 0 ) {
+		return false;
+	}
+
+	// Scene HDR, bloom, SSAO, lens flare, and tonemapping are final-frame
+	// effects. Nested render-to-texture views such as skies, mirrors, remote
+	// cameras, and render demos should feed the root scene unfiltered, then be
+	// processed once with the full frame. Filtering sidecar views separately
+	// makes the effect appear attached to those subviews instead of the world.
+	if ( viewDef->isSubview
+		|| viewDef->superView != NULL
+		|| viewDef->subviewSurface != NULL
+		|| viewDef->renderView.viewID < 0 ) {
 		return false;
 	}
 
@@ -815,12 +832,16 @@ static bool RB_IsMainScenePostProcessView( void ) {
 	// loaded map. Those views must composite directly over the already drawn
 	// menu instead of being routed through the fullscreen scene-target present
 	// path, which would overwrite the menu with an opaque buffer.
-	if ( backEnd.viewDef->renderWorld != NULL && backEnd.viewDef->renderWorld->mapName.Length() == 0 ) {
+	if ( viewDef->renderWorld != NULL && viewDef->renderWorld->mapName.Length() == 0 ) {
 		return false;
 	}
 
 	// X-ray subviews intentionally diverge from the normal scene shading path.
-	return !backEnd.viewDef->isXraySubview;
+	return !viewDef->isXraySubview;
+}
+
+static bool RB_IsMainScenePostProcessView( void ) {
+	return RB_IsMainScenePostProcessView( backEnd.viewDef );
 }
 
 static const int RB_BLOOM_MAX_LEVELS = 5;
@@ -833,34 +854,300 @@ static idImage *rbSceneColorImage = NULL;
 static idImage *rbSceneDepthStencilImage = NULL;
 static idRenderTexture *rbSceneRenderTexture = NULL;
 static int rbSceneRenderTextureSamples = -1;
+static int rbSceneRenderTargetPreserveFarDepthFrame = -1;
+static const viewDef_t *rbSceneRenderTargetPreserveFarDepthView = NULL;
+static int rbSceneRenderTargetPortalSkyFrame = -1;
+static idScreenRect rbSceneRenderTargetPortalSkyViewport;
+static int rbSceneRenderTargetPortalSkyWidth = 0;
+static int rbSceneRenderTargetPortalSkyHeight = 0;
+static idImage *rbSceneRenderTargetPreserveDepthImage = NULL;
+static int rbSceneRenderTargetPreserveDepthFrame = -1;
+static int rbSceneRenderTargetPreserveDepthWidth = 0;
+static int rbSceneRenderTargetPreserveDepthHeight = 0;
+static GLhandleARB rbSceneDepthAwarePresentProgram = 0;
+static GLhandleARB rbSceneDepthAwarePresentVertexShader = 0;
+static GLhandleARB rbSceneDepthAwarePresentFragmentShader = 0;
+static int rbSceneDepthAwarePresentGeneration = -1;
+static GLint rbSceneDepthAwarePresentSceneLocation = -1;
+static GLint rbSceneDepthAwarePresentDepthLocation = -1;
+static const int RB_SCREEN_FRACTION_MIN = 10;
+static const int RB_SCREEN_FRACTION_NATIVE = 100;
+static const int RB_SCREEN_FRACTION_MAX = 200;
+static int rbLastReportedScreenFractionRequest = 0;
+static int rbLastReportedScreenFractionEffective = 0;
 static float rbHDRAdaptedExposure = 1.0f;
 static float rbHDRLastAverageLuminance = 1.0f;
 static float rbHDRLastTargetExposure = 1.0f;
 static float rbHDRLastAdaptationTime = -1.0f;
 static bool rbHDRExposureInitialized = false;
 
+struct rbSceneScaleState_t {
+	bool active;
+	int requestedPercent;
+	int effectivePercent;
+	int nativeWidth;
+	int nativeHeight;
+	int scaledWidth;
+	int scaledHeight;
+	idScreenRect nativeViewport;
+	idScreenRect nativeScissor;
+};
+
+static void RB_ClearSceneScaleState( rbSceneScaleState_t &state ) {
+	memset( &state, 0, sizeof( state ) );
+}
+
+static int RB_RequestedScreenFraction( void ) {
+	return idMath::ClampInt( RB_SCREEN_FRACTION_MIN, RB_SCREEN_FRACTION_MAX, r_screenFraction.GetInteger() );
+}
+
+static bool RB_ViewCoversBackBuffer( const viewDef_t *viewDef ) {
+	if ( viewDef == NULL ) {
+		return false;
+	}
+
+	const int viewportWidth = viewDef->viewport.x2 - viewDef->viewport.x1 + 1;
+	const int viewportHeight = viewDef->viewport.y2 - viewDef->viewport.y1 + 1;
+	return viewDef->viewport.x1 == 0
+		&& viewDef->viewport.y1 == 0
+		&& viewportWidth == glConfig.vidWidth
+		&& viewportHeight == glConfig.vidHeight;
+}
+
+static int RB_MaxSceneScaleDimension( void ) {
+	int maxDimension = ( glConfig.maxTextureSize > 0 ) ? glConfig.maxTextureSize : 4096;
+	maxDimension = Min( maxDimension, 32767 );
+	return Max( 1, maxDimension );
+}
+
+static int RB_EffectiveScreenFractionForView( const viewDef_t *viewDef ) {
+	const int requestedPercent = RB_RequestedScreenFraction();
+	if ( requestedPercent <= RB_SCREEN_FRACTION_NATIVE ) {
+		return requestedPercent;
+	}
+	if ( viewDef == NULL ) {
+		return RB_SCREEN_FRACTION_NATIVE;
+	}
+
+	const int nativeWidth = viewDef->viewport.x2 - viewDef->viewport.x1 + 1;
+	const int nativeHeight = viewDef->viewport.y2 - viewDef->viewport.y1 + 1;
+	if ( nativeWidth <= 0 || nativeHeight <= 0 ) {
+		return RB_SCREEN_FRACTION_NATIVE;
+	}
+
+	const int maxDimension = RB_MaxSceneScaleDimension();
+	int maxPercent = RB_SCREEN_FRACTION_MAX;
+	maxPercent = Min( maxPercent, static_cast<int>( ( static_cast<int64>( maxDimension ) * 100 ) / nativeWidth ) );
+	maxPercent = Min( maxPercent, static_cast<int>( ( static_cast<int64>( maxDimension ) * 100 ) / nativeHeight ) );
+	const int effectivePercent = idMath::ClampInt( RB_SCREEN_FRACTION_NATIVE, RB_SCREEN_FRACTION_MAX, Min( requestedPercent, maxPercent ) );
+
+	if ( effectivePercent != requestedPercent
+		&& ( rbLastReportedScreenFractionRequest != requestedPercent || rbLastReportedScreenFractionEffective != effectivePercent ) ) {
+		common->Warning(
+			"Requested r_screenFraction %d%% exceeds the safe render target size for %dx%d (GL max texture size %d); using %d%%.",
+			requestedPercent,
+			nativeWidth,
+			nativeHeight,
+			glConfig.maxTextureSize,
+			effectivePercent );
+		rbLastReportedScreenFractionRequest = requestedPercent;
+		rbLastReportedScreenFractionEffective = effectivePercent;
+	}
+
+	return effectivePercent;
+}
+
+static int RB_ScaledDimension( int nativeDimension, int scalePercent ) {
+	if ( nativeDimension <= 0 ) {
+		return 0;
+	}
+	const int64 scaled = static_cast<int64>( nativeDimension ) * scalePercent + 50;
+	return Max( 1, static_cast<int>( scaled / 100 ) );
+}
+
+static bool RB_SupersampledSceneTargetRequested( const viewDef_t *viewDef ) {
+	if ( RB_RequestedScreenFraction() <= RB_SCREEN_FRACTION_NATIVE ) {
+		return false;
+	}
+	if ( !RB_IsMainScenePostProcessView( viewDef ) || !RB_ViewCoversBackBuffer( viewDef ) ) {
+		return false;
+	}
+	return RB_EffectiveScreenFractionForView( viewDef ) > RB_SCREEN_FRACTION_NATIVE;
+}
+
+static bool RB_ComputeSupersampledSceneSize( const viewDef_t *viewDef, int &targetWidth, int &targetHeight, int *effectivePercent = NULL ) {
+	if ( !RB_SupersampledSceneTargetRequested( viewDef ) ) {
+		return false;
+	}
+
+	const int nativeWidth = viewDef->viewport.x2 - viewDef->viewport.x1 + 1;
+	const int nativeHeight = viewDef->viewport.y2 - viewDef->viewport.y1 + 1;
+	const int scalePercent = RB_EffectiveScreenFractionForView( viewDef );
+	targetWidth = RB_ScaledDimension( nativeWidth, scalePercent );
+	targetHeight = RB_ScaledDimension( nativeHeight, scalePercent );
+	if ( effectivePercent != NULL ) {
+		*effectivePercent = scalePercent;
+	}
+	return targetWidth > nativeWidth && targetHeight > nativeHeight;
+}
+
+static int RB_ScaleRectStart( int value, int sourceExtent, int targetExtent ) {
+	return static_cast<int>( ( static_cast<int64>( value ) * targetExtent ) / sourceExtent );
+}
+
+static int RB_ScaleRectEnd( int value, int sourceExtent, int targetExtent ) {
+	return static_cast<int>( ( ( static_cast<int64>( value + 1 ) * targetExtent ) + sourceExtent - 1 ) / sourceExtent ) - 1;
+}
+
+static void RB_ScaleLocalScreenRect( idScreenRect &rect, int sourceWidth, int sourceHeight, int targetWidth, int targetHeight ) {
+	if ( rect.IsEmpty() || sourceWidth <= 0 || sourceHeight <= 0 || targetWidth <= 0 || targetHeight <= 0 ) {
+		return;
+	}
+
+	const int x1 = idMath::ClampInt( 0, targetWidth - 1, RB_ScaleRectStart( rect.x1, sourceWidth, targetWidth ) );
+	const int y1 = idMath::ClampInt( 0, targetHeight - 1, RB_ScaleRectStart( rect.y1, sourceHeight, targetHeight ) );
+	const int x2 = idMath::ClampInt( 0, targetWidth - 1, RB_ScaleRectEnd( rect.x2, sourceWidth, targetWidth ) );
+	const int y2 = idMath::ClampInt( 0, targetHeight - 1, RB_ScaleRectEnd( rect.y2, sourceHeight, targetHeight ) );
+
+	if ( x2 < x1 || y2 < y1 ) {
+		rect.Clear();
+		return;
+	}
+
+	rect.x1 = static_cast<short>( x1 );
+	rect.y1 = static_cast<short>( y1 );
+	rect.x2 = static_cast<short>( x2 );
+	rect.y2 = static_cast<short>( y2 );
+}
+
+static bool RB_MarkDrawSurfScaled( idList<const drawSurf_t *> &scaledSurfs, const drawSurf_t *surf ) {
+	if ( surf == NULL ) {
+		return false;
+	}
+	for ( int i = 0; i < scaledSurfs.Num(); i++ ) {
+		if ( scaledSurfs[i] == surf ) {
+			return false;
+		}
+	}
+	scaledSurfs.Append( surf );
+	return true;
+}
+
+static void RB_ScaleDrawSurfScissor( idList<const drawSurf_t *> &scaledSurfs, const drawSurf_t *surf, int sourceWidth, int sourceHeight, int targetWidth, int targetHeight ) {
+	if ( !RB_MarkDrawSurfScaled( scaledSurfs, surf ) ) {
+		return;
+	}
+	RB_ScaleLocalScreenRect( const_cast<drawSurf_t *>( surf )->scissorRect, sourceWidth, sourceHeight, targetWidth, targetHeight );
+}
+
+static void RB_ScaleDrawSurfChainScissors( idList<const drawSurf_t *> &scaledSurfs, const drawSurf_t *surf, int sourceWidth, int sourceHeight, int targetWidth, int targetHeight ) {
+	for ( const drawSurf_t *chainSurf = surf; chainSurf != NULL; chainSurf = chainSurf->nextOnLight ) {
+		RB_ScaleDrawSurfScissor( scaledSurfs, chainSurf, sourceWidth, sourceHeight, targetWidth, targetHeight );
+	}
+}
+
+static void RB_ScaleLightDrawSurfScissors( idList<const drawSurf_t *> &scaledSurfs, const viewLight_t *vLight, int sourceWidth, int sourceHeight, int targetWidth, int targetHeight ) {
+	if ( vLight == NULL ) {
+		return;
+	}
+
+	RB_ScaleDrawSurfChainScissors( scaledSurfs, vLight->globalShadows, sourceWidth, sourceHeight, targetWidth, targetHeight );
+	RB_ScaleDrawSurfChainScissors( scaledSurfs, vLight->localInteractions, sourceWidth, sourceHeight, targetWidth, targetHeight );
+	RB_ScaleDrawSurfChainScissors( scaledSurfs, vLight->localShadows, sourceWidth, sourceHeight, targetWidth, targetHeight );
+	RB_ScaleDrawSurfChainScissors( scaledSurfs, vLight->globalInteractions, sourceWidth, sourceHeight, targetWidth, targetHeight );
+	RB_ScaleDrawSurfChainScissors( scaledSurfs, vLight->localShadowMapCasters, sourceWidth, sourceHeight, targetWidth, targetHeight );
+	RB_ScaleDrawSurfChainScissors( scaledSurfs, vLight->globalShadowMapCasters, sourceWidth, sourceHeight, targetWidth, targetHeight );
+	RB_ScaleDrawSurfChainScissors( scaledSurfs, vLight->localTranslucentShadowMapCasters, sourceWidth, sourceHeight, targetWidth, targetHeight );
+	RB_ScaleDrawSurfChainScissors( scaledSurfs, vLight->globalTranslucentShadowMapCasters, sourceWidth, sourceHeight, targetWidth, targetHeight );
+	RB_ScaleDrawSurfChainScissors( scaledSurfs, vLight->translucentInteractions, sourceWidth, sourceHeight, targetWidth, targetHeight );
+}
+
+static void RB_BeginSceneSupersampling( rbSceneScaleState_t &state, const viewDef_t *sceneTargetView ) {
+	RB_ClearSceneScaleState( state );
+	if ( backEnd.viewDef == NULL || sceneTargetView == NULL ) {
+		return;
+	}
+	viewDef_t *viewDef = const_cast<viewDef_t *>( backEnd.viewDef );
+
+	int targetWidth = 0;
+	int targetHeight = 0;
+	int effectivePercent = RB_SCREEN_FRACTION_NATIVE;
+	if ( !RB_ComputeSupersampledSceneSize( sceneTargetView, targetWidth, targetHeight, &effectivePercent ) ) {
+		return;
+	}
+
+	const int nativeWidth = viewDef->viewport.x2 - viewDef->viewport.x1 + 1;
+	const int nativeHeight = viewDef->viewport.y2 - viewDef->viewport.y1 + 1;
+	if ( nativeWidth <= 0 || nativeHeight <= 0 || targetWidth <= nativeWidth || targetHeight <= nativeHeight ) {
+		return;
+	}
+
+	state.active = true;
+	state.requestedPercent = RB_RequestedScreenFraction();
+	state.effectivePercent = effectivePercent;
+	state.nativeWidth = nativeWidth;
+	state.nativeHeight = nativeHeight;
+	state.scaledWidth = targetWidth;
+	state.scaledHeight = targetHeight;
+	state.nativeViewport = viewDef->viewport;
+	state.nativeScissor = viewDef->scissor;
+
+	RB_ScaleLocalScreenRect( viewDef->scissor, nativeWidth, nativeHeight, targetWidth, targetHeight );
+	viewDef->viewport.x1 = 0;
+	viewDef->viewport.y1 = 0;
+	viewDef->viewport.x2 = static_cast<short>( targetWidth - 1 );
+	viewDef->viewport.y2 = static_cast<short>( targetHeight - 1 );
+
+	idList<const drawSurf_t *> scaledSurfs;
+	scaledSurfs.SetGranularity( 256 );
+	for ( int i = 0; i < viewDef->numDrawSurfs; i++ ) {
+		RB_ScaleDrawSurfScissor( scaledSurfs, viewDef->drawSurfs[i], nativeWidth, nativeHeight, targetWidth, targetHeight );
+	}
+	for ( viewLight_t *vLight = viewDef->viewLights; vLight != NULL; vLight = vLight->next ) {
+		RB_ScaleLocalScreenRect( vLight->scissorRect, nativeWidth, nativeHeight, targetWidth, targetHeight );
+		RB_ScaleLightDrawSurfScissors( scaledSurfs, vLight, nativeWidth, nativeHeight, targetWidth, targetHeight );
+	}
+	for ( viewEntity_t *vEntity = viewDef->viewEntitys; vEntity != NULL; vEntity = vEntity->next ) {
+		RB_ScaleLocalScreenRect( vEntity->scissorRect, nativeWidth, nativeHeight, targetWidth, targetHeight );
+	}
+}
+
+static void RB_RestoreSceneSupersampling( const rbSceneScaleState_t &state ) {
+	if ( !state.active || backEnd.viewDef == NULL ) {
+		return;
+	}
+
+	viewDef_t *viewDef = const_cast<viewDef_t *>( backEnd.viewDef );
+	viewDef->viewport = state.nativeViewport;
+	viewDef->scissor = state.nativeScissor;
+}
+
 static bool RB_PostProcessBloomRequested( void ) {
 	return r_bloom.GetBool() && r_bloomIntensity.GetFloat() > 0.0001f;
 }
 
-static bool RB_IsMainMotionBlurView( void ) {
-	if ( !RB_IsMainScenePostProcessView() ) {
+static bool RB_IsMainMotionBlurView( const viewDef_t *viewDef ) {
+	if ( !RB_IsMainScenePostProcessView( viewDef ) ) {
 		return false;
 	}
-	if ( backEnd.viewDef->isSubview || backEnd.viewDef->superView != NULL ) {
+	if ( viewDef->isSubview || viewDef->superView != NULL ) {
 		return false;
 	}
-	if ( backEnd.viewDef->renderView.viewID < 0 ) {
+	if ( viewDef->renderView.viewID < 0 ) {
 		return false;
 	}
 	return true;
 }
 
-static bool RB_PostProcessMotionBlurRequested( void ) {
+static bool RB_IsMainMotionBlurView( void ) {
+	return RB_IsMainMotionBlurView( backEnd.viewDef );
+}
+
+static bool RB_PostProcessMotionBlurRequested( const viewDef_t *viewDef ) {
 	if ( !r_motionBlur.GetBool() ) {
 		return false;
 	}
-	if ( !RB_IsMainMotionBlurView() ) {
+	if ( !RB_IsMainMotionBlurView( viewDef ) ) {
 		return false;
 	}
 	if ( r_jitter.GetBool() ) {
@@ -872,6 +1159,10 @@ static bool RB_PostProcessMotionBlurRequested( void ) {
 	return r_motionBlurStrength.GetFloat() > 0.0f
 		&& r_motionBlurMaxPixels.GetFloat() > 0.0f
 		&& r_motionBlurSamples.GetInteger() > 0;
+}
+
+static bool RB_PostProcessMotionBlurRequested( void ) {
+	return RB_PostProcessMotionBlurRequested( backEnd.viewDef );
 }
 
 static int RB_HDRDebugViewValue( void ) {
@@ -888,6 +1179,177 @@ static bool RB_HDRAutoExposureRequested( void ) {
 
 static bool RB_HDRAutoExposureEnabled( void ) {
 	return r_hdrAutoExposure.GetBool() && r_hdrToneMap.GetBool() && R_ModernGLExecutor_ModernVisiblePostProcessHandoffActive();
+}
+
+static bool RB_ViewRequestsSceneRenderTarget( const viewDef_t *viewDef ) {
+	if ( r_skipPostProcess.GetBool() ) {
+		return false;
+	}
+	if ( !RB_IsMainScenePostProcessView( viewDef ) ) {
+		return false;
+	}
+
+	const bool supersampledSceneRequested = RB_SupersampledSceneTargetRequested( viewDef );
+	if ( !glConfig.GLSLProgramAvailable && !supersampledSceneRequested ) {
+		return false;
+	}
+
+	const bool bloomRequested = RB_PostProcessBloomRequested();
+	const bool motionBlurRequested = RB_PostProcessMotionBlurRequested( viewDef );
+	const bool ssaoRequested = r_ssao.GetBool();
+	const bool toneMapRequested = r_hdrToneMap.GetBool();
+	const bool autoExposureRequested = RB_HDRAutoExposureRequested();
+	const bool hdrDebugRequested = RB_HDRDebugViewValue() > 0;
+	const bool modernVisibleSceneTargetRequested = RB_ModernVisibleSceneTargetRequested();
+
+	// Bloom now always routes through the resolved scene target. The direct
+	// back-buffer capture path was fragile when toggling bloom live and during
+	// map handoffs, and it also clipped highlight energy before the bright-pass.
+	return bloomRequested
+		|| motionBlurRequested
+		|| ssaoRequested
+		|| toneMapRequested
+		|| autoExposureRequested
+		|| hdrDebugRequested
+		|| modernVisibleSceneTargetRequested
+		|| supersampledSceneRequested;
+}
+
+static bool RB_IsInlineSubviewOfScenePostProcessView( const viewDef_t *viewDef ) {
+	if ( viewDef == NULL || viewDef->superView == NULL || viewDef->subviewSurface == NULL ) {
+		return false;
+	}
+	if ( !viewDef->isSubview || viewDef->isXraySubview ) {
+		return false;
+	}
+	if ( viewDef->subviewSurface->material == NULL || viewDef->subviewSurface->material->GetSort() != SS_SUBVIEW ) {
+		return false;
+	}
+
+	const viewDef_t *superView = viewDef->superView;
+	if ( !RB_IsMainScenePostProcessView( superView ) ) {
+		return false;
+	}
+
+	// Inline portal-sky subviews inherit the parent viewport and render
+	// directly into it. Dynamic render-map subviews are cropped to scratch
+	// images and must stay isolated from the parent scene target.
+	if ( !viewDef->viewport.Equals( superView->viewport ) ) {
+		return false;
+	}
+	if ( viewDef->renderView.width != superView->renderView.width
+		|| viewDef->renderView.height != superView->renderView.height ) {
+		return false;
+	}
+
+	return true;
+}
+
+static bool RB_IsPortalSkyView( const viewDef_t *viewDef ) {
+	return viewDef != NULL && ( viewDef->renderFlags & RF_PORTAL_SKY ) != 0;
+}
+
+static bool RB_MaterialIsPortalSkyForSSAO( const idMaterial *material ) {
+	return material != NULL && ( material->IsPortalSky() || material->GetSort() == SS_PORTAL_SKY );
+}
+
+static bool RB_ViewHasPortalSkyMaskSurfaces( const viewDef_t *viewDef ) {
+	if ( viewDef == NULL || viewDef->drawSurfs == NULL ) {
+		return false;
+	}
+	for ( int i = 0; i < viewDef->numDrawSurfs; i++ ) {
+		const drawSurf_t *surf = viewDef->drawSurfs[i];
+		if ( surf != NULL && RB_MaterialIsPortalSkyForSSAO( surf->material ) ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool RB_ViewHasSkyBackdropSurfaces( const viewDef_t *viewDef ) {
+	if ( viewDef == NULL || viewDef->drawSurfs == NULL ) {
+		return false;
+	}
+	for ( int i = 0; i < viewDef->numDrawSurfs; i++ ) {
+		const drawSurf_t *surf = viewDef->drawSurfs[i];
+		if ( surf == NULL || surf->material == NULL ) {
+			continue;
+		}
+		const texgen_t texgen = surf->material->Texgen();
+		if ( texgen == TG_SKYBOX_CUBE || texgen == TG_WOBBLESKY_CUBE ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static const viewDef_t *RB_PortalSkySceneTargetView( const viewDef_t *viewDef ) {
+	if ( !RB_IsPortalSkyView( viewDef ) || backEnd.renderTexture != NULL ) {
+		return NULL;
+	}
+
+	const viewDef_t *rootView = tr.primaryView;
+	if ( rootView == NULL || rootView == viewDef || RB_IsPortalSkyView( rootView ) ) {
+		return NULL;
+	}
+	if ( !RB_ViewRequestsSceneRenderTarget( rootView ) ) {
+		return NULL;
+	}
+
+	// Game code emits RF_PORTAL_SKY immediately before the root view it feeds.
+	// Only inherit the scene target when both views address the same framebuffer
+	// footprint; render-to-texture captures and odd side views should stay direct.
+	if ( !viewDef->viewport.Equals( rootView->viewport ) ) {
+		return NULL;
+	}
+	if ( viewDef->renderView.width != rootView->renderView.width
+		|| viewDef->renderView.height != rootView->renderView.height ) {
+		return NULL;
+	}
+
+	return rootView;
+}
+
+static void RB_MarkSceneRenderTargetPreserveFarDepth( const viewDef_t *rootView ) {
+	if ( rootView == NULL ) {
+		return;
+	}
+	rbSceneRenderTargetPreserveFarDepthFrame = backEnd.frameCount;
+	rbSceneRenderTargetPreserveFarDepthView = rootView;
+}
+
+static void RB_MarkPortalSkyBackdropForSceneTarget( const viewDef_t *viewDef ) {
+	if ( !RB_IsPortalSkyView( viewDef ) || backEnd.renderTexture != NULL ) {
+		return;
+	}
+	if ( !RB_ViewHasSkyBackdropSurfaces( viewDef ) ) {
+		return;
+	}
+	rbSceneRenderTargetPortalSkyFrame = backEnd.frameCount;
+	rbSceneRenderTargetPortalSkyViewport = viewDef->viewport;
+	rbSceneRenderTargetPortalSkyWidth = viewDef->renderView.width;
+	rbSceneRenderTargetPortalSkyHeight = viewDef->renderView.height;
+}
+
+static bool RB_HasPortalSkyBackdropForSceneTarget( const viewDef_t *viewDef ) {
+	if ( viewDef == NULL || rbSceneRenderTargetPortalSkyFrame != backEnd.frameCount ) {
+		return false;
+	}
+	return viewDef->viewport.Equals( rbSceneRenderTargetPortalSkyViewport )
+		&& viewDef->renderView.width == rbSceneRenderTargetPortalSkyWidth
+		&& viewDef->renderView.height == rbSceneRenderTargetPortalSkyHeight;
+}
+
+static bool RB_ShouldPreserveSceneRenderTargetFarDepth( const viewDef_t *viewDef ) {
+	if ( viewDef == NULL ) {
+		return false;
+	}
+	if ( rbSceneRenderTargetPreserveFarDepthFrame == backEnd.frameCount
+		&& rbSceneRenderTargetPreserveFarDepthView == viewDef ) {
+		return true;
+	}
+	return RB_ViewRequestsSceneRenderTarget( viewDef )
+		&& ( RB_ViewHasPortalSkyMaskSurfaces( viewDef ) || RB_HasPortalSkyBackdropForSceneTarget( viewDef ) );
 }
 
 static bool RB_IsSceneRenderTexture( const idRenderTexture *renderTexture ) {
@@ -965,15 +1427,67 @@ static void RB_CaptureCurrentDepthImage( int viewportWidth, int viewportHeight )
 	backEnd.currentDepthCopied = true;
 }
 
-static bool RB_EnsureSceneRenderTexture( void ) {
-	if ( !backEnd.viewDef ) {
+static idImage *RB_EnsureSceneRenderTargetPreserveDepthImage( int viewportWidth, int viewportHeight ) {
+	if ( globalImages == NULL || viewportWidth <= 0 || viewportHeight <= 0 ) {
+		return NULL;
+	}
+
+	idImageOpts opts;
+	opts.textureType = TT_2D;
+	opts.format = FMT_DEPTH;
+	opts.width = viewportWidth;
+	opts.height = viewportHeight;
+	opts.numLevels = 1;
+	opts.numMSAASamples = 0;
+	opts.isPersistant = true;
+
+	rbSceneRenderTargetPreserveDepthImage = globalImages->ScratchImage( "_scenePreserveDepth", &opts, TF_NEAREST, TR_CLAMP, TD_DEPTH );
+	return rbSceneRenderTargetPreserveDepthImage;
+}
+
+static void RB_CaptureSceneRenderTargetPreserveDepthImage( void ) {
+	rbSceneRenderTargetPreserveDepthFrame = -1;
+	rbSceneRenderTargetPreserveDepthWidth = 0;
+	rbSceneRenderTargetPreserveDepthHeight = 0;
+
+	if ( !RB_IsSceneRenderTexture( backEnd.renderTexture ) || backEnd.viewDef == NULL ) {
+		return;
+	}
+	if ( !RB_ShouldPreserveSceneRenderTargetFarDepth( backEnd.viewDef ) ) {
+		return;
+	}
+
+	const int viewportWidth = backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1;
+	const int viewportHeight = backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1;
+	idImage *depthImage = RB_EnsureSceneRenderTargetPreserveDepthImage( viewportWidth, viewportHeight );
+	if ( depthImage == NULL ) {
+		return;
+	}
+
+	depthImage->CopyDepthbuffer(
+		backEnd.viewDef->viewport.x1,
+		backEnd.viewDef->viewport.y1,
+		viewportWidth,
+		viewportHeight );
+	rbSceneRenderTargetPreserveDepthFrame = backEnd.frameCount;
+	rbSceneRenderTargetPreserveDepthWidth = viewportWidth;
+	rbSceneRenderTargetPreserveDepthHeight = viewportHeight;
+}
+
+static bool RB_EnsureSceneRenderTexture( const viewDef_t *sceneTargetView ) {
+	if ( sceneTargetView == NULL ) {
 		return false;
 	}
 
-	const int targetWidth = Max( glConfig.vidWidth, backEnd.viewDef->viewport.x2 + 1 );
-	const int targetHeight = Max( glConfig.vidHeight, backEnd.viewDef->viewport.y2 + 1 );
+	int supersampledWidth = 0;
+	int supersampledHeight = 0;
+	const bool supersampledScene = RB_ComputeSupersampledSceneSize( sceneTargetView, supersampledWidth, supersampledHeight );
+	const int targetWidth = supersampledScene ? supersampledWidth : Max( glConfig.vidWidth, sceneTargetView->viewport.x2 + 1 );
+	const int targetHeight = supersampledScene ? supersampledHeight : Max( glConfig.vidHeight, sceneTargetView->viewport.y2 + 1 );
 	const int requestedSamples = Max( 0, r_multiSamples.GetInteger() );
-	const int sceneSamples = ( requestedSamples > 1 && !R_ModernGLExecutor_ModernVisibleRequestedForPost() ) ? requestedSamples : 0;
+	// Supersampling is already an antialiasing resolve. Keep the oversized
+	// scene target single-sample instead of stacking an MSAA FP16 FBO on top of it.
+	const int sceneSamples = ( !supersampledScene && requestedSamples > 1 && !R_ModernGLExecutor_ModernVisibleRequestedForPost() ) ? requestedSamples : 0;
 
 	if ( targetWidth <= 0 || targetHeight <= 0 ) {
 		return false;
@@ -1022,45 +1536,20 @@ static bool RB_EnsureSceneRenderTexture( void ) {
 }
 
 static bool RB_SceneRenderTargetRequested( void ) {
-	if ( r_skipPostProcess.GetBool() ) {
-		return false;
-	}
-	if ( !glConfig.GLSLProgramAvailable ) {
-		return false;
-	}
-	if ( !RB_IsMainScenePostProcessView() ) {
-		return false;
-	}
-	const bool bloomRequested = RB_PostProcessBloomRequested();
-	const bool motionBlurRequested = RB_PostProcessMotionBlurRequested();
-	const bool ssaoRequested = r_ssao.GetBool();
-	const bool toneMapRequested = r_hdrToneMap.GetBool();
-	const bool autoExposureRequested = RB_HDRAutoExposureRequested();
-	const bool hdrDebugRequested = RB_HDRDebugViewValue() > 0;
-	const bool modernVisibleSceneTargetRequested = RB_ModernVisibleSceneTargetRequested();
-	if ( !bloomRequested
-		&& !motionBlurRequested
-		&& !ssaoRequested
-		&& !toneMapRequested
-		&& !autoExposureRequested
-		&& !hdrDebugRequested
-		&& !modernVisibleSceneTargetRequested ) {
-		return false;
-	}
 	if ( backEnd.renderTexture != NULL ) {
 		return false;
 	}
+	return RB_ViewRequestsSceneRenderTarget( backEnd.viewDef );
+}
 
-	// Bloom now always routes through the resolved scene target. The direct
-	// back-buffer capture path was fragile when toggling bloom live and during
-	// map handoffs, and it also clipped highlight energy before the bright-pass.
-	return bloomRequested
-		|| motionBlurRequested
-		|| ssaoRequested
-		|| toneMapRequested
-		|| autoExposureRequested
-		|| hdrDebugRequested
-		|| modernVisibleSceneTargetRequested;
+static bool RB_InlineSubviewSceneRenderTargetRequested( void ) {
+	if ( backEnd.renderTexture != NULL ) {
+		return false;
+	}
+	if ( !RB_IsInlineSubviewOfScenePostProcessView( backEnd.viewDef ) ) {
+		return false;
+	}
+	return RB_ViewRequestsSceneRenderTarget( backEnd.viewDef->superView );
 }
 
 static void RB_BeginFullscreenPostProcessPass( int scissorX, int scissorY, int scissorWidth, int scissorHeight ) {
@@ -1085,7 +1574,7 @@ static void RB_BeginFullscreenPostProcessPass( int scissorX, int scissorY, int s
 	glLoadIdentity();
 	glOrtho( 0, 1, 0, 1, -1, 1 );
 
-	GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO );
+	GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO | GLS_DEPTHMASK | GLS_DEPTHFUNC_ALWAYS );
 	GL_Cull( CT_TWO_SIDED );
 
 	const int maxStateUnits = Max( 0, Min( MAX_MULTITEXTURE_UNITS, Min( glConfig.maxTextureUnits, glConfig.maxTextureImageUnits ) ) );
@@ -1241,6 +1730,42 @@ enum rbSSAOUniformIndex_t {
 
 static newShaderStage_t rbSSAOStage;
 static bool rbSSAOStageInitialized = false;
+static idImage *rbSSAOWorldDepthImage = NULL;
+static idImage *rbSSAOFinalDepthImage = NULL;
+static int rbSSAOWorldDepthFrame = -1;
+static int rbSSAOWorldDepthWidth = 0;
+static int rbSSAOWorldDepthHeight = 0;
+
+static bool RB_SSAORequestedForCurrentView( void ) {
+	if ( r_skipPostProcess.GetBool() || !r_ssao.GetBool() ) {
+		return false;
+	}
+	if ( !glConfig.GLSLProgramAvailable ) {
+		return false;
+	}
+	if ( !RB_IsMainScenePostProcessView() ) {
+		return false;
+	}
+	return r_ssaoRadius.GetFloat() > 0.0f && r_ssaoIntensity.GetFloat() > 0.0f;
+}
+
+static idImage *RB_EnsureSSAODepthScratchImage( idImage *&image, const char *name, int viewportWidth, int viewportHeight ) {
+	if ( globalImages == NULL || viewportWidth <= 0 || viewportHeight <= 0 ) {
+		return NULL;
+	}
+
+	idImageOpts opts;
+	opts.textureType = TT_2D;
+	opts.format = FMT_DEPTH;
+	opts.width = viewportWidth;
+	opts.height = viewportHeight;
+	opts.numLevels = 1;
+	opts.numMSAASamples = 0;
+	opts.isPersistant = true;
+
+	image = globalImages->ScratchImage( name, &opts, TF_NEAREST, TR_CLAMP, TD_DEPTH );
+	return image;
+}
 
 static void RB_InitSSAOStage( void ) {
 	if ( rbSSAOStageInitialized ) {
@@ -1271,29 +1796,16 @@ static void RB_InitSSAOStage( void ) {
 		rbSSAOStage.shaderParmNumRegisters[i] = uniforms[i].components;
 	}
 
-	rbSSAOStage.numShaderTextures = 2;
+	rbSSAOStage.numShaderTextures = 3;
 	idStr::Copynz( rbSSAOStage.shaderTextureNames[0], "Scene", sizeof( rbSSAOStage.shaderTextureNames[0] ) );
 	idStr::Copynz( rbSSAOStage.shaderTextureNames[1], "DepthBuffer", sizeof( rbSSAOStage.shaderTextureNames[1] ) );
+	idStr::Copynz( rbSSAOStage.shaderTextureNames[2], "FinalDepthBuffer", sizeof( rbSSAOStage.shaderTextureNames[2] ) );
 
 	rbSSAOStageInitialized = true;
 }
 
 static void RB_STD_SSAO( void ) {
-	if ( r_skipPostProcess.GetBool() || !r_ssao.GetBool() ) {
-		return;
-	}
-
-	if ( !glConfig.GLSLProgramAvailable ) {
-		return;
-	}
-
-	if ( !RB_IsMainScenePostProcessView() ) {
-		return;
-	}
-
-	const GLfloat radius = r_ssaoRadius.GetFloat();
-	const GLfloat intensity = r_ssaoIntensity.GetFloat();
-	if ( radius <= 0.0f || intensity <= 0.0f ) {
+	if ( !RB_SSAORequestedForCurrentView() ) {
 		return;
 	}
 
@@ -1308,23 +1820,9 @@ static void RB_STD_SSAO( void ) {
 		return;
 	}
 
-	GLuint deferredSceneTexture = 0;
-	GLuint deferredDepthTexture = 0;
-	int deferredSceneWidth = 0;
-	int deferredSceneHeight = 0;
-	int deferredDepthWidth = 0;
-	int deferredDepthHeight = 0;
-	const bool useDeferredInputs = R_ModernGLExecutor_GetDeferredSSAOInputs(
-		deferredSceneTexture,
-		deferredDepthTexture,
-		deferredSceneWidth,
-		deferredSceneHeight,
-		deferredDepthWidth,
-		deferredDepthHeight );
-
-	idImage *sceneImage = useDeferredInputs ? NULL : globalImages->currentRenderImage;
-	idImage *depthImage = useDeferredInputs ? NULL : globalImages->currentDepthImage;
-	if ( !useDeferredInputs && ( sceneImage == NULL || depthImage == NULL ) ) {
+	idImage *sceneImage = globalImages->currentRenderImage;
+	idImage *fallbackDepthImage = globalImages->currentDepthImage;
+	if ( sceneImage == NULL || fallbackDepthImage == NULL ) {
 		return;
 	}
 
@@ -1336,23 +1834,43 @@ static void RB_STD_SSAO( void ) {
 
 	RB_LogComment( "---------- RB_STD_SSAO ----------\n" );
 
-	if ( !useDeferredInputs ) {
-		sceneImage->CopyFramebuffer(
-			backEnd.viewDef->viewport.x1,
-			backEnd.viewDef->viewport.y1,
-			viewportWidth,
-			viewportHeight );
-		depthImage->CopyDepthbuffer(
-			backEnd.viewDef->viewport.x1,
-			backEnd.viewDef->viewport.y1,
-			viewportWidth,
-			viewportHeight );
+	sceneImage->CopyFramebuffer(
+		backEnd.viewDef->viewport.x1,
+		backEnd.viewDef->viewport.y1,
+		viewportWidth,
+		viewportHeight );
+
+	idImage *depthImage = NULL;
+	if ( rbSSAOWorldDepthFrame == backEnd.frameCount
+		&& rbSSAOWorldDepthWidth == viewportWidth
+		&& rbSSAOWorldDepthHeight == viewportHeight
+		&& rbSSAOWorldDepthImage != NULL ) {
+		depthImage = rbSSAOWorldDepthImage;
+	} else {
+		if ( !backEnd.currentDepthCopied ) {
+			RB_CaptureCurrentDepthImage( viewportWidth, viewportHeight );
+		}
+		depthImage = fallbackDepthImage;
+	}
+	if ( depthImage == NULL ) {
+		return;
 	}
 
-	const int textureWidth = useDeferredInputs ? deferredSceneWidth : sceneImage->GetOpts().width;
-	const int textureHeight = useDeferredInputs ? deferredSceneHeight : sceneImage->GetOpts().height;
-	const int depthTextureWidth = useDeferredInputs ? deferredDepthWidth : depthImage->GetOpts().width;
-	const int depthTextureHeight = useDeferredInputs ? deferredDepthHeight : depthImage->GetOpts().height;
+	idImage *finalDepthImage = RB_EnsureSSAODepthScratchImage( rbSSAOFinalDepthImage, "_ssaoFinalDepth", viewportWidth, viewportHeight );
+	if ( finalDepthImage != NULL ) {
+		finalDepthImage->CopyDepthbuffer(
+			backEnd.viewDef->viewport.x1,
+			backEnd.viewDef->viewport.y1,
+			viewportWidth,
+			viewportHeight );
+	} else {
+		finalDepthImage = depthImage;
+	}
+
+	const int textureWidth = sceneImage->GetOpts().width;
+	const int textureHeight = sceneImage->GetOpts().height;
+	const int depthTextureWidth = depthImage->GetOpts().width;
+	const int depthTextureHeight = depthImage->GetOpts().height;
 	if ( textureWidth <= 0 || textureHeight <= 0 || depthTextureWidth <= 0 || depthTextureHeight <= 0 ) {
 		return;
 	}
@@ -1366,17 +1884,15 @@ static void RB_STD_SSAO( void ) {
 		backEnd.viewDef->scissor.y2 - backEnd.viewDef->scissor.y1 + 1 );
 
 	GL_SelectTexture( 0 );
-	if ( useDeferredInputs ) {
-		glBindTexture( GL_TEXTURE_2D, deferredSceneTexture );
-	} else {
-		sceneImage->Bind();
-	}
+	sceneImage->Bind();
 	GL_SelectTexture( 1 );
-	if ( useDeferredInputs ) {
-		glBindTexture( GL_TEXTURE_2D, deferredDepthTexture );
-	} else {
-		depthImage->Bind();
-	}
+	depthImage->Bind();
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE );
+	glTexParameteri( GL_TEXTURE_2D, GL_DEPTH_TEXTURE_MODE, GL_LUMINANCE );
+	GL_SelectTexture( 2 );
+	finalDepthImage->Bind();
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE );
+	glTexParameteri( GL_TEXTURE_2D, GL_DEPTH_TEXTURE_MODE, GL_LUMINANCE );
 	GL_SelectTexture( 0 );
 
 	glUseProgramObjectARB( (GLhandleARB)rbSSAOStage.glslProgramObject );
@@ -1391,6 +1907,13 @@ static void RB_STD_SSAO( void ) {
 		glUniform1iARB( depthLocation, 1 );
 	}
 
+	const int finalDepthLocation = rbSSAOStage.shaderTextureLocations[2];
+	if ( finalDepthLocation >= 0 ) {
+		glUniform1iARB( finalDepthLocation, 2 );
+	}
+
+	const GLfloat radius = r_ssaoRadius.GetFloat();
+	const GLfloat intensity = r_ssaoIntensity.GetFloat();
 	const GLfloat invTexSize[2] = {
 		1.0f / static_cast<GLfloat>( depthTextureWidth ),
 		1.0f / static_cast<GLfloat>( depthTextureHeight )
@@ -2783,14 +3306,144 @@ static void RB_STD_Bloom( void ) {
 	}
 }
 
-static void RB_PresentSceneRenderTargetToBackBuffer( void ) {
+static void RB_FreeSceneDepthAwarePresentProgram( void ) {
+	if ( rbSceneDepthAwarePresentProgram != 0 ) {
+		if ( rbSceneDepthAwarePresentVertexShader != 0 ) {
+			glDetachObjectARB( rbSceneDepthAwarePresentProgram, rbSceneDepthAwarePresentVertexShader );
+		}
+		if ( rbSceneDepthAwarePresentFragmentShader != 0 ) {
+			glDetachObjectARB( rbSceneDepthAwarePresentProgram, rbSceneDepthAwarePresentFragmentShader );
+		}
+		glDeleteObjectARB( rbSceneDepthAwarePresentProgram );
+	}
+	if ( rbSceneDepthAwarePresentVertexShader != 0 ) {
+		glDeleteObjectARB( rbSceneDepthAwarePresentVertexShader );
+	}
+	if ( rbSceneDepthAwarePresentFragmentShader != 0 ) {
+		glDeleteObjectARB( rbSceneDepthAwarePresentFragmentShader );
+	}
+	rbSceneDepthAwarePresentProgram = 0;
+	rbSceneDepthAwarePresentVertexShader = 0;
+	rbSceneDepthAwarePresentFragmentShader = 0;
+	rbSceneDepthAwarePresentGeneration = -1;
+	rbSceneDepthAwarePresentSceneLocation = -1;
+	rbSceneDepthAwarePresentDepthLocation = -1;
+}
+
+void RB_ShutdownScenePostProcess( void ) {
+	RB_FreeSceneDepthAwarePresentProgram();
+}
+
+static bool RB_EnsureSceneDepthAwarePresentProgram( void ) {
+	if ( !glConfig.GLSLProgramAvailable ) {
+		return false;
+	}
+	if ( rbSceneDepthAwarePresentProgram != 0 && rbSceneDepthAwarePresentGeneration == tr.videoRestartCount ) {
+		return true;
+	}
+
+	RB_FreeSceneDepthAwarePresentProgram();
+
+	static const char *vertexSource =
+		"void main() {\n"
+		"	gl_Position = ftransform();\n"
+		"	gl_TexCoord[0] = gl_MultiTexCoord0;\n"
+		"}\n";
+	static const char *fragmentSource =
+		"uniform sampler2D Scene;\n"
+		"uniform sampler2D DepthBuffer;\n"
+		"void main() {\n"
+		"	vec2 uv = gl_TexCoord[0].st;\n"
+		"	if ( texture2D( DepthBuffer, uv ).r >= 0.99999 ) {\n"
+		"		discard;\n"
+		"	}\n"
+		"	gl_FragColor = texture2D( Scene, uv );\n"
+		"}\n";
+
+	GLhandleARB vertexShader = glCreateShaderObjectARB( GL_VERTEX_SHADER_ARB );
+	GLhandleARB fragmentShader = glCreateShaderObjectARB( GL_FRAGMENT_SHADER_ARB );
+	if ( vertexShader == 0 || fragmentShader == 0 ) {
+		if ( vertexShader != 0 ) {
+			glDeleteObjectARB( vertexShader );
+		}
+		if ( fragmentShader != 0 ) {
+			glDeleteObjectARB( fragmentShader );
+		}
+		return false;
+	}
+
+	const GLcharARB *vertexSourceARB = (const GLcharARB *)vertexSource;
+	const GLcharARB *fragmentSourceARB = (const GLcharARB *)fragmentSource;
+	glShaderSourceARB( vertexShader, 1, &vertexSourceARB, NULL );
+	glShaderSourceARB( fragmentShader, 1, &fragmentSourceARB, NULL );
+	glCompileShaderARB( vertexShader );
+	glCompileShaderARB( fragmentShader );
+
+	GLint status = GL_FALSE;
+	glGetObjectParameterivARB( vertexShader, GL_OBJECT_COMPILE_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_PrintGLSLInfoLog( vertexShader, "vertex shader compile", "scene depth-aware present" );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		return false;
+	}
+	glGetObjectParameterivARB( fragmentShader, GL_OBJECT_COMPILE_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_PrintGLSLInfoLog( fragmentShader, "fragment shader compile", "scene depth-aware present" );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		return false;
+	}
+
+	GLhandleARB programObject = glCreateProgramObjectARB();
+	if ( programObject == 0 ) {
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		return false;
+	}
+	glAttachObjectARB( programObject, vertexShader );
+	glAttachObjectARB( programObject, fragmentShader );
+	glLinkProgramARB( programObject );
+
+	glGetObjectParameterivARB( programObject, GL_OBJECT_LINK_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_PrintGLSLInfoLog( programObject, "program link", "scene depth-aware present" );
+		glDetachObjectARB( programObject, vertexShader );
+		glDetachObjectARB( programObject, fragmentShader );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		glDeleteObjectARB( programObject );
+		return false;
+	}
+
+	rbSceneDepthAwarePresentProgram = programObject;
+	rbSceneDepthAwarePresentVertexShader = vertexShader;
+	rbSceneDepthAwarePresentFragmentShader = fragmentShader;
+	rbSceneDepthAwarePresentGeneration = tr.videoRestartCount;
+	rbSceneDepthAwarePresentSceneLocation = glGetUniformLocationARB( programObject, "Scene" );
+	rbSceneDepthAwarePresentDepthLocation = glGetUniformLocationARB( programObject, "DepthBuffer" );
+
+	if ( rbSceneDepthAwarePresentSceneLocation < 0 || rbSceneDepthAwarePresentDepthLocation < 0 ) {
+		common->Warning( "scene depth-aware present shader is missing required sampler uniforms" );
+		RB_FreeSceneDepthAwarePresentProgram();
+		return false;
+	}
+
+	return true;
+}
+
+static void RB_PresentSceneRenderTargetToBackBuffer( const rbSceneScaleState_t &scaleState ) {
 	if ( !RB_IsSceneRenderTexture( backEnd.renderTexture ) || backEnd.viewDef == NULL ) {
 		return;
 	}
 
-	const int viewportWidth = backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1;
-	const int viewportHeight = backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1;
-	if ( viewportWidth <= 0 || viewportHeight <= 0 ) {
+	const int sourceViewportWidth = backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1;
+	const int sourceViewportHeight = backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1;
+	const idScreenRect targetViewport = scaleState.active ? scaleState.nativeViewport : backEnd.viewDef->viewport;
+	const idScreenRect targetScissor = scaleState.active ? scaleState.nativeScissor : backEnd.viewDef->scissor;
+	const int targetViewportWidth = targetViewport.x2 - targetViewport.x1 + 1;
+	const int targetViewportHeight = targetViewport.y2 - targetViewport.y1 + 1;
+	if ( sourceViewportWidth <= 0 || sourceViewportHeight <= 0 || targetViewportWidth <= 0 || targetViewportHeight <= 0 ) {
 		return;
 	}
 
@@ -2809,7 +3462,7 @@ static void RB_PresentSceneRenderTargetToBackBuffer( void ) {
 	if ( canPresentSceneColorDirectly ) {
 		presentImage = sceneColorImage;
 	} else if ( copyImage != NULL ) {
-		RB_CaptureCurrentRenderImage( viewportWidth, viewportHeight );
+		RB_CaptureCurrentRenderImage( sourceViewportWidth, sourceViewportHeight );
 		presentImage = copyImage;
 	}
 
@@ -2823,33 +3476,75 @@ static void RB_PresentSceneRenderTargetToBackBuffer( void ) {
 		return;
 	}
 
+	bool preserveFarDepth = RB_ShouldPreserveSceneRenderTargetFarDepth( backEnd.viewDef );
+	idImage *presentDepthImage = NULL;
+	if ( preserveFarDepth && globalImages != NULL && RB_EnsureSceneDepthAwarePresentProgram() ) {
+		if ( rbSceneRenderTargetPreserveDepthFrame == backEnd.frameCount
+			&& rbSceneRenderTargetPreserveDepthWidth == sourceViewportWidth
+			&& rbSceneRenderTargetPreserveDepthHeight == sourceViewportHeight
+			&& rbSceneRenderTargetPreserveDepthImage != NULL ) {
+			presentDepthImage = rbSceneRenderTargetPreserveDepthImage;
+		} else {
+			presentDepthImage = globalImages->currentDepthImage;
+		}
+		if ( presentDepthImage != NULL && presentDepthImage == globalImages->currentDepthImage ) {
+			RB_CaptureCurrentDepthImage( sourceViewportWidth, sourceViewportHeight );
+		}
+		if ( presentDepthImage != NULL ) {
+			const int depthTextureWidth = presentDepthImage->GetOpts().width;
+			const int depthTextureHeight = presentDepthImage->GetOpts().height;
+			if ( depthTextureWidth <= 0 || depthTextureHeight <= 0 ) {
+				presentDepthImage = NULL;
+			}
+		}
+	} else {
+		preserveFarDepth = false;
+	}
+	preserveFarDepth = preserveFarDepth && presentDepthImage != NULL;
+
 	idRenderTexture::BindNull();
 	backEnd.renderTexture = NULL;
 	glDrawBuffer( GL_BACK );
 	glReadBuffer( GL_BACK );
 	glViewport(
-		tr.viewportOffset[0] + backEnd.viewDef->viewport.x1,
-		tr.viewportOffset[1] + backEnd.viewDef->viewport.y1,
-		viewportWidth,
-		viewportHeight );
+		tr.viewportOffset[0] + targetViewport.x1,
+		tr.viewportOffset[1] + targetViewport.y1,
+		targetViewportWidth,
+		targetViewportHeight );
 	glScissor(
-		tr.viewportOffset[0] + backEnd.viewDef->viewport.x1 + backEnd.viewDef->scissor.x1,
-		tr.viewportOffset[1] + backEnd.viewDef->viewport.y1 + backEnd.viewDef->scissor.y1,
-		backEnd.viewDef->scissor.x2 - backEnd.viewDef->scissor.x1 + 1,
-		backEnd.viewDef->scissor.y2 - backEnd.viewDef->scissor.y1 + 1 );
-	backEnd.currentScissor = backEnd.viewDef->scissor;
+		tr.viewportOffset[0] + targetViewport.x1 + targetScissor.x1,
+		tr.viewportOffset[1] + targetViewport.y1 + targetScissor.y1,
+		targetScissor.x2 - targetScissor.x1 + 1,
+		targetScissor.y2 - targetScissor.y1 + 1 );
+	backEnd.currentScissor = targetScissor;
 
 	RB_BeginFullscreenPostProcessPass(
-		backEnd.viewDef->viewport.x1 + backEnd.viewDef->scissor.x1,
-		backEnd.viewDef->viewport.y1 + backEnd.viewDef->scissor.y1,
-		backEnd.viewDef->scissor.x2 - backEnd.viewDef->scissor.x1 + 1,
-		backEnd.viewDef->scissor.y2 - backEnd.viewDef->scissor.y1 + 1 );
+		targetViewport.x1 + targetScissor.x1,
+		targetViewport.y1 + targetScissor.y1,
+		targetScissor.x2 - targetScissor.x1 + 1,
+		targetScissor.y2 - targetScissor.y1 + 1 );
 	GL_SelectTexture( 0 );
 	presentImage->Bind();
 	GL_TexEnv( GL_MODULATE );
 
 	RB_SetFramebufferSRGBEnabled( true );
-	RB_DrawFullscreenPostProcessQuad( viewportWidth, viewportHeight, textureWidth, textureHeight );
+	if ( preserveFarDepth ) {
+		GL_SelectTexture( 1 );
+		presentDepthImage->Bind();
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE );
+		glTexParameteri( GL_TEXTURE_2D, GL_DEPTH_TEXTURE_MODE, GL_LUMINANCE );
+		GL_SelectTexture( 0 );
+		glUseProgramObjectARB( rbSceneDepthAwarePresentProgram );
+		glUniform1iARB( rbSceneDepthAwarePresentSceneLocation, 0 );
+		glUniform1iARB( rbSceneDepthAwarePresentDepthLocation, 1 );
+	}
+	RB_DrawFullscreenPostProcessQuad( sourceViewportWidth, sourceViewportHeight, textureWidth, textureHeight );
+	if ( preserveFarDepth ) {
+		glUseProgramObjectARB( 0 );
+		GL_SelectTexture( 1 );
+		globalImages->BindNull();
+		GL_SelectTexture( 0 );
+	}
 	RB_SetFramebufferSRGBEnabled( false );
 
 	globalImages->BindNull();
@@ -2898,8 +3593,8 @@ void RB_ApplyResolutionScaleToBackBuffer( void ) {
 		return;
 	}
 
-	const int scalePercent = idMath::ClampInt( 10, 100, r_screenFraction.GetInteger() );
-	if ( scalePercent >= 100 ) {
+	const int scalePercent = RB_RequestedScreenFraction();
+	if ( scalePercent >= RB_SCREEN_FRACTION_NATIVE ) {
 		return;
 	}
 
@@ -3106,7 +3801,7 @@ void RB_ApplyCRTToBackBuffer( void ) {
 	const GLfloat scanlineStrength = idMath::ClampFloat( 0.0f, 1.0f, r_crtScanlineStrength.GetFloat() );
 	const GLfloat maskStrength = idMath::ClampFloat( 0.0f, 1.0f, r_crtMaskStrength.GetFloat() );
 	const GLfloat curvature = idMath::ClampFloat( 0.0f, 0.25f, r_crtCurvature.GetFloat() );
-	const GLfloat chromaticAberration = idMath::ClampFloat( 0.0f, 8.0f, r_crtChromatic.GetFloat() );
+	const GLfloat chromaticAberration = idMath::ClampFloat( 0.0f, 0.35f, r_crtChromatic.GetFloat() );
 	const GLfloat timeSeconds = static_cast<GLfloat>( backEnd.frameCount ) * ( 1.0f / 60.0f );
 
 	if ( rbCRTStage.shaderParmLocations[RB_CRT_UNIFORM_INV_TEX_SIZE] >= 0 ) {
@@ -5005,6 +5700,14 @@ void RB_T_FillDepthBuffer( const drawSurf_t *surf ) {
 		return;
 	}
 
+	// Portal-sky surfaces are a mask for the sky camera rendered before the
+	// main scene. Keep those pixels at far depth when a scene-target present
+	// needs to preserve the already-rendered sky color.
+	if ( RB_MaterialIsPortalSkyForSSAO( shader )
+		&& ( RB_SSAORequestedForCurrentView() || RB_ShouldPreserveSceneRenderTargetFarDepth( backEnd.viewDef ) ) ) {
+		return;
+	}
+
 	// some deforms may disable themselves by setting numIndexes = 0
 	if ( !tri->numIndexes ) {
 		return;
@@ -5211,6 +5914,176 @@ void RB_STD_FillDepthBuffer( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 		GL_SelectTexture( 0 );
 	}
 
+}
+
+typedef bool (*rbDrawSurfFilter_t)( const drawSurf_t *surf );
+
+static bool RB_MaterialIsSkyForSSAODepth( const idMaterial *material ) {
+	if ( material == NULL ) {
+		return false;
+	}
+	if ( RB_MaterialIsPortalSkyForSSAO( material ) ) {
+		return true;
+	}
+
+	const texgen_t texgen = material->Texgen();
+	return texgen == TG_SKYBOX_CUBE || texgen == TG_WOBBLESKY_CUBE;
+}
+
+static bool RB_SSAOWorldDepthSurfFilter( const drawSurf_t *surf ) {
+	if ( surf == NULL || surf->space == NULL || surf->geo == NULL || surf->material == NULL ) {
+		return false;
+	}
+	if ( ( surf->dsFlags & DSF_BSE_EFFECT ) != 0 ) {
+		return false;
+	}
+	if ( surf->space->weaponDepthHack || surf->space->modelDepthHack != 0.0f ) {
+		return false;
+	}
+
+	const idMaterial *material = surf->material;
+	if ( !material->IsDrawn() || material->Coverage() == MC_TRANSLUCENT ) {
+		return false;
+	}
+	if ( material->GetSort() >= SS_POST_PROCESS || material->GetSort() == SS_SUBVIEW ) {
+		return false;
+	}
+	if ( material->HasGui() || material->SuppressInSubview() || RB_MaterialIsSkyForSSAODepth( material ) ) {
+		return false;
+	}
+
+	const idRenderEntityLocal *entityDef = surf->space->entityDef;
+	if ( entityDef == NULL ) {
+		return true;
+	}
+
+	const renderEntity_t &renderEntity = entityDef->parms;
+	if ( renderEntity.remoteRenderView != NULL
+		|| renderEntity.allowSurfaceInViewID != 0
+		|| renderEntity.weaponDepthHackInViewID != 0
+		|| renderEntity.modelDepthHack != 0.0f ) {
+		return false;
+	}
+	return true;
+}
+
+static int RB_RenderDrawSurfListWithFilter( drawSurf_t **drawSurfs, int numDrawSurfs, void (*triFunc_)( const drawSurf_t * ), rbDrawSurfFilter_t filter ) {
+	int rendered = 0;
+	backEnd.currentSpace = NULL;
+
+	for ( int i = 0; i < numDrawSurfs; i++ ) {
+		const drawSurf_t *drawSurf = drawSurfs[i];
+		if ( filter != NULL && !filter( drawSurf ) ) {
+			continue;
+		}
+		if ( drawSurf == NULL || drawSurf->space == NULL ) {
+			continue;
+		}
+
+		if ( drawSurf->space != backEnd.currentSpace ) {
+			glLoadMatrixf( drawSurf->space->modelViewMatrix );
+		}
+
+		if ( drawSurf->space->weaponDepthHack ) {
+			RB_EnterWeaponDepthHack();
+		}
+
+		if ( drawSurf->space->modelDepthHack != 0.0f ) {
+			RB_EnterModelDepthHack( drawSurf->space->modelDepthHack );
+		}
+
+		if ( r_useScissor.GetBool() && !backEnd.currentScissor.Equals( drawSurf->scissorRect ) ) {
+			backEnd.currentScissor = drawSurf->scissorRect;
+			glScissor(
+				backEnd.viewDef->viewport.x1 + backEnd.currentScissor.x1,
+				backEnd.viewDef->viewport.y1 + backEnd.currentScissor.y1,
+				backEnd.currentScissor.x2 + 1 - backEnd.currentScissor.x1,
+				backEnd.currentScissor.y2 + 1 - backEnd.currentScissor.y1 );
+		}
+
+		triFunc_( drawSurf );
+
+		if ( drawSurf->space->weaponDepthHack || drawSurf->space->modelDepthHack != 0.0f ) {
+			RB_LeaveDepthHack();
+		}
+
+		backEnd.currentSpace = drawSurf->space;
+		rendered++;
+	}
+
+	return rendered;
+}
+
+static int RB_STD_FillDepthBufferFiltered( drawSurf_t **drawSurfs, int numDrawSurfs, rbDrawSurfFilter_t filter ) {
+	if ( !backEnd.viewDef->viewEntitys ) {
+		return 0;
+	}
+
+	if ( backEnd.viewDef->numClipPlanes ) {
+		GL_SelectTexture( 1 );
+		globalImages->alphaNotchImage->Bind();
+		glDisableClientState( GL_TEXTURE_COORD_ARRAY );
+		glEnable( GL_TEXTURE_GEN_S );
+		glTexCoord2f( 1, 0.5 );
+	}
+
+	GL_SelectTexture( 0 );
+	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
+
+	glPolygonOffset( r_offsetFactor.GetFloat(), r_offsetUnits.GetFloat() );
+
+	GL_State( GLS_DEPTHFUNC_LESS );
+	glEnable( GL_STENCIL_TEST );
+	glStencilFunc( GL_ALWAYS, 1, 255 );
+
+	const int rendered = RB_RenderDrawSurfListWithFilter( drawSurfs, numDrawSurfs, RB_T_FillDepthBuffer, filter );
+
+	if ( backEnd.viewDef->numClipPlanes ) {
+		GL_SelectTexture( 1 );
+		globalImages->BindNull();
+		glDisable( GL_TEXTURE_GEN_S );
+		GL_SelectTexture( 0 );
+	}
+
+	return rendered;
+}
+
+static void RB_CaptureSSAOWorldDepthImage( drawSurf_t **drawSurfs, int numDrawSurfs ) {
+	rbSSAOWorldDepthFrame = -1;
+	rbSSAOWorldDepthWidth = 0;
+	rbSSAOWorldDepthHeight = 0;
+
+	if ( !RB_SSAORequestedForCurrentView() || globalImages == NULL || backEnd.viewDef == NULL ) {
+		return;
+	}
+
+	const int viewportWidth = backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1;
+	const int viewportHeight = backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1;
+	idImage *worldDepthImage = RB_EnsureSSAODepthScratchImage( rbSSAOWorldDepthImage, "_ssaoWorldDepth", viewportWidth, viewportHeight );
+	if ( worldDepthImage == NULL ) {
+		return;
+	}
+
+	RB_LogComment( "---------- RB_CaptureSSAOWorldDepthImage ----------\n" );
+
+	glColorMask( GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE );
+	const int rendered = RB_STD_FillDepthBufferFiltered( drawSurfs, numDrawSurfs, RB_SSAOWorldDepthSurfFilter );
+	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
+
+	if ( rendered > 0 ) {
+		worldDepthImage->CopyDepthbuffer(
+			backEnd.viewDef->viewport.x1,
+			backEnd.viewDef->viewport.y1,
+			viewportWidth,
+			viewportHeight );
+		rbSSAOWorldDepthFrame = backEnd.frameCount;
+		rbSSAOWorldDepthWidth = viewportWidth;
+		rbSSAOWorldDepthHeight = viewportHeight;
+	}
+
+	// Restore the view to a clean depth/stencil buffer before the normal renderer
+	// either runs its full depth prepass or accepts the modern visible handoff.
+	RB_BeginDrawingView();
 }
 
 /*
@@ -7399,8 +8272,23 @@ void	RB_STD_DrawView( void ) {
 	drawSurfs = (drawSurf_t **)&backEnd.viewDef->drawSurfs[0];
 	numDrawSurfs = backEnd.viewDef->numDrawSurfs;
 
-	if ( RB_SceneRenderTargetRequested() && RB_EnsureSceneRenderTexture() ) {
+	RB_MarkPortalSkyBackdropForSceneTarget( backEnd.viewDef );
+
+	rbSceneScaleState_t sceneScaleState;
+	RB_ClearSceneScaleState( sceneScaleState );
+	const bool rootSceneRenderTargetRequested = RB_SceneRenderTargetRequested();
+	const bool inlineSubviewSceneRenderTargetRequested = RB_InlineSubviewSceneRenderTargetRequested();
+	const viewDef_t *portalSkySceneTargetView = RB_PortalSkySceneTargetView( backEnd.viewDef );
+	if ( portalSkySceneTargetView != NULL ) {
+		RB_MarkSceneRenderTargetPreserveFarDepth( portalSkySceneTargetView );
+	}
+	const viewDef_t *sceneTargetView = inlineSubviewSceneRenderTargetRequested
+		? backEnd.viewDef->superView
+		: backEnd.viewDef;
+	if ( ( rootSceneRenderTargetRequested || inlineSubviewSceneRenderTargetRequested )
+		&& RB_EnsureSceneRenderTexture( sceneTargetView ) ) {
 		backEnd.renderTexture = rbSceneRenderTexture;
+		RB_BeginSceneSupersampling( sceneScaleState, sceneTargetView );
 	}
 
 	// If we have a backend rendertexture, assign it here.
@@ -7413,6 +8301,7 @@ void	RB_STD_DrawView( void ) {
 
 	// clear the z buffer, set the projection matrix, etc
 	RB_BeginDrawingView();
+	RB_CaptureSSAOWorldDepthImage( drawSurfs, numDrawSurfs );
 
 	// decide how much overbrighting we are going to do
 	RB_DetermineLightScale();
@@ -7470,6 +8359,8 @@ void	RB_STD_DrawView( void ) {
 		processed = RB_STD_DrawShaderPasses( drawSurfs, numDrawSurfs );
 	}
 
+	R_ModernGLExecutor_SubmitForwardPlusDecalOverlay( backEnd.viewDef );
+
 	// Apply a configurable brightness floor after ambient/material passes.
 	RB_STD_ForceAmbient();
 
@@ -7482,6 +8373,7 @@ void	RB_STD_DrawView( void ) {
 
 	// Modern visible color and depth enter the existing HDR/SSAO/bloom stack here; GUI remains a swap-time overlay.
 	R_ModernGLExecutor_ComposeVisibleSceneForPost();
+	RB_CaptureSceneRenderTargetPreserveDepthImage();
 
 	// Apply SSAO before bloom and tonemapping so indirect shadowing modulates the lit scene.
 	RB_STD_SSAO();
@@ -7502,8 +8394,15 @@ void	RB_STD_DrawView( void ) {
 
 	RB_RenderDebugTools( drawSurfs, numDrawSurfs );
 
-	if ( RB_IsSceneRenderTexture( backEnd.renderTexture ) ) {
-		RB_PresentSceneRenderTargetToBackBuffer();
+	if ( rootSceneRenderTargetRequested && RB_IsSceneRenderTexture( backEnd.renderTexture ) ) {
+		RB_PresentSceneRenderTargetToBackBuffer( sceneScaleState );
+	}
+	RB_RestoreSceneSupersampling( sceneScaleState );
+
+	if ( inlineSubviewSceneRenderTargetRequested
+		&& RB_IsSceneRenderTexture( backEnd.renderTexture ) ) {
+		backEnd.renderTexture = NULL;
+		idRenderTexture::BindNull();
 	}
 
 // jmarshall - stupid OpenGL

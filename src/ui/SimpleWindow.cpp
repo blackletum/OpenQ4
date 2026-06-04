@@ -523,16 +523,6 @@ void idSimpleWindow::Redraw(float x, float y) {
 	}
 	DrawBackground(drawRect);
 	DrawBorderAndCaption(drawRect);
-	if ( textShadow ) {
-		idStr shadowText = text;
-		idRectangle shadowRect = textRect;
-
-		shadowText.RemoveColors();
-		shadowRect.x += textShadow;
-		shadowRect.y += textShadow;
-
-		dc->DrawText( shadowText, textScale, textAlign, colorBlack, shadowRect, !( flags & WIN_NOWRAP ), -1, false, NULL, 0, textSpacing, textStyle, ( flags & WIN_CHATWINDOW ) != 0 );
-	}
 	dc->DrawText( text, textScale, textAlign, foreColor, textRect, !( flags & WIN_NOWRAP ), -1, false, NULL, 0, textSpacing, textStyle, ( flags & WIN_CHATWINDOW ) != 0 );
 	dc->SetTransformInfo(vec3_origin, mat3_identity);
 	if ( flags & WIN_NOCLIP ) {
@@ -703,12 +693,23 @@ void idSimpleWindow::ReadFromSaveGame( idFile *savefile ) {
 
 	int stringLen;
 
-	savefile->Read( &stringLen, sizeof( stringLen ) );
+	const int stringOffset = savefile->Tell();
+	if ( savefile->Read( &stringLen, sizeof( stringLen ) ) != sizeof( stringLen ) ) {
+		common->Error( "idSimpleWindow::ReadFromSaveGame: truncated background length at offset %d", stringOffset );
+	}
+	const int remainingBytes = Max( 0, savefile->Length() - savefile->Tell() );
+	const int maxSavedStringLength = 64 * 1024;
+	if ( stringLen < 0 || stringLen > maxSavedStringLength || stringLen > remainingBytes ) {
+		common->Error( "idSimpleWindow::ReadFromSaveGame: invalid background length %d at offset %d (remaining %d)",
+			stringLen, stringOffset, remainingBytes );
+	}
 	if ( stringLen > 0 ) {
 		idStr backName;
 
 		backName.Fill( ' ', stringLen );
-		savefile->Read( &(backName)[0], stringLen );
+		if ( savefile->Read( &(backName)[0], stringLen ) != stringLen ) {
+			common->Error( "idSimpleWindow::ReadFromSaveGame: truncated background name at offset %d", savefile->Tell() );
+		}
 
 		background = declManager->FindMaterial( backName );
 		if ( background ) {

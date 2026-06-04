@@ -360,7 +360,6 @@ idRenderModelDecal::CreateDecal
 =================
 */
 void idRenderModelDecal::CreateDecal( const idRenderModel *model, const decalProjectionInfo_t &localInfo ) {
-
 	// check all model surfaces
 	for ( int surfNum = 0; surfNum < model->NumSurfaces(); surfNum++ ) {
 		const modelSurface_t *surf = model->Surface( surfNum );

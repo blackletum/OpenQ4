@@ -92,6 +92,14 @@ idImage::DeriveOpts
 */
 ID_INLINE void idImage::DeriveOpts() {
 
+	if ( usage == TD_FONT ) {
+		opts.format = FMT_DXT1;
+		opts.colorFormat = CFM_GREEN_ALPHA;
+		opts.numLevels = 4; // Retail Quake 4's generated font-atlas path keeps four mip levels.
+		opts.gammaMips = true;
+		return;
+	}
+
 	if ( opts.format == FMT_NONE ) {
 		opts.colorFormat = CFM_DEFAULT;
 // jmarshall - no need to compress
@@ -221,6 +229,20 @@ ID_INLINE void idImage::DeriveOpts() {
 			}
 		}
 	}
+}
+
+static ID_INLINE bool R_GeneratedImageHeaderMatchesDerivedOpts( const bimageFile_t &header, const idImageOpts &derivedOpts, textureUsage_t usage ) {
+	if ( header.colorFormat != derivedOpts.colorFormat ||
+		header.format != derivedOpts.format ||
+		header.textureType != derivedOpts.textureType ) {
+		return false;
+	}
+
+	if ( usage == TD_FONT && header.numLevels != derivedOpts.numLevels ) {
+		return false;
+	}
+
+	return true;
 }
 
 /*
@@ -429,9 +451,7 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 	const bimageFile_t & header = im.GetFileHeader();
 
 	if ( ( fileSystem->InProductionMode() && binaryFileTime != FILE_NOT_FOUND_TIMESTAMP ) || ( ( binaryFileTime != FILE_NOT_FOUND_TIMESTAMP )
-		&& ( header.colorFormat == opts.colorFormat )
-		&& ( header.format == opts.format )
-		&& ( header.textureType == opts.textureType )
+		&& R_GeneratedImageHeaderMatchesDerivedOpts( header, opts, usage )
 		) ) {
 		opts.width = header.width;
 		opts.height = header.height;

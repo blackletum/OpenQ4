@@ -379,17 +379,6 @@ void idChoiceWindow::Draw(int time, float x, float y) {
 	// FIXME: It'd be really cool if textAlign worked, but a lot of the guis have it set wrong because it used to not work
 	textAlign = 0;
 
-	if ( textShadow ) {
-		idStr shadowText = choices[currentChoice];
-		idRectangle shadowRect = textRect;
-
-		shadowText.RemoveColors();
-		shadowRect.x += textShadow;
-		shadowRect.y += textShadow;
-
-		dc->DrawText( shadowText, textScale, textAlign, colorBlack, shadowRect, false, -1, false, NULL, 0, Q4_CHOICE_WINDOW_TEXT_SPACING, style );
-	}
-
 	if ( hover && !noEvents && Contains(gui->CursorX(), gui->CursorY()) ) {
 		color = hoverColor;
 	} else {

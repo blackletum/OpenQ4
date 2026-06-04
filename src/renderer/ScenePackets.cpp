@@ -19,7 +19,6 @@ static bool R_ScenePackets_ModernPipelineRequested( void ) {
 		|| r_rendererModernSubmit.GetBool()
 		|| r_rendererGpuValidation.GetBool()
 		|| r_rendererBindless.GetBool()
-		|| r_ssao.GetBool()
 		|| modernVisibleRequested
 		|| r_rendererModernVisibleDepth.GetBool()
 		|| r_rendererModernDepthDebug.GetInteger() > 0
@@ -150,13 +149,20 @@ static const idImage *R_ScenePackets_FirstAmbientImage( const idMaterial *materi
 	if ( material == NULL ) {
 		return NULL;
 	}
+	const bool preferClassicDecalStage = material->GetSort() >= SS_DECAL && material->GetSort() < SS_MEDIUM;
+	const idImage *firstAmbientImage = NULL;
 	for ( int i = 0; i < material->GetNumStages(); ++i ) {
 		const shaderStage_t *stage = material->GetStage( i );
 		if ( stage != NULL && stage->lighting == SL_AMBIENT && stage->texture.image != NULL ) {
-			return stage->texture.image;
+			if ( firstAmbientImage == NULL ) {
+				firstAmbientImage = stage->texture.image;
+			}
+			if ( !preferClassicDecalStage || stage->newStage == NULL ) {
+				return stage->texture.image;
+			}
 		}
 	}
-	return NULL;
+	return firstAmbientImage;
 }
 
 static bool R_ScenePackets_DrawSurfUsesSkinning( const drawSurf_t *drawSurf ) {

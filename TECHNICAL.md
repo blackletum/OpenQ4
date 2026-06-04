@@ -110,6 +110,7 @@ openQ4 automatically validates your Quake 4 installation to ensure you have legi
 - `r_hdrToneMap 0|1` — Toggle HDR filmic tone mapping and color correction
 - `r_ssao 0|1` — Toggle screen-space ambient occlusion
 - `r_crt 0|1` — Toggle CRT emulation post-processing
+- `r_crtChromatic` — Optional CRT channel convergence offset; defaults to `0` and is capped to a subtle range to avoid global RGB edge artifacts
 - `r_useShadowMap 0|1` — Enable the experimental shadow-map path
 - `r_shadowMapCSM 0|1` — Enable projected-light cascaded shadow maps (when shadow maps are active)
 - `r_shadowMapHashedAlpha 0|1` — Hashed alpha testing for cutout/perforated shadow casters
@@ -124,8 +125,8 @@ openQ4 automatically validates your Quake 4 installation to ensure you have legi
 - See [docs-user/shadow-mapping.md](docs-user/shadow-mapping.md) for the full shadow-map CVar reference, presets, transparency behavior, and debug modes
 
 ### Resolution Scaling
-- `r_screenFraction` — Values below `100` reduce internal resolution; values above `100` expose supersample-style presets in the video menu
-- `r_resolutionScaleMode 0` — Legacy viewport scaling (default)
+- `r_screenFraction` — `10..200`; values below `100` reduce or simulate reduced resolution, while values above `100` supersample the root scene in a single-sample offscreen target and resolve to the native back buffer
+- `r_resolutionScaleMode 0` — Legacy cropped viewport scaling below native resolution
 - `r_resolutionScaleMode 1` — Bilinear fullscreen upscale
 - `r_resolutionScaleMode 2` — High-quality fullscreen upscale + sharpening
 - `r_resolutionScaleSharpness` — HQ sharpen strength (`0.0` to `1.5`)
@@ -187,6 +188,10 @@ openQ4-client_x64 +set fs_basepath "C:\path\to\Quake 4"
 ```
 
 </details>
+
+### Crash Diagnostics
+
+On Windows, openQ4 installs an unhandled-exception crash handler in packaged and local builds. Crashes write `openq4_crash_*.log` and `openq4_crash_*.dmp` files under a `crashes/` directory beside the executable, for example `.install/crashes/` when launching from the staged package root. Public Windows release packages include matching PDB diagnostic symbols so those dumps can be symbolized.
 
 ---
 

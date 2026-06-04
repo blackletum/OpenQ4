@@ -86,6 +86,21 @@ static bool vidmode_active = false;
 static int save_rampsize = 0;
 static unsigned short *save_red, *save_green, *save_blue;
 
+static void GLimp_FreeVidModes( void ) {
+	if ( vidmodes != NULL ) {
+		XFree( vidmodes );
+		vidmodes = NULL;
+	}
+	num_vidmodes = 0;
+}
+
+static void GLimp_RestoreDisplayMode( void ) {
+	if ( dpy != NULL && vidmode_active && vidmodes != NULL && num_vidmodes > 0 && vidmodes[0] != NULL ) {
+		XF86VidModeSwitchToMode( dpy, scrnum, vidmodes[0] );
+	}
+	vidmode_active = false;
+}
+
 void GLimp_WakeBackEnd(void *a) {
 	common->DPrintf("GLimp_WakeBackEnd stub\n");
 }
@@ -266,12 +281,32 @@ void GLimp_SaveGamma() {
 	}
 
 	assert( dpy );
-	
-	XF86VidModeGetGammaRampSize( dpy, scrnum, &save_rampsize);
-	save_red = (unsigned short *)malloc(save_rampsize*sizeof(unsigned short));
-	save_green = (unsigned short *)malloc(save_rampsize*sizeof(unsigned short));
-	save_blue = (unsigned short *)malloc(save_rampsize*sizeof(unsigned short));
-	XF86VidModeGetGammaRamp( dpy, scrnum, save_rampsize, save_red, save_green, save_blue);
+
+	int rampSize = 0;
+	if ( !XF86VidModeGetGammaRampSize( dpy, scrnum, &rampSize ) || rampSize <= 0 ) {
+		return;
+	}
+
+	save_red = (unsigned short *)malloc( rampSize * sizeof( unsigned short ) );
+	save_green = (unsigned short *)malloc( rampSize * sizeof( unsigned short ) );
+	save_blue = (unsigned short *)malloc( rampSize * sizeof( unsigned short ) );
+	if ( save_red == NULL || save_green == NULL || save_blue == NULL ) {
+		free( save_red );
+		free( save_green );
+		free( save_blue );
+		save_red = save_green = save_blue = NULL;
+		return;
+	}
+
+	if ( !XF86VidModeGetGammaRamp( dpy, scrnum, rampSize, save_red, save_green, save_blue ) ) {
+		free( save_red );
+		free( save_green );
+		free( save_blue );
+		save_red = save_green = save_blue = NULL;
+		return;
+	}
+
+	save_rampsize = rampSize;
 }
 
 /*
@@ -282,12 +317,14 @@ save and restore the original gamma of the system
 =================
 */
 void GLimp_RestoreGamma() {
-	if (!save_rampsize)
+	if ( !save_rampsize || dpy == NULL || save_red == NULL || save_green == NULL || save_blue == NULL ) {
 		return;
-	
+	}
+
 	XF86VidModeSetGammaRamp( dpy, scrnum, save_rampsize, save_red, save_green, save_blue);
 	
 	free(save_red); free(save_green); free(save_blue);
+	save_red = save_green = save_blue = NULL;
 	save_rampsize = 0;
 }
 
@@ -301,10 +338,12 @@ the size of the gamma ramp can not be changed on X (I need to confirm this)
 */
 void GLimp_SetGamma(unsigned short red[256], unsigned short green[256], unsigned short blue[256]) {
 	if ( dpy ) {		
-		int size;
+		int size = 0;
 		
 		GLimp_SaveGamma();
-		XF86VidModeGetGammaRampSize( dpy, scrnum, &size);
+		if ( !XF86VidModeGetGammaRampSize( dpy, scrnum, &size ) || size <= 0 ) {
+			return;
+		}
 		common->DPrintf("XF86VidModeGetGammaRampSize: %d\n", size);
 		if ( size > 256 ) {
 			// silly generic resample
@@ -313,6 +352,12 @@ void GLimp_SetGamma(unsigned short red[256], unsigned short green[256], unsigned
 			l_red = (unsigned short *)malloc(size*sizeof(unsigned short));
 			l_green = (unsigned short *)malloc(size*sizeof(unsigned short));
 			l_blue = (unsigned short *)malloc(size*sizeof(unsigned short));
+			if ( l_red == NULL || l_green == NULL || l_blue == NULL ) {
+				free( l_red );
+				free( l_green );
+				free( l_blue );
+				return;
+			}
 			//int r_size = 256;
 			int r_i; float r_f;
 			for(i=0; i<size-1; i++) {
@@ -335,27 +380,32 @@ void GLimp_SetGamma(unsigned short red[256], unsigned short green[256], unsigned
 void GLimp_Shutdown() {
 	if ( dpy ) {
 		
-		Sys_XUninstallGrabs();
+		if ( win != 0 ) {
+			Sys_XUninstallGrabs();
+		}
 	
 		GLimp_RestoreGamma();
 
-		glXDestroyContext( dpy, ctx );
+		if ( ctx != NULL ) {
+			glXMakeCurrent( dpy, None, NULL );
+			glXDestroyContext( dpy, ctx );
+		}
 		
 #if !defined( ID_GL_HARDLINK )
 		GLimp_dlclose();
 #endif
 		
-		XDestroyWindow( dpy, win );
-		if ( vidmode_active ) {
-			XF86VidModeSwitchToMode( dpy, scrnum, vidmodes[0] );
+		if ( win != 0 ) {
+			XDestroyWindow( dpy, win );
 		}
+		GLimp_RestoreDisplayMode();
 
 		XFlush( dpy );
+		GLimp_FreeVidModes();
 
 		// FIXME: that's going to crash
 		//XCloseDisplay( dpy );
 
-		vidmode_active = false;
 		dpy = NULL;
 		win = 0;
 		ctx = NULL;
@@ -372,11 +422,11 @@ GLX_TestDGA
 Check for DGA	- update in_dgamouse if needed
 */
 void GLX_TestDGA() {
-	int dga_MajorVersion = 0, dga_MinorVersion = 0;
-
 	assert( dpy );
 
 #if defined( ID_ENABLE_DGA )
+	int dga_MajorVersion = 0, dga_MinorVersion = 0;
+
 	if ( !XF86DGAQueryVersion( dpy, &dga_MajorVersion, &dga_MinorVersion ) ) {
 		// unable to query, probalby not supported
 		common->Printf( "Failed to detect DGA DirectVideo Mouse\n" );
@@ -522,9 +572,16 @@ int GLX_Init(glimpParms_t a) {
 	GLX_TestDGA();
 
 	if ( vidmode_ext ) {
-		int best_fit, best_dist, dist, x, y;
+		GLimp_FreeVidModes();
+		if ( !XF86VidModeGetAllModeLines( dpy, scrnum, &num_vidmodes, &vidmodes ) || vidmodes == NULL || num_vidmodes <= 0 ) {
+			common->Printf( "XFree86-VidModeExtension: no usable modes reported\n" );
+			GLimp_FreeVidModes();
+			vidmode_ext = false;
+		}
+	}
 
-		XF86VidModeGetAllModeLines( dpy, scrnum, &num_vidmodes, &vidmodes );
+	if ( vidmode_ext ) {
+		int best_fit, best_dist, dist, x, y;
 
 		// Are we going fullscreen?  If so, let's change video mode
 		if ( a.fullScreen ) {
@@ -532,6 +589,9 @@ int GLX_Init(glimpParms_t a) {
 			best_fit = -1;
 
 			for (i = 0; i < num_vidmodes; i++) {
+				if ( vidmodes[i] == NULL ) {
+					continue;
+				}
 				if (a.width > vidmodes[i]->hdisplay ||
 					a.height > vidmodes[i]->vdisplay)
 					continue;
@@ -655,6 +715,7 @@ int GLX_Init(glimpParms_t a) {
 
 	if (!visinfo) {
 		common->Printf("Couldn't get a visual\n");
+		GLimp_RestoreDisplayMode();
 		return false;
 	}
 	// window attributes
@@ -676,6 +737,12 @@ int GLX_Init(glimpParms_t a) {
 						actualWidth, actualHeight,
 						0, visinfo->depth, InputOutput,
 						visinfo->visual, mask, &attr);
+	if ( win == 0 ) {
+		common->Printf( "XCreateWindow failed\n" );
+		XFree( visinfo );
+		GLimp_RestoreDisplayMode();
+		return false;
+	}
 
 	XStoreName(dpy, win, GAME_NAME);
 
@@ -698,6 +765,9 @@ int GLX_Init(glimpParms_t a) {
 	if ( !GLX_CreateContextWithLadder( visinfo ) ) {
 		common->Printf( "Couldn't create a GLX context\n" );
 		XFree(visinfo);
+		XDestroyWindow( dpy, win );
+		win = 0;
+		GLimp_RestoreDisplayMode();
 		return false;
 	}
 	XSync(dpy, False);
@@ -705,13 +775,21 @@ int GLX_Init(glimpParms_t a) {
 	// Free the visinfo after we're done with it
 	XFree(visinfo);
 
-	glXMakeCurrent(dpy, win, ctx);
+	if ( !glXMakeCurrent(dpy, win, ctx) ) {
+		common->Printf( "glXMakeCurrent failed\n" );
+		glXDestroyContext( dpy, ctx );
+		ctx = NULL;
+		XDestroyWindow( dpy, win );
+		win = 0;
+		GLimp_RestoreDisplayMode();
+		return false;
+	}
 
 	glstring = (const char *) glGetString(GL_RENDERER);
-	common->Printf("GL_RENDERER: %s\n", glstring);
+	common->Printf("GL_RENDERER: %s\n", glstring != NULL ? glstring : "<unknown>");
 	
 	glstring = (const char *) glGetString(GL_EXTENSIONS);
-	common->Printf("GL_EXTENSIONS: %s\n", glstring);
+	common->Printf("GL_EXTENSIONS: %s\n", glstring != NULL ? glstring : "<unavailable>");
 
 	// FIXME: here, software GL test
 
@@ -818,7 +896,9 @@ int Sys_GetVideoRam( void ) {
 		int len;
 		char umm_buf[ 1024 ];
 		char *line;
-		if ( ( len = read( fd, umm_buf, 1024 ) ) != -1 ) {
+		len = read( fd, umm_buf, sizeof( umm_buf ) );
+		close( fd );
+		if ( len > 1 ) {
 			// should be way enough to get the full file
 			// grab "free  LFB = " line and "free  Inv = " lines
 			umm_buf[ len-1 ] = '\0';
@@ -839,7 +919,7 @@ int Sys_GetVideoRam( void ) {
 				run_once &= ~15;
 				return run_once;
 			}
-		} else {
+		} else if ( len == -1 ) {
 			common->Printf( "read /proc/dri/0/umm failed: %s\n", strerror( errno ) );
 		}
 	}

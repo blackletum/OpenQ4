@@ -883,8 +883,11 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 			"void main() {\n"
 			"    vec4 texel = ModernSampleMainTexture(vTexCoord);\n"
 			"    float blendAmount = clamp(uLocalParams.x, 0.0, 1.0);\n"
+			"    float decalMode = step(0.5, uLocalParams.w);\n"
 			"    vec3 blendColor = vec3(uLocalParams.y, uLocalParams.z, uLocalParams.w);\n"
-			"    vec3 baseColor = texel.rgb * max(uDebugColor.rgb, vec3(0.0));\n"
+			"    vec4 vertexTint = clamp(vVertexColor, vec4(0.0), vec4(1.0));\n"
+			"    vec4 materialColor = texel * vertexTint * max(uDebugColor, vec4(0.0));\n"
+			"    vec3 baseColor = materialColor.rgb;\n"
 			"    vec3 materialNormal = ModernMaterialNormal();\n"
 			"    float specular = ModernSpecularStrength();\n"
 			"    vec3 emissive = ModernEmissiveColor();\n"
@@ -909,7 +912,8 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 			"        vec3 contribution = ModernClusterEvaluateLight(light, vViewPosition, materialNormal, specular, ModernMaterialFresnel(), attenuation);\n"
 			"        if (type == 0 || type == 1) { lightAccum += contribution * shadowVisibility; }\n"
 			"    }\n"
-			"    out_Color = vec4(ModernSceneReferredColor(mix(baseColor, blendColor, blendAmount) + lightAccum + emissive), texel.a * uDebugColor.a);\n"
+			"    vec3 transparentColor = mix(baseColor, blendColor, blendAmount) + lightAccum + emissive;\n"
+			"    out_Color = vec4(ModernSceneReferredColor(mix(transparentColor, baseColor, decalMode)), materialColor.a);\n"
 			"}\n",
 			glslVersion,
 			hasShaderStorage,

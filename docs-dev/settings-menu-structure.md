@@ -227,7 +227,7 @@ The pane has two display layouts:
 |---|---|---|---|---|---|
 | Display Device | `choiceDef` | `set_sys_display_device_val` | `r_screen` | Runtime `gui::display_names` / `gui::display_values` | Only visible when `gui::display_count > 1`. |
 | Multi-Screen | `choiceDef` | `set_sys_multiscreen_val` | `r_multiScreen` | `0 Primary Display Only`, `1 Span All Displays` | Only visible when more than one display is detected. |
-| Super Sample | `choiceDef` | `set_sys_supersample_val` | `r_screenFraction` | `75`, `85`, `100` | Displayed as `75%`, `85%`, `100%`. The engine cvar supports a wider range, but the GUI offers these three presets. |
+| Super Sample | `choiceDef` | `set_sys_supersample_val` | `r_screenFraction` | `75`, `85`, `100`, `125`, `150`, `200` | Values below `100%` keep the existing reduced-resolution choices; values above `100%` render the root scene into a larger single-sample offscreen target and resolve back to the native back buffer. |
 | Anti-Aliasing | `choiceDef` | `set_sys_msaa_val` | `r_multisamples` | `0 Off`, `2 2x`, `4 4x`, `8 8x`, `16 16x` | GUI cvar spelling is lower-case `r_multisamples`; the engine cvar is `r_multiSamples` and cvar lookup is case-insensitive. |
 | Post AA | `choiceDef` | `set_sys_postaa_val` | `r_postAA` | `0 Off`, `1 SMAA 1x` | Runtime post-process AA option. |
 | VSync | `choiceDef` | `set_sys_vsync_val` | `r_swapInterval` | `No;Yes` | Boolean picker. |

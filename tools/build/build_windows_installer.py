@@ -89,12 +89,16 @@ def inno_string_literal(value: Path | str) -> str:
 def validate_package_dir(package_dir: Path, arch: str) -> None:
     required_paths = [
         package_dir / f"{PRODUCT_NAME}-client_{arch}.exe",
+        package_dir / f"{PRODUCT_NAME}-client_{arch}.pdb",
         package_dir / f"{PRODUCT_NAME}-ded_{arch}.exe",
+        package_dir / f"{PRODUCT_NAME}-ded_{arch}.pdb",
         package_dir / "README.html",
         package_dir / "LICENSE",
         package_dir / "docs" / "index.html",
         package_dir / "baseoq4" / "mod.json",
         package_dir / "baseoq4" / "pak0.pk4",
+        package_dir / "baseoq4" / f"game-sp_{arch}.pdb",
+        package_dir / "baseoq4" / f"game-mp_{arch}.pdb",
     ]
 
     missing = [path for path in required_paths if not path.is_file()]

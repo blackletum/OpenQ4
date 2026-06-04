@@ -160,6 +160,20 @@ def get_required_game_module_binaries(platform: str, arch: str) -> tuple[str, st
     )
 
 
+def get_required_windows_root_symbols(arch: str) -> tuple[str, str]:
+    return (
+        f"{PRODUCT_NAME}-client_{arch}.pdb",
+        f"{PRODUCT_NAME}-ded_{arch}.pdb",
+    )
+
+
+def get_required_windows_game_symbols(arch: str) -> tuple[str, str]:
+    return (
+        f"game-sp_{arch}.pdb",
+        f"game-mp_{arch}.pdb",
+    )
+
+
 def write_text_file(path: Path, lines: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -355,6 +369,37 @@ def copy_required_game_binaries(
                 missing_required.append(filename)
                 continue
             raise FileNotFoundError(f"required game module not found: {source}")
+        shutil.copy2(source, package_game_dir / filename)
+
+    return missing_required
+
+
+def copy_required_windows_symbols(
+    arch: str,
+    install_dir: Path,
+    package_root: Path,
+    install_game_dir: Path,
+    package_game_dir: Path,
+    allow_missing_binaries: bool,
+) -> list[str]:
+    missing_required: list[str] = []
+
+    for filename in get_required_windows_root_symbols(arch):
+        source = install_dir / filename
+        if not source.is_file():
+            if allow_missing_binaries:
+                missing_required.append(filename)
+                continue
+            raise FileNotFoundError(f"required Windows diagnostic symbol not found: {source}")
+        shutil.copy2(source, package_root / filename)
+
+    for filename in get_required_windows_game_symbols(arch):
+        source = install_game_dir / filename
+        if not source.is_file():
+            if allow_missing_binaries:
+                missing_required.append(f"{GAME_DIR_NAME}/{filename}")
+                continue
+            raise FileNotFoundError(f"required Windows game diagnostic symbol not found: {source}")
         shutil.copy2(source, package_game_dir / filename)
 
     return missing_required
@@ -635,6 +680,16 @@ def main(argv: list[str]) -> int:
         package_game_dir,
         args.allow_missing_binaries,
     )
+    missing_symbols: list[str] = []
+    if args.platform == "windows":
+        missing_symbols = copy_required_windows_symbols(
+            args.arch,
+            install_dir,
+            package_root,
+            install_game_dir,
+            package_game_dir,
+            args.allow_missing_binaries,
+        )
     missing_loose_game_files = copy_required_loose_game_files(
         install_game_dir,
         package_game_dir,
@@ -697,6 +752,10 @@ def main(argv: list[str]) -> int:
         print("Linux launchers:")
         for filename in copied_linux_launchers:
             print(f"  - {package_root / filename}")
+    if missing_symbols:
+        print("Missing Windows diagnostic symbols allowed by --allow-missing-binaries:")
+        for filename in missing_symbols:
+            print(f"  - {filename}")
     if macos_app_bundle is not None:
         print(f"macOS app bundle: {macos_app_bundle}")
     if missing_required:

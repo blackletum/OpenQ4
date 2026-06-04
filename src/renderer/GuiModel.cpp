@@ -32,6 +32,27 @@ If you have questions concerning this license or the applicable additional terms
 #include "tr_local.h"
 #include "ScenePackets.h"
 
+static const int Q4_GUI_MODEL_MAX_SURFACE_VERTS = 12800;
+
+static ID_INLINE void R_SetGuiDrawVertPayload( idDrawVert *vert ) {
+	vert->color[0] = vert->color[1] = vert->color[2] = vert->color[3] = 255;
+	vert->color2[0] = vert->color2[1] = vert->color2[2] = vert->color2[3] = 255;
+}
+
+static ID_INLINE void R_SetGuiDrawVert( idDrawVert *vert, float x, float y, float z, float s, float t, const idDrawVert *source = NULL ) {
+	if ( source != NULL ) {
+		*vert = *source;
+	} else {
+		vert->Clear();
+	}
+
+	vert->xyz.Set( x, y, z );
+	vert->st.Set( s, t );
+	vert->normal.Set( 0, 0, 1 );
+	vert->tangents[0].Set( 1, 0, 0 );
+	vert->tangents[1].Set( 0, 1, 0 );
+	R_SetGuiDrawVertPayload( vert );
+}
 
 /*
 ================
@@ -419,6 +440,10 @@ void idGuiModel::DrawStretchPic( const idDrawVert *dverts, const glIndex_t *dind
 		surf->material = hShader;
 	}
 
+	if ( surf->numVerts > Q4_GUI_MODEL_MAX_SURFACE_VERTS ) {
+		AdvanceSurf();
+	}
+
 	// add the verts and indexes to the current surface
 
 	if ( clip ) {
@@ -433,39 +458,39 @@ void idGuiModel::DrawStretchPic( const idDrawVert *dverts, const glIndex_t *dind
 			w.AddPoint(idVec5(dverts[dindexes[i+1]].xyz.x, dverts[dindexes[i+1]].xyz.y, dverts[dindexes[i+1]].xyz.z, dverts[dindexes[i+1]].st.x, dverts[dindexes[i+1]].st.y));
 			w.AddPoint(idVec5(dverts[dindexes[i+2]].xyz.x, dverts[dindexes[i+2]].xyz.y, dverts[dindexes[i+2]].xyz.z, dverts[dindexes[i+2]].st.x, dverts[dindexes[i+2]].st.y));
 
+			bool needsClip = false;
 			for ( j = 0; j < 3; j++ ) {
 				if ( w[j].x < min_x || w[j].x > max_x ||
 					w[j].y < min_y || w[j].y > max_y ) {
+					needsClip = true;
 					break;
 				}
 			}
-// jmarshall - screen clipping isn't working. This is a optimisation I'm not worried about on current gen hardware
-			//if ( j < 3 ) {
-			//	idPlane p;
-			//	p.Normal().y = p.Normal().z = 0.0f; p.Normal().x = 1.0f; p.SetDist( min_x );
-			//	w.ClipInPlace( p );
-			//	p.Normal().y = p.Normal().z = 0.0f; p.Normal().x = -1.0f; p.SetDist( -max_x );
-			//	w.ClipInPlace( p );
-			//	p.Normal().x = p.Normal().z = 0.0f; p.Normal().y = 1.0f; p.SetDist( min_y );
-			//	w.ClipInPlace( p );
-			//	p.Normal().x = p.Normal().z = 0.0f; p.Normal().y = -1.0f; p.SetDist( -max_y );
-			//	w.ClipInPlace( p );
-			//}
-// jmarshall end
 
+			if ( needsClip ) {
+				idPlane clipPlane( 1.0f, 0.0f, 0.0f, -min_x );
+				w.ClipInPlace( clipPlane, 0.1f, false );
+
+				clipPlane = idPlane( -1.0f, 0.0f, 0.0f, max_x );
+				w.ClipInPlace( clipPlane, 0.1f, false );
+
+				clipPlane = idPlane( 0.0f, 1.0f, 0.0f, -min_y );
+				w.ClipInPlace( clipPlane, 0.1f, false );
+
+				clipPlane = idPlane( 0.0f, -1.0f, 0.0f, max_y );
+				w.ClipInPlace( clipPlane, 0.1f, false );
+			}
+
+			if ( w.GetNumPoints() <= 0 ) {
+				continue;
+			}
+
+			const idDrawVert *sourceVert = &dverts[dindexes[i]];
 			int	numVerts = verts.Num();
 			verts.SetNum( numVerts + w.GetNumPoints(), false );
 			for ( j = 0 ; j < w.GetNumPoints() ; j++ ) {
 				idDrawVert *dv = &verts[numVerts+j];
-
-				dv->xyz.x = w[j].x;
-				dv->xyz.y = w[j].y;
-				dv->xyz.z = w[j].z;
-				dv->st.x = w[j].s;
-				dv->st.y = w[j].t;
-				dv->normal.Set(0, 0, 1);
-				dv->tangents[0].Set(1, 0, 0);
-				dv->tangents[1].Set(0, 1, 0);
+				R_SetGuiDrawVert( dv, w[j].x, w[j].y, w[j].z, w[j].s, w[j].t, sourceVert );
 			}
 			surf->numVerts += w.GetNumPoints();
 
@@ -545,62 +570,10 @@ void idGuiModel::DrawStretchPic( float x, float y, float w, float h, float s1, f
 	indexes[3] = 2;
 	indexes[4] = 0;
 	indexes[5] = 1;
-	verts[0].xyz[0] = x;
-	verts[0].xyz[1] = y;
-	verts[0].xyz[2] = 0;
-	verts[0].st[0] = s1;
-	verts[0].st[1] = t1;
-	verts[0].normal[0] = 0;
-	verts[0].normal[1] = 0;
-	verts[0].normal[2] = 1;
-	verts[0].tangents[0][0] = 1;
-	verts[0].tangents[0][1] = 0;
-	verts[0].tangents[0][2] = 0;
-	verts[0].tangents[1][0] = 0;
-	verts[0].tangents[1][1] = 1;
-	verts[0].tangents[1][2] = 0;
-	verts[1].xyz[0] = x + w;
-	verts[1].xyz[1] = y;
-	verts[1].xyz[2] = 0;
-	verts[1].st[0] = s2;
-	verts[1].st[1] = t1;
-	verts[1].normal[0] = 0;
-	verts[1].normal[1] = 0;
-	verts[1].normal[2] = 1;
-	verts[1].tangents[0][0] = 1;
-	verts[1].tangents[0][1] = 0;
-	verts[1].tangents[0][2] = 0;
-	verts[1].tangents[1][0] = 0;
-	verts[1].tangents[1][1] = 1;
-	verts[1].tangents[1][2] = 0;
-	verts[2].xyz[0] = x + w;
-	verts[2].xyz[1] = y + h;
-	verts[2].xyz[2] = 0;
-	verts[2].st[0] = s2;
-	verts[2].st[1] = t2;
-	verts[2].normal[0] = 0;
-	verts[2].normal[1] = 0;
-	verts[2].normal[2] = 1;
-	verts[2].tangents[0][0] = 1;
-	verts[2].tangents[0][1] = 0;
-	verts[2].tangents[0][2] = 0;
-	verts[2].tangents[1][0] = 0;
-	verts[2].tangents[1][1] = 1;
-	verts[2].tangents[1][2] = 0;
-	verts[3].xyz[0] = x;
-	verts[3].xyz[1] = y + h;
-	verts[3].xyz[2] = 0;
-	verts[3].st[0] = s1;
-	verts[3].st[1] = t2;
-	verts[3].normal[0] = 0;
-	verts[3].normal[1] = 0;
-	verts[3].normal[2] = 1;
-	verts[3].tangents[0][0] = 1;
-	verts[3].tangents[0][1] = 0;
-	verts[3].tangents[0][2] = 0;
-	verts[3].tangents[1][0] = 0;
-	verts[3].tangents[1][1] = 1;
-	verts[3].tangents[1][2] = 0;
+	R_SetGuiDrawVert( &verts[0], x, y, 0.0f, s1, t1 );
+	R_SetGuiDrawVert( &verts[1], x + w, y, 0.0f, s2, t1 );
+	R_SetGuiDrawVert( &verts[2], x + w, y + h, 0.0f, s2, t2 );
+	R_SetGuiDrawVert( &verts[3], x, y + h, 0.0f, s1, t2 );
 
 	DrawStretchPic( &verts[0], &indexes[0], 4, 6, hShader, false, 0.0f, 0.0f, 640.0f, 480.0f );
 }
@@ -628,48 +601,9 @@ void idGuiModel::DrawStretchTri( idVec2 p1, idVec2 p2, idVec2 p3, idVec2 t1, idV
 	tempIndexes[0] = 1;
 	tempIndexes[1] = 0;
 	tempIndexes[2] = 2;
-	tempVerts[0].xyz[0] = p1.x;
-	tempVerts[0].xyz[1] = p1.y;
-	tempVerts[0].xyz[2] = 0;
-	tempVerts[0].st[0] = t1.x;
-	tempVerts[0].st[1] = t1.y;
-	tempVerts[0].normal[0] = 0;
-	tempVerts[0].normal[1] = 0;
-	tempVerts[0].normal[2] = 1;
-	tempVerts[0].tangents[0][0] = 1;
-	tempVerts[0].tangents[0][1] = 0;
-	tempVerts[0].tangents[0][2] = 0;
-	tempVerts[0].tangents[1][0] = 0;
-	tempVerts[0].tangents[1][1] = 1;
-	tempVerts[0].tangents[1][2] = 0;
-	tempVerts[1].xyz[0] = p2.x;
-	tempVerts[1].xyz[1] = p2.y;
-	tempVerts[1].xyz[2] = 0;
-	tempVerts[1].st[0] = t2.x;
-	tempVerts[1].st[1] = t2.y;
-	tempVerts[1].normal[0] = 0;
-	tempVerts[1].normal[1] = 0;
-	tempVerts[1].normal[2] = 1;
-	tempVerts[1].tangents[0][0] = 1;
-	tempVerts[1].tangents[0][1] = 0;
-	tempVerts[1].tangents[0][2] = 0;
-	tempVerts[1].tangents[1][0] = 0;
-	tempVerts[1].tangents[1][1] = 1;
-	tempVerts[1].tangents[1][2] = 0;
-	tempVerts[2].xyz[0] = p3.x;
-	tempVerts[2].xyz[1] = p3.y;
-	tempVerts[2].xyz[2] = 0;
-	tempVerts[2].st[0] = t3.x;
-	tempVerts[2].st[1] = t3.y;
-	tempVerts[2].normal[0] = 0;
-	tempVerts[2].normal[1] = 0;
-	tempVerts[2].normal[2] = 1;
-	tempVerts[2].tangents[0][0] = 1;
-	tempVerts[2].tangents[0][1] = 0;
-	tempVerts[2].tangents[0][2] = 0;
-	tempVerts[2].tangents[1][0] = 0;
-	tempVerts[2].tangents[1][1] = 1;
-	tempVerts[2].tangents[1][2] = 0;
+	R_SetGuiDrawVert( &tempVerts[0], p1.x, p1.y, 0.0f, t1.x, t1.y );
+	R_SetGuiDrawVert( &tempVerts[1], p2.x, p2.y, 0.0f, t2.x, t2.y );
+	R_SetGuiDrawVert( &tempVerts[2], p3.x, p3.y, 0.0f, t3.x, t3.y );
 
 	// break the current surface if we are changing to a new material
 	if ( material != surf->material ) {

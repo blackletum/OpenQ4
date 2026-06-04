@@ -735,10 +735,6 @@ idTCP::Write
 ==================
 */
 
-static void got_SIGPIPE( int signum ) {
-	common->Printf( "idTCP: SIGPIPE\n" );
-}
-
 int	idTCP::Write(void *data, int size) {
 	int nbytes;
 	
@@ -746,26 +742,21 @@ int	idTCP::Write(void *data, int size) {
 		common->Printf( "idTCP::Write: not initialized\n");
 		return -1;
 	}
-	
-	struct sigaction bak_action;
-	struct sigaction action;
-
-	action.sa_handler = got_SIGPIPE;
-	sigemptyset( &action.sa_mask );
-	action.sa_flags = 0;
-	
-	if ( sigaction( SIGPIPE, &action, &bak_action ) != 0 ) {
-		common->Printf( "ERROR: idTCP::Write: failed to set temporary SIGPIPE handler\n" );
-		Close();
-		return -1;
-	}
 
 #if defined(_GNU_SOURCE)	
 	// handle EINTR interrupted system call with TEMP_FAILURE_RETRY -  this is probably GNU libc specific
-	if ( ( nbytes = TEMP_FAILURE_RETRY ( write( fd, data, size ) ) ) == -1 ) {
+	#if defined( MSG_NOSIGNAL )
+	if ( ( nbytes = TEMP_FAILURE_RETRY( send( fd, data, size, MSG_NOSIGNAL ) ) ) == -1 ) {
+	#else
+	if ( ( nbytes = TEMP_FAILURE_RETRY( write( fd, data, size ) ) ) == -1 ) {
+	#endif
 #else
 	  do {
+	#if defined( MSG_NOSIGNAL )
+	    nbytes = send( fd, data, size, MSG_NOSIGNAL );
+	#else
 	    nbytes = write( fd, data, size );
+	#endif
 	  } while ( nbytes == -1 && errno == EINTR );
 	  if ( nbytes == -1 ) {
 #endif
@@ -773,12 +764,6 @@ int	idTCP::Write(void *data, int size) {
 		Close();
 		return -1;
 	}
-	
-	if ( sigaction( SIGPIPE, &bak_action, NULL ) != 0 ) {
-		common->Printf( "ERROR: idTCP::Write: failed to reset SIGPIPE handler\n" );
-		Close();
-		return -1;
-	}
-	
+
 	return nbytes;	
 }

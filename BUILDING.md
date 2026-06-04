@@ -130,7 +130,7 @@ bash tools/validation/validate_push.sh
 
 ### PR Validation
 
-Use this before opening or updating a pull request. It performs a clean release-style build in `.tmp/validation/pr-builddir`, stages `.install/`, and verifies the staged runtime payload contains the expected engine executables, SP/MP game modules, required `baseoq4` files, and no root-level build-only linker artifacts.
+Use this before opening or updating a pull request. It performs a clean release-style debug build in `.tmp/validation/pr-builddir`, stages `.install/`, and verifies the staged runtime payload contains the expected engine executables, SP/MP game modules, required `baseoq4` files, Windows diagnostic symbols when applicable, and no root-level build-only linker artifacts.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/validation/validate_pr.ps1
@@ -167,7 +167,7 @@ powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 compile -C 
 builddir\openQ4-client_<arch>.exe
 ```
 
-### Release Build
+### Optimized Build
 
 ```powershell
 # 1. Configure
@@ -211,7 +211,7 @@ bash tools/build/meson_setup.sh compile -C builddir
 
 Use `-Dplatform_backend=native` during setup if you need to compare against the legacy Linux X11/GLX backend.
 
-### Release Build
+### Optimized Build
 
 ```bash
 # 1. Configure
@@ -247,19 +247,23 @@ After running the install step, `.install/` is a self-contained distributable pa
 ```
 .install/
 ├── openQ4-client_<arch>[.exe]  # Main executable
+├── openQ4-client_<arch>.pdb    # (Windows) client diagnostic symbols
 ├── openQ4-ded_<arch>[.exe]     # Dedicated server
+├── openQ4-ded_<arch>.pdb       # (Windows) dedicated-server diagnostic symbols
 ├── openQ4-steamdeck            # (Linux) Steam Deck launcher
 ├── OpenAL32.dll                # (Windows) runtime dependency
 ├── share/applications/         # (Linux) desktop entries
 └── baseoq4/
     ├── game-sp_<arch>[.dll/.so/.dylib]   # Single-player module
+    ├── game-sp_<arch>.pdb                # (Windows) SP diagnostic symbols
     ├── game-mp_<arch>[.dll/.so/.dylib]   # Multiplayer module
+    ├── game-mp_<arch>.pdb                # (Windows) MP diagnostic symbols
     ├── openq4_defaults.cfg            # openQ4-owned default binds
     └── openq4_profile_steamdeck.cfg   # Steam Deck profile overrides
 ```
 
 > [!NOTE]
-> Do not distribute raw `buildtype=debug` artifacts in public packages. MSVC import libraries (`*.lib`) are development-only artifacts and are not required in the package.
+> Public release packages intentionally use Meson `buildtype=debug` binaries while staying on the `stable` version track, so crash reports are actionable. Windows packages include matching PDB files; MSVC import libraries (`*.lib`) are development-only artifacts and are not required in the package.
 
 Repo-authored runtime overrides live under `content/baseoq4/`. The install step stages that source-owned content into the runtime `baseoq4/` directory inside `.install/`.
 
@@ -271,7 +275,7 @@ The `meson install` step (via the wrapper) stages all required binaries into `.i
 
 Release archives also generate a packaged offline HTML documentation site under `docs/`. If you run the release packager manually instead of using GitHub Actions, make sure `python -m pip install markdown` is available in the same environment.
 
-The manually dispatched GitHub release workflow publishes architecture-qualified release assets such as `openq4-<version>-windows-x64.zip`, `openq4-<version>-windows-arm64.zip`, `openq4-<version>-linux-x64.tar.xz`, `openq4-<version>-linux-arm64.tar.xz`, and `openq4-<version>-macos-arm64.tar.gz`. Windows release payloads also get native installer executables such as `openq4-<version>-windows-x64-setup.exe` and `openq4-<version>-windows-arm64-setup.exe`. Each installer is compiled from the already-packaged Windows release directory so its file set matches the archive instead of diverging from it, writes install metadata to the registry for upgrade detection, registers a normal Windows uninstaller entry, and can optionally register `openq4://` browser links.
+The manually dispatched GitHub release workflow publishes architecture-qualified release assets such as `openq4-<version>-windows-x64.zip`, `openq4-<version>-windows-arm64.zip`, `openq4-<version>-linux-x64.tar.xz`, `openq4-<version>-linux-arm64.tar.xz`, and `openq4-<version>-macos-arm64.tar.gz`. Release workflow packages use Meson `buildtype=debug` plus `version_track=stable`; Windows payloads include PDB files and write crash logs plus minidumps under `crashes/` beside the executable after unhandled exceptions. Windows release payloads also get native installer executables such as `openq4-<version>-windows-x64-setup.exe` and `openq4-<version>-windows-arm64-setup.exe`. Each installer is compiled from the already-packaged Windows release directory so its file set matches the archive instead of diverging from it, writes install metadata to the registry for upgrade detection, registers a normal Windows uninstaller entry, and can optionally register `openq4://` browser links.
 
 If you want to build that installer manually on Windows after packaging a release directory, install [Inno Setup](https://jrsoftware.org/isinfo.php) and run:
 
@@ -286,7 +290,7 @@ To include the icon set synchronisation step before building (validated and gene
 $env:OPENQ4_SKIP_ICON_SYNC = "1"
 ```
 
-The manually dispatched GitHub release workflow builds with `version_track=stable` and injects `version_base_override` from `tools/build/openq4_release_version.py`. That helper uses the repo version in `meson.build` as the release floor and, once stable `v*` tags exist, automatically chooses between a serial bump (`0.1.010` -> `0.1.011`) and a milestone bump (`0.1.010` -> `0.2.000`) based on the scale of changes since the previous release. The workflow also accepts manual `bump_mode` and `version_override` inputs when a release needs an explicit decision.
+The manually dispatched GitHub release workflow injects `version_base_override` from `tools/build/openq4_release_version.py`. That helper uses the repo version in `meson.build` as the release floor and, once stable `v*` tags exist, automatically chooses between a serial bump (`0.1.010` -> `0.1.011`) and a milestone bump (`0.1.010` -> `0.2.000`) based on the scale of changes since the previous release. The workflow also accepts manual `bump_mode` and `version_override` inputs when a release needs an explicit decision.
 
 ---
 

@@ -1160,11 +1160,13 @@ void idRenderSystemLocal::BeginFrame( int windowWidth, int windowHeight ) {
 	currentRenderCrop = 0;
 
 	// screenFraction mode 0 keeps the legacy cropped-viewport behavior used for
-	// quick fill-rate testing. Modes 1/2 render full-size and apply a final
-	// fullscreen resolution-scale pass in the backend.
-	if ( r_screenFraction.GetInteger() != 100 && r_resolutionScaleMode.GetInteger() == 0 ) {
-		int	w = SCREEN_WIDTH * r_screenFraction.GetInteger() / 100.0f;
-		int h = SCREEN_HEIGHT * r_screenFraction.GetInteger() / 100.0f;
+	// quick fill-rate testing below native resolution. Supersampling above native
+	// is handled by the main-scene render target path so the back buffer stays at
+	// the display size.
+	const int screenFraction = idMath::ClampInt( 10, 200, r_screenFraction.GetInteger() );
+	if ( screenFraction < 100 && r_resolutionScaleMode.GetInteger() == 0 ) {
+		int	w = SCREEN_WIDTH * screenFraction / 100.0f;
+		int h = SCREEN_HEIGHT * screenFraction / 100.0f;
 		CropRenderSize( w, h );
 	}
 
