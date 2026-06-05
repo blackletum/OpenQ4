@@ -10,8 +10,9 @@ on:
         type: choice
         options:
           - auto
-          - serial
-          - minor
+          - major (x..)
+          - minor (.x.)
+          - patch (..x)
       version_override:
         description: Optional explicit release version (for example 0.1.011)
         required: false

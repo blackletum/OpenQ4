@@ -222,7 +222,7 @@ openQ4 uses numeric release versions from `meson.build` and appends an explicit 
 - `dev` — default local builds, e.g. `X.Y.Z-dev+gabcdef12`
 - `beta` / `rc` — optional pre-release labels, e.g. `X.Y.Z-beta.1+gabcdef12`
 
-The current beta release line is `0.1.010`. The manual GitHub release workflow treats the repo version as the minimum next release version, then consults existing stable `v*` tags plus the scale of changes since the previous release to decide whether to emit the next serial release or advance the middle release milestone. Track labels, git metadata, and Windows/macOS resource/build numbers are generated automatically.
+The current beta release line is `0.1.010`. The manual GitHub release workflow treats the repo version as the minimum next release version, then consults existing stable `v*` tags plus the scale of changes since the previous release to decide whether to emit the next patch release or advance the minor release milestone. Manual release dispatch also exposes explicit `auto`, `major (x..)`, `minor (.x.)`, and `patch (..x)` bump choices. Track labels, git metadata, and Windows/macOS resource/build numbers are generated automatically.
 
 ---
 

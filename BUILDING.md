@@ -290,7 +290,7 @@ To include the icon set synchronisation step before building (validated and gene
 $env:OPENQ4_SKIP_ICON_SYNC = "1"
 ```
 
-The manually dispatched GitHub release workflow injects `version_base_override` from `tools/build/openq4_release_version.py`. That helper uses the repo version in `meson.build` as the release floor and, once stable `v*` tags exist, automatically chooses between a serial bump (`0.1.010` -> `0.1.011`) and a milestone bump (`0.1.010` -> `0.2.000`) based on the scale of changes since the previous release. The workflow also accepts manual `bump_mode` and `version_override` inputs when a release needs an explicit decision.
+The manually dispatched GitHub release workflow injects `version_base_override` from `tools/build/openq4_release_version.py`. That helper uses the repo version in `meson.build` as the release floor and, once stable `v*` tags exist, automatically chooses between a patch bump (`0.1.010` -> `0.1.011`) and a minor bump (`0.1.010` -> `0.2.000`) based on the scale of changes since the previous release. The workflow also accepts manual `bump_mode` choices for `auto`, `major (x..)`, `minor (.x.)`, and `patch (..x)`, plus `version_override` when a release needs an explicit version.
 
 ---
 

@@ -13,25 +13,52 @@ from pathlib import Path
 
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 RELEASE_TAG_RE = re.compile(r"^v(\d+\.\d+\.\d+)$")
+BUMP_MODE_ALIASES = {
+    "auto": "auto",
+    "major": "major",
+    "major (x..)": "major",
+    "minor": "minor",
+    "minor (.x.)": "minor",
+    "patch": "patch",
+    "patch (..x)": "patch",
+    "serial": "patch",
+    "serial (..x)": "patch",
+}
 
 
 @dataclass(frozen=True)
 class ReleaseVersion:
     major: int
     minor: int
-    serial: int
-    serial_width: int
+    patch: int
+    patch_width: int
     text: str
 
     @property
     def key(self) -> tuple[int, int, int]:
-        return (self.major, self.minor, self.serial)
+        return (self.major, self.minor, self.patch)
 
-    def format(self, *, minor: int | None = None, serial: int | None = None) -> str:
+    def format(
+        self,
+        *,
+        major: int | None = None,
+        minor: int | None = None,
+        patch: int | None = None,
+    ) -> str:
+        rendered_major = self.major if major is None else major
         rendered_minor = self.minor if minor is None else minor
-        rendered_serial = self.serial if serial is None else serial
-        rendered_width = max(self.serial_width, len(str(rendered_serial)))
-        return f"{self.major}.{rendered_minor}.{rendered_serial:0{rendered_width}d}"
+        rendered_patch = self.patch if patch is None else patch
+        rendered_width = max(self.patch_width, len(str(rendered_patch)))
+        return f"{rendered_major}.{rendered_minor}.{rendered_patch:0{rendered_width}d}"
+
+
+def parse_bump_mode(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized not in BUMP_MODE_ALIASES:
+        raise argparse.ArgumentTypeError(
+            "bump mode must be one of: auto, major (x..), minor (.x.), patch (..x)"
+        )
+    return BUMP_MODE_ALIASES[normalized]
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -55,9 +82,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--bump-mode",
-        choices=("auto", "serial", "minor"),
+        type=parse_bump_mode,
         default="auto",
-        help="Release bump mode (default: auto).",
+        help="Release bump mode: auto, major (x..), minor (.x.), or patch (..x).",
     )
     return parser.parse_args(argv[1:])
 
@@ -97,12 +124,12 @@ def parse_version(version_text: str) -> ReleaseVersion:
             f"(for example 0.1.010), got: {version_text!r}"
         )
 
-    major_raw, minor_raw, serial_raw = match.groups()
+    major_raw, minor_raw, patch_raw = match.groups()
     return ReleaseVersion(
         major=int(major_raw),
         minor=int(minor_raw),
-        serial=int(serial_raw),
-        serial_width=max(3, len(serial_raw)),
+        patch=int(patch_raw),
+        patch_width=max(3, len(patch_raw)),
         text=normalized,
     )
 
@@ -221,7 +248,7 @@ def analyze_change_scale(
     deletions: int,
 ) -> tuple[str, str, int]:
     if not changed_files:
-        return "serial", "No changed files were detected since the previous release tag.", 0
+        return "patch", "No changed files were detected since the previous release tag.", 0
 
     unique_categories: dict[str, int] = {}
     major_subsystems: set[str] = set()
@@ -235,7 +262,7 @@ def analyze_change_scale(
             major_subsystems.add(category)
 
     if docs_only:
-        return "serial", "Only documentation and packaging metadata changed since the previous release.", 0
+        return "patch", "Only documentation and packaging metadata changed since the previous release.", 0
 
     score = sum(unique_categories.values())
     file_count = len(changed_files)
@@ -271,7 +298,7 @@ def analyze_change_scale(
 
     if score >= 12 or (len(major_subsystems) >= 3 and churn >= 1200):
         return "minor", reason, score
-    return "serial", reason, score
+    return "patch", reason, score
 
 
 def emit_metadata(metadata: dict[str, str | int]) -> None:
@@ -393,13 +420,17 @@ def main(argv: list[str]) -> int:
         )
         return 0
 
-    if args.bump_mode == "minor":
+    if args.bump_mode == "major":
+        release_scale = "major"
+        release_reason = "Major bump was selected manually."
+        analysis_score = 0
+    elif args.bump_mode == "minor":
         release_scale = "minor"
         release_reason = "Minor bump was selected manually."
         analysis_score = 0
-    elif args.bump_mode == "serial":
-        release_scale = "serial"
-        release_reason = "Serial bump was selected manually."
+    elif args.bump_mode == "patch":
+        release_scale = "patch"
+        release_reason = "Patch bump was selected manually."
         analysis_score = 0
     else:
         release_scale, release_reason, analysis_score = analyze_change_scale(
@@ -409,13 +440,19 @@ def main(argv: list[str]) -> int:
             deletions=deletions,
         )
 
-    if release_scale == "minor":
+    if release_scale == "major":
+        next_version = base_version.format(
+            major=base_version.major + 1,
+            minor=0,
+            patch=0,
+        )
+    elif release_scale == "minor":
         next_version = base_version.format(
             minor=base_version.minor + 1,
-            serial=0,
+            patch=0,
         )
     else:
-        next_version = base_version.format(serial=base_version.serial + 1)
+        next_version = base_version.format(patch=base_version.patch + 1)
 
     emit_metadata(
         {
