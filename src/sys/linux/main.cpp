@@ -737,10 +737,12 @@ double Sys_ClockTicksPerSecond(void) {
 	static bool		init = false;
 	static double	ret;
 #if !defined( __i386__ ) && !defined( __x86_64__ )
-	ret = 1000000000.0;
-	init = true;
+	if ( !init ) {
+		ret = 1000000000.0;
+		init = true;
+	}
 	return ret;
-#endif
+#else
 
 	if ( init ) {
 		return ret;
@@ -790,6 +792,7 @@ double Sys_ClockTicksPerSecond(void) {
 	ret = Sys_MeasureClockTicksFallback( "failed parsing /proc/cpuinfo" );
 	init = true;
 	return ret;		
+#endif
 }
 
 /*
