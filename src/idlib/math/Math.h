@@ -49,17 +49,23 @@
 #define	ANGLE2BYTE(x)			( idMath::FtoiFast( (x) * 256.0f / 360.0f ) & 255 )
 #define	BYTE2ANGLE(x)			( (x) * ( 360.0f / 256.0f ) )
 
-#define FLOATSIGNBITSET(f)		((*(const unsigned long *)&(f)) >> 31)
-#define FLOATSIGNBITNOTSET(f)	((~(*(const unsigned long *)&(f))) >> 31)
-#define FLOATNOTZERO(f)			((*(const unsigned long *)&(f)) & ~(1<<31) )
-#define INTSIGNBITSET(i)		(((const unsigned long)(i)) >> 31)
-#define INTSIGNBITNOTSET(i)		((~((const unsigned long)(i))) >> 31)
+ID_INLINE unsigned int idMath_FloatBits( const float f ) {
+	unsigned int bits;
+	memcpy( &bits, &f, sizeof( bits ) );
+	return bits;
+}
 
-#define	FLOAT_IS_NAN(x)			(((*(const unsigned long *)&x) & 0x7f800000) == 0x7f800000)
-#define FLOAT_IS_INF(x)			(((*(const unsigned long *)&x) & 0x7fffffff) == 0x7f800000)
-#define FLOAT_IS_IND(x)			((*(const unsigned long *)&x) == 0xffc00000)
-#define	FLOAT_IS_DENORMAL(x)	(((*(const unsigned long *)&x) & 0x7f800000) == 0x00000000 && \
-								 ((*(const unsigned long *)&x) & 0x007fffff) != 0x00000000 )
+#define FLOATSIGNBITSET(f)		(idMath_FloatBits(f) >> 31)
+#define FLOATSIGNBITNOTSET(f)	((~idMath_FloatBits(f)) >> 31)
+#define FLOATNOTZERO(f)			(idMath_FloatBits(f) & ~(1u<<31) )
+#define INTSIGNBITSET(i)		((static_cast<unsigned int>(i)) >> 31)
+#define INTSIGNBITNOTSET(i)		((~(static_cast<unsigned int>(i))) >> 31)
+
+#define	FLOAT_IS_NAN(x)			((idMath_FloatBits(x) & 0x7f800000u) == 0x7f800000u)
+#define FLOAT_IS_INF(x)			((idMath_FloatBits(x) & 0x7fffffffu) == 0x7f800000u)
+#define FLOAT_IS_IND(x)			(idMath_FloatBits(x) == 0xffc00000u)
+#define	FLOAT_IS_DENORMAL(x)	((idMath_FloatBits(x) & 0x7f800000u) == 0x00000000u && \
+								 (idMath_FloatBits(x) & 0x007fffffu) != 0x00000000u )
 
 #define IEEE_FLT_MANTISSA_BITS	23
 #define IEEE_FLT_EXPONENT_BITS	8
@@ -104,9 +110,9 @@ class idVec3;
 ================================================================================================
 */
 
-#define IEEE_FLT_SIGNBITSET( a )	(reinterpret_cast<const unsigned int &>(a) >> IEEE_FLT_SIGN_BIT)
-#define IEEE_FLT_SIGNBITNOTSET( a )	((~reinterpret_cast<const unsigned int &>(a)) >> IEEE_FLT_SIGN_BIT)
-#define IEEE_FLT_ISNOTZERO( a )		(reinterpret_cast<const unsigned int &>(a) & ~(1u<<IEEE_FLT_SIGN_BIT))
+#define IEEE_FLT_SIGNBITSET( a )	(idMath_FloatBits(a) >> IEEE_FLT_SIGN_BIT)
+#define IEEE_FLT_SIGNBITNOTSET( a )	((~idMath_FloatBits(a)) >> IEEE_FLT_SIGN_BIT)
+#define IEEE_FLT_ISNOTZERO( a )		(idMath_FloatBits(a) & ~(1u<<IEEE_FLT_SIGN_BIT))
 
 class idMath {
 public:
