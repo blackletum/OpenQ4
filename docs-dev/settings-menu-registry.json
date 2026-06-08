@@ -119,9 +119,10 @@
       "label_key": "#str_200098",
       "target_type": "bind",
       "target": "_moveUp",
-      "default": "JOY3;KP_INS;SPACE",
+      "default": "JOY3;JOY19;KP_INS;SPACE",
       "default_keys": [
         "JOY3",
+        "JOY19",
         "KP_INS",
         "SPACE"
       ],
@@ -143,9 +144,10 @@
       "label_key": "#str_200099",
       "target_type": "bind",
       "target": "_moveDown",
-      "default": "JOY4;c",
+      "default": "JOY4;JOY20;c",
       "default_keys": [
         "JOY4",
+        "JOY20",
         "c"
       ],
       "restart_required": false,
@@ -594,10 +596,11 @@
       "label_key": "#str_200117",
       "target_type": "bind",
       "target": "_impulse13",
-      "default": "r;JOY6",
+      "default": "r;JOY6;JOY21",
       "default_keys": [
         "r",
-        "JOY6"
+        "JOY6",
+        "JOY21"
       ],
       "restart_required": false,
       "accessibility": "Focusable bindDef row that captures the next key or button for this command."
@@ -798,10 +801,11 @@
       "label_key": "#str_229920",
       "target_type": "bind",
       "target": "_weaponWheel",
-      "default": "e;JOY1;q",
+      "default": "e;JOY1;JOY22;q",
       "default_keys": [
         "e",
         "JOY1",
+        "JOY22",
         "q"
       ],
       "restart_required": false,

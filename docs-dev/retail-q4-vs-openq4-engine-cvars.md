@@ -206,8 +206,8 @@ Generated on 2026-04-19.
 | `gui_set_sys_scroll` | src/framework/Session_menu.cpp:43 |
 | `image_highQualityCompression` | src/renderer/BinaryImage.cpp:43 |
 | `in_dgamouse` | src/sys/linux/input.cpp:35 |
-| `in_joystickDeadZone` | src/sys/win32/win_sdl3.cpp:136 |
-| `in_joystickTriggerThreshold` | src/sys/win32/win_sdl3.cpp:137 |
+| `in_joystickDeadZone` | src/sys/sdl3/sdl3_backend.cpp:139 |
+| `in_joystickTriggerThreshold` | src/sys/sdl3/sdl3_backend.cpp:140 |
 | `in_nograb` | src/sys/linux/input.cpp:36 |
 | `in_runDefaultMigrated` | src/framework/UsercmdGen.cpp:449 |
 | `in_tty` | src/sys/posix/posix_main.cpp:62 |
@@ -281,11 +281,11 @@ Generated on 2026-04-19.
 | `r_minDisplayRefresh` | src/sys/osx/macosx_glimp.mm:46 |
 | `r_msaaAlphaToCoverage` | src/renderer/RenderSystem_init.cpp:148 |
 | `r_msaaResolveDepth` | src/renderer/RenderSystem_init.cpp:147 |
-| `r_multiScreen` | src/sys/win32/win_sdl3.cpp:139 |
+| `r_multiScreen` | src/sys/sdl3/sdl3_backend.cpp:149 |
 | `r_postAA` | src/renderer/RenderSystem_init.cpp:102 |
 | `r_resolutionScaleMode` | src/renderer/RenderSystem_init.cpp:308 |
 | `r_resolutionScaleSharpness` | src/renderer/RenderSystem_init.cpp:309 |
-| `r_screen` | src/sys/win32/win_sdl3.cpp:138 |
+| `r_screen` | src/sys/sdl3/sdl3_backend.cpp:148 |
 | `r_shaderReport` | src/renderer/RenderSystem_init.cpp:211 |
 | `r_shadowMapBias` | src/renderer/RenderSystem_init.cpp:265 |
 | `r_shadowMapCSM` | src/renderer/RenderSystem_init.cpp:169 |

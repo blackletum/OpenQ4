@@ -402,7 +402,7 @@ private:
 
 				// Fixed at spawn time
 				int				mNumForks;
-				unsigned long	mSeed;
+				unsigned int	mSeed;
 				idVec3			mForkSizeMins;
 				idVec3			mForkSizeMaxs;
 				idVec3			mJitterSize;

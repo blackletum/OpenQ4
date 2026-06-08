@@ -13,6 +13,24 @@ resolve_meson_cmd() {
     local candidate=""
     local python_cmd=""
 
+    if [[ -n "${OPENQ4_MESON:-}" ]]; then
+        if [[ ! -x "${OPENQ4_MESON}" ]]; then
+            echo "OPENQ4_MESON points to a missing or non-executable Meson: '${OPENQ4_MESON}'." >&2
+            exit 1
+        fi
+
+        for candidate in python python3; do
+            if python_cmd="$(command -v "${candidate}" 2>/dev/null)"; then
+                PYTHON_CMD="${python_cmd}"
+                MESON_CMD=("${OPENQ4_MESON}")
+                return
+            fi
+        done
+
+        echo "Python was not found. Install Python or ensure it is available on PATH." >&2
+        exit 1
+    fi
+
     for candidate in python python3; do
         if ! python_cmd="$(command -v "${candidate}" 2>/dev/null)"; then
             continue
@@ -191,7 +209,7 @@ build_setup_args_for_existing_build_dir() {
 
 remove_build_directory() {
     local build_dir="$1"
-    [[ -n "${build_dir}" && -d "${build_dir}" ]] || return
+    [[ -n "${build_dir}" && -d "${build_dir}" ]] || return 0
 
     local resolved_build_dir=""
     local resolved_repo_root=""
@@ -213,7 +231,7 @@ remove_build_directory() {
 
 remove_stale_bse_artifacts() {
     local directory_path="$1"
-    [[ -n "${directory_path}" && -d "${directory_path}" ]] || return
+    [[ -n "${directory_path}" && -d "${directory_path}" ]] || return 0
 
     find "${directory_path}" -maxdepth 1 -type f \
         \( -name 'openQ4-BSE_*.dll' -o -name 'openQ4-BSE_*.dylib' -o -name 'openQ4-BSE_*.so' -o -name 'openQ4-BSE_*.lib' -o -name 'openQ4-BSE_*.pdb' -o \
@@ -227,7 +245,7 @@ remove_stale_bse_artifacts() {
 
 remove_non_runtime_install_artifacts() {
     local install_root="$1"
-    [[ -n "${install_root}" && -d "${install_root}" ]] || return
+    [[ -n "${install_root}" && -d "${install_root}" ]] || return 0
 
     find "${install_root}" -maxdepth 1 -type f \
         \( -name '*.lib' -o -name '*.exp' -o -name '*.ilk' -o -name '*.map' -o -name '*.zip' -o -name 'mgscope_sendinput.cfg' -o -name 'scope_autotest*.cfg' \) \
@@ -238,7 +256,7 @@ remove_non_runtime_install_artifacts() {
         done
 
     local install_game_dir="${install_root}/baseoq4"
-    [[ -d "${install_game_dir}" ]] || return
+    [[ -d "${install_game_dir}" ]] || return 0
 
     find "${install_game_dir}" -maxdepth 1 -type f \
         \( -name '*.lib' -o -name '*.exp' -o -name '*.ilk' -o -name '*.map' \) \

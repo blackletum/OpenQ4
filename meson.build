@@ -46,13 +46,6 @@ elif host_system == 'darwin'
   if platform_backend_requested == 'legacy_win32'
     error('platform_backend=legacy_win32 is only valid on Windows hosts.')
   endif
-
-  if platform_backend_requested == 'sdl3'
-    message(
-      'platform_backend=sdl3 on macOS currently maps to native platform sources while SDL3 migration work is implemented.'
-    )
-    platform_backend = 'native'
-  endif
 elif host_system != 'windows'
   error('Unsupported host system for platform backend selection: ' + host_system)
 endif
@@ -669,7 +662,7 @@ if host_system == 'linux'
   linux_desktop_conf.set('OPENQ4_PROJECT_VERSION', openq4_version_short)
   linux_desktop_conf.set('OPENQ4_PROJECT_VERSION_FULL', openq4_version_full)
   linux_steamdeck_launcher = configure_file(
-    input: 'assets/linux/OpenQ4-steamdeck.in',
+    input: 'assets/linux/openQ4-steamdeck.in',
     output: 'openQ4-steamdeck',
     configuration: linux_desktop_conf,
   )

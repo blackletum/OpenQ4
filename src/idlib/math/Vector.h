@@ -1133,7 +1133,7 @@ ID_INLINE idVec3 idVec3::Random( const idVec3& range, idRandom& random ) const {
 // RAVEN END
 
 ID_INLINE bool idVec3::IsZero( void ) const {
-	return ( ( ( *( const unsigned long * ) &( x ) ) | ( *( const unsigned long * ) &( y ) ) | ( *( const unsigned long * ) &( z ) ) ) & ~( 1<<31 ) ) == 0;
+	return ( ( idMath_FloatBits( x ) | idMath_FloatBits( y ) | idMath_FloatBits( z ) ) & 0x7fffffffu ) == 0;
 }
 
 //===============================================================

@@ -1,6 +1,7 @@
 #!/bin/sh
 
-if [ -z "${SDL_VIDEODRIVER:-}" ] && [ -n "${WAYLAND_DISPLAY:-}" ] && [ -n "${DISPLAY:-}" ]; then
+if [ -z "${SDL_VIDEO_DRIVER:-}" ] && [ -z "${SDL_VIDEODRIVER:-}" ] && [ -n "${WAYLAND_DISPLAY:-}" ] && [ -n "${DISPLAY:-}" ]; then
+	export SDL_VIDEO_DRIVER=x11
 	export SDL_VIDEODRIVER=x11
 fi
 

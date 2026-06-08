@@ -447,6 +447,11 @@ static void Sys_ReportWaylandRuntime( void ) {
 
 	const char *waylandDisplay = getenv( "WAYLAND_DISPLAY" );
 	const char *x11Display = getenv( "DISPLAY" );
+	const char *sdlVideoDriver = getenv( "SDL_VIDEO_DRIVER" );
+	const char *legacySdlVideoDriver = getenv( "SDL_VIDEODRIVER" );
+	const char *effectiveSdlVideoDriver = ( sdlVideoDriver != NULL && sdlVideoDriver[0] != '\0' )
+		? sdlVideoDriver
+		: legacySdlVideoDriver;
 
 	if ( waylandDisplay == NULL || waylandDisplay[0] == '\0' ) {
 		return;
@@ -456,7 +461,7 @@ static void Sys_ReportWaylandRuntime( void ) {
 #if defined( USE_SDL3 )
 		Sys_Printf(
 			"Wayland session detected (%s) without X11 DISPLAY. "
-			"OpenQ4 will let SDL3 choose a video driver; if OpenGL startup fails, use an XWayland-enabled session or set SDL_VIDEODRIVER=x11.\n",
+			"OpenQ4 will use SDL3's native Wayland path when selected; if OpenGL startup fails, use an XWayland-enabled session or set SDL_VIDEO_DRIVER=x11 (SDL_VIDEODRIVER=x11 is also honored by SDL3).\n",
 			waylandDisplay
 		);
 #else
@@ -471,9 +476,10 @@ static void Sys_ReportWaylandRuntime( void ) {
 
 #if defined( USE_SDL3 )
 	Sys_Printf(
-		"Wayland session detected (%s) with X11 DISPLAY=%s available.\n",
+		"Wayland session detected (%s) with X11 DISPLAY=%s available. SDL3 video override: %s.\n",
 		waylandDisplay,
-		x11Display
+		x11Display,
+		( effectiveSdlVideoDriver != NULL && effectiveSdlVideoDriver[0] != '\0' ) ? effectiveSdlVideoDriver : "<unset>"
 	);
 #else
 	Sys_Printf(

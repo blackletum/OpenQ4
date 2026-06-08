@@ -1831,10 +1831,10 @@ bool rvElectricityParticle::Render(const rvBSE* effect, rvParticleTemplate* pt, 
 
 	if (mLastJitter + mJitterRate <= time) {
 		mLastJitter = time;
-		mSeed = static_cast<unsigned long>(rvRandom::Init());
+		mSeed = rvRandom::Init();
 	}
 
-	const unsigned long previousSeed = rvRandom::GetSeed();
+	const unsigned int previousSeed = rvRandom::GetSeed();
 	rvRandom::Init(mSeed);
 
 	const int boltCount = Max(1, (mNumBolts > 0) ? mNumBolts : GetBoltCount(mainLength));
@@ -1916,7 +1916,7 @@ void rvElectricityParticle::SetupElectricity(rvParticleTemplate* pt) {
 	const rvElectricityInfo* info = pt->mElecInfo;
 	mNumBolts = 0;
 	mNumForks = info->mNumForks;
-	mSeed = static_cast<unsigned long>(rvRandom::Init());
+	mSeed = rvRandom::Init();
 	mForkSizeMins = info->mForkSizeMins;
 	mForkSizeMaxs = info->mForkSizeMaxs;
 	mJitterSize = info->mJitterSize;

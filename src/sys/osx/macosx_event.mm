@@ -58,6 +58,7 @@ static bool		inputRectValid	= NO;
 static CGRect	inputRect;
 static const void *sKLuchrData	= NULL;
 static const void *sKLKCHRData	= NULL;
+static float	s_scrollWheelRemainderY = 0.0f;
 
 int	vkeyToOpenQ4Key[256] = {
 	/*0x00*/	'a', 's', 'd', 'f', 'h', 'g', 'z', 'x',
@@ -117,6 +118,62 @@ int	vkeyToOpenQ4Key_German[256] = {
 };
 
 static const int *vkeyTable = vkeyToOpenQ4Key;	
+
+static int OSX_MapVirtualKey( unsigned short vkey ) {
+	if ( vkey >= 256 ) {
+		return 0;
+	}
+
+	int doomKey = vkeyTable[ vkey ];
+	if ( doomKey == '?' ) {
+		return 0;
+	}
+
+	return doomKey;
+}
+
+static int OSX_MapControlChar( int doomKey, bool keyDownFlag, unsigned int nativeModifiers ) {
+	if ( !keyDownFlag ) {
+		return 0;
+	}
+
+	switch ( doomKey ) {
+		case K_BACKSPACE: return '\b';
+		case K_TAB: return '\t';
+		case K_ENTER:
+		case K_KP_ENTER: return '\r';
+		default:
+			break;
+	}
+
+	if ( ( nativeModifiers & NSControlKeyMask ) != 0 && ( nativeModifiers & NSAlternateKeyMask ) == 0 ) {
+		if ( doomKey >= 'a' && doomKey <= 'z' ) {
+			return ( doomKey - 'a' ) + 1;
+		}
+	}
+
+	return 0;
+}
+
+static void OSX_PostMouseButtonEvent( int buttonIndex, bool isDown ) {
+	const int key = K_MOUSE1 + buttonIndex;
+	Posix_QueEvent( SE_KEY, key, isDown, 0, NULL);
+	Posix_AddMousePollEvent( M_ACTION1 + buttonIndex, isDown ? 1 : 0 );
+}
+
+static void OSX_PostMouseWheelSteps( int wheelSteps ) {
+	if ( wheelSteps == 0 ) {
+		return;
+	}
+
+	const int wheelKey = wheelSteps < 0 ? K_MWHEELDOWN : K_MWHEELUP;
+	const int absSteps = abs( wheelSteps );
+	for ( int i = 0; i < absSteps; ++i ) {
+		Posix_QueEvent( SE_KEY, wheelKey, true, 0, NULL );
+		Posix_QueEvent( SE_KEY, wheelKey, false, 0, NULL );
+	}
+	Posix_AddMousePollEvent( M_DELTAZ, wheelSteps );
+}
 
 /*
  ===========
@@ -237,7 +294,7 @@ void processMouseMovedEvent( NSEvent *mouseMovedEvent ) {
 
 inline bool OSX_LookupCharacter(unsigned short vkey, unsigned int modifiers, bool keyDownFlag, unsigned char *outChar)
 {
-	UInt32 translated;
+	UInt32 translated = 0;
 	UInt32 deadKeyState = 0;
 	UniChar unicodeString[16];
 	UniCharCount actualStringLength = 0;
@@ -260,29 +317,35 @@ inline bool OSX_LookupCharacter(unsigned short vkey, unsigned int modifiers, boo
 void OSX_ProcessKeyEvent( NSEvent *keyEvent, bool keyDownFlag ) {
 	unsigned char character;
 	unsigned int modifiers = 0;
+	unsigned int nativeModifiers = [ keyEvent modifierFlags ];
 	unsigned short vkey = [ keyEvent keyCode ];
 
-	if ( [ keyEvent modifierFlags ] & NSAlphaShiftKeyMask )
+	if ( nativeModifiers & NSAlphaShiftKeyMask )
 		modifiers |= alphaLock;
-	if ( [ keyEvent modifierFlags ] & NSShiftKeyMask )
+	if ( nativeModifiers & NSShiftKeyMask )
 		modifiers |= shiftKey;
-	if ( [ keyEvent modifierFlags ] & NSControlKeyMask )
+	if ( nativeModifiers & NSControlKeyMask )
 		modifiers |= controlKey;
-	if ( [ keyEvent modifierFlags ] & NSAlternateKeyMask )
+	if ( nativeModifiers & NSAlternateKeyMask )
 		modifiers |= optionKey;
-	if ( [ keyEvent modifierFlags ] & NSCommandKeyMask )
+	if ( nativeModifiers & NSCommandKeyMask )
 		modifiers |= cmdKey;
 	modifiers >>= 8;
 				
-	int doomKey = (unsigned char)vkeyTable[vkey];
-	Posix_QueEvent( SE_KEY, doomKey, keyDownFlag, 0, NULL );
+	int doomKey = OSX_MapVirtualKey( vkey );
+	if ( doomKey != 0 ) {
+		Posix_QueEvent( SE_KEY, doomKey, keyDownFlag, 0, NULL );
+		Posix_AddKeyboardPollEvent( doomKey, keyDownFlag );
+	}
 	if ( keyDownFlag ) {
-		if ( OSX_LookupCharacter(vkey, modifiers, keyDownFlag, &character ) && 
+		const int controlChar = OSX_MapControlChar( doomKey, keyDownFlag, nativeModifiers );
+		if ( controlChar != 0 ) {
+			Posix_QueEvent( SE_CHAR, controlChar, 0, 0, NULL);
+		} else if ( OSX_LookupCharacter(vkey, modifiers, keyDownFlag, &character ) &&
 			 character != Sys_GetConsoleKey( false ) && character != Sys_GetConsoleKey( true ) ) {
 			Posix_QueEvent( SE_CHAR, character, 0, 0, NULL);
 		}
 	}
-	Posix_AddKeyboardPollEvent( doomKey, keyDownFlag );
 	
 	return;
 }
@@ -304,9 +367,11 @@ void processFlagsChangedEvent( NSEvent *flagsChangedEvent ) {
     int			newModifierFlags;
 
     newModifierFlags = [flagsChangedEvent modifierFlags];
+	sendEventForMaskChangeInFlags( K_CAPSLOCK, NSAlphaShiftKeyMask, oldModifierFlags, newModifierFlags );
     sendEventForMaskChangeInFlags( K_ALT, NSAlternateKeyMask, oldModifierFlags, newModifierFlags );
     sendEventForMaskChangeInFlags( K_CTRL, NSControlKeyMask, oldModifierFlags, newModifierFlags );
     sendEventForMaskChangeInFlags( K_SHIFT, NSShiftKeyMask, oldModifierFlags, newModifierFlags );
+	sendEventForMaskChangeInFlags( K_COMMAND, NSCommandKeyMask, oldModifierFlags, newModifierFlags );
     oldModifierFlags = newModifierFlags;
 }
 
@@ -327,34 +392,13 @@ void processSystemDefinedEvent( NSEvent *systemDefinedEvent ) {
         
         //common->Printf( "uberbuttons: %08lx %08lx\n", buttonsDelta, buttons );
 
-		if (buttonsDelta & 1) {
-            isDown = buttons & 1;
-            Posix_QueEvent( SE_KEY, K_MOUSE1, isDown, 0, NULL);
-			Posix_AddMousePollEvent( M_ACTION1, isDown );
-		}
-
-		if (buttonsDelta & 2) {
-            isDown = buttons & 2;
-            Posix_QueEvent( SE_KEY, K_MOUSE2, isDown, 0, NULL);
-			Posix_AddMousePollEvent( M_ACTION2, isDown );
-		}
-
-		if (buttonsDelta & 4) {
-            isDown = buttons & 4;
-            Posix_QueEvent( SE_KEY, K_MOUSE3, isDown, 0, NULL);
-			Posix_AddMousePollEvent( M_ACTION3, isDown );
-		}
-
-		if (buttonsDelta & 8) {
-            isDown = buttons & 8;
-            Posix_QueEvent( SE_KEY, K_MOUSE4, isDown, 0, NULL);
-			Posix_AddMousePollEvent( M_ACTION4, isDown );
-        }
-        
-		if (buttonsDelta & 16) {
-            isDown = buttons & 16;
-            Posix_QueEvent( SE_KEY, K_MOUSE5, isDown, 0, NULL);
-			Posix_AddMousePollEvent( M_ACTION5, isDown );
+		for ( int i = 0; i < 8; ++i ) {
+			const int mask = 1 << i;
+			if ( ( buttonsDelta & mask ) == 0 ) {
+				continue;
+			}
+			isDown = ( buttons & mask ) != 0;
+			OSX_PostMouseButtonEvent( i, isDown != 0 );
 		}
         
         oldButtons = buttons;
@@ -398,17 +442,18 @@ void processEvent( NSEvent *event ) {
 	case NSSystemDefined:
 		processSystemDefinedEvent( event );
 		return;
-	case NSScrollWheel:
-		if ([event deltaY] < 0.0) {
-			Posix_QueEvent( SE_KEY, K_MWHEELDOWN, true, 0, NULL );
-			Posix_QueEvent( SE_KEY, K_MWHEELDOWN, false, 0, NULL );
-			Posix_AddMousePollEvent( M_DELTAZ, -1 );
-		} else {
-			Posix_QueEvent( SE_KEY, K_MWHEELUP, true, 0, NULL );
-			Posix_QueEvent( SE_KEY, K_MWHEELUP, false, 0, NULL );
-			Posix_AddMousePollEvent( M_DELTAZ, 1 );
+	case NSScrollWheel: {
+		float deltaY = [event deltaY] + s_scrollWheelRemainderY;
+		int wheelSteps = 0;
+		if ( deltaY >= 1.0f ) {
+			wheelSteps = static_cast<int>( floorf( deltaY ) );
+		} else if ( deltaY <= -1.0f ) {
+			wheelSteps = static_cast<int>( ceilf( deltaY ) );
 		}
+		s_scrollWheelRemainderY = deltaY - static_cast<float>( wheelSteps );
+		OSX_PostMouseWheelSteps( wheelSteps );
 		return;
+	}
 	default:
 		//NSLog( @"handle event %@", event );
 		break;

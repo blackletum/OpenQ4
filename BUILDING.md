@@ -194,7 +194,7 @@ meson compile -C builddir
 ## Building on Linux / macOS
 
 > [!NOTE]
-> As of March 30, 2026, Linux defaults to the SDL3 backend. `-Dplatform_backend=native` remains available as the fallback Linux path. On Steam Deck or other mixed Wayland/X11 sessions, `openQ4-steamdeck` prefers XWayland when both `WAYLAND_DISPLAY` and `DISPLAY` are present.
+> As of March 30, 2026, Linux defaults to the SDL3 backend. `-Dplatform_backend=native` remains available as the fallback Linux path. Native Wayland is handled through SDL3/Wayland/EGL, while `openQ4-steamdeck` still prefers XWayland when both `WAYLAND_DISPLAY` and `DISPLAY` are present unless `SDL_VIDEO_DRIVER` or `SDL_VIDEODRIVER` is already set.
 
 ### Debug Build
 
@@ -266,6 +266,18 @@ After running the install step, `.install/` is a self-contained distributable pa
 > Public release packages intentionally use Meson `buildtype=debug` binaries while staying on the `stable` version track, so crash reports are actionable. Windows packages include matching PDB files; MSVC import libraries (`*.lib`) are development-only artifacts and are not required in the package.
 
 Repo-authored runtime overrides live under `content/baseoq4/`. The install step stages that source-owned content into the runtime `baseoq4/` directory inside `.install/`.
+
+On Linux desktops, you can create a user desktop shortcut for the staged runtime after the install step:
+
+```bash
+bash tools/linux/install_desktop_launcher.sh
+```
+
+If Quake 4 is not in a location that openQ4 can auto-detect, pass the retail install root that contains `q4base/`:
+
+```bash
+bash tools/linux/install_desktop_launcher.sh --basepath "/path/to/Quake 4"
+```
 
 ---
 

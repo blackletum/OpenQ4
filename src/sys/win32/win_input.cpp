@@ -941,8 +941,19 @@ Sys_PollKeyboardInputEvents
 ====================
 */
 int Sys_ReturnKeyboardInputEvent( const int n, int &ch, bool &state ) {
+	if ( n < 0 || n >= DINPUT_BUFFERSIZE ) {
+		ch = 0;
+		state = false;
+		return 0;
+	}
+
 	ch = IN_DIMapKey( polled_didod[ n ].dwOfs );
 	state = (polled_didod[ n ].dwData & 0x80) == 0x80;
+	if ( ch <= 0 || ch >= K_LAST_KEY ) {
+		ch = 0;
+		state = false;
+		return 0;
+	}
 	if ( ch == K_PRINT_SCR ) {
 		if ( Sys_HandlePrintScreenHotkey( state ) ) {
 			return 0;
@@ -973,11 +984,15 @@ void Sys_QueMouseEvents( int dwElements ) {
 			switch (polled_didod[i].dwOfs) {
 			case DIMOFS_X:
 				value = polled_didod[i].dwData;
-				Sys_QueEvent( polled_didod[i].dwTimeStamp, SE_MOUSE, value, 0, 0, NULL );
+				if ( value != 0 ) {
+					Sys_QueEvent( polled_didod[i].dwTimeStamp, SE_MOUSE, value, 0, 0, NULL );
+				}
 				break;
 			case DIMOFS_Y:
 				value = polled_didod[i].dwData;
-				Sys_QueEvent( polled_didod[i].dwTimeStamp, SE_MOUSE, 0, value, 0, NULL );
+				if ( value != 0 ) {
+					Sys_QueEvent( polled_didod[i].dwTimeStamp, SE_MOUSE, 0, value, 0, NULL );
+				}
 				break;
 			case DIMOFS_Z:
 				value = ( (int) polled_didod[i].dwData ) / WHEEL_DELTA;
@@ -1024,7 +1039,13 @@ int Sys_PollMouseInputEvents( void ) {
 }
 
 int Sys_ReturnMouseInputEvent( const int n, int &action, int &value ) {
-	int diaction = polled_didod[n].dwOfs;
+	if ( n < 0 || n >= DINPUT_BUFFERSIZE ) {
+		action = 0;
+		value = 0;
+		return 0;
+	}
+
+	const int diaction = polled_didod[n].dwOfs;
 
 	if ( diaction >= DIMOFS_BUTTON0 && diaction <= DIMOFS_BUTTON7 ) {
 		value = (polled_didod[n].dwData & 0x80) == 0x80;
@@ -1035,10 +1056,18 @@ int Sys_ReturnMouseInputEvent( const int n, int &action, int &value ) {
 	switch( diaction ) {
 		case DIMOFS_X:
 			value = polled_didod[n].dwData;
+			if ( value == 0 ) {
+				action = 0;
+				return 0;
+			}
 			action = M_DELTAX;
 			return 1;
 		case DIMOFS_Y:
 			value = polled_didod[n].dwData;
+			if ( value == 0 ) {
+				action = 0;
+				return 0;
+			}
 			action = M_DELTAY;
 			return 1;
 		case DIMOFS_Z:
@@ -1047,10 +1076,13 @@ int Sys_ReturnMouseInputEvent( const int n, int &action, int &value ) {
 			action = M_DELTAZ;
 			// a value of zero here should never happen
 			if ( value == 0 ) {
+				action = 0;
 				return 0;
 			}
 			return 1;
 	}
+	action = 0;
+	value = 0;
 	return 0;
 }
 
@@ -1074,7 +1106,6 @@ void Sys_EndJoystickInputEvents( void ) {
 }
 
 bool Sys_GetJoystickAxisState( int axis, int &value ) {
-	axis = 0;
 	value = 0;
 	return false;
 }

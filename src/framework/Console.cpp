@@ -3932,10 +3932,10 @@ bool idConsoleLocal::MouseKeyEvent( int key, bool down ) {
 				ClearTextDragState();
 			}
 		}
-		return key >= K_MOUSE1 && key <= K_MOUSE5;
+		return key >= K_MOUSE1 && key <= K_MOUSE8;
 	}
 
-	if ( key < K_MOUSE1 || key > K_MOUSE5 ) {
+	if ( key < K_MOUSE1 || key > K_MOUSE8 ) {
 		return false;
 	}
 
@@ -4319,7 +4319,7 @@ bool	idConsoleLocal::ProcessEvent( const sysEvent_t *event, bool forceAccept ) {
 	}
 
 	if ( event->evType == SE_KEY ) {
-		if ( event->evValue >= K_MOUSE1 && event->evValue <= K_MOUSE5 ) {
+		if ( event->evValue >= K_MOUSE1 && event->evValue <= K_MOUSE8 ) {
 			return MouseKeyEvent( event->evValue, event->evValue2 != 0 );
 		}
 

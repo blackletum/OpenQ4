@@ -1,8 +1,8 @@
 [wrap-file]
-directory = SDL3-3.4.4
-source_url = https://github.com/libsdl-org/SDL/releases/download/release-3.4.4/SDL3-3.4.4.tar.gz
-source_filename = SDL3-3.4.4.tar.gz
-source_hash = ee712dbe6a89bb140bbfc2ce72358fb5ee5cc2240abeabd54855012db30b3864
+directory = SDL3-3.4.10
+source_url = https://github.com/libsdl-org/SDL/releases/download/release-3.4.10/SDL3-3.4.10.tar.gz
+source_filename = SDL3-3.4.10.tar.gz
+source_hash = 12b34280415ec8418c864408b93d008a20a6530687ee613d60bfbd20411f2785
 patch_directory = sdl3
 
 [provide]

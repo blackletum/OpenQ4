@@ -549,7 +549,7 @@ Returns (the fraction of the frame) that the key was down
 */
 int	idUsercmdGenLocal::ButtonState( int key ) {
 	if ( key<0 || key>=UB_MAX_BUTTONS ) {
-		return -1;
+		return 0;
 	}
 	return ( buttonState[key] > 0 ) ? 1 : 0;
 }
@@ -564,7 +564,7 @@ bk20060111
 */
 int	idUsercmdGenLocal::KeyState( int key ) {
 	if ( key<0 || key>=K_LAST_KEY ) {
-		return -1;
+		return 0;
 	}
 	return ( keyState[key] ) ? 1 : 0;
 }
@@ -1358,6 +1358,9 @@ Handles async mouse/keyboard button actions
 ===================
 */
 void idUsercmdGenLocal::Key( int keyNum, bool down ) {
+	if ( keyNum <= 0 || keyNum >= K_LAST_KEY ) {
+		return;
+	}
 
 	// Sanity check, sometimes we get double message :(
 	if ( keyState[ keyNum ] == down ) {
@@ -1531,10 +1534,18 @@ idUsercmdGenLocal::MouseState
 ================
 */
 void idUsercmdGenLocal::MouseState( int *x, int *y, int *button, bool *down ) {
-	*x = continuousMouseX;
-	*y = continuousMouseY;
-	*button = mouseButton;
-	*down = mouseDown;
+	if ( x != NULL ) {
+		*x = continuousMouseX;
+	}
+	if ( y != NULL ) {
+		*y = continuousMouseY;
+	}
+	if ( button != NULL ) {
+		*button = mouseButton;
+	}
+	if ( down != NULL ) {
+		*down = mouseDown;
+	}
 }
 
 /*

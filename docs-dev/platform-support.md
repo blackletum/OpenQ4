@@ -24,7 +24,8 @@ This document defines the long-term platform direction for OpenQ4 and how SDL3 +
 - Toolchain baseline direction: MSVC 19.46+ (Visual Studio 2026 generation), with compatibility fallback permitted during migration.
 - As of March 30, 2026, Linux defaults to the SDL3 backend and keeps `-Dplatform_backend=native` as a fallback path.
 - Steam Deck support is delivered through the explicit `openQ4-steamdeck` launcher/profile, not hardware auto-detection.
-- When both `WAYLAND_DISPLAY` and `DISPLAY` are available, the Steam Deck launcher prefers XWayland by exporting `SDL_VIDEODRIVER=x11` unless the user already set an SDL video driver.
+- Native Wayland is supported through the SDL3 backend. The shared SDL3 path logs the selected video driver, applies Wayland-aware defaults, avoids persisting compositor-owned window positions, and tries SDL's unversioned OpenGL compatibility fallback first when `r_glTier` is `auto` on native Wayland.
+- When both `WAYLAND_DISPLAY` and `DISPLAY` are available, the Steam Deck launcher prefers XWayland by exporting `SDL_VIDEO_DRIVER=x11` and `SDL_VIDEODRIVER=x11` unless the user already set an SDL video driver.
 - Windows arm64 currently uses a custom OpenAL Soft package path during bring-up because the in-repo bundled Windows runtime payload is still x64-only.
 
 ## Runtime Baselines
@@ -33,7 +34,7 @@ This document defines the long-term platform direction for OpenQ4 and how SDL3 +
 - Windows validation focus: current `Windows 11` releases first, with `Windows 10` retained as a practical compatibility target even though Microsoft's general Windows 10 servicing ended on `October 14, 2025`.
 - Windows 7/8/8.1 are no longer hard-blocked by the current x64 binaries, but they are legacy and outside the actively validated support matrix.
 - macOS packaged compatibility floor for the arm64 release line: `macOS 11` or later. Meson now pins the deployment target to `11.0` so the binary floor matches the documented floor.
-- Linux packaged compatibility floor: release archives are built on pinned `Ubuntu 24.04` runners and should be treated as targeting a comparable modern 64-bit desktop userspace with OpenGL plus X11/GLX or XWayland available.
+- Linux packaged compatibility floor: release archives are built on pinned `Ubuntu 24.04` runners and should be treated as targeting a comparable modern 64-bit desktop userspace with OpenGL plus SDL3 Wayland/EGL or X11/GLX available.
 - Steam Deck support assumes a SteamOS 3.x style environment and the explicit `openQ4-steamdeck` launcher.
 
 ## SDL3 Direction

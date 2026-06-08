@@ -46,21 +46,21 @@ int Sys_PollMouseInputEvents( void ) { return 0; }
 
 void Sys_EndMouseInputEvents( void ) { }
 
-int Sys_ReturnMouseInputEvent( const int n, int &action, int &value ) { return 0; }
+int Sys_ReturnMouseInputEvent( const int n, int &action, int &value ) { action = 0; value = 0; return 0; }
 
 int Sys_PollKeyboardInputEvents( void ) { return 0; }
 
 void Sys_EndKeyboardInputEvents( void ) { }
 
-int Sys_ReturnKeyboardInputEvent( const int n, int &action, bool &state ) { return 0; }
+int Sys_ReturnKeyboardInputEvent( const int n, int &action, bool &state ) { action = 0; state = false; return 0; }
 
 int Sys_PollJoystickInputEvents( void ) { return 0; }
 
-int Sys_ReturnJoystickInputEvent( const int n, int &axis, int &value ) { return 0; }
+int Sys_ReturnJoystickInputEvent( const int n, int &axis, int &value ) { axis = 0; value = 0; return 0; }
 
 void Sys_EndJoystickInputEvents( void ) { }
 
-bool Sys_GetJoystickAxisState( int axis, int &value ) { axis = 0; value = 0; return false; }
+bool Sys_GetJoystickAxisState( int axis, int &value ) { value = 0; return false; }
 
 bool Sys_SetJoystickRumble( float lowFrequency, float highFrequency, int durationMsec ) { return false; }
 

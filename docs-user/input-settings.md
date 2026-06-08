@@ -81,6 +81,10 @@ seta cl_mouseAccelDebug 0
 
 For CPI-normalized tuning, set `m_cpi` to the mouse hardware value and use `360 / sensitivity` as an approximate centimeters-per-360 target.
 
+SDL3 builds use relative mouse capture during gameplay on Windows, Linux, and macOS. On Linux, OpenQ4 requests unscaled relative deltas from SDL where the desktop stack supports them and preserves fractional movement before it reaches the integer engine event queue. `Mouse1` through `Mouse8` are bindable by name on SDL3 and the native X11 fallback, and wheel up/down remain available as `MWHEELUP` and `MWHEELDOWN`.
+
+Native macOS builds also expose `Mouse1` through `Mouse8`, track high-resolution wheel/trackpad deltas before emitting wheel steps, and synthesize common edit-field control characters such as Return, Tab, Backspace, and Ctrl-letter shortcuts.
+
 ## Controller Settings
 
 Controller tuning lives in `Settings -> Game Options -> Controller`.
@@ -113,6 +117,17 @@ seta in_joystickMoveCurve 1.0
 ```
 
 `1.0` is linear movement. Higher values make walking easier near the center of the stick but require more stick travel to reach full movement.
+
+SDL gamepads use SDL's standard controller database, so Xbox, PlayStation, Steam Input, and similar pads should not need axis remapping. Generic SDL joysticks use raw axes with these auto defaults:
+
+| Cvar | Auto default | What it changes |
+|---|---:|---|
+| `in_joystickUseDedicatedLookAxes` | `-1` | `-1` uses look axes only when a paired look stick is available, `0` keeps classic single-stick behavior, and `1` forces dedicated look axes when any mapped look axis exists. |
+| `in_joystickMoveAxisX` / `in_joystickMoveAxisY` | `0` / `1` | Raw joystick axes used for movement or classic stick look. |
+| `in_joystickLookAxisX` / `in_joystickLookAxisY` | `2` / `3` | Raw joystick axes used for dedicated look on four-axis devices. |
+| `in_joystickUpAxis` / `in_joystickUpAxisNegative` | `4` / `5` | Optional vertical/throttle axes; when both exist, OpenQ4 uses positive minus negative. |
+
+Set an axis cvar to `-1` for auto, or to a raw SDL axis number from `0` through `31`. These advanced joystick cvars only affect generic SDL joysticks; SDL gamepads keep the stable `JOY` button and stick layout described below.
 
 ## Stock Keyboard and Mouse Binds
 
@@ -148,7 +163,7 @@ The shipped defaults are defined in `content/baseoq4/default.cfg`.
 
 ## Default Controller Buttons
 
-SDL gamepads use stable `JOY` button names so binds work across common Xbox, PlayStation, and Steam Input layouts.
+SDL gamepads use stable `JOY` button names so binds work across common Xbox, PlayStation, and Steam Input layouts. Controller support is first-class in SDL3 builds on Windows, Linux, and macOS. The native Linux, native macOS, and legacy Win32 input fallbacks currently remain keyboard/mouse focused.
 
 | Button | Default action |
 |---|---|
@@ -158,6 +173,8 @@ SDL gamepads use stable `JOY` button names so binds work across common Xbox, Pla
 | `JOY4` / B or Circle | Crouch |
 | `JOY5` / Y or Triangle | Flashlight |
 | `JOY6` / X or Square | Reload |
+| `JOY7` / Start | Menu |
+| `JOY8` / Back or Select | Menu |
 | `JOY9` / D-pad Up | Objectives or scores |
 | `JOY10` / D-pad Down | Center view |
 | `JOY11` / D-pad Right | Previous weapon |
@@ -166,7 +183,12 @@ SDL gamepads use stable `JOY` button names so binds work across common Xbox, Pla
 | `JOY14` / Right stick click | Center view |
 | `JOY15` / RT | Attack |
 | `JOY16` / LT | Zoom |
+| `JOY17` / Guide | Menu, when delivered by the OS |
 | `JOY18` / Touchpad | Objectives or scores, when available |
+| `JOY19` / Right paddle 1 | Jump |
+| `JOY20` / Left paddle 1 | Crouch |
+| `JOY21` / Right paddle 2 | Reload |
+| `JOY22` / Left paddle 2 | Weapon wheel |
 
 Menu behavior:
 
@@ -176,6 +198,7 @@ Menu behavior:
 - The D-pad and movement stick move menu focus.
 - Holding the D-pad, movement stick, or shoulder buttons repeats navigation for long lists.
 - Steam Deck packages enable the `steamdeck` platform profile, which applies `openq4_profile_steamdeck.cfg` on top of the normal defaults.
+- `JOY23` through `JOY28`, `JOY29` through `JOY32`, and generic `AUX1` through `AUX16` are bindable for extra device buttons but are intentionally unbound by default.
 
 ## Useful Console Commands
 

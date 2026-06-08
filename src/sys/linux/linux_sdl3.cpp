@@ -35,7 +35,7 @@ extern "C" {
 }
 
 #define OPENQ4_SDL3_LINUX_HOST 1
-#include "../win32/win_sdl3.cpp"
+#include "../sdl3/sdl3_backend.cpp"
 
 Display *dpy = NULL;
 Window win = 0;

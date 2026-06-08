@@ -111,6 +111,17 @@ SDL3_LINUX_SOURCES = (
     "sys/linux/libXNVCtrl/NVCtrl.c",
 )
 
+SDL3_DARWIN_SOURCES = (
+    "sys/posix/posix_main.cpp",
+    "sys/posix/posix_net.cpp",
+    "sys/posix/posix_signal.cpp",
+    "sys/posix/posix_threads.cpp",
+    "sys/osx/macosx_compat.mm",
+    "sys/osx/macosx_misc.mm",
+    "sys/osx/macosx_sdl3.cpp",
+    "sys/osx/macosx_sdl3_main.cpp",
+)
+
 LINUX_PLATFORM_SOURCES = (
     "sys/posix/posix_input.cpp",
     "sys/posix/posix_main.cpp",
@@ -181,7 +192,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--platform-backend",
         choices=("sdl3", "legacy_win32", "native"),
         default="sdl3",
-        help="Platform backend source selection (Windows: sdl3/legacy_win32, Linux: sdl3/native, macOS: native).",
+        help="Platform backend source selection (Windows: sdl3/legacy_win32, Linux/macOS: sdl3/native).",
     )
     parser.add_argument(
         "--include-game",
@@ -266,7 +277,10 @@ def main(argv: list[str]) -> int:
             for rel_path in platform_sources:
                 add_required_source(source_set, ordered_sources, source_root, rel_path)
         elif args.host_system == "darwin":
-            for rel_path in DARWIN_PLATFORM_SOURCES:
+            platform_sources = (
+                SDL3_DARWIN_SOURCES if args.platform_backend == "sdl3" else DARWIN_PLATFORM_SOURCES
+            )
+            for rel_path in platform_sources:
                 add_required_source(source_set, ordered_sources, source_root, rel_path)
         else:
             print(f"Unsupported host system: {args.host_system}", file=sys.stderr)
