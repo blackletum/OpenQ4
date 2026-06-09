@@ -57,10 +57,29 @@ double Sys_ClockTicksPerSecond( void ) {
 void	Sys_Sleep( int msec ) {
 }
 
-void	Sys_CreateThread(  xthread_t function, void *parms, xthreadPriority priority, xthreadInfo& info ) {
+void Sys_CreateThread( xthread_t function, void *parms, xthreadPriority priority, xthreadInfo& info, const char *name, xthreadInfo *threads[MAX_THREADS], int *thread_count ) {
+	info.name = name;
+	info.threadHandle = 0;
+	info.threadId = 0;
+	info.stopRequested = false;
 }
 
 void Sys_DestroyThread( xthreadInfo& info ) {
+	info.threadHandle = 0;
+	info.threadId = 0;
+	info.stopRequested = false;
+}
+
+void Sys_RequestThreadStop( xthreadInfo& info ) {
+	info.stopRequested = true;
+}
+
+bool Sys_IsThreadStopRequested( const xthreadInfo& info ) {
+	return info.stopRequested;
+}
+
+bool Sys_IsCurrentThreadStopRequested( void ) {
+	return false;
 }
 
 void	Sys_FlushCacheMemory( void *base, int bytes ) {
@@ -207,6 +226,8 @@ const char *Sys_NetAdrToString( const netadr_t a ) {
 	} else if ( a.type == NA_IP ) {
 		idStr::snPrintf( s, sizeof(s), "%i.%i.%i.%i:%i",
 			a.ip[0], a.ip[1], a.ip[2], a.ip[3], BigShort(a.port) );
+	} else if ( a.type == NA_IP6 ) {
+		idStr::snPrintf( s, sizeof(s), "[ipv6]:%i", BigShort(a.port) );
 	}
 	return s;
 }

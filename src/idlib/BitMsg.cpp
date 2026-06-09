@@ -176,7 +176,11 @@ idBitMsg::WriteNetadr
 void idBitMsg::WriteNetadr( const netadr_t adr ) {
 	byte *dataPtr;
 	dataPtr = GetByteSpace( 4 );
-	memcpy( dataPtr, adr.ip, 4 );
+	if ( adr.type == NA_IP || adr.type == NA_LOOPBACK ) {
+		memcpy( dataPtr, adr.ip, 4 );
+	} else {
+		memset( dataPtr, 0, 4 );
+	}
 	WriteUShort( adr.port );
 }
 
@@ -440,6 +444,7 @@ idBitMsg::ReadNetadr
 void idBitMsg::ReadNetadr( netadr_t *adr ) const {
 	int i;
  
+	memset( adr, 0, sizeof( *adr ) );
 	adr->type = NA_IP;
 	for ( i = 0; i < 4; i++ ) {
 		adr->ip[ i ] = ReadByte();

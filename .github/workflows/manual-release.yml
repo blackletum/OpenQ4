@@ -163,6 +163,7 @@ jobs:
           set -euo pipefail
           for attempt in 1 2 3; do
             if sudo apt-get update && sudo apt-get install -y \
+              binutils \
               libasound2-dev \
               libdbus-1-dev \
               libdecor-0-dev \
@@ -261,7 +262,7 @@ jobs:
           set -euo pipefail
           export OPENQ4_SKIP_GAMELIBS_SYNC=1
 
-          bash tools/build/meson_setup.sh setup --wipe builddir . --backend ninja --buildtype=debug --wrap-mode=forcefallback -Dplatform_backend=${{ matrix.platform_backend }} -Dversion_track=stable -Dversion_base_override=${{ needs.metadata.outputs.version }}
+          bash tools/build/meson_setup.sh setup --wipe builddir . --backend ninja --buildtype=debugoptimized -Db_ndebug=true --wrap-mode=forcefallback -Dplatform_backend=${{ matrix.platform_backend }} -Dversion_track=stable -Dversion_base_override=${{ needs.metadata.outputs.version }}
           bash tools/build/meson_setup.sh compile -C builddir
           bash tools/build/meson_setup.sh install -C builddir --no-rebuild --skip-subprojects
 
@@ -291,6 +292,50 @@ jobs:
               exit 1
             fi
           fi
+
+      - name: Prepare Linux debug symbols
+        if: matrix.platform == 'linux'
+        id: linux_symbols
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          symbols_stem="openq4-${{ needs.metadata.outputs.version_tag }}-linux-${{ matrix.binary_arch }}-debugsymbols"
+          symbols_dir="${RUNNER_TEMP}/${symbols_stem}"
+          symbols_archive="${RUNNER_TEMP}/${symbols_stem}.tar.xz"
+          rm -rf "${symbols_dir}" "${symbols_archive}"
+          mkdir -p "${symbols_dir}/baseoq4"
+
+          binaries=(
+            ".install/openQ4-client_${{ matrix.binary_arch }}"
+            ".install/openQ4-ded_${{ matrix.binary_arch }}"
+            ".install/baseoq4/game-sp_${{ matrix.binary_arch }}.so"
+            ".install/baseoq4/game-mp_${{ matrix.binary_arch }}.so"
+          )
+
+          for binary in "${binaries[@]}"; do
+            if [ ! -f "${binary}" ]; then
+              echo "Required Linux binary for debug-symbol split is missing: ${binary}"
+              exit 1
+            fi
+
+            relative_path="${binary#.install/}"
+            debug_file="${symbols_dir}/${relative_path}.debug"
+            mkdir -p "$(dirname "${debug_file}")"
+
+            binary_abs="$(pwd -P)/${binary#./}"
+            debug_basename="$(basename "${debug_file}")"
+
+            objcopy --only-keep-debug "${binary_abs}" "${debug_file}"
+            objcopy --strip-debug "${binary_abs}"
+            (
+              cd "$(dirname "${debug_file}")"
+              objcopy --add-gnu-debuglink="${debug_basename}" "${binary_abs}"
+            )
+          done
+
+          tar -C "${symbols_dir}" -cJf "${symbols_archive}" .
+          echo "debug_symbols_path=${symbols_archive}" >> "$GITHUB_OUTPUT"
 
       - name: Prepare package
         id: package
@@ -382,6 +427,14 @@ jobs:
           path: ${{ steps.package.outputs.archive_path }}
           if-no-files-found: error
 
+      - name: Upload Linux debug symbols
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v6
+        with:
+          name: openq4-release-${{ needs.metadata.outputs.version_tag }}-linux-${{ matrix.binary_arch }}-debugsymbols
+          path: ${{ steps.linux_symbols.outputs.debug_symbols_path }}
+          if-no-files-found: error
+
       - name: Upload Windows installer
         if: matrix.platform == 'windows'
         uses: actions/upload-artifact@v6
@@ -441,7 +494,9 @@ jobs:
             "openq4-${{ needs.metadata.outputs.version_tag }}-windows-arm64.zip"
             "openq4-${{ needs.metadata.outputs.version_tag }}-windows-arm64-setup.exe"
             "openq4-${{ needs.metadata.outputs.version_tag }}-linux-x64.tar.xz"
+            "openq4-${{ needs.metadata.outputs.version_tag }}-linux-x64-debugsymbols.tar.xz"
             "openq4-${{ needs.metadata.outputs.version_tag }}-linux-arm64.tar.xz"
+            "openq4-${{ needs.metadata.outputs.version_tag }}-linux-arm64-debugsymbols.tar.xz"
             "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64.tar.gz"
           )
 

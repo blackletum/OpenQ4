@@ -37,11 +37,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m py_compile tools/validation/openq4_validate.py
+          python -m py_compile tools/validation/openq4_validate.py tools/tests/renderer_validation_matrix.py tools/tests/linux_arm64_ci_coverage.py
           bash -n tools/build/meson_setup.sh
           bash -n tools/validation/validate_push.sh
           bash -n tools/validation/validate_pr.sh
           python tools/tests/hdr_postprocess_math.py
+          python tools/tests/linux_arm64_ci_coverage.py
 
       - name: Dry-run validation profiles
         shell: bash
@@ -89,3 +90,94 @@ jobs:
 
           Write-Host "Selected validation profile: pr"
           powershell -NoProfile -ExecutionPolicy Bypass -File tools/validation/validate_pr.ps1 --fail-on-dirty
+
+  linux-arm64:
+    name: Linux ARM64 Commit Validation
+    runs-on: ubuntu-24.04-arm
+    needs: script-smoke
+    timeout-minutes: 90
+    env:
+      OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/../OpenQ4-GameLibs
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fetch OpenQ4-GameLibs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/themuffinator/OpenQ4-GameLibs.git "${OPENQ4_GAMELIBS_REPO}"
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Install Meson and Ninja
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install meson ninja
+
+      - name: Install Linux native dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if sudo apt-get update && sudo apt-get install -y \
+              libasound2-dev \
+              libdbus-1-dev \
+              libdecor-0-dev \
+              libdrm-dev \
+              libegl1-mesa-dev \
+              libfribidi-dev \
+              libgbm-dev \
+              libgl1-mesa-dev \
+              libibus-1.0-dev \
+              libjack-dev \
+              libopenal-dev \
+              libpipewire-0.3-dev \
+              libpulse-dev \
+              libsndio-dev \
+              libthai-dev \
+              libudev-dev \
+              libwayland-dev \
+              libx11-dev \
+              libxcursor-dev \
+              libxext-dev \
+              libxfixes-dev \
+              libxi-dev \
+              libxkbcommon-dev \
+              libxrandr-dev \
+              libxss-dev \
+              libxtst-dev \
+              libxxf86dga-dev \
+              libxxf86vm-dev \
+              xvfb; then
+              exit 0
+            fi
+
+            if [ "${attempt}" -eq 3 ]; then
+              echo "Failed to install Linux native dependencies after ${attempt} attempts."
+              exit 1
+            fi
+
+            echo "Linux dependency installation attempt ${attempt} failed; retrying in 10 seconds..."
+            sleep 10
+          done
+
+      - name: Run selected validation profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          env SDL_VIDEO_DRIVER=x11 SDL_VIDEODRIVER=x11 xvfb-run -a bash tools/validation/validate_pr.sh \
+            --fail-on-dirty \
+            --runtime \
+            --runtime-cases renderer-default-safety-selftest \
+            --runtime-tiers auto \
+            --runtime-basepath "" \
+            --runtime-skip-official-pak-validation

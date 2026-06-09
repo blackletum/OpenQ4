@@ -985,13 +985,16 @@ Sys_AsyncThread
 */
 void Sys_AsyncThread( void ) {
 	while ( 1 ) {
+		if ( Sys_IsCurrentThreadStopRequested() ) {
+			return;
+		}
+
 		usleep( 1000 );
 		const int previousTicNumber = com_ticNumber;
 		common->Async();
 		for ( int tic = previousTicNumber; tic < com_ticNumber; ++tic ) {
 			Sys_TriggerEvent( TRIGGER_EVENT_ONE );
 		}
-		pthread_testcancel();
 	}
 }
 

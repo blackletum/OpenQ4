@@ -766,6 +766,8 @@ const char *Sys_NetAdrToString( const netadr_t a ) {
 		}
 	} else if ( a.type == NA_IP ) {
 		idStr::snPrintf( s, 64, "%i.%i.%i.%i:%i", a.ip[0], a.ip[1], a.ip[2], a.ip[3], a.port );
+	} else if ( a.type == NA_IP6 ) {
+		idStr::snPrintf( s, 64, "[ipv6]:%i", a.port );
 	}
 	return s;
 }
@@ -827,6 +829,10 @@ bool Sys_CompareNetAdrBase( const netadr_t a, const netadr_t b ) {
 		return false;
 	}
 
+	if ( a.type == NA_IP6 ) {
+		return memcmp( a.ip6, b.ip6, sizeof( a.ip6 ) ) == 0 && a.scopeId == b.scopeId;
+	}
+
 	common->Printf( "Sys_CompareNetAdrBase: bad address type\n" );
 	return false;
 }
@@ -873,6 +879,7 @@ idPort::idPort
 */
 idPort::idPort() {
 	netSocket = 0;
+	netSocket6 = 0;
 	memset( &bound_to, 0, sizeof( bound_to ) );
 }
 
@@ -924,6 +931,7 @@ void idPort::Close() {
 		}
 		closesocket( netSocket );
 		netSocket = 0;
+		netSocket6 = 0;
 		memset( &bound_to, 0, sizeof( bound_to ) );
 	}
 }

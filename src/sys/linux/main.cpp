@@ -28,7 +28,6 @@ If you have questions concerning this license or the applicable additional terms
 #include "../../idlib/precompiled.h"
 #include "../posix/posix_public.h"
 #include "../sys_local.h"
-#include "local.h"
 
 #include <pthread.h>
 #include <errno.h>
@@ -508,6 +507,10 @@ Sys_AsyncThread
 */
 void Sys_AsyncThread( void ) {
 	while (1) {
+		if ( Sys_IsCurrentThreadStopRequested() ) {
+			return;
+		}
+
 		usleep( 1000 );
 
 		const int previousTicNumber = com_ticNumber;
@@ -515,9 +518,6 @@ void Sys_AsyncThread( void ) {
 		for ( int tic = previousTicNumber; tic < com_ticNumber; ++tic ) {
 			Sys_TriggerEvent( TRIGGER_EVENT_ONE );
 		}
-
-		// thread exit
-		pthread_testcancel();
 	}
 }
 

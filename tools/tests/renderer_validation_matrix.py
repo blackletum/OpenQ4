@@ -376,7 +376,13 @@ def sanitize_case_id(case_id: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", case_id)
 
 
-def common_args(root: Path, case_id: str, basepath: str, savepath: Path) -> list[str]:
+def common_args(
+    root: Path,
+    case_id: str,
+    basepath: str,
+    savepath: Path,
+    skip_official_pak_validation: bool,
+) -> list[str]:
     log_name = f"openq4_validation_{sanitize_case_id(case_id)}.log"
     args = [
         "+set",
@@ -416,6 +422,8 @@ def common_args(root: Path, case_id: str, basepath: str, savepath: Path) -> list
         "fs_game",
         "baseoq4",
     ]
+    if skip_official_pak_validation:
+        args += ["+set", "fs_validateOfficialPaks", "0"]
     if basepath:
         args += ["+set", "fs_basepath", basepath]
     return args
@@ -1031,6 +1039,7 @@ def run_case(
     basepath: str,
     case: dict[str, Any],
     timeout_seconds: int,
+    skip_official_pak_validation: bool,
 ) -> dict[str, Any]:
     case_id = case["id"]
     log_name = f"openq4_validation_{sanitize_case_id(case_id)}.log"
@@ -1040,7 +1049,7 @@ def run_case(
     if log_path_guess is not None:
         log_path_guess.unlink()
 
-    args = common_args(root, case_id, basepath, savepath) + case["args"] + ["+quit"]
+    args = common_args(root, case_id, basepath, savepath, skip_official_pak_validation) + case["args"] + ["+quit"]
     started = time.time()
     timed_out = False
     with stdout_path.open("w", encoding="utf-8", errors="replace") as stdout_file, stderr_path.open("w", encoding="utf-8", errors="replace") as stderr_file:
@@ -1272,6 +1281,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--basepath", default=default_basepath(), help="Quake 4 install/base path. Omit or set empty to skip fs_basepath.")
     parser.add_argument("--savepath", default="", help="Save path root. Defaults to <repo>/.home.")
     parser.add_argument("--output-dir", default="", help="Report/output directory. Defaults to <repo>/.tmp/renderer-validation/<timestamp>.")
+    parser.add_argument(
+        "--skip-official-pak-validation",
+        action="store_true",
+        help="Disable official q4base PK4 validation for assetless engine-startup smoke checks.",
+    )
     parser.add_argument("--list", action="store_true", help="List automated and manual cases without running them.")
     return parser.parse_args(argv)
 
@@ -1340,7 +1354,16 @@ def main(argv: list[str]) -> int:
     results = []
     for case in safe_cases:
         print(f"running {case['id']}...")
-        result = run_case(root, executable, output_dir, savepath, basepath, case, args.timeout)
+        result = run_case(
+            root,
+            executable,
+            output_dir,
+            savepath,
+            basepath,
+            case,
+            args.timeout,
+            args.skip_official_pak_validation,
+        )
         print(f"  {result['status']} ({result['elapsedSeconds']}s)")
         results.append(result)
 
@@ -1350,6 +1373,7 @@ def main(argv: list[str]) -> int:
         "executable": str(executable),
         "savepath": str(savepath),
         "basepath": basepath,
+        "skipOfficialPakValidation": args.skip_official_pak_validation,
     }
     report_json, report_md = write_reports(output_dir, results, metadata)
     print(f"wrote {report_md}")

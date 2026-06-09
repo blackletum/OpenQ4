@@ -88,7 +88,9 @@ To rebuild the game libraries as part of the openQ4 build, set `OPENQ4_BUILD_GAM
 
 ## Build Setup
 
-Third-party libraries such as SDL3, GLEW, OpenAL Soft, and stb_vorbis are managed as Meson subprojects. Linux still requires the usual native development packages for X11/OpenGL plus SDL3 runtime integrations before the first configure step. On current Debian/Ubuntu systems, install the CI-aligned SDL3/Linux package set (`libasound2-dev`, `libdbus-1-dev`, `libdecor-0-dev`, `libdrm-dev`, `libegl1-mesa-dev`, `libfribidi-dev`, `libgbm-dev`, `libgl1-mesa-dev`, `libibus-1.0-dev`, `libjack-dev`, `libopenal-dev`, `libpipewire-0.3-dev`, `libpulse-dev`, `libsndio-dev`, `libthai-dev`, `libudev-dev`, `libwayland-dev`, `libx11-dev`, `libxcursor-dev`, `libxext-dev`, `libxfixes-dev`, `libxi-dev`, `libxkbcommon-dev`, `libxrandr-dev`, `libxss-dev`, `libxtst-dev`, `libxxf86dga-dev`, and `libxxf86vm-dev`).
+Third-party libraries such as SDL3, GLEW, OpenAL Soft, and stb_vorbis are managed as Meson subprojects. On Linux, the default SDL3 backend requires OpenGL plus the SDL3 runtime integration development packages, while X11/Xext are optional helpers used only when available for the SDL3 NVIDIA VRAM probe. The legacy `-Dplatform_backend=native` path still requires X11/GLX and VidMode development packages.
+
+On current Debian/Ubuntu systems, install the SDL3/Linux package set (`binutils`, `libasound2-dev`, `libdbus-1-dev`, `libdecor-0-dev`, `libdrm-dev`, `libegl1-mesa-dev`, `libfribidi-dev`, `libgbm-dev`, `libgl1-mesa-dev`, `libibus-1.0-dev`, `libjack-dev`, `libopenal-dev`, `libpipewire-0.3-dev`, `libpulse-dev`, `libsndio-dev`, `libthai-dev`, `libudev-dev`, `libwayland-dev`, and `libxkbcommon-dev`). Add `libx11-dev`, `libxext-dev`, `libxcursor-dev`, `libxfixes-dev`, `libxi-dev`, `libxrandr-dev`, `libxss-dev`, `libxtst-dev`, `libxxf86dga-dev`, and `libxxf86vm-dev` when validating the optional SDL3 X11 helper path or the native Linux backend.
 
 ---
 
@@ -114,7 +116,7 @@ Pass any of these with `-D<option>=<value>` on the `meson setup` command line:
 
 openQ4 includes two local validation profiles under `tools/validation/`. They share one Python runner and use the platform build wrappers so Windows validation still goes through `tools/build/meson_setup.ps1`.
 
-GitHub Actions runs the same validation entrypoints on every pushed commit, pull request, and manual dispatch through `.github/workflows/commit-validation.yml`. Branch pushes run the faster push profile; pull requests, manual dispatches, and direct pushes to `main` run the full PR profile.
+GitHub Actions runs the same validation entrypoints on every pushed commit, pull request, and manual dispatch. Branch pushes run the faster push profile across Linux x64, Linux ARM64, macOS, and Windows. Pull requests/manual dispatches run the full PR profile on Windows x64 plus Linux ARM64, where the staged ARM64 client also runs an assetless no-map renderer startup smoke under a virtual X display.
 
 ### Push Validation
 
@@ -143,6 +145,7 @@ bash tools/validation/validate_pr.sh
 Useful options:
 
 - Add `--runtime` to run the safe renderer startup validation matrix after the staged install.
+- Add `--runtime-skip-official-pak-validation` with a targeted no-map runtime case when intentionally running an assetless engine-startup smoke, such as CI coverage without retail Quake 4 PK4s.
 - Add `--build-gamelibs` when you also want the Windows wrapper to build the standalone OpenQ4-GameLibs outputs during compile.
 - Use `--game-libs-repo <path>` when the companion repository is not at `../OpenQ4-GameLibs`.
 - Use `--build-dir <path>` plus `--no-clean` to validate a specific existing build tree.
@@ -263,7 +266,7 @@ After running the install step, `.install/` is a self-contained distributable pa
 ```
 
 > [!NOTE]
-> Public release packages intentionally use Meson `buildtype=debug` binaries while staying on the `stable` version track, so crash reports are actionable. Windows packages include matching PDB files; MSVC import libraries (`*.lib`) are development-only artifacts and are not required in the package.
+> Public release packages stay on the `stable` version track while using platform-appropriate diagnostics. Windows packages intentionally use Meson `buildtype=debug` and include matching PDB files. Linux and macOS release packages use Meson `buildtype=debugoptimized` with `b_ndebug=true`; Linux debug info is split into separate `openq4-<version>-linux-<arch>-debugsymbols.tar.xz` assets. MSVC import libraries (`*.lib`) are development-only artifacts and are not required in the package.
 
 Repo-authored runtime overrides live under `content/baseoq4/`. The install step stages that source-owned content into the runtime `baseoq4/` directory inside `.install/`.
 
@@ -287,7 +290,7 @@ The `meson install` step (via the wrapper) stages all required binaries into `.i
 
 Release archives also generate a packaged offline HTML documentation site under `docs/`. If you run the release packager manually instead of using GitHub Actions, make sure `python -m pip install markdown` is available in the same environment.
 
-The manually dispatched GitHub release workflow publishes architecture-qualified release assets such as `openq4-<version>-windows-x64.zip`, `openq4-<version>-windows-arm64.zip`, `openq4-<version>-linux-x64.tar.xz`, `openq4-<version>-linux-arm64.tar.xz`, and `openq4-<version>-macos-arm64.tar.gz`. Release workflow packages use Meson `buildtype=debug` plus `version_track=stable`; Windows payloads include PDB files and write crash logs plus minidumps under `crashes/` beside the executable after unhandled exceptions. Windows release payloads also get native installer executables such as `openq4-<version>-windows-x64-setup.exe` and `openq4-<version>-windows-arm64-setup.exe`. Each installer is compiled from the already-packaged Windows release directory so its file set matches the archive instead of diverging from it, writes install metadata to the registry for upgrade detection, registers a normal Windows uninstaller entry, and can optionally register `openq4://` browser links.
+The manually dispatched GitHub release workflow publishes architecture-qualified release assets such as `openq4-<version>-windows-x64.zip`, `openq4-<version>-windows-arm64.zip`, `openq4-<version>-linux-x64.tar.xz`, `openq4-<version>-linux-arm64.tar.xz`, and `openq4-<version>-macos-arm64.tar.gz`. Release workflow packages use `version_track=stable`; Windows payloads use Meson `buildtype=debug`, include PDB files, and write crash logs plus minidumps under `crashes/` beside the executable after unhandled exceptions. Linux and macOS payloads use Meson `buildtype=debugoptimized` with `b_ndebug=true`; Linux release runs also publish detached debug-symbol archives such as `openq4-<version>-linux-x64-debugsymbols.tar.xz` and `openq4-<version>-linux-arm64-debugsymbols.tar.xz`. Windows release payloads also get native installer executables such as `openq4-<version>-windows-x64-setup.exe` and `openq4-<version>-windows-arm64-setup.exe`. Each installer is compiled from the already-packaged Windows release directory so its file set matches the archive instead of diverging from it, writes install metadata to the registry for upgrade detection, registers a normal Windows uninstaller entry, and can optionally register `openq4://` browser links.
 
 If you want to build that installer manually on Windows after packaging a release directory, install [Inno Setup](https://jrsoftware.org/isinfo.php) and run:
 

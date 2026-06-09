@@ -37,11 +37,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m py_compile tools/validation/openq4_validate.py
+          python -m py_compile tools/validation/openq4_validate.py tools/tests/renderer_validation_matrix.py tools/tests/linux_arm64_ci_coverage.py
           bash -n tools/build/meson_setup.sh
           bash -n tools/validation/validate_push.sh
           bash -n tools/validation/validate_pr.sh
           python tools/tests/hdr_postprocess_math.py
+          python tools/tests/linux_arm64_ci_coverage.py
 
       - name: Dry-run push profile
         shell: bash
@@ -62,10 +63,16 @@ jobs:
         include:
           - name: Linux Push Verification
             os: ubuntu-24.04
-            artifact_name: linux
+            artifact_name: linux-x64
+            runtime_smoke: false
+          - name: Linux ARM64 Push Verification
+            os: ubuntu-24.04-arm
+            artifact_name: linux-arm64
+            runtime_smoke: true
           - name: macOS Push Verification
             os: macos-15
             artifact_name: macos
+            runtime_smoke: false
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -88,7 +95,7 @@ jobs:
           python -m pip install meson ninja
 
       - name: Install Linux native dependencies
-        if: matrix.os == 'ubuntu-24.04'
+        if: startsWith(matrix.os, 'ubuntu-')
         shell: bash
         run: |
           set -euo pipefail
@@ -121,7 +128,8 @@ jobs:
               libxss-dev \
               libxtst-dev \
               libxxf86dga-dev \
-              libxxf86vm-dev; then
+              libxxf86vm-dev \
+              xvfb; then
               exit 0
             fi
 
@@ -138,7 +146,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash tools/validation/validate_push.sh --install --fail-on-dirty
+          validation_args=(--install --fail-on-dirty)
+          if [[ "${{ matrix.runtime_smoke }}" == "true" ]]; then
+            validation_args+=(
+              --runtime
+              --runtime-cases renderer-default-safety-selftest
+              --runtime-tiers auto
+              --runtime-basepath ""
+              --runtime-skip-official-pak-validation
+            )
+            env SDL_VIDEO_DRIVER=x11 SDL_VIDEODRIVER=x11 xvfb-run -a bash tools/validation/validate_push.sh "${validation_args[@]}"
+          else
+            bash tools/validation/validate_push.sh "${validation_args[@]}"
+          fi
 
       - name: Publish staged payload
         if: always()

@@ -56,6 +56,10 @@ Sys_AsyncThread
 */
 void Sys_AsyncThread( void ) {
 	while ( 1 ) {
+		if ( Sys_IsCurrentThreadStopRequested() ) {
+			return;
+		}
+
 		usleep( 1000 );
 
 		const int previousTicNumber = com_ticNumber;
@@ -63,8 +67,6 @@ void Sys_AsyncThread( void ) {
 		for ( int tic = previousTicNumber; tic < com_ticNumber; ++tic ) {
 			Sys_TriggerEvent( TRIGGER_EVENT_ONE );
 		}
-
-		pthread_testcancel();
 	}
 }
 
@@ -304,6 +306,7 @@ void Sys_ShutdownSymbols( void ) {
 Sys_SetClipboardData
 ====================
 */
+#if !defined( USE_SDL3 )
 void Sys_SetClipboardData( const char *string ) {
 	NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
 	[pasteboard clearContents];
@@ -321,6 +324,7 @@ void Sys_SetClipboardData( const char *string ) {
 
 	[pasteboard setString:clipboardString forType:NSPasteboardTypeString];
 }
+#endif
 
 /*
 ===============

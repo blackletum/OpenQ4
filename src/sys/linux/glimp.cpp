@@ -38,7 +38,7 @@ extern "C" {
 #	include "libXNVCtrl/NVCtrlLib.h"
 }
 
-idCVar sys_videoRam( "sys_videoRam", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER, "Texture memory on the video card (in megabytes) - 0: autodetect", 0, 512 );
+idCVar sys_videoRam( "sys_videoRam", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER, "Texture memory on the video card (in megabytes) - 0: autodetect", 0, OPENQ4_LINUX_MAX_CONFIGURED_VIDEO_RAM_MB );
 
 Display *dpy = NULL;
 static int scrnum = 0;
@@ -99,6 +99,17 @@ static void GLimp_RestoreDisplayMode( void ) {
 		XF86VidModeSwitchToMode( dpy, scrnum, vidmodes[0] );
 	}
 	vidmode_active = false;
+}
+
+static void GLimp_CloseDisplay( void ) {
+	if ( dpy == NULL ) {
+		return;
+	}
+
+	XSync( dpy, False );
+	XCloseDisplay( dpy );
+	dpy = NULL;
+	scrnum = 0;
 }
 
 void GLimp_WakeBackEnd(void *a) {
@@ -389,26 +400,22 @@ void GLimp_Shutdown() {
 		if ( ctx != NULL ) {
 			glXMakeCurrent( dpy, None, NULL );
 			glXDestroyContext( dpy, ctx );
+			ctx = NULL;
 		}
-		
+
+		GLimp_RestoreDisplayMode();
+
+		if ( win != 0 ) {
+			XDestroyWindow( dpy, win );
+			win = 0;
+		}
+
+		GLimp_FreeVidModes();
+		GLimp_CloseDisplay();
+
 #if !defined( ID_GL_HARDLINK )
 		GLimp_dlclose();
 #endif
-		
-		if ( win != 0 ) {
-			XDestroyWindow( dpy, win );
-		}
-		GLimp_RestoreDisplayMode();
-
-		XFlush( dpy );
-		GLimp_FreeVidModes();
-
-		// FIXME: that's going to crash
-		//XCloseDisplay( dpy );
-
-		dpy = NULL;
-		win = 0;
-		ctx = NULL;
 	}
 }
 
@@ -825,11 +832,13 @@ bool GLimp_Init( glimpParms_t a ) {
 	
 #ifndef ID_GL_HARDLINK
 	if ( !GLimp_dlopen() ) {
+		GLimp_Shutdown();
 		return false;
 	}
 #endif
 	
 	if (!GLX_Init(a)) {
+		GLimp_Shutdown();
 		return false;
 	}
 	
@@ -871,7 +880,8 @@ int Sys_GetVideoRam( void ) {
 	// try a few strategies to guess the amount of video ram
 	common->Printf( "guessing video ram ( use +set sys_videoRam to force ) ..\n" );
 	if ( !GLimp_OpenDisplay( ) ) {
-		run_once = 64;
+		common->Printf( "guess failed, using conservative modern VRAM setting ( %dMB VRAM )\n", OPENQ4_LINUX_UNKNOWN_VIDEO_RAM_MB );
+		run_once = OPENQ4_LINUX_UNKNOWN_VIDEO_RAM_MB;
 		return run_once;
 	}
 	l_dpy = dpy;
@@ -923,7 +933,7 @@ int Sys_GetVideoRam( void ) {
 			common->Printf( "read /proc/dri/0/umm failed: %s\n", strerror( errno ) );
 		}
 	}
-	common->Printf( "guess failed, return default low-end VRAM setting ( 64MB VRAM )\n" );
-	run_once = 64;
+	common->Printf( "guess failed, using conservative modern VRAM setting ( %dMB VRAM )\n", OPENQ4_LINUX_UNKNOWN_VIDEO_RAM_MB );
+	run_once = OPENQ4_LINUX_UNKNOWN_VIDEO_RAM_MB;
 	return run_once;
 }

@@ -154,13 +154,11 @@ This cvar is set on operating systems that use case sensitive filesystems (Linux
 It is a common situation to have the media reference filenames, whereas the file on disc 
 only matches in a case-insensitive way. When "fs_caseSensitiveOS" is set, the filesystem
 will always do a case insensitive search.
-IMPORTANT: This only applies to files, and not to directories. There is no case-insensitive
-matching of directories. All directory names should be lowercase, when "com_developer" is 1,
-the filesystem will warn when it catches bad directory situations (regardless of the
-"fs_caseSensitiveOS" setting)
-When bad casing in directories happen and "fs_caseSensitiveOS" is set, BuildOSPath will
-attempt to correct the situation by forcing the path to lowercase. This assumes the media
-is stored all lowercase.
+Directory segments are also resolved case-insensitively when they already exist on disk.
+When "com_developer" is 1, the filesystem will warn when it catches bad directory
+situations (regardless of the "fs_caseSensitiveOS" setting). Missing directories are
+left unchanged so write paths can still create new content and failed reads report the
+unresolved segment in debug output instead of relying on lowercase assumptions.
 
 "additional mod path search":
 fs_game_base can be used to set an additional search path
@@ -1185,6 +1183,8 @@ private:
 
 private:
 	void					ReplaceSeparators( idStr &path, char sep = PATHSEPERATOR_CHAR );
+	bool					FindCaseInsensitiveOSPathEntry( const char *directory, const char *segment, bool directoryOnly, idStr &resolvedSegment );
+	bool					ResolveCaseInsensitiveOSPath( const char *path, idStr &resolvedPath, bool finalSegmentIsFile );
 	long					HashFileName( const char *fname ) const;
 	int						ListOSFiles( const char *directory, const char *extension, idStrList &list );
 	FILE *					OpenOSFile( const char *name, const char *mode, idStr *caseSensitiveName = NULL );
@@ -1363,9 +1363,30 @@ FILE *idFileSystemLocal::OpenOSFile( const char *fileName, const char *mode, idS
 #endif
 	fp = fopen( fileName, mode );
 	if ( !fp && fs_caseSensitiveOS.GetBool() ) {
+		idStr resolvedFileName;
+		if ( ResolveCaseInsensitiveOSPath( fileName, resolvedFileName, true ) ) {
+			fp = fopen( resolvedFileName, mode );
+			if ( fp ) {
+				if ( caseSensitiveName ) {
+					*caseSensitiveName = resolvedFileName;
+					caseSensitiveName->StripPath();
+				}
+				if ( fs_debug.GetInteger() ) {
+					common->Printf( "idFileSystemLocal::OpenFileRead: changed %s to %s\n", fileName, resolvedFileName.c_str() );
+				}
+				return fp;
+			} else {
+				common->Warning( "idFileSystemLocal::OpenFileRead: fs_caseSensitiveOS 1 resolved %s to %s but could not open it", fileName, resolvedFileName.c_str() );
+			}
+		}
+
 		fpath = fileName;
 		fpath.StripFilename();
 		fpath.StripTrailing( PATHSEPERATOR_CHAR );
+		idStr resolvedPath;
+		if ( ResolveCaseInsensitiveOSPath( fpath.c_str(), resolvedPath, false ) ) {
+			fpath = resolvedPath;
+		}
 		if ( ListOSFiles( fpath, NULL, list ) == -1 ) {
 			return NULL;
 		}
@@ -1552,21 +1573,139 @@ void idFileSystemLocal::ReplaceSeparators( idStr &path, char sep ) {
 
 /*
 ===================
+idFileSystemLocal::FindCaseInsensitiveOSPathEntry
+===================
+*/
+bool idFileSystemLocal::FindCaseInsensitiveOSPathEntry( const char *directory, const char *segment, bool directoryOnly, idStr &resolvedSegment ) {
+	idStrList entries;
+	const char *listDirectory = directory;
+	const char *extension = directoryOnly ? "/" : "";
+
+	if ( !listDirectory || !listDirectory[0] ) {
+		listDirectory = ".";
+	}
+
+	if ( !segment || !segment[0] ) {
+		return false;
+	}
+
+	if ( Sys_ListFiles( listDirectory, extension, entries ) == -1 ) {
+		return false;
+	}
+
+	for ( int i = 0; i < entries.Num(); i++ ) {
+		if ( entries[i].Cmp( segment ) == 0 ) {
+			resolvedSegment = entries[i];
+			return true;
+		}
+	}
+
+	for ( int i = 0; i < entries.Num(); i++ ) {
+		if ( entries[i].Icmp( segment ) == 0 ) {
+			resolvedSegment = entries[i];
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/*
+===================
+idFileSystemLocal::ResolveCaseInsensitiveOSPath
+===================
+*/
+bool idFileSystemLocal::ResolveCaseInsensitiveOSPath( const char *path, idStr &resolvedPath, bool finalSegmentIsFile ) {
+	if ( !path ) {
+		resolvedPath.Clear();
+		return false;
+	}
+
+	if ( !path[0] ) {
+		resolvedPath.Clear();
+		return false;
+	}
+
+	idStr normalized = path;
+	ReplaceSeparators( normalized, '/' );
+
+	while ( normalized.Length() > 1 && normalized[ normalized.Length() - 1 ] == '/' ) {
+		normalized.CapLength( normalized.Length() - 1 );
+	}
+
+	const bool absolutePath = ( normalized[0] == '/' );
+	const int pathLength = normalized.Length();
+	int index = absolutePath ? 1 : 0;
+	bool changed = false;
+
+	resolvedPath = absolutePath ? "/" : "";
+
+	while ( index < pathLength ) {
+		while ( index < pathLength && normalized[index] == '/' ) {
+			index++;
+		}
+		if ( index >= pathLength ) {
+			break;
+		}
+
+		const int segmentStart = index;
+		while ( index < pathLength && normalized[index] != '/' ) {
+			index++;
+		}
+
+		idStr segment = normalized.Mid( segmentStart, index - segmentStart );
+		const bool hasMoreSegments = ( index < pathLength );
+		const bool directoryOnly = hasMoreSegments || !finalSegmentIsFile;
+		const char *parentDirectory = resolvedPath.IsEmpty() ? "." : resolvedPath.c_str();
+		idStr resolvedSegment;
+
+		if ( !FindCaseInsensitiveOSPathEntry( parentDirectory, segment.c_str(), directoryOnly, resolvedSegment ) ) {
+			if ( fs_debug.GetBool() ) {
+				common->Printf( "idFileSystemLocal::ResolveCaseInsensitiveOSPath: could not resolve %s segment '%s' under '%s' while resolving '%s'\n",
+					directoryOnly ? "directory" : "file",
+					segment.c_str(),
+					parentDirectory,
+					path );
+			}
+			resolvedPath = normalized;
+			ReplaceSeparators( resolvedPath );
+			return false;
+		}
+
+		if ( resolvedSegment.Cmp( segment.c_str() ) != 0 ) {
+			changed = true;
+		}
+		resolvedPath.AppendPath( resolvedSegment );
+	}
+
+	ReplaceSeparators( resolvedPath );
+	return changed;
+}
+
+/*
+===================
 idFileSystemLocal::BuildOSPath
 ===================
 */
 const char *idFileSystemLocal::BuildOSPath( const char *base, const char *game, const char *relativePath ) {
 	static char OSPath[MAX_STRING_CHARS];
 	idStr newPath;
+	bool hasUpperDirectory = false;
+	idStr strBase = base;
+	strBase.StripTrailing( '/' );
+	strBase.StripTrailing( '\\' );
+	sprintf( newPath, "%s/%s/%s", strBase.c_str(), game, relativePath );
+	ReplaceSeparators( newPath );
 
 	if ( fs_caseSensitiveOS.GetBool() || com_developer.GetBool() ) {
-		// extract the path, make sure it's all lowercase
-		idStr testPath, fileName;
+		// extract the directory path and warn about non-portable casing
+		idStr testPath;
 
 		sprintf( testPath, "%s/%s", game , relativePath );
 		testPath.StripFilename();
 
 		if ( testPath.HasUpper() ) {
+			hasUpperDirectory = true;
 			bool warn = true;
 
 			// On case-insensitive OSes, avoid warning for top-level non-game folders
@@ -1584,26 +1723,36 @@ const char *idFileSystemLocal::BuildOSPath( const char *base, const char *game, 
 			if ( warn ) {
 				common->Warning( "Non-portable: path contains uppercase characters: %s", testPath.c_str() );
 			}
-
-			// attempt a fixup on the fly
-			if ( fs_caseSensitiveOS.GetBool() ) {
-				testPath.ToLower();
-				fileName = relativePath;
-				fileName.StripPath();
-				sprintf( newPath, "%s/%s/%s", base, testPath.c_str(), fileName.c_str() );
-				ReplaceSeparators( newPath );
-				common->DPrintf( "Fixed up to %s\n", newPath.c_str() );
-				idStr::Copynz( OSPath, newPath, sizeof( OSPath ) );
-				return OSPath;
-			}
 		}
 	}
 
-	idStr strBase = base;
-	strBase.StripTrailing( '/' );
-	strBase.StripTrailing( '\\' );
-	sprintf( newPath, "%s/%s/%s", strBase.c_str(), game, relativePath );
-	ReplaceSeparators( newPath );
+	if ( fs_caseSensitiveOS.GetBool() && hasUpperDirectory ) {
+		const int relativeLength = relativePath ? idStr::Length( relativePath ) : 0;
+		const bool finalSegmentIsFile = ( relativeLength > 0 && relativePath[ relativeLength - 1 ] != '/' && relativePath[ relativeLength - 1 ] != '\\' );
+		idStr directoryPath = newPath;
+		idStr fileName;
+
+		if ( finalSegmentIsFile ) {
+			fileName = directoryPath;
+			fileName.StripPath();
+			directoryPath.StripFilename();
+		}
+
+		while ( directoryPath.Length() > 1 && directoryPath[ directoryPath.Length() - 1 ] == PATHSEPERATOR_CHAR ) {
+			directoryPath.CapLength( directoryPath.Length() - 1 );
+		}
+
+		idStr resolvedDirectory;
+		if ( !directoryPath.IsEmpty() && ResolveCaseInsensitiveOSPath( directoryPath.c_str(), resolvedDirectory, false ) ) {
+			if ( finalSegmentIsFile ) {
+				resolvedDirectory.AppendPath( fileName );
+			}
+			newPath = resolvedDirectory;
+			ReplaceSeparators( newPath );
+			common->DPrintf( "Resolved case-sensitive path to %s\n", newPath.c_str() );
+		}
+	}
+
 	idStr::Copynz( OSPath, newPath, sizeof( OSPath ) );
 	return OSPath;
 }
@@ -3215,6 +3364,8 @@ idFileSystemLocal::ListOSFiles
 */
 int	idFileSystemLocal::ListOSFiles( const char *directory, const char *extension, idStrList &list ) {
 	int i, j, ret;
+	const char *cacheDirectory = directory;
+	idStr resolvedDirectory;
 
 	if ( !extension ) {
 		extension = "";
@@ -3243,14 +3394,21 @@ int	idFileSystemLocal::ListOSFiles( const char *directory, const char *extension
 	}	
 
 	ret = Sys_ListFiles( directory, extension, list );
+	if ( ret == -1 && ResolveCaseInsensitiveOSPath( directory, resolvedDirectory, false ) ) {
+		cacheDirectory = resolvedDirectory.c_str();
+		if ( fs_debug.GetInteger() ) {
+			common->Printf( "idFileSystemLocal::ListOSFiles: changed %s to %s\n", directory, cacheDirectory );
+		}
+		ret = Sys_ListFiles( cacheDirectory, extension, list );
+	}
 
 	if ( ret == -1 ) {
 		return -1;
 	}
 
 	// push a new entry
-	dir_cache[dir_cache_index].Init( directory, extension, list );
-	dir_cache_index = (++dir_cache_index) % MAX_CACHED_DIRS;
+	dir_cache[dir_cache_index].Init( cacheDirectory, extension, list );
+	dir_cache_index = ( dir_cache_index + 1 ) % MAX_CACHED_DIRS;
 	if ( dir_cache_count < MAX_CACHED_DIRS ) {
 		dir_cache_count++;
 	}
@@ -5373,6 +5531,10 @@ Reads part of a file from a background thread.
 */
 dword BackgroundDownloadThread( void *parms ) {
 	while( 1 ) {
+		if ( Sys_IsCurrentThreadStopRequested() ) {
+			return 0;
+		}
+
 		Sys_EnterCriticalSection();
 		backgroundDownload_t	*bgl = fileSystemLocal.backgroundDownloads;
 		if ( !bgl ) {

@@ -89,25 +89,182 @@ static int Sys_KeepSocketFdOutOfStdioRange( int socketFd ) {
 	return duplicateFd;
 }
 
+static bool Sys_ParsePortText( const char *text, int *port ) {
+	if ( text == NULL || text[0] == '\0' || port == NULL ) {
+		return false;
+	}
+
+	char *end = NULL;
+	errno = 0;
+	const long parsedPort = strtol( text, &end, 10 );
+	if ( errno != 0 || end == text || *end != '\0' || parsedPort < 0 || parsedPort > 65535 ) {
+		return false;
+	}
+
+	*port = static_cast<int>( parsedPort );
+	return true;
+}
+
+static bool Sys_SplitHostAndPort( const char *src, char *host, size_t hostSize, char *service, size_t serviceSize ) {
+	if ( src == NULL || src[0] == '\0' || host == NULL || hostSize == 0 || service == NULL || serviceSize == 0 ) {
+		return false;
+	}
+
+	service[0] = '\0';
+
+	if ( src[0] == '[' ) {
+		const char *endBracket = strchr( src, ']' );
+		if ( endBracket == NULL || endBracket == src + 1 ) {
+			return false;
+		}
+
+		const size_t hostLength = static_cast<size_t>( endBracket - src - 1 );
+		if ( hostLength >= hostSize ) {
+			return false;
+		}
+		memcpy( host, src + 1, hostLength );
+		host[hostLength] = '\0';
+
+		if ( endBracket[1] == '\0' ) {
+			return true;
+		}
+		if ( endBracket[1] != ':' ) {
+			return false;
+		}
+
+		int port = 0;
+		if ( !Sys_ParsePortText( endBracket + 2, &port ) ) {
+			return false;
+		}
+		idStr::snPrintf( service, serviceSize, "%d", port );
+		return true;
+	}
+
+	const char *firstColon = strchr( src, ':' );
+	const char *lastColon = strrchr( src, ':' );
+	if ( firstColon != NULL && firstColon == lastColon ) {
+		const size_t hostLength = static_cast<size_t>( firstColon - src );
+		if ( hostLength == 0 || hostLength >= hostSize ) {
+			return false;
+		}
+		memcpy( host, src, hostLength );
+		host[hostLength] = '\0';
+
+		int port = 0;
+		if ( !Sys_ParsePortText( firstColon + 1, &port ) ) {
+			return false;
+		}
+		idStr::snPrintf( service, serviceSize, "%d", port );
+		return true;
+	}
+
+	idStr::Copynz( host, src, hostSize );
+	return true;
+}
+
+static void Sys_SetSockaddrPort( struct sockaddr *address, int port ) {
+	if ( address->sa_family == AF_INET ) {
+		reinterpret_cast<struct sockaddr_in *>( address )->sin_port = htons( static_cast<unsigned short>( port ) );
+	} else if ( address->sa_family == AF_INET6 ) {
+		reinterpret_cast<struct sockaddr_in6 *>( address )->sin6_port = htons( static_cast<unsigned short>( port ) );
+	}
+}
+
+static bool Sys_ResolveSockaddr( const char *s, bool doDNSResolve, int family, int socktype, int defaultPort, struct sockaddr_storage *sadr, socklen_t *sadrLen ) {
+	char host[NI_MAXHOST];
+	char service[NI_MAXSERV];
+
+	if ( sadr == NULL || sadrLen == NULL || !Sys_SplitHostAndPort( s, host, sizeof( host ), service, sizeof( service ) ) ) {
+		return false;
+	}
+
+	if ( service[0] == '\0' ) {
+		idStr::snPrintf( service, sizeof( service ), "%d", Max( 0, defaultPort ) );
+	}
+
+	struct addrinfo hints;
+	memset( &hints, 0, sizeof( hints ) );
+	hints.ai_family = family;
+	hints.ai_socktype = socktype;
+	hints.ai_flags = doDNSResolve ? 0 : AI_NUMERICHOST;
+
+	struct addrinfo *results = NULL;
+	const int error = getaddrinfo( host, service, &hints, &results );
+	if ( error != 0 ) {
+		return false;
+	}
+
+	bool resolved = false;
+	for ( const struct addrinfo *result = results; result != NULL; result = result->ai_next ) {
+		if ( result->ai_addr == NULL ) {
+			continue;
+		}
+		if ( result->ai_family != AF_INET && result->ai_family != AF_INET6 ) {
+			continue;
+		}
+		if ( result->ai_addrlen > sizeof( *sadr ) ) {
+			continue;
+		}
+
+		memset( sadr, 0, sizeof( *sadr ) );
+		memcpy( sadr, result->ai_addr, result->ai_addrlen );
+		*sadrLen = static_cast<socklen_t>( result->ai_addrlen );
+		resolved = true;
+		break;
+	}
+
+	freeaddrinfo( results );
+	return resolved;
+}
+
+static bool Sys_IsAnyInterfaceName( const char *net_interface ) {
+	return net_interface == NULL || net_interface[0] == '\0' || !idStr::Icmp( net_interface, "localhost" );
+}
+
+static const char *Sys_SocketFamilyName( int family ) {
+	return family == AF_INET6 ? "IPv6" : "IPv4";
+}
+
 /*
 =============
 NetadrToSockadr
 =============
 */
-static void NetadrToSockadr( const netadr_t * a, struct sockaddr_in *s ) {
-	memset(s, 0, sizeof(*s));
+static bool NetadrToSockadr( const netadr_t * a, struct sockaddr_storage *s, socklen_t *slen ) {
+	if ( a == NULL || s == NULL || slen == NULL ) {
+		return false;
+	}
+
+	memset( s, 0, sizeof( *s ) );
 
 	if ( a->type == NA_BROADCAST ) {
-		s->sin_family = AF_INET;
-
-		s->sin_port = htons( (short)a->port );
-		s->sin_addr.s_addr = INADDR_BROADCAST;
+		struct sockaddr_in *ipv4 = reinterpret_cast<struct sockaddr_in *>( s );
+		ipv4->sin_family = AF_INET;
+		ipv4->sin_port = htons( static_cast<unsigned short>( a->port ) );
+		ipv4->sin_addr.s_addr = INADDR_BROADCAST;
+		*slen = sizeof( *ipv4 );
+		return true;
 	} else if ( a->type == NA_IP || a->type == NA_LOOPBACK ) {
-		s->sin_family = AF_INET;
-
-		memcpy( &s->sin_addr.s_addr, a->ip, sizeof( a->ip ) );
-		s->sin_port = htons( (short)a->port );
+		struct sockaddr_in *ipv4 = reinterpret_cast<struct sockaddr_in *>( s );
+		ipv4->sin_family = AF_INET;
+		memcpy( &ipv4->sin_addr.s_addr, a->ip, sizeof( a->ip ) );
+		if ( a->type == NA_LOOPBACK ) {
+			ipv4->sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+		}
+		ipv4->sin_port = htons( static_cast<unsigned short>( a->port ) );
+		*slen = sizeof( *ipv4 );
+		return true;
+	} else if ( a->type == NA_IP6 ) {
+		struct sockaddr_in6 *ipv6 = reinterpret_cast<struct sockaddr_in6 *>( s );
+		ipv6->sin6_family = AF_INET6;
+		memcpy( &ipv6->sin6_addr, a->ip6, sizeof( a->ip6 ) );
+		ipv6->sin6_scope_id = a->scopeId;
+		ipv6->sin6_port = htons( static_cast<unsigned short>( a->port ) );
+		*slen = sizeof( *ipv6 );
+		return true;
 	}
+
+	return false;
 }
 
 /*
@@ -115,97 +272,32 @@ static void NetadrToSockadr( const netadr_t * a, struct sockaddr_in *s ) {
 SockadrToNetadr
 =============
 */
-static void SockadrToNetadr(struct sockaddr_in *s, netadr_t * a) {
-	const unsigned int ip = s->sin_addr.s_addr;
-	memcpy( a->ip, &ip, sizeof( a->ip ) );
-	a->port = ntohs( s->sin_port );
-	// we store in network order, that loopback test is host order..
-	if ( ntohl( ip ) == INADDR_LOOPBACK ) {
-		a->type = NA_LOOPBACK;
-	} else {
-		a->type = NA_IP;
-	}
-}
-
-/*
-=============
-ExtractPort
-=============
-*/
-static bool ExtractPort( const char *src, char *buf, int bufsize, int *port ) {
-	char *p;
-	char *end;
-	long parsedPort;
-
-	strncpy( buf, src, bufsize );
-	p = buf; p += Min( bufsize - 1, (int)strlen( src ) ); *p = '\0';
-	p = strchr( buf, ':' );
-	if ( !p ) {
-		return false;
-	}
-	*p = '\0';
-	errno = 0;
-	parsedPort = strtol( p + 1, &end, 10 );
-	if ( errno != 0 || end == p + 1 || *end != '\0' || parsedPort < 0 || parsedPort > 65535 ) {
-		return false;
-	}
-	*port = static_cast<int>( parsedPort );
-	return true;
-}
-
-/*
-=============
-StringToSockaddr
-=============
-*/
-static bool StringToSockaddr( const char *s, struct sockaddr_in *sadr, bool doDNSResolve ) {
-	struct hostent *h;
-	char buf[256];
-	int port;
-	bool parsedAddress = false;
-
-	if ( s == NULL || s[0] == '\0' ) {
+static bool SockadrToNetadr( const struct sockaddr *s, netadr_t * a ) {
+	if ( s == NULL || a == NULL ) {
 		return false;
 	}
 
-	memset( sadr, 0, sizeof( *sadr ) );
-	sadr->sin_family = AF_INET;
+	memset( a, 0, sizeof( *a ) );
 
-	sadr->sin_port = 0;
-
-	if (s[0] >= '0' && s[0] <= '9') {
-		if ( inet_aton( s, &sadr->sin_addr ) ) {
-			parsedAddress = true;
-		} else {
-			// check for port
-			if ( !ExtractPort( s, buf, sizeof( buf ), &port ) ) {
-				return false;
-			}
-			if ( !inet_aton( buf, &sadr->sin_addr ) ) {
-				return false;
-			}
-			parsedAddress = true;
-			sadr->sin_port = htons( port );
-		}
-	} else if ( doDNSResolve ) {
-		// try to remove the port first, otherwise the DNS gets confused into multiple timeouts
-		// failed or not failed, buf is expected to contain the appropriate host to resolve
-		if ( ExtractPort( s, buf, sizeof( buf ), &port ) ) {
-			sadr->sin_port = htons( port );			
-		} else {
-			idStr::Copynz( buf, s, sizeof( buf ) );
-		}
-		if ( !( h = gethostbyname( buf ) ) ) {
-			return false;
-		}
-		if ( h->h_addrtype != AF_INET || h->h_length < static_cast<int>( sizeof( sadr->sin_addr ) ) || h->h_addr_list == NULL || h->h_addr_list[0] == NULL ) {
-			return false;
-		}
-		memcpy( &sadr->sin_addr, h->h_addr_list[0], sizeof( sadr->sin_addr ) );
-		parsedAddress = true;
+	if ( s->sa_family == AF_INET ) {
+		const struct sockaddr_in *ipv4 = reinterpret_cast<const struct sockaddr_in *>( s );
+		const unsigned int ip = ipv4->sin_addr.s_addr;
+		memcpy( a->ip, &ip, sizeof( a->ip ) );
+		a->port = ntohs( ipv4->sin_port );
+		a->type = ( ntohl( ip ) == INADDR_LOOPBACK ) ? NA_LOOPBACK : NA_IP;
+		return true;
 	}
 
-	return parsedAddress;
+	if ( s->sa_family == AF_INET6 ) {
+		const struct sockaddr_in6 *ipv6 = reinterpret_cast<const struct sockaddr_in6 *>( s );
+		memcpy( a->ip6, &ipv6->sin6_addr, sizeof( a->ip6 ) );
+		a->scopeId = ipv6->sin6_scope_id;
+		a->port = ntohs( ipv6->sin6_port );
+		a->type = NA_IP6;
+		return true;
+	}
+
+	return false;
 }
 
 /*
@@ -214,14 +306,14 @@ Sys_StringToAdr
 =============
 */
 bool Sys_StringToNetAdr( const char *s, netadr_t * a, bool doDNSResolve ) {
-	struct sockaddr_in sadr;
+	struct sockaddr_storage sadr;
+	socklen_t sadrLen;
 
-	if ( !StringToSockaddr( s, &sadr, doDNSResolve ) ) {
+	if ( !Sys_ResolveSockaddr( s, doDNSResolve, AF_UNSPEC, SOCK_DGRAM, 0, &sadr, &sadrLen ) ) {
 		return false;
 	}
 
-	SockadrToNetadr( &sadr, a );
-	return true;
+	return SockadrToNetadr( reinterpret_cast<const struct sockaddr *>( &sadr ), a );
 }
 
 /*
@@ -230,21 +322,39 @@ Sys_NetAdrToString
 =============
 */
 const char *Sys_NetAdrToString( const netadr_t a ) {
-	static char s[64];
+	static char s[4][128];
+	static int index = 0;
+	char *buffer = s[index++ & 3];
 
 	if ( a.type == NA_LOOPBACK ) {
 		if ( a.port ) {
-			idStr::snPrintf( s, sizeof(s), "localhost:%i", a.port );
+			idStr::snPrintf( buffer, sizeof( s[0] ), "localhost:%i", a.port );
 		} else {
-			idStr::snPrintf( s, sizeof(s), "localhost" );
+			idStr::snPrintf( buffer, sizeof( s[0] ), "localhost" );
 		}
 	} else if ( a.type == NA_IP ) {
-		idStr::snPrintf( s, sizeof(s), "%i.%i.%i.%i:%i",
+		idStr::snPrintf( buffer, sizeof( s[0] ), "%i.%i.%i.%i:%i",
 			a.ip[0], a.ip[1], a.ip[2], a.ip[3], a.port );
+	} else if ( a.type == NA_IP6 ) {
+		char addressText[INET6_ADDRSTRLEN];
+		if ( inet_ntop( AF_INET6, a.ip6, addressText, sizeof( addressText ) ) == NULL ) {
+			idStr::Copynz( addressText, "::", sizeof( addressText ) );
+		}
+		if ( a.port ) {
+			if ( a.scopeId ) {
+				idStr::snPrintf( buffer, sizeof( s[0] ), "[%s%%%u]:%i", addressText, a.scopeId, a.port );
+			} else {
+				idStr::snPrintf( buffer, sizeof( s[0] ), "[%s]:%i", addressText, a.port );
+			}
+		} else if ( a.scopeId ) {
+			idStr::snPrintf( buffer, sizeof( s[0] ), "%s%%%u", addressText, a.scopeId );
+		} else {
+			idStr::snPrintf( buffer, sizeof( s[0] ), "%s", addressText );
+		}
 	} else {
-		idStr::snPrintf( s, sizeof(s), "bad" );
+		idStr::snPrintf( buffer, sizeof( s[0] ), "bad" );
 	}
-	return s;
+	return buffer;
 }
 
 /*
@@ -254,7 +364,6 @@ Sys_IsLANAddress
 */
 bool Sys_IsLANAddress( const netadr_t adr ) {
 	int i;
-	unsigned long *p_ip;
 	unsigned long ip;
 
 #if ID_NOLANADDRESS
@@ -266,6 +375,20 @@ bool Sys_IsLANAddress( const netadr_t adr ) {
 		return true;
 	}
 
+	if ( adr.type == NA_IP6 ) {
+		struct in6_addr ipv6;
+		memcpy( &ipv6, adr.ip6, sizeof( ipv6 ) );
+		if ( IN6_IS_ADDR_LOOPBACK( &ipv6 ) || IN6_IS_ADDR_LINKLOCAL( &ipv6 ) ) {
+			return true;
+		}
+#ifdef IN6_IS_ADDR_SITELOCAL
+		if ( IN6_IS_ADDR_SITELOCAL( &ipv6 ) ) {
+			return true;
+		}
+#endif
+		return ( adr.ip6[0] & 0xfe ) == 0xfc;
+	}
+
 	if ( adr.type != NA_IP ) {
 		return false;
 	}
@@ -275,8 +398,9 @@ bool Sys_IsLANAddress( const netadr_t adr ) {
 	}
 
 	for ( i = 0; i < num_interfaces; i++ ) {
-		p_ip = (unsigned long *)&adr.ip[0];
-		ip = ntohl( *p_ip );
+		unsigned int packedIP;
+		memcpy( &packedIP, adr.ip, sizeof( packedIP ) );
+		ip = ntohl( packedIP );
 		if( ( netint[i].ip & netint[i].mask ) == ( ip & netint[i].mask ) ) {
 			return true;
 		}
@@ -306,6 +430,10 @@ bool Sys_CompareNetAdrBase( const netadr_t a, const netadr_t b ) {
 			return true;
 		}
 		return false;
+	}
+
+	if ( a.type == NA_IP6 ) {
+		return memcmp( a.ip6, b.ip6, sizeof( a.ip6 ) ) == 0 && a.scopeId == b.scopeId;
 	}
 
 	common->Printf( "Sys_CompareNetAdrBase: bad address type\n" );
@@ -433,78 +561,117 @@ void Sys_InitNetworking(void)
 
 /*
 ====================
-IPSocket
+IPSocketForFamily
 ====================
 */
-static int IPSocket( const char *net_interface, int port, netadr_t *bound_to = NULL ) {
-	int newsocket;
-	struct sockaddr_in address;
-	int i = 1;
-
-	if ( net_interface ) {
-		common->Printf( "Opening IP socket: %s:%i\n", net_interface, port );
-	} else {
-		common->Printf( "Opening IP socket: localhost:%i\n", port );
+static int IPSocketForFamily( const char *net_interface, int port, int family, netadr_t *bound_to = NULL, bool quiet = false ) {
+	if ( family != AF_INET && family != AF_INET6 ) {
+		return 0;
 	}
 
+	const int bindPort = port == PORT_ANY ? 0 : port;
+	const char *interfaceText = Sys_IsAnyInterfaceName( net_interface ) ? "localhost" : net_interface;
+	if ( !quiet ) {
+		common->Printf( "Opening %s UDP socket: %s:%i\n", Sys_SocketFamilyName( family ), interfaceText, port );
+	}
+
+	struct sockaddr_storage address;
+	socklen_t addressLen = 0;
 	memset( &address, 0, sizeof( address ) );
 
-	if ( ( newsocket = socket( PF_INET, SOCK_DGRAM, IPPROTO_UDP ) ) == -1 ) {
-		common->Printf( "ERROR: IPSocket: socket: %s", strerror( errno ) );
+	if ( Sys_IsAnyInterfaceName( net_interface ) ) {
+		if ( family == AF_INET ) {
+			struct sockaddr_in *ipv4 = reinterpret_cast<struct sockaddr_in *>( &address );
+			ipv4->sin_family = AF_INET;
+			ipv4->sin_addr.s_addr = INADDR_ANY;
+			ipv4->sin_port = htons( static_cast<unsigned short>( bindPort ) );
+			addressLen = sizeof( *ipv4 );
+		} else {
+			struct sockaddr_in6 *ipv6 = reinterpret_cast<struct sockaddr_in6 *>( &address );
+			ipv6->sin6_family = AF_INET6;
+			ipv6->sin6_addr = in6addr_any;
+			ipv6->sin6_port = htons( static_cast<unsigned short>( bindPort ) );
+			addressLen = sizeof( *ipv6 );
+		}
+	} else {
+		if ( !Sys_ResolveSockaddr( net_interface, true, family, SOCK_DGRAM, bindPort, &address, &addressLen ) ) {
+			if ( !quiet ) {
+				common->Printf( "ERROR: IPSocketForFamily: bad %s interface address '%s'\n", Sys_SocketFamilyName( family ), net_interface );
+			}
+			return 0;
+		}
+		Sys_SetSockaddrPort( reinterpret_cast<struct sockaddr *>( &address ), bindPort );
+	}
+
+	int newsocket = socket( family, SOCK_DGRAM, IPPROTO_UDP );
+	if ( newsocket == -1 ) {
+		if ( !quiet ) {
+			common->Printf( "ERROR: IPSocketForFamily: %s socket: %s\n", Sys_SocketFamilyName( family ), strerror( errno ) );
+		}
 		return 0;
 	}
 	newsocket = Sys_KeepSocketFdOutOfStdioRange( newsocket );
 	if ( newsocket == -1 ) {
 		return 0;
 	}
-	// make it non-blocking
+
 	int on = 1;
 	if ( ioctl( newsocket, FIONBIO, &on ) == -1 ) {
-		common->Printf( "ERROR: IPSocket: ioctl FIONBIO:%s\n",
-				   strerror( errno ) );
-		close( newsocket );
-		return 0;
-	}
-	// make it broadcast capable
-	if ( setsockopt( newsocket, SOL_SOCKET, SO_BROADCAST, (char *) &i, sizeof(i) ) == -1 ) {
-		common->Printf( "ERROR: IPSocket: setsockopt SO_BROADCAST:%s\n", strerror( errno ) );
+		if ( !quiet ) {
+			common->Printf( "ERROR: IPSocketForFamily: %s ioctl FIONBIO: %s\n", Sys_SocketFamilyName( family ), strerror( errno ) );
+		}
 		close( newsocket );
 		return 0;
 	}
 
-	if ( !net_interface || !net_interface[ 0 ]
-		|| !idStr::Icmp( net_interface, "localhost" ) ) {
-		address.sin_addr.s_addr = INADDR_ANY;
-	} else {
-		if ( !StringToSockaddr( net_interface, &address, true ) ) {
-			common->Printf( "ERROR: IPSocket: bad interface address '%s'\n", net_interface );
+	if ( family == AF_INET ) {
+		if ( setsockopt( newsocket, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<char *>( &on ), sizeof( on ) ) == -1 ) {
+			if ( !quiet ) {
+				common->Printf( "ERROR: IPSocketForFamily: setsockopt SO_BROADCAST: %s\n", strerror( errno ) );
+			}
 			close( newsocket );
 			return 0;
 		}
 	}
 
-	if ( port == PORT_ANY ) {
-		address.sin_port = 0;
-	} else {
-		address.sin_port = htons((short) port);
+#ifdef IPV6_V6ONLY
+	if ( family == AF_INET6 ) {
+		if ( setsockopt( newsocket, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<char *>( &on ), sizeof( on ) ) == -1 ) {
+			if ( !quiet ) {
+				common->Printf( "ERROR: IPSocketForFamily: setsockopt IPV6_V6ONLY: %s\n", strerror( errno ) );
+			}
+			close( newsocket );
+			return 0;
+		}
 	}
+#endif
 
-	address.sin_family = AF_INET;
-
-	if ( bind( newsocket, (const struct sockaddr *)&address, sizeof( address ) ) == -1 ) {
-		common->Printf( "ERROR: IPSocket: bind: %s\n", strerror( errno ) );
+	if ( bind( newsocket, reinterpret_cast<const struct sockaddr *>( &address ), addressLen ) == -1 ) {
+		if ( !quiet ) {
+			common->Printf( "ERROR: IPSocketForFamily: %s bind: %s\n", Sys_SocketFamilyName( family ), strerror( errno ) );
+		}
 		close( newsocket );
 		return 0;
+	}
+
+	if ( quiet ) {
+		common->Printf( "Opening %s UDP socket: %s:%i\n", Sys_SocketFamilyName( family ), interfaceText, port );
 	}
 
 	if ( bound_to ) {
-		socklen_t len = sizeof( address );
-		if ( getsockname( newsocket, (struct sockaddr *)&address, &len ) == -1 ) {
-			common->Printf( "ERROR: IPSocket: getsockname: %s\n", strerror( errno ) );
+		struct sockaddr_storage boundAddress;
+		memset( &boundAddress, 0, sizeof( boundAddress ) );
+		socklen_t boundAddressLen = sizeof( boundAddress );
+		if ( getsockname( newsocket, reinterpret_cast<struct sockaddr *>( &boundAddress ), &boundAddressLen ) == -1 ) {
+			common->Printf( "ERROR: IPSocketForFamily: getsockname: %s\n", strerror( errno ) );
 			close( newsocket );
 			return 0;
 		}
-		SockadrToNetadr( &address, bound_to );
+		if ( !SockadrToNetadr( reinterpret_cast<const struct sockaddr *>( &boundAddress ), bound_to ) ) {
+			common->Printf( "ERROR: IPSocketForFamily: unsupported bound address family\n" );
+			close( newsocket );
+			return 0;
+		}
 	}
 
 	return newsocket;
@@ -517,6 +684,11 @@ idPort::idPort
 */
 idPort::idPort() {
 	netSocket = 0;
+	netSocket6 = 0;
+	packetsRead = 0;
+	bytesRead = 0;
+	packetsWritten = 0;
+	bytesWritten = 0;
 	memset( &bound_to, 0, sizeof( bound_to ) );
 }
 
@@ -536,10 +708,14 @@ idPort::Close
 */
 void idPort::Close() {
 	if ( netSocket ) {
-		close(netSocket);
+		close( netSocket );
 		netSocket = 0;
-		memset( &bound_to, 0, sizeof( bound_to ) );
 	}
+	if ( netSocket6 ) {
+		close( netSocket6 );
+		netSocket6 = 0;
+	}
+	memset( &bound_to, 0, sizeof( bound_to ) );
 }
 
 /*
@@ -547,36 +723,52 @@ void idPort::Close() {
 idPort::GetPacket
 ==================
 */
-bool idPort::GetPacket( netadr_t &net_from, void *data, int &size, int maxSize ) {
+static bool Net_GetPacketFromSocket( int socketFd, const char *context, netadr_t &net_from, void *data, int &size, int maxSize ) {
 	int ret;
-	struct sockaddr_in from;
-	socklen_t fromlen;
-	
-	if ( !netSocket ) {
+	struct sockaddr_storage from;
+	socklen_t fromlen = sizeof( from );
+
+	if ( socketFd <= 0 ) {
 		return false;
 	}
-	if ( data == NULL || maxSize <= 0 ) {
-		size = 0;
-		return false;
-	}
-	
-	fromlen = sizeof( from );
-	ret = recvfrom( netSocket, data, maxSize, 0, (struct sockaddr *) &from, &fromlen );
+
+	ret = recvfrom( socketFd, data, maxSize, 0, reinterpret_cast<struct sockaddr *>( &from ), &fromlen );
 
 	if ( ret == -1 ) {
 		if (errno == EWOULDBLOCK || errno == ECONNREFUSED) {
 			// those commonly happen, don't verbose
 			return false;
 		}
-		common->DPrintf( "idPort::GetPacket recvfrom(): %s\n", strerror( errno ) );
+		common->DPrintf( "%s recvfrom(): %s\n", context, strerror( errno ) );
 		return false;
 	}
 
-	assert( ret < maxSize );
+	assert( ret <= maxSize );
 
-	SockadrToNetadr( &from, &net_from );
+	if ( !SockadrToNetadr( reinterpret_cast<const struct sockaddr *>( &from ), &net_from ) ) {
+		common->DPrintf( "%s: unsupported address family\n", context );
+		return false;
+	}
 	size = ret;
 	return true;
+}
+
+bool idPort::GetPacket( netadr_t &net_from, void *data, int &size, int maxSize ) {
+	if ( !netSocket && !netSocket6 ) {
+		return false;
+	}
+	if ( data == NULL || maxSize <= 0 ) {
+		size = 0;
+		return false;
+	}
+
+	if ( Net_GetPacketFromSocket( netSocket, "idPort::GetPacket IPv4", net_from, data, size, maxSize ) ||
+			Net_GetPacketFromSocket( netSocket6, "idPort::GetPacket IPv6", net_from, data, size, maxSize ) ) {
+		packetsRead++;
+		bytesRead += size;
+		return true;
+	}
+	return false;
 }
 
 /*
@@ -589,7 +781,7 @@ bool idPort::GetPacketBlocking( netadr_t &net_from, void *data, int &size, int m
 	struct timeval		tv;
 	int					ret;
 	
-	if ( !netSocket ) {
+	if ( !netSocket && !netSocket6 ) {
 		return false;
 	}
 	if ( data == NULL || maxSize <= 0 ) {
@@ -602,11 +794,21 @@ bool idPort::GetPacketBlocking( netadr_t &net_from, void *data, int &size, int m
 	}
 
 	FD_ZERO( &set );
-	FD_SET( netSocket, &set );
+	int maxSocket = -1;
+	if ( netSocket ) {
+		FD_SET( netSocket, &set );
+		maxSocket = netSocket;
+	}
+	if ( netSocket6 ) {
+		FD_SET( netSocket6, &set );
+		if ( netSocket6 > maxSocket ) {
+			maxSocket = netSocket6;
+		}
+	}
 
 	tv.tv_sec = timeout / 1000;
 	tv.tv_usec = ( timeout % 1000 ) * 1000;
-	ret = select( netSocket+1, &set, NULL, NULL, &tv );
+	ret = select( maxSocket + 1, &set, NULL, NULL, &tv );
 	if ( ret == -1 ) {
 		if ( errno == EINTR ) {
 			common->DPrintf( "idPort::GetPacketBlocking: select EINTR\n" );
@@ -620,19 +822,22 @@ bool idPort::GetPacketBlocking( netadr_t &net_from, void *data, int &size, int m
 		// timed out
 		return false;
 	}
-	struct sockaddr_in from;
-	socklen_t fromlen;
-	fromlen = sizeof( from );
-	ret = recvfrom( netSocket, data, maxSize, 0, (struct sockaddr *)&from, &fromlen );
-	if ( ret == -1 ) {
-		// there should be no blocking errors once select declares things are good
-		common->DPrintf( "idPort::GetPacketBlocking: %s\n", strerror( errno ) );
-		return false;
+
+	if ( netSocket && FD_ISSET( netSocket, &set ) ) {
+		if ( Net_GetPacketFromSocket( netSocket, "idPort::GetPacketBlocking IPv4", net_from, data, size, maxSize ) ) {
+			packetsRead++;
+			bytesRead += size;
+			return true;
+		}
 	}
-	assert( ret < maxSize );
-	SockadrToNetadr( &from, &net_from );
-	size = ret;
-	return true;
+	if ( netSocket6 && FD_ISSET( netSocket6, &set ) ) {
+		if ( Net_GetPacketFromSocket( netSocket6, "idPort::GetPacketBlocking IPv6", net_from, data, size, maxSize ) ) {
+			packetsRead++;
+			bytesRead += size;
+			return true;
+		}
+	}
+	return false;
 }
 
 /*
@@ -642,27 +847,37 @@ idPort::SendPacket
 */
 void idPort::SendPacket( const netadr_t to, const void *data, int size ) {
 	int ret;
-	struct sockaddr_in addr;
+	struct sockaddr_storage addr;
+	socklen_t addrLen;
 
 	if ( to.type == NA_BAD ) {
 		common->Warning( "idPort::SendPacket: bad address type NA_BAD - ignored" );
 		return;
 	}
 
-	if ( !netSocket ) {
-		return;
-	}
 	if ( size < 0 || ( data == NULL && size > 0 ) ) {
 		common->Warning( "idPort::SendPacket: invalid packet buffer - ignored" );
 		return;
 	}
 
-	NetadrToSockadr( &to, &addr );
+	if ( !NetadrToSockadr( &to, &addr, &addrLen ) ) {
+		common->Warning( "idPort::SendPacket: bad address type - ignored" );
+		return;
+	}
 
-	ret = sendto( netSocket, data, size, 0, (struct sockaddr *) &addr, sizeof(addr) );
+	const int socketFd = addr.ss_family == AF_INET6 ? netSocket6 : netSocket;
+	if ( !socketFd ) {
+		common->Warning( "idPort::SendPacket: no %s socket for %s - ignored", Sys_SocketFamilyName( addr.ss_family ), Sys_NetAdrToString( to ) );
+		return;
+	}
+
+	ret = sendto( socketFd, data, size, 0, reinterpret_cast<struct sockaddr *>( &addr ), addrLen );
 	if ( ret == -1 ) {
 		common->Printf( "idPort::SendPacket ERROR: to %s: %s\n", Sys_NetAdrToString( to ), strerror( errno ) );
+		return;
 	}
+	packetsWritten++;
+	bytesWritten += size;
 }
 
 /*
@@ -671,13 +886,71 @@ idPort::InitForPort
 ==================
 */
 bool idPort::InitForPort( int portNumber ) {
-	netSocket = IPSocket( net_ip.GetString(), portNumber, &bound_to );
-	if ( netSocket <= 0 ) {
-		netSocket = 0;
-		memset( &bound_to, 0, sizeof( bound_to ) );
-		return false;
+	Close();
+
+	const char *interfaceName = net_ip.GetString();
+	if ( Sys_IsAnyInterfaceName( interfaceName ) ) {
+		netadr_t bound4;
+		netadr_t bound6;
+		memset( &bound4, 0, sizeof( bound4 ) );
+		memset( &bound6, 0, sizeof( bound6 ) );
+
+		netSocket = IPSocketForFamily( interfaceName, portNumber, AF_INET, &bound4 );
+		int ipv6Port = portNumber;
+		if ( netSocket > 0 ) {
+			bound_to = bound4;
+			if ( portNumber == PORT_ANY ) {
+				ipv6Port = bound4.port;
+			}
+		}
+
+		netSocket6 = IPSocketForFamily( interfaceName, ipv6Port, AF_INET6, &bound6 );
+		if ( netSocket <= 0 && netSocket6 > 0 ) {
+			bound_to = bound6;
+		}
+
+		if ( netSocket <= 0 && netSocket6 <= 0 ) {
+			netSocket = 0;
+			netSocket6 = 0;
+			memset( &bound_to, 0, sizeof( bound_to ) );
+			return false;
+		}
+		return true;
 	}
-	return true;
+
+	const bool prefersIPv6 = strchr( interfaceName, ':' ) != NULL;
+	const int firstFamily = prefersIPv6 ? AF_INET6 : AF_INET;
+	const int secondFamily = prefersIPv6 ? AF_INET : AF_INET6;
+
+	netadr_t explicitBound;
+	memset( &explicitBound, 0, sizeof( explicitBound ) );
+
+	const int firstSocket = IPSocketForFamily( interfaceName, portNumber, firstFamily, &explicitBound, true );
+	if ( firstSocket > 0 ) {
+		if ( firstFamily == AF_INET6 ) {
+			netSocket6 = firstSocket;
+		} else {
+			netSocket = firstSocket;
+		}
+		bound_to = explicitBound;
+		return true;
+	}
+
+	const int secondSocket = IPSocketForFamily( interfaceName, portNumber, secondFamily, &explicitBound );
+	if ( secondSocket > 0 ) {
+		if ( secondFamily == AF_INET6 ) {
+			netSocket6 = secondSocket;
+		} else {
+			netSocket = secondSocket;
+		}
+		bound_to = explicitBound;
+		return true;
+	}
+
+	netSocket = 0;
+	netSocket6 = 0;
+	memset( &bound_to, 0, sizeof( bound_to ) );
+	return false;
 }
 
 //=============================================================================
@@ -707,25 +980,25 @@ idTCP::Init
 ==================
 */
 bool idTCP::Init( const char *host, short port ) {
-	struct sockaddr_in sadr;
-	if ( !Sys_StringToNetAdr( host, &address, true ) ) {
+	struct sockaddr_storage sadr;
+	socklen_t sadrLen;
+
+	if ( !Sys_ResolveSockaddr( host, true, AF_UNSPEC, SOCK_STREAM, port, &sadr, &sadrLen ) ) {
 		common->Printf( "Couldn't resolve server name \"%s\"\n", host ? host : "" );
 		return false;
 	}
-	address.type = NA_IP;
-	if (!address.port) {
-		address.port = port;
+	if ( !SockadrToNetadr( reinterpret_cast<const struct sockaddr *>( &sadr ), &address ) ) {
+		common->Printf( "Couldn't resolve server name \"%s\" to a supported address family\n", host ? host : "" );
+		return false;
 	}
-	common->Printf( "\"%s\" resolved to %i.%i.%i.%i:%i\n", host, 
-		address.ip[0], address.ip[1], address.ip[2], address.ip[3],  address.port );
-	NetadrToSockadr(&address, &sadr);
+	common->Printf( "\"%s\" resolved to %s\n", host ? host : "", Sys_NetAdrToString( address ) );
 
 	if (fd) {
 		common->Warning("idTCP::Init: already initialized?\n");
 		Close();
 	}
 		
-	if ((fd = socket(PF_INET, SOCK_STREAM, 0)) == -1) {
+	if ((fd = socket( sadr.ss_family, SOCK_STREAM, IPPROTO_TCP )) == -1) {
 		fd = 0;
 		common->Printf("ERROR: idTCP::Init: socket: %s\n", strerror(errno));
 		return false;
@@ -736,7 +1009,7 @@ bool idTCP::Init( const char *host, short port ) {
 		return false;
 	}
 	
-	if ( connect( fd, (const sockaddr *)&sadr, sizeof( sadr ) ) == -1 ) {
+	if ( connect( fd, reinterpret_cast<const sockaddr *>( &sadr ), sadrLen ) == -1 ) {
 		common->Printf( "ERROR: idTCP::Init: connect: %s\n", strerror( errno ) );		
 		close( fd );
 		fd = 0;

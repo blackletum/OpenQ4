@@ -156,6 +156,38 @@ int g_thread_count = 0;
 
 typedef void *(*pthread_function_t) (void *);
 
+static uintptr_t Sys_PThreadToHandle( pthread_t thread ) {
+	uintptr_t handle = 0;
+	const size_t copyBytes = Min( sizeof( handle ), sizeof( thread ) );
+	memcpy( &handle, &thread, copyBytes );
+	return handle;
+}
+
+static pthread_t Sys_HandleToPThread( uintptr_t handle ) {
+	pthread_t thread;
+	memset( &thread, 0, sizeof( thread ) );
+	const size_t copyBytes = Min( sizeof( handle ), sizeof( thread ) );
+	memcpy( &thread, &handle, copyBytes );
+	return thread;
+}
+
+static void Sys_RemoveThreadInfo( xthreadInfo& info ) {
+	Sys_EnterCriticalSection( );
+	for( int i = 0 ; i < g_thread_count ; i++ ) {
+		if ( &info == g_threads[ i ] ) {
+			g_threads[ i ] = NULL;
+			int j;
+			for( j = i+1 ; j < g_thread_count ; j++ ) {
+				g_threads[ j-1 ] = g_threads[ j ];
+			}
+			g_threads[ j-1 ] = NULL;
+			g_thread_count--;
+			break;
+		}
+	}
+	Sys_LeaveCriticalSection( );
+}
+
 /*
 ==================
 Sys_CreateThread
@@ -168,11 +200,15 @@ void Sys_CreateThread( xthread_t function, void *parms, xthreadPriority priority
 	if ( pthread_attr_setdetachstate( &attr, PTHREAD_CREATE_JOINABLE ) != 0 ) {
 		common->Error( "ERROR: pthread_attr_setdetachstate %s failed\n", name );
 	}
-	if ( pthread_create( ( pthread_t* )&info.threadHandle, &attr, ( pthread_function_t )function, parms ) != 0 ) {
+	pthread_t thread;
+	if ( pthread_create( &thread, &attr, ( pthread_function_t )function, parms ) != 0 ) {
 		common->Error( "ERROR: pthread_create %s failed\n", name );
 	}
 	pthread_attr_destroy( &attr );
 	info.name = name;
+	info.threadHandle = Sys_PThreadToHandle( thread );
+	info.threadId = 0;
+	info.stopRequested = false;
 	if ( *thread_count < MAX_THREADS ) {
 		threads[ ( *thread_count )++ ] = &info;
 	} else {
@@ -183,34 +219,72 @@ void Sys_CreateThread( xthread_t function, void *parms, xthreadPriority priority
 
 /*
 ==================
+Sys_RequestThreadStop
+==================
+*/
+void Sys_RequestThreadStop( xthreadInfo& info ) {
+	Sys_EnterCriticalSection( );
+	info.stopRequested = true;
+	Sys_LeaveCriticalSection( );
+
+	for ( int i = 0; i < MAX_TRIGGER_EVENTS; i++ ) {
+		Sys_TriggerEvent( i );
+	}
+}
+
+/*
+==================
+Sys_IsThreadStopRequested
+==================
+*/
+bool Sys_IsThreadStopRequested( const xthreadInfo& info ) {
+	bool stopRequested;
+	Sys_EnterCriticalSection( );
+	stopRequested = info.stopRequested;
+	Sys_LeaveCriticalSection( );
+	return stopRequested;
+}
+
+/*
+==================
+Sys_IsCurrentThreadStopRequested
+==================
+*/
+bool Sys_IsCurrentThreadStopRequested( void ) {
+	const pthread_t thread = pthread_self();
+	bool stopRequested = false;
+
+	Sys_EnterCriticalSection( );
+	for( int i = 0 ; i < g_thread_count ; i++ ) {
+		if ( g_threads[ i ] != NULL && pthread_equal( thread, Sys_HandleToPThread( g_threads[ i ]->threadHandle ) ) ) {
+			stopRequested = g_threads[ i ]->stopRequested;
+			break;
+		}
+	}
+	Sys_LeaveCriticalSection( );
+	return stopRequested;
+}
+
+/*
+==================
 Sys_DestroyThread
 ==================
 */
 void Sys_DestroyThread( xthreadInfo& info ) {
-	// the target thread must have a cancelation point, otherwise pthread_cancel is useless
 	assert( info.threadHandle );
-	if ( pthread_cancel( ( pthread_t )info.threadHandle ) != 0 ) {
-		common->Error( "ERROR: pthread_cancel %s failed\n", info.name );
+	const pthread_t thread = Sys_HandleToPThread( info.threadHandle );
+	if ( pthread_equal( thread, pthread_self() ) ) {
+		common->Error( "ERROR: Sys_DestroyThread attempted to join current thread %s\n", info.name );
 	}
-	if ( pthread_join( ( pthread_t )info.threadHandle, NULL ) != 0 ) {
+
+	Sys_RequestThreadStop( info );
+	if ( pthread_join( thread, NULL ) != 0 ) {
 		common->Error( "ERROR: pthread_join %s failed\n", info.name );
 	}
 	info.threadHandle = 0;
-	Sys_EnterCriticalSection( );
-	for( int i = 0 ; i < g_thread_count ; i++ ) {
-		if ( &info == g_threads[ i ] ) {
-			g_threads[ i ] = NULL;
-			int j;
-			for( j = i+1 ; j < g_thread_count ; j++ ) {
-				g_threads[ j-1 ] = g_threads[ j ];
-			}
-			g_threads[ j-1 ] = NULL;
-			g_thread_count--;
-			Sys_LeaveCriticalSection( );
-			return;
-		}
-	}
-	Sys_LeaveCriticalSection( );
+	info.threadId = 0;
+	info.stopRequested = false;
+	Sys_RemoveThreadInfo( info );
 }
 
 /*
@@ -223,7 +297,7 @@ const char* Sys_GetThreadName( int *index ) {
 	Sys_EnterCriticalSection( );
 	pthread_t thread = pthread_self();
 	for( int i = 0 ; i < g_thread_count ; i++ ) {
-		if ( thread == (pthread_t)g_threads[ i ]->threadHandle ) {
+		if ( g_threads[ i ] != NULL && pthread_equal( thread, Sys_HandleToPThread( g_threads[ i ]->threadHandle ) ) ) {
 			if ( index ) {
 				*index = i;
 			}

@@ -313,6 +313,10 @@ private:
 
 	void WorkerMain() {
 		for ( ;; ) {
+			if ( Sys_IsCurrentThreadStopRequested() ) {
+				return;
+			}
+
 			lightGridBakeJob_t *job = NULL;
 			bool shouldStop = false;
 			if ( !TryPopPending( job, shouldStop ) ) {

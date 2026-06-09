@@ -448,6 +448,7 @@ typedef enum {
 	NA_LOOPBACK,
 	NA_BROADCAST,
 	NA_IP,
+	NA_IP6,
 // jmarshall
 	NA_BOT
 // jmarshall end
@@ -456,6 +457,8 @@ typedef enum {
 typedef struct {
 	netadrtype_t	type;
 	unsigned char	ip[4];
+	unsigned char	ip6[16];
+	unsigned int	scopeId;
 	unsigned short	port;
 } netadr_t;
 
@@ -485,6 +488,7 @@ public:
 private:
 	netadr_t	bound_to;		// interface and port
 	int			netSocket;		// OS specific socket
+	int			netSocket6;		// OS specific IPv6 socket
 };
 
 class idTCP {
@@ -539,8 +543,9 @@ typedef enum {
 
 typedef struct {
 	const char *	name;
-	int				threadHandle;
+	uintptr_t		threadHandle;
 	unsigned long	threadId;
+	volatile bool	stopRequested;
 } xthreadInfo;
 
 const int MAX_THREADS				= 10;
@@ -549,6 +554,9 @@ extern int			g_thread_count;
 
 void				Sys_CreateThread( xthread_t function, void *parms, xthreadPriority priority, xthreadInfo &info, const char *name, xthreadInfo *threads[MAX_THREADS], int *thread_count );
 void				Sys_DestroyThread( xthreadInfo& info ); // sets threadHandle back to 0
+void				Sys_RequestThreadStop( xthreadInfo& info );
+bool				Sys_IsThreadStopRequested( const xthreadInfo& info );
+bool				Sys_IsCurrentThreadStopRequested( void );
 
 // find the name of the calling thread
 // if index != NULL, set the index in g_threads array (use -1 for "main" thread)

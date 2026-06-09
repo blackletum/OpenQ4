@@ -214,6 +214,28 @@ if build_engine and not fs_mod.is_dir(bse_source_root)
   error('Integrated BSE source directory not found: ' + bse_source_root)
 endif
 
+cc = meson.get_compiler('c')
+cpp = meson.get_compiler('cpp')
+
+linux_x11_dep = disabler()
+linux_xext_dep = disabler()
+linux_xxf86vm_dep = disabler()
+linux_gl_dep = disabler()
+linux_x11_helpers_enabled = false
+if build_engine and host_system == 'linux'
+  linux_gl_dep = cc.find_library('GL', required: true)
+  if use_sdl3_backend
+    linux_x11_dep = dependency('x11', required: false)
+    linux_xext_dep = dependency('xext', required: false)
+    linux_x11_helpers_enabled = linux_x11_dep.found() and linux_xext_dep.found()
+  else
+    linux_x11_dep = dependency('x11', required: true)
+    linux_xext_dep = dependency('xext', required: true)
+    linux_xxf86vm_dep = dependency('xxf86vm', required: true)
+    linux_x11_helpers_enabled = true
+  endif
+endif
+
 engine_source_discovery = run_command(
   py,
   meson.project_source_root() / 'tools' / 'build' / 'meson_sources.py',
@@ -221,6 +243,8 @@ engine_source_discovery = run_command(
   host_system,
   '--platform-backend',
   platform_backend,
+  '--linux-x11-helpers',
+  linux_x11_helpers_enabled ? 'true' : 'false',
   '--include-game',
   'false',
   check: true,
@@ -298,9 +322,6 @@ if host_system == 'windows' and resource_compiler.found()
     include_directories: [root_include_dir],
   )
 endif
-
-cc = meson.get_compiler('c')
-cpp = meson.get_compiler('cpp')
 
 is_msvc = cc.get_id() == 'msvc' and cpp.get_id() == 'msvc'
 msvc_2026_min = '19.46.0'
@@ -402,15 +423,15 @@ if build_engine
     deps += [
       dependency('threads', required: true),
       cc.find_library('dl', required: true),
-      dependency('x11', required: true),
-      dependency('xext', required: true),
-      cc.find_library('GL', required: true),
+      linux_gl_dep,
     ]
-    if not use_sdl3_backend
-      deps += [dependency('xxf86vm', required: true)]
-    endif
     if use_sdl3_backend
       deps += [sdl3_dep]
+      if linux_x11_helpers_enabled
+        deps += [linux_x11_dep, linux_xext_dep]
+      endif
+    else
+      deps += [linux_x11_dep, linux_xext_dep, linux_xxf86vm_dep]
     endif
   elif host_system == 'darwin'
     deps += [
@@ -448,6 +469,11 @@ endif
 if use_sdl3_backend
   shared_cpp_args += ['-DUSE_SDL3=1']
   shared_c_args += ['-DUSE_SDL3=1']
+endif
+
+if host_system == 'linux' and use_sdl3_backend and linux_x11_helpers_enabled
+  shared_cpp_args += ['-DOPENQ4_HAVE_X11_HELPERS=1']
+  shared_c_args += ['-DOPENQ4_HAVE_X11_HELPERS=1']
 endif
 
 if cpp.get_argument_syntax() == 'msvc'
@@ -755,6 +781,7 @@ summary(
     'game_mp binary': game_mp_binary_name,
     'Resource compiler': resource_compiler.found(),
     'SDL3': use_sdl3_backend and sdl3_dep.found(),
+    'Linux X11 helpers': linux_x11_helpers_enabled,
     'GLEW': glew_dep.found(),
     'OpenAL': openal_dep.found(),
     'stb_vorbis': stb_vorbis_dep.found(),

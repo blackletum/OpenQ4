@@ -515,12 +515,13 @@ void Sys_CreateThread(xthread_t function, void* parms, xthreadPriority priority,
 		parms,	// LPVOID lpvThreadParm,
 		0,		//   DWORD fdwCreate,
 		&info.threadId);
-	info.threadHandle = (int)temp;
+	info.threadHandle = reinterpret_cast<uintptr_t>(temp);
+	info.stopRequested = false;
 	if (priority == THREAD_HIGHEST) {
-		SetThreadPriority((HANDLE)info.threadHandle, THREAD_PRIORITY_HIGHEST);		//  we better sleep enough to do this
+		SetThreadPriority(reinterpret_cast<HANDLE>(info.threadHandle), THREAD_PRIORITY_HIGHEST);		//  we better sleep enough to do this
 	}
 	else if (priority == THREAD_ABOVE_NORMAL) {
-		SetThreadPriority((HANDLE)info.threadHandle, THREAD_PRIORITY_ABOVE_NORMAL);
+		SetThreadPriority(reinterpret_cast<HANDLE>(info.threadHandle), THREAD_PRIORITY_ABOVE_NORMAL);
 	}
 	info.name = name;
 	if (*thread_count < MAX_THREADS) {
@@ -533,13 +534,73 @@ void Sys_CreateThread(xthread_t function, void* parms, xthreadPriority priority,
 
 /*
 ==================
+Sys_RemoveThreadInfo
+==================
+*/
+static void Sys_RemoveThreadInfo( xthreadInfo& info ) {
+	for( int i = 0 ; i < g_thread_count ; i++ ) {
+		if ( &info == g_threads[ i ] ) {
+			g_threads[ i ] = NULL;
+			int j;
+			for( j = i+1 ; j < g_thread_count ; j++ ) {
+				g_threads[ j-1 ] = g_threads[ j ];
+			}
+			g_threads[ j-1 ] = NULL;
+			g_thread_count--;
+			return;
+		}
+	}
+}
+
+/*
+==================
+Sys_RequestThreadStop
+==================
+*/
+void Sys_RequestThreadStop( xthreadInfo& info ) {
+	info.stopRequested = true;
+	if ( win32.backgroundDownloadSemaphore ) {
+		Sys_TriggerEvent();
+	}
+}
+
+/*
+==================
+Sys_IsThreadStopRequested
+==================
+*/
+bool Sys_IsThreadStopRequested( const xthreadInfo& info ) {
+	return info.stopRequested;
+}
+
+/*
+==================
+Sys_IsCurrentThreadStopRequested
+==================
+*/
+bool Sys_IsCurrentThreadStopRequested( void ) {
+	const DWORD id = GetCurrentThreadId();
+	for (int i = 0; i < g_thread_count; i++) {
+		if ( g_threads[i] != NULL && id == g_threads[i]->threadId ) {
+			return g_threads[i]->stopRequested;
+		}
+	}
+	return false;
+}
+
+/*
+==================
 Sys_DestroyThread
 ==================
 */
 void Sys_DestroyThread(xthreadInfo& info) {
-	WaitForSingleObject((HANDLE)info.threadHandle, INFINITE);
-	CloseHandle((HANDLE)info.threadHandle);
+	Sys_RequestThreadStop( info );
+	WaitForSingleObject(reinterpret_cast<HANDLE>(info.threadHandle), INFINITE);
+	CloseHandle(reinterpret_cast<HANDLE>(info.threadHandle));
 	info.threadHandle = 0;
+	info.threadId = 0;
+	info.stopRequested = false;
+	Sys_RemoveThreadInfo( info );
 }
 
 /*
@@ -1408,7 +1469,7 @@ void Sys_StartAsyncThread(void) {
 
 #ifdef SET_THREAD_AFFINITY 
 	// give the async thread an affinity for the second cpu
-	SetThreadAffinityMask((HANDLE)threadInfo.threadHandle, 2);
+	SetThreadAffinityMask(reinterpret_cast<HANDLE>(threadInfo.threadHandle), 2);
 #endif
 
 	if (!threadInfo.threadHandle) {

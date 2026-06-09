@@ -1429,19 +1429,25 @@ static idStr Session_GetMPLoadLimitString( const idDict &serverInfo ) {
 }
 
 static bool Session_IsLoadingContinueKey( int key ) {
-	if ( key == K_ESCAPE || key == K_ENTER || key == K_KP_ENTER || key == K_SPACE ) {
-		return true;
+	if ( key <= 0 || key >= K_LAST_KEY ) {
+		return false;
 	}
-	if ( key >= K_MOUSE1 && key <= K_MOUSE8 ) {
-		return true;
+
+	switch ( key ) {
+		case K_COMMAND:
+		case K_CAPSLOCK:
+		case K_SCROLL:
+		case K_POWER:
+		case K_PRINT_SCR:
+		case K_RIGHT_ALT:
+			return false;
+		default:
+			return true;
 	}
-	if ( key >= K_JOY1 && key <= K_JOY32 ) {
-		return true;
-	}
-	if ( key >= K_AUX1 && key <= K_AUX16 ) {
-		return true;
-	}
-	return false;
+}
+
+static bool Session_IsLoadingContinueChar( int ch ) {
+	return ch >= K_SPACE;
 }
 
 static bool Session_ShouldSilenceAudioWhenUnfocused() {
@@ -4022,7 +4028,9 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 				if ( ev.evType == SE_CONSOLE ) {
 					cmdSystem->BufferCommandText( CMD_EXEC_APPEND, (char *)ev.evPtr );
 					cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "\n" );
-				} else if ( waitingForContinue && acceptContinueInput && ev.evType == SE_KEY && ev.evValue2 && Session_IsLoadingContinueKey( ev.evValue ) ) {
+				} else if ( waitingForContinue && acceptContinueInput &&
+						( ( ev.evType == SE_KEY && ev.evValue2 && Session_IsLoadingContinueKey( ev.evValue ) ) ||
+						  ( ev.evType == SE_CHAR && Session_IsLoadingContinueChar( ev.evValue ) ) ) ) {
 					waitingForContinue = false;
 				}
 

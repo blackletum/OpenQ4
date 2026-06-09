@@ -63,6 +63,21 @@ static bool R_IsQ4LightImageNamespace( const char *name ) {
 			|| idStr::Icmpn( name, "gfx/lights/", 11 ) == 0 );
 }
 
+static bool R_IsQ4PresentationImageNamespace( const char *name ) {
+	return name != NULL
+		&& ( idStr::Icmpn( name, "gfx/guis/", 9 ) == 0
+			|| idStr::Icmpn( name, "fonts", 5 ) == 0
+			|| idStr::Icmpn( name, "newfonts", 8 ) == 0 );
+}
+
+static bool R_AllowImageDownSizeForName( const char *name, bool allowDownSize ) {
+	if ( !allowDownSize ) {
+		return false;
+	}
+
+	return !R_IsQ4PresentationImageNamespace( name );
+}
+
 /*
 ===============
 R_ReloadImages_f
@@ -350,6 +365,7 @@ idImage	*idImageManager::GetImageWithParameters( const char *_name, textureFilte
 	name.Replace( ".tga", "" );
 	name.BackSlashesToSlashes();
 	R_NormalizeInternalImageName( name );
+	allowDownSize = R_AllowImageDownSizeForName( name.c_str(), allowDownSize );
 	int hash = name.FileNameHash();
 	for ( int i = imageHash.First( hash ); i != -1; i = imageHash.Next( i ) ) {
 		idImage	* image = images[i];
@@ -402,6 +418,7 @@ idImage	*idImageManager::ImageFromFile( const char *_name, textureFilter_t filte
 	name.Replace( ".tga", "" );
 	name.BackSlashesToSlashes();
 	R_NormalizeInternalImageName( name );
+	allowDownSize = R_AllowImageDownSizeForName( name.c_str(), allowDownSize );
 
 	//
 	// see if the image is already loaded, unless we
@@ -499,6 +516,7 @@ idImage *idImageManager::ImageHandleDeferred( const char *_name, textureFilter_t
 	name.Replace( ".tga", "" );
 	name.BackSlashesToSlashes();
 	R_NormalizeInternalImageName( name );
+	allowDownSize = R_AllowImageDownSizeForName( name.c_str(), allowDownSize );
 
 	int hash = name.FileNameHash();
 	for ( int i = imageHash.First( hash ); i != -1; i = imageHash.Next( i ) ) {

@@ -108,6 +108,9 @@ SDL3_LINUX_SOURCES = (
     "sys/linux/linux_sdl3.cpp",
     "sys/linux/main.cpp",
     "sys/linux/stack.cpp",
+)
+
+LINUX_X11_HELPER_SOURCES = (
     "sys/linux/libXNVCtrl/NVCtrl.c",
 )
 
@@ -200,6 +203,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default="true",
         help="Include src/game sources in output.",
     )
+    parser.add_argument(
+        "--linux-x11-helpers",
+        choices=("true", "false"),
+        default="false",
+        help="Include optional X11 helper sources for Linux SDL3 builds.",
+    )
     return parser.parse_args(argv)
 
 
@@ -276,6 +285,9 @@ def main(argv: list[str]) -> int:
             )
             for rel_path in platform_sources:
                 add_required_source(source_set, ordered_sources, source_root, rel_path)
+            if args.platform_backend == "sdl3" and args.linux_x11_helpers == "true":
+                for rel_path in LINUX_X11_HELPER_SOURCES:
+                    add_required_source(source_set, ordered_sources, source_root, rel_path)
         elif args.host_system == "darwin":
             platform_sources = (
                 SDL3_DARWIN_SOURCES if args.platform_backend == "sdl3" else DARWIN_PLATFORM_SOURCES

@@ -45,6 +45,10 @@ If you have questions concerning this license or the applicable additional terms
 #include <limits.h>
 #include <time.h>
 
+#if defined( USE_SDL3 )
+#include <SDL3/SDL.h>
+#endif
+
 #if defined( __linux__ )
 #include <sys/sysinfo.h>
 #endif
@@ -59,6 +63,10 @@ If you have questions concerning this license or the applicable additional terms
 #endif
 
 #include "posix_public.h"
+
+#if !defined( MACOS_X ) || defined( USE_SDL3 )
+#define OPENQ4_POSIX_OWNS_COMMON_SYS 1
+#endif
 
 #define					MAX_OSPATH PATH_MAX
 #define					COMMAND_HISTORY 64
@@ -224,7 +232,7 @@ void idSysLocal::StartProcess( const char *exeName, bool quit ) {
 Sys_Quit
 ================
 */
-#ifndef MACOS_X
+#if defined( OPENQ4_POSIX_OWNS_COMMON_SYS )
 void Sys_Quit(void) {
 	Posix_Exit( EXIT_SUCCESS );
 }
@@ -235,30 +243,26 @@ void Sys_Quit(void) {
 Sys_Milliseconds
 ================
 */
-/* base time in seconds, that's our origin
-   timeval:tv_sec is an int: 
-   assuming this wraps every 0x7fffffff - ~68 years since the Epoch (1970) - we're safe till 2038
-   using unsigned long data type to work right with Sys_XTimeToSysTime */
-unsigned long sys_timeBase = 0;
-/* current time in ms, using sys_timeBase as origin
-   NOTE: sys_timeBase*1000 + curtime -> ms since the Epoch
-     0x7fffffff ms - ~24 days
-		 or is it 48 days? the specs say int, but maybe it's casted from unsigned int?
-*/
+static uint64_t sys_timeBaseNs = 0;
+static int sys_lastMilliseconds = 0;
+
 int Sys_Milliseconds( void ) {
-	int curtime;
-	struct timeval tp;
+	struct timespec ts;
 
-	gettimeofday(&tp, NULL);
-
-	if (!sys_timeBase) {
-		sys_timeBase = tp.tv_sec;
-		return tp.tv_usec / 1000;
+	if ( clock_gettime( CLOCK_MONOTONIC, &ts ) != 0 ) {
+		return sys_lastMilliseconds;
 	}
 
-	curtime = (tp.tv_sec - sys_timeBase) * 1000 + tp.tv_usec / 1000;
+	const uint64_t nowNs = static_cast<uint64_t>( ts.tv_sec ) * 1000000000ull + static_cast<uint64_t>( ts.tv_nsec );
 
-	return curtime;
+	if ( sys_timeBaseNs == 0 ) {
+		sys_timeBaseNs = nowNs;
+		sys_lastMilliseconds = 0;
+		return sys_lastMilliseconds;
+	}
+
+	sys_lastMilliseconds = static_cast<int>( ( nowNs - sys_timeBaseNs ) / 1000000ull );
+	return sys_lastMilliseconds;
 }
 
 /*
@@ -307,11 +311,9 @@ int Sys_ListFiles( const char *directory, const char *extension, idStrList &list
 		dironly = true;
 	}
 	
-	// search
-	// NOTE: case sensitivity of directory path can screw us up here
 	if ((fdir = opendir(directory)) == NULL) {
 		if (debug) {
-			common->Printf("Sys_ListFiles: opendir %s failed\n", directory);
+			common->Printf("Sys_ListFiles: opendir %s failed: %s\n", directory, strerror( errno ));
 		}
 		return -1;
 	}
@@ -540,8 +542,19 @@ Sys_Init
 Posix_EarlyInit/Posix_LateInit is better
 =================
 */
-#ifndef MACOS_X
+#if defined( OPENQ4_POSIX_OWNS_COMMON_SYS )
 void Sys_Init( void ) { }
+#endif
+
+/*
+=================
+Sys_Shutdown
+=================
+*/
+#if defined( MACOS_X ) && defined( USE_SDL3 )
+void Sys_Shutdown( void ) {
+	Posix_Shutdown();
+}
 #endif
 
 /*
@@ -646,7 +659,7 @@ ID_TIME_T Sys_FileTimeStamp(FILE * fp) {
 	return st.st_mtime;
 }
 
-#ifndef MACOS_X
+#if defined( OPENQ4_POSIX_OWNS_COMMON_SYS )
 void Sys_Sleep(int msec) {
 	if ( msec <= 0 ) {
 		return;
@@ -664,16 +677,45 @@ void Sys_Sleep(int msec) {
 }
 #endif
 
-#ifndef MACOS_X
+#if defined( OPENQ4_POSIX_OWNS_COMMON_SYS )
 char *Sys_GetClipboardData(void) {
+#if defined( USE_SDL3 )
+	char *clipboardText = SDL_GetClipboardText();
+	if ( clipboardText == NULL || clipboardText[0] == '\0' ) {
+		if ( clipboardText != NULL ) {
+			SDL_free( clipboardText );
+		}
+		return NULL;
+	}
+
+	const size_t clipboardLength = strlen( clipboardText );
+	if ( clipboardLength > static_cast<size_t>( idMath::INT_MAX - 1 ) ) {
+		SDL_free( clipboardText );
+		return NULL;
+	}
+
+	char *data = static_cast<char *>( Mem_Alloc( static_cast<int>( clipboardLength ) + 1 ) );
+	memcpy( data, clipboardText, clipboardLength + 1 );
+	SDL_free( clipboardText );
+
+	strtok( data, "\n\r\b" );
+	return data;
+#else
 	Sys_Printf( "TODO: Sys_GetClipboardData\n" );
 	return NULL;
+#endif
 }
 #endif
 
-#ifndef MACOS_X
+#if defined( OPENQ4_POSIX_OWNS_COMMON_SYS )
 void Sys_SetClipboardData( const char *string ) {
+#if defined( USE_SDL3 )
+	if ( !SDL_SetClipboardText( string != NULL ? string : "" ) ) {
+		Sys_Printf( "SDL_SetClipboardText failed: %s\n", SDL_GetError() );
+	}
+#else
 	Sys_Printf( "TODO: Sys_SetClipboardData\n" );
+#endif
 }
 #endif
 	
@@ -1324,7 +1366,7 @@ void Sys_VPrintf(const char *msg, va_list arg) {
 Sys_Error
 ================
 */
-#ifndef MACOS_X
+#if defined( OPENQ4_POSIX_OWNS_COMMON_SYS )
 void Sys_Error(const char *error, ...) {
 	va_list argptr;
 

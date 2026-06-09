@@ -24,21 +24,26 @@ along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "../../idlib/precompiled.h"
 #include "../../renderer/tr_local.h"
-#include "local.h"
+#include "linux_shared.h"
 
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
 
+#if defined(OPENQ4_HAVE_X11_HELPERS)
+#include <X11/Xlib.h>
 extern "C" {
 #include "libXNVCtrl/NVCtrlLib.h"
 }
+#endif
 
 #define OPENQ4_SDL3_LINUX_HOST 1
 #include "../sdl3/sdl3_backend.cpp"
 
+#if defined(OPENQ4_HAVE_X11_HELPERS)
 Display *dpy = NULL;
 Window win = 0;
+#endif
 bool dga_found = false;
 
 idCVar sys_videoRam(
@@ -47,7 +52,7 @@ idCVar sys_videoRam(
 	CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER,
 	"Texture memory on the video card (in megabytes) - 0: autodetect",
 	0,
-	512
+	OPENQ4_LINUX_MAX_CONFIGURED_VIDEO_RAM_MB
 );
 
 bool QGL_Init(const char *dllname) {
@@ -88,6 +93,7 @@ int Sys_GetVideoRam(void) {
 
 	common->Printf("guessing video ram ( use +set sys_videoRam to force ) ..\n");
 
+#if defined(OPENQ4_HAVE_X11_HELPERS)
 	Display *queryDisplay = dpy;
 	const bool ownsDisplay = (queryDisplay == NULL);
 	if (queryDisplay == NULL && getenv("DISPLAY") != NULL) {
@@ -116,6 +122,7 @@ int Sys_GetVideoRam(void) {
 			return cachedVideoRam;
 		}
 	}
+#endif
 
 	const int fd = open("/proc/dri/0/umm", O_RDONLY);
 	if (fd != -1) {
@@ -142,7 +149,7 @@ int Sys_GetVideoRam(void) {
 		}
 	}
 
-	common->Printf("guess failed, return default low-end VRAM setting ( 64MB VRAM )\n");
-	cachedVideoRam = 64;
+	common->Printf("guess failed, using conservative modern VRAM setting ( %dMB VRAM )\n", OPENQ4_LINUX_UNKNOWN_VIDEO_RAM_MB);
+	cachedVideoRam = OPENQ4_LINUX_UNKNOWN_VIDEO_RAM_MB;
 	return cachedVideoRam;
 }

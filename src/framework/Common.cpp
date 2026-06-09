@@ -129,6 +129,41 @@ static void Common_MigrateLegacyConsoleAllowCVar( void ) {
 	con_allowConsole.SetString( legacyAllowConsole->GetString() );
 }
 
+static void Common_MigrateLinuxLegacyLowVRamTexturePreset( void ) {
+#if defined( __linux__ )
+	const int archivedVideoRam = com_videoRam.GetInteger();
+	if ( archivedVideoRam >= 128 ) {
+		return;
+	}
+
+	const bool legacyTextureCap =
+		cvarSystem->GetCVarBool( "image_ignoreHighQuality" ) &&
+		( cvarSystem->GetCVarInteger( "image_downSize" ) != 0 ||
+			cvarSystem->GetCVarInteger( "image_downsize" ) != 0 ) &&
+		cvarSystem->GetCVarInteger( "image_downSizeLimit" ) == 256;
+	if ( !legacyTextureCap ) {
+		return;
+	}
+
+	const int detectedVideoRam = Sys_GetVideoRam();
+	if ( detectedVideoRam < 128 ) {
+		return;
+	}
+
+	common->Printf(
+		"Migrating legacy Linux VRAM config: replacing archived %dMB texture downsize preset with detected %dMB VRAM\n",
+		archivedVideoRam,
+		detectedVideoRam );
+	com_videoRam.SetInteger( detectedVideoRam );
+	cvarSystem->SetCVarInteger( "image_ignoreHighQuality", 0, CVAR_ARCHIVE );
+	cvarSystem->SetCVarInteger( "image_downSize", 0, CVAR_ARCHIVE );
+	cvarSystem->SetCVarInteger( "image_downsize", 0, CVAR_ARCHIVE );
+	cvarSystem->SetCVarInteger( "image_downSizeLimit", 0, CVAR_ARCHIVE );
+	cvarSystem->SetCVarInteger( "image_downSizeSpecular", 0, CVAR_ARCHIVE );
+	cvarSystem->SetCVarInteger( "image_downSizeBump", 0, CVAR_ARCHIVE );
+#endif
+}
+
 static int commonLastPresentationCap = -1;
 static double commonNextPresentationFrameClock = 0.0;
 static bool commonNextPresentationFrameValid = false;
@@ -3954,6 +3989,7 @@ void idCommonLocal::InitGame( void ) {
 
 	// if any archived cvars are modified after this, we will trigger a writing of the config file
 	cvarSystem->ClearModifiedFlags( CVAR_ARCHIVE );
+	Common_MigrateLinuxLegacyLowVRamTexturePreset();
 
 	// cvars are initialized, but not the rendering system. Allow preference startup dialog
 	Sys_DoPreferences();
