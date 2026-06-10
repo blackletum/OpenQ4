@@ -74,6 +74,15 @@ def validate_runtime_flags() -> None:
     require(runner, '"--skip-official-pak-validation"', "validation profile renderer handoff")
 
 
+def validate_assetless_renderer_bootstrap() -> None:
+    source = read("src/renderer/RenderSystem_init.cpp")
+
+    require(source, 'FindMaterial( "_default", false )', "renderer default material stock lookup")
+    require(source, "using generated internal fallback", "renderer default material assetless fallback")
+    require(source, 'FindMaterial( "_default" )', "renderer default material generated fallback lookup")
+    require(source, "_default material fallback not available", "renderer default material fallback fatal guard")
+
+
 def validate_release_note() -> None:
     source = read("docs-dev/release-completion.md")
 
@@ -94,6 +103,7 @@ def main() -> None:
     validate_push_workflow()
     validate_commit_workflow()
     validate_runtime_flags()
+    validate_assetless_renderer_bootstrap()
     validate_release_note()
     validate_no_duplicate_jobs()
     print("linux_arm64_ci_coverage: ok")

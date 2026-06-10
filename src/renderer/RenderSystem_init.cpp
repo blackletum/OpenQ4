@@ -3088,7 +3088,11 @@ R_InitMaterials
 void R_InitMaterials( void ) {
 	tr.defaultMaterial = declManager->FindMaterial( "_default", false );
 	if ( !tr.defaultMaterial ) {
-		common->FatalError( "_default material not found" );
+		common->Printf( "Renderer default material: using generated internal fallback for missing _default material decl\n" );
+		tr.defaultMaterial = declManager->FindMaterial( "_default" );
+	}
+	if ( !tr.defaultMaterial ) {
+		common->FatalError( "_default material fallback not available" );
 	}
 	declManager->FindMaterial( "_default", false );
 
