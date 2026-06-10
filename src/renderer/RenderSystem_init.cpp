@@ -294,7 +294,7 @@ idCVar cl_gunfov_adjust( "cl_gunfov_adjust", "1", CVAR_RENDERER | CVAR_ARCHIVE |
 
 idCVar r_ignoreGLErrors( "r_ignoreGLErrors", "1", CVAR_RENDERER | CVAR_BOOL, "ignore GL errors" );
 idCVar r_finish( "r_finish", "0", CVAR_RENDERER | CVAR_BOOL, "force a call to glFinish() every frame" );
-idCVar r_swapInterval( "r_swapInterval", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "changes wglSwapIntarval" );
+idCVar r_swapInterval( "r_swapInterval", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "controls the platform swap interval / VSync state" );
 
 idCVar r_gamma( "r_gamma", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "changes gamma tables", 0.5f, 3.0f );
 idCVar r_brightness( "r_brightness", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "changes gamma tables", 0.5f, 2.0f );
@@ -2926,20 +2926,43 @@ extern	PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT;
 R_VidRestart_f
 =================
 */
-static void R_PerformFullVidRestart( bool forceWindow ) {
+static void R_ClearActiveRenderTextures( void ) {
 	backEnd.renderTexture = NULL;
+	backEnd.feedbackRenderTexture = NULL;
 	tr.activeRenderTexture = NULL;
-	idRenderTexture::BindNull();
+}
+
+static void R_ShutdownRenderTargetsBeforeImagePurge( void ) {
+	R_ClearActiveRenderTextures();
+	if ( glConfig.isInitialized ) {
+		idRenderTexture::BindNull();
+	}
+
+	// Render textures keep pointers to idImage objects. Destroy/reset every
+	// GL render-target owner before image purge or full renderer teardown can
+	// invalidate those images.
+	tr.ShutdownSpecialEffects();
+	RB_ShutdownScenePostProcess();
+	RB_ShutdownShadowMapResources();
 	tr.ProcessPendingRenderTextureDeletes();
+	R_ClearActiveRenderTextures();
+}
+
+static void R_PerformFullVidRestart( bool forceWindow ) {
+	R_ShutdownRenderTargetsBeforeImagePurge();
 
 	// Input is tied to the native window/context lifecycle.
 	Sys_ShutdownInput();
 
 	// Force image/object handles to rebuild against the new context.
 	globalImages->PurgeAllImages();
+	R_ShutdownFrameData();
+	R_RendererMetrics_ShutdownGpuTimers();
 	R_MaterialResourceTable_Shutdown();
 	R_RenderGraphResources_Shutdown();
 	R_ModernGLExecutor_Shutdown();
+	R_RendererUpload_Shutdown();
+	RendererBootstrap_Shutdown();
 	GLimp_Shutdown();
 	glConfig.isInitialized = false;
 
@@ -2950,8 +2973,7 @@ static void R_PerformFullVidRestart( bool forceWindow ) {
 
 	R_InitOpenGL();
 	cvarSystem->SetCVarBool( "r_fullscreen", latchedFullscreen );
-	backEnd.renderTexture = NULL;
-	tr.activeRenderTexture = NULL;
+	R_ClearActiveRenderTextures();
 
 	globalImages->ReloadImages( true );
 }
@@ -3340,6 +3362,7 @@ void idRenderSystemLocal::Shutdown( void ) {
 	R_DoneFreeType( );
 
 	if ( glConfig.isInitialized ) {
+		R_ShutdownRenderTargetsBeforeImagePurge();
 		globalImages->PurgeAllImages();
 	}
 
@@ -3437,8 +3460,16 @@ idRenderSystemLocal::ShutdownOpenGL
 ========================
 */
 void idRenderSystemLocal::ShutdownOpenGL( void ) {
-	ShutdownSpecialEffects();
-	ProcessPendingRenderTextureDeletes();
+	if ( !glConfig.isInitialized ) {
+		R_ClearActiveRenderTextures();
+		useUIViewportFor2D = true;
+		return;
+	}
+
+	R_ShutdownRenderTargetsBeforeImagePurge();
+	if ( globalImages != NULL ) {
+		globalImages->PurgeAllImages();
+	}
 
 	// free the context and close the window
 	R_ShutdownFrameData();
@@ -3446,13 +3477,11 @@ void idRenderSystemLocal::ShutdownOpenGL( void ) {
 	R_MaterialResourceTable_Shutdown();
 	R_RenderGraphResources_Shutdown();
 	R_ModernGLExecutor_Shutdown();
-	RB_ShutdownScenePostProcess();
 	R_RendererUpload_Shutdown();
 	RendererBootstrap_Shutdown();
 	GLimp_Shutdown();
 	glConfig.isInitialized = false;
-	backEnd.renderTexture = NULL;
-	activeRenderTexture = NULL;
+	R_ClearActiveRenderTextures();
 	useUIViewportFor2D = true;
 }
 

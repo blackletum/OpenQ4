@@ -177,6 +177,7 @@ def validation_env(args: argparse.Namespace, root: Path) -> dict[str, str]:
 def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) -> None:
     tests = [
         root / "tools" / "tests" / "hdr_postprocess_math.py",
+        root / "tools" / "tests" / "linux_vsync_support.py",
     ]
     for test_script in tests:
         if not test_script.is_file():

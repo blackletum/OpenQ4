@@ -682,6 +682,13 @@ install_data(
   rename: 'openQ4.icns',
 )
 
+if host_system != 'windows'
+  install_data(
+    'assets/splash/quake4_rt_bitmap_4001.bmp',
+    install_dir: install_root_dir / 'assets' / 'splash',
+  )
+endif
+
 if host_system == 'linux'
   linux_desktop_conf = configuration_data()
   linux_desktop_conf.set('OPENQ4_CLIENT_BINARY', engine_client_binary_name)

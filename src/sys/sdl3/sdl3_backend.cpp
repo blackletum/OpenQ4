@@ -253,6 +253,7 @@ static int s_absoluteMouseX = 0;
 static int s_absoluteMouseY = 0;
 static bool s_menuMouseRouteActive = false;
 static idUserInterface *s_trackedMenuGui = NULL;
+static bool s_trackedConsoleActive = false;
 static bool s_haveMenuMousePosition = false;
 static float s_menuMouseX = 0.0f;
 static float s_menuMouseY = 0.0f;
@@ -713,13 +714,13 @@ static bool SDL3_MapWindowMouseToConsoleCursor(float windowMouseX, float windowM
 }
 
 static bool SDL3_MapWindowMouseToRoutedCursor(float windowMouseX, float windowMouseY, float &cursorX, float &cursorY) {
+	if (console != NULL && console->Active()) {
+		return SDL3_MapWindowMouseToConsoleCursor(windowMouseX, windowMouseY, cursorX, cursorY);
+	}
+
 	idUserInterface *activeGui = SDL3_GetActiveMenuGui();
 	if (activeGui != NULL) {
 		return SDL3_MapWindowMouseToGuiCursor(windowMouseX, windowMouseY, cursorX, cursorY);
-	}
-
-	if (console != NULL && console->Active()) {
-		return SDL3_MapWindowMouseToConsoleCursor(windowMouseX, windowMouseY, cursorX, cursorY);
 	}
 
 	return false;
@@ -757,6 +758,24 @@ static bool SDL3_UpdateRoutedMouseDelta(float menuMouseX, float menuMouseY, int 
 
 static void SDL3_SyncSystemMouseToActiveCursor(void) {
 	if (!SDL3_ShouldRouteMenuMouse() || !s_sdlWindow) {
+		return;
+	}
+
+	if (console != NULL && console->Active()) {
+		float windowMouseX = 0.0f;
+		float windowMouseY = 0.0f;
+		(void)SDL_GetMouseState(&windowMouseX, &windowMouseY);
+
+		float cursorX = 0.0f;
+		float cursorY = 0.0f;
+		if (!SDL3_MapWindowMouseToConsoleCursor(windowMouseX, windowMouseY, cursorX, cursorY)) {
+			return;
+		}
+
+		console->SetMousePosition(cursorX, cursorY);
+		s_ignoreNextMenuWarpMotion = false;
+		s_menuMouseInsideWindow = true;
+		SDL3_SetMenuMouseTrackingPosition(cursorX, cursorY);
 		return;
 	}
 
@@ -802,25 +821,6 @@ static void SDL3_SyncSystemMouseToActiveCursor(void) {
 		return;
 #endif
 	}
-
-	if (console == NULL || !console->Active()) {
-		return;
-	}
-
-	float windowMouseX = 0.0f;
-	float windowMouseY = 0.0f;
-	(void)SDL_GetMouseState(&windowMouseX, &windowMouseY);
-
-	float consoleMouseX = 0.0f;
-	float consoleMouseY = 0.0f;
-	if (!SDL3_MapWindowMouseToConsoleCursor(windowMouseX, windowMouseY, consoleMouseX, consoleMouseY)) {
-		return;
-	}
-
-	console->SetMousePosition(consoleMouseX, consoleMouseY);
-	s_ignoreNextMenuWarpMotion = false;
-	s_menuMouseInsideWindow = true;
-	SDL3_SetMenuMouseTrackingPosition(consoleMouseX, consoleMouseY);
 }
 
 static int SDL3_ClampJoystickValue(int value) {
@@ -2590,6 +2590,29 @@ static bool SDL3_ApplyScreenParms(glimpParms_t parms) {
 	return true;
 }
 
+static bool SDL3_ApplySwapInterval(void) {
+	if (!s_sdlWindow || !s_sdlContext) {
+		return false;
+	}
+
+	const int requestedInterval = r_swapInterval.GetInteger();
+	if (!SDL_GL_SetSwapInterval(requestedInterval)) {
+		common->Printf("SDL3: failed to set swap interval %d: %s\n", requestedInterval, SDL_GetError());
+		return false;
+	}
+
+	int actualInterval = 0;
+	if (!SDL_GL_GetSwapInterval(&actualInterval)) {
+		common->Printf("SDL3: swap interval set to %d, but query failed: %s\n", requestedInterval, SDL_GetError());
+	} else if (actualInterval == requestedInterval) {
+		common->Printf("SDL3: swap interval set to %d\n", actualInterval);
+	} else {
+		common->Printf("SDL3: requested swap interval %d, driver reports %d\n", requestedInterval, actualInterval);
+	}
+
+	return true;
+}
+
 static void SDL3_LoadWGLExtensions(void) {
 #if defined(OPENQ4_SDL3_POSIX_HOST)
 	glConfig.wgl_extensions_string = "";
@@ -2753,9 +2776,29 @@ static void SDL3_HandleWindowEvent(const SDL_WindowEvent &event, int eventTime) 
 }
 
 bool Sys_SDL_PumpEvents(void) {
+#if defined(OPENQ4_SDL3_POSIX_HOST)
+	const bool gameWindowReady = s_sdlVideoActive && s_sdlWindow;
+	if (!gameWindowReady) {
+		if (!Posix_ConsoleNeedsEventPump()) {
+			return false;
+		}
+
+		SDL_Event event;
+		while (SDL_PollEvent(&event)) {
+			if (Posix_ConsoleProcessEvent(&event)) {
+				continue;
+			}
+			if (event.type == SDL_EVENT_QUIT) {
+				cmdSystem->BufferCommandText(CMD_EXEC_APPEND, "quit\n");
+			}
+		}
+		return true;
+	}
+#else
 	if (!s_sdlVideoActive || !s_sdlWindow) {
 		return false;
 	}
+#endif
 
 	if (in_joystick.IsModified()) {
 		if (in_joystick.GetBool()) {
@@ -2805,6 +2848,12 @@ bool Sys_SDL_PumpEvents(void) {
 	SDL_Event event;
 	while (SDL_PollEvent(&event)) {
 		const int eventTime = SDL3_EventMilliseconds(event.common.timestamp);
+
+#if defined(OPENQ4_SDL3_POSIX_HOST)
+		if (Posix_ConsoleProcessEvent(&event)) {
+			continue;
+		}
+#endif
 
 		if (event.type >= SDL_EVENT_WINDOW_FIRST && event.type <= SDL_EVENT_WINDOW_LAST) {
 			if (event.window.type == SDL_EVENT_WINDOW_RESIZED) {
@@ -3225,13 +3274,15 @@ void IN_Frame(void) {
 
 	bool shouldGrab = true;
 	const bool routeMenuMouse = SDL3_ShouldRouteMenuMouse();
-	idUserInterface *activeMenuGui = routeMenuMouse ? session->GetActiveGUI() : NULL;
+	const bool consoleActive = console != NULL && console->Active();
+	idUserInterface *activeMenuGui = routeMenuMouse ? SDL3_GetActiveMenuGui() : NULL;
 
-	if (activeMenuGui != s_trackedMenuGui) {
+	if (activeMenuGui != s_trackedMenuGui || consoleActive != s_trackedConsoleActive) {
 		// Match the Alt+Tab recovery path when gameplay/menu transitions swap the
-		// active GUI without generating a focus event.
+		// active GUI or console overlay without generating a focus event.
 		SDL3_InvalidateMenuMouseRouting();
 		s_trackedMenuGui = activeMenuGui;
+		s_trackedConsoleActive = consoleActive;
 	}
 
 #if !defined(OPENQ4_SDL3_POSIX_HOST)
@@ -3284,10 +3335,17 @@ void IN_Frame(void) {
 
 void Sys_GrabMouseCursor(bool grabIt) {
 #ifndef ID_DEDICATED
+	const bool wasMouseReleased = win32.mouseReleased;
 	win32.mouseReleased = !grabIt;
+#if defined(OPENQ4_SDL3_POSIX_HOST)
+	if (wasMouseReleased != win32.mouseReleased) {
+		IN_Frame();
+	}
+#else
 	if (!grabIt) {
 		IN_Frame();
 	}
+#endif
 #else
 	(void)grabIt;
 #endif
@@ -3301,6 +3359,7 @@ void Sys_InitInput(void) {
 	win32.mouseGrabbed = SDL3_IsMouseCaptured();
 	s_menuMouseRouteActive = false;
 	s_trackedMenuGui = NULL;
+	s_trackedConsoleActive = false;
 	SDL3_ResetMenuMouseTracking();
 	s_menuMouseInsideWindow = true;
 	SDL3_UpdateCursorVisibility();
@@ -3753,6 +3812,10 @@ bool GLimp_Init(glimpParms_t parms) {
 
 	SDL3_UpdateNativeWindowHandles();
 	SDL3_LoadWGLExtensions();
+	if (r_swapInterval.IsModified()) {
+		r_swapInterval.ClearModified();
+		(void)SDL3_ApplySwapInterval();
+	}
 
 	win32.activeApp = true;
 	win32.wglErrors = 0;
@@ -3773,6 +3836,11 @@ bool GLimp_SetScreenParms(glimpParms_t parms) {
 	}
 
 	SDL3_UpdateNativeWindowHandles();
+	r_swapInterval.SetModified();
+	if (r_swapInterval.IsModified()) {
+		r_swapInterval.ClearModified();
+		(void)SDL3_ApplySwapInterval();
+	}
 
 	return true;
 }
@@ -3820,9 +3888,7 @@ void GLimp_Shutdown(void) {
 void GLimp_SwapBuffers(void) {
 	if (r_swapInterval.IsModified()) {
 		r_swapInterval.ClearModified();
-		if (!SDL_GL_SetSwapInterval(r_swapInterval.GetInteger())) {
-			common->Printf("SDL3: failed to set swap interval: %s\n", SDL_GetError());
-		}
+		(void)SDL3_ApplySwapInterval();
 	}
 
 	if (s_sdlWindow && !SDL_GL_SwapWindow(s_sdlWindow)) {

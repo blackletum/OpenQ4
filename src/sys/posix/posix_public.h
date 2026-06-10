@@ -58,6 +58,12 @@ bool		Posix_AddMousePollEvent( int action, int value );
 
 void		Posix_PollInput( void );
 void		Posix_InitConsoleInput( void );
+void		Posix_ConsoleAppendText( const char *message );
+void		Posix_ConsoleLateInit( void );
+bool		Posix_ConsoleNeedsEventPump( void );
+bool		Posix_ConsoleProcessEvent( const void *eventData );
+void		Posix_ConsoleFrame( void );
+void		Posix_ShutdownConsole( void );
 void		Posix_Shutdown( void );
 
 void		Sys_FPE_handler( int signum, siginfo_t *info, void *context );

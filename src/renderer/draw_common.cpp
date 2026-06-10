@@ -549,7 +549,7 @@ static void RB_FreeGLSLProgram( newShaderStage_t *stage ) {
 		return;
 	}
 
-	if ( stage->glslProgramObject != 0 ) {
+	if ( stage->glslProgramObject != 0 && glConfig.isInitialized ) {
 		if ( stage->glslVertexShaderObject != 0 ) {
 			glDetachObjectARB(
 				(GLhandleARB)stage->glslProgramObject,
@@ -3310,7 +3310,7 @@ static void RB_STD_Bloom( void ) {
 }
 
 static void RB_FreeSceneDepthAwarePresentProgram( void ) {
-	if ( rbSceneDepthAwarePresentProgram != 0 ) {
+	if ( rbSceneDepthAwarePresentProgram != 0 && glConfig.isInitialized ) {
 		if ( rbSceneDepthAwarePresentVertexShader != 0 ) {
 			glDetachObjectARB( rbSceneDepthAwarePresentProgram, rbSceneDepthAwarePresentVertexShader );
 		}
@@ -3319,10 +3319,10 @@ static void RB_FreeSceneDepthAwarePresentProgram( void ) {
 		}
 		glDeleteObjectARB( rbSceneDepthAwarePresentProgram );
 	}
-	if ( rbSceneDepthAwarePresentVertexShader != 0 ) {
+	if ( rbSceneDepthAwarePresentVertexShader != 0 && glConfig.isInitialized ) {
 		glDeleteObjectARB( rbSceneDepthAwarePresentVertexShader );
 	}
-	if ( rbSceneDepthAwarePresentFragmentShader != 0 ) {
+	if ( rbSceneDepthAwarePresentFragmentShader != 0 && glConfig.isInitialized ) {
 		glDeleteObjectARB( rbSceneDepthAwarePresentFragmentShader );
 	}
 	rbSceneDepthAwarePresentProgram = 0;
@@ -3331,10 +3331,6 @@ static void RB_FreeSceneDepthAwarePresentProgram( void ) {
 	rbSceneDepthAwarePresentGeneration = -1;
 	rbSceneDepthAwarePresentSceneLocation = -1;
 	rbSceneDepthAwarePresentDepthLocation = -1;
-}
-
-void RB_ShutdownScenePostProcess( void ) {
-	RB_FreeSceneDepthAwarePresentProgram();
 }
 
 static bool RB_EnsureSceneDepthAwarePresentProgram( void ) {
@@ -4669,6 +4665,74 @@ static void RB_InitLensFlareStage( void ) {
 	rbLensFlareStage.numShaderTextures = 1;
 	idStr::Copynz( rbLensFlareStage.shaderTextureNames[0], "DepthBuffer", sizeof( rbLensFlareStage.shaderTextureNames[0] ) );
 	rbLensFlareStageInitialized = true;
+}
+
+static void RB_DestroyPostProcessRenderTexture( idRenderTexture *&renderTexture ) {
+	if ( renderTexture == NULL ) {
+		return;
+	}
+	tr.DestroyRenderTexture( renderTexture );
+	renderTexture = NULL;
+}
+
+void RB_ShutdownScenePostProcess( void ) {
+	RB_FreeSceneDepthAwarePresentProgram();
+
+	RB_FreeGLSLProgram( &rbLightGridIndirectStage );
+	RB_FreeGLSLProgram( &rbSSAOStage );
+	RB_FreeGLSLProgram( &rbMotionBlurStage );
+	RB_FreeGLSLProgram( &rbMotionVectorStage );
+	RB_FreeGLSLProgram( &rbBloomExtractStage );
+	RB_FreeGLSLProgram( &rbBloomDownsampleStage );
+	RB_FreeGLSLProgram( &rbBloomBlurStage );
+	RB_FreeGLSLProgram( &rbHDRLuminanceStage );
+	RB_FreeGLSLProgram( &rbBloomCompositeStage );
+	RB_FreeGLSLProgram( &rbResolutionScaleStage );
+	RB_FreeGLSLProgram( &rbCRTStage );
+	RB_FreeGLSLProgram( &rbSoftParticleStage );
+	RB_FreeGLSLProgram( &rbRVSpecialDepthStage );
+	RB_FreeGLSLProgram( &rbRVSpecialBlurStage );
+	RB_FreeGLSLProgram( &rbRVSpecialMedLabsStage );
+	RB_FreeGLSLProgram( &rbRVSpecialALStage );
+	RB_FreeGLSLProgram( &rbLensFlareStage );
+
+	RB_DestroyPostProcessRenderTexture( rbSceneRenderTexture );
+	rbSceneRenderTextureSamples = -1;
+	rbSceneColorImage = NULL;
+	rbSceneDepthStencilImage = NULL;
+	rbSceneRenderTargetPreserveDepthImage = NULL;
+	rbSceneRenderTargetPreserveFarDepthFrame = -1;
+	rbSceneRenderTargetPreserveFarDepthView = NULL;
+	rbSceneRenderTargetPortalSkyFrame = -1;
+	rbSceneRenderTargetPortalSkyViewport.Clear();
+	rbSceneRenderTargetPortalSkyWidth = 0;
+	rbSceneRenderTargetPortalSkyHeight = 0;
+	rbSceneRenderTargetPreserveDepthFrame = -1;
+	rbSceneRenderTargetPreserveDepthWidth = 0;
+	rbSceneRenderTargetPreserveDepthHeight = 0;
+
+	RB_ResetMotionBlurHistory();
+	RB_DestroyPostProcessRenderTexture( rbMotionVectorRenderTexture );
+	rbMotionVectorImage = NULL;
+	rbMotionVectorPreviousState = NULL;
+	rbMotionVectorDrewSurface = false;
+
+	for ( int level = 0; level < RB_BLOOM_MAX_LEVELS; level++ ) {
+		for ( int ping = 0; ping < 2; ping++ ) {
+			RB_DestroyPostProcessRenderTexture( rbBloomRenderTextures[level][ping] );
+			rbBloomImages[level][ping] = NULL;
+		}
+	}
+	for ( int level = 0; level < RB_HDR_EXPOSURE_MAX_LEVELS; level++ ) {
+		RB_DestroyPostProcessRenderTexture( rbHDRExposureRenderTextures[level] );
+		rbHDRExposureImages[level] = NULL;
+	}
+	rbHDRExposureLevelCount = 0;
+	rbHDRAdaptedExposure = 1.0f;
+	rbHDRLastAverageLuminance = 1.0f;
+	rbHDRLastTargetExposure = 1.0f;
+	rbHDRLastAdaptationTime = -1.0f;
+	rbHDRExposureInitialized = false;
 }
 
 static bool RB_ProjectLensFlarePoint( const idVec3 &origin, int viewportWidth, int viewportHeight, float &screenX, float &screenY, float &depth01 ) {

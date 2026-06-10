@@ -72,8 +72,17 @@ static GLXContext ctx = NULL;
 #endif
 
 typedef GLXContext ( *glXCreateContextAttribsARBProc_t )( Display *, GLXFBConfig, GLXContext, Bool, const int * );
+typedef void ( *openq4GLXSwapIntervalEXTProc_t )( Display *, GLXDrawable, int );
+typedef int ( *openq4GLXSwapIntervalMESAProc_t )( unsigned int );
+typedef int ( *openq4GLXGetSwapIntervalMESAProc_t )( void );
+typedef int ( *openq4GLXSwapIntervalSGIProc_t )( int );
 
 static bool glx_context_create_error = false;
+static openq4GLXSwapIntervalEXTProc_t glx_swap_interval_ext = NULL;
+static openq4GLXSwapIntervalMESAProc_t glx_swap_interval_mesa = NULL;
+static openq4GLXGetSwapIntervalMESAProc_t glx_get_swap_interval_mesa = NULL;
+static openq4GLXSwapIntervalSGIProc_t glx_swap_interval_sgi = NULL;
+static bool glx_swap_control_tear_available = false;
 
 static bool vidmode_ext = false;
 static int vidmode_MajorVersion = 0, vidmode_MinorVersion = 0;	// major and minor of XF86VidExtensions
@@ -187,15 +196,19 @@ static GLXFBConfig GLX_FindFBConfigForVisual( XVisualInfo *visinfo ) {
 	return match;
 }
 
-static glXCreateContextAttribsARBProc_t GLX_GetCreateContextAttribsProc( void ) {
-	glXCreateContextAttribsARBProc_t proc = NULL;
+static void *GLX_GetProcAddressForName( const char *name ) {
+	void *proc = NULL;
 #if defined( GLX_VERSION_1_4 )
-	proc = reinterpret_cast<glXCreateContextAttribsARBProc_t>( glXGetProcAddress( reinterpret_cast<const GLubyte *>( "glXCreateContextAttribsARB" ) ) );
+	proc = reinterpret_cast<void *>( glXGetProcAddress( reinterpret_cast<const GLubyte *>( name ) ) );
 #endif
 	if ( proc == NULL ) {
-		proc = reinterpret_cast<glXCreateContextAttribsARBProc_t>( glXGetProcAddressARB( reinterpret_cast<const GLubyte *>( "glXCreateContextAttribsARB" ) ) );
+		proc = reinterpret_cast<void *>( glXGetProcAddressARB( reinterpret_cast<const GLubyte *>( name ) ) );
 	}
 	return proc;
+}
+
+static glXCreateContextAttribsARBProc_t GLX_GetCreateContextAttribsProc( void ) {
+	return reinterpret_cast<glXCreateContextAttribsARBProc_t>( GLX_GetProcAddressForName( "glXCreateContextAttribsARB" ) );
 }
 
 static bool GLX_CreateContextForCandidate(
@@ -276,6 +289,147 @@ static bool GLX_CreateContextWithLadder( XVisualInfo *visinfo ) {
 		common->Printf( "GLX: OpenGL context %s failed\n", candidate.label );
 	}
 
+	return false;
+}
+
+static bool GLX_HasExtension( const char *extensions, const char *extension ) {
+	if ( extensions == NULL || extension == NULL || extension[0] == '\0' ) {
+		return false;
+	}
+
+	const size_t extensionLength = strlen( extension );
+	const char *cursor = extensions;
+	while ( ( cursor = strstr( cursor, extension ) ) != NULL ) {
+		const bool startsToken = ( cursor == extensions || cursor[-1] == ' ' );
+		const char after = cursor[extensionLength];
+		const bool endsToken = ( after == '\0' || after == ' ' );
+		if ( startsToken && endsToken ) {
+			return true;
+		}
+		cursor += extensionLength;
+	}
+
+	return false;
+}
+
+static void GLX_ResetSwapControl( void ) {
+	glx_swap_interval_ext = NULL;
+	glx_swap_interval_mesa = NULL;
+	glx_get_swap_interval_mesa = NULL;
+	glx_swap_interval_sgi = NULL;
+	glx_swap_control_tear_available = false;
+}
+
+static void GLX_InitSwapControl( void ) {
+	GLX_ResetSwapControl();
+
+	const char *extensions = NULL;
+	if ( dpy != NULL ) {
+		extensions = glXQueryExtensionsString( dpy, scrnum );
+	}
+
+	const bool hasExtSwapControl = GLX_HasExtension( extensions, "GLX_EXT_swap_control" );
+	const bool hasMesaSwapControl = GLX_HasExtension( extensions, "GLX_MESA_swap_control" );
+	const bool hasSgiSwapControl = GLX_HasExtension( extensions, "GLX_SGI_swap_control" );
+	glx_swap_control_tear_available = GLX_HasExtension( extensions, "GLX_EXT_swap_control_tear" );
+
+	if ( hasExtSwapControl ) {
+		glx_swap_interval_ext = reinterpret_cast<openq4GLXSwapIntervalEXTProc_t>( GLX_GetProcAddressForName( "glXSwapIntervalEXT" ) );
+	}
+	if ( hasMesaSwapControl ) {
+		glx_swap_interval_mesa = reinterpret_cast<openq4GLXSwapIntervalMESAProc_t>( GLX_GetProcAddressForName( "glXSwapIntervalMESA" ) );
+		glx_get_swap_interval_mesa = reinterpret_cast<openq4GLXGetSwapIntervalMESAProc_t>( GLX_GetProcAddressForName( "glXGetSwapIntervalMESA" ) );
+	}
+	if ( hasSgiSwapControl ) {
+		glx_swap_interval_sgi = reinterpret_cast<openq4GLXSwapIntervalSGIProc_t>( GLX_GetProcAddressForName( "glXSwapIntervalSGI" ) );
+	}
+
+	common->Printf(
+		"GLX: swap control: EXT=%s MESA=%s SGI=%s tear=%s\n",
+		glx_swap_interval_ext != NULL ? "yes" : "no",
+		glx_swap_interval_mesa != NULL ? "yes" : "no",
+		glx_swap_interval_sgi != NULL ? "yes" : "no",
+		glx_swap_control_tear_available ? "yes" : "no" );
+}
+
+static bool GLX_NormalizeSwapIntervalForBackend(
+	int requestedInterval,
+	bool supportsZero,
+	bool supportsNegative,
+	const char *backendName,
+	int &interval ) {
+	interval = requestedInterval;
+
+	if ( interval < -1 ) {
+		common->Printf( "GLX: requested swap interval %d is below the supported adaptive interval; using -1.\n", requestedInterval );
+		interval = -1;
+	}
+	if ( interval < 0 && !supportsNegative ) {
+		common->Printf( "GLX: swap interval %d requested, but %s cannot request adaptive VSync; using interval 1.\n", requestedInterval, backendName );
+		interval = 1;
+	}
+	if ( interval == 0 && !supportsZero ) {
+		common->Printf( "GLX: swap interval 0 requested, but %s cannot force VSync off.\n", backendName );
+		return false;
+	}
+
+	return true;
+}
+
+static bool GLX_ApplySwapInterval( void ) {
+	if ( dpy == NULL || win == 0 || ctx == NULL ) {
+		return false;
+	}
+
+	const int requestedInterval = r_swapInterval.GetInteger();
+	int interval = requestedInterval;
+
+	if ( glx_swap_interval_ext != NULL &&
+			GLX_NormalizeSwapIntervalForBackend( requestedInterval, true, glx_swap_control_tear_available, "GLX_EXT_swap_control", interval ) ) {
+		glx_swap_interval_ext( dpy, static_cast<GLXDrawable>( win ), interval );
+		XSync( dpy, False );
+		if ( interval == requestedInterval ) {
+			common->Printf( "GLX: swap interval set to %d via GLX_EXT_swap_control\n", interval );
+		} else {
+			common->Printf( "GLX: requested swap interval %d, applied %d via GLX_EXT_swap_control\n", requestedInterval, interval );
+		}
+		return true;
+	}
+
+	if ( glx_swap_interval_mesa != NULL &&
+			GLX_NormalizeSwapIntervalForBackend( requestedInterval, true, false, "GLX_MESA_swap_control", interval ) ) {
+		const int result = glx_swap_interval_mesa( static_cast<unsigned int>( interval ) );
+		if ( result != 0 ) {
+			common->Printf( "GLX: glXSwapIntervalMESA(%d) failed with code %d\n", interval, result );
+			return false;
+		}
+
+		const int actualInterval = glx_get_swap_interval_mesa != NULL ? glx_get_swap_interval_mesa() : interval;
+		if ( actualInterval == requestedInterval ) {
+			common->Printf( "GLX: swap interval set to %d via GLX_MESA_swap_control\n", actualInterval );
+		} else {
+			common->Printf( "GLX: requested swap interval %d, driver reports %d via GLX_MESA_swap_control\n", requestedInterval, actualInterval );
+		}
+		return true;
+	}
+
+	if ( glx_swap_interval_sgi != NULL &&
+			GLX_NormalizeSwapIntervalForBackend( requestedInterval, false, false, "GLX_SGI_swap_control", interval ) ) {
+		const int result = glx_swap_interval_sgi( interval );
+		if ( result != 0 ) {
+			common->Printf( "GLX: glXSwapIntervalSGI(%d) failed with code %d\n", interval, result );
+			return false;
+		}
+
+		if ( interval == requestedInterval ) {
+			common->Printf( "GLX: swap interval set to %d via GLX_SGI_swap_control\n", interval );
+		} else {
+			common->Printf( "GLX: requested swap interval %d, applied %d via GLX_SGI_swap_control\n", requestedInterval, interval );
+		}
+		return true;
+	}
+
+	common->Printf( "GLX: swap interval %d requested, but no usable GLX swap-control extension is available\n", requestedInterval );
 	return false;
 }
 
@@ -402,6 +556,7 @@ void GLimp_Shutdown() {
 			glXDestroyContext( dpy, ctx );
 			ctx = NULL;
 		}
+		GLX_ResetSwapControl();
 
 		GLimp_RestoreDisplayMode();
 
@@ -421,6 +576,10 @@ void GLimp_Shutdown() {
 
 void GLimp_SwapBuffers() {
 	assert( dpy );
+	if ( r_swapInterval.IsModified() ) {
+		r_swapInterval.ClearModified();
+		(void)GLX_ApplySwapInterval();
+	}
 	glXSwapBuffers( dpy, win );
 }
 
@@ -790,6 +949,13 @@ int GLX_Init(glimpParms_t a) {
 		win = 0;
 		GLimp_RestoreDisplayMode();
 		return false;
+	}
+
+	GLX_InitSwapControl();
+	r_swapInterval.SetModified();
+	if ( r_swapInterval.IsModified() ) {
+		r_swapInterval.ClearModified();
+		(void)GLX_ApplySwapInterval();
 	}
 
 	glstring = (const char *) glGetString(GL_RENDERER);

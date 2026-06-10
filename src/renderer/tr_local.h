@@ -1087,7 +1087,7 @@ extern idCVar cl_gunfov_adjust;		// weapon FOV aspect policy
 
 extern idCVar r_finish;					// force a call to glFinish() every frame
 extern idCVar r_frontBuffer;			// draw to front buffer for debugging
-extern idCVar r_swapInterval;			// changes wglSwapIntarval
+extern idCVar r_swapInterval;			// controls platform swap interval / VSync
 extern idCVar r_offsetFactor;			// polygon offset parameter
 extern idCVar r_offsetUnits;			// polygon offset parameter
 extern idCVar r_singleTriangle;			// only draw a single triangle per primitive
@@ -1745,6 +1745,7 @@ void	R_ReportShaderPrograms_f( const idCmdArgs &args );
 int		R_FindARBProgram( GLenum target, const char *program );
 bool	R_IsARBProgramValid( GLenum target, GLuint ident );
 bool	R_BindARBProgram( GLenum target, GLuint ident, const char *usage, bool required );
+void	RB_ShutdownShadowMapResources( void );
 
 typedef enum {
 	PROG_INVALID,

@@ -3657,6 +3657,90 @@ static void RB_ShadowMapDebugOverlayFreeProgram( void ) {
 	memset( &g_shadowDebugOverlayProgram, 0, sizeof( g_shadowDebugOverlayProgram ) );
 }
 
+static void RB_ShadowMapDestroyRenderTexture( idRenderTexture *&renderTexture ) {
+	if ( renderTexture == NULL ) {
+		return;
+	}
+	tr.DestroyRenderTexture( renderTexture );
+	renderTexture = NULL;
+}
+
+static void RB_ShadowMapResetProgramStateNoGL( void ) {
+	memset( &g_shadowMapProgram, 0, sizeof( g_shadowMapProgram ) );
+	memset( &g_shadowMapCasterProgram, 0, sizeof( g_shadowMapCasterProgram ) );
+	memset( &g_translucentShadowCasterProgram, 0, sizeof( g_translucentShadowCasterProgram ) );
+	memset( &g_materialInteractionProgram, 0, sizeof( g_materialInteractionProgram ) );
+	memset( &g_pointShadowMapProgram, 0, sizeof( g_pointShadowMapProgram ) );
+	memset( &g_pointShadowCasterProgram, 0, sizeof( g_pointShadowCasterProgram ) );
+	memset( &g_pointTranslucentShadowCasterProgram, 0, sizeof( g_pointTranslucentShadowCasterProgram ) );
+	memset( &g_shadowDebugOverlayProgram, 0, sizeof( g_shadowDebugOverlayProgram ) );
+}
+
+void RB_ShutdownShadowMapResources( void ) {
+	if ( glConfig.isInitialized ) {
+		RB_ShadowMapFreeProgram();
+		RB_ShadowMapFreeCasterProgram();
+		RB_TranslucentShadowMapFreeCasterProgram();
+		RB_MaterialInteractionFreeProgram();
+		RB_PointShadowMapFreeProgram();
+		RB_PointShadowMapFreeCasterProgram();
+		RB_PointTranslucentShadowMapFreeCasterProgram();
+		RB_ShadowMapDebugOverlayFreeProgram();
+	} else {
+		RB_ShadowMapResetProgramStateNoGL();
+	}
+
+	RB_ShadowMapDestroyRenderTexture( g_shadowMapScratchRenderTexture );
+	RB_ShadowMapDestroyRenderTexture( g_translucentShadowMapRenderTexture );
+	RB_ShadowMapDestroyRenderTexture( g_pointShadowMapScratchRenderTexture );
+	RB_ShadowMapDestroyRenderTexture( g_pointTranslucentShadowMapRenderTexture );
+
+	for ( int i = 0; i < SHADOWMAP_CACHE_MAX_SLOTS; i++ ) {
+		RB_ShadowMapDestroyRenderTexture( g_projectedShadowMapCache[i].renderTexture );
+		RB_ShadowMapDestroyRenderTexture( g_pointShadowMapCache[i].renderTexture );
+	}
+
+	if ( glConfig.isInitialized && glDeleteQueries != NULL ) {
+		for ( int i = 0; i < SHADOWMAP_GPU_TIMER_QUERY_SLOTS; i++ ) {
+			if ( g_shadowMapGpuTimerQuerySlots[i].query != 0 ) {
+				glDeleteQueries( 1, &g_shadowMapGpuTimerQuerySlots[i].query );
+			}
+		}
+	}
+
+	g_shadowMapDepthImage = NULL;
+	g_shadowMapRenderTexture = NULL;
+	g_shadowMapScratchDepthImage = NULL;
+	g_shadowMapScratchRenderTexture = NULL;
+	memset( g_translucentShadowMomentImages, 0, sizeof( g_translucentShadowMomentImages ) );
+	g_translucentShadowMapRenderTexture = NULL;
+	g_pointShadowMapColorImage = NULL;
+	g_pointShadowMapDepthImage = NULL;
+	g_pointShadowMapRenderTexture = NULL;
+	g_pointShadowMapScratchColorImage = NULL;
+	g_pointShadowMapScratchDepthImage = NULL;
+	g_pointShadowMapScratchRenderTexture = NULL;
+	memset( g_pointTranslucentShadowMomentImages, 0, sizeof( g_pointTranslucentShadowMomentImages ) );
+	g_pointTranslucentShadowMapRenderTexture = NULL;
+	memset( &g_projectedShadowMapState, 0, sizeof( g_projectedShadowMapState ) );
+	g_projectedTranslucentShadowPassReady = false;
+	g_pointTranslucentShadowPassReady = false;
+	g_pointShadowMapDepthCompareAvailable = true;
+	g_pointShadowMapDepthCompareAvailableGeneration = -1;
+	memset( &g_shadowMapStats, 0, sizeof( g_shadowMapStats ) );
+	g_shadowMapLastReportFrame = -0x3fffffff;
+	g_shadowMapReportThisFrame = false;
+	memset( &g_shadowMapDebugOverlayState, 0, sizeof( g_shadowMapDebugOverlayState ) );
+	g_shadowMapDebugOverlayState.lightDefIndex = -1;
+	memset( g_projectedShadowMapCache, 0, sizeof( g_projectedShadowMapCache ) );
+	memset( g_pointShadowMapCache, 0, sizeof( g_pointShadowMapCache ) );
+	memset( g_shadowMapLightHistory, 0, sizeof( g_shadowMapLightHistory ) );
+	g_activeProjectedShadowMapCache = NULL;
+	g_activePointShadowMapCache = NULL;
+	memset( g_shadowMapGpuTimerQuerySlots, 0, sizeof( g_shadowMapGpuTimerQuerySlots ) );
+	g_shadowMapGpuTimerQueryCursor = 0;
+}
+
 static void RB_ShadowMapPrintInfoLog( GLhandleARB object, const char *label, const char *name ) {
 	GLint logLength = 0;
 	glGetObjectParameterivARB( object, GL_OBJECT_INFO_LOG_LENGTH_ARB, &logLength );

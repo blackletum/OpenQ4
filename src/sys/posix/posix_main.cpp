@@ -68,6 +68,11 @@ If you have questions concerning this license or the applicable additional terms
 #define OPENQ4_POSIX_OWNS_COMMON_SYS 1
 #endif
 
+#if defined( USE_SDL3 )
+bool Sys_SDL_PumpEvents( void );
+void IN_Frame( void );
+#endif
+
 #define					MAX_OSPATH PATH_MAX
 #define					COMMAND_HISTORY 64
 
@@ -156,6 +161,7 @@ void Posix_Exit(int ret) {
 	if ( asyncThread.threadHandle ) {
 		Sys_DestroyThread( asyncThread );
 	}
+	Posix_ShutdownConsole();
 	Posix_ReleaseInstanceLock();
 	// process spawning. it's best when it happens after everything has shut down
 	Posix_RunExitSpawn();
@@ -563,6 +569,7 @@ Posix_Shutdown
 =================
 */
 void Posix_Shutdown( void ) {
+	Posix_ShutdownConsole();
 	Posix_ReleaseInstanceLock();
 	for ( int i = 0; i < COMMAND_HISTORY; i++ ) {
 		history[ i ].Clear();
@@ -619,27 +626,6 @@ void Sys_DLL_Unload( intptr_t handle ) {
 	}
 	dlclose( (void *)handle );
 }
-
-/*
-================
-Sys_ShowConsole
-================
-*/
-void Sys_ShowConsole( int visLevel, bool quitOnClose ) { }
-
-/*
-================
-Sys_ShowSplash
-================
-*/
-void Sys_ShowSplash( void ) { }
-
-/*
-================
-Sys_DestroySplash
-================
-*/
-void Sys_DestroySplash( void ) { }
 
 // ---------------------------------------------------------------------------
 
@@ -890,6 +876,7 @@ void Posix_LateInit( void ) {
 #ifndef ID_DEDICATED
 	common->Printf( "Video memory: %s\n", Sys_FormatMemoryMB( Sys_GetVideoRam() ).c_str() );
 #endif
+	Posix_ConsoleLateInit();
 	Posix_StartAsyncThread( );
 }
 
@@ -1307,11 +1294,17 @@ char *Posix_ConsoleInput( void ) {
 
 /*
 called during frame loops, pacifier updates etc.
-this is only for console input polling and misc mouse grab tasks
-the actual mouse and keyboard input is in the Sys_Poll logic
+this polls console input and keeps SDL window/input state current
 */
 void Sys_GenerateEvents( void ) {
 	char *s;
+
+#if defined( USE_SDL3 )
+	(void)Sys_SDL_PumpEvents();
+	IN_Frame();
+#endif
+	Posix_ConsoleFrame();
+
 	if ( ( s = Posix_ConsoleInput() ) ) {
 		char *b;
 		int len;
@@ -1345,19 +1338,34 @@ void Sys_DebugVPrintf( const char *fmt, va_list arg ) {
 	tty_Show();
 }
 
+#define MAX_POSIX_PRINT_MSG 4096
+
 void Sys_Printf(const char *msg, ...) {
+	char text[MAX_POSIX_PRINT_MSG];
 	va_list argptr;
 
-	tty_Hide();
 	va_start( argptr, msg );
-	vprintf( msg, argptr );
+	idStr::vsnPrintf( text, sizeof( text ) - 1, msg, argptr );
 	va_end( argptr );
+	text[sizeof( text ) - 1] = '\0';
+
+	Posix_ConsoleAppendText( text );
+
+	tty_Hide();
+	fputs( text, stdout );
 	tty_Show();
 }
 
 void Sys_VPrintf(const char *msg, va_list arg) {
+	char text[MAX_POSIX_PRINT_MSG];
+
+	idStr::vsnPrintf( text, sizeof( text ) - 1, msg, arg );
+	text[sizeof( text ) - 1] = '\0';
+
+	Posix_ConsoleAppendText( text );
+
 	tty_Hide();
-	vprintf(msg, arg);
+	fputs( text, stdout );
 	tty_Show();
 }
 

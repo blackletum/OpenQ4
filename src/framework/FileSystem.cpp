@@ -1052,6 +1052,7 @@ public:
 
 	virtual void			Init( void );
 	virtual void			StartBackgroundDownloadThread( void );
+	virtual void			StopBackgroundDownloadThread( void );
 	virtual void			Restart( void );
 	virtual void			Shutdown( bool reloading );
 	virtual bool			IsInitialized( void ) const;
@@ -1271,6 +1272,8 @@ idFileSystemLocal::idFileSystemLocal( void ) {
 	currentAssetLog.Clear();
 	currentAssetLogUnfiltered.Clear();
 	assetLog.Clear();
+	backgroundDownloads = NULL;
+	memset( &defaultBackgroundDownload, 0, sizeof( defaultBackgroundDownload ) );
 	memset( &backgroundThread, 0, sizeof( backgroundThread ) );
 	addonPaks = NULL;
 }
@@ -4820,6 +4823,8 @@ Frees all resources and closes all files
 void idFileSystemLocal::Shutdown( bool reloading ) {
 	searchpath_t *sp, *next, *loop;
 
+	StopBackgroundDownloadThread();
+
 	gameFolder.Clear();
 
 	serverPaks.Clear();
@@ -5514,7 +5519,7 @@ idFileSystemLocal::CurlProgressFunction
 */
 int idFileSystemLocal::CurlProgressFunction( void *clientp, double dltotal, double dlnow, double ultotal, double ulnow ) {
 	backgroundDownload_t *bgl = (backgroundDownload_t *)clientp;
-	if ( bgl->url.status == DL_ABORTING ) {
+	if ( bgl->url.status == DL_ABORTING || Sys_IsCurrentThreadStopRequested() ) {
 		return 1;
 	}
 	bgl->url.dltotal = dltotal;
@@ -5658,6 +5663,33 @@ void idFileSystemLocal::StartBackgroundDownloadThread() {
 		}
 	} else {
 		common->Printf( "background thread already running\n" );
+	}
+}
+
+/*
+=================
+idFileSystemLocal::StopBackgroundDownloadThread
+=================
+*/
+void idFileSystemLocal::StopBackgroundDownloadThread() {
+	if ( backgroundThread.threadHandle ) {
+		Sys_DestroyThread( backgroundThread );
+	}
+
+	Sys_EnterCriticalSection();
+	backgroundDownload_t *bgl = backgroundDownloads;
+	backgroundDownloads = NULL;
+	Sys_LeaveCriticalSection();
+
+	while ( bgl != NULL ) {
+		backgroundDownload_t *next = bgl->next;
+		bgl->next = NULL;
+		if ( bgl->opcode == DLTYPE_URL ) {
+			bgl->url.status = DL_FAILED;
+			idStr::Copynz( bgl->url.dlerror, "filesystem shutting down", MAX_STRING_CHARS );
+		}
+		bgl->completed = true;
+		bgl = next;
 	}
 }
 
