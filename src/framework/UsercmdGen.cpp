@@ -381,6 +381,7 @@ public:
 
 	usercmd_t		GetDirectUsercmd( void );
 	void			TriggerImpulse( int impulseNum );
+	bool			GetPresentationViewDelta( float &yawDelta, float &pitchDelta );
 
 private:
 	void			MakeCurrent( void );
@@ -468,6 +469,7 @@ private:
 	static idCVar	cl_mouseAccelOffset;
 	static idCVar	cl_mouseAccelPower;
 	static idCVar	cl_mouseSensCap;
+	static idCVar	in_presentationView;
 };
 
 idCVar idUsercmdGenLocal::in_yawSpeed( "in_yawspeed", "140", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "yaw change speed when holding down _left or _right button" );
@@ -494,6 +496,7 @@ idCVar idUsercmdGenLocal::cl_mouseAccelDebug( "cl_mouseAccelDebug", "0", CVAR_SY
 idCVar idUsercmdGenLocal::cl_mouseAccelOffset( "cl_mouseAccelOffset", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "movement rate subtracted before mouse acceleration is applied" );
 idCVar idUsercmdGenLocal::cl_mouseAccelPower( "cl_mouseAccelPower", "2", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "mouse acceleration exponent; 2 matches QuakeLive", 1, 8 );
 idCVar idUsercmdGenLocal::cl_mouseSensCap( "cl_mouseSensCap", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "maximum accelerated mouse sensitivity; 0 disables the cap", 0, 100000 );
+idCVar idUsercmdGenLocal::in_presentationView( "in_presentationView", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "sample accumulated mouse movement on presentation frames so the view can rotate between 60 Hz usercmds; requires game-side consumption of GetPresentationViewDelta" );
 
 static idUsercmdGenLocal localUsercmdGen;
 idUsercmdGen	*usercmdGen = &localUsercmdGen;
@@ -1526,6 +1529,46 @@ void idUsercmdGenLocal::UsercmdInterrupt( void ) {
 	cmd.sequence = com_ticNumber+1;
 
 	buffered[(com_ticNumber+1) & (MAX_BUFFERED_USERCMD-1)] = cmd;
+}
+
+/*
+================
+idUsercmdGenLocal::GetPresentationViewDelta
+
+Presentation-frame view sampling groundwork. Drains pending mouse input into
+the same accumulators the next 60 Hz usercmd consumes, then reports the
+accumulated, not-yet-consumed view rotation in degrees so the presentation
+view can rotate between simulation tics. Movement is never consumed here, so
+gameplay input timing is unchanged. Smoothing/filtering is intentionally not
+applied; the authoritative usercmd path keeps that behavior.
+================
+*/
+bool idUsercmdGenLocal::GetPresentationViewDelta( float &yawDelta, float &pitchDelta ) {
+	yawDelta = 0.0f;
+	pitchDelta = 0.0f;
+
+	if ( !in_presentationView.GetBool() || !initialized || Inhibited() ) {
+		return false;
+	}
+
+	// the async tic thread runs the same event drain under this lock
+	Sys_EnterCriticalSection();
+	Mouse();
+	float mx = static_cast<float>( mouseDx );
+	float my = static_cast<float>( mouseDy );
+	Sys_LeaveCriticalSection();
+
+	if ( mx == 0.0f && my == 0.0f ) {
+		return true;
+	}
+
+	float strafeMx = 0.0f;
+	float strafeMy = 0.0f;
+	const float mouseAxisScale = NormalizeMouseDeltasForCpi( mx, my, strafeMx, strafeMy );
+	const float mouseSensitivity = CalculateMouseSensitivity( mx, my, NULL, NULL );
+	yawDelta = -m_yaw.GetFloat() * mouseAxisScale * mx * mouseSensitivity;
+	pitchDelta = m_pitch.GetFloat() * mouseAxisScale * my * mouseSensitivity;
+	return true;
 }
 
 /*

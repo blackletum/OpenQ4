@@ -1652,6 +1652,30 @@ bool R_IssueEntityDefCallback( idRenderEntityLocal *def ) {
 
 /*
 ===================
+R_HashJointMatrices
+
+FNV-1a over the joint matrices as 64-bit words. The game owns and mutates the
+joint array in place, so pointer identity alone cannot prove a skinned
+snapshot is still valid; this content hash can.
+===================
+*/
+unsigned long long R_HashJointMatrices( const idJointMat *joints, int numJoints ) {
+	const unsigned long long fnvOffset = 14695981039346656037ULL;
+	const unsigned long long fnvPrime = 1099511628211ULL;
+
+	unsigned long long hash = fnvOffset;
+	const int totalBytes = numJoints * static_cast<int>( sizeof( joints[0] ) );
+	const int wordCount = totalBytes / static_cast<int>( sizeof( unsigned long long ) );
+	const unsigned long long *words = reinterpret_cast<const unsigned long long *>( joints );
+	for ( int i = 0; i < wordCount; ++i ) {
+		hash ^= words[i];
+		hash *= fnvPrime;
+	}
+	return hash;
+}
+
+/*
+===================
 R_EntityDefDynamicModel
 
 Issues a deferred entity callback if necessary.
@@ -1730,6 +1754,16 @@ idRenderModel *R_EntityDefDynamicModel( idRenderEntityLocal *def, bool collision
 
 		def->dynamicModel = def->cachedDynamicModel;
 		def->dynamicModelFrameCount = tr.frameCount;
+
+		// record the joint-content hash this snapshot was built from so a later
+		// transform-only UpdateEntityDef can prove the snapshot is still valid
+		if ( r_useRepeatedStateReuse.GetBool() && def->dynamicModel != NULL
+			&& def->parms.joints != NULL && def->parms.numJoints > 0 ) {
+			def->dynamicModelJointsHash = R_HashJointMatrices( def->parms.joints, def->parms.numJoints );
+			def->dynamicModelJointsHashValid = true;
+		} else {
+			def->dynamicModelJointsHashValid = false;
+		}
 	}
 
 	// set model depth hack value

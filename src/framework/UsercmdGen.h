@@ -183,6 +183,13 @@ public:
 
 	// Queue a one-shot impulse for the next generated usercmd.
 	virtual void		TriggerImpulse( int impulseNum ) = 0;
+
+	// Presentation-frame view sampling groundwork (in_presentationView):
+	// drains pending mouse input under the async lock and reports the
+	// accumulated, not-yet-consumed view rotation in degrees. The input is
+	// not consumed; the next 60 Hz usercmd still receives the full movement.
+	// Returns false when disabled or inhibited.
+	virtual bool		GetPresentationViewDelta( float &yawDelta, float &pitchDelta ) = 0;
 };
 
 extern idUsercmdGen	*usercmdGen;

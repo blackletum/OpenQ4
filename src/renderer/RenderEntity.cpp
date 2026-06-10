@@ -46,6 +46,8 @@ idRenderEntityLocal::idRenderEntityLocal() {
 	cachedDynamicModel		= NULL;
 	dynamicCollisionModel	= NULL;
 	cachedDynamicCollisionModel = NULL;
+	dynamicModelJointsHash	= 0;
+	dynamicModelJointsHashValid = false;
 	referenceBounds			= bounds_zero;
 	viewCount				= 0;
 	viewEntity				= NULL;

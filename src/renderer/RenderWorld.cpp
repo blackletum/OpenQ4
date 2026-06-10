@@ -405,9 +405,43 @@ void idRenderWorldLocal::UpdateEntityDef( qhandle_t entityHandle, const renderEn
 			}
 		}
 
+		// a transform-only update (interpolated presentation frames, movers
+		// carrying riders) leaves the model-space skinned snapshot intact, so
+		// the renderer can skip regenerating it; interactions, shadow volumes,
+		// and area references still rebuild against the new transform below
+		bool keepDynamicModel = false;
+		if ( r_useRepeatedStateReuse.GetBool()
+			&& !re->forceUpdate
+			&& !session->readDemo
+			&& def->dynamicModel != NULL
+			&& re->hModel != NULL
+			&& re->hModel == def->parms.hModel
+			&& re->hModel->IsDynamicModel() == DM_CACHED
+			&& re->callback == NULL
+			&& def->parms.callback == NULL
+			&& re->callbackData == def->parms.callbackData
+			&& re->customShader == def->parms.customShader
+			&& re->customSkin == def->parms.customSkin
+			&& re->referenceShader == def->parms.referenceShader
+			&& re->suppressSurfaceMask == def->parms.suppressSurfaceMask
+			&& re->suppressLOD == def->parms.suppressLOD
+			&& re->numJoints == def->parms.numJoints
+			&& re->joints == def->parms.joints
+			&& memcmp( re->shaderParms, def->parms.shaderParms, sizeof( re->shaderParms ) ) == 0 ) {
+			if ( re->joints == NULL ) {
+				keepDynamicModel = true;
+			} else if ( def->dynamicModelJointsHashValid
+				&& R_HashJointMatrices( re->joints, re->numJoints ) == def->dynamicModelJointsHash ) {
+				keepDynamicModel = true;
+			}
+			if ( keepDynamicModel ) {
+				tr.pc.c_entitySnapshotsReused++;
+			}
+		}
+
 		// save any decals if the model is the same, allowing marks to move with entities
 		if ( def->parms.hModel == re->hModel ) {
-			R_FreeEntityDefDerivedData( def, true, true );
+			R_FreeEntityDefDerivedData( def, true, true, keepDynamicModel );
 		} else {
 			R_FreeEntityDefDerivedData( def, false, false );
 		}
@@ -800,6 +834,11 @@ void idRenderWorldLocal::ProjectOverlay( qhandle_t entityHandle, const idPlane l
 		def->overlay = idRenderModelOverlay::Alloc();
 	}
 	def->overlay->CreateOverlay( model, localTextureAxis, material );
+
+	// the overlay surfaces are baked into the dynamic snapshot when it is
+	// generated; clear it so the new overlay appears on the next rendered
+	// frame even when the snapshot would otherwise be reused
+	R_ClearEntityDefDynamicModel( def );
 }
 
 /*

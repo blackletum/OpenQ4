@@ -48,6 +48,7 @@ typedef struct modernGLSubmitCommand_s {
 	int							sortBucket;
 	unsigned int				materialStableId;
 	float						modelViewMatrix[16];
+	float						modelViewProjectionMatrix[16];
 	float						modelDepthHack;
 	int							scissorX1;
 	int							scissorY1;
@@ -133,6 +134,10 @@ private:
 	modernGLSubmitPlanStats_t stats;
 	int numCommands;
 };
+
+// builds command.modelViewProjectionMatrix from the command's view projection,
+// model-view matrix, and depth-hack state; safe to call once at plan-build time
+void R_ModernGLSubmitCommand_BuildModelViewProjection( modernGLSubmitCommand_t &command );
 
 bool RendererModernGLSubmitPlan_RunSelfTest( void );
 

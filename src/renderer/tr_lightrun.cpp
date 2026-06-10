@@ -627,7 +627,7 @@ Used by both RE_FreeEntityDef and RE_UpdateEntityDef
 Does not actually free the entityDef.
 ===================
 */
-void R_FreeEntityDefDerivedData( idRenderEntityLocal *def, bool keepDecals, bool keepCachedDynamicModel ) {
+void R_FreeEntityDefDerivedData( idRenderEntityLocal *def, bool keepDecals, bool keepCachedDynamicModel, bool keepDynamicModel ) {
 	int i;
 	areaReference_t	*ref, *next;
 
@@ -655,12 +655,15 @@ void R_FreeEntityDefDerivedData( idRenderEntityLocal *def, bool keepDecals, bool
 		def->firstInteraction->UnlinkAndFree();
 	}
 
-	// clear the dynamic model if present
-	if ( def->dynamicModel ) {
-		def->dynamicModel = NULL;
-	}
-	if ( def->dynamicCollisionModel ) {
-		def->dynamicCollisionModel = NULL;
+	// clear the dynamic model if present; a transform-only update can keep the
+	// model-space snapshot because interactions and refs still rebuild above
+	if ( !keepDynamicModel ) {
+		if ( def->dynamicModel ) {
+			def->dynamicModel = NULL;
+		}
+		if ( def->dynamicCollisionModel ) {
+			def->dynamicCollisionModel = NULL;
+		}
 	}
 
 	if ( !keepDecals ) {

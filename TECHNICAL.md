@@ -122,6 +122,8 @@ openQ4 automatically validates your Quake 4 installation to ensure you have legi
 - `r_enhancedMaterialNormalScale` — Boost tangent-space normal detail when enhanced materials are active
 - `r_enhancedMaterialSpecularBoost` — Increase specular intensity when enhanced materials are active
 - `r_enhancedMaterialFresnel` — Add grazing-angle fresnel to existing materials when enhanced materials are active
+- `r_useRepeatedStateReuse 0|1` — Keep model-space skinned snapshots across transform-only entity updates so repeated-state presentation frames skip CPU re-skinning (default `1`; reuse hits show as `snapshotsReused` under `r_showUpdates 1`)
+- `r_hdrAutoExposureAsync 0|1` — Read the HDR auto-exposure luminance sample back asynchronously with one frame of latency instead of stalling the GPU pipeline every frame (default `1`)
 - See [docs-user/shadow-mapping.md](docs-user/shadow-mapping.md) for the full shadow-map CVar reference, presets, transparency behavior, and debug modes
 
 ### Resolution Scaling

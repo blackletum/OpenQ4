@@ -318,6 +318,12 @@ public:
 	idRenderModel *			dynamicCollisionModel;	// collision-only dynamic snapshot for traces / sil-trace parity
 	idRenderModel *			cachedDynamicCollisionModel;
 
+	// repeated-state reuse: content hash of parms.joints when the dynamic
+	// snapshot was generated, so transform-only entity updates (interpolated
+	// presentation frames, movers) can keep the model-space skinned snapshot
+	unsigned long long		dynamicModelJointsHash;
+	bool					dynamicModelJointsHashValid;
+
 	idBounds				referenceBounds;		// the local bounds used to place entityRefs, either from parms or a model
 
 	// a viewEntity_t is created whenever a idRenderEntityLocal is considered for inclusion
@@ -709,6 +715,7 @@ typedef struct {
 	int		c_tangentIndexes;	// R_DeriveTangents()
 	int		c_numDecalIndexes;	// idRenderModelDecal::AddDecalDrawSurf
 	int		c_entityUpdates, c_lightUpdates, c_entityReferences, c_lightReferences;
+	int		c_entitySnapshotsReused;	// transform-only entity updates that kept the dynamic snapshot
 	int		c_guiSurfs;
 	int		frontEndMsec;		// sum of time in all RE_RenderScene's in a frame
 } performanceCounters_t;
@@ -1060,6 +1067,7 @@ extern idCVar r_hdrVibrance;			// post-process vibrance when tone mapping is ena
 extern idCVar r_hdrSaturation;			// post-process saturation when tone mapping is enabled
 extern idCVar r_hdrContrast;			// post-process contrast when tone mapping is enabled
 extern idCVar r_hdrAutoExposure;		// automatically derive exposure from scene luminance
+extern idCVar r_hdrAutoExposureAsync;	// async PBO readback for the auto-exposure luminance sample
 extern idCVar r_hdrKeyValue;			// exposure key value used by auto exposure
 extern idCVar r_hdrMinExposure;			// minimum auto-exposure multiplier
 extern idCVar r_hdrMaxExposure;			// maximum auto-exposure multiplier
@@ -1212,6 +1220,7 @@ extern idCVar r_enhancedMaterialSpecularBoost;	// specular intensity scale when 
 extern idCVar r_enhancedMaterialFresnel;	// grazing-angle fresnel contribution when enhanced material shading is enabled
 extern idCVar r_useDeferredTangents;	// 1 = don't always calc tangents after deform
 extern idCVar r_useCachedDynamicModels;	// 1 = cache snapshots of dynamic models
+extern idCVar r_useRepeatedStateReuse;	// 1 = keep model-space dynamic snapshots across transform-only entity updates
 extern idCVar r_useNewSkinning;		// 1 = use retail Quake 4's SIMD-ready MD5 skinning path
 extern idCVar r_useFastSkinning;	// 1 = approximate MD5 skinning with single-joint tangent transforms
 extern idCVar r_deriveBiTangents;	// 1 = derive bitangents from normal/tangent after skinning
@@ -1638,7 +1647,11 @@ void R_FreeLightDefDerivedData( idRenderLightLocal *light );
 void R_CheckForEntityDefsUsingModel( idRenderModel *model );
 
 void R_ClearEntityDefDynamicModel( idRenderEntityLocal *def );
-void R_FreeEntityDefDerivedData( idRenderEntityLocal *def, bool keepDecals, bool keepCachedDynamicModel );
+void R_FreeEntityDefDerivedData( idRenderEntityLocal *def, bool keepDecals, bool keepCachedDynamicModel, bool keepDynamicModel = false );
+
+// content hash over game-owned joint matrices, used to prove a dynamic
+// snapshot is still valid across transform-only entity updates
+unsigned long long R_HashJointMatrices( const idJointMat *joints, int numJoints );
 void R_FreeEntityDefCachedDynamicModel( idRenderEntityLocal *def );
 void R_FreeEntityDefDecals( idRenderEntityLocal *def );
 void R_FreeEntityDefOverlay( idRenderEntityLocal *def );

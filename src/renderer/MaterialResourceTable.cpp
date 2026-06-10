@@ -5,6 +5,10 @@
 #include "MaterialResourceTable.h"
 #include "GLDebugScope.h"
 
+// open-addressed material-pointer hash so per-draw record lookups stay O(1);
+// entries store record index + 1 with 0 meaning empty so a memset clears it
+const int MATERIAL_RESOURCE_TABLE_HASH_SIZE = MATERIAL_RESOURCE_TABLE_MAX_RECORDS * 2;
+
 typedef struct materialResourceTableState_s {
 	materialResourceTableRecord_t	records[MATERIAL_RESOURCE_TABLE_MAX_RECORDS];
 	materialResourceTableStats_t		stats;
@@ -13,9 +17,35 @@ typedef struct materialResourceTableState_s {
 	int								maxClassicTextureUnits;
 	unsigned int					textureArrayTable[MATERIAL_RESOURCE_TABLE_TEXTURE_ARRAY_CAPACITY];
 	int								textureArrayTableCount;
+	short							materialHash[MATERIAL_RESOURCE_TABLE_HASH_SIZE];
 } materialResourceTableState_t;
 
 static materialResourceTableState_t rg_materialResourceTable;
+
+static int R_MaterialResourceTable_HashMaterial( const idMaterial *material ) {
+	size_t key = reinterpret_cast<size_t>( material ) >> 4;
+	key *= 2654435761u;
+	return static_cast<int>( key & ( MATERIAL_RESOURCE_TABLE_HASH_SIZE - 1 ) );
+}
+
+static void R_MaterialResourceTable_HashInsert( const idMaterial *material, int recordIndex ) {
+	if ( material == NULL ) {
+		return;
+	}
+	int slot = R_MaterialResourceTable_HashMaterial( material );
+	for ( int probe = 0; probe < MATERIAL_RESOURCE_TABLE_HASH_SIZE; ++probe ) {
+		short &entry = rg_materialResourceTable.materialHash[slot];
+		if ( entry == 0 ) {
+			entry = static_cast<short>( recordIndex + 1 );
+			return;
+		}
+		if ( rg_materialResourceTable.records[entry - 1].material == material ) {
+			// the first record added for a material keeps lookup priority
+			return;
+		}
+		slot = ( slot + 1 ) & ( MATERIAL_RESOURCE_TABLE_HASH_SIZE - 1 );
+	}
+}
 
 const char *MaterialResourceBlendMode_Name( materialResourceBlendMode_t blendMode ) {
 	switch ( blendMode ) {
@@ -925,6 +955,7 @@ static bool R_MaterialResourceTable_AddRecordFromSource( const materialResourceR
 	R_MaterialResourceTable_CountClass( record );
 	R_MaterialResourceTable_CountFallbacks( record );
 
+	R_MaterialResourceTable_HashInsert( record.material, rg_materialResourceTable.stats.records );
 	rg_materialResourceTable.stats.records++;
 	return true;
 }
@@ -937,6 +968,7 @@ static void R_MaterialResourceTable_ResetFrameStats( void ) {
 	const bool textureViewsSupported = rg_materialResourceTable.stats.textureViewsSupported;
 	memset( rg_materialResourceTable.records, 0, sizeof( rg_materialResourceTable.records ) );
 	memset( rg_materialResourceTable.textureArrayTable, 0, sizeof( rg_materialResourceTable.textureArrayTable ) );
+	memset( rg_materialResourceTable.materialHash, 0, sizeof( rg_materialResourceTable.materialHash ) );
 	rg_materialResourceTable.textureArrayTableCount = 0;
 	memset( &rg_materialResourceTable.stats, 0, sizeof( rg_materialResourceTable.stats ) );
 	rg_materialResourceTable.stats.initialized = initialized;
@@ -1007,10 +1039,17 @@ const materialResourceTableRecord_t *R_MaterialResourceTable_FindRecordForMateri
 	if ( material == NULL ) {
 		return NULL;
 	}
-	for ( int i = 0; i < rg_materialResourceTable.stats.records; ++i ) {
-		if ( rg_materialResourceTable.records[i].material == material ) {
-			return &rg_materialResourceTable.records[i];
+	int slot = R_MaterialResourceTable_HashMaterial( material );
+	for ( int probe = 0; probe < MATERIAL_RESOURCE_TABLE_HASH_SIZE; ++probe ) {
+		const short entry = rg_materialResourceTable.materialHash[slot];
+		if ( entry == 0 ) {
+			return NULL;
 		}
+		const materialResourceTableRecord_t &record = rg_materialResourceTable.records[entry - 1];
+		if ( record.material == material ) {
+			return &record;
+		}
+		slot = ( slot + 1 ) & ( MATERIAL_RESOURCE_TABLE_HASH_SIZE - 1 );
 	}
 	return NULL;
 }

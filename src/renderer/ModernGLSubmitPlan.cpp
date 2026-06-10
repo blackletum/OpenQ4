@@ -20,6 +20,48 @@ static void R_ModernGLSubmitPlan_SetStatus( modernGLSubmitPlanStats_t &stats, co
 	idStr::Copynz( stats.status, status ? status : "unknown", sizeof( stats.status ) );
 }
 
+static float R_ModernGLSubmitPlan_CalcFovForAspect( float fovX, float width, float height ) {
+	const float clampedFovX = idMath::ClampFloat( 1.0f, 179.0f, fovX );
+	const float safeWidth = Max( width, 1.0f );
+	const float safeHeight = Max( height, 1.0f );
+	const float x = safeWidth / idMath::Tan( DEG2RAD( clampedFovX ) * 0.5f );
+	return RAD2DEG( idMath::ATan( safeHeight / Max( x, idMath::FLOAT_EPSILON ) ) ) * 2.0f;
+}
+
+void R_ModernGLSubmitCommand_BuildModelViewProjection( modernGLSubmitCommand_t &command ) {
+	float projectionMatrix[16];
+	if ( command.viewDef == NULL ) {
+		memset( command.modelViewProjectionMatrix, 0, sizeof( command.modelViewProjectionMatrix ) );
+		return;
+	}
+	memcpy( projectionMatrix, command.viewDef->projectionMatrix, sizeof( projectionMatrix ) );
+	if ( command.modelDepthHack != 0.0f ) {
+		projectionMatrix[14] -= command.modelDepthHack;
+	} else if ( command.weaponDepthHack ) {
+		const float weaponFovOverride = cl_gunfov.GetFloat();
+		if ( weaponFovOverride > 0.0f ) {
+			const float viewportWidth = static_cast<float>( Max( 1, command.viewDef->viewport.x2 - command.viewDef->viewport.x1 + 1 ) );
+			const float viewportHeight = static_cast<float>( Max( 1, command.viewDef->viewport.y2 - command.viewDef->viewport.y1 + 1 ) );
+
+			float weaponFovX = idMath::ClampFloat( 30.0f, 160.0f, weaponFovOverride );
+			float weaponFovY = 0.0f;
+			if ( cl_gunfov_adjust.GetBool() ) {
+				weaponFovY = R_ModernGLSubmitPlan_CalcFovForAspect( weaponFovX, 4.0f, 3.0f );
+				weaponFovX = R_ModernGLSubmitPlan_CalcFovForAspect( weaponFovY, viewportHeight, viewportWidth );
+			} else {
+				weaponFovY = R_ModernGLSubmitPlan_CalcFovForAspect( weaponFovX, viewportWidth, viewportHeight );
+			}
+
+			weaponFovX = idMath::ClampFloat( 1.0f, 179.0f, weaponFovX );
+			weaponFovY = idMath::ClampFloat( 1.0f, 179.0f, weaponFovY );
+			projectionMatrix[0] = 1.0f / idMath::Tan( DEG2RAD( weaponFovX ) * 0.5f );
+			projectionMatrix[5] = 1.0f / idMath::Tan( DEG2RAD( weaponFovY ) * 0.5f );
+		}
+		projectionMatrix[14] *= 0.25f;
+	}
+	myGlMultMatrix( command.modelViewMatrix, projectionMatrix, command.modelViewProjectionMatrix );
+}
+
 static bool R_ModernGLSubmitPlan_ScissorEquals( const modernGLSubmitCommand_t &a, const modernGLSubmitCommand_t &b ) {
 	return a.scissorX1 == b.scissorX1
 		&& a.scissorY1 == b.scissorY1
@@ -560,6 +602,7 @@ bool idModernGLSubmitPlan::AddCommand( const modernGLDrawPlanEntry_t &entry ) {
 	command.weaponDepthHack = instance->weaponDepthHack;
 	command.negativeScale = instance->negativeScale;
 	command.sortEligible = false;
+	R_ModernGLSubmitCommand_BuildModelViewProjection( command );
 	R_ModernGLSubmitPlan_FillVisibilityPacket( command, *geo, instance, materialRecord );
 
 	const bool havePrevious = numCommands > 0;

@@ -178,6 +178,7 @@ idCVar r_hdrVibrance( "r_hdrVibrance", "0.0", CVAR_RENDERER | CVAR_ARCHIVE | CVA
 idCVar r_hdrSaturation( "r_hdrSaturation", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "post-process saturation applied when tone mapping is enabled", 0.0f, 2.0f );
 idCVar r_hdrContrast( "r_hdrContrast", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "post-process contrast applied when tone mapping is enabled", 0.1f, 3.0f );
 idCVar r_hdrAutoExposure( "r_hdrAutoExposure", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "derive exposure from a log-average scene luminance pyramid" );
+idCVar r_hdrAutoExposureAsync( "r_hdrAutoExposureAsync", "1", CVAR_RENDERER | CVAR_BOOL, "read the auto-exposure luminance sample back asynchronously with one frame of latency instead of stalling the GPU pipeline" );
 idCVar r_hdrKeyValue( "r_hdrKeyValue", "0.18", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "middle-gray key value used by HDR auto exposure", 0.01f, 1.0f );
 idCVar r_hdrMinExposure( "r_hdrMinExposure", "0.25", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "minimum auto-exposure multiplier", 0.01f, 16.0f );
 idCVar r_hdrMaxExposure( "r_hdrMaxExposure", "8.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "maximum auto-exposure multiplier", 0.01f, 32.0f );
@@ -263,6 +264,7 @@ idCVar r_useTwoSidedStencil( "r_useTwoSidedStencil", "1", CVAR_RENDERER | CVAR_B
 idCVar r_stencilTranslucentShadows( "r_stencilTranslucentShadows", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "let translucent materials cast and receive stencil shadows (requires interaction rebuild when toggled)" );
 idCVar r_useDeferredTangents( "r_useDeferredTangents", "1", CVAR_RENDERER | CVAR_BOOL, "defer tangents calculations after deform" );
 idCVar r_useCachedDynamicModels( "r_useCachedDynamicModels", "1", CVAR_RENDERER | CVAR_BOOL, "cache snapshots of dynamic models" );
+idCVar r_useRepeatedStateReuse( "r_useRepeatedStateReuse", "1", CVAR_RENDERER | CVAR_BOOL, "keep model-space dynamic snapshots across transform-only entity updates so repeated-state presentation frames skip CPU re-skinning" );
 idCVar r_useNewSkinning( "r_useNewSkinning", "1", CVAR_RENDERER | CVAR_BOOL, "use retail-style SIMD MD5 skinning data" );
 idCVar r_useFastSkinning( "r_useFastSkinning", "0", CVAR_RENDERER | CVAR_BOOL, "approximate MD5 tangent skinning with the dominant joint only" );
 idCVar r_deriveBiTangents( "r_deriveBiTangents", "0", CVAR_RENDERER | CVAR_BOOL, "derive bitangents from skinned normals and tangents" );
@@ -762,6 +764,9 @@ static void R_RendererShaderLibraryReload_f( const idCmdArgs &args ) {
 	if ( !R_ModernGLShaderLibrary_Reload() ) {
 		common->Warning( "Renderer shader-library reload did not complete" );
 	}
+	// plans cache program handles/uniform locations from the previous library
+	// generation; drop them so the next frame rebuilds against live programs
+	R_ModernGLExecutor_InvalidatePlans();
 }
 
 static void R_RendererModernGLDrawPlanSelfTest_f( const idCmdArgs &args ) {

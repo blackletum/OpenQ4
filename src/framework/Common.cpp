@@ -1182,9 +1182,10 @@ doom set test blah + map test
 ============================================================================
 */
 
-#define		MAX_CONSOLE_LINES	32
+#define		MAX_CONSOLE_LINES	64
 int			com_numConsoleLines;
 idCmdArgs	com_consoleLines[MAX_CONSOLE_LINES];
+static bool	com_droppedStartupCommands = false;
 
 int Com_GetNumStartupCommandLines( void ) {
 	return com_numConsoleLines;
@@ -1239,6 +1240,8 @@ void idCommonLocal::ParseCommandLine( int argc, const char **argv ) {
 	}
 
 	if ( droppedCommands ) {
+		// the log file is not open yet, so AddStartupCommands repeats this warning once it is
+		com_droppedStartupCommands = true;
 		Printf( "^3WARNING: command line contains more than %d startup commands; extra commands were ignored\n", MAX_CONSOLE_LINES );
 	}
 }
@@ -1381,6 +1384,10 @@ will keep the demoloop from immediately starting
 bool idCommonLocal::AddStartupCommands( void ) {
 	int		i;
 	bool	added;
+
+	if ( com_droppedStartupCommands ) {
+		Warning( "command line contains more than %d startup commands; extra commands were ignored", MAX_CONSOLE_LINES );
+	}
 
 	added = false;
 	// quote every token, so args with semicolons can work

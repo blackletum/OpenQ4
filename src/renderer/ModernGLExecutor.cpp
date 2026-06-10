@@ -2461,46 +2461,6 @@ static void R_ModernGLExecutor_SetSubmitScissor( const modernGLSubmitCommand_t &
 		Max( 1, scissorY2 - scissorY1 + 1 ) );
 }
 
-static float R_ModernGLExecutor_CalcFovForAspect( float fovX, float width, float height ) {
-	const float clampedFovX = idMath::ClampFloat( 1.0f, 179.0f, fovX );
-	const float safeWidth = Max( width, 1.0f );
-	const float safeHeight = Max( height, 1.0f );
-	const float x = safeWidth / idMath::Tan( DEG2RAD( clampedFovX ) * 0.5f );
-	return RAD2DEG( idMath::ATan( safeHeight / Max( x, idMath::FLOAT_EPSILON ) ) ) * 2.0f;
-}
-
-static void R_ModernGLExecutor_BuildCommandProjectionMatrix( const modernGLSubmitCommand_t &command, float projectionMatrix[16] ) {
-	memcpy( projectionMatrix, command.viewDef->projectionMatrix, sizeof( float ) * 16 );
-	if ( command.modelDepthHack != 0.0f ) {
-		projectionMatrix[14] -= command.modelDepthHack;
-		return;
-	}
-	if ( !command.weaponDepthHack ) {
-		return;
-	}
-
-	const float weaponFovOverride = cl_gunfov.GetFloat();
-	if ( weaponFovOverride > 0.0f ) {
-		const float viewportWidth = static_cast<float>( Max( 1, command.viewDef->viewport.x2 - command.viewDef->viewport.x1 + 1 ) );
-		const float viewportHeight = static_cast<float>( Max( 1, command.viewDef->viewport.y2 - command.viewDef->viewport.y1 + 1 ) );
-
-		float weaponFovX = idMath::ClampFloat( 30.0f, 160.0f, weaponFovOverride );
-		float weaponFovY = 0.0f;
-		if ( cl_gunfov_adjust.GetBool() ) {
-			weaponFovY = R_ModernGLExecutor_CalcFovForAspect( weaponFovX, 4.0f, 3.0f );
-			weaponFovX = R_ModernGLExecutor_CalcFovForAspect( weaponFovY, viewportHeight, viewportWidth );
-		} else {
-			weaponFovY = R_ModernGLExecutor_CalcFovForAspect( weaponFovX, viewportWidth, viewportHeight );
-		}
-
-		weaponFovX = idMath::ClampFloat( 1.0f, 179.0f, weaponFovX );
-		weaponFovY = idMath::ClampFloat( 1.0f, 179.0f, weaponFovY );
-		projectionMatrix[0] = 1.0f / idMath::Tan( DEG2RAD( weaponFovX ) * 0.5f );
-		projectionMatrix[5] = 1.0f / idMath::Tan( DEG2RAD( weaponFovY ) * 0.5f );
-	}
-	projectionMatrix[14] *= 0.25f;
-}
-
 static void R_ModernGLExecutor_ApplyCommandDepthRange( const modernGLSubmitCommand_t &command ) {
 	if ( command.modelDepthHack != 0.0f ) {
 		glDepthRange( 0.0, 1.0 );
@@ -3112,9 +3072,7 @@ static int R_ModernGLExecutor_AllocGpuDrivenBucket( const modernGLSubmitCommand_
 
 static void R_ModernGLExecutor_BuildDrawRecord( const modernGLSubmitCommand_t &command, modernGLDrawRecord_t &record ) {
 	memset( &record, 0, sizeof( record ) );
-	float projectionMatrix[16];
-	R_ModernGLExecutor_BuildCommandProjectionMatrix( command, projectionMatrix );
-	myGlMultMatrix( command.modelViewMatrix, projectionMatrix, record.modelViewProjection );
+	memcpy( record.modelViewProjection, command.modelViewProjectionMatrix, sizeof( record.modelViewProjection ) );
 	memcpy( record.modelViewMatrix, command.modelViewMatrix, sizeof( record.modelViewMatrix ) );
 	R_ModernGLExecutor_DebugColorForCommand( command, record.debugColor );
 	R_ModernGLExecutor_LocalParamsForCommand( command, record.localParams );
@@ -3185,7 +3143,9 @@ static void R_ModernGLExecutor_ClearPendingGpuValidationReadbacks( void ) {
 
 static bool R_ModernGLExecutor_PollGpuValidationFence( modernGLPendingGpuValidationReadback_t &pending ) {
 	if ( pending.fence == NULL || glClientWaitSync == NULL ) {
-		return tr.frameCount >= pending.readyFrame;
+		// without a sync object there is no proof the GPU finished writing the
+		// validation buffer; never guess from frame age, let the readback expire
+		return false;
 	}
 	const GLenum waitResult = glClientWaitSync( pending.fence, 0, 0 );
 	if ( waitResult == GL_ALREADY_SIGNALED || waitResult == GL_CONDITION_SATISFIED ) {
@@ -3221,6 +3181,11 @@ static void R_ModernGLExecutor_ProcessPendingGpuDrivenValidationReadbacks( moder
 
 static bool R_ModernGLExecutor_QueueGpuDrivenValidationReadback( const modernGLStreamBufferBinding_t &validationBinding, const modernGLGpuDrivenCpuReference_t &cpuReference, int delayFrames, modernGLExecutorStats_t &stats ) {
 	if ( !validationBinding.valid || validationBinding.allocation.vbo == 0 || validationBinding.size < static_cast<GLsizeiptr>( sizeof( GLuint ) * MODERN_GL_GPU_DRIVEN_VALIDATION_COUNTERS ) ) {
+		stats.gpuDrivenValidationSkippedReadbacks++;
+		return false;
+	}
+	if ( glFenceSync == NULL || glClientWaitSync == NULL ) {
+		// GPU validation readback requires sync objects to be trustworthy
 		stats.gpuDrivenValidationSkippedReadbacks++;
 		return false;
 	}
@@ -3897,11 +3862,6 @@ static bool R_ModernGLExecutor_SubmitCommand( const modernGLSubmitCommand_t &com
 		}
 	}
 
-	float projectionMatrix[16];
-	R_ModernGLExecutor_BuildCommandProjectionMatrix( command, projectionMatrix );
-	float modelViewProjection[16];
-	myGlMultMatrix( command.modelViewMatrix, projectionMatrix, modelViewProjection );
-
 	R_GLStateCache().UseProgram( command.program );
 	if ( command.drawRecordModeLocation >= 0 && glUniform1ui != NULL ) {
 		glUniform1ui( command.drawRecordModeLocation, 0 );
@@ -3910,7 +3870,7 @@ static bool R_ModernGLExecutor_SubmitCommand( const modernGLSubmitCommand_t &com
 	if ( R_ModernGLExecutor_CommandUsesClusteredLighting( command ) ) {
 		R_ModernGLExecutor_BindClusterUniformBlocks( command.program );
 	}
-	glUniformMatrix4fv( command.modelViewProjectionLocation, 1, GL_FALSE, modelViewProjection );
+	glUniformMatrix4fv( command.modelViewProjectionLocation, 1, GL_FALSE, command.modelViewProjectionMatrix );
 	if ( command.modelViewMatrixLocation >= 0 ) {
 		glUniformMatrix4fv( command.modelViewMatrixLocation, 1, GL_FALSE, command.modelViewMatrix );
 	}
@@ -6375,6 +6335,13 @@ void R_ModernGLExecutor_SkipFrame( void ) {
 	R_ModernGLExecutor_RecordMetrics( rg_modernGLExecutorStats );
 }
 
+void R_ModernGLExecutor_InvalidatePlans( void ) {
+	// cached program handles and uniform locations in the plans are only valid
+	// for the shader-library generation they were built against
+	rg_modernGLDrawPlan.Clear();
+	rg_modernGLSubmitPlan.Clear();
+}
+
 void R_ModernGLExecutor_PrepareFrame( const idScenePacketFrame &packetFrame, const idRenderGraph &graph ) {
 	R_ModernGLExecutor_ResetPassOwnershipTable( "frame-start" );
 	const bool modernVisibleRequested = R_ModernGLExecutor_ModernVisibleRequested();
@@ -6445,6 +6412,28 @@ void R_ModernGLExecutor_PrepareFrame( const idScenePacketFrame &packetFrame, con
 			R_ModernGLExecutor_CopySubmitPlanStats( rg_modernGLExecutorStats, rg_modernGLSubmitPlan.Stats() );
 		} else {
 			rg_modernGLSubmitPlan.Clear();
+		}
+		// keep the legacy-fallback handoff loud: silently dropping the submit plan
+		// would otherwise hide modern draw loss behind the ARB2 bridge
+		static bool warnedDrawPlanNotReady = false;
+		static bool warnedDrawPlanOverflow = false;
+		if ( !rg_modernGLExecutorStats.drawPlanReady ) {
+			if ( !warnedDrawPlanNotReady ) {
+				common->Printf( "Modern GL executor: draw plan not ready (%s); modern draws fall back to the legacy path this frame\n",
+					rg_modernGLDrawPlan.Stats().status );
+				warnedDrawPlanNotReady = true;
+			}
+		} else {
+			warnedDrawPlanNotReady = false;
+		}
+		if ( rg_modernGLExecutorStats.drawPlanOverflow ) {
+			if ( !warnedDrawPlanOverflow ) {
+				common->Printf( "Modern GL executor: draw plan overflow (%d source packets, %d planned); excess draws fall back to the legacy path\n",
+					rg_modernGLDrawPlan.Stats().sourceDrawPackets, rg_modernGLDrawPlan.Stats().plannedDraws );
+				warnedDrawPlanOverflow = true;
+			}
+		} else {
+			warnedDrawPlanOverflow = false;
 		}
 	} else {
 		rg_modernGLDrawPlan.Clear();
@@ -9426,7 +9415,7 @@ bool RendererModernVisible_RunSelfTest( void ) {
 			stats.modernFullRestores );
 		return false;
 	}
-	if ( resourcesAvailable && ( !stats.deferredResolveExecuted || ( stats.pipelineForwardPlusNeeded && !stats.forwardPlusExecuted ) || !stats.modernVisibleExecuted || !stats.modernVisibleResourcesReady || !stats.modernVisibleSourceReady || !stats.modernVisibleHybridTargetReady || !stats.modernVisibleBackBufferReady || !stats.modernVisibleShadowReady || !stats.modernVisiblePostProcessHandoff || stats.modernVisibleCompositions <= 0 || stats.modernVisibleCompositeCopies <= 0 || stats.modernVisiblePostProcessCompositions <= 0 || stats.modernVisibleDepthCopies <= 0 || stats.modernVisiblePixels <= 0 ) ) {
+	if ( resourcesAvailable && ( ( stats.pipelineDeferredNeeded && !stats.deferredResolveExecuted ) || ( stats.pipelineForwardPlusNeeded && !stats.forwardPlusExecuted ) || ( !stats.deferredResolveExecuted && !stats.forwardPlusExecuted ) || !stats.modernVisibleExecuted || !stats.modernVisibleResourcesReady || !stats.modernVisibleSourceReady || !stats.modernVisibleHybridTargetReady || !stats.modernVisibleBackBufferReady || !stats.modernVisibleShadowReady || !stats.modernVisiblePostProcessHandoff || stats.modernVisibleCompositions <= 0 || stats.modernVisibleCompositeCopies <= 0 || stats.modernVisiblePostProcessCompositions <= 0 || stats.modernVisibleDepthCopies <= 0 || stats.modernVisiblePixels <= 0 ) ) {
 		common->Printf(
 			"RendererModernVisible self-test failed: composition execution mismatch (deferred=%d forward=%d exec=%d res=%d source=%d hybrid=%d backBuffer=%d shadow=%d hdr=%d postHandoff=%d composed=%d copies=%d postComposed=%d depthCopies=%d pixels=%d fallback=%d)\n",
 			stats.deferredResolveExecuted ? 1 : 0,

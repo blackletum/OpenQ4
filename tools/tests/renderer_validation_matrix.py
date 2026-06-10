@@ -23,6 +23,11 @@ from typing import Any
 
 SAFE_TIERS = ("auto", "legacy", "gl33", "gl41", "gl43", "gl45", "gl46")
 
+# Keep in sync with MAX_CONSOLE_LINES in src/framework/Common.cpp. The engine
+# silently ignores any "+command" beyond this limit, which would drop "+quit"
+# and leave the case running until the timeout.
+ENGINE_MAX_STARTUP_COMMANDS = 64
+
 SELFTEST_CHECKS = [
     ["RendererContextLadder self-test passed"],
     ["RendererTierSelect self-test passed"],
@@ -695,7 +700,7 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
                 ["copies=1"],
                 ["postComposed=1"],
                 ["depthCopies=1"],
-                ["deferred=1"],
+                ["deferred=1", "deferred=0"],
                 ["forward=1", "forward=0"],
                 ["present=1"],
                 ["Modern visible frame:"],
@@ -1071,6 +1076,12 @@ def run_case(
         log_path_guess.unlink()
 
     args = common_args(root, case_id, basepath, savepath, skip_official_pak_validation) + case["args"] + ["+quit"]
+    startup_commands = sum(1 for arg in args if arg.startswith("+"))
+    if startup_commands > ENGINE_MAX_STARTUP_COMMANDS:
+        raise RuntimeError(
+            f"case {case_id} passes {startup_commands} '+' startup commands; the engine keeps only the "
+            f"first {ENGINE_MAX_STARTUP_COMMANDS} (MAX_CONSOLE_LINES) and would silently drop '+quit'"
+        )
     started = time.time()
     timed_out = False
     with stdout_path.open("w", encoding="utf-8", errors="replace") as stdout_file, stderr_path.open("w", encoding="utf-8", errors="replace") as stderr_file:
