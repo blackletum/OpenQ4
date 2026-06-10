@@ -28,7 +28,7 @@
 	"#str_41103"	"Backend di rendering"
 	"#str_41104"	"BEST;ARB;ARB2;CG;EXP;NV10;NV20;R200"
 	"#str_41105"	"Non disponibile"
-	"#str_41106"	"La cattura RenderDoc non e ancora supportata con il renderer OpenQ4 attuale. Il contesto OpenGL iniettato non fornisce le funzionalita di compatibilita di cui OpenQ4 ha ancora bisogno."
+	"#str_41106"	"La cattura RenderDoc non e ancora supportata con il renderer openQ4 attuale. Il contesto OpenGL iniettato non fornisce le funzionalita di compatibilita di cui openQ4 ha ancora bisogno."
 	"#str_41107"	"Volumi di Irradianza"
 	"#str_41108"	"Zoom a Commutazione"
 	"#str_41109"	"DETTAGLI MOD"

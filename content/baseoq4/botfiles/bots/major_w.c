@@ -1,4 +1,4 @@
-// Prototype OpenQ4 multiplayer bot weapon weights.
+// Prototype openQ4 multiplayer bot weapon weights.
 
 weight "weapon_machinegun" switch (6) {
 	case 0: return 0;

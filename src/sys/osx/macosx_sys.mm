@@ -73,7 +73,7 @@ int main(int argc, const char *argv[]) {
 
 const char *macosx_scanForLibraryDirectory(void)
 {
-    return "/Library/OpenQ4";
+    return "/Library/openQ4";
 }
 
 //===========================================================================
@@ -191,7 +191,7 @@ void Sys_Error(const char *error, ...)
     va_end(argptr);
 
     NSLog(@"Sys_Error: %@", formattedString);
-    NSRunAlertPanel(@"OpenQ4 Error", formattedString, nil, nil, nil);
+    NSRunAlertPanel(@"openQ4 Error", formattedString, nil, nil, nil);
 
     Sys_Quit();
 }

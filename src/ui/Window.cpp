@@ -168,7 +168,7 @@ static void AdjustTournamentWarmupLayout( const idUserInterfaceLocal *gui, const
 	}
 }
 
-static rvNamedEvent *OpenQ4_CreateLegacyCinematicNamedEvent( idWindow *window, const char *eventName ) {
+static rvNamedEvent *openQ4_CreateLegacyCinematicNamedEvent( idWindow *window, const char *eventName ) {
 	if ( window == NULL || window->GetGui() == NULL ) {
 		return NULL;
 	}
@@ -4915,7 +4915,7 @@ void idWindow::ReadFromSaveGame( idFile *savefile ) {
 		}
 
 		if ( matchedIndex == -1 ) {
-			rvNamedEvent *legacyEvent = OpenQ4_CreateLegacyCinematicNamedEvent( this, savedEventName );
+			rvNamedEvent *legacyEvent = openQ4_CreateLegacyCinematicNamedEvent( this, savedEventName );
 			if ( legacyEvent != NULL ) {
 				namedEvents.Insert( legacyEvent, i );
 				matchedIndex = i;

@@ -445,7 +445,7 @@ static void R_RenderWorld_FinalizeLoadedWorld( idRenderWorldLocal &world ) {
 R_RenderWorld_ParseSupportedMD5RProc
 
 Retail Quake 4 MD5RProc companions serialize shared packed buffers first and
-then attach per-area Model blocks that reference those shared arrays. OpenQ4
+then attach per-area Model blocks that reference those shared arrays. openQ4
 now mirrors that layout directly while still accepting the older classic
 model / shadowModel fallback sections for compatibility.
 ================
@@ -1019,7 +1019,7 @@ void idRenderWorldLocal::ClearWorld() {
 ===========================
 idRenderWorldLocal::WriteMD5R
 
-Retail Quake 4 writes fully packed MD5RProc worlds from here. OpenQ4 now does
+Retail Quake 4 writes fully packed MD5RProc worlds from here. openQ4 now does
 the same when the world was loaded from an MD5RProc companion and still has the
 shared packed buffer state resident, or when a classic proc world has already
 been converted into resident MD5R proc data during this session.
@@ -1262,7 +1262,7 @@ bool idRenderWorldLocal::InitFromMap( const char *name ) {
 	const bool hasMD5RProcCompanion = R_RenderWorld_HasMD5RProcCompanion( name, md5rProcFilename, &md5rProcTimeStamp );
 	if ( hasMD5RProcCompanion ) {
 		common->DPrintf(
-			"Found MD5RProc companion '%s' for map '%s'; OpenQ4 will prefer it before the classic proc world '%s'.\n",
+			"Found MD5RProc companion '%s' for map '%s'; openQ4 will prefer it before the classic proc world '%s'.\n",
 			md5rProcFilename.c_str(),
 			name,
 			filename.c_str() );

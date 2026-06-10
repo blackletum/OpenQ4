@@ -3,10 +3,10 @@ set -euo pipefail
 
 action="${1:-build}"
 workspace="${OPENQ4_GUEST_WORKSPACE:-${HOME}/openq4-work}"
-repo="${workspace}/OpenQ4"
-gamelibs="${workspace}/OpenQ4-GameLibs"
-host_repo="${OPENQ4_HOST_REPO_SHARE:-/mnt/hgfs/OpenQ4}"
-host_gamelibs="${OPENQ4_HOST_GAMELIBS_SHARE:-/mnt/hgfs/OpenQ4-GameLibs}"
+repo="${workspace}/openQ4"
+gamelibs="${workspace}/openQ4-GameLibs"
+host_repo="${OPENQ4_HOST_REPO_SHARE:-/mnt/hgfs/openQ4}"
+host_gamelibs="${OPENQ4_HOST_GAMELIBS_SHARE:-/mnt/hgfs/openQ4-GameLibs}"
 basepath="${OPENQ4_BASEPATH:-}"
 stamp="$(date +%Y%m%d-%H%M%S)"
 results_root="${workspace}/results"
@@ -35,7 +35,7 @@ sync_tree() {
 }
 
 sync_sources() {
-    echo "Syncing OpenQ4 from ${host_repo} to ${repo}"
+    echo "Syncing openQ4 from ${host_repo} to ${repo}"
     sync_tree "${host_repo}" "${repo}" \
         --exclude '/.home/' \
         --exclude '/.install/' \
@@ -44,7 +44,7 @@ sync_sources() {
         --exclude '/builddir*/' \
         --exclude '/tmp-game-libs/'
 
-    echo "Syncing OpenQ4-GameLibs from ${host_gamelibs} to ${gamelibs}"
+    echo "Syncing openQ4-GameLibs from ${host_gamelibs} to ${gamelibs}"
     sync_tree "${host_gamelibs}" "${gamelibs}" \
         --exclude '/builddir*/' \
         --exclude '/.tmp/'
@@ -59,17 +59,17 @@ build_openq4() {
     local builddir="${OPENQ4_BUILDDIR:-builddir}"
     local platform_backend="${OPENQ4_PLATFORM_BACKEND:-sdl3}"
 
-    echo "Configuring OpenQ4 (${buildtype}, backend=${platform_backend})"
+    echo "Configuring openQ4 (${buildtype}, backend=${platform_backend})"
     bash tools/build/meson_setup.sh setup --wipe "${builddir}" . \
         --backend ninja \
         --buildtype="${buildtype}" \
         --wrap-mode=forcefallback \
         "-Dplatform_backend=${platform_backend}"
 
-    echo "Compiling OpenQ4"
+    echo "Compiling openQ4"
     bash tools/build/meson_setup.sh compile -C "${builddir}"
 
-    echo "Staging OpenQ4 into .install"
+    echo "Staging openQ4 into .install"
     bash tools/build/meson_setup.sh install -C "${builddir}" --no-rebuild --skip-subprojects
 }
 
@@ -95,7 +95,7 @@ run_smoke() {
     export DISPLAY="${DISPLAY:-:0}"
     export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/${uid_value}}"
 
-    echo "Running OpenQ4 renderer smoke on DISPLAY=${DISPLAY}"
+    echo "Running openQ4 renderer smoke on DISPLAY=${DISPLAY}"
     python3 tools/tests/renderer_gameplay_benchmark.py \
         --profile smoke \
         --limit "${OPENQ4_SMOKE_LIMIT:-1}" \
@@ -123,7 +123,7 @@ install_desktop_launcher() {
     resolve_basepath
 
     if [[ ! -d ".install" ]]; then
-        echo "Missing staged OpenQ4 runtime: ${repo}/.install" >&2
+        echo "Missing staged openQ4 runtime: ${repo}/.install" >&2
         echo "Run the build action first." >&2
         exit 1
     fi
@@ -135,7 +135,7 @@ install_desktop_launcher() {
         launcher_args+=(--basepath "${basepath}")
     fi
 
-    echo "Installing OpenQ4 desktop launcher"
+    echo "Installing openQ4 desktop launcher"
     bash tools/linux/install_desktop_launcher.sh "${launcher_args[@]}"
 }
 
@@ -177,4 +177,4 @@ case "${action}" in
 esac
 
 publish_results
-echo "OpenQ4 Linux Mint workflow '${action}' complete. Guest results: ${run_dir}"
+echo "openQ4 Linux Mint workflow '${action}' complete. Guest results: ${run_dir}"

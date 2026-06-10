@@ -1,4 +1,4 @@
-# OpenQ4 Input Key Matrix Audit (2026-04-23)
+# openQ4 Input Key Matrix Audit (2026-04-23)
 
 This checklist audits SDL3 input parity against the legacy Win32 path for:
 

@@ -39,7 +39,7 @@ windowDef Desktop
 		resettime "quicksave_msg" "0" ;
 	}
 
-	// OpenQ4: keep the retail 128x128 ambient layers at native tile scale and
+	// openQ4: keep the retail 128x128 ambient layers at native tile scale and
 	// extend them across the full expanded canvas instead of stretching a single
 	// 4:3 copy.
 	windowDef data

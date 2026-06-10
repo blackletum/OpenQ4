@@ -83,7 +83,7 @@ static void FreeBuffer( void* p )
 	return Mem_Free( p );
 }
 
-static bool OpenQ4_CanUploadSampleToOpenAL()
+static bool openQ4_CanUploadSampleToOpenAL()
 {
 	ALCcontext* const expectedContext = soundSystemLocal.hardware.GetOpenALContext();
 	if( expectedContext == NULL )
@@ -371,7 +371,7 @@ void idSoundSample_OpenAL::LoadResource()
 
 void idSoundSample_OpenAL::CreateOpenALBuffer()
 {
-	if( !OpenQ4_CanUploadSampleToOpenAL() )
+	if( !openQ4_CanUploadSampleToOpenAL() )
 	{
 		return;
 	}
@@ -921,7 +921,7 @@ void idSoundSample_OpenAL::MakeDefault()
 	playBegin = 0;
 	playLength = DEFAULT_NUM_SAMPLES;
 
-	if( !OpenQ4_CanUploadSampleToOpenAL() )
+	if( !openQ4_CanUploadSampleToOpenAL() )
 	{
 		return;
 	}

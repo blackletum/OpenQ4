@@ -1,7 +1,7 @@
-// Shared fallback characteristics for OpenQ4 multiplayer bots.
+// Shared fallback characteristics for openQ4 multiplayer bots.
 
 skill 1 {
-	0 "OpenQ4 Bot"
+	0 "openQ4 Bot"
 	1 "male"
 	2 0.30
 	3 "bots/major_w.c"
@@ -53,7 +53,7 @@ skill 1 {
 }
 
 skill 2 {
-	0 "OpenQ4 Bot"
+	0 "openQ4 Bot"
 	1 "male"
 	2 0.40
 	3 "bots/major_w.c"
@@ -105,7 +105,7 @@ skill 2 {
 }
 
 skill 3 {
-	0 "OpenQ4 Bot"
+	0 "openQ4 Bot"
 	1 "male"
 	2 0.52
 	3 "bots/major_w.c"
@@ -157,7 +157,7 @@ skill 3 {
 }
 
 skill 4 {
-	0 "OpenQ4 Bot"
+	0 "openQ4 Bot"
 	1 "male"
 	2 0.66
 	3 "bots/major_w.c"
@@ -209,7 +209,7 @@ skill 4 {
 }
 
 skill 5 {
-	0 "OpenQ4 Bot"
+	0 "openQ4 Bot"
 	1 "male"
 	2 0.80
 	3 "bots/major_w.c"

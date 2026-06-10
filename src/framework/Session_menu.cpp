@@ -1085,7 +1085,7 @@ void idSessionLocal::UpdateModsMenuGuiVars( void ) {
 	guiActive->SetStateString( "mod_release_date", modInfo.releaseDate.c_str() );
 	guiActive->SetStateString( "mod_author", modInfo.author.c_str() );
 	guiActive->SetStateString( "mod_website", modInfo.website.c_str() );
-	guiActive->SetStateString( "mod_required_engine_version", modInfo.requiredOpenQ4Version.c_str() );
+	guiActive->SetStateString( "mod_required_engine_version", modInfo.requiredopenQ4Version.c_str() );
 	guiActive->SetStateString( "mod_directory", modInfo.directory.c_str() );
 }
 

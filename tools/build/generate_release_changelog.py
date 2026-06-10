@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate release notes for OpenQ4 manual releases."""
+"""Generate release notes for openQ4 manual releases."""
 
 from __future__ import annotations
 

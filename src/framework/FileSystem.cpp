@@ -70,7 +70,7 @@ usually the executable. It defaults to the current directory, but can be overrid
 with "+set fs_basepath c:\doom" on the command line. The base path cannot be modified
 at all after startup.
 
-The "home path" is the user-writable root path for OpenQ4 data. It can be overridden
+The "home path" is the user-writable root path for openQ4 data. It can be overridden
 with "+set fs_homepath c:\users\you\saved games\openq4" on the command line.
 
 The "save path" is the path to the directory where game files will be saved. It defaults
@@ -163,7 +163,7 @@ unresolved segment in debug output instead of relying on lowercase assumptions.
 "additional mod path search":
 fs_game_base can be used to set an additional search path
 in search order, fs_game, fs_game_base, BASEGAME
-for instance to base a mod of OpenQ4 + D3XP assets, fs_game mymod, fs_game_base baseoq4
+for instance to base a mod of openQ4 + D3XP assets, fs_game mymod, fs_game_base baseoq4
 
 =============================================================================
 */
@@ -171,7 +171,7 @@ for instance to base a mod of OpenQ4 + D3XP assets, fs_game mymod, fs_game_base 
 
 
 // define to fix special-cases for GetPackStatus so that files that shipped in 
-// the wrong place for OpenQ4 don't break pure servers.
+// the wrong place for openQ4 don't break pure servers.
 #define DOOM3_PURE_SPECIAL_CASES	
 
 typedef bool (*pureExclusionFunc_t)( const struct pureExclusion_s &excl, int l, const idStr &name );
@@ -285,7 +285,7 @@ static officialPk4Info_t officialPk4s[] = {
 	{ "pak021.pk4",				0x2ba6e70c,	true,	true },
 	{ "pak022.pk4",				0x4e390eec,	true,	true },
 
-	// official patch/menu media, but not required by OpenQ4 startup
+	// official patch/menu media, but not required by openQ4 startup
 	{ "pak023.pk4",				0x7c1fd3a5,	false,	true },
 	{ "pak024.pk4",				0x5546d551,	false,	true },
 	{ "pak025.pk4",				0xcaeec1fd,	false,	true },
@@ -2913,10 +2913,10 @@ typedef struct openQ4BaseVersion_s {
 
 /*
 ===============
-FS_ParseOpenQ4BaseVersion
+FS_ParseopenQ4BaseVersion
 ===============
 */
-static bool FS_ParseOpenQ4BaseVersion( const char *version, openQ4BaseVersion_t &parsed ) {
+static bool FS_ParseopenQ4BaseVersion( const char *version, openQ4BaseVersion_t &parsed ) {
 	int values[3] = { 0, 0, 0 };
 
 	if ( version == NULL || version[0] == '\0' ) {
@@ -2957,10 +2957,10 @@ static bool FS_ParseOpenQ4BaseVersion( const char *version, openQ4BaseVersion_t 
 
 /*
 ===============
-FS_CompareOpenQ4BaseVersions
+FS_CompareopenQ4BaseVersions
 ===============
 */
-static int FS_CompareOpenQ4BaseVersions( const openQ4BaseVersion_t &left, const openQ4BaseVersion_t &right ) {
+static int FS_CompareopenQ4BaseVersions( const openQ4BaseVersion_t &left, const openQ4BaseVersion_t &right ) {
 	if ( left.major != right.major ) {
 		return left.major < right.major ? -1 : 1;
 	}
@@ -2985,7 +2985,7 @@ static bool FS_ParseModManifest( const char *jsonText, idModInfo &modInfo, idStr
 	modInfo.releaseDate.Clear();
 	modInfo.website.Clear();
 	modInfo.author.Clear();
-	modInfo.requiredOpenQ4Version.Clear();
+	modInfo.requiredopenQ4Version.Clear();
 	modInfo.listLabel.Clear();
 
 	if ( jsonText == NULL ) {
@@ -3040,8 +3040,8 @@ static bool FS_ParseModManifest( const char *jsonText, idModInfo &modInfo, idStr
 			modInfo.website = value;
 		} else if ( !key.Icmp( "author" ) ) {
 			modInfo.author = value;
-		} else if ( !key.Icmp( "requiredOpenQ4Version" ) ) {
-			modInfo.requiredOpenQ4Version = value;
+		} else if ( !key.Icmp( "requiredopenQ4Version" ) ) {
+			modInfo.requiredopenQ4Version = value;
 		}
 
 		cursor = FS_SkipJsonWhitespace( cursor );
@@ -3082,8 +3082,8 @@ static bool FS_ParseModManifest( const char *jsonText, idModInfo &modInfo, idStr
 		errorOut = "missing required field 'author'";
 		return false;
 	}
-	if ( modInfo.requiredOpenQ4Version.IsEmpty() ) {
-		errorOut = "missing required field 'requiredOpenQ4Version'";
+	if ( modInfo.requiredopenQ4Version.IsEmpty() ) {
+		errorOut = "missing required field 'requiredopenQ4Version'";
 		return false;
 	}
 
@@ -3194,30 +3194,30 @@ bool idFileSystemLocal::ReadModManifestFile( const char *manifestPath, idModInfo
 	}
 
 	openQ4BaseVersion_t requiredVersion;
-	if ( !FS_ParseOpenQ4BaseVersion( modInfo.requiredOpenQ4Version.c_str(), requiredVersion ) ) {
+	if ( !FS_ParseopenQ4BaseVersion( modInfo.requiredopenQ4Version.c_str(), requiredVersion ) ) {
 		if ( reason != NULL ) {
 			*reason = va(
 				"%s has invalid required openQ4 version '%s' (expected major.minor.patch)",
 				modInfo.displayName.c_str(),
-				modInfo.requiredOpenQ4Version.c_str() );
+				modInfo.requiredopenQ4Version.c_str() );
 		}
 		return false;
 	}
 
 	openQ4BaseVersion_t engineVersion;
-	if ( !FS_ParseOpenQ4BaseVersion( OPENQ4_VERSION_BASE, engineVersion ) ) {
+	if ( !FS_ParseopenQ4BaseVersion( OPENQ4_VERSION_BASE, engineVersion ) ) {
 		if ( reason != NULL ) {
 			*reason = va( "this build has invalid openQ4 version '%s'", OPENQ4_VERSION_BASE );
 		}
 		return false;
 	}
 
-	if ( FS_CompareOpenQ4BaseVersions( engineVersion, requiredVersion ) < 0 ) {
+	if ( FS_CompareopenQ4BaseVersions( engineVersion, requiredVersion ) < 0 ) {
 		if ( reason != NULL ) {
 			*reason = va(
 				"%s requires openQ4 %s or newer but this build is %s",
 				modInfo.displayName.c_str(),
-				modInfo.requiredOpenQ4Version.c_str(),
+				modInfo.requiredopenQ4Version.c_str(),
 				OPENQ4_VERSION_BASE );
 		}
 		return false;
@@ -3680,7 +3680,7 @@ void idFileSystemLocal::AddGameDirectory( const char *path, const char *dir ) {
 	ListOSFiles( pakfile, ".pk4", pakfiles );
 
 	// Sort them so later entries override earlier ones after they are inserted
-	// into the search path. OpenQ4 reserves short pakN.pk4 names for its own
+	// into the search path. openQ4 reserves short pakN.pk4 names for its own
 	// content, so those win over wider retail-style pakNNN.pk4 names.
 	FS_SortPk4FilesForLoadOrder( pakfiles );
 
@@ -4120,7 +4120,7 @@ void idFileSystemLocal::Startup( void ) {
 		if ( FindMisplacedOfficialPaks( misplacedErrors ) ) {
 			common->FatalError(
 				"Official Quake 4 media pk4 files were found in the wrong game directory.\n\n%s\n"
-				"Move the listed files from '%s' to '%s'. Retail Quake 4 assets must live in '%s'; '%s' is reserved for OpenQ4 runtime content.",
+				"Move the listed files from '%s' to '%s'. Retail Quake 4 assets must live in '%s'; '%s' is reserved for openQ4 runtime content.",
 				misplacedErrors.c_str(), OPENQ4_GAMEDIR, BASE_GAMEDIR, BASE_GAMEDIR, OPENQ4_GAMEDIR );
 		}
 

@@ -105,7 +105,7 @@ static void R_ModelManager_BuildMD5RName( idStr &md5rName, const idStr &canonica
 R_ModelManager_FindLoadablePrebuiltMD5R
 
  Retail prefers a compiled .md5rc companion when present, then falls back to
- the plain .md5r file. OpenQ4 mirrors that probe order and always hands the
+ the plain .md5r file. openQ4 mirrors that probe order and always hands the
  canonical .md5r name to the binary-aware lexer so it can resolve either form.
 =================
 */

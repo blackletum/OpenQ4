@@ -6,7 +6,7 @@ repo_root="$(CDPATH= cd -- "${script_dir}/../.." && pwd)"
 
 install_root="${OPENQ4_INSTALL_ROOT:-${repo_root}/.install}"
 desktop_dir="${OPENQ4_DESKTOP_DIR:-}"
-launcher_name="${OPENQ4_DESKTOP_LAUNCHER_NAME:-OpenQ4.desktop}"
+launcher_name="${OPENQ4_DESKTOP_LAUNCHER_NAME:-openQ4.desktop}"
 client_binary="${OPENQ4_CLIENT_BINARY:-}"
 basepath="${OPENQ4_BASEPATH:-}"
 
@@ -14,12 +14,12 @@ usage() {
     cat <<'EOF'
 Usage: install_desktop_launcher.sh [options]
 
-Creates an OpenQ4 launcher on the current Linux user's desktop.
+Creates an openQ4 launcher on the current Linux user's desktop.
 
 Options:
-  --install-root PATH   Staged OpenQ4 runtime root. Defaults to repo .install.
+  --install-root PATH   Staged openQ4 runtime root. Defaults to repo .install.
   --desktop-dir PATH    Desktop directory. Defaults to xdg-user-dir DESKTOP.
-  --name FILENAME       Launcher filename. Defaults to OpenQ4.desktop.
+  --name FILENAME       Launcher filename. Defaults to openQ4.desktop.
   --client PATH         Client binary. Defaults to openQ4-client_<host arch>.
   --basepath PATH       Quake 4 install root containing q4base/.
   --no-basepath         Do not write fs_basepath into the launcher.
@@ -134,7 +134,7 @@ find_client_binary() {
     if [[ -n "${client_binary}" ]]; then
         client_binary="$(canonicalize_existing_file "${client_binary}")"
         if [[ ! -x "${client_binary}" ]]; then
-            echo "OpenQ4 client is not executable: ${client_binary}" >&2
+            echo "openQ4 client is not executable: ${client_binary}" >&2
             exit 1
         fi
         printf '%s\n' "${client_binary}"
@@ -155,9 +155,9 @@ find_client_binary() {
             canonicalize_existing_file "${candidate}"
             return
         fi
-    done < <(find "${install_root}" -maxdepth 1 -type f \( -name 'openQ4-client_*' -o -name 'OpenQ4-client_*' \) | sort)
+    done < <(find "${install_root}" -maxdepth 1 -type f \( -name 'openQ4-client_*' -o -name 'openQ4-client_*' \) | sort)
 
-    echo "No executable OpenQ4 client was found under ${install_root}." >&2
+    echo "No executable openQ4 client was found under ${install_root}." >&2
     echo "Run the Linux install step first, then retry this launcher install." >&2
     exit 1
 }
@@ -229,7 +229,7 @@ fi
     printf '%s\n' '[Desktop Entry]'
     printf '%s\n' 'Version=1.0'
     printf '%s\n' 'Type=Application'
-    printf '%s\n' 'Name=OpenQ4'
+    printf '%s\n' 'Name=openQ4'
     printf '%s\n' 'GenericName=First-person shooter'
     printf '%s\n' 'Comment=Modern open-source engine and game-code replacement for Quake 4'
     printf 'Exec=%s\n' "${exec_line}"
@@ -247,4 +247,4 @@ if command -v gio >/dev/null 2>&1; then
     gio set "${launcher_path}" metadata::trusted true >/dev/null 2>&1 || true
 fi
 
-echo "Installed OpenQ4 desktop launcher: ${launcher_path}"
+echo "Installed openQ4 desktop launcher: ${launcher_path}"

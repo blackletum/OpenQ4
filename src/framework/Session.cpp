@@ -97,7 +97,7 @@ static float Session_GetBlockingLoadFrameIntervalMsec( void ) {
 
 static void Session_BeginBlockingLoadPresentationFrame( void ) {
 	if ( Session_FindPresentationCap() > 0 ) {
-		OpenQ4_BeginPresentationFrame();
+		openQ4_BeginPresentationFrame();
 	} else {
 		com_frameRealTime = Sys_Milliseconds();
 	}
@@ -246,12 +246,12 @@ static bool Session_IsRetailSaveGameName( const idStr &gameName ) {
 	return gameName.Icmp( SAVEGAME_GAME_NAME_RETAIL ) == 0;
 }
 
-static bool Session_IsLegacyOpenQ4SaveGameName( const idStr &gameName ) {
+static bool Session_IsLegacyopenQ4SaveGameName( const idStr &gameName ) {
 	return gameName.Icmp( SAVEGAME_GAME_NAME_LEGACY_OPENQ4 ) == 0;
 }
 
 static bool Session_IsSupportedSaveGameName( const idStr &gameName ) {
-	return Session_IsRetailSaveGameName( gameName ) || Session_IsLegacyOpenQ4SaveGameName( gameName );
+	return Session_IsRetailSaveGameName( gameName ) || Session_IsLegacyopenQ4SaveGameName( gameName );
 }
 
 static bool Session_SaveGameHeaderUsesEntityFilter( const idStr &gameName ) {
@@ -334,17 +334,17 @@ void idSessionLocal::SampleMultiplayerFramePacing( int frameStartMsec ) {
 	UpdateFramePacingStats( frameStartMsec, 0, 0, 0 );
 }
 
-void OpenQ4_PrintFramePacingSnapshot( const char *reason ) {
+void openQ4_PrintFramePacingSnapshot( const char *reason ) {
 	sessLocal.PrintFramePacingSnapshot( reason );
 }
 
-void OpenQ4_RecordMultiplayerFramePacing( int frameStartMsec ) {
+void openQ4_RecordMultiplayerFramePacing( int frameStartMsec ) {
 	sessLocal.SampleMultiplayerFramePacing( frameStartMsec );
 }
 
 void idSessionLocal::UpdateFramePacingStats( int frameStartMsec, int requestedWaitMsec, int actualWaitMsec, int gameTicsToRun ) {
 	openq4AsyncTimingStats_t asyncStats;
-	OpenQ4_GetAsyncTimingStats( asyncStats, 120 );
+	openQ4_GetAsyncTimingStats( asyncStats, 120 );
 
 	const int sampleCount = Max( framePacingStats.frameSampleCount, 1 );
 
@@ -818,12 +818,12 @@ static void Session_BlitRGBA( byte *dest, int destWidth, int destHeight, int des
 	}
 }
 
-static bool OpenQ4_IsSingleplayerGameType( void ) {
+static bool openQ4_IsSingleplayerGameType( void ) {
 	const char *gameType = cvarSystem->GetCVarString( "si_gameType" );
 	return !( gameType && gameType[ 0 ] && idStr::Icmp( gameType, "singleplayer" ) != 0 );
 }
 
-static idEntity *OpenQ4_FindSpawnedEntityByBaseClass( const char *className ) {
+static idEntity *openQ4_FindSpawnedEntityByBaseClass( const char *className ) {
 	if ( !gameEdit || !className || !className[ 0 ] ) {
 		return NULL;
 	}
@@ -2100,7 +2100,7 @@ static void Session_BakeLightGrids_f( const idCmdArgs &args ) {
 	Session_RunLightGridBake( args );
 }
 
-static void Session_OpenQ4ResumeBakeLightGrids_f( const idCmdArgs &args ) {
+static void Session_openQ4ResumeBakeLightGrids_f( const idCmdArgs &args ) {
 	Session_RunLightGridBake( args );
 }
 
@@ -2224,10 +2224,10 @@ static void Session_TestMap_f( const idCmdArgs &args ) {
 
 /*
 ==================
-Session_OpenQ4StartSingleplayer_f
+Session_openQ4StartSingleplayer_f
 ==================
 */
-static void Session_OpenQ4StartSingleplayer_f( const idCmdArgs &args ) {
+static void Session_openQ4StartSingleplayer_f( const idCmdArgs &args ) {
 	if ( args.Argc() < 2 ) {
 		common->Printf( "USAGE: openq4_startSingleplayer <map> [devmap] [entityFilter]\n" );
 		return;
@@ -2468,7 +2468,7 @@ bool idSessionLocal::IsIAmTheDukeActive( void ) const {
 }
 
 void idSessionLocal::ToggleIAmTheDuke( void ) {
-	if ( idAsyncNetwork::IsActive() || !OpenQ4_IsSingleplayerGameType() ) {
+	if ( idAsyncNetwork::IsActive() || !openQ4_IsSingleplayerGameType() ) {
 		common->Printf( "iamtheduke is single-player only.\n" );
 		return;
 	}
@@ -2478,7 +2478,7 @@ void idSessionLocal::ToggleIAmTheDuke( void ) {
 		return;
 	}
 
-	idPlayer *player = static_cast<idPlayer *>( OpenQ4_FindSpawnedEntityByBaseClass( "idPlayer" ) );
+	idPlayer *player = static_cast<idPlayer *>( openQ4_FindSpawnedEntityByBaseClass( "idPlayer" ) );
 	if ( player != NULL && player->health <= 0 ) {
 		common->Printf( "You must be alive to use this command.\n" );
 		return;
@@ -2601,7 +2601,7 @@ void idSessionLocal::ShowLoadingGui() {
 	int stop = Sys_Milliseconds() + 1000;
 	int force = 10;
 	while ( Sys_Milliseconds() < stop || force-- > 0 ) {
-		OpenQ4_BeginPresentationFrame();
+		openQ4_BeginPresentationFrame();
 		com_frameTime = common->GetUserCmdTime( com_ticNumber );
 		session->Frame();
 		session->UpdateScreen( false );
@@ -2609,7 +2609,7 @@ void idSessionLocal::ShowLoadingGui() {
 #else
 	int stop = com_ticNumber + common->GetUserCmdTicsForMsecCeil( 1000 );
 	while ( com_ticNumber < stop ) {
-		OpenQ4_BeginPresentationFrame();
+		openQ4_BeginPresentationFrame();
 		com_frameTime = common->GetUserCmdTime( com_ticNumber );
 		session->Frame();
 		session->UpdateScreen( false );
@@ -4514,7 +4514,7 @@ bool idSessionLocal::LoadGame( const char *saveName ) {
 		return false;
 	}
 
-	// Accept both the retail Quake 4 save header and older OpenQ4-branded headers.
+	// Accept both the retail Quake 4 save header and older openQ4-branded headers.
 	if ( !Session_IsSupportedSaveGameName( gamename ) ) {
 		common->Warning( "Attempted to load an invalid savegame header '%s' from %s",
 			gamename.c_str(), in.c_str() );
@@ -4542,7 +4542,7 @@ bool idSessionLocal::LoadGame( const char *saveName ) {
 	}
 
 	// retail Quake 4 stores an entity filter after the map name.
-	// Older OpenQ4 saves omitted it, so only consume it from retail-style headers.
+	// Older openQ4 saves omitted it, so only consume it from retail-style headers.
 	if ( Session_SaveGameHeaderUsesEntityFilter( gamename ) ) {
 		if ( !Session_ReadSaveGameString( savegameFile, entityFilter, MAX_STRING_CHARS, "entity filter", in.c_str() ) ) {
 			loadingSaveGame = false;
@@ -5566,10 +5566,10 @@ void idSessionLocal::Init() {
 	cmdSystem->AddCommand( "writePrecache", Sess_WritePrecache_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "writes precache commands" );
 
 #ifndef	ID_DEDICATED
-	cmdSystem->AddCommand( "openq4_startSingleplayer", Session_OpenQ4StartSingleplayer_f, CMD_FL_SYSTEM, "internal helper to start singleplayer after game-module switches" );
-	cmdSystem->AddCommand( "openq4_resumeBakeLightGrids", Session_OpenQ4ResumeBakeLightGrids_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "internal helper to continue light-grid baking after game-module switches" );
+	cmdSystem->AddCommand( "openq4_startSingleplayer", Session_openQ4StartSingleplayer_f, CMD_FL_SYSTEM, "internal helper to start singleplayer after game-module switches" );
+	cmdSystem->AddCommand( "openq4_resumeBakeLightGrids", Session_openQ4ResumeBakeLightGrids_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "internal helper to continue light-grid baking after game-module switches" );
 	cmdSystem->AddCommand( "iamtheduke", Session_IAmTheDuke_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "toggles the SP-only iamtheduke cheat text overlay" );
-	cmdSystem->AddCommand( "bakeLightGrids", Session_BakeLightGrids_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "bakes OpenQ4-compatible lightgrid metadata and irradiance atlases for the current map or a batch of maps" );
+	cmdSystem->AddCommand( "bakeLightGrids", Session_BakeLightGrids_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "bakes openQ4-compatible lightgrid metadata and irradiance atlases for the current map or a batch of maps" );
 	cmdSystem->AddCommand( "map", Session_Map_f, CMD_FL_SYSTEM, "loads a map", idCmdSystem::ArgCompletion_MapName );
 	cmdSystem->AddCommand( "devmap", Session_DevMap_f, CMD_FL_SYSTEM, "loads a map in developer mode", idCmdSystem::ArgCompletion_MapName );
 	cmdSystem->AddCommand( "testmap", Session_TestMap_f, CMD_FL_SYSTEM, "tests a map", idCmdSystem::ArgCompletion_MapName );

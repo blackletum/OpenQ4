@@ -1,12 +1,12 @@
-# OpenQ4 Quake 4 BSE Research And Implementation Plan (2026-02-06)
+# openQ4 Quake 4 BSE Research And Implementation Plan (2026-02-06)
 
 ## Purpose
 
-This document captures a deep technical review of Quake 4's BSE (Basic System for Effects) and a concrete implementation plan for OpenQ4.
+This document captures a deep technical review of Quake 4's BSE (Basic System for Effects) and a concrete implementation plan for openQ4.
 
 Primary references:
 
-- OpenQ4 source tree (`src/bse`, `src/game`, `src/renderer`, `src/framework`)
+- openQ4 source tree (`src/bse`, `src/game`, `src/renderer`, `src/framework`)
 - Reverse-engineered BSE project: `E:\_SOURCE\_CODE\Quake4BSE-master`
 
 ## What BSE Is
@@ -31,7 +31,7 @@ In code terms:
 
 ### Decl registration and lookup
 
-OpenQ4 wires BSE effects as a dedicated decl type:
+openQ4 wires BSE effects as a dedicated decl type:
 
 - `RegisterDeclType( "effect", DECL_EFFECT, idDeclAllocator<rvDeclEffect> )`
 - `RegisterDeclFolder( "effects", ".fx", DECL_EFFECT )`
@@ -112,7 +112,7 @@ Observed effect-level scalar keywords:
 - `cutOffDistance`
 - `size`
 
-Current OpenQ4 parser issue:
+Current openQ4 parser issue:
 
 - `rvDeclEffect::Parse` is hard-disabled via `#if 1 return true;` in `src/bse/BSE_EffectTemplate.cpp`.
 
@@ -192,9 +192,9 @@ Important BSE runtime semantics from the recovered code paths:
 - Timeout/impact spawned sub-effects
 - End-origin aware behavior for linked beams and similar effects
 
-In OpenQ4, much of this logic exists but is currently disabled or stubbed.
+In openQ4, much of this logic exists but is currently disabled or stubbed.
 
-## Current OpenQ4 Status (Gap Analysis)
+## Current openQ4 Status (Gap Analysis)
 
 ### Major missing/disabled areas
 
@@ -233,7 +233,7 @@ In OpenQ4, much of this logic exists but is currently disabled or stubbed.
 
 ### Behavioral concern to resolve during implementation
 
-`rvClientEffect::Think` treats `UpdateEffectDef(...) == true` as "effect is done; remove self". OpenQ4 currently returns `true` unconditionally from `idRenderWorldLocal::UpdateEffectDef`, which can prematurely tear down live client effects unless compensated by other code paths.
+`rvClientEffect::Think` treats `UpdateEffectDef(...) == true` as "effect is done; remove self". openQ4 currently returns `true` unconditionally from `idRenderWorldLocal::UpdateEffectDef`, which can prematurely tear down live client effects unless compensated by other code paths.
 
 File:
 
@@ -242,7 +242,7 @@ File:
 
 ## Detailed Implementation Plan
 
-This plan prioritizes compatibility with original Quake 4 assets and shipped-content behavior. OpenQ4 does not target binary compatibility with the proprietary Quake 4 game DLLs.
+This plan prioritizes compatibility with original Quake 4 assets and shipped-content behavior. openQ4 does not target binary compatibility with the proprietary Quake 4 game DLLs.
 
 ### Phase 0: Baseline and instrumentation
 
@@ -364,7 +364,7 @@ Tasks:
 2. Re-enable/implement segment render paths:
 - particle draw, motion trail, decal creation
 3. Re-enable/implement effect-level render model update path (`rvBSE::Render` or equivalent final architecture).
-4. Reconcile any old renderer API drift with current OpenQ4 renderer interfaces.
+4. Reconcile any old renderer API drift with current openQ4 renderer interfaces.
 
 Files:
 
@@ -468,7 +468,7 @@ This order minimizes hidden coupling: parse/template correctness first, then run
 ### Progress Snapshot (2026-02-06, follow-up pass)
 
 - Phase 4 (runtime foundation): implemented non-stub segment lifecycle plumbing (`Init`, `InitTime`, attenuation helpers, `Check`, `Handle`, `UpdateParticles`, `CalcCounts`) so effects no longer rely on pure no-op segment runtime paths.
-- Phase 4 note: full particle simulation/render/decal projection parity is still pending because OpenQ4 currently lacks several runtime particle implementation units present in the reverse-engineered reference tree.
+- Phase 4 note: full particle simulation/render/decal projection parity is still pending because openQ4 currently lacks several runtime particle implementation units present in the reverse-engineered reference tree.
 - Phase 5 (manager/renderer contract): implemented manager-side duration/sound/filter/rate-limit logic, wired `EffectDefHasSound`, fixed `UpdateEffectDef` return semantics to report completion via `rvRenderEffectLocal::expired`, and hardened effect handle bounds checks.
 - Runtime validation loop executed after these changes; latest run logs show no BSE parser/runtime warnings.
 - Current blocker for strict Procedure 1 path: startup can fatal early with `Couldn't load default.cfg` when savepath config is absent/non-writable; validation was completed using the configured writable savepath.
@@ -485,14 +485,14 @@ This order minimizes hidden coupling: parse/template correctness first, then run
 - Phase 4/5 parity slice (spawn ordering / draw order): restored runtime spawn-list insertion behavior in `BSE_SegmentRuntime` so particles are no longer always LIFO-inserted; linked segments now preserve stable end-time ordering while complex segments keep front-insert behavior, and temporary segments are handled explicitly.
 - Phase 5 draw-order refinement: segment render path now treats linked strip particles specially by disabling depth-sort for strip topology and using first-strip index budgeting rules to avoid premature render rejection.
 - Phase 5 utility parity: `rvSegment::Sort` in `BSE_SegmentRuntime` is now implemented with stable depth sorting for deterministic per-segment order when invoked.
-- Validation: after each of these patches, OpenQ4 compiles cleanly and Procedure 1 short-run log checks continue to show no BSE parser/runtime assert/fatal regressions.
+- Validation: after each of these patches, openQ4 compiles cleanly and Procedure 1 short-run log checks continue to show no BSE parser/runtime assert/fatal regressions.
 - Phase 5 correctness fix: removed the `Filtered()` + `CanPlayRateLimited()` double-consumption path on network/entity receive flows (`src/game/Entity.cpp`, `src/game/Game_network.cpp`); rate-limit cost is now consumed once per event.
 - Phase 2/4 correctness fix: restored `rvParticleTemplate::FixupParms` sanitization logic (previously fully disabled), re-enabling spawn-type normalization and end-origin spawn-type promotion behavior used by parsed particle domains.
 - Phase 3/4 parity fix: `rvBSE::UpdateFromOwner` now derives `mLightningAxis` from current origin/end-origin direction (with stable fallback basis), instead of leaving lightning-axis state stale/default.
 - Phase 4/5 parity fix: `rvSegment::AttenuateInterval` and `rvSegment::AttenuateCount` now apply `bse_scale` interpolation semantics instead of hardcoded max-range behavior.
 - Phase 4/5 parity fix: `bse_maxParticles` is now enforced consistently in segment runtime allocation/count clamps (`InitParticleArray`, `AddToParticleCount`, spawner/check and precomputed count clamps), rather than silently using compile-time `MAX_PARTICLES` only.
 - Phase 7 cleanup: temporary always-on BSE trace spam (`spawn/expire/generic-remove`, segment render skip, segment state print) has been removed from runtime paths, and `bse_frameCounters` default was set back to `0` in renderer init.
-- Validation (2026-02-07): clean rebuild executed from `builddir/` (full clean + full rebuild) and both `OpenQ4.exe` and `OpenQ4-ded.exe` link successfully; 10-second stock-asset launch/log pass shows zero BSE parser/runtime assert/fatal tokens.
+- Validation (2026-02-07): clean rebuild executed from `builddir/` (full clean + full rebuild) and both `openQ4.exe` and `openQ4-ded.exe` link successfully; 10-second stock-asset launch/log pass shows zero BSE parser/runtime assert/fatal tokens.
 - Phase 4 physics parity: `rvParticle::FinishSpawn` now applies template-authored gravity (`gravity` decl range) in effect-space, projected into particle-local acceleration, instead of silently ignoring particle gravity.
 - Phase 4 debris parity: `rvDebrisParticle::FinishSpawn` now follows the client-moveable path (`game->SpawnClientMoveable`) when `entityDef` is provided, and immediately retires CPU-side particle rendering for those debris particles.
 - Phase 5 robustness: client-effect shader parm defaults (RGBA/brightness/time offset) are now initialized in `rvClientEffect::Init`, and `rvBSE::UpdateFromOwner` now applies a safe fallback to unit tint/brightness when render effects arrive with fully zeroed shader parms.
@@ -506,7 +506,7 @@ This order minimizes hidden coupling: parse/template correctness first, then run
 - Phase 4 render-matrix parity follow-up (2026-02-08): `rvOrientedParticle::Render` now matches decompiled oriented-quad corner sign/order (`-right`, `-up`, `+right`, `+up`) for the rotation basis, eliminating mirrored orientation in oriented particle quads.
 - Runtime stability follow-up (2026-02-08): hardened startup command parsing and token append bounds (`ParseCommandLine`, `StartupVariable`, `idCmdArgs::AppendArg`) to prevent access violations under oversized `+wait` stress command lines; reproduced crash no longer occurs across `+wait` 40/120/900 validation launches.
 
-### Implementation Reference Mapping (OpenQ4 <-> Quake4BSE-master)
+### Implementation Reference Mapping (openQ4 <-> Quake4BSE-master)
 
 - `src/bse/BSE_EffectTemplate.cpp` <-> `E:\_SOURCE\_CODE\Quake4BSE-master\bse\BSE_EffectTemplate.cpp`
 - `src/bse/BSE_SegmentTemplate.cpp` <-> `E:\_SOURCE\_CODE\Quake4BSE-master\bse\BSE_SegmentTemplate.cpp`
@@ -515,4 +515,4 @@ This order minimizes hidden coupling: parse/template correctness first, then run
 - `src/bse/BSE_Segment.cpp` <-> `E:\_SOURCE\_CODE\Quake4BSE-master\bse\BSE_Segment.cpp`
 - `src/bse/BSE_Manager.cpp` <-> `E:\_SOURCE\_CODE\Quake4BSE-master\bse\BSE_Manager.cpp`
 
-Use this mapping as a behavior reference, not a blind copy source. Keep OpenQ4 interfaces and build layout intact, and preserve Quake 4 compatibility requirements first.
+Use this mapping as a behavior reference, not a blind copy source. Keep openQ4 interfaces and build layout intact, and preserve Quake 4 compatibility requirements first.

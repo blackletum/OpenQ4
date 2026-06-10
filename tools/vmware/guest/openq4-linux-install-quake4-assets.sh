@@ -13,7 +13,7 @@ sudo_run() {
     fi
 
     if [[ -z "${OPENQ4_SUDO_PASSWORD:-}" ]]; then
-        echo "sudo needs a password. Re-run through Invoke-OpenQ4LinuxMintWorkflow.ps1 or set OPENQ4_SUDO_PASSWORD." >&2
+        echo "sudo needs a password. Re-run through Invoke-openQ4LinuxMintWorkflow.ps1 or set OPENQ4_SUDO_PASSWORD." >&2
         exit 1
     fi
 
@@ -85,7 +85,7 @@ mount_data_disk() {
         local device
         device="$(find_data_device)"
         if [[ -z "${device}" ]]; then
-            echo "No safe OpenQ4 data disk candidate found. Set OPENQ4_DATA_DEVICE=/dev/..." >&2
+            echo "No safe openQ4 data disk candidate found. Set OPENQ4_DATA_DEVICE=/dev/..." >&2
             exit 1
         fi
 

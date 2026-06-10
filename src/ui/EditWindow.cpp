@@ -38,12 +38,12 @@ If you have questions concerning this license or the applicable additional terms
 static const int Q4_EDIT_WINDOW_TEXT_SPACING = 0;
 static const float Q4_EDIT_WINDOW_LINE_HEIGHT_SCALE = 1.25f;
 
-static float OpenQ4_EditWindowWrappedLineHeight( idEditWindow *window ) {
+static float openQ4_EditWindowWrappedLineHeight( idEditWindow *window ) {
 	float lineHeight = window->GetMaxCharHeight() * Q4_EDIT_WINDOW_LINE_HEIGHT_SCALE;
 	return lineHeight > 0.0f ? lineHeight : 1.0f;
 }
 
-static int OpenQ4_EditWindowEscapeLength( const char *text ) {
+static int openQ4_EditWindowEscapeLength( const char *text ) {
 	return idStr::IsEscape( text );
 }
 
@@ -177,7 +177,7 @@ void idEditWindow::Draw( int time, float x, float y ) {
 	rect.w += paintOffset;
 
 	if ( wrap && scroller->GetHigh() > 0.0f ) {
-		const float lineHeight = OpenQ4_EditWindowWrappedLineHeight( this );
+		const float lineHeight = openQ4_EditWindowWrappedLineHeight( this );
 		rect.y -= scroller->GetValue() * lineHeight;
 		rect.w -= sizeBias;
 		rect.h = breaks.Num() * lineHeight;
@@ -551,7 +551,7 @@ void idEditWindow::EnsureCursorVisible()
 		} else {
 			int i = 0;
 			while ( i < text.Length() && i < cursorPos ) {
-				const int escapeLength = OpenQ4_EditWindowEscapeLength( &text[i] );
+				const int escapeLength = openQ4_EditWindowEscapeLength( &text[i] );
 				if ( escapeLength > 0 ) {
 					i += escapeLength;
 				} else {
@@ -586,7 +586,7 @@ void idEditWindow::EnsureCursorVisible()
 		}
 		dc->DrawText( text, textScale, textAlign, colorWhite, rect, true, ( flags & WIN_FOCUS ) ? cursorPos : -1, true, &breaks, 0, Q4_EDIT_WINDOW_TEXT_SPACING, static_cast<int>( textstyle ), ( flags & WIN_CHATWINDOW ) != 0 );
 
-		const int fit = static_cast<int>( textRect.h / OpenQ4_EditWindowWrappedLineHeight( this ) );
+		const int fit = static_cast<int>( textRect.h / openQ4_EditWindowWrappedLineHeight( this ) );
 		if ( breaks.Num() <= fit ) {
 			// The text fits completely in the box
 			scroller->SetRange(0.0f, 0.0f, 1.0f);

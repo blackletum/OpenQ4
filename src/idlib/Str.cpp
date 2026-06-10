@@ -21,7 +21,7 @@ static idDynamicBlockAlloc<char, 1<<18, 128, MA_STRING>	stringDataAllocator;
 
 namespace {
 idList<idStr>	g_iconEscapeCodes;
-static bool OpenQ4_IsRegisteredIconEscapeCode( const char *code ) {
+static bool openQ4_IsRegisteredIconEscapeCode( const char *code ) {
 	if ( code == NULL || code[0] == '\0' || code[1] == '\0' || code[2] == '\0' ) {
 		return false;
 	}
@@ -298,7 +298,7 @@ void idStr::RegisterIconEscapeCode( const char *code ) {
 	iconCode[1] = code[1];
 	iconCode[2] = code[2];
 	iconCode[3] = '\0';
-	if ( OpenQ4_IsRegisteredIconEscapeCode( iconCode ) ) {
+	if ( openQ4_IsRegisteredIconEscapeCode( iconCode ) ) {
 		return;
 	}
 	g_iconEscapeCodes.Append( iconCode );

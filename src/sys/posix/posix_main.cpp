@@ -802,7 +802,7 @@ int Sys_GetDriveFreeSpace( const char *path ) {
 /*
 ================
 Sys_AlreadyRunning
-return true if there is a copy of OpenQ4 running already
+return true if there is a copy of openQ4 running already
 ================
 */
 bool Sys_AlreadyRunning( void ) {
@@ -833,7 +833,7 @@ bool Sys_AlreadyRunning( void ) {
 
 		Posix_ReleaseInstanceLock();
 		if ( lockError == EACCES || lockError == EAGAIN ) {
-			common->Printf( "another OpenQ4 instance is already running\n" );
+			common->Printf( "another openQ4 instance is already running\n" );
 			return true;
 		}
 

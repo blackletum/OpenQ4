@@ -1229,7 +1229,7 @@ static unsigned long LightGrid_CalculateBakeSettingsHash( const lightGridBakeOpt
 	unsigned long hash;
 	CRC32_InitChecksum( hash );
 
-	LightGrid_HashString( hash, "OpenQ4 lightgrid bake settings" );
+	LightGrid_HashString( hash, "openQ4 lightgrid bake settings" );
 	LightGrid_HashInt( hash, LIGHTGRID_CURRENT_VERSION );
 	LightGrid_HashInt( hash, LIGHTGRID_BAKE_HEADER_VERSION );
 	LightGrid_HashInt( hash, options.maxProbes );

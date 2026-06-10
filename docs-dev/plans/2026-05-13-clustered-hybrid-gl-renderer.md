@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document is the task plan for turning the current OpenQ4 renderer bridge into a robust, easy-to-debug, high-performance, high-compatibility OpenGL renderer. The target is a clustered hybrid deferred/forward+ pipeline that keeps stock Quake 4 asset behavior intact, preserves the existing ARB2 renderer as a compatibility fallback until parity is proven, and scales from GL 3.3-era hardware through GL 4.6-class desktop drivers.
+This document is the task plan for turning the current openQ4 renderer bridge into a robust, easy-to-debug, high-performance, high-compatibility OpenGL renderer. The target is a clustered hybrid deferred/forward+ pipeline that keeps stock Quake 4 asset behavior intact, preserves the existing ARB2 renderer as a compatibility fallback until parity is proven, and scales from GL 3.3-era hardware through GL 4.6-class desktop drivers.
 
 This plan is GL-only. Metal and Vulkan are out of scope.
 
@@ -72,7 +72,7 @@ flowchart TD
     P --> Q["Indirect command generation"]
 ```
 
-The pipeline is hybrid because OpenQ4 materials and effects are not a clean deferred-only workload. The renderer should choose per pass:
+The pipeline is hybrid because openQ4 materials and effects are not a clean deferred-only workload. The renderer should choose per pass:
 
 - Opaque bulk geometry: deferred-lite or full deferred where material coverage is ready.
 - Perforated/alpha-tested geometry: depth-prepass plus forward+ unless a safe G-buffer representation exists.
@@ -554,7 +554,7 @@ Goal: optimize the renderer only after pass ownership and parity are stable.
 - Metrics added/changed: `r_rendererMetrics` now includes visibility, packet-build, graph-build, and present CPU timings; `rendererBenchmark capture(...)` adds rolling frame-time P50/P95/P99 plus a threshold pass/fail signal. `gfxInfo` now prints `Renderer benchmark:` and `Performance regression thresholds:` summaries.
 - Self-tests added/changed: Added `rendererBenchmarkSelfTest` for percentile and preset-budget validation, plus `rendererBenchmarkCapture` for dumping the latest capture.
 - Fallback behavior: ARB2 remains the default visible renderer. Adaptive cluster-grid sizing is off by default; when enabled, the modern clustered-light grid uses the selected benchmark preset within the existing 8x6x16 allocation ceiling.
-- Validation run: `tools\build\meson_setup.ps1 compile -C builddir -- -j1`; `tools\build\meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects`; targeted staged startup with `+set r_rendererMetrics 2 +rendererBenchmarkSelfTest +rendererBenchmarkCapture +gfxInfo` passed and wrote `E:\Repositories\OpenQ4\.home\q4base\logs\openq4_phase16_benchmark.log`; `python tools\tests\renderer_validation_matrix.py` passed 23/23 automated safe cases, including the new `renderer-benchmark-selftest`, and wrote `.tmp\renderer-validation\20260514-150946\renderer_validation_report.md`; `python tools\tests\renderer_validation_matrix.py --list` prints the benchmark case and performance regression thresholds.
+- Validation run: `tools\build\meson_setup.ps1 compile -C builddir -- -j1`; `tools\build\meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects`; targeted staged startup with `+set r_rendererMetrics 2 +rendererBenchmarkSelfTest +rendererBenchmarkCapture +gfxInfo` passed and wrote `E:\Repositories\openQ4\.home\q4base\logs\openq4_phase16_benchmark.log`; `python tools\tests\renderer_validation_matrix.py` passed 23/23 automated safe cases, including the new `renderer-benchmark-selftest`, and wrote `.tmp\renderer-validation\20260514-150946\renderer_validation_report.md`; `python tools\tests\renderer_validation_matrix.py --list` prints the benchmark case and performance regression thresholds.
 - Known limitations: Phase 16 adds the capture contract, preset budgets, and opt-in scalability hooks. It does not claim a real gameplay performance win until the manual SP/MP benchmark scenes and RenderDoc captures are run on target hardware.
 
 ## Phase 17: Default Promotion And Cleanup

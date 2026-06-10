@@ -232,17 +232,17 @@ def validate_packaged_mod_manifest(package_game_dir: Path, version: str) -> None
     if manifest.get("version") != version:
         mismatches.append(f"version={manifest.get('version')!r}")
 
-    required_version_text = manifest.get("requiredOpenQ4Version")
+    required_version_text = manifest.get("requiredopenQ4Version")
     required_version = (
         parse_stable_base_version(required_version_text)
         if isinstance(required_version_text, str)
         else None
     )
     if required_version is None:
-        mismatches.append(f"requiredOpenQ4Version={required_version_text!r}")
+        mismatches.append(f"requiredopenQ4Version={required_version_text!r}")
     elif required_version > release_version:
         mismatches.append(
-            f"requiredOpenQ4Version={required_version_text!r} "
+            f"requiredopenQ4Version={required_version_text!r} "
             f"(requires newer than package {version})"
         )
 

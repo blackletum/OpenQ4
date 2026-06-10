@@ -3,7 +3,7 @@
 #include "Radiant_resource.h"
 #include "../../AutoVersion.h"
 
-#define OPENQ4_RADIANT_ABOUT_TEXT "OpenQ4 Radiant " VERSION_PRODUCT_STRING "\nCopyright (C) 1999-2003 id Software, Inc. and 2026 DarkMatter Productions\n\n"
+#define OPENQ4_RADIANT_ABOUT_TEXT "openQ4 Radiant " VERSION_PRODUCT_STRING "\nCopyright (C) 1999-2003 id Software, Inc. and 2026 DarkMatter Productions\n\n"
 
 #define APSTUDIO_READONLY_SYMBOLS
 /////////////////////////////////////////////////////////////////////////////
@@ -1049,7 +1049,7 @@ END
 
 IDD_ABOUT DIALOG  0, 0, 275, 223
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "About OpenQ4 Radiant"
+CAPTION "About openQ4 Radiant"
 FONT 8, "MS Sans Serif"
 BEGIN
     DEFPUSHBUTTON   "OK",IDOK,236,7,35,14
@@ -2108,12 +2108,12 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName", "DarkMatter Productions"
-            VALUE "FileDescription", "OpenQ4 Radiant"
+            VALUE "FileDescription", "openQ4 Radiant"
             VALUE "FileVersion", "0, 0, 1, 0"
-            VALUE "InternalName", "OpenQ4 Radiant"
+            VALUE "InternalName", "openQ4 Radiant"
             VALUE "LegalCopyright", "Copyright (C) 1999-2003 id Software, Inc. and 2026 DarkMatter Productions"
-            VALUE "OriginalFilename", "OpenQ4Radiant.exe"
-            VALUE "ProductName", "OpenQ4"
+            VALUE "OriginalFilename", "openQ4Radiant.exe"
+            VALUE "ProductName", "openQ4"
             VALUE "ProductVersion", "0, 0, 1, 0"
         END
     END
@@ -2494,14 +2494,14 @@ END
 
 STRINGTABLE 
 BEGIN
-    IDR_MAINFRAME           "OpenQ4"
+    IDR_MAINFRAME           "openQ4"
     IDR_RADIANTYPE          "\nRadian\nRadian\n\n\nRadiant.Document\nRadian Document"
     IDR_SHADERTYPE          "\nUntitled\nSHADER Document\nShader Files (*.shader)\n.shader\nShaderFileType\nSHADER File Type\nSHADER\nShader Files\n"
 END
 
 STRINGTABLE 
 BEGIN
-    AFX_IDS_APP_TITLE       "OpenQ4"
+    AFX_IDS_APP_TITLE       "openQ4"
     AFX_IDS_IDLEMESSAGE     "Ready"
 END
 
@@ -2802,7 +2802,7 @@ END
 STRINGTABLE 
 BEGIN
     ID_SHOW_LIGHTVOLUMES    "Show Light Volumes\nShow Light Volumes"
-    ID_SHOW_DOOM            "Enable OpenQ4\n"
+    ID_SHOW_DOOM            "Enable openQ4\n"
     ID_SELECTION_MOVEONLY   "Move selection only ( No size )\nMove selection only ( No size )"
 END
 

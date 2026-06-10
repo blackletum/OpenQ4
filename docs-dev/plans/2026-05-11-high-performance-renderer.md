@@ -1,14 +1,14 @@
-# Reworking OpenQ4 for Extreme Renderer Performance and Tiered GL and Metal Support
+# Reworking openQ4 for Extreme Renderer Performance and Tiered GL and Metal Support
 
 ## Executive summary
 
-The analysed codebase is the urlthemuffinator/OpenQ4 high-framerate branchhttps://github.com/themuffinator/OpenQ4/tree/high-framerate-rendering-phase4. The most important conclusion is that the renderer redesign should **not** use OpenGL 4.3 as the architectural baseline. In this codebase, the current renderer still creates a generic SDL OpenGL context without explicitly negotiating a modern core profile, and the renderer state and capability model still centre on compatibility-era features such as ARB vertex/fragment programs, ARB2 path validation, compatibility-style extension checks, and an old vertex-cache model. The branch’s own high-framerate work is primarily about **presentation/simulation decoupling, interpolation, and compatibility hardening**, not yet a ground-up renderer rewrite. fileciteturn16file0 fileciteturn19file0 fileciteturn20file0 fileciteturn18file0
+The analysed codebase is the urlthemuffinator/openQ4 high-framerate branchhttps://github.com/themuffinator/openQ4/tree/high-framerate-rendering-phase4. The most important conclusion is that the renderer redesign should **not** use OpenGL 4.3 as the architectural baseline. In this codebase, the current renderer still creates a generic SDL OpenGL context without explicitly negotiating a modern core profile, and the renderer state and capability model still centre on compatibility-era features such as ARB vertex/fragment programs, ARB2 path validation, compatibility-style extension checks, and an old vertex-cache model. The branch’s own high-framerate work is primarily about **presentation/simulation decoupling, interpolation, and compatibility hardening**, not yet a ground-up renderer rewrite. fileciteturn16file0 fileciteturn19file0 fileciteturn20file0 fileciteturn18file0
 
 The right design is a **tiered renderer** with a **GL 3.3-class modern baseline**, a **GL 2.x compatibility fallback**, a **GL 4.1 macOS-class tier** as requested, a **GL 4.3 “first fully GPU-driven” tier**, a **GL 4.4/4.5 low-overhead tier**, a **GL 4.6-plus/extensions tier**, and a **Metal backend family**. In other words: **4.3 should be the first premium tier, not the minimum tier**. The official OpenGL registry is the correct primary source for the spec and extension ladder; it explicitly tracks the 2.1, 3.3, 4.1, 4.3, 4.4, 4.5, and 4.6 specification lineage and the extension registry used to capability-gate later features. urlofficial OpenGL registryturn0search0 citeturn0search0
 
-Architecturally, OpenQ4 should move to a **data-oriented scene extraction layer**, **draw-packet generation**, **render graph execution**, and **resource-table abstraction**, then choose between **deferred**, **deferred-lite**, and **forward+** depending on tier, bandwidth, and scene characteristics. The original Forward+ paper is still directly relevant because it frames forward clustered/tiled lighting as a way to keep material flexibility while culling light lists before shading, and the clustered-shading paper remains relevant because it shows why 3D clustering reduces wasted lighting work versus screen-space-only binning. urlForward+ paperturn0search3 citeturn0search3turn0search7
+Architecturally, openQ4 should move to a **data-oriented scene extraction layer**, **draw-packet generation**, **render graph execution**, and **resource-table abstraction**, then choose between **deferred**, **deferred-lite**, and **forward+** depending on tier, bandwidth, and scene characteristics. The original Forward+ paper is still directly relevant because it frames forward clustered/tiled lighting as a way to keep material flexibility while culling light lists before shading, and the clustered-shading paper remains relevant because it shows why 3D clustering reduces wasted lighting work versus screen-space-only binning. urlForward+ paperturn0search3 citeturn0search3turn0search7
 
-For modern systems, the target should be **multi-threaded scene build + GPU-driven visibility + indirect submission + persistent mapped streaming + adaptive frame pacing**. For older or low-power systems, the design must fall back cleanly to **CPU visibility, CPU-built batches, instancing where available, reduced MRT pressure, simplified lighting, and conventional buffer orphan/map streaming**. The repo already contains evidence that OpenQ4 can benefit from careful asynchronous and threaded work: the light-grid baking path uses worker threads and optional pixel-pack-buffer async readback, and the shadow-map documentation already describes explicit fallback to the legacy shadow path when the newer path is unavailable or unsuitable. fileciteturn14file2 fileciteturn14file3
+For modern systems, the target should be **multi-threaded scene build + GPU-driven visibility + indirect submission + persistent mapped streaming + adaptive frame pacing**. For older or low-power systems, the design must fall back cleanly to **CPU visibility, CPU-built batches, instancing where available, reduced MRT pressure, simplified lighting, and conventional buffer orphan/map streaming**. The repo already contains evidence that openQ4 can benefit from careful asynchronous and threaded work: the light-grid baking path uses worker threads and optional pixel-pack-buffer async readback, and the shadow-map documentation already describes explicit fallback to the legacy shadow path when the newer path is unavailable or unsuitable. fileciteturn14file2 fileciteturn14file3
 
 Assumptions used in this report are intentionally conservative. There is no fixed hardware target; the engine must scale from old integrated GPUs and low-power PCs through modern desktops. “GL 4.1” is treated here as the requested macOS OpenGL tier. Bindless textures are treated as **optional accelerants**, not a mandatory baseline. Metal is treated as a first-class backend opportunity, but not as a requirement for the GL renderer path. citeturn0search0turn0search4turn0search6turn0search9
 
@@ -16,7 +16,7 @@ Assumptions used in this report are intentionally conservative. There is no fixe
 
 The branch documentation shows that recent work has focused on **decoupling presentation from the fixed 60 Hz gameplay cadence**, validating high-refresh presentation targets such as 240 FPS, adding interpolation, and hardening special cases like cinematics, GUI timing, AVI capture, and repeated-state redraw behaviour. That is important groundwork, but it is not yet a renderer architecture overhaul. Any redesign should therefore **preserve and build on that work**, not discard it. fileciteturn18file0
 
-The current renderer and platform layer still behave like a legacy compatibility-era renderer. In the SDL backend, OpenQ4 resets GL attributes and creates a context, but it does **not** negotiate a version/profile ladder such as 4.6 core → 4.5 core → 4.3 core → 4.1 core → 3.3 core → compatibility fallback. In renderer init, OpenQ4 still probes and records features such as ARB vertex/fragment programs, NV register combiners, ATI fragment shaders, compatibility-style multitexture checks, and the ARB2 path. That makes a hard 4.3 baseline mismatched to the present code’s actual structure. fileciteturn16file0 fileciteturn19file0
+The current renderer and platform layer still behave like a legacy compatibility-era renderer. In the SDL backend, openQ4 resets GL attributes and creates a context, but it does **not** negotiate a version/profile ladder such as 4.6 core → 4.5 core → 4.3 core → 4.1 core → 3.3 core → compatibility fallback. In renderer init, openQ4 still probes and records features such as ARB vertex/fragment programs, NV register combiners, ATI fragment shaders, compatibility-style multitexture checks, and the ARB2 path. That makes a hard 4.3 baseline mismatched to the present code’s actual structure. fileciteturn16file0 fileciteturn19file0
 
 The current `glconfig_t` also reflects this mixed-era model. It tracks compatibility-era features, ARB2 flags, GLSL availability, multitexture counts, simple path preferences, and renderer-path switches such as `allowARB2Path`, `allowNV20Path`, and `preferSimpleLighting`. A redesign should replace that with a **capability database** that records **functional features** rather than renderer-history branches. fileciteturn17file0 fileciteturn19file0
 
@@ -145,7 +145,7 @@ That is a direct response to the current platform code, which creates a context 
 
 ## Target renderer architecture
 
-The redesign should preserve OpenQ4’s game-facing renderer API, but internally replace the monolithic back-end with five clear layers: **scene extraction**, **visibility and LOD**, **resource tables**, **render graph**, and **backend execution**. The result is one renderer that scales from old GL compatibility machines to modern GPU-driven GL and Metal devices. fileciteturn17file0 fileciteturn19file0
+The redesign should preserve openQ4’s game-facing renderer API, but internally replace the monolithic back-end with five clear layers: **scene extraction**, **visibility and LOD**, **resource tables**, **render graph**, and **backend execution**. The result is one renderer that scales from old GL compatibility machines to modern GPU-driven GL and Metal devices. fileciteturn17file0 fileciteturn19file0
 
 ### Recommended architecture
 
@@ -172,7 +172,7 @@ flowchart TD
 
 ### Scene extraction and draw packets
 
-The current OpenQ4 front-end should stop “thinking in GL calls” and start emitting **draw packets**. A draw packet should contain immutable references to geometry, material ID, per-pass flags, instance data offsets, and sort keys, but **no direct OpenGL state calls**. That allows worker threads to prepare large portions of the frame without touching the GL context, which is crucial because OpenGL submission still has a single-thread choke point on most drivers. The existing decoupled presentation work in the branch already proves that OpenQ4 benefits from separating timing domains; the same principle should be applied to renderer job structure. fileciteturn18file0 fileciteturn19file0
+The current openQ4 front-end should stop “thinking in GL calls” and start emitting **draw packets**. A draw packet should contain immutable references to geometry, material ID, per-pass flags, instance data offsets, and sort keys, but **no direct OpenGL state calls**. That allows worker threads to prepare large portions of the frame without touching the GL context, which is crucial because OpenGL submission still has a single-thread choke point on most drivers. The existing decoupled presentation work in the branch already proves that openQ4 benefits from separating timing domains; the same principle should be applied to renderer job structure. fileciteturn18file0 fileciteturn19file0
 
 ### Visibility, world clustering, and LOD
 
@@ -194,7 +194,7 @@ The renderer should not choose one universal pipeline. It should choose per tier
 - **View models, subviews, GUI surfaces**: forward path, with explicit pass rules.
 - **Fallback path**: simple forward lighting with aggressively pruned light lists.
 
-The rationale is exactly the same as in the Forward+ paper: forward+ preserves material flexibility while still reducing the number of lights each shader invocation must consider. That fits OpenQ4’s legacy material system much better than a “deferred only” rewrite. citeturn0search3
+The rationale is exactly the same as in the Forward+ paper: forward+ preserves material flexibility while still reducing the number of lights each shader invocation must consider. That fits openQ4’s legacy material system much better than a “deferred only” rewrite. citeturn0search3
 
 ### Resource tables and bindless-style abstraction
 
@@ -209,7 +209,7 @@ This is one of the biggest cross-tier wins. On classic GL, materials bind textur
 
 ### Render graph
 
-Add a real **render graph**. OpenQ4 already has multiple off-screen paths, shadow resources, and post-process targets, but they are still managed in a relatively ad hoc style. A frame graph should own:
+Add a real **render graph**. openQ4 already has multiple off-screen paths, shadow resources, and post-process targets, but they are still managed in a relatively ad hoc style. A frame graph should own:
 
 - pass dependencies,
 - transient texture/buffer lifetimes,
@@ -241,7 +241,7 @@ For modern systems, the redesign should target a pipeline where the CPU prepares
    Keep the current presentation/simulation decoupling, but make the renderer pacing-aware. The engine should track CPU build time, submit time, and GPU completion time, then decide whether to shift cost from GPU to CPU or vice versa. Examples: choose deferred-lite instead of full deferred on bandwidth-bound GPUs; choose CPU culling instead of GPU culling if compute is slower than scalar CPU visibility on a low-end GPU. fileciteturn18file0
 
 6. **Async resource uploads**  
-   Create an explicit upload manager. On modern GL, use persistent-mapped staging or PBO upload streams; on older GL, use orphaned pixel unpack buffers or subimage uploads; on Metal, use blit encoders. The repo’s current light-grid baking path already demonstrates that asynchronous readback and worker coordination can be made to work in OpenQ4, so the architectural precedent is there. fileciteturn14file2
+   Create an explicit upload manager. On modern GL, use persistent-mapped staging or PBO upload streams; on older GL, use orphaned pixel unpack buffers or subimage uploads; on Metal, use blit encoders. The repo’s current light-grid baking path already demonstrates that asynchronous readback and worker coordination can be made to work in openQ4, so the architectural precedent is there. fileciteturn14file2
 
 ### Old and low-power fallback strategy
 
@@ -256,7 +256,7 @@ For modern systems, the redesign should target a pipeline where the CPU prepares
 | Post FX | Small curated set | Minimal or disabled |
 | Scene density | Geometry/shading LOD | Stronger LOD and culling thresholds |
 
-The guiding rule is that low-end paths should still use the **same scene data**, just with fewer passes, smaller working sets, and simpler execution. That makes the codebase more robust than maintaining two unrelated renderers. OpenQ4’s shadow-map guide already establishes the right behaviour here: if the preferred path fails or is unavailable, fall back to the proven legacy path rather than dropping the effect entirely. fileciteturn14file3
+The guiding rule is that low-end paths should still use the **same scene data**, just with fewer passes, smaller working sets, and simpler execution. That makes the codebase more robust than maintaining two unrelated renderers. openQ4’s shadow-map guide already establishes the right behaviour here: if the preferred path fails or is unavailable, fall back to the proven legacy path rather than dropping the effect entirely. fileciteturn14file3
 
 ## Shader conversion, permutation control, and hybrid API support
 
@@ -420,7 +420,7 @@ Use five scene classes:
 4. **Dynamic-model crowd**: many animated actors and projectiles.
 5. **Streaming stress**: rapid movement and resource churn.
 
-Because OpenQ4 already has shadow maps, light-grid baking, subviews, GUI surfaces, and heavy special-effect handling, benchmark content must include those systems instead of only geometry throughput. fileciteturn19file0 fileciteturn14file2 fileciteturn14file3
+Because openQ4 already has shadow maps, light-grid baking, subviews, GUI surfaces, and heavy special-effect handling, benchmark content must include those systems instead of only geometry throughput. fileciteturn19file0 fileciteturn14file2 fileciteturn14file3
 
 ### Suggested graphs for continuous tracking
 
@@ -434,7 +434,7 @@ Because OpenQ4 already has shadow maps, light-grid baking, subviews, GUI surface
 
 ### Final recommendation
 
-The renderer redesign should adopt **GL3.3 as the real architectural baseline**, keep a **GL2.x compatibility fallback**, treat **GL4.3 as the first full GPU-driven tier**, use **GL4.4/4.5 for low-overhead submission and persistent mapping**, use **GL4.6-plus/extensions as an opportunistic top end**, and define a **Metal baseline and Metal advanced tier** around argument buffers and indirect command buffers. That gives OpenQ4 one coherent renderer strategy that can push much denser scenes at high refresh rates on modern PCs while still scaling down cleanly on old or low-power systems. citeturn0search0turn0search3turn0search4turn0search6turn0search9
+The renderer redesign should adopt **GL3.3 as the real architectural baseline**, keep a **GL2.x compatibility fallback**, treat **GL4.3 as the first full GPU-driven tier**, use **GL4.4/4.5 for low-overhead submission and persistent mapping**, use **GL4.6-plus/extensions as an opportunistic top end**, and define a **Metal baseline and Metal advanced tier** around argument buffers and indirect command buffers. That gives openQ4 one coherent renderer strategy that can push much denser scenes at high refresh rates on modern PCs while still scaling down cleanly on old or low-power systems. citeturn0search0turn0search3turn0search4turn0search6turn0search9
 
 ### Open questions and limitations
 

@@ -180,7 +180,7 @@ These are materials with holes cut by alpha test, such as:
 Behavior:
 - They cast cutout shadows in both projected and point shadow-map paths.
 - `r_shadowMapHashedAlpha 1` is the recommended mode and is enabled by default.
-- If a perforated stage uses explicit texture coordinates, OpenQ4 can render it with either hashed alpha or hard alpha-test shadowing; unsupported animated texgen cutouts cast conservative solid depth instead of dropping the shadow.
+- If a perforated stage uses explicit texture coordinates, openQ4 can render it with either hashed alpha or hard alpha-test shadowing; unsupported animated texgen cutouts cast conservative solid depth instead of dropping the shadow.
 - Translucent shadow coverage stages preserve the same material alpha-test mode, so blended foliage/glass masks stay consistent with opaque cutouts.
 
 Hashed alpha notes:

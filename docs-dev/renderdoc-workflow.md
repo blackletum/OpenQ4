@@ -1,12 +1,12 @@
 # RenderDoc Workflow
 
-This document covers the OpenQ4 RenderDoc status and the March 2026 black-viewport investigation.
+This document covers the openQ4 RenderDoc status and the March 2026 black-viewport investigation.
 
 ## Root Cause
 
 - The black viewport reports were not caused by missing SMAA assets in the release package.
 - The older two-pass SMAA placeholder path had an undefined OpenGL feedback loop in the neighborhood-blend pass:
-  - `OpenQ4-GameLibs/src/game/Game_render.cpp` already copied the resolved scene into `_currentRender` before the SMAA passes.
+  - `openQ4-GameLibs/src/game/Game_render.cpp` already copied the resolved scene into `_currentRender` before the SMAA passes.
   - [`content/baseoq4/materials/postprocess_openq4.mtr`](../content/baseoq4/materials/postprocess_openq4.mtr) previously drew `postprocess/smaa_blend` into `_postProcessAlbedo0` while also sampling `_postProcessAlbedo0`.
 - Some drivers preserved the previous texture contents and appeared to work. Others returned black or undefined data. That is why the issue only reproduced for some users and clustered around `r_postAA 1`.
 - Current builds no longer use that path. `r_postAA 1` now stages the resolved scene in `_postProcessAlbedo2`, runs a three-pass GLSL SMAA 1x implementation from that stable source, then blits the result back to `_postProcessAlbedo0` for the remaining post stack.
@@ -14,20 +14,20 @@ This document covers the OpenQ4 RenderDoc status and the March 2026 black-viewpo
 ## Current RenderDoc Limitation
 
 - Upstream RenderDoc currently supports `OpenGL 3.2 - 4.6 Core` but not `OpenGL 1.0 - 2.0 Compat`; see the RenderDoc project README: <https://github.com/baldurk/renderdoc>.
-- OpenQ4's current renderer still depends on the ARB2 compatibility path (`GL_ARB_fragment_program`, `GL_ARB_shader_objects`, and related fixed-function era state).
-- OpenQ4 now has an explicit GL tier/context ladder (`r_glTier`) and can request core-profile contexts for forced modern tiers, but the shipping executor is still routed through the ARB2 bridge. Treat forced core contexts as renderer-modernization bring-up only until the GL 3.3/4.x executor lands.
-- On this machine, launching OpenQ4 through RenderDoc injection caused required compatibility features to disappear during startup, which aborted renderer initialization before any frame could be captured.
-- OpenQ4 now reports the missing required OpenGL features explicitly during that failure instead of only showing the generic "video card / driver" error.
+- openQ4's current renderer still depends on the ARB2 compatibility path (`GL_ARB_fragment_program`, `GL_ARB_shader_objects`, and related fixed-function era state).
+- openQ4 now has an explicit GL tier/context ladder (`r_glTier`) and can request core-profile contexts for forced modern tiers, but the shipping executor is still routed through the ARB2 bridge. Treat forced core contexts as renderer-modernization bring-up only until the GL 3.3/4.x executor lands.
+- On this machine, launching openQ4 through RenderDoc injection caused required compatibility features to disappear during startup, which aborted renderer initialization before any frame could be captured.
+- openQ4 now reports the missing required OpenGL features explicitly during that failure instead of only showing the generic "video card / driver" error.
 - The commands and wrapper below are retained as plumbing for future renderer modernization, but today they should be treated as unsupported on the shipping OpenGL renderer.
 
 ## Current Workflow Status
 
-OpenQ4 now exposes two console commands:
+openQ4 now exposes two console commands:
 
 - `renderDocStatus`
 - `renderDocCapture [frames]`
 
-`renderDocCapture` arms a next-frame capture when OpenQ4 is already running under RenderDoc. If `frames` is greater than `1`, it requests a multi-frame capture.
+`renderDocCapture` arms a next-frame capture when openQ4 is already running under RenderDoc. If `frames` is greater than `1`, it requests a multi-frame capture.
 
 For the current renderer, the scripted wrapper intentionally fails fast unless you pass `-AllowUnsupported`. This avoids booting the game into a guaranteed unsupported capture attempt from VS Code tasks or ad-hoc command lines.
 
@@ -45,7 +45,7 @@ or:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\debug\renderdoc_capture.ps1 -Mode MP -Map mp/q4dm2 -AllowUnsupported
 ```
 
-The wrapper still launches `renderdoccmd capture`, starts OpenQ4 from `.install/`, waits for the map to settle, then calls `renderDocCapture`. Captures are written under `fs_savepath/baseoq4/renderdoc/`.
+The wrapper still launches `renderdoccmd capture`, starts openQ4 from `.install/`, waits for the map to settle, then calls `renderDocCapture`. Captures are written under `fs_savepath/baseoq4/renderdoc/`.
 
 On the current renderer, the launch is still expected to fail before first frame with the explicit RenderDoc compatibility error above. If no `.rdc` file is produced, the wrapper reports that limitation instead of silently succeeding.
 

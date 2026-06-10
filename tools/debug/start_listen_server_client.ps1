@@ -29,7 +29,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-function New-OpenQ4CommonArgs {
+function New-openQ4CommonArgs {
     param(
         [Parameter(Mandatory = $true)]
         [string]$SavePath,
@@ -121,7 +121,7 @@ $fullscreenValue = if ($Fullscreen) { "1" } else { "0" }
 $maxFPSValue = $MaxFPS.ToString()
 $swapIntervalValue = $SwapInterval.ToString()
 
-$serverArgs = New-OpenQ4CommonArgs `
+$serverArgs = New-openQ4CommonArgs `
     -SavePath $serverSavePath `
     -LogFileName "logs/listen-server.log" `
     -InstallDir $installDir `
@@ -142,7 +142,7 @@ $serverArgs += @(
     "+spawnServer", $Map
 )
 
-$clientArgs = New-OpenQ4CommonArgs `
+$clientArgs = New-openQ4CommonArgs `
     -SavePath $clientSavePath `
     -LogFileName "logs/listen-client.log" `
     -InstallDir $installDir `

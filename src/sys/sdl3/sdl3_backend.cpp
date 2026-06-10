@@ -3696,6 +3696,14 @@ bool GLimp_Init(glimpParms_t parms) {
 	SDL3_SetMouseHintDefaults();
 	SDL3_SetVideoHintDefaults();
 
+#if defined(OPENQ4_SDL3_POSIX_HOST)
+	if (!s_sdlVideoActive && (SDL_WasInit(SDL_INIT_VIDEO) & SDL_INIT_VIDEO) != 0) {
+		common->Printf("SDL3: adopting video subsystem initialized by early startup UI\n");
+		s_sdlVideoActive = true;
+		Posix_ReleaseStartupSDLVideoOwnership();
+	}
+#endif
+
 	if (!s_sdlVideoActive) {
 		if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
 			common->Printf("SDL3: failed to initialize video subsystem: %s\n", SDL_GetError());
@@ -3725,60 +3733,70 @@ bool GLimp_Init(glimpParms_t parms) {
 		common->Printf("SDL3: no OpenGL context candidates were generated for r_glTier %s\n", r_glTier.GetString());
 		return false;
 	}
-	SDL3_SetGLAttributesForCandidate(parms, contextCandidates[0]);
 
 	SDL_WindowFlags flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
 	if (!parms.fullScreen && parms.borderless) {
 		flags |= SDL_WINDOW_BORDERLESS;
 	}
-	s_sdlWindow = SDL_CreateWindow(GAME_NAME, parms.width, parms.height, flags);
-	if (!s_sdlWindow) {
-		common->Printf("SDL3: could not create window: %s\n", SDL_GetError());
-		return false;
-	}
 
-	if (!parms.fullScreen) {
-		int targetX = win32.win_xpos.GetInteger();
-		int targetY = win32.win_ypos.GetInteger();
-		int targetWidth = parms.width;
-		int targetHeight = parms.height;
-
-		const sdl3DisplaySelection_t selectedDisplay = SDL3_ResolveTargetDisplay(false);
-		if (selectedDisplay.id != 0) {
-			SDL_Rect bounds;
-			if (SDL3_GetDisplayWindowedPlacementBounds(selectedDisplay.id, bounds)) {
-				const bool needsRecoveryPlacement = !SDL3_WindowRectIntersectsAnyDisplay(targetX, targetY, targetWidth, targetHeight);
-				const bool recenterIfOutside = (r_screen.GetInteger() >= 0) || needsRecoveryPlacement;
-				SDL3_ConstrainWindowRectToBounds(targetX, targetY, targetWidth, targetHeight, bounds, recenterIfOutside);
-			}
-		}
-
-		(void)SDL_SetWindowSize(s_sdlWindow, targetWidth, targetHeight);
-		(void)SDL3_SetWindowPositionCompat(
-			targetX,
-			targetY,
-			selectedDisplay.id,
-			r_screen.GetInteger() >= 0,
-			"place initial window");
-	}
-
+	idStr lastContextError;
 	s_sdlContext = NULL;
 	for (int candidateIndex = 0; candidateIndex < contextCandidateCount; ++candidateIndex) {
 		const rendererContextCandidate_t &candidate = contextCandidates[candidateIndex];
 		SDL3_SetGLAttributesForCandidate(parms, candidate);
+
+		s_sdlWindow = SDL_CreateWindow(GAME_NAME, parms.width, parms.height, flags);
+		if (!s_sdlWindow) {
+			lastContextError = SDL_GetError();
+			common->Printf("SDL3: could not create window for OpenGL context %s: %s\n", candidate.label, lastContextError.c_str());
+			continue;
+		}
+
+		if (!parms.fullScreen) {
+			int targetX = win32.win_xpos.GetInteger();
+			int targetY = win32.win_ypos.GetInteger();
+			int targetWidth = parms.width;
+			int targetHeight = parms.height;
+
+			const sdl3DisplaySelection_t selectedDisplay = SDL3_ResolveTargetDisplay(false);
+			if (selectedDisplay.id != 0) {
+				SDL_Rect bounds;
+				if (SDL3_GetDisplayWindowedPlacementBounds(selectedDisplay.id, bounds)) {
+					const bool needsRecoveryPlacement = !SDL3_WindowRectIntersectsAnyDisplay(targetX, targetY, targetWidth, targetHeight);
+					const bool recenterIfOutside = (r_screen.GetInteger() >= 0) || needsRecoveryPlacement;
+					SDL3_ConstrainWindowRectToBounds(targetX, targetY, targetWidth, targetHeight, bounds, recenterIfOutside);
+				}
+			}
+
+			(void)SDL_SetWindowSize(s_sdlWindow, targetWidth, targetHeight);
+			(void)SDL3_SetWindowPositionCompat(
+				targetX,
+				targetY,
+				selectedDisplay.id,
+				r_screen.GetInteger() >= 0,
+				"place initial window");
+		}
+
 		common->Printf("SDL3: trying OpenGL context %s\n", candidate.label);
 		s_sdlContext = SDL_GL_CreateContext(s_sdlWindow);
-		if (s_sdlContext) {
+		if (s_sdlContext && SDL_GL_MakeCurrent(s_sdlWindow, s_sdlContext)) {
 			SDL3_RecordGLContextCandidate(candidate);
 			common->Printf("SDL3: created OpenGL context %s\n", glConfig.contextRequest.label);
 			break;
 		}
-		common->Printf("SDL3: OpenGL context %s failed: %s\n", candidate.label, SDL_GetError());
-	}
-	if (!s_sdlContext) {
-		common->Printf("SDL3: could not create OpenGL context: %s\n", SDL_GetError());
+
+		lastContextError = SDL_GetError();
+		common->Printf("SDL3: OpenGL context %s failed: %s\n", candidate.label, lastContextError.c_str());
+		if (s_sdlContext) {
+			(void)SDL_GL_MakeCurrent(s_sdlWindow, NULL);
+			(void)SDL_GL_DestroyContext(s_sdlContext);
+			s_sdlContext = NULL;
+		}
 		SDL_DestroyWindow(s_sdlWindow);
 		s_sdlWindow = NULL;
+	}
+	if (!s_sdlContext) {
+		common->Printf("SDL3: could not create OpenGL context: %s\n", lastContextError.Length() > 0 ? lastContextError.c_str() : SDL_GetError());
 		return false;
 	}
 

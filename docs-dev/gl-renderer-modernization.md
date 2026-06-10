@@ -1,6 +1,6 @@
 # GL Renderer Modernization
 
-OpenQ4 now has the first GL-only foundation for the high-performance renderer redesign. This milestone does not replace the ARB2 renderer yet; it adds the capability, selection, telemetry, compatibility bridge, and opt-in modern-executor preparation path that later GL 3.3/4.x draw execution will use.
+openQ4 now has the first GL-only foundation for the high-performance renderer redesign. This milestone does not replace the ARB2 renderer yet; it adds the capability, selection, telemetry, compatibility bridge, and opt-in modern-executor preparation path that later GL 3.3/4.x draw execution will use.
 
 ## Runtime Tiers
 
@@ -75,7 +75,7 @@ r_rendererShaderReload 0
 
 ## Cross-Platform Context Ladder
 
-OpenQ4 now builds context candidates from one shared renderer-side ladder instead of keeping per-platform arrays. Windows SDL3, Linux SDL3, native Linux/GLX, and native macOS/NSOpenGL all record the selected request in `glConfig.contextRequest`, and `gfxInfo` prints both requested and actual debug-context state.
+openQ4 now builds context candidates from one shared renderer-side ladder instead of keeping per-platform arrays. Windows SDL3, Linux SDL3, native Linux/GLX, and native macOS/NSOpenGL all record the selected request in `glConfig.contextRequest`, and `gfxInfo` prints both requested and actual debug-context state.
 
 Forced modern tiers prefer the requested compatibility-profile tier first, then lower compatibility-profile tiers, then the unversioned compatibility fallback, with core-profile candidates retained only as a final diagnostic fallback:
 

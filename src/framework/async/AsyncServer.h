@@ -60,7 +60,7 @@ typedef enum {
 typedef enum {
 	AUTH_NONE = 0,	// no reply yet
 	AUTH_OK,		// this client is good
-	AUTH_WAIT,		// legacy auth state (unused in OpenQ4)
+	AUTH_WAIT,		// legacy auth state (unused in openQ4)
 	AUTH_DENY,		// denied - don't send me anything about this client anymore
 	AUTH_MAXSTATES
 } authReply_t;

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validation profiles for OpenQ4 local pushes and pull requests."""
+"""Validation profiles for openQ4 local pushes and pull requests."""
 
 from __future__ import annotations
 
@@ -111,12 +111,12 @@ def resolve_meson_wrapper(root: Path) -> list[str]:
     if host_is_windows():
         wrapper = root / "tools" / "build" / "meson_setup.ps1"
         if not wrapper.is_file():
-            raise ValidationError(f"OpenQ4 Meson wrapper not found: {wrapper}")
+            raise ValidationError(f"openQ4 Meson wrapper not found: {wrapper}")
         return ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(wrapper)]
 
     wrapper = root / "tools" / "build" / "meson_setup.sh"
     if not wrapper.is_file():
-        raise ValidationError(f"OpenQ4 Meson wrapper not found: {wrapper}")
+        raise ValidationError(f"openQ4 Meson wrapper not found: {wrapper}")
     return ["bash", str(wrapper)]
 
 
@@ -162,7 +162,7 @@ def validation_env(args: argparse.Namespace, root: Path) -> dict[str, str]:
     if args.game_libs_repo:
         env["OPENQ4_GAMELIBS_REPO"] = str(Path(args.game_libs_repo).resolve())
     elif "OPENQ4_GAMELIBS_REPO" not in env:
-        default_game_libs = (root / ".." / "OpenQ4-GameLibs").resolve()
+        default_game_libs = (root / ".." / "openQ4-GameLibs").resolve()
         env["OPENQ4_GAMELIBS_REPO"] = str(default_game_libs)
 
     if args.build_gamelibs:
@@ -196,7 +196,7 @@ def ensure_game_libs_repo(env: dict[str, str]) -> None:
     expected = game_libs_repo / "src" / "game"
     if not expected.is_dir():
         raise ValidationError(
-            "OpenQ4-GameLibs source directory was not found. "
+            "openQ4-GameLibs source directory was not found. "
             f"Expected: {expected}"
         )
 
@@ -415,7 +415,7 @@ def apply_profile_defaults(args: argparse.Namespace, root: Path) -> None:
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("profile", choices=sorted(PROFILE_DEFAULTS), help="Validation profile to run.")
-    parser.add_argument("--source-root", default="", help="OpenQ4 source root. Defaults to this script's repository.")
+    parser.add_argument("--source-root", default="", help="openQ4 source root. Defaults to this script's repository.")
     parser.add_argument("--build-dir", default=None, help="Meson build directory for this validation run.")
     parser.add_argument("--buildtype", default=None, help="Meson buildtype. Profile default: push=debug, pr=debug.")
     parser.add_argument("--platform-backend", default="", help="Optional Meson platform_backend override.")
@@ -425,8 +425,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--no-install", dest="install", action="store_false", help="Skip Meson install and staged payload checks.")
     parser.add_argument("--skip-python-tests", action="store_true", help="Skip lightweight Python validation tests.")
     parser.add_argument("--skip-build", action="store_true", help="Skip Meson setup/compile/install steps.")
-    parser.add_argument("--build-gamelibs", action="store_true", help="Ask the Windows Meson wrapper to build OpenQ4-GameLibs during compile.")
-    parser.add_argument("--game-libs-repo", default="", help="Override the OpenQ4-GameLibs companion repository path.")
+    parser.add_argument("--build-gamelibs", action="store_true", help="Ask the Windows Meson wrapper to build openQ4-GameLibs during compile.")
+    parser.add_argument("--game-libs-repo", default="", help="Override the openQ4-GameLibs companion repository path.")
     parser.add_argument("--skip-icon-sync", action="store_true", help="Set OPENQ4_SKIP_ICON_SYNC=1 for this run.")
     parser.add_argument("--jobs", "-j", type=int, default=None, help="Parallel compile job count passed to Meson.")
     parser.add_argument("--extra-setup-arg", action="append", default=[], help="Additional argument appended to Meson setup.")
@@ -441,7 +441,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Disable official q4base PK4 validation for assetless renderer startup smoke checks.",
     )
-    parser.add_argument("--fail-on-dirty", action="store_true", help="Fail when the OpenQ4 working tree has uncommitted changes.")
+    parser.add_argument("--fail-on-dirty", action="store_true", help="Fail when the openQ4 working tree has uncommitted changes.")
     parser.add_argument("--dry-run", action="store_true", help="Print the selected commands without executing them.")
     return parser.parse_args(argv)
 
@@ -456,7 +456,7 @@ def main(argv: list[str]) -> int:
     wrapper = resolve_meson_wrapper(root)
 
     started = time.monotonic()
-    print(f"OpenQ4 {args.profile} validation", flush=True)
+    print(f"openQ4 {args.profile} validation", flush=True)
     print(f"Source root: {root}", flush=True)
     print(f"Git revision: {describe_git_revision(root, env)}", flush=True)
     print(f"Build dir: {build_dir}", flush=True)

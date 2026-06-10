@@ -1,4 +1,4 @@
-// OpenQ4 napalm residue tuning.
+// openQ4 napalm residue tuning.
 // Keep the stock napalm impact glob, but make the lingering flame a smaller touch hazard
 // and keep it active for twice as long.
 

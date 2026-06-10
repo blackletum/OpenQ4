@@ -44,7 +44,7 @@ extern idCVar s_deviceName;
 
 static const char* OPENQ4_AUDIO_DEVICE_DEFAULT_CHOICE = "__OPENQ4_DEFAULT_AUDIO_DEVICE__";
 
-static bool OpenQ4_UseEnumerateAllDevices( ALCdevice* device ) {
+static bool openQ4_UseEnumerateAllDevices( ALCdevice* device ) {
 #if defined( ALC_ALL_DEVICES_SPECIFIER ) && defined( ALC_DEFAULT_ALL_DEVICES_SPECIFIER )
 	return alcIsExtensionPresent( device, "ALC_ENUMERATE_ALL_EXT" ) != AL_FALSE;
 #else
@@ -52,18 +52,18 @@ static bool OpenQ4_UseEnumerateAllDevices( ALCdevice* device ) {
 #endif
 }
 
-static ALCenum OpenQ4_GetPlaybackDevicesToken( ALCdevice* device ) {
+static ALCenum openQ4_GetPlaybackDevicesToken( ALCdevice* device ) {
 #if defined( ALC_ALL_DEVICES_SPECIFIER )
-	if( OpenQ4_UseEnumerateAllDevices( device ) ) {
+	if( openQ4_UseEnumerateAllDevices( device ) ) {
 		return ALC_ALL_DEVICES_SPECIFIER;
 	}
 #endif
 	return ALC_DEVICE_SPECIFIER;
 }
 
-static ALCenum OpenQ4_GetDefaultPlaybackDeviceToken( ALCdevice* device ) {
+static ALCenum openQ4_GetDefaultPlaybackDeviceToken( ALCdevice* device ) {
 #if defined( ALC_DEFAULT_ALL_DEVICES_SPECIFIER )
-	if( OpenQ4_UseEnumerateAllDevices( device ) ) {
+	if( openQ4_UseEnumerateAllDevices( device ) ) {
 		return ALC_DEFAULT_ALL_DEVICES_SPECIFIER;
 	}
 #endif
@@ -91,7 +91,7 @@ static openq4_alGenAuxiliaryEffectSlots_t qalGenAuxiliaryEffectSlots = NULL;
 static openq4_alDeleteAuxiliaryEffectSlots_t qalDeleteAuxiliaryEffectSlots = NULL;
 static openq4_alAuxiliaryEffectSloti_t qalAuxiliaryEffectSloti = NULL;
 
-static bool OpenQ4_LoadHardwareEfxProcs() {
+static bool openQ4_LoadHardwareEfxProcs() {
 	static bool initialized = false;
 	static bool available = false;
 
@@ -202,12 +202,12 @@ void idSoundHardware_OpenAL::GetAvailablePlaybackDevices( idStrList& deviceNames
 	deviceNames.Clear();
 	defaultDeviceName.Clear();
 
-	const ALCchar* defaultDevice = alcGetString( NULL, OpenQ4_GetDefaultPlaybackDeviceToken( NULL ) );
+	const ALCchar* defaultDevice = alcGetString( NULL, openQ4_GetDefaultPlaybackDeviceToken( NULL ) );
 	if( defaultDevice != NULL && defaultDevice[0] != '\0' ) {
 		defaultDeviceName = reinterpret_cast<const char*>( defaultDevice );
 	}
 
-	const ALCchar* deviceList = alcGetString( NULL, OpenQ4_GetPlaybackDevicesToken( NULL ) );
+	const ALCchar* deviceList = alcGetString( NULL, openQ4_GetPlaybackDevicesToken( NULL ) );
 	if( deviceList == NULL || deviceList[0] == '\0' ) {
 		return;
 	}
@@ -232,7 +232,7 @@ idStr idSoundHardware_OpenAL::GetActivePlaybackDeviceName( ALCdevice* device ) {
 
 	const ALCchar* activeDevice = NULL;
 #if defined( ALC_ALL_DEVICES_SPECIFIER )
-	if( OpenQ4_UseEnumerateAllDevices( device ) ) {
+	if( openQ4_UseEnumerateAllDevices( device ) ) {
 		activeDevice = alcGetString( device, ALC_ALL_DEVICES_SPECIFIER );
 	}
 #endif
@@ -529,7 +529,7 @@ void idSoundHardware_OpenAL::Init()
 	auxEffectSlot = 0;
 	auxReverbEffect = 0;
 #if OPENQ4_OPENAL_EFX_SUPPORTED
-	if( s_useEAXReverb.GetBool() && openALVersionSupported && alcIsExtensionPresent( openalDevice, "ALC_EXT_EFX" ) == AL_TRUE && OpenQ4_LoadHardwareEfxProcs() )
+	if( s_useEAXReverb.GetBool() && openALVersionSupported && alcIsExtensionPresent( openalDevice, "ALC_EXT_EFX" ) == AL_TRUE && openQ4_LoadHardwareEfxProcs() )
 	{
 		qalGenEffects( 1, &auxReverbEffect );
 		if( CheckALErrors() == AL_NO_ERROR && auxReverbEffect != 0 )

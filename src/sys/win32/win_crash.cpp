@@ -354,7 +354,7 @@ static void Sys_WriteCrashLog(
 	Sys_StringPrintf(
 		logBuffer,
 		ARRAYSIZE(logBuffer),
-		"OpenQ4 crash report\r\n"
+		"openQ4 crash report\r\n"
 		"Timestamp: %04u-%02u-%02u %02u:%02u:%02u.%03u\r\n"
 		"ProcessId: %lu\r\n"
 		"ThreadId: %lu\r\n"
@@ -477,7 +477,7 @@ static LONG WINAPI Sys_UnhandledExceptionFilter(LPEXCEPTION_POINTERS exceptionIn
 		Sys_StringPrintf(
 			message,
 			ARRAYSIZE(message),
-			"OpenQ4 encountered an unhandled exception.\n\n"
+			"openQ4 encountered an unhandled exception.\n\n"
 			"Crash log:\n%s\n\n"
 			"Crash dump:\n%s\n\n"
 			"Please attach both files when reporting this issue.",
@@ -489,7 +489,7 @@ static LONG WINAPI Sys_UnhandledExceptionFilter(LPEXCEPTION_POINTERS exceptionIn
 		Sys_StringPrintf(
 			message,
 			ARRAYSIZE(message),
-			"OpenQ4 encountered an unhandled exception.\n\n"
+			"openQ4 encountered an unhandled exception.\n\n"
 			"Crash log:\n%s\n\n"
 			"Failed to create crash dump (error 0x%08lX).",
 			logPath,
@@ -497,7 +497,7 @@ static LONG WINAPI Sys_UnhandledExceptionFilter(LPEXCEPTION_POINTERS exceptionIn
 		);
 	}
 
-	MessageBoxA(NULL, message, "OpenQ4 Crash", MB_ICONERROR | MB_OK | MB_SYSTEMMODAL);
+	MessageBoxA(NULL, message, "openQ4 Crash", MB_ICONERROR | MB_OK | MB_SYSTEMMODAL);
 
 	return EXCEPTION_EXECUTE_HANDLER;
 }

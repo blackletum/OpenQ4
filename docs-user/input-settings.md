@@ -1,6 +1,6 @@
 # Input Settings and Controls Guide
 
-This guide covers the main ways to configure keyboard, mouse, and controller input in OpenQ4, including the in-game menu, console commands, default binds, config files, and common troubleshooting.
+This guide covers the main ways to configure keyboard, mouse, and controller input in openQ4, including the in-game menu, console commands, default binds, config files, and common troubleshooting.
 
 ## Quick Start
 
@@ -24,25 +24,25 @@ This guide covers the main ways to configure keyboard, mouse, and controller inp
 
 To rebind an action, select its row and press the key, mouse button, or controller button you want to use. Analog sticks are configured through the controller settings instead of being rebound as buttons.
 
-## Where OpenQ4 Stores Input Settings
+## Where openQ4 Stores Input Settings
 
-At startup, OpenQ4 loads input-related config in this order:
+At startup, openQ4 loads input-related config in this order:
 
 1. `default.cfg`
 2. `openq4_defaults.cfg` (if present)
 3. `openq4_profile_<profile>.cfg`, such as `openq4_profile_steamdeck.cfg` when a platform profile is active
-4. `OpenQ4Config.cfg`
+4. `openQ4Config.cfg`
 5. `autoexec.cfg` (if present)
 
 What this means in practice:
 
 - Stock defaults come from `content/baseoq4/default.cfg`.
-- OpenQ4-specific overrides can be layered on top through `openq4_defaults.cfg`.
+- openQ4-specific overrides can be layered on top through `openq4_defaults.cfg`.
 - Platform-specific overrides can be applied through `com_platformProfile`.
-- Your saved personal changes live in `OpenQ4Config.cfg`.
+- Your saved personal changes live in `openQ4Config.cfg`.
 - Advanced users can place their own final overrides in `autoexec.cfg`.
 
-`OpenQ4Config.cfg` is the main user config file name, and it is written under the normal writable save/config area (`fs_savepath`, which defaults to `fs_homepath`).
+`openQ4Config.cfg` is the main user config file name, and it is written under the normal writable save/config area (`fs_savepath`, which defaults to `fs_homepath`).
 
 ## Mouse Settings
 
@@ -81,7 +81,7 @@ seta cl_mouseAccelDebug 0
 
 For CPI-normalized tuning, set `m_cpi` to the mouse hardware value and use `360 / sensitivity` as an approximate centimeters-per-360 target.
 
-SDL3 builds use relative mouse capture during gameplay on Windows, Linux, and macOS. On Linux, OpenQ4 requests unscaled relative deltas from SDL where the desktop stack supports them and preserves fractional movement before it reaches the integer engine event queue. `Mouse1` through `Mouse8` are bindable by name on SDL3 and the native X11 fallback, and wheel up/down remain available as `MWHEELUP` and `MWHEELDOWN`.
+SDL3 builds use relative mouse capture during gameplay on Windows, Linux, and macOS. On Linux, openQ4 requests unscaled relative deltas from SDL where the desktop stack supports them and preserves fractional movement before it reaches the integer engine event queue. `Mouse1` through `Mouse8` are bindable by name on SDL3 and the native X11 fallback, and wheel up/down remain available as `MWHEELUP` and `MWHEELDOWN`.
 
 Native macOS builds also expose `Mouse1` through `Mouse8`, track high-resolution wheel/trackpad deltas before emitting wheel steps, and synthesize common edit-field control characters such as Return, Tab, Backspace, and Ctrl-letter shortcuts.
 
@@ -125,7 +125,7 @@ SDL gamepads use SDL's standard controller database, so Xbox, PlayStation, Steam
 | `in_joystickUseDedicatedLookAxes` | `-1` | `-1` uses look axes only when a paired look stick is available, `0` keeps classic single-stick behavior, and `1` forces dedicated look axes when any mapped look axis exists. |
 | `in_joystickMoveAxisX` / `in_joystickMoveAxisY` | `0` / `1` | Raw joystick axes used for movement or classic stick look. |
 | `in_joystickLookAxisX` / `in_joystickLookAxisY` | `2` / `3` | Raw joystick axes used for dedicated look on four-axis devices. |
-| `in_joystickUpAxis` / `in_joystickUpAxisNegative` | `4` / `5` | Optional vertical/throttle axes; when both exist, OpenQ4 uses positive minus negative. |
+| `in_joystickUpAxis` / `in_joystickUpAxisNegative` | `4` / `5` | Optional vertical/throttle axes; when both exist, openQ4 uses positive minus negative. |
 
 Set an axis cvar to `-1` for auto, or to a raw SDL axis number from `0` through `31`. These advanced joystick cvars only affect generic SDL joysticks; SDL gamepads keep the stable `JOY` button and stick layout described below.
 
@@ -288,7 +288,7 @@ seta com_platformProfile steamdeck
 | Triggers feel unresponsive | Lower `Trigger Press`. |
 | Rumble does not work | Enable `Rumble`, set `Rumble Strength` above `0`, confirm the device supports haptics, and reset `s_controllerRumble` to `1` if it was changed from the console. |
 | Mouse look is backwards vertically | Change `Mouse Pitch` or `Invert Look`, depending on the device. |
-| Binding change did not stick | Run `writeConfig my-input-backup.cfg` to confirm your commands are valid, then quit normally so `OpenQ4Config.cfg` is rewritten. |
+| Binding change did not stick | Run `writeConfig my-input-backup.cfg` to confirm your commands are valid, then quit normally so `openQ4Config.cfg` is rewritten. |
 
 If you want a final personal override layer that survives menu changes, place your preferred `seta` and `bind` commands in `autoexec.cfg`.
 

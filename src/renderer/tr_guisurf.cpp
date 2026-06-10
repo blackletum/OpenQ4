@@ -240,7 +240,7 @@ static void R_UpdateGuiScreenRectState( idUserInterface *gui, const drawSurf_t *
 	float maxX = rect.x2 * ratioX;
 	float maxY = rect.y2 * ratioY;
 
-	// Retail Quake 4 writes raw 640x480 HUD coords here. OpenQ4's optional HUD aspect
+	// Retail Quake 4 writes raw 640x480 HUD coords here. openQ4's optional HUD aspect
 	// correction remaps those coords into a centered 4:3 region, so undo that transform
 	// first or the bracket box will be squeezed inward on widescreen displays.
 	R_ConvertScreenToHudSpace( minX, minY );

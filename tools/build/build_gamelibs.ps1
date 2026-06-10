@@ -11,7 +11,7 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $openQ4Root = [System.IO.Path]::GetFullPath((Join-Path $scriptDir "..\.."))
 
 if ([string]::IsNullOrWhiteSpace($GameLibsRepo)) {
-    $GameLibsRepo = Join-Path $openQ4Root "..\OpenQ4-GameLibs"
+    $GameLibsRepo = Join-Path $openQ4Root "..\openQ4-GameLibs"
 }
 if ([string]::IsNullOrWhiteSpace($BuildDir)) {
     $BuildDir = Join-Path $GameLibsRepo "builddir"
@@ -24,14 +24,14 @@ $gameLibsCoreData = Join-Path $gameLibsBuildDir "meson-private\coredata.dat"
 $gameLibsBuildNinja = Join-Path $gameLibsBuildDir "build.ninja"
 
 if (-not (Test-Path $gameLibsRoot)) {
-    throw "OpenQ4-GameLibs repository not found at '$gameLibsRoot'. Set OPENQ4_GAMELIBS_REPO or pass -GameLibsRepo."
+    throw "openQ4-GameLibs repository not found at '$gameLibsRoot'. Set OPENQ4_GAMELIBS_REPO or pass -GameLibsRepo."
 }
 
 if (-not (Test-Path $gameLibsMesonSetup)) {
-    throw "OpenQ4-GameLibs Meson wrapper not found at '$gameLibsMesonSetup'."
+    throw "openQ4-GameLibs Meson wrapper not found at '$gameLibsMesonSetup'."
 }
 
-Write-Host "Building OpenQ4 SDK game libraries from:"
+Write-Host "Building openQ4 SDK game libraries from:"
 Write-Host "  Repo: $gameLibsRoot"
 Write-Host "  BuildDir: $gameLibsBuildDir"
 
@@ -55,4 +55,4 @@ if ($compileExit -ne 0) {
     exit $compileExit
 }
 
-Write-Host "OpenQ4-GameLibs build complete."
+Write-Host "openQ4-GameLibs build complete."

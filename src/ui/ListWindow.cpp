@@ -48,7 +48,7 @@ static const int doubleClickSpeed = 300;
 
 static const int Q4_LIST_WINDOW_TEXT_SPACING = 0;
 
-static const idMaterial *OpenQ4_ListMaterial( const char *name ) {
+static const idMaterial *openQ4_ListMaterial( const char *name ) {
 	if ( name == NULL || name[ 0 ] == '\0' ) {
 		return NULL;
 	}
@@ -59,7 +59,7 @@ static const idMaterial *OpenQ4_ListMaterial( const char *name ) {
 	return mat;
 }
 
-static int OpenQ4_ClampListTop( int top, int fit, int itemCount ) {
+static int openQ4_ClampListTop( int top, int fit, int itemCount ) {
 	if ( fit <= 0 ) {
 		fit = 1;
 	}
@@ -70,8 +70,8 @@ static int OpenQ4_ClampListTop( int top, int fit, int itemCount ) {
 	return idMath::ClampInt( 0, maxTop, top );
 }
 
-static int OpenQ4_EnsureSelectionVisible( int top, int fit, int selection, int itemCount ) {
-	top = OpenQ4_ClampListTop( top, fit, itemCount );
+static int openQ4_EnsureSelectionVisible( int top, int fit, int selection, int itemCount ) {
+	top = openQ4_ClampListTop( top, fit, itemCount );
 	if ( selection < 0 || selection >= itemCount ) {
 		return top;
 	}
@@ -83,7 +83,7 @@ static int OpenQ4_EnsureSelectionVisible( int top, int fit, int selection, int i
 	} else if ( selection >= top + fit ) {
 		top = selection - fit + 1;
 	}
-	return OpenQ4_ClampListTop( top, fit, itemCount );
+	return openQ4_ClampListTop( top, fit, itemCount );
 }
 
 void idListWindow::CommonInit() {
@@ -598,10 +598,10 @@ void idListWindow::Draw(int time, float x, float y) {
 		}
 	}
 
-	const idMaterial *matFocus = OpenQ4_ListMaterial( backgroundFocus.c_str() );
-	const idMaterial *matLine = OpenQ4_ListMaterial( backgroundLine.c_str() );
-	const idMaterial *matHover = OpenQ4_ListMaterial( backgroundHover.c_str() );
-	const idMaterial *matGreyed = OpenQ4_ListMaterial( backgroundGreyed.c_str() );
+	const idMaterial *matFocus = openQ4_ListMaterial( backgroundFocus.c_str() );
+	const idMaterial *matLine = openQ4_ListMaterial( backgroundLine.c_str() );
+	const idMaterial *matHover = openQ4_ListMaterial( backgroundHover.c_str() );
+	const idMaterial *matGreyed = openQ4_ListMaterial( backgroundGreyed.c_str() );
 	gui->SetStateInt( va( "%s_hover", listName.c_str() ), -1 );
 	const bool listContainsCursor = !noEvents && Contains( gui->CursorX(), gui->CursorY() );
 	hover = listContainsCursor;
@@ -764,7 +764,7 @@ void idListWindow::HandleBuddyUpdate(idWindow *buddy) {
 		lineHeight = 1.0f;
 	}
 	top = scroller->GetValue();
-	top = OpenQ4_ClampListTop( top, textRect.h / lineHeight, listItems.Num() );
+	top = openQ4_ClampListTop( top, textRect.h / lineHeight, listItems.Num() );
 	const idStr topStateName = va( "%s_top", listName.c_str() );
 	gui->SetStateInt( topStateName.c_str(), top );
 }
@@ -802,14 +802,14 @@ void idListWindow::UpdateList() {
 	const bool hasRequestedTop = gui->State().GetInt( topStateName.c_str(), "0", requestedTop );
 	if ( hasRequestedTop ) {
 		if ( requestedTop < 0 ) {
-			value = static_cast<float>( OpenQ4_EnsureSelectionVisible( idMath::Ftoi( value ), fit, GetCurrentSel(), listItems.Num() ) );
+			value = static_cast<float>( openQ4_EnsureSelectionVisible( idMath::Ftoi( value ), fit, GetCurrentSel(), listItems.Num() ) );
 		} else {
 			value = static_cast<float>( requestedTop );
 		}
 	}
-	top = OpenQ4_ClampListTop( idMath::Ftoi( value ), fit, listItems.Num() );
+	top = openQ4_ClampListTop( idMath::Ftoi( value ), fit, listItems.Num() );
 	scroller->SetValue( static_cast<float>( top ) );
-	top = OpenQ4_ClampListTop( idMath::Ftoi( scroller->GetValue() ), fit, listItems.Num() );
+	top = openQ4_ClampListTop( idMath::Ftoi( scroller->GetValue() ), fit, listItems.Num() );
 	gui->SetStateInt( topStateName.c_str(), top );
 
 	typedTime = 0;

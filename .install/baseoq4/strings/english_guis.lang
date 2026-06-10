@@ -1115,7 +1115,7 @@
 	"#str_223008"	"Right;Centered;Lower Right"
 	"#str_223009"	"Enable detailed sky"
 
-	// OpenQ4 GUI strings : #str_229900 - #str_229999
+	// openQ4 GUI strings : #str_229900 - #str_229999
 	"#str_229900"	"DISPLAY"
 	"#str_229901"	"AUDIO"
 	"#str_229902"	"Basics"

@@ -36,8 +36,8 @@ If you have questions concerning this license or the applicable additional terms
 #define	MAX_PRINT_MSG_SIZE	4096
 #define MAX_WARNING_LIST	256
 
-void OpenQ4_PrintFramePacingSnapshot( const char *reason );
-void OpenQ4_RecordMultiplayerFramePacing( int frameStartMsec );
+void openQ4_PrintFramePacingSnapshot( const char *reason );
+void openQ4_RecordMultiplayerFramePacing( int frameStartMsec );
 
 static const int OPENQ4_ENTITYDEF_MEDIA_CACHE_TOOL_MASK =
 	EDITOR_RADIANT |
@@ -72,7 +72,7 @@ idCVar com_buildInfo( "com_buildInfo", buildInfo.string, CVAR_SYSTEM|CVAR_ROM, "
 idCVar com_skipRenderer( "com_skipRenderer", "0", CVAR_BOOL|CVAR_SYSTEM, "skip the renderer completely" );
 idCVar com_machineSpec( "com_machineSpec", "-1", CVAR_INTEGER | CVAR_ARCHIVE | CVAR_SYSTEM, "hardware classification, -1 = not detected, 0 = low quality, 1 = medium quality, 2 = high quality, 3 = ultra quality" );
 idCVar com_purgeAll( "com_purgeAll", "0", CVAR_BOOL | CVAR_ARCHIVE | CVAR_SYSTEM, "purge everything between level loads" );
-idCVar com_WriteSingleDeclFile( "com_WriteSingleDeclFile", "0", CVAR_SYSTEM | CVAR_BOOL, "write a packed decl file after startup or map loads; use com_singleDeclFileWriteMode for OpenQ4 or exact-retail game-type coverage" );
+idCVar com_WriteSingleDeclFile( "com_WriteSingleDeclFile", "0", CVAR_SYSTEM | CVAR_BOOL, "write a packed decl file after startup or map loads; use com_singleDeclFileWriteMode for openQ4 or exact-retail game-type coverage" );
 idCVar com_memoryMarker( "com_memoryMarker", "-1", CVAR_INTEGER | CVAR_SYSTEM | CVAR_INIT, "used as a marker for memory stats" );
 idCVar com_preciseTic( "com_preciseTic", "1", CVAR_BOOL|CVAR_SYSTEM, "run one game tick every async thread update" );
 idCVar com_asyncInput( "com_asyncInput", "0", CVAR_BOOL|CVAR_SYSTEM, "sample input from the async thread" );
@@ -247,7 +247,7 @@ static void Common_ThrottlePresentationFrame( void ) {
 	commonNextPresentationFrameClock += frameClockUnits;
 }
 
-void OpenQ4_BeginPresentationFrame( void ) {
+void openQ4_BeginPresentationFrame( void ) {
 	if ( idAsyncNetwork::serverDedicated.GetInteger() == 1 ) {
 		Common_ResetPresentationThrottle();
 	} else {
@@ -272,10 +272,10 @@ bool			com_editorActive;		//  true if an editor has focus
 
 /*
 ==================
-OpenQ4_GetActiveToolFlags
+openQ4_GetActiveToolFlags
 ==================
 */
-int OpenQ4_GetActiveToolFlags( int flags ) {
+int openQ4_GetActiveToolFlags( int flags ) {
 	if ( flags == EDITOR_ALL ) {
 		return com_editors;
 	}
@@ -285,19 +285,19 @@ int OpenQ4_GetActiveToolFlags( int flags ) {
 
 /*
 ==================
-OpenQ4_IsAnyToolActive
+openQ4_IsAnyToolActive
 ==================
 */
-bool OpenQ4_IsAnyToolActive( void ) {
-	return com_editorActive || OpenQ4_GetActiveToolFlags( EDITOR_ALL ) != 0;
+bool openQ4_IsAnyToolActive( void ) {
+	return com_editorActive || openQ4_GetActiveToolFlags( EDITOR_ALL ) != 0;
 }
 
 /*
 ==================
-OpenQ4_ToolPrint
+openQ4_ToolPrint
 ==================
 */
-void OpenQ4_ToolPrint( const char *text ) {
+void openQ4_ToolPrint( const char *text ) {
 	bool toolPrinted = false;
 
 	if ( text == NULL || text[0] == '\0' ) {
@@ -305,21 +305,21 @@ void OpenQ4_ToolPrint( const char *text ) {
 	}
 
 #ifdef ID_ALLOW_TOOLS
-	if ( OpenQ4_GetActiveToolFlags( EDITOR_DECL ) != 0 ) {
+	if ( openQ4_GetActiveToolFlags( EDITOR_DECL ) != 0 ) {
 		toolPrinted = DeclBrowserPrint( text ) || toolPrinted;
 	}
 
-	if ( OpenQ4_GetActiveToolFlags( EDITOR_DEBUGGER ) != 0 ) {
+	if ( openQ4_GetActiveToolFlags( EDITOR_DEBUGGER ) != 0 ) {
 		DebuggerServerPrint( text );
 		toolPrinted = true;
 	}
 
-	if ( OpenQ4_GetActiveToolFlags( EDITOR_RADIANT ) != 0 ) {
+	if ( openQ4_GetActiveToolFlags( EDITOR_RADIANT ) != 0 ) {
 		RadiantPrint( text );
 		toolPrinted = true;
 	}
 
-	if ( OpenQ4_GetActiveToolFlags( EDITOR_MATERIAL ) != 0 ) {
+	if ( openQ4_GetActiveToolFlags( EDITOR_MATERIAL ) != 0 ) {
 		MaterialEditorPrintConsole( text );
 		toolPrinted = true;
 	}
@@ -332,11 +332,11 @@ void OpenQ4_ToolPrint( const char *text ) {
 
 /*
 ==================
-OpenQ4_ShouldCacheEntityDefMedia
+openQ4_ShouldCacheEntityDefMedia
 ==================
 */
-bool OpenQ4_ShouldCacheEntityDefMedia( bool noCaching ) {
-	return !noCaching && OpenQ4_GetActiveToolFlags( OPENQ4_ENTITYDEF_MEDIA_CACHE_TOOL_MASK ) == 0;
+bool openQ4_ShouldCacheEntityDefMedia( bool noCaching ) {
+	return !noCaching && openQ4_GetActiveToolFlags( OPENQ4_ENTITYDEF_MEDIA_CACHE_TOOL_MASK ) == 0;
 }
 
 extern glconfig_t	glConfig;
@@ -834,7 +834,7 @@ idCommonLocal::PrintFramePacingSnapshot
 ==================
 */
 void idCommonLocal::PrintFramePacingSnapshot( const char *reason ) {
-	OpenQ4_PrintFramePacingSnapshot( reason );
+	openQ4_PrintFramePacingSnapshot( reason );
 }
 
 /*
@@ -1542,7 +1542,7 @@ idCommonLocal::DoingDeclValidation
 */
 bool idCommonLocal::DoingDeclValidation( void ) {
 	const int validationMask = EDITOR_DECL | EDITOR_DECL_VALIDATING;
-	return OpenQ4_GetActiveToolFlags( validationMask ) == validationMask;
+	return openQ4_GetActiveToolFlags( validationMask ) == validationMask;
 }
 
 /*
@@ -3205,7 +3205,7 @@ idCommonLocal::Frame
 */
 void idCommonLocal::Frame( void ) {
 	try {
-		OpenQ4_BeginPresentationFrame();
+		openQ4_BeginPresentationFrame();
 		const int frameStartMsec = com_frameRealTime;
 
 		// pump all the events
@@ -3230,7 +3230,7 @@ void idCommonLocal::Frame( void ) {
 			// Keep netplay flow the same as stock, but ensure audio mixes each frame.
 			soundSystem->Render();
 			session->GuiFrameEvents();
-			OpenQ4_RecordMultiplayerFramePacing( frameStartMsec );
+			openQ4_RecordMultiplayerFramePacing( frameStartMsec );
 			session->UpdateScreen( false );
 		}
 	} else {
@@ -3274,7 +3274,7 @@ idCommonLocal::GUIFrame
 =================
 */
 void idCommonLocal::GUIFrame( bool execCmd, bool network ) {
-	OpenQ4_BeginPresentationFrame();
+	openQ4_BeginPresentationFrame();
 	Sys_GenerateEvents();
 	eventLoop->RunEventLoop( execCmd );	// and execute any commands
 	com_frameTime = GetUserCmdTime( com_ticNumber );
@@ -3318,7 +3318,7 @@ int prevAsyncMsec;
 double	lastTicMsec;
 bool	lastTicMsecValid;
 
-void OpenQ4_GetAsyncTimingStats( openq4AsyncTimingStats_t &stats, int maxSamples ) {
+void openQ4_GetAsyncTimingStats( openq4AsyncTimingStats_t &stats, int maxSamples ) {
 	memset( &stats, 0, sizeof( stats ) );
 
 	if ( maxSamples <= 0 ) {
@@ -3379,7 +3379,7 @@ void OpenQ4_GetAsyncTimingStats( openq4AsyncTimingStats_t &stats, int maxSamples
 	stats.avgJitterMsec = jitterSum / static_cast<float>( stats.sampleCount );
 }
 
-static bool OpenQ4_ShouldUseSmoothSingleplayerSlowTime( void ) {
+static bool openQ4_ShouldUseSmoothSingleplayerSlowTime( void ) {
 	if ( cvarSystem == NULL || idAsyncNetwork::IsActive() ) {
 		return false;
 	}
@@ -3451,7 +3451,7 @@ void idCommonLocal::Async( void ) {
 
 	// the number of msec per tic can be varies with the timescale cvar
 	float timescale = com_timescale.GetFloat();
-	const bool smoothSlowTime = OpenQ4_ShouldUseSmoothSingleplayerSlowTime();
+	const bool smoothSlowTime = openQ4_ShouldUseSmoothSingleplayerSlowTime();
 	if ( !smoothSlowTime && timescale != 1.0f ) {
 		ticMsec /= timescale;
 		if ( ticMsec < 1.0 ) {
@@ -3473,23 +3473,23 @@ void idCommonLocal::Async( void ) {
 	}
 }
 
-static bool OpenQ4_IsMultiplayerGameType( const char *gameType ) {
+static bool openQ4_IsMultiplayerGameType( const char *gameType ) {
 	return gameType && gameType[0] && idStr::Icmp( gameType, "singleplayer" ) != 0;
 }
 
-static bool OpenQ4_IsValidGameModuleName( const char *moduleName ) {
+static bool openQ4_IsValidGameModuleName( const char *moduleName ) {
 	return moduleName
 		&& ( idStr::Icmp( moduleName, "game_sp" ) == 0 || idStr::Icmp( moduleName, "game_mp" ) == 0 );
 }
 
-static const char *OpenQ4_SelectGameModuleBaseName( void ) {
+static const char *openQ4_SelectGameModuleBaseName( void ) {
 	const char *nextModule = cvarSystem->GetCVarString( "com_nextGameModule" );
-	if ( OpenQ4_IsValidGameModuleName( nextModule ) ) {
+	if ( openQ4_IsValidGameModuleName( nextModule ) ) {
 		return idStr::Icmp( nextModule, "game_mp" ) == 0 ? "game_mp" : "game_sp";
 	}
 
 	const char *gameType = cvarSystem->GetCVarString( "si_gameType" );
-	return OpenQ4_IsMultiplayerGameType( gameType ) ? "game_mp" : "game_sp";
+	return openQ4_IsMultiplayerGameType( gameType ) ? "game_mp" : "game_sp";
 }
 
 #if defined( _M_X64 ) || defined( __x86_64__ )
@@ -3501,12 +3501,12 @@ static const char *OpenQ4_SelectGameModuleBaseName( void ) {
 #else
 	#define OPENQ4_MODULE_ARCH_TAG "unknown"
 #endif
-static void OpenQ4_BuildGameModuleBinaryName( const char *moduleName, char outName[ MAX_OSPATH ] ) {
+static void openQ4_BuildGameModuleBinaryName( const char *moduleName, char outName[ MAX_OSPATH ] ) {
 	const char *variant = ( moduleName && idStr::Icmp( moduleName, "game_mp" ) == 0 ) ? "mp" : "sp";
 	idStr::snPrintf( outName, MAX_OSPATH, "game-%s_%s", variant, OPENQ4_MODULE_ARCH_TAG );
 }
 
-static void OpenQ4_DisableBSEWithWarning( const char *reason, bool showDialog = true ) {
+static void openQ4_DisableBSEWithWarning( const char *reason, bool showDialog = true ) {
 	static bool warnedConsole = false;
 	if ( !warnedConsole ) {
 		warnedConsole = true;
@@ -3530,7 +3530,7 @@ static void OpenQ4_DisableBSEWithWarning( const char *reason, bool showDialog = 
 #endif
 
 	::declEffectEdit = NULL;
-	::bseAllocDeclEffect = OpenQ4_AllocIntegratedBSEDeclEffect;
+	::bseAllocDeclEffect = openQ4_AllocIntegratedBSEDeclEffect;
 	::bse = &bseDisabledLocal;
 }
 
@@ -3543,12 +3543,12 @@ void idCommonLocal::AttachBSE( void ) {
 #ifdef __DOOM_DLL__
 	::bse = &bseDisabledLocal;
 	::declEffectEdit = NULL;
-	::bseAllocDeclEffect = OpenQ4_AllocIntegratedBSEDeclEffect;
+	::bseAllocDeclEffect = openQ4_AllocIntegratedBSEDeclEffect;
 
 #if !defined( ID_DEDICATED )
 	common->DPrintf( "Attaching integrated BSE.\n" );
-	::bse = OpenQ4_GetIntegratedBSEManager();
-	::declEffectEdit = OpenQ4_GetIntegratedBSEDeclEffectEdit();
+	::bse = openQ4_GetIntegratedBSEManager();
+	::declEffectEdit = openQ4_GetIntegratedBSEDeclEffectEdit();
 #else
 	common->DPrintf( "Attaching integrated BSE decl allocator with disabled runtime manager.\n" );
 #endif
@@ -3583,8 +3583,8 @@ void idCommonLocal::LoadGameDLL( void ) {
 	gameExport_t	gameExport;
 	GetGameAPI_t	GetGameAPI;
 
-	const char *gameModuleBaseName = OpenQ4_SelectGameModuleBaseName();
-	OpenQ4_BuildGameModuleBinaryName( gameModuleBaseName, preferredGameModuleBinary );
+	const char *gameModuleBaseName = openQ4_SelectGameModuleBaseName();
+	openQ4_BuildGameModuleBinaryName( gameModuleBaseName, preferredGameModuleBinary );
 	selectedModuleBinary = preferredGameModuleBinary;
 	fileSystem->FindDLL( selectedModuleBinary, dllPath, true );
 
@@ -4028,7 +4028,7 @@ void idCommonLocal::InitGame( void ) {
 
 	// initialize the BSE system before the game DLL starts creating effects
 	if ( bse && !bse->Init() ) {
-		OpenQ4_DisableBSEWithWarning( "BSE initialization failed" );
+		openQ4_DisableBSEWithWarning( "BSE initialization failed" );
 	}
 
 	// startup the script debugger

@@ -8,7 +8,7 @@
 	"#str_102087"	"Loading..."
 	"#str_102911"	"Unidentified"
 	"#str_102916"	"Game Saved..."
-	"#str_104137"	"These changes will take effect the next time you run OpenQ4."
+	"#str_104137"	"These changes will take effect the next time you run openQ4."
 	"#str_104141"	"UNABLE TO LOCATE 3D AUDIO"
 	"#str_104142"	"Surround speakers not found.\nMake sure the speaker settings are configured properly in the Windows Control Panel."
 	"#str_104247"	"Ready"
@@ -137,7 +137,7 @@
 	"#str_104434"	"FRAG LIMIT %d"
 	"#str_104435"	"%d YES VOTES, %d NO VOTES"
 	"#str_104837"	"UPDATES"
-	"#str_104839"	"OpenQ4 is up to date, no update is required."
+	"#str_104839"	"openQ4 is up to date, no update is required."
 	"#str_104840"	"Bad challenge.\n"
 	"#str_104842"	"Data not in sync with server data.\n"
 	"#str_104843"	"This server only accepts LAN clients.\n"
@@ -239,7 +239,7 @@
 	"#str_107091"	"JOY30"
 	"#str_107092"	"JOY31"
 	"#str_107093"	"JOY32"
-	"#str_107094"	"AUX1"	
+	"#str_107094"	"AUX1"
 	"#str_107095"	"AUX2"
 	"#str_107096"	"AUX3"
 	"#str_107097"	"AUX4"
@@ -261,7 +261,7 @@
 	"#str_107113"	"LEFTARROW"
 	"#str_107114"	"5"
 	"#str_107115"	"RIGHTARROW"
-	"#str_107116"	"END"	
+	"#str_107116"	"END"
 	"#str_107117"	"DOWNARROW"
 	"#str_107118"	"PGDN"
 	"#str_107119"	"ENTER"
@@ -302,9 +302,9 @@
 	"#str_107189"	"Checking"
 	"#str_107190"	"N/A"
 	"#str_107191"	"Logging in to authorization server"
-	"#str_107194"	"OpenQ4 CD Key is invalid"
-	"#str_107196"	"This OpenQ4 CD Key is banned"
-	"#str_107198"	"OpenQ4 CD Key is in use"	
+	"#str_107194"	"openQ4 CD Key is invalid"
+	"#str_107196"	"This openQ4 CD Key is banned"
+	"#str_107198"	"openQ4 CD Key is in use"
 	"#str_107204"	"Waiting for authorization"
 	"#str_107205"	"Client unknown to auth"
 	"#str_107206"	"Access denied - CD Key in use"
@@ -312,7 +312,7 @@
 	"#str_107208"	"Authorize Server - Waiting for client"
 	"#str_107210"	"Can't connect to the pure server at %s:\n"
 	"#str_107211"	"The pure server at %s didn't provide a reference to executable code\n"
-	"#str_107212"	"OpenQ4"
+	"#str_107212"	"openQ4"
 	"#str_107213"	"Downloading %s"
 	"#str_107214"	"pak is corrupted ( checksum 0x%x, expected 0x%x )"
 	"#str_107215"	"The download failed or was cancelled"
@@ -324,7 +324,7 @@
 	"#str_107221"	"Missing game binaries"
 	"#str_107222"	"The server only offers to download some of the files required to connect ( %s ). Download anyway?"
 	"#str_107223"	"You are missing some files to connect to this server, and the server doesn't provide downloads."
-	"#str_107224"	"You need to download some files to connect to this server ( %s ), proceed?"	
+	"#str_107224"	"You need to download some files to connect to this server ( %s ), proceed?"
 	"#str_107230"	"Surround speakers not found.\nMake sure the speaker settings are configured properly."
 	"#str_107231"	"EAX"
 	"#str_107232"	"EAX Reverb"
@@ -371,18 +371,18 @@
 	"#str_107291"	"Arena CTF"
 	"#str_107292"	"Unsorted"
 	"#str_107293"	"Scanning for LAN servers..."
-	"#str_107294"	"Scanned %d OpenQ4 Servers"
+	"#str_107294"	"Scanned %d openQ4 Servers"
 	"#str_107295"	"You fragged %s"
 	"#str_107296"	"You were fragged by %s"
 	"#str_107297"	"Scanning %d/%d: %s"
 	"#str_107298"	"Scanning - Found: %s"
-	"#str_107299"	"OpenQ4 is out of date."
-	
+	"#str_107299"	"openQ4 is out of date."
+
 	// DEF file entries
 	// done by hand
-	
+
 	// items.def
-	
+
 	"#str_107300"	"if set to 1, show item acquisition gui when picked up"
 	"#str_107301"	"name referenced for triggers etc.. requiring this to be in inventory to work"
 	"#str_107302"	"icon name for hud graphics"
@@ -413,19 +413,19 @@
 	"#str_107327"	"The Moderator"
 	"#str_107328"	"Small Armor Vest"
 	"#str_107329"	"Large Armor Vest"
-	
+
 	//weapons and goods
-	
+
 	"#str_107400"	"Blaster"
-	"#str_107401"	"Dark Matter Gun"	
+	"#str_107401"	"Dark Matter Gun"
 	"#str_107402"	"Gauntlet"
-	"#str_107403"	"Grenade Launcher"	
-	"#str_107404"	"HyperBlaster"	
+	"#str_107403"	"Grenade Launcher"
+	"#str_107404"	"HyperBlaster"
 	"#str_107405"	"Lightning Gun"
 	"#str_107406"	"Machinegun"
 	"#str_107407"	"Nailgun"
 	"#str_107408"	"Railgun"
-	"#str_107409"	"Rocket Launcher"	
+	"#str_107409"	"Rocket Launcher"
 	"#str_107410"	"Shotgun"
 	"#str_107411"	"Clips"
 	"#str_107412"	"Nails"
@@ -457,9 +457,9 @@
 	"#str_107440"	"Rocket Homing Mod"
 
 	//persona data
-	
+
 	"#str_107500"	"PERSONA TEST"
-	"#str_107501"	"PERSONA DESCRIPTION"	
+	"#str_107501"	"PERSONA DESCRIPTION"
 	"#str_107502"	"Rhino Squad"
 	"#str_107503"	"Badger Squad"
 	"#str_107504"	"Wolf Squad"
@@ -480,9 +480,9 @@
 	"#str_107519"	"Tech Strauss"
 	"#str_107520"	"LT Voss"
 	"#str_107521"	"Unnamed"
-	
+
 	// maps.def
-	
+
 	"#str_107600"	"THE FRAGGING YARD"
 	"#str_107601"	"SANDSTORM"
 	"#str_107602"	"THE LOST FLEET"
@@ -525,8 +525,8 @@
 	"#str_107639"	"FUEL STATION"
 	"#str_107640"	"CONSTRUCTION ZONE"
 	"#str_107641"	"WASTE PROCESSING FACILITY"
-	"#str_107642"	"OPERATION: LAST HOPE"	
-	"#str_107643"	"DATA PROCESSING TERMINAL"	
+	"#str_107642"	"OPERATION: LAST HOPE"
+	"#str_107643"	"DATA PROCESSING TERMINAL"
 	"#str_107644"	"PUTRIFICATION CENTER"
 	"#str_107645"	"DATA STORAGE TERMINAL"
 	"#str_107646"	"RELATIVITY"
@@ -536,7 +536,7 @@
 	"#str_107650"	"BACKSLASH"
 	"#str_107651"	"RIGHT ALT"
 	"#str_107652"	"RIGHT CTRL"
-	"#str_107653"	"RIGHT SHIFT"	
+	"#str_107653"	"RIGHT SHIFT"
 	"#str_107654"	"Can't save after failed mission"
 	"#str_107655"	"No response from %s after %d challenges. Disconnecting."
 	"#str_107656"	"Checkpoint"
@@ -559,14 +559,14 @@
 	"#str_107673"	"SPECTATING"
 	"#str_107674"	"WAITING ON ONE MORE PLAYER"
 	"#str_107675"	"WAITING ON ONE PLAYER ON EACH TEAM"
-	"#str_107676"	"Tourney"	
+	"#str_107676"	"Tourney"
 	"#str_107677"	"Team Deathmatch"
 	"#str_107678"	"Capture the Flag"
 	"#str_107679"	"Deathmatch"
 	"#str_107680"	"One Flag Capture the Flag"
 	"#str_107681"	"Arena Capture the Flag"
 	"#str_107682"	"Arena One Flag Capture the Flag"
-	"#str_107683"	"Checking for OpenQ4 updates."
+	"#str_107683"	"Checking for openQ4 updates."
 	"#str_107684"	"You will be seeded when the tournament begins."
 	"#str_107685"	"You will spectate the tournament."
 	"#str_107686"	"You are in the waiting room"
@@ -607,30 +607,30 @@
 	"#str_107719"	"Semi-Finals"
 	"#str_107720"	"Final Match"
 	"#str_107721"	"Pre-game"
-	
+
 	"#str_107722"	"THE ENEMY HAS YOUR FLAG"
 	"#str_107723"	"THE ENEMY DROPPED YOUR FLAG"
 	"#str_107724"	"Vote Status:"
 	"#str_107725"	"Server Name"
 	"#str_107726"	"Server IP"
 	"#str_107727"	"Game Type"
-	
+
 	"#str_107728"	"PLAYING"
 	"#str_107729"	"ELIMINATED"
-	
+
 	"#str_107730"	"Map Name:"
 	"#str_107731"	"No Choices Defined"
 	"#str_107732"	"WAITING FOR %d MORE PLAYERS"
 	"#str_107733"	"Already at the voted Min Players"
 	"#str_107734"	"Min Players value is out of range"
-	"#str_107735"	"Set Min Players to %d"	
+	"#str_107735"	"Set Min Players to %d"
 	"#str_107736"	"Getting list of servers..."
 	"#str_107737"	"Settling world"
 	"#str_107738"	"Waiting for initial server message"
 	"#str_107739"	"WAITING TO PLAY"
 	"#str_107740"	"ADVANCED"
 	// player.def for the model names in the MP menus..
-	
+
 	"#str_108000"	"Failed Transfer"
 	"#str_108001"	"Slimy Transfer"
 	"#str_108002"	"Corpse"
@@ -653,8 +653,8 @@
 	"#str_108019"	"Alternate Corpse 1"
 	"#str_108020"	"Alternate Corpse 2"
 	"#str_108021"	"Alternate Corpse 3"
-	
-	
+
+
 	"#str_108022"	"killed client"
 	"#str_108023"	"Voting disabled on server"
 
@@ -663,7 +663,7 @@
 	"#str_108025"	"Strogg"
 	"#str_108026"	"Marine"
 	"#str_108027"	"%s team hit the capture limit."
-	
+
 	// patch code strings start with #str_110000
 	"#str_110000"	"Unsorted"
 	"#str_110001"	"Only Favorite Servers"
@@ -675,14 +675,14 @@
 	"#str_110007"	"Only PB-Enabled"
 	"#str_110008"	"Only PB-Disabled"
 
-	"#str_110010"	"SHUFFLE TEAMS"	
-	
+	"#str_110010"	"SHUFFLE TEAMS"
+
 	"#str_110011"	"DM"
 	"#str_110012"	"Tourney"
 	"#str_110013"	"Team DM"
 	"#str_110014"	"CTF"
 	"#str_110015"	"Arena CTF"
-	
+
 	"#str_110016"	"Players Low %s High (non-empty)"
 	"#str_110017"	"Waiting on everybody to ready up;  Not Ready: Press %s to ready"
 	"#str_110018"	"Waiting on everybody to ready up;  Ready: Press %s to un-ready"
@@ -690,10 +690,10 @@
 	"#str_110019"	""
 	"#str_110020"	"Do you wish to report anonymous usage statistics to the developer?  Information sent will be of the type: Presence of DVD drive, type of video card, amount of system RAM, etc"
 	"#str_110021"	"Do you wish to be prompted each time anonymous statistics are reported?"
-	
+
 	"#str_110023"	"Showing %d out of %d servers"
 	"#str_110024"	"Offline"
-	
+
 	"#str_110100"	"Pro Marine"
 	"#str_110101"	"Pro Strogg"
 
@@ -712,12 +712,12 @@
 	"#str_122011"	"ALLOW BUYING %s"
 	"#str_122012"	"USAGE: clientcallvote buying [0-1]\n"
 	"#str_122013"	"Already at the voted Buying Mode"
-	"#str_122014"	"Set Buy Mode to %d"	
+	"#str_122014"	"Set Buy Mode to %d"
 	"#str_122015"	"Credits:"
 	"#str_122016"	"(Buy Zone)"
 	"#str_122017"	"Already at the voted Control Time.\n"
 	"#str_122018"	"Control time value is out of range.\n"
-	
+
 	"#str_122900"	"CAVERNOUS CRYONICS"
 	"#str_122901"	"CENTRAL INDUSTRIAL"
 	"#str_122902"	"WARFORGED"
@@ -736,6 +736,6 @@
 	"#str_123007"	"Game"
 	"#str_123008"	"all"
 	"#str_123009"	"Tickrate"
-	
+
 }
 

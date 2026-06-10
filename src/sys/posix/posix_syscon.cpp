@@ -355,7 +355,7 @@ static void Posix_SplashRender( void ) {
 	(void)SDL_RenderPresent( s_splashWindow.renderer );
 }
 
-static void Posix_SplashDestroy( void ) {
+static void Posix_SplashDestroy( bool releaseVideoSubsystem ) {
 	const SDL_WindowID destroyedWindowID = s_splashWindow.windowID;
 	if ( s_splashWindow.texture != NULL ) {
 		SDL_DestroyTexture( s_splashWindow.texture );
@@ -377,7 +377,7 @@ static void Posix_SplashDestroy( void ) {
 
 	Posix_SplashDrainEvents( destroyedWindowID );
 
-	if ( s_splashWindow.videoInitializedBySplash ) {
+	if ( releaseVideoSubsystem && s_splashWindow.videoInitializedBySplash ) {
 		SDL_QuitSubSystem( SDL_INIT_VIDEO );
 		s_splashWindow.videoInitializedBySplash = false;
 	}
@@ -866,7 +866,7 @@ static void Posix_ConsoleRender( void ) {
 }
 
 static void Posix_ConsoleShow( int visLevel, bool quitOnClose ) {
-	Posix_SplashDestroy();
+	Posix_SplashDestroy( false );
 	s_consoleWindow.quitOnClose = quitOnClose;
 
 	if ( visLevel < 0 || visLevel > 2 ) {
@@ -1083,7 +1083,7 @@ void Posix_ConsoleFrame( void ) {
 
 void Posix_ShutdownConsole( void ) {
 #if defined( USE_SDL3 )
-	Posix_SplashDestroy();
+	Posix_SplashDestroy( true );
 	Posix_ConsoleStopTextInput();
 	if ( s_consoleWindow.renderer != NULL ) {
 		SDL_DestroyRenderer( s_consoleWindow.renderer );
@@ -1099,6 +1099,13 @@ void Posix_ShutdownConsole( void ) {
 		SDL_QuitSubSystem( SDL_INIT_VIDEO );
 		s_consoleWindow.videoInitializedByConsole = false;
 	}
+#endif
+}
+
+void Posix_ReleaseStartupSDLVideoOwnership( void ) {
+#if defined( USE_SDL3 )
+	s_splashWindow.videoInitializedBySplash = false;
+	s_consoleWindow.videoInitializedByConsole = false;
 #endif
 }
 
@@ -1131,7 +1138,7 @@ void Sys_ShowSplash( void ) {
 	s_splashWindow.renderer = SDL_CreateRenderer( s_splashWindow.window, "software" );
 	if ( s_splashWindow.renderer == NULL ) {
 		Sys_Printf( "SDL splash disabled: failed to create software renderer: %s\n", SDL_GetError() );
-		Posix_SplashDestroy();
+		Posix_SplashDestroy( true );
 		s_splashWindow.createFailed = true;
 		return;
 	}
@@ -1147,7 +1154,7 @@ void Sys_ShowSplash( void ) {
 
 void Sys_DestroySplash( void ) {
 #if defined( USE_SDL3 )
-	Posix_SplashDestroy();
+	Posix_SplashDestroy( false );
 #endif
 }
 

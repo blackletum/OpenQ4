@@ -140,7 +140,7 @@ public:
 	// doesn't advance and get things out of sync
 	virtual void	TimeHitch( int msec ) = 0;
 
-	// Legacy CD key API (kept for compatibility; OpenQ4 no longer requires keys).
+	// Legacy CD key API (kept for compatibility; openQ4 no longer requires keys).
 	virtual void	ReadCDKey( void ) = 0;
 	virtual void	WriteCDKey( void ) = 0;
 

@@ -1,12 +1,12 @@
-# Retail Q4 vs OpenQ4 Engine CVar Divergences
+# Retail Q4 vs openQ4 Engine CVar Divergences
 
 Generated on 2026-04-19.
 
 ## Scope
 
 - Retail exact names were resolved from engine-owned `idCVar` symbols recovered from `E:\Repositories\Quake4Decompiled-main`, then matched against live retail Q4 runtime cvars.
-- OpenQ4 exact names were taken from `idCVar` constructor definitions in `src/`, with `r_minDisplayRefresh` and `r_maxDisplayRefresh` supplemented from the earlier extraction because the simple parser misses those two render declarations.
-- Shared metadata diffs compare retail dedicated runtime metadata against OpenQ4 dedicated runtime metadata, with OpenQ4 client runtime used only as a fallback for BSE cvars that are intentionally not registered in the dedicated path.
+- openQ4 exact names were taken from `idCVar` constructor definitions in `src/`, with `r_minDisplayRefresh` and `r_maxDisplayRefresh` supplemented from the earlier extraction because the simple parser misses those two render declarations.
+- Shared metadata diffs compare retail dedicated runtime metadata against openQ4 dedicated runtime metadata, with openQ4 client runtime used only as a fallback for BSE cvars that are intentionally not registered in the dedicated path.
 - `flags` come from `listCvars -flags`, after dropping the transient `MO` marker and the leading storage-type token (`B` / `I` / `F` / `S`).
 - `type/range` is the exact `listCvars -type` output, so enum domains and numeric min/max ranges show up there when the engine reports them.
 - The four retail decomp symbols that could not be matched to live retail runtime cvars are listed at the end and were excluded from the exact-name diff.
@@ -16,7 +16,7 @@ Generated on 2026-04-19.
 | Category | Count |
 | --- | ---: |
 | Retail-only exact engine-side cvars | 131 |
-| OpenQ4-only exact engine-side cvars | 212 |
+| openQ4-only exact engine-side cvars | 212 |
 | Shared exact names with metadata differences | 51 |
 
 ## 1. Retail-Only
@@ -155,9 +155,9 @@ Generated on 2026-04-19.
 | `win_viewlog_xpos` | win_viewlog_xpos | sys/win32/win_syscon.cpp:553<br>sys/win32/win_syscon.cpp:557<br>sys/win32/win_syscon.cpp:562 |
 | `win_viewlog_ypos` | win_viewlog_ypos | sys/win32/win_syscon.cpp:553<br>sys/win32/win_syscon.cpp:558<br>sys/win32/win_syscon.cpp:563 |
 
-## 2. OpenQ4-Only
+## 2. openQ4-Only
 
-| CVar | OpenQ4 source(s) |
+| CVar | openQ4 source(s) |
 | --- | --- |
 | `bearTurretAngle` | src/ui/GameBearShootWindow.cpp:45 |
 | `bearTurretForce` | src/ui/GameBearShootWindow.cpp:46 |
@@ -373,7 +373,7 @@ Generated on 2026-04-19.
 
 ## 3. Shared Names With Metadata Differences
 
-| CVar | Changed | Retail default | OpenQ4 default | Retail flags | OpenQ4 flags | Retail type/range | OpenQ4 type/range |
+| CVar | Changed | Retail default | openQ4 default | Retail flags | openQ4 flags | Retail type/range | openQ4 type/range |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `bse_rateCost` | default, flags | `1.0` | `1` | `ST AR` | `ST CH` | `float` | `float` |
 | `bse_rateLimit` | default, flags | `3.0` | `1` | `ST AR` | `ST CH` | `float` | `float` |
@@ -424,7 +424,7 @@ Generated on 2026-04-19.
 | `s_useOcclusion` | flags | `1` | `1` | `SND ST AR` | `ST CH` | `bool` | `bool` |
 | `s_useOpenAL` | default, flags | `0` | `1` | `SND ST AR` | `ST AR` | `bool` | `bool` |
 | `s_volume` | default, flags, type/range | `0.5` | `1.0` | `SND ST AR` | `ST AR` | `float` | `float [0, 1]` |
-| `si_version` | default | `Quake4  V1.4.3 win-x86 Oct 20 2010` | `OpenQ4 0.1.010-nightly.20260319.1+g47f946e3.dirty` | `SYS SI ST RO` | `SYS SI ST RO` | `string` | `string` |
+| `si_version` | default | `Quake4  V1.4.3 win-x86 Oct 20 2010` | `openQ4 0.1.010-nightly.20260319.1+g47f946e3.dirty` | `SYS SI ST RO` | `SYS SI ST RO` | `string` | `string` |
 | `timescale` | type/range | `1` | `1` | `SYS ST CH` | `SYS ST CH` | `string` | `float [0.1, 10]` |
 
 ## Unresolved Retail Symbols

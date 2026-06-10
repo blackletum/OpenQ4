@@ -118,7 +118,7 @@ bool R_IsMD5RRuntimeAvailable( void ) {
 =======================
 R_IsMD5RWriteAvailable
 
-OpenQ4's text/binary MD5R model writer is now implemented in the parser-backed
+openQ4's text/binary MD5R model writer is now implemented in the parser-backed
 rvRenderModelMD5R path, so it no longer depends on the original retail
 _MD5R_WRITE_SUPPORT macro. World export now round-trips packed MD5RProc
 companions when that shared world-buffer state is loaded, while classic .proc

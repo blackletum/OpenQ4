@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>English</string>
 	<key>CFBundleExecutable</key>
-	<string>OpenQ4</string>
+	<string>openQ4</string>
 	<key>CFBundleIconFile</key>
 	<string>quake4.icns</string>
 	<key>CFBundleIdentifier</key>

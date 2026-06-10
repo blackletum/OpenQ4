@@ -5,10 +5,10 @@
 <img src="assets/docs/img/banner.png" alt="openQ4 banner">
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Status](https://img.shields.io/badge/status-Beta%20Development-d97a1f.svg)](https://github.com/themuffinator/OpenQ4/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](https://github.com/themuffinator/OpenQ4)
-[![Architecture](https://img.shields.io/badge/arch-x64%20%7C%20ARM64-orange.svg)](https://github.com/themuffinator/OpenQ4)
-[![Windows Installer](https://img.shields.io/badge/windows-installer%20available-2d8f4e.svg)](https://github.com/themuffinator/OpenQ4/releases)
+[![Status](https://img.shields.io/badge/status-Beta%20Development-d97a1f.svg)](https://github.com/themuffinator/openQ4/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](https://github.com/themuffinator/openQ4)
+[![Architecture](https://img.shields.io/badge/arch-x64%20%7C%20ARM64-orange.svg)](https://github.com/themuffinator/openQ4)
+[![Windows Installer](https://img.shields.io/badge/windows-installer%20available-2d8f4e.svg)](https://github.com/themuffinator/openQ4/releases)
 [![Build System](https://img.shields.io/badge/build-Meson%20%2B%20Ninja-yellow.svg)](https://mesonbuild.com/)
 
 **Open-source Quake 4 source-port and game-code replacement built for modern systems**
@@ -27,7 +27,7 @@
 
 **openQ4** is a complete open-source replacement for the Quake 4 engine and game binaries. The project keeps official Quake 4 asset compatibility as its guiding constraint while modernizing rendering, display handling, input, packaging, and the build pipeline for current hardware and operating systems.
 
-Single-player and multiplayer live under one `baseoq4/` directory with `game-sp` and `game-mp`. SDK-derived game code is maintained in the companion [OpenQ4-GameLibs](https://github.com/themuffinator/OpenQ4-GameLibs) repository, while BSE is treated as first-party source under `src/bse/` and linked directly into the client executable.
+Single-player and multiplayer live under one `baseoq4/` directory with `game-sp` and `game-mp`. SDK-derived game code is maintained in the companion [openQ4-GameLibs](https://github.com/themuffinator/openQ4-GameLibs) repository, while BSE is treated as first-party source under `src/bse/` and linked directly into the client executable.
 
 > [!NOTE]
 > openQ4 does not include Quake 4 assets. You need a legitimate copy of Quake 4 from Steam or GOG to play.
@@ -51,7 +51,7 @@ Single-player and multiplayer live under one `baseoq4/` directory with `game-sp`
 - Startup auto-discovery for Steam and GOG installs
 - Official `q4base` media PK4 validation enabled by default, with only core retail media required and retail game-binary PK4s ignored
 - In-tree BSE runtime integrated into `openQ4-client_<arch>`
-- Canonical SDK-derived game-library source kept in [OpenQ4-GameLibs](https://github.com/themuffinator/OpenQ4-GameLibs)
+- Canonical SDK-derived game-library source kept in [openQ4-GameLibs](https://github.com/themuffinator/openQ4-GameLibs)
 
 ### Rendering and presentation
 
@@ -97,7 +97,7 @@ Single-player and multiplayer live under one `baseoq4/` directory with `game-sp`
 ## Getting Started
 
 1. Install **Quake 4** from [Steam](https://store.steampowered.com/app/2210/Quake_4/) or [GOG](https://www.gog.com/en/game/quake_4).
-2. Download the latest openQ4 release from the [Releases page](https://github.com/themuffinator/OpenQ4/releases).
+2. Download the latest openQ4 release from the [Releases page](https://github.com/themuffinator/openQ4/releases).
 3. Choose the asset that matches your CPU architecture (`x64` or `arm64`, the ARM64 release label).
 4. Install or extract openQ4 to its own folder when possible:
    - Windows: use the matching installer (`openq4-<version>-windows-<arch>-setup.exe`) or extract the matching `.zip`. The installer detects existing openQ4 installs, registers a normal Windows uninstaller entry, and can optionally enable `openq4://` browser links.
@@ -142,7 +142,7 @@ Project scope is intentionally explicit:
 - `baseoq4/` remains the single game directory for SP and MP
 - BSE stays integrated in-tree under `src/bse/`
 - Dedicated server builds keep the disabled BSE manager path unless that changes by design
-- Canonical SDK/game-library edits belong in `../OpenQ4-GameLibs`, not a mirrored `src/game` tree
+- Canonical SDK/game-library edits belong in `../openQ4-GameLibs`, not a mirrored `src/game` tree
 - Compatibility with proprietary Quake 4 game DLLs is a non-goal
 - The current irradiance-volume path is intentionally non-PBR and LDR: it adds indirect diffuse only, bakes openQ4-native `.tga` atlases, and does not bring over the BFG EXR/environment-probe reflection stack
 
@@ -163,9 +163,9 @@ The manifest is a flat JSON object with these required string fields:
 - `releaseDate`
 - `website`
 - `author`
-- `requiredOpenQ4Version`
+- `requiredopenQ4Version`
 
-`requiredOpenQ4Version` is matched against the current openQ4 engine version (for example `0.1.010`). Mods without a manifest, or with a mismatched required engine version, are hidden from the mod menu and rejected for automatic mod switching.
+`requiredopenQ4Version` is matched against the current openQ4 engine version (for example `0.1.010`). Mods without a manifest, or with a mismatched required engine version, are hidden from the mod menu and rejected for automatic mod switching.
 
 ```json
 {
@@ -174,7 +174,7 @@ The manifest is a flat JSON object with these required string fields:
   "releaseDate": "2026-04-14",
   "website": "https://www.darkmatter-quake.com",
   "author": "themuffinator / DarkMatter Productions",
-  "requiredOpenQ4Version": "0.1.010"
+  "requiredopenQ4Version": "0.1.010"
 }
 ```
 
@@ -184,7 +184,7 @@ The manifest is a flat JSON object with these required string fields:
 
 Full setup instructions live in [BUILDING.md](BUILDING.md). The short version:
 
-- Keep [OpenQ4-GameLibs](https://github.com/themuffinator/OpenQ4-GameLibs) checked out beside this repo at `../OpenQ4-GameLibs`
+- Keep [openQ4-GameLibs](https://github.com/themuffinator/openQ4-GameLibs) checked out beside this repo at `../openQ4-GameLibs`
 - Use `builddir/` for local Meson builds
 - Use `.install/` as the staged runtime package root
 - Author repo-managed runtime overrides under `content/baseoq4/`; Meson stages them into `.install/baseoq4/`
@@ -267,7 +267,7 @@ openQ4 welcomes code, documentation, testing, and compatibility reports. Keep st
 
 openQ4 engine code is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0). See [LICENSE](LICENSE) for the full text.
 
-The game-library code in [OpenQ4-GameLibs](https://github.com/themuffinator/OpenQ4-GameLibs) is derived from the Quake 4 SDK and remains subject to id Software's SDK EULA. Quake 4 game assets remain the property of id Software and ZeniMax Media.
+The game-library code in [openQ4-GameLibs](https://github.com/themuffinator/openQ4-GameLibs) is derived from the Quake 4 SDK and remains subject to id Software's SDK EULA. Quake 4 game assets remain the property of id Software and ZeniMax Media.
 
 ---
 
@@ -281,6 +281,6 @@ The software is provided "as is" without warranty of any kind. openQ4 is experim
 
 ## Links
 
-[Website](https://www.darkmatter-quake.com) | [Repository](https://github.com/themuffinator/OpenQ4) | [Game Library](https://github.com/themuffinator/OpenQ4-GameLibs) | [Issue Tracker](https://github.com/themuffinator/OpenQ4/issues) | [Releases](https://github.com/themuffinator/OpenQ4/releases)
+[Website](https://www.darkmatter-quake.com) | [Repository](https://github.com/themuffinator/openQ4) | [Game Library](https://github.com/themuffinator/openQ4-GameLibs) | [Issue Tracker](https://github.com/themuffinator/openQ4/issues) | [Releases](https://github.com/themuffinator/openQ4/releases)
 
 [Back to Top](#top)

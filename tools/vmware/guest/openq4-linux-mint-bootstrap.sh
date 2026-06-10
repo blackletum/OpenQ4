@@ -13,7 +13,7 @@ sudo_run() {
     fi
 
     if [[ -z "${OPENQ4_SUDO_PASSWORD:-}" ]]; then
-        echo "sudo needs a password. Re-run through Invoke-OpenQ4LinuxMintWorkflow.ps1 or set OPENQ4_SUDO_PASSWORD." >&2
+        echo "sudo needs a password. Re-run through Invoke-openQ4LinuxMintWorkflow.ps1 or set OPENQ4_SUDO_PASSWORD." >&2
         exit 1
     fi
 
@@ -32,7 +32,7 @@ sudo_env_run() {
     fi
 
     if [[ -z "${OPENQ4_SUDO_PASSWORD:-}" ]]; then
-        echo "sudo needs a password. Re-run through Invoke-OpenQ4LinuxMintWorkflow.ps1 or set OPENQ4_SUDO_PASSWORD." >&2
+        echo "sudo needs a password. Re-run through Invoke-openQ4LinuxMintWorkflow.ps1 or set OPENQ4_SUDO_PASSWORD." >&2
         exit 1
     fi
 
@@ -102,7 +102,7 @@ export DEBIAN_FRONTEND=noninteractive
 echo "Updating apt metadata..."
 sudo_env_run DEBIAN_FRONTEND=noninteractive apt-get update
 
-echo "Installing OpenQ4 Linux build/runtime dependencies..."
+echo "Installing openQ4 Linux build/runtime dependencies..."
 sudo_env_run DEBIAN_FRONTEND=noninteractive apt-get install -y "${required_packages[@]}"
 
 for package_name in "${optional_packages[@]}"; do
@@ -154,5 +154,5 @@ cat <<'EOF'
 Linux Mint bootstrap complete.
 
 Recommended next command from the Windows host:
-  powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/Invoke-OpenQ4LinuxMintWorkflow.ps1 -Action Build -GuestUser codex
+  powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/Invoke-openQ4LinuxMintWorkflow.ps1 -Action Build -GuestUser codex
 EOF

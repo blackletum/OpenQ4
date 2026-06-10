@@ -109,7 +109,7 @@ public:
 	void				SendReliableGameMessage( const idBitMsg &msg );
 
 	void				SendVersionCheck( bool fromMenu = false );
-	// Legacy no-op in OpenQ4 (CD key auth removed).
+	// Legacy no-op in openQ4 (CD key auth removed).
 	bool				SendAuthCheck( const char *cdkey, const char *xpkey );
 
 	void				PacifierUpdate( void );

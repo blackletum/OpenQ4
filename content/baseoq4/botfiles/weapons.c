@@ -1,4 +1,4 @@
-// Initial OpenQ4 multiplayer bot weapon configuration.
+// Initial openQ4 multiplayer bot weapon configuration.
 
 projectileinfo {
 	name "bullet"

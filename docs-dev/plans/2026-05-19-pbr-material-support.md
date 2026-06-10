@@ -2,25 +2,25 @@
 
 ## Purpose
 
-Add physically based material support to OpenQ4 without changing how shipped Quake 4 assets render by default. PBR must be an opt-in extension for new OpenQ4 materials and future replacement-content work, while the existing `bumpmap`, `diffusemap`, `specularmap`, ambient-stage, GUI, post-process, light, fog, BSE, and ARB2 compatibility contracts remain intact.
+Add physically based material support to openQ4 without changing how shipped Quake 4 assets render by default. PBR must be an opt-in extension for new openQ4 materials and future replacement-content work, while the existing `bumpmap`, `diffusemap`, `specularmap`, ambient-stage, GUI, post-process, light, fog, BSE, and ARB2 compatibility contracts remain intact.
 
 The short version: stock materials stay stock; PBR materials get a modern material model; every unsupported case has a visible fallback reason and a legacy rendering path.
 
 ## Suitability Review
 
-This plan is suitable for OpenQ4 only if legacy fallback is treated as a first-class authoring contract, not as a nice-to-have conversion step. OpenQ4's shipped-content compatibility still comes from the classic material parser and the `SL_BUMP`/`SL_DIFFUSE`/`SL_SPECULAR` interaction model, so PBR metadata must never be the only runtime description for a material that can ship in `baseoq4/`.
+This plan is suitable for openQ4 only if legacy fallback is treated as a first-class authoring contract, not as a nice-to-have conversion step. openQ4's shipped-content compatibility still comes from the classic material parser and the `SL_BUMP`/`SL_DIFFUSE`/`SL_SPECULAR` interaction model, so PBR metadata must never be the only runtime description for a material that can ship in `baseoq4/`.
 
 Required adjustments:
 
 - Use a namespaced `pbr { ... }` block as the canonical syntax. This adds one top-level parser entry point instead of many new general material keywords and keeps classic stage parsing easy to audit.
 - Prefer dual-authored materials: classic `bumpmap`, `diffusemap`, and `specularmap` stages remain the seamless fallback for ARB2, legacy GL tiers, PBR-disabled runs, and any modern fail-closed case.
 - Treat generated fallback as development convenience only. A generated fallback may keep a test material visible, but release validation should fail if shipped PBR materials depend on approximate generated classic stages.
-- Do not promise that older Quake 4 or pre-PBR OpenQ4 binaries will ignore new PBR tokens. They generally will not. Backward compatibility for old binaries requires separate legacy material declarations or content overlays, not mixed new syntax.
+- Do not promise that older Quake 4 or pre-PBR openQ4 binaries will ignore new PBR tokens. They generally will not. Backward compatibility for old binaries requires separate legacy material declarations or content overlays, not mixed new syntax.
 - Keep explicit fallback ownership independent of PBR rendering cvars. A user disabling PBR must still get the authored classic material, not a missing/default material.
 
 ## Current Baseline
 
-OpenQ4 currently has two material/rendering worlds that need to stay in sync:
+openQ4 currently has two material/rendering worlds that need to stay in sync:
 
 - The legacy material parser in `src/renderer/Material.cpp` compiles classic stages into `SL_BUMP`, `SL_DIFFUSE`, `SL_SPECULAR`, and `SL_AMBIENT`. It adds implicit `_flat` and `_white` stages when an interaction would otherwise be incomplete, then sorts interaction stages into the order expected by the classic renderer.
 - The classic interaction path in `src/renderer/tr_render.cpp` and `src/renderer/draw_arb2.cpp` decomposes a surface/light pair into one or more `drawInteraction_t` records with bump, diffuse, and specular images. This is the compatibility authority for shipped assets.
@@ -35,14 +35,14 @@ The design should use the modern material bridge instead of replacing the classi
 - Existing stock materials must not be reinterpreted as PBR by default.
 - `r_renderer arb2`, `r_glTier legacy`, and default conservative startup must remain valid rollback paths.
 - A PBR material intended for shipped content must include authored classic fallback stages or explicit legacy fallback maps. Generated approximation stages are acceptable for tests and local authoring previews, but they are not considered seamless enough for release assets.
-- New PBR parser tokens are OpenQ4 material syntax, not legacy Quake 4 syntax. Do not require old binaries to ignore them; if old-binary compatibility is ever needed, ship a separate legacy declaration or content overlay.
-- In OpenQ4, unknown tokens should still default the material as they do today, so real typos remain visible. The PBR parser should recognize only the `pbr`/`physicallyBased` block entry point at the top level, then validate all PBR tokens inside that block.
+- New PBR parser tokens are openQ4 material syntax, not legacy Quake 4 syntax. Do not require old binaries to ignore them; if old-binary compatibility is ever needed, ship a separate legacy declaration or content overlay.
+- In openQ4, unknown tokens should still default the material as they do today, so real typos remain visible. The PBR parser should recognize only the `pbr`/`physicallyBased` block entry point at the top level, then validate all PBR tokens inside that block.
 - No repo `q4base/` or replacement-asset dependency may be introduced to make stock maps work.
 - All PBR features must fail closed in modern rendering: unsupported texture layout, shader tier, dynamic image, custom program, or material feature means fallback to classic material ownership, not partial lighting.
 
 ## Material Authoring Model
 
-Add a top-level PBR metadata block to the material language. The preferred OpenQ4 authoring shape is dual-authored: classic stages first for the legacy interaction path, then a `pbr { ... }` block for modern PBR ownership.
+Add a top-level PBR metadata block to the material language. The preferred openQ4 authoring shape is dual-authored: classic stages first for the legacy interaction path, then a `pbr { ... }` block for modern PBR ownership.
 
 ```text
 materials/example/pbr_panel
@@ -358,7 +358,7 @@ Add separate PBR controls instead of overloading enhanced materials:
 ### Phase 7: Authoring And Tooling
 
 - [ ] Document material syntax and texture packing in `docs-dev` and user-facing docs when ready.
-- [ ] Add Material Editor awareness if the tool is still maintained for OpenQ4 workflows.
+- [ ] Add Material Editor awareness if the tool is still maintained for openQ4 workflows.
 - [ ] Add optional import-helper guidance for glTF-style ORM maps.
 - [ ] Add sample PBR materials only if the project intentionally wants shipped sample content. Otherwise keep test assets under `.tmp/`.
 - [ ] Acceptance: artists can author a PBR material without reading renderer code.

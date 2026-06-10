@@ -91,9 +91,9 @@ const char *Sys_DefaultSavePath( void ) {
 	const char *home = [NSHomeDirectory() fileSystemRepresentation];
 	if ( home != NULL && home[0] != '\0' ) {
 #if defined( ID_DEMO_BUILD )
-		savepath = va( "%s/Library/Application Support/OpenQ4 Demo", home );
+		savepath = va( "%s/Library/Application Support/openQ4 Demo", home );
 #else
-		savepath = va( "%s/Library/Application Support/OpenQ4", home );
+		savepath = va( "%s/Library/Application Support/openQ4", home );
 #endif
 	} else {
 		savepath = Posix_Cwd();

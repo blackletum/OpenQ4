@@ -17,7 +17,7 @@
 #define PROJECT_VERSION				OPENQ4_VERSION_SHORT
 #define PROJECT_VERSION_FULL			OPENQ4_VERSION
 #define PROJECT_WEBSITE				"www.darkmatter-quake.com"
-#define PROJECT_REPO					"https://github.com/themuffinator/OpenQ4"
+#define PROJECT_REPO					"https://github.com/themuffinator/openQ4"
 
 #define GAME_NAME						PROJECT_NAME			// appears on window titles and errors
 #define GAME_ICON						"q4icon.bmp"
@@ -41,7 +41,7 @@
 #endif
 
 // paths
-#define	CD_BASEDIR						"OpenQ4"
+#define	CD_BASEDIR						"openQ4"
 #define	BASE_GAMEDIR					"q4base"
 #define	BASE_MPGAMEDIR					"q4mp"
 #define OPENQ4_GAMEDIR					"baseoq4"
@@ -60,9 +60,9 @@
 #define	CD_EXE							PROJECT_NAME "-client_" OPENQ4_BINARY_ARCH ".exe"
 
 #ifdef _XENON
-#define CONFIG_FILE						"save:/OpenQ4Config.cfg"
+#define CONFIG_FILE						"save:/openQ4Config.cfg"
 #else
-#define CONFIG_FILE						"OpenQ4Config.cfg"
+#define CONFIG_FILE						"openQ4Config.cfg"
 #endif
 
 // base folder where the source code lives
@@ -120,10 +120,10 @@
 // RAVEN END
 
 // Savegame header compatibility:
-// - New OpenQ4 saves use Quake 4's retail engine header name/version.
-// - Older OpenQ4 builds wrote OpenQ4-branded headers with versions 0 and 1.
+// - New openQ4 saves use Quake 4's retail engine header name/version.
+// - Older openQ4 builds wrote openQ4-branded headers with versions 0 and 1.
 #define SAVEGAME_GAME_NAME_RETAIL				"Quake4"
-#define SAVEGAME_GAME_NAME_LEGACY_OPENQ4		"OpenQ4"
+#define SAVEGAME_GAME_NAME_LEGACY_OPENQ4		"openQ4"
 #define SAVEGAME_VERSION						1834
 #define LEGACY_OPENQ4_SAVEGAME_VERSION			0
 #define LEGACY_OPENQ4_SAVEGAME_VERSION_ALT		1
@@ -132,9 +132,9 @@
 #define EDITOR_WINDOWTEXT				"QuakeEdit"
 
 // win32 info
-#define WIN32_CONSOLE_CLASS				"OpenQ4 WinConsole"
-#define WIN32_SPLASH_CLASS				"OpenQ4 Splash"
-#define	WIN32_WINDOW_CLASS_NAME			"OpenQ4"
+#define WIN32_CONSOLE_CLASS				"openQ4 WinConsole"
+#define WIN32_SPLASH_CLASS				"openQ4 Splash"
+#define	WIN32_WINDOW_CLASS_NAME			"openQ4"
 #define	WIN32_FAKE_WINDOW_CLASS_NAME	"OPENQ4_WGL_FAKE"
 
 #ifdef __linux__

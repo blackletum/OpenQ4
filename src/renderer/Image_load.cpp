@@ -138,7 +138,7 @@ ID_INLINE void idImage::DeriveOpts() {
 			break;
 		case TD_HIGH_QUALITY:
 			// Preserve Quake 4's distinct "uncompressed/highquality" image bucket,
-			// but keep it on OpenQ4's modern uncompressed RGBA8 path rather than
+			// but keep it on openQ4's modern uncompressed RGBA8 path rather than
 			// reviving older compressed-driver behavior.
 			opts.gammaMips = false;
 			opts.colorFormat = CFM_DEFAULT;

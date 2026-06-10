@@ -16,7 +16,7 @@ option(
   'build_games',
   type: 'boolean',
   value: true,
-  description: 'Build game modules (game-sp_<arch>/game-mp_<arch>) from the companion OpenQ4-GameLibs repository.',
+  description: 'Build game modules (game-sp_<arch>/game-mp_<arch>) from the companion openQ4-GameLibs repository.',
 )
 
 option(

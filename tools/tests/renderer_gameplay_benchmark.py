@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run opt-in OpenQ4 renderer gameplay benchmark and capture cases.
+"""Run opt-in openQ4 renderer gameplay benchmark and capture cases.
 
 Unlike renderer_validation_matrix.py, this runner enters maps. It is intended
 for local, target-hardware validation where stock Quake 4 assets are available.
@@ -260,7 +260,7 @@ def host_arch() -> str:
 def find_client_executable(root: Path) -> Path:
     install_dir = root / ".install"
     suffix = ".exe" if os.name == "nt" else ""
-    candidate_prefixes = ("openQ4-client", "OpenQ4-client")
+    candidate_prefixes = ("openQ4-client", "openQ4-client")
     for prefix in candidate_prefixes:
         preferred = install_dir / f"{prefix}_{host_arch()}{suffix}"
         if preferred.exists():
@@ -1274,7 +1274,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--max-p95-ms", type=float, default=0.0, help="Fail when the parsed frame-pacing P95 exceeds this millisecond budget. Use 0 to disable.")
     parser.add_argument("--max-p99-ms", type=float, default=0.0, help="Fail when the parsed frame-pacing P99 exceeds this millisecond budget. Use 0 to disable.")
     parser.add_argument("--set-cvar", action="append", default=[], metavar="NAME=VALUE", help="Extra post-map cvar written into the generated benchmark cfg. Repeat for A/B diagnostics without extending the launch command line.")
-    parser.add_argument("--set-launch-cvar", action="append", default=[], metavar="NAME=VALUE", help="Extra cvar applied on the OpenQ4 launch command line before the map loads. Use for load-time renderer knobs such as vertex/index buffer caching.")
+    parser.add_argument("--set-launch-cvar", action="append", default=[], metavar="NAME=VALUE", help="Extra cvar applied on the openQ4 launch command line before the map loads. Use for load-time renderer knobs such as vertex/index buffer caching.")
     parser.add_argument("--exec-command", action="append", default=[], metavar="COMMAND", help="Extra post-map console command written into the generated benchmark cfg. Repeat for targeted diagnostics such as flashlight impulses.")
     parser.add_argument("--autoexec-delay-ms", type=int, default=1000, help="Delay after active map draw before executing the generated benchmark cfg.")
     parser.add_argument("--settle-frames", type=int, default=360, help="Frames to wait after map/connect before sampling.")
@@ -1291,7 +1291,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--mp-client-delay", type=int, default=12, help="Seconds to wait before launching the MP loopback client.")
     parser.add_argument("--mp-client-delay-frames", type=int, default=480, help="Extra server frames before server-side capture in MP runs.")
     parser.add_argument("--limit", type=int, default=0, help="Limit generated specs, useful for bounded local smoke runs.")
-    parser.add_argument("--dry-run", action="store_true", help="Write the planned command lines without launching OpenQ4.")
+    parser.add_argument("--dry-run", action="store_true", help="Write the planned command lines without launching openQ4.")
     parser.add_argument("--list", action="store_true", help="List profiles, cases, and shadow presets without running.")
     parsed = parser.parse_args(argv)
     try:

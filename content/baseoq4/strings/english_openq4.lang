@@ -28,7 +28,7 @@
 	"#str_41103"	"Renderer Backend"
 	"#str_41104"	"BEST;ARB;ARB2;CG;EXP;NV10;NV20;R200"
 	"#str_41105"	"Unavailable"
-	"#str_41106"	"RenderDoc capture is not yet supported with the current OpenQ4 renderer. The injected OpenGL context is missing compatibility features that OpenQ4 still requires."
+	"#str_41106"	"RenderDoc capture is not yet supported with the current openQ4 renderer. The injected OpenGL context is missing compatibility features that openQ4 still requires."
 	"#str_41107"	"Irradiance Volumes"
 	"#str_41108"	"Toggle Zoom"
 	"#str_41109"	"MOD DETAILS"

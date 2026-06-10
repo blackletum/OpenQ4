@@ -198,7 +198,7 @@ static bool Sys_ExecProcessArgs( char *const argv[], bool dofork ) {
 			return true;
 		}
 		execvp( argv[0], argv );
-		Sys_WriteProcessChildText( "OpenQ4 child exec failed: " );
+		Sys_WriteProcessChildText( "openQ4 child exec failed: " );
 		Sys_WriteProcessChildText( argv[0] );
 		Sys_WriteProcessChildText( "\n" );
 		_exit( 127 );
@@ -460,13 +460,13 @@ static void Sys_ReportWaylandRuntime( void ) {
 #if defined( USE_SDL3 )
 		Sys_Printf(
 			"Wayland session detected (%s) without X11 DISPLAY. "
-			"OpenQ4 will use SDL3's native Wayland path when selected; if OpenGL startup fails, use an XWayland-enabled session or set SDL_VIDEO_DRIVER=x11 (SDL_VIDEODRIVER=x11 is also honored by SDL3).\n",
+			"openQ4 will use SDL3's native Wayland path when selected; if OpenGL startup fails, use an XWayland-enabled session or set SDL_VIDEO_DRIVER=x11 (SDL_VIDEODRIVER=x11 is also honored by SDL3).\n",
 			waylandDisplay
 		);
 #else
 		Sys_Printf(
 			"Wayland session detected (%s) without X11 DISPLAY. "
-			"OpenQ4 currently requires X11/GLX on Linux; launch from an XWayland-enabled session.\n",
+			"openQ4 currently requires X11/GLX on Linux; launch from an XWayland-enabled session.\n",
 			waylandDisplay
 		);
 #endif
@@ -482,7 +482,7 @@ static void Sys_ReportWaylandRuntime( void ) {
 	);
 #else
 	Sys_Printf(
-		"Wayland session detected (%s). OpenQ4 is using X11 via XWayland (DISPLAY=%s).\n",
+		"Wayland session detected (%s). openQ4 is using X11 via XWayland (DISPLAY=%s).\n",
 		waylandDisplay,
 		x11Display
 	);

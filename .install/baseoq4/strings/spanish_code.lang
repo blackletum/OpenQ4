@@ -8,7 +8,7 @@
 	"#str_102087"	"Cargando..."
 	"#str_102911"	"Sin identificar"
 	"#str_102916"	"Partida guardada..."
-	"#str_104137"	"Estos cambios surtirán efecto la próxima vez que ejecutes OpenQ4."
+	"#str_104137"	"Estos cambios surtirán efecto la próxima vez que ejecutes openQ4."
 	"#str_104141"	"AUDIO EN 3D NO HALLADO"
 	"#str_104142"	"No se han encontrado altavoces envolventes.\nVerifica que los altavoces estén configurados correctamente en el panel de control de Windows."
 	"#str_104247"	"Preparado"
@@ -137,7 +137,7 @@
 	"#str_104434"	"LÍMITE DE BAJAS %d"
 	"#str_104435"	"%d VOTOS A FAVOR; %d VOTOS EN CONTRA"
 	"#str_104837"	"ACTUALIZAR"
-	"#str_104839"	"OpenQ4 está actualizado. No es necesaria ninguna actualización."
+	"#str_104839"	"openQ4 está actualizado. No es necesaria ninguna actualización."
 	"#str_104840"	"Desafío incorrecto.\n"
 	"#str_104842"	"Los datos no están sincronizados con los del servidor.\n"
 	"#str_104843"	"Este servidor solo acepta clientes LAN.\n"
@@ -239,7 +239,7 @@
 	"#str_107091"	"MANDO 30"
 	"#str_107092"	"MANDO 31"
 	"#str_107093"	"MANDO 32"
-	"#str_107094"	"AUX. 1"	
+	"#str_107094"	"AUX. 1"
 	"#str_107095"	"AUX. 2"
 	"#str_107096"	"AUX. 3"
 	"#str_107097"	"AUX. 4"
@@ -302,9 +302,9 @@
 	"#str_107189"	"Comprobando."
 	"#str_107190"	"N/D"
 	"#str_107191"	"Entrando para autorizar servidor."
-	"#str_107194"	"La clave del CD de OpenQ4 es incorrecta."
-	"#str_107196"	"Esta clave del CD de OpenQ4 ha sido prohibida."
-	"#str_107198"	"La clave del CD de OpenQ4 ya está siendo utilizada."	
+	"#str_107194"	"La clave del CD de openQ4 es incorrecta."
+	"#str_107196"	"Esta clave del CD de openQ4 ha sido prohibida."
+	"#str_107198"	"La clave del CD de openQ4 ya está siendo utilizada."
 	"#str_107204"	"Esperando autorización."
 	"#str_107205"	"Cliente para autorización desconocido."
 	"#str_107206"	"Acceso denegado: clave del CD en uso."
@@ -312,8 +312,8 @@
 	"#str_107208"	"Servidor de autorización: esperando al cliente."
 	"#str_107210"	"Imposible conectarse al servidor puro en %s:\n"
 	"#str_107211"	"El servidor puro en %s no ha proporcionado una referencia al código ejecutable.\n"
-	"#str_107212"	"OpenQ4"
-	"#str_107213"	"Descargando %s"	
+	"#str_107212"	"openQ4"
+	"#str_107213"	"Descargando %s"
 	"#str_107214"	"pak dañado (chequeo 0x%x, se esperaba 0x%x)."
 	"#str_107215"	"La descarga ha fallado o ha sido cancelada."
 	"#str_107216"	"Descarga fallida."
@@ -324,7 +324,7 @@
 	"#str_107221"	"Faltan archivos binarios del juego."
 	"#str_107222"	"El servidor solo ofrece descargar algunos de los archivos necesarios para conectarse(%s). ¿Descargarlos de todas formas?"
 	"#str_107223"	"Te faltan algunos archivos para conectarte a este servidor, pero no se ofrecen descargas."
-	"#str_107224"	"Tienes que descargar algunos archivos para conectarte a este servidor (%s). ¿Continuar?"	
+	"#str_107224"	"Tienes que descargar algunos archivos para conectarte a este servidor (%s). ¿Continuar?"
 	"#str_107230"	"No se han encontrado altavoces envolventes.\nVerifica que los altavoces estén configurados correctamente."
 	"#str_107231"	"EAX"
 	"#str_107232"	"Reverberación EAX"
@@ -371,18 +371,18 @@
 	"#str_107291"	"Arena CLB "
 	"#str_107292"	"Sin ordenar"
 	"#str_107293"	"Escaneando servidores LAN..."
-	"#str_107294"	"Escaneados %d servidores OpenQ4"
+	"#str_107294"	"Escaneados %d servidores openQ4"
 	"#str_107295"	"Has acribillado a %s"
 	"#str_107296"	"Has sido acribillado por %s"
 	"#str_107297"	"Escaneando %d/%d: %s"
 	"#str_107298"	"Escaneando. Encontrado: %s"
-	"#str_107299"	"OpenQ4 no está actualizado. Visita www.Quake4Game.com para encontrar las actualizaciones."
-	
+	"#str_107299"	"openQ4 no está actualizado. Visita www.Quake4Game.com para encontrar las actualizaciones."
+
 	// DEF file entries
 	// done by hand
-	
+
 	// items.def
-	
+
 	"#str_107300"	"si es 1, se muestra la interfaz de adquisición de objeto al cogerlo."
 	"#str_107301"	"referencia para activadores, etc. Tiene que estar en el inventario para que funcione."
 	"#str_107302"	"nombre de icono para los gráficos del visor frontal."
@@ -413,9 +413,9 @@
 	"#str_107327"	"El moderador"
 	"#str_107328"	"Chaleco de armadura pequeño "
 	"#str_107329"	"Chaleco de armadura grande "
-	
+
 	//weapons and goods
-	
+
 	"#str_107400"	"Bláster"
 	"#str_107401"	"Pistola de Materia Oscura"
 	"#str_107402"	"Guantelete"
@@ -457,9 +457,9 @@
 	"#str_107440"	"Mod. de cohete guiado"
 
 	//persona data
-	
+
 	"#str_107500"	"PRUEBA DEL PERSONAJE"
-	"#str_107501"	"DESCRIPCIÓN DEL PERSONAJE"	
+	"#str_107501"	"DESCRIPCIÓN DEL PERSONAJE"
 	"#str_107502"	"Pelotón Rhino"
 	"#str_107503"	"Pelotón Tejón (Badger)"
 	"#str_107504"	"Pelotón Lobo (Wolf)"
@@ -480,9 +480,9 @@
 	"#str_107519"	"Técnico Strauss"
 	"#str_107520"	"Teniente Voss"
 	"#str_107521"	"Sin nombre"
-	
+
 	// maps.def
-	
+
 	"#str_107600"	"MATADERO"
 	"#str_107601"	"TORMENTA DE ARENA"
 	"#str_107602"	"LA FLOTA PERDIDA"
@@ -536,7 +536,7 @@
 	"#str_107650"	"CONSECUENCIAS"
 	"#str_107651"	"ALT DER."
 	"#str_107652"	"CONTROL DER."
-	"#str_107653"	"MAYÚS DER."	
+	"#str_107653"	"MAYÚS DER."
 	"#str_107654"	"Imposible guardar tras una misión fallida"
 	"#str_107655"	"Sin respuesta de %s tras %d intentos. Desconectando"
 	"#str_107656"	"Punto de control"
@@ -559,14 +559,14 @@
 	"#str_107673"	"OBSERVANDO"
 	"#str_107674"	"ESPERANDO A UN JUGADOR MÁS"
 	"#str_107675"	"ESPERANDO A UN JUGADOR DE CADA EQUIPO"
-	"#str_107676"	"Torneo"	
+	"#str_107676"	"Torneo"
 	"#str_107677"	"Partida a Muerte por Equipos"
 	"#str_107678"	"Capturar la Bandera"
 	"#str_107679"	"Partida a Muerte"
 	"#str_107680"	"Capturar la Bandera (Una Bandera)"
 	"#str_107681"	"Capturar la Bandera (Arena)"
 	"#str_107682"	"Capturar la Bandera (Arena y Una Bandera)"
-	"#str_107683"	"Buscando actualizaciones de OpenQ4."
+	"#str_107683"	"Buscando actualizaciones de openQ4."
 	"#str_107684"	"Vas a participar cuando comience el torneo. "
 	"#str_107685"	"Vas a observar el torneo."
 	"#str_107686"	"Estás en la sala de espera"
@@ -607,30 +607,30 @@
 	"#str_107719"	"Semifinales"
 	"#str_107720"	"Final"
 	"#str_107721"	"Pre-partida"
-	
+
 	"#str_107722"	"EL ENEMIGO TIENE TU BANDERA"
 	"#str_107723"	"EL ENEMIGO HA SOLTADO LA BANDERA"
 	"#str_107724"	"Estado de voto:"
 	"#str_107725"	"Nombre servidor"
 	"#str_107726"	"Servidor IP"
 	"#str_107727"	"Tipo de juego"
-	
+
 	"#str_107728"	"JUGANDO"
 	"#str_107729"	"ELIMINADO"
-	
+
 	"#str_107730"	"Nombre del mapa:"
 	"#str_107731"	"Elecciones Indefinidas"
 	"#str_107732"	"ESPERANDO A %d JUGADORES MÁS"
 	"#str_107733"	"Presente en Jugadores mín. votados"
 	"#str_107734"	"El valor de Jugadores mín. está fuera del rango"
-	"#str_107735"	"Ajustar Jugadores mín. a %d"	
+	"#str_107735"	"Ajustar Jugadores mín. a %d"
 	"#str_107736"	"Obteniendo lista de servidores…"
 	"#str_107737"	"Estableciendo mundo"
 	"#str_107738"	"Esperando mensaje inicial del servidor"
 	"#str_107739"	"ESPERANDO"
 	"#str_107740"	"AVANZADO"
 	// player.def for the model names in the MP menus..
-	
+
 	"#str_108000"	"Strogg Fallido"
 	"#str_108001"	"Strogg Viscoso"
 	"#str_108002"	"Cadáver"
@@ -653,8 +653,8 @@
 	"#str_108019"	"Cadáver Alternativo 1"
 	"#str_108020"	"Cadáver Alternativo 2"
 	"#str_108021"	"Cadáver Alternativo 3"
-	
-	
+
+
 	"#str_108022"	"cliente matado"
 	"#str_108023"	"Votación desactivada en el servidor"
 
@@ -663,7 +663,7 @@
 	"#str_108025"	"Strogg"
 	"#str_108026"	"Marine"
 	"#str_108027"	"El equipo %s ha llegado al límite de capturas."
-	
+
 	// patch code strings start with #str_110000
 	"#str_110000"	"Desordenado"
 	"#str_110001"	"Solo servidores favoritos"
@@ -686,11 +686,11 @@
 	"#str_110016"	"Jugadores Bajo %s Alto (no vacío)"
 	"#str_110017"	"Esperando a que todos estén preparados; No estás preparado: Pulsa %s para estar preparado."
 	"#str_110018"	"Esperando a que todos estén preparados; Preparado: Pulsa %s para dejar de estar preparado."
-		
+
 	"#str_110019"	""
 	"#str_110020"	"¿Quieres mandar información a los desarrolladores acerca de datos de uso anónimo? La información que se enviará será del tipo: Presencia de un lector de DVD, tipo de tarjeta gráfica, cantidad de memoria RAM del sistema, etc."
 	"#str_110021"	"¿Quieres ser avisado cada vez que se envíen estadísticas de uso anónimo?"
-	
+
 	"#str_110023"	"Mostrando %d de %d servidores"
 	"#str_110024"	"Offline"
 
@@ -734,7 +734,7 @@
 	"#str_123005"	"Q4TV Solo"
 	"#str_123006"	"Filtrar por MOD"
 	"#str_123007"	"Juego"
-	"#str_123008"	"Todo"	
+	"#str_123008"	"Todo"
 	"#str_123009"	"Tickrate"
 
 }

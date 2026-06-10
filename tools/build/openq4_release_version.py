@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compute the next OpenQ4 manual release version."""
+"""Compute the next openQ4 manual release version."""
 
 from __future__ import annotations
 
@@ -63,12 +63,12 @@ def parse_bump_mode(value: str) -> str:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Compute the next manual OpenQ4 release version."
+        description="Compute the next manual openQ4 release version."
     )
     parser.add_argument(
         "--source-root",
         default=".",
-        help="OpenQ4 repository root (default: current directory).",
+        help="openQ4 repository root (default: current directory).",
     )
     parser.add_argument(
         "--current-version",

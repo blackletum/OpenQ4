@@ -16,17 +16,17 @@ jobs:
     name: Validation Script Smoke
     runs-on: ubuntu-24.04
     env:
-      OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/../OpenQ4-GameLibs
+      OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/../openQ4-GameLibs
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Fetch OpenQ4-GameLibs
+      - name: Fetch openQ4-GameLibs
         shell: bash
         run: |
           set -euo pipefail
-          git clone --depth 1 https://github.com/themuffinator/OpenQ4-GameLibs.git "${OPENQ4_GAMELIBS_REPO}"
+          git clone --depth 1 https://github.com/themuffinator/openQ4-GameLibs.git "${OPENQ4_GAMELIBS_REPO}"
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -57,7 +57,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     env:
-      OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/../OpenQ4-GameLibs
+      OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/../openQ4-GameLibs
     strategy:
       fail-fast: false
       matrix:
@@ -78,11 +78,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Fetch OpenQ4-GameLibs
+      - name: Fetch openQ4-GameLibs
         shell: bash
         run: |
           set -euo pipefail
-          git clone --depth 1 https://github.com/themuffinator/OpenQ4-GameLibs.git "${OPENQ4_GAMELIBS_REPO}"
+          git clone --depth 1 https://github.com/themuffinator/openQ4-GameLibs.git "${OPENQ4_GAMELIBS_REPO}"
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
@@ -176,16 +176,16 @@ jobs:
     runs-on: windows-2025-vs2026
     timeout-minutes: 90
     env:
-      OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/../OpenQ4-GameLibs
+      OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/../openQ4-GameLibs
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Fetch OpenQ4-GameLibs
+      - name: Fetch openQ4-GameLibs
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          git clone --depth 1 https://github.com/themuffinator/OpenQ4-GameLibs.git "$env:OPENQ4_GAMELIBS_REPO"
+          git clone --depth 1 https://github.com/themuffinator/openQ4-GameLibs.git "$env:OPENQ4_GAMELIBS_REPO"
 
       - name: Setup Python
         uses: actions/setup-python@v6

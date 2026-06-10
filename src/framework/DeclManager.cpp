@@ -69,7 +69,7 @@ missing reload over a previously explicit definition
 #define USE_COMPRESSED_DECLS
 //#define GET_HUFFMAN_FREQUENCIES
 
-static idDecl *OpenQ4_AllocEffectDecl( void ) {
+static idDecl *openQ4_AllocEffectDecl( void ) {
 	if ( bseAllocDeclEffect == NULL ) {
 		common->FatalError( "DECL_EFFECT allocator is not installed. AttachBSE must run before declManager->Init()." );
 	}
@@ -79,7 +79,7 @@ static idDecl *OpenQ4_AllocEffectDecl( void ) {
 		common->FatalError( "DECL_EFFECT allocator returned NULL." );
 	}
 
-	if ( !OpenQ4_IsIntegratedBSEDeclEffect( decl ) ) {
+	if ( !openQ4_IsIntegratedBSEDeclEffect( decl ) ) {
 		delete decl;
 		common->FatalError( "DECL_EFFECT allocator returned a non-BSE decl instance." );
 	}
@@ -87,8 +87,8 @@ static idDecl *OpenQ4_AllocEffectDecl( void ) {
 	return decl;
 }
 
-static void OpenQ4_VerifyEffectDeclAllocator( void ) {
-	idDecl *decl = OpenQ4_AllocEffectDecl();
+static void openQ4_VerifyEffectDeclAllocator( void ) {
+	idDecl *decl = openQ4_AllocEffectDecl();
 	delete decl;
 }
 
@@ -219,7 +219,7 @@ public:
 	idDeclLocal *				decls;
 };
 
-static bool DeclManager_IsOpenQ4OverrideDeclFile( const idDeclFile *sourceFile ) {
+static bool DeclManager_IsopenQ4OverrideDeclFile( const idDeclFile *sourceFile ) {
 	if ( sourceFile == NULL ) {
 		return false;
 	}
@@ -369,7 +369,7 @@ private:
 idCVar idDeclManagerLocal::decl_show( "decl_show", "0", CVAR_SYSTEM, "set to 1 to print parses, 2 to also print references", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 idCVar com_SingleDeclFile( "com_SingleDeclFile", "0", CVAR_SYSTEM | CVAR_BOOL, "load decls from a packed single .decls file instead of scanning loose decl folders" );
 static idCVar com_singleDeclFileName( "com_singleDeclFileName", "", CVAR_SYSTEM, "override packed decl file used by com_SingleDeclFile and writeDeclFile" );
-static idCVar com_singleDeclFileWriteMode( "com_singleDeclFileWriteMode", "0", CVAR_SYSTEM | CVAR_INTEGER, "packed .decls writer policy: 0 = OpenQ4 extended game types, 1 = exact retail game types", 0, 1, idCmdSystem::ArgCompletion_Integer<0,1> );
+static idCVar com_singleDeclFileWriteMode( "com_singleDeclFileWriteMode", "0", CVAR_SYSTEM | CVAR_INTEGER, "packed .decls writer policy: 0 = openQ4 extended game types, 1 = exact retail game types", 0, 1, idCmdSystem::ArgCompletion_Integer<0,1> );
 
 static const declType_t declSingleFileFrameworkTypes[] = {
 	DECL_TABLE,
@@ -387,7 +387,7 @@ static const declType_t declSingleFileFrameworkTypes[] = {
 	DECL_MAPDEF
 };
 
-static const declType_t declSingleFileOpenQ4GameTypes[] = {
+static const declType_t declSingleFileopenQ4GameTypes[] = {
 	DECL_ENTITYDEF,
 	DECL_MODELDEF,
 	DECL_MAPDEF,
@@ -428,7 +428,7 @@ static void DeclManager_GetSingleDeclFileName( idStr &fileName ) {
 }
 
 static void DeclManager_ShowReloadProgress( int fileIndex, int fileCount, const char *fileName ) {
-	OpenQ4_ToolPrint( va( "%d/%d: %s\n", fileIndex + 1, fileCount, fileName ) );
+	openQ4_ToolPrint( va( "%d/%d: %s\n", fileIndex + 1, fileCount, fileName ) );
 }
 
 idDeclManagerLocal	declManagerLocal;
@@ -871,7 +871,7 @@ static void DeclManager_MakeGameDeclTypeList( idList<declType_t> &list, declSing
 		return;
 	}
 
-	MakeDeclTypeList( list, declSingleFileOpenQ4GameTypes, sizeof( declSingleFileOpenQ4GameTypes ) / sizeof( declSingleFileOpenQ4GameTypes[0] ) );
+	MakeDeclTypeList( list, declSingleFileopenQ4GameTypes, sizeof( declSingleFileopenQ4GameTypes ) / sizeof( declSingleFileopenQ4GameTypes[0] ) );
 }
 
 static bool DeclManager_WriteProgramImagesEnabled( void ) {
@@ -1015,7 +1015,7 @@ int idDeclFile::LoadAndParse( bool unique ) {
 			if ( newDecl->sourceFile == this && !newDecl->redefinedInReload ) {
 				referencedThisLevel = newDecl->referencedThisLevel;
 			} else {
-				if ( !DeclManager_IsOpenQ4OverrideDeclFile( newDecl->sourceFile ) ) {
+				if ( !DeclManager_IsopenQ4OverrideDeclFile( newDecl->sourceFile ) ) {
 					src.Warning( "%s '%s' previously defined at %s:%i", declManagerLocal.GetDeclNameFromType( identifiedType ),
 									name.c_str(), newDecl->sourceFile->fileName.c_str(), newDecl->sourceLine );
 				}
@@ -1192,7 +1192,7 @@ int idDeclFile::LoadAndParse( idFile *file ) {
 		idDeclLocal *decl = declManagerLocal.FindTypeWithoutParsing( identifiedType, name, false );
 		if ( decl ) {
 			if ( decl->sourceFile != this || decl->redefinedInReload ) {
-				if ( !DeclManager_IsOpenQ4OverrideDeclFile( decl->sourceFile ) ) {
+				if ( !DeclManager_IsopenQ4OverrideDeclFile( decl->sourceFile ) ) {
 					src.Warning( "%s '%s' previously defined at %s:%i",
 						declManagerLocal.GetDeclNameFromType( identifiedType ),
 						name.c_str(),
@@ -1283,8 +1283,8 @@ void idDeclManagerLocal::Init( void ) {
 	RegisterDeclType(  "materialType",		DECL_MATERIALTYPE,  idDeclAllocator<rvDeclMatType>);
 	RegisterDeclType(  "lipSync",			DECL_LIPSYNC,		idDeclAllocator<rvDeclLipSync>);
 	RegisterDeclType(  "playback",			DECL_PLAYBACK,		idDeclAllocator<rvDeclPlayback>);
-	OpenQ4_VerifyEffectDeclAllocator();
-	RegisterDeclType(	"effect",			DECL_EFFECT,		OpenQ4_AllocEffectDecl);
+	openQ4_VerifyEffectDeclAllocator();
+	RegisterDeclType(	"effect",			DECL_EFFECT,		openQ4_AllocEffectDecl);
 // jmarshall end
 
 // jmarshall: Raven Decl Support
@@ -3798,7 +3798,7 @@ void idDeclLocal::ParseLocal( bool noCaching ) {
 		}
 	}
 
-	if ( common->IsInitialized() && !declManagerLocal.GetInsideLoad() && !OpenQ4_IsAnyToolActive() ) {
+	if ( common->IsInitialized() && !declManagerLocal.GetInsideLoad() && !openQ4_IsAnyToolActive() ) {
 		common->Warning( "Loading non pre-cached %s decl %s", declManagerLocal.GetDeclNameFromType( type ), name.c_str() );
 	}
 

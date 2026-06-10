@@ -1442,7 +1442,7 @@ bool idDeclAF::ParseSettings( idLexer &src ) {
 			}
 
 			// Retail treats bare "fastEval" as true. Keep that behavior, while
-			// also accepting explicit boolean values for OpenQ4 tooling.
+			// also accepting explicit boolean values for openQ4 tooling.
 			if ( !valueToken.Icmp( "1" ) || !valueToken.Icmp( "true" ) ) {
 				fastEval = true;
 			} else if ( !valueToken.Icmp( "0" ) || !valueToken.Icmp( "false" ) ) {

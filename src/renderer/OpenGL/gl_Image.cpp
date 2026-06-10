@@ -305,7 +305,7 @@ void idImage::AllocImage() {
 	PurgeImage();
 	storageGeneration++;
 
-	// OpenQ4 still follows the stock Quake 4 renderer's legacy SDR lighting path.
+	// openQ4 still follows the stock Quake 4 renderer's legacy SDR lighting path.
 	// Enabling selective sRGB decode without a full renderer-wide linear workflow
 	// changes the baseline image significantly, so keep stock texture sampling
 	// behavior for now and reserve strict sRGB texture decode for future work.

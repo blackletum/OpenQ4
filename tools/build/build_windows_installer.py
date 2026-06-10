@@ -14,7 +14,7 @@ from pathlib import Path
 PRODUCT_NAME = "openQ4"
 PRODUCT_PUBLISHER = "DarkMatter Productions"
 SETUP_ICON_RELATIVE = Path("assets") / "icons" / "quake4.ico"
-TEMPLATE_RELATIVE = Path("tools") / "build" / "OpenQ4Installer.iss.in"
+TEMPLATE_RELATIVE = Path("tools") / "build" / "openQ4Installer.iss.in"
 SUPPORTED_ARCHES = ("x64", "x86", "arm64")
 
 

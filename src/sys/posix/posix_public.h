@@ -64,6 +64,7 @@ bool		Posix_ConsoleNeedsEventPump( void );
 bool		Posix_ConsoleProcessEvent( const void *eventData );
 void		Posix_ConsoleFrame( void );
 void		Posix_ShutdownConsole( void );
+void		Posix_ReleaseStartupSDLVideoOwnership( void );
 void		Posix_Shutdown( void );
 
 void		Sys_FPE_handler( int signum, siginfo_t *info, void *context );

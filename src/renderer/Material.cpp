@@ -177,7 +177,7 @@ static bool R_IsQ4LightImageNamespace( const char *name ) {
 
 static textureUsage_t R_DefaultStageUsageForMaterial( const char *materialName ) {
 	// Retail Quake 4 routes projected-light materials from both stock light
-	// namespaces through its light-oriented image bucket. OpenQ4 maps that
+	// namespaces through its light-oriented image bucket. openQ4 maps that
 	// behavior onto TD_LIGHT so projection cookies avoid the generic texture path.
 	if ( R_IsQ4LightImageNamespace( materialName ) ) {
 		return TD_LIGHT;
@@ -187,7 +187,7 @@ static textureUsage_t R_DefaultStageUsageForMaterial( const char *materialName )
 
 static textureUsage_t R_ApplyMaterialHighQualityUsage( textureUsage_t usage, bool forceHighQuality ) {
 	// Retail Quake 4 routes authored "highquality"/"uncompressed" image hints
-	// through a distinct usage bucket. OpenQ4 keeps that separate identity so
+	// through a distinct usage bucket. openQ4 keeps that separate identity so
 	// those stages do not collapse onto generic caches, while still letting the
 	// modern loader keep its higher-quality uncompressed binary-image pipeline.
 	if ( forceHighQuality || !image_ignoreHighQuality.GetBool() ) {
@@ -197,7 +197,7 @@ static textureUsage_t R_ApplyMaterialHighQualityUsage( textureUsage_t usage, boo
 }
 
 static unsigned int R_ApplyMaterialNoMipFlags( unsigned int flags ) {
-	// Retail only promoted "nomips" while resource builds were active. OpenQ4's
+	// Retail only promoted "nomips" while resource builds were active. openQ4's
 	// equivalent build switch is the boolean com_makingBuild cvar.
 	if ( com_makingBuild.GetBool() ) {
 		flags |= IMAGEFLAG_NOMIPS;

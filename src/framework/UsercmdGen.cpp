@@ -475,7 +475,7 @@ idCVar idUsercmdGenLocal::in_pitchSpeed( "in_pitchspeed", "140", CVAR_SYSTEM | C
 idCVar idUsercmdGenLocal::in_angleSpeedKey( "in_anglespeedkey", "1.5", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "angle change scale when holding down _speed button" );
 idCVar idUsercmdGenLocal::in_freeLook( "in_freeLook", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "look around with mouse (reverse _mlook button)" );
 idCVar idUsercmdGenLocal::in_alwaysRun( "in_alwaysRun", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "always run (reverse _speed button)" );
-static idCVar in_runDefaultMigrated( "in_runDefaultMigrated", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "one-time migration flag for legacy OpenQ4 run defaults" );
+static idCVar in_runDefaultMigrated( "in_runDefaultMigrated", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "one-time migration flag for legacy openQ4 run defaults" );
 idCVar idUsercmdGenLocal::in_toggleRun( "in_toggleRun", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "pressing _speed button toggles run on/off - only in MP" );
 idCVar idUsercmdGenLocal::in_toggleCrouch( "in_toggleCrouch", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "pressing _movedown button toggles player crouching/standing" );
 idCVar idUsercmdGenLocal::in_toggleZoom( "in_toggleZoom", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "pressing _zoom button toggles zoom on/off" );
@@ -609,7 +609,7 @@ bool idUsercmdGenLocal::Inhibited( void ) {
 ================
 idUsercmdGenLocal::MigrateLegacyRunDefaults
 
-Older OpenQ4 builds archived in_alwaysRun as 0, which leaves retail Quake 4's
+Older openQ4 builds archived in_alwaysRun as 0, which leaves retail Quake 4's
 footstep-authored run animations unused until the player manually corrects the
 setting. Migrate those profiles once so existing installs regain retail input
 and movement behavior automatically.

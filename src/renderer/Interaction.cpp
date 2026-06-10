@@ -1469,7 +1469,7 @@ void idInteraction::CreateInteraction( const idRenderModel *model ) {
 		if ( ( surfaceCanCastDedicatedShadowMap || surfaceCanCastTranslucentShadowMap ) && shadowLODAdmitted ) {
 			// Dedicated shadow maps can consume ambient triangles even when the
 			// retail stencil-volume path has no silhouette volume to submit.
-			// Translucent moment casters are OpenQ4-specific, but they are still
+			// Translucent moment casters are openQ4-specific, but they are still
 			// shadow output and need the same entity-level retail LOD admission.
 			interactionGenerated = true;
 		}

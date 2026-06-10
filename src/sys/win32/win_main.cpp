@@ -254,7 +254,7 @@ bool Sys_HandlePrintScreenHotkey( bool pressed ) {
 	return true;
 }
 
-static int Sys_OpenQ4ProtocolHexValue( const char c ) {
+static int Sys_openQ4ProtocolHexValue( const char c ) {
 	if ( c >= '0' && c <= '9' ) {
 		return c - '0';
 	}
@@ -267,14 +267,14 @@ static int Sys_OpenQ4ProtocolHexValue( const char c ) {
 	return -1;
 }
 
-static void Sys_DecodeOpenQ4ProtocolComponent( const idStr &source, idStr &decoded ) {
+static void Sys_DecodeopenQ4ProtocolComponent( const idStr &source, idStr &decoded ) {
 	decoded.Clear();
 
 	for ( int i = 0; i < source.Length(); ++i ) {
 		const char c = source[ i ];
 		if ( c == '%' && ( i + 2 ) < source.Length() ) {
-			const int hi = Sys_OpenQ4ProtocolHexValue( source[ i + 1 ] );
-			const int lo = Sys_OpenQ4ProtocolHexValue( source[ i + 2 ] );
+			const int hi = Sys_openQ4ProtocolHexValue( source[ i + 1 ] );
+			const int lo = Sys_openQ4ProtocolHexValue( source[ i + 2 ] );
 			if ( hi >= 0 && lo >= 0 ) {
 				decoded.Append( static_cast<char>( ( hi << 4 ) | lo ) );
 				i += 2;
@@ -285,7 +285,7 @@ static void Sys_DecodeOpenQ4ProtocolComponent( const idStr &source, idStr &decod
 	}
 }
 
-static bool Sys_IsValidOpenQ4ConnectTarget( const idStr &target ) {
+static bool Sys_IsValidopenQ4ConnectTarget( const idStr &target ) {
 	if ( target.Length() <= 0 || target.Length() > 255 ) {
 		return false;
 	}
@@ -316,7 +316,7 @@ static bool Sys_IsValidOpenQ4ConnectTarget( const idStr &target ) {
 	return true;
 }
 
-static bool Sys_TryReadOpenQ4ProtocolQueryValue( const idStr &query, const char *key, idStr &value ) {
+static bool Sys_TryReadopenQ4ProtocolQueryValue( const idStr &query, const char *key, idStr &value ) {
 	int start = 0;
 
 	value.Clear();
@@ -345,7 +345,7 @@ static bool Sys_TryReadOpenQ4ProtocolQueryValue( const idStr &query, const char 
 	return false;
 }
 
-static bool Sys_TryTranslateOpenQ4ProtocolCommandLine( const char *rawCmdLine, idStr &translatedCmdLine ) {
+static bool Sys_TryTranslateopenQ4ProtocolCommandLine( const char *rawCmdLine, idStr &translatedCmdLine ) {
 	idCmdArgs args;
 	idStr uriPayload;
 	idStr path;
@@ -395,9 +395,9 @@ static bool Sys_TryTranslateOpenQ4ProtocolCommandLine( const char *rawCmdLine, i
 	}
 
 	if ( encodedTarget.Length() == 0 ) {
-		if ( !Sys_TryReadOpenQ4ProtocolQueryValue( query, "server", encodedTarget ) ) {
-			if ( !Sys_TryReadOpenQ4ProtocolQueryValue( query, "target", encodedTarget ) ) {
-				Sys_TryReadOpenQ4ProtocolQueryValue( query, "address", encodedTarget );
+		if ( !Sys_TryReadopenQ4ProtocolQueryValue( query, "server", encodedTarget ) ) {
+			if ( !Sys_TryReadopenQ4ProtocolQueryValue( query, "target", encodedTarget ) ) {
+				Sys_TryReadopenQ4ProtocolQueryValue( query, "address", encodedTarget );
 			}
 		}
 	}
@@ -413,8 +413,8 @@ static bool Sys_TryTranslateOpenQ4ProtocolCommandLine( const char *rawCmdLine, i
 		return true;
 	}
 
-	Sys_DecodeOpenQ4ProtocolComponent( encodedTarget, decodedTarget );
-	if ( !Sys_IsValidOpenQ4ConnectTarget( decodedTarget ) ) {
+	Sys_DecodeopenQ4ProtocolComponent( encodedTarget, decodedTarget );
+	if ( !Sys_IsValidopenQ4ConnectTarget( decodedTarget ) ) {
 		return true;
 	}
 
@@ -1044,14 +1044,14 @@ const char* Sys_DefaultSavePath(void) {
 
 	if ( localAppData && localAppData[0] ) {
 		savePath = localAppData;
-		savePath.AppendPath( "OpenQ4" );
+		savePath.AppendPath( "openQ4" );
 		return savePath.c_str();
 	}
 
 	if ( userProfile && userProfile[0] ) {
 		savePath = userProfile;
 		savePath.AppendPath( "Saved Games" );
-		savePath.AppendPath( "OpenQ4" );
+		savePath.AppendPath( "openQ4" );
 		return savePath.c_str();
 	}
 
@@ -1481,13 +1481,13 @@ void Sys_StartAsyncThread(void) {
 ================
 Sys_AlreadyRunning
 
-returns true if there is a copy of OpenQ4 running already
+returns true if there is a copy of openQ4 running already
 ================
 */
 bool Sys_AlreadyRunning(void) {
 #ifndef DEBUG
 	if (!win32.win_allowMultipleInstances.GetBool()) {
-		HANDLE hMutexOneInstance = ::CreateMutex(NULL, FALSE, "OpenQ4");
+		HANDLE hMutexOneInstance = ::CreateMutex(NULL, FALSE, "openQ4");
 		if (::GetLastError() == ERROR_ALREADY_EXISTS || ::GetLastError() == ERROR_ACCESS_DENIED) {
 			return true;
 		}
@@ -1541,7 +1541,7 @@ void Sys_Init(void) {
 	win32.sys_arch.SetString( Sys_FormatWindowsVersion( win32.osversion ) );
 	if ( !Sys_IsWindowsVersionOrGreater( win32.osversion, OPENQ4_VALIDATED_WINDOWS_MAJOR_VERSION, OPENQ4_VALIDATED_WINDOWS_MINOR_VERSION ) ) {
 		common->Printf(
-			"WARNING: %s is outside OpenQ4's actively validated Windows support matrix.\n",
+			"WARNING: %s is outside openQ4's actively validated Windows support matrix.\n",
 			win32.sys_arch.GetString() );
 	}
 
@@ -1800,7 +1800,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	Sys_GetCurrentMemoryStatus(exeLaunchMemoryStats);
 
 	win32.hInstance = hInstance;
-	if ( Sys_TryTranslateOpenQ4ProtocolCommandLine( lpCmdLine, translatedCmdLine ) ) {
+	if ( Sys_TryTranslateopenQ4ProtocolCommandLine( lpCmdLine, translatedCmdLine ) ) {
 		effectiveCmdLine = translatedCmdLine.c_str();
 	}
 	idStr::Copynz(sys_cmdline, effectiveCmdLine, sizeof(sys_cmdline));

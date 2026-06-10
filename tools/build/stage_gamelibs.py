@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage OpenQ4-GameLibs game sources into a temporary local tree."""
+"""Stage openQ4-GameLibs game sources into a temporary local tree."""
 
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ def main(argv: list[str]) -> int:
         return 1
 
     if not project_root.is_dir():
-        print(f"error: OpenQ4 root not found: {project_root}", file=sys.stderr)
+        print(f"error: openQ4 root not found: {project_root}", file=sys.stderr)
         return 1
 
     dest_game_dir = stage_root / "src" / "game"

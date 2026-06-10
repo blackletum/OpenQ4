@@ -1,8 +1,8 @@
-# OpenQ4 High-Framerate Rendering Plan (2026-04-15)
+# openQ4 High-Framerate Rendering Plan (2026-04-15)
 
 ## Purpose
 
-This document defines a staged implementation plan for allowing true high-refresh presentation in OpenQ4 while preserving Quake 4 gameplay behavior and stock-asset compatibility.
+This document defines a staged implementation plan for allowing true high-refresh presentation in openQ4 while preserving Quake 4 gameplay behavior and stock-asset compatibility.
 
 The goal is not to blindly raise the simulation tick. The goal is to let the engine present frames at modern refresh rates while keeping the authoritative game simulation stable and compatible.
 
@@ -20,7 +20,7 @@ Rationale:
 
 ## Current State
 
-OpenQ4 is currently structured around a `60 Hz` usercmd / async-tic model:
+openQ4 is currently structured around a `60 Hz` usercmd / async-tic model:
 
 - `src/framework/UsercmdGen.h`
   - `USERCMD_HZ = 60`
@@ -33,7 +33,7 @@ OpenQ4 is currently structured around a `60 Hz` usercmd / async-tic model:
   - `idCommonLocal::SingleAsyncTic()` increments `com_ticNumber`
 - `src/framework/Session.cpp`
   - `idSessionLocal::Frame()` waits for `latchedTicNumber >= minTic` before continuing, which effectively ties frame progression to new tics
-- `E:\Repositories\OpenQ4-GameLibs\src\game\Game_local.cpp`
+- `E:\Repositories\openQ4-GameLibs\src\game\Game_local.cpp`
   - game code reads `common->GetUserCmdMSec()` / `common->GetUserCmdHz()`
   - render view generation and per-frame game flow are built around that cadence
 
@@ -74,14 +74,14 @@ Engine:
 
 GameLibs:
 
-- `E:\Repositories\OpenQ4-GameLibs\src\game\Game_local.cpp`
-- `E:\Repositories\OpenQ4-GameLibs\src\game\Player.cpp`
-- `E:\Repositories\OpenQ4-GameLibs\src\game\Entity.cpp`
-- `E:\Repositories\OpenQ4-GameLibs\src\game\Camera.cpp`
-- `E:\Repositories\OpenQ4-GameLibs\src\mpgame\Game_local.cpp`
-- `E:\Repositories\OpenQ4-GameLibs\src\mpgame\Player.cpp`
-- `E:\Repositories\OpenQ4-GameLibs\src\mpgame\Entity.cpp`
-- `E:\Repositories\OpenQ4-GameLibs\src\mpgame\Camera.cpp`
+- `E:\Repositories\openQ4-GameLibs\src\game\Game_local.cpp`
+- `E:\Repositories\openQ4-GameLibs\src\game\Player.cpp`
+- `E:\Repositories\openQ4-GameLibs\src\game\Entity.cpp`
+- `E:\Repositories\openQ4-GameLibs\src\game\Camera.cpp`
+- `E:\Repositories\openQ4-GameLibs\src\mpgame\Game_local.cpp`
+- `E:\Repositories\openQ4-GameLibs\src\mpgame\Player.cpp`
+- `E:\Repositories\openQ4-GameLibs\src\mpgame\Entity.cpp`
+- `E:\Repositories\openQ4-GameLibs\src\mpgame\Camera.cpp`
 
 ## Phase 0: Measurement And Safety Rails
 
@@ -182,7 +182,7 @@ Exit criteria:
 
 ## Phase 2: Separate Presentation From Game-Tic Gating
 
-OpenQ4 currently waits for a new tic before `idSessionLocal::Frame()` proceeds. That is the main architectural blocker.
+openQ4 currently waits for a new tic before `idSessionLocal::Frame()` proceeds. That is the main architectural blocker.
 
 Status: `Complete` as of `2026-04-16`.
 
@@ -477,7 +477,7 @@ Specific checks:
 
 The first milestone is complete when:
 
-- OpenQ4 can present at `240 FPS`
+- openQ4 can present at `240 FPS`
 - gameplay simulation still runs at the intended `60 Hz`
 - camera and first-person presentation are genuinely smoother than the current build
 - SP and MP gameplay remain stable

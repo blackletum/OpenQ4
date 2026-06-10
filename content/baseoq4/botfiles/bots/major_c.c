@@ -1,4 +1,4 @@
-// Prototype OpenQ4 multiplayer bot character.
+// Prototype openQ4 multiplayer bot character.
 
 skill 1 {
 	0 "Major"

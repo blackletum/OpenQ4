@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate packaged HTML documentation for OpenQ4 releases."""
+"""Generate packaged HTML documentation for openQ4 releases."""
 
 from __future__ import annotations
 
@@ -601,9 +601,9 @@ class GeneratedDocSite:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate packaged HTML documentation for an OpenQ4 release."
+        description="Generate packaged HTML documentation for an openQ4 release."
     )
-    parser.add_argument("--source-root", default=".", help="OpenQ4 repository root.")
+    parser.add_argument("--source-root", default=".", help="openQ4 repository root.")
     parser.add_argument("--output-dir", required=True, help="Directory to populate with HTML docs.")
     parser.add_argument("--version", required=True, help="Release version string.")
     parser.add_argument("--platform", required=True, help="Target package platform.")
@@ -829,7 +829,7 @@ def build_doc_specs(source_root: Path) -> list[DocSpec]:
         if not summary and relative == Path("README.md"):
             summary = (
                 "Project overview, runtime scope, compatibility goals, and the main "
-                "documentation map for OpenQ4."
+                "documentation map for openQ4."
             )
         specs.append(
             DocSpec(
@@ -970,7 +970,7 @@ def render_doc_page(
             f'        <a class="button primary" href="{html.escape(docs_home_href)}">Docs Home</a>',
             f'        <a class="button" href="{html.escape(overview_href)}">Project Overview</a>',
             f'        <a class="button" href="{html.escape(package_home_href)}">Package Home</a>',
-            '        <a class="button" href="https://github.com/themuffinator/OpenQ4">GitHub</a>',
+            '        <a class="button" href="https://github.com/themuffinator/openQ4">GitHub</a>',
             "      </div>",
             "    </header>",
             '    <div class="layout">',
@@ -1097,7 +1097,7 @@ def render_index_page(
             "    </section>",
             '    <footer class="footer">',
             '      <p>These pages are bundled directly into the release archive so the package remains self-documenting even when viewed offline.</p>',
-            '      <p><a href="../README.html">Package home</a> | <a href="https://github.com/themuffinator/OpenQ4">Repository</a> | <a href="https://www.darkmatter-quake.com">Website</a></p>',
+            '      <p><a href="../README.html">Package home</a> | <a href="https://github.com/themuffinator/openQ4">Repository</a> | <a href="https://www.darkmatter-quake.com">Website</a></p>',
             "    </footer>",
             "  </div>",
             "</body>",

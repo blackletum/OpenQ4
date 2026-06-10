@@ -1,18 +1,18 @@
-# Shadow Mapping in OpenQ4 Under id Tech 4 and OpenGL 4.1
+# Shadow Mapping in openQ4 Under id Tech 4 and OpenGL 4.1
 
 ## Executive summary
 
-The current OpenQ4 shadow system is not a pure shadow-mapping renderer. It is an id Tech 4 renderer that still treats stencil shadows as the default path, while exposing an optional shadow-map path for projected and point lights, optional projected-light cascaded shadow maps, hashed-alpha casting, and experimental translucent moment accumulation. That design choice is visible both in the repository’s public feature summary and in the renderer cvar surface: `r_useShadowMap` is off by default, `r_shadowMapCSM` is optional, and the code exposes a substantial set of bias, padding, filtering, cascade, debug, and diagnostic controls rather than a fully consolidated modern shadow pipeline. citeturn3view0 fileciteturn20file0L1-L1
+The current openQ4 shadow system is not a pure shadow-mapping renderer. It is an id Tech 4 renderer that still treats stencil shadows as the default path, while exposing an optional shadow-map path for projected and point lights, optional projected-light cascaded shadow maps, hashed-alpha casting, and experimental translucent moment accumulation. That design choice is visible both in the repository’s public feature summary and in the renderer cvar surface: `r_useShadowMap` is off by default, `r_shadowMapCSM` is optional, and the code exposes a substantial set of bias, padding, filtering, cascade, debug, and diagnostic controls rather than a fully consolidated modern shadow pipeline. citeturn3view0 fileciteturn20file0L1-L1
 
 In practice, that means the current implementation inherits three structural tensions. First, it is fitting a texture-space shadow solution into an engine architecture built around per-light interaction lists, portal/scissor culling, and shadow volumes in the style of entity["video_game","Doom 3","2004 fps"] and other entity["organization","id Software","game studio"] id Tech 4 titles. Secondly, the current controls strongly suggest a “simple path plus incremental fixes” implementation rather than a fully re-architected atlas-and-cascade subsystem. Thirdly, the default bias values and map sizes are conservative enough to suppress acne, but large enough to make detachment artefacts and slope errors unsurprising on angled receivers and in large, complex views. citeturn3view0 fileciteturn20file0L1-L1
 
 The three observed failures line up with that reading. Missing shadows in complex scenes are most plausibly driven by interaction/culling/LOD decisions, overly tight caster coverage, map density collapse, and shadow-fit instability. Misprojected shadows on angled surfaces point to projection-fit and receiver-offset problems more than to filtering. Peter Panning points directly at the current bias stack: raster-time polygon offset on caster rendering plus receiver-time constant bias plus receiver normal bias, with no evidence from the exposed controls of a more advanced receiver-plane or texel-scaled adaptive bias model. fileciteturn20file0L1-L1
 
-My assessment is that OpenQ4 should not jump straight to exotic filtering. The highest-value path is: make the current shadow test correct and observable; stabilise the projection; split caster and receiver treatment; replace constant world-agnostic biasing with texel-aware adaptive bias; tighten culling rules for shadow casters; and only then add better filtering. Under the OpenGL 4.1 envelope you gave, that is entirely feasible with GLSL 4.10, texture arrays, sampler shadow compares, FBO-based passes, timer queries, and careful CPU-side scheduling, without requiring compute shaders or a renderer-wide deferred rewrite. fileciteturn20file0L1-L1
+My assessment is that openQ4 should not jump straight to exotic filtering. The highest-value path is: make the current shadow test correct and observable; stabilise the projection; split caster and receiver treatment; replace constant world-agnostic biasing with texel-aware adaptive bias; tighten culling rules for shadow casters; and only then add better filtering. Under the OpenGL 4.1 envelope you gave, that is entirely feasible with GLSL 4.10, texture arrays, sampler shadow compares, FBO-based passes, timer queries, and careful CPU-side scheduling, without requiring compute shaders or a renderer-wide deferred rewrite. fileciteturn20file0L1-L1
 
 ## Current state in the repository
 
-OpenQ4 publicly describes its renderer as keeping classic stencil shadows as the default while adding “experimental shadow mapping for projected and point lights, projected-light CSM, alpha-tested transparency shadows, and optional translucent shadow accumulation”. That wording matters: the shadow-map path is additive, optional, and explicitly experimental, not the canonical shadow solution of the engine. citeturn3view0
+openQ4 publicly describes its renderer as keeping classic stencil shadows as the default while adding “experimental shadow mapping for projected and point lights, projected-light CSM, alpha-tested transparency shadows, and optional translucent shadow accumulation”. That wording matters: the shadow-map path is additive, optional, and explicitly experimental, not the canonical shadow solution of the engine. citeturn3view0
 
 The current renderer configuration surface exposes the following key controls:
 
@@ -35,7 +35,7 @@ Architecturally, shadow-map integration appears to live inside the existing ARB2
 
 ### Missing shadows in complex scenes
 
-In id Tech 4 terms, “complex scene” is where every convenience breaks at once: more portal areas, more light/entity interactions, more scissors, more potential LOD elision, more off-screen casters, and more opportunities for a tight shadow fit to miss an essential blocker. OpenQ4’s renderer still exposes retail-style entity and shadow LOD controls (`r_lod_entities`, `r_lod_shadows`, percentage thresholds), interaction culling/scissoring, portal-aware scissors, view-light culling, and shadow-map-specific projection padding. That combination makes missing shadows more likely to be a visibility-selection problem before it is a filtering problem. fileciteturn20file0L1-L1
+In id Tech 4 terms, “complex scene” is where every convenience breaks at once: more portal areas, more light/entity interactions, more scissors, more potential LOD elision, more off-screen casters, and more opportunities for a tight shadow fit to miss an essential blocker. openQ4’s renderer still exposes retail-style entity and shadow LOD controls (`r_lod_entities`, `r_lod_shadows`, percentage thresholds), interaction culling/scissoring, portal-aware scissors, view-light culling, and shadow-map-specific projection padding. That combination makes missing shadows more likely to be a visibility-selection problem before it is a filtering problem. fileciteturn20file0L1-L1
 
 The most likely engine-level root causes are these:
 
@@ -109,7 +109,7 @@ The important point is not the exact formula; it is that **bias magnitude must s
 
 ### Peter Panning
 
-Peter Panning is the easiest of the three to explain because the current configuration already exposes every ingredient. OpenQ4’s shadow-map path has caster-side polygon offset and receiver-side constant and normal bias controls. The defaults are conservative rather than aggressive about contact fidelity. That is a perfectly normal place for an experimental implementation to land, because acne is more embarrassing than mild detachment when first bringing a path online. But once you start looking for contact fidelity, those defaults are visibly large. fileciteturn20file0L1-L1
+Peter Panning is the easiest of the three to explain because the current configuration already exposes every ingredient. openQ4’s shadow-map path has caster-side polygon offset and receiver-side constant and normal bias controls. The defaults are conservative rather than aggressive about contact fidelity. That is a perfectly normal place for an experimental implementation to land, because acne is more embarrassing than mild detachment when first bringing a path online. But once you start looking for contact fidelity, those defaults are visibly large. fileciteturn20file0L1-L1
 
 The most likely specific causes are:
 
@@ -125,13 +125,13 @@ The fix is a three-part strategy:
 - **Replace fixed receiver bias with texel-aware slope/normal bias**, as above.
 - Add an optional **short-range contact shadow pass** in screen space for first-contact restoration, especially for weapon/viewmodel and tight architectural contacts.
 
-That last point is worth emphasising. In an id Tech 4 forward interaction renderer, a tiny screen-space contact-shadow term is often cheaper and more reliable than trying to make the shadow map do impossible sub-texel work. Because OpenQ4 already has post-process infrastructure for SSAO and other screen-space effects, a 4–8 step depth raymarch along `-L` in screen space is a realistic GL 4.1-era complement to the main shadow map. Use it only within a small camera-space radius and multiply it softly into the shadow term. That does not replace the map, but it removes the “floating object” look after bias is reduced to sane levels. citeturn3view0 fileciteturn20file0L1-L1
+That last point is worth emphasising. In an id Tech 4 forward interaction renderer, a tiny screen-space contact-shadow term is often cheaper and more reliable than trying to make the shadow map do impossible sub-texel work. Because openQ4 already has post-process infrastructure for SSAO and other screen-space effects, a 4–8 step depth raymarch along `-L` in screen space is a realistic GL 4.1-era complement to the main shadow map. Use it only within a small camera-space radius and multiply it softly into the shadow term. That does not replace the map, but it removes the “floating object” look after bias is reduced to sane levels. citeturn3view0 fileciteturn20file0L1-L1
 
 ## A production-quality redesign that fits OpenGL 4.1 and id Tech 4
 
 ### The recommended target architecture
 
-I would keep OpenQ4’s broad compatibility posture and evolve the current path into a **hybrid, production-oriented shadow system**:
+I would keep openQ4’s broad compatibility posture and evolve the current path into a **hybrid, production-oriented shadow system**:
 
 - **Stencil shadows remain the compatibility fallback** and the default for cases where shadow maps are not materially better.
 - **Projected lights** use a **stable atlas-backed CSM** path only when the light is large enough to justify it; otherwise they use a single stable projected map.
@@ -189,7 +189,7 @@ CascadeFit BuildStableCascade(const FrustumSlice& receiverSlice,
 }
 ```
 
-This does three things OpenQ4 needs immediately: it reduces shimmer, makes bias predictable because world-units-per-texel is stable, and greatly reduces slope-driven projection errors.
+This does three things openQ4 needs immediately: it reduces shimmer, makes bias predictable because world-units-per-texel is stable, and greatly reduces slope-driven projection errors.
 
 ### Bias strategy that actually scales
 
@@ -244,7 +244,7 @@ Under id Tech 4, the big win is not merely memory savings. It is **deterministic
 
 ### Filtering choices under GL 4.1
 
-Do not lead with VSM/EVSM unless you are specifically willing to pay their failure modes. For OpenQ4’s current needs, I would rank techniques as follows.
+Do not lead with VSM/EVSM unless you are specifically willing to pay their failure modes. For openQ4’s current needs, I would rank techniques as follows.
 
 | Technique | Visual result | Cost | Failure mode | GL 4.1 fit | Recommendation |
 |---|---|---|---|---|---|
@@ -340,11 +340,11 @@ The solutions above are chosen specifically because they fit an id Tech 4 render
 
 ## Comparison tables and performance expectations
 
-### Technique comparison for OpenQ4’s likely priorities
+### Technique comparison for openQ4’s likely priorities
 
 The table below is my recommended decision matrix for this codebase specifically.
 
-| Technique | Solves current repo pain points | GPU cost | CPU cost | Memory cost | Risk | Best role in OpenQ4 |
+| Technique | Solves current repo pain points | GPU cost | CPU cost | Memory cost | Risk | Best role in openQ4 |
 |---|---|---:|---:|---:|---|---|
 | Stable single projected map | medium | low | low | low | low | default for modest projected lights |
 | Stable CSM | high for large projected lights | medium | medium | medium | medium | large projected lights and sun-like cases |
@@ -378,7 +378,7 @@ The central performance conclusion is simple: **projection correctness and bias 
 
 ```mermaid
 gantt
-    title OpenQ4 shadow mapping roadmap
+    title openQ4 shadow mapping roadmap
     dateFormat  YYYY-MM-DD
     section Correctness
     Shadow visualisation and metrics        :a1, 2026-04-27, 14d
@@ -461,7 +461,7 @@ I would keep the old bias cvars for compatibility, but internally deprecate them
 
 ## Recommended final design choices
 
-If I were making the final call for a production-quality OpenQ4 branch under your stated constraints, I would choose the following stack:
+If I were making the final call for a production-quality openQ4 branch under your stated constraints, I would choose the following stack:
 
 1. **Opaque projected lights**
    - stable single-map path for ordinary lights;

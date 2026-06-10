@@ -28,7 +28,7 @@
 	"#str_41103"	"Backend Renderizado"
 	"#str_41104"	"BEST;ARB;ARB2;CG;EXP;NV10;NV20;R200"
 	"#str_41105"	"No disponible"
-	"#str_41106"	"La captura con RenderDoc todavia no es compatible con el renderizador actual de OpenQ4. El contexto OpenGL inyectado no proporciona las funciones de compatibilidad que OpenQ4 todavia necesita."
+	"#str_41106"	"La captura con RenderDoc todavia no es compatible con el renderizador actual de openQ4. El contexto OpenGL inyectado no proporciona las funciones de compatibilidad que openQ4 todavia necesita."
 	"#str_41107"	"Volúmenes de Irradiancia"
 	"#str_41108"	"Alternar Zoom"
 	"#str_41109"	"DETALLES DEL MOD"

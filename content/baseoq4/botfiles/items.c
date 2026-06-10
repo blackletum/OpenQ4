@@ -1,4 +1,4 @@
-// Initial OpenQ4 multiplayer bot item configuration.
+// Initial openQ4 multiplayer bot item configuration.
 // Classnames mirror the stock Quake 4 multiplayer map entities.
 
 iteminfo "weapon_machinegun" {

@@ -31,35 +31,35 @@ static const rendererDriverQuirkRule_t rg_driverQuirkRules[] = {
 		"Microsoft OpenGL-D3D translation path is limited to the legacy compatibility renderer"
 	},
 	{
-		"OpenQ4Test",
+		"openQ4Test",
 		"Missing UBO",
 		"",
 		RENDERER_DRIVER_QUIRK_DISABLE_UBO,
 		"synthetic missing-UBO downgrade"
 	},
 	{
-		"OpenQ4Test",
+		"openQ4Test",
 		"Broken MRT",
 		"",
 		RENDERER_DRIVER_QUIRK_DISABLE_MRT,
 		"synthetic MRT downgrade"
 	},
 	{
-		"OpenQ4Test",
+		"openQ4Test",
 		"Missing Timer Query",
 		"",
 		RENDERER_DRIVER_QUIRK_DISABLE_TIMER_QUERY,
 		"synthetic timer-query fallback"
 	},
 	{
-		"OpenQ4Test",
+		"openQ4Test",
 		"Missing Buffer Storage",
 		"",
 		RENDERER_DRIVER_QUIRK_DISABLE_BUFFER_STORAGE,
 		"synthetic GL45 buffer-storage downgrade"
 	},
 	{
-		"OpenQ4Test",
+		"openQ4Test",
 		"Rejected Debug Context",
 		"",
 		RENDERER_DRIVER_QUIRK_REJECT_DEBUG_CONTEXT,
@@ -1552,7 +1552,7 @@ bool RendererCompatibilityGates_RunSelfTest( void ) {
 		caps.debugContext = true;
 		caps.hasTimerQuery = true;
 		const rendererDriverInfo_t driverInfo = {
-			"OpenQ4Test",
+			"openQ4Test",
 			quirkCasesTable[i].renderer,
 			"1.0"
 		};

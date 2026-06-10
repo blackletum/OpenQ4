@@ -68,7 +68,7 @@ typedef enum {
 
 	EDITOR_ALL					= -1,
 
-	// Legacy OpenQ4 tool aliases retained for old in-tree editor code.
+	// Legacy openQ4 tool aliases retained for old in-tree editor code.
 	EDITOR_PARTICLE				= EDITOR_FX,
 	EDITOR_ENTITYDEF			= EDITOR_DECL
 } toolFlag_t;
@@ -190,12 +190,12 @@ struct openq4AsyncTimingStats_t {
 	float			avgJitterMsec;
 };
 
-void				OpenQ4_GetAsyncTimingStats( openq4AsyncTimingStats_t &stats, int maxSamples = 60 );
-void				OpenQ4_BeginPresentationFrame( void );
-int					OpenQ4_GetActiveToolFlags( int flags );
-bool				OpenQ4_IsAnyToolActive( void );
-void				OpenQ4_ToolPrint( const char *text );
-bool				OpenQ4_ShouldCacheEntityDefMedia( bool noCaching );
+void				openQ4_GetAsyncTimingStats( openq4AsyncTimingStats_t &stats, int maxSamples = 60 );
+void				openQ4_BeginPresentationFrame( void );
+int					openQ4_GetActiveToolFlags( int flags );
+bool				openQ4_IsAnyToolActive( void );
+void				openQ4_ToolPrint( const char *text );
+bool				openQ4_ShouldCacheEntityDefMedia( bool noCaching );
 class idCommon {
 public:
 	virtual						~idCommon(void) {}

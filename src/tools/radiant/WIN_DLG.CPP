@@ -588,7 +588,7 @@ BOOL CALLBACK AboutDlgProc( HWND hwndDlg,
 			idStr::snPrintf(
 				buffer,
 				1024,
-				"OpenQ4 Radiant %s\nCopyright (C) 1999-2004 id Software, Inc. and 2026 DarkMatter Productions\n",
+				"openQ4 Radiant %s\nCopyright (C) 1999-2004 id Software, Inc. and 2026 DarkMatter Productions\n",
 				OPENQ4_VERSION
 			);
 //			SetDlgItemText( hwndDlg, IDC_ABOUT_INFO, buffer);

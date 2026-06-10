@@ -1,4 +1,4 @@
-# OpenQ4 TODO
+# openQ4 TODO
 
 This file tracks current known issues and upcoming features.
 

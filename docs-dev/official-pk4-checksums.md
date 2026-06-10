@@ -7,11 +7,11 @@ This table captures the PK4 checksums loaded from official installed game direct
 - Log source: `logs/openq4.log` startup lines (`Loaded pk4 ... with checksum ...`) under `fs_savepath\<gameDir>\`
 - Checksum format: engine PK4 checksum (`MD4` of zip-entry CRC list, as computed in `src/framework/FileSystem.cpp`)
 
-OpenQ4 ignores the retail game-binary PK4 archives (`game000.pk4` through `game300.pk4`, plus `gamex*.pk4` variants) because it ships its own game modules. They are not required and are not verified.
+openQ4 ignores the retail game-binary PK4 archives (`game000.pk4` through `game300.pk4`, plus `gamex*.pk4` variants) because it ships its own game modules. They are not required and are not verified.
 
 ## Required official baseline
 
-These core retail media PK4s are required by OpenQ4 startup validation (`fs_validateOfficialPaks 1`, default):
+These core retail media PK4s are required by openQ4 startup validation (`fs_validateOfficialPaks 1`, default):
 
 | PK4 | Checksum |
 |---|---|
@@ -40,7 +40,7 @@ These core retail media PK4s are required by OpenQ4 startup validation (`fs_vali
 
 ## Optional official PK4s detected
 
-These PK4s are recognized when present, but missing files do not block startup. `pak023.pk4` through `pak025.pk4` contain official patch/menu splash media rather than core campaign or multiplayer assets required by OpenQ4.
+These PK4s are recognized when present, but missing files do not block startup. `pak023.pk4` through `pak025.pk4` contain official patch/menu splash media rather than core campaign or multiplayer assets required by openQ4.
 
 | PK4 | Checksum |
 |---|---|

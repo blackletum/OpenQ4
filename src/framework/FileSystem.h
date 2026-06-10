@@ -140,7 +140,7 @@ struct idModInfo {
 	idStr					releaseDate;
 	idStr					website;
 	idStr					author;
-	idStr					requiredOpenQ4Version;
+	idStr					requiredopenQ4Version;
 	idStr					listLabel;
 };
 
@@ -155,7 +155,7 @@ public:
 	const char *			GetReleaseDate( int index ) const { return mods[index].releaseDate.c_str(); }
 	const char *			GetWebsite( int index ) const { return mods[index].website.c_str(); }
 	const char *			GetAuthor( int index ) const { return mods[index].author.c_str(); }
-	const char *			GetRequiredOpenQ4Version( int index ) const { return mods[index].requiredOpenQ4Version.c_str(); }
+	const char *			GetRequiredopenQ4Version( int index ) const { return mods[index].requiredopenQ4Version.c_str(); }
 	const idModInfo &		GetInfo( int index ) const { return mods[index]; }
 
 private:

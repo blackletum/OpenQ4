@@ -49,7 +49,7 @@ static openq4_alDeleteFilters_t qalDeleteFilters = NULL;
 static openq4_alFilteri_t qalFilteri = NULL;
 static openq4_alFilterf_t qalFilterf = NULL;
 
-static bool OpenQ4_LoadVoiceEfxProcs() {
+static bool openQ4_LoadVoiceEfxProcs() {
 	static bool initialized = false;
 	static bool available = false;
 
@@ -832,7 +832,7 @@ idSoundVoice_OpenAL::CreateWetDryFilters
 void idSoundVoice_OpenAL::CreateWetDryFilters()
 {
 #if OPENQ4_OPENAL_EFX_SUPPORTED
-	if( !soundSystemLocal.hardware.HasEFX() || !OpenQ4_LoadVoiceEfxProcs() || !alIsSource( openalSource ) )
+	if( !soundSystemLocal.hardware.HasEFX() || !openQ4_LoadVoiceEfxProcs() || !alIsSource( openalSource ) )
 	{
 		return;
 	}
@@ -930,7 +930,7 @@ void idSoundVoice_OpenAL::ApplyWetDryRouting()
 	const float effectiveGain = Max( 0.0f, gain );
 
 #if OPENQ4_OPENAL_EFX_SUPPORTED
-	const bool hasEfx = soundSystemLocal.hardware.HasEFX() && OpenQ4_LoadVoiceEfxProcs();
+	const bool hasEfx = soundSystemLocal.hardware.HasEFX() && openQ4_LoadVoiceEfxProcs();
 	if( hasEfx )
 	{
 		CreateWetDryFilters();

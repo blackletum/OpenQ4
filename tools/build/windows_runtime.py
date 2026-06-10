@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Helpers for validating Windows CRT linkage and staging non-CRT runtime payloads for OpenQ4."""
+"""Helpers for validating Windows CRT linkage and staging non-CRT runtime payloads for openQ4."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import struct
 from pathlib import Path
 
 
-PRODUCT_NAME = "OpenQ4"
+PRODUCT_NAME = "openQ4"
 GAME_DIR_NAME = "baseoq4"
 OPENAL_RUNTIME_OVERRIDES = {
     "x64": [Path("src/external/openal-soft/bin/win64/OpenAL32.dll")],
@@ -165,7 +165,7 @@ def infer_runtime_flavor(root_dir: Path) -> str:
     if has_release and has_debug:
         raise RuntimeError(
             f"Mixed MSVC CRT flavors detected under '{root_dir}'. "
-            "OpenQ4 runtime binaries must all use the same CRT flavor."
+            "openQ4 runtime binaries must all use the same CRT flavor."
         )
     if has_debug:
         return RuntimeFlavor.DEBUG
@@ -188,7 +188,7 @@ def detect_binary_arch(root_dir: Path) -> str:
             if "_" not in stem:
                 continue
             return stem.rsplit("_", 1)[-1]
-    raise RuntimeError(f"Could not determine OpenQ4 binary architecture from '{root_dir}'.")
+    raise RuntimeError(f"Could not determine openQ4 binary architecture from '{root_dir}'.")
 
 
 
@@ -266,7 +266,7 @@ def stage_runtime_payloads(
         for binary_name, imports in sorted(violations.items()):
             violation_lines.append(f"{binary_name}: {', '.join(imports)}")
         raise RuntimeError(
-            "OpenQ4 Windows binaries still import the MSVC/UCRT runtime. "
+            "openQ4 Windows binaries still import the MSVC/UCRT runtime. "
             "Expected static CRT linkage for all builds.\n"
             + "\n".join(violation_lines)
         )

@@ -1,6 +1,6 @@
-# OpenQ4 Platform And Architecture Roadmap
+# openQ4 Platform And Architecture Roadmap
 
-This document defines the long-term platform direction for OpenQ4 and how SDL3 + Meson are used to get there.
+This document defines the long-term platform direction for openQ4 and how SDL3 + Meson are used to get there.
 
 ## Target End State
 

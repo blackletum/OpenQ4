@@ -1,20 +1,20 @@
-# ARB2 Shader Compilation Robustness and Failure Modes in OpenQ4
+# ARB2 Shader Compilation Robustness and Failure Modes in openQ4
 
 ## Executive summary
 
-OpenQ4’s “ARB2” renderer uses two related shader technologies: ARB assembly programs (via `GL_ARB_vertex_program` / `GL_ARB_fragment_program`) and GLSL programs using the legacy ARB shader object API (`GL_ARB_shader_objects`). The codebase already contains strong building blocks for robustness in the GLSL path—most notably a disciplined “load → compile → status-check → link → status-check → cache-by-context-generation” pattern and consistent info-log reporting—while the ARB assembly program path is comparatively permissive and can fail “softly” in ways that later surface as confusing runtime GL errors or rendering corruption. fileciteturn78file0L1-L1 fileciteturn83file0L1-L1
+openQ4’s “ARB2” renderer uses two related shader technologies: ARB assembly programs (via `GL_ARB_vertex_program` / `GL_ARB_fragment_program`) and GLSL programs using the legacy ARB shader object API (`GL_ARB_shader_objects`). The codebase already contains strong building blocks for robustness in the GLSL path—most notably a disciplined “load → compile → status-check → link → status-check → cache-by-context-generation” pattern and consistent info-log reporting—while the ARB assembly program path is comparatively permissive and can fail “softly” in ways that later surface as confusing runtime GL errors or rendering corruption. fileciteturn78file0L1-L1 fileciteturn83file0L1-L1
 
 Key robustness gaps and failure modes concentrate around (a) incomplete state tracking for ARB assembly program validity (compile failures don’t clearly disable later use), (b) diagnostic suppression by default (`r_ignoreGLErrors` defaults to ignoring), (c) loader/extension-string assumptions that may not hold across modern core contexts, and (d) lack of persistent shader caching (disk/binary caching) for GLSL programs. fileciteturn79file0L1-L1 fileciteturn83file0L1-L1
 
 Modernization should be approached as an incremental hardening + developer UX initiative: unify shader compilation into a single “shader manager” with explicit validity states and structured error payloads; adopt modern diagnostics (`KHR_debug`), robust reset handling (`KHR_robustness`), and optional parallel/async compile (`KHR_parallel_shader_compile`); add a persistent cache guarded by strict compatibility keys and known driver quirks; and invest in reproducible shader-compile tests and runtime metrics. citeturn15search0turn0search1turn18search0
 
-## Code-level pipeline and API entry points in OpenQ4 and OpenQ4-GameLibs
+## Code-level pipeline and API entry points in openQ4 and openQ4-GameLibs
 
-This section maps the *actual* shader compilation/loading pipeline as implemented in the two requested repos at commit `738afb3…` (OpenQ4) and `b10475d…` (OpenQ4-GameLibs). fileciteturn79file0L1-L1 fileciteturn80file0L1-L1
+This section maps the *actual* shader compilation/loading pipeline as implemented in the two requested repos at commit `738afb3…` (openQ4) and `b10475d…` (openQ4-GameLibs). fileciteturn79file0L1-L1 fileciteturn80file0L1-L1
 
 ### Capability detection and top-level entry points
 
-OpenQ4 decides whether the ARB2 and GLSL paths are available during OpenGL initialization in `src/renderer/RenderSystem_init.cpp`:
+openQ4 decides whether the ARB2 and GLSL paths are available during OpenGL initialization in `src/renderer/RenderSystem_init.cpp`:
 
 - Extension gating is primarily **string-based** (`R_CheckExtension` checks `glConfig.extensions_string`) and is executed after `glewInit()` in `R_CheckPortableExtensions()`. This populates key booleans such as `glConfig.ARBVertexProgramAvailable`, `glConfig.ARBFragmentProgramAvailable` (can be inhibited by `r_inhibitFragmentProgram`), and `glConfig.GLSLProgramAvailable` (requires `GL_ARB_shader_objects`, `GL_ARB_vertex_shader`, `GL_ARB_fragment_shader`, `GL_ARB_shading_language_100`). fileciteturn79file0L1-L1
 
@@ -24,7 +24,7 @@ OpenQ4 decides whether the ARB2 and GLSL paths are available during OpenGL initi
 
 ### Extension function entry points and loader interactions
 
-In OpenQ4-GameLibs, `src/renderer/qgl.h` declares the ARB2 and ARB shader object function entry points used throughout OpenQ4:
+In openQ4-GameLibs, `src/renderer/qgl.h` declares the ARB2 and ARB shader object function entry points used throughout openQ4:
 
 - ARB assembly program API: `qglProgramStringARB`, `qglBindProgramARB`, `qglGenProgramsARB`, and the parameter APIs (`qglProgramEnvParameter4fvARB`, `qglProgramLocalParameter4fvARB`). fileciteturn80file0L1-L1
 
@@ -54,9 +54,9 @@ The ARB assembly program pipeline lives primarily in `src/renderer/draw_arb2.cpp
 
 **Robustness implication:** the ARB assembly loader prints errors but (as written) does not establish a strongly enforced “invalid program cannot be bound/enabled later” contract in the same way the GLSL code does (with `glslProgramLoaded` / `glslProgramValid`). The ARB program specs indicate that using an invalid current vertex program while vertex program mode is enabled can trigger `GL_INVALID_OPERATION` at draw-time. citeturn10search0
 
-### GLSL pipeline in OpenQ4 (ARB shader objects)
+### GLSL pipeline in openQ4 (ARB shader objects)
 
-OpenQ4 has two distinct GLSL compilation loci (both using ARB shader object APIs):
+openQ4 has two distinct GLSL compilation loci (both using ARB shader object APIs):
 
 1) **General “new stage” GLSL programs** for materials/post-process, implemented in `src/renderer/draw_common.cpp`:
 - Programs are tracked per `newShaderStage_t` with fields such as `glslProgramLoaded`, `glslProgramValid`, `glslProgramGeneration`, and shader/program object IDs.
@@ -78,7 +78,7 @@ OpenQ4 has two distinct GLSL compilation loci (both using ARB shader object APIs
 
 ### Fallback paths already present
 
-OpenQ4’s material pipeline contains multiple fallback ideas that are directly relevant to “robust shader handling”:
+openQ4’s material pipeline contains multiple fallback ideas that are directly relevant to “robust shader handling”:
 
 - If a material stage is flagged `glslProgram` but GLSL isn’t available, `RB_ResolveGLSLProgram` marks it loaded/invalid so subsequent draws skip it without repeatedly attempting compilation. fileciteturn83file0L1-L1
 
@@ -96,13 +96,13 @@ OpenQ4’s material pipeline contains multiple fallback ideas that are directly 
 
 **GLSL (ARB_shader_objects) behavior**:
 - Compilation and link errors are detectable via `GL_OBJECT_COMPILE_STATUS_ARB`, `GL_OBJECT_LINK_STATUS_ARB`, and info logs obtainable through `glGetInfoLogARB`. citeturn11search0
-- OpenQ4’s `RB_PrintGLSLInfoLog` and `RB_ResolveGLSLProgram` map cleanly to that model and provide a strong template to generalize (including for ARB assembly, where possible). fileciteturn83file0L1-L1
+- openQ4’s `RB_PrintGLSLInfoLog` and `RB_ResolveGLSLProgram` map cleanly to that model and provide a strong template to generalize (including for ARB assembly, where possible). fileciteturn83file0L1-L1
 
 ### Comparative failure-mode table
 
 The table below focuses on *robustness and failure handling* across ARB assembly and GLSL paths, and on how failures propagate into runtime rendering.
 
-| Failure mode | Likely root cause | How it manifests in OpenQ4 today | Detection method | Mitigation / modernization |
+| Failure mode | Likely root cause | How it manifests in openQ4 today | Detection method | Mitigation / modernization |
 |---|---|---|---|---|
 | ARB program file missing | Bad install, mod packaging, wrong case/path | `R_LoadARBProgram` prints missing file and returns; later render path may still assume program exists | `fileSystem->ReadFile` failure; logs | Track `valid=false` per program, disable binding/enabling; fallback to non-ARB2 path or skip effect; add “compile-all at init” option fileciteturn78file0L1-L1 |
 | ARB program missing `!!ARBvp/!!ARBfp` header or `END` | Content corruption, authoring error | Loader prints “couldn’t find header/END” and returns | string search in loader | Use stricter structural validation + include snippet in log; treat as *hard invalid* for that feature, not “best-effort” fileciteturn78file0L1-L1 |
@@ -112,8 +112,8 @@ The table below focuses on *robustness and failure handling* across ARB assembly
 | GLSL compile failure (vertex/fragment) | GLSL version mismatch, syntax error, unsupported features, driver bug | `RB_PrintGLSLInfoLog` prints compile log; stage invalidated and skipped | `GL_OBJECT_COMPILE_STATUS_ARB` + info log | Already good. Improve by adding source hashing + standardized prefix (`#version`, defines) + dump-to-file option for repro fileciteturn83file0L1-L1 citeturn11search0 |
 | GLSL link failure | Interface mismatch, missing varyings/uniform mismatch, driver bug | Link log printed; stage invalidated | `GL_OBJECT_LINK_STATUS_ARB` + info log | Already good. Add optional `glValidateProgram` (or ARB equivalent) in dev builds and capture validation log fileciteturn83file0L1-L1 citeturn11search0 |
 | Uniform location is -1 unexpectedly | Optimized-out uniform, name mismatch, wrong shader variant | Some uniforms guarded by `>=0`, others may be set anyway | `glGetUniformLocationARB` result | Normalize: always guard uniform updates by location >= 0; add a debug warning once per program for missing “required” uniforms fileciteturn83file0L1-L1 |
-| `vid_restart` invalidates program objects | Context recreation, driver reset, device loss | OpenQ4 increments `tr.videoRestartCount`; GLSL stages and some shader programs cache by generation | `tr.videoRestartCount` checks | Extend the generation-cache pattern to ARB assembly and to any other GPU objects; unify under a single cache manager fileciteturn79file0L1-L1 fileciteturn83file0L1-L1 |
-| Disk-level caching via program binaries breaks on some drivers | Binary formats vendor-specific; incompat with compat profiles; driver bugs | OpenQ4 currently does not use program binaries | N/A | If adding `ARB_get_program_binary`, guard with strict cache keying and opt-out lists; Mesa has history disabling program binaries for compatibility profiles in some cases citeturn18search0turn6search0 |
+| `vid_restart` invalidates program objects | Context recreation, driver reset, device loss | openQ4 increments `tr.videoRestartCount`; GLSL stages and some shader programs cache by generation | `tr.videoRestartCount` checks | Extend the generation-cache pattern to ARB assembly and to any other GPU objects; unify under a single cache manager fileciteturn79file0L1-L1 fileciteturn83file0L1-L1 |
+| Disk-level caching via program binaries breaks on some drivers | Binary formats vendor-specific; incompat with compat profiles; driver bugs | openQ4 currently does not use program binaries | N/A | If adding `ARB_get_program_binary`, guard with strict cache keying and opt-out lists; Mesa has history disabling program binaries for compatibility profiles in some cases citeturn18search0turn6search0 |
 | GPU hang/reset during shader execution/compile | Driver/compiler bug; adversarial shader; heavy recursion | Potential crash/hang; hard to attribute | Robustness APIs (reset status) | Add optional robust context creation and poll `glGetGraphicsResetStatus`; on reset, invalidate caches and downgrade effects; tie to telemetry citeturn15search0turn8search5 |
 | Adversarial shader causes DoS or memory corruption in driver/compiler | Vulnerable shader compiler path; excessive recursion; UAF | Out-of-process GPU compiler crash or system instability (depending on platform) | Security advisories/CVEs | Treat shader sources as untrusted inputs: rate-limit compilation, sandbox/priv-separate where feasible, consider disallowing “custom” shader ingestion in untrusted modes citeturn21search2turn20search0turn20search3 |
 
@@ -125,14 +125,14 @@ Shaders are a driver-facing “mini-program.” Multiple public advisories demon
 - CVE-2018-3979 describes a remote DoS scenario in the Nouveau driver triggered by a crafted pixel shader (in the cited reports, triggered through a browser rendering path). citeturn20search0turn20search6
 - A much more recent record (CVE-2025-13952, published January 2026) describes a write/use-after-free crash in a GPU shader compiler library triggered by “unusual shader code,” with a note that privilege context of the compiler process can matter for exploitation. citeturn20search3
 
-**Implication for OpenQ4:** even if content is “local,” mod ecosystems and downloadable content mean shader sources should be treated as potentially untrusted. Robust handling is not only about graceful graphics fallback; it also reduces the risk of shader-driven driver crashes and improves postmortem diagnosis when they happen.
+**Implication for openQ4:** even if content is “local,” mod ecosystems and downloadable content mean shader sources should be treated as potentially untrusted. Robust handling is not only about graceful graphics fallback; it also reduces the risk of shader-driven driver crashes and improves postmortem diagnosis when they happen.
 
 ### Performance impacts of robustness measures
 
 OpenGL robustness and diagnostics often trade CPU/GPU overhead for observability:
 
-- Repeated `glGetError` polling can stall the driver and is expensive in hot paths; OpenQ4 suppresses error reporting by default (via `r_ignoreGLErrors=1`) and limits `GL_CheckErrors` to a small bounded loop. fileciteturn79file0L1-L1
-- Shader compilation and linking can be the biggest CPU hitch during level load or shader warm-up; OpenQ4’s GLSL stages cache compilation by `tr.videoRestartCount`, which is good but still lacks persistent caching across process launches. fileciteturn83file0L1-L1
+- Repeated `glGetError` polling can stall the driver and is expensive in hot paths; openQ4 suppresses error reporting by default (via `r_ignoreGLErrors=1`) and limits `GL_CheckErrors` to a small bounded loop. fileciteturn79file0L1-L1
+- Shader compilation and linking can be the biggest CPU hitch during level load or shader warm-up; openQ4’s GLSL stages cache compilation by `tr.videoRestartCount`, which is good but still lacks persistent caching across process launches. fileciteturn83file0L1-L1
 - Adding `ARB_get_program_binary` caching can reduce compile time but introduces compatibility risks; real-world driver stacks have had significant issues around program binaries (including Mesa disabling aspects of it in some compatibility contexts). citeturn18search0turn6search0
 
 ## Modernization recommendations and implementation plan
@@ -159,7 +159,7 @@ OpenGL robustness and diagnostics often trade CPU/GPU overhead for observability
 
 5) **Add persistent caching for GLSL programs—carefully.**  
    Use `ARB_get_program_binary` only when safe:
-   - key binaries by (shader source hash, OpenQ4 build ID, GL_VENDOR/GL_RENDERER/GL_VERSION, driver version string, and binary format enum),
+   - key binaries by (shader source hash, openQ4 build ID, GL_VENDOR/GL_RENDERER/GL_VERSION, driver version string, and binary format enum),
    - validate successful `glProgramBinary` by checking link status and optionally validating in dev builds,
    - implement a driver denylist / feature flag, because program binary support has historically been fragile in some stacks (example: Mesa has disabled program binary paths in some compatibility scenarios). citeturn6search0turn18search0
 

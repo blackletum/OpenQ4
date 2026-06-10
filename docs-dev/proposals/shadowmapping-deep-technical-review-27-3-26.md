@@ -1,8 +1,8 @@
-# OpenQ4 Shadow Mapping Deep Technical Review and Productionization Plan
+# openQ4 Shadow Mapping Deep Technical Review and Productionization Plan
 
 ## Scope, constraints, and evaluation criteria
 
-OpenQ4’s renderer is idTech4-derived (the lineage of entity["video_game","Doom 3","idtech4 game 2004"] / entity["video_game","Quake 4","idtech4 game 2005"]), which strongly shapes what “production-ready” means in practice: many lights, forward additive lighting passes (“interactions”), and historically a heavy reliance on stencil shadow volumes. fileciteturn47file0L1-L1
+openQ4’s renderer is idTech4-derived (the lineage of entity["video_game","Doom 3","idtech4 game 2004"] / entity["video_game","Quake 4","idtech4 game 2005"]), which strongly shapes what “production-ready” means in practice: many lights, forward additive lighting passes (“interactions”), and historically a heavy reliance on stencil shadow volumes. fileciteturn47file0L1-L1
 
 Within that context, the current goal is not simply “make a shadow map,” but to make a shadowing system that is:
 
@@ -12,11 +12,11 @@ Within that context, the current goal is not simply “make a shadow map,” but
 - **Efficient** under idTech4’s “many local lights” workload.
 - **Robust** across driver capability variability and failure modes (shader compile/link, FBO completeness, state leaks).
 
-OpenQ4 already exposes a broad set of CVars and debug modes for shadow maps (including CSM, hashed alpha cutouts, and experimental translucent moments), so this review treats configurability as a core requirement, not an afterthought. fileciteturn49file0L1-L1 fileciteturn48file0L1-L1
+openQ4 already exposes a broad set of CVars and debug modes for shadow maps (including CSM, hashed alpha cutouts, and experimental translucent moments), so this review treats configurability as a core requirement, not an afterthought. fileciteturn49file0L1-L1 fileciteturn48file0L1-L1
 
-## Current OpenQ4 shadow mapping architecture
+## Current openQ4 shadow mapping architecture
 
-OpenQ4’s user-facing documentation describes a shadow-map pipeline that supports:
+openQ4’s user-facing documentation describes a shadow-map pipeline that supports:
 
 - **Projected-light shadow maps** (spot/projector-style idTech4 lights)
 - **Point-light shadow maps** (omni lights)
@@ -28,7 +28,7 @@ It also explicitly states that the engine **falls back to the legacy shadow path
 
 ### Caster classification and eligibility
 
-At the interaction-building stage, OpenQ4 constructs dedicated draw-surface chains for shadow-map casters:
+At the interaction-building stage, openQ4 constructs dedicated draw-surface chains for shadow-map casters:
 
 - `globalShadowMapCasters` / `localShadowMapCasters` for opaque/perforated casters.
 - `globalTranslucentShadowMapCasters` / `localTranslucentShadowMapCasters` for blended casters, only when the experimental translucent moments feature is enabled and hardware limits allow it (GLSL availability, enough texture units, ≥3 draw buffers/attachments, cubemap support for point lights). fileciteturn47file0L1-L1
@@ -51,7 +51,7 @@ This is already a strong foundation: GLSL is the right tool for CSM selection lo
 
 ### Known critical failures and what they imply
 
-OpenQ4’s own internal triage notes two severe observed failures in the new shadow mapping path:
+openQ4’s own internal triage notes two severe observed failures in the new shadow mapping path:
 
 - **Peter Panning** (shadows detached from casters).
 - **“Unravelled” / scattered projected shadows** when angled surface lights cast shadows, or when upright surface lights cast onto angled receivers. fileciteturn34file0L1-L1
@@ -62,7 +62,7 @@ The triage notes that “no combination of shadowmapping CVars resolves either i
 
 ### Bias design: what’s implemented and what still needs hardening
 
-OpenQ4 exposes both **caster-side polygon offset** controls (`r_shadowMapPolygonFactor`, `r_shadowMapPolygonOffset`) and **receiver-side bias** controls for projected and point lights (`r_shadowMapBias`, `r_shadowMapNormalBias`, `r_shadowMapPointBias`, `r_shadowMapPointNormalBias`). fileciteturn49file0L1-L1 fileciteturn48file0L1-L1 fileciteturn51file0L1-L1
+openQ4 exposes both **caster-side polygon offset** controls (`r_shadowMapPolygonFactor`, `r_shadowMapPolygonOffset`) and **receiver-side bias** controls for projected and point lights (`r_shadowMapBias`, `r_shadowMapNormalBias`, `r_shadowMapPointBias`, `r_shadowMapPointNormalBias`). fileciteturn49file0L1-L1 fileciteturn48file0L1-L1 fileciteturn51file0L1-L1
 
 OpenGL’s polygon offset is explicitly defined as an offset of the form `factor * DZ + r * units`, applied after interpolation and before depth test/write. citeturn8search0turn8search7 This matches the intended use in shadow maps: reducing self-shadowing on the caster pass, especially at grazing angles.
 
@@ -75,15 +75,15 @@ A key upgrade path for large PCF kernels is **receiver-plane depth bias** (deriv
 
 ### CSM quality: what’s already present and what is still missing
 
-OpenQ4’s CSM feature set is already aligned with common practice: configurable cascade count (1–4), camera distance range, a λ blend between uniform/log split placement, cascade blending, and stabilization (“snap bounds to texels”). fileciteturn49file0L1-L1 fileciteturn48file0L1-L1
+openQ4’s CSM feature set is already aligned with common practice: configurable cascade count (1–4), camera distance range, a λ blend between uniform/log split placement, cascade blending, and stabilization (“snap bounds to texels”). fileciteturn49file0L1-L1 fileciteturn48file0L1-L1
 
-The Microsoft CSM guidance highlights several pitfalls that map directly to OpenQ4’s tuning knobs and current failure modes:
+The Microsoft CSM guidance highlights several pitfalls that map directly to openQ4’s tuning knobs and current failure modes:
 
 - CSM exists primarily to combat **perspective aliasing** by allocating more shadow resolution near the eye. citeturn9search0
 - **Depth bias becomes more important** with large PCF kernels because neighboring taps refer to different depths, increasing erroneous self-shadowing unless biasing is handled carefully. citeturn9search0
 - When rendering cascades into a single large buffer, you need **padding for PCF kernels**, or sampling crosses cascade boundaries unless you clamp or add a guard band. citeturn9search0
 
-OpenQ4 exposes both a projected padding value (`r_shadowMapProjectionPad`) and a cascade blend fraction (`r_shadowMapCascadeBlend`), which is consistent with the need to avoid edge leakage and seams. fileciteturn49file0L1-L1
+openQ4 exposes both a projected padding value (`r_shadowMapProjectionPad`) and a cascade blend fraction (`r_shadowMapCascadeBlend`), which is consistent with the need to avoid edge leakage and seams. fileciteturn49file0L1-L1
 
 What’s still needed for “production-ready” CSM in this engine is not more knobs—it’s **strong invariants and automatic safeguards**:
 
@@ -95,24 +95,24 @@ What’s still needed for “production-ready” CSM in this engine is not more 
 
 #### Cutouts (alpha-tested / perforated)
 
-OpenQ4’s default for cutouts is **hashed alpha**, implemented directly in the caster shader. fileciteturn49file0L1-L1 fileciteturn38file0L1-L1
+openQ4’s default for cutouts is **hashed alpha**, implemented directly in the caster shader. fileciteturn49file0L1-L1 fileciteturn38file0L1-L1
 
 This aligns with the primary reference on hashed alpha testing by entity["people","Chris Wyman","graphics researcher"] and entity["people","Morgan McGuire","graphics researcher"], which explains that hashed alpha addresses the common failure mode where alpha-tested geometry disappears under minification, trading it for controlled noise with improved stability. citeturn8search3
 
-From a production-quality perspective, OpenQ4’s cutout approach is directionally strong, but it needs two additional hardening steps:
+From a production-quality perspective, openQ4’s cutout approach is directionally strong, but it needs two additional hardening steps:
 
 - **Stability under CSM movement** (hashed sampling anchored in shadow-map texels is only stable if cascade projection is stabilized; otherwise it can shimmer).
 - **Consistent material semantics** (ensure the shadow caster uses the same alpha test thresholds/texture coordinates as the surface’s intended cutout behavior; your shader infrastructure supports alpha ref and matrix rows already, but this must be validated against real idTech4 content patterns). fileciteturn39file0L1-L1 fileciteturn38file0L1-L1
 
 #### Blended/translucent transmission (experimental moments overlay)
 
-OpenQ4’s translucent shadowing is explicitly described as **experimental**, conservative in supported stage patterns, and implemented as an additional overlay pass requiring extra MRT attachments and extra samplers. fileciteturn49file0L1-L1
+openQ4’s translucent shadowing is explicitly described as **experimental**, conservative in supported stage patterns, and implemented as an additional overlay pass requiring extra MRT attachments and extra samplers. fileciteturn49file0L1-L1
 
 Technically, the caster shaders convert absorption-like alpha into **optical depth** (`-log(1-alpha)`) and accumulate depth moments per color channel into three render targets. fileciteturn40file0L1-L1 This is a physically motivated direction (Beer–Lambert style transmittance models are naturally exponential in optical depth), but a moments-based model is notorious for **leakage and reconstruction artifacts** when not formulated carefully.
 
 If your goal is “highest quality possible” translucent occluder shadowing within an OpenGL shadow-map framework, the most relevant modern reference class is **Moment Shadow Maps**, which explicitly covers soft shadows and translucent occluders and provides a mathematically grounded moment reconstruction approach (including improved variants). citeturn9search36
 
-OpenQ4 is already storing four values per channel (`tau, tau*z, tau*z^2, tau*z^3`), which is strongly suggestive of a “4-moment” intent. fileciteturn40file0L1-L1 Productionization here means: either commit to a well-defined MSM-style reconstruction (with known error bounds and mitigation), or keep this feature clearly “experimental/artist-driven” with strict guardrails and easy disable.
+openQ4 is already storing four values per channel (`tau, tau*z, tau*z^2, tau*z^3`), which is strongly suggestive of a “4-moment” intent. fileciteturn40file0L1-L1 Productionization here means: either commit to a well-defined MSM-style reconstruction (with known error bounds and mitigation), or keep this feature clearly “experimental/artist-driven” with strict guardrails and easy disable.
 
 ## Findings on performance, scalability, and robustness
 
@@ -120,7 +120,7 @@ OpenQ4 is already storing four values per channel (`tau, tau*z, tau*z^2, tau*z^3
 
 Shadow mapping is fundamentally a **light-dependent extra render pass**. In idTech4-style scenes, dozens of local lights can be active, and doing per-light shadow maps (plus CSM multi-cascade, plus point-light cubemap faces) can explode GPU cost.
 
-OpenQ4 already attempts several critical mitigations:
+openQ4 already attempts several critical mitigations:
 
 - It only links eligible casters, skips GUI/subview materials, and avoids including view-only entities or depth-hacked models in caster lists. fileciteturn47file0L1-L1
 - It uses cached ambient/index buffers where possible and touches caches to avoid unintended purges. fileciteturn47file0L1-L1
@@ -132,7 +132,7 @@ At minimum, implement per-light heuristics or authoring controls such as: “CSM
 
 ### Robustness: shader compilation, capability detection, and fallbacks
 
-OpenQ4 explicitly detects GLSL availability via ARB shader object extensions (and ensures the “ARB2” path can run). fileciteturn51file0L1-L1
+openQ4 explicitly detects GLSL availability via ARB shader object extensions (and ensures the “ARB2” path can run). fileciteturn51file0L1-L1
 
 Two high-value robustness properties already exist:
 
@@ -147,11 +147,11 @@ However, the presence of severe artifacts that resist CVar tuning strongly sugge
 
 For production, robustness must be enforced by “hard” debug tooling: one-frame overlays for atlas and per-cascade validity plus per-light reporting should be easy to turn on and must be trusted. fileciteturn49file0L1-L1
 
-## ARB assembly vs GLSL for shadow mapping in OpenQ4
+## ARB assembly vs GLSL for shadow mapping in openQ4
 
 ### What the codebase is actually doing today
 
-OpenQ4’s renderer is positioned as “ARB2,” but it also supports GLSL programs through ARB shader objects (`GL_ARB_shader_objects`, etc.). fileciteturn51file0L1-L1
+openQ4’s renderer is positioned as “ARB2,” but it also supports GLSL programs through ARB shader objects (`GL_ARB_shader_objects`, etc.). fileciteturn51file0L1-L1
 
 The actual shadow-map implementation is already **GLSL-based** (GLSL 1.10), as shown by the shipped `.vs/.fs` shadow caster and interaction programs. fileciteturn24file0L1-L1 fileciteturn38file0L1-L1
 
@@ -210,7 +210,7 @@ Deliverable: default settings that minimize contact lift while remaining stable 
 
 ### CSM hardening and quality upgrades
 
-OpenQ4 already includes the right knobs for cascade count, split distribution (λ), blending, and stabilization. fileciteturn49file0L1-L1
+openQ4 already includes the right knobs for cascade count, split distribution (λ), blending, and stabilization. fileciteturn49file0L1-L1
 
 To make CSM “production-grade”:
 

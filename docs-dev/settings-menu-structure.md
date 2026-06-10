@@ -1,6 +1,6 @@
 # Settings Menu Structure
 
-This document describes the current OpenQ4 Settings menu as implemented by the main menu GUI scripts. It records the visible menu organization, widget types, cvar or GUI-state targets, discrete values, and slider ranges.
+This document describes the current openQ4 Settings menu as implemented by the main menu GUI scripts. It records the visible menu organization, widget types, cvar or GUI-state targets, discrete values, and slider ranges.
 
 Source files:
 
@@ -277,7 +277,7 @@ The pane has two display layouts:
 |---|---|---|---|---|---|
 | Irradiance Volumes | `choiceDef` | `set_sys_irradiance_val` | `r_useLightGrid` | `No;Yes` | Enables baked light-grid indirect diffuse when available. |
 | Bloom | `choiceDef` | `set_sys_bloom_val` | `r_bloom` | `No;Yes` | Boolean picker. |
-| Lens Flare | `choiceDef` | `set_sys_lensflare_val` | `r_lensFlare` | `0 Off`, `1 Coronas`, `2 High Quality` | OpenQ4 post-effect quality picker. |
+| Lens Flare | `choiceDef` | `set_sys_lensflare_val` | `r_lensFlare` | `0 Off`, `1 Coronas`, `2 High Quality` | openQ4 post-effect quality picker. |
 | SSAO | `choiceDef` | `set_sys_ssao_val` | `r_ssao` | `No;Yes` | Boolean picker. |
 | Tone Mapping | `choiceDef` | `set_sys_tonemap_val` | `r_hdrToneMap` | `No;Yes` | Boolean picker. |
 | CRT Filter | `choiceDef` | `set_sys_crt_val` | `r_crt` | `No;Yes` | Boolean picker. |

@@ -1,6 +1,6 @@
 # Quake 4 Light Entity Parity Notes
 
-This note tracks retail Quake 4 light entity key handling and renderer behavior, and records OpenQ4 parity status.
+This note tracks retail Quake 4 light entity key handling and renderer behavior, and records openQ4 parity status.
 
 ## Research Inputs
 
@@ -48,7 +48,7 @@ Canonical parser keys (game-side):
 - `noDynamicShadows` participates in light "shape change" checks that trigger derived-data rebuilds.
 - Fog/blend lights use the `noFog` contract instead of ordinary lighting-stage emission tests.
 - Light/material shader register evaluation uses `referenceSoundHandle` amplitude inputs.
-- `detailLevel` is compared against `r_lightDetailLevel` during area light-ref collection; OpenQ4 defaults this cvar to `0` so all stock-authored lights remain visible unless a user explicitly requests detail culling.
+- `detailLevel` is compared against `r_lightDetailLevel` during area light-ref collection; openQ4 defaults this cvar to `0` so all stock-authored lights remain visible unless a user explicitly requests detail culling.
 - `globalLight` bypasses portal-based light culling in area light-ref collection.
 - `globalLight` bypasses per-surface light-tri frustum culling in interaction submission.
 - Tiny interaction/shadow batches can be dropped by `r_limitBatchSize` before drawsurf allocation.
@@ -56,7 +56,7 @@ Canonical parser keys (game-side):
 - Entity scissor tightening is enabled by default through `r_useEntityScissors`, and retail entity LOD clears those scissors for very small on-screen coverage.
 - Shadow submission keeps `noSelfShadow` ownership tied to the original interaction material instead of any later shader override.
 
-## OpenQ4 Parity Updates Implemented
+## openQ4 Parity Updates Implemented
 
 - Added `globalLight` parsing to canonical light parser:
   - `src/game/Light.cpp`
@@ -94,7 +94,7 @@ Canonical parser keys (game-side):
 
 ## Current Result
 
-OpenQ4 now honors retail Quake 4 light entity keys and runtime handling for:
+openQ4 now honors retail Quake 4 light entity keys and runtime handling for:
 
 - `noDynamicShadows`
 - fog/blend-light `noFog`

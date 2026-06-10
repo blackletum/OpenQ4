@@ -1,11 +1,11 @@
-# RBDOOM-3-BFG Parity Modernization Plan for OpenQ4
+# RBDOOM-3-BFG Parity Modernization Plan for openQ4
 
 Date: 2026-02-09  
 Author: Codex (analysis + implementation plan)
 
 ## 1. Goal
 
-Bring OpenQ4 to the same technical standard as modern RBDOOM-3-BFG, with special focus on lighting and shadowing, while preserving OpenQ4 rules:
+Bring openQ4 to the same technical standard as modern RBDOOM-3-BFG, with special focus on lighting and shadowing, while preserving openQ4 rules:
 
 - stock Quake 4 asset compatibility first
 - no reliance on shipping custom `q4base/` content
@@ -14,15 +14,15 @@ Bring OpenQ4 to the same technical standard as modern RBDOOM-3-BFG, with special
 
 ## 2. Baseline and Evidence
 
-### OpenQ4 / Quake4Doom baseline state
+### openQ4 / Quake4Doom baseline state
 
-- OpenQ4 renderer is still the legacy OpenGL/stencil-shadow path (`src/renderer/OpenGL`, `src/renderer/tr_stencilshadow.cpp`, `src/renderer/draw_common.cpp`).
-- OpenQ4 has no modern RBDOOM renderer modules:
+- openQ4 renderer is still the legacy OpenGL/stencil-shadow path (`src/renderer/OpenGL`, `src/renderer/tr_stencilshadow.cpp`, `src/renderer/draw_common.cpp`).
+- openQ4 has no modern RBDOOM renderer modules:
   - missing `src/renderer/NVRHI`
   - missing `src/renderer/Passes`
   - missing `src/renderer/RenderWorld_lightgrid.cpp`
   - missing `src/renderer/RenderWorld_envprobes.cpp`
-- OpenQ4 has basic post AA hook (`r_postAA`, SMAA material path) but no TAA/SSAO/SSR pipeline.
+- openQ4 has basic post AA hook (`r_postAA`, SMAA material path) but no TAA/SSAO/SSR pipeline.
 - Quake4Doom snapshot timestamps cluster around 2021-09, and source fingerprints align with pre-modern renderer architecture.
 
 ### Upstream RBDOOM evolution landmarks
@@ -86,7 +86,7 @@ This confirms the parity gap is mostly renderer architecture and lighting/shadow
 - Better map conversion and standalone compile workflows.
 - GI and light data cache workflows (including HDR-to-bimage caching path).
 
-## 4. OpenQ4 Gap Matrix (Prioritized)
+## 4. openQ4 Gap Matrix (Prioritized)
 
 Priority P0 (critical to "same standard"):
 
@@ -128,7 +128,7 @@ Deliverables:
 
 - Frozen parity target list from RBDOOM features and cvars.
 - Golden-scene capture suite for Quake 4 maps (same camera paths, fixed cvars, deterministic screenshots).
-- Performance telemetry baseline for OpenQ4.
+- Performance telemetry baseline for openQ4.
 
 Tasks:
 
@@ -144,7 +144,7 @@ Exit criteria:
 
 Deliverables:
 
-- Shadow map rendering path in OpenQ4, initially toggleable beside stencil shadows.
+- Shadow map rendering path in openQ4, initially toggleable beside stencil shadows.
 - Atlas allocator with debug visualization and stats.
 - Point + spot light shadow maps.
 
@@ -254,7 +254,7 @@ Exit criteria:
 
 Deliverables:
 
-- Backend abstraction seam in OpenQ4 renderer.
+- Backend abstraction seam in openQ4 renderer.
 - Vulkan backend boot path with feature parity subset, then staged completion.
 
 Tasks:
@@ -301,7 +301,7 @@ Mitigation:
 
 Risk:
 
-- Shipping prebaked GI data conflicts with OpenQ4 asset rules.
+- Shipping prebaked GI data conflicts with openQ4 asset rules.
 
 Mitigation:
 
@@ -343,5 +343,5 @@ Mitigation:
 - `E:/_SOURCE/_CODE/_tmp/RBDOOM-3-BFG-full2/neo/renderer/RenderWorld_envprobes.cpp`
 - `E:/_SOURCE/_CODE/_tmp/RBDOOM-3-BFG-full2/neo/renderer/Material.cpp`
 - `E:/_SOURCE/_CODE/Quake4Doom-master/src/renderer/RenderSystem_init.cpp`
-- `e:/Repositories/OpenQ4/src/renderer/RenderSystem_init.cpp`
-- `e:/Repositories/OpenQ4/src/renderer/tr_stencilshadow.cpp`
+- `e:/Repositories/openQ4/src/renderer/RenderSystem_init.cpp`
+- `e:/Repositories/openQ4/src/renderer/tr_stencilshadow.cpp`

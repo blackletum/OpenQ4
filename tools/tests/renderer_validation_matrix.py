@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run and report the OpenQ4 renderer validation matrix.
+"""Run and report the openQ4 renderer validation matrix.
 
 The default matrix is intentionally safe: it starts the staged client, runs
 renderer self-tests and tier/startup probes, prints gfxInfo, then quits. Gameplay
@@ -342,7 +342,7 @@ def host_arch() -> str:
 def find_client_executable(root: Path) -> Path:
     install_dir = root / ".install"
     suffix = ".exe" if os.name == "nt" else ""
-    candidate_prefixes = ("openQ4-client", "OpenQ4-client")
+    candidate_prefixes = ("openQ4-client", "openQ4-client")
     for prefix in candidate_prefixes:
         preferred = install_dir / f"{prefix}_{host_arch()}{suffix}"
         if preferred.exists():

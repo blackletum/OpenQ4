@@ -51,7 +51,7 @@ function Quote-CmdArg([string]$Value) {
     return $Value
 }
 
-function Get-OpenQ4VsProcessArch {
+function Get-openQ4VsProcessArch {
     $arch = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString().ToLowerInvariant()
     switch ($arch) {
         "x64" { return "x64" }
@@ -61,20 +61,20 @@ function Get-OpenQ4VsProcessArch {
     }
 }
 
-function Get-OpenQ4VsTargetArch {
+function Get-openQ4VsTargetArch {
     if (-not [string]::IsNullOrWhiteSpace($env:OPENQ4_VS_TARGET_ARCH)) {
         return $env:OPENQ4_VS_TARGET_ARCH.Trim().ToLowerInvariant()
     }
 
-    return Get-OpenQ4VsProcessArch
+    return Get-openQ4VsProcessArch
 }
 
-function Get-OpenQ4VsHostArch {
+function Get-openQ4VsHostArch {
     if (-not [string]::IsNullOrWhiteSpace($env:OPENQ4_VS_HOST_ARCH)) {
         return $env:OPENQ4_VS_HOST_ARCH.Trim().ToLowerInvariant()
     }
 
-    return Get-OpenQ4VsProcessArch
+    return Get-openQ4VsProcessArch
 }
 
 function Get-MesonCommand {
@@ -250,7 +250,7 @@ function Ensure-WindowsStaticCRTSetupArgs {
         if ($arg -like "-Db_vscrt=*") {
             $found = $true
             if ($arg -ne $requiredArg) {
-                Write-Host "Overriding Meson b_vscrt option to '$requiredValue' to satisfy OpenQ4 Windows static CRT policy."
+                Write-Host "Overriding Meson b_vscrt option to '$requiredValue' to satisfy openQ4 Windows static CRT policy."
             }
             $updatedArgs += $requiredArg
             continue
@@ -386,7 +386,7 @@ function Get-LatestFileWriteTimeUtc {
     return $latest
 }
 
-function Get-OpenQ4GameLibsRepoPath {
+function Get-openQ4GameLibsRepoPath {
     param(
         [string]$RepoRoot,
         [string]$ConfiguredRepo
@@ -396,7 +396,7 @@ function Get-OpenQ4GameLibsRepoPath {
         return [System.IO.Path]::GetFullPath($ConfiguredRepo)
     }
 
-    return [System.IO.Path]::GetFullPath((Join-Path $RepoRoot "..\OpenQ4-GameLibs"))
+    return [System.IO.Path]::GetFullPath((Join-Path $RepoRoot "..\openQ4-GameLibs"))
 }
 
 function Test-GamelibsStageRefreshNeeded {
@@ -416,7 +416,7 @@ function Test-GamelibsStageRefreshNeeded {
         return $false
     }
 
-    $resolvedGameLibsRepo = Get-OpenQ4GameLibsRepoPath -RepoRoot $RepoRoot -ConfiguredRepo $GameLibsRepo
+    $resolvedGameLibsRepo = Get-openQ4GameLibsRepoPath -RepoRoot $RepoRoot -ConfiguredRepo $GameLibsRepo
     $sourceGameDir = Join-Path $resolvedGameLibsRepo "src\game"
     $stagedGameDir = Join-Path $RepoRoot ".tmp\gamelibs_stage\src\game"
 
@@ -455,11 +455,11 @@ function Remove-BSEArtifacts {
         "openQ4-BSE_*.so",
         "openQ4-BSE_*.lib",
         "openQ4-BSE_*.pdb",
-        "OpenQ4-BSE_*.dll",
-        "OpenQ4-BSE_*.dylib",
-        "OpenQ4-BSE_*.so",
-        "OpenQ4-BSE_*.lib",
-        "OpenQ4-BSE_*.pdb"
+        "openQ4-BSE_*.dll",
+        "openQ4-BSE_*.dylib",
+        "openQ4-BSE_*.so",
+        "openQ4-BSE_*.lib",
+        "openQ4-BSE_*.pdb"
     )
 
     foreach ($pattern in $patterns) {
@@ -581,7 +581,7 @@ function Copy-WindowsDiagnosticSymbols {
     }
 }
 
-function Stop-OpenQ4RuntimeProcesses {
+function Stop-openQ4RuntimeProcesses {
     [OutputType([bool])]
     param()
 
@@ -592,12 +592,12 @@ function Stop-OpenQ4RuntimeProcesses {
         "openQ4-ded_x64",
         "openQ4-ded_x86",
         "openQ4-ded_arm64",
-        "OpenQ4-client_x64",
-        "OpenQ4-client_x86",
-        "OpenQ4-client_arm64",
-        "OpenQ4-ded_x64",
-        "OpenQ4-ded_x86",
-        "OpenQ4-ded_arm64"
+        "openQ4-client_x64",
+        "openQ4-client_x86",
+        "openQ4-client_arm64",
+        "openQ4-ded_x64",
+        "openQ4-ded_x86",
+        "openQ4-ded_arm64"
     )
 
     $running = @(Get-Process -Name $processNames -ErrorAction SilentlyContinue)
@@ -642,8 +642,8 @@ if (-not (Test-Path $rcWrapper)) {
 
 $env:WINDRES = $rcWrapper
 
-$vsTargetArch = Get-OpenQ4VsTargetArch
-$vsHostArch = Get-OpenQ4VsHostArch
+$vsTargetArch = Get-openQ4VsTargetArch
+$vsHostArch = Get-openQ4VsHostArch
 $vsDevCmd = $null
 if (Test-WindowsHost) {
     $vsDevCmd = Get-VsDevCmdPath -TargetArch $vsTargetArch
@@ -747,14 +747,14 @@ if ($effectiveArgs.Length -gt 0 -and ($effectiveArgs[0] -eq "compile" -or $effec
         if ([string]::IsNullOrWhiteSpace([string]$configuredCRT)) {
             $configuredCRT = "unset"
         }
-        Write-Host "Meson build directory '$($buildInfo.BuildDir)' uses b_vscrt='$configuredCRT'. Reconfiguring for OpenQ4's required Windows static CRT policy..."
+        Write-Host "Meson build directory '$($buildInfo.BuildDir)' uses b_vscrt='$configuredCRT'. Reconfiguring for openQ4's required Windows static CRT policy..."
         $reconfigureReasons += "Windows static CRT policy"
     }
 
     $needsGameLibsRefresh = Test-GamelibsStageRefreshNeeded -BuildDir $buildInfo.BuildDir -RepoRoot $repoRoot -GameLibsRepo $gameLibsRepo
     if ($needsGameLibsRefresh) {
-        Write-Host "OpenQ4-GameLibs sources changed since the last staged snapshot. Reconfiguring '$($buildInfo.BuildDir)'..."
-        $reconfigureReasons += "staged OpenQ4-GameLibs refresh"
+        Write-Host "openQ4-GameLibs sources changed since the last staged snapshot. Reconfiguring '$($buildInfo.BuildDir)'..."
+        $reconfigureReasons += "staged openQ4-GameLibs refresh"
     }
 
     if ($reconfigureReasons.Count -gt 0) {
@@ -786,7 +786,7 @@ if ($effectiveArgs.Length -gt 0 -and ($effectiveArgs[0] -eq "compile" -or $effec
 }
 
 if ($commandName -eq "install" -and $env:OPENQ4_INSTALL_CLOSE_RUNNING -ne "0") {
-    Stop-OpenQ4RuntimeProcesses | Out-Null
+    Stop-openQ4RuntimeProcesses | Out-Null
 }
 
 if (@("setup", "compile", "install").Contains($commandName) -and $env:OPENQ4_SKIP_ICON_SYNC -ne "1") {
@@ -806,7 +806,7 @@ $exitCode = [int]$LASTEXITCODE
 
 if ($commandName -eq "install" -and $exitCode -ne 0 -and $env:OPENQ4_INSTALL_RETRY_ON_FAILURE -ne "0") {
     Write-Host "Meson install failed; retrying once after ensuring openQ4 processes are stopped..."
-    Stop-OpenQ4RuntimeProcesses | Out-Null
+    Stop-openQ4RuntimeProcesses | Out-Null
     Start-Sleep -Milliseconds 500
     Invoke-Meson -MesonArgs $effectiveArgs -VsDevCmdPath $vsDevCmd -MesonCommand $mesonCommand -VsTargetArch $vsTargetArch -VsHostArch $vsHostArch
     $exitCode = [int]$LASTEXITCODE

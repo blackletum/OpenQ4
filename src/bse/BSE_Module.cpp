@@ -188,18 +188,18 @@ rvBSEManagerLocal bseLocal;
 rvDeclEffectEditLocal declEffectEditLocal;
 }
 
-idDecl* OpenQ4_AllocIntegratedBSEDeclEffect( void ) {
+idDecl* openQ4_AllocIntegratedBSEDeclEffect( void ) {
 	return new rvDeclEffect();
 }
 
-bool OpenQ4_IsIntegratedBSEDeclEffect( const idDecl *decl ) {
+bool openQ4_IsIntegratedBSEDeclEffect( const idDecl *decl ) {
 	return dynamic_cast<const rvDeclEffect *>( decl ) != NULL;
 }
 
-rvBSEManager* OpenQ4_GetIntegratedBSEManager( void ) {
+rvBSEManager* openQ4_GetIntegratedBSEManager( void ) {
 	return &bseLocal;
 }
 
-rvDeclEffectEdit* OpenQ4_GetIntegratedBSEDeclEffectEdit( void ) {
+rvDeclEffectEdit* openQ4_GetIntegratedBSEDeclEffectEdit( void ) {
 	return &declEffectEditLocal;
 }

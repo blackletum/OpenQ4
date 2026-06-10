@@ -1,23 +1,23 @@
 # Linux Mint VMware Workflow
 
-This workflow creates a Linux Mint VM for OpenQ4 Linux compatibility testing through VMware Workstation on the Windows development host.
+This workflow creates a Linux Mint VM for openQ4 Linux compatibility testing through VMware Workstation on the Windows development host.
 
 ## Create The VM
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/New-OpenQ4LinuxMintVm.ps1 -Start
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/New-openQ4LinuxMintVm.ps1 -Start
 ```
 
 Defaults:
 
-- VM files: `.tmp/vmware/OpenQ4-LinuxMint/`
+- VM files: `.tmp/vmware/openQ4-LinuxMint/`
 - ISO: `E:\ISO\linuxmint-22.3-cinnamon-64bit.iso`
 - OS disk: 96 GB growable VMDK
 - Data disk: growable VMDK attached as `scsi0:1` for Quake 4 assets
 - Memory/CPU: 8 GB RAM, 4 vCPUs
 - Shared folders:
-  - `OpenQ4` -> this repository, writable only so guest logs can return under `.tmp/`
-  - `OpenQ4-GameLibs` -> companion repo, read-only
+  - `openQ4` -> this repository, writable only so guest logs can return under `.tmp/`
+  - `openQ4-GameLibs` -> companion repo, read-only
   - `Quake4` -> Steam Quake 4 install, read-only
   - `Downloads` -> host Downloads folder, read-only, for the Quake 4 patch payload
 
@@ -36,13 +36,13 @@ The VM boots the ISO first for installation. Do not click VMware Workstation's y
 When the Mint installer asks you to remove the installation medium, shut down or power off the VM and switch it to disk-first boot:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/New-OpenQ4LinuxMintVm.ps1 -DiskFirst -DetachIso
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/New-openQ4LinuxMintVm.ps1 -DiskFirst -DetachIso
 ```
 
 Then start the VM again from VMware or with:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/New-OpenQ4LinuxMintVm.ps1 -DiskFirst -DetachIso -Start
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/New-openQ4LinuxMintVm.ps1 -DiskFirst -DetachIso -Start
 ```
 
 ## Bootstrap And Build
@@ -50,7 +50,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/New-OpenQ4Linux
 From the Windows host, after the installed Mint desktop is running:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/Invoke-OpenQ4LinuxMintWorkflow.ps1 -Action All -GuestUser codex
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/Invoke-openQ4LinuxMintWorkflow.ps1 -Action All -GuestUser codex
 ```
 
 `-Action All` does the following through `vmrun` guest operations:
@@ -61,40 +61,40 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/Invoke-OpenQ4Li
 - formats/mounts the second disk as `/mnt/openq4-data`
 - copies Quake 4 assets to `/mnt/openq4-data/Quake4`
 - applies the Downloads 1.4.2 patch overlay only when the copied assets do not already look patched
-- syncs `OpenQ4` and `OpenQ4-GameLibs` into `~/openq4-work/` on the guest ext4 disk
-- configures, builds, and stages OpenQ4 with `tools/build/meson_setup.sh`
+- syncs `openQ4` and `openQ4-GameLibs` into `~/openq4-work/` on the guest ext4 disk
+- configures, builds, and stages openQ4 with `tools/build/meson_setup.sh`
 - runs the smoke profile from `tools/tests/renderer_gameplay_benchmark.py` against `/mnt/openq4-data/Quake4`
-- installs an executable `OpenQ4.desktop` launcher on the Mint desktop, pointing at the staged `.install` runtime and copied Quake 4 assets
+- installs an executable `openQ4.desktop` launcher on the Mint desktop, pointing at the staged `.install` runtime and copied Quake 4 assets
 - copies workflow logs back to `.tmp/vmware-linux-mint-results/` when the host share is writable
 
 You can run narrower actions as needed:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/Invoke-OpenQ4LinuxMintWorkflow.ps1 -Action Bootstrap -GuestUser codex
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/Invoke-OpenQ4LinuxMintWorkflow.ps1 -Action Assets -GuestUser codex
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/Invoke-OpenQ4LinuxMintWorkflow.ps1 -Action Build -GuestUser codex
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/Invoke-OpenQ4LinuxMintWorkflow.ps1 -Action Smoke -GuestUser codex
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/Invoke-OpenQ4LinuxMintWorkflow.ps1 -Action Launcher -GuestUser codex
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/Invoke-openQ4LinuxMintWorkflow.ps1 -Action Bootstrap -GuestUser codex
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/Invoke-openQ4LinuxMintWorkflow.ps1 -Action Assets -GuestUser codex
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/Invoke-openQ4LinuxMintWorkflow.ps1 -Action Build -GuestUser codex
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/Invoke-openQ4LinuxMintWorkflow.ps1 -Action Smoke -GuestUser codex
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/Invoke-openQ4LinuxMintWorkflow.ps1 -Action Launcher -GuestUser codex
 ```
 
 If VMware HGFS returns I/O errors when reading the broad repository shares, mirror the source trees into a clean host staging directory under `.tmp/`, add those mirrors as VMware shared folders, and point the guest workflow at them:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/Invoke-OpenQ4LinuxMintWorkflow.ps1 `
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/vmware/Invoke-openQ4LinuxMintWorkflow.ps1 `
   -Action Build `
   -GuestUser codex `
-  -GuestHostRepoShare /mnt/hgfs/OpenQ4Staged `
-  -GuestHostGameLibsShare /mnt/hgfs/OpenQ4GameLibsStaged `
-  -GuestHostResultsDir /mnt/hgfs/OpenQ4Staged/.tmp/vmware-linux-mint-results
+  -GuestHostRepoShare /mnt/hgfs/openQ4Staged `
+  -GuestHostGameLibsShare /mnt/hgfs/openQ4GameLibsStaged `
+  -GuestHostResultsDir /mnt/hgfs/openQ4Staged/.tmp/vmware-linux-mint-results
 ```
 
 ## Guest Paths
 
-- Guest source workspace: `~/openq4-work/OpenQ4`
-- Guest GameLibs workspace: `~/openq4-work/OpenQ4-GameLibs`
-- Guest staged runtime: `~/openq4-work/OpenQ4/.install`
+- Guest source workspace: `~/openq4-work/openQ4`
+- Guest GameLibs workspace: `~/openq4-work/openQ4-GameLibs`
+- Guest staged runtime: `~/openq4-work/openQ4/.install`
 - Guest Quake 4 assets: `/mnt/openq4-data/Quake4`
-- Guest desktop launcher: `~/Desktop/OpenQ4.desktop`
+- Guest desktop launcher: `~/Desktop/openQ4.desktop`
 - Guest workflow logs: `~/openq4-work/results/`
 - Host-copied logs: `.tmp/vmware-linux-mint-results/`
 

@@ -1037,7 +1037,7 @@
 	"#str_223007"	"Position arme"
 	"#str_223008"	"Droite;Centree;Bas droite"
 	"#str_223009"	"Ciel detaille active"
-	// OpenQ4 GUI strings : #str_229900 - #str_229999
+	// openQ4 GUI strings : #str_229900 - #str_229999
 	"#str_229900"	"AFFICHAGE"
 	"#str_229901"	"AUDIO"
 	"#str_229902"	"Base"

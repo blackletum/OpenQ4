@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Coverage checks for OpenQ4 settings-menu cvar exposure."""
+"""Coverage checks for openQ4 settings-menu cvar exposure."""
 
 from collections import defaultdict
 import json
@@ -8,7 +8,7 @@ import re
 
 
 ROOT = Path(__file__).resolve().parents[2]
-GAME_LIBS = ROOT.parent / "OpenQ4-GameLibs"
+GAME_LIBS = ROOT.parent / "openQ4-GameLibs"
 
 
 def read(path: Path) -> str:
