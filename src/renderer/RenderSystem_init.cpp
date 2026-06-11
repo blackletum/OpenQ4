@@ -281,9 +281,15 @@ idCVar r_lod_shadows( "r_lod_shadows", "1", CVAR_RENDERER | CVAR_BOOL, "enable r
 idCVar r_lod_shadows_percent( "r_lod_shadows_percent", "0.01", CVAR_RENDERER | CVAR_FLOAT, "screen-coverage threshold for keeping interaction shadows active", 0.0f, 1.0f );
 
 idCVar r_useVertexBuffers( "r_useVertexBuffers", "1", CVAR_RENDERER | CVAR_INTEGER, "use ARB_vertex_buffer_object for vertexes", 0, 1, idCmdSystem::ArgCompletion_Integer<0,1>  );
-// not archived: older configs pinned the historical 0 default, and the
-// VBO-unavailable force-off in idVertexCache::Init must not persist either
-idCVar r_useIndexBuffers( "r_useIndexBuffers", "1", CVAR_RENDERER | CVAR_INTEGER, "use ARB_vertex_buffer_object for indexes", 0, 1, idCmdSystem::ArgCompletion_Integer<0,1>  );
+// not archived: the VBO-unavailable force-off in idVertexCache::Init must not
+// persist into configs. Default 0 (client-memory indexes) matches the measured
+// fast path on real content: index VBOs add a per-draw element-buffer bind
+// across thousands of distinct per-surface buffers (never elided) plus lazy
+// alloc bursts while traversing, and mode 2 additionally re-uploads static
+// buffers every frame for regenerated geometry (heavy pacing spikes on
+// effect/character scenes). 1 (static geometry only) and 2 (everything) are
+// retained for per-machine A/B benchmarking.
+idCVar r_useIndexBuffers( "r_useIndexBuffers", "0", CVAR_RENDERER | CVAR_INTEGER, "use ARB_vertex_buffer_object for indexes: 0 = never, 1 = static geometry only, 2 = all geometry", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2>  );
 idCVar r_useSmp( "r_useSmp", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use SMP rendering" );
 
 idCVar r_useStateCaching( "r_useStateCaching", "1", CVAR_RENDERER | CVAR_BOOL, "avoid redundant state changes in GL_*() calls" );

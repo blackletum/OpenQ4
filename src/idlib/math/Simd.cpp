@@ -1193,6 +1193,54 @@ void TestCompare( void ) {
 	}
 	result = ( i >= COUNT ) ? "ok" : S_COLOR_RED"X";
 	PrintClocks( va( "   simd->CmpLE( 2, float[] >= float ) %s", result ), COUNT, bestClocksSIMD, bestClocksGeneric );
+
+	// edge coverage: odd counts (vectorized implementations must run their
+	// scalar tails), the highest bit number, non-zero constants, and
+	// NaN / negative-zero inputs must all match the generic results exactly
+	{
+		const int edgeCount = COUNT - 3;
+		const float edgeConstant = 0.5f;
+		bool edgeOk = true;
+
+		fsrc0[1] = idMath::INFINITY - idMath::INFINITY;	// NaN
+		fsrc0[2] = -0.0f;
+		fsrc0[3] = 0.0f;
+		fsrc0[COUNT - 5] = idMath::INFINITY - idMath::INFINITY;
+
+		memset( bytedst, 0, sizeof( bytedst ) );
+		memset( bytedst2, 0, sizeof( bytedst2 ) );
+
+		p_generic->CmpGT( bytedst, fsrc0, edgeConstant, edgeCount );
+		p_simd->CmpGT( bytedst2, fsrc0, edgeConstant, edgeCount );
+		edgeOk &= ( memcmp( bytedst, bytedst2, COUNT ) == 0 );
+		p_generic->CmpGE( bytedst, fsrc0, edgeConstant, edgeCount );
+		p_simd->CmpGE( bytedst2, fsrc0, edgeConstant, edgeCount );
+		edgeOk &= ( memcmp( bytedst, bytedst2, COUNT ) == 0 );
+		p_generic->CmpLT( bytedst, fsrc0, edgeConstant, edgeCount );
+		p_simd->CmpLT( bytedst2, fsrc0, edgeConstant, edgeCount );
+		edgeOk &= ( memcmp( bytedst, bytedst2, COUNT ) == 0 );
+		p_generic->CmpLE( bytedst, fsrc0, edgeConstant, edgeCount );
+		p_simd->CmpLE( bytedst2, fsrc0, edgeConstant, edgeCount );
+		edgeOk &= ( memcmp( bytedst, bytedst2, COUNT ) == 0 );
+
+		memset( bytedst, 0, sizeof( bytedst ) );
+		memset( bytedst2, 0, sizeof( bytedst2 ) );
+
+		p_generic->CmpGT( bytedst, 7, fsrc0, edgeConstant, edgeCount );
+		p_simd->CmpGT( bytedst2, 7, fsrc0, edgeConstant, edgeCount );
+		edgeOk &= ( memcmp( bytedst, bytedst2, COUNT ) == 0 );
+		p_generic->CmpGE( bytedst, 5, fsrc0, edgeConstant, edgeCount );
+		p_simd->CmpGE( bytedst2, 5, fsrc0, edgeConstant, edgeCount );
+		edgeOk &= ( memcmp( bytedst, bytedst2, COUNT ) == 0 );
+		p_generic->CmpLT( bytedst, 0, fsrc0, edgeConstant, edgeCount );
+		p_simd->CmpLT( bytedst2, 0, fsrc0, edgeConstant, edgeCount );
+		edgeOk &= ( memcmp( bytedst, bytedst2, COUNT ) == 0 );
+		p_generic->CmpLE( bytedst, 3, fsrc0, edgeConstant, edgeCount );
+		p_simd->CmpLE( bytedst2, 3, fsrc0, edgeConstant, edgeCount );
+		edgeOk &= ( memcmp( bytedst, bytedst2, COUNT ) == 0 );
+
+		idLib::common->Printf( "   simd->Cmp* edge cases (tail/NaN/-0/bit7) %s\n", edgeOk ? "ok" : S_COLOR_RED"X" );
+	}
 }
 
 /*
@@ -4232,6 +4280,8 @@ void idSIMD::Test_f( const idCmdArgs &args ) {
 
 	idLib::common->Printf("====================================\n" );
 */
+	TestCompare();
+	TestMinMax();
 	TestBlendJoints();
 	TestConvertJointQuatsToJointMats();
 	TestConvertJointMatsToJointQuats();

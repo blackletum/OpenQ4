@@ -162,7 +162,7 @@ static void R_TouchShadowMapCache( vertCache_t *cache ) {
 	R_TouchVertexCache( cache );
 }
 
-static bool R_EnsureShadowMapCasterCaches( srfTriangles_t *casterTris ) {
+static bool R_EnsureShadowMapCasterCaches( srfTriangles_t *casterTris, const idRenderEntityLocal *entityDef ) {
 	if ( casterTris == NULL ) {
 		return false;
 	}
@@ -177,7 +177,7 @@ static bool R_EnsureShadowMapCasterCaches( srfTriangles_t *casterTris ) {
 		return false;
 	}
 
-	if ( !casterTris->indexCache && r_useIndexBuffers.GetBool() && casterTris->numIndexes > 0 ) {
+	if ( !casterTris->indexCache && casterTris->numIndexes > 0 && R_StaticIndexCacheAllowed( entityDef ) ) {
 		vertexCache.Alloc(
 			casterTris->indexes,
 			casterTris->numIndexes * sizeof( casterTris->indexes[0] ),
@@ -909,7 +909,7 @@ Packed MD5R prim-batch shadows manage their own geometry stream, so they don't
 go through the classic cache upload path here.
 ===================
 */
-static bool R_EnsureInteractionShadowCache( surfaceInteraction_t *sint ) {
+static bool R_EnsureInteractionShadowCache( surfaceInteraction_t *sint, const idRenderEntityLocal *entityDef ) {
 	srfTriangles_t *shadowTris = sint->shadowTris;
 
 #if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
@@ -944,7 +944,7 @@ static bool R_EnsureInteractionShadowCache( surfaceInteraction_t *sint ) {
 
 	R_TouchVertexCache( shadowTris->shadowCache );
 
-	if ( !shadowTris->indexCache && r_useIndexBuffers.GetBool() && shadowTris->numIndexes > 0 ) {
+	if ( !shadowTris->indexCache && shadowTris->numIndexes > 0 && R_StaticIndexCacheAllowed( entityDef ) ) {
 		vertexCache.Alloc(
 			shadowTris->indexes,
 			shadowTris->numIndexes * sizeof( shadowTris->indexes[0] ),
@@ -1773,7 +1773,7 @@ void idInteraction::AddActiveInteraction( void ) {
 								} else {
 									lightTris->indexCache = NULL;
 								}
-							} else if ( !lightTris->indexCache && r_useIndexBuffers.GetBool() && lightTris->indexes != NULL && lightTris->numIndexes > 0 ) {
+							} else if ( !lightTris->indexCache && lightTris->indexes != NULL && lightTris->numIndexes > 0 && R_StaticIndexCacheAllowed( entityDef ) ) {
 								vertexCache.Alloc(
 									lightTris->indexes,
 									lightTris->numIndexes * sizeof( lightTris->indexes[0] ),
@@ -1898,7 +1898,7 @@ void idInteraction::AddActiveInteraction( void ) {
 
 			if ( allowShadowMapCaster ) {
 				srfTriangles_t *casterTris = sint->ambientTris;
-				const bool haveCasterGeometry = R_EnsureShadowMapCasterCaches( casterTris );
+				const bool haveCasterGeometry = R_EnsureShadowMapCasterCaches( casterTris, entityDef );
 
 				if ( haveCasterGeometry ) {
 					R_TouchShadowMapCache( casterTris->ambientCache );
@@ -1917,7 +1917,7 @@ void idInteraction::AddActiveInteraction( void ) {
 
 			if ( allowTranslucentShadowMapCaster ) {
 				srfTriangles_t *casterTris = sint->ambientTris;
-				const bool haveCasterGeometry = R_EnsureShadowMapCasterCaches( casterTris );
+				const bool haveCasterGeometry = R_EnsureShadowMapCasterCaches( casterTris, entityDef );
 
 				if ( haveCasterGeometry ) {
 					R_TouchShadowMapCache( casterTris->ambientCache );
@@ -1950,7 +1950,7 @@ void idInteraction::AddActiveInteraction( void ) {
 				}
 			}
 
-			if ( !R_EnsureInteractionShadowCache( sint ) ) {
+			if ( !R_EnsureInteractionShadowCache( sint, entityDef ) ) {
 				continue;
 			}
 

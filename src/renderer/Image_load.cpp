@@ -703,11 +703,37 @@ static void R_DownsizeLoadedCubeImageData( textureUsage_t usage, bool allowDownS
 
 /*
 ====================
+R_BindTextureForDirectAccess
+
+Raw glBindTexture for framebuffer copies, uploads, and sampler-state updates.
+The bind replaces the active unit's binding BEHIND idImage::Bind()'s
+redundant-bind filter, so the per-TMU tracker must be updated alongside or a
+later Bind() of the previously tracked texture silently early-outs while
+something else is actually bound. A stale tracker entry here is how the SSAO
+pass ended up sampling its depth scratch image as the scene texture
+(near-dark / far-white frames): a _currentRender material left
+tracking[0] == scene, the depth copy raw-bound the depth texture over it,
+and the scene Bind() was filtered out.
+====================
+*/
+void R_BindTextureForDirectAccess( unsigned int target, int texnum ) {
+	glBindTexture( target, texnum );
+	if ( target == GL_TEXTURE_2D ) {
+		backEnd.glState.tmu[backEnd.glState.currenttmu].current2DMap = texnum;
+	} else if ( target == GL_TEXTURE_CUBE_MAP_EXT ) {
+		backEnd.glState.tmu[backEnd.glState.currenttmu].currentCubeMap = texnum;
+	}
+	// other targets (e.g. multisample) are not tracked by the legacy filter
+	// and do not disturb the tracked 2D / cube bindings
+}
+
+/*
+====================
 CopyFramebuffer
 ====================
 */
 void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight ) {
-	glBindTexture( ( opts.textureType == TT_CUBIC ) ? GL_TEXTURE_CUBE_MAP_EXT : GL_TEXTURE_2D, texnum );
+	R_BindTextureForDirectAccess( ( opts.textureType == TT_CUBIC ) ? GL_TEXTURE_CUBE_MAP_EXT : GL_TEXTURE_2D, texnum );
 
 	const bool readingFromRenderTexture = ( backEnd.renderTexture != NULL ) && ( backEnd.renderTexture->GetNumColorImages() > 0 );
 	const GLenum readAttachment = GL_COLOR_ATTACHMENT0;
@@ -820,7 +846,7 @@ CopyDepthbuffer
 ====================
 */
 void idImage::CopyDepthbuffer( int x, int y, int imageWidth, int imageHeight ) {
-	glBindTexture( ( opts.textureType == TT_CUBIC ) ? GL_TEXTURE_CUBE_MAP_EXT : GL_TEXTURE_2D, texnum );
+	R_BindTextureForDirectAccess( ( opts.textureType == TT_CUBIC ) ? GL_TEXTURE_CUBE_MAP_EXT : GL_TEXTURE_2D, texnum );
 
 	const bool needsStorageResize = ( opts.width != imageWidth ) || ( opts.height != imageHeight );
 	opts.width = imageWidth;
@@ -1199,7 +1225,7 @@ void idImage::SetSamplerState( textureFilter_t tf, textureRepeat_t tr ) {
 	}
 	filter = tf;
 	repeat = tr;
-	glBindTexture( ( opts.textureType == TT_CUBIC ) ? GL_TEXTURE_CUBE_MAP_EXT : GL_TEXTURE_2D, texnum );
+	R_BindTextureForDirectAccess( ( opts.textureType == TT_CUBIC ) ? GL_TEXTURE_CUBE_MAP_EXT : GL_TEXTURE_2D, texnum );
 	SetTexParameters();
 }
 

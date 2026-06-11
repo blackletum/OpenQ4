@@ -363,7 +363,15 @@ static bool R_ModernGLExecutor_PassIsPost( renderPassCategory_t category ) {
 		|| category == RENDER_PASS_AUTHORED_POST;
 }
 
+// true once a skipped frame has refreshed the dormant-pipeline bookkeeping.
+// Cleared by R_ModernGLExecutor_ResetPassOwnershipTable, which every path
+// that mutates the global executor state traverses (PrepareFrame, Shutdown,
+// and all modern selftests), so stale bookkeeping is re-published on the
+// next skipped frame after any such activity.
+static bool rg_modernGLExecutorSkipLatched = false;
+
 static void R_ModernGLExecutor_ResetPassOwnershipTable( const char *reason ) {
+	rg_modernGLExecutorSkipLatched = false;
 	memset( &rg_modernGLPassOwnership, 0, sizeof( rg_modernGLPassOwnership ) );
 	idStr::Copynz( rg_modernGLPassOwnership.failClosedReason, reason != NULL ? reason : "reset", sizeof( rg_modernGLPassOwnership.failClosedReason ) );
 	for ( int i = 0; i < MODERN_GL_PASS_OWNER_COUNT; ++i ) {
@@ -6329,10 +6337,29 @@ void R_ModernGLExecutor_Shutdown( void ) {
 }
 
 void R_ModernGLExecutor_SkipFrame( void ) {
-	R_ModernGLExecutor_ResetPassOwnershipTable( "side-pipeline-skipped" );
-	R_ModernGLExecutor_ResetStats( rg_modernGLExecutorStats, false );
+	// the dormant-pipeline bookkeeping (ownership-table reason strings, a
+	// ~2 KB stats reset, and a several-hundred-scalar metrics fan-out) only
+	// needs refreshing once after any executor activity (the latch is
+	// cleared by ResetPassOwnershipTable), and per-frame only while metrics
+	// output actually consumes it
+	const bool refresh = !rg_modernGLExecutorSkipLatched || r_rendererMetrics.GetInteger() > 0;
+
+	// reset BEFORE polling so readback completions recorded below land in
+	// fresh stats instead of being wiped (matches the pre-latch ordering
+	// where readbacks were processed after the reset)
+	if ( refresh ) {
+		R_ModernGLExecutor_ResetPassOwnershipTable( "side-pipeline-skipped" );
+		R_ModernGLExecutor_ResetStats( rg_modernGLExecutorStats, false );
+	}
+
+	// GPU-validation readbacks may still be in flight from a just-disabled
+	// session; always poll those.
 	R_ModernGLExecutor_ProcessPendingGpuDrivenValidationReadbacks( rg_modernGLExecutorStats );
-	R_ModernGLExecutor_RecordMetrics( rg_modernGLExecutorStats );
+
+	if ( refresh ) {
+		R_ModernGLExecutor_RecordMetrics( rg_modernGLExecutorStats );
+		rg_modernGLExecutorSkipLatched = true;
+	}
 }
 
 void R_ModernGLExecutor_InvalidatePlans( void ) {
@@ -6343,7 +6370,7 @@ void R_ModernGLExecutor_InvalidatePlans( void ) {
 }
 
 void R_ModernGLExecutor_PrepareFrame( const idScenePacketFrame &packetFrame, const idRenderGraph &graph ) {
-	R_ModernGLExecutor_ResetPassOwnershipTable( "frame-start" );
+	R_ModernGLExecutor_ResetPassOwnershipTable( "frame-start" );	// also clears the skip latch
 	const bool modernVisibleRequested = R_ModernGLExecutor_ModernVisibleRequested();
 	// SSAO samples the final scene/depth post target; do not request a deferred sidecar just for it.
 	const bool ssaoDeferredSidecarRequested = false;

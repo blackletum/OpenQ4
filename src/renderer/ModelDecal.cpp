@@ -631,6 +631,14 @@ void idRenderModelDecal::AddDecalDrawSurf( viewEntity_t *space ) {
 			const shaderStage_t *pStage = material->GetStage( stage );
 			byte *stageColor = stageColors + stage * decalColorStride;
 
+			// consecutive triangles of one impact share identical
+			// (life, spawn time) pairs and the register interpreter is
+			// deterministic, so only re-evaluate when the pair changes -
+			// decal-heavy firefights otherwise re-interpret the same
+			// expression ops hundreds of times per frame per decal model
+			float lastLife = -1.0f;		// vertLifeSpan is always in [0, 1]
+			float lastStartTime = 0.0f;
+
 			for ( int indexBase = 0; indexBase < tri.numIndexes; indexBase += 3 ) {
 				const glIndex_t triVertIndex0 = tri.indexes[indexBase + 0];
 				const glIndex_t triVertIndex1 = tri.indexes[indexBase + 1];
@@ -640,7 +648,11 @@ void idRenderModelDecal::AddDecalDrawSurf( viewEntity_t *space ) {
 				// triangle before the stage colors are baked into the draw surf.
 				shaderParms[4] = vertLifeSpan[triVertIndex0];
 				shaderParms[5] = indexStartTime[indexBase];
-				material->EvaluateStageRegisters( stage, regs, shaderParms, tr.frameShaderTime );
+				if ( shaderParms[4] != lastLife || shaderParms[5] != lastStartTime ) {
+					material->EvaluateStageRegisters( stage, regs, shaderParms, tr.frameShaderTime );
+					lastLife = shaderParms[4];
+					lastStartTime = shaderParms[5];
+				}
 
 				const float colorScale = vertDepthFade[triVertIndex0] * 255.0f;
 				for ( int k = 0; k < 4; k++ ) {

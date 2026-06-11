@@ -41,6 +41,10 @@ If you have questions concerning this license or the applicable additional terms
 frameData_t		*frameData;
 backEndState_t	backEnd;
 
+// true while the dormant-pipeline metric mirrors hold freshly zeroed values;
+// re-armed whenever the modern side pipeline records real stats
+static bool rg_modernStatMirrorsZeroed = false;
+
 static ID_INLINE GLint R_SafeStencilClearValue() {
 	const int stencilBits = idMath::ClampInt( 1, 30, ( glConfig.stencilBits > 0 ) ? glConfig.stencilBits : 8 );
 	return 1 << ( stencilBits - 1 );
@@ -744,20 +748,27 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 		R_MaterialResourceTable_PrepareFrame( *scenePackets );
 		R_RendererMetrics_RecordMaterialResourceTable( R_MaterialResourceTable_Stats() );
 		R_ModernGLExecutor_PrepareFrame( *scenePackets, legacyGraph );
+		rg_modernStatMirrorsZeroed = false;	// active frame wrote real stats; re-zero on next dormant frame
 	} else {
-		scenePacketFrameStats_t packetStats;
-		memset( &packetStats, 0, sizeof( packetStats ) );
-		R_RendererMetrics_RecordScenePackets( packetStats );
-		R_RendererMetrics_RecordRenderGraph( 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false );
-		renderGraphResourceManagerStats_t graphResourceStats;
-		memset( &graphResourceStats, 0, sizeof( graphResourceStats ) );
-		R_RendererMetrics_RecordRenderGraphResources( graphResourceStats );
-		materialResourceTableStats_t materialStats;
-		memset( &materialStats, 0, sizeof( materialStats ) );
-		R_RendererMetrics_RecordMaterialResourceTable( materialStats );
-		rendererClusteredLightingStats_t clusterStats;
-		memset( &clusterStats, 0, sizeof( clusterStats ) );
-		R_RendererMetrics_RecordClusteredLighting( clusterStats );
+		// the zeroed stat mirrors cannot change while the side pipeline is
+		// skipped: refresh them once on the active->dormant transition, and
+		// per-frame only while metrics output actually consumes them
+		if ( !rg_modernStatMirrorsZeroed || r_rendererMetrics.GetInteger() > 0 ) {
+			scenePacketFrameStats_t packetStats;
+			memset( &packetStats, 0, sizeof( packetStats ) );
+			R_RendererMetrics_RecordScenePackets( packetStats );
+			R_RendererMetrics_RecordRenderGraph( 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false );
+			renderGraphResourceManagerStats_t graphResourceStats;
+			memset( &graphResourceStats, 0, sizeof( graphResourceStats ) );
+			R_RendererMetrics_RecordRenderGraphResources( graphResourceStats );
+			materialResourceTableStats_t materialStats;
+			memset( &materialStats, 0, sizeof( materialStats ) );
+			R_RendererMetrics_RecordMaterialResourceTable( materialStats );
+			rendererClusteredLightingStats_t clusterStats;
+			memset( &clusterStats, 0, sizeof( clusterStats ) );
+			R_RendererMetrics_RecordClusteredLighting( clusterStats );
+			rg_modernStatMirrorsZeroed = true;
+		}
 		R_ModernGLExecutor_SkipFrame();
 	}
 	backEndStartTime = Sys_Milliseconds();

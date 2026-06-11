@@ -42,6 +42,15 @@ public:
 
 	virtual void VPCALL DeriveTriPlanes( idPlane * RESTRICT planes, const idDrawVert * RESTRICT verts, const int numVerts, const int * RESTRICT indexes, const int numIndexes );
 
+	virtual void VPCALL CmpGT( byte *dst, const float *src0, const float constant, const int count );
+	virtual void VPCALL CmpGT( byte *dst, const byte bitNum, const float *src0, const float constant, const int count );
+	virtual void VPCALL CmpGE( byte *dst, const float *src0, const float constant, const int count );
+	virtual void VPCALL CmpGE( byte *dst, const byte bitNum, const float *src0, const float constant, const int count );
+	virtual void VPCALL CmpLT( byte *dst, const float *src0, const float constant, const int count );
+	virtual void VPCALL CmpLT( byte *dst, const byte bitNum, const float *src0, const float constant, const int count );
+	virtual void VPCALL CmpLE( byte *dst, const float *src0, const float constant, const int count );
+	virtual void VPCALL CmpLE( byte *dst, const byte bitNum, const float *src0, const float constant, const int count );
+
 	virtual void VPCALL ConvertJointQuatsToJointMats( idJointMat * RESTRICT jointMats, const idJointQuat * RESTRICT jointQuats, const int numJoints );
 	virtual void VPCALL TransformJoints( idJointMat * RESTRICT jointMats, const int * RESTRICT parents, const int firstJoint, const int lastJoint );
 	virtual void VPCALL MultiplyJoints( idJointMat * RESTRICT result, const idJointMat * RESTRICT joints1, const idJointMat * RESTRICT joints2, const int numJoints );

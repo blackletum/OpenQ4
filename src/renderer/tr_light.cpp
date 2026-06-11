@@ -209,6 +209,31 @@ void R_TouchVertexCache( vertCache_t *cache ) {
 
 /*
 ==================
+R_StaticIndexCacheAllowed
+
+Static index VBOs only pay off for geometry whose index data survives across
+frames (world/brush models, static entity models, prelight volumes, static
+interactions). Per-frame regenerated dynamic-model tris (animated MD5,
+beams/liquids, and their per-light interaction shadow/light tris) would
+allocate and re-upload a static buffer every frame - more expensive than the
+client-memory index draw it replaces, and the churn shows up as frame-pacing
+spikes. r_useIndexBuffers 2 restores the upload-everything behavior for A/B.
+==================
+*/
+bool R_StaticIndexCacheAllowed( const idRenderEntityLocal *def ) {
+	const int mode = r_useIndexBuffers.GetInteger();
+	if ( mode >= 2 ) {
+		return true;
+	}
+	if ( mode < 1 ) {
+		return false;
+	}
+	const idRenderModel *model = ( def != NULL ) ? def->parms.hModel : NULL;
+	return model == NULL || model->IsDynamicModel() == DM_STATIC;
+}
+
+/*
+==================
 R_CreateAmbientCache
 
 Create it if needed
@@ -2088,7 +2113,7 @@ static void R_AddAmbientDrawsurfs( viewEntity_t *vEntity ) {
 					return;
 				}
 
-				if ( r_useIndexBuffers.GetBool() && !tri->indexCache && tri->indexes != NULL && tri->numIndexes > 0 ) {
+				if ( !tri->indexCache && tri->indexes != NULL && tri->numIndexes > 0 && R_StaticIndexCacheAllowed( def ) ) {
 					vertexCache.Alloc( tri->indexes, tri->numIndexes * sizeof( tri->indexes[0] ), &tri->indexCache, true );
 				}
 			}

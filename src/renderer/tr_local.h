@@ -1494,6 +1494,18 @@ void R_StencilShot( void );
 
 bool R_CheckExtension( char *name );
 
+// raw glBindTexture that keeps the per-TMU redundant-bind tracker coherent;
+// REQUIRED for any direct bind outside idImage::Bind() (framebuffer copies,
+// uploads, sampler-state changes) or a later filtered Bind() can silently
+// leave the wrong texture bound
+void R_BindTextureForDirectAccess( unsigned int target, int texnum );
+
+// true when geometry owned by this entity def may allocate a STATIC index
+// VBO (r_useIndexBuffers 1 limits that to static models; per-frame
+// regenerated dynamic-model tris re-upload every frame, which costs more
+// than the client-memory index draw it replaces and causes pacing spikes)
+bool R_StaticIndexCacheAllowed( const idRenderEntityLocal *def );
+
 
 /*
 ====================================================================

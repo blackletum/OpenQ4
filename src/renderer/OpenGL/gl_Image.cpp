@@ -93,7 +93,7 @@ void idImage::SubImageUpload( int mipLevel, int x, int y, int z, int width, int 
 		uploadTarget = GL_TEXTURE_2D;
 	}
 
-	glBindTexture( target, texnum );
+	R_BindTextureForDirectAccess( target, texnum );
 
 	if ( pixelPitch != 0 ) {
 		glPixelStorei( GL_UNPACK_ROW_LENGTH, pixelPitch );
@@ -453,7 +453,7 @@ void idImage::AllocImage() {
 		numSides = 1;
 	}
 
-	glBindTexture( target, texnum );
+	R_BindTextureForDirectAccess( target, texnum );
 
 	if ( wantsMSAA ) {
 		int samples = opts.numMSAASamples;

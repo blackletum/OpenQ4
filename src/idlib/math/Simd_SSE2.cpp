@@ -315,6 +315,91 @@ void VPCALL idSIMD_SSE2::DeriveTriPlanes( idPlane * RESTRICT planes, const idDra
 
 /*
 ============
+SSE2 float-vs-constant compares
+
+	exact replacements: the ordered SSE compares return false for NaN exactly
+	like the scalar relational operators do. Four 4-wide float masks are
+	packed to sixteen 0x00/0xFF bytes, then masked to 0/1 stores or OR'd into
+	the destination bit. These feed shadow facing / cull-bit classification,
+	which runs per (caster x light) every frame in combat scenes.
+============
+*/
+ID_INLINE static __m128i SSE2_PackCmpMasks( __m128 m0, __m128 m1, __m128 m2, __m128 m3 ) {
+	return _mm_packs_epi16(
+		_mm_packs_epi32( _mm_castps_si128( m0 ), _mm_castps_si128( m1 ) ),
+		_mm_packs_epi32( _mm_castps_si128( m2 ), _mm_castps_si128( m3 ) ) );
+}
+
+#define SSE2_CMP_CONSTANT_PLAIN( CMP_PS, SCALAR_OP ) \
+	const __m128 c = _mm_set1_ps( constant ); \
+	const __m128i one = _mm_set1_epi8( 1 ); \
+	int i = 0; \
+	for ( ; i + 16 <= count; i += 16 ) { \
+		const __m128i packed = SSE2_PackCmpMasks( \
+			CMP_PS( _mm_loadu_ps( src0 + i + 0 ), c ), \
+			CMP_PS( _mm_loadu_ps( src0 + i + 4 ), c ), \
+			CMP_PS( _mm_loadu_ps( src0 + i + 8 ), c ), \
+			CMP_PS( _mm_loadu_ps( src0 + i + 12 ), c ) ); \
+		_mm_storeu_si128( (__m128i *)( dst + i ), _mm_and_si128( packed, one ) ); \
+	} \
+	for ( ; i < count; i++ ) { \
+		dst[i] = src0[i] SCALAR_OP constant; \
+	}
+
+#define SSE2_CMP_CONSTANT_BITNUM( CMP_PS, SCALAR_OP ) \
+	const __m128 c = _mm_set1_ps( constant ); \
+	const __m128i bit = _mm_set1_epi8( (char)( 1 << bitNum ) ); \
+	int i = 0; \
+	for ( ; i + 16 <= count; i += 16 ) { \
+		const __m128i packed = SSE2_PackCmpMasks( \
+			CMP_PS( _mm_loadu_ps( src0 + i + 0 ), c ), \
+			CMP_PS( _mm_loadu_ps( src0 + i + 4 ), c ), \
+			CMP_PS( _mm_loadu_ps( src0 + i + 8 ), c ), \
+			CMP_PS( _mm_loadu_ps( src0 + i + 12 ), c ) ); \
+		const __m128i prev = _mm_loadu_si128( (const __m128i *)( dst + i ) ); \
+		_mm_storeu_si128( (__m128i *)( dst + i ), _mm_or_si128( prev, _mm_and_si128( packed, bit ) ) ); \
+	} \
+	for ( ; i < count; i++ ) { \
+		dst[i] |= ( src0[i] SCALAR_OP constant ) << bitNum; \
+	}
+
+void VPCALL idSIMD_SSE2::CmpGT( byte *dst, const float *src0, const float constant, const int count ) {
+	SSE2_CMP_CONSTANT_PLAIN( _mm_cmpgt_ps, > )
+}
+
+void VPCALL idSIMD_SSE2::CmpGT( byte *dst, const byte bitNum, const float *src0, const float constant, const int count ) {
+	SSE2_CMP_CONSTANT_BITNUM( _mm_cmpgt_ps, > )
+}
+
+void VPCALL idSIMD_SSE2::CmpGE( byte *dst, const float *src0, const float constant, const int count ) {
+	SSE2_CMP_CONSTANT_PLAIN( _mm_cmpge_ps, >= )
+}
+
+void VPCALL idSIMD_SSE2::CmpGE( byte *dst, const byte bitNum, const float *src0, const float constant, const int count ) {
+	SSE2_CMP_CONSTANT_BITNUM( _mm_cmpge_ps, >= )
+}
+
+void VPCALL idSIMD_SSE2::CmpLT( byte *dst, const float *src0, const float constant, const int count ) {
+	SSE2_CMP_CONSTANT_PLAIN( _mm_cmplt_ps, < )
+}
+
+void VPCALL idSIMD_SSE2::CmpLT( byte *dst, const byte bitNum, const float *src0, const float constant, const int count ) {
+	SSE2_CMP_CONSTANT_BITNUM( _mm_cmplt_ps, < )
+}
+
+void VPCALL idSIMD_SSE2::CmpLE( byte *dst, const float *src0, const float constant, const int count ) {
+	SSE2_CMP_CONSTANT_PLAIN( _mm_cmple_ps, <= )
+}
+
+void VPCALL idSIMD_SSE2::CmpLE( byte *dst, const byte bitNum, const float *src0, const float constant, const int count ) {
+	SSE2_CMP_CONSTANT_BITNUM( _mm_cmple_ps, <= )
+}
+
+#undef SSE2_CMP_CONSTANT_PLAIN
+#undef SSE2_CMP_CONSTANT_BITNUM
+
+/*
+============
 idSIMD_SSE2::ConvertJointQuatsToJointMats
 
 	scalar, but with the idMat3 round trip of the generic version removed;

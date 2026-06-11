@@ -241,3 +241,78 @@ G is gated by `r_useRedundantStateFiltering 0` where it touches evaluation order
   DeriveTriPlanes wins are below integer-millisecond resolution on this static spawn view —
   they target shadow/character-dense scenes (same caveat as the pass-3 SIMD work).
 - Log review: warning sets byte-identical between baseline and all-changes runs.
+
+## Addendum (same day): two post-landing fixes
+
+### SSAO white-frame corruption (pre-existing, root-caused)
+
+Intermittent near-white frames with `r_ssao 1` (near geometry dark, far world white = a
+depth buffer drawn fullscreen). Root cause: `idImage::CopyFramebuffer` / `CopyDepthbuffer` /
+`SetSamplerState` / `SubImageUpload` / `AllocImage` issued raw `glBindTexture` calls that
+replace the active unit's binding BEHIND `idImage::Bind()`'s per-TMU redundant-bind filter
+(`tmu[].current2DMap`), and `BindNull()` never clears the tracker. Once a `_currentRender`
+material left tracking[0] == scene, the SSAO depth copy raw-bound its depth scratch over it
+and the scene `Bind()` was silently filtered — the shader sampled depth as `Scene`. Fixed
+with `R_BindTextureForDirectAccess()` (tr_local.h), which keeps the tracker coherent at all
+five raw-bind sites. Verified: 26/26 validation matrix, SSAO-on storage1 capture renders
+correctly (zero near-white pixels). This bug class is stock-idTech4-era; SSAO's per-frame
+copies made it visible, and cinematics (`SubImageUpload` every video frame) were equally
+exposed.
+
+### Index-VBO churn pacing regression on dynamic geometry (pass-4 regression, fixed)
+
+Real gameplay (animated characters, BSE effects) regressed in frame-rate consistency vs the
+pre-pass-4 build while the static storage1 spawn benchmark improved — exactly the blind spot
+the verification flagged. Mechanism: with the flip, every per-frame-regenerated tri surf
+(dynamic-model ambient tris, per-light interaction lightTris/shadowTris, shadow-map caster
+tris) allocated and re-uploaded a STATIC index VBO every frame. Demonstrated on
+`sp-medlabs` (BSE-heavy): **1001 KB/frame upload with the flip vs 21 KB/frame with the
+fix** (48x), pacing max 19 -> 13 ms; on storage1 the all-changes 94 ms pacing spike
+disappeared (max 16 ms, p95 8 ms, present 184 Hz — better than both the pre-pass-4
+baseline and the original flip).
+
+Fix: `r_useIndexBuffers` is now tiered — `0` = never, `1` = static geometry only:
+world/brush models, static entity models, prelight shadow volumes, static interactions;
+`2` = all geometry (the regressing upload-everything behavior, kept for A/B).
+Gating helper `R_StaticIndexCacheAllowed()` (tr_light.cpp) checks
+`hModel->IsDynamicModel() == DM_STATIC`. Frame-temp index paths (deforms, BSE frame-submit,
+packed MD5R) are unaffected — they go through the persistent-mapped ring, which is cheap.
+Lesson recorded: static-spawn benchmarks cannot see per-frame regeneration churn; any
+geometry-lifetime change must be A/B'd on `sp-medlabs` (BSE) and a character-dense scene,
+watching the per-frame `upload=` KB and `framePacing` max, not just frame averages.
+
+## Addendum 2 (same day): default revert + further combat-path optimizations
+
+Persistent user reports of lower/less-consistent real-gameplay framerates vs the post-pass-3
+build narrowed the remaining default-path delta to the index flip even at mode 1: a per-draw
+GL_ELEMENT_ARRAY bind across thousands of distinct per-surface buffers (never elided by the
+bind filter) plus lazy index-VBO alloc bursts on first surface visibility while traversing —
+neither visible to the static spawn-view benchmarks. **`r_useIndexBuffers` default reverted
+to `0`** (exact pass-3 submission behavior); modes 1/2 retained for per-machine A/B. The
+measured spawn-view benefit was within the established ±20% run-to-run Hz noise anyway.
+
+New optimizations landed in the same change:
+- **SSE2 CmpGT/CmpGE/CmpLT/CmpLE** (plain + bitNum forms, 8 overrides): shadow facing
+  (`R_CalcInteractionFacing`) and cull-bit classification (`R_CalcInteractionCullBits`,
+  stencil-shadow clip bits) run per (caster × light) every frame in combat; byte-exact vs
+  generic (ordered SSE compares match scalar NaN semantics). `testSIMD` now also runs
+  `TestCompare()`/`TestMinMax()` plus a new edge block (odd counts forcing scalar tails,
+  bitNum 7, NaN/-0.0 inputs, non-zero constants) — all ok.
+- **Decal stage-register hoist** (ModelDecal.cpp): `EvaluateStageRegisters` was run per
+  TRIANGLE per stage per frame; consecutive triangles of one impact share identical
+  (life, spawnTime) inputs, so it now re-evaluates only when the pair changes —
+  decal-heavy firefights stop re-interpreting identical material expressions hundreds of
+  times per frame. Bit-identical output by construction.
+- **Dormant-pipeline bookkeeping latch**: `R_ModernGLExecutor_SkipFrame`'s ownership-table
+  string rewrites, ~2 KB stats reset, and several-hundred-scalar metrics fan-out (plus the
+  five zero-fill mirror Records in `RB_ExecuteBackEndCommands`) now run once per
+  active→dormant transition (and per-frame only while `r_rendererMetrics > 0`). The latch is
+  cleared inside `R_ModernGLExecutor_ResetPassOwnershipTable`, which every state-mutating
+  path traverses (PrepareFrame, Shutdown, all modern selftests), and the readback poll
+  ordering preserves pre-latch semantics (reset before poll). An adversarial review caught
+  and fixed three majors here before landing (poll-ordering wipe, selftest poisoning,
+  once-per-process mirror flag).
+
+Validation: 26/26 matrix; testSIMD fully ok incl. new edge cases; medlabs pacing max
+improved to 8 ms (best recorded); storage1 within the established noise band with the
+pass-3 submission path restored.
