@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 """Regression checks for Linux ARM64 CI coverage."""
 
+import os
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+GAME_LIBS_ROOT = Path(os.environ.get("OPENQ4_GAMELIBS_REPO", ROOT.parent / "openQ4-GameLibs")).resolve()
 
 
 def read(relative_path: str) -> str:
     return (ROOT / relative_path).read_text(encoding="utf-8")
+
+
+def read_game_libs(relative_path: str) -> str:
+    return (GAME_LIBS_ROOT / relative_path).read_text(encoding="utf-8")
 
 
 def require(haystack: str, needle: str, context: str) -> None:
@@ -68,7 +74,8 @@ def validate_runtime_flags() -> None:
     runner = read("tools/validation/openq4_validate.py")
 
     require(renderer, "--skip-official-pak-validation", "renderer validation matrix assetless option")
-    require(renderer, '"fs_validateOfficialPaks", "0"', "renderer validation matrix startup cvar")
+    require(renderer, '"fs_validateOfficialPaks"', "renderer validation matrix startup cvar")
+    require(renderer, '"g_allowAssetlessStartup"', "renderer validation matrix assetless game guard")
     require(renderer, "skipOfficialPakValidation", "renderer validation matrix report metadata")
     require(runner, "--runtime-skip-official-pak-validation", "validation profile assetless option")
     require(runner, '"--skip-official-pak-validation"', "validation profile renderer handoff")
@@ -83,11 +90,25 @@ def validate_assetless_renderer_bootstrap() -> None:
     require(source, "_default material fallback not available", "renderer default material fallback fatal guard")
 
 
+def validate_assetless_game_bootstrap() -> None:
+    for module in ("game", "mpgame"):
+        game_local = read_game_libs(f"src/{module}/Game_local.cpp")
+        sys_cvar = read_game_libs(f"src/{module}/gamesys/SysCvar.cpp")
+        sys_cvar_header = read_game_libs(f"src/{module}/gamesys/SysCvar.h")
+
+        require(game_local, 'FindEntityDefDict( "aas_types", false )', f"{module} stock AAS lookup")
+        require(game_local, "g_allowAssetlessStartup.GetBool()", f"{module} assetless AAS guard")
+        require(game_local, "continuing without AAS because g_allowAssetlessStartup is enabled", f"{module} assetless AAS log")
+        require(sys_cvar, '"g_allowAssetlessStartup"', f"{module} assetless startup cvar")
+        require(sys_cvar_header, "g_allowAssetlessStartup", f"{module} assetless startup cvar declaration")
+
+
 def validate_release_note() -> None:
     source = read("docs-dev/release-completion.md")
 
     require(source, "Linux ARM64 is now covered by normal CI", "release completion notes")
     require(source, "assetless renderer startup smoke", "release completion notes")
+    require(source, "AAS declarations", "release completion notes")
 
 
 def validate_no_duplicate_jobs() -> None:
@@ -104,6 +125,7 @@ def main() -> None:
     validate_commit_workflow()
     validate_runtime_flags()
     validate_assetless_renderer_bootstrap()
+    validate_assetless_game_bootstrap()
     validate_release_note()
     validate_no_duplicate_jobs()
     print("linux_arm64_ci_coverage: ok")

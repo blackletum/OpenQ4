@@ -428,7 +428,14 @@ def common_args(
         "baseoq4",
     ]
     if skip_official_pak_validation:
-        args += ["+set", "fs_validateOfficialPaks", "0"]
+        args += [
+            "+set",
+            "fs_validateOfficialPaks",
+            "0",
+            "+set",
+            "g_allowAssetlessStartup",
+            "1",
+        ]
     if basepath:
         args += ["+set", "fs_basepath", basepath]
     return args
