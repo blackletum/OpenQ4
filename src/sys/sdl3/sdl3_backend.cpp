@@ -576,8 +576,11 @@ static void SDL3_UpdateCursorVisibility(void) {
 	(void)SDL_ShowCursor();
 }
 
-static int SDL3_RoundToInt(float value) {
-	return static_cast<int>(value >= 0.0f ? (value + 0.5f) : (value - 0.5f));
+static int SDL3_ConsumeMouseDelta(float delta, float &remainder) {
+	const float accumulated = delta + remainder;
+	const int whole = static_cast<int>(accumulated);
+	remainder = accumulated - static_cast<float>(whole);
+	return whole;
 }
 
 typedef struct {
@@ -743,12 +746,8 @@ static bool SDL3_UpdateRoutedMouseDelta(float menuMouseX, float menuMouseY, int 
 		previousY = activeGui->CursorY();
 	}
 
-	const float deltaX = (menuMouseX - previousX) + s_menuMouseRemainderX;
-	const float deltaY = (menuMouseY - previousY) + s_menuMouseRemainderY;
-	dx = SDL3_RoundToInt(deltaX);
-	dy = SDL3_RoundToInt(deltaY);
-	s_menuMouseRemainderX = deltaX - static_cast<float>(dx);
-	s_menuMouseRemainderY = deltaY - static_cast<float>(dy);
+	dx = SDL3_ConsumeMouseDelta(menuMouseX - previousX, s_menuMouseRemainderX);
+	dy = SDL3_ConsumeMouseDelta(menuMouseY - previousY, s_menuMouseRemainderY);
 	s_menuMouseX = menuMouseX;
 	s_menuMouseY = menuMouseY;
 	s_haveMenuMousePosition = true;
@@ -2746,6 +2745,14 @@ static void SDL3_HandleWindowEvent(const SDL_WindowEvent &event, int eventTime) 
 			SDL3_InvalidateMenuMouseRouting();
 			break;
 
+		case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+		case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+			SDL3_InitDesktopMode();
+			SDL3_RefreshWindowPlacement();
+			SDL3_InvalidateMenuMouseRouting();
+			SDL3_UpdateCursorVisibility();
+			break;
+
 		case SDL_EVENT_WINDOW_MINIMIZED:
 			win32.activeApp = false;
 			s_menuMouseInsideWindow = false;
@@ -2940,12 +2947,8 @@ bool Sys_SDL_PumpEvents(void) {
 				const bool mouseCaptured = SDL3_IsMouseCaptured();
 
 				if (mouseCaptured) {
-					const float deltaX = event.motion.xrel + s_sdlRelativeMouseRemainderX;
-					const float deltaY = event.motion.yrel + s_sdlRelativeMouseRemainderY;
-					dx = SDL3_RoundToInt(deltaX);
-					dy = SDL3_RoundToInt(deltaY);
-					s_sdlRelativeMouseRemainderX = deltaX - static_cast<float>(dx);
-					s_sdlRelativeMouseRemainderY = deltaY - static_cast<float>(dy);
+					dx = SDL3_ConsumeMouseDelta(event.motion.xrel, s_sdlRelativeMouseRemainderX);
+					dy = SDL3_ConsumeMouseDelta(event.motion.yrel, s_sdlRelativeMouseRemainderY);
 					s_haveAbsoluteMousePosition = false;
 					SDL3_ResetMenuMouseTracking();
 				} else if (SDL3_ShouldRouteMenuMouse()) {

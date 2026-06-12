@@ -59,6 +59,8 @@ static const float Q4_TEXT_OUTLINE_DARK_THRESHOLD = 0.2f;
 static const float Q4_TEXT_STYLE_OFFSET = 1.0f;
 static const float Q4_TEXT_LINE_SPACING_SCALE = 1.25f;
 static const float Q4_GLYPH_HORIZONTAL_GUARD_TEXELS = 0.5f;
+static const float Q4_GLYPH_SMALL_ATLAS_HORIZONTAL_GUARD_TEXELS = 1.0f;
+static const float Q4_GLYPH_SMALL_FONT_MAX_POINT_SIZE = 12.0f;
 static const int Q4_TEXT_STYLE_SHADOW = 1;
 static const int Q4_TEXT_STYLE_OUTLINE = 2;
 static const int Q4_TEXT_ALIGN_VERTICAL_CENTER = 3;
@@ -187,7 +189,11 @@ static float openQ4_GlyphDrawY( float y, float fontScale, const glyphInfo_t *gly
 	return y - fontScale * glyph->horiBearingY;
 }
 
-static bool openQ4_ApplyGlyphHorizontalGuard( const glyphInfo_t *glyph, float fontScale, float &x, float &width, float &s1, float &s2 ) {
+static float openQ4_GlyphHorizontalGuardTexels( const fontInfo_t *font ) {
+	return ( font != NULL && font->pointSize <= Q4_GLYPH_SMALL_FONT_MAX_POINT_SIZE ) ? Q4_GLYPH_SMALL_ATLAS_HORIZONTAL_GUARD_TEXELS : Q4_GLYPH_HORIZONTAL_GUARD_TEXELS;
+}
+
+static bool openQ4_ApplyGlyphHorizontalGuard( const fontInfo_t *font, const glyphInfo_t *glyph, float fontScale, float &x, float &width, float &s1, float &s2 ) {
 	if ( glyph == NULL || fontScale == 0.0f || width <= 0.0f || s2 <= s1 ) {
 		return false;
 	}
@@ -197,8 +203,9 @@ static bool openQ4_ApplyGlyphHorizontalGuard( const glyphInfo_t *glyph, float fo
 		return false;
 	}
 
-	const float leftGuard = Min( Q4_GLYPH_HORIZONTAL_GUARD_TEXELS, Max( 0.0f, s1 * atlasWidth ) );
-	const float rightGuard = Min( Q4_GLYPH_HORIZONTAL_GUARD_TEXELS, Max( 0.0f, ( 1.0f - s2 ) * atlasWidth ) );
+	const float guardTexels = openQ4_GlyphHorizontalGuardTexels( font );
+	const float leftGuard = Min( guardTexels, Max( 0.0f, s1 * atlasWidth ) );
+	const float rightGuard = Min( guardTexels, Max( 0.0f, ( 1.0f - s2 ) * atlasWidth ) );
 	if ( leftGuard == 0.0f && rightGuard == 0.0f ) {
 		return false;
 	}
@@ -208,6 +215,19 @@ static bool openQ4_ApplyGlyphHorizontalGuard( const glyphInfo_t *glyph, float fo
 	s1 -= leftGuard / atlasWidth;
 	s2 += rightGuard / atlasWidth;
 	return true;
+}
+
+static float openQ4_GlyphVisibleRightEdge( float x, const fontInfo_t *font, float fontScale, const glyphInfo_t *glyph ) {
+	if ( glyph == NULL || fontScale == 0.0f ) {
+		return x;
+	}
+
+	float drawX = openQ4_GlyphDrawX( x, fontScale, glyph );
+	float width = glyph->width;
+	float s1 = glyph->s;
+	float s2 = glyph->s2;
+	openQ4_ApplyGlyphHorizontalGuard( font, glyph, fontScale, drawX, width, s1, s2 );
+	return drawX + width * fontScale;
 }
 
 static bool openQ4_HasRenderableFont( const q4ScaledFont_t &scaledFont ) {
@@ -1054,7 +1074,7 @@ void idDeviceContext::PaintChar(float x,float y,float width,float height,float s
 	DrawStretchPic(x, y, w, h, s, t, s2, t2, hShader);
 }
 
-void idDeviceContext::PaintGlyph( float x, float y, float scale, const glyphInfo_t *glyph, const idMaterial *hShader ) {
+void idDeviceContext::PaintGlyph( float x, float y, float scale, const fontInfo_t *font, const glyphInfo_t *glyph, const idMaterial *hShader ) {
 	if ( glyph == NULL ) {
 		return;
 	}
@@ -1062,7 +1082,7 @@ void idDeviceContext::PaintGlyph( float x, float y, float scale, const glyphInfo
 	float width = glyph->width;
 	float s = glyph->s;
 	float s2 = glyph->s2;
-	openQ4_ApplyGlyphHorizontalGuard( glyph, scale, x, width, s, s2 );
+	openQ4_ApplyGlyphHorizontalGuard( font, glyph, scale, x, width, s, s2 );
 	PaintChar( x, y, width, glyph->height, scale, s, glyph->t, s2, glyph->t2, hShader );
 }
 
@@ -1206,7 +1226,7 @@ int idDeviceContext::DrawText(float x, float y, float scale, idVec4 color, const
 		if ( style == Q4_TEXT_STYLE_SHADOW ) {
 			idVec4 shadowColor( 0.0f, 0.0f, 0.0f, currentColor[3] );
 			renderSystem->SetColor( shadowColor );
-			PaintGlyph( drawX + Q4_TEXT_STYLE_OFFSET, drawY + Q4_TEXT_STYLE_OFFSET, scaledFont.renderScale, glyph, scaledFont.font->material );
+			PaintGlyph( drawX + Q4_TEXT_STYLE_OFFSET, drawY + Q4_TEXT_STYLE_OFFSET, scaledFont.renderScale, scaledFont.font, glyph, scaledFont.font->material );
 			renderSystem->SetColor( currentColor );
 		} else if ( style == Q4_TEXT_STYLE_OUTLINE ) {
 			const bool darkOutline = currentColor[0] >= Q4_TEXT_OUTLINE_DARK_THRESHOLD || currentColor[1] >= Q4_TEXT_OUTLINE_DARK_THRESHOLD || currentColor[2] >= Q4_TEXT_OUTLINE_DARK_THRESHOLD;
@@ -1219,12 +1239,12 @@ int idDeviceContext::DrawText(float x, float y, float scale, idVec4 color, const
 			};
 			renderSystem->SetColor( outlineColor );
 			for ( int i = 0; i < 4; ++i ) {
-				PaintGlyph( drawX + offsets[i][0], drawY + offsets[i][1], scaledFont.renderScale, glyph, scaledFont.font->material );
+				PaintGlyph( drawX + offsets[i][0], drawY + offsets[i][1], scaledFont.renderScale, scaledFont.font, glyph, scaledFont.font->material );
 			}
 			renderSystem->SetColor( currentColor );
 		}
 
-		PaintGlyph( drawX, drawY, scaledFont.renderScale, glyph, scaledFont.font->material );
+		PaintGlyph( drawX, drawY, scaledFont.renderScale, scaledFont.font, glyph, scaledFont.font->material );
 
 		if ( openQ4_TextCursorReached( cursor, count ) ) {
 			DrawEditCursor( x, y, scale );
@@ -1289,7 +1309,7 @@ int idDeviceContext::CharWidth( const char c, float scale, int adjust ) {
 		return 0;
 	}
 	const glyphInfo_t *glyph = &useFont->glyphs[(const unsigned char)c];
-	return openQ4_ScaledFontUnits( useScale, openQ4_GlyphAdvanceUnits( glyph, adjust ) );
+	return static_cast<int>( openQ4_ScaledGlyphAdvance( useScale, glyph, static_cast<float>( adjust ) ) );
 }
 
 int idDeviceContext::TextWidth( const char *text, float scale, int limit, int adjust ) {
@@ -1299,7 +1319,8 @@ int idDeviceContext::TextWidth( const char *text, float scale, int limit, int ad
 		return 0;
 	}
 
-	int width = 0;
+	float advanceX = 0.0f;
+	float visibleRight = 0.0f;
 	int index = 0;
 	const unsigned char *s = reinterpret_cast<const unsigned char *>( text );
 	while ( *s != '\0' && ( limit <= 0 || index < limit ) ) {
@@ -1312,7 +1333,9 @@ int idDeviceContext::TextWidth( const char *text, float scale, int limit, int ad
 					const embeddedIcon_t *icon = NULL;
 					if ( FindIcon( iconCode, &icon ) && icon->height > 0.0f ) {
 						const glyphInfo_t *referenceGlyph = &useFont->glyphs[Q4_EMBEDDED_ICON_REFERENCE_GLYPH];
-						width += openQ4_EmbeddedIconWidthUnits( icon->width, icon->height, referenceGlyph->height, Q4_EMBEDDED_ICON_DRAW_WIDTH );
+						const float iconWidth = static_cast<float>( openQ4_EmbeddedIconWidthUnits( icon->width, icon->height, referenceGlyph->height, Q4_EMBEDDED_ICON_DRAW_WIDTH ) );
+						visibleRight = Max( visibleRight, advanceX + iconWidth * useScale );
+						advanceX += iconWidth;
 					}
 				}
 			}
@@ -1321,11 +1344,13 @@ int idDeviceContext::TextWidth( const char *text, float scale, int limit, int ad
 			continue;
 		}
 
-		width += openQ4_GlyphAdvanceUnits( &useFont->glyphs[*s], adjust );
+		const glyphInfo_t *glyph = &useFont->glyphs[*s];
+		visibleRight = Max( visibleRight, openQ4_GlyphVisibleRightEdge( advanceX, useFont, useScale, glyph ) );
+		advanceX += openQ4_ScaledGlyphAdvance( useScale, glyph, static_cast<float>( adjust ) );
 		s++;
 		index++;
 	}
-	return openQ4_ScaledFontUnits( useScale, width );
+	return static_cast<int>( idMath::Ceil( Max( advanceX, visibleRight ) ) );
 }
 
 int idDeviceContext::TextHeight(const char *text, float scale, int limit, int adjust) {
@@ -1520,7 +1545,7 @@ void idDeviceContext::DrawEditCursor( float x, float y, float scale ) {
 		return;
 	}
 	const glyphInfo_t *glyph = &useFont->glyphs[overStrikeMode ? Q4_OVERSTRIKE_CURSOR_GLYPH : Q4_INSERT_CURSOR_GLYPH];
-	PaintGlyph( x, openQ4_GlyphDrawY( y, useScale, glyph ), useScale, glyph, useFont->material );
+	PaintGlyph( x, openQ4_GlyphDrawY( y, useScale, glyph ), useScale, useFont, glyph, useFont->material );
 }
 
 int idDeviceContext::DrawText( const char *text, float textScale, int textAlign, idVec4 color, idRectangle rectDraw, bool wrap, int cursor, bool calcOnly, idList<int> *breaks, int limit, int adjust, int style, bool chatWindow ) {
@@ -1711,15 +1736,29 @@ bool UI_FontParity_RunSelfTest( void ) {
 	guardedGlyph.width = 8.5625f;
 	guardedGlyph.s = 145.0f / 256.0f;
 	guardedGlyph.s2 = 153.5625f / 256.0f;
+	fontInfo_t smallGuardFont = {};
+	smallGuardFont.pointSize = 12.0f;
 	float guardedX = 20.0f;
 	float guardedW = guardedGlyph.width;
 	float guardedS1 = guardedGlyph.s;
 	float guardedS2 = guardedGlyph.s2;
-	ok &= openQ4_CheckBool( "glyph horizontal guard applied", openQ4_ApplyGlyphHorizontalGuard( &guardedGlyph, 0.8f, guardedX, guardedW, guardedS1, guardedS2 ), true );
-	ok &= openQ4_CheckNear( "glyph horizontal guard x", guardedX, 19.6f );
-	ok &= openQ4_CheckNear( "glyph horizontal guard width", guardedW, 9.5625f );
-	ok &= openQ4_CheckNear( "glyph horizontal guard s1", guardedS1, 144.5f / 256.0f );
-	ok &= openQ4_CheckNear( "glyph horizontal guard s2", guardedS2, 154.0625f / 256.0f );
+	ok &= openQ4_CheckBool( "glyph horizontal guard applied", openQ4_ApplyGlyphHorizontalGuard( &smallGuardFont, &guardedGlyph, 0.8f, guardedX, guardedW, guardedS1, guardedS2 ), true );
+	ok &= openQ4_CheckNear( "glyph horizontal guard x", guardedX, 19.2f );
+	ok &= openQ4_CheckNear( "glyph horizontal guard width", guardedW, 10.5625f );
+	ok &= openQ4_CheckNear( "glyph horizontal guard s1", guardedS1, 144.0f / 256.0f );
+	ok &= openQ4_CheckNear( "glyph horizontal guard s2", guardedS2, 154.5625f / 256.0f );
+
+	fontInfo_t mediumGuardFont = {};
+	mediumGuardFont.pointSize = 24.0f;
+	guardedX = 20.0f;
+	guardedW = guardedGlyph.width;
+	guardedS1 = guardedGlyph.s;
+	guardedS2 = guardedGlyph.s2;
+	ok &= openQ4_CheckBool( "medium glyph horizontal guard applied", openQ4_ApplyGlyphHorizontalGuard( &mediumGuardFont, &guardedGlyph, 0.8f, guardedX, guardedW, guardedS1, guardedS2 ), true );
+	ok &= openQ4_CheckNear( "medium glyph horizontal guard x", guardedX, 19.6f );
+	ok &= openQ4_CheckNear( "medium glyph horizontal guard width", guardedW, 9.5625f );
+	ok &= openQ4_CheckNear( "medium glyph horizontal guard s1", guardedS1, 144.5f / 256.0f );
+	ok &= openQ4_CheckNear( "medium glyph horizontal guard s2", guardedS2, 154.0625f / 256.0f );
 	ok &= openQ4_CheckNear( "embedded icon draw width units", static_cast<float>( openQ4_EmbeddedIconWidthUnits( 32.0f, 16.0f, 12.0f, Q4_EMBEDDED_ICON_DRAW_WIDTH ) ), 24.0f );
 	ok &= openQ4_CheckNear( "embedded icon registered width units", static_cast<float>( openQ4_EmbeddedIconWidthUnits( 32.0f, 16.0f, 12.0f, Q4_EMBEDDED_ICON_REGISTERED_WIDTH ) ), 32.0f );
 	ok &= openQ4_CheckNear( "embedded icon full-image dimension", static_cast<float>( openQ4_EmbeddedIconDimensionOrImageSize( Q4_EMBEDDED_ICON_FULL_IMAGE, 64.0f ) ), 64.0f );
@@ -1792,13 +1831,17 @@ bool UI_FontParity_RunSelfTest( void ) {
 		float guardedIncomingGlyphWidth = incomingGlyphWidth;
 		float guardedIncomingGlyphS1 = incomingGlyph.s;
 		float guardedIncomingGlyphS2 = incomingGlyph.s2;
-		ok &= openQ4_CheckBool( "hud radio glyph horizontal guard applied", openQ4_ApplyGlyphHorizontalGuard( &incomingGlyph, radioFontScale, guardedIncomingGlyphX, guardedIncomingGlyphWidth, guardedIncomingGlyphS1, guardedIncomingGlyphS2 ), true );
+		ok &= openQ4_CheckBool( "hud radio glyph horizontal guard applied", openQ4_ApplyGlyphHorizontalGuard( &smallGuardFont, &incomingGlyph, radioFontScale, guardedIncomingGlyphX, guardedIncomingGlyphWidth, guardedIncomingGlyphS1, guardedIncomingGlyphS2 ), true );
 		const float guardedIncomingGlyphW = guardedIncomingGlyphWidth * radioFontScale;
 
 		ok &= openQ4_CheckNear( "hud radio marine scale", radioFontScale, 0.8f );
 		ok &= openQ4_CheckNear( "hud radio marine line height", radioLineHeight, 11.0f );
-		ok &= openQ4_CheckNear( "hud radio incoming width", static_cast<float>( radioFontDc.TextWidth( "incoming", 0.2f, 0, 0 ) ), 54.0f );
-		ok &= openQ4_CheckNear( "hud radio transmission width", static_cast<float>( radioFontDc.TextWidth( "transmission", 0.2f, 0, 0 ) ), 79.0f );
+		ok &= openQ4_CheckNear( "hud radio incoming width", static_cast<float>( radioFontDc.TextWidth( "incoming", 0.2f, 0, 0 ) ), 57.0f );
+		ok &= openQ4_CheckNear( "hud radio transmission width", static_cast<float>( radioFontDc.TextWidth( "transmission", 0.2f, 0, 0 ) ), 84.0f );
+		ok &= openQ4_CheckNear( "hud radio communication width", static_cast<float>( radioFontDc.TextWidth( "communication", 0.2f, 0, 0 ) ), 92.0f );
+		ok &= openQ4_CheckNear( "loading title visual width", static_cast<float>( radioFontDc.TextWidth( "Data Networking Tower", 0.36f, 0, -2 ) ), 223.0f );
+		idRectangle loadingTitleRect( 290.0f, 11.0f, 336.0f, 20.0f );
+		ok &= openQ4_CheckNear( "loading title right align x", openQ4_AlignedTextX( loadingTitleRect, idDeviceContext::ALIGN_RIGHT, radioFontDc.TextWidth( "Data Networking Tower", 0.36f, 0, -2 ) ), 403.0f );
 		ok &= openQ4_CheckNear( "hud radio incoming text height", static_cast<float>( radioFontDc.TextHeight( "incoming", 0.2f, 0, 0 ) ), 5.0f );
 		ok &= openQ4_CheckNear( "hud radio incoming baseline", radioIncomingBaseline, 19.0f );
 		ok &= openQ4_CheckNear( "hud radio transmission baseline", radioTransmissionBaseline, 26.0f );
@@ -1808,10 +1851,10 @@ bool UI_FontParity_RunSelfTest( void ) {
 		ok &= openQ4_CheckNear( "hud radio transmission glyph y", transmissionGlyphY, 20.3375f );
 		ok &= openQ4_CheckNear( "hud radio transmission glyph bottom", transmissionGlyphY + incomingGlyphH, 26.0f );
 		ok &= openQ4_CheckNear( "hud radio transmission unclipped overhang", transmissionGlyphY + incomingGlyphH - radioTransmissionTextRect.Bottom(), 1.0f );
-		ok &= openQ4_CheckNear( "hud radio guarded glyph x", guardedIncomingGlyphX, 547.5125f );
-		ok &= openQ4_CheckNear( "hud radio guarded glyph width", guardedIncomingGlyphW, 5.9875f );
-		ok &= openQ4_CheckNear( "hud radio guarded glyph s1", guardedIncomingGlyphS1, 19.5f / 256.0f );
-		ok &= openQ4_CheckNear( "hud radio guarded glyph s2", guardedIncomingGlyphS2, 26.984375f / 256.0f );
+		ok &= openQ4_CheckNear( "hud radio guarded glyph x", guardedIncomingGlyphX, 547.1125f );
+		ok &= openQ4_CheckNear( "hud radio guarded glyph width", guardedIncomingGlyphW, 6.7875f );
+		ok &= openQ4_CheckNear( "hud radio guarded glyph s1", guardedIncomingGlyphS1, 19.0f / 256.0f );
+		ok &= openQ4_CheckNear( "hud radio guarded glyph s2", guardedIncomingGlyphS2, 27.484375f / 256.0f );
 
 		idDeviceContext radioClipDc;
 		radioClipDc.EnableClipping( true );

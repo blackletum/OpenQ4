@@ -148,6 +148,12 @@ static bool RB_DrawSurfNeedsLegacyFeedback( const drawSurf_t *surf ) {
 	if ( material == NULL ) {
 		return false;
 	}
+	if ( r_softParticles.GetBool()
+		&& ( surf->dsFlags & DSF_BSE_EFFECT ) != 0
+		&& material->HasAmbient()
+		&& material->GetSort() < SS_POST_PROCESS ) {
+		return true;
+	}
 	return material->TestMaterialFlag( MF_NEED_CURRENT_RENDER )
 		|| material->HasSubview()
 		|| material->GetSort() == SS_SUBVIEW;
@@ -8654,6 +8660,7 @@ void	RB_STD_DrawView( void ) {
 		if ( RB_HasLegacyFeedbackDrawSurfs( drawSurfs, processed ) ) {
 			R_ModernGLExecutor_ComposeVisibleSceneForPost();
 			backEnd.currentRenderCopied = false;
+			backEnd.currentDepthCopied = false;
 			RB_STD_DrawShaderPasses( drawSurfs, processed, RB_DrawSurfNeedsLegacyFeedback );
 		}
 		R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_AMBIENT );

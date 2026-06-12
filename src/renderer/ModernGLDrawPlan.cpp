@@ -134,6 +134,14 @@ static bool R_ModernGLDrawPlan_ModernVisibleRequested( void ) {
 	return r_rendererModernVisible.GetBool() || RendererBootstrap_ShouldAutoPromoteModernVisible();
 }
 
+static bool R_ModernGLDrawPlan_NeedsLegacySoftParticlePath( const drawPacket_t &draw ) {
+	const drawSurf_t *surf = draw.legacyDrawSurf;
+	return r_softParticles.GetBool()
+		&& draw.passCategory == RENDER_PASS_AMBIENT
+		&& surf != NULL
+		&& ( surf->dsFlags & DSF_BSE_EFFECT ) != 0;
+}
+
 static void R_ModernGLDrawPlan_CountGeometryFallback( modernGLDrawPlanStats_t &stats, geometryResourceFallbackReason_t reason ) {
 	stats.fallbackDraws++;
 	stats.geometryFallbackDraws++;
@@ -352,6 +360,10 @@ bool idModernGLDrawPlan::Build( const idScenePacketFrame &packetFrame, const idR
 			continue;
 		}
 		if ( !R_ModernGLDrawPlan_HasGraphPass( graph, draw.passCategory ) ) {
+			stats.fallbackDraws++;
+			continue;
+		}
+		if ( R_ModernGLDrawPlan_NeedsLegacySoftParticlePath( draw ) ) {
 			stats.fallbackDraws++;
 			continue;
 		}
