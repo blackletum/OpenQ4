@@ -2200,6 +2200,7 @@ typedef enum {
 	SHADOWMAP_PASS_RESULT_CACHE_REUSE,
 	SHADOWMAP_PASS_RESULT_NO_SHADOW_SURFS,
 	SHADOWMAP_PASS_RESULT_STENCIL_ONLY,
+	SHADOWMAP_PASS_RESULT_RECEIVER_FALLBACK,
 	SHADOWMAP_PASS_RESULT_RENDER_FAIL,
 	SHADOWMAP_PASS_RESULT_MASK_FAIL,
 	SHADOWMAP_PASS_RESULT_SCHEDULED_SKIP
@@ -2337,6 +2338,8 @@ static const char *RB_ShadowMapPassResultName( shadowMapPassResult_t result ) {
 		return "no-shadow-surfs";
 	case SHADOWMAP_PASS_RESULT_STENCIL_ONLY:
 		return "stencil-only";
+	case SHADOWMAP_PASS_RESULT_RECEIVER_FALLBACK:
+		return "receiver-fallback";
 	case SHADOWMAP_PASS_RESULT_RENDER_FAIL:
 		return "render-fail";
 	case SHADOWMAP_PASS_RESULT_MASK_FAIL:
@@ -8771,15 +8774,8 @@ static void RB_ShadowMapRunPass( const viewLight_t *vLight, shadowMapPassKind_t 
 	}
 
 	if ( !RB_DrawSurfChainHasFilteredSurface( interactions, RB_SurfaceEligibleForShadowMapReceiver ) ) {
-		if ( passKind == SHADOWMAP_PASS_LOCAL ) {
-			g_shadowMapStats.fallbackLocalPasses++;
-			g_shadowMapStats.maskFailLocalPasses++;
-		} else {
-			g_shadowMapStats.fallbackGlobalPasses++;
-			g_shadowMapStats.maskFailGlobalPasses++;
-		}
-		RB_ShadowMapPassReport( vLight, passKind, pointLight, SHADOWMAP_PASS_RESULT_MASK_FAIL, primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters, primaryShadowSurfs, secondaryShadowSurfs, interactions );
-		RB_ShadowMapStencilFallback( primaryShadowSurfs, secondaryShadowSurfs, interactions );
+		RB_ShadowMapDrawReceiverFallbacks( passKind, primaryShadowSurfs, secondaryShadowSurfs, interactions );
+		RB_ShadowMapPassReport( vLight, passKind, pointLight, SHADOWMAP_PASS_RESULT_RECEIVER_FALLBACK, primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters, primaryShadowSurfs, secondaryShadowSurfs, interactions );
 		return;
 	}
 

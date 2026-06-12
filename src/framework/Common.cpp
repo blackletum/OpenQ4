@@ -3710,6 +3710,42 @@ bool idCommonLocal::IsInitialized( void ) const {
 	return com_fullyInitialized;
 }
 
+static double Common_AdjustMachineSpecGHz( double ghz, cpuid_t cpu ) {
+	// Retail Quake 4 applies a CPU-vendor adjustment before classifying the
+	// quality tier. openQ4 does not expose a separate AMD64 flag, so keep the
+	// conservative legacy AMD adjustment without changing the public CPU enum.
+	if ( ( cpu & CPUID_AMD ) != 0 ) {
+		return ghz * 1.15f;
+	}
+	return ghz;
+}
+
+static int Common_DetectMachineSpec( double ghz, int vidRam, int sysRam, bool oldCard ) {
+	if ( ghz >= 2.89f && vidRam >= 300 && sysRam >= 1000 && !oldCard ) {
+		return 3;
+	}
+	if ( ghz >= 2.89f && vidRam >= 160 && sysRam >= 1000 && !oldCard ) {
+		return 2;
+	}
+	if ( ghz >= 2.29f && vidRam >= 160 && sysRam >= 750 && !oldCard ) {
+		return 1;
+	}
+	return 0;
+}
+
+static const char *Common_MachineSpecQualificationMessage( int machineSpec ) {
+	switch ( machineSpec ) {
+		case 3:
+			return "This system qualifies for Ultra quality!\n";
+		case 2:
+			return "This system qualifies for High quality!\n";
+		case 1:
+			return "This system qualifies for Medium quality.\n";
+		default:
+			return "This system qualifies for Low quality.\n";
+	}
+}
+
 /*
 =================
 idCommonLocal::SetMachineSpec
@@ -3717,8 +3753,9 @@ idCommonLocal::SetMachineSpec
 */
 void idCommonLocal::SetMachineSpec( void ) {
 	// Sys_ClockTicksPerSecond is the timer rate (QPC/monotonic), not CPU speed
+	cpuid_t cpu = Sys_GetProcessorId();
 	const double cpuHz = Sys_GetApproximateProcessorFrequencyHz();
-	double ghz = cpuHz * 0.000000001f;
+	const double ghz = Common_AdjustMachineSpecGHz( cpuHz * 0.000000001f, cpu );
 	int vidRam = Sys_GetVideoRam();
 	int sysRam = Sys_GetSystemRam();
 	bool oldCard = false;
@@ -3732,19 +3769,9 @@ void idCommonLocal::SetMachineSpec( void ) {
 		Sys_FormatMemoryMB( vidRam ).c_str(),
 		( oldCard ) ? "a less than optimal video architecture" : "an optimal video architecture" );
 
-	if ( ghz >= 3.0f && vidRam >= 6144 && sysRam >= 16384 && !oldCard ) {
-		Printf( "This system qualifies for Ultra quality!\n" );
-		com_machineSpec.SetInteger( 3 );
-	} else if ( ghz >= 2.5f && vidRam >= 4096 && sysRam >= 8192 && !oldCard ) {
-		Printf( "This system qualifies for High quality!\n" );
-		com_machineSpec.SetInteger( 2 );
-	} else if ( ghz >= 2.0f && vidRam >= 2048 && sysRam >= 6144 ) {
-		Printf( "This system qualifies for Medium quality.\n" );
-		com_machineSpec.SetInteger( 1 );
-	} else {
-		Printf( "This system qualifies for Low quality.\n" );
-		com_machineSpec.SetInteger( 0 );
-	}
+	const int machineSpec = Common_DetectMachineSpec( ghz, vidRam, sysRam, oldCard );
+	Printf( "%s", Common_MachineSpecQualificationMessage( machineSpec ) );
+	com_machineSpec.SetInteger( machineSpec );
 	com_videoRam.SetInteger( vidRam );
 }
 
@@ -4007,10 +4034,21 @@ void idCommonLocal::InitGame( void ) {
 	// re-override anything from the config files with command line args
 	StartupVariable( NULL, false );
 
+	bool repairedUnsetMachineSpec = false;
+	if ( com_machineSpec.GetInteger() < 0 ) {
+		Printf( "com_machineSpec is unset; detecting system quality tier.\n" );
+		SetMachineSpec();
+		Com_ExecMachineSpec_f( args );
+		repairedUnsetMachineSpec = true;
+	}
+
 	Common_MigrateLegacyConsoleAllowCVar();
 
 	// if any archived cvars are modified after this, we will trigger a writing of the config file
 	cvarSystem->ClearModifiedFlags( CVAR_ARCHIVE );
+	if ( repairedUnsetMachineSpec ) {
+		cvarSystem->SetModifiedFlags( CVAR_ARCHIVE );
+	}
 	Common_MigrateLinuxLegacyLowVRamTexturePreset();
 
 	// cvars are initialized, but not the rendering system. Allow preference startup dialog

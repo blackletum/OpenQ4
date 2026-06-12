@@ -10,6 +10,10 @@ Process:
 
 ## Ready For Changelog
 
+- [x] MCC Landing's post-bigdoor lift sequence no longer traps the player inside the broken replacement lift when it fails near the top of its upward ride.
+- [x] Flashlight shadow parity restored: automatic quality detection now uses retail-style Quake 4 machine-spec thresholds again and repairs stale `com_machineSpec -1` configs, so capable systems classify as Ultra and the SDK flashlight shadow gate casts world shadows like retail.
+- [x] Shadow-map diagnostics now match the active renderer path: modern-sidecar budget misses and ARB2 receiver-only local passes no longer report visible stencil fallback when the backend is actually rendering supported lights with shadow maps.
+- [x] Lens flare depth testing now clamps visibility samples to valid captured depth texels and skips the overlay when the current-view depth capture is unavailable, preventing edge shimmer and stale-depth flare leaks.
 - [x] Core engine math now uses SSE2 SIMD on x86-64 instead of scalar fallback code: character skinning, shadow-volume facing/projection, model bounds, and joint-matrix work run through a new vectorized processor (validated bit-compatible by `testSIMD`), reducing CPU cost per animated character and per shadow-casting light; `com_forceGenericSIMD 1` restores the previous scalar path.
 - [x] The renderer submits work to the graphics driver with much less redundant chatter: repeated program parameters, vertex-array toggles, and vertex/index buffer rebinds are now filtered out across consecutive draws (`r_useRedundantStateFiltering`, default on), and the per-view surface sort uses a radix sort instead of the slower general-purpose C library sort.
 - [x] With shadow maps disabled (the default stencil-shadow look), the renderer no longer evaluates per-surface shadow-map caster policy checks every frame, trimming front-end cost in light-dense scenes.

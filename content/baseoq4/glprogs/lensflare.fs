@@ -13,8 +13,9 @@ uniform vec4 elementParams;
 float SampleDepth( vec2 uv ) {
 	// Inset by half a texel so nearest filtering never fetches outside the
 	// viewport region when the depth texture is larger than the viewport.
-	vec2 maxUv = viewportTexScale - 0.5 * invDepthTexSize;
-	vec2 clampedUv = clamp( uv, vec2( 0.0, 0.0 ), maxUv );
+	vec2 minUv = 0.5 * invDepthTexSize;
+	vec2 maxUv = max( minUv, viewportTexScale - 0.5 * invDepthTexSize );
+	vec2 clampedUv = clamp( uv, minUv, maxUv );
 	return texture2D( DepthBuffer, clampedUv ).r;
 }
 

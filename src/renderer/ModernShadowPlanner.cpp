@@ -384,6 +384,18 @@ static void R_ModernShadowPlanner_AssignAtlasTiles( modernShadowLightDescriptor_
 	descriptor.atlasTileReady = true;
 }
 
+static void R_ModernShadowPlanner_SetBudgetMissPolicy( modernShadowLightDescriptor_t &descriptor ) {
+	descriptor.fallbackReason = MODERN_SHADOW_FALLBACK_BUDGET;
+	if ( descriptor.modernReceiverSamplingReady ) {
+		descriptor.policy = R_ModernShadowPlanner_LightHasStencilFallback( descriptor ) ? MODERN_SHADOW_POLICY_STENCIL_FALLBACK : MODERN_SHADOW_POLICY_SKIPPED;
+		descriptor.stencilFallback = descriptor.policy == MODERN_SHADOW_POLICY_STENCIL_FALLBACK;
+		return;
+	}
+
+	descriptor.policy = MODERN_SHADOW_POLICY_SKIPPED;
+	descriptor.stencilFallback = false;
+}
+
 static void R_ModernShadowPlanner_SelectMappedLights( modernShadowPlannerStats_t &stats ) {
 	bool selected[MODERN_SHADOW_PLAN_MAX_LIGHTS];
 	memset( selected, 0, sizeof( selected ) );
@@ -411,9 +423,7 @@ static void R_ModernShadowPlanner_SelectMappedLights( modernShadowPlannerStats_t
 			usedPixels += candidate.estimatedPixels;
 			continue;
 		}
-		candidate.policy = R_ModernShadowPlanner_LightHasStencilFallback( candidate ) ? MODERN_SHADOW_POLICY_STENCIL_FALLBACK : MODERN_SHADOW_POLICY_SKIPPED;
-		candidate.fallbackReason = MODERN_SHADOW_FALLBACK_BUDGET;
-		candidate.stencilFallback = candidate.policy == MODERN_SHADOW_POLICY_STENCIL_FALLBACK;
+		R_ModernShadowPlanner_SetBudgetMissPolicy( candidate );
 		stats.budgetThrottledLights++;
 	}
 	stats.atlasTiles = mappedTiles;

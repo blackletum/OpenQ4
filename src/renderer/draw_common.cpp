@@ -5137,6 +5137,9 @@ static void RB_STD_LensFlare( void ) {
 	if ( !backEnd.currentDepthCopied ) {
 		RB_CaptureCurrentDepthImage( viewportWidth, viewportHeight );
 	}
+	if ( !backEnd.currentDepthCopied ) {
+		return;
+	}
 
 	const int depthTextureWidth = depthImage->GetOpts().width;
 	const int depthTextureHeight = depthImage->GetOpts().height;
