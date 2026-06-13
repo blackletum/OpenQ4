@@ -5094,6 +5094,19 @@ static bool RB_ProjectLensFlarePoint( const idVec3 &origin, int viewportWidth, i
 	return true;
 }
 
+static idVec3 RB_LensFlareSourceOriginForParms( const renderLight_t &parms ) {
+	// Light-center offsets are for lighting/shadow direction. The visible flare
+	// should stay attached to the authored source position.
+	return parms.origin;
+}
+
+static idVec3 RB_LensFlareSourceOrigin( const viewLight_t *vLight ) {
+	if ( vLight == NULL || vLight->lightDef == NULL ) {
+		return vec3_origin;
+	}
+	return RB_LensFlareSourceOriginForParms( vLight->lightDef->parms );
+}
+
 static bool RB_EvaluateLensFlareLightColor( const viewLight_t *vLight, idVec4 &lightColor ) {
 	if ( vLight == NULL || vLight->lightShader == NULL || vLight->shaderRegisters == NULL ) {
 		return false;
@@ -5137,12 +5150,12 @@ static float RB_EstimateLensFlareWorldRadius( const viewLight_t *vLight ) {
 	return Max( parms.right.Length(), Max( parms.up.Length(), parms.target.Length() ) ) * 0.35f;
 }
 
-static float RB_EstimateLensFlareRadiusPixels( const viewLight_t *vLight, float centerX, float centerY, int viewportWidth, int viewportHeight ) {
+static float RB_EstimateLensFlareRadiusPixels( const viewLight_t *vLight, const idVec3 &sourceOrigin, float centerX, float centerY, int viewportWidth, int viewportHeight ) {
 	float radiusPixels = 0.0f;
 	const float worldRadius = RB_EstimateLensFlareWorldRadius( vLight );
 
 	if ( worldRadius > 0.0f ) {
-		const idVec3 offsetPoint = vLight->globalLightOrigin + backEnd.viewDef->renderView.viewaxis[1] * worldRadius;
+		const idVec3 offsetPoint = sourceOrigin + backEnd.viewDef->renderView.viewaxis[1] * worldRadius;
 		float offsetX = 0.0f;
 		float offsetY = 0.0f;
 		float depth01 = 0.0f;
@@ -5202,7 +5215,7 @@ static int RB_CollectLensFlareCandidates( rbLensFlareCandidate_t candidates[RB_L
 
 	for ( const viewLight_t *vLight = backEnd.viewDef->viewLights; vLight != NULL; vLight = vLight->next ) {
 		stats.consideredLights++;
-		if ( vLight->lightDef == NULL || !vLight->viewSeesGlobalLightOrigin || vLight->scissorRect.IsEmpty() ) {
+		if ( vLight->lightDef == NULL || vLight->scissorRect.IsEmpty() ) {
 			stats.rejectedLights++;
 			continue;
 		}
@@ -5217,7 +5230,8 @@ static int RB_CollectLensFlareCandidates( rbLensFlareCandidate_t candidates[RB_L
 
 		// Lights essentially attached to the camera (weapon glows, muzzle
 		// lights) have unstable projections and meaningless occlusion tests.
-		idVec3 toEye = backEnd.viewDef->renderView.vieworg - vLight->globalLightOrigin;
+		const idVec3 sourceOrigin = RB_LensFlareSourceOrigin( vLight );
+		idVec3 toEye = backEnd.viewDef->renderView.vieworg - sourceOrigin;
 		const float eyeDistance = toEye.Normalize();
 		if ( eyeDistance < settings.minEyeDistance ) {
 			stats.rejectedLights++;
@@ -5233,12 +5247,16 @@ static int RB_CollectLensFlareCandidates( rbLensFlareCandidate_t candidates[RB_L
 		float screenX = 0.0f;
 		float screenY = 0.0f;
 		float lightDepth = 0.0f;
-		if ( !RB_ProjectLensFlarePoint( vLight->globalLightOrigin, viewportWidth, viewportHeight, screenX, screenY, lightDepth ) ) {
+		if ( !RB_ProjectLensFlarePoint( sourceOrigin, viewportWidth, viewportHeight, screenX, screenY, lightDepth ) ) {
+			stats.rejectedLights++;
+			continue;
+		}
+		if ( screenX < 0.0f || screenX > viewportWidth || screenY < 0.0f || screenY > viewportHeight ) {
 			stats.rejectedLights++;
 			continue;
 		}
 
-		float projectedRadius = RB_EstimateLensFlareRadiusPixels( vLight, screenX, screenY, viewportWidth, viewportHeight );
+		float projectedRadius = RB_EstimateLensFlareRadiusPixels( vLight, sourceOrigin, screenX, screenY, viewportWidth, viewportHeight );
 		if ( projectedRadius <= settings.minSourceRadiusPixels ) {
 			stats.rejectedLights++;
 			continue;
@@ -5263,7 +5281,7 @@ static int RB_CollectLensFlareCandidates( rbLensFlareCandidate_t candidates[RB_L
 		float occlusionDepthBias = 0.0008f;
 		{
 			const float toleranceWorld = Min( Max( 8.0f, eyeDistance * 0.02f ), eyeDistance * 0.5f );
-			const idVec3 pulledPoint = vLight->globalLightOrigin + toEye * toleranceWorld;
+			const idVec3 pulledPoint = sourceOrigin + toEye * toleranceWorld;
 			float pulledX = 0.0f;
 			float pulledY = 0.0f;
 			float pulledDepth = 0.0f;
@@ -5481,6 +5499,16 @@ bool RB_LensFlareRuntimeSelfTest( void ) {
 		ok = false;
 	}
 
+	renderLight_t sourceOriginTest;
+	memset( &sourceOriginTest, 0, sizeof( sourceOriginTest ) );
+	sourceOriginTest.origin.Set( 16.0f, -32.0f, 64.0f );
+	sourceOriginTest.lightCenter.Set( 0.0f, 0.0f, 128.0f );
+	const idVec3 flareSourceOrigin = RB_LensFlareSourceOriginForParms( sourceOriginTest );
+	if ( ( flareSourceOrigin - sourceOriginTest.origin ).LengthSqr() > 0.0001f ) {
+		common->Printf( "RendererLensFlareRuntime self-test failed: flare source origin follows light_center offset\n" );
+		ok = false;
+	}
+
 	renderBackendCaps_t caps;
 	memset( &caps, 0, sizeof( caps ) );
 	caps.contextCreated = true;
@@ -5529,7 +5557,7 @@ bool RB_LensFlareRuntimeSelfTest( void ) {
 	}
 
 	common->Printf(
-		"RendererLensFlareRuntime self-test passed (accumulation/composite contract, compositeProgram=%d shaderLibrary=%d)\n",
+		"RendererLensFlareRuntime self-test passed (accumulation/composite contract, sourceAnchor=origin, compositeProgram=%d shaderLibrary=%d)\n",
 		compositeProgramChecked ? 1 : 0,
 		shaderLibraryChecked ? 1 : 0 );
 	return true;
