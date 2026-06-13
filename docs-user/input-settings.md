@@ -94,7 +94,7 @@ Controller tuning lives in `Settings -> Game Options -> Controller`.
 | Controller | `in_joystick` | On | Enables SDL3 gamepad/joystick input and hotplug support. |
 | Stick Layout | `in_joystickSouthpaw` | Default | Use `Southpaw` to swap movement and look sticks. |
 | Stick Dead Zone | `in_joystickDeadZone` | `0.18` | Raises or lowers the center area ignored by analog sticks. |
-| Look Sensitivity | `in_joystickLookSensitivity` | `0.75` | Scales controller turn speed. |
+| Look Sensitivity | `in_joystickLookSensitivity` | `0.75` | Scales controller turn speed after stick deflection is normalized. |
 | Look Curve | `in_joystickLookCurve` | `1.35` | Higher values damp small aim movements; full-stick turn speed is controlled by Look Sensitivity. |
 | Invert Look | `in_joystickInvertLook` | Off | Flips vertical controller look. |
 | Trigger Press | `in_joystickTriggerThreshold` | `0.35` | Controls how far LT/RT must be pressed before they count as buttons. |
@@ -282,6 +282,7 @@ seta com_platformProfile steamdeck
 | Console does not open | Verify you are using the stock console binds (`` ` `` / `~`) or rebind a key through the Controls screen. |
 | Controller is not detected | Make sure `Controller` is enabled, reconnect the device, and check whether Steam Input is remapping it. |
 | Movement or aim drifts | Raise `Stick Dead Zone` until the drift stops. |
+| Aim feels too fast | Lower `Look Sensitivity`; if tiny stick movements are the problem, raise `Look Curve`. |
 | Aim feels too slow | Raise `Look Sensitivity`. |
 | Aim feels too twitchy near center | Raise `Look Curve` or `Stick Dead Zone`. |
 | Triggers activate by accident | Raise `Trigger Press`. |

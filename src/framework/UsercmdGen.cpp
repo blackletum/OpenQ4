@@ -34,6 +34,7 @@ If you have questions concerning this license or the applicable additional terms
 static const float MOUSE_CPI_INCHES_PER_CM = 2.5399999618530273f;
 static const float MOUSE_CPI_VIEW_SCALE = 45.45454545454546f;
 static const int MOUSE_FILTER_SAMPLES = 32;
+static const float JOYSTICK_AXIS_LOOK_SCALE = 1.0f / 127.0f;
 
 /*
 ================
@@ -1056,8 +1057,12 @@ void idUsercmdGenLocal::JoystickMove( void ) {
 	const float usercmdSeconds = common->GetUserCmdSec();
 	// AXIS_ROLL is used as a backend capability flag: non-zero means dedicated look axes are available.
 	const bool hasDedicatedLookAxis = joystickAxis[AXIS_ROLL] != 0;
-	const int lookAxisX = hasDedicatedLookAxis ? joystickAxis[AXIS_SIDE] : joystickAxis[AXIS_YAW];
-	int lookAxisY = hasDedicatedLookAxis ? joystickAxis[AXIS_FORWARD] : -joystickAxis[AXIS_PITCH];
+	const float lookAxisX = ( hasDedicatedLookAxis ?
+		joystickAxis[AXIS_SIDE] :
+		joystickAxis[AXIS_YAW] ) * JOYSTICK_AXIS_LOOK_SCALE;
+	float lookAxisY = ( hasDedicatedLookAxis ?
+		joystickAxis[AXIS_FORWARD] :
+		-joystickAxis[AXIS_PITCH] ) * JOYSTICK_AXIS_LOOK_SCALE;
 	if ( !hasDedicatedLookAxis && cvarSystem->GetCVarBool( "in_joystickInvertLook" ) ) {
 		// backends only apply invert to dedicated look axes; the shared move/look axis is inverted here
 		lookAxisY = -lookAxisY;
