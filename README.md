@@ -8,279 +8,134 @@
 [![Status](https://img.shields.io/badge/status-Beta%20Development-d97a1f.svg)](https://github.com/themuffinator/openQ4/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](https://github.com/themuffinator/openQ4)
 [![Architecture](https://img.shields.io/badge/arch-x64%20%7C%20ARM64-orange.svg)](https://github.com/themuffinator/openQ4)
-[![Windows Installer](https://img.shields.io/badge/windows-installer%20available-2d8f4e.svg)](https://github.com/themuffinator/openQ4/releases)
-[![Build System](https://img.shields.io/badge/build-Meson%20%2B%20Ninja-yellow.svg)](https://mesonbuild.com/)
 
-**Open-source Quake 4 source-port and game-code replacement built for modern systems**
+**Play Quake 4 on modern systems with an open-source engine and game-code replacement built around the original retail assets.**
 
-  <a href="https://discord.gg/T32mFejwR4">
-    <img src="https://img.shields.io/badge/Join%20us%20on-Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join us on Discord">
-  </a>
+<a href="https://github.com/themuffinator/openQ4/releases">
+  <img src="https://img.shields.io/badge/Download-Latest%20Release-2d8f4e?style=for-the-badge&logo=github" alt="Download the latest openQ4 release">
+</a>
+<a href="https://discord.gg/T32mFejwR4">
+  <img src="https://img.shields.io/badge/Join%20the-Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join the openQ4 Discord server">
+</a>
+<a href="https://github.com/themuffinator/openQ4/stargazers">
+  <img src="https://img.shields.io/github/stars/themuffinator/openQ4?style=for-the-badge&logo=github&label=Star%20on%20GitHub" alt="Star openQ4 on GitHub">
+</a>
+<a href="https://github.com/themuffinator/openQ4/fork">
+  <img src="https://img.shields.io/github/forks/themuffinator/openQ4?style=for-the-badge&logo=github&label=Fork%20on%20GitHub" alt="Fork openQ4 on GitHub">
+</a>
 
-[Getting Started](#getting-started) | [Highlights](#highlights) | [Compatibility](#compatibility-and-scope) | [Building](BUILDING.md) | [Documentation](#documentation) | [Credits](#credits)
+[Get Started](docs-user/getting-started.md) | [Features](#why-players-use-openq4) | [Player Docs](#player-guides) | [Build from Source](BUILDING.md) | [Technical Reference](TECHNICAL.md)
 
 </div>
 
 ---
 
-## Overview
+## What is openQ4?
 
-**openQ4** is a complete open-source replacement for the Quake 4 engine and game binaries. The project keeps official Quake 4 asset compatibility as its guiding constraint while modernizing rendering, display handling, input, packaging, and the build pipeline for current hardware and operating systems.
+**openQ4** is an open-source replacement for the Quake 4 engine and game binaries, built to keep the original game playable on modern PCs while improving presentation, controls, packaging, and day-to-day usability.
 
-Single-player and multiplayer live under one `baseoq4/` directory with `game-sp` and `game-mp`. SDK-derived game code is maintained in the companion [openQ4-GameLibs](https://github.com/themuffinator/openQ4-GameLibs) repository, while BSE is treated as first-party source under `src/bse/` and linked directly into the client executable.
-
-> [!NOTE]
-> openQ4 does not include Quake 4 assets. You need a legitimate copy of Quake 4 from Steam or GOG to play.
+It is designed for players who want the original Quake 4 experience with a cleaner path to running it on today's hardware.
 
 > [!NOTE]
-> openQ4 uses its own engine and game modules. It does not target compatibility with the proprietary Quake 4 DLLs and is not a drop-in runtime for legacy mods.
+> openQ4 does **not** include Quake 4 assets. You still need a legitimate Quake 4 copy from Steam or GOG.
 
 <p align="center">
   <img src="assets/docs/img/shot1.png" alt="openQ4 gameplay screenshot showing stock Quake 4 assets running in openQ4" width="92%">
 </p>
-<p align="center"><sub>openQ4 running against stock Quake 4 content.</sub></p>
+<p align="center"><sub>Original Quake 4 content, modernized for current systems.</sub></p>
 
 ---
 
-## Highlights
+## Why players use openQ4
 
-### Engine and compatibility
-
-- Complete engine and game-code replacement for Quake 4
-- Unified `baseoq4/` game directory for both single-player and multiplayer
-- Startup auto-discovery for Steam and GOG installs
-- Official `q4base` media PK4 validation enabled by default, with only core retail media required and retail game-binary PK4s ignored
-- In-tree BSE runtime integrated into `openQ4-client_<arch>`
-- Canonical SDK-derived game-library source kept in [openQ4-GameLibs](https://github.com/themuffinator/openQ4-GameLibs)
-
-### Rendering and presentation
-
-- GL renderer modernization groundwork: explicit tier/capability probing, shared cross-platform GL context ladders for SDL3/GLX/NSOpenGL, `gfxInfo` tier/context/upload/GPU-timer/front-end scene-packet/resource-graph/graph-resource-owner/material-resource-table/geometry-instance-record/modern-executor/Shader Library V2/draw-plan/submit-plan/clustered-light/deferred-resolve/forward+/modern-visible/default-promotion reporting, RenderWorld/GUI-derived material, geometry, and instance packet metadata, opt-in renderer metrics, a GL 3.3+ executor with controlled depth, shadow, G-buffer, resolve, clustered, transparent, GUI, post, and debug shader families, graph-owned transient texture/FBO validation, material-table texture/sampler/fallback records, backend-neutral geometry/instance packet records, compact permutation/reflection metadata, draw-plan generation, diagnostic masked draw submission via `r_rendererModernSubmit`, opt-in graph-backed visible depth/shadow-depth resources and depth debug overlay via `r_rendererModernVisibleDepth`/`r_rendererModernDepthDebug`, opt-in graph-backed opaque G-buffer resources and attachment debug overlay via `r_rendererModernOpaque`/`r_rendererModernGBufferDebug`, CPU clustered-light grids with GL 3.3 UBO fallback records and `r_rendererClusterDebug` occupancy/count/overflow overlays, opt-in graph-backed deferred-lite resolve output and debug overlay via `r_rendererModernDeferred`/`r_rendererModernDeferredDebug`, opt-in clustered forward+ opaque/alpha/transparent side-path output via `r_rendererForwardPlus`, guarded hybrid visible-frame composition via `r_rendererModernVisible`, evidence-gated default-promotion sign-off via `r_rendererPromotionEvidence` plus `r_rendererModernAutoPromote`, GL 4.3 SSBO/compute culling, CPU-reference validation, generated indirect-command compaction, and masked multi-draw-indirect execution via `r_rendererGpuValidation`, GL 4.5 DSA texture/FBO/sampler creation, named buffer/FBO updates, buffer/texture/sampler multi-bind, batch-compaction metrics, bindless experiment reporting via `r_rendererBindless`, cache-backed/frame-temp/CPU-uploaded index-source handling, and an upload manager for static vertex/index buffers plus GL 4.5 persistent dynamic streams with fence diagnostics while the ARB2 compatibility bridge remains the default visible shipping path
-- Renderer rollback remains explicit while the modern path is opt-in: use `r_renderer arb2` and `r_glTier legacy` to force the compatibility bridge, and keep `r_rendererPromotionEvidence` empty while `r_rendererModernAutoPromote`, `r_rendererModernVisible`, `r_rendererModernSubmit`, `r_rendererModernDeferred`, `r_rendererForwardPlus`, `r_rendererGpuValidation`, `r_rendererBindless`, and `r_rendererShaderReload` stay at `0` to quarantine modern side paths during compatibility checks.
-- Multi-scale **bloom** with luminance-based extraction
-- **FP16 HDR** scene targets, filmic tone mapping, color controls, and log-average auto exposure
-- Depth-aware **lens flares** with lightweight corona and high-quality ghost/streak modes
-- Opt-in **soft particles** for BSE effects, letting smoke, dust, and additive bursts depth-fade against solid scene geometry without changing stock assets
-- **SSAO** and optional **CRT** post-processing
-- Classic **stencil shadows** remain the default and now include translucent material caster/receiver support by default, with experimental **shadow mapping** for projected and point lights, projected-light CSM, alpha-tested transparency shadows, and optional translucent shadow accumulation
-- Optional **enhanced material shading** upgrades stock normal/specular response through a renderer-only GLSL path, with no asset or material script changes required
-- Experimental **irradiance-volume** indirect diffuse from [RBDOOM-3-BFG](https://github.com/RobertBeckebans/RBDOOM-3-BFG)-inspired `.lightgrid` data and per-area atlases, including native `bakeLightGrids` generation for openQ4-compatible assets with batch/CLI map loading and live console progress. See the [Light Grid Guide](docs-user/light-grids.md).
-- Screen-fraction scaling, supersample-style presets, **MSAA**, and **SMAA**
-
-### Modern usability
-
-- **Automatic aspect-ratio**, FOV, zoom, and view-weapon framing from live render size
-- Initial **multiplayer bot** content pack for AAS-enabled maps, currently seeded with one prototype character (`major`)
-- Single-player weapon wheel currently under development, including slow-motion audio/presentation treatment on hold
-- **Multi-monitor** targeting plus borderless, desktop fullscreen, and exclusive fullscreen paths
-- **Controller** hotplug and analog input support
-- FnQuake3-inspired **enhanced console UX** with completion popup, smooth scrollback, mouse selection, clipboard editing, and draggable scroll bars
-- CPMA/CNQ3-style `^a`-`^z` **rainbow text color escapes**, including console rendering and live input preview
-- **SDL3-first Linux runtime** with an explicit `openQ4-steamdeck` launcher/profile for **Steam Deck**
-- Meson-based builds, `builddir/` for local artifacts, and `.install/` for staged runtime packages
-- **Beta-stage** manual releases for **Windows**, **Linux**, and **macOS**
-- Architecture-qualified release assets for **x64** and **ARM64**
-- Native **Windows installers** ship alongside the Windows `.zip` release packages, with uninstall support and optional `openq4://` browser-link registration
-- Windows release packages include diagnostic symbols and write crash logs plus memory dumps under `crashes/` beside the executable after unhandled crashes
-- Linux release packages use optimized binaries, with separate debug-symbol archives published for crash investigation
+- **Modern display support** for widescreen, ultrawide, multi-monitor, borderless, and fullscreen setups.
+- **Optional visual upgrades** such as bloom, HDR, anti-aliasing, soft particles, and enhanced shadow options.
+- **Improved input and quality-of-life features** including controller support, better console UX, and modern settings behavior.
+- **Single-player and multiplayer in one install** with active compatibility work aimed at the stock game.
+- **Cross-platform releases** for Windows, Linux, and macOS, with Steam Deck support in the Linux package line.
+- **Open development** with releases, issue tracking, and community feedback all happening in public.
 
 <p align="center">
   <img src="assets/docs/img/shot2.png" alt="openQ4 gameplay screenshot showing combat and bloom" width="49%">
   <img src="assets/docs/img/shot3.png" alt="openQ4 gameplay screenshot showing environment lighting and shadow detail" width="49%">
 </p>
-<p align="center"><sub>Modern renderer upgrades layered onto the original game assets.</sub></p>
+<p align="center"><sub>Visual improvements are optional, so you can tune the experience to your taste.</sub></p>
 
 ---
 
-<a id="quick-start"></a>
-
-## Getting Started
+## Quick start
 
 1. Install **Quake 4** from [Steam](https://store.steampowered.com/app/2210/Quake_4/) or [GOG](https://www.gog.com/en/game/quake_4).
-2. Download the latest openQ4 release from the [Releases page](https://github.com/themuffinator/openQ4/releases).
-3. Choose the asset that matches your CPU architecture (`x64` or `arm64`, the ARM64 release label).
-4. Install or extract openQ4 to its own folder when possible:
-   - Windows: use the matching installer (`openq4-<version>-windows-<arch>-setup.exe`) or extract the matching `.zip`. The installer detects existing openQ4 installs, registers a normal Windows uninstaller entry, and can optionally enable `openq4://` browser links.
-   - Linux/macOS: extract the release archive to a folder of your choice.
-5. Use one of these layouts:
-   - Preferred: leave retail Quake 4 in its Steam/GOG folder, with assets under `q4base/`, and keep openQ4 in a separate install folder.
-   - Portable/manual: keep `baseoq4/` and a copied retail `q4base/` side by side in the openQ4 root.
-   - Avoid: never copy retail PK4s into openQ4's `baseoq4/`; `baseoq4/` is only for openQ4 runtime files such as its game modules and packaged overrides.
-6. Launch `openQ4-client_<arch>` (`openQ4-client_<arch>.exe` on Windows).
-7. On Steam Deck, launch `openQ4-steamdeck` instead of the generic client entrypoint.
+2. Download the latest openQ4 build from the [Releases page](https://github.com/themuffinator/openQ4/releases).
+3. Launch `openQ4-client_<arch>` (or `openQ4-steamdeck` on Steam Deck).
+4. If openQ4 does not find your Quake 4 install automatically, follow the path setup notes in the [Getting Started guide](docs-user/getting-started.md).
 
-openQ4 will try to locate your Quake 4 install automatically. If detection fails, launch with `+set fs_basepath "C:\path\to\Quake 4"` and point it at the retail Quake 4 root that contains `q4base/`, not at `q4base/` or `baseoq4/` directly. See [TECHNICAL.md](TECHNICAL.md#advanced-configuration) for the full path reference.
-
-> [!TIP]
-> Windows release packages are intended to be self-contained and include matching PDB diagnostic symbols. If openQ4 crashes, attach the generated `crashes/openq4_crash_*.log` and `.dmp` files when reporting the issue.
-
-> [!TIP]
-> Linux release archives are optimized for normal play. Matching `openq4-<version>-linux-<arch>-debugsymbols.tar.xz` assets are published separately for native crash debugging.
-
-> [!TIP]
-> As of March 30, 2026, Linux packages default to the SDL3 backend. Native Wayland is supported through SDL3 and now uses Wayland-aware window placement and OpenGL fallback ordering. On Steam Deck, `openQ4-steamdeck` still prefers XWayland when both `WAYLAND_DISPLAY` and `DISPLAY` are present unless you already set `SDL_VIDEO_DRIVER` or `SDL_VIDEODRIVER` yourself.
-
-> [!TIP]
-> Current platform baselines are `Windows 7+` for binary compatibility with active validation centered on newer Windows releases, `macOS 11+` for the arm64 package line, and Linux release packages built on `Ubuntu 24.04`-class environments with OpenGL plus SDL3 Wayland/EGL or X11/GLX available.
+**Need the step-by-step version?** Start with [docs-user/getting-started.md](docs-user/getting-started.md).
 
 ---
 
-## Compatibility and Scope
+## Player guides
 
-openQ4 is developed against the shipped Quake 4 assets, not replacement repo-side content. Current compatibility work already covers several engine paths that stock content depends on:
+### Start here
 
-- BSE reconstruction and client-side effect execution
-- Effect-driven sound shader behavior
-- BSE screen and camera effect paths
-- Material and shader compatibility work needed to reduce custom override dependence
-- Runtime irradiance-volume sampling plus a native `bakeLightGrids` command that writes `.lightgrid` metadata and `env/<map>/area*_lightgrid_amb.tga` atlases to `fs_savepath`, can auto-load named maps, `all`, or `all-mp`, skips already-complete targets unless `force` is used, reports bake progress through the console/log instead of leaving a static frame up, parallelizes CPU probe integration with configurable worker threads, and uses async GPU readback where supported
-- Modern display handling for widescreen, ultrawide, and multi-monitor setups
-- Official asset validation through `fs_validateOfficialPaks 1`
+- [Getting Started](docs-user/getting-started.md) - installation, first launch, and common setup questions
+- [Client Settings Guide](docs-user/client-settings.md) - where to find the most useful in-game settings
+- [Server Setup Guide](docs-user/server-setup.md) - basic dedicated server setup and common server variables
 
-Project scope is intentionally explicit:
+### Play and tune
 
-- `baseoq4/` remains the single game directory for SP and MP
-- BSE stays integrated in-tree under `src/bse/`
-- Dedicated server builds keep the disabled BSE manager path unless that changes by design
-- Canonical SDK/game-library edits belong in `../openQ4-GameLibs`, not a mirrored `src/game` tree
-- Compatibility with proprietary Quake 4 game DLLs is a non-goal
-- The current irradiance-volume path is intentionally non-PBR and LDR: it adds indirect diffuse only, bakes openQ4-native `.tga` atlases, and does not bring over the BFG EXR/environment-probe reflection stack
+- [Display Settings](docs-user/display-settings.md) - fullscreen, windowed mode, resolution scale, and multi-monitor behavior
+- [Input Settings](docs-user/input-settings.md) - keyboard, mouse, controller, and binding help
+- [Gameplay Settings](docs-user/gameplay-settings.md) - gameplay and audio toggles for everyday play
+- [Steam Deck](docs-user/steam-deck.md) - launcher, controls, and Linux handheld notes
+- [Multiplayer Networking](docs-user/multiplayer-networking.md) - multiplayer tuning and lag-comp behavior
+- [Shadow Mapping](docs-user/shadow-mapping.md) - optional shadow-map settings and troubleshooting
+- [Light Grids](docs-user/light-grids.md) - advanced lighting guide for players and testers
 
-For unattended baking, run the client with startup commands such as `+bakeLightGrids all -quit`, `+set sv_cheats 1 +bakeLightGrids all-mp -quit`, or `+bakeLightGrids force game/tram1 -quit`. openQ4 will switch modules as needed, load each map automatically, skip already-complete targets unless `force` is present, and stream progress to the console/log while writing outputs to `fs_savepath`. Multiplayer-target bakes are cheat-protected, so enable `sv_cheats` or `net_allowCheats` before `bakeLightGrids` when targeting MP maps.
+### Build and technical docs
 
-Gameplay parity work is still ongoing. For current follow-up items, see [TODO.md](TODO.md) and [docs-dev/release-completion.md](docs-dev/release-completion.md).
+- [BUILDING.md](BUILDING.md) - compile openQ4 from source
+- [TECHNICAL.md](TECHNICAL.md) - advanced configuration, file layout, compatibility notes, and mod details
 
 ---
 
-## Mod Manifests
+## Compatibility at a glance
 
-Runnable openQ4 mods now require a `mod.json` file in the root of the mod directory. This applies to `baseoq4/` as well as any external mod folder selected through the mod menu or requested by multiplayer auto-restart.
+- openQ4 targets the **official Quake 4 retail assets**.
+- It ships its **own engine and game modules**.
+- It is **not** a drop-in runtime for the original proprietary Quake 4 DLL mods.
+- The project is still in **beta development**, so compatibility work is ongoing.
 
-The manifest is a flat JSON object with these required string fields:
-
-- `name`
-- `version`
-- `releaseDate`
-- `website`
-- `author`
-- `requiredopenQ4Version`
-
-`requiredopenQ4Version` is matched against the current openQ4 engine version (for example `0.1.010`). Mods without a manifest, or with a mismatched required engine version, are hidden from the mod menu and rejected for automatic mod switching.
-
-```json
-{
-  "name": "openQ4",
-  "version": "0.1.010",
-  "releaseDate": "2026-04-14",
-  "website": "https://www.darkmatter-quake.com",
-  "author": "themuffinator / DarkMatter Productions",
-  "requiredopenQ4Version": "0.1.010"
-}
-```
-
----
-
-## Building from Source
-
-Full setup instructions live in [BUILDING.md](BUILDING.md). The short version:
-
-- Keep [openQ4-GameLibs](https://github.com/themuffinator/openQ4-GameLibs) checked out beside this repo at `../openQ4-GameLibs`
-- Use `builddir/` for local Meson builds
-- Use `.install/` as the staged runtime package root
-- Author repo-managed runtime overrides under `content/baseoq4/`; Meson stages them into `.install/baseoq4/`
-- On Windows, call `tools/build/meson_setup.ps1` instead of raw `meson` from an arbitrary shell
-- When staging `.install/`, use `meson install -C builddir --no-rebuild --skip-subprojects` or the wrapper equivalent
-- Use `tools/validation/validate_push.ps1` before pushing and `tools/validation/validate_pr.ps1` before opening or updating PRs; GitHub Actions runs the same gates on pushed commits and PRs
-- In the Codex app, use the checked-in `.codex/environments/openq4.toml` actions to run the same build and launch entries defined in `.vscode/tasks.json` and `.vscode/launch.json`
-
-```powershell
-powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 setup --wipe builddir . --backend ninja --buildtype=debug --wrap-mode=forcefallback
-powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 compile -C builddir
-powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects
-```
-
-Set `OPENQ4_BUILD_GAMELIBS=1` if you want the wrapper to trigger game-library builds during `compile`. For local runtime validation, launch from `.install/` so `fs_cdpath` points at the staged openQ4 overlay.
-
----
-
-## Documentation
-
-- [BUILDING.md](BUILDING.md) - platform requirements and build workflow
-- [TECHNICAL.md](TECHNICAL.md) - advanced configuration, file layout, dependencies, and compatibility notes
-- [docs-user/display-settings.md](docs-user/display-settings.md) - display, fullscreen, and multi-monitor behavior
-- [docs-user/gameplay-settings.md](docs-user/gameplay-settings.md) - cinematic skip, corpse cleanup, corpse sinking, and music-volume controls
-- [docs-user/input-settings.md](docs-user/input-settings.md) - keyboard, mouse, controller, binding, and config-file reference
-- [docs-user/light-grids.md](docs-user/light-grids.md) - light-grid baking, runtime toggles, output paths, and troubleshooting
-- [docs-user/steam-deck.md](docs-user/steam-deck.md) - Steam Deck launcher, controls, and asset discovery notes
-- [docs-user/shadow-mapping.md](docs-user/shadow-mapping.md) - shadow-map settings, presets, and troubleshooting
-- [docs-user/multiplayer-networking.md](docs-user/multiplayer-networking.md) - multiplayer networking and lag compensation
-- [docs-dev/platform-support.md](docs-dev/platform-support.md) - platform roadmap and backend status
-- [docs-dev/high-framerate-rendering-plan.md](docs-dev/high-framerate-rendering-plan.md) - staged plan for 240 FPS presentation support
-- [docs-dev/gl-renderer-modernization.md](docs-dev/gl-renderer-modernization.md) - GL tier selection, context ladder, metrics, and renderer-modernization scaffolding
-- [docs-dev/plans/2026-05-13-clustered-hybrid-gl-renderer.md](docs-dev/plans/2026-05-13-clustered-hybrid-gl-renderer.md) - phased plan for the clustered hybrid deferred/forward+ GL renderer
-- [docs-dev/renderer-validation-matrix.md](docs-dev/renderer-validation-matrix.md) - automated safe renderer validation and manual SP/MP gameplay sign-off matrix
-- [docs-dev/official-pk4-checksums.md](docs-dev/official-pk4-checksums.md) - official asset validation reference
-- [docs-dev/input-key-matrix.md](docs-dev/input-key-matrix.md) - keyboard and controller input reference
-- [docs-dev/release-completion.md](docs-dev/release-completion.md) - current release checklist and open work
-- [TODO.md](TODO.md) - tracked issues and planned tasks
-
-<p align="center">
-  <img src="assets/docs/img/shot4.png" alt="openQ4 gameplay screenshot showing atmospheric environment" width="92%">
-</p>
-<p align="center"><sub>Built to preserve the original game feel on modern displays and GPUs.</sub></p>
+If you run into problems, please use the [issue tracker](https://github.com/themuffinator/openQ4/issues) and include crash logs or setup details when possible.
 
 ---
 
 ## Contributing
 
-openQ4 welcomes code, documentation, testing, and compatibility reports. Keep stock-asset compatibility in mind, prefer engine-side fixes over shipping replacement content, and update documentation when behavior or workflow changes.
+Bug reports, compatibility reports, testing feedback, and code contributions are all welcome. If you want to help build the project itself, start with [BUILDING.md](BUILDING.md).
 
 ---
 
 ## Credits
 
-### Project
-
 - **themuffinator** - openQ4 development and maintenance
 - **DarkMatter Productions** - project stewardship and website
-
-### Upstream and reference work
-
-- **Justin Marshall** - [Quake4Doom](https://github.com/jmarshall23/Quake4Doom) and initial BSE reverse engineering
-- **CPMADevs CNQ3** - reference for CPMA/CNQ3-style rainbow text color escape support, adapted via the local FnQ3 implementation
-- **Robert Beckebans** - renderer modernization reference work, including irradiance-volume integration reference material from [RBDOOM-3-BFG](https://github.com/RobertBeckebans/RBDOOM-3-BFG)
-- **id Software** - idTech 4 engine and Quake 4
-- **Raven Software** - Quake 4 game development
-
-### Community and third-party libraries
-
-- **Map-Center community** - feedback and playtesting, especially Papaya, JohnnyBoy, and coffee009
-- **Sean Barrett** - [stb_vorbis](https://github.com/nothings/stb) audio codec
-- **GLEW Team** - Nigel Stewart, Milan Ikits, Marcelo E. Magallon, and Lev Povalahev
-- **OpenAL Soft contributors** - 3D audio implementation
-- **SDL contributors** - cross-platform framework
-- **SMAA authors** - Jorge Jimenez, Jose I. Echevarria, Belen Masia, Fernando Navarro, and Diego Gutierrez
+- **Justin Marshall** - Quake4Doom and early BSE reverse engineering reference work
+- **Robert Beckebans** - renderer modernization reference work, including RBDOOM-3-BFG inspiration
+- **id Software** and **Raven Software** - Quake 4 and the underlying technology
 
 ---
 
-## License
+## License and disclaimer
 
-openQ4 engine code is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0). See [LICENSE](LICENSE) for the full text.
+openQ4 engine code is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0). See [LICENSE](LICENSE) for details.
 
-The game-library code in [openQ4-GameLibs](https://github.com/themuffinator/openQ4-GameLibs) is derived from the Quake 4 SDK and remains subject to id Software's SDK EULA. Quake 4 game assets remain the property of id Software and ZeniMax Media.
+The game-library code in [openQ4-GameLibs](https://github.com/themuffinator/openQ4-GameLibs) is derived from the Quake 4 SDK and remains subject to id Software's SDK EULA. Quake 4 assets remain the property of id Software and ZeniMax Media.
 
----
-
-## Disclaimer
-
-openQ4 is an independent project and is not affiliated with, endorsed by, or sponsored by id Software, Raven Software, Bethesda, or ZeniMax Media. Quake 4 is a trademark of ZeniMax Media Inc.
-
-The software is provided "as is" without warranty of any kind. openQ4 is experimental software under active development and requires a legitimate Quake 4 installation.
+openQ4 is an independent project and is not affiliated with, endorsed by, or sponsored by id Software, Raven Software, Bethesda, or ZeniMax Media.
 
 ---
 
-## Links
-
-[Website](https://www.darkmatter-quake.com) | [Repository](https://github.com/themuffinator/openQ4) | [Game Library](https://github.com/themuffinator/openQ4-GameLibs) | [Issue Tracker](https://github.com/themuffinator/openQ4/issues) | [Releases](https://github.com/themuffinator/openQ4/releases)
+[Website](https://www.darkmatter-quake.com) | [Repository](https://github.com/themuffinator/openQ4) | [Game Library](https://github.com/themuffinator/openQ4-GameLibs) | [Issues](https://github.com/themuffinator/openQ4/issues) | [Releases](https://github.com/themuffinator/openQ4/releases)
 
 [Back to Top](#top)

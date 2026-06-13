@@ -16,6 +16,7 @@ For installation and a feature overview, see the [README](README.md). For buildi
 - [Game Directory Structure](#game-directory-structure)
 - [Asset Validation](#asset-validation)
 - [Advanced Configuration](#advanced-configuration)
+- [Mod Manifests](#mod-manifests)
 - [SDK and Game Library](#sdk-and-game-library)
 - [Dependencies](#dependencies)
 - [Versioning](#versioning)
@@ -196,6 +197,36 @@ openQ4-client_x64 +set fs_basepath "C:\path\to\Quake 4"
 ### Crash Diagnostics
 
 On Windows, openQ4 installs an unhandled-exception crash handler in packaged and local builds. Crashes write `openq4_crash_*.log` and `openq4_crash_*.dmp` files under a `crashes/` directory beside the executable, for example `.install/crashes/` when launching from the staged package root. Public Windows release packages include matching PDB diagnostic symbols so those dumps can be symbolized.
+
+---
+
+## Mod Manifests
+
+Runnable openQ4 mods require a `mod.json` file in the root of the mod directory. This applies to `baseoq4/` as well as any external mod folder selected through the mod menu or requested by multiplayer auto-restart.
+
+The manifest is a flat JSON object with these required string fields:
+
+- `name`
+- `version`
+- `releaseDate`
+- `website`
+- `author`
+- `requiredopenQ4Version`
+
+`requiredopenQ4Version` is matched against the current openQ4 engine version. Mods without a manifest, or with a mismatched required engine version, are hidden from the mod menu and rejected for automatic mod switching.
+
+Example:
+
+```json
+{
+  "name": "openQ4",
+  "version": "0.1.010",
+  "releaseDate": "2026-04-14",
+  "website": "https://www.darkmatter-quake.com",
+  "author": "themuffinator / DarkMatter Productions",
+  "requiredopenQ4Version": "0.1.010"
+}
+```
 
 ---
 
