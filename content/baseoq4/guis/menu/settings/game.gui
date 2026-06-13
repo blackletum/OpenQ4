@@ -59,11 +59,11 @@
 							} else if ( "gui::game_section_choice" == 2 ) {
 								set "gui::gui_set_game_scroll" "19" ;
 							} else if ( "gui::game_section_choice" == 3 ) {
-								set "gui::gui_set_game_scroll" "28" ;
+								set "gui::gui_set_game_scroll" "35" ;
 							} else if ( "gui::game_section_choice" == 4 ) {
-								set "gui::gui_set_game_scroll" "34" ;
+								set "gui::gui_set_game_scroll" "41" ;
 							} else {
-								set "gui::gui_set_game_scroll" "36" ;
+								set "gui::gui_set_game_scroll" "43" ;
 							}
 							set "cmd" "applySettingsScroll game" ;
 						}
@@ -76,7 +76,7 @@
 					noclip	0
 					windowDef set_game_content
 					{
-						rect	-24,-41,640,1188
+						rect	-24,-41,640,1356
 						visible	1
 
 	//--------------------------------------------------------------//
@@ -1596,6 +1596,404 @@
 					}
 				}
 	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Controller Gyro
+	//==============================================================//
+
+				windowDef set_game_controller_gyro
+				{
+					rect  228,753,377,25
+					visible 1
+
+					windowDef set_game_controller_gyro_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_controller_gyro_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229964"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					choiceDef set_game_controller_gyro_value
+					{
+						rect	240,3,162,18
+						visible	1
+						forecolor	1,0.745,0.137,0.8
+						cvar	in_gyro
+						textscale	0.24
+						font	"fonts/lowpixel"
+						choices	"#str_200059"
+						choiceType	0
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Controller Gyro Sensitivity
+	//==============================================================//
+
+				windowDef set_game_controller_gyro_sensitivity
+				{
+					rect	228,777,377,25
+					visible	1
+
+					windowDef set_game_controller_gyro_sensitivity_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_controller_gyro_sensitivity_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229965"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					windowDef set_game_controller_gyro_sensitivity_slider_bg
+					{
+						rect	244,8,128,16
+						background	"gfx/guis/mainmenu/slider_bg"
+						matcolor	1,0.745,0.137,0.8
+						noevents	1
+						visible	1
+					}
+					sliderDef set_game_controller_gyro_sensitivity_slider_bar
+					{
+						rect	244,9,71,8
+						forecolor	1,0.745,0.137,0.8
+						matcolor	1,0.745,0.137,0.8
+						low	0
+						high	8.0
+						step	0.05
+						thumbShader	"gfx/guis/mainmenu/slider_bar"
+						cvar	in_gyroSensitivity
+						visible	1
+					}
+					editDef set_game_controller_gyro_sensitivity_value
+					{
+						rect	322,4,100,18
+						visible	1
+						cvar	in_gyroSensitivity
+						textscale	0.24
+						maxchars	4
+						numeric	1
+						forecolor	1,0.745,0.137,0.8
+						font	"fonts/lowpixel"
+
+						onEnter {
+							setfocus "set_b_back" ;
+						}
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Controller Touchpad Mode
+	//==============================================================//
+
+				windowDef set_game_controller_touchpad_mode
+				{
+					rect  228,801,377,25
+					visible 1
+
+					windowDef set_game_controller_touchpad_mode_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_controller_touchpad_mode_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229966"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					choiceDef set_game_controller_touchpad_mode_value
+					{
+						rect	240,3,162,18
+						visible	1
+						forecolor	1,0.745,0.137,0.8
+						cvar	in_touchpadMode
+						textscale	0.24
+						font	"fonts/lowpixel"
+						choices	"#str_229967"
+						values	"0;1;2;3"
+						choiceType	1
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Controller Touchpad Sensitivity
+	//==============================================================//
+
+				windowDef set_game_controller_touchpad_sensitivity
+				{
+					rect	228,825,377,25
+					visible	1
+
+					windowDef set_game_controller_touchpad_sensitivity_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_controller_touchpad_sensitivity_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229968"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					windowDef set_game_controller_touchpad_sensitivity_slider_bg
+					{
+						rect	244,8,128,16
+						background	"gfx/guis/mainmenu/slider_bg"
+						matcolor	1,0.745,0.137,0.8
+						noevents	1
+						visible	1
+					}
+					sliderDef set_game_controller_touchpad_sensitivity_slider_bar
+					{
+						rect	244,9,71,8
+						forecolor	1,0.745,0.137,0.8
+						matcolor	1,0.745,0.137,0.8
+						low	0
+						high	8.0
+						step	0.05
+						thumbShader	"gfx/guis/mainmenu/slider_bar"
+						cvar	in_touchpadSensitivity
+						visible	1
+					}
+					editDef set_game_controller_touchpad_sensitivity_value
+					{
+						rect	322,4,100,18
+						visible	1
+						cvar	in_touchpadSensitivity
+						textscale	0.24
+						maxchars	4
+						numeric	1
+						forecolor	1,0.745,0.137,0.8
+						font	"fonts/lowpixel"
+
+						onEnter {
+							setfocus "set_b_back" ;
+						}
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Controller Touchscreen
+	//==============================================================//
+
+				windowDef set_game_controller_touchscreen
+				{
+					rect  228,849,377,25
+					visible 1
+
+					windowDef set_game_controller_touchscreen_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_controller_touchscreen_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229969"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					choiceDef set_game_controller_touchscreen_value
+					{
+						rect	240,3,162,18
+						visible	1
+						forecolor	1,0.745,0.137,0.8
+						cvar	in_touchscreen
+						textscale	0.24
+						font	"fonts/lowpixel"
+						choices	"#str_200059"
+						choiceType	0
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Controller Low Battery Rumble
+	//==============================================================//
+
+				windowDef set_game_controller_low_battery_rumble
+				{
+					rect	228,873,377,25
+					visible	1
+
+					windowDef set_game_controller_low_battery_rumble_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_controller_low_battery_rumble_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229970"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					windowDef set_game_controller_low_battery_rumble_slider_bg
+					{
+						rect	244,8,128,16
+						background	"gfx/guis/mainmenu/slider_bg"
+						matcolor	1,0.745,0.137,0.8
+						noevents	1
+						visible	1
+					}
+					sliderDef set_game_controller_low_battery_rumble_slider_bar
+					{
+						rect	244,9,71,8
+						forecolor	1,0.745,0.137,0.8
+						matcolor	1,0.745,0.137,0.8
+						low	0
+						high	100
+						step	1
+						thumbShader	"gfx/guis/mainmenu/slider_bar"
+						cvar	in_joystickLowBatteryRumbleThreshold
+						visible	1
+					}
+					editDef set_game_controller_low_battery_rumble_value
+					{
+						rect	322,4,100,18
+						visible	1
+						cvar	in_joystickLowBatteryRumbleThreshold
+						textscale	0.24
+						maxchars	3
+						numeric	1
+						forecolor	1,0.745,0.137,0.8
+						font	"fonts/lowpixel"
+
+						onEnter {
+							setfocus "set_b_back" ;
+						}
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Controller Low Battery Rumble Cap
+	//==============================================================//
+
+				windowDef set_game_controller_low_battery_rumble_cap
+				{
+					rect	228,897,377,25
+					visible	1
+
+					windowDef set_game_controller_low_battery_rumble_cap_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_controller_low_battery_rumble_cap_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_229971"
+						textscale	0.24
+						font	"fonts/lowpixel"
+					}
+					windowDef set_game_controller_low_battery_rumble_cap_slider_bg
+					{
+						rect	244,8,128,16
+						background	"gfx/guis/mainmenu/slider_bg"
+						matcolor	1,0.745,0.137,0.8
+						noevents	1
+						visible	1
+					}
+					sliderDef set_game_controller_low_battery_rumble_cap_slider_bar
+					{
+						rect	244,9,71,8
+						forecolor	1,0.745,0.137,0.8
+						matcolor	1,0.745,0.137,0.8
+						low	0
+						high	2.0
+						step	0.05
+						thumbShader	"gfx/guis/mainmenu/slider_bar"
+						cvar	in_joystickLowBatteryRumbleScale
+						visible	1
+					}
+					editDef set_game_controller_low_battery_rumble_cap_value
+					{
+						rect	322,4,100,18
+						visible	1
+						cvar	in_joystickLowBatteryRumbleScale
+						textscale	0.24
+						maxchars	4
+						numeric	1
+						forecolor	1,0.745,0.137,0.8
+						font	"fonts/lowpixel"
+
+						onEnter {
+							setfocus "set_b_back" ;
+						}
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
+	//==============================================================//
 				
 	//==============================================================//
 	// Settings->Game Options->Use Custom Crosshair
@@ -1603,7 +2001,7 @@
 				
 				windowDef set_game_customxhair
 				{
-					rect  228,753,403,25
+					rect  228,921,403,25
 					visible 1
 											
 					windowDef set_game_customxhair_background
@@ -1664,7 +2062,7 @@
 			
 				windowDef set_game_previewxhair
 				{
-					rect	228,777,377,48
+					rect	228,945,377,48
 					visible	1
 				
 					windowDef set_game_previewxhair_background
@@ -1727,7 +2125,7 @@
 
 				windowDef set_game_xhairsize
 				{
-					rect  228,825,377,25
+					rect  228,993,377,25
 					visible 1
 											
 					windowDef set_game_xhairsize_background
@@ -1784,7 +2182,7 @@
 
 				windowDef set_game_xhaircolor
 				{
-					rect  228,850,377,25
+					rect  228,1018,377,25
 					visible 1
 											
 					windowDef set_game_xhaircolor_background
@@ -1928,7 +2326,7 @@
 
 				windowDef set_game_corpsesink
 				{
-					rect  228,875,377,25
+					rect  228,1043,377,25
 					visible 1
 
 					windowDef set_game_corpsesink_background
@@ -1972,7 +2370,7 @@
 
 				windowDef set_game_corpsetime
 				{
-					rect  228,899,377,25
+					rect  228,1067,377,25
 					visible 1
 
 					windowDef set_game_corpsetime_background
@@ -2019,7 +2417,7 @@
 
 				windowDef set_game_language
 				{
-					rect  228,923,377,25
+					rect  228,1091,377,25
 					visible 1
 											
 					windowDef set_game_language_background
@@ -2067,7 +2465,7 @@
 
 				windowDef set_game_consoleaccess
 				{
-					rect  228,947,377,25
+					rect  228,1115,377,25
 					visible 1
 
 					windowDef set_game_consoleaccess_background
@@ -2111,7 +2509,7 @@
 
 				windowDef set_game_autoskipcinematics
 				{
-					rect  228,981,377,25
+					rect  228,1149,377,25
 					visible 1
 
 					windowDef set_game_autoskipcinematics_background
@@ -2154,7 +2552,7 @@
 
 				windowDef set_game_viewweapon
 				{
-					rect	259,1015,327,13
+					rect	259,1183,327,13
 					visible	1
 					forecolor	1,1,1,0.4
 					text	"#str_229952"
@@ -2170,7 +2568,7 @@
 
 				windowDef set_game_cl_gunfov
 				{
-					rect	228,1029,377,25
+					rect	228,1197,377,25
 					visible	1
 
 					windowDef set_game_cl_gunfov_background
@@ -2237,7 +2635,7 @@
 
 				windowDef set_game_cl_gunfov_adjust
 				{
-					rect  228,1053,377,25
+					rect  228,1221,377,25
 					visible 1
 
 					windowDef set_game_cl_gunfov_adjust_background
@@ -2281,7 +2679,7 @@
 
 				windowDef set_game_cl_gun_x
 				{
-					rect	228,1077,377,25
+					rect	228,1245,377,25
 					visible	1
 
 					windowDef set_game_cl_gun_x_background
@@ -2347,7 +2745,7 @@
 
 				windowDef set_game_cl_gun_y
 				{
-					rect	228,1101,377,25
+					rect	228,1269,377,25
 					visible	1
 
 					windowDef set_game_cl_gun_y_background
@@ -2413,7 +2811,7 @@
 
 				windowDef set_game_cl_gun_z
 				{
-					rect	228,1125,377,25
+					rect	228,1293,377,25
 					visible	1
 
 					windowDef set_game_cl_gun_z_background
@@ -2483,7 +2881,7 @@
 					forecolor	1,1,1,0.8
 					matcolor	1,1,1,0.4
 					low	0
-					high	36
+					high	43
 					step	1
 					vertical	1
 					scrollbar	1

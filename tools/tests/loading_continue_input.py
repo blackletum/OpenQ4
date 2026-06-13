@@ -87,6 +87,7 @@ def validate_session_gate() -> None:
 def validate_sdl3_backend_input() -> None:
     source = read("src/sys/sdl3/sdl3_backend.cpp")
     pump = function_body(source, "bool Sys_SDL_PumpEvents(void) {")
+    button_helper = function_body(source, "static void SDL3_QueueMouseButtonEvent(int key, bool down, int eventTime, bool pollState) {")
 
     # Keyboard keys must queue unconditionally so "press any key" works.
     require(pump, "Sys_QueEvent(eventTime, SE_KEY, key, down, 0, NULL);", "SDL3 keyboard SE_KEY queueing")
@@ -98,10 +99,11 @@ def validate_sdl3_backend_input() -> None:
     button_case = pump[pump.find("case SDL_EVENT_MOUSE_BUTTON_DOWN:") :]
     button_case = button_case[: button_case.find("case SDL_EVENT_MOUSE_WHEEL:")]
     require(button_case, "openQ4_AcceptingLoadingContinueInput()", "SDL3 mouse button gate acceptance")
-    require(button_case, "Sys_QueEvent(eventTime, SE_KEY, key, down, 0, NULL);", "SDL3 mouse button SE_KEY queueing")
+    require(button_case, "SDL3_QueueMouseButtonEvent(key, down, eventTime, routedMouseInput);", "SDL3 mouse button helper queueing")
+    require(button_helper, "Sys_QueEvent(eventTime, SE_KEY, key, down ? 1 : 0, 0, NULL);", "SDL3 mouse button SE_KEY queueing")
     require_order(
-        button_case,
-        "if (routedMouseInput) {",
+        button_helper,
+        "if (pollState) {",
         "SDL3_QueueMouseInput(M_ACTION1",
         "SDL3 mouse poll queueing stays capture/menu-routed only",
     )

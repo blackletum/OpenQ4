@@ -9,6 +9,7 @@ This guide covers the main ways to configure keyboard, mouse, and controller inp
 - Start with sensitivity and dead zone before changing advanced values.
 - Press `` ` `` or `~` to open the console with the stock default bindings.
 - Run `listBinds` to see your current bindings.
+- Run `listControllers` to print SDL gamepad, joystick, gyro, touchpad, battery, and Steam Deck routing diagnostics.
 - Run `writeConfig my-input-backup.cfg` to save a manual backup before large binding changes.
 - Use `Load Defaults` if the controls get into a bad state. This also resets custom binds.
 
@@ -100,6 +101,8 @@ Controller tuning lives in `Settings -> Game Options -> Controller`.
 | Trigger Press | `in_joystickTriggerThreshold` | `0.35` | Controls how far LT/RT must be pressed before they count as buttons. |
 | Rumble | `in_joystickRumble` | On | Enables gameplay rumble when the device supports it. |
 | Rumble Strength | `in_joystickRumbleScale` | `1.0` | Scales rumble intensity from `0.0` to `2.0`. |
+| Low-Battery Rumble Threshold | `in_joystickLowBatteryRumbleThreshold` | `0` globally, `20` in the Steam Deck profile | Caps effective rumble output when SDL reports a controller battery at or below this percentage; `0` disables the cap. |
+| Low-Battery Rumble Cap | `in_joystickLowBatteryRumbleScale` | `0.75` | Maximum effective rumble scale below the low-battery threshold. This does not rewrite `in_joystickRumbleScale`. |
 
 Suggested adjustments:
 
@@ -128,6 +131,21 @@ SDL gamepads use SDL's standard controller database, so Xbox, PlayStation, Steam
 | `in_joystickUpAxis` / `in_joystickUpAxisNegative` | `4` / `5` | Optional vertical/throttle axes; when both exist, openQ4 uses positive minus negative. |
 
 Set an axis cvar to `-1` for auto, or to a raw SDL axis number from `0` through `31`. These advanced joystick cvars only affect generic SDL joysticks; SDL gamepads keep the stable `JOY` button and stick layout described below.
+
+Steam Deck and SDL gamepad native input has additional cvars. The main controls are exposed in `Settings -> Game Options -> Controller`; the cvars remain useful for config files and console troubleshooting.
+
+| Cvar | Default | What it changes |
+|---|---:|---|
+| `in_gyro` | `0` globally, `1` in the Steam Deck profile | Enables SDL gamepad gyro as mouse-look input during gameplay when the device exposes a gyro sensor. |
+| `in_gyroSensitivity` | `1.0` globally, `0.20` in the Steam Deck profile | Scales gyro mouse-look motion. It still flows through normal mouse sensitivity. |
+| `in_gyroDeadZone` | `0.015` | Ignores tiny gyro rates in radians per second. |
+| `in_gyroYawAxis` / `in_gyroPitchAxis` | `2` / `0` | Selects the SDL gyro data indices used for yaw and pitch. |
+| `in_gyroInvertYaw` / `in_gyroInvertPitch` | `0` / `0` | Flips native gyro yaw or pitch if the device orientation feels backwards. |
+| `in_touchpadMode` | `0` globally, `1` in the Steam Deck profile | `0` disables motion, `1` moves the menu/console cursor, `2` sends mouse-look deltas during gameplay, and `3` keeps touchpad motion off while preserving touchpad button binds. |
+| `in_touchpadSensitivity` | `1.0` | Scales SDL gamepad touchpad motion. |
+| `in_touchscreen` | `1` | Routes native SDL touchscreen taps and drags to menu, console, and loading-continue input. |
+
+The menu also exposes `in_joystickLowBatteryRumbleThreshold` and `in_joystickLowBatteryRumbleScale`, so Deck users can tune the battery-friendly rumble cap without editing config files.
 
 ## Stock Keyboard and Mouse Binds
 
@@ -208,6 +226,7 @@ Menu behavior:
 | `unbind <key>` | Removes a bind from one key or button. |
 | `unbindall` | Clears all binds. Use with care. |
 | `listBinds` | Prints the current binds. |
+| `listControllers` | Prints SDL controller diagnostics, including active gamepad/joystick details, touchpad and gyro capability, touchscreen routing, and low-battery rumble state. |
 | `writeConfig <filename>` | Writes a config snapshot to a `.cfg` file. |
 
 Examples:
@@ -275,6 +294,8 @@ seta in_joystickRumbleScale 0.50
 seta com_platformProfile steamdeck
 ```
 
+On Steam Deck or SteamOS, direct `openQ4-client_x64` launches auto-select this profile when `com_platformProfile` is still `default`. Set `OPENQ4_NO_STEAMDECK_AUTODETECT=1` to keep direct launches on the default profile.
+
 ## Troubleshooting
 
 | Problem | Try this |
@@ -288,6 +309,9 @@ seta com_platformProfile steamdeck
 | Triggers activate by accident | Raise `Trigger Press`. |
 | Triggers feel unresponsive | Lower `Trigger Press`. |
 | Rumble does not work | Enable `Rumble`, set `Rumble Strength` above `0`, confirm the device supports haptics, and reset `s_controllerRumble` to `1` if it was changed from the console. |
+| Rumble gets weaker at low battery | Raise `in_joystickLowBatteryRumbleScale`, lower `in_joystickLowBatteryRumbleThreshold`, or set the threshold to `0` to disable the low-battery cap. |
+| Steam Deck gyro does not work | Confirm `in_gyro 1`, run `listControllers`, and make sure Steam Input is not hiding the gyro from the game. |
+| Steam Deck touchpad moves aim instead of menus | Set `in_touchpadMode 1`; use `2` only when you want touchpad mouse-look during gameplay. Run `listControllers` if SDL reports no touchpad capability. |
 | Mouse look is backwards vertically | Change `Mouse Pitch` or `Invert Look`, depending on the device. |
 | Binding change did not stick | Run `writeConfig my-input-backup.cfg` to confirm your commands are valid, then quit normally so `openQ4Config.cfg` is rewritten. |
 

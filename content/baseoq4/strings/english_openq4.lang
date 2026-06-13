@@ -105,4 +105,12 @@
 	"#str_229961"	"Video;Window;Rendering;Quality;Post FX;Sizing"
 	"#str_229962"	"DEVICES"
 	"#str_229963"	"EFFECTS"
+	"#str_229964"	"Gyro"
+	"#str_229965"	"Gyro Sensitivity"
+	"#str_229966"	"Touchpad Mode"
+	"#str_229967"	"Off;Menu Cursor;Mouse Look;Button Only"
+	"#str_229968"	"Touchpad Sensitivity"
+	"#str_229969"	"Touchscreen"
+	"#str_229970"	"Low Battery Rumble"
+	"#str_229971"	"Low Battery Cap"
 }

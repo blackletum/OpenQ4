@@ -1,6 +1,8 @@
 #!/bin/sh
 
-if [ -z "${SDL_VIDEO_DRIVER:-}" ] && [ -z "${SDL_VIDEODRIVER:-}" ] && [ -n "${WAYLAND_DISPLAY:-}" ] && [ -n "${DISPLAY:-}" ]; then
+export OPENQ4_STEAMDECK="${OPENQ4_STEAMDECK:-1}"
+
+if [ "${OPENQ4_FORCE_X11:-0}" = "1" ]; then
 	export SDL_VIDEO_DRIVER=x11
 	export SDL_VIDEODRIVER=x11
 fi

@@ -180,6 +180,7 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "linux_highdpi_mouse.py",
         root / "tools" / "tests" / "linux_vsync_support.py",
         root / "tools" / "tests" / "loading_continue_input.py",
+        root / "tools" / "tests" / "steam_deck_support.py",
     ]
     for test_script in tests:
         if not test_script.is_file():
@@ -228,6 +229,35 @@ def require_posix_executable(path: Path, root: Path, label: str) -> None:
         raise ValidationError(f"{label} is not executable: {rel(path, root)}")
 
 
+def validate_linux_steamdeck_launcher(path: Path, root: Path, client_candidates: list[Path]) -> None:
+    try:
+        launcher = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValidationError(f"Linux Steam Deck launcher is unreadable: {rel(path, root)}") from exc
+
+    required_tokens = (
+        "OPENQ4_STEAMDECK",
+        "OPENQ4_FORCE_X11",
+        "SDL_VIDEO_DRIVER=x11",
+        "SDL_VIDEODRIVER=x11",
+        "+set com_platformProfile steamdeck",
+    )
+    for token in required_tokens:
+        if token not in launcher:
+            raise ValidationError(f"Linux Steam Deck launcher is missing {token!r}: {rel(path, root)}")
+
+    if "WAYLAND_DISPLAY" in launcher:
+        raise ValidationError(f"Linux Steam Deck launcher still forces X11 from Wayland session state: {rel(path, root)}")
+
+    client_names = {candidate.name for candidate in client_candidates}
+    if not any(client_name in launcher for client_name in client_names):
+        expected = ", ".join(sorted(client_names))
+        raise ValidationError(
+            f"Linux Steam Deck launcher does not exec a staged client binary. "
+            f"Expected one of: {expected}"
+        )
+
+
 def desktop_entry_exec(path: Path, root: Path) -> str:
     try:
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -253,6 +283,7 @@ def validate_linux_launch_metadata(root: Path, install_root: Path, client_candid
     if not steamdeck_launcher.is_file():
         raise ValidationError("Linux staged payload is missing openQ4-steamdeck.")
     require_posix_executable(steamdeck_launcher, root, "Linux Steam Deck launcher")
+    validate_linux_steamdeck_launcher(steamdeck_launcher, root, client_candidates)
 
     desktop_dir = install_root / "share" / "applications"
     desktop_entries = {

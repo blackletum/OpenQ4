@@ -43,7 +43,7 @@ extern idCVar com_skipLogoVideos;
 idCVar	idSessionLocal::gui_configServerRate( "gui_configServerRate", "0", CVAR_GUI | CVAR_ARCHIVE | CVAR_ROM | CVAR_INTEGER, "" );
 idCVar gui_set_sys_scroll( "gui_set_sys_scroll", "0", CVAR_GUI | CVAR_INTEGER, "display menu scroll step", 0, 26 );
 idCVar gui_set_audio_scroll( "gui_set_audio_scroll", "0", CVAR_GUI | CVAR_INTEGER, "audio menu scroll step", 0.0f, 0.0f );
-idCVar gui_set_game_scroll( "gui_set_game_scroll", "0", CVAR_GUI | CVAR_INTEGER, "game menu scroll step", 0, 36 );
+idCVar gui_set_game_scroll( "gui_set_game_scroll", "0", CVAR_GUI | CVAR_INTEGER, "game menu scroll step", 0, 43 );
 
 static const int MENU_CONTROLLER_AXIS_THRESHOLD = 50;
 static const int MENU_CONTROLLER_REPEAT_INITIAL_MSEC = 320;
@@ -2261,10 +2261,10 @@ static const mainMenuSettingsScrollPage_t MAINMENU_SETTINGS_SCROLL_PAGES[] = {
 		"game_section_choice",
 		21,
 		0,
-		36,
+		43,
 		-24,
 		-41,
-		1188,
+		1356,
 		24.0f
 	}
 };
@@ -2306,13 +2306,13 @@ static int MainMenuSettingsSectionChoiceForScroll( const mainMenuSettingsScrollP
 		if ( scrollValue < 19 ) {
 			return 1;
 		}
-		if ( scrollValue < 28 ) {
+		if ( scrollValue < 35 ) {
 			return 2;
 		}
-		if ( scrollValue < 34 ) {
+		if ( scrollValue < 41 ) {
 			return 3;
 		}
-		if ( scrollValue < 36 ) {
+		if ( scrollValue < 43 ) {
 			return 4;
 		}
 		return 5;

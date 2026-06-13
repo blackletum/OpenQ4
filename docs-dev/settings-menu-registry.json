@@ -2668,6 +2668,213 @@
       "accessibility": "Slider with paired edit field."
     },
     {
+      "id": "game.controller.gyro",
+      "pane": "Game Options",
+      "section": "Controller",
+      "path": "Settings > Game Options > Controller > Gyro",
+      "source": "game",
+      "container": "set_game_controller_gyro",
+      "widgets": [
+        "set_game_controller_gyro_value"
+      ],
+      "widget_type": "choice",
+      "label_key": "#str_229964",
+      "choices_key": "#str_200059",
+      "target_type": "cvar",
+      "target": "in_gyro",
+      "default": "0",
+      "restart_required": false,
+      "accessibility": "Standard focusable choiceDef row."
+    },
+    {
+      "id": "game.controller.gyro_sensitivity",
+      "pane": "Game Options",
+      "section": "Controller",
+      "path": "Settings > Game Options > Controller > Gyro Sensitivity",
+      "source": "game",
+      "container": "set_game_controller_gyro_sensitivity",
+      "widgets": [
+        "set_game_controller_gyro_sensitivity_slider_bar",
+        "set_game_controller_gyro_sensitivity_value"
+      ],
+      "edit_fields": [
+        {
+          "name": "set_game_controller_gyro_sensitivity_value",
+          "maxchars": 4,
+          "numeric": true
+        }
+      ],
+      "widget_type": "slider_edit",
+      "label_key": "#str_229965",
+      "target_type": "cvar",
+      "target": "in_gyroSensitivity",
+      "default": "1.0",
+      "ui_range": {
+        "low": "0",
+        "high": "8.0",
+        "step": "0.05"
+      },
+      "cvar_range": {
+        "low": "0",
+        "high": "8.0"
+      },
+      "restart_required": false,
+      "accessibility": "Slider with paired edit field."
+    },
+    {
+      "id": "game.controller.touchpad_mode",
+      "pane": "Game Options",
+      "section": "Controller",
+      "path": "Settings > Game Options > Controller > Touchpad Mode",
+      "source": "game",
+      "container": "set_game_controller_touchpad_mode",
+      "widgets": [
+        "set_game_controller_touchpad_mode_value"
+      ],
+      "widget_type": "choice",
+      "label_key": "#str_229966",
+      "choices_key": "#str_229967",
+      "values": [
+        "0",
+        "1",
+        "2",
+        "3"
+      ],
+      "target_type": "cvar",
+      "target": "in_touchpadMode",
+      "default": "0",
+      "cvar_range": {
+        "low": "0",
+        "high": "3"
+      },
+      "restart_required": false,
+      "accessibility": "Standard focusable choiceDef row with fixed touchpad routing modes."
+    },
+    {
+      "id": "game.controller.touchpad_sensitivity",
+      "pane": "Game Options",
+      "section": "Controller",
+      "path": "Settings > Game Options > Controller > Touchpad Sensitivity",
+      "source": "game",
+      "container": "set_game_controller_touchpad_sensitivity",
+      "widgets": [
+        "set_game_controller_touchpad_sensitivity_slider_bar",
+        "set_game_controller_touchpad_sensitivity_value"
+      ],
+      "edit_fields": [
+        {
+          "name": "set_game_controller_touchpad_sensitivity_value",
+          "maxchars": 4,
+          "numeric": true
+        }
+      ],
+      "widget_type": "slider_edit",
+      "label_key": "#str_229968",
+      "target_type": "cvar",
+      "target": "in_touchpadSensitivity",
+      "default": "1.0",
+      "ui_range": {
+        "low": "0",
+        "high": "8.0",
+        "step": "0.05"
+      },
+      "cvar_range": {
+        "low": "0",
+        "high": "8.0"
+      },
+      "restart_required": false,
+      "accessibility": "Slider with paired edit field."
+    },
+    {
+      "id": "game.controller.touchscreen",
+      "pane": "Game Options",
+      "section": "Controller",
+      "path": "Settings > Game Options > Controller > Touchscreen",
+      "source": "game",
+      "container": "set_game_controller_touchscreen",
+      "widgets": [
+        "set_game_controller_touchscreen_value"
+      ],
+      "widget_type": "choice",
+      "label_key": "#str_229969",
+      "choices_key": "#str_200059",
+      "target_type": "cvar",
+      "target": "in_touchscreen",
+      "default": "1",
+      "restart_required": false,
+      "accessibility": "Standard focusable choiceDef row."
+    },
+    {
+      "id": "game.controller.low_battery_rumble",
+      "pane": "Game Options",
+      "section": "Controller",
+      "path": "Settings > Game Options > Controller > Low Battery Rumble",
+      "source": "game",
+      "container": "set_game_controller_low_battery_rumble",
+      "widgets": [
+        "set_game_controller_low_battery_rumble_slider_bar",
+        "set_game_controller_low_battery_rumble_value"
+      ],
+      "edit_fields": [
+        {
+          "name": "set_game_controller_low_battery_rumble_value",
+          "maxchars": 3,
+          "numeric": true
+        }
+      ],
+      "widget_type": "slider_edit",
+      "label_key": "#str_229970",
+      "target_type": "cvar",
+      "target": "in_joystickLowBatteryRumbleThreshold",
+      "default": "0",
+      "ui_range": {
+        "low": "0",
+        "high": "100",
+        "step": "1"
+      },
+      "cvar_range": {
+        "low": "0",
+        "high": "100"
+      },
+      "restart_required": false,
+      "accessibility": "Slider with paired edit field."
+    },
+    {
+      "id": "game.controller.low_battery_rumble_cap",
+      "pane": "Game Options",
+      "section": "Controller",
+      "path": "Settings > Game Options > Controller > Low Battery Rumble Cap",
+      "source": "game",
+      "container": "set_game_controller_low_battery_rumble_cap",
+      "widgets": [
+        "set_game_controller_low_battery_rumble_cap_slider_bar",
+        "set_game_controller_low_battery_rumble_cap_value"
+      ],
+      "edit_fields": [
+        {
+          "name": "set_game_controller_low_battery_rumble_cap_value",
+          "maxchars": 4,
+          "numeric": true
+        }
+      ],
+      "widget_type": "slider_edit",
+      "label_key": "#str_229971",
+      "target_type": "cvar",
+      "target": "in_joystickLowBatteryRumbleScale",
+      "default": "0.75",
+      "ui_range": {
+        "low": "0",
+        "high": "2.0",
+        "step": "0.05"
+      },
+      "cvar_range": {
+        "low": "0",
+        "high": "2.0"
+      },
+      "restart_required": false,
+      "accessibility": "Slider with paired edit field."
+    },
+    {
       "id": "game.crosshair_custom",
       "pane": "Game Options",
       "section": "Crosshair",

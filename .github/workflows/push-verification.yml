@@ -37,7 +37,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m py_compile tools/validation/openq4_validate.py tools/tests/renderer_validation_matrix.py tools/tests/linux_arm64_ci_coverage.py tools/tests/linux_highdpi_mouse.py tools/tests/linux_vsync_support.py tools/tests/loading_continue_input.py
+          python -m py_compile tools/validation/openq4_validate.py tools/tests/renderer_validation_matrix.py tools/tests/linux_arm64_ci_coverage.py tools/tests/linux_highdpi_mouse.py tools/tests/linux_vsync_support.py tools/tests/loading_continue_input.py tools/tests/steam_deck_support.py
           bash -n tools/build/meson_setup.sh
           bash -n tools/validation/validate_push.sh
           bash -n tools/validation/validate_pr.sh
@@ -46,6 +46,7 @@ jobs:
           python tools/tests/linux_highdpi_mouse.py
           python tools/tests/linux_vsync_support.py
           python tools/tests/loading_continue_input.py
+          python tools/tests/steam_deck_support.py
 
       - name: Dry-run push profile
         shell: bash

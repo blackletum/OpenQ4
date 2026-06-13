@@ -5,9 +5,9 @@ openQ4 supports Steam Deck through the dedicated `openQ4-steamdeck` launcher shi
 ## Launching
 
 - Use `openQ4-steamdeck` instead of `openQ4-client_x64`.
-- The launcher adds `+set com_platformProfile steamdeck` and preserves any extra command-line arguments you pass.
-- If `SDL_VIDEO_DRIVER` and `SDL_VIDEODRIVER` are both unset and both `WAYLAND_DISPLAY` and `DISPLAY` exist, the launcher exports `SDL_VIDEO_DRIVER=x11` and `SDL_VIDEODRIVER=x11` so Steam Deck sessions prefer XWayland for now.
-- To test native Wayland explicitly, launch with `SDL_VIDEO_DRIVER=wayland` or `SDL_VIDEODRIVER=wayland`.
+- The launcher adds `+set com_platformProfile steamdeck`, exports `OPENQ4_STEAMDECK=1`, and preserves any extra command-line arguments you pass.
+- Native Wayland is the default SDL choice when available. To force the old XWayland fallback path, launch with `OPENQ4_FORCE_X11=1`.
+- If you launch `openQ4-client_x64` directly on a Steam Deck or SteamOS host, openQ4 auto-selects the `steamdeck` platform profile when `com_platformProfile` is still `default`. Set `OPENQ4_NO_STEAMDECK_AUTODETECT=1` or `OPENQ4_DISABLE_STEAMDECK_AUTODETECT=1` to disable that fallback.
 
 ## Controls
 
@@ -40,20 +40,46 @@ Tuning and haptics:
 
 - Controller rumble is driven from Quake 4 sound shake/rumble metadata during gameplay.
 - Use `in_joystickRumble 0` to disable motor output, or tune strength with `in_joystickRumbleScale`.
-- The in-game menu exposes these controls under `Settings -> Game Options -> Controller`, alongside stick layout, radial dead-zone, look sensitivity, look curve, invert-look, and trigger-threshold tuning.
+- The Steam Deck profile sets `in_joystickLowBatteryRumbleThreshold 20` and `in_joystickLowBatteryRumbleScale 0.75`, which caps effective rumble output while SDL reports a controller battery at or below 20 percent. This does not rewrite your configured rumble strength.
+- The Steam Deck profile enables native SDL gyro aiming with a conservative `in_gyroSensitivity 0.20`; raise or lower that cvar if gyro aim feels slow or fast.
+- `in_touchpadMode 1` routes gamepad touchpad motion to menu/console cursor movement. Use `in_touchpadMode 2` for touchpad mouse-look, `0` to disable touchpad motion, or `3` to leave touchpad motion off while keeping touchpad button binds.
+- `in_touchscreen 1` routes direct touchscreen taps and drags to menus, console, and loading-continue input when SDL delivers native touch events.
+- The in-game menu exposes controller controls under `Settings -> Game Options -> Controller`, including stick layout, radial dead-zone, look sensitivity, look curve, invert-look, trigger threshold, rumble tuning, gyro, touchpad mode, touchscreen input, and low-battery rumble caps.
 - For the full input settings guide, see [input-settings.md](input-settings.md).
+
+## Steam Input and Diagnostics
+
+For native Steam Deck testing, use a Steam Input profile that exposes the Deck as a gamepad with its gyro and touchpad capabilities available to SDL. Steam-level gyro-to-mouse or touchpad-to-mouse mappings can still be useful for users, but they hide those inputs from openQ4's native `in_gyro` and `in_touchpadMode` paths.
+
+If a build expects native touchscreen or multi-touch events, enable Touch API pass-through in the Steamworks/partner configuration. Without that partner-side setting, Steam may deliver touch as mouse emulation instead of SDL touchscreen events.
+
+Run `listControllers` from the console when diagnosing Deck input. It prints the active SDL gamepad/joystick, GUID, type, path, power state, touchpad count, sensor capability, gyro/touchpad cvars, touchscreen routing, and low-battery rumble state. Save the log output with bug reports when gyro, touchpad, touchscreen, or rumble behavior is unclear.
+
+## Performance
+
+- When the Steam Deck profile is active, `com_steamDeckAutoFrameCap 1` applies a Deck-friendly `com_maxfps` only if `com_maxfps` is still the global default of `240`.
+- The automatic cap uses SDL's current display refresh and clamps it to the Deck-oriented `40..90` range. LCD Deck sessions normally land on `60`; OLED or higher-refresh sessions can land higher.
+- Set `com_maxfps` yourself to preserve a specific cap. Set `com_steamDeckAutoFrameCap 0` to disable the automatic default, or set `com_steamDeckFrameCap` to a nonzero value to choose the Deck default cap explicitly.
 
 ## Asset Discovery
 
 Linux Steam auto-discovery checks these roots and then expands any additional library folders from `libraryfolders.vdf`:
 
+- `OPENQ4_STEAM_ROOT` / `OPENQ4_STEAM_ROOTS`
+- `STEAM_COMPAT_CLIENT_INSTALL_PATH`
+- `$XDG_DATA_HOME/Steam`
 - `~/.steam/steam`
+- `~/.steam/root`
 - `~/.local/share/Steam`
 - `~/.var/app/com.valvesoftware.Steam/.local/share/Steam`
 
 openQ4 then looks for `steamapps/common/Quake 4` under each Steam library root.
 
+For deterministic testing, set `OPENQ4_QUAKE4_PATH` or `OPENQ4_QUAKE4_ROOT` to the Quake 4 install root directly, or set `OPENQ4_STEAM_LIBRARY` / `OPENQ4_STEAM_LIBRARIES` to Steam library roots that contain `steamapps/common/Quake 4`. On Linux, multiple roots may be separated with `:` or `;`.
+
 ## Notes
 
-- Steam Deck support is explicit launcher/profile behavior, not automatic hardware detection.
-- Native Wayland is supported through the SDL3 backend, but the Steam Deck launcher keeps XWayland as its default mixed-session path until Deck-specific Wayland validation is broader.
+- Steam Deck support is still profile-driven, but the engine now has a Deck/SteamOS fallback detector for direct client launches.
+- Suspend/resume and foreground/background SDL events release captured input, stop rumble, write the current config, and reacquire controllers when the app returns.
+- Native Wayland is supported through the SDL3 backend; XWayland remains available through `OPENQ4_FORCE_X11=1` or explicit SDL video-driver environment variables.
+- The developer-facing Deck QA checklist lives in [../docs-dev/steam-deck-qa.md](../docs-dev/steam-deck-qa.md).

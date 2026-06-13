@@ -105,4 +105,12 @@
 	"#str_229961"	"Video;Fenetre;Rendu;Qualite;Post FX;Taille"
 	"#str_229962"	"PERIPHERIQUES"
 	"#str_229963"	"EFFETS"
+	"#str_229964"	"Gyro"
+	"#str_229965"	"Sensib. Gyro"
+	"#str_229966"	"Mode Pave tactile"
+	"#str_229967"	"Desactive;Curseur menu;Regard souris;Bouton seul"
+	"#str_229968"	"Sensib. Pave tactile"
+	"#str_229969"	"Ecran tactile"
+	"#str_229970"	"Vibr. batterie basse"
+	"#str_229971"	"Limite batt. basse"
 }

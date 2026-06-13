@@ -27,6 +27,16 @@ This guide covers openQ4 display/window settings for end users, including multi-
 | `r_displayRefresh` | `0` | Requested fullscreen refresh rate (0 = default/driver choice). |
 | `r_screen` | `-1` | SDL3 monitor target (`-1` auto/current, `0..N` explicit index). |
 
+## Frame Cap
+
+| Setting | Default | What it does |
+|---|---:|---|
+| `com_maxfps` | `240` | Presentation frame cap (`0` = uncapped). |
+| `com_steamDeckAutoFrameCap` | `1` | When the Steam Deck profile is active, applies a Deck-friendly cap only while `com_maxfps` is still `240`. |
+| `com_steamDeckFrameCap` | `0` | Steam Deck default cap override (`0` = use detected display refresh clamped to the Deck-oriented range). |
+
+The Steam Deck auto cap preserves custom `com_maxfps` values. Set `com_steamDeckAutoFrameCap 0` to opt out, or set `com_maxfps` directly for a fixed cap.
+
 ## Anti-Aliasing Settings (New)
 
 | Setting | Default | What it does |

@@ -143,10 +143,20 @@
         <li>Install or extract openQ4 to its own folder when possible. On Windows, either run the installer executable or extract the archive; the installer can detect an existing openQ4 install, adds a standard uninstall entry, and optionally registers <code>openq4://</code> browser links.</li>
         <li>Use a clean layout: preferably keep retail Quake 4 separate with assets under <code>q4base/</code>; for a portable setup, keep a copied retail <code>q4base/</code> beside openQ4's <code>baseoq4/</code>. Never copy retail PK4s into <code>baseoq4/</code>.</li>
         <li>Run <code>openQ4-client_&lt;arch&gt;</code> or <code>openQ4-client_&lt;arch&gt;.exe</code>.</li>
-        <li>On Steam Deck, use <code>openQ4-steamdeck</code> when it is included in the package.</li>
+        <li>On Steam Deck, use <code>openQ4-steamdeck</code> when it is included in the package. Direct <code>openQ4-client_&lt;arch&gt;</code> launches on Steam Deck or SteamOS also auto-select the Deck profile when <code>com_platformProfile</code> is still <code>default</code>.</li>
         <li>Open <code>docs/index.html</code> for the full offline documentation set, or use the installer-created Start Menu shortcuts on Windows.</li>
         <li>If auto-detection fails, launch with <code>+set fs_basepath "path\\to\\Quake 4"</code>, pointing at the retail root that contains <code>q4base/</code>.</li>
       </ol>
+    </section>
+
+    <section>
+      <h2>Steam Deck Notes</h2>
+      <ul>
+        <li>The Deck launcher enables the <code>steamdeck</code> platform profile and sets <code>OPENQ4_STEAMDECK=1</code>.</li>
+        <li>Native Wayland is the default SDL path when available. Set <code>OPENQ4_FORCE_X11=1</code> to force the XWayland fallback.</li>
+        <li>Deck controller tuning lives under <code>Settings -&gt; Game Options -&gt; Controller</code>, including gyro, touchpad mode, touchscreen routing, and low-battery rumble caps.</li>
+        <li>Run <code>listControllers</code> from the console when reporting Deck input, battery, gyro, touchpad, or touchscreen issues.</li>
+      </ul>
     </section>
 
     <section>

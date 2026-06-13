@@ -105,4 +105,12 @@
 	"#str_229961"	"Video;Finestra;Rendering;Qualita;Post FX;Dimensione"
 	"#str_229962"	"DISPOSITIVI"
 	"#str_229963"	"EFFETTI"
+	"#str_229964"	"Giroscopio"
+	"#str_229965"	"Sensib. Giroscopio"
+	"#str_229966"	"Modalita Touchpad"
+	"#str_229967"	"Disattivato;Cursore menu;Mira mouse;Solo pulsante"
+	"#str_229968"	"Sensib. Touchpad"
+	"#str_229969"	"Touchscreen"
+	"#str_229970"	"Vibr. batteria bassa"
+	"#str_229971"	"Limite batt. bassa"
 }

@@ -105,4 +105,12 @@
 	"#str_229961"	"Video;Ventana;Render;Calidad;Post FX;Tamano"
 	"#str_229962"	"DISPOSITIVOS"
 	"#str_229963"	"EFECTOS"
+	"#str_229964"	"Giroscopio"
+	"#str_229965"	"Sensib. Giroscopio"
+	"#str_229966"	"Modo Touchpad"
+	"#str_229967"	"Desact.;Cursor menu;Mirada raton;Solo boton"
+	"#str_229968"	"Sensib. Touchpad"
+	"#str_229969"	"Pantalla tactil"
+	"#str_229970"	"Vibr. bateria baja"
+	"#str_229971"	"Limite bateria baja"
 }

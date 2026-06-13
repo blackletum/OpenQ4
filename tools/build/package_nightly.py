@@ -564,9 +564,36 @@ def require_packaged_executable(path: Path, label: str, *, allow_missing: bool =
         raise RuntimeError(f"{label} is not executable in the Linux package: {path}")
 
 
+def validate_linux_steamdeck_launcher(path: Path, expected_client: str) -> None:
+    try:
+        launcher = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(f"Linux Steam Deck launcher is unreadable: {path}") from exc
+
+    required_tokens = (
+        "OPENQ4_STEAMDECK",
+        "OPENQ4_FORCE_X11",
+        "SDL_VIDEO_DRIVER=x11",
+        "SDL_VIDEODRIVER=x11",
+        "+set com_platformProfile steamdeck",
+    )
+    for token in required_tokens:
+        if token not in launcher:
+            raise RuntimeError(f"Linux Steam Deck launcher is missing {token!r}: {path}")
+
+    if "WAYLAND_DISPLAY" in launcher:
+        raise RuntimeError(f"Linux Steam Deck launcher still forces X11 from Wayland session state: {path}")
+
+    if expected_client not in launcher:
+        raise RuntimeError(
+            f"Linux Steam Deck launcher does not exec the packaged client {expected_client!r}: {path}"
+        )
+
+
 def validate_linux_package_metadata(package_root: Path, arch: str, *, allow_missing_binaries: bool = False) -> None:
+    client_binary = f"{PRODUCT_NAME}-client_{arch}"
     require_packaged_executable(
-        package_root / f"{PRODUCT_NAME}-client_{arch}",
+        package_root / client_binary,
         "Linux client binary",
         allow_missing=allow_missing_binaries,
     )
@@ -575,11 +602,13 @@ def validate_linux_package_metadata(package_root: Path, arch: str, *, allow_miss
         "Linux dedicated-server binary",
         allow_missing=allow_missing_binaries,
     )
-    require_packaged_executable(package_root / "openQ4-steamdeck", "Linux Steam Deck launcher")
+    steamdeck_launcher = package_root / "openQ4-steamdeck"
+    require_packaged_executable(steamdeck_launcher, "Linux Steam Deck launcher")
+    validate_linux_steamdeck_launcher(steamdeck_launcher, client_binary)
 
     desktop_dir = package_root / "share" / "applications"
     expected_exec = {
-        "openq4.desktop": f"{PRODUCT_NAME}-client_{arch}",
+        "openq4.desktop": client_binary,
         "openq4-steamdeck.desktop": "openQ4-steamdeck",
     }
     for filename, expected_command in expected_exec.items():

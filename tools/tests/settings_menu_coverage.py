@@ -365,6 +365,10 @@ def validate_value_entry_widgets(mainmenu: str, system_gui: str, audio_gui: str,
             "set_game_controller_look_curve_value",
             "set_game_controller_trigger_value",
             "set_game_controller_rumble_strength_value",
+            "set_game_controller_gyro_sensitivity_value",
+            "set_game_controller_touchpad_sensitivity_value",
+            "set_game_controller_low_battery_rumble_value",
+            "set_game_controller_low_battery_rumble_cap_value",
             "set_game_cl_gunfov_value",
         ),
     }
@@ -692,11 +696,11 @@ def main() -> None:
     for token in (
         "rect\t204,104,377,16",
         "rect\t0,128,640,256",
-        "rect\t-24,-41,640,1188",
+        "rect\t-24,-41,640,1356",
         "rect\t613,128,16,256",
-        "high\t36",
+        "high\t43",
         "cvar\tgui_set_game_scroll",
-        "640,1188",
+        "640,1356",
     ):
         require(game_gui + mainmenu, token, "Game Options scroll coverage")
     for token in (
@@ -708,9 +712,9 @@ def main() -> None:
         'set "gui::gui_set_game_scroll" "0"',
         'set "gui::gui_set_game_scroll" "9"',
         'set "gui::gui_set_game_scroll" "19"',
-        'set "gui::gui_set_game_scroll" "28"',
-        'set "gui::gui_set_game_scroll" "34"',
-        'set "gui::gui_set_game_scroll" "36"',
+        'set "gui::gui_set_game_scroll" "35"',
+        'set "gui::gui_set_game_scroll" "41"',
+        'set "gui::gui_set_game_scroll" "43"',
         'set "cmd" "applySettingsScroll game"',
         "set_game_section_choice::noevents",
     ):
@@ -723,7 +727,7 @@ def main() -> None:
     reject(audio_gui + mainmenu, "set gui_set_audio_scroll", "Audio scroll cvar command")
     for token in (
         'gui_set_sys_scroll( "gui_set_sys_scroll", "0", CVAR_GUI | CVAR_INTEGER, "display menu scroll step", 0, 26 )',
-        'gui_set_game_scroll( "gui_set_game_scroll", "0", CVAR_GUI | CVAR_INTEGER, "game menu scroll step", 0, 36 )',
+        'gui_set_game_scroll( "gui_set_game_scroll", "0", CVAR_GUI | CVAR_INTEGER, "game menu scroll step", 0, 43 )',
         "HandleMainMenuSettingsScrollInput( guiActive, event->evValue )",
         'MainMenuWindowStateEqualsInt( gui, "desktop::curr", page.expectedPage )',
         "MainMenuSettingsPopupIsVisible( gui )",
@@ -743,7 +747,7 @@ def main() -> None:
     reject(session_menu, 'MainMenuWindowStateIsNonZero( gui, "desktop::active" )', "C++ settings scroll active-state gate")
     for token in (
         '"desktop::curr" == 22 && "desktop::active" == 0',
-        '"desktop::curr" == 36 && "desktop::active" == 0',
+        '"desktop::curr" == 43 && "desktop::active" == 0',
         '"desktop::curr" == 21 && "desktop::active" == 0',
         'transition "set_sys_content::rect"',
         'transition "set_game_content::rect"',
@@ -775,7 +779,7 @@ def main() -> None:
         require(session_menu, f'SetStateInt( "{state}", cvarSystem->GetCVarBool( "{cvar}" ) ? 0 : 1 )', f"{state} cvar sync")
         reject(system_surface, f'cvar\t"{cvar}"', f"{cvar} direct negative GUI binding")
 
-    string_ids = [f"#str_{value}" for value in range(229943, 229964)]
+    string_ids = [f"#str_{value}" for value in range(229943, 229972)]
     for lang_path in sorted((ROOT / "content/baseoq4/strings").glob("*_openq4.lang")):
         lang_text = read(lang_path)
         for string_id in string_ids:

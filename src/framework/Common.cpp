@@ -430,6 +430,92 @@ BSE_AllocDeclEffect_t bseAllocDeclEffect = NULL;
 // writes si_version to the config file - in a kinda obfuscated way
 //#define ID_WRITE_VERSION
 
+static const char *Common_GetNonEmptyEnv( const char *name ) {
+	const char *value = getenv( name );
+	return ( value != NULL && value[0] != '\0' ) ? value : NULL;
+}
+
+static bool Common_IsEnvFlagFalse( const char *value ) {
+	return value != NULL &&
+		( idStr::Icmp( value, "0" ) == 0 ||
+		  idStr::Icmp( value, "false" ) == 0 ||
+		  idStr::Icmp( value, "no" ) == 0 ||
+		  idStr::Icmp( value, "off" ) == 0 );
+}
+
+static bool Common_IsEnvFlagTrue( const char *value ) {
+	return value != NULL &&
+		( idStr::Icmp( value, "1" ) == 0 ||
+		  idStr::Icmp( value, "true" ) == 0 ||
+		  idStr::Icmp( value, "yes" ) == 0 ||
+		  idStr::Icmp( value, "on" ) == 0 ||
+		  idStr::Icmp( value, "steamdeck" ) == 0 );
+}
+
+static bool Common_FileContainsAnyToken( const char *path, const char **tokens, int numTokens ) {
+	FILE *file = fopen( path, "r" );
+	if ( file == NULL ) {
+		return false;
+	}
+
+	char buffer[512];
+	while ( fgets( buffer, sizeof( buffer ), file ) != NULL ) {
+		idStr line = buffer;
+		for ( int i = 0; i < numTokens; ++i ) {
+			if ( tokens[i] != NULL && line.Find( tokens[i], false ) >= 0 ) {
+				fclose( file );
+				return true;
+			}
+		}
+	}
+
+	fclose( file );
+	return false;
+}
+
+static bool Common_HasSteamDeckHostSignal( void ) {
+	const char *explicitSignals[] = {
+		"OPENQ4_STEAMDECK",
+		"OPENQ4_AUTODETECT_STEAMDECK",
+		"SteamDeck",
+		"STEAM_DECK"
+	};
+	for ( int i = 0; i < static_cast<int>( sizeof( explicitSignals ) / sizeof( explicitSignals[0] ) ); ++i ) {
+		const char *value = Common_GetNonEmptyEnv( explicitSignals[i] );
+		if ( Common_IsEnvFlagFalse( value ) ) {
+			return false;
+		}
+		if ( Common_IsEnvFlagTrue( value ) ) {
+			return true;
+		}
+	}
+
+#if defined( __linux__ )
+	const char *dmiTokens[] = {
+		"steam deck",
+		"jupiter",
+		"galileo"
+	};
+	if ( Common_FileContainsAnyToken( "/sys/devices/virtual/dmi/id/product_name", dmiTokens, static_cast<int>( sizeof( dmiTokens ) / sizeof( dmiTokens[0] ) ) ) ||
+		 Common_FileContainsAnyToken( "/sys/devices/virtual/dmi/id/board_name", dmiTokens, static_cast<int>( sizeof( dmiTokens ) / sizeof( dmiTokens[0] ) ) ) ) {
+		return true;
+	}
+
+	const char *steamOsTokens[] = {
+		"ID=steamos",
+		"ID_LIKE=steamos",
+		"VARIANT_ID=steamdeck",
+		"SteamOS"
+	};
+	if ( Common_FileContainsAnyToken( "/etc/os-release", steamOsTokens, static_cast<int>( sizeof( steamOsTokens ) / sizeof( steamOsTokens[0] ) ) ) ||
+		 Common_FileContainsAnyToken( "/run/host/os-release", steamOsTokens, static_cast<int>( sizeof( steamOsTokens ) / sizeof( steamOsTokens[0] ) ) ) ) {
+		return true;
+	}
+#endif
+
+	return false;
+}
+
 class idCommonLocal : public idCommon {
 public:
 								idCommonLocal( void );
@@ -503,6 +589,7 @@ private:
 	void						ParseCommandLine( int argc, const char **argv );
 	void						ClearCommandLine( void );
 	bool						SafeMode( void );
+	void						ApplyAutomaticPlatformProfile( void );
 
 static idStr Common_BuildPlatformProfileConfigName( const char *profileName ) {
 	idStr profile = profileName;
@@ -3710,6 +3797,25 @@ bool idCommonLocal::IsInitialized( void ) const {
 	return com_fullyInitialized;
 }
 
+void idCommonLocal::ApplyAutomaticPlatformProfile( void ) {
+	if ( idStr::Icmp( com_platformProfile.GetString(), "default" ) != 0 ) {
+		return;
+	}
+
+	if ( Common_IsEnvFlagTrue( Common_GetNonEmptyEnv( "OPENQ4_DISABLE_STEAMDECK_AUTODETECT" ) ) ||
+		 Common_IsEnvFlagTrue( Common_GetNonEmptyEnv( "OPENQ4_NO_STEAMDECK_AUTODETECT" ) ) ) {
+		Printf( "Steam Deck platform profile auto-detection disabled by environment.\n" );
+		return;
+	}
+
+	if ( !Common_HasSteamDeckHostSignal() ) {
+		return;
+	}
+
+	Printf( "Auto-selecting steamdeck platform profile from host environment.\n" );
+	com_platformProfile.SetString( "steamdeck" );
+}
+
 static double Common_AdjustMachineSpecGHz( double ghz, cpuid_t cpu ) {
 	// Retail Quake 4 applies a CPU-vendor adjustment before classifying the
 	// quality tier. openQ4 does not expose a separate AMD64 flag, so keep the
@@ -3833,6 +3939,7 @@ void idCommonLocal::Init( int argc, const char **argv, const char *cmdline ) {
 
 		// override cvars from command line
 		StartupVariable( NULL, false );
+		ApplyAutomaticPlatformProfile();
 
 		if ( !idAsyncNetwork::serverDedicated.GetInteger() && Sys_AlreadyRunning() ) {
 			Sys_Quit();

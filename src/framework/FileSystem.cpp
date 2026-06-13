@@ -481,6 +481,47 @@ static void FS_AddUniquePath( idStrList &paths, const char *path ) {
 	paths.Append( normalized );
 }
 
+static bool FS_IsEnvPathListSeparator( char c ) {
+#ifdef WIN32
+	return c == ';';
+#else
+	return c == ':' || c == ';';
+#endif
+}
+
+static void FS_AppendEnvPathList( idStrList &paths, const char *envName ) {
+	const char *value = getenv( envName );
+	if ( !value || !value[ 0 ] ) {
+		return;
+	}
+
+	idStr valueList = value;
+	const int length = valueList.Length();
+	int start = 0;
+	for ( int i = 0; i <= length; i++ ) {
+		if ( i == length || FS_IsEnvPathListSeparator( valueList[ i ] ) ) {
+			if ( i > start ) {
+				idStr path = valueList.Mid( start, i - start );
+				path.Strip( ' ' );
+				path.Strip( '\t' );
+				path.Strip( '\"' );
+				FS_AddUniquePath( paths, path.c_str() );
+			}
+			start = i + 1;
+		}
+	}
+}
+
+static void FS_LogPathList( const char *label, const idStrList &paths ) {
+	if ( common == NULL ) {
+		return;
+	}
+	common->Printf( "%s (%d):\n", label, paths.Num() );
+	for ( int i = 0; i < paths.Num(); i++ ) {
+		common->Printf( "  %s\n", paths[ i ].c_str() );
+	}
+}
+
 static bool FS_HasGameFilesAtGameDirPath( const char *gameDirPath ) {
 	idStr pakPath;
 
@@ -791,11 +832,21 @@ static void FS_AppendSteamLibrariesFromVdf( const char *steamRoot, idStrList &li
 
 static void FS_BuildSteamInstallCandidates( idStrList &candidates ) {
 	idStrList	steamRoots;
+	idStrList	explicitLibraryRoots;
+	idStrList	discoveryLibraryRoots;
 	idStrList	libraryRoots;
 	idStr		path;
 	const char	*envPath;
 
 	candidates.Clear();
+
+	FS_AppendEnvPathList( candidates, "OPENQ4_QUAKE4_PATH" );
+	FS_AppendEnvPathList( candidates, "OPENQ4_QUAKE4_ROOT" );
+	FS_AppendEnvPathList( steamRoots, "OPENQ4_STEAM_ROOT" );
+	FS_AppendEnvPathList( steamRoots, "OPENQ4_STEAM_ROOTS" );
+	FS_AppendEnvPathList( steamRoots, "STEAM_COMPAT_CLIENT_INSTALL_PATH" );
+	FS_AppendEnvPathList( explicitLibraryRoots, "OPENQ4_STEAM_LIBRARY" );
+	FS_AppendEnvPathList( explicitLibraryRoots, "OPENQ4_STEAM_LIBRARIES" );
 
 #ifdef WIN32
 	FS_AddUniquePath( steamRoots, "C:/Program Files (x86)/Steam" );
@@ -835,11 +886,22 @@ static void FS_BuildSteamInstallCandidates( idStrList &candidates ) {
 		FS_AddUniquePath( steamRoots, path.c_str() );
 	}
 #else
+	envPath = getenv( "XDG_DATA_HOME" );
+	if ( envPath && envPath[ 0 ] ) {
+		path = envPath;
+		path.AppendPath( "Steam" );
+		FS_AddUniquePath( steamRoots, path.c_str() );
+	}
 	envPath = getenv( "HOME" );
 	if ( envPath && envPath[ 0 ] ) {
 		path = envPath;
 		path.AppendPath( ".steam" );
 		path.AppendPath( "steam" );
+		FS_AddUniquePath( steamRoots, path.c_str() );
+
+		path = envPath;
+		path.AppendPath( ".steam" );
+		path.AppendPath( "root" );
 		FS_AddUniquePath( steamRoots, path.c_str() );
 
 		path = envPath;
@@ -859,11 +921,21 @@ static void FS_BuildSteamInstallCandidates( idStrList &candidates ) {
 	}
 #endif
 
+	for ( int i = 0; i < explicitLibraryRoots.Num(); i++ ) {
+		FS_AddUniquePath( discoveryLibraryRoots, explicitLibraryRoots[ i ] );
+		path = explicitLibraryRoots[ i ];
+		path.AppendPath( "steamapps" );
+		path.AppendPath( "common" );
+		path.AppendPath( "Quake 4" );
+		FS_AddUniquePath( candidates, path.c_str() );
+	}
+
 	for ( int i = 0; i < steamRoots.Num(); i++ ) {
 		libraryRoots.Clear();
 		FS_AddUniquePath( libraryRoots, steamRoots[ i ] );
 		FS_AppendSteamLibrariesFromVdf( steamRoots[ i ], libraryRoots );
 		for ( int j = 0; j < libraryRoots.Num(); j++ ) {
+			FS_AddUniquePath( discoveryLibraryRoots, libraryRoots[ j ] );
 			path = libraryRoots[ j ];
 			path.AppendPath( "steamapps" );
 			path.AppendPath( "common" );
@@ -871,6 +943,11 @@ static void FS_BuildSteamInstallCandidates( idStrList &candidates ) {
 			FS_AddUniquePath( candidates, path.c_str() );
 		}
 	}
+
+	FS_LogPathList( "Steam install discovery roots", steamRoots );
+	FS_LogPathList( "Steam explicit library roots", explicitLibraryRoots );
+	FS_LogPathList( "Steam library roots to probe", discoveryLibraryRoots );
+	FS_LogPathList( "Steam Quake 4 install candidates", candidates );
 }
 
 static void FS_BuildGogInstallCandidates( idStrList &candidates ) {
@@ -4774,9 +4851,9 @@ void idFileSystemLocal::Init( void ) {
 #endif	
 
 	// fs_basepath auto-discovery order:
-	// 1) valid user override
+	// 1) valid fs_basepath override
 	// 2) current working directory
-	// 3) Steam install paths
+	// 3) Steam install paths, including explicit OPENQ4_* environment overrides
 	// 4) GOG install paths
 	if ( fs_basepath.GetString()[0] ) {
 		if ( !FS_HasGameFilesAtBasePath( fs_basepath.GetString() ) ) {

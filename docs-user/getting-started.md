@@ -16,7 +16,7 @@ This guide is for players who want to install openQ4 and start playing as quickl
 2. Download the openQ4 release that matches your CPU architecture.
 3. Install or extract openQ4 to its **own folder**.
 4. Launch `openQ4-client_<arch>`.
-5. On Steam Deck, launch `openQ4-steamdeck` instead.
+5. On Steam Deck, launch `openQ4-steamdeck` when it is included in the package.
 
 openQ4 will try to find your Quake 4 install automatically.
 
@@ -53,7 +53,11 @@ If you prefer a self-contained setup, keep these side by side in the same root f
 
 ### Steam Deck
 
-- Use `openQ4-steamdeck` instead of the normal client launcher.
+- Use `openQ4-steamdeck` when it is included in the package. It enables the `steamdeck` platform profile and sets `OPENQ4_STEAMDECK=1`.
+- Direct `openQ4-client_<arch>` launches on Steam Deck or SteamOS also auto-select the Deck profile while `com_platformProfile` is still `default`.
+- Native Wayland is the default SDL path when available. Set `OPENQ4_FORCE_X11=1` to force the XWayland fallback.
+- Tune Deck controller behavior under `Settings -> Game Options -> Controller`, including gyro, touchpad mode, touchscreen routing, and low-battery rumble caps.
+- Run `listControllers` from the console when reporting Deck input, battery, gyro, touchpad, or touchscreen issues.
 - For more detail, see the [Steam Deck guide](steam-deck.md).
 
 ## If Auto-Detection Fails

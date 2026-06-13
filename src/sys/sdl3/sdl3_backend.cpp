@@ -33,6 +33,8 @@ along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 #endif
 #include "../../framework/Common.h"
 #include "../../framework/Console.h"
+#include "../../framework/FileSystem.h"
+#include "../../framework/licensee.h"
 #include "../../framework/Session.h"
 #include "../../renderer/tr_local.h"
 
@@ -132,7 +134,7 @@ static SDL_Gamepad *s_sdlGamepad = NULL;
 static SDL_Joystick *s_sdlJoystick = NULL;
 static SDL_JoystickID s_sdlGamepadId = 0;
 static SDL_JoystickID s_sdlJoystickId = 0;
-static bool s_sdlDisplayCommandRegistered = false;
+static bool s_sdlDiagnosticCommandsRegistered = false;
 static bool s_sdlDisplaySummaryLogged = false;
 static bool s_sdlVideoDriverSummaryLogged = false;
 static float s_sdlMouseWheelRemainderY = 0.0f;
@@ -156,6 +158,20 @@ static idCVar in_joystickUpAxis("in_joystickUpAxis", "-1", CVAR_SYSTEM | CVAR_AR
 static idCVar in_joystickUpAxisNegative("in_joystickUpAxisNegative", "-1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER, "raw joystick negative vertical/throttle axis (-1 = auto)", -1, 31);
 static idCVar in_joystickRumble("in_joystickRumble", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "enable controller rumble/haptic feedback");
 static idCVar in_joystickRumbleScale("in_joystickRumbleScale", "1.0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "controller rumble strength scale", 0.0f, 2.0f);
+static idCVar in_joystickLowBatteryRumbleThreshold("in_joystickLowBatteryRumbleThreshold", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER, "controller battery percent where rumble output is capped (0 = disabled)", 0, 100);
+static idCVar in_joystickLowBatteryRumbleScale("in_joystickLowBatteryRumbleScale", "0.75", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "maximum effective controller rumble scale below the low-battery threshold", 0.0f, 2.0f);
+static idCVar in_gyro("in_gyro", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "enable SDL gamepad gyro as mouse-look input");
+static idCVar in_gyroSensitivity("in_gyroSensitivity", "1.0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "SDL gamepad gyro mouse-look sensitivity", 0.0f, 8.0f);
+static idCVar in_gyroDeadZone("in_gyroDeadZone", "0.015", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "ignore SDL gamepad gyro rates below this radians-per-second threshold", 0.0f, 2.0f);
+static idCVar in_gyroYawAxis("in_gyroYawAxis", "2", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER, "SDL gamepad gyro data index used for yaw", 0, 2);
+static idCVar in_gyroPitchAxis("in_gyroPitchAxis", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER, "SDL gamepad gyro data index used for pitch", 0, 2);
+static idCVar in_gyroInvertYaw("in_gyroInvertYaw", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "invert SDL gamepad gyro yaw");
+static idCVar in_gyroInvertPitch("in_gyroInvertPitch", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "invert SDL gamepad gyro pitch");
+static idCVar in_touchpadMode("in_touchpadMode", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER, "SDL gamepad touchpad mode: 0=off, 1=menu cursor, 2=mouse-look, 3=button-only", 0, 3);
+static idCVar in_touchpadSensitivity("in_touchpadSensitivity", "1.0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "SDL gamepad touchpad motion sensitivity", 0.0f, 8.0f);
+static idCVar in_touchscreen("in_touchscreen", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "route SDL touchscreen events to menu and loading UI mouse input");
+static idCVar com_steamDeckAutoFrameCap("com_steamDeckAutoFrameCap", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "apply a Steam Deck frame cap when com_maxfps is still at the global default");
+static idCVar com_steamDeckFrameCap("com_steamDeckFrameCap", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER, "Steam Deck frame cap override (0 = detected display refresh, clamped for Deck)", 0, 1000);
 static idCVar r_screen("r_screen", "-1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "SDL3 display index to target (-1 = auto/current display)");
 static idCVar r_multiScreen("r_multiScreen", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "multi-screen mode (0 = single display, 1 = span all displays)", 0, 1);
 
@@ -244,10 +260,26 @@ static Uint16 s_joystickRumbleLow = 0;
 static Uint16 s_joystickRumbleHigh = 0;
 static int s_joystickRumbleUntilTime = 0;
 static int s_joystickRumbleLastUpdateTime = 0;
+static bool s_lowBatteryRumbleScaleActive = false;
+static int s_lowBatteryRumblePercent = -1;
 static const int SDL3_RUMBLE_DEBOUNCE_MSEC = 40;
 static const int SDL3_MAX_JOYSTICK_BUTTONS = 48;
 static bool s_joystickButtonsDown[SDL3_MAX_JOYSTICK_BUTTONS] = { false };
 static Uint8 s_joystickHatState = SDL_HAT_CENTERED;
+static bool s_gamepadGyroEnabled = false;
+static Uint64 s_gamepadGyroLastTimestamp = 0;
+static float s_gamepadGyroRemainderX = 0.0f;
+static float s_gamepadGyroRemainderY = 0.0f;
+static bool s_gamepadTouchpadFingerActive = false;
+static int s_gamepadTouchpadIndex = -1;
+static int s_gamepadTouchpadFinger = -1;
+static float s_gamepadTouchpadLastX = 0.0f;
+static float s_gamepadTouchpadLastY = 0.0f;
+static float s_gamepadTouchpadRemainderX = 0.0f;
+static float s_gamepadTouchpadRemainderY = 0.0f;
+static bool s_touchscreenFingerActive = false;
+static SDL_FingerID s_touchscreenFingerId = 0;
+static bool s_sdlAppInBackground = false;
 static bool s_haveAbsoluteMousePosition = false;
 static int s_absoluteMouseX = 0;
 static int s_absoluteMouseY = 0;
@@ -379,6 +411,18 @@ static void SDL3_ClearInputQueues(void) {
 	s_menuMouseRemainderY = 0.0f;
 	s_sdlRelativeMouseRemainderX = 0.0f;
 	s_sdlRelativeMouseRemainderY = 0.0f;
+	s_gamepadGyroLastTimestamp = 0;
+	s_gamepadGyroRemainderX = 0.0f;
+	s_gamepadGyroRemainderY = 0.0f;
+	s_gamepadTouchpadFingerActive = false;
+	s_gamepadTouchpadIndex = -1;
+	s_gamepadTouchpadFinger = -1;
+	s_gamepadTouchpadLastX = 0.0f;
+	s_gamepadTouchpadLastY = 0.0f;
+	s_gamepadTouchpadRemainderX = 0.0f;
+	s_gamepadTouchpadRemainderY = 0.0f;
+	s_touchscreenFingerActive = false;
+	s_touchscreenFingerId = 0;
 	s_ignoreNextMenuWarpMotion = false;
 	s_menuWarpWindowX = 0.0f;
 	s_menuWarpWindowY = 0.0f;
@@ -531,6 +575,7 @@ static void SDL3_SetMouseHintDefaults(void) {
 	(void)SDL_SetHintWithPriority(SDL_HINT_MOUSE_RELATIVE_MODE_CENTER, "1", SDL_HINT_DEFAULT);
 	(void)SDL_SetHintWithPriority(SDL_HINT_MOUSE_RELATIVE_SYSTEM_SCALE, "0", SDL_HINT_DEFAULT);
 	(void)SDL_SetHintWithPriority(SDL_HINT_MOUSE_RELATIVE_WARP_MOTION, "0", SDL_HINT_DEFAULT);
+	(void)SDL_SetHintWithPriority(SDL_HINT_TOUCH_MOUSE_EVENTS, "0", SDL_HINT_DEFAULT);
 }
 
 static void SDL3_ResetMenuMouseTracking(void) {
@@ -755,6 +800,52 @@ static bool SDL3_UpdateRoutedMouseDelta(float menuMouseX, float menuMouseY, int 
 	return true;
 }
 
+static void SDL3_QueueMouseDelta(int dx, int dy, int eventTime) {
+	if (dx == 0 && dy == 0) {
+		return;
+	}
+
+	Sys_QueEvent(eventTime, SE_MOUSE, dx, dy, 0, NULL);
+	if (dx != 0) {
+		SDL3_QueueMouseInput(M_DELTAX, dx, eventTime);
+	}
+	if (dy != 0) {
+		SDL3_QueueMouseInput(M_DELTAY, dy, eventTime);
+	}
+}
+
+static void SDL3_QueueMouseButtonEvent(int key, bool down, int eventTime, bool pollState) {
+	if (key == 0) {
+		return;
+	}
+
+	Sys_QueEvent(eventTime, SE_KEY, key, down ? 1 : 0, 0, NULL);
+	if (pollState) {
+		SDL3_QueueMouseInput(M_ACTION1 + (key - K_MOUSE1), down ? 1 : 0, eventTime);
+	}
+}
+
+static bool SDL3_SetRoutedCursorFromWindowPosition(float windowMouseX, float windowMouseY, int &dx, int &dy) {
+	float cursorX = 0.0f;
+	float cursorY = 0.0f;
+	if (!SDL3_MapWindowMouseToRoutedCursor(windowMouseX, windowMouseY, cursorX, cursorY)) {
+		SDL3_ResetMenuMouseTracking();
+		return false;
+	}
+
+	if (console != NULL && console->Active()) {
+		console->SetMousePosition(cursorX, cursorY);
+	} else {
+		idUserInterface *activeGui = SDL3_GetActiveMenuGui();
+		if (activeGui != NULL) {
+			activeGui->SetCursor(cursorX, cursorY);
+		}
+	}
+
+	s_menuMouseInsideWindow = true;
+	return SDL3_UpdateRoutedMouseDelta(cursorX, cursorY, dx, dy);
+}
+
 static void SDL3_SyncSystemMouseToActiveCursor(void) {
 	if (!SDL3_ShouldRouteMenuMouse() || !s_sdlWindow) {
 		return;
@@ -864,6 +955,53 @@ static float SDL3_ClampUnit(float value) {
 
 static float SDL3_ClampRumbleScale(float value) {
 	return SDL3_ClampRange(value, 0.0f, 2.0f);
+}
+
+static SDL_PowerState SDL3_GetControllerPowerInfo(int &percent) {
+	percent = -1;
+	if (s_sdlGamepad) {
+		return SDL_GetGamepadPowerInfo(s_sdlGamepad, &percent);
+	}
+	if (s_sdlJoystick) {
+		return SDL_GetJoystickPowerInfo(s_sdlJoystick, &percent);
+	}
+	return SDL_POWERSTATE_UNKNOWN;
+}
+
+static void SDL3_UpdateLowBatteryRumbleLog(bool active, int percent, float cap) {
+	if (active == s_lowBatteryRumbleScaleActive && (!active || percent == s_lowBatteryRumblePercent)) {
+		return;
+	}
+
+	if (active) {
+		common->Printf("controller: battery at %d%%; capping effective rumble scale to %.2f\n", percent, cap);
+	} else if (s_lowBatteryRumbleScaleActive) {
+		common->Printf("controller: battery recovered; restoring configured rumble scale.\n");
+	}
+
+	s_lowBatteryRumbleScaleActive = active;
+	s_lowBatteryRumblePercent = active ? percent : -1;
+}
+
+static float SDL3_GetEffectiveRumbleScale(void) {
+	const float configuredScale = SDL3_ClampRumbleScale(in_joystickRumbleScale.GetFloat());
+	const int threshold = in_joystickLowBatteryRumbleThreshold.GetInteger();
+	const float lowBatteryCap = SDL3_ClampRumbleScale(in_joystickLowBatteryRumbleScale.GetFloat());
+
+	if (configuredScale <= 0.0f || lowBatteryCap >= configuredScale || threshold <= 0) {
+		SDL3_UpdateLowBatteryRumbleLog(false, -1, lowBatteryCap);
+		return configuredScale;
+	}
+
+	int percent = -1;
+	const SDL_PowerState powerState = SDL3_GetControllerPowerInfo(percent);
+	const bool lowBattery =
+		powerState == SDL_POWERSTATE_ON_BATTERY &&
+		percent >= 0 &&
+		percent <= threshold;
+
+	SDL3_UpdateLowBatteryRumbleLog(lowBattery, percent, lowBatteryCap);
+	return lowBattery ? lowBatteryCap : configuredScale;
 }
 
 static float SDL3_NormalizeSignedAxisFloat(Sint16 value) {
@@ -1345,9 +1483,15 @@ static void SDL3_CloseGamepad(int eventTime) {
 
 	SDL3_StopControllerRumble();
 	SDL3_ReleaseGamepadState(eventTime);
+	if (s_gamepadGyroEnabled) {
+		(void)SDL_SetGamepadSensorEnabled(s_sdlGamepad, SDL_SENSOR_GYRO, false);
+	}
 	SDL_CloseGamepad(s_sdlGamepad);
 	s_sdlGamepad = NULL;
 	s_sdlGamepadId = 0;
+	s_gamepadGyroEnabled = false;
+	s_gamepadGyroLastTimestamp = 0;
+	s_gamepadTouchpadFingerActive = false;
 	SDL3_ClearJoystickState();
 }
 
@@ -1364,6 +1508,329 @@ static void SDL3_CloseJoystick(int eventTime) {
 	SDL3_ClearJoystickState();
 }
 
+static int SDL3_ClampSensorAxisIndex(int axis) {
+	if (axis < 0) {
+		return 0;
+	}
+	if (axis > 2) {
+		return 2;
+	}
+	return axis;
+}
+
+static float SDL3_ApplyDeadZone(float value, float deadZone) {
+	if (fabsf(value) < deadZone) {
+		return 0.0f;
+	}
+	return value;
+}
+
+static Uint64 SDL3_GamepadSensorTimestamp(const SDL_GamepadSensorEvent &event) {
+	if (event.sensor_timestamp != 0) {
+		return event.sensor_timestamp;
+	}
+	return event.timestamp;
+}
+
+static void SDL3_UpdateGamepadSensorState(bool logCapabilities) {
+	s_gamepadGyroEnabled = false;
+	s_gamepadGyroLastTimestamp = 0;
+	s_gamepadGyroRemainderX = 0.0f;
+	s_gamepadGyroRemainderY = 0.0f;
+
+	if (!s_sdlGamepad) {
+		return;
+	}
+
+	const int touchpadCount = SDL_GetNumGamepadTouchpads(s_sdlGamepad);
+	const bool hasGyro = SDL_GamepadHasSensor(s_sdlGamepad, SDL_SENSOR_GYRO);
+	if (logCapabilities) {
+		common->Printf("controller: SDL gamepad capabilities: touchpads=%d gyro=%s\n", touchpadCount, hasGyro ? "yes" : "no");
+	}
+
+	if (!hasGyro) {
+		return;
+	}
+
+	const bool wantsGyro = in_joystick.GetBool() && in_gyro.GetBool();
+	if (!SDL_SetGamepadSensorEnabled(s_sdlGamepad, SDL_SENSOR_GYRO, wantsGyro)) {
+		if (wantsGyro) {
+			common->Printf("controller: failed to enable SDL gamepad gyro: %s\n", SDL_GetError());
+		}
+		return;
+	}
+
+	s_gamepadGyroEnabled = wantsGyro;
+	if (logCapabilities && wantsGyro) {
+		const float dataRate = SDL_GetGamepadSensorDataRate(s_sdlGamepad, SDL_SENSOR_GYRO);
+		if (dataRate > 0.0f) {
+			common->Printf("controller: SDL gamepad gyro enabled at %.1f Hz\n", dataRate);
+		} else {
+			common->Printf("controller: SDL gamepad gyro enabled\n");
+		}
+	}
+}
+
+static void SDL3_HandleGamepadGyroEvent(const SDL_GamepadSensorEvent &event, int eventTime) {
+	if (!in_joystick.GetBool() || !in_gyro.GetBool() || !s_sdlGamepad || event.which != s_sdlGamepadId || event.sensor != SDL_SENSOR_GYRO) {
+		return;
+	}
+	if (!s_gamepadGyroEnabled) {
+		SDL3_UpdateGamepadSensorState(false);
+		if (!s_gamepadGyroEnabled) {
+			return;
+		}
+	}
+	if (!SDL3_IsMouseCaptured() || SDL3_ShouldRouteMenuMouse()) {
+		s_gamepadGyroLastTimestamp = SDL3_GamepadSensorTimestamp(event);
+		s_gamepadGyroRemainderX = 0.0f;
+		s_gamepadGyroRemainderY = 0.0f;
+		return;
+	}
+
+	const Uint64 sensorTimestamp = SDL3_GamepadSensorTimestamp(event);
+	if (sensorTimestamp == 0 || s_gamepadGyroLastTimestamp == 0 || sensorTimestamp <= s_gamepadGyroLastTimestamp) {
+		s_gamepadGyroLastTimestamp = sensorTimestamp;
+		return;
+	}
+
+	const Uint64 deltaNs = sensorTimestamp - s_gamepadGyroLastTimestamp;
+	s_gamepadGyroLastTimestamp = sensorTimestamp;
+
+	float deltaSeconds = static_cast<float>(static_cast<double>(deltaNs) / 1000000000.0);
+	deltaSeconds = SDL3_ClampRange(deltaSeconds, 0.0f, 0.050f);
+	if (deltaSeconds <= 0.0f) {
+		return;
+	}
+
+	const int yawAxis = SDL3_ClampSensorAxisIndex(in_gyroYawAxis.GetInteger());
+	const int pitchAxis = SDL3_ClampSensorAxisIndex(in_gyroPitchAxis.GetInteger());
+	const float deadZone = SDL3_ClampRange(in_gyroDeadZone.GetFloat(), 0.0f, 2.0f);
+	const float sensitivity = SDL3_ClampRange(in_gyroSensitivity.GetFloat(), 0.0f, 8.0f);
+	if (sensitivity <= 0.0f) {
+		return;
+	}
+
+	float yawRate = SDL3_ApplyDeadZone(event.data[yawAxis], deadZone);
+	float pitchRate = SDL3_ApplyDeadZone(event.data[pitchAxis], deadZone);
+	if (in_gyroInvertYaw.GetBool()) {
+		yawRate = -yawRate;
+	}
+	if (in_gyroInvertPitch.GetBool()) {
+		pitchRate = -pitchRate;
+	}
+
+	static const float RADIANS_TO_CLASSIC_MOUSE_COUNTS = 2600.0f;
+	const float yawCounts = yawRate * deltaSeconds * RADIANS_TO_CLASSIC_MOUSE_COUNTS * sensitivity;
+	const float pitchCounts = pitchRate * deltaSeconds * RADIANS_TO_CLASSIC_MOUSE_COUNTS * sensitivity;
+	const int dx = SDL3_ConsumeMouseDelta(yawCounts, s_gamepadGyroRemainderX);
+	const int dy = SDL3_ConsumeMouseDelta(pitchCounts, s_gamepadGyroRemainderY);
+	SDL3_QueueMouseDelta(dx, dy, eventTime);
+}
+
+static bool SDL3_GamepadTouchpadEventMatchesTrackedFinger(const SDL_GamepadTouchpadEvent &event) {
+	return s_gamepadTouchpadFingerActive &&
+		event.touchpad == s_gamepadTouchpadIndex &&
+		event.finger == s_gamepadTouchpadFinger;
+}
+
+static void SDL3_OpenFirstController(void);
+static bool SDL3_IsSteamDeckPlatformProfile(void);
+
+static void SDL3_HandleGamepadTouchpadEvent(const SDL_GamepadTouchpadEvent &event, int eventTime) {
+	if (!in_joystick.GetBool() || !s_sdlGamepad || event.which != s_sdlGamepadId) {
+		return;
+	}
+
+	const int mode = in_touchpadMode.GetInteger();
+	if (mode <= 0 || mode >= 3) {
+		if (event.type == SDL_EVENT_GAMEPAD_TOUCHPAD_UP && SDL3_GamepadTouchpadEventMatchesTrackedFinger(event)) {
+			s_gamepadTouchpadFingerActive = false;
+		}
+		return;
+	}
+
+	if (event.type == SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN) {
+		if (s_gamepadTouchpadFingerActive) {
+			return;
+		}
+		s_gamepadTouchpadFingerActive = true;
+		s_gamepadTouchpadIndex = event.touchpad;
+		s_gamepadTouchpadFinger = event.finger;
+		s_gamepadTouchpadLastX = event.x;
+		s_gamepadTouchpadLastY = event.y;
+		s_gamepadTouchpadRemainderX = 0.0f;
+		s_gamepadTouchpadRemainderY = 0.0f;
+		return;
+	}
+
+	if (!SDL3_GamepadTouchpadEventMatchesTrackedFinger(event)) {
+		return;
+	}
+
+	if (event.type == SDL_EVENT_GAMEPAD_TOUCHPAD_UP) {
+		s_gamepadTouchpadFingerActive = false;
+		return;
+	}
+	if (event.type != SDL_EVENT_GAMEPAD_TOUCHPAD_MOTION) {
+		return;
+	}
+
+	bool shouldRoute = false;
+	if (mode == 1) {
+		shouldRoute = SDL3_ShouldRouteMenuMouse();
+	} else if (mode == 2) {
+		shouldRoute = SDL3_IsMouseCaptured() && !SDL3_ShouldRouteMenuMouse();
+	}
+	if (!shouldRoute) {
+		s_gamepadTouchpadLastX = event.x;
+		s_gamepadTouchpadLastY = event.y;
+		s_gamepadTouchpadRemainderX = 0.0f;
+		s_gamepadTouchpadRemainderY = 0.0f;
+		return;
+	}
+
+	int windowWidth = SCREEN_WIDTH;
+	int windowHeight = SCREEN_HEIGHT;
+	if (s_sdlWindow) {
+		(void)SDL_GetWindowSize(s_sdlWindow, &windowWidth, &windowHeight);
+		if (windowWidth <= 0) {
+			windowWidth = SCREEN_WIDTH;
+		}
+		if (windowHeight <= 0) {
+			windowHeight = SCREEN_HEIGHT;
+		}
+	}
+
+	const float sensitivity = SDL3_ClampRange(in_touchpadSensitivity.GetFloat(), 0.0f, 8.0f);
+	const float deltaX = (event.x - s_gamepadTouchpadLastX) * static_cast<float>(windowWidth) * sensitivity;
+	const float deltaY = (event.y - s_gamepadTouchpadLastY) * static_cast<float>(windowHeight) * sensitivity;
+	s_gamepadTouchpadLastX = event.x;
+	s_gamepadTouchpadLastY = event.y;
+
+	const int dx = SDL3_ConsumeMouseDelta(deltaX, s_gamepadTouchpadRemainderX);
+	const int dy = SDL3_ConsumeMouseDelta(deltaY, s_gamepadTouchpadRemainderY);
+	SDL3_QueueMouseDelta(dx, dy, eventTime);
+}
+
+static void SDL3_HandleFingerEvent(const SDL_TouchFingerEvent &event, int eventTime) {
+	if (!in_touchscreen.GetBool() || !s_sdlWindow) {
+		return;
+	}
+
+	const SDL_WindowID windowId = SDL_GetWindowID(s_sdlWindow);
+	if (event.windowID != 0 && windowId != 0 && event.windowID != windowId) {
+		return;
+	}
+
+	const bool down = event.type == SDL_EVENT_FINGER_DOWN;
+	const bool up = event.type == SDL_EVENT_FINGER_UP || event.type == SDL_EVENT_FINGER_CANCELED;
+	const bool motion = event.type == SDL_EVENT_FINGER_MOTION;
+
+	if (down) {
+		if (s_touchscreenFingerActive) {
+			return;
+		}
+		s_touchscreenFingerActive = true;
+		s_touchscreenFingerId = event.fingerID;
+	} else if (!s_touchscreenFingerActive || event.fingerID != s_touchscreenFingerId) {
+		return;
+	}
+
+	int windowWidth = SCREEN_WIDTH;
+	int windowHeight = SCREEN_HEIGHT;
+	(void)SDL_GetWindowSize(s_sdlWindow, &windowWidth, &windowHeight);
+	if (windowWidth <= 0) {
+		windowWidth = SCREEN_WIDTH;
+	}
+	if (windowHeight <= 0) {
+		windowHeight = SCREEN_HEIGHT;
+	}
+
+	const float windowMouseX = SDL3_ClampRange(event.x, 0.0f, 1.0f) * static_cast<float>(windowWidth);
+	const float windowMouseY = SDL3_ClampRange(event.y, 0.0f, 1.0f) * static_cast<float>(windowHeight);
+	int dx = 0;
+	int dy = 0;
+	const bool routed = SDL3_ShouldRouteMenuMouse() && SDL3_SetRoutedCursorFromWindowPosition(windowMouseX, windowMouseY, dx, dy);
+
+	(void)motion;
+	if (down || up) {
+		const bool acceptsLoadingInput = openQ4_AcceptingLoadingContinueInput();
+		if (routed || acceptsLoadingInput) {
+			SDL3_QueueMouseButtonEvent(K_MOUSE1, down, eventTime, routed);
+		}
+	}
+
+	if (up) {
+		s_touchscreenFingerActive = false;
+		s_touchscreenFingerId = 0;
+	}
+}
+
+static void SDL3_HandleAppBackgroundTransition(int eventTime, const char *reason) {
+	if (s_sdlAppInBackground) {
+		return;
+	}
+
+	s_sdlAppInBackground = true;
+	win32.activeApp = false;
+	win32.movingWindow = false;
+	s_menuMouseInsideWindow = false;
+	SDL3_InvalidateMenuMouseRouting();
+
+	common->Printf("SDL3: application entering background (%s); releasing input and writing config.\n", reason);
+	Sys_GrabMouseCursor(false);
+	SDL3_StopControllerRumble();
+	SDL3_ReleaseGamepadState(eventTime);
+	SDL3_ReleaseJoystickState(eventTime);
+	SDL3_ClearJoystickState();
+	if (s_sdlGamepad && s_gamepadGyroEnabled) {
+		(void)SDL_SetGamepadSensorEnabled(s_sdlGamepad, SDL_SENSOR_GYRO, false);
+		s_gamepadGyroEnabled = false;
+	}
+	SDL3_ClearInputQueues();
+	idKeyInput::ClearStates();
+	SDL3_UpdateCursorVisibility();
+	if (session != NULL) {
+		session->SetPlayingSoundWorld();
+	}
+
+	if (cvarSystem != NULL && cvarSystem->IsInitialized()) {
+		cvarSystem->SetModifiedFlags(CVAR_ARCHIVE);
+	}
+	if (common != NULL && common->IsInitialized() && fileSystem != NULL && fileSystem->IsInitialized()) {
+		common->WriteConfigToFile(CONFIG_FILE);
+	}
+}
+
+static void SDL3_HandleAppForegroundTransition(int eventTime, const char *reason) {
+	if (!s_sdlAppInBackground) {
+		return;
+	}
+
+	s_sdlAppInBackground = false;
+	win32.activeApp = true;
+	win32.movingWindow = false;
+	s_menuMouseInsideWindow = true;
+	SDL3_InvalidateMenuMouseRouting();
+	SDL3_ClearInputQueues();
+	idKeyInput::ClearStates();
+
+	common->Printf("SDL3: application returned to foreground (%s); reacquiring input.\n", reason);
+	SDL3_OpenFirstController();
+	if (s_sdlGamepad) {
+		SDL3_UpdateGamepadSensorState(false);
+		SDL3_UpdateGamepadAxes(eventTime);
+	} else if (s_sdlJoystick) {
+		SDL3_UpdateJoystickAxes();
+	}
+	Sys_GrabMouseCursor(true);
+	SDL3_UpdateCursorVisibility();
+	if (session != NULL) {
+		session->SetPlayingSoundWorld();
+	}
+}
+
 static bool SDL3_OpenGamepad(SDL_JoystickID instanceId) {
 	SDL_Gamepad *pad = SDL_OpenGamepad(instanceId);
 	if (!pad) {
@@ -1377,6 +1844,7 @@ static bool SDL3_OpenGamepad(SDL_JoystickID instanceId) {
 	SDL3_ClearControllerTrackingState();
 
 	SDL3_UpdateGamepadAxes(Sys_Milliseconds());
+	SDL3_UpdateGamepadSensorState(true);
 
 	const char *name = SDL_GetGamepadName(pad);
 	if (name && name[0] != '\0') {
@@ -1443,6 +1911,218 @@ static void SDL3_OpenFirstController(void) {
 			if (SDL3_OpenJoystick(joysticks[i])) {
 				break;
 			}
+		}
+		SDL_free(joysticks);
+	}
+}
+
+static const char *SDL3_PowerStateName(SDL_PowerState state) {
+	switch (state) {
+		case SDL_POWERSTATE_ERROR: return "error";
+		case SDL_POWERSTATE_UNKNOWN: return "unknown";
+		case SDL_POWERSTATE_ON_BATTERY: return "on-battery";
+		case SDL_POWERSTATE_NO_BATTERY: return "no-battery";
+		case SDL_POWERSTATE_CHARGING: return "charging";
+		case SDL_POWERSTATE_CHARGED: return "charged";
+		default: return "unrecognized";
+	}
+}
+
+static const char *SDL3_JoystickTypeName(SDL_JoystickType type) {
+	switch (type) {
+		case SDL_JOYSTICK_TYPE_UNKNOWN: return "unknown";
+		case SDL_JOYSTICK_TYPE_GAMEPAD: return "gamepad";
+		case SDL_JOYSTICK_TYPE_WHEEL: return "wheel";
+		case SDL_JOYSTICK_TYPE_ARCADE_STICK: return "arcade-stick";
+		case SDL_JOYSTICK_TYPE_FLIGHT_STICK: return "flight-stick";
+		case SDL_JOYSTICK_TYPE_DANCE_PAD: return "dance-pad";
+		case SDL_JOYSTICK_TYPE_GUITAR: return "guitar";
+		case SDL_JOYSTICK_TYPE_DRUM_KIT: return "drum-kit";
+		case SDL_JOYSTICK_TYPE_ARCADE_PAD: return "arcade-pad";
+		case SDL_JOYSTICK_TYPE_THROTTLE: return "throttle";
+		case SDL_JOYSTICK_TYPE_COUNT: return "count";
+		default: return "unrecognized";
+	}
+}
+
+static const char *SDL3_NonEmptyString(const char *value) {
+	return (value != NULL && value[0] != '\0') ? value : "<unreported>";
+}
+
+static void SDL3_GUIDToText(SDL_GUID guid, char *buffer, int bufferSize) {
+	if (buffer == NULL || bufferSize <= 0) {
+		return;
+	}
+	buffer[0] = '\0';
+	SDL_GUIDToString(guid, buffer, bufferSize);
+	if (buffer[0] == '\0') {
+		idStr::snPrintf(buffer, bufferSize, "<unreported>");
+	}
+}
+
+static void SDL3_PrintGamepadSensorLine(SDL_Gamepad *pad, SDL_SensorType sensor, const char *label) {
+	const bool hasSensor = SDL_GamepadHasSensor(pad, sensor);
+	if (!hasSensor) {
+		common->Printf("    %s: no\n", label);
+		return;
+	}
+
+	const bool enabled = SDL_GamepadSensorEnabled(pad, sensor);
+	const float dataRate = SDL_GetGamepadSensorDataRate(pad, sensor);
+	if (dataRate > 0.0f) {
+		common->Printf("    %s: yes enabled=%s rate=%.1f Hz\n", label, enabled ? "yes" : "no", dataRate);
+	} else {
+		common->Printf("    %s: yes enabled=%s rate=unreported\n", label, enabled ? "yes" : "no");
+	}
+}
+
+static void SDL3_PrintControllerPowerLine(const char *prefix, SDL_PowerState state, int percent) {
+	if (percent >= 0) {
+		common->Printf("%s%s %d%%\n", prefix, SDL3_PowerStateName(state), percent);
+	} else {
+		common->Printf("%s%s\n", prefix, SDL3_PowerStateName(state));
+	}
+}
+
+static void SDL3_PrintActiveGamepadDetails(void) {
+	if (!s_sdlGamepad) {
+		common->Printf("  active gamepad: none\n");
+		return;
+	}
+
+	const SDL_GamepadType type = SDL_GetGamepadType(s_sdlGamepad);
+	const SDL_GamepadType realType = SDL_GetRealGamepadType(s_sdlGamepad);
+	const char *typeName = SDL_GetGamepadStringForType(type);
+	const char *realTypeName = SDL_GetGamepadStringForType(realType);
+	SDL_Joystick *joystick = SDL_GetGamepadJoystick(s_sdlGamepad);
+	SDL_GUID padGuid = {};
+	if (joystick != NULL) {
+		padGuid = SDL_GetJoystickGUID(joystick);
+	}
+	char guid[64];
+	SDL3_GUIDToText(padGuid, guid, sizeof(guid));
+
+	common->Printf("  active gamepad: id=%u name=%s\n", static_cast<unsigned int>(s_sdlGamepadId), SDL3_NonEmptyString(SDL_GetGamepadName(s_sdlGamepad)));
+	common->Printf("    path: %s\n", SDL3_NonEmptyString(SDL_GetGamepadPath(s_sdlGamepad)));
+	common->Printf("    serial: %s\n", SDL3_NonEmptyString(SDL_GetGamepadSerial(s_sdlGamepad)));
+	common->Printf("    guid: %s\n", guid);
+	common->Printf("    type: %s realType=%s steamHandle=%s\n",
+		SDL3_NonEmptyString(typeName),
+		SDL3_NonEmptyString(realTypeName),
+		SDL_GetGamepadSteamHandle(s_sdlGamepad) != 0 ? "yes" : "no");
+
+	int powerPercent = -1;
+	const SDL_PowerState powerState = SDL_GetGamepadPowerInfo(s_sdlGamepad, &powerPercent);
+	SDL3_PrintControllerPowerLine("    power: ", powerState, powerPercent);
+
+	const int touchpadCount = SDL_GetNumGamepadTouchpads(s_sdlGamepad);
+	common->Printf("    touchpads: %d\n", touchpadCount);
+	for (int i = 0; i < touchpadCount; ++i) {
+		common->Printf("      [%d] fingers=%d\n", i, SDL_GetNumGamepadTouchpadFingers(s_sdlGamepad, i));
+	}
+
+	SDL3_PrintGamepadSensorLine(s_sdlGamepad, SDL_SENSOR_GYRO, "gyro");
+	SDL3_PrintGamepadSensorLine(s_sdlGamepad, SDL_SENSOR_ACCEL, "accelerometer");
+	common->Printf("    gyro route: cvar=%s enabled=%s sensitivity=%.3f deadZone=%.3f yawAxis=%d pitchAxis=%d invertYaw=%s invertPitch=%s\n",
+		in_gyro.GetBool() ? "on" : "off",
+		s_gamepadGyroEnabled ? "yes" : "no",
+		in_gyroSensitivity.GetFloat(),
+		in_gyroDeadZone.GetFloat(),
+		SDL3_ClampSensorAxisIndex(in_gyroYawAxis.GetInteger()),
+		SDL3_ClampSensorAxisIndex(in_gyroPitchAxis.GetInteger()),
+		in_gyroInvertYaw.GetBool() ? "yes" : "no",
+		in_gyroInvertPitch.GetBool() ? "yes" : "no");
+	common->Printf("    touchpad route: mode=%d sensitivity=%.3f trackedFinger=%s\n",
+		in_touchpadMode.GetInteger(),
+		in_touchpadSensitivity.GetFloat(),
+		s_gamepadTouchpadFingerActive ? "yes" : "no");
+}
+
+static void SDL3_PrintActiveJoystickDetails(void) {
+	if (!s_sdlJoystick) {
+		common->Printf("  active joystick: none\n");
+		return;
+	}
+
+	char guid[64];
+	SDL3_GUIDToText(SDL_GetJoystickGUID(s_sdlJoystick), guid, sizeof(guid));
+
+	common->Printf("  active joystick: id=%u name=%s\n", static_cast<unsigned int>(s_sdlJoystickId), SDL3_NonEmptyString(SDL_GetJoystickName(s_sdlJoystick)));
+	common->Printf("    path: %s\n", SDL3_NonEmptyString(SDL_GetJoystickPath(s_sdlJoystick)));
+	common->Printf("    serial: %s\n", SDL3_NonEmptyString(SDL_GetJoystickSerial(s_sdlJoystick)));
+	common->Printf("    guid: %s\n", guid);
+	common->Printf("    type: %s axes=%d buttons=%d hats=%d dedicatedLook=%s\n",
+		SDL3_JoystickTypeName(SDL_GetJoystickType(s_sdlJoystick)),
+		SDL_GetNumJoystickAxes(s_sdlJoystick),
+		SDL_GetNumJoystickButtons(s_sdlJoystick),
+		SDL_GetNumJoystickHats(s_sdlJoystick),
+		SDL3_ShouldUseDedicatedJoystickLookAxes(SDL_GetNumJoystickAxes(s_sdlJoystick)) ? "yes" : "no");
+
+	int powerPercent = -1;
+	const SDL_PowerState powerState = SDL_GetJoystickPowerInfo(s_sdlJoystick, &powerPercent);
+	SDL3_PrintControllerPowerLine("    power: ", powerState, powerPercent);
+}
+
+static void SDL3_ListControllers_f(const idCmdArgs &args) {
+	(void)args;
+
+	common->Printf("SDL3 controller diagnostics:\n");
+	common->Printf("  in_joystick=%s gamepadSubsystem=%s joystickSubsystem=%s\n",
+		in_joystick.GetBool() ? "on" : "off",
+		s_sdlGamepadSubsystemActive ? "active" : "inactive",
+		s_sdlJoystickSubsystemActive ? "active" : "inactive");
+	common->Printf("  Steam Deck profile: %s autoFrameCap=%s deckFrameCap=%d com_maxfps=%d\n",
+		SDL3_IsSteamDeckPlatformProfile() ? "yes" : "no",
+		com_steamDeckAutoFrameCap.GetBool() ? "on" : "off",
+		com_steamDeckFrameCap.GetInteger(),
+		com_maxfps.GetInteger());
+	common->Printf("  touchscreen route: %s activeFinger=%s\n",
+		in_touchscreen.GetBool() ? "on" : "off",
+		s_touchscreenFingerActive ? "yes" : "no");
+	common->Printf("  rumble: enabled=%s scale=%.3f lowBatteryThreshold=%d lowBatteryScale=%.3f lowBatteryCapActive=%s\n",
+		in_joystickRumble.GetBool() ? "yes" : "no",
+		in_joystickRumbleScale.GetFloat(),
+		in_joystickLowBatteryRumbleThreshold.GetInteger(),
+		in_joystickLowBatteryRumbleScale.GetFloat(),
+		s_lowBatteryRumbleScaleActive ? "yes" : "no");
+
+	SDL3_PrintActiveGamepadDetails();
+	SDL3_PrintActiveJoystickDetails();
+
+	int gamepadCount = 0;
+	SDL_JoystickID *gamepads = SDL_GetGamepads(&gamepadCount);
+	common->Printf("  SDL gamepads (%d):\n", gamepadCount);
+	if (gamepads != NULL) {
+		for (int i = 0; i < gamepadCount; ++i) {
+			const SDL_JoystickID id = gamepads[i];
+			const char *typeName = SDL_GetGamepadStringForType(SDL_GetGamepadTypeForID(id));
+			const char *realTypeName = SDL_GetGamepadStringForType(SDL_GetRealGamepadTypeForID(id));
+			common->Printf("    [%d] id=%u%s name=%s type=%s realType=%s path=%s\n",
+				i,
+				static_cast<unsigned int>(id),
+				(id == s_sdlGamepadId) ? " active" : "",
+				SDL3_NonEmptyString(SDL_GetGamepadNameForID(id)),
+				SDL3_NonEmptyString(typeName),
+				SDL3_NonEmptyString(realTypeName),
+				SDL3_NonEmptyString(SDL_GetGamepadPathForID(id)));
+		}
+		SDL_free(gamepads);
+	}
+
+	int joystickCount = 0;
+	SDL_JoystickID *joysticks = SDL_GetJoysticks(&joystickCount);
+	common->Printf("  SDL joysticks (%d):\n", joystickCount);
+	if (joysticks != NULL) {
+		for (int i = 0; i < joystickCount; ++i) {
+			const SDL_JoystickID id = joysticks[i];
+			common->Printf("    [%d] id=%u%s gamepad=%s name=%s type=%s path=%s\n",
+				i,
+				static_cast<unsigned int>(id),
+				(id == s_sdlJoystickId) ? " active" : "",
+				SDL_IsGamepad(id) ? "yes" : "no",
+				SDL3_NonEmptyString(SDL_GetJoystickNameForID(id)),
+				SDL3_JoystickTypeName(SDL_GetJoystickTypeForID(id)),
+				SDL3_NonEmptyString(SDL_GetJoystickPathForID(id)));
 		}
 		SDL_free(joysticks);
 	}
@@ -1891,6 +2571,55 @@ static sdl3DisplaySelection_t SDL3_ResolveTargetDisplay(bool warnOnInvalidScreen
 	}
 
 	return selection;
+}
+
+static bool SDL3_IsSteamDeckPlatformProfile(void) {
+	if (cvarSystem == NULL || !cvarSystem->IsInitialized()) {
+		return false;
+	}
+	const char *profile = cvarSystem->GetCVarString("com_platformProfile");
+	return profile != NULL && idStr::Icmp(profile, "steamdeck") == 0;
+}
+
+static int SDL3_DetectSteamDeckFrameCap(void) {
+	const int configuredCap = com_steamDeckFrameCap.GetInteger();
+	if (configuredCap > 0) {
+		return idMath::ClampInt(1, 1000, configuredCap);
+	}
+
+	int detectedRefresh = 60;
+	const sdl3DisplaySelection_t selectedDisplay = SDL3_ResolveTargetDisplay(false);
+	SDL_DisplayID display = selectedDisplay.id;
+	if (display == 0) {
+		display = SDL_GetPrimaryDisplay();
+	}
+
+	if (display != 0) {
+		const SDL_DisplayMode *desktopMode = SDL_GetDesktopDisplayMode(display);
+		if (desktopMode != NULL && desktopMode->refresh_rate > 1.0f) {
+			detectedRefresh = static_cast<int>(desktopMode->refresh_rate + 0.5f);
+		}
+	}
+
+	return idMath::ClampInt(40, 90, detectedRefresh);
+}
+
+static void SDL3_ApplySteamDeckPerformanceDefaults(void) {
+	static const int OPENQ4_GLOBAL_DEFAULT_MAXFPS = 240;
+
+	if (!SDL3_IsSteamDeckPlatformProfile() || !com_steamDeckAutoFrameCap.GetBool()) {
+		return;
+	}
+
+	const int currentMaxFps = com_maxfps.GetInteger();
+	if (currentMaxFps != OPENQ4_GLOBAL_DEFAULT_MAXFPS) {
+		common->Printf("Steam Deck performance defaults: preserving configured com_maxfps %d.\n", currentMaxFps);
+		return;
+	}
+
+	const int deckFrameCap = SDL3_DetectSteamDeckFrameCap();
+	com_maxfps.SetInteger(deckFrameCap);
+	common->Printf("Steam Deck performance defaults: setting com_maxfps to %d.\n", deckFrameCap);
 }
 
 static bool SDL3_GetDisplayWindowedPlacementBounds(SDL_DisplayID display, SDL_Rect &bounds) {
@@ -2835,12 +3564,43 @@ bool Sys_SDL_PumpEvents(void) {
 		}
 		in_joystick.ClearModified();
 	}
-	if (in_joystickRumble.IsModified() || in_joystickRumbleScale.IsModified()) {
+	if (in_joystickRumble.IsModified() || in_joystickRumbleScale.IsModified() ||
+			in_joystickLowBatteryRumbleThreshold.IsModified() || in_joystickLowBatteryRumbleScale.IsModified()) {
 		if (!in_joystickRumble.GetBool() || in_joystickRumbleScale.GetFloat() <= 0.0f) {
 			SDL3_StopControllerRumble();
 		}
+		s_lowBatteryRumbleScaleActive = false;
+		s_lowBatteryRumblePercent = -1;
 		in_joystickRumble.ClearModified();
 		in_joystickRumbleScale.ClearModified();
+		in_joystickLowBatteryRumbleThreshold.ClearModified();
+		in_joystickLowBatteryRumbleScale.ClearModified();
+	}
+	if (in_gyro.IsModified() || in_gyroSensitivity.IsModified() || in_gyroDeadZone.IsModified() ||
+			in_gyroYawAxis.IsModified() || in_gyroPitchAxis.IsModified() ||
+			in_gyroInvertYaw.IsModified() || in_gyroInvertPitch.IsModified() ||
+			in_touchpadMode.IsModified() || in_touchpadSensitivity.IsModified() ||
+			in_touchscreen.IsModified()) {
+		SDL3_UpdateGamepadSensorState(false);
+		s_gamepadGyroLastTimestamp = 0;
+		s_gamepadGyroRemainderX = 0.0f;
+		s_gamepadGyroRemainderY = 0.0f;
+		s_gamepadTouchpadFingerActive = false;
+		s_gamepadTouchpadRemainderX = 0.0f;
+		s_gamepadTouchpadRemainderY = 0.0f;
+		if (!in_touchscreen.GetBool()) {
+			s_touchscreenFingerActive = false;
+		}
+		in_gyro.ClearModified();
+		in_gyroSensitivity.ClearModified();
+		in_gyroDeadZone.ClearModified();
+		in_gyroYawAxis.ClearModified();
+		in_gyroPitchAxis.ClearModified();
+		in_gyroInvertYaw.ClearModified();
+		in_gyroInvertPitch.ClearModified();
+		in_touchpadMode.ClearModified();
+		in_touchpadSensitivity.ClearModified();
+		in_touchscreen.ClearModified();
 	}
 	if (in_joystickDeadZone.IsModified() || in_joystickTriggerThreshold.IsModified() ||
 			in_joystickLookSensitivity.IsModified() || in_joystickLookCurve.IsModified() ||
@@ -2893,6 +3653,30 @@ bool Sys_SDL_PumpEvents(void) {
 		switch (event.type) {
 			case SDL_EVENT_QUIT:
 				cmdSystem->BufferCommandText(CMD_EXEC_APPEND, "quit\n");
+				break;
+
+			case SDL_EVENT_TERMINATING:
+				SDL3_HandleAppBackgroundTransition(eventTime, "terminating");
+				break;
+
+			case SDL_EVENT_WILL_ENTER_BACKGROUND:
+				SDL3_HandleAppBackgroundTransition(eventTime, "will enter background");
+				break;
+
+			case SDL_EVENT_DID_ENTER_BACKGROUND:
+				SDL3_HandleAppBackgroundTransition(eventTime, "did enter background");
+				break;
+
+			case SDL_EVENT_WILL_ENTER_FOREGROUND:
+				SDL3_HandleAppForegroundTransition(eventTime, "will enter foreground");
+				break;
+
+			case SDL_EVENT_DID_ENTER_FOREGROUND:
+				SDL3_HandleAppForegroundTransition(eventTime, "did enter foreground");
+				break;
+
+			case SDL_EVENT_LOW_MEMORY:
+				common->Printf("SDL3: low-memory event received from OS.\n");
 				break;
 
 			case SDL_EVENT_KEY_DOWN:
@@ -2995,13 +3779,7 @@ bool Sys_SDL_PumpEvents(void) {
 				}
 
 				if ((mouseCaptured || SDL3_ShouldRouteMenuMouse()) && (dx != 0 || dy != 0)) {
-					Sys_QueEvent(eventTime, SE_MOUSE, dx, dy, 0, NULL);
-					if (dx != 0) {
-						SDL3_QueueMouseInput(M_DELTAX, dx, eventTime);
-					}
-					if (dy != 0) {
-						SDL3_QueueMouseInput(M_DELTAY, dy, eventTime);
-					}
+					SDL3_QueueMouseDelta(dx, dy, eventTime);
 				}
 				break;
 			}
@@ -3013,12 +3791,9 @@ bool Sys_SDL_PumpEvents(void) {
 					const int key = SDL3_MapMouseButton(event.button.button);
 					if (key != 0) {
 						const bool down = event.button.down;
-						Sys_QueEvent(eventTime, SE_KEY, key, down, 0, NULL);
-						if (routedMouseInput) {
-							// Don't latch poll-path button state from the loading-continue
-							// gate into the first gameplay usercmd frame.
-							SDL3_QueueMouseInput(M_ACTION1 + (key - K_MOUSE1), down ? 1 : 0, eventTime);
-						}
+						// Don't latch poll-path button state from the loading-continue
+						// gate into the first gameplay usercmd frame.
+						SDL3_QueueMouseButtonEvent(key, down, eventTime, routedMouseInput);
 					}
 				}
 				break;
@@ -3061,6 +3836,14 @@ bool Sys_SDL_PumpEvents(void) {
 				}
 				break;
 
+			case SDL_EVENT_GAMEPAD_REMAPPED:
+			case SDL_EVENT_GAMEPAD_STEAM_HANDLE_UPDATED:
+				if (in_joystick.GetBool() && s_sdlGamepad && event.gdevice.which == s_sdlGamepadId) {
+					SDL3_UpdateGamepadSensorState(true);
+					SDL3_UpdateGamepadAxes(eventTime);
+				}
+				break;
+
 			case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
 			case SDL_EVENT_GAMEPAD_BUTTON_UP:
 				if (in_joystick.GetBool() && s_sdlGamepad && event.gbutton.which == s_sdlGamepadId) {
@@ -3079,6 +3862,16 @@ bool Sys_SDL_PumpEvents(void) {
 				if (in_joystick.GetBool() && s_sdlGamepad && event.gaxis.which == s_sdlGamepadId) {
 					SDL3_UpdateGamepadAxes(eventTime);
 				}
+				break;
+
+			case SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN:
+			case SDL_EVENT_GAMEPAD_TOUCHPAD_MOTION:
+			case SDL_EVENT_GAMEPAD_TOUCHPAD_UP:
+				SDL3_HandleGamepadTouchpadEvent(event.gtouchpad, eventTime);
+				break;
+
+			case SDL_EVENT_GAMEPAD_SENSOR_UPDATE:
+				SDL3_HandleGamepadGyroEvent(event.gsensor, eventTime);
 				break;
 
 			case SDL_EVENT_JOYSTICK_ADDED:
@@ -3118,6 +3911,13 @@ bool Sys_SDL_PumpEvents(void) {
 				if (in_joystick.GetBool() && s_sdlJoystick && event.jaxis.which == s_sdlJoystickId) {
 					SDL3_UpdateJoystickAxes();
 				}
+				break;
+
+			case SDL_EVENT_FINGER_DOWN:
+			case SDL_EVENT_FINGER_MOTION:
+			case SDL_EVENT_FINGER_UP:
+			case SDL_EVENT_FINGER_CANCELED:
+				SDL3_HandleFingerEvent(event.tfinger, eventTime);
 				break;
 
 			default:
@@ -3419,6 +4219,20 @@ void Sys_InitInput(void) {
 
 	win32.in_mouse.ClearModified();
 	in_joystick.ClearModified();
+	in_joystickLowBatteryRumbleThreshold.ClearModified();
+	in_joystickLowBatteryRumbleScale.ClearModified();
+	in_gyro.ClearModified();
+	in_gyroSensitivity.ClearModified();
+	in_gyroDeadZone.ClearModified();
+	in_gyroYawAxis.ClearModified();
+	in_gyroPitchAxis.ClearModified();
+	in_gyroInvertYaw.ClearModified();
+	in_gyroInvertPitch.ClearModified();
+	in_touchpadMode.ClearModified();
+	in_touchpadSensitivity.ClearModified();
+	in_touchscreen.ClearModified();
+	com_steamDeckAutoFrameCap.ClearModified();
+	com_steamDeckFrameCap.ClearModified();
 	SDL3_ClearInputQueues();
 	common->Printf("------------------------------------\n");
 }
@@ -3575,7 +4389,7 @@ bool Sys_SetJoystickRumble(float lowFrequency, float highFrequency, int duration
 		return false;
 	}
 
-	const float scale = SDL3_ClampRumbleScale(in_joystickRumbleScale.GetFloat());
+	const float scale = SDL3_GetEffectiveRumbleScale();
 	const Uint16 low = SDL3_ClampRumbleValue(SDL3_ClampUnit(lowFrequency) * scale);
 	const Uint16 high = SDL3_ClampRumbleValue(SDL3_ClampUnit(highFrequency) * scale);
 	if (low == 0 && high == 0) {
@@ -3740,11 +4554,13 @@ bool GLimp_Init(glimpParms_t parms) {
 	}
 	SDL3_UpdateVideoDriverProfile();
 	SDL3_PrintVideoDriverSummary();
+	SDL3_ApplySteamDeckPerformanceDefaults();
 
-	if (!s_sdlDisplayCommandRegistered) {
+	if (!s_sdlDiagnosticCommandsRegistered) {
 		cmdSystem->AddCommand("listDisplays", SDL3_ListDisplays_f, CMD_FL_SYSTEM, "lists SDL3 displays and monitor indices");
 		cmdSystem->AddCommand("listDisplayModes", SDL3_ListDisplayModes_f, CMD_FL_SYSTEM, "lists SDL3 fullscreen display modes (optional display index)");
-		s_sdlDisplayCommandRegistered = true;
+		cmdSystem->AddCommand("listControllers", SDL3_ListControllers_f, CMD_FL_SYSTEM, "lists SDL3 controller, sensor, touchpad, and battery diagnostics");
+		s_sdlDiagnosticCommandsRegistered = true;
 	}
 
 	if (!s_sdlDisplaySummaryLogged) {
@@ -3896,6 +4712,7 @@ void GLimp_Shutdown(void) {
 	SDL3_DisableWindowAspectSnap();
 	IN_DeactivateMouse();
 	SDL3_ShutdownControllerSubsystems();
+	s_sdlAppInBackground = false;
 	(void)SDL3_LeaveFullscreenAndRestoreDesktopMode();
 	if (s_sdlWindow && s_sdlTextInputActive) {
 		(void)SDL_StopTextInput(s_sdlWindow);
