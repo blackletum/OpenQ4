@@ -5200,6 +5200,8 @@ static void RB_STD_LensFlare( void ) {
 			const idVec2 centerDelta( viewportWidth * 0.5f - candidate.screenX, viewportHeight * 0.5f - candidate.screenY );
 
 			if ( centerDelta.LengthSqr() > 256.0f ) {
+				const float viewportDiagonal = idMath::Sqrt( static_cast<float>( viewportWidth * viewportWidth + viewportHeight * viewportHeight ) );
+				const float ghostDistanceReference = Max( 1.0f, viewportDiagonal * 0.50f );
 				static const float ghostFactors[3] = { 0.35f, 1.15f, 1.8f };
 				static const float ghostSizeScales[3] = { 0.60f, 0.42f, 0.78f };
 				// Keep flare hue driven by the light itself. Hard-coded chromatic
@@ -5214,11 +5216,17 @@ static void RB_STD_LensFlare( void ) {
 				for ( int ghostIndex = 0; ghostIndex < 3; ghostIndex++ ) {
 					const float ghostX = candidate.screenX + centerDelta.x * ghostFactors[ghostIndex];
 					const float ghostY = candidate.screenY + centerDelta.y * ghostFactors[ghostIndex];
-					const float ghostRadius = coronaRadius * ghostSizeScales[ghostIndex];
+					const float ghostDistanceX = ghostX - candidate.screenX;
+					const float ghostDistanceY = ghostY - candidate.screenY;
+					const float ghostDistance = idMath::Sqrt( ghostDistanceX * ghostDistanceX + ghostDistanceY * ghostDistanceY );
+					const float ghostDistance01 = idMath::ClampFloat( 0.0f, 1.0f, ghostDistance / ghostDistanceReference );
+					const float ghostSizeFade = idMath::Lerp( 1.0f, 0.72f, ghostDistance01 );
+					const float ghostIntensityFade = idMath::Lerp( 1.0f, 0.58f, ghostDistance01 );
+					const float ghostRadius = coronaRadius * ghostSizeScales[ghostIndex] * ghostSizeFade;
 					const idVec3 ghostScale(
-						ghostIntensityScales[ghostIndex],
-						ghostIntensityScales[ghostIndex],
-						ghostIntensityScales[ghostIndex] );
+						ghostIntensityScales[ghostIndex] * ghostIntensityFade,
+						ghostIntensityScales[ghostIndex] * ghostIntensityFade,
+						ghostIntensityScales[ghostIndex] * ghostIntensityFade );
 
 					RB_DrawLensFlareQuad( candidate, viewportWidth, viewportHeight,
 						ghostX, ghostY, ghostRadius, ghostRadius, ghostScale, candidate.axis, 1.0f, ghostParams[ghostIndex] );

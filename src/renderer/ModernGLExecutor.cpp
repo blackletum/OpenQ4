@@ -2728,10 +2728,6 @@ static void R_ModernGLExecutor_LocalParamsForCommand( const modernGLSubmitComman
 			params[3] = 1.0f;
 			break;
 		}
-		params[0] = 0.25f;
-		params[1] = 0.38f;
-		params[2] = 0.42f;
-		params[3] = 0.48f;
 		break;
 	case MODERN_GL_SHADER_DEBUG_VISUALIZATION:
 		params[0] = 0.5f;

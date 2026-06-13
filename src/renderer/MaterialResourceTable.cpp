@@ -116,6 +116,8 @@ const char *MaterialResourceFallbackReason_Name( materialResourceFallbackReason_
 		return "needsCurrentRender";
 	case MATERIAL_RESOURCE_FALLBACK_STAGE_CONDITION:
 		return "stageCondition";
+	case MATERIAL_RESOURCE_FALLBACK_STAGE_COLOR:
+		return "stageColor";
 	case MATERIAL_RESOURCE_FALLBACK_TEXTURE_MATRIX:
 		return "textureMatrix";
 	case MATERIAL_RESOURCE_FALLBACK_VERTEX_COLOR:
@@ -362,6 +364,38 @@ static int R_MaterialResourceTable_SemanticSlot( materialResourceTextureSemantic
 	default:
 		return -1;
 	}
+}
+
+static const materialResourceTextureBinding_t *R_MaterialResourceTable_FindStageBinding( const materialResourceTableRecord_t &record, materialResourceTextureSemantic_t semantic ) {
+	for ( int i = 0; i < record.textureBindingCount; ++i ) {
+		if ( record.textures[i].semantic == semantic && record.textures[i].stageIndex >= 0 ) {
+			return &record.textures[i];
+		}
+	}
+	return NULL;
+}
+
+static bool R_MaterialResourceTable_ColorRegistersMatch( const materialResourceTextureBinding_t &a, const materialResourceTextureBinding_t &b ) {
+	for ( int i = 0; i < 4; ++i ) {
+		if ( a.colorRegisters[i] != b.colorRegisters[i] ) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static void R_MaterialResourceTable_ValidateStageColorContract( materialResourceTableRecord_t &record ) {
+	const materialResourceTextureBinding_t *diffuse = R_MaterialResourceTable_FindStageBinding( record, MATERIAL_RESOURCE_TEXTURE_DIFFUSE );
+	const materialResourceTextureBinding_t *emissive = R_MaterialResourceTable_FindStageBinding( record, MATERIAL_RESOURCE_TEXTURE_EMISSIVE );
+	if ( diffuse == NULL || emissive == NULL || R_MaterialResourceTable_ColorRegistersMatch( *diffuse, *emissive ) ) {
+		return;
+	}
+
+	// The modern material programs currently carry one material tint. Stock light
+	// cards often combine a neutral diffuse base with a parm-colored additive
+	// glow, so let the legacy path preserve the separate glow color/off state.
+	R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_STAGE_COLOR, MATERIAL_RESOURCE_FALLBACK_FLAG_STAGE_COLOR );
+	rg_materialResourceTable.stats.unsupportedFeatures++;
 }
 
 static int R_MaterialResourceTable_BlendBits( int drawStateBits ) {
@@ -693,6 +727,9 @@ static void R_MaterialResourceTable_CountFallbacks( const materialResourceTableR
 	if ( ( record.fallbackFlags & MATERIAL_RESOURCE_FALLBACK_FLAG_STAGE_CONDITION ) != 0 ) {
 		rg_materialResourceTable.stats.fallbackStageCondition++;
 	}
+	if ( ( record.fallbackFlags & MATERIAL_RESOURCE_FALLBACK_FLAG_STAGE_COLOR ) != 0 ) {
+		rg_materialResourceTable.stats.fallbackStageColor++;
+	}
 	if ( ( record.fallbackFlags & MATERIAL_RESOURCE_FALLBACK_FLAG_TEXTURE_MATRIX ) != 0 ) {
 		rg_materialResourceTable.stats.fallbackTextureMatrix++;
 	}
@@ -946,6 +983,7 @@ static bool R_MaterialResourceTable_AddRecordFromSource( const materialResourceR
 		R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_MISSING_IMAGE, MATERIAL_RESOURCE_FALLBACK_FLAG_MISSING_IMAGE );
 		rg_materialResourceTable.stats.missingImages++;
 	}
+	R_MaterialResourceTable_ValidateStageColorContract( record );
 	if ( !scanMaterialStages ) {
 		record.shadowCasterSupported = record.castsShadow && record.fallbackReason == MATERIAL_RESOURCE_FALLBACK_NONE;
 		record.shadowFallbackFlags = record.fallbackFlags;
@@ -1068,7 +1106,7 @@ int R_MaterialResourceTable_TextureArrayTableIndexForHandle( unsigned int textur
 void R_MaterialResourceTable_PrintGfxInfo( void ) {
 	const materialResourceTableStats_t &stats = R_MaterialResourceTable_Stats();
 	common->Printf(
-		"Material resource table: initialized=%d available=%d prepared=%d records=%d source=%d draws=%d textures=%d classic=%d arrays=%d table=%d/%d desc=%d overflow=%d views=%d bindless=%d/%d fallback=%d missing=%d unsupported=%d custom=%d/%d dynamic=%d current=%d texgen=%d(screen=%d sky=%d) condition=%d matrix=%d vertexColor=%d offset=%d debugTrunc=%d source='%s' status='%s'\n",
+		"Material resource table: initialized=%d available=%d prepared=%d records=%d source=%d draws=%d textures=%d classic=%d arrays=%d table=%d/%d desc=%d overflow=%d views=%d bindless=%d/%d fallback=%d missing=%d unsupported=%d custom=%d/%d dynamic=%d current=%d texgen=%d(screen=%d sky=%d) condition=%d stageColor=%d matrix=%d vertexColor=%d offset=%d debugTrunc=%d source='%s' status='%s'\n",
 		stats.initialized ? 1 : 0,
 		stats.available ? 1 : 0,
 		stats.prepared ? 1 : 0,
@@ -1096,6 +1134,7 @@ void R_MaterialResourceTable_PrintGfxInfo( void ) {
 		stats.fallbackScreenTexgen,
 		stats.fallbackSkyTexgen,
 		stats.fallbackStageCondition,
+		stats.fallbackStageColor,
 		stats.fallbackTextureMatrix,
 		stats.fallbackVertexColor,
 		stats.fallbackPolygonOffset,
