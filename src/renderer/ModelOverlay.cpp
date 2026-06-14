@@ -63,6 +63,104 @@ void R_ClearOverlayMaterials( idList<overlayMaterial_t *> &materials ) {
 	materials.Clear();
 }
 
+bool R_MaterializePrimBatchOverlayTriangles( const srfTriangles_t &sourceTri, srfTriangles_t &tempTri, idDrawVert *tempVerts, glIndex_t *tempIndexes ) {
+	memset( &tempTri, 0, sizeof( tempTri ) );
+	tempTri.bounds = sourceTri.bounds;
+	tempTri.numVerts = sourceTri.numVerts;
+	tempTri.verts = tempVerts;
+	tempTri.numIndexes = sourceTri.numIndexes;
+	tempTri.indexes = tempIndexes;
+
+	if ( sourceTri.numVerts <= 0 || sourceTri.numIndexes <= 0 || tempVerts == NULL || tempIndexes == NULL ) {
+		return false;
+	}
+
+	if ( sourceTri.verts != NULL && sourceTri.indexes != NULL ) {
+		memcpy( tempVerts, sourceTri.verts, sourceTri.numVerts * sizeof( tempVerts[0] ) );
+		memcpy( tempIndexes, sourceTri.indexes, sourceTri.numIndexes * sizeof( tempIndexes[0] ) );
+		return true;
+	}
+
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	if ( !R_TriHasPrimBatchMesh( &sourceTri ) ) {
+		return false;
+	}
+
+	return R_MD5R_CopyPrimBatchTriangles(
+		tempVerts,
+		tempIndexes,
+		reinterpret_cast<const rvMesh *>( sourceTri.primBatchMesh ),
+		reinterpret_cast<const rvSilTraceVertT *>( sourceTri.silTraceVerts ) );
+#else
+	return false;
+#endif
+}
+
+void R_CreateClassicOverlayTriangles( const srfTriangles_t *stri, const idPlane localTextureAxis[2], overlayVertex_t *overlayVerts, glIndex_t *overlayIndexes, int &numVerts, int &numIndexes ) {
+	numVerts = 0;
+	numIndexes = 0;
+
+	if ( stri == NULL || stri->verts == NULL || stri->indexes == NULL || stri->numVerts <= 0 || stri->numIndexes <= 0 ) {
+		return;
+	}
+
+	byte *cullBits = (byte *)_alloca16( stri->numVerts * sizeof( cullBits[0] ) );
+	idVec2 *texCoords = (idVec2 *)_alloca16( stri->numVerts * sizeof( texCoords[0] ) );
+
+	SIMDProcessor->OverlayPointCull( cullBits, texCoords, localTextureAxis, stri->verts, stri->numVerts );
+
+	glIndex_t *vertexRemap = (glIndex_t *)_alloca16( sizeof( vertexRemap[0] ) * stri->numVerts );
+	SIMDProcessor->Memset( vertexRemap, -1, sizeof( vertexRemap[0] ) * stri->numVerts );
+
+	// Find triangles that need the overlay.
+	for ( int index = 0; index < stri->numIndexes; index += 3 ) {
+		int v1 = stri->indexes[index + 0];
+		int	v2 = stri->indexes[index + 1];
+		int v3 = stri->indexes[index + 2];
+
+		// Skip triangles completely off one side.
+		if ( cullBits[v1] & cullBits[v2] & cullBits[v3] ) {
+			continue;
+		}
+
+		// Keep this triangle.
+		for ( int vnum = 0; vnum < 3; vnum++ ) {
+			int ind = stri->indexes[index + vnum];
+			if ( vertexRemap[ind] == (glIndex_t)-1 ) {
+				vertexRemap[ind] = numVerts;
+
+				overlayVerts[numVerts].vertexNum = ind;
+				overlayVerts[numVerts].st[0] = texCoords[ind][0];
+				overlayVerts[numVerts].st[1] = texCoords[ind][1];
+
+				numVerts++;
+			}
+			overlayIndexes[numIndexes++] = vertexRemap[ind];
+		}
+	}
+}
+
+bool R_CopyOverlayVertexPosition( idDrawVert &dst, const srfTriangles_t *baseTri, int vertexNum ) {
+	if ( baseTri == NULL || vertexNum < 0 || vertexNum >= baseTri->numVerts ) {
+		return false;
+	}
+
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	if ( baseTri->silTraceVerts != NULL ) {
+		const rvSilTraceVertT *silTraceVerts = reinterpret_cast<const rvSilTraceVertT *>( baseTri->silTraceVerts );
+		dst.xyz = silTraceVerts[vertexNum].xyzw.ToVec3();
+		return true;
+	}
+#endif
+
+	if ( baseTri->verts == NULL ) {
+		return false;
+	}
+
+	dst.xyz = baseTri->verts[vertexNum].xyz;
+	return true;
+}
+
 }
 
 
@@ -127,19 +225,26 @@ may extend well past the 0.0 to 1.0 texture range
 */
 void idRenderModelOverlay::CreateOverlay( const idRenderModel *model, const idPlane localTextureAxis[2], const idMaterial *mtr ) {
 	int i, maxVerts, maxIndexes, surfNum;
-	idRenderModelOverlay *overlay = NULL;
 
 	// count up the maximum possible vertices and indexes per surface
 	maxVerts = 0;
 	maxIndexes = 0;
 	for ( surfNum = 0; surfNum < model->NumSurfaces(); surfNum++ ) {
 		const modelSurface_t *surf = model->Surface( surfNum );
+		if ( surf == NULL || surf->geometry == NULL ) {
+			continue;
+		}
+
 		if ( surf->geometry->numVerts > maxVerts ) {
 			maxVerts = surf->geometry->numVerts;
 		}
 		if ( surf->geometry->numIndexes > maxIndexes ) {
 			maxIndexes = surf->geometry->numIndexes;
 		}
+	}
+
+	if ( maxVerts <= 0 || maxIndexes <= 0 ) {
+		return;
 	}
 
 	// make temporary buffers for the building process
@@ -174,45 +279,22 @@ void idRenderModelOverlay::CreateOverlay( const idRenderModel *model, const idPl
 			continue;
 		}
 
-		byte *cullBits = (byte *)_alloca16( stri->numVerts * sizeof( cullBits[0] ) );
-		idVec2 *texCoords = (idVec2 *)_alloca16( stri->numVerts * sizeof( texCoords[0] ) );
-
-		SIMDProcessor->OverlayPointCull( cullBits, texCoords, localTextureAxis, stri->verts, stri->numVerts );
-
-		glIndex_t *vertexRemap = (glIndex_t *)_alloca16( sizeof( vertexRemap[0] ) * stri->numVerts );
-		SIMDProcessor->Memset( vertexRemap, -1,  sizeof( vertexRemap[0] ) * stri->numVerts );
-
-		// find triangles that need the overlay
 		int numVerts = 0;
 		int numIndexes = 0;
-		int triNum = 0;
-		for ( int index = 0; index < stri->numIndexes; index += 3, triNum++ ) {
-			int v1 = stri->indexes[index+0];
-			int	v2 = stri->indexes[index+1];
-			int v3 = stri->indexes[index+2];
+		const srfTriangles_t *overlayTri = stri;
+		srfTriangles_t materializedTri;
 
-			// skip triangles completely off one side
-			if ( cullBits[v1] & cullBits[v2] & cullBits[v3] ) {
+		if ( R_TriHasPrimBatchMesh( stri ) && ( stri->verts == NULL || stri->indexes == NULL ) ) {
+			idDrawVert *tempVerts = (idDrawVert *)_alloca16( stri->numVerts * sizeof( tempVerts[0] ) );
+			glIndex_t *tempIndexes = (glIndex_t *)_alloca16( stri->numIndexes * sizeof( tempIndexes[0] ) );
+			if ( !R_MaterializePrimBatchOverlayTriangles( *stri, materializedTri, tempVerts, tempIndexes ) ) {
 				continue;
 			}
 
-			// we could do more precise triangle culling, like the light interaction does, if desired
-
-			// keep this triangle
-			for ( int vnum = 0; vnum < 3; vnum++ ) {
-				int ind = stri->indexes[index+vnum];
-				if ( vertexRemap[ind] == (glIndex_t)-1 ) {
-					vertexRemap[ind] = numVerts;
-
-					overlayVerts[numVerts].vertexNum = ind;
-					overlayVerts[numVerts].st[0] = texCoords[ind][0];
-					overlayVerts[numVerts].st[1] = texCoords[ind][1];
-
-					numVerts++;
-				}
-				overlayIndexes[numIndexes++] = vertexRemap[ind];
-			}
+			overlayTri = &materializedTri;
 		}
+
+		R_CreateClassicOverlayTriangles( overlayTri, localTextureAxis, overlayVerts, overlayIndexes, numVerts, numIndexes );
 
 		if ( !numIndexes ) {
 			continue;
@@ -355,7 +437,7 @@ void idRenderModelOverlay::AddOverlaySurfacesToModel( idRenderModel *baseModel )
 				newTri->verts[numVerts].st[0] = overlayVert->st[0];
 				newTri->verts[numVerts].st[1] = overlayVert->st[1];
 
-				if ( overlayVert->vertexNum >= baseSurf->geometry->numVerts ) {
+				if ( !R_CopyOverlayVertexPosition( newTri->verts[numVerts], baseSurf->geometry, overlayVert->vertexNum ) ) {
 					// This can happen when playing a demofile and a model has been changed since it was recorded, so just issue a warning and go on.
 					common->Warning( "idRenderModelOverlay::AddOverlaySurfacesToModel: overlay vertex out of range.  Model has probably changed since generating the overlay." );
 					FreeSurface( surf );
@@ -363,7 +445,6 @@ void idRenderModelOverlay::AddOverlaySurfacesToModel( idRenderModel *baseModel )
 					staticModel->DeleteSurfaceWithId( newSurf->id );
 					return;
 				}
-				newTri->verts[numVerts].xyz = baseSurf->geometry->verts[overlayVert->vertexNum].xyz;
 				numVerts++;
 			}
 		}

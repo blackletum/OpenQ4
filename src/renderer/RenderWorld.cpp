@@ -828,10 +828,13 @@ void idRenderWorldLocal::ProjectOverlay( qhandle_t entityHandle, const idPlane l
 	const renderEntity_t *refEnt = &def->parms;
 
 	idRenderModel *model = refEnt->hModel;
-	if ( model->IsDynamicModel() != DM_CACHED ) {	// FIXME: probably should be MD5 only
+	if ( model == NULL || model->IsDynamicModel() != DM_CACHED ) {	// FIXME: probably should be MD5 only
 		return;
 	}
-	model = R_EntityDefDynamicModel( def, true );
+	model = R_EntityDefDynamicModel( def, false );
+	if ( model == NULL ) {
+		return;
+	}
 
 	if ( def->overlay == NULL ) {
 		def->overlay = idRenderModelOverlay::Alloc();
