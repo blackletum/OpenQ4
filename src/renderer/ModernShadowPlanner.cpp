@@ -2985,6 +2985,127 @@ bool RendererShadowProjectedDiagnostic_RunSelfTest( void ) {
 		return false;
 	}
 
+	viewLight_t viewScopedLights[2];
+	idRenderLightLocal viewScopedLightDefs[2];
+	const char *viewScopedLabels[2] = { "allowLightInViewID", "suppressLightInViewID" };
+	for ( int viewScopedIndex = 0; viewScopedIndex < 2; viewScopedIndex++ ) {
+		viewScopedLights[viewScopedIndex] = light;
+		viewScopedLightDefs[viewScopedIndex] = lightDef;
+		viewScopedLightDefs[viewScopedIndex].index = 3103 + viewScopedIndex;
+		viewScopedLightDefs[viewScopedIndex].parms.allowLightInViewID = viewScopedIndex == 0 ? 1 : 0;
+		viewScopedLightDefs[viewScopedIndex].parms.suppressLightInViewID = viewScopedIndex == 1 ? 1 : 0;
+		viewScopedLights[viewScopedIndex].lightDef = &viewScopedLightDefs[viewScopedIndex];
+
+		const shadowMapLightClassification_t viewScopedClassification = R_ClassifyShadowMapLight( &viewScopedLights[viewScopedIndex] );
+		if ( !viewScopedClassification.ordinaryProjectedLight || viewScopedClassification.projectedCSMEnabled || viewScopedClassification.csmEnabled || viewScopedClassification.cascadeCount != 1 || viewScopedClassification.tileCount != 1 || viewScopedClassification.atlasDiv != 1 ) {
+			common->Printf(
+				"RendererShadowProjectedDiagnostic self-test failed: view-scoped projected light %s classified as %s ordinary=%d projectedCSM=%d/%d csm=%d cascades=%d tiles=%d atlasDiv=%d\n",
+				viewScopedLabels[viewScopedIndex],
+				R_ShadowMapLightClassName( viewScopedClassification.lightClass ),
+				viewScopedClassification.ordinaryProjectedLight ? 1 : 0,
+				viewScopedClassification.projectedCSMEnabled ? 1 : 0,
+				viewScopedClassification.projectedCSMGateApplies ? 1 : 0,
+				viewScopedClassification.csmEnabled ? 1 : 0,
+				viewScopedClassification.cascadeCount,
+				viewScopedClassification.tileCount,
+				viewScopedClassification.atlasDiv );
+			return false;
+		}
+
+		shadowMapProjectedLightState_t viewScopedProjectedState;
+		R_BuildShadowMapProjectedLightState( &viewScopedLights[viewScopedIndex], &view, descriptor->resolution, viewScopedProjectedState );
+		if ( !viewScopedProjectedState.valid || viewScopedProjectedState.requestedCascadeCount != 1 || viewScopedProjectedState.cascadeCount != 1 || viewScopedProjectedState.atlasDiv != 1 || viewScopedProjectedState.cascadeFallback || viewScopedProjectedState.fallbackReason != SHADOWMAP_PROJECTED_FALLBACK_NONE || viewScopedProjectedState.cascadeFit[0].attempted ) {
+			common->Printf(
+				"RendererShadowProjectedDiagnostic self-test failed: view-scoped projected state %s valid=%d requested=%d cascades=%d atlasDiv=%d fallback=%d/%s fitAttempted=%d\n",
+				viewScopedLabels[viewScopedIndex],
+				viewScopedProjectedState.valid ? 1 : 0,
+				viewScopedProjectedState.requestedCascadeCount,
+				viewScopedProjectedState.cascadeCount,
+				viewScopedProjectedState.atlasDiv,
+				viewScopedProjectedState.cascadeFallback ? 1 : 0,
+				R_ShadowMapProjectedFallbackReasonName( viewScopedProjectedState.fallbackReason ),
+				viewScopedProjectedState.cascadeFit[0].attempted ? 1 : 0 );
+			return false;
+		}
+
+		shadowMapArb2ParityState_t viewScopedArb2State;
+		if ( !RB_ShadowMapBuildArb2ParityState( &viewScopedLights[viewScopedIndex], &view, descriptor->resolution, viewScopedArb2State ) || !viewScopedArb2State.valid || !viewScopedArb2State.projectedStateReady || viewScopedArb2State.csmEnabled || viewScopedArb2State.requestedCascadeCount != 1 || viewScopedArb2State.cascadeCount != 1 || viewScopedArb2State.tileCount != 1 || viewScopedArb2State.atlasDiv != 1 || viewScopedArb2State.projectedCascadeFallback ) {
+			common->Printf(
+				"RendererShadowProjectedDiagnostic self-test failed: view-scoped ARB2 state %s valid=%d projectedReady=%d csm=%d requested=%d cascades=%d tiles=%d atlasDiv=%d fallback=%d/%d\n",
+				viewScopedLabels[viewScopedIndex],
+				viewScopedArb2State.valid ? 1 : 0,
+				viewScopedArb2State.projectedStateReady ? 1 : 0,
+				viewScopedArb2State.csmEnabled ? 1 : 0,
+				viewScopedArb2State.requestedCascadeCount,
+				viewScopedArb2State.cascadeCount,
+				viewScopedArb2State.tileCount,
+				viewScopedArb2State.atlasDiv,
+				viewScopedArb2State.projectedCascadeFallback ? 1 : 0,
+				viewScopedArb2State.projectedFallbackCascade );
+			return false;
+		}
+	}
+
+	const idMaterial *flashlightLightShader = declManager != NULL ? declManager->FindMaterial( "gfx/lights/flashlight" ) : NULL;
+	if ( flashlightLightShader == NULL ) {
+		common->Printf( "RendererShadowProjectedDiagnostic self-test failed: could not resolve gfx/lights/flashlight material\n" );
+		return false;
+	}
+
+	viewLight_t flashlightLight = light;
+	idRenderLightLocal flashlightLightDef = lightDef;
+	flashlightLightDef.index = 3105;
+	flashlightLightDef.lightShader = flashlightLightShader;
+	flashlightLightDef.parms.shader = flashlightLightShader;
+	flashlightLight.lightDef = &flashlightLightDef;
+	flashlightLight.lightShader = flashlightLightShader;
+
+	const shadowMapLightClassification_t flashlightClassification = R_ClassifyShadowMapLight( &flashlightLight );
+	if ( !flashlightClassification.ordinaryProjectedLight || flashlightClassification.projectedCSMEnabled || flashlightClassification.csmEnabled || flashlightClassification.cascadeCount != 1 || flashlightClassification.tileCount != 1 || flashlightClassification.atlasDiv != 1 ) {
+		common->Printf(
+			"RendererShadowProjectedDiagnostic self-test failed: stock flashlight classified as %s ordinary=%d projectedCSM=%d/%d csm=%d cascades=%d tiles=%d atlasDiv=%d\n",
+			R_ShadowMapLightClassName( flashlightClassification.lightClass ),
+			flashlightClassification.ordinaryProjectedLight ? 1 : 0,
+			flashlightClassification.projectedCSMEnabled ? 1 : 0,
+			flashlightClassification.projectedCSMGateApplies ? 1 : 0,
+			flashlightClassification.csmEnabled ? 1 : 0,
+			flashlightClassification.cascadeCount,
+			flashlightClassification.tileCount,
+			flashlightClassification.atlasDiv );
+		return false;
+	}
+
+	shadowMapProjectedLightState_t flashlightProjectedState;
+	R_BuildShadowMapProjectedLightState( &flashlightLight, &view, descriptor->resolution, flashlightProjectedState );
+	if ( !flashlightProjectedState.valid || flashlightProjectedState.requestedCascadeCount != 1 || flashlightProjectedState.cascadeCount != 1 || flashlightProjectedState.atlasDiv != 1 || flashlightProjectedState.cascadeFallback || flashlightProjectedState.fallbackReason != SHADOWMAP_PROJECTED_FALLBACK_NONE || flashlightProjectedState.cascadeFit[0].attempted ) {
+		common->Printf(
+			"RendererShadowProjectedDiagnostic self-test failed: stock flashlight projected state valid=%d requested=%d cascades=%d atlasDiv=%d fallback=%d/%s fitAttempted=%d\n",
+			flashlightProjectedState.valid ? 1 : 0,
+			flashlightProjectedState.requestedCascadeCount,
+			flashlightProjectedState.cascadeCount,
+			flashlightProjectedState.atlasDiv,
+			flashlightProjectedState.cascadeFallback ? 1 : 0,
+			R_ShadowMapProjectedFallbackReasonName( flashlightProjectedState.fallbackReason ),
+			flashlightProjectedState.cascadeFit[0].attempted ? 1 : 0 );
+		return false;
+	}
+
+	shadowMapArb2ParityState_t flashlightArb2State;
+	if ( !RB_ShadowMapBuildArb2ParityState( &flashlightLight, &view, descriptor->resolution, flashlightArb2State ) || !flashlightArb2State.valid || !flashlightArb2State.projectedStateReady || flashlightArb2State.csmEnabled || flashlightArb2State.requestedCascadeCount != 1 || flashlightArb2State.cascadeCount != 1 || flashlightArb2State.tileCount != 1 || flashlightArb2State.atlasDiv != 1 || flashlightArb2State.projectedCascadeFallback ) {
+		common->Printf(
+			"RendererShadowProjectedDiagnostic self-test failed: stock flashlight ARB2 state valid=%d projectedReady=%d csm=%d requested=%d cascades=%d tiles=%d atlasDiv=%d fallback=%d/%d\n",
+			flashlightArb2State.valid ? 1 : 0,
+			flashlightArb2State.projectedStateReady ? 1 : 0,
+			flashlightArb2State.csmEnabled ? 1 : 0,
+			flashlightArb2State.requestedCascadeCount,
+			flashlightArb2State.cascadeCount,
+			flashlightArb2State.tileCount,
+			flashlightArb2State.atlasDiv,
+			flashlightArb2State.projectedCascadeFallback ? 1 : 0,
+			flashlightArb2State.projectedFallbackCascade );
+		return false;
+	}
+
 	shadowMapArb2ParityState_t arb2State;
 	if ( !RB_ShadowMapBuildArb2ParityState( &light, &view, descriptor->resolution, arb2State ) || !arb2State.valid || !arb2State.projectedStateReady || !arb2State.csmEnabled || arb2State.cascadeCount != 3 || arb2State.tileCount != 3 || arb2State.atlasDiv != 2 || arb2State.projectedCascadeFallback ) {
 		common->Printf(

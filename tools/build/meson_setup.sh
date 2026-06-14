@@ -5,6 +5,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "${script_dir}/../.." && pwd)"
 default_builddir="${repo_root}/builddir"
 sync_icons_script="${script_dir}/sync_icons.py"
+check_staged_content_script="${script_dir}/check_staged_content_edits.py"
 declare -a MESON_CMD=()
 PYTHON_CMD=""
 declare -a READ_ARRAY_RESULT=()
@@ -285,6 +286,15 @@ if [[ ( "${command_name}" == "setup" || "${command_name}" == "compile" || "${com
     fi
 
     "${PYTHON_CMD}" "${sync_icons_script}" --source-root "${repo_root}"
+fi
+
+if [[ "${command_name}" == "install" ]]; then
+    if [[ ! -f "${check_staged_content_script}" ]]; then
+        echo "Staged content edit check script not found: '${check_staged_content_script}'." >&2
+        exit 1
+    fi
+
+    "${PYTHON_CMD}" "${check_staged_content_script}" --source-root "${repo_root}"
 fi
 
 if [[ "${command_name}" == "setup" ]]; then

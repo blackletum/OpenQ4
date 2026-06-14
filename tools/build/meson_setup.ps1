@@ -661,6 +661,7 @@ $gameLibsRepo = if ([string]::IsNullOrWhiteSpace($env:OPENQ4_GAMELIBS_REPO)) { "
 $buildGameLibsScript = Join-Path $scriptDir "build_gamelibs.ps1"
 $stageWindowsRuntimeScript = Join-Path $scriptDir "stage_windows_runtime.py"
 $syncIconsScript = Join-Path $scriptDir "sync_icons.py"
+$checkStagedContentScript = Join-Path $scriptDir "check_staged_content_edits.py"
 
 if ($commandName -eq "setup") {
     $effectiveArgs = Ensure-WindowsStaticCRTSetupArgs -MesonArgs $effectiveArgs
@@ -799,6 +800,18 @@ if (@("setup", "compile", "install").Contains($commandName) -and $env:OPENQ4_SKI
     $syncIconExit = [int]$LASTEXITCODE
     if ($syncIconExit -ne 0) {
         exit $syncIconExit
+    }
+}
+
+if ($commandName -eq "install") {
+    if (-not (Test-Path $checkStagedContentScript)) {
+        throw "Staged content edit check script not found: '$checkStagedContentScript'."
+    }
+
+    & python $checkStagedContentScript "--source-root" $repoRoot
+    $checkStagedContentExit = [int]$LASTEXITCODE
+    if ($checkStagedContentExit -ne 0) {
+        exit $checkStagedContentExit
     }
 }
 

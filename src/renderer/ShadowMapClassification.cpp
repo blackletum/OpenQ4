@@ -20,6 +20,36 @@ static shadowMapLightClass_t R_ShadowMapLightClassForViewLight( const viewLight_
 	return SHADOWMAP_LIGHT_PROJECTED;
 }
 
+static bool R_ShadowMapProjectedLightIsViewScoped( const viewLight_t *vLight ) {
+	if ( vLight == NULL || vLight->lightDef == NULL ) {
+		return false;
+	}
+	const renderLight_t &parms = vLight->lightDef->parms;
+	return parms.allowLightInViewID != 0 || parms.suppressLightInViewID != 0;
+}
+
+static bool R_ShadowMapProjectedLightUsesStockFlashlightShader( const viewLight_t *vLight ) {
+	if ( vLight == NULL ) {
+		return false;
+	}
+
+	const idMaterial *lightShader = vLight->lightShader;
+	if ( lightShader == NULL && vLight->lightDef != NULL ) {
+		lightShader = vLight->lightDef->lightShader;
+	}
+	if ( lightShader == NULL ) {
+		return false;
+	}
+
+	const char *shaderName = lightShader->GetName();
+	return shaderName != NULL && idStr::Icmp( shaderName, "gfx/lights/flashlight" ) == 0;
+}
+
+static bool R_ShadowMapProjectedLightNeedsAuthoredSingleProjection( const viewLight_t *vLight ) {
+	return R_ShadowMapProjectedLightIsViewScoped( vLight )
+		|| R_ShadowMapProjectedLightUsesStockFlashlightShader( vLight );
+}
+
 shadowMapLightClassification_t R_ClassifyShadowMapLight( const viewLight_t *vLight ) {
 	shadowMapLightClassification_t classification;
 	memset( &classification, 0, sizeof( classification ) );
@@ -31,7 +61,11 @@ shadowMapLightClassification_t R_ClassifyShadowMapLight( const viewLight_t *vLig
 	classification.parallelLight = classification.lightClass == SHADOWMAP_LIGHT_PARALLEL;
 	classification.globalLight = classification.lightClass == SHADOWMAP_LIGHT_GLOBAL;
 	classification.projectedCSMGateApplies = classification.ordinaryProjectedLight;
-	classification.projectedCSMEnabled = classification.projectedCSMGateApplies && r_shadowMapProjectedCSM.GetBool();
+	// Player weapon lights, including the stock flashlight projector, must keep
+	// their authored projection instead of being camera-fitted into cascades.
+	classification.projectedCSMEnabled = classification.projectedCSMGateApplies
+		&& r_shadowMapProjectedCSM.GetBool()
+		&& !R_ShadowMapProjectedLightNeedsAuthoredSingleProjection( vLight );
 	classification.cascadeCount = 1;
 	classification.atlasDiv = classification.pointLight ? 3 : 1;
 	classification.tileCount = classification.pointLight ? 6 : 1;
