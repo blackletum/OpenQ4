@@ -52,7 +52,7 @@ It is designed for players who want the original Quake 4 experience with a clean
 - **Optional visual upgrades** such as bloom, HDR, anti-aliasing, soft particles, and enhanced shadow options.
 - **Improved input and quality-of-life features** including controller support, better console UX, and modern settings behavior.
 - **Single-player and multiplayer in one install** with active compatibility work aimed at the stock game.
-- **Cross-platform releases** for Windows, Linux, and macOS, with Steam Deck support in the Linux package line.
+- **Cross-platform releases** for Windows, Linux, and macOS, with Steam Deck support on Linux and separate macOS OpenGL/Metal bridge packages.
 - **Open development** with releases, issue tracking, and community feedback all happening in public.
 
 <p align="center">
