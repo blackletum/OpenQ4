@@ -135,11 +135,8 @@ static bool R_ModernGLDrawPlan_ModernVisibleRequested( void ) {
 }
 
 static bool R_ModernGLDrawPlan_NeedsLegacySoftParticlePath( const drawPacket_t &draw ) {
-	const drawSurf_t *surf = draw.legacyDrawSurf;
-	return r_softParticles.GetBool()
-		&& draw.passCategory == RENDER_PASS_AMBIENT
-		&& surf != NULL
-		&& ( surf->dsFlags & DSF_BSE_EFFECT ) != 0;
+	return draw.passCategory == RENDER_PASS_AMBIENT
+		&& RB_DrawSurfHasSoftParticleStage( draw.legacyDrawSurf );
 }
 
 static void R_ModernGLDrawPlan_CountGeometryFallback( modernGLDrawPlanStats_t &stats, geometryResourceFallbackReason_t reason ) {

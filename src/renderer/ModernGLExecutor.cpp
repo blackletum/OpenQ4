@@ -1785,12 +1785,7 @@ static bool R_ModernGLExecutor_DrawPacketUsesLegacyFeedbackSurface( const drawPa
 		return false;
 	}
 
-	const drawSurf_t *surf = draw.legacyDrawSurf;
-	if ( r_softParticles.GetBool()
-		&& surf != NULL
-		&& ( surf->dsFlags & DSF_BSE_EFFECT ) != 0
-		&& material->HasAmbient()
-		&& material->GetSort() < SS_POST_PROCESS ) {
+	if ( RB_DrawSurfHasSoftParticleStage( draw.legacyDrawSurf ) ) {
 		return true;
 	}
 

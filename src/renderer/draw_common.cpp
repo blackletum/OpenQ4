@@ -151,10 +151,7 @@ static bool RB_DrawSurfNeedsLegacyFeedback( const drawSurf_t *surf ) {
 	if ( material == NULL ) {
 		return false;
 	}
-	if ( r_softParticles.GetBool()
-		&& ( surf->dsFlags & DSF_BSE_EFFECT ) != 0
-		&& material->HasAmbient()
-		&& material->GetSort() < SS_POST_PROCESS ) {
+	if ( RB_DrawSurfHasSoftParticleStage( surf ) ) {
 		return true;
 	}
 	return material->TestMaterialFlag( MF_NEED_CURRENT_RENDER )
@@ -4410,17 +4407,11 @@ static bool RB_SoftParticleBlendSupported( int drawStateBits ) {
 		|| blendBits == ( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE );
 }
 
-static bool RB_SoftParticleStageEligible( const drawSurf_t *surf, const shaderStage_t *pStage ) {
-	if ( !r_softParticles.GetBool() || !glConfig.GLSLProgramAvailable ) {
-		return false;
-	}
-	if ( globalImages == NULL || globalImages->currentDepthImage == NULL || backEnd.viewDef == NULL ) {
-		return false;
-	}
+static bool RB_SoftParticleStageContractSupported( const drawSurf_t *surf, const shaderStage_t *pStage ) {
 	if ( surf == NULL || pStage == NULL || surf->geo == NULL ) {
 		return false;
 	}
-	if ( ( surf->dsFlags & DSF_BSE_EFFECT ) == 0 ) {
+	if ( ( surf->dsFlags & DSF_BSE_EFFECT ) == 0 || ( surf->geo->surfaceFlags & STF_SOFT_PARTICLE_CANDIDATE ) == 0 ) {
 		return false;
 	}
 	if ( R_TriHasPrimBatchMesh( surf->geo ) || pStage->newStage != NULL ) {
@@ -4440,11 +4431,72 @@ static bool RB_SoftParticleStageEligible( const drawSurf_t *surf, const shaderSt
 	}
 
 	const idMaterial *shader = surf->material;
-	if ( shader == NULL || shader->GetSort() < SS_MEDIUM || shader->GetSort() >= SS_POST_PROCESS ) {
+	if ( shader == NULL || shader->GetSort() < SS_FAR || shader->GetSort() >= SS_POST_PROCESS ) {
 		return false;
 	}
 
 	return true;
+}
+
+static bool RB_SoftParticleStageVisible( const shaderStage_t *pStage, const float *regs ) {
+	if ( pStage == NULL ) {
+		return false;
+	}
+	if ( regs != NULL && regs[ pStage->conditionRegister ] == 0.0f ) {
+		return false;
+	}
+
+	const int blendBits = pStage->drawStateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
+	if ( regs != NULL ) {
+		const float r = regs[ pStage->color.registers[0] ];
+		const float g = regs[ pStage->color.registers[1] ];
+		const float b = regs[ pStage->color.registers[2] ];
+		const float a = regs[ pStage->color.registers[3] ];
+		if ( blendBits == ( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE )
+			&& r <= 0.0f && g <= 0.0f && b <= 0.0f ) {
+			return false;
+		}
+		if ( blendBits == ( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA )
+			&& a <= 0.0f ) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool RB_DrawSurfHasSoftParticleStage( const drawSurf_t *surf ) {
+	if ( !r_softParticles.GetBool() || !glConfig.GLSLProgramAvailable ) {
+		return false;
+	}
+	if ( surf == NULL || surf->material == NULL || surf->geo == NULL ) {
+		return false;
+	}
+	const idMaterial *shader = surf->material;
+	if ( !shader->HasAmbient() ) {
+		return false;
+	}
+
+	const float *regs = surf->shaderRegisters;
+	for ( int stage = 0; stage < shader->GetNumStages(); ++stage ) {
+		const shaderStage_t *pStage = shader->GetStage( stage );
+		if ( RB_SoftParticleStageContractSupported( surf, pStage ) && RB_SoftParticleStageVisible( pStage, regs ) ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static bool RB_SoftParticleStageEligible( const drawSurf_t *surf, const shaderStage_t *pStage ) {
+	if ( !r_softParticles.GetBool() || !glConfig.GLSLProgramAvailable ) {
+		return false;
+	}
+	if ( globalImages == NULL || globalImages->currentDepthImage == NULL || backEnd.viewDef == NULL ) {
+		return false;
+	}
+
+	return RB_SoftParticleStageContractSupported( surf, pStage );
 }
 
 static float RB_SoftParticleVertexColorModeValue( stageVertexColor_t vertexColor ) {

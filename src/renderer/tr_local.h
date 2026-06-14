@@ -1842,6 +1842,7 @@ void RB_FinishStageTexturing( const shaderStage_t *pStage, const drawSurf_t *sur
 void RB_BindVariableStageImage( const textureStage_t *texture, const float *shaderRegisters );
 void RB_BindStageTexture( const float *shaderRegisters, const textureStage_t *texture, const drawSurf_t *surf );
 void RB_FinishStageTexture( const textureStage_t *texture, const drawSurf_t *surf );
+bool RB_DrawSurfHasSoftParticleStage( const drawSurf_t *surf );
 void RB_StencilShadowPass( const drawSurf_t *drawSurfs );
 void RB_STD_DrawView( void );
 void RB_STD_FogAllLights( void );

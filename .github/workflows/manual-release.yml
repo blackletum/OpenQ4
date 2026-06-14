@@ -369,7 +369,7 @@ jobs:
             --version "${{ needs.metadata.outputs.version }}" \
             --version-tag "${{ needs.metadata.outputs.version_tag }}" \
             --archive-format "${{ matrix.archive_format }}" \
-            --package-suffix "${{ matrix.package_suffix }}" \
+            --package-suffix="${{ matrix.package_suffix }}" \
             --source-root "${GITHUB_WORKSPACE}" \
             --output-dir "${RUNNER_TEMP}"
 

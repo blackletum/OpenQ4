@@ -728,6 +728,9 @@ void rvSegment::AllocateSurface(rvBSE* effect, idRenderModel* model) {
 	}
 	tri->numVerts = 0;
 	tri->numIndexes = 0;
+	if (pt->GetType() == PTYPE_SPRITE || pt->GetType() == PTYPE_ORIENTED) {
+		tri->surfaceFlags |= STF_SOFT_PARTICLE_CANDIDATE;
+	}
 
 	modelSurface_t surf;
 	surf.id = 0;

@@ -49,6 +49,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "ModernGLSubmitPlan.h"
 #include "ModernShadowPlanner.h"
 #include "../framework/RenderDoc.h"
+#include "../framework/declEntityDef.h"
 #include "../ui/DeviceContext.h"
 
 // Detect the Microsoft software OpenGL wrapper and guide the user toward
@@ -2231,15 +2232,173 @@ static void R_LevelShotNormalizeFovToAspect( const renderView_t &sourceView, flo
 	}
 }
 
-static bool R_GetDefaultLevelShotBaseName( idStr &baseName ) {
-	idStr mapName;
+static void R_NormalizeLevelShotMapDeclPath( const char *mapPath, idStr &normalizedPath ) {
+	normalizedPath = ( mapPath != NULL ) ? mapPath : "";
+	normalizedPath.BackSlashesToSlashes();
+	normalizedPath.Strip( ' ' );
+	normalizedPath.Strip( '\t' );
+	normalizedPath.StripTrailingWhitespace();
+	normalizedPath.StripQuotes();
+	normalizedPath.StripFileExtension();
 
-	if ( tr.primaryWorld != NULL && tr.primaryWorld->mapName.Length() > 0 && tr.primaryWorld->mapName != "<FREED>" ) {
-		mapName = tr.primaryWorld->mapName;
-	} else {
-		mapName = cvarSystem->GetCVarString( "si_map" );
+	if ( !idStr::Icmpn( normalizedPath.c_str(), "maps/", 5 ) ) {
+		normalizedPath = normalizedPath.c_str() + 5;
+	}
+}
+
+static void R_NormalizeLevelShotEntityFilterToken( const char *entityFilter, idStr &normalizedFilter ) {
+	normalizedFilter = ( entityFilter != NULL ) ? entityFilter : "";
+	normalizedFilter.Strip( ' ' );
+	normalizedFilter.Strip( '\t' );
+	normalizedFilter.StripTrailingWhitespace();
+	normalizedFilter.StripQuotes();
+}
+
+static bool R_IsLevelShotMapFilterWhitespace( const char ch ) {
+	return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';
+}
+
+static void R_NormalizeLevelShotMapPathAndEntityFilter( const char *mapPath, const char *entityFilter, idStr &normalizedMapPath, idStr &normalizedEntityFilter ) {
+	idStr mapToken = ( mapPath != NULL ) ? mapPath : "";
+	mapToken.BackSlashesToSlashes();
+	mapToken.Strip( ' ' );
+	mapToken.Strip( '\t' );
+	mapToken.StripTrailingWhitespace();
+	mapToken.StripQuotes();
+
+	R_NormalizeLevelShotEntityFilterToken( entityFilter, normalizedEntityFilter );
+
+	int split = -1;
+	for ( int i = mapToken.Length() - 1; i >= 0; --i ) {
+		if ( R_IsLevelShotMapFilterWhitespace( mapToken[ i ] ) ) {
+			split = i;
+			break;
+		}
 	}
 
+	if ( split > 0 ) {
+		idStr mapPart = mapToken.Left( split );
+		idStr filterPart = mapToken.Right( mapToken.Length() - split - 1 );
+		idStr normalizedFilterPart;
+		mapPart.Strip( ' ' );
+		mapPart.Strip( '\t' );
+		mapPart.StripTrailingWhitespace();
+		mapPart.StripQuotes();
+		R_NormalizeLevelShotEntityFilterToken( filterPart.c_str(), normalizedFilterPart );
+
+		if ( mapPart.Length() > 0 && normalizedFilterPart.Length() > 0 ) {
+			mapToken = mapPart;
+			if ( normalizedEntityFilter.Length() == 0 ) {
+				normalizedEntityFilter = normalizedFilterPart;
+			}
+		}
+	}
+
+	R_NormalizeLevelShotMapDeclPath( mapToken.c_str(), normalizedMapPath );
+}
+
+static bool R_GetLevelShotMapDeclForNormalizedPath( const idStr &normalizedPath, idDict &outMapDecl ) {
+	if ( normalizedPath.IsEmpty() ) {
+		return false;
+	}
+
+	const idDecl *mapDecl = declManager->FindType( DECL_MAPDEF, normalizedPath.c_str(), false );
+	const idDeclEntityDef *mapDef = static_cast<const idDeclEntityDef *>( mapDecl );
+	if ( mapDef != NULL ) {
+		outMapDecl = mapDef->dict;
+		outMapDecl.Set( "path", mapDef->GetName() );
+		return true;
+	}
+
+	const int numMaps = fileSystem->GetNumMaps();
+	for ( int i = 0; i < numMaps; ++i ) {
+		const idDict *candidate = fileSystem->GetMapDecl( i );
+		if ( candidate == NULL ) {
+			continue;
+		}
+
+		idStr candidatePath;
+		R_NormalizeLevelShotMapDeclPath( candidate->GetString( "path" ), candidatePath );
+		if ( candidatePath.IsEmpty() ) {
+			continue;
+		}
+
+		if ( !fileSystem->FilenameCompare( normalizedPath.c_str(), candidatePath.c_str() ) ) {
+			outMapDecl = *candidate;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static bool R_GetLevelShotMapDecl( const char *mapPath, const char *entityFilter, idDict &outMapDecl ) {
+	outMapDecl.Clear();
+
+	idStr normalizedPath;
+	idStr normalizedEntityFilter;
+	R_NormalizeLevelShotMapPathAndEntityFilter( mapPath, entityFilter, normalizedPath, normalizedEntityFilter );
+	if ( normalizedPath.IsEmpty() ) {
+		return false;
+	}
+
+	if ( normalizedEntityFilter.Length() > 0 ) {
+		idStr filteredPath = normalizedPath;
+		filteredPath += "_";
+		filteredPath += normalizedEntityFilter;
+		filteredPath.Strip( ' ' );
+		filteredPath.Strip( '\t' );
+		filteredPath.StripTrailingWhitespace();
+		filteredPath.StripQuotes();
+		filteredPath.BackSlashesToSlashes();
+		filteredPath.Replace( " ", "_" );
+		if ( R_GetLevelShotMapDeclForNormalizedPath( filteredPath, outMapDecl ) ) {
+			return true;
+		}
+	}
+
+	if ( R_GetLevelShotMapDeclForNormalizedPath( normalizedPath, outMapDecl ) ) {
+		return true;
+	}
+
+	if ( normalizedEntityFilter.Length() == 0 ) {
+		idStr firstSegmentPath = normalizedPath;
+		firstSegmentPath += "_first";
+		if ( R_GetLevelShotMapDeclForNormalizedPath( firstSegmentPath, outMapDecl ) ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static bool R_GetDefaultLevelShotBaseName( idStr &baseName ) {
+	idStr mapPath;
+
+	if ( tr.primaryWorld != NULL && tr.primaryWorld->mapName.Length() > 0 && tr.primaryWorld->mapName != "<FREED>" ) {
+		mapPath = tr.primaryWorld->mapName;
+	} else {
+		mapPath = cvarSystem->GetCVarString( "si_map" );
+	}
+
+	if ( mapPath.Length() <= 0 ) {
+		return false;
+	}
+
+	idDict mapDeclDict;
+	const char *entityFilter = cvarSystem->GetCVarString( "si_entityFilter" );
+	if ( R_GetLevelShotMapDecl( mapPath.c_str(), entityFilter, mapDeclDict ) ) {
+		const char *loadImage = mapDeclDict.GetString( "loadimage", "" );
+		if ( loadImage[0] != '\0' ) {
+			// Match the mapDef loadscreen name, including split-map variants such as _first/_second.
+			baseName = loadImage;
+			baseName.BackSlashesToSlashes();
+			baseName.StripFileExtension();
+			return true;
+		}
+	}
+
+	idStr mapName = mapPath;
 	mapName.StripPath();
 	mapName.StripFileExtension();
 	if ( mapName.Length() <= 0 ) {

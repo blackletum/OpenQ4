@@ -87,6 +87,7 @@ typedef struct srfTriangles_s {
 	idBounds					bounds;					// for culling
 
 	int							ambientViewCount;		// if == tr.viewCount, it is visible this view
+	int							surfaceFlags;			// STF_* runtime surface classification
 
 	bool						generateNormals;		// create normals from geometry, instead of using explicit ones
 	bool						tangentsCalculated;		// set when the vertex tangents have been calculated
@@ -192,6 +193,8 @@ typedef struct srfTriangles_s {
 #endif
 // RAVEN END
 } srfTriangles_t;
+
+static const int STF_SOFT_PARTICLE_CANDIDATE = 1 << 0;
 
 static ID_INLINE bool R_TriHasPrimBatchMesh( const srfTriangles_t *tri ) {
 #if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
