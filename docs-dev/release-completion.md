@@ -10,6 +10,7 @@ Process:
 
 ## Ready For Changelog
 
+- [x] Save-game loading is more reliable: restored trace-model caches now accept stock-compatible saved collision data without an over-strict plane check, and failed or interrupted restores clean up safely instead of crashing during map shutdown.
 - [x] macOS manual releases now publish both OpenGL and Metal ARM64 packages reliably: the release workflow passes dash-prefixed package suffixes in an argument-safe form, so `-opengl` and `-metal` variants no longer fail before packaging starts.
 - [x] Enemy bullet impacts now keep their resolved flesh, armor, or monster-metal hit material through replicated damage effects, so sounds, wounds, and splats follow the same hit-material result as retail Quake 4 instead of falling back to a model's base material.
 - [x] The `levelshot` capture command now writes tiles using the active mapDef `loadimage` name, so shared shots like `game/airdefense2` save as `airdefense` and split-map visits such as `first`/`second` save under their matching loadscreen names.
