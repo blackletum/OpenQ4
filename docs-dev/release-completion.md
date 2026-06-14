@@ -10,6 +10,7 @@ Process:
 
 ## Ready For Changelog
 
+- [x] Starting a campaign map partway in no-save/dev-start flows now treats the authored loadout as already owned equipment: startup armor, ammo, inventory items, and weapons no longer flash pickup notifications, and the selected weapon is settled into its ready state instead of playing a pickup-style raise after the map appears.
 - [x] Steam Deck setup is easier to diagnose and friendlier on battery: Steam asset discovery now accepts explicit Quake 4, Steam root, Steam library, Steam compatibility, and XDG override paths with startup logging, while the Deck profile can apply a display-refresh-aware default frame cap and low-battery rumble cap without rewriting user-tuned settings.
 - [x] Steam Deck support now has a dedicated `listControllers` diagnostics command plus a shipping QA checklist, making it easier to capture SDL controller, gyro, touchpad, touchscreen, battery, Steam Input pass-through, suspend/resume, display, asset-discovery, and performance evidence before release.
 - [x] Steam Deck controls are easier to tune in-game: Settings -> Game Options -> Controller now exposes gyro, gyro sensitivity, touchpad mode and sensitivity, touchscreen routing, and low-battery rumble caps with localized labels and settings-registry coverage.
