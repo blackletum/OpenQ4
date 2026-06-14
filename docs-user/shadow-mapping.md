@@ -243,25 +243,26 @@ Projected shadow maps store Quake 4's authored light falloff depth directly, so 
 
 | Setting | Default | Range | What it does |
 |---|---:|---:|---|
-| `r_shadowMapBias` | `0.00035` | `0..0.05` | Constant receiver depth bias for projected lights. |
-| `r_shadowMapNormalBias` | `0.0015` | `0..0.05` | Extra projected-light bias on sloped receivers. |
-| `r_shadowMapTexelBiasScale` | `1.0` | `0..8` | Uses texel-aware receiver bias based on fitted cascade/light footprint. Constant bias acts as a compatibility floor. |
+| `r_shadowMapBias` | `0.00016` | `0..0.05` | Constant receiver depth bias for projected lights. |
+| `r_shadowMapNormalBias` | `0.00075` | `0..0.05` | Extra projected-light bias on sloped receivers. |
+| `r_shadowMapTexelBiasScale` | `0.45` | `0..8` | Uses texel-aware receiver bias based on fitted cascade/light footprint. Constant bias acts as a compatibility floor. |
 | `r_shadowMapReceiverPlaneBias` | `0` | `0..1` | Allows derivative receiver-plane bias for wider projected-light filters. |
-| `r_shadowMapPolygonFactor` | `1.25` | `0..16` | Slope-scale caster polygon offset used while rendering shadow maps. |
-| `r_shadowMapPolygonOffset` | `1.0` | `0..64` | Constant caster polygon offset used while rendering shadow maps. |
+| `r_shadowMapPolygonFactor` | `0.75` | `0..16` | Slope-scale caster polygon offset used while rendering shadow maps. |
+| `r_shadowMapPolygonOffset` | `0.5` | `0..64` | Constant caster polygon offset used while rendering shadow maps. |
 
 Point-light tuning:
 
 | Setting | Default | Range | What it does |
 |---|---:|---:|---|
-| `r_shadowMapPointBias` | `0.00020` | `0..0.05` | Constant receiver depth bias for point lights. |
-| `r_shadowMapPointNormalBias` | `0.0020` | `0..0.05` | Extra point-light bias on sloped receivers. |
+| `r_shadowMapPointBias` | `0.00010` | `0..0.05` | Constant receiver depth bias for point lights. |
+| `r_shadowMapPointNormalBias` | `0.0010` | `0..0.05` | Extra point-light bias on sloped receivers. |
 
-Point-light constant and texel-aware receiver bias also use the larger value rather than stacking both terms, so tuning one path does not automatically over-bias the other.
+Point-light constant and texel-aware receiver bias also use the larger value rather than stacking both terms, so tuning one path does not automatically over-bias the other. The slope-amplified texel-aware term is capped internally so grazing receivers do not create detached shadows.
 
 Practical advice:
 - Raise bias values slowly in very small steps.
 - If shadows detach from contact points, lower the relevant bias before changing many other settings.
+- Existing configs may keep older archived bias values. If detached shadows persist after updating, compare your local cvars against the defaults above.
 - If CSM shimmers while moving the camera, keep `r_shadowMapCascadeStabilize 1`.
 - Wider filter radii usually need more careful bias tuning.
 

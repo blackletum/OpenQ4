@@ -61,6 +61,8 @@ varying float vViewDepth;
 
 const float kShadowCoordWEpsilon = 1.0e-5;
 const float kShadowCoordMaxMagnitude = 65536.0;
+const float kShadowBiasMinLightCos = 0.20;
+const float kShadowBiasMaxSlope = 4.0;
 const float kShadowDebugAtlas = 1.0;
 const float kShadowDebugCascadeIndex = 2.0;
 const float kShadowDebugProjectedUV = 3.0;
@@ -261,9 +263,9 @@ float ShadowReceiverBias( int cascadeIndex, float depth ) {
 	if ( ShadowDebugModeIs( kShadowDebugBiasOff ) ) {
 		return 0.0;
 	}
-	float lightCos = clamp( vShadowLightCos, 1.0e-3, 1.0 );
+	float lightCos = clamp( vShadowLightCos, kShadowBiasMinLightCos, 1.0 );
 	float sinTheta = sqrt( max( 1.0 - lightCos * lightCos, 0.0 ) );
-	float slopeBias = sinTheta / lightCos;
+	float slopeBias = min( sinTheta / lightCos, kShadowBiasMaxSlope );
 	float cascadeScale = CascadeBiasScale( cascadeIndex );
 	float normalBias = ShadowDebugModeIs( kShadowDebugReceiverPlaneBiasOff ) ? 0.0 : uShadowNormalBias;
 	float scalarBias = ( uShadowBias + normalBias * sinTheta ) * cascadeScale;

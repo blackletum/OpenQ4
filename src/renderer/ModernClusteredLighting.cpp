@@ -539,6 +539,9 @@ static int R_ModernClusteredLighting_ShadowDescriptorFlags( const modernShadowLi
 	if ( shadow.projectedCascadeFallback ) {
 		flags |= RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_PROJECTED_FALLBACK;
 	}
+	if ( r_shadowMapReceiverPlaneBias.GetBool() ) {
+		flags |= RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_RECEIVER_PLANE_BIAS;
+	}
 	return flags;
 }
 

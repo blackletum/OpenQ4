@@ -43,6 +43,8 @@ const float kShadowDebugReceiverPlaneBiasOff = 11.0;
 const float kShadowDebugCompareDelta = 12.0;
 const float kShadowDebugReceiverEligibility = 13.0;
 const float kShadowDebugReceiverFallbackReason = 14.0;
+const float kShadowBiasMinLightCos = 0.20;
+const float kShadowBiasMaxSlope = 4.0;
 
 varying vec2 vBumpTexCoord;
 varying vec2 vDiffuseTexCoord;
@@ -192,9 +194,9 @@ float ShadowReceiverBias() {
 	if ( ShadowDebugModeIs( kShadowDebugBiasOff ) ) {
 		return 0.0;
 	}
-	float lightCos = clamp( vShadowLightCos, 1.0e-3, 1.0 );
+	float lightCos = clamp( vShadowLightCos, kShadowBiasMinLightCos, 1.0 );
 	float sinTheta = sqrt( max( 1.0 - lightCos * lightCos, 0.0 ) );
-	float slopeBias = sinTheta / lightCos;
+	float slopeBias = min( sinTheta / lightCos, kShadowBiasMaxSlope );
 	float normalBias = ShadowDebugModeIs( kShadowDebugReceiverPlaneBiasOff ) ? 0.0 : uShadowNormalBias;
 	float scalarBias = uShadowBias + normalBias * sinTheta;
 	float texelBias = uPointShadowTexelDepthBias * ( 1.0 + slopeBias );

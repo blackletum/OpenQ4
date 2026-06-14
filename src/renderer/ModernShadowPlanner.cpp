@@ -2803,9 +2803,9 @@ bool RendererShadowProjectedDiagnostic_RunSelfTest( void ) {
 	r_shadowMapProjectionPad.SetFloat( 0.15f );
 	r_shadowMapCascadeDistance.SetFloat( 1536.0f );
 	r_shadowMapCascadeBlend.SetFloat( 0.15f );
-	r_shadowMapBias.SetFloat( 0.00035f );
-	r_shadowMapNormalBias.SetFloat( 0.0015f );
-	r_shadowMapTexelBiasScale.SetFloat( 1.0f );
+	r_shadowMapBias.SetFloat( 0.00016f );
+	r_shadowMapNormalBias.SetFloat( 0.00075f );
+	r_shadowMapTexelBiasScale.SetFloat( 0.45f );
 	r_shadowMapFilterRadius.SetFloat( 2.0f );
 	r_shadowMapPCSSLightRadius.SetFloat( 4.0f );
 	r_shadowMapPCSSMaxRadius.SetFloat( 8.0f );

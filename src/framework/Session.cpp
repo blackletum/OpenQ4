@@ -521,6 +521,8 @@ static void Session_NormalizeEntityFilterToken( const char *entityFilter, idStr 
 	normalizedFilter.StripQuotes();
 }
 
+static bool Session_ShouldDefaultFirstEntityFilter( const idStr &normalizedPath );
+
 static void Session_NormalizeMapPathAndEntityFilter( const char *mapPath, const char *entityFilter,
 	idStr &normalizedMapPath, idStr &normalizedEntityFilter ) {
 	idStr mapToken = ( mapPath != NULL ) ? mapPath : "";
@@ -559,6 +561,9 @@ static void Session_NormalizeMapPathAndEntityFilter( const char *mapPath, const 
 	}
 
 	Session_NormalizeMapDeclPath( mapToken.c_str(), normalizedMapPath );
+	if ( normalizedEntityFilter.Length() == 0 && Session_ShouldDefaultFirstEntityFilter( normalizedMapPath ) ) {
+		normalizedEntityFilter = "first";
+	}
 }
 
 static bool Session_GetMapDeclDictForNormalizedPath( const idStr &normalizedPath, idDict &outMapDecl ) {
@@ -594,6 +599,46 @@ static bool Session_GetMapDeclDictForNormalizedPath( const idStr &normalizedPath
 	}
 
 	return false;
+}
+
+static bool Session_MapDefDeclExistsWithoutParsing( const idStr &normalizedPath ) {
+	if ( normalizedPath.IsEmpty() ) {
+		return false;
+	}
+
+	const int numMapDefs = declManager->GetNumDecls( DECL_MAPDEF );
+	for ( int i = 0; i < numMapDefs; ++i ) {
+		const idDecl *mapDecl = declManager->DeclByIndex( DECL_MAPDEF, i, false );
+		if ( mapDecl == NULL ) {
+			continue;
+		}
+
+		idStr mapDeclPath;
+		Session_NormalizeMapDeclPath( mapDecl->GetName(), mapDeclPath );
+		if ( mapDeclPath.IsEmpty() ) {
+			continue;
+		}
+
+		if ( !fileSystem->FilenameCompare( normalizedPath.c_str(), mapDeclPath.c_str() ) ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static bool Session_ShouldDefaultFirstEntityFilter( const idStr &normalizedPath ) {
+	if ( normalizedPath.IsEmpty() ) {
+		return false;
+	}
+
+	if ( Session_MapDefDeclExistsWithoutParsing( normalizedPath ) ) {
+		return false;
+	}
+
+	idStr firstSegmentPath = normalizedPath;
+	firstSegmentPath += "_first";
+	return Session_MapDefDeclExistsWithoutParsing( firstSegmentPath );
 }
 
 static void Session_ApplyEntityFilterToServerInfo( idDict &serverInfo, const char *entityFilter ) {

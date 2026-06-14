@@ -97,6 +97,16 @@ The improvements below are ordered by technical dependency, not by coding conven
 - [x] Run compile, staging, safe selftests, and targeted gameplay image-regression captures.
 - [x] Update the 6.4 audit record and release-completion note.
 
+#### Peter-panning mitigation checklist
+
+- [x] Audit ARB2/content GLSL, caster polygon offset, texel-aware receiver bias, and modern clustered receiver bias paths.
+- [x] Clamp slope-amplified receiver bias so grazing-angle surfaces cannot expand texel bias into detached shadows.
+- [x] Retune default projected, point, texel-aware, and caster-side shadow-map bias values downward.
+- [x] Gate modern receiver-plane derivative bias behind the same `r_shadowMapReceiverPlaneBias` policy as the ARB2 path.
+- [x] Run compile, shadow planner diagnostics, and targeted gameplay shadow regression validation.
+
+Validation evidence: `tools\build\meson_setup.ps1 compile -C builddir`, `tools\build\meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects`, `renderer_validation_matrix.py --cases renderer-shadow-planner-selftest,renderer-shadow-projected-diagnostic`, and `renderer_gameplay_benchmark.py --profile shadow-regression` with `r_postAA=0`. The initial cold-cache five-case gameplay run passed projected and point cases while three captures missed their screenshot/benchmark markers during first-use cache generation; rerunning those three with a warm cache and longer settle window passed.
+
 #### 4.3 caster-admission audit record
 
 - Perforated materials remain admitted through the opaque shadow-map caster path. The ARB2 projected and point caster shaders sample active alpha-test stages when they can bind explicit texture coordinates, and diagnostics already count these as `alpha` casters.
