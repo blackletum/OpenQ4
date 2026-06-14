@@ -34,8 +34,13 @@ endif
 
 platform_backend_requested = get_option('platform_backend')
 platform_backend = platform_backend_requested
+macos_graphics_bridge = get_option('macos_graphics_bridge')
 if host_system == 'windows' and platform_backend_requested == 'native'
   error('platform_backend=native is only valid on non-Windows hosts.')
+endif
+
+if host_system != 'darwin' and macos_graphics_bridge != 'opengl'
+  error('macos_graphics_bridge=' + macos_graphics_bridge + ' is only valid on macOS hosts.')
 endif
 
 if host_system == 'linux'
@@ -46,11 +51,15 @@ elif host_system == 'darwin'
   if platform_backend_requested == 'legacy_win32'
     error('platform_backend=legacy_win32 is only valid on Windows hosts.')
   endif
+  if macos_graphics_bridge == 'metal' and platform_backend_requested != 'sdl3'
+    error('macos_graphics_bridge=metal requires platform_backend=sdl3 so the bridge stays on the shared SDL3 path instead of the native Cocoa backend.')
+  endif
 elif host_system != 'windows'
   error('Unsupported host system for platform backend selection: ' + host_system)
 endif
 
 use_sdl3_backend = platform_backend == 'sdl3'
+use_macos_metal_bridge = host_system == 'darwin' and macos_graphics_bridge == 'metal'
 if host_system == 'windows' and not use_sdl3_backend
   warning(
     'legacy_win32 backend is transitional. '
@@ -344,6 +353,7 @@ glew_dep = disabler()
 stb_vorbis_dep = disabler()
 openal_dep = disabler()
 sdl3_dep = disabler()
+macos_graphics_bridge_dep = disabler()
 deps = []
 if build_engine
   glew_dep = dependency(
@@ -434,6 +444,13 @@ if build_engine
       deps += [linux_x11_dep, linux_xext_dep, linux_xxf86vm_dep]
     endif
   elif host_system == 'darwin'
+    if use_macos_metal_bridge
+      macos_graphics_bridge_dep = dependency(
+        'appleframeworks',
+        modules: ['Metal', 'QuartzCore'],
+        required: true,
+      )
+    endif
     deps += [
       dependency('threads', required: true),
       dependency(
@@ -444,6 +461,9 @@ if build_engine
     ]
     if use_sdl3_backend
       deps += [sdl3_dep]
+    endif
+    if use_macos_metal_bridge
+      deps += [macos_graphics_bridge_dep]
     endif
   endif
 endif
@@ -466,6 +486,10 @@ endif
 if host_system == 'darwin'
   shared_cpp_args += ['-DMACOS_X=1']
   shared_c_args += ['-DMACOS_X=1']
+  if use_macos_metal_bridge
+    shared_cpp_args += ['-DOPENQ4_MACOS_METAL_BRIDGE=1']
+    shared_c_args += ['-DOPENQ4_MACOS_METAL_BRIDGE=1']
+  endif
 endif
 
 if use_sdl3_backend
@@ -817,6 +841,7 @@ summary(
     'C++ standard': get_option('cpp_std'),
     'Platform backend requested': platform_backend_requested,
     'Platform backend': platform_backend,
+    'macOS graphics bridge': macos_graphics_bridge,
     'OpenAL override root': openal_root_override == '' ? 'bundled/default' : openal_root_override,
     'Build engine': build_engine,
     'engine client binary': engine_client_binary_name,

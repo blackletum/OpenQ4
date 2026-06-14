@@ -180,6 +180,7 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "linux_highdpi_mouse.py",
         root / "tools" / "tests" / "linux_vsync_support.py",
         root / "tools" / "tests" / "loading_continue_input.py",
+        root / "tools" / "tests" / "macos_metal_bridge.py",
         root / "tools" / "tests" / "steam_deck_support.py",
     ]
     for test_script in tests:

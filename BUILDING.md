@@ -88,7 +88,7 @@ To rebuild the game libraries as part of the openQ4 build, set `OPENQ4_BUILD_GAM
 
 ## Build Setup
 
-Third-party libraries such as SDL3, GLEW, OpenAL Soft, and stb_vorbis are managed as Meson subprojects. On Linux, the default SDL3 backend requires OpenGL plus the SDL3 runtime integration development packages, while X11/Xext are optional helpers used only when available for the SDL3 NVIDIA VRAM probe. The legacy `-Dplatform_backend=native` path still requires X11/GLX and VidMode development packages.
+Third-party libraries such as SDL3, GLEW, OpenAL Soft, and stb_vorbis are managed as Meson subprojects. On Linux, the default SDL3 backend requires OpenGL plus the SDL3 runtime integration development packages, while X11/Xext are optional helpers used only when available for the SDL3 NVIDIA VRAM probe. The legacy `-Dplatform_backend=native` path still requires X11/GLX and VidMode development packages. On macOS, SDL3 is the default platform path; `-Dmacos_graphics_bridge=metal` enables the Metal-ready SDL3/Cocoa bridge while keeping the stock-compatible OpenGL renderer rather than introducing a native Metal rewrite.
 
 On current Debian/Ubuntu systems, install the SDL3/Linux package set (`binutils`, `libasound2-dev`, `libdbus-1-dev`, `libdecor-0-dev`, `libdrm-dev`, `libegl1-mesa-dev`, `libfribidi-dev`, `libgbm-dev`, `libgl1-mesa-dev`, `libibus-1.0-dev`, `libjack-dev`, `libopenal-dev`, `libpipewire-0.3-dev`, `libpulse-dev`, `libsndio-dev`, `libthai-dev`, `libudev-dev`, `libwayland-dev`, and `libxkbcommon-dev`). Add `libx11-dev`, `libxext-dev`, `libxcursor-dev`, `libxfixes-dev`, `libxi-dev`, `libxrandr-dev`, `libxss-dev`, `libxtst-dev`, `libxxf86dga-dev`, and `libxxf86vm-dev` when validating the optional SDL3 X11 helper path or the native Linux backend.
 
@@ -104,7 +104,8 @@ Pass any of these with `-D<option>=<value>` on the `meson setup` command line:
 | `build_games` | `true` | Build game modules |
 | `build_game_sp` | `true` | Build single-player game module |
 | `build_game_mp` | `true` | Build multiplayer game module |
-| `platform_backend` | platform-dependent | `sdl3` or `legacy_win32` on Windows, `sdl3` or `native` on Linux, `native` on macOS |
+| `platform_backend` | `sdl3` | `sdl3` or `legacy_win32` on Windows, `sdl3` or `native` on Linux/macOS |
+| `macos_graphics_bridge` | `opengl` | macOS-only graphics bridge: `opengl` or `metal`; `metal` requires `platform_backend=sdl3` and keeps rendering on the OpenGL compatibility path |
 | `version_track` | `dev` | Build track label (`stable`, `dev`, `beta`, `rc`) |
 | `version_iteration` | *(empty)* | Dot-separated iteration counter for pre-release builds |
 | `version_base_override` | *(empty)* | Override the generated release version without editing `meson.build` |
@@ -197,7 +198,7 @@ meson compile -C builddir
 ## Building on Linux / macOS
 
 > [!NOTE]
-> As of March 30, 2026, Linux defaults to the SDL3 backend. `-Dplatform_backend=native` remains available as the fallback Linux path. Native Wayland is handled through SDL3/Wayland/EGL, while `openQ4-steamdeck` still prefers XWayland when both `WAYLAND_DISPLAY` and `DISPLAY` are present unless `SDL_VIDEO_DRIVER` or `SDL_VIDEODRIVER` is already set.
+> As of March 30, 2026, Linux and macOS default to the SDL3 backend. `-Dplatform_backend=native` remains available as the fallback POSIX comparison path. Native Wayland is handled through SDL3/Wayland/EGL on Linux, while `openQ4-steamdeck` still prefers XWayland when both `WAYLAND_DISPLAY` and `DISPLAY` are present unless `SDL_VIDEO_DRIVER` or `SDL_VIDEODRIVER` is already set.
 
 ### Debug Build
 
@@ -212,7 +213,15 @@ bash tools/build/meson_setup.sh compile -C builddir
 ./builddir/openQ4-client_<arch>
 ```
 
-Use `-Dplatform_backend=native` during setup if you need to compare against the legacy Linux X11/GLX backend.
+Use `-Dplatform_backend=native` during setup if you need to compare against the legacy Linux X11/GLX or macOS Cocoa/OpenGL backend.
+
+For macOS Metal bring-up without a native renderer rewrite, configure with:
+
+```bash
+bash tools/build/meson_setup.sh setup --wipe builddir . --backend ninja --buildtype=debug --wrap-mode=forcefallback -Dplatform_backend=sdl3 -Dmacos_graphics_bridge=metal
+```
+
+This mode links the Metal/QuartzCore bridge frameworks, defaults SDL's render/GPU hints to Metal, and logs the active bridge during OpenGL startup. The visible renderer remains openQ4's OpenGL compatibility path so shipped Quake 4 asset behavior stays the guiding constraint.
 
 ### Optimized Build
 
@@ -266,7 +275,7 @@ After running the install step, `.install/` is a self-contained distributable pa
 ```
 
 > [!NOTE]
-> Public release packages stay on the `stable` version track while using platform-appropriate diagnostics. Windows packages intentionally use Meson `buildtype=debug` and include matching PDB files. Linux and macOS release packages use Meson `buildtype=debugoptimized` with `b_ndebug=true`; Linux debug info is split into separate `openq4-<version>-linux-<arch>-debugsymbols.tar.xz` assets. MSVC import libraries (`*.lib`) are development-only artifacts and are not required in the package.
+> Public release packages stay on the `stable` version track while using platform-appropriate diagnostics. Windows packages intentionally use Meson `buildtype=debug` and include matching PDB files. Linux and macOS release packages use Meson `buildtype=debugoptimized` with `b_ndebug=true`; Linux debug info is split into separate `openq4-<version>-linux-<arch>-debugsymbols.tar.xz` assets. macOS release packaging builds both `-opengl` and `-metal` variants from the SDL3 backend so the Metal bridge remains additive. MSVC import libraries (`*.lib`) are development-only artifacts and are not required in the package.
 
 Repo-authored runtime overrides live under `content/baseoq4/`. The install step stages that source-owned content into the runtime `baseoq4/` directory inside `.install/`.
 
@@ -290,7 +299,7 @@ The `meson install` step (via the wrapper) stages all required binaries into `.i
 
 Release archives also generate a packaged offline HTML documentation site under `docs/`. If you run the release packager manually instead of using GitHub Actions, make sure `python -m pip install markdown` is available in the same environment.
 
-The manually dispatched GitHub release workflow publishes architecture-qualified release assets such as `openq4-<version>-windows-x64.zip`, `openq4-<version>-windows-arm64.zip`, `openq4-<version>-linux-x64.tar.xz`, `openq4-<version>-linux-arm64.tar.xz`, and `openq4-<version>-macos-arm64.tar.gz`. Release workflow packages use `version_track=stable`; Windows payloads use Meson `buildtype=debug`, include PDB files, and write crash logs plus minidumps under `crashes/` beside the executable after unhandled exceptions. Linux and macOS payloads use Meson `buildtype=debugoptimized` with `b_ndebug=true`; Linux release runs also publish detached debug-symbol archives such as `openq4-<version>-linux-x64-debugsymbols.tar.xz` and `openq4-<version>-linux-arm64-debugsymbols.tar.xz`. Windows release payloads also get native installer executables such as `openq4-<version>-windows-x64-setup.exe` and `openq4-<version>-windows-arm64-setup.exe`. Each installer is compiled from the already-packaged Windows release directory so its file set matches the archive instead of diverging from it, writes install metadata to the registry for upgrade detection, registers a normal Windows uninstaller entry, and can optionally register `openq4://` browser links.
+The manually dispatched GitHub release workflow publishes architecture-qualified release assets such as `openq4-<version>-windows-x64.zip`, `openq4-<version>-windows-arm64.zip`, `openq4-<version>-linux-x64.tar.xz`, `openq4-<version>-linux-arm64.tar.xz`, `openq4-<version>-macos-arm64-opengl.tar.gz`, and `openq4-<version>-macos-arm64-metal.tar.gz`. Release workflow packages use `version_track=stable`; Windows payloads use Meson `buildtype=debug`, include PDB files, and write crash logs plus minidumps under `crashes/` beside the executable after unhandled exceptions. Linux and macOS payloads use Meson `buildtype=debugoptimized` with `b_ndebug=true`; Linux release runs also publish detached debug-symbol archives such as `openq4-<version>-linux-x64-debugsymbols.tar.xz` and `openq4-<version>-linux-arm64-debugsymbols.tar.xz`. Windows release payloads also get native installer executables such as `openq4-<version>-windows-x64-setup.exe` and `openq4-<version>-windows-arm64-setup.exe`. Each installer is compiled from the already-packaged Windows release directory so its file set matches the archive instead of diverging from it, writes install metadata to the registry for upgrade detection, registers a normal Windows uninstaller entry, and can optionally register `openq4://` browser links.
 
 If you want to build that installer manually on Windows after packaging a release directory, install [Inno Setup](https://jrsoftware.org/isinfo.php) and run:
 

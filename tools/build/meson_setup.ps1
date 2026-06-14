@@ -324,6 +324,7 @@ function Get-SetupArgsForExistingBuildDir {
 
     $optionNames = @(
         "platform_backend",
+        "macos_graphics_bridge",
         "version_track",
         "version_iteration",
         "version_base_override",

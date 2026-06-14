@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import sys
@@ -135,6 +136,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--package-suffix",
+        default="",
+        help=(
+            "Optional file-name suffix appended after the platform/arch stem, "
+            "for release variants such as -opengl or -metal."
+        ),
+    )
+    parser.add_argument(
         "--allow-missing-binaries",
         action="store_true",
         help=(
@@ -143,6 +152,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         ),
     )
     return parser.parse_args(argv[1:])
+
+
+def normalize_package_suffix(raw_suffix: str) -> str:
+    suffix = raw_suffix.strip()
+    if suffix == "":
+        return ""
+    if not suffix.startswith("-"):
+        suffix = "-" + suffix
+    if not re.fullmatch(r"-[A-Za-z0-9][A-Za-z0-9._-]*", suffix):
+        raise ValueError(
+            "package suffix must be empty or a file-name-safe value such as -opengl or -metal"
+        )
+    return suffix
 
 
 def get_required_root_binaries(platform: str, arch: str) -> tuple[str, str]:
@@ -688,6 +710,10 @@ def create_macos_app_bundle(
             f"<string>{version}</string>",
             "<key>LSMinimumSystemVersion</key>",
             "<string>12.0</string>",
+            "<key>NSHighResolutionCapable</key>",
+            "<true/>",
+            "<key>NSSupportsAutomaticGraphicsSwitching</key>",
+            "<true/>",
             "</dict>",
             "</plist>",
         ],
@@ -729,7 +755,12 @@ def main(argv: list[str]) -> int:
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    package_stem = f"openq4-{args.version_tag}-{args.platform}-{args.arch}"
+    try:
+        package_suffix = normalize_package_suffix(args.package_suffix)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    package_stem = f"openq4-{args.version_tag}-{args.platform}-{args.arch}{package_suffix}"
     package_root = output_dir / package_stem
     if package_root.exists():
         shutil.rmtree(package_root)

@@ -42,6 +42,14 @@ option(
 )
 
 option(
+  'macos_graphics_bridge',
+  type: 'combo',
+  choices: ['opengl', 'metal'],
+  value: 'opengl',
+  description: 'macOS graphics bridge. metal keeps the SDL3/OpenGL renderer path but enables the Metal-ready SDL3/Cocoa integration surface for translation-layer bring-up.',
+)
+
+option(
   'version_track',
   type: 'string',
   value: 'dev',

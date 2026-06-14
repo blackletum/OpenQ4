@@ -50,6 +50,7 @@ If you prefer a self-contained setup, keep these side by side in the same root f
 
 - Extract the release archive to a folder of your choice.
 - Linux packages default to the SDL3 runtime path.
+- macOS packages use the SDL3 runtime path and are published as separate OpenGL and Metal bridge variants. The Metal package is a bridge mode around the existing OpenGL renderer, so gameplay compatibility stays aligned with the stock asset path while Metal translation-layer work can be tested separately.
 
 ### Steam Deck
 

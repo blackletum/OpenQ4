@@ -94,6 +94,8 @@ jobs:
             label: Windows x64
             binary_arch: x64
             platform_backend: sdl3
+            macos_graphics_bridge: opengl
+            package_suffix: ""
             archive_format: zip
             archive_ext: .zip
           - os: windows-11-arm
@@ -101,6 +103,8 @@ jobs:
             label: Windows ARM64
             binary_arch: arm64
             platform_backend: sdl3
+            macos_graphics_bridge: opengl
+            package_suffix: ""
             archive_format: zip
             archive_ext: .zip
           - os: ubuntu-24.04
@@ -108,6 +112,8 @@ jobs:
             label: Linux x64
             binary_arch: x64
             platform_backend: sdl3
+            macos_graphics_bridge: opengl
+            package_suffix: ""
             archive_format: tar.xz
             archive_ext: .tar.xz
           - os: ubuntu-24.04-arm
@@ -115,13 +121,26 @@ jobs:
             label: Linux ARM64
             binary_arch: arm64
             platform_backend: sdl3
+            macos_graphics_bridge: opengl
+            package_suffix: ""
             archive_format: tar.xz
             archive_ext: .tar.xz
           - os: macos-15
             platform: macos
-            label: macOS ARM64
+            label: macOS ARM64 OpenGL
             binary_arch: arm64
             platform_backend: sdl3
+            macos_graphics_bridge: opengl
+            package_suffix: "-opengl"
+            archive_format: tar.gz
+            archive_ext: .tar.gz
+          - os: macos-15
+            platform: macos
+            label: macOS ARM64 Metal
+            binary_arch: arm64
+            platform_backend: sdl3
+            macos_graphics_bridge: metal
+            package_suffix: "-metal"
             archive_format: tar.gz
             archive_ext: .tar.gz
 
@@ -239,6 +258,7 @@ jobs:
             "--buildtype=debug",
             "--wrap-mode=forcefallback",
             "-Dplatform_backend=${{ matrix.platform_backend }}",
+            "-Dmacos_graphics_bridge=${{ matrix.macos_graphics_bridge }}",
             "-Dversion_track=stable",
             "-Dversion_base_override=${{ needs.metadata.outputs.version }}"
           )
@@ -262,7 +282,7 @@ jobs:
           set -euo pipefail
           export OPENQ4_SKIP_GAMELIBS_SYNC=1
 
-          bash tools/build/meson_setup.sh setup --wipe builddir . --backend ninja --buildtype=debugoptimized -Db_ndebug=true --wrap-mode=forcefallback -Dplatform_backend=${{ matrix.platform_backend }} -Dversion_track=stable -Dversion_base_override=${{ needs.metadata.outputs.version }}
+          bash tools/build/meson_setup.sh setup --wipe builddir . --backend ninja --buildtype=debugoptimized -Db_ndebug=true --wrap-mode=forcefallback -Dplatform_backend=${{ matrix.platform_backend }} -Dmacos_graphics_bridge=${{ matrix.macos_graphics_bridge }} -Dversion_track=stable -Dversion_base_override=${{ needs.metadata.outputs.version }}
           bash tools/build/meson_setup.sh compile -C builddir
           bash tools/build/meson_setup.sh install -C builddir --no-rebuild --skip-subprojects
 
@@ -349,11 +369,12 @@ jobs:
             --version "${{ needs.metadata.outputs.version }}" \
             --version-tag "${{ needs.metadata.outputs.version_tag }}" \
             --archive-format "${{ matrix.archive_format }}" \
+            --package-suffix "${{ matrix.package_suffix }}" \
             --source-root "${GITHUB_WORKSPACE}" \
             --output-dir "${RUNNER_TEMP}"
 
-          archive_path="${RUNNER_TEMP}/openq4-${{ needs.metadata.outputs.version_tag }}-${{ matrix.platform }}-${{ matrix.binary_arch }}${{ matrix.archive_ext }}"
-          package_dir="${RUNNER_TEMP}/openq4-${{ needs.metadata.outputs.version_tag }}-${{ matrix.platform }}-${{ matrix.binary_arch }}"
+          archive_path="${RUNNER_TEMP}/openq4-${{ needs.metadata.outputs.version_tag }}-${{ matrix.platform }}-${{ matrix.binary_arch }}${{ matrix.package_suffix }}${{ matrix.archive_ext }}"
+          package_dir="${RUNNER_TEMP}/openq4-${{ needs.metadata.outputs.version_tag }}-${{ matrix.platform }}-${{ matrix.binary_arch }}${{ matrix.package_suffix }}"
           if [ ! -f "${archive_path}" ]; then
             echo "Expected package archive not found: ${archive_path}"
             exit 1
@@ -423,7 +444,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: openq4-release-${{ needs.metadata.outputs.version_tag }}-${{ matrix.platform }}-${{ matrix.binary_arch }}
+          name: openq4-release-${{ needs.metadata.outputs.version_tag }}-${{ matrix.platform }}-${{ matrix.binary_arch }}${{ matrix.package_suffix }}
           path: ${{ steps.package.outputs.archive_path }}
           if-no-files-found: error
 
@@ -497,7 +518,8 @@ jobs:
             "openq4-${{ needs.metadata.outputs.version_tag }}-linux-x64-debugsymbols.tar.xz"
             "openq4-${{ needs.metadata.outputs.version_tag }}-linux-arm64.tar.xz"
             "openq4-${{ needs.metadata.outputs.version_tag }}-linux-arm64-debugsymbols.tar.xz"
-            "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64.tar.gz"
+            "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64-opengl.tar.gz"
+            "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64-metal.tar.gz"
           )
 
           missing=0

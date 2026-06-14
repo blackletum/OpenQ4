@@ -137,6 +137,7 @@ static SDL_JoystickID s_sdlJoystickId = 0;
 static bool s_sdlDiagnosticCommandsRegistered = false;
 static bool s_sdlDisplaySummaryLogged = false;
 static bool s_sdlVideoDriverSummaryLogged = false;
+static bool s_sdlGraphicsBridgeSummaryLogged = false;
 static float s_sdlMouseWheelRemainderY = 0.0f;
 static float s_sdlRelativeMouseRemainderX = 0.0f;
 static float s_sdlRelativeMouseRemainderY = 0.0f;
@@ -448,8 +449,27 @@ static const char *SDL3_EnvString(const char *name) {
 	return (value != NULL && value[0] != '\0') ? value : "<unset>";
 }
 
+static const char *SDL3_HintString(const char *name) {
+	const char *value = SDL_GetHint(name);
+	return (value != NULL && value[0] != '\0') ? value : "<unset>";
+}
+
 static bool SDL3_StringEquals(const char *a, const char *b) {
 	return a != NULL && b != NULL && idStr::Icmp(a, b) == 0;
+}
+
+static bool SDL3_IsMacOSMetalBridge(void) {
+#if defined(OPENQ4_SDL3_DARWIN_HOST) && defined(OPENQ4_MACOS_METAL_BRIDGE)
+	return true;
+#else
+	return false;
+#endif
+}
+
+static const char *SDL3_GraphicsBridgeDescription(void) {
+	return SDL3_IsMacOSMetalBridge()
+		? "macOS Metal bridge (SDL3/Cocoa host, OpenGL renderer compatibility path)"
+		: "OpenGL";
 }
 
 static void SDL3_SetVideoHintDefaults(void) {
@@ -458,6 +478,14 @@ static void SDL3_SetVideoHintDefaults(void) {
 	(void)SDL_SetHintWithPriority(SDL_HINT_VIDEO_WAYLAND_MODE_EMULATION, "1", SDL_HINT_DEFAULT);
 	(void)SDL_SetHintWithPriority(SDL_HINT_VIDEO_WAYLAND_MODE_SCALING, "aspect", SDL_HINT_DEFAULT);
 	(void)SDL_SetHintWithPriority(SDL_HINT_VIDEO_WAYLAND_SCALE_TO_DISPLAY, "0", SDL_HINT_DEFAULT);
+#endif
+#if defined(OPENQ4_SDL3_DARWIN_HOST)
+	if (SDL3_IsMacOSMetalBridge()) {
+		(void)SDL_SetHintWithPriority(SDL_HINT_VIDEO_DRIVER, "cocoa", SDL_HINT_DEFAULT);
+		(void)SDL_SetHintWithPriority(SDL_HINT_RENDER_DRIVER, "metal", SDL_HINT_DEFAULT);
+		(void)SDL_SetHintWithPriority(SDL_HINT_GPU_DRIVER, "metal", SDL_HINT_DEFAULT);
+		(void)SDL_SetHintWithPriority(SDL_HINT_VIDEO_METAL_AUTO_RESIZE_DRAWABLE, "1", SDL_HINT_DEFAULT);
+	}
 #endif
 }
 
@@ -522,6 +550,29 @@ static void SDL3_PrintVideoDriverSummary(void) {
 #endif
 
 	s_sdlVideoDriverSummaryLogged = true;
+}
+
+static void SDL3_PrintGraphicsBridgeSummary(void) {
+	if (s_sdlGraphicsBridgeSummaryLogged) {
+		return;
+	}
+
+	common->Printf("SDL3: graphics bridge: %s\n", SDL3_GraphicsBridgeDescription());
+
+#if defined(OPENQ4_SDL3_DARWIN_HOST)
+	if (SDL3_IsMacOSMetalBridge()) {
+		common->Printf(
+			"SDL3: macOS Metal bridge keeps rendering on the existing OpenGL compatibility path; no native Metal renderer rewrite is selected.\n");
+		common->Printf(
+			"SDL3: macOS Metal bridge hints: SDL_VIDEO_DRIVER=%s SDL_RENDER_DRIVER=%s SDL_GPU_DRIVER=%s SDL_VIDEO_METAL_AUTO_RESIZE_DRAWABLE=%s\n",
+			SDL3_HintString(SDL_HINT_VIDEO_DRIVER),
+			SDL3_HintString(SDL_HINT_RENDER_DRIVER),
+			SDL3_HintString(SDL_HINT_GPU_DRIVER),
+			SDL3_HintString(SDL_HINT_VIDEO_METAL_AUTO_RESIZE_DRAWABLE));
+	}
+#endif
+
+	s_sdlGraphicsBridgeSummaryLogged = true;
 }
 
 static void SDL3_QueueKeyboardInput(int key, bool down, int time) {
@@ -4554,6 +4605,7 @@ bool GLimp_Init(glimpParms_t parms) {
 	}
 	SDL3_UpdateVideoDriverProfile();
 	SDL3_PrintVideoDriverSummary();
+	SDL3_PrintGraphicsBridgeSummary();
 	SDL3_ApplySteamDeckPerformanceDefaults();
 
 	if (!s_sdlDiagnosticCommandsRegistered) {
@@ -4735,6 +4787,7 @@ void GLimp_Shutdown(void) {
 		s_sdlVideoActive = false;
 		s_sdlVideoDriver = SDL3_VIDEO_DRIVER_UNKNOWN;
 		idStr::snPrintf(s_sdlVideoDriverName, sizeof(s_sdlVideoDriverName), "unknown");
+		s_sdlGraphicsBridgeSummaryLogged = false;
 	}
 
 	win32.hWnd = NULL;
