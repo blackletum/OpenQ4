@@ -556,6 +556,7 @@ function Copy-WindowsDiagnosticSymbols {
 
     $installGameDir = Join-Path $InstallRoot "baseoq4"
     New-Item -Path $installGameDir -ItemType Directory -Force | Out-Null
+    $stagedGameSymbols = @{}
 
     $gameBuildDirs = @(
         (Join-Path $BuildDir "content\baseoq4"),
@@ -575,6 +576,10 @@ function Copy-WindowsDiagnosticSymbols {
             $matches = @(Get-ChildItem -Path $gameBuildDir -Filter $pattern -File -ErrorAction SilentlyContinue)
             foreach ($match in $matches) {
                 $destination = Join-Path $installGameDir $match.Name
+                if ($stagedGameSymbols.ContainsKey($destination)) {
+                    continue
+                }
+                $stagedGameSymbols[$destination] = $true
                 Write-Host "Staging diagnostic symbol '$destination'"
                 Copy-Item -LiteralPath $match.FullName -Destination $destination -Force
             }

@@ -256,7 +256,6 @@ void idMaterial::CommonInit() {
 	constantRegisters = NULL;
 	numStages = 0;
 	numAmbientStages = 0;
-	lightGridDiffuseStage = -1;
 	stages = NULL;
 	editorImage = NULL;
 	lightFalloffImage = NULL;
@@ -382,7 +381,6 @@ void idMaterial::FreeData() {
 		R_StaticFree( stages );
 		stages = NULL;
 	}
-	lightGridDiffuseStage = -1;
 	if ( expressionRegisters != NULL ) {
 		R_StaticFree( expressionRegisters );
 		expressionRegisters = NULL;
@@ -3249,7 +3247,6 @@ bool idMaterial::Parse( const char *text, const int textLength ) {
 	if (numStages) {
 		stages = (shaderStage_t *)R_StaticAlloc( numStages * sizeof( stages[0] ) );
 		memcpy( stages, pd->parseStages, numStages * sizeof( stages[0] ) );
-		SelectLightGridDiffuseStage();
 	}
 
 	if ( numOps ) {
@@ -3877,63 +3874,6 @@ const shaderStage_t *idMaterial::GetBumpStage( void ) const {
 		}
 	}
 	return NULL;
-}
-
-/*
-===================
-idMaterial::SelectLightGridDiffuseStage
-===================
-*/
-void idMaterial::SelectLightGridDiffuseStage() {
-	lightGridDiffuseStage = -1;
-	if ( stages == NULL || numStages <= 0 ) {
-		return;
-	}
-
-	for ( int i = 0 ; i < numStages ; i++ ) {
-		const shaderStage_t &stage = stages[i];
-		if ( stage.lighting != SL_DIFFUSE ) {
-			continue;
-		}
-
-		if ( lightGridDiffuseStage < 0 ) {
-			lightGridDiffuseStage = i;
-		}
-		if ( stage.vertexColor == SVC_IGNORE ) {
-			lightGridDiffuseStage = i;
-			return;
-		}
-	}
-}
-
-/*
-===================
-idMaterial::GetLightGridDiffuseStageIndex
-===================
-*/
-int idMaterial::GetLightGridDiffuseStageIndex( const float *registers ) const {
-	if ( stages == NULL || numStages <= 0 ) {
-		return -1;
-	}
-
-	if ( lightGridDiffuseStage >= 0 && lightGridDiffuseStage < numStages ) {
-		const shaderStage_t &stage = stages[lightGridDiffuseStage];
-		if ( registers == NULL || registers[stage.conditionRegister] != 0.0f ) {
-			return lightGridDiffuseStage;
-		}
-	}
-
-	for ( int i = 0 ; i < numStages ; i++ ) {
-		if ( stages[i].lighting != SL_DIFFUSE ) {
-			continue;
-		}
-		if ( registers != NULL && registers[stages[i].conditionRegister] == 0.0f ) {
-			continue;
-		}
-		return i;
-	}
-
-	return -1;
 }
 
 /*

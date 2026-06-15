@@ -19,6 +19,13 @@ OPENAL_RUNTIME_OVERRIDES = {
 WINDOWS_ROOT_RUNTIME_PATTERNS = (
     "OpenAL32.dll",
 )
+BUILD_GAME_GENERATED_IGNORE_PATTERNS = (
+    "*.dll.p",
+)
+SOURCE_GAME_RUNTIME_IGNORE_PATTERNS = (
+    "meson.build",
+    "mod.json.in",
+)
 
 RELEASE_IMPORT_TOKENS = (
     b"ucrtbase.dll",
@@ -208,6 +215,68 @@ def clear_staged_runtime_files(root_dir: Path) -> None:
 
 
 
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+
+def _remove_directory_inside(directory_path: Path, root_dir: Path) -> None:
+    directory_path = directory_path.resolve()
+    root_dir = root_dir.resolve()
+    if directory_path == root_dir or not _is_relative_to(directory_path, root_dir):
+        raise RuntimeError(f"Refusing to remove directory outside build root: '{directory_path}'")
+    if directory_path.exists():
+        shutil.rmtree(directory_path)
+
+
+
+def _copy_runtime_tree(source_dir: Path, destination_dir: Path, ignore_patterns: tuple[str, ...]) -> None:
+    if not source_dir.is_dir():
+        return
+    shutil.copytree(
+        source_dir,
+        destination_dir,
+        dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns(*ignore_patterns),
+    )
+
+
+
+def stage_build_game_directory(source_root: Path, build_root: Path) -> dict[str, object]:
+    """Prepare builddir/baseoq4 so the client can run directly from builddir."""
+
+    source_game_dir = source_root / "content" / GAME_DIR_NAME
+    build_generated_game_dir = build_root / "content" / GAME_DIR_NAME
+    build_runtime_game_dir = build_root / GAME_DIR_NAME
+    staged_file_count = 0
+
+    if not source_game_dir.is_dir() and not build_generated_game_dir.is_dir():
+        return {
+            "directory": None,
+            "file_count": staged_file_count,
+        }
+
+    _remove_directory_inside(build_runtime_game_dir, build_root)
+    build_runtime_game_dir.mkdir(parents=True, exist_ok=True)
+
+    _copy_runtime_tree(source_game_dir, build_runtime_game_dir, SOURCE_GAME_RUNTIME_IGNORE_PATTERNS)
+    _copy_runtime_tree(build_generated_game_dir, build_runtime_game_dir, BUILD_GAME_GENERATED_IGNORE_PATTERNS)
+
+    for path in build_runtime_game_dir.rglob("*"):
+        if path.is_file():
+            staged_file_count += 1
+
+    return {
+        "directory": str(build_runtime_game_dir),
+        "file_count": staged_file_count,
+    }
+
+
+
 def ensure_no_msvc_runtime_imports(root_dir: Path) -> dict[str, list[str]]:
     violations: dict[str, list[str]] = {}
     for binary_path in collect_runtime_binaries(root_dir):
@@ -248,6 +317,7 @@ def stage_runtime_payloads(
     build_root = build_root.resolve()
     source_root = source_root.resolve()
 
+    staged_build_game = stage_build_game_directory(source_root, build_root)
     binaries = collect_runtime_binaries(build_root)
     if not binaries:
         return {
@@ -255,6 +325,7 @@ def stage_runtime_payloads(
             "runtime_flavor": RuntimeFlavor.NONE,
             "targets": [str(target) for target in targets],
             "copied_files": [],
+            "staged_build_game": staged_build_game,
             "validated_binaries": [],
         }
 
@@ -285,5 +356,6 @@ def stage_runtime_payloads(
         "runtime_flavor": flavor,
         "targets": [str(target) for target in targets],
         "copied_files": sorted(set(copied_files)),
+        "staged_build_game": staged_build_game,
         "validated_binaries": [str(path) for path in binaries],
     }

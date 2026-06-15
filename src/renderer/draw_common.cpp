@@ -8971,6 +8971,69 @@ static void RB_UpdateLightGridImageResidency( idRenderWorldLocal *world ) {
 	}
 }
 
+static void RB_LightGridSetIdentityTextureMatrix( idVec4 matrix[2] ) {
+	matrix[0].Set( 1.0f, 0.0f, 0.0f, 0.0f );
+	matrix[1].Set( 0.0f, 1.0f, 0.0f, 0.0f );
+}
+
+static bool RB_LightGridMaterialStageIsActive( const shaderStage_t *stage, const float *regs ) {
+	return stage != NULL && ( regs == NULL || regs[ stage->conditionRegister ] != 0.0f );
+}
+
+static bool RB_LightGridHasActiveDiffuseStage( const idMaterial *shader, const float *regs ) {
+	if ( shader == NULL ) {
+		return false;
+	}
+
+	for ( int stageIndex = 0; stageIndex < shader->GetNumStages(); stageIndex++ ) {
+		const shaderStage_t *stage = shader->GetStage( stageIndex );
+		if ( stage->lighting == SL_DIFFUSE && RB_LightGridMaterialStageIsActive( stage, regs ) ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static bool RB_STD_DrawLightGridDiffuseStage( const drawSurf_t *surf, const shaderStage_t *diffuseStage, int diffuseStageIndex, idImage *bumpImage, const idVec4 bumpMatrix[2], const float *regs, const srfTriangles_t *tri, idDrawVert *ac ) {
+	if ( diffuseStage == NULL || tri == NULL || ac == NULL ) {
+		return false;
+	}
+
+	idImage *diffuseImage = globalImages->whiteImage;
+	idVec4 diffuseMatrix[2];
+	float diffuseColor[4];
+	R_SetDrawInteraction( diffuseStage, regs, &diffuseImage, diffuseMatrix, diffuseColor );
+	if ( diffuseImage == NULL ) {
+		diffuseImage = globalImages->whiteImage;
+	}
+	if ( bumpImage == NULL || r_skipBump.GetBool() ) {
+		bumpImage = globalImages->flatNormalMap;
+	}
+	if ( diffuseColor[0] <= 0.0f && diffuseColor[1] <= 0.0f && diffuseColor[2] <= 0.0f ) {
+		return false;
+	}
+
+	float vertexColorParams[2];
+	RB_LightGridVertexColorParams( diffuseStage->vertexColor, vertexColorParams );
+
+	RB_SetStageVertexColorPointer( surf, diffuseStageIndex, ac );
+	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_BUMP_MATRIX_S], 1, bumpMatrix[0].ToFloatPtr() );
+	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_BUMP_MATRIX_T], 1, bumpMatrix[1].ToFloatPtr() );
+	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_DIFFUSE_MATRIX_S], 1, diffuseMatrix[0].ToFloatPtr() );
+	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_DIFFUSE_MATRIX_T], 1, diffuseMatrix[1].ToFloatPtr() );
+	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_DIFFUSE_COLOR], 1, diffuseColor );
+	glUniform2fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_VERTEX_COLOR_PARAMS], 1, vertexColorParams );
+
+	GL_SelectTextureNoClient( 0 );
+	bumpImage->Bind();
+	GL_SelectTextureNoClient( 1 );
+	diffuseImage->Bind();
+
+	RB_DrawElementsWithCounters( tri );
+	return true;
+}
+
 static void RB_STD_DrawLightGridSurface( const drawSurf_t *surf, const LightGrid &lightGrid, const rbLightGridPortalBlend_t *portalBlend = NULL, bool invertPortalBlend = false ) {
 	const srfTriangles_t *tri = surf->geo;
 	const idMaterial *shader = surf->material;
@@ -8986,11 +9049,9 @@ static void RB_STD_DrawLightGridSurface( const drawSurf_t *surf, const LightGrid
 		return;
 	}
 
-	const int diffuseStageIndex = shader->GetLightGridDiffuseStageIndex( regs );
-	if ( diffuseStageIndex < 0 ) {
+	if ( !RB_LightGridHasActiveDiffuseStage( shader, regs ) ) {
 		return;
 	}
-	const shaderStage_t *diffuseStage = shader->GetStage( diffuseStageIndex );
 
 	idImage *irradianceImage = lightGrid.irradianceImage;
 	if ( irradianceImage == NULL ) {
@@ -9035,18 +9096,6 @@ static void RB_STD_DrawLightGridSurface( const drawSurf_t *surf, const LightGrid
 		}
 		if ( probeImage != NULL && ( probeImage->GetOpts().width != probeImageWidth || probeImage->GetOpts().height != probeImageHeight ) ) {
 			probeImage = NULL;
-		}
-	}
-
-	const shaderStage_t *bumpStage = shader->GetBumpStage();
-	idImage *bumpImage = globalImages->flatNormalMap;
-	idVec4 bumpMatrix[2];
-	bumpMatrix[0].Set( 1.0f, 0.0f, 0.0f, 0.0f );
-	bumpMatrix[1].Set( 0.0f, 1.0f, 0.0f, 0.0f );
-	if ( bumpStage != NULL && regs[ bumpStage->conditionRegister ] != 0 && !r_skipBump.GetBool() ) {
-		R_SetDrawInteraction( bumpStage, regs, &bumpImage, bumpMatrix, NULL );
-		if ( bumpImage == NULL ) {
-			bumpImage = globalImages->flatNormalMap;
 		}
 	}
 
@@ -9146,8 +9195,6 @@ static void RB_STD_DrawLightGridSurface( const drawSurf_t *surf, const LightGrid
 	glTexCoordPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->tangents[1].ToFloatPtr() );
 	GL_SelectTexture( 0 );
 
-	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_BUMP_MATRIX_S], 1, bumpMatrix[0].ToFloatPtr() );
-	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_BUMP_MATRIX_T], 1, bumpMatrix[1].ToFloatPtr() );
 	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_MODEL_MATRIX_ROW0], 1, row0 );
 	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_MODEL_MATRIX_ROW1], 1, row1 );
 	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_MODEL_MATRIX_ROW2], 1, row2 );
@@ -9162,8 +9209,6 @@ static void RB_STD_DrawLightGridSurface( const drawSurf_t *surf, const LightGrid
 	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_PORTAL_BOUNDS_MIN], 1, portalBoundsMin );
 	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_PORTAL_BOUNDS_MAX], 1, portalBoundsMax );
 
-	GL_SelectTextureNoClient( 0 );
-	bumpImage->Bind();
 	GL_SelectTextureNoClient( 2 );
 	irradianceImage->SetSamplerState( TF_LINEAR, TR_CLAMP );
 	irradianceImage->Bind();
@@ -9182,27 +9227,26 @@ static void RB_STD_DrawLightGridSurface( const drawSurf_t *surf, const LightGrid
 		globalImages->blackImage->Bind();
 	}
 
-	idImage *diffuseImage = globalImages->whiteImage;
-	idVec4 diffuseMatrix[2];
-	float diffuseColor[4];
-	R_SetDrawInteraction( diffuseStage, regs, &diffuseImage, diffuseMatrix, diffuseColor );
-	if ( diffuseImage == NULL ) {
-		diffuseImage = globalImages->whiteImage;
+	idImage *currentBumpImage = globalImages->flatNormalMap;
+	idVec4 currentBumpMatrix[2];
+	RB_LightGridSetIdentityTextureMatrix( currentBumpMatrix );
+	for ( int stageIndex = 0; stageIndex < shader->GetNumStages(); stageIndex++ ) {
+		const shaderStage_t *stage = shader->GetStage( stageIndex );
+		if ( stage->lighting == SL_BUMP ) {
+			if ( !r_skipBump.GetBool() && RB_LightGridMaterialStageIsActive( stage, regs ) ) {
+				R_SetDrawInteraction( stage, regs, &currentBumpImage, currentBumpMatrix, NULL );
+				if ( currentBumpImage == NULL ) {
+					currentBumpImage = globalImages->flatNormalMap;
+				}
+			}
+			continue;
+		}
+		if ( stage->lighting != SL_DIFFUSE || !RB_LightGridMaterialStageIsActive( stage, regs ) ) {
+			continue;
+		}
+
+		RB_STD_DrawLightGridDiffuseStage( surf, stage, stageIndex, currentBumpImage, currentBumpMatrix, regs, tri, ac );
 	}
-
-	float vertexColorParams[2];
-	RB_LightGridVertexColorParams( diffuseStage->vertexColor, vertexColorParams );
-
-	RB_SetStageVertexColorPointer( surf, diffuseStageIndex, ac );
-	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_DIFFUSE_MATRIX_S], 1, diffuseMatrix[0].ToFloatPtr() );
-	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_DIFFUSE_MATRIX_T], 1, diffuseMatrix[1].ToFloatPtr() );
-	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_DIFFUSE_COLOR], 1, diffuseColor );
-	glUniform2fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_VERTEX_COLOR_PARAMS], 1, vertexColorParams );
-
-	GL_SelectTextureNoClient( 1 );
-	diffuseImage->Bind();
-
-	RB_DrawElementsWithCounters( tri );
 
 	GL_SelectTextureNoClient( 2 );
 	globalImages->BindNull();

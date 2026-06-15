@@ -506,9 +506,6 @@ public:
 	// used for bumpy-specular
 	const shaderStage_t* GetBumpStage(void) const;
 
-	// get the material-compiled diffuse stage used by the light-grid indirect pass
-	int					GetLightGridDiffuseStageIndex(const float* registers) const;
-
 	// custom GLSL lighting can use the stock shadow-map receiver only when the
 	// material still exposes active non-custom bump/diffuse/specular stages.
 	bool				HasActiveCustomGLSLLighting(const float* registers) const;
@@ -799,7 +796,6 @@ private:
 	void				MultiplyTextureMatrix(textureStage_t* ts, int registers[2][3]);	// FIXME: for some reason the const is bad for gcc and Mac
 	void				SortInteractionStages();
 	void				AddImplicitStages(const textureRepeat_t trpDefault = TR_REPEAT);
-	void				SelectLightGridDiffuseStage();
 	void				CheckForConstantRegisters();
 
 private:
@@ -872,7 +868,6 @@ private:
 
 	int					numStages;
 	int					numAmbientStages;
-	int					lightGridDiffuseStage;
 
 	shaderStage_t* stages;
 

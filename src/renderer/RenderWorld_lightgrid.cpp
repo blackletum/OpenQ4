@@ -1499,9 +1499,12 @@ static bool LightGrid_CommitStagedOutputFile( const lightGridStagedWrite_t &stag
 }
 
 static void LightGrid_WriteBakeStatsBlock( idFile *file, const lightGridBakeOptions_t &options, const lightGridBakeFileStats_t &stats, const idRenderWorldLocal *world ) {
+	char settingsHashString[16];
+	idStr::snPrintf( settingsHashString, sizeof( settingsHashString ), "%08lx", stats.settingsHash );
+
 	file->WriteFloatString( "lightGridBakeStats {\n" );
 	file->WriteFloatString( "\theaderVersion %i\n", LIGHTGRID_BAKE_HEADER_VERSION );
-	file->WriteFloatString( "\tsettingsHash 0x%08lx\n", stats.settingsHash );
+	file->WriteFloatString( "\tsettingsHash 0x%s\n", settingsHashString );
 	file->WriteFloatString( "\tmap \"%s\"\n", ( world != NULL ) ? world->mapName.c_str() : "" );
 	file->WriteFloatString(
 		"\toptions maxProbes %i bounces %i captureSize %i blends %i samples %i gridSize ( %f %f %f )\n",
