@@ -35,6 +35,7 @@ This file describes project goals, rules, and upstream credits for anyone workin
 - Treat release changelog maintenance as part of feature completion. User-facing curated release notes belong in `docs-dev/releases/vX.Y.Z.md`, and the manual release workflow will publish that file when it exists.
 - Write release notes for end users first: lead with the visible benefit, call out any action or compatibility note the reader needs, and avoid dumping internal implementation trivia unless it materially helps the audience.
 - Use `builddir/` as the standard Meson build output directory for local builds, VS Code tasks, and launch configurations.
+- Never add VS Code `preLaunchTask` entries to launch configurations; launch tasks must remain direct game launches.
 - Treat `.install/` as the release-style package root; stage built binaries into `.install/` and `.install/baseoq4/`.
 - Keep game-module outputs available under both `builddir/baseoq4/` (direct run) and `.install/baseoq4/` (staged package).
 - Keep `.install/` focused on runtime/staged content: engine executables in `.install/`, game DLLs and staged overrides/assets in `.install/baseoq4/`.
