@@ -405,6 +405,10 @@ bool idGLStateCache::BindSampler( int unit, GLuint sampler ) {
 }
 
 bool idGLStateCache::BindTextures( GLuint first, GLsizei count, const GLuint *textureNames ) {
+	return BindTextures( first, count, textureNames, NULL );
+}
+
+bool idGLStateCache::BindTextures( GLuint first, GLsizei count, const GLuint *textureNames, const GLenum *textureTargets ) {
 	if ( count <= 0 || textureNames == NULL || first >= static_cast<GLuint>( TextureUnitCount() ) ) {
 		return false;
 	}
@@ -413,19 +417,38 @@ bool idGLStateCache::BindTextures( GLuint first, GLsizei count, const GLuint *te
 		return false;
 	}
 	if ( glBindTextures == NULL ) {
+		const GLenum knownTargets[3] = { GL_TEXTURE_2D, GL_TEXTURE_3D, GL_TEXTURE_CUBE_MAP };
 		bool issued = false;
 		for ( GLsizei i = 0; i < clampedCount; ++i ) {
-			issued = BindTexture( static_cast<int>( first + i ), GL_TEXTURE_2D, textureNames[i] ) || issued;
+			const int unit = static_cast<int>( first + i );
+			const GLenum target = textureTargets != NULL && textureTargets[i] != 0 ? textureTargets[i] : GL_TEXTURE_2D;
+			for ( int knownTarget = 0; knownTarget < static_cast<int>( sizeof( knownTargets ) / sizeof( knownTargets[0] ) ); ++knownTarget ) {
+				if ( textureNames[i] == 0 || knownTargets[knownTarget] != target ) {
+					issued = BindTexture( unit, knownTargets[knownTarget], 0 ) || issued;
+				}
+			}
+			if ( textureNames[i] != 0 ) {
+				issued = BindTexture( unit, target, textureNames[i] ) || issued;
+			}
 		}
 		return issued;
 	}
 
-	const int texture2DSlot = TextureTargetSlot( GL_TEXTURE_2D );
-	bool allCached = texture2DSlot >= 0;
+	bool allCached = true;
 	for ( GLsizei i = 0; i < clampedCount && allCached; ++i ) {
 		const int unit = static_cast<int>( first + i );
-		if ( !textures[unit][texture2DSlot].valid || textures[unit][texture2DSlot].value != textureNames[i] ) {
+		const GLenum target = textureTargets != NULL && textureTargets[i] != 0 ? textureTargets[i] : GL_TEXTURE_2D;
+		const int slot = TextureTargetSlot( target );
+		if ( slot < 0 ) {
 			allCached = false;
+			break;
+		}
+		for ( int targetSlot = 0; targetSlot < static_cast<int>( sizeof( textures[unit] ) / sizeof( textures[unit][0] ) ); ++targetSlot ) {
+			const GLuint expectedTexture = targetSlot == slot ? textureNames[i] : 0;
+			if ( !textures[unit][targetSlot].valid || textures[unit][targetSlot].value != expectedTexture ) {
+				allCached = false;
+				break;
+			}
 		}
 	}
 	if ( allCached ) {
@@ -437,11 +460,16 @@ bool idGLStateCache::BindTextures( GLuint first, GLsizei count, const GLuint *te
 	stats.textureMultiBindBatches++;
 	for ( GLsizei i = 0; i < clampedCount; ++i ) {
 		const int unit = static_cast<int>( first + i );
-		bool unitChanged = texture2DSlot < 0 || !textures[unit][texture2DSlot].valid || textures[unit][texture2DSlot].value != textureNames[i];
-		memset( textures[unit], 0, sizeof( textures[unit] ) );
-		if ( texture2DSlot >= 0 ) {
-			textures[unit][texture2DSlot].valid = true;
-			textures[unit][texture2DSlot].value = textureNames[i];
+		const GLenum target = textureTargets != NULL && textureTargets[i] != 0 ? textureTargets[i] : GL_TEXTURE_2D;
+		const int slot = TextureTargetSlot( target );
+		bool unitChanged = slot < 0;
+		for ( int targetSlot = 0; targetSlot < static_cast<int>( sizeof( textures[unit] ) / sizeof( textures[unit][0] ) ); ++targetSlot ) {
+			const GLuint expectedTexture = targetSlot == slot ? textureNames[i] : 0;
+			if ( !textures[unit][targetSlot].valid || textures[unit][targetSlot].value != expectedTexture ) {
+				unitChanged = true;
+			}
+			textures[unit][targetSlot].valid = true;
+			textures[unit][targetSlot].value = expectedTexture;
 		}
 		if ( unitChanged ) {
 			RecordMiss( stats.textureMisses );
@@ -879,6 +907,12 @@ bool RendererGLStateCache_RunSelfTest( void ) {
 		GLuint textureNames[2] = { 0, 0 };
 		cache.BindTextures( 0, 2, textureNames );
 		cache.BindTextures( 0, 2, textureNames );
+	}
+	{
+		GLuint textureNames[3] = { 0, 0, 0 };
+		GLenum textureTargets[3] = { GL_TEXTURE_2D, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_2D };
+		cache.BindTextures( 0, 3, textureNames, textureTargets );
+		cache.BindTextures( 0, 3, textureNames, textureTargets );
 	}
 	if ( glBindSamplers != NULL ) {
 		GLuint samplerNames[2] = { 0, 0 };

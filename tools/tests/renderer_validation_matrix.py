@@ -1128,6 +1128,29 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
 
     cases += [
         {
+            "id": "renderer-debug-output-debug-context",
+            "category": "debug-startup",
+            "description": "Opt-in debug-context probe that requires an actual debug context and debug-output callback registration.",
+            "default": False,
+            "args": [
+                "+set",
+                "r_glTier",
+                "auto",
+                "+set",
+                "r_glDebugContext",
+                "1",
+                "+gfxInfo",
+            ],
+            "checks": STARTUP_CHECKS
+            + [
+                ["Renderer default safety:"],
+                ["Requested GL tier: auto"],
+                ["requestedDebug=1"],
+                ["actualDebug=1"],
+                ["OpenGL debug output callback enabled", "OpenGL ARB debug output callback enabled"],
+            ],
+        },
+        {
             "id": "tier-gl33-debug-context",
             "category": "context-startup",
             "description": "Debug-context request path with non-debug fallback available in the ladder.",
@@ -1578,11 +1601,14 @@ def main(argv: list[str]) -> int:
             return 2
         requested = set(requested_cases)
         safe_cases = [case for case in safe_cases if case["id"] in requested]
+    elif not args.list:
+        safe_cases = [case for case in safe_cases if case.get("default", True)]
 
     if args.list:
         print("Automated safe cases:")
         for case in safe_cases:
-            print(f"  {case['id']}: {case['description']}")
+            default_label = "" if case.get("default", True) else " [opt-in]"
+            print(f"  {case['id']}{default_label}: {case['description']}")
         print("\nManual gameplay cases:")
         for case in MANUAL_GAMEPLAY_MATRIX:
             print(f"  {case['id']}: {case['mode']} {case['map']} - {case['purpose']}")

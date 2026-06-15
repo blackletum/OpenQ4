@@ -279,6 +279,7 @@ bool idModernGLDrawPlan::AddEntry( const drawPacket_t &draw, int drawPacketIndex
 	entry.materialFlagsLocation = program.materialFlagsLocation;
 	entry.materialEnhancementLocation = program.materialEnhancementLocation;
 	entry.drawRecordModeLocation = program.drawRecordModeLocation;
+	entry.drawRecordCountLocation = program.drawRecordCountLocation;
 	entry.drawPacketIndex = drawPacketIndex;
 	entry.materialRecordIndex = draw.materialRecordIndex;
 	entry.materialTableIndex = materialRecord.tableIndex;

@@ -37,6 +37,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "LensFlareSettings.h"
 #include "RendererMetrics.h"
 #include "RendererUpload.h"
+#include "GLDebugScope.h"
 #include "RenderGraph.h"
 #include "RenderGraphResources.h"
 #include "MaterialResourceTable.h"
@@ -342,6 +343,8 @@ idCVar r_renderer( "r_renderer", "best", CVAR_RENDERER | CVAR_ARCHIVE, "hardware
 idCVar r_actualRenderer( "r_actualRenderer", "UNINITIALIZED", CVAR_RENDERER | CVAR_ROM, "actual active renderer backend after request/fallback selection" );
 idCVar r_glTier( "r_glTier", "auto", CVAR_RENDERER | CVAR_ARCHIVE, "OpenGL renderer tier: auto, legacy, gl33, gl41, gl43, gl45, gl46", r_glTierArgs, idCmdSystem::ArgCompletion_String<r_glTierArgs> );
 idCVar r_glDebugContext( "r_glDebugContext", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "request a debug OpenGL context when the platform backend supports it" );
+idCVar r_glDebugOutput( "r_glDebugOutput", "1", CVAR_RENDERER | CVAR_BOOL, "enable OpenGL debug output callbacks for debug contexts when supported" );
+idCVar r_glDebugSynchronous( "r_glDebugSynchronous", "0", CVAR_RENDERER | CVAR_BOOL, "make OpenGL debug callbacks synchronous for driver-call stack debugging" );
 idCVar r_rendererMetrics( "r_rendererMetrics", "0", CVAR_RENDERER | CVAR_INTEGER, "renderer metrics: 0 = off, 1 = periodic summary, 2 = per-frame/pass detail", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 idCVar r_rendererGpuTimers( "r_rendererGpuTimers", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "sample GL timer queries when r_rendererMetrics is enabled and supported" );
 idCVar r_rendererBenchmarkPreset( "r_rendererBenchmarkPreset", "baseline", CVAR_RENDERER | CVAR_ARCHIVE, "renderer benchmark budget preset: low, baseline, modern, high-end", r_rendererBenchmarkPresetArgs, idCmdSystem::ArgCompletion_String<r_rendererBenchmarkPresetArgs> );
@@ -1393,11 +1396,14 @@ void R_InitOpenGL( void ) {
 
 	// recheck all the extensions (FIXME: this might be dangerous)
 	R_CheckPortableExtensions();
+	R_GLDebugOutput_Init();
 
 	// parse our vertex and fragment programs, possibly disably support for
 	// one of the paths if there was an error
 	R_ARB2_Init();
+	R_GLDebugOutput_FlushMessages();
 	R_ModernGLExecutor_Init( glConfig.backendCaps, glConfig.renderFeatures );
+	R_GLDebugOutput_FlushMessages();
 	RendererBootstrap_SetModernExecutorAvailable( R_ModernGLExecutor_Stats().available );
 	RendererBootstrap_FinalizeLegacyBridge( glConfig.allowARB2Path );
 	glConfig.rendererTier = RendererBootstrap_GetState().selectedTier;
@@ -1459,6 +1465,8 @@ void GL_CheckErrors( void ) {
     char	s[64];
 	int		i;
 
+	R_GLDebugOutput_FlushMessages();
+
 	// check for up to 10 errors pending
 	for ( i = 0 ; i < 10 ; i++ ) {
 		err = glGetError();
@@ -1493,6 +1501,7 @@ void GL_CheckErrors( void ) {
 			common->Printf( "GL_CheckErrors: %s\n", s );
 		}
 	}
+	R_GLDebugOutput_FlushMessages();
 }
 
 /*
@@ -3129,7 +3138,7 @@ void GfxInfo_f( const idCmdArgs &args ) {
 	{
 		const rendererUploadStats_t &uploadStats = R_RendererUpload_Stats();
 		common->Printf(
-			"Renderer upload manager: frameStream=%s, staticAllocator=%d, buffers=%d index=%d, ring=%dKB, persistent=%d, mapRangeFallback=%d, staticLive=%d/%dKB, fences=%d/%d waits=%d, legacyBridge=%d\n",
+			"Renderer upload manager: frameStream=%s, staticAllocator=%d, buffers=%d index=%d, ring=%dKB, persistent=%d, mapRangeFallback=%d, staticLive=%d/%dKB, fences=%d/%d waits=%d timeouts=%d fallbacks=%d, legacyBridge=%d\n",
 			uploadStats.dynamicFrameBridge ? "enabled" : "disabled",
 			uploadStats.staticBufferAllocator ? 1 : 0,
 			uploadStats.ringBufferCount,
@@ -3142,6 +3151,8 @@ void GfxInfo_f( const idCmdArgs &args ) {
 			uploadStats.frameFencesSubmitted,
 			uploadStats.frameFencesRetired,
 			uploadStats.frameFenceWaits,
+			uploadStats.frameFenceTimeouts,
+			uploadStats.frameFenceFallbacks,
 			uploadStats.legacyBridge ? 1 : 0 );
 	}
 
@@ -3240,6 +3251,7 @@ static void R_PerformFullVidRestart( bool forceWindow ) {
 	R_RenderGraphResources_Shutdown();
 	R_ModernGLExecutor_Shutdown();
 	R_RendererUpload_Shutdown();
+	R_GLDebugOutput_Shutdown();
 	RendererBootstrap_Shutdown();
 	R_PurgeFramebufferCopyFBOs();
 	GLimp_Shutdown();
@@ -3769,6 +3781,7 @@ void idRenderSystemLocal::ShutdownOpenGL( void ) {
 	R_RenderGraphResources_Shutdown();
 	R_ModernGLExecutor_Shutdown();
 	R_RendererUpload_Shutdown();
+	R_GLDebugOutput_Shutdown();
 	RendererBootstrap_Shutdown();
 	R_PurgeFramebufferCopyFBOs();
 	GLimp_Shutdown();

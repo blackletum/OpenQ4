@@ -2265,7 +2265,7 @@ void R_RendererMetrics_EndFrame( int frontEndMsec, int backEndMsec, int viewCoun
 			rg_rendererMetrics.modernVisibilityShadowCasterSavedDraws,
 			rg_rendererMetrics.modernVisibilityShadowCasterSavedTriangles );
 		common->Printf(
-			"rendererMetrics lowOverhead(req=%d ready=%d dsa=%d multiBind=%d bindless=%d/%d sampler=%d dsaUpdates=%d framebufferDSA=%d samplerDSA=%d/%d bufferMultiBind=%d textureMultiBind=%d samplerMultiBind=%d classicTextureBinds=%d compactedBatches=%d restores=%d/%d textureTable=%d/%d tableSize=%d/%d desc=%d draws=%d uniforms=%d fallback=%d graphDSA(tex=%d params=%d fbo=%d) graphClassic(tex=%d fbo=%d) upload(persistent=%d default=%d buffers=%d index=%d fences=%d/%d waits=%d sync=%d))\n",
+			"rendererMetrics lowOverhead(req=%d ready=%d dsa=%d multiBind=%d bindless=%d/%d sampler=%d dsaUpdates=%d framebufferDSA=%d samplerDSA=%d/%d bufferMultiBind=%d textureMultiBind=%d samplerMultiBind=%d classicTextureBinds=%d compactedBatches=%d restores=%d/%d textureTable=%d/%d tableSize=%d/%d desc=%d draws=%d uniforms=%d fallback=%d graphDSA(tex=%d params=%d fbo=%d) graphClassic(tex=%d fbo=%d) upload(persistent=%d default=%d buffers=%d index=%d fences=%d/%d waits=%d timeouts=%d fallbacks=%d sync=%d))\n",
 			rg_rendererMetrics.lowOverheadRequested ? 1 : 0,
 			rg_rendererMetrics.lowOverheadReady ? 1 : 0,
 			rg_rendererMetrics.lowOverheadUsesDSA ? 1 : 0,
@@ -2304,6 +2304,8 @@ void R_RendererMetrics_EndFrame( int frontEndMsec, int backEndMsec, int viewCoun
 			uploadStats.frameFencesSubmitted,
 			uploadStats.frameFencesRetired,
 			uploadStats.frameFenceWaits,
+			uploadStats.frameFenceTimeouts,
+			uploadStats.frameFenceFallbacks,
 			uploadStats.fenceSyncAvailable ? 1 : 0 );
 		RendererBenchmarks_PrintLatestCapture();
 		return;

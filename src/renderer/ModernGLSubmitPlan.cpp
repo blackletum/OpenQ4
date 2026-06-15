@@ -575,6 +575,7 @@ bool idModernGLSubmitPlan::AddCommand( const modernGLDrawPlanEntry_t &entry ) {
 	command.materialFlagsLocation = entry.materialFlagsLocation;
 	command.materialEnhancementLocation = entry.materialEnhancementLocation;
 	command.drawRecordModeLocation = entry.drawRecordModeLocation;
+	command.drawRecordCountLocation = entry.drawRecordCountLocation;
 	command.vertexStride = geo->vertexStride;
 	command.indexType = geo->indexType;
 	command.indexCount = entry.indexCount;

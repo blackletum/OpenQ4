@@ -135,6 +135,8 @@ enum modernGLGpuDrivenCounter_t {
 	MODERN_GL_GPU_COUNTER_HIZ_TESTED,
 	MODERN_GL_GPU_COUNTER_HIZ_REJECTED,
 	MODERN_GL_GPU_COUNTER_COMPACTED,
+	MODERN_GL_GPU_COUNTER_INVALID_BUCKET,
+	MODERN_GL_GPU_COUNTER_INDIRECT_OVERFLOW,
 	MODERN_GL_GPU_COUNTER_COUNT
 };
 
@@ -454,6 +456,7 @@ static GLuint rg_modernGLExecutorVisibleCompositeProgram = 0;
 static GLuint rg_modernGLExecutorHiZReduceProgram = 0;
 static GLuint rg_modernGLExecutorHiZFBO = 0;
 static GLint rg_modernGLExecutorComputeRecordCountLocation = -1;
+static GLint rg_modernGLExecutorComputeBucketCountLocation = -1;
 static GLint rg_modernGLExecutorComputeHiZTextureLocation = -1;
 static GLint rg_modernGLExecutorComputeHiZParamsLocation = -1;
 static GLint rg_modernGLExecutorDepthOverlayTextureLocation = -1;
@@ -734,10 +737,8 @@ static bool R_ModernGLExecutor_CreateBuffer( GLenum target, GLsizeiptr bytes, co
 	if ( buffer == 0 ) {
 		return false;
 	}
-	glBindBuffer( target, buffer );
+	R_GLStateCache().BindBuffer( target, buffer );
 	glBufferData( target, bytes, data, usage );
-	glBindBuffer( target, 0 );
-	R_GLStateCache_InvalidateBufferBinding( target, "modern buffer create" );
 	return true;
 }
 
@@ -752,7 +753,6 @@ static void R_ModernGLExecutor_UpdateBuffer( GLenum target, GLuint buffer, GLsiz
 	}
 	R_GLStateCache().BindBuffer( target, buffer );
 	glBufferSubData( target, 0, bytes, data );
-	R_GLStateCache().BindBuffer( target, 0 );
 }
 
 static bool R_ModernGLExecutor_StreamBufferData( const void *data, GLsizeiptr bytes, int alignment, modernGLStreamBufferBinding_t &binding, modernGLExecutorStats_t &stats ) {
@@ -815,10 +815,11 @@ static GLuint R_ModernGLExecutor_CompileGpuDrivenComputeProgram( void ) {
 		"struct DrawElementsIndirectCommand { uint count; uint instanceCount; uint firstIndex; uint baseVertex; uint baseInstance; };\n"
 		"struct BucketRecord { uvec4 header; uvec4 counters; };\n"
 		"uniform uint u_recordCount;\n"
+		"uniform uint u_bucketCount;\n"
 		"uniform sampler2D u_hiZTexture;\n"
 		"uniform vec4 u_hiZParams;\n"
 		"layout(std430, binding = 1) readonly buffer ModernSceneRecords { SceneRecord records[]; };\n"
-		"layout(std430, binding = 2) buffer ModernValidation { uint counters[10]; };\n"
+		"layout(std430, binding = 2) buffer ModernValidation { uint counters[12]; };\n"
 		"layout(std430, binding = 3) buffer ModernIndirectCommands { DrawElementsIndirectCommand commands[]; };\n"
 		"layout(std430, binding = 5) buffer ModernBucketRecords { BucketRecord buckets[]; };\n"
 		"float FetchHiZRectMax(vec4 bounds, int mip, bool flipY) {\n"
@@ -864,10 +865,15 @@ static GLuint R_ModernGLExecutor_CompileGpuDrivenComputeProgram( void ) {
 		"	bool indirectEligible = ( flags & 2u ) != 0u;\n"
 		"	bool visible = ( flags & 4u ) != 0u;\n"
 		"	bool hiZCandidate = ( flags & 16u ) != 0u;\n"
+		"	uint bucketIndex = record.ids.x;\n"
+		"	if ( indirectEligible && bucketIndex >= u_bucketCount ) {\n"
+		"		atomicAdd( counters[10], 1u );\n"
+		"		indirectEligible = false;\n"
+		"	}\n"
 		"	atomicAdd( counters[0], 1u );\n"
 		"	if ( indirectEligible ) {\n"
 		"		atomicAdd( counters[1], 1u );\n"
-		"		atomicAdd( counters[6], record.ids.x + 1u );\n"
+		"		atomicAdd( counters[6], bucketIndex + 1u );\n"
 		"	}\n"
 		"	if ( ( flags & 8u ) != 0u ) {\n"
 		"		atomicAdd( counters[5], uint( record.counts.z ) );\n"
@@ -877,7 +883,7 @@ static GLuint R_ModernGLExecutor_CompileGpuDrivenComputeProgram( void ) {
 		"		if ( HiZRejects( record ) ) {\n"
 		"			visible = false;\n"
 		"			atomicAdd( counters[8], 1u );\n"
-		"			atomicAdd( buckets[record.ids.x].counters.y, 1u );\n"
+		"			atomicAdd( buckets[bucketIndex].counters.y, 1u );\n"
 		"		}\n"
 		"	}\n"
 		"	if ( !visible ) {\n"
@@ -888,9 +894,9 @@ static GLuint R_ModernGLExecutor_CompileGpuDrivenComputeProgram( void ) {
 		"	if ( !indexed || !indirectEligible ) {\n"
 		"		return;\n"
 		"	}\n"
-		"	uint bucketIndex = record.ids.x;\n"
 		"	uint compactIndex = atomicAdd( buckets[bucketIndex].counters.x, 1u );\n"
 		"	if ( compactIndex >= buckets[bucketIndex].header.y ) {\n"
+		"		atomicAdd( counters[11], 1u );\n"
 		"		return;\n"
 		"	}\n"
 		"	uint dst = buckets[bucketIndex].header.x + compactIndex;\n"
@@ -946,6 +952,7 @@ static GLuint R_ModernGLExecutor_CompileGpuDrivenComputeProgram( void ) {
 	}
 
 	rg_modernGLExecutorComputeRecordCountLocation = glGetUniformLocation != NULL ? glGetUniformLocation( program, "u_recordCount" ) : -1;
+	rg_modernGLExecutorComputeBucketCountLocation = glGetUniformLocation != NULL ? glGetUniformLocation( program, "u_bucketCount" ) : -1;
 	rg_modernGLExecutorComputeHiZTextureLocation = glGetUniformLocation != NULL ? glGetUniformLocation( program, "u_hiZTexture" ) : -1;
 	rg_modernGLExecutorComputeHiZParamsLocation = glGetUniformLocation != NULL ? glGetUniformLocation( program, "u_hiZParams" ) : -1;
 	return program;
@@ -1387,6 +1394,7 @@ static void R_ModernGLExecutor_DestroyGpuDrivenObjects( void ) {
 	rg_modernGLExecutorVisibleCompositeProgram = 0;
 	rg_modernGLExecutorHiZReduceProgram = 0;
 	rg_modernGLExecutorComputeRecordCountLocation = -1;
+	rg_modernGLExecutorComputeBucketCountLocation = -1;
 	rg_modernGLExecutorComputeHiZTextureLocation = -1;
 	rg_modernGLExecutorComputeHiZParamsLocation = -1;
 	rg_modernGLExecutorDepthOverlayTextureLocation = -1;
@@ -3028,6 +3036,7 @@ static bool R_ModernGLExecutor_CommandCanSeedIndirect( const modernGLSubmitComma
 		&& command.ambientCacheOffset >= 0
 		&& command.vertexStride > 0
 		&& command.drawRecordModeLocation >= 0
+		&& command.drawRecordCountLocation >= 0
 		&& ( command.ambientCacheOffset % command.vertexStride ) == 0;
 }
 
@@ -3144,6 +3153,8 @@ static void R_ModernGLExecutor_ApplyGpuDrivenValidationCounters( modernGLExecuto
 	stats.gpuDrivenGpuClusterBins = static_cast<int>( counters[MODERN_GL_GPU_COUNTER_CLUSTER_BINS] );
 	stats.gpuDrivenHiZRejected = hiZRejected;
 	stats.gpuDrivenIndirectCompactedCommands = static_cast<int>( counters[MODERN_GL_GPU_COUNTER_COMPACTED] );
+	stats.gpuDrivenInvalidBucketIds = static_cast<int>( counters[MODERN_GL_GPU_COUNTER_INVALID_BUCKET] );
+	stats.gpuDrivenIndirectOverflow = static_cast<int>( counters[MODERN_GL_GPU_COUNTER_INDIRECT_OVERFLOW] );
 	stats.visibilityHiZRejected = stats.gpuDrivenHiZRejected;
 	stats.visibilityGpuRejected += stats.gpuDrivenHiZRejected;
 	stats.visibilitySavedDraws += stats.gpuDrivenHiZRejected;
@@ -3154,6 +3165,8 @@ static void R_ModernGLExecutor_ApplyGpuDrivenValidationCounters( modernGLExecuto
 	stats.gpuDrivenValidationMismatches += R_ModernGLExecutor_CompareGpuDrivenCounter( counters[MODERN_GL_GPU_COUNTER_VISIBLE_INSTANCES], Max( 0, cpuReference.visibleInstances - hiZRejected ) );
 	stats.gpuDrivenValidationMismatches += R_ModernGLExecutor_CompareGpuDrivenCounter( counters[MODERN_GL_GPU_COUNTER_CLUSTER_BINS], cpuReference.clusterBins );
 	stats.gpuDrivenValidationMismatches += R_ModernGLExecutor_CompareGpuDrivenCounter( counters[MODERN_GL_GPU_COUNTER_COMPACTED], stats.gpuDrivenGpuGeneratedCommands );
+	stats.gpuDrivenValidationMismatches += R_ModernGLExecutor_CompareGpuDrivenCounter( counters[MODERN_GL_GPU_COUNTER_INVALID_BUCKET], 0 );
+	stats.gpuDrivenValidationMismatches += R_ModernGLExecutor_CompareGpuDrivenCounter( counters[MODERN_GL_GPU_COUNTER_INDIRECT_OVERFLOW], 0 );
 }
 
 static void R_ModernGLExecutor_ApplyGpuDrivenCpuPrediction( modernGLExecutorStats_t &stats, const modernGLGpuDrivenCpuReference_t &cpuReference ) {
@@ -3468,6 +3481,9 @@ static void R_ModernGLExecutor_UpdateGpuDrivenBuffers( modernGLExecutorStats_t &
 		R_GLStateCache().UseProgram( rg_modernGLExecutorComputeProgram );
 		if ( rg_modernGLExecutorComputeRecordCountLocation >= 0 ) {
 			glUniform1ui( rg_modernGLExecutorComputeRecordCountLocation, static_cast<GLuint>( sceneRecordCount ) );
+		}
+		if ( rg_modernGLExecutorComputeBucketCountLocation >= 0 ) {
+			glUniform1ui( rg_modernGLExecutorComputeBucketCountLocation, static_cast<GLuint>( Max( 0, rg_modernGLGpuDrivenBucketCount ) ) );
 		}
 		if ( rg_modernGLExecutorComputeHiZTextureLocation >= 0 ) {
 			glUniform1i( rg_modernGLExecutorComputeHiZTextureLocation, 1 );
@@ -3934,6 +3950,9 @@ static bool R_ModernGLExecutor_SubmitCommand( const modernGLSubmitCommand_t &com
 	if ( command.drawRecordModeLocation >= 0 && glUniform1ui != NULL ) {
 		glUniform1ui( command.drawRecordModeLocation, 0 );
 	}
+	if ( command.drawRecordCountLocation >= 0 && glUniform1ui != NULL ) {
+		glUniform1ui( command.drawRecordCountLocation, 0 );
+	}
 	R_ModernGLExecutor_BindFrameUniformBufferBase( stats );
 	if ( R_ModernGLExecutor_CommandUsesClusteredLighting( command ) ) {
 		R_ModernGLExecutor_BindClusterUniformBlocks( command.program );
@@ -4114,13 +4133,14 @@ static void R_ModernGLExecutor_SubmitGpuDrivenIndirect( modernGLExecutorStats_t 
 			continue;
 		}
 		const modernGLSubmitCommand_t &command = bucket.command;
-		if ( command.viewDef == NULL || command.program == 0 || command.vertexBuffer == 0 || command.indexBuffer == 0 || command.drawRecordModeLocation < 0 ) {
+		if ( command.viewDef == NULL || command.program == 0 || command.vertexBuffer == 0 || command.indexBuffer == 0 || command.drawRecordModeLocation < 0 || command.drawRecordCountLocation < 0 ) {
 			stats.gpuDrivenIndirectFallbacks += bucket.commandCount;
 			continue;
 		}
 
 		R_GLStateCache().UseProgram( command.program );
 		glUniform1ui( command.drawRecordModeLocation, 1 );
+		glUniform1ui( command.drawRecordCountLocation, static_cast<GLuint>( Max( 0, stats.gpuDrivenDrawRecords ) ) );
 		R_ModernGLExecutor_BindFrameUniformBufferBase( stats );
 		if ( R_ModernGLExecutor_CommandUsesClusteredLighting( command ) ) {
 			R_ModernGLExecutor_BindClusterUniformBlocks( command.program );
@@ -4982,18 +5002,65 @@ static int R_ModernGLExecutor_CountActualShadowTextures( const rendererShadowTex
 	return count;
 }
 
-static void R_ModernGLExecutor_BindShadowTextureSlot( const rendererShadowTextureBinding_t &binding, const unsigned int fallbackTarget, const int unit, modernGLExecutorStats_t &stats ) {
-	const GLenum target = binding.target != 0 ? static_cast<GLenum>( binding.target ) : static_cast<GLenum>( fallbackTarget );
-	const GLuint texture = binding.ready ? binding.texture : 0;
-	R_GLStateCache().ActiveTextureUnit( unit );
-	if ( R_GLStateCache().BindTexture( unit, target, texture ) ) {
-		stats.lowOverheadClassicTextureBinds++;
+static GLenum R_ModernGLExecutor_TextureTargetForGroup( const GLenum *targets, GLsizei index ) {
+	return targets != NULL && targets[index] != 0 ? targets[index] : GL_TEXTURE_2D;
+}
+
+static void R_ModernGLExecutor_BindTextureGroup( GLuint first, GLsizei count, const GLuint *textures, const GLenum *targets, GLuint sampler, bool bindSampler, modernGLExecutorStats_t &stats ) {
+	if ( count <= 0 || textures == NULL ) {
+		return;
 	}
-	if ( glBindSampler != NULL ) {
-		R_GLStateCache().BindSampler( unit, 0 );
+	const GLsizei clampedCount = Min( count, static_cast<GLsizei>( MATERIAL_RESOURCE_TABLE_TEXTURE_ARRAY_CAPACITY ) );
+	if ( clampedCount <= 0 ) {
+		return;
 	}
-	if ( texture != 0 && ( target == GL_TEXTURE_2D || target == GL_TEXTURE_CUBE_MAP ) ) {
-		glTexParameteri( target, GL_TEXTURE_COMPARE_MODE, GL_NONE );
+	if ( stats.tierUsesMultiBind && glBindTextures != NULL ) {
+		if ( R_GLStateCache().BindTextures( first, clampedCount, textures, targets ) ) {
+			stats.lowOverheadTextureMultiBindBatches++;
+		}
+		if ( bindSampler && glBindSamplers != NULL ) {
+			GLuint samplers[MATERIAL_RESOURCE_TABLE_TEXTURE_ARRAY_CAPACITY];
+			for ( GLsizei i = 0; i < clampedCount; ++i ) {
+				samplers[i] = sampler;
+			}
+			if ( R_GLStateCache().BindSamplers( first, clampedCount, samplers ) ) {
+				stats.lowOverheadSamplerMultiBindBatches++;
+			}
+		}
+		return;
+	}
+
+	for ( GLsizei i = 0; i < clampedCount; ++i ) {
+		const GLenum target = R_ModernGLExecutor_TextureTargetForGroup( targets, i );
+		R_GLStateCache().ActiveTextureUnit( static_cast<int>( first + i ) );
+		if ( R_GLStateCache().BindTexture( static_cast<int>( first + i ), target, textures[i] ) ) {
+			stats.lowOverheadClassicTextureBinds++;
+		}
+		if ( bindSampler && glBindSampler != NULL ) {
+			R_GLStateCache().BindSampler( static_cast<int>( first + i ), sampler );
+		}
+	}
+}
+
+static void R_ModernGLExecutor_BindTextureGroup( GLuint first, GLsizei count, const GLuint *textures, modernGLExecutorStats_t &stats ) {
+	R_ModernGLExecutor_BindTextureGroup( first, count, textures, NULL, rg_modernGLExecutorLowOverheadSampler, rg_modernGLExecutorLowOverheadSampler != 0, stats );
+}
+
+static GLenum R_ModernGLExecutor_ShadowTextureTarget( const rendererShadowTextureBinding_t &binding, const unsigned int fallbackTarget ) {
+	return binding.target != 0 ? static_cast<GLenum>( binding.target ) : static_cast<GLenum>( fallbackTarget );
+}
+
+static GLuint R_ModernGLExecutor_ShadowTextureName( const rendererShadowTextureBinding_t &binding ) {
+	return binding.ready ? binding.texture : 0;
+}
+
+static void R_ModernGLExecutor_ApplyShadowTextureParameters( GLuint first, GLsizei count, const GLuint *textures, const GLenum *targets ) {
+	for ( GLsizei i = 0; i < count; ++i ) {
+		const GLenum target = R_ModernGLExecutor_TextureTargetForGroup( targets, i );
+		if ( textures[i] != 0 && ( target == GL_TEXTURE_2D || target == GL_TEXTURE_CUBE_MAP ) ) {
+			R_GLStateCache().ActiveTextureUnit( static_cast<int>( first + i ) );
+			glTexParameteri( target, GL_TEXTURE_COMPARE_MODE, GL_NONE );
+		}
 	}
 }
 
@@ -5047,47 +5114,26 @@ static bool R_ModernGLExecutor_BindModernShadowTextures( GLuint program, modernG
 		}
 	}
 
-	R_ModernGLExecutor_BindShadowTextureSlot( bindings.projectedAtlas, GL_TEXTURE_2D, MODERN_GL_SHADOW_TEXTURE_UNIT_PROJECTED_ATLAS, stats );
-	R_ModernGLExecutor_BindShadowTextureSlot( bindings.pointAtlas, GL_TEXTURE_CUBE_MAP, MODERN_GL_SHADOW_TEXTURE_UNIT_POINT_ATLAS, stats );
+	GLuint shadowTextures[MODERN_GL_SHADOW_TEXTURE_UNIT_COUNT];
+	GLenum shadowTargets[MODERN_GL_SHADOW_TEXTURE_UNIT_COUNT];
+	shadowTextures[0] = R_ModernGLExecutor_ShadowTextureName( bindings.projectedAtlas );
+	shadowTargets[0] = R_ModernGLExecutor_ShadowTextureTarget( bindings.projectedAtlas, GL_TEXTURE_2D );
+	shadowTextures[1] = R_ModernGLExecutor_ShadowTextureName( bindings.pointAtlas );
+	shadowTargets[1] = R_ModernGLExecutor_ShadowTextureTarget( bindings.pointAtlas, GL_TEXTURE_CUBE_MAP );
 	for ( int i = 0; i < RENDERER_SHADOW_TEXTURE_MOMENT_COUNT; ++i ) {
-		R_ModernGLExecutor_BindShadowTextureSlot( bindings.projectedMoments[i], GL_TEXTURE_2D, MODERN_GL_SHADOW_TEXTURE_UNIT_PROJECTED_MOMENTS + i, stats );
-		R_ModernGLExecutor_BindShadowTextureSlot( bindings.pointMoments[i], GL_TEXTURE_CUBE_MAP, MODERN_GL_SHADOW_TEXTURE_UNIT_POINT_MOMENTS + i, stats );
+		const int projectedSlot = 2 + i;
+		const int pointSlot = 2 + RENDERER_SHADOW_TEXTURE_MOMENT_COUNT + i;
+		shadowTextures[projectedSlot] = R_ModernGLExecutor_ShadowTextureName( bindings.projectedMoments[i] );
+		shadowTargets[projectedSlot] = R_ModernGLExecutor_ShadowTextureTarget( bindings.projectedMoments[i], GL_TEXTURE_2D );
+		shadowTextures[pointSlot] = R_ModernGLExecutor_ShadowTextureName( bindings.pointMoments[i] );
+		shadowTargets[pointSlot] = R_ModernGLExecutor_ShadowTextureTarget( bindings.pointMoments[i], GL_TEXTURE_CUBE_MAP );
 	}
+	R_ModernGLExecutor_BindTextureGroup( MODERN_GL_SHADOW_TEXTURE_UNIT_PROJECTED_ATLAS, MODERN_GL_SHADOW_TEXTURE_UNIT_COUNT, shadowTextures, shadowTargets, 0, true, stats );
+	R_ModernGLExecutor_ApplyShadowTextureParameters( MODERN_GL_SHADOW_TEXTURE_UNIT_PROJECTED_ATLAS, MODERN_GL_SHADOW_TEXTURE_UNIT_COUNT, shadowTextures, shadowTargets );
+
 	stats.shadowTextureBoundTextures += actualTextures;
 	R_GLStateCache().ActiveTextureUnit( 0 );
 	return samplerReady;
-}
-
-static void R_ModernGLExecutor_BindTextureGroup( GLuint first, GLsizei count, const GLuint *textures, modernGLExecutorStats_t &stats ) {
-	if ( count <= 0 || textures == NULL ) {
-		return;
-	}
-	if ( stats.tierUsesMultiBind && glBindTextures != NULL ) {
-		if ( R_GLStateCache().BindTextures( first, count, textures ) ) {
-			stats.lowOverheadTextureMultiBindBatches++;
-		}
-		if ( rg_modernGLExecutorLowOverheadSampler != 0 && glBindSamplers != NULL ) {
-			GLuint samplers[MATERIAL_RESOURCE_TABLE_TEXTURE_ARRAY_CAPACITY];
-			const GLsizei samplerCount = Min( count, static_cast<GLsizei>( MATERIAL_RESOURCE_TABLE_TEXTURE_ARRAY_CAPACITY ) );
-			for ( GLsizei i = 0; i < samplerCount; ++i ) {
-				samplers[i] = rg_modernGLExecutorLowOverheadSampler;
-			}
-			if ( R_GLStateCache().BindSamplers( first, samplerCount, samplers ) ) {
-				stats.lowOverheadSamplerMultiBindBatches++;
-			}
-		}
-		return;
-	}
-
-	for ( GLsizei i = 0; i < count; ++i ) {
-		R_GLStateCache().ActiveTextureUnit( static_cast<int>( first + i ) );
-		if ( R_GLStateCache().BindTexture( static_cast<int>( first + i ), GL_TEXTURE_2D, textures[i] ) ) {
-			stats.lowOverheadClassicTextureBinds++;
-		}
-		if ( rg_modernGLExecutorLowOverheadSampler != 0 && glBindSampler != NULL ) {
-			R_GLStateCache().BindSampler( static_cast<int>( first + i ), rg_modernGLExecutorLowOverheadSampler );
-		}
-	}
 }
 
 static void R_ModernGLExecutor_UnbindTextureGroup( GLuint first, GLsizei count, modernGLExecutorStats_t &stats ) {
@@ -6436,7 +6482,6 @@ void R_ModernGLExecutor_Init( const renderBackendCaps_t &caps, const renderFeatu
 		return;
 	}
 	R_GLDebug_LabelVertexArray( rg_modernGLExecutorVAO, "ModernGLExecutor starter VAO" );
-	R_GLDebug_LabelBuffer( rg_modernGLExecutorFrameUBO, "ModernGLExecutor frame constants UBO" );
 
 	modernGLFrameConstants_t constants;
 	memset( &constants, 0, sizeof( constants ) );
@@ -6452,6 +6497,7 @@ void R_ModernGLExecutor_Init( const renderBackendCaps_t &caps, const renderFeatu
 		glBufferData( GL_UNIFORM_BUFFER, sizeof( constants ), &constants, GL_DYNAMIC_DRAW );
 		glBindBuffer( GL_UNIFORM_BUFFER, 0 );
 	}
+	R_GLDebug_LabelBuffer( rg_modernGLExecutorFrameUBO, "ModernGLExecutor frame constants UBO" );
 	glBindVertexArray( 0 );
 
 	if ( rg_modernGLExecutorLowOverheadReady && !R_ModernGLExecutor_CreateLowOverheadSampler() ) {
@@ -6944,7 +6990,7 @@ void R_ModernGLExecutor_PrepareFrame( const idScenePacketFrame &packetFrame, con
 			rg_modernGLExecutorStats.submitPlanSortMaterialBatchSavings,
 			rg_modernGLExecutorStats.submitPlanSortVertexBufferBatchSavings );
 		common->Printf(
-			"modernGpuDrivenMDI drawRecords=%d ready=%d/%d bucketReady=%d bytes=%d/%d bucketBytes=%d buckets=%d bucketed=%d compacted=%d generated=%d hiz=%d/%d rejected=%d indirectBytes=%d multiDrawCalls=%d multiDrawBatches=%d fallback=%d streamed=%d upload=%d/%d validationDeferred=%d skipped=%d\n",
+			"modernGpuDrivenMDI drawRecords=%d ready=%d/%d bucketReady=%d bytes=%d/%d bucketBytes=%d buckets=%d bucketed=%d compacted=%d generated=%d hiz=%d/%d rejected=%d invalidBucket=%d overflow=%d indirectBytes=%d multiDrawCalls=%d multiDrawBatches=%d fallback=%d streamed=%d upload=%d/%d validationDeferred=%d skipped=%d\n",
 			rg_modernGLExecutorStats.gpuDrivenDrawRecords,
 			rg_modernGLExecutorStats.drawRecordBufferReady ? 1 : 0,
 			rg_modernGLExecutorStats.drawRecordIndexBufferReady ? 1 : 0,
@@ -6959,6 +7005,8 @@ void R_ModernGLExecutor_PrepareFrame( const idScenePacketFrame &packetFrame, con
 			rg_modernGLExecutorStats.gpuDrivenHiZCullingReady ? 1 : 0,
 			rg_modernGLExecutorStats.gpuDrivenHiZCandidates,
 			rg_modernGLExecutorStats.gpuDrivenHiZRejected,
+			rg_modernGLExecutorStats.gpuDrivenInvalidBucketIds,
+			rg_modernGLExecutorStats.gpuDrivenIndirectOverflow,
 			rg_modernGLExecutorStats.gpuDrivenIndirectBytes,
 			rg_modernGLExecutorStats.gpuDrivenIndirectDrawCalls,
 			rg_modernGLExecutorStats.gpuDrivenMultiDrawBatches,
@@ -7866,7 +7914,7 @@ void R_ModernGLExecutor_PrintGfxInfo( void ) {
 		rg_modernGLExecutorStats.submitPlanSortMaterialBatchSavings,
 		rg_modernGLExecutorStats.submitPlanSortVertexBufferBatchSavings );
 	common->Printf(
-		"Modern GL GPU-driven MDI: drawRecords=%d ready=%d/%d bucketReady=%d bytes=%d/%d bucketBytes=%d buckets=%d bucketed=%d compacted=%d generated=%d hiz=%d/%d rejected=%d indirectBytes=%d multiDrawCalls=%d multiDrawBatches=%d fallback=%d streamed=%d upload=%d/%d validationDeferred=%d skipped=%d\n",
+		"Modern GL GPU-driven MDI: drawRecords=%d ready=%d/%d bucketReady=%d bytes=%d/%d bucketBytes=%d buckets=%d bucketed=%d compacted=%d generated=%d hiz=%d/%d rejected=%d invalidBucket=%d overflow=%d indirectBytes=%d multiDrawCalls=%d multiDrawBatches=%d fallback=%d streamed=%d upload=%d/%d validationDeferred=%d skipped=%d\n",
 		rg_modernGLExecutorStats.gpuDrivenDrawRecords,
 		rg_modernGLExecutorStats.drawRecordBufferReady ? 1 : 0,
 		rg_modernGLExecutorStats.drawRecordIndexBufferReady ? 1 : 0,
@@ -7881,6 +7929,8 @@ void R_ModernGLExecutor_PrintGfxInfo( void ) {
 		rg_modernGLExecutorStats.gpuDrivenHiZCullingReady ? 1 : 0,
 		rg_modernGLExecutorStats.gpuDrivenHiZCandidates,
 		rg_modernGLExecutorStats.gpuDrivenHiZRejected,
+		rg_modernGLExecutorStats.gpuDrivenInvalidBucketIds,
+		rg_modernGLExecutorStats.gpuDrivenIndirectOverflow,
 		rg_modernGLExecutorStats.gpuDrivenIndirectBytes,
 		rg_modernGLExecutorStats.gpuDrivenIndirectDrawCalls,
 		rg_modernGLExecutorStats.gpuDrivenMultiDrawBatches,
@@ -8347,6 +8397,91 @@ bool RendererModernGLExecutor_RunSelfTest( void ) {
 	return true;
 }
 
+static bool R_ModernGLExecutor_RunGpuDrivenInvalidIndexSelfTest( void ) {
+	if ( rg_modernGLExecutorComputeProgram == 0 || rg_modernGLExecutorSceneSSBO == 0 || rg_modernGLExecutorIndirectBuffer == 0 || rg_modernGLExecutorBucketSSBO == 0 || rg_modernGLExecutorValidationSSBO == 0 ) {
+		return false;
+	}
+	if ( glDispatchCompute == NULL || glMemoryBarrier == NULL || glUniform1ui == NULL || glUniform4f == NULL ) {
+		return false;
+	}
+
+	modernGLGpuSceneRecord_t sceneRecords[2];
+	modernGLDrawElementsIndirectCommand_t indirectRecords[1];
+	modernGLGpuDrivenBucketRecord_t bucketRecords[1];
+	GLuint validationCounters[MODERN_GL_GPU_DRIVEN_VALIDATION_COUNTERS];
+	memset( sceneRecords, 0, sizeof( sceneRecords ) );
+	memset( indirectRecords, 0, sizeof( indirectRecords ) );
+	memset( bucketRecords, 0, sizeof( bucketRecords ) );
+	memset( validationCounters, 0, sizeof( validationCounters ) );
+
+	const GLuint indirectFlags = MODERN_GL_GPU_RECORD_INDEXED | MODERN_GL_GPU_RECORD_INDIRECT_ELIGIBLE | MODERN_GL_GPU_RECORD_VISIBLE;
+	for ( int i = 0; i < 2; ++i ) {
+		sceneRecords[i].counts[0] = 6.0f;
+		sceneRecords[i].ids[3] = indirectFlags;
+		sceneRecords[i].indirect[0] = 6u;
+		sceneRecords[i].indirect[1] = 0u;
+		sceneRecords[i].indirect[2] = 0u;
+		sceneRecords[i].indirect[3] = static_cast<GLuint>( i );
+	}
+	sceneRecords[0].ids[0] = 64u;
+	sceneRecords[1].ids[0] = 0u;
+	bucketRecords[0].header[0] = 0u;
+	bucketRecords[0].header[1] = 0u;
+	bucketRecords[0].header[2] = 0u;
+	bucketRecords[0].header[3] = 0u;
+
+	modernGLExecutorStats_t stats;
+	R_ModernGLExecutor_ResetStats( stats, true );
+	R_ModernGLExecutor_UpdateBuffer( GL_SHADER_STORAGE_BUFFER, rg_modernGLExecutorSceneSSBO, sizeof( sceneRecords ), sceneRecords, stats );
+	R_ModernGLExecutor_UpdateBuffer( GL_DRAW_INDIRECT_BUFFER, rg_modernGLExecutorIndirectBuffer, sizeof( indirectRecords ), indirectRecords, stats );
+	R_ModernGLExecutor_UpdateBuffer( GL_SHADER_STORAGE_BUFFER, rg_modernGLExecutorBucketSSBO, sizeof( bucketRecords ), bucketRecords, stats );
+	R_ModernGLExecutor_UpdateBuffer( GL_SHADER_STORAGE_BUFFER, rg_modernGLExecutorValidationSSBO, sizeof( validationCounters ), validationCounters, stats );
+
+	R_GLStateCache().BindBufferBase( GL_SHADER_STORAGE_BUFFER, 1, rg_modernGLExecutorSceneSSBO );
+	R_GLStateCache().BindBufferBase( GL_SHADER_STORAGE_BUFFER, 2, rg_modernGLExecutorValidationSSBO );
+	R_GLStateCache().BindBufferBase( GL_SHADER_STORAGE_BUFFER, 3, rg_modernGLExecutorIndirectBuffer );
+	R_GLStateCache().BindBufferBase( GL_SHADER_STORAGE_BUFFER, MODERN_GL_GPU_BUCKET_SSBO_BINDING, rg_modernGLExecutorBucketSSBO );
+	R_GLStateCache().UseProgram( rg_modernGLExecutorComputeProgram );
+	if ( rg_modernGLExecutorComputeRecordCountLocation >= 0 ) {
+		glUniform1ui( rg_modernGLExecutorComputeRecordCountLocation, 2u );
+	}
+	if ( rg_modernGLExecutorComputeBucketCountLocation >= 0 ) {
+		glUniform1ui( rg_modernGLExecutorComputeBucketCountLocation, 1u );
+	}
+	if ( rg_modernGLExecutorComputeHiZTextureLocation >= 0 && glUniform1i != NULL ) {
+		glUniform1i( rg_modernGLExecutorComputeHiZTextureLocation, 0 );
+	}
+	if ( rg_modernGLExecutorComputeHiZParamsLocation >= 0 ) {
+		glUniform4f( rg_modernGLExecutorComputeHiZParamsLocation, 1.0f, 1.0f, 1.0f, 0.0f );
+	}
+	glDispatchCompute( 1, 1, 1 );
+	glMemoryBarrier( GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT );
+	R_GLStateCache().UseProgram( 0 );
+
+	GLuint gpuCounters[MODERN_GL_GPU_DRIVEN_VALIDATION_COUNTERS] = { 0 };
+	const bool readbackOk = R_ModernGLExecutor_ReadGpuDrivenCounters( rg_modernGLExecutorValidationSSBO, 0, gpuCounters );
+	R_ModernGLExecutor_UnbindGpuDrivenBuffers();
+	if ( !readbackOk ) {
+		common->Printf( "RendererGpuDriven self-test failed: invalid-index counter readback unavailable\n" );
+		return false;
+	}
+	if ( gpuCounters[MODERN_GL_GPU_COUNTER_PROCESSED] != 2u
+		|| gpuCounters[MODERN_GL_GPU_COUNTER_ELIGIBLE] != 1u
+		|| gpuCounters[MODERN_GL_GPU_COUNTER_GENERATED] != 0u
+		|| gpuCounters[MODERN_GL_GPU_COUNTER_INVALID_BUCKET] != 1u
+		|| gpuCounters[MODERN_GL_GPU_COUNTER_INDIRECT_OVERFLOW] != 1u ) {
+		common->Printf(
+			"RendererGpuDriven self-test failed: invalid-index counters mismatch (processed=%u eligible=%u generated=%u invalidBucket=%u overflow=%u)\n",
+			gpuCounters[MODERN_GL_GPU_COUNTER_PROCESSED],
+			gpuCounters[MODERN_GL_GPU_COUNTER_ELIGIBLE],
+			gpuCounters[MODERN_GL_GPU_COUNTER_GENERATED],
+			gpuCounters[MODERN_GL_GPU_COUNTER_INVALID_BUCKET],
+			gpuCounters[MODERN_GL_GPU_COUNTER_INDIRECT_OVERFLOW] );
+		return false;
+	}
+	return true;
+}
+
 bool RendererGpuDriven_RunSelfTest( void ) {
 	idScenePacketFrame emptyFrame;
 	if ( R_ModernGLExecutor_FrameSupportsGpuDrivenValidation( emptyFrame ) ) {
@@ -8602,9 +8737,12 @@ bool RendererGpuDriven_RunSelfTest( void ) {
 		common->Printf( "RendererGpuDriven self-test failed: indirect multi-draw execution mismatch\n" );
 		return false;
 	}
+	if ( !R_ModernGLExecutor_RunGpuDrivenInvalidIndexSelfTest() ) {
+		return false;
+	}
 
 	common->Printf(
-		"RendererGpuDriven self-test passed (resources=%d compute=%d source=%d eligible=%d generated=%d culled=%d visible=%d cpu=%d/%d/%d gpu=%d/%d/%d clusters=%d/%d mismatches=%d readbacks=%d drawRecords=%d buckets=%d bucketed=%d compacted=%d hiz=%d/%d/%d indirect=%d multiDraw=%d indirectCalls=%d dispatches=%d)\n",
+		"RendererGpuDriven self-test passed (resources=%d compute=%d source=%d eligible=%d generated=%d culled=%d visible=%d cpu=%d/%d/%d gpu=%d/%d/%d clusters=%d/%d mismatches=%d readbacks=%d drawRecords=%d buckets=%d bucketed=%d compacted=%d invalidProbe=1 hiz=%d/%d/%d indirect=%d multiDraw=%d indirectCalls=%d dispatches=%d)\n",
 		stats.gpuDrivenReady ? 1 : 0,
 		stats.computeValidationReady ? 1 : 0,
 		stats.gpuDrivenSourceCommands,
@@ -8790,44 +8928,48 @@ bool RendererModernVisibility_RunSelfTest( void ) {
 	return true;
 }
 
-static bool R_ModernGLExecutor_BuildVisiblePathSelfTestFrame( idScenePacketFrame &packetFrame, idRenderGraph &graph ) {
-	packetFrame.Clear();
-
+typedef struct modernGLVisiblePathSelfTestFrame_s {
 	drawSurf_t drawSurfs[2];
-	memset( drawSurfs, 0, sizeof( drawSurfs ) );
+	drawSurf_t *drawSurfPtrs[2];
 	srfTriangles_t geometry;
 	vertCache_t ambientCache;
 	vertCache_t indexCache;
-	if ( !R_ModernGLExecutor_InitSelfTestTriangleGeometry( geometry, ambientCache, indexCache, "RendererVisiblePath" ) ) {
+	viewEntity_t viewEntity;
+	viewDef_t worldView;
+} modernGLVisiblePathSelfTestFrame_t;
+
+static bool R_ModernGLExecutor_BuildVisiblePathSelfTestFrame( idScenePacketFrame &packetFrame, idRenderGraph &graph, modernGLVisiblePathSelfTestFrame_t &frameData ) {
+	packetFrame.Clear();
+	graph.Clear();
+	memset( &frameData, 0, sizeof( frameData ) );
+
+	if ( !R_ModernGLExecutor_InitSelfTestTriangleGeometry( frameData.geometry, frameData.ambientCache, frameData.indexCache, "RendererVisiblePath" ) ) {
 		return false;
 	}
 	for ( int i = 0; i < 2; ++i ) {
-		drawSurfs[i].geo = &geometry;
+		frameData.drawSurfs[i].geo = &frameData.geometry;
 		if ( tr.defaultMaterial != NULL ) {
-			drawSurfs[i].material = tr.defaultMaterial;
-			drawSurfs[i].sort = tr.defaultMaterial->GetSort();
+			frameData.drawSurfs[i].material = tr.defaultMaterial;
+			frameData.drawSurfs[i].sort = tr.defaultMaterial->GetSort();
 		}
 	}
 
-	drawSurf_t *drawSurfPtrs[2] = { &drawSurfs[0], &drawSurfs[1] };
-	viewEntity_t viewEntity;
-	memset( &viewEntity, 0, sizeof( viewEntity ) );
-	drawSurfs[0].space = &viewEntity;
-	drawSurfs[1].space = &viewEntity;
-	viewDef_t worldView;
-	memset( &worldView, 0, sizeof( worldView ) );
-	worldView.viewEntitys = &viewEntity;
-	worldView.drawSurfs = drawSurfPtrs;
-	worldView.numDrawSurfs = 2;
+	frameData.drawSurfPtrs[0] = &frameData.drawSurfs[0];
+	frameData.drawSurfPtrs[1] = &frameData.drawSurfs[1];
+	frameData.drawSurfs[0].space = &frameData.viewEntity;
+	frameData.drawSurfs[1].space = &frameData.viewEntity;
+	frameData.worldView.viewEntitys = &frameData.viewEntity;
+	frameData.worldView.drawSurfs = frameData.drawSurfPtrs;
+	frameData.worldView.numDrawSurfs = 2;
 
-	if ( !packetFrame.AddScene( &worldView, true ) ) {
+	if ( !packetFrame.AddScene( &frameData.worldView, true ) ) {
 		return false;
 	}
 	if ( !packetFrame.AddPass( RENDER_PASS_DEPTH, true ) ) {
 		return false;
 	}
 	for ( int i = 0; i < 2; ++i ) {
-		if ( !packetFrame.AddDrawPacket( &drawSurfs[i], RENDER_PASS_DEPTH, i ) ) {
+		if ( !packetFrame.AddDrawPacket( &frameData.drawSurfs[i], RENDER_PASS_DEPTH, i ) ) {
 			return false;
 		}
 	}
@@ -8835,7 +8977,7 @@ static bool R_ModernGLExecutor_BuildVisiblePathSelfTestFrame( idScenePacketFrame
 		return false;
 	}
 	for ( int i = 0; i < 2; ++i ) {
-		if ( !packetFrame.AddDrawPacket( &drawSurfs[i], RENDER_PASS_SHADOW_MAP, i ) ) {
+		if ( !packetFrame.AddDrawPacket( &frameData.drawSurfs[i], RENDER_PASS_SHADOW_MAP, i ) ) {
 			return false;
 		}
 	}
@@ -8855,7 +8997,8 @@ bool RendererVisiblePath_RunSelfTest( void ) {
 
 	idScenePacketFrame packetFrame;
 	idRenderGraph graph;
-	if ( !R_ModernGLExecutor_BuildVisiblePathSelfTestFrame( packetFrame, graph ) ) {
+	modernGLVisiblePathSelfTestFrame_t frameData;
+	if ( !R_ModernGLExecutor_BuildVisiblePathSelfTestFrame( packetFrame, graph, frameData ) ) {
 		common->Printf( "RendererVisiblePath self-test failed: could not build depth/shadow packet frame\n" );
 		return false;
 	}
@@ -8941,42 +9084,47 @@ bool RendererVisiblePath_RunSelfTest( void ) {
 	return true;
 }
 
-static bool R_ModernGLExecutor_BuildGBufferSelfTestFrame( idScenePacketFrame &packetFrame, idRenderGraph &graph ) {
+typedef struct modernGLGBufferSelfTestFrame_s {
 	drawSurf_t drawSurfs[2];
-	memset( drawSurfs, 0, sizeof( drawSurfs ) );
+	drawSurf_t *drawSurfPtrs[2];
 	srfTriangles_t geometry;
 	vertCache_t ambientCache;
 	vertCache_t indexCache;
-	if ( !R_ModernGLExecutor_InitSelfTestTriangleGeometry( geometry, ambientCache, indexCache, "RendererGBuffer" ) ) {
+	viewEntity_t viewEntity;
+	viewDef_t worldView;
+} modernGLGBufferSelfTestFrame_t;
+
+static bool R_ModernGLExecutor_BuildGBufferSelfTestFrame( idScenePacketFrame &packetFrame, idRenderGraph &graph, modernGLGBufferSelfTestFrame_t &frameData ) {
+	packetFrame.Clear();
+	graph.Clear();
+	memset( &frameData, 0, sizeof( frameData ) );
+	if ( !R_ModernGLExecutor_InitSelfTestTriangleGeometry( frameData.geometry, frameData.ambientCache, frameData.indexCache, "RendererGBuffer" ) ) {
 		return false;
 	}
 	for ( int i = 0; i < 2; ++i ) {
-		drawSurfs[i].geo = &geometry;
+		frameData.drawSurfs[i].geo = &frameData.geometry;
 		if ( tr.defaultMaterial != NULL ) {
-			drawSurfs[i].material = tr.defaultMaterial;
-			drawSurfs[i].sort = tr.defaultMaterial->GetSort();
+			frameData.drawSurfs[i].material = tr.defaultMaterial;
+			frameData.drawSurfs[i].sort = tr.defaultMaterial->GetSort();
 		}
 	}
 
-	drawSurf_t *drawSurfPtrs[2] = { &drawSurfs[0], &drawSurfs[1] };
-	viewEntity_t viewEntity;
-	memset( &viewEntity, 0, sizeof( viewEntity ) );
-	drawSurfs[0].space = &viewEntity;
-	drawSurfs[1].space = &viewEntity;
-	viewDef_t worldView;
-	memset( &worldView, 0, sizeof( worldView ) );
-	worldView.viewEntitys = &viewEntity;
-	worldView.drawSurfs = drawSurfPtrs;
-	worldView.numDrawSurfs = 2;
+	frameData.drawSurfPtrs[0] = &frameData.drawSurfs[0];
+	frameData.drawSurfPtrs[1] = &frameData.drawSurfs[1];
+	frameData.drawSurfs[0].space = &frameData.viewEntity;
+	frameData.drawSurfs[1].space = &frameData.viewEntity;
+	frameData.worldView.viewEntitys = &frameData.viewEntity;
+	frameData.worldView.drawSurfs = frameData.drawSurfPtrs;
+	frameData.worldView.numDrawSurfs = 2;
 
-	if ( !packetFrame.AddScene( &worldView, true ) ) {
+	if ( !packetFrame.AddScene( &frameData.worldView, true ) ) {
 		return false;
 	}
 	if ( !packetFrame.AddPass( RENDER_PASS_AMBIENT, true ) ) {
 		return false;
 	}
 	for ( int i = 0; i < 2; ++i ) {
-		if ( !packetFrame.AddDrawPacket( &drawSurfs[i], RENDER_PASS_AMBIENT, i ) ) {
+		if ( !packetFrame.AddDrawPacket( &frameData.drawSurfs[i], RENDER_PASS_AMBIENT, i ) ) {
 			return false;
 		}
 	}
@@ -9029,9 +9177,10 @@ bool RendererGBuffer_RunSelfTest( void ) {
 		return false;
 	}
 
+	modernGLGBufferSelfTestFrame_t frameData;
 	idScenePacketFrame packetFrame;
 	idRenderGraph graph;
-	if ( !R_ModernGLExecutor_BuildGBufferSelfTestFrame( packetFrame, graph ) ) {
+	if ( !R_ModernGLExecutor_BuildGBufferSelfTestFrame( packetFrame, graph, frameData ) ) {
 		common->Printf( "RendererGBuffer self-test failed: could not build ambient packet frame\n" );
 		return false;
 	}
@@ -10434,7 +10583,7 @@ bool RendererLowOverhead_RunSelfTest( void ) {
 
 	const rendererUploadStats_t &uploadStats = R_RendererUpload_Stats();
 	common->Printf(
-		"RendererLowOverhead self-test passed (dsa=1 multiBind=1 sampler=%d textureDSA=%d framebufferDSA=%d dsaUpdates=%d framebufferDSAUpdates=%d fboCache=%d/%d bufferMultiBind=%d textureMultiBind=%d samplerMultiBind=%d classicTextureBinds=%d bindless=%d/%d compactedBatches=%d textureTable=%d/%d draws=%d uniforms=%d fallback=%d streamUpload=%d/%d uploadFallback=%d/%d persistent=%d buffers=%d fences=%d/%d waits=%d)\n",
+		"RendererLowOverhead self-test passed (dsa=1 multiBind=1 sampler=%d textureDSA=%d framebufferDSA=%d dsaUpdates=%d framebufferDSAUpdates=%d fboCache=%d/%d bufferMultiBind=%d textureMultiBind=%d samplerMultiBind=%d classicTextureBinds=%d bindless=%d/%d compactedBatches=%d textureTable=%d/%d draws=%d uniforms=%d fallback=%d streamUpload=%d/%d uploadFallback=%d/%d persistent=%d buffers=%d fences=%d/%d waits=%d timeouts=%d fallbacks=%d)\n",
 		stats.lowOverheadSamplerReady ? 1 : 0,
 		graphStats.dsaTextureAllocations,
 		graphStats.dsaFramebufferAllocations,
@@ -10462,6 +10611,8 @@ bool RendererLowOverhead_RunSelfTest( void ) {
 		uploadStats.ringBufferCount,
 		uploadStats.frameFencesSubmitted,
 		uploadStats.frameFencesRetired,
-		uploadStats.frameFenceWaits );
+		uploadStats.frameFenceWaits,
+		uploadStats.frameFenceTimeouts,
+		uploadStats.frameFenceFallbacks );
 	return true;
 }

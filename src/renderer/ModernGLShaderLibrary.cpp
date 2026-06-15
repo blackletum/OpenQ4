@@ -233,6 +233,7 @@ static void R_ModernGLShaderLibrary_BuildVertexSource( int glslVersion, modernGL
 		"    ModernDrawRecord records[];\n"
 		"} uDrawRecords;\n"
 		"uniform uint uDrawRecordMode;\n"
+		"uniform uint uDrawRecordCount;\n"
 		"flat out vec4 vDrawDebugColor;\n"
 		"flat out vec4 vDrawLocalParams;\n"
 		"flat out vec4 vDrawMaterialFlags;\n"
@@ -253,7 +254,9 @@ static void R_ModernGLShaderLibrary_BuildVertexSource( int glslVersion, modernGL
 		"#if MODERN_HAS_DRAW_RECORDS\n"
 		"    if (uDrawRecordMode != 0u) {\n"
 		"        uint drawRecordIndex = uint(attr_DrawRecordIndex + 0.5);\n"
-		"        return uDrawRecords.records[int(drawRecordIndex)];\n"
+		"        if (drawRecordIndex < uDrawRecordCount) {\n"
+		"            return uDrawRecords.records[int(drawRecordIndex)];\n"
+		"        }\n"
 		"    }\n"
 		"#endif\n"
 		"    return ModernUniformDrawRecord();\n"
@@ -1552,6 +1555,7 @@ static bool R_ModernGLShaderLibrary_ReflectProgram( modernGLShaderProgramInfo_t 
 	info.reflection.materialFlagsLocation = glGetUniformLocation( info.program, "uMaterialFlags" );
 	info.reflection.materialEnhancementLocation = glGetUniformLocation( info.program, "uMaterialEnhancement" );
 	info.reflection.drawRecordModeLocation = glGetUniformLocation( info.program, "uDrawRecordMode" );
+	info.reflection.drawRecordCountLocation = glGetUniformLocation( info.program, "uDrawRecordCount" );
 	info.reflection.sceneDepthTextureLocation = glGetUniformLocation( info.program, "uSceneDepth" );
 	info.reflection.lensFlareAccumTextureLocation = glGetUniformLocation( info.program, "uLensFlareAccum" );
 	const GLint shadowAtlasLocation = glGetUniformLocation( info.program, "uModernShadowAtlas" );
@@ -1873,6 +1877,18 @@ static bool R_ModernGLShaderLibrary_ReflectProgram( modernGLShaderProgramInfo_t 
 			GL_UNSIGNED_INT,
 			true,
 			info.reflection.drawRecordModeLocation >= 0 );
+		R_ModernGLShaderLibrary_AddReflectionRecord(
+			info.reflection.uniforms,
+			info.reflection.uniformCount,
+			"uDrawRecordCount",
+			MODERN_GL_SHADER_RESOURCE_UNIFORM,
+			-1,
+			info.reflection.drawRecordCountLocation,
+			-1,
+			1,
+			GL_UNSIGNED_INT,
+			true,
+			info.reflection.drawRecordCountLocation >= 0 );
 		const int drawRecordSSBOIndex = R_ModernGLShaderLibrary_ProgramResourceIndex( info.program, GL_SHADER_STORAGE_BLOCK, "ModernDrawRecords" );
 		R_ModernGLShaderLibrary_AddReflectionRecord(
 			info.reflection.shaderStorageBlocks,
@@ -2019,6 +2035,7 @@ static bool R_ModernGLShaderLibrary_ReflectProgram( modernGLShaderProgramInfo_t 
 	info.materialFlagsLocation = info.reflection.materialFlagsLocation;
 	info.materialEnhancementLocation = info.reflection.materialEnhancementLocation;
 	info.drawRecordModeLocation = info.reflection.drawRecordModeLocation;
+	info.drawRecordCountLocation = info.reflection.drawRecordCountLocation;
 	info.sceneDepthTextureLocation = info.reflection.sceneDepthTextureLocation;
 	info.lensFlareAccumTextureLocation = info.reflection.lensFlareAccumTextureLocation;
 
@@ -2092,6 +2109,10 @@ static bool R_ModernGLShaderLibrary_ReflectProgram( modernGLShaderProgramInfo_t 
 		common->Warning( "Modern GL program '%s' is missing uDrawRecordMode", info.name );
 		return false;
 	}
+	if ( info.reflection.usesDrawRecords && info.drawRecordCountLocation < 0 ) {
+		common->Warning( "Modern GL program '%s' is missing uDrawRecordCount", info.name );
+		return false;
+	}
 
 	glUniformBlockBinding( info.program, static_cast<GLuint>( info.frameBlockIndex ), 0 );
 	if ( info.reflection.usesMainTexture || info.reflection.usesMaterialTextures || info.reflection.usesSceneDepthTexture || info.reflection.usesLensFlareAccumTexture || info.reflection.usesShadowTextures ) {
@@ -2147,6 +2168,7 @@ static bool R_ModernGLShaderLibrary_ReflectProgram( modernGLShaderProgramInfo_t 
 	if ( info.reflection.usesDrawRecords && glUniform1ui != NULL ) {
 		glUseProgram( info.program );
 		glUniform1ui( info.drawRecordModeLocation, 0 );
+		glUniform1ui( info.drawRecordCountLocation, 0 );
 		glUseProgram( 0 );
 	}
 	return true;
@@ -2297,6 +2319,7 @@ static bool R_ModernGLShaderLibrary_CreateProgram( int glslVersion, modernGLShad
 	info.materialFlagsLocation = -1;
 	info.materialEnhancementLocation = -1;
 	info.drawRecordModeLocation = -1;
+	info.drawRecordCountLocation = -1;
 	info.sceneDepthTextureLocation = -1;
 	info.lensFlareAccumTextureLocation = -1;
 	idStr::snPrintf(
@@ -2808,7 +2831,7 @@ bool RendererModernGLShaderLibrary_RunSelfTest( void ) {
 			common->Printf( "RendererModernGLShaderLibrary self-test failed: SSBO reflection mismatch for %s\n", program->name );
 			return false;
 		}
-		if ( program->reflection.usesDrawRecords && ( program->drawRecordModeLocation < 0 || program->reflection.shaderStorageBlockCount <= 0 || program->reflection.attributeCount < 7 ) ) {
+		if ( program->reflection.usesDrawRecords && ( program->drawRecordModeLocation < 0 || program->drawRecordCountLocation < 0 || program->reflection.shaderStorageBlockCount <= 0 || program->reflection.attributeCount < 7 ) ) {
 			common->Printf( "RendererModernGLShaderLibrary self-test failed: draw-record reflection mismatch for %s\n", program->name );
 			return false;
 		}

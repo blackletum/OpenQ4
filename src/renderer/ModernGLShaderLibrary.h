@@ -71,6 +71,7 @@ typedef struct modernGLShaderReflection_s {
 	int		materialFlagsLocation;
 	int		materialEnhancementLocation;
 	int		drawRecordModeLocation;
+	int		drawRecordCountLocation;
 	int		sceneDepthTextureLocation;
 	int		lensFlareAccumTextureLocation;
 	int		positionAttribute;
@@ -138,6 +139,7 @@ typedef struct modernGLShaderProgramInfo_s {
 	int							materialFlagsLocation;
 	int							materialEnhancementLocation;
 	int							drawRecordModeLocation;
+	int							drawRecordCountLocation;
 	bool						linked;
 	char						name[64];
 } modernGLShaderProgramInfo_t;
