@@ -760,10 +760,10 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 				graphStats.overflow );
 		}
 		R_RenderGraphResources_PrepareFrame( legacyGraph );
-		R_RendererMetrics_RecordRenderGraphResources( R_RenderGraphResources_Stats() );
 		R_MaterialResourceTable_PrepareFrame( *scenePackets );
 		R_RendererMetrics_RecordMaterialResourceTable( R_MaterialResourceTable_Stats() );
 		R_ModernGLExecutor_PrepareFrame( *scenePackets, legacyGraph );
+		R_RendererMetrics_RecordRenderGraphResources( R_RenderGraphResources_Stats() );
 		rg_modernStatMirrorsZeroed = false;	// active frame wrote real stats; re-zero on next dormant frame
 	} else {
 		// the zeroed stat mirrors cannot change while the side pipeline is

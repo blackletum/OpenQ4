@@ -305,14 +305,44 @@ GAMEPLAY_BENCHMARK_HARNESS = [
         "coverage": "mid-term upload-pressure matrix for storage1, airdefense1, and medlabs across default, persistent, reduced-ring, minimum-frame-buffer, and map-range/subdata fallback upload variants",
     },
     {
+        "profile": "upload-pressure-long",
+        "command": "python tools\\tests\\renderer_gameplay_benchmark.py --profile upload-pressure-long",
+        "coverage": "long-run upload-pressure profile using 30-second samples and explicit upload counter coverage for intermittent fence, ring, overflow, and stall evidence",
+    },
+    {
+        "profile": "map-transition-resource-count",
+        "command": "python tools\\tests\\renderer_gameplay_benchmark.py --profile map-transition-resource-count",
+        "coverage": "single-process SP map-transition loop that alternates storage1/storage2/storage1/storage2/storage1 and compares post-warm repeated-map renderer object counts while tracking static upload residency",
+    },
+    {
+        "profile": "mode-transition-resource-count",
+        "command": "python tools\\tests\\renderer_gameplay_benchmark.py --profile mode-transition-resource-count",
+        "coverage": "single-process SP-to-MP-to-SP game-module transition loop that compares renderer object counts across module reloads",
+    },
+    {
+        "profile": "static-residency-budget",
+        "command": "python tools\\tests\\renderer_gameplay_benchmark.py --profile static-residency-budget",
+        "coverage": "single-process SP map-transition loop with the opt-in vertex-cache LRU budget gate enabled, requiring budget status to stay passing while graph/FBO/upload/fence/shader object counts remain stable",
+    },
+    {
         "profile": "low-overhead-state",
         "command": "python tools\\tests\\renderer_gameplay_benchmark.py --profile low-overhead-state --sample-msec 3000",
         "coverage": "mid-term GL 3.3 versus GL 4.5 low-overhead state/bind comparison with detailed renderer metrics, modern executor preparation enabled, and state-cache/DSA/multibind counters promoted into reports",
     },
     {
+        "profile": "low-overhead-submit",
+        "command": "python tools\\tests\\renderer_gameplay_benchmark.py --profile low-overhead-submit",
+        "coverage": "long-term GL 4.5 diagnostic modern-submit gameplay profile with modern executor and GPU timers enabled, requiring submitted masked draws, zero submit fallback/missing-buffer counters, graph DSA activity, texture/sampler multibind batches, and legacy-handoff restore counters",
+    },
+    {
         "profile": "graph-invalidation",
         "command": "python tools\\tests\\renderer_gameplay_benchmark.py --profile graph-invalidation --sample-msec 3000",
         "coverage": "mid-term render-graph invalidation A/B profile for post/lens-flare/BSE-heavy scenes across default and r_rendererGraphInvalidate-armed launch variants",
+    },
+    {
+        "profile": "graph-invalidation-modern",
+        "command": "python tools\\tests\\renderer_gameplay_benchmark.py --profile graph-invalidation-modern",
+        "coverage": "long-term modern-side render-graph invalidation A/B profile with GPU timers, post-map modern side-path cvars, and explicit submitted-versus-unsubmitted-pass accounting for armed candidates",
     },
     {
         "profile": "performance-comparison",
@@ -507,9 +537,22 @@ def host_arch() -> str:
 
 
 def find_client_executable(root: Path) -> Path:
+    return find_installed_executable(root, "client")
+
+
+def find_dedicated_executable(root: Path) -> Path:
+    return find_installed_executable(root, "ded")
+
+
+def find_installed_executable(root: Path, kind: str) -> Path:
     install_dir = root / ".install"
     suffix = ".exe" if os.name == "nt" else ""
-    candidate_prefixes = ("openQ4-client", "openQ4-client")
+    if kind == "ded":
+        candidate_prefixes = ("openQ4-ded",)
+        label = "dedicated server"
+    else:
+        candidate_prefixes = ("openQ4-client",)
+        label = "client"
     for prefix in candidate_prefixes:
         preferred = install_dir / f"{prefix}_{host_arch()}{suffix}"
         if preferred.exists():
@@ -530,7 +573,7 @@ def find_client_executable(root: Path) -> Path:
         if candidate.is_file():
             return candidate
 
-    raise FileNotFoundError(f"openQ4 client executable not found under {install_dir}")
+    raise FileNotFoundError(f"openQ4 {label} executable not found under {install_dir}")
 
 
 def default_basepath() -> str:
@@ -641,6 +684,24 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
             "description": "Renderer foundation, upload, metrics, packet, graph, material, geometry, shader, draw, submit, and executor self-tests.",
             "args": selftest_commands,
             "checks": SELFTEST_CHECKS + [["Selected renderer tier:"], ["GL context request:"]],
+        },
+        {
+            "id": "renderer-vertex-cache-budget-selftest",
+            "category": "selftest",
+            "description": "Focused vertex-cache residency proof that the opt-in LRU budget gate purges old static buffers while protecting recently touched blocks.",
+            "args": [
+                "+set",
+                "r_rendererMetrics",
+                "2",
+                "+rendererVertexCacheBudgetSelfTest",
+                "+gfxInfo",
+            ],
+            "checks": [
+                ["RendererVertexCacheBudget self-test passed"],
+                ["Renderer vertex cache:"],
+                ["Selected renderer tier:"],
+                ["GL context request:"],
+            ],
         },
         {
             "id": "renderer-visible-depth-selftest",
@@ -1273,6 +1334,310 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
                 ["GL context request:"],
             ],
         },
+        {
+            "id": "renderer-no-multibind-fallback-selftest",
+            "category": "selftest",
+            "description": "Focused GL state-cache proof that the no-multibind texture fallback handles mixed 2D/cube targets and records fallback batches.",
+            "args": [
+                "+set",
+                "r_rendererMetrics",
+                "2",
+                "+set",
+                "r_glTier",
+                "gl45",
+                "+rendererGLStateCacheSelfTest",
+                "+gfxInfo",
+            ],
+            "checks": [
+                ["RendererGLStateCache self-test passed"],
+                ["textureMultiBindFallback="],
+                ["mixedTargetFallback=1"],
+                ["Modern GL state cache:"],
+                ["Renderer caps:"],
+                ["Requested GL tier: gl45"],
+                ["Selected renderer tier:"],
+                ["GL context request:"],
+            ],
+        },
+        {
+            "id": "renderer-modern-cvar-vid-restart",
+            "category": "restart",
+            "description": "Assetless vid_restart probe after toggling forced GL tier and opt-in modern renderer path cvars.",
+            "assetless": True,
+            "args": [
+                "+set",
+                "r_rendererMetrics",
+                "2",
+                "+gfxInfo",
+                "+set",
+                "r_glTier",
+                "gl45",
+                "+set",
+                "r_rendererModernExecutor",
+                "1",
+                "+set",
+                "r_rendererModernVisible",
+                "1",
+                "+set",
+                "r_rendererModernVisibleDepth",
+                "1",
+                "+set",
+                "r_rendererModernOpaque",
+                "1",
+                "+set",
+                "r_rendererModernDeferred",
+                "1",
+                "+set",
+                "r_rendererForwardPlus",
+                "1",
+                "+vid_restart",
+                "+gfxInfo",
+            ],
+            "checks": STARTUP_CHECKS
+            + [
+                ["Requested GL tier: auto"],
+                ["Requested GL tier: gl45"],
+                ["Renderer default safety:"],
+                ["Renderer graph resources:"],
+                ["Modern GL executor:"],
+                ["Modern forward+: cvar=1"],
+                ["Modern visible frame: cvar=1"],
+                ["glTier=gl45"],
+                ["executor=1"],
+                ["visible=1"],
+                ["visibleDepth=1"],
+                ["opaque=1"],
+                ["deferred=1"],
+                ["forwardPlus=1"],
+            ],
+            "countChecks": [
+                {
+                    "label": "gfxInfo selected-tier output before and after vid_restart",
+                    "pattern": "Selected renderer tier:",
+                    "min": 2,
+                },
+                {
+                    "label": "gfxInfo context-request output before and after vid_restart",
+                    "pattern": "GL context request:",
+                    "min": 2,
+                },
+                {
+                    "label": "modern executor summary before and after vid_restart",
+                    "pattern": "Modern GL executor:",
+                    "min": 2,
+                },
+            ],
+        },
+        {
+            "id": "renderer-resource-count-vid-restart",
+            "category": "restart",
+            "description": "Assetless repeated vid_restart probe that verifies renderer object-count summaries stay stable after rebuilds.",
+            "assetless": True,
+            "args": [
+                "+set",
+                "r_rendererMetrics",
+                "2",
+                "+set",
+                "r_glTier",
+                "gl45",
+                "+set",
+                "r_rendererModernExecutor",
+                "1",
+                "+set",
+                "r_rendererModernVisibleDepth",
+                "1",
+                "+set",
+                "r_rendererModernOpaque",
+                "1",
+                "+set",
+                "r_rendererModernDeferred",
+                "1",
+                "+set",
+                "r_rendererForwardPlus",
+                "1",
+                "+gfxInfo",
+                "+vid_restart",
+                "+gfxInfo",
+                "+vid_restart",
+                "+gfxInfo",
+                "+vid_restart",
+                "+gfxInfo",
+            ],
+            "checks": STARTUP_CHECKS
+            + [
+                ["Requested GL tier: gl45"],
+                ["Renderer graph resources:"],
+                ["Renderer upload manager:"],
+                ["Modern GL shader library:"],
+                ["Modern GL executor:"],
+                ["Modern forward+: cvar=1"],
+                ["Modern visible frame:"],
+            ],
+            "countChecks": [
+                {
+                    "label": "gfxInfo graph-resource summaries across restart samples",
+                    "pattern": "Renderer graph resources:",
+                    "min": 4,
+                },
+                {
+                    "label": "gfxInfo upload-manager summaries across restart samples",
+                    "pattern": "Renderer upload manager: frameStream=",
+                    "min": 4,
+                },
+                {
+                    "label": "gfxInfo shader-library summaries across restart samples",
+                    "pattern": "Modern GL shader library:",
+                    "min": 4,
+                },
+            ],
+            "valueChecks": [
+                {
+                    "label": "render graph texture/FBO counts after repeated vid_restart",
+                    "pattern": r"Renderer graph resources:.*handles=(?P<handles>\d+).*textures=(?P<textures>\d+).*buffers=(?P<buffers>\d+).*physical=(?P<physical>\d+).*fbo=(?P<fboReady>\d+)/(?P<fboTotal>\d+).*status='(?P<status>[^']+)'",
+                    "last": 3,
+                    "min": 3,
+                },
+                {
+                    "label": "upload/static-buffer/fence counts after repeated vid_restart",
+                    "pattern": r"Renderer upload manager: frameStream=(?P<frameStream>[^,]+), staticAllocator=(?P<staticAllocator>\d+), buffers=(?P<buffers>\d+) index=(?P<index>\d+), ring=(?P<ringKB>\d+)KB, persistent=(?P<persistent>\d+), mapRangeFallback=(?P<mapRangeFallback>\d+), staticLive=(?P<staticLive>\d+)/(?P<staticKB>\d+)KB, fences=(?P<fencesSubmitted>\d+)/(?P<fencesRetired>\d+) waits=(?P<waits>\d+) timeouts=(?P<timeouts>\d+) fallbacks=(?P<fallbacks>\d+)",
+                    "last": 3,
+                    "min": 3,
+                },
+                {
+                    "label": "shader program counts after repeated vid_restart",
+                    "pattern": r"Modern GL shader library: (?P<availability>[^,]+), programs=(?P<programs>\d+),.*failed=(?P<failed>\d+),.*highestGLSL=(?P<highestGLSL>\d+)",
+                    "last": 3,
+                    "min": 3,
+                },
+            ],
+        },
+        {
+            "id": "renderer-shutdown-leak-audit-vid-restart",
+            "category": "restart",
+            "description": "Assetless repeated vid_restart and final shutdown probe that requires renderer live-object audit counters to reach zero after teardown.",
+            "assetless": True,
+            "args": [
+                "+set",
+                "r_rendererMetrics",
+                "2",
+                "+set",
+                "r_rendererShutdownAudit",
+                "1",
+                "+set",
+                "r_glTier",
+                "gl45",
+                "+set",
+                "r_rendererModernExecutor",
+                "1",
+                "+set",
+                "r_rendererModernVisibleDepth",
+                "1",
+                "+set",
+                "r_rendererModernOpaque",
+                "1",
+                "+set",
+                "r_rendererModernDeferred",
+                "1",
+                "+set",
+                "r_rendererForwardPlus",
+                "1",
+                "+gfxInfo",
+                "+vid_restart",
+                "+gfxInfo",
+                "+vid_restart",
+                "+gfxInfo",
+                "+vid_restart",
+                "+gfxInfo",
+            ],
+            "checks": STARTUP_CHECKS
+            + [
+                ["Requested GL tier: gl45"],
+                ["Renderer shutdown audit vid_restart pre:"],
+                ["Renderer shutdown audit vid_restart post: live=0 status=pass"],
+                ["Renderer shutdown audit shutdown post: live=0 status=pass"],
+                ["Renderer graph resources:"],
+                ["Renderer upload manager:"],
+                ["Modern GL executor:"],
+                ["Modern clustered lighting:"],
+            ],
+            "countChecks": [
+                {
+                    "label": "clean live-object audit after each full vid_restart teardown",
+                    "pattern": "Renderer shutdown audit vid_restart post: live=0 status=pass",
+                    "min": 3,
+                },
+                {
+                    "label": "clean live-object audit after final renderer shutdown",
+                    "pattern": "Renderer shutdown audit shutdown post: live=0 status=pass",
+                    "min": 1,
+                },
+                {
+                    "label": "pre-teardown live-object audit snapshots",
+                    "pattern": "Renderer shutdown audit vid_restart pre:",
+                    "min": 3,
+                },
+            ],
+            "valueChecks": [
+                {
+                    "label": "post-teardown live-object audit rows stay empty",
+                    "pattern": r"Renderer shutdown audit (?P<event>vid_restart|shutdown) post: live=(?P<live>\d+) status=(?P<status>\w+) graph\(physical=(?P<graphPhysical>\d+) tex=(?P<graphTextures>\d+) fbo=(?P<graphFbos>\d+)\) upload\(frame=(?P<uploadFrameBuffers>\d+) mapped=(?P<uploadMapped>\d+) fences=(?P<uploadFences>\d+) static=(?P<uploadStaticLive>\d+)/(?P<uploadStaticKB>\d+)KB pooled=(?P<uploadStaticPooled>\d+)/(?P<uploadStaticPooledKB>\d+)KB\) modern\(vao=(?P<modernVaos>\d+) buffers=(?P<modernBuffers>\d+) fbo=(?P<modernFbos>\d+) samplers=(?P<modernSamplers>\d+) programs=(?P<modernPrograms>\d+) shaderPrograms=(?P<shaderPrograms>\d+) sync=(?P<modernSyncs>\d+)\) cluster\(buffers=(?P<clusterBuffers>\d+) tex=(?P<clusterTextures>\d+) programs=(?P<clusterPrograms>\d+) vao=(?P<clusterVaos>\d+)\)",
+                    "min": 4,
+                    "fields": [
+                        "live",
+                        "status",
+                        "graphPhysical",
+                        "graphTextures",
+                        "graphFbos",
+                        "uploadFrameBuffers",
+                        "uploadMapped",
+                        "uploadFences",
+                        "uploadStaticLive",
+                        "uploadStaticKB",
+                        "uploadStaticPooled",
+                        "uploadStaticPooledKB",
+                        "modernVaos",
+                        "modernBuffers",
+                        "modernFbos",
+                        "modernSamplers",
+                        "modernPrograms",
+                        "shaderPrograms",
+                        "modernSyncs",
+                        "clusterBuffers",
+                        "clusterTextures",
+                        "clusterPrograms",
+                        "clusterVaos",
+                    ],
+                },
+            ],
+        },
+        {
+            "id": "dedicated-disabled-bse-manager-startup",
+            "category": "dedicated-server",
+            "description": "Dedicated server startup keeps the integrated effect decl allocator while using the disabled BSE runtime manager and shutting down renderer scaffolding without GL vertex-cache errors.",
+            "executable": "dedicated",
+            "args": [
+                "+set",
+                "net_serverDedicated",
+                "1",
+                "+set",
+                "si_gameType",
+                "DM",
+            ],
+            "checks": [
+                ["Type 'help' for dedicated server info."],
+                ["Attaching integrated BSE decl allocator with disabled runtime manager."],
+                ["Loading game DLL:"],
+                ["game-mp_"],
+                ["idRenderSystem::Shutdown()"],
+            ],
+            "forbidden": [
+                "ERROR:",
+                "idVertexCache Free: NULL pointer",
+                "BSE unavailable",
+                "BSE initialization failed",
+                "Attaching integrated BSE.\n",
+            ],
+        },
     ]
 
     for shader_tier in SHADER_LIBRARY_TIER_MATRIX:
@@ -1484,11 +1849,15 @@ def evaluate_checks(
     checks: list[list[str]],
     warnings: dict[str, int],
     count_checks: list[dict[str, Any]] | None = None,
+    forbidden: list[str] | None = None,
 ) -> tuple[bool, list[str]]:
     missing: list[str] = []
     for alternatives in checks:
         if not any(pattern in text for pattern in alternatives):
             missing.append(" or ".join(alternatives))
+    for marker in forbidden or []:
+        if marker in text:
+            missing.append(f"forbidden marker: {marker}")
     for check in count_checks or []:
         patterns = check.get("patterns")
         if patterns is None:
@@ -1510,6 +1879,77 @@ def evaluate_checks(
             missing.append(f"unexpected marker: {marker}")
     missing += [f"warning signature: {name}={count}" for name, count in sorted(warnings.items()) if count > 0]
     return len(missing) == 0, missing
+
+
+def _value_check_rows(pattern: str, text: str) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    regex = re.compile(pattern)
+    for match in regex.finditer(text):
+        groups = match.groupdict()
+        if groups:
+            rows.append({key: value for key, value in groups.items()})
+        else:
+            rows.append({str(index + 1): value for index, value in enumerate(match.groups())})
+    return rows
+
+
+def _format_value_row(row: dict[str, str], fields: list[str]) -> str:
+    return " ".join(f"{field}={row.get(field, '')}" for field in fields)
+
+
+def evaluate_value_checks(
+    text: str,
+    value_checks: list[dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    results: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for check in value_checks or []:
+        label = check.get("label", check.get("pattern", "value check"))
+        rows = _value_check_rows(check.get("pattern", ""), text)
+        skip = int(check.get("skip", 0))
+        selected = rows[skip:] if skip > 0 else rows
+        if "last" in check:
+            selected = selected[-int(check["last"]):]
+        min_count = int(check.get("min", 1))
+        fields = list(check.get("fields", []))
+        if not fields and selected:
+            fields = list(selected[0].keys())
+
+        result: dict[str, Any] = {
+            "label": label,
+            "status": "pass",
+            "matches": len(rows),
+            "samples": len(selected),
+            "fields": fields,
+            "baseline": selected[0] if selected else {},
+            "observed": selected,
+        }
+
+        if len(selected) < min_count:
+            result["status"] = "fail"
+            reason = f"{label} samples >= {min_count} (found {len(selected)}, matches {len(rows)})"
+            result["reason"] = reason
+            missing.append(reason)
+            results.append(result)
+            continue
+
+        baseline = selected[0]
+        drift: list[str] = []
+        for sample_index, row in enumerate(selected[1:], start=2):
+            for field in fields:
+                if row.get(field) != baseline.get(field):
+                    drift.append(
+                        f"sample {sample_index} {field}={row.get(field, '')} expected {baseline.get(field, '')}"
+                    )
+
+        if drift:
+            result["status"] = "fail"
+            result["reason"] = "; ".join(drift)
+            missing.append(f"{label} stable ({result['reason']})")
+
+        results.append(result)
+
+    return results, missing
 
 
 def extract_last_prefixed_value(text: str, prefix: str) -> str:
@@ -1548,6 +1988,7 @@ def extract_summary(text: str) -> dict[str, str]:
         "compatibilityGates": "Renderer compatibility gates:",
         "gpuTimers": "Renderer GPU timers:",
         "uploadManager": "Renderer upload manager:",
+        "vertexCache": "Renderer vertex cache:",
         "modernExecutor": "Modern GL executor:",
         "stateCache": "Modern GL state cache:",
     }.items():
@@ -1761,13 +2202,24 @@ def run_case(
             log_text += "\n" + stderr_path.read_text(encoding="utf-8", errors="replace")
 
     warning_signatures = count_warning_signatures(log_text)
-    checks_ok, missing = evaluate_checks(log_text, case["checks"], warning_signatures, case.get("countChecks"))
+    checks_ok, missing = evaluate_checks(
+        log_text,
+        case["checks"],
+        warning_signatures,
+        case.get("countChecks"),
+        case.get("forbidden"),
+    )
+    value_check_results, value_check_missing = evaluate_value_checks(log_text, case.get("valueChecks"))
+    missing.extend(value_check_missing)
+    checks_ok = checks_ok and not value_check_missing
     ok = exit_code == 0 and not timed_out and log_path is not None and checks_ok
     return {
         "id": case_id,
         "category": case["category"],
         "description": case["description"],
         "assetless": case_assetless,
+        "executableKind": case.get("executable", "client"),
+        "executable": str(executable),
         "status": "pass" if ok else "fail",
         "exitCode": exit_code,
         "timedOut": timed_out,
@@ -1777,6 +2229,7 @@ def run_case(
         "stderr": str(stderr_path),
         "missing": missing,
         "warningSignatures": warning_signatures,
+        "valueChecks": value_check_results,
         "summary": extract_summary(log_text),
     }
 
@@ -1819,27 +2272,60 @@ def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dic
         "",
         f"- Generated: {metadata['generated']}",
         f"- Host: {metadata['host']}",
-        f"- Executable: `{metadata['executable']}`",
+        f"- Client executable: `{metadata.get('clientExecutable', metadata['executable'])}`",
         f"- Save path: `{metadata['savepath']}`",
         f"- Base path: `{metadata['basepath'] or 'not set'}`",
         f"- Automated cases: {passed} passed, {failed} failed",
         "",
         "## Automated Safe Cases",
         "",
-        "| Status | Case | Category | Context | Selected Tier | Warning Signatures | Log |",
-        "|---|---|---|---|---|---|---|",
+        "| Status | Case | Category | Executable | Context | Selected Tier | Warning Signatures | Log |",
+        "|---|---|---|---|---|---|---|---|",
     ]
+    if metadata.get("dedicatedExecutable"):
+        lines.insert(5, f"- Dedicated executable: `{metadata['dedicatedExecutable']}`")
     for result in results:
         summary = result["summary"]
         context = summary.get("context", summary.get("contextProfile", ""))
         selected = summary.get("selectedTier", "")
         warnings = format_warning_signatures(result.get("warningSignatures", {}))
         log = result["log"] or result["stdout"]
+        executable_label = result.get("executableKind", "client")
         lines.append(
-            f"| {result['status']} | `{result['id']}` | {result['category']} | {context} | {selected} | {warnings} | `{log}` |"
+            f"| {result['status']} | `{result['id']}` | {result['category']} | {executable_label} | {context} | {selected} | {warnings} | `{log}` |"
         )
         if result["missing"]:
-            lines.append(f"|  | missing |  | {'; '.join(result['missing'])} |  |  |  |")
+            lines.append(f"|  | missing |  |  | {'; '.join(result['missing'])} |  |  |  |")
+
+    value_check_rows = [
+        (result, value_check)
+        for result in results
+        for value_check in result.get("valueChecks", [])
+    ]
+    if value_check_rows:
+        lines += [
+            "",
+            "## Value Stability Checks",
+            "",
+            "These rows compare named values captured from repeated log summaries in a single case. They are intended for restart and residency probes where growth across samples would indicate a lifetime regression.",
+            "",
+            "| Case | Check | Status | Samples | Stable Values |",
+            "|---|---|---|---:|---|",
+        ]
+        for result, value_check in value_check_rows:
+            fields = value_check.get("fields", [])
+            baseline = value_check.get("baseline", {})
+            if isinstance(baseline, dict):
+                stable_values = _format_value_row(baseline, fields)
+            else:
+                stable_values = ""
+            if value_check.get("status") != "pass":
+                stable_values = value_check.get("reason", stable_values)
+            lines.append(
+                f"| `{result['id']}` | {markdown_cell(value_check.get('label', ''))} | "
+                f"{value_check.get('status', '')} | {value_check.get('samples', 0)} | "
+                f"{markdown_cell(stable_values)} |"
+            )
 
     lines += [
         "",
@@ -2120,7 +2606,8 @@ def main(argv: list[str]) -> int:
             print(f"  {item['criterion']}: {item['required']}")
         return 0
 
-    executable = find_client_executable(root)
+    client_executable = find_client_executable(root)
+    dedicated_executable: Path | None = None
     savepath = Path(args.savepath).resolve() if args.savepath else root / ".home"
     savepath.mkdir(parents=True, exist_ok=True)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -2135,9 +2622,14 @@ def main(argv: list[str]) -> int:
     results = []
     for case in safe_cases:
         print(f"running {case['id']}...")
+        case_executable = client_executable
+        if case.get("executable") == "dedicated":
+            if dedicated_executable is None:
+                dedicated_executable = find_dedicated_executable(root)
+            case_executable = dedicated_executable
         result = run_case(
             root,
-            executable,
+            case_executable,
             output_dir,
             savepath,
             basepath,
@@ -2153,7 +2645,9 @@ def main(argv: list[str]) -> int:
     metadata = {
         "generated": time.strftime("%Y-%m-%d %H:%M:%S %z"),
         "host": f"{platform.system()} {platform.release()} {platform.machine()}",
-        "executable": str(executable),
+        "executable": str(client_executable),
+        "clientExecutable": str(client_executable),
+        "dedicatedExecutable": str(dedicated_executable) if dedicated_executable is not None else "",
         "savepath": str(savepath),
         "basepath": basepath,
         "skipOfficialPakValidation": args.skip_official_pak_validation,

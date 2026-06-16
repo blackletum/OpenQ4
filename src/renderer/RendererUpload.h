@@ -37,6 +37,16 @@ typedef struct rendererUploadStats_s {
 	bool	fenceSyncAvailable;
 } rendererUploadStats_t;
 
+typedef struct rendererUploadLiveObjects_s {
+	int		frameBuffers;
+	int		mappedFrameBuffers;
+	int		frameFences;
+	int		staticBuffersLive;
+	int		staticBytesLive;
+	int		staticBuffersPooled;
+	int		staticBytesPooled;
+} rendererUploadLiveObjects_t;
+
 typedef struct rendererUploadAllocation_s {
 	unsigned int	vbo;
 	int				offset;
@@ -135,6 +145,7 @@ public:
 	bool DynamicFrameBridgeAvailable( void ) const;
 	bool StaticBufferAllocatorAvailable( void ) const;
 	int FrameCapacity( void ) const;
+	rendererUploadLiveObjects_t LiveObjects( void ) const;
 
 private:
 	enum uploadPath_t {
@@ -184,6 +195,7 @@ void R_RendererUpload_FreeStaticBuffer( unsigned int &vbo, int bytes, bool index
 void R_RendererUpload_RecordLegacyUpload( int bytes );
 void R_RendererUpload_RecordLegacyStall( void );
 const rendererUploadStats_t &R_RendererUpload_Stats( void );
+rendererUploadLiveObjects_t R_RendererUpload_LiveObjects( void );
 bool R_RendererUpload_DynamicFrameBridgeAvailable( void );
 bool R_RendererUpload_StaticBufferAllocatorAvailable( void );
 int R_RendererUpload_FrameCapacity( void );

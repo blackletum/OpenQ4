@@ -347,6 +347,7 @@ idCVar r_glDebugOutput( "r_glDebugOutput", "1", CVAR_RENDERER | CVAR_BOOL, "enab
 idCVar r_glDebugSynchronous( "r_glDebugSynchronous", "0", CVAR_RENDERER | CVAR_BOOL, "make OpenGL debug callbacks synchronous for driver-call stack debugging" );
 idCVar r_rendererMetrics( "r_rendererMetrics", "0", CVAR_RENDERER | CVAR_INTEGER, "renderer metrics: 0 = off, 1 = periodic summary, 2 = per-frame/pass detail", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 idCVar r_rendererGpuTimers( "r_rendererGpuTimers", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "sample GL timer queries when r_rendererMetrics is enabled and supported" );
+idCVar r_rendererShutdownAudit( "r_rendererShutdownAudit", "0", CVAR_RENDERER | CVAR_BOOL, "print renderer live-object audit markers during vid_restart and shutdown" );
 idCVar r_rendererBenchmarkPreset( "r_rendererBenchmarkPreset", "baseline", CVAR_RENDERER | CVAR_ARCHIVE, "renderer benchmark budget preset: low, baseline, modern, high-end", r_rendererBenchmarkPresetArgs, idCmdSystem::ArgCompletion_String<r_rendererBenchmarkPresetArgs> );
 idCVar r_rendererPerfThresholdP95( "r_rendererPerfThresholdP95", "0", CVAR_RENDERER | CVAR_INTEGER, "custom renderer benchmark P95 frame-time budget in milliseconds (0 = preset default)", 0, 1000, idCmdSystem::ArgCompletion_Integer<0,1000> );
 idCVar r_rendererPerfThresholdP99( "r_rendererPerfThresholdP99", "0", CVAR_RENDERER | CVAR_INTEGER, "custom renderer benchmark P99 frame-time budget in milliseconds (0 = preset default)", 0, 1000, idCmdSystem::ArgCompletion_Integer<0,1000> );
@@ -641,6 +642,13 @@ static void R_RendererUploadSelfTest_f( const idCmdArgs &args ) {
 	(void)args;
 	if ( !RendererUpload_RunSelfTest() ) {
 		common->Warning( "Renderer upload self-test failed" );
+	}
+}
+
+static void R_RendererVertexCacheBudgetSelfTest_f( const idCmdArgs &args ) {
+	(void)args;
+	if ( !vertexCache.BudgetSelfTest() ) {
+		common->Warning( "Renderer vertex-cache budget self-test failed" );
 	}
 }
 
@@ -3156,6 +3164,32 @@ void GfxInfo_f( const idCmdArgs &args ) {
 			uploadStats.frameFenceFallbacks,
 			uploadStats.legacyBridge ? 1 : 0 );
 	}
+	{
+		const vertexCacheResidencyStats_t vertexStats = vertexCache.ResidencyStats();
+		const char *budgetStatus = vertexStats.budgetEnabled
+			? ( vertexStats.overBudget ? "blocked" : "pass" )
+			: "disabled";
+		common->Printf(
+			"Renderer vertex cache: mode=%s budget=%d status=%s limit=%dKB protectFrames=%d static=%d/%dKB fixed=%d/%dKB purgable=%d/%dKB protected=%d/%dKB lastPurge=%d/%dKB lastProtected=%d/%dKB overBudget=%dKB\n",
+			vertexStats.fast ? "vbo" : "virtual",
+			vertexStats.budgetEnabled ? 1 : 0,
+			budgetStatus,
+			vertexStats.budgetBytes / 1024,
+			vertexStats.protectFrames,
+			vertexStats.staticBuffers,
+			vertexStats.staticBytes / 1024,
+			vertexStats.fixedBuffers,
+			vertexStats.fixedBytes / 1024,
+			vertexStats.purgableBuffers,
+			vertexStats.purgableBytes / 1024,
+			vertexStats.protectedBuffers,
+			vertexStats.protectedBytes / 1024,
+			vertexStats.lastPurgedBuffers,
+			vertexStats.lastPurgedBytes / 1024,
+			vertexStats.lastProtectedBuffers,
+			vertexStats.lastProtectedBytes / 1024,
+			vertexStats.lastOverBudgetBytes / 1024 );
+	}
 
 	if ( glConfig.allowARB2Path ) {
 		common->Printf( "ARB2 path ENABLED%s\n", active[tr.backEndRenderer == BE_ARB2] );
@@ -3238,6 +3272,70 @@ static void R_ShutdownRenderTargetsBeforeImagePurge( void ) {
 	R_ClearActiveRenderTextures();
 }
 
+static int R_RendererShutdownAudit_TotalLiveObjects(
+	const renderGraphResourceLiveObjects_t &graphLive,
+	const rendererUploadLiveObjects_t &uploadLive,
+	const modernGLExecutorLiveObjects_t &executorLive,
+	const rendererClusteredLightingLiveObjects_t &clusterLive ) {
+	return graphLive.physicalAllocations
+		+ graphLive.textures
+		+ graphLive.framebuffers
+		+ uploadLive.frameBuffers
+		+ uploadLive.mappedFrameBuffers
+		+ uploadLive.frameFences
+		+ uploadLive.staticBuffersLive
+		+ uploadLive.staticBuffersPooled
+		+ executorLive.vertexArrays
+		+ executorLive.buffers
+		+ executorLive.framebuffers
+		+ executorLive.samplers
+		+ executorLive.programs
+		+ executorLive.shaderPrograms
+		+ executorLive.syncs
+		+ clusterLive.buffers
+		+ clusterLive.textures
+		+ clusterLive.programs
+		+ clusterLive.vertexArrays;
+}
+
+static void R_RendererShutdownAudit_Print( const char *eventName, const char *phaseName ) {
+	if ( !r_rendererShutdownAudit.GetBool() ) {
+		return;
+	}
+	const renderGraphResourceLiveObjects_t graphLive = R_RenderGraphResources_LiveObjects();
+	const rendererUploadLiveObjects_t uploadLive = R_RendererUpload_LiveObjects();
+	const modernGLExecutorLiveObjects_t executorLive = R_ModernGLExecutor_LiveObjects();
+	const rendererClusteredLightingLiveObjects_t clusterLive = R_ModernClusteredLighting_LiveObjects();
+	const int liveObjects = R_RendererShutdownAudit_TotalLiveObjects( graphLive, uploadLive, executorLive, clusterLive );
+	common->Printf(
+		"Renderer shutdown audit %s %s: live=%d status=%s graph(physical=%d tex=%d fbo=%d) upload(frame=%d mapped=%d fences=%d static=%d/%dKB pooled=%d/%dKB) modern(vao=%d buffers=%d fbo=%d samplers=%d programs=%d shaderPrograms=%d sync=%d) cluster(buffers=%d tex=%d programs=%d vao=%d)\n",
+		eventName != NULL ? eventName : "unknown",
+		phaseName != NULL ? phaseName : "unknown",
+		liveObjects,
+		liveObjects == 0 ? "pass" : "active",
+		graphLive.physicalAllocations,
+		graphLive.textures,
+		graphLive.framebuffers,
+		uploadLive.frameBuffers,
+		uploadLive.mappedFrameBuffers,
+		uploadLive.frameFences,
+		uploadLive.staticBuffersLive,
+		uploadLive.staticBytesLive / 1024,
+		uploadLive.staticBuffersPooled,
+		uploadLive.staticBytesPooled / 1024,
+		executorLive.vertexArrays,
+		executorLive.buffers,
+		executorLive.framebuffers,
+		executorLive.samplers,
+		executorLive.programs,
+		executorLive.shaderPrograms,
+		executorLive.syncs,
+		clusterLive.buffers,
+		clusterLive.textures,
+		clusterLive.programs,
+		clusterLive.vertexArrays );
+}
+
 static void R_PerformFullVidRestart( bool forceWindow ) {
 	R_ShutdownRenderTargetsBeforeImagePurge();
 
@@ -3246,6 +3344,7 @@ static void R_PerformFullVidRestart( bool forceWindow ) {
 
 	// Force image/object handles to rebuild against the new context.
 	globalImages->PurgeAllImages();
+	R_RendererShutdownAudit_Print( "vid_restart", "pre" );
 	R_ShutdownFrameData();
 	R_RendererMetrics_ShutdownGpuTimers();
 	R_MaterialResourceTable_Shutdown();
@@ -3255,6 +3354,7 @@ static void R_PerformFullVidRestart( bool forceWindow ) {
 	R_GLDebugOutput_Shutdown();
 	RendererBootstrap_Shutdown();
 	R_PurgeFramebufferCopyFBOs();
+	R_RendererShutdownAudit_Print( "vid_restart", "post" );
 	GLimp_Shutdown();
 	glConfig.isInitialized = false;
 
@@ -3483,6 +3583,7 @@ void R_InitCommands( void ) {
 	cmdSystem->AddCommand( "uiFontParitySelfTest", R_UIFontParitySelfTest_f, CMD_FL_RENDERER, "run GUI font retail parity self tests" );
 	cmdSystem->AddCommand( "rendererBenchmarkCapture", R_RendererBenchmarkCapture_f, CMD_FL_RENDERER, "print the latest renderer benchmark capture summary" );
 	cmdSystem->AddCommand( "rendererUploadSelfTest", R_RendererUploadSelfTest_f, CMD_FL_RENDERER, "run renderer upload stream self tests" );
+	cmdSystem->AddCommand( "rendererVertexCacheBudgetSelfTest", R_RendererVertexCacheBudgetSelfTest_f, CMD_FL_RENDERER, "run renderer vertex-cache budget self tests" );
 	cmdSystem->AddCommand( "rendererGpuTimerSelfTest", R_RendererGpuTimerSelfTest_f, CMD_FL_RENDERER, "run renderer GPU timer query self tests" );
 	cmdSystem->AddCommand( "rendererLensFlareSettingsSelfTest", R_RendererLensFlareSettingsSelfTest_f, CMD_FL_RENDERER, "run renderer lens-flare settings self tests" );
 	cmdSystem->AddCommand( "rendererLensFlareRuntimeSelfTest", R_RendererLensFlareRuntimeSelfTest_f, CMD_FL_RENDERER, "run renderer lens-flare accumulation and composite self tests" );
@@ -3776,6 +3877,7 @@ void idRenderSystemLocal::ShutdownOpenGL( void ) {
 	}
 
 	// free the context and close the window
+	R_RendererShutdownAudit_Print( "shutdown", "pre" );
 	R_ShutdownFrameData();
 	R_RendererMetrics_ShutdownGpuTimers();
 	R_MaterialResourceTable_Shutdown();
@@ -3785,6 +3887,7 @@ void idRenderSystemLocal::ShutdownOpenGL( void ) {
 	R_GLDebugOutput_Shutdown();
 	RendererBootstrap_Shutdown();
 	R_PurgeFramebufferCopyFBOs();
+	R_RendererShutdownAudit_Print( "shutdown", "post" );
 	GLimp_Shutdown();
 	glConfig.isInitialized = false;
 	R_ClearActiveRenderTextures();

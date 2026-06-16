@@ -2517,6 +2517,16 @@ const modernGLShaderLibraryStats_t &R_ModernGLShaderLibrary_Stats( void ) {
 	return rg_modernGLShaderLibraryStats;
 }
 
+int R_ModernGLShaderLibrary_LiveProgramCount( void ) {
+	int livePrograms = 0;
+	for ( int i = 0; i < MODERN_GL_SHADER_MAX_PROGRAMS; ++i ) {
+		if ( rg_modernGLShaderPrograms[i].program != 0 ) {
+			livePrograms++;
+		}
+	}
+	return livePrograms;
+}
+
 const modernGLShaderProgramInfo_t *R_ModernGLShaderLibrary_FindProgram( modernGLShaderProgramKind_t kind, int preferredGLSLVersion ) {
 	const modernGLShaderProgramInfo_t *best = NULL;
 	for ( int i = 0; i < rg_modernGLShaderProgramCount; ++i ) {

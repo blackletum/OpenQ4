@@ -552,6 +552,7 @@ public:
 	virtual void				BeginRedirect( char *buffer, int buffersize, void (*flush)( const char * ) );
 	virtual void				EndRedirect( void );
 	virtual void				SetRefreshOnPrint( bool set );
+	void						PreserveLogFileOnNextOpen( void );
 	virtual void				Printf( const char *fmt, ... ) id_attribute((format(printf,2,3)));
 	virtual void				VPrintf( const char *fmt, va_list arg );
 	virtual void				PrintFramePacingSnapshot( const char *reason );
@@ -634,6 +635,7 @@ static idStr Common_BuildPlatformProfileConfigName( const char *profileName ) {
 	bool						com_shuttingDown;
 
 	idFile *					logFile;
+	bool						logFileAppendOnNextOpen;
 
 	char						errorMessage[MAX_PRINT_MSG_SIZE];
 
@@ -671,6 +673,7 @@ idCommonLocal::idCommonLocal( void ) {
 	com_shuttingDown = false;
 
 	logFile = NULL;
+	logFileAppendOnNextOpen = false;
 
 	strcpy( errorMessage, "" );
 
@@ -758,6 +761,15 @@ void idCommonLocal::CloseLogFile( void ) {
 		fileSystem->CloseFile( logFile );
 		logFile = NULL;
 	}
+}
+
+/*
+==================
+idCommonLocal::PreserveLogFileOnNextOpen
+==================
+*/
+void idCommonLocal::PreserveLogFileOnNextOpen( void ) {
+	logFileAppendOnNextOpen = true;
 }
 
 /*
@@ -860,7 +872,8 @@ void idCommonLocal::VPrintf( const char *fmt, va_list args ) {
 			// fileSystem->OpenFileWrite can cause recursive prints into here
 			recursing = true;
 
-			logFile = fileSystem->OpenFileWrite( fileNameToOpen );
+			logFile = logFileAppendOnNextOpen ? fileSystem->OpenFileAppend( fileNameToOpen, false, "fs_savepath" ) : fileSystem->OpenFileWrite( fileNameToOpen );
+			logFileAppendOnNextOpen = false;
 			if ( !logFile ) {
 				logFileFailed = true;
 				FatalError( "failed to open log file '%s'\n", fileNameToOpen );
@@ -2294,7 +2307,14 @@ void Com_ReloadEngine_f( const idCmdArgs &args ) {
 	if ( !menu ) {
 		Sys_ShowConsole( 1, false );
 	}
+	const int reloadLogFile = com_logFile.GetInteger();
+	const idStr reloadLogFileName = com_logFileName.GetString();
 	commonLocal.ShutdownGame( true );
+	if ( reloadLogFile > 0 ) {
+		commonLocal.PreserveLogFileOnNextOpen();
+		com_logFile.SetInteger( reloadLogFile );
+		com_logFileName.SetString( reloadLogFileName.c_str() );
+	}
 	commonLocal.InitGame();
 	if ( !menu && !idAsyncNetwork::serverDedicated.GetBool() ) {
 		Sys_ShowConsole( 0, false );

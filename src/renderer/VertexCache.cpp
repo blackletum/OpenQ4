@@ -38,6 +38,8 @@ static const int	EXPAND_HEADERS = 1024;
 
 idCVar idVertexCache::r_showVertexCache( "r_showVertexCache", "0", CVAR_INTEGER|CVAR_RENDERER, "" );
 idCVar idVertexCache::r_vertexBufferMegs( "r_vertexBufferMegs", "32", CVAR_INTEGER|CVAR_RENDERER, "" );
+idCVar idVertexCache::r_vertexBufferBudget( "r_vertexBufferBudget", "0", CVAR_BOOL|CVAR_RENDERER, "enforce r_vertexBufferMegs as an LRU budget for static vertex/index cache blocks" );
+idCVar idVertexCache::r_vertexBufferBudgetFrames( "r_vertexBufferBudgetFrames", "2", CVAR_INTEGER|CVAR_RENDERER, "frames of recent static vertex/index cache use protected from budget purging" );
 
 idVertexCache		vertexCache;
 
@@ -310,6 +312,11 @@ void idVertexCache::Init() {
 	frameBytes = FRAME_MEMORY_BYTES;
 	staticAllocTotal = 0;
 	staticCountTotal = 0;
+	budgetPurgedThisFrame = 0;
+	budgetPurgedBytesThisFrame = 0;
+	budgetProtectedThisFrame = 0;
+	budgetProtectedBytesThisFrame = 0;
+	budgetOverBudgetBytes = 0;
 
 	byte	*junk = (byte *)Mem_Alloc( frameBytes );
 	for ( int i = 0 ; i < NUM_VERTEX_FRAMES ; i++ ) {
@@ -330,6 +337,7 @@ void idVertexCache::Init() {
 	}
 
 	EndFrame();
+	initialized = true;
 }
 
 /*
@@ -348,10 +356,84 @@ void idVertexCache::PurgeAll() {
 
 /*
 ===========
+idVertexCache::BlockProtectedByBudgetAge
+
+Blocks touched recently may still be referenced by queued GPU work. New
+level-load allocations start old enough to purge until the backend actually
+uses them through Touch().
+===========
+*/
+bool idVertexCache::BlockProtectedByBudgetAge( const vertCache_t *block ) const {
+	if ( block == NULL ) {
+		return false;
+	}
+	const int protectFrames = Max( 0, r_vertexBufferBudgetFrames.GetInteger() );
+	return protectFrames > 0 && block->frameUsed > currentFrame - protectFrames;
+}
+
+/*
+===========
+idVertexCache::PurgeLRUOverBudget
+===========
+*/
+void idVertexCache::PurgeLRUOverBudget() {
+	budgetPurgedThisFrame = 0;
+	budgetPurgedBytesThisFrame = 0;
+	budgetProtectedThisFrame = 0;
+	budgetProtectedBytesThisFrame = 0;
+	budgetOverBudgetBytes = 0;
+
+	const int budgetMegs = Max( 8, r_vertexBufferMegs.GetInteger() );
+	const int budgetBytes = budgetMegs * 1024 * 1024;
+	if ( !r_vertexBufferBudget.GetBool() || budgetBytes <= 0 || staticAllocTotal <= budgetBytes ) {
+		budgetOverBudgetBytes = Max( 0, staticAllocTotal - budgetBytes );
+		return;
+	}
+
+	vertCache_t *block = staticHeaders.prev;
+	while ( staticAllocTotal > budgetBytes && block != &staticHeaders ) {
+		vertCache_t *prev = block->prev;
+		if ( block->tag != TAG_USED ) {
+			block = prev;
+			continue;
+		}
+		if ( BlockProtectedByBudgetAge( block ) ) {
+			budgetProtectedThisFrame++;
+			budgetProtectedBytesThisFrame += block->size;
+			block = prev;
+			continue;
+		}
+
+		const int purgedBytes = block->size;
+		ActuallyFree( block );
+		budgetPurgedThisFrame++;
+		budgetPurgedBytesThisFrame += purgedBytes;
+		block = prev;
+	}
+
+	budgetOverBudgetBytes = Max( 0, staticAllocTotal - budgetBytes );
+	if ( budgetOverBudgetBytes > 0 && r_showVertexCache.GetBool() ) {
+		common->Printf(
+			"vertex cache budget: over by %ik after purging %i/%ik, protected %i/%ik\n",
+			budgetOverBudgetBytes / 1024,
+			budgetPurgedThisFrame,
+			budgetPurgedBytesThisFrame / 1024,
+			budgetProtectedThisFrame,
+			budgetProtectedBytesThisFrame / 1024 );
+	}
+}
+
+/*
+===========
 idVertexCache::Shutdown
 ===========
 */
 void idVertexCache::Shutdown() {
+	if ( !initialized ) {
+		InvalidateBufferBindings();
+		return;
+	}
+
 	PurgeAll();
 
 	while( deferredFreeList.next != &deferredFreeList ) {
@@ -374,6 +456,7 @@ void idVertexCache::Shutdown() {
 	}
 
 	headerAllocator.Shutdown();
+	initialized = false;
 }
 
 /*
@@ -673,14 +756,6 @@ void idVertexCache::EndFrame() {
 			staticCountTotal, staticAllocTotal/1024 );
 	}
 
-#if 0
-	// if our total static count is above our working memory limit, start purging things
-	while ( staticAllocTotal > r_vertexBufferMegs.GetInteger() * 1024 * 1024 ) {
-		// free the least recently used
-
-	}
-#endif
-
 	if( !virtualMemory ) {
 		// unbind vertex buffers so normal virtual memory will be used in case
 		// r_useVertexBuffers / r_useIndexBuffers
@@ -703,6 +778,8 @@ void idVertexCache::EndFrame() {
 		ActuallyFree( deferredFreeList.next );
 	}
 
+	PurgeLRUOverBudget();
+
 	// free all the frame temp headers
 	vertCache_t	*block = dynamicHeaders.next;
 	if ( block != &dynamicHeaders ) {
@@ -713,6 +790,145 @@ void idVertexCache::EndFrame() {
 
 		dynamicHeaders.next = dynamicHeaders.prev = &dynamicHeaders;
 	}
+}
+
+/*
+=============
+idVertexCache::ResidencyStats
+=============
+*/
+vertexCacheResidencyStats_t idVertexCache::ResidencyStats() const {
+	vertexCacheResidencyStats_t stats;
+	memset( &stats, 0, sizeof( stats ) );
+	stats.staticBuffers = staticCountTotal;
+	stats.staticBytes = staticAllocTotal;
+	stats.fast = !virtualMemory;
+	stats.budgetEnabled = r_vertexBufferBudget.GetBool();
+	stats.budgetBytes = Max( 8, r_vertexBufferMegs.GetInteger() ) * 1024 * 1024;
+	stats.protectFrames = Max( 0, r_vertexBufferBudgetFrames.GetInteger() );
+	stats.lastPurgedBuffers = budgetPurgedThisFrame;
+	stats.lastPurgedBytes = budgetPurgedBytesThisFrame;
+	stats.lastProtectedBuffers = budgetProtectedThisFrame;
+	stats.lastProtectedBytes = budgetProtectedBytesThisFrame;
+	stats.lastOverBudgetBytes = Max( 0, budgetOverBudgetBytes );
+	stats.overBudget = stats.staticBytes > stats.budgetBytes;
+
+	for ( int i = 0; i < NUM_VERTEX_FRAMES; i++ ) {
+		if ( tempBuffers[i] != NULL && tempBuffers[i]->tag == TAG_FIXED ) {
+			stats.fixedBuffers++;
+			stats.fixedBytes += tempBuffers[i]->size;
+		}
+	}
+
+	for ( vertCache_t *block = staticHeaders.next; block != &staticHeaders; block = block->next ) {
+		if ( block->tag != TAG_USED ) {
+			continue;
+		}
+		if ( BlockProtectedByBudgetAge( block ) ) {
+			stats.protectedBuffers++;
+			stats.protectedBytes += block->size;
+		} else {
+			stats.purgableBuffers++;
+			stats.purgableBytes += block->size;
+		}
+	}
+
+	return stats;
+}
+
+/*
+=============
+idVertexCache::BudgetSelfTest
+=============
+*/
+bool idVertexCache::BudgetSelfTest() {
+	if ( virtualMemory || !R_RendererUpload_StaticBufferAllocatorAvailable() ) {
+		common->Printf( "RendererVertexCacheBudget self-test skipped (static VBO allocator unavailable)\n" );
+		return true;
+	}
+
+	struct vertexCacheBoolCVarRestore_t {
+		vertexCacheBoolCVarRestore_t( idCVar &value ) : cvar( value ), oldValue( value.GetBool() ) {}
+		~vertexCacheBoolCVarRestore_t() { cvar.SetBool( oldValue ); }
+		idCVar &cvar;
+		bool oldValue;
+	};
+	struct vertexCacheIntCVarRestore_t {
+		vertexCacheIntCVarRestore_t( idCVar &value ) : cvar( value ), oldValue( value.GetInteger() ) {}
+		~vertexCacheIntCVarRestore_t() { cvar.SetInteger( oldValue ); }
+		idCVar &cvar;
+		int oldValue;
+	};
+	vertexCacheBoolCVarRestore_t restoreBudget( r_vertexBufferBudget );
+	vertexCacheIntCVarRestore_t restoreBudgetFrames( r_vertexBufferBudgetFrames );
+	vertexCacheIntCVarRestore_t restoreBudgetMegs( r_vertexBufferMegs );
+
+	const int blockBytes = 2 * 1024 * 1024;
+	const int baselineBytes = staticAllocTotal;
+	const int budgetMegs = Max( 8, ( baselineBytes + 2 * blockBytes + 1024 * 1024 - 1 ) / ( 1024 * 1024 ) );
+	r_vertexBufferBudget.SetBool( true );
+	r_vertexBufferBudgetFrames.SetInteger( NUM_VERTEX_FRAMES );
+	r_vertexBufferMegs.SetInteger( budgetMegs );
+
+	byte *data = static_cast<byte *>( Mem_Alloc( blockBytes ) );
+	memset( data, 0x33, blockBytes );
+
+	vertCache_t *blocks[3] = { NULL, NULL, NULL };
+	bool ok = true;
+	for ( int i = 0; i < 3; ++i ) {
+		Alloc( data, blockBytes, &blocks[i], false );
+		if ( blocks[i] == NULL ) {
+			ok = false;
+			common->Printf( "RendererVertexCacheBudget self-test failed: allocation %d\n", i );
+			break;
+		}
+	}
+
+	if ( ok ) {
+		Touch( blocks[0] );
+		EndFrame();
+		const vertexCacheResidencyStats_t stats = ResidencyStats();
+		const bool protectedBlockSurvived = blocks[0] != NULL && blocks[0]->tag == TAG_USED;
+		const bool oldBlockPurged = blocks[1] == NULL || blocks[2] == NULL;
+		if ( stats.lastPurgedBuffers <= 0 || stats.lastPurgedBytes < blockBytes ) {
+			common->Printf( "RendererVertexCacheBudget self-test failed: no LRU purge recorded\n" );
+			ok = false;
+		}
+		if ( !protectedBlockSurvived ) {
+			common->Printf( "RendererVertexCacheBudget self-test failed: recently touched block was purged\n" );
+			ok = false;
+		}
+		if ( !oldBlockPurged ) {
+			common->Printf( "RendererVertexCacheBudget self-test failed: old block was not purged\n" );
+			ok = false;
+		}
+		if ( stats.overBudget || stats.lastOverBudgetBytes != 0 ) {
+			common->Printf( "RendererVertexCacheBudget self-test failed: budget overage remains (%dKB)\n", stats.lastOverBudgetBytes / 1024 );
+			ok = false;
+		}
+	}
+
+	for ( int i = 0; i < 3; ++i ) {
+		if ( blocks[i] != NULL && blocks[i]->tag == TAG_USED ) {
+			ActuallyFree( blocks[i] );
+			blocks[i] = NULL;
+		}
+	}
+	Mem_Free( data );
+
+	if ( !ok ) {
+		return false;
+	}
+
+	common->Printf(
+		"RendererVertexCacheBudget self-test passed (budget=%dKB baseline=%dKB purged=%d/%dKB protected=%d/%dKB)\n",
+		budgetMegs * 1024,
+		baselineBytes / 1024,
+		budgetPurgedThisFrame,
+		budgetPurgedBytesThisFrame / 1024,
+		budgetProtectedThisFrame,
+		budgetProtectedBytesThisFrame / 1024 );
+	return true;
 }
 
 /*

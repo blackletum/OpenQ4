@@ -454,6 +454,16 @@ typedef struct modernGLExecutorStats_s {
 	char	status[96];
 } modernGLExecutorStats_t;
 
+typedef struct modernGLExecutorLiveObjects_s {
+	int		vertexArrays;
+	int		buffers;
+	int		framebuffers;
+	int		samplers;
+	int		programs;
+	int		shaderPrograms;
+	int		syncs;
+} modernGLExecutorLiveObjects_t;
+
 void R_ModernGLExecutor_Init( const renderBackendCaps_t &caps, const renderFeatureSet_t &features );
 void R_ModernGLExecutor_Shutdown( void );
 void R_ModernGLExecutor_SkipFrame( void );
@@ -466,6 +476,7 @@ void R_ModernGLExecutor_SubmitForwardPlusDecalOverlay( const viewDef_t *viewDef 
 void R_ModernGLExecutor_ComposeVisibleSceneForPost( void );
 void R_ModernGLExecutor_ComposeVisibleFrame( void );
 const modernGLExecutorStats_t &R_ModernGLExecutor_Stats( void );
+modernGLExecutorLiveObjects_t R_ModernGLExecutor_LiveObjects( void );
 bool R_ModernGLExecutor_ModernVisibleRequestedForPost( void );
 bool R_ModernGLExecutor_ModernVisiblePostProcessHandoffActive( void );
 bool R_ModernGLExecutor_LegacyPassCanSkip( renderPassCategory_t category );

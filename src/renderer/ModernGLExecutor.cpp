@@ -4989,8 +4989,12 @@ static void R_ModernGLExecutor_SubmitGBuffer( modernGLExecutorStats_t &stats ) {
 		}
 	}
 
+	const bool gBufferExecuted = stats.opaqueGBufferDraws > 0 || stats.opaqueGBufferClearOps > 0;
+	if ( gBufferExecuted ) {
+		R_RenderGraphResources_SubmitInvalidationsForPass( RENDER_PASS_AMBIENT, true );
+	}
 	R_ModernGLExecutor_RestoreAfterSubmit( stats, "G-buffer submit" );
-	stats.opaqueGBufferExecuted = stats.opaqueGBufferDraws > 0 || stats.opaqueGBufferClearOps > 0;
+	stats.opaqueGBufferExecuted = gBufferExecuted;
 	if ( stats.opaqueGBufferExecuted ) {
 		R_ModernGLExecutor_SetStatus( stats, "gbuffer-legacy-fallback" );
 	}
@@ -5373,6 +5377,7 @@ static void R_ModernGLExecutor_SubmitDeferredResolve( modernGLExecutorStats_t &s
 		R_ModernGLExecutor_BindModernShadowTextures( program->program, stats );
 		glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
 	}
+	R_RenderGraphResources_SubmitInvalidationsForPass( RENDER_PASS_DEFERRED_RESOLVE, true );
 	R_RendererMetrics_EndGpuTimer();
 
 	if ( !rg_modernGLExecutorSoftPassHandoffs ) {
@@ -5713,8 +5718,12 @@ static void R_ModernGLExecutor_SubmitForwardPlus( modernGLExecutorStats_t &stats
 	}
 	R_RendererMetrics_EndGpuTimer();
 
+	const bool forwardPlusExecuted = stats.forwardPlusDraws > 0 || stats.forwardPlusClearOps > 0;
+	if ( forwardPlusExecuted ) {
+		R_RenderGraphResources_SubmitInvalidationsForPass( RENDER_PASS_FORWARD_PLUS, true );
+	}
 	R_ModernGLExecutor_RestoreAfterSubmit( stats, "forward+ submit" );
-	stats.forwardPlusExecuted = stats.forwardPlusDraws > 0 || stats.forwardPlusClearOps > 0;
+	stats.forwardPlusExecuted = forwardPlusExecuted;
 	if ( stats.forwardPlusExecuted ) {
 		R_ModernGLExecutor_SetStatus( stats, "forward-plus-legacy-fallback" );
 	}
@@ -7647,6 +7656,7 @@ static bool R_ModernGLExecutor_ComposeVisibleSceneToTarget(
 			R_ModernGLExecutor_BlitVisibleDepthToTarget( stats, targetFramebuffer, targetX, targetY, targetWidth, targetHeight );
 		}
 		R_ModernGLExecutor_CopyHybridToTarget( stats, *hybridSceneColor, targetFramebuffer, targetX, targetY, targetWidth, targetHeight, postProcessHandoff );
+		R_RenderGraphResources_SubmitInvalidationsForPass( RENDER_PASS_PRESENT, true );
 	}
 	if ( useGpuTimer ) {
 		R_RendererMetrics_EndGpuTimer();
@@ -7830,6 +7840,57 @@ void R_ModernGLExecutor_DrawDeferredDebugOverlay( void ) {
 
 const modernGLExecutorStats_t &R_ModernGLExecutor_Stats( void ) {
 	return rg_modernGLExecutorStats;
+}
+
+modernGLExecutorLiveObjects_t R_ModernGLExecutor_LiveObjects( void ) {
+	modernGLExecutorLiveObjects_t live;
+	memset( &live, 0, sizeof( live ) );
+	if ( rg_modernGLExecutorVAO != 0 ) {
+		live.vertexArrays++;
+	}
+	const GLuint buffers[] = {
+		rg_modernGLExecutorFrameUBO,
+		rg_modernGLExecutorSceneSSBO,
+		rg_modernGLExecutorIndirectBuffer,
+		rg_modernGLExecutorDrawRecordSSBO,
+		rg_modernGLExecutorDrawRecordIndexBuffer,
+		rg_modernGLExecutorBucketSSBO,
+		rg_modernGLExecutorValidationSSBO
+	};
+	for ( int i = 0; i < static_cast<int>( sizeof( buffers ) / sizeof( buffers[0] ) ); ++i ) {
+		if ( buffers[i] != 0 ) {
+			live.buffers++;
+		}
+	}
+	if ( rg_modernGLExecutorGBufferFBO != 0 ) {
+		live.framebuffers++;
+	}
+	if ( rg_modernGLExecutorHiZFBO != 0 ) {
+		live.framebuffers++;
+	}
+	if ( rg_modernGLExecutorLowOverheadSampler != 0 ) {
+		live.samplers++;
+	}
+	const GLuint programs[] = {
+		rg_modernGLExecutorComputeProgram,
+		rg_modernGLExecutorDepthOverlayProgram,
+		rg_modernGLExecutorGBufferOverlayProgram,
+		rg_modernGLExecutorDeferredOverlayProgram,
+		rg_modernGLExecutorVisibleCompositeProgram,
+		rg_modernGLExecutorHiZReduceProgram
+	};
+	for ( int i = 0; i < static_cast<int>( sizeof( programs ) / sizeof( programs[0] ) ); ++i ) {
+		if ( programs[i] != 0 ) {
+			live.programs++;
+		}
+	}
+	live.shaderPrograms = R_ModernGLShaderLibrary_LiveProgramCount();
+	for ( int i = 0; i < MODERN_GL_GPU_VALIDATION_PENDING_READBACKS; ++i ) {
+		if ( rg_modernGLPendingValidationReadbacks[i].fence != NULL ) {
+			live.syncs++;
+		}
+	}
+	return live;
 }
 
 bool R_ModernGLExecutor_ModernVisiblePostProcessHandoffActive( void ) {

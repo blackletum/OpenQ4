@@ -200,12 +200,20 @@ typedef struct rendererClusteredLightingStats_s {
 	char	status[96];
 } rendererClusteredLightingStats_t;
 
+typedef struct rendererClusteredLightingLiveObjects_s {
+	int		buffers;
+	int		textures;
+	int		programs;
+	int		vertexArrays;
+} rendererClusteredLightingLiveObjects_t;
+
 void R_ModernClusteredLighting_Init( const renderBackendCaps_t &caps, const renderFeatureSet_t &features );
 void R_ModernClusteredLighting_Shutdown( void );
 void R_ModernClusteredLighting_PrepareFrame( const idScenePacketFrame &packetFrame, bool requested );
 void R_ModernClusteredLighting_DrawDebugOverlay( void );
 void R_ModernClusteredLighting_PrintGfxInfo( void );
 const rendererClusteredLightingStats_t &R_ModernClusteredLighting_Stats( void );
+rendererClusteredLightingLiveObjects_t R_ModernClusteredLighting_LiveObjects( void );
 bool R_ModernClusteredLighting_FrameLossless( void );
 bool R_ModernClusteredLighting_BindGridForView( const viewDef_t *viewDef );
 int R_ModernClusteredLighting_NumLightDescriptors( void );

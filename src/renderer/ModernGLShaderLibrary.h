@@ -203,6 +203,7 @@ void R_ModernGLShaderLibrary_Init( const renderBackendCaps_t &caps, const render
 void R_ModernGLShaderLibrary_Shutdown( void );
 bool R_ModernGLShaderLibrary_Reload( void );
 const modernGLShaderLibraryStats_t &R_ModernGLShaderLibrary_Stats( void );
+int R_ModernGLShaderLibrary_LiveProgramCount( void );
 const modernGLShaderProgramInfo_t *R_ModernGLShaderLibrary_FindProgram( modernGLShaderProgramKind_t kind, int preferredGLSLVersion );
 void R_ModernGLShaderLibrary_PrintGfxInfo( void );
 bool RendererModernGLShaderLibrary_RunSelfTest( void );

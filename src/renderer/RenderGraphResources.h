@@ -46,6 +46,7 @@ typedef struct renderGraphResourceHandle_s {
 	GLuint					texture;
 	GLuint					framebuffer;
 	GLenum					framebufferStatus;
+	int						invalidateSubmitted;
 	bool					imported;
 	bool					transient;
 	bool					presentable;
@@ -122,15 +123,28 @@ typedef struct renderGraphResourceManagerStats_s {
 	int						invalidateSkippedNotLastUse;
 	int						invalidateSkippedIncompleteFramebuffer;
 	int						invalidateSkippedUnsupportedAttachment;
+	int						invalidateSubmitSkippedDisabled;
+	int						invalidateSubmitSkippedUnsupportedTier;
+	int						invalidateSubmitSkippedMissingOwner;
+	int						invalidateSubmitSkippedMissingFramebuffer;
+	int						invalidateSubmitSkippedUnsubmittedPass;
 	int						lifetimeValidationFailures;
 	bool					overflow;
 	char					lastFailure[128];
 } renderGraphResourceManagerStats_t;
 
+typedef struct renderGraphResourceLiveObjects_s {
+	int						physicalAllocations;
+	int						textures;
+	int						framebuffers;
+} renderGraphResourceLiveObjects_t;
+
 void R_RenderGraphResources_Init( const renderBackendCaps_t &caps, const renderFeatureSet_t &features );
 void R_RenderGraphResources_Shutdown( void );
 void R_RenderGraphResources_PrepareFrame( const idRenderGraph &graph );
+int R_RenderGraphResources_SubmitInvalidationsForPass( renderPassCategory_t category, bool passOwned );
 const renderGraphResourceManagerStats_t &R_RenderGraphResources_Stats( void );
+renderGraphResourceLiveObjects_t R_RenderGraphResources_LiveObjects( void );
 const renderGraphResourceHandle_t *R_RenderGraphResources_FindHandle( const char *name );
 const renderGraphResourceHandle_t *R_RenderGraphResources_HandleForGraphResource( int graphResourceIndex );
 void R_RenderGraphResources_PrintGfxInfo( void );

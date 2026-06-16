@@ -2184,6 +2184,38 @@ void R_ModernClusteredLighting_Shutdown( void ) {
 	R_ModernClusteredLighting_SetStatus( rg_clusteredLightingStats, "off" );
 }
 
+rendererClusteredLightingLiveObjects_t R_ModernClusteredLighting_LiveObjects( void ) {
+	rendererClusteredLightingLiveObjects_t live;
+	memset( &live, 0, sizeof( live ) );
+	const GLuint buffers[] = {
+		rg_clusteredLightingParamsUBO,
+		rg_clusteredLightingLightsUBO,
+		rg_clusteredLightingIndicesUBO,
+		rg_clusteredLightingShadowDescriptorsUBO,
+		rg_clusteredLightingLightsSSBO,
+		rg_clusteredLightingIndicesSSBO,
+		rg_clusteredLightingShadowDescriptorsSSBO
+	};
+	for ( int i = 0; i < static_cast<int>( sizeof( buffers ) / sizeof( buffers[0] ) ); ++i ) {
+		if ( buffers[i] != 0 ) {
+			live.buffers++;
+		}
+	}
+	if ( rg_clusteredLightingDebugTexture != 0 ) {
+		live.textures++;
+	}
+	if ( rg_clusteredLightingComputeProgram != 0 ) {
+		live.programs++;
+	}
+	if ( rg_clusteredLightingDebugProgram != 0 ) {
+		live.programs++;
+	}
+	if ( rg_clusteredLightingDebugVAO != 0 ) {
+		live.vertexArrays++;
+	}
+	return live;
+}
+
 void R_ModernClusteredLighting_PrepareFrame( const idScenePacketFrame &packetFrame, bool requested ) {
 	R_ModernClusteredLighting_BuildFrame( packetFrame, requested || r_rendererClusterDebug.GetInteger() > 0, rg_clusteredLightingStats );
 	R_ModernClusteredLighting_UploadBuffers( rg_clusteredLightingStats );

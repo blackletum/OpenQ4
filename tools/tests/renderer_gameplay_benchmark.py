@@ -137,7 +137,31 @@ LENS_FLARE_SCENES: dict[str, dict[str, Any]] = {
     },
 }
 
-ALL_SCENES = {**REQUIRED_SCENES, **SHADOW_SCENES, **LENS_FLARE_SCENES}
+MAP_TRANSITION_SCENES: dict[str, dict[str, Any]] = {
+    "sp-map-transition-resource-count": {
+        "mode": "SP",
+        "map": "game/storage1",
+        "purpose": "single-process SP map transition loop for renderer object-count growth checks",
+        "path": "map-transition",
+        "transitionMaps": ("game/storage1", "game/storage2", "game/storage1", "game/storage2", "game/storage1"),
+    },
+}
+
+MODE_TRANSITION_SCENES: dict[str, dict[str, Any]] = {
+    "sp-mp-sp-mode-transition-resource-count": {
+        "mode": "SP",
+        "map": "game/storage1",
+        "purpose": "single-process SP to MP to SP game-module transition loop for renderer object-count lifetime checks",
+        "path": "mode-transition",
+        "modeTransitions": (
+            {"mode": "SP", "module": "game_sp", "map": "game/storage1"},
+            {"mode": "MP", "module": "game_mp", "map": "mp/q4dm1"},
+            {"mode": "SP", "module": "game_sp", "map": "game/storage1"},
+        ),
+    },
+}
+
+ALL_SCENES = {**REQUIRED_SCENES, **SHADOW_SCENES, **LENS_FLARE_SCENES, **MAP_TRANSITION_SCENES, **MODE_TRANSITION_SCENES}
 
 SHADOW_PRESETS: dict[str, dict[str, str]] = {
     "default": {},
@@ -245,7 +269,7 @@ GRAPH_INVALIDATION_VARIANTS: dict[str, dict[str, Any]] = {
         "cvars": (),
     },
     "armed": {
-        "purpose": "default-off graph invalidation path armed for eligibility comparison without submitting GL discard calls",
+        "purpose": "default-off graph invalidation path armed; pass-owned modern paths may submit GL discard calls while legacy-owned candidates remain telemetry-only",
         "cvars": (
             ("r_rendererGraphInvalidate", "1"),
         ),
@@ -280,7 +304,9 @@ PERFORMANCE_COMPARISON_VARIANTS: dict[str, dict[str, Any]] = {
 
 PROFILE_LAUNCH_VARIANT_TABLES: dict[str, dict[str, dict[str, Any]]] = {
     "upload-pressure": UPLOAD_PRESSURE_VARIANTS,
+    "upload-pressure-long": UPLOAD_PRESSURE_VARIANTS,
     "graph-invalidation": GRAPH_INVALIDATION_VARIANTS,
+    "graph-invalidation-modern": GRAPH_INVALIDATION_VARIANTS,
     "performance-comparison": PERFORMANCE_COMPARISON_VARIANTS,
 }
 
@@ -390,6 +416,19 @@ PROFILE_DEFAULTS = {
         "lensFlare": ("default",),
         "launchVariants": tuple(UPLOAD_PRESSURE_VARIANTS.keys()),
     },
+    "upload-pressure-long": {
+        "cases": ("sp-storage1", "sp-airdefense1", "sp-medlabs"),
+        "tiers": ("auto",),
+        "maxfps": ("0",),
+        "swap": ("0",),
+        "display": ("windowed",),
+        "shadows": ("default",),
+        "lensFlare": ("default",),
+        "launchVariants": tuple(UPLOAD_PRESSURE_VARIANTS.keys()),
+        "sampleMsec": 30000,
+        "settleFrames": 600,
+        "timeout": 420,
+    },
     "low-overhead-state": {
         "cases": ("sp-storage1", "sp-airdefense1", "sp-medlabs"),
         "tiers": ("gl33", "gl45"),
@@ -401,6 +440,27 @@ PROFILE_DEFAULTS = {
         "modernExecutor": True,
         "rendererMetricsLevel": 2,
     },
+    "low-overhead-submit": {
+        "cases": ("sp-storage1", "sp-medlabs"),
+        "tiers": ("gl45",),
+        "maxfps": ("0",),
+        "swap": ("0",),
+        "display": ("windowed",),
+        "shadows": ("default",),
+        "lensFlare": ("default",),
+        "modernExecutor": True,
+        "gpuTimers": True,
+        "rendererMetricsLevel": 2,
+        "settleFrames": 180,
+        "sampleMsec": 3000,
+        "timeout": 240,
+        "cvars": (
+            ("r_rendererModernSubmit", "1"),
+        ),
+        "requirements": {
+            "lowOverheadModernSubmit": True,
+        },
+    },
     "graph-invalidation": {
         "cases": ("lensflare-storage1", "lensflare-airdefense1", "sp-medlabs"),
         "tiers": ("auto",),
@@ -410,6 +470,31 @@ PROFILE_DEFAULTS = {
         "shadows": ("default",),
         "lensFlare": ("corona",),
         "launchVariants": tuple(GRAPH_INVALIDATION_VARIANTS.keys()),
+    },
+    "graph-invalidation-modern": {
+        "cases": ("sp-storage1", "lensflare-airdefense1", "sp-medlabs"),
+        "tiers": ("auto",),
+        "maxfps": ("0",),
+        "swap": ("0",),
+        "display": ("windowed",),
+        "shadows": ("default",),
+        "lensFlare": ("corona",),
+        "launchVariants": tuple(GRAPH_INVALIDATION_VARIANTS.keys()),
+        "modernExecutor": True,
+        "gpuTimers": True,
+        "rendererMetricsLevel": 2,
+        "settleFrames": 180,
+        "sampleMsec": 3000,
+        "timeout": 240,
+        "cvars": (
+            ("r_rendererModernVisibleDepth", "1"),
+            ("r_rendererModernOpaque", "1"),
+            ("r_rendererModernDeferred", "1"),
+            ("r_rendererForwardPlus", "1"),
+        ),
+        "requirements": {
+            "graphInvalidationModern": True,
+        },
     },
     "performance-comparison": {
         "cases": ("sp-storage1", "sp-airdefense1", "sp-storage2", "sp-medlabs"),
@@ -444,6 +529,50 @@ PROFILE_DEFAULTS = {
         "display": ("windowed",),
         "shadows": ("default",),
         "lensFlare": ("high",),
+    },
+    "map-transition-resource-count": {
+        "cases": ("sp-map-transition-resource-count",),
+        "tiers": ("auto",),
+        "maxfps": ("240",),
+        "swap": ("0",),
+        "display": ("windowed",),
+        "shadows": ("default",),
+        "lensFlare": ("default",),
+        "sampleMsec": 1000,
+        "settleFrames": 180,
+        "timeout": 420,
+        "rendererMetricsLevel": 2,
+    },
+    "mode-transition-resource-count": {
+        "cases": ("sp-mp-sp-mode-transition-resource-count",),
+        "tiers": ("auto",),
+        "maxfps": ("240",),
+        "swap": ("0",),
+        "display": ("windowed",),
+        "shadows": ("default",),
+        "lensFlare": ("default",),
+        "sampleMsec": 1000,
+        "settleFrames": 180,
+        "timeout": 420,
+        "rendererMetricsLevel": 2,
+    },
+    "static-residency-budget": {
+        "cases": ("sp-map-transition-resource-count",),
+        "tiers": ("auto",),
+        "maxfps": ("240",),
+        "swap": ("0",),
+        "display": ("windowed",),
+        "shadows": ("default",),
+        "lensFlare": ("default",),
+        "cvars": (
+            ("r_vertexBufferBudget", "1"),
+            ("r_vertexBufferMegs", "8"),
+            ("r_vertexBufferBudgetFrames", "2"),
+        ),
+        "sampleMsec": 1000,
+        "settleFrames": 180,
+        "timeout": 420,
+        "rendererMetricsLevel": 2,
     },
     "postaa-state-poison": {
         "cases": ("sp-airdefense1",),
@@ -531,6 +660,8 @@ class RunSpec:
     upload_variant: str = "default"
     variant_prefix: str = "variant"
     launch_cvars: tuple[tuple[str, str], ...] = ()
+    transition_maps: tuple[str, ...] = ()
+    mode_transitions: tuple[dict[str, str], ...] = ()
 
     @property
     def fullscreen(self) -> bool:
@@ -630,9 +761,9 @@ def profile_launch_variant_table(profile: str) -> dict[str, dict[str, Any]]:
 
 
 def profile_launch_variant_prefix(profile: str) -> str:
-    if profile == "upload-pressure":
+    if profile.startswith("upload-pressure"):
         return "upload"
-    if profile == "graph-invalidation":
+    if profile.startswith("graph-invalidation"):
         return "graph"
     if profile == "performance-comparison":
         return "perf"
@@ -847,6 +978,178 @@ def write_autoexec_cfg(
         screenshot_path = savepath / game_dir / screenshot_rel
         screenshot_path.parent.mkdir(parents=True, exist_ok=True)
     return cfg_rel, shot_name
+
+
+def write_map_transition_cfgs(
+    savepath: Path,
+    spec: RunSpec,
+    role: str,
+    run_id: str,
+    settle_frames: int,
+    sample_frames: int,
+    sample_msec: int,
+    quit_wait_frames: int = 5,
+    extra_cvars: tuple[tuple[str, str], ...] = (),
+    exec_commands: tuple[str, ...] = (),
+    gpu_timers: bool = False,
+    renderer_metrics_level: int = 2,
+    capture_index: int = 0,
+) -> tuple[str, str, list[str]]:
+    transition_maps = spec.transition_maps or (spec.map_name,)
+    cfg_rels = [f"renderer-bench/{role}_{capture_index}_map{i + 1}.cfg" for i in range(len(transition_maps))]
+    shot_name = f"screenshots/renderer-bench/{role}_{capture_index}.tga"
+    sample_wait = f"waitMsec {max(1, sample_msec)}" if sample_msec > 0 else f"wait {max(1, sample_frames)}"
+    screenshot_rel = Path(shot_name.replace("/", os.sep))
+
+    for index, map_name in enumerate(transition_maps):
+        lines: list[str] = [
+            "r_rendererModernVisible 0",
+            "r_rendererModernVisibleDepth 0",
+            "r_rendererModernOpaque 0",
+            "r_rendererModernDeferred 0",
+            "r_rendererForwardPlus 0",
+            "r_rendererModernSubmit 0",
+            "r_rendererGpuValidation 0",
+            "r_rendererBindless 0",
+            "r_rendererShaderReload 0",
+        ]
+        for name, value in LENS_FLARE_PRESETS[spec.lens_flare_preset].items():
+            lines.append(f"{name} {value}")
+        for name, value in extra_cvars:
+            lines.append(f"{name} {value}")
+        lines += [
+            f"wait {max(1, settle_frames)}",
+            "god",
+            "notarget",
+            f"echo RendererMapTransition sample={index + 1} map={map_name}",
+        ]
+        lines.extend(exec_commands)
+        lines += [
+            "framePacingReset",
+            f"r_rendererMetrics {max(1, renderer_metrics_level)}",
+            f"r_rendererGpuTimers {1 if gpu_timers else 0}",
+            sample_wait,
+            "rendererBenchmarkCapture",
+            "framePacingSnapshot",
+            "gfxInfo",
+            "r_rendererMetrics 0",
+        ]
+        if index + 1 < len(transition_maps):
+            lines += [
+                f'set g_autoExecAfterMapLoad "{cfg_rels[index + 1]}"',
+                f"map {transition_maps[index + 1]}",
+            ]
+        else:
+            lines += [
+                f'screenshot "{shot_name}"',
+                f"wait {max(1, quit_wait_frames)}",
+                "quit",
+            ]
+        payload = "\n".join(lines) + "\n"
+        for game_dir in ("baseoq4", "q4base"):
+            cfg_path = savepath / game_dir / Path(cfg_rels[index])
+            cfg_path.parent.mkdir(parents=True, exist_ok=True)
+            cfg_path.write_text(payload, encoding="utf-8")
+            screenshot_path = savepath / game_dir / screenshot_rel
+            screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+
+    return cfg_rels[0], shot_name, cfg_rels
+
+
+def write_mode_transition_cfgs(
+    savepath: Path,
+    spec: RunSpec,
+    role: str,
+    run_id: str,
+    settle_frames: int,
+    sample_frames: int,
+    sample_msec: int,
+    quit_wait_frames: int = 5,
+    extra_cvars: tuple[tuple[str, str], ...] = (),
+    exec_commands: tuple[str, ...] = (),
+    gpu_timers: bool = False,
+    renderer_metrics_level: int = 2,
+    capture_index: int = 0,
+) -> tuple[str, str, list[str]]:
+    transitions = spec.mode_transitions or ({"mode": spec.mode, "module": "game_sp", "map": spec.map_name},)
+    cfg_rels = [f"renderer-bench/{role}_{capture_index}_mode{i + 1}.cfg" for i in range(len(transitions))]
+    shot_name = f"screenshots/renderer-bench/{role}_{capture_index}.tga"
+    sample_wait = f"waitMsec {max(1, sample_msec)}" if sample_msec > 0 else f"wait {max(1, sample_frames)}"
+    screenshot_rel = Path(shot_name.replace("/", os.sep))
+
+    for index, step in enumerate(transitions):
+        mode = str(step.get("mode", spec.mode))
+        module = str(step.get("module", "game_sp" if mode.upper() == "SP" else "game_mp"))
+        map_name = str(step.get("map", spec.map_name))
+        lines: list[str] = [
+            "r_rendererModernVisible 0",
+            "r_rendererModernVisibleDepth 0",
+            "r_rendererModernOpaque 0",
+            "r_rendererModernDeferred 0",
+            "r_rendererForwardPlus 0",
+            "r_rendererModernSubmit 0",
+            "r_rendererGpuValidation 0",
+            "r_rendererBindless 0",
+            "r_rendererShaderReload 0",
+        ]
+        for name, value in LENS_FLARE_PRESETS[spec.lens_flare_preset].items():
+            lines.append(f"{name} {value}")
+        for name, value in extra_cvars:
+            lines.append(f"{name} {value}")
+        lines += [
+            f"wait {max(1, settle_frames)}",
+            "god",
+            "notarget",
+            f"echo RendererModeTransition sample={index + 1} mode={mode} module={module} map={map_name}",
+        ]
+        lines.extend(exec_commands)
+        lines += [
+            "framePacingReset",
+            f"r_rendererMetrics {max(1, renderer_metrics_level)}",
+            f"r_rendererGpuTimers {1 if gpu_timers else 0}",
+            sample_wait,
+            "rendererBenchmarkCapture",
+            "framePacingSnapshot",
+            "gfxInfo",
+            "r_rendererMetrics 0",
+        ]
+        if index + 1 < len(transitions):
+            next_step = transitions[index + 1]
+            next_mode = str(next_step.get("mode", "")).upper()
+            next_map = str(next_step.get("map", spec.map_name))
+            if next_mode == "MP":
+                lines += [
+                    f'set g_autoExecAfterMapLoad "{cfg_rels[index + 1]}"',
+                    "set net_serverDedicated 0",
+                    "seta si_pure 0",
+                    "set net_serverAllowServerMod 1",
+                    "set sv_cheats 1",
+                    "set si_gameType DM",
+                    f"spawnServer {next_map}",
+                ]
+            else:
+                lines += [
+                    "disconnect",
+                    "wait 10",
+                    f'set g_autoExecAfterMapLoad "{cfg_rels[index + 1]}"',
+                    "set si_gameType singleplayer",
+                    f"openq4_startSingleplayer {next_map} 1",
+                ]
+        else:
+            lines += [
+                f'screenshot "{shot_name}"',
+                f"wait {max(1, quit_wait_frames)}",
+                "quit",
+            ]
+        payload = "\n".join(lines) + "\n"
+        for game_dir in ("baseoq4", "q4base"):
+            cfg_path = savepath / game_dir / Path(cfg_rels[index])
+            cfg_path.parent.mkdir(parents=True, exist_ok=True)
+            cfg_path.write_text(payload, encoding="utf-8")
+            screenshot_path = savepath / game_dir / screenshot_rel
+            screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+
+    return cfg_rels[0], shot_name, cfg_rels
 
 
 def log_candidates(savepath: Path, log_name: str) -> list[Path]:
@@ -1200,7 +1503,233 @@ def parse_renderer_metrics_line(line: str) -> dict[str, str]:
                 "graphInvalidateSkippedUnsupported": unsupported,
             }
         )
+    graph_invalidate_submit_skip = re.search(
+        r"invalidateSubmitSkip\(disabled=(\d+) unsupportedTier=(\d+) missingOwner=(\d+) missingFBO=(\d+)(?: unsubmittedPass=(\d+))?\)",
+        line,
+    )
+    if graph_invalidate_submit_skip:
+        disabled, unsupported_tier, missing_owner, missing_fbo, unsubmitted_pass = graph_invalidate_submit_skip.groups()
+        result.update(
+            {
+                "graphInvalidateSubmitSkippedDisabled": disabled,
+                "graphInvalidateSubmitSkippedUnsupportedTier": unsupported_tier,
+                "graphInvalidateSubmitSkippedMissingOwner": missing_owner,
+                "graphInvalidateSubmitSkippedMissingFBO": missing_fbo,
+                "graphInvalidateSubmitSkippedUnsubmittedPass": unsubmitted_pass or "",
+            }
+        )
+    modern_exec = re.search(r"modernExec\(mode=([^\s]+).*?plan=(\d+) planDraws=(\d+).*?planFallback=(\d+).*?batches=(\d+).*?submit=(\d+) submitDraws=(\d+) submitDepth=(\d+) submitMaterial=(\d+) submitFallback=(\d+) missing\(vbo=(\d+) ibo=(\d+)\) indexUpload=(\d+) submitted=(\d+)/(\d+) submittedFallback=(\d+) submittedUpload=(\d+) submitBatches\(program=(\d+) vbo=(\d+) ibo=(\d+) scissor=(\d+) material=(\d+)\) uniforms=(\d+) frameUBO=(\d+) submitOverflow=(\d+)", line)
+    if modern_exec:
+        (
+            mode,
+            plan_ready,
+            plan_draws,
+            plan_fallback,
+            plan_batches,
+            submit_ready,
+            submit_draws,
+            submit_depth,
+            submit_material,
+            submit_fallback,
+            missing_vbo,
+            missing_ibo,
+            index_upload,
+            submitted,
+            submitted_draws,
+            submitted_fallback,
+            submitted_upload,
+            program_batches,
+            vbo_batches,
+            ibo_batches,
+            scissor_batches,
+            material_batches,
+            uniforms,
+            frame_ubo,
+            submit_overflow,
+        ) = modern_exec.groups()
+        result.update(
+            {
+                "modernExecMode": mode,
+                "modernDrawPlanReady": plan_ready,
+                "modernPlanDraws": plan_draws,
+                "modernPlanFallbacks": plan_fallback,
+                "modernPlanBatches": plan_batches,
+                "modernSubmitPlanReady": submit_ready,
+                "modernSubmitDraws": submit_draws,
+                "modernSubmitDepthDraws": submit_depth,
+                "modernSubmitMaterialDraws": submit_material,
+                "modernSubmitFallbacks": submit_fallback,
+                "modernSubmitMissingVBO": missing_vbo,
+                "modernSubmitMissingIBO": missing_ibo,
+                "modernSubmitIndexUploads": index_upload,
+                "modernSubmitted": submitted,
+                "modernSubmittedDraws": submitted_draws,
+                "modernSubmittedFallbacks": submitted_fallback,
+                "modernSubmittedUploads": submitted_upload,
+                "modernSubmitProgramBatches": program_batches,
+                "modernSubmitVBOBatches": vbo_batches,
+                "modernSubmitIBOBatches": ibo_batches,
+                "modernSubmitScissorBatches": scissor_batches,
+                "modernSubmitMaterialBatches": material_batches,
+                "modernSubmitUniforms": uniforms,
+                "modernSubmitFrameUBO": frame_ubo,
+                "modernSubmitOverflow": submit_overflow,
+            }
+        )
     return result
+
+
+def parse_renderer_graph_resources_info(line: str) -> dict[str, str]:
+    if not line:
+        return {}
+    result: dict[str, str] = {}
+    graph_invalidate = re.search(
+        r"invalidate\(enabled=(\d+) tagged=(\d+) candidates=(\d+) armed=(\d+) submitted=(\d+) skipped=(\d+)(?: later=(\d+))?",
+        line,
+    )
+    if graph_invalidate:
+        enabled, tagged, candidates, armed, submitted, skipped, later = graph_invalidate.groups()
+        result.update(
+            {
+                "graphInvalidateEnabled": enabled,
+                "graphInvalidateTagged": tagged,
+                "graphInvalidateCandidates": candidates,
+                "graphInvalidateArmed": armed,
+                "graphInvalidateSubmitted": submitted,
+                "graphInvalidateSkipped": skipped,
+            }
+        )
+        if later is not None:
+            result["graphInvalidateSkippedLater"] = later
+    result.update(parse_renderer_metrics_line(line))
+    return result
+
+
+def parse_modern_executor_info(line: str) -> dict[str, str]:
+    if not line:
+        return {}
+    result: dict[str, str] = {}
+    cvar_match = re.search(
+        r"cvar=(\d+).*?submitCvar=(\d+).*?visibleDepthCvar=(\d+).*?"
+        r"opaqueCvar=(\d+).*?deferredCvar=(\d+)",
+        line,
+    )
+    if cvar_match:
+        cvar, submit_cvar, visible_depth, opaque, deferred = cvar_match.groups()
+        result.update(
+            {
+                "modernExecutorCvar": cvar,
+                "modernSubmitCvar": submit_cvar,
+                "modernVisibleDepthCvar": visible_depth,
+                "modernOpaqueCvar": opaque,
+                "modernDeferredCvar": deferred,
+            }
+        )
+    plan_match = re.search(
+        r"drawPlan=(\d+), planDraws=(\d+).*?planFallback=(\d+), batches=(\d+)",
+        line,
+    )
+    if plan_match:
+        plan_ready, plan_draws, plan_fallback, plan_batches = plan_match.groups()
+        result.update(
+            {
+                "modernDrawPlanReady": plan_ready,
+                "modernPlanDraws": plan_draws,
+                "modernPlanFallbacks": plan_fallback,
+                "modernPlanBatches": plan_batches,
+            }
+        )
+    submit_match = re.search(
+        r"submitPlan=(\d+), submitDraws=(\d+), submitFallback=(\d+), "
+        r"missingVBO=(\d+), missingIBO=(\d+), indexUpload=(\d+), "
+        r"submitted=(\d+)/(\d+) upload=(\d+) fallback=(\d+)",
+        line,
+    )
+    if submit_match:
+        (
+            submit_ready,
+            submit_draws,
+            submit_fallback,
+            missing_vbo,
+            missing_ibo,
+            index_upload,
+            submitted,
+            submitted_draws,
+            submitted_upload,
+            submitted_fallback,
+        ) = submit_match.groups()
+        result.update(
+            {
+                "modernSubmitPlanReady": submit_ready,
+                "modernSubmitDraws": submit_draws,
+                "modernSubmitFallbacks": submit_fallback,
+                "modernSubmitMissingVBO": missing_vbo,
+                "modernSubmitMissingIBO": missing_ibo,
+                "modernSubmitIndexUploads": index_upload,
+                "modernSubmitted": submitted,
+                "modernSubmittedDraws": submitted_draws,
+                "modernSubmittedUploads": submitted_upload,
+                "modernSubmittedFallbacks": submitted_fallback,
+            }
+        )
+    submit_batches = re.search(r"submitBatches\(program=(\d+) vbo=(\d+) ibo=(\d+)\)", line)
+    if submit_batches:
+        program_batches, vbo_batches, ibo_batches = submit_batches.groups()
+        result.update(
+            {
+                "modernSubmitProgramBatches": program_batches,
+                "modernSubmitVBOBatches": vbo_batches,
+                "modernSubmitIBOBatches": ibo_batches,
+            }
+        )
+    low_overhead_match = re.search(r"lowOverhead=(\d+) dsa=(\d+) multiBind=(\d+) dsaUpdates=(\d+) multiBindBatches=(\d+)", line)
+    if low_overhead_match:
+        ready, dsa, multibind, dsa_updates, multibind_batches = low_overhead_match.groups()
+        result.update(
+            {
+                "modernLowOverheadReady": ready,
+                "modernLowOverheadDSA": dsa,
+                "modernLowOverheadMultiBind": multibind,
+                "modernLowOverheadDSAUpdates": dsa_updates,
+                "modernLowOverheadMultiBindBatches": multibind_batches,
+            }
+        )
+    restore_match = re.search(r"restores=(\d+)/(\d+)", line)
+    if restore_match:
+        soft_restores, full_restores = restore_match.groups()
+        result.update(
+            {
+                "modernSoftRestores": soft_restores,
+                "modernFullRestores": full_restores,
+            }
+        )
+    legacy_match = re.search(r"legacyFallback=(\d+)", line)
+    if legacy_match:
+        result["modernLegacyFallback"] = legacy_match.group(1)
+    visible_depth_match = re.search(r"visibleDepth\(req=(\d+) exec=(\d+)", line)
+    if visible_depth_match:
+        result["modernVisibleDepthReq"], result["modernVisibleDepthExec"] = visible_depth_match.groups()
+    gbuffer_match = re.search(r"gbuffer\(req=(\d+) exec=(\d+)", line)
+    if gbuffer_match:
+        result["modernGBufferReq"], result["modernGBufferExec"] = gbuffer_match.groups()
+    deferred_match = re.search(r"deferred\(req=(\d+) exec=(\d+)", line)
+    if deferred_match:
+        result["modernDeferredReq"], result["modernDeferredExec"] = deferred_match.groups()
+    return result
+
+
+def parse_modern_forward_plus_info(line: str) -> dict[str, str]:
+    if not line:
+        return {}
+    match = re.search(r"modernForwardPlus req=(\d+) exec=(\d+) res=(\d+)", line)
+    if not match:
+        return {}
+    req, exec_value, res = match.groups()
+    return {
+        "modernForwardPlusReq": req,
+        "modernForwardPlusExec": exec_value,
+        "modernForwardPlusRes": res,
+    }
 
 
 def parse_upload_manager_info(line: str) -> dict[str, str]:
@@ -1249,6 +1778,425 @@ def parse_upload_manager_info(line: str) -> dict[str, str]:
         "fenceFallbacks": fallbacks,
         "uploadLegacyBridge": legacy_bridge,
     }
+
+
+def parse_vertex_cache_info(line: str) -> dict[str, str]:
+    if not line:
+        return {}
+    match = re.search(
+        r"Renderer vertex cache: mode=([^\s]+) budget=(\d+) status=([^\s]+) "
+        r"limit=(\d+)KB protectFrames=(\d+) static=(\d+)/(\d+)KB "
+        r"fixed=(\d+)/(\d+)KB purgable=(\d+)/(\d+)KB protected=(\d+)/(\d+)KB "
+        r"lastPurge=(\d+)/(\d+)KB lastProtected=(\d+)/(\d+)KB overBudget=(\d+)KB",
+        line,
+    )
+    if not match:
+        return {}
+    (
+        mode,
+        budget,
+        status,
+        limit_kb,
+        protect_frames,
+        static_buffers,
+        static_kb,
+        fixed_buffers,
+        fixed_kb,
+        purgable_buffers,
+        purgable_kb,
+        protected_buffers,
+        protected_kb,
+        purge_buffers,
+        purge_kb,
+        last_protected_buffers,
+        last_protected_kb,
+        over_budget_kb,
+    ) = match.groups()
+    return {
+        "vertexCacheMode": mode,
+        "vertexBudgetEnabled": budget,
+        "vertexBudgetStatus": status,
+        "vertexBudgetLimitKB": limit_kb,
+        "vertexBudgetProtectFrames": protect_frames,
+        "vertexStaticBuffers": static_buffers,
+        "vertexStaticKB": static_kb,
+        "vertexFixedBuffers": fixed_buffers,
+        "vertexFixedKB": fixed_kb,
+        "vertexPurgableBuffers": purgable_buffers,
+        "vertexPurgableKB": purgable_kb,
+        "vertexProtectedBuffers": protected_buffers,
+        "vertexProtectedKB": protected_kb,
+        "vertexLastPurgeBuffers": purge_buffers,
+        "vertexLastPurgeKB": purge_kb,
+        "vertexLastProtectedBuffers": last_protected_buffers,
+        "vertexLastProtectedKB": last_protected_kb,
+        "vertexOverBudgetKB": over_budget_kb,
+    }
+
+
+def parse_graph_resources_info(line: str) -> dict[str, str]:
+    if not line:
+        return {}
+    match = re.search(
+        r"Renderer graph resources:.*?handles=(\d+).*?textures=(\d+).*?buffers=(\d+).*?"
+        r"physical=(\d+).*?fbo=(\d+)/(\d+).*?status='([^']+)'",
+        line,
+    )
+    if not match:
+        return {}
+    handles, textures, buffers, physical, fbo_ready, fbo_total, status = match.groups()
+    return {
+        "graphHandles": handles,
+        "graphTextures": textures,
+        "graphBuffers": buffers,
+        "graphPhysical": physical,
+        "graphFboReady": fbo_ready,
+        "graphFboTotal": fbo_total,
+        "graphStatus": status,
+    }
+
+
+def parse_shader_library_info(line: str) -> dict[str, str]:
+    if not line:
+        return {}
+    match = re.search(
+        r"Modern GL shader library: ([^,]+), programs=(\d+),.*?failed=(\d+),.*?highestGLSL=(\d+)",
+        line,
+    )
+    if not match:
+        return {}
+    availability, programs, failed, highest_glsl = match.groups()
+    return {
+        "shaderAvailability": availability,
+        "shaderPrograms": programs,
+        "shaderFailed": failed,
+        "shaderHighestGLSL": highest_glsl,
+    }
+
+
+def parse_map_transition_marker(line: str) -> dict[str, str]:
+    match = re.search(r"RendererMapTransition\s+sample\s*=\s*(\d+)\s+map\s*=\s*([^\s]+)", line)
+    if not match:
+        return {}
+    sample, map_name = match.groups()
+    return {"sample": sample, "map": map_name}
+
+
+def collect_map_transition_resource_samples(text: str, transition_maps: tuple[str, ...]) -> list[dict[str, str]]:
+    if not transition_maps:
+        return []
+    samples: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    for line in text.splitlines():
+        marker = parse_map_transition_marker(line)
+        if marker:
+            if current is not None:
+                samples.append(current)
+            current = marker
+            continue
+        if current is None:
+            continue
+        graph = parse_graph_resources_info(line)
+        if graph:
+            current.update(graph)
+            continue
+        upload = parse_upload_manager_info(line)
+        if upload:
+            current.update(upload)
+            continue
+        vertex = parse_vertex_cache_info(line)
+        if vertex:
+            current.update(vertex)
+            continue
+        shader = parse_shader_library_info(line)
+        if shader:
+            current.update(shader)
+            continue
+    if current is not None:
+        samples.append(current)
+    return samples
+
+
+def parse_mode_transition_marker(line: str) -> dict[str, str]:
+    match = re.search(
+        r"RendererModeTransition\s+sample\s*=\s*(\d+)\s+mode\s*=\s*([^\s]+)\s+module\s*=\s*([^\s]+)\s+map\s*=\s*([^\s]+)",
+        line,
+    )
+    if not match:
+        return {}
+    sample, mode, module, map_name = match.groups()
+    return {"sample": sample, "mode": mode, "module": module, "map": map_name}
+
+
+def collect_mode_transition_resource_samples(text: str, mode_transitions: tuple[dict[str, str], ...]) -> list[dict[str, str]]:
+    if not mode_transitions:
+        return []
+    samples: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    for line in text.splitlines():
+        marker = parse_mode_transition_marker(line)
+        if marker:
+            if current is not None:
+                samples.append(current)
+            current = marker
+            continue
+        if current is None:
+            continue
+        graph = parse_graph_resources_info(line)
+        if graph:
+            current.update(graph)
+            continue
+        upload = parse_upload_manager_info(line)
+        if upload:
+            current.update(upload)
+            continue
+        vertex = parse_vertex_cache_info(line)
+        if vertex:
+            current.update(vertex)
+            continue
+        shader = parse_shader_library_info(line)
+        if shader:
+            current.update(shader)
+            continue
+    if current is not None:
+        samples.append(current)
+    return samples
+
+
+def _int_value(row: dict[str, str], key: str) -> int | None:
+    try:
+        return int(row.get(key, ""))
+    except ValueError:
+        return None
+
+
+def unique_transition_maps(transition_maps: tuple[str, ...]) -> list[str]:
+    unique_maps: list[str] = []
+    for map_name in transition_maps:
+        if map_name not in unique_maps:
+            unique_maps.append(map_name)
+    return unique_maps
+
+
+def warm_repeated_map_indices(samples: list[dict[str, str]], transition_maps: tuple[str, ...]) -> list[int]:
+    if not transition_maps:
+        return []
+    first_map = transition_maps[0]
+    required_maps = unique_transition_maps(transition_maps)
+    seen: set[str] = set()
+    indices: list[int] = []
+    for index, sample in enumerate(samples):
+        map_name = sample.get("map", "")
+        if map_name:
+            seen.add(map_name)
+        if map_name == first_map and all(required in seen for required in required_maps):
+            indices.append(index)
+    return indices
+
+
+def append_vertex_budget_checks(checks: list[dict[str, Any]], first: dict[str, str], last: dict[str, str]) -> None:
+    budget_enabled = first.get("vertexBudgetEnabled") == "1" or last.get("vertexBudgetEnabled") == "1"
+    if not budget_enabled:
+        return
+
+    first_over = _int_value(first, "vertexOverBudgetKB")
+    last_over = _int_value(last, "vertexOverBudgetKB")
+    checks.append(
+        {
+            "field": "vertexOverBudgetKB",
+            "mode": "budget",
+            "first": first_over,
+            "last": last_over,
+            "status": "pass" if first_over == 0 and last_over == 0 else "fail",
+        }
+    )
+    before_status = first.get("vertexBudgetStatus", "")
+    after_status = last.get("vertexBudgetStatus", "")
+    checks.append(
+        {
+            "field": "vertexBudgetStatus",
+            "mode": "budget",
+            "first": before_status,
+            "last": after_status,
+            "status": "pass" if before_status == "pass" and after_status == "pass" else "fail",
+        }
+    )
+    for key in ("vertexBudgetLimitKB", "vertexBudgetProtectFrames"):
+        before = _int_value(first, key)
+        after = _int_value(last, key)
+        checks.append({"field": key, "mode": "stable", "first": before, "last": after, "status": "pass" if before == after else "fail"})
+
+
+def evaluate_map_transition_resource_counts(text: str, transition_maps: tuple[str, ...]) -> dict[str, Any]:
+    if not transition_maps:
+        return {}
+    samples = collect_map_transition_resource_samples(text, transition_maps)
+    result: dict[str, Any] = {
+        "status": "pass",
+        "expectedMaps": list(transition_maps),
+        "samples": samples,
+        "checks": [],
+    }
+    if len(samples) < len(transition_maps):
+        result["status"] = "fail"
+        result["reason"] = f"expected {len(transition_maps)} map-transition samples, found {len(samples)}"
+        return result
+
+    first_map = transition_maps[0]
+    warm_indices = warm_repeated_map_indices(samples, transition_maps)
+    if len(warm_indices) < 2:
+        result["status"] = "fail"
+        result["reason"] = f"expected at least two post-warm samples for repeated map '{first_map}', found {len(warm_indices)}"
+        return result
+
+    first = samples[warm_indices[0]]
+    last = samples[warm_indices[-1]]
+    result["comparison"] = "post-warm repeated first map"
+    result["baselineSample"] = first.get("sample", "")
+    result["finalSample"] = last.get("sample", "")
+    checks: list[dict[str, Any]] = []
+
+    for key in (
+        "graphHandles",
+        "graphTextures",
+        "graphBuffers",
+        "graphPhysical",
+        "graphFboReady",
+        "graphFboTotal",
+        "uploadBuffers",
+        "fenceSubmitted",
+        "fenceRetired",
+        "fenceWaits",
+        "fenceTimeouts",
+        "fenceFallbacks",
+    ):
+        before = _int_value(first, key)
+        after = _int_value(last, key)
+        status = "pass" if before is not None and after is not None and after <= before else "fail"
+        checks.append({"field": key, "mode": "no-growth", "first": before, "last": after, "status": status})
+
+    for key in ("uploadStaticLiveBuffers", "uploadStaticLiveKB"):
+        before = _int_value(first, key)
+        after = _int_value(last, key)
+        checks.append({"field": key, "mode": "tracked-residency", "first": before, "last": after, "status": "tracked"})
+
+    append_vertex_budget_checks(checks, first, last)
+
+    for key in ("graphStatus", "uploadFrameStream", "shaderAvailability", "shaderPrograms", "shaderFailed", "shaderHighestGLSL"):
+        before = first.get(key, "")
+        after = last.get(key, "")
+        status = "pass" if before and after and after == before else "fail"
+        checks.append({"field": key, "mode": "stable", "first": before, "last": after, "status": status})
+
+    result["checks"] = checks
+    failed = [check for check in checks if check["status"] == "fail"]
+    if failed:
+        result["status"] = "fail"
+        result["reason"] = "; ".join(
+            f"{check['field']} {check.get('first')}->{check.get('last')}" for check in failed[:8]
+        )
+    return result
+
+
+def mode_transition_step_id(step: dict[str, str]) -> tuple[str, str, str]:
+    return (
+        str(step.get("mode", "")).upper(),
+        str(step.get("module", "")),
+        str(step.get("map", "")),
+    )
+
+
+def evaluate_mode_transition_resource_counts(text: str, mode_transitions: tuple[dict[str, str], ...]) -> dict[str, Any]:
+    if not mode_transitions:
+        return {}
+    expected_steps = [
+        {
+            "mode": str(step.get("mode", "")),
+            "module": str(step.get("module", "")),
+            "map": str(step.get("map", "")),
+        }
+        for step in mode_transitions
+    ]
+    samples = collect_mode_transition_resource_samples(text, mode_transitions)
+    result: dict[str, Any] = {
+        "status": "pass",
+        "expectedSteps": expected_steps,
+        "samples": samples,
+        "checks": [],
+    }
+    if len(samples) < len(mode_transitions):
+        result["status"] = "fail"
+        result["reason"] = f"expected {len(mode_transitions)} mode-transition samples, found {len(samples)}"
+        return result
+
+    observed = [mode_transition_step_id(sample) for sample in samples[: len(mode_transitions)]]
+    expected = [mode_transition_step_id(step) for step in expected_steps]
+    if observed != expected:
+        result["status"] = "fail"
+        result["reason"] = f"expected mode/module/map sequence {expected}, found {observed}"
+        return result
+
+    first_expected = expected_steps[0]
+    comparable_indices = [
+        index
+        for index, sample in enumerate(samples)
+        if mode_transition_step_id(sample) == mode_transition_step_id(first_expected)
+    ]
+    if len(comparable_indices) < 2:
+        result["status"] = "fail"
+        result["reason"] = (
+            f"expected repeated initial mode/map sample for "
+            f"{first_expected.get('mode', '')}/{first_expected.get('module', '')}/{first_expected.get('map', '')}"
+        )
+        return result
+
+    first = samples[comparable_indices[0]]
+    last = samples[comparable_indices[-1]]
+    result["comparison"] = "SP->MP->SP repeated initial mode/map"
+    result["baselineSample"] = first.get("sample", "")
+    result["finalSample"] = last.get("sample", "")
+    checks: list[dict[str, Any]] = []
+
+    for key in (
+        "graphHandles",
+        "graphTextures",
+        "graphBuffers",
+        "graphPhysical",
+        "graphFboReady",
+        "graphFboTotal",
+        "uploadBuffers",
+        "fenceSubmitted",
+        "fenceRetired",
+        "fenceWaits",
+        "fenceTimeouts",
+        "fenceFallbacks",
+    ):
+        before = _int_value(first, key)
+        after = _int_value(last, key)
+        status = "pass" if before is not None and after is not None and after <= before else "fail"
+        checks.append({"field": key, "mode": "no-growth", "first": before, "last": after, "status": status})
+
+    for key in ("uploadStaticLiveBuffers", "uploadStaticLiveKB"):
+        before = _int_value(first, key)
+        after = _int_value(last, key)
+        checks.append({"field": key, "mode": "tracked-residency", "first": before, "last": after, "status": "tracked"})
+
+    append_vertex_budget_checks(checks, first, last)
+
+    for key in ("graphStatus", "uploadFrameStream", "shaderAvailability", "shaderPrograms", "shaderFailed", "shaderHighestGLSL"):
+        before = first.get(key, "")
+        after = last.get(key, "")
+        status = "pass" if before and after and after == before else "fail"
+        checks.append({"field": key, "mode": "stable", "first": before, "last": after, "status": status})
+
+    result["checks"] = checks
+    failed = [check for check in checks if check["status"] == "fail"]
+    if failed:
+        result["status"] = "fail"
+        result["reason"] = "; ".join(
+            f"{check['field']} {check.get('first')}->{check.get('last')}" for check in failed[:8]
+        )
+    return result
 
 
 def parse_state_cache_info(line: str) -> dict[str, str]:
@@ -1393,7 +2341,11 @@ def extract_summary(text: str) -> dict[str, str]:
         "benchmarkInfo": extract_last_line(text, "Renderer benchmark:"),
         "rendererMetrics": metrics_line,
         "lowOverheadMetrics": extract_last_line(text, "rendererMetrics lowOverhead("),
+        "graphResourcesInfo": extract_last_line(text, "Renderer graph resources:"),
+        "modernExecutorInfo": extract_last_line(text, "Modern GL executor:"),
+        "modernForwardPlusInfo": extract_last_line(text, "modernForwardPlus req="),
         "uploadManagerInfo": extract_last_line(text, "Renderer upload manager: frameStream="),
+        "vertexCacheInfo": extract_last_line(text, "Renderer vertex cache:"),
         "stateCacheInfo": extract_last_line(text, "Modern GL state cache:"),
         "framePacing": extract_last_line(text, "Frame pacing"),
         "selectedTier": extract_last_line(text, "Selected renderer tier:"),
@@ -1413,7 +2365,11 @@ def extract_summary(text: str) -> dict[str, str]:
         )
     summary.update(parse_benchmark_capture(summary["benchmarkCapture"]))
     summary.update(parse_renderer_metrics_line(summary["rendererMetrics"]))
+    summary.update(parse_renderer_graph_resources_info(summary["graphResourcesInfo"]))
+    summary.update(parse_modern_executor_info(summary["modernExecutorInfo"]))
+    summary.update(parse_modern_forward_plus_info(summary["modernForwardPlusInfo"]))
     summary.update(parse_upload_manager_info(summary["uploadManagerInfo"]))
+    summary.update(parse_vertex_cache_info(summary["vertexCacheInfo"]))
     summary.update(parse_state_cache_info(summary["stateCacheInfo"]))
     summary.update(parse_low_overhead_metrics_line(summary["lowOverheadMetrics"]))
     summary.update(parse_frame_pacing(summary["framePacing"]))
@@ -1428,6 +2384,143 @@ def summary_float(summary: dict[str, str], key: str) -> float | None:
         return float(value)
     except ValueError:
         return None
+
+
+def summary_int(summary: dict[str, str], key: str) -> int | None:
+    value = summary.get(key)
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def evaluate_graph_invalidation_modern_requirements(spec: RunSpec, summary: dict[str, str]) -> list[str]:
+    missing: list[str] = []
+    required_modern_cvars = (
+        ("modernExecutorCvar", "modern executor cvar"),
+        ("modernVisibleDepthCvar", "modern visible-depth cvar"),
+        ("modernOpaqueCvar", "modern opaque cvar"),
+        ("modernDeferredCvar", "modern deferred cvar"),
+    )
+    for key, label in required_modern_cvars:
+        if summary_int(summary, key) != 1:
+            missing.append(f"{label}=1")
+
+    if summary_int(summary, "modernVisibleDepthReq") != 1:
+        missing.append("modern visible-depth request")
+    if summary_int(summary, "modernForwardPlusReq") != 1:
+        missing.append("modern forward+ request")
+
+    tagged = summary_int(summary, "graphInvalidateTagged")
+    candidates = summary_int(summary, "graphInvalidateCandidates")
+    armed = summary_int(summary, "graphInvalidateArmed")
+    submitted = summary_int(summary, "graphInvalidateSubmitted")
+    unsubmitted = summary_int(summary, "graphInvalidateSubmitSkippedUnsubmittedPass")
+
+    if tagged is None or tagged <= 0:
+        missing.append("graph invalidation tagged accesses")
+    if candidates is None or candidates <= 0:
+        missing.append("graph invalidation candidates")
+
+    if spec.upload_variant == "default":
+        if summary_int(summary, "graphInvalidateEnabled") != 0:
+            missing.append("default graph invalidation disabled state")
+        if armed not in (0, None):
+            missing.append(f"default graph invalidation armed={armed}")
+        if submitted not in (0, None):
+            missing.append(f"default graph invalidation submitted={submitted}")
+    elif spec.upload_variant == "armed":
+        if summary_int(summary, "graphInvalidateEnabled") != 1:
+            missing.append("armed graph invalidation enabled state")
+        if armed is None or armed <= 0:
+            missing.append("armed graph invalidation candidates")
+        if submitted is None:
+            missing.append("graph invalidation submitted counter")
+        if unsubmitted is None:
+            missing.append("graph invalidation unsubmitted-pass counter")
+        if (submitted or 0) <= 0 and (unsubmitted or 0) <= 0:
+            missing.append("armed graph invalidation submit accounting")
+
+    return missing
+
+
+def evaluate_low_overhead_modern_submit_requirements(spec: RunSpec, summary: dict[str, str]) -> list[str]:
+    missing: list[str] = []
+    expected_one = (
+        ("modernExecutorCvar", "modern executor cvar"),
+        ("modernSubmitCvar", "modern submit cvar"),
+        ("modernSubmitPlanReady", "modern submit plan"),
+        ("modernSubmitted", "modern submit execution"),
+        ("lowOverheadReady", "low-overhead readiness"),
+        ("lowOverheadDSA", "low-overhead DSA readiness"),
+        ("lowOverheadMultiBind", "low-overhead multibind readiness"),
+    )
+    for key, label in expected_one:
+        if summary_int(summary, key) != 1:
+            missing.append(f"{label}=1")
+
+    positive = (
+        ("modernSubmitDraws", "modern submit draw count"),
+        ("modernSubmittedDraws", "modern submitted draw count"),
+        ("modernSubmitMaterialDraws", "modern submitted material draw count"),
+        ("modernSubmitIndexUploads", "modern submit index uploads"),
+        ("modernSubmitProgramBatches", "modern submit program batches"),
+        ("modernSubmitVBOBatches", "modern submit VBO batches"),
+        ("modernSubmitUniforms", "modern submit uniform updates"),
+        ("modernSubmitFrameUBO", "modern submit frame UBO update"),
+        ("lowOverheadCompactedBatches", "low-overhead compacted batches"),
+        ("lowOverheadFullRestores", "low-overhead full restore"),
+        ("stateCacheLegacyResets", "state-cache legacy reset"),
+    )
+    for key, label in positive:
+        value = summary_int(summary, key)
+        if value is None or value <= 0:
+            missing.append(label)
+
+    expected_zero = (
+        ("modernSubmitFallbacks", "modern submit fallback"),
+        ("modernSubmittedFallbacks", "modern submitted fallback"),
+        ("modernSubmitMissingVBO", "modern submit missing VBO"),
+        ("modernSubmitMissingIBO", "modern submit missing IBO"),
+        ("modernSubmitOverflow", "modern submit overflow"),
+    )
+    for key, label in expected_zero:
+        value = summary_int(summary, key)
+        if value not in (0, None):
+            missing.append(f"{label}={value}")
+
+    texture_multibind = summary_int(summary, "lowOverheadTextureMultiBind") or 0
+    sampler_multibind = summary_int(summary, "lowOverheadSamplerMultiBind") or 0
+    if texture_multibind <= 0 and sampler_multibind <= 0:
+        missing.append("texture or sampler multibind batches")
+
+    graph_dsa_tex = summary_int(summary, "lowOverheadGraphDSATextures") or 0
+    graph_dsa_params = summary_int(summary, "lowOverheadGraphDSAParams") or 0
+    graph_dsa_fbo = summary_int(summary, "lowOverheadGraphDSAFBO") or 0
+    if graph_dsa_tex <= 0 or graph_dsa_params <= 0 or graph_dsa_fbo <= 0:
+        missing.append(
+            "graph DSA texture/parameter/FBO updates "
+            f"({graph_dsa_tex}/{graph_dsa_params}/{graph_dsa_fbo})"
+        )
+
+    return missing
+
+
+def evaluate_profile_requirements(
+    spec: RunSpec,
+    summary: dict[str, str],
+    validation_requirements: dict[str, Any] | None,
+) -> list[str]:
+    if not validation_requirements:
+        return []
+    missing: list[str] = []
+    if validation_requirements.get("graphInvalidationModern", False):
+        missing.extend(evaluate_graph_invalidation_modern_requirements(spec, summary))
+    if validation_requirements.get("lowOverheadModernSubmit", False):
+        missing.extend(evaluate_low_overhead_modern_submit_requirements(spec, summary))
+    return missing
 
 
 def load_tga_rgb(path: Path) -> tuple[int, int, bytes]:
@@ -1554,6 +2647,9 @@ def evaluate_role_result(
     min_pacing_hz: float = 0.0,
     max_p95_ms: float = 0.0,
     max_p99_ms: float = 0.0,
+    transition_maps: tuple[str, ...] = (),
+    mode_transitions: tuple[dict[str, str], ...] = (),
+    validation_requirements: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     log_path = find_log(savepath, log_name)
     log_text = read_text(log_path)
@@ -1573,6 +2669,8 @@ def evaluate_role_result(
         max_threshold,
         require_reference,
     )
+    map_transition = evaluate_map_transition_resource_counts(text, transition_maps)
+    mode_transition = evaluate_mode_transition_resource_counts(text, mode_transitions)
     missing: list[str] = []
     if timed_out:
         missing.append("timeout")
@@ -1628,6 +2726,11 @@ def evaluate_role_result(
         missing += [f"{name}={count}" for name, count in warnings.items() if count > 0]
     if image.get("pass") is False:
         missing.append(f"image comparison {image.get('status')}")
+    if map_transition and map_transition.get("status") != "pass":
+        missing.append(f"map transition resource counts: {map_transition.get('reason', 'failed')}")
+    if mode_transition and mode_transition.get("status") != "pass":
+        missing.append(f"mode transition resource counts: {mode_transition.get('reason', 'failed')}")
+    missing.extend(evaluate_profile_requirements(spec, summary, validation_requirements))
 
     ok = exit_code == 0 and not timed_out and not missing
     return {
@@ -1647,6 +2750,8 @@ def evaluate_role_result(
         "missing": missing,
         "summary": summary,
         "image": image,
+        "mapTransition": map_transition,
+        "modeTransition": mode_transition,
     }
 
 
@@ -1672,7 +2777,10 @@ def launch_and_wait(
         except subprocess.TimeoutExpired:
             timed_out = True
             process.kill()
-            exit_code = process.wait(timeout=10)
+            try:
+                exit_code = process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                exit_code = process.returncode if process.returncode is not None else -9
     elapsed = time.time() - started
     return exit_code, timed_out, elapsed
 
@@ -1695,21 +2803,54 @@ def run_sp_spec(
         log_path.unlink()
     stdout_path = output_dir / f"{filesystem_id}.out.txt"
     stderr_path = output_dir / f"{filesystem_id}.err.txt"
-    autoexec_cfg, screenshot_rel = write_autoexec_cfg(
-        savepath,
-        spec,
-        "sp",
-        run_id,
-        args.settle_frames,
-        args.sample_frames,
-        args.sample_msec,
-        5,
-        args.extra_cvars,
-        args.exec_commands,
-        args.gpu_timers,
-        not args.pacing_only,
-        args.renderer_metrics_level,
-    )
+    transition_cfgs: list[str] = []
+    mode_transition_cfgs: list[str] = []
+    if spec.mode_transitions:
+        autoexec_cfg, screenshot_rel, mode_transition_cfgs = write_mode_transition_cfgs(
+            savepath,
+            spec,
+            "sp_mode_transition",
+            run_id,
+            args.settle_frames,
+            args.sample_frames,
+            args.sample_msec,
+            5,
+            args.extra_cvars,
+            args.exec_commands,
+            args.gpu_timers,
+            max(1, args.renderer_metrics_level),
+        )
+    elif spec.transition_maps:
+        autoexec_cfg, screenshot_rel, transition_cfgs = write_map_transition_cfgs(
+            savepath,
+            spec,
+            "sp_transition",
+            run_id,
+            args.settle_frames,
+            args.sample_frames,
+            args.sample_msec,
+            5,
+            args.extra_cvars,
+            args.exec_commands,
+            args.gpu_timers,
+            max(1, args.renderer_metrics_level),
+        )
+    else:
+        autoexec_cfg, screenshot_rel = write_autoexec_cfg(
+            savepath,
+            spec,
+            "sp",
+            run_id,
+            args.settle_frames,
+            args.sample_frames,
+            args.sample_msec,
+            5,
+            args.extra_cvars,
+            args.exec_commands,
+            args.gpu_timers,
+            not args.pacing_only,
+            args.renderer_metrics_level,
+        )
     game_args = common_args(
         root,
         savepath,
@@ -1741,6 +2882,12 @@ def run_sp_spec(
         script_cvars=args.extra_cvars,
         exec_commands=args.exec_commands,
     )
+    if spec.transition_maps:
+        sp_metadata["transitionMaps"] = list(spec.transition_maps)
+        sp_metadata["transitionAutoexecCfgs"] = transition_cfgs
+    if spec.mode_transitions:
+        sp_metadata["modeTransitions"] = list(spec.mode_transitions)
+        sp_metadata["modeTransitionAutoexecCfgs"] = mode_transition_cfgs
 
     if args.dry_run:
         return {
@@ -1759,6 +2906,10 @@ def run_sp_spec(
             "status": "planned",
             "args": game_args,
             "autoexecCfg": autoexec_cfg,
+            "transitionMaps": list(spec.transition_maps),
+            "transitionAutoexecCfgs": transition_cfgs,
+            "modeTransitions": list(spec.mode_transitions),
+            "modeTransitionAutoexecCfgs": mode_transition_cfgs,
             "screenshotRequest": screenshot_rel,
             "lensFlarePreset": spec.lens_flare_preset,
             "renderer": spec.renderer,
@@ -1803,6 +2954,9 @@ def run_sp_spec(
         args.min_pacing_hz,
         args.max_p95_ms,
         args.max_p99_ms,
+        spec.transition_maps,
+        spec.mode_transitions,
+        args.validation_requirements,
     )
     return {
         "id": spec.id,
@@ -1818,6 +2972,8 @@ def run_sp_spec(
         "renderer": spec.renderer,
         "uploadVariant": spec.upload_variant,
         "launchCvars": list(spec.launch_cvars),
+        "transitionMaps": list(spec.transition_maps),
+        "modeTransitions": list(spec.mode_transitions),
         "status": role_result["status"],
         "roles": [role_result],
     }
@@ -2052,6 +3208,9 @@ def run_mp_spec(
         args.min_pacing_hz,
         args.max_p95_ms,
         args.max_p99_ms,
+        (),
+        (),
+        args.validation_requirements,
     )
     client_result = evaluate_role_result(
         spec,
@@ -2073,6 +3232,9 @@ def run_mp_spec(
         args.min_pacing_hz,
         args.max_p95_ms,
         args.max_p99_ms,
+        (),
+        (),
+        args.validation_requirements,
     )
     ok = server_result["status"] == "pass" and client_result["status"] == "pass"
     return {
@@ -2099,6 +3261,7 @@ def run_mp_spec(
 def harness_failure_result(spec: RunSpec, exc: Exception) -> dict[str, Any]:
     message = f"harness exception: {type(exc).__name__}: {exc}"
     role = "client" if spec.mode == "MP" else "sp"
+    filesystem_id = compact_filesystem_id(spec.id)
     role_result = {
         "id": spec.id,
         "role": role,
@@ -2122,6 +3285,8 @@ def harness_failure_result(spec: RunSpec, exc: Exception) -> dict[str, Any]:
         "mode": spec.mode,
         "map": spec.map_name,
         "purpose": spec.purpose,
+        "transitionMaps": list(spec.transition_maps),
+        "modeTransitions": list(spec.mode_transitions),
         "tier": spec.tier,
         "maxfps": spec.maxfps,
         "swapInterval": spec.swap_interval,
@@ -2185,6 +3350,8 @@ def build_specs(args: argparse.Namespace) -> list[RunSpec]:
                                             upload_variant=launch_variant,
                                             variant_prefix=profile_launch_variant_prefix(args.profile),
                                             launch_cvars=profile_launch_variant_cvars(args.profile, launch_variant),
+                                            transition_maps=tuple(scene.get("transitionMaps", ())),
+                                            mode_transitions=tuple(scene.get("modeTransitions", ())),
                                         )
                                     )
     if args.limit > 0:
@@ -2246,6 +3413,38 @@ def format_state_cache_summary(summary: dict[str, str]) -> str:
     return ""
 
 
+UPLOAD_COUNTER_COVERAGE_KEYS: tuple[dict[str, Any], ...] = (
+    {"counter": "fence wait count", "fields": ("fenceWaits", "lowOverheadFenceWaits")},
+    {"counter": "fence timeout count", "fields": ("fenceTimeouts", "lowOverheadFenceTimeouts")},
+    {"counter": "fallback count", "fields": ("fenceFallbacks", "lowOverheadFenceFallbacks")},
+    {"counter": "upload ring high-water", "fields": ("ringHighWaterKB",)},
+    {"counter": "overflow KB", "fields": ("ringOverflowKB",)},
+    {"counter": "frame stalls", "fields": ("frameStalls",)},
+)
+
+
+def upload_counter_coverage_rows(metric_roles: list[tuple[dict[str, Any], dict[str, Any]]]) -> list[dict[str, Any]]:
+    total = len(metric_roles)
+    rows: list[dict[str, Any]] = []
+    for item in UPLOAD_COUNTER_COVERAGE_KEYS:
+        fields = tuple(item["fields"])
+        present = 0
+        for _result, role_result in metric_roles:
+            summary = role_result.get("summary", {}) or {}
+            if any(summary.get(field) not in (None, "") for field in fields):
+                present += 1
+        rows.append(
+            {
+                "counter": item["counter"],
+                "fields": fields,
+                "presentRoles": present,
+                "totalRoles": total,
+                "complete": total > 0 and present == total,
+            }
+        )
+    return rows
+
+
 def format_cpu_phase_summary(summary: dict[str, str]) -> str:
     keys = (
         ("fe", "frontEndMs"),
@@ -2286,6 +3485,11 @@ def format_graph_invalidate_skip_summary(summary: dict[str, str]) -> str:
         ("later", "graphInvalidateSkippedLater"),
         ("incomplete", "graphInvalidateSkippedIncomplete"),
         ("unsupported", "graphInvalidateSkippedUnsupported"),
+        ("disabled", "graphInvalidateSubmitSkippedDisabled"),
+        ("unsupportedTier", "graphInvalidateSubmitSkippedUnsupportedTier"),
+        ("missingOwner", "graphInvalidateSubmitSkippedMissingOwner"),
+        ("missingFBO", "graphInvalidateSubmitSkippedMissingFBO"),
+        ("unsubmittedPass", "graphInvalidateSubmitSkippedUnsubmittedPass"),
     ]
     parts = [f"{label}={summary[key]}" for label, key in skip_keys if summary.get(key)]
     return " ".join(parts)
@@ -2338,6 +3542,69 @@ def format_low_overhead_upload_summary(summary: dict[str, str]) -> str:
     )
 
 
+def format_modern_submit_cvar_summary(summary: dict[str, str]) -> str:
+    if not any(summary.get(key) for key in ("modernExecutorCvar", "modernSubmitCvar")):
+        return ""
+    return (
+        f"executor={summary.get('modernExecutorCvar', '?')} "
+        f"submit={summary.get('modernSubmitCvar', '?')}"
+    )
+
+
+def format_modern_submit_plan_summary(summary: dict[str, str]) -> str:
+    if not any(summary.get(key) for key in ("modernSubmitPlanReady", "modernSubmitDraws")):
+        return ""
+    return (
+        f"ready={summary.get('modernSubmitPlanReady', '?')} "
+        f"draws={summary.get('modernSubmitDraws', '?')} "
+        f"material={summary.get('modernSubmitMaterialDraws', '?')}"
+    )
+
+
+def format_modern_submit_execution_summary(summary: dict[str, str]) -> str:
+    if not any(summary.get(key) for key in ("modernSubmitted", "modernSubmittedDraws")):
+        return ""
+    return (
+        f"submitted={summary.get('modernSubmitted', '?')}/"
+        f"{summary.get('modernSubmittedDraws', '?')} "
+        f"upload={summary.get('modernSubmittedUploads', '?')}"
+    )
+
+
+def format_modern_submit_fallback_summary(summary: dict[str, str]) -> str:
+    if not any(summary.get(key) for key in ("modernSubmitFallbacks", "modernSubmitMissingVBO")):
+        return ""
+    return (
+        f"plan={summary.get('modernSubmitFallbacks', '?')} "
+        f"submitted={summary.get('modernSubmittedFallbacks', '?')} "
+        f"missing={summary.get('modernSubmitMissingVBO', '?')}/"
+        f"{summary.get('modernSubmitMissingIBO', '?')} "
+        f"overflow={summary.get('modernSubmitOverflow', '?')}"
+    )
+
+
+def format_modern_submit_batch_summary(summary: dict[str, str]) -> str:
+    if not any(summary.get(key) for key in ("modernSubmitProgramBatches", "modernSubmitVBOBatches")):
+        return ""
+    return (
+        f"program={summary.get('modernSubmitProgramBatches', '?')} "
+        f"vbo={summary.get('modernSubmitVBOBatches', '?')} "
+        f"ibo={summary.get('modernSubmitIBOBatches', '?')} "
+        f"scissor={summary.get('modernSubmitScissorBatches', '?')} "
+        f"material={summary.get('modernSubmitMaterialBatches', '?')}"
+    )
+
+
+def format_modern_submit_restore_summary(summary: dict[str, str]) -> str:
+    if not any(summary.get(key) for key in ("lowOverheadSoftRestores", "modernSoftRestores")):
+        return ""
+    return (
+        f"low={summary.get('lowOverheadSoftRestores', summary.get('modernSoftRestores', '?'))}/"
+        f"{summary.get('lowOverheadFullRestores', summary.get('modernFullRestores', '?'))} "
+        f"legacyReset={summary.get('stateCacheLegacyResets', '?')}"
+    )
+
+
 def markdown_cell(value: Any) -> str:
     text = "" if value is None else str(value)
     return text.replace("\r", " ").replace("\n", " ").replace("|", "\\|")
@@ -2375,17 +3642,27 @@ def format_metadata_commands(items: Any) -> str:
 def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dict[str, Any]) -> tuple[Path, Path]:
     report_json = output_dir / "renderer_gameplay_benchmark_report.json"
     report_md = output_dir / "renderer_gameplay_benchmark_report.md"
+    metric_roles_for_coverage = [
+        (result, role_result)
+        for result in results
+        for role_result in result.get("roles", [])
+        if role_result.get("status") != "planned"
+    ]
+    upload_counter_coverage = upload_counter_coverage_rows(metric_roles_for_coverage)
     payload = {
         "metadata": metadata,
         "requiredScenes": REQUIRED_SCENES,
         "shadowScenes": SHADOW_SCENES,
         "lensFlareScenes": LENS_FLARE_SCENES,
+        "mapTransitionScenes": MAP_TRANSITION_SCENES,
+        "modeTransitionScenes": MODE_TRANSITION_SCENES,
         "shadowPresets": SHADOW_PRESETS,
         "lensFlarePresets": LENS_FLARE_PRESETS,
         "lensFlareSignoffMatrix": LENS_FLARE_SIGNOFF_MATRIX,
         "uploadPressureVariants": UPLOAD_PRESSURE_VARIANTS,
         "graphInvalidationVariants": GRAPH_INVALIDATION_VARIANTS,
         "performanceComparisonVariants": PERFORMANCE_COMPARISON_VARIANTS,
+        "uploadCounterCoverage": upload_counter_coverage,
         "results": results,
     }
     report_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -2406,11 +3683,13 @@ def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dic
         f"- Launch variants: `{', '.join(metadata.get('launchVariants', [])) or 'none'}`",
         f"- Sample: `{metadata['sampleMsec']} ms`" if metadata.get("sampleMsec", 0) > 0 else f"- Sample: `{metadata['sampleFrames']} frames`",
         f"- Renderer metrics level: `{metadata.get('rendererMetricsLevel', 1)}`",
+        f"- GPU timers: `{1 if metadata.get('gpuTimers', False) else 0}`",
         f"- Modern executor: `{1 if metadata.get('modernExecutor', False) else 0}`",
         f"- Profile cvars: {format_metadata_cvars(metadata.get('profileCvars', {}))}",
         f"- Launch cvars: {format_metadata_cvars(metadata.get('launchCvars', {}))}",
         f"- Script cvars: {format_metadata_cvars(metadata.get('scriptCvars', []))}",
         f"- Exec commands: {format_metadata_commands(metadata.get('execCommands', []))}",
+        f"- Validation requirements: `{', '.join(metadata.get('validationRequirements', {}).keys()) or 'none'}`",
         f"- Reference dir: `{metadata.get('referenceDir') or 'not set'}`",
         f"- Require references: `{1 if metadata.get('requireReferences', False) else 0}`",
         f"- Image thresholds: RMS `{metadata.get('imageRmsThreshold', 2.0)}`, max `{metadata.get('imageMaxThreshold', 24)}`",
@@ -2513,6 +3792,143 @@ def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dic
                 f"{format_fence_summary(summary) or 'missing'} | "
                 f"{format_upload_path_summary(summary) or 'missing'} | "
                 f"{format_state_cache_summary(summary) or 'missing'} |"
+            )
+
+    map_transition_roles = [
+        (result, role_result)
+        for result, role_result in metric_roles
+        if role_result.get("mapTransition")
+    ]
+    if map_transition_roles:
+        lines += [
+            "",
+            "## Map Transition Resource Counts",
+            "",
+            "Transition profiles compare post-warm repeated-map samples. Graph/resource object counts, upload frame-buffer counts, fences, and status/capability fields must stay stable; static upload residency is tracked separately unless the vertex-cache budget gate is enabled for the profile.",
+            "",
+            "| Case | Role | Status | Expected Maps | Samples | Checks |",
+            "|---|---|---|---|---|---|",
+        ]
+        for result, role_result in map_transition_roles:
+            transition = role_result.get("mapTransition", {}) or {}
+            samples = transition.get("samples", []) or []
+            sample_parts: list[str] = []
+            for sample in samples:
+                sample_parts.append(
+                    f"{sample.get('sample', '?')}:{sample.get('map', '?')} "
+                    f"graph={sample.get('graphHandles', '?')}/"
+                    f"{sample.get('graphTextures', '?')}/"
+                    f"{sample.get('graphFboReady', '?')}/"
+                    f"{sample.get('graphFboTotal', '?')} "
+                    f"upload={sample.get('uploadStaticLiveBuffers', '?')}/"
+                    f"{sample.get('uploadStaticLiveKB', '?')}KB "
+                    f"vertex={sample.get('vertexStaticBuffers', '?')}/"
+                    f"{sample.get('vertexStaticKB', '?')}KB "
+                    f"budget={sample.get('vertexBudgetStatus', '?')}/"
+                    f"{sample.get('vertexOverBudgetKB', '?')}KB "
+                    f"fence={sample.get('fenceSubmitted', '?')}/"
+                    f"{sample.get('fenceRetired', '?')} "
+                    f"shader={sample.get('shaderPrograms', '?')}/"
+                    f"{sample.get('shaderFailed', '?')}"
+                )
+            failed_checks = [
+                check for check in transition.get("checks", []) or [] if check.get("status") == "fail"
+            ]
+            if failed_checks:
+                check_summary = "; ".join(
+                    f"{check.get('field')} {check.get('first')}->{check.get('last')}" for check in failed_checks[:8]
+                )
+            else:
+                tracked_checks = [
+                    check for check in transition.get("checks", []) or [] if check.get("status") == "tracked"
+                ]
+                tracked_summary = "; ".join(
+                    f"{check.get('field')} {check.get('first')}->{check.get('last')}" for check in tracked_checks[:4]
+                )
+                check_summary = "pass" if not tracked_summary else f"pass; tracked {tracked_summary}"
+            lines.append(
+                f"| `{result['id']}` | `{role_result.get('role', '')}` | {transition.get('status', '')} | "
+                f"{markdown_cell(', '.join(transition.get('expectedMaps', [])))} | "
+                f"{markdown_cell('; '.join(sample_parts))} | {markdown_cell(check_summary)} |"
+            )
+
+    mode_transition_roles = [
+        (result, role_result)
+        for result, role_result in metric_roles
+        if role_result.get("modeTransition")
+    ]
+    if mode_transition_roles:
+        lines += [
+            "",
+            "## Mode Transition Resource Counts",
+            "",
+            "Mode-transition profiles validate renderer object lifetimes across in-process SP/MP game-module reloads. The repeated initial SP sample is compared after the MP hop; graph/FBO, upload frame-buffer, fence, and shader counts must not grow, while static upload residency is tracked separately unless the vertex-cache budget gate is enabled for the profile.",
+            "",
+            "| Case | Role | Status | Expected Steps | Samples | Checks |",
+            "|---|---|---|---|---|---|",
+        ]
+        for result, role_result in mode_transition_roles:
+            transition = role_result.get("modeTransition", {}) or {}
+            expected_steps = [
+                f"{step.get('mode', '?')}/{step.get('module', '?')}/{step.get('map', '?')}"
+                for step in transition.get("expectedSteps", []) or []
+            ]
+            samples = transition.get("samples", []) or []
+            sample_parts: list[str] = []
+            for sample in samples:
+                sample_parts.append(
+                    f"{sample.get('sample', '?')}:{sample.get('mode', '?')}/"
+                    f"{sample.get('module', '?')}/{sample.get('map', '?')} "
+                    f"graph={sample.get('graphHandles', '?')}/"
+                    f"{sample.get('graphTextures', '?')}/"
+                    f"{sample.get('graphFboReady', '?')}/"
+                    f"{sample.get('graphFboTotal', '?')} "
+                    f"upload={sample.get('uploadBuffers', '?')} static="
+                    f"{sample.get('uploadStaticLiveBuffers', '?')}/"
+                    f"{sample.get('uploadStaticLiveKB', '?')}KB "
+                    f"vertex={sample.get('vertexStaticBuffers', '?')}/"
+                    f"{sample.get('vertexStaticKB', '?')}KB "
+                    f"budget={sample.get('vertexBudgetStatus', '?')}/"
+                    f"{sample.get('vertexOverBudgetKB', '?')}KB "
+                    f"fence={sample.get('fenceSubmitted', '?')}/"
+                    f"{sample.get('fenceRetired', '?')} "
+                    f"shader={sample.get('shaderPrograms', '?')}/"
+                    f"{sample.get('shaderFailed', '?')}"
+                )
+            failed_checks = [
+                check for check in transition.get("checks", []) or [] if check.get("status") == "fail"
+            ]
+            if failed_checks:
+                check_summary = "; ".join(
+                    f"{check.get('field')} {check.get('first')}->{check.get('last')}" for check in failed_checks[:8]
+                )
+            else:
+                tracked_checks = [
+                    check for check in transition.get("checks", []) or [] if check.get("status") == "tracked"
+                ]
+                tracked_summary = "; ".join(
+                    f"{check.get('field')} {check.get('first')}->{check.get('last')}" for check in tracked_checks[:4]
+                )
+                check_summary = "pass" if not tracked_summary else f"pass; tracked {tracked_summary}"
+            lines.append(
+                f"| `{result['id']}` | `{role_result.get('role', '')}` | {transition.get('status', '')} | "
+                f"{markdown_cell(' -> '.join(expected_steps))} | "
+                f"{markdown_cell('; '.join(sample_parts))} | {markdown_cell(check_summary)} |"
+            )
+
+    if metric_roles and metadata.get("profile", "").startswith("upload-pressure"):
+        lines += [
+            "",
+            "## Upload Counter Coverage",
+            "",
+            "| Counter | Parsed Fields | Roles Present | Status |",
+            "|---|---|---:|---|",
+        ]
+        for row in upload_counter_coverage:
+            fields = ", ".join(f"`{field}`" for field in row["fields"])
+            status = "complete" if row["complete"] else "missing"
+            lines.append(
+                f"| {row['counter']} | {fields} | {row['presentRoles']}/{row['totalRoles']} | {status} |"
             )
 
     presentation_roles = [
@@ -2623,6 +4039,34 @@ def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dic
                 f"{format_state_cache_summary(summary) or 'missing'} |"
             )
 
+    modern_submit_roles = [
+        (result, role_result)
+        for result, role_result in metric_roles
+        if (role_result.get("summary", {}) or {}).get("modernSubmitPlanReady")
+        or (role_result.get("summary", {}) or {}).get("modernSubmitCvar")
+    ]
+    if modern_submit_roles:
+        lines += [
+            "",
+            "## Modern Submit Metrics",
+            "",
+            "| Case | Role | Tier | Variant | Cvars | Plan | Submitted | Fallback/Missing | Submit Batches | Restores | Low Overhead |",
+            "|---|---|---|---|---|---|---|---|---|---|---|",
+        ]
+        for result, role_result in modern_submit_roles:
+            summary = role_result.get("summary", {}) or {}
+            lines.append(
+                f"| `{result['id']}` | `{role_result.get('role', '')}` | `{result.get('tier', '')}` | "
+                f"`{result.get('uploadVariant', 'default')}` | "
+                f"{format_modern_submit_cvar_summary(summary) or 'missing'} | "
+                f"{format_modern_submit_plan_summary(summary) or 'missing'} | "
+                f"{format_modern_submit_execution_summary(summary) or 'missing'} | "
+                f"{format_modern_submit_fallback_summary(summary) or 'missing'} | "
+                f"{format_modern_submit_batch_summary(summary) or 'missing'} | "
+                f"{format_modern_submit_restore_summary(summary) or 'missing'} | "
+                f"{format_low_overhead_cap_summary(summary) or 'missing'} |"
+            )
+
     failed_roles = [
         (result, role_result)
         for result in results
@@ -2718,6 +4162,31 @@ def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dic
     ]
     for case_id, scene in LENS_FLARE_SCENES.items():
         lines.append(f"| `{case_id}` | {scene['mode']} | `{scene['map']}` | {scene['purpose']} |")
+
+    lines += [
+        "",
+        "## Map Transition Resource-Count Coverage",
+        "",
+        "| Case | Mode | Initial Map | Transition Maps | Purpose |",
+        "|---|---|---|---|---|",
+    ]
+    for case_id, scene in MAP_TRANSITION_SCENES.items():
+        transition_maps = ", ".join(f"`{map_name}`" for map_name in scene.get("transitionMaps", ()))
+        lines.append(f"| `{case_id}` | {scene['mode']} | `{scene['map']}` | {transition_maps} | {scene['purpose']} |")
+
+    lines += [
+        "",
+        "## Mode Transition Resource-Count Coverage",
+        "",
+        "| Case | Initial Mode | Initial Map | Transition Steps | Purpose |",
+        "|---|---|---|---|---|",
+    ]
+    for case_id, scene in MODE_TRANSITION_SCENES.items():
+        transition_steps = " -> ".join(
+            f"`{step.get('mode', '?')}/{step.get('module', '?')}/{step.get('map', '?')}`"
+            for step in scene.get("modeTransitions", ())
+        )
+        lines.append(f"| `{case_id}` | {scene['mode']} | `{scene['map']}` | {transition_steps} | {scene['purpose']} |")
 
     lines += [
         "",
@@ -2818,10 +4287,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--set-launch-cvar", action="append", default=[], metavar="NAME=VALUE", help="Extra cvar applied on the openQ4 launch command line before the map loads. Use for load-time renderer knobs such as vertex/index buffer caching.")
     parser.add_argument("--exec-command", action="append", default=[], metavar="COMMAND", help="Extra post-map console command written into the generated benchmark cfg. Repeat for targeted diagnostics such as flashlight impulses.")
     parser.add_argument("--autoexec-delay-ms", type=int, default=1000, help="Delay after active map draw before executing the generated benchmark cfg.")
-    parser.add_argument("--settle-frames", type=int, default=360, help="Frames to wait after map/connect before sampling.")
-    parser.add_argument("--sample-frames", type=int, default=600, help="Frames to sample before dumping metrics and screenshots.")
-    parser.add_argument("--sample-msec", type=int, default=0, help="Real milliseconds to sample before dumping metrics and screenshots. Overrides --sample-frames when positive.")
-    parser.add_argument("--timeout", type=int, default=180, help="Per-case process timeout in seconds.")
+    parser.add_argument("--settle-frames", type=int, default=None, help="Frames to wait after map/connect before sampling. Defaults to the selected profile, usually 360.")
+    parser.add_argument("--sample-frames", type=int, default=None, help="Frames to sample before dumping metrics and screenshots. Defaults to the selected profile, usually 600.")
+    parser.add_argument("--sample-msec", type=int, default=None, help="Real milliseconds to sample before dumping metrics and screenshots. Overrides --sample-frames when positive. Defaults to the selected profile, usually 0.")
+    parser.add_argument("--timeout", type=int, default=None, help="Per-case process timeout in seconds. Defaults to the selected profile, usually 180.")
     parser.add_argument("--basepath", default=default_basepath(), help="Quake 4 install/base path. Omit or set empty to skip fs_basepath.")
     parser.add_argument("--output-dir", default="", help="Report/output directory. Defaults to <repo>/.tmp/renderer-gameplay/<timestamp>.")
     parser.add_argument("--reference-dir", default="", help="Optional TGA reference screenshot root for deterministic image comparison.")
@@ -2842,10 +4311,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parsed.extra_cvars = profile_cvars + parse_extra_cvars(parsed.set_cvar)
         parsed.launch_cvars = parse_extra_cvars(parsed.set_launch_cvar)
         parsed.exec_commands = parse_exec_commands(parsed.exec_command)
+        if parsed.settle_frames is None:
+            parsed.settle_frames = int(profile_defaults.get("settleFrames", 360))
+        if parsed.sample_frames is None:
+            parsed.sample_frames = int(profile_defaults.get("sampleFrames", 600))
+        if parsed.sample_msec is None:
+            parsed.sample_msec = int(profile_defaults.get("sampleMsec", 0))
+        if parsed.timeout is None:
+            parsed.timeout = int(profile_defaults.get("timeout", 180))
         if parsed.renderer_metrics_level < 0:
             parsed.renderer_metrics_level = int(profile_defaults.get("rendererMetricsLevel", 1))
         parsed.renderer_metrics_level = max(0, parsed.renderer_metrics_level)
         parsed.modern_executor = parsed.modern_executor or bool(profile_defaults.get("modernExecutor", False))
+        parsed.gpu_timers = parsed.gpu_timers or bool(profile_defaults.get("gpuTimers", False))
+        parsed.validation_requirements = dict(profile_defaults.get("requirements", {}))
     except ValueError as exc:
         parser.error(str(exc))
     parsed.reference_dir_path = Path(parsed.reference_dir).resolve() if parsed.reference_dir else None
@@ -2873,7 +4352,21 @@ def print_list() -> None:
         if int(defaults.get("rendererMetricsLevel", 1)) != 1:
             metrics_text = f" metrics={defaults['rendererMetricsLevel']}"
         modern_text = " modernExecutor=1" if defaults.get("modernExecutor", False) else ""
-        print(f"  {profile}: {count} generated case(s){cvar_text}{variant_text}{metrics_text}{modern_text}")
+        gpu_text = " gpuTimers=1" if defaults.get("gpuTimers", False) else ""
+        requirement_text = ""
+        if defaults.get("requirements"):
+            requirement_text = " requirements=" + ",".join(defaults["requirements"].keys())
+        timing_parts: list[str] = []
+        if int(defaults.get("settleFrames", 360)) != 360:
+            timing_parts.append(f"settle={defaults['settleFrames']}f")
+        if int(defaults.get("sampleFrames", 600)) != 600:
+            timing_parts.append(f"sample={defaults['sampleFrames']}f")
+        if int(defaults.get("sampleMsec", 0)) > 0:
+            timing_parts.append(f"sample={defaults['sampleMsec']}ms")
+        if int(defaults.get("timeout", 180)) != 180:
+            timing_parts.append(f"timeout={defaults['timeout']}s")
+        timing_text = " " + " ".join(timing_parts) if timing_parts else ""
+        print(f"  {profile}: {count} generated case(s){cvar_text}{variant_text}{metrics_text}{modern_text}{gpu_text}{timing_text}{requirement_text}")
     print("\nRequired gameplay cases:")
     for case_id, scene in REQUIRED_SCENES.items():
         print(f"  {case_id}: {scene['mode']} {scene['map']} - {scene['purpose']}")
@@ -2883,6 +4376,17 @@ def print_list() -> None:
     print("\nLens flare capture cases:")
     for case_id, scene in LENS_FLARE_SCENES.items():
         print(f"  {case_id}: {scene['mode']} {scene['map']} - {scene['purpose']}")
+    print("\nMap transition resource-count cases:")
+    for case_id, scene in MAP_TRANSITION_SCENES.items():
+        transition_maps = " -> ".join(scene.get("transitionMaps", (scene["map"],)))
+        print(f"  {case_id}: {scene['mode']} {transition_maps} - {scene['purpose']}")
+    print("\nMode transition resource-count cases:")
+    for case_id, scene in MODE_TRANSITION_SCENES.items():
+        transition_steps = " -> ".join(
+            f"{step.get('mode', '?')}/{step.get('module', '?')}/{step.get('map', '?')}"
+            for step in scene.get("modeTransitions", ())
+        )
+        print(f"  {case_id}: {transition_steps} - {scene['purpose']}")
     print("\nShadow presets:")
     for preset, cvars in SHADOW_PRESETS.items():
         cvar_text = ", ".join(f"{key}={value}" for key, value in cvars.items()) or "stock defaults"
@@ -2962,7 +4466,9 @@ def main(argv: list[str]) -> int:
         "sampleFrames": args.sample_frames,
         "sampleMsec": args.sample_msec,
         "rendererMetricsLevel": args.renderer_metrics_level,
+        "gpuTimers": args.gpu_timers,
         "modernExecutor": args.modern_executor,
+        "validationRequirements": args.validation_requirements,
         "minPacingHz": args.min_pacing_hz,
         "maxP95Ms": args.max_p95_ms,
         "maxP99Ms": args.max_p99_ms,

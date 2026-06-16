@@ -51,6 +51,27 @@ typedef struct vertCache_s {
 	int				frameUsed;			// it can't be purged if near the current frame
 } vertCache_t;
 
+typedef struct vertexCacheResidencyStats_s {
+	int				staticBuffers;
+	int				staticBytes;
+	int				fixedBuffers;
+	int				fixedBytes;
+	int				purgableBuffers;
+	int				purgableBytes;
+	int				protectedBuffers;
+	int				protectedBytes;
+	int				budgetBytes;
+	int				protectFrames;
+	int				lastPurgedBuffers;
+	int				lastPurgedBytes;
+	int				lastProtectedBuffers;
+	int				lastProtectedBytes;
+	int				lastOverBudgetBytes;
+	bool			fast;
+	bool			budgetEnabled;
+	bool			overBudget;
+} vertexCacheResidencyStats_t;
+
 
 class idVertexCache {
 public:
@@ -112,14 +133,21 @@ public:
 	// listVertexCache calls this
 	void			List();
 
+	vertexCacheResidencyStats_t ResidencyStats() const;
+	bool			BudgetSelfTest();
+
 private:
 	void			InitMemoryBlocks( int size );
 	void			ActuallyFree( vertCache_t *block );
 	void			ReclaimHeaderList( vertCache_t *list );
 	void			ReclaimAllHeaders();
+	bool			BlockProtectedByBudgetAge( const vertCache_t *block ) const;
+	void			PurgeLRUOverBudget();
 
 	static idCVar	r_showVertexCache;
 	static idCVar	r_vertexBufferMegs;
+	static idCVar	r_vertexBufferBudget;
+	static idCVar	r_vertexBufferBudgetFrames;
 
 	int				staticCountTotal;
 	int				staticAllocTotal;		// for end of frame purging
@@ -130,11 +158,17 @@ private:
 	int				dynamicCountThisFrame;
 	int				legacyAllocThisFrame;	// bytes used in tempBuffers[listNum]; separate from
 											// dynamicAllocThisFrame, which also counts bridged bytes
+	int				budgetPurgedThisFrame;
+	int				budgetPurgedBytesThisFrame;
+	int				budgetProtectedThisFrame;
+	int				budgetProtectedBytesThisFrame;
+	int				budgetOverBudgetBytes;
 
 	int				currentFrame;			// for purgable block tracking
 	int				listNum;				// currentFrame % NUM_VERTEX_FRAMES, determines which tempBuffers to use
 
 	bool			virtualMemory;			// not fast stuff
+	bool			initialized;			// false on dedicated/server paths that never open GL
 
 	bool			allocatingTempBuffer;	// force GL_STREAM_DRAW_ARB
 

@@ -37,7 +37,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m py_compile tools/validation/openq4_validate.py tools/tests/renderer_validation_matrix.py tools/tests/linux_arm64_ci_coverage.py tools/tests/linux_highdpi_mouse.py tools/tests/linux_vsync_support.py tools/tests/loading_continue_input.py tools/tests/macos_metal_bridge.py tools/tests/steam_deck_support.py
+          python -m py_compile tools/validation/openq4_validate.py tools/tests/renderer_validation_matrix.py tools/tests/renderer_promotion_evidence.py tools/tests/renderer_capture_summary.py tools/tests/renderer_shader_inventory.py tools/tests/renderer_visual_reference_summary.py tools/tests/renderer_performance_summary.py tools/tests/renderer_platform_summary.py tools/tests/renderer_candidate_summary.py tools/tests/linux_arm64_ci_coverage.py tools/tests/linux_highdpi_mouse.py tools/tests/linux_vsync_support.py tools/tests/loading_continue_input.py tools/tests/macos_metal_bridge.py tools/tests/steam_deck_support.py
           bash -n tools/build/meson_setup.sh
           bash -n tools/validation/validate_push.sh
           bash -n tools/validation/validate_pr.sh

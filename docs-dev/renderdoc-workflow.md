@@ -31,6 +31,23 @@ openQ4 now exposes two console commands:
 
 For the current renderer, the scripted wrapper intentionally fails fast unless you pass `-AllowUnsupported`. This avoids booting the game into a guaranteed unsupported capture attempt from VS Code tasks or ad-hoc command lines.
 
+## Long-Term Capture Evidence Summary
+
+Use `tools/tests/renderer_capture_summary.py` to create and review the long-term RenderDoc/API evidence bundle before any renderer-promotion claim:
+
+```powershell
+python tools\tests\renderer_capture_summary.py --output-dir .tmp\renderer-captures\<capture-run> --write-template
+```
+
+The standard capture layout is:
+
+- `.tmp/renderer-captures/<run>/<case-id>/<case-id>.rdc` for RenderDoc captures.
+- `.tmp/renderer-captures/<run>/<case-id>/<case-id>.api-trace.json` for API/driver trace evidence.
+- `.tmp/renderer-captures/<run>/<case-id>/review.json` for per-case review metadata.
+- `.tmp/renderer-captures/<run>/capture_summary.md` for the run-level summary.
+
+The default ARB2-compatible and explicit ARB2 rollback rows are API/driver-trace rows until compatibility-profile RenderDoc capture is proven reliable. Forced modern/core-profile rows use RenderDoc when supported. Low-overhead bind-count and graph-invalidation claims require API trace evidence in addition to any `.rdc` frame capture.
+
 ### Experimental Failure Reproduction
 
 If you are explicitly testing future renderer modernization work and still want to reproduce the current limitation, run:

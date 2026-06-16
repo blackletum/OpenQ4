@@ -1176,6 +1176,7 @@ extern idCVar r_glDebugOutput;			// enable OpenGL debug output callbacks when su
 extern idCVar r_glDebugSynchronous;		// make OpenGL debug callbacks synchronous
 extern idCVar r_rendererMetrics;			// 0 off, 1 summary, 2 verbose per-frame/pass metrics
 extern idCVar r_rendererGpuTimers;		// sample GL timer queries when renderer metrics are enabled
+extern idCVar r_rendererShutdownAudit;	// print renderer live-object audit markers during restart/shutdown
 extern idCVar r_rendererBenchmarkPreset;	// benchmark budget preset
 extern idCVar r_rendererPerfThresholdP95;	// custom P95 benchmark threshold in milliseconds
 extern idCVar r_rendererPerfThresholdP99;	// custom P99 benchmark threshold in milliseconds

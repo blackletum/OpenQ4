@@ -575,6 +575,27 @@ int idUploadManager::FrameCapacity( void ) const {
 	return ring.Capacity();
 }
 
+rendererUploadLiveObjects_t idUploadManager::LiveObjects( void ) const {
+	rendererUploadLiveObjects_t live;
+	memset( &live, 0, sizeof( live ) );
+	for ( int i = 0; i < RENDERER_UPLOAD_MAX_FRAME_BUFFERS; ++i ) {
+		if ( frameBuffers[i].vbo != 0 ) {
+			live.frameBuffers++;
+		}
+		if ( frameBuffers[i].mapped != NULL ) {
+			live.mappedFrameBuffers++;
+		}
+		if ( frameBuffers[i].fence != NULL ) {
+			live.frameFences++;
+		}
+	}
+	live.staticBuffersLive = allocator.StaticBuffersLive();
+	live.staticBytesLive = allocator.StaticBytesLive();
+	live.staticBuffersPooled = allocator.StaticBuffersPooled();
+	live.staticBytesPooled = allocator.StaticBytesPooled();
+	return live;
+}
+
 bool idUploadManager::CreateFrameBuffers( uploadPath_t requestedPath ) {
 	path = requestedPath;
 	if ( path == UPLOAD_PATH_DISABLED ) {
@@ -780,6 +801,10 @@ void R_RendererUpload_RecordLegacyStall( void ) {
 
 const rendererUploadStats_t &R_RendererUpload_Stats( void ) {
 	return rg_uploadManager.Stats();
+}
+
+rendererUploadLiveObjects_t R_RendererUpload_LiveObjects( void ) {
+	return rg_uploadManager.LiveObjects();
 }
 
 bool R_RendererUpload_DynamicFrameBridgeAvailable( void ) {
