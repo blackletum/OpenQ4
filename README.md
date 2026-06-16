@@ -123,6 +123,7 @@ Bug reports, compatibility reports, testing feedback, and code contributions are
 - **Justin Marshall** - Quake4Doom and early BSE reverse engineering reference work
 - **Robert Beckebans** - renderer modernization reference work, including RBDOOM-3-BFG inspiration
 - **id Software** and **Raven Software** - Quake 4 and the underlying technology
+- **akacross** (Discord user) - Thorough playtesting on Linux and Windows, a huge help moving the project forward!
 
 ---
 
