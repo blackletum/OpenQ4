@@ -27,6 +27,7 @@ typedef struct glStateCacheStats_s {
 	int		textureMisses;
 	int		samplerMisses;
 	int		textureMultiBindBatches;
+	int		textureMultiBindFallbackBatches;
 	int		samplerMultiBindBatches;
 	int		framebufferMisses;
 	int		blendMisses;

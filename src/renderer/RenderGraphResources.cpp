@@ -383,6 +383,9 @@ static void R_RenderGraphResources_CopyPassRecords( const idRenderGraph &graph )
 		record.clearOps = pass.clearCount;
 		record.resolveOps = pass.resolveCount;
 		record.invalidateOps = pass.invalidateCount;
+		record.invalidateCandidates = 0;
+		record.invalidateSkipped = 0;
+		record.invalidateSubmitted = 0;
 		record.presentOps = pass.presentCount;
 		record.enabled = pass.enabled;
 		record.legacyWrapped = pass.legacyWrapped;
@@ -873,6 +876,121 @@ static void R_RenderGraphResources_AddLegacyImports( const idRenderGraph &graph 
 	}
 }
 
+static renderGraphResourceHandle_t *R_RenderGraphResources_MutableHandleForGraphResource( int graphResourceIndex ) {
+	for ( int i = 0; i < rg_renderGraphResourceHandleCount; ++i ) {
+		if ( rg_renderGraphResourceHandles[i].graphResourceIndex == graphResourceIndex ) {
+			return &rg_renderGraphResourceHandles[i];
+		}
+	}
+	return NULL;
+}
+
+static renderGraphResourcePassRecord_t *R_RenderGraphResources_PassRecordForIndex( int passIndex ) {
+	if ( passIndex < 0 || passIndex >= rg_renderGraphResourcePassCount ) {
+		return NULL;
+	}
+	return &rg_renderGraphResourcePasses[passIndex];
+}
+
+static bool R_RenderGraphResources_HasLaterResourceUse( const idRenderGraph &graph, const renderGraphResourceAccess_t &access ) {
+	const unsigned int useMask = RENDER_GRAPH_ACCESS_READ
+		| RENDER_GRAPH_ACCESS_WRITE
+		| RENDER_GRAPH_ACCESS_CLEAR
+		| RENDER_GRAPH_ACCESS_RESOLVE
+		| RENDER_GRAPH_ACCESS_PRESENT;
+	for ( int i = 0; i < graph.NumResourceAccesses(); ++i ) {
+		const renderGraphResourceAccess_t &other = graph.ResourceAccess( i );
+		if ( other.resourceIndex != access.resourceIndex || other.passIndex <= access.passIndex ) {
+			continue;
+		}
+		if ( ( other.access & useMask ) != 0 ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool R_RenderGraphResources_AttachmentCanInvalidate( const renderGraphResourceHandle_t &handle ) {
+	return handle.attachment == GL_COLOR_ATTACHMENT0
+		|| handle.attachment == GL_DEPTH_ATTACHMENT
+		|| handle.attachment == GL_DEPTH_STENCIL_ATTACHMENT;
+}
+
+static void R_RenderGraphResources_RecordInvalidateSkip( renderGraphResourcePassRecord_t *passRecord, int &reason ) {
+	rg_renderGraphResourceStats.invalidateSkipped++;
+	reason++;
+	if ( passRecord != NULL ) {
+		passRecord->invalidateSkipped++;
+	}
+}
+
+static void R_RenderGraphResources_AuditInvalidationEligibility( const idRenderGraph &graph ) {
+	rg_renderGraphResourceStats.invalidateEnabled = r_rendererGraphInvalidate.GetBool();
+
+	for ( int i = 0; i < graph.NumResourceAccesses(); ++i ) {
+		const renderGraphResourceAccess_t &access = graph.ResourceAccess( i );
+		if ( ( access.access & RENDER_GRAPH_ACCESS_INVALIDATE ) == 0 ) {
+			continue;
+		}
+
+		rg_renderGraphResourceStats.invalidateTaggedAccesses++;
+		renderGraphResourcePassRecord_t *passRecord = R_RenderGraphResources_PassRecordForIndex( access.passIndex );
+
+		if ( access.resourceIndex < 0 || access.resourceIndex >= graph.NumResources() || passRecord == NULL ) {
+			R_RenderGraphResources_RecordInvalidateSkip( passRecord, rg_renderGraphResourceStats.invalidateSkippedInvalidResource );
+			continue;
+		}
+
+		const renderGraphResource_t &resource = graph.Resource( access.resourceIndex );
+		renderGraphResourceHandle_t *handle = R_RenderGraphResources_MutableHandleForGraphResource( access.resourceIndex );
+		if ( handle == NULL ) {
+			R_RenderGraphResources_RecordInvalidateSkip( passRecord, rg_renderGraphResourceStats.invalidateSkippedInvalidResource );
+			continue;
+		}
+
+		if ( !rg_renderGraphResourceStats.available ) {
+			R_RenderGraphResources_RecordInvalidateSkip( passRecord, rg_renderGraphResourceStats.invalidateSkippedUnavailable );
+			continue;
+		}
+		if ( resource.imported || handle->imported ) {
+			R_RenderGraphResources_RecordInvalidateSkip( passRecord, rg_renderGraphResourceStats.invalidateSkippedImported );
+			continue;
+		}
+		if ( resource.type == RENDER_GRAPH_RESOURCE_BUFFER || handle->type == RENDER_GRAPH_RESOURCE_BUFFER ) {
+			R_RenderGraphResources_RecordInvalidateSkip( passRecord, rg_renderGraphResourceStats.invalidateSkippedBuffer );
+			continue;
+		}
+		if ( !resource.transient || !handle->transient ) {
+			R_RenderGraphResources_RecordInvalidateSkip( passRecord, rg_renderGraphResourceStats.invalidateSkippedNonTransient );
+			continue;
+		}
+		if ( resource.presentable || handle->presentable ) {
+			R_RenderGraphResources_RecordInvalidateSkip( passRecord, rg_renderGraphResourceStats.invalidateSkippedPresentable );
+			continue;
+		}
+		if ( !R_RenderGraphResources_AttachmentCanInvalidate( *handle ) ) {
+			R_RenderGraphResources_RecordInvalidateSkip( passRecord, rg_renderGraphResourceStats.invalidateSkippedUnsupportedAttachment );
+			continue;
+		}
+		if ( access.passIndex != resource.lastPass || access.passIndex != handle->lastPass || R_RenderGraphResources_HasLaterResourceUse( graph, access ) ) {
+			R_RenderGraphResources_RecordInvalidateSkip( passRecord, rg_renderGraphResourceStats.invalidateSkippedNotLastUse );
+			continue;
+		}
+		if ( !handle->framebufferComplete || handle->framebuffer == 0 ) {
+			R_RenderGraphResources_RecordInvalidateSkip( passRecord, rg_renderGraphResourceStats.invalidateSkippedIncompleteFramebuffer );
+			continue;
+		}
+
+		rg_renderGraphResourceStats.invalidateCandidates++;
+		if ( rg_renderGraphResourceStats.invalidateEnabled ) {
+			rg_renderGraphResourceStats.invalidateArmedCandidates++;
+		}
+		if ( passRecord != NULL ) {
+			passRecord->invalidateCandidates++;
+		}
+	}
+}
+
 void R_RenderGraphResources_Init( const renderBackendCaps_t &caps, const renderFeatureSet_t &features ) {
 	R_RenderGraphResources_Shutdown();
 
@@ -919,10 +1037,12 @@ void R_RenderGraphResources_PrepareFrame( const idRenderGraph &graph ) {
 
 	if ( !rg_renderGraphResourceStats.available ) {
 		R_RenderGraphResources_AddGraphHandles( graph );
+		R_RenderGraphResources_AuditInvalidationEligibility( graph );
 		return;
 	}
 
 	R_RenderGraphResources_AddGraphHandles( graph );
+	R_RenderGraphResources_AuditInvalidationEligibility( graph );
 	rg_renderGraphResourceStats.prepared =
 		rg_renderGraphResourceStats.lifetimeValidationFailures == 0
 		&& rg_renderGraphResourceStats.incompleteFramebuffers == 0
@@ -959,7 +1079,7 @@ const renderGraphResourceHandle_t *R_RenderGraphResources_HandleForGraphResource
 
 void R_RenderGraphResources_PrintGfxInfo( void ) {
 	common->Printf(
-		"Renderer graph resources: initialized=%d available=%d supported=%d lowOverhead=%d handles=%d imported=%d transient=%d textures=%d buffers=%d physical=%d mipmapped=%d/%d dsa(tex=%d params=%d fbo=%d) classic(tex=%d fbo=%d) fbo=%d/%d status='%s'\n",
+		"Renderer graph resources: initialized=%d available=%d supported=%d lowOverhead=%d handles=%d imported=%d transient=%d textures=%d buffers=%d physical=%d mipmapped=%d/%d dsa(tex=%d params=%d fbo=%d) classic(tex=%d fbo=%d) fbo=%d/%d invalidate(enabled=%d tagged=%d candidates=%d armed=%d submitted=%d skipped=%d later=%d) status='%s'\n",
 		rg_renderGraphResourceStats.initialized ? 1 : 0,
 		rg_renderGraphResourceStats.available ? 1 : 0,
 		rg_renderGraphResourceStats.supported ? 1 : 0,
@@ -979,12 +1099,19 @@ void R_RenderGraphResources_PrintGfxInfo( void ) {
 		rg_renderGraphResourceStats.classicFramebufferAllocations,
 		rg_renderGraphResourceStats.completeFramebuffers,
 		rg_renderGraphResourceStats.framebufferCount,
+		rg_renderGraphResourceStats.invalidateEnabled ? 1 : 0,
+		rg_renderGraphResourceStats.invalidateTaggedAccesses,
+		rg_renderGraphResourceStats.invalidateCandidates,
+		rg_renderGraphResourceStats.invalidateArmedCandidates,
+		rg_renderGraphResourceStats.invalidateSubmitted,
+		rg_renderGraphResourceStats.invalidateSkipped,
+		rg_renderGraphResourceStats.invalidateSkippedNotLastUse,
 		rg_renderGraphResourceStats.lastFailure );
 }
 
 void R_RenderGraphResources_DumpLatest( void ) {
 	common->Printf(
-		"RenderGraphResource dump: prepared=%d lowOverhead=%d handles=%d graphResources=%d passes=%d physical=%d new=%d reused=%d aliasReused=%d mipmapped=%d/%d dsa(tex=%d params=%d fbo=%d) classic(tex=%d fbo=%d) fbo=%d/%d failures=%d overflow=%d status='%s'\n",
+		"RenderGraphResource dump: prepared=%d lowOverhead=%d handles=%d graphResources=%d passes=%d physical=%d new=%d reused=%d aliasReused=%d mipmapped=%d/%d dsa(tex=%d params=%d fbo=%d) classic(tex=%d fbo=%d) fbo=%d/%d invalidate(enabled=%d tagged=%d candidates=%d armed=%d submitted=%d skipped=%d unavailable=%d invalid=%d imported=%d buffer=%d nonTransient=%d presentable=%d later=%d incomplete=%d unsupported=%d) failures=%d overflow=%d status='%s'\n",
 		rg_renderGraphResourceStats.prepared ? 1 : 0,
 		rg_renderGraphResourceStats.lowOverheadReady ? 1 : 0,
 		rg_renderGraphResourceStats.handles,
@@ -1003,6 +1130,21 @@ void R_RenderGraphResources_DumpLatest( void ) {
 		rg_renderGraphResourceStats.classicFramebufferAllocations,
 		rg_renderGraphResourceStats.completeFramebuffers,
 		rg_renderGraphResourceStats.framebufferCount,
+		rg_renderGraphResourceStats.invalidateEnabled ? 1 : 0,
+		rg_renderGraphResourceStats.invalidateTaggedAccesses,
+		rg_renderGraphResourceStats.invalidateCandidates,
+		rg_renderGraphResourceStats.invalidateArmedCandidates,
+		rg_renderGraphResourceStats.invalidateSubmitted,
+		rg_renderGraphResourceStats.invalidateSkipped,
+		rg_renderGraphResourceStats.invalidateSkippedUnavailable,
+		rg_renderGraphResourceStats.invalidateSkippedInvalidResource,
+		rg_renderGraphResourceStats.invalidateSkippedImported,
+		rg_renderGraphResourceStats.invalidateSkippedBuffer,
+		rg_renderGraphResourceStats.invalidateSkippedNonTransient,
+		rg_renderGraphResourceStats.invalidateSkippedPresentable,
+		rg_renderGraphResourceStats.invalidateSkippedNotLastUse,
+		rg_renderGraphResourceStats.invalidateSkippedIncompleteFramebuffer,
+		rg_renderGraphResourceStats.invalidateSkippedUnsupportedAttachment,
 		rg_renderGraphResourceStats.lifetimeValidationFailures,
 		rg_renderGraphResourceStats.overflow ? 1 : 0,
 		rg_renderGraphResourceStats.lastFailure );
@@ -1010,7 +1152,7 @@ void R_RenderGraphResources_DumpLatest( void ) {
 	for ( int i = 0; i < rg_renderGraphResourcePassCount; ++i ) {
 		const renderGraphResourcePassRecord_t &pass = rg_renderGraphResourcePasses[i];
 		common->Printf(
-			"  pass[%d] %s category=%s accesses=%d read=%d write=%d clear=%d resolve=%d invalidate=%d present=%d enabled=%d legacy=%d packet=%d resource=%d\n",
+			"  pass[%d] %s category=%s accesses=%d read=%d write=%d clear=%d resolve=%d invalidate=%d candidates=%d skipped=%d submitted=%d present=%d enabled=%d legacy=%d packet=%d resource=%d\n",
 			pass.passIndex,
 			pass.name,
 			RenderPassCategory_Name( pass.category ),
@@ -1020,6 +1162,9 @@ void R_RenderGraphResources_DumpLatest( void ) {
 			pass.clearOps,
 			pass.resolveOps,
 			pass.invalidateOps,
+			pass.invalidateCandidates,
+			pass.invalidateSkipped,
+			pass.invalidateSubmitted,
 			pass.presentOps,
 			pass.enabled ? 1 : 0,
 			pass.legacyWrapped ? 1 : 0,
@@ -1153,9 +1298,11 @@ bool RendererRenderGraphResource_RunSelfTest( void ) {
 
 	R_RenderGraphResources_PrepareFrame( graph );
 	const renderGraphResourceManagerStats_t &stats = R_RenderGraphResources_Stats();
-	if ( !stats.prepared || stats.graphResources != 5 || stats.handles < 7 || stats.importedHandles < 4 || stats.transientHandles < 3 || stats.completeFramebuffers < 3 || stats.lifetimeValidationFailures != 0 || stats.overflow ) {
+	if ( !stats.prepared || stats.graphResources != 5 || stats.handles < 7 || stats.importedHandles < 4 || stats.transientHandles < 3 || stats.completeFramebuffers < 3
+		|| stats.invalidateTaggedAccesses != 3 || stats.invalidateCandidates != 3 || stats.invalidateSkipped != 0 || stats.invalidateSubmitted != 0
+		|| stats.lifetimeValidationFailures != 0 || stats.overflow ) {
 		common->Printf(
-			"RendererRenderGraphResource self-test detail: prepared=%d graphResources=%d handles=%d imported=%d transient=%d fbo=%d/%d lifetimeFailures=%d overflow=%d status='%s'\n",
+			"RendererRenderGraphResource self-test detail: prepared=%d graphResources=%d handles=%d imported=%d transient=%d fbo=%d/%d invalidate(tagged=%d candidates=%d armed=%d submitted=%d skipped=%d) lifetimeFailures=%d overflow=%d status='%s'\n",
 			stats.prepared ? 1 : 0,
 			stats.graphResources,
 			stats.handles,
@@ -1163,6 +1310,11 @@ bool RendererRenderGraphResource_RunSelfTest( void ) {
 			stats.transientHandles,
 			stats.completeFramebuffers,
 			stats.framebufferCount,
+			stats.invalidateTaggedAccesses,
+			stats.invalidateCandidates,
+			stats.invalidateArmedCandidates,
+			stats.invalidateSubmitted,
+			stats.invalidateSkipped,
 			stats.lifetimeValidationFailures,
 			stats.overflow ? 1 : 0,
 			stats.lastFailure );
@@ -1187,16 +1339,49 @@ bool RendererRenderGraphResource_RunSelfTest( void ) {
 		return false;
 	}
 
+	idRenderGraph unsafeInvalidateGraph;
+	if ( !unsafeInvalidateGraph.AddPass( RENDER_PASS_AUTHORED_POST, "unsafe-invalidate-write", true, true ) ) {
+		common->Printf( "RendererRenderGraphResource self-test failed: could not add unsafe invalidate write pass\n" );
+		return false;
+	}
+	const int unsafeScratch = unsafeInvalidateGraph.AddResource( "unsafeScratch", RENDER_GRAPH_RESOURCE_COLOR, false, true, false, 1 );
+	if ( unsafeScratch < 0
+		|| !unsafeInvalidateGraph.AddPassResource( 0, unsafeScratch, RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR | RENDER_GRAPH_ACCESS_INVALIDATE, "unsafe-write" )
+		|| !unsafeInvalidateGraph.AddPass( RENDER_PASS_PRESENT, "unsafe-invalidate-read", true, true )
+		|| !unsafeInvalidateGraph.AddPassResource( 1, unsafeScratch, RENDER_GRAPH_ACCESS_READ, "unsafe-read-later" ) ) {
+		common->Printf( "RendererRenderGraphResource self-test failed: could not build unsafe invalidate graph\n" );
+		return false;
+	}
+	R_RenderGraphResources_PrepareFrame( unsafeInvalidateGraph );
+	const renderGraphResourceManagerStats_t &unsafeStats = R_RenderGraphResources_Stats();
+	if ( !unsafeStats.prepared || unsafeStats.invalidateTaggedAccesses != 1 || unsafeStats.invalidateCandidates != 0 || unsafeStats.invalidateSkipped != 1 || unsafeStats.invalidateSkippedNotLastUse != 1 ) {
+		common->Printf(
+			"RendererRenderGraphResource self-test detail: unsafe invalidation prepared=%d tagged=%d candidates=%d skipped=%d later=%d status='%s'\n",
+			unsafeStats.prepared ? 1 : 0,
+			unsafeStats.invalidateTaggedAccesses,
+			unsafeStats.invalidateCandidates,
+			unsafeStats.invalidateSkipped,
+			unsafeStats.invalidateSkippedNotLastUse,
+			unsafeStats.lastFailure );
+		return false;
+	}
+	R_RenderGraphResources_PrepareFrame( graph );
+	const renderGraphResourceManagerStats_t &finalStats = R_RenderGraphResources_Stats();
+
 	common->Printf(
-		"RendererRenderGraphResource self-test passed (handles=%d imported=%d transient=%d physical=%d lowOverhead=%d dsaTex=%d dsaFbo=%d fbo=%d/%d)\n",
-		stats.handles,
-		stats.importedHandles,
-		stats.transientHandles,
-		stats.physicalAllocations,
-		stats.lowOverheadReady ? 1 : 0,
-		stats.dsaTextureAllocations,
-		stats.dsaFramebufferAllocations,
-		stats.completeFramebuffers,
-		stats.framebufferCount );
+		"RendererRenderGraphResource self-test passed (handles=%d imported=%d transient=%d physical=%d lowOverhead=%d dsaTex=%d dsaFbo=%d fbo=%d/%d invalidate=%d/%d armed=%d skipped=%d)\n",
+		finalStats.handles,
+		finalStats.importedHandles,
+		finalStats.transientHandles,
+		finalStats.physicalAllocations,
+		finalStats.lowOverheadReady ? 1 : 0,
+		finalStats.dsaTextureAllocations,
+		finalStats.dsaFramebufferAllocations,
+		finalStats.completeFramebuffers,
+		finalStats.framebufferCount,
+		finalStats.invalidateCandidates,
+		finalStats.invalidateTaggedAccesses,
+		finalStats.invalidateArmedCandidates,
+		finalStats.invalidateSkipped );
 	return true;
 }

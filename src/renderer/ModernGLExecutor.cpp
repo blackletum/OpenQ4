@@ -755,6 +755,80 @@ static void R_ModernGLExecutor_UpdateBuffer( GLenum target, GLuint buffer, GLsiz
 	glBufferSubData( target, 0, bytes, data );
 }
 
+static bool R_ModernGLExecutor_BufferHelperSelfTest( modernGLExecutorStats_t &stats ) {
+	if ( glGenBuffers == NULL || glBindBuffer == NULL || glBufferData == NULL || glBufferSubData == NULL || glDeleteBuffers == NULL ) {
+		common->Printf( "RendererModernGLExecutor buffer-helper self-test skipped: buffer entry points unavailable\n" );
+		return true;
+	}
+
+	struct lowOverheadRestore_t {
+		bool oldValue;
+		lowOverheadRestore_t() : oldValue( rg_modernGLExecutorLowOverheadReady ) {}
+		~lowOverheadRestore_t() { rg_modernGLExecutorLowOverheadReady = oldValue; }
+	};
+	lowOverheadRestore_t restoreLowOverhead;
+	rg_modernGLExecutorLowOverheadReady = false;
+
+	byte initialData[16];
+	byte updateData[16];
+	memset( initialData, 0x2a, sizeof( initialData ) );
+	memset( updateData, 0x5c, sizeof( updateData ) );
+
+	R_GLStateCache_InvalidateBufferBinding( GL_ARRAY_BUFFER, "modern executor buffer helper self-test" );
+
+	GLuint buffer = 0;
+	if ( !R_ModernGLExecutor_CreateBuffer( GL_ARRAY_BUFFER, sizeof( initialData ), initialData, GL_DYNAMIC_DRAW, buffer ) || buffer == 0 ) {
+		common->Printf( "RendererModernGLExecutor buffer-helper self-test failed: create helper did not allocate\n" );
+		return false;
+	}
+
+	const glStateCacheStats_t afterCreate = R_GLStateCache_Stats();
+	const bool createLeftBindingCached = !R_GLStateCache().BindBuffer( GL_ARRAY_BUFFER, buffer );
+	const glStateCacheStats_t afterCreateProbe = R_GLStateCache_Stats();
+	if ( !createLeftBindingCached || afterCreateProbe.hits <= afterCreate.hits || afterCreateProbe.misses != afterCreate.misses ) {
+		glDeleteBuffers( 1, &buffer );
+		idVertexCache::InvalidateBufferBindings();
+		R_GLStateCache_InvalidateBufferBinding( GL_ARRAY_BUFFER, "modern executor buffer helper self-test failed cleanup" );
+		common->Printf(
+			"RendererModernGLExecutor buffer-helper self-test failed: create helper disturbed cached buffer binding (hit=%d hits=%d/%d misses=%d/%d)\n",
+			createLeftBindingCached ? 1 : 0,
+			afterCreateProbe.hits,
+			afterCreate.hits,
+			afterCreateProbe.misses,
+			afterCreate.misses );
+		return false;
+	}
+
+	const glStateCacheStats_t beforeUpdate = R_GLStateCache_Stats();
+	R_ModernGLExecutor_UpdateBuffer( GL_ARRAY_BUFFER, buffer, sizeof( updateData ), updateData, stats );
+	const glStateCacheStats_t afterUpdate = R_GLStateCache_Stats();
+	const bool updateLeftBindingCached = !R_GLStateCache().BindBuffer( GL_ARRAY_BUFFER, buffer );
+	const glStateCacheStats_t afterUpdateProbe = R_GLStateCache_Stats();
+	if ( !updateLeftBindingCached || afterUpdateProbe.hits <= afterUpdate.hits || afterUpdateProbe.misses != afterUpdate.misses ) {
+		glDeleteBuffers( 1, &buffer );
+		idVertexCache::InvalidateBufferBindings();
+		R_GLStateCache_InvalidateBufferBinding( GL_ARRAY_BUFFER, "modern executor buffer helper self-test failed cleanup" );
+		common->Printf(
+			"RendererModernGLExecutor buffer-helper self-test failed: update helper disturbed cached buffer binding (hit=%d hits=%d/%d misses=%d/%d updateHits=%d/%d)\n",
+			updateLeftBindingCached ? 1 : 0,
+			afterUpdateProbe.hits,
+			afterUpdate.hits,
+			afterUpdateProbe.misses,
+			afterUpdate.misses,
+			afterUpdate.hits,
+			beforeUpdate.hits );
+		return false;
+	}
+
+	glDeleteBuffers( 1, &buffer );
+	idVertexCache::InvalidateBufferBindings();
+	R_GLStateCache_InvalidateBufferBinding( GL_ARRAY_BUFFER, "modern executor buffer helper self-test cleanup" );
+	common->Printf(
+		"RendererModernGLExecutor buffer-helper self-test passed (noZeroUnbind=1 createHit=1 updateHit=1 updateCachedHit=%d)\n",
+		afterUpdate.hits > beforeUpdate.hits ? 1 : 0 );
+	return true;
+}
+
 static bool R_ModernGLExecutor_StreamBufferData( const void *data, GLsizeiptr bytes, int alignment, modernGLStreamBufferBinding_t &binding, modernGLExecutorStats_t &stats ) {
 	(void)stats;
 	R_ModernGLExecutor_ResetStreamBinding( binding );
@@ -8333,6 +8407,9 @@ bool RendererModernGLExecutor_RunSelfTest( void ) {
 	if ( !RendererModernGLSubmitPlan_RunSelfTest() ) {
 		return false;
 	}
+	if ( !R_ModernGLExecutor_BufferHelperSelfTest( stats ) ) {
+		return false;
+	}
 	if ( rg_modernGLExecutorFeatures.gpuDriven ) {
 		if ( !rg_modernGLExecutorGpuDrivenReady || rg_modernGLExecutorSceneSSBO == 0 || rg_modernGLExecutorIndirectBuffer == 0 || rg_modernGLExecutorDrawRecordSSBO == 0 || rg_modernGLExecutorDrawRecordIndexBuffer == 0 || rg_modernGLExecutorBucketSSBO == 0 || rg_modernGLExecutorValidationSSBO == 0 || rg_modernGLExecutorComputeProgram == 0 ) {
 			common->Printf( "RendererModernGLExecutor self-test failed: GL43 GPU-driven resources unavailable\n" );
@@ -8373,7 +8450,7 @@ bool RendererModernGLExecutor_RunSelfTest( void ) {
 	}
 
 	common->Printf(
-		"RendererModernGLExecutor self-test passed (gpuScene=%d gpuIndirect=%d drawRecords=%d buckets=%d dispatches=%d submitSort=%d/%d saved=%d textureTable=%d/%d vertexBinding=%d vertexFormat=%d vertexSource=%d vertexLegacy=%d vertexHits=%d dsaUpdates=%d multiBindBatches=%d uploadStream=%d/%d hizReduce=%d)\n",
+		"RendererModernGLExecutor self-test passed (gpuScene=%d gpuIndirect=%d drawRecords=%d buckets=%d dispatches=%d submitSort=%d/%d saved=%d textureTable=%d/%d vertexBinding=%d vertexFormat=%d vertexSource=%d vertexLegacy=%d vertexHits=%d dsaUpdates=%d multiBindBatches=%d uploadStream=%d/%d noZeroUnbind=1 hizReduce=%d)\n",
 		stats.gpuDrivenSceneRecords,
 		stats.gpuDrivenIndirectRecords,
 		stats.gpuDrivenDrawRecords,

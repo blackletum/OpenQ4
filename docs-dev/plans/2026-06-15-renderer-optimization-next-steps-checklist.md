@@ -128,11 +128,11 @@ The `Immediate` phase from `2026-06-15-renderer-optimization.md` is complete as 
   - [x] `sp-storage2`: 214.4 Hz / p95 8 ms
   - [x] `sp-medlabs`: 223.1 Hz / p95 7 ms
   - [x] `sp-mcc-landing`: 239.9 Hz / p95 6 ms
-- [ ] Required multiplayer benchmark capture passes:
+- [x] Required multiplayer benchmark capture passes:
   - [x] `mp-q4dm1-listen` server/client launch reaches `mp/q4dm1` and arms the map-load autoexec path.
   - [x] A clean staged direct MP listen-server sanity launch reaches `mp/q4dm1`, renders, and shuts down normally from scripted `quit`.
-  - [ ] The MP benchmark autoexec executes after the listen-server/client reach active draw.
-  - [ ] Server and client benchmark summaries, pacing data, screenshots, `gfxInfo`, and selected renderer tier are captured.
+  - [x] The MP benchmark autoexec executes after the listen-server/client reach active draw.
+  - [x] Server and client benchmark summaries, pacing data, screenshots, `gfxInfo`, and selected renderer tier are captured.
 - [x] Reject the naive MP draw-hook experiment and restore GameLibs after it caused fast no-log harness exits.
 - [x] Inspect safe-matrix logs for renderer warning signatures:
   - [x] Full default fixed report shows `32 passed, 0 failed`.
@@ -157,17 +157,20 @@ The `Immediate` phase from `2026-06-15-renderer-optimization.md` is complete as 
 - [x] Focused lifetime-hardening rerun report: `.tmp/renderer-validation/renderer-optimization-next-lifetime-rerun/renderer_validation_report.md`
 - [x] Broader lifetime-hardening safe report: `.tmp/renderer-validation/renderer-optimization-next-lifetime-default/renderer_validation_report.md`
 - [x] Focused immediate-plan audit report: `.tmp/renderer-validation/renderer-immediate-plan-audit/renderer_validation_report.md`
-- [x] Required gameplay profile report: `.tmp/renderer-gameplay/renderer-optimization-next-required/renderer_gameplay_benchmark_report.md` (partial sign-off: six SP cases passed; `mp-q4dm1-listen` capture blocked)
+- [x] Required gameplay profile report: `.tmp/renderer-gameplay/renderer-optimization-next-required/renderer_gameplay_benchmark_report.md` (historical split result: six SP cases passed; `mp-q4dm1-listen` was completed later in `.tmp/rgmp2/renderer_gameplay_benchmark_report.md`)
+- [x] Complete required gameplay rerun after MP trigger/harness hardening: `.tmp/renderer-gameplay/ntr-required-r2/renderer_gameplay_benchmark_report.md` (`7 passed, 0 failed`)
 - [x] Post-MP cleanup SP smoke report: `.tmp/renderer-gameplay/renderer-optimization-next-postmp-sp-smoke/renderer_gameplay_benchmark_report.md`
 - [x] Clean staged MP sanity log: `.tmp/renderer-gameplay/manual-mp-noauto-clean/q4base/logs/openq4_manual_mp_noauto_clean.log`
+- [x] Debug-output opt-in restart proof: `.tmp/renderer-validation/near-term-debug-output-round4/renderer_validation_report.md` (`2 passed, 0 failed`)
+- [x] Upload-stress profiling bundle: `.tmp/renderer-validation/near-term-upload-stress-round4/upload_stress_summary.md`
 
 ## Open Questions
 
-- [ ] Should the explicit debug-output callback probe become default on platforms where `actualDebug=1` is available, or remain an opt-in developer diagnostic?
-- [ ] Should the validation harness gain explicit skip semantics for platform-conditional cases instead of opt-in-only cases?
-- [ ] Should GL debug callback messages be promoted into renderer metrics counters in addition to log output?
+- [x] Should the explicit debug-output callback probe become default on platforms where `actualDebug=1` is available, or remain an opt-in developer diagnostic? Answer: keep real-debug-context probes opt-in so default validation stays portable.
+- [x] Should the validation harness gain explicit skip semantics for platform-conditional cases instead of opt-in-only cases? Answer: no skip semantics for this tranche; opt-in-only debug-output cases are the selected platform policy.
+- [x] Should GL debug callback messages be promoted into renderer metrics counters in addition to log output? Answer: keep them as developer-only diagnostics for the near term, not release-signoff metric counters.
 - [x] Should the required gameplay profile be run in this round, or saved for the next renderer-validation round after reviewing the smoke screenshot/log counters? Answer: run it in this round.
 - [x] Should other self-test frame builders that keep legacy draw-surface pointers be refactored into explicit lifetime structs proactively, even if their current pass mix does not dereference those pointers after helper return? Answer: refactor helper-return cases now; leave same-scope self-tests unchanged after auditing their lifetimes.
-- [ ] What is the right MP benchmark trigger point for listen-server/client runs so `rendererBenchmarkCapture`, screenshots, `gfxInfo`, and tier logging happen after active draw instead of never firing or firing before the map is ready?
-- [ ] Why did the naive MP game draw-hook autoexec experiment cause fast no-log exits in the benchmark harness while direct staged MP listen-server startup remained healthy?
-- [ ] Should the gameplay benchmark harness surface fast no-log exits with captured launch metadata and an explicit failure reason?
+- [x] What is the right MP benchmark trigger point for listen-server/client runs so `rendererBenchmarkCapture`, screenshots, `gfxInfo`, and tier logging happen after active draw instead of never firing or firing before the map is ready? Answer: arm at map activation, execute from game-library active-frame timing (`RunFrame` for listen server, local `ClientPrediction` for loopback client), and keep the draw path as an additional render-readiness signal.
+- [x] Why did the naive MP game draw-hook autoexec experiment cause fast no-log exits in the benchmark harness while direct staged MP listen-server startup remained healthy? Answer: the long diagnostic output path exceeded classic Windows path limits for expected logs/screenshots; the harness now emits path-length warnings, and compact output dirs such as `.tmp\rgmp2` avoid that false failure.
+- [x] Should the gameplay benchmark harness surface fast no-log exits with captured launch metadata and an explicit failure reason? Answer: yes; the harness report now records launch commands, role/save/base/dev metadata, exit/timeout state, and explicit missing/empty-log reasons.

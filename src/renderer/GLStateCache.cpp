@@ -419,6 +419,7 @@ bool idGLStateCache::BindTextures( GLuint first, GLsizei count, const GLuint *te
 	if ( glBindTextures == NULL ) {
 		const GLenum knownTargets[3] = { GL_TEXTURE_2D, GL_TEXTURE_3D, GL_TEXTURE_CUBE_MAP };
 		bool issued = false;
+		stats.textureMultiBindFallbackBatches++;
 		for ( GLsizei i = 0; i < clampedCount; ++i ) {
 			const int unit = static_cast<int>( first + i );
 			const GLenum target = textureTargets != NULL && textureTargets[i] != 0 ? textureTargets[i] : GL_TEXTURE_2D;
@@ -804,7 +805,7 @@ const glStateCacheStats_t &R_GLStateCache_Stats( void ) {
 void R_GLStateCache_PrintGfxInfo( void ) {
 	const glStateCacheStats_t &stats = R_GLStateCache_Stats();
 	common->Printf(
-		"Modern GL state cache: init=%d debugGroups=%d labels=%d units=%d uboBindings=%d ssboBindings=%d hits=%d misses=%d textureMultiBind=%d samplerMultiBind=%d invalidations=%d legacyResets=%d last='%s'\n",
+		"Modern GL state cache: init=%d debugGroups=%d labels=%d units=%d uboBindings=%d ssboBindings=%d hits=%d misses=%d textureMultiBind=%d textureMultiBindFallback=%d samplerMultiBind=%d invalidations=%d legacyResets=%d last='%s'\n",
 		stats.initialized ? 1 : 0,
 		stats.debugGroupsAvailable ? 1 : 0,
 		stats.objectLabelsAvailable ? 1 : 0,
@@ -814,6 +815,7 @@ void R_GLStateCache_PrintGfxInfo( void ) {
 		stats.hits,
 		stats.misses,
 		stats.textureMultiBindBatches,
+		stats.textureMultiBindFallbackBatches,
 		stats.samplerMultiBindBatches,
 		stats.forcedInvalidations,
 		stats.legacyHandoffResets,
@@ -911,8 +913,22 @@ bool RendererGLStateCache_RunSelfTest( void ) {
 	{
 		GLuint textureNames[3] = { 0, 0, 0 };
 		GLenum textureTargets[3] = { GL_TEXTURE_2D, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_2D };
+		glGenTextures( 3, textureNames );
+		const int fallbackBatchesBefore = cache.Stats().textureMultiBindFallbackBatches;
+		PFNGLBINDTEXTURESPROC savedBindTextures = glBindTextures;
+		glBindTextures = NULL;
 		cache.BindTextures( 0, 3, textureNames, textureTargets );
 		cache.BindTextures( 0, 3, textureNames, textureTargets );
+		glBindTextures = savedBindTextures;
+		const int mixedTargetFallbackBatches = cache.Stats().textureMultiBindFallbackBatches - fallbackBatchesBefore;
+		if ( mixedTargetFallbackBatches <= 0 ) {
+			glDeleteTextures( 3, textureNames );
+			common->Printf( "RendererGLStateCache self-test failed: mixed-target texture fallback was not exercised\n" );
+			return false;
+		}
+		GLuint clearTextureNames[3] = { 0, 0, 0 };
+		cache.BindTextures( 0, 3, clearTextureNames, textureTargets );
+		glDeleteTextures( 3, textureNames );
 	}
 	if ( glBindSamplers != NULL ) {
 		GLuint samplerNames[2] = { 0, 0 };
@@ -941,10 +957,11 @@ bool RendererGLStateCache_RunSelfTest( void ) {
 	cache.InvalidateAll( "self-test complete" );
 	GL_ClearStateDelta();
 	common->Printf(
-		"RendererGLStateCache self-test passed (hits=%d misses=%d textureMultiBind=%d samplerMultiBind=%d invalidations=%d legacyResets=%d)\n",
+		"RendererGLStateCache self-test passed (hits=%d misses=%d textureMultiBind=%d textureMultiBindFallback=%d mixedTargetFallback=1 samplerMultiBind=%d invalidations=%d legacyResets=%d)\n",
 		afterLegacy.hits,
 		afterLegacy.misses,
 		beforeLegacy.textureMultiBindBatches,
+		beforeLegacy.textureMultiBindFallbackBatches,
 		beforeLegacy.samplerMultiBindBatches,
 		afterLegacy.forcedInvalidations,
 		afterLegacy.legacyHandoffResets );

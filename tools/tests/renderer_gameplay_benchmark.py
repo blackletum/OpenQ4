@@ -17,6 +17,7 @@ import math
 import os
 import platform
 import re
+import shlex
 import struct
 import subprocess
 import sys
@@ -203,6 +204,86 @@ LENS_FLARE_SIGNOFF_MATRIX = [
     },
 ]
 
+UPLOAD_PRESSURE_VARIANTS: dict[str, dict[str, Any]] = {
+    "default": {
+        "purpose": "current upload defaults for the selected renderer tier",
+        "cvars": (),
+    },
+    "persistent": {
+        "purpose": "explicit persistent-mapped upload request on GL 4.4+ capable drivers",
+        "cvars": (
+            ("r_rendererUploadPersistent", "1"),
+        ),
+    },
+    "reduced-ring": {
+        "purpose": "smaller 4 MB per-frame upload ring with the normal frame-buffer count",
+        "cvars": (
+            ("r_rendererUploadMegs", "4"),
+            ("r_rendererUploadFrameBuffers", "4"),
+            ("r_rendererUploadPersistent", "1"),
+        ),
+    },
+    "min-frame-buffers": {
+        "purpose": "minimum safe upload frame-buffer rotation depth with the default ring size",
+        "cvars": (
+            ("r_rendererUploadMegs", "16"),
+            ("r_rendererUploadFrameBuffers", "3"),
+            ("r_rendererUploadPersistent", "1"),
+        ),
+    },
+    "map-range": {
+        "purpose": "persistent mapping disabled, exercising the map-range/subdata fallback tier available on the target driver",
+        "cvars": (
+            ("r_rendererUploadPersistent", "0"),
+        ),
+    },
+}
+
+GRAPH_INVALIDATION_VARIANTS: dict[str, dict[str, Any]] = {
+    "default": {
+        "purpose": "current default graph invalidation policy; candidates are counted but not armed",
+        "cvars": (),
+    },
+    "armed": {
+        "purpose": "default-off graph invalidation path armed for eligibility comparison without submitting GL discard calls",
+        "cvars": (
+            ("r_rendererGraphInvalidate", "1"),
+        ),
+    },
+}
+
+PERFORMANCE_COMPARISON_VARIANTS: dict[str, dict[str, Any]] = {
+    "default": {
+        "purpose": "current r_renderer best default path with guarded modern promotion disabled",
+        "cvars": (),
+    },
+    "arb2": {
+        "purpose": "explicit ARB2 rollback/baseline path for ARB2-or-better comparisons",
+        "cvars": (
+            ("r_renderer", "arb2"),
+            ("r_rendererModernExecutor", "0"),
+            ("r_rendererModernSubmit", "0"),
+            ("r_rendererModernVisible", "0"),
+            ("r_rendererModernAutoPromote", "0"),
+        ),
+    },
+    "executor": {
+        "purpose": "modern executor preparation path enabled while visible output remains on the compatibility bridge",
+        "cvars": (
+            ("r_rendererModernExecutor", "1"),
+            ("r_rendererModernSubmit", "0"),
+            ("r_rendererModernVisible", "0"),
+            ("r_rendererModernAutoPromote", "0"),
+        ),
+    },
+}
+
+PROFILE_LAUNCH_VARIANT_TABLES: dict[str, dict[str, dict[str, Any]]] = {
+    "upload-pressure": UPLOAD_PRESSURE_VARIANTS,
+    "graph-invalidation": GRAPH_INVALIDATION_VARIANTS,
+    "performance-comparison": PERFORMANCE_COMPARISON_VARIANTS,
+}
+
 SHADOW_DEBUG_PRESET_MODES = (1, 2, 3, 4, 5, 6, 7, 12, 13, 14)
 
 for debug_mode in SHADOW_DEBUG_PRESET_MODES:
@@ -299,6 +380,71 @@ PROFILE_DEFAULTS = {
         "shadows": ("default",),
         "lensFlare": ("off", "corona", "high"),
     },
+    "upload-pressure": {
+        "cases": ("sp-storage1", "sp-airdefense1", "sp-medlabs"),
+        "tiers": ("auto",),
+        "maxfps": ("0",),
+        "swap": ("0",),
+        "display": ("windowed",),
+        "shadows": ("default",),
+        "lensFlare": ("default",),
+        "launchVariants": tuple(UPLOAD_PRESSURE_VARIANTS.keys()),
+    },
+    "low-overhead-state": {
+        "cases": ("sp-storage1", "sp-airdefense1", "sp-medlabs"),
+        "tiers": ("gl33", "gl45"),
+        "maxfps": ("0",),
+        "swap": ("0",),
+        "display": ("windowed",),
+        "shadows": ("default",),
+        "lensFlare": ("default",),
+        "modernExecutor": True,
+        "rendererMetricsLevel": 2,
+    },
+    "graph-invalidation": {
+        "cases": ("lensflare-storage1", "lensflare-airdefense1", "sp-medlabs"),
+        "tiers": ("auto",),
+        "maxfps": ("0",),
+        "swap": ("0",),
+        "display": ("windowed",),
+        "shadows": ("default",),
+        "lensFlare": ("corona",),
+        "launchVariants": tuple(GRAPH_INVALIDATION_VARIANTS.keys()),
+    },
+    "performance-comparison": {
+        "cases": ("sp-storage1", "sp-airdefense1", "sp-storage2", "sp-medlabs"),
+        "tiers": ("auto",),
+        "maxfps": ("0",),
+        "swap": ("0",),
+        "display": ("windowed",),
+        "shadows": ("default",),
+        "lensFlare": ("default",),
+        "launchVariants": tuple(PERFORMANCE_COMPARISON_VARIANTS.keys()),
+    },
+    "presentation-comparison": {
+        "cases": ("sp-storage1", "sp-airdefense1", "sp-storage2", "sp-medlabs", "mp-q4dm1-listen"),
+        "tiers": ("auto",),
+        "maxfps": PRESENTATION_MAXFPS,
+        "swap": PRESENTATION_SWAP_INTERVALS,
+        "display": ("windowed",),
+        "shadows": ("default",),
+        "lensFlare": ("default",),
+    },
+    "visual-comparison": {
+        "cases": (
+            "lensflare-airdefense1",
+            "sp-medlabs",
+            "sp-mcc-landing",
+            "sp-storage2",
+            "mp-q4dm1-listen",
+        ),
+        "tiers": ("auto",),
+        "maxfps": ("240",),
+        "swap": ("0",),
+        "display": ("windowed",),
+        "shadows": ("default",),
+        "lensFlare": ("high",),
+    },
     "postaa-state-poison": {
         "cases": ("sp-airdefense1",),
         "tiers": ("auto",),
@@ -382,6 +528,9 @@ class RunSpec:
     shadow_preset: str
     lens_flare_preset: str
     renderer: str
+    upload_variant: str = "default"
+    variant_prefix: str = "variant"
+    launch_cvars: tuple[tuple[str, str], ...] = ()
 
     @property
     def fullscreen(self) -> bool:
@@ -399,6 +548,8 @@ class RunSpec:
         ]
         if self.lens_flare_preset != "default":
             parts.append(f"lf{self.lens_flare_preset}")
+        if self.upload_variant != "default":
+            parts.append(f"{self.variant_prefix}-{self.upload_variant}")
         parts.append(self.renderer)
         return sanitize_case_id("_".join(parts))
 
@@ -454,10 +605,45 @@ def sanitize_case_id(case_id: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", case_id)
 
 
+def compact_filesystem_id(case_id: str, max_length: int = 56) -> str:
+    sanitized = sanitize_case_id(case_id)
+    if len(sanitized) <= max_length:
+        return sanitized
+    digest = hashlib.sha1(sanitized.encode("utf-8")).hexdigest()[:10]
+    stem_limit = max(8, max_length - len(digest) - 1)
+    stem = sanitized[:stem_limit].rstrip("._-") or "case"
+    return f"{stem}-{digest}"
+
+
 def split_csv(value: str, defaults: tuple[str, ...]) -> tuple[str, ...]:
     if not value:
         return defaults
     return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
+def profile_launch_variants(defaults: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(defaults.get("launchVariants", ("default",)))
+
+
+def profile_launch_variant_table(profile: str) -> dict[str, dict[str, Any]]:
+    return PROFILE_LAUNCH_VARIANT_TABLES.get(profile, {"default": {"purpose": "current defaults", "cvars": ()}})
+
+
+def profile_launch_variant_prefix(profile: str) -> str:
+    if profile == "upload-pressure":
+        return "upload"
+    if profile == "graph-invalidation":
+        return "graph"
+    if profile == "performance-comparison":
+        return "perf"
+    return "variant"
+
+
+def profile_launch_variant_cvars(profile: str, variant: str) -> tuple[tuple[str, str], ...]:
+    table = profile_launch_variant_table(profile)
+    if variant not in table:
+        raise ValueError(f"unknown {profile} launch variant '{variant}'")
+    return tuple(table[variant].get("cvars", ()))
 
 
 def parse_extra_cvars(values: list[str]) -> tuple[tuple[str, str], ...]:
@@ -562,10 +748,12 @@ def build_scripted_capture_lines(
     settle_frames: int,
     sample_frames: int,
     sample_msec: int,
+    quit_wait_frames: int = 5,
     extra_cvars: tuple[tuple[str, str], ...] = (),
     exec_commands: tuple[str, ...] = (),
     gpu_timers: bool = False,
     renderer_metrics: bool = True,
+    renderer_metrics_level: int = 1,
     capture_index: int = 0,
 ) -> tuple[list[str], str]:
     shot_name = f"screenshots/renderer-bench/{role}_{capture_index}.tga"
@@ -594,8 +782,9 @@ def build_scripted_capture_lines(
     lines.append("framePacingReset")
     sample_wait = f"waitMsec {max(1, sample_msec)}" if sample_msec > 0 else f"wait {max(1, sample_frames)}"
     if renderer_metrics:
+        metrics_level = max(1, renderer_metrics_level)
         lines += [
-            "r_rendererMetrics 1",
+            f"r_rendererMetrics {metrics_level}",
             f"r_rendererGpuTimers {1 if gpu_timers else 0}",
             sample_wait,
             "rendererBenchmarkCapture",
@@ -611,7 +800,7 @@ def build_scripted_capture_lines(
         "framePacingSnapshot",
         "gfxInfo",
         f'screenshot "{shot_name}"',
-        "wait 5",
+        f"wait {max(1, quit_wait_frames)}",
         "quit",
     ]
     return lines, shot_name
@@ -625,10 +814,12 @@ def write_autoexec_cfg(
     settle_frames: int,
     sample_frames: int,
     sample_msec: int,
+    quit_wait_frames: int = 5,
     extra_cvars: tuple[tuple[str, str], ...] = (),
     exec_commands: tuple[str, ...] = (),
     gpu_timers: bool = False,
     renderer_metrics: bool = True,
+    renderer_metrics_level: int = 1,
     capture_index: int = 0,
 ) -> tuple[str, str]:
     lines, shot_name = build_scripted_capture_lines(
@@ -638,10 +829,12 @@ def write_autoexec_cfg(
         settle_frames,
         sample_frames,
         sample_msec,
+        quit_wait_frames,
         extra_cvars,
         exec_commands,
         gpu_timers,
         renderer_metrics,
+        renderer_metrics_level,
         capture_index,
     )
     cfg_rel = f"renderer-bench/{role}_{capture_index}.cfg"
@@ -656,28 +849,108 @@ def write_autoexec_cfg(
     return cfg_rel, shot_name
 
 
-def find_log(savepath: Path, log_name: str) -> Path | None:
-    candidates = [
+def log_candidates(savepath: Path, log_name: str) -> list[Path]:
+    return [
         savepath / "baseoq4" / "logs" / log_name,
         savepath / "q4base" / "logs" / log_name,
         savepath / "logs" / log_name,
     ]
+
+
+def find_log(savepath: Path, log_name: str) -> Path | None:
+    candidates = log_candidates(savepath, log_name)
     for candidate in candidates:
         if candidate.exists():
             return candidate
     return None
 
 
-def find_screenshot(savepath: Path, relative_name: str) -> Path | None:
+def screenshot_candidates(savepath: Path, relative_name: str) -> list[Path]:
     rel = Path(relative_name.replace("/", os.sep))
-    for game_dir in ("baseoq4", "q4base"):
-        candidate = savepath / game_dir / rel
+    return [
+        savepath / "baseoq4" / rel,
+        savepath / "q4base" / rel,
+        savepath / rel,
+    ]
+
+
+def autoexec_candidates(savepath: Path, cfg_rel: str) -> list[Path]:
+    rel = Path(cfg_rel.replace("/", os.sep))
+    return [
+        savepath / "baseoq4" / rel,
+        savepath / "q4base" / rel,
+        savepath / rel,
+    ]
+
+
+def windows_path_length_warning(label: str, paths: list[str]) -> str:
+    if os.name != "nt":
+        return ""
+    long_paths = [path for path in paths if len(path) >= 260]
+    if not long_paths:
+        return ""
+    return f"{label} path length >=260 chars (max {max(len(path) for path in long_paths)})"
+
+
+def find_screenshot(savepath: Path, relative_name: str) -> Path | None:
+    candidates = screenshot_candidates(savepath, relative_name)
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
         if candidate.exists():
             return candidate
-    candidate = savepath / rel
-    if candidate.exists():
-        return candidate
     return None
+
+
+def format_command(command: list[str]) -> str:
+    if os.name == "nt":
+        return subprocess.list2cmdline(command)
+    return " ".join(shlex.quote(part) for part in command)
+
+
+def cvar_pair_payload(cvars: tuple[tuple[str, str], ...]) -> list[dict[str, str]]:
+    return [{"name": str(name), "value": str(value)} for name, value in cvars]
+
+
+def role_launch_metadata(
+    root: Path,
+    executable: Path,
+    launch_args: list[str],
+    cwd: Path,
+    savepath: Path,
+    basepath: str,
+    role: str,
+    log_name: str,
+    screenshot_rel: str,
+    port: int | None = None,
+    autoexec_cfg: str = "",
+    launch_cvars: tuple[tuple[str, str], ...] = (),
+    script_cvars: tuple[tuple[str, str], ...] = (),
+    exec_commands: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    command = [str(executable)] + [str(arg) for arg in launch_args]
+    metadata: dict[str, Any] = {
+        "role": role,
+        "executable": str(executable),
+        "launchCommand": format_command(command),
+        "workingDirectory": str(cwd),
+        "savepath": str(savepath),
+        "devpath": str(root / ".install"),
+        "basepath": basepath,
+        "gameDir": "baseoq4",
+        "autoexecCfg": autoexec_cfg,
+        "expectedAutoexecPaths": [str(path) for path in autoexec_candidates(savepath, autoexec_cfg)] if autoexec_cfg else [],
+        "expectedLogPaths": [str(path) for path in log_candidates(savepath, log_name)],
+        "expectedScreenshotPaths": [str(path) for path in screenshot_candidates(savepath, screenshot_rel)],
+        "launchCvars": cvar_pair_payload(launch_cvars),
+        "scriptCvars": cvar_pair_payload(script_cvars),
+        "execCommands": list(exec_commands),
+    }
+    if port is not None:
+        metadata["port"] = port
+    return metadata
 
 
 def read_text(path: Path | None) -> str:
@@ -723,10 +996,405 @@ def parse_frame_pacing(line: str) -> dict[str, str]:
     return result
 
 
+def parse_benchmark_capture(line: str) -> dict[str, str]:
+    if not line:
+        return {}
+    result: dict[str, str] = {}
+    upload_match = re.search(r"work\(upload=(\d+)KB", line)
+    if upload_match:
+        result["benchmarkUploadKB"] = upload_match.group(1)
+    return result
+
+
+def parse_renderer_metrics_line(line: str) -> dict[str, str]:
+    if not line:
+        return {}
+    result: dict[str, str] = {}
+    phase_match = re.search(
+        r"tier=([^\s]+) fe=(\d+)ms visibility=(\d+)ms packet=(\d+)ms graph=(\d+)ms "
+        r"submit=(\d+)ms be=(\d+)ms present=(\d+)ms gpu=([^\s]+) views=(\d+) ents=(\d+) "
+        r"lights=(\d+) draws=(\d+)",
+        line,
+    )
+    if phase_match:
+        (
+            tier,
+            front_end_ms,
+            visibility_ms,
+            packet_ms,
+            graph_ms,
+            submit_ms,
+            backend_ms,
+            present_ms,
+            gpu_text,
+            views,
+            entities,
+            lights,
+            draws,
+        ) = phase_match.groups()
+        result.update(
+            {
+                "metricsTier": tier,
+                "frontEndMs": front_end_ms,
+                "visibilityMs": visibility_ms,
+                "packetMs": packet_ms,
+                "graphMs": graph_ms,
+                "submitMs": submit_ms,
+                "backendMs": backend_ms,
+                "presentMs": present_ms,
+                "gpuMs": gpu_text,
+                "views": views,
+                "visibleEntities": entities,
+                "viewLights": lights,
+                "draws": draws,
+            }
+        )
+    summary_match = re.search(
+        r"uploads=(\d+)KB stalls=(\d+) ring=(\d+)/(\d+)KB overflow=(\d+)KB "
+        r"static=(\d+)KB/(\d+) live=(\d+)/(\d+)KB",
+        line,
+    )
+    if summary_match:
+        (
+            upload_kb,
+            stalls,
+            ring_high_kb,
+            ring_capacity_kb,
+            overflow_kb,
+            static_upload_kb,
+            static_allocs,
+            static_live,
+            static_live_kb,
+        ) = summary_match.groups()
+        result.update(
+            {
+                "metricsUploadKB": upload_kb,
+                "frameStalls": stalls,
+                "ringHighWaterKB": ring_high_kb,
+                "ringCapacityKB": ring_capacity_kb,
+                "ringOverflowKB": overflow_kb,
+                "staticUploadKB": static_upload_kb,
+                "staticUploadAllocs": static_allocs,
+                "staticLiveBuffers": static_live,
+                "staticLiveKB": static_live_kb,
+            }
+        )
+    else:
+        detailed_match = re.search(
+            r"uploads=(\d+) stalls=(\d+) ring=(\d+)/(\d+)KB allocs=(\d+) overflow=(\d+) "
+            r"static=(\d+)KB/(\d+) live=(\d+)/(\d+)KB writes\(p=(\d+) map=(\d+) sub=(\d+)\)",
+            line,
+        )
+        if detailed_match:
+            (
+                upload_bytes,
+                stalls,
+                ring_high_kb,
+                ring_capacity_kb,
+                frame_allocs,
+                overflow_kb,
+                static_upload_kb,
+                static_allocs,
+                static_live,
+                static_live_kb,
+                persistent_writes,
+                map_writes,
+                subdata_writes,
+            ) = detailed_match.groups()
+            result.update(
+                {
+                    "metricsUploadBytes": upload_bytes,
+                    "frameStalls": stalls,
+                    "ringHighWaterKB": ring_high_kb,
+                    "ringCapacityKB": ring_capacity_kb,
+                    "frameUploadAllocs": frame_allocs,
+                    "ringOverflowKB": overflow_kb,
+                    "staticUploadKB": static_upload_kb,
+                    "staticUploadAllocs": static_allocs,
+                    "staticLiveBuffers": static_live,
+                    "staticLiveKB": static_live_kb,
+                    "persistentWrites": persistent_writes,
+                    "mapRangeWrites": map_writes,
+                    "subDataWrites": subdata_writes,
+                }
+            )
+    state_summary = re.search(r"stateCache=(\d+)/(\d+) invalid=(\d+) legacyReset=(\d+)", line)
+    if state_summary:
+        hits, misses, invalidations, legacy_resets = state_summary.groups()
+        result.update(
+            {
+                "stateCacheHits": hits,
+                "stateCacheMisses": misses,
+                "stateCacheInvalidations": invalidations,
+                "stateCacheLegacyResets": legacy_resets,
+            }
+        )
+    else:
+        state_detail = re.search(
+            r"stateCache\(hits=(\d+) misses=(\d+) invalidations=(\d+) legacyResets=(\d+)",
+            line,
+        )
+        if state_detail:
+            hits, misses, invalidations, legacy_resets = state_detail.groups()
+            result.update(
+                {
+                    "stateCacheHits": hits,
+                    "stateCacheMisses": misses,
+                    "stateCacheInvalidations": invalidations,
+                    "stateCacheLegacyResets": legacy_resets,
+                }
+            )
+    graph_invalidate_summary = re.search(r"graphInvalidate=(\d+)/(\d+)/(\d+)/(\d+)/(\d+)/(\d+)", line)
+    if graph_invalidate_summary:
+        enabled, tagged, candidates, armed, submitted, skipped = graph_invalidate_summary.groups()
+        result.update(
+            {
+                "graphInvalidateEnabled": enabled,
+                "graphInvalidateTagged": tagged,
+                "graphInvalidateCandidates": candidates,
+                "graphInvalidateArmed": armed,
+                "graphInvalidateSubmitted": submitted,
+                "graphInvalidateSkipped": skipped,
+            }
+        )
+    graph_invalidate_detail = re.search(
+        r"graphGL\(.*?invalidate\(enabled=(\d+) tagged=(\d+) candidates=(\d+) armed=(\d+) "
+        r"submitted=(\d+) skipped=(\d+) unavailable=(\d+) invalid=(\d+) imported=(\d+) "
+        r"buffer=(\d+) nonTransient=(\d+) presentable=(\d+) later=(\d+) incomplete=(\d+) unsupported=(\d+)\)",
+        line,
+    )
+    if graph_invalidate_detail:
+        (
+            enabled,
+            tagged,
+            candidates,
+            armed,
+            submitted,
+            skipped,
+            unavailable,
+            invalid,
+            imported,
+            buffer,
+            non_transient,
+            presentable,
+            later,
+            incomplete,
+            unsupported,
+        ) = graph_invalidate_detail.groups()
+        result.update(
+            {
+                "graphInvalidateEnabled": enabled,
+                "graphInvalidateTagged": tagged,
+                "graphInvalidateCandidates": candidates,
+                "graphInvalidateArmed": armed,
+                "graphInvalidateSubmitted": submitted,
+                "graphInvalidateSkipped": skipped,
+                "graphInvalidateSkippedUnavailable": unavailable,
+                "graphInvalidateSkippedInvalid": invalid,
+                "graphInvalidateSkippedImported": imported,
+                "graphInvalidateSkippedBuffer": buffer,
+                "graphInvalidateSkippedNonTransient": non_transient,
+                "graphInvalidateSkippedPresentable": presentable,
+                "graphInvalidateSkippedLater": later,
+                "graphInvalidateSkippedIncomplete": incomplete,
+                "graphInvalidateSkippedUnsupported": unsupported,
+            }
+        )
+    return result
+
+
+def parse_upload_manager_info(line: str) -> dict[str, str]:
+    if not line:
+        return {}
+    match = re.search(
+        r"Renderer upload manager: frameStream=([^,]+), staticAllocator=(\d+), "
+        r"buffers=(\d+) index=(\d+), ring=(\d+)KB, persistent=(\d+), "
+        r"mapRangeFallback=(\d+), staticLive=(\d+)/(\d+)KB, fences=(\d+)/(\d+) "
+        r"waits=(\d+) timeouts=(\d+) fallbacks=(\d+), legacyBridge=(\d+)",
+        line,
+    )
+    if not match:
+        return {}
+    (
+        frame_stream,
+        static_allocator,
+        buffers,
+        index,
+        ring_kb,
+        persistent,
+        map_range,
+        static_live,
+        static_live_kb,
+        fences_submitted,
+        fences_retired,
+        waits,
+        timeouts,
+        fallbacks,
+        legacy_bridge,
+    ) = match.groups()
+    return {
+        "uploadFrameStream": frame_stream,
+        "uploadStaticAllocator": static_allocator,
+        "uploadBuffers": buffers,
+        "uploadBufferIndex": index,
+        "uploadRingCapacityKB": ring_kb,
+        "uploadPersistent": persistent,
+        "uploadMapRangeFallback": map_range,
+        "uploadStaticLiveBuffers": static_live,
+        "uploadStaticLiveKB": static_live_kb,
+        "fenceSubmitted": fences_submitted,
+        "fenceRetired": fences_retired,
+        "fenceWaits": waits,
+        "fenceTimeouts": timeouts,
+        "fenceFallbacks": fallbacks,
+        "uploadLegacyBridge": legacy_bridge,
+    }
+
+
+def parse_state_cache_info(line: str) -> dict[str, str]:
+    if not line:
+        return {}
+    match = re.search(
+        r"Modern GL state cache: .*?hits=(\d+) misses=(\d+) .*?textureMultiBind=(\d+)"
+        r"(?: textureMultiBindFallback=(\d+))? samplerMultiBind=(\d+) invalidations=(\d+) legacyResets=(\d+)",
+        line,
+    )
+    if not match:
+        return {}
+    hits, misses, texture_multi_bind, texture_fallback, sampler_multi_bind, invalidations, legacy_resets = match.groups()
+    return {
+        "stateCacheInfoHits": hits,
+        "stateCacheInfoMisses": misses,
+        "stateTextureMultiBindBatches": texture_multi_bind,
+        "stateTextureMultiBindFallbackBatches": texture_fallback or "0",
+        "stateSamplerMultiBindBatches": sampler_multi_bind,
+        "stateCacheInfoInvalidations": invalidations,
+        "stateCacheInfoLegacyResets": legacy_resets,
+    }
+
+
+def parse_low_overhead_metrics_line(line: str) -> dict[str, str]:
+    if not line:
+        return {}
+    result: dict[str, str] = {}
+    prefix = re.search(
+        r"rendererMetrics lowOverhead\(req=(\d+) ready=(\d+) dsa=(\d+) multiBind=(\d+) "
+        r"bindless=(\d+)/(\d+) sampler=(\d+) dsaUpdates=(\d+) framebufferDSA=(\d+) "
+        r"samplerDSA=(\d+)/(\d+) bufferMultiBind=(\d+) textureMultiBind=(\d+) "
+        r"samplerMultiBind=(\d+) classicTextureBinds=(\d+) compactedBatches=(\d+) "
+        r"restores=(\d+)/(\d+) textureTable=(\d+)/(\d+) tableSize=(\d+)/(\d+) "
+        r"desc=(\d+) draws=(\d+) uniforms=(\d+) fallback=(\d+)",
+        line,
+    )
+    if prefix:
+        (
+            requested,
+            ready,
+            dsa,
+            multibind,
+            bindless_requested,
+            bindless_available,
+            sampler,
+            dsa_updates,
+            framebuffer_dsa,
+            sampler_dsa_creates,
+            sampler_dsa_updates,
+            buffer_multibind,
+            texture_multibind,
+            sampler_multibind,
+            classic_texture_binds,
+            compacted_batches,
+            soft_restores,
+            full_restores,
+            texture_table_used,
+            texture_table_ready,
+            table_textures,
+            table_capacity,
+            descriptors,
+            draws,
+            uniforms,
+            fallback,
+        ) = prefix.groups()
+        result.update(
+            {
+                "lowOverheadRequested": requested,
+                "lowOverheadReady": ready,
+                "lowOverheadDSA": dsa,
+                "lowOverheadMultiBind": multibind,
+                "lowOverheadBindlessRequested": bindless_requested,
+                "lowOverheadBindlessAvailable": bindless_available,
+                "lowOverheadSampler": sampler,
+                "lowOverheadDSAUpdates": dsa_updates,
+                "lowOverheadFramebufferDSA": framebuffer_dsa,
+                "lowOverheadSamplerDSACreates": sampler_dsa_creates,
+                "lowOverheadSamplerDSAUpdates": sampler_dsa_updates,
+                "lowOverheadBufferMultiBind": buffer_multibind,
+                "lowOverheadTextureMultiBind": texture_multibind,
+                "lowOverheadSamplerMultiBind": sampler_multibind,
+                "lowOverheadClassicTextureBinds": classic_texture_binds,
+                "lowOverheadCompactedBatches": compacted_batches,
+                "lowOverheadSoftRestores": soft_restores,
+                "lowOverheadFullRestores": full_restores,
+                "lowOverheadTextureTableUsed": texture_table_used,
+                "lowOverheadTextureTableReady": texture_table_ready,
+                "lowOverheadTextureTableTextures": table_textures,
+                "lowOverheadTextureTableCapacity": table_capacity,
+                "lowOverheadTextureTableDescriptors": descriptors,
+                "lowOverheadTextureTableDraws": draws,
+                "lowOverheadTextureTableUniforms": uniforms,
+                "lowOverheadTextureTableFallbacks": fallback,
+            }
+        )
+    graph = re.search(
+        r"graphDSA\(tex=(\d+) params=(\d+) fbo=(\d+)\) graphClassic\(tex=(\d+) fbo=(\d+)\)",
+        line,
+    )
+    if graph:
+        graph_dsa_tex, graph_dsa_params, graph_dsa_fbo, graph_classic_tex, graph_classic_fbo = graph.groups()
+        result.update(
+            {
+                "lowOverheadGraphDSATextures": graph_dsa_tex,
+                "lowOverheadGraphDSAParams": graph_dsa_params,
+                "lowOverheadGraphDSAFBO": graph_dsa_fbo,
+                "lowOverheadGraphClassicTextures": graph_classic_tex,
+                "lowOverheadGraphClassicFBO": graph_classic_fbo,
+            }
+        )
+    upload = re.search(
+        r"upload\(persistent=(\d+) default=(\d+) buffers=(\d+) index=(\d+) "
+        r"fences=(\d+)/(\d+) waits=(\d+) timeouts=(\d+) fallbacks=(\d+) sync=(\d+)\)",
+        line,
+    )
+    if upload:
+        persistent, default, buffers, index, fences_submitted, fences_retired, waits, timeouts, fallbacks, sync = upload.groups()
+        result.update(
+            {
+                "lowOverheadUploadPersistent": persistent,
+                "lowOverheadUploadPersistentDefault": default,
+                "lowOverheadUploadBuffers": buffers,
+                "lowOverheadUploadBufferIndex": index,
+                "lowOverheadFenceSubmitted": fences_submitted,
+                "lowOverheadFenceRetired": fences_retired,
+                "lowOverheadFenceWaits": waits,
+                "lowOverheadFenceTimeouts": timeouts,
+                "lowOverheadFenceFallbacks": fallbacks,
+                "lowOverheadFenceSync": sync,
+            }
+        )
+    return result
+
+
 def extract_summary(text: str) -> dict[str, str]:
+    metrics_line = extract_last_line(text, "rendererMetrics summary")
+    if not metrics_line:
+        metrics_line = extract_last_line(text, "rendererMetrics frame=")
     summary: dict[str, str] = {
         "benchmarkCapture": extract_last_line(text, "rendererBenchmark capture("),
         "benchmarkInfo": extract_last_line(text, "Renderer benchmark:"),
+        "rendererMetrics": metrics_line,
+        "lowOverheadMetrics": extract_last_line(text, "rendererMetrics lowOverhead("),
+        "uploadManagerInfo": extract_last_line(text, "Renderer upload manager: frameStream="),
+        "stateCacheInfo": extract_last_line(text, "Modern GL state cache:"),
         "framePacing": extract_last_line(text, "Frame pacing"),
         "selectedTier": extract_last_line(text, "Selected renderer tier:"),
         "tierContract": extract_last_line(text, "Renderer tier contract:"),
@@ -743,6 +1411,11 @@ def extract_summary(text: str) -> dict[str, str]:
                 "thresholdPass": threshold_pass,
             }
         )
+    summary.update(parse_benchmark_capture(summary["benchmarkCapture"]))
+    summary.update(parse_renderer_metrics_line(summary["rendererMetrics"]))
+    summary.update(parse_upload_manager_info(summary["uploadManagerInfo"]))
+    summary.update(parse_state_cache_info(summary["stateCacheInfo"]))
+    summary.update(parse_low_overhead_metrics_line(summary["lowOverheadMetrics"]))
     summary.update(parse_frame_pacing(summary["framePacing"]))
     return summary
 
@@ -872,6 +1545,7 @@ def evaluate_role_result(
     stdout_path: Path,
     stderr_path: Path,
     screenshot_rel: str,
+    launch_metadata: dict[str, Any],
     reference_dir: Path | None,
     rms_threshold: float,
     max_threshold: int,
@@ -882,9 +1556,12 @@ def evaluate_role_result(
     max_p99_ms: float = 0.0,
 ) -> dict[str, Any]:
     log_path = find_log(savepath, log_name)
-    text = read_text(log_path)
+    log_text = read_text(log_path)
+    stdout_text = read_text(stdout_path)
+    stderr_text = read_text(stderr_path)
+    text = log_text
     if not text:
-        text = read_text(stdout_path) + "\n" + read_text(stderr_path)
+        text = stdout_text + "\n" + stderr_text
     screenshot = find_screenshot(savepath, screenshot_rel)
     warnings = warning_counts(text)
     summary = extract_summary(text)
@@ -900,7 +1577,24 @@ def evaluate_role_result(
     if timed_out:
         missing.append("timeout")
     if log_path is None:
-        missing.append("log file")
+        missing.append("log file missing")
+        warning = windows_path_length_warning("expected log", launch_metadata.get("expectedLogPaths", []))
+        if warning:
+            missing.append(warning)
+    elif not log_text.strip():
+        missing.append("log file empty")
+    if not text.strip():
+        missing.append("no log/stdout/stderr text")
+    if "AutoExecAfterMapLoad: armed" not in text:
+        missing.append("autoexec armed marker")
+    if "AutoExecAfterMapLoad: waiting for first active draw" not in text:
+        missing.append("autoexec waiting-for-active-draw marker")
+    if "AutoExecAfterMapLoad: first active draw observed" not in text:
+        missing.append("active-draw marker")
+    if "AutoExecAfterMapLoad: executed" not in text:
+        missing.append("autoexec executed marker")
+    if "AutoExecAfterMapLoad: skipped" in text:
+        missing.append(extract_last_line(text, "AutoExecAfterMapLoad: skipped"))
     if require_benchmark and "rendererBenchmark capture(" not in text:
         missing.append("renderer benchmark capture line")
     if require_benchmark and "Renderer benchmark:" not in text:
@@ -927,6 +1621,9 @@ def evaluate_role_result(
         missing.append("selected tier line")
     if screenshot is None:
         missing.append("screenshot")
+        warning = windows_path_length_warning("expected screenshot", launch_metadata.get("expectedScreenshotPaths", []))
+        if warning:
+            missing.append(warning)
     if any(count > 0 for count in warnings.values()):
         missing += [f"{name}={count}" for name, count in warnings.items() if count > 0]
     if image.get("pass") is False:
@@ -945,6 +1642,7 @@ def evaluate_role_result(
         "stderr": str(stderr_path),
         "screenshot": str(screenshot) if screenshot is not None else "",
         "screenshotRequest": screenshot_rel,
+        "metadata": launch_metadata,
         "warnings": warnings,
         "missing": missing,
         "summary": summary,
@@ -988,14 +1686,15 @@ def run_sp_spec(
     spec: RunSpec,
     args: argparse.Namespace,
 ) -> dict[str, Any]:
-    savepath = output_dir / "savepaths" / spec.id
+    filesystem_id = compact_filesystem_id(spec.id)
+    savepath = output_dir / "savepaths" / filesystem_id
     savepath.mkdir(parents=True, exist_ok=True)
-    log_name = f"openq4_gameplay_{spec.id}.log"
+    log_name = f"openq4_{filesystem_id}.log"
     log_path = find_log(savepath, log_name)
     if log_path is not None:
         log_path.unlink()
-    stdout_path = output_dir / f"{spec.id}.out.txt"
-    stderr_path = output_dir / f"{spec.id}.err.txt"
+    stdout_path = output_dir / f"{filesystem_id}.out.txt"
+    stderr_path = output_dir / f"{filesystem_id}.err.txt"
     autoexec_cfg, screenshot_rel = write_autoexec_cfg(
         savepath,
         spec,
@@ -1004,10 +1703,12 @@ def run_sp_spec(
         args.settle_frames,
         args.sample_frames,
         args.sample_msec,
+        5,
         args.extra_cvars,
         args.exec_commands,
         args.gpu_timers,
         not args.pacing_only,
+        args.renderer_metrics_level,
     )
     game_args = common_args(
         root,
@@ -1018,30 +1719,66 @@ def run_sp_spec(
         args.benchmark_preset,
         args.modern_executor,
         args.show_fps_overlay,
-        args.launch_cvars,
+        spec.launch_cvars + args.launch_cvars,
         autoexec_cfg,
         args.autoexec_delay_ms,
     )
     append_set(game_args, "si_gameType", "singleplayer")
     append_command(game_args, "map", spec.map_name)
+    cwd = root / ".install"
+    sp_metadata = role_launch_metadata(
+        root,
+        executable,
+        game_args,
+        cwd,
+        savepath,
+        basepath,
+        "sp",
+        log_name,
+        screenshot_rel,
+        autoexec_cfg=autoexec_cfg,
+        launch_cvars=spec.launch_cvars + args.launch_cvars,
+        script_cvars=args.extra_cvars,
+        exec_commands=args.exec_commands,
+    )
 
     if args.dry_run:
         return {
             "id": spec.id,
+            "filesystemId": filesystem_id,
             "mode": spec.mode,
             "map": spec.map_name,
+            "purpose": spec.purpose,
+            "tier": spec.tier,
+            "maxfps": spec.maxfps,
+            "swapInterval": spec.swap_interval,
+            "display": spec.display_mode,
+            "shadowPreset": spec.shadow_preset,
+            "uploadVariant": spec.upload_variant,
+            "launchCvars": list(spec.launch_cvars),
             "status": "planned",
             "args": game_args,
             "autoexecCfg": autoexec_cfg,
             "screenshotRequest": screenshot_rel,
             "lensFlarePreset": spec.lens_flare_preset,
-            "roles": [],
+            "renderer": spec.renderer,
+            "roles": [
+                {
+                    "role": "sp",
+                    "status": "planned",
+                    "log": "",
+                    "screenshot": "",
+                    "screenshotRequest": screenshot_rel,
+                    "metadata": sp_metadata,
+                    "missing": [],
+                }
+            ],
         }
 
     exit_code, timed_out, elapsed = launch_and_wait(
         executable,
         game_args,
-        root / ".install",
+        cwd,
         stdout_path,
         stderr_path,
         args.timeout,
@@ -1057,6 +1794,7 @@ def run_sp_spec(
         stdout_path,
         stderr_path,
         screenshot_rel,
+        sp_metadata,
         args.reference_dir_path,
         args.image_rms_threshold,
         args.image_max_threshold,
@@ -1078,6 +1816,8 @@ def run_sp_spec(
         "shadowPreset": spec.shadow_preset,
         "lensFlarePreset": spec.lens_flare_preset,
         "renderer": spec.renderer,
+        "uploadVariant": spec.upload_variant,
+        "launchCvars": list(spec.launch_cvars),
         "status": role_result["status"],
         "roles": [role_result],
     }
@@ -1094,22 +1834,23 @@ def run_mp_spec(
     args: argparse.Namespace,
 ) -> dict[str, Any]:
     port = args.mp_port + index
-    server_savepath = output_dir / "savepaths" / f"{spec.id}_server"
-    client_savepath = output_dir / "savepaths" / f"{spec.id}_client"
+    filesystem_id = compact_filesystem_id(spec.id)
+    server_savepath = output_dir / "savepaths" / f"{filesystem_id}_server"
+    client_savepath = output_dir / "savepaths" / f"{filesystem_id}_client"
     server_savepath.mkdir(parents=True, exist_ok=True)
     client_savepath.mkdir(parents=True, exist_ok=True)
 
-    server_log = f"openq4_gameplay_{spec.id}_server.log"
-    client_log = f"openq4_gameplay_{spec.id}_client.log"
+    server_log = f"openq4_{filesystem_id}_server.log"
+    client_log = f"openq4_{filesystem_id}_client.log"
     for savepath, log_name in ((server_savepath, server_log), (client_savepath, client_log)):
         log_path = find_log(savepath, log_name)
         if log_path is not None:
             log_path.unlink()
 
-    server_stdout = output_dir / f"{spec.id}_server.out.txt"
-    server_stderr = output_dir / f"{spec.id}_server.err.txt"
-    client_stdout = output_dir / f"{spec.id}_client.out.txt"
-    client_stderr = output_dir / f"{spec.id}_client.err.txt"
+    server_stdout = output_dir / f"{filesystem_id}_server.out.txt"
+    server_stderr = output_dir / f"{filesystem_id}_server.err.txt"
+    client_stdout = output_dir / f"{filesystem_id}_client.out.txt"
+    client_stderr = output_dir / f"{filesystem_id}_client.err.txt"
 
     server_autoexec_cfg, server_screenshot = write_autoexec_cfg(
         server_savepath,
@@ -1119,10 +1860,12 @@ def run_mp_spec(
         args.settle_frames + args.mp_client_delay_frames,
         args.sample_frames,
         args.sample_msec,
+        args.mp_server_quit_delay_frames,
         args.extra_cvars,
         args.exec_commands,
         args.gpu_timers,
         not args.pacing_only,
+        args.renderer_metrics_level,
     )
     server_args = common_args(
         root,
@@ -1133,7 +1876,7 @@ def run_mp_spec(
         args.benchmark_preset,
         args.modern_executor,
         args.show_fps_overlay,
-        args.launch_cvars,
+        spec.launch_cvars + args.launch_cvars,
         server_autoexec_cfg,
         args.autoexec_delay_ms,
     )
@@ -1153,10 +1896,12 @@ def run_mp_spec(
         args.settle_frames,
         args.sample_frames,
         args.sample_msec,
+        5,
         args.extra_cvars,
         args.exec_commands,
         args.gpu_timers,
         not args.pacing_only,
+        args.renderer_metrics_level,
     )
     client_args = common_args(
         root,
@@ -1167,18 +1912,60 @@ def run_mp_spec(
         args.benchmark_preset,
         args.modern_executor,
         args.show_fps_overlay,
-        args.launch_cvars,
+        spec.launch_cvars + args.launch_cvars,
         client_autoexec_cfg,
         args.autoexec_delay_ms,
     )
     append_set(client_args, "ui_name", "RendererBenchClient")
     append_command(client_args, "connect", f"127.0.0.1:{port}")
+    cwd = root / ".install"
+    server_metadata = role_launch_metadata(
+        root,
+        executable,
+        server_args,
+        cwd,
+        server_savepath,
+        basepath,
+        "server",
+        server_log,
+        server_screenshot,
+        port,
+        autoexec_cfg=server_autoexec_cfg,
+        launch_cvars=spec.launch_cvars + args.launch_cvars,
+        script_cvars=args.extra_cvars,
+        exec_commands=args.exec_commands,
+    )
+    client_metadata = role_launch_metadata(
+        root,
+        executable,
+        client_args,
+        cwd,
+        client_savepath,
+        basepath,
+        "client",
+        client_log,
+        client_screenshot,
+        port,
+        autoexec_cfg=client_autoexec_cfg,
+        launch_cvars=spec.launch_cvars + args.launch_cvars,
+        script_cvars=args.extra_cvars,
+        exec_commands=args.exec_commands,
+    )
 
     if args.dry_run:
         return {
             "id": spec.id,
+            "filesystemId": filesystem_id,
             "mode": spec.mode,
             "map": spec.map_name,
+            "purpose": spec.purpose,
+            "tier": spec.tier,
+            "maxfps": spec.maxfps,
+            "swapInterval": spec.swap_interval,
+            "display": spec.display_mode,
+            "shadowPreset": spec.shadow_preset,
+            "uploadVariant": spec.upload_variant,
+            "launchCvars": list(spec.launch_cvars),
             "status": "planned",
             "serverArgs": server_args,
             "clientArgs": client_args,
@@ -1187,7 +1974,27 @@ def run_mp_spec(
             "serverScreenshotRequest": server_screenshot,
             "clientScreenshotRequest": client_screenshot,
             "lensFlarePreset": spec.lens_flare_preset,
-            "roles": [],
+            "renderer": spec.renderer,
+            "roles": [
+                {
+                    "role": "server",
+                    "status": "planned",
+                    "log": "",
+                    "screenshot": "",
+                    "screenshotRequest": server_screenshot,
+                    "metadata": server_metadata,
+                    "missing": [],
+                },
+                {
+                    "role": "client",
+                    "status": "planned",
+                    "log": "",
+                    "screenshot": "",
+                    "screenshotRequest": client_screenshot,
+                    "metadata": client_metadata,
+                    "missing": [],
+                },
+            ],
         }
 
     started = time.time()
@@ -1196,7 +2003,7 @@ def run_mp_spec(
     with server_stdout.open("w", encoding="utf-8", errors="replace") as server_out, server_stderr.open("w", encoding="utf-8", errors="replace") as server_err:
         server_process = subprocess.Popen(
             [str(executable)] + server_args,
-            cwd=str(root / ".install"),
+            cwd=str(cwd),
             stdout=server_out,
             stderr=server_err,
         )
@@ -1204,7 +2011,7 @@ def run_mp_spec(
     with client_stdout.open("w", encoding="utf-8", errors="replace") as client_out, client_stderr.open("w", encoding="utf-8", errors="replace") as client_err:
         client_process = subprocess.Popen(
             [str(executable)] + client_args,
-            cwd=str(root / ".install"),
+            cwd=str(cwd),
             stdout=client_out,
             stderr=client_err,
         )
@@ -1236,6 +2043,7 @@ def run_mp_spec(
         server_stdout,
         server_stderr,
         server_screenshot,
+        server_metadata,
         args.reference_dir_path,
         args.image_rms_threshold,
         args.image_max_threshold,
@@ -1256,6 +2064,7 @@ def run_mp_spec(
         client_stdout,
         client_stderr,
         client_screenshot,
+        client_metadata,
         args.reference_dir_path,
         args.image_rms_threshold,
         args.image_max_threshold,
@@ -1268,6 +2077,7 @@ def run_mp_spec(
     ok = server_result["status"] == "pass" and client_result["status"] == "pass"
     return {
         "id": spec.id,
+        "filesystemId": filesystem_id,
         "mode": spec.mode,
         "map": spec.map_name,
         "purpose": spec.purpose,
@@ -1278,6 +2088,8 @@ def run_mp_spec(
         "shadowPreset": spec.shadow_preset,
         "lensFlarePreset": spec.lens_flare_preset,
         "renderer": spec.renderer,
+        "uploadVariant": spec.upload_variant,
+        "launchCvars": list(spec.launch_cvars),
         "status": "pass" if ok else "fail",
         "port": port,
         "roles": [server_result, client_result],
@@ -1306,6 +2118,7 @@ def harness_failure_result(spec: RunSpec, exc: Exception) -> dict[str, Any]:
     }
     return {
         "id": spec.id,
+        "filesystemId": filesystem_id,
         "mode": spec.mode,
         "map": spec.map_name,
         "purpose": spec.purpose,
@@ -1316,6 +2129,8 @@ def harness_failure_result(spec: RunSpec, exc: Exception) -> dict[str, Any]:
         "shadowPreset": spec.shadow_preset,
         "lensFlarePreset": spec.lens_flare_preset,
         "renderer": spec.renderer,
+        "uploadVariant": spec.upload_variant,
+        "launchCvars": list(spec.launch_cvars),
         "status": "fail",
         "roles": [role_result],
         "harnessError": message,
@@ -1331,6 +2146,7 @@ def build_specs(args: argparse.Namespace) -> list[RunSpec]:
     display_values = split_csv(args.display_modes, defaults["display"])
     shadow_values = split_csv(args.shadow_presets, defaults["shadows"])
     lens_flare_values = split_csv(args.lens_flare_presets, defaults["lensFlare"])
+    launch_variant_values = split_csv(args.launch_variants, profile_launch_variants(defaults))
 
     specs: list[RunSpec] = []
     for case_id in case_ids:
@@ -1351,25 +2167,209 @@ def build_specs(args: argparse.Namespace) -> list[RunSpec]:
                             for lens_flare in lens_flare_values:
                                 if lens_flare not in LENS_FLARE_PRESETS:
                                     raise ValueError(f"unknown lens-flare preset '{lens_flare}'")
-                                specs.append(
-                                    RunSpec(
-                                        case_id=case_id,
-                                        mode=scene["mode"],
-                                        map_name=scene["map"],
-                                        purpose=scene["purpose"],
-                                        path_name=scene["path"],
-                                        tier=tier,
-                                        maxfps=maxfps,
-                                        swap_interval=swap,
-                                        display_mode=display,
-                                        shadow_preset=shadow,
-                                        lens_flare_preset=lens_flare,
-                                        renderer=args.renderer,
+                                for launch_variant in launch_variant_values:
+                                    specs.append(
+                                        RunSpec(
+                                            case_id=case_id,
+                                            mode=scene["mode"],
+                                            map_name=scene["map"],
+                                            purpose=scene["purpose"],
+                                            path_name=scene["path"],
+                                            tier=tier,
+                                            maxfps=maxfps,
+                                            swap_interval=swap,
+                                            display_mode=display,
+                                            shadow_preset=shadow,
+                                            lens_flare_preset=lens_flare,
+                                            renderer=args.renderer,
+                                            upload_variant=launch_variant,
+                                            variant_prefix=profile_launch_variant_prefix(args.profile),
+                                            launch_cvars=profile_launch_variant_cvars(args.profile, launch_variant),
+                                        )
                                     )
-                                )
     if args.limit > 0:
         specs = specs[: args.limit]
     return specs
+
+
+def format_upload_amount(summary: dict[str, str], kb_key: str, bytes_key: str = "") -> str:
+    if summary.get(kb_key):
+        return f"{summary[kb_key]}KB"
+    if bytes_key and summary.get(bytes_key):
+        return f"{summary[bytes_key]}B"
+    return ""
+
+
+def format_ring_summary(summary: dict[str, str]) -> str:
+    high = summary.get("ringHighWaterKB", "")
+    capacity = summary.get("ringCapacityKB") or summary.get("uploadRingCapacityKB", "")
+    if high or capacity:
+        return f"{high or '?'}/{capacity or '?'}KB"
+    return ""
+
+
+def format_fence_summary(summary: dict[str, str]) -> str:
+    submitted = summary.get("fenceSubmitted", "")
+    retired = summary.get("fenceRetired", "")
+    waits = summary.get("fenceWaits", "")
+    timeouts = summary.get("fenceTimeouts", "")
+    fallbacks = summary.get("fenceFallbacks", "")
+    if submitted or retired or waits or timeouts or fallbacks:
+        return f"{submitted or '?'}/{retired or '?'} wait={waits or '?'} timeout={timeouts or '?'} fallback={fallbacks or '?'}"
+    return ""
+
+
+def format_upload_path_summary(summary: dict[str, str]) -> str:
+    stream = summary.get("uploadFrameStream", "")
+    persistent = summary.get("uploadPersistent", "")
+    map_range = summary.get("uploadMapRangeFallback", "")
+    buffers = summary.get("uploadBuffers", "")
+    parts: list[str] = []
+    if stream:
+        parts.append(stream)
+    if persistent:
+        parts.append(f"persistent={persistent}")
+    if map_range:
+        parts.append(f"mapRange={map_range}")
+    if buffers:
+        parts.append(f"buffers={buffers}")
+    return ", ".join(parts)
+
+
+def format_state_cache_summary(summary: dict[str, str]) -> str:
+    hits = summary.get("stateCacheHits") or summary.get("stateCacheInfoHits", "")
+    misses = summary.get("stateCacheMisses") or summary.get("stateCacheInfoMisses", "")
+    invalidations = summary.get("stateCacheInvalidations") or summary.get("stateCacheInfoInvalidations", "")
+    legacy_resets = summary.get("stateCacheLegacyResets") or summary.get("stateCacheInfoLegacyResets", "")
+    if hits or misses or invalidations or legacy_resets:
+        return f"{hits or '?'}/{misses or '?'} invalid={invalidations or '?'} legacyReset={legacy_resets or '?'}"
+    return ""
+
+
+def format_cpu_phase_summary(summary: dict[str, str]) -> str:
+    keys = (
+        ("fe", "frontEndMs"),
+        ("vis", "visibilityMs"),
+        ("pkt", "packetMs"),
+        ("graph", "graphMs"),
+        ("submit", "submitMs"),
+        ("be", "backendMs"),
+        ("present", "presentMs"),
+    )
+    parts = [f"{label}={summary[key]}ms" for label, key in keys if summary.get(key)]
+    return " ".join(parts)
+
+
+def format_pacing_summary(summary: dict[str, str]) -> str:
+    if not summary.get("pacingHz"):
+        return ""
+    parts = [f"{summary['pacingHz']}Hz"]
+    if summary.get("pacingP50Ms"):
+        parts.append(f"p50={summary['pacingP50Ms']}ms")
+    if summary.get("pacingP95Ms"):
+        parts.append(f"p95={summary['pacingP95Ms']}ms")
+    if summary.get("pacingP99Ms"):
+        parts.append(f"p99={summary['pacingP99Ms']}ms")
+    if summary.get("pacingMaxMs"):
+        parts.append(f"max={summary['pacingMaxMs']}ms")
+    return " ".join(parts)
+
+
+def format_graph_invalidate_skip_summary(summary: dict[str, str]) -> str:
+    skip_keys = [
+        ("unavailable", "graphInvalidateSkippedUnavailable"),
+        ("invalid", "graphInvalidateSkippedInvalid"),
+        ("imported", "graphInvalidateSkippedImported"),
+        ("buffer", "graphInvalidateSkippedBuffer"),
+        ("nonTransient", "graphInvalidateSkippedNonTransient"),
+        ("presentable", "graphInvalidateSkippedPresentable"),
+        ("later", "graphInvalidateSkippedLater"),
+        ("incomplete", "graphInvalidateSkippedIncomplete"),
+        ("unsupported", "graphInvalidateSkippedUnsupported"),
+    ]
+    parts = [f"{label}={summary[key]}" for label, key in skip_keys if summary.get(key)]
+    return " ".join(parts)
+
+
+def format_low_overhead_cap_summary(summary: dict[str, str]) -> str:
+    if not summary.get("lowOverheadRequested"):
+        return ""
+    return (
+        f"req={summary.get('lowOverheadRequested', '?')} "
+        f"ready={summary.get('lowOverheadReady', '?')} "
+        f"dsa={summary.get('lowOverheadDSA', '?')} "
+        f"multi={summary.get('lowOverheadMultiBind', '?')}"
+    )
+
+
+def format_low_overhead_multibind_summary(summary: dict[str, str]) -> str:
+    if not any(summary.get(key) for key in ("lowOverheadBufferMultiBind", "lowOverheadTextureMultiBind", "lowOverheadSamplerMultiBind")):
+        return ""
+    return (
+        f"buf={summary.get('lowOverheadBufferMultiBind', '?')} "
+        f"tex={summary.get('lowOverheadTextureMultiBind', '?')} "
+        f"samp={summary.get('lowOverheadSamplerMultiBind', '?')}"
+    )
+
+
+def format_low_overhead_graph_summary(summary: dict[str, str]) -> str:
+    if not any(summary.get(key) for key in ("lowOverheadGraphDSATextures", "lowOverheadGraphClassicTextures")):
+        return ""
+    return (
+        f"dsa={summary.get('lowOverheadGraphDSATextures', '?')}/"
+        f"{summary.get('lowOverheadGraphDSAParams', '?')}/"
+        f"{summary.get('lowOverheadGraphDSAFBO', '?')} "
+        f"classic={summary.get('lowOverheadGraphClassicTextures', '?')}/"
+        f"{summary.get('lowOverheadGraphClassicFBO', '?')}"
+    )
+
+
+def format_low_overhead_upload_summary(summary: dict[str, str]) -> str:
+    if not any(summary.get(key) for key in ("lowOverheadUploadPersistent", "lowOverheadFenceSubmitted")):
+        return ""
+    return (
+        f"persistent={summary.get('lowOverheadUploadPersistent', '?')}/"
+        f"{summary.get('lowOverheadUploadPersistentDefault', '?')} "
+        f"fences={summary.get('lowOverheadFenceSubmitted', '?')}/"
+        f"{summary.get('lowOverheadFenceRetired', '?')} "
+        f"wait={summary.get('lowOverheadFenceWaits', '?')} "
+        f"timeout={summary.get('lowOverheadFenceTimeouts', '?')} "
+        f"fallback={summary.get('lowOverheadFenceFallbacks', '?')}"
+    )
+
+
+def markdown_cell(value: Any) -> str:
+    text = "" if value is None else str(value)
+    return text.replace("\r", " ").replace("\n", " ").replace("|", "\\|")
+
+
+def format_metadata_cvars(items: Any) -> str:
+    if not items:
+        return "none"
+    parts: list[str] = []
+    if isinstance(items, dict):
+        iterable = [{"name": key, "value": value} for key, value in items.items()]
+    else:
+        iterable = items
+    for item in iterable:
+        if isinstance(item, dict):
+            name = item.get("name", "")
+            value = item.get("value", "")
+        else:
+            try:
+                name, value = item
+            except (TypeError, ValueError):
+                parts.append(markdown_cell(item))
+                continue
+        if name:
+            parts.append(f"{name}={value}")
+    return markdown_cell(", ".join(parts) if parts else "none")
+
+
+def format_metadata_commands(items: Any) -> str:
+    if not items:
+        return "none"
+    return markdown_cell("; ".join(str(item) for item in items))
 
 
 def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dict[str, Any]) -> tuple[Path, Path]:
@@ -1383,6 +2383,9 @@ def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dic
         "shadowPresets": SHADOW_PRESETS,
         "lensFlarePresets": LENS_FLARE_PRESETS,
         "lensFlareSignoffMatrix": LENS_FLARE_SIGNOFF_MATRIX,
+        "uploadPressureVariants": UPLOAD_PRESSURE_VARIANTS,
+        "graphInvalidationVariants": GRAPH_INVALIDATION_VARIANTS,
+        "performanceComparisonVariants": PERFORMANCE_COMPARISON_VARIANTS,
         "results": results,
     }
     report_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -1397,19 +2400,31 @@ def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dic
         f"- Host: {metadata['host']}",
         f"- Executable: `{metadata['executable']}`",
         f"- Base path: `{metadata['basepath'] or 'not set'}`",
+        f"- Dev path: `{metadata.get('devpath') or 'not set'}`",
+        f"- Game dir: `{metadata.get('gameDir', 'baseoq4')}`",
         f"- Profile: `{metadata['profile']}`",
+        f"- Launch variants: `{', '.join(metadata.get('launchVariants', [])) or 'none'}`",
         f"- Sample: `{metadata['sampleMsec']} ms`" if metadata.get("sampleMsec", 0) > 0 else f"- Sample: `{metadata['sampleFrames']} frames`",
+        f"- Renderer metrics level: `{metadata.get('rendererMetricsLevel', 1)}`",
+        f"- Modern executor: `{1 if metadata.get('modernExecutor', False) else 0}`",
+        f"- Profile cvars: {format_metadata_cvars(metadata.get('profileCvars', {}))}",
+        f"- Launch cvars: {format_metadata_cvars(metadata.get('launchCvars', {}))}",
+        f"- Script cvars: {format_metadata_cvars(metadata.get('scriptCvars', []))}",
+        f"- Exec commands: {format_metadata_commands(metadata.get('execCommands', []))}",
+        f"- Reference dir: `{metadata.get('referenceDir') or 'not set'}`",
+        f"- Require references: `{1 if metadata.get('requireReferences', False) else 0}`",
+        f"- Image thresholds: RMS `{metadata.get('imageRmsThreshold', 2.0)}`, max `{metadata.get('imageMaxThreshold', 24)}`",
         f"- Cases: {passed} passed, {failed} failed, {planned} planned",
         "",
         "## Results",
         "",
-        "| Status | Case | Mode | Map | Tier | FPS | VSync | Display | Shadow | Lens Flare | Pacing | Benchmark | Image | Screenshot | Log |",
-        "|---|---|---|---|---|---:|---:|---|---|---|---|---|---|---|---|",
+        "| Status | Case | Mode | Map | Tier | FPS | VSync | Display | Shadow | Lens Flare | Variant | Pacing | Benchmark | Image | Screenshot | Log |",
+        "|---|---|---|---|---|---:|---:|---|---|---|---|---|---|---|---|---|",
     ]
     for result in results:
         if result["status"] == "planned":
             lines.append(
-                f"| planned | `{result['id']}` | {result['mode']} | `{result['map']}` |  |  |  |  |  |  |  | dry run |  |  |  |"
+                f"| planned | `{result['id']}` | {result['mode']} | `{result['map']}` | `{result['tier']}` | {result['maxfps']} | {result['swapInterval']} | {result['display']} | `{result['shadowPreset']}` | `{result.get('lensFlarePreset', 'default')}` | `{result.get('uploadVariant', 'default')}` | dry run | dry run | planned | `{result.get('screenshotRequest', '')}` |  |"
             )
             continue
         role = next((item for item in result.get("roles", []) if item["role"] in ("client", "sp")), result.get("roles", [{}])[0])
@@ -1431,13 +2446,248 @@ def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dic
         screenshot = role.get("screenshot", "")
         log = role.get("log", "")
         lines.append(
-            f"| {result['status']} | `{result['id']}` | {result['mode']} | `{result['map']}` | `{result['tier']}` | {result['maxfps']} | {result['swapInterval']} | {result['display']} | `{result['shadowPreset']}` | `{result.get('lensFlarePreset', 'default')}` | {pacing or 'missing'} | {benchmark or 'missing'} | {image_status} | `{screenshot}` | `{log}` |"
+            f"| {result['status']} | `{result['id']}` | {result['mode']} | `{result['map']}` | `{result['tier']}` | {result['maxfps']} | {result['swapInterval']} | {result['display']} | `{result['shadowPreset']}` | `{result.get('lensFlarePreset', 'default')}` | `{result.get('uploadVariant', 'default')}` | {pacing or 'missing'} | {benchmark or 'missing'} | {image_status} | `{screenshot}` | `{log}` |"
         )
         for role_result in result.get("roles", []):
             if role_result.get("missing"):
                 lines.append(
-                    f"|  | `{role_result['role']}` missing |  |  |  |  |  |  |  |  | {'; '.join(role_result['missing'])} |  |  |  |  |"
+                    f"|  | `{role_result['role']}` missing |  |  |  |  |  |  |  |  |  | {'; '.join(role_result['missing'])} |  |  |  |  |"
                 )
+
+    role_rows = [
+        (result, role_result)
+        for result in results
+        for role_result in result.get("roles", [])
+    ]
+    if role_rows:
+        lines += [
+            "",
+            "## Role Reproduction Metadata",
+            "",
+            "Full launch commands are stored in each role's JSON metadata; failed and planned roles also print them below.",
+            "",
+            "| Case | Role | Status | Elapsed | Timeout | Working Directory | Save Path | Dev Path | Game | Autoexec | Launch Cvars | Script Cvars | Exec Commands | Command Recorded |",
+            "|---|---|---|---:|---|---|---|---|---|---|---|---|---|---|",
+        ]
+        for result, role_result in role_rows:
+            role_metadata = role_result.get("metadata", {}) or {}
+            command_recorded = "yes" if role_metadata.get("launchCommand") else "no"
+            lines.append(
+                f"| `{result['id']}` | `{role_result.get('role', '')}` | {role_result.get('status', result.get('status', ''))} | "
+                f"{role_result.get('elapsedSeconds', '')} | "
+                f"{role_result.get('timedOut', '')} | "
+                f"`{markdown_cell(role_metadata.get('workingDirectory', ''))}` | "
+                f"`{markdown_cell(role_metadata.get('savepath', ''))}` | "
+                f"`{markdown_cell(role_metadata.get('devpath', ''))}` | "
+                f"`{markdown_cell(role_metadata.get('gameDir', ''))}` | "
+                f"`{markdown_cell(role_metadata.get('autoexecCfg', ''))}` | "
+                f"{format_metadata_cvars(role_metadata.get('launchCvars', []))} | "
+                f"{format_metadata_cvars(role_metadata.get('scriptCvars', []))} | "
+                f"{format_metadata_commands(role_metadata.get('execCommands', []))} | "
+                f"{command_recorded} |"
+            )
+
+    metric_roles = [
+        (result, role_result)
+        for result in results
+        for role_result in result.get("roles", [])
+        if role_result.get("status") != "planned"
+    ]
+    if metric_roles:
+        lines += [
+            "",
+            "## Upload And State Metrics",
+            "",
+            "| Case | Role | Variant | Benchmark Upload | Metrics Upload | Ring | Overflow | Stalls | Fences | Upload Path | State Cache |",
+            "|---|---|---|---:|---:|---|---:|---:|---|---|---|",
+        ]
+        for result, role_result in metric_roles:
+            summary = role_result.get("summary", {}) or {}
+            lines.append(
+                f"| `{result['id']}` | `{role_result.get('role', '')}` | `{result.get('uploadVariant', 'default')}` | "
+                f"{format_upload_amount(summary, 'benchmarkUploadKB') or 'missing'} | "
+                f"{format_upload_amount(summary, 'metricsUploadKB', 'metricsUploadBytes') or 'missing'} | "
+                f"{format_ring_summary(summary) or 'missing'} | "
+                f"{format_upload_amount(summary, 'ringOverflowKB') or 'missing'} | "
+                f"{summary.get('frameStalls', 'missing')} | "
+                f"{format_fence_summary(summary) or 'missing'} | "
+                f"{format_upload_path_summary(summary) or 'missing'} | "
+                f"{format_state_cache_summary(summary) or 'missing'} |"
+            )
+
+    presentation_roles = [
+        (result, role_result)
+        for result, role_result in metric_roles
+        if (role_result.get("summary", {}) or {}).get("pacingHz")
+    ]
+    if presentation_roles:
+        lines += [
+            "",
+            "## Presentation Pacing",
+            "",
+            "| Case | Role | FPS Cap | VSync | Display | Variant | Present Avg | Hz | P50 | P95 | P99 | Max |",
+            "|---|---|---:|---:|---|---|---:|---:|---:|---:|---:|---:|",
+        ]
+        for result, role_result in presentation_roles:
+            summary = role_result.get("summary", {}) or {}
+            lines.append(
+                f"| `{result['id']}` | `{role_result.get('role', '')}` | "
+                f"{result.get('maxfps', '')} | {result.get('swapInterval', '')} | "
+                f"{result.get('display', '')} | `{result.get('uploadVariant', 'default')}` | "
+                f"{summary.get('pacingPresentMs', 'missing')} | "
+                f"{summary.get('pacingHz', 'missing')} | "
+                f"{summary.get('pacingP50Ms', 'missing')} | "
+                f"{summary.get('pacingP95Ms', 'missing')} | "
+                f"{summary.get('pacingP99Ms', 'missing')} | "
+                f"{summary.get('pacingMaxMs', 'missing')} |"
+            )
+
+    performance_roles = [
+        (result, role_result)
+        for result, role_result in metric_roles
+        if (role_result.get("summary", {}) or {}).get("frontEndMs")
+    ]
+    if performance_roles:
+        lines += [
+            "",
+            "## Performance Phase Metrics",
+            "",
+            "| Case | Role | Tier | Variant | Pacing | CPU Phases | GPU | Draws | Upload | State Cache |",
+            "|---|---|---|---|---|---|---|---:|---:|---|",
+        ]
+        for result, role_result in performance_roles:
+            summary = role_result.get("summary", {}) or {}
+            lines.append(
+                f"| `{result['id']}` | `{role_result.get('role', '')}` | "
+                f"`{summary.get('metricsTier') or result.get('tier', '')}` | "
+                f"`{result.get('uploadVariant', 'default')}` | "
+                f"{format_pacing_summary(summary) or 'missing'} | "
+                f"{format_cpu_phase_summary(summary) or 'missing'} | "
+                f"{summary.get('gpuMs', 'missing')} | "
+                f"{summary.get('draws', 'missing')} | "
+                f"{format_upload_amount(summary, 'metricsUploadKB', 'metricsUploadBytes') or 'missing'} | "
+                f"{format_state_cache_summary(summary) or 'missing'} |"
+            )
+
+    graph_invalidate_roles = [
+        (result, role_result)
+        for result, role_result in metric_roles
+        if (role_result.get("summary", {}) or {}).get("graphInvalidateTagged")
+    ]
+    if graph_invalidate_roles:
+        lines += [
+            "",
+            "## Render Graph Invalidation",
+            "",
+            "| Case | Role | Tier | Variant | Enabled | Tagged | Candidates | Armed | Submitted | Skipped | Skip Breakdown |",
+            "|---|---|---|---|---:|---:|---:|---:|---:|---:|---|",
+        ]
+        for result, role_result in graph_invalidate_roles:
+            summary = role_result.get("summary", {}) or {}
+            lines.append(
+                f"| `{result['id']}` | `{role_result.get('role', '')}` | `{result.get('tier', '')}` | "
+                f"`{result.get('uploadVariant', 'default')}` | "
+                f"{summary.get('graphInvalidateEnabled', 'missing')} | "
+                f"{summary.get('graphInvalidateTagged', 'missing')} | "
+                f"{summary.get('graphInvalidateCandidates', 'missing')} | "
+                f"{summary.get('graphInvalidateArmed', 'missing')} | "
+                f"{summary.get('graphInvalidateSubmitted', 'missing')} | "
+                f"{summary.get('graphInvalidateSkipped', 'missing')} | "
+                f"{format_graph_invalidate_skip_summary(summary) or 'missing'} |"
+            )
+
+    low_overhead_roles = [
+        (result, role_result)
+        for result, role_result in metric_roles
+        if (role_result.get("summary", {}) or {}).get("lowOverheadMetrics")
+    ]
+    if low_overhead_roles:
+        lines += [
+            "",
+            "## Low Overhead Metrics",
+            "",
+            "| Case | Role | Tier | Capabilities | DSA Updates | Multibind | Classic Texture Binds | Compacted | Graph DSA/Classic | Upload/Fences | State Cache |",
+            "|---|---|---|---|---:|---|---:|---:|---|---|---|",
+        ]
+        for result, role_result in low_overhead_roles:
+            summary = role_result.get("summary", {}) or {}
+            lines.append(
+                f"| `{result['id']}` | `{role_result.get('role', '')}` | `{result.get('tier', '')}` | "
+                f"{format_low_overhead_cap_summary(summary) or 'missing'} | "
+                f"{summary.get('lowOverheadDSAUpdates', 'missing')} | "
+                f"{format_low_overhead_multibind_summary(summary) or 'missing'} | "
+                f"{summary.get('lowOverheadClassicTextureBinds', 'missing')} | "
+                f"{summary.get('lowOverheadCompactedBatches', 'missing')} | "
+                f"{format_low_overhead_graph_summary(summary) or 'missing'} | "
+                f"{format_low_overhead_upload_summary(summary) or 'missing'} | "
+                f"{format_state_cache_summary(summary) or 'missing'} |"
+            )
+
+    failed_roles = [
+        (result, role_result)
+        for result in results
+        for role_result in result.get("roles", [])
+        if role_result.get("status") == "fail"
+    ]
+    planned_roles = [
+        (result, role_result)
+        for result in results
+        for role_result in result.get("roles", [])
+        if role_result.get("status") == "planned"
+    ]
+    if failed_roles:
+        lines += ["", "## Failed Role Details", ""]
+        for result, role_result in failed_roles:
+            role_metadata = role_result.get("metadata", {}) or {}
+            expected_logs = role_metadata.get("expectedLogPaths", [])
+            expected_shots = role_metadata.get("expectedScreenshotPaths", [])
+            expected_autoexec = role_metadata.get("expectedAutoexecPaths", [])
+            lines += [
+                f"### `{result['id']}` / `{role_result.get('role', '')}`",
+                "",
+                f"- Exit: `{role_result.get('exitCode', '')}`; timed out: `{role_result.get('timedOut', '')}`; elapsed: `{role_result.get('elapsedSeconds', '')} s`",
+                f"- Working directory: `{role_metadata.get('workingDirectory', '')}`",
+                f"- Save path: `{role_metadata.get('savepath', '')}`",
+                f"- Dev path: `{role_metadata.get('devpath', '')}`",
+                f"- Base path: `{role_metadata.get('basepath') or 'not set'}`",
+                f"- Game dir: `{role_metadata.get('gameDir', '')}`; port: `{role_metadata.get('port', '')}`",
+                f"- Autoexec cfg: `{role_metadata.get('autoexecCfg', '')}`",
+                f"- Expected autoexec: `{expected_autoexec[0] if expected_autoexec else ''}`",
+                f"- Expected log: `{expected_logs[0] if expected_logs else ''}`",
+                f"- Expected screenshot: `{expected_shots[0] if expected_shots else role_result.get('screenshotRequest', '')}`",
+                f"- Launch cvars: {format_metadata_cvars(role_metadata.get('launchCvars', []))}",
+                f"- Script cvars: {format_metadata_cvars(role_metadata.get('scriptCvars', []))}",
+                f"- Exec commands: {format_metadata_commands(role_metadata.get('execCommands', []))}",
+                f"- Missing: {'; '.join(role_result.get('missing', [])) or 'none'}",
+                "",
+                "```text",
+                role_metadata.get("launchCommand", ""),
+                "```",
+                "",
+            ]
+
+    if planned_roles:
+        lines += ["", "## Planned Role Details", ""]
+        for result, role_result in planned_roles:
+            role_metadata = role_result.get("metadata", {}) or {}
+            expected_autoexec = role_metadata.get("expectedAutoexecPaths", [])
+            lines += [
+                f"### `{result['id']}` / `{role_result.get('role', '')}`",
+                "",
+                f"- Working directory: `{role_metadata.get('workingDirectory', '')}`",
+                f"- Save path: `{role_metadata.get('savepath', '')}`",
+                f"- Game dir: `{role_metadata.get('gameDir', '')}`; port: `{role_metadata.get('port', '')}`",
+                f"- Autoexec cfg: `{role_metadata.get('autoexecCfg', '')}`",
+                f"- Expected autoexec: `{expected_autoexec[0] if expected_autoexec else ''}`",
+                f"- Launch cvars: {format_metadata_cvars(role_metadata.get('launchCvars', []))}",
+                f"- Script cvars: {format_metadata_cvars(role_metadata.get('scriptCvars', []))}",
+                f"- Exec commands: {format_metadata_commands(role_metadata.get('execCommands', []))}",
+                "",
+                "```text",
+                role_metadata.get("launchCommand", ""),
+                "```",
+                "",
+            ]
 
     lines += [
         "",
@@ -1482,6 +2732,42 @@ def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dic
 
     lines += [
         "",
+        "## Upload Pressure Variants",
+        "",
+        "| Variant | Launch Cvars | Purpose |",
+        "|---|---|---|",
+    ]
+    for variant, item in UPLOAD_PRESSURE_VARIANTS.items():
+        cvars = item.get("cvars", ())
+        cvar_text = ", ".join(f"`{key} {value}`" for key, value in cvars) or "current defaults"
+        lines.append(f"| `{variant}` | {cvar_text} | {item['purpose']} |")
+
+    lines += [
+        "",
+        "## Graph Invalidation Variants",
+        "",
+        "| Variant | Launch Cvars | Purpose |",
+        "|---|---|---|",
+    ]
+    for variant, item in GRAPH_INVALIDATION_VARIANTS.items():
+        cvars = item.get("cvars", ())
+        cvar_text = ", ".join(f"`{key} {value}`" for key, value in cvars) or "current defaults"
+        lines.append(f"| `{variant}` | {cvar_text} | {item['purpose']} |")
+
+    lines += [
+        "",
+        "## Performance Comparison Variants",
+        "",
+        "| Variant | Launch Cvars | Purpose |",
+        "|---|---|---|",
+    ]
+    for variant, item in PERFORMANCE_COMPARISON_VARIANTS.items():
+        cvars = item.get("cvars", ())
+        cvar_text = ", ".join(f"`{key} {value}`" for key, value in cvars) or "current defaults"
+        lines.append(f"| `{variant}` | {cvar_text} | {item['purpose']} |")
+
+    lines += [
+        "",
         "## Lens Flare Sign-Off Matrix",
         "",
         "| Platform | Required Tiers | Visual Evidence | Performance Evidence |",
@@ -1517,12 +2803,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--display-modes", default="", help="Comma-separated display modes: windowed,fullscreen.")
     parser.add_argument("--shadow-presets", default="", help="Comma-separated shadow presets. Use --list to inspect values.")
     parser.add_argument("--lens-flare-presets", default="", help="Comma-separated lens-flare presets: default,off,corona,high.")
+    parser.add_argument("--launch-variants", default="", help="Comma-separated profile launch variants. Use --list to inspect values for profiles such as upload-pressure.")
     parser.add_argument("--renderer", default="best", help="Value for r_renderer, usually best or arb2.")
     parser.add_argument("--benchmark-preset", default="baseline", help="Value for r_rendererBenchmarkPreset.")
     parser.add_argument("--modern-executor", action="store_true", help="Opt into r_rendererModernExecutor for gameplay benchmarking. Defaults off so ARB2/high-FPS baselines are not polluted by side-path work.")
     parser.add_argument("--gpu-timers", action="store_true", help="Enable GL timer queries during the sampled benchmark window. Defaults off for acceptance FPS runs because timer queries can perturb frame pacing.")
     parser.add_argument("--show-fps-overlay", action="store_true", help="Draw the in-game FPS overlay during the run. Defaults off so acceptance timings measure renderer/gameplay cost, not diagnostic text drawing.")
     parser.add_argument("--pacing-only", action="store_true", help="Measure frame pacing without enabling r_rendererMetrics or rendererBenchmarkCapture. Use this for high-FPS acceptance runs after diagnostic captures are clean.")
+    parser.add_argument("--renderer-metrics-level", type=int, default=-1, help="Renderer metrics detail level during the sampled window. Defaults to the selected profile's level, usually 1; use 2 for detailed low-overhead/state lines.")
     parser.add_argument("--min-pacing-hz", type=float, default=0.0, help="Fail when the parsed frame-pacing snapshot falls below this average presentation rate.")
     parser.add_argument("--max-p95-ms", type=float, default=0.0, help="Fail when the parsed frame-pacing P95 exceeds this millisecond budget. Use 0 to disable.")
     parser.add_argument("--max-p99-ms", type=float, default=0.0, help="Fail when the parsed frame-pacing P99 exceeds this millisecond budget. Use 0 to disable.")
@@ -1543,15 +2831,21 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--mp-port", type=int, default=28110, help="Base listen-server port for MP runs.")
     parser.add_argument("--mp-client-delay", type=int, default=12, help="Seconds to wait before launching the MP loopback client.")
     parser.add_argument("--mp-client-delay-frames", type=int, default=480, help="Extra server frames before server-side capture in MP runs.")
+    parser.add_argument("--mp-server-quit-delay-frames", type=int, default=1800, help="Extra server frames to wait after MP server capture before quitting, so the loopback client can finish its capture.")
     parser.add_argument("--limit", type=int, default=0, help="Limit generated specs, useful for bounded local smoke runs.")
     parser.add_argument("--dry-run", action="store_true", help="Write the planned command lines without launching openQ4.")
     parser.add_argument("--list", action="store_true", help="List profiles, cases, and shadow presets without running.")
     parsed = parser.parse_args(argv)
     try:
-        profile_cvars = tuple(PROFILE_DEFAULTS[parsed.profile].get("cvars", ()))
+        profile_defaults = PROFILE_DEFAULTS[parsed.profile]
+        profile_cvars = tuple(profile_defaults.get("cvars", ()))
         parsed.extra_cvars = profile_cvars + parse_extra_cvars(parsed.set_cvar)
         parsed.launch_cvars = parse_extra_cvars(parsed.set_launch_cvar)
         parsed.exec_commands = parse_exec_commands(parsed.exec_command)
+        if parsed.renderer_metrics_level < 0:
+            parsed.renderer_metrics_level = int(profile_defaults.get("rendererMetricsLevel", 1))
+        parsed.renderer_metrics_level = max(0, parsed.renderer_metrics_level)
+        parsed.modern_executor = parsed.modern_executor or bool(profile_defaults.get("modernExecutor", False))
     except ValueError as exc:
         parser.error(str(exc))
     parsed.reference_dir_path = Path(parsed.reference_dir).resolve() if parsed.reference_dir else None
@@ -1561,6 +2855,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def print_list() -> None:
     print("Profiles:")
     for profile, defaults in PROFILE_DEFAULTS.items():
+        launch_variants = profile_launch_variants(defaults)
         count = (
             len(defaults["cases"])
             * len(defaults["tiers"])
@@ -1569,10 +2864,16 @@ def print_list() -> None:
             * len(defaults["display"])
             * len(defaults["shadows"])
             * len(defaults["lensFlare"])
+            * len(launch_variants)
         )
         profile_cvars = defaults.get("cvars", ())
         cvar_text = " " + ", ".join(f"{key}={value}" for key, value in profile_cvars) if profile_cvars else ""
-        print(f"  {profile}: {count} generated case(s){cvar_text}")
+        variant_text = "" if launch_variants == ("default",) else " variants=" + ",".join(launch_variants)
+        metrics_text = ""
+        if int(defaults.get("rendererMetricsLevel", 1)) != 1:
+            metrics_text = f" metrics={defaults['rendererMetricsLevel']}"
+        modern_text = " modernExecutor=1" if defaults.get("modernExecutor", False) else ""
+        print(f"  {profile}: {count} generated case(s){cvar_text}{variant_text}{metrics_text}{modern_text}")
     print("\nRequired gameplay cases:")
     for case_id, scene in REQUIRED_SCENES.items():
         print(f"  {case_id}: {scene['mode']} {scene['map']} - {scene['purpose']}")
@@ -1593,6 +2894,21 @@ def print_list() -> None:
     print("\nLens flare sign-off matrix:")
     for item in LENS_FLARE_SIGNOFF_MATRIX:
         print(f"  {item['platform']}: {item['tiers']} - {item['visualEvidence']}; {item['performanceEvidence']}")
+    print("\nUpload pressure variants:")
+    for variant, item in UPLOAD_PRESSURE_VARIANTS.items():
+        cvars = item.get("cvars", ())
+        cvar_text = ", ".join(f"{key}={value}" for key, value in cvars) or "current defaults"
+        print(f"  {variant}: {cvar_text} - {item['purpose']}")
+    print("\nGraph invalidation variants:")
+    for variant, item in GRAPH_INVALIDATION_VARIANTS.items():
+        cvars = item.get("cvars", ())
+        cvar_text = ", ".join(f"{key}={value}" for key, value in cvars) or "current defaults"
+        print(f"  {variant}: {cvar_text} - {item['purpose']}")
+    print("\nPerformance comparison variants:")
+    for variant, item in PERFORMANCE_COMPARISON_VARIANTS.items():
+        cvars = item.get("cvars", ())
+        cvar_text = ", ".join(f"{key}={value}" for key, value in cvars) or "current defaults"
+        print(f"  {variant}: {cvar_text} - {item['purpose']}")
 
 
 def main(argv: list[str]) -> int:
@@ -1631,22 +2947,35 @@ def main(argv: list[str]) -> int:
             print(f"  {result['status']}", flush=True)
         results.append(result)
 
+    selected_launch_variants = list(dict.fromkeys(spec.upload_variant for spec in specs))
     metadata = {
         "generated": time.strftime("%Y-%m-%d %H:%M:%S %z"),
         "host": f"{platform.system()} {platform.release()} {platform.machine()}",
         "executable": str(executable),
         "basepath": basepath,
+        "devpath": str(root / ".install"),
+        "gameDir": "baseoq4",
         "profile": args.profile,
         "dryRun": args.dry_run,
         "autoexecDelayMs": args.autoexec_delay_ms,
         "settleFrames": args.settle_frames,
         "sampleFrames": args.sample_frames,
         "sampleMsec": args.sample_msec,
+        "rendererMetricsLevel": args.renderer_metrics_level,
+        "modernExecutor": args.modern_executor,
         "minPacingHz": args.min_pacing_hz,
         "maxP95Ms": args.max_p95_ms,
         "maxP99Ms": args.max_p99_ms,
+        "referenceDir": str(args.reference_dir_path) if args.reference_dir_path is not None else "",
+        "requireReferences": args.require_references,
+        "imageRmsThreshold": args.image_rms_threshold,
+        "imageMaxThreshold": args.image_max_threshold,
         "profileCvars": dict(PROFILE_DEFAULTS[args.profile].get("cvars", ())),
+        "profileLaunchVariants": list(profile_launch_variants(PROFILE_DEFAULTS[args.profile])),
+        "launchVariants": selected_launch_variants,
+        "launchVariantFilter": args.launch_variants,
         "launchCvars": dict(args.launch_cvars),
+        "scriptCvars": cvar_pair_payload(args.extra_cvars),
         "execCommands": list(args.exec_commands),
     }
     report_json, report_md = write_reports(output_dir, results, metadata)

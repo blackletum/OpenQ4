@@ -1187,6 +1187,7 @@ extern idCVar r_rendererUploadMegs;		// dynamic upload stream size in megabytes 
 extern idCVar r_rendererUploadFrameBuffers;	// dynamic upload stream frame-buffer rotation depth
 extern idCVar r_rendererUploadPersistent;	// allow persistent-mapped dynamic upload stream
 extern idCVar r_rendererUploadBufferPool;	// recycle static GL buffer names instead of gen/data/delete churn
+extern idCVar r_rendererGraphInvalidate;	// opt-in render-graph transient attachment invalidation candidates
 extern idCVar r_rendererModernExecutor;	// opt-in modern GL executor prepare path
 extern idCVar r_rendererModernSubmit;	// opt-in modern GL draw submission before ARB2 fallback
 extern idCVar r_rendererGpuValidation;	// compare GL43 GPU-driven compute results against CPU reference data

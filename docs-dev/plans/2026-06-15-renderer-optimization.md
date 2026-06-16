@@ -301,4 +301,14 @@ The best roadmap here is incremental and test-first. I would not rewrite the ren
 | Mid-term | Profile upload stalls under stress; evaluate bounded-wait policy and persistent-map variants | Fewer frame spikes in upload-heavy scenes | M |
 | Later | Thread render-graph last-use/discard data into backend invalidation calls; optionally externalize/generated-test shader sources | Better bandwidth behavior and easier shader maintenance | M–L |
 
+## Mid-term execution status
+
+The first Windows x64 mid-term tranche is now captured in `docs-dev/plans/2026-06-15-renderer-optimization-mid-term-checklist.md`. The local evidence covers upload-pressure stress runs, low-overhead GL 3.3 versus GL 4.5 metrics, default/ARB2/executor performance comparisons, capped/uncapped/VSync presentation pacing, opt-in GPU timers, visual screenshot inspection, graph-invalidation GPU evidence, broad safe startup validation, and required SP/MP gameplay.
+
+The measured result is conservative: no upload-ring, renderer-default, transient-invalidation, low-overhead, or promotion-policy default should change from this tranche. The sampled upload-pressure runs did not show waits, timeouts, fallbacks, or overflow pressure; the ARB2-or-better comparison was mixed; graph invalidation remains default-off until pass-owned submission counters and stronger bandwidth evidence exist; and timer-query captures remain diagnostic rather than acceptance pacing data.
+
+The mid-term implementation tranche is closed without a renderer-default promotion. The deferred promotion-quality gates are approved deterministic screenshot references, RenderDoc/API capture for pass contents and bind-count claims, Linux x64 validation, and macOS GL 4.1 validation. Rollback now has a local gameplay proof, but it still needs to be reviewed as part of any final promotion evidence bundle. The required promotion platforms for a renderer promotion or portability claim remain Windows x64, Linux x64, and macOS GL 4.1.
+
+The long-term follow-up checklist is tracked in `docs-dev/plans/2026-06-15-renderer-optimization-long-term-checklist.md`. It owns the deferred promotion evidence, approved references, RenderDoc/API capture, cross-platform validation, pass-owned invalidation, and future default-promotion decision work.
+
 My overall assessment is favorable. `openQ4` already has the right architectural pieces for a robust modernized OpenGL renderer, and the code shows unusually good attention to fallback tiers, cleanup, metrics, and self-tests for a legacy-engine modernization. The main work now is to close a short list of avoidable robustness and portability gaps, then spend profiling time on the few hot paths where the renderer still does more state and synchronization work than necessary. citeturn17view3turn25view0turn28view3turn38view3turn46view0turn48view3

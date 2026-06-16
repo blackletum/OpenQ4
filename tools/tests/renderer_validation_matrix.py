@@ -33,6 +33,10 @@ SELFTEST_CHECKS = [
     ["RendererTierSelect self-test passed"],
     ["RendererTierContract self-test passed"],
     ["RendererUpload self-test passed"],
+    ["fences="],
+    ["waits="],
+    ["timeouts="],
+    ["fallbacks="],
     ["RendererGpuTimer self-test passed", "RendererGpuTimer self-test skipped"],
     ["RendererLensFlareSettings self-test passed"],
     ["RendererLensFlareRuntime self-test passed"],
@@ -42,10 +46,13 @@ SELFTEST_CHECKS = [
     ["RendererMaterialResourceTable self-test passed", "RendererMaterialResourceTable self-test skipped"],
     ["RendererGeometryResource self-test passed"],
     ["RendererGLStateCache self-test passed", "RendererGLStateCache self-test skipped"],
+    ["textureMultiBindFallback=", "RendererGLStateCache self-test skipped"],
+    ["mixedTargetFallback=1", "RendererGLStateCache self-test skipped"],
     ["RendererModernGLShaderLibrary self-test passed"],
     ["RendererModernGLDrawPlan self-test passed"],
     ["RendererModernGLSubmitPlan self-test passed"],
     ["RendererModernGLExecutor self-test passed"],
+    ["noZeroUnbind=1", "RendererModernGLExecutor buffer-helper self-test skipped"],
     ["RendererModernVisibility self-test passed"],
     ["RendererShadowPlanner self-test passed"],
 ]
@@ -233,6 +240,24 @@ LONG_RUN_VALIDATION_MATRIX = [
     },
 ]
 
+CROSS_PLATFORM_VALIDATION_MATRIX = [
+    {
+        "platform": "Windows x64",
+        "status": "first validation target",
+        "required": "safe renderer matrix, required SP/MP gameplay, upload-pressure, low-overhead-state, performance-comparison, presentation-comparison, and visual-comparison artifacts before any promotion claim",
+    },
+    {
+        "platform": "Linux x64",
+        "status": "pending after Windows artifacts are green",
+        "required": "safe renderer matrix plus required gameplay on SDL3/Linux with selected tier, context profile, upload mode, timer-query availability, DSA, and multibind notes recorded",
+    },
+    {
+        "platform": "macOS GL 4.1",
+        "status": "pending before portability claims",
+        "required": "assetless GL 4.1/auto validation and approved gameplay/visual evidence on the Apple OpenGL compatibility floor; GL 4.3+ and GL 4.5+ tiers are not expected",
+    },
+]
+
 GAMEPLAY_BENCHMARK_HARNESS = [
     {
         "profile": "smoke",
@@ -273,6 +298,36 @@ GAMEPLAY_BENCHMARK_HARNESS = [
         "profile": "lensflare-signoff",
         "command": "python tools\\tests\\renderer_gameplay_benchmark.py --profile lensflare-signoff",
         "coverage": "cross-platform lens-flare sign-off profile covering storage/outdoor scenes, off/corona/high presets, and auto/macOS-floor/low-overhead GL tiers for visual and pacing evidence",
+    },
+    {
+        "profile": "upload-pressure",
+        "command": "python tools\\tests\\renderer_gameplay_benchmark.py --profile upload-pressure --sample-msec 3000",
+        "coverage": "mid-term upload-pressure matrix for storage1, airdefense1, and medlabs across default, persistent, reduced-ring, minimum-frame-buffer, and map-range/subdata fallback upload variants",
+    },
+    {
+        "profile": "low-overhead-state",
+        "command": "python tools\\tests\\renderer_gameplay_benchmark.py --profile low-overhead-state --sample-msec 3000",
+        "coverage": "mid-term GL 3.3 versus GL 4.5 low-overhead state/bind comparison with detailed renderer metrics, modern executor preparation enabled, and state-cache/DSA/multibind counters promoted into reports",
+    },
+    {
+        "profile": "graph-invalidation",
+        "command": "python tools\\tests\\renderer_gameplay_benchmark.py --profile graph-invalidation --sample-msec 3000",
+        "coverage": "mid-term render-graph invalidation A/B profile for post/lens-flare/BSE-heavy scenes across default and r_rendererGraphInvalidate-armed launch variants",
+    },
+    {
+        "profile": "performance-comparison",
+        "command": "python tools\\tests\\renderer_gameplay_benchmark.py --profile performance-comparison --sample-msec 3000",
+        "coverage": "mid-term ARB2-or-better comparison profile for storage, airdefense, storage2, and medlabs scenes across default, explicit ARB2, and modern-executor-prep launch variants with CPU phase and pacing metrics promoted into reports",
+    },
+    {
+        "profile": "presentation-comparison",
+        "command": "python tools\\tests\\renderer_gameplay_benchmark.py --profile presentation-comparison --sample-msec 3000 --pacing-only",
+        "coverage": "mid-term presentation pacing profile for storage, airdefense, storage2, medlabs, and MP q4dm1 listen/client scenes across com_maxfps 0/120/240 and r_swapInterval 0/1 with avg/P50/P95/P99/max pacing promoted into reports",
+    },
+    {
+        "profile": "visual-comparison",
+        "command": "python tools\\tests\\renderer_gameplay_benchmark.py --profile visual-comparison --sample-msec 3000",
+        "coverage": "mid-term screenshot comparison set for post/lens-flare, BSE-heavy, GUI/subview, dense local-light, and MP listen/client scenes with optional TGA reference comparison",
     },
 ]
 
@@ -402,6 +457,29 @@ DEFAULT_PROMOTION_CRITERIA = [
     {
         "criterion": "manual sign-off",
         "required": "`r_rendererModernAutoPromote 1` is set only together with a complete `r_rendererPromotionEvidence` token",
+    },
+]
+
+PROMOTION_READINESS_MATRIX = [
+    {
+        "id": "promotion-missing-evidence-block",
+        "coverage": "`r_rendererModernAutoPromote 1` without `r_rendererPromotionEvidence`",
+        "expected": "default promotion remains inactive with evidenceReady=0",
+    },
+    {
+        "id": "promotion-incomplete-evidence-block",
+        "coverage": "`r_rendererModernAutoPromote 1` with a partial Phase 8 evidence token",
+        "expected": "default promotion remains inactive and reports the missing evidence categories",
+    },
+    {
+        "id": "promotion-explicit-arb2-rollback",
+        "coverage": "explicit `r_renderer arb2` with a complete evidence token and auto-promote requested",
+        "expected": "ARB2 remains the visible rollback path and promotion is blocked by the explicit renderer escape",
+    },
+    {
+        "id": "promotion-debug-off-defaults",
+        "coverage": "clean `r_renderer best` startup with debug/validation/experimental side paths off",
+        "expected": "default safety reports conservative=1, rollback=available, and issues=none",
     },
 ]
 
@@ -970,6 +1048,133 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
             ],
         },
         {
+            "id": "promotion-missing-evidence-block",
+            "category": "promotion-readiness",
+            "description": "Auto-promotion request remains blocked when no Phase 8 evidence token is present.",
+            "assetless": True,
+            "args": [
+                "+set",
+                "r_glTier",
+                "auto",
+                "+set",
+                "r_renderer",
+                "best",
+                "+set",
+                "r_rendererModernAutoPromote",
+                "1",
+                "+set",
+                "r_rendererPromotionEvidence",
+                "",
+                "+gfxInfo",
+            ],
+            "checks": STARTUP_CHECKS
+            + [
+                ["Renderer default promotion:"],
+                ["cvar=1"],
+                ["active=0"],
+                ["evidence=0"],
+                ["evidenceReady=0"],
+            ],
+        },
+        {
+            "id": "promotion-incomplete-evidence-block",
+            "category": "promotion-readiness",
+            "description": "Auto-promotion request remains blocked and reports missing categories when Phase 8 evidence is incomplete.",
+            "assetless": True,
+            "args": [
+                "+set",
+                "r_glTier",
+                "auto",
+                "+set",
+                "r_renderer",
+                "best",
+                "+set",
+                "r_rendererModernAutoPromote",
+                "1",
+                "+set",
+                "r_rendererPromotionEvidence",
+                "phase8=complete;warnings=0;visual=pass;gameplay=pass",
+                "+gfxInfo",
+            ],
+            "checks": STARTUP_CHECKS
+            + [
+                ["Renderer default promotion:"],
+                ["cvar=1"],
+                ["active=0"],
+                ["evidence=1"],
+                ["evidenceReady=0"],
+                ["evidenceMissing="],
+                ["renderdoc"],
+                ["perf"],
+                ["presentation"],
+                ["rollback"],
+                ["debug"],
+            ],
+        },
+        {
+            "id": "promotion-explicit-arb2-rollback",
+            "category": "promotion-readiness",
+            "description": "Explicit ARB2 renderer selection remains a rollback escape even when complete evidence and auto-promotion are requested.",
+            "assetless": True,
+            "args": [
+                "+set",
+                "r_glTier",
+                "auto",
+                "+set",
+                "r_renderer",
+                "arb2",
+                "+set",
+                "r_rendererModernAutoPromote",
+                "1",
+                "+set",
+                "r_rendererPromotionEvidence",
+                PROMOTION_EVIDENCE_TOKEN,
+                "+gfxInfo",
+            ],
+            "checks": STARTUP_CHECKS
+            + [
+                ["Renderer default promotion:"],
+                ["cvar=1"],
+                ["active=0"],
+                ["evidence=1"],
+                ["evidenceReady=1"],
+                ["rendererAllows=0"],
+                ["reason=explicit-renderer-escape"],
+                ["Renderer bootstrap:"],
+                ["defaultVisible=ARB2"],
+            ],
+        },
+        {
+            "id": "promotion-debug-off-defaults",
+            "category": "promotion-readiness",
+            "description": "Clean default startup keeps debug, validation, bindless, shader-reload, and modern visible side paths off.",
+            "assetless": True,
+            "args": [
+                "+set",
+                "r_renderer",
+                "best",
+                "+gfxInfo",
+            ],
+            "checks": STARTUP_CHECKS
+            + [
+                ["Renderer default safety:"],
+                ["renderer=best"],
+                ["executor=0"],
+                ["submit=0"],
+                ["autoPromote=0"],
+                ["promotionEvidence=0"],
+                ["visible=0"],
+                ["visibleDepth=0"],
+                ["gpuValidation=0"],
+                ["bindless=0"],
+                ["shaderReload=0"],
+                ["rollback=available"],
+                ["issues=none"],
+                ["Renderer default promotion:"],
+                ["active=0"],
+            ],
+        },
+        {
             "id": "renderer-benchmark-selftest",
             "category": "selftest",
             "description": "Phase 16 benchmark capture format, frame-time percentile, preset budget, and regression-threshold coverage.",
@@ -1057,6 +1262,9 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
                 ["textureMultiBind="],
                 ["samplerMultiBind="],
                 ["compactedBatches="],
+                ["waits="],
+                ["timeouts="],
+                ["fallbacks="],
                 ["rendererMetrics lowOverhead(req=1"],
                 ["Modern GL low-overhead:"],
                 ["Renderer graph resources:"],
@@ -1151,6 +1359,41 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
             ],
         },
         {
+            "id": "renderer-debug-output-vid-restart",
+            "category": "debug-restart",
+            "description": "Opt-in debug-output probe that requires callback registration before and after vid_restart.",
+            "default": False,
+            "args": [
+                "+set",
+                "r_glTier",
+                "auto",
+                "+set",
+                "r_glDebugContext",
+                "1",
+                "+set",
+                "r_glDebugOutput",
+                "1",
+                "+gfxInfo",
+                "+vid_restart",
+                "+gfxInfo",
+            ],
+            "checks": STARTUP_CHECKS
+            + [
+                ["Renderer default safety:"],
+                ["Requested GL tier: auto"],
+                ["requestedDebug=1"],
+                ["actualDebug=1"],
+                ["OpenGL debug output callback enabled", "OpenGL ARB debug output callback enabled"],
+            ],
+            "countChecks": [
+                {
+                    "label": "debug-output callback registration across vid_restart",
+                    "patterns": ["OpenGL debug output callback enabled", "OpenGL ARB debug output callback enabled"],
+                    "min": 2,
+                },
+            ],
+        },
+        {
             "id": "tier-gl33-debug-context",
             "category": "context-startup",
             "description": "Debug-context request path with non-debug fallback available in the ladder.",
@@ -1236,11 +1479,26 @@ def format_warning_signatures(warnings: dict[str, int]) -> str:
     return ", ".join(active) if active else "0"
 
 
-def evaluate_checks(text: str, checks: list[list[str]], warnings: dict[str, int]) -> tuple[bool, list[str]]:
+def evaluate_checks(
+    text: str,
+    checks: list[list[str]],
+    warnings: dict[str, int],
+    count_checks: list[dict[str, Any]] | None = None,
+) -> tuple[bool, list[str]]:
     missing: list[str] = []
     for alternatives in checks:
         if not any(pattern in text for pattern in alternatives):
             missing.append(" or ".join(alternatives))
+    for check in count_checks or []:
+        patterns = check.get("patterns")
+        if patterns is None:
+            pattern = check.get("pattern", "")
+            patterns = [pattern] if pattern else []
+        count = sum(text.count(pattern) for pattern in patterns)
+        min_count = int(check.get("min", 1))
+        label = check.get("label", " or ".join(patterns))
+        if count < min_count:
+            missing.append(f"{label} >= {min_count} (found {count})")
     failed_markers = [
         "self-test failed",
         "Fatal Error",
@@ -1254,6 +1512,25 @@ def evaluate_checks(text: str, checks: list[list[str]], warnings: dict[str, int]
     return len(missing) == 0, missing
 
 
+def extract_last_prefixed_value(text: str, prefix: str) -> str:
+    value = ""
+    for line in text.splitlines():
+        if line.startswith(prefix):
+            value = line[len(prefix) :].strip()
+    return value
+
+
+def extract_named_value(text: str, name: str) -> str:
+    match = re.search(rf"(?:^|[\s,\(]){re.escape(name)}[:=]([^\s,\)]+)", text)
+    return match.group(1) if match else ""
+
+
+def summarize_bool_field(value: str) -> str:
+    if value in ("0", "1"):
+        return "yes" if value == "1" else "no"
+    return value
+
+
 def extract_summary(text: str) -> dict[str, str]:
     summary: dict[str, str] = {}
     for key, pattern in {
@@ -1265,7 +1542,144 @@ def extract_summary(text: str) -> dict[str, str]:
         match = re.search(pattern, text)
         if match:
             summary[key] = match.group(1).strip()
+
+    for key, prefix in {
+        "rendererCaps": "Renderer caps:",
+        "compatibilityGates": "Renderer compatibility gates:",
+        "gpuTimers": "Renderer GPU timers:",
+        "uploadManager": "Renderer upload manager:",
+        "modernExecutor": "Modern GL executor:",
+        "stateCache": "Modern GL state cache:",
+    }.items():
+        value = extract_last_prefixed_value(text, prefix)
+        if value:
+            summary[key] = value
+
+    context_request = summary.get("contextRequest", "")
+    summary["requestedDebug"] = extract_named_value(context_request, "requestedDebug")
+    summary["actualDebug"] = extract_named_value(context_request, "actualDebug")
+
+    renderer_caps = summary.get("rendererCaps", "")
+    for field, source in {
+        "capVBO": "VBO",
+        "capUBO": "UBO",
+        "capVAO": "VAO",
+        "capMRT": "MRT",
+        "capFBO": "FBO",
+        "capMapRange": "map_range",
+        "capSync": "sync",
+        "capCompute": "compute",
+        "capSSBO": "SSBO",
+        "capBufferStorage": "buffer_storage",
+        "capDSA": "DSA",
+        "capMultiBind": "multi_bind",
+        "capBindless": "bindless",
+    }.items():
+        value = extract_named_value(renderer_caps, source)
+        if value:
+            summary[field] = value
+
+    compatibility_gates = summary.get("compatibilityGates", "")
+    for field, source in {
+        "gateBaseline": "baseline",
+        "gateUBO": "UBO",
+        "gateMRT": "MRT",
+        "gateTimerQuery": "timerQuery",
+        "gateBufferStorage": "bufferStorage",
+        "gateLowOverhead": "lowOverhead",
+        "gateDebugFallback": "debugFallback",
+        "gateForcedTierSupported": "forcedTierSupported",
+    }.items():
+        value = extract_named_value(compatibility_gates, source)
+        if value:
+            summary[field] = value
+
+    gpu_timers = summary.get("gpuTimers", "")
+    if gpu_timers:
+        summary["gpuTimerStatus"] = gpu_timers.split(",", 1)[0].strip()
+        timer_query = extract_named_value(gpu_timers, "timerQuery")
+        if timer_query:
+            summary["timerQuery"] = timer_query
+
+    upload_manager = summary.get("uploadManager", "")
+    for field, source in {
+        "uploadFrameStream": "frameStream",
+        "uploadStaticAllocator": "staticAllocator",
+        "uploadBuffers": "buffers",
+        "uploadRingKB": "ring",
+        "uploadPersistent": "persistent",
+        "uploadMapRangeFallback": "mapRangeFallback",
+        "uploadFenceWaits": "waits",
+        "uploadFenceTimeouts": "timeouts",
+        "uploadFenceFallbacks": "fallbacks",
+        "uploadLegacyBridge": "legacyBridge",
+    }.items():
+        value = extract_named_value(upload_manager, source)
+        if value:
+            summary[field] = value
+
+    modern_executor = summary.get("modernExecutor", "")
+    for field, source in {
+        "executorAvailable": "available",
+        "executorGpuDriven": "gpuDriven",
+        "executorSSBO": "ssbo",
+        "executorLowOverhead": "lowOverhead",
+        "executorDSA": "dsa",
+        "executorMultiBind": "multiBind",
+    }.items():
+        if source == "available":
+            if modern_executor:
+                summary[field] = "1" if modern_executor.startswith("available") else "0"
+            continue
+        value = extract_named_value(modern_executor, source)
+        if value:
+            summary[field] = value
+
     return summary
+
+
+def markdown_cell(value: Any) -> str:
+    return str(value or "").replace("|", "\\|").replace("\r", " ").replace("\n", " ")
+
+
+def summarize_capability_row(summary: dict[str, str]) -> dict[str, str]:
+    return {
+        "context": summary.get("contextProfile") or summary.get("context", ""),
+        "request": summary.get("contextRequest", ""),
+        "debug": f"{summary.get('requestedDebug', '?')}/{summary.get('actualDebug', '?')}",
+        "tier": summary.get("selectedTier", ""),
+        "timer": f"{summary.get('gpuTimerStatus', 'missing')} tq={summary.get('timerQuery') or summary.get('gateTimerQuery', '?')}",
+        "upload": (
+            f"{summary.get('uploadFrameStream', 'missing')} "
+            f"ring={summary.get('uploadRingKB', '?')} "
+            f"persistent={summary.get('uploadPersistent', '?')} "
+            f"mapRangeFallback={summary.get('uploadMapRangeFallback', '?')}"
+        ),
+        "lowOverhead": (
+            f"ready={summary.get('gateLowOverhead') or summary.get('executorLowOverhead', '?')} "
+            f"DSA={summary.get('executorDSA') or summary.get('capDSA', '?')} "
+            f"multiBind={summary.get('executorMultiBind') or summary.get('capMultiBind', '?')}"
+        ),
+    }
+
+
+def build_platform_summaries(results: list[dict[str, Any]], metadata: dict[str, Any]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for result in results:
+        summary = result.get("summary", {})
+        if not summary:
+            continue
+        row = summarize_capability_row(summary)
+        row.update(
+            {
+                "host": metadata.get("host", ""),
+                "case": result.get("id", ""),
+                "status": result.get("status", ""),
+                "log": result.get("log") or result.get("stdout", ""),
+            }
+        )
+        rows.append(row)
+    return rows
 
 
 def print_failure_details(result: dict[str, Any]) -> None:
@@ -1347,7 +1761,7 @@ def run_case(
             log_text += "\n" + stderr_path.read_text(encoding="utf-8", errors="replace")
 
     warning_signatures = count_warning_signatures(log_text)
-    checks_ok, missing = evaluate_checks(log_text, case["checks"], warning_signatures)
+    checks_ok, missing = evaluate_checks(log_text, case["checks"], warning_signatures, case.get("countChecks"))
     ok = exit_code == 0 and not timed_out and log_path is not None and checks_ok
     return {
         "id": case_id,
@@ -1383,6 +1797,8 @@ def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dic
         "shaderLibraryTierMatrix": SHADER_LIBRARY_TIER_MATRIX,
         "lensFlareSignoffMatrix": LENS_FLARE_SIGNOFF_MATRIX,
         "longRunValidationMatrix": LONG_RUN_VALIDATION_MATRIX,
+        "crossPlatformValidationMatrix": CROSS_PLATFORM_VALIDATION_MATRIX,
+        "capturedPlatformSummaries": build_platform_summaries(results, metadata),
         "perfRegressionThresholds": PERF_REGRESSION_THRESHOLDS,
         "promotionEvidenceGate": {
             "cvar": "r_rendererPromotionEvidence",
@@ -1392,6 +1808,7 @@ def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dic
             "status": "blocked-until-manual-evidence",
         },
         "defaultPromotionCriteria": DEFAULT_PROMOTION_CRITERIA,
+        "promotionReadinessMatrix": PROMOTION_READINESS_MATRIX,
     }
     report_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -1522,6 +1939,38 @@ def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dic
     for item in LONG_RUN_VALIDATION_MATRIX:
         lines.append(f"| `{item['id']}` | {item['mode']} | {item['purpose']} |")
 
+    platform_summaries = build_platform_summaries(results, metadata)
+    lines += [
+        "",
+        "## Captured Platform Capability Summary",
+        "",
+        "Rows are extracted from `gfxInfo` output in completed automated startup cases. Use this table as the first cross-platform note bundle; pending target platforms still require their own runs.",
+        "",
+        "| Case | Status | Host | Context | Debug Req/Actual | Tier | Timer | Upload | Low-Overhead | Log |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    if platform_summaries:
+        for row in platform_summaries:
+            lines.append(
+                f"| `{row['case']}` | {row['status']} | {markdown_cell(row['host'])} | "
+                f"{markdown_cell(row['context'])} | {markdown_cell(row['debug'])} | "
+                f"`{markdown_cell(row['tier'])}` | {markdown_cell(row['timer'])} | "
+                f"{markdown_cell(row['upload'])} | {markdown_cell(row['lowOverhead'])} | "
+                f"`{markdown_cell(row['log'])}` |"
+            )
+    else:
+        lines.append("| not-run | not-run |  |  |  |  |  |  |  |  |")
+
+    lines += [
+        "",
+        "## Cross-Platform Validation Status",
+        "",
+        "| Platform | Status | Required Evidence Before Promotion Claims |",
+        "|---|---|---|",
+    ]
+    for item in CROSS_PLATFORM_VALIDATION_MATRIX:
+        lines.append(f"| {item['platform']} | {item['status']} | {item['required']} |")
+
     lines += [
         "",
         "## Performance Regression Thresholds",
@@ -1554,6 +2003,24 @@ def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dic
         "| `rollback=pass` | `r_renderer arb2`, `r_glTier legacy`, and modern-disable rollback commands work after modern-visible frames. |",
         "| `debug=off` | Promotion does not depend on debug-only overlays, validation readbacks, bindless experiments, or shader reload. |",
     ]
+
+    results_by_id = {result["id"]: result for result in results}
+    lines += [
+        "",
+        "## Promotion Readiness Probes",
+        "",
+        "| Case | Status | Coverage | Expected Signal | Log |",
+        "|---|---|---|---|---|",
+    ]
+    for item in PROMOTION_READINESS_MATRIX:
+        result = results_by_id.get(item["id"])
+        if result is None:
+            status = "not-run"
+            log = ""
+        else:
+            status = result["status"]
+            log = result["log"] or result["stdout"]
+        lines.append(f"| `{item['id']}` | {status} | {item['coverage']} | {item['expected']} | `{log}` |")
 
     lines += [
         "",
@@ -1639,9 +2106,15 @@ def main(argv: list[str]) -> int:
         print("\nLong-run cases:")
         for case in LONG_RUN_VALIDATION_MATRIX:
             print(f"  {case['id']}: {case['mode']} - {case['purpose']}")
+        print("\nCross-platform validation targets:")
+        for item in CROSS_PLATFORM_VALIDATION_MATRIX:
+            print(f"  {item['platform']}: {item['status']} - {item['required']}")
         print("\nPerformance regression thresholds:")
         for item in PERF_REGRESSION_THRESHOLDS:
             print(f"  {item['preset']}: P95 <= {item['p95Ms']} ms, P99 <= {item['p99Ms']} ms - {item['budget']}")
+        print("\nPromotion readiness probes:")
+        for item in PROMOTION_READINESS_MATRIX:
+            print(f"  {item['id']}: {item['coverage']} - {item['expected']}")
         print("\nDefault promotion criteria:")
         for item in DEFAULT_PROMOTION_CRITERIA:
             print(f"  {item['criterion']}: {item['required']}")
