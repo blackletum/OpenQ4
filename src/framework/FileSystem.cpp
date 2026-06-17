@@ -36,7 +36,7 @@ If you have questions concerning this license or the applicable additional terms
 	#include <io.h>	// for _read
 	#include <direct.h> // for _getcwd
 #else
-	#if !__MACH__ && __MWERKS__
+	#if !defined( __MACH__ ) && defined( __MWERKS__ )
 		#include <types.h>
 		#include <stat.h>
 	#else

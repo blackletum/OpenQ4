@@ -180,7 +180,7 @@ typedef struct {
 
 double TBToDoubleNano( U64 startTime, U64 stopTime, double ticksPerNanosecond );
 
-#if __MWERKS__
+#if defined( __MWERKS__ )
 asm void GetTB( U64 * );
 #else
 void GetTB( U64 * );

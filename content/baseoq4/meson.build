@@ -14,6 +14,21 @@ if build_games and build_game_sp
       install: true,
       install_dir: install_game_dir,
     )
+  elif host_system == 'darwin'
+    shared_module(
+      game_sp_binary_name,
+      game_sources,
+      include_directories: game_include_dirs,
+      link_with: game_idlib_library,
+      cpp_args: game_common_cpp_args,
+      c_args: game_common_c_args,
+      cpp_pch: game_module_pch_headers,
+      link_args: game_module_link_args,
+      name_prefix: '',
+      name_suffix: 'dylib',
+      install: true,
+      install_dir: install_game_dir,
+    )
   else
     shared_module(
       game_sp_binary_name,
@@ -44,6 +59,21 @@ if build_games and build_game_mp
       link_args: game_module_link_args,
       vs_module_defs: game_module_defs_file,
       name_prefix: '',
+      install: true,
+      install_dir: install_game_dir,
+    )
+  elif host_system == 'darwin'
+    shared_module(
+      game_mp_binary_name,
+      game_sources,
+      include_directories: game_include_dirs,
+      link_with: game_idlib_library,
+      cpp_args: game_common_cpp_args + ['-DGAME_MPAPI'],
+      c_args: game_common_c_args,
+      cpp_pch: game_module_pch_headers,
+      link_args: game_module_link_args,
+      name_prefix: '',
+      name_suffix: 'dylib',
       install: true,
       install_dir: install_game_dir,
     )

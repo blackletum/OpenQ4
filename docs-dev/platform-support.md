@@ -15,8 +15,8 @@ This document defines the long-term platform direction for openQ4 and how SDL3 +
 
 ## Current Baseline (0.1.010 beta line)
 
-- Primary actively validated build target: Windows x64.
-- Hosted release automation now covers Windows x64/arm64, Linux x64/arm64, and macOS arm64 package generation.
+- Primary actively validated build targets: Windows x64, Linux x64/arm64, and macOS arm64 through hosted CI/package generation.
+- Windows arm64 remains package-validated during bring-up, with runtime validation still required on hardware.
 - Build system: Meson + Ninja.
 - Dependency model: Meson subprojects/wraps.
 - Platform backend direction: SDL3-first (legacy Win32 backend is transitional only).
@@ -32,6 +32,7 @@ This document defines the long-term platform direction for openQ4 and how SDL3 +
 - XWayland remains available as an explicit fallback by setting `OPENQ4_FORCE_X11=1` or an SDL video-driver override such as `SDL_VIDEO_DRIVER=x11`.
 - If a native Wayland compositor has decoration, resize, or window-control issues, `OPENQ4_WAYLAND_PREFER_LIBDECOR=1` asks SDL to prefer libdecor without changing the default path for other sessions.
 - If a compositor applies window changes too asynchronously for diagnosis, `OPENQ4_WAYLAND_SYNC_WINDOW_OPS=1` asks SDL to synchronize every window operation. Use it only as a troubleshooting option because some compositors may block during window animations.
+- macOS arm64 release packages are built and validated in both OpenGL and Metal bridge variants, with `.app` metadata, executable bits, archive contents, runtime dependency roots, and architecture-matched `.dylib` game modules checked before release publication.
 - Windows arm64 currently uses a custom OpenAL Soft package path during bring-up because the in-repo bundled Windows runtime payload is still x64-only.
 
 ## Runtime Baselines
@@ -68,7 +69,7 @@ This document defines the long-term platform direction for openQ4 and how SDL3 +
 1. Keep Windows x64 stable with SDL3 default backend.
 2. Keep Linux on the SDL3 backend by default and validate both x64 and arm64 release paths.
 3. Validate Windows arm64 beyond compile/package bring-up, especially runtime audio and in-game coverage.
-4. Promote Linux and macOS to first-class once they pass consistent compile/link/runtime validation loops.
+4. Continue macOS hardware signoff for input devices, audio devices, and in-game renderer coverage on real Macs while keeping the CI build/package path first-class.
 
 ## SDL3 Migration Staging (Linux/macOS)
 
