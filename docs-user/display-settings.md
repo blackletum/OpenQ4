@@ -6,7 +6,7 @@ This guide covers openQ4 display/window settings for end users, including multi-
 
 - Press `Alt+Enter` to toggle fullscreen/windowed mode (fast path uses `vid_restart partial`).
 - Run `listDisplays` in the console to list monitor indices for `r_screen`.
-- On SDL3 builds, run `listDisplayModes [displayIndex]` to list available exclusive fullscreen modes.
+- On SDL3 builds, run `listDisplayModes [displayIndex]` to list available exclusive fullscreen modes, including SDL-reported content scale, pixel density, and exact refresh details when available.
 - The in-game `Settings -> System` menu exposes fullscreen policy, borderless/window sizing, custom exclusive fullscreen sizing, refresh rate, UI aspect behavior, display target, multi-screen, and resolution scale controls.
 - After changing video cvars, run `vid_restart` (or `vid_restart partial` for quick window/fullscreen transitions).
 
@@ -76,7 +76,7 @@ The Display menu exposes curated presets: `10%`, `25%`, `50%`, `75%`, `85%`, `10
 
 Notes:
 - When `r_fullscreenDesktop 1`, `r_mode` and `r_custom*` are ignored for fullscreen sizing (they still exist for legacy configs and exclusive mode).
-- Use `listDisplayModes` to see what your monitor actually supports in exclusive mode.
+- Use `listDisplayModes` to see what your monitor actually supports in exclusive mode. On SDL3/Wayland, display diagnostics also report scale, orientation, pixel density, and exact refresh details that help diagnose compositor scaling behavior.
 
 ## Windowed Sizing and Placement
 

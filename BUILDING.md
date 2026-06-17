@@ -117,7 +117,7 @@ Pass any of these with `-D<option>=<value>` on the `meson setup` command line:
 
 openQ4 includes two local validation profiles under `tools/validation/`. They share one Python runner and use the platform build wrappers so Windows validation still goes through `tools/build/meson_setup.ps1`.
 
-GitHub Actions runs the same validation entrypoints on every pushed commit, pull request, and manual dispatch. Branch pushes run the faster push profile across Linux x64, Linux ARM64, macOS, and Windows. Pull requests/manual dispatches run the full PR profile on Windows x64 plus Linux ARM64, where the staged ARM64 client also runs an assetless no-map renderer startup smoke under a virtual X display.
+GitHub Actions runs the same validation entrypoints on every pushed commit, pull request, and manual dispatch. Branch pushes run the faster push profile across Linux x64, Linux ARM64, macOS, and Windows. Pull requests/manual dispatches run the full PR profile on Windows x64, Linux ARM64, and macOS ARM64; the staged Linux ARM64 client also runs an assetless no-map renderer startup smoke under a virtual X display.
 
 ### Push Validation
 

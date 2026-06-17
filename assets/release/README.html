@@ -153,7 +153,7 @@
       <h2>Steam Deck Notes</h2>
       <ul>
         <li>The Deck launcher enables the <code>steamdeck</code> platform profile and sets <code>OPENQ4_STEAMDECK=1</code>.</li>
-        <li>Native Wayland is the default SDL path when available. Set <code>OPENQ4_FORCE_X11=1</code> to force the XWayland fallback.</li>
+        <li>Native Wayland is the default SDL path when available. Set <code>OPENQ4_FORCE_X11=1</code> to force the XWayland fallback from the Deck launcher or a direct client launch.</li>
         <li>Deck controller tuning lives under <code>Settings -&gt; Game Options -&gt; Controller</code>, including gyro, touchpad mode, touchscreen routing, and low-battery rumble caps.</li>
         <li>Run <code>listControllers</code> from the console when reporting Deck input, battery, gyro, touchpad, or touchscreen issues.</li>
       </ul>
@@ -164,6 +164,7 @@
       <ul>
         <li>macOS packages use the SDL3 runtime path and are published as separate OpenGL and Metal bridge variants.</li>
         <li>The Metal package is a bridge mode around the existing OpenGL renderer, preserving stock-asset compatibility while Metal translation-layer work continues.</li>
+        <li>Launch <code>openQ4.app</code> from the extracted package folder. If Gatekeeper blocks an unsigned archive build, use Finder's right-click Open flow, or remove quarantine from the extracted folder with <code>xattr -dr com.apple.quarantine /path/to/openq4-folder</code>.</li>
       </ul>
     </section>
 

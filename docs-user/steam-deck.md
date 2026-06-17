@@ -6,7 +6,7 @@ openQ4 supports Steam Deck through the dedicated `openQ4-steamdeck` launcher shi
 
 - Use `openQ4-steamdeck` instead of `openQ4-client_x64`.
 - The launcher adds `+set com_platformProfile steamdeck`, exports `OPENQ4_STEAMDECK=1`, and preserves any extra command-line arguments you pass.
-- Native Wayland is the default SDL choice when available. To force the old XWayland fallback path, launch with `OPENQ4_FORCE_X11=1`.
+- Native Wayland is the default SDL choice when available. To force the old XWayland fallback path, launch with `OPENQ4_FORCE_X11=1`; the dedicated launcher and direct client launches both honor it unless an explicit SDL video-driver override is already set.
 - If you launch `openQ4-client_x64` directly on a Steam Deck or SteamOS host, openQ4 auto-selects the `steamdeck` platform profile when `com_platformProfile` is still `default`. Set `OPENQ4_NO_STEAMDECK_AUTODETECT=1` or `OPENQ4_DISABLE_STEAMDECK_AUTODETECT=1` to disable that fallback.
 
 ## Controls

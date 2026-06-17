@@ -449,9 +449,21 @@ static void Sys_ReportWaylandRuntime( void ) {
 	const char *x11Display = getenv( "DISPLAY" );
 	const char *sdlVideoDriver = getenv( "SDL_VIDEO_DRIVER" );
 	const char *legacySdlVideoDriver = getenv( "SDL_VIDEODRIVER" );
+	const char *openQ4ForceX11 = getenv( "OPENQ4_FORCE_X11" );
+	const char *openQ4PreferLibdecor = getenv( "OPENQ4_WAYLAND_PREFER_LIBDECOR" );
+	const char *openQ4SyncWindowOps = getenv( "OPENQ4_WAYLAND_SYNC_WINDOW_OPS" );
 	const char *effectiveSdlVideoDriver = ( sdlVideoDriver != NULL && sdlVideoDriver[0] != '\0' )
 		? sdlVideoDriver
 		: legacySdlVideoDriver;
+	const char *effectiveOpenQ4ForceX11 = ( openQ4ForceX11 != NULL && openQ4ForceX11[0] != '\0' )
+		? openQ4ForceX11
+		: "<unset>";
+	const char *effectiveOpenQ4PreferLibdecor = ( openQ4PreferLibdecor != NULL && openQ4PreferLibdecor[0] != '\0' )
+		? openQ4PreferLibdecor
+		: "<unset>";
+	const char *effectiveOpenQ4SyncWindowOps = ( openQ4SyncWindowOps != NULL && openQ4SyncWindowOps[0] != '\0' )
+		? openQ4SyncWindowOps
+		: "<unset>";
 
 	if ( waylandDisplay == NULL || waylandDisplay[0] == '\0' ) {
 		return;
@@ -461,7 +473,10 @@ static void Sys_ReportWaylandRuntime( void ) {
 #if defined( USE_SDL3 )
 		Sys_Printf(
 			"Wayland session detected (%s) without X11 DISPLAY. "
-			"openQ4 will use SDL3's native Wayland path when selected; if OpenGL startup fails, use an XWayland-enabled session or set SDL_VIDEO_DRIVER=x11 (SDL_VIDEODRIVER=x11 is also honored by SDL3).\n",
+			"openQ4 will use SDL3's native Wayland path when selected; "
+			"use OPENQ4_FORCE_X11=1 from an XWayland-enabled session for fallback, "
+			"OPENQ4_WAYLAND_PREFER_LIBDECOR=1 for decoration issues, or "
+			"OPENQ4_WAYLAND_SYNC_WINDOW_OPS=1 for window-operation diagnostics.\n",
 			waylandDisplay
 		);
 #else
@@ -476,10 +491,14 @@ static void Sys_ReportWaylandRuntime( void ) {
 
 #if defined( USE_SDL3 )
 	Sys_Printf(
-		"Wayland session detected (%s) with X11 DISPLAY=%s available. SDL3 video override: %s.\n",
+		"Wayland session detected (%s) with X11 DISPLAY=%s available. SDL3 video override: %s; "
+		"OPENQ4_FORCE_X11=%s OPENQ4_WAYLAND_PREFER_LIBDECOR=%s OPENQ4_WAYLAND_SYNC_WINDOW_OPS=%s.\n",
 		waylandDisplay,
 		x11Display,
-		( effectiveSdlVideoDriver != NULL && effectiveSdlVideoDriver[0] != '\0' ) ? effectiveSdlVideoDriver : "<unset>"
+		( effectiveSdlVideoDriver != NULL && effectiveSdlVideoDriver[0] != '\0' ) ? effectiveSdlVideoDriver : "<unset>",
+		effectiveOpenQ4ForceX11,
+		effectiveOpenQ4PreferLibdecor,
+		effectiveOpenQ4SyncWindowOps
 	);
 #else
 	Sys_Printf(

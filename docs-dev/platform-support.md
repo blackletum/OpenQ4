@@ -22,10 +22,14 @@ This document defines the long-term platform direction for openQ4 and how SDL3 +
 - Platform backend direction: SDL3-first (legacy Win32 backend is transitional only).
 - Language baseline target: C++23 semantics (`vc++latest` on current MSVC Meson front-end).
 - Toolchain baseline direction: MSVC 19.46+ (Visual Studio 2026 generation), with compatibility fallback permitted during migration.
-- As of March 30, 2026, Linux defaults to the SDL3 backend and keeps `-Dplatform_backend=native` as a fallback path.
+- As of March 30, 2026, Linux and macOS default to the SDL3 backend and keep `-Dplatform_backend=native` as a fallback/comparison path.
 - Steam Deck support is delivered through the explicit `openQ4-steamdeck` launcher/profile, not hardware auto-detection.
-- Native Wayland is supported through the SDL3 backend. The shared SDL3 path logs the selected video driver, applies Wayland-aware defaults, avoids persisting compositor-owned window positions, and tries SDL's unversioned OpenGL compatibility fallback first when `r_glTier` is `auto` on native Wayland.
-- When both `WAYLAND_DISPLAY` and `DISPLAY` are available, the Steam Deck launcher prefers XWayland by exporting `SDL_VIDEO_DRIVER=x11` and `SDL_VIDEODRIVER=x11` unless the user already set an SDL video driver.
+- Native Wayland is supported through the SDL3 backend. The shared SDL3 path logs the selected video driver, active Wayland hints, display content scale, orientation, current/desktop display modes, exact refresh details when SDL reports them, and compositor-accepted window state after screen changes; applies Wayland-aware defaults; avoids persisting compositor-owned window positions; keeps relative mouse-look usable when pointer confinement is unavailable; synchronizes compositor-negotiated size/fullscreen changes before refreshing renderer placement; and tries SDL's unversioned OpenGL compatibility fallback first when `r_glTier` is `auto` on native Wayland.
+- SDL3 Linux VRAM autodetection can enumerate DRM card/render-node sysfs before legacy `/proc/dri` fallback, so native Wayland and minimal X11-free sessions are less dependent on optional XNVCtrl helpers.
+- SDL3 Linux desktop-resolution queries fall back from desktop mode to current mode and display bounds, improving startup robustness on compositors that do not report a conventional desktop mode.
+- XWayland remains available as an explicit fallback by setting `OPENQ4_FORCE_X11=1` or an SDL video-driver override such as `SDL_VIDEO_DRIVER=x11`.
+- If a native Wayland compositor has decoration, resize, or window-control issues, `OPENQ4_WAYLAND_PREFER_LIBDECOR=1` asks SDL to prefer libdecor without changing the default path for other sessions.
+- If a compositor applies window changes too asynchronously for diagnosis, `OPENQ4_WAYLAND_SYNC_WINDOW_OPS=1` asks SDL to synchronize every window operation. Use it only as a troubleshooting option because some compositors may block during window animations.
 - Windows arm64 currently uses a custom OpenAL Soft package path during bring-up because the in-repo bundled Windows runtime payload is still x64-only.
 
 ## Runtime Baselines
@@ -65,9 +69,9 @@ This document defines the long-term platform direction for openQ4 and how SDL3 +
 
 ## SDL3 Migration Staging (Linux/macOS)
 
-- Linux now uses a real SDL3 runtime path when `-Dplatform_backend=sdl3` is selected, and that is the default Linux configuration as of March 30, 2026.
-- macOS still maps `platform_backend=sdl3` to native platform sources until its SDL3 runtime path is implemented.
-- This keeps one backend vocabulary across platforms while allowing Linux to validate the shared SDL3 stack directly.
+- Linux and macOS now use the shared SDL3 runtime path when `-Dplatform_backend=sdl3` is selected, and that is the default configuration as of March 30, 2026.
+- macOS SDL3 builds select `src/sys/osx/macosx_sdl3.cpp` and `src/sys/osx/macosx_sdl3_main.cpp` with the shared SDL3 window, input, controller, and OpenGL context path.
+- The native Linux X11/GLX and macOS Cocoa/OpenGL backends remain available through `-Dplatform_backend=native` for comparison and rollback while SDL3 remains the release path.
 
 ## Definition Of Done For First-Class Platform Support
 

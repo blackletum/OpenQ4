@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-repo_root="$(cd -- "${script_dir}/../.." && pwd)"
+case "${BASH_SOURCE[0]}" in
+    */*) script_dir="${BASH_SOURCE[0]%/*}" ;;
+    *) script_dir=. ;;
+esac
+script_dir="$(CDPATH= cd "${script_dir}" && pwd)"
+repo_root="$(CDPATH= cd "${script_dir}/../.." && pwd)"
 default_builddir="${repo_root}/builddir"
 sync_icons_script="${script_dir}/sync_icons.py"
 check_staged_content_script="${script_dir}/check_staged_content_edits.py"

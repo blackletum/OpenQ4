@@ -454,6 +454,16 @@ static const char *SDL3_HintString(const char *name) {
 	return (value != NULL && value[0] != '\0') ? value : "<unset>";
 }
 
+static bool SDL3_EnvHasValue(const char *name) {
+	const char *value = getenv(name);
+	return value != NULL && value[0] != '\0';
+}
+
+static bool SDL3_EnvFlagEnabled(const char *name) {
+	const char *value = getenv(name);
+	return value != NULL && value[0] != '\0' && idStr::Icmp(value, "0") != 0 && idStr::Icmp(value, "false") != 0;
+}
+
 static bool SDL3_StringEquals(const char *a, const char *b) {
 	return a != NULL && b != NULL && idStr::Icmp(a, b) == 0;
 }
@@ -474,6 +484,17 @@ static const char *SDL3_GraphicsBridgeDescription(void) {
 
 static void SDL3_SetVideoHintDefaults(void) {
 #if defined(OPENQ4_SDL3_LINUX_HOST)
+	if (SDL3_EnvFlagEnabled("OPENQ4_FORCE_X11") &&
+			!SDL3_EnvHasValue("SDL_VIDEO_DRIVER") &&
+			!SDL3_EnvHasValue("SDL_VIDEODRIVER")) {
+		(void)SDL_SetHintWithPriority(SDL_HINT_VIDEO_DRIVER, "x11", SDL_HINT_DEFAULT);
+	}
+	if (SDL3_EnvFlagEnabled("OPENQ4_WAYLAND_PREFER_LIBDECOR")) {
+		(void)SDL_SetHintWithPriority(SDL_HINT_VIDEO_WAYLAND_PREFER_LIBDECOR, "1", SDL_HINT_DEFAULT);
+	}
+	if (SDL3_EnvFlagEnabled("OPENQ4_WAYLAND_SYNC_WINDOW_OPS")) {
+		(void)SDL_SetHintWithPriority(SDL_HINT_VIDEO_SYNC_WINDOW_OPERATIONS, "1", SDL_HINT_DEFAULT);
+	}
 	(void)SDL_SetHintWithPriority(SDL_HINT_VIDEO_WAYLAND_ALLOW_LIBDECOR, "1", SDL_HINT_DEFAULT);
 	(void)SDL_SetHintWithPriority(SDL_HINT_VIDEO_WAYLAND_MODE_EMULATION, "1", SDL_HINT_DEFAULT);
 	(void)SDL_SetHintWithPriority(SDL_HINT_VIDEO_WAYLAND_MODE_SCALING, "aspect", SDL_HINT_DEFAULT);
@@ -535,7 +556,10 @@ static void SDL3_PrintVideoDriverSummary(void) {
 
 #if defined(OPENQ4_SDL3_LINUX_HOST)
 	common->Printf(
-		"SDL3: Linux video environment: SDL_VIDEO_DRIVER=%s SDL_VIDEODRIVER=%s WAYLAND_DISPLAY=%s DISPLAY=%s\n",
+		"SDL3: Linux video environment: OPENQ4_FORCE_X11=%s OPENQ4_WAYLAND_PREFER_LIBDECOR=%s OPENQ4_WAYLAND_SYNC_WINDOW_OPS=%s SDL_VIDEO_DRIVER=%s SDL_VIDEODRIVER=%s WAYLAND_DISPLAY=%s DISPLAY=%s\n",
+		SDL3_EnvString("OPENQ4_FORCE_X11"),
+		SDL3_EnvString("OPENQ4_WAYLAND_PREFER_LIBDECOR"),
+		SDL3_EnvString("OPENQ4_WAYLAND_SYNC_WINDOW_OPS"),
 		SDL3_EnvString("SDL_VIDEO_DRIVER"),
 		SDL3_EnvString("SDL_VIDEODRIVER"),
 		SDL3_EnvString("WAYLAND_DISPLAY"),
@@ -544,6 +568,14 @@ static void SDL3_PrintVideoDriverSummary(void) {
 	if (SDL3_IsNativeWaylandVideoDriver()) {
 		common->Printf(
 			"SDL3: native Wayland active; compositor-controlled window placement and Wayland-first OpenGL fallback ordering enabled.\n");
+		common->Printf(
+			"SDL3: Wayland hints: ALLOW_LIBDECOR=%s PREFER_LIBDECOR=%s MODE_EMULATION=%s MODE_SCALING=%s SCALE_TO_DISPLAY=%s SYNC_WINDOW_OPERATIONS=%s\n",
+			SDL3_HintString(SDL_HINT_VIDEO_WAYLAND_ALLOW_LIBDECOR),
+			SDL3_HintString(SDL_HINT_VIDEO_WAYLAND_PREFER_LIBDECOR),
+			SDL3_HintString(SDL_HINT_VIDEO_WAYLAND_MODE_EMULATION),
+			SDL3_HintString(SDL_HINT_VIDEO_WAYLAND_MODE_SCALING),
+			SDL3_HintString(SDL_HINT_VIDEO_WAYLAND_SCALE_TO_DISPLAY),
+			SDL3_HintString(SDL_HINT_VIDEO_SYNC_WINDOW_OPERATIONS));
 	} else if (s_sdlVideoDriver == SDL3_VIDEO_DRIVER_X11 && getenv("WAYLAND_DISPLAY") != NULL) {
 		common->Printf("SDL3: X11 video driver active in a Wayland session; running through XWayland.\n");
 	}
@@ -2529,6 +2561,41 @@ static int SDL3_FindDisplayIndex(const SDL_DisplayID *displays, int displayCount
 	return -1;
 }
 
+static const char *SDL3_DisplayOrientationName(SDL_DisplayOrientation orientation) {
+	switch (orientation) {
+		case SDL_ORIENTATION_LANDSCAPE: return "landscape";
+		case SDL_ORIENTATION_LANDSCAPE_FLIPPED: return "landscape-flipped";
+		case SDL_ORIENTATION_PORTRAIT: return "portrait";
+		case SDL_ORIENTATION_PORTRAIT_FLIPPED: return "portrait-flipped";
+		default: return "unknown";
+	}
+}
+
+static void SDL3_FormatDisplayMode(const SDL_DisplayMode *mode, char *buffer, int bufferSize) {
+	if (buffer == NULL || bufferSize <= 0) {
+		return;
+	}
+	if (mode == NULL || mode->w <= 0 || mode->h <= 0) {
+		idStr::snPrintf(buffer, bufferSize, "unavailable");
+		return;
+	}
+	if (mode->refresh_rate_numerator > 0 && mode->refresh_rate_denominator > 0) {
+		idStr::snPrintf(buffer, bufferSize, "%dx%d @ %.2f Hz (%d/%d) pd=%.2f",
+			mode->w,
+			mode->h,
+			mode->refresh_rate,
+			mode->refresh_rate_numerator,
+			mode->refresh_rate_denominator,
+			mode->pixel_density);
+	} else {
+		idStr::snPrintf(buffer, bufferSize, "%dx%d @ %.2f Hz pd=%.2f",
+			mode->w,
+			mode->h,
+			mode->refresh_rate,
+			mode->pixel_density);
+	}
+}
+
 static void SDL3_PrintDisplayList(void) {
 	int displayCount = 0;
 	SDL_DisplayID *displays = SDL_GetDisplays(&displayCount);
@@ -2550,22 +2617,42 @@ static void SDL3_PrintDisplayList(void) {
 			name = "<unnamed>";
 		}
 
+		const float contentScale = SDL_GetDisplayContentScale(display);
+		const SDL_DisplayOrientation naturalOrientation = SDL_GetNaturalDisplayOrientation(display);
+		const SDL_DisplayOrientation currentOrientation = SDL_GetCurrentDisplayOrientation(display);
+		const SDL_DisplayMode *desktopMode = SDL_GetDesktopDisplayMode(display);
+		const SDL_DisplayMode *currentMode = SDL_GetCurrentDisplayMode(display);
+		char desktopModeText[96];
+		char currentModeText[96];
+		SDL3_FormatDisplayMode(desktopMode, desktopModeText, sizeof(desktopModeText));
+		SDL3_FormatDisplayMode(currentMode, currentModeText, sizeof(currentModeText));
+
 		SDL_Rect bounds;
 		if (SDL_GetDisplayBounds(display, &bounds)) {
-			common->Printf("  [%d]%s %s (%dx%d @ %d,%d)\n",
+			common->Printf("  [%d]%s %s (%dx%d @ %d,%d, contentScale %.2f, orientation %s/%s, desktop %s, current %s)\n",
 				i,
 				(display == primaryDisplay) ? " *" : "",
 				name,
 				bounds.w,
 				bounds.h,
 				bounds.x,
-				bounds.y);
+				bounds.y,
+				contentScale,
+				SDL3_DisplayOrientationName(naturalOrientation),
+				SDL3_DisplayOrientationName(currentOrientation),
+				desktopModeText,
+				currentModeText);
 		} else {
-			common->Printf("  [%d]%s %s (bounds unavailable: %s)\n",
+			common->Printf("  [%d]%s %s (bounds unavailable: %s, contentScale %.2f, orientation %s/%s, desktop %s, current %s)\n",
 				i,
 				(display == primaryDisplay) ? " *" : "",
 				name,
-				SDL_GetError());
+				SDL_GetError(),
+				contentScale,
+				SDL3_DisplayOrientationName(naturalOrientation),
+				SDL3_DisplayOrientationName(currentOrientation),
+				desktopModeText,
+				currentModeText);
 		}
 	}
 
@@ -2914,13 +3001,19 @@ static void SDL3_ListDisplayModes_f(const idCmdArgs &args) {
 		return;
 	}
 
-	common->Printf("SDL3: fullscreen modes for display %d (%s):\n", selectedDisplay.index, name);
+	const float contentScale = SDL_GetDisplayContentScale(display);
+	common->Printf("SDL3: fullscreen modes for display %d (%s, contentScale %.2f):\n",
+		selectedDisplay.index,
+		name,
+		contentScale);
 	for (int i = 0; i < modeCount; ++i) {
 		const SDL_DisplayMode *mode = modes[i];
 		if (mode == NULL || mode->w <= 0 || mode->h <= 0) {
 			continue;
 		}
-		common->Printf("  [%d] %dx%d @ %.2f Hz\n", i, mode->w, mode->h, mode->refresh_rate);
+		char modeText[96];
+		SDL3_FormatDisplayMode(mode, modeText, sizeof(modeText));
+		common->Printf("  [%d] %s\n", i, modeText);
 	}
 
 	SDL_free(modes);
@@ -3165,6 +3258,57 @@ static void SDL3_RefreshWindowPlacement(void) {
 	}
 }
 
+static void SDL3_PrintWaylandWindowState(const char *description) {
+	if (!s_sdlWindow || !SDL3_IsNativeWaylandVideoDriver()) {
+		return;
+	}
+
+	int x = 0;
+	int y = 0;
+	int width = 0;
+	int height = 0;
+	int pixelWidth = 0;
+	int pixelHeight = 0;
+	const bool havePosition = SDL_GetWindowPosition(s_sdlWindow, &x, &y);
+	const bool haveSize = SDL_GetWindowSize(s_sdlWindow, &width, &height);
+	const bool havePixelSize = SDL_GetWindowSizeInPixels(s_sdlWindow, &pixelWidth, &pixelHeight);
+	const SDL_WindowFlags flags = SDL_GetWindowFlags(s_sdlWindow);
+	const float pixelDensity = SDL_GetWindowPixelDensity(s_sdlWindow);
+	const float displayScale = SDL_GetWindowDisplayScale(s_sdlWindow);
+	const SDL_DisplayID display = SDL_GetDisplayForWindow(s_sdlWindow);
+
+	int displayIndex = -1;
+	int displayCount = 0;
+	SDL_DisplayID *displays = SDL_GetDisplays(&displayCount);
+	if (displays != NULL) {
+		displayIndex = SDL3_FindDisplayIndex(displays, displayCount, display);
+		SDL_free(displays);
+	}
+
+	const char *displayName = (display != 0) ? SDL_GetDisplayName(display) : NULL;
+	if (displayName == NULL || displayName[0] == '\0') {
+		displayName = "<unknown>";
+	}
+
+	common->Printf(
+		"SDL3: native Wayland window state after %s: pos=%s%d,%d size=%s%dx%d pixels=%s%dx%d pixelDensity=%.2f displayScale=%.2f fullscreen=%s display=%d (%s)\n",
+		description != NULL ? description : "screen change",
+		havePosition ? "" : "<unreported> ",
+		x,
+		y,
+		haveSize ? "" : "<unreported> ",
+		width,
+		height,
+		havePixelSize ? "" : "<unreported> ",
+		pixelWidth,
+		pixelHeight,
+		pixelDensity,
+		displayScale,
+		(flags & SDL_WINDOW_FULLSCREEN) != 0 ? "yes" : "no",
+		displayIndex,
+		displayName);
+}
+
 static bool SDL3_LeaveFullscreenAndRestoreDesktopMode(void) {
 	if (!s_sdlWindow) {
 		return true;
@@ -3189,6 +3333,18 @@ static bool SDL3_LeaveFullscreenAndRestoreDesktopMode(void) {
 	}
 
 	return true;
+}
+
+static void SDL3_SyncWindowAfterScreenChange(const char *description) {
+	if (!s_sdlWindow) {
+		return;
+	}
+
+	if (!SDL_SyncWindow(s_sdlWindow)) {
+		common->DPrintf("SDL3: failed to synchronize window after %s: %s\n",
+			description != NULL ? description : "screen change",
+			SDL_GetError());
+	}
 }
 
 #if defined(_WIN32)
@@ -3383,8 +3539,10 @@ static bool SDL3_ApplyScreenParms(glimpParms_t parms) {
 
 	win32.cdsFullscreen = parms.fullScreen;
 	glConfig.isFullscreen = parms.fullScreen;
+	SDL3_SyncWindowAfterScreenChange(parms.fullScreen ? "fullscreen change" : "windowed change");
 	s_screenParmTransitionActive = false;
 	SDL3_RefreshWindowPlacement();
+	SDL3_PrintWaylandWindowState(parms.fullScreen ? "fullscreen change" : "windowed change");
 
 	return true;
 }
@@ -4100,6 +4258,24 @@ unsigned char Sys_MapCharForKey(int key) {
 
 void IN_ActivateMouse(void) {
 	if (!s_sdlWindow || !win32.in_mouse.GetBool() || SDL3_IsMouseCaptured()) {
+		return;
+	}
+
+	if (SDL3_IsNativeWaylandVideoDriver()) {
+		if (!SDL_SetWindowRelativeMouseMode(s_sdlWindow, true)) {
+			common->Printf("SDL3: failed to enable relative mouse mode: %s\n", SDL_GetError());
+			return;
+		}
+		if (!SDL_SetWindowMouseGrab(s_sdlWindow, true)) {
+			common->DPrintf("SDL3: native Wayland could not confine mouse pointer; continuing with relative mouse mode: %s\n", SDL_GetError());
+		}
+		(void)SDL_HideCursor();
+		(void)SDL_GetRelativeMouseState(NULL, NULL);
+		s_sdlRelativeMouseRemainderX = 0.0f;
+		s_sdlRelativeMouseRemainderY = 0.0f;
+		win32.mouseGrabbed = SDL3_IsMouseCaptured();
+		SDL3_ResetMenuMouseTracking();
+		SDL3_UpdateCursorVisibility();
 		return;
 	}
 

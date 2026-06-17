@@ -14,6 +14,9 @@ This file is part of the Doom 3 GPL Source Code. See docs/legal for details.
 #include "../posix/posix_public.h"
 #include "../sys_public.h"
 
+#define SDL_MAIN_HANDLED
+#include <SDL3/SDL_main.h>
+
 static void Sys_HandlePendingQuitSignal(void) {
 	const int quitSignal = Posix_ConsumeQuitSignal();
 	if (quitSignal == 0) {
@@ -25,12 +28,12 @@ static void Sys_HandlePendingQuitSignal(void) {
 	common->Quit();
 }
 
-int main(int argc, const char **argv) {
+static int SDLCALL OpenQ4_Main(int argc, char **argv) {
 	Posix_EarlyInit();
 	Sys_ShowSplash();
 
 	if (argc > 1) {
-		common->Init(argc - 1, &argv[1], NULL);
+		common->Init(argc - 1, const_cast<const char **>(&argv[1]), NULL);
 	} else {
 		common->Init(0, NULL, NULL);
 	}
@@ -43,4 +46,10 @@ int main(int argc, const char **argv) {
 		Sys_HandlePendingQuitSignal();
 		common->Frame();
 	}
+
+	return 0;
+}
+
+int main(int argc, char **argv) {
+	return SDL_RunApp(argc, argv, OpenQ4_Main, NULL);
 }

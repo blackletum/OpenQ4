@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+case "${BASH_SOURCE[0]}" in
+    */*) script_dir="${BASH_SOURCE[0]%/*}" ;;
+    *) script_dir=. ;;
+esac
+script_dir="$(CDPATH= cd "${script_dir}" && pwd)"
 runner="${script_dir}/openq4_validate.py"
 
 python_cmd=""

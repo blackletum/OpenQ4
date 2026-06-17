@@ -26,8 +26,10 @@ along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 #include "../../renderer/tr_local.h"
 #include "linux_shared.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 #if defined(OPENQ4_HAVE_X11_HELPERS)
@@ -63,6 +65,106 @@ bool QGL_Init(const char *dllname) {
 void QGL_Shutdown(void) {
 }
 
+static bool Sys_ReadUnsignedLongLongFile(const char *path, unsigned long long &value) {
+	value = 0;
+
+	const int fd = open(path, O_RDONLY);
+	if (fd == -1) {
+		return false;
+	}
+
+	char buffer[64];
+	const int len = read(fd, buffer, sizeof(buffer) - 1);
+	close(fd);
+
+	if (len <= 0) {
+		return false;
+	}
+
+	buffer[len] = '\0';
+	char *end = NULL;
+	errno = 0;
+	const unsigned long long parsed = strtoull(buffer, &end, 10);
+	if (errno != 0 || end == buffer || parsed == 0) {
+		return false;
+	}
+
+	value = parsed;
+	return true;
+}
+
+static void Sys_UpdateLargestDrmSysfsVideoRamBytes(const char *nodeName, unsigned long long &largestBytes) {
+	if (nodeName == NULL || nodeName[0] == '\0') {
+		return;
+	}
+	if (strncmp(nodeName, "card", 4) != 0 && strncmp(nodeName, "renderD", 7) != 0) {
+		return;
+	}
+
+	char path[192];
+	idStr::snPrintf(path, sizeof(path), "/sys/class/drm/%s/device/mem_info_vram_total", nodeName);
+
+	unsigned long long bytes = 0;
+	if (Sys_ReadUnsignedLongLongFile(path, bytes) && bytes > largestBytes) {
+		largestBytes = bytes;
+	}
+}
+
+static bool Sys_QueryEnumeratedDrmSysfsVideoRamBytes(unsigned long long &largestBytes) {
+	DIR *dir = opendir("/sys/class/drm");
+	if (dir == NULL) {
+		return false;
+	}
+
+	for (;;) {
+		errno = 0;
+		struct dirent *entry = readdir(dir);
+		if (entry == NULL) {
+			break;
+		}
+		Sys_UpdateLargestDrmSysfsVideoRamBytes(entry->d_name, largestBytes);
+	}
+
+	const bool readComplete = errno == 0;
+	closedir(dir);
+	return readComplete;
+}
+
+static void Sys_QueryKnownDrmSysfsVideoRamBytes(unsigned long long &largestBytes) {
+	for (int card = 0; card < 16; ++card) {
+		char nodeName[32];
+		idStr::snPrintf(nodeName, sizeof(nodeName), "card%d", card);
+		Sys_UpdateLargestDrmSysfsVideoRamBytes(nodeName, largestBytes);
+	}
+
+	for (int renderNode = 128; renderNode < 144; ++renderNode) {
+		char nodeName[32];
+		idStr::snPrintf(nodeName, sizeof(nodeName), "renderD%d", renderNode);
+		Sys_UpdateLargestDrmSysfsVideoRamBytes(nodeName, largestBytes);
+	}
+}
+
+static int Sys_QueryDrmSysfsVideoRamMB(void) {
+	unsigned long long largestBytes = 0;
+	const bool enumeratedDrm = Sys_QueryEnumeratedDrmSysfsVideoRamBytes(largestBytes);
+	if (!enumeratedDrm || largestBytes == 0) {
+		Sys_QueryKnownDrmSysfsVideoRamBytes(largestBytes);
+	}
+
+	if (largestBytes == 0) {
+		return 0;
+	}
+
+	const unsigned long long megabytes = largestBytes / (1024ULL * 1024ULL);
+	if (megabytes == 0) {
+		return 0;
+	}
+	if (megabytes > static_cast<unsigned long long>(OPENQ4_LINUX_MAX_CONFIGURED_VIDEO_RAM_MB)) {
+		return OPENQ4_LINUX_MAX_CONFIGURED_VIDEO_RAM_MB;
+	}
+	return static_cast<int>(megabytes);
+}
+
 bool Sys_GetDesktopResolution(int *width, int *height) {
 	if (width == NULL || height == NULL) {
 		return false;
@@ -71,13 +173,31 @@ bool Sys_GetDesktopResolution(int *width, int *height) {
 	const sdl3DisplaySelection_t selectedDisplay = SDL3_ResolveTargetDisplay(false);
 	const SDL_DisplayID display = (selectedDisplay.id != 0) ? selectedDisplay.id : SDL_GetPrimaryDisplay();
 	const SDL_DisplayMode *desktopMode = SDL_GetDesktopDisplayMode(display);
-	if (desktopMode == NULL) {
-		return false;
+	if (desktopMode != NULL && desktopMode->w > 0 && desktopMode->h > 0) {
+		*width = desktopMode->w;
+		*height = desktopMode->h;
+		return true;
 	}
 
-	*width = desktopMode->w;
-	*height = desktopMode->h;
-	return (*width > 0 && *height > 0);
+	const SDL_DisplayMode *currentMode = SDL_GetCurrentDisplayMode(display);
+	if (currentMode != NULL && currentMode->w > 0 && currentMode->h > 0) {
+		common->DPrintf("SDL3 Linux: desktop display mode unavailable, using current display mode %dx%d\n",
+			currentMode->w, currentMode->h);
+		*width = currentMode->w;
+		*height = currentMode->h;
+		return true;
+	}
+
+	SDL_Rect bounds;
+	if (display != 0 && SDL_GetDisplayBounds(display, &bounds) && bounds.w > 0 && bounds.h > 0) {
+		common->DPrintf("SDL3 Linux: desktop display mode unavailable, using display bounds %dx%d\n",
+			bounds.w, bounds.h);
+		*width = bounds.w;
+		*height = bounds.h;
+		return true;
+	}
+
+	return false;
 }
 
 int Sys_GetVideoRam(void) {
@@ -123,6 +243,12 @@ int Sys_GetVideoRam(void) {
 		}
 	}
 #endif
+
+	cachedVideoRam = Sys_QueryDrmSysfsVideoRamMB();
+	if (cachedVideoRam > 0) {
+		common->Printf("found DRM sysfs VRAM total: %d MB\n", cachedVideoRam);
+		return cachedVideoRam;
+	}
 
 	const int fd = open("/proc/dri/0/umm", O_RDONLY);
 	if (fd != -1) {

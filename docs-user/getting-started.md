@@ -51,12 +51,13 @@ If you prefer a self-contained setup, keep these side by side in the same root f
 - Extract the release archive to a folder of your choice.
 - Linux packages default to the SDL3 runtime path.
 - macOS packages use the SDL3 runtime path and are published as separate OpenGL and Metal bridge variants. The Metal package is a bridge mode around the existing OpenGL renderer, so gameplay compatibility stays aligned with the stock asset path while Metal translation-layer work can be tested separately.
+- On macOS, launch `openQ4.app` from the extracted package folder. If Gatekeeper blocks an unsigned archive build, use Finder's right-click `Open` flow for the app, or remove quarantine from the extracted openQ4 folder with `xattr -dr com.apple.quarantine /path/to/openq4-folder`.
 
 ### Steam Deck
 
 - Use `openQ4-steamdeck` when it is included in the package. It enables the `steamdeck` platform profile and sets `OPENQ4_STEAMDECK=1`.
 - Direct `openQ4-client_<arch>` launches on Steam Deck or SteamOS also auto-select the Deck profile while `com_platformProfile` is still `default`.
-- Native Wayland is the default SDL path when available. Set `OPENQ4_FORCE_X11=1` to force the XWayland fallback.
+- Native Wayland is the default SDL path when available. Set `OPENQ4_FORCE_X11=1` to force the XWayland fallback from either the Steam Deck launcher or a direct client launch.
 - Tune Deck controller behavior under `Settings -> Game Options -> Controller`, including gyro, touchpad mode, touchscreen routing, and low-battery rumble caps.
 - Run `listControllers` from the console when reporting Deck input, battery, gyro, touchpad, or touchscreen issues.
 - For more detail, see the [Steam Deck guide](steam-deck.md).

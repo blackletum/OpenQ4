@@ -198,3 +198,64 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
           include-hidden-files: true
+
+  macos-arm64:
+    name: macOS ARM64 ${{ matrix.bridge_label }} Commit Validation
+    runs-on: macos-15
+    needs: script-smoke
+    timeout-minutes: 90
+    env:
+      OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/../openQ4-GameLibs
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - bridge_label: OpenGL
+            macos_graphics_bridge: opengl
+            artifact_suffix: opengl
+          - bridge_label: Metal
+            macos_graphics_bridge: metal
+            artifact_suffix: metal
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fetch openQ4-GameLibs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/themuffinator/openQ4-GameLibs.git "${OPENQ4_GAMELIBS_REPO}"
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Install Meson and Ninja
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install meson ninja
+
+      - name: Run selected validation profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/validation/validate_pr.sh \
+            --fail-on-dirty \
+            --platform-backend=sdl3 \
+            --extra-setup-arg=-Dmacos_graphics_bridge=${{ matrix.macos_graphics_bridge }}
+
+      - name: Publish staged payload
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: commit-macos-arm64-${{ matrix.artifact_suffix }}-payload
+          path: .install
+          if-no-files-found: warn
+          retention-days: 14
+          include-hidden-files: true

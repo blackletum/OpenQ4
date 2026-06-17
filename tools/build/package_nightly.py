@@ -4,15 +4,18 @@
 from __future__ import annotations
 
 import argparse
+import filecmp
 import json
 import os
+import plistlib
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 import tarfile
 from pathlib import Path
-from zipfile import ZIP_DEFLATED, ZipFile
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -83,6 +86,19 @@ OPENQ4_REQUIRED_LOOSE_GAME_FILES = {
 OPENQ4_PK4_EXCLUDED_FILES = {
     relative_path.lower() for relative_path in OPENQ4_REQUIRED_LOOSE_GAME_FILES
 }
+MACOS_EXPECTED_PLIST_VALUES = {
+    "CFBundleExecutable": "openQ4",
+    "CFBundleIconFile": "openQ4.icns",
+    "CFBundleIdentifier": "com.darkmatter.openq4",
+    "CFBundleName": "openQ4",
+    "CFBundlePackageType": "APPL",
+    "LSMinimumSystemVersion": "11.0",
+    "NSPrincipalClass": "NSApplication",
+}
+MACOS_ALLOWED_RUNTIME_DEPENDENCY_PREFIXES = (
+    "/System/Library/",
+    "/usr/lib/",
+)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -505,18 +521,33 @@ def create_game_pk4(
 
 
 def create_release_archive(
-    package_root: Path, archive_path: Path, archive_format: str
+    package_root: Path,
+    archive_path: Path,
+    archive_format: str,
+    executable_relative_paths: set[Path] | None = None,
 ) -> None:
     if archive_path.exists():
         archive_path.unlink()
+
+    executable_archive_paths = {
+        relative_path.as_posix()
+        for relative_path in (executable_relative_paths or set())
+    }
 
     if archive_format == "zip":
         with ZipFile(archive_path, "w", compression=ZIP_DEFLATED, compresslevel=9) as archive:
             for path in sorted(package_root.rglob("*")):
                 if not path.is_file():
                     continue
-                arcname = (Path(package_root.name) / path.relative_to(package_root)).as_posix()
-                archive.write(path, arcname=arcname)
+                relative_path = path.relative_to(package_root)
+                arcname = (Path(package_root.name) / relative_path).as_posix()
+                info = ZipInfo.from_file(path, arcname)
+                info.compress_type = ZIP_DEFLATED
+                if relative_path.as_posix() in executable_archive_paths:
+                    mode = ((info.external_attr >> 16) | 0o100755) & 0o177777
+                    info.external_attr = mode << 16
+                    info.create_system = 3
+                archive.writestr(info, path.read_bytes(), compresslevel=9)
         return
 
     mode = {"tar.gz": "w:gz", "tar.xz": "w:xz"}[archive_format]
@@ -524,8 +555,205 @@ def create_release_archive(
         for path in sorted(package_root.rglob("*")):
             if not path.is_file():
                 continue
-            arcname = (Path(package_root.name) / path.relative_to(package_root)).as_posix()
-            archive.add(path, arcname=arcname, recursive=False)
+            relative_path = path.relative_to(package_root)
+            arcname = (Path(package_root.name) / relative_path).as_posix()
+            info = archive.gettarinfo(path, arcname=arcname)
+            if relative_path.as_posix() in executable_archive_paths:
+                info.mode = 0o755
+            with path.open("rb") as handle:
+                archive.addfile(info, handle)
+
+
+def get_package_executable_archive_paths(
+    platform: str, arch: str, copied_linux_launchers: list[str]
+) -> set[Path]:
+    if platform not in ("linux", "macos"):
+        return set()
+
+    executable_paths = {Path(filename) for filename in get_required_root_binaries(platform, arch)}
+    if platform == "linux":
+        executable_paths.update(Path(filename) for filename in copied_linux_launchers)
+    elif platform == "macos":
+        executable_paths.add(Path("openQ4.app") / "Contents" / "MacOS" / "openQ4")
+
+    return executable_paths
+
+
+def validate_macos_plist_values(plist: dict, label: str, version: str | None = None) -> None:
+    for key, expected in MACOS_EXPECTED_PLIST_VALUES.items():
+        if plist.get(key) != expected:
+            raise RuntimeError(f"{label} {key} is {plist.get(key)!r}; expected {expected!r}")
+
+    if version is not None:
+        for key in ("CFBundleShortVersionString", "CFBundleVersion"):
+            if plist.get(key) != version:
+                raise RuntimeError(f"{label} {key} is {plist.get(key)!r}; expected {version!r}")
+
+    if plist.get("NSHighResolutionCapable") is not True:
+        raise RuntimeError(f"{label} must set NSHighResolutionCapable=true")
+    if plist.get("NSSupportsAutomaticGraphicsSwitching") is not True:
+        raise RuntimeError(f"{label} must set NSSupportsAutomaticGraphicsSwitching=true")
+
+
+def validate_macos_archive_contents(
+    package_root: Path, archive_path: Path, archive_format: str, arch: str, version: str
+) -> None:
+    package_prefix = package_root.name + "/"
+    client_entry = f"{package_prefix}openQ4-client_{arch}"
+    dedicated_entry = f"{package_prefix}openQ4-ded_{arch}"
+    app_executable_entry = f"{package_prefix}openQ4.app/Contents/MacOS/openQ4"
+    expected_entries = {
+        client_entry,
+        dedicated_entry,
+        f"{package_prefix}{GAME_DIR_NAME}/mod.json",
+        f"{package_prefix}{GAME_DIR_NAME}/pak0.pk4",
+        f"{package_prefix}openQ4.app/Contents/Info.plist",
+        app_executable_entry,
+        f"{package_prefix}openQ4.app/Contents/Resources/openQ4.icns",
+        f"{package_prefix}openQ4.app/Contents/Resources/VERSION.txt",
+        f"{package_prefix}openQ4.app/Contents/Resources/English.lproj/InfoPlist.strings",
+        f"{package_prefix}openQ4.app/Contents/Resources/French.lproj/InfoPlist.strings",
+    }
+    executable_entries = {
+        client_entry,
+        dedicated_entry,
+        app_executable_entry,
+    }
+    plist_entry = f"{package_prefix}openQ4.app/Contents/Info.plist"
+
+    modes: dict[str, int] = {}
+    entry_names: set[str] = set()
+    plist_bytes: bytes | None = None
+    client_bytes: bytes | None = None
+    app_executable_bytes: bytes | None = None
+
+    if archive_format == "zip":
+        with ZipFile(archive_path, "r") as archive:
+            for info in archive.infolist():
+                name = info.filename.rstrip("/")
+                if not name:
+                    continue
+                entry_names.add(name)
+                modes[name] = (info.external_attr >> 16) & 0o777
+            if plist_entry in entry_names:
+                plist_bytes = archive.read(plist_entry)
+            if client_entry in entry_names:
+                client_bytes = archive.read(client_entry)
+            if app_executable_entry in entry_names:
+                app_executable_bytes = archive.read(app_executable_entry)
+    else:
+        with tarfile.open(archive_path, "r:*") as archive:
+            for member in archive.getmembers():
+                name = member.name.rstrip("/")
+                if not name:
+                    continue
+                entry_names.add(name)
+                modes[name] = member.mode
+                if name == plist_entry:
+                    extracted = archive.extractfile(member)
+                    if extracted is not None:
+                        plist_bytes = extracted.read()
+                elif name == client_entry:
+                    extracted = archive.extractfile(member)
+                    if extracted is not None:
+                        client_bytes = extracted.read()
+                elif name == app_executable_entry:
+                    extracted = archive.extractfile(member)
+                    if extracted is not None:
+                        app_executable_bytes = extracted.read()
+
+    bad_names = [
+        name
+        for name in sorted(entry_names)
+        if name.startswith("/") or "/../" in f"/{name}/" or not name.startswith(package_prefix)
+    ]
+    if bad_names:
+        joined = ", ".join(bad_names[:5])
+        raise RuntimeError(f"macOS archive contains unsafe or out-of-package paths: {joined}")
+
+    missing_entries = sorted(expected_entries - entry_names)
+    if missing_entries:
+        joined = ", ".join(missing_entries)
+        raise RuntimeError(f"macOS archive is missing required entries: {joined}")
+
+    for entry in sorted(executable_entries):
+        if modes.get(entry, 0) & 0o111 == 0:
+            raise RuntimeError(f"macOS archive entry is not executable: {entry}")
+
+    if plist_bytes is None:
+        raise RuntimeError(f"macOS archive Info.plist is unreadable: {plist_entry}")
+    if client_bytes is None or app_executable_bytes is None:
+        raise RuntimeError("macOS archive executable payloads are unreadable")
+    if client_bytes != app_executable_bytes:
+        raise RuntimeError(
+            "macOS archive app executable does not match packaged client binary"
+        )
+    try:
+        validate_macos_plist_values(
+            plistlib.loads(plist_bytes),
+            "macOS archive Info.plist",
+            version,
+        )
+    except plistlib.InvalidFileException as exc:
+        raise RuntimeError(f"macOS archive Info.plist is invalid: {plist_entry}") from exc
+
+
+def macos_otool_dependencies(binary_path: Path) -> list[str]:
+    if sys.platform != "darwin":
+        return []
+
+    otool_path = shutil.which("otool")
+    if otool_path is None:
+        raise RuntimeError("macOS dependency validation requires otool")
+
+    completed = subprocess.run(
+        [otool_path, "-L", str(binary_path)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode != 0:
+        message = completed.stderr.strip() or completed.stdout.strip()
+        raise RuntimeError(f"otool failed for macOS binary {binary_path}: {message}")
+
+    dependencies: list[str] = []
+    for line in completed.stdout.splitlines()[1:]:
+        dependency = line.strip().split(" (", 1)[0].strip()
+        if dependency:
+            dependencies.append(dependency)
+
+    if binary_path.suffix == ".dylib" and dependencies:
+        # The first entry for a dylib is its install name, not a library it loads.
+        dependencies = dependencies[1:]
+
+    return dependencies
+
+
+def validate_macos_binary_dependencies(package_root: Path, arch: str) -> None:
+    if sys.platform != "darwin":
+        return
+
+    binary_paths = [
+        package_root / f"{PRODUCT_NAME}-client_{arch}",
+        package_root / f"{PRODUCT_NAME}-ded_{arch}",
+        package_root / "openQ4.app" / "Contents" / "MacOS" / "openQ4",
+        package_root / GAME_DIR_NAME / f"game-sp_{arch}.dylib",
+        package_root / GAME_DIR_NAME / f"game-mp_{arch}.dylib",
+    ]
+
+    for binary_path in binary_paths:
+        require_packaged_executable(binary_path, "macOS dependency validation binary")
+        rejected_dependencies = [
+            dependency
+            for dependency in macos_otool_dependencies(binary_path)
+            if not dependency.startswith(MACOS_ALLOWED_RUNTIME_DEPENDENCY_PREFIXES)
+        ]
+        if rejected_dependencies:
+            joined = ", ".join(rejected_dependencies)
+            raise RuntimeError(
+                f"macOS binary has unbundled non-system dependencies: {binary_path}: {joined}"
+            )
 
 
 def copy_optional_share_tree(platform: str, install_dir: Path, package_root: Path) -> bool:
@@ -581,9 +809,9 @@ def require_packaged_executable(path: Path, label: str, *, allow_missing: bool =
     if not path.is_file():
         if allow_missing:
             return
-        raise RuntimeError(f"{label} is missing from the Linux package: {path}")
+        raise RuntimeError(f"{label} is missing from the package: {path}")
     if not os.access(path, os.X_OK):
-        raise RuntimeError(f"{label} is not executable in the Linux package: {path}")
+        raise RuntimeError(f"{label} is not executable in the package: {path}")
 
 
 def validate_linux_steamdeck_launcher(path: Path, expected_client: str) -> None:
@@ -646,6 +874,42 @@ def validate_linux_package_metadata(package_root: Path, arch: str, *, allow_miss
             )
 
 
+def validate_macos_app_bundle(package_root: Path, app_root: Path, arch: str, version: str) -> None:
+    client_binary = package_root / f"{PRODUCT_NAME}-client_{arch}"
+    require_packaged_executable(client_binary, "macOS client binary")
+
+    package_game_dir = package_root / GAME_DIR_NAME
+    if not package_game_dir.is_dir():
+        raise RuntimeError(f"macOS package is missing {GAME_DIR_NAME}/ beside the app bundle: {package_game_dir}")
+
+    app_contents = app_root / "Contents"
+    app_plist = app_contents / "Info.plist"
+    app_executable = app_contents / "MacOS" / "openQ4"
+    app_icon = app_contents / "Resources" / "openQ4.icns"
+    app_version = app_contents / "Resources" / "VERSION.txt"
+
+    if not app_plist.is_file():
+        raise RuntimeError(f"macOS app bundle is missing Info.plist: {app_plist}")
+    if not app_executable.is_file() or not os.access(app_executable, os.X_OK):
+        raise RuntimeError(f"macOS app executable is missing or not executable: {app_executable}")
+    if not app_icon.is_file():
+        raise RuntimeError(f"macOS app bundle is missing its icon: {app_icon}")
+    if not app_version.is_file():
+        raise RuntimeError(f"macOS app bundle is missing its version manifest: {app_version}")
+
+    try:
+        plist = plistlib.loads(app_plist.read_bytes())
+    except (OSError, plistlib.InvalidFileException) as exc:
+        raise RuntimeError(f"macOS app Info.plist is unreadable: {app_plist}") from exc
+
+    validate_macos_plist_values(plist, "macOS app Info.plist", version)
+
+    if not filecmp.cmp(client_binary, app_executable, shallow=False):
+        raise RuntimeError(
+            f"macOS app executable does not match packaged client binary: {app_executable}"
+        )
+
+
 def create_macos_app_bundle(
     package_root: Path,
     install_dir: Path,
@@ -661,17 +925,13 @@ def create_macos_app_bundle(
     app_macos.mkdir(parents=True, exist_ok=True)
     app_resources.mkdir(parents=True, exist_ok=True)
 
-    launcher = app_macos / "openQ4"
-    write_text_file(
-        launcher,
-        [
-            "#!/bin/sh",
-            'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
-            'APP_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)"',
-            f'exec "$APP_ROOT/{PRODUCT_NAME}-client_{arch}" "$@"',
-        ],
-    )
-    os.chmod(launcher, 0o755)
+    client_binary = package_root / f"{PRODUCT_NAME}-client_{arch}"
+    if not client_binary.is_file():
+        raise RuntimeError(f"macOS client binary is missing before app bundle creation: {client_binary}")
+
+    app_executable = app_macos / "openQ4"
+    shutil.copy2(client_binary, app_executable)
+    os.chmod(app_executable, 0o755)
 
     icns_candidates = [
         install_dir / "openQ4.icns",
@@ -709,7 +969,9 @@ def create_macos_app_bundle(
             "<key>CFBundleVersion</key>",
             f"<string>{version}</string>",
             "<key>LSMinimumSystemVersion</key>",
-            "<string>12.0</string>",
+            "<string>11.0</string>",
+            "<key>NSPrincipalClass</key>",
+            "<string>NSApplication</string>",
             "<key>NSHighResolutionCapable</key>",
             "<true/>",
             "<key>NSSupportsAutomaticGraphicsSwitching</key>",
@@ -874,9 +1136,38 @@ def main(argv: list[str]) -> int:
             args.version,
             args.version_tag,
         )
+        try:
+            validate_macos_app_bundle(package_root, macos_app_bundle, args.arch, args.version)
+            validate_macos_binary_dependencies(package_root, args.arch)
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+    archive_executable_paths = get_package_executable_archive_paths(
+        args.platform,
+        args.arch,
+        copied_linux_launchers,
+    )
 
     archive_path = output_dir / f"{package_stem}{archive_suffix}"
-    create_release_archive(package_root, archive_path, archive_format)
+    create_release_archive(
+        package_root,
+        archive_path,
+        archive_format,
+        archive_executable_paths,
+    )
+    if args.platform == "macos":
+        try:
+            validate_macos_archive_contents(
+                package_root,
+                archive_path,
+                archive_format,
+                args.arch,
+                args.version,
+            )
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
 
     print(f"Packaged openQ4 release {args.version} for {args.platform}")
     print(f"Package directory: {package_root}")

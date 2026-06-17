@@ -70,14 +70,22 @@ jobs:
             os: ubuntu-24.04
             artifact_name: linux-x64
             runtime_smoke: false
+            macos_graphics_bridge: ""
           - name: Linux ARM64 Push Verification
             os: ubuntu-24.04-arm
             artifact_name: linux-arm64
             runtime_smoke: true
-          - name: macOS Push Verification
+            macos_graphics_bridge: ""
+          - name: macOS OpenGL Push Verification
             os: macos-15
-            artifact_name: macos
+            artifact_name: macos-opengl
             runtime_smoke: false
+            macos_graphics_bridge: opengl
+          - name: macOS Metal Push Verification
+            os: macos-15
+            artifact_name: macos-metal
+            runtime_smoke: false
+            macos_graphics_bridge: metal
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -154,6 +162,12 @@ jobs:
         run: |
           set -euo pipefail
           validation_args=(--install --fail-on-dirty)
+          if [[ -n "${{ matrix.macos_graphics_bridge }}" ]]; then
+            validation_args+=(
+              --platform-backend=sdl3
+              --extra-setup-arg=-Dmacos_graphics_bridge=${{ matrix.macos_graphics_bridge }}
+            )
+          fi
           if [[ "${{ matrix.runtime_smoke }}" == "true" ]]; then
             validation_args+=(
               --runtime

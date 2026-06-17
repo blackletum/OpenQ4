@@ -313,6 +313,45 @@ jobs:
             fi
           fi
 
+          if [ "${{ matrix.platform }}" = "macos" ]; then
+            required_macos_payload=(
+              ".install/openQ4-client_${{ matrix.binary_arch }}"
+              ".install/openQ4-ded_${{ matrix.binary_arch }}"
+              ".install/baseoq4/game-sp_${{ matrix.binary_arch }}.dylib"
+              ".install/baseoq4/game-mp_${{ matrix.binary_arch }}.dylib"
+              ".install/openQ4.icns"
+              ".install/assets/splash/quake4_rt_bitmap_4001.bmp"
+            )
+
+            for payload in "${required_macos_payload[@]}"; do
+              if [ ! -f "${payload}" ]; then
+                echo "Missing macOS staged payload file: ${payload}"
+                exit 1
+              fi
+            done
+
+            for binary in ".install/openQ4-client_${{ matrix.binary_arch }}" ".install/openQ4-ded_${{ matrix.binary_arch }}"; do
+              if [ ! -x "${binary}" ]; then
+                echo "Missing executable bit on macOS staged binary: ${binary}"
+                exit 1
+              fi
+            done
+
+            shopt -s nullglob
+            bad_macos_modules=(
+              .install/baseoq4/game-sp_*.dll
+              .install/baseoq4/game-sp_*.so
+              .install/baseoq4/game-mp_*.dll
+              .install/baseoq4/game-mp_*.so
+            )
+            shopt -u nullglob
+            if [ "${#bad_macos_modules[@]}" -ne 0 ]; then
+              echo "macOS staged payload contains non-dylib game modules:"
+              printf '  - %s\n' "${bad_macos_modules[@]}"
+              exit 1
+            fi
+          fi
+
       - name: Prepare Linux debug symbols
         if: matrix.platform == 'linux'
         id: linux_symbols
@@ -427,19 +466,102 @@ jobs:
           app_plist="${app_root}/Contents/Info.plist"
           app_exec="${app_root}/Contents/MacOS/openQ4"
           app_icon="${app_root}/Contents/Resources/openQ4.icns"
+          app_version="${app_root}/Contents/Resources/VERSION.txt"
+          client_binary="${{ steps.package.outputs.package_dir }}/openQ4-client_${{ matrix.binary_arch }}"
+          dedicated_binary="${{ steps.package.outputs.package_dir }}/openQ4-ded_${{ matrix.binary_arch }}"
+          game_dir="${{ steps.package.outputs.package_dir }}/baseoq4"
+          sp_module="${game_dir}/game-sp_${{ matrix.binary_arch }}.dylib"
+          mp_module="${game_dir}/game-mp_${{ matrix.binary_arch }}.dylib"
 
           if [ ! -f "${app_plist}" ]; then
             echo "Missing macOS app Info.plist: ${app_plist}"
             exit 1
           fi
           if [ ! -x "${app_exec}" ]; then
-            echo "Missing or non-executable macOS app launcher: ${app_exec}"
+            echo "Missing or non-executable macOS app executable: ${app_exec}"
             exit 1
           fi
           if [ ! -f "${app_icon}" ]; then
             echo "Missing macOS app icon: ${app_icon}"
             exit 1
           fi
+          if [ ! -f "${app_version}" ]; then
+            echo "Missing macOS app version manifest: ${app_version}"
+            exit 1
+          fi
+          if [ ! -x "${client_binary}" ]; then
+            echo "Missing or non-executable macOS client binary: ${client_binary}"
+            exit 1
+          fi
+          if [ ! -x "${dedicated_binary}" ]; then
+            echo "Missing or non-executable macOS dedicated binary: ${dedicated_binary}"
+            exit 1
+          fi
+          if [ ! -d "${game_dir}" ]; then
+            echo "Missing macOS package game directory beside the app bundle: ${game_dir}"
+            exit 1
+          fi
+          for module in "${sp_module}" "${mp_module}"; do
+            if [ ! -f "${module}" ]; then
+              echo "Missing macOS package game module: ${module}"
+              exit 1
+            fi
+          done
+          if ! cmp -s "${app_exec}" "${client_binary}"; then
+            echo "macOS app executable does not match the packaged client binary."
+            exit 1
+          fi
+          if ! command -v otool >/dev/null 2>&1; then
+            echo "otool is required for macOS runtime dependency validation."
+            exit 1
+          fi
+          check_macos_binary_dependencies() {
+            binary="$1"
+            deps=()
+            while IFS= read -r dependency; do
+              if [ -n "${dependency}" ]; then
+                deps+=("${dependency}")
+              fi
+            done < <(otool -L "${binary}" | sed '1d' | awk '{print $1}')
+
+            if [[ "${binary}" == *.dylib && "${#deps[@]}" -gt 0 ]]; then
+              deps=("${deps[@]:1}")
+            fi
+
+            for dependency in "${deps[@]}"; do
+              case "${dependency}" in
+                /System/Library/*|/usr/lib/*)
+                  ;;
+                *)
+                  echo "macOS binary has unbundled non-system dependency: ${binary} -> ${dependency}"
+                  exit 1
+                  ;;
+              esac
+            done
+          }
+          for binary in "${app_exec}" "${client_binary}" "${dedicated_binary}" "${sp_module}" "${mp_module}"; do
+            check_macos_binary_dependencies "${binary}"
+          done
+          check_plist_value() {
+            key="$1"
+            expected="$2"
+            actual="$(/usr/libexec/PlistBuddy -c "Print :${key}" "${app_plist}")"
+            if [ "${actual}" != "${expected}" ]; then
+              echo "macOS app Info.plist ${key} is '${actual}', expected '${expected}'."
+              exit 1
+            fi
+          }
+          check_plist_value CFBundleExecutable openQ4
+          check_plist_value CFBundleIconFile openQ4.icns
+          check_plist_value CFBundleIdentifier com.darkmatter.openq4
+          check_plist_value CFBundleName openQ4
+          check_plist_value CFBundlePackageType APPL
+          check_plist_value CFBundleShortVersionString "${{ needs.metadata.outputs.version }}"
+          check_plist_value CFBundleVersion "${{ needs.metadata.outputs.version }}"
+          check_plist_value LSMinimumSystemVersion 11.0
+          check_plist_value NSPrincipalClass NSApplication
+          check_plist_value NSHighResolutionCapable true
+          check_plist_value NSSupportsAutomaticGraphicsSwitching true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6

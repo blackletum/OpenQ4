@@ -33,10 +33,14 @@ If you have questions concerning this license or the applicable additional terms
 
 #import <AppKit/AppKit.h>
 #import <OpenGL/OpenGL.h>
+#import <mach-o/dyld.h>
 #import <mach/mach_time.h>
 #import <pthread.h>
 #import <limits.h>
+#import <stdlib.h>
+#import <string.h>
 #import <sys/sysctl.h>
+#import <sys/stat.h>
 #import <unistd.h>
 
 #import "macosx_local.h"
@@ -48,6 +52,64 @@ static idStr	savepath;
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
+
+static bool Sys_CopyPathIfFits( char *outPath, size_t outPathSize, const char *sourcePath ) {
+	if ( outPath == NULL || outPathSize <= 0 || sourcePath == NULL || sourcePath[0] == '\0' ) {
+		return false;
+	}
+	if ( strlen( sourcePath ) >= outPathSize ) {
+		outPath[0] = '\0';
+		return false;
+	}
+	idStr::Copynz( outPath, sourcePath, outPathSize );
+	return true;
+}
+
+static bool Sys_CopyExecutablePath( char *outPath, size_t outPathSize ) {
+	if ( outPath == NULL || outPathSize <= 0 ) {
+		return false;
+	}
+
+	uint32_t bufferSize = static_cast<uint32_t>( outPathSize );
+	char *pathBuffer = outPath;
+	bool allocatedPathBuffer = false;
+
+	outPath[0] = '\0';
+	if ( _NSGetExecutablePath( pathBuffer, &bufferSize ) != 0 ) {
+		pathBuffer = static_cast<char *>( malloc( bufferSize ) );
+		if ( pathBuffer == NULL ) {
+			return false;
+		}
+		allocatedPathBuffer = true;
+		if ( _NSGetExecutablePath( pathBuffer, &bufferSize ) != 0 ) {
+			free( pathBuffer );
+			return false;
+		}
+	}
+
+	char resolvedPath[PATH_MAX];
+	const char *copyPath = pathBuffer;
+	if ( realpath( pathBuffer, resolvedPath ) != NULL ) {
+		copyPath = resolvedPath;
+	}
+	if ( copyPath == outPath ) {
+		if ( allocatedPathBuffer ) {
+			free( pathBuffer );
+		}
+		return outPath[0] != '\0';
+	}
+	if ( !Sys_CopyPathIfFits( outPath, outPathSize, copyPath ) ) {
+		if ( allocatedPathBuffer ) {
+			free( pathBuffer );
+		}
+		return false;
+	}
+
+	if ( allocatedPathBuffer ) {
+		free( pathBuffer );
+	}
+	return outPath[0] != '\0';
+}
 
 /*
 =================
@@ -77,9 +139,63 @@ Sys_EXEPath
 */
 const char *Sys_EXEPath( void ) {
 	static char exePath[PATH_MAX];
-	const char *bundlePath = [[[NSBundle mainBundle] bundlePath] fileSystemRepresentation];
-	idStr::Copynz( exePath, bundlePath != NULL ? bundlePath : Posix_Cwd(), sizeof( exePath ) );
+	if ( Sys_CopyExecutablePath( exePath, sizeof( exePath ) ) ) {
+		return exePath;
+	}
+
+	const char *bundlePath = [[[NSBundle mainBundle] executablePath] fileSystemRepresentation];
+	if ( Sys_CopyPathIfFits( exePath, sizeof( exePath ), bundlePath ) ) {
+		return exePath;
+	}
+
+	exePath[0] = '\0';
 	return exePath;
+}
+
+static bool Sys_DirectoryContainsGameDir( const idStr &candidate ) {
+	struct stat st;
+	idStr testbase;
+
+	if ( candidate.Length() <= 0 ) {
+		return false;
+	}
+
+	testbase = candidate;
+	testbase.AppendPath( BASE_GAMEDIR );
+	return stat( testbase.c_str(), &st ) != -1 && S_ISDIR( st.st_mode );
+}
+
+static bool Sys_UseBasePathCandidate( const idStr &candidate, const char *label ) {
+	if ( !Sys_DirectoryContainsGameDir( candidate ) ) {
+		common->Printf( "no '%s' directory in %s path %s, skipping\n", BASE_GAMEDIR, label, candidate.c_str() );
+		return false;
+	}
+
+	basepath = candidate;
+	return true;
+}
+
+static bool Sys_UseAppBundleParentBasePathCandidate( const idStr &exeDirectory ) {
+	static const char appExecutableDirectorySuffix[] = "/Contents/MacOS";
+	const int suffixLength = sizeof( appExecutableDirectorySuffix ) - 1;
+
+	if ( exeDirectory.Length() <= suffixLength ) {
+		return false;
+	}
+
+	idStr normalizedDirectory = exeDirectory;
+	normalizedDirectory.BackSlashesToSlashes();
+	const char *suffixStart = normalizedDirectory.c_str() + normalizedDirectory.Length() - suffixLength;
+	if ( idStr::Cmp( suffixStart, appExecutableDirectorySuffix ) != 0 ) {
+		return false;
+	}
+
+	idStr packageDirectory = normalizedDirectory;
+	packageDirectory.StripFilename(); // Contents
+	packageDirectory.StripFilename(); // openQ4.app
+	packageDirectory.StripFilename(); // extracted package root
+
+	return Sys_UseBasePathCandidate( packageDirectory, "app parent" );
 }
 
 /*
@@ -107,13 +223,46 @@ Sys_DefaultBasePath
 ==============
 */
 const char *Sys_DefaultBasePath( void ) {
-	basepath = Sys_EXEPath();
-	if ( basepath.Length() > 0 ) {
-		basepath.StripFilename();
+	idStr candidate;
+	idStr exeDirectory;
+
+	exeDirectory = Sys_EXEPath();
+	if ( exeDirectory.Length() > 0 ) {
+		exeDirectory.StripFilename();
+		if ( Sys_UseBasePathCandidate( exeDirectory, "exe" ) ) {
+			return basepath.c_str();
+		}
+		if ( Sys_UseAppBundleParentBasePathCandidate( exeDirectory ) ) {
+			return basepath.c_str();
+		}
 	}
-	if ( basepath.Length() == 0 ) {
-		basepath = Posix_Cwd();
+
+	candidate = Posix_Cwd();
+	if ( candidate.Cmp( exeDirectory.c_str() ) != 0 && Sys_UseBasePathCandidate( candidate, "cwd" ) ) {
+		return basepath.c_str();
 	}
+
+	NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
+	NSString *bundleParentPath = [bundlePath stringByDeletingLastPathComponent];
+	NSString *resourcePath = [[NSBundle mainBundle] resourcePath];
+	NSString *bundleProbePaths[] = { bundlePath, bundleParentPath, resourcePath };
+	for ( int i = 0; i < 3; ++i ) {
+		NSString *probePath = bundleProbePaths[i];
+		if ( probePath == nil ) {
+			continue;
+		}
+		const char *fileSystemPath = [probePath fileSystemRepresentation];
+		if ( fileSystemPath == NULL || fileSystemPath[0] == '\0' ) {
+			continue;
+		}
+		candidate = fileSystemPath;
+		if ( Sys_UseBasePathCandidate( candidate, "bundle" ) ) {
+			return basepath.c_str();
+		}
+	}
+
+	common->Printf( "WARNING: using current directory as fallback base path\n" );
+	basepath = Posix_Cwd();
 	return basepath.c_str();
 }
 

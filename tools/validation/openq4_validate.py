@@ -7,6 +7,7 @@ import argparse
 import fnmatch
 import os
 import platform
+import re
 import shlex
 import subprocess
 import sys
@@ -59,6 +60,10 @@ def host_is_windows() -> bool:
 
 def host_is_linux() -> bool:
     return platform.system().lower() == "linux"
+
+
+def host_is_macos() -> bool:
+    return platform.system().lower() == "darwin"
 
 
 def format_command(command: list[str]) -> str:
@@ -306,6 +311,69 @@ def validate_linux_launch_metadata(root: Path, install_root: Path, client_candid
             )
 
 
+def macos_binary_arch(path: Path, stem: str) -> str | None:
+    match = re.fullmatch(rf"{re.escape(stem)}_([A-Za-z0-9_]+)", path.name)
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def validate_macos_staged_metadata(
+    root: Path,
+    install_root: Path,
+    game_dir: Path,
+    client_candidates: list[Path],
+    dedicated_candidates: list[Path],
+) -> None:
+    icon_path = install_root / "openQ4.icns"
+    splash_path = install_root / "assets" / "splash" / "quake4_rt_bitmap_4001.bmp"
+
+    if not icon_path.is_file():
+        raise ValidationError(f"macOS staged payload is missing app icon: {rel(icon_path, root)}")
+    if not splash_path.is_file():
+        raise ValidationError(f"macOS staged payload is missing startup splash asset: {rel(splash_path, root)}")
+
+    client_arches: set[str] = set()
+    for client in client_candidates:
+        arch = macos_binary_arch(client, "openQ4-client")
+        if arch is None:
+            raise ValidationError(f"Unexpected macOS client binary name: {rel(client, root)}")
+        client_arches.add(arch)
+
+    dedicated_arches: set[str] = set()
+    for dedicated in dedicated_candidates:
+        arch = macos_binary_arch(dedicated, "openQ4-ded")
+        if arch is None:
+            raise ValidationError(f"Unexpected macOS dedicated-server binary name: {rel(dedicated, root)}")
+        dedicated_arches.add(arch)
+
+    if client_arches != dedicated_arches:
+        raise ValidationError(
+            "macOS staged engine binary architecture mismatch: "
+            f"clients={sorted(client_arches)} dedicated={sorted(dedicated_arches)}"
+        )
+
+    bad_game_modules = sorted(
+        path
+        for pattern in ("game-sp_*.dll", "game-sp_*.so", "game-mp_*.dll", "game-mp_*.so")
+        for path in game_dir.glob(pattern)
+    )
+    if bad_game_modules:
+        formatted = "\n".join(f"  - {rel(path, root)}" for path in bad_game_modules)
+        raise ValidationError(f"macOS staged payload contains non-dylib game modules:\n{formatted}")
+
+    missing_game_modules: list[Path] = []
+    for arch in sorted(client_arches):
+        for module_name in (f"game-sp_{arch}.dylib", f"game-mp_{arch}.dylib"):
+            module_path = game_dir / module_name
+            if not module_path.is_file():
+                missing_game_modules.append(module_path)
+
+    if missing_game_modules:
+        formatted = "\n".join(f"  - {rel(path, root)}" for path in missing_game_modules)
+        raise ValidationError(f"macOS staged payload is missing architecture-matched game modules:\n{formatted}")
+
+
 def validate_staged_payload(root: Path, *, dry_run: bool) -> None:
     section("Validate staged .install payload")
     if dry_run:
@@ -330,6 +398,14 @@ def validate_staged_payload(root: Path, *, dry_run: bool) -> None:
         require_posix_executable(dedicated_candidates[0], root, "Staged dedicated-server executable")
     if host_is_linux():
         validate_linux_launch_metadata(root, install_root, client_candidates)
+    if host_is_macos():
+        validate_macos_staged_metadata(
+            root,
+            install_root,
+            game_dir,
+            client_candidates,
+            dedicated_candidates,
+        )
 
     sp_modules = find_any(game_dir, ("game-sp_*.dll", "game-sp_*.so", "game-sp_*.dylib"))
     mp_modules = find_any(game_dir, ("game-mp_*.dll", "game-mp_*.so", "game-mp_*.dylib"))
