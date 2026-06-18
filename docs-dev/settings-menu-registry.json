@@ -2073,6 +2073,41 @@
       "accessibility": "Standard focusable choiceDef row."
     },
     {
+      "id": "game.scope_sensitivity",
+      "pane": "Game Options",
+      "section": "Gameplay And View",
+      "path": "Settings > Game Options > Gameplay And View > Scope Sensitivity",
+      "source": "game",
+      "container": "set_game_scopesensitivity",
+      "widgets": [
+        "set_game_scopesensitivity_slider_bar",
+        "set_game_scopesensitivity_value"
+      ],
+      "edit_fields": [
+        {
+          "name": "set_game_scopesensitivity_value",
+          "maxchars": 3,
+          "numeric": true
+        }
+      ],
+      "widget_type": "slider_edit",
+      "label_key": "#str_229972",
+      "target_type": "cvar",
+      "target": "pm_zoomedSlow",
+      "default": "50",
+      "ui_range": {
+        "low": "1",
+        "high": "100",
+        "step": "1"
+      },
+      "cvar_range": {
+        "low": "1",
+        "high": "100"
+      },
+      "restart_required": false,
+      "accessibility": "Slider with paired edit field; scales mouse, gyro/touchpad mouse-look, and controller look speed while scoped."
+    },
+    {
       "id": "game.show_decals",
       "pane": "Game Options",
       "section": "Gameplay And View",

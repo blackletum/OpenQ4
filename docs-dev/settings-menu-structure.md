@@ -49,7 +49,7 @@ Scroll controls:
 | Pane | Scroll widget | Cvar | Range | Step | Notes |
 |---|---|---|---|---|---|
 | Game Options | `choiceDef set_game_section_choice` | `game_section_choice` | General / Mouse / Controller / Crosshair / Gameplay / View Weapon | `1` | Localized section picker below the pane title and above the scroll frame. Sets live GUI state `gui::gui_set_game_scroll` to the group anchor and calls `applySettingsScroll game`; the engine clamps and applies the matching row-canvas rect. |
-| Game Options | `sliderDef set_game_scroll_thumb` | `gui_set_game_scroll` | `0..36` | `1` | Vertical scrollbar. Calls `applySettingsScroll game`; `idSliderWindow` propagates the command from thumb drag as well as key/button events. |
+| Game Options | `sliderDef set_game_scroll_thumb` | `gui_set_game_scroll` | `0..44` | `1` | Vertical scrollbar. Calls `applySettingsScroll game`; `idSliderWindow` propagates the command from thumb drag as well as key/button events. |
 | System | `choiceDef set_sys_section_choice` | `sys_section_choice` | Video / Window / Rendering / Quality / Post FX / Sizing | `1` | Localized section picker above the scroll frame. Sets live GUI state `gui::gui_set_sys_scroll` to the group anchor and calls `applySettingsScroll system`; the engine clamps and applies the matching row-canvas rect. |
 | System | `sliderDef set_sys_scroll_thumb` | `gui_set_sys_scroll` | `0..26` | `1` | Vertical scrollbar. Calls `applySettingsScroll system`; `idSliderWindow` propagates the command from thumb drag as well as key/button events. |
 | Audio | `sliderDef set_audio_scroll_thumb` | `gui_set_audio_scroll` | `0..0` | `1` | Disabled in practice because Audio fits without scrolling; the engine keeps its scroll thumb hidden and no-evented. |
@@ -161,6 +161,7 @@ The Game Options pane is `p_settings_game` and is included from `content/baseoq4
 | Auto Reload | `choiceDef` | `set_game_autoreload_value` | `ui_autoReload` | `No;Yes` | Boolean picker. |
 | Auto Switch | `choiceDef` | `set_game_autoswitch_value` | `ui_autoSwitch` | `No;Yes` | Boolean picker. |
 | Toggle Zoom | `choiceDef` | `set_game_togglezoom_value` | `in_toggleZoom` | `No;Yes` | Boolean picker. |
+| Scope Sensitivity | `sliderDef` + `editDef` | `set_game_scopesensitivity_slider_bar`, `set_game_scopesensitivity_value` | `pm_zoomedSlow` | `1..100`, step `1` | Percent of normal mouse, gyro/touchpad mouse-look, and controller look speed while scoped. Fresh configs default to `50`. |
 | Show Decals | `choiceDef` | `set_game_showdecals_value` | `g_decals` | `No;Yes` | Boolean picker. |
 | Show Gun | `choiceDef` | `set_game_showgun_value` | `ui_showGun` | `No;Yes` | Boolean picker. |
 | Gun Position | `choiceDef` | `set_game_gunXYZ_value` | GUI state `g_gunXYZ` via `applyGunPositionChoice` | `0 Right`, `1 Centered`, `2 Lower Right` | The C++ menu adapter writes the preset `g_gunX`, `g_gunY`, and `g_gunZ` values, and enables `g_weaponFovEffect` when that cvar exists. |

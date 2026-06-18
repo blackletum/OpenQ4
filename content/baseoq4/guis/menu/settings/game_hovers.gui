@@ -102,13 +102,37 @@
 			}
 		}
 	//==============================================================//
+
+	//==============================================================//
+	// Settings->Game Options->Scope Sensitivity
+	//--------------------------------------------------------------//
+		windowDef set_game_scopesensitivity_hover
+		{
+			rect	245,145,361,20
+			visible	0
+
+			onMouseEnter {
+				if ("desktop::active" == 0) {
+					stoptransitions "set_game_scopesensitivity_background" ;
+					set "set_game_scopesensitivity_background::matcolor_w" "1" ;
+					set "cmd" "play main_menu_mouseover" ;
+				}
+			}
+
+			onMouseExit {
+				if ("desktop::active" == 0) {
+					transition "set_game_scopesensitivity_background::matcolor_w" "1" "0.4" "300" ;
+				}
+			}
+		}
+	//==============================================================//
 				
 	//==============================================================//
 	// Settings->Game Options->Show Decals
 	//--------------------------------------------------------------//
 		windowDef set_game_showdecals_hover
 		{
-			rect	245,145,361,20
+			rect	245,169,361,20
 			visible	0
 
 			onMouseEnter {
@@ -135,7 +159,7 @@
 	//--------------------------------------------------------------//
 		windowDef set_game_showgun_hover
 		{
-			rect	245,169,361,20
+			rect	245,193,361,20
 			visible	0
 
 			onMouseEnter {
@@ -162,7 +186,7 @@
 	//--------------------------------------------------------------//
 		windowDef set_game_gunXYZ_hover
 		{
-			rect  245,193,361,20
+			rect  245,217,361,20
 			visible 0
 				
 			onMouseEnter {
@@ -185,7 +209,7 @@
 	//--------------------------------------------------------------//
 		windowDef set_game_simpleitems_hover
 		{
-			rect	245,217,361,20
+			rect	245,241,361,20
 			visible	0
 
 			onMouseEnter {
@@ -209,7 +233,7 @@
 	//--------------------------------------------------------------//
 		windowDef set_game_forcemodel_hover
 		{
-			rect	245,241,361,20
+			rect	245,265,361,20
 			visible	0
 
 			onMouseEnter {
@@ -233,7 +257,7 @@
 	//==============================================================//
 		windowDef set_game_mpitch_hover
 		{
-			rect	245,289,361,20
+			rect	245,313,361,20
 			visible	0
 	
 			onMouseEnter {
@@ -257,7 +281,7 @@
 	//==============================================================//			
 		windowDef set_game_msmooth_hover
 		{
-			rect	245,313,361,20
+			rect	245,337,361,20
 			visible	0
 
 			onMouseEnter {
@@ -282,7 +306,7 @@
 	//==============================================================//
 		windowDef set_game_msensitivity_hover
 		{
-			rect	245,337,361,20
+			rect	245,361,361,20
 			visible	0
 
 			onMouseEnter {
@@ -309,7 +333,7 @@
 	//==============================================================//
 		windowDef set_game_mcpi_hover
 		{
-			rect	245,361,361,20
+			rect	245,385,361,20
 			visible	0
 
 			onMouseEnter {
@@ -333,7 +357,7 @@
 	//==============================================================//
 		windowDef set_game_mfilter_hover
 		{
-			rect	245,385,361,20
+			rect	245,409,361,20
 			visible	0
 
 			onMouseEnter {
@@ -357,7 +381,7 @@
 	//==============================================================//
 		windowDef set_game_maccel_hover
 		{
-			rect	245,409,361,20
+			rect	245,433,361,20
 			visible	0
 
 			onMouseEnter {
@@ -381,7 +405,7 @@
 	//==============================================================//
 		windowDef set_game_macceloffset_hover
 		{
-			rect	245,433,361,20
+			rect	245,457,361,20
 			visible	0
 
 			onMouseEnter {
@@ -405,7 +429,7 @@
 	//==============================================================//
 		windowDef set_game_maccelpower_hover
 		{
-			rect	245,457,361,20
+			rect	245,481,361,20
 			visible	0
 
 			onMouseEnter {
@@ -429,7 +453,7 @@
 	//==============================================================//
 		windowDef set_game_msenscap_hover
 		{
-			rect	245,481,361,20
+			rect	245,505,361,20
 			visible	0
 
 			onMouseEnter {
@@ -453,7 +477,7 @@
 	//==============================================================//
 		windowDef set_game_controller_enabled_hover
 		{
-			rect	245,529,361,20
+			rect	245,553,361,20
 			visible	0
 
 			onMouseEnter {
@@ -472,7 +496,7 @@
 		}
 		windowDef set_game_controller_layout_hover
 		{
-			rect	245,553,361,20
+			rect	245,577,361,20
 			visible	0
 
 			onMouseEnter {
@@ -491,7 +515,7 @@
 		}
 		windowDef set_game_controller_deadzone_hover
 		{
-			rect	245,577,361,20
+			rect	245,601,361,20
 			visible	0
 
 			onMouseEnter {
@@ -510,7 +534,7 @@
 		}
 		windowDef set_game_controller_look_sensitivity_hover
 		{
-			rect	245,601,361,20
+			rect	245,625,361,20
 			visible	0
 
 			onMouseEnter {
@@ -529,7 +553,7 @@
 		}
 		windowDef set_game_controller_look_curve_hover
 		{
-			rect	245,625,361,20
+			rect	245,649,361,20
 			visible	0
 
 			onMouseEnter {
@@ -548,7 +572,7 @@
 		}
 		windowDef set_game_controller_invert_hover
 		{
-			rect	245,649,361,20
+			rect	245,673,361,20
 			visible	0
 
 			onMouseEnter {
@@ -567,7 +591,7 @@
 		}
 		windowDef set_game_controller_trigger_hover
 		{
-			rect	245,673,361,20
+			rect	245,697,361,20
 			visible	0
 
 			onMouseEnter {
@@ -586,7 +610,7 @@
 		}
 		windowDef set_game_controller_rumble_hover
 		{
-			rect	245,697,361,20
+			rect	245,721,361,20
 			visible	0
 
 			onMouseEnter {
@@ -605,7 +629,7 @@
 		}
 		windowDef set_game_controller_rumble_strength_hover
 		{
-			rect	245,721,361,20
+			rect	245,745,361,20
 			visible	0
 
 			onMouseEnter {
@@ -624,7 +648,7 @@
 		}
 		windowDef set_game_controller_gyro_hover
 		{
-			rect	245,755,361,20
+			rect	245,779,361,20
 			visible	0
 
 			onMouseEnter {
@@ -643,7 +667,7 @@
 		}
 		windowDef set_game_controller_gyro_sensitivity_hover
 		{
-			rect	245,779,361,20
+			rect	245,803,361,20
 			visible	0
 
 			onMouseEnter {
@@ -662,7 +686,7 @@
 		}
 		windowDef set_game_controller_touchpad_mode_hover
 		{
-			rect	245,803,361,20
+			rect	245,827,361,20
 			visible	0
 
 			onMouseEnter {
@@ -681,7 +705,7 @@
 		}
 		windowDef set_game_controller_touchpad_sensitivity_hover
 		{
-			rect	245,827,361,20
+			rect	245,851,361,20
 			visible	0
 
 			onMouseEnter {
@@ -700,7 +724,7 @@
 		}
 		windowDef set_game_controller_touchscreen_hover
 		{
-			rect	245,851,361,20
+			rect	245,875,361,20
 			visible	0
 
 			onMouseEnter {
@@ -719,7 +743,7 @@
 		}
 		windowDef set_game_controller_low_battery_rumble_hover
 		{
-			rect	245,875,361,20
+			rect	245,899,361,20
 			visible	0
 
 			onMouseEnter {
@@ -738,7 +762,7 @@
 		}
 		windowDef set_game_controller_low_battery_rumble_cap_hover
 		{
-			rect	245,899,361,20
+			rect	245,923,361,20
 			visible	0
 
 			onMouseEnter {
@@ -762,7 +786,7 @@
 	//==============================================================//
 		windowDef set_game_customxhair_hover
 		{
-			rect	245,923,361,20
+			rect	245,947,361,20
 			visible	0
 
 			onMouseEnter {
@@ -788,7 +812,7 @@
 	//==============================================================//
 		windowDef set_game_previewxhair_hover
 		{
-			rect	245,947,361,48
+			rect	245,971,361,48
 			visible	0
 
 			onMouseEnter {
@@ -825,7 +849,7 @@
 	//==============================================================//
 		windowDef set_game_xhairsize_hover
 		{
-			rect	245,995,361,20
+			rect	245,1019,361,20
 			visible	0
 
 			onMouseEnter {
@@ -852,7 +876,7 @@
 	//==============================================================//
 		windowDef set_game_xhaircolor_hover
 		{
-			rect	245,1020,361,20
+			rect	245,1044,361,20
 			visible	0
 
 			onMouseEnter {
@@ -872,7 +896,7 @@
 			}
 		windowDef set_game_corpsesink_hover
 			{
-				rect	245,1045,361,20
+				rect	245,1069,361,20
 				visible	0
 
 				onMouseEnter {
@@ -891,7 +915,7 @@
 			}
 			windowDef set_game_corpsetime_hover
 			{
-				rect	245,1069,361,20
+				rect	245,1093,361,20
 				visible	0
 
 				onMouseEnter {
@@ -910,7 +934,7 @@
 			}
 			windowDef set_game_language_hover
 			{
-				rect	245,1093,361,20
+				rect	245,1117,361,20
 				visible	0
 
 				onMouseEnter {
@@ -929,7 +953,7 @@
 			}
 			windowDef set_game_consoleaccess_hover
 			{
-				rect	245,1117,361,20
+				rect	245,1141,361,20
 				visible	0
 
 				onMouseEnter {
@@ -948,7 +972,7 @@
 			}
 			windowDef set_game_autoskipcinematics_hover
 			{
-				rect	245,1151,361,20
+				rect	245,1175,361,20
 				visible	0
 
 				onMouseEnter {
@@ -967,7 +991,7 @@
 			}
 			windowDef set_game_cl_gunfov_hover
 			{
-				rect	245,1199,361,20
+				rect	245,1223,361,20
 				visible	0
 
 				onMouseEnter {
@@ -986,7 +1010,7 @@
 			}
 			windowDef set_game_cl_gunfov_adjust_hover
 			{
-				rect	245,1223,361,20
+				rect	245,1247,361,20
 				visible	0
 
 				onMouseEnter {
@@ -1005,7 +1029,7 @@
 			}
 			windowDef set_game_cl_gun_x_hover
 			{
-				rect	245,1247,361,20
+				rect	245,1271,361,20
 				visible	0
 
 				onMouseEnter {
@@ -1024,7 +1048,7 @@
 			}
 			windowDef set_game_cl_gun_y_hover
 			{
-				rect	245,1271,361,20
+				rect	245,1295,361,20
 				visible	0
 
 				onMouseEnter {
@@ -1043,7 +1067,7 @@
 			}
 			windowDef set_game_cl_gun_z_hover
 			{
-				rect	245,1295,361,20
+				rect	245,1319,361,20
 				visible	0
 
 				onMouseEnter {

@@ -398,6 +398,7 @@ private:
 	void			MouseMove( void );
 	float			NormalizeMouseDeltasForCpi( float &mx, float &my, float &strafeMx, float &strafeMy ) const;
 	float			CalculateMouseSensitivity( float mx, float my, float *debugRate, float *debugPower ) const;
+	float			GetZoomLookSensitivityScale( void ) const;
 	int				GetMouseFilterSamples( void );
 	void			ResetMouseFilter( void );
 	void			BeginMouseFilter( void );
@@ -786,6 +787,20 @@ float idUsercmdGenLocal::CalculateMouseSensitivity( float mx, float my, float *d
 
 /*
 =================
+idUsercmdGenLocal::GetZoomLookSensitivityScale
+=================
+*/
+float idUsercmdGenLocal::GetZoomLookSensitivityScale( void ) const {
+	const int zoomedSlowPercent = cvarSystem->GetCVarInteger( "pm_isZoomed" );
+	if ( zoomedSlowPercent <= 0 ) {
+		return 1.0f;
+	}
+
+	return idMath::ClampFloat( 0.01f, 1.0f, static_cast<float>( zoomedSlowPercent ) * 0.01f );
+}
+
+/*
+=================
 idUsercmdGenLocal::GetMouseFilterSamples
 =================
 */
@@ -1001,7 +1016,7 @@ void idUsercmdGenLocal::MouseMove( void ) {
 	}
 
 	const float mouseAxisScale = NormalizeMouseDeltasForCpi( mx, my, strafeMx, strafeMy );
-	const float mouseSensitivity = CalculateMouseSensitivity( mx, my, &accelRate, &accelPower );
+	const float mouseSensitivity = CalculateMouseSensitivity( mx, my, &accelRate, &accelPower ) * GetZoomLookSensitivityScale();
 	WriteMouseAccelDebugLog( mx, my, accelRate, accelPower );
 
 	mx *= mouseSensitivity;
@@ -1080,7 +1095,7 @@ void idUsercmdGenLocal::JoystickMove( void ) {
 	if ( joystickLookSensitivity <= 0.0f ) {
 		joystickLookSensitivity = 1.0f;
 	}
-	joystickLookSensitivity = idMath::ClampFloat( 0.1f, 4.0f, joystickLookSensitivity );
+	joystickLookSensitivity = idMath::ClampFloat( 0.1f, 4.0f, joystickLookSensitivity ) * GetZoomLookSensitivityScale();
 
 	if ( hasDedicatedLookAxis || !ButtonState( UB_STRAFE ) ) {
 		// positive axis values mean stick right/down; turning right decreases yaw and
@@ -1576,7 +1591,7 @@ bool idUsercmdGenLocal::GetPresentationViewDelta( float &yawDelta, float &pitchD
 	float strafeMx = 0.0f;
 	float strafeMy = 0.0f;
 	const float mouseAxisScale = NormalizeMouseDeltasForCpi( mx, my, strafeMx, strafeMy );
-	const float mouseSensitivity = CalculateMouseSensitivity( mx, my, NULL, NULL );
+	const float mouseSensitivity = CalculateMouseSensitivity( mx, my, NULL, NULL ) * GetZoomLookSensitivityScale();
 	yawDelta = -m_yaw.GetFloat() * mouseAxisScale * mx * mouseSensitivity;
 	pitchDelta = m_pitch.GetFloat() * mouseAxisScale * my * mouseSensitivity;
 	return true;
