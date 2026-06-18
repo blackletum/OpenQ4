@@ -113,4 +113,8 @@
 	"#str_229969"	"Touchscreen"
 	"#str_229970"	"Low Battery Rumble"
 	"#str_229971"	"Low Battery Cap"
+	"#str_229972"	"Scope Sensitivity"
+	"#str_229973"	"Desktop Native"
+	"#str_229974"	"Custom"
+	"#str_229975"	"Display Resolution"
 }
