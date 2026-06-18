@@ -224,6 +224,15 @@ static rendererMaterialClass_t R_ScenePackets_MaterialClassForDrawSurf( const dr
 	return material->IsDrawn() ? RENDER_MATERIAL_OPAQUE : RENDER_MATERIAL_SHADOW_ONLY;
 }
 
+static bool R_ScenePackets_DrawSurfIsDecalMaterialPass( const drawSurf_t *drawSurf ) {
+	const idMaterial *material = drawSurf != NULL ? drawSurf->material : NULL;
+	if ( material == NULL ) {
+		return false;
+	}
+	return drawSurf->decalColorCache != NULL
+		|| ( material->GetSort() >= SS_DECAL && material->GetSort() < SS_FAR );
+}
+
 static const idImage *R_ScenePackets_FirstStageImage( const idMaterial *material, stageLighting_t lighting ) {
 	if ( material == NULL ) {
 		return NULL;
@@ -1146,6 +1155,21 @@ static int R_ScenePackets_LightGridStageBlendBits( const shaderStage_t *stage ) 
 	return stage != NULL ? ( stage->drawStateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS ) ) : 0;
 }
 
+static bool R_ScenePackets_LightGridMaterialHasActiveColorMaskStage( const idMaterial *material, const float *regs ) {
+	if ( material == NULL ) {
+		return false;
+	}
+
+	for ( int stageIndex = 0; stageIndex < material->GetNumStages(); stageIndex++ ) {
+		const shaderStage_t *stage = material->GetStage( stageIndex );
+		if ( R_ScenePackets_LightGridMaterialStageIsActive( stage, regs ) && ( stage->drawStateBits & GLS_COLORMASK ) != 0 ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 static bool R_ScenePackets_LightGridAmbientStageCanProvideAlbedo( const idMaterial *material, const shaderStage_t *stage, const float *regs ) {
 	if ( material == NULL || stage == NULL ) {
 		return false;
@@ -1229,6 +1253,9 @@ static bool R_ScenePackets_DrawSurfAmbientEligible( const viewDef_t *viewDef, co
 	if ( !material->HasAmbient() || material->IsPortalSky() || material->SuppressInSubview() ) {
 		return false;
 	}
+	if ( r_skipDecals.GetBool() && R_ScenePackets_DrawSurfIsDecalMaterialPass( drawSurf ) ) {
+		return false;
+	}
 	return material->GetSort() < SS_POST_PROCESS;
 }
 
@@ -1257,6 +1284,11 @@ static bool R_ScenePackets_DrawSurfLightGridEligible( const viewDef_t *viewDef, 
 		return false;
 	}
 	if ( drawSurf->space->weaponDepthHack ) {
+		// Keep scene-packet planning in lockstep with the backend: viewmodel
+		// scope/glass mask stages are authored outside the light-grid pass.
+		if ( R_ScenePackets_LightGridMaterialHasActiveColorMaskStage( drawSurf->material, drawSurf->shaderRegisters ) ) {
+			return false;
+		}
 		return R_ScenePackets_CurrentViewLightGrid( viewDef ) != NULL;
 	}
 	if ( drawSurf->space->modelDepthHack != 0.0f ) {

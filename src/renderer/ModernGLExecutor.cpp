@@ -5607,6 +5607,9 @@ static bool R_ModernGLExecutor_ForwardPlusDecalOverlayAllowed( const modernGLExe
 	if ( viewDef == NULL || viewDef->viewEntitys == NULL || viewDef->isSubview ) {
 		return false;
 	}
+	if ( r_skipDecals.GetBool() ) {
+		return false;
+	}
 	if ( stats.modernVisibleCanReplaceFrame ) {
 		return false;
 	}
@@ -6079,7 +6082,13 @@ static void R_ModernGLExecutor_FinalizePassOwnership( const idRenderGraph &graph
 		if ( lightGridModern && R_ModernGLExecutor_PassExistsInGraph( graph, RENDER_PASS_LIGHT_GRID ) ) {
 			R_ModernGLExecutor_SetPassOwnership( RENDER_PASS_LIGHT_GRID, MODERN_GL_PASS_OWNER_MODERN, true, true, "modern-light-grid-consumed" );
 		}
-		if ( stats.modernVisibleGuiReadyDraws == stats.modernVisibleGuiDraws && R_ModernGLExecutor_PassExistsInGraph( graph, RENDER_PASS_GUI ) ) {
+		// Empty GUI packet sets are not proof that the fullscreen 2D view was
+		// replayed. Startup/loading quads can fall outside the modern GUI packet
+		// filter, so only suppress the legacy GUI pass after at least one modern
+		// GUI draw was prepared and every GUI packet is covered.
+		if ( stats.modernVisibleGuiDraws > 0 &&
+			stats.modernVisibleGuiReadyDraws == stats.modernVisibleGuiDraws &&
+			R_ModernGLExecutor_PassExistsInGraph( graph, RENDER_PASS_GUI ) ) {
 			R_ModernGLExecutor_SetPassOwnership( RENDER_PASS_GUI, MODERN_GL_PASS_OWNER_MODERN, false, true, "modern-gui-replay-ready" );
 		}
 		if ( R_ModernGLExecutor_PassExistsInGraph( graph, RENDER_PASS_PRESENT ) ) {

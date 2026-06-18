@@ -2094,6 +2094,8 @@ static bool Session_LoadLightGridBakeMap( const idStr &mapName ) {
 		spawnArgs.AppendArg( mapName.c_str() );
 		cmdSystem->BufferCommandArgs( CMD_EXEC_NOW, spawnArgs );
 	} else {
+		cvarSystem->SetCVarString( "si_gameType", "singleplayer" );
+		cvarSystem->SetCVarString( "si_map", mapName.c_str() );
 		sessLocal.StartNewGame( mapName.c_str(), true );
 	}
 

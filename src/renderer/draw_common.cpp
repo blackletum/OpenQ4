@@ -159,8 +159,47 @@ static bool RB_DrawSurfNeedsLegacyFeedback( const drawSurf_t *surf ) {
 		|| material->GetSort() == SS_SUBVIEW;
 }
 
-static bool RB_HasLegacyFeedbackDrawSurfs( drawSurf_t **drawSurfs, int numDrawSurfs ) {
+static bool RB_DrawSurfIsDecalMaterialPass( const drawSurf_t *surf ) {
+	const idMaterial *material = surf != NULL ? surf->material : NULL;
+	if ( material == NULL ) {
+		return false;
+	}
+	return surf->decalColorCache != NULL
+		|| ( material->GetSort() >= SS_DECAL && material->GetSort() < SS_FAR );
+}
+
+static bool RB_DrawSurfIsBeforeLitDecalPass( const drawSurf_t *surf ) {
+	const idMaterial *material = surf != NULL ? surf->material : NULL;
+	if ( material == NULL || RB_DrawSurfIsDecalMaterialPass( surf ) ) {
+		return false;
+	}
+	return material->GetSort() < SS_DECAL;
+}
+
+static bool RB_DrawSurfIsLitDecalOrLaterPass( const drawSurf_t *surf ) {
+	const idMaterial *material = surf != NULL ? surf->material : NULL;
+	if ( material == NULL ) {
+		return false;
+	}
+	if ( RB_DrawSurfIsDecalMaterialPass( surf ) ) {
+		return !r_skipDecals.GetBool();
+	}
+	return material->GetSort() >= SS_DECAL && material->GetSort() < SS_POST_PROCESS;
+}
+
+static bool RB_DrawSurfNeedsPreDecalLegacyFeedback( const drawSurf_t *surf ) {
+	return RB_DrawSurfNeedsLegacyFeedback( surf ) && RB_DrawSurfIsBeforeLitDecalPass( surf );
+}
+
+static bool RB_DrawSurfNeedsLitDecalLegacyFeedback( const drawSurf_t *surf ) {
+	return RB_DrawSurfNeedsLegacyFeedback( surf ) && RB_DrawSurfIsLitDecalOrLaterPass( surf );
+}
+
+static bool RB_HasLegacyFeedbackDrawSurfs( drawSurf_t **drawSurfs, int numDrawSurfs, rbShaderPassSurfFilter_t filter = NULL ) {
 	for ( int i = 0; i < numDrawSurfs; ++i ) {
+		if ( filter != NULL && !filter( drawSurfs[i] ) ) {
+			continue;
+		}
 		if ( RB_DrawSurfNeedsLegacyFeedback( drawSurfs[i] ) ) {
 			return true;
 		}
@@ -8020,6 +8059,10 @@ static bool rbLightGridInlineSubmittedThisView = false;
 int RB_STD_DrawShaderPasses( drawSurf_t **drawSurfs, int numDrawSurfs, rbShaderPassSurfFilter_t filter = NULL ) {
 	int				i;
 
+	if ( drawSurfs == NULL || numDrawSurfs <= 0 ) {
+		return 0;
+	}
+
 	// only obey skipAmbient if we are rendering a view
 	if ( backEnd.viewDef->viewEntitys && r_skipAmbient.GetBool() ) {
 		return numDrawSurfs;
@@ -8964,18 +9007,43 @@ static bool RB_LightGridIsUsable( const LightGrid &candidate ) {
 	return candidate.IsUsable();
 }
 
+static bool RB_LightGridMaterialHasActiveColorMaskStage( const idMaterial *shader, const float *regs ) {
+	if ( shader == NULL ) {
+		return false;
+	}
+
+	for ( int stageIndex = 0; stageIndex < shader->GetNumStages(); stageIndex++ ) {
+		const shaderStage_t *stage = shader->GetStage( stageIndex );
+		if ( stage != NULL &&
+			( regs == NULL || regs[stage->conditionRegister] != 0.0f ) &&
+			( stage->drawStateBits & GLS_COLORMASK ) != 0 ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 static bool RB_SurfaceCanReceiveLightGrid( const drawSurf_t *surf ) {
-	return surf != NULL
-		&& surf->material != NULL
-		&& surf->space != NULL
-		&& surf->geo != NULL
-		&& surf->material->IsDrawn()
-		&& surf->material->ReceivesLighting()
-		&& surf->material->GetSort() == SS_OPAQUE
-		&& !surf->material->IsPortalSky()
-		&& surf->material->Coverage() != MC_TRANSLUCENT
-		&& surf->decalColorCache == NULL
-		&& !surf->material->TestMaterialFlag( MF_POLYGONOFFSET );
+	if ( surf == NULL || surf->material == NULL || surf->space == NULL || surf->geo == NULL ) {
+		return false;
+	}
+	if ( !surf->material->IsDrawn() || !surf->material->ReceivesLighting() || surf->material->GetSort() != SS_OPAQUE ) {
+		return false;
+	}
+	if ( surf->material->IsPortalSky() || surf->material->Coverage() == MC_TRANSLUCENT ) {
+		return false;
+	}
+	if ( surf->decalColorCache != NULL || surf->material->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
+		return false;
+	}
+	// First-person scope/glass surfaces can use color-mask stages to author
+	// alpha/display behavior. The additive indirect pass cannot preserve those
+	// masks, so let the weapon's regular material and GUI light own them.
+	if ( surf->space->weaponDepthHack && RB_LightGridMaterialHasActiveColorMaskStage( surf->material, surf->shaderRegisters ) ) {
+		return false;
+	}
+	return true;
 }
 
 static const LightGrid *RB_CurrentViewLightGrid( void );
@@ -10320,26 +10388,29 @@ void	RB_STD_DrawView( void ) {
 		backEnd.viewDef->renderWorld->RenderPortalFades();
 	}
 
-	// now draw any non-light dependent shading passes
-	int processed = 0;
-	if ( R_ModernGLExecutor_LegacyPassCanSkipForView( RENDER_PASS_AMBIENT, backEnd.viewDef ) ) {
-		processed = RB_STD_FindPostProcessStart( drawSurfs, numDrawSurfs );
-		if ( RB_HasLegacyFeedbackDrawSurfs( drawSurfs, processed ) ) {
+	// now draw non-light dependent base shading. Decal and later blended
+	// surfaces are held until after every lighting contribution so their blend
+	// modes see the same lit framebuffer as retail Q4's decal pass.
+	const int processed = RB_STD_FindPostProcessStart( drawSurfs, numDrawSurfs );
+	const bool ambientLegacySkipped = R_ModernGLExecutor_LegacyPassCanSkipForView( RENDER_PASS_AMBIENT, backEnd.viewDef );
+	const bool preDecalFeedback = ambientLegacySkipped && RB_HasLegacyFeedbackDrawSurfs( drawSurfs, processed, RB_DrawSurfIsBeforeLitDecalPass );
+	const bool litDecalFeedback = ambientLegacySkipped && RB_HasLegacyFeedbackDrawSurfs( drawSurfs, processed, RB_DrawSurfIsLitDecalOrLaterPass );
+	if ( ambientLegacySkipped ) {
+		if ( preDecalFeedback || litDecalFeedback ) {
 			R_ModernGLExecutor_ComposeVisibleSceneForPost();
 			backEnd.currentRenderCopied = false;
 			backEnd.currentDepthCopied = false;
-			RB_STD_DrawShaderPasses( drawSurfs, processed, RB_DrawSurfNeedsLegacyFeedback );
+			if ( preDecalFeedback ) {
+				RB_STD_DrawShaderPasses( drawSurfs, processed, RB_DrawSurfNeedsPreDecalLegacyFeedback );
+			}
 		}
 		R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_AMBIENT );
-	} else {
+	} else if ( processed > 0 ) {
 		// Keep authored post-process surfaces out of the ambient/material pass.
 		// Some pre-post materials legitimately populate _currentRender; if the
 		// full list is submitted here, SS_POST_PROCESS surfaces can consume that
 		// stale pre-light-grid copy before the indirect overlay has been added.
-		processed = RB_STD_FindPostProcessStart( drawSurfs, numDrawSurfs );
-		if ( processed > 0 ) {
-			RB_STD_DrawShaderPasses( drawSurfs, processed );
-		}
+		RB_STD_DrawShaderPasses( drawSurfs, processed, RB_DrawSurfIsBeforeLitDecalPass );
 	}
 
 	// Modern visible color/depth must be handed back before legacy overlay
@@ -10357,6 +10428,16 @@ void	RB_STD_DrawView( void ) {
 	}
 
 	R_ModernGLExecutor_SubmitForwardPlusDecalOverlay( backEnd.viewDef );
+
+	if ( ambientLegacySkipped ) {
+		if ( litDecalFeedback ) {
+			backEnd.currentRenderCopied = false;
+			backEnd.currentDepthCopied = false;
+			RB_STD_DrawShaderPasses( drawSurfs, processed, RB_DrawSurfNeedsLitDecalLegacyFeedback );
+		}
+	} else if ( processed > 0 ) {
+		RB_STD_DrawShaderPasses( drawSurfs, processed, RB_DrawSurfIsLitDecalOrLaterPass );
+	}
 
 	// Apply a configurable brightness floor after ambient/material passes.
 	RB_STD_ForceAmbient();

@@ -3715,7 +3715,7 @@ void idFileSystemLocal::TouchFileList_f( const idCmdArgs &args ) {
 ================
 idFileSystemLocal::AddGameDirectory
 
-Sets gameFolder, adds the directory to the head of the search paths, then loads any pk4 files.
+	Adds the directory to the head of the search paths, then loads any pk4 files.
 ================
 */
 void idFileSystemLocal::AddGameDirectory( const char *path, const char *dir ) {
@@ -3735,8 +3735,6 @@ void idFileSystemLocal::AddGameDirectory( const char *path, const char *dir ) {
 			return;
 		}
 	}
-
-	gameFolder = dir;
 
 	//
 	// add the directory to the search path
@@ -4213,6 +4211,17 @@ void idFileSystemLocal::Startup( void ) {
 
 		common->Warning( "Ignoring fs_game '%s': %s", fs_game.GetString(), invalidReason.c_str() );
 		fs_game.SetString( "" );
+	}
+
+	// File writes should use the selected game directory even while search paths
+	// are still being populated. Pak-load diagnostics can open logFile as soon
+	// as the first q4base search path exists.
+	if ( fs_game.GetString()[ 0 ] && idStr::Icmp( fs_game.GetString(), BASE_GAMEDIR ) ) {
+		gameFolder = fs_game.GetString();
+	} else if ( fs_game_base.GetString()[ 0 ] && idStr::Icmp( fs_game_base.GetString(), BASE_GAMEDIR ) ) {
+		gameFolder = fs_game_base.GetString();
+	} else {
+		gameFolder = BASE_GAMEDIR;
 	}
 
 	SetupGameDirectories( BASE_GAMEDIR );
