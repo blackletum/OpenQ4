@@ -4035,6 +4035,207 @@ void RB_ApplyCRTToBackBuffer( void ) {
 	RB_EndFullscreenPostProcessPass();
 }
 
+static GLhandleARB rbColorMappingProgram = 0;
+static GLhandleARB rbColorMappingVertexShader = 0;
+static GLhandleARB rbColorMappingFragmentShader = 0;
+static int rbColorMappingProgramGeneration = 0;
+static GLint rbColorMappingSceneLocation = -1;
+static GLint rbColorMappingBrightnessLocation = -1;
+static GLint rbColorMappingGammaLocation = -1;
+
+static void RB_FreeColorMappingProgram( void ) {
+	if ( rbColorMappingProgram != 0 && glConfig.isInitialized && rbColorMappingProgramGeneration == tr.glContextGeneration ) {
+		if ( rbColorMappingVertexShader != 0 ) {
+			glDetachObjectARB( rbColorMappingProgram, rbColorMappingVertexShader );
+			glDeleteObjectARB( rbColorMappingVertexShader );
+		}
+		if ( rbColorMappingFragmentShader != 0 ) {
+			glDetachObjectARB( rbColorMappingProgram, rbColorMappingFragmentShader );
+			glDeleteObjectARB( rbColorMappingFragmentShader );
+		}
+		glDeleteObjectARB( rbColorMappingProgram );
+	}
+
+	rbColorMappingProgram = 0;
+	rbColorMappingVertexShader = 0;
+	rbColorMappingFragmentShader = 0;
+	rbColorMappingProgramGeneration = 0;
+	rbColorMappingSceneLocation = -1;
+	rbColorMappingBrightnessLocation = -1;
+	rbColorMappingGammaLocation = -1;
+}
+
+static bool RB_EnsureColorMappingProgram( void ) {
+	if ( rbColorMappingProgram != 0 && rbColorMappingProgramGeneration == tr.glContextGeneration ) {
+		return true;
+	}
+
+	RB_FreeColorMappingProgram();
+
+	if ( !glConfig.GLSLProgramAvailable ) {
+		return false;
+	}
+
+	static const char *colorMappingVertexSource =
+		"void main() {\n"
+		"	gl_Position = ftransform();\n"
+		"	gl_TexCoord[0] = gl_MultiTexCoord0;\n"
+		"}\n";
+	static const char *colorMappingFragmentSource =
+		"uniform sampler2D Scene;\n"
+		"uniform float brightness;\n"
+		"uniform float gamma;\n"
+		"\n"
+		"void main() {\n"
+		"	vec4 sampleColor = texture2D( Scene, gl_TexCoord[0].st );\n"
+		"	vec3 color = clamp( sampleColor.rgb * brightness, 0.0, 1.0 );\n"
+		"	float safeGamma = max( gamma, 0.001 );\n"
+		"	color = pow( color, vec3( 1.0 / safeGamma ) );\n"
+		"	gl_FragColor = vec4( color, sampleColor.a );\n"
+		"}\n";
+
+	GLhandleARB vertexShader = glCreateShaderObjectARB( GL_VERTEX_SHADER_ARB );
+	GLhandleARB fragmentShader = glCreateShaderObjectARB( GL_FRAGMENT_SHADER_ARB );
+	if ( vertexShader == 0 || fragmentShader == 0 ) {
+		if ( vertexShader != 0 ) {
+			glDeleteObjectARB( vertexShader );
+		}
+		if ( fragmentShader != 0 ) {
+			glDeleteObjectARB( fragmentShader );
+		}
+		return false;
+	}
+
+	const GLcharARB *vertexSource = (const GLcharARB *)colorMappingVertexSource;
+	const GLcharARB *fragmentSource = (const GLcharARB *)colorMappingFragmentSource;
+	glShaderSourceARB( vertexShader, 1, &vertexSource, NULL );
+	glShaderSourceARB( fragmentShader, 1, &fragmentSource, NULL );
+	glCompileShaderARB( vertexShader );
+	glCompileShaderARB( fragmentShader );
+
+	GLint status = GL_FALSE;
+	glGetObjectParameterivARB( vertexShader, GL_OBJECT_COMPILE_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_PrintGLSLInfoLog( vertexShader, "vertex shader compile", "builtin/final_color_mapping" );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		return false;
+	}
+
+	glGetObjectParameterivARB( fragmentShader, GL_OBJECT_COMPILE_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_PrintGLSLInfoLog( fragmentShader, "fragment shader compile", "builtin/final_color_mapping" );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		return false;
+	}
+
+	GLhandleARB programObject = glCreateProgramObjectARB();
+	glAttachObjectARB( programObject, vertexShader );
+	glAttachObjectARB( programObject, fragmentShader );
+	glLinkProgramARB( programObject );
+
+	glGetObjectParameterivARB( programObject, GL_OBJECT_LINK_STATUS_ARB, &status );
+	if ( status == GL_FALSE ) {
+		RB_PrintGLSLInfoLog( programObject, "program link", "builtin/final_color_mapping" );
+		glDetachObjectARB( programObject, vertexShader );
+		glDetachObjectARB( programObject, fragmentShader );
+		glDeleteObjectARB( vertexShader );
+		glDeleteObjectARB( fragmentShader );
+		glDeleteObjectARB( programObject );
+		return false;
+	}
+
+	rbColorMappingProgram = programObject;
+	rbColorMappingVertexShader = vertexShader;
+	rbColorMappingFragmentShader = fragmentShader;
+	rbColorMappingProgramGeneration = tr.glContextGeneration;
+	rbColorMappingSceneLocation = glGetUniformLocationARB( programObject, "Scene" );
+	rbColorMappingBrightnessLocation = glGetUniformLocationARB( programObject, "brightness" );
+	rbColorMappingGammaLocation = glGetUniformLocationARB( programObject, "gamma" );
+	if ( rbColorMappingSceneLocation < 0 || rbColorMappingBrightnessLocation < 0 || rbColorMappingGammaLocation < 0 ) {
+		common->Warning( "GLSL builtin/final_color_mapping is missing required uniforms" );
+		RB_FreeColorMappingProgram();
+		return false;
+	}
+
+	common->Printf( "Loaded built-in GLSL program 'builtin/final_color_mapping'\n" );
+	return true;
+}
+
+static bool RB_ColorMappingsAreNeutral( float brightness, float gamma ) {
+	return idMath::Fabs( brightness - 1.0f ) <= 0.0001f
+		&& idMath::Fabs( gamma - 1.0f ) <= 0.0001f;
+}
+
+void RB_ApplyColorMappingsToBackBuffer( void ) {
+	if ( GLimp_UseNativeGammaRamps() ) {
+		return;
+	}
+
+	const GLfloat brightness = idMath::ClampFloat( 0.0f, 16.0f, r_brightness.GetFloat() );
+	const GLfloat gamma = Max( r_gamma.GetFloat(), 0.001f );
+	if ( RB_ColorMappingsAreNeutral( brightness, gamma ) ) {
+		return;
+	}
+
+	if ( !glConfig.GLSLProgramAvailable ) {
+		static bool warned = false;
+		if ( !warned ) {
+			common->Warning( "r_brightness/r_gamma require GLSL on this platform backend because native gamma ramps are unavailable" );
+			warned = true;
+		}
+		return;
+	}
+
+	if ( !RB_EnsureColorMappingProgram() ) {
+		return;
+	}
+
+	const int viewportWidth = glConfig.vidWidth;
+	const int viewportHeight = glConfig.vidHeight;
+	if ( viewportWidth <= 0 || viewportHeight <= 0 ) {
+		return;
+	}
+
+	idImage *sceneImage = globalImages->currentRenderImage;
+	if ( sceneImage == NULL ) {
+		return;
+	}
+
+	RB_LogComment( "---------- RB_ApplyColorMappingsToBackBuffer ----------\n" );
+
+	idRenderTexture::BindNull();
+	backEnd.renderTexture = NULL;
+	glDrawBuffer( GL_BACK );
+	glReadBuffer( GL_BACK );
+	glViewport( 0, 0, viewportWidth, viewportHeight );
+	glScissor( 0, 0, viewportWidth, viewportHeight );
+
+	sceneImage->CopyFramebuffer( 0, 0, viewportWidth, viewportHeight );
+
+	const int textureWidth = sceneImage->GetOpts().width;
+	const int textureHeight = sceneImage->GetOpts().height;
+	if ( textureWidth <= 0 || textureHeight <= 0 ) {
+		return;
+	}
+
+	RB_BeginFullscreenPostProcessPass( 0, 0, viewportWidth, viewportHeight );
+	GL_SelectTexture( 0 );
+	sceneImage->Bind();
+	GL_TexEnv( GL_MODULATE );
+
+	glUseProgramObjectARB( rbColorMappingProgram );
+	glUniform1iARB( rbColorMappingSceneLocation, 0 );
+	glUniform1fARB( rbColorMappingBrightnessLocation, brightness );
+	glUniform1fARB( rbColorMappingGammaLocation, gamma );
+
+	RB_DrawFullscreenPostProcessQuad( viewportWidth, viewportHeight, textureWidth, textureHeight );
+	glUseProgramObjectARB( 0 );
+	globalImages->BindNull();
+	RB_EndFullscreenPostProcessPass();
+}
+
 /*
 =====================
 RB_BakeTextureMatrixIntoTexgen
@@ -5191,6 +5392,7 @@ void RB_ShutdownScenePostProcess( void ) {
 	RB_FreeGLSLProgram( &rbBloomCompositeStage );
 	RB_FreeGLSLProgram( &rbResolutionScaleStage );
 	RB_FreeGLSLProgram( &rbCRTStage );
+	RB_FreeColorMappingProgram();
 	RB_FreeGLSLProgram( &rbSoftParticleStage );
 	RB_FreeGLSLProgram( &rbRVSpecialDepthStage );
 	RB_FreeGLSLProgram( &rbRVSpecialBlurStage );

@@ -206,6 +206,10 @@ void GLimp_SetGamma( unsigned short red[256], unsigned short green[256], unsigne
 	//}
 }
 
+bool GLimp_UseNativeGammaRamps( void ) {
+	return false;
+}
+
 /*
 =============================================================================
 

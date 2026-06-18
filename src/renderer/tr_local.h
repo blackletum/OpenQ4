@@ -1650,6 +1650,9 @@ void		GLimp_SetGamma( unsigned short red[256],
 // Sets the hardware gamma ramps for gamma and brightness adjustment.
 // These are now taken as 16 bit values, so we can take full advantage
 // of dacs with >8 bits of precision
+bool		GLimp_UseNativeGammaRamps( void );
+// Returns true when the platform backend applies r_gamma/r_brightness through
+// OS display gamma ramps instead of the renderer's final framebuffer pass.
 
 
 bool		GLimp_SpawnRenderThread( void (*function)( void ) );
@@ -2204,6 +2207,7 @@ void RB_ShowOverdraw( void );
 void RB_RenderDebugTools( drawSurf_t **drawSurfs, int numDrawSurfs );
 void RB_ShutdownDebugTools( void );
 void RB_ShutdownScenePostProcess( void );
+void RB_ApplyColorMappingsToBackBuffer( void );
 bool RB_LensFlareRuntimeSelfTest( void );
 
 /*

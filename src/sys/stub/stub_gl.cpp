@@ -390,6 +390,7 @@ GLExtension_t GLimp_ExtensionPointer( const char *a) { return StubFunction; };
 
 bool GLimp_Init(glimpParms_t a) {return true;};
 void GLimp_SetGamma(unsigned short*a, unsigned short*b, unsigned short*c) {};
+bool GLimp_UseNativeGammaRamps(void) {return false;};
 void GLimp_PreserveWindowOnShutdown(bool preserve) {(void)preserve;};
 void GLimp_Shutdown() {};
 void GLimp_SwapBuffers() {};

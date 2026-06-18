@@ -10,6 +10,7 @@ Process:
 
 ## Ready For Changelog
 
+- [x] Settings menu brightness and gamma changes now visibly apply on SDL3 and legacy non-native gamma backends through a final framebuffer color-mapping pass, while native Linux and macOS gamma-ramp backends keep using their OS display ramp path.
 - [x] Display resolution control is now display-aware in the Settings menu: the System page lists Desktop Native, Custom, and SDL3-reported fullscreen resolutions for the selected monitor, applies explicit selections as exact custom fullscreen sizes instead of limiting users to legacy mode indices, refresh choices follow the selected display, and high-refresh requests above 200 Hz are accepted.
 - [x] Single-player enemy-hit feedback now matches retail Quake 4 again: the stock cursor GUI's per-component color aliases resolve correctly, so damaging enemies flashes the crosshair red without requiring custom HUD content or a new setting.
 - [x] Switching between single-player and multiplayer now keeps the game window open and shows the existing initialization-style loading screen while the matching game module is reloaded, avoiding the old console flash and window recreation during SP/MP map transitions.

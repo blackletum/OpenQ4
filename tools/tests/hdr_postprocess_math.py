@@ -130,6 +130,19 @@ def apply_lift_gamma_gain(color, lift, post_gamma, gain):
     return tuple(channel * gain for channel in corrected)
 
 
+def apply_display_color_mapping(color, brightness, gamma):
+    safe_gamma = max(gamma, 1.0e-3)
+    brightened = tuple(clamp(channel * brightness, 0.0, 1.0) for channel in color)
+    return tuple(math.pow(channel, 1.0 / safe_gamma) for channel in brightened)
+
+
+def legacy_gamma_table_value(channel, brightness, gamma):
+    j = min(int(channel * 255.0) * brightness, 255.0)
+    if gamma == 1.0:
+        return ((int(j) << 8) | int(j)) / 65535.0
+    return clamp((65535.0 * math.pow(j / 255.0, 1.0 / gamma) + 0.5) / 65535.0, 0.0, 1.0)
+
+
 def apply_vibrance(color, vibrance):
     luma = dot(color, LUMA)
     saturation = max_channel(color) - min(color[0], color[1], color[2])
@@ -313,6 +326,30 @@ def test_scene_post_process_excludes_sidecar_views():
     assert_true("RB_IsMainScenePostProcessView( viewDef )" in scene_target_request, "scene render-target requests should use the shared main-scene guard")
 
 
+def test_display_color_mapping_matches_legacy_curve_and_present_path():
+    root = Path(__file__).resolve().parents[2]
+    draw_common = (root / "src" / "renderer" / "draw_common.cpp").read_text(encoding="utf-8")
+    tr_backend = (root / "src" / "renderer" / "tr_backend.cpp").read_text(encoding="utf-8")
+    sdl3_backend = (root / "src" / "sys" / "sdl3" / "sdl3_backend.cpp").read_text(encoding="utf-8")
+    win32_backend = (root / "src" / "sys" / "win32" / "win_glimp.cpp").read_text(encoding="utf-8")
+    linux_native = (root / "src" / "sys" / "linux" / "glimp.cpp").read_text(encoding="utf-8")
+    osx_native = (root / "src" / "sys" / "osx" / "macosx_glimp.mm").read_text(encoding="utf-8")
+
+    for channel in (0.0, 0.1, 0.25, 0.5, 0.85, 1.0):
+        shader_value = apply_display_color_mapping((channel, channel, channel), 1.2, 1.4)[0]
+        legacy_value = legacy_gamma_table_value(channel, 1.2, 1.4)
+        assert_true(abs(shader_value - legacy_value) < 0.01, "display color mapping should match the legacy gamma table curve")
+
+    assert_true("vec3 color = clamp( sampleColor.rgb * brightness, 0.0, 1.0 );" in draw_common, "final color mapping should apply r_brightness before gamma")
+    assert_true("color = pow( color, vec3( 1.0 / safeGamma ) );" in draw_common, "final color mapping should apply r_gamma as the legacy display curve")
+    assert_true("GLimp_UseNativeGammaRamps()" in draw_common, "final color mapping should skip platforms that still use native gamma ramps")
+    assert_true("RB_ApplyResolutionScaleToBackBuffer();\n\t\tRB_ApplyCRTToBackBuffer();\n\t\tRB_ApplyColorMappingsToBackBuffer();" in tr_backend, "display color mapping should run after other final backbuffer passes")
+    assert_true("bool GLimp_UseNativeGammaRamps(void) {\n\treturn false;\n}" in sdl3_backend, "SDL3 should use renderer-owned color mapping")
+    assert_true("bool GLimp_UseNativeGammaRamps( void ) {\n\treturn false;\n}" in win32_backend, "legacy Win32 should use renderer-owned color mapping")
+    assert_true("bool GLimp_UseNativeGammaRamps( void ) {\n\treturn true;\n}" in linux_native, "native Linux GL should keep using OS gamma ramps")
+    assert_true("bool GLimp_UseNativeGammaRamps(void) {\n\treturn true;\n}" in osx_native, "native macOS GL should keep using OS gamma ramps")
+
+
 def main():
     tests = [
         test_bloom_contribution_monotonic,
@@ -330,6 +367,7 @@ def main():
         test_bloom_shader_uses_saturation_aware_brightness,
         test_hdr_shader_uses_scene_referred_inputs,
         test_scene_post_process_excludes_sidecar_views,
+        test_display_color_mapping_matches_legacy_curve_and_present_path,
     ]
 
     for test in tests:

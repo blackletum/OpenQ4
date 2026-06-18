@@ -551,6 +551,7 @@ const void	RB_SwapBuffers( const void *data ) {
 	if ( !r_frontBuffer.GetBool() ) {
 		RB_ApplyResolutionScaleToBackBuffer();
 		RB_ApplyCRTToBackBuffer();
+		RB_ApplyColorMappingsToBackBuffer();
 	}
 
 	// don't flip if drawing to front buffer

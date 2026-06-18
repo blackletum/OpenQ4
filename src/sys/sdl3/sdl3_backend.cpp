@@ -4875,6 +4875,10 @@ void GLimp_SetGamma(unsigned short red[256], unsigned short green[256], unsigned
 	(void)blue;
 }
 
+bool GLimp_UseNativeGammaRamps(void) {
+	return false;
+}
+
 static void SDL3_MoveCompatibilityFallbacksToFront(rendererContextCandidate_t *candidates, int candidateCount) {
 	int insertIndex = 0;
 

@@ -758,6 +758,10 @@ void GLimp_SetGamma(unsigned short red[256],
 	Sys_GetGammaTable(&glw_state.inGameTable);
 }
 
+bool GLimp_UseNativeGammaRamps(void) {
+	return true;
+}
+
 /*****************************************************************************/
 
 #pragma mark -
