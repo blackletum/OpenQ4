@@ -2266,7 +2266,7 @@ void Com_ExecMachineSpec_f( const idCmdArgs &args ) {
 		cvarSystem->SetCVarInteger( "image_useNormalCompression", 1, CVAR_ARCHIVE );
 	}
 
-#if MACOS_X
+#if defined( MACOS_X )
 	// On low settings, G4 systems & 64MB FX5200/NV34 Systems should default shadows off
 	bool oldArch;
 	int vendorId, deviceId, cpuId;

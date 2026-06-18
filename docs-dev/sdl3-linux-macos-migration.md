@@ -37,12 +37,12 @@ This document defines the implementation plan for migrating non-Windows platform
 - Validate XWayland and native Wayland behavior explicitly in logs and docs.
 
 4. macOS SDL3 Runtime Bring-Up
-- Replace macOS native window/event pump path with SDL3 equivalents. Source selection now reaches the SDL3 wrapper; macOS CI covers configure/build/install, and hardware runtime validation is still required.
+- Replace macOS native window/event pump path with SDL3 equivalents. Source selection now reaches the SDL3 wrapper; macOS CI covers OpenGL and Metal bridge configure/build/install/package validation, and real-device runtime validation remains required for hardware-specific input/audio/display signoff.
 - Validate Cocoa integration assumptions, cursor modes, focus transitions, keyboard/text input, high-resolution scrolling, controller hotplug, gamepad/joystick mapping, and rumble behavior.
 - Ensure app-bundle execution path behaves correctly.
 
 5. Promotion To First-Class
-- Promote the remaining SDL3 paths to default once compile/link/runtime checks pass consistently.
+- Keep SDL3 as the default Linux/macOS path and continue broadening hardware runtime evidence after CI compile/link/package checks pass consistently.
 - Keep native backends available for rollback until at least one release cycle is stable.
 
 ## Validation Requirements Per Phase

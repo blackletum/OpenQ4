@@ -49,6 +49,10 @@ typedef unsigned long long	uint64;
 class ThreadedAlloc;		// class that is only used to expand the AutoCrit template to tag allocs/frees called from inside the R_AddModelSurfaces call graph
 #define PC_CVAR_ARCHIVE CVAR_ARCHIVE
 
+#if defined( __APPLE__ ) && !defined( MACOS_X )
+#define MACOS_X 1
+#endif
+
 #ifdef _WINDOWS
 
 	// _WIN32 always defined

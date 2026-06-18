@@ -386,6 +386,7 @@ def validate_macos_staged_payload_validator_runtime() -> None:
 def validate_meson_contract() -> None:
     options = read("meson_options.txt")
     meson = read("meson.build")
+    baseoq4_meson = read("content/baseoq4/meson.build")
     setup_sh = read("tools/build/meson_setup.sh")
     setup_ps1 = read("tools/build/meson_setup.ps1")
 
@@ -400,6 +401,9 @@ def validate_meson_contract() -> None:
     require(meson, "modules: ['Metal', 'QuartzCore']", "Metal bridge framework dependency")
     require(meson, "-DOPENQ4_MACOS_METAL_BRIDGE=1", "Metal bridge compile define")
     require(meson, "'macOS graphics bridge': macos_graphics_bridge", "Meson summary")
+
+    require(baseoq4_meson, "elif host_system == 'darwin'", "macOS game module source branch")
+    require(baseoq4_meson, "name_suffix: 'dylib'", "macOS game module dylib suffix")
 
     require(setup_sh, "macos_graphics_bridge", "Bash Meson wrapper option preservation")
     require(setup_ps1, '"macos_graphics_bridge"', "PowerShell Meson wrapper option preservation")
@@ -576,7 +580,7 @@ def validate_docs_and_ci_hooks() -> None:
     require(release_notes, "Final macOS release archive", "release completion notes")
     require(platform_support, "Linux and macOS now use the shared SDL3 runtime path", "platform support roadmap")
     require(platform_support, "macOS SDL3 builds select `src/sys/osx/macosx_sdl3.cpp`", "platform support roadmap")
-    require(migration, "macOS CI covers configure/build/install", "SDL3 migration plan")
+    require(migration, "macOS CI covers OpenGL and Metal bridge configure/build/install/package validation", "SDL3 migration plan")
 
     require(validator, "macos_metal_bridge.py", "validation runner")
     require(push, "tools/tests/macos_metal_bridge.py", "push verification workflow")

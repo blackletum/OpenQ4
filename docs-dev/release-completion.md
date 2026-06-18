@@ -23,6 +23,8 @@ Process:
 - [x] SDL3 input support is aligned across Windows, Linux, and macOS: keyboard/text input, relative mouse capture, high-resolution wheel handling, gamepad/joystick hotplug, stable controller binds, rumble, battery diagnostics, gyro, touchpad, touchscreen routing, and `listControllers` diagnostics now share the same backend contract on SDL3 platforms.
 - [x] Linux and macOS memory handling now matches the Windows contract more closely: protected allocator blocks use real page-lock and unlock calls instead of no-op success stubs, and reported system RAM totals use the same rounded, overflow-safe megabyte reporting.
 - [x] macOS renderer startup now validates callable OpenGL entry points after SDL3 creates Apple's fallback compatibility context, resolving the crash reported in GitHub issue #73 comment 4730727130 by downgrading optional VBO uploads or failing cleanly when required ARB program hooks are missing.
+- [x] macOS package staging now pins game-module outputs to the `.dylib` names that the app bundle, release archives, and runtime validators require, so OpenGL and Metal bridge packages cannot silently drift to non-macOS module suffixes.
+- [x] Platform macro guards were hardened so legacy `MACOS_X`, `__MACH__`, and `__MWERKS__` checks use defined-style preprocessor tests, shared feature switches provide guarded 0/1 defaults, and push validation now blocks those brittle guard forms from returning.
 - [x] Linux x64 and ARM64 CI builds are unblocked again: SDL3 DRM VRAM detection now uses openQ4's portable string comparison path, keeping sysfs VRAM probing intact without tripping the guarded C string wrappers on GCC/Clang builds.
 - [x] Multi-display and window behavior is now aligned across Windows, Linux, and macOS SDL3 builds: selected-monitor launches, desktop/exclusive fullscreen, borderless windows, selected-display spanned UI, windowed placement, high-DPI drawable refresh, and display-change recovery use the shared SDL3 path, while macOS now honors the selected display for compatibility calls and falls back through current mode/display bounds when desktop mode is unavailable.
 - [x] Strogg health stations are usable again after the player becomes Strogg in the single-player campaign: animated in-world GUI models now participate in renderer GUI tracing, so the station panel can receive the stock `heal begin` / `heal end` commands.
@@ -505,5 +507,5 @@ Process:
 
 ## Carry Forward
 
-- [ ] Linux and macOS bring-up needs full compile/link/runtime validation to reach first-class status.
+- [ ] Continue macOS hardware runtime signoff for real input devices, audio devices, display modes, and in-game renderer coverage beyond the hosted CI compile/link/package checks.
 - [ ] Replace temporary MSVC compatibility flag (`/Zc:strictStrings-`) with full strict-strings codebase compliance.
