@@ -7,7 +7,7 @@ This guide covers openQ4 display/window settings for end users, including multi-
 - Press `Alt+Enter` to toggle fullscreen/windowed mode (fast path uses `vid_restart partial`).
 - Run `listDisplays` in the console to list monitor indices for `r_screen`.
 - On SDL3 builds, run `listDisplayModes [displayIndex]` to list available exclusive fullscreen modes, including SDL-reported content scale, pixel density, and exact refresh details when available.
-- The in-game `Settings -> System` menu exposes fullscreen policy, borderless/window sizing, custom exclusive fullscreen sizing, refresh rate, UI aspect behavior, display target, multi-screen, and resolution scale controls.
+- The in-game `Settings -> System` menu exposes display resolution, fullscreen policy, borderless/window sizing, custom exclusive fullscreen sizing, refresh rate, UI aspect behavior, display target, multi-screen, and resolution scale controls.
 - After changing video cvars, run `vid_restart` (or `vid_restart partial` for quick window/fullscreen transitions).
 
 ## Core Display Settings
@@ -21,9 +21,9 @@ This guide covers openQ4 display/window settings for end users, including multi-
 | `r_windowHeight` | `720` | Windowed height. |
 | `win_xpos` | (auto) | Window X position (updated automatically when you move the window). |
 | `win_ypos` | (auto) | Window Y position (updated automatically when you move the window). |
-| `r_mode` | `3` | Preset mode index. Use `-1` for custom width/height. |
-| `r_customWidth` | `720` | Custom width used when `r_mode -1`. |
-| `r_customHeight` | `486` | Custom height used when `r_mode -1`. |
+| `r_mode` | `-2` | Fullscreen sizing selector (`-2` = desktop native/current display, `-1` = custom, `0+` = legacy preset index). |
+| `r_customWidth` | `1920` | Custom exclusive-fullscreen width used when `r_mode -1`. |
+| `r_customHeight` | `1080` | Custom exclusive-fullscreen height used when `r_mode -1`. |
 | `r_displayRefresh` | `0` | Requested fullscreen refresh rate (0 = default/driver choice). |
 | `r_screen` | `-1` | SDL3 monitor target (`-1` auto/current, `0..N` explicit index). |
 
@@ -71,11 +71,13 @@ The Display menu exposes curated presets: `10%`, `25%`, `50%`, `75%`, `85%`, `10
 
 - Default behavior is **desktop-native fullscreen** (`r_fullscreenDesktop 1`): fullscreen matches your current desktop resolution and does not change Windows display mode.
 - For **exclusive fullscreen** (explicit mode switch), set `r_fullscreenDesktop 0`. In this mode, `r_mode`/`r_customWidth`/`r_customHeight` control the requested fullscreen resolution.
+- In `Settings -> System`, **Display Resolution** lists Desktop Native, Custom, and SDL3-reported fullscreen resolutions for the selected display. Choosing an explicit resolution writes `r_mode -1` plus the exact custom width/height so unusual monitor modes are not limited by the old preset table.
+- **Refresh Rate** lists the selected display's SDL3-reported refresh rates when available. Leave it on Auto unless you specifically need an exclusive-mode refresh request.
 - On Windows, fullscreen windows minimize on focus loss so system UI such as Alt+Tab and the Snipping Tool overlay can take foreground cleanly.
 - On Windows, `PrintScreen` yields to the system snipping UI by default (`win_printScreenToSystemTool 1`). Use `F12` for the built-in openQ4 screenshot command, or set that cvar to `0` if you explicitly want `PrintScreen` available for in-engine binds again.
 
 Notes:
-- When `r_fullscreenDesktop 1`, `r_mode` and `r_custom*` are ignored for fullscreen sizing (they still exist for legacy configs and exclusive mode).
+- When `r_fullscreenDesktop 1`, `r_mode` and `r_custom*` are ignored for fullscreen sizing (they still exist for legacy configs and exclusive mode). Use `r_screenFraction` for below-native scaling or supersampling while staying in desktop-native fullscreen.
 - Use `listDisplayModes` to see what your monitor actually supports in exclusive mode. On SDL3/Wayland, display diagnostics also report scale, orientation, pixel density, and exact refresh details that help diagnose compositor scaling behavior.
 
 ## Windowed Sizing and Placement
@@ -91,7 +93,7 @@ Notes:
 ## Aspect Ratio and FOV
 
 - `r_aspectRatio` is **deprecated/ignored**. Aspect ratio and FOV behavior are derived automatically from the current render size, so the game follows any aspect ratio without manual selection.
-- The Display menu no longer exposes a manual Aspect Ratio selector; the Screen Size list is selected automatically from the current video mode bucket.
+- The Display menu no longer exposes a manual Aspect Ratio selector; Display Resolution and the live window size drive aspect behavior automatically.
 - Weapon gameplay zoom uses the same gameplay FOV conversion path as normal view FOV, so authored weapon zoom values keep consistent framing/magnification across aspect ratios.
 - In multiplayer, zoomed first-person view suppresses view bob while scoped so reticle tracking stays stable during movement.
 - Scope GUI yaw tracking for zoom overlays follows the weapon/player view axis path, improving scope alignment while turning.

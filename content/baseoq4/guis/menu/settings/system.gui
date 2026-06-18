@@ -154,7 +154,7 @@
 					rect	259,148,172,18
 					visible	1
 					forecolor	1,1,1,0.8
-					text	"#str_200145"
+					text	"#str_229975"
 					textscale	0.24
 					font	"fonts/lowpixel"
 				}
@@ -163,10 +163,10 @@
 					rect	468,148,164,18
 					visible	1
 					forecolor	1,0.741,0.133,0.8
-					choices	"gui::4_3_choices"
-					values	"gui::4_3_values"
-					cvar	"r_mode"
-					choiceType	1
+					choices	"gui::display_mode_choices"
+					values	"gui::display_mode_values"
+					gui	display_mode_choice
+					choiceType	0
 					textscale	0.24
 					font	"fonts/lowpixel"
 
@@ -176,6 +176,7 @@
 //						set "set_t_vidrestart::visible" "1" ;
 //						set "set_b_vidrestart::visible" "1" ;
 						set "desktop::vidwarn" "1" ;
+						set "cmd" "applyDisplayModeChoice" ;
 					}
 
 					onAction {
@@ -188,10 +189,10 @@
 					rect	468,148,164,18
 					visible	0
 					forecolor	1,0.745,0.137,0.8
-					choices	"gui::16_9_choices"
-					values	"gui::16_9_values"
-					cvar	"r_mode"
-					choiceType	1
+					choices	"gui::display_mode_choices"
+					values	"gui::display_mode_values"
+					gui	display_mode_choice
+					choiceType	0
 					textscale	0.24
 					font	"fonts/lowpixel"
 
@@ -201,6 +202,7 @@
 						set "set_t_vidrestart::visible" "1" ;
 						set "set_b_vidrestart::visible" "1" ;
 						set "desktop::vidwarn" "1" ;
+						set "cmd" "applyDisplayModeChoice" ;
 					}
 
 					onAction {
@@ -213,10 +215,10 @@
 					rect	468,148,164,18
 					visible	0
 					forecolor	1,0.745,0.137,0.8
-					choices	"gui::16_10_choices"
-					values	"gui::16_10_values"
-					cvar	"r_mode"
-					choiceType	1
+					choices	"gui::display_mode_choices"
+					values	"gui::display_mode_values"
+					gui	display_mode_choice
+					choiceType	0
 					textscale	0.24
 					font	"fonts/lowpixel"
 
@@ -226,6 +228,7 @@
 //						set "set_t_vidrestart::visible" "1" ;
 //						set "set_b_vidrestart::visible" "1" ;
 						set "desktop::vidwarn" "1" ;
+						set "cmd" "applyDisplayModeChoice" ;
 					}
 
 					onAction {
@@ -845,6 +848,7 @@
 					onActionRelease {
 						set "set_sys_notice::visible" "1" ;
 						set "desktop::vidwarn" "1" ;
+						set "cmd" "refreshDisplayChoices" ;
 					}
 				}
 				windowDef set_sys_b19
@@ -1141,8 +1145,8 @@
 					visible	1
 					forecolor	1,0.745,0.137,0.8
 					choiceType	1
-					choices	"#str_229950"
-					values	"0;60;75;120;144;165;240"
+					choices	"gui::display_refresh_choices"
+					values	"gui::display_refresh_values"
 					cvar	"r_displayRefresh"
 					textscale	0.24
 					font	"fonts/lowpixel"
@@ -1265,6 +1269,7 @@
 						setfocus "set_b_back" ;
 						set "set_sys_notice::visible" "1" ;
 						set "desktop::vidwarn" "1" ;
+						set "cmd" "applyCustomDisplaySize" ;
 					}
 
 					onAction {
@@ -1304,6 +1309,7 @@
 						setfocus "set_b_back" ;
 						set "set_sys_notice::visible" "1" ;
 						set "desktop::vidwarn" "1" ;
+						set "cmd" "applyCustomDisplaySize" ;
 					}
 
 					onAction {

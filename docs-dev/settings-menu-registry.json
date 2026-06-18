@@ -1279,7 +1279,7 @@
       "id": "system.screen_size",
       "pane": "System",
       "section": "Video Basics",
-      "path": "Settings > System > Video Basics > Screen Size",
+      "path": "Settings > System > Video Basics > Display Resolution",
       "source": "system",
       "container": "set_sys_screensize",
       "widgets": [
@@ -1288,26 +1288,27 @@
         "set_sys_screensize_val_2"
       ],
       "widget_type": "choice",
-      "label_key": "#str_200145",
+      "label_key": "#str_229975",
       "dynamic_choices": [
         {
-          "choices": "gui::4_3_choices",
-          "values": "gui::4_3_values"
-        },
-        {
-          "choices": "gui::16_9_choices",
-          "values": "gui::16_9_values"
-        },
-        {
-          "choices": "gui::16_10_choices",
-          "values": "gui::16_10_values"
+          "choices": "gui::display_mode_choices",
+          "values": "gui::display_mode_values"
         }
       ],
-      "target_type": "cvar",
-      "target": "r_mode",
-      "default": "-2",
+      "target_type": "gui_state",
+      "target": "display_mode_choice",
+      "default": "0",
+      "adapter": {
+        "source": "session_menu",
+        "command": "applyDisplayModeChoice",
+        "writes": [
+          "r_mode",
+          "r_customWidth",
+          "r_customHeight"
+        ]
+      },
       "restart_required": true,
-      "accessibility": "One focusable choiceDef is shown at a time for the active aspect bucket."
+      "accessibility": "One focusable choiceDef is shown at a time; the engine adapter writes desktop-native or exact custom fullscreen cvars from the selected display's mode list."
     },
     {
       "id": "system.fullscreen",
@@ -1875,24 +1876,20 @@
       ],
       "widget_type": "choice",
       "label_key": "#str_229945",
-      "choices_key": "#str_229950",
-      "values": [
-        "0",
-        "60",
-        "75",
-        "120",
-        "144",
-        "165",
-        "240"
+      "dynamic_choices": [
+        {
+          "choices": "gui::display_refresh_choices",
+          "values": "gui::display_refresh_values"
+        }
       ],
       "target_type": "cvar",
       "target": "r_displayRefresh",
       "default": "0",
       "cvar_range": {
         "low": "0",
-        "high": "200"
+        "high": "1000"
       },
-      "range_intent": "The GUI exposes common refresh presets rather than every engine-accepted integer.",
+      "range_intent": "SDL3 builds expose the selected display's reported fullscreen refresh rates; fallback builds expose common presets.",
       "restart_required": true,
       "accessibility": "Standard focusable choiceDef row."
     },

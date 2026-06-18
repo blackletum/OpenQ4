@@ -636,7 +636,12 @@ def main() -> None:
         last_position = position
 
     display_cvars = [
+        "display_mode_choice",
+        "display_mode_choices",
+        "display_mode_values",
         "ui_aspectCorrection",
+        "display_refresh_choices",
+        "display_refresh_values",
         "r_displayRefresh",
         "r_windowWidth",
         "r_windowHeight",
@@ -645,6 +650,19 @@ def main() -> None:
     ]
     for cvar in display_cvars:
         require(system_gui, cvar, "System settings include")
+    for token in (
+        "applyDisplayModeChoice",
+        "applyCustomDisplaySize",
+        "refreshDisplayChoices",
+        "BuildMainMenuDisplayModeChoices",
+        "BuildMainMenuRefreshChoices",
+        "SDL_GetFullscreenDisplayModes",
+        "r_customWidth",
+        "r_customHeight",
+        'SetCVarInteger( "r_mode", -1 )',
+        'SetCVarInteger( "r_mode", -2 )',
+    ):
+        require(session_menu + system_gui, token, "Display resolution adapter")
 
     game_cvars = [
         "g_autoSkipCinematics",
@@ -779,7 +797,7 @@ def main() -> None:
         require(session_menu, f'SetStateInt( "{state}", cvarSystem->GetCVarBool( "{cvar}" ) ? 0 : 1 )', f"{state} cvar sync")
         reject(system_surface, f'cvar\t"{cvar}"', f"{cvar} direct negative GUI binding")
 
-    string_ids = [f"#str_{value}" for value in range(229943, 229972)]
+    string_ids = [f"#str_{value}" for value in range(229943, 229972)] + [f"#str_{value}" for value in range(229973, 229976)]
     for lang_path in sorted((ROOT / "content/baseoq4/strings").glob("*_openq4.lang")):
         lang_text = read(lang_path)
         for string_id in string_ids:

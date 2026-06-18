@@ -241,9 +241,9 @@ The pane has two display layouts:
 |---|---|---|---|---|---|
 | Auto Detect | `windowDef` action | `set_b_system_auto` | Auto-detect popup | N/A | Opens the existing auto-detect confirmation flow. |
 | Video Quality / Renderer | `choiceDef` | `set_sys_vidqual_val` | `r_renderer` | `best;arb;arb2;Cg;exp;nv10;nv20;r200` | Displays `BEST;ARB;ARB2;CG;EXP;NV10;NV20;R200`. Marks `desktop::vidwarn`. |
-| Screen Size | `choiceDef` | `set_sys_screensize_val_0` | `r_mode` | Runtime `gui::4_3_choices` / `gui::4_3_values` | Visible when the current mode is classified as the Other aspect bucket. Includes custom mode `-1` when `r_customWidth`/`r_customHeight` match the group. |
-| Screen Size | `choiceDef` | `set_sys_screensize_val_1` | `r_mode` | Runtime `gui::16_9_choices` / `gui::16_9_values` | Visible when the current mode is classified as `16:9`. |
-| Screen Size | `choiceDef` | `set_sys_screensize_val_2` | `r_mode` | Runtime `gui::16_10_choices` / `gui::16_10_values` | Visible when the current mode is classified as `16:10`. |
+| Display Resolution | `choiceDef` | `set_sys_screensize_val_0` | GUI state `display_mode_choice` via `applyDisplayModeChoice` | Runtime `gui::display_mode_choices` / `gui::display_mode_values` | Visible compatibility picker. Includes Desktop Native, Custom, then SDL3 fullscreen resolutions from the selected display, falling back to engine presets. The adapter writes `r_mode -2` or `r_mode -1` plus exact `r_customWidth`/`r_customHeight`. |
+| Display Resolution | `choiceDef` | `set_sys_screensize_val_1` | GUI state `display_mode_choice` via `applyDisplayModeChoice` | Runtime `gui::display_mode_choices` / `gui::display_mode_values` | Compatibility duplicate retained for the old aspect-bucketed menu events. It uses the same dynamic list and adapter as `set_sys_screensize_val_0`. |
+| Display Resolution | `choiceDef` | `set_sys_screensize_val_2` | GUI state `display_mode_choice` via `applyDisplayModeChoice` | Runtime `gui::display_mode_choices` / `gui::display_mode_values` | Compatibility duplicate retained for the old aspect-bucketed menu events. It uses the same dynamic list and adapter as `set_sys_screensize_val_0`. |
 | Fullscreen | `choiceDef` | `set_sys_fullscreen_val` | `r_fullscreen` | `No;Yes` | Marks `desktop::vidwarn`. |
 | Gamma / Brightness | `sliderDef` + `editDef` | `set_sys_gamma_slider`, `set_sys_gamma_value` | `r_brightness` | `0.5..2.0`, step `0.1` | Numeric edit field `maxchars 3`, allowing values such as `0.5` and `2.0`. |
 
@@ -288,11 +288,11 @@ The pane has two display layouts:
 |---|---|---|---|---|---|
 | Display Sizing | `windowDef` label | `set_sys_display_tuning` | N/A | N/A | Section label below Post Effects. |
 | UI Aspect | `choiceDef` | `set_sys_ui_aspect_val` | `ui_aspectCorrection` | `No;Yes` | `Yes` keeps classic 4:3-style UI correction. |
-| Refresh Rate | `choiceDef` | `set_sys_refresh_val` | `r_displayRefresh` | `0 Auto`, `60`, `75`, `120`, `144`, `165`, `240` | Marks `desktop::vidwarn`. |
+| Refresh Rate | `choiceDef` | `set_sys_refresh_val` | `r_displayRefresh` | Runtime `gui::display_refresh_choices` / `gui::display_refresh_values` | SDL3 builds list refresh rates reported by the selected display; fallback builds expose common presets. Marks `desktop::vidwarn`. |
 | Window Width | `editDef` | `set_sys_window_width_val` | `r_windowWidth` | Numeric field, `maxchars 5` | Windowed width. Marks `desktop::vidwarn`. |
 | Window Height | `editDef` | `set_sys_window_height_val` | `r_windowHeight` | Numeric field, `maxchars 5` | Windowed height. Marks `desktop::vidwarn`. |
-| Custom FS Width | `editDef` | `set_sys_custom_width_val` | `r_customWidth` | Numeric field, `maxchars 5` | Exclusive custom fullscreen width when `r_mode -1`. Marks `desktop::vidwarn`. |
-| Custom FS Height | `editDef` | `set_sys_custom_height_val` | `r_customHeight` | Numeric field, `maxchars 5` | Exclusive custom fullscreen height when `r_mode -1`. Marks `desktop::vidwarn`. |
+| Custom FS Width | `editDef` | `set_sys_custom_width_val` | `r_customWidth` | Numeric field, `maxchars 5` | Exclusive custom fullscreen width. Entering a value runs `applyCustomDisplaySize`, selecting `r_mode -1`. Marks `desktop::vidwarn`. |
+| Custom FS Height | `editDef` | `set_sys_custom_height_val` | `r_customHeight` | Numeric field, `maxchars 5` | Exclusive custom fullscreen height. Entering a value runs `applyCustomDisplaySize`, selecting `r_mode -1`. Marks `desktop::vidwarn`. |
 
 ## Audio
 
@@ -313,9 +313,12 @@ The Audio pane is `p_settings_audio`, included from `content/baseoq4/guis/menu/s
 
 | GUI state | Used by | Source behavior |
 |---|---|---|
-| `4_3_choices`, `4_3_values` | System Screen Size | Built from supported modes in the Other aspect group, plus custom mode `-1` when applicable. `Session_menu.cpp` automatically selects this visible picker when the current `r_mode` belongs to this bucket. |
-| `16_9_choices`, `16_9_values` | System Screen Size | Built from supported 16:9 modes, plus custom mode `-1` when applicable. `Session_menu.cpp` automatically selects this visible picker when the current `r_mode` belongs to this bucket. |
-| `16_10_choices`, `16_10_values` | System Screen Size | Built from supported 16:10 modes, plus custom mode `-1` when applicable. `Session_menu.cpp` automatically selects this visible picker when the current `r_mode` belongs to this bucket. |
+| `display_mode_choices`, `display_mode_values` | System Display Resolution | Built from Desktop Native, Custom, and SDL3 fullscreen resolutions for the selected display, with a preset fallback when SDL modes are unavailable. |
+| `display_mode_choice` | System Display Resolution | GUI-state index consumed by `applyDisplayModeChoice`; the adapter writes `r_mode`, `r_customWidth`, and `r_customHeight`. |
+| `display_refresh_choices`, `display_refresh_values` | System Refresh Rate | Built from the selected display's SDL3 fullscreen mode refresh rates, with a common preset fallback. |
+| `4_3_choices`, `4_3_values` | System Display Resolution compatibility aliases | Kept in sync with `display_mode_choices` / `display_mode_values` for old GUI visibility events. |
+| `16_9_choices`, `16_9_values` | System Display Resolution compatibility aliases | Kept in sync with `display_mode_choices` / `display_mode_values` for old GUI visibility events. |
+| `16_10_choices`, `16_10_values` | System Display Resolution compatibility aliases | Kept in sync with `display_mode_choices` / `display_mode_values` for old GUI visibility events. |
 | `display_names`, `display_values`, `display_count` | System Display Device / Multi-Screen | Built from SDL display enumeration. Multi-display rows are hidden when `display_count <= 1`. |
 | `device_name`, `device_value` | Audio Sound Device | Built from the available audio device list. |
 

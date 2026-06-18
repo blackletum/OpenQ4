@@ -397,7 +397,7 @@ Generated on 2026-04-19.
 | `r_brightness` | default | `1.2` | `1` | `RNDR ST AR` | `RNDR ST AR` | `float [0.5, 2]` | `float [0.5, 2]` |
 | `r_customHeight` | default | `486` | `1080` | `RNDR ST AR` | `RNDR ST AR` | `int` | `int` |
 | `r_customWidth` | default | `720` | `1920` | `RNDR ST AR` | `RNDR ST AR` | `int` | `int` |
-| `r_displayRefresh` | flags | `0` | `0` | `RNDR ST AR` | `RNDR ST` | `int [0, 200]` | `int [0, 200]` |
+| `r_displayRefresh` | flags, type/range | `0` | `0` | `RNDR ST AR` | `RNDR ST` | `int [0, 200]` | `int [0, 1000]` |
 | `r_lightDetailLevel` | default, flags, type/range | `9` | `0` | `RNDR ST` | `RNDR ST AR` | `float` | `float [0, 10]` |
 | `r_mode` | default | `3` | `-2` | `RNDR ST AR` | `RNDR ST AR` | `int` | `int` |
 | `r_renderer` | type/range | `best` | `best` | `RNDR ST AR` | `RNDR ST AR` | `string [best, arb, arb2, nv10, nv20, r200]` | `string [best, arb, arb2, Cg, exp, nv10, nv20, r200]` |

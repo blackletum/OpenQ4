@@ -308,43 +308,13 @@ static const mainMenuVidMode_t mainMenuVidModes[] = {
 	{ 10, 5120, 2880 }
 };
 
-enum {
-	MAINMENU_ASPECT_OTHER = 0,
-	MAINMENU_ASPECT_16_9 = 1,
-	MAINMENU_ASPECT_16_10 = 2
-};
-
-static int ClassifyMainMenuAspectGroup( int width, int height ) {
-	if ( width <= 0 || height <= 0 ) {
-		return MAINMENU_ASPECT_OTHER;
-	}
-
-	const float aspect = static_cast<float>( width ) / static_cast<float>( height );
-	if ( idMath::Fabs( aspect - ( 16.0f / 10.0f ) ) < 0.02f ) {
-		return MAINMENU_ASPECT_16_10;
-	}
-	if ( idMath::Fabs( aspect - ( 16.0f / 9.0f ) ) < 0.02f ) {
-		return MAINMENU_ASPECT_16_9;
-	}
-
-	return MAINMENU_ASPECT_OTHER;
-}
-
-static int GetMainMenuAspectGroupForMode( int mode ) {
-	if ( mode == -1 ) {
-		return ClassifyMainMenuAspectGroup(
-			cvarSystem->GetCVarInteger( "r_customWidth" ),
-			cvarSystem->GetCVarInteger( "r_customHeight" ) );
-	}
-
-	for ( int i = 0; i < static_cast<int>( sizeof( mainMenuVidModes ) / sizeof( mainMenuVidModes[0] ) ); ++i ) {
-		if ( mainMenuVidModes[i].mode == mode ) {
-			return ClassifyMainMenuAspectGroup( mainMenuVidModes[i].width, mainMenuVidModes[i].height );
-		}
-	}
-
-	return MAINMENU_ASPECT_OTHER;
-}
+typedef struct mainMenuDisplayModeOption_s {
+	int		width;
+	int		height;
+	int		legacyMode;
+	bool	desktopNative;
+	bool	custom;
+} mainMenuDisplayModeOption_t;
 
 static void AppendMainMenuChoice( idStr &choiceNames, idStr &choiceValues, const char *label, int value ) {
 	if ( choiceNames.Length() > 0 ) {
@@ -356,24 +326,274 @@ static void AppendMainMenuChoice( idStr &choiceNames, idStr &choiceValues, const
 	choiceValues += va( "%d", value );
 }
 
-static void BuildMainMenuResolutionChoices( int aspectGroup, idStr &choiceNames, idStr &choiceValues ) {
-	choiceNames.Clear();
-	choiceValues.Clear();
-
-	const int customWidth = cvarSystem->GetCVarInteger( "r_customWidth" );
-	const int customHeight = cvarSystem->GetCVarInteger( "r_customHeight" );
-	if ( customWidth > 0 && customHeight > 0 && ClassifyMainMenuAspectGroup( customWidth, customHeight ) == aspectGroup ) {
-		AppendMainMenuChoice( choiceNames, choiceValues, va( "%dx%d", customWidth, customHeight ), -1 );
-	}
-
+static const mainMenuVidMode_t *FindMainMenuVidModeByMode( int mode ) {
 	for ( int i = 0; i < static_cast<int>( sizeof( mainMenuVidModes ) / sizeof( mainMenuVidModes[0] ) ); ++i ) {
-		if ( ClassifyMainMenuAspectGroup( mainMenuVidModes[i].width, mainMenuVidModes[i].height ) != aspectGroup ) {
+		if ( mainMenuVidModes[i].mode == mode ) {
+			return &mainMenuVidModes[i];
+		}
+	}
+	return NULL;
+}
+
+static bool MainMenuDisplayModeResolutionExists( const idList<mainMenuDisplayModeOption_t> &options, int width, int height ) {
+	for ( int i = 0; i < options.Num(); ++i ) {
+		if ( options[i].desktopNative || options[i].custom ) {
 			continue;
 		}
+		if ( options[i].width == width && options[i].height == height ) {
+			return true;
+		}
+	}
+	return false;
+}
 
-		AppendMainMenuChoice( choiceNames, choiceValues,
-			va( "%dx%d", mainMenuVidModes[i].width, mainMenuVidModes[i].height ),
-			mainMenuVidModes[i].mode );
+static void AppendMainMenuDisplayModeOption(
+	idList<mainMenuDisplayModeOption_t> &options,
+	idStr *choiceNames,
+	idStr *choiceValues,
+	const char *label,
+	int width,
+	int height,
+	int legacyMode,
+	bool desktopNative,
+	bool custom ) {
+	mainMenuDisplayModeOption_t option;
+	option.width = width;
+	option.height = height;
+	option.legacyMode = legacyMode;
+	option.desktopNative = desktopNative;
+	option.custom = custom;
+
+	const int optionIndex = options.Append( option );
+	if ( choiceNames != NULL && choiceValues != NULL ) {
+		idStr safeLabel = label;
+		safeLabel.Replace( ";", "," );
+		AppendMainMenuChoice( *choiceNames, *choiceValues, safeLabel.c_str(), optionIndex );
+	}
+}
+
+static int MainMenuRoundRefreshRate( float refreshRate ) {
+	if ( refreshRate <= 0.0f ) {
+		return 0;
+	}
+	return static_cast<int>( refreshRate + 0.5f );
+}
+
+#if defined( USE_SDL3 )
+static SDL_DisplayID GetMainMenuSelectedSDLDisplay( void ) {
+	SDL_DisplayID display = 0;
+	const int requestedScreen = cvarSystem->GetCVarInteger( "r_screen" );
+
+	int displayCount = 0;
+	SDL_DisplayID *displays = SDL_GetDisplays( &displayCount );
+	if ( displays != NULL && displayCount > 0 ) {
+		if ( requestedScreen >= 0 && requestedScreen < displayCount ) {
+			display = displays[requestedScreen];
+		}
+		if ( display == 0 ) {
+			display = SDL_GetPrimaryDisplay();
+		}
+		if ( display == 0 ) {
+			display = displays[0];
+		}
+	}
+	if ( displays != NULL ) {
+		SDL_free( displays );
+	}
+
+	if ( display == 0 ) {
+		display = SDL_GetPrimaryDisplay();
+	}
+	return display;
+}
+#endif
+
+static void BuildMainMenuDisplayModeChoices(
+	idList<mainMenuDisplayModeOption_t> &options,
+	idStr *choiceNames,
+	idStr *choiceValues ) {
+	options.Clear();
+	if ( choiceNames != NULL ) {
+		choiceNames->Clear();
+	}
+	if ( choiceValues != NULL ) {
+		choiceValues->Clear();
+	}
+
+	int desktopWidth = 0;
+	int desktopHeight = 0;
+	idStr desktopLabel = common->GetLanguageDict()->GetString( "#str_229973" );
+	if ( Sys_GetDesktopResolution( &desktopWidth, &desktopHeight ) && desktopWidth > 0 && desktopHeight > 0 ) {
+		desktopLabel = va( "%s %dx%d", desktopLabel.c_str(), desktopWidth, desktopHeight );
+	}
+	AppendMainMenuDisplayModeOption( options, choiceNames, choiceValues, desktopLabel.c_str(), desktopWidth, desktopHeight, -2, true, false );
+
+	const int customWidth = idMath::ClampInt( 320, 16384, cvarSystem->GetCVarInteger( "r_customWidth" ) );
+	const int customHeight = idMath::ClampInt( 240, 16384, cvarSystem->GetCVarInteger( "r_customHeight" ) );
+	idStr customLabel = va( "%s %dx%d", common->GetLanguageDict()->GetString( "#str_229974" ), customWidth, customHeight );
+	AppendMainMenuDisplayModeOption( options, choiceNames, choiceValues, customLabel.c_str(), customWidth, customHeight, -1, false, true );
+
+	int displayModeCount = 0;
+#if defined( USE_SDL3 )
+	SDL_DisplayID display = GetMainMenuSelectedSDLDisplay();
+	if ( display != 0 ) {
+		int modeCount = 0;
+		SDL_DisplayMode **modes = SDL_GetFullscreenDisplayModes( display, &modeCount );
+		if ( modes != NULL && modeCount > 0 ) {
+			for ( int i = 0; i < modeCount; ++i ) {
+				const SDL_DisplayMode *mode = modes[i];
+				if ( mode == NULL || mode->w < 320 || mode->h < 240 ) {
+					continue;
+				}
+				if ( MainMenuDisplayModeResolutionExists( options, mode->w, mode->h ) ) {
+					continue;
+				}
+				AppendMainMenuDisplayModeOption(
+					options,
+					choiceNames,
+					choiceValues,
+					va( "%dx%d", mode->w, mode->h ),
+					mode->w,
+					mode->h,
+					-1,
+					false,
+					false );
+				displayModeCount++;
+			}
+		}
+		if ( modes != NULL ) {
+			SDL_free( modes );
+		}
+	}
+#endif
+
+	if ( displayModeCount == 0 ) {
+		for ( int i = 0; i < static_cast<int>( sizeof( mainMenuVidModes ) / sizeof( mainMenuVidModes[0] ) ); ++i ) {
+			if ( MainMenuDisplayModeResolutionExists( options, mainMenuVidModes[i].width, mainMenuVidModes[i].height ) ) {
+				continue;
+			}
+			AppendMainMenuDisplayModeOption(
+				options,
+				choiceNames,
+				choiceValues,
+				va( "%dx%d", mainMenuVidModes[i].width, mainMenuVidModes[i].height ),
+				mainMenuVidModes[i].width,
+				mainMenuVidModes[i].height,
+				mainMenuVidModes[i].mode,
+				false,
+				false );
+		}
+	}
+}
+
+static int FindMainMenuDisplayModeChoice( const idList<mainMenuDisplayModeOption_t> &options ) {
+	const int currentMode = cvarSystem->GetCVarInteger( "r_mode" );
+	int targetWidth = 0;
+	int targetHeight = 0;
+	bool preferCustom = false;
+
+	if ( currentMode == -2 ) {
+		for ( int i = 0; i < options.Num(); ++i ) {
+			if ( options[i].desktopNative ) {
+				return i;
+			}
+		}
+		return 0;
+	}
+
+	if ( currentMode == -1 ) {
+		targetWidth = idMath::ClampInt( 320, 16384, cvarSystem->GetCVarInteger( "r_customWidth" ) );
+		targetHeight = idMath::ClampInt( 240, 16384, cvarSystem->GetCVarInteger( "r_customHeight" ) );
+		preferCustom = true;
+	} else {
+		const mainMenuVidMode_t *mode = FindMainMenuVidModeByMode( currentMode );
+		if ( mode != NULL ) {
+			targetWidth = mode->width;
+			targetHeight = mode->height;
+		}
+	}
+
+	if ( targetWidth <= 0 || targetHeight <= 0 ) {
+		return 0;
+	}
+
+	if ( preferCustom ) {
+		for ( int i = 0; i < options.Num(); ++i ) {
+			if ( options[i].custom ) {
+				return i;
+			}
+		}
+	}
+
+	for ( int i = 0; i < options.Num(); ++i ) {
+		if ( options[i].width == targetWidth && options[i].height == targetHeight ) {
+			return i;
+		}
+	}
+
+	return 0;
+}
+
+static bool MainMenuRefreshRateExists( const idList<int> &refreshRates, int refreshRate ) {
+	for ( int i = 0; i < refreshRates.Num(); ++i ) {
+		if ( refreshRates[i] == refreshRate ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static void AddMainMenuRefreshRate( idList<int> &refreshRates, int refreshRate ) {
+	if ( refreshRate <= 0 || MainMenuRefreshRateExists( refreshRates, refreshRate ) ) {
+		return;
+	}
+
+	int insertIndex = 1; // keep Auto at index 0
+	while ( insertIndex < refreshRates.Num() && refreshRates[insertIndex] < refreshRate ) {
+		insertIndex++;
+	}
+	refreshRates.Insert( refreshRate, insertIndex );
+}
+
+static void BuildMainMenuRefreshChoices( idStr &choiceNames, idStr &choiceValues ) {
+	idList<int> refreshRates;
+	refreshRates.Append( 0 );
+
+#if defined( USE_SDL3 )
+	SDL_DisplayID display = GetMainMenuSelectedSDLDisplay();
+	if ( display != 0 ) {
+		int modeCount = 0;
+		SDL_DisplayMode **modes = SDL_GetFullscreenDisplayModes( display, &modeCount );
+		if ( modes != NULL && modeCount > 0 ) {
+			for ( int i = 0; i < modeCount; ++i ) {
+				const SDL_DisplayMode *mode = modes[i];
+				if ( mode == NULL ) {
+					continue;
+				}
+				AddMainMenuRefreshRate( refreshRates, MainMenuRoundRefreshRate( mode->refresh_rate ) );
+			}
+		}
+		if ( modes != NULL ) {
+			SDL_free( modes );
+		}
+	}
+#endif
+
+	if ( refreshRates.Num() == 1 ) {
+		static const int fallbackRefreshRates[] = { 60, 75, 120, 144, 165, 240 };
+		for ( int i = 0; i < static_cast<int>( sizeof( fallbackRefreshRates ) / sizeof( fallbackRefreshRates[0] ) ); ++i ) {
+			AddMainMenuRefreshRate( refreshRates, fallbackRefreshRates[i] );
+		}
+	}
+
+	choiceNames.Clear();
+	choiceValues.Clear();
+	for ( int i = 0; i < refreshRates.Num(); ++i ) {
+		const int refreshRate = refreshRates[i];
+		const char *label = refreshRate == 0
+			? common->GetLanguageDict()->GetString( "#str_229914" )
+			: va( "%d Hz", refreshRate );
+		AppendMainMenuChoice( choiceNames, choiceValues, label, refreshRate );
 	}
 }
 
@@ -384,18 +604,24 @@ static void SetMainMenuVideoGuiVars( idUserInterface *gui ) {
 
 	idStr choiceNames;
 	idStr choiceValues;
+	idList<mainMenuDisplayModeOption_t> displayModeOptions;
+	BuildMainMenuDisplayModeChoices( displayModeOptions, &choiceNames, &choiceValues );
 
-	BuildMainMenuResolutionChoices( MAINMENU_ASPECT_OTHER, choiceNames, choiceValues );
+	gui->SetStateString( "display_mode_choices", choiceNames.c_str() );
+	gui->SetStateString( "display_mode_values", choiceValues.c_str() );
+	gui->SetStateInt( "display_mode_choice", FindMainMenuDisplayModeChoice( displayModeOptions ) );
+
+	// Compatibility aliases for the original aspect-bucketed GUI widgets.
 	gui->SetStateString( "4_3_choices", choiceNames.c_str() );
 	gui->SetStateString( "4_3_values", choiceValues.c_str() );
-
-	BuildMainMenuResolutionChoices( MAINMENU_ASPECT_16_9, choiceNames, choiceValues );
 	gui->SetStateString( "16_9_choices", choiceNames.c_str() );
 	gui->SetStateString( "16_9_values", choiceValues.c_str() );
-
-	BuildMainMenuResolutionChoices( MAINMENU_ASPECT_16_10, choiceNames, choiceValues );
 	gui->SetStateString( "16_10_choices", choiceNames.c_str() );
 	gui->SetStateString( "16_10_values", choiceValues.c_str() );
+
+	BuildMainMenuRefreshChoices( choiceNames, choiceValues );
+	gui->SetStateString( "display_refresh_choices", choiceNames.c_str() );
+	gui->SetStateString( "display_refresh_values", choiceValues.c_str() );
 }
 
 static void SetMainMenuQualityGuiVars( idUserInterface *gui ) {
@@ -413,17 +639,48 @@ static void SyncMainMenuAspectVisibility( idUserInterface *gui ) {
 		return;
 	}
 
-	switch ( GetMainMenuAspectGroupForMode( cvarSystem->GetCVarInteger( "r_mode" ) ) ) {
-	case MAINMENU_ASPECT_16_9:
-		gui->HandleNamedEvent( "forceAspect1" );
-		break;
-	case MAINMENU_ASPECT_16_10:
-		gui->HandleNamedEvent( "forceAspect2" );
-		break;
-	default:
-		gui->HandleNamedEvent( "forceAspect0" );
-		break;
+	gui->HandleNamedEvent( "forceAspect0" );
+}
+
+static void RefreshMainMenuDisplayChoices( idUserInterface *gui ) {
+	if ( gui == NULL ) {
+		return;
 	}
+
+	SetMainMenuVideoGuiVars( gui );
+	SyncMainMenuAspectVisibility( gui );
+	gui->StateChanged( common->GetPresentationTime() );
+}
+
+static void ApplyMainMenuDisplayModeChoice( idUserInterface *gui ) {
+	if ( gui == NULL ) {
+		return;
+	}
+
+	idList<mainMenuDisplayModeOption_t> displayModeOptions;
+	BuildMainMenuDisplayModeChoices( displayModeOptions, NULL, NULL );
+	if ( displayModeOptions.Num() <= 0 ) {
+		return;
+	}
+
+	int choice = gui->State().GetInt( "display_mode_choice" );
+	choice = idMath::ClampInt( 0, displayModeOptions.Num() - 1, choice );
+	const mainMenuDisplayModeOption_t &option = displayModeOptions[choice];
+
+	if ( option.desktopNative ) {
+		cvarSystem->SetCVarInteger( "r_mode", -2 );
+	} else {
+		cvarSystem->SetCVarInteger( "r_mode", -1 );
+		cvarSystem->SetCVarInteger( "r_customWidth", idMath::ClampInt( 320, 16384, option.width ) );
+		cvarSystem->SetCVarInteger( "r_customHeight", idMath::ClampInt( 240, 16384, option.height ) );
+	}
+
+	RefreshMainMenuDisplayChoices( gui );
+}
+
+static void ApplyMainMenuCustomDisplaySize( idUserInterface *gui ) {
+	cvarSystem->SetCVarInteger( "r_mode", -1 );
+	RefreshMainMenuDisplayChoices( gui );
 }
 
 /*
@@ -1900,6 +2157,21 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 
 		if ( !idStr::Icmp( cmd, "applyForceModelChoice" ) ) {
 			ApplyMainMenuForceModelChoice( guiActive ? guiActive : guiMainMenu );
+			continue;
+		}
+
+		if ( !idStr::Icmp( cmd, "applyDisplayModeChoice" ) ) {
+			ApplyMainMenuDisplayModeChoice( guiActive ? guiActive : guiMainMenu );
+			continue;
+		}
+
+		if ( !idStr::Icmp( cmd, "applyCustomDisplaySize" ) ) {
+			ApplyMainMenuCustomDisplaySize( guiActive ? guiActive : guiMainMenu );
+			continue;
+		}
+
+		if ( !idStr::Icmp( cmd, "refreshDisplayChoices" ) ) {
+			RefreshMainMenuDisplayChoices( guiActive ? guiActive : guiMainMenu );
 			continue;
 		}
 
