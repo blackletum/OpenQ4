@@ -747,7 +747,7 @@ jobs:
           DISCORD_RELEASE_EMOJI: ${{ vars.DISCORD_RELEASE_EMOJI || '' }}
           DISCORD_RELEASE_MENTIONS: ${{ vars.DISCORD_RELEASE_MENTIONS || '' }}
           DISCORD_FEEDBACK_CHANNEL: ${{ vars.DISCORD_FEEDBACK_CHANNEL || 'the openQ4 Discord' }}
-          DISCORD_RELEASE_AVATAR_URL: ${{ vars.DISCORD_RELEASE_AVATAR_URL || 'https://raw.githubusercontent.com/themuffinator/OpenQ4/main/assets/icons/quake4_256.png' }}
+          DISCORD_RELEASE_AVATAR_URL: ${{ vars.DISCORD_RELEASE_AVATAR_URL || 'https://raw.githubusercontent.com/themuffinator/OpenQ4/main/assets/img/avatar.png' }}
         shell: bash
         run: |
           set -euo pipefail

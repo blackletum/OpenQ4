@@ -9,7 +9,7 @@ const releaseEmoji = (process.env.DISCORD_RELEASE_EMOJI || "").trim();
 const mentions = (process.env.DISCORD_RELEASE_MENTIONS || "").trim();
 const feedbackChannel = (process.env.DISCORD_FEEDBACK_CHANNEL || "the openQ4 Discord").trim();
 const avatarUrl = (process.env.DISCORD_RELEASE_AVATAR_URL ||
-  "https://raw.githubusercontent.com/themuffinator/OpenQ4/main/assets/icons/quake4_256.png").trim();
+  "https://raw.githubusercontent.com/themuffinator/OpenQ4/main/assets/img/avatar.png").trim();
 
 function requireValue(value, name) {
   if (!value) {
