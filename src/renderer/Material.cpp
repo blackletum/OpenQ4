@@ -1511,6 +1511,15 @@ static glslShaderParmBinding_t R_ParseGLSLShaderParmBinding( const idToken &toke
 	if ( !token.Icmp( "postProcessSMAAQuality" ) ) {
 		return GLSL_SHADERPARM_POSTPROCESS_SMAA_QUALITY;
 	}
+	if ( !token.Icmp( "currentRenderViewportOrigin" ) ) {
+		return GLSL_SHADERPARM_CURRENT_RENDER_VIEWPORT_ORIGIN;
+	}
+	if ( !token.Icmp( "currentRenderViewportSize" ) ) {
+		return GLSL_SHADERPARM_CURRENT_RENDER_VIEWPORT_SIZE;
+	}
+	if ( !token.Icmp( "currentRenderTextureScale" ) ) {
+		return GLSL_SHADERPARM_CURRENT_RENDER_TEXTURE_SCALE;
+	}
 
 	return GLSL_SHADERPARM_REGISTERS;
 }

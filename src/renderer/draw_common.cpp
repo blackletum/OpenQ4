@@ -503,6 +503,40 @@ bool RB_BindGLSLShaderParm( glslShaderParmBinding_t binding, int location, const
 	case GLSL_SHADERPARM_POSTPROCESS_SMAA_QUALITY:
 		glUniform4fvARB( location, 1, backEnd.postProcessSMAAQuality.ToFloatPtr() );
 		return true;
+	case GLSL_SHADERPARM_CURRENT_RENDER_VIEWPORT_ORIGIN: {
+		const GLfloat viewportOrigin[2] = {
+			static_cast<GLfloat>( backEnd.viewDef->viewport.x1 ),
+			static_cast<GLfloat>( backEnd.viewDef->viewport.y1 )
+		};
+		glUniform2fvARB( location, 1, viewportOrigin );
+		return true;
+	}
+	case GLSL_SHADERPARM_CURRENT_RENDER_VIEWPORT_SIZE: {
+		const GLfloat viewportSize[2] = {
+			static_cast<GLfloat>( Max( 1, backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1 ) ),
+			static_cast<GLfloat>( Max( 1, backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1 ) )
+		};
+		glUniform2fvARB( location, 1, viewportSize );
+		return true;
+	}
+	case GLSL_SHADERPARM_CURRENT_RENDER_TEXTURE_SCALE: {
+		const int viewportWidth = Max( 1, backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1 );
+		const int viewportHeight = Max( 1, backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1 );
+		int textureWidth = viewportWidth;
+		int textureHeight = viewportHeight;
+
+		if ( globalImages->currentRenderImage != NULL ) {
+			textureWidth = Max( 1, globalImages->currentRenderImage->GetOpts().width );
+			textureHeight = Max( 1, globalImages->currentRenderImage->GetOpts().height );
+		}
+
+		const GLfloat textureScale[2] = {
+			static_cast<GLfloat>( viewportWidth ) / static_cast<GLfloat>( textureWidth ),
+			static_cast<GLfloat>( viewportHeight ) / static_cast<GLfloat>( textureHeight )
+		};
+		glUniform2fvARB( location, 1, textureScale );
+		return true;
+	}
 	case GLSL_SHADERPARM_REGISTERS:
 	default:
 		return false;
