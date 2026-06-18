@@ -2,9 +2,9 @@ LGRID 7
 
 lightGridBakeStats {
 	headerVersion 1
-	settingsHash 0xa00a8bdb
+	settingsHash 0xacacc1f5
 	map "maps/mp/q4dm8"
-	options maxProbes 16384 bounces 1 captureSize 128 blends 1 samples 128 gridSize ( 64 64 128 )
+	options maxProbes 16384 bounces 3 captureSize 128 blends 1 samples 128 gridSize ( 64 64 128 )
 	probes total 630 valid 630 invalid 0 relocated 0 nearSolid 0
 	areas total 1 baked 1 maxAtlas 2016 80
 	visibility maxDistance 4096 traceBias 2 traceSamples 4 coneOffset 0.1199999973
