@@ -241,6 +241,7 @@ idCVar r_displayRefresh( "r_displayRefresh", "0", CVAR_RENDERER | CVAR_INTEGER |
 idCVar r_fullscreen( "r_fullscreen", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "0 = windowed, 1 = full screen" );
 idCVar r_fullscreenDesktop( "r_fullscreenDesktop", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "1 = native desktop fullscreen, 0 = exclusive mode using r_mode/r_customWidth/r_customHeight" );
 idCVar r_borderless( "r_borderless", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "1 = borderless window mode when r_fullscreen is 0" );
+idCVar r_hiddenWindow( "r_hiddenWindow", "0", CVAR_RENDERER | CVAR_BOOL, "create a hidden OpenGL window for batch renderer jobs" );
 idCVar r_windowWidth( "r_windowWidth", "1280", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "windowed mode width" );
 idCVar r_windowHeight( "r_windowHeight", "720", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "windowed mode height" );
 idCVar r_customWidth( "r_customWidth", "1920", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "custom screen width. set r_mode to -1 to activate" );
@@ -429,6 +430,15 @@ idCVar r_skipAmbient( "r_skipAmbient", "0", CVAR_RENDERER | CVAR_BOOL, "bypasses
 idCVar r_skipNewAmbient( "r_skipNewAmbient", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE, "bypasses all vertex/fragment program ambient drawing" );
 idCVar r_forceAmbient( "r_forceAmbient", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "force ambient lighting level", 0.0f, 1.0f );
 idCVar r_useLightGrid( "r_useLightGrid", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use precomputed irradiance-volume atlases when present" );
+idCVar r_lightGridIntensity( "r_lightGridIntensity", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "scales baked light-grid indirect diffuse contribution", 0.0f, 16.0f );
+idCVar r_lightGridVisibilityFloor( "r_lightGridVisibilityFloor", "0.10", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "minimum baked light-grid probe visibility after visibility falloff", 0.0f, 1.0f );
+idCVar r_lightGridIrradianceGamma( "r_lightGridIrradianceGamma", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "decodes baked LDR light-grid atlas samples before scene-referred blending", 0.25f, 4.0f );
+idCVar r_lightGridMaxContribution( "r_lightGridMaxContribution", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "maximum per-channel baked light-grid contribution before bloom/HDR processing; 0 disables the cap", 0.0f, 16.0f );
+idCVar r_lightGridReport( "r_lightGridReport", "0", CVAR_RENDERER | CVAR_INTEGER, "print light-grid receiver statistics every N frames while enabled", 0, 600 );
+idCVar r_lightGridDebug( "r_lightGridDebug", "0", CVAR_RENDERER | CVAR_INTEGER, "debug baked light-grid indirect pass output: 0 normal, 1 receiver coverage, 2 irradiance, 3 coverage without depth, 4 albedo diagnostic, 5 final contribution, 6 manual depth accept, 7 sampled scene depth", 0, 7 );
+idCVar r_lightGridDepthBiasFactor( "r_lightGridDepthBiasFactor", "0", CVAR_RENDERER | CVAR_FLOAT, "fallback polygon offset factor for depth-tested baked light-grid overlay receivers", -64.0f, 64.0f );
+idCVar r_lightGridDepthBiasUnits( "r_lightGridDepthBiasUnits", "0", CVAR_RENDERER | CVAR_FLOAT, "fallback polygon offset units for depth-tested baked light-grid overlay receivers", -4096.0f, 4096.0f );
+idCVar r_lightGridDepthTolerance( "r_lightGridDepthTolerance", "0.005", CVAR_RENDERER | CVAR_FLOAT, "normalized depth tolerance for clipping baked light-grid receivers against captured scene depth", 0.0f, 0.1f );
 idCVar r_lightGridPortalBlend( "r_lightGridPortalBlend", "64", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "world-unit radius for blending indirect light grids across visible portal boundaries; 0 disables", 0.0f, 256.0f );
 idCVar r_lightGridResidencyFrames( "r_lightGridResidencyFrames", "180", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "frames to keep light-grid atlases resident after visible/neighbor use", 0, 3600, idCmdSystem::ArgCompletion_Integer<0,3600> );
 idCVar r_lightGridBakeWorkers( "r_lightGridBakeWorkers", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "worker threads for light-grid probe integration (-1 = disabled, 0 = auto, 1..8 = explicit)", -1, 8, idCmdSystem::ArgCompletion_Integer<-1,8> );
@@ -440,6 +450,7 @@ idCVar r_skipFogLights( "r_skipFogLights", "0", CVAR_RENDERER | CVAR_BOOL, "skip
 idCVar r_skipDeforms( "r_skipDeforms", "0", CVAR_RENDERER | CVAR_BOOL, "leave all deform materials in their original state" );
 idCVar r_skipFrontEnd( "r_skipFrontEnd", "0", CVAR_RENDERER | CVAR_BOOL, "bypasses all front end work, but 2D gui rendering still draws" );
 idCVar r_skipUpdates( "r_skipUpdates", "0", CVAR_RENDERER | CVAR_BOOL, "1 = don't accept any entity or light updates, making everything static" );
+idCVar r_skipEntities( "r_skipEntities", "0", CVAR_RENDERER | CVAR_BOOL, "skip non-world render entities for renderer diagnostics" );
 idCVar r_skipDecals( "r_skipDecals", "0", CVAR_RENDERER | CVAR_BOOL, "skip decal surfaces" );
 idCVar r_skipOverlays( "r_skipOverlays", "0", CVAR_RENDERER | CVAR_BOOL, "skip overlay surfaces" );
 idCVar r_skipSpecular( "r_skipSpecular", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_CHEAT | CVAR_ARCHIVE, "use black for specular1" );
@@ -1335,7 +1346,8 @@ void R_InitOpenGL( void ) {
 	//
 	for ( i = 0 ; i < 2 ; i++ ) {
 		// set the parameters we are trying
-		parms.fullScreen = r_fullscreen.GetBool();
+		parms.hiddenWindow = r_hiddenWindow.GetBool();
+		parms.fullScreen = !parms.hiddenWindow && r_fullscreen.GetBool();
 		if ( parms.fullScreen ) {
 			R_GetModeInfo( &parms.width, &parms.height, r_mode.GetInteger() );
 		} else {
@@ -1343,7 +1355,7 @@ void R_InitOpenGL( void ) {
 		}
 		glConfig.vidWidth = parms.width;
 		glConfig.vidHeight = parms.height;
-		parms.borderless = !parms.fullScreen && r_borderless.GetBool();
+		parms.borderless = !parms.hiddenWindow && !parms.fullScreen && r_borderless.GetBool();
 		parms.displayHz = r_displayRefresh.GetInteger();
 		parms.multiSamples = r_multiSamples.GetInteger();
 		parms.stereo = false;
@@ -3358,13 +3370,14 @@ void R_VidRestart_f( const idCmdArgs &args ) {
 		R_PerformFullVidRestart( forceWindow );
 	} else {
 		glimpParms_t	parms;
-		parms.fullScreen = ( forceWindow ) ? false : r_fullscreen.GetBool();
+		parms.hiddenWindow = r_hiddenWindow.GetBool();
+		parms.fullScreen = ( forceWindow || parms.hiddenWindow ) ? false : r_fullscreen.GetBool();
 		if ( parms.fullScreen ) {
 			R_GetModeInfo( &parms.width, &parms.height, r_mode.GetInteger() );
 		} else {
 			R_GetWindowedModeInfo( &parms.width, &parms.height );
 		}
-		parms.borderless = !parms.fullScreen && r_borderless.GetBool();
+		parms.borderless = !parms.hiddenWindow && !parms.fullScreen && r_borderless.GetBool();
 		parms.displayHz = r_displayRefresh.GetInteger();
 		parms.multiSamples = r_multiSamples.GetInteger();
 		parms.stereo = false;

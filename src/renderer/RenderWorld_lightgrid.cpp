@@ -90,6 +90,12 @@ typedef struct lightGridPackChunkDirectory_s {
 
 static bool LightGrid_PackedImageRefIsValid( const lightGridPackedImageRef_t &ref );
 
+enum lightGridPackedImageLoadResult_t {
+	LIGHTGRID_PACKED_IMAGE_LOAD_FAILED,
+	LIGHTGRID_PACKED_IMAGE_LOAD_ALREADY_RESIDENT,
+	LIGHTGRID_PACKED_IMAGE_LOAD_MATERIALIZED
+};
+
 typedef struct lightGridBakeProbeTask_s {
 	int					atlasX;
 	int					atlasY;
@@ -2293,22 +2299,22 @@ bool idRenderWorldLocal::LoadLightGridPackFile( const char *name ) {
 	return assignedChunks > 0;
 }
 
-static bool LightGrid_LoadPackedImageRef( const lightGridPackedImageRef_t &ref, idImage *image, textureUsage_t usage ) {
+static lightGridPackedImageLoadResult_t LightGrid_LoadPackedImageRef( const lightGridPackedImageRef_t &ref, idImage *image, textureUsage_t usage ) {
 	(void)usage;
 	if ( !LightGrid_PackedImageRefIsValid( ref ) || image == NULL ) {
-		return false;
+		return LIGHTGRID_PACKED_IMAGE_LOAD_FAILED;
 	}
 	if ( image->IsLoaded() && !image->IsDefaulted() ) {
-		return true;
+		return LIGHTGRID_PACKED_IMAGE_LOAD_ALREADY_RESIDENT;
 	}
 
 	idFile *file = fileSystem->OpenFileRead( ref.packFileName.c_str() );
 	if ( file == NULL ) {
-		return false;
+		return LIGHTGRID_PACKED_IMAGE_LOAD_FAILED;
 	}
 	if ( file->Seek( ref.dataOffset, FS_SEEK_SET ) != 0 ) {
 		fileSystem->CloseFile( file );
-		return false;
+		return LIGHTGRID_PACKED_IMAGE_LOAD_FAILED;
 	}
 
 	idBinaryImage packedImage( image->GetName() );
@@ -2318,17 +2324,17 @@ static bool LightGrid_LoadPackedImageRef( const lightGridPackedImageRef_t &ref, 
 	fileSystem->CloseFile( file );
 	if ( !readPayload || chunkEnd - chunkStart != ref.dataBytes ) {
 		common->Warning( "LightGrid pack: failed to read %s from %s", image->GetName(), ref.packFileName.c_str() );
-		return false;
+		return LIGHTGRID_PACKED_IMAGE_LOAD_FAILED;
 	}
 
 	const bimageFile_t &header = packedImage.GetFileHeader();
 	if ( header.width != ref.width || header.height != ref.height || header.textureType != TT_2D || header.numLevels <= 0 ) {
 		common->Warning( "LightGrid pack: invalid image header for %s", image->GetName() );
-		return false;
+		return LIGHTGRID_PACKED_IMAGE_LOAD_FAILED;
 	}
 	if ( ( header.format == FMT_DXT1 || header.format == FMT_DXT5 ) && !glConfig.textureCompressionAvailable ) {
 		common->Warning( "LightGrid pack: %s requires compressed texture support", image->GetName() );
-		return false;
+		return LIGHTGRID_PACKED_IMAGE_LOAD_FAILED;
 	}
 
 	idImageOpts opts;
@@ -2344,7 +2350,7 @@ static bool LightGrid_LoadPackedImageRef( const lightGridPackedImageRef_t &ref, 
 		const bimageImage_t &img = packedImage.GetImageHeader( i );
 		image->SubImageUpload( img.level, 0, 0, img.destZ, img.width, img.height, packedImage.GetImageData( i ) );
 	}
-	return image->IsLoaded() && !image->IsDefaulted();
+	return ( image->IsLoaded() && !image->IsDefaulted() ) ? LIGHTGRID_PACKED_IMAGE_LOAD_MATERIALIZED : LIGHTGRID_PACKED_IMAGE_LOAD_FAILED;
 }
 
 bool idRenderWorldLocal::EnsureLightGridAreaImages( int areaIndex ) {
@@ -2354,12 +2360,18 @@ bool idRenderWorldLocal::EnsureLightGridAreaImages( int areaIndex ) {
 
 	LightGrid &lightGrid = portalAreas[areaIndex].lightGrid;
 	const int start = Sys_Milliseconds();
-	bool loadedPackedImage = false;
+	bool materializedPackedImage = false;
 
 	if ( LightGrid_PackedImageRefIsValid( lightGrid.packedIrradianceImage ) ) {
-		loadedPackedImage = LightGrid_LoadPackedImageRef( lightGrid.packedIrradianceImage, lightGrid.irradianceImage, TD_LIGHTGRID ) || loadedPackedImage;
-		LightGrid_LoadPackedImageRef( lightGrid.packedVisibilityImage, lightGrid.visibilityImage, TD_LIGHTGRID_VISIBILITY );
-		LightGrid_LoadPackedImageRef( lightGrid.packedProbeImage, lightGrid.probeImage, TD_LIGHTGRID_PROBE );
+		const lightGridPackedImageLoadResult_t irradianceLoad =
+			LightGrid_LoadPackedImageRef( lightGrid.packedIrradianceImage, lightGrid.irradianceImage, TD_LIGHTGRID );
+		const lightGridPackedImageLoadResult_t visibilityLoad =
+			LightGrid_LoadPackedImageRef( lightGrid.packedVisibilityImage, lightGrid.visibilityImage, TD_LIGHTGRID_VISIBILITY );
+		const lightGridPackedImageLoadResult_t probeLoad =
+			LightGrid_LoadPackedImageRef( lightGrid.packedProbeImage, lightGrid.probeImage, TD_LIGHTGRID_PROBE );
+		materializedPackedImage = irradianceLoad == LIGHTGRID_PACKED_IMAGE_LOAD_MATERIALIZED ||
+			visibilityLoad == LIGHTGRID_PACKED_IMAGE_LOAD_MATERIALIZED ||
+			probeLoad == LIGHTGRID_PACKED_IMAGE_LOAD_MATERIALIZED;
 	} else {
 		if ( lightGrid.irradianceImage != NULL && !lightGrid.irradianceImage->IsLoaded() ) {
 			lightGrid.irradianceImage->ActuallyLoadImage( true );
@@ -2372,7 +2384,7 @@ bool idRenderWorldLocal::EnsureLightGridAreaImages( int areaIndex ) {
 		}
 	}
 
-	if ( loadedPackedImage ) {
+	if ( materializedPackedImage ) {
 		common->DPrintf(
 			"LightGrid pack: materialized area %i images in %.3fs\n",
 			areaIndex,
@@ -2481,7 +2493,8 @@ void LightGrid::Clear() {
 }
 
 bool LightGrid::HasImage() const {
-	return irradianceImage != NULL && !irradianceImage->IsDefaulted();
+	return ( irradianceImage != NULL && !irradianceImage->IsDefaulted() ) ||
+		LightGrid_PackedImageRefIsValid( packedIrradianceImage );
 }
 
 bool LightGrid::IsUsable() const {

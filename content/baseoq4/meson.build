@@ -111,6 +111,11 @@ install_subdir(
 )
 
 install_subdir(
+  'env',
+  install_dir: install_game_dir,
+)
+
+install_subdir(
   'strings',
   install_dir: install_game_dir,
 )

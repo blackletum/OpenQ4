@@ -76,6 +76,8 @@ PFNWGLSETPBUFFERATTRIBARBPROC	wglSetPbufferAttribARB;
 
 void* GLimp_ExtensionPointer(const char* name);
 
+static bool win32PreserveWindowOnShutdown = false;
+
 /* ARB_pixel_format */
 #define WGL_NUMBER_PIXEL_FORMATS_ARB       0x2000
 #define WGL_DRAW_TO_WINDOW_ARB             0x2001
@@ -402,62 +404,68 @@ static bool GLW_InitDriver( glimpParms_t parms ) {
 		common->Printf( "succeeded\n" );
 	}
 
-	// the multisample path uses the wgl 
-	bool formatChosen = false;
-	if ( wglChoosePixelFormatARB && parms.multiSamples > 1 ) {
-		int		iAttributes[20];
-		FLOAT	fAttributes[] = {0, 0};
-		UINT	numFormats = 0;
+	const int currentPixelFormat = GetPixelFormat( win32.hDC );
+	if ( currentPixelFormat > 0 ) {
+		win32.pixelformat = currentPixelFormat;
+		common->Printf( "...reusing PIXELFORMAT %d\n", win32.pixelformat );
+	} else {
+		// the multisample path uses the wgl
+		bool formatChosen = false;
+		if ( wglChoosePixelFormatARB && parms.multiSamples > 1 ) {
+			int		iAttributes[20];
+			FLOAT	fAttributes[] = {0, 0};
+			UINT	numFormats = 0;
 
-		// FIXME: specify all the other stuff
-		iAttributes[0] = WGL_SAMPLE_BUFFERS_ARB;
-		iAttributes[1] = 1;
-		iAttributes[2] = WGL_SAMPLES_ARB;
-		iAttributes[3] = parms.multiSamples;
-		iAttributes[4] = WGL_DOUBLE_BUFFER_ARB;
-		iAttributes[5] = TRUE;
-		iAttributes[6] = WGL_STENCIL_BITS_ARB;
-		iAttributes[7] = 8;
-		iAttributes[8] = WGL_DEPTH_BITS_ARB;
-		iAttributes[9] = 24;
-		iAttributes[10] = WGL_RED_BITS_ARB;
-		iAttributes[11] = 8;
-		iAttributes[12] = WGL_BLUE_BITS_ARB;
-		iAttributes[13] = 8;
-		iAttributes[14] = WGL_GREEN_BITS_ARB;
-		iAttributes[15] = 8;
-		iAttributes[16] = WGL_ALPHA_BITS_ARB;
-		iAttributes[17] = 8;
-		iAttributes[18] = 0;
-		iAttributes[19] = 0;
+			// FIXME: specify all the other stuff
+			iAttributes[0] = WGL_SAMPLE_BUFFERS_ARB;
+			iAttributes[1] = 1;
+			iAttributes[2] = WGL_SAMPLES_ARB;
+			iAttributes[3] = parms.multiSamples;
+			iAttributes[4] = WGL_DOUBLE_BUFFER_ARB;
+			iAttributes[5] = TRUE;
+			iAttributes[6] = WGL_STENCIL_BITS_ARB;
+			iAttributes[7] = 8;
+			iAttributes[8] = WGL_DEPTH_BITS_ARB;
+			iAttributes[9] = 24;
+			iAttributes[10] = WGL_RED_BITS_ARB;
+			iAttributes[11] = 8;
+			iAttributes[12] = WGL_BLUE_BITS_ARB;
+			iAttributes[13] = 8;
+			iAttributes[14] = WGL_GREEN_BITS_ARB;
+			iAttributes[15] = 8;
+			iAttributes[16] = WGL_ALPHA_BITS_ARB;
+			iAttributes[17] = 8;
+			iAttributes[18] = 0;
+			iAttributes[19] = 0;
 
-		win32.pixelformat = 0;
-		if ( wglChoosePixelFormatARB( win32.hDC, iAttributes, fAttributes, 1, &win32.pixelformat, &numFormats ) && numFormats > 0 && win32.pixelformat != 0 ) {
-			formatChosen = true;
-		} else {
-			common->Printf( "...^3wglChoosePixelFormatARB failed, ignoring multisamples^0\n" );
+			win32.pixelformat = 0;
+			if ( wglChoosePixelFormatARB( win32.hDC, iAttributes, fAttributes, 1, &win32.pixelformat, &numFormats ) && numFormats > 0 && win32.pixelformat != 0 ) {
+				formatChosen = true;
+			} else {
+				common->Printf( "...^3wglChoosePixelFormatARB failed, ignoring multisamples^0\n" );
+			}
 		}
-	}
-	if ( !formatChosen ) {
-		// this is the "classic" choose pixel format path
+		if ( !formatChosen ) {
+			// this is the "classic" choose pixel format path
 
-		// eventually we may need to have more fallbacks, but for
-		// now, ask for everything
-		if ( parms.stereo ) {
-			common->Printf( "...attempting to use stereo\n" );
-			src.dwFlags |= PFD_STEREO;
-		}
+			// eventually we may need to have more fallbacks, but for
+			// now, ask for everything
+			if ( parms.stereo ) {
+				common->Printf( "...attempting to use stereo\n" );
+				src.dwFlags |= PFD_STEREO;
+			}
 
-		//
-		// choose, set, and describe our desired pixel format.  If we're
-		// using a minidriver then we need to bypass the GDI functions,
-		// otherwise use the GDI functions.
-		//
-		if ( ( win32.pixelformat = ChoosePixelFormat( win32.hDC, &src ) ) == 0 ) {
-			common->Printf( "...^3GLW_ChoosePFD failed^0\n");
-			return false;
+			//
+			// choose, set, and describe our desired pixel format.  If we're
+			// using a minidriver then we need to bypass the GDI functions,
+			// otherwise use the GDI functions.
+			//
+			if ( ( win32.pixelformat = ChoosePixelFormat( win32.hDC, &src ) ) == 0 ) {
+				common->Printf( "...^3GLW_ChoosePFD failed^0\n");
+				return false;
+			}
+			common->Printf( "...PIXELFORMAT %d selected\n", win32.pixelformat );
 		}
-		common->Printf( "...PIXELFORMAT %d selected\n", win32.pixelformat );
 	}
 
 	// get the full info
@@ -471,10 +479,12 @@ static bool GLW_InitDriver( glimpParms_t parms ) {
 		glConfig.stencilBits = 8;
 	}
 
-	// the same SetPixelFormat is used either way
-	if ( SetPixelFormat( win32.hDC, win32.pixelformat, &win32.pfd ) == FALSE ) {
-		common->Printf( "...^3SetPixelFormat failed^0\n", win32.hDC );
-		return false;
+	if ( currentPixelFormat == 0 ) {
+		// the same SetPixelFormat is used either way
+		if ( SetPixelFormat( win32.hDC, win32.pixelformat, &win32.pfd ) == FALSE ) {
+			common->Printf( "...^3SetPixelFormat failed^0\n", win32.hDC );
+			return false;
+		}
 	}
 
 	//
@@ -612,32 +622,45 @@ static bool GLW_CreateWindow( glimpParms_t parms ) {
 		}
 	}
 
-	win32.hWnd = CreateWindowEx (
-		 exstyle, 
-		 WIN32_WINDOW_CLASS_NAME,
-		 GAME_NAME,
-		 stylebits,
-		 x, y, w, h,
-		 NULL,
-		 NULL,
-		 win32.hInstance,
-		 NULL);
+	const bool reuseWindow = win32.hWnd != NULL;
+	if ( reuseWindow ) {
+		SetWindowText( win32.hWnd, GAME_NAME );
+		SetWindowLong( win32.hWnd, GWL_STYLE, stylebits );
+		SetWindowLong( win32.hWnd, GWL_EXSTYLE, exstyle );
+		SetWindowPos( win32.hWnd, parms.fullScreen ? HWND_TOPMOST : HWND_NOTOPMOST, x, y, w, h, SWP_FRAMECHANGED | SWP_SHOWWINDOW );
+		common->Printf( "...reusing window @ %d,%d (%dx%d)\n", x, y, w, h );
+	} else {
+		win32.hWnd = CreateWindowEx (
+			 exstyle,
+			 WIN32_WINDOW_CLASS_NAME,
+			 GAME_NAME,
+			 stylebits,
+			 x, y, w, h,
+			 NULL,
+			 NULL,
+			 win32.hInstance,
+			 NULL);
 
-	if ( !win32.hWnd ) {
-		common->Printf( "^3GLW_CreateWindow() - Couldn't create window^0\n" );
-		return false;
+		if ( !win32.hWnd ) {
+			common->Printf( "^3GLW_CreateWindow() - Couldn't create window^0\n" );
+			return false;
+		}
 	}
 
 	::SetTimer( win32.hWnd, 0, 100, NULL );
 
 	ShowWindow( win32.hWnd, SW_SHOW );
 	UpdateWindow( win32.hWnd );
-	common->Printf( "...created window @ %d,%d (%dx%d)\n", x, y, w, h );
+	if ( !reuseWindow ) {
+		common->Printf( "...created window @ %d,%d (%dx%d)\n", x, y, w, h );
+	}
 
 	if ( !GLW_InitDriver( parms ) ) {
-		ShowWindow( win32.hWnd, SW_HIDE );
-		DestroyWindow( win32.hWnd );
-		win32.hWnd = NULL;
+		if ( !reuseWindow ) {
+			ShowWindow( win32.hWnd, SW_HIDE );
+			DestroyWindow( win32.hWnd );
+			win32.hWnd = NULL;
+		}
 		return false;
 	}
 
@@ -943,6 +966,10 @@ bool GLimp_SetScreenParms( glimpParms_t parms ) {
 	return ret;
 }
 
+void GLimp_PreserveWindowOnShutdown( bool preserve ) {
+	win32PreserveWindowOnShutdown = preserve;
+}
+
 /*
 ===================
 GLimp_Shutdown
@@ -954,6 +981,7 @@ subsystem.
 void GLimp_Shutdown( void ) {
 	const char *success[] = { "failed", "success" };
 	int retVal;
+	const bool preserveWindow = win32PreserveWindowOnShutdown && win32.hWnd != NULL;
 
 	common->Printf( "Shutting down OpenGL subsystem\n" );
 
@@ -978,7 +1006,7 @@ void GLimp_Shutdown( void ) {
 	}
 
 	// destroy window
-	if ( win32.hWnd ) {
+	if ( win32.hWnd && !preserveWindow ) {
 		common->Printf( "...destroying window\n" );
 		ShowWindow( win32.hWnd, SW_HIDE );
 		DestroyWindow( win32.hWnd );
@@ -986,7 +1014,7 @@ void GLimp_Shutdown( void ) {
 	}
 
 	// reset display settings
-	if ( win32.cdsFullscreen ) {
+	if ( win32.cdsFullscreen && !preserveWindow ) {
 		common->Printf( "...resetting display\n" );
 		ChangeDisplaySettings( 0, 0 );
 		win32.cdsFullscreen = false;
@@ -1000,7 +1028,9 @@ void GLimp_Shutdown( void ) {
 	}
 
 	// restore gamma
-	GLimp_RestoreGamma();
+	if ( !preserveWindow ) {
+		GLimp_RestoreGamma();
+	}
 
 	// shutdown QGL subsystem
 	QGL_Shutdown();

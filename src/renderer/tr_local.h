@@ -1087,6 +1087,7 @@ extern idCVar r_displayRefresh;			// optional display refresh rate option for vi
 extern idCVar r_fullscreen;				// 0 = windowed, 1 = full screen
 extern idCVar r_fullscreenDesktop;		// 1 = desktop-native fullscreen, 0 = exclusive fullscreen mode
 extern idCVar r_borderless;				// 1 = borderless window when r_fullscreen is 0
+extern idCVar r_hiddenWindow;			// 1 = create a hidden OpenGL window for batch jobs
 extern idCVar r_windowWidth;				// windowed mode width
 extern idCVar r_windowHeight;				// windowed mode height
 extern idCVar r_multiSamples;			// number of antialiasing samples
@@ -1330,6 +1331,15 @@ extern idCVar r_skipAmbient;			// bypasses all non-interaction drawing
 extern idCVar r_skipNewAmbient;			// bypasses all vertex/fragment program ambients
 extern idCVar r_forceAmbient;			// lifts the final scene toward a minimum brightness
 extern idCVar r_useLightGrid;			// enable indirect diffuse from precomputed irradiance volumes
+extern idCVar r_lightGridIntensity;		// scales baked light-grid indirect diffuse contribution
+extern idCVar r_lightGridVisibilityFloor;	// minimum light-grid probe visibility after falloff
+extern idCVar r_lightGridIrradianceGamma;	// gamma decode for baked LDR light-grid irradiance
+extern idCVar r_lightGridMaxContribution;	// maximum light-grid contribution before bloom/HDR
+extern idCVar r_lightGridReport;		// print light-grid receiver statistics every N frames while enabled
+extern idCVar r_lightGridDebug;			// debug baked light-grid indirect pass output
+extern idCVar r_lightGridDepthBiasFactor;	// polygon offset factor for light-grid overlay
+extern idCVar r_lightGridDepthBiasUnits;	// polygon offset units for light-grid overlay
+extern idCVar r_lightGridDepthTolerance;	// depth texture tolerance for light-grid receiver clipping
 extern idCVar r_lightGridPortalBlend;	// world-unit blend radius for light-grid sampling across visible portal boundaries
 extern idCVar r_lightGridResidencyFrames;	// keep light-grid atlases resident after visible/neighbor use
 extern idCVar r_lightGridBakeWorkers;	// worker thread count for CPU probe integration (-1 = disabled, 0 = auto)
@@ -1342,6 +1352,7 @@ extern idCVar r_skipSubviews;			// 1 = don't render any mirrors / cameras / etc
 extern idCVar r_skipGuiShaders;			// 1 = don't render any gui elements on surfaces
 extern idCVar r_skipParticles;			// 1 = don't render any particles
 extern idCVar r_skipUpdates;			// 1 = don't accept any entity or light updates, making everything static
+extern idCVar r_skipEntities;			// 1 = skip non-world render entities
 extern idCVar r_skipDeforms;			// leave all deform materials in their original state
 extern idCVar r_skipDynamicTextures;	// don't dynamically create textures
 extern idCVar r_skipLightScale;			// don't do any post-interaction light scaling, makes things dim on low-dynamic range cards
@@ -1606,6 +1617,7 @@ typedef struct {
 	int			height;
 	bool		fullScreen;
 	bool		borderless;
+	bool		hiddenWindow;
 	bool		stereo;
 	int			displayHz;
 	int			multiSamples;
@@ -1622,6 +1634,10 @@ bool		GLimp_SetScreenParms( glimpParms_t parms );
 void		GLimp_Shutdown( void );
 // Destroys the rendering context, closes the window, resets the resolution,
 // and resets the gamma ramps.
+
+void		GLimp_PreserveWindowOnShutdown( bool preserve );
+// Requests that the next GLimp_Shutdown keep the native window alive for a
+// same-process renderer restart.
 
 void		GLimp_SwapBuffers( void );
 // Calls the system specific swapbuffers routine, and may also perform

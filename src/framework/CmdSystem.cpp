@@ -68,6 +68,7 @@ public:
 	virtual void			BufferCommandArgs( cmdExecution_t exec, const idCmdArgs &args );
 
 	virtual void			SetupReloadEngine( const idCmdArgs &args );
+	virtual void			SetupReloadGameModule( const idCmdArgs &args );
 	virtual bool			PostReloadEngine( void );
 
 	void					SetWait( int numFrames ) { wait = numFrames; }
@@ -857,6 +858,16 @@ idCmdSystemLocal::SetupReloadEngine
 */
 void idCmdSystemLocal::SetupReloadEngine( const idCmdArgs &args ) {
 	BufferCommandText( CMD_EXEC_APPEND, "reloadEngine\n" );
+	postReload = args;
+}
+
+/*
+============
+idCmdSystemLocal::SetupReloadGameModule
+============
+*/
+void idCmdSystemLocal::SetupReloadGameModule( const idCmdArgs &args ) {
+	BufferCommandText( CMD_EXEC_APPEND, "reloadGameModule\n" );
 	postReload = args;
 }
 

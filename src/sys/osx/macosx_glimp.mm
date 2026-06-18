@@ -633,6 +633,10 @@ void GLimp_SwapBuffers( void ) {
 	*/
 }
 
+void GLimp_PreserveWindowOnShutdown( bool preserve ) {
+	(void)preserve;
+}
+
 /*
 ** GLimp_Shutdown
 **

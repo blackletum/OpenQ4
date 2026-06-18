@@ -1807,6 +1807,10 @@ enum rbLightGridUniformIndex_t {
 	RB_LIGHTGRID_UNIFORM_PORTAL_PLANE,
 	RB_LIGHTGRID_UNIFORM_PORTAL_BOUNDS_MIN,
 	RB_LIGHTGRID_UNIFORM_PORTAL_BOUNDS_MAX,
+	RB_LIGHTGRID_UNIFORM_DEBUG_INFO,
+	RB_LIGHTGRID_UNIFORM_DEPTH_INFO,
+	RB_LIGHTGRID_UNIFORM_DEPTH_VIEWPORT,
+	RB_LIGHTGRID_UNIFORM_COLOR_INFO,
 	RB_LIGHTGRID_UNIFORM_DIFFUSE_COLOR,
 	RB_LIGHTGRID_UNIFORM_VERTEX_COLOR_PARAMS,
 	RB_LIGHTGRID_UNIFORM_COUNT
@@ -1814,6 +1818,9 @@ enum rbLightGridUniformIndex_t {
 
 static newShaderStage_t rbLightGridIndirectStage;
 static bool rbLightGridIndirectStageInitialized = false;
+static bool rbLightGridDepthCompareAvailable = false;
+static int rbLightGridDepthCompareWidth = 0;
+static int rbLightGridDepthCompareHeight = 0;
 
 static void RB_InitLightGridIndirectStage( void ) {
 	if ( rbLightGridIndirectStageInitialized ) {
@@ -1842,6 +1849,10 @@ static void RB_InitLightGridIndirectStage( void ) {
 		{ "uPortalPlane", 4 },
 		{ "uPortalBoundsMin", 4 },
 		{ "uPortalBoundsMax", 4 },
+		{ "uDebugInfo", 4 },
+		{ "uDepthInfo", 4 },
+		{ "uDepthViewport", 4 },
+		{ "uColorInfo", 4 },
 		{ "uDiffuseColor", 4 },
 		{ "uVertexColorParams", 2 }
 	};
@@ -1852,12 +1863,13 @@ static void RB_InitLightGridIndirectStage( void ) {
 		rbLightGridIndirectStage.shaderParmNumRegisters[i] = uniforms[i].components;
 	}
 
-	rbLightGridIndirectStage.numShaderTextures = 5;
+	rbLightGridIndirectStage.numShaderTextures = 6;
 	idStr::Copynz( rbLightGridIndirectStage.shaderTextureNames[0], "uBumpMap", sizeof( rbLightGridIndirectStage.shaderTextureNames[0] ) );
 	idStr::Copynz( rbLightGridIndirectStage.shaderTextureNames[1], "uDiffuseMap", sizeof( rbLightGridIndirectStage.shaderTextureNames[1] ) );
 	idStr::Copynz( rbLightGridIndirectStage.shaderTextureNames[2], "uLightGridAtlas", sizeof( rbLightGridIndirectStage.shaderTextureNames[2] ) );
 	idStr::Copynz( rbLightGridIndirectStage.shaderTextureNames[3], "uLightGridVisibilityAtlas", sizeof( rbLightGridIndirectStage.shaderTextureNames[3] ) );
 	idStr::Copynz( rbLightGridIndirectStage.shaderTextureNames[4], "uLightGridProbeAtlas", sizeof( rbLightGridIndirectStage.shaderTextureNames[4] ) );
+	idStr::Copynz( rbLightGridIndirectStage.shaderTextureNames[5], "uSceneDepth", sizeof( rbLightGridIndirectStage.shaderTextureNames[5] ) );
 
 	rbLightGridIndirectStageInitialized = true;
 }
@@ -7764,6 +7776,11 @@ RB_STD_DrawShaderPasses
 Draw non-light dependent passes
 =====================
 */
+static bool RB_STD_LightGridInlinePassAvailable( void );
+static bool RB_STD_DrawLightGridInlineSurface( const drawSurf_t *surf );
+static bool RB_LightGridUseDepthTextureCompare( void );
+static bool rbLightGridInlineSubmittedThisView = false;
+
 int RB_STD_DrawShaderPasses( drawSurf_t **drawSurfs, int numDrawSurfs, rbShaderPassSurfFilter_t filter = NULL ) {
 	int				i;
 
@@ -7777,6 +7794,26 @@ int RB_STD_DrawShaderPasses( drawSurf_t **drawSurfs, int numDrawSurfs, rbShaderP
 	// if we are about to draw the first surface that needs
 	// the rendering in a texture, copy it over
 	if ( drawSurfs[0]->material->GetSort() >= SS_POST_PROCESS ) {
+		const int lightGridReportFrames = r_lightGridReport.GetInteger();
+		if ( lightGridReportFrames > 0 && ( backEnd.frameCount % lightGridReportFrames ) == 0 ) {
+			idStr materialNames;
+			const int sampleCount = Min( numDrawSurfs, 8 );
+			for ( int surfIndex = 0; surfIndex < sampleCount; surfIndex++ ) {
+				if ( surfIndex > 0 ) {
+					materialNames.Append( ", " );
+				}
+				const idMaterial *material = drawSurfs[surfIndex] != NULL ? drawSurfs[surfIndex]->material : NULL;
+				materialNames.Append( material != NULL ? material->GetName() : "<null>" );
+			}
+			common->Printf(
+				"PostProcess surface pass: frame %i count=%i currentRender=%i renderTexture=%i first=%s sample=[%s]\n",
+				backEnd.frameCount,
+				numDrawSurfs,
+				backEnd.currentRenderCopied ? 1 : 0,
+				backEnd.renderTexture != NULL ? 1 : 0,
+				drawSurfs[0]->material->GetName(),
+				materialNames.c_str() );
+		}
 		if ( r_skipPostProcess.GetBool() ) {
 			return 0;
 		}
@@ -7816,6 +7853,12 @@ int RB_STD_DrawShaderPasses( drawSurf_t **drawSurfs, int numDrawSurfs, rbShaderP
 
 	RB_SetProgramEnvironment();
 
+	// The post-ambient light-grid pass owns the complete receiver set. Inline
+	// submission can only see surfaces that happen to pass the material-stage
+	// checks during ambient drawing; one small submitted surface would otherwise
+	// suppress the full pass and make most of the world miss baked lighting.
+	const bool drawInlineLightGrid = false;
+
 	// we don't use RB_RenderDrawSurfListWithFunction()
 	// because we want to defer the matrix load because many
 	// surfaces won't draw any ambient passes
@@ -7853,6 +7896,10 @@ int RB_STD_DrawShaderPasses( drawSurf_t **drawSurfs, int numDrawSurfs, rbShaderP
 		}
 
 		RB_STD_T_RenderShaderPasses( drawSurfs[i] );
+		if ( drawInlineLightGrid && RB_STD_DrawLightGridInlineSurface( drawSurfs[i] ) ) {
+			rbLightGridInlineSubmittedThisView = true;
+			backEnd.currentRenderCopied = false;
+		}
 	}
 
 	GL_Cull( CT_FRONT_SIDED );
@@ -8660,6 +8707,16 @@ static void RB_LightGridVertexColorParams( const stageVertexColor_t vertexColor,
 	}
 }
 
+static bool RB_LightGridUsesReceiverOnlySubmission( const int debugMode ) {
+	return debugMode == 0 ||
+		debugMode == 1 ||
+		debugMode == 2 ||
+		debugMode == 3 ||
+		debugMode == 5 ||
+		debugMode == 6 ||
+		debugMode == 7;
+}
+
 struct rbLightGridPortalBlend_t {
 	const LightGrid *	neighborLightGrid;
 	idPlane				portalPlane;
@@ -8672,32 +8729,25 @@ static bool RB_LightGridIsUsable( const LightGrid &candidate ) {
 }
 
 static bool RB_SurfaceCanReceiveLightGrid( const drawSurf_t *surf ) {
-	if ( surf == NULL ) {
-		return false;
-	}
-	if ( surf->material == NULL || surf->space == NULL || surf->geo == NULL ) {
-		return false;
-	}
-	if ( !surf->material->ReceivesLighting() || surf->material->IsPortalSky() ) {
-		return false;
-	}
-	if ( surf->material->Coverage() == MC_TRANSLUCENT ) {
-		return false;
-	}
-	if ( surf->decalColorCache != NULL ) {
-		return false;
-	}
-	if ( surf->material->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
-		return false;
-	}
-
-	return true;
+	return surf != NULL
+		&& surf->material != NULL
+		&& surf->space != NULL
+		&& surf->geo != NULL
+		&& surf->material->IsDrawn()
+		&& surf->material->ReceivesLighting()
+		&& surf->material->GetSort() == SS_OPAQUE
+		&& !surf->material->IsPortalSky()
+		&& surf->material->Coverage() != MC_TRANSLUCENT
+		&& surf->decalColorCache == NULL
+		&& !surf->material->TestMaterialFlag( MF_POLYGONOFFSET );
 }
+
+static const LightGrid *RB_CurrentViewLightGrid( void );
 
 static bool RB_SurfaceHasLightGrid( const drawSurf_t *surf, const LightGrid *&lightGrid ) {
 	lightGrid = NULL;
 
-	if ( surf == NULL || surf->area == NULL ) {
+	if ( surf == NULL ) {
 		return false;
 	}
 	// Keep the indirect light-grid pass on stable world/entity receivers only.
@@ -8710,13 +8760,16 @@ static bool RB_SurfaceHasLightGrid( const drawSurf_t *surf, const LightGrid *&li
 		return false;
 	}
 
-	const LightGrid &candidate = surf->area->lightGrid;
-	if ( !RB_LightGridIsUsable( candidate ) ) {
-		return false;
+	if ( surf->area != NULL ) {
+		const LightGrid &candidate = surf->area->lightGrid;
+		if ( RB_LightGridIsUsable( candidate ) ) {
+			lightGrid = &candidate;
+			return true;
+		}
 	}
 
-	lightGrid = &candidate;
-	return true;
+	lightGrid = RB_CurrentViewLightGrid();
+	return lightGrid != NULL;
 }
 
 static int RB_CurrentViewLightGridArea( idRenderWorldLocal *world ) {
@@ -8916,7 +8969,9 @@ static void RB_TouchLightGridResidencyArea( idRenderWorldLocal *world, int areaI
 	}
 
 	rbLightGridResidencyLastTouched[areaIndex] = frameIndex;
-	world->EnsureLightGridAreaImages( areaIndex );
+	if ( !world->EnsureLightGridAreaImages( areaIndex ) ) {
+		return;
+	}
 	RB_LoadLightGridResidencyImages( lightGrid );
 }
 
@@ -8981,14 +9036,47 @@ static bool RB_LightGridMaterialStageIsActive( const shaderStage_t *stage, const
 	return stage != NULL && ( regs == NULL || regs[ stage->conditionRegister ] != 0.0f );
 }
 
-static bool RB_LightGridHasActiveDiffuseStage( const idMaterial *shader, const float *regs ) {
+static int RB_LightGridStageBlendBits( const shaderStage_t *stage ) {
+	return stage != NULL ? ( stage->drawStateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS ) ) : 0;
+}
+
+static bool RB_LightGridAmbientStageCanProvideAlbedo( const idMaterial *shader, const shaderStage_t *stage, const float *regs ) {
+	if ( shader == NULL || stage == NULL ) {
+		return false;
+	}
+	if ( stage->lighting != SL_AMBIENT || !RB_LightGridMaterialStageIsActive( stage, regs ) ) {
+		return false;
+	}
+	if ( shader->IsPortalSky() || shader->TestMaterialFlag( MF_SKY ) || shader->GetSort() >= SS_FAR ) {
+		return false;
+	}
+	if ( stage->texture.image == NULL || stage->newStage != NULL ) {
+		return false;
+	}
+	if ( stage->texture.texgen != TG_EXPLICIT && stage->texture.texgen != TG_POT_CORRECTION ) {
+		return false;
+	}
+	return RB_LightGridStageBlendBits( stage ) == 0;
+}
+
+static bool RB_LightGridStageCanProvideAlbedo( const idMaterial *shader, const shaderStage_t *stage, const float *regs ) {
+	if ( stage == NULL ) {
+		return false;
+	}
+	if ( stage->lighting == SL_DIFFUSE && RB_LightGridMaterialStageIsActive( stage, regs ) ) {
+		return true;
+	}
+	return RB_LightGridAmbientStageCanProvideAlbedo( shader, stage, regs );
+}
+
+static bool RB_LightGridHasActiveAlbedoStage( const idMaterial *shader, const float *regs ) {
 	if ( shader == NULL ) {
 		return false;
 	}
 
 	for ( int stageIndex = 0; stageIndex < shader->GetNumStages(); stageIndex++ ) {
 		const shaderStage_t *stage = shader->GetStage( stageIndex );
-		if ( stage->lighting == SL_DIFFUSE && RB_LightGridMaterialStageIsActive( stage, regs ) ) {
+		if ( RB_LightGridStageCanProvideAlbedo( shader, stage, regs ) ) {
 			return true;
 		}
 	}
@@ -8996,15 +9084,94 @@ static bool RB_LightGridHasActiveDiffuseStage( const idMaterial *shader, const f
 	return false;
 }
 
-static bool RB_STD_DrawLightGridDiffuseStage( const drawSurf_t *surf, const shaderStage_t *diffuseStage, int diffuseStageIndex, idImage *bumpImage, const idVec4 bumpMatrix[2], const float *regs, const srfTriangles_t *tri, idDrawVert *ac ) {
-	if ( diffuseStage == NULL || tri == NULL || ac == NULL ) {
+struct rbLightGridDrawStats_t {
+	int nullInput;
+	int noAlbedo;
+	int cacheFail;
+	int emptyGeometry;
+	int noIrradiance;
+	int ensureFail;
+	int defaultIrradiance;
+	int badAtlas;
+	int stageReject;
+	int stageSubmit;
+};
+
+struct rbLightGridAlbedoBinding_t {
+	const shaderStage_t *stage;
+	int stageIndex;
+	idImage *image;
+	idVec4 matrix[2];
+	float color[4];
+	float vertexColorParams[2];
+};
+
+static void RB_LightGridInitAlbedoBinding( rbLightGridAlbedoBinding_t &binding ) {
+	memset( &binding, 0, sizeof( binding ) );
+	binding.stage = NULL;
+	binding.stageIndex = -1;
+	binding.image = globalImages != NULL ? globalImages->whiteImage : NULL;
+	RB_LightGridSetIdentityTextureMatrix( binding.matrix );
+	binding.color[0] = 0.55f;
+	binding.color[1] = 0.55f;
+	binding.color[2] = 0.55f;
+	binding.color[3] = 1.0f;
+	binding.vertexColorParams[0] = 0.0f;
+	binding.vertexColorParams[1] = 1.0f;
+}
+
+static bool RB_LightGridFindRepresentativeAlbedo( const drawSurf_t *surf, rbLightGridAlbedoBinding_t &binding ) {
+	RB_LightGridInitAlbedoBinding( binding );
+	const idMaterial *shader = surf != NULL ? surf->material : NULL;
+	const float *regs = surf != NULL ? surf->shaderRegisters : NULL;
+	if ( shader == NULL || regs == NULL ) {
+		return false;
+	}
+
+	for ( int stageIndex = 0; stageIndex < shader->GetNumStages(); stageIndex++ ) {
+		const shaderStage_t *stage = shader->GetStage( stageIndex );
+		if ( !RB_LightGridStageCanProvideAlbedo( shader, stage, regs ) ) {
+			continue;
+		}
+
+		idImage *diffuseImage = globalImages->whiteImage;
+		idVec4 diffuseMatrix[2];
+		float diffuseColor[4];
+		R_SetDrawInteraction( stage, regs, &diffuseImage, diffuseMatrix, diffuseColor );
+		if ( diffuseImage == NULL ) {
+			diffuseImage = globalImages->whiteImage;
+		}
+		if ( diffuseColor[0] <= 0.0f && diffuseColor[1] <= 0.0f && diffuseColor[2] <= 0.0f ) {
+			diffuseColor[0] = 1.0f;
+			diffuseColor[1] = 1.0f;
+			diffuseColor[2] = 1.0f;
+		}
+
+		binding.stage = stage;
+		binding.stageIndex = stageIndex;
+		binding.image = diffuseImage;
+		binding.matrix[0] = diffuseMatrix[0];
+		binding.matrix[1] = diffuseMatrix[1];
+		binding.color[0] = diffuseColor[0];
+		binding.color[1] = diffuseColor[1];
+		binding.color[2] = diffuseColor[2];
+		binding.color[3] = diffuseColor[3];
+		RB_LightGridVertexColorParams( stage->vertexColor, binding.vertexColorParams );
+		return true;
+	}
+
+	return false;
+}
+
+static bool RB_STD_DrawLightGridAlbedoStage( const drawSurf_t *surf, const shaderStage_t *albedoStage, int albedoStageIndex, idImage *bumpImage, const idVec4 bumpMatrix[2], const float *regs, const srfTriangles_t *tri, idDrawVert *ac ) {
+	if ( albedoStage == NULL || tri == NULL || ac == NULL ) {
 		return false;
 	}
 
 	idImage *diffuseImage = globalImages->whiteImage;
 	idVec4 diffuseMatrix[2];
 	float diffuseColor[4];
-	R_SetDrawInteraction( diffuseStage, regs, &diffuseImage, diffuseMatrix, diffuseColor );
+	R_SetDrawInteraction( albedoStage, regs, &diffuseImage, diffuseMatrix, diffuseColor );
 	if ( diffuseImage == NULL ) {
 		diffuseImage = globalImages->whiteImage;
 	}
@@ -9012,13 +9179,29 @@ static bool RB_STD_DrawLightGridDiffuseStage( const drawSurf_t *surf, const shad
 		bumpImage = globalImages->flatNormalMap;
 	}
 	if ( diffuseColor[0] <= 0.0f && diffuseColor[1] <= 0.0f && diffuseColor[2] <= 0.0f ) {
-		return false;
+		diffuseColor[0] = 1.0f;
+		diffuseColor[1] = 1.0f;
+		diffuseColor[2] = 1.0f;
 	}
 
 	float vertexColorParams[2];
-	RB_LightGridVertexColorParams( diffuseStage->vertexColor, vertexColorParams );
+	RB_LightGridVertexColorParams( albedoStage->vertexColor, vertexColorParams );
 
-	RB_SetStageVertexColorPointer( surf, diffuseStageIndex, ac );
+	const bool useVertexColorArray = albedoStage->vertexColor != SVC_IGNORE;
+	if ( useVertexColorArray ) {
+		RB_SetStageVertexColorPointer( surf, albedoStageIndex, ac );
+		glEnableClientState( GL_COLOR_ARRAY );
+	} else {
+		glDisableClientState( GL_COLOR_ARRAY );
+		glColor4f( 1.0f, 1.0f, 1.0f, 1.0f );
+	}
+
+	GL_SelectTexture( 0 );
+	if ( albedoStage->texture.texgen == TG_POT_CORRECTION && surf->dynamicTexCoords != NULL ) {
+		glTexCoordPointer( 2, GL_FLOAT, 0, vertexCache.Position( surf->dynamicTexCoords ) );
+	} else {
+		glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>( &ac->st ) );
+	}
 	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_BUMP_MATRIX_S], 1, bumpMatrix[0].ToFloatPtr() );
 	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_BUMP_MATRIX_T], 1, bumpMatrix[1].ToFloatPtr() );
 	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_DIFFUSE_MATRIX_S], 1, diffuseMatrix[0].ToFloatPtr() );
@@ -9032,48 +9215,78 @@ static bool RB_STD_DrawLightGridDiffuseStage( const drawSurf_t *surf, const shad
 	diffuseImage->Bind();
 
 	RB_DrawElementsWithCounters( tri );
+	if ( useVertexColorArray ) {
+		glDisableClientState( GL_COLOR_ARRAY );
+	}
 	return true;
 }
 
-static void RB_STD_DrawLightGridSurface( const drawSurf_t *surf, const LightGrid &lightGrid, const rbLightGridPortalBlend_t *portalBlend = NULL, bool invertPortalBlend = false ) {
+static bool RB_STD_DrawLightGridSurface( const drawSurf_t *surf, const LightGrid &lightGrid, const rbLightGridPortalBlend_t *portalBlend = NULL, bool invertPortalBlend = false, rbLightGridDrawStats_t *drawStats = NULL ) {
 	const srfTriangles_t *tri = surf->geo;
 	const idMaterial *shader = surf->material;
 	const float *regs = surf->shaderRegisters;
+	const int debugMode = r_lightGridDebug.GetInteger();
+	const bool receiverOnlySubmission = RB_LightGridUsesReceiverOnlySubmission( debugMode );
 	if ( tri == NULL || shader == NULL || regs == NULL ) {
-		return;
+		if ( drawStats != NULL ) {
+			drawStats->nullInput++;
+		}
+		return false;
 	}
-	if ( !RB_EnsurePackedClassicDrawCaches( surf, shader->ReceivesLighting(), true ) ) {
-		return;
+	if ( !receiverOnlySubmission && !RB_LightGridHasActiveAlbedoStage( shader, regs ) ) {
+		if ( drawStats != NULL ) {
+			drawStats->noAlbedo++;
+		}
+		return false;
+	}
+	if ( !RB_EnsurePackedClassicDrawCaches( surf, true, true ) ) {
+		if ( drawStats != NULL ) {
+			drawStats->cacheFail++;
+		}
+		return false;
 	}
 
 	if ( tri->numIndexes <= 0 || tri->ambientCache == NULL ) {
-		return;
-	}
-
-	if ( !RB_LightGridHasActiveDiffuseStage( shader, regs ) ) {
-		return;
+		if ( drawStats != NULL ) {
+			drawStats->emptyGeometry++;
+		}
+		return false;
 	}
 
 	idImage *irradianceImage = lightGrid.irradianceImage;
 	if ( irradianceImage == NULL ) {
-		return;
+		if ( drawStats != NULL ) {
+			drawStats->noIrradiance++;
+		}
+		return false;
 	}
 
 	if ( backEnd.viewDef != NULL && backEnd.viewDef->renderWorld != NULL ) {
-		backEnd.viewDef->renderWorld->EnsureLightGridAreaImages( lightGrid.area );
+		if ( !backEnd.viewDef->renderWorld->EnsureLightGridAreaImages( lightGrid.area ) ) {
+			if ( drawStats != NULL ) {
+				drawStats->ensureFail++;
+			}
+			return false;
+		}
 	}
 
 	if ( !irradianceImage->IsLoaded() ) {
 		irradianceImage->ActuallyLoadImage( true );
 	}
 	if ( irradianceImage->IsDefaulted() ) {
-		return;
+		if ( drawStats != NULL ) {
+			drawStats->defaultIrradiance++;
+		}
+		return false;
 	}
 
 	const int atlasWidth = irradianceImage->GetOpts().width;
 	const int atlasHeight = irradianceImage->GetOpts().height;
 	if ( atlasWidth <= 0 || atlasHeight <= 0 ) {
-		return;
+		if ( drawStats != NULL ) {
+			drawStats->badAtlas++;
+		}
+		return false;
 	}
 
 	idImage *visibilityImage = lightGrid.visibilityImage;
@@ -9124,13 +9337,13 @@ static void RB_STD_DrawLightGridSurface( const drawSurf_t *surf, const LightGrid
 	const float atlasInfo[4] = {
 		1.0f / static_cast<float>( atlasWidth ),
 		1.0f / static_cast<float>( atlasHeight ),
-		static_cast<float>( lightGrid.imageBorderSize ),
-		static_cast<float>( Max( lightGrid.imageSingleProbeSize - lightGrid.imageBorderSize, 1 ) ) / static_cast<float>( Max( lightGrid.imageSingleProbeSize, 1 ) )
+		static_cast<float>( lightGrid.imageSingleProbeSize ),
+		static_cast<float>( lightGrid.imageBorderSize )
 	};
 	const float visibilityInfo[4] = {
 		lightGrid.visibilityMaxDistance > 0.0f ? lightGrid.visibilityMaxDistance : 4096.0f,
 		3.0f,
-		0.04f,
+		idMath::ClampFloat( 0.0f, 1.0f, r_lightGridVisibilityFloor.GetFloat() ),
 		2.0f
 	};
 	const float probeInfo[4] = {
@@ -9140,8 +9353,9 @@ static void RB_STD_DrawLightGridSurface( const drawSurf_t *surf, const LightGrid
 		0.0f
 	};
 	const bool usePortalBlend = portalBlend != NULL && portalBlend->blendDistance > 0.0f && !portalBlend->portalBounds.IsCleared();
+	const float lightGridIntensity = idMath::ClampFloat( 0.0f, 16.0f, r_lightGridIntensity.GetFloat() );
 	const float blendInfo[4] = {
-		1.0f,
+		lightGridIntensity,
 		usePortalBlend ? ( invertPortalBlend ? -1.0f : 1.0f ) : 0.0f,
 		usePortalBlend ? portalBlend->blendDistance : 0.0f,
 		0.0f
@@ -9162,6 +9376,31 @@ static void RB_STD_DrawLightGridSurface( const drawSurf_t *surf, const LightGrid
 		usePortalBlend ? portalBlend->portalBounds[1][0] : 0.0f,
 		usePortalBlend ? portalBlend->portalBounds[1][1] : 0.0f,
 		usePortalBlend ? portalBlend->portalBounds[1][2] : 0.0f,
+		0.0f
+	};
+	const float debugInfo[4] = {
+		static_cast<float>( r_lightGridDebug.GetInteger() ),
+		0.18f,
+		0.18f,
+		0.18f
+	};
+	const bool useDepthTextureCompare = debugMode != 3 && RB_LightGridUseDepthTextureCompare();
+	const float depthInfo[4] = {
+		useDepthTextureCompare ? 1.0f / static_cast<float>( rbLightGridDepthCompareWidth ) : 1.0f,
+		useDepthTextureCompare ? 1.0f / static_cast<float>( rbLightGridDepthCompareHeight ) : 1.0f,
+		idMath::ClampFloat( 0.0f, 0.1f, r_lightGridDepthTolerance.GetFloat() ),
+		useDepthTextureCompare ? 1.0f : 0.0f
+	};
+	const float depthViewport[4] = {
+		backEnd.viewDef != NULL ? static_cast<float>( tr.viewportOffset[0] + backEnd.viewDef->viewport.x1 ) : 0.0f,
+		backEnd.viewDef != NULL ? static_cast<float>( tr.viewportOffset[1] + backEnd.viewDef->viewport.y1 ) : 0.0f,
+		0.0f,
+		0.0f
+	};
+	const float colorInfo[4] = {
+		idMath::ClampFloat( 0.25f, 4.0f, r_lightGridIrradianceGamma.GetFloat() ),
+		idMath::ClampFloat( 0.0f, 16.0f, r_lightGridMaxContribution.GetFloat() ),
+		RB_IsSceneRenderTexture( backEnd.renderTexture ) ? 1.0f : 0.0f,
 		0.0f
 	};
 
@@ -9187,7 +9426,8 @@ static void RB_STD_DrawLightGridSurface( const drawSurf_t *surf, const LightGrid
 	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
 	glNormalPointer( GL_FLOAT, sizeof( idDrawVert ), ac->normal.ToFloatPtr() );
 	glEnableClientState( GL_NORMAL_ARRAY );
-	glEnableClientState( GL_COLOR_ARRAY );
+	glDisableClientState( GL_COLOR_ARRAY );
+	glColor4f( 1.0f, 1.0f, 1.0f, 1.0f );
 
 	GL_SelectTexture( 0 );
 	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
@@ -9213,6 +9453,10 @@ static void RB_STD_DrawLightGridSurface( const drawSurf_t *surf, const LightGrid
 	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_PORTAL_PLANE], 1, portalPlane );
 	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_PORTAL_BOUNDS_MIN], 1, portalBoundsMin );
 	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_PORTAL_BOUNDS_MAX], 1, portalBoundsMax );
+	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_DEBUG_INFO], 1, debugInfo );
+	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_DEPTH_INFO], 1, depthInfo );
+	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_DEPTH_VIEWPORT], 1, depthViewport );
+	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_COLOR_INFO], 1, colorInfo );
 
 	GL_SelectTextureNoClient( 2 );
 	irradianceImage->SetSamplerState( TF_LINEAR, TR_CLAMP );
@@ -9231,10 +9475,98 @@ static void RB_STD_DrawLightGridSurface( const drawSurf_t *surf, const LightGrid
 	} else {
 		globalImages->blackImage->Bind();
 	}
+	GL_SelectTextureNoClient( 5 );
+	if ( useDepthTextureCompare && globalImages->currentDepthImage != NULL ) {
+		globalImages->currentDepthImage->SetSamplerState( TF_NEAREST, TR_CLAMP );
+		globalImages->currentDepthImage->Bind();
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE );
+		glTexParameteri( GL_TEXTURE_2D, GL_DEPTH_TEXTURE_MODE, GL_LUMINANCE );
+	} else {
+		globalImages->whiteImage->Bind();
+	}
+
+	if ( receiverOnlySubmission ) {
+		idVec4 identityMatrix[2];
+		RB_LightGridSetIdentityTextureMatrix( identityMatrix );
+		rbLightGridAlbedoBinding_t albedoBinding;
+		RB_LightGridFindRepresentativeAlbedo( surf, albedoBinding );
+		const bool useVertexColorArray = albedoBinding.stage != NULL && albedoBinding.stage->vertexColor != SVC_IGNORE && albedoBinding.stageIndex >= 0;
+
+		glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_BUMP_MATRIX_S], 1, identityMatrix[0].ToFloatPtr() );
+		glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_BUMP_MATRIX_T], 1, identityMatrix[1].ToFloatPtr() );
+		glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_DIFFUSE_MATRIX_S], 1, albedoBinding.matrix[0].ToFloatPtr() );
+		glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_DIFFUSE_MATRIX_T], 1, albedoBinding.matrix[1].ToFloatPtr() );
+		glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_DIFFUSE_COLOR], 1, albedoBinding.color );
+		glUniform2fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_VERTEX_COLOR_PARAMS], 1, albedoBinding.vertexColorParams );
+
+		GL_SelectTexture( 0 );
+		if ( albedoBinding.stage != NULL && albedoBinding.stage->texture.texgen == TG_POT_CORRECTION && surf->dynamicTexCoords != NULL ) {
+			glTexCoordPointer( 2, GL_FLOAT, 0, vertexCache.Position( surf->dynamicTexCoords ) );
+		} else {
+			glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>( &ac->st ) );
+		}
+
+		if ( useVertexColorArray ) {
+			RB_SetStageVertexColorPointer( surf, albedoBinding.stageIndex, ac );
+			glEnableClientState( GL_COLOR_ARRAY );
+		} else {
+			glDisableClientState( GL_COLOR_ARRAY );
+			glColor4f( 1.0f, 1.0f, 1.0f, 1.0f );
+		}
+
+		GL_SelectTextureNoClient( 0 );
+		globalImages->flatNormalMap->Bind();
+		GL_SelectTextureNoClient( 1 );
+		albedoBinding.image->Bind();
+
+		RB_DrawElementsWithCounters( tri );
+		if ( useVertexColorArray ) {
+			glDisableClientState( GL_COLOR_ARRAY );
+		}
+
+		GL_SelectTextureNoClient( 2 );
+		globalImages->BindNull();
+		GL_SelectTextureNoClient( 3 );
+		globalImages->BindNull();
+		GL_SelectTextureNoClient( 4 );
+		globalImages->BindNull();
+		GL_SelectTextureNoClient( 5 );
+		globalImages->BindNull();
+		GL_SelectTextureNoClient( 1 );
+		globalImages->BindNull();
+		GL_SelectTextureNoClient( 0 );
+		globalImages->BindNull();
+
+		GL_SelectTexture( 2 );
+		glDisableClientState( GL_TEXTURE_COORD_ARRAY );
+		GL_SelectTexture( 1 );
+		glDisableClientState( GL_TEXTURE_COORD_ARRAY );
+		GL_SelectTexture( 0 );
+		glDisableClientState( GL_COLOR_ARRAY );
+		glDisableClientState( GL_NORMAL_ARRAY );
+
+		if ( surf->space->weaponDepthHack || surf->space->modelDepthHack != 0.0f ) {
+			RB_LeaveDepthHack();
+		}
+		if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
+			glDisable( GL_POLYGON_OFFSET_FILL );
+		}
+		if ( useAlphaToCoverage ) {
+			glDisable( GL_SAMPLE_ALPHA_TO_COVERAGE );
+		}
+
+		if ( drawStats != NULL ) {
+			drawStats->stageSubmit++;
+		}
+		return true;
+	}
 
 	idImage *currentBumpImage = globalImages->flatNormalMap;
 	idVec4 currentBumpMatrix[2];
 	RB_LightGridSetIdentityTextureMatrix( currentBumpMatrix );
+	bool submitted = false;
+	int stageRejects = 0;
+	int stageSubmits = 0;
 	for ( int stageIndex = 0; stageIndex < shader->GetNumStages(); stageIndex++ ) {
 		const shaderStage_t *stage = shader->GetStage( stageIndex );
 		if ( stage->lighting == SL_BUMP ) {
@@ -9246,11 +9578,14 @@ static void RB_STD_DrawLightGridSurface( const drawSurf_t *surf, const LightGrid
 			}
 			continue;
 		}
-		if ( stage->lighting != SL_DIFFUSE || !RB_LightGridMaterialStageIsActive( stage, regs ) ) {
+		if ( !RB_LightGridStageCanProvideAlbedo( shader, stage, regs ) ) {
+			stageRejects++;
 			continue;
 		}
 
-		RB_STD_DrawLightGridDiffuseStage( surf, stage, stageIndex, currentBumpImage, currentBumpMatrix, regs, tri, ac );
+		submitted = true;
+		stageSubmits++;
+		RB_STD_DrawLightGridAlbedoStage( surf, stage, stageIndex, currentBumpImage, currentBumpMatrix, regs, tri, ac );
 	}
 
 	GL_SelectTextureNoClient( 2 );
@@ -9258,6 +9593,8 @@ static void RB_STD_DrawLightGridSurface( const drawSurf_t *surf, const LightGrid
 	GL_SelectTextureNoClient( 3 );
 	globalImages->BindNull();
 	GL_SelectTextureNoClient( 4 );
+	globalImages->BindNull();
+	GL_SelectTextureNoClient( 5 );
 	globalImages->BindNull();
 	GL_SelectTextureNoClient( 1 );
 	globalImages->BindNull();
@@ -9281,6 +9618,181 @@ static void RB_STD_DrawLightGridSurface( const drawSurf_t *surf, const LightGrid
 	if ( useAlphaToCoverage ) {
 		glDisable( GL_SAMPLE_ALPHA_TO_COVERAGE );
 	}
+
+	if ( drawStats != NULL ) {
+		drawStats->stageReject += stageRejects;
+		drawStats->stageSubmit += stageSubmits;
+	}
+
+	return submitted;
+}
+
+static bool RB_STD_LightGridInlinePassAvailable( void ) {
+	return r_useLightGrid.GetBool() && glConfig.GLSLProgramAvailable && rbLightGridIndirectStage.glslProgramObject != 0;
+}
+
+static bool RB_LightGridUseDepthTextureCompare( void ) {
+	return rbLightGridDepthCompareAvailable && globalImages != NULL && globalImages->currentDepthImage != NULL;
+}
+
+static void RB_PrepareLightGridDepthTexture( void ) {
+	rbLightGridDepthCompareAvailable = false;
+	rbLightGridDepthCompareWidth = 0;
+	rbLightGridDepthCompareHeight = 0;
+
+	if ( !r_useLightGrid.GetBool() || !glConfig.GLSLProgramAvailable || backEnd.viewDef == NULL || globalImages == NULL || globalImages->currentDepthImage == NULL ) {
+		return;
+	}
+
+	RB_InitLightGridIndirectStage();
+	if ( rbLightGridIndirectStage.glslProgramObject == 0 ) {
+		return;
+	}
+
+	const int viewportWidth = backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1;
+	const int viewportHeight = backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1;
+	if ( viewportWidth <= 0 || viewportHeight <= 0 ) {
+		return;
+	}
+
+	RB_CaptureCurrentDepthImage( viewportWidth, viewportHeight );
+	if ( !backEnd.currentDepthCopied ) {
+		return;
+	}
+
+	idImage *depthImage = globalImages->currentDepthImage;
+	const idImageOpts &depthOpts = depthImage->GetOpts();
+	rbLightGridDepthCompareWidth = depthOpts.width > 0 ? depthOpts.width : viewportWidth;
+	rbLightGridDepthCompareHeight = depthOpts.height > 0 ? depthOpts.height : viewportHeight;
+	rbLightGridDepthCompareAvailable = rbLightGridDepthCompareWidth > 0 && rbLightGridDepthCompareHeight > 0;
+}
+
+static void RB_STD_BindLightGridProgram( void ) {
+	glUseProgramObjectARB( (GLhandleARB)rbLightGridIndirectStage.glslProgramObject );
+	for ( int i = 0; i < rbLightGridIndirectStage.numShaderTextures; i++ ) {
+		if ( rbLightGridIndirectStage.shaderTextureLocations[i] >= 0 ) {
+			glUniform1iARB( rbLightGridIndirectStage.shaderTextureLocations[i], i );
+		}
+	}
+}
+
+static void RB_STD_SetLightGridDrawState( const bool inlineSurface ) {
+	const int debugMode = r_lightGridDebug.GetInteger();
+	const bool debugIrradianceReplace = debugMode == 2 || debugMode == 4 || debugMode == 5 || debugMode == 6 || debugMode == 7;
+	const bool debugCoverageNoDepth = debugMode == 3;
+	const bool debugDepthTexture = debugMode == 6 || debugMode == 7;
+	const bool depthTextureCompare = !debugCoverageNoDepth && RB_LightGridUseDepthTextureCompare();
+	const bool disableHardwareDepth = debugCoverageNoDepth || ( depthTextureCompare && debugDepthTexture );
+	const float lightGridDepthBiasFactor = inlineSurface ? 0.0f : r_lightGridDepthBiasFactor.GetFloat();
+	const float lightGridDepthBiasUnits = inlineSurface ? 0.0f : r_lightGridDepthBiasUnits.GetFloat();
+	const bool useLightGridDepthBias = !debugCoverageNoDepth && !depthTextureCompare && ( lightGridDepthBiasFactor != 0.0f || lightGridDepthBiasUnits != 0.0f );
+	const int blendState = debugIrradianceReplace ? ( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO ) : ( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE );
+	const int depthState = disableHardwareDepth ? GLS_DEPTHFUNC_ALWAYS : ( useLightGridDepthBias ? GLS_DEPTHFUNC_LESS : GLS_DEPTHFUNC_EQUAL );
+
+	GL_ClearStateDelta();
+	GL_State( blendState | GLS_DEPTHMASK | depthState );
+	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
+	glBlendEquation( GL_FUNC_ADD );
+	if ( debugIrradianceReplace ) {
+		glDisable( GL_BLEND );
+		glBlendFunc( GL_ONE, GL_ZERO );
+	} else {
+		glEnable( GL_BLEND );
+		glBlendFunc( GL_ONE, GL_ONE );
+	}
+	glDepthMask( GL_FALSE );
+	if ( disableHardwareDepth ) {
+		glDisable( GL_DEPTH_TEST );
+	} else {
+		glEnable( GL_DEPTH_TEST );
+	}
+	if ( useLightGridDepthBias ) {
+		glPolygonOffset( lightGridDepthBiasFactor, lightGridDepthBiasUnits );
+		glEnable( GL_POLYGON_OFFSET_FILL );
+	}
+	glDisable( GL_STENCIL_TEST );
+}
+
+static void RB_STD_FinishLightGridDrawState( const bool inlineSurface ) {
+	const int debugMode = r_lightGridDebug.GetInteger();
+	const bool debugCoverageNoDepth = debugMode == 3;
+	const bool debugDepthTexture = debugMode == 6 || debugMode == 7;
+	const bool depthTextureCompare = !debugCoverageNoDepth && RB_LightGridUseDepthTextureCompare();
+	const bool disableHardwareDepth = debugCoverageNoDepth || ( depthTextureCompare && debugDepthTexture );
+	const bool useLightGridDepthBias =
+		!inlineSurface &&
+		!debugCoverageNoDepth &&
+		!depthTextureCompare &&
+		( r_lightGridDepthBiasFactor.GetFloat() != 0.0f || r_lightGridDepthBiasUnits.GetFloat() != 0.0f );
+
+	glUseProgramObjectARB( 0 );
+	if ( useLightGridDepthBias ) {
+		glDisable( GL_POLYGON_OFFSET_FILL );
+	}
+	if ( disableHardwareDepth ) {
+		glEnable( GL_DEPTH_TEST );
+	}
+	glEnable( GL_BLEND );
+	GL_SelectTexture( 0 );
+	GL_Cull( CT_FRONT_SIDED );
+	GL_ClearStateDelta();
+}
+
+static bool RB_STD_DrawLightGridInlineSurface( const drawSurf_t *surf ) {
+	if ( surf == NULL || surf->material == NULL ) {
+		return false;
+	}
+	if ( surf->material->GetSort() >= SS_POST_PROCESS || surf->material->SuppressInSubview() ) {
+		return false;
+	}
+
+	const int debugMode = r_lightGridDebug.GetInteger();
+	const bool receiverOnlySubmission = RB_LightGridUsesReceiverOnlySubmission( debugMode );
+	const LightGrid *lightGrid = NULL;
+	bool viewWeaponLightGrid = false;
+	if ( !RB_SurfaceHasLightGrid( surf, lightGrid ) ) {
+		if ( !RB_SurfaceHasViewWeaponLightGrid( surf, lightGrid ) ) {
+			return false;
+		}
+		viewWeaponLightGrid = true;
+	}
+	if ( !receiverOnlySubmission && !RB_LightGridHasActiveAlbedoStage( surf->material, surf->shaderRegisters ) ) {
+		return false;
+	}
+
+	glDepthRange( 0.0, 1.0 );
+	glMatrixMode( GL_PROJECTION );
+	glLoadMatrixf( backEnd.viewDef->projectionMatrix );
+	glMatrixMode( GL_MODELVIEW );
+	glLoadMatrixf( surf->space->modelViewMatrix );
+	backEnd.currentSpace = surf->space;
+	if ( r_useScissor.GetBool() && !backEnd.currentScissor.Equals( surf->scissorRect ) ) {
+		backEnd.currentScissor = surf->scissorRect;
+		glScissor(
+			tr.viewportOffset[0] + backEnd.viewDef->viewport.x1 + backEnd.currentScissor.x1,
+			tr.viewportOffset[1] + backEnd.viewDef->viewport.y1 + backEnd.currentScissor.y1,
+			backEnd.currentScissor.x2 + 1 - backEnd.currentScissor.x1,
+			backEnd.currentScissor.y2 + 1 - backEnd.currentScissor.y1 );
+	}
+
+	RB_STD_SetLightGridDrawState( true );
+	RB_STD_BindLightGridProgram();
+
+	bool submitted = false;
+	if ( viewWeaponLightGrid ) {
+		rbLightGridPortalBlend_t portalBlend;
+		if ( RB_SurfaceHasLightGridPortalBlend( surf, portalBlend ) ) {
+			submitted |= RB_STD_DrawLightGridSurface( surf, *lightGrid, &portalBlend, true );
+			submitted |= RB_STD_DrawLightGridSurface( surf, *portalBlend.neighborLightGrid, &portalBlend, false );
+		} else {
+			submitted |= RB_STD_DrawLightGridSurface( surf, *lightGrid );
+		}
+	} else {
+		submitted |= RB_STD_DrawLightGridSurface( surf, *lightGrid );
+	}
+
+	RB_STD_FinishLightGridDrawState( true );
+	return submitted;
 }
 
 static void RB_STD_LightGridIndirect( void ) {
@@ -9306,36 +9818,74 @@ static void RB_STD_LightGridIndirect( void ) {
 
 	RB_LogComment( "---------- RB_STD_LightGridIndirect ----------\n" );
 
-	GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHFUNC_EQUAL );
-	glEnable( GL_DEPTH_TEST );
-	glDisable( GL_STENCIL_TEST );
-	glUseProgramObjectARB( (GLhandleARB)rbLightGridIndirectStage.glslProgramObject );
-
-	for ( int i = 0; i < rbLightGridIndirectStage.numShaderTextures; i++ ) {
-		if ( rbLightGridIndirectStage.shaderTextureLocations[i] >= 0 ) {
-			glUniform1iARB( rbLightGridIndirectStage.shaderTextureLocations[i], i );
-		}
+	// Restore whole-view scissor after per-light/decal passes so the overlay
+	// is clipped only by the current view, not by the last submitted light.
+	glViewport(
+		tr.viewportOffset[0] + backEnd.viewDef->viewport.x1,
+		tr.viewportOffset[1] + backEnd.viewDef->viewport.y1,
+		backEnd.viewDef->viewport.x2 + 1 - backEnd.viewDef->viewport.x1,
+		backEnd.viewDef->viewport.y2 + 1 - backEnd.viewDef->viewport.y1 );
+	if ( r_useScissor.GetBool() ) {
+		glScissor(
+			tr.viewportOffset[0] + backEnd.viewDef->viewport.x1 + backEnd.viewDef->scissor.x1,
+			tr.viewportOffset[1] + backEnd.viewDef->viewport.y1 + backEnd.viewDef->scissor.y1,
+			backEnd.viewDef->scissor.x2 - backEnd.viewDef->scissor.x1 + 1,
+			backEnd.viewDef->scissor.y2 - backEnd.viewDef->scissor.y1 + 1 );
+		backEnd.currentScissor = backEnd.viewDef->scissor;
 	}
+	glDepthRange( 0.0, 1.0 );
+	glMatrixMode( GL_PROJECTION );
+	glLoadMatrixf( backEnd.viewDef->projectionMatrix );
+	glMatrixMode( GL_MODELVIEW );
+
+	const int debugMode = r_lightGridDebug.GetInteger();
+	const bool receiverOnlySubmission = RB_LightGridUsesReceiverOnlySubmission( debugMode );
+
+	RB_STD_SetLightGridDrawState( false );
+	RB_STD_BindLightGridProgram();
 
 	RB_UpdateLightGridImageResidency( backEnd.viewDef->renderWorld );
+
+	const int reportFrames = r_lightGridReport.GetInteger();
+	const bool reportStats = reportFrames > 0 && ( backEnd.frameCount % reportFrames ) == 0;
+	int worldConsidered = 0;
+	int worldPostSkipped = 0;
+	int worldNoGrid = 0;
+	int worldNoAlbedo = 0;
+	int worldGrid = 0;
+	int worldSubmitted = 0;
+	int weaponGrid = 0;
+	int weaponSubmitted = 0;
+	rbLightGridDrawStats_t drawStats;
+	memset( &drawStats, 0, sizeof( drawStats ) );
 
 	backEnd.currentSpace = NULL;
 	for ( int i = 0; i < backEnd.viewDef->numDrawSurfs; i++ ) {
 		drawSurf_t *surf = backEnd.viewDef->drawSurfs[i];
+		worldConsidered++;
 		if ( surf == NULL || surf->material == NULL ) {
 			continue;
 		}
 		if ( surf->material->GetSort() >= SS_POST_PROCESS || surf->material->SuppressInSubview() ) {
+			worldPostSkipped++;
 			continue;
 		}
 
 		const LightGrid *lightGrid = NULL;
 		if ( !RB_SurfaceHasLightGrid( surf, lightGrid ) ) {
+			worldNoGrid++;
+			continue;
+		}
+		if ( !receiverOnlySubmission && !RB_LightGridHasActiveAlbedoStage( surf->material, surf->shaderRegisters ) ) {
+			worldNoAlbedo++;
 			continue;
 		}
 
+		worldGrid++;
 		RB_SimpleSurfaceSetup( surf );
-		RB_STD_DrawLightGridSurface( surf, *lightGrid );
+		if ( RB_STD_DrawLightGridSurface( surf, *lightGrid, NULL, false, reportStats ? &drawStats : NULL ) ) {
+			worldSubmitted++;
+		}
 	}
 
 	RB_LogComment( "---------- RB_STD_ViewWeaponLightGridIndirect ----------\n" );
@@ -9355,19 +9905,52 @@ static void RB_STD_LightGridIndirect( void ) {
 			continue;
 		}
 
+		weaponGrid++;
 		RB_SimpleSurfaceSetup( surf );
+		bool submitted = false;
 		rbLightGridPortalBlend_t portalBlend;
 		if ( RB_SurfaceHasLightGridPortalBlend( surf, portalBlend ) ) {
-			RB_STD_DrawLightGridSurface( surf, *lightGrid, &portalBlend, true );
-			RB_STD_DrawLightGridSurface( surf, *portalBlend.neighborLightGrid, &portalBlend, false );
+			submitted |= RB_STD_DrawLightGridSurface( surf, *lightGrid, &portalBlend, true, reportStats ? &drawStats : NULL );
+			submitted |= RB_STD_DrawLightGridSurface( surf, *portalBlend.neighborLightGrid, &portalBlend, false, reportStats ? &drawStats : NULL );
 		} else {
-			RB_STD_DrawLightGridSurface( surf, *lightGrid );
+			submitted |= RB_STD_DrawLightGridSurface( surf, *lightGrid, NULL, false, reportStats ? &drawStats : NULL );
+		}
+		if ( submitted ) {
+			weaponSubmitted++;
 		}
 	}
 
-	glUseProgramObjectARB( 0 );
-	GL_SelectTexture( 0 );
-	GL_Cull( CT_FRONT_SIDED );
+	if ( reportStats ) {
+		common->Printf(
+			"LightGrid receiver stats: frame %i debug=%i debugLoc=%i world considered=%i postSkip=%i noGrid=%i noAlbedo=%i grid=%i submitted=%i weaponGrid=%i weaponSubmitted=%i draw null=%i noAlb=%i cache=%i empty=%i noIrr=%i ensure=%i default=%i badAtlas=%i stageReject=%i stageSubmit=%i\n",
+			backEnd.frameCount,
+			r_lightGridDebug.GetInteger(),
+			rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_DEBUG_INFO],
+			worldConsidered,
+			worldPostSkipped,
+			worldNoGrid,
+			worldNoAlbedo,
+			worldGrid,
+			worldSubmitted,
+			weaponGrid,
+			weaponSubmitted,
+			drawStats.nullInput,
+			drawStats.noAlbedo,
+			drawStats.cacheFail,
+			drawStats.emptyGeometry,
+			drawStats.noIrradiance,
+			drawStats.ensureFail,
+			drawStats.defaultIrradiance,
+			drawStats.badAtlas,
+			drawStats.stageReject,
+			drawStats.stageSubmit );
+	}
+
+	if ( worldSubmitted > 0 || weaponSubmitted > 0 ) {
+		backEnd.currentRenderCopied = false;
+	}
+
+	RB_STD_FinishLightGridDrawState( false );
 }
 
 //=========================================================================================
@@ -9388,6 +9971,10 @@ void	RB_STD_DrawView( void ) {
 
 	drawSurfs = (drawSurf_t **)&backEnd.viewDef->drawSurfs[0];
 	numDrawSurfs = backEnd.viewDef->numDrawSurfs;
+	rbLightGridInlineSubmittedThisView = false;
+	rbLightGridDepthCompareAvailable = false;
+	rbLightGridDepthCompareWidth = 0;
+	rbLightGridDepthCompareHeight = 0;
 
 	RB_MarkPortalSkyBackdropForSceneTarget( backEnd.viewDef );
 
@@ -9430,6 +10017,7 @@ void	RB_STD_DrawView( void ) {
 	} else {
 		RB_STD_FillDepthBuffer( drawSurfs, numDrawSurfs );
 	}
+	RB_PrepareLightGridDepthTexture();
 	RB_DisplaySpecialEffects( backEnd.viewDef->viewEntitys, false );
 
 	// main light renderer
@@ -9447,13 +10035,6 @@ void	RB_STD_DrawView( void ) {
 
 	// disable stencil shadow test
 	glStencilFunc( GL_ALWAYS, 128, 255 );
-
-	// add precomputed indirect diffuse from irradiance-volume atlases
-	if ( R_ModernGLExecutor_LegacyPassCanSkipForView( RENDER_PASS_LIGHT_GRID, backEnd.viewDef ) ) {
-		R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_LIGHT_GRID );
-	} else {
-		RB_STD_LightGridIndirect();
-	}
 
 	// uplight the entire screen to crutch up not having better blending range
 	RB_STD_LightScale();
@@ -9474,7 +10055,28 @@ void	RB_STD_DrawView( void ) {
 		}
 		R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_AMBIENT );
 	} else {
-		processed = RB_STD_DrawShaderPasses( drawSurfs, numDrawSurfs );
+		// Keep authored post-process surfaces out of the ambient/material pass.
+		// Some pre-post materials legitimately populate _currentRender; if the
+		// full list is submitted here, SS_POST_PROCESS surfaces can consume that
+		// stale pre-light-grid copy before the indirect overlay has been added.
+		processed = RB_STD_FindPostProcessStart( drawSurfs, numDrawSurfs );
+		if ( processed > 0 ) {
+			RB_STD_DrawShaderPasses( drawSurfs, processed );
+		}
+	}
+
+	// Modern visible color/depth must be handed back before legacy overlay
+	// passes, otherwise the later composition overwrites those contributions.
+	R_ModernGLExecutor_ComposeVisibleSceneForPost();
+
+	// Add precomputed indirect diffuse from irradiance-volume atlases after
+	// ambient/material shading. This matches the render graph and keeps the
+	// baked contribution visible instead of letting later material passes bury
+	// it.
+	if ( R_ModernGLExecutor_LegacyPassCanSkipForView( RENDER_PASS_LIGHT_GRID, backEnd.viewDef ) ) {
+		R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_LIGHT_GRID );
+	} else {
+		RB_STD_LightGridIndirect();
 	}
 
 	R_ModernGLExecutor_SubmitForwardPlusDecalOverlay( backEnd.viewDef );
@@ -9489,8 +10091,6 @@ void	RB_STD_DrawView( void ) {
 		RB_STD_FogAllLights();
 	}
 
-	// Modern visible color and depth enter the existing HDR/SSAO/bloom stack here; GUI remains a swap-time overlay.
-	R_ModernGLExecutor_ComposeVisibleSceneForPost();
 	RB_CaptureSceneRenderTargetPreserveDepthImage();
 
 	// Apply SSAO before bloom and tonemapping so indirect shadowing modulates the lit scene.

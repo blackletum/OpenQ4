@@ -1156,6 +1156,37 @@ static const portalArea_t *R_FallbackDrawSurfArea( const viewEntity_t *space ) {
 	return space->entityDef->entityRefs->area;
 }
 
+static const portalArea_t *R_DrawSurfAreaForGlobalPoint( const idVec3 &point ) {
+	if ( tr.viewDef == NULL || tr.viewDef->renderWorld == NULL ) {
+		return NULL;
+	}
+
+	const int areaNum = tr.viewDef->renderWorld->PointInArea( point );
+	if ( areaNum >= 0 && areaNum < tr.viewDef->renderWorld->NumAreas() ) {
+		return &tr.viewDef->renderWorld->portalAreas[ areaNum ];
+	}
+	return NULL;
+}
+
+static const portalArea_t *R_CurrentViewDrawSurfArea( void ) {
+	if ( tr.viewDef == NULL || tr.viewDef->renderWorld == NULL ) {
+		return NULL;
+	}
+
+	int areaNum = tr.viewDef->areaNum;
+	if ( areaNum < 0 || areaNum >= tr.viewDef->renderWorld->NumAreas() ) {
+		areaNum = tr.viewDef->renderWorld->PointInArea( tr.viewDef->initialViewAreaOrigin );
+	}
+	if ( areaNum < 0 || areaNum >= tr.viewDef->renderWorld->NumAreas() ) {
+		areaNum = tr.viewDef->renderWorld->PointInArea( tr.viewDef->renderView.vieworg );
+	}
+	if ( areaNum < 0 || areaNum >= tr.viewDef->renderWorld->NumAreas() ) {
+		return NULL;
+	}
+
+	return &tr.viewDef->renderWorld->portalAreas[ areaNum ];
+}
+
 static const portalArea_t *R_ResolveDrawSurfArea( const srfTriangles_t *tri, const viewEntity_t *space ) {
 	if ( tri == NULL || space == NULL || tr.viewDef == NULL || tr.viewDef->renderWorld == NULL ) {
 		return NULL;
@@ -1164,14 +1195,25 @@ static const portalArea_t *R_ResolveDrawSurfArea( const srfTriangles_t *tri, con
 	if ( !tri->bounds.IsCleared() ) {
 		idVec3 globalCenter;
 		R_LocalPointToGlobal( space->modelMatrix, tri->bounds.GetCenter(), globalCenter );
+		const portalArea_t *centerArea = R_DrawSurfAreaForGlobalPoint( globalCenter );
+		if ( centerArea != NULL ) {
+			return centerArea;
+		}
 
-		const int areaNum = tr.viewDef->renderWorld->PointInArea( globalCenter );
-		if ( areaNum >= 0 && areaNum < tr.viewDef->renderWorld->NumAreas() ) {
-			return &tr.viewDef->renderWorld->portalAreas[ areaNum ];
+		idVec3 localPoints[8];
+		tri->bounds.ToPoints( localPoints );
+		for ( int pointIndex = 0; pointIndex < 8; pointIndex++ ) {
+			idVec3 globalPoint;
+			R_LocalPointToGlobal( space->modelMatrix, localPoints[pointIndex], globalPoint );
+			const portalArea_t *cornerArea = R_DrawSurfAreaForGlobalPoint( globalPoint );
+			if ( cornerArea != NULL ) {
+				return cornerArea;
+			}
 		}
 	}
 
-	return R_FallbackDrawSurfArea( space );
+	const portalArea_t *fallbackArea = R_FallbackDrawSurfArea( space );
+	return fallbackArea != NULL ? fallbackArea : R_CurrentViewDrawSurfArea();
 }
 
 /*

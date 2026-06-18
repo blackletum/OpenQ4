@@ -574,6 +574,10 @@ void GLimp_Shutdown() {
 	}
 }
 
+void GLimp_PreserveWindowOnShutdown( bool preserve ) {
+	(void)preserve;
+}
+
 void GLimp_SwapBuffers() {
 	assert( dpy );
 	if ( r_swapInterval.IsModified() ) {

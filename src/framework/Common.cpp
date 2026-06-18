@@ -108,6 +108,9 @@ idCVar com_activeGameModule( "com_activeGameModule", "", CVAR_SYSTEM, "active ga
 idCVar com_nextGameModule( "com_nextGameModule", "", CVAR_SYSTEM, "internal one-shot game module override for reloadEngine" );
 idCVar com_platformProfile( "com_platformProfile", "default", CVAR_SYSTEM | CVAR_INIT, "startup platform profile (default or steamdeck)" );
 
+static bool openQ4_IsValidGameModuleName( const char *moduleName );
+void GLimp_PreserveWindowOnShutdown( bool preserve );
+
 idCVar com_product_lang_ext( "com_product_lang_ext", "1", CVAR_INTEGER | CVAR_SYSTEM | CVAR_ARCHIVE, "Extension to use when creating language files." );
 idCVar r_skipGlowOverlay( "r_skipGlowOverlay", "0", CVAR_ARCHIVE | CVAR_RENDERER, "skip glow overlays when non-zero" );
 
@@ -577,6 +580,7 @@ public:
 
 	void						InitGame( void );
 	void						ShutdownGame( bool reloading );
+	void						PrintLoadingMessage( const char *msg );
 
 	// localization
 	void						InitLanguageDict( void );
@@ -629,7 +633,6 @@ static idStr Common_BuildPlatformProfileConfigName( const char *profileName ) {
 	void						DetachBSE( void );
 	void						LoadGameDLL( void );
 	void						UnloadGameDLL( void );
-	void						PrintLoadingMessage( const char *msg );
 	void						FilterLangList( idStrList* list, idStr lang );
 
 	bool						com_fullyInitialized;
@@ -2315,6 +2318,45 @@ void Com_ReloadEngine_f( const idCmdArgs &args ) {
 }
 
 /*
+=================
+Com_ReloadGameModule_f
+=================
+*/
+void Com_ReloadGameModule_f( const idCmdArgs &args ) {
+	if ( !commonLocal.IsInitialized() ) {
+		return;
+	}
+
+	const char *nextModule = cvarSystem->GetCVarString( "com_nextGameModule" );
+	if ( !openQ4_IsValidGameModuleName( nextModule ) ) {
+		common->Printf( "reloadGameModule requested without a valid com_nextGameModule; falling back to reloadEngine\n" );
+		Com_ReloadEngine_f( args );
+		return;
+	}
+
+	common->Printf( "============= ReloadGameModule start =============\n" );
+	fileSystem->SetIsFileLoadingAllowed( true );
+
+#ifndef ID_DEDICATED
+	if ( !com_skipRenderer.GetBool() && renderSystem->IsOpenGLRunning() ) {
+		commonLocal.PrintLoadingMessage( common->GetLanguageDict()->GetString( "#str_104350" ) );
+	}
+#endif
+
+	GLimp_PreserveWindowOnShutdown( true );
+	commonLocal.ShutdownGame( true );
+	GLimp_PreserveWindowOnShutdown( false );
+	commonLocal.InitGame();
+
+	common->Printf( "============= ReloadGameModule end ===============\n" );
+
+	if ( !cmdSystem->PostReloadEngine() ) {
+		session->StartMenu();
+	}
+	fileSystem->SetIsFileLoadingAllowed( false );
+}
+
+/*
 ===============
 idCommonLocal::GetLanguageDict
 ===============
@@ -3084,6 +3126,7 @@ void idCommonLocal::InitCommands( void ) {
 	cmdSystem->AddCommand( "exit", Com_Quit_f, CMD_FL_SYSTEM, "exits the game" );
 	cmdSystem->AddCommand( "writeConfig", Com_WriteConfig_f, CMD_FL_SYSTEM, "writes a config file" );
 	cmdSystem->AddCommand( "reloadEngine", Com_ReloadEngine_f, CMD_FL_SYSTEM, "reloads the engine down to including the file system" );
+	cmdSystem->AddCommand( "reloadGameModule", Com_ReloadGameModule_f, CMD_FL_SYSTEM, "reloads the active game module while preserving the render window" );
 	cmdSystem->AddCommand( "setMachineSpec", Com_SetMachineSpec_f, CMD_FL_SYSTEM, "detects system capabilities and sets com_machineSpec to appropriate value" );
 	cmdSystem->AddCommand( "execMachineSpec", Com_ExecMachineSpec_f, CMD_FL_SYSTEM, "execs the appropriate config files and sets cvars based on com_machineSpec" );
 

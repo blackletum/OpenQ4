@@ -669,8 +669,8 @@ void R_RenderGraph_BuildLegacyFrameGraph( const emptyCommand_t *cmds, idRenderGr
 		case RC_DRAW_VIEW:
 			R_RenderGraph_AddPassOnce( graph, RENDER_PASS_DEPTH, "legacyDepth" );
 			R_RenderGraph_AddPassOnce( graph, RENDER_PASS_ARB2_INTERACTION, "legacyARB2Interaction" );
-			R_RenderGraph_AddPassOnce( graph, RENDER_PASS_LIGHT_GRID, "legacyLightGrid" );
 			R_RenderGraph_AddPassOnce( graph, RENDER_PASS_AMBIENT, "legacyAmbient" );
+			R_RenderGraph_AddPassOnce( graph, RENDER_PASS_LIGHT_GRID, "legacyLightGrid" );
 			R_RenderGraph_AddPassOnce( graph, RENDER_PASS_FOG_BLEND, "legacyFogBlend" );
 			R_RenderGraph_AddPassOnce( graph, RENDER_PASS_AUTHORED_POST, "legacyPostProcess" );
 			break;
@@ -980,7 +980,7 @@ static bool R_RenderGraph_RunWorldPacketSelfTest( void ) {
 	if ( !R_RenderGraph_CheckAccess( graph, 0, "sceneDepth", RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR )
 		|| !R_RenderGraph_CheckAccess( graph, 1, "sceneDepth", RENDER_GRAPH_ACCESS_READ )
 		|| !R_RenderGraph_CheckAccess( graph, 1, "sceneColor", RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR )
-		|| !R_RenderGraph_CheckAccess( graph, 2, "lightGrid", RENDER_GRAPH_ACCESS_READ )
+		|| !R_RenderGraph_CheckAccess( graph, 3, "lightGrid", RENDER_GRAPH_ACCESS_READ )
 		|| !R_RenderGraph_CheckAccess( graph, 5, "postA", RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR )
 		|| !R_RenderGraph_CheckAccess( graph, 5, "postA", RENDER_GRAPH_ACCESS_INVALIDATE )
 		|| !R_RenderGraph_CheckAccess( graph, 5, "sceneColor", RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_RESOLVE )
@@ -996,8 +996,8 @@ static bool R_RenderGraph_RunWorldPacketSelfTest( void ) {
 	return
 		R_RenderGraph_CheckPass( graph, 0, RENDER_PASS_DEPTH, 1, expectedDepthDraws ) &&
 		R_RenderGraph_CheckPass( graph, 1, RENDER_PASS_ARB2_INTERACTION, 1, 0 ) &&
-		R_RenderGraph_CheckPass( graph, 2, RENDER_PASS_LIGHT_GRID, 1, 0 ) &&
-		R_RenderGraph_CheckPass( graph, 3, RENDER_PASS_AMBIENT, 1, expectedAmbientDraws ) &&
+		R_RenderGraph_CheckPass( graph, 2, RENDER_PASS_AMBIENT, 1, expectedAmbientDraws ) &&
+		R_RenderGraph_CheckPass( graph, 3, RENDER_PASS_LIGHT_GRID, 1, 0 ) &&
 		R_RenderGraph_CheckPass( graph, 4, RENDER_PASS_FOG_BLEND, 1, 0 ) &&
 		R_RenderGraph_CheckPass( graph, 5, RENDER_PASS_AUTHORED_POST, 1, 0 ) &&
 		R_RenderGraph_CheckPass( graph, 6, RENDER_PASS_SPECIAL_EFFECTS, 1, 0 ) &&

@@ -301,6 +301,7 @@ static bool s_menuMouseInsideWindow = true;
 static bool s_windowAspectSnapActive = false;
 static float s_windowAspectSnapRatio = 0.0f;
 static bool s_screenParmTransitionActive = false;
+static bool s_preserveWindowOnShutdown = false;
 static bool s_waylandSpanWarningLogged = false;
 
 static const int SDL3_LIFECYCLE_PENDING_BACKGROUND = 1 << 0;
@@ -3409,7 +3410,8 @@ static void SDL3_RefreshWindowPlacement(void) {
 	int height = 0;
 	int pixelWidth = 0;
 	int pixelHeight = 0;
-	const bool canPersistWindowedPlacement = !win32.cdsFullscreen && !s_screenParmTransitionActive;
+	const bool windowIsHidden = (SDL_GetWindowFlags(s_sdlWindow) & SDL_WINDOW_HIDDEN) != 0;
+	const bool canPersistWindowedPlacement = !windowIsHidden && !win32.cdsFullscreen && !s_screenParmTransitionActive;
 	const bool isWindowedResizable = !r_borderless.GetBool();
 
 	const bool haveWindowPosition = SDL_GetWindowPosition(s_sdlWindow, &x, &y);
@@ -3560,6 +3562,11 @@ static void SDL3_MinimizeOnFullscreenFocusLoss(void) {
 static bool SDL3_ApplyScreenParms(glimpParms_t parms) {
 	if (!s_sdlWindow) {
 		return false;
+	}
+
+	if (parms.hiddenWindow) {
+		parms.fullScreen = false;
+		parms.borderless = false;
 	}
 
 	s_screenParmTransitionActive = true;
@@ -3732,7 +3739,20 @@ static bool SDL3_ApplyScreenParms(glimpParms_t parms) {
 
 	win32.cdsFullscreen = parms.fullScreen;
 	glConfig.isFullscreen = parms.fullScreen;
-	SDL3_SyncWindowAfterScreenChange(parms.fullScreen ? "fullscreen change" : "windowed change");
+
+	if (parms.hiddenWindow) {
+		if (!SDL_HideWindow(s_sdlWindow)) {
+			common->DPrintf("SDL3: failed to hide render window: %s\n", SDL_GetError());
+		}
+	} else {
+		if (!SDL_ShowWindow(s_sdlWindow)) {
+			common->DPrintf("SDL3: failed to show render window: %s\n", SDL_GetError());
+		}
+	}
+
+	if (!parms.hiddenWindow) {
+		SDL3_SyncWindowAfterScreenChange(parms.fullScreen ? "fullscreen change" : "windowed change");
+	}
 	s_screenParmTransitionActive = false;
 	SDL3_RefreshWindowPlacement();
 	SDL3_PrintWaylandWindowState(parms.fullScreen ? "fullscreen change" : "windowed change");
@@ -4959,6 +4979,10 @@ static void SDL3_LogGLContextAttributes(void) {
 		flags);
 }
 
+void GLimp_PreserveWindowOnShutdown(bool preserve) {
+	s_preserveWindowOnShutdown = preserve;
+}
+
 bool GLimp_Init(glimpParms_t parms) {
 	const char *driverName;
 
@@ -5009,9 +5033,23 @@ bool GLimp_Init(glimpParms_t parms) {
 		return false;
 	}
 
+	if (parms.hiddenWindow) {
+		parms.fullScreen = false;
+		parms.borderless = false;
+		common->Printf("SDL3: creating hidden OpenGL render window\n");
+	}
+
 	SDL_WindowFlags flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
 	if (!parms.fullScreen && parms.borderless) {
 		flags |= SDL_WINDOW_BORDERLESS;
+	}
+	if (parms.hiddenWindow) {
+		flags |= SDL_WINDOW_HIDDEN;
+	}
+
+	const bool usingPreservedWindow = s_sdlWindow != NULL;
+	if (usingPreservedWindow) {
+		common->Printf("SDL3: reusing preserved OpenGL window\n");
 	}
 
 	idStr lastContextError;
@@ -5020,14 +5058,17 @@ bool GLimp_Init(glimpParms_t parms) {
 		const rendererContextCandidate_t &candidate = contextCandidates[candidateIndex];
 		SDL3_SetGLAttributesForCandidate(parms, candidate);
 
-		s_sdlWindow = SDL_CreateWindow(GAME_NAME, parms.width, parms.height, flags);
-		if (!s_sdlWindow) {
-			lastContextError = SDL_GetError();
-			common->Printf("SDL3: could not create window for OpenGL context %s: %s\n", candidate.label, lastContextError.c_str());
-			continue;
+		const bool createdWindowForAttempt = !usingPreservedWindow;
+		if (createdWindowForAttempt) {
+			s_sdlWindow = SDL_CreateWindow(GAME_NAME, parms.width, parms.height, flags);
+			if (!s_sdlWindow) {
+				lastContextError = SDL_GetError();
+				common->Printf("SDL3: could not create window for OpenGL context %s: %s\n", candidate.label, lastContextError.c_str());
+				continue;
+			}
 		}
 
-		if (!parms.fullScreen) {
+		if (createdWindowForAttempt && !parms.fullScreen && !parms.hiddenWindow) {
 			int targetX = win32.win_xpos.GetInteger();
 			int targetY = win32.win_ypos.GetInteger();
 			int targetWidth = parms.width;
@@ -5067,8 +5108,10 @@ bool GLimp_Init(glimpParms_t parms) {
 			(void)SDL_GL_DestroyContext(s_sdlContext);
 			s_sdlContext = NULL;
 		}
-		SDL_DestroyWindow(s_sdlWindow);
-		s_sdlWindow = NULL;
+		if (createdWindowForAttempt) {
+			SDL_DestroyWindow(s_sdlWindow);
+			s_sdlWindow = NULL;
+		}
 	}
 	if (!s_sdlContext) {
 		common->Printf("SDL3: could not create OpenGL context: %s\n", lastContextError.Length() > 0 ? lastContextError.c_str() : SDL_GetError());
@@ -5078,9 +5121,11 @@ bool GLimp_Init(glimpParms_t parms) {
 	if (!SDL_GL_MakeCurrent(s_sdlWindow, s_sdlContext)) {
 		common->Printf("SDL3: could not make context current: %s\n", SDL_GetError());
 		(void)SDL_GL_DestroyContext(s_sdlContext);
-		SDL_DestroyWindow(s_sdlWindow);
 		s_sdlContext = NULL;
-		s_sdlWindow = NULL;
+		if (!usingPreservedWindow) {
+			SDL_DestroyWindow(s_sdlWindow);
+			s_sdlWindow = NULL;
+		}
 		return false;
 	}
 	SDL3_LogGLContextAttributes();
@@ -5118,6 +5163,11 @@ bool GLimp_Init(glimpParms_t parms) {
 }
 
 bool GLimp_SetScreenParms(glimpParms_t parms) {
+	if (parms.hiddenWindow) {
+		parms.fullScreen = false;
+		parms.borderless = false;
+	}
+
 	if (!SDL3_ApplyScreenParms(parms)) {
 		return false;
 	}
@@ -5140,12 +5190,15 @@ bool GLimp_SetScreenParms(glimpParms_t parms) {
 
 void GLimp_Shutdown(void) {
 	common->Printf("Shutting down OpenGL subsystem (SDL3 backend)\n");
+	const bool preserveWindow = s_preserveWindowOnShutdown && s_sdlWindow != NULL;
 
 	SDL3_DisableWindowAspectSnap();
 	IN_DeactivateMouse();
 	SDL3_ShutdownControllerSubsystems();
 	s_sdlAppInBackground = false;
-	(void)SDL3_LeaveFullscreenAndRestoreDesktopMode();
+	if (!preserveWindow) {
+		(void)SDL3_LeaveFullscreenAndRestoreDesktopMode();
+	}
 	if (s_sdlWindow && s_sdlTextInputActive) {
 		(void)SDL_StopTextInput(s_sdlWindow);
 		s_sdlTextInputActive = false;
@@ -5157,12 +5210,12 @@ void GLimp_Shutdown(void) {
 		s_sdlContext = NULL;
 	}
 
-	if (s_sdlWindow) {
+	if (s_sdlWindow && !preserveWindow) {
 		SDL_DestroyWindow(s_sdlWindow);
 		s_sdlWindow = NULL;
 	}
 
-	if (s_sdlVideoActive) {
+	if (s_sdlVideoActive && !preserveWindow) {
 		SDL3_UnregisterLifecycleEventWatch();
 		SDL_QuitSubSystem(SDL_INIT_VIDEO);
 		s_sdlVideoActive = false;
@@ -5171,11 +5224,15 @@ void GLimp_Shutdown(void) {
 		s_sdlGraphicsBridgeSummaryLogged = false;
 	}
 
-	win32.hWnd = NULL;
+	if (!preserveWindow) {
+		win32.hWnd = NULL;
+	}
 	win32.hDC = NULL;
 	win32.hGLRC = NULL;
-	win32.cdsFullscreen = false;
-	glConfig.isFullscreen = false;
+	if (!preserveWindow) {
+		win32.cdsFullscreen = false;
+		glConfig.isFullscreen = false;
+	}
 
 	SDL3_ClearInputQueues();
 	QGL_Shutdown();

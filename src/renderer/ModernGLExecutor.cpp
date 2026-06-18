@@ -1591,10 +1591,10 @@ static void R_ModernGLExecutor_CountModernVisibleOwner( const renderGraphPass_t 
 		modernOwned = stats.forwardPlusRequested;
 		break;
 	case RENDER_PASS_LIGHT_GRID:
-		modernOwned = stats.deferredResolveRequested || stats.forwardPlusRequested;
-		if ( modernOwned ) {
-			stats.modernVisibleLightGridModernPasses++;
-		}
+		// The graph models baked light-grid dependencies for planning, but the
+		// current deferred/Forward+ shaders do not sample the packed atlas data.
+		// Keep this pass legacy-owned until that parity exists.
+		modernOwned = false;
 		break;
 	case RENDER_PASS_GUI:
 		modernOwned = stats.modernVisibleGuiProgramReady;
@@ -1931,6 +1931,9 @@ static void R_ModernGLExecutor_AnalyzeModernVisibleOwnershipReadiness( const idS
 	}
 
 	if ( graph.FindPass( RENDER_PASS_ARB2_INTERACTION ) >= 0 && !stats.modernVisibleLightingReady ) {
+		stats.modernVisibleBlockedByLegacy = true;
+	}
+	if ( graph.FindPass( RENDER_PASS_LIGHT_GRID ) >= 0 && !stats.modernVisibleLightGridReady ) {
 		stats.modernVisibleBlockedByLegacy = true;
 	}
 	R_ModernGLExecutor_RecomputeModernVisibleFallbacks( stats );
@@ -6038,9 +6041,11 @@ static void R_ModernGLExecutor_FinalizePassOwnership( const idRenderGraph &graph
 		const bool lightingModern =
 			stats.modernVisibleLightingReady &&
 			( deferredModern || forwardModern );
-		const bool lightGridModern =
-			stats.modernVisibleLightGridReady &&
-			( deferredModern || forwardModern );
+		// Deferred/Forward+ currently carry only dynamic clustered lighting and
+		// material emissive. Baked atlas irradiance is still applied by the
+		// legacy light-grid receiver pass, so never mark it skip-safe here until
+		// the modern shaders sample the same .lightgrid/.lightgridpack data.
+		const bool lightGridModern = false;
 		const bool shadowOwnershipModern =
 			stats.modernVisibleShadowOwnershipReady &&
 			stats.modernVisibleShadowReady;
@@ -10119,7 +10124,7 @@ bool RendererModernCompatibility_RunSelfTest( void ) {
 	}
 	if ( !stats.modernVisibleBlockedByLegacy
 		|| stats.modernVisibleOwnerFallbacks <= 0
-		|| stats.modernVisibleLightGridModernPasses <= 0
+		|| stats.modernVisibleLightGridModernPasses != 0
 		|| stats.modernVisibleLightingReady
 		|| stats.modernVisibleLightGridReady
 		|| stats.modernVisibleShadowOwnershipReady

@@ -1138,15 +1138,64 @@ static const LightGrid *R_ScenePackets_CurrentViewLightGrid( const viewDef_t *vi
 	return R_ScenePackets_LightGridIsUsable( candidate ) ? &candidate : NULL;
 }
 
+static bool R_ScenePackets_LightGridMaterialStageIsActive( const shaderStage_t *stage, const float *regs ) {
+	return stage != NULL && ( regs == NULL || regs[ stage->conditionRegister ] != 0.0f );
+}
+
+static int R_ScenePackets_LightGridStageBlendBits( const shaderStage_t *stage ) {
+	return stage != NULL ? ( stage->drawStateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS ) ) : 0;
+}
+
+static bool R_ScenePackets_LightGridAmbientStageCanProvideAlbedo( const idMaterial *material, const shaderStage_t *stage, const float *regs ) {
+	if ( material == NULL || stage == NULL ) {
+		return false;
+	}
+	if ( stage->lighting != SL_AMBIENT || !R_ScenePackets_LightGridMaterialStageIsActive( stage, regs ) ) {
+		return false;
+	}
+	if ( material->IsPortalSky() || material->TestMaterialFlag( MF_SKY ) || material->GetSort() >= SS_FAR ) {
+		return false;
+	}
+	if ( stage->texture.image == NULL || stage->newStage != NULL ) {
+		return false;
+	}
+	if ( stage->texture.texgen != TG_EXPLICIT && stage->texture.texgen != TG_POT_CORRECTION ) {
+		return false;
+	}
+	return R_ScenePackets_LightGridStageBlendBits( stage ) == 0;
+}
+
+static bool R_ScenePackets_LightGridStageCanProvideAlbedo( const idMaterial *material, const shaderStage_t *stage, const float *regs ) {
+	if ( stage == NULL ) {
+		return false;
+	}
+	if ( stage->lighting == SL_DIFFUSE && R_ScenePackets_LightGridMaterialStageIsActive( stage, regs ) ) {
+		return true;
+	}
+	return R_ScenePackets_LightGridAmbientStageCanProvideAlbedo( material, stage, regs );
+}
+
+static bool R_ScenePackets_LightGridHasActiveAlbedoStage( const idMaterial *material, const float *regs ) {
+	if ( material == NULL ) {
+		return false;
+	}
+
+	for ( int stageIndex = 0; stageIndex < material->GetNumStages(); stageIndex++ ) {
+		const shaderStage_t *stage = material->GetStage( stageIndex );
+		if ( R_ScenePackets_LightGridStageCanProvideAlbedo( material, stage, regs ) ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 static bool R_ScenePackets_SurfaceCanReceiveLightGrid( const drawSurf_t *drawSurf ) {
 	if ( !R_ScenePackets_DrawSurfHasMaterialGeometry( drawSurf ) ) {
 		return false;
 	}
 	const idMaterial *material = drawSurf->material;
-	if ( !material->ReceivesLighting() || material->IsPortalSky() ) {
-		return false;
-	}
-	if ( material->Coverage() == MC_TRANSLUCENT ) {
+	if ( !material->IsDrawn() || material->IsPortalSky() ) {
 		return false;
 	}
 	if ( drawSurf->decalColorCache != NULL ) {
@@ -1204,13 +1253,19 @@ static bool R_ScenePackets_DrawSurfLightGridEligible( const viewDef_t *viewDef, 
 	if ( drawSurf->material->GetSort() >= SS_POST_PROCESS || drawSurf->material->SuppressInSubview() ) {
 		return false;
 	}
+	if ( !R_ScenePackets_LightGridHasActiveAlbedoStage( drawSurf->material, drawSurf->shaderRegisters ) ) {
+		return false;
+	}
 	if ( drawSurf->space->weaponDepthHack ) {
 		return R_ScenePackets_CurrentViewLightGrid( viewDef ) != NULL;
 	}
-	if ( drawSurf->space->modelDepthHack != 0.0f || drawSurf->area == NULL ) {
+	if ( drawSurf->space->modelDepthHack != 0.0f ) {
 		return false;
 	}
-	return R_ScenePackets_LightGridIsUsable( drawSurf->area->lightGrid );
+	if ( drawSurf->area != NULL && R_ScenePackets_LightGridIsUsable( drawSurf->area->lightGrid ) ) {
+		return true;
+	}
+	return R_ScenePackets_CurrentViewLightGrid( viewDef ) != NULL;
 }
 
 static bool R_ScenePackets_DrawSurfGUIEligible( const viewDef_t *viewDef, const drawSurf_t *drawSurf ) {
@@ -1578,8 +1633,8 @@ static void R_ScenePackets_AddDrawView( idScenePacketFrame &packetFrame, const v
 		R_ScenePackets_AddShadowMapPass( packetFrame, viewDef );
 		R_ScenePackets_AddStencilShadowPass( packetFrame, viewDef );
 		R_ScenePackets_AddInteractionPass( packetFrame, viewDef );
-		R_ScenePackets_AddFilteredDrawSurfPass( packetFrame, viewDef, RENDER_PASS_LIGHT_GRID, R_ScenePackets_DrawSurfLightGridEligible );
 		R_ScenePackets_AddFilteredDrawSurfPass( packetFrame, viewDef, RENDER_PASS_AMBIENT, R_ScenePackets_DrawSurfAmbientEligible );
+		R_ScenePackets_AddFilteredDrawSurfPass( packetFrame, viewDef, RENDER_PASS_LIGHT_GRID, R_ScenePackets_DrawSurfLightGridEligible );
 		R_ScenePackets_AddFogBlendPass( packetFrame, viewDef );
 		R_ScenePackets_AddRootPostProcessPasses( packetFrame, viewDef );
 		R_ScenePackets_AddFilteredDrawSurfPass( packetFrame, viewDef, RENDER_PASS_AUTHORED_POST, R_ScenePackets_DrawSurfAuthoredPostEligible );

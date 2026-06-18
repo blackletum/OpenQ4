@@ -5,6 +5,7 @@ uniform sampler2D uDiffuseMap;
 uniform sampler2D uLightGridAtlas;
 uniform sampler2D uLightGridVisibilityAtlas;
 uniform sampler2D uLightGridProbeAtlas;
+uniform sampler2D uSceneDepth;
 
 uniform vec4 uLightGridOrigin;
 uniform vec4 uLightGridSize;
@@ -16,6 +17,10 @@ uniform vec4 uBlendInfo;
 uniform vec4 uPortalPlane;
 uniform vec4 uPortalBoundsMin;
 uniform vec4 uPortalBoundsMax;
+uniform vec4 uDebugInfo;
+uniform vec4 uDepthInfo;
+uniform vec4 uDepthViewport;
+uniform vec4 uColorInfo;
 uniform vec4 uDiffuseColor;
 
 varying vec2 vBumpTexCoord;
@@ -28,6 +33,36 @@ varying vec3 vVertexColor;
 
 vec2 SignNotZero( vec2 value ) {
 	return vec2( value.x >= 0.0 ? 1.0 : -1.0, value.y >= 0.0 ? 1.0 : -1.0 );
+}
+
+vec3 SafeNormalize( vec3 value ) {
+	return value * inversesqrt( max( dot( value, value ), 1.0e-8 ) );
+}
+
+vec3 DecodeBakedIrradiance( vec3 value ) {
+	float gamma = max( uColorInfo.x, 0.001 );
+	return pow( max( value, vec3( 0.0 ) ), vec3( gamma ) );
+}
+
+vec3 ShapeLightGridContribution( vec3 value ) {
+	float maxContribution = uColorInfo.y;
+	if ( maxContribution > 0.0 ) {
+		value = min( value, vec3( maxContribution ) );
+	}
+	return max( value, vec3( 0.0 ) );
+}
+
+vec3 DecodeLocalNormal( vec4 bumpSample ) {
+	vec2 localNormalXY = vec2( bumpSample.a, bumpSample.g ) * 2.0 - 1.0;
+	float xyLengthSq = dot( localNormalXY, localNormalXY );
+	if ( xyLengthSq > 1.0 ) {
+		localNormalXY *= inversesqrt( xyLengthSq );
+		xyLengthSq = 1.0;
+	}
+
+	float encodedZ = max( bumpSample.b * 2.0 - 1.0, 0.0 );
+	float reconstructedZ = sqrt( max( 1.0 - xyLengthSq, 0.0 ) );
+	return SafeNormalize( vec3( localNormalXY, mix( encodedZ, reconstructedZ, 0.75 ) ) );
 }
 
 vec2 OctEncode( vec3 normal ) {
@@ -61,18 +96,13 @@ void ComputeGridAxis( float lightOrigin, float cellSize, float bound, out float 
 }
 
 vec2 ProbeAtlasCoord( vec3 sampleCoord, vec2 octCoord ) {
-	float invCellsX = 1.0 / max( uLightGridBounds.x * uLightGridBounds.z, 1.0 );
-	float invCellsY = 1.0 / max( uLightGridBounds.y, 1.0 );
-	float probeScale = uAtlasInfo.w;
-	vec2 octCoordInCell = octCoord * vec2( invCellsX, invCellsY );
+	float tileSize = max( uAtlasInfo.z, 1.0 );
+	float borderSize = max( uAtlasInfo.w, 0.0 );
+	float activeSize = max( tileSize - borderSize, 1.0 );
 	float cellIndex = sampleCoord.x + sampleCoord.z * uLightGridBounds.x;
-	vec2 atlasOffset = vec2( cellIndex * invCellsX, sampleCoord.y * invCellsY );
-
-	vec2 octCoordWithinAtlas = ( octCoordInCell + atlasOffset ) * probeScale;
-	vec2 probeTopLeftPixels = vec2(
-		cellIndex * uAtlasInfo.z + uAtlasInfo.z * 0.5,
-		sampleCoord.y * uAtlasInfo.z + uAtlasInfo.z * 0.5 );
-	return probeTopLeftPixels * uAtlasInfo.xy + octCoordWithinAtlas;
+	vec2 probeOriginPixels = vec2( cellIndex * tileSize, sampleCoord.y * tileSize );
+	vec2 samplePixels = probeOriginPixels + vec2( borderSize * 0.5 ) + octCoord * activeSize;
+	return samplePixels * uAtlasInfo.xy;
 }
 
 vec2 ProbeGridCoord( vec3 sampleCoord ) {
@@ -110,8 +140,8 @@ float VisibilityWeight( vec4 moments, float receiverDistance, vec3 worldNormal, 
 	float variance = max( meanDistanceSq - meanDistance * meanDistance, maxDistance * maxDistance * 0.000025 );
 	float delta = biasedDistance - meanDistance;
 	float chebyshev = variance / ( variance + delta * delta );
-	chebyshev = clamp( chebyshev, uVisibilityInfo.z, 1.0 );
-	return pow( chebyshev, max( uVisibilityInfo.w, 1.0 ) );
+	chebyshev = clamp( chebyshev, 0.0, 1.0 );
+	return clamp( pow( chebyshev, max( uVisibilityInfo.w, 1.0 ) ), uVisibilityInfo.z, 1.0 );
 }
 
 float LightGridContributionScale() {
@@ -130,10 +160,78 @@ float LightGridContributionScale() {
 	return uBlendInfo.x * blendWeight;
 }
 
+vec2 LightGridDepthCoord() {
+	return ( gl_FragCoord.xy - uDepthViewport.xy ) * uDepthInfo.xy;
+}
+
+bool LightGridDepthCoordValid( vec2 depthCoord ) {
+	return depthCoord.x >= 0.0 && depthCoord.y >= 0.0 && depthCoord.x <= 1.0 && depthCoord.y <= 1.0;
+}
+
+float LightGridSceneDepth( vec2 depthCoord ) {
+	return texture2D( uSceneDepth, depthCoord ).r;
+}
+
+bool LightGridDepthAccepted() {
+	if ( uDepthInfo.w <= 0.5 ) {
+		return true;
+	}
+
+	vec2 depthCoord = LightGridDepthCoord();
+	if ( !LightGridDepthCoordValid( depthCoord ) ) {
+		return false;
+	}
+
+	float sceneDepth = LightGridSceneDepth( depthCoord );
+	return gl_FragCoord.z <= sceneDepth + uDepthInfo.z;
+}
+
 void main() {
+	if ( uDebugInfo.x > 5.5 && uDebugInfo.x < 6.5 ) {
+		if ( uDepthInfo.w <= 0.5 ) {
+			gl_FragColor = vec4( 0.0, 0.0, 0.6, 1.0 );
+			return;
+		}
+		vec2 depthCoord = LightGridDepthCoord();
+		if ( !LightGridDepthCoordValid( depthCoord ) ) {
+			gl_FragColor = vec4( 0.8, 0.0, 0.8, 1.0 );
+			return;
+		}
+		float sceneDepth = LightGridSceneDepth( depthCoord );
+		bool accepted = gl_FragCoord.z <= sceneDepth + uDepthInfo.z;
+		gl_FragColor = accepted ? vec4( 0.0, 0.6, 0.0, 1.0 ) : vec4( 0.7, 0.0, 0.0, 1.0 );
+		return;
+	}
+	if ( uDebugInfo.x > 6.5 && uDebugInfo.x < 7.5 ) {
+		if ( uDepthInfo.w <= 0.5 ) {
+			gl_FragColor = vec4( 0.0, 0.0, 0.6, 1.0 );
+			return;
+		}
+		vec2 depthCoord = LightGridDepthCoord();
+		if ( !LightGridDepthCoordValid( depthCoord ) ) {
+			gl_FragColor = vec4( 0.8, 0.0, 0.8, 1.0 );
+			return;
+		}
+		float sceneDepth = LightGridSceneDepth( depthCoord );
+		gl_FragColor = vec4( vec3( sceneDepth ), 1.0 );
+		return;
+	}
+
+	if ( ( uDebugInfo.x > 0.5 && uDebugInfo.x < 1.5 ) || ( uDebugInfo.x > 2.5 && uDebugInfo.x < 3.5 ) ) {
+		if ( uDebugInfo.x < 2.5 && !LightGridDepthAccepted() ) {
+			discard;
+		}
+		gl_FragColor = vec4( uDebugInfo.yzw, 1.0 );
+		return;
+	}
+
+	if ( !LightGridDepthAccepted() ) {
+		discard;
+	}
+
 	vec4 bumpSample = texture2D( uBumpMap, vBumpTexCoord );
-	vec3 localNormal = normalize( vec3( bumpSample.a, bumpSample.g, bumpSample.b ) * 2.0 - 1.0 );
-	vec3 worldNormal = normalize(
+	vec3 localNormal = DecodeLocalNormal( bumpSample );
+	vec3 worldNormal = SafeNormalize(
 		vWorldTangent * localNormal.x +
 		vWorldBitangent * localNormal.y +
 		vWorldNormal * localNormal.z );
@@ -171,7 +269,7 @@ void main() {
 		vec3 sampleCoord = vec3( gridCoordX, gridCoordY, gridCoordZ ) + corner;
 		vec2 atlasCoord = ProbeAtlasCoord( sampleCoord, octCoord );
 
-		vec3 sampleColor = texture2D( uLightGridAtlas, atlasCoord ).rgb;
+		vec3 sampleColor = DecodeBakedIrradiance( texture2D( uLightGridAtlas, atlasCoord ).rgb );
 		if ( dot( sampleColor, vec3( 1.0 ) ) < 0.0001 ) {
 			continue;
 		}
@@ -193,6 +291,19 @@ void main() {
 	}
 
 	vec3 diffuseSample = texture2D( uDiffuseMap, vDiffuseTexCoord ).rgb;
-	vec3 diffuseLighting = irradiance * diffuseSample * uDiffuseColor.rgb * vVertexColor * LightGridContributionScale();
+	if ( uDebugInfo.x > 1.5 && uDebugInfo.x < 2.5 ) {
+		gl_FragColor = vec4( ShapeLightGridContribution( irradiance * LightGridContributionScale() ), 1.0 );
+		return;
+	}
+	if ( uDebugInfo.x > 3.5 && uDebugInfo.x < 4.5 ) {
+		gl_FragColor = vec4( diffuseSample * uDiffuseColor.rgb * vVertexColor, 1.0 );
+		return;
+	}
+
+	vec3 diffuseLighting = ShapeLightGridContribution( irradiance * diffuseSample * uDiffuseColor.rgb * vVertexColor * LightGridContributionScale() );
+	if ( uDebugInfo.x > 4.5 && uDebugInfo.x < 5.5 ) {
+		gl_FragColor = vec4( diffuseLighting, 1.0 );
+		return;
+	}
 	gl_FragColor = vec4( diffuseLighting, 1.0 );
 }

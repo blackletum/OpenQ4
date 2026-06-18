@@ -795,6 +795,10 @@ void idRenderWorldLocal::AddAreaEntityRefs( int areaNum, const portalStack_t *ps
 		if ( r_singleEntity.GetInteger() >= 0 && r_singleEntity.GetInteger() != entity->index ) {
 			continue;
 		}
+		if ( r_skipEntities.GetBool() &&
+			 ( entity->parms.hModel == NULL || !entity->parms.hModel->IsStaticWorldModel() ) ) {
+			continue;
+		}
 
 		// remove decals that are completely faded away
 		R_FreeEntityDefFadedDecals( entity, tr.viewDef->renderView.time );

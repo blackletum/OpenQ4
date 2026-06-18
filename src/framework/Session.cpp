@@ -2054,7 +2054,27 @@ static void Session_ReloadLightGridBakeBatch( const lightGridBakeOptions_t &opti
 		useMultiplayerModule ? "game_mp" : "game_sp",
 		resumeIndex + 1,
 		mapTargets.Num() );
-	cmdSystem->SetupReloadEngine( reloadArgs );
+	cmdSystem->SetupReloadGameModule( reloadArgs );
+}
+
+static bool Session_WaitForLightGridBakeView( const idStr &mapName ) {
+	const int startMsec = Sys_Milliseconds();
+	const int maxWaitMsec = 10000;
+	const int maxFrames = 240;
+
+	for ( int frame = 0; frame < maxFrames && Sys_Milliseconds() - startMsec < maxWaitMsec; frame++ ) {
+		if ( tr.primaryWorld != NULL && tr.primaryView != NULL ) {
+			if ( frame > 0 ) {
+				common->Printf( "bakeLightGrids: render view ready for %s after %i warm-up frame(s)\n", mapName.c_str(), frame );
+			}
+			return true;
+		}
+
+		common->GUIFrame( false, true );
+	}
+
+	common->Printf( "bakeLightGrids: timed out waiting for render view after loading '%s'\n", mapName.c_str() );
+	return tr.primaryWorld != NULL && tr.primaryView != NULL;
 }
 
 static bool Session_LoadLightGridBakeMap( const idStr &mapName ) {
@@ -2082,8 +2102,7 @@ static bool Session_LoadLightGridBakeMap( const idStr &mapName ) {
 		return false;
 	}
 
-	sessLocal.UpdateScreen();
-	return true;
+	return Session_WaitForLightGridBakeView( mapName );
 }
 
 static bool Session_CanBakeLightGridMap( const idStr &mapName ) {
@@ -2108,7 +2127,10 @@ static bool Session_BakeLightGridCurrentMap( const lightGridBakeOptions_t &optio
 	}
 
 	if ( sessLocal.mapSpawned && ( !tr.primaryWorld || !tr.primaryView ) ) {
-		sessLocal.UpdateScreen();
+		idStr waitMapName = cvarSystem->GetCVarString( "si_map" );
+		if ( !Session_WaitForLightGridBakeView( waitMapName ) ) {
+			return false;
+		}
 	}
 
 	idStr mapName;
@@ -3414,7 +3436,7 @@ void idSessionLocal::StartNewGame( const char *mapName, bool devmap, const char 
 		if ( normalizedEntityFilter.Length() > 0 ) {
 			reloadArgs.AppendArg( normalizedEntityFilter.c_str() );
 		}
-		cmdSystem->SetupReloadEngine( reloadArgs );
+		cmdSystem->SetupReloadGameModule( reloadArgs );
 		return;
 	}
 
@@ -4672,7 +4694,7 @@ bool idSessionLocal::LoadGame( const char *saveName ) {
 		idCmdArgs reloadArgs;
 		reloadArgs.AppendArg( "loadGame" );
 		reloadArgs.AppendArg( requestedSaveName.c_str() );
-		cmdSystem->SetupReloadEngine( reloadArgs );
+		cmdSystem->SetupReloadGameModule( reloadArgs );
 		return true;
 	}
 

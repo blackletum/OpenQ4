@@ -90,6 +90,8 @@ void GLimp_SetGamma( unsigned short red[256],
 				    unsigned short green[256],
 					unsigned short blue[256] ) { }
 
+void GLimp_PreserveWindowOnShutdown( bool preserve ) { (void)preserve; }
+
 void GLimp_Shutdown( void ) { }
 
 void GLimp_SwapBuffers( void ) { }

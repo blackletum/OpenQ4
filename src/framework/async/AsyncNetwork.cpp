@@ -337,7 +337,7 @@ void idAsyncNetwork::SpawnServer_f( const idCmdArgs &args ) {
 		if ( args.Argc() > 1 ) {
 			reloadArgs.AppendArg( args.Argv( 1 ) );
 		}
-		cmdSystem->SetupReloadEngine( reloadArgs );
+		cmdSystem->SetupReloadGameModule( reloadArgs );
 		return;
 	}
 
@@ -402,7 +402,7 @@ void idAsyncNetwork::Connect_f( const idCmdArgs &args ) {
 		idCmdArgs reloadArgs;
 		reloadArgs.AppendArg( "connect" );
 		reloadArgs.AppendArg( args.Argv( 1 ) );
-		cmdSystem->SetupReloadEngine( reloadArgs );
+		cmdSystem->SetupReloadGameModule( reloadArgs );
 		return;
 	}
 
@@ -422,7 +422,7 @@ void idAsyncNetwork::Reconnect_f( const idCmdArgs &args ) {
 		cvarSystem->SetCVarString( "com_nextGameModule", "game_mp" );
 		idCmdArgs reloadArgs;
 		reloadArgs.AppendArg( "reconnect" );
-		cmdSystem->SetupReloadEngine( reloadArgs );
+		cmdSystem->SetupReloadGameModule( reloadArgs );
 		return;
 	}
 
