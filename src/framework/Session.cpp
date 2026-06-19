@@ -1435,6 +1435,7 @@ static void Session_DrawFallbackLoadingScreen() {
 
 	renderSystem->SetColor( idVec4( 24.0f / 255.0f, 26.0f / 255.0f, 8.0f / 255.0f, 1.0f ) );
 	renderSystem->DrawStretchPic( 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0, 0, 1, 1, declManager->FindMaterial( "_white" ) );
+	renderSystem->FlushGui();
 
 	const idMaterial *splashMaterial = declManager->FindMaterial( "gfx/splashScreen", false );
 	if ( splashMaterial ) {

@@ -42,7 +42,7 @@ The Steam Deck auto cap preserves custom `com_maxfps` values. Set `com_steamDeck
 | Setting | Default | What it does |
 |---|---:|---|
 | `r_multiSamples` | `0` | MSAA sample count for the main scene render target (`0`, `2`, `4`, `8`, `16`; `0` = off). |
-| `r_postAA` | `0` | Post AA mode (`0` = off, `1` = official SMAA 1x using the medium preset). |
+| `r_postAA` | `0` | Post AA mode (`0` = off, `1` = SMAA medium, `2` = SMAA high, `3` = SMAA ultra, `4` = color-edge prototype). |
 | `r_msaaAlphaToCoverage` | `1` | Enables alpha-to-coverage for perforated/alpha-tested materials when MSAA is active. Helps foliage/fences look cleaner. |
 | `r_msaaResolveDepth` | `0` | Also resolves depth during MSAA resolve. Usually leave this off unless debugging a depth-dependent edge case. |
 
@@ -54,8 +54,19 @@ The Steam Deck auto cap preserves custom `com_maxfps` values. Set `com_steamDeck
 - `16`: enthusiast/high-end setting where supported.
 - `1` usually provides no meaningful benefit and is not recommended.
 
+`r_postAA` value guide:
+- `0`: disabled.
+- `1`: SMAA medium; luma-edge detection with a `0.10` threshold and 8-step search, recommended as the post-AA default.
+- `2`: SMAA high; luma-edge detection with the same `0.10` threshold and a 16-step search.
+- `3`: SMAA ultra; luma-edge detection with a lower `0.05` threshold and a 32-step search.
+- `4`: color-edge prototype; color-edge detection with a `0.10` threshold and a 16-step search for comparison captures.
+
 Notes:
 - `r_multiSamples` is hardware-limited and may be clamped by the driver/GPU.
+- Unsupported `r_multiSamples` values are normalized to the supported ladder before video startup (`1` becomes off; odd/intermediate values step up to `2`, `4`, `8`, or `16`).
+- On SDL3 builds, video startup retries lower MSAA requests if the window or GL context rejects the requested sample count (`16 -> 8 -> 4 -> 2 -> off`) and logs the requested, selected, and driver-reported multisample attributes.
+- `gfxInfo` reports the active AA summary, including requested/effective MSAA, `GL_MAX_SAMPLES`, alpha-to-coverage, post AA mode, screen fraction, and supersampling state.
+- The Post AA startup/runtime log records the active SMAA edge mode, threshold, search steps, and local contrast scale so quality captures can be compared without guessing which shader contract was active.
 - Changing `r_multiSamples` should be followed by `vid_restart`.
 - `r_postAA`, `r_msaaAlphaToCoverage`, and `r_msaaResolveDepth` can be changed at runtime, but a `vid_restart` is still safe if behavior looks stale.
 

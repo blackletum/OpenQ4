@@ -4914,7 +4914,41 @@ static int SDL3_BuildGLContextCandidates(rendererContextCandidate_t *candidates,
 	return candidateCount;
 }
 
-static void SDL3_SetGLAttributesForCandidate(glimpParms_t parms, const rendererContextCandidate_t &candidate) {
+static int SDL3_NormalizeMSAASampleFallback(const int samples) {
+	if (samples <= 1) {
+		return 0;
+	}
+	if (samples <= 2) {
+		return 2;
+	}
+	if (samples <= 4) {
+		return 4;
+	}
+	if (samples <= 8) {
+		return 8;
+	}
+	return 16;
+}
+
+static int SDL3_BuildMSAASampleFallbacks(const int requestedSamples, int *fallbacks, const int maxFallbacks) {
+	static const int sampleSteps[] = {16, 8, 4, 2, 0};
+	const int normalizedSamples = SDL3_NormalizeMSAASampleFallback(requestedSamples);
+	int fallbackCount = 0;
+
+	if (fallbacks == NULL || maxFallbacks <= 0) {
+		return 0;
+	}
+
+	for (int i = 0; i < static_cast<int>(sizeof(sampleSteps) / sizeof(sampleSteps[0])) && fallbackCount < maxFallbacks; ++i) {
+		if (sampleSteps[i] <= normalizedSamples) {
+			fallbacks[fallbackCount++] = sampleSteps[i];
+		}
+	}
+
+	return fallbackCount > 0 ? fallbackCount : 1;
+}
+
+static void SDL3_SetGLAttributesForCandidate(glimpParms_t parms, const rendererContextCandidate_t &candidate, const int multiSamples) {
 	SDL_GL_ResetAttributes();
 	(void)SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
 	(void)SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
@@ -4926,9 +4960,9 @@ static void SDL3_SetGLAttributesForCandidate(glimpParms_t parms, const rendererC
 	if (parms.stereo) {
 		(void)SDL_GL_SetAttribute(SDL_GL_STEREO, 1);
 	}
-	if (parms.multiSamples > 1) {
+	if (multiSamples > 1) {
 		(void)SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
-		(void)SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, parms.multiSamples);
+		(void)SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, multiSamples);
 	}
 	if (candidate.explicitVersion) {
 		(void)SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, candidate.major);
@@ -4962,16 +4996,20 @@ static const char *SDL3_GLProfileMaskName(int profileMask) {
 	}
 }
 
-static void SDL3_LogGLContextAttributes(void) {
+static void SDL3_LogGLContextAttributes(const int requestedMultiSamples, const int selectedMultiSamples) {
 	int major = 0;
 	int minor = 0;
 	int profileMask = 0;
 	int flags = 0;
+	int multisampleBuffers = 0;
+	int multisampleSamples = 0;
 
 	const bool gotMajor = SDL_GL_GetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, &major);
 	const bool gotMinor = SDL_GL_GetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, &minor);
 	const bool gotProfile = SDL_GL_GetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, &profileMask);
 	const bool gotFlags = SDL_GL_GetAttribute(SDL_GL_CONTEXT_FLAGS, &flags);
+	const bool gotMultisampleBuffers = SDL_GL_GetAttribute(SDL_GL_MULTISAMPLEBUFFERS, &multisampleBuffers);
+	const bool gotMultisampleSamples = SDL_GL_GetAttribute(SDL_GL_MULTISAMPLESAMPLES, &multisampleSamples);
 
 	common->Printf(
 		"SDL3: reported OpenGL context attributes: version=%s%d.%d profile=%s flags=%s0x%x\n",
@@ -4981,6 +5019,14 @@ static void SDL3_LogGLContextAttributes(void) {
 		gotProfile ? SDL3_GLProfileMaskName(profileMask) : "unreported",
 		gotFlags ? "" : "<unreported> ",
 		flags);
+	common->Printf(
+		"SDL3: reported OpenGL multisample attributes: requested=%d selected=%d actualBuffers=%s%d actualSamples=%s%d\n",
+		requestedMultiSamples,
+		selectedMultiSamples,
+		gotMultisampleBuffers ? "" : "<unreported> ",
+		multisampleBuffers,
+		gotMultisampleSamples ? "" : "<unreported> ",
+		multisampleSamples);
 }
 
 void GLimp_PreserveWindowOnShutdown(bool preserve) {
@@ -5056,65 +5102,81 @@ bool GLimp_Init(glimpParms_t parms) {
 		common->Printf("SDL3: reusing preserved OpenGL window\n");
 	}
 
+	const int requestedMultiSamples = SDL3_NormalizeMSAASampleFallback(parms.multiSamples);
+	parms.multiSamples = requestedMultiSamples;
+	int multiSampleFallbacks[5];
+	const int multiSampleFallbackCount = SDL3_BuildMSAASampleFallbacks(
+		requestedMultiSamples,
+		multiSampleFallbacks,
+		static_cast<int>(sizeof(multiSampleFallbacks) / sizeof(multiSampleFallbacks[0])));
+	int selectedMultiSamples = 0;
+
 	idStr lastContextError;
 	s_sdlContext = NULL;
 	for (int candidateIndex = 0; candidateIndex < contextCandidateCount; ++candidateIndex) {
 		const rendererContextCandidate_t &candidate = contextCandidates[candidateIndex];
-		SDL3_SetGLAttributesForCandidate(parms, candidate);
+		for (int sampleIndex = 0; sampleIndex < multiSampleFallbackCount; ++sampleIndex) {
+			const int candidateMultiSamples = multiSampleFallbacks[sampleIndex];
+			SDL3_SetGLAttributesForCandidate(parms, candidate, candidateMultiSamples);
 
-		const bool createdWindowForAttempt = !usingPreservedWindow;
-		if (createdWindowForAttempt) {
-			s_sdlWindow = SDL_CreateWindow(GAME_NAME, parms.width, parms.height, flags);
-			if (!s_sdlWindow) {
-				lastContextError = SDL_GetError();
-				common->Printf("SDL3: could not create window for OpenGL context %s: %s\n", candidate.label, lastContextError.c_str());
-				continue;
-			}
-		}
-
-		if (createdWindowForAttempt && !parms.fullScreen && !parms.hiddenWindow) {
-			int targetX = win32.win_xpos.GetInteger();
-			int targetY = win32.win_ypos.GetInteger();
-			int targetWidth = parms.width;
-			int targetHeight = parms.height;
-
-			const sdl3DisplaySelection_t selectedDisplay = SDL3_ResolveTargetDisplay(false);
-			if (selectedDisplay.id != 0) {
-				SDL_Rect bounds;
-				if (SDL3_GetDisplayWindowedPlacementBounds(selectedDisplay.id, bounds)) {
-					const bool needsRecoveryPlacement = !SDL3_WindowRectIntersectsAnyDisplay(targetX, targetY, targetWidth, targetHeight);
-					const bool recenterIfOutside = (r_screen.GetInteger() >= 0) || needsRecoveryPlacement;
-					SDL3_ConstrainWindowRectToBounds(targetX, targetY, targetWidth, targetHeight, bounds, recenterIfOutside);
+			const bool createdWindowForAttempt = !usingPreservedWindow;
+			if (createdWindowForAttempt) {
+				s_sdlWindow = SDL_CreateWindow(GAME_NAME, parms.width, parms.height, flags);
+				if (!s_sdlWindow) {
+					lastContextError = SDL_GetError();
+					common->Printf("SDL3: could not create window for OpenGL context %s with MSAA samples=%d: %s\n", candidate.label, candidateMultiSamples, lastContextError.c_str());
+					continue;
 				}
 			}
 
-			(void)SDL_SetWindowSize(s_sdlWindow, targetWidth, targetHeight);
-			(void)SDL3_SetWindowPositionCompat(
-				targetX,
-				targetY,
-				selectedDisplay.id,
-				r_screen.GetInteger() >= 0,
-				"place initial window");
-		}
+			if (createdWindowForAttempt && !parms.fullScreen && !parms.hiddenWindow) {
+				int targetX = win32.win_xpos.GetInteger();
+				int targetY = win32.win_ypos.GetInteger();
+				int targetWidth = parms.width;
+				int targetHeight = parms.height;
 
-		common->Printf("SDL3: trying OpenGL context %s\n", candidate.label);
-		s_sdlContext = SDL_GL_CreateContext(s_sdlWindow);
-		if (s_sdlContext && SDL_GL_MakeCurrent(s_sdlWindow, s_sdlContext)) {
-			SDL3_RecordGLContextCandidate(candidate);
-			common->Printf("SDL3: created OpenGL context %s\n", glConfig.contextRequest.label);
-			break;
-		}
+				const sdl3DisplaySelection_t selectedDisplay = SDL3_ResolveTargetDisplay(false);
+				if (selectedDisplay.id != 0) {
+					SDL_Rect bounds;
+					if (SDL3_GetDisplayWindowedPlacementBounds(selectedDisplay.id, bounds)) {
+						const bool needsRecoveryPlacement = !SDL3_WindowRectIntersectsAnyDisplay(targetX, targetY, targetWidth, targetHeight);
+						const bool recenterIfOutside = (r_screen.GetInteger() >= 0) || needsRecoveryPlacement;
+						SDL3_ConstrainWindowRectToBounds(targetX, targetY, targetWidth, targetHeight, bounds, recenterIfOutside);
+					}
+				}
 
-		lastContextError = SDL_GetError();
-		common->Printf("SDL3: OpenGL context %s failed: %s\n", candidate.label, lastContextError.c_str());
+				(void)SDL_SetWindowSize(s_sdlWindow, targetWidth, targetHeight);
+				(void)SDL3_SetWindowPositionCompat(
+					targetX,
+					targetY,
+					selectedDisplay.id,
+					r_screen.GetInteger() >= 0,
+					"place initial window");
+			}
+
+			common->Printf("SDL3: trying OpenGL context %s with MSAA samples=%d\n", candidate.label, candidateMultiSamples);
+			s_sdlContext = SDL_GL_CreateContext(s_sdlWindow);
+			if (s_sdlContext && SDL_GL_MakeCurrent(s_sdlWindow, s_sdlContext)) {
+				SDL3_RecordGLContextCandidate(candidate);
+				selectedMultiSamples = candidateMultiSamples;
+				common->Printf("SDL3: created OpenGL context %s with MSAA samples=%d\n", glConfig.contextRequest.label, selectedMultiSamples);
+				break;
+			}
+
+			lastContextError = SDL_GetError();
+			common->Printf("SDL3: OpenGL context %s with MSAA samples=%d failed: %s\n", candidate.label, candidateMultiSamples, lastContextError.c_str());
+			if (s_sdlContext) {
+				(void)SDL_GL_MakeCurrent(s_sdlWindow, NULL);
+				(void)SDL_GL_DestroyContext(s_sdlContext);
+				s_sdlContext = NULL;
+			}
+			if (createdWindowForAttempt) {
+				SDL_DestroyWindow(s_sdlWindow);
+				s_sdlWindow = NULL;
+			}
+		}
 		if (s_sdlContext) {
-			(void)SDL_GL_MakeCurrent(s_sdlWindow, NULL);
-			(void)SDL_GL_DestroyContext(s_sdlContext);
-			s_sdlContext = NULL;
-		}
-		if (createdWindowForAttempt) {
-			SDL_DestroyWindow(s_sdlWindow);
-			s_sdlWindow = NULL;
+			break;
 		}
 	}
 	if (!s_sdlContext) {
@@ -5132,7 +5194,13 @@ bool GLimp_Init(glimpParms_t parms) {
 		}
 		return false;
 	}
-	SDL3_LogGLContextAttributes();
+	if (selectedMultiSamples != requestedMultiSamples) {
+		common->Printf("SDL3: r_multiSamples requested %d, using %d after context creation fallback\n", requestedMultiSamples, selectedMultiSamples);
+		r_multiSamples.SetInteger(selectedMultiSamples);
+		r_multiSamples.ClearModified();
+		parms.multiSamples = selectedMultiSamples;
+	}
+	SDL3_LogGLContextAttributes(requestedMultiSamples, selectedMultiSamples);
 
 #if defined(OPENQ4_SDL3_LINUX_HOST)
 	driverName = r_glDriver.GetString()[0] ? r_glDriver.GetString() : "libGL.so.1";

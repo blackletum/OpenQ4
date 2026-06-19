@@ -808,10 +808,7 @@ void idRenderSystemLocal::SetUseUIViewportFor2D( bool enable ) {
 
 	// Viewport selection for 2D is applied when guiModel is emitted.
 	// Flush pending 2D so already-queued surfaces keep the previous mode.
-	if ( glConfig.isInitialized && guiModel != NULL ) {
-		guiModel->EmitFullScreen();
-		guiModel->Clear();
-	}
+	FlushGui();
 
 	useUIViewportFor2D = enable;
 }
@@ -829,6 +826,15 @@ x/y/w/h are in the 0,0 to 640,480 range
 */
 void idRenderSystemLocal::DrawStretchTri( idVec2 p1, idVec2 p2, idVec2 p3, idVec2 t1, idVec2 t2, idVec2 t3, const idMaterial *material ) {
 	tr.guiModel->DrawStretchTri( p1, p2, p3, t1, t2, t3, material );
+}
+
+void idRenderSystemLocal::FlushGui() {
+	if ( !glConfig.isInitialized || guiModel == NULL ) {
+		return;
+	}
+
+	guiModel->EmitFullScreen();
+	guiModel->Clear();
 }
 
 /*
@@ -1250,8 +1256,7 @@ void idRenderSystemLocal::EndFrame( int *frontEndMsec, int *backEndMsec ) {
 	}
 
 	// close any gui drawing
-	guiModel->EmitFullScreen();
-	guiModel->Clear();
+	FlushGui();
 
 	// check for dynamic changes that require some initialization
 	R_CheckCvars();

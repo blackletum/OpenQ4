@@ -1583,14 +1583,17 @@
       "choices_key": "#str_41095",
       "values": [
         "0",
-        "1"
+        "1",
+        "2",
+        "3",
+        "4"
       ],
       "target_type": "cvar",
       "target": "r_postAA",
       "default": "0",
       "cvar_range": {
         "low": "0",
-        "high": "1"
+        "high": "4"
       },
       "restart_required": false,
       "accessibility": "Standard focusable choiceDef row."

@@ -256,7 +256,7 @@ The pane has two display layouts:
 | Multi-Screen | `choiceDef` | `set_sys_multiscreen_val` | `r_multiScreen` | `0 Primary Display Only`, `1 Span All Displays` | Only visible when more than one display is detected. |
 | Resolution Scale | `choiceDef` | `set_sys_supersample_val` | `r_screenFraction` | `10`, `25`, `50`, `75`, `85`, `100`, `125`, `150`, `200` | Values below `100%` reduce scene resolution for performance; values above `100%` render the root scene into a larger single-sample offscreen target and resolve back to the native back buffer. |
 | Anti-Aliasing | `choiceDef` | `set_sys_msaa_val` | `r_multisamples` | `0 Off`, `2 2x`, `4 4x`, `8 8x`, `16 16x` | GUI cvar spelling is lower-case `r_multisamples`; the engine cvar is `r_multiSamples` and cvar lookup is case-insensitive. |
-| Post AA | `choiceDef` | `set_sys_postaa_val` | `r_postAA` | `0 Off`, `1 SMAA 1x` | Runtime post-process AA option. |
+| Post AA | `choiceDef` | `set_sys_postaa_val` | `r_postAA` | `0 Off`, `1 SMAA Medium`, `2 SMAA High`, `3 SMAA Ultra`, `4 Color Edge` | Runtime post-process AA option. |
 | VSync | `choiceDef` | `set_sys_vsync_val` | `r_swapInterval` | `No;Yes` | Boolean picker. |
 | Borderless | `choiceDef` | `set_sys_borderless_val` | `r_borderless` | `No;Yes` | Boolean picker. |
 | Fullscreen Policy | `choiceDef` | `set_sys_fullscreen_policy_val` | `r_fullscreenDesktop` | `1 Desktop`, `0 Exclusive` | Desktop/native fullscreen is first in the displayed order. |

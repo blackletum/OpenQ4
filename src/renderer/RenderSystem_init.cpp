@@ -176,11 +176,12 @@ static void GfxInfo_f( void );
 const char *r_rendererArgs[] = { "best", "arb", "arb2", "Cg", "exp", "nv10", "nv20", "r200", NULL };
 const char *r_glTierArgs[] = { "auto", "legacy", "gl33", "gl41", "gl43", "gl45", "gl46", NULL };
 const char *r_rendererBenchmarkPresetArgs[] = { "low", "baseline", "modern", "high-end", NULL };
+const char *r_multiSamplesArgs[] = { "0", "2", "4", "8", "16", NULL };
 
 idCVar r_inhibitFragmentProgram( "r_inhibitFragmentProgram", "0", CVAR_RENDERER | CVAR_BOOL, "ignore the fragment program extension" );
 idCVar r_glDriver( "r_glDriver", "", CVAR_RENDERER, "\"opengl32\", etc." );
 idCVar r_useLightPortalFlow( "r_useLightPortalFlow", "1", CVAR_RENDERER | CVAR_BOOL, "use a more precise area reference determination" );
-idCVar r_multiSamples( "r_multiSamples", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "number of antialiasing samples" );
+idCVar r_multiSamples( "r_multiSamples", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "MSAA sample count: 0 = off, 2/4/8/16 = supported quality steps", 0, 16, idCmdSystem::ArgCompletion_String<r_multiSamplesArgs> );
 idCVar r_postAA( "r_postAA", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "post AA mode: 0 = off, 1 = SMAA 1x medium, 2 = SMAA 1x high, 3 = SMAA 1x ultra, 4 = SMAA 1x colour-edge prototype", 0, 4, idCmdSystem::ArgCompletion_Integer<0,4> );
 idCVar r_postAAStatePoisonTest( "r_postAAStatePoisonTest", "0", CVAR_RENDERER | CVAR_BOOL, "intentionally dirty GL texture/client state before SMAA post-AA draws for validation" );
 idCVar r_bloom( "r_bloom", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable bloom post-process" );
@@ -1261,6 +1262,22 @@ static void R_GetWindowedModeInfo( int *width, int *height ) {
 	}
 }
 
+static int R_NormalizeMultiSamplesValue( const int samples ) {
+	if ( samples <= 1 ) {
+		return 0;
+	}
+	if ( samples <= 2 ) {
+		return 2;
+	}
+	if ( samples <= 4 ) {
+		return 4;
+	}
+	if ( samples <= 8 ) {
+		return 8;
+	}
+	return 16;
+}
+
 static void R_NormalizeDisplayCvars( void ) {
 	const int originalMode = r_mode.GetInteger();
 	int normalizedMode = originalMode;
@@ -1299,6 +1316,14 @@ static void R_NormalizeDisplayCvars( void ) {
 	if ( r_customHeight.GetInteger() != clampedCustomHeight ) {
 		r_customHeight.SetInteger( clampedCustomHeight );
 		r_customHeight.ClearModified();
+	}
+
+	const int originalMultiSamples = r_multiSamples.GetInteger();
+	const int normalizedMultiSamples = R_NormalizeMultiSamplesValue( originalMultiSamples );
+	if ( originalMultiSamples != normalizedMultiSamples ) {
+		common->Printf( "^3r_multiSamples %d is not a supported MSAA step; using %d^0\n", originalMultiSamples, normalizedMultiSamples );
+		r_multiSamples.SetInteger( normalizedMultiSamples );
+		r_multiSamples.ClearModified();
 	}
 }
 
@@ -3075,6 +3100,113 @@ void R_SetColorMappings( void ) {
 	GLimp_SetGamma( tr.gammaTable, tr.gammaTable, tr.gammaTable );
 }
 
+static const char *R_GfxInfoPostAAName( const int postAA ) {
+	switch ( postAA ) {
+		case 0:
+			return "Off";
+		case 1:
+			return "SMAA1xMedium";
+		case 2:
+			return "SMAA1xHigh";
+		case 3:
+			return "SMAA1xUltra";
+		case 4:
+			return "SMAA1xColorPrototype";
+		default:
+			return "Unknown";
+	}
+}
+
+static int R_GfxInfoGLMaxSamples( bool &available ) {
+	available = false;
+	int maxSamples = 0;
+
+#ifdef GL_MAX_SAMPLES
+	if ( glConfig.isInitialized && ( GLEW_ARB_texture_multisample || GLEW_VERSION_3_2 ) ) {
+		glGetIntegerv( GL_MAX_SAMPLES, &maxSamples );
+		available = maxSamples > 0;
+	}
+#endif
+
+	return maxSamples;
+}
+
+static void R_GfxInfoPrintAAState( void ) {
+	bool maxSamplesAvailable = false;
+	const int glMaxSamples = R_GfxInfoGLMaxSamples( maxSamplesAvailable );
+	const int requestedMSAA = Max( 0, r_multiSamples.GetInteger() );
+	const int screenFraction = idMath::ClampInt( 10, 200, r_screenFraction.GetInteger() );
+	const bool supersamplingActive = screenFraction > 100;
+	const bool modernVisiblePostSuppressesMSAA = R_ModernGLExecutor_ModernVisibleRequestedForPost();
+	const bool textureMSAAAvailable = ( GLEW_ARB_texture_multisample || GLEW_VERSION_3_2 ) != 0;
+
+	int effectiveMSAA = 0;
+	const char *msaaReason = "off";
+	if ( requestedMSAA > 1 ) {
+		if ( supersamplingActive ) {
+			msaaReason = "supersampling";
+		} else if ( modernVisiblePostSuppressesMSAA ) {
+			msaaReason = "modern-visible-post";
+		} else if ( !textureMSAAAvailable ) {
+			msaaReason = "texture-msaa-unavailable";
+		} else {
+			effectiveMSAA = requestedMSAA;
+			msaaReason = "active";
+			if ( maxSamplesAvailable && effectiveMSAA > glMaxSamples ) {
+				effectiveMSAA = glMaxSamples;
+				msaaReason = "gl-max-clamp";
+			}
+			if ( effectiveMSAA <= 1 ) {
+				effectiveMSAA = 0;
+				msaaReason = "gl-max-disabled";
+			}
+		}
+	}
+
+	const int postAA = idMath::ClampInt( 0, 4, r_postAA.GetInteger() );
+	const char *postAAName = R_GfxInfoPostAAName( postAA );
+	bool postAAEffective = postAA > 0;
+	const char *postAAReason = postAAName;
+	if ( postAA == 0 ) {
+		postAAReason = "off";
+	} else if ( r_skipPostProcess.GetBool() ) {
+		postAAEffective = false;
+		postAAReason = "r_skipPostProcess";
+	} else if ( !glConfig.GLSLProgramAvailable ) {
+		postAAEffective = false;
+		postAAReason = "glsl-unavailable";
+	}
+
+	char glMaxSamplesText[32];
+	if ( maxSamplesAvailable ) {
+		idStr::snPrintf( glMaxSamplesText, sizeof( glMaxSamplesText ), "%d", glMaxSamples );
+	} else {
+		idStr::snPrintf( glMaxSamplesText, sizeof( glMaxSamplesText ), "unavailable" );
+	}
+
+	char supersamplingText[32];
+	if ( supersamplingActive ) {
+		idStr::snPrintf( supersamplingText, sizeof( supersamplingText ), "%d%%", screenFraction );
+	} else {
+		idStr::snPrintf( supersamplingText, sizeof( supersamplingText ), "off" );
+	}
+
+	common->Printf(
+		"Renderer AA: MSAA requested=%d effective=%d reason=%s GL_MAX_SAMPLES=%s alphaToCoverage=%d PostAA=%d(%s) postAAEffective=%d postAAReason=%s screenFraction=%d%% supersampling=%s resolutionScaleMode=%d\n",
+		requestedMSAA,
+		effectiveMSAA,
+		msaaReason,
+		glMaxSamplesText,
+		r_msaaAlphaToCoverage.GetBool() ? 1 : 0,
+		postAA,
+		postAAName,
+		postAAEffective ? 1 : 0,
+		postAAReason,
+		screenFraction,
+		supersamplingText,
+		r_resolutionScaleMode.GetInteger() );
+}
+
 
 /*
 ================
@@ -3140,6 +3272,7 @@ void GfxInfo_f( const idCmdArgs &args ) {
 		glConfig.contextRequest.debugContext ? 1 : 0,
 		glConfig.backendCaps.debugContext ? 1 : 0,
 		glConfig.backendCaps.forwardCompatibleContext ? 1 : 0 );
+	R_GfxInfoPrintAAState();
 	common->Printf(
 		"Renderer features: modern=%d gl41=%d gpuDriven=%d lowOverhead=%d persistentUploads=%d DSA=%d multiBind=%d bindless=%d bindlessExperiment=%d renderGraph=%d scenePackets=%d legacyBridge=%d\n",
 		glConfig.renderFeatures.modernBaseline ? 1 : 0,
