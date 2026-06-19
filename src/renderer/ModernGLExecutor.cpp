@@ -8187,6 +8187,105 @@ static bool R_ModernGLExecutor_InitSelfTestTriangleGeometry( srfTriangles_t &geo
 	return true;
 }
 
+struct rendererModernGLSelfTestSurfaceScene_t {
+	drawSurf_t drawSurfs[4];
+	drawSurf_t *drawSurfPtrs[4];
+	srfTriangles_t geometry;
+	vertCache_t ambientCache;
+	vertCache_t indexCache;
+	viewEntity_t viewEntity;
+	viewDef_t worldView;
+	idDecl *ownedMaterialDecl;
+	const idMaterial *ownedOpaqueMaterial;
+
+	rendererModernGLSelfTestSurfaceScene_t() :
+		ownedMaterialDecl( NULL ),
+		ownedOpaqueMaterial( NULL ) {
+	}
+
+	~rendererModernGLSelfTestSurfaceScene_t() {
+		DeclManager_FreeAllocatedDecl( ownedMaterialDecl );
+		ownedMaterialDecl = NULL;
+		ownedOpaqueMaterial = NULL;
+	}
+
+	const idMaterial *InitOpaqueMaterial( const char *selfTestName ) {
+		if ( ownedOpaqueMaterial != NULL ) {
+			return ownedOpaqueMaterial;
+		}
+		if ( declManager == NULL ) {
+			common->Printf( "%s self-test failed: decl manager unavailable for synthetic opaque material\n", selfTestName ? selfTestName : "Renderer" );
+			return NULL;
+		}
+
+		ownedMaterialDecl = declManager->AllocateDecl( DECL_MATERIAL );
+		idMaterial *material = static_cast<idMaterial *>( ownedMaterialDecl );
+		const char *definition =
+			"{\n"
+			"\t{\n"
+			"\t\tblend\tbumpmap\n"
+			"\t\tmap\t_flat\n"
+			"\t}\n"
+			"\t{\n"
+			"\t\tblend\tdiffusemap\n"
+			"\t\tmap\t_white\n"
+			"\t}\n"
+			"\t{\n"
+			"\t\tblend\tspecularmap\n"
+			"\t\tmap\t_black\n"
+			"\t}\n"
+			"}\n";
+		if ( material == NULL || !material->Parse( definition, static_cast<int>( strlen( definition ) ), true ) ) {
+			common->Printf( "%s self-test failed: could not parse synthetic opaque material\n", selfTestName ? selfTestName : "Renderer" );
+			DeclManager_FreeAllocatedDecl( ownedMaterialDecl );
+			ownedMaterialDecl = NULL;
+			return NULL;
+		}
+		if ( !material->IsDrawn() || material->Coverage() == MC_TRANSLUCENT || material->GetSort() >= SS_POST_PROCESS ) {
+			common->Printf(
+				"%s self-test failed: synthetic material is not opaque-compatible (drawn=%d coverage=%d sort=%.3f)\n",
+				selfTestName ? selfTestName : "Renderer",
+				material->IsDrawn() ? 1 : 0,
+				material->Coverage(),
+				material->GetSort() );
+			DeclManager_FreeAllocatedDecl( ownedMaterialDecl );
+			ownedMaterialDecl = NULL;
+			return NULL;
+		}
+
+		ownedOpaqueMaterial = material;
+		return ownedOpaqueMaterial;
+	}
+
+	bool Init( const char *selfTestName, const int drawSurfCount, const idMaterial *materialOverride = NULL ) {
+		if ( drawSurfCount <= 0 || drawSurfCount > static_cast<int>( sizeof( drawSurfs ) / sizeof( drawSurfs[0] ) ) ) {
+			common->Printf( "%s self-test failed: invalid synthetic draw-surface count %d\n", selfTestName ? selfTestName : "Renderer", drawSurfCount );
+			return false;
+		}
+		memset( drawSurfs, 0, sizeof( drawSurfs ) );
+		memset( drawSurfPtrs, 0, sizeof( drawSurfPtrs ) );
+		memset( &viewEntity, 0, sizeof( viewEntity ) );
+		memset( &worldView, 0, sizeof( worldView ) );
+		if ( !R_ModernGLExecutor_InitSelfTestTriangleGeometry( geometry, ambientCache, indexCache, selfTestName ) ) {
+			return false;
+		}
+		const idMaterial *material = materialOverride != NULL ? materialOverride : tr.defaultMaterial;
+		for ( int i = 0; i < drawSurfCount; ++i ) {
+			drawSurfs[i].geo = &geometry;
+			drawSurfs[i].space = &viewEntity;
+			if ( material != NULL ) {
+				drawSurfs[i].material = material;
+				drawSurfs[i].sort = material->GetSort();
+			}
+			drawSurfPtrs[i] = &drawSurfs[i];
+		}
+		worldView.viewEntitys = &viewEntity;
+		worldView.drawSurfs = drawSurfPtrs;
+		worldView.numDrawSurfs = drawSurfCount;
+		return true;
+	}
+};
+
 bool RendererModernGLExecutor_RunSelfTest( void ) {
 	if ( !R_ModernGLExecutor_DrawVertLayoutSelfTest() ) {
 		return false;
@@ -8804,44 +8903,20 @@ bool RendererModernVisibility_RunSelfTest( void ) {
 	return true;
 }
 
-static bool R_ModernGLExecutor_BuildVisiblePathSelfTestFrame( idScenePacketFrame &packetFrame, idRenderGraph &graph ) {
+static bool R_ModernGLExecutor_BuildVisiblePathSelfTestFrame( idScenePacketFrame &packetFrame, idRenderGraph &graph, rendererModernGLSelfTestSurfaceScene_t &scene ) {
 	packetFrame.Clear();
 
-	drawSurf_t drawSurfs[2];
-	memset( drawSurfs, 0, sizeof( drawSurfs ) );
-	srfTriangles_t geometry;
-	vertCache_t ambientCache;
-	vertCache_t indexCache;
-	if ( !R_ModernGLExecutor_InitSelfTestTriangleGeometry( geometry, ambientCache, indexCache, "RendererVisiblePath" ) ) {
+	if ( !scene.Init( "RendererVisiblePath", 2 ) ) {
 		return false;
 	}
-	for ( int i = 0; i < 2; ++i ) {
-		drawSurfs[i].geo = &geometry;
-		if ( tr.defaultMaterial != NULL ) {
-			drawSurfs[i].material = tr.defaultMaterial;
-			drawSurfs[i].sort = tr.defaultMaterial->GetSort();
-		}
-	}
-
-	drawSurf_t *drawSurfPtrs[2] = { &drawSurfs[0], &drawSurfs[1] };
-	viewEntity_t viewEntity;
-	memset( &viewEntity, 0, sizeof( viewEntity ) );
-	drawSurfs[0].space = &viewEntity;
-	drawSurfs[1].space = &viewEntity;
-	viewDef_t worldView;
-	memset( &worldView, 0, sizeof( worldView ) );
-	worldView.viewEntitys = &viewEntity;
-	worldView.drawSurfs = drawSurfPtrs;
-	worldView.numDrawSurfs = 2;
-
-	if ( !packetFrame.AddScene( &worldView, true ) ) {
+	if ( !packetFrame.AddScene( &scene.worldView, true ) ) {
 		return false;
 	}
 	if ( !packetFrame.AddPass( RENDER_PASS_DEPTH, true ) ) {
 		return false;
 	}
 	for ( int i = 0; i < 2; ++i ) {
-		if ( !packetFrame.AddDrawPacket( &drawSurfs[i], RENDER_PASS_DEPTH, i ) ) {
+		if ( !packetFrame.AddDrawPacket( &scene.drawSurfs[i], RENDER_PASS_DEPTH, i ) ) {
 			return false;
 		}
 	}
@@ -8849,7 +8924,7 @@ static bool R_ModernGLExecutor_BuildVisiblePathSelfTestFrame( idScenePacketFrame
 		return false;
 	}
 	for ( int i = 0; i < 2; ++i ) {
-		if ( !packetFrame.AddDrawPacket( &drawSurfs[i], RENDER_PASS_SHADOW_MAP, i ) ) {
+		if ( !packetFrame.AddDrawPacket( &scene.drawSurfs[i], RENDER_PASS_SHADOW_MAP, i ) ) {
 			return false;
 		}
 	}
@@ -8869,7 +8944,8 @@ bool RendererVisiblePath_RunSelfTest( void ) {
 
 	idScenePacketFrame packetFrame;
 	idRenderGraph graph;
-	if ( !R_ModernGLExecutor_BuildVisiblePathSelfTestFrame( packetFrame, graph ) ) {
+	rendererModernGLSelfTestSurfaceScene_t scene;
+	if ( !R_ModernGLExecutor_BuildVisiblePathSelfTestFrame( packetFrame, graph, scene ) ) {
 		common->Printf( "RendererVisiblePath self-test failed: could not build depth/shadow packet frame\n" );
 		return false;
 	}
@@ -8955,42 +9031,19 @@ bool RendererVisiblePath_RunSelfTest( void ) {
 	return true;
 }
 
-static bool R_ModernGLExecutor_BuildGBufferSelfTestFrame( idScenePacketFrame &packetFrame, idRenderGraph &graph ) {
-	drawSurf_t drawSurfs[2];
-	memset( drawSurfs, 0, sizeof( drawSurfs ) );
-	srfTriangles_t geometry;
-	vertCache_t ambientCache;
-	vertCache_t indexCache;
-	if ( !R_ModernGLExecutor_InitSelfTestTriangleGeometry( geometry, ambientCache, indexCache, "RendererGBuffer" ) ) {
+static bool R_ModernGLExecutor_BuildGBufferSelfTestFrame( idScenePacketFrame &packetFrame, idRenderGraph &graph, rendererModernGLSelfTestSurfaceScene_t &scene, const idMaterial *material ) {
+	if ( !scene.Init( "RendererGBuffer", 2, material ) ) {
 		return false;
 	}
-	for ( int i = 0; i < 2; ++i ) {
-		drawSurfs[i].geo = &geometry;
-		if ( tr.defaultMaterial != NULL ) {
-			drawSurfs[i].material = tr.defaultMaterial;
-			drawSurfs[i].sort = tr.defaultMaterial->GetSort();
-		}
-	}
 
-	drawSurf_t *drawSurfPtrs[2] = { &drawSurfs[0], &drawSurfs[1] };
-	viewEntity_t viewEntity;
-	memset( &viewEntity, 0, sizeof( viewEntity ) );
-	drawSurfs[0].space = &viewEntity;
-	drawSurfs[1].space = &viewEntity;
-	viewDef_t worldView;
-	memset( &worldView, 0, sizeof( worldView ) );
-	worldView.viewEntitys = &viewEntity;
-	worldView.drawSurfs = drawSurfPtrs;
-	worldView.numDrawSurfs = 2;
-
-	if ( !packetFrame.AddScene( &worldView, true ) ) {
+	if ( !packetFrame.AddScene( &scene.worldView, true ) ) {
 		return false;
 	}
 	if ( !packetFrame.AddPass( RENDER_PASS_AMBIENT, true ) ) {
 		return false;
 	}
 	for ( int i = 0; i < 2; ++i ) {
-		if ( !packetFrame.AddDrawPacket( &drawSurfs[i], RENDER_PASS_AMBIENT, i ) ) {
+		if ( !packetFrame.AddDrawPacket( &scene.drawSurfs[i], RENDER_PASS_AMBIENT, i ) ) {
 			return false;
 		}
 	}
@@ -9045,7 +9098,12 @@ bool RendererGBuffer_RunSelfTest( void ) {
 
 	idScenePacketFrame packetFrame;
 	idRenderGraph graph;
-	if ( !R_ModernGLExecutor_BuildGBufferSelfTestFrame( packetFrame, graph ) ) {
+	rendererModernGLSelfTestSurfaceScene_t scene;
+	const idMaterial *gbufferMaterial = scene.InitOpaqueMaterial( "RendererGBuffer" );
+	if ( gbufferMaterial == NULL ) {
+		return false;
+	}
+	if ( !R_ModernGLExecutor_BuildGBufferSelfTestFrame( packetFrame, graph, scene, gbufferMaterial ) ) {
 		common->Printf( "RendererGBuffer self-test failed: could not build ambient packet frame\n" );
 		return false;
 	}
@@ -9060,9 +9118,9 @@ bool RendererGBuffer_RunSelfTest( void ) {
 	idModernGLSubmitPlan submitPlan;
 	submitPlan.Build( drawPlan );
 	const modernGLSubmitPlanStats_t &submitStats = submitPlan.Stats();
-	const materialResourceTableRecord_t *defaultRecord = R_MaterialResourceTable_FindRecordForMaterial( tr.defaultMaterial );
-	const bool materialModernEligible = defaultRecord != NULL && defaultRecord->fallbackReason == MATERIAL_RESOURCE_FALLBACK_NONE;
-	const int expectedDraws = tr.defaultMaterial != NULL && materialModernEligible ? 2 : 0;
+	const materialResourceTableRecord_t *selfTestRecord = R_MaterialResourceTable_FindRecordForMaterial( gbufferMaterial );
+	const bool materialModernEligible = selfTestRecord != NULL && selfTestRecord->fallbackReason == MATERIAL_RESOURCE_FALLBACK_NONE;
+	const int expectedDraws = gbufferMaterial != NULL && materialModernEligible ? 2 : 0;
 	if ( drawStats.sourceDrawPackets != packetFrame.NumDrawPackets() || drawStats.materialDraws != expectedDraws || submitStats.materialReadyDraws != expectedDraws || submitPlan.NumCommands() != expectedDraws ) {
 		common->Printf(
 			"RendererGBuffer self-test failed: draw/submit coverage mismatch (source=%d material=%d ready=%d commands=%d expected=%d)\n",
@@ -9581,8 +9639,16 @@ bool RendererModernVisible_RunSelfTest( void ) {
 		rendererModernVisibleBoolCVarRestore_t( idCVar &value ) : cvar( value ), oldValue( value.GetBool() ) {}
 		~rendererModernVisibleBoolCVarRestore_t() { cvar.SetBool( oldValue ); }
 	};
+	struct rendererModernVisibleIntCVarRestore_t {
+		idCVar &cvar;
+		int oldValue;
+		rendererModernVisibleIntCVarRestore_t( idCVar &value ) : cvar( value ), oldValue( value.GetInteger() ) {}
+		~rendererModernVisibleIntCVarRestore_t() { cvar.SetInteger( oldValue ); }
+	};
 	rendererModernVisibleBoolCVarRestore_t restoreShadows( r_shadows );
+	rendererModernVisibleIntCVarRestore_t restoreDeferredDebug( r_rendererModernDeferredDebug );
 	r_shadows.SetBool( false );
+	r_rendererModernDeferredDebug.SetInteger( 1 );
 
 	drawSurf_t drawSurfs[3];
 	memset( drawSurfs, 0, sizeof( drawSurfs ) );
@@ -10231,10 +10297,19 @@ bool RendererLowOverhead_RunSelfTest( void ) {
 		rendererLowOverheadCVarRestore_t( idCVar &value ) : cvar( value ), oldValue( value.GetBool() ) {}
 		~rendererLowOverheadCVarRestore_t() { cvar.SetBool( oldValue ); }
 	};
+	struct rendererLowOverheadIntCVarRestore_t {
+		idCVar &cvar;
+		int oldValue;
+
+		rendererLowOverheadIntCVarRestore_t( idCVar &value ) : cvar( value ), oldValue( value.GetInteger() ) {}
+		~rendererLowOverheadIntCVarRestore_t() { cvar.SetInteger( oldValue ); }
+	};
 	rendererLowOverheadCVarRestore_t restoreOpaque( r_rendererModernOpaque );
 	rendererLowOverheadCVarRestore_t restoreDeferred( r_rendererModernDeferred );
+	rendererLowOverheadIntCVarRestore_t restoreDeferredDebug( r_rendererModernDeferredDebug );
 	r_rendererModernOpaque.SetBool( true );
 	r_rendererModernDeferred.SetBool( true );
+	r_rendererModernDeferredDebug.SetInteger( 1 );
 
 	drawSurf_t drawSurfs[2];
 	memset( drawSurfs, 0, sizeof( drawSurfs ) );

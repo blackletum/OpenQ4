@@ -1967,22 +1967,21 @@ idStr::snPrintf
 int idStr::snPrintf( char *dest, int size, const char *fmt, ...) {
 	int len;
 	va_list argptr;
-	char buffer[32000];	// big, but small enough to fit in PPC stack
 
+	if ( dest == NULL || size <= 0 ) {
+		return -1;
+	}
 	va_start( argptr, fmt );
-	len = vsprintf( buffer, fmt, argptr );
+	len = idStr::vsnPrintf( dest, size, fmt, argptr );
 	va_end( argptr );
-	if ( len >= sizeof( buffer ) ) {
-		idLib::common->Error( "idStr::snPrintf: overflowed buffer" );
+	if ( len < 0 ) {
+		if ( idLib::common != NULL ) {
+			idLib::common->Warning( "idStr::snPrintf: overflow in %i byte buffer\n", size );
+		}
+		return idStr::Length( dest );
 	}
-	if ( len >= size ) {
-		idLib::common->Warning( "idStr::snPrintf: overflow of %i in %i\n", len, size );
-		len = size;
-	}
-	idStr::Copynz( dest, buffer, size );
 	return len;
 }
-
 /*
 ============
 idStr::vsnPrintf
@@ -2004,6 +2003,9 @@ or returns -1 on failure or if the buffer would be overflowed.
 int idStr::vsnPrintf( char *dest, int size, const char *fmt, va_list argptr ) {
 	int ret;
 
+	if ( dest == NULL || size <= 0 ) {
+		return -1;
+	}
 #ifdef _WIN32
 #undef _vsnprintf
 	ret = _vsnprintf( dest, size-1, fmt, argptr );
@@ -2080,7 +2082,7 @@ char *va( const char *fmt, ... ) {
 // RAVEN END
 
 	va_start( argptr, fmt );
-	vsprintf( buf, fmt, argptr );
+	idStr::vsnPrintf( buf, VA_BUF_LEN, fmt, argptr );
 	va_end( argptr );
 
 	return buf;

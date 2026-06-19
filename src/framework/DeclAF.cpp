@@ -215,20 +215,33 @@ const char *idAFVector::ToString( idStr &str, const int precision ) {
 	switch( type ) {
 		case idAFVector::VEC_COORDS: {
 			char format[128];
-			sprintf( format, "( %%.%df, %%.%df, %%.%df )", precision, precision, precision );
-			sprintf( str, format, vec.x, vec.y, vec.z );
+			char buffer[128];
+			const int clampedPrecision = idMath::ClampInt( 0, 9, precision );
+			idStr::snPrintf( format, sizeof( format ), "( %%.%df, %%.%df, %%.%df )", clampedPrecision, clampedPrecision, clampedPrecision );
+			idStr::snPrintf( buffer, sizeof( buffer ), format, vec.x, vec.y, vec.z );
+			str = buffer;
 			break;
 		}
 		case idAFVector::VEC_JOINT: {
-			sprintf( str, "joint( \"%s\" )", joint1.c_str() );
+			str = "joint( \"";
+			str += joint1;
+			str += "\" )";
 			break;
 		}
 		case idAFVector::VEC_BONECENTER: {
-			sprintf( str, "bonecenter( \"%s\", \"%s\" )", joint1.c_str(), joint2.c_str() );
+			str = "bonecenter( \"";
+			str += joint1;
+			str += "\", \"";
+			str += joint2;
+			str += "\" )";
 			break;
 		}
 		case idAFVector::VEC_BONEDIR: {
-			sprintf( str, "bonedir( \"%s\", \"%s\" )", joint1.c_str(), joint2.c_str() );
+			str = "bonedir( \"";
+			str += joint1;
+			str += "\", \"";
+			str += joint2;
+			str += "\" )";
 			break;
 		}
 		default: {

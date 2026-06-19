@@ -54,6 +54,7 @@ This file describes project goals, rules, and upstream credits for anyone workin
 - For investigations, reference the log file written by `logFileName` (VS Code launch uses `logs/openq4.log`), located under `fs_savepath\<gameDir>\` (e.g. `${workspaceFolder}\\.home\\baseoq4\\logs\\openq4.log`).
 - For runtime validation, use mode-specific launch tasks: use the SP launch task for single-player testing and the MP launch task for multiplayer testing.
 - Do not treat main-menu startup as sufficient validation; enter in-game/map gameplay relevant to the change before concluding tests.
+- For macOS testing/debugging, use the compliant Apple-hardware VM/host workflow in `docs-dev/macos-vm-testing-workflow.md` and `tools/macos/Invoke-openQ4MacOSWorkflow.ps1`. Keep macOS installer/restore-image inventory under `E:\ISO\macos\`. Do not use Windows VMware macOS unlocker/Hackintosh-style setup guides for openQ4 automation.
 - Use `.tmp/` directory in repository for any temporary files required for tasks.
 - Always consider cross-platform compatibility for any changes.
 

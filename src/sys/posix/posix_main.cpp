@@ -588,11 +588,21 @@ intptr_t Sys_DLL_Load( const char *path ) {
 		Sys_Printf( "dlopen failed: empty path\n" );
 		return 0;
 	}
+#if defined( MACOS_X )
+	char resolvedPath[PATH_MAX];
+	if ( realpath( path, resolvedPath ) == NULL ) {
+		Sys_Printf( "dlopen '%s' failed: %s\n", path, strerror( errno ) );
+		return 0;
+	}
+	const char *loadPath = resolvedPath;
+#else
+	const char *loadPath = path;
+#endif
 	dlerror();
-	void *handle = dlopen( path, RTLD_NOW );
+	void *handle = dlopen( loadPath, RTLD_NOW | RTLD_LOCAL );
 	if ( !handle ) {
 		const char *error = dlerror();
-		Sys_Printf( "dlopen '%s' failed: %s\n", path, error ? error : "unknown error" );
+		Sys_Printf( "dlopen '%s' failed: %s\n", loadPath, error ? error : "unknown error" );
 	}
 	return (intptr_t)handle;
 }

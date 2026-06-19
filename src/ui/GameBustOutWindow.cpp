@@ -883,7 +883,12 @@ void idGameBustOutWindow::LoadBoardFiles( void ) {
 	}
 
 	boardSize = 9 * 12 * 4;
+	if ( numLevels <= 0 || numLevels > idMath::INT_MAX / boardSize ) {
+		common->Warning( "Hell Bust-Out has invalid level count %d", numLevels );
+		return;
+	}
 	levelBoardData = (byte*)Mem_Alloc( boardSize * numLevels );
+	memset( levelBoardData, 0, boardSize * numLevels );
 
 	currentBoard = levelBoardData;
 
@@ -898,6 +903,9 @@ void idGameBustOutWindow::LoadBoardFiles( void ) {
 		if ( pic != NULL ) {
 			if ( w != 9 || h != 12 ) {
 				common->DWarning( "Hell Bust-Out level image not correct dimensions! (%d x %d)", w, h );
+				Mem_Free(pic);
+				currentBoard += boardSize;
+				continue;
 			}
 
 			memcpy( currentBoard, pic, boardSize );

@@ -229,6 +229,37 @@ static bool DeclManager_IsopenQ4OverrideDeclFile( const idDeclFile *sourceFile )
 	return fileName.Icmpn( "def/", 4 ) == 0 && fileName.Find( "_openq4.def", false ) >= 0;
 }
 
+static bool DeclManager_DeclNameHasPrefix( const idStr &name, const char *prefix ) {
+	return name.Icmpn( prefix, strlen( prefix ) ) == 0;
+}
+
+static bool DeclManager_IsStockMaterialRedeclaration( declType_t type, const idStr &name, const idDeclFile *previousSourceFile, const idDeclFile *currentSourceFile ) {
+	if ( type != DECL_MATERIAL || previousSourceFile == NULL || currentSourceFile == NULL ) {
+		return false;
+	}
+
+	if ( DeclManager_IsopenQ4OverrideDeclFile( previousSourceFile ) || DeclManager_IsopenQ4OverrideDeclFile( currentSourceFile ) ) {
+		return false;
+	}
+
+	idStr previousFileName = previousSourceFile->fileName;
+	previousFileName.BackSlashesToSlashes();
+
+	idStr currentFileName = currentSourceFile->fileName;
+	currentFileName.BackSlashesToSlashes();
+
+	if ( currentFileName.Icmp( "materials/mappack1.mtr" ) == 0 && previousFileName.Icmp( "materials/mapobjects_mp2.mtr" ) == 0 ) {
+		return DeclManager_DeclNameHasPrefix( name, "models/mapobjects/multiplayer/jump_pad/" ) ||
+			DeclManager_DeclNameHasPrefix( name, "models/mapobjects/multiplayer/acceleration_pad/" );
+	}
+
+	if ( currentFileName.Icmp( "materials/stroyent_mp.mtr" ) == 0 && previousFileName.Icmp( "materials/mappack1.mtr" ) == 0 ) {
+		return DeclManager_DeclNameHasPrefix( name, "textures/stroyent/mp/" );
+	}
+
+	return false;
+}
+
 class idDeclManagerLocal : public idDeclManager {
 	friend class idDeclLocal;
 
@@ -994,7 +1025,8 @@ int idDeclFile::LoadAndParse( bool unique ) {
 		}
 
 		name = token;
-		if ( unique && strippedName.Cmp( name ) != 0 ) {
+		const bool uniqueNameMismatch = unique && strippedName.Cmp( name ) != 0;
+		if ( uniqueNameMismatch && defaultType != DECL_EFFECT ) {
 			src.Warning( "%s must be in a file of the same name", name.c_str() );
 		}
 
@@ -1015,7 +1047,8 @@ int idDeclFile::LoadAndParse( bool unique ) {
 			if ( newDecl->sourceFile == this && !newDecl->redefinedInReload ) {
 				referencedThisLevel = newDecl->referencedThisLevel;
 			} else {
-				if ( !DeclManager_IsopenQ4OverrideDeclFile( newDecl->sourceFile ) ) {
+				if ( !DeclManager_IsopenQ4OverrideDeclFile( newDecl->sourceFile ) &&
+						!DeclManager_IsStockMaterialRedeclaration( identifiedType, name, newDecl->sourceFile, this ) ) {
 					src.Warning( "%s '%s' previously defined at %s:%i", declManagerLocal.GetDeclNameFromType( identifiedType ),
 									name.c_str(), newDecl->sourceFile->fileName.c_str(), newDecl->sourceLine );
 				}
@@ -1045,6 +1078,46 @@ int idDeclFile::LoadAndParse( bool unique ) {
 		// if it is currently in use, or the program-image writer needs every material parsed, reparse it immediately
 		if ( referencedThisLevel || DeclManager_WriteProgramImagesEnabled() ) {
 			newDecl->ParseLocal();
+		}
+
+		if ( uniqueNameMismatch && identifiedType == DECL_EFFECT ) {
+			idDeclLocal *aliasDecl = declManagerLocal.FindTypeWithoutParsing( identifiedType, strippedName.c_str(), false );
+			referencedThisLevel = false;
+			if ( aliasDecl ) {
+				if ( aliasDecl->sourceFile == this && !aliasDecl->redefinedInReload ) {
+					referencedThisLevel = aliasDecl->referencedThisLevel;
+				} else if ( !DeclManager_IsopenQ4OverrideDeclFile( aliasDecl->sourceFile ) ) {
+					aliasDecl = NULL;
+				}
+			} else {
+				aliasDecl = declManagerLocal.FindTypeWithoutParsing( identifiedType, strippedName.c_str(), true );
+				aliasDecl->nextInFile = this->decls;
+				this->decls = aliasDecl;
+			}
+
+			if ( aliasDecl != NULL ) {
+				aliasDecl->redefinedInReload = true;
+
+				if ( aliasDecl->textSource ) {
+					Mem_Free( aliasDecl->textSource );
+					aliasDecl->textSource = NULL;
+				}
+
+				aliasDecl->SetTextLocal( declDefinition.c_str(), declDefinition.Length() );
+				aliasDecl->sourceFile = this;
+				aliasDecl->sourceTextOffset = startMarker;
+				aliasDecl->sourceTextLength = size;
+				aliasDecl->sourceLine = sourceLine;
+				aliasDecl->declState = DS_UNPARSED;
+
+				if ( referencedThisLevel || DeclManager_WriteProgramImagesEnabled() ) {
+					aliasDecl->ParseLocal();
+				}
+			}
+		}
+
+		if ( unique ) {
+			break;
 		}
 	}
 
@@ -1192,7 +1265,8 @@ int idDeclFile::LoadAndParse( idFile *file ) {
 		idDeclLocal *decl = declManagerLocal.FindTypeWithoutParsing( identifiedType, name, false );
 		if ( decl ) {
 			if ( decl->sourceFile != this || decl->redefinedInReload ) {
-				if ( !DeclManager_IsopenQ4OverrideDeclFile( decl->sourceFile ) ) {
+				if ( !DeclManager_IsopenQ4OverrideDeclFile( decl->sourceFile ) &&
+						!DeclManager_IsStockMaterialRedeclaration( identifiedType, name, decl->sourceFile, this ) ) {
 					src.Warning( "%s '%s' previously defined at %s:%i",
 						declManagerLocal.GetDeclNameFromType( identifiedType ),
 						name.c_str(),
@@ -2693,10 +2767,13 @@ void idDeclManagerLocal::WritePrecacheCommands( idFile *f ) {
 				continue;
 			}
 
-			char	str[1024];
-			sprintf( str, "touch %s %s\n", declTypes[i]->typeName.c_str(), decl->GetName() );
-			common->Printf( "%s", str );
-			f->Printf( "%s", str );
+			idStr command = "touch ";
+			command += declTypes[i]->typeName;
+			command += " ";
+			command += decl->GetName();
+			command += "\n";
+			common->Printf( "%s", command.c_str() );
+			f->Printf( "%s", command.c_str() );
 		}
 	}
 }

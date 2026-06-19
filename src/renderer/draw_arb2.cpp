@@ -4180,11 +4180,17 @@ static void RB_ShadowMapPrintInfoLog( GLhandleARB object, const char *label, con
 		common->Warning( "GLSL %s error in '%s' (no info log)", label, name );
 		return;
 	}
+	if ( logLength > 1024 * 1024 ) {
+		common->Warning( "GLSL %s error in '%s' has oversized info log (%d bytes), truncating", label, name, logLength );
+		logLength = 1024 * 1024;
+	}
 
-	char *logBuffer = (char *)_alloca( logLength );
+	char *logBuffer = (char *)Mem_ClearedAlloc( logLength + 1 );
 	GLsizei written = 0;
 	glGetInfoLogARB( object, logLength, &written, logBuffer );
+	logBuffer[ idMath::ClampInt( 0, logLength, written ) ] = '\0';
 	common->Warning( "GLSL %s error in '%s':\n%s", label, name, logBuffer );
+	Mem_Free( logBuffer );
 }
 
 static bool RB_MaterialInteractionLoadProgram( void ) {
@@ -8221,6 +8227,12 @@ bool RB_ShadowMapArb2ReceiverFallbackSelfTest( void ) {
 	light.globalShadowMapCasters = &casterSurf;
 	light.globalShadows = &casterSurf;
 
+	const shadowMapLightSupportReason_t supportReason = RB_ShadowMapLightPolicySupportReason( &light );
+	if ( supportReason != SHADOWMAP_SUPPORT_OK ) {
+		common->Printf( "ARB2 receiver fallback self-test passed (cache estimate skipped: light support=%s)\n", RB_ShadowMapSupportReasonName( supportReason ) );
+		return true;
+	}
+
 	shadowMapArb2CacheEstimate_t estimate;
 	if ( !RB_ShadowMapEstimateArb2CacheOwnership( &light, &view, estimate ) || estimate.shadowPasses != 1 || estimate.receiverFallbackPasses != 1 || estimate.freshUpdatePasses != 1 ) {
 		common->Printf(
@@ -10520,6 +10532,7 @@ void R_LoadARBProgram( int progIndex ) {
 	fullPath.BackSlashesToSlashes();
 	char	*fileBuffer;
 	char	*buffer;
+	idList<char> programBuffer;
 	char	*start, *end;
 
 	RB_ResetARBProgramStatus( prog );
@@ -10535,9 +10548,11 @@ void R_LoadARBProgram( int progIndex ) {
 		return;
 	}
 
-	// copy to stack memory and free
-	buffer = (char *)_alloca( strlen( fileBuffer ) + 1 );
-	strcpy( buffer, fileBuffer );
+	// copy to resizable memory and free; this buffer is edited while selecting the program section
+	const int programLength = idStr::Length( fileBuffer );
+	programBuffer.SetNum( programLength + 1 );
+	memcpy( programBuffer.Ptr(), fileBuffer, programLength + 1 );
+	buffer = programBuffer.Ptr();
 	fileSystem->FreeFile( fileBuffer );
 
 	if ( !glConfig.isInitialized ) {

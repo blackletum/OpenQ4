@@ -198,7 +198,12 @@ void R_ListImages_f( const idCmdArgs &args ) {
 
 	totalSize = 0;
 
-	sortedImage_t	*sortedArray = (sortedImage_t *)alloca( sizeof( sortedImage_t ) * globalImages->images.Num() );
+	idList<sortedImage_t> sortedImages;
+	sortedImage_t *sortedArray = NULL;
+	if ( sorted || sortByName ) {
+		sortedImages.SetNum( globalImages->images.Num() );
+		sortedArray = sortedImages.Ptr();
+	}
 
 	for ( i = 0 ; i < globalImages->images.Num() ; i++ ) {
 		image = globalImages->images[ i ];
@@ -684,16 +689,19 @@ void R_CombineCubeImages_f( const idCmdArgs &args ) {
 	common->SetRefreshOnPrint( true );
 
 	for ( int frameNum = 1 ; frameNum < 10000 ; frameNum++ ) {
-		char	filename[MAX_IMAGE_NAME];
+		idStr	filename;
 		byte	*pics[6];
 		int		width = 0, height = 0;
 		int		side;
 		int		orderRemap[6] = { 1,3,4,2,5,6 };
 		for ( side = 0 ; side < 6 ; side++ ) {
-			sprintf( filename, "%s%i%04i.tga", baseName.c_str(), orderRemap[side], frameNum );
+			char suffix[32];
+			idStr::snPrintf( suffix, sizeof( suffix ), "%i%04i.tga", orderRemap[side], frameNum );
+			filename = baseName;
+			filename += suffix;
 
-			common->Printf( "reading %s\n", filename );
-			R_LoadImage( filename, &pics[side], &width, &height, NULL, true );
+			common->Printf( "reading %s\n", filename.c_str() );
+			R_LoadImage( filename.c_str(), &pics[side], &width, &height, NULL, true );
 
 			if ( !pics[side] ) {
 				common->Printf( "not found.\n" );
@@ -732,16 +740,36 @@ void R_CombineCubeImages_f( const idCmdArgs &args ) {
 			break;
 		}
 
-		idTempArray<byte> buf( width*height*6*4 );
+		if ( width <= 0 || height <= 0 || height > idMath::INT_MAX / 6 ) {
+			common->Warning( "combineCubeImages: invalid image dimensions %dx%d", width, height );
+			for ( int i = 0 ; i < 6 ; i++ ) {
+				Mem_Free( pics[i] );
+			}
+			break;
+		}
+		const int combinedHeight = height * 6;
+		if ( width > idMath::INT_MAX / combinedHeight || width * combinedHeight > idMath::INT_MAX / 4 ) {
+			common->Warning( "combineCubeImages: image dimensions are too large %dx%d", width, height );
+			for ( int i = 0 ; i < 6 ; i++ ) {
+				Mem_Free( pics[i] );
+			}
+			break;
+		}
+
+		const int combinedBytes = width * combinedHeight * 4;
+		idTempArray<byte> buf( combinedBytes );
 		byte	*combined = (byte *)buf.Ptr();
 		for (  side = 0 ; side < 6 ; side++ ) {
 			memcpy( combined+width*height*4*side, pics[side], width*height*4 );
 			Mem_Free( pics[side] );
 		}
-		sprintf( filename, "%sCM%04i.tga", baseName.c_str(), frameNum );
+		char suffix[32];
+		idStr::snPrintf( suffix, sizeof( suffix ), "CM%04i.tga", frameNum );
+		filename = baseName;
+		filename += suffix;
 
-		common->Printf( "writing %s\n", filename );
-		R_WriteTGA( filename, combined, width, height*6 );
+		common->Printf( "writing %s\n", filename.c_str() );
+		R_WriteTGA( filename.c_str(), combined, width, combinedHeight );
 	}
 	common->SetRefreshOnPrint( false );
 }

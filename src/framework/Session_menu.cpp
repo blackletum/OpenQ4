@@ -3140,16 +3140,31 @@ void idSessionLocal::DownloadProgressBox( backgroundDownload_t *bgl, const char 
 				if ( dltotal ) {
 					sTotal.BestUnit( "%.2f", dltotal, MEASURE_SIZE );
 					if ( lapsed < 2000 ) {
-						sprintf( sMsg, "%s / %s", sNow.c_str(), sTotal.c_str() );
+						sMsg = sNow;
+						sMsg += " / ";
+						sMsg += sTotal;
 					} else {
-						sprintf( sETA, "%.0f sec", ( (float)dltotal / (float)dlnow - 1.0f ) * lapsed / 1000 );
-						sprintf( sMsg, "%s / %s ( %s - %s )", sNow.c_str(), sTotal.c_str(), sBW.c_str(), sETA.c_str() );
+						if ( dlnow > 0 ) {
+							sETA = va( "%.0f sec", ( (float)dltotal / (float)dlnow - 1.0f ) * lapsed / 1000 );
+						} else {
+							sETA = "-- sec";
+						}
+						sMsg = sNow;
+						sMsg += " / ";
+						sMsg += sTotal;
+						sMsg += " ( ";
+						sMsg += sBW;
+						sMsg += " - ";
+						sMsg += sETA;
+						sMsg += " )";
 					}
 				} else {
 					if ( lapsed < 2000 ) {
 						sMsg = sNow;
 					} else {
-						sprintf( sMsg, "%s - %s", sNow.c_str(), sBW.c_str() );
+						sMsg = sNow;
+						sMsg += " - ";
+						sMsg += sBW;
 					}
 				}
 				if ( dltotal ) {
@@ -3313,7 +3328,21 @@ void idSessionLocal::HandleNoteCommands( const char *menuCommand ) {
 				workName += "viewNotes";
 			}
 
-			sprintf( str, "recordViewNotes \"%s\" \"%s\" \"%s\"\n", workName.c_str(), noteNum.c_str(), guiTakeNotes->State().GetString( "note" ) );
+			idStr note = guiTakeNotes->State().GetString( "note" );
+			workName.Replace( "\\", "\\\\" );
+			workName.Replace( "\"", "\\\"" );
+			noteNum.Replace( "\\", "\\\\" );
+			noteNum.Replace( "\"", "\\\"" );
+			note.Replace( "\\", "\\\\" );
+			note.Replace( "\"", "\\\"" );
+
+			str = "recordViewNotes \"";
+			str += workName;
+			str += "\" \"";
+			str += noteNum;
+			str += "\" \"";
+			str += note;
+			str += "\"\n";
 			
 			cmdSystem->BufferCommandText( CMD_EXEC_NOW, str );
 			cmdSystem->ExecuteCommandBuffer();

@@ -686,11 +686,17 @@ static void RB_PrintGLSLInfoLog( GLhandleARB object, const char *label, const ch
 		common->Warning( "GLSL %s error in '%s' (no info log)", label, name );
 		return;
 	}
+	if ( logLength > 1024 * 1024 ) {
+		common->Warning( "GLSL %s error in '%s' has oversized info log (%d bytes), truncating", label, name, logLength );
+		logLength = 1024 * 1024;
+	}
 
-	char *logBuffer = (char *)_alloca( logLength );
+	char *logBuffer = (char *)Mem_ClearedAlloc( logLength + 1 );
 	GLsizei written = 0;
 	glGetInfoLogARB( object, logLength, &written, logBuffer );
+	logBuffer[ idMath::ClampInt( 0, logLength, written ) ] = '\0';
 	common->Warning( "GLSL %s error in '%s':\n%s", label, name, logBuffer );
+	Mem_Free( logBuffer );
 }
 
 static bool RB_PathHasGlprogsPrefix( const idStr &path ) {

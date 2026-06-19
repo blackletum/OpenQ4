@@ -524,7 +524,7 @@ Key_Bind_f
 */
 void Key_Bind_f( const idCmdArgs &args ) {
 	int			i, c, b;
-	char		cmd[MAX_STRING_CHARS];
+	idStr		cmd;
 	
 	c = args.Argc();
 
@@ -549,15 +549,14 @@ void Key_Bind_f( const idCmdArgs &args ) {
 	}
 	
 	// copy the rest of the command line
-	cmd[0] = 0;		// start out with a null string
 	for ( i = 2; i < c; i++ ) {
-		strcat( cmd, args.Argv( i ) );
+		cmd += args.Argv( i );
 		if ( i != (c-1) ) {
-			strcat( cmd, " " );
+			cmd += " ";
 		}
 	}
 
-	idKeyInput::SetBinding( b, cmd );
+	idKeyInput::SetBinding( b, cmd.c_str() );
 }
 
 /*

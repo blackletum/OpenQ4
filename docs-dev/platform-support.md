@@ -53,7 +53,7 @@ This document defines the long-term platform direction for openQ4 and how SDL3 +
 - New platform-facing work should prefer SDL3 abstractions first.
 - Platform-specific code should be isolated under `src/sys/<platform>/` when SDL3 cannot cover a requirement directly.
 - OpenGL context selection now uses the shared renderer ladder across SDL3, native GLX, and native NSOpenGL paths. macOS remains capped at OpenGL 4.1 core by the platform OpenGL stack, while Linux and Windows can continue down through core and compatibility-profile fallbacks according to `r_glTier`.
-- macOS startup validates both advertised OpenGL extensions and the callable entry points behind the ARB2, VBO, and GLSL paths. If Apple's OpenGL 2.1 compatibility fallback reports an incomplete loader state, openQ4 now downgrades optional VBO uploads to the virtual-memory vertex cache or fails through the normal missing-feature path instead of continuing into a SIGSEGV.
+- macOS startup validates both advertised OpenGL extensions and the callable entry points behind the multitexture, ARB2, VBO upload, PBO readback, and GLSL paths. If Apple's OpenGL 2.1 compatibility fallback reports an incomplete loader state, openQ4 now downgrades optional upload/readback paths to CPU-backed fallbacks or fails through the normal missing-feature path instead of continuing into a SIGSEGV.
 
 ## Meson Direction
 

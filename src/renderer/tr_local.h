@@ -1375,6 +1375,7 @@ extern idCVar r_resolutionScaleSharpness;	// sharpen amount for HQ resolution sc
 
 extern idCVar r_showUnsmoothedTangents;	// highlight geometry rendered with unsmoothed tangents
 extern idCVar r_showSilhouette;			// highlight edges that are casting shadow planes
+extern idCVar r_reportSilhouetteEdgeWarnings;	// report duplicate/tripled silhouette-edge topology diagnostics
 extern idCVar r_showVertexColor;		// draws all triangles with the solid vertex color
 extern idCVar r_showUpdates;			// report entity and light updates and ref counts
 extern idCVar r_showDemo;				// report reads and writes to the demo file

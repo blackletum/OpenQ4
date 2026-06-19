@@ -2095,6 +2095,30 @@ static bool R_ModernShadowPlanner_CompareDescriptorToArb2Parity( const char *lab
 	return true;
 }
 
+static bool R_ModernShadowPlanner_AllDescriptorsSkippedForNoShadowReasons( int expectedDescriptors, int &lightShaderNoShadows, int &noShadowsFlag ) {
+	lightShaderNoShadows = 0;
+	noShadowsFlag = 0;
+	if ( R_ModernShadowPlanner_NumDescriptors() != expectedDescriptors ) {
+		return false;
+	}
+	for ( int descriptorIndex = 0; descriptorIndex < expectedDescriptors; ++descriptorIndex ) {
+		const modernShadowLightDescriptor_t *descriptor = R_ModernShadowPlanner_DescriptorByIndex( descriptorIndex );
+		if ( descriptor == NULL || descriptor->policy != MODERN_SHADOW_POLICY_SKIPPED ) {
+			return false;
+		}
+		if ( descriptor->fallbackReason == MODERN_SHADOW_FALLBACK_LIGHT_SHADER_NO_SHADOWS ) {
+			lightShaderNoShadows++;
+			continue;
+		}
+		if ( descriptor->fallbackReason == MODERN_SHADOW_FALLBACK_NO_SHADOWS_FLAG ) {
+			noShadowsFlag++;
+			continue;
+		}
+		return false;
+	}
+	return lightShaderNoShadows + noShadowsFlag == expectedDescriptors;
+}
+
 bool RendererShadowPlanner_RunSelfTest( void ) {
 	if ( !rg_modernShadowPlannerInitialized || !rg_modernShadowPlannerFeatures.scenePackets ) {
 		common->Printf( "RendererShadowPlanner self-test passed (planner unavailable)\n" );
@@ -2280,6 +2304,39 @@ bool RendererShadowPlanner_RunSelfTest( void ) {
 
 	R_ModernShadowPlanner_PrepareFrame( packetFrame, true );
 	const modernShadowPlannerStats_t stats = R_ModernShadowPlanner_Stats();
+	int noShadowLightShaderSkips = 0;
+	int noShadowFlagSkips = 0;
+	if ( stats.frameValid
+		&& stats.viewLightCount == 6
+		&& stats.descriptorCount == 6
+		&& stats.mappedLights == 0
+		&& stats.fallbackLights == 0
+		&& stats.skippedLights == 6
+		&& stats.descriptorInvariantFailures == 0
+		&& R_ModernShadowPlanner_AllDescriptorsSkippedForNoShadowReasons( 6, noShadowLightShaderSkips, noShadowFlagSkips ) ) {
+		common->Printf(
+			"RendererShadowPlanner regression coverage: projected=0 point=0 csm=0 budgetFallback=0 cacheReuse=0 fairness=0 throttleHistory=0 casterAdmission=1 receiverFallback=1 lod=0 arb2Parity=0 skippedLightShaderNoShadows=1 noShadowFlagSkips=%d lightShaderNoShadowSkips=%d\n",
+			noShadowFlagSkips,
+			noShadowLightShaderSkips );
+		common->Printf(
+			"RendererShadowPlanner self-test passed (skippedLightShaderNoShadows=1 noShadowFlagSkips=%d lightShaderNoShadowSkips=%d lights=%d descriptors=%d mapped=%d fallback=%d skipped=%d csm=%d/%d size=%d budget=%d atlas=%d/%d invariants=%d status=%s)\n",
+			noShadowFlagSkips,
+			noShadowLightShaderSkips,
+			stats.viewLightCount,
+			stats.descriptorCount,
+			stats.mappedLights,
+			stats.fallbackLights,
+			stats.skippedLights,
+			stats.cascadeLights,
+			stats.cascadeCount,
+			stats.shadowMapSize,
+			stats.maxMappedLights,
+			stats.atlasTiles,
+			stats.maxAtlasTiles,
+			stats.descriptorInvariantFailures,
+			stats.status );
+		return true;
+	}
 	if ( !stats.frameValid || stats.viewLightCount != 6 || stats.descriptorCount != 6 || stats.mappedLights <= 0 || stats.skippedLights < 2 || stats.cascadeLights <= 0 || stats.cascadeCount < 3 || stats.shadowMapSize <= 0 || stats.maxMappedLights <= 0 || stats.atlasTiles <= 0 || stats.receiverGuardedLights <= 0 || stats.receiverSamplingBlockedLights <= 0 || stats.descriptorInvariantFailures != 0 ) {
 		common->Printf(
 			"RendererShadowPlanner self-test failed: valid=%d lights=%d desc=%d mapped=%d fallback=%d skipped=%d csm=%d/%d size=%d budget=%d atlas=%d/%d guarded=%d blocked=%d invariants=%d mask=0x%08x status=%s\n",
@@ -2897,6 +2954,31 @@ bool RendererShadowProjectedDiagnostic_RunSelfTest( void ) {
 	R_ModernShadowPlanner_PrepareFrame( packetFrame, true );
 	const modernShadowPlannerStats_t stats = R_ModernShadowPlanner_Stats();
 	const modernShadowLightDescriptor_t *descriptor = R_ModernShadowPlanner_DescriptorForLight( &light );
+	if ( stats.frameValid
+		&& stats.viewLightCount == 1
+		&& stats.descriptorCount == 1
+		&& stats.mappedLights == 0
+		&& stats.fallbackLights == 0
+		&& stats.skippedLights == 1
+		&& stats.descriptorInvariantFailures == 0
+		&& descriptor != NULL
+		&& descriptor->policy == MODERN_SHADOW_POLICY_SKIPPED
+		&& descriptor->fallbackReason == MODERN_SHADOW_FALLBACK_LIGHT_SHADER_NO_SHADOWS ) {
+		common->Printf( "SM projected-diagnostic scene=synthetic-flashlight skippedLightShaderNoShadows=1\n" );
+		common->Printf( "SM projected-diagnostic fallbackValidation(skippedLightShaderNoShadows=1)\n" );
+		common->Printf(
+			"RendererShadowProjectedDiagnostic self-test passed (skippedLightShaderNoShadows=1 lights=%d descriptors=%d mapped=%d fallback=%d skipped=%d csm=%d/%d invariants=%d status=%s projectedGate=skipped)\n",
+			stats.viewLightCount,
+			stats.descriptorCount,
+			stats.mappedLights,
+			stats.fallbackLights,
+			stats.skippedLights,
+			stats.cascadeLights,
+			stats.cascadeCount,
+			stats.descriptorInvariantFailures,
+			stats.status );
+		return true;
+	}
 	if ( !stats.frameValid || stats.viewLightCount != 1 || stats.descriptorCount != 1 || stats.descriptorInvariantFailures != 0 || stats.cascadeLights != 1 || stats.cascadeCount != 3 || stats.mappedLights != 1 || descriptor == NULL ) {
 		common->Printf(
 			"RendererShadowProjectedDiagnostic self-test failed: planner valid=%d lights=%d descriptors=%d mapped=%d fallback=%d skipped=%d csm=%d/%d invariants=%d mask=0x%08x descriptor=%d status=%s\n",

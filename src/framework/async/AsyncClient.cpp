@@ -2001,7 +2001,17 @@ void idAsyncClient::HandleDownloads( void ) {
 				fileSystem->BackgroundDownload( &backgroundDownload );
 				idStr dltitle;
 				// "Downloading %s"
-				sprintf( dltitle, common->GetLanguageDict()->GetString( "#str_07213" ), dlList[ 0 ].filename.c_str() );
+				const char *downloadFormat = common->GetLanguageDict()->GetString( "#str_07213" );
+				const char *downloadPlaceholder = strstr( downloadFormat, "%s" );
+				if ( downloadPlaceholder != NULL ) {
+					dltitle.Append( downloadFormat, static_cast<int>( downloadPlaceholder - downloadFormat ) );
+					dltitle += dlList[ 0 ].filename;
+					dltitle += downloadPlaceholder + 2;
+				} else {
+					dltitle = downloadFormat;
+					dltitle += " ";
+					dltitle += dlList[ 0 ].filename;
+				}
 				if ( numPaks > 1 ) {
 					dltitle += va( " (%d/%d)", pakCount, numPaks );
 				}

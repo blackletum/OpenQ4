@@ -1183,7 +1183,7 @@ void R_IdentifySilEdges( srfTriangles_t *tri, bool omitCoplanarEdges ) {
 		R_DefineEdge( i3, i1, i );
 	}
 
-	if ( c_duplicatedEdges || c_tripledEdges ) {
+	if ( r_reportSilhouetteEdgeWarnings.GetBool() && ( c_duplicatedEdges || c_tripledEdges ) ) {
 		common->DWarning( "%i duplicated edge directions, %i tripled edges", c_duplicatedEdges, c_tripledEdges );
 	}
 

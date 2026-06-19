@@ -833,7 +833,7 @@ void Sys_Error(const char* error, ...) {
 	MSG        msg;
 
 	va_start(argptr, error);
-	vsprintf(text, error, argptr);
+	idStr::vsnPrintf(text, sizeof(text), error, argptr);
 	va_end(argptr);
 
 	Conbuf_AppendText(text);
@@ -1095,7 +1095,14 @@ int Sys_ListFiles(const char* directory, const char* extension, idStrList& list)
 		flag = _A_SUBDIR;
 	}
 
-	sprintf(search, "%s\\*%s", directory, extension);
+	search = directory ? directory : "";
+	search += "\\*";
+	search += extension;
+	for ( int i = 0; i < search.Length(); i++ ) {
+		if ( search[ i ] == '/' ) {
+			search[ i ] = '\\';
+		}
+	}
 
 	// search
 	list.Clear();
@@ -1132,11 +1139,24 @@ char* Sys_GetClipboardData(void) {
 
 		if ((hClipboardData = GetClipboardData(CF_TEXT)) != 0) {
 			if ((cliptext = (char*)GlobalLock(hClipboardData)) != 0) {
-				data = (char*)Mem_Alloc(GlobalSize(hClipboardData) + 1);
-				strcpy(data, cliptext);
+				const SIZE_T clipSize = GlobalSize(hClipboardData);
+				SIZE_T textLength = 0;
+
+				if (clipSize > 0 && clipSize <= static_cast<SIZE_T>(idMath::INT_MAX - 1)) {
+					while (textLength < clipSize && cliptext[textLength] != '\0') {
+						textLength++;
+					}
+					data = (char*)Mem_Alloc((int)textLength + 1);
+					if (textLength > 0) {
+						memcpy(data, cliptext, textLength);
+					}
+					data[textLength] = '\0';
+				}
 				GlobalUnlock(hClipboardData);
 
-				strtok(data, "\n\r\b");
+				if (data != NULL) {
+					strtok(data, "\n\r\b");
+				}
 			}
 		}
 		CloseClipboard();
@@ -1152,19 +1172,30 @@ Sys_SetClipboardData
 void Sys_SetClipboardData(const char* string) {
 	HGLOBAL HMem;
 	char* PMem;
+	size_t stringLength;
+
+	if ( string == NULL ) {
+		return;
+	}
+
+	stringLength = strlen(string) + 1;
+	if ( stringLength > static_cast<size_t>(idMath::INT_MAX) ) {
+		return;
+	}
 
 	// allocate memory block
-	HMem = (char*)::GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, strlen(string) + 1);
+	HMem = (char*)::GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, stringLength);
 	if (HMem == NULL) {
 		return;
 	}
 	// lock allocated memory and obtain a pointer
 	PMem = (char*)::GlobalLock(HMem);
 	if (PMem == NULL) {
+		::GlobalFree(HMem);
 		return;
 	}
 	// copy text into allocated memory block
-	lstrcpy(PMem, string);
+	memcpy(PMem, string, stringLength);
 	// unlock allocated memory
 	::GlobalUnlock(HMem);
 	// open Clipboard
@@ -1175,10 +1206,14 @@ void Sys_SetClipboardData(const char* string) {
 	// remove current Clipboard contents
 	EmptyClipboard();
 	// supply the memory handle to the Clipboard
-	SetClipboardData(CF_TEXT, HMem);
-	HMem = 0;
+	if (SetClipboardData(CF_TEXT, HMem) != NULL) {
+		HMem = 0;
+	}
 	// close Clipboard
 	CloseClipboard();
+	if (HMem != NULL) {
+		::GlobalFree(HMem);
+	}
 }
 
 /*

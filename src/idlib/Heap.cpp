@@ -559,8 +559,6 @@ void *idHeap::Allocate16( const dword bytes, byte tag ) {
 	}
 	*((byte *)(alignedPtr - 1)) = (byte) padSize;
 
-	assert( (uintptr_t)alignedPtr < (uintptr_t)0xff000000 );
-
 	return (void *) alignedPtr;
 #else
 //RAVEN END
@@ -593,7 +591,6 @@ void *idHeap::Allocate16( const dword bytes, byte tag ) {
 
    	}
   	*((uintptr_t *)(alignedPtr - sizeof( uintptr_t ))) = (uintptr_t)ptr;
-   	assert( (uintptr_t)alignedPtr < (uintptr_t)0xff000000 );
    	return (void *) alignedPtr;
 
 //RAVEN BEGIN

@@ -329,10 +329,11 @@ void idRenderModelManagerLocal::WritePrecacheCommands( idFile *f ) {
 			continue;
 		}
 
-		char	str[1024];
-		sprintf( str, "touchModel %s\n", model->Name() );
-		common->Printf( "%s", str );
-		f->Printf( "%s", str );
+		idStr command = "touchModel ";
+		command += model->Name();
+		command += "\n";
+		common->Printf( "%s", command.c_str() );
+		f->Printf( "%s", command.c_str() );
 	}
 }
 

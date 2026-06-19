@@ -265,7 +265,8 @@ void idAsyncServer::ExecuteMapChange( void ) {
 	// initialize map settings
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "rescanSI" );
 
-	sprintf( mapName, "maps/%s", sessLocal.mapSpawnData.serverInfo.GetString( "si_map" ) );
+	mapName = "maps/";
+	mapName += sessLocal.mapSpawnData.serverInfo.GetString( "si_map" );
 	mapName.SetFileExtension( ".map" );
 	ff = fileSystem->FindFile( mapName, !serverReloadingEngine );
 	switch( ff ) {
@@ -1817,8 +1818,7 @@ void idAsyncServer::ProcessConnectMessage( const netadr_t from, const idBitMsg &
 			// initialize
 			clients[ clientNum ].channel.Init( from, serverId );
 			clients[ clientNum ].OS = OS;
-			strncpy( clients[ clientNum ].guid, guid, 12 );
-			clients[ clientNum ].guid[11] = 0;
+			idStr::Copynz( clients[ clientNum ].guid, guid, sizeof( clients[ clientNum ].guid ) );
 			break;
 		}
 	}
@@ -1872,7 +1872,7 @@ bool idAsyncServer::VerifyChecksumMessage( int clientNum, const netadr_t *from, 
 		// just to make sure a broken client doesn't crash us
 		if ( numChecksums >= MAX_PURE_PAKS ) {
 			common->Warning( "MAX_PURE_PAKS ( %d ) exceeded in idAsyncServer::ProcessPureMessage\n", MAX_PURE_PAKS );
-			sprintf( reply, "#str_07144" );
+			reply = "#str_07144";
 			return false;
 		}
 	} while ( i );
@@ -1887,19 +1887,19 @@ bool idAsyncServer::VerifyChecksumMessage( int clientNum, const netadr_t *from, 
 	// compare the lists
 	if ( serverGamePakChecksum != gamePakChecksum ) {
 		common->Printf( "client %s: invalid game code pak ( 0x%x )\n", from ? Sys_NetAdrToString( *from ) : va( "%d", clientNum ), gamePakChecksum );
-		sprintf( reply, "#str_07145" );
+		reply = "#str_07145";
 		return false;
 	}
 	for ( i = 0; serverChecksums[ i ] != 0; i++ ) {
 		if ( checksums[ i ] != serverChecksums[ i ] ) {
 			common->DPrintf( "client %s: pak missing ( 0x%x )\n", from ? Sys_NetAdrToString( *from ) : va( "%d", clientNum ), serverChecksums[ i ] );
-			sprintf( reply, "pak missing ( 0x%x )\n", serverChecksums[ i ] );
+			reply = va( "pak missing ( 0x%x )\n", serverChecksums[ i ] );
 			return false;
 		}
 	}
 	if ( checksums[ i ] != 0 ) {
 		common->DPrintf( "client %s: extra pak file referenced ( 0x%x )\n", from ? Sys_NetAdrToString( *from ) : va( "%d", clientNum ), checksums[ i ] );
-		sprintf( reply, "extra pak file referenced ( 0x%x )\n", checksums[ i ] );
+		reply = va( "extra pak file referenced ( 0x%x )\n", checksums[ i ] );
 		return false;
 	}
 	return true;
@@ -2651,7 +2651,7 @@ idAsyncServer::GetAsyncStatsAvgMsg
 ===============
 */
 void idAsyncServer::GetAsyncStatsAvgMsg( idStr &msg ) {
-	sprintf( msg, "avrg out: %d B/s - max %d B/s ( over %d ms )", stats_average_sum / stats_numsamples, stats_max, idAsyncNetwork::serverSnapshotDelay.GetInteger() * stats_numsamples );
+	msg = va( "avrg out: %d B/s - max %d B/s ( over %d ms )", stats_average_sum / stats_numsamples, stats_max, idAsyncNetwork::serverSnapshotDelay.GetInteger() * stats_numsamples );
 }
 
 /*

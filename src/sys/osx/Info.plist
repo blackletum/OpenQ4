@@ -4,6 +4,8 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>English</string>
+	<key>CFBundleDisplayName</key>
+	<string>openQ4</string>
 	<key>CFBundleExecutable</key>
 	<string>openQ4</string>
 	<key>CFBundleIconFile</key>
@@ -24,6 +26,8 @@
 	<string>0.1.010</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>11.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.games</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>

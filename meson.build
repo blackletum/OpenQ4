@@ -486,6 +486,23 @@ endif
 if host_system == 'darwin'
   shared_cpp_args += ['-DMACOS_X=1']
   shared_c_args += ['-DMACOS_X=1']
+  macos_compile_hardening_args = []
+  foreach hardening_arg : ['-fstack-protector-strong', '-D_FORTIFY_SOURCE=2']
+    if cpp.has_argument(hardening_arg) and cc.has_argument(hardening_arg)
+      macos_compile_hardening_args += hardening_arg
+    endif
+  endforeach
+  shared_cpp_args += macos_compile_hardening_args
+  shared_c_args += macos_compile_hardening_args
+
+  macos_link_hardening_args = []
+  foreach hardening_arg : ['-Wl,-pie', '-Wl,-dead_strip', '-Wl,-headerpad_max_install_names']
+    if cpp.has_link_argument(hardening_arg)
+      macos_link_hardening_args += hardening_arg
+    endif
+  endforeach
+  engine_link_args += macos_link_hardening_args
+
   if use_macos_metal_bridge
     shared_cpp_args += ['-DOPENQ4_MACOS_METAL_BRIDGE=1']
     shared_c_args += ['-DOPENQ4_MACOS_METAL_BRIDGE=1']
@@ -708,6 +725,12 @@ if host_system == 'windows'
   else
     game_module_link_args += ['/STACK:16000000,16000000']
   endif
+elif host_system == 'darwin'
+  foreach hardening_arg : ['-Wl,-dead_strip', '-Wl,-headerpad_max_install_names']
+    if cpp.has_link_argument(hardening_arg)
+      game_module_link_args += hardening_arg
+    endif
+  endforeach
 endif
 
 game_idlib_library = disabler()

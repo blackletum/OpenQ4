@@ -161,7 +161,9 @@ idInternalCVar::CopyValueStrings
 ============
 */
 const char **idInternalCVar::CopyValueStrings( const char **strings ) {
-	int i, totalLength;
+	int i, stringCount;
+	size_t totalLength;
+	size_t allocationSize;
 	const char **ptr;
 	char *str;
 
@@ -170,17 +172,30 @@ const char **idInternalCVar::CopyValueStrings( const char **strings ) {
 	}
 
 	totalLength = 0;
-	for ( i = 0; strings[i] != NULL; i++ ) {
-		totalLength += idStr::Length( strings[i] ) + 1;
+	for ( stringCount = 0; strings[stringCount] != NULL; stringCount++ ) {
+		const size_t stringLength = idStr::Length( strings[stringCount] ) + 1;
+
+		if ( totalLength > static_cast<size_t>( idMath::INT_MAX ) - stringLength ) {
+			common->FatalError( "idInternalCVar::CopyValueStrings: value string table too large" );
+		}
+		totalLength += stringLength;
 	}
 
-	ptr = (const char **) Mem_Alloc( ( i + 1 ) * sizeof( char * ) + totalLength );
-	str = (char *) (((byte *)ptr) + ( i + 1 ) * sizeof( char * ) );
+	allocationSize = ( (size_t)stringCount + 1 ) * sizeof( char * );
+	if ( allocationSize > static_cast<size_t>( idMath::INT_MAX ) - totalLength ) {
+		common->FatalError( "idInternalCVar::CopyValueStrings: value string table too large" );
+	}
+	allocationSize += totalLength;
 
-	for ( i = 0; strings[i] != NULL; i++ ) {
+	ptr = (const char **) Mem_Alloc( (int)allocationSize );
+	str = (char *) (((byte *)ptr) + ( (size_t)stringCount + 1 ) * sizeof( char * ) );
+
+	for ( i = 0; i < stringCount; i++ ) {
+		const size_t stringLength = idStr::Length( strings[i] ) + 1;
+
 		ptr[i] = str;
-		strcpy( str, strings[i] );
-		str += idStr::Length( strings[i] ) + 1;
+		memcpy( str, strings[i], stringLength );
+		str += stringLength;
 	}
 	ptr[i] = NULL;
 

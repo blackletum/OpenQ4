@@ -2272,7 +2272,9 @@ static void Session_Map_f( const idCmdArgs &args ) {
 	// make sure the level exists before trying to change, so that
 	// a typo at the server console won't end the game
 	// handle addon packs through reloadEngine
-	sprintf( string, "maps/%s.map", map.c_str() );
+	string = "maps/";
+	string += map;
+	string.SetFileExtension( ".map" );
 	ff = fileSystem->FindFile( string, true );
 	switch ( ff ) {
 	case FIND_NO:
@@ -2315,7 +2317,9 @@ static void Session_DevMap_f( const idCmdArgs &args ) {
 	// make sure the level exists before trying to change, so that
 	// a typo at the server console won't end the game
 	// handle addon packs through reloadEngine
-	sprintf( string, "maps/%s.map", map.c_str() );
+	string = "maps/";
+	string += map;
+	string.SetFileExtension( ".map" );
 	ff = fileSystem->FindFile( string, true );
 	switch ( ff ) {
 	case FIND_NO:
@@ -2360,13 +2364,19 @@ static void Session_TestMap_f( const idCmdArgs &args ) {
 
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "disconnect" );
 
-	sprintf( string, "dmap maps/%s.map", map.c_str() );
+	string = "dmap maps/";
+	string += map;
+	string.SetFileExtension( ".map" );
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, string );
 
 	if ( entityFilter.Length() > 0 ) {
-		sprintf( string, "devmap %s %s", map.c_str(), entityFilter.c_str() );
+		string = "devmap ";
+		string += map;
+		string += " ";
+		string += entityFilter;
 	} else {
-		sprintf( string, "devmap %s", map.c_str() );
+		string = "devmap ";
+		string += map;
 	}
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, string );
 }
@@ -2873,7 +2883,7 @@ static idStr FindUnusedFileName( const char *format ) {
 	char	filename[1024];
 
 	for ( i = 0 ; i < 999 ; i++ ) {
-		sprintf( filename, format, i );
+		idStr::snPrintf( filename, sizeof( filename ), format, i );
 		int len = fileSystem->ReadFile( filename, NULL, NULL );
 		if ( len <= 0 ) {
 			return filename;	// file doesn't exist
@@ -3821,7 +3831,7 @@ void idSessionLocal::LoadLoadingGui( const char *mapName ) {
 	}
 
 	char guiMap[ MAX_STRING_CHARS ];
-	strncpy( guiMap, va( "guis/map/%s.gui", stripped.c_str() ), MAX_STRING_CHARS );
+	idStr::Copynz( guiMap, va( "guis/map/%s.gui", stripped.c_str() ), sizeof( guiMap ) );
 	// give the gamecode a chance to override
 	//game->GetMapLoadingGUI( guiMap );
 

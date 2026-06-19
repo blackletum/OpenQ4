@@ -9,6 +9,7 @@ import os
 import platform
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -44,6 +45,21 @@ NON_RUNTIME_PATTERNS = (
     "*.map",
     "*.zip",
 )
+
+MACOS_FORBIDDEN_XATTRS = (
+    "com.apple.quarantine",
+)
+
+MACOS_NON_RUNTIME_PATTERNS = NON_RUNTIME_PATTERNS + (
+    "*.dSYM",
+    "*.pdb",
+)
+
+MACOS_LIPO_ARCHES = {
+    "arm64": "arm64",
+    "x64": "x86_64",
+    "x86": "i386",
+}
 
 
 class ValidationError(RuntimeError):
@@ -182,6 +198,7 @@ def validation_env(args: argparse.Namespace, root: Path) -> dict[str, str]:
 def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) -> None:
     tests = [
         root / "tools" / "tests" / "campaign_split_state_transition.py",
+        root / "tools" / "tests" / "filesystem_case_segments.py",
         root / "tools" / "tests" / "hdr_postprocess_math.py",
         root / "tools" / "tests" / "linux_highdpi_mouse.py",
         root / "tools" / "tests" / "linux_vsync_support.py",
@@ -239,6 +256,110 @@ def is_posix_executable(path: Path) -> bool:
 def require_posix_executable(path: Path, root: Path, label: str) -> None:
     if not is_posix_executable(path):
         raise ValidationError(f"{label} is not executable: {rel(path, root)}")
+
+
+def macos_forbidden_xattrs(path: Path) -> list[str]:
+    try:
+        names = os.listxattr(path)
+    except (AttributeError, OSError):
+        return []
+    return sorted(name for name in names if name in MACOS_FORBIDDEN_XATTRS)
+
+
+def validate_no_macos_forbidden_xattrs(root: Path, install_root: Path) -> None:
+    offenders: list[tuple[Path, list[str]]] = []
+    for path in [install_root, *install_root.rglob("*")]:
+        bad_attrs = macos_forbidden_xattrs(path)
+        if bad_attrs:
+            offenders.append((path, bad_attrs))
+
+    if offenders:
+        formatted = "\n".join(
+            f"  - {rel(path, root)}: {', '.join(attrs)}" for path, attrs in offenders[:20]
+        )
+        raise ValidationError(f"macOS staged payload contains forbidden extended attributes:\n{formatted}")
+
+
+def validate_no_macos_non_runtime_artifacts(root: Path, install_root: Path, game_dir: Path) -> None:
+    bad_artifacts: list[Path] = []
+    for directory in (install_root, game_dir):
+        for path in directory.rglob("*"):
+            if any(fnmatch.fnmatch(path.name.lower(), pattern.lower()) for pattern in MACOS_NON_RUNTIME_PATTERNS):
+                bad_artifacts.append(path)
+
+    if bad_artifacts:
+        formatted = "\n".join(f"  - {rel(path, root)}" for path in sorted(bad_artifacts)[:20])
+        raise ValidationError(f"macOS staged payload contains non-runtime artifacts:\n{formatted}")
+
+
+def validate_no_macos_symlinks(root: Path, install_root: Path) -> None:
+    symlinks = [path for path in install_root.rglob("*") if path.is_symlink()]
+    if symlinks:
+        formatted = "\n".join(f"  - {rel(path, root)}" for path in sorted(symlinks)[:20])
+        raise ValidationError(f"macOS staged payload contains symlink entries:\n{formatted}")
+
+
+def validate_no_macos_unsafe_file_modes(root: Path, install_root: Path) -> None:
+    if not host_is_macos():
+        return
+
+    offenders: list[str] = []
+    for path in install_root.rglob("*"):
+        if not path.is_file():
+            continue
+        mode = path.stat().st_mode & 0o7777
+        if mode & 0o7000:
+            offenders.append(f"{rel(path, root)} has special mode bits {mode:o}")
+        elif mode & 0o022:
+            offenders.append(f"{rel(path, root)} is group/other writable ({mode:o})")
+
+    if offenders:
+        formatted = "\n".join(f"  - {offender}" for offender in offenders[:20])
+        raise ValidationError(f"macOS staged payload contains unsafe file modes:\n{formatted}")
+
+
+def macos_expected_lipo_arch(arch: str) -> str:
+    expected = MACOS_LIPO_ARCHES.get(arch)
+    if expected is None:
+        raise ValidationError(f"macOS staged architecture {arch!r} has no lipo mapping")
+    return expected
+
+
+def macos_lipo_arches(binary_path: Path) -> set[str]:
+    if not host_is_macos():
+        return set()
+
+    lipo_path = shutil.which("lipo")
+    if lipo_path is None:
+        raise ValidationError("macOS architecture validation requires lipo.")
+
+    completed = subprocess.run(
+        [lipo_path, "-archs", str(binary_path)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode != 0:
+        message = completed.stderr.strip() or completed.stdout.strip()
+        raise ValidationError(f"lipo failed for macOS binary {binary_path}: {message}")
+
+    return set(completed.stdout.strip().split())
+
+
+def validate_macos_binary_architectures(root: Path, arch: str, binary_paths: list[Path]) -> None:
+    if not host_is_macos():
+        return
+
+    expected_arch = macos_expected_lipo_arch(arch)
+    for binary_path in binary_paths:
+        actual_arches = macos_lipo_arches(binary_path)
+        if expected_arch not in actual_arches:
+            actual = ", ".join(sorted(actual_arches)) or "<none>"
+            raise ValidationError(
+                f"macOS staged binary architecture mismatch: {rel(binary_path, root)} "
+                f"expected {expected_arch}, found {actual}"
+            )
 
 
 def validate_linux_steamdeck_launcher(path: Path, root: Path, client_candidates: list[Path]) -> None:
@@ -341,6 +462,7 @@ def validate_macos_staged_metadata(
 
     client_arches: set[str] = set()
     for client in client_candidates:
+        require_posix_executable(client, root, "macOS staged client executable")
         arch = macos_binary_arch(client, "openQ4-client")
         if arch is None:
             raise ValidationError(f"Unexpected macOS client binary name: {rel(client, root)}")
@@ -348,6 +470,7 @@ def validate_macos_staged_metadata(
 
     dedicated_arches: set[str] = set()
     for dedicated in dedicated_candidates:
+        require_posix_executable(dedicated, root, "macOS staged dedicated-server executable")
         arch = macos_binary_arch(dedicated, "openQ4-ded")
         if arch is None:
             raise ValidationError(f"Unexpected macOS dedicated-server binary name: {rel(dedicated, root)}")
@@ -374,10 +497,43 @@ def validate_macos_staged_metadata(
             module_path = game_dir / module_name
             if not module_path.is_file():
                 missing_game_modules.append(module_path)
+            elif not is_posix_executable(module_path):
+                raise ValidationError(f"macOS staged game module is not executable: {rel(module_path, root)}")
 
     if missing_game_modules:
         formatted = "\n".join(f"  - {rel(path, root)}" for path in missing_game_modules)
         raise ValidationError(f"macOS staged payload is missing architecture-matched game modules:\n{formatted}")
+
+    expected_game_modules = {
+        game_dir / f"game-sp_{arch}.dylib" for arch in client_arches
+    } | {
+        game_dir / f"game-mp_{arch}.dylib" for arch in client_arches
+    }
+    stale_game_modules = sorted(
+        path
+        for path in game_dir.glob("game-*.dylib")
+        if path not in expected_game_modules
+    )
+    if stale_game_modules:
+        formatted = "\n".join(f"  - {rel(path, root)}" for path in stale_game_modules)
+        raise ValidationError(f"macOS staged payload contains stale or mismatched game modules:\n{formatted}")
+
+    for arch in sorted(client_arches):
+        validate_macos_binary_architectures(
+            root,
+            arch,
+            [
+                install_root / f"openQ4-client_{arch}",
+                install_root / f"openQ4-ded_{arch}",
+                game_dir / f"game-sp_{arch}.dylib",
+                game_dir / f"game-mp_{arch}.dylib",
+            ],
+        )
+
+    validate_no_macos_non_runtime_artifacts(root, install_root, game_dir)
+    validate_no_macos_forbidden_xattrs(root, install_root)
+    validate_no_macos_symlinks(root, install_root)
+    validate_no_macos_unsafe_file_modes(root, install_root)
 
 
 def validate_staged_payload(root: Path, *, dry_run: bool) -> None:

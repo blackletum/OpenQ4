@@ -38,15 +38,42 @@ If you have questions concerning this license or the applicable additional terms
 FS_WriteFloatString
 =================
 */
-int FS_WriteFloatString( char *buf, const char *fmt, va_list argPtr ) {
-	long i;
-	unsigned long u;
+static void FS_AppendFloatString( char *buf, int bufSize, int &index, const char *fmt, ... ) {
+	va_list argPtr;
+	int written;
+
+	if ( index < 0 || index >= bufSize ) {
+		common->Error( "FS_WriteFloatString: output overflow" );
+	}
+
+	va_start( argPtr, fmt );
+	written = idStr::vsnPrintf( buf + index, bufSize - index, fmt, argPtr );
+	va_end( argPtr );
+
+	if ( written < 0 ) {
+		common->Error( "FS_WriteFloatString: output overflow" );
+	}
+
+	index += written;
+}
+
+int FS_WriteFloatString( char *buf, int bufSize, const char *fmt, va_list argPtr ) {
+	int i;
+	unsigned int u;
 	double f;
 	char *str;
 	int index;
 	idStr tmp, format;
 
+	if ( buf == NULL || bufSize <= 0 ) {
+		common->Error( "FS_WriteFloatString: invalid output buffer" );
+	}
+	if ( fmt == NULL ) {
+		common->Error( "FS_WriteFloatString: invalid format string" );
+	}
+
 	index = 0;
+	buf[0] = '\0';
 
 	while( *fmt ) {
 		switch( *fmt ) {
@@ -66,47 +93,50 @@ int FS_WriteFloatString( char *buf, const char *fmt, va_list argPtr ) {
 					case 'G':
 						f = va_arg( argPtr, double );
 						if ( format.Length() <= 2 ) {
+							char tmpBuffer[512];
+
 							// high precision floating point number without trailing zeros
-							sprintf( tmp, "%1.10f", f );
+							idStr::snPrintf( tmpBuffer, sizeof( tmpBuffer ), "%1.10f", f );
+							tmp = tmpBuffer;
 							tmp.StripTrailing( '0' );
 							tmp.StripTrailing( '.' );
-							index += sprintf( buf+index, "%s", tmp.c_str() );
+							FS_AppendFloatString( buf, bufSize, index, "%s", tmp.c_str() );
 						}
 						else {
-							index += sprintf( buf+index, format.c_str(), f );
+							FS_AppendFloatString( buf, bufSize, index, format.c_str(), f );
 						}
 						break;
 					case 'd':
 					case 'i':
-						i = va_arg( argPtr, long );
-						index += sprintf( buf+index, format.c_str(), i );
+						i = va_arg( argPtr, int );
+						FS_AppendFloatString( buf, bufSize, index, format.c_str(), i );
 						break;
 					case 'u':
-						u = va_arg( argPtr, unsigned long );
-						index += sprintf( buf+index, format.c_str(), u );
+						u = va_arg( argPtr, unsigned int );
+						FS_AppendFloatString( buf, bufSize, index, format.c_str(), u );
 						break;
 					case 'o':
-						u = va_arg( argPtr, unsigned long );
-						index += sprintf( buf+index, format.c_str(), u );
+						u = va_arg( argPtr, unsigned int );
+						FS_AppendFloatString( buf, bufSize, index, format.c_str(), u );
 						break;
 					case 'x':
-						u = va_arg( argPtr, unsigned long );
-						index += sprintf( buf+index, format.c_str(), u );
+						u = va_arg( argPtr, unsigned int );
+						FS_AppendFloatString( buf, bufSize, index, format.c_str(), u );
 						break;
 					case 'X':
-						u = va_arg( argPtr, unsigned long );
-						index += sprintf( buf+index, format.c_str(), u );
+						u = va_arg( argPtr, unsigned int );
+						FS_AppendFloatString( buf, bufSize, index, format.c_str(), u );
 						break;
 					case 'c':
-						i = va_arg( argPtr, long );
-						index += sprintf( buf+index, format.c_str(), (char) i );
+						i = va_arg( argPtr, int );
+						FS_AppendFloatString( buf, bufSize, index, format.c_str(), (char) i );
 						break;
 					case 's':
 						str = va_arg( argPtr, char * );
-						index += sprintf( buf+index, format.c_str(), str );
+						FS_AppendFloatString( buf, bufSize, index, format.c_str(), str ? str : "" );
 						break;
 					case '%':
-						index += sprintf( buf+index, format.c_str() );
+						FS_AppendFloatString( buf, bufSize, index, format.c_str() );
 						break;
 					default:
 						common->Error( "FS_WriteFloatString: invalid format %s", format.c_str() );
@@ -118,16 +148,16 @@ int FS_WriteFloatString( char *buf, const char *fmt, va_list argPtr ) {
 				fmt++;
 				switch( *fmt ) {
 					case 't':
-						index += sprintf( buf+index, "\t" );
+						FS_AppendFloatString( buf, bufSize, index, "\t" );
 						break;
 					case 'v':
-						index += sprintf( buf+index, "\v" );
+						FS_AppendFloatString( buf, bufSize, index, "\v" );
 						break;
 					case 'n':
-						index += sprintf( buf+index, "\n" );
+						FS_AppendFloatString( buf, bufSize, index, "\n" );
 						break;
 					case '\\':
-						index += sprintf( buf+index, "\\" );
+						FS_AppendFloatString( buf, bufSize, index, "\\" );
 						break;
 					default:
 						common->Error( "FS_WriteFloatString: unknown escape character \'%c\'", *fmt );
@@ -136,7 +166,7 @@ int FS_WriteFloatString( char *buf, const char *fmt, va_list argPtr ) {
 				fmt++;
 				break;
 			default:
-				index += sprintf( buf+index, "%c", *fmt );
+				FS_AppendFloatString( buf, bufSize, index, "%c", *fmt );
 				fmt++;
 				break;
 		}
@@ -297,7 +327,7 @@ int idFile::WriteFloatString( const char *fmt, ... ) {
 	va_list argPtr;
 
 	va_start( argPtr, fmt );
-	len = FS_WriteFloatString( buf, fmt, argPtr );
+	len = FS_WriteFloatString( buf, sizeof( buf ), fmt, argPtr );
 	va_end( argPtr );
 
 	return Write( buf, len );

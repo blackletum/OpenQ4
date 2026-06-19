@@ -11,6 +11,7 @@ import plistlib
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -88,17 +89,36 @@ OPENQ4_PK4_EXCLUDED_FILES = {
 }
 MACOS_EXPECTED_PLIST_VALUES = {
     "CFBundleExecutable": "openQ4",
+    "CFBundleDisplayName": "openQ4",
     "CFBundleIconFile": "openQ4.icns",
     "CFBundleIdentifier": "com.darkmatter.openq4",
     "CFBundleName": "openQ4",
     "CFBundlePackageType": "APPL",
     "LSMinimumSystemVersion": "11.0",
+    "LSApplicationCategoryType": "public.app-category.games",
     "NSPrincipalClass": "NSApplication",
 }
 MACOS_ALLOWED_RUNTIME_DEPENDENCY_PREFIXES = (
     "/System/Library/",
     "/usr/lib/",
 )
+MACOS_FORBIDDEN_XATTRS = (
+    "com.apple.quarantine",
+)
+MACOS_FORBIDDEN_ARCHIVE_NAMES = (
+    ".DS_Store",
+)
+MACOS_PKGINFO_BYTES = b"APPL????"
+MACOS_LOCALIZED_INFO_LOCALES = (
+    "English",
+    "French",
+)
+
+MACOS_LIPO_ARCHES = {
+    "arm64": "arm64",
+    "x64": "x86_64",
+    "x86": "i386",
+}
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -222,6 +242,290 @@ def ensure_posix_executable(path: Path) -> None:
     if os.name == "nt":
         return
     os.chmod(path, path.stat().st_mode | 0o755)
+
+
+def macos_forbidden_xattrs(path: Path) -> list[str]:
+    try:
+        names = os.listxattr(path)
+    except (AttributeError, OSError):
+        return []
+    return sorted(name for name in names if name in MACOS_FORBIDDEN_XATTRS)
+
+
+def strip_macos_forbidden_xattrs(root: Path) -> None:
+    if sys.platform != "darwin":
+        return
+
+    for path in [root, *root.rglob("*")]:
+        for attr in macos_forbidden_xattrs(path):
+            try:
+                os.removexattr(path, attr)
+            except OSError as exc:
+                raise RuntimeError(f"failed to remove {attr} from macOS package path: {path}") from exc
+
+
+def validate_no_macos_forbidden_xattrs(root: Path) -> None:
+    offenders: list[tuple[Path, list[str]]] = []
+    for path in [root, *root.rglob("*")]:
+        bad_attrs = macos_forbidden_xattrs(path)
+        if bad_attrs:
+            offenders.append((path, bad_attrs))
+
+    if offenders:
+        joined = ", ".join(
+            f"{path.relative_to(root).as_posix() or '.'}: {','.join(attrs)}"
+            for path, attrs in offenders[:10]
+        )
+        raise RuntimeError(f"macOS package contains forbidden extended attributes: {joined}")
+
+
+def validate_no_package_symlinks(root: Path) -> None:
+    symlinks = [path for path in root.rglob("*") if path.is_symlink()]
+    if symlinks:
+        joined = ", ".join(path.relative_to(root).as_posix() for path in symlinks[:10])
+        raise RuntimeError(f"macOS package contains symlink entries: {joined}")
+
+
+def validate_no_package_special_files(root: Path) -> None:
+    if os.name == "nt":
+        return
+
+    special_files = [
+        path
+        for path in root.rglob("*")
+        if not path.is_symlink() and not path.is_file() and not path.is_dir()
+    ]
+    if special_files:
+        joined = ", ".join(path.relative_to(root).as_posix() for path in special_files[:10])
+        raise RuntimeError(f"macOS package contains special file entries: {joined}")
+
+
+def validate_macos_package_file_modes(root: Path) -> None:
+    if os.name == "nt":
+        return
+
+    offenders: list[str] = []
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        mode = path.stat().st_mode & 0o7777
+        if mode & 0o7000:
+            offenders.append(f"{path.relative_to(root).as_posix()} has special mode bits {mode:o}")
+        elif mode & 0o022:
+            offenders.append(f"{path.relative_to(root).as_posix()} is group/other writable ({mode:o})")
+
+    if offenders:
+        raise RuntimeError("macOS package contains unsafe file modes: " + ", ".join(offenders[:10]))
+
+
+def parse_version_manifest_bytes(data: bytes, label: str) -> dict[str, str]:
+    try:
+        lines = data.decode("utf-8").splitlines()
+    except UnicodeDecodeError as exc:
+        raise RuntimeError(f"{label} version manifest is not UTF-8") from exc
+
+    if not lines or lines[0].strip() != PRODUCT_NAME:
+        raise RuntimeError(f"{label} version manifest has invalid product header")
+
+    values: dict[str, str] = {}
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        if "=" not in line:
+            raise RuntimeError(f"{label} version manifest contains malformed line: {line!r}")
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+    return values
+
+
+def validate_version_manifest_bytes(
+    data: bytes,
+    label: str,
+    *,
+    version: str,
+    version_tag: str,
+    platform: str,
+    arch: str,
+) -> None:
+    values = parse_version_manifest_bytes(data, label)
+    expected = {
+        "version": version,
+        "version_tag": version_tag,
+        "platform": platform,
+        "arch": arch,
+    }
+    for key, expected_value in expected.items():
+        actual = values.get(key)
+        if actual != expected_value:
+            raise RuntimeError(
+                f"{label} version manifest {key} is {actual!r}; expected {expected_value!r}"
+            )
+
+
+def validate_macos_localized_info_bytes(data: bytes, label: str, version: str) -> None:
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError(f"{label} is not UTF-8") from exc
+
+    required_tokens = (
+        'CFBundleName = "openQ4";',
+        f'CFBundleShortVersionString = "{version}";',
+        f'CFBundleGetInfoString = "openQ4 version {version}, Copyright 2026 DarkMatter Productions";',
+        'NSHumanReadableCopyright = "Copyright 2026 DarkMatter Productions";',
+    )
+    for token in required_tokens:
+        if token not in text:
+            raise RuntimeError(f"{label} is missing {token!r}")
+
+
+def macos_package_version_tag_from_name(package_root: Path, arch: str) -> str:
+    name = package_root.name
+    prefix = "openq4-"
+    marker = f"-macos-{arch}"
+    if not name.startswith(prefix) or marker not in name:
+        raise RuntimeError(f"macOS package directory name cannot provide version tag: {name}")
+    return name[len(prefix) : name.index(marker)]
+
+
+def validate_macos_version_manifests(package_root: Path, arch: str, version: str, version_tag: str) -> None:
+    manifests = {
+        "macOS package": package_root / "VERSION.txt",
+        "macOS app": package_root / "openQ4.app" / "Contents" / "Resources" / "VERSION.txt",
+    }
+    for label, manifest_path in manifests.items():
+        try:
+            data = manifest_path.read_bytes()
+        except OSError as exc:
+            raise RuntimeError(f"{label} version manifest is unreadable: {manifest_path}") from exc
+        validate_version_manifest_bytes(
+            data,
+            label,
+            version=version,
+            version_tag=version_tag,
+            platform="macos",
+            arch=arch,
+        )
+
+
+def validate_macos_localized_info_files(package_root: Path, version: str) -> None:
+    for locale in MACOS_LOCALIZED_INFO_LOCALES:
+        path = package_root / "openQ4.app" / "Contents" / "Resources" / f"{locale}.lproj" / "InfoPlist.strings"
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            raise RuntimeError(f"macOS localized InfoPlist.strings is unreadable: {path}") from exc
+        validate_macos_localized_info_bytes(data, f"macOS {locale} InfoPlist.strings", version)
+
+
+def macos_expected_lipo_arch(arch: str) -> str:
+    expected = MACOS_LIPO_ARCHES.get(arch)
+    if expected is None:
+        raise RuntimeError(f"macOS package architecture {arch!r} has no lipo mapping")
+    return expected
+
+
+def macos_lipo_arches(binary_path: Path) -> set[str]:
+    if sys.platform != "darwin":
+        return set()
+
+    lipo_path = shutil.which("lipo")
+    if lipo_path is None:
+        raise RuntimeError("macOS architecture validation requires lipo")
+
+    completed = subprocess.run(
+        [lipo_path, "-archs", str(binary_path)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode != 0:
+        message = completed.stderr.strip() or completed.stdout.strip()
+        raise RuntimeError(f"lipo failed for macOS binary {binary_path}: {message}")
+
+    return set(completed.stdout.strip().split())
+
+
+def validate_macos_binary_architectures(binary_paths: list[Path], arch: str) -> None:
+    if sys.platform != "darwin":
+        return
+
+    expected_arch = macos_expected_lipo_arch(arch)
+    for binary_path in binary_paths:
+        actual_arches = macos_lipo_arches(binary_path)
+        if expected_arch not in actual_arches:
+            actual = ", ".join(sorted(actual_arches)) or "<none>"
+            raise RuntimeError(
+                f"macOS binary architecture mismatch: {binary_path}: "
+                f"expected {expected_arch}, found {actual}"
+            )
+
+
+def run_macos_codesign(command: list[str], *, label: str) -> None:
+    completed = subprocess.run(
+        command,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode != 0:
+        message = completed.stderr.strip() or completed.stdout.strip()
+        raise RuntimeError(f"{label} failed: {message}")
+
+
+def ad_hoc_sign_macos_payload(package_root: Path, arch: str) -> None:
+    if sys.platform != "darwin":
+        return
+
+    codesign_path = shutil.which("codesign")
+    if codesign_path is None:
+        raise RuntimeError("macOS code-sign validation requires codesign")
+
+    sign_targets = [
+        package_root / f"{PRODUCT_NAME}-client_{arch}",
+        package_root / f"{PRODUCT_NAME}-ded_{arch}",
+        package_root / GAME_DIR_NAME / f"game-sp_{arch}.dylib",
+        package_root / GAME_DIR_NAME / f"game-mp_{arch}.dylib",
+    ]
+    for target in sign_targets:
+        run_macos_codesign(
+            [codesign_path, "--force", "--sign", "-", "--timestamp=none", str(target)],
+            label=f"ad-hoc signing {target}",
+        )
+
+    app_root = package_root / "openQ4.app"
+    app_executable = app_root / "Contents" / "MacOS" / "openQ4"
+    shutil.copy2(package_root / f"{PRODUCT_NAME}-client_{arch}", app_executable)
+    ensure_posix_executable(app_executable)
+    run_macos_codesign(
+        [codesign_path, "--force", "--sign", "-", "--timestamp=none", str(app_root)],
+        label=f"ad-hoc signing {app_root}",
+    )
+
+
+def verify_macos_codesignature(package_root: Path, arch: str) -> None:
+    if sys.platform != "darwin":
+        return
+
+    codesign_path = shutil.which("codesign")
+    if codesign_path is None:
+        raise RuntimeError("macOS code-sign validation requires codesign")
+
+    verify_targets = [
+        package_root / f"{PRODUCT_NAME}-client_{arch}",
+        package_root / f"{PRODUCT_NAME}-ded_{arch}",
+        package_root / GAME_DIR_NAME / f"game-sp_{arch}.dylib",
+        package_root / GAME_DIR_NAME / f"game-mp_{arch}.dylib",
+        package_root / "openQ4.app" / "Contents" / "MacOS" / "openQ4",
+        package_root / "openQ4.app",
+    ]
+    for target in verify_targets:
+        run_macos_codesign(
+            [codesign_path, "--verify", "--strict", "--verbose=2", str(target)],
+            label=f"code signature verification for {target}",
+        )
 
 
 def write_version_manifest(
@@ -417,7 +721,10 @@ def copy_required_game_binaries(
                 missing_required.append(filename)
                 continue
             raise FileNotFoundError(f"required game module not found: {source}")
-        shutil.copy2(source, package_game_dir / filename)
+        destination = package_game_dir / filename
+        shutil.copy2(source, destination)
+        if platform == "macos":
+            ensure_posix_executable(destination)
 
     return missing_required
 
@@ -484,10 +791,12 @@ def create_game_pk4(
 
     with ZipFile(destination_pk4, "w", compression=ZIP_DEFLATED, compresslevel=9) as pk4:
         for path in sorted(install_game_dir.rglob("*")):
+            rel = path.relative_to(install_game_dir)
+            if path.is_symlink():
+                raise RuntimeError(f"refusing to package symlink into {destination_pk4.name}: {rel.as_posix()}")
             if not path.is_file():
                 continue
 
-            rel = path.relative_to(install_game_dir)
             rel_parts_lower = {part.lower() for part in rel.parts}
             rel_posix_lower = rel.as_posix().lower()
 
@@ -528,6 +837,11 @@ def create_release_archive(
 ) -> None:
     if archive_path.exists():
         archive_path.unlink()
+
+    symlinks = [path for path in package_root.rglob("*") if path.is_symlink()]
+    if symlinks:
+        joined = ", ".join(path.relative_to(package_root).as_posix() for path in symlinks[:10])
+        raise RuntimeError(f"release archive input contains symlink entries: {joined}")
 
     executable_archive_paths = {
         relative_path.as_posix()
@@ -575,6 +889,12 @@ def get_package_executable_archive_paths(
         executable_paths.update(Path(filename) for filename in copied_linux_launchers)
     elif platform == "macos":
         executable_paths.add(Path("openQ4.app") / "Contents" / "MacOS" / "openQ4")
+        executable_paths.update(
+            {
+                Path(GAME_DIR_NAME) / f"game-sp_{arch}.dylib",
+                Path(GAME_DIR_NAME) / f"game-mp_{arch}.dylib",
+            }
+        )
 
     return executable_paths
 
@@ -595,6 +915,31 @@ def validate_macos_plist_values(plist: dict, label: str, version: str | None = N
         raise RuntimeError(f"{label} must set NSSupportsAutomaticGraphicsSwitching=true")
 
 
+def validate_macos_archive_name(name: str, package_prefix: str) -> None:
+    if (
+        name.startswith("/")
+        or "\\" in name
+        or re.match(r"^[A-Za-z]:", name) is not None
+        or "/../" in f"/{name}/"
+        or not name.startswith(package_prefix)
+    ):
+        raise RuntimeError(f"macOS archive contains unsafe or out-of-package path: {name}")
+
+
+def validate_macos_archive_mode(name: str, mode: int) -> None:
+    if mode & 0o7000:
+        raise RuntimeError(f"macOS archive entry has special mode bits: {name} ({mode:o})")
+    if mode & 0o022:
+        raise RuntimeError(f"macOS archive entry is group/other writable: {name} ({mode:o})")
+
+
+def record_macos_archive_entry(entry_names: set[str], name: str, package_prefix: str) -> None:
+    validate_macos_archive_name(name, package_prefix)
+    if name in entry_names:
+        raise RuntimeError(f"macOS archive contains duplicate entry: {name}")
+    entry_names.add(name)
+
+
 def validate_macos_archive_contents(
     package_root: Path, archive_path: Path, archive_format: str, arch: str, version: str
 ) -> None:
@@ -605,9 +950,13 @@ def validate_macos_archive_contents(
     expected_entries = {
         client_entry,
         dedicated_entry,
+        f"{package_prefix}{GAME_DIR_NAME}/game-sp_{arch}.dylib",
+        f"{package_prefix}{GAME_DIR_NAME}/game-mp_{arch}.dylib",
         f"{package_prefix}{GAME_DIR_NAME}/mod.json",
         f"{package_prefix}{GAME_DIR_NAME}/pak0.pk4",
+        f"{package_prefix}VERSION.txt",
         f"{package_prefix}openQ4.app/Contents/Info.plist",
+        f"{package_prefix}openQ4.app/Contents/PkgInfo",
         app_executable_entry,
         f"{package_prefix}openQ4.app/Contents/Resources/openQ4.icns",
         f"{package_prefix}openQ4.app/Contents/Resources/VERSION.txt",
@@ -618,14 +967,21 @@ def validate_macos_archive_contents(
         client_entry,
         dedicated_entry,
         app_executable_entry,
+        f"{package_prefix}{GAME_DIR_NAME}/game-sp_{arch}.dylib",
+        f"{package_prefix}{GAME_DIR_NAME}/game-mp_{arch}.dylib",
     }
     plist_entry = f"{package_prefix}openQ4.app/Contents/Info.plist"
 
     modes: dict[str, int] = {}
     entry_names: set[str] = set()
     plist_bytes: bytes | None = None
+    pkginfo_bytes: bytes | None = None
+    root_version_bytes: bytes | None = None
+    app_version_bytes: bytes | None = None
+    localized_info_bytes: dict[str, bytes] = {}
     client_bytes: bytes | None = None
     app_executable_bytes: bytes | None = None
+    package_version_tag = macos_package_version_tag_from_name(package_root, arch)
 
     if archive_format == "zip":
         with ZipFile(archive_path, "r") as archive:
@@ -633,10 +989,29 @@ def validate_macos_archive_contents(
                 name = info.filename.rstrip("/")
                 if not name:
                     continue
-                entry_names.add(name)
-                modes[name] = (info.external_attr >> 16) & 0o777
+                mode_type = (info.external_attr >> 16) & 0o170000
+                if info.create_system == 3 and mode_type == stat.S_IFLNK:
+                    raise RuntimeError(f"macOS archive contains symlink entry: {name}")
+                if info.create_system == 3 and mode_type not in (0, stat.S_IFREG):
+                    raise RuntimeError(f"macOS archive contains non-regular entry: {name}")
+                record_macos_archive_entry(entry_names, name, package_prefix)
+                modes[name] = (info.external_attr >> 16) & 0o7777
+                validate_macos_archive_mode(name, modes[name])
             if plist_entry in entry_names:
                 plist_bytes = archive.read(plist_entry)
+            pkginfo_entry = f"{package_prefix}openQ4.app/Contents/PkgInfo"
+            if pkginfo_entry in entry_names:
+                pkginfo_bytes = archive.read(pkginfo_entry)
+            root_version_entry = f"{package_prefix}VERSION.txt"
+            app_version_entry = f"{package_prefix}openQ4.app/Contents/Resources/VERSION.txt"
+            if root_version_entry in entry_names:
+                root_version_bytes = archive.read(root_version_entry)
+            if app_version_entry in entry_names:
+                app_version_bytes = archive.read(app_version_entry)
+            for locale in MACOS_LOCALIZED_INFO_LOCALES:
+                entry = f"{package_prefix}openQ4.app/Contents/Resources/{locale}.lproj/InfoPlist.strings"
+                if entry in entry_names:
+                    localized_info_bytes[locale] = archive.read(entry)
             if client_entry in entry_names:
                 client_bytes = archive.read(client_entry)
             if app_executable_entry in entry_names:
@@ -647,12 +1022,34 @@ def validate_macos_archive_contents(
                 name = member.name.rstrip("/")
                 if not name:
                     continue
-                entry_names.add(name)
-                modes[name] = member.mode
+                if member.issym() or member.islnk():
+                    raise RuntimeError(f"macOS archive contains symlink entry: {name}")
+                if not member.isfile():
+                    raise RuntimeError(f"macOS archive contains non-regular entry: {name}")
+                record_macos_archive_entry(entry_names, name, package_prefix)
+                modes[name] = member.mode & 0o7777
+                validate_macos_archive_mode(name, modes[name])
                 if name == plist_entry:
                     extracted = archive.extractfile(member)
                     if extracted is not None:
                         plist_bytes = extracted.read()
+                elif name == f"{package_prefix}openQ4.app/Contents/PkgInfo":
+                    extracted = archive.extractfile(member)
+                    if extracted is not None:
+                        pkginfo_bytes = extracted.read()
+                elif name == f"{package_prefix}VERSION.txt":
+                    extracted = archive.extractfile(member)
+                    if extracted is not None:
+                        root_version_bytes = extracted.read()
+                elif name == f"{package_prefix}openQ4.app/Contents/Resources/VERSION.txt":
+                    extracted = archive.extractfile(member)
+                    if extracted is not None:
+                        app_version_bytes = extracted.read()
+                elif name.startswith(f"{package_prefix}openQ4.app/Contents/Resources/") and name.endswith(".lproj/InfoPlist.strings"):
+                    locale = Path(name).parts[-2].replace(".lproj", "")
+                    extracted = archive.extractfile(member)
+                    if extracted is not None:
+                        localized_info_bytes[locale] = extracted.read()
                 elif name == client_entry:
                     extracted = archive.extractfile(member)
                     if extracted is not None:
@@ -662,19 +1059,39 @@ def validate_macos_archive_contents(
                     if extracted is not None:
                         app_executable_bytes = extracted.read()
 
-    bad_names = [
+    bad_metadata_names = [
         name
         for name in sorted(entry_names)
-        if name.startswith("/") or "/../" in f"/{name}/" or not name.startswith(package_prefix)
+        if any(
+            part in MACOS_FORBIDDEN_ARCHIVE_NAMES
+            or part.startswith("._")
+            or part.endswith(".dSYM")
+            for part in Path(name).parts
+        )
     ]
-    if bad_names:
-        joined = ", ".join(bad_names[:5])
-        raise RuntimeError(f"macOS archive contains unsafe or out-of-package paths: {joined}")
+    if bad_metadata_names:
+        joined = ", ".join(bad_metadata_names[:5])
+        raise RuntimeError(f"macOS archive contains non-runtime metadata/debug entries: {joined}")
 
     missing_entries = sorted(expected_entries - entry_names)
     if missing_entries:
         joined = ", ".join(missing_entries)
         raise RuntimeError(f"macOS archive is missing required entries: {joined}")
+
+    expected_game_modules = {
+        f"{package_prefix}{GAME_DIR_NAME}/game-sp_{arch}.dylib",
+        f"{package_prefix}{GAME_DIR_NAME}/game-mp_{arch}.dylib",
+    }
+    stale_game_modules = sorted(
+        name
+        for name in entry_names
+        if name.startswith(f"{package_prefix}{GAME_DIR_NAME}/game-")
+        and name.endswith(".dylib")
+        and name not in expected_game_modules
+    )
+    if stale_game_modules:
+        joined = ", ".join(stale_game_modules[:5])
+        raise RuntimeError(f"macOS archive contains stale or mismatched game modules: {joined}")
 
     for entry in sorted(executable_entries):
         if modes.get(entry, 0) & 0o111 == 0:
@@ -682,6 +1099,31 @@ def validate_macos_archive_contents(
 
     if plist_bytes is None:
         raise RuntimeError(f"macOS archive Info.plist is unreadable: {plist_entry}")
+    if pkginfo_bytes != MACOS_PKGINFO_BYTES:
+        raise RuntimeError("macOS archive PkgInfo is missing or invalid")
+    if root_version_bytes is None or app_version_bytes is None:
+        raise RuntimeError("macOS archive version manifests are unreadable")
+    validate_version_manifest_bytes(
+        root_version_bytes,
+        "macOS archive package",
+        version=version,
+        version_tag=package_version_tag,
+        platform="macos",
+        arch=arch,
+    )
+    validate_version_manifest_bytes(
+        app_version_bytes,
+        "macOS archive app",
+        version=version,
+        version_tag=package_version_tag,
+        platform="macos",
+        arch=arch,
+    )
+    for locale in MACOS_LOCALIZED_INFO_LOCALES:
+        data = localized_info_bytes.get(locale)
+        if data is None:
+            raise RuntimeError(f"macOS archive missing {locale} localized InfoPlist.strings")
+        validate_macos_localized_info_bytes(data, f"macOS archive {locale} InfoPlist.strings", version)
     if client_bytes is None or app_executable_bytes is None:
         raise RuntimeError("macOS archive executable payloads are unreadable")
     if client_bytes != app_executable_bytes:
@@ -730,6 +1172,29 @@ def macos_otool_dependencies(binary_path: Path) -> list[str]:
     return dependencies
 
 
+def macos_otool_install_name(binary_path: Path) -> str:
+    if sys.platform != "darwin" or binary_path.suffix != ".dylib":
+        return ""
+
+    otool_path = shutil.which("otool")
+    if otool_path is None:
+        raise RuntimeError("macOS install-name validation requires otool")
+
+    completed = subprocess.run(
+        [otool_path, "-D", str(binary_path)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode != 0:
+        message = completed.stderr.strip() or completed.stdout.strip()
+        raise RuntimeError(f"otool failed for macOS dylib {binary_path}: {message}")
+
+    lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    return lines[1] if len(lines) > 1 else ""
+
+
 def validate_macos_binary_dependencies(package_root: Path, arch: str) -> None:
     if sys.platform != "darwin":
         return
@@ -744,6 +1209,10 @@ def validate_macos_binary_dependencies(package_root: Path, arch: str) -> None:
 
     for binary_path in binary_paths:
         require_packaged_executable(binary_path, "macOS dependency validation binary")
+
+    validate_macos_binary_architectures(binary_paths, arch)
+
+    for binary_path in binary_paths:
         rejected_dependencies = [
             dependency
             for dependency in macos_otool_dependencies(binary_path)
@@ -753,6 +1222,18 @@ def validate_macos_binary_dependencies(package_root: Path, arch: str) -> None:
             joined = ", ".join(rejected_dependencies)
             raise RuntimeError(
                 f"macOS binary has unbundled non-system dependencies: {binary_path}: {joined}"
+            )
+
+    expected_install_names = {
+        package_root / GAME_DIR_NAME / f"game-sp_{arch}.dylib": f"@loader_path/game-sp_{arch}.dylib",
+        package_root / GAME_DIR_NAME / f"game-mp_{arch}.dylib": f"@loader_path/game-mp_{arch}.dylib",
+    }
+    for binary_path, expected_install_name in expected_install_names.items():
+        actual_install_name = macos_otool_install_name(binary_path)
+        if actual_install_name != expected_install_name:
+            raise RuntimeError(
+                "macOS game module install name is not package-relative: "
+                f"{binary_path}: {actual_install_name!r}; expected {expected_install_name!r}"
             )
 
 
@@ -887,6 +1368,7 @@ def validate_macos_app_bundle(package_root: Path, app_root: Path, arch: str, ver
     app_executable = app_contents / "MacOS" / "openQ4"
     app_icon = app_contents / "Resources" / "openQ4.icns"
     app_version = app_contents / "Resources" / "VERSION.txt"
+    app_pkginfo = app_contents / "PkgInfo"
 
     if not app_plist.is_file():
         raise RuntimeError(f"macOS app bundle is missing Info.plist: {app_plist}")
@@ -896,6 +1378,8 @@ def validate_macos_app_bundle(package_root: Path, app_root: Path, arch: str, ver
         raise RuntimeError(f"macOS app bundle is missing its icon: {app_icon}")
     if not app_version.is_file():
         raise RuntimeError(f"macOS app bundle is missing its version manifest: {app_version}")
+    if not app_pkginfo.is_file() or app_pkginfo.read_bytes() != MACOS_PKGINFO_BYTES:
+        raise RuntimeError(f"macOS app bundle is missing a valid PkgInfo file: {app_pkginfo}")
 
     try:
         plist = plistlib.loads(app_plist.read_bytes())
@@ -952,6 +1436,8 @@ def create_macos_app_bundle(
             "<dict>",
             "<key>CFBundleDevelopmentRegion</key>",
             "<string>English</string>",
+            "<key>CFBundleDisplayName</key>",
+            "<string>openQ4</string>",
             "<key>CFBundleExecutable</key>",
             "<string>openQ4</string>",
             "<key>CFBundleIconFile</key>",
@@ -970,6 +1456,8 @@ def create_macos_app_bundle(
             f"<string>{version}</string>",
             "<key>LSMinimumSystemVersion</key>",
             "<string>11.0</string>",
+            "<key>LSApplicationCategoryType</key>",
+            "<string>public.app-category.games</string>",
             "<key>NSPrincipalClass</key>",
             "<string>NSApplication</string>",
             "<key>NSHighResolutionCapable</key>",
@@ -980,6 +1468,7 @@ def create_macos_app_bundle(
             "</plist>",
         ],
     )
+    (app_contents / "PkgInfo").write_bytes(MACOS_PKGINFO_BYTES)
     write_macos_localized_info_strings(app_contents, version)
     write_version_manifest(
         app_resources / "VERSION.txt",
@@ -1137,8 +1626,17 @@ def main(argv: list[str]) -> int:
             args.version_tag,
         )
         try:
+            validate_no_package_symlinks(package_root)
+            validate_no_package_special_files(package_root)
+            validate_macos_package_file_modes(package_root)
+            strip_macos_forbidden_xattrs(package_root)
+            validate_no_macos_forbidden_xattrs(package_root)
+            ad_hoc_sign_macos_payload(package_root, args.arch)
+            validate_macos_version_manifests(package_root, args.arch, args.version, args.version_tag)
+            validate_macos_localized_info_files(package_root, args.version)
             validate_macos_app_bundle(package_root, macos_app_bundle, args.arch, args.version)
             validate_macos_binary_dependencies(package_root, args.arch)
+            verify_macos_codesignature(package_root, args.arch)
         except RuntimeError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1

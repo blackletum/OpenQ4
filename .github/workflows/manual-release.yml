@@ -475,6 +475,7 @@ jobs:
           set -euo pipefail
           app_root="${{ steps.package.outputs.package_dir }}/openQ4.app"
           app_plist="${app_root}/Contents/Info.plist"
+          app_pkginfo="${app_root}/Contents/PkgInfo"
           app_exec="${app_root}/Contents/MacOS/openQ4"
           app_icon="${app_root}/Contents/Resources/openQ4.icns"
           app_version="${app_root}/Contents/Resources/VERSION.txt"
@@ -486,6 +487,10 @@ jobs:
 
           if [ ! -f "${app_plist}" ]; then
             echo "Missing macOS app Info.plist: ${app_plist}"
+            exit 1
+          fi
+          if [ ! -f "${app_pkginfo}" ] || [ "$(cat "${app_pkginfo}")" != "APPL????" ]; then
+            echo "Missing or invalid macOS app PkgInfo: ${app_pkginfo}"
             exit 1
           fi
           if [ ! -x "${app_exec}" ]; then
@@ -513,8 +518,8 @@ jobs:
             exit 1
           fi
           for module in "${sp_module}" "${mp_module}"; do
-            if [ ! -f "${module}" ]; then
-              echo "Missing macOS package game module: ${module}"
+            if [ ! -x "${module}" ]; then
+              echo "Missing or non-executable macOS package game module: ${module}"
               exit 1
             fi
           done
@@ -526,6 +531,48 @@ jobs:
             echo "otool is required for macOS runtime dependency validation."
             exit 1
           fi
+          if ! command -v lipo >/dev/null 2>&1; then
+            echo "lipo is required for macOS architecture validation."
+            exit 1
+          fi
+          if ! command -v codesign >/dev/null 2>&1; then
+            echo "codesign is required for macOS signature validation."
+            exit 1
+          fi
+          case "${{ matrix.binary_arch }}" in
+            arm64) expected_lipo_arch="arm64" ;;
+            x64) expected_lipo_arch="x86_64" ;;
+            x86) expected_lipo_arch="i386" ;;
+            *)
+              echo "No lipo architecture mapping for ${{ matrix.binary_arch }}."
+              exit 1
+              ;;
+          esac
+          check_macos_binary_architecture() {
+            binary="$1"
+            if ! lipo -archs "${binary}" | tr ' ' '\n' | grep -qx "${expected_lipo_arch}"; then
+              echo "macOS binary architecture mismatch: ${binary}; expected ${expected_lipo_arch}."
+              lipo -archs "${binary}" || true
+              exit 1
+            fi
+          }
+          check_macos_codesignature() {
+            target="$1"
+            if ! codesign --verify --strict --verbose=2 "${target}" >/dev/null 2>&1; then
+              echo "macOS code signature verification failed: ${target}"
+              codesign --verify --strict --verbose=2 "${target}" || true
+              exit 1
+            fi
+          }
+          check_macos_install_name() {
+            binary="$1"
+            expected="$2"
+            actual="$(otool -D "${binary}" | sed -n '2p' | tr -d '[:space:]')"
+            if [ "${actual}" != "${expected}" ]; then
+              echo "macOS game module install name mismatch: ${binary}; expected ${expected}, found ${actual:-<empty>}."
+              exit 1
+            fi
+          }
           check_macos_binary_dependencies() {
             binary="$1"
             deps=()
@@ -551,8 +598,13 @@ jobs:
             done
           }
           for binary in "${app_exec}" "${client_binary}" "${dedicated_binary}" "${sp_module}" "${mp_module}"; do
+            check_macos_binary_architecture "${binary}"
             check_macos_binary_dependencies "${binary}"
+            check_macos_codesignature "${binary}"
           done
+          check_macos_codesignature "${app_root}"
+          check_macos_install_name "${sp_module}" "@loader_path/game-sp_${{ matrix.binary_arch }}.dylib"
+          check_macos_install_name "${mp_module}" "@loader_path/game-mp_${{ matrix.binary_arch }}.dylib"
           check_plist_value() {
             key="$1"
             expected="$2"
@@ -563,6 +615,7 @@ jobs:
             fi
           }
           check_plist_value CFBundleExecutable openQ4
+          check_plist_value CFBundleDisplayName openQ4
           check_plist_value CFBundleIconFile openQ4.icns
           check_plist_value CFBundleIdentifier com.darkmatter.openq4
           check_plist_value CFBundleName openQ4
@@ -570,6 +623,7 @@ jobs:
           check_plist_value CFBundleShortVersionString "${{ needs.metadata.outputs.version }}"
           check_plist_value CFBundleVersion "${{ needs.metadata.outputs.version }}"
           check_plist_value LSMinimumSystemVersion 11.0
+          check_plist_value LSApplicationCategoryType public.app-category.games
           check_plist_value NSPrincipalClass NSApplication
           check_plist_value NSHighResolutionCapable true
           check_plist_value NSSupportsAutomaticGraphicsSwitching true

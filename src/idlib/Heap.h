@@ -2,6 +2,8 @@
 #ifndef __HEAP_H__
 #define __HEAP_H__
 
+#include <stddef.h>
+
 /*
 ===============================================================================
 
@@ -260,7 +262,7 @@ void		Mem_Free16( void *ptr, const char *fileName, const int lineNumber );
 inline void *Mem_StackAlloc( const int size ) { return( _alloca( size ) ); }
 inline void *Mem_StackAlloc16( const int size ) { 
 	byte *addr = ( byte * )_alloca( size + 15 );
-	addr = ( byte * )( ( int )( addr + 15 ) & 0xfffffff0 );
+	addr = ( byte * )( ( intptr_t )( addr + 15 ) & ~(intptr_t)15 );
 	return( ( void * )addr ); 
 }
 
@@ -449,7 +451,7 @@ type *idBlockAlloc<type,blockSize,memoryTag>::Alloc( void ) {
 
 template<class type, int blockSize, byte memoryTag>
 void idBlockAlloc<type,blockSize,memoryTag>::Free( type *t ) {
-	element_t *element = (element_t *)( ( (unsigned char *) t ) - ( (intptr_t) &((element_t *)0)->t ) );
+	element_t *element = (element_t *)( ( (byte *) t ) - offsetof( element_t, t ) );
 	element->next = free;
 	free = element;
 	active--;

@@ -91,6 +91,26 @@ def make_macos_plist_bytes(package, version: str) -> bytes:
     return plistlib.dumps(plist)
 
 
+def make_version_manifest_bytes(version: str, version_tag: str, platform: str, arch: str) -> bytes:
+    return (
+        "openQ4\n"
+        f"version={version}\n"
+        f"version_tag={version_tag}\n"
+        f"platform={platform}\n"
+        f"arch={arch}\n"
+    ).encode("utf-8")
+
+
+def make_macos_localized_info_bytes(version: str) -> bytes:
+    return (
+        "/* Localized versions of Info.plist keys */\n\n"
+        'CFBundleName = "openQ4";\n'
+        f'CFBundleShortVersionString = "{version}";\n'
+        f'CFBundleGetInfoString = "openQ4 version {version}, Copyright 2026 DarkMatter Productions";\n'
+        'NSHumanReadableCopyright = "Copyright 2026 DarkMatter Productions";\n'
+    ).encode("utf-8")
+
+
 def make_macos_archive_entries(
     package,
     package_name: str,
@@ -104,23 +124,27 @@ def make_macos_archive_entries(
 ) -> dict[str, tuple[bytes, int]]:
     prefix = package_name + "/"
     client_bytes = b"client-binary\n"
+    version = "0.2.000"
+    version_tag = "v0.2.000"
+    localized_info = make_macos_localized_info_bytes(version)
     entries = {
+        f"{prefix}VERSION.txt": (make_version_manifest_bytes(version, version_tag, "macos", arch), 0o644),
         f"{prefix}openQ4-client_{arch}": (client_bytes, client_mode),
         f"{prefix}openQ4-ded_{arch}": (b"dedicated-binary\n", dedicated_mode),
+        f"{prefix}{package.GAME_DIR_NAME}/game-sp_{arch}.dylib": (b"sp-module\n", 0o755),
+        f"{prefix}{package.GAME_DIR_NAME}/game-mp_{arch}.dylib": (b"mp-module\n", 0o755),
         f"{prefix}{package.GAME_DIR_NAME}/mod.json": (b'{"version":"0.2.000"}\n', 0o644),
         f"{prefix}{package.GAME_DIR_NAME}/pak0.pk4": (b"pk4\n", 0o644),
         f"{prefix}openQ4.app/Contents/Info.plist": (plist_bytes, 0o644),
+        f"{prefix}openQ4.app/Contents/PkgInfo": (package.MACOS_PKGINFO_BYTES, 0o644),
         f"{prefix}openQ4.app/Contents/MacOS/openQ4": (client_bytes, app_exec_mode),
         f"{prefix}openQ4.app/Contents/Resources/openQ4.icns": (b"icns\n", 0o644),
-        f"{prefix}openQ4.app/Contents/Resources/VERSION.txt": (b"openQ4\n", 0o644),
-        f"{prefix}openQ4.app/Contents/Resources/English.lproj/InfoPlist.strings": (
-            b'CFBundleName = "openQ4";\n',
+        f"{prefix}openQ4.app/Contents/Resources/VERSION.txt": (
+            make_version_manifest_bytes(version, version_tag, "macos", arch),
             0o644,
         ),
-        f"{prefix}openQ4.app/Contents/Resources/French.lproj/InfoPlist.strings": (
-            b'CFBundleName = "openQ4";\n',
-            0o644,
-        ),
+        f"{prefix}openQ4.app/Contents/Resources/English.lproj/InfoPlist.strings": (localized_info, 0o644),
+        f"{prefix}openQ4.app/Contents/Resources/French.lproj/InfoPlist.strings": (localized_info, 0o644),
     }
     if extra_entries:
         entries.update(extra_entries)
@@ -135,6 +159,41 @@ def write_test_targz_archive(archive_path: Path, entries: dict[str, tuple[bytes,
             member.size = len(data)
             member.mtime = 0
             archive.addfile(member, io.BytesIO(data))
+
+
+def write_test_targz_archive_with_symlink(
+    archive_path: Path, entries: dict[str, tuple[bytes, int]], link_name: str
+) -> None:
+    with tarfile.open(archive_path, "w:gz") as archive:
+        for name, (data, mode) in entries.items():
+            member = tarfile.TarInfo(name)
+            member.mode = mode
+            member.size = len(data)
+            member.mtime = 0
+            archive.addfile(member, io.BytesIO(data))
+        link = tarfile.TarInfo(link_name)
+        link.type = tarfile.SYMTYPE
+        link.linkname = "../escaped"
+        link.mode = 0o777
+        link.mtime = 0
+        archive.addfile(link)
+
+
+def write_test_targz_archive_with_fifo(
+    archive_path: Path, entries: dict[str, tuple[bytes, int]], fifo_name: str
+) -> None:
+    with tarfile.open(archive_path, "w:gz") as archive:
+        for name, (data, mode) in entries.items():
+            member = tarfile.TarInfo(name)
+            member.mode = mode
+            member.size = len(data)
+            member.mtime = 0
+            archive.addfile(member, io.BytesIO(data))
+        fifo = tarfile.TarInfo(fifo_name)
+        fifo.type = tarfile.FIFOTYPE
+        fifo.mode = 0o644
+        fifo.mtime = 0
+        archive.addfile(fifo)
 
 
 def write_test_zip_archive(archive_path: Path, entries: dict[str, tuple[bytes, int]]) -> None:
@@ -168,6 +227,7 @@ def validate_macos_app_bundle_validator_runtime() -> None:
         write_test_file(package_root / f"openQ4-client_{arch}", client_bytes, 0o755)
         (package_root / package.GAME_DIR_NAME).mkdir(parents=True, exist_ok=True)
         write_test_file(app_contents / "Info.plist", make_macos_plist_bytes(package, version))
+        write_test_file(app_contents / "PkgInfo", package.MACOS_PKGINFO_BYTES)
         write_test_file(app_contents / "MacOS" / "openQ4", client_bytes, 0o755)
         write_test_file(app_contents / "Resources" / "openQ4.icns", b"icns\n")
         write_test_file(app_contents / "Resources" / "VERSION.txt", b"openQ4\n")
@@ -179,6 +239,14 @@ def validate_macos_app_bundle_validator_runtime() -> None:
             "macOS app executable does not match packaged client binary",
             lambda: package.validate_macos_app_bundle(package_root, app_root, arch, version),
             "macOS app executable drift from packaged client",
+        )
+
+        write_test_file(app_contents / "MacOS" / "openQ4", client_bytes, 0o755)
+        write_test_file(app_contents / "PkgInfo", b"BROKEN!!")
+        expect_runtime_error(
+            "valid PkgInfo",
+            lambda: package.validate_macos_app_bundle(package_root, app_root, arch, version),
+            "invalid macOS app PkgInfo",
         )
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -231,6 +299,237 @@ def validate_macos_archive_validator_runtime() -> None:
                 version,
             ),
             "non-executable macOS archive client",
+        )
+
+        bad_mode_archive = work / "bad-mode.tar.gz"
+        write_test_targz_archive(
+            bad_mode_archive,
+            make_macos_archive_entries(
+                package,
+                package_root.name,
+                arch,
+                plist_bytes,
+                extra_entries={f"{package_root.name}/world-writable.txt": (b"bad\n", 0o666)},
+            ),
+        )
+        expect_runtime_error(
+            "group/other writable",
+            lambda: package.validate_macos_archive_contents(
+                package_root,
+                bad_mode_archive,
+                "tar.gz",
+                arch,
+                version,
+            ),
+            "macOS archive with unsafe mode bits",
+        )
+
+        bad_metadata_archive = work / "bad-metadata.tar.gz"
+        write_test_targz_archive(
+            bad_metadata_archive,
+            make_macos_archive_entries(
+                package,
+                package_root.name,
+                arch,
+                plist_bytes,
+                extra_entries={f"{package_root.name}/.DS_Store": (b"metadata\n", 0o644)},
+            ),
+        )
+        expect_runtime_error(
+            "non-runtime metadata/debug entries",
+            lambda: package.validate_macos_archive_contents(
+                package_root,
+                bad_metadata_archive,
+                "tar.gz",
+                arch,
+                version,
+            ),
+            "macOS archive with Finder metadata",
+        )
+
+        bad_duplicate_archive = work / "bad-duplicate.tar.gz"
+        duplicate_entries = make_macos_archive_entries(package, package_root.name, arch, plist_bytes)
+        with tarfile.open(bad_duplicate_archive, "w:gz") as archive:
+            for name, (data, mode) in duplicate_entries.items():
+                for _ in range(2 if name.endswith("VERSION.txt") else 1):
+                    member = tarfile.TarInfo(name)
+                    member.mode = mode
+                    member.size = len(data)
+                    member.mtime = 0
+                    archive.addfile(member, io.BytesIO(data))
+        expect_runtime_error(
+            "duplicate entry",
+            lambda: package.validate_macos_archive_contents(
+                package_root,
+                bad_duplicate_archive,
+                "tar.gz",
+                arch,
+                version,
+            ),
+            "macOS archive with duplicate entry",
+        )
+
+        bad_path_archive = work / "bad-path.tar.gz"
+        write_test_targz_archive(
+            bad_path_archive,
+            make_macos_archive_entries(
+                package,
+                package_root.name,
+                arch,
+                plist_bytes,
+                extra_entries={f"{package_root.name}\\bad": (b"bad\n", 0o644)},
+            ),
+        )
+        expect_runtime_error(
+            "unsafe",
+            lambda: package.validate_macos_archive_contents(
+                package_root,
+                bad_path_archive,
+                "tar.gz",
+                arch,
+                version,
+            ),
+            "macOS archive with backslash path",
+        )
+
+        bad_pkginfo_archive = work / "bad-pkginfo.tar.gz"
+        write_test_targz_archive(
+            bad_pkginfo_archive,
+            make_macos_archive_entries(
+                package,
+                package_root.name,
+                arch,
+                plist_bytes,
+                extra_entries={
+                    f"{package_root.name}/openQ4.app/Contents/PkgInfo": (b"BROKEN!!", 0o644)
+                },
+            ),
+        )
+        expect_runtime_error(
+            "PkgInfo",
+            lambda: package.validate_macos_archive_contents(
+                package_root,
+                bad_pkginfo_archive,
+                "tar.gz",
+                arch,
+                version,
+            ),
+            "macOS archive with invalid PkgInfo",
+        )
+
+        bad_manifest_archive = work / "bad-manifest.tar.gz"
+        write_test_targz_archive(
+            bad_manifest_archive,
+            make_macos_archive_entries(
+                package,
+                package_root.name,
+                arch,
+                plist_bytes,
+                extra_entries={
+                    f"{package_root.name}/VERSION.txt": (
+                        make_version_manifest_bytes(version, "wrong-tag", "macos", arch),
+                        0o644,
+                    )
+                },
+            ),
+        )
+        expect_runtime_error(
+            "version_tag",
+            lambda: package.validate_macos_archive_contents(
+                package_root,
+                bad_manifest_archive,
+                "tar.gz",
+                arch,
+                version,
+            ),
+            "macOS archive with mismatched version manifest",
+        )
+
+        bad_localized_archive = work / "bad-localized.tar.gz"
+        write_test_targz_archive(
+            bad_localized_archive,
+            make_macos_archive_entries(
+                package,
+                package_root.name,
+                arch,
+                plist_bytes,
+                extra_entries={
+                    f"{package_root.name}/openQ4.app/Contents/Resources/English.lproj/InfoPlist.strings": (
+                        b'CFBundleName = "openQ4";\n',
+                        0o644,
+                    )
+                },
+            ),
+        )
+        expect_runtime_error(
+            "CFBundleShortVersionString",
+            lambda: package.validate_macos_archive_contents(
+                package_root,
+                bad_localized_archive,
+                "tar.gz",
+                arch,
+                version,
+            ),
+            "macOS archive with incomplete localized plist strings",
+        )
+
+        bad_symlink_archive = work / "bad-symlink.tar.gz"
+        write_test_targz_archive_with_symlink(
+            bad_symlink_archive,
+            make_macos_archive_entries(package, package_root.name, arch, plist_bytes),
+            f"{package_root.name}/openQ4.app/Contents/MacOS/linked",
+        )
+        expect_runtime_error(
+            "symlink entry",
+            lambda: package.validate_macos_archive_contents(
+                package_root,
+                bad_symlink_archive,
+                "tar.gz",
+                arch,
+                version,
+            ),
+            "macOS archive with symlink entry",
+        )
+
+        bad_special_archive = work / "bad-special.tar.gz"
+        write_test_targz_archive_with_fifo(
+            bad_special_archive,
+            make_macos_archive_entries(package, package_root.name, arch, plist_bytes),
+            f"{package_root.name}/openQ4.app/Contents/MacOS/fifo",
+        )
+        expect_runtime_error(
+            "non-regular entry",
+            lambda: package.validate_macos_archive_contents(
+                package_root,
+                bad_special_archive,
+                "tar.gz",
+                arch,
+                version,
+            ),
+            "macOS archive with non-regular entry",
+        )
+
+        bad_stale_module_archive = work / "bad-stale-module.tar.gz"
+        write_test_targz_archive(
+            bad_stale_module_archive,
+            make_macos_archive_entries(
+                package,
+                package_root.name,
+                arch,
+                plist_bytes,
+                extra_entries={f"{package_root.name}/{package.GAME_DIR_NAME}/game-sp_x64.dylib": (b"stale\n", 0o755)},
+            ),
+        )
+        expect_runtime_error(
+            "stale or mismatched game modules",
+            lambda: package.validate_macos_archive_contents(
+                package_root,
+                bad_stale_module_archive,
+                "tar.gz",
+                arch,
+                version,
+            ),
+            "macOS archive with stale game module",
         )
 
         bad_plist_archive = work / "bad-plist-version.tar.gz"
@@ -295,7 +594,7 @@ def validate_macos_archive_validator_runtime() -> None:
             ),
         )
         expect_runtime_error(
-            "macOS archive contains unsafe or out-of-package paths",
+            "macOS archive contains unsafe or out-of-package path",
             lambda: package.validate_macos_archive_contents(
                 package_root,
                 unsafe_archive,
@@ -304,6 +603,33 @@ def validate_macos_archive_validator_runtime() -> None:
                 version,
             ),
             "out-of-package macOS archive entry",
+        )
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def validate_macos_pk4_symlink_guard_runtime() -> None:
+    if not hasattr(os, "symlink"):
+        return
+
+    package = load_package_module()
+    work = ROOT / ".tmp" / "macos-pk4-symlink-contract"
+    install_game_dir = work / "baseoq4"
+    destination_pk4 = work / "pak0.pk4"
+
+    shutil.rmtree(work, ignore_errors=True)
+    try:
+        write_test_file(install_game_dir / "mod.json", b"{}\n")
+        write_test_file(install_game_dir / "normal.txt", b"ok\n")
+        try:
+            os.symlink("normal.txt", install_game_dir / "linked.txt")
+        except (OSError, NotImplementedError):
+            return
+
+        expect_runtime_error(
+            "refusing to package symlink",
+            lambda: package.create_game_pk4(install_game_dir, destination_pk4),
+            "macOS package PK4 symlink source",
         )
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -341,8 +667,10 @@ def validate_macos_staged_payload_validator_runtime() -> None:
         write_test_file(install_root / "assets" / "splash" / "quake4_rt_bitmap_4001.bmp", b"bmp\n")
         write_test_file(client, b"client\n", 0o755)
         write_test_file(dedicated, b"ded\n", 0o755)
-        write_test_file(game_dir / f"game-sp_{arch}.dylib", b"sp\n")
-        write_test_file(game_dir / f"game-mp_{arch}.dylib", b"mp\n")
+        sp_module = game_dir / f"game-sp_{arch}.dylib"
+        mp_module = game_dir / f"game-mp_{arch}.dylib"
+        write_test_file(sp_module, b"sp\n", 0o755)
+        write_test_file(mp_module, b"mp\n", 0o755)
 
         validator.validate_macos_staged_metadata(
             ROOT,
@@ -367,7 +695,37 @@ def validate_macos_staged_payload_validator_runtime() -> None:
         )
         bad_module.unlink()
 
-        (game_dir / f"game-mp_{arch}.dylib").unlink()
+        if os.name != "nt":
+            os.chmod(mp_module, 0o644)
+            expect_runtime_error(
+                "not executable",
+                lambda: validator.validate_macos_staged_metadata(
+                    ROOT,
+                    install_root,
+                    game_dir,
+                    [client],
+                    [dedicated],
+                ),
+                "macOS staged payload with non-executable game module",
+            )
+            os.chmod(mp_module, 0o755)
+
+        bad_dsym = install_root / f"openQ4-client_{arch}.dSYM"
+        bad_dsym.mkdir()
+        expect_runtime_error(
+            "non-runtime artifacts",
+            lambda: validator.validate_macos_staged_metadata(
+                ROOT,
+                install_root,
+                game_dir,
+                [client],
+                [dedicated],
+            ),
+            "macOS staged payload with debug symbol bundle",
+        )
+        shutil.rmtree(bad_dsym)
+
+        mp_module.unlink()
         expect_runtime_error(
             "architecture-matched game modules",
             lambda: validator.validate_macos_staged_metadata(
@@ -400,10 +758,15 @@ def validate_meson_contract() -> None:
     require(meson, "use_macos_metal_bridge", "Metal bridge build predicate")
     require(meson, "modules: ['Metal', 'QuartzCore']", "Metal bridge framework dependency")
     require(meson, "-DOPENQ4_MACOS_METAL_BRIDGE=1", "Metal bridge compile define")
+    require(meson, "-fstack-protector-strong", "macOS compile hardening")
+    require(meson, "-D_FORTIFY_SOURCE=2", "macOS compile hardening")
+    require(meson, "-Wl,-pie", "macOS executable hardening")
+    require(meson, "-Wl,-dead_strip", "macOS link hardening")
     require(meson, "'macOS graphics bridge': macos_graphics_bridge", "Meson summary")
 
     require(baseoq4_meson, "elif host_system == 'darwin'", "macOS game module source branch")
     require(baseoq4_meson, "name_suffix: 'dylib'", "macOS game module dylib suffix")
+    require(baseoq4_meson, "-Wl,-install_name,@loader_path/", "macOS game module install name")
 
     require(setup_sh, "macos_graphics_bridge", "Bash Meson wrapper option preservation")
     require(setup_ps1, '"macos_graphics_bridge"', "PowerShell Meson wrapper option preservation")
@@ -436,6 +799,7 @@ def validate_packaging_and_release_contract() -> None:
     release = read(".github/workflows/manual-release.yml")
     compat = read("src/sys/osx/macosx_compat.mm")
     main = read("src/sys/osx/macosx_sdl3_main.cpp")
+    posix = read("src/sys/posix/posix_main.cpp")
     validator = read("tools/validation/openq4_validate.py")
     commit = read(".github/workflows/commit-validation.yml")
     push = read(".github/workflows/push-verification.yml")
@@ -443,6 +807,7 @@ def validate_packaging_and_release_contract() -> None:
     require(package, "--package-suffix", "release packaging variant suffix")
     require(package, "normalize_package_suffix", "release packaging variant suffix")
     require(package, "import filecmp", "macOS app executable comparison")
+    require(package, "import stat", "macOS archive symlink validation")
     require(package, "import subprocess", "macOS binary dependency validation")
     require(package, "filecmp.cmp(client_binary, app_executable, shallow=False)", "macOS app executable comparison")
     require(package, "shutil.copy2(client_binary, app_executable)", "macOS app executable creation")
@@ -452,22 +817,64 @@ def validate_packaging_and_release_contract() -> None:
     require(package, "info.mode = 0o755", "POSIX archive executable mode preservation")
     require(package, "MACOS_ALLOWED_RUNTIME_DEPENDENCY_PREFIXES", "macOS binary dependency validation")
     require(package, "macos_otool_dependencies", "macOS binary dependency validation")
+    require(package, "macos_otool_install_name", "macOS game module install-name validation")
     require(package, "validate_macos_binary_dependencies", "macOS binary dependency validation")
     require(package, "otool_path, \"-L\"", "macOS binary dependency validation")
+    require(package, "otool_path, \"-D\"", "macOS game module install-name validation")
     require(package, "macOS binary has unbundled non-system dependencies", "macOS binary dependency validation")
+    require(package, "macOS game module install name is not package-relative", "macOS game module install-name validation")
+    require(package, "MACOS_FORBIDDEN_XATTRS", "macOS package quarantine validation")
+    require(package, "strip_macos_forbidden_xattrs", "macOS package quarantine validation")
+    require(package, "validate_no_macos_forbidden_xattrs", "macOS package quarantine validation")
+    require(package, "MACOS_FORBIDDEN_ARCHIVE_NAMES", "macOS archive metadata validation")
+    require(package, "MACOS_PKGINFO_BYTES", "macOS app PkgInfo validation")
+    require(package, "MACOS_LOCALIZED_INFO_LOCALES", "macOS localized plist validation")
+    require(package, "MACOS_LIPO_ARCHES", "macOS binary architecture validation")
+    require(package, "validate_macos_package_file_modes", "macOS package mode validation")
+    require(package, "validate_no_package_symlinks", "macOS package symlink validation")
+    require(package, "validate_no_package_special_files", "macOS package special-file validation")
+    require(package, "refusing to package symlink", "macOS PK4 symlink validation")
+    require(package, "macOS archive contains non-regular entry", "macOS archive special-file validation")
+    require(package, "validate_version_manifest_bytes", "macOS version manifest validation")
+    require(package, "validate_macos_version_manifests", "macOS version manifest validation")
+    require(package, "validate_macos_localized_info_bytes", "macOS localized plist validation")
+    require(package, "validate_macos_localized_info_files", "macOS localized plist validation")
+    require(package, "macos_package_version_tag_from_name", "macOS archive version manifest validation")
+    require(package, "validate_macos_archive_name", "macOS archive path validation")
+    require(package, "validate_macos_archive_mode", "macOS archive mode validation")
+    require(package, "record_macos_archive_entry", "macOS archive duplicate validation")
+    require(package, "release archive input contains symlink entries", "macOS package symlink validation")
+    require(package, "macOS archive contains duplicate entry", "macOS archive duplicate validation")
+    require(package, "macOS archive entry is group/other writable", "macOS archive mode validation")
+    require(package, "macOS archive contains symlink entry", "macOS archive symlink validation")
+    require(package, "macOS archive contains stale or mismatched game modules", "macOS archive stale module validation")
+    require(package, "macOS archive version manifests are unreadable", "macOS archive version manifest validation")
+    require(package, "macos_lipo_arches", "macOS binary architecture validation")
+    require(package, "validate_macos_binary_architectures", "macOS binary architecture validation")
+    require(package, "lipo_path, \"-archs\"", "macOS binary architecture validation")
+    require(package, "ad_hoc_sign_macos_payload", "macOS ad-hoc signing")
+    require(package, "verify_macos_codesignature", "macOS code-sign validation")
+    require(package, "codesign_path, \"--force\"", "macOS ad-hoc signing")
+    require(package, "code signature verification", "macOS code-sign validation")
+    require(package, "game-sp_{arch}.dylib", "macOS archive game module validation")
+    require(package, "game-mp_{arch}.dylib", "macOS archive game module validation")
+    require(package, "macOS archive contains non-runtime metadata/debug entries", "macOS archive metadata validation")
     require(package, "MACOS_EXPECTED_PLIST_VALUES", "macOS package Info.plist validation")
     require(package, "validate_macos_plist_values", "macOS package Info.plist validation")
     require(package, "validate_macos_app_bundle", "macOS package app validation")
     require(package, "validate_macos_archive_contents", "macOS package archive validation")
+    require(package, '"CFBundleDisplayName": "openQ4"', "macOS package Info.plist validation")
     require(package, '"CFBundleIconFile": "openQ4.icns"', "macOS package Info.plist validation")
     require(package, '"CFBundleName": "openQ4"', "macOS package Info.plist validation")
+    require(package, '"LSApplicationCategoryType": "public.app-category.games"', "macOS package Info.plist validation")
     require(package, '("CFBundleShortVersionString", "CFBundleVersion")', "macOS package Info.plist validation")
+    require(package, "openQ4.app/Contents/PkgInfo", "macOS package PkgInfo validation")
     require(package, "openQ4-ded_{arch}", "macOS package archive validation")
     require(package, "English.lproj/InfoPlist.strings", "macOS package archive validation")
     require(package, "French.lproj/InfoPlist.strings", "macOS package archive validation")
     require(package, "macOS archive entry is not executable", "macOS package archive validation")
     require(package, "macOS archive app executable does not match packaged client binary", "macOS package archive validation")
-    require(package, "macOS archive contains unsafe or out-of-package paths", "macOS package archive validation")
+    require(package, "macOS archive contains unsafe or out-of-package path", "macOS package archive validation")
     require(package, "macOS archive Info.plist", "macOS package archive validation")
     require(package, "plistlib.loads", "macOS package Info.plist validation")
     require(package, "NSSupportsAutomaticGraphicsSwitching", "macOS package Info.plist validation")
@@ -487,12 +894,25 @@ def validate_packaging_and_release_contract() -> None:
     require(main, "SDL_MAIN_HANDLED", "macOS SDL3 launch initialization")
     require(main, "static int SDLCALL OpenQ4_Main", "macOS SDL3 launch initialization")
     require(main, "SDL_RunApp(argc, argv, OpenQ4_Main, NULL)", "macOS SDL3 launch initialization")
+    require(posix, "realpath( path, resolvedPath )", "macOS dylib path canonicalization")
+    require(posix, "RTLD_NOW | RTLD_LOCAL", "macOS dylib local symbol scope")
     require(validator, "host_is_macos", "macOS staged payload validation")
     require(validator, "macos_binary_arch", "macOS staged payload validation")
     require(validator, "validate_macos_staged_metadata", "macOS staged payload validation")
     require(validator, "openQ4.icns", "macOS staged payload validation")
     require(validator, "non-dylib game modules", "macOS staged payload validation")
     require(validator, "architecture-matched game modules", "macOS staged payload validation")
+    require(validator, "macOS staged game module is not executable", "macOS staged game module validation")
+    require(validator, "MACOS_FORBIDDEN_XATTRS", "macOS staged quarantine validation")
+    require(validator, "MACOS_NON_RUNTIME_PATTERNS", "macOS staged debug artifact validation")
+    require(validator, "MACOS_LIPO_ARCHES", "macOS staged architecture validation")
+    require(validator, "validate_no_macos_symlinks", "macOS staged symlink validation")
+    require(validator, "validate_no_macos_unsafe_file_modes", "macOS staged mode validation")
+    require(validator, "macOS staged payload contains symlink entries", "macOS staged symlink validation")
+    require(validator, "macOS staged payload contains unsafe file modes", "macOS staged mode validation")
+    require(validator, "stale or mismatched game modules", "macOS staged stale module validation")
+    require(validator, "validate_macos_binary_architectures", "macOS staged architecture validation")
+    require(validator, "lipo_path, \"-archs\"", "macOS staged architecture validation")
     require(commit, "macOS ARM64 ${{ matrix.bridge_label }} Commit Validation", "commit validation macOS job")
     require(commit, "macos_graphics_bridge: opengl", "commit validation macOS OpenGL job")
     require(commit, "macos_graphics_bridge: metal", "commit validation macOS Metal job")
@@ -507,7 +927,9 @@ def validate_packaging_and_release_contract() -> None:
     require(push, "--extra-setup-arg=-Dmacos_graphics_bridge=${{ matrix.macos_graphics_bridge }}", "push verification macOS bridge setup")
 
     for source, context in ((package, "macOS package Info.plist"), (plist, "legacy macOS Info.plist")):
+        require(source, "CFBundleDisplayName", context)
         require(source, "CFBundleName", context)
+        require(source, "LSApplicationCategoryType", context)
         require(source, "NSHighResolutionCapable", context)
         require(source, "NSPrincipalClass", context)
         require(source, "NSSupportsAutomaticGraphicsSwitching", context)
@@ -527,8 +949,16 @@ def validate_packaging_and_release_contract() -> None:
     require(release, "--package-suffix=\"${{ matrix.package_suffix }}\"", "manual release packaging")
     require(release, 'cmp -s "${app_exec}" "${client_binary}"', "manual release macOS app validation")
     require(release, "macOS app executable does not match the packaged client binary", "manual release macOS app validation")
+    require(release, "Missing or invalid macOS app PkgInfo", "manual release macOS app validation")
     require(release, "Missing or non-executable macOS dedicated binary", "manual release macOS app validation")
+    require(release, "Missing or non-executable macOS package game module", "manual release macOS app validation")
     require(release, "sp_module=", "manual release macOS dependency validation")
+    require(release, "check_macos_binary_architecture", "manual release macOS architecture validation")
+    require(release, "lipo -archs", "manual release macOS architecture validation")
+    require(release, "check_macos_codesignature", "manual release macOS signature validation")
+    require(release, "codesign --verify --strict", "manual release macOS signature validation")
+    require(release, "check_macos_install_name", "manual release macOS install-name validation")
+    require(release, "@loader_path/game-sp_${{ matrix.binary_arch }}.dylib", "manual release macOS install-name validation")
     require(release, "check_macos_binary_dependencies", "manual release macOS dependency validation")
     require(release, "otool -L", "manual release macOS dependency validation")
     require(release, "unbundled non-system dependency", "manual release macOS dependency validation")
@@ -536,15 +966,55 @@ def validate_packaging_and_release_contract() -> None:
     require(release, ".install/baseoq4/game-sp_${{ matrix.binary_arch }}.dylib", "manual release macOS staged validation")
     require(release, ".install/baseoq4/game-mp_${{ matrix.binary_arch }}.dylib", "manual release macOS staged validation")
     require(release, "macOS staged payload contains non-dylib game modules", "manual release macOS staged validation")
+    require(release, "check_plist_value CFBundleDisplayName openQ4", "manual release macOS app validation")
     require(release, "check_plist_value CFBundleIconFile openQ4.icns", "manual release macOS app validation")
     require(release, "check_plist_value CFBundleName openQ4", "manual release macOS app validation")
     require(release, "check_plist_value CFBundleShortVersionString", "manual release macOS app validation")
     require(release, "check_plist_value CFBundleVersion", "manual release macOS app validation")
     require(release, "check_plist_value LSMinimumSystemVersion 11.0", "manual release macOS app validation")
+    require(release, "check_plist_value LSApplicationCategoryType public.app-category.games", "manual release macOS app validation")
     require(release, "check_plist_value NSPrincipalClass NSApplication", "manual release macOS app validation")
     require(release, "check_plist_value NSSupportsAutomaticGraphicsSwitching true", "manual release macOS app validation")
     require(release, "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64-opengl.tar.gz", "manual release expected assets")
     require(release, "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64-metal.tar.gz", "manual release expected assets")
+
+
+def validate_macos_workflow_security_contract() -> None:
+    host = read("tools/macos/Invoke-openQ4MacOSWorkflow.ps1")
+    assets = read("tools/macos/guest/openq4-macos-install-quake4-assets.sh")
+    guest = read("tools/macos/guest/openq4-macos-sync-build-test.sh")
+    debug = read(".github/workflows/macos-debug.yml")
+
+    require(host, "Assert-NoArchiveLinks", "macOS host archive symlink guard")
+    require(host, "RemoteTempRoot", "macOS host per-run remote temp root")
+    require(host, "BatchMode=yes", "macOS host non-interactive SSH")
+    require(host, "Unsafe archive path", "macOS host archive path validation")
+    require(host, "Archive contains a symlink or special file", "macOS host archive special-file validation")
+    require(host, "rsync -a --delete", "macOS host safe temp extraction sync")
+    require(host, "openQ4/.git", "macOS host source metadata exclusion")
+    require(host, "openQ4/.codex", "macOS host local agent metadata exclusion")
+    require(host, "openQ4-GameLibs/.git", "macOS host GameLibs metadata exclusion")
+    require(host, "$assetRootName/q4base/*.cfg", "macOS host personal config exclusion")
+    require(host, "$assetRootName/q4base/q4key", "macOS host private key exclusion")
+
+    require(assets, "reject_unsafe_tar_entries", "macOS asset tar path validation")
+    require(assets, "reject_unsafe_tree_entries", "macOS asset symlink validation")
+    require(assets, "Unsafe asset archive path", "macOS asset tar path validation")
+    require(assets, "Asset archive contains a symlink or special file", "macOS asset special-file validation")
+    require(assets, "multiple q4base directories", "macOS asset ambiguity validation")
+    require(assets, "/tmp/openq4-macos-*/*", "macOS asset copied archive cleanup")
+
+    require(guest, "resolve_under_repo", "macOS guest builddir containment")
+    require(guest, "Path escapes the openQ4 repository", "macOS guest builddir containment")
+    require(guest, "OPENQ4_ALLOW_CROSS_ARCH_CLIENT", "macOS guest cross-arch launch opt-in")
+    require(guest, "Missing staged macOS client for host architecture", "macOS guest exact-arch client selection")
+    require(guest, "shell_quote", "macOS guest launcher quoting")
+    require(guest, "shlex.quote", "macOS guest launcher quoting")
+    require(guest, "exec ${client_q} +set fs_basepath ${basepath_q}", "macOS guest launcher quoted exec")
+
+    require(debug, "bash -n tools/macos/guest/openq4-macos-bootstrap.sh", "macOS debug workflow guest script syntax check")
+    require(debug, "bash -n tools/macos/guest/openq4-macos-install-quake4-assets.sh", "macOS debug workflow asset script syntax check")
+    require(debug, "bash -n tools/macos/guest/openq4-macos-sync-build-test.sh", "macOS debug workflow build script syntax check")
 
 
 def validate_macos_shell_entrypoints() -> None:
@@ -591,9 +1061,11 @@ def main() -> None:
     validate_meson_contract()
     validate_sdl3_runtime_contract()
     validate_packaging_and_release_contract()
+    validate_macos_workflow_security_contract()
     validate_macos_shell_entrypoints()
     validate_macos_app_bundle_validator_runtime()
     validate_macos_archive_validator_runtime()
+    validate_macos_pk4_symlink_guard_runtime()
     validate_legacy_macos_plist_runtime()
     validate_macos_staged_payload_validator_runtime()
     validate_docs_and_ci_hooks()

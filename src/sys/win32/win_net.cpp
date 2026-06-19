@@ -361,15 +361,14 @@ void NET_OpenSocks( int port ) {
 	// method count
 	if ( rfc1929 ) {
 		buf[1] = 2;
+		buf[2] = 0;		// method #1 - method id #00: no authentication
+		buf[3] = 2;		// method #2 - method id #02: username/password
 		len = 4;
 	}
 	else {
 		buf[1] = 1;
+		buf[2] = 0;		// method #1 - method id #00: no authentication
 		len = 3;
-	}
-	buf[2] = 0;		// method #1 - method id #00: no authentication
-	if ( rfc1929 ) {
-		buf[2] = 2;		// method #2 - method id #02: username/password
 	}
 	if ( send( socks_socket, (const char *)buf, len, 0 ) == SOCKET_ERROR ) {
 		err = WSAGetLastError();
@@ -400,25 +399,29 @@ void NET_OpenSocks( int port ) {
 
 	// do username/password authentication if needed
 	if ( buf[1] == 2 ) {
-		int		ulen;
-		int		plen;
+		size_t	ulen;
+		size_t	plen;
 
 		// build the request
 		ulen = strlen( net_socksUsername.GetString() );
 		plen = strlen( net_socksPassword.GetString() );
+		if ( ulen > 255 || plen > 255 || 3 + ulen + plen > sizeof( buf ) ) {
+			common->Printf( "NET_OpenSocks: username/password too long\n" );
+			return;
+		}
 
 		buf[0] = 1;		// username/password authentication version
-		buf[1] = ulen;
+		buf[1] = (unsigned char)ulen;
 		if ( ulen ) {
 			memcpy( &buf[2], net_socksUsername.GetString(), ulen );
 		}
-		buf[2 + ulen] = plen;
+		buf[2 + ulen] = (unsigned char)plen;
 		if ( plen ) {
 			memcpy( &buf[3 + ulen], net_socksPassword.GetString(), plen );
 		}
 
 		// send it
-		if ( send( socks_socket, (const char *)buf, 3 + ulen + plen, 0 ) == SOCKET_ERROR ) {
+		if ( send( socks_socket, (const char *)buf, (int)( 3 + ulen + plen ), 0 ) == SOCKET_ERROR ) {
 			err = WSAGetLastError();
 			common->Printf( "NET_OpenSocks: send: %s\n", NET_ErrorString() );
 			return;
@@ -531,8 +534,12 @@ bool Net_GetUDPPacket( int netSocket, netadr_t &net_from, char *data, int &size,
 	struct sockaddr	from;
 	int				fromlen;
 	int				err;
+	bool			oversizePacket;
 
 	if( !netSocket ) {
+		return false;
+	}
+	if ( data == NULL || maxSize <= 0 ) {
 		return false;
 	}
 
@@ -545,10 +552,11 @@ bool Net_GetUDPPacket( int netSocket, netadr_t &net_from, char *data, int &size,
 			return false;
 		}
 		char	buf[1024];
-		sprintf( buf, "Net_GetUDPPacket: %s\n", NET_ErrorString() );
+		idStr::snPrintf( buf, sizeof( buf ), "Net_GetUDPPacket: %s\n", NET_ErrorString() );
 		OutputDebugString( buf );
 		return false;
 	}
+	oversizePacket = ( ret == maxSize );
 
 	if ( netSocket == ip_socket ) {
 		memset( ((struct sockaddr_in *)&from)->sin_zero, 0, 8 );
@@ -565,13 +573,14 @@ bool Net_GetUDPPacket( int netSocket, netadr_t &net_from, char *data, int &size,
 		net_from.ip[3] = data[7];
 		net_from.port = *(short *)&data[8];
 		memmove( data, &data[10], ret - 10 );
+		ret -= 10;
 	} else {
 		Net_SockadrToNetadr( &from, &net_from );
 	}
 
-	if( ret == maxSize ) {
+	if( oversizePacket ) {
 		char	buf[1024];
-		sprintf( buf, "Net_GetUDPPacket: oversize packet from %s\n", Sys_NetAdrToString( net_from ) );
+		idStr::snPrintf( buf, sizeof( buf ), "Net_GetUDPPacket: oversize packet from %s\n", Sys_NetAdrToString( net_from ) );
 		OutputDebugString( buf );
 		return false;
 	}
@@ -593,10 +602,19 @@ void Net_SendUDPPacket( int netSocket, int length, const void *data, const netad
 	if( !netSocket ) {
 		return;
 	}
+	if ( data == NULL || length < 0 ) {
+		return;
+	}
 
 	Net_NetadrToSockadr( &to, &addr );
 
 	if( usingSocks && to.type == NA_IP ) {
+		if ( length > (int)sizeof( socksBuf ) - 10 ) {
+			char	buf[1024];
+			idStr::snPrintf( buf, sizeof( buf ), "Net_SendUDPPacket: oversized SOCKS packet to %s\n", Sys_NetAdrToString( to ) );
+			OutputDebugString( buf );
+			return;
+		}
 		socksBuf[0] = 0;	// reserved
 		socksBuf[1] = 0;
 		socksBuf[2] = 0;	// fragment (not fragmented)
@@ -622,7 +640,7 @@ void Net_SendUDPPacket( int netSocket, int length, const void *data, const netad
 		}
 
 		char	buf[1024];
-		sprintf( buf, "Net_SendUDPPacket: %s\n", NET_ErrorString() );
+		idStr::snPrintf( buf, sizeof( buf ), "Net_SendUDPPacket: %s\n", NET_ErrorString() );
 		OutputDebugString( buf );
 	}
 }

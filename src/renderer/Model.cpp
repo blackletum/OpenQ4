@@ -1499,7 +1499,7 @@ struct aseModel_s *idRenderModelStatic::ConvertLWOToASE( const struct st_lwObjec
 	for ( lwSurface *surf = obj->surf; surf; surf = surf->next ) {
 
 		aseMaterial_t *mat = (aseMaterial_t *)Mem_ClearedAlloc( sizeof( *mat ) );
-		strcpy( mat->name, surf->name );
+		idStr::Copynz( mat->name, surf->name, sizeof( mat->name ) );
 		mat->uTiling = mat->vTiling = 1;
 		mat->angle = mat->uOffset = mat->vOffset = 0;
 		ase->materials.Append( mat );

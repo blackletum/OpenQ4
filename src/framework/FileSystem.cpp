@@ -1774,14 +1774,17 @@ const char *idFileSystemLocal::BuildOSPath( const char *base, const char *game, 
 	idStr strBase = base;
 	strBase.StripTrailing( '/' );
 	strBase.StripTrailing( '\\' );
-	sprintf( newPath, "%s/%s/%s", strBase.c_str(), game, relativePath );
+	newPath = strBase;
+	newPath.AppendPath( game );
+	newPath.AppendPath( relativePath );
 	ReplaceSeparators( newPath );
 
 	if ( fs_caseSensitiveOS.GetBool() || com_developer.GetBool() ) {
 		// extract the directory path and warn about non-portable casing
 		idStr testPath;
 
-		sprintf( testPath, "%s/%s", game , relativePath );
+		testPath = game;
+		testPath.AppendPath( relativePath );
 		testPath.StripFilename();
 
 		if ( testPath.HasUpper() ) {
@@ -1917,7 +1920,7 @@ const char *idFileSystemLocal::OSPathToRelativePath( const char *OSPath ) {
 			s = strstr( base, "\\" );
 		}
 		if ( s ) {
-			strcpy( relativePath, s + 1 );
+			idStr::Copynz( relativePath, s + 1, sizeof( relativePath ) );
 			if ( fs_debug.GetInteger() > 1 ) {
 				common->Printf( "idFileSystem::OSPathToRelativePath: %s becomes %s\n", OSPath, relativePath );
 			}
@@ -1928,7 +1931,7 @@ const char *idFileSystemLocal::OSPathToRelativePath( const char *OSPath ) {
 	if ( !ignoreWarning ) {
 		common->Warning( "idFileSystem::OSPathToRelativePath failed on %s", OSPath );
 	}
-	strcpy( relativePath, "" );
+	relativePath[0] = '\0';
 	return relativePath;
 }
 
@@ -2450,6 +2453,7 @@ pack_t *idFileSystemLocal::LoadZipFile( const char *zipfile ) {
 
 	f = OpenOSFile( zipfile, "rb" );
 	if ( !f ) {
+		common->Warning( "Could not open pk4 '%s': %s", zipfile, strerror( errno ) );
 		return NULL;
 	}
 	fseek( f, 0, SEEK_END );
@@ -2459,9 +2463,15 @@ pack_t *idFileSystemLocal::LoadZipFile( const char *zipfile ) {
 	fs_numHeaderLongs = 0;
 
 	uf = unzOpen( zipfile );
+	if ( !uf ) {
+		common->Warning( "Could not open pk4 zip '%s'", zipfile );
+		return NULL;
+	}
 	err = unzGetGlobalInfo( uf, &gi );
 
 	if ( err != UNZ_OK ) {
+		common->Warning( "Could not read pk4 central directory '%s'", zipfile );
+		unzClose( uf );
 		return NULL;
 	}
 
@@ -3596,7 +3606,7 @@ void idFileSystemLocal::Path_f( const idCmdArgs &args ) {
 	for ( sp = fileSystemLocal.searchPaths; sp; sp = sp->next ) {
 		if ( sp->pack ) {
 			if ( com_developer.GetBool() ) {
-				sprintf( status, "%s (%i files - 0x%x %s", sp->pack->pakFilename.c_str(), sp->pack->numfiles, sp->pack->checksum, sp->pack->referenced ? "referenced" : "not referenced" );
+				status = va( "%s (%i files - 0x%x %s", sp->pack->pakFilename.c_str(), sp->pack->numfiles, sp->pack->checksum, sp->pack->referenced ? "referenced" : "not referenced" );
 				if ( sp->pack->addon ) {
 					status += " - addon)\n";
 				} else {
@@ -3750,9 +3760,13 @@ void idFileSystemLocal::AddGameDirectory( const char *path, const char *dir ) {
 
 	// find all pak files in this directory
 	pakfile = BuildOSPath( path, dir, "" );
-	pakfile[ pakfile.Length() - 1 ] = 0;	// strip the trailing slash
+	pakfile.StripTrailing( '/' );
+	pakfile.StripTrailing( '\\' );
 
 	ListOSFiles( pakfile, ".pk4", pakfiles );
+	if ( fs_debug.GetInteger() ) {
+		common->Printf( "Found %d pk4 file(s) in %s\n", pakfiles.Num(), pakfile.c_str() );
+	}
 
 	// Sort them so later entries override earlier ones after they are inserted
 	// into the search path. openQ4 reserves short pakN.pk4 names for its own
@@ -5927,102 +5941,32 @@ void idFileSystemLocal::FindDLL( const char *name, char _dllPath[ MAX_OSPATH ], 
 	idFile			*dllFile = NULL;
 	char			dllName[MAX_OSPATH];
 	idStr			dllPath;
-	int				dllHash;
-	pack_t			*inPak;
-	pack_t			*pak;
-	fileInPack_t	*pakFile;	
 
 	sys->DLL_GetFileName( name, dllName, MAX_OSPATH );
-	dllHash = HashFileName( dllName );
 
-#if ID_FAKE_PURE
-	if ( 1 ) {
-#else
-	if ( !serverPaks.Num() ) {
-#endif
-		idStr exeDir = Sys_EXEPath();
-		exeDir.StripFilename();
+	idStr exeDir = Sys_EXEPath();
+	exeDir.StripFilename();
 
-		// Stage game modules under builddir/<gamedir>/ so the engine can load them
-		// without requiring copies into the executable root.
-		const char *moduleGameDir = fs_game.GetString();
-		if ( !moduleGameDir[0] ) {
-			moduleGameDir = OPENQ4_GAMEDIR;
-		}
-		if ( !dllFile && moduleGameDir[0] ) {
-			dllPath = exeDir;
-			dllPath.AppendPath( moduleGameDir );
-			dllPath.AppendPath( dllName );
-			dllFile = OpenExplicitFileRead( dllPath );
-		}
-
-		// Fallback: check the executable directory itself.
-		if ( !dllFile ) {
-			dllPath = exeDir;
-			dllPath.AppendPath( dllName );
-			dllFile = OpenExplicitFileRead( dllPath );
-		}
+	// Only load openQ4 game modules staged next to the executable. Do not load
+	// executable code from PK4s, fs_savepath, fs_game search dirs, or pure-server
+	// code paks.
+	const char *moduleGameDir = fs_game.GetString();
+	if ( !moduleGameDir[0] ) {
+		moduleGameDir = OPENQ4_GAMEDIR;
 	}
+	if ( moduleGameDir[0] ) {
+		dllPath = exeDir;
+		dllPath.AppendPath( moduleGameDir );
+		dllPath.AppendPath( dllName );
+		dllFile = OpenExplicitFileRead( dllPath );
+	}
+
 	if ( !dllFile ) {
-		if ( !serverPaks.Num() ) {
-			// not running in pure mode, try to extract from a pak file first
-			dllFile = OpenFileReadFlags( dllName, FSFLAG_SEARCH_PAKS | FSFLAG_PURE_NOREF | FSFLAG_BINARY_ONLY, &inPak );
-			if ( dllFile ) {
-				common->Printf( "found DLL in pak file: %s\n", dllFile->GetFullPath() );
-				dllPath = RelativePathToOSPath( dllName, "fs_savepath" );
-				CopyFile( dllFile, dllPath );
-				CloseFile( dllFile );
-				dllFile = OpenFileReadFlags( dllName, FSFLAG_SEARCH_DIRS );
-				if ( !dllFile ) {
-					common->Error( "DLL extraction to fs_savepath failed\n" );
-				} else if ( updateChecksum ) {
-					gameDLLChecksum = GetFileChecksum( dllFile );
-					gamePakChecksum = inPak->checksum;
-					updateChecksum = false;	// don't try again below
-				}
-			} else {
-				// didn't find a source in a pak file, try in the directory
-				dllFile = OpenFileReadFlags( dllName, FSFLAG_SEARCH_DIRS );
-				if ( dllFile ) {
-					if ( updateChecksum ) {
-						gameDLLChecksum = GetFileChecksum( dllFile );
-						// see if we can mark a pak file
-						pak = FindPakForFileChecksum( dllName, gameDLLChecksum, false );
-						pak ? gamePakChecksum = pak->checksum : gamePakChecksum = 0;
-						updateChecksum = false;
-					}
-				}
-			}
-		} else {
-			// we are in pure mode. this path to be reached only for game DLL situations
-			// with a code pak checksum given by server
-			assert( gamePakChecksum );
-			assert( updateChecksum );
-			pak = GetPackForChecksum( gamePakChecksum );
-			if ( !pak ) {
-				// not supposed to happen, bug in pure code?
-				common->Warning( "FindDLL in pure mode: game pak not found ( 0x%x )\n", gamePakChecksum );
-			} else {
-				// extract and copy
-				for ( pakFile = pak->hashTable[dllHash]; pakFile; pakFile = pakFile->next ) {
-					if ( !FilenameCompare( pakFile->name, dllName ) ) {
-						dllFile = ReadFileFromZip( pak, pakFile, dllName );
-						common->Printf( "found DLL in game pak file: %s\n", pak->pakFilename.c_str() );
-						dllPath = RelativePathToOSPath( dllName, "fs_savepath" );
-						CopyFile( dllFile, dllPath );
-						CloseFile( dllFile );
-						dllFile = OpenFileReadFlags( dllName, FSFLAG_SEARCH_DIRS );
-						if ( !dllFile ) {
-							common->Error( "DLL extraction to fs_savepath failed\n" );
-						} else {
-							gameDLLChecksum = GetFileChecksum( dllFile );
-							updateChecksum = false;	// don't try again below
-						}						
-					}
-				}
-			}
-		}
+		dllPath = exeDir;
+		dllPath.AppendPath( dllName );
+		dllFile = OpenExplicitFileRead( dllPath );
 	}
+
 	if ( updateChecksum ) {
 		if ( dllFile ) {
 			gameDLLChecksum = GetFileChecksum( dllFile );

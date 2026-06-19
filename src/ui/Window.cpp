@@ -1434,34 +1434,30 @@ idWindow::DebugDraw
 ================
 */
 void idWindow::DebugDraw(int time, float x, float y) {
-	static char buff[16384];
 	if (dc) {
 		dc->EnableClipping(false);
 		if (gui_debug.GetInteger() == 1) {
 			dc->DrawRect(drawRect.x, drawRect.y, drawRect.w, drawRect.h, 1, idDeviceContext::colorRed);
 		} else if (gui_debug.GetInteger() == 2) {
-			char out[1024];
+			idStr buff;
 			idStr str;
 			str = text.c_str();
 			
 			if (str.Length()) {
-				sprintf(buff, "%s\n", str.c_str());
+				buff = str;
+				buff += "\n";
 			}
 
-			sprintf(out, "Rect: %0.1f, %0.1f, %0.1f, %0.1f\n", rect.x(), rect.y(), rect.w(), rect.h());
-			strcat(buff, out);
-			sprintf(out, "Draw Rect: %0.1f, %0.1f, %0.1f, %0.1f\n", drawRect.x, drawRect.y, drawRect.w, drawRect.h);
-			strcat(buff, out);
-			sprintf(out, "Client Rect: %0.1f, %0.1f, %0.1f, %0.1f\n", clientRect.x, clientRect.y, clientRect.w, clientRect.h);
-			strcat(buff, out);
-			sprintf(out, "Cursor: %0.1f : %0.1f\n", gui->CursorX(), gui->CursorY());
-			strcat(buff, out);
+			buff += va("Rect: %0.1f, %0.1f, %0.1f, %0.1f\n", rect.x(), rect.y(), rect.w(), rect.h());
+			buff += va("Draw Rect: %0.1f, %0.1f, %0.1f, %0.1f\n", drawRect.x, drawRect.y, drawRect.w, drawRect.h);
+			buff += va("Client Rect: %0.1f, %0.1f, %0.1f, %0.1f\n", clientRect.x, clientRect.y, clientRect.w, clientRect.h);
+			buff += va("Cursor: %0.1f : %0.1f\n", gui->CursorX(), gui->CursorY());
 
 
 			//idRectangle tempRect = textRect;
 			//tempRect.x += offsetX;
 			//drawRect.y += offsetY;
-			dc->DrawText(buff, textScale, textAlign, foreColor, textRect, true);
+			dc->DrawText(buff.c_str(), textScale, textAlign, foreColor, textRect, true);
 		} 
 		dc->EnableClipping(true);
 	}

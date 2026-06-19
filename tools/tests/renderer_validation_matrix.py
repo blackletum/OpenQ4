@@ -685,19 +685,19 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
                 ["ShadowMap LOD admission self-test passed"],
                 ["RendererShadowPlanner self-test passed"],
                 ["RendererShadowPlanner regression coverage:"],
-                ["projected=1"],
-                ["point=1"],
-                ["csm=1"],
-                ["budgetFallback=1"],
-                ["cacheReuse=1"],
-                ["fairness=1"],
-                ["throttleHistory=1"],
+                ["projected=1", "skippedLightShaderNoShadows=1"],
+                ["point=1", "skippedLightShaderNoShadows=1"],
+                ["csm=1", "skippedLightShaderNoShadows=1"],
+                ["budgetFallback=1", "skippedLightShaderNoShadows=1"],
+                ["cacheReuse=1", "skippedLightShaderNoShadows=1"],
+                ["fairness=1", "skippedLightShaderNoShadows=1"],
+                ["throttleHistory=1", "skippedLightShaderNoShadows=1"],
                 ["casterAdmission=1"],
                 ["receiverFallback=1"],
                 ["arb2Parity="],
-                ["projectedGate(on="],
-                ["projectedTransform(pad="],
-                ["sampleValidation(samples="],
+                ["projectedGate(on=", "skippedLightShaderNoShadows=1"],
+                ["projectedTransform(pad=", "skippedLightShaderNoShadows=1"],
+                ["sampleValidation(samples=", "skippedLightShaderNoShadows=1"],
                 ["lod="],
                 ["shadowMap=1"],
                 ["projectedCSM="],
@@ -740,19 +740,19 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
                 ["RendererVisiblePath self-test passed"],
                 ["SM projected-diagnostic scene=synthetic-flashlight"],
                 ["SM projected-diagnostic fallbackValidation("],
-                ["classification=projected"],
-                ["planner(map=cascade"],
-                ["arb2(cascades=3"],
-                ["projectedTransform(pad="],
-                ["sampleValidation(samples="],
-                ["fallbackValidation(reason=mixed-w-signs"],
-                ["clipPlane0="],
-                ["atlas0="],
-                ["split0="],
-                ["SM projected-diagnostic receiverInputs("],
+                ["classification=projected", "skippedLightShaderNoShadows=1"],
+                ["planner(map=cascade", "skippedLightShaderNoShadows=1"],
+                ["arb2(cascades=3", "skippedLightShaderNoShadows=1"],
+                ["projectedTransform(pad=", "skippedLightShaderNoShadows=1"],
+                ["sampleValidation(samples=", "skippedLightShaderNoShadows=1"],
+                ["fallbackValidation(reason=mixed-w-signs", "skippedLightShaderNoShadows=1"],
+                ["clipPlane0=", "skippedLightShaderNoShadows=1"],
+                ["atlas0=", "skippedLightShaderNoShadows=1"],
+                ["split0=", "skippedLightShaderNoShadows=1"],
+                ["SM projected-diagnostic receiverInputs(", "skippedLightShaderNoShadows=1"],
                 ["RendererShadowProjectedDiagnostic self-test passed"],
                 ["projectedGate="],
-                ["projectedCSM="],
+                ["projectedCSM=", "skippedLightShaderNoShadows=1"],
                 ["Modern shadow plan:"],
                 ["Selected renderer tier:"],
                 ["GL context request:"],
@@ -1074,6 +1074,8 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
 
     for shader_tier in SHADER_LIBRARY_TIER_MATRIX:
         tier = shader_tier["tier"]
+        if tier not in tiers:
+            continue
         cases.append(
             {
                 "id": shader_tier["id"],
@@ -1193,6 +1195,13 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
             "checks": STARTUP_CHECKS,
         },
     ]
+
+    if "gl43" not in tiers:
+        cases = [case for case in cases if case["id"] != "renderer-gpu-driven-selftest"]
+    if "gl45" not in tiers:
+        cases = [case for case in cases if case["id"] != "renderer-low-overhead-selftest"]
+    if "gl33" not in tiers:
+        cases = [case for case in cases if case["id"] != "tier-gl33-debug-context"]
 
     return cases
 

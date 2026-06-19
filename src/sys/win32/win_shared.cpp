@@ -366,16 +366,22 @@ UNDNAME_NO_ALLOCATION_MODEL |
 UNDNAME_NO_ALLOCATION_LANGUAGE |
 UNDNAME_NO_MEMBER_TYPE;
 
+static void Sym_FormatAddress( address_t addr, idStr &funcName ) {
+	char addressString[ 32 ];
+	idStr::snPrintf( addressString, sizeof( addressString ), "0x%llx", (unsigned long long)addr );
+	funcName = addressString;
+}
+
 #if defined(_DEBUG) && 1
 
 typedef struct symbol_s {
-	int					address;
+	address_t			address;
 	char* name;
 	struct symbol_s* next;
 } symbol_t;
 
 typedef struct module_s {
-	int					address;
+	address_t			address;
 	char* name;
 	symbol_t* symbols;
 	struct module_s* next;
@@ -413,15 +419,25 @@ void SkipWhiteSpace(const char** ptr) {
 ParseHexNumber
 ==================
 */
-int ParseHexNumber(const char** ptr) {
-	int n = 0;
-	while ((**ptr) >= '0' && (**ptr) <= '9' || (**ptr) >= 'a' && (**ptr) <= 'f') {
-		n <<= 4;
-		if (**ptr >= '0' && **ptr <= '9') {
-			n |= ((**ptr) - '0');
+address_t ParseHexNumber(const char** ptr) {
+	address_t n = 0;
+	while (true) {
+		const char c = **ptr;
+		if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			n <<= 4;
 		}
 		else {
-			n |= 10 + ((**ptr) - 'a');
+			break;
+		}
+
+		if (c >= '0' && c <= '9') {
+			n |= (address_t)(c - '0');
+		}
+		else if (c >= 'a' && c <= 'f') {
+			n |= (address_t)(10 + c - 'a');
+		}
+		else {
+			n |= (address_t)(10 + c - 'A');
 		}
 		(*ptr)++;
 	}
@@ -433,7 +449,7 @@ int ParseHexNumber(const char** ptr) {
 Sym_Init
 ==================
 */
-void Sym_Init(long addr) {
+void Sym_Init(address_t addr) {
 	TCHAR moduleName[MAX_STRING_CHARS];
 	MEMORY_BASIC_INFORMATION mbi;
 
@@ -455,7 +471,7 @@ void Sym_Init(long addr) {
 	module_t* module = (module_t*)malloc(sizeof(module_t));
 	module->name = (char*)malloc(strlen(moduleName) + 1);
 	strcpy(module->name, moduleName);
-	module->address = (int)mbi.AllocationBase;
+	module->address = (address_t)mbi.AllocationBase;
 	module->symbols = NULL;
 	module->next = modules;
 	modules = module;
@@ -487,7 +503,7 @@ void Sym_Init(long addr) {
 		SkipRestOfLine(&ptr);
 	}
 
-	int symbolAddress;
+	address_t symbolAddress;
 	int symbolLength;
 	char symbolName[MAX_STRING_CHARS];
 	symbol_t* symbol;
@@ -563,7 +579,7 @@ void Sym_Shutdown(void) {
 Sym_GetFuncInfo
 ==================
 */
-void Sym_GetFuncInfo(long addr, idStr& module, idStr& funcName) {
+void Sym_GetFuncInfo(address_t addr, idStr& module, idStr& funcName) {
 	MEMORY_BASIC_INFORMATION mbi;
 	module_t* m;
 	symbol_t* s;
@@ -571,7 +587,7 @@ void Sym_GetFuncInfo(long addr, idStr& module, idStr& funcName) {
 	VirtualQuery((void*)addr, &mbi, sizeof(mbi));
 
 	for (m = modules; m != NULL; m = m->next) {
-		if (m->address == (int)mbi.AllocationBase) {
+		if (m->address == (address_t)mbi.AllocationBase) {
 			break;
 		}
 	}
@@ -601,13 +617,13 @@ void Sym_GetFuncInfo(long addr, idStr& module, idStr& funcName) {
 		}
 	}
 
-	sprintf(funcName, "0x%08x", addr);
+	Sym_FormatAddress(addr, funcName);
 	module = "";
 }
 
 #elif defined(_DEBUG)
 
-DWORD lastAllocationBase = -1;
+DWORD64 lastAllocationBase = 0;
 HANDLE processHandle;
 idStr lastModule;
 
@@ -616,12 +632,12 @@ idStr lastModule;
 Sym_Init
 ==================
 */
-void Sym_Init(long addr) {
+void Sym_Init(address_t addr) {
 	TCHAR moduleName[MAX_STRING_CHARS];
 	TCHAR modShortNameBuf[MAX_STRING_CHARS];
 	MEMORY_BASIC_INFORMATION mbi;
 
-	if (lastAllocationBase != -1) {
+	if (lastAllocationBase != 0) {
 		Sym_Shutdown();
 	}
 
@@ -635,14 +651,15 @@ void Sym_Init(long addr) {
 	if (!SymInitialize(processHandle, NULL, FALSE)) {
 		return;
 	}
-	if (!SymLoadModule(processHandle, NULL, moduleName, NULL, (DWORD)mbi.AllocationBase, 0)) {
+	DWORD64 moduleBase = (DWORD64)(uintptr_t)mbi.AllocationBase;
+	if (!SymLoadModule64(processHandle, NULL, moduleName, NULL, moduleBase, 0)) {
 		SymCleanup(processHandle);
 		return;
 	}
 
 	SymSetOptions(SymGetOptions() & ~SYMOPT_UNDNAME);
 
-	lastAllocationBase = (DWORD)mbi.AllocationBase;
+	lastAllocationBase = moduleBase;
 }
 
 /*
@@ -651,9 +668,11 @@ Sym_Shutdown
 ==================
 */
 void Sym_Shutdown(void) {
-	SymUnloadModule(GetCurrentProcess(), lastAllocationBase);
-	SymCleanup(GetCurrentProcess());
-	lastAllocationBase = -1;
+	if (lastAllocationBase != 0) {
+		SymUnloadModule64(GetCurrentProcess(), lastAllocationBase);
+		SymCleanup(GetCurrentProcess());
+		lastAllocationBase = 0;
+	}
 }
 
 /*
@@ -661,25 +680,26 @@ void Sym_Shutdown(void) {
 Sym_GetFuncInfo
 ==================
 */
-void Sym_GetFuncInfo(long addr, idStr& module, idStr& funcName) {
+void Sym_GetFuncInfo(address_t addr, idStr& module, idStr& funcName) {
 	MEMORY_BASIC_INFORMATION mbi;
 
 	VirtualQuery((void*)addr, &mbi, sizeof(mbi));
 
-	if ((DWORD)mbi.AllocationBase != lastAllocationBase) {
+	DWORD64 moduleBase = (DWORD64)(uintptr_t)mbi.AllocationBase;
+	if (moduleBase != lastAllocationBase) {
 		Sym_Init(addr);
 	}
 
-	BYTE symbolBuffer[sizeof(IMAGEHLP_SYMBOL) + MAX_STRING_CHARS];
-	PIMAGEHLP_SYMBOL pSymbol = (PIMAGEHLP_SYMBOL)&symbolBuffer[0];
-	pSymbol->SizeOfStruct = sizeof(symbolBuffer);
+	BYTE symbolBuffer[sizeof(IMAGEHLP_SYMBOL64) + MAX_STRING_CHARS];
+	PIMAGEHLP_SYMBOL64 pSymbol = (PIMAGEHLP_SYMBOL64)&symbolBuffer[0];
+	pSymbol->SizeOfStruct = sizeof(IMAGEHLP_SYMBOL64);
 	pSymbol->MaxNameLength = 1023;
 	pSymbol->Address = 0;
 	pSymbol->Flags = 0;
 	pSymbol->Size = 0;
 
-	DWORD symDisplacement = 0;
-	if (SymGetSymFromAddr(processHandle, addr, &symDisplacement, pSymbol)) {
+	DWORD64 symDisplacement = 0;
+	if (SymGetSymFromAddr64(processHandle, (DWORD64)addr, &symDisplacement, pSymbol)) {
 		// clean up name, throwing away decorations that don't affect uniqueness
 		char undName[MAX_STRING_CHARS];
 		if (UnDecorateSymbolName(pSymbol->Name, undName, sizeof(undName), UNDECORATE_FLAGS)) {
@@ -703,7 +723,7 @@ void Sym_GetFuncInfo(long addr, idStr& module, idStr& funcName) {
 		LocalFree(lpMsgBuf);
 
 		// Couldn't retrieve symbol (no debug info?, can't load dbghelp.dll?)
-		sprintf(funcName, "0x%08x", addr);
+		Sym_FormatAddress(addr, funcName);
 		module = "";
 	}
 }
@@ -715,7 +735,7 @@ void Sym_GetFuncInfo(long addr, idStr& module, idStr& funcName) {
 Sym_Init
 ==================
 */
-void Sym_Init(long addr) {
+void Sym_Init(address_t addr) {
 }
 
 /*
@@ -731,9 +751,9 @@ void Sym_Shutdown(void) {
 Sym_GetFuncInfo
 ==================
 */
-void Sym_GetFuncInfo(long addr, idStr& module, idStr& funcName) {
+void Sym_GetFuncInfo(address_t addr, idStr& module, idStr& funcName) {
 	module = "";
-	sprintf(funcName, "0x%08x", addr);
+	Sym_FormatAddress(addr, funcName);
 }
 
 #endif

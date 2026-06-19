@@ -117,17 +117,38 @@ static bool R_CheckGLSLProgramExtensions() {
 		&& R_CheckExtension( "GL_ARB_shading_language_100" );
 }
 
-static bool R_HasARBVertexBufferObjectEntryPoints() {
+static bool R_HasARBMultitextureEntryPoints() {
+	return glActiveTextureARB != NULL
+		&& glClientActiveTextureARB != NULL
+		&& glMultiTexCoord2fARB != NULL;
+}
+
+static bool R_HasARBBufferObjectEntryPoints() {
 	return glBindBufferARB != NULL
 		&& glDeleteBuffersARB != NULL
 		&& glGenBuffersARB != NULL
 		&& glBufferDataARB != NULL;
 }
 
+static bool R_HasARBVertexBufferObjectEntryPoints() {
+	return R_HasARBBufferObjectEntryPoints()
+		&& glBufferSubDataARB != NULL;
+}
+
+static bool R_HasARBPixelBufferObjectEntryPoints() {
+	return R_HasARBBufferObjectEntryPoints()
+		&& glMapBufferARB != NULL
+		&& glUnmapBufferARB != NULL;
+}
+
 static bool R_HasARBProgramEntryPoints() {
 	return glBindProgramARB != NULL
 		&& glProgramStringARB != NULL
-		&& glProgramEnvParameter4fvARB != NULL;
+		&& glProgramEnvParameter4fvARB != NULL
+		&& glProgramLocalParameter4fvARB != NULL
+		&& glVertexAttribPointerARB != NULL
+		&& glEnableVertexAttribArrayARB != NULL
+		&& glDisableVertexAttribArrayARB != NULL;
 }
 
 static bool R_HasGLSLProgramEntryPoints() {
@@ -138,9 +159,21 @@ static bool R_HasGLSLProgramEntryPoints() {
 		&& glGetInfoLogARB != NULL
 		&& glCreateProgramObjectARB != NULL
 		&& glAttachObjectARB != NULL
+		&& glDetachObjectARB != NULL
+		&& glBindAttribLocationARB != NULL
 		&& glLinkProgramARB != NULL
 		&& glUseProgramObjectARB != NULL
 		&& glGetUniformLocationARB != NULL
+		&& glUniform1fARB != NULL
+		&& glUniform1fvARB != NULL
+		&& glUniform1iARB != NULL
+		&& glUniform2fvARB != NULL
+		&& glUniform3fvARB != NULL
+		&& glUniform4fvARB != NULL
+		&& glUniformMatrix4fvARB != NULL
+		&& glVertexAttribPointerARB != NULL
+		&& glEnableVertexAttribArrayARB != NULL
+		&& glDisableVertexAttribArrayARB != NULL
 		&& glDeleteObjectARB != NULL;
 }
 
@@ -540,6 +573,7 @@ idCVar r_lightAllBackFaces( "r_lightAllBackFaces", "0", CVAR_RENDERER | CVAR_BOO
 idCVar r_showPortals( "r_showPortals", "0", CVAR_RENDERER | CVAR_BOOL, "draw portal outlines in color based on passed / not passed" );
 idCVar r_showUnsmoothedTangents( "r_showUnsmoothedTangents", "0", CVAR_RENDERER | CVAR_BOOL, "if 1, put all nvidia register combiner programming in display lists" );
 idCVar r_showSilhouette( "r_showSilhouette", "0", CVAR_RENDERER | CVAR_BOOL, "highlight edges that are casting shadow planes" );
+idCVar r_reportSilhouetteEdgeWarnings( "r_reportSilhouetteEdgeWarnings", "0", CVAR_RENDERER | CVAR_BOOL, "print developer warnings for duplicate/tripled silhouette edges while building triangle surfaces" );
 idCVar r_showVertexColor( "r_showVertexColor", "0", CVAR_RENDERER | CVAR_BOOL, "draws all triangles with the solid vertex color" );
 idCVar r_showUpdates( "r_showUpdates", "0", CVAR_RENDERER | CVAR_BOOL, "report entity and light updates and ref counts" );
 idCVar r_showDemo( "r_showDemo", "0", CVAR_RENDERER | CVAR_BOOL, "report reads and writes to the demo file" );
@@ -913,6 +947,11 @@ static void R_CheckPortableExtensions( void ) {
 
 	// GL_ARB_multitexture
 	glConfig.multitextureAvailable = R_CheckRequiredExtension( "GL_ARB_multitexture" );
+	if ( glConfig.multitextureAvailable && !R_HasARBMultitextureEntryPoints() ) {
+		common->Printf( "X..GL_ARB_multitexture entry points incomplete\n" );
+		R_RecordMissingRequiredOpenGLFeature( "GL_ARB_multitexture entry points" );
+		glConfig.multitextureAvailable = false;
+	}
 	if ( glConfig.multitextureAvailable ) {
 		//glGetIntegerv( GL_MAX_TEXTURE_UNITS_ARB, (GLint *)&glConfig.maxTextureUnits );
 		//if ( glConfig.maxTextureUnits > MAX_MULTITEXTURE_UNITS ) {
@@ -1057,8 +1096,11 @@ static void R_CheckPortableExtensions( void ) {
 		common->Printf( "X..GL_ARB_vertex_buffer_object entry points incomplete; using virtual-memory vertex cache\n" );
 		glConfig.ARBVertexBufferObjectAvailable = false;
 	}
-	glConfig.pixelBufferObjectAvailable =
-		( GLEW_ARB_pixel_buffer_object || GLEW_EXT_pixel_buffer_object || GLEW_VERSION_2_1 );
+	const bool pixelBufferObjectAdvertised = ( GLEW_ARB_pixel_buffer_object || GLEW_EXT_pixel_buffer_object || GLEW_VERSION_2_1 ) != 0;
+	glConfig.pixelBufferObjectAvailable = pixelBufferObjectAdvertised && R_HasARBPixelBufferObjectEntryPoints();
+	if ( pixelBufferObjectAdvertised && !glConfig.pixelBufferObjectAvailable ) {
+		common->Printf( "X..pixel buffer object entry points incomplete; async readbacks disabled\n" );
+	}
 
 	// ARB_vertex_program
 	glConfig.ARBVertexProgramAvailable = R_CheckRequiredExtension( "GL_ARB_vertex_program" );
@@ -1753,16 +1795,16 @@ Prints a list of the materials sorted by surface area
 */
 void R_ReportSurfaceAreas_f( const idCmdArgs &args ) {
 	int		i, count;
-	idMaterial	**list;
+	idList<idMaterial *> list;
 
 	count = declManager->GetNumDecls( DECL_MATERIAL );
-	list = (idMaterial **)_alloca( count * sizeof( *list ) );
+	list.SetNum( count );
 
 	for ( i = 0 ; i < count ; i++ ) {
 		list[i] = (idMaterial *)declManager->DeclByIndex( DECL_MATERIAL, i, false );
 	}
 
-	qsort( list, count, sizeof( list[0] ), R_QsortSurfaceAreas );
+	qsort( list.Ptr(), count, sizeof( list[0] ), R_QsortSurfaceAreas );
 
 	// skip over ones with 0 area
 	for ( i = 0 ; i < count ; i++ ) {
@@ -2155,7 +2197,10 @@ void R_ScreenshotFilename( int &lastNumber, const char *base, idStr &fileName ) 
 		frac -= d*10;
 		e = frac;
 
-		sprintf( fileName, "%s%i%i%i%i%i.tga", base, a, b, c, d, e );
+		char suffix[16];
+		idStr::snPrintf( suffix, sizeof( suffix ), "%i%i%i%i%i.tga", a, b, c, d, e );
+		fileName = base;
+		fileName += suffix;
 		if ( lastNumber == 99999 ) {
 			break;
 		}
@@ -2836,7 +2881,9 @@ void R_EnvShot_f( const idCmdArgs &args ) {
 		ref.width = glConfig.vidWidth;
 		ref.height = glConfig.vidHeight;
 		ref.viewaxis = axis[i];
-		sprintf( fullname, "env/%s%s", baseName, extensions[i] );
+		fullname = "env/";
+		fullname += baseName;
+		fullname += extensions[i];
 		tr.TakeScreenshot( size, size, fullname, blends, &ref );
 	}
 
@@ -2968,7 +3015,9 @@ void R_MakeAmbientMap_f( const idCmdArgs &args ) {
 
 	// read all of the images
 	for ( i = 0 ; i < 6 ; i++ ) {
-		sprintf( fullname, "env/%s%s", baseName, extensions[i] );
+		fullname = "env/";
+		fullname += baseName;
+		fullname += extensions[i];
 		common->Printf( "loading %s\n", fullname.c_str() );
 		session->UpdateScreen();
 		R_LoadImage( fullname, &buffers[i], &width, &height, NULL, true );
@@ -2995,6 +3044,13 @@ void R_MakeAmbientMap_f( const idCmdArgs &args ) {
 	// resample with hemispherical blending
 	int	samples = 1000;
 
+	if ( outSize > idMath::INT_MAX / outSize || outSize * outSize > idMath::INT_MAX / 4 ) {
+		common->Warning( "ambientshot: output size is too large %d", outSize );
+		for ( i = 0 ; i < 6 ; i++ ) {
+			Mem_Free( buffers[i] );
+		}
+		return;
+	}
 	byte	*outBuffer = (byte *)Mem_Alloc( outSize * outSize * 4 );
 
 	for ( int map = 0 ; map < 2 ; map++ ) {
@@ -3041,9 +3097,15 @@ void R_MakeAmbientMap_f( const idCmdArgs &args ) {
 			}
 
 			if ( map == 0 ) {
-				sprintf( fullname, "env/%s_amb%s", baseName, extensions[i] );
+				fullname = "env/";
+				fullname += baseName;
+				fullname += "_amb";
+				fullname += extensions[i];
 			} else {
-				sprintf( fullname, "env/%s_spec%s", baseName, extensions[i] );
+				fullname = "env/";
+				fullname += baseName;
+				fullname += "_spec";
+				fullname += extensions[i];
 			}
 			common->Printf( "writing %s\n", fullname.c_str() );
 			session->UpdateScreen();
@@ -3573,6 +3635,12 @@ void R_InitMaterials( void ) {
 	// needed by R_DeriveLightData
 	declManager->FindMaterial( "lights/defaultPointLight" );
 	declManager->FindMaterial( "lights/defaultProjectedLight" );
+	declManager->FindMaterial( "gfx/lights/flashlight" );
+
+	// Session wipes are used during map transitions after the level-load
+	// precache window has closed.
+	declManager->FindMaterial( "gfx/wipes/fade" );
+	declManager->FindMaterial( "gfx/wipes/fade_blend" );
 }
 
 

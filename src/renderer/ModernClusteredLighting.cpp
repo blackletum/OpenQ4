@@ -2677,12 +2677,22 @@ bool RendererClusterGrid_RunSelfTest( void ) {
 			&& shadowRecord->shadowFallbackReason == MODERN_SHADOW_FALLBACK_NONE
 			&& ( shadowDescriptor->flags & ( RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_RECEIVER_BLOCKED | RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_SAMPLING_READY ) ) == RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_SAMPLING_READY
 			&& ( shadowRecord->flags & MODERN_CLUSTER_LIGHT_FLAG_SHADOW_MAPPED ) != 0;
+		const bool skippedLightMaterialValid =
+			shadowDescriptor != NULL
+			&& shadowRecord != NULL
+			&& shadowDescriptor->policy == MODERN_SHADOW_POLICY_SKIPPED
+			&& shadowDescriptor->fallbackReason == MODERN_SHADOW_FALLBACK_LIGHT_SHADER_NO_SHADOWS
+			&& shadowRecord->shadowPolicy == MODERN_SHADOW_POLICY_SKIPPED
+			&& shadowRecord->shadowFallbackReason == MODERN_SHADOW_FALLBACK_LIGHT_SHADER_NO_SHADOWS
+			&& shadowClusterStats.shadowMappedLights == 0
+			&& shadowClusterStats.shadowFallbackLights == 0
+			&& shadowClusterStats.shadowSkippedLights > 0;
 		if ( shadowStats.available
 			&& ( shadowClusterStats.shadowFallbackLights != 0
 				|| shadowClusterStats.shadowDescriptorCount != shadowStats.descriptorCount
 				|| shadowClusterStats.shadowDescriptorCapacity <= 0
-				|| !descriptorCommonValid
-				|| ( !blockedHandoffValid && !sampledHandoffValid ) ) ) {
+				|| ( !descriptorCommonValid && !skippedLightMaterialValid )
+				|| ( !skippedLightMaterialValid && !blockedHandoffValid && !sampledHandoffValid ) ) ) {
 			common->Printf(
 				"RendererClusterGrid self-test failed: shadow receiver handoff invalid (sampling=%d plannerBlocked=%d clusterBlocked=%d mapped=%d fallback=%d descriptors=%d/%d cap=%d policy=%d reason=%d flags=0x%x descPolicy=%d descReason=%d descMap=%d descCompare=%d descBias=%d descTiles=%d descFlags=0x%x)\n",
 				samplingReady ? 1 : 0,

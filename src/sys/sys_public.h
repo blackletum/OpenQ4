@@ -266,7 +266,7 @@ typedef struct sysMemoryStats_s {
 	int availExtendedVirtual;
 } sysMemoryStats_t;
 
-typedef unsigned long address_t;
+typedef uintptr_t address_t;
 
 template<class type> class idList;		// for Sys_ListFiles
 

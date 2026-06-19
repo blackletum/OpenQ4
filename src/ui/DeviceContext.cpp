@@ -2067,7 +2067,7 @@ char *idRectangle::String( void ) const {
 	s = str[ index ];
 	index = (index + 1)&7;
 
-	sprintf( s, "%.2f %.2f %.2f %.2f", x, y, w, h );
+	idStr::snPrintf( s, sizeof( str[0] ), "%.2f %.2f %.2f %.2f", x, y, w, h );
 
 	return s;
 }

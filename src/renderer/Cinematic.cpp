@@ -317,10 +317,11 @@ bool idCinematicLocal::InitFromFile(const char* qpath, bool amilooping) {
 	animationLength = 100000;
 
 	if (strstr(qpath, "/") == NULL && strstr(qpath, "\\") == NULL) {
-		sprintf(fileName, "video/%s", qpath);
+		fileName = "video/";
+		fileName += qpath;
 	}
 	else {
-		sprintf(fileName, "%s", qpath);
+		fileName = qpath;
 	}
 
 	iFile = fileSystem->OpenFileRead(fileName);

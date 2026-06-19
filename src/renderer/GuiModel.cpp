@@ -168,8 +168,9 @@ void idGuiModel::ReadFromDemo( idDemoFile *demo ) {
 		if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_POINTER_FREE_VERSION ) {
 			demo->ReadBool( hasMaterial );
 		} else {
-			demo->ReadInt( (int&)surf->material );
-			hasMaterial = ( surf->material != NULL );
+			int legacyMaterial = 0;
+			demo->ReadInt( legacyMaterial );
+			hasMaterial = ( legacyMaterial != 0 );
 		}
 		demo->ReadFloat( surf->color[0] );
 		demo->ReadFloat( surf->color[1] );

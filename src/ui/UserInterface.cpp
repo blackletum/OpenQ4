@@ -72,10 +72,11 @@ void idUserInterfaceManagerLocal::WritePrecacheCommands( idFile *f ) {
 
 	int c = guis.Num();
 	for( int i = 0; i < c; i++ ) {
-		char	str[1024];
-		sprintf( str, "touchGui %s\n", guis[i]->Name() );
-		common->Printf( "%s", str );
-		f->Printf( "%s", str );
+		idStr command = "touchGui ";
+		command += guis[i]->Name();
+		command += "\n";
+		common->Printf( "%s", command.c_str() );
+		f->Printf( "%s", command.c_str() );
 	}
 }
 

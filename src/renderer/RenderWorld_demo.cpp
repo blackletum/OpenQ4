@@ -708,15 +708,17 @@ void	idRenderWorldLocal::ReadRenderLight( ) {
 	if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_POINTER_FREE_VERSION ) {
 		session->readDemo->ReadBool( hasPrelightModel );
 	} else {
-		session->readDemo->ReadInt( (int&)light.prelightModel );
-		hasPrelightModel = ( light.prelightModel != NULL );
+		int legacyPrelightModel = 0;
+		session->readDemo->ReadInt( legacyPrelightModel );
+		hasPrelightModel = ( legacyPrelightModel != 0 );
 	}
 	session->readDemo->ReadInt( light.lightId );
 	if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_POINTER_FREE_VERSION ) {
 		session->readDemo->ReadBool( hasShader );
 	} else {
-		session->readDemo->ReadInt( (int&)light.shader );
-		hasShader = ( light.shader != NULL );
+		int legacyShader = 0;
+		session->readDemo->ReadInt( legacyShader );
+		hasShader = ( legacyShader != 0 );
 	}
 	for ( int i = 0; i < MAX_ENTITY_SHADER_PARMS; i++)
 		session->readDemo->ReadFloat( light.shaderParms[i] );
@@ -940,8 +942,9 @@ void	idRenderWorldLocal::ReadRenderEntity() {
 	if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_POINTER_FREE_VERSION ) {
 		session->readDemo->ReadBool( hasModel );
 	} else {
-		session->readDemo->ReadInt( (int&)ent.hModel );
-		hasModel = ( ent.hModel != NULL );
+		int legacyModel = 0;
+		session->readDemo->ReadInt( legacyModel );
+		hasModel = ( legacyModel != 0 );
 	}
 	session->readDemo->ReadInt( ent.entityNum );
 	session->readDemo->ReadInt( ent.bodyId );
@@ -952,8 +955,12 @@ void	idRenderWorldLocal::ReadRenderEntity() {
 		session->readDemo->ReadBool( hasCallback );
 		session->readDemo->ReadBool( hasCallbackData );
 	} else {
-		session->readDemo->ReadInt( (int&)ent.callback );
-		session->readDemo->ReadInt( (int&)ent.callbackData );
+		int legacyCallback = 0;
+		int legacyCallbackData = 0;
+		session->readDemo->ReadInt( legacyCallback );
+		session->readDemo->ReadInt( legacyCallbackData );
+		hasCallback = ( legacyCallback != 0 );
+		hasCallbackData = ( legacyCallbackData != 0 );
 	}
 	session->readDemo->ReadInt( ent.suppressSurfaceInViewID );
 	session->readDemo->ReadInt( ent.suppressShadowInViewID );
@@ -966,12 +973,15 @@ void	idRenderWorldLocal::ReadRenderEntity() {
 		session->readDemo->ReadBool( hasReferenceShader );
 		session->readDemo->ReadBool( hasCustomSkin );
 	} else {
-		session->readDemo->ReadInt( (int&)ent.customShader );
-		session->readDemo->ReadInt( (int&)ent.referenceShader );
-		session->readDemo->ReadInt( (int&)ent.customSkin );
-		hasCustomShader = ( ent.customShader != NULL );
-		hasReferenceShader = ( ent.referenceShader != NULL );
-		hasCustomSkin = ( ent.customSkin != NULL );
+		int legacyCustomShader = 0;
+		int legacyReferenceShader = 0;
+		int legacyCustomSkin = 0;
+		session->readDemo->ReadInt( legacyCustomShader );
+		session->readDemo->ReadInt( legacyReferenceShader );
+		session->readDemo->ReadInt( legacyCustomSkin );
+		hasCustomShader = ( legacyCustomShader != 0 );
+		hasReferenceShader = ( legacyReferenceShader != 0 );
+		hasCustomSkin = ( legacyCustomSkin != 0 );
 	}
 	session->readDemo->ReadInt( ent.referenceSound );
 	for ( i = 0; i < MAX_ENTITY_SHADER_PARMS; i++ ) {
@@ -981,8 +991,9 @@ void	idRenderWorldLocal::ReadRenderEntity() {
 		if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_POINTER_FREE_VERSION ) {
 			session->readDemo->ReadBool( hasGui[i] );
 		} else {
-			session->readDemo->ReadInt( (int&)ent.gui[i] );
-			hasGui[i] = ( ent.gui[i] != NULL );
+			int legacyGui = 0;
+			session->readDemo->ReadInt( legacyGui );
+			hasGui[i] = ( legacyGui != 0 );
 		}
 	}
 	if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_REMOTE_VIEW_VERSION ) {
@@ -1000,7 +1011,8 @@ void	idRenderWorldLocal::ReadRenderEntity() {
 		common->Error( "ReadRenderEntity: bad numJoints %i", ent.numJoints );
 	}
 	if ( session->renderdemoVersion < OPENQ4_RENDERDEMO_POINTER_FREE_VERSION ) {
-		session->readDemo->ReadInt( (int&)ent.joints );
+		int legacyJoints = 0;
+		session->readDemo->ReadInt( legacyJoints );
 	}
 	session->readDemo->ReadFloat( ent.modelDepthHack );
 	session->readDemo->ReadBool( ent.noSelfShadow );

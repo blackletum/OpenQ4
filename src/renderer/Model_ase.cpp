@@ -77,6 +77,50 @@ static int CharIsTokenDelimiter( int ch )
 	return 0;
 }
 
+static int ASE_ParseNonNegativeCount( const char *name )
+{
+	const int count = atoi( ase.token );
+	if ( count < 0 ) {
+		common->Error( "%s is negative: %d", name, count );
+	}
+	return count;
+}
+
+static void *ASE_AllocArray( int count, int elementSize, const char *name )
+{
+	if ( count < 0 ) {
+		common->Error( "%s is negative: %d", name, count );
+	}
+	if ( elementSize <= 0 || count > 0x7fffffff / elementSize ) {
+		common->Error( "%s allocation size overflow: %d elements", name, count );
+	}
+	if ( count == 0 ) {
+		return NULL;
+	}
+	return Mem_Alloc( count * elementSize );
+}
+
+static void ASE_CheckCurrentVertex( const aseMesh_t *mesh, int count, const char *listName )
+{
+	if ( mesh == NULL || ase.currentVertex < 0 || ase.currentVertex >= count ) {
+		common->Error( "%s vertex index out of range: %d of %d", listName, ase.currentVertex, count );
+	}
+}
+
+static void ASE_CheckCurrentFace( const aseMesh_t *mesh, const char *listName )
+{
+	if ( mesh == NULL || ase.currentFace < 0 || ase.currentFace >= mesh->numFaces ) {
+		common->Error( "%s face index out of range: %d of %d", listName, ase.currentFace, mesh ? mesh->numFaces : 0 );
+	}
+}
+
+static void ASE_CheckVertexIndex( int index, int count, const char *listName )
+{
+	if ( index < 0 || index >= count ) {
+		common->Error( "%s referenced vertex index out of range: %d of %d", listName, index, count );
+	}
+}
+
 static int ASE_GetToken( bool restOfLine )
 {
 	int i = 0;
@@ -96,6 +140,10 @@ static int ASE_GetToken( bool restOfLine )
 
 	while ( ( ase.curpos - ase.buffer ) < ase.len )
 	{
+		if ( i >= (int)sizeof( ase.token ) - 1 ) {
+			ase.token[sizeof( ase.token ) - 1] = 0;
+			common->Error( "ASE token exceeds %d characters", (int)sizeof( ase.token ) - 1 );
+		}
 		ase.token[i] = *ase.curpos;
 
 		ase.curpos++;
@@ -289,6 +337,8 @@ static void ASE_KeyMESH_VERTEX_LIST( const char *token )
 
 	if ( !strcmp( token, "*MESH_VERTEX" ) )
 	{
+		ASE_CheckCurrentVertex( pMesh, pMesh->numVertexes, "MESH_VERTEX_LIST" );
+
 		ASE_GetToken( false );		// skip number
 
 		ASE_GetToken( false );
@@ -301,11 +351,6 @@ static void ASE_KeyMESH_VERTEX_LIST( const char *token )
 		pMesh->vertexes[ase.currentVertex].z = atof( ase.token );
 
 		ase.currentVertex++;
-
-		if ( ase.currentVertex > pMesh->numVertexes )
-		{
-			common->Error( "ase.currentVertex >= pMesh->numVertexes" );
-		}
 	}
 	else
 	{
@@ -319,6 +364,8 @@ static void ASE_KeyMESH_FACE_LIST( const char *token )
 
 	if ( !strcmp( token, "*MESH_FACE" ) )
 	{
+		ASE_CheckCurrentFace( pMesh, "MESH_FACE_LIST" );
+
 		ASE_GetToken( false );	// skip face number
 
 		// we are flipping the order here to change the front/back facing
@@ -366,6 +413,8 @@ static void ASE_KeyTFACE_LIST( const char *token )
 	{
 		int a, b, c;
 
+		ASE_CheckCurrentFace( pMesh, "MESH_TFACE_LIST" );
+
 		ASE_GetToken( false );
 
 		ASE_GetToken( false );
@@ -374,6 +423,10 @@ static void ASE_KeyTFACE_LIST( const char *token )
 		c = atoi( ase.token );
 		ASE_GetToken( false );
 		b = atoi( ase.token );
+
+		ASE_CheckVertexIndex( a, pMesh->numTVertexes, "MESH_TFACE_LIST" );
+		ASE_CheckVertexIndex( b, pMesh->numTVertexes, "MESH_TFACE_LIST" );
+		ASE_CheckVertexIndex( c, pMesh->numTVertexes, "MESH_TFACE_LIST" );
 
 		pMesh->faces[ase.currentFace].tVertexNum[0] = a;
 		pMesh->faces[ase.currentFace].tVertexNum[1] = b;
@@ -393,11 +446,14 @@ static void ASE_KeyCFACE_LIST( const char *token )
 
 	if ( !strcmp( token, "*MESH_CFACE" ) )
 	{
+		ASE_CheckCurrentFace( pMesh, "MESH_CFACE_LIST" );
+
 		ASE_GetToken( false );
 
 		for ( int i = 0 ; i < 3 ; i++ ) {
 			ASE_GetToken( false );
 			int a = atoi( ase.token );
+			ASE_CheckVertexIndex( a, pMesh->numCVertexes, "MESH_CFACE_LIST" );
 
 			// we flip the vertex order to change the face direction to our style
 			static int remap[3] = { 0, 2, 1 };
@@ -420,29 +476,25 @@ static void ASE_KeyMESH_TVERTLIST( const char *token )
 
 	if ( !strcmp( token, "*MESH_TVERT" ) )
 	{
-		char u[80], v[80], w[80];
+		float u, v;
+
+		ASE_CheckCurrentVertex( pMesh, pMesh->numTVertexes, "MESH_TVERTLIST" );
 
 		ASE_GetToken( false );
 
 		ASE_GetToken( false );
-		strcpy( u, ase.token );
+		u = atof( ase.token );
 
 		ASE_GetToken( false );
-		strcpy( v, ase.token );
+		v = atof( ase.token );
 
 		ASE_GetToken( false );
-		strcpy( w, ase.token );
 
-		pMesh->tvertexes[ase.currentVertex].x = atof( u );
+		pMesh->tvertexes[ase.currentVertex].x = u;
 		// our OpenGL second texture axis is inverted from MAX's sense
-		pMesh->tvertexes[ase.currentVertex].y = 1.0f - atof( v );
+		pMesh->tvertexes[ase.currentVertex].y = 1.0f - v;
 
 		ase.currentVertex++;
-
-		if ( ase.currentVertex > pMesh->numTVertexes )
-		{
-			common->Error( "ase.currentVertex > pMesh->numTVertexes" );
-		}
 	}
 	else
 	{
@@ -458,23 +510,20 @@ static void ASE_KeyMESH_CVERTLIST( const char *token )
 
 	if ( !strcmp( token, "*MESH_VERTCOL" ) )
 	{
+		ASE_CheckCurrentVertex( pMesh, pMesh->numCVertexes, "MESH_CVERTLIST" );
+
 		ASE_GetToken( false );
 
 		ASE_GetToken( false );
-		pMesh->cvertexes[ase.currentVertex][0] = atof( token );
+		pMesh->cvertexes[ase.currentVertex][0] = atof( ase.token );
 
 		ASE_GetToken( false );
-		pMesh->cvertexes[ase.currentVertex][1] = atof( token );
+		pMesh->cvertexes[ase.currentVertex][1] = atof( ase.token );
 
 		ASE_GetToken( false );
-		pMesh->cvertexes[ase.currentVertex][2] = atof( token );
+		pMesh->cvertexes[ase.currentVertex][2] = atof( ase.token );
 
 		ase.currentVertex++;
-
-		if ( ase.currentVertex > pMesh->numCVertexes )
-		{
-			common->Error( "ase.currentVertex > pMesh->numCVertexes" );
-		}
 	}
 	else {
 		common->Error( "Unknown token '%s' while parsing MESH_CVERTLIST", token );
@@ -488,11 +537,14 @@ static void ASE_KeyMESH_NORMALS( const char *token )
 	idVec3		n;
 
 	pMesh->normalsParsed = true;
-	f = &pMesh->faces[ase.currentFace];
+	f = NULL;
 
 	if ( !strcmp( token, "*MESH_FACENORMAL" ) )
 	{
 		int	num;
+
+		ASE_CheckCurrentFace( pMesh, "MESH_NORMALS" );
+		f = &pMesh->faces[ase.currentFace];
 
 		ASE_GetToken( false );
 		num = atoi( ase.token );
@@ -530,6 +582,10 @@ static void ASE_KeyMESH_NORMALS( const char *token )
 
 		if ( num >= pMesh->numVertexes || num < 0 ) {
 			common->Error( "MESH_NORMALS vertex index out of range: %i", num );
+		}
+
+		if ( ase.currentFace <= 0 || ase.currentFace > pMesh->numFaces ) {
+			common->Error( "MESH_NORMALS vertex normal without a valid face normal" );
 		}
 
 		f = &pMesh->faces[ ase.currentFace - 1 ];
@@ -574,35 +630,35 @@ static void ASE_KeyMESH( const char *token )
 	{
 		ASE_GetToken( false );
 
-		pMesh->numVertexes = atoi( ase.token );
+		pMesh->numVertexes = ASE_ParseNonNegativeCount( "*MESH_NUMVERTEX" );
 		VERBOSE( ( ".....num vertexes: %d\n", pMesh->numVertexes ) );
 	}
 	else if ( !strcmp( token, "*MESH_NUMTVERTEX" ) )
 	{
 		ASE_GetToken( false );
 
-		pMesh->numTVertexes = atoi( ase.token );
+		pMesh->numTVertexes = ASE_ParseNonNegativeCount( "*MESH_NUMTVERTEX" );
 		VERBOSE( ( ".....num tvertexes: %d\n", pMesh->numTVertexes ) );
 	}
 	else if ( !strcmp( token, "*MESH_NUMCVERTEX" ) )
 	{
 		ASE_GetToken( false );
 
-		pMesh->numCVertexes = atoi( ase.token );
+		pMesh->numCVertexes = ASE_ParseNonNegativeCount( "*MESH_NUMCVERTEX" );
 		VERBOSE( ( ".....num cvertexes: %d\n", pMesh->numCVertexes ) );
 	}
 	else if ( !strcmp( token, "*MESH_NUMFACES" ) )
 	{
 		ASE_GetToken( false );
 
-		pMesh->numFaces = atoi( ase.token );
+		pMesh->numFaces = ASE_ParseNonNegativeCount( "*MESH_NUMFACES" );
 		VERBOSE( ( ".....num faces: %d\n", pMesh->numFaces ) );
 	}
 	else if ( !strcmp( token, "*MESH_NUMTVFACES" ) )
 	{
 		ASE_GetToken( false );
 
-		pMesh->numTVFaces = atoi( ase.token );
+		pMesh->numTVFaces = ASE_ParseNonNegativeCount( "*MESH_NUMTVFACES" );
 		VERBOSE( ( ".....num tvfaces: %d\n", pMesh->numTVFaces ) );
 
 		if ( pMesh->numTVFaces != pMesh->numFaces )
@@ -614,17 +670,17 @@ static void ASE_KeyMESH( const char *token )
 	{
 		ASE_GetToken( false );
 
-		pMesh->numCVFaces = atoi( ase.token );
+		pMesh->numCVFaces = ASE_ParseNonNegativeCount( "*MESH_NUMCVFACES" );
 		VERBOSE( ( ".....num cvfaces: %d\n", pMesh->numCVFaces ) );
 
-		if ( pMesh->numTVFaces != pMesh->numFaces )
+		if ( pMesh->numCVFaces != pMesh->numFaces )
 		{
 			common->Error( "MESH_NUMCVFACES != MESH_NUMFACES" );
 		}
 	}
 	else if ( !strcmp( token, "*MESH_VERTEX_LIST" ) )
 	{
-		pMesh->vertexes = (idVec3 *)Mem_Alloc( sizeof( idVec3 ) * pMesh->numVertexes );
+		pMesh->vertexes = (idVec3 *)ASE_AllocArray( pMesh->numVertexes, sizeof( idVec3 ), "*MESH_VERTEX_LIST" );
 		ase.currentVertex = 0;
 		VERBOSE( ( ".....parsing MESH_VERTEX_LIST\n" ) );
 		ASE_ParseBracedBlock( ASE_KeyMESH_VERTEX_LIST );
@@ -632,20 +688,20 @@ static void ASE_KeyMESH( const char *token )
 	else if ( !strcmp( token, "*MESH_TVERTLIST" ) )
 	{
 		ase.currentVertex = 0;
-		pMesh->tvertexes = (idVec2 *)Mem_Alloc( sizeof( idVec2 ) * pMesh->numTVertexes );
+		pMesh->tvertexes = (idVec2 *)ASE_AllocArray( pMesh->numTVertexes, sizeof( idVec2 ), "*MESH_TVERTLIST" );
 		VERBOSE( ( ".....parsing MESH_TVERTLIST\n" ) );
 		ASE_ParseBracedBlock( ASE_KeyMESH_TVERTLIST );
 	}
 	else if ( !strcmp( token, "*MESH_CVERTLIST" ) )
 	{
 		ase.currentVertex = 0;
-		pMesh->cvertexes = (idVec3 *)Mem_Alloc( sizeof( idVec3 ) * pMesh->numCVertexes );
+		pMesh->cvertexes = (idVec3 *)ASE_AllocArray( pMesh->numCVertexes, sizeof( idVec3 ), "*MESH_CVERTLIST" );
 		VERBOSE( ( ".....parsing MESH_CVERTLIST\n" ) );
 		ASE_ParseBracedBlock( ASE_KeyMESH_CVERTLIST );
 	}
 	else if ( !strcmp( token, "*MESH_FACE_LIST" ) )
 	{
-		pMesh->faces = (aseFace_t *)Mem_Alloc( sizeof( aseFace_t ) * pMesh->numFaces );
+		pMesh->faces = (aseFace_t *)ASE_AllocArray( pMesh->numFaces, sizeof( aseFace_t ), "*MESH_FACE_LIST" );
 		ase.currentFace = 0;
 		VERBOSE( ( ".....parsing MESH_FACE_LIST\n" ) );
 		ASE_ParseBracedBlock( ASE_KeyMESH_FACE_LIST );

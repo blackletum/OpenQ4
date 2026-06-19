@@ -68,8 +68,12 @@ ID_INLINE void idBase64::Release( void ) {
 }
 
 ID_INLINE void idBase64::EnsureAlloced( int size ) {
-	if ( size > alloced ) {
-		Release();
+	if ( size <= alloced ) {
+		return;
+	}
+	Release();
+	if ( size <= 0 ) {
+		return;
 	}
 	data = new byte[size];
 	alloced = size;
@@ -77,8 +81,10 @@ ID_INLINE void idBase64::EnsureAlloced( int size ) {
 
 ID_INLINE void idBase64::operator=( const idStr &s ) {
 	EnsureAlloced( s.Length()+1 ); // trailing \0 - beware, this does a Release
-	strcpy( (char *)data, s.c_str() );
 	len = s.Length();
+	if ( data != NULL ) {
+		memcpy( data, s.c_str(), len + 1 );
+	}
 }
 
 #endif /* !__BASE64_H__ */

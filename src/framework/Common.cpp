@@ -680,7 +680,7 @@ idCommonLocal::idCommonLocal( void ) {
 
 	logFile = NULL;
 
-	strcpy( errorMessage, "" );
+	errorMessage[0] = '\0';
 
 	rd_buffer = NULL;
 	rd_buffersize = 0;
@@ -814,11 +814,31 @@ void idCommonLocal::VPrintf( const char *fmt, va_list args ) {
 	}
 
 	if ( rd_buffer ) {
-		if ( (int)( strlen( msg ) + strlen( rd_buffer ) ) > ( rd_buffersize - 1 ) ) {
-			rd_flush( rd_buffer );
-			*rd_buffer = 0;
+		const char *text = msg;
+		while ( *text ) {
+			int used = strlen( rd_buffer );
+			int available = rd_buffersize - used - 1;
+			if ( available <= 0 ) {
+				rd_flush( rd_buffer );
+				*rd_buffer = 0;
+				used = 0;
+				available = rd_buffersize - 1;
+			}
+			if ( available <= 0 ) {
+				break;
+			}
+
+			const int remaining = strlen( text );
+			const int copyLength = Min( available, remaining );
+			memcpy( rd_buffer + used, text, copyLength );
+			rd_buffer[used + copyLength] = '\0';
+			text += copyLength;
+
+			if ( *text ) {
+				rd_flush( rd_buffer );
+				*rd_buffer = 0;
+			}
 		}
-		strcat( rd_buffer, msg );
 		return;
 	}
 
@@ -1769,7 +1789,9 @@ void idCommonLocal::WriteConfigToFile( const char *filename ) {
 	assert( config_compressor );
 	t = time( NULL );
 	curtime = ctime( &t );
-	sprintf( runtag, "%s - %s", cvarSystem->GetCVarString( "si_version" ), curtime );
+	runtag = cvarSystem->GetCVarString( "si_version" );
+	runtag += " - ";
+	runtag += curtime;
 	config_compressor->Init( &compressed, true, 8 );
 	config_compressor->Write( runtag.c_str(), runtag.Length() );
 	config_compressor->FinishCompress( );
@@ -3773,16 +3795,9 @@ void idCommonLocal::LoadGameDLL( void ) {
 	fileSystem->FindDLL( selectedModuleBinary, dllPath, true );
 
 	if ( !dllPath[ 0 ] ) {
-		// Legacy fallback for existing installs that still ship game_sp/game_mp.
-		selectedModuleBinary = gameModuleBaseName;
-		fileSystem->FindDLL( selectedModuleBinary, dllPath, true );
-	}
-
-	if ( !dllPath[ 0 ] ) {
 		common->FatalError(
-			"couldn't find game dynamic library '%s' (or legacy '%s')",
-			preferredGameModuleBinary,
-			gameModuleBaseName
+			"couldn't find game dynamic library '%s'",
+			preferredGameModuleBinary
 		);
 		return;
 	}

@@ -241,15 +241,14 @@ void Sys_DoPreferences( void ) {
 
 int main( int argc, char **argv ) {
 	// combine the args into a windows-style command line
-	char	cmdline[4096];
-	cmdline[0] = 0;
+	idStr cmdline;
 	for ( int i = 1 ; i < argc ; i++ ) {
-		strcat( cmdline, argv[i] );
-		if ( i < argc - 1 ) {
-			strcat( cmdline, " " );
+		if ( i > 1 ) {
+			cmdline += " ";
 		}
+		cmdline += argv[i];
 	}
-	common->Init( cmdline );
+	common->Init( cmdline.c_str() );
 
 	while( 1 ) {
 		common->Async();

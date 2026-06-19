@@ -102,10 +102,24 @@ def validate_release_note() -> None:
     require(source, "instead of assuming lowercase paths", "release completion notes")
 
 
+def validate_validation_coverage() -> None:
+    validator = read("tools/validation/openq4_validate.py")
+    push = read(".github/workflows/push-verification.yml")
+    commit = read(".github/workflows/commit-validation.yml")
+
+    for haystack, context in (
+        (validator, "validation runner"),
+        (push, "push verification workflow"),
+        (commit, "commit validation workflow"),
+    ):
+        require(haystack, "filesystem_case_segments.py", context)
+
+
 def main() -> None:
     validate_filesystem_case_resolution()
     validate_posix_directory_diagnostics()
     validate_release_note()
+    validate_validation_coverage()
     print("filesystem_case_segments: ok")
 
 
