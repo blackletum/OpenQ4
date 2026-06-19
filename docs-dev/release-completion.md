@@ -11,6 +11,7 @@ Process:
 ## Ready For Changelog
 
 - [x] The multiplayer settings menu shows the selected player model preview again when the menu opens or the model choice changes.
+- [x] Cinematic letterboxing now updates when the window or display size changes, and ultrawide/tall layouts add the needed pillarbox or letterbox bars so the visible cinematic area remains 16:9.
 - [x] Single-player now offers a harsher Warlord difficulty above General, with beefier enemies and wider-range AI pressure, plus a Turbo Mode toggle that raises player run speed to a Quake 2-like pace, doubles vehicle top speed, doubles doors, lifts, conveyors, and other mover speeds, and removes weapon clip reload interruptions without changing weapon damage.
 - [x] Starting a new single-player game from the menu now routes through a deferred session map-start command instead of executing a raw map load inside the GUI click handler, preventing the menu-window access violation seen after pressing Start Game while still entering gameplay directly.
 - [x] The System settings page now has a Performance Preset dropdown and Auto-Detect button above the display controls, giving low-power systems such as Raspberry Pi a one-click profile that lowers resolution scale, AA, post effects, texture pressure, and surround/EAX audio cost without using debug visual skips.

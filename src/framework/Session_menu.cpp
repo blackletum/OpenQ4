@@ -1928,6 +1928,42 @@ void idSessionLocal::UpdateMPLevelShot( void ) {
 	declManager->FindMaterial( screenshot )->SetSort( SS_GUI );
 }
 
+static int MainMenuGetNewGameOption( idUserInterface *gui, const char *desktopStateName, const char *stateName, int defaultValue ) {
+	if ( gui == NULL ) {
+		return defaultValue;
+	}
+
+	idWindow *desktop = gui->GetDesktop();
+	if ( desktop != NULL ) {
+		idWinVar *winVar = desktopStateName != NULL ? desktop->GetWinVarByName( desktopStateName, true ) : NULL;
+		if ( winVar == NULL && stateName != NULL ) {
+			winVar = desktop->GetWinVarByName( stateName, false );
+		}
+		if ( winVar != NULL ) {
+			return atoi( winVar->c_str() );
+		}
+	}
+
+	int value = defaultValue;
+	if ( desktopStateName != NULL && gui->State().GetInt( desktopStateName, va( "%d", defaultValue ), value ) ) {
+		return value;
+	}
+	if ( stateName != NULL && gui->State().GetInt( stateName, va( "%d", defaultValue ), value ) ) {
+		return value;
+	}
+
+	return defaultValue;
+}
+
+static void MainMenuApplyNewGameOptions( idUserInterface *gui ) {
+	const int skill = idMath::ClampInt( 0, 4, MainMenuGetNewGameOption( gui, "desktop::skill", "skill", cvarSystem->GetCVarInteger( "g_skill" ) ) );
+	const int turboMode = MainMenuGetNewGameOption( gui, "desktop::turboMode", "turboMode", cvarSystem->GetCVarInteger( "g_turboMode" ) ) != 0 ? 1 : 0;
+
+	cvarSystem->SetCVarInteger( "g_skill", skill );
+	cvarSystem->SetCVarInteger( "g_turboMode", turboMode );
+	common->DPrintf( "Main menu new game options: g_skill=%d g_turboMode=%d\n", skill, turboMode );
+}
+
 /*
 ==============
 idSessionLocal::HandleMainMenuCommands
@@ -1992,8 +2028,7 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 		}
 
 		if ( !idStr::Icmp( cmd, "startMap" ) ) {
-			cvarSystem->SetCVarInteger( "g_skill", guiMainMenu->State().GetInt( "skill" ) );
-			cvarSystem->SetCVarInteger( "g_turboMode", guiMainMenu->State().GetInt( "turboMode" ) );
+			MainMenuApplyNewGameOptions( guiMainMenu );
 			if ( icmd < args.Argc() ) {
 				StartNewGame( args.Argv( icmd++ ) );
 			} else {
@@ -2010,8 +2045,7 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 		}
 		
 		if ( !idStr::Icmp( cmd, "startGame" ) ) {
-			cvarSystem->SetCVarInteger( "g_skill", guiMainMenu->State().GetInt( "skill" ) );
-			cvarSystem->SetCVarInteger( "g_turboMode", guiMainMenu->State().GetInt( "turboMode" ) );
+			MainMenuApplyNewGameOptions( guiMainMenu );
 			if ( icmd < args.Argc() ) {
 				StartNewGame( args.Argv( icmd++ ) );
 			} else {

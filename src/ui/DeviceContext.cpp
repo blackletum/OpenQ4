@@ -372,6 +372,63 @@ static void openQ4_CalcVirtualScreenExpansion( float width, float height, float 
 	}
 }
 
+static void openQ4_CalcCinematic16x9Bars( float width, float height, float windowWidth, float windowHeight, bool aspectCorrect, idRectangle &topBar, idRectangle &bottomBar, idRectangle &leftBar, idRectangle &rightBar, idRectangle &visibleArea ) {
+	topBar.Empty();
+	bottomBar.Empty();
+	leftBar.Empty();
+	rightBar.Empty();
+	visibleArea.Empty();
+
+	q4VirtualScreenTransform_t transform;
+	openQ4_CalcVirtualScreenTransform( width, height, windowWidth, windowHeight, aspectCorrect, transform );
+
+	if ( transform.xScale <= 0.0f || transform.yScale <= 0.0f || windowWidth <= 0.0f || windowHeight <= 0.0f ) {
+		return;
+	}
+
+	const idRectangle fullArea(
+		-transform.xOffset / transform.xScale,
+		-transform.yOffset / transform.yScale,
+		static_cast<float>( VIRTUAL_WIDTH ) / transform.xScale,
+		static_cast<float>( VIRTUAL_HEIGHT ) / transform.yScale );
+
+	if ( fullArea.w <= 0.0f || fullArea.h <= 0.0f ) {
+		return;
+	}
+
+	const float physicalScaleX = transform.xScale * ( windowWidth / static_cast<float>( VIRTUAL_WIDTH ) );
+	const float physicalScaleY = transform.yScale * ( windowHeight / static_cast<float>( VIRTUAL_HEIGHT ) );
+	if ( physicalScaleX <= 0.0f || physicalScaleY <= 0.0f ) {
+		return;
+	}
+
+	const float targetPhysicalAspect = 16.0f / 9.0f;
+	const float targetLogicalAspect = targetPhysicalAspect * ( physicalScaleY / physicalScaleX );
+	const float fullLogicalAspect = fullArea.w / fullArea.h;
+	const float aspectEpsilon = 0.0001f;
+
+	visibleArea = fullArea;
+	if ( fullLogicalAspect > targetLogicalAspect + aspectEpsilon ) {
+		visibleArea.w = fullArea.h * targetLogicalAspect;
+		visibleArea.x = fullArea.x + ( fullArea.w - visibleArea.w ) * 0.5f;
+	} else if ( fullLogicalAspect + aspectEpsilon < targetLogicalAspect ) {
+		visibleArea.h = fullArea.w / targetLogicalAspect;
+		visibleArea.y = fullArea.y + ( fullArea.h - visibleArea.h ) * 0.5f;
+	}
+
+	const float topHeight = Max( 0.0f, visibleArea.y - fullArea.y );
+	const float bottomY = visibleArea.y + visibleArea.h;
+	const float bottomHeight = Max( 0.0f, fullArea.Bottom() - bottomY );
+	const float leftWidth = Max( 0.0f, visibleArea.x - fullArea.x );
+	const float rightX = visibleArea.x + visibleArea.w;
+	const float rightWidth = Max( 0.0f, fullArea.Right() - rightX );
+
+	topBar = idRectangle( fullArea.x, fullArea.y, fullArea.w, topHeight );
+	bottomBar = idRectangle( fullArea.x, bottomY, fullArea.w, bottomHeight );
+	leftBar = idRectangle( fullArea.x, fullArea.y, leftWidth, fullArea.h );
+	rightBar = idRectangle( rightX, fullArea.y, rightWidth, fullArea.h );
+}
+
 static float openQ4_ApplyVirtualX( const q4VirtualScreenTransform_t &transform, float x ) {
 	return x * transform.xScale + transform.xOffset;
 }
@@ -1302,6 +1359,13 @@ void idDeviceContext::GetVirtualScreenExpansion( float width, float height, floa
 	openQ4_CalcVirtualScreenExpansion( width, height, windowWidth, windowHeight, aspectCorrect, xExpand, yExpand );
 }
 
+void idDeviceContext::GetCinematic16x9Bars( float width, float height, idRectangle &topBar, idRectangle &bottomBar, idRectangle &leftBar, idRectangle &rightBar, idRectangle &visibleArea ) const {
+	float windowWidth = 0.0f;
+	float windowHeight = 0.0f;
+	openQ4_GetCurrentViewportSize( windowWidth, windowHeight );
+	openQ4_CalcCinematic16x9Bars( width, height, windowWidth, windowHeight, aspectCorrect, topBar, bottomBar, leftBar, rightBar, visibleArea );
+}
+
 float idDeviceContext::GetCanvasAspect() const {
 	float windowWidth = static_cast<float>( glConfig.uiViewportWidth );
 	float windowHeight = static_cast<float>( glConfig.uiViewportHeight );
@@ -1966,11 +2030,41 @@ bool UI_FontParity_RunSelfTest( void ) {
 	ok &= openQ4_CheckNear( "tall expanded top edge", openQ4_ApplyVirtualY( transform, -yExpand ), 0.0f );
 	ok &= openQ4_CheckNear( "tall expanded bottom edge", openQ4_ApplyVirtualY( transform, 480.0f + yExpand ), 480.0f );
 
+	idRectangle cinematicTop;
+	idRectangle cinematicBottom;
+	idRectangle cinematicLeft;
+	idRectangle cinematicRight;
+	idRectangle cinematicVisible;
+	openQ4_CalcCinematic16x9Bars( 640.0f, 480.0f, 640.0f, 480.0f, true, cinematicTop, cinematicBottom, cinematicLeft, cinematicRight, cinematicVisible );
+	ok &= openQ4_CheckNear( "4:3 cinematic top bar height", cinematicTop.h, 60.0f );
+	ok &= openQ4_CheckNear( "4:3 cinematic bottom bar y", cinematicBottom.y, 420.0f );
+	ok &= openQ4_CheckNear( "4:3 cinematic visible height", cinematicVisible.h, 360.0f );
+	ok &= openQ4_CheckNear( "4:3 cinematic left pillar width", cinematicLeft.w, 0.0f );
+
+	openQ4_CalcCinematic16x9Bars( 640.0f, 480.0f, 1920.0f, 1080.0f, true, cinematicTop, cinematicBottom, cinematicLeft, cinematicRight, cinematicVisible );
+	ok &= openQ4_CheckNear( "16:9 cinematic top bar height", cinematicTop.h, 0.0f );
+	ok &= openQ4_CheckNear( "16:9 cinematic left pillar width", cinematicLeft.w, 0.0f );
+	ok &= openQ4_CheckNear( "16:9 cinematic visible width", cinematicVisible.w, 853.333313f );
+
+	openQ4_CalcCinematic16x9Bars( 640.0f, 480.0f, 2560.0f, 1080.0f, true, cinematicTop, cinematicBottom, cinematicLeft, cinematicRight, cinematicVisible );
+	ok &= openQ4_CheckNear( "ultrawide cinematic top bar height", cinematicTop.h, 0.0f );
+	ok &= openQ4_CheckNear( "ultrawide cinematic left pillar width", cinematicLeft.w, 142.222229f );
+	ok &= openQ4_CheckNear( "ultrawide cinematic right pillar width", cinematicRight.w, 142.222229f );
+	ok &= openQ4_CheckNear( "ultrawide cinematic visible width", cinematicVisible.w, 853.333313f );
+
 	openQ4_CalcVirtualScreenTransform( 320.0f, 240.0f, 1920.0f, 1080.0f, false, transform );
 	ok &= openQ4_CheckNear( "retail x scale without aspect correction", transform.xScale, 2.0f );
 	ok &= openQ4_CheckNear( "retail y scale without aspect correction", transform.yScale, 2.0f );
 	ok &= openQ4_CheckNear( "retail x offset without aspect correction", transform.xOffset, 0.0f );
 	ok &= openQ4_CheckNear( "retail y offset without aspect correction", transform.yOffset, 0.0f );
+
+	openQ4_CalcCinematic16x9Bars( 640.0f, 480.0f, 1920.0f, 1080.0f, false, cinematicTop, cinematicBottom, cinematicLeft, cinematicRight, cinematicVisible );
+	ok &= openQ4_CheckNear( "stretched 16:9 cinematic top bar height", cinematicTop.h, 0.0f );
+	ok &= openQ4_CheckNear( "stretched 16:9 cinematic left pillar width", cinematicLeft.w, 0.0f );
+
+	openQ4_CalcCinematic16x9Bars( 640.0f, 480.0f, 2560.0f, 1080.0f, false, cinematicTop, cinematicBottom, cinematicLeft, cinematicRight, cinematicVisible );
+	ok &= openQ4_CheckNear( "stretched ultrawide cinematic left pillar width", cinematicLeft.w, 80.0f );
+	ok &= openQ4_CheckNear( "stretched ultrawide cinematic visible width", cinematicVisible.w, 480.0f );
 
 	idDeviceContext baseClipDc;
 	baseClipDc.EnableClipping( true );

@@ -665,9 +665,16 @@ def validate_macos_staged_payload_validator_runtime() -> None:
     install_root = work / ".install"
     game_dir = install_root / "baseoq4"
     arch = "arm64"
+    expected_lipo_arch = validator.macos_expected_lipo_arch(arch)
+    real_macos_lipo_arches = validator.macos_lipo_arches
+    fake_lipo_arches: dict[Path, set[str]] = {}
+
+    def fake_macos_lipo_arches(binary_path: Path) -> set[str]:
+        return fake_lipo_arches.get(binary_path, {expected_lipo_arch})
 
     shutil.rmtree(work, ignore_errors=True)
     try:
+        validator.macos_lipo_arches = fake_macos_lipo_arches
         client = install_root / f"openQ4-client_{arch}"
         dedicated = install_root / f"openQ4-ded_{arch}"
         write_test_file(install_root / "openQ4.icns", b"icns\n")
@@ -686,6 +693,21 @@ def validate_macos_staged_payload_validator_runtime() -> None:
             [client],
             [dedicated],
         )
+
+        if validator.host_is_macos():
+            fake_lipo_arches[client] = {"x86_64"}
+            expect_runtime_error(
+                "architecture mismatch",
+                lambda: validator.validate_macos_staged_metadata(
+                    ROOT,
+                    install_root,
+                    game_dir,
+                    [client],
+                    [dedicated],
+                ),
+                "macOS staged payload with mismatched client architecture",
+            )
+            fake_lipo_arches[client] = {expected_lipo_arch}
 
         bad_module = game_dir / f"game-sp_{arch}.so"
         write_test_file(bad_module, b"wrong\n")
@@ -745,6 +767,7 @@ def validate_macos_staged_payload_validator_runtime() -> None:
             "macOS staged payload missing matched MP module",
         )
     finally:
+        validator.macos_lipo_arches = real_macos_lipo_arches
         shutil.rmtree(work, ignore_errors=True)
 
 

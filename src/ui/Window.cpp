@@ -182,9 +182,9 @@ static rvNamedEvent *openQ4_CreateLegacyCinematicNamedEvent( idWindow *window, c
 		"{ "
 		"set \"blackbar_top::visible\" \"1\"; "
 		"set \"blackbar_bottom::visible\" \"1\"; "
+		"set \"blackbar_left::visible\" \"1\"; "
+		"set \"blackbar_right::visible\" \"1\"; "
 		"set \"anim_bars::visible\" \"1\"; "
-		"set \"blackbar_top::rect\" \"0,0,640,60\"; "
-		"set \"blackbar_bottom::rect\" \"0,420,640,60\"; "
 		"}";
 
 	idParser src( legacyShowLetterboxScript, sizeof( legacyShowLetterboxScript ) - 1,

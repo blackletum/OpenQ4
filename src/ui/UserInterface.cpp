@@ -42,6 +42,21 @@ idCVar ui_aspectCorrection( "ui_aspectCorrection", "1", CVAR_GUI | CVAR_ARCHIVE 
 idUserInterfaceManagerLocal	uiManagerLocal;
 idUserInterfaceManager *	uiManager = &uiManagerLocal;
 
+namespace {
+
+static void SetStateRectangleComponents( idUserInterfaceLocal *gui, const char *prefix, const idRectangle &rect ) {
+	if ( gui == NULL || prefix == NULL ) {
+		return;
+	}
+
+	gui->SetStateFloat( va( "%s_x", prefix ), rect.x );
+	gui->SetStateFloat( va( "%s_y", prefix ), rect.y );
+	gui->SetStateFloat( va( "%s_w", prefix ), rect.w );
+	gui->SetStateFloat( va( "%s_h", prefix ), rect.h );
+}
+
+}
+
 /*
 ===============================================================================
 
@@ -465,6 +480,18 @@ void idUserInterfaceLocal::Redraw( int _time, bool useAspectCorrection ) {
 		uiManagerLocal.dc.GetVirtualScreenExpansion( desktop->forceAspectWidth, desktop->forceAspectHeight, xExpand, yExpand );
 		SetStateFloat( "virtual_screen_x_expand", xExpand );
 		SetStateFloat( "virtual_screen_y_expand", yExpand );
+
+		idRectangle cinematicTopBar;
+		idRectangle cinematicBottomBar;
+		idRectangle cinematicLeftBar;
+		idRectangle cinematicRightBar;
+		idRectangle cinematicVisibleArea;
+		uiManagerLocal.dc.GetCinematic16x9Bars( desktop->forceAspectWidth, desktop->forceAspectHeight, cinematicTopBar, cinematicBottomBar, cinematicLeftBar, cinematicRightBar, cinematicVisibleArea );
+		SetStateRectangleComponents( this, "cinematic_bar_top", cinematicTopBar );
+		SetStateRectangleComponents( this, "cinematic_bar_bottom", cinematicBottomBar );
+		SetStateRectangleComponents( this, "cinematic_bar_left", cinematicLeftBar );
+		SetStateRectangleComponents( this, "cinematic_bar_right", cinematicRightBar );
+		SetStateRectangleComponents( this, "cinematic_visible_area", cinematicVisibleArea );
 
 		if ( gui_debugScript.GetInteger() > 4 ) {
 			static int lastDebugRedrawTime = -10000;
