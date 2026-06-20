@@ -45,3 +45,36 @@ gfx/guis/hud/reticles/railgun_scope_glow_bottom
 		clamp
 	}
 }
+
+gfx/guis/hud/reticles/nailgun_scope_oq4
+{
+	noShadows
+	translucent
+	{
+		blend blend
+		Map gfx/guis/hud/reticles/nailgun_scope_oq4.tga
+		clamp
+	}
+}
+
+gfx/guis/hud/reticles/nailgun_scope_oq4_top
+{
+	noShadows
+	translucent
+	{
+		blend blend
+		Map gfx/guis/hud/reticles/nailgun_scope_oq4_top.tga
+		clamp
+	}
+}
+
+gfx/guis/hud/reticles/nailgun_scope_oq4_left
+{
+	noShadows
+	translucent
+	{
+		blend blend
+		Map gfx/guis/hud/reticles/nailgun_scope_oq4_left.tga
+		clamp
+	}
+}
