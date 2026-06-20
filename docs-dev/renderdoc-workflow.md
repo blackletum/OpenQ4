@@ -7,7 +7,7 @@ This document covers the openQ4 RenderDoc status and the March 2026 black-viewpo
 - The black viewport reports were not caused by missing SMAA assets in the release package.
 - The older two-pass SMAA placeholder path had an undefined OpenGL feedback loop in the neighborhood-blend pass:
   - `openQ4-game/src/game/Game_render.cpp` already copied the resolved scene into `_currentRender` before the SMAA passes.
-  - [`content/baseoq4/materials/postprocess_openq4.mtr`](../content/baseoq4/materials/postprocess_openq4.mtr) previously drew `postprocess/smaa_blend` into `_postProcessAlbedo0` while also sampling `_postProcessAlbedo0`.
+  - [`content/baseoq4/pak0/materials/postprocess_openq4.mtr`](../content/baseoq4/pak0/materials/postprocess_openq4.mtr) previously drew `postprocess/smaa_blend` into `_postProcessAlbedo0` while also sampling `_postProcessAlbedo0`.
 - Some drivers preserved the previous texture contents and appeared to work. Others returned black or undefined data. That is why the issue only reproduced for some users and clustered around `r_postAA 1`.
 - Current builds no longer use that path. `r_postAA 1` now stages the resolved scene in `_postProcessAlbedo2`, runs a three-pass GLSL SMAA 1x implementation from that stable source, then blits the result back to `_postProcessAlbedo0` for the remaining post stack.
 
@@ -79,7 +79,7 @@ If the blend pass ever samples the same texture it is rendering to, the build st
 
 ## Release Package Audit
 
-`tools/build/package_release.py` now fails packaging if `pak0.pk4` is missing any of these required runtime files:
+`tools/build/package_release.py` now fails packaging if the generated openQ4 PK4s are missing pack-specific required runtime files. `pak0.pk4` must include:
 
 - `materials/postprocess_openq4.mtr`
 - `glprogs/smaa_edge.vs`
@@ -88,6 +88,13 @@ If the blend pass ever samples the same texture it is rendering to, the build st
 - `glprogs/smaa_weights.fs`
 - `glprogs/smaa_blend.vs`
 - `glprogs/smaa_blend.fs`
+
+`pak1.pk4` must include representative level assets such as:
+
+- `gfx/guis/loadscreens/generic.dds`
+- `gfx/guis/loadscreens/generic.tga`
+- `maps/game/airdefense1.lightgrid`
+- `maps/game/airdefense1.lightgridpack`
 
 This check is meant to catch packaging regressions in the postprocess stack before release artifacts ship.
 

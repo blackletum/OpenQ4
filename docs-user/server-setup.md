@@ -33,7 +33,7 @@ openQ4-ded_x64 +set si_name "My openQ4 Server" +set si_map mp/q4dm1 +set si_game
 | `si_warmup` | Whether warmup is used |
 | `g_mapCycle` | Map cycle script |
 
-Default multiplayer values are seeded from `content/baseoq4/default.cfg`.
+Default multiplayer values are seeded from `content/baseoq4/pak0/default.cfg`.
 
 ## Useful Console Commands
 

@@ -97,6 +97,7 @@ def validate_package_dir(package_dir: Path, arch: str) -> None:
         package_dir / "docs" / "index.html",
         package_dir / "baseoq4" / "mod.json",
         package_dir / "baseoq4" / "pak0.pk4",
+        package_dir / "baseoq4" / "pak1.pk4",
         package_dir / "baseoq4" / f"game-sp_{arch}.pdb",
         package_dir / "baseoq4" / f"game-mp_{arch}.pdb",
     ]

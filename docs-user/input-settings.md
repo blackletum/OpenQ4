@@ -37,7 +37,7 @@ At startup, openQ4 loads input-related config in this order:
 
 What this means in practice:
 
-- Stock defaults come from `content/baseoq4/default.cfg`.
+- Stock defaults come from `content/baseoq4/pak0/default.cfg`.
 - openQ4-specific overrides can be layered on top through `openq4_defaults.cfg`.
 - Platform-specific overrides can be applied through `com_platformProfile`.
 - Your saved personal changes live in `openQ4Config.cfg`.
@@ -151,7 +151,7 @@ The menu also exposes `in_joystickLowBatteryRumbleThreshold` and `in_joystickLow
 
 ## Stock Keyboard and Mouse Binds
 
-The shipped defaults are defined in `content/baseoq4/default.cfg`.
+The shipped defaults are defined in `content/baseoq4/pak0/default.cfg`.
 
 ### Core Movement and Combat
 

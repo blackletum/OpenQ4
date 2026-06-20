@@ -143,6 +143,7 @@ def make_macos_archive_entries(
         f"{prefix}{package.GAME_DIR_NAME}/game-mp_{arch}.dylib": (b"mp-module\n", 0o755),
         f"{prefix}{package.GAME_DIR_NAME}/mod.json": (b'{"version":"0.2.000"}\n', 0o644),
         f"{prefix}{package.GAME_DIR_NAME}/pak0.pk4": (b"pk4\n", 0o644),
+        f"{prefix}{package.GAME_DIR_NAME}/pak1.pk4": (b"pk4\n", 0o644),
         f"{prefix}openQ4.app/Contents/Info.plist": (plist_bytes, 0o644),
         f"{prefix}openQ4.app/Contents/PkgInfo": (package.MACOS_PKGINFO_BYTES, 0o644),
         f"{prefix}openQ4.app/Contents/MacOS/openQ4": (client_bytes, app_exec_mode),
@@ -1046,6 +1047,7 @@ def validate_packaging_and_release_contract() -> None:
     require(package, "code signature verification", "macOS code-sign validation")
     require(package, "game-sp_{arch}.dylib", "macOS archive game module validation")
     require(package, "game-mp_{arch}.dylib", "macOS archive game module validation")
+    require(package, "pak1.pk4", "macOS archive level pack validation")
     require(package, "macOS archive contains non-runtime metadata/debug entries", "macOS archive metadata validation")
     require(package, "MACOS_EXPECTED_PLIST_VALUES", "macOS package Info.plist validation")
     require(package, "validate_macos_plist_values", "macOS package Info.plist validation")

@@ -34,8 +34,8 @@ from linux_metadata import (
 from generate_release_docs import GeneratedDocSite, generate_release_docs_site
 from openq4_pak import (
     OPENQ4_PK4_FORBIDDEN_FILES,
+    OPENQ4_PACK_NAMES,
     OPENQ4_REQUIRED_LOOSE_GAME_FILES,
-    OPENQ4_REQUIRED_PK4_FILES,
     PAK0_NAME,
     copy_game_pk4,
     create_game_pk4 as create_openq4_game_pk4,
@@ -1066,9 +1066,9 @@ def copy_required_loose_game_files(
 
 
 def create_game_pk4(
-    install_game_dir: Path, destination_pk4: Path
+    install_game_dir: Path, destination_pk4: Path, pak_name: str = PAK0_NAME
 ) -> tuple[int, list[str], list[str]]:
-    result = create_openq4_game_pk4(install_game_dir, destination_pk4)
+    result = create_openq4_game_pk4(install_game_dir, destination_pk4, pak_name=pak_name)
     return result.added_files, result.skipped_samples, result.missing_required
 
 
@@ -1226,6 +1226,7 @@ def validate_macos_archive_contents(
         f"{package_prefix}{GAME_DIR_NAME}/game-mp_{arch}.dylib",
         f"{package_prefix}{GAME_DIR_NAME}/mod.json",
         f"{package_prefix}{GAME_DIR_NAME}/pak0.pk4",
+        f"{package_prefix}{GAME_DIR_NAME}/pak1.pk4",
         f"{package_prefix}VERSION.txt",
         f"{package_prefix}openQ4.app/Contents/Info.plist",
         f"{package_prefix}openQ4.app/Contents/PkgInfo",
@@ -1854,31 +1855,40 @@ def main(argv: list[str]) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    game_pk4_path = package_game_dir / PAK0_NAME
-    staged_game_pk4_path = install_game_dir / PAK0_NAME
+    source_content_dir = source_root / "content" / GAME_DIR_NAME
+    pk4_results = []
+    for pak_name in OPENQ4_PACK_NAMES:
+        game_pk4_path = package_game_dir / pak_name
+        staged_game_pk4_path = install_game_dir / pak_name
+        source_pack_dir = source_content_dir / Path(pak_name).stem
 
-    if staged_game_pk4_path.is_file():
-        pk4_result = copy_game_pk4(staged_game_pk4_path, game_pk4_path)
-    else:
-        pk4_result = create_openq4_game_pk4(install_game_dir, game_pk4_path)
+        if staged_game_pk4_path.is_file():
+            pk4_result = copy_game_pk4(staged_game_pk4_path, game_pk4_path, pak_name=pak_name)
+        elif source_pack_dir.is_dir():
+            pk4_result = create_openq4_game_pk4(source_pack_dir, game_pk4_path, pak_name=pak_name)
+        else:
+            print(
+                f"error: {GAME_DIR_NAME}/{pak_name} was not staged and source pack directory is missing: {source_pack_dir}",
+                file=sys.stderr,
+            )
+            return 1
 
-    added_files = pk4_result.added_files
-    skipped_samples = pk4_result.skipped_samples
-    missing_required_pk4_files = pk4_result.missing_required
-    if added_files == 0:
-        print(
-            f"error: {GAME_DIR_NAME} pk4 packaging found no eligible files after filtering",
-            file=sys.stderr,
-        )
-        return 1
-    if missing_required_pk4_files:
-        print(
-            f"error: {GAME_DIR_NAME} pk4 packaging is missing required runtime files:",
-            file=sys.stderr,
-        )
-        for rel in missing_required_pk4_files:
-            print(f"  - {rel}", file=sys.stderr)
-        return 1
+        if pk4_result.added_files == 0:
+            print(
+                f"error: {GAME_DIR_NAME}/{pak_name} packaging found no eligible files after filtering",
+                file=sys.stderr,
+            )
+            return 1
+        if pk4_result.missing_required:
+            print(
+                f"error: {GAME_DIR_NAME}/{pak_name} packaging is missing required runtime files:",
+                file=sys.stderr,
+            )
+            for rel in pk4_result.missing_required:
+                print(f"  - {rel}", file=sys.stderr)
+            return 1
+
+        pk4_results.append((pak_name, pk4_result))
 
     copied_share = copy_optional_share_tree(args.platform, install_dir, package_root)
     copied_linux_launchers: list[str] = []
@@ -1963,7 +1973,12 @@ def main(argv: list[str]) -> int:
     print(f"Archive format: {archive_format}")
     print(f"Version manifest: {package_root / 'VERSION.txt'}")
     print(f"Documentation portal: {generated_docs.index_path} ({generated_docs.page_count} pages)")
-    print(f"openQ4 pk4: {game_pk4_path} ({added_files} files, md5 {pk4_result.md5_hex})")
+    print("openQ4 pk4s:")
+    for pak_name, pk4_result in pk4_results:
+        print(
+            f"  - {package_game_dir / pak_name} "
+            f"({pk4_result.added_files} files, md5 {pk4_result.md5_hex})"
+        )
     if copied_share:
         print(f"Share payload: {package_root / 'share'}")
     if copied_linux_launchers:
@@ -1988,6 +2003,11 @@ def main(argv: list[str]) -> int:
         print("Missing required loose game files:")
         for relative_path in missing_loose_game_files:
             print(f"  - {relative_path}")
+    skipped_samples = [
+        f"{pak_name}:{sample}"
+        for pak_name, pk4_result in pk4_results
+        for sample in pk4_result.skipped_samples
+    ]
     if skipped_samples:
         print("Filtered sample paths:")
         for rel in skipped_samples:

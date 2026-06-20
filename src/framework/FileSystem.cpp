@@ -30,7 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "Unzip.h"
-#include "openq4_pak0_generated.h"
+#include "openq4_paks_generated.h"
 
 #ifdef WIN32
 	#include <windows.h>
@@ -1291,7 +1291,7 @@ private:
 	pack_t *				FindGamePackByName( const char *name, const char *gameDir ) const;
 	pack_t *				FindBaseGamePackByName( const char *name ) const;
 	bool					FindMisplacedOfficialPaks( idStr &errors ) const;
-	bool					ValidateOpenQ4Pak0( idStr &errors ) const;
+	bool					ValidateOpenQ4Paks( idStr &errors ) const;
 	bool					ValidateRequiredOfficialPaks( idStr &errors ) const;
 	void					Startup( void );
 	void					SetRestrictions( void );
@@ -4478,7 +4478,7 @@ bool idFileSystemLocal::IsOpenQ4PurePack( const pack_t *pak ) const {
 	}
 
 	pak->pakFilename.ExtractFileName( name );
-	return !name.Icmp( "pak0.pk4" );
+	return !name.Icmp( "pak0.pk4" ) || !name.Icmp( "pak1.pk4" );
 }
 
 /*
@@ -4551,12 +4551,19 @@ bool idFileSystemLocal::FindMisplacedOfficialPaks( idStr &errors ) const {
 
 /*
 ================
-idFileSystemLocal::ValidateOpenQ4Pak0
+idFileSystemLocal::ValidateOpenQ4Paks
 ================
 */
-bool idFileSystemLocal::ValidateOpenQ4Pak0( idStr &errors ) const {
-	pack_t		*pack;
-	char		actualMD5[33];
+bool idFileSystemLocal::ValidateOpenQ4Paks( idStr &errors ) const {
+	struct expectedOpenQ4Pak_t {
+		const char *name;
+		const char *md5;
+	};
+	static const expectedOpenQ4Pak_t expectedPaks[] = {
+		{ "pak0.pk4", OPENQ4_PAK0_MD5 },
+		{ "pak1.pk4", OPENQ4_PAK1_MD5 },
+		{ NULL, NULL }
+	};
 
 	errors.Clear();
 
@@ -4565,24 +4572,28 @@ bool idFileSystemLocal::ValidateOpenQ4Pak0( idStr &errors ) const {
 		return true;
 	}
 
-	pack = FindGamePackByName( "pak0.pk4", OPENQ4_GAMEDIR );
-	if ( !pack ) {
-		errors += va( "missing %s/pak0.pk4 (expected checksum %s)\n", OPENQ4_GAMEDIR, OPENQ4_PAK0_MD5 );
-		return false;
+	for ( int i = 0; expectedPaks[ i ].name != NULL; i++ ) {
+		const expectedOpenQ4Pak_t &expected = expectedPaks[ i ];
+		pack_t *pack = FindGamePackByName( expected.name, OPENQ4_GAMEDIR );
+		char actualMD5[33];
+
+		if ( !pack ) {
+			errors += va( "missing %s/%s (expected checksum %s)\n", OPENQ4_GAMEDIR, expected.name, expected.md5 );
+			continue;
+		}
+
+		if ( !MD5_FileChecksum( pack->pakFilename.c_str(), actualMD5 ) ) {
+			errors += va( "could not read %s for checksum validation\n", pack->pakFilename.c_str() );
+			continue;
+		}
+
+		if ( idStr::Icmp( actualMD5, expected.md5 ) ) {
+			errors += va( "checksum mismatch for %s/%s (expected %s, got %s from %s)\n",
+				OPENQ4_GAMEDIR, expected.name, expected.md5, actualMD5, pack->pakFilename.c_str() );
+		}
 	}
 
-	if ( !MD5_FileChecksum( pack->pakFilename.c_str(), actualMD5 ) ) {
-		errors += va( "could not read %s for checksum validation\n", pack->pakFilename.c_str() );
-		return false;
-	}
-
-	if ( idStr::Icmp( actualMD5, OPENQ4_PAK0_MD5 ) ) {
-		errors += va( "checksum mismatch for %s/pak0.pk4 (expected %s, got %s from %s)\n",
-			OPENQ4_GAMEDIR, OPENQ4_PAK0_MD5, actualMD5, pack->pakFilename.c_str() );
-		return false;
-	}
-
-	return true;
+	return ( errors.Length() == 0 );
 }
 
 /*
@@ -4715,12 +4726,12 @@ void idFileSystemLocal::Startup( void ) {
 		SetupGameDirectories( fs_game.GetString() );
 	}
 
-	idStr openQ4Pak0Errors;
-	if ( !ValidateOpenQ4Pak0( openQ4Pak0Errors ) ) {
+	idStr openQ4PakErrors;
+	if ( !ValidateOpenQ4Paks( openQ4PakErrors ) ) {
 		common->FatalError(
-			"openQ4 runtime content '%s/pak0.pk4' is missing or modified.\n\n%s\n"
-			"Rebuild or reinstall openQ4 so '<openQ4 package root>/%s/pak0.pk4' matches this engine. Retail Quake 4 PK4s belong in '%s', not '%s'.",
-			OPENQ4_GAMEDIR, openQ4Pak0Errors.c_str(), OPENQ4_GAMEDIR, BASE_GAMEDIR, OPENQ4_GAMEDIR );
+			"openQ4 runtime content packs in '%s' are missing or modified.\n\n%s\n"
+			"Rebuild or reinstall openQ4 so '<openQ4 package root>/%s/pak0.pk4' and '<openQ4 package root>/%s/pak1.pk4' match this engine. Retail Quake 4 PK4s belong in '%s', not '%s'.",
+			OPENQ4_GAMEDIR, openQ4PakErrors.c_str(), OPENQ4_GAMEDIR, OPENQ4_GAMEDIR, BASE_GAMEDIR, OPENQ4_GAMEDIR );
 	}
 
 	if ( fs_validateOfficialPaks.GetBool() ) {
@@ -4729,7 +4740,7 @@ void idFileSystemLocal::Startup( void ) {
 			common->FatalError(
 				"Retail Quake 4 media pk4 files must be installed in '%s', not '%s'.\n\n%s\n"
 				"Move the listed files into '<Quake 4 install root>/%s', or remove them from '%s' and launch with +set fs_basepath pointing at a Quake 4 install root that contains '%s'. "
-				"The '%s' directory is reserved for openQ4 runtime files such as pak0.pk4, mod.json, and game modules.",
+				"The '%s' directory is reserved for openQ4 runtime files such as pak0.pk4, pak1.pk4, mod.json, and game modules.",
 				BASE_GAMEDIR, OPENQ4_GAMEDIR, misplacedErrors.c_str(), BASE_GAMEDIR, OPENQ4_GAMEDIR, BASE_GAMEDIR, OPENQ4_GAMEDIR );
 		}
 

@@ -2,16 +2,16 @@
   "version": 1,
   "scope": "Initial registry for Settings menu surfaces touched by the June 4, 2026 refactor. Expand as additional legacy panes are split or normalized.",
   "sources": {
-    "mainmenu": "content/baseoq4/guis/mainmenu.gui",
-    "controls": "content/baseoq4/guis/menu/settings/controls.gui",
-    "system": "content/baseoq4/guis/menu/settings/system.gui",
-    "audio": "content/baseoq4/guis/menu/settings/audio.gui",
-    "popups": "content/baseoq4/guis/menu/settings/popups.gui",
-    "game": "content/baseoq4/guis/menu/settings/game.gui",
-    "game_hovers": "content/baseoq4/guis/menu/settings/game_hovers.gui",
+    "mainmenu": "content/baseoq4/pak0/guis/mainmenu.gui",
+    "controls": "content/baseoq4/pak0/guis/menu/settings/controls.gui",
+    "system": "content/baseoq4/pak0/guis/menu/settings/system.gui",
+    "audio": "content/baseoq4/pak0/guis/menu/settings/audio.gui",
+    "popups": "content/baseoq4/pak0/guis/menu/settings/popups.gui",
+    "game": "content/baseoq4/pak0/guis/menu/settings/game.gui",
+    "game_hovers": "content/baseoq4/pak0/guis/menu/settings/game_hovers.gui",
     "session_menu": "src/framework/Session_menu.cpp",
-    "default_cfg": "content/baseoq4/default.cfg",
-    "openq4_defaults_cfg": "content/baseoq4/openq4_defaults.cfg"
+    "default_cfg": "content/baseoq4/pak0/default.cfg",
+    "openq4_defaults_cfg": "content/baseoq4/pak0/openq4_defaults.cfg"
   },
   "settings": [
     {

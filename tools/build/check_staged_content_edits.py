@@ -25,6 +25,7 @@ STALE_LOOSE_SUBDIRS = (
     "guis",
     "maps",
     "materials",
+    "scripts",
     "strings",
 )
 
@@ -32,7 +33,7 @@ STALE_LOOSE_SUBDIRS = (
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Remove stale loose baseoq4 content that is now compiled into pak0.pk4 "
+            "Remove stale loose baseoq4 content that is now compiled into openQ4 PK4s "
             "before Meson stages a fresh install."
         )
     )

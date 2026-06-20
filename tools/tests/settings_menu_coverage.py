@@ -50,7 +50,7 @@ def gui_block(source_text: str, widget_name: str) -> str:
 
 def load_locale_strings() -> dict[str, str]:
     locales: dict[str, str] = defaultdict(str)
-    for lang_path in sorted((ROOT / "content/baseoq4/strings").glob("*.lang")):
+    for lang_path in sorted((ROOT / "content/baseoq4/pak0/strings").glob("*.lang")):
         locale = lang_path.stem.split("_", 1)[0]
         locales[locale] += "\n" + read(lang_path)
     if not locales:
@@ -570,13 +570,13 @@ def validate_scripted_pseudo_setting_adapters(game_gui: str, session_menu: str) 
 def main() -> None:
     validate_settings_registry()
 
-    mainmenu = read(ROOT / "content/baseoq4/guis/mainmenu.gui")
-    controls_gui = read(ROOT / "content/baseoq4/guis/menu/settings/controls.gui")
-    system_gui = read(ROOT / "content/baseoq4/guis/menu/settings/system.gui")
-    audio_gui = read(ROOT / "content/baseoq4/guis/menu/settings/audio.gui")
-    popups_gui = read(ROOT / "content/baseoq4/guis/menu/settings/popups.gui")
-    game_gui = read(ROOT / "content/baseoq4/guis/menu/settings/game.gui")
-    game_hovers = read(ROOT / "content/baseoq4/guis/menu/settings/game_hovers.gui")
+    mainmenu = read(ROOT / "content/baseoq4/pak0/guis/mainmenu.gui")
+    controls_gui = read(ROOT / "content/baseoq4/pak0/guis/menu/settings/controls.gui")
+    system_gui = read(ROOT / "content/baseoq4/pak0/guis/menu/settings/system.gui")
+    audio_gui = read(ROOT / "content/baseoq4/pak0/guis/menu/settings/audio.gui")
+    popups_gui = read(ROOT / "content/baseoq4/pak0/guis/menu/settings/popups.gui")
+    game_gui = read(ROOT / "content/baseoq4/pak0/guis/menu/settings/game.gui")
+    game_hovers = read(ROOT / "content/baseoq4/pak0/guis/menu/settings/game_hovers.gui")
     session_menu = read(ROOT / "src/framework/Session_menu.cpp")
     slider_window = read(ROOT / "src/ui/SliderWindow.cpp")
     validate_value_entry_widgets(mainmenu, system_gui, audio_gui, popups_gui, game_gui)
@@ -801,7 +801,7 @@ def main() -> None:
         reject(system_surface, f'cvar\t"{cvar}"', f"{cvar} direct negative GUI binding")
 
     string_ids = [f"#str_{value}" for value in range(229943, 229976)]
-    for lang_path in sorted((ROOT / "content/baseoq4/strings").glob("*_openq4.lang")):
+    for lang_path in sorted((ROOT / "content/baseoq4/pak0/strings").glob("*_openq4.lang")):
         lang_text = read(lang_path)
         for string_id in string_ids:
             require(lang_text, string_id, lang_path.name)

@@ -47,16 +47,32 @@
     },
     {
       "label": "Build openQ4 (Meson Debug)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\.vscode\\meson-task.ps1",
+        "fastbuild"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": [
+        "$msCompile"
+      ]
+    },
+    {
+      "label": "Full Build and Stage openQ4 (Meson Debug)",
       "dependsOrder": "sequence",
       "dependsOn": [
         "Configure openQ4 (Meson Debug)",
         "Compile openQ4 (Meson Debug)",
         "Stage openQ4 Install Tree (Meson Debug)"
       ],
-      "group": {
-        "kind": "build",
-        "isDefault": true
-      },
       "problemMatcher": []
     },
     {
@@ -112,7 +128,7 @@
       ],
       "dependsOrder": "sequence",
       "dependsOn": [
-        "Build openQ4 (Meson Debug)"
+        "Full Build and Stage openQ4 (Meson Debug)"
       ],
       "options": {
         "cwd": "${workspaceFolder}\\.install"

@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('setup', 'compile', 'install')]
+    [ValidateSet('setup', 'compile', 'install', 'fastbuild')]
     [string]$Action
 )
 
@@ -10,6 +10,9 @@ Set-StrictMode -Version Latest
 $workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $mesonWrapper = Join-Path $workspaceRoot 'tools\build\meson_setup.ps1'
 $buildDir = Join-Path $workspaceRoot 'builddir'
+$installDir = Join-Path $workspaceRoot '.install'
+$fastStageScript = Join-Path $workspaceRoot 'tools\build\stage_fast_install.py'
+$checkStagedContentScript = Join-Path $workspaceRoot 'tools\build\check_staged_content_edits.py'
 
 if (-not (Test-Path $mesonWrapper)) {
     throw "openQ4 Meson wrapper not found at '$mesonWrapper'."
@@ -17,6 +20,13 @@ if (-not (Test-Path $mesonWrapper)) {
 
 function Invoke-openQ4Meson([string[]]$MesonArgs) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File $mesonWrapper @MesonArgs
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+}
+
+function Invoke-PythonTool([string[]]$ToolArgs) {
+    & python @ToolArgs
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
@@ -61,6 +71,32 @@ switch ($Action) {
             'compile',
             '-C',
             $buildDir
+        )
+    }
+    'fastbuild' {
+        if (-not (Test-Path $fastStageScript)) {
+            throw "openQ4 fast staging script not found at '$fastStageScript'."
+        }
+        if (-not (Test-Path $checkStagedContentScript)) {
+            throw "openQ4 staged content edit check script not found at '$checkStagedContentScript'."
+        }
+
+        Invoke-openQ4Meson @(
+            'compile',
+            '-C',
+            $buildDir
+        )
+        Invoke-PythonTool @(
+            $checkStagedContentScript,
+            '--source-root',
+            $workspaceRoot
+        )
+        Invoke-PythonTool @(
+            $fastStageScript,
+            '--build-dir',
+            $buildDir,
+            '--install-dir',
+            $installDir
         )
     }
     'install' {

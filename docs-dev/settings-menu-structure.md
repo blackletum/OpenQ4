@@ -4,13 +4,13 @@ This document describes the current openQ4 Settings menu as implemented by the m
 
 Source files:
 
-- `content/baseoq4/guis/mainmenu.gui`
-- `content/baseoq4/guis/menu/settings/controls.gui`
-- `content/baseoq4/guis/menu/settings/system.gui`
-- `content/baseoq4/guis/menu/settings/audio.gui`
-- `content/baseoq4/guis/menu/settings/popups.gui`
-- `content/baseoq4/guis/menu/settings/game.gui`
-- `content/baseoq4/guis/menu/settings/game_hovers.gui`
+- `content/baseoq4/pak0/guis/mainmenu.gui`
+- `content/baseoq4/pak0/guis/menu/settings/controls.gui`
+- `content/baseoq4/pak0/guis/menu/settings/system.gui`
+- `content/baseoq4/pak0/guis/menu/settings/audio.gui`
+- `content/baseoq4/pak0/guis/menu/settings/popups.gui`
+- `content/baseoq4/pak0/guis/menu/settings/game.gui`
+- `content/baseoq4/pak0/guis/menu/settings/game_hovers.gui`
 - `src/framework/Session_menu.cpp`
 - `docs-dev/settings-menu-registry.json`
 
@@ -28,7 +28,7 @@ Source files:
 
 Several rows use `gui` instead of `cvar`. These write a GUI state variable first, then apply one or more console commands from GUI event handlers.
 
-Controls registry records use `target_type: "bind"` and validate shipped default keys from `content/baseoq4/default.cfg` plus `content/baseoq4/openq4_defaults.cfg`.
+Controls registry records use `target_type: "bind"` and validate shipped default keys from `content/baseoq4/pak0/default.cfg` plus `content/baseoq4/pak0/openq4_defaults.cfg`.
 
 ## Top-Level Settings Shell
 
@@ -58,7 +58,7 @@ Mouse-wheel, Page Up/Page Down, controller shoulder, Home, and End scrolling is 
 
 Settings popups:
 
-Settings-specific popup window definitions are included from `content/baseoq4/guis/menu/settings/popups.gui`. Their animation windows and shared event wiring remain in `mainmenu.gui`.
+Settings-specific popup window definitions are included from `content/baseoq4/pak0/guis/menu/settings/popups.gui`. Their animation windows and shared event wiring remain in `mainmenu.gui`.
 
 | Popup | Widget/action surface | Type | Effect |
 |---|---|---|---|
@@ -68,7 +68,7 @@ Settings-specific popup window definitions are included from `content/baseoq4/gu
 
 ## Controls
 
-The Controls pane is `p_settings_ctrls`, included from `content/baseoq4/guis/menu/settings/controls.gui`. It has four subpanes selected by action buttons: Movement, Weapons, Attack/Look, and Other. Every row uses `bindDef`.
+The Controls pane is `p_settings_ctrls`, included from `content/baseoq4/pak0/guis/menu/settings/controls.gui`. It has four subpanes selected by action buttons: Movement, Weapons, Attack/Look, and Other. Every row uses `bindDef`.
 
 Category selectors:
 
@@ -151,7 +151,7 @@ The numbered `set_b_controls_move_1..13` windows are row hover/action surfaces f
 
 ## Game Options
 
-The Game Options pane is `p_settings_game` and is included from `content/baseoq4/guis/menu/settings/game.gui`. It uses hover/action overlays from `game_hovers.gui`.
+The Game Options pane is `p_settings_game` and is included from `content/baseoq4/pak0/guis/menu/settings/game.gui`. It uses hover/action overlays from `game_hovers.gui`.
 
 ### Gameplay And View
 
@@ -229,7 +229,7 @@ The Game Options pane is `p_settings_game` and is included from `content/baseoq4
 
 ## System
 
-The System pane is `p_settings_sys`, included from `content/baseoq4/guis/menu/settings/system.gui`. Dynamic resolution and display-device lists are populated by `Session_menu.cpp` when the main menu opens.
+The System pane is `p_settings_sys`, included from `content/baseoq4/pak0/guis/menu/settings/system.gui`. Dynamic resolution and display-device lists are populated by `Session_menu.cpp` when the main menu opens.
 
 The pane has two display layouts:
 
@@ -296,7 +296,7 @@ The pane has two display layouts:
 
 ## Audio
 
-The Audio pane is `p_settings_audio`, included from `content/baseoq4/guis/menu/settings/audio.gui`. It is a single-page layout grouped as Levels, Devices, and Effects.
+The Audio pane is `p_settings_audio`, included from `content/baseoq4/pak0/guis/menu/settings/audio.gui`. It is a single-page layout grouped as Levels, Devices, and Effects.
 
 | Section | Label | Widget type | Value widget | Target | Values or range | Notes |
 |---|---|---|---|---|---|---|

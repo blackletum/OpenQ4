@@ -44,6 +44,7 @@ PROFILE_DEFAULTS = {
 STAGED_REQUIRED_GAME_FILES = (
     "mod.json",
     "pak0.pk4",
+    "pak1.pk4",
 )
 
 STAGED_FORBIDDEN_LOOSE_GAME_PATHS = (
@@ -58,6 +59,7 @@ STAGED_FORBIDDEN_LOOSE_GAME_PATHS = (
     "guis",
     "maps",
     "materials",
+    "scripts",
     "strings",
 )
 
@@ -245,6 +247,7 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "sdl3_multidisplay_windowing.py",
         root / "tools" / "tests" / "steam_deck_support.py",
         root / "tools" / "tests" / "startup_language_override.py",
+        root / "tools" / "tests" / "vscode_fast_build.py",
     ]
     for test_script in tests:
         if not test_script.is_file():
@@ -665,7 +668,7 @@ def validate_staged_payload(root: Path, *, dry_run: bool) -> None:
     if stale_loose_content:
         formatted = "\n".join(f"  - {rel(path, root)}" for path in stale_loose_content)
         raise ValidationError(
-            "Staged baseoq4 contains loose content that must live inside pak0.pk4:\n"
+            "Staged baseoq4 contains loose content that must live inside openQ4 PK4s:\n"
             f"{formatted}"
         )
 

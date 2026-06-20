@@ -13,7 +13,7 @@ def read_repo_file(relative_path):
 
 def test_cvar_and_menu_expose_safe_supersampling_range():
     init_cpp = read_repo_file(Path("src") / "renderer" / "RenderSystem_init.cpp")
-    system_gui = read_repo_file(Path("content") / "baseoq4" / "guis" / "menu" / "settings" / "system.gui")
+    system_gui = read_repo_file(Path("content") / "baseoq4" / "pak0" / "guis" / "menu" / "settings" / "system.gui")
 
     assert_true('"r_screenFraction", "100"' in init_cpp, "r_screenFraction should keep native resolution as the default")
     assert_true("10, 200" in init_cpp, "r_screenFraction should expose the guarded 10..200 range")

@@ -15,7 +15,23 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 GAME_DIR_NAME = "baseoq4"
 PAK0_NAME = "pak0.pk4"
+PAK1_NAME = "pak1.pk4"
+OPENQ4_PACK_NAMES = (PAK0_NAME, PAK1_NAME)
 DETERMINISTIC_ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
+OPENQ4_PAKS_HEADER_TEMPLATE = """\
+#ifndef OPENQ4_PAKS_GENERATED_H
+#define OPENQ4_PAKS_GENERATED_H
+
+#define OPENQ4_PAK0_MD5 "{pak0_md5_hex}"
+#define OPENQ4_PAK0_SIZE_BYTES {pak0_size_bytes}
+#define OPENQ4_PAK0_FILE_COUNT {pak0_file_count}
+
+#define OPENQ4_PAK1_MD5 "{pak1_md5_hex}"
+#define OPENQ4_PAK1_SIZE_BYTES {pak1_size_bytes}
+#define OPENQ4_PAK1_FILE_COUNT {pak1_file_count}
+
+#endif
+"""
 
 OPENQ4_EXCLUDED_DIRS = {"logs", "screenshots"}
 OPENQ4_PK4_EXCLUDED_SUFFIXES = {
@@ -27,16 +43,25 @@ OPENQ4_PK4_EXCLUDED_SUFFIXES = {
     ".exp",
     ".ilk",
 }
-OPENQ4_REQUIRED_PK4_FILES = {
-    "gfx/guis/loadscreens/generic.dds",
-    "gfx/guis/loadscreens/generic.tga",
-    "glprogs/smaa_blend.fs",
-    "glprogs/smaa_blend.vs",
-    "glprogs/smaa_edge.fs",
-    "glprogs/smaa_edge.vs",
-    "glprogs/smaa_weights.fs",
-    "glprogs/smaa_weights.vs",
-    "materials/postprocess_openq4.mtr",
+OPENQ4_REQUIRED_PK4_FILES_BY_PACK = {
+    PAK0_NAME: {
+        "glprogs/smaa_blend.fs",
+        "glprogs/smaa_blend.vs",
+        "glprogs/smaa_edge.fs",
+        "glprogs/smaa_edge.vs",
+        "glprogs/smaa_weights.fs",
+        "glprogs/smaa_weights.vs",
+        "materials/postprocess_openq4.mtr",
+    },
+    PAK1_NAME: {
+        "env/maps/game/airdefense1/area0_lightgrid_amb.tga",
+        "env/maps/game/airdefense1/area0_lightgrid_pos.tga",
+        "env/maps/game/airdefense1/area0_lightgrid_vis.tga",
+        "gfx/guis/loadscreens/generic.dds",
+        "gfx/guis/loadscreens/generic.tga",
+        "maps/game/airdefense1.lightgrid",
+        "maps/game/airdefense1.lightgridpack",
+    },
 }
 OPENQ4_REQUIRED_LOOSE_GAME_FILES = {
     "mod.json",
@@ -48,7 +73,7 @@ OPENQ4_PK4_FORBIDDEN_FILES = {
 OPENQ4_PK4_EXCLUDED_FILES = {
     "meson.build",
     "mod.json.in",
-    PAK0_NAME,
+    *(name.lower() for name in OPENQ4_PACK_NAMES),
     *(relative_path.lower() for relative_path in OPENQ4_REQUIRED_LOOSE_GAME_FILES),
 }
 
@@ -68,6 +93,13 @@ def file_md5_hex(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def write_text_if_changed(path: Path, contents: str) -> None:
+    if path.is_file() and path.read_text(encoding="utf-8") == contents:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(contents, encoding="utf-8", newline="\n")
 
 
 def _replace_file_if_changed(source: Path, destination: Path) -> None:
@@ -94,14 +126,29 @@ def _should_skip_pk4_entry(relative_path: Path) -> bool:
     return False
 
 
-def _iter_pk4_entries(source_dir: Path) -> tuple[list[tuple[Path, str]], list[str]]:
+def required_files_for_pack(pak_name: str) -> set[str]:
+    return set(OPENQ4_REQUIRED_PK4_FILES_BY_PACK.get(pak_name.lower(), set()))
+
+
+def format_openq4_paks_header(pak0_result: Pk4BuildResult, pak1_result: Pk4BuildResult) -> str:
+    return OPENQ4_PAKS_HEADER_TEMPLATE.format(
+        pak0_md5_hex=pak0_result.md5_hex,
+        pak0_size_bytes=pak0_result.size_bytes,
+        pak0_file_count=pak0_result.added_files,
+        pak1_md5_hex=pak1_result.md5_hex,
+        pak1_size_bytes=pak1_result.size_bytes,
+        pak1_file_count=pak1_result.added_files,
+    )
+
+
+def _iter_pk4_entries(source_dir: Path, pak_name: str) -> tuple[list[tuple[Path, str]], list[str]]:
     entries: list[tuple[Path, str]] = []
     skipped_samples: list[str] = []
 
     for path in sorted(source_dir.rglob("*"), key=lambda item: item.relative_to(source_dir).as_posix().lower()):
         rel = path.relative_to(source_dir)
         if path.is_symlink():
-            raise RuntimeError(f"refusing to package symlink into {PAK0_NAME}: {rel.as_posix()}")
+            raise RuntimeError(f"refusing to package symlink into {pak_name}: {rel.as_posix()}")
         if not path.is_file():
             continue
 
@@ -110,7 +157,7 @@ def _iter_pk4_entries(source_dir: Path) -> tuple[list[tuple[Path, str]], list[st
 
         if rel_posix_lower in OPENQ4_PK4_FORBIDDEN_FILES:
             raise RuntimeError(
-                f"{PAK0_NAME} must remain a pure runtime pack; "
+                f"{pak_name} must remain a pure runtime pack; "
                 f"refusing marker file: {rel_posix}"
             )
 
@@ -124,9 +171,15 @@ def _iter_pk4_entries(source_dir: Path) -> tuple[list[tuple[Path, str]], list[st
     return entries, skipped_samples
 
 
-def _write_deterministic_zip(source_dir: Path, destination_pk4: Path) -> tuple[int, list[str], list[str]]:
-    entries, skipped_samples = _iter_pk4_entries(source_dir)
+def _write_deterministic_zip(
+    source_dir: Path,
+    destination_pk4: Path,
+    pak_name: str,
+    required_files: set[str] | None = None,
+) -> tuple[int, list[str], list[str]]:
+    entries, skipped_samples = _iter_pk4_entries(source_dir, pak_name)
     added_paths: set[str] = set()
+    required_files = required_files if required_files is not None else required_files_for_pack(pak_name)
 
     destination_pk4.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
@@ -148,7 +201,7 @@ def _write_deterministic_zip(source_dir: Path, destination_pk4: Path) -> tuple[i
 
         missing_required = sorted(
             required_path
-            for required_path in OPENQ4_REQUIRED_PK4_FILES
+            for required_path in required_files
             if required_path.lower() not in added_paths
         )
 
@@ -160,8 +213,20 @@ def _write_deterministic_zip(source_dir: Path, destination_pk4: Path) -> tuple[i
     return len(entries), skipped_samples, missing_required
 
 
-def create_game_pk4(source_dir: Path, destination_pk4: Path) -> Pk4BuildResult:
-    added_files, skipped_samples, missing_required = _write_deterministic_zip(source_dir, destination_pk4)
+def create_game_pk4(
+    source_dir: Path,
+    destination_pk4: Path,
+    *,
+    pak_name: str | None = None,
+    required_files: set[str] | None = None,
+) -> Pk4BuildResult:
+    pak_name = pak_name or destination_pk4.name
+    added_files, skipped_samples, missing_required = _write_deterministic_zip(
+        source_dir,
+        destination_pk4,
+        pak_name,
+        required_files,
+    )
     return Pk4BuildResult(
         added_files=added_files,
         skipped_samples=skipped_samples,
@@ -171,7 +236,15 @@ def create_game_pk4(source_dir: Path, destination_pk4: Path) -> Pk4BuildResult:
     )
 
 
-def inspect_game_pk4(pk4_path: Path) -> Pk4BuildResult:
+def inspect_game_pk4(
+    pk4_path: Path,
+    *,
+    pak_name: str | None = None,
+    required_files: set[str] | None = None,
+) -> Pk4BuildResult:
+    pak_name = pak_name or pk4_path.name
+    required_files = required_files if required_files is not None else required_files_for_pack(pak_name)
+
     with ZipFile(pk4_path, "r") as pk4:
         names = [
             info.filename
@@ -183,11 +256,11 @@ def inspect_game_pk4(pk4_path: Path) -> Pk4BuildResult:
     forbidden = sorted(lower_names & OPENQ4_PK4_FORBIDDEN_FILES)
     if forbidden:
         joined = ", ".join(forbidden)
-        raise RuntimeError(f"{pk4_path.name} must remain a pure runtime pack; found marker file(s): {joined}")
+        raise RuntimeError(f"{pak_name} must remain a pure runtime pack; found marker file(s): {joined}")
 
     missing_required = sorted(
         required_path
-        for required_path in OPENQ4_REQUIRED_PK4_FILES
+        for required_path in required_files
         if required_path.lower() not in lower_names
     )
 
@@ -200,7 +273,13 @@ def inspect_game_pk4(pk4_path: Path) -> Pk4BuildResult:
     )
 
 
-def copy_game_pk4(source_pk4: Path, destination_pk4: Path) -> Pk4BuildResult:
+def copy_game_pk4(
+    source_pk4: Path,
+    destination_pk4: Path,
+    *,
+    pak_name: str | None = None,
+    required_files: set[str] | None = None,
+) -> Pk4BuildResult:
     destination_pk4.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_pk4, destination_pk4)
-    return inspect_game_pk4(destination_pk4)
+    return inspect_game_pk4(destination_pk4, pak_name=pak_name, required_files=required_files)

@@ -179,31 +179,103 @@ if not build_engine and not build_games
   error('At least one build target must be enabled. Use -Dbuild_engine=true and/or -Dbuild_games=true.')
 endif
 
-openq4_pak0_file = []
-openq4_pak0_generated_header = []
+openq4_pak_files = []
+openq4_paks_generated_header = []
 if build_engine or build_games
-  openq4_pak0_outputs = custom_target(
+  openq4_pak_script_files = files(
+    'tools/build/openq4_pak.py',
+  )
+  openq4_pak0_source_discovery = run_command(
+    py,
+    meson.project_source_root() / 'tools' / 'build' / 'list_pak_sources.py',
+    meson.project_source_root(),
+    'pak0.pk4',
+    'content/baseoq4/pak0',
+    check: true,
+  )
+  openq4_pak1_source_discovery = run_command(
+    py,
+    meson.project_source_root() / 'tools' / 'build' / 'list_pak_sources.py',
+    meson.project_source_root(),
+    'pak1.pk4',
+    'content/baseoq4/pak1',
+    check: true,
+  )
+  openq4_pak0_source_paths = openq4_pak0_source_discovery.stdout().strip().split('\n')
+  openq4_pak1_source_paths = openq4_pak1_source_discovery.stdout().strip().split('\n')
+  if openq4_pak0_source_paths.length() == 0
+    error('tools/build/list_pak_sources.py returned no pak0 source files.')
+  endif
+  if openq4_pak1_source_paths.length() == 0
+    error('tools/build/list_pak_sources.py returned no pak1 source files.')
+  endif
+
+  openq4_pak0_output = custom_target(
     'openq4_pak0',
-    output: ['pak0.pk4', 'openq4_pak0_generated.h'],
+    output: 'pak0.pk4',
     command: [
       py,
-      meson.project_source_root() / 'tools' / 'build' / 'build_pak0.py',
+      meson.project_source_root() / 'tools' / 'build' / 'build_openq4_pack.py',
+      '--pak-name',
+      'pak0.pk4',
       '--source-dir',
-      meson.project_source_root() / 'content' / 'baseoq4',
-      '--pak-out',
-      '@OUTPUT0@',
-      '--header-out',
-      '@OUTPUT1@',
+      meson.project_source_root() / 'content' / 'baseoq4' / 'pak0',
+      '--out',
+      '@OUTPUT@',
       '--stage-out',
       meson.current_build_dir() / 'baseoq4' / 'pak0.pk4',
     ],
+    depend_files: files(openq4_pak0_source_paths) + openq4_pak_script_files + files(
+      'tools/build/build_openq4_pack.py',
+    ),
     build_by_default: true,
-    build_always_stale: true,
     install: true,
-    install_dir: [install_game_dir, false],
+    install_dir: install_game_dir,
   )
-  openq4_pak0_file = openq4_pak0_outputs[0]
-  openq4_pak0_generated_header = [openq4_pak0_outputs[1]]
+  openq4_pak1_output = custom_target(
+    'openq4_pak1',
+    output: 'pak1.pk4',
+    command: [
+      py,
+      meson.project_source_root() / 'tools' / 'build' / 'build_openq4_pack.py',
+      '--pak-name',
+      'pak1.pk4',
+      '--source-dir',
+      meson.project_source_root() / 'content' / 'baseoq4' / 'pak1',
+      '--out',
+      '@OUTPUT@',
+      '--stage-out',
+      meson.current_build_dir() / 'baseoq4' / 'pak1.pk4',
+    ],
+    depend_files: files(openq4_pak1_source_paths) + openq4_pak_script_files + files(
+      'tools/build/build_openq4_pack.py',
+    ),
+    build_by_default: true,
+    install: true,
+    install_dir: install_game_dir,
+  )
+  openq4_paks_header_output = custom_target(
+    'openq4_paks_generated_header',
+    input: [openq4_pak0_output, openq4_pak1_output],
+    output: 'openq4_paks_generated.h',
+    command: [
+      py,
+      meson.project_source_root() / 'tools' / 'build' / 'generate_pak_header.py',
+      '--pak0',
+      '@INPUT0@',
+      '--pak1',
+      '@INPUT1@',
+      '--header-out',
+      '@OUTPUT@',
+    ],
+    depend_files: openq4_pak_script_files + files(
+      'tools/build/generate_pak_header.py',
+    ),
+    build_by_default: true,
+    install: false,
+  )
+  openq4_pak_files = [openq4_pak0_output, openq4_pak1_output]
+  openq4_paks_generated_header = [openq4_paks_header_output]
 endif
 
 if needs_game_headers
@@ -301,7 +373,7 @@ endif
 
 openq4_engine_sources = files(engine_source_paths)
 if build_engine
-  openq4_engine_sources += openq4_pak0_generated_header
+  openq4_engine_sources += openq4_paks_generated_header
 endif
 
 game_sources = []

@@ -71,7 +71,7 @@ def validate_launcher_templates() -> None:
 
 
 def validate_profile_defaults() -> None:
-    profile = read("content/baseoq4/openq4_profile_steamdeck.cfg")
+    profile = read("content/baseoq4/pak0/openq4_profile_steamdeck.cfg")
     for token in (
         'seta in_joystick "1"',
         'seta in_gyro "1"',
@@ -285,7 +285,7 @@ def validate_sdl3_input_and_lifecycle() -> None:
 
 
 def validate_menu_and_docs() -> None:
-    game_gui = read("content/baseoq4/guis/menu/settings/game.gui")
+    game_gui = read("content/baseoq4/pak0/guis/menu/settings/game.gui")
     registry = read("docs-dev/settings-menu-registry.json")
     release = read("docs-dev/release-completion.md")
     steam_deck = read("docs-user/steam-deck.md")

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import filecmp
 import os
 import shutil
 import struct
@@ -251,10 +252,10 @@ def stage_build_game_directory(source_root: Path, build_root: Path) -> dict[str,
 
     build_generated_game_dir = build_root / "content" / GAME_DIR_NAME
     build_runtime_game_dir = build_root / GAME_DIR_NAME
-    build_game_pk4 = build_root / "pak0.pk4"
+    build_game_pk4s = [build_root / name for name in ("pak0.pk4", "pak1.pk4")]
     staged_file_count = 0
 
-    if not build_generated_game_dir.is_dir() and not build_game_pk4.is_file():
+    if not build_generated_game_dir.is_dir() and not any(path.is_file() for path in build_game_pk4s):
         return {
             "directory": None,
             "file_count": staged_file_count,
@@ -264,8 +265,9 @@ def stage_build_game_directory(source_root: Path, build_root: Path) -> dict[str,
     build_runtime_game_dir.mkdir(parents=True, exist_ok=True)
 
     _copy_runtime_tree(build_generated_game_dir, build_runtime_game_dir, BUILD_GAME_GENERATED_IGNORE_PATTERNS)
-    if build_game_pk4.is_file():
-        shutil.copy2(build_game_pk4, build_runtime_game_dir / "pak0.pk4")
+    for build_game_pk4 in build_game_pk4s:
+        if build_game_pk4.is_file():
+            shutil.copy2(build_game_pk4, build_runtime_game_dir / build_game_pk4.name)
 
     for path in build_runtime_game_dir.rglob("*"):
         if path.is_file():
@@ -288,8 +290,10 @@ def ensure_no_msvc_runtime_imports(root_dir: Path) -> dict[str, list[str]]:
 
 
 
-def _copy_file(source_path: Path, target_dir: Path) -> Path:
+def _copy_file_if_changed(source_path: Path, target_dir: Path) -> Path | None:
     destination = target_dir / source_path.name
+    if destination.is_file() and filecmp.cmp(source_path, destination, shallow=False):
+        return None
     shutil.copy2(source_path, destination)
     return destination
 
@@ -347,10 +351,15 @@ def stage_runtime_payloads(
     openal_runtime = resolve_openal_runtime_path(source_root, arch)
     for target in targets:
         target.mkdir(parents=True, exist_ok=True)
-        clear_staged_runtime_files(target)
+        expected_runtime_names = {openal_runtime.name.lower()} if openal_runtime is not None else set()
+        for staged_runtime in list_staged_runtime_files(target):
+            if staged_runtime.name.lower() not in expected_runtime_names:
+                staged_runtime.unlink()
 
         if openal_runtime is not None:
-            copied_files.append(str(_copy_file(openal_runtime, target)))
+            copied_file = _copy_file_if_changed(openal_runtime, target)
+            if copied_file is not None:
+                copied_files.append(str(copied_file))
 
     return {
         "arch": arch,

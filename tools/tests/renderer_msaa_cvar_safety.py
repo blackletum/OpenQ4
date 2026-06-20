@@ -75,7 +75,7 @@ def test_gfxinfo_reports_effective_aa_state():
 def test_postaa_settings_surface_exposes_all_modes():
     repo_root = Path(__file__).resolve().parents[2]
     init_cpp = read_repo_file(Path("src") / "renderer" / "RenderSystem_init.cpp")
-    system_gui = read_repo_file(Path("content") / "baseoq4" / "guis" / "menu" / "settings" / "system.gui")
+    system_gui = read_repo_file(Path("content") / "baseoq4" / "pak0" / "guis" / "menu" / "settings" / "system.gui")
     structure_md = read_repo_file(Path("docs-dev") / "settings-menu-structure.md")
     display_settings_md = read_repo_file(Path("docs-user") / "display-settings.md")
     registry = json.loads((repo_root / "docs-dev" / "settings-menu-registry.json").read_text(encoding="utf-8"))["settings"]
@@ -86,7 +86,7 @@ def test_postaa_settings_surface_exposes_all_modes():
     )
     assert_true('values\t"0;1;2;3;4"' in system_gui, "System menu Post AA choice should expose all modes")
     for language in ("english", "french", "italian", "spanish"):
-        lang_file = read_repo_file(Path("content") / "baseoq4" / "strings" / f"{language}_openq4.lang")
+        lang_file = read_repo_file(Path("content") / "baseoq4" / "pak0" / "strings" / f"{language}_openq4.lang")
         line = next((candidate for candidate in lang_file.splitlines() if '"#str_41095"' in candidate), "")
         assert_true(line.count(";") == 4, f"{language} Post AA choices should list five labels")
 
@@ -100,8 +100,8 @@ def test_postaa_settings_surface_exposes_all_modes():
 
 def test_postaa_smaa_quality_presets_are_explicit_and_logged():
     game_render = read_companion_file(Path("src") / "game" / "Game_render.cpp")
-    edge_shader = read_repo_file(Path("content") / "baseoq4" / "glprogs" / "smaa_edge.fs")
-    weights_shader = read_repo_file(Path("content") / "baseoq4" / "glprogs" / "smaa_weights.fs")
+    edge_shader = read_repo_file(Path("content") / "baseoq4" / "pak0" / "glprogs" / "smaa_edge.fs")
+    weights_shader = read_repo_file(Path("content") / "baseoq4" / "pak0" / "glprogs" / "smaa_weights.fs")
 
     assert_true("struct openq4SMAAQualityPreset_t" in game_render, "SMAA modes should use a named preset contract")
     assert_true("PostAASMAAQualityPreset( const openq4PostAAMode_t mode )" in game_render, "SMAA quality presets should be selected in one place")
