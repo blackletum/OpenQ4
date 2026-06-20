@@ -4757,6 +4757,10 @@ void Sys_ShutdownInput(void) {
 	SDL3_ClearInputQueues();
 }
 
+void Sys_ClearInputEvents(void) {
+	SDL3_ClearInputQueues();
+}
+
 int Sys_PollKeyboardInputEvents(void) {
 	Sys_EnterCriticalSection(CRITICAL_SECTION_ONE);
 

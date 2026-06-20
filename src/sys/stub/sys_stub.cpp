@@ -147,6 +147,9 @@ void Sys_InitInput( void ) {
 void Sys_ShutdownInput( void ) {
 }
 
+void Sys_ClearInputEvents( void ) {
+}
+
 sysEvent_t	Sys_GetEvent( void ) {
 	sysEvent_t	ev;
 

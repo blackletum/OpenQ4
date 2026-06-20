@@ -382,6 +382,7 @@ void			Sys_ClearEvents( void );
 // the main window is recreated
 void			Sys_InitInput( void );
 void			Sys_ShutdownInput( void );
+void			Sys_ClearInputEvents( void );
 void			Sys_InitScanTable( void );
 const unsigned char *Sys_GetScanTable( void );
 unsigned char	Sys_GetConsoleKey( bool shifted );

@@ -105,40 +105,101 @@ windowDef Desktop
 			matcolor	0,0,0,0.34
 			rotate	"gui::playerYaw"
 		}
-		windowDef scope_center
+		windowDef scope_expand_top_l
 		{
-			rect	0,0,640,480
-			visible	1
-			background	"gfx/guis/hud/reticles/nailgun_scope"
-			matcolor	1,1,1,1
-		}
-		windowDef scope_left
-		{
-			rect	( 0 - "gui::virtual_screen_x_expand" ),0,( "gui::virtual_screen_x_expand" ),480
-			visible	1
-			background	"gfx/guis/hud/reticles/nailgun_scope_left"
-			matcolor	1,1,1,1
-		}
-		windowDef scope_right
-		{
-			rect	640,0,( "gui::virtual_screen_x_expand" ),480
-			visible	1
-			background	"gfx/guis/hud/reticles/nailgun_scope_right"
-			matcolor	1,1,1,1
-		}
-		windowDef scope_top
-		{
-			rect	0,( 0 - "gui::virtual_screen_y_expand" ),640,( "gui::virtual_screen_y_expand" )
+			rect	0,( 0 - "gui::virtual_screen_y_expand" ),256,( "gui::virtual_screen_y_expand" )
 			visible	1
 			background	"gfx/guis/hud/reticles/nailgun_scope_top"
 			matcolor	1,1,1,1
 		}
-		windowDef scope_bottom
+		windowDef scope_expand_top_r
 		{
-			rect	0,480,640,( "gui::virtual_screen_y_expand" )
+			rect	384,( 0 - "gui::virtual_screen_y_expand" ),256,( "gui::virtual_screen_y_expand" )
 			visible	1
-			background	"gfx/guis/hud/reticles/nailgun_scope_bottom"
+			background	"gfx/guis/hud/reticles/nailgun_scope_top"
 			matcolor	1,1,1,1
+			matscalex	-1
+		}
+		windowDef scope_expand_bottom_l
+		{
+			rect	0,480,256,( "gui::virtual_screen_y_expand" )
+			visible	1
+			background	"gfx/guis/hud/reticles/nailgun_scope_top"
+			matcolor	1,1,1,1
+			matscaley	-1
+		}
+		windowDef scope_expand_bottom_r
+		{
+			rect	384,480,256,( "gui::virtual_screen_y_expand" )
+			visible	1
+			background	"gfx/guis/hud/reticles/nailgun_scope_top"
+			matcolor	1,1,1,1
+			matscalex	-1
+			matscaley	-1
+		}
+		windowDef scope_expand_left_t
+		{
+			rect	( 0 - "gui::virtual_screen_x_expand" ),0,( "gui::virtual_screen_x_expand" ),240
+			visible	1
+			background	"gfx/guis/hud/reticles/nailgun_scope_left"
+			matcolor	1,1,1,1
+		}
+		windowDef scope_expand_left_b
+		{
+			rect	( 0 - "gui::virtual_screen_x_expand" ),240,( "gui::virtual_screen_x_expand" ),240
+			visible	1
+			background	"gfx/guis/hud/reticles/nailgun_scope_left"
+			matcolor	1,1,1,1
+			matscaley	-1
+		}
+		windowDef scope_expand_right_t
+		{
+			rect	640,0,( "gui::virtual_screen_x_expand" ),240
+			visible	1
+			background	"gfx/guis/hud/reticles/nailgun_scope_left"
+			matcolor	1,1,1,1
+			matscalex	-1
+		}
+		windowDef scope_expand_right_b
+		{
+			rect	640,240,( "gui::virtual_screen_x_expand" ),240
+			visible	1
+			background	"gfx/guis/hud/reticles/nailgun_scope_left"
+			matcolor	1,1,1,1
+			matscalex	-1
+			matscaley	-1
+		}
+		windowDef tl_scope
+		{
+			rect	0,0,256,240
+			visible	1
+			background	"gfx/guis/hud/reticles/nailgun_scope"
+			matcolor	1,1,1,1
+		}
+		windowDef bl_scope
+		{
+			rect	0,240,256,240
+			visible	1
+			background	"gfx/guis/hud/reticles/nailgun_scope"
+			matcolor	1,1,1,1
+			matscaley	-1
+		}
+		windowDef br_scope
+		{
+			rect	384,240,256,240
+			visible	1
+			background	"gfx/guis/hud/reticles/nailgun_scope"
+			matcolor	1,1,1,1
+			matscaley	-1
+			matscalex	-1
+		}
+		windowDef tr_scope
+		{
+			rect	384,0,256,240
+			visible	1
+			background	"gfx/guis/hud/reticles/nailgun_scope"
+			matcolor	1,1,1,1
+			matscalex	-1
 		}
 		windowDef tl_ring
 		{

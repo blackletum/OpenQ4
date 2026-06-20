@@ -135,6 +135,11 @@ void Sys_EndKeyboardInputEvents( void ) {
 	poll_keyboard_event_count = 0;	
  }
 
+void Sys_ClearInputEvents( void ) {
+	poll_keyboard_event_count = 0;
+	poll_mouse_event_count = 0;
+}
+
 int Sys_PollMouseInputEvents( void ) {
 #if 0 //moved to the Sys_End functions
 	poll_keyboard_event_count = 0;

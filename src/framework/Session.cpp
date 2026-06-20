@@ -4339,8 +4339,9 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 		}
 
 		// The same key/button used to continue would otherwise remain latched into
-		// the first gameplay frame and can immediately trigger cinematic skip.
+		// the first gameplay frame and can immediately trigger gameplay input.
 		idKeyInput::ClearStates();
+		Sys_ClearInputEvents();
 	}
 
 	// capture the current screen and start a wipe

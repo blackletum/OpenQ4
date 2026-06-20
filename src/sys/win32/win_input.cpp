@@ -973,6 +973,22 @@ int Sys_ReturnKeyboardInputEvent( const int n, int &ch, bool &state ) {
 void Sys_EndKeyboardInputEvents( void ) {
 }
 
+static void IN_ClearBufferedDeviceData( LPDIRECTINPUTDEVICE8 device ) {
+	if ( device == NULL ) {
+		return;
+	}
+
+	DWORD dwElements = DINPUT_BUFFERSIZE;
+	device->GetDeviceData( sizeof( DIDEVICEOBJECTDATA ), NULL, &dwElements, 0 );
+}
+
+void Sys_ClearInputEvents( void ) {
+	IN_ClearBufferedDeviceData( win32.g_pKeyboard );
+	IN_ClearBufferedDeviceData( win32.g_pMouse );
+	memset( polled_didod, 0, sizeof( polled_didod ) );
+	memset( toggleFetch, 0, sizeof( toggleFetch ) );
+	diFetch = 0;
+}
 void Sys_QueMouseEvents( int dwElements ) {
 	int i, value;
 

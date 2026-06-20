@@ -39,6 +39,7 @@ input
 void Sys_InitInput( void ) { }
 
 void Sys_ShutdownInput( void ) { }
+void Sys_ClearInputEvents( void ) { }
 
 void Sys_GrabMouseCursor( bool ) { }
 
