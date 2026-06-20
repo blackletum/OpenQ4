@@ -68,14 +68,14 @@ windowDef Desktop
 		windowDef scope_glow_tl
 		{
 			rect	43,0,277,240
-			visible	1
+			visible	0
 			background	"gfx/guis/hud/reticles/nailgun_scope_glow"
 			matcolor	0.141,0.0901,0,1
 		}
 		windowDef scope_glow_tr
 		{
 			rect	320,0,277,240
-			visible	1
+			visible	0
 			background	"gfx/guis/hud/reticles/nailgun_scope_glow"
 			matcolor	0.141,0.0901,0,1
 			matscalex	-1
@@ -83,7 +83,7 @@ windowDef Desktop
 		windowDef scope_glow_bl
 		{
 			rect	43,240,277,240
-			visible	1
+			visible	0
 			background	"gfx/guis/hud/reticles/nailgun_scope_glow"
 			matcolor	0.141,0.0901,0,1
 			matscaley	-1
@@ -91,7 +91,7 @@ windowDef Desktop
 		windowDef scope_glow_br
 		{
 			rect	320,240,277,240
-			visible	1
+			visible	0
 			background	"gfx/guis/hud/reticles/nailgun_scope_glow"
 			matcolor	0.141,0.0901,0,1
 			matscaley	-1
