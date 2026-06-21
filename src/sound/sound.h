@@ -475,4 +475,6 @@ public:
 
 extern idSoundSystem*	soundSystem;
 
+#define OPENQ4_SOUND_HAS_SOUNDWORLD_SKIP 1
+
 #endif /* !__SOUND__ */

@@ -26,8 +26,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
-          DISCORD_RELEASE_EMOJI: ${{ vars.DISCORD_RELEASE_EMOJI || '' }}
-          DISCORD_RELEASE_MENTIONS: ${{ vars.DISCORD_RELEASE_MENTIONS || '' }}
+          DISCORD_RELEASE_EMOJI: ${{ vars.DISCORD_RELEASE_EMOJI || '<:quake4:1425986174941397105>' }}
+          DISCORD_RELEASE_MENTIONS: ${{ vars.DISCORD_RELEASE_MENTIONS || '<@&1425985498693898260> <@&1390287267276525628>' }}
           DISCORD_FEEDBACK_CHANNEL: ${{ vars.DISCORD_FEEDBACK_CHANNEL || 'the openQ4 Discord' }}
           DISCORD_RELEASE_AVATAR_URL: ${{ vars.DISCORD_RELEASE_AVATAR_URL || 'https://raw.githubusercontent.com/themuffinator/OpenQ4/main/assets/img/avatar.png' }}
         shell: bash
