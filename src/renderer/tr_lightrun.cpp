@@ -521,7 +521,8 @@ WindingCompletelyInsideLight
 bool WindingCompletelyInsideLight( const idWinding *w, const idRenderLightLocal *ldef ) {
 	int		i, j;
 
-	for ( i = 0 ; i < w->GetNumPoints() ; i++ ) {
+	const int windingPointCount = w->GetNumPoints();
+	for ( i = 0 ; i < windingPointCount ; i++ ) {
 		for ( j = 0 ; j < 6 ; j++ ) {
 			float	d;
 

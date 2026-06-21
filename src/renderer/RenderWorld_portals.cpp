@@ -97,7 +97,8 @@ idScreenRect idRenderWorldLocal::ScreenRectFromWinding( const idWinding *w, view
 	float			windowX, windowY;
 
 	r.Clear();
-	for ( i = 0 ; i < w->GetNumPoints() ; i++ ) {
+	const int windingPointCount = w->GetNumPoints();
+	for ( i = 0 ; i < windingPointCount ; i++ ) {
 		R_LocalPointToGlobal( space->modelMatrix, (*w)[i].ToVec3(), v );
 		R_GlobalToNormalizedDeviceCoordinates( v, ndc );
 
@@ -157,7 +158,8 @@ bool idRenderWorldLocal::PortalIsFoggedOut( const portal_t *p ) {
 	forward[3] = a * tr.viewDef->worldSpace.modelViewMatrix[14];
 
 	w = p->w;
-	for ( i = 0 ; i < w->GetNumPoints() ; i++ ) {
+	const int windingPointCount = w->GetNumPoints();
+	for ( i = 0 ; i < windingPointCount ; i++ ) {
 		float	d;
 
 		d = forward.Distance( (*w)[i].ToVec3() );
@@ -238,7 +240,8 @@ void idRenderWorldLocal::RenderPortalFades( void ) {
 			float minV = idMath::INFINITY;
 			float maxV = -idMath::INFINITY;
 
-			for ( int pointIndex = 0; pointIndex < w->GetNumPoints(); pointIndex++ ) {
+			const int windingPointCount = w->GetNumPoints();
+			for ( int pointIndex = 0; pointIndex < windingPointCount; pointIndex++ ) {
 				const idVec3 delta = ( *w )[pointIndex].ToVec3() - origin;
 				const float u = delta * edge;
 				const float v = delta * vAxis;
@@ -259,7 +262,7 @@ void idRenderWorldLocal::RenderPortalFades( void ) {
 			portal->image->Bind();
 
 			glBegin( GL_POLYGON );
-			for ( int pointIndex = 0; pointIndex < w->GetNumPoints(); pointIndex++ ) {
+			for ( int pointIndex = 0; pointIndex < windingPointCount; pointIndex++ ) {
 				const idVec3 &point = ( *w )[pointIndex].ToVec3();
 				const idVec3 delta = point - origin;
 				const float u = ( ( delta * edge ) - minU ) / uRange;
@@ -1147,7 +1150,8 @@ qhandle_t idRenderWorldLocal::FindPortal( const idBounds &b ) const {
 		w = portal->portals[0]->w;
 
 		wb.Clear();
-		for ( j = 0 ; j < w->GetNumPoints() ; j++ ) {
+		const int windingPointCount = w->GetNumPoints();
+		for ( j = 0 ; j < windingPointCount ; j++ ) {
 			wb.AddPoint( (*w)[j].ToVec3() );
 		}
 		if ( wb.IntersectsBounds( b ) ) {
@@ -1295,7 +1299,8 @@ void idRenderWorldLocal::ShowPortals() {
 			}
 
 			glBegin( GL_LINE_LOOP );
-			for ( j = 0 ; j < w->GetNumPoints() ; j++ ) {
+			const int windingPointCount = w->GetNumPoints();
+			for ( j = 0 ; j < windingPointCount ; j++ ) {
 				glVertex3fv( (*w)[j].ToFloatPtr() );
 			}
 			glEnd();

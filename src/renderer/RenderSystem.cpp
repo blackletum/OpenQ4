@@ -1720,7 +1720,8 @@ bool idRenderSystemLocal::ValidateMaterialArbPrograms( const idMaterial* materia
 		return false;
 	}
 
-	for ( int stageIndex = 0; stageIndex < material->GetNumStages(); ++stageIndex ) {
+	const int stageCount = material->GetNumStages();
+	for ( int stageIndex = 0; stageIndex < stageCount; ++stageIndex ) {
 		const shaderStage_t* stage = material->GetStage( stageIndex );
 		if ( stage == NULL || stage->newStage == NULL ) {
 			continue;

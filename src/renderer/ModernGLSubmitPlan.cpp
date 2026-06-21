@@ -10,7 +10,9 @@ idModernGLSubmitPlan::idModernGLSubmitPlan()
 }
 
 void idModernGLSubmitPlan::Clear( void ) {
+#ifdef _DEBUG
 	memset( commands, 0, sizeof( commands ) );
+#endif
 	memset( &stats, 0, sizeof( stats ) );
 	idStr::Copynz( stats.status, "empty", sizeof( stats.status ) );
 	numCommands = 0;
@@ -99,6 +101,10 @@ static bool R_ModernGLSubmitPlan_CommandCanSort( const modernGLSubmitCommand_t &
 }
 
 static int R_ModernGLSubmitPlan_CullSortKey( const modernGLSubmitCommand_t &command ) {
+	return command.cullSortKey;
+}
+
+static int R_ModernGLSubmitPlan_BuildCullSortKey( const modernGLSubmitCommand_t &command ) {
 	int key = command.cullType & 0xff;
 	if ( command.twoSided ) {
 		key |= 1 << 8;
@@ -110,6 +116,16 @@ static int R_ModernGLSubmitPlan_CullSortKey( const modernGLSubmitCommand_t &comm
 		key |= 1 << 10;
 	}
 	return key;
+}
+
+static void R_ModernGLSubmitPlan_TransformPointToClip( const idVec3 &src, const float mvp[16], idPlane &clip ) {
+	for ( int i = 0; i < 4; ++i ) {
+		clip[i] =
+			src[0] * mvp[i + 0 * 4] +
+			src[1] * mvp[i + 1 * 4] +
+			src[2] * mvp[i + 2 * 4] +
+			mvp[i + 3 * 4];
+	}
 }
 
 static int R_ModernGLSubmitPlan_CompareSortKey( const modernGLSubmitCommand_t &a, const modernGLSubmitCommand_t &b ) {
@@ -181,13 +197,43 @@ static bool R_ModernGLSubmitPlan_StateBucketEquals( const modernGLSubmitCommand_
 		&& R_ModernGLSubmitPlan_ScissorEquals( a, b );
 }
 
+static const int MODERN_GL_SUBMIT_PLAN_INSERTION_SORT_THRESHOLD = 16;
+
+static bool R_ModernGLSubmitPlan_RangeAlreadySorted( const modernGLSubmitCommand_t *commands, int left, int right ) {
+	for ( int i = left + 1; i < right; ++i ) {
+		if ( R_ModernGLSubmitPlan_CompareSortKey( commands[i - 1], commands[i] ) > 0 ) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static void R_ModernGLSubmitPlan_InsertionSortRange( modernGLSubmitCommand_t *commands, int left, int right ) {
+	for ( int i = left + 1; i < right; ++i ) {
+		const modernGLSubmitCommand_t key = commands[i];
+		int j = i;
+		while ( j > left && R_ModernGLSubmitPlan_CompareSortKey( commands[j - 1], key ) > 0 ) {
+			commands[j] = commands[j - 1];
+			j--;
+		}
+		commands[j] = key;
+	}
+}
+
 static void R_ModernGLSubmitPlan_StableSortRange( modernGLSubmitCommand_t *commands, int left, int right ) {
 	if ( right - left <= 1 ) {
+		return;
+	}
+	if ( right - left <= MODERN_GL_SUBMIT_PLAN_INSERTION_SORT_THRESHOLD ) {
+		R_ModernGLSubmitPlan_InsertionSortRange( commands, left, right );
 		return;
 	}
 	const int mid = left + ( right - left ) / 2;
 	R_ModernGLSubmitPlan_StableSortRange( commands, left, mid );
 	R_ModernGLSubmitPlan_StableSortRange( commands, mid, right );
+	if ( R_ModernGLSubmitPlan_CompareSortKey( commands[mid - 1], commands[mid] ) <= 0 ) {
+		return;
+	}
 
 	for ( int i = left; i < right; ++i ) {
 		rg_modernGLSubmitPlanSortScratch[i] = commands[i];
@@ -258,6 +304,7 @@ static void R_ModernGLSubmitPlan_SortCommands( modernGLSubmitCommand_t *commands
 	}
 
 	int index = 0;
+	bool sortedAnySpan = false;
 	while ( index < numCommands ) {
 		if ( !commands[index].sortEligible ) {
 			index++;
@@ -274,7 +321,10 @@ static void R_ModernGLSubmitPlan_SortCommands( modernGLSubmitCommand_t *commands
 		}
 		if ( index - start > 1 ) {
 			stats.sortSpans++;
-			R_ModernGLSubmitPlan_StableSortRange( commands, start, index );
+			if ( !R_ModernGLSubmitPlan_RangeAlreadySorted( commands, start, index ) ) {
+				R_ModernGLSubmitPlan_StableSortRange( commands, start, index );
+				sortedAnySpan = true;
+			}
 		}
 	}
 
@@ -290,6 +340,15 @@ static void R_ModernGLSubmitPlan_SortCommands( modernGLSubmitCommand_t *commands
 				stats.sortReorderedDraws++;
 			}
 		}
+	}
+
+	if ( !sortedAnySpan ) {
+		stats.sortedStateBuckets = stats.unsortedStateBuckets;
+		stats.sortStateBucketSavings = 0;
+		stats.sortProgramBatchSavings = 0;
+		stats.sortMaterialBatchSavings = 0;
+		stats.sortVertexBufferBatchSavings = 0;
+		return;
 	}
 
 	const int unsortedProgramBatches = stats.programBatches;
@@ -410,15 +469,20 @@ static void R_ModernGLSubmitPlan_FillVisibilityPacket( modernGLSubmitCommand_t &
 	float maxY = -1.0f;
 	float minDepth = 1.0f;
 	float maxDepth = 0.0f;
+	float visibilityModelViewProjectionMatrix[16];
+	const float *visibilityMVP = command.modelViewProjectionMatrix;
+	if ( command.modelDepthHack != 0.0f || command.weaponDepthHack ) {
+		myGlMultMatrix( command.modelViewMatrix, command.viewDef->projectionMatrix, visibilityModelViewProjectionMatrix );
+		visibilityMVP = visibilityModelViewProjectionMatrix;
+	}
 
 	for ( int i = 0; i < 8; ++i ) {
 		idVec3 corner;
 		corner.x = geo.bounds[( i & 1 ) ? 1 : 0].x;
 		corner.y = geo.bounds[( i & 2 ) ? 1 : 0].y;
 		corner.z = geo.bounds[( i & 4 ) ? 1 : 0].z;
-		idPlane eye;
 		idPlane clip;
-		R_TransformModelToClip( corner, command.modelViewMatrix, command.viewDef->projectionMatrix, eye, clip );
+		R_ModernGLSubmitPlan_TransformPointToClip( corner, visibilityMVP, clip );
 		if ( clip[3] <= 1.0e-4f ) {
 			command.visibilityNearPlaneClipped = true;
 			continue;
@@ -498,6 +562,129 @@ static bool R_ModernGLSubmitPlan_RunFrameTempIndexCacheSelfTest( void ) {
 	return true;
 }
 
+static unsigned int R_ModernGLSubmitPlan_ImageHandleOrZero( const idImage *image ) {
+	if ( image != NULL && image->IsLoaded() ) {
+		return const_cast<idImage *>( image )->GetDeviceHandle();
+	}
+	return 0;
+}
+
+static unsigned int R_ModernGLSubmitPlan_FallbackTextureForSemantic( materialResourceTextureSemantic_t semantic ) {
+	if ( globalImages == NULL ) {
+		return 0;
+	}
+	switch ( semantic ) {
+	case MATERIAL_RESOURCE_TEXTURE_BUMP:
+		if ( const unsigned int handle = R_ModernGLSubmitPlan_ImageHandleOrZero( globalImages->flatNormalMap ) ) {
+			return handle;
+		}
+		break;
+	case MATERIAL_RESOURCE_TEXTURE_SPECULAR:
+	case MATERIAL_RESOURCE_TEXTURE_EMISSIVE:
+		if ( const unsigned int handle = R_ModernGLSubmitPlan_ImageHandleOrZero( globalImages->blackImage ) ) {
+			return handle;
+		}
+		break;
+	default:
+		break;
+	}
+	if ( const unsigned int handle = R_ModernGLSubmitPlan_ImageHandleOrZero( globalImages->whiteImage ) ) {
+		return handle;
+	}
+	return R_ModernGLSubmitPlan_ImageHandleOrZero( globalImages->defaultImage );
+}
+
+static int R_ModernGLSubmitPlan_TextureTableIndexForHandle( unsigned int textureHandle ) {
+	return R_MaterialResourceTable_TextureArrayTableIndexForHandle( textureHandle );
+}
+
+static int R_ModernGLSubmitPlan_TextureTableIndexForBinding( const materialResourceTextureBinding_t *binding ) {
+	if ( binding == NULL || binding->textureHandle == 0 ) {
+		return -1;
+	}
+	if ( binding->textureArrayCandidate && binding->textureArrayLayer >= 0 ) {
+		return binding->textureArrayLayer;
+	}
+	return R_ModernGLSubmitPlan_TextureTableIndexForHandle( binding->textureHandle );
+}
+
+static const materialResourceTextureBinding_t *R_ModernGLSubmitPlan_PrimaryTextureBinding( const materialResourceTableRecord_t *materialRecord ) {
+	if ( materialRecord == NULL ) {
+		return NULL;
+	}
+	static const materialResourceTextureSemantic_t primarySemantics[3] = {
+		MATERIAL_RESOURCE_TEXTURE_DIFFUSE,
+		MATERIAL_RESOURCE_TEXTURE_GUI,
+		MATERIAL_RESOURCE_TEXTURE_POST_PROCESS
+	};
+	for ( int i = 0; i < 3; ++i ) {
+		const materialResourceTextureBinding_t *binding = R_MaterialResourceTable_TextureBindingForSemantic( *materialRecord, primarySemantics[i] );
+		if ( binding != NULL && binding->textureHandle != 0 ) {
+			return binding;
+		}
+	}
+	return NULL;
+}
+
+static void R_ModernGLSubmitPlan_ResetMaterialTextureCache( modernGLSubmitCommand_t &command ) {
+	for ( int i = 0; i < MODERN_GL_SUBMIT_MATERIAL_TEXTURE_COUNT; ++i ) {
+		command.materialTextureHandles[i] = 0;
+		command.materialTextureTableIndices[i] = -1;
+	}
+	command.materialLoadedTextureSemanticMask = 0;
+	command.materialAlphaTestRegister = 0;
+	command.alphaTestMaterial = false;
+	command.alphaTestOrPerforatedMaterial = false;
+}
+
+static void R_ModernGLSubmitPlan_SetTextureCacheSlot(
+	modernGLSubmitCommand_t &command,
+	int slot,
+	const materialResourceTextureBinding_t *binding,
+	materialResourceTextureSemantic_t fallbackSemantic ) {
+	if ( slot < 0 || slot >= MODERN_GL_SUBMIT_MATERIAL_TEXTURE_COUNT ) {
+		return;
+	}
+	if ( binding != NULL && binding->textureHandle != 0 ) {
+		command.materialTextureHandles[slot] = binding->textureHandle;
+		command.materialTextureTableIndices[slot] = R_ModernGLSubmitPlan_TextureTableIndexForBinding( binding );
+		return;
+	}
+	const unsigned int fallbackHandle = R_ModernGLSubmitPlan_FallbackTextureForSemantic( fallbackSemantic );
+	command.materialTextureHandles[slot] = fallbackHandle;
+	command.materialTextureTableIndices[slot] = R_ModernGLSubmitPlan_TextureTableIndexForHandle( fallbackHandle );
+}
+
+static void R_ModernGLSubmitPlan_FillMaterialTextureCache( modernGLSubmitCommand_t &command, const materialResourceTableRecord_t *materialRecord ) {
+	R_ModernGLSubmitPlan_ResetMaterialTextureCache( command );
+	if ( materialRecord != NULL ) {
+		command.materialLoadedTextureSemanticMask = materialRecord->loadedTextureSemanticMask;
+		command.materialAlphaTestRegister = materialRecord->alphaTestRegister;
+		command.alphaTestMaterial = materialRecord->alphaTest;
+		command.alphaTestOrPerforatedMaterial = materialRecord->alphaTest || materialRecord->materialClass == RENDER_MATERIAL_PERFORATED;
+	}
+	R_ModernGLSubmitPlan_SetTextureCacheSlot(
+		command,
+		MODERN_GL_SUBMIT_MATERIAL_TEXTURE_MAIN,
+		R_ModernGLSubmitPlan_PrimaryTextureBinding( materialRecord ),
+		MATERIAL_RESOURCE_TEXTURE_DIFFUSE );
+	R_ModernGLSubmitPlan_SetTextureCacheSlot(
+		command,
+		MODERN_GL_SUBMIT_MATERIAL_TEXTURE_NORMAL,
+		materialRecord != NULL ? R_MaterialResourceTable_TextureBindingForSemantic( *materialRecord, MATERIAL_RESOURCE_TEXTURE_BUMP ) : NULL,
+		MATERIAL_RESOURCE_TEXTURE_BUMP );
+	R_ModernGLSubmitPlan_SetTextureCacheSlot(
+		command,
+		MODERN_GL_SUBMIT_MATERIAL_TEXTURE_SPECULAR,
+		materialRecord != NULL ? R_MaterialResourceTable_TextureBindingForSemantic( *materialRecord, MATERIAL_RESOURCE_TEXTURE_SPECULAR ) : NULL,
+		MATERIAL_RESOURCE_TEXTURE_SPECULAR );
+	R_ModernGLSubmitPlan_SetTextureCacheSlot(
+		command,
+		MODERN_GL_SUBMIT_MATERIAL_TEXTURE_EMISSIVE,
+		materialRecord != NULL ? R_MaterialResourceTable_TextureBindingForSemantic( *materialRecord, MATERIAL_RESOURCE_TEXTURE_EMISSIVE ) : NULL,
+		MATERIAL_RESOURCE_TEXTURE_EMISSIVE );
+}
+
 bool idModernGLSubmitPlan::AddCommand( const modernGLDrawPlanEntry_t &entry ) {
 	if ( numCommands >= MODERN_GL_SUBMIT_PLAN_MAX_COMMANDS ) {
 		stats.overflow = true;
@@ -551,6 +738,7 @@ bool idModernGLSubmitPlan::AddCommand( const modernGLDrawPlanEntry_t &entry ) {
 	modernGLSubmitCommand_t &command = commands[numCommands];
 	memset( &command, 0, sizeof( command ) );
 	command.drawPlanEntry = &entry;
+	command.materialRecord = R_MaterialResourceTable_RecordForIndex( entry.materialTableIndex );
 	command.viewDef = draw->viewDef;
 	command.passCategory = entry.passCategory;
 	command.pipeline = entry.pipeline;
@@ -585,10 +773,11 @@ bool idModernGLSubmitPlan::AddCommand( const modernGLDrawPlanEntry_t &entry ) {
 	command.instanceRecordIndex = entry.instanceRecordIndex;
 	command.originalSubmitOrder = numCommands;
 	command.sortBucket = -1;
-	const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( entry.materialTableIndex );
+	const materialResourceTableRecord_t *materialRecord = command.materialRecord;
 	command.blendMode = materialRecord != NULL ? materialRecord->blendMode : MATERIAL_RESOURCE_BLEND_OPAQUE;
 	command.cullType = materialRecord != NULL ? materialRecord->cullType : CT_FRONT_SIDED;
 	command.materialStableId = entry.materialStableId;
+	R_ModernGLSubmitPlan_FillMaterialTextureCache( command, materialRecord );
 	memcpy( command.modelViewMatrix, instance->modelViewMatrix, sizeof( command.modelViewMatrix ) );
 	command.modelDepthHack = instance->modelDepthHack;
 	command.scissorX1 = draw->scissorX1;
@@ -601,7 +790,14 @@ bool idModernGLSubmitPlan::AddCommand( const modernGLDrawPlanEntry_t &entry ) {
 	command.shouldCreateBackSides = materialRecord != NULL && materialRecord->shouldCreateBackSides;
 	command.weaponDepthHack = instance->weaponDepthHack;
 	command.negativeScale = instance->negativeScale;
+	command.cullSortKey = R_ModernGLSubmitPlan_BuildCullSortKey( command );
 	command.sortEligible = false;
+	command.forwardPlusDecal =
+		command.pipeline == MODERN_GL_DRAW_PLAN_PIPELINE_FORWARD_PLUS_TRANSPARENT
+		&& materialRecord != NULL
+		&& draw->passCategory == RENDER_PASS_AMBIENT
+		&& ( materialRecord->sortGroup == MATERIAL_RESOURCE_SORT_DECAL
+			|| ( draw->legacyDrawSurf != NULL && draw->legacyDrawSurf->decalColorCache != NULL ) );
 	R_ModernGLSubmitCommand_BuildModelViewProjection( command );
 	R_ModernGLSubmitPlan_FillVisibilityPacket( command, *geo, instance, materialRecord );
 
@@ -659,7 +855,8 @@ bool idModernGLSubmitPlan::Build( const idModernGLDrawPlan &drawPlan ) {
 	}
 
 	stats.available = true;
-	for ( int i = 0; i < drawPlan.NumEntries(); ++i ) {
+	const int drawPlanEntries = drawPlan.NumEntries();
+	for ( int i = 0; i < drawPlanEntries; ++i ) {
 		AddCommand( drawPlan.Entry( i ) );
 	}
 	R_ModernGLSubmitPlan_SortCommands( commands, numCommands, stats );
@@ -777,6 +974,7 @@ static void R_ModernGLSubmitPlan_InitSortSelfTestCommand(
 	entry.materialRecordIndex = materialTableIndex;
 
 	memset( &command, 0, sizeof( command ) );
+	R_ModernGLSubmitPlan_ResetMaterialTextureCache( command );
 	command.drawPlanEntry = &entry;
 	command.viewDef = viewDef;
 	command.passCategory = draw.passCategory;
@@ -796,6 +994,7 @@ static void R_ModernGLSubmitPlan_InitSortSelfTestCommand(
 	command.instanceRecordIndex = originalOrder;
 	command.blendMode = sortable ? MATERIAL_RESOURCE_BLEND_OPAQUE : MATERIAL_RESOURCE_BLEND_GUI;
 	command.cullType = CT_FRONT_SIDED;
+	command.cullSortKey = R_ModernGLSubmitPlan_BuildCullSortKey( command );
 	command.originalSubmitOrder = originalOrder;
 	command.sortBucket = -1;
 	command.scissorX1 = 0;

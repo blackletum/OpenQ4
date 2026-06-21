@@ -447,7 +447,8 @@ static idVec3 R_ModernClusteredLighting_LightColor( const viewLight_t *vLight ) 
 	const float *lightRegs = vLight != NULL ? vLight->shaderRegisters : NULL;
 
 	if ( lightShader != NULL && lightRegs != NULL ) {
-		for ( int stageIndex = 0; stageIndex < lightShader->GetNumStages(); ++stageIndex ) {
+		const int stageCount = lightShader->GetNumStages();
+		for ( int stageIndex = 0; stageIndex < stageCount; ++stageIndex ) {
 			const shaderStage_t *stage = lightShader->GetStage( stageIndex );
 			if ( stage == NULL || lightRegs[ stage->conditionRegister ] == 0.0f ) {
 				continue;
@@ -801,7 +802,8 @@ static int R_ModernClusteredLighting_CountViewLights( const viewDef_t *viewDef )
 	for ( const viewLight_t *vLight = viewDef->viewLights; vLight != NULL; vLight = vLight->next ) {
 		const idMaterial *lightShader = R_ModernClusteredLighting_ResolvedLightShader( vLight );
 		if ( R_ModernClusteredLighting_UsePerStageDescriptors( vLight, lightShader ) ) {
-			for ( int stageIndex = 0; stageIndex < lightShader->GetNumStages(); ++stageIndex ) {
+			const int stageCount = lightShader->GetNumStages();
+			for ( int stageIndex = 0; stageIndex < stageCount; ++stageIndex ) {
 				idVec3 stageColor;
 				if ( R_ModernClusteredLighting_StageContributionColor( lightShader->GetStage( stageIndex ), vLight->shaderRegisters, stageColor ) ) {
 					count++;
@@ -944,7 +946,8 @@ static const idImage *R_ModernClusteredLighting_FirstStageImage( const viewLight
 	}
 	const float *lightRegs = vLight != NULL ? vLight->shaderRegisters : NULL;
 	const idImage *fallbackImage = NULL;
-	for ( int stageIndex = 0; stageIndex < material->GetNumStages(); ++stageIndex ) {
+	const int stageCount = material->GetNumStages();
+	for ( int stageIndex = 0; stageIndex < stageCount; ++stageIndex ) {
 		const shaderStage_t *stage = material->GetStage( stageIndex );
 		if ( stage == NULL || stage->texture.image == NULL ) {
 			continue;
@@ -1197,7 +1200,8 @@ static bool R_ModernClusteredLighting_AddLight( modernClusterGridRecord_t &grid,
 	const idMaterial *lightShader = R_ModernClusteredLighting_LightShader( vLight );
 	if ( R_ModernClusteredLighting_UsePerStageDescriptors( vLight, lightShader ) ) {
 		int appendedStages = 0;
-		for ( int stageIndex = 0; stageIndex < lightShader->GetNumStages(); ++stageIndex ) {
+		const int stageCount = lightShader->GetNumStages();
+		for ( int stageIndex = 0; stageIndex < stageCount; ++stageIndex ) {
 			const shaderStage_t *lightStage = lightShader->GetStage( stageIndex );
 			idVec3 stageColor;
 			if ( !R_ModernClusteredLighting_StageContributionColor( lightStage, vLight->shaderRegisters, stageColor ) ) {
@@ -1358,7 +1362,8 @@ static void R_ModernClusteredLighting_BuildFrame( const idScenePacketFrame &pack
 	stats.lightCapacity = rg_clusteredLightingFrame.lightCapacity;
 	stats.indexRecordCapacity = rg_clusteredLightingFrame.indexRecordCapacity;
 	stats.shadowDescriptorCapacity = rg_clusteredLightingFrame.shadowDescriptorCapacity;
-	stats.sceneCount = packetFrame.NumScenes();
+	const int sceneCount = packetFrame.NumScenes();
+	stats.sceneCount = sceneCount;
 	R_ModernClusteredLighting_SetStatus( stats, requested ? "unavailable" : "off" );
 
 	if ( !requested ) {
@@ -1374,7 +1379,7 @@ static void R_ModernClusteredLighting_BuildFrame( const idScenePacketFrame &pack
 
 	const int startMsec = Sys_Milliseconds();
 	const rendererBenchmarkBudget_t &budget = RendererBenchmarks_CurrentBudget();
-	for ( int sceneIndex = 0; sceneIndex < packetFrame.NumScenes(); ++sceneIndex ) {
+	for ( int sceneIndex = 0; sceneIndex < sceneCount; ++sceneIndex ) {
 		const scenePacket_t &scene = packetFrame.Scene( sceneIndex );
 		if ( scene.viewDef == NULL ) {
 			continue;

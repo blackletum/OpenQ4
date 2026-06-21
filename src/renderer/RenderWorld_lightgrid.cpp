@@ -2346,7 +2346,8 @@ static lightGridPackedImageLoadResult_t LightGrid_LoadPackedImageRef( const ligh
 	opts.numLevels = header.numLevels;
 	opts.gammaMips = false;
 	image->AllocImage( opts, TF_LINEAR, TR_CLAMP );
-	for ( int i = 0; i < packedImage.NumImages(); i++ ) {
+	const int imageCount = packedImage.NumImages();
+	for ( int i = 0; i < imageCount; i++ ) {
 		const bimageImage_t &img = packedImage.GetImageHeader( i );
 		image->SubImageUpload( img.level, 0, 0, img.destZ, img.width, img.height, packedImage.GetImageData( i ) );
 	}

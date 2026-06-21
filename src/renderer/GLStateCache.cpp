@@ -323,21 +323,25 @@ bool idGLStateCache::BindBuffersBase( GLenum target, GLuint first, GLsizei count
 		return issued;
 	}
 
-	bool allCached = true;
+	int firstDirty = -1;
+	int lastDirty = -1;
 	for ( GLsizei i = 0; i < count; ++i ) {
 		cachedBufferBaseBinding_t *cached = BufferBaseBindingForTarget( target, first + i );
 		if ( cached == NULL || !cached->valid || cached->range || cached->buffer != buffers[i] ) {
-			allCached = false;
-			break;
+			if ( firstDirty < 0 ) {
+				firstDirty = i;
+			}
+			lastDirty = i;
 		}
 	}
-	if ( allCached ) {
+	if ( firstDirty < 0 ) {
 		stats.hits += count;
 		return false;
 	}
 
-	glBindBuffersBase( target, first, count, buffers );
-	for ( GLsizei i = 0; i < count; ++i ) {
+	glBindBuffersBase( target, first + firstDirty, lastDirty - firstDirty + 1, buffers + firstDirty );
+	stats.hits += firstDirty + ( count - 1 - lastDirty );
+	for ( GLsizei i = firstDirty; i <= lastDirty; ++i ) {
 		cachedBufferBaseBinding_t *cached = BufferBaseBindingForTarget( target, first + i );
 		if ( cached != NULL ) {
 			if ( cached->valid && !cached->range && cached->buffer == buffers[i] ) {
@@ -377,11 +381,11 @@ bool idGLStateCache::BindTexture( int unit, GLenum target, GLuint texture ) {
 	if ( unit < 0 || unit >= TextureUnitCount() || slot < 0 ) {
 		return false;
 	}
-	ActiveTextureUnit( unit );
 	if ( textures[unit][slot].valid && textures[unit][slot].value == texture ) {
 		RecordHit();
 		return false;
 	}
+	ActiveTextureUnit( unit );
 	glBindTexture( target, texture );
 	textures[unit][slot].valid = true;
 	textures[unit][slot].value = texture;
@@ -421,21 +425,26 @@ bool idGLStateCache::BindTextures( GLuint first, GLsizei count, const GLuint *te
 	}
 
 	const int texture2DSlot = TextureTargetSlot( GL_TEXTURE_2D );
-	bool allCached = texture2DSlot >= 0;
-	for ( GLsizei i = 0; i < clampedCount && allCached; ++i ) {
+	int firstDirty = -1;
+	int lastDirty = -1;
+	for ( GLsizei i = 0; i < clampedCount; ++i ) {
 		const int unit = static_cast<int>( first + i );
 		if ( !textures[unit][texture2DSlot].valid || textures[unit][texture2DSlot].value != textureNames[i] ) {
-			allCached = false;
+			if ( firstDirty < 0 ) {
+				firstDirty = i;
+			}
+			lastDirty = i;
 		}
 	}
-	if ( allCached ) {
+	if ( firstDirty < 0 ) {
 		stats.hits += clampedCount;
 		return false;
 	}
 
-	glBindTextures( first, clampedCount, textureNames );
+	glBindTextures( first + firstDirty, lastDirty - firstDirty + 1, textureNames + firstDirty );
 	stats.textureMultiBindBatches++;
-	for ( GLsizei i = 0; i < clampedCount; ++i ) {
+	stats.hits += firstDirty + ( clampedCount - 1 - lastDirty );
+	for ( GLsizei i = firstDirty; i <= lastDirty; ++i ) {
 		const int unit = static_cast<int>( first + i );
 		bool unitChanged = texture2DSlot < 0 || !textures[unit][texture2DSlot].valid || textures[unit][texture2DSlot].value != textureNames[i];
 		memset( textures[unit], 0, sizeof( textures[unit] ) );
@@ -468,22 +477,26 @@ bool idGLStateCache::BindSamplers( GLuint first, GLsizei count, const GLuint *sa
 		return issued;
 	}
 
-	bool allCached = true;
+	int firstDirty = -1;
+	int lastDirty = -1;
 	for ( GLsizei i = 0; i < clampedCount; ++i ) {
 		const int unit = static_cast<int>( first + i );
 		if ( !samplers[unit].valid || samplers[unit].value != samplerNames[i] ) {
-			allCached = false;
-			break;
+			if ( firstDirty < 0 ) {
+				firstDirty = i;
+			}
+			lastDirty = i;
 		}
 	}
-	if ( allCached ) {
+	if ( firstDirty < 0 ) {
 		stats.hits += clampedCount;
 		return false;
 	}
 
-	glBindSamplers( first, clampedCount, samplerNames );
+	glBindSamplers( first + firstDirty, lastDirty - firstDirty + 1, samplerNames + firstDirty );
 	stats.samplerMultiBindBatches++;
-	for ( GLsizei i = 0; i < clampedCount; ++i ) {
+	stats.hits += firstDirty + ( clampedCount - 1 - lastDirty );
+	for ( GLsizei i = firstDirty; i <= lastDirty; ++i ) {
 		const int unit = static_cast<int>( first + i );
 		if ( !samplers[unit].valid || samplers[unit].value != samplerNames[i] ) {
 			RecordMiss( stats.samplerMisses );

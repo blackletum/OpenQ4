@@ -336,8 +336,10 @@ static void R_RenderGraphResources_ResetFrameRecords( const idRenderGraph &graph
 	rg_renderGraphResourceStats.lowOverheadReady = R_RenderGraphResources_CanUseLowOverheadObjects();
 	rg_renderGraphResourceStats.width = glConfig.vidWidth;
 	rg_renderGraphResourceStats.height = glConfig.vidHeight;
-	rg_renderGraphResourceStats.graphPasses = graph.NumPasses();
-	rg_renderGraphResourceStats.graphResources = graph.NumResources();
+	const int graphPassCount = graph.NumPasses();
+	const int graphResourceCount = graph.NumResources();
+	rg_renderGraphResourceStats.graphPasses = graphPassCount;
+	rg_renderGraphResourceStats.graphResources = graphResourceCount;
 	R_RenderGraphResources_SetStatus( available ? "ready" : "unavailable" );
 
 	for ( int i = 0; i < RENDER_GRAPH_RESOURCE_MAX_PHYSICAL_ALLOCATIONS; ++i ) {
@@ -363,10 +365,11 @@ static void R_RenderGraphResources_ResetFrameRecords( const idRenderGraph &graph
 }
 
 static void R_RenderGraphResources_CopyPassRecords( const idRenderGraph &graph ) {
-	const int passCount = Min( graph.NumPasses(), RENDER_GRAPH_RESOURCE_MAX_PASS_RECORDS );
+	const int graphPassCount = graph.NumPasses();
+	const int passCount = Min( graphPassCount, RENDER_GRAPH_RESOURCE_MAX_PASS_RECORDS );
 	rg_renderGraphResourcePassCount = passCount;
 	rg_renderGraphResourceStats.passRecords = passCount;
-	if ( graph.NumPasses() > RENDER_GRAPH_RESOURCE_MAX_PASS_RECORDS ) {
+	if ( graphPassCount > RENDER_GRAPH_RESOURCE_MAX_PASS_RECORDS ) {
 		rg_renderGraphResourceStats.overflow = true;
 	}
 	for ( int i = 0; i < passCount; ++i ) {
@@ -834,7 +837,8 @@ static void R_RenderGraphResources_ValidateHandleLifetime( const renderGraphReso
 }
 
 static void R_RenderGraphResources_AddGraphHandles( const idRenderGraph &graph ) {
-	for ( int i = 0; i < graph.NumResources(); ++i ) {
+	const int graphResourceCount = graph.NumResources();
+	for ( int i = 0; i < graphResourceCount; ++i ) {
 		renderGraphResourceHandle_t *handle = R_RenderGraphResources_AddHandle();
 		if ( handle == NULL ) {
 			return;

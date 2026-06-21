@@ -11,7 +11,9 @@ idModernGLDrawPlan::idModernGLDrawPlan()
 }
 
 void idModernGLDrawPlan::Clear( void ) {
+#ifdef _DEBUG
 	memset( entries, 0, sizeof( entries ) );
+#endif
 	memset( &stats, 0, sizeof( stats ) );
 	idStr::Copynz( stats.status, "empty", sizeof( stats.status ) );
 	numEntries = 0;
@@ -85,14 +87,19 @@ static bool R_ModernGLDrawPlan_CategoryPipeline( renderPassCategory_t category, 
 	}
 }
 
-static bool R_ModernGLDrawPlan_HasGraphPass( const idRenderGraph &graph, renderPassCategory_t category ) {
-	for ( int i = 0; i < graph.NumPasses(); ++i ) {
-		const renderGraphPass_t &pass = graph.Pass( i );
-		if ( pass.category == category && pass.enabled && pass.packetBacked ) {
-			return true;
-		}
+typedef struct modernGLDrawPlanBuildContext_s {
+	unsigned int	packetBackedPassMask;
+	bool			modernVisibleRequested;
+	bool			gBufferRequested;
+	bool			forwardPlusRequested;
+	const modernGLShaderProgramInfo_t *programs[MODERN_GL_SHADER_PROGRAM_KIND_COUNT];
+} modernGLDrawPlanBuildContext_t;
+
+static bool R_ModernGLDrawPlan_HasGraphPass( const modernGLDrawPlanBuildContext_t &context, renderPassCategory_t category ) {
+	if ( category < RENDER_PASS_DEPTH || category > RENDER_PASS_PRESENT ) {
+		return false;
 	}
-	return false;
+	return ( context.packetBackedPassMask & ( 1u << static_cast<unsigned int>( category ) ) ) != 0;
 }
 
 static bool R_ModernGLDrawPlan_IsDepthPipeline( modernGLDrawPlanPipeline_t pipeline ) {
@@ -130,10 +137,6 @@ static geometryResourceFallbackReason_t R_ModernGLDrawPlan_GeometryFallbackReaso
 	return GEOMETRY_RESOURCE_FALLBACK_NONE;
 }
 
-static bool R_ModernGLDrawPlan_ModernVisibleRequested( void ) {
-	return r_rendererModernVisible.GetBool() || RendererBootstrap_ShouldAutoPromoteModernVisible();
-}
-
 static bool R_ModernGLDrawPlan_NeedsLegacySoftParticlePath( const drawPacket_t &draw ) {
 	return draw.passCategory == RENDER_PASS_AMBIENT
 		&& RB_DrawSurfHasSoftParticleStage( draw.legacyDrawSurf );
@@ -162,12 +165,8 @@ static void R_ModernGLDrawPlan_CountGeometryFallback( modernGLDrawPlanStats_t &s
 	}
 }
 
-static bool R_ModernGLDrawPlan_ShouldUseGBuffer( const materialResourceTableRecord_t &materialRecord ) {
-	if ( !R_ModernGLDrawPlan_ModernVisibleRequested()
-		&& !r_rendererModernOpaque.GetBool()
-		&& r_rendererModernGBufferDebug.GetInteger() <= 0
-		&& !r_rendererModernDeferred.GetBool()
-		&& r_rendererModernDeferredDebug.GetInteger() <= 0 ) {
+static bool R_ModernGLDrawPlan_ShouldUseGBuffer( const modernGLDrawPlanBuildContext_t &context, const materialResourceTableRecord_t &materialRecord ) {
+	if ( !context.gBufferRequested ) {
 		return false;
 	}
 	return materialRecord.materialClass == RENDER_MATERIAL_OPAQUE
@@ -182,19 +181,7 @@ static bool R_ModernGLDrawPlan_IsForwardPlusDecalDraw( const drawPacket_t &draw,
 }
 
 static bool R_ModernGLDrawPlan_RecordHasRenderableColorBinding( const materialResourceTableRecord_t &materialRecord ) {
-	for ( int i = 0; i < materialRecord.textureBindingCount; ++i ) {
-		const materialResourceTextureBinding_t &binding = materialRecord.textures[i];
-		if ( binding.textureHandle == 0 ) {
-			continue;
-		}
-		if ( binding.semantic == MATERIAL_RESOURCE_TEXTURE_DIFFUSE
-			|| binding.semantic == MATERIAL_RESOURCE_TEXTURE_EMISSIVE
-			|| binding.semantic == MATERIAL_RESOURCE_TEXTURE_GUI
-			|| binding.semantic == MATERIAL_RESOURCE_TEXTURE_POST_PROCESS ) {
-			return true;
-		}
-	}
-	return false;
+	return materialRecord.renderableColorTextureMask != 0;
 }
 
 static bool R_ModernGLDrawPlan_MaterialFallbackAllowedForForwardPlus( const drawPacket_t &draw, const materialResourceTableRecord_t &materialRecord ) {
@@ -216,8 +203,8 @@ static bool R_ModernGLDrawPlan_MaterialFallbackAllowedForForwardPlus( const draw
 	return ( materialRecord.fallbackFlags & ~decalHandledFallbacks ) == 0;
 }
 
-static bool R_ModernGLDrawPlan_ShouldUseForwardPlus( const drawPacket_t &draw, const materialResourceTableRecord_t &materialRecord, modernGLDrawPlanPipeline_t &pipeline, modernGLShaderProgramKind_t &shaderKind ) {
-	if ( !R_ModernGLDrawPlan_ModernVisibleRequested() && !r_rendererForwardPlus.GetBool() ) {
+static bool R_ModernGLDrawPlan_ShouldUseForwardPlus( const modernGLDrawPlanBuildContext_t &context, const drawPacket_t &draw, const materialResourceTableRecord_t &materialRecord, modernGLDrawPlanPipeline_t &pipeline, modernGLShaderProgramKind_t &shaderKind ) {
+	if ( !context.forwardPlusRequested ) {
 		return false;
 	}
 	if ( materialRecord.materialClass == RENDER_MATERIAL_GUI
@@ -347,8 +334,24 @@ bool idModernGLDrawPlan::Build( const idScenePacketFrame &packetFrame, const idR
 	bool haveTransparentSortKey = false;
 	bool havePrevious = false;
 
+	modernGLDrawPlanBuildContext_t context;
+	memset( &context, 0, sizeof( context ) );
+	context.packetBackedPassMask = graph.PacketBackedPassCategoryMask();
+	context.modernVisibleRequested = r_rendererModernVisible.GetBool() || RendererBootstrap_ShouldAutoPromoteModernVisible();
+	context.gBufferRequested =
+		context.modernVisibleRequested
+		|| r_rendererModernOpaque.GetBool()
+		|| r_rendererModernGBufferDebug.GetInteger() > 0
+		|| r_rendererModernDeferred.GetBool()
+		|| r_rendererModernDeferredDebug.GetInteger() > 0;
+	context.forwardPlusRequested = context.modernVisibleRequested || r_rendererForwardPlus.GetBool();
+	for ( int kind = 0; kind < MODERN_GL_SHADER_PROGRAM_KIND_COUNT; ++kind ) {
+		context.programs[kind] = R_ModernGLShaderLibrary_FindProgram( static_cast<modernGLShaderProgramKind_t>( kind ), shaderStats.highestGLSLVersion );
+	}
+
 	stats.available = true;
-	for ( int i = 0; i < packetFrame.NumDrawPackets(); ++i ) {
+	const int drawPacketCount = packetFrame.NumDrawPackets();
+	for ( int i = 0; i < drawPacketCount; ++i ) {
 		const drawPacket_t &draw = packetFrame.DrawPacket( i );
 		modernGLDrawPlanPipeline_t pipeline;
 		modernGLShaderProgramKind_t shaderKind;
@@ -356,7 +359,7 @@ bool idModernGLDrawPlan::Build( const idScenePacketFrame &packetFrame, const idR
 			stats.fallbackDraws++;
 			continue;
 		}
-		if ( !R_ModernGLDrawPlan_HasGraphPass( graph, draw.passCategory ) ) {
+		if ( !R_ModernGLDrawPlan_HasGraphPass( context, draw.passCategory ) ) {
 			stats.fallbackDraws++;
 			continue;
 		}
@@ -389,7 +392,7 @@ bool idModernGLDrawPlan::Build( const idScenePacketFrame &packetFrame, const idR
 			stats.missingMaterialTableDraws++;
 			continue;
 		}
-		const bool forwardPlusCandidate = R_ModernGLDrawPlan_ShouldUseForwardPlus( draw, *materialRecord, pipeline, shaderKind );
+		const bool forwardPlusCandidate = R_ModernGLDrawPlan_ShouldUseForwardPlus( context, draw, *materialRecord, pipeline, shaderKind );
 		if ( materialRecord->fallbackReason != MATERIAL_RESOURCE_FALLBACK_NONE
 			&& ( !forwardPlusCandidate || !R_ModernGLDrawPlan_MaterialFallbackAllowedForForwardPlus( draw, *materialRecord ) ) ) {
 			stats.fallbackDraws++;
@@ -397,14 +400,14 @@ bool idModernGLDrawPlan::Build( const idScenePacketFrame &packetFrame, const idR
 			continue;
 		}
 
-		if ( !forwardPlusCandidate && draw.passCategory == RENDER_PASS_AMBIENT && R_ModernGLDrawPlan_ShouldUseGBuffer( *materialRecord ) ) {
+		if ( !forwardPlusCandidate && draw.passCategory == RENDER_PASS_AMBIENT && R_ModernGLDrawPlan_ShouldUseGBuffer( context, *materialRecord ) ) {
 			pipeline = MODERN_GL_DRAW_PLAN_PIPELINE_GBUFFER;
 			shaderKind = ( materialRecord->alphaTest || materialRecord->materialClass == RENDER_MATERIAL_PERFORATED )
 				? MODERN_GL_SHADER_GBUFFER_ALPHA_TEST
 				: MODERN_GL_SHADER_GBUFFER_OPAQUE;
 		}
 
-		const modernGLShaderProgramInfo_t *program = R_ModernGLShaderLibrary_FindProgram( shaderKind, shaderStats.highestGLSLVersion );
+		const modernGLShaderProgramInfo_t *program = ( shaderKind >= 0 && shaderKind < MODERN_GL_SHADER_PROGRAM_KIND_COUNT ) ? context.programs[shaderKind] : NULL;
 		if ( program == NULL || program->program == 0 || !program->linked ) {
 			stats.fallbackDraws++;
 			continue;
@@ -583,7 +586,8 @@ bool RendererModernGLDrawPlan_RunSelfTest( void ) {
 		}
 		bool sawDepth = false;
 		bool sawMaterial = false;
-		for ( int i = 0; i < plan.NumEntries(); ++i ) {
+		const int planEntryCount = plan.NumEntries();
+		for ( int i = 0; i < planEntryCount; ++i ) {
 			const modernGLDrawPlanEntry_t &entry = plan.Entry( i );
 			sawDepth = sawDepth || entry.shaderKind == MODERN_GL_SHADER_DEPTH;
 			sawMaterial = sawMaterial || R_ModernGLDrawPlan_IsMaterialPipeline( entry.pipeline );

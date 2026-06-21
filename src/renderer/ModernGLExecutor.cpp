@@ -1659,7 +1659,8 @@ static void R_ModernGLExecutor_FinalizeModernVisibleCompatibility( const idScene
 	}
 
 	int guiReadyDraws = 0;
-	for ( int i = 0; i < submitPlan.NumCommands(); ++i ) {
+	const int commandCount = submitPlan.NumCommands();
+	for ( int i = 0; i < commandCount; ++i ) {
 		const modernGLSubmitCommand_t &command = submitPlan.Command( i );
 		if ( command.pipeline != MODERN_GL_DRAW_PLAN_PIPELINE_GUI ) {
 			continue;
@@ -1705,7 +1706,8 @@ static void R_ModernGLExecutor_SetOwnershipBlocker(
 }
 
 static int R_ModernGLExecutor_ViewIndexForViewDef( const idScenePacketFrame &packetFrame, const viewDef_t *viewDef ) {
-	for ( int i = 0; i < packetFrame.NumScenes(); ++i ) {
+	const int sceneCount = packetFrame.NumScenes();
+	for ( int i = 0; i < sceneCount; ++i ) {
 		if ( packetFrame.Scene( i ).viewDef == viewDef ) {
 			return i;
 		}
@@ -1730,7 +1732,8 @@ static bool R_ModernGLExecutor_DrawPacketUsesLegacySidecarView( const drawPacket
 
 static int R_ModernGLExecutor_CountPassDraws( const idScenePacketFrame &packetFrame, renderPassCategory_t category ) {
 	int count = 0;
-	for ( int i = 0; i < packetFrame.NumDrawPackets(); ++i ) {
+	const int drawPacketCount = packetFrame.NumDrawPackets();
+	for ( int i = 0; i < drawPacketCount; ++i ) {
 		const drawPacket_t &draw = packetFrame.DrawPacket( i );
 		if ( draw.passCategory == category && !R_ModernGLExecutor_DrawPacketUsesLegacySidecarView( draw ) ) {
 			count++;
@@ -1741,7 +1744,8 @@ static int R_ModernGLExecutor_CountPassDraws( const idScenePacketFrame &packetFr
 
 static int R_ModernGLExecutor_FirstContributingLightIndex( const idScenePacketFrame &packetFrame, renderPassCategory_t category, int &viewIndex ) {
 	viewIndex = -1;
-	for ( int sceneIndex = 0; sceneIndex < packetFrame.NumScenes(); ++sceneIndex ) {
+	const int sceneCount = packetFrame.NumScenes();
+	for ( int sceneIndex = 0; sceneIndex < sceneCount; ++sceneIndex ) {
 		const viewDef_t *viewDef = packetFrame.Scene( sceneIndex ).viewDef;
 		if ( viewDef == NULL || R_ModernGLExecutor_ViewDefUsesLegacySidecar( viewDef ) ) {
 			continue;
@@ -1809,7 +1813,8 @@ static bool R_ModernGLExecutor_DrawPacketIsForwardPlusDecal( const drawPacket_t 
 static bool R_ModernGLExecutor_DecalFallbackAllowedForForwardPlus( const materialResourceTableRecord_t &materialRecord, const drawPacket_t *draw );
 
 static void R_ModernGLExecutor_RecordPacketFallbackBlockers( const idScenePacketFrame &packetFrame, modernGLExecutorStats_t &stats ) {
-	for ( int i = 0; i < packetFrame.NumDrawPackets(); ++i ) {
+	const int drawPacketCount = packetFrame.NumDrawPackets();
+	for ( int i = 0; i < drawPacketCount; ++i ) {
 		const drawPacket_t &draw = packetFrame.DrawPacket( i );
 		const bool materialPass =
 			draw.passCategory == RENDER_PASS_DEPTH ||
@@ -1962,7 +1967,8 @@ static bool R_ModernGLExecutor_DrawPacketSupportsGpuDrivenValidation( const draw
 }
 
 static bool R_ModernGLExecutor_FrameSupportsGpuDrivenValidation( const idScenePacketFrame &packetFrame ) {
-	for ( int i = 0; i < packetFrame.NumDrawPackets(); ++i ) {
+	const int drawPacketCount = packetFrame.NumDrawPackets();
+	for ( int i = 0; i < drawPacketCount; ++i ) {
 		if ( R_ModernGLExecutor_DrawPacketSupportsGpuDrivenValidation( packetFrame.DrawPacket( i ) ) ) {
 			return true;
 		}
@@ -2176,7 +2182,8 @@ static void R_ModernGLExecutor_AnalyzeFrame(
 		return;
 	}
 
-	for ( int i = 0; i < graph.NumPasses(); ++i ) {
+	const int graphPassCount = graph.NumPasses();
+	for ( int i = 0; i < graphPassCount; ++i ) {
 		const renderGraphPass_t &pass = graph.Pass( i );
 		R_ModernGLExecutor_CountModernVisibleOwner( pass, stats );
 		if ( pass.enabled && pass.packetBacked ) {
@@ -2186,7 +2193,8 @@ static void R_ModernGLExecutor_AnalyzeFrame(
 		}
 	}
 
-	for ( int i = 0; i < packetFrame.NumDrawPackets(); ++i ) {
+	const int drawPacketCount = packetFrame.NumDrawPackets();
+	for ( int i = 0; i < drawPacketCount; ++i ) {
 		const drawPacket_t &draw = packetFrame.DrawPacket( i );
 		if ( draw.geometryRecord != NULL ) {
 			stats.geometryDrawPackets++;
@@ -2524,6 +2532,10 @@ static void R_ModernGLExecutor_ApplyCommandCullState( const modernGLSubmitComman
 	R_GLStateCache().SetCullFace( cullFace );
 }
 
+static const materialResourceTableRecord_t *R_ModernGLExecutor_MaterialRecordForCommand( const modernGLSubmitCommand_t &command ) {
+	return command.materialRecord != NULL ? command.materialRecord : R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
+}
+
 static const materialResourceTextureBinding_t *R_ModernGLExecutor_FindTextureBinding( const materialResourceTableRecord_t &record, materialResourceTextureSemantic_t semantic );
 static float R_ModernGLExecutor_ShaderRegisterValue( const modernGLSubmitCommand_t &command, int registerIndex, float fallbackValue );
 static bool R_ModernGLExecutor_CommandMaterialColor( const modernGLSubmitCommand_t &command, float color[4] );
@@ -2644,19 +2656,7 @@ static bool R_ModernGLExecutor_DrawPacketIsForwardPlusDecal( const drawPacket_t 
 }
 
 static bool R_ModernGLExecutor_RecordHasRenderableColorBinding( const materialResourceTableRecord_t &materialRecord ) {
-	for ( int i = 0; i < materialRecord.textureBindingCount; ++i ) {
-		const materialResourceTextureBinding_t &binding = materialRecord.textures[i];
-		if ( binding.textureHandle == 0 ) {
-			continue;
-		}
-		if ( binding.semantic == MATERIAL_RESOURCE_TEXTURE_DIFFUSE
-			|| binding.semantic == MATERIAL_RESOURCE_TEXTURE_EMISSIVE
-			|| binding.semantic == MATERIAL_RESOURCE_TEXTURE_GUI
-			|| binding.semantic == MATERIAL_RESOURCE_TEXTURE_POST_PROCESS ) {
-			return true;
-		}
-	}
-	return false;
+	return materialRecord.renderableColorTextureMask != 0;
 }
 
 static bool R_ModernGLExecutor_DecalFallbackAllowedForForwardPlus( const materialResourceTableRecord_t &materialRecord, const drawPacket_t *draw ) {
@@ -2679,19 +2679,6 @@ static bool R_ModernGLExecutor_DecalFallbackAllowedForForwardPlus( const materia
 	return ( materialRecord.fallbackFlags & ~decalHandledFallbacks ) == 0;
 }
 
-static bool R_ModernGLExecutor_IsForwardPlusDecalCommand( const modernGLSubmitCommand_t &command ) {
-	if ( command.pipeline != MODERN_GL_DRAW_PLAN_PIPELINE_FORWARD_PLUS_TRANSPARENT ) {
-		return false;
-	}
-	const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
-	if ( materialRecord == NULL ) {
-		return false;
-	}
-	const drawPacket_t *draw = command.drawPlanEntry != NULL ? command.drawPlanEntry->drawPacket : NULL;
-	return materialRecord->sortGroup == MATERIAL_RESOURCE_SORT_DECAL
-		|| ( draw != NULL && draw->legacyDrawSurf != NULL && draw->legacyDrawSurf->decalColorCache != NULL );
-}
-
 static void R_ModernGLExecutor_LocalParamsForCommand( const modernGLSubmitCommand_t &command, float params[4] ) {
 	params[0] = 0.0f;
 	params[1] = 0.0f;
@@ -2700,10 +2687,8 @@ static void R_ModernGLExecutor_LocalParamsForCommand( const modernGLSubmitComman
 	switch ( command.shaderKind ) {
 	case MODERN_GL_SHADER_DEPTH:
 	case MODERN_GL_SHADER_SHADOW_DEPTH: {
-		const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
-		const bool alphaTest = materialRecord != NULL && ( materialRecord->alphaTest || materialRecord->materialClass == RENDER_MATERIAL_PERFORATED );
 		params[0] = R_ModernGLExecutor_AlphaReferenceForCommand( command );
-		params[1] = alphaTest ? 1.0f : 0.0f;
+		params[1] = command.alphaTestOrPerforatedMaterial ? 1.0f : 0.0f;
 		break;
 	}
 	case MODERN_GL_SHADER_GBUFFER_ALPHA_TEST:
@@ -2723,7 +2708,7 @@ static void R_ModernGLExecutor_LocalParamsForCommand( const modernGLSubmitComman
 		break;
 	case MODERN_GL_SHADER_TRANSPARENT_FORWARD:
 	case MODERN_GL_SHADER_FOG_BLEND:
-		if ( command.shaderKind == MODERN_GL_SHADER_TRANSPARENT_FORWARD && R_ModernGLExecutor_IsForwardPlusDecalCommand( command ) ) {
+		if ( command.shaderKind == MODERN_GL_SHADER_TRANSPARENT_FORWARD && command.forwardPlusDecal ) {
 			params[3] = 1.0f;
 			break;
 		}
@@ -3521,13 +3506,7 @@ static void R_ModernGLExecutor_CountSubmittedFallback( modernGLExecutorStats_t &
 }
 
 static const materialResourceTextureBinding_t *R_ModernGLExecutor_FindTextureBinding( const materialResourceTableRecord_t &record, materialResourceTextureSemantic_t semantic ) {
-	for ( int i = 0; i < record.textureBindingCount; ++i ) {
-		const materialResourceTextureBinding_t &binding = record.textures[i];
-		if ( binding.semantic == semantic ) {
-			return &binding;
-		}
-	}
-	return NULL;
+	return R_MaterialResourceTable_TextureBindingForSemantic( record, semantic );
 }
 
 static const materialResourceTextureBinding_t *R_ModernGLExecutor_PrimaryColorBinding( const materialResourceTableRecord_t &record, modernGLShaderProgramKind_t shaderKind ) {
@@ -3551,7 +3530,7 @@ static bool R_ModernGLExecutor_CommandMaterialColor( const modernGLSubmitCommand
 	color[2] = 1.0f;
 	color[3] = 1.0f;
 
-	const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
+	const materialResourceTableRecord_t *materialRecord = R_ModernGLExecutor_MaterialRecordForCommand( command );
 	if ( materialRecord == NULL ) {
 		return false;
 	}
@@ -3565,110 +3544,48 @@ static bool R_ModernGLExecutor_CommandMaterialColor( const modernGLSubmitCommand
 	return true;
 }
 
-static GLuint R_ModernGLExecutor_ImageHandleOrZero( const idImage *image ) {
-	if ( image != NULL && image->IsLoaded() ) {
-		return const_cast<idImage *>( image )->GetDeviceHandle();
+static GLuint R_ModernGLExecutor_TextureForCommandSemantic( const modernGLSubmitCommand_t &command, materialResourceTextureSemantic_t semantic ) {
+	switch ( semantic ) {
+	case MATERIAL_RESOURCE_TEXTURE_BUMP:
+		return static_cast<GLuint>( command.materialTextureHandles[MODERN_GL_SUBMIT_MATERIAL_TEXTURE_NORMAL] );
+	case MATERIAL_RESOURCE_TEXTURE_SPECULAR:
+		return static_cast<GLuint>( command.materialTextureHandles[MODERN_GL_SUBMIT_MATERIAL_TEXTURE_SPECULAR] );
+	case MATERIAL_RESOURCE_TEXTURE_EMISSIVE:
+		return static_cast<GLuint>( command.materialTextureHandles[MODERN_GL_SUBMIT_MATERIAL_TEXTURE_EMISSIVE] );
+	case MATERIAL_RESOURCE_TEXTURE_DIFFUSE:
+	case MATERIAL_RESOURCE_TEXTURE_GUI:
+	case MATERIAL_RESOURCE_TEXTURE_POST_PROCESS:
+		return static_cast<GLuint>( command.materialTextureHandles[MODERN_GL_SUBMIT_MATERIAL_TEXTURE_MAIN] );
+	default:
+		break;
 	}
 	return 0;
 }
 
-static GLuint R_ModernGLExecutor_FallbackTextureForSemantic( materialResourceTextureSemantic_t semantic ) {
-	if ( globalImages == NULL ) {
-		return 0;
-	}
-	switch ( semantic ) {
-	case MATERIAL_RESOURCE_TEXTURE_BUMP:
-		if ( GLuint handle = R_ModernGLExecutor_ImageHandleOrZero( globalImages->flatNormalMap ) ) {
-			return handle;
-		}
-		break;
-	case MATERIAL_RESOURCE_TEXTURE_SPECULAR:
-	case MATERIAL_RESOURCE_TEXTURE_EMISSIVE:
-		if ( GLuint handle = R_ModernGLExecutor_ImageHandleOrZero( globalImages->blackImage ) ) {
-			return handle;
-		}
-		break;
-	default:
-		break;
-	}
-	if ( GLuint handle = R_ModernGLExecutor_ImageHandleOrZero( globalImages->whiteImage ) ) {
-		return handle;
-	}
-	return R_ModernGLExecutor_ImageHandleOrZero( globalImages->defaultImage );
-}
-
-static GLuint R_ModernGLExecutor_TextureForCommandSemantic( const modernGLSubmitCommand_t &command, materialResourceTextureSemantic_t semantic ) {
-	const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
-	if ( materialRecord != NULL ) {
-		const materialResourceTextureBinding_t *binding = R_ModernGLExecutor_FindTextureBinding( *materialRecord, semantic );
-		if ( binding != NULL && binding->textureHandle != 0 ) {
-			return static_cast<GLuint>( binding->textureHandle );
-		}
-	}
-	return R_ModernGLExecutor_FallbackTextureForSemantic( semantic );
-}
-
 static GLuint R_ModernGLExecutor_TextureForCommand( const modernGLSubmitCommand_t &command ) {
-	const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
-	if ( materialRecord != NULL ) {
-		materialResourceTextureSemantic_t semantics[3] = {
-			MATERIAL_RESOURCE_TEXTURE_DIFFUSE,
-			MATERIAL_RESOURCE_TEXTURE_GUI,
-			MATERIAL_RESOURCE_TEXTURE_POST_PROCESS
-		};
-		for ( int i = 0; i < 3; ++i ) {
-			const materialResourceTextureBinding_t *binding = R_ModernGLExecutor_FindTextureBinding( *materialRecord, semantics[i] );
-			if ( binding != NULL && binding->textureHandle != 0 ) {
-				return static_cast<GLuint>( binding->textureHandle );
-			}
-		}
-	}
-	return R_ModernGLExecutor_FallbackTextureForSemantic( MATERIAL_RESOURCE_TEXTURE_DIFFUSE );
-}
-
-static int R_ModernGLExecutor_TextureTableIndexForHandle( GLuint textureHandle ) {
-	return R_MaterialResourceTable_TextureArrayTableIndexForHandle( static_cast<unsigned int>( textureHandle ) );
-}
-
-static int R_ModernGLExecutor_TextureTableIndexForBinding( const materialResourceTextureBinding_t *binding ) {
-	if ( binding == NULL || binding->textureHandle == 0 ) {
-		return -1;
-	}
-	if ( binding->textureArrayCandidate && binding->textureArrayLayer >= 0 ) {
-		return binding->textureArrayLayer;
-	}
-	return R_ModernGLExecutor_TextureTableIndexForHandle( static_cast<GLuint>( binding->textureHandle ) );
+	return static_cast<GLuint>( command.materialTextureHandles[MODERN_GL_SUBMIT_MATERIAL_TEXTURE_MAIN] );
 }
 
 static int R_ModernGLExecutor_TextureTableIndexForCommandSemantic( const modernGLSubmitCommand_t &command, materialResourceTextureSemantic_t semantic ) {
-	const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
-	if ( materialRecord != NULL ) {
-		const materialResourceTextureBinding_t *binding = R_ModernGLExecutor_FindTextureBinding( *materialRecord, semantic );
-		const int bindingIndex = R_ModernGLExecutor_TextureTableIndexForBinding( binding );
-		if ( bindingIndex >= 0 ) {
-			return bindingIndex;
-		}
+	switch ( semantic ) {
+	case MATERIAL_RESOURCE_TEXTURE_BUMP:
+		return command.materialTextureTableIndices[MODERN_GL_SUBMIT_MATERIAL_TEXTURE_NORMAL];
+	case MATERIAL_RESOURCE_TEXTURE_SPECULAR:
+		return command.materialTextureTableIndices[MODERN_GL_SUBMIT_MATERIAL_TEXTURE_SPECULAR];
+	case MATERIAL_RESOURCE_TEXTURE_EMISSIVE:
+		return command.materialTextureTableIndices[MODERN_GL_SUBMIT_MATERIAL_TEXTURE_EMISSIVE];
+	case MATERIAL_RESOURCE_TEXTURE_DIFFUSE:
+	case MATERIAL_RESOURCE_TEXTURE_GUI:
+	case MATERIAL_RESOURCE_TEXTURE_POST_PROCESS:
+		return command.materialTextureTableIndices[MODERN_GL_SUBMIT_MATERIAL_TEXTURE_MAIN];
+	default:
+		break;
 	}
-	return R_ModernGLExecutor_TextureTableIndexForHandle( R_ModernGLExecutor_FallbackTextureForSemantic( semantic ) );
+	return -1;
 }
 
 static int R_ModernGLExecutor_MainTextureTableIndexForCommand( const modernGLSubmitCommand_t &command ) {
-	const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
-	if ( materialRecord != NULL ) {
-		const materialResourceTextureSemantic_t semantics[3] = {
-			MATERIAL_RESOURCE_TEXTURE_DIFFUSE,
-			MATERIAL_RESOURCE_TEXTURE_GUI,
-			MATERIAL_RESOURCE_TEXTURE_POST_PROCESS
-		};
-		for ( int i = 0; i < 3; ++i ) {
-			const materialResourceTextureBinding_t *binding = R_ModernGLExecutor_FindTextureBinding( *materialRecord, semantics[i] );
-			const int bindingIndex = R_ModernGLExecutor_TextureTableIndexForBinding( binding );
-			if ( bindingIndex >= 0 ) {
-				return bindingIndex;
-			}
-		}
-	}
-	return R_ModernGLExecutor_TextureTableIndexForHandle( R_ModernGLExecutor_FallbackTextureForSemantic( MATERIAL_RESOURCE_TEXTURE_DIFFUSE ) );
+	return command.materialTextureTableIndices[MODERN_GL_SUBMIT_MATERIAL_TEXTURE_MAIN];
 }
 
 static bool R_ModernGLExecutor_TextureTableIndicesForCommand( const modernGLSubmitCommand_t &command, GLuint indices[MODERN_GL_MATERIAL_TEXTURE_COUNT] ) {
@@ -3710,12 +3627,8 @@ static void R_ModernGLExecutor_SetTextureTableMode( const modernGLSubmitCommand_
 }
 
 static bool R_ModernGLExecutor_CommandHasTextureSemantic( const modernGLSubmitCommand_t &command, materialResourceTextureSemantic_t semantic ) {
-	const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
-	if ( materialRecord == NULL ) {
-		return false;
-	}
-	const materialResourceTextureBinding_t *binding = R_ModernGLExecutor_FindTextureBinding( *materialRecord, semantic );
-	return binding != NULL && binding->textureHandle != 0;
+	const unsigned int semanticBit = MaterialResourceTextureSemantic_Bit( semantic );
+	return semanticBit != 0 && ( command.materialLoadedTextureSemanticMask & semanticBit ) != 0;
 }
 
 static float R_ModernGLExecutor_ShaderRegisterValue( const modernGLSubmitCommand_t &command, int registerIndex, float fallbackValue ) {
@@ -3732,11 +3645,10 @@ static float R_ModernGLExecutor_ShaderRegisterValue( const modernGLSubmitCommand
 }
 
 static float R_ModernGLExecutor_AlphaReferenceForCommand( const modernGLSubmitCommand_t &command ) {
-	const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
-	if ( materialRecord == NULL || !materialRecord->alphaTest ) {
+	if ( !command.alphaTestMaterial ) {
 		return 0.5f;
 	}
-	return idMath::ClampFloat( 0.0f, 1.0f, R_ModernGLExecutor_ShaderRegisterValue( command, materialRecord->alphaTestRegister, 0.5f ) );
+	return idMath::ClampFloat( 0.0f, 1.0f, R_ModernGLExecutor_ShaderRegisterValue( command, command.materialAlphaTestRegister, 0.5f ) );
 }
 
 static void R_ModernGLExecutor_MaterialFlagsForCommand( const modernGLSubmitCommand_t &command, float flags[4] ) {
@@ -3810,7 +3722,6 @@ static void R_ModernGLExecutor_BindMaterialTextures( const modernGLSubmitCommand
 	if ( command.mainTextureLocation >= 0 ) {
 		const GLuint textureHandle = R_ModernGLExecutor_TextureForCommand( command );
 		if ( textureHandle != 0 ) {
-			R_GLStateCache().ActiveTextureUnit( MODERN_GL_MATERIAL_TEXTURE_MAIN );
 			if ( R_GLStateCache().BindTexture( MODERN_GL_MATERIAL_TEXTURE_MAIN, GL_TEXTURE_2D, textureHandle ) ) {
 				stats.lowOverheadClassicTextureBinds++;
 			}
@@ -3818,21 +3729,18 @@ static void R_ModernGLExecutor_BindMaterialTextures( const modernGLSubmitCommand
 	}
 	if ( command.normalTextureLocation >= 0 ) {
 		const GLuint textureHandle = R_ModernGLExecutor_TextureForCommandSemantic( command, MATERIAL_RESOURCE_TEXTURE_BUMP );
-		R_GLStateCache().ActiveTextureUnit( MODERN_GL_MATERIAL_TEXTURE_NORMAL );
 		if ( R_GLStateCache().BindTexture( MODERN_GL_MATERIAL_TEXTURE_NORMAL, GL_TEXTURE_2D, textureHandle ) ) {
 			stats.lowOverheadClassicTextureBinds++;
 		}
 	}
 	if ( command.specularTextureLocation >= 0 ) {
 		const GLuint textureHandle = R_ModernGLExecutor_TextureForCommandSemantic( command, MATERIAL_RESOURCE_TEXTURE_SPECULAR );
-		R_GLStateCache().ActiveTextureUnit( MODERN_GL_MATERIAL_TEXTURE_SPECULAR );
 		if ( R_GLStateCache().BindTexture( MODERN_GL_MATERIAL_TEXTURE_SPECULAR, GL_TEXTURE_2D, textureHandle ) ) {
 			stats.lowOverheadClassicTextureBinds++;
 		}
 	}
 	if ( command.emissiveTextureLocation >= 0 ) {
 		const GLuint textureHandle = R_ModernGLExecutor_TextureForCommandSemantic( command, MATERIAL_RESOURCE_TEXTURE_EMISSIVE );
-		R_GLStateCache().ActiveTextureUnit( MODERN_GL_MATERIAL_TEXTURE_EMISSIVE );
 		if ( R_GLStateCache().BindTexture( MODERN_GL_MATERIAL_TEXTURE_EMISSIVE, GL_TEXTURE_2D, textureHandle ) ) {
 			stats.lowOverheadClassicTextureBinds++;
 		}
@@ -3844,7 +3752,8 @@ static bool R_ModernGLExecutor_ExerciseMaterialTextureTableForSelfTest( modernGL
 	if ( !stats.materialTextureTableReady ) {
 		return false;
 	}
-	for ( int i = 0; i < rg_modernGLSubmitPlan.NumCommands(); ++i ) {
+	const int commandCount = rg_modernGLSubmitPlan.NumCommands();
+	for ( int i = 0; i < commandCount; ++i ) {
 		const modernGLSubmitCommand_t &command = rg_modernGLSubmitPlan.Command( i );
 		if ( command.program == 0 || command.textureIndicesLocation < 0 || command.textureTableModeLocation < 0 ) {
 			continue;
@@ -4170,7 +4079,7 @@ static void R_ModernGLExecutor_CountVisibleDepthFallback( const modernGLSubmitCo
 }
 
 static bool R_ModernGLExecutor_VisibleDepthMaterialSupported( const modernGLSubmitCommand_t &command, modernGLExecutorStats_t &stats ) {
-	const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
+	const materialResourceTableRecord_t *materialRecord = R_ModernGLExecutor_MaterialRecordForCommand( command );
 	if ( materialRecord == NULL || materialRecord->fallbackReason != MATERIAL_RESOURCE_FALLBACK_NONE ) {
 		stats.visibleDepthMaterialFallbackDraws++;
 		return false;
@@ -4220,8 +4129,7 @@ static bool R_ModernGLExecutor_VisibleDepthMaterialSupported( const modernGLSubm
 }
 
 static void R_ModernGLExecutor_CountVisibleDepthOwnedFeatures( const modernGLSubmitCommand_t &command, modernGLExecutorStats_t &stats ) {
-	const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
-	if ( materialRecord != NULL && ( materialRecord->alphaTest || materialRecord->materialClass == RENDER_MATERIAL_PERFORATED ) ) {
+	if ( command.alphaTestOrPerforatedMaterial ) {
 		stats.visibleDepthAlphaTestDraws++;
 	}
 	const drawPacket_t *draw = command.drawPlanEntry != NULL ? command.drawPlanEntry->drawPacket : NULL;
@@ -4265,7 +4173,8 @@ static void R_ModernGLExecutor_ExecuteVisibleDepthPass(
 	const char *passLabel ) {
 	idGLDebugScope passScope( passLabel );
 	R_GLStateCache().BindVertexArray( rg_modernGLExecutorVAO );
-	for ( int i = 0; i < rg_modernGLSubmitPlan.NumCommands(); ++i ) {
+	const int commandCount = rg_modernGLSubmitPlan.NumCommands();
+	for ( int i = 0; i < commandCount; ++i ) {
 		const modernGLSubmitCommand_t &command = rg_modernGLSubmitPlan.Command( i );
 		if ( command.pipeline != MODERN_GL_DRAW_PLAN_PIPELINE_DEPTH && command.pipeline != MODERN_GL_DRAW_PLAN_PIPELINE_SHADOW_DEPTH ) {
 			continue;
@@ -4315,7 +4224,8 @@ static void R_ModernGLExecutor_SubmitVisibleDepth( modernGLExecutorStats_t &stat
 			stats.visibleDepthResolveOps++;
 		}
 	} else {
-		for ( int i = 0; i < rg_modernGLSubmitPlan.NumCommands(); ++i ) {
+		const int commandCount = rg_modernGLSubmitPlan.NumCommands();
+		for ( int i = 0; i < commandCount; ++i ) {
 			const modernGLSubmitCommand_t &command = rg_modernGLSubmitPlan.Command( i );
 			if ( command.passCategory == RENDER_PASS_DEPTH ) {
 				stats.visibleDepthResourceFallbackDraws++;
@@ -4334,7 +4244,8 @@ static void R_ModernGLExecutor_SubmitVisibleDepth( modernGLExecutorStats_t &stat
 			stats.visibleDepthResolveOps++;
 		}
 	} else {
-		for ( int i = 0; i < rg_modernGLSubmitPlan.NumCommands(); ++i ) {
+		const int commandCount = rg_modernGLSubmitPlan.NumCommands();
+		for ( int i = 0; i < commandCount; ++i ) {
 			const modernGLSubmitCommand_t &command = rg_modernGLSubmitPlan.Command( i );
 			if ( command.passCategory == RENDER_PASS_SHADOW_MAP ) {
 				stats.visibleDepthResourceFallbackDraws++;
@@ -4747,7 +4658,7 @@ static bool R_ModernGLExecutor_MaterialContractPromotable( const materialResourc
 }
 
 static bool R_ModernGLExecutor_GBufferMaterialSupported( const modernGLSubmitCommand_t &command, modernGLExecutorStats_t &stats ) {
-	const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
+	const materialResourceTableRecord_t *materialRecord = R_ModernGLExecutor_MaterialRecordForCommand( command );
 	if ( materialRecord == NULL || materialRecord->fallbackReason != MATERIAL_RESOURCE_FALLBACK_NONE ) {
 		stats.opaqueGBufferMaterialFallbackDraws++;
 		return false;
@@ -4814,7 +4725,8 @@ static void R_ModernGLExecutor_SubmitGBuffer( modernGLExecutorStats_t &stats ) {
 	const renderGraphResourceHandle_t *sceneDepth = NULL;
 	const bool depthReady = R_ModernGLExecutor_DepthResourceReady( "sceneDepth", sceneDepth );
 	if ( !stats.opaqueGBufferResourcesReady || !depthReady || sceneDepth == NULL || !R_ModernGLExecutor_PrepareGBufferFBO( colorHandles, *sceneDepth, stats ) ) {
-		for ( int i = 0; i < rg_modernGLSubmitPlan.NumCommands(); ++i ) {
+		const int commandCount = rg_modernGLSubmitPlan.NumCommands();
+		for ( int i = 0; i < commandCount; ++i ) {
 			const modernGLSubmitCommand_t &command = rg_modernGLSubmitPlan.Command( i );
 			if ( command.pipeline == MODERN_GL_DRAW_PLAN_PIPELINE_GBUFFER ) {
 				stats.opaqueGBufferResourceFallbackDraws++;
@@ -4861,7 +4773,8 @@ static void R_ModernGLExecutor_SubmitGBuffer( modernGLExecutorStats_t &stats ) {
 
 	idGLDebugScope passScope( "ModernGLExecutor opaque G-buffer pass" );
 	R_GLStateCache().BindVertexArray( rg_modernGLExecutorVAO );
-	for ( int i = 0; i < rg_modernGLSubmitPlan.NumCommands(); ++i ) {
+	const int commandCount = rg_modernGLSubmitPlan.NumCommands();
+	for ( int i = 0; i < commandCount; ++i ) {
 		const modernGLSubmitCommand_t &command = rg_modernGLSubmitPlan.Command( i );
 		if ( command.pipeline != MODERN_GL_DRAW_PLAN_PIPELINE_GBUFFER ) {
 			continue;
@@ -4878,9 +4791,9 @@ static void R_ModernGLExecutor_SubmitGBuffer( modernGLExecutorStats_t &stats ) {
 			continue;
 		}
 		stats.opaqueGBufferDraws++;
-		const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
+		const materialResourceTableRecord_t *materialRecord = R_ModernGLExecutor_MaterialRecordForCommand( command );
 		if ( materialRecord != NULL ) {
-			if ( materialRecord->alphaTest || materialRecord->materialClass == RENDER_MATERIAL_PERFORATED ) {
+			if ( command.alphaTestOrPerforatedMaterial ) {
 				stats.opaqueGBufferAlphaTestDraws++;
 			}
 			if ( materialRecord->hasEmissive || materialRecord->hasDiffuse ) {
@@ -5078,7 +4991,6 @@ static void R_ModernGLExecutor_BindTextureGroup( GLuint first, GLsizei count, co
 	}
 
 	for ( GLsizei i = 0; i < count; ++i ) {
-		R_GLStateCache().ActiveTextureUnit( static_cast<int>( first + i ) );
 		if ( R_GLStateCache().BindTexture( static_cast<int>( first + i ), GL_TEXTURE_2D, textures[i] ) ) {
 			stats.lowOverheadClassicTextureBinds++;
 		}
@@ -5300,19 +5212,19 @@ static bool R_ModernGLExecutor_ForwardPlusCommandRequested( const modernGLExecut
 	if ( !R_ModernGLExecutor_IsForwardPlusPipeline( command.pipeline ) ) {
 		return false;
 	}
-	if ( stats.forwardPlusDecalOnlyRequested && !R_ModernGLExecutor_IsForwardPlusDecalCommand( command ) ) {
+	if ( stats.forwardPlusDecalOnlyRequested && !command.forwardPlusDecal ) {
 		return false;
 	}
 	return true;
 }
 
 static bool R_ModernGLExecutor_ForwardPlusMaterialSupported( const modernGLSubmitCommand_t &command, modernGLExecutorStats_t &stats ) {
-	const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
+	const materialResourceTableRecord_t *materialRecord = R_ModernGLExecutor_MaterialRecordForCommand( command );
 	if ( materialRecord == NULL ) {
 		stats.forwardPlusMaterialFallbackDraws++;
 		return false;
 	}
-	const bool decalMaterial = R_ModernGLExecutor_IsForwardPlusDecalCommand( command );
+	const bool decalMaterial = command.forwardPlusDecal;
 	if ( materialRecord->fallbackReason != MATERIAL_RESOURCE_FALLBACK_NONE
 		&& ( !decalMaterial || !R_ModernGLExecutor_DecalFallbackAllowedForForwardPlus( *materialRecord, command.drawPlanEntry != NULL ? command.drawPlanEntry->drawPacket : NULL ) ) ) {
 		stats.forwardPlusMaterialFallbackDraws++;
@@ -5462,7 +5374,8 @@ static void R_ModernGLExecutor_SubmitForwardPlus( modernGLExecutorStats_t &stats
 	stats.forwardPlusSceneColorReady = R_ModernGLExecutor_ForwardPlusSceneColorUsable( "sceneColor", sceneColor );
 	stats.forwardPlusSceneDepthReady = R_ModernGLExecutor_ForwardPlusSceneDepthUsable( "sceneDepth", sceneDepth );
 	if ( !stats.forwardPlusSceneColorReady || !stats.forwardPlusSceneDepthReady || sceneColor == NULL || sceneDepth == NULL || !R_ModernGLExecutor_PrepareForwardPlusFBO( *sceneColor, *sceneDepth, stats ) ) {
-		for ( int i = 0; i < rg_modernGLSubmitPlan.NumCommands(); ++i ) {
+		const int commandCount = rg_modernGLSubmitPlan.NumCommands();
+		for ( int i = 0; i < commandCount; ++i ) {
 			const modernGLSubmitCommand_t &command = rg_modernGLSubmitPlan.Command( i );
 			if ( R_ModernGLExecutor_ForwardPlusCommandRequested( stats, command ) ) {
 				stats.forwardPlusResourceFallbackDraws++;
@@ -5494,12 +5407,13 @@ static void R_ModernGLExecutor_SubmitForwardPlus( modernGLExecutorStats_t &stats
 		bool haveTransparentSort = false;
 		unsigned long long previousTransparentSort = 0;
 		int previousTransparentMaterial = -2;
-		for ( int i = 0; i < rg_modernGLSubmitPlan.NumCommands(); ++i ) {
+		const int commandCount = rg_modernGLSubmitPlan.NumCommands();
+		for ( int i = 0; i < commandCount; ++i ) {
 			const modernGLSubmitCommand_t &command = rg_modernGLSubmitPlan.Command( i );
 			if ( !R_ModernGLExecutor_ForwardPlusCommandRequested( stats, command ) ) {
 				continue;
 			}
-			const bool decalCommand = R_ModernGLExecutor_IsForwardPlusDecalCommand( command );
+			const bool decalCommand = command.forwardPlusDecal;
 			if ( !R_ModernGLExecutor_CommandVisibleForModernPath( command, &stats, false ) ) {
 				continue;
 			}
@@ -5531,8 +5445,7 @@ static void R_ModernGLExecutor_SubmitForwardPlus( modernGLExecutorStats_t &stats
 			}
 
 			if ( transparent ) {
-				const materialResourceTableRecord_t *transparentMaterialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
-				const bool decalMaterial = transparentMaterialRecord != NULL && R_ModernGLExecutor_IsForwardPlusDecalCommand( command );
+				const bool decalMaterial = command.forwardPlusDecal;
 				R_GLStateCache().SetBlendEnabled( true );
 				if ( command.blendMode == MATERIAL_RESOURCE_BLEND_ADD ) {
 					R_GLStateCache().SetBlendFunc( GL_ONE, GL_ONE );
@@ -5550,10 +5463,10 @@ static void R_ModernGLExecutor_SubmitForwardPlus( modernGLExecutorStats_t &stats
 				R_GLStateCache().SetBlendEnabled( false );
 				R_GLStateCache().SetDepthMask( GL_FALSE );
 			}
-			const materialResourceTableRecord_t *commandMaterialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
+			const materialResourceTableRecord_t *commandMaterialRecord = R_ModernGLExecutor_MaterialRecordForCommand( command );
 			const bool applyPolygonOffset = transparent
 				&& commandMaterialRecord != NULL
-				&& R_ModernGLExecutor_IsForwardPlusDecalCommand( command )
+				&& command.forwardPlusDecal
 				&& commandMaterialRecord->hasMaterialPolygonOffset;
 			if ( applyPolygonOffset ) {
 				glEnable( GL_POLYGON_OFFSET_FILL );
@@ -5677,10 +5590,11 @@ void R_ModernGLExecutor_SubmitForwardPlusDecalOverlay( const viewDef_t *viewDef 
 	R_GLStateCache().SetCullFaceEnabled( false );
 	R_GLStateCache().SetColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
 
-	for ( int i = 0; i < rg_modernGLSubmitPlan.NumCommands(); ++i ) {
+	const int commandCount = rg_modernGLSubmitPlan.NumCommands();
+	for ( int i = 0; i < commandCount; ++i ) {
 		const modernGLSubmitCommand_t &command = rg_modernGLSubmitPlan.Command( i );
 		if ( !R_ModernGLExecutor_CommandMatchesForwardPlusDecalOverlayView( command, viewDef )
-			|| !R_ModernGLExecutor_IsForwardPlusDecalCommand( command ) ) {
+			|| !command.forwardPlusDecal ) {
 			continue;
 		}
 		if ( !R_ModernGLExecutor_CommandVisibleForModernPath( command, &stats, false ) ) {
@@ -5700,7 +5614,7 @@ void R_ModernGLExecutor_SubmitForwardPlusDecalOverlay( const viewDef_t *viewDef 
 			R_GLStateCache().SetBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
 		}
 
-		const materialResourceTableRecord_t *materialRecord = R_MaterialResourceTable_RecordForIndex( command.materialTableIndex );
+		const materialResourceTableRecord_t *materialRecord = R_ModernGLExecutor_MaterialRecordForCommand( command );
 		const bool applyPolygonOffset = materialRecord != NULL && materialRecord->hasMaterialPolygonOffset;
 		if ( applyPolygonOffset ) {
 			glEnable( GL_POLYGON_OFFSET_FILL );
@@ -5745,7 +5659,8 @@ static void R_ModernGLExecutor_SubmitPlan( modernGLExecutorStats_t &stats ) {
 	R_GLStateCache().SetDepthMask( GL_FALSE );
 	R_GLStateCache().SetColorMask( GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE );
 
-	for ( int i = 0; i < rg_modernGLSubmitPlan.NumCommands(); ++i ) {
+	const int commandCount = rg_modernGLSubmitPlan.NumCommands();
+	for ( int i = 0; i < commandCount; ++i ) {
 		const modernGLSubmitCommand_t &command = rg_modernGLSubmitPlan.Command( i );
 		if ( command.pipeline == MODERN_GL_DRAW_PLAN_PIPELINE_GBUFFER || R_ModernGLExecutor_IsForwardPlusPipeline( command.pipeline ) ) {
 			continue;
@@ -5781,7 +5696,8 @@ static void R_ModernGLExecutor_SubmitModernGui( modernGLExecutorStats_t &stats )
 	R_GLStateCache().SetColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
 
 	int submittedGuiDraws = 0;
-	for ( int i = 0; i < rg_modernGLSubmitPlan.NumCommands(); ++i ) {
+	const int commandCount = rg_modernGLSubmitPlan.NumCommands();
+	for ( int i = 0; i < commandCount; ++i ) {
 		const modernGLSubmitCommand_t &command = rg_modernGLSubmitPlan.Command( i );
 		if ( command.pipeline != MODERN_GL_DRAW_PLAN_PIPELINE_GUI ) {
 			continue;
@@ -5994,7 +5910,8 @@ static void R_ModernGLExecutor_FinalizePassOwnership( const idRenderGraph &graph
 		rg_modernGLPassOwnership.handoffReady ? "modern-visible-handoff-ready" : "modern-visible-fail-closed",
 		sizeof( rg_modernGLPassOwnership.failClosedReason ) );
 
-	for ( int i = 0; i < graph.NumPasses(); ++i ) {
+	const int graphPassCount = graph.NumPasses();
+	for ( int i = 0; i < graphPassCount; ++i ) {
 		const renderGraphPass_t &pass = graph.Pass( i );
 		if ( !R_ModernGLExecutor_PassCategoryValid( pass.category ) ) {
 			continue;
@@ -6650,10 +6567,11 @@ void R_ModernGLExecutor_PrepareFrame( const idScenePacketFrame &packetFrame, con
 	rg_modernGLExecutorStats.gpuDrivenValidationRequested = gpuDrivenValidationRequested;
 	R_ModernGLExecutor_ProcessPendingGpuDrivenValidationReadbacks( rg_modernGLExecutorStats );
 	const scenePacketFrameStats_t &packetStats = packetFrame.Stats();
-	rg_modernGLExecutorStats.visibilityScenes = packetFrame.NumScenes();
+	const int visibilitySceneCount = packetFrame.NumScenes();
+	rg_modernGLExecutorStats.visibilityScenes = visibilitySceneCount;
 	rg_modernGLExecutorStats.visibilityPortalPVSPreserved = packetStats.frontEndDerived || packetStats.backendDerived;
 	rg_modernGLExecutorStats.visibilityPortalRejectedAreas = packetStats.clippedDrawPackets;
-	for ( int i = 0; i < packetFrame.NumScenes(); ++i ) {
+	for ( int i = 0; i < visibilitySceneCount; ++i ) {
 		const scenePacket_t &scene = packetFrame.Scene( i );
 		if ( scene.viewDef != NULL && scene.viewDef->connectedAreas != NULL && scene.viewDef->areaNum >= 0 ) {
 			rg_modernGLExecutorStats.visibilityPortalVisibleAreas++;
@@ -9126,7 +9044,8 @@ bool RendererGBuffer_RunSelfTest( void ) {
 			expectedDraws );
 		return false;
 	}
-	for ( int i = 0; i < drawPlan.NumEntries(); ++i ) {
+	const int drawPlanEntryCount = drawPlan.NumEntries();
+	for ( int i = 0; i < drawPlanEntryCount; ++i ) {
 		if ( drawPlan.Entry( i ).pipeline != MODERN_GL_DRAW_PLAN_PIPELINE_GBUFFER ) {
 			common->Printf( "RendererGBuffer self-test failed: non-G-buffer ambient entry\n" );
 			return false;

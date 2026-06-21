@@ -1247,7 +1247,8 @@ guiPoint_t	idRenderWorldLocal::GuiTrace( qhandle_t entityHandle, const idVec3 st
 	float best = 1.0f;
 	bestShader = NULL;
 
-	for ( j = 0 ; j < model->NumSurfaces() ; j++ ) {
+	const int surfaceCount = model->NumSurfaces();
+	for ( j = 0 ; j < surfaceCount ; j++ ) {
 		const modelSurface_t *surf = model->Surface( j );
 
 		tri = surf->geometry;
@@ -1324,7 +1325,8 @@ void R_GuiTraceProbe_f( const idCmdArgs &args ) {
 	int guiSurfaces = 0;
 	int hits = 0;
 
-	for ( int i = 0; i < world->entityDefs.Num(); i++ ) {
+	const int entityCount = world->entityDefs.Num();
+	for ( int i = 0; i < entityCount; i++ ) {
 		idRenderEntityLocal *def = world->entityDefs[i];
 		if ( def == NULL ) {
 			continue;
@@ -1336,7 +1338,8 @@ void R_GuiTraceProbe_f( const idCmdArgs &args ) {
 		}
 
 		bool reported = false;
-		for ( int j = 0; j < model->NumSurfaces(); j++ ) {
+		const int surfaceCount = model->NumSurfaces();
+		for ( int j = 0; j < surfaceCount; j++ ) {
 			const modelSurface_t *surf = model->Surface( j );
 			if ( surf == NULL || surf->geometry == NULL ) {
 				continue;
@@ -1491,7 +1494,8 @@ bool idRenderWorldLocal::ModelTrace( modelTrace_t &trace, qhandle_t entityHandle
 	// if we have explicit collision surfaces, only collide against them
 	// (FIXME, should probably have a parm to control this)
 	collisionSurface = false;
-	for ( i = 0; i < model->NumBaseSurfaces(); i++ ) {
+	const int baseSurfaceCount = model->NumBaseSurfaces();
+	for ( i = 0; i < baseSurfaceCount; i++ ) {
 		surf = model->Surface( i );
 
 		shader = R_RemapShaderBySkin( surf->shader, def->parms.customSkin, def->parms.customShader );
@@ -1503,7 +1507,7 @@ bool idRenderWorldLocal::ModelTrace( modelTrace_t &trace, qhandle_t entityHandle
 	}
 
 	// only use baseSurfaces, not any overlays
-	for ( i = 0; i < model->NumBaseSurfaces(); i++ ) {
+	for ( i = 0; i < baseSurfaceCount; i++ ) {
 		surf = model->Surface( i );
 
 		shader = R_RemapShaderBySkin( surf->shader, def->parms.customSkin, def->parms.customShader );
@@ -1639,7 +1643,8 @@ bool idRenderWorldLocal::Trace( modelTrace_t &trace, const idVec3 &start, const 
 			}
 
 			// check all model surfaces
-			for ( j = 0; j < model->NumSurfaces(); j++ ) {
+			const int surfaceCount = model->NumSurfaces();
+			for ( j = 0; j < surfaceCount; j++ ) {
 				const modelSurface_t *surf = model->Surface( j );
 
 				shader = R_RemapShaderBySkin( surf->shader, def->parms.customSkin, def->parms.customShader );
@@ -2318,12 +2323,13 @@ void idRenderWorldLocal::DebugWinding( const idVec4 &color, const idWinding &w, 
 	int i;
 	idVec3 point, lastPoint;
 
-	if ( w.GetNumPoints() < 2 ) {
+	const int windingPointCount = w.GetNumPoints();
+	if ( windingPointCount < 2 ) {
 		return;
 	}
 
-	lastPoint = origin + w[w.GetNumPoints()-1].ToVec3() * axis;
-	for ( i = 0; i < w.GetNumPoints(); i++ ) {
+	lastPoint = origin + w[windingPointCount - 1].ToVec3() * axis;
+	for ( i = 0; i < windingPointCount; i++ ) {
 		point = origin + w[i].ToVec3() * axis;
 		DebugLine( color, lastPoint, point, lifetime, depthTest );
 		lastPoint = point;

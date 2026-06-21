@@ -229,7 +229,8 @@ void idRenderModelOverlay::CreateOverlay( const idRenderModel *model, const idPl
 	// count up the maximum possible vertices and indexes per surface
 	maxVerts = 0;
 	maxIndexes = 0;
-	for ( surfNum = 0; surfNum < model->NumSurfaces(); surfNum++ ) {
+	const int surfaceCount = model->NumSurfaces();
+	for ( surfNum = 0; surfNum < surfaceCount; surfNum++ ) {
 		const modelSurface_t *surf = model->Surface( surfNum );
 		if ( surf == NULL || surf->geometry == NULL ) {
 			continue;
@@ -252,7 +253,8 @@ void idRenderModelOverlay::CreateOverlay( const idRenderModel *model, const idPl
 	glIndex_t *overlayIndexes = (glIndex_t *)_alloca16( maxIndexes * sizeof( *overlayIndexes ) );
 
 	// pull out the triangles we need from the base surfaces
-	for ( surfNum = 0; surfNum < model->NumBaseSurfaces(); surfNum++ ) {
+	const int baseSurfaceCount = model->NumBaseSurfaces();
+	for ( surfNum = 0; surfNum < baseSurfaceCount; surfNum++ ) {
 		const modelSurface_t *surf = model->Surface( surfNum );
 		float d;
 

@@ -88,6 +88,13 @@ const char *MaterialResourceTextureSemantic_Name( materialResourceTextureSemanti
 	}
 }
 
+unsigned int MaterialResourceTextureSemantic_Bit( materialResourceTextureSemantic_t semantic ) {
+	if ( semantic <= MATERIAL_RESOURCE_TEXTURE_NONE || semantic >= MATERIAL_RESOURCE_TEXTURE_COUNT ) {
+		return 0;
+	}
+	return 1u << static_cast<unsigned int>( semantic );
+}
+
 const char *MaterialResourceFallbackReason_Name( materialResourceFallbackReason_t reason ) {
 	switch ( reason ) {
 	case MATERIAL_RESOURCE_FALLBACK_NONE:
@@ -300,12 +307,13 @@ static materialResourceBlendMode_t R_MaterialResourceTable_BlendModeForMaterial(
 	if ( materialClass == RENDER_MATERIAL_PERFORATED ) {
 		return MATERIAL_RESOURCE_BLEND_ALPHA_TEST;
 	}
-	if ( material == NULL || material->GetNumStages() <= 0 ) {
+	const int stageCount = material != NULL ? material->GetNumStages() : 0;
+	if ( stageCount <= 0 ) {
 		return materialClass == RENDER_MATERIAL_TRANSLUCENT ? MATERIAL_RESOURCE_BLEND_BLEND : MATERIAL_RESOURCE_BLEND_OPAQUE;
 	}
 
 	bool sawAlphaTest = false;
-	for ( int i = 0; i < material->GetNumStages(); ++i ) {
+	for ( int i = 0; i < stageCount; ++i ) {
 		const shaderStage_t *stage = material->GetStage( i );
 		if ( stage != NULL && stage->hasAlphaTest ) {
 			sawAlphaTest = true;
@@ -367,10 +375,9 @@ static int R_MaterialResourceTable_SemanticSlot( materialResourceTextureSemantic
 }
 
 static const materialResourceTextureBinding_t *R_MaterialResourceTable_FindStageBinding( const materialResourceTableRecord_t &record, materialResourceTextureSemantic_t semantic ) {
-	for ( int i = 0; i < record.textureBindingCount; ++i ) {
-		if ( record.textures[i].semantic == semantic && record.textures[i].stageIndex >= 0 ) {
-			return &record.textures[i];
-		}
+	const int bindingIndex = ( semantic > MATERIAL_RESOURCE_TEXTURE_NONE && semantic < MATERIAL_RESOURCE_TEXTURE_COUNT ) ? record.semanticBindingIndex[semantic] : -1;
+	if ( bindingIndex >= 0 && bindingIndex < record.textureBindingCount && record.textures[bindingIndex].stageIndex >= 0 ) {
+		return &record.textures[bindingIndex];
 	}
 	return NULL;
 }
@@ -506,21 +513,15 @@ static void R_MaterialResourceTable_SeedTextureArrayFallbacks( void ) {
 }
 
 static int R_MaterialResourceTable_FindTextureBindingIndex( const materialResourceTableRecord_t &record, materialResourceTextureSemantic_t semantic ) {
-	for ( int i = 0; i < record.textureBindingCount; ++i ) {
-		if ( record.textures[i].semantic == semantic ) {
-			return i;
-		}
+	if ( semantic <= MATERIAL_RESOURCE_TEXTURE_NONE || semantic >= MATERIAL_RESOURCE_TEXTURE_COUNT ) {
+		return -1;
 	}
-	return -1;
+	const int bindingIndex = record.semanticBindingIndex[semantic];
+	return bindingIndex >= 0 && bindingIndex < record.textureBindingCount ? bindingIndex : -1;
 }
 
 static bool R_MaterialResourceTable_HasSemanticBinding( const materialResourceTableRecord_t &record, materialResourceTextureSemantic_t semantic ) {
-	for ( int i = 0; i < record.textureBindingCount; ++i ) {
-		if ( record.textures[i].semantic == semantic ) {
-			return true;
-		}
-	}
-	return false;
+	return R_MaterialResourceTable_FindTextureBindingIndex( record, semantic ) >= 0;
 }
 
 static void R_MaterialResourceTable_AddTextureBinding(
@@ -529,7 +530,7 @@ static void R_MaterialResourceTable_AddTextureBinding(
 	const idImage *image,
 	const shaderStage_t *stage,
 	int stageIndex ) {
-	if ( semantic == MATERIAL_RESOURCE_TEXTURE_NONE || image == NULL ) {
+	if ( semantic <= MATERIAL_RESOURCE_TEXTURE_NONE || semantic >= MATERIAL_RESOURCE_TEXTURE_COUNT || image == NULL ) {
 		record.hasMissingImage = true;
 		R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_MISSING_IMAGE, MATERIAL_RESOURCE_FALLBACK_FLAG_MISSING_IMAGE );
 		rg_materialResourceTable.stats.missingImages++;
@@ -545,7 +546,8 @@ static void R_MaterialResourceTable_AddTextureBinding(
 		return;
 	}
 
-	materialResourceTextureBinding_t &binding = record.textures[record.textureBindingCount++];
+	const int bindingIndex = record.textureBindingCount++;
+	materialResourceTextureBinding_t &binding = record.textures[bindingIndex];
 	memset( &binding, 0, sizeof( binding ) );
 	binding.semantic = semantic;
 	binding.image = image;
@@ -603,6 +605,18 @@ static void R_MaterialResourceTable_AddTextureBinding(
 		R_MaterialResourceTable_RecordDebugStringTruncation( "texture binding semantic" );
 	}
 
+	record.semanticBindingIndex[semantic] = bindingIndex;
+	const unsigned int semanticBit = MaterialResourceTextureSemantic_Bit( semantic );
+	record.textureSemanticMask |= semanticBit;
+	if ( binding.textureHandle != 0 ) {
+		record.loadedTextureSemanticMask |= semanticBit;
+		if ( semantic == MATERIAL_RESOURCE_TEXTURE_DIFFUSE
+			|| semantic == MATERIAL_RESOURCE_TEXTURE_EMISSIVE
+			|| semantic == MATERIAL_RESOURCE_TEXTURE_GUI
+			|| semantic == MATERIAL_RESOURCE_TEXTURE_POST_PROCESS ) {
+			record.renderableColorTextureMask |= semanticBit;
+		}
+	}
 	R_MaterialResourceTable_UpdateRecordSemanticFlags( record, semantic, image );
 	if ( binding.defaulted ) {
 		record.hasDefaultedImage = true;
@@ -781,7 +795,7 @@ static void R_MaterialResourceTable_ScanMaterialStages( materialResourceTableRec
 		R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_NEEDS_CURRENT_RENDER, MATERIAL_RESOURCE_FALLBACK_FLAG_NEEDS_CURRENT_RENDER );
 	}
 
-	for ( int i = 0; i < material->GetNumStages(); ++i ) {
+	for ( int i = 0; i < record.stageCount; ++i ) {
 		const shaderStage_t *stage = material->GetStage( i );
 		if ( stage == NULL ) {
 			continue;
@@ -929,6 +943,9 @@ static bool R_MaterialResourceTable_AddRecordFromSource( const materialResourceR
 
 	materialResourceTableRecord_t &record = rg_materialResourceTable.records[rg_materialResourceTable.stats.records];
 	memset( &record, 0, sizeof( record ) );
+	for ( int i = 0; i < MATERIAL_RESOURCE_TEXTURE_COUNT; ++i ) {
+		record.semanticBindingIndex[i] = -1;
+	}
 	record.tableIndex = rg_materialResourceTable.stats.records;
 	record.sourceMaterialRecordIndex = sourceIndex;
 	record.materialId = sourceRecord.material != NULL ? sourceRecord.material->Index() : -1;
@@ -1044,8 +1061,10 @@ void R_MaterialResourceTable_PrepareFrame( const idScenePacketFrame &packetFrame
 	idGLDebugScope scope( "MaterialResourceTable::PrepareFrame" );
 	R_MaterialResourceTable_ResetFrameStats();
 	rg_materialResourceTable.stats.prepared = true;
-	rg_materialResourceTable.stats.sourceMaterialRecords = packetFrame.NumMaterialRecords();
-	for ( int i = 0; i < packetFrame.NumDrawPackets(); ++i ) {
+	const int materialRecordCount = packetFrame.NumMaterialRecords();
+	const int drawPacketCount = packetFrame.NumDrawPackets();
+	rg_materialResourceTable.stats.sourceMaterialRecords = materialRecordCount;
+	for ( int i = 0; i < drawPacketCount; ++i ) {
 		if ( packetFrame.DrawPacket( i ).materialRecordIndex >= 0 ) {
 			rg_materialResourceTable.stats.drawPacketReferences++;
 		}
@@ -1053,7 +1072,7 @@ void R_MaterialResourceTable_PrepareFrame( const idScenePacketFrame &packetFrame
 	if ( !rg_materialResourceTable.stats.available ) {
 		return;
 	}
-	for ( int i = 0; i < packetFrame.NumMaterialRecords(); ++i ) {
+	for ( int i = 0; i < materialRecordCount; ++i ) {
 		R_MaterialResourceTable_AddRecordFromSource( packetFrame.MaterialRecord( i ), i, true );
 	}
 	R_MaterialResourceTable_BuildTextureArrayTable();
@@ -1073,6 +1092,11 @@ const materialResourceTableRecord_t *R_MaterialResourceTable_RecordForIndex( int
 		return NULL;
 	}
 	return &rg_materialResourceTable.records[tableIndex];
+}
+
+const materialResourceTextureBinding_t *R_MaterialResourceTable_TextureBindingForSemantic( const materialResourceTableRecord_t &record, materialResourceTextureSemantic_t semantic ) {
+	const int bindingIndex = R_MaterialResourceTable_FindTextureBindingIndex( record, semantic );
+	return bindingIndex >= 0 ? &record.textures[bindingIndex] : NULL;
 }
 
 const materialResourceTableRecord_t *R_MaterialResourceTable_FindRecordForMaterial( const idMaterial *material ) {
@@ -1372,15 +1396,17 @@ bool RendererMaterialResourceTable_RunSelfTest( void ) {
 	R_ScenePackets_BuildLegacyCommandStream( reinterpret_cast<const emptyCommand_t *>( &drawCmd ), packetFrame );
 	R_MaterialResourceTable_PrepareFrame( packetFrame );
 	const materialResourceTableStats_t &stats = R_MaterialResourceTable_Stats();
+	const int materialRecordCount = packetFrame.NumMaterialRecords();
+	const int drawPacketCount = packetFrame.NumDrawPackets();
 	const int expectedRecords = tr.defaultMaterial != NULL ? 1 : 0;
-	if ( stats.sourceMaterialRecords != packetFrame.NumMaterialRecords()
+	if ( stats.sourceMaterialRecords != materialRecordCount
 		|| stats.records != expectedRecords
-		|| stats.drawPacketReferences != ( tr.defaultMaterial != NULL ? packetFrame.NumDrawPackets() : 0 )
+		|| stats.drawPacketReferences != ( tr.defaultMaterial != NULL ? drawPacketCount : 0 )
 		|| stats.overflow ) {
 		common->Printf(
 			"RendererMaterialResourceTable self-test failed: packet build mismatch source=%d/%d records=%d expected=%d drawRefs=%d overflow=%d\n",
 			stats.sourceMaterialRecords,
-			packetFrame.NumMaterialRecords(),
+			materialRecordCount,
 			stats.records,
 			expectedRecords,
 			stats.drawPacketReferences,

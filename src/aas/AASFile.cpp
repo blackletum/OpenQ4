@@ -597,6 +597,7 @@ idAASFileLocal::idAASFileLocal
 ================
 */
 idAASFileLocal::idAASFileLocal( void ) {
+	version = AAS_FILEVERSION;
 	planeList.SetGranularity( AAS_PLANE_GRANULARITY );
 	vertices.SetGranularity( AAS_VERTEX_GRANULARITY );
 	edges.SetGranularity( AAS_EDGE_GRANULARITY );
@@ -952,6 +953,7 @@ bool idAASFileLocal::ParseReachabilities( idLexer &src, int areaNum ) {
 	area->rev_reach = NULL;
 	area->travelFlags = AreaContentsTravelFlags( areaNum );
 	for ( j = 0; j < num; j++ ) {
+		memset( &reach, 0, sizeof( reach ) );
 		Reachability_Read( src, &reach );
 		switch( reach.travelType ) {
 			case TFL_SPECIAL:
@@ -964,7 +966,11 @@ bool idAASFileLocal::ParseReachabilities( idLexer &src, int areaNum ) {
 		}
 		newReach->CopyBase( reach );
 		newReach->fromAreaNum = areaNum;
+		newReach->number = 0;
+		newReach->disableCount = 0;
 		newReach->next = area->reach;
+		newReach->rev_next = NULL;
+		newReach->areaTravelTimes = NULL;
 		area->reach = newReach;
 	}
 	src.ExpectTokenString( "}" );
@@ -997,6 +1003,7 @@ idAASFileLocal::ParseAreas
 bool idAASFileLocal::ParseAreas( idLexer &src ) {
 	int numAreas, i;
 	aasArea_t area;
+	const bool hasTacticalFeatures = ( version.Icmp( "1.07" ) != 0 );
 
 	numAreas = src.ParseInt();
 	areas.Resize( numAreas );
@@ -1004,6 +1011,7 @@ bool idAASFileLocal::ParseAreas( idLexer &src ) {
 		return false;
 	}
 	for ( i = 0; i < numAreas; i++ ) {
+		memset( &area, 0, sizeof( area ) );
 		src.ParseInt();
 		src.ExpectTokenString( "(" );
 		area.flags = src.ParseInt();
@@ -1013,9 +1021,12 @@ bool idAASFileLocal::ParseAreas( idLexer &src ) {
 		area.cluster = src.ParseInt();
 		area.clusterAreaNum = src.ParseInt();
 // jmarshall - AAS 1.08 
-		area.numFeatures = src.ParseInt();
-		area.firstFeature = src.ParseInt();
+		if ( hasTacticalFeatures ) {
+			area.numFeatures = src.ParseInt();
+			area.firstFeature = src.ParseInt();
+		}
 // jmarshall end
+		area.firstMarker = NULL;
 		src.ExpectTokenString( ")" );
 		areas.Append( area );
 		ParseReachabilities( src, i );
@@ -1165,9 +1176,13 @@ bool idAASFileLocal::Load( const idStr &fileName, unsigned int mapFileCRC ) {
 		return false;
 	}
 
-	if ( !src.ReadToken( &token ) || token != AAS_FILEVERSION ) {
-		common->Warning( "AAS file '%s' has version %s instead of %s", name.c_str(), token.c_str(), AAS_FILEVERSION );
+	if ( !src.ReadToken( &token ) ) {
+		common->Warning( "AAS file '%s' has no version", name.c_str() );
 		return false;
+	}
+	version = token;
+	if ( token != AAS_FILEVERSION ) {
+		common->Warning( "AAS file '%s' has version %s instead of %s", name.c_str(), token.c_str(), AAS_FILEVERSION );
 	}
 
 	if ( !src.ExpectTokenType( TT_NUMBER, TT_INTEGER, &token ) ) {
@@ -1179,7 +1194,10 @@ bool idAASFileLocal::Load( const idStr &fileName, unsigned int mapFileCRC ) {
 	if ( mapFileCRC && c != mapFileCRC ) {
 		common->Warning( "AAS file '%s' is out of date", name.c_str() );
 		console->SetAASFileOutOfDate( true );
-		return false;
+		if ( !cvarSystem->GetCVarBool( "ai_allowOldAAS" ) ) {
+			return false;
+		}
+		common->Warning( "Using out of date AAS file anyway." );
 	}
 
 	// clear the file in memory
@@ -1405,6 +1423,6 @@ void idAASFileLocal::DeleteClusters( void ) {
 	portals.Append( portal );
 
 	// first cluster is a dummy
-	memset( &cluster, 0, sizeof( portal ) );
+	memset( &cluster, 0, sizeof( cluster ) );
 	clusters.Append( cluster );
 }

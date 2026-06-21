@@ -486,16 +486,17 @@ void idGuiModel::DrawStretchPic( const idDrawVert *dverts, const glIndex_t *dind
 				continue;
 			}
 
+			const int windingPointCount = w.GetNumPoints();
 			const idDrawVert *sourceVert = &dverts[dindexes[i]];
 			int	numVerts = verts.Num();
-			verts.SetNum( numVerts + w.GetNumPoints(), false );
-			for ( j = 0 ; j < w.GetNumPoints() ; j++ ) {
+			verts.SetNum( numVerts + windingPointCount, false );
+			for ( j = 0 ; j < windingPointCount ; j++ ) {
 				idDrawVert *dv = &verts[numVerts+j];
 				R_SetGuiDrawVert( dv, w[j].x, w[j].y, w[j].z, w[j].s, w[j].t, sourceVert );
 			}
-			surf->numVerts += w.GetNumPoints();
+			surf->numVerts += windingPointCount;
 
-			for ( j = 2; j < w.GetNumPoints(); j++ ) {
+			for ( j = 2; j < windingPointCount; j++ ) {
 				indexes.Append( numVerts - surf->firstVert );
 				indexes.Append( numVerts + j - 1 - surf->firstVert );
 				indexes.Append( numVerts + j - surf->firstVert );

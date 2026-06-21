@@ -920,7 +920,9 @@ void RB_CreateSingleDrawInteractionsFiltered( const drawSurf_t *surf, void (*Dra
 		R_GlobalPlaneToLocal( surf->space->modelMatrix, backEnd.vLight->lightProject[i], lightProject[i] );
 	}
 
-	for ( int lightStageNum = 0 ; lightStageNum < lightShader->GetNumStages() ; lightStageNum++ ) {
+	const int lightStageCount = lightShader->GetNumStages();
+	const int surfaceStageCount = surfaceShader->GetNumStages();
+	for ( int lightStageNum = 0 ; lightStageNum < lightStageCount ; lightStageNum++ ) {
 		const shaderStage_t	*lightStage = lightShader->GetStage( lightStageNum );
 
 		// ignore stages that fail the condition
@@ -953,7 +955,7 @@ void RB_CreateSingleDrawInteractionsFiltered( const drawSurf_t *surf, void (*Dra
 		lightColor[3] = lightRegs[ lightStage->color.registers[3] ];
 
 		// go through the individual stages
-		for ( int surfaceStageNum = 0 ; surfaceStageNum < surfaceShader->GetNumStages() ; surfaceStageNum++ ) {
+		for ( int surfaceStageNum = 0 ; surfaceStageNum < surfaceStageCount ; surfaceStageNum++ ) {
 			const shaderStage_t	*surfaceStage = surfaceShader->GetStage( surfaceStageNum );
 			if ( StageFilter != NULL && !StageFilter( surfaceStage, surfaceRegs ) ) {
 				continue;

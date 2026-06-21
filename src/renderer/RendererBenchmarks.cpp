@@ -49,7 +49,8 @@ static int RendererBenchmarks_NumPresets( void ) {
 
 static const rendererBenchmarkPreset_t &RendererBenchmarks_PresetForName( const char *name ) {
 	if ( name != NULL && name[0] != '\0' ) {
-		for ( int i = 0; i < RendererBenchmarks_NumPresets(); ++i ) {
+		const int presetCount = RendererBenchmarks_NumPresets();
+		for ( int i = 0; i < presetCount; ++i ) {
 			if ( idStr::Icmp( name, rg_benchmarkPresets[i].name ) == 0 ) {
 				return rg_benchmarkPresets[i];
 			}
@@ -305,7 +306,8 @@ bool RendererBenchmark_RunSelfTest( void ) {
 		ok = false;
 	}
 
-	for ( int i = 0; i < RendererBenchmarks_NumPresets(); ++i ) {
+	const int presetCount = RendererBenchmarks_NumPresets();
+	for ( int i = 0; i < presetCount; ++i ) {
 		if ( rg_benchmarkPresets[i].clusterTilesX < 1 || rg_benchmarkPresets[i].clusterTilesX > 8 ||
 			rg_benchmarkPresets[i].clusterTilesY < 1 || rg_benchmarkPresets[i].clusterTilesY > 6 ||
 			rg_benchmarkPresets[i].clusterSlicesZ < 1 || rg_benchmarkPresets[i].clusterSlicesZ > 16 ||

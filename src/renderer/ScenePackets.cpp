@@ -236,7 +236,8 @@ static const idImage *R_ScenePackets_FirstStageImage( const idMaterial *material
 	if ( material == NULL ) {
 		return NULL;
 	}
-	for ( int i = 0; i < material->GetNumStages(); ++i ) {
+	const int stageCount = material->GetNumStages();
+	for ( int i = 0; i < stageCount; ++i ) {
 		const shaderStage_t *stage = material->GetStage( i );
 		if ( stage != NULL && stage->lighting == lighting && stage->texture.image != NULL ) {
 			return stage->texture.image;
@@ -253,7 +254,8 @@ static const idImage *R_ScenePackets_FirstAmbientImage( const idMaterial *materi
 	// SS_FAR and up classify as translucent, not decal
 	const bool preferClassicDecalStage = material->GetSort() >= SS_DECAL && material->GetSort() < SS_FAR;
 	const idImage *firstAmbientImage = NULL;
-	for ( int i = 0; i < material->GetNumStages(); ++i ) {
+	const int stageCount = material->GetNumStages();
+	for ( int i = 0; i < stageCount; ++i ) {
 		const shaderStage_t *stage = material->GetStage( i );
 		if ( stage != NULL && stage->lighting == SL_AMBIENT && stage->texture.image != NULL ) {
 			if ( firstAmbientImage == NULL ) {
@@ -279,7 +281,8 @@ static bool R_ScenePackets_MaterialUsesRemoteRender( const idMaterial *material 
 	if ( material == NULL ) {
 		return false;
 	}
-	for ( int i = 0; i < material->GetNumStages(); ++i ) {
+	const int stageCount = material->GetNumStages();
+	for ( int i = 0; i < stageCount; ++i ) {
 		const shaderStage_t *stage = material->GetStage( i );
 		if ( stage != NULL && stage->texture.dynamic == DI_REMOTE_RENDER ) {
 			return true;
@@ -1155,7 +1158,8 @@ static bool R_ScenePackets_LightGridMaterialHasActiveColorMaskStage( const idMat
 		return false;
 	}
 
-	for ( int stageIndex = 0; stageIndex < material->GetNumStages(); stageIndex++ ) {
+	const int stageCount = material->GetNumStages();
+	for ( int stageIndex = 0; stageIndex < stageCount; stageIndex++ ) {
 		const shaderStage_t *stage = material->GetStage( stageIndex );
 		if ( R_ScenePackets_LightGridMaterialStageIsActive( stage, regs ) && ( stage->drawStateBits & GLS_COLORMASK ) != 0 ) {
 			return true;
@@ -1199,7 +1203,8 @@ static bool R_ScenePackets_LightGridHasActiveAlbedoStage( const idMaterial *mate
 		return false;
 	}
 
-	for ( int stageIndex = 0; stageIndex < material->GetNumStages(); stageIndex++ ) {
+	const int stageCount = material->GetNumStages();
+	for ( int stageIndex = 0; stageIndex < stageCount; stageIndex++ ) {
 		const shaderStage_t *stage = material->GetStage( stageIndex );
 		if ( R_ScenePackets_LightGridStageCanProvideAlbedo( material, stage, regs ) ) {
 			return true;
@@ -1783,7 +1788,8 @@ void R_ScenePackets_LogIfVerbose( const idScenePacketFrame &packetFrame ) {
 		stats.sortKeyValidationFailures,
 		stats.overflow ? 1 : 0,
 		ScenePacketOverflowCause_Name( stats.overflowCause ) );
-	for ( int i = 0; i < packetFrame.NumPasses(); ++i ) {
+	const int passCount = packetFrame.NumPasses();
+	for ( int i = 0; i < passCount; ++i ) {
 		const passPacket_t &pass = packetFrame.Pass( i );
 		common->Printf(
 			"scenePackets pass[%d]=%s category=%s draws=%d enabled=%d\n",
@@ -1793,7 +1799,8 @@ void R_ScenePackets_LogIfVerbose( const idScenePacketFrame &packetFrame ) {
 			pass.drawPacketCount,
 			pass.enabled ? 1 : 0 );
 	}
-	for ( int i = 0; i < packetFrame.NumMaterialRecords() && i < 8; ++i ) {
+	const int materialRecordLogCount = Min( packetFrame.NumMaterialRecords(), 8 );
+	for ( int i = 0; i < materialRecordLogCount; ++i ) {
 		const materialResourceRecord_t &record = packetFrame.MaterialRecord( i );
 		common->Printf(
 			"scenePackets material[%d]=%s class=%s diffuse=%s normal=%s specular=%s table=%d\n",
@@ -1805,7 +1812,8 @@ void R_ScenePackets_LogIfVerbose( const idScenePacketFrame &packetFrame ) {
 			record.specularImage ? record.specularImage->GetName() : "<none>",
 			record.resourceTableIndex );
 	}
-	for ( int i = 0; i < packetFrame.NumGeometryRecords() && i < 8; ++i ) {
+	const int geometryRecordLogCount = Min( packetFrame.NumGeometryRecords(), 8 );
+	for ( int i = 0; i < geometryRecordLogCount; ++i ) {
 		const geometryResourceRecord_t &record = packetFrame.GeometryRecord( i );
 		common->Printf(
 			"scenePackets geometry[%d]=verts:%d indexes:%d vbo:%d@%d ibo:%d@%d lifetime=%d skin=%d deform=%d fallback=%s flags=0x%x bounds=%s\n",
@@ -1823,7 +1831,8 @@ void R_ScenePackets_LogIfVerbose( const idScenePacketFrame &packetFrame ) {
 			record.fallbackFlags,
 			record.hasBounds ? "yes" : "no" );
 	}
-	for ( int i = 0; i < packetFrame.NumInstanceRecords() && i < 8; ++i ) {
+	const int instanceRecordLogCount = Min( packetFrame.NumInstanceRecords(), 8 );
+	for ( int i = 0; i < instanceRecordLogCount; ++i ) {
 		const instanceRecord_t &record = packetFrame.InstanceRecord( i );
 		common->Printf(
 			"scenePackets instance[%d]=entity:%d flags=0x%x regs=%d+%d color=(%.2f %.2f %.2f %.2f) legacy=%d\n",

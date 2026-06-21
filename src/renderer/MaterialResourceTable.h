@@ -41,7 +41,8 @@ enum materialResourceTextureSemantic_t {
 	MATERIAL_RESOURCE_TEXTURE_SPECULAR,
 	MATERIAL_RESOURCE_TEXTURE_EMISSIVE,
 	MATERIAL_RESOURCE_TEXTURE_GUI,
-	MATERIAL_RESOURCE_TEXTURE_POST_PROCESS
+	MATERIAL_RESOURCE_TEXTURE_POST_PROCESS,
+	MATERIAL_RESOURCE_TEXTURE_COUNT
 };
 
 enum materialResourceSortGroup_t {
@@ -193,6 +194,10 @@ typedef struct materialResourceTableRecord_s {
 	unsigned int						shadowFallbackFlags;
 	bool								hasDefaultedImage;
 	bool								hasMissingImage;
+	unsigned int						textureSemanticMask;
+	unsigned int						loadedTextureSemanticMask;
+	unsigned int						renderableColorTextureMask;
+	int									semanticBindingIndex[MATERIAL_RESOURCE_TEXTURE_COUNT];
 	int									textureBindingCount;
 	materialResourceTextureBinding_t	textures[MATERIAL_RESOURCE_TABLE_MAX_TEXTURE_BINDINGS];
 } materialResourceTableRecord_t;
@@ -264,6 +269,8 @@ const unsigned int *R_MaterialResourceTable_TextureArrayTable( int &count );
 int R_MaterialResourceTable_TextureArrayTableIndexForHandle( unsigned int textureHandle );
 const char *MaterialResourceBlendMode_Name( materialResourceBlendMode_t blendMode );
 const char *MaterialResourceTextureSemantic_Name( materialResourceTextureSemantic_t semantic );
+unsigned int MaterialResourceTextureSemantic_Bit( materialResourceTextureSemantic_t semantic );
+const materialResourceTextureBinding_t *R_MaterialResourceTable_TextureBindingForSemantic( const materialResourceTableRecord_t &record, materialResourceTextureSemantic_t semantic );
 const char *MaterialResourceFallbackReason_Name( materialResourceFallbackReason_t reason );
 void R_MaterialResourceTable_PrintGfxInfo( void );
 void R_MaterialResourceTable_DumpLatest( void );

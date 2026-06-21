@@ -295,7 +295,8 @@ void idImage::GenerateImage( const byte *pic, int width, int height, textureFilt
 
 	AllocImage();
 
-	for ( int i = 0; i < im.NumImages(); i++ ) {
+	const int imageCount = im.NumImages();
+	for ( int i = 0; i < imageCount; i++ ) {
 		const bimageImage_t & img = im.GetImageHeader( i );
 		const byte * data = im.GetImageData( i );
 		SubImageUpload( img.level, 0, 0, img.destZ, img.width, img.height, data );
@@ -337,7 +338,8 @@ void idImage::GenerateCubeImage( const byte *pic[6], int size, textureFilter_t f
 
 	AllocImage();
 
-	for ( int i = 0; i < im.NumImages(); i++ ) {
+	const int imageCount = im.NumImages();
+	for ( int i = 0; i < imageCount; i++ ) {
 		const bimageImage_t & img = im.GetImageHeader( i );
 		const byte * data = im.GetImageData( i );
 		SubImageUpload( img.level, 0, 0, img.destZ, img.width, img.height, data );
@@ -583,7 +585,8 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 	AllocImage();
 
 
-	for ( int i = 0; i < im.NumImages(); i++ ) {
+	const int imageCount = im.NumImages();
+	for ( int i = 0; i < imageCount; i++ ) {
 		const bimageImage_t & img = im.GetImageHeader( i );
 		const byte * data = im.GetImageData( i );
 		SubImageUpload( img.level, 0, 0, img.destZ, img.width, img.height, data );

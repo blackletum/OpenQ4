@@ -689,7 +689,8 @@ static void R_POTCorrectionTexGen( drawSurf_t *surf ) {
 	const idMaterial *material = surf->material;
 	const shaderStage_t *stage = NULL;
 
-	for ( int stageNum = 0; stageNum < material->GetNumStages(); ++stageNum ) {
+	const int stageCount = material->GetNumStages();
+	for ( int stageNum = 0; stageNum < stageCount; ++stageNum ) {
 		const shaderStage_t *candidate = material->GetStage( stageNum );
 		if ( candidate->texture.texgen == TG_POT_CORRECTION ) {
 			stage = candidate;
@@ -1255,7 +1256,8 @@ idScreenRect R_ClippedLightScissorRectangle( viewLight_t *vLight ) {
 		}
 
 		// project these points to the screen and add to bounds
-		for ( j = 0; j < w.GetNumPoints(); j++ ) {
+		const int windingPointCount = w.GetNumPoints();
+		for ( j = 0; j < windingPointCount; j++ ) {
 			idPlane		eye, clip;
 			idVec3		ndc;
 
@@ -1562,7 +1564,8 @@ void R_AddLightSurfaces( void ) {
 		// to a positive light value, we can completely skip the light
 		if ( !lightShader->IsFogLight() && !lightShader->IsBlendLight() ) {
 			int lightStageNum;
-			for ( lightStageNum = 0 ; lightStageNum < lightShader->GetNumStages() ; lightStageNum++ ) {
+			const int lightStageCount = lightShader->GetNumStages();
+			for ( lightStageNum = 0 ; lightStageNum < lightStageCount ; lightStageNum++ ) {
 				const shaderStage_t	*lightStage = lightShader->GetStage( lightStageNum );
 
 				// ignore stages that fail the condition
@@ -1595,7 +1598,7 @@ void R_AddLightSurfaces( void ) {
 					break;
 				}
 			}
-			if ( lightStageNum == lightShader->GetNumStages() ) {
+			if ( lightStageNum == lightStageCount ) {
 				// we went through all the stages and didn't find one that adds anything
 				// remove the light from the viewLights list, and change its frame marker
 				// so interaction generation doesn't think the light is visible and

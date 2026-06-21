@@ -2673,7 +2673,8 @@ void RB_ShowDebugPolygons( void ) {
 
 			glBegin( GL_POLYGON );
 
-			for ( j = 0; j < poly->winding.GetNumPoints(); j++) {
+			const int windingPointCount = poly->winding.GetNumPoints();
+			for ( j = 0; j < windingPointCount; j++) {
 				glVertex3fv( poly->winding[j].ToFloatPtr() );
 			}
 

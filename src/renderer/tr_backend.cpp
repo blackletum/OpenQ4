@@ -630,7 +630,8 @@ static void RB_ResolveMSAA(const void* data) {
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, cmd->destRenderTexture->GetDeviceHandle());
 
 	// Resolve all of the render targets.
-	for (int i = 0; i < cmd->msaaRenderTexture->GetNumColorImages(); i++)
+	const int colorImageCount = cmd->msaaRenderTexture->GetNumColorImages();
+	for (int i = 0; i < colorImageCount; i++)
 	{
 		glReadBuffer(GL_COLOR_ATTACHMENT0 + i);
 		glDrawBuffer(GL_COLOR_ATTACHMENT0 + i);

@@ -1590,7 +1590,7 @@ void idInteraction::CreateInteraction( const idRenderModel *model ) {
 		R_TranslucentShadowMapMomentsSupportedForLight( lightDef );
 
 	// check each surface in the model
-	for ( int c = 0 ; c < model->NumSurfaces() ; c++ ) {
+	for ( int c = 0 ; c < numSurfaces ; c++ ) {
 		const modelSurface_t	*surf;
 		srfTriangles_t	*tri;
 	

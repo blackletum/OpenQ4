@@ -110,6 +110,8 @@ public:
 	int NumResources( void ) const;
 	int NumResourceAccesses( void ) const;
 	int FindPass( renderPassCategory_t category ) const;
+	bool HasPass( renderPassCategory_t category ) const;
+	unsigned int PacketBackedPassCategoryMask( void ) const;
 	const renderGraphPass_t &Pass( int index ) const;
 	const renderGraphResource_t &Resource( int index ) const;
 	const renderGraphResourceAccess_t &ResourceAccess( int index ) const;
@@ -123,6 +125,8 @@ private:
 	int numPasses;
 	int numResources;
 	int numResourceAccesses;
+	unsigned int passCategoryMask;
+	unsigned int packetBackedPassCategoryMask;
 };
 
 void R_RenderGraph_BuildLegacyFrameGraph( const emptyCommand_t *cmds, idRenderGraph &graph );

@@ -3337,7 +3337,8 @@ static_assert(
 void idMaterial::Print() const {
 	int			i;
 
-	for ( i = EXP_REG_NUM_PREDEFINED ; i < GetNumRegisters() ; i++ ) {
+	const int registerCount = GetNumRegisters();
+	for ( i = EXP_REG_NUM_PREDEFINED ; i < registerCount ; i++ ) {
 		common->Printf( "register %i: %f\n", i, expressionRegisters[i] );
 	}
 	common->Printf( "\n" );

@@ -7,9 +7,15 @@
 #include "ModernGLDrawPlan.h"
 
 const int MODERN_GL_SUBMIT_PLAN_MAX_COMMANDS = MODERN_GL_DRAW_PLAN_MAX_ENTRIES;
+const int MODERN_GL_SUBMIT_MATERIAL_TEXTURE_MAIN = 0;
+const int MODERN_GL_SUBMIT_MATERIAL_TEXTURE_NORMAL = 1;
+const int MODERN_GL_SUBMIT_MATERIAL_TEXTURE_SPECULAR = 2;
+const int MODERN_GL_SUBMIT_MATERIAL_TEXTURE_EMISSIVE = 3;
+const int MODERN_GL_SUBMIT_MATERIAL_TEXTURE_COUNT = 4;
 
 typedef struct modernGLSubmitCommand_s {
 	const modernGLDrawPlanEntry_t *drawPlanEntry;
+	const materialResourceTableRecord_t *materialRecord;
 	const viewDef_t			*viewDef;
 	renderPassCategory_t		passCategory;
 	modernGLDrawPlanPipeline_t	pipeline;
@@ -42,10 +48,15 @@ typedef struct modernGLSubmitCommand_s {
 	int							materialTableIndex;
 	int							geometryRecordIndex;
 	int							instanceRecordIndex;
+	unsigned int				materialTextureHandles[MODERN_GL_SUBMIT_MATERIAL_TEXTURE_COUNT];
+	int							materialTextureTableIndices[MODERN_GL_SUBMIT_MATERIAL_TEXTURE_COUNT];
+	unsigned int				materialLoadedTextureSemanticMask;
 	materialResourceBlendMode_t	blendMode;
 	int							cullType;
+	int							materialAlphaTestRegister;
 	int							originalSubmitOrder;
 	int							sortBucket;
+	int							cullSortKey;
 	unsigned int				materialStableId;
 	float						modelViewMatrix[16];
 	float						modelViewProjectionMatrix[16];
@@ -75,6 +86,9 @@ typedef struct modernGLSubmitCommand_s {
 	bool						visibilityDynamic;
 	bool						visibilityShadowCaster;
 	bool						sortEligible;
+	bool						forwardPlusDecal;
+	bool						alphaTestMaterial;
+	bool						alphaTestOrPerforatedMaterial;
 } modernGLSubmitCommand_t;
 
 typedef struct modernGLSubmitPlanStats_s {

@@ -82,11 +82,12 @@ R_RenderWorld_IsShadowModel
 ================
 */
 static bool R_RenderWorld_IsShadowModel( const idRenderModel &model ) {
-	if ( model.NumSurfaces() <= 0 ) {
+	const int surfaceCount = model.NumSurfaces();
+	if ( surfaceCount <= 0 ) {
 		return false;
 	}
 
-	for ( int surfaceIndex = 0; surfaceIndex < model.NumSurfaces(); ++surfaceIndex ) {
+	for ( int surfaceIndex = 0; surfaceIndex < surfaceCount; ++surfaceIndex ) {
 		const modelSurface_t *surface = model.Surface( surfaceIndex );
 		if ( surface == NULL || surface->geometry == NULL ) {
 			continue;
@@ -111,11 +112,12 @@ R_RenderWorld_HasRenderableSurfaces
 ================
 */
 static bool R_RenderWorld_HasRenderableSurfaces( const idRenderModel &model ) {
-	if ( model.NumSurfaces() <= 0 ) {
+	const int surfaceCount = model.NumSurfaces();
+	if ( surfaceCount <= 0 ) {
 		return false;
 	}
 
-	for ( int surfaceIndex = 0; surfaceIndex < model.NumSurfaces(); ++surfaceIndex ) {
+	for ( int surfaceIndex = 0; surfaceIndex < surfaceCount; ++surfaceIndex ) {
 		const modelSurface_t *surface = model.Surface( surfaceIndex );
 		if ( surface == NULL || surface->geometry == NULL || surface->shader == NULL ) {
 			continue;
@@ -137,7 +139,8 @@ R_RenderWorld_WriteClassicMD5RProcModel
 */
 static void R_RenderWorld_WriteClassicMD5RProcModel( idFile &outFile, const idRenderModel &model ) {
 	int numExportableSurfaces = 0;
-	for ( int surfaceIndex = 0; surfaceIndex < model.NumSurfaces(); ++surfaceIndex ) {
+	const int surfaceCount = model.NumSurfaces();
+	for ( int surfaceIndex = 0; surfaceIndex < surfaceCount; ++surfaceIndex ) {
 		const modelSurface_t *surface = model.Surface( surfaceIndex );
 		if ( surface == NULL || surface->geometry == NULL || surface->shader == NULL ) {
 			continue;
@@ -156,7 +159,7 @@ static void R_RenderWorld_WriteClassicMD5RProcModel( idFile &outFile, const idRe
 	outFile.WriteFloatString( "%d\n", numExportableSurfaces );
 	outFile.WriteFloatString( "0\n" );
 
-	for ( int surfaceIndex = 0; surfaceIndex < model.NumSurfaces(); ++surfaceIndex ) {
+	for ( int surfaceIndex = 0; surfaceIndex < surfaceCount; ++surfaceIndex ) {
 		const modelSurface_t *surface = model.Surface( surfaceIndex );
 		if ( surface == NULL || surface->geometry == NULL || surface->shader == NULL ) {
 			continue;
@@ -258,13 +261,14 @@ static void R_RenderWorld_WriteClassicMD5RProcInterAreaPortals( const idRenderWo
 			continue;
 		}
 
+		const int windingPointCount = winding->GetNumPoints();
 		outFile.WriteFloatString(
 			"%d %d %d ",
-			winding->GetNumPoints(),
+			windingPointCount,
 			negativePortal->intoArea,
 			positivePortal->intoArea );
 
-		for ( int pointIndex = 0; pointIndex < winding->GetNumPoints(); ++pointIndex ) {
+		for ( int pointIndex = 0; pointIndex < windingPointCount; ++pointIndex ) {
 			outFile.WriteFloatString(
 				"( %f %f %f ) ",
 				( *winding )[ pointIndex ].x,
@@ -1471,11 +1475,12 @@ void idRenderWorldLocal::AddWorldModelEntities() {
 
 		idRenderModel *hModel = def->parms.hModel;
 		portalAreas[i].globalBounds = hModel->Bounds();
+		const int surfaceCount = hModel->NumSurfaces();
 		if ( idRenderModelStatic *staticModel = dynamic_cast<idRenderModelStatic *>( hModel ) ) {
 			def->needsPortalSky = staticModel->HasProcSky();
 		}
 
-		for ( int j = 0; j < hModel->NumSurfaces(); j++ ) {
+		for ( int j = 0; j < surfaceCount; j++ ) {
 			const modelSurface_t *surf = hModel->Surface( j );
 
 			if ( surf->shader != NULL && ( surf->shader->IsPortalSky()

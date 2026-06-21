@@ -7,18 +7,31 @@
 idRenderGraph::idRenderGraph()
 	: numPasses( 0 ),
 	  numResources( 0 ),
-	  numResourceAccesses( 0 ) {
+	  numResourceAccesses( 0 ),
+	  passCategoryMask( 0 ),
+	  packetBackedPassCategoryMask( 0 ) {
 	memset( &stats, 0, sizeof( stats ) );
 }
 
 void idRenderGraph::Clear( void ) {
+#ifdef _DEBUG
 	memset( passes, 0, sizeof( passes ) );
 	memset( resources, 0, sizeof( resources ) );
 	memset( resourceAccesses, 0, sizeof( resourceAccesses ) );
+#endif
 	memset( &stats, 0, sizeof( stats ) );
 	numPasses = 0;
 	numResources = 0;
 	numResourceAccesses = 0;
+	passCategoryMask = 0;
+	packetBackedPassCategoryMask = 0;
+}
+
+static unsigned int R_RenderGraph_PassCategoryBit( renderPassCategory_t category ) {
+	if ( category < RENDER_PASS_DEPTH || category > RENDER_PASS_PRESENT ) {
+		return 0;
+	}
+	return 1u << static_cast<unsigned int>( category );
 }
 
 bool idRenderGraph::AddPass( renderPassCategory_t category, const char *name, bool enabled, bool legacyWrapped ) {
@@ -38,6 +51,9 @@ bool idRenderGraph::AddPass( renderPassCategory_t category, const char *name, bo
 	pass.resourceBacked = false;
 	numPasses++;
 	stats.graphPasses = numPasses;
+	if ( enabled ) {
+		passCategoryMask |= R_RenderGraph_PassCategoryBit( category );
+	}
 	return true;
 }
 
@@ -52,6 +68,7 @@ bool idRenderGraph::AddPacketPass( renderPassCategory_t category, const char *na
 	pass.drawPacketCount = drawPackets;
 	pass.commandPacketCount = commandPackets;
 	pass.scenePacketCount = 1;
+	packetBackedPassCategoryMask |= R_RenderGraph_PassCategoryBit( category );
 	stats.passPackets++;
 	stats.drawPackets += drawPackets;
 	stats.commandPackets += commandPackets;
@@ -99,6 +116,9 @@ int idRenderGraph::FindResource( const char *name ) const {
 		return -1;
 	}
 	for ( int i = 0; i < numResources; ++i ) {
+		if ( resources[i].name == name ) {
+			return i;
+		}
 		if ( resources[i].name != NULL && idStr::Icmp( resources[i].name, name ) == 0 ) {
 			return i;
 		}
@@ -197,12 +217,25 @@ int idRenderGraph::NumResourceAccesses( void ) const {
 }
 
 int idRenderGraph::FindPass( renderPassCategory_t category ) const {
+	const unsigned int categoryBit = R_RenderGraph_PassCategoryBit( category );
+	if ( categoryBit == 0 || ( passCategoryMask & categoryBit ) == 0 ) {
+		return -1;
+	}
 	for ( int i = 0; i < numPasses; ++i ) {
 		if ( passes[i].category == category ) {
 			return i;
 		}
 	}
 	return -1;
+}
+
+bool idRenderGraph::HasPass( renderPassCategory_t category ) const {
+	const unsigned int categoryBit = R_RenderGraph_PassCategoryBit( category );
+	return categoryBit != 0 && ( passCategoryMask & categoryBit ) != 0;
+}
+
+unsigned int idRenderGraph::PacketBackedPassCategoryMask( void ) const {
+	return packetBackedPassCategoryMask;
 }
 
 const renderGraphPass_t &idRenderGraph::Pass( int index ) const {
@@ -237,12 +270,7 @@ static const char *R_RenderGraph_ResourceTypeName( renderGraphResourceType_t typ
 }
 
 static bool R_RenderGraph_HasPass( const idRenderGraph &graph, renderPassCategory_t category ) {
-	for ( int i = 0; i < graph.NumPasses(); ++i ) {
-		if ( graph.Pass( i ).category == category ) {
-			return true;
-		}
-	}
-	return false;
+	return graph.HasPass( category );
 }
 
 static bool R_RenderGraph_ShouldModelModernVisible( void );
@@ -689,7 +717,8 @@ void R_RenderGraph_BuildLegacyFrameGraph( const emptyCommand_t *cmds, idRenderGr
 void R_RenderGraph_BuildFromScenePackets( const idScenePacketFrame &packetFrame, idRenderGraph &graph ) {
 	graph.Clear();
 
-	for ( int i = 0; i < packetFrame.NumPasses(); ++i ) {
+	const int packetPassCount = packetFrame.NumPasses();
+	for ( int i = 0; i < packetPassCount; ++i ) {
 		const passPacket_t &pass = packetFrame.Pass( i );
 		if ( pass.passCategory == RENDER_PASS_PRESENT && R_RenderGraph_ShouldModelModernVisible() ) {
 			continue;
@@ -734,7 +763,8 @@ void R_RenderGraph_LogIfVerbose( const idRenderGraph &graph ) {
 		stats.invalidateOps,
 		stats.presentOps,
 		stats.overflow ? 1 : 0 );
-	for ( int i = 0; i < graph.NumPasses(); ++i ) {
+	const int graphPassCount = graph.NumPasses();
+	for ( int i = 0; i < graphPassCount; ++i ) {
 		const renderGraphPass_t &pass = graph.Pass( i );
 		common->Printf(
 			" %s%s[p=%d d=%d r=%d w=%d c=%d x=%d i=%d]",
@@ -750,7 +780,9 @@ void R_RenderGraph_LogIfVerbose( const idRenderGraph &graph ) {
 	}
 	common->Printf( "\n" );
 
-	for ( int i = 0; i < graph.NumResources() && i < 12; ++i ) {
+	const int graphResourceCount = graph.NumResources();
+	const int logResourceCount = Min( graphResourceCount, 12 );
+	for ( int i = 0; i < logResourceCount; ++i ) {
 		const renderGraphResource_t &resource = graph.Resource( i );
 		common->Printf(
 			"renderGraph resource[%d]=%s type=%s imported=%d transient=%d presentable=%d alias=%d lifetime=%d..%d producer=%d lastWriter=%d read=%d write=%d clear=%d resolve=%d invalidate=%d present=%d\n",

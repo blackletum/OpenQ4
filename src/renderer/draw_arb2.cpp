@@ -6101,7 +6101,8 @@ static bool RB_ShadowMapCanProgramPerforatedCaster( const drawSurf_t *surf ) {
 	bool haveActiveStage = false;
 	const idMaterial *shader = surf->material;
 	const float *regs = surf->shaderRegisters;
-	for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
+	const int stageCount = shader->GetNumStages();
+	for ( int stage = 0; stage < stageCount; stage++ ) {
 		const shaderStage_t *pStage = shader->GetStage( stage );
 		if ( !pStage->hasAlphaTest || regs[ pStage->conditionRegister ] == 0 ) {
 			continue;
@@ -6196,7 +6197,8 @@ static const shaderStage_t *RB_FindTranslucentShadowCoverageStage( const idMater
 	const shaderStage_t *bestStage = NULL;
 	int bestPriority = -1;
 
-	for ( int stage = 0; stage < shader->GetNumStages(); ++stage ) {
+	const int stageCount = shader->GetNumStages();
+	for ( int stage = 0; stage < stageCount; ++stage ) {
 		const shaderStage_t *pStage = shader->GetStage( stage );
 		const int priority = RB_TranslucentShadowCoverageStagePriority( pStage, regs );
 		if ( priority > bestPriority ) {
@@ -6390,7 +6392,8 @@ static void RB_ShadowMapDrawPerforatedCasterProgram( const drawSurf_t *surf, con
 	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
 	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>( &ac->st ) );
 
-	for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
+	const int stageCount = shader->GetNumStages();
+	for ( int stage = 0; stage < stageCount; stage++ ) {
 		const shaderStage_t *pStage = shader->GetStage( stage );
 		if ( !pStage->hasAlphaTest || regs[ pStage->conditionRegister ] == 0 ) {
 			continue;
@@ -6508,7 +6511,8 @@ static void RB_ShadowMapDrawTranslucentCasterChain( const drawSurf_t *surf, cons
 		const shaderStage_t *coverageStage = RB_FindTranslucentShadowCoverageStage( shader, regs );
 		bool drewStage = false;
 
-		for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
+		const int stageCount = shader->GetNumStages();
+		for ( int stage = 0; stage < stageCount; stage++ ) {
 			const shaderStage_t *pStage = shader->GetStage( stage );
 			if ( !RB_TranslucentShadowStageSupported( pStage, regs ) ) {
 				continue;
@@ -6714,7 +6718,8 @@ static bool RB_PointShadowMapCanProcessPerforatedCaster( const drawSurf_t *surf 
 	bool haveActiveStage = false;
 	const idMaterial *shader = surf->material;
 	const float *regs = surf->shaderRegisters;
-	for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
+	const int stageCount = shader->GetNumStages();
+	for ( int stage = 0; stage < stageCount; stage++ ) {
 		const shaderStage_t *pStage = shader->GetStage( stage );
 		if ( !pStage->hasAlphaTest || regs[ pStage->conditionRegister ] == 0 ) {
 			continue;
@@ -6823,7 +6828,8 @@ static void RB_PointShadowMapDrawPerforatedCaster( const drawSurf_t *surf, const
 		return;
 	}
 
-	for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
+	const int stageCount = shader->GetNumStages();
+	for ( int stage = 0; stage < stageCount; stage++ ) {
 		const shaderStage_t *pStage = shader->GetStage( stage );
 
 		if ( !pStage->hasAlphaTest ) {
@@ -6962,7 +6968,8 @@ static void RB_PointShadowMapDrawTranslucentCasterChain( const drawSurf_t *surf,
 		const shaderStage_t *coverageStage = RB_FindTranslucentShadowCoverageStage( shader, regs );
 		bool drewStage = false;
 
-		for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
+		const int stageCount = shader->GetNumStages();
+		for ( int stage = 0; stage < stageCount; stage++ ) {
 			const shaderStage_t *pStage = shader->GetStage( stage );
 			if ( !RB_TranslucentShadowStageSupported( pStage, regs ) ) {
 				continue;
@@ -8528,7 +8535,9 @@ static void RB_ARB2_CreateCustomGLSLDrawInteractionsForSurface( const drawSurf_t
 		R_GlobalPlaneToLocal( surf->space->modelMatrix, backEnd.vLight->lightProject[i], lightProject[i] );
 	}
 
-	for ( int lightStageNum = 0; lightStageNum < lightShader->GetNumStages(); lightStageNum++ ) {
+	const int lightStageCount = lightShader->GetNumStages();
+	const int surfaceStageCount = surfaceShader->GetNumStages();
+	for ( int lightStageNum = 0; lightStageNum < lightStageCount; lightStageNum++ ) {
 		const shaderStage_t *lightStage = lightShader->GetStage( lightStageNum );
 		if ( lightRegs != NULL && lightRegs[ lightStage->conditionRegister ] == 0.0f ) {
 			continue;
@@ -8548,7 +8557,7 @@ static void RB_ARB2_CreateCustomGLSLDrawInteractionsForSurface( const drawSurf_t
 			lightRegs[ lightStage->color.registers[3] ]
 		};
 
-		for ( int surfaceStageNum = 0; surfaceStageNum < surfaceShader->GetNumStages(); surfaceStageNum++ ) {
+		for ( int surfaceStageNum = 0; surfaceStageNum < surfaceStageCount; surfaceStageNum++ ) {
 			const shaderStage_t *surfaceStage = surfaceShader->GetStage( surfaceStageNum );
 			if ( surfaceStage == NULL || surfaceStage->newStage == NULL ) {
 				continue;

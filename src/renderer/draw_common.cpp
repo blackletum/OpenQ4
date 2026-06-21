@@ -134,7 +134,8 @@ static bool RB_MaterialUsesCurrentDepth( const idMaterial *material ) {
 		return false;
 	}
 
-	for ( int i = 0; i < material->GetNumStages(); i++ ) {
+	const int stageCount = material->GetNumStages();
+	for ( int i = 0; i < stageCount; i++ ) {
 		if ( RB_StageUsesCurrentDepth( material->GetStage( i ) ) ) {
 			return true;
 		}
@@ -4750,7 +4751,8 @@ bool RB_DrawSurfHasSoftParticleStage( const drawSurf_t *surf ) {
 	}
 
 	const float *regs = surf->shaderRegisters;
-	for ( int stage = 0; stage < shader->GetNumStages(); ++stage ) {
+	const int stageCount = shader->GetNumStages();
+	for ( int stage = 0; stage < stageCount; ++stage ) {
 		const shaderStage_t *pStage = shader->GetStage( stage );
 		if ( RB_SoftParticleStageContractSupported( surf, pStage ) && RB_SoftParticleStageVisible( pStage, regs ) ) {
 			return true;
@@ -5268,7 +5270,8 @@ static bool RB_RVSpecialPrepareSolidStageTexturing( const drawSurf_t *surf, idDr
 		return true;
 	}
 
-	for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
+	const int stageCount = shader->GetNumStages();
+	for ( int stage = 0; stage < stageCount; stage++ ) {
 		const shaderStage_t *pStage = shader->GetStage( stage );
 		if ( pStage->lighting != SL_DIFFUSE || regs[ pStage->conditionRegister ] == 0.0f ) {
 			continue;
@@ -5346,7 +5349,8 @@ static void RB_T_CaptureRVSpecialDepth( const drawSurf_t *surf ) {
 	}
 
 	regs = surf->shaderRegisters;
-	for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
+	const int stageCount = shader->GetNumStages();
+	for ( int stage = 0; stage < stageCount; stage++ ) {
 		pStage = shader->GetStage( stage );
 		if ( regs[ pStage->conditionRegister ] != 0.0f ) {
 			break;
@@ -5381,7 +5385,7 @@ static void RB_T_CaptureRVSpecialDepth( const drawSurf_t *surf ) {
 		bool didDraw = false;
 
 		glEnable( GL_ALPHA_TEST );
-		for ( int stage = 0; stage < shader->GetNumStages(); stage++ ) {
+		for ( int stage = 0; stage < stageCount; stage++ ) {
 			pStage = shader->GetStage( stage );
 			if ( !pStage->hasAlphaTest || regs[ pStage->conditionRegister ] == 0.0f ) {
 				continue;
@@ -5884,16 +5888,17 @@ void RB_T_FillDepthBuffer( const drawSurf_t *surf ) {
 	regs = surf->shaderRegisters;
 
 	const bool useAlphaToCoverage = RB_UseAlphaToCoverage( shader );
+	const int stageCount = shader->GetNumStages();
 
 	// if all stages of a material have been conditioned off, don't do anything
-	for ( stage = 0; stage < shader->GetNumStages() ; stage++ ) {		
+	for ( stage = 0; stage < stageCount ; stage++ ) {
 		pStage = shader->GetStage(stage);
 		// check the stage enable condition
 		if ( regs[ pStage->conditionRegister ] != 0 ) {
 			break;
 		}
 	}
-	if ( stage == shader->GetNumStages() ) {
+	if ( stage == stageCount ) {
 		return;
 	}
 
@@ -5940,7 +5945,7 @@ void RB_T_FillDepthBuffer( const drawSurf_t *surf ) {
 
 		glEnable( GL_ALPHA_TEST );
 		// perforated surfaces may have multiple alpha tested stages
-		for ( stage = 0; stage < shader->GetNumStages() ; stage++ ) {		
+		for ( stage = 0; stage < stageCount ; stage++ ) {
 			pStage = shader->GetStage(stage);
 
 			if ( !pStage->hasAlphaTest ) {
@@ -6489,7 +6494,8 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>(&ac->st) );
 	bool resetTexCoords = false;
 
-	for ( stage = 0; stage < shader->GetNumStages() ; stage++ ) {		
+	const int stageCount = shader->GetNumStages();
+	for ( stage = 0; stage < stageCount ; stage++ ) {
 		pStage = shader->GetStage(stage);
 
 		// check the enable condition
@@ -7466,7 +7472,8 @@ static void RB_BlendLight( const drawSurf_t *drawSurfs,  const drawSurf_t *drawS
 	glEnable( GL_TEXTURE_GEN_T );
 	glEnable( GL_TEXTURE_GEN_Q );
 
-	for ( i = 0 ; i < lightShader->GetNumStages() ; i++ ) {
+	const int lightStageCount = lightShader->GetNumStages();
+	for ( i = 0 ; i < lightStageCount ; i++ ) {
 		stage = lightShader->GetStage(i);
 
 		if ( !regs[ stage->conditionRegister ] ) {
@@ -7929,7 +7936,8 @@ static bool RB_LightGridMaterialHasActiveColorMaskStage( const idMaterial *shade
 		return false;
 	}
 
-	for ( int stageIndex = 0; stageIndex < shader->GetNumStages(); stageIndex++ ) {
+	const int stageCount = shader->GetNumStages();
+	for ( int stageIndex = 0; stageIndex < stageCount; stageIndex++ ) {
 		const shaderStage_t *stage = shader->GetStage( stageIndex );
 		if ( stage != NULL &&
 			( regs == NULL || regs[stage->conditionRegister] != 0.0f ) &&
@@ -8336,7 +8344,8 @@ static bool RB_LightGridHasActiveAlbedoStage( const idMaterial *shader, const fl
 		return false;
 	}
 
-	for ( int stageIndex = 0; stageIndex < shader->GetNumStages(); stageIndex++ ) {
+	const int stageCount = shader->GetNumStages();
+	for ( int stageIndex = 0; stageIndex < stageCount; stageIndex++ ) {
 		const shaderStage_t *stage = shader->GetStage( stageIndex );
 		if ( RB_LightGridStageCanProvideAlbedo( shader, stage, regs ) ) {
 			return true;
@@ -8390,7 +8399,8 @@ static bool RB_LightGridFindRepresentativeAlbedo( const drawSurf_t *surf, rbLigh
 		return false;
 	}
 
-	for ( int stageIndex = 0; stageIndex < shader->GetNumStages(); stageIndex++ ) {
+	const int stageCount = shader->GetNumStages();
+	for ( int stageIndex = 0; stageIndex < stageCount; stageIndex++ ) {
 		const shaderStage_t *stage = shader->GetStage( stageIndex );
 		if ( !RB_LightGridStageCanProvideAlbedo( shader, stage, regs ) ) {
 			continue;
@@ -8829,7 +8839,8 @@ static bool RB_STD_DrawLightGridSurface( const drawSurf_t *surf, const LightGrid
 	bool submitted = false;
 	int stageRejects = 0;
 	int stageSubmits = 0;
-	for ( int stageIndex = 0; stageIndex < shader->GetNumStages(); stageIndex++ ) {
+	const int stageCount = shader->GetNumStages();
+	for ( int stageIndex = 0; stageIndex < stageCount; stageIndex++ ) {
 		const shaderStage_t *stage = shader->GetStage( stageIndex );
 		if ( stage->lighting == SL_BUMP ) {
 			if ( !r_skipBump.GetBool() && RB_LightGridMaterialStageIsActive( stage, regs ) ) {

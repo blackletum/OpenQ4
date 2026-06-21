@@ -70,8 +70,9 @@ srfTriangles_t *R_PolytopeSurface( int numPlanes, const idPlane *planes, idWindi
 		if ( w.GetNumPoints() <= 2 ) {
 			continue;
 		}
-		numVerts += w.GetNumPoints();
-		numIndexes += ( w.GetNumPoints() - 2 ) * 3;
+		const int windingPointCount = w.GetNumPoints();
+		numVerts += windingPointCount;
+		numIndexes += ( windingPointCount - 2 ) * 3;
 	}
 
 	// allocate the surface
@@ -82,25 +83,26 @@ srfTriangles_t *R_PolytopeSurface( int numPlanes, const idPlane *planes, idWindi
 	// copy the data from the windings
 	for ( i = 0; i < numPlanes; i++ ) {
 		idFixedWinding &w = planeWindings[i];
-		if ( !w.GetNumPoints() ) {
+		const int windingPointCount = w.GetNumPoints();
+		if ( !windingPointCount ) {
 			continue;
 		}
-		for ( j = 0 ; j < w.GetNumPoints() ; j++ ) {
+		for ( j = 0 ; j < windingPointCount ; j++ ) {
 			tri->verts[tri->numVerts + j ].Clear();
 			tri->verts[tri->numVerts + j ].xyz = w[j].ToVec3();
 		}
 
-		for ( j = 1 ; j < w.GetNumPoints() - 1 ; j++ ) {
+		for ( j = 1 ; j < windingPointCount - 1 ; j++ ) {
 			tri->indexes[ tri->numIndexes + 0 ] = tri->numVerts;
 			tri->indexes[ tri->numIndexes + 1 ] = tri->numVerts + j;
 			tri->indexes[ tri->numIndexes + 2 ] = tri->numVerts + j + 1;
 			tri->numIndexes += 3;
 		}
-		tri->numVerts += w.GetNumPoints();
+		tri->numVerts += windingPointCount;
 
 		// optionally save the winding
 		if ( windings ) {
-			windings[i] = new idWinding( w.GetNumPoints() );
+			windings[i] = new idWinding( windingPointCount );
 			*windings[i] = w;
 		}
 	}

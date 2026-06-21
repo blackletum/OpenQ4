@@ -149,7 +149,8 @@ idRenderModelDecal::CreateProjectionInfo
 */
 bool idRenderModelDecal::CreateProjectionInfo( decalProjectionInfo_t &info, const idFixedWinding &winding, const idVec3 &projectionOrigin, const bool parallel, const float fadeDepth, const idMaterial *material, const int startTime ) {
 
-	if ( winding.GetNumPoints() != NUM_DECAL_BOUNDING_PLANES - 2 ) {
+	const int windingPointCount = winding.GetNumPoints();
+	if ( windingPointCount != NUM_DECAL_BOUNDING_PLANES - 2 ) {
 		common->Printf( "idRenderModelDecal::CreateProjectionInfo: winding must have %d points\n", NUM_DECAL_BOUNDING_PLANES - 2 );
 		return false;
 	}
@@ -174,7 +175,7 @@ bool idRenderModelDecal::CreateProjectionInfo( decalProjectionInfo_t &info, cons
 	if ( parallel ) {
 		const idVec3 transToProj = windingPlane.Normal() * depth;
 		const idVec3 transToFade = windingPlane.Normal() * fadeDepth;
-		for ( int i = 0; i < winding.GetNumPoints(); i++ ) {
+		for ( int i = 0; i < windingPointCount; i++ ) {
 			const idVec3 point = winding[i].ToVec3();
 			info.projectionBounds.AddPoint( point + transToProj );
 			info.projectionBounds.AddPoint( point - transToFade );
@@ -185,15 +186,15 @@ bool idRenderModelDecal::CreateProjectionInfo( decalProjectionInfo_t &info, cons
 
 	// calculate the world space projection volume bounding planes, positive sides face outside the decal
 	if ( parallel ) {
-		for ( int i = 0; i < winding.GetNumPoints(); i++ ) {
-			idVec3 edge = winding[(i+1)%winding.GetNumPoints()].ToVec3() - winding[i].ToVec3();
+		for ( int i = 0; i < windingPointCount; i++ ) {
+			idVec3 edge = winding[(i+1)%windingPointCount].ToVec3() - winding[i].ToVec3();
 			info.boundingPlanes[i].Normal().Cross( windingPlane.Normal(), edge );
 			info.boundingPlanes[i].Normalize();
 			info.boundingPlanes[i].FitThroughPoint( winding[i].ToVec3() );
 		}
 	} else {
-		for ( int i = 0; i < winding.GetNumPoints(); i++ ) {
-			info.boundingPlanes[i].FromPoints( projectionOrigin, winding[i].ToVec3(), winding[(i+1)%winding.GetNumPoints()].ToVec3() );
+		for ( int i = 0; i < windingPointCount; i++ ) {
+			info.boundingPlanes[i].FromPoints( projectionOrigin, winding[i].ToVec3(), winding[(i+1)%windingPointCount].ToVec3() );
 		}
 	}
 	info.boundingPlanes[NUM_DECAL_BOUNDING_PLANES - 2] = windingPlane;
@@ -279,17 +280,18 @@ idRenderModelDecal::AddWinding
 void idRenderModelDecal::AddWinding( const idWinding &w, const idMaterial *decalMaterial, const idPlane fadePlanes[2], float fadeDepth, int startTime ) {
 	int i;
 	float invFadeDepth, fade;
+	const int windingPointCount = w.GetNumPoints();
 
 	if ( ( material == NULL || material == decalMaterial ) &&
-			tri.numVerts + w.GetNumPoints() < MAX_DECAL_VERTS &&
-				tri.numIndexes + ( w.GetNumPoints() - 2 ) * 3 < MAX_DECAL_INDEXES ) {
+			tri.numVerts + windingPointCount < MAX_DECAL_VERTS &&
+				tri.numIndexes + ( windingPointCount - 2 ) * 3 < MAX_DECAL_INDEXES ) {
 
 		material = decalMaterial;
 
 		// add to this decal
 		invFadeDepth = -1.0f / fadeDepth;
 
-		for ( i = 0; i < w.GetNumPoints(); i++ ) {
+		for ( i = 0; i < windingPointCount; i++ ) {
 			fade = fadePlanes[0].Distance( w[i].ToVec3() ) * invFadeDepth;
 			if ( fade < 0.0f ) {
 				fade = fadePlanes[1].Distance( w[i].ToVec3() ) * invFadeDepth;
@@ -311,7 +313,7 @@ void idRenderModelDecal::AddWinding( const idWinding &w, const idMaterial *decal
 			tri.verts[tri.numVerts + i].color[2] = 255;
 			tri.verts[tri.numVerts + i].color[3] = 255;
 		}
-		for ( i = 2; i < w.GetNumPoints(); i++ ) {
+		for ( i = 2; i < windingPointCount; i++ ) {
 			tri.indexes[tri.numIndexes + 0] = tri.numVerts;
 			tri.indexes[tri.numIndexes + 1] = tri.numVerts + i - 1;
 			tri.indexes[tri.numIndexes + 2] = tri.numVerts + i;
@@ -320,7 +322,7 @@ void idRenderModelDecal::AddWinding( const idWinding &w, const idMaterial *decal
 			indexStartTime[tri.numIndexes + 2] = (float)startTime;
 			tri.numIndexes += 3;
 		}
-		tri.numVerts += w.GetNumPoints();
+		tri.numVerts += windingPointCount;
 		tri.tangentsCalculated = false;
 		tri.facePlanesCalculated = false;
 		return;
@@ -361,7 +363,8 @@ idRenderModelDecal::CreateDecal
 */
 void idRenderModelDecal::CreateDecal( const idRenderModel *model, const decalProjectionInfo_t &localInfo ) {
 	// check all model surfaces
-	for ( int surfNum = 0; surfNum < model->NumSurfaces(); surfNum++ ) {
+	const int surfaceCount = model->NumSurfaces();
+	for ( int surfNum = 0; surfNum < surfaceCount; surfNum++ ) {
 		const modelSurface_t *surf = model->Surface( surfNum );
 
 		// if no geometry or no shader

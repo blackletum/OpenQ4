@@ -1583,7 +1583,8 @@ void R_ModernShadowPlanner_PrepareFrame( const idScenePacketFrame &packetFrame, 
 	rg_modernShadowPlannerStats.visibilityCasterCullingReady = r_rendererOcclusion.GetBool();
 	rg_modernShadowPlannerStats.visibilityNoQueryStall = true;
 	rg_modernShadowPlannerStats.modernReceiverSamplingReady = R_ModernShadowPlanner_ModernReceiverSamplingAvailable();
-	rg_modernShadowPlannerStats.sceneCount = packetFrame.NumScenes();
+	const int sceneCount = packetFrame.NumScenes();
+	rg_modernShadowPlannerStats.sceneCount = sceneCount;
 	rg_modernShadowPlannerStats.shadowMapSize = R_ModernShadowPlanner_BudgetedShadowMapSize();
 	const rendererBenchmarkBudget_t &budget = RendererBenchmarks_CurrentBudget();
 	const modernShadowPlannerBudget_t shadowBudget = R_ModernShadowPlanner_BuildBudget( budget, rg_modernShadowPlannerStats.shadowMapSize );
@@ -1605,7 +1606,7 @@ void R_ModernShadowPlanner_PrepareFrame( const idScenePacketFrame &packetFrame, 
 	}
 
 	const int startMsec = Sys_Milliseconds();
-	for ( int sceneIndex = 0; sceneIndex < packetFrame.NumScenes(); ++sceneIndex ) {
+	for ( int sceneIndex = 0; sceneIndex < sceneCount; ++sceneIndex ) {
 		const scenePacket_t &scene = packetFrame.Scene( sceneIndex );
 		if ( scene.viewDef == NULL ) {
 			continue;
@@ -2584,7 +2585,8 @@ bool RendererShadowPlanner_RunSelfTest( void ) {
 	R_ModernShadowPlanner_PrepareFrame( packetFrame, true );
 	const modernShadowPlannerStats_t budgetStressStats = R_ModernShadowPlanner_Stats();
 	const modernShadowLightDescriptor_t *budgetMissDescriptor = NULL;
-	for ( int descriptorIndex = 0; descriptorIndex < R_ModernShadowPlanner_NumDescriptors(); ++descriptorIndex ) {
+	const int budgetDescriptorCount = R_ModernShadowPlanner_NumDescriptors();
+	for ( int descriptorIndex = 0; descriptorIndex < budgetDescriptorCount; ++descriptorIndex ) {
 		const modernShadowLightDescriptor_t *descriptor = R_ModernShadowPlanner_DescriptorByIndex( descriptorIndex );
 		if ( descriptor != NULL && descriptor->fallbackReason == MODERN_SHADOW_FALLBACK_BUDGET ) {
 			budgetMissDescriptor = descriptor;
@@ -2639,7 +2641,8 @@ bool RendererShadowPlanner_RunSelfTest( void ) {
 	const modernShadowPlannerStats_t fairnessStats = R_ModernShadowPlanner_Stats();
 	const modernShadowLightDescriptor_t *fairnessPointDescriptor = R_ModernShadowPlanner_DescriptorForLight( &lights[1] );
 	const modernShadowLightDescriptor_t *fairnessBudgetMissDescriptor = NULL;
-	for ( int descriptorIndex = 0; descriptorIndex < R_ModernShadowPlanner_NumDescriptors(); ++descriptorIndex ) {
+	const int fairnessDescriptorCount = R_ModernShadowPlanner_NumDescriptors();
+	for ( int descriptorIndex = 0; descriptorIndex < fairnessDescriptorCount; ++descriptorIndex ) {
 		const modernShadowLightDescriptor_t *descriptor = R_ModernShadowPlanner_DescriptorByIndex( descriptorIndex );
 		if ( descriptor != NULL && descriptor->fallbackReason == MODERN_SHADOW_FALLBACK_BUDGET ) {
 			fairnessBudgetMissDescriptor = descriptor;

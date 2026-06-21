@@ -94,6 +94,7 @@ private:
 	int							AreaContentsTravelFlags( int areaNum ) const;
 	idVec3						AreaReachableGoal( int areaNum ) const;
 	int							NumReachabilities( void ) const;
+	idStr						version;
 };
 
 #endif /* !__AASFILELOCAL_H__ */

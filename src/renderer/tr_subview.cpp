@@ -230,7 +230,8 @@ bool R_PreciseCullSurface( const drawSurf_t *drawSurf, idBounds &ndcBounds ) {
 				break;
 			}
 		}
-		for ( j = 0; j < w.GetNumPoints(); j++ ) {
+		const int windingPointCount = w.GetNumPoints();
+		for ( j = 0; j < windingPointCount; j++ ) {
 			idVec3	screen;
 
 			R_GlobalToNormalizedDeviceCoordinates( w[j].ToVec3(), screen );
@@ -632,7 +633,8 @@ bool	R_GenerateSurfaceSubview( drawSurf_t *drawSurf ) {
 
 	// see what kind of subview we are making
 	if ( shader->GetSort() != SS_SUBVIEW ) {
-		for ( int i = 0 ; i < shader->GetNumStages() ; i++ ) {
+		const int stageCount = shader->GetNumStages();
+		for ( int i = 0 ; i < stageCount ; i++ ) {
 			const shaderStage_t	*stage = shader->GetStage( i );
 			switch ( stage->texture.dynamic ) {
 			case DI_REMOTE_RENDER:
