@@ -1338,6 +1338,7 @@ bool rvParticleTemplate::Parse(rvDeclEffect* effect, idParser* src) {
 				return false;
 			}
 			mEntityDefName = token;
+			declManager->FindType(DECL_ENTITYDEF, mEntityDefName, false);
 		}
 		else if (!token.Icmp("material")) {
 			if (!src->ReadToken(&token)) {

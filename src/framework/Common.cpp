@@ -115,6 +115,7 @@ void GLimp_PreserveWindowOnShutdown( bool preserve );
 
 idCVar com_product_lang_ext( "com_product_lang_ext", "1", CVAR_INTEGER | CVAR_SYSTEM | CVAR_ARCHIVE, "Extension to use when creating language files." );
 idCVar r_skipGlowOverlay( "r_skipGlowOverlay", "0", CVAR_ARCHIVE | CVAR_RENDERER, "skip glow overlays when non-zero" );
+static idCVar r_borderlessDefaultMigrated( "r_borderlessDefaultMigrated", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "one-time migration flag for legacy bordered window defaults" );
 
 static void Common_MigrateLegacyConsoleAllowCVar( void ) {
 	idCVar *legacyAllowConsole = cvarSystem->Find( "com_allowConsole" );
@@ -166,6 +167,21 @@ static void Common_MigrateLinuxLegacyLowVRamTexturePreset( void ) {
 	cvarSystem->SetCVarInteger( "image_downSizeLimit", 0, CVAR_ARCHIVE );
 	cvarSystem->SetCVarInteger( "image_downSizeSpecular", 0, CVAR_ARCHIVE );
 	cvarSystem->SetCVarInteger( "image_downSizeBump", 0, CVAR_ARCHIVE );
+#endif
+}
+
+static void Common_MigrateLegacyBorderlessWindowDefault( void ) {
+#if defined( _WIN32 )
+	if ( r_borderlessDefaultMigrated.GetBool() ) {
+		return;
+	}
+
+	if ( !cvarSystem->GetCVarBool( "r_borderless" ) ) {
+		common->Printf( "Migrating legacy display config: enabling borderless windowed presentation\n" );
+		cvarSystem->SetCVarBool( "r_borderless", true, CVAR_ARCHIVE );
+	}
+
+	r_borderlessDefaultMigrated.SetBool( true );
 #endif
 }
 
@@ -4508,6 +4524,7 @@ void idCommonLocal::InitGame( void ) {
 		cvarSystem->SetModifiedFlags( CVAR_ARCHIVE );
 	}
 	Common_MigrateLinuxLegacyLowVRamTexturePreset();
+	Common_MigrateLegacyBorderlessWindowDefault();
 
 	// cvars are initialized, but not the rendering system. Allow preference startup dialog
 	Sys_DoPreferences();

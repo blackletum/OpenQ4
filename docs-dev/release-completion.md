@@ -580,6 +580,7 @@ Process:
 - [x] Direct no-post scene rendering now clears the backbuffer before drawing the world, preventing full-screen GUI/material overlays such as stock vehicle screen dirt from persisting after the GUI that drew them has stopped rendering.
 - [x] Renderer restart and game-mode reloads are more robust: `vid_restart` and SP/MP engine reloads now release scene, post-process, shadow-map, BSE, and background filesystem state before rebuilding OpenGL, reducing black-scene and initialization failures after changing renderer settings or switching game modules.
 - [x] Outdoor BSE-heavy scenes such as `game/airdefense1` now reject offscreen effect geometry from maintained effect bounds before rebuilding render surfaces, reducing frame pacing stutter while preserving authored smoke and effect rendering.
+- [x] Windowed play is smoother in BSE-heavy outdoor scenes: new installs default windowed mode to borderless presentation and legacy Windows configs migrate once from the old bordered-window default, avoiding Windows/OpenGL swap stalls seen in `game/airdefense1`; BSE debris entity definitions are also precached when effects parse so first-impact debris media no longer loads during gameplay.
 - [x] The `game/core2` Makron fight is more reliable on x64 builds: scripted flying turns now rotate toward their target without getting stuck, and the retail teleport phase can recover if its script handoff fails to finish so the boss no longer remains hidden and effectively undamageable.
 
 ## Carry Forward

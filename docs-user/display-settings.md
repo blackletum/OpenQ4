@@ -32,7 +32,7 @@ The `com_performancePreset` cvar stores the selected preset. Use the Settings me
 |---|---:|---|
 | `r_fullscreen` | `1` | `1` = fullscreen, `0` = windowed. |
 | `r_fullscreenDesktop` | `1` | `1` = native desktop fullscreen (recommended). `0` = exclusive fullscreen using `r_mode`/`r_custom*`. |
-| `r_borderless` | `0` | Borderless window mode when `r_fullscreen 0`. |
+| `r_borderless` | `1` | Borderless window mode when `r_fullscreen 0`. |
 | `r_windowWidth` | `1280` | Windowed width. |
 | `r_windowHeight` | `720` | Windowed height. |
 | `win_xpos` | (auto) | Window X position (updated automatically when you move the window). |
@@ -111,7 +111,8 @@ Notes:
 ## Windowed Sizing and Placement
 
 - `Settings -> System -> Display Sizing` exposes `r_windowWidth`, `r_windowHeight`, `r_customWidth`, `r_customHeight`, and `r_displayRefresh`. Leaving Refresh Rate on `Auto` writes `r_displayRefresh 0`.
-- When windowed (`r_fullscreen 0`, `r_borderless 0`), resizing updates `r_windowWidth`/`r_windowHeight` automatically.
+- New Windows installs, and legacy Windows configs migrated from the old default, use borderless windowed presentation when `r_fullscreen 0` to avoid OpenGL bordered-window frame pacing stalls. Set `r_borderless 0` and run `vid_restart` if you specifically want a resizable bordered window.
+- When bordered windowed mode is active (`r_fullscreen 0`, `r_borderless 0`), resizing updates `r_windowWidth`/`r_windowHeight` automatically.
 - Moving the window updates `win_xpos`/`win_ypos` automatically.
 - When switching fullscreen -> windowed, openQ4 restores the last remembered windowed size/position (it should not come back as a fullscreen-sized window).
 - If you unplug/rearrange monitors and the saved window position becomes off-screen, openQ4 will recover by clamping/recentering the window back onto a valid display.
