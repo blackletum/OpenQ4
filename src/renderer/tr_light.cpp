@@ -123,9 +123,9 @@ idCVar bse_culledLoopServiceRefreshBudget(
 	"maximum portal-culled looping BSE effects to refresh per rendered view; 0 disables stale refresh");
 idCVar bse_useFrustumCull(
 	"bse_useFrustumCull",
-	"0",
+	"1",
 	CVAR_RENDERER | CVAR_BOOL,
-	"if 1, experimental: cull BSE render surfaces by expanded effect bounds before emitting draw surfaces");
+	"if 1, cull BSE render surfaces by expanded effect bounds before emitting draw surfaces");
 idCVar bse_useCachedFrustumCull(
 	"bse_useCachedFrustumCull",
 	"0",
@@ -2270,7 +2270,7 @@ static bool R_EffectCachedRenderBounds( const rvRenderEffectLocal *def, idBounds
 	return hasBounds;
 }
 
-static bool R_EffectBuildCullBounds( const rvRenderEffectLocal *def, idBounds &bounds, bool &hasCachedRenderBounds ) {
+static bool R_EffectBuildCullBounds( const rvRenderEffectLocal *def, idBounds &bounds, bool &hasCachedRenderBounds, bool includeCachedRenderBounds = true ) {
 	hasCachedRenderBounds = false;
 	bounds.Clear();
 
@@ -2283,7 +2283,7 @@ static bool R_EffectBuildCullBounds( const rvRenderEffectLocal *def, idBounds &b
 	}
 
 	idBounds cachedRenderBounds;
-	if ( R_EffectCachedRenderBounds( def, cachedRenderBounds ) ) {
+	if ( includeCachedRenderBounds && R_EffectCachedRenderBounds( def, cachedRenderBounds ) ) {
 		hasCachedRenderBounds = true;
 		if ( bounds.IsCleared() ) {
 			bounds = cachedRenderBounds;
@@ -2356,16 +2356,17 @@ static bool R_CullEffectByArea( const idRenderWorldLocal *world, const rvRenderE
 }
 
 static bool R_CullEffectByFrustum( const rvRenderEffectLocal *def, bool requireCachedRenderBounds = false ) {
-	if ( !bse_useFrustumCull.GetBool() || !bse_useCachedFrustumCull.GetBool() || R_EffectUsesViewModelDepth( def ) || R_ShouldDisableEntityCullingForLevelshot() || R_IsPortalSkyView() ) {
+	if ( !bse_useFrustumCull.GetBool() || R_EffectUsesViewModelDepth( def ) || R_ShouldDisableEntityCullingForLevelshot() || R_IsPortalSkyView() ) {
 		return false;
 	}
 
 	idBounds expandedBounds;
 	bool hasCachedRenderBounds = false;
-	if ( !R_EffectBuildCullBounds( def, expandedBounds, hasCachedRenderBounds ) ) {
+	const bool includeCachedRenderBounds = bse_useCachedFrustumCull.GetBool();
+	if ( !R_EffectBuildCullBounds( def, expandedBounds, hasCachedRenderBounds, includeCachedRenderBounds ) ) {
 		return false;
 	}
-	if ( requireCachedRenderBounds && !hasCachedRenderBounds ) {
+	if ( requireCachedRenderBounds && includeCachedRenderBounds && !hasCachedRenderBounds ) {
 		return false;
 	}
 	expandedBounds.ExpandSelf( Max( 0.0f, bse_frustumCullExpand.GetFloat() ) );
@@ -2544,7 +2545,7 @@ void R_AddEffectSurfaces(void) {
 				continue;
 			}
 
-			if ( R_CullEffectByFrustum( def, true ) ) {
+			if ( R_CullEffectByFrustum( def ) ) {
 				++dropDefFrustumCull;
 				continue;
 			}
