@@ -10,6 +10,7 @@ Process:
 
 ## Ready For Changelog
 
+- [x] Manual releases no longer fail late when Apple signing credentials are absent: the workflow now builds a credential-aware release matrix, keeps Windows/Linux packages mandatory, includes signed/notarized macOS DMGs only when all Apple Developer ID and notary secrets are configured, and verifies the expected artifact list against the matrix that actually ran.
 - [x] Runtime PK4 packaging now tracks `content/baseoq4/pak0/` and `content/baseoq4/pak1/` through generated source manifests, so removing generated content such as obsolete Air Defense 1 light-grid chunks no longer leaves stale Ninja dependencies that break the fast local build.
 - [x] macOS push verification builds are unblocked again: process handoff path and environment filtering now use openQ4's guarded string-compare API instead of raw C string calls rejected by the shared idStr safety wrappers.
 - [x] Renderer helper and diagnostic loops do less repeated count work: portal export/find/show paths, MSAA resolves, light and subview winding projection, debug polygon drawing, material register printing, shadow-planner descriptor checks, and benchmark preset scans now cache stable loop counts before iterating.

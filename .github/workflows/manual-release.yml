@@ -41,6 +41,9 @@ jobs:
       release_scale: ${{ steps.version.outputs.release_scale }}
       release_reason: ${{ steps.version.outputs.release_reason }}
       bump_mode: ${{ steps.version.outputs.bump_mode }}
+      release_matrix: ${{ steps.release_matrix.outputs.release_matrix }}
+      macos_release_enabled: ${{ steps.release_matrix.outputs.macos_release_enabled }}
+      macos_release_reason: ${{ steps.release_matrix.outputs.macos_release_reason }}
 
     steps:
       - name: Checkout
@@ -90,6 +93,131 @@ jobs:
             exit 1
           fi
 
+      - name: Build release matrix
+        id: release_matrix
+        env:
+          MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
+          MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD }}
+          MACOS_DEVELOPER_ID_APPLICATION_IDENTITY: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_IDENTITY }}
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          MACOS_NOTARY_APP_PASSWORD: ${{ secrets.MACOS_NOTARY_APP_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+
+          matrix = [
+              {
+                  "os": "windows-2025",
+                  "platform": "windows",
+                  "label": "Windows x64",
+                  "binary_arch": "x64",
+                  "platform_backend": "sdl3",
+                  "macos_graphics_bridge": "opengl",
+                  "macos_openal_provider": "apple_framework",
+                  "package_suffix": "",
+                  "archive_format": "zip",
+                  "archive_ext": ".zip",
+              },
+              {
+                  "os": "windows-11-arm",
+                  "platform": "windows",
+                  "label": "Windows ARM64",
+                  "binary_arch": "arm64",
+                  "platform_backend": "sdl3",
+                  "macos_graphics_bridge": "opengl",
+                  "macos_openal_provider": "apple_framework",
+                  "package_suffix": "",
+                  "archive_format": "zip",
+                  "archive_ext": ".zip",
+              },
+              {
+                  "os": "ubuntu-24.04",
+                  "platform": "linux",
+                  "label": "Linux x64",
+                  "binary_arch": "x64",
+                  "platform_backend": "sdl3",
+                  "macos_graphics_bridge": "opengl",
+                  "macos_openal_provider": "apple_framework",
+                  "package_suffix": "",
+                  "archive_format": "tar.xz",
+                  "archive_ext": ".tar.xz",
+              },
+              {
+                  "os": "ubuntu-24.04-arm",
+                  "platform": "linux",
+                  "label": "Linux ARM64",
+                  "binary_arch": "arm64",
+                  "platform_backend": "sdl3",
+                  "macos_graphics_bridge": "opengl",
+                  "macos_openal_provider": "apple_framework",
+                  "package_suffix": "",
+                  "archive_format": "tar.xz",
+                  "archive_ext": ".tar.xz",
+              },
+          ]
+
+          required_macos_secrets = (
+              "MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64",
+              "MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD",
+              "MACOS_DEVELOPER_ID_APPLICATION_IDENTITY",
+              "MACOS_NOTARY_APPLE_ID",
+              "MACOS_NOTARY_TEAM_ID",
+              "MACOS_NOTARY_APP_PASSWORD",
+          )
+          missing_macos_secrets = [
+              secret_name
+              for secret_name in required_macos_secrets
+              if not os.environ.get(secret_name)
+          ]
+          macos_release_enabled = not missing_macos_secrets
+
+          if macos_release_enabled:
+              matrix.extend(
+                  [
+                      {
+                          "os": "macos-15",
+                          "platform": "macos",
+                          "label": "macOS ARM64 OpenGL",
+                          "binary_arch": "arm64",
+                          "platform_backend": "sdl3",
+                          "macos_graphics_bridge": "opengl",
+                          "macos_openal_provider": "apple_framework",
+                          "package_suffix": "-opengl",
+                          "archive_format": "dmg",
+                          "archive_ext": ".dmg",
+                      },
+                      {
+                          "os": "macos-15",
+                          "platform": "macos",
+                          "label": "macOS ARM64 Metal",
+                          "binary_arch": "arm64",
+                          "platform_backend": "sdl3",
+                          "macos_graphics_bridge": "metal",
+                          "macos_openal_provider": "apple_framework",
+                          "package_suffix": "-metal",
+                          "archive_format": "dmg",
+                          "archive_ext": ".dmg",
+                      },
+                  ]
+              )
+              macos_release_reason = "macOS signed/notarized release artifacts enabled."
+          else:
+              macos_release_reason = (
+                  "macOS release artifacts skipped because Apple signing/notary "
+                  "repository secrets are not configured: "
+                  + ", ".join(missing_macos_secrets)
+              )
+
+          print("macos_release_enabled=" + ("true" if macos_release_enabled else "false"))
+          print(f"macos_release_reason={macos_release_reason}")
+          print("release_matrix=" + json.dumps({"include": matrix}, separators=(",", ":")))
+          PY
+
   builds:
     name: ${{ matrix.label }}
     needs: metadata
@@ -98,68 +226,7 @@ jobs:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/openQ4-game
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: windows-2025
-            platform: windows
-            label: Windows x64
-            binary_arch: x64
-            platform_backend: sdl3
-            macos_graphics_bridge: opengl
-            macos_openal_provider: apple_framework
-            package_suffix: ""
-            archive_format: zip
-            archive_ext: .zip
-          - os: windows-11-arm
-            platform: windows
-            label: Windows ARM64
-            binary_arch: arm64
-            platform_backend: sdl3
-            macos_graphics_bridge: opengl
-            macos_openal_provider: apple_framework
-            package_suffix: ""
-            archive_format: zip
-            archive_ext: .zip
-          - os: ubuntu-24.04
-            platform: linux
-            label: Linux x64
-            binary_arch: x64
-            platform_backend: sdl3
-            macos_graphics_bridge: opengl
-            macos_openal_provider: apple_framework
-            package_suffix: ""
-            archive_format: tar.xz
-            archive_ext: .tar.xz
-          - os: ubuntu-24.04-arm
-            platform: linux
-            label: Linux ARM64
-            binary_arch: arm64
-            platform_backend: sdl3
-            macos_graphics_bridge: opengl
-            macos_openal_provider: apple_framework
-            package_suffix: ""
-            archive_format: tar.xz
-            archive_ext: .tar.xz
-          - os: macos-15
-            platform: macos
-            label: macOS ARM64 OpenGL
-            binary_arch: arm64
-            platform_backend: sdl3
-            macos_graphics_bridge: opengl
-            macos_openal_provider: apple_framework
-            package_suffix: "-opengl"
-            archive_format: dmg
-            archive_ext: .dmg
-          - os: macos-15
-            platform: macos
-            label: macOS ARM64 Metal
-            binary_arch: arm64
-            platform_backend: sdl3
-            macos_graphics_bridge: metal
-            macos_openal_provider: apple_framework
-            package_suffix: "-metal"
-            archive_format: dmg
-            archive_ext: .dmg
+      matrix: ${{ fromJSON(needs.metadata.outputs.release_matrix) }}
 
     steps:
       - name: Checkout
@@ -813,9 +880,16 @@ jobs:
             "openq4-${{ needs.metadata.outputs.version_tag }}-linux-x64-debugsymbols.tar.xz"
             "openq4-${{ needs.metadata.outputs.version_tag }}-linux-arm64.tar.xz"
             "openq4-${{ needs.metadata.outputs.version_tag }}-linux-arm64-debugsymbols.tar.xz"
-            "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64-opengl.dmg"
-            "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64-metal.dmg"
           )
+
+          if [ "${{ needs.metadata.outputs.macos_release_enabled }}" = "true" ]; then
+            expected+=(
+              "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64-opengl.dmg"
+              "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64-metal.dmg"
+            )
+          else
+            echo "${{ needs.metadata.outputs.macos_release_reason }}"
+          fi
 
           missing=0
           for package_file in "${expected[@]}"; do
