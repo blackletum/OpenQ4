@@ -654,6 +654,14 @@ void idSoundEmitterLocal::OverrideParms( const soundShaderParms_t* base, const s
 	{
 		out->volume = base->volume;
 	}
+	if( over->attenuatedVolume )
+	{
+		out->attenuatedVolume = over->attenuatedVolume;
+	}
+	else
+	{
+		out->attenuatedVolume = base->attenuatedVolume;
+	}
 	if( over->soundClass )
 	{
 		out->soundClass = over->soundClass;
@@ -885,6 +893,7 @@ void idSoundEmitterLocal::UpdateEmitter( const idVec3& origin, const idVec3& vel
 		soundWorld->writeDemo->WriteFloat( parms->minDistance );
 		soundWorld->writeDemo->WriteFloat( parms->maxDistance );
 		soundWorld->writeDemo->WriteFloat( parms->volume );
+		soundWorld->writeDemo->WriteFloat( parms->attenuatedVolume );
 		soundWorld->writeDemo->WriteFloat( parms->shakes );
 		soundWorld->writeDemo->WriteInt( parms->soundShaderFlags );
 		soundWorld->writeDemo->WriteInt( parms->soundClass );
@@ -1201,6 +1210,7 @@ void idSoundEmitterLocal::ModifySound( const s_channelType channel, const soundS
 		soundWorld->writeDemo->WriteFloat( parms->minDistance );
 		soundWorld->writeDemo->WriteFloat( parms->maxDistance );
 		soundWorld->writeDemo->WriteFloat( parms->volume );
+		soundWorld->writeDemo->WriteFloat( parms->attenuatedVolume );
 		soundWorld->writeDemo->WriteFloat( parms->shakes );
 		soundWorld->writeDemo->WriteInt( parms->soundShaderFlags );
 		soundWorld->writeDemo->WriteInt( parms->soundClass );

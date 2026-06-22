@@ -50,8 +50,9 @@ If you prefer a self-contained setup, keep these side by side in the same root f
 
 - On Linux, extract the release archive to a folder of your choice.
 - Linux packages default to the SDL3 runtime path.
-- Current macOS release packages are for Apple Silicon/arm64 Macs. Intel Mac and universal2 packages are not published yet.
-- macOS packages use the SDL3 runtime path and are published as separate OpenGL and Metal bridge DMGs. The Metal package is a bridge mode around the existing OpenGL renderer, so gameplay compatibility stays aligned with the stock asset path while Metal translation-layer work can be tested separately.
+- macOS packages are published only from credentialed release runs with Apple Developer ID signing and notarization configured; releases without those credentials omit macOS downloads instead of shipping unsigned official artifacts.
+- When macOS packages are published, they are for Apple Silicon/arm64 Macs. Intel Mac and universal2 packages are not published yet.
+- Credentialed macOS packages use the SDL3 runtime path and are published as separate OpenGL and Metal bridge DMGs. The Metal package is a bridge mode around the existing OpenGL renderer, so gameplay compatibility stays aligned with the stock asset path while Metal translation-layer work can be tested separately.
 - On macOS, open the DMG and launch `openQ4.app` from the mounted package, or copy the full package contents to a folder of your choice. Keep `openQ4.app`, `baseoq4/`, and the loose runtime files together.
 
 ### Steam Deck

@@ -124,7 +124,7 @@ GitHub Actions runs the same validation entrypoints on every pushed commit, pull
 
 Pull requests also run Linux Sanitizer Validation on x64 with ASan+UBSan enabled. This is a compile-focused lane for engine and staged game-module code, not a gameplay/runtime sanitizer pass yet; it disables precompiled headers to keep sanitizer diagnostics attached to normal translation units and skips install packaging so failures stay centered on configure/compile output.
 
-Current official macOS release artifacts are Apple Silicon/arm64 only. Intel Mac and universal2 packages are not published until a dedicated Intel runner or universal packaging lane is added; local Intel builds may still be used for development bring-up, but they are outside the packaged release support matrix.
+Official macOS release artifacts are published only when Apple Developer ID signing and notarization credentials are configured. When they are published, they are Apple Silicon/arm64 only; Intel Mac and universal2 packages are not published until a dedicated Intel runner or universal packaging lane is added. Local Intel builds may still be used for development bring-up, but they are outside the packaged release support matrix.
 
 ### Push Validation
 
@@ -333,7 +333,7 @@ After running the install step, `.install/` is a self-contained distributable pa
 ```
 
 > [!NOTE]
-> Public release packages stay on the `stable` version track while using platform-appropriate diagnostics. Windows packages intentionally use Meson `buildtype=debug` and include matching PDB files. Linux and macOS release packages use Meson `buildtype=debugoptimized` with `b_ndebug=true`; Linux debug info is split into separate `openq4-<version>-linux-<arch>-debugsymbols.tar.xz` assets. macOS release packaging builds both `-opengl` and `-metal` variants from the SDL3 backend so the Metal bridge remains additive. MSVC import libraries (`*.lib`) are development-only artifacts and are not required in the package.
+> Public release packages stay on the `stable` version track while using platform-appropriate diagnostics. Windows packages intentionally use Meson `buildtype=debug` and include matching PDB files. Linux packages use Meson `buildtype=debugoptimized` with `b_ndebug=true`; Linux debug info is split into separate `openq4-<version>-linux-<arch>-debugsymbols.tar.xz` assets. Credentialed macOS release packaging uses the same optimized diagnostics profile and builds both `-opengl` and `-metal` variants from the SDL3 backend so the Metal bridge remains additive. MSVC import libraries (`*.lib`) are development-only artifacts and are not required in the package.
 
 Repo-authored runtime overrides live under `content/baseoq4/pak0/` and `content/baseoq4/pak1/`. The build compiles those source-owned roots into `.install/baseoq4/pak0.pk4` and `.install/baseoq4/pak1.pk4`; `mod.json` and platform-specific game modules remain loose beside them.
 

@@ -67,18 +67,21 @@ static const int	SSF_PLAY_ONCE =			BIT( 6 );	// never restart if already playing
 static const int	SSF_UNCLAMPED =			BIT( 7 );	// don't clamp calculated volumes at 1.0
 static const int	SSF_NO_FLICKER =		BIT( 8 );	// always return 1.0 for volume queries
 static const int	SSF_NO_DUPS =			BIT( 9 );	// try not to play the same sound twice in a row
-static const int	SSF_VO =				BIT( 10 ); // VO - direct a portion of the sound through the center channel (set automatically on shaders that contain files that start with "sound/vo/")
-static const int	SSF_MUSIC =				BIT( 11 ); // Music - Muted when the player is playing his own music
 
 // RAVEN BEGIN
-	static const int	SSF_USEDOPPLER = BIT(17);	// allow doppler pitch shifting effects
-	static const int	SSF_NO_RANDOMSTART = BIT(18);	// don't offset the start position for looping sounds
-	static const int	SSF_VO_FOR_PLAYER = BIT(12);	// Notifies a funcRadioChatter that this shader is directed at the player
-	static const int	SSF_IS_VO = BIT(13);	// this sound is VO
-	static const int	SSF_CAUSE_RUMBLE = BIT(14);	// causes joystick rumble
+static const int	SSF_USEDOPPLER = BIT(10);	// allow doppler pitch shifting effects
+static const int	SSF_NO_RANDOMSTART = BIT(11);	// don't offset the start position for looping sounds
+static const int	SSF_VO_FOR_PLAYER = BIT(12);	// Notifies a funcRadioChatter that this shader is directed at the player
+static const int	SSF_IS_VO = BIT(13);	// this sound is VO
+static const int	SSF_CAUSE_RUMBLE = BIT(14);	// causes joystick rumble
 static const int	SSF_CENTER = BIT(15);	// sound through center channel only
 static const int	SSF_HILITE = BIT(16);	// display debug info for this emitter
 // RAVEN END
+
+// OpenQ4-only runtime classifications. Keep these out of the retail flag range
+// because game modules and shipped Q4 data use bits 10/11 for Doppler/no-random-start.
+static const int	SSF_VO =				BIT( 22 ); // VO - direct a portion of the sound through the center channel (set automatically on shaders that contain files that start with "sound/vo/")
+static const int	SSF_MUSIC =				BIT( 23 ); // Music - Muted when the player is playing his own music
 
 // these options can be overriden from sound shader defaults on a per-emitter and per-channel basis
 typedef struct
@@ -86,6 +89,7 @@ typedef struct
 	float					minDistance;
 	float					maxDistance;
 	float					volume;					// linear scale (1.0 = nominal)
+	float					attenuatedVolume;		// Quake 4 archived field; retained for retail ABI/save-demo layout
 	float					shakes;
 	int						soundShaderFlags;		// SSF_* bit flags
 	int						soundClass;				// for global fading of sounds

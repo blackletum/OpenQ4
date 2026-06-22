@@ -382,6 +382,7 @@ bool idSoundShader::ParseShader( idLexer& src )
 	parms.minDistance = 40.0f;
 	parms.maxDistance = 400.0f;
 	parms.volume = 1;
+	parms.attenuatedVolume = 0.0f;
 	parms.shakes = 0;
 	parms.soundShaderFlags = 0;
 	parms.soundClass = 0;
@@ -448,7 +449,6 @@ bool idSoundShader::ParseShader( idLexer& src )
 			const float maxShift = src.ParseFloat();
 			minFrequencyShift = minShift;
 			maxFrequencyShift = maxShift;
-			parms.frequencyShift = 0.5f * (minShift + maxShift);
 		}
 		else if (!token.Icmp("volumeDb")) {
 			float db = src.ParseFloat();

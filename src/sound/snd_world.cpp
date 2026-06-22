@@ -1016,6 +1016,7 @@ void idSoundWorldLocal::ProcessDemoCommand( idDemoFile* readDemo )
 			readDemo->ReadFloat( parms.minDistance );
 			readDemo->ReadFloat( parms.maxDistance );
 			readDemo->ReadFloat( parms.volume );
+			readDemo->ReadFloat( parms.attenuatedVolume );
 			readDemo->ReadFloat( parms.shakes );
 			readDemo->ReadInt( parms.soundShaderFlags );
 			readDemo->ReadInt( parms.soundClass );
@@ -1060,6 +1061,7 @@ void idSoundWorldLocal::ProcessDemoCommand( idDemoFile* readDemo )
 			readDemo->ReadFloat( parms.minDistance );
 			readDemo->ReadFloat( parms.maxDistance );
 			readDemo->ReadFloat( parms.volume );
+			readDemo->ReadFloat( parms.attenuatedVolume );
 			readDemo->ReadFloat( parms.shakes );
 			readDemo->ReadInt( parms.soundShaderFlags );
 			readDemo->ReadInt( parms.soundClass );
@@ -1147,6 +1149,7 @@ void idSoundWorldLocal::WriteToSaveGame( idFile* savefile )
 			savefile->WriteFloat( parms.minDistance );
 			savefile->WriteFloat( parms.maxDistance );
 			savefile->WriteFloat( parms.volume );
+			savefile->WriteFloat( parms.attenuatedVolume );
 			savefile->WriteFloat( parms.shakes );
 			savefile->WriteInt( parms.soundShaderFlags );
 			savefile->WriteInt( parms.soundClass );
@@ -1250,6 +1253,7 @@ void idSoundWorldLocal::ReadFromSaveGame( idFile* savefile )
 			savefile->ReadFloat( parms.minDistance );
 			savefile->ReadFloat( parms.maxDistance );
 			savefile->ReadFloat( parms.volume );
+			savefile->ReadFloat( parms.attenuatedVolume );
 			savefile->ReadFloat( parms.shakes );
 			savefile->ReadInt( parms.soundShaderFlags );
 			savefile->ReadInt( parms.soundClass );
