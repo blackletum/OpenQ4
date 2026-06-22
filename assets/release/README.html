@@ -163,11 +163,11 @@
     <section>
       <h2>macOS Notes</h2>
       <ul>
-        <li>macOS packages are published only from credentialed release runs with Apple Developer ID signing and notarization configured; releases without those credentials omit macOS downloads instead of shipping unsigned official artifacts.</li>
-        <li>When macOS packages are published, they are for Apple Silicon/arm64 Macs. Intel Mac and universal2 packages are not published yet.</li>
-        <li>Credentialed macOS packages use the SDL3 runtime path and are published as separate OpenGL and Metal bridge DMGs.</li>
+        <li>macOS packages are for Apple Silicon/arm64 Macs. Intel Mac and universal2 packages are not published yet.</li>
+        <li>Credentialed macOS release runs publish signed/notarized OpenGL and Metal bridge DMGs. Releases without Apple Developer ID signing and notarization credentials publish clearly labeled <code>-unsigned.tar.gz</code> archives instead.</li>
+        <li>Unsigned macOS archives are ad-hoc signed only for bundle validity, are not notarized, and may require normal Gatekeeper approval on first launch.</li>
         <li>The Metal package is a bridge mode around the existing OpenGL renderer, preserving stock-asset compatibility while Metal translation-layer work continues.</li>
-        <li>Open the DMG and launch <code>openQ4.app</code> from the mounted package, or copy the full package contents to a folder of your choice. Keep <code>openQ4.app</code>, <code>baseoq4/</code>, and the loose runtime files together.</li>
+        <li>Open the DMG or unpack the <code>-unsigned.tar.gz</code> archive, then launch <code>openQ4.app</code>. Keep <code>openQ4.app</code>, <code>baseoq4/</code>, and the loose runtime files together.</li>
       </ul>
     </section>
 

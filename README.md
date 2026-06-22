@@ -40,26 +40,54 @@ It is designed for players who want the original Quake 4 experience with a clean
 > openQ4 does **not** include Quake 4 assets. You still need a legitimate Quake 4 copy from Steam or GOG.
 
 <p align="center">
-  <img src="assets/docs/img/shot1.png" alt="openQ4 gameplay screenshot showing stock Quake 4 assets running in openQ4" width="92%">
+  <img src="assets/docs/img/readme-airdefense1-start.png" alt="openQ4 frustum culling off and on comparison at the game airdefense1 start" width="92%">
 </p>
-<p align="center"><sub>Original Quake 4 content, modernized for current systems.</sub></p>
+<p align="center"><sub>Air Defense 1's post-intro start position with triangle debug rendering: culling disabled on the left, modern culling enabled on the right.</sub></p>
+
+<p align="center">
+  <img src="assets/docs/img/readme-airdefense1-cinematic.png" alt="openQ4 airdefense1 intro cinematic showing ships approaching Stroggos" width="92%">
+</p>
+<p align="center"><sub>Campaign cinematics and scripted scenes remain part of the stock-asset compatibility target.</sub></p>
 
 ---
 
 ## Why players use openQ4
 
 - **Modern display support** for widescreen, ultrawide, multi-monitor, borderless, and fullscreen setups.
-- **Optional visual upgrades** such as bloom, HDR, anti-aliasing, soft particles, and enhanced shadow options.
+- **Optional visual upgrades** such as bloom, HDR, anti-aliasing, baked light grids, soft particles, and enhanced shadow options.
 - **Improved input and quality-of-life features** including controller support, better console UX, and modern settings behavior.
 - **Single-player and multiplayer in one install** with active compatibility work aimed at the stock game.
 - **Cross-platform support** with Windows and Linux release packages, Steam Deck support on Linux, and a signed/notarized macOS DMG lane for credentialed release runs.
 - **Open development** with releases, issue tracking, and community feedback all happening in public.
 
+---
+
+## Renderer showcase
+
 <p align="center">
-  <img src="assets/docs/img/shot2.png" alt="openQ4 gameplay screenshot showing combat and bloom" width="49%">
-  <img src="assets/docs/img/shot3.png" alt="openQ4 gameplay screenshot showing environment lighting and shadow detail" width="49%">
+  <img src="assets/docs/img/readme-bloom-hdr.png" alt="openQ4 bloom and HDR side-by-side comparison on mp q4dm2" width="92%">
 </p>
-<p align="center"><sub>Visual improvements are optional, so you can tune the experience to your taste.</sub></p>
+<p align="center"><sub>Bloom and HDR on mp/q4dm2 from the same loadscreen camera: normal rendering on the left, enhanced post-processing on the right.</sub></p>
+
+<p align="center">
+  <img src="assets/docs/img/readme-lightgrid.png" alt="openQ4 light-grid indirect diffuse off and on comparison" width="92%">
+</p>
+<p align="center"><sub>Baked light-grid indirect diffuse on mp/q4dm2, shown off and on from the same loadscreen camera.</sub></p>
+
+<p align="center">
+  <img src="assets/docs/img/readme-crt.png" alt="openQ4 CRT post-process off and on comparison on mp q4dm8" width="92%">
+</p>
+<p align="center"><sub>CRT post-processing on mp/q4dm8, shown off and on with a clean no-HUD camera.</sub></p>
+
+<p align="center">
+  <img src="assets/docs/img/readme-crt-q4dm6.png" alt="openQ4 CRT post-process off and on comparison on mp q4dm6" width="92%">
+</p>
+<p align="center"><sub>A second CRT comparison on mp/q4dm6 shows the same post-process across a brighter indoor arena.</sub></p>
+
+<p align="center">
+  <img src="assets/docs/img/readme-culling-tris.png" alt="openQ4 visible triangle debug comparison with frustum culling off and on" width="92%">
+</p>
+<p align="center"><sub>Visible-triangle debug rendering in game/storage1 highlights the renderer's improved frustum and occlusion-culling path, disabled on the left and enabled on the right.</sub></p>
 
 ---
 

@@ -9,7 +9,7 @@ const defaultReleaseEmoji = "<:quake4:1425986174941397105>";
 const defaultMentions = "<@&1425985498693898260> <@&1390287267276525628>";
 const releaseEmoji = (process.env.DISCORD_RELEASE_EMOJI || defaultReleaseEmoji).trim();
 const mentions = (process.env.DISCORD_RELEASE_MENTIONS || defaultMentions).trim();
-const feedbackChannel = (process.env.DISCORD_FEEDBACK_CHANNEL || "the openQ4 Discord").trim();
+const feedbackChannel = (process.env.DISCORD_FEEDBACK_CHANNEL || "<#1509926146018513077>").trim();
 const avatarUrl = (process.env.DISCORD_RELEASE_AVATAR_URL ||
   "https://raw.githubusercontent.com/themuffinator/OpenQ4/main/assets/img/avatar.png").trim();
 
