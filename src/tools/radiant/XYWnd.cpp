@@ -4161,15 +4161,22 @@ void CXYWnd::Copy()
 			HANDLE	h = ::GlobalAlloc(GMEM_ZEROINIT | GMEM_MOVEABLE | GMEM_DDESHARE, lSize + sizeof (long));
 			if (h != NULL) {
 				unsigned char	*cp = reinterpret_cast < unsigned char * > (::GlobalLock(h));
-				memcpy(cp, &lSize, sizeof (long));
-				cp += sizeof (long);
-				g_Clipboard.SeekToBegin();
-				g_Clipboard.Read(cp, lSize);
-				::GlobalUnlock(h);
-				::SetClipboardData(nClipboard, h);
-				::CloseClipboard();
-				bClipped = true;
+				if (cp != NULL) {
+					memcpy(cp, &lSize, sizeof (long));
+					cp += sizeof (long);
+					g_Clipboard.SeekToBegin();
+					g_Clipboard.Read(cp, lSize);
+					::GlobalUnlock(h);
+					if (::SetClipboardData(nClipboard, h) != NULL) {
+						h = NULL;
+						bClipped = true;
+					}
+				}
+				if (h != NULL) {
+					::GlobalFree(h);
+				}
 			}
+			::CloseClipboard();
 		}
 	}
 
@@ -4267,19 +4274,26 @@ void CXYWnd::Paste()
 	CWaitCursor WaitCursor;
 	bool		bPasted = false;
 	UINT		nClipboard = ::RegisterClipboardFormat("RadiantClippings");
-	if (nClipboard > 0 && OpenClipboard() && ::IsClipboardFormatAvailable(nClipboard)) {
-		HANDLE	h = ::GetClipboardData(nClipboard);
-		if (h) {
-			g_Clipboard.SetLength(0);
-
-			unsigned char	*cp = reinterpret_cast < unsigned char * > (::GlobalLock(h));
-			long			lSize = 0;
-			memcpy(&lSize, cp, sizeof (long));
-			cp += sizeof (long);
-			g_Clipboard.Write(cp, lSize);
+	g_Clipboard.SetLength(0);
+	if (nClipboard > 0 && OpenClipboard()) {
+		if (::IsClipboardFormatAvailable(nClipboard)) {
+			HANDLE	h = ::GetClipboardData(nClipboard);
+			if (h) {
+				unsigned char	*cp = reinterpret_cast < unsigned char * > (::GlobalLock(h));
+				const SIZE_T	clipSize = ::GlobalSize(h);
+				if (cp != NULL && clipSize >= sizeof (long)) {
+					long	lSize = 0;
+					memcpy(&lSize, cp, sizeof (long));
+					cp += sizeof (long);
+					if (lSize >= 0 && static_cast<SIZE_T>(lSize) <= clipSize - sizeof (long)) {
+						g_Clipboard.SetLength(0);
+						g_Clipboard.Write(cp, lSize);
+					}
+					::GlobalUnlock(h);
+				}
+			}
 		}
 
-		::GlobalUnlock(h);
 		::CloseClipboard();
 	}
 
@@ -4288,7 +4302,7 @@ void CXYWnd::Paste()
 
 		int		nLen = g_Clipboard.GetLength();
 		char	*pBuffer = new char[nLen + 1];
-		memset(pBuffer, 0, sizeof(pBuffer));
+		memset(pBuffer, 0, nLen + 1);
 		g_Clipboard.Read(pBuffer, nLen);
 		pBuffer[nLen] = '\0';
 		Map_ImportBuffer(pBuffer, !(GetAsyncKeyState(VK_SHIFT) & 0x8000));

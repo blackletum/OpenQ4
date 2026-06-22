@@ -349,9 +349,9 @@ public:
 	void					WriteRenderLight( qhandle_t handle, const renderLight_t *light );
 	void					WriteRenderEntity( qhandle_t handle, const renderEntity_t *ent );
 	void					WriteRenderEffect( qhandle_t handle, const rvRenderEffectLocal *effectDef );
-	void					ReadRenderEntity();
-	void					ReadRenderLight();
-	void					ReadRenderEffect();
+	bool					ReadRenderEntity();
+	bool					ReadRenderLight();
+	bool					ReadRenderEffect();
 	
 
 	//--------------------------

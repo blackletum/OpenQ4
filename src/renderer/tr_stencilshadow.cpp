@@ -953,7 +953,7 @@ static void R_CreateShadowVolumeInFrustum( const idRenderEntityLocal *ent,
 		}
 		for ( i = 0 ; i < opt.totalIndexes ; i++ ) {
 			int	index = opt.indexes[i];
-			if ( index < 0 || index > opt.numVerts ) {
+			if ( index < 0 || index >= opt.numVerts ) {
 				common->Error( "optimized shadow index out of range" );
 			}
 			shadowIndexes[numShadowIndexes+i] = index + numShadowVerts;

@@ -2376,13 +2376,13 @@ addonInfo_t *idFileSystemLocal::ParseAddonDef( const char *buf, const int len ) 
 			delete info;
 			return NULL;
 		}
-		int checksum;
+		unsigned int checksum;
 		if ( sscanf( token.c_str(), "0x%x", &checksum ) != 1 && sscanf( token.c_str(), "%x", &checksum ) != 1 ) {
 			src.Warning( "Could not parse checksum '%s'", token.c_str() );
 			delete info;
 			return NULL;
 		}
-		info->depends.Append( checksum );
+		info->depends.Append( static_cast<int>( checksum ) );
 	}
 	// read any number of mapDef entries
 	while ( 1 ) {
@@ -6477,7 +6477,7 @@ void idFileSystemLocal::FindDLL( const char *name, char _dllPath[ MAX_OSPATH ], 
 	} else {
 		dllPath = "";
 	}
-	idStr::snPrintf( _dllPath, MAX_OSPATH, dllPath.c_str() );
+	idStr::snPrintf( _dllPath, MAX_OSPATH, "%s", dllPath.c_str() );
 }
 
 /*

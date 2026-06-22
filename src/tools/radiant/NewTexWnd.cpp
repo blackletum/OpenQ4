@@ -873,7 +873,7 @@ BOOL CNewTexWnd::OnToolTipNotify( UINT id, NMHDR * pNMHDR, LRESULT * pResult ) {
 
 	if (mat) {
 	    TOOLTIPTEXT *pTTT = (TOOLTIPTEXT *)pNMHDR;
-		strcpy(tip, mat->GetDescription());
+		idStr::Copynz(tip, mat->GetDescription(), sizeof(tip));
 	    pTTT->lpszText = tip;
 	    pTTT->hinst = NULL;
 	    return(TRUE);

@@ -53,6 +53,39 @@ void R_FreeRenderDemoDecalChain( idRenderModelDecal *decal ) {
 	}
 }
 
+void R_FreeRenderDemoEntityPayload( renderEntity_t &ent, idRenderModelDecal *decal, idRenderModelOverlay *overlay ) {
+	if ( ent.joints != NULL ) {
+		Mem_Free16( ent.joints );
+		ent.joints = NULL;
+	}
+	R_FreeRenderDemoDecalChain( decal );
+	idRenderModelOverlay::Free( overlay );
+}
+
+bool R_DemoReadInt( idDemoFile *demo, int &value ) {
+	return demo->ReadInt( value ) == sizeof( value );
+}
+
+bool R_DemoReadFloat( idDemoFile *demo, float &value ) {
+	return demo->ReadFloat( value ) == sizeof( value );
+}
+
+bool R_DemoReadBool( idDemoFile *demo, bool &value ) {
+	return demo->ReadBool( value ) == sizeof( value );
+}
+
+bool R_DemoReadChar( idDemoFile *demo, char &value ) {
+	return demo->ReadChar( value ) == sizeof( value );
+}
+
+bool R_DemoReadVec3( idDemoFile *demo, idVec3 &value ) {
+	return demo->ReadVec3( value ) == sizeof( value );
+}
+
+bool R_DemoReadMat3( idDemoFile *demo, idMat3 &value ) {
+	return demo->ReadMat3( value ) == sizeof( value );
+}
+
 void R_WriteDemoRenderViewData( idDemoFile *demo, const renderView_t *renderView ) {
 	demo->WriteInt( renderView->viewID );
 	demo->WriteInt( renderView->x );
@@ -81,29 +114,38 @@ void R_WriteDemoRenderViewData( idDemoFile *demo, const renderView_t *renderView
 bool R_ReadDemoRenderViewData( idDemoFile *demo, renderView_t *renderView, int renderdemoVersion ) {
 	renderView->globalMaterial = NULL;
 
-	demo->ReadInt( renderView->viewID );
-	demo->ReadInt( renderView->x );
-	demo->ReadInt( renderView->y );
-	demo->ReadInt( renderView->width );
-	demo->ReadInt( renderView->height );
-	demo->ReadFloat( renderView->fov_x );
-	demo->ReadFloat( renderView->fov_y );
-	demo->ReadVec3( renderView->vieworg );
-	demo->ReadMat3( renderView->viewaxis );
-	demo->ReadBool( renderView->cramZNear );
-	demo->ReadBool( renderView->forceUpdate );
+	if ( !R_DemoReadInt( demo, renderView->viewID ) ||
+		 !R_DemoReadInt( demo, renderView->x ) ||
+		 !R_DemoReadInt( demo, renderView->y ) ||
+		 !R_DemoReadInt( demo, renderView->width ) ||
+		 !R_DemoReadInt( demo, renderView->height ) ||
+		 !R_DemoReadFloat( demo, renderView->fov_x ) ||
+		 !R_DemoReadFloat( demo, renderView->fov_y ) ||
+		 !R_DemoReadVec3( demo, renderView->vieworg ) ||
+		 !R_DemoReadMat3( demo, renderView->viewaxis ) ||
+		 !R_DemoReadBool( demo, renderView->cramZNear ) ||
+		 !R_DemoReadBool( demo, renderView->forceUpdate ) ) {
+		return false;
+	}
+	if ( renderView->width < 1 || renderView->width > 32768 || renderView->height < 1 || renderView->height > 32768 ) {
+		return false;
+	}
 
 	char tmp;
-	demo->ReadChar( tmp );
-	demo->ReadChar( tmp );
-	demo->ReadInt( renderView->time );
+	if ( !R_DemoReadChar( demo, tmp ) ||
+		 !R_DemoReadChar( demo, tmp ) ||
+		 !R_DemoReadInt( demo, renderView->time ) ) {
+		return false;
+	}
 	for ( int i = 0; i < MAX_GLOBAL_SHADER_PARMS; i++ ) {
-		demo->ReadFloat( renderView->shaderParms[i] );
+		if ( !R_DemoReadFloat( demo, renderView->shaderParms[i] ) ) {
+			return false;
+		}
 	}
 
 	if ( renderdemoVersion >= OPENQ4_RENDERDEMO_RENDER_VIEW_DECLS_VERSION ) {
 		bool hasGlobalMaterial = false;
-		if ( !demo->ReadBool( hasGlobalMaterial ) ) {
+		if ( !R_DemoReadBool( demo, hasGlobalMaterial ) ) {
 			return false;
 		}
 		if ( hasGlobalMaterial ) {
@@ -111,7 +153,7 @@ bool R_ReadDemoRenderViewData( idDemoFile *demo, renderView_t *renderView, int r
 		}
 	} else {
 		int legacyGlobalMaterial = 0;
-		if ( !demo->ReadInt( legacyGlobalMaterial ) ) {
+		if ( !R_DemoReadInt( demo, legacyGlobalMaterial ) ) {
 			return false;
 		}
 		// Older render demos only persisted the raw pointer value here, which
@@ -156,33 +198,35 @@ void R_WriteDemoEffectData( idDemoFile *demo, const rvRenderEffectLocal *effectD
 bool R_ReadDemoEffectData( idDemoFile *demo, renderEffect_t *effect, int *gameTime, bool *stopped ) {
 	effect->declEffect = NULL;
 
-	if ( !demo->ReadInt( *gameTime ) ) {
+	if ( !R_DemoReadInt( demo, *gameTime ) ||
+		 !R_DemoReadFloat( demo, effect->startTime ) ||
+		 !R_DemoReadInt( demo, effect->suppressSurfaceInViewID ) ||
+		 !R_DemoReadInt( demo, effect->allowSurfaceInViewID ) ||
+		 !R_DemoReadInt( demo, effect->groupID ) ||
+		 !R_DemoReadVec3( demo, effect->origin ) ||
+		 !R_DemoReadMat3( demo, effect->axis ) ||
+		 !R_DemoReadVec3( demo, effect->gravity ) ||
+		 !R_DemoReadVec3( demo, effect->endOrigin ) ||
+		 !R_DemoReadFloat( demo, effect->attenuation ) ||
+		 !R_DemoReadBool( demo, effect->hasEndOrigin ) ||
+		 !R_DemoReadBool( demo, effect->loop ) ||
+		 !R_DemoReadBool( demo, effect->ambient ) ||
+		 !R_DemoReadBool( demo, effect->inConnectedArea ) ||
+		 !R_DemoReadInt( demo, effect->weaponDepthHackInViewID ) ||
+		 !R_DemoReadFloat( demo, effect->modelDepthHack ) ||
+		 !R_DemoReadInt( demo, effect->referenceSoundHandle ) ) {
 		return false;
 	}
-	demo->ReadFloat( effect->startTime );
-	demo->ReadInt( effect->suppressSurfaceInViewID );
-	demo->ReadInt( effect->allowSurfaceInViewID );
-	demo->ReadInt( effect->groupID );
-	demo->ReadVec3( effect->origin );
-	demo->ReadMat3( effect->axis );
-	demo->ReadVec3( effect->gravity );
-	demo->ReadVec3( effect->endOrigin );
-	demo->ReadFloat( effect->attenuation );
-	demo->ReadBool( effect->hasEndOrigin );
-	demo->ReadBool( effect->loop );
-	demo->ReadBool( effect->ambient );
-	demo->ReadBool( effect->inConnectedArea );
-	demo->ReadInt( effect->weaponDepthHackInViewID );
-	demo->ReadFloat( effect->modelDepthHack );
-	demo->ReadInt( effect->referenceSoundHandle );
 	for ( int i = 0; i < MAX_ENTITY_SHADER_PARMS; ++i ) {
-		demo->ReadFloat( effect->shaderParms[i] );
+		if ( !R_DemoReadFloat( demo, effect->shaderParms[i] ) ) {
+			return false;
+		}
 	}
-	if ( !demo->ReadBool( *stopped ) ) {
+	if ( !R_DemoReadBool( demo, *stopped ) ) {
 		return false;
 	}
 	bool hasDeclEffect = false;
-	if ( !demo->ReadBool( hasDeclEffect ) ) {
+	if ( !R_DemoReadBool( demo, hasDeclEffect ) ) {
 		return false;
 	}
 	if ( hasDeclEffect ) {
@@ -255,15 +299,20 @@ bool		idRenderWorldLocal::ProcessDemoCommand( idDemoFile *readDemo, renderView_t
 	}
 
 	switch( dc ) {
-	case DC_LOADMAP:
+	case DC_LOADMAP: {
 		// read the initial data
-		demoHeader_t	header;
+		demoHeader_t	header = {};
 
-		readDemo->ReadInt( header.version );
-		readDemo->ReadInt( header.sizeofRenderEntity );
-		readDemo->ReadInt( header.sizeofRenderLight );
-		for ( int i = 0; i < 256; i++ )
-			readDemo->ReadChar( header.mapname[i] );
+		if ( readDemo->ReadInt( header.version ) != sizeof( header.version ) ||
+			 readDemo->ReadInt( header.sizeofRenderEntity ) != sizeof( header.sizeofRenderEntity ) ||
+			 readDemo->ReadInt( header.sizeofRenderLight ) != sizeof( header.sizeofRenderLight ) ) {
+			return false;
+		}
+		for ( int i = 0; i < (int)sizeof( header.mapname ); i++ ) {
+			if ( readDemo->ReadChar( header.mapname[i] ) != sizeof( header.mapname[i] ) ) {
+				return false;
+			}
+		}
 		// a corrupt or truncated demo may not include a terminator
 		header.mapname[sizeof( header.mapname ) - 1] = '\0';
 		// the internal version value got replaced by DS_VERSION at toplevel
@@ -279,6 +328,7 @@ bool		idRenderWorldLocal::ProcessDemoCommand( idDemoFile *readDemo, renderView_t
 		pendingDemoTimeOffset = true;		// the first render view after the map load sets the playback offset
 
 		break;
+	}
 
 	case DC_RENDERVIEW:
 		if ( !R_ReadDemoRenderViewData( readDemo, renderView, session->renderdemoVersion ) ) {
@@ -297,7 +347,9 @@ bool		idRenderWorldLocal::ProcessDemoCommand( idDemoFile *readDemo, renderView_t
 		return false;
 
 	case DC_UPDATE_ENTITYDEF:
-		ReadRenderEntity();
+		if ( !ReadRenderEntity() ) {
+			return false;
+		}
 		break;
 	case DC_DELETE_ENTITYDEF:
 		if ( !readDemo->ReadInt( h ) ) {
@@ -309,7 +361,9 @@ bool		idRenderWorldLocal::ProcessDemoCommand( idDemoFile *readDemo, renderView_t
 		FreeEntityDef( h );
 		break;
 	case DC_UPDATE_LIGHTDEF:
-		ReadRenderLight();
+		if ( !ReadRenderLight() ) {
+			return false;
+		}
 		break;
 	case DC_DELETE_LIGHTDEF:
 		if ( !readDemo->ReadInt( h ) ) {
@@ -321,7 +375,9 @@ bool		idRenderWorldLocal::ProcessDemoCommand( idDemoFile *readDemo, renderView_t
 		FreeLightDef( h );
 		break;
 	case DC_UPDATE_EFFECTDEF:
-		ReadRenderEffect();
+		if ( !ReadRenderEffect() ) {
+			return false;
+		}
 		break;
 	case DC_STOP_EFFECTDEF:
 		if ( !readDemo->ReadInt( h ) ) {
@@ -354,9 +410,14 @@ bool		idRenderWorldLocal::ProcessDemoCommand( idDemoFile *readDemo, renderView_t
 			common->Printf( "DC_CROP_RENDER\n" );
 		}
 		int	size[3];
-		readDemo->ReadInt( size[0] );
-		readDemo->ReadInt( size[1] );
-		readDemo->ReadInt( size[2] );
+		if ( readDemo->ReadInt( size[0] ) != sizeof( size[0] ) ||
+			 readDemo->ReadInt( size[1] ) != sizeof( size[1] ) ||
+			 readDemo->ReadInt( size[2] ) != sizeof( size[2] ) ) {
+			return false;
+		}
+		if ( size[0] < 1 || size[0] > 32768 || size[1] < 1 || size[1] > 32768 ) {
+			common->Error( "DC_CROP_RENDER: bad sizes %d %d", size[0], size[1] );
+		}
 		renderSystem->CropRenderSize( size[0], size[1], size[2] != 0 );
 		break;
 
@@ -394,8 +455,13 @@ bool		idRenderWorldLocal::ProcessDemoCommand( idDemoFile *readDemo, renderView_t
 	case DC_SET_PORTAL_STATE:
 		{
 			int		data[2];
-			readDemo->ReadInt( data[0] );
-			readDemo->ReadInt( data[1] );
+			if ( readDemo->ReadInt( data[0] ) != sizeof( data[0] ) ||
+				 readDemo->ReadInt( data[1] ) != sizeof( data[1] ) ) {
+				return false;
+			}
+			if ( data[0] < 0 ) {
+				common->Error( "DC_SET_PORTAL_STATE: bad portal %d", data[0] );
+			}
 			SetPortalState( data[0], data[1] );
 			if ( r_showDemo.GetBool() ) {
 				common->Printf( "DC_SET_PORTAL_STATE: %i %i\n", data[0], data[1] );
@@ -677,7 +743,7 @@ void	idRenderWorldLocal::WriteRenderLight( qhandle_t handle, const renderLight_t
 ReadRenderLight
 ================
 */
-void	idRenderWorldLocal::ReadRenderLight( ) {
+bool	idRenderWorldLocal::ReadRenderLight( ) {
 	renderLight_t	light = {};
 	int				index;
 	bool			hasPrelightModel = false;
@@ -685,47 +751,68 @@ void	idRenderWorldLocal::ReadRenderLight( ) {
 
 	light.detailLevel = DEFAULT_LIGHT_DETAIL_LEVEL;
 
-	session->readDemo->ReadInt( index );
+	if ( !R_DemoReadInt( session->readDemo, index ) ) {
+		return false;
+	}
 	if ( index < 0 ) {
 		common->Error( "ReadRenderLight: index < 0 " );
 	}
 
-	session->readDemo->ReadMat3( light.axis );
-	session->readDemo->ReadVec3( light.origin );
-	session->readDemo->ReadInt( light.suppressLightInViewID );
-	session->readDemo->ReadInt( light.allowLightInViewID );
-	session->readDemo->ReadBool( light.noShadows );
-	session->readDemo->ReadBool( light.noSpecular );
-	session->readDemo->ReadBool( light.pointLight );
-	session->readDemo->ReadBool( light.parallel );
-	session->readDemo->ReadVec3( light.lightRadius );
-	session->readDemo->ReadVec3( light.lightCenter );
-	session->readDemo->ReadVec3( light.target );
-	session->readDemo->ReadVec3( light.right );
-	session->readDemo->ReadVec3( light.up );
-	session->readDemo->ReadVec3( light.start );
-	session->readDemo->ReadVec3( light.end );
+	if ( !R_DemoReadMat3( session->readDemo, light.axis ) ||
+		 !R_DemoReadVec3( session->readDemo, light.origin ) ||
+		 !R_DemoReadInt( session->readDemo, light.suppressLightInViewID ) ||
+		 !R_DemoReadInt( session->readDemo, light.allowLightInViewID ) ||
+		 !R_DemoReadBool( session->readDemo, light.noShadows ) ||
+		 !R_DemoReadBool( session->readDemo, light.noSpecular ) ||
+		 !R_DemoReadBool( session->readDemo, light.pointLight ) ||
+		 !R_DemoReadBool( session->readDemo, light.parallel ) ||
+		 !R_DemoReadVec3( session->readDemo, light.lightRadius ) ||
+		 !R_DemoReadVec3( session->readDemo, light.lightCenter ) ||
+		 !R_DemoReadVec3( session->readDemo, light.target ) ||
+		 !R_DemoReadVec3( session->readDemo, light.right ) ||
+		 !R_DemoReadVec3( session->readDemo, light.up ) ||
+		 !R_DemoReadVec3( session->readDemo, light.start ) ||
+		 !R_DemoReadVec3( session->readDemo, light.end ) ) {
+		return false;
+	}
 	if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_POINTER_FREE_VERSION ) {
-		session->readDemo->ReadBool( hasPrelightModel );
+		if ( !R_DemoReadBool( session->readDemo, hasPrelightModel ) ) {
+			return false;
+		}
 	} else {
 		int legacyPrelightModel = 0;
-		session->readDemo->ReadInt( legacyPrelightModel );
+		if ( !R_DemoReadInt( session->readDemo, legacyPrelightModel ) ) {
+			return false;
+		}
 		hasPrelightModel = ( legacyPrelightModel != 0 );
 	}
-	session->readDemo->ReadInt( light.lightId );
+	if ( !R_DemoReadInt( session->readDemo, light.lightId ) ) {
+		return false;
+	}
 	if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_POINTER_FREE_VERSION ) {
-		session->readDemo->ReadBool( hasShader );
+		if ( !R_DemoReadBool( session->readDemo, hasShader ) ) {
+			return false;
+		}
 	} else {
 		int legacyShader = 0;
-		session->readDemo->ReadInt( legacyShader );
+		if ( !R_DemoReadInt( session->readDemo, legacyShader ) ) {
+			return false;
+		}
 		hasShader = ( legacyShader != 0 );
 	}
-	for ( int i = 0; i < MAX_ENTITY_SHADER_PARMS; i++)
-		session->readDemo->ReadFloat( light.shaderParms[i] );
-	if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_ENTITY_EXTRAS_VERSION ) {
-		session->readDemo->ReadInt( light.referenceSoundHandle );
+	for ( int i = 0; i < MAX_ENTITY_SHADER_PARMS; i++ ) {
+		if ( !R_DemoReadFloat( session->readDemo, light.shaderParms[i] ) ) {
+			return false;
+		}
 	}
-	session->readDemo->ReadInt( light.referenceSound );
+	if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_ENTITY_EXTRAS_VERSION ) {
+		if ( !R_DemoReadInt( session->readDemo, light.referenceSoundHandle ) ) {
+			return false;
+		}
+	}
+	if ( !R_DemoReadInt( session->readDemo, light.referenceSound ) ) {
+		return false;
+	}
 	if ( hasPrelightModel ) {
 		light.prelightModel = renderModelManager->FindModel( session->readDemo->ReadHashString() );
 	}
@@ -733,15 +820,18 @@ void	idRenderWorldLocal::ReadRenderLight( ) {
 		light.shader = declManager->FindMaterial( session->readDemo->ReadHashString() );
 	}
 	if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_LIGHT_EXTRAS_VERSION ) {
-		session->readDemo->ReadBool( light.noDynamicShadows );
-		session->readDemo->ReadBool( light.globalLight );
-		session->readDemo->ReadFloat( light.detailLevel );
+		if ( !R_DemoReadBool( session->readDemo, light.noDynamicShadows ) ||
+			 !R_DemoReadBool( session->readDemo, light.globalLight ) ||
+			 !R_DemoReadFloat( session->readDemo, light.detailLevel ) ) {
+			return false;
+		}
 	}
 	UpdateLightDef( index, &light );
 
 	if ( r_showDemo.GetBool() ) {
 		common->Printf( "DC_UPDATE_LIGHTDEF: %i\n", index );
 	}
+	return true;
 }
 
 /*
@@ -773,20 +863,20 @@ void	idRenderWorldLocal::WriteRenderEffect( qhandle_t handle, const rvRenderEffe
 ReadRenderEffect
 ================
 */
-void	idRenderWorldLocal::ReadRenderEffect() {
+bool	idRenderWorldLocal::ReadRenderEffect() {
 	renderEffect_t		effect = {};
 	int					index = -1;
 	int					effectGameTime = 0;
 	bool				stopped = false;
 
-	if ( !session->readDemo->ReadInt( index ) ) {
-		return;
+	if ( !R_DemoReadInt( session->readDemo, index ) ) {
+		return false;
 	}
 	if ( index < 0 ) {
 		common->Error( "ReadRenderEffect: index < 0" );
 	}
 	if ( !R_ReadDemoEffectData( session->readDemo, &effect, &effectGameTime, &stopped ) ) {
-		return;
+		return false;
 	}
 
 	UpdateEffectDef( index, &effect, effectGameTime );
@@ -800,6 +890,7 @@ void	idRenderWorldLocal::ReadRenderEffect() {
 		const char *effectName = effect.declEffect ? effect.declEffect->GetName() : "NULL";
 		common->Printf( "DC_UPDATE_EFFECTDEF: %i = %s\n", index, effectName );
 	}
+	return true;
 }
 
 /*
@@ -919,7 +1010,7 @@ void	idRenderWorldLocal::WriteRenderEntity( qhandle_t handle, const renderEntity
 ReadRenderEntity
 ================
 */
-void	idRenderWorldLocal::ReadRenderEntity() {
+bool	idRenderWorldLocal::ReadRenderEntity() {
 	renderEntity_t		ent = {};
 	idRenderModelDecal *demoDecals = NULL;
 	idRenderModelOverlay *demoOverlay = NULL;
@@ -934,93 +1025,131 @@ void	idRenderWorldLocal::ReadRenderEntity() {
 	bool				hasGui[ MAX_RENDERENTITY_GUI ] = { false };
 	int					index, i;
 
-	session->readDemo->ReadInt( index );
+	if ( !R_DemoReadInt( session->readDemo, index ) ) {
+		return false;
+	}
 	if ( index < 0 ) {
 		common->Error( "ReadRenderEntity: index < 0" );
 	}
 
 	if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_POINTER_FREE_VERSION ) {
-		session->readDemo->ReadBool( hasModel );
+		if ( !R_DemoReadBool( session->readDemo, hasModel ) ) {
+			return false;
+		}
 	} else {
 		int legacyModel = 0;
-		session->readDemo->ReadInt( legacyModel );
+		if ( !R_DemoReadInt( session->readDemo, legacyModel ) ) {
+			return false;
+		}
 		hasModel = ( legacyModel != 0 );
 	}
-	session->readDemo->ReadInt( ent.entityNum );
-	session->readDemo->ReadInt( ent.bodyId );
-	session->readDemo->ReadVec3( ent.bounds[0] );
-	session->readDemo->ReadVec3( ent.bounds[1] );
+	if ( !R_DemoReadInt( session->readDemo, ent.entityNum ) ||
+		 !R_DemoReadInt( session->readDemo, ent.bodyId ) ||
+		 !R_DemoReadVec3( session->readDemo, ent.bounds[0] ) ||
+		 !R_DemoReadVec3( session->readDemo, ent.bounds[1] ) ) {
+		return false;
+	}
 	if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_POINTER_FREE_VERSION ) {
 		// Render callbacks are process-local and cannot be replayed safely.
-		session->readDemo->ReadBool( hasCallback );
-		session->readDemo->ReadBool( hasCallbackData );
+		if ( !R_DemoReadBool( session->readDemo, hasCallback ) ||
+			 !R_DemoReadBool( session->readDemo, hasCallbackData ) ) {
+			return false;
+		}
 	} else {
 		int legacyCallback = 0;
 		int legacyCallbackData = 0;
-		session->readDemo->ReadInt( legacyCallback );
-		session->readDemo->ReadInt( legacyCallbackData );
+		if ( !R_DemoReadInt( session->readDemo, legacyCallback ) ||
+			 !R_DemoReadInt( session->readDemo, legacyCallbackData ) ) {
+			return false;
+		}
 		hasCallback = ( legacyCallback != 0 );
 		hasCallbackData = ( legacyCallbackData != 0 );
 	}
-	session->readDemo->ReadInt( ent.suppressSurfaceInViewID );
-	session->readDemo->ReadInt( ent.suppressShadowInViewID );
-	session->readDemo->ReadInt( ent.suppressShadowInLightID );
-	session->readDemo->ReadInt( ent.allowSurfaceInViewID );
-	session->readDemo->ReadVec3( ent.origin );
-	session->readDemo->ReadMat3( ent.axis );
+	if ( !R_DemoReadInt( session->readDemo, ent.suppressSurfaceInViewID ) ||
+		 !R_DemoReadInt( session->readDemo, ent.suppressShadowInViewID ) ||
+		 !R_DemoReadInt( session->readDemo, ent.suppressShadowInLightID ) ||
+		 !R_DemoReadInt( session->readDemo, ent.allowSurfaceInViewID ) ||
+		 !R_DemoReadVec3( session->readDemo, ent.origin ) ||
+		 !R_DemoReadMat3( session->readDemo, ent.axis ) ) {
+		return false;
+	}
 	if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_POINTER_FREE_VERSION ) {
-		session->readDemo->ReadBool( hasCustomShader );
-		session->readDemo->ReadBool( hasReferenceShader );
-		session->readDemo->ReadBool( hasCustomSkin );
+		if ( !R_DemoReadBool( session->readDemo, hasCustomShader ) ||
+			 !R_DemoReadBool( session->readDemo, hasReferenceShader ) ||
+			 !R_DemoReadBool( session->readDemo, hasCustomSkin ) ) {
+			return false;
+		}
 	} else {
 		int legacyCustomShader = 0;
 		int legacyReferenceShader = 0;
 		int legacyCustomSkin = 0;
-		session->readDemo->ReadInt( legacyCustomShader );
-		session->readDemo->ReadInt( legacyReferenceShader );
-		session->readDemo->ReadInt( legacyCustomSkin );
+		if ( !R_DemoReadInt( session->readDemo, legacyCustomShader ) ||
+			 !R_DemoReadInt( session->readDemo, legacyReferenceShader ) ||
+			 !R_DemoReadInt( session->readDemo, legacyCustomSkin ) ) {
+			return false;
+		}
 		hasCustomShader = ( legacyCustomShader != 0 );
 		hasReferenceShader = ( legacyReferenceShader != 0 );
 		hasCustomSkin = ( legacyCustomSkin != 0 );
 	}
-	session->readDemo->ReadInt( ent.referenceSound );
+	if ( !R_DemoReadInt( session->readDemo, ent.referenceSound ) ) {
+		return false;
+	}
 	for ( i = 0; i < MAX_ENTITY_SHADER_PARMS; i++ ) {
-		session->readDemo->ReadFloat( ent.shaderParms[i] );
+		if ( !R_DemoReadFloat( session->readDemo, ent.shaderParms[i] ) ) {
+			return false;
+		}
 	}
 	for ( i = 0; i < MAX_RENDERENTITY_GUI; i++ ) {
 		if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_POINTER_FREE_VERSION ) {
-			session->readDemo->ReadBool( hasGui[i] );
+			if ( !R_DemoReadBool( session->readDemo, hasGui[i] ) ) {
+				return false;
+			}
 		} else {
 			int legacyGui = 0;
-			session->readDemo->ReadInt( legacyGui );
+			if ( !R_DemoReadInt( session->readDemo, legacyGui ) ) {
+				return false;
+			}
 			hasGui[i] = ( legacyGui != 0 );
 		}
 	}
 	if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_REMOTE_VIEW_VERSION ) {
-		session->readDemo->ReadBool( hasRemoteRenderView );
+		if ( !R_DemoReadBool( session->readDemo, hasRemoteRenderView ) ) {
+			return false;
+		}
 		if ( hasRemoteRenderView && !R_ReadDemoRenderViewData( session->readDemo, &demoRemoteRenderView, session->renderdemoVersion ) ) {
-			return;
+			return false;
 		}
 	} else {
 		int legacyRemoteRenderView = 0;
-		session->readDemo->ReadInt( legacyRemoteRenderView );
+		if ( !R_DemoReadInt( session->readDemo, legacyRemoteRenderView ) ) {
+			return false;
+		}
 		hasRemoteRenderView = false;
 	}
-	session->readDemo->ReadInt( ent.numJoints );
+	if ( !R_DemoReadInt( session->readDemo, ent.numJoints ) ) {
+		return false;
+	}
 	if ( ent.numJoints < 0 || ent.numJoints > DEMO_MAX_ENTITY_JOINTS ) {
 		common->Error( "ReadRenderEntity: bad numJoints %i", ent.numJoints );
 	}
 	if ( session->renderdemoVersion < OPENQ4_RENDERDEMO_POINTER_FREE_VERSION ) {
 		int legacyJoints = 0;
-		session->readDemo->ReadInt( legacyJoints );
+		if ( !R_DemoReadInt( session->readDemo, legacyJoints ) ) {
+			return false;
+		}
 	}
-	session->readDemo->ReadFloat( ent.modelDepthHack );
-	session->readDemo->ReadBool( ent.noSelfShadow );
-	session->readDemo->ReadBool( ent.noShadow );
-	session->readDemo->ReadBool( ent.noDynamicInteractions );
+	if ( !R_DemoReadFloat( session->readDemo, ent.modelDepthHack ) ||
+		 !R_DemoReadBool( session->readDemo, ent.noSelfShadow ) ||
+		 !R_DemoReadBool( session->readDemo, ent.noShadow ) ||
+		 !R_DemoReadBool( session->readDemo, ent.noDynamicInteractions ) ) {
+		return false;
+	}
 	{
 		int forceUpdate;
-		session->readDemo->ReadInt( forceUpdate );
+		if ( !R_DemoReadInt( session->readDemo, forceUpdate ) ) {
+			return false;
+		}
 		ent.forceUpdate = ( forceUpdate != 0 );
 	}
 	ent.callback = NULL;
@@ -1040,8 +1169,12 @@ void	idRenderWorldLocal::ReadRenderEntity() {
 		ent.joints = (idJointMat *)Mem_Alloc16( ent.numJoints * sizeof( ent.joints[0] ) ); 
 		for ( int i = 0; i < ent.numJoints; i++) {
 			float *data = ent.joints[i].ToFloatPtr();
-			for ( int j = 0; j < 12; ++j)
-				session->readDemo->ReadFloat( data[j] );
+			for ( int j = 0; j < 12; ++j) {
+				if ( !R_DemoReadFloat( session->readDemo, data[j] ) ) {
+					R_FreeRenderDemoEntityPayload( ent, demoDecals, demoOverlay );
+					return false;
+				}
+			}
 		}
 	}
 
@@ -1062,29 +1195,44 @@ void	idRenderWorldLocal::ReadRenderEntity() {
 	}
 
 	if ( session->renderdemoVersion >= OPENQ4_RENDERDEMO_ENTITY_EXTRAS_VERSION ) {
-		bool hasOverlayShader;
-		bool hasDecals;
-		bool hasOverlay;
+		bool hasOverlayShader = false;
+		bool hasDecals = false;
+		bool hasOverlay = false;
 
-		session->readDemo->ReadInt( ent.weaponDepthHackInViewID );
-		session->readDemo->ReadFloat( ent.shadowLODDistance );
-		session->readDemo->ReadInt( ent.suppressLOD );
-		session->readDemo->ReadInt( ent.referenceSoundHandle );
-		session->readDemo->ReadBool( hasOverlayShader );
+		if ( !R_DemoReadInt( session->readDemo, ent.weaponDepthHackInViewID ) ||
+			 !R_DemoReadFloat( session->readDemo, ent.shadowLODDistance ) ||
+			 !R_DemoReadInt( session->readDemo, ent.suppressLOD ) ||
+			 !R_DemoReadInt( session->readDemo, ent.referenceSoundHandle ) ||
+			 !R_DemoReadBool( session->readDemo, hasOverlayShader ) ) {
+			R_FreeRenderDemoEntityPayload( ent, demoDecals, demoOverlay );
+			return false;
+		}
 		if ( hasOverlayShader ) {
 			ent.overlayShader = declManager->FindMaterial( session->readDemo->ReadHashString() );
 		}
 
-		session->readDemo->ReadBool( hasDecals );
+		if ( !R_DemoReadBool( session->readDemo, hasDecals ) ) {
+			R_FreeRenderDemoEntityPayload( ent, demoDecals, demoOverlay );
+			return false;
+		}
 		if ( hasDecals ) {
 			demoDecals = idRenderModelDecal::Alloc();
-			demoDecals->ReadFromDemoFile( session->readDemo );
+			if ( !demoDecals->ReadFromDemoFile( session->readDemo ) ) {
+				R_FreeRenderDemoEntityPayload( ent, demoDecals, demoOverlay );
+				return false;
+			}
 		}
 
-		session->readDemo->ReadBool( hasOverlay );
+		if ( !R_DemoReadBool( session->readDemo, hasOverlay ) ) {
+			R_FreeRenderDemoEntityPayload( ent, demoDecals, demoOverlay );
+			return false;
+		}
 		if ( hasOverlay ) {
 			demoOverlay = idRenderModelOverlay::Alloc();
-			demoOverlay->ReadFromDemoFile( session->readDemo );
+			if ( !demoOverlay->ReadFromDemoFile( session->readDemo ) ) {
+				R_FreeRenderDemoEntityPayload( ent, demoDecals, demoOverlay );
+				return false;
+			}
 		}
 	}
 
@@ -1153,4 +1301,5 @@ void	idRenderWorldLocal::ReadRenderEntity() {
 	if ( r_showDemo.GetBool() ) {
 		common->Printf( "DC_UPDATE_ENTITYDEF: %i = %s\n", index, ent.hModel ? ent.hModel->Name() : "NULL" );
 	}
+	return true;
 }

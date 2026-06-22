@@ -46,16 +46,16 @@ void R_WriteDrawVertToDemo( idDemoFile *f, const idDrawVert &vert ) {
 	f->WriteUnsignedChar( vert.color[3] );
 }
 
-void R_ReadDrawVertFromDemo( idDemoFile *f, idDrawVert &vert ) {
-	f->ReadVec3( vert.xyz );
-	f->ReadVec2( vert.st );
-	f->ReadVec3( vert.normal );
-	f->ReadVec3( vert.tangents[0] );
-	f->ReadVec3( vert.tangents[1] );
-	f->ReadUnsignedChar( vert.color[0] );
-	f->ReadUnsignedChar( vert.color[1] );
-	f->ReadUnsignedChar( vert.color[2] );
-	f->ReadUnsignedChar( vert.color[3] );
+bool R_ReadDrawVertFromDemo( idDemoFile *f, idDrawVert &vert ) {
+	return f->ReadVec3( vert.xyz ) == sizeof( vert.xyz ) &&
+		f->ReadVec2( vert.st ) == sizeof( vert.st ) &&
+		f->ReadVec3( vert.normal ) == sizeof( vert.normal ) &&
+		f->ReadVec3( vert.tangents[0] ) == sizeof( vert.tangents[0] ) &&
+		f->ReadVec3( vert.tangents[1] ) == sizeof( vert.tangents[1] ) &&
+		f->ReadUnsignedChar( vert.color[0] ) == sizeof( vert.color[0] ) &&
+		f->ReadUnsignedChar( vert.color[1] ) == sizeof( vert.color[1] ) &&
+		f->ReadUnsignedChar( vert.color[2] ) == sizeof( vert.color[2] ) &&
+		f->ReadUnsignedChar( vert.color[3] ) == sizeof( vert.color[3] );
 }
 
 bool R_MaterializePrimBatchDecalTriangles( const srfTriangles_t &sourceTri, srfTriangles_t &tempTri, idDrawVert *tempVerts, glIndex_t *tempIndexes ) {
@@ -703,8 +703,8 @@ void idRenderModelDecal::AddDecalDrawSurf( viewEntity_t *space ) {
 idRenderModelDecal::ReadFromDemoFile
 ====================
 */
-void idRenderModelDecal::ReadFromDemoFile( idDemoFile *f ) {
-	int numDecals;
+bool idRenderModelDecal::ReadFromDemoFile( idDemoFile *f ) {
+	int numDecals = 0;
 	idRenderModelDecal *decal;
 
 	while ( nextDecal != NULL ) {
@@ -723,13 +723,15 @@ void idRenderModelDecal::ReadFromDemoFile( idDemoFile *f ) {
 	tri.indexes = indexes;
 	material = NULL;
 
-	f->ReadInt( numDecals );
+	if ( f == NULL || f->ReadInt( numDecals ) != sizeof( numDecals ) ) {
+		return false;
+	}
 	if ( numDecals < 0 || numDecals > 1024 ) {
 		common->Error( "idRenderModelDecal::ReadFromDemoFile: bad decal count %d", numDecals );
 	}
 
 	if ( numDecals == 0 ) {
-		return;
+		return true;
 	}
 
 	decal = this;
@@ -738,19 +740,25 @@ void idRenderModelDecal::ReadFromDemoFile( idDemoFile *f ) {
 
 		decal->material = ( materialName[0] != '\0' ) ? declManager->FindMaterial( materialName ) : NULL;
 
-		f->ReadInt( decal->tri.numVerts );
+		if ( f->ReadInt( decal->tri.numVerts ) != sizeof( decal->tri.numVerts ) ) {
+			return false;
+		}
 		if ( decal->tri.numVerts < 0 || decal->tri.numVerts > MAX_DECAL_VERTS ) {
 			common->Error( "idRenderModelDecal::ReadFromDemoFile: bad vert count %d", decal->tri.numVerts );
 		}
 
 		for ( int vertIndex = 0; vertIndex < decal->tri.numVerts; vertIndex++ ) {
-			R_ReadDrawVertFromDemo( f, decal->tri.verts[vertIndex] );
-			f->ReadFloat( decal->vertDepthFade[vertIndex] );
-			f->ReadFloat( decal->vertLifeSpan[vertIndex] );
+			if ( !R_ReadDrawVertFromDemo( f, decal->tri.verts[vertIndex] ) ||
+				 f->ReadFloat( decal->vertDepthFade[vertIndex] ) != sizeof( decal->vertDepthFade[vertIndex] ) ||
+				 f->ReadFloat( decal->vertLifeSpan[vertIndex] ) != sizeof( decal->vertLifeSpan[vertIndex] ) ) {
+				return false;
+			}
 		}
 
-		f->ReadInt( decal->tri.numIndexes );
-		if ( decal->tri.numIndexes < 0 || decal->tri.numIndexes > MAX_DECAL_INDEXES ) {
+		if ( f->ReadInt( decal->tri.numIndexes ) != sizeof( decal->tri.numIndexes ) ) {
+			return false;
+		}
+		if ( decal->tri.numIndexes < 0 || decal->tri.numIndexes > MAX_DECAL_INDEXES || ( decal->tri.numIndexes % 3 ) != 0 ) {
 			common->Error( "idRenderModelDecal::ReadFromDemoFile: bad index count %d", decal->tri.numIndexes );
 		}
 
@@ -758,9 +766,16 @@ void idRenderModelDecal::ReadFromDemoFile( idDemoFile *f ) {
 			int storedIndex;
 			int storedStartTime;
 
-			f->ReadInt( storedIndex );
+			if ( f->ReadInt( storedIndex ) != sizeof( storedIndex ) ) {
+				return false;
+			}
+			if ( storedIndex < 0 || storedIndex >= decal->tri.numVerts ) {
+				common->Error( "idRenderModelDecal::ReadFromDemoFile: bad index %d", storedIndex );
+			}
 			decal->tri.indexes[index] = storedIndex;
-			f->ReadInt( storedStartTime );
+			if ( f->ReadInt( storedStartTime ) != sizeof( storedStartTime ) ) {
+				return false;
+			}
 			decal->indexStartTime[index] = (float)storedStartTime;
 		}
 
@@ -769,6 +784,7 @@ void idRenderModelDecal::ReadFromDemoFile( idDemoFile *f ) {
 			decal = decal->nextDecal;
 		}
 	}
+	return true;
 }
 
 /*

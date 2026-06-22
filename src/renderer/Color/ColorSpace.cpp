@@ -468,7 +468,7 @@ Ny(h,j) = H(h,j)
 */
 void idColorSpace::ConvertNormalMapToStereographicHeightMap( byte *heightMap, const byte *normalMap, int width, int height, float &scale ) {
 
-	idTempArray<float> buffer( (width+1) * (height+1) * sizeof( float ) );
+	idTempArray<float> buffer( (width+1) * (height+1) );
 	float * temp = (float *)buffer.Ptr();
 	memset( temp, 0, (width+1) * (height+1) * sizeof( float ) );
 

@@ -34,6 +34,8 @@ idCVar idDemoFile::com_compressDemos( "com_compressDemos", "1", CVAR_SYSTEM | CV
 idCVar idDemoFile::com_preloadDemos( "com_preloadDemos", "0", CVAR_SYSTEM | CVAR_BOOL | CVAR_ARCHIVE, "Load the whole demo in to RAM before running it" );
 
 #define DEMO_MAGIC GAME_NAME " RDEMO"
+#define MAX_DEMO_HASH_STRINGS 65536
+#define MAX_DEMO_DICT_ENTRIES 4096
 
 /*
 ================
@@ -66,10 +68,10 @@ idDemoFile::AllocCompressor
 idCompressor *idDemoFile::AllocCompressor( int type ) {
 	switch ( type ) {
 	case 0: return idCompressor::AllocNoCompression();
-	default:
 	case 1: return idCompressor::AllocLZW();
 	case 2: return idCompressor::AllocLZSS();
 	case 3: return idCompressor::AllocHuffman();
+	default: return NULL;
 	}
 }
 
@@ -92,10 +94,17 @@ bool idDemoFile::OpenForReading( const char *fileName ) {
 	}
 
 	fileLength = f->Length();
+	if ( fileLength <= 0 ) {
+		Close();
+		return false;
+	}
 
 	if ( com_preloadDemos.GetBool() ) {
 		fileImage = (byte *)Mem_Alloc( fileLength );
-		f->Read( fileImage, fileLength );
+		if ( f->Read( fileImage, fileLength ) != fileLength ) {
+			Close();
+			return false;
+		}
 		fileSystem->CloseFile( f );
 		f = new idFile_Memory( va( "preloaded(%s)", fileName ), (const char *)fileImage, fileLength );
 	}
@@ -106,9 +115,15 @@ bool idDemoFile::OpenForReading( const char *fileName ) {
 
 	writing = false;
 
-	f->Read(magicBuffer, magicLen);
-	if ( memcmp(magicBuffer, DEMO_MAGIC, magicLen) == 0 ) {
-		f->ReadInt( compression );
+	if ( f->Read( magicBuffer, magicLen ) != magicLen ) {
+		Close();
+		return false;
+	}
+	if ( memcmp( magicBuffer, DEMO_MAGIC, magicLen ) == 0 ) {
+		if ( f->ReadInt( compression ) != sizeof( compression ) ) {
+			Close();
+			return false;
+		}
 	} else {
 		// Ideally we would error out if the magic string isn't there,
 		// but for backwards compatibility we are going to assume it's just an uncompressed demo file
@@ -117,6 +132,10 @@ bool idDemoFile::OpenForReading( const char *fileName ) {
 	}
 
 	compressor = AllocCompressor( compression );
+	if ( compressor == NULL ) {
+		Close();
+		return false;
+	}
 	compressor->Init( f, false, 8 );
 
 	return true;
@@ -165,10 +184,15 @@ bool idDemoFile::OpenForWriting( const char *fileName ) {
 	writing = true;
 
 	f->Write(DEMO_MAGIC, sizeof(DEMO_MAGIC));
-	f->WriteInt( com_compressDemos.GetInteger() );
+	int compression = com_compressDemos.GetInteger();
+	compressor = AllocCompressor( compression );
+	if ( compressor == NULL ) {
+		Close();
+		return false;
+	}
+	f->WriteInt( compression );
 	f->Flush();
 
-	compressor = AllocCompressor( com_compressDemos.GetInteger() );
 	compressor->Init( f, true, 8 );
 
 	return true;
@@ -217,14 +241,25 @@ const char *idDemoFile::ReadHashString() {
 		fLog->Write( text, strlen( text ) );
 	} 
 
-	ReadInt( index );
+	if ( ReadInt( index ) != sizeof( index ) ) {
+		Close();
+		common->Error( "demo hash index truncated" );
+	}
 
 	if ( index == -1 ) {
 		// read a new string for the table
+		if ( demoStrings.Num() >= MAX_DEMO_HASH_STRINGS ) {
+			Close();
+			common->Error( "demo hash table overflow" );
+		}
 		idStr	*str = new idStr;
 		
 		idStr data;
 		ReadString( data );
+		if ( data.Length() >= MAX_STRING_CHARS ) {
+			Close();
+			common->Error( "demo hash string too long" );
+		}
 		*str = data;
 		
 		demoStrings.Append( str );
@@ -246,6 +281,10 @@ idDemoFile::WriteHashString
 ================
 */
 void idDemoFile::WriteHashString( const char *str ) {
+	if ( str == NULL ) {
+		str = "";
+	}
+
 	if ( log && fLog ) {
 		const char *text = va( "%s > Writing hash string\n", logStr.c_str() );
 		fLog->Write( text, strlen( text ) );
@@ -277,7 +316,10 @@ void idDemoFile::ReadDict( idDict &dict ) {
 	idStr key, val;
 
 	dict.Clear();
-	ReadInt( c );
+	if ( ReadInt( c ) != sizeof( c ) || c < 0 || c > MAX_DEMO_DICT_ENTRIES ) {
+		Close();
+		common->Error( "demo dictionary count out of range" );
+	}
 	for ( i = 0; i < c; i++ ) {
 		key = ReadHashString();
 		val = ReadHashString();
@@ -307,6 +349,9 @@ void idDemoFile::WriteDict( const idDict &dict ) {
  ================
  */
 int idDemoFile::Read( void *buffer, int len ) {
+	if ( compressor == NULL ) {
+		return 0;
+	}
 	int read = compressor->Read( buffer, len );
 	if ( read == 0 && len >= 4 ) {
 		*(demoSystem_t *)buffer = DS_FINISHED;
@@ -320,6 +365,9 @@ int idDemoFile::Read( void *buffer, int len ) {
  ================
  */
 int idDemoFile::Write( const void *buffer, int len ) {
+	if ( compressor == NULL || buffer == NULL || len <= 0 ) {
+		return 0;
+	}
 	return compressor->Write( buffer, len );
 }
 

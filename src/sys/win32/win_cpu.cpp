@@ -312,7 +312,7 @@ int Sys_FPU_PrintStateFlags(char* ptr, int ctrl, int stat, int tags, int inof, i
 
 	length += sprintf(ptr + length, "Status Word:\n");
 	for (i = 0; statusWordFlags[i].name[0]; i++) {
-		ptr += sprintf(ptr + length, "  %-30s = %s\n", statusWordFlags[i].name, (stat & (1 << statusWordFlags[i].bit)) ? "true" : "false");
+		length += sprintf(ptr + length, "  %-30s = %s\n", statusWordFlags[i].name, (stat & (1 << statusWordFlags[i].bit)) ? "true" : "false");
 	}
 	length += sprintf(ptr + length, "  %-30s = %d%d%d%d\n", "Condition code", (stat >> 8) & 1, (stat >> 9) & 1, (stat >> 10) & 1, (stat >> 14) & 1);
 	length += sprintf(ptr + length, "  %-30s = %d\n", "Top of stack pointer", (stat >> 11) & 7);

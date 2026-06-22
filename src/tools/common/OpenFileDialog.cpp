@@ -248,7 +248,10 @@ void rvOpenFileDialog::HandleCommandOK ( void )
 	{
 		if ( strlen( mLookin ) )
 		{
-			idStr::snPrintf( mLookin, sizeof( mLookin ), "%s/%s", mLookin, temp );
+			idStr newLookin = mLookin;
+			newLookin.Append( "/" );
+			newLookin.Append( temp );
+			idStr::Copynz( mLookin, newLookin.c_str(), sizeof( mLookin ) );
 		} else {
 			idStr::Copynz( mLookin, temp, sizeof( mLookin ) );
 		}
@@ -357,12 +360,14 @@ void rvOpenFileDialog::HandleLookInChange ( void )
 	if ( sel >= 1 )
 	{
 		SendMessage ( mWndLookin, CB_GETLBTEXT, 1, (LPARAM)temp );
-		idStr::snPrintf( mLookin, sizeof( mLookin ), "%s", temp );
+		lookin = temp;
 		for ( i = 2; i <= sel; i ++ )
 		{
 			SendMessage ( mWndLookin, CB_GETLBTEXT, i, (LPARAM)temp );
-			idStr::snPrintf( mLookin, sizeof( mLookin ), "%s/%s", mLookin, temp );
+			lookin.Append( "/" );
+			lookin.Append( temp );
 		}			
+		idStr::Copynz( mLookin, lookin.c_str(), sizeof( mLookin ) );
 	}
 	else
 	{

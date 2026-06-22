@@ -83,6 +83,30 @@ static void FreeBuffer( void* p )
 	return Mem_Free( p );
 }
 
+template<class type>
+static bool openQ4_ReadBigExact( idFile* file, type& value )
+{
+	return file != NULL && file->ReadBig( value ) == sizeof( value );
+}
+
+static bool openQ4_ReadExact( idFile* file, void* buffer, const int size )
+{
+	if( size < 0 || ( size > 0 && buffer == NULL ) )
+	{
+		return false;
+	}
+	return size == 0 || ( file != NULL && file->Read( buffer, size ) == size );
+}
+
+static bool openQ4_ReadWaveExact( idWaveFile& wave, void* buffer, const int size )
+{
+	if( size <= 0 || buffer == NULL )
+	{
+		return false;
+	}
+	return wave.Read( buffer, size ) == ( size_t )size;
+}
+
 static bool openQ4_CanUploadSampleToOpenAL()
 {
 	ALCcontext* const expectedContext = soundSystemLocal.hardware.GetOpenALContext();
@@ -203,28 +227,86 @@ bool idSoundSample_OpenAL::LoadGeneratedSample( const idStr& filename )
 	idFileLocal fileIn( fileSystem->OpenFileRead( filename ) );
 	if( fileIn != NULL )
 	{
+		FreeData();
+
+		const int fileLength = fileIn->Length();
 		uint32 magic;
-		fileIn->ReadBig( magic );
-		fileIn->ReadBig( timestamp );
-		fileIn->ReadBig( loaded );
-		fileIn->ReadBig( playBegin );
-		fileIn->ReadBig( playLength );
-		idWaveFile::ReadWaveFormatDirect( format, fileIn );
+		if( !openQ4_ReadBigExact( fileIn, magic ) || magic != SOUND_MAGIC_IDMSA )
+		{
+			return false;
+		}
+		if( !openQ4_ReadBigExact( fileIn, timestamp ) ||
+			!openQ4_ReadBigExact( fileIn, loaded ) ||
+			!openQ4_ReadBigExact( fileIn, playBegin ) ||
+			!openQ4_ReadBigExact( fileIn, playLength ) ||
+			playBegin < 0 ||
+			playLength < 0 )
+		{
+			return false;
+		}
+		if( !idWaveFile::ReadWaveFormatDirect( format, fileIn ) )
+		{
+			return false;
+		}
 		int num;
-		fileIn->ReadBig( num );
+		if( !openQ4_ReadBigExact( fileIn, num ) || num < 0 || num > fileLength )
+		{
+			return false;
+		}
 		amplitude.Clear();
 		amplitude.SetNum( num );
-		fileIn->Read( amplitude.Ptr(), amplitude.Num() );
-		fileIn->ReadBig( totalBufferSize );
-		fileIn->ReadBig( num );
+		if( !openQ4_ReadExact( fileIn, amplitude.Ptr(), amplitude.Num() ) )
+		{
+			amplitude.Clear();
+			return false;
+		}
+		if( !openQ4_ReadBigExact( fileIn, totalBufferSize ) || totalBufferSize <= 0 )
+		{
+			return false;
+		}
+		if( !openQ4_ReadBigExact( fileIn, num ) || num <= 0 || num > totalBufferSize )
+		{
+			return false;
+		}
 		buffers.SetNum( num );
+		int remainingBufferBytes = totalBufferSize;
 		for( int i = 0; i < num; i++ )
 		{
-			fileIn->ReadBig( buffers[ i ].numSamples );
-			fileIn->ReadBig( buffers[ i ].bufferSize );
+			buffers[ i ].buffer = NULL;
+			if( !openQ4_ReadBigExact( fileIn, buffers[ i ].numSamples ) ||
+				!openQ4_ReadBigExact( fileIn, buffers[ i ].bufferSize ) ||
+				buffers[ i ].numSamples < 0 ||
+				buffers[ i ].bufferSize <= 0 ||
+				buffers[ i ].bufferSize > remainingBufferBytes )
+			{
+				for( int j = 0; j < i; j++ )
+				{
+					FreeBuffer( buffers[ j ].buffer );
+				}
+				buffers.Clear();
+				return false;
+			}
 			buffers[ i ].buffer = AllocBuffer( buffers[ i ].bufferSize, GetName() );
-			fileIn->Read( buffers[ i ].buffer, buffers[ i ].bufferSize );
+			if( buffers[ i ].buffer == NULL || !openQ4_ReadExact( fileIn, buffers[ i ].buffer, buffers[ i ].bufferSize ) )
+			{
+				for( int j = 0; j <= i; j++ )
+				{
+					FreeBuffer( buffers[ j ].buffer );
+				}
+				buffers.Clear();
+				return false;
+			}
 			buffers[ i ].buffer = GPU_CONVERT_CPU_TO_CPU_CACHED_READONLY_ADDRESS( buffers[ i ].buffer );
+			remainingBufferBytes -= buffers[ i ].bufferSize;
+		}
+		if( remainingBufferBytes != 0 )
+		{
+			for( int i = 0; i < buffers.Num(); i++ )
+			{
+				FreeBuffer( buffers[ i ].buffer );
+			}
+			buffers.Clear();
+			return false;
 		}
 		return true;
 	}
@@ -485,7 +567,14 @@ bool idSoundSample_OpenAL::LoadWav( const idStr& filename )
 	}
 	timestamp = wave.Timestamp();
 
-	totalBufferSize = wave.SeekToChunk( 'data' );
+	const uint32 dataChunkSize = wave.SeekToChunk( 'data' );
+	if( dataChunkSize == 0 || dataChunkSize > ( uint32 )idMath::INT_MAX || format.basic.blockSize == 0 )
+	{
+		idLib::Warning( "LoadWav( %s ) : invalid data chunk", filename.c_str() );
+		MakeDefault();
+		return false;
+	}
+	totalBufferSize = ( int )dataChunkSize;
 
 	if( format.basic.formatTag == idWaveFile::FORMAT_PCM || format.basic.formatTag == idWaveFile::FORMAT_EXTENSIBLE )
 	{
@@ -493,6 +582,12 @@ bool idSoundSample_OpenAL::LoadWav( const idStr& filename )
 		if( format.basic.bitsPerSample != 16 )
 		{
 			idLib::Warning( "LoadWav( %s ) : %s", filename.c_str(), "Not a 16 bit PCM wav file" );
+			MakeDefault();
+			return false;
+		}
+		if( totalBufferSize % format.basic.blockSize != 0 )
+		{
+			idLib::Warning( "LoadWav( %s ) : %s", filename.c_str(), "PCM data is not block aligned" );
 			MakeDefault();
 			return false;
 		}
@@ -505,8 +600,12 @@ bool idSoundSample_OpenAL::LoadWav( const idStr& filename )
 		buffers[0].numSamples = playLength;
 		buffers[0].buffer = AllocBuffer( totalBufferSize, GetName() );
 
-
-		wave.Read( buffers[0].buffer, totalBufferSize );
+		if( buffers[0].buffer == NULL || !openQ4_ReadWaveExact( wave, buffers[0].buffer, totalBufferSize ) )
+		{
+			idLib::Warning( "LoadWav( %s ) : could not read PCM data", filename.c_str() );
+			MakeDefault();
+			return false;
+		}
 
 		if( format.basic.bitsPerSample == 16 )
 		{
@@ -518,6 +617,12 @@ bool idSoundSample_OpenAL::LoadWav( const idStr& filename )
 	}
 	else if( format.basic.formatTag == idWaveFile::FORMAT_ADPCM )
 	{
+		if( format.extra.adpcm.samplesPerBlock == 0 || totalBufferSize % format.basic.blockSize != 0 )
+		{
+			idLib::Warning( "LoadWav( %s ) : invalid ADPCM block layout", filename.c_str() );
+			MakeDefault();
+			return false;
+		}
 
 		playBegin = 0;
 		playLength = ( ( totalBufferSize / format.basic.blockSize ) * format.extra.adpcm.samplesPerBlock );
@@ -527,7 +632,12 @@ bool idSoundSample_OpenAL::LoadWav( const idStr& filename )
 		buffers[0].numSamples = playLength;
 		buffers[0].buffer  = AllocBuffer( totalBufferSize, GetName() );
 
-		wave.Read( buffers[0].buffer, totalBufferSize );
+		if( buffers[0].buffer == NULL || !openQ4_ReadWaveExact( wave, buffers[0].buffer, totalBufferSize ) )
+		{
+			idLib::Warning( "LoadWav( %s ) : could not read ADPCM data", filename.c_str() );
+			MakeDefault();
+			return false;
+		}
 
 		buffers[0].buffer = GPU_CONVERT_CPU_TO_CPU_CACHED_READONLY_ADDRESS( buffers[0].buffer );
 
@@ -542,12 +652,25 @@ bool idSoundSample_OpenAL::LoadWav( const idStr& filename )
 			return false;
 		}
 
-		int bytesPerBlock = format.extra.xma2.bytesPerBlock;
+		if( format.extra.xma2.bytesPerBlock == 0 || format.extra.xma2.bytesPerBlock > ( uint32 )idMath::INT_MAX )
+		{
+			idLib::Warning( "LoadWav( %s ) : invalid XMA2 block size", filename.c_str() );
+			MakeDefault();
+			return false;
+		}
+		const int bytesPerBlock = ( int )format.extra.xma2.bytesPerBlock;
+		const uint64 requiredBlocks = ( ( uint64 )totalBufferSize + bytesPerBlock - 1 ) / bytesPerBlock;
+		if( format.extra.xma2.blockCount != requiredBlocks )
+		{
+			idLib::Warning( "LoadWav( %s ) : invalid XMA2 block layout", filename.c_str() );
+			MakeDefault();
+			return false;
+		}
 		//assert( format.extra.xma2.blockCount == ALIGN( totalBufferSize, bytesPerBlock ) / bytesPerBlock );
 		//assert( format.extra.xma2.blockCount * bytesPerBlock >= totalBufferSize );
 		//assert( format.extra.xma2.blockCount * bytesPerBlock < totalBufferSize + bytesPerBlock );
 
-		buffers.SetNum( format.extra.xma2.blockCount );
+		buffers.SetNum( ( int )format.extra.xma2.blockCount );
 		for( int i = 0; i < buffers.Num(); i++ )
 		{
 			if( i == buffers.Num() - 1 )
@@ -560,7 +683,17 @@ bool idSoundSample_OpenAL::LoadWav( const idStr& filename )
 			}
 
 			buffers[i].buffer = AllocBuffer( buffers[i].bufferSize, GetName() );
-			wave.Read( buffers[i].buffer, buffers[i].bufferSize );
+			if( buffers[i].buffer == NULL || !openQ4_ReadWaveExact( wave, buffers[i].buffer, buffers[i].bufferSize ) )
+			{
+				for( int j = 0; j <= i; j++ )
+				{
+					FreeBuffer( buffers[j].buffer );
+				}
+				buffers.Clear();
+				idLib::Warning( "LoadWav( %s ) : could not read XMA2 data", filename.c_str() );
+				MakeDefault();
+				return false;
+			}
 			buffers[i].buffer = GPU_CONVERT_CPU_TO_CPU_CACHED_READONLY_ADDRESS( buffers[i].buffer );
 		}
 
@@ -574,15 +707,45 @@ bool idSoundSample_OpenAL::LoadWav( const idStr& filename )
 
 		for( int i = 0; i < buffers.Num(); i++ )
 		{
-			wave.Read( &buffers[i].numSamples, sizeof( buffers[i].numSamples ) );
+			if( !openQ4_ReadWaveExact( wave, &buffers[i].numSamples, sizeof( buffers[i].numSamples ) ) )
+			{
+				idLib::Warning( "LoadWav( %s ) : could not read XMA2 seek table", filename.c_str() );
+				MakeDefault();
+				return false;
+			}
 			idSwap::Big( buffers[i].numSamples );
+			if( buffers[i].numSamples < 0 )
+			{
+				idLib::Warning( "LoadWav( %s ) : invalid XMA2 seek entry", filename.c_str() );
+				MakeDefault();
+				return false;
+			}
 		}
 
-		playBegin = format.extra.xma2.loopBegin;
-		playLength = format.extra.xma2.loopLength;
+		if( format.extra.xma2.loopBegin > ( uint32 )idMath::INT_MAX || format.extra.xma2.loopLength > ( uint32 )idMath::INT_MAX )
+		{
+			idLib::Warning( "LoadWav( %s ) : invalid XMA2 loop range", filename.c_str() );
+			MakeDefault();
+			return false;
+		}
+
+		playBegin = ( int )format.extra.xma2.loopBegin;
+		playLength = ( int )format.extra.xma2.loopLength;
+		if( playLength < 0 || playLength > idMath::INT_MAX - playBegin )
+		{
+			idLib::Warning( "LoadWav( %s ) : invalid XMA2 loop range", filename.c_str() );
+			MakeDefault();
+			return false;
+		}
 
 		if( buffers[buffers.Num() - 1].numSamples < playBegin + playLength )
 		{
+			if( buffers[buffers.Num() - 1].numSamples < playBegin )
+			{
+				idLib::Warning( "LoadWav( %s ) : invalid XMA2 loop range", filename.c_str() );
+				MakeDefault();
+				return false;
+			}
 			// This shouldn't happen, but it's not fatal if it does
 			playLength = buffers[buffers.Num() - 1].numSamples - playBegin;
 		}
@@ -691,6 +854,22 @@ bool idSoundSample_OpenAL::LoadOgg( const idStr& filename )
 		MakeDefault();
 		return false;
 	}
+	if( sampleRate <= 0 )
+	{
+		free( decoded );
+		idLib::Warning( "LoadOgg( %s ) : invalid sample rate %d", filename.c_str(), sampleRate );
+		MakeDefault();
+		return false;
+	}
+
+	const uint64 decodedBytes = ( uint64 )samplesPerChannel * channels * sizeof( int16 );
+	if( decodedBytes == 0 || decodedBytes > ( uint64 )idMath::INT_MAX )
+	{
+		free( decoded );
+		idLib::Warning( "LoadOgg( %s ) : decoded data is too large", filename.c_str() );
+		MakeDefault();
+		return false;
+	}
 
 	memset( &format, 0, sizeof( format ) );
 	format.basic.formatTag = idWaveFile::FORMAT_PCM;
@@ -703,12 +882,19 @@ bool idSoundSample_OpenAL::LoadOgg( const idStr& filename )
 	playBegin = 0;
 	playLength = samplesPerChannel;
 
-	totalBufferSize = samplesPerChannel * channels * sizeof( int16 );
+	totalBufferSize = ( int )decodedBytes;
 
 	buffers.SetNum( 1 );
 	buffers[0].bufferSize = totalBufferSize;
 	buffers[0].numSamples = playLength;
 	buffers[0].buffer = AllocBuffer( totalBufferSize, GetName() );
+	if( buffers[0].buffer == NULL )
+	{
+		free( decoded );
+		idLib::Warning( "LoadOgg( %s ) : could not allocate decoded audio", filename.c_str() );
+		MakeDefault();
+		return false;
+	}
 
 	memcpy( buffers[0].buffer, decoded, totalBufferSize );
 	buffers[0].buffer = GPU_CONVERT_CPU_TO_CPU_CACHED_READONLY_ADDRESS( buffers[0].buffer );
@@ -776,9 +962,11 @@ bool idSoundSample_OpenAL::LoadRoQ( const idStr& filename )
 
 		offset += 8;
 
-		if( chunkSize < 0 || offset + chunkSize > fileLen )
+		if( chunkSize > fileLen - offset )
 		{
-			break;
+			Mem_Free( fileData );
+			idLib::Warning( "LoadRoQ( %s ) : truncated audio chunk", filename.c_str() );
+			return false;
 		}
 
 		const byte* chunkData = fileData + offset;
@@ -797,6 +985,12 @@ bool idSoundSample_OpenAL::LoadRoQ( const idStr& filename )
 			}
 
 			const int oldSamples = pcmSamples.Num();
+			if( chunkSize > idMath::INT_MAX - oldSamples )
+			{
+				Mem_Free( fileData );
+				idLib::Warning( "LoadRoQ( %s ) : decoded audio is too large", filename.c_str() );
+				return false;
+			}
 			pcmSamples.SetNum( oldSamples + chunkSize );
 
 			int32 predictor = static_cast<int16>( chunkArg );
@@ -809,6 +1003,12 @@ bool idSoundSample_OpenAL::LoadRoQ( const idStr& filename )
 		}
 		else if( chunkId == ROQ_SOUND_STEREO )
 		{
+			if( ( chunkSize & 1 ) != 0 )
+			{
+				Mem_Free( fileData );
+				idLib::Warning( "LoadRoQ( %s ) : malformed stereo audio chunk", filename.c_str() );
+				return false;
+			}
 			if( channels == 0 )
 			{
 				channels = 2;
@@ -823,6 +1023,12 @@ bool idSoundSample_OpenAL::LoadRoQ( const idStr& filename )
 			const int stereoBytes = chunkSize & ~1;
 			const int samplePairs = stereoBytes >> 1;
 			const int oldSamples = pcmSamples.Num();
+			if( stereoBytes > idMath::INT_MAX - oldSamples )
+			{
+				Mem_Free( fileData );
+				idLib::Warning( "LoadRoQ( %s ) : decoded audio is too large", filename.c_str() );
+				return false;
+			}
 			pcmSamples.SetNum( oldSamples + samplePairs * 2 );
 
 			int32 leftPredictor = static_cast<int16>( chunkArg & 0xFF00 );
@@ -861,12 +1067,22 @@ bool idSoundSample_OpenAL::LoadRoQ( const idStr& filename )
 
 	playBegin = 0;
 	playLength = pcmSamples.Num() / channels;
+	if( pcmSamples.Num() > idMath::INT_MAX / ( int )sizeof( int16 ) )
+	{
+		idLib::Warning( "LoadRoQ( %s ) : decoded audio is too large", filename.c_str() );
+		return false;
+	}
 	totalBufferSize = pcmSamples.Num() * sizeof( int16 );
 
 	buffers.SetNum( 1 );
 	buffers[0].bufferSize = totalBufferSize;
 	buffers[0].numSamples = playLength;
 	buffers[0].buffer = AllocBuffer( totalBufferSize, GetName() );
+	if( buffers[0].buffer == NULL )
+	{
+		idLib::Warning( "LoadRoQ( %s ) : could not allocate decoded audio", filename.c_str() );
+		return false;
+	}
 	memcpy( buffers[0].buffer, pcmSamples.Ptr(), totalBufferSize );
 	buffers[0].buffer = GPU_CONVERT_CPU_TO_CPU_CACHED_READONLY_ADDRESS( buffers[0].buffer );
 
@@ -1010,8 +1226,17 @@ bool idSoundSample_OpenAL::LoadAmplitude( const idStr& name )
 	{
 		return false;
 	}
-	amplitude.SetNum( f->Length() );
-	f->Read( amplitude.Ptr(), amplitude.Num() );
+	const int fileLength = f->Length();
+	if( fileLength < 0 )
+	{
+		return false;
+	}
+	amplitude.SetNum( fileLength );
+	if( !openQ4_ReadExact( f, amplitude.Ptr(), amplitude.Num() ) )
+	{
+		amplitude.Clear();
+		return false;
+	}
 	return true;
 }
 

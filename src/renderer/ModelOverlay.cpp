@@ -34,30 +34,33 @@ If you have questions concerning this license or the applicable additional terms
 
 namespace {
 
-void R_ClearOverlayMaterials( idList<overlayMaterial_t *> &materials ) {
-	for ( int k = 0; k < materials.Num(); k++ ) {
-		overlayMaterial_t *material = materials[k];
-		if ( material == NULL ) {
+void R_FreeOverlayMaterial( overlayMaterial_t *material ) {
+	if ( material == NULL ) {
+		return;
+	}
+
+	for ( int i = 0; i < material->surfaces.Num(); i++ ) {
+		overlaySurface_t *surface = material->surfaces[i];
+		if ( surface == NULL ) {
 			continue;
 		}
 
-		for ( int i = 0; i < material->surfaces.Num(); i++ ) {
-			overlaySurface_t *surface = material->surfaces[i];
-			if ( surface == NULL ) {
-				continue;
-			}
-
-			if ( surface->verts != NULL ) {
-				Mem_Free( surface->verts );
-			}
-			if ( surface->indexes != NULL ) {
-				Mem_Free( surface->indexes );
-			}
-			Mem_Free( surface );
+		if ( surface->verts != NULL ) {
+			Mem_Free( surface->verts );
 		}
+		if ( surface->indexes != NULL ) {
+			Mem_Free( surface->indexes );
+		}
+		Mem_Free( surface );
+	}
 
-		material->surfaces.Clear();
-		delete material;
+	material->surfaces.Clear();
+	delete material;
+}
+
+void R_ClearOverlayMaterials( idList<overlayMaterial_t *> &materials ) {
+	for ( int k = 0; k < materials.Num(); k++ ) {
+		R_FreeOverlayMaterial( materials[k] );
 	}
 
 	materials.Clear();
@@ -479,12 +482,14 @@ void idRenderModelOverlay::RemoveOverlaySurfacesFromModel( idRenderModel *baseMo
 idRenderModelOverlay::ReadFromDemoFile
 ====================
 */
-void idRenderModelOverlay::ReadFromDemoFile( idDemoFile *f ) {
-	int numMaterials;
+bool idRenderModelOverlay::ReadFromDemoFile( idDemoFile *f ) {
+	int numMaterials = 0;
 
 	R_ClearOverlayMaterials( materials );
 
-	f->ReadInt( numMaterials );
+	if ( f == NULL || f->ReadInt( numMaterials ) != sizeof( numMaterials ) ) {
+		return false;
+	}
 	if ( numMaterials < 0 || numMaterials > 1024 ) {
 		common->Error( "idRenderModelOverlay::ReadFromDemoFile: bad material count %d", numMaterials );
 	}
@@ -496,13 +501,19 @@ void idRenderModelOverlay::ReadFromDemoFile( idDemoFile *f ) {
 
 		material->material = ( materialName[0] != '\0' ) ? declManager->FindMaterial( materialName ) : NULL;
 
-		f->ReadInt( numSurfaces );
+		if ( f->ReadInt( numSurfaces ) != sizeof( numSurfaces ) ) {
+			R_FreeOverlayMaterial( material );
+			return false;
+		}
 		if ( numSurfaces < 0 || numSurfaces > MAX_OVERLAY_SURFACES ) {
-			delete material;
+			R_FreeOverlayMaterial( material );
 			common->Error( "idRenderModelOverlay::ReadFromDemoFile: bad surface count %d", numSurfaces );
 		}
 
 		material->surfaces.SetNum( numSurfaces );
+		for ( int surfaceIndex = 0; surfaceIndex < numSurfaces; surfaceIndex++ ) {
+			material->surfaces[surfaceIndex] = NULL;
+		}
 		for ( int surfaceIndex = 0; surfaceIndex < numSurfaces; surfaceIndex++ ) {
 			overlaySurface_t *surface = (overlaySurface_t *)Mem_Alloc( sizeof( *surface ) );
 			int numVerts;
@@ -510,14 +521,18 @@ void idRenderModelOverlay::ReadFromDemoFile( idDemoFile *f ) {
 
 			memset( surface, 0, sizeof( *surface ) );
 
-			f->ReadInt( surface->surfaceNum );
-			f->ReadInt( surface->surfaceId );
-			f->ReadInt( numVerts );
-			f->ReadInt( numIndexes );
-
-			if ( numVerts < 0 || numVerts > 1 << 20 || numIndexes < 0 || numIndexes > 1 << 21 ) {
+			if ( f->ReadInt( surface->surfaceNum ) != sizeof( surface->surfaceNum ) ||
+				 f->ReadInt( surface->surfaceId ) != sizeof( surface->surfaceId ) ||
+				 f->ReadInt( numVerts ) != sizeof( numVerts ) ||
+				 f->ReadInt( numIndexes ) != sizeof( numIndexes ) ) {
 				Mem_Free( surface );
-				delete material;
+				R_FreeOverlayMaterial( material );
+				return false;
+			}
+
+			if ( numVerts < 0 || numVerts > 1 << 20 || numIndexes < 0 || numIndexes > 1 << 21 || ( numIndexes % 3 ) != 0 ) {
+				Mem_Free( surface );
+				R_FreeOverlayMaterial( material );
 				common->Error(
 					"idRenderModelOverlay::ReadFromDemoFile: invalid surface payload verts=%d indexes=%d",
 					numVerts,
@@ -531,9 +546,13 @@ void idRenderModelOverlay::ReadFromDemoFile( idDemoFile *f ) {
 			if ( surface->numVerts > 0 ) {
 				surface->verts = (overlayVertex_t *)Mem_Alloc( surface->numVerts * sizeof( surface->verts[0] ) );
 				for ( int vertIndex = 0; vertIndex < surface->numVerts; vertIndex++ ) {
-					f->ReadInt( surface->verts[vertIndex].vertexNum );
-					f->ReadFloat( surface->verts[vertIndex].st[0] );
-					f->ReadFloat( surface->verts[vertIndex].st[1] );
+					if ( f->ReadInt( surface->verts[vertIndex].vertexNum ) != sizeof( surface->verts[vertIndex].vertexNum ) ||
+						 f->ReadFloat( surface->verts[vertIndex].st[0] ) != sizeof( surface->verts[vertIndex].st[0] ) ||
+						 f->ReadFloat( surface->verts[vertIndex].st[1] ) != sizeof( surface->verts[vertIndex].st[1] ) ) {
+						FreeSurface( surface );
+						R_FreeOverlayMaterial( material );
+						return false;
+					}
 				}
 			}
 
@@ -542,7 +561,16 @@ void idRenderModelOverlay::ReadFromDemoFile( idDemoFile *f ) {
 				for ( int index = 0; index < surface->numIndexes; index++ ) {
 					int storedIndex;
 
-					f->ReadInt( storedIndex );
+					if ( f->ReadInt( storedIndex ) != sizeof( storedIndex ) ) {
+						FreeSurface( surface );
+						R_FreeOverlayMaterial( material );
+						return false;
+					}
+					if ( storedIndex < 0 || storedIndex >= surface->numVerts ) {
+						FreeSurface( surface );
+						R_FreeOverlayMaterial( material );
+						common->Error( "idRenderModelOverlay::ReadFromDemoFile: bad index %d", storedIndex );
+					}
 					surface->indexes[index] = storedIndex;
 				}
 			}
@@ -552,6 +580,7 @@ void idRenderModelOverlay::ReadFromDemoFile( idDemoFile *f ) {
 
 		materials.Append( material );
 	}
+	return true;
 }
 
 /*

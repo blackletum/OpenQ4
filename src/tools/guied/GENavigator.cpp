@@ -43,6 +43,30 @@ rvGENavigator::rvGENavigator ( )
 	mScriptsIcon = NULL;
 	mVisibleIconDisabled = NULL;
 	mScriptsLightIcon = NULL;
+	mCollapseIcon = NULL;
+	mExpandIcon = NULL;
+}
+
+rvGENavigator::~rvGENavigator ( )
+{
+	if ( mVisibleIcon != NULL ) {
+		DestroyIcon( mVisibleIcon );
+	}
+	if ( mVisibleIconDisabled != NULL ) {
+		DestroyIcon( mVisibleIconDisabled );
+	}
+	if ( mScriptsIcon != NULL ) {
+		DestroyIcon( mScriptsIcon );
+	}
+	if ( mScriptsLightIcon != NULL ) {
+		DestroyIcon( mScriptsLightIcon );
+	}
+	if ( mCollapseIcon != NULL ) {
+		DestroyIcon( mCollapseIcon );
+	}
+	if ( mExpandIcon != NULL ) {
+		DestroyIcon( mExpandIcon );
+	}
 }
 
 /*

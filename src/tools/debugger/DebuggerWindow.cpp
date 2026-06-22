@@ -103,6 +103,17 @@ rvDebuggerWindow::~rvDebuggerWindow ( )
 	}
 }
 
+static void Debugger_AddImageListIcon( HIMAGELIST imageList, HINSTANCE instance, int resourceId ) {
+	if ( imageList == NULL ) {
+		return;
+	}
+	HICON icon = (HICON)LoadImage( instance, MAKEINTRESOURCE( resourceId ), IMAGE_ICON, 16, 16, LR_DEFAULTSIZE | LR_DEFAULTCOLOR );
+	if ( icon != NULL ) {
+		ImageList_AddIcon( imageList, icon );
+		DestroyIcon( icon );
+	}
+}
+
 /*
 ================
 rvDebuggerWindow::RegisterClass
@@ -859,10 +870,10 @@ int rvDebuggerWindow::HandleCreate ( WPARAM wparam, LPARAM lparam )
 	// Create the image list that is used by the threads window, callstack window, and 
 	// margin window
 	mImageList = ImageList_Create ( 16, 16, ILC_COLOR|ILC_MASK, 0, 2 );
-	ImageList_AddIcon ( mImageList, (HICON)LoadImage ( mInstance, MAKEINTRESOURCE(IDI_DBG_EMPTY), IMAGE_ICON, 16, 16, LR_DEFAULTSIZE|LR_DEFAULTCOLOR) );
-	ImageList_AddIcon ( mImageList, (HICON)LoadImage ( mInstance, MAKEINTRESOURCE(IDI_DBG_CURRENT), IMAGE_ICON, 16, 16, LR_DEFAULTSIZE|LR_DEFAULTCOLOR) );
-	ImageList_AddIcon ( mImageList, (HICON)LoadImage ( mInstance, MAKEINTRESOURCE(IDI_DBG_BREAKPOINT), IMAGE_ICON, 16, 16, LR_DEFAULTSIZE|LR_DEFAULTCOLOR) );
-	ImageList_AddIcon ( mImageList, (HICON)LoadImage ( mInstance, MAKEINTRESOURCE(IDI_DBG_CURRENTLINE), IMAGE_ICON, 16, 16, LR_DEFAULTSIZE|LR_DEFAULTCOLOR) );
+	Debugger_AddImageListIcon( mImageList, mInstance, IDI_DBG_EMPTY );
+	Debugger_AddImageListIcon( mImageList, mInstance, IDI_DBG_CURRENT );
+	Debugger_AddImageListIcon( mImageList, mInstance, IDI_DBG_BREAKPOINT );
+	Debugger_AddImageListIcon( mImageList, mInstance, IDI_DBG_CURRENTLINE );
 	ListView_SetImageList ( mWndThreads, mImageList, LVSIL_SMALL );
 	ListView_SetImageList ( mWndCallstack, mImageList, LVSIL_SMALL );
 

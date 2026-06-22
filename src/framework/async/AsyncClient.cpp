@@ -941,9 +941,13 @@ idAsyncClient::ReadLocalizedServerString
 ===============
 */
 void idAsyncClient::ReadLocalizedServerString( const idBitMsg &msg, char *out, int maxLen ) {
+	if ( out == NULL || maxLen <= 0 ) {
+		return;
+	}
 	msg.ReadString( out, maxLen );
 	// look up localized string. if the message is not an #str_ format, we'll just get it back unchanged
-	idStr::snPrintf( out, maxLen - 1, "%s", common->GetLanguageDict()->GetString( out ) );
+	const idStr localized = common->GetLanguageDict()->GetString( out );
+	idStr::Copynz( out, localized.c_str(), maxLen );
 }
 
 /*
@@ -1220,6 +1224,10 @@ void idAsyncClient::ProcessInfoResponseMessage( const netadr_t from, const idBit
 		serverInfo.serverInfo.Print();
 	}
 	for ( i = msg.ReadByte(); i < MAX_ASYNC_CLIENTS; i = msg.ReadByte() ) {
+		if ( serverInfo.clients >= MAX_ASYNC_CLIENTS ) {
+			common->Printf( "server %s ignored - too many clients in info response\n", Sys_NetAdrToString( serverInfo.adr ) );
+			return;
+		}
 		serverInfo.pings[ serverInfo.clients ] = msg.ReadShort();
 		serverInfo.rate[ serverInfo.clients ] = msg.ReadLong();
 		msg.ReadString( serverInfo.nickname[ serverInfo.clients ], MAX_NICKLEN );
@@ -2160,12 +2168,21 @@ void idAsyncClient::ProcessDownloadInfoMessage( const netadr_t from, const idBit
 			common->Warning( "tried to process a download list while already busy downloading things" );
 			return;
 		}
+		if ( dlCount < 0 || dlCount > MAX_PURE_PAKS ) {
+			common->Warning( "bad download count %d from pending request", dlCount );
+			return;
+		}
 		// read the URLs, check against what we requested, prompt for download
 		pakIndex = -1;
 		totalDlSize = 0;
 		do {
 			pakIndex++;
 			pakDl = msg.ReadByte();
+			if ( pakDl != SERVER_PAK_END && pakIndex >= dlCount ) {
+				common->Warning( "server sent more download entries than requested" );
+				dlList.Clear();
+				return;
+			}
 			if ( pakDl == SERVER_PAK_YES ) {
 				if ( pakIndex == 0 ) {
 					gotGame = true;
@@ -2253,16 +2270,22 @@ idAsyncClient::GetDownloadRequest
 ===============
 */
 int idAsyncClient::GetDownloadRequest( const int checksums[ MAX_PURE_PAKS ], int count, int gamePakChecksum ) {
-	assert( !checksums[ count ] ); // 0-terminated
-	if ( memcmp( dlChecksums + 1, checksums, sizeof( int ) * count ) || gamePakChecksum != dlChecksums[ 0 ] ) {
+	const int storedChecksumCount = idMath::ClampInt( 0, MAX_PURE_PAKS - 1, count );
+	assert( count == storedChecksumCount );
+	assert( !checksums[ storedChecksumCount ] ); // 0-terminated
+	if ( count != storedChecksumCount ) {
+		common->Warning( "download request checksum count %d exceeds storage capacity %d", count, storedChecksumCount );
+	}
+	if ( count != storedChecksumCount || memcmp( dlChecksums + 1, checksums, sizeof( int ) * storedChecksumCount ) || gamePakChecksum != dlChecksums[ 0 ] ) {
 		idRandom newreq;
 
+		memset( dlChecksums, 0, sizeof( dlChecksums ) );
 		dlChecksums[ 0 ] = gamePakChecksum;
-		memcpy( dlChecksums + 1, checksums, sizeof( int ) * MAX_PURE_PAKS );
+		memcpy( dlChecksums + 1, checksums, sizeof( int ) * storedChecksumCount );
 
 		newreq.SetSeed( Sys_Milliseconds() );
 		dlRequest = newreq.RandomInt();
-		dlCount = count + ( gamePakChecksum ? 1 : 0 );
+		dlCount = storedChecksumCount + 1;
 		return dlRequest;
 	}
 	// this is the same dlRequest, we haven't heard from the server. keep the same id

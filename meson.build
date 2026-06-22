@@ -185,33 +185,44 @@ if build_engine or build_games
   openq4_pak_script_files = files(
     'tools/build/openq4_pak.py',
   )
-  openq4_pak0_source_discovery = run_command(
-    py,
-    meson.project_source_root() / 'tools' / 'build' / 'list_pak_sources.py',
-    meson.project_source_root(),
-    'pak0.pk4',
-    'content/baseoq4/pak0',
-    check: true,
+  openq4_pak_manifest_script_files = files(
+    'tools/build/write_pak_manifest.py',
   )
-  openq4_pak1_source_discovery = run_command(
-    py,
-    meson.project_source_root() / 'tools' / 'build' / 'list_pak_sources.py',
-    meson.project_source_root(),
-    'pak1.pk4',
-    'content/baseoq4/pak1',
-    check: true,
+
+  openq4_pak0_source_manifest = custom_target(
+    'openq4_pak0_source_manifest',
+    output: 'pak0.sources',
+    command: [
+      py,
+      meson.project_source_root() / 'tools' / 'build' / 'write_pak_manifest.py',
+      meson.project_source_root(),
+      'pak0.pk4',
+      'content/baseoq4/pak0',
+      '@OUTPUT@',
+    ],
+    depend_files: openq4_pak_script_files + openq4_pak_manifest_script_files,
+    build_always_stale: true,
+    build_by_default: true,
   )
-  openq4_pak0_source_paths = openq4_pak0_source_discovery.stdout().strip().split('\n')
-  openq4_pak1_source_paths = openq4_pak1_source_discovery.stdout().strip().split('\n')
-  if openq4_pak0_source_paths.length() == 0
-    error('tools/build/list_pak_sources.py returned no pak0 source files.')
-  endif
-  if openq4_pak1_source_paths.length() == 0
-    error('tools/build/list_pak_sources.py returned no pak1 source files.')
-  endif
+  openq4_pak1_source_manifest = custom_target(
+    'openq4_pak1_source_manifest',
+    output: 'pak1.sources',
+    command: [
+      py,
+      meson.project_source_root() / 'tools' / 'build' / 'write_pak_manifest.py',
+      meson.project_source_root(),
+      'pak1.pk4',
+      'content/baseoq4/pak1',
+      '@OUTPUT@',
+    ],
+    depend_files: openq4_pak_script_files + openq4_pak_manifest_script_files,
+    build_always_stale: true,
+    build_by_default: true,
+  )
 
   openq4_pak0_output = custom_target(
     'openq4_pak0',
+    input: openq4_pak0_source_manifest,
     output: 'pak0.pk4',
     command: [
       py,
@@ -220,12 +231,14 @@ if build_engine or build_games
       'pak0.pk4',
       '--source-dir',
       meson.project_source_root() / 'content' / 'baseoq4' / 'pak0',
+      '--manifest',
+      '@INPUT@',
       '--out',
       '@OUTPUT@',
       '--stage-out',
       meson.current_build_dir() / 'baseoq4' / 'pak0.pk4',
     ],
-    depend_files: files(openq4_pak0_source_paths) + openq4_pak_script_files + files(
+    depend_files: openq4_pak_script_files + files(
       'tools/build/build_openq4_pack.py',
     ),
     build_by_default: true,
@@ -234,6 +247,7 @@ if build_engine or build_games
   )
   openq4_pak1_output = custom_target(
     'openq4_pak1',
+    input: openq4_pak1_source_manifest,
     output: 'pak1.pk4',
     command: [
       py,
@@ -242,12 +256,14 @@ if build_engine or build_games
       'pak1.pk4',
       '--source-dir',
       meson.project_source_root() / 'content' / 'baseoq4' / 'pak1',
+      '--manifest',
+      '@INPUT@',
       '--out',
       '@OUTPUT@',
       '--stage-out',
       meson.current_build_dir() / 'baseoq4' / 'pak1.pk4',
     ],
-    depend_files: files(openq4_pak1_source_paths) + openq4_pak_script_files + files(
+    depend_files: openq4_pak_script_files + files(
       'tools/build/build_openq4_pack.py',
     ),
     build_by_default: true,

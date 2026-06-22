@@ -384,8 +384,19 @@ LONG WINAPI InputLineWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
 		// enter the line
 		if (key == K_ENTER || key == K_KP_ENTER) {
-			strncat(s_wcd.consoleText, s_wcd.consoleField.GetBuffer(), sizeof(s_wcd.consoleText) - strlen(s_wcd.consoleText) - 5);
-			strcat(s_wcd.consoleText, "\n");
+			const char *inputText = s_wcd.consoleField.GetBuffer();
+			size_t used = strlen( s_wcd.consoleText );
+			if ( used < sizeof( s_wcd.consoleText ) - 1 ) {
+				const size_t available = sizeof( s_wcd.consoleText ) - used - 1;
+				const size_t copyLength = Min( strlen( inputText ), available );
+				memcpy( s_wcd.consoleText + used, inputText, copyLength );
+				used += copyLength;
+				s_wcd.consoleText[used] = '\0';
+			}
+			if ( used < sizeof( s_wcd.consoleText ) - 1 ) {
+				s_wcd.consoleText[used++] = '\n';
+				s_wcd.consoleText[used] = '\0';
+			}
 			SetWindowText(s_wcd.hwndInputLine, "");
 
 			Sys_Printf("]%s\n", s_wcd.consoleField.GetBuffer());
@@ -632,7 +643,7 @@ char* Sys_ConsoleInput(void) {
 		return NULL;
 	}
 
-	strcpy(s_wcd.returnedText, s_wcd.consoleText);
+	idStr::Copynz( s_wcd.returnedText, s_wcd.consoleText, sizeof( s_wcd.returnedText ) );
 	s_wcd.consoleText[0] = 0;
 
 	return s_wcd.returnedText;
@@ -665,19 +676,29 @@ void Conbuf_AppendText(const char* pMsg)
 	//
 	// copy into an intermediate buffer
 	//
-	while (msg[i] && ((b - buffer) < sizeof(buffer) - 1)) {
+	const char *bufferEnd = buffer + sizeof( buffer ) - 1;
+	while (msg[i] && b < bufferEnd) {
 		if (msg[i] == '\n' && msg[i + 1] == '\r') {
+			if ( b + 2 > bufferEnd ) {
+				break;
+			}
 			b[0] = '\r';
 			b[1] = '\n';
 			b += 2;
 			i++;
 		}
 		else if (msg[i] == '\r') {
+			if ( b + 2 > bufferEnd ) {
+				break;
+			}
 			b[0] = '\r';
 			b[1] = '\n';
 			b += 2;
 		}
 		else if (msg[i] == '\n') {
+			if ( b + 2 > bufferEnd ) {
+				break;
+			}
 			b[0] = '\r';
 			b[1] = '\n';
 			b += 2;

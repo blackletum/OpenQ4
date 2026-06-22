@@ -137,6 +137,9 @@ void idGuiModel::ReadFromDemo( idDemoFile *demo ) {
 
 	i = verts.Num();
 	demo->ReadInt( i );
+	if ( i < 0 || i > 1 << 20 ) {
+		common->Error( "idGuiModel::ReadFromDemo: bad vertex count %d", i );
+	}
 	verts.SetNum( i, false );
 	for ( j = 0; j < i; j++ )
 	{
@@ -153,6 +156,9 @@ void idGuiModel::ReadFromDemo( idDemoFile *demo ) {
 	
 	i = indexes.Num();
 	demo->ReadInt( i );
+	if ( i < 0 || i > 1 << 21 ) {
+		common->Error( "idGuiModel::ReadFromDemo: bad index count %d", i );
+	}
 	indexes.SetNum( i, false );
 	for ( j = 0; j < i; j++ ) {
 		demo->ReadInt(indexes[j] );
@@ -160,6 +166,9 @@ void idGuiModel::ReadFromDemo( idDemoFile *demo ) {
 	
 	i = surfaces.Num();
 	demo->ReadInt( i );
+	if ( i < 0 || i > 1 << 16 ) {
+		common->Error( "idGuiModel::ReadFromDemo: bad surface count %d", i );
+	}
 	surfaces.SetNum( i, false );
 	for ( j = 0 ; j < i ; j++ ) {
 		guiModelSurface_t	*surf = &surfaces[j];
@@ -180,6 +189,10 @@ void idGuiModel::ReadFromDemo( idDemoFile *demo ) {
 		demo->ReadInt( surf->numVerts );
 		demo->ReadInt( surf->firstIndex );
 		demo->ReadInt( surf->numIndexes );
+		if ( surf->firstVert < 0 || surf->numVerts < 0 || surf->firstVert > verts.Num() - surf->numVerts ||
+			 surf->firstIndex < 0 || surf->numIndexes < 0 || surf->firstIndex > indexes.Num() - surf->numIndexes ) {
+			common->Error( "idGuiModel::ReadFromDemo: bad surface range" );
+		}
 		surf->material = hasMaterial ? declManager->FindMaterial( demo->ReadHashString() ) : NULL;
 	}
 }

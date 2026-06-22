@@ -73,13 +73,21 @@ private:
 
 		idBinaryImageData() : data( NULL ) { }
 		~idBinaryImageData() { Free(); }
-		idBinaryImageData & operator=( idBinaryImageData & other ) {
+		idBinaryImageData & operator=( const idBinaryImageData & other ) {
 			if ( this == &other ) {
 				return *this;
 			}
 
-			Alloc( other.dataSize );
-			memcpy( data, other.data, other.dataSize );
+			level = other.level;
+			destZ = other.destZ;
+			width = other.width;
+			height = other.height;
+			if ( other.dataSize > 0 && other.data != NULL ) {
+				Alloc( other.dataSize );
+				memcpy( data, other.data, other.dataSize );
+			} else {
+				Free();
+			}
 			return *this;
 		}
 		void Free() {
@@ -91,6 +99,9 @@ private:
 		}
 		void Alloc( int size ) {
 			Free();
+			if ( size <= 0 ) {
+				return;
+			}
 			dataSize = size;
 			data = (byte *)Mem_Alloc( size );
 		}

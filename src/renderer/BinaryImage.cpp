@@ -44,6 +44,10 @@ idCVar image_highQualityCompression( "image_highQualityCompression", "0", CVAR_B
 idCVar image_writeGeneratedImages( "image_writeGeneratedImages", "0", CVAR_RENDERER | CVAR_BOOL, "write generated binary image cache files during runtime loads" );
 idCVar image_showGeneratedImageWrites( "image_showGeneratedImageWrites", "0", CVAR_RENDERER | CVAR_BOOL, "print each generated binary image cache write" );
 
+static const int MAX_BINARY_IMAGE_DIMENSION = 32768;
+static const int MAX_BINARY_IMAGE_LEVELS = 32;
+static const int MAX_BINARY_IMAGE_DATA_SIZE = 1 << 30;
+
 static bool R_ShouldWriteGeneratedImages() {
 	return image_writeGeneratedImages.GetBool() || cvarSystem->GetCVarBool( "com_makingBuild" );
 }
@@ -450,7 +454,7 @@ Load the preprocessed image from the generated folder.
 ==========================
 */
 bool idBinaryImage::LoadFromGeneratedFile( idFile * bFile, ID_TIME_T sourceFileTime, bool validateSourceFileTime ) {
-	if ( bFile->Read( &fileData, sizeof( fileData ) ) <= 0 ) {
+	if ( bFile->Read( &fileData, sizeof( fileData ) ) != sizeof( fileData ) ) {
 		return false;
 	}
 	idSwapClass<bimageFile_t> swap;
@@ -469,6 +473,20 @@ bool idBinaryImage::LoadFromGeneratedFile( idFile * bFile, ID_TIME_T sourceFileT
 	if ( validateSourceFileTime && fileData.sourceFileTime != sourceFileTime && !fileSystem->InProductionMode()) {
 		return false;
 	}
+	if ( fileData.textureType != TT_2D && fileData.textureType != TT_CUBIC ) {
+		return false;
+	}
+	if ( fileData.format <= FMT_NONE || fileData.format > FMT_RGBA16F || BitsForFormat( (textureFormat_t)fileData.format ) <= 0 ) {
+		return false;
+	}
+	if ( fileData.colorFormat < CFM_DEFAULT || fileData.colorFormat > CFM_GREEN_ALPHA ) {
+		return false;
+	}
+	if ( fileData.width <= 0 || fileData.width > MAX_BINARY_IMAGE_DIMENSION ||
+		 fileData.height <= 0 || fileData.height > MAX_BINARY_IMAGE_DIMENSION ||
+		 fileData.numLevels <= 0 || fileData.numLevels > MAX_BINARY_IMAGE_LEVELS ) {
+		return false;
+	}
 
 	int numImages = fileData.numLevels;
 	if ( fileData.textureType == TT_CUBIC ) {
@@ -479,7 +497,7 @@ bool idBinaryImage::LoadFromGeneratedFile( idFile * bFile, ID_TIME_T sourceFileT
 
 	for ( int i = 0; i < numImages; i++ ) {
 		idBinaryImageData &img = images[ i ];
-		if ( bFile->Read( &img, sizeof( bimageImage_t ) ) <= 0 ) {
+		if ( bFile->Read( &img, sizeof( bimageImage_t ) ) != sizeof( bimageImage_t ) ) {
 			return false;
 		}
 		idSwapClass<bimageImage_t> swap;
@@ -488,19 +506,36 @@ bool idBinaryImage::LoadFromGeneratedFile( idFile * bFile, ID_TIME_T sourceFileT
 		swap.Big( img.width );
 		swap.Big( img.height );
 		swap.Big( img.dataSize );
-		assert( img.level >= 0 && img.level < fileData.numLevels );
-		assert( img.destZ == 0 || fileData.textureType == TT_CUBIC );
-		assert( img.dataSize > 0 );
+		if ( img.level < 0 || img.level >= fileData.numLevels ) {
+			return false;
+		}
+		if ( fileData.textureType == TT_2D ) {
+			if ( img.destZ != 0 ) {
+				return false;
+			}
+		} else if ( img.destZ < 0 || img.destZ >= 6 ) {
+			return false;
+		}
+		if ( img.width <= 0 || img.width > MAX_BINARY_IMAGE_DIMENSION || img.height <= 0 || img.height > MAX_BINARY_IMAGE_DIMENSION ) {
+			return false;
+		}
+		if ( img.dataSize <= 0 || img.dataSize > MAX_BINARY_IMAGE_DATA_SIZE ) {
+			return false;
+		}
 		// DXT images need to be padded to 4x4 block sizes, but the original image
 		// sizes are still retained, so the stored data size may be larger than
 		// just the multiplication of dimensions
-		assert( img.dataSize >= img.width * img.height * BitsForFormat( (textureFormat_t)fileData.format ) / 8 );
+		const int bitsForFormat = BitsForFormat( (textureFormat_t)fileData.format );
+		const long long minDataSize = ( (long long)img.width * img.height * bitsForFormat + 7 ) / 8;
+		if ( minDataSize <= 0 || minDataSize > MAX_BINARY_IMAGE_DATA_SIZE || img.dataSize < minDataSize ) {
+			return false;
+		}
 		img.Alloc( img.dataSize );
 		if ( img.data == NULL ) {
 			return false;
 		}
 
-		if ( bFile->Read( img.data, img.dataSize ) <= 0 ) {
+		if ( bFile->Read( img.data, img.dataSize ) != img.dataSize ) {
 			return false;
 		}
 	}

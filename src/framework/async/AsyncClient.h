@@ -174,7 +174,7 @@ private:
 
 	int					dlRequest;		// randomized number to keep track of the requests
 	int					dlChecksums[ MAX_PURE_PAKS ]; // 0-terminated, first element is the game pak checksum or 0
-	int					dlCount;		// total number of paks we request download for ( including the game pak )
+	int					dlCount;		// download-info slots expected: game pak slot plus asset paks
 	idList<pakDlEntry_t>dlList;			// list of paks to download, with url and name
 	int					currentDlSize;
 	int					totalDlSize;	// for partial progress stuff

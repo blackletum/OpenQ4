@@ -171,7 +171,9 @@ ID_INLINE int idBitMsg::GetSize( void ) const {
 }
 
 ID_INLINE void idBitMsg::SetSize( int size ) {
-	if ( size > maxSize ) {
+	if ( size < 0 ) {
+		curSize = 0;
+	} else if ( size > maxSize ) {
 		curSize = maxSize;
 	} else {
 		curSize = size;

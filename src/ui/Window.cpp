@@ -1865,7 +1865,7 @@ void idWindow::Redraw(float x, float y) {
 
 	if ( flags & WIN_SHOWCOORDS ) {
 		dc->EnableClipping(false);
-		sprintf(str, "x: %i y: %i  cursorx: %i cursory: %i", (int)rect.x(), (int)rect.y(), (int)gui->CursorX(), (int)gui->CursorY());
+		str = va( "x: %i y: %i  cursorx: %i cursory: %i", (int)rect.x(), (int)rect.y(), (int)gui->CursorX(), (int)gui->CursorY() );
 		dc->DrawText(str, 0.25f, 0, dc->colorWhite, idRectangle(0, 0, 100, 20), false);
 		dc->EnableClipping(true);
 	}
@@ -1947,7 +1947,7 @@ void idWindow::Redraw(float x, float y) {
 
 	if (gui_debug.GetInteger() && flags & WIN_DESKTOP) {
 		dc->EnableClipping(false);
-		sprintf(str, "x: %1.f y: %1.f",  gui->CursorX(), gui->CursorY());
+		str = va( "x: %1.f y: %1.f",  gui->CursorX(), gui->CursorY() );
 		dc->DrawText(str, 0.25, 0, dc->colorWhite, idRectangle(0, 0, 100, 20), false);
 		dc->DrawText(gui->GetSourceFile(), 0.25, 0, dc->colorWhite, idRectangle(0, 20, 300, 20), false);
 		dc->EnableClipping(true);
@@ -2018,7 +2018,8 @@ void idWindow::CalcClientRect(float xofs, float yofs) {
 		// and ignore the original positioning
 		if (flags & WIN_HCENTER) {
 			drawRect.x = (parent->rect.w() - rect.w()) / 2;
-		} else {
+		}
+		if (flags & WIN_VCENTER) {
 			drawRect.y = (parent->rect.h() - rect.h()) / 2;
 		}
 	}

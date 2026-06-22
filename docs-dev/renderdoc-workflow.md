@@ -89,12 +89,10 @@ If the blend pass ever samples the same texture it is rendering to, the build st
 - `glprogs/smaa_blend.vs`
 - `glprogs/smaa_blend.fs`
 
-`pak1.pk4` must include representative level assets such as:
+`pak1.pk4` must include representative level-loadscreen assets such as:
 
 - `gfx/guis/loadscreens/generic.dds`
 - `gfx/guis/loadscreens/generic.tga`
-- `maps/game/airdefense1.lightgrid`
-- `maps/game/airdefense1.lightgridpack`
 
 This check is meant to catch packaging regressions in the postprocess stack before release artifacts ship.
 

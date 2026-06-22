@@ -209,7 +209,7 @@ def validate_build_pak0_contract() -> None:
     build_pak0 = read("tools/build/build_pak0.py")
     build_openq4_pack = read("tools/build/build_openq4_pack.py")
     generate_pak_header = read("tools/build/generate_pak_header.py")
-    list_pak_sources = read("tools/build/list_pak_sources.py")
+    write_pak_manifest = read("tools/build/write_pak_manifest.py")
     pak_helper = read("tools/build/openq4_pak.py")
     install_guard = read("tools/build/check_staged_content_edits.py")
     windows_runtime = read("tools/build/windows_runtime.py")
@@ -220,14 +220,19 @@ def validate_build_pak0_contract() -> None:
     require(meson, "'openq4_pak0'", "Meson openQ4 pak0 build target name")
     require(meson, "'openq4_pak1'", "Meson openQ4 pak1 build target name")
     require(meson, "'openq4_paks_generated_header'", "Meson generated pack checksum target name")
-    require(meson, "list_pak_sources.py", "Meson pack source dependency discovery")
+    require(meson, "'openq4_pak0_source_manifest'", "Meson pak0 source manifest target")
+    require(meson, "'openq4_pak1_source_manifest'", "Meson pak1 source manifest target")
+    require(meson, "write_pak_manifest.py", "Meson pack source manifest refresh")
     require(meson, "build_openq4_pack.py", "Meson single-pack build script")
     require(meson, "generate_pak_header.py", "Meson pack header generation script")
     require(meson, "'openq4_paks_generated.h'", "Meson generated pack checksum header")
-    require(meson, "depend_files: files(openq4_pak0_source_paths)", "Meson pak0 source dependency tracking")
-    require(meson, "depend_files: files(openq4_pak1_source_paths)", "Meson pak1 source dependency tracking")
+    require(meson, "input: openq4_pak0_source_manifest", "Meson pak0 depends on source manifest")
+    require(meson, "input: openq4_pak1_source_manifest", "Meson pak1 depends on source manifest")
+    require(meson, "--manifest", "Meson pack target consumes source manifest")
     require(meson, "build_by_default: true", "Meson pack default build")
-    reject(meson, "build_always_stale: true", "Meson packs must not rebuild when inputs are unchanged")
+    require(meson, "build_always_stale: true", "Meson source manifests rescan pack directories")
+    reject(meson, "openq4_pak0_source_paths", "Meson pak0 must not bake a configured source-file list")
+    reject(meson, "openq4_pak1_source_paths", "Meson pak1 must not bake a configured source-file list")
     require(meson, "install: true", "Meson pack install")
     require(meson, "install: false", "Meson does not install generated header")
     require(meson, "install_dir: install_game_dir", "Meson installs generated packs")
@@ -248,10 +253,13 @@ def validate_build_pak0_contract() -> None:
     require(build_pak0, "--pak1-stage-out", "builddir direct-run pak1 staging")
     require(build_openq4_pack, "--pak-name", "single-pack build script pack selection")
     require(build_openq4_pack, "create_game_pk4", "single-pack build script helper")
+    require(build_openq4_pack, "--manifest", "single-pack build script manifest dependency")
     require(build_openq4_pack, "--stage-out", "single-pack builddir direct-run staging")
     require(generate_pak_header, "format_openq4_paks_header", "generated pack header shared formatter")
     require(generate_pak_header, "inspect_game_pk4", "generated pack header validates built packs")
-    require(list_pak_sources, "_iter_pk4_entries", "Meson pack dependency source list matches packer filtering")
+    require(pak_helper, "format_pk4_source_manifest", "pack source manifest matches packer filtering")
+    require(write_pak_manifest, "format_pk4_source_manifest", "Meson pack manifest source list matches packer filtering")
+    require(write_pak_manifest, "write_text_if_changed", "Meson pack manifest avoids unnecessary downstream rebuilds")
     require(install_guard, "STALE_LOOSE_ROOT_FILES", "install guard stale loose root files")
     require(install_guard, "STALE_LOOSE_SUBDIRS", "install guard stale loose content dirs")
     require(install_guard, '"default.cfg"', "install guard stale loose default config")
@@ -281,13 +289,8 @@ def validate_build_pak0_contract() -> None:
             "materials/postprocess_openq4.mtr",
         ]
         pak1_required_files = [
-            "env/maps/game/airdefense1/area0_lightgrid_amb.tga",
-            "env/maps/game/airdefense1/area0_lightgrid_pos.tga",
-            "env/maps/game/airdefense1/area0_lightgrid_vis.tga",
             "gfx/guis/loadscreens/generic.dds",
             "gfx/guis/loadscreens/generic.tga",
-            "maps/game/airdefense1.lightgrid",
-            "maps/game/airdefense1.lightgridpack",
         ]
         for relative_path in pak0_required_files:
             write_test_file(pak0_source_dir / relative_path, f"{relative_path}\n".encode("utf-8"))
@@ -330,7 +333,7 @@ def validate_build_pak0_contract() -> None:
         require(header, f'#define OPENQ4_PAK0_MD5 "{pak0_digest}"', "generated pak0 checksum header")
         require(header, f'#define OPENQ4_PAK1_MD5 "{pak1_digest}"', "generated pak1 checksum header")
         require(header, "#define OPENQ4_PAK0_FILE_COUNT 7", "generated pak0 file count")
-        require(header, "#define OPENQ4_PAK1_FILE_COUNT 7", "generated pak1 file count")
+        require(header, "#define OPENQ4_PAK1_FILE_COUNT 2", "generated pak1 file count")
         if pak0_out.read_bytes() != pak0_stage_out.read_bytes():
             raise AssertionError("Staged pak0.pk4 does not match generated pak0.pk4")
         if pak1_out.read_bytes() != pak1_stage_out.read_bytes():
@@ -359,6 +362,7 @@ def validate_validation_coverage() -> None:
         require(haystack, "build_openq4_pack.py", context)
         require(haystack, "generate_pak_header.py", context)
         require(haystack, "list_pak_sources.py", context)
+        require(haystack, "write_pak_manifest.py", context)
         require(haystack, "openq4_pak.py", context)
 
 

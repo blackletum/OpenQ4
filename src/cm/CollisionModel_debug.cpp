@@ -155,20 +155,22 @@ idCollisionModelManagerLocal::StringFromContents
 ================
 */
 const char *idCollisionModelManagerLocal::StringFromContents( const int contents ) const {
-	int i, length = 0;
+	int i;
 	static char contentsString[MAX_STRING_CHARS];
+	idStr contentsText;
 
 	contentsString[0] = '\0';
 
 	for ( i = 1; cm_contentsFlagByIndex[i] != 0; i++ ) {
 		if ( contents & cm_contentsFlagByIndex[i] ) {
-			if ( length != 0 ) {
-				length += idStr::snPrintf( contentsString + length, sizeof( contentsString ) - length, "," );
+			if ( contentsText.Length() != 0 ) {
+				contentsText += ",";
 			}
-			length += idStr::snPrintf( contentsString + length, sizeof( contentsString ) - length, cm_contentsNameByIndex[i] );
+			contentsText += cm_contentsNameByIndex[i];
 		}
 	}
 
+	idStr::Copynz( contentsString, contentsText.c_str(), sizeof( contentsString ) );
 	return contentsString;
 }
 

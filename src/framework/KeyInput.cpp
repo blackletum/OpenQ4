@@ -200,6 +200,10 @@ public:
 bool		key_overstrikeMode = false;
 idKey *		keys = NULL;
 
+static bool Key_IsValidKeyNum( int keynum ) {
+	return keys != NULL && keynum >= 0 && keynum < MAX_KEYS;
+}
+
 static bool BindingsEquivalent( const char *lhs, const char *rhs ) {
 	if ( !lhs || !rhs || !lhs[0] || !rhs[0] ) {
 		return false;
@@ -295,7 +299,7 @@ idKeyInput::IsDown
 ===================
 */
 bool idKeyInput::IsDown( int keynum ) {
-	if ( keynum == -1 ) {
+	if ( !Key_IsValidKeyNum( keynum ) ) {
 		return false;
 	}
 
@@ -439,7 +443,7 @@ idKeyInput::SetBinding
 ===================
 */
 void idKeyInput::SetBinding( int keynum, const char *binding ) {
-	if ( keynum == -1 ) {
+	if ( !Key_IsValidKeyNum( keynum ) ) {
 		return;
 	}
 
@@ -464,7 +468,7 @@ idKeyInput::GetBinding
 ===================
 */
 const char *idKeyInput::GetBinding( int keynum ) {
-	if ( keynum == -1 ) {
+	if ( !Key_IsValidKeyNum( keynum ) ) {
 		return "";
 	}
 
@@ -477,6 +481,10 @@ idKeyInput::GetUsercmdAction
 ===================
 */
 int idKeyInput::GetUsercmdAction( int keynum ) {
+	if ( !Key_IsValidKeyNum( keynum ) ) {
+		return 0;
+	}
+
 	return keys[ keynum ].usercmdAction;
 }
 
@@ -724,6 +732,10 @@ Called by the system for both key up and key down events
 ===================
 */
 void idKeyInput::PreliminaryKeyEvent( int keynum, bool down ) {
+	if ( !Key_IsValidKeyNum( keynum ) ) {
+		return;
+	}
+
 	keys[keynum].down = down;
 
 #ifdef ID_DOOM_LEGACY
@@ -749,6 +761,10 @@ idKeyInput::ExecKeyBinding
 =================
 */
 bool idKeyInput::ExecKeyBinding( int keynum ) {
+	if ( !Key_IsValidKeyNum( keynum ) ) {
+		return false;
+	}
+
 	// commands that are used by the async thread
 	// don't add text
 	if ( keys[keynum].usercmdAction ) {

@@ -943,6 +943,10 @@ void idSoundWorldLocal::ProcessDemoCommand( idDemoFile* readDemo )
 		{
 			int numCaches = 0;
 			readDemo->ReadInt( numCaches );
+			if( numCaches < 0 || numCaches > 4096 )
+			{
+				common->Error( "idSoundWorldLocal::ProcessDemoCommand: bad sound cache count %d", numCaches );
+			}
 			for( int i = 0; i < numCaches; ++i )
 			{
 				const char* declName = readDemo->ReadHashString();
@@ -972,6 +976,10 @@ void idSoundWorldLocal::ProcessDemoCommand( idDemoFile* readDemo )
 		case SCMD_ALLOC_EMITTER:
 		{
 			readDemo->ReadInt( index );
+			if( index <= 0 || index > 65536 )
+			{
+				common->Error( "idSoundWorldLocal::ProcessDemoCommand: bad emitter index %d", index );
+			}
 
 			while( emitters.Num() <= index )
 			{
@@ -986,7 +994,12 @@ void idSoundWorldLocal::ProcessDemoCommand( idDemoFile* readDemo )
 
 			readDemo->ReadInt( index );
 			readDemo->ReadInt( immediate );
-			EmitterForIndex( index )->Free( immediate != 0 );
+			idSoundEmitter* emitter = EmitterForIndex( index );
+			if( emitter == NULL )
+			{
+				common->Error( "idSoundWorldLocal::ProcessDemoCommand: bad emitter index %d", index );
+			}
+			emitter->Free( immediate != 0 );
 		}
 		break;
 		case SCMD_UPDATE:
@@ -1009,7 +1022,12 @@ void idSoundWorldLocal::ProcessDemoCommand( idDemoFile* readDemo )
 			readDemo->ReadFloat( parms.frequencyShift );
 			readDemo->ReadFloat( parms.wetLevel );
 			readDemo->ReadFloat( parms.dryLevel );
-			EmitterForIndex( index )->UpdateEmitter( origin, velocity, listenerId, &parms );
+			idSoundEmitter* emitter = EmitterForIndex( index );
+			if( emitter == NULL )
+			{
+				common->Error( "idSoundWorldLocal::ProcessDemoCommand: bad emitter index %d", index );
+			}
+			emitter->UpdateEmitter( origin, velocity, listenerId, &parms );
 		}
 		break;
 		case SCMD_START:
@@ -1024,7 +1042,12 @@ void idSoundWorldLocal::ProcessDemoCommand( idDemoFile* readDemo )
 			readDemo->ReadInt( channel );
 			readDemo->ReadFloat( diversity );
 			readDemo->ReadInt( shaderFlags );
-			EmitterForIndex( index )->StartSound( shader, ( s_channelType )channel, diversity, shaderFlags );
+			idSoundEmitter* emitter = EmitterForIndex( index );
+			if( emitter == NULL )
+			{
+				common->Error( "idSoundWorldLocal::ProcessDemoCommand: bad emitter index %d", index );
+			}
+			emitter->StartSound( shader, ( s_channelType )channel, diversity, shaderFlags );
 		}
 		break;
 		case SCMD_MODIFY:
@@ -1043,7 +1066,12 @@ void idSoundWorldLocal::ProcessDemoCommand( idDemoFile* readDemo )
 			readDemo->ReadFloat( parms.frequencyShift );
 			readDemo->ReadFloat( parms.wetLevel );
 			readDemo->ReadFloat( parms.dryLevel );
-			EmitterForIndex( index )->ModifySound( ( s_channelType )channel, &parms );
+			idSoundEmitter* emitter = EmitterForIndex( index );
+			if( emitter == NULL )
+			{
+				common->Error( "idSoundWorldLocal::ProcessDemoCommand: bad emitter index %d", index );
+			}
+			emitter->ModifySound( ( s_channelType )channel, &parms );
 		}
 		break;
 		case SCMD_STOP:
@@ -1052,7 +1080,12 @@ void idSoundWorldLocal::ProcessDemoCommand( idDemoFile* readDemo )
 
 			readDemo->ReadInt( index );
 			readDemo->ReadInt( channel );
-			EmitterForIndex( index )->StopSound( ( s_channelType )channel );
+			idSoundEmitter* emitter = EmitterForIndex( index );
+			if( emitter == NULL )
+			{
+				common->Error( "idSoundWorldLocal::ProcessDemoCommand: bad emitter index %d", index );
+			}
+			emitter->StopSound( ( s_channelType )channel );
 		}
 		break;
 		case SCMD_FADE:
@@ -1064,7 +1097,12 @@ void idSoundWorldLocal::ProcessDemoCommand( idDemoFile* readDemo )
 			readDemo->ReadInt( channel );
 			readDemo->ReadFloat( to );
 			readDemo->ReadFloat( over );
-			EmitterForIndex( index )->FadeSound( ( s_channelType )channel, to, over );
+			idSoundEmitter* emitter = EmitterForIndex( index );
+			if( emitter == NULL )
+			{
+				common->Error( "idSoundWorldLocal::ProcessDemoCommand: bad emitter index %d", index );
+			}
+			emitter->FadeSound( ( s_channelType )channel, to, over );
 		}
 		break;
 	}
@@ -1242,6 +1280,10 @@ void idSoundWorldLocal::ReadFromSaveGame( idFile* savefile )
 
 	int numEmitters = 0;
 	savefile->ReadInt( numEmitters );
+	if( numEmitters < 1 || numEmitters > 65536 )
+	{
+		common->Error( "idSoundWorldLocal::ReadFromSaveGame: bad emitter count %d", numEmitters );
+	}
 	ClearAllSoundEmitters();
 	idStr shaderName;
 	// Start at 1 because the local sound emitter is not saved
@@ -1258,6 +1300,10 @@ void idSoundWorldLocal::ReadFromSaveGame( idFile* savefile )
 		helper::ReadShaderParms( savefile, emitter->parms );
 		int numChannels = 0;
 		savefile->ReadInt( numChannels );
+		if( numChannels < 0 || numChannels > 1024 )
+		{
+			common->Error( "idSoundWorldLocal::ReadFromSaveGame: bad channel count %d", numChannels );
+		}
 		emitter->channels.SetNum( numChannels );
 		for( int c = 0; c < numChannels; c++ )
 		{

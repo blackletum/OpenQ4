@@ -94,7 +94,7 @@ public:
 								// Returns the next decal in the chain.
 	idRenderModelDecal *		Next( void ) const { return nextDecal; }
 
-	void						ReadFromDemoFile( class idDemoFile *f );
+	bool						ReadFromDemoFile( class idDemoFile *f );
 	void						WriteToDemoFile( class idDemoFile *f ) const;
 
 private:

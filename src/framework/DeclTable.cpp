@@ -45,7 +45,7 @@ float idDeclTable::TableLookup( float index ) const {
 	int domain = values.Num() - 1;
 
 	if ( domain <= 1 ) {
-		return 1.0f;
+		return values.Num() > 0 ? values[0] : 1.0f;
 	}
 
 	if ( clamp ) {

@@ -6762,11 +6762,20 @@ void CMainFrame::OnNurbEditor() {
 			::EmptyClipboard();
 	        HGLOBAL clip;
 			char* buff;
-			clip = ::GlobalAlloc(GMEM_DDESHARE, temp.Length()+1);
-			buff = (char*)::GlobalLock(clip);
-			strcpy(buff, temp);
-			::GlobalUnlock(clip);
-			::SetClipboardData(CF_TEXT, clip);
+			clip = ::GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, temp.Length()+1);
+			if (clip != NULL) {
+				buff = (char*)::GlobalLock(clip);
+				if (buff != NULL) {
+					strcpy(buff, temp);
+					::GlobalUnlock(clip);
+					if (::SetClipboardData(CF_TEXT, clip) != NULL) {
+						clip = NULL;
+					}
+				}
+				if (clip != NULL) {
+					::GlobalFree(clip);
+				}
+			}
 			::CloseClipboard();
 		}
 		nurb.Clear();

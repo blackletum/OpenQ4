@@ -2270,6 +2270,9 @@ void idRenderModelStatic::ReadFromDemoFile( class idDemoFile *f ) {
 
 	int i, j, numSurfaces;
 	f->ReadInt( numSurfaces );
+	if ( numSurfaces < 0 || numSurfaces > 65536 ) {
+		common->Error( "idRenderModelStatic::ReadFromDemoFile: bad surface count %d", numSurfaces );
+	}
 	
 	for ( i = 0 ; i < numSurfaces ; i++ ) {
 		modelSurface_t	surf;
@@ -2278,12 +2281,29 @@ void idRenderModelStatic::ReadFromDemoFile( class idDemoFile *f ) {
 		
 		srfTriangles_t	*tri = R_AllocStaticTriSurf();
 		
-		f->ReadInt( tri->numIndexes );
-		R_AllocStaticTriSurfIndexes( tri, tri->numIndexes );
-		for ( j = 0; j < tri->numIndexes; ++j )
-			f->ReadInt( (int&)tri->indexes[j] );
+		int numIndexes;
+		f->ReadInt( numIndexes );
+		if ( numIndexes < 0 || numIndexes > 1 << 24 || ( numIndexes % 3 ) != 0 ) {
+			common->Error( "idRenderModelStatic::ReadFromDemoFile: bad index count %d", numIndexes );
+		}
+		idList<int> demoIndexes;
+		demoIndexes.SetNum( numIndexes );
+		for ( j = 0; j < numIndexes; ++j ) {
+			f->ReadInt( demoIndexes[j] );
+		}
 		
 		f->ReadInt( tri->numVerts );
+		if ( tri->numVerts < 0 || tri->numVerts > 1 << 20 ) {
+			common->Error( "idRenderModelStatic::ReadFromDemoFile: bad vertex count %d", tri->numVerts );
+		}
+		tri->numIndexes = numIndexes;
+		R_AllocStaticTriSurfIndexes( tri, tri->numIndexes );
+		for ( j = 0; j < tri->numIndexes; ++j ) {
+			if ( demoIndexes[j] < 0 || demoIndexes[j] >= tri->numVerts ) {
+				common->Error( "idRenderModelStatic::ReadFromDemoFile: bad vertex index %d", demoIndexes[j] );
+			}
+			tri->indexes[j] = (glIndex_t)demoIndexes[j];
+		}
 		R_AllocStaticTriSurfVerts( tri, tri->numVerts );
 		for ( j = 0; j < tri->numVerts; ++j ) {
 			f->ReadVec3( tri->verts[j].xyz );

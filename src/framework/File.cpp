@@ -427,10 +427,26 @@ int idFile::ReadString( idStr &string ) {
 	int len;
 	int result = 0;
 	
-	ReadInt( len );
-	if ( len >= 0 ) {
+	if ( ReadInt( len ) != sizeof( len ) || len < 0 ) {
+		string.Clear();
+		return 0;
+	}
+
+	const int fileLength = Length();
+	const int fileTell = Tell();
+	if ( fileLength > 0 && fileTell >= 0 && len > fileLength - fileTell ) {
+		string.Clear();
+		return 0;
+	}
+
+	if ( len > 0 ) {
 		string.Fill( ' ', len );
 		result = Read( &string[ 0 ], len );
+		if ( result != len ) {
+			string.Clear();
+		}
+	} else {
+		string.Clear();
 	}
 	return result;
 }
@@ -586,6 +602,10 @@ int idFile::WriteBool( const bool value ) {
  */
 int idFile::WriteString( const char *value ) {
 	int len;
+
+	if ( value == NULL ) {
+		value = "";
+	}
 	
 	len = strlen( value );
 	WriteInt( len );
@@ -707,7 +727,11 @@ idFile_Memory::idFile_Memory
 =================
 */
 idFile_Memory::idFile_Memory( const char *name, char *data, int length ) {
-	this->name = name;
+	this->name = name ? name : "";
+	if ( data == NULL || length < 0 ) {
+		data = NULL;
+		length = 0;
+	}
 	maxSize = length;
 	fileSize = 0;
 	allocated = length;
@@ -724,7 +748,11 @@ idFile_Memory::idFile_Memory
 =================
 */
 idFile_Memory::idFile_Memory( const char *name, const char *data, int length ) {
-	this->name = name;
+	this->name = name ? name : "";
+	if ( data == NULL || length < 0 ) {
+		data = "";
+		length = 0;
+	}
 	maxSize = 0;
 	fileSize = length;
 	allocated = 0;
@@ -757,9 +785,15 @@ int idFile_Memory::Read( void *buffer, int len ) {
 		common->FatalError( "idFile_Memory::Read: %s not opened in read mode", name.c_str() );
 		return 0;
 	}
+	if ( len <= 0 || buffer == NULL || curPtr == NULL || filePtr == NULL ) {
+		return 0;
+	}
 
 	if ( curPtr + len > filePtr + fileSize ) {
 		len = filePtr + fileSize - curPtr;
+	}
+	if ( len <= 0 ) {
+		return 0;
 	}
 	memcpy( buffer, curPtr, len );
 	curPtr += len;
@@ -777,8 +811,12 @@ int idFile_Memory::Write( const void *buffer, int len ) {
 		common->FatalError( "idFile_Memory::Write: %s not opened in write mode", name.c_str() );
 		return 0;
 	}
+	if ( len <= 0 || buffer == NULL ) {
+		return 0;
+	}
 
-	int alloc = curPtr + len + 1 - filePtr - allocated; // need room for len+1
+	const int curOffset = ( filePtr != NULL && curPtr != NULL ) ? ( curPtr - filePtr ) : 0;
+	int alloc = curOffset + len + 1 - allocated; // need room for len+1
 	if ( alloc > 0 ) {
 		if ( maxSize != 0 ) {
 			common->Error( "idFile_Memory::Write: exceeded maximum size %d", maxSize );
@@ -790,7 +828,7 @@ int idFile_Memory::Write( const void *buffer, int len ) {
 			memcpy( newPtr, filePtr, allocated );
 		}
 		allocated += extra;
-		curPtr = newPtr + ( curPtr - filePtr );		
+		curPtr = newPtr + curOffset;
 		if ( filePtr ) {
 			Mem_Free( filePtr );
 		}
@@ -827,6 +865,9 @@ idFile_Memory::Tell
 =================
 */
 int idFile_Memory::Tell( void ) {
+	if ( curPtr == NULL || filePtr == NULL ) {
+		return 0;
+	}
 	return ( curPtr - filePtr );
 }
 
@@ -854,6 +895,13 @@ idFile_Memory::Seek
 =================
 */
 int idFile_Memory::Seek( long offset, fsOrigin_t origin ) {
+	if ( filePtr == NULL ) {
+		if ( offset == 0 ) {
+			curPtr = NULL;
+			return 0;
+		}
+		return -1;
+	}
 
 	switch( origin ) {
 		case FS_SEEK_CUR: {
@@ -918,6 +966,10 @@ idFile_Memory::SetData
 =================
 */
 void idFile_Memory::SetData( const char *data, int length ) {
+	if ( data == NULL || length < 0 ) {
+		data = "";
+		length = 0;
+	}
 	maxSize = 0;
 	fileSize = length;
 	allocated = 0;
@@ -978,6 +1030,9 @@ int idFile_BitMsg::Read( void *buffer, int len ) {
 		common->FatalError( "idFile_BitMsg::Read: %s not opened in read mode", name.c_str() );
 		return 0;
 	}
+	if ( len <= 0 || buffer == NULL ) {
+		return 0;
+	}
 
 	return msg->ReadData( buffer, len );
 }
@@ -991,6 +1046,9 @@ int idFile_BitMsg::Write( const void *buffer, int len ) {
 
 	if ( !( mode & ( 1 << FS_WRITE ) ) ) {
 		common->FatalError( "idFile_Memory::Write: %s not opened in write mode", name.c_str() );
+		return 0;
+	}
+	if ( len <= 0 || buffer == NULL ) {
 		return 0;
 	}
 
@@ -1022,7 +1080,7 @@ idFile_BitMsg::Tell
 =================
 */
 int idFile_BitMsg::Tell( void ) {
-	if ( mode & FS_READ ) {
+	if ( mode & ( 1 << FS_READ ) ) {
 		return msg->GetReadCount();
 	} else {
 		return msg->GetSize();
@@ -1111,6 +1169,9 @@ int idFile_Permanent::Read( void *buffer, int len ) {
 	if ( !o ) {
 		return 0;
 	}
+	if ( len <= 0 || buffer == NULL ) {
+		return 0;
+	}
 
 	buf = (byte *)buffer;
 
@@ -1161,6 +1222,9 @@ int idFile_Permanent::Write( const void *buffer, int len ) {
 	}
 
 	if ( !o ) {
+		return 0;
+	}
+	if ( len <= 0 || buffer == NULL ) {
 		return 0;
 	}
 
@@ -1314,6 +1378,9 @@ Properly handles partial reads
 */
 int idFile_InZip::Read( void *buffer, int len ) {
 	static const int readChunkBytes = 64 * 1024;
+	if ( len <= 0 || buffer == NULL ) {
+		return 0;
+	}
 	byte *buf = static_cast<byte *>( buffer );
 	int totalRead = 0;
 
@@ -1411,16 +1478,25 @@ int idFile_InZip::Seek( long offset, fsOrigin_t origin ) {
 	switch( origin ) {
 		case FS_SEEK_END: {
 			offset = fileSize - offset;
+			if ( offset < 0 ) {
+				return -1;
+			}
 		}
 		case FS_SEEK_SET: {
 			// set the file position in the zip file (also sets the current file info)
 			unzSetCurrentFileInfoPosition( z, zipFilePos );
 			unzOpenCurrentFile( z );
+			if ( offset < 0 ) {
+				return -1;
+			}
 			if ( offset <= 0 ) {
 				return 0;
 			}
 		}
 		case FS_SEEK_CUR: {
+			if ( offset < 0 ) {
+				return -1;
+			}
 			buf = (char *) _alloca16( ZIP_SEEK_BUF_SIZE );
 			for ( i = 0; i < ( offset - ZIP_SEEK_BUF_SIZE ); i += ZIP_SEEK_BUF_SIZE ) {
 				res = unzReadCurrentFile( z, buf, ZIP_SEEK_BUF_SIZE );

@@ -1488,7 +1488,7 @@ void idAsyncServer::ProcessAuthMessage( const idBitMsg &msg ) {
 		return;
 	}
 	
-	idStr::snPrintf( challenges[ i ].guid, 12, client_guid );
+	idStr::snPrintf( challenges[ i ].guid, sizeof( challenges[ i ].guid ), "%s", client_guid );
 	if ( reply == AUTH_OK ) {
 		challenges[ i ].authState = CDK_OK;
 		common->Printf( "client %s %s is authed\n", Sys_NetAdrToString( client_from ), client_guid );
@@ -2705,6 +2705,10 @@ void idAsyncServer::ProcessDownloadRequestMessage( const netadr_t from, const id
 	// read the checksums, build path names and pass that to the game code
 	dlPakChecksum = msg.ReadLong();
 	while ( dlPakChecksum ) {
+		if ( numPaks >= MAX_PURE_PAKS ) {
+			common->Warning( "client requested too many download paks" );
+			return;
+		}
 		if ( !( dlSize[ numPaks ] = fileSystem->ValidateDownloadPakForChecksum( dlPakChecksum, pakbuf, false ) ) ) {
 			// we pass an empty token to the game so our list doesn't get offset
 			common->Warning( "client requested an unknown pak 0x%x", dlPakChecksum );

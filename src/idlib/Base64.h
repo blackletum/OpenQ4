@@ -51,7 +51,7 @@ ID_INLINE idBase64::~idBase64( void ) {
 }
 
 ID_INLINE const char *idBase64::c_str( void ) const {
-	return (const char *)data;
+	return ( data != NULL ) ? (const char *)data : "";
 }
 
 ID_INLINE void idBase64::Init( void ) {

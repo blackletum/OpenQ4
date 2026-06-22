@@ -179,15 +179,23 @@ idMsgChannel::ReadMessageData
 ================
 */
 bool idMsgChannel::ReadMessageData( idBitMsg &out, const idBitMsg &msg ) {
-	int reliableAcknowledge, reliableMessageSize, reliableSequence;
+	int reliableAcknowledge, reliableMessageSize, reliableSequence, messageSize;
 
 	// read message size
-	out.SetSize( msg.ReadShort() );
+	messageSize = msg.ReadShort();
+	if ( messageSize < (int)sizeof( int ) + (int)sizeof( short ) || messageSize > out.GetMaxSize() ) {
+		common->Printf( "%s: bad message size %d\n", Sys_NetAdrToString( remoteAddress ), messageSize );
+		return false;
+	}
+	out.SetSize( messageSize );
 
 	// decompress message
 	idFile_BitMsg file( msg );
 	compressor->Init( &file, false, 3 );
-	compressor->Read( out.GetData(), out.GetSize() );
+	if ( compressor->Read( out.GetData(), out.GetSize() ) != out.GetSize() ) {
+		common->Printf( "%s: truncated compressed message\n", Sys_NetAdrToString( remoteAddress ) );
+		return false;
+	}
 	incomingCompression = compressor->GetCompressionRatio();
 	out.BeginReading();
 
@@ -204,7 +212,8 @@ bool idMsgChannel::ReadMessageData( idBitMsg &out, const idBitMsg &msg ) {
 	// read reliable messages
 	reliableMessageSize = out.ReadShort();
 	while( reliableMessageSize != 0 ) {
-		if ( reliableMessageSize <= 0 || reliableMessageSize > out.GetSize() - out.GetReadCount() ) {
+		const int remaining = out.GetSize() - out.GetReadCount();
+		if ( reliableMessageSize <= 0 || remaining < (int)sizeof( int ) || reliableMessageSize > remaining - (int)sizeof( int ) ) {
 			common->Printf( "%s: bad reliable message\n", Sys_NetAdrToString( remoteAddress ) );
 			return false;
 		}
@@ -368,6 +377,10 @@ bool idMsgChannel::Process( const netadr_t from, int time, idBitMsg &msg, int &s
 	UpdateIncomingRate( time, msg.GetSize() );
 
 	// get sequence numbers
+	if ( msg.GetRemaingData() < (int)sizeof( int ) ) {
+		common->Printf( "%s: runt packet\n", Sys_NetAdrToString( remoteAddress ) );
+		return false;
+	}
 	sequence = msg.ReadLong();
 
 	// check for fragment information
@@ -380,6 +393,10 @@ bool idMsgChannel::Process( const netadr_t from, int time, idBitMsg &msg, int &s
 
 	// read the fragment information
 	if ( fragmented ) {
+		if ( msg.GetRemaingData() < (int)sizeof( short ) * 2 ) {
+			common->Printf( "%s: runt fragment header\n", Sys_NetAdrToString( remoteAddress ) );
+			return false;
+		}
 		fragStart = msg.ReadShort();
 		fragLength = msg.ReadShort();
 	} else {
@@ -420,6 +437,14 @@ bool idMsgChannel::Process( const netadr_t from, int time, idBitMsg &msg, int &s
 	// if the message is fragmented
 	//
 	if ( fragmented ) {
+		if ( fragStart < 0 || fragLength < 0 || fragLength > msg.GetRemaingData() || fragStart + fragLength > (int)sizeof( fragmentBuffer ) ) {
+			if ( net_channelShowDrop.GetBool() || net_channelShowPackets.GetBool() ) {
+				common->Printf( "%s: illegal fragment range\n", Sys_NetAdrToString( remoteAddress ) );
+			}
+			UpdatePacketLoss( time, 0, 1 );
+			return false;
+		}
+
 		// make sure we have the correct sequence number
 		if ( sequence != fragmentSequence ) {
 			fragmentSequence = sequence;
@@ -458,6 +483,13 @@ bool idMsgChannel::Process( const netadr_t from, int time, idBitMsg &msg, int &s
 		}
 
 	} else {
+		if ( msg.GetRemaingData() > (int)sizeof( fragmentBuffer ) ) {
+			if ( net_channelShowDrop.GetBool() || net_channelShowPackets.GetBool() ) {
+				common->Printf( "%s: packet payload too large\n", Sys_NetAdrToString( remoteAddress ) );
+			}
+			UpdatePacketLoss( time, 0, 1 );
+			return false;
+		}
 		memcpy( fragmentBuffer, msg.GetData() + msg.GetReadCount(), msg.GetRemaingData() );
 		fragmentLength = msg.GetRemaingData();
 		UpdatePacketLoss( time, 1, 0 );

@@ -90,8 +90,8 @@ DialogDeclBrowser::~DialogDeclBrowser
 ================
 */
 DialogDeclBrowser::~DialogDeclBrowser() {
-	delete m_pwchTip;
-	delete m_pchTip;
+	delete[] m_pwchTip;
+	delete[] m_pchTip;
 }
 
 /*
@@ -608,24 +608,24 @@ BOOL DialogDeclBrowser::OnToolTipNotify( UINT id, NMHDR *pNMHDR, LRESULT *pResul
 
 #ifndef _UNICODE
 		if( pNMHDR->code == TTN_NEEDTEXTA ) {
-			delete m_pchTip;
+			delete[] m_pchTip;
 			m_pchTip = new TCHAR[toolTip.GetLength() + 2];
 			lstrcpyn( m_pchTip, toolTip, toolTip.GetLength() + 1 );
 			pTTTW->lpszText = (WCHAR*)m_pchTip;
 		} else {
-			delete m_pwchTip;
+			delete[] m_pwchTip;
 			m_pwchTip = new WCHAR[toolTip.GetLength() + 2];
 			_mbstowcsz( m_pwchTip, toolTip, toolTip.GetLength() + 1 );
 			pTTTW->lpszText = (WCHAR*)m_pwchTip;
 		}
 #else
 		if( pNMHDR->code == TTN_NEEDTEXTA ) {
-			delete m_pchTip;
+			delete[] m_pchTip;
 			m_pchTip = new TCHAR[toolTip.GetLength() + 2];
 			_wcstombsz( m_pchTip, toolTip, toolTip.GetLength() + 1 );
 			pTTTA->lpszText = (LPTSTR)m_pchTip;
 		} else {
-			delete m_pwchTip;
+			delete[] m_pwchTip;
 			m_pwchTip = new WCHAR[toolTip.GetLength() + 2];
 			lstrcpyn( m_pwchTip, toolTip, toolTip.GetLength() + 1 );
 			pTTTA->lpszText = (LPTSTR) m_pwchTip;

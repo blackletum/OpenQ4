@@ -469,7 +469,7 @@ void idEditField::AutoComplete( void ) {
 		autoComplete = globalAutoComplete;
 
 		// and print it
-		idStr::snPrintf( buffer, sizeof( buffer ), autoComplete.currentMatch );
+		idStr::snPrintf( buffer, sizeof( buffer ), "%s", autoComplete.currentMatch );
 		if ( explicitCommandPrefix && buffer[0] != '/' && buffer[0] != '\\' && strlen( buffer ) + 1 < sizeof( buffer ) ) {
 			memmove( buffer + 1, buffer, strlen( buffer ) + 1 );
 			buffer[0] = commandPrefix;

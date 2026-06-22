@@ -174,17 +174,20 @@ Net_ExtractPort
 */
 static bool Net_ExtractPort( const char *src, char *buf, int bufsize, int *port ) {
 	char *p;
-	strncpy( buf, src, bufsize );
-	p = buf; p += Min( bufsize - 1, (int)strlen( src ) ); *p = '\0';
+	char *end;
+	long parsedPort;
+	idStr::Copynz( buf, src, bufsize );
 	p = strchr( buf, ':' );
 	if ( !p ) {
 		return false;
 	}
-	*p = '\0';
-	*port = strtol( p+1, NULL, 10 );
-	if ( errno == ERANGE ) {
+	errno = 0;
+	parsedPort = strtol( p + 1, &end, 10 );
+	if ( end == p + 1 || *end != '\0' || errno == ERANGE || parsedPort < 0 || parsedPort > 65535 ) {
 		return false;
 	}
+	*p = '\0';
+	*port = (int)parsedPort;
 	return true;
 }
 

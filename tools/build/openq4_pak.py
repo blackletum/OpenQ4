@@ -54,13 +54,8 @@ OPENQ4_REQUIRED_PK4_FILES_BY_PACK = {
         "materials/postprocess_openq4.mtr",
     },
     PAK1_NAME: {
-        "env/maps/game/airdefense1/area0_lightgrid_amb.tga",
-        "env/maps/game/airdefense1/area0_lightgrid_pos.tga",
-        "env/maps/game/airdefense1/area0_lightgrid_vis.tga",
         "gfx/guis/loadscreens/generic.dds",
         "gfx/guis/loadscreens/generic.tga",
-        "maps/game/airdefense1.lightgrid",
-        "maps/game/airdefense1.lightgridpack",
     },
 }
 OPENQ4_REQUIRED_LOOSE_GAME_FILES = {
@@ -169,6 +164,22 @@ def _iter_pk4_entries(source_dir: Path, pak_name: str) -> tuple[list[tuple[Path,
         entries.append((path, rel_posix))
 
     return entries, skipped_samples
+
+
+def format_pk4_source_manifest(source_root: Path, source_dir: Path, pak_name: str) -> str:
+    entries, _skipped_samples = _iter_pk4_entries(source_dir, pak_name)
+    lines = [
+        "# openQ4 PK4 source manifest",
+        f"pak={pak_name}",
+        f"source={source_dir.relative_to(source_root).as_posix()}",
+    ]
+
+    for path, arcname in entries:
+        stat = path.stat()
+        relative_path = path.relative_to(source_root).as_posix()
+        lines.append(f"{arcname}\t{relative_path}\t{stat.st_size}\t{stat.st_mtime_ns}")
+
+    return "\n".join(lines) + "\n"
 
 
 def _write_deterministic_zip(
