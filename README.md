@@ -78,16 +78,6 @@ It is designed for players who want the original Quake 4 experience with a clean
 </p>
 <p align="center"><sub>A second CRT comparison on mp/q4dm6 shows the same post-process across a brighter indoor arena.</sub></p>
 
-<p align="center">
-  <img src="assets/docs/img/readme-airdefense1-start.png" alt="openQ4 frustum culling off and on comparison at the game airdefense1 start" width="92%">
-</p>
-<p align="center"><sub>Air Defense 1's post-intro start position with triangle debug rendering: culling disabled on the left, modern culling enabled on the right.</sub></p>
-
-<p align="center">
-  <img src="assets/docs/img/readme-culling-tris.png" alt="openQ4 visible triangle debug comparison with frustum culling off and on" width="92%">
-</p>
-<p align="center"><sub>Visible-triangle debug rendering in game/storage1 highlights the renderer's improved frustum and occlusion-culling path, disabled on the left and enabled on the right.</sub></p>
-
 ---
 
 ## Quick start
