@@ -52,7 +52,7 @@ openQ4's current light-grid path:
 - uses visibility moments during interpolation to reduce wall and corner light leaks
 - relocates probes away from solid or near-solid map space where possible, then uses those relocated positions at runtime
 - blends indirect light between adjacent visible portal areas near doorway/window boundaries
-- keeps the current portal area and visible portal neighbors resident for a short age window to reduce atlas reload hitches while moving between areas
+- preloads packed light-grid atlases during map setup and keeps them resident for the level, avoiding runtime atlas reload hitches while moving between areas
 - draws one material-selected representative diffuse stage for the indirect pass, avoiding repeated light-grid redraws on multi-diffuse materials
 - lights eligible first-person weapon/viewmodel surfaces from the active view area's light grid through a dedicated weapon pass
 
@@ -74,7 +74,7 @@ If no baked assets are found, openQ4 can still generate a runtime probe layout f
 |---|---:|---:|---|
 | `r_useLightGrid` | `1` | `0..1` | Master toggle for runtime indirect diffuse from baked light grids. |
 | `r_lightGridPortalBlend` | `64` | `0..256` | World-unit radius for cross-area light-grid blending near visible portal boundaries. `0` disables portal blending. |
-| `r_lightGridResidencyFrames` | `180` | `0..3600` | Frames to keep light-grid atlas images resident after visible or portal-neighbor use. `0` keeps only the current visible/neighbor set. |
+| `r_lightGridResidencyFrames` | `0` | `0..3600` | Frames to keep loose fallback atlas images resident after visible or portal-neighbor use. `0` disables runtime purging. Packed `.lightgridpack` atlases always stay resident for the loaded map. |
 | `r_showLightGrid` | `0` | `0..3` | Draws probe positions for debugging. |
 | `r_lightGridBakeWorkers` | `0` | `-1..8` | CPU worker threads for probe integration during baking. `-1` disables threading, `0` auto-picks from logical CPU cores. |
 | `r_lightGridBakeAsyncReadback` | `1` | `0..1` | Uses async pixel-pack-buffer readback during baking when the driver supports it. Falls back to synchronous readback when unsupported. |

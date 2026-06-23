@@ -241,7 +241,6 @@ The pane has two display layouts:
 | Label | Widget type | Value widget | Target | Values or range | Notes |
 |---|---|---|---|---|---|
 | Auto Detect | `windowDef` action | `set_b_system_auto` | Auto-detect popup | N/A | Opens the existing auto-detect confirmation flow. |
-| Video Quality / Renderer | `choiceDef` | `set_sys_vidqual_val` | `r_renderer` | `best;arb;arb2;Cg;exp;nv10;nv20;r200` | Displays `BEST;ARB;ARB2;CG;EXP;NV10;NV20;R200`. Marks `desktop::vidwarn`. |
 | Display Resolution | `choiceDef` | `set_sys_screensize_val_0` | GUI state `display_mode_choice` via `applyDisplayModeChoice` | Runtime `gui::display_mode_choices` / `gui::display_mode_values` | Visible compatibility picker. Includes Desktop Native, SDL3 fullscreen preset resolutions from the selected display, then Custom; static presets are not shown unless the display reports them. The adapter writes `r_mode -2`, a stable legacy `r_mode` ID for catalog matches, or `r_mode -1` plus exact `r_customWidth`/`r_customHeight` for detected modes outside the catalog. |
 | Display Resolution | `choiceDef` | `set_sys_screensize_val_1` | GUI state `display_mode_choice` via `applyDisplayModeChoice` | Runtime `gui::display_mode_choices` / `gui::display_mode_values` | Compatibility duplicate retained for the old aspect-bucketed menu events. It uses the same dynamic list and adapter as `set_sys_screensize_val_0`. |
 | Display Resolution | `choiceDef` | `set_sys_screensize_val_2` | GUI state `display_mode_choice` via `applyDisplayModeChoice` | Runtime `gui::display_mode_choices` / `gui::display_mode_values` | Compatibility duplicate retained for the old aspect-bucketed menu events. It uses the same dynamic list and adapter as `set_sys_screensize_val_0`. |
@@ -276,6 +275,7 @@ The pane has two display layouts:
 
 | Label | Widget type | Value widget | Target | Values or range | Notes |
 |---|---|---|---|---|---|
+| Renderer Fallback | `choiceDef` | `set_sys_vidqual_val` | `r_renderer` | `best;arb2` | Displays `Auto;ARB2`. This is the compatibility rollback selector, not the historical multi-backend picker; legacy console/config values still fall back in engine code. Marks `desktop::vidwarn`. |
 | Irradiance Volumes | `choiceDef` | `set_sys_irradiance_val` | `r_useLightGrid` | `No;Yes` | Enables baked light-grid indirect diffuse when available. |
 | Bloom | `choiceDef` | `set_sys_bloom_val` | `r_bloom` | `No;Yes` | Boolean picker. |
 | SSAO | `choiceDef` | `set_sys_ssao_val` | `r_ssao` | `No;Yes` | Boolean picker. |

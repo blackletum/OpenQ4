@@ -70,7 +70,7 @@ def validate_wrapper() -> None:
     require(wrapper, "'--install-dir',", "VS Code fast build stages .install incrementally")
 
     stager = read("tools/build/stage_fast_install.py")
-    require(stager, "filecmp.cmp", "fast install copy-if-changed behavior")
+    require(stager, "copy_file_if_changed", "fast install copy-if-changed behavior")
     require(stager, '"pak0.pk4"', "fast install stages pak0")
     require(stager, '"pak1.pk4"', "fast install stages pak1")
     reject(stager, '"*.lib",\n    "pak0.pk4"', "fast install must not copy linker artifacts as runtime content")

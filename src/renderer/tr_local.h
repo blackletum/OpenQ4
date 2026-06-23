@@ -1341,7 +1341,7 @@ extern idCVar r_lightGridDepthBiasFactor;	// polygon offset factor for light-gri
 extern idCVar r_lightGridDepthBiasUnits;	// polygon offset units for light-grid overlay
 extern idCVar r_lightGridDepthTolerance;	// depth texture tolerance for light-grid receiver clipping
 extern idCVar r_lightGridPortalBlend;	// world-unit blend radius for light-grid sampling across visible portal boundaries
-extern idCVar r_lightGridResidencyFrames;	// keep light-grid atlases resident after visible/neighbor use
+extern idCVar r_lightGridResidencyFrames;	// keep loose light-grid atlases resident after visible/neighbor use; 0 disables runtime purging
 extern idCVar r_lightGridBakeWorkers;	// worker thread count for CPU probe integration (-1 = disabled, 0 = auto)
 extern idCVar r_lightGridBakeAsyncReadback;	// use async pixel-pack-buffer readback during light-grid baking when supported
 extern idCVar r_lightGridBakeMemoryMB;	// transient memory budget for in-flight light-grid bake jobs

@@ -215,6 +215,7 @@ CATEGORY_RULES: tuple[tuple[str, str, int, bool], ...] = (
 
 DOC_PREFIXES = (
     "docs/",
+    "docs-user/",
     "docs-dev/",
     "assets/",
 )
@@ -308,6 +309,28 @@ def emit_metadata(metadata: dict[str, str | int]) -> None:
         print(f"{key}={value}")
 
 
+def validate_version_override(
+    override_version: ReleaseVersion,
+    current_version: ReleaseVersion,
+    latest_release: tuple[str, ReleaseVersion] | None,
+) -> None:
+    if override_version.key < current_version.key:
+        raise SystemExit(
+            "version override must not be lower than the configured project version "
+            f"{current_version.text}, got: {override_version.text}"
+        )
+
+    if latest_release is None:
+        return
+
+    latest_tag, latest_version = latest_release
+    if override_version.key < latest_version.key:
+        raise SystemExit(
+            "version override must not be lower than the latest published release "
+            f"{latest_tag} ({latest_version.text}), got: {override_version.text}"
+        )
+
+
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     source_root = Path(args.source_root).resolve()
@@ -315,15 +338,19 @@ def main(argv: list[str]) -> int:
     current_version = parse_version(
         read_project_version(source_root, args.current_version)
     )
+    latest_release = find_latest_release_tag(source_root)
 
     version_override = args.version_override.strip()
     if version_override:
         override_version = parse_version(version_override)
+        validate_version_override(override_version, current_version, latest_release)
+        latest_tag = latest_release[0] if latest_release is not None else ""
+        latest_version = latest_release[1].text if latest_release is not None else ""
         emit_metadata(
             {
                 "current_version": current_version.text,
-                "latest_release_tag": "",
-                "latest_release_version": "",
+                "latest_release_tag": latest_tag,
+                "latest_release_version": latest_version,
                 "version": override_version.text,
                 "version_tag": override_version.text,
                 "release_tag": f"v{override_version.text}",
@@ -340,7 +367,6 @@ def main(argv: list[str]) -> int:
         )
         return 0
 
-    latest_release = find_latest_release_tag(source_root)
     if latest_release is None:
         emit_metadata(
             {

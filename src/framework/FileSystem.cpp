@@ -443,6 +443,112 @@ static void FS_SortPk4FilesForLoadOrder( idStrList &pakfiles ) {
 	pakfiles.Swap( other );
 }
 
+static const char *fsLanguagePackOrder[] = {
+	"english",
+	"spanish",
+	"french",
+	"italian",
+	"german",
+	"russian",
+	"polish",
+	"korean",
+	"japanese",
+	"chinese",
+	NULL
+};
+
+static bool FS_IsKnownLanguage( const char *language ) {
+	if ( language == NULL || language[ 0 ] == '\0' ) {
+		return false;
+	}
+
+	for ( int i = 0; fsLanguagePackOrder[ i ] != NULL; ++i ) {
+		if ( !idStr::Icmp( language, fsLanguagePackOrder[ i ] ) ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static bool FS_LanguageListContains( const idStrList &languages, const char *language ) {
+	if ( language == NULL || language[ 0 ] == '\0' ) {
+		return false;
+	}
+	for ( int i = 0; i < languages.Num(); ++i ) {
+		if ( !languages[ i ].Icmp( language ) ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static void FS_AppendUniqueLanguage( idStrList &languages, const char *language ) {
+	if ( language == NULL || language[ 0 ] == '\0' || FS_LanguageListContains( languages, language ) ) {
+		return;
+	}
+	languages.Append( language );
+}
+
+static bool FS_ParseLanguagePackName( const char *pakFilename, idStr &language ) {
+	idStr fileName;
+	int suffix;
+
+	if ( pakFilename == NULL || pakFilename[ 0 ] == '\0' ) {
+		return false;
+	}
+
+	fileName = pakFilename;
+	fileName.StripPath();
+	fileName.ToLower();
+	if ( !fileName.CheckExtension( ".pk4" ) || fileName.Icmpn( "zpak_", 5 ) ) {
+		return false;
+	}
+
+	fileName.StripFileExtension();
+	language = fileName.Right( fileName.Length() - 5 );
+	suffix = language.Find( '_' );
+	if ( suffix == 0 ) {
+		return false;
+	}
+	if ( suffix > 0 ) {
+		language.CapLength( suffix );
+	}
+
+	return FS_IsKnownLanguage( language.c_str() );
+}
+
+static bool FS_PakPathIsInGameDir( const char *pakFilename, const char *gameDir ) {
+	idStr directory;
+	idStr dirName;
+
+	if ( pakFilename == NULL || gameDir == NULL ) {
+		return false;
+	}
+
+	directory = pakFilename;
+	directory.StripFilename();
+	dirName = directory;
+	dirName.StripPath();
+	return !dirName.Icmp( gameDir );
+}
+
+static void FS_OrderLanguagePackList( idStrList &languages ) {
+	idStrList ordered;
+
+	for ( int i = 0; fsLanguagePackOrder[ i ] != NULL; ++i ) {
+		if ( FS_LanguageListContains( languages, fsLanguagePackOrder[ i ] ) ) {
+			ordered.Append( fsLanguagePackOrder[ i ] );
+		}
+	}
+
+	for ( int i = 0; i < languages.Num(); ++i ) {
+		FS_AppendUniqueLanguage( ordered, languages[ i ].c_str() );
+	}
+
+	languages.Swap( ordered );
+}
+
 static bool FS_FileExists( const char *path ) {
 	FILE *f;
 	if ( !path || !path[ 0 ] ) {
@@ -1147,6 +1253,7 @@ public:
 	virtual idFileList *	ListFiles( const char *relativePath, const char *extension, bool sort = false, bool fullRelativePath = false, const char* gamedir = NULL );
 	virtual idFileList *	ListFilesTree( const char *relativePath, const char *extension, bool sort = false, const char* gamedir = NULL );
 	virtual void			FreeFileList( idFileList *fileList );
+	virtual void			ListAvailableLanguagePacks( idStrList &languages );
 	virtual const char *	OSPathToRelativePath( const char *OSPath );
 	virtual const char *	RelativePathToOSPath( const char *relativePath, const char *basePath );
 	virtual const char *	BuildOSPath( const char *base, const char *game, const char *relativePath );
@@ -2861,6 +2968,31 @@ idFileSystemLocal::FreeFileList
 */
 void idFileSystemLocal::FreeFileList( idFileList *fileList ) {
 	delete fileList;
+}
+
+/*
+===============
+idFileSystemLocal::ListAvailableLanguagePacks
+===============
+*/
+void idFileSystemLocal::ListAvailableLanguagePacks( idStrList &languages ) {
+	idStr language;
+
+	languages.Clear();
+
+	for ( searchpath_t *search = searchPaths; search != NULL; search = search->next ) {
+		if ( search->pack == NULL ) {
+			continue;
+		}
+		if ( !FS_PakPathIsInGameDir( search->pack->pakFilename.c_str(), BASE_GAMEDIR ) ) {
+			continue;
+		}
+		if ( FS_ParseLanguagePackName( search->pack->pakFilename.c_str(), language ) ) {
+			FS_AppendUniqueLanguage( languages, language.c_str() );
+		}
+	}
+
+	FS_OrderLanguagePackList( languages );
 }
 
 static const char *OPENQ4_MOD_MANIFEST_FILENAME = "mod.json";

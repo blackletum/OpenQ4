@@ -4,9 +4,10 @@
 from __future__ import annotations
 
 import argparse
-import filecmp
-import shutil
+import sys
 from pathlib import Path
+
+from openq4_pak import copy_file_if_changed, is_relative_to
 
 
 ROOT_RUNTIME_PATTERNS = (
@@ -40,15 +41,30 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--build-dir", required=True, help="Meson build directory.")
     parser.add_argument("--install-dir", required=True, help="Runtime staging root, usually .install.")
+    parser.add_argument(
+        "--source-root",
+        default=str(Path(__file__).resolve().parents[2]),
+        help="openQ4 source root used to validate the fast staging target.",
+    )
     return parser.parse_args(argv[1:])
 
 
 def copy_if_changed(source: Path, destination: Path) -> bool:
-    if destination.is_file() and filecmp.cmp(source, destination, shallow=False):
-        return False
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, destination)
-    return True
+    return copy_file_if_changed(source, destination)
+
+
+def validate_stage_roots(source_root: Path, build_dir: Path, install_dir: Path) -> None:
+    source_root = source_root.resolve()
+    build_dir = build_dir.resolve()
+    install_dir = install_dir.resolve()
+    expected_install_dir = source_root / ".install"
+
+    if install_dir != expected_install_dir:
+        raise RuntimeError(f"fast staging install directory must be {expected_install_dir}: {install_dir}")
+    if not is_relative_to(build_dir, source_root):
+        raise RuntimeError(f"fast staging build directory must stay under {source_root}: {build_dir}")
+    if build_dir == install_dir or is_relative_to(install_dir, build_dir):
+        raise RuntimeError(f"fast staging build directory must not contain the install directory: {build_dir}")
 
 
 def remove_matches(root: Path, patterns: tuple[str, ...]) -> list[Path]:
@@ -79,18 +95,24 @@ def copy_matches(source_root: Path, destination_root: Path, patterns: tuple[str,
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    source_root = Path(args.source_root).resolve()
     build_dir = Path(args.build_dir).resolve()
     install_dir = Path(args.install_dir).resolve()
     build_game_dir = build_dir / "baseoq4"
     install_game_dir = install_dir / "baseoq4"
 
-    install_dir.mkdir(parents=True, exist_ok=True)
-    install_game_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        validate_stage_roots(source_root, build_dir, install_dir)
+        install_dir.mkdir(parents=True, exist_ok=True)
+        install_game_dir.mkdir(parents=True, exist_ok=True)
 
-    removed = remove_matches(install_dir, NON_RUNTIME_PATTERNS)
-    removed += remove_matches(install_game_dir, NON_RUNTIME_PATTERNS + ("*.so", "*.dylib"))
-    copied = copy_matches(build_dir, install_dir, ROOT_RUNTIME_PATTERNS)
-    copied += copy_matches(build_game_dir, install_game_dir, GAME_RUNTIME_PATTERNS)
+        removed = remove_matches(install_dir, NON_RUNTIME_PATTERNS)
+        removed += remove_matches(install_game_dir, NON_RUNTIME_PATTERNS + ("*.so", "*.dylib"))
+        copied = copy_matches(build_dir, install_dir, ROOT_RUNTIME_PATTERNS)
+        copied += copy_matches(build_game_dir, install_game_dir, GAME_RUNTIME_PATTERNS)
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     print(
         f"fast-staged .install: copied={len(copied)} "

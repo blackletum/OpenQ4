@@ -93,6 +93,8 @@ switch ($Action) {
         )
         Invoke-PythonTool @(
             $fastStageScript,
+            '--source-root',
+            $workspaceRoot,
             '--build-dir',
             $buildDir,
             '--install-dir',

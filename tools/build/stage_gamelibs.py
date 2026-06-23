@@ -153,6 +153,7 @@ def write_stage_manifest(project_root: Path, gamelibs_root: Path, stage_root: Pa
 
 
 def validate_stage_manifest(stage_root: Path) -> None:
+    stage_root = stage_root.resolve()
     manifest_path = stage_root / MANIFEST_NAME
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     files = manifest.get("files")
@@ -165,8 +166,14 @@ def validate_stage_manifest(stage_root: Path) -> None:
         if not isinstance(rel, str) or not isinstance(expected_hash, str):
             raise RuntimeError("stage manifest contains malformed file entry")
 
-        path = stage_root / rel
-        if not path.is_file():
+        rel_path = Path(rel)
+        if not rel_path.parts or rel_path.is_absolute() or any(part in ("", ".", "..") for part in rel_path.parts):
+            raise RuntimeError(f"stage manifest contains unsafe path: {rel}")
+
+        path = (stage_root / rel_path).resolve()
+        if not is_relative_to(path, stage_root):
+            raise RuntimeError(f"stage manifest path escapes stage root: {rel}")
+        if path.is_symlink() or not path.is_file():
             raise RuntimeError(f"stage manifest references missing file: {rel}")
         actual_hash = file_sha256(path)
         if actual_hash != expected_hash:

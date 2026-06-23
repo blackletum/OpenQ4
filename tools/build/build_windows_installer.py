@@ -92,13 +92,16 @@ def validate_package_dir(package_dir: Path, arch: str) -> None:
         package_dir / f"{PRODUCT_NAME}-client_{arch}.pdb",
         package_dir / f"{PRODUCT_NAME}-ded_{arch}.exe",
         package_dir / f"{PRODUCT_NAME}-ded_{arch}.pdb",
+        package_dir / "OpenAL32.dll",
         package_dir / "README.html",
         package_dir / "LICENSE",
         package_dir / "docs" / "index.html",
         package_dir / "baseoq4" / "mod.json",
         package_dir / "baseoq4" / "pak0.pk4",
         package_dir / "baseoq4" / "pak1.pk4",
+        package_dir / "baseoq4" / f"game-sp_{arch}.dll",
         package_dir / "baseoq4" / f"game-sp_{arch}.pdb",
+        package_dir / "baseoq4" / f"game-mp_{arch}.dll",
         package_dir / "baseoq4" / f"game-mp_{arch}.pdb",
     ]
 

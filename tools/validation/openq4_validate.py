@@ -91,6 +91,17 @@ class ValidationError(RuntimeError):
     pass
 
 
+def positive_int(value: str) -> int:
+    try:
+        parsed = int(value, 10)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"{value!r} is not an integer") from exc
+
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError(f"{value!r} must be a positive integer")
+    return parsed
+
+
 def repo_root_from_script() -> Path:
     return Path(__file__).resolve().parents[2]
 
@@ -118,6 +129,14 @@ def rel(path: Path, root: Path) -> str:
         return path.resolve().relative_to(root.resolve()).as_posix()
     except ValueError:
         return str(path)
+
+
+def is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
 
 
 def section(title: str) -> None:
@@ -164,6 +183,46 @@ def resolve_meson_wrapper(root: Path) -> list[str]:
     if not wrapper.is_file():
         raise ValidationError(f"openQ4 Meson wrapper not found: {wrapper}")
     return ["bash", str(wrapper)]
+
+
+def validate_source_root(root: Path) -> None:
+    if not root.is_dir():
+        raise ValidationError(f"Source root does not exist or is not a directory: {root}")
+
+    required_files = (
+        root / "meson.build",
+        root / "tools" / "validation" / "openq4_validate.py",
+    )
+    missing = [path for path in required_files if not path.is_file()]
+    if missing:
+        formatted = "\n".join(f"  - {path}" for path in missing)
+        raise ValidationError(f"Source root is missing required openQ4 files:\n{formatted}")
+
+    if host_is_windows():
+        wrapper = root / "tools" / "build" / "meson_setup.ps1"
+    else:
+        wrapper = root / "tools" / "build" / "meson_setup.sh"
+    if not wrapper.is_file():
+        raise ValidationError(f"Source root is missing the platform Meson wrapper: {wrapper}")
+
+
+def validate_build_dir(root: Path, build_dir: Path) -> None:
+    if build_dir.exists() and not build_dir.is_dir():
+        raise ValidationError(f"Build directory path exists but is not a directory: {build_dir}")
+
+    if build_dir.resolve() == root.resolve():
+        raise ValidationError("Build directory must not be the source root.")
+
+    if is_relative_to(root, build_dir):
+        raise ValidationError("Build directory must not contain the source root.")
+
+    if is_relative_to(build_dir, root):
+        relative_parts = build_dir.resolve().relative_to(root.resolve()).parts
+        first_part = relative_parts[0] if relative_parts else ""
+        if first_part != ".tmp" and not first_part.startswith("builddir"):
+            raise ValidationError(
+                "Build directory inside the source tree must live under .tmp/ or use a builddir* name."
+            )
 
 
 def is_meson_build_dir(path: Path) -> bool:
@@ -242,12 +301,15 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "macos_static_policy.py",
         root / "tools" / "tests" / "macos_metal_bridge.py",
         root / "tools" / "tests" / "openq4_pure_pack.py",
+        root / "tools" / "tests" / "packaging_safety.py",
         root / "tools" / "tests" / "preprocessor_macro_safety.py",
         root / "tools" / "tests" / "posix_memory_management.py",
+        root / "tools" / "tests" / "release_tooling_safety.py",
         root / "tools" / "tests" / "sdl3_input_parity.py",
         root / "tools" / "tests" / "sdl3_multidisplay_windowing.py",
         root / "tools" / "tests" / "steam_deck_support.py",
         root / "tools" / "tests" / "startup_language_override.py",
+        root / "tools" / "tests" / "validation_hardening.py",
         root / "tools" / "tests" / "vscode_fast_build.py",
     ]
     for test_script in tests:
@@ -288,6 +350,72 @@ def find_engine_executables(install_root: Path, stem: str) -> list[Path]:
     ]
 
 
+def staged_binary_arch(path: Path, stem: str) -> str | None:
+    match = re.fullmatch(rf"{re.escape(stem)}_([A-Za-z0-9_]+)", path.stem)
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def staged_arches(paths: list[Path], stem: str, root: Path, label: str) -> set[str]:
+    arches: set[str] = set()
+    for path in paths:
+        arch = staged_binary_arch(path, stem)
+        if arch is None:
+            raise ValidationError(f"Unexpected {label} binary name: {rel(path, root)}")
+        arches.add(arch)
+    return arches
+
+
+def expected_game_module_suffix() -> str:
+    if host_is_windows():
+        return ".dll"
+    if host_is_macos():
+        return ".dylib"
+    return ".so"
+
+
+def find_staged_game_modules(game_dir: Path, stem: str) -> list[Path]:
+    return find_any(game_dir, (f"{stem}_*.dll", f"{stem}_*.so", f"{stem}_*.dylib"))
+
+
+def validate_staged_architecture_set(
+    root: Path,
+    game_dir: Path,
+    client_candidates: list[Path],
+    dedicated_candidates: list[Path],
+) -> set[str]:
+    client_arches = staged_arches(client_candidates, "openQ4-client", root, "client")
+    dedicated_arches = staged_arches(dedicated_candidates, "openQ4-ded", root, "dedicated-server")
+    if client_arches != dedicated_arches:
+        raise ValidationError(
+            "Staged engine binary architecture mismatch: "
+            f"clients={sorted(client_arches)} dedicated={sorted(dedicated_arches)}"
+        )
+
+    expected_suffix = expected_game_module_suffix()
+    game_modules = find_staged_game_modules(game_dir, "game-sp") + find_staged_game_modules(game_dir, "game-mp")
+    wrong_suffix_modules = sorted(path for path in game_modules if path.suffix.lower() != expected_suffix)
+    if wrong_suffix_modules:
+        formatted = "\n".join(f"  - {rel(path, root)}" for path in wrong_suffix_modules)
+        raise ValidationError(
+            f"Staged payload contains game modules for the wrong platform suffix; "
+            f"expected {expected_suffix}:\n{formatted}"
+        )
+
+    sp_modules = [path for path in game_modules if path.name.startswith("game-sp_") and path.suffix.lower() == expected_suffix]
+    mp_modules = [path for path in game_modules if path.name.startswith("game-mp_") and path.suffix.lower() == expected_suffix]
+    sp_arches = staged_arches(sp_modules, "game-sp", root, "single-player game module")
+    mp_arches = staged_arches(mp_modules, "game-mp", root, "multiplayer game module")
+    if sp_arches != client_arches or mp_arches != client_arches:
+        raise ValidationError(
+            "Staged game module architecture mismatch: "
+            f"engine={sorted(client_arches)} sp={sorted(sp_arches)} mp={sorted(mp_arches)}"
+        )
+
+    return client_arches
+
+
 def is_posix_executable(path: Path) -> bool:
     return path.is_file() and os.access(path, os.X_OK)
 
@@ -320,22 +448,40 @@ def validate_no_macos_forbidden_xattrs(root: Path, install_root: Path) -> None:
 
 
 def validate_no_macos_non_runtime_artifacts(root: Path, install_root: Path, game_dir: Path) -> None:
+    validate_no_non_runtime_artifacts(
+        root,
+        (install_root, game_dir),
+        MACOS_NON_RUNTIME_PATTERNS,
+        "macOS staged payload contains non-runtime artifacts",
+    )
+
+
+def validate_no_staged_symlinks(root: Path, install_root: Path) -> None:
+    symlinks = [path for path in install_root.rglob("*") if path.is_symlink()]
+    if symlinks:
+        formatted = "\n".join(f"  - {rel(path, root)}" for path in sorted(symlinks)[:20])
+        raise ValidationError(f"Staged payload contains symlink entries:\n{formatted}")
+
+
+def validate_no_macos_symlinks(root: Path, install_root: Path) -> None:
+    validate_no_staged_symlinks(root, install_root)
+
+
+def validate_no_non_runtime_artifacts(
+    root: Path,
+    directories: tuple[Path, ...],
+    patterns: tuple[str, ...],
+    message: str,
+) -> None:
     bad_artifacts: list[Path] = []
-    for directory in (install_root, game_dir):
+    for directory in directories:
         for path in directory.rglob("*"):
-            if any(fnmatch.fnmatch(path.name.lower(), pattern.lower()) for pattern in MACOS_NON_RUNTIME_PATTERNS):
+            if any(fnmatch.fnmatch(path.name.lower(), pattern.lower()) for pattern in patterns):
                 bad_artifacts.append(path)
 
     if bad_artifacts:
         formatted = "\n".join(f"  - {rel(path, root)}" for path in sorted(bad_artifacts)[:20])
-        raise ValidationError(f"macOS staged payload contains non-runtime artifacts:\n{formatted}")
-
-
-def validate_no_macos_symlinks(root: Path, install_root: Path) -> None:
-    symlinks = [path for path in install_root.rglob("*") if path.is_symlink()]
-    if symlinks:
-        formatted = "\n".join(f"  - {rel(path, root)}" for path in sorted(symlinks)[:20])
-        raise ValidationError(f"macOS staged payload contains symlink entries:\n{formatted}")
+        raise ValidationError(f"{message}:\n{formatted}")
 
 
 def validate_no_macos_unsafe_file_modes(root: Path, install_root: Path) -> None:
@@ -611,8 +757,45 @@ def validate_macos_staged_metadata(
 
     validate_no_macos_non_runtime_artifacts(root, install_root, game_dir)
     validate_no_macos_forbidden_xattrs(root, install_root)
-    validate_no_macos_symlinks(root, install_root)
     validate_no_macos_unsafe_file_modes(root, install_root)
+
+
+def validate_windows_symbols(root: Path, install_root: Path, game_dir: Path, arches: set[str]) -> None:
+    if not host_is_windows():
+        return
+
+    if not (install_root / "OpenAL32.dll").is_file():
+        raise ValidationError("Windows staged payload is missing OpenAL32.dll.")
+
+    required_symbols = {
+        install_root / f"openQ4-client_{arch}.pdb"
+        for arch in arches
+    } | {
+        install_root / f"openQ4-ded_{arch}.pdb"
+        for arch in arches
+    } | {
+        game_dir / f"game-sp_{arch}.pdb"
+        for arch in arches
+    } | {
+        game_dir / f"game-mp_{arch}.pdb"
+        for arch in arches
+    }
+
+    missing_symbols = sorted(path for path in required_symbols if not path.is_file())
+    if missing_symbols:
+        formatted = "\n".join(f"  - {rel(path, root)}" for path in missing_symbols)
+        raise ValidationError(f"Windows staged payload is missing architecture-matched diagnostic PDB files:\n{formatted}")
+
+    staged_symbols = (
+        sorted(install_root.glob("openQ4-client_*.pdb"))
+        + sorted(install_root.glob("openQ4-ded_*.pdb"))
+        + sorted(game_dir.glob("game-sp_*.pdb"))
+        + sorted(game_dir.glob("game-mp_*.pdb"))
+    )
+    stale_symbols = [path for path in staged_symbols if path not in required_symbols]
+    if stale_symbols:
+        formatted = "\n".join(f"  - {rel(path, root)}" for path in stale_symbols)
+        raise ValidationError(f"Windows staged payload contains stale or architecture-mismatched PDB files:\n{formatted}")
 
 
 def validate_staged_payload(root: Path, *, dry_run: bool) -> None:
@@ -635,8 +818,26 @@ def validate_staged_payload(root: Path, *, dry_run: bool) -> None:
     if not dedicated_candidates:
         raise ValidationError("Staged dedicated-server executable was not found under .install/.")
     if not host_is_windows():
-        require_posix_executable(client_candidates[0], root, "Staged client executable")
-        require_posix_executable(dedicated_candidates[0], root, "Staged dedicated-server executable")
+        for client in client_candidates:
+            require_posix_executable(client, root, "Staged client executable")
+        for dedicated in dedicated_candidates:
+            require_posix_executable(dedicated, root, "Staged dedicated-server executable")
+
+    sp_modules = find_staged_game_modules(game_dir, "game-sp")
+    mp_modules = find_staged_game_modules(game_dir, "game-mp")
+    if not sp_modules:
+        raise ValidationError("Staged single-player game module was not found under .install/baseoq4/.")
+    if not mp_modules:
+        raise ValidationError("Staged multiplayer game module was not found under .install/baseoq4/.")
+
+    staged_arches_for_payload = validate_staged_architecture_set(
+        root,
+        game_dir,
+        client_candidates,
+        dedicated_candidates,
+    )
+    validate_no_staged_symlinks(root, install_root)
+
     if host_is_linux():
         validate_linux_launch_metadata(root, install_root, client_candidates)
         validate_linux_binary_hardening(root, client_candidates + dedicated_candidates)
@@ -648,13 +849,6 @@ def validate_staged_payload(root: Path, *, dry_run: bool) -> None:
             client_candidates,
             dedicated_candidates,
         )
-
-    sp_modules = find_any(game_dir, ("game-sp_*.dll", "game-sp_*.so", "game-sp_*.dylib"))
-    mp_modules = find_any(game_dir, ("game-mp_*.dll", "game-mp_*.so", "game-mp_*.dylib"))
-    if not sp_modules:
-        raise ValidationError("Staged single-player game module was not found under .install/baseoq4/.")
-    if not mp_modules:
-        raise ValidationError("Staged multiplayer game module was not found under .install/baseoq4/.")
 
     for relative_name in STAGED_REQUIRED_GAME_FILES:
         required_file = game_dir / relative_name
@@ -673,30 +867,13 @@ def validate_staged_payload(root: Path, *, dry_run: bool) -> None:
             f"{formatted}"
         )
 
-    if host_is_windows():
-        if not (install_root / "OpenAL32.dll").is_file():
-            raise ValidationError("Windows staged payload is missing OpenAL32.dll.")
-
-        required_symbols = (
-            sorted(install_root.glob("openQ4-client_*.pdb")),
-            sorted(install_root.glob("openQ4-ded_*.pdb")),
-            sorted(game_dir.glob("game-sp_*.pdb")),
-            sorted(game_dir.glob("game-mp_*.pdb")),
-        )
-        if any(len(matches) == 0 for matches in required_symbols):
-            raise ValidationError("Windows staged payload is missing one or more required diagnostic PDB files.")
-
-    bad_artifacts: list[Path] = []
-    for directory in (install_root, game_dir):
-        for path in directory.iterdir():
-            if not path.is_file():
-                continue
-            if any(fnmatch.fnmatch(path.name.lower(), pattern.lower()) for pattern in NON_RUNTIME_PATTERNS):
-                bad_artifacts.append(path)
-
-    if bad_artifacts:
-        formatted = "\n".join(f"  - {rel(path, root)}" for path in bad_artifacts)
-        raise ValidationError(f"Non-runtime artifacts remain staged:\n{formatted}")
+    validate_windows_symbols(root, install_root, game_dir, staged_arches_for_payload)
+    validate_no_non_runtime_artifacts(
+        root,
+        (install_root, game_dir),
+        NON_RUNTIME_PATTERNS,
+        "Non-runtime artifacts remain staged",
+    )
 
     print(f"Client: {rel(client_candidates[0], root)}", flush=True)
     print(f"Dedicated server: {rel(dedicated_candidates[0], root)}", flush=True)
@@ -792,13 +969,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--build-gamelibs", action="store_true", help="Ask the Windows Meson wrapper to build openQ4-game during compile.")
     parser.add_argument("--game-libs-repo", default="", help="Override the openQ4-game companion repository path.")
     parser.add_argument("--skip-icon-sync", action="store_true", help="Set OPENQ4_SKIP_ICON_SYNC=1 for this run.")
-    parser.add_argument("--jobs", "-j", type=int, default=None, help="Parallel compile job count passed to Meson.")
+    parser.add_argument("--jobs", "-j", type=positive_int, default=None, help="Parallel compile job count passed to Meson.")
     parser.add_argument("--extra-setup-arg", action="append", default=[], help="Additional argument appended to Meson setup.")
     parser.add_argument("--extra-compile-arg", action="append", default=[], help="Additional argument appended to Meson compile.")
     parser.add_argument("--runtime", action="store_true", help="Also run the safe renderer startup validation matrix after install.")
     parser.add_argument("--runtime-cases", default="", help="Comma-separated renderer validation case ids.")
     parser.add_argument("--runtime-tiers", default="auto,legacy", help="Renderer tiers for --runtime. Defaults to auto,legacy.")
-    parser.add_argument("--runtime-timeout", type=int, default=60, help="Per-case renderer validation timeout.")
+    parser.add_argument("--runtime-timeout", type=positive_int, default=60, help="Per-case renderer validation timeout.")
     parser.add_argument("--runtime-basepath", default=None, help="Quake 4 base path override for renderer validation.")
     parser.add_argument(
         "--runtime-skip-official-pak-validation",
@@ -813,8 +990,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     root = Path(args.source_root).resolve() if args.source_root else repo_root_from_script()
+    validate_source_root(root)
     apply_profile_defaults(args, root)
     build_dir = Path(args.build_dir).resolve()
+    validate_build_dir(root, build_dir)
     build_dir.parent.mkdir(parents=True, exist_ok=True)
     env = validation_env(args, root)
     wrapper = resolve_meson_wrapper(root)

@@ -52,3 +52,9 @@ _tmp_*
 *.pdb
 .voice_eng/
 /$outDir
+
+# Local diagnostic transcripts and runtime logs
+*.log
+*.log.*
+InstallationLog.txt
+logs/

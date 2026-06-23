@@ -33,6 +33,10 @@ If you have questions concerning this license or the applicable additional terms
 #include "../bse/BSE_API.h"
 #include "RenderDoc.h"
 
+#if defined( USE_SDL3 )
+#include <SDL3/SDL_locale.h>
+#endif
+
 #define	MAX_PRINT_MSG_SIZE	4096
 #define MAX_WARNING_LIST	256
 
@@ -670,7 +674,7 @@ public:
 	void						PrintLoadingMessage( const char *msg );
 
 	// localization
-	void						InitLanguageDict( bool applyStartupSysLang );
+	void						InitLanguageDict( bool applyStartupSysLang, bool allowAutoLanguageSelect );
 	void						LocalizeGui( const char *fileName, idLangDict &langDict );
 	void						LocalizeMapData( const char *fileName, idLangDict &langDict );
 	void						LocalizeSpecificMapData( const char *fileName, idLangDict &langDict, const idLangDict &replaceArgs );
@@ -1543,6 +1547,26 @@ before the filesystem is started, but all other sets should
 be after execing the config and default.
 ==================
 */
+static bool Common_HasStartupVariable( const char *match ) {
+	if ( match == NULL || match[ 0 ] == '\0' ) {
+		return false;
+	}
+
+	for ( int i = 0; i < com_numConsoleLines; ++i ) {
+		if ( com_consoleLines[ i ].Argc() < 2 ) {
+			continue;
+		}
+		if ( idStr::Cmp( com_consoleLines[ i ].Argv( 0 ), "set" ) ) {
+			continue;
+		}
+		if ( !idStr::Icmp( com_consoleLines[ i ].Argv( 1 ), match ) ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 void idCommonLocal::StartupVariable( const char *match, bool once ) {
 	int			i;
 	const char *s;
@@ -3001,12 +3025,228 @@ void idCommonLocal::FilterLangList( idStrList* list, idStr lang ) {
 	}
 }
 
+static void Common_NormalizeLanguageName( idStr &language ) {
+	language.Strip( ' ' );
+	language.Strip( '\t' );
+	language.Strip( '\r' );
+	language.Strip( '\n' );
+	language.ToLower();
+	if ( language.IsEmpty() ) {
+		language = "english";
+	}
+}
+
+static bool Common_TrySelectLanguage( const idStrList &languages, const char *candidate, idStr &selected ) {
+	if ( candidate == NULL || candidate[ 0 ] == '\0' ) {
+		return false;
+	}
+
+	for ( int i = 0; i < languages.Num(); ++i ) {
+		if ( !languages[ i ].Icmp( candidate ) ) {
+			selected = languages[ i ];
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static void Common_AppendUniqueLanguage( idStrList &languages, const char *language ) {
+	idStr selected;
+	if ( language == NULL || language[ 0 ] == '\0' || Common_TrySelectLanguage( languages, language, selected ) ) {
+		return;
+	}
+	languages.Append( language );
+}
+
+static const char *Common_MapLocaleLanguageCode( const char *languageCode ) {
+	struct languageMap_t {
+		const char *code;
+		const char *sysLang;
+	};
+	static const languageMap_t languageMap[] = {
+		{ "en", "english" },
+		{ "es", "spanish" },
+		{ "fr", "french" },
+		{ "it", "italian" },
+		{ "de", "german" },
+		{ "ru", "russian" },
+		{ "pl", "polish" },
+		{ "ko", "korean" },
+		{ "kr", "korean" },
+		{ "ja", "japanese" },
+		{ "jp", "japanese" },
+		{ "zh", "chinese" },
+		{ NULL, NULL }
+	};
+
+	if ( languageCode == NULL || languageCode[ 0 ] == '\0' ) {
+		return NULL;
+	}
+
+	for ( int i = 0; languageMap[ i ].code != NULL; ++i ) {
+		if ( !idStr::Icmp( languageCode, languageMap[ i ].code ) ) {
+			return languageMap[ i ].sysLang;
+		}
+	}
+
+	return NULL;
+}
+
+static void Common_AppendPreferredLanguageFromLocaleToken( const char *localeToken, idStrList &preferredLanguages ) {
+	idStr languageCode;
+	int cutLength;
+
+	if ( localeToken == NULL || localeToken[ 0 ] == '\0' ) {
+		return;
+	}
+
+	languageCode = localeToken;
+	languageCode.Strip( ' ' );
+	languageCode.Strip( '\t' );
+	languageCode.Strip( '\r' );
+	languageCode.Strip( '\n' );
+	if ( languageCode.IsEmpty() || !languageCode.Icmp( "C" ) || !languageCode.Icmp( "POSIX" ) ) {
+		return;
+	}
+
+	languageCode.ToLower();
+	cutLength = languageCode.Length();
+	const char delimiters[] = { '_', '-', '.', '@' };
+	const int numDelimiters = sizeof( delimiters ) / sizeof( delimiters[ 0 ] );
+	for ( int i = 0; i < numDelimiters; ++i ) {
+		const int delimiterIndex = languageCode.Find( delimiters[ i ] );
+		if ( delimiterIndex >= 0 && delimiterIndex < cutLength ) {
+			cutLength = delimiterIndex;
+		}
+	}
+	languageCode.CapLength( cutLength );
+
+	Common_AppendUniqueLanguage( preferredLanguages, Common_MapLocaleLanguageCode( languageCode.c_str() ) );
+}
+
+static void Common_AppendPreferredLanguagesFromLocaleList( const char *localeList, idStrList &preferredLanguages ) {
+	idStr token;
+
+	if ( localeList == NULL || localeList[ 0 ] == '\0' ) {
+		return;
+	}
+
+	for ( int i = 0; ; ++i ) {
+		const char ch = localeList[ i ];
+		if ( ch == ':' || ch == ';' || ch == '\0' ) {
+			Common_AppendPreferredLanguageFromLocaleToken( token.c_str(), preferredLanguages );
+			token.Clear();
+			if ( ch == '\0' ) {
+				break;
+			}
+			continue;
+		}
+		token.Append( ch );
+	}
+}
+
+#if defined( _WIN32 )
+static const char *Common_MapWindowsPrimaryLanguage( WORD primaryLanguage ) {
+	switch ( primaryLanguage ) {
+		case LANG_ENGLISH: return "english";
+		case LANG_SPANISH: return "spanish";
+		case LANG_FRENCH: return "french";
+		case LANG_ITALIAN: return "italian";
+		case LANG_GERMAN: return "german";
+		case LANG_RUSSIAN: return "russian";
+		case LANG_POLISH: return "polish";
+		case LANG_KOREAN: return "korean";
+		case LANG_JAPANESE: return "japanese";
+		case LANG_CHINESE: return "chinese";
+		default: return NULL;
+	}
+}
+#endif
+
+static void Common_GetOSPreferredLanguages( idStrList &preferredLanguages ) {
+	preferredLanguages.Clear();
+
+#if defined( USE_SDL3 )
+	int localeCount = 0;
+	SDL_Locale **locales = SDL_GetPreferredLocales( &localeCount );
+	if ( locales != NULL ) {
+		for ( int i = 0; i < localeCount && locales[ i ] != NULL; ++i ) {
+			Common_AppendPreferredLanguageFromLocaleToken( locales[ i ]->language, preferredLanguages );
+		}
+		SDL_free( locales );
+	}
+#endif
+
+#if defined( _WIN32 )
+	Common_AppendUniqueLanguage(
+		preferredLanguages,
+		Common_MapWindowsPrimaryLanguage( PRIMARYLANGID( GetUserDefaultUILanguage() ) ) );
+#endif
+
+	const char *envNames[] = {
+		"LANGUAGE",
+		"LC_ALL",
+		"LC_MESSAGES",
+		"LANG",
+		NULL
+	};
+	for ( int i = 0; envNames[ i ] != NULL; ++i ) {
+		Common_AppendPreferredLanguagesFromLocaleList( Common_GetNonEmptyEnv( envNames[ i ] ), preferredLanguages );
+	}
+}
+
+static idStr Common_FormatLanguageList( const idStrList &languages ) {
+	idStr formatted;
+
+	for ( int i = 0; i < languages.Num(); ++i ) {
+		if ( i > 0 ) {
+			formatted += ", ";
+		}
+		formatted += languages[ i ];
+	}
+
+	return formatted;
+}
+
+static bool Common_ResolveLanguageSelection( const idStr &requestedLanguage, const idStrList &availableLanguagePacks, bool preferOSLanguage, idStr &resolvedLanguage, bool &usedOSPreference ) {
+	idStrList preferredLanguages;
+
+	resolvedLanguage = requestedLanguage;
+	usedOSPreference = false;
+
+	if ( availableLanguagePacks.Num() == 0 ) {
+		return false;
+	}
+
+	if ( preferOSLanguage || !Common_TrySelectLanguage( availableLanguagePacks, requestedLanguage.c_str(), resolvedLanguage ) ) {
+		Common_GetOSPreferredLanguages( preferredLanguages );
+		for ( int i = 0; i < preferredLanguages.Num(); ++i ) {
+			if ( Common_TrySelectLanguage( availableLanguagePacks, preferredLanguages[ i ].c_str(), resolvedLanguage ) ) {
+				usedOSPreference = true;
+				return idStr::Icmp( resolvedLanguage.c_str(), requestedLanguage.c_str() ) != 0;
+			}
+		}
+	}
+
+	if ( Common_TrySelectLanguage( availableLanguagePacks, requestedLanguage.c_str(), resolvedLanguage ) ) {
+		return idStr::Icmp( resolvedLanguage.c_str(), requestedLanguage.c_str() ) != 0;
+	}
+
+	if ( Common_TrySelectLanguage( availableLanguagePacks, "english", resolvedLanguage ) ) {
+		return idStr::Icmp( resolvedLanguage.c_str(), requestedLanguage.c_str() ) != 0;
+	}
+
+	resolvedLanguage = availableLanguagePacks[ 0 ];
+	return idStr::Icmp( resolvedLanguage.c_str(), requestedLanguage.c_str() ) != 0;
+}
+
 /*
 ===============
 idCommonLocal::InitLanguageDict
 ===============
 */
-void idCommonLocal::InitLanguageDict( bool applyStartupSysLang ) {
+void idCommonLocal::InitLanguageDict( bool applyStartupSysLang, bool allowAutoLanguageSelect ) {
 	idStr fileName;
 	languageDict.Clear();
 
@@ -3018,19 +3258,45 @@ void idCommonLocal::InitLanguageDict( bool applyStartupSysLang ) {
 	langFiles =  fileSystem->ListFilesTree( "strings", ".lang", true );
 	
 	idStrList langList = langFiles->GetList();
+	idStrList availableLanguagePacks;
+	fileSystem->ListAvailableLanguagePacks( availableLanguagePacks );
+	const bool hasStartupSysLang = Common_HasStartupVariable( "sys_lang" );
 
 	if ( applyStartupSysLang ) {
 		// Let command-line sys_lang apply for the early startup dictionary load.
 		StartupVariable( "sys_lang", false );
 	}
 	idStr langName = cvarSystem->GetCVarString( "sys_lang" );
-	langName.Strip( ' ' );
-	langName.Strip( '\t' );
-	langName.Strip( '\r' );
-	langName.Strip( '\n' );
-	langName.ToLower();
-	if ( langName.IsEmpty() ) {
-		langName = "english";
+	Common_NormalizeLanguageName( langName );
+	const idStr requestedLangName = langName;
+	idStr resolvedLangName;
+	bool usedOSPreference = false;
+	const bool languagePackChangedSelection = Common_ResolveLanguageSelection(
+		requestedLangName,
+		availableLanguagePacks,
+		allowAutoLanguageSelect && !hasStartupSysLang,
+		resolvedLangName,
+		usedOSPreference );
+	if ( languagePackChangedSelection ) {
+		if ( usedOSPreference && allowAutoLanguageSelect && !hasStartupSysLang ) {
+			common->Printf(
+				"Selecting startup language '%s' from OS preference and available language packs (%s)\n",
+				resolvedLangName.c_str(),
+				Common_FormatLanguageList( availableLanguagePacks ).c_str() );
+		} else if ( usedOSPreference ) {
+			common->Printf(
+				"Language pack for sys_lang '%s' is not available; using OS-preferred '%s' from available language packs (%s)\n",
+				requestedLangName.c_str(),
+				resolvedLangName.c_str(),
+				Common_FormatLanguageList( availableLanguagePacks ).c_str() );
+		} else {
+			common->Printf(
+				"Language pack for sys_lang '%s' is not available; using '%s' from available language packs (%s)\n",
+				requestedLangName.c_str(),
+				resolvedLangName.c_str(),
+				Common_FormatLanguageList( availableLanguagePacks ).c_str() );
+		}
+		langName = resolvedLangName;
 	}
 	if ( idStr::Cmp( langName.c_str(), cvarSystem->GetCVarString( "sys_lang" ) ) != 0 ) {
 		cvarSystem->SetCVarString( "sys_lang", langName.c_str() );
@@ -3043,11 +3309,10 @@ void idCommonLocal::InitLanguageDict( bool applyStartupSysLang ) {
 	if ( currentLangList.Num() == 0 ) {
 		// reset cvar to default and try to load again
 		common->Printf( "No language files found for sys_lang '%s'; falling back to English\n", langName.c_str() );
-		cmdSystem->BufferCommandText( CMD_EXEC_NOW, "reset sys_lang" );
-		langName = cvarSystem->GetCVarString( "sys_lang" );
-		langName.ToLower();
+		langName = "english";
+		cvarSystem->SetCVarString( "sys_lang", langName.c_str() );
 		currentLangList = langList;
-		FilterLangList(&currentLangList, langName);
+		FilterLangList( &currentLangList, langName );
 	}
 
 	if ( idStr::Icmp( langName.c_str(), "english" ) != 0 ) {
@@ -3238,7 +3503,7 @@ void Com_ReloadLanguage_f( const idCmdArgs &args ) {
 	(void)args;
 	const bool wasFileLoadingAllowed = fileSystem->GetIsFileLoadingAllowed();
 	fileSystem->SetIsFileLoadingAllowed( true );
-	commonLocal.InitLanguageDict( false );
+	commonLocal.InitLanguageDict( false, false );
 	fileSystem->SetIsFileLoadingAllowed( wasFileLoadingAllowed );
 }
 
@@ -4784,7 +5049,12 @@ void idCommonLocal::InitGame( void ) {
 	renderSystem->Init();
 
 	// initialize string database right off so we can use it for loading messages
-	InitLanguageDict( true );
+	const idStr startupLanguageBeforeAutoSelect = cvarSystem->GetCVarString( "sys_lang" );
+	const bool allowStartupLanguageAutoSelect = sysDetect && !Common_HasStartupVariable( "sys_lang" );
+	InitLanguageDict( true, allowStartupLanguageAutoSelect );
+	const bool startupLanguageAutoSelected =
+		allowStartupLanguageAutoSelect &&
+		idStr::Icmp( startupLanguageBeforeAutoSelect.c_str(), cvarSystem->GetCVarString( "sys_lang" ) ) != 0;
 
 	PrintLoadingMessage( common->GetLanguageDict()->GetString( "#str_104343" ) );
 
@@ -4829,7 +5099,7 @@ void idCommonLocal::InitGame( void ) {
 	// have settled, so +set sys_lang wins over archived startup scripts.
 	const bool wasFileLoadingAllowed = fileSystem->GetIsFileLoadingAllowed();
 	fileSystem->SetIsFileLoadingAllowed( true );
-	InitLanguageDict( false );
+	InitLanguageDict( false, false );
 	fileSystem->SetIsFileLoadingAllowed( wasFileLoadingAllowed );
 
 	bool repairedUnsetMachineSpec = false;
@@ -4844,7 +5114,7 @@ void idCommonLocal::InitGame( void ) {
 
 	// if any archived cvars are modified after this, we will trigger a writing of the config file
 	cvarSystem->ClearModifiedFlags( CVAR_ARCHIVE );
-	if ( repairedUnsetMachineSpec ) {
+	if ( repairedUnsetMachineSpec || startupLanguageAutoSelected ) {
 		cvarSystem->SetModifiedFlags( CVAR_ARCHIVE );
 	}
 	Common_MigrateLinuxLegacyLowVRamTexturePreset();

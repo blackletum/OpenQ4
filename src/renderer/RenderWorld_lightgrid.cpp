@@ -2367,6 +2367,10 @@ bool idRenderWorldLocal::EnsureLightGridAreaImages( int areaIndex ) {
 		return false;
 	}
 
+	if ( !tr.IsOpenGLRunning() ) {
+		return false;
+	}
+
 	LightGrid &lightGrid = portalAreas[areaIndex].lightGrid;
 	const int start = Sys_Milliseconds();
 	bool materializedPackedImage = false;
@@ -2697,6 +2701,7 @@ void idRenderWorldLocal::SetupLightGrid() {
 	idStr filename = mapName;
 	filename.SetFileExtension( "lightgridpack" );
 	if ( LoadLightGridPackFile( filename ) ) {
+		PreloadLightGridImages();
 		common->DPrintf( "LightGrid setup for %s used packed data in %.3fs\n", mapName.c_str(), ( Sys_Milliseconds() - setupStart ) * 0.001f );
 		return;
 	}
@@ -2711,6 +2716,7 @@ void idRenderWorldLocal::SetupLightGrid() {
 
 	if ( LoadLightGridFile( filename ) ) {
 		LoadLightGridImages();
+		PreloadLightGridImages();
 		common->DPrintf( "LightGrid setup for %s used loose metadata/images in %.3fs\n", mapName.c_str(), ( Sys_Milliseconds() - setupStart ) * 0.001f );
 		return;
 	}
@@ -2807,6 +2813,33 @@ void idRenderWorldLocal::LoadLightGridImages( bool forceReloadLoaded ) {
 	// even if tr.frameCount has not advanced (bake paths render inline)
 	lightGridAvailabilityFrame = -1;
 	common->DPrintf( "LightGrid image handles for %s: %i deferred handles in %.3fs\n", mapName.c_str(), handleCount, ( Sys_Milliseconds() - loadStart ) * 0.001f );
+}
+
+void idRenderWorldLocal::PreloadLightGridImages() {
+	if ( !tr.IsOpenGLRunning() ) {
+		return;
+	}
+
+	const int loadStart = Sys_Milliseconds();
+	int areaCount = 0;
+	int failedCount = 0;
+	for ( int i = 0; i < numPortalAreas; i++ ) {
+		if ( !portalAreas[i].lightGrid.IsUsable() ) {
+			continue;
+		}
+		areaCount++;
+		if ( !EnsureLightGridAreaImages( i ) ) {
+			failedCount++;
+		}
+	}
+
+	lightGridAvailabilityFrame = -1;
+	common->DPrintf(
+		"LightGrid preloaded %i/%i areas for %s in %.3fs\n",
+		areaCount - failedCount,
+		areaCount,
+		mapName.c_str(),
+		( Sys_Milliseconds() - loadStart ) * 0.001f );
 }
 
 bool idRenderWorldLocal::LoadLightGridFile( const char *name ) {

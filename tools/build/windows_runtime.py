@@ -3,11 +3,12 @@
 
 from __future__ import annotations
 
-import filecmp
 import os
 import shutil
 import struct
 from pathlib import Path
+
+from openq4_pak import copy_file_if_changed
 
 
 PRODUCT_NAME = "openQ4"
@@ -267,7 +268,7 @@ def stage_build_game_directory(source_root: Path, build_root: Path) -> dict[str,
     _copy_runtime_tree(build_generated_game_dir, build_runtime_game_dir, BUILD_GAME_GENERATED_IGNORE_PATTERNS)
     for build_game_pk4 in build_game_pk4s:
         if build_game_pk4.is_file():
-            shutil.copy2(build_game_pk4, build_runtime_game_dir / build_game_pk4.name)
+            copy_file_if_changed(build_game_pk4, build_runtime_game_dir / build_game_pk4.name)
 
     for path in build_runtime_game_dir.rglob("*"):
         if path.is_file():
@@ -292,10 +293,7 @@ def ensure_no_msvc_runtime_imports(root_dir: Path) -> dict[str, list[str]]:
 
 def _copy_file_if_changed(source_path: Path, target_dir: Path) -> Path | None:
     destination = target_dir / source_path.name
-    if destination.is_file() and filecmp.cmp(source_path, destination, shallow=False):
-        return None
-    shutil.copy2(source_path, destination)
-    return destination
+    return destination if copy_file_if_changed(source_path, destination) else None
 
 
 

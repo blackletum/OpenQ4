@@ -9,15 +9,18 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 RELEASE_TAG_RE = re.compile(r"^v(\d+\.\d+\.\d+)$")
+VERSION_TAG_RE = re.compile(r"^\d+\.\d+\.\d+$")
+REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
-def run_git(args: list[str]) -> str:
+def run_git(source_root: Path, args: list[str]) -> str:
     try:
         result = subprocess.run(
-            ["git", *args],
+            ["git", "-C", str(source_root), *args],
             check=True,
             text=True,
             capture_output=True,
@@ -35,15 +38,19 @@ def parse_tag_version(tag: str) -> tuple[int, int, int] | None:
     return tuple(int(part) for part in parts)
 
 
-def find_previous_release_tag(current_release_tag: str) -> str | None:
-    tags = run_git(["tag", "--list", "v*"])
+def find_previous_release_tag(source_root: Path, current_release_tag: str) -> str | None:
+    current_version = parse_tag_version(current_release_tag)
+    if current_version is None:
+        raise RuntimeError(f"invalid release tag: {current_release_tag!r}")
+
+    tags = run_git(source_root, ["tag", "--list", "v*"])
     release_tags: list[tuple[tuple[int, int, int], str]] = []
     for raw_tag in tags.splitlines():
         tag = raw_tag.strip()
         if not tag or tag == current_release_tag:
             continue
         version = parse_tag_version(tag)
-        if version is None:
+        if version is None or version >= current_version:
             continue
         release_tags.append((version, tag))
 
@@ -53,15 +60,20 @@ def find_previous_release_tag(current_release_tag: str) -> str | None:
     return release_tags[-1][1]
 
 
-def collect_commits(range_spec: str | None, max_count: int) -> list[tuple[str, str, str, str]]:
+def collect_commits(
+    source_root: Path,
+    range_spec: str | None,
+    max_count: int,
+) -> list[tuple[str, str, str, str]]:
+    if max_count <= 0:
+        return []
+
     pretty = "%H%x1f%h%x1f%ad%x1f%s"
-    args = ["log", "--no-merges", "--date=short", f"--pretty=format:{pretty}"]
+    args = ["log", "--no-merges", "--date=short", "-n", str(max_count), f"--pretty=format:{pretty}"]
     if range_spec:
         args.append(range_spec)
-    else:
-        args.extend(["-n", str(max_count)])
 
-    output = run_git(args)
+    output = run_git(source_root, args)
     commits: list[tuple[str, str, str, str]] = []
     if not output:
         return commits
@@ -73,6 +85,9 @@ def collect_commits(range_spec: str | None, max_count: int) -> list[tuple[str, s
 
 
 def select_highlights(commits: list[tuple[str, str, str, str]], max_items: int) -> list[str]:
+    if max_items <= 0:
+        return []
+
     seen: set[str] = set()
     highlights: list[str] = []
     for _, _, _, subject in commits:
@@ -119,6 +134,70 @@ def sanitize_release_notes_override(body: str, version_tag: str, release_tag: st
     return "\n".join(lines).strip()
 
 
+def normalize_release_text(value: str) -> str:
+    normalized = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", value)
+    normalized = re.sub(r"\s+", " ", normalized.replace("\r", " ").replace("\n", " "))
+    return normalized.strip()
+
+
+def escape_markdown_inline(value: str) -> str:
+    escaped = normalize_release_text(value).replace("\\", "\\\\")
+    for char in ("`", "*", "_", "[", "]", "(", ")", "|"):
+        escaped = escaped.replace(char, "\\" + char)
+    return escaped
+
+
+def escape_markdown_table_cell(value: str) -> str:
+    return escape_markdown_inline(value)
+
+
+def validate_repo_slug(repo: str) -> str:
+    normalized = repo.strip()
+    if REPO_SLUG_RE.fullmatch(normalized) is None:
+        raise RuntimeError(
+            "GitHub repository slug must be owner/name using only letters, digits, '.', '_', or '-'"
+        )
+    owner, name = normalized.split("/", 1)
+    if owner in {".", ".."} or name in {".", ".."} or ".." in owner or ".." in name:
+        raise RuntimeError(f"invalid GitHub repository slug: {repo!r}")
+    return normalized
+
+
+def validate_release_tag(release_tag: str) -> str:
+    normalized = release_tag.strip()
+    if RELEASE_TAG_RE.fullmatch(normalized) is None:
+        raise RuntimeError(f"release tag must look like v0.1.010, got: {release_tag!r}")
+    return normalized
+
+
+def validate_version_tag(version_tag: str) -> str:
+    normalized = version_tag.strip()
+    if VERSION_TAG_RE.fullmatch(normalized) is None:
+        raise RuntimeError(f"version tag must look like 0.1.010, got: {version_tag!r}")
+    return normalized
+
+
+def validate_optional_https_url(value: str, label: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        return ""
+
+    parsed = urlparse(normalized)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise RuntimeError(f"{label} must be an absolute https URL, got: {value!r}")
+    return normalized
+
+
+def non_negative_int(value: str) -> int:
+    try:
+        parsed = int(value, 10)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected a non-negative integer, got: {value!r}") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(f"expected a non-negative integer, got: {value!r}")
+    return parsed
+
+
 def build_release_header(
     *,
     version: str,
@@ -145,17 +224,17 @@ def build_release_header(
     lines.append("")
     lines.append("| Field | Value |")
     lines.append("| --- | --- |")
-    lines.append(f"| Version | `{version}` |")
-    lines.append(f"| Release tag | `{release_tag}` |")
+    lines.append(f"| Version | `{escape_markdown_table_cell(version)}` |")
+    lines.append(f"| Release tag | `{escape_markdown_table_cell(release_tag)}` |")
     lines.append(f"| Commit | [`{short_sha}`]({repo_url}/commit/{head_sha}) |")
-    lines.append(f"| Generated | `{generated_at}` |")
+    lines.append(f"| Generated | `{escape_markdown_table_cell(generated_at)}` |")
     if release_scale:
-        lines.append(f"| Release scale | `{release_scale}` |")
+        lines.append(f"| Release scale | `{escape_markdown_table_cell(release_scale)}` |")
     if release_reason:
-        lines.append(f"| Version decision | {release_reason} |")
+        lines.append(f"| Version decision | {escape_markdown_table_cell(release_reason)} |")
     if run_url:
         run_label = run_id if run_id else "Workflow run"
-        lines.append(f"| Workflow | [{run_label}]({run_url}) |")
+        lines.append(f"| Workflow | [{escape_markdown_inline(run_label)}]({run_url}) |")
     if previous_tag:
         lines.append(f"| Since | {previous_tag_link} ({compare_link}) |")
     lines.append("")
@@ -180,13 +259,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--run-url", default="", help="GitHub workflow run URL.")
     parser.add_argument(
         "--max-commits",
-        type=int,
+        type=non_negative_int,
         default=40,
         help="Maximum commits to include in the change log section (default: 40).",
     )
     parser.add_argument(
         "--max-highlights",
-        type=int,
+        type=non_negative_int,
         default=6,
         help="Maximum highlighted commits (default: 6).",
     )
@@ -197,36 +276,41 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
 
     source_root = Path(args.source_root).resolve()
-    repo_url = f"https://github.com/{args.repo}"
-    head_sha = run_git(["rev-parse", "HEAD"])
-    previous_tag = find_previous_release_tag(args.release_tag)
+    repo_slug = validate_repo_slug(args.repo)
+    version_tag = validate_version_tag(args.version_tag)
+    release_tag = validate_release_tag(args.release_tag)
+    run_url = validate_optional_https_url(args.run_url, "workflow run URL")
+
+    repo_url = f"https://github.com/{repo_slug}"
+    head_sha = run_git(source_root, ["rev-parse", "HEAD"])
+    previous_tag = find_previous_release_tag(source_root, release_tag)
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines = build_release_header(
         version=args.version,
-        version_tag=args.version_tag,
-        release_tag=args.release_tag,
+        version_tag=version_tag,
+        release_tag=release_tag,
         release_scale=args.release_scale,
         release_reason=args.release_reason,
         repo_url=repo_url,
         head_sha=head_sha,
         generated_at=generated_at,
         run_id=args.run_id,
-        run_url=args.run_url,
+        run_url=run_url,
         previous_tag=previous_tag,
     )
 
     release_notes_override = find_tracked_release_notes(
         source_root,
-        args.release_tag,
-        args.version_tag,
+        release_tag,
+        version_tag,
     )
     used_override = False
     if release_notes_override is not None:
         override_path = source_root / release_notes_override
         override_body = sanitize_release_notes_override(
             override_path.read_text(encoding="utf-8"),
-            args.version_tag,
-            args.release_tag,
+            version_tag,
+            release_tag,
         )
         if override_body:
             lines.extend(override_body.splitlines())
@@ -241,9 +325,9 @@ def main(argv: list[str]) -> int:
 
     if not used_override:
         commit_range = f"{previous_tag}..HEAD" if previous_tag else None
-        commits = collect_commits(commit_range, args.max_commits)
+        commits = collect_commits(source_root, commit_range, args.max_commits)
         if not commits:
-            commits = collect_commits(None, args.max_commits)
+            commits = collect_commits(source_root, None, args.max_commits)
 
         highlights = select_highlights(commits, args.max_highlights)
 
@@ -251,7 +335,7 @@ def main(argv: list[str]) -> int:
         lines.append("")
         if highlights:
             for subject in highlights:
-                lines.append(f"- {subject}")
+                lines.append(f"- {escape_markdown_inline(subject)}")
         else:
             lines.append("- Maintenance and release integration updates.")
         lines.append("")
@@ -261,7 +345,7 @@ def main(argv: list[str]) -> int:
         if commits:
             for full_sha, short, date, subject in commits[: args.max_commits]:
                 lines.append(
-                    f"- {subject} ([`{short}`]({repo_url}/commit/{full_sha}), {date})"
+                    f"- {escape_markdown_inline(subject)} ([`{short}`]({repo_url}/commit/{full_sha}), {date})"
                 )
         else:
             lines.append("- No commit metadata was available for this release.")

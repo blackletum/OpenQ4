@@ -292,6 +292,7 @@ public:
 	bool					WriteMD5R( bool compressed );
 	void					SetupLightGrid();
 	void					LoadLightGridImages( bool forceReloadLoaded = false );
+	void					PreloadLightGridImages();
 	bool					EnsureLightGridAreaImages( int areaIndex );
 	bool					AnyLightGridAvailable();
 	bool					LoadLightGridFile( const char *name );

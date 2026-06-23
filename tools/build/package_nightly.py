@@ -37,8 +37,10 @@ from openq4_pak import (
     OPENQ4_PACK_NAMES,
     OPENQ4_REQUIRED_LOOSE_GAME_FILES,
     PAK0_NAME,
+    copy_file_if_changed,
     copy_game_pk4,
     create_game_pk4 as create_openq4_game_pk4,
+    is_relative_to,
 )
 
 
@@ -266,6 +268,48 @@ def normalize_package_suffix(raw_suffix: str) -> str:
     return suffix
 
 
+def validate_package_path_token(value: str, label: str) -> str:
+    token = value.strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", token):
+        raise ValueError(f"{label} must be a file-name-safe token without slashes or spaces")
+    return token
+
+
+def resolve_package_root(output_dir: Path, package_stem: str) -> Path:
+    package_root = (output_dir / package_stem).resolve()
+    resolved_output_dir = output_dir.resolve()
+    if package_root == resolved_output_dir or not is_relative_to(package_root, resolved_output_dir):
+        raise ValueError(f"package root escapes output directory: {package_root}")
+    return package_root
+
+
+def copy_regular_file(source: Path, destination: Path) -> None:
+    if source.is_symlink():
+        raise RuntimeError(f"refusing to package symlinked file: {source}")
+    if not source.is_file():
+        raise FileNotFoundError(f"required package file not found: {source}")
+    copy_file_if_changed(source, destination)
+
+
+def copy_regular_tree(source_root: Path, destination_root: Path) -> None:
+    if source_root.is_symlink():
+        raise RuntimeError(f"refusing to package symlinked directory: {source_root}")
+    if not source_root.is_dir():
+        raise FileNotFoundError(f"required package directory not found: {source_root}")
+
+    for path in sorted(source_root.rglob("*")):
+        if path.is_symlink():
+            raise RuntimeError(f"refusing to package symlink from tree: {path}")
+        relative_path = path.relative_to(source_root)
+        destination = destination_root / relative_path
+        if path.is_dir():
+            destination.mkdir(parents=True, exist_ok=True)
+        elif path.is_file():
+            copy_regular_file(path, destination)
+        else:
+            raise RuntimeError(f"refusing to package non-regular file from tree: {path}")
+
+
 def get_required_root_binaries(platform: str, arch: str) -> tuple[str, str]:
     exe_ext = PLATFORM_EXECUTABLE_EXT[platform]
     return (
@@ -397,7 +441,12 @@ def parse_version_manifest_bytes(data: bytes, label: str) -> dict[str, str]:
         if "=" not in line:
             raise RuntimeError(f"{label} version manifest contains malformed line: {line!r}")
         key, value = line.split("=", 1)
-        values[key.strip()] = value.strip()
+        key = key.strip()
+        if key == "":
+            raise RuntimeError(f"{label} version manifest contains an empty key")
+        if key in values:
+            raise RuntimeError(f"{label} version manifest contains duplicate key: {key}")
+        values[key] = value.strip()
     return values
 
 
@@ -910,9 +959,7 @@ def copy_release_collateral(source_root: Path, package_root: Path) -> None:
     )
 
     for source, destination in collateral:
-        if not source.is_file():
-            raise FileNotFoundError(f"required release collateral not found: {source}")
-        shutil.copy2(source, destination)
+        copy_regular_file(source, destination)
 
 
 def generate_release_documentation(
@@ -949,7 +996,7 @@ def copy_required_binaries(
                 continue
             raise FileNotFoundError(f"required distributable not found: {source}")
         destination = package_root / filename
-        shutil.copy2(source, destination)
+        copy_regular_file(source, destination)
         if platform in ("linux", "macos"):
             ensure_posix_executable(destination)
 
@@ -983,7 +1030,7 @@ def copy_required_windows_runtime(
         )
 
     for source in runtime_files:
-        shutil.copy2(source, package_root / source.name)
+        copy_regular_file(source, package_root / source.name)
 
     if not runtime_files:
         if allow_missing_binaries:
@@ -1013,7 +1060,7 @@ def copy_required_game_binaries(
                 continue
             raise FileNotFoundError(f"required game module not found: {source}")
         destination = package_game_dir / filename
-        shutil.copy2(source, destination)
+        copy_regular_file(source, destination)
         if platform == "macos":
             ensure_posix_executable(destination)
 
@@ -1037,7 +1084,7 @@ def copy_required_windows_symbols(
                 missing_required.append(filename)
                 continue
             raise FileNotFoundError(f"required Windows diagnostic symbol not found: {source}")
-        shutil.copy2(source, package_root / filename)
+        copy_regular_file(source, package_root / filename)
 
     for filename in get_required_windows_game_symbols(arch):
         source = install_game_dir / filename
@@ -1046,7 +1093,7 @@ def copy_required_windows_symbols(
                 missing_required.append(f"{GAME_DIR_NAME}/{filename}")
                 continue
             raise FileNotFoundError(f"required Windows game diagnostic symbol not found: {source}")
-        shutil.copy2(source, package_game_dir / filename)
+        copy_regular_file(source, package_game_dir / filename)
 
     return missing_required
 
@@ -1068,7 +1115,7 @@ def copy_required_loose_game_files(
 
         destination = package_game_dir / Path(relative_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
+        copy_regular_file(source, destination)
 
     return missing_required
 
@@ -1111,7 +1158,7 @@ def create_release_archive(
     archive_format: str,
     executable_relative_paths: set[Path] | None = None,
 ) -> None:
-    if archive_path.exists():
+    if archive_path.exists() or archive_path.is_symlink():
         archive_path.unlink()
 
     symlinks = [path for path in package_root.rglob("*") if path.is_symlink()]
@@ -1141,7 +1188,8 @@ def create_release_archive(
                     mode = ((info.external_attr >> 16) | 0o100755) & 0o177777
                     info.external_attr = mode << 16
                     info.create_system = 3
-                archive.writestr(info, path.read_bytes(), compresslevel=9)
+                with path.open("rb") as source, archive.open(info, "w") as target:
+                    shutil.copyfileobj(source, target, length=1024 * 1024)
         return
 
     mode = {"tar.gz": "w:gz", "tar.xz": "w:xz"}[archive_format]
@@ -1527,7 +1575,7 @@ def copy_optional_share_tree(platform: str, install_dir: Path, package_root: Pat
         return False
 
     share_dest = package_root / "share"
-    shutil.copytree(share_source, share_dest, dirs_exist_ok=True)
+    copy_regular_tree(share_source, share_dest)
     return True
 
 
@@ -1540,7 +1588,7 @@ def copy_optional_linux_launchers(install_dir: Path, package_root: Path) -> list
             continue
 
         destination = package_root / filename
-        shutil.copy2(source, destination)
+        copy_regular_file(source, destination)
         os.chmod(destination, 0o755)
         copied.append(filename)
 
@@ -1692,7 +1740,7 @@ def create_macos_app_bundle(
         raise RuntimeError(f"macOS client binary is missing before app bundle creation: {client_binary}")
 
     app_executable = app_macos / "openQ4"
-    shutil.copy2(client_binary, app_executable)
+    copy_regular_file(client_binary, app_executable)
     os.chmod(app_executable, 0o755)
 
     icns_candidates = [
@@ -1701,7 +1749,7 @@ def create_macos_app_bundle(
     ]
     for icns_source in icns_candidates:
         if icns_source.is_file():
-            shutil.copy2(icns_source, app_resources / "openQ4.icns")
+            copy_regular_file(icns_source, app_resources / "openQ4.icns")
             break
 
     info_plist = app_contents / "Info.plist"
@@ -1788,12 +1836,17 @@ def main(argv: list[str]) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
+        version_tag = validate_package_path_token(args.version_tag, "version tag")
         package_suffix = normalize_package_suffix(args.package_suffix)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    package_stem = f"openq4-{args.version_tag}-{args.platform}-{args.arch}{package_suffix}"
-    package_root = output_dir / package_stem
+    package_stem = f"openq4-{version_tag}-{args.platform}-{args.arch}{package_suffix}"
+    try:
+        package_root = resolve_package_root(output_dir, package_stem)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     if package_root.exists():
         shutil.rmtree(package_root)
     package_root.mkdir(parents=True, exist_ok=True)
@@ -1821,7 +1874,7 @@ def main(argv: list[str]) -> int:
     write_version_manifest(
         package_root / "VERSION.txt",
         version=args.version,
-        version_tag=args.version_tag,
+        version_tag=version_tag,
         platform=args.platform,
         arch=args.arch,
     )
@@ -1919,7 +1972,7 @@ def main(argv: list[str]) -> int:
             install_dir,
             args.arch,
             args.version,
-            args.version_tag,
+            version_tag,
         )
         try:
             validate_no_package_symlinks(package_root)
@@ -1929,7 +1982,7 @@ def main(argv: list[str]) -> int:
             validate_no_macos_forbidden_xattrs(package_root)
             macos_signing = resolve_macos_signing_config(args)
             sign_macos_payload(package_root, args.arch, macos_signing)
-            validate_macos_version_manifests(package_root, args.arch, args.version, args.version_tag)
+            validate_macos_version_manifests(package_root, args.arch, args.version, version_tag)
             validate_macos_localized_info_files(package_root, args.version)
             validate_macos_app_bundle(package_root, macos_app_bundle, args.arch, args.version)
             validate_macos_binary_dependencies(package_root, args.arch)

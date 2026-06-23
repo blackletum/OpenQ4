@@ -622,6 +622,38 @@ def require_markdown_module() -> Any:
     return markdown_lib
 
 
+def is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def validate_output_root(source_root: Path, output_root: Path) -> None:
+    source_root = source_root.resolve()
+    output_root = output_root.resolve()
+    output_anchor = Path(output_root.anchor).resolve()
+
+    if output_root == output_anchor:
+        raise RuntimeError(f"refusing to replace filesystem root while generating docs: {output_root}")
+    if output_root == source_root or is_relative_to(source_root, output_root):
+        raise RuntimeError(
+            "refusing to generate release docs into the source root or one of its parent directories: "
+            f"{output_root}"
+        )
+    if is_relative_to(output_root, source_root):
+        relative = output_root.relative_to(source_root)
+        first_part = relative.parts[0] if relative.parts else ""
+        if first_part not in {".tmp", ".install"} and not first_part.startswith("builddir"):
+            raise RuntimeError(
+                "refusing to replace a source-controlled repository directory while generating docs: "
+                f"{output_root}"
+            )
+    if output_root.exists() and not output_root.is_dir():
+        raise RuntimeError(f"release docs output path exists but is not a directory: {output_root}")
+
+
 def collect_doc_sources(source_root: Path) -> list[Path]:
     docs: list[Path] = []
     seen: set[str] = set()
@@ -1114,8 +1146,14 @@ def generate_release_docs_site(
     platform: str,
     arch: str,
 ) -> GeneratedDocSite:
+    source_root = source_root.resolve()
+    output_root = output_root.resolve()
+    validate_output_root(source_root, output_root)
+
     markdown_lib = require_markdown_module()
     specs = build_doc_specs(source_root)
+    if not specs:
+        raise RuntimeError(f"no Markdown documentation sources were found under {source_root}")
 
     if output_root.exists():
         shutil.rmtree(output_root)

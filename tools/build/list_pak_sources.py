@@ -6,7 +6,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from openq4_pak import _iter_pk4_entries
+from openq4_pak import _iter_pk4_entries, require_directory_inside
 
 
 def normalize(path: str) -> str:
@@ -21,10 +21,10 @@ def main(argv: list[str]) -> int:
     source_root = Path(argv[1]).resolve()
     pak_name = argv[2].strip()
     subdir = normalize(argv[3])
-    content_root = (source_root / subdir).resolve()
-
-    if not content_root.is_dir():
-        print(f"error: pack source directory not found: {content_root}", file=sys.stderr)
+    try:
+        content_root = require_directory_inside(source_root / subdir, source_root, "pack source")
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
 
     try:

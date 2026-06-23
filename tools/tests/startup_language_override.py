@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Regression checks for startup language override ordering."""
 
+import re
 from pathlib import Path
 
 
@@ -19,6 +20,11 @@ def require(haystack: str, needle: str, context: str) -> None:
 def reject(haystack: str, needle: str, context: str) -> None:
     if needle in haystack:
         raise AssertionError(f"Unexpected {needle!r} in {context}")
+
+
+def require_regex(haystack: str, pattern: str, context: str) -> None:
+    if re.search(pattern, haystack) is None:
+        raise AssertionError(f"Missing pattern {pattern!r} in {context}")
 
 
 def function_body(source: str, signature: str) -> str:
@@ -50,38 +56,48 @@ def require_order(haystack: str, first: str, second: str, context: str) -> None:
 
 def validate_language_reload_contract() -> None:
     source = read("src/framework/Common.cpp")
-    init_language = function_body(source, "void idCommonLocal::InitLanguageDict( bool applyStartupSysLang ) {")
+    init_language = function_body(source, "void idCommonLocal::InitLanguageDict( bool applyStartupSysLang, bool allowAutoLanguageSelect ) {")
     reload_command = function_body(source, "void Com_ReloadLanguage_f( const idCmdArgs &args ) {")
     init_game = function_body(source, "void idCommonLocal::InitGame( void ) {")
 
-    require(source, "void\t\t\t\t\t\tInitLanguageDict( bool applyStartupSysLang );", "Common language helper declaration")
+    require_regex(
+        source,
+        r"void\s+InitLanguageDict\s*\(\s*bool\s+applyStartupSysLang\s*,\s*bool\s+allowAutoLanguageSelect\s*\)\s*;",
+        "Common language helper declaration",
+    )
     require(init_language, "if ( applyStartupSysLang ) {", "conditional startup sys_lang replay")
     require(init_language, 'StartupVariable( "sys_lang", false );', "early startup sys_lang replay")
+    require(init_language, "fileSystem->ListAvailableLanguagePacks( availableLanguagePacks );", "language pack availability discovery")
+    require(init_language, "const bool hasStartupSysLang = Common_HasStartupVariable( \"sys_lang\" );", "explicit startup sys_lang detection")
+    require(init_language, "Common_ResolveLanguageSelection(", "language pack constrained resolver")
+    require(init_language, "allowAutoLanguageSelect && !hasStartupSysLang", "OS language preference only when startup sys_lang is not explicit")
     require(reload_command, "const bool wasFileLoadingAllowed = fileSystem->GetIsFileLoadingAllowed();", "interactive reloadLanguage preserves file-loading flag")
     require(reload_command, "fileSystem->SetIsFileLoadingAllowed( true );", "interactive reloadLanguage enables file loading")
-    require(reload_command, "commonLocal.InitLanguageDict( false );", "interactive reloadLanguage preserves current sys_lang")
+    require(reload_command, "commonLocal.InitLanguageDict( false, false );", "interactive reloadLanguage preserves current sys_lang")
     require(reload_command, "fileSystem->SetIsFileLoadingAllowed( wasFileLoadingAllowed );", "interactive reloadLanguage restores file-loading flag")
     reject(reload_command, "StartupVariable", "interactive reloadLanguage should not replay launch sys_lang")
 
-    require(init_game, "InitLanguageDict( true );", "early startup language load")
+    require(init_game, "const bool allowStartupLanguageAutoSelect = sysDetect && !Common_HasStartupVariable( \"sys_lang\" );", "first-run language auto-select gate")
+    require(init_game, "InitLanguageDict( true, allowStartupLanguageAutoSelect );", "early startup language load")
     require(init_game, "exec autoexec.cfg", "startup autoexec execution")
     require(init_game, "cmdSystem->ExecuteCommandBuffer();", "startup cfg command execution")
     require(init_game, "StartupVariable( NULL, false );", "startup command-line cvar reapply")
     require(init_game, "const bool wasFileLoadingAllowed = fileSystem->GetIsFileLoadingAllowed();", "startup final language reload preserves file-loading flag")
     require(init_game, "fileSystem->SetIsFileLoadingAllowed( true );", "startup final language reload enables file loading")
-    require(init_game, "InitLanguageDict( false );", "settled startup language reload")
+    require(init_game, "InitLanguageDict( false, false );", "settled startup language reload")
     require(init_game, "fileSystem->SetIsFileLoadingAllowed( wasFileLoadingAllowed );", "startup final language reload restores file-loading flag")
+    require(init_game, "repairedUnsetMachineSpec || startupLanguageAutoSelected", "auto-selected startup language persists to config")
     reject(
         init_game,
         'cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "reloadLanguage\\n" );',
         "startup language reload should happen after command-line reapply",
     )
-    require_order(init_game, "InitLanguageDict( true );", "exec autoexec.cfg", "early language load before cfg files")
+    require_order(init_game, "InitLanguageDict( true, allowStartupLanguageAutoSelect );", "exec autoexec.cfg", "early language load before cfg files")
     require_order(init_game, "exec autoexec.cfg", "cmdSystem->ExecuteCommandBuffer();", "cfg files before execution")
     require_order(init_game, "cmdSystem->ExecuteCommandBuffer();", "StartupVariable( NULL, false );", "cfg execution before command-line reapply")
-    require_order(init_game, "StartupVariable( NULL, false );", "InitLanguageDict( false );", "command-line reapply before final language reload")
-    require_order(init_game, "fileSystem->SetIsFileLoadingAllowed( true );", "InitLanguageDict( false );", "file loading enabled before final language reload")
-    require_order(init_game, "InitLanguageDict( false );", "fileSystem->SetIsFileLoadingAllowed( wasFileLoadingAllowed );", "file-loading flag restored after final language reload")
+    require_order(init_game, "StartupVariable( NULL, false );", "InitLanguageDict( false, false );", "command-line reapply before final language reload")
+    require_order(init_game, "fileSystem->SetIsFileLoadingAllowed( true );", "InitLanguageDict( false, false );", "file loading enabled before final language reload")
+    require_order(init_game, "InitLanguageDict( false, false );", "fileSystem->SetIsFileLoadingAllowed( wasFileLoadingAllowed );", "file-loading flag restored after final language reload")
 
 
 def validate_ci_smoke() -> None:

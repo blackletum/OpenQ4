@@ -195,6 +195,8 @@ public:
 	virtual idFileList *	ListFilesTree( const char *relativePath, const char *extension, bool sort = false, const char* gamedir = NULL ) = 0;
 							// Frees the given file list.
 	virtual void			FreeFileList( idFileList *fileList ) = 0;
+							// Lists retail zpak_<language>.pk4 language packs that are available from q4base search paths.
+	virtual void			ListAvailableLanguagePacks( idStrList &languages ) = 0;
 							// Converts a relative path to a full OS path.
 	virtual const char *	OSPathToRelativePath( const char *OSPath ) = 0;
 							// Converts a full OS path to a relative path.

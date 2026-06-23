@@ -1247,10 +1247,10 @@
       "accessibility": "Slider with paired edit field."
     },
     {
-      "id": "system.renderer_backend",
+      "id": "system.renderer_fallback",
       "pane": "System",
-      "section": "Video Basics",
-      "path": "Settings > System > Video Basics > Renderer Backend",
+      "section": "Post Effects",
+      "path": "Settings > System > Post Effects > Renderer Fallback",
       "source": "system",
       "container": "set_sys_vidqual",
       "widgets": [
@@ -1261,19 +1261,13 @@
       "choices_key": "#str_41104",
       "values": [
         "best",
-        "arb",
-        "arb2",
-        "Cg",
-        "exp",
-        "nv10",
-        "nv20",
-        "r200"
+        "arb2"
       ],
       "target_type": "cvar",
       "target": "r_renderer",
       "default": "best",
       "restart_required": true,
-      "accessibility": "Standard focusable choiceDef row."
+      "accessibility": "Advanced compatibility choice with only the automatic path and explicit ARB2 rollback exposed."
     },
     {
       "id": "system.screen_size",

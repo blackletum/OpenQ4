@@ -65,7 +65,7 @@ The tables below are synthesized from the settings GUI source files, the hover G
 
 | Menu path | Setting | Widget | Bound cvar or state | UI range or choices | Cvar bounds status | Localization key | Notes |
 |---|---|---|---|---|---|---|---|
-| Settings → Display → Screen | Renderer Backend | choice | `r_renderer` | `best, arb, arb2, Cg, exp, nv10, nv20, r200` | Repo-verified choices only; explicit numeric bounds not applicable | `#str_41103` / `#str_41104` | Legacy backend selector; likely advanced-only for modern users |
+| Settings → Display → Advanced Rendering | Renderer Fallback | choice | `r_renderer` | `best, arb2` | Repo-verified player-facing choices; legacy console/config values are still accepted and fall back to ARB2 | `#str_41103` / `#str_41104` | Compatibility rollback selector; no longer advertises removed ARB/NV/R200/Cg/EXP backends |
 | Settings → Display → Screen | Screen Size | choice | `r_mode` | dynamic per aspect bucket | Doc-only; tied to available modes | `#str_200145` | Resolution list is aspect-bucketed |
 | Settings → Display → Screen | Aspect Ratio | choice | GUI state `r_aspectRatio` | `Other, 16:9, 16:10` | **Mismatch**; docs say deprecated/ignored | `#str_200974` | UI should be removed or replaced |
 | Settings → Display → Screen | Fullscreen | choice | `r_fullscreen` | Yes/No | Repo-verified boolean | `#str_200147` | Good direct binding |

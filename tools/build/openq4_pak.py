@@ -105,6 +105,77 @@ def _replace_file_if_changed(source: Path, destination: Path) -> None:
     os.replace(source, destination)
 
 
+def is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def require_directory_inside(path: Path, parent: Path, label: str) -> Path:
+    resolved_path = path.resolve()
+    resolved_parent = parent.resolve()
+    if not resolved_path.is_dir():
+        raise RuntimeError(f"{label} directory not found: {resolved_path}")
+    if not is_relative_to(resolved_path, resolved_parent):
+        raise RuntimeError(f"{label} directory must stay under {resolved_parent}: {resolved_path}")
+    return resolved_path
+
+
+def validate_pk4_arcname(name: str, pak_name: str, seen_names: set[str] | None = None) -> str:
+    normalized = name.replace("\\", "/")
+    raw_parts = normalized.split("/")
+    parts = tuple(part for part in raw_parts if part != "")
+    first_part = parts[0] if parts else ""
+    if (
+        normalized != name
+        or normalized.startswith("/")
+        or normalized.startswith("../")
+        or "/../" in f"/{normalized}/"
+        or "" in raw_parts
+        or ":" in first_part
+        or not parts
+        or any(part in (".", "..") for part in parts)
+    ):
+        raise RuntimeError(f"{pak_name} contains unsafe archive path: {name}")
+
+    canonical = "/".join(parts)
+    if seen_names is not None:
+        key = canonical.lower()
+        if key in seen_names:
+            raise RuntimeError(f"{pak_name} contains duplicate archive path: {canonical}")
+        seen_names.add(key)
+    return canonical
+
+
+def copy_file_if_changed(source: Path, destination: Path) -> bool:
+    source = source.resolve()
+    if not source.is_file() or source.is_symlink():
+        raise RuntimeError(f"refusing to copy non-regular source file: {source}")
+    if destination.is_symlink():
+        destination.unlink()
+    if destination.is_file() and filecmp.cmp(source, destination, shallow=False):
+        return False
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        prefix=destination.name + ".",
+        suffix=".tmp",
+        dir=destination.parent,
+        delete=False,
+    ) as tmp_handle:
+        tmp_path = Path(tmp_handle.name)
+
+    try:
+        shutil.copy2(source, tmp_path)
+        os.replace(tmp_path, destination)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+    return True
+
+
 def _should_skip_pk4_entry(relative_path: Path) -> bool:
     rel_parts_lower = {part.lower() for part in relative_path.parts}
     rel_posix_lower = relative_path.as_posix().lower()
@@ -140,6 +211,9 @@ def _iter_pk4_entries(source_dir: Path, pak_name: str) -> tuple[list[tuple[Path,
     entries: list[tuple[Path, str]] = []
     skipped_samples: list[str] = []
 
+    if not source_dir.is_dir():
+        raise RuntimeError(f"{pak_name} source directory not found: {source_dir}")
+
     for path in sorted(source_dir.rglob("*"), key=lambda item: item.relative_to(source_dir).as_posix().lower()):
         rel = path.relative_to(source_dir)
         if path.is_symlink():
@@ -147,7 +221,7 @@ def _iter_pk4_entries(source_dir: Path, pak_name: str) -> tuple[list[tuple[Path,
         if not path.is_file():
             continue
 
-        rel_posix = rel.as_posix()
+        rel_posix = validate_pk4_arcname(rel.as_posix(), pak_name)
         rel_posix_lower = rel_posix.lower()
 
         if rel_posix_lower in OPENQ4_PK4_FORBIDDEN_FILES:
@@ -167,6 +241,8 @@ def _iter_pk4_entries(source_dir: Path, pak_name: str) -> tuple[list[tuple[Path,
 
 
 def format_pk4_source_manifest(source_root: Path, source_dir: Path, pak_name: str) -> str:
+    source_root = source_root.resolve()
+    source_dir = require_directory_inside(source_dir, source_root, "pack source")
     entries, _skipped_samples = _iter_pk4_entries(source_dir, pak_name)
     lines = [
         "# openQ4 PK4 source manifest",
@@ -207,7 +283,8 @@ def _write_deterministic_zip(
                 info = ZipInfo(arcname, date_time=DETERMINISTIC_ZIP_TIMESTAMP)
                 info.compress_type = ZIP_DEFLATED
                 info.external_attr = 0o644 << 16
-                pk4.writestr(info, path.read_bytes())
+                with path.open("rb") as source, pk4.open(info, "w") as target:
+                    shutil.copyfileobj(source, target, length=1024 * 1024)
                 added_paths.add(arcname.lower())
 
         missing_required = sorted(
@@ -257,11 +334,15 @@ def inspect_game_pk4(
     required_files = required_files if required_files is not None else required_files_for_pack(pak_name)
 
     with ZipFile(pk4_path, "r") as pk4:
-        names = [
-            info.filename
-            for info in pk4.infolist()
-            if not info.is_dir()
-        ]
+        names = []
+        seen_names: set[str] = set()
+        for info in pk4.infolist():
+            if info.is_dir():
+                continue
+            mode_type = (info.external_attr >> 16) & 0o170000
+            if mode_type not in (0, 0o100000):
+                raise RuntimeError(f"{pak_name} contains non-regular archive entry: {info.filename}")
+            names.append(validate_pk4_arcname(info.filename, pak_name, seen_names))
 
     lower_names = {name.lower() for name in names}
     forbidden = sorted(lower_names & OPENQ4_PK4_FORBIDDEN_FILES)
@@ -291,6 +372,5 @@ def copy_game_pk4(
     pak_name: str | None = None,
     required_files: set[str] | None = None,
 ) -> Pk4BuildResult:
-    destination_pk4.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source_pk4, destination_pk4)
+    copy_file_if_changed(source_pk4, destination_pk4)
     return inspect_game_pk4(destination_pk4, pak_name=pak_name, required_files=required_files)

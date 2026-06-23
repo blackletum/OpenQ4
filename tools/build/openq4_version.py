@@ -130,6 +130,13 @@ def resolve_auto_iteration_date(auto_iteration_date: str) -> str:
             "auto iteration date must be YYYYMMDD, "
             f"got: {normalized!r}"
         )
+    try:
+        datetime.strptime(normalized, "%Y%m%d")
+    except ValueError as exc:
+        raise SystemExit(
+            "auto iteration date must be a real UTC calendar date, "
+            f"got: {normalized!r}"
+        ) from exc
     return normalized
 
 
@@ -152,18 +159,22 @@ def compute_auto_iteration(source_root: Path, base_version: str, track: str, aut
         raise SystemExit("auto iteration is only valid for prerelease tracks")
 
     date_stamp = resolve_auto_iteration_date(auto_iteration_date)
-    tag_prefix = f"{track}-{base_version}-{track}.{date_stamp}."
     tag_glob = f"{track}-{base_version}-{track}.{date_stamp}*"
+    tag_pattern = re.compile(
+        rf"^{re.escape(track)}-{re.escape(base_version)}-"
+        rf"{re.escape(track)}\.{re.escape(date_stamp)}\.(\d+)$"
+    )
     matching_tags = run_git(source_root, "tag", "--list", tag_glob)
 
-    published_build_count = 0
+    highest_published_build = 0
     for raw_tag in matching_tags.splitlines():
         tag = raw_tag.strip()
-        if not tag or not tag.startswith(tag_prefix):
+        match = tag_pattern.fullmatch(tag)
+        if match is None:
             continue
-        published_build_count += 1
+        highest_published_build = max(highest_published_build, int(match.group(1)))
 
-    return f"{date_stamp}.{published_build_count + 1}"
+    return f"{date_stamp}.{highest_published_build + 1}"
 
 
 def detect_git_metadata(source_root: Path) -> tuple[str, bool, int]:

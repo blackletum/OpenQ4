@@ -4,12 +4,10 @@
 from __future__ import annotations
 
 import argparse
-import filecmp
-import shutil
 import sys
 from pathlib import Path
 
-from openq4_pak import OPENQ4_PACK_NAMES, create_game_pk4
+from openq4_pak import OPENQ4_PACK_NAMES, copy_file_if_changed, create_game_pk4
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -31,10 +29,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def copy_if_changed(source: Path, destination: Path) -> None:
-    if destination.is_file() and filecmp.cmp(source, destination, shallow=False):
-        return
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, destination)
+    copy_file_if_changed(source, destination)
 
 
 def main(argv: list[str]) -> int:

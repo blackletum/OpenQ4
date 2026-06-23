@@ -1172,7 +1172,7 @@ def validate_packaging_and_release_contract() -> None:
     require(validator, "MACOS_LIPO_ARCHES", "macOS staged architecture validation")
     require(validator, "validate_no_macos_symlinks", "macOS staged symlink validation")
     require(validator, "validate_no_macos_unsafe_file_modes", "macOS staged mode validation")
-    require(validator, "macOS staged payload contains symlink entries", "macOS staged symlink validation")
+    require(validator, "Staged payload contains symlink entries", "cross-platform staged symlink validation")
     require(validator, "macOS staged payload contains unsafe file modes", "macOS staged mode validation")
     require(validator, "stale or mismatched game modules", "macOS staged stale module validation")
     require(validator, "validate_macos_binary_architectures", "macOS staged architecture validation")
