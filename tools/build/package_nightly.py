@@ -664,6 +664,38 @@ def macos_signable_targets(package_root: Path, arch: str) -> list[Path]:
     ]
 
 
+def macos_game_module_install_names(package_root: Path, arch: str) -> dict[Path, str]:
+    return {
+        package_root / GAME_DIR_NAME / f"game-sp_{arch}.dylib": f"@loader_path/game-sp_{arch}.dylib",
+        package_root / GAME_DIR_NAME / f"game-mp_{arch}.dylib": f"@loader_path/game-mp_{arch}.dylib",
+    }
+
+
+def normalize_macos_game_module_install_names(package_root: Path, arch: str) -> None:
+    if sys.platform != "darwin":
+        return
+
+    pending_updates: list[tuple[Path, str]] = []
+    for binary_path, expected_install_name in macos_game_module_install_names(package_root, arch).items():
+        require_packaged_executable(binary_path, "macOS game module install-name normalization binary")
+        actual_install_name = macos_otool_install_name(binary_path)
+        if actual_install_name != expected_install_name:
+            pending_updates.append((binary_path, expected_install_name))
+
+    if not pending_updates:
+        return
+
+    install_name_tool_path = shutil.which("install_name_tool")
+    if install_name_tool_path is None:
+        raise RuntimeError("macOS install-name normalization requires install_name_tool")
+
+    for binary_path, expected_install_name in pending_updates:
+        run_macos_command(
+            [install_name_tool_path, "-id", expected_install_name, str(binary_path)],
+            label=f"setting macOS game module install name for {binary_path}",
+        )
+
+
 def macos_codesign_target(codesign_path: str, target: Path, config: MacOSSigningConfig) -> None:
     command = [
         codesign_path,
@@ -1553,10 +1585,7 @@ def validate_macos_binary_dependencies(package_root: Path, arch: str) -> None:
                 f"macOS binary has unbundled non-system dependencies: {binary_path}: {joined}"
             )
 
-    expected_install_names = {
-        package_root / GAME_DIR_NAME / f"game-sp_{arch}.dylib": f"@loader_path/game-sp_{arch}.dylib",
-        package_root / GAME_DIR_NAME / f"game-mp_{arch}.dylib": f"@loader_path/game-mp_{arch}.dylib",
-    }
+    expected_install_names = macos_game_module_install_names(package_root, arch)
     for binary_path, expected_install_name in expected_install_names.items():
         actual_install_name = macos_otool_install_name(binary_path)
         if actual_install_name != expected_install_name:
@@ -1980,6 +2009,7 @@ def main(argv: list[str]) -> int:
             validate_macos_package_file_modes(package_root)
             strip_macos_forbidden_xattrs(package_root)
             validate_no_macos_forbidden_xattrs(package_root)
+            normalize_macos_game_module_install_names(package_root, args.arch)
             macos_signing = resolve_macos_signing_config(args)
             sign_macos_payload(package_root, args.arch, macos_signing)
             validate_macos_version_manifests(package_root, args.arch, args.version, version_tag)

@@ -780,6 +780,71 @@ def validate_macos_signing_preserves_client_app_match_runtime() -> None:
         shutil.rmtree(work, ignore_errors=True)
 
 
+def validate_macos_install_name_normalization_runtime() -> None:
+    package = load_package_module()
+    work = ROOT / ".tmp" / "macos-install-name-contract"
+    package_root = work / "openq4-v0.2.000-macos-arm64-opengl"
+    arch = "arm64"
+
+    original_platform = package.sys.platform
+    original_which = package.shutil.which
+    original_otool_install_name = package.macos_otool_install_name
+    original_run_macos_command = package.run_macos_command
+
+    shutil.rmtree(work, ignore_errors=True)
+    try:
+        sp_module = package_root / package.GAME_DIR_NAME / f"game-sp_{arch}.dylib"
+        mp_module = package_root / package.GAME_DIR_NAME / f"game-mp_{arch}.dylib"
+        write_test_file(sp_module, b"sp\n", 0o755)
+        write_test_file(mp_module, b"mp\n", 0o755)
+
+        install_names = {
+            sp_module: "/tmp/openq4/.install/baseoq4/game-sp_arm64.dylib",
+            mp_module: f"@loader_path/game-mp_{arch}.dylib",
+        }
+        calls = []
+
+        def fake_which(tool_name):
+            if tool_name == "install_name_tool":
+                return "/usr/bin/install_name_tool"
+            return original_which(tool_name)
+
+        def fake_otool_install_name(binary_path):
+            return install_names[Path(binary_path)]
+
+        def fake_run_macos_command(command, *, label):
+            calls.append((command, label))
+            install_names[Path(command[3])] = command[2]
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        package.sys.platform = "darwin"
+        package.shutil.which = fake_which
+        package.macos_otool_install_name = fake_otool_install_name
+        package.run_macos_command = fake_run_macos_command
+        package.normalize_macos_game_module_install_names(package_root, arch)
+
+        expected_call = (
+            [
+                "/usr/bin/install_name_tool",
+                "-id",
+                f"@loader_path/game-sp_{arch}.dylib",
+                str(sp_module),
+            ],
+            f"setting macOS game module install name for {sp_module}",
+        )
+        if calls != [expected_call]:
+            raise AssertionError(f"Unexpected macOS install-name normalization calls: {calls!r}")
+        expected_install_names = package.macos_game_module_install_names(package_root, arch)
+        if install_names != expected_install_names:
+            raise AssertionError(f"macOS game module install names were not normalized: {install_names!r}")
+    finally:
+        package.sys.platform = original_platform
+        package.shutil.which = original_which
+        package.macos_otool_install_name = original_otool_install_name
+        package.run_macos_command = original_run_macos_command
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def validate_macos_pk4_symlink_guard_runtime() -> None:
     if not hasattr(os, "symlink"):
         return
@@ -1062,6 +1127,15 @@ def validate_packaging_and_release_contract() -> None:
     require(package, "MACOS_ALLOWED_RUNTIME_DEPENDENCY_PREFIXES", "macOS binary dependency validation")
     require(package, "macos_otool_dependencies", "macOS binary dependency validation")
     require(package, "macos_otool_install_name", "macOS game module install-name validation")
+    require(package, "normalize_macos_game_module_install_names", "macOS game module install-name normalization")
+    require(package, "install_name_tool", "macOS game module install-name normalization")
+    require(package, "setting macOS game module install name", "macOS game module install-name normalization")
+    require_before(
+        package,
+        "normalize_macos_game_module_install_names(package_root, args.arch)",
+        "sign_macos_payload(package_root, args.arch, macos_signing)",
+        "macOS install-name normalization before signing",
+    )
     require(package, "validate_macos_binary_dependencies", "macOS binary dependency validation")
     require(package, "otool_path, \"-L\"", "macOS binary dependency validation")
     require(package, "otool_path, \"-D\"", "macOS game module install-name validation")
@@ -1489,6 +1563,7 @@ def main() -> None:
     validate_macos_archive_validator_runtime()
     validate_macos_signing_config_runtime()
     validate_macos_signing_preserves_client_app_match_runtime()
+    validate_macos_install_name_normalization_runtime()
     validate_macos_pk4_symlink_guard_runtime()
     validate_legacy_macos_plist_runtime()
     validate_macos_staged_payload_validator_runtime()
