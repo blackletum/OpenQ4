@@ -15,7 +15,7 @@ if build_games and build_game_sp
       install_dir: install_game_dir,
     )
   elif host_system == 'darwin'
-    shared_module(
+    shared_library(
       game_sp_binary_name,
       game_sources,
       include_directories: game_include_dirs,
@@ -63,7 +63,7 @@ if build_games and build_game_mp
       install_dir: install_game_dir,
     )
   elif host_system == 'darwin'
-    shared_module(
+    shared_library(
       game_mp_binary_name,
       game_sources,
       include_directories: game_include_dirs,

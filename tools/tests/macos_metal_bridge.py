@@ -975,6 +975,8 @@ def validate_meson_contract() -> None:
     require(meson, "'macOS OpenAL provider': macos_openal_provider", "Meson summary")
 
     require(baseoq4_meson, "elif host_system == 'darwin'", "macOS game module source branch")
+    require(baseoq4_meson, "shared_library(\n      game_sp_binary_name,", "macOS SP game module dylib target type")
+    require(baseoq4_meson, "shared_library(\n      game_mp_binary_name,", "macOS MP game module dylib target type")
     require(baseoq4_meson, "name_suffix: 'dylib'", "macOS game module dylib suffix")
     require(baseoq4_meson, "-Wl,-install_name,@loader_path/", "macOS game module install name")
 
