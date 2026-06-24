@@ -19,6 +19,16 @@ static const int RENDERER_UPLOAD_POOL_MAX_TOTAL_BYTES = 32 << 20;
 
 static idUploadManager rg_uploadManager;
 
+static void R_RendererUpload_DeleteBufferName( unsigned int &vbo ) {
+	if ( vbo == 0 ) {
+		return;
+	}
+	if ( glDeleteBuffersARB != NULL ) {
+		glDeleteBuffersARB( 1, &vbo );
+	}
+	vbo = 0;
+}
+
 idBufferAllocator::idBufferAllocator()
 	: pooledBytes( 0 )
 	, capacityBytes( 0 )
@@ -66,7 +76,7 @@ void idBufferAllocator::DrainPool( void ) {
 	for ( int i = 0; i < 2; i++ ) {
 		for ( int j = 0; j < pooledNames[i].Num(); j++ ) {
 			unsigned int vbo = pooledNames[i][j];
-			glDeleteBuffersARB( 1, &vbo );
+			R_RendererUpload_DeleteBufferName( vbo );
 			deletedAny = true;
 		}
 		pooledNames[i].SetNum( 0, false );
@@ -154,7 +164,7 @@ void idBufferAllocator::FreeStaticBuffer( unsigned int &vbo, int bytes, bool ind
 		pooledBytes += bytes;
 		vbo = 0;
 	} else {
-		glDeleteBuffersARB( 1, &vbo );
+		R_RendererUpload_DeleteBufferName( vbo );
 		// deleting a bound buffer implicitly unbinds the name from EVERY
 		// target it is bound to, so invalidate both modern shadows (matches
 		// DrainPool; the legacy call already covers both legacy shadows)
@@ -347,13 +357,17 @@ void idUploadManager::Init( const renderBackendCaps_t &caps ) {
 			requestedPath = UPLOAD_PATH_SUBDATA;
 		}
 	}
+	if ( requestedPath == UPLOAD_PATH_DISABLED ) {
+		frameBufferCount = 0;
+	}
 
-	allocator.Init( ringBytes, requestedPath == UPLOAD_PATH_PERSISTENT );
-	ring.Init( ringBytes, requestedPath == UPLOAD_PATH_PERSISTENT );
+	const int activeRingBytes = requestedPath == UPLOAD_PATH_DISABLED ? 0 : ringBytes;
+	allocator.Init( activeRingBytes, requestedPath == UPLOAD_PATH_PERSISTENT );
+	ring.Init( activeRingBytes, requestedPath == UPLOAD_PATH_PERSISTENT );
 	legacy.Init( useMapRange );
 
 	memset( &stats, 0, sizeof( stats ) );
-	stats.ringSizeBytes = ringBytes;
+	stats.ringSizeBytes = activeRingBytes;
 	stats.ringBufferCount = frameBufferCount;
 	stats.persistentMapped = requestedPath == UPLOAD_PATH_PERSISTENT;
 	stats.lowOverheadPersistentDefault = lowOverheadPersistentDefault;
@@ -361,7 +375,7 @@ void idUploadManager::Init( const renderBackendCaps_t &caps ) {
 	stats.legacyBridge = true;
 	stats.dynamicFrameBridge = false;
 	stats.staticBufferAllocator = requestedPath != UPLOAD_PATH_DISABLED;
-	hasSync = caps.hasSync && glFenceSync != NULL && glClientWaitSync != NULL && glDeleteSync != NULL;
+	hasSync = requestedPath != UPLOAD_PATH_DISABLED && caps.hasSync && glFenceSync != NULL && glClientWaitSync != NULL && glDeleteSync != NULL;
 	stats.fenceSyncAvailable = hasSync;
 
 	if ( requestedPath != UPLOAD_PATH_DISABLED ) {
@@ -380,13 +394,20 @@ void idUploadManager::Init( const renderBackendCaps_t &caps ) {
 	stats.staticBufferAllocator = path != UPLOAD_PATH_DISABLED;
 	UpdateAllocatorStats();
 
+	const char *bridgeMode = "disabled";
+	if ( path == UPLOAD_PATH_PERSISTENT ) {
+		bridgeMode = "GL45 persistent-mapped capable";
+	} else if ( path != UPLOAD_PATH_DISABLED ) {
+		bridgeMode = "streaming";
+	}
+
 	common->Printf(
 		"Renderer upload manager: %s legacy bridge, frameStream=%s, staticAllocator=%s, buffers=%d, ring=%dKB, sync=%s\n",
-		path == UPLOAD_PATH_PERSISTENT ? "GL45 persistent-mapped capable" : "streaming",
+		bridgeMode,
 		PathName(),
 		stats.staticBufferAllocator ? "yes" : "no",
 		frameBufferCount,
-		ringBytes / 1024,
+		activeRingBytes / 1024,
 		hasSync ? "yes" : "no" );
 }
 
@@ -533,8 +554,7 @@ void idUploadManager::FreeStaticBuffer( unsigned int &vbo, int bytes, bool index
 	}
 
 	if ( !initialized || !stats.staticBufferAllocator ) {
-		glDeleteBuffersARB( 1, &vbo );
-		vbo = 0;
+		R_RendererUpload_DeleteBufferName( vbo );
 		return;
 	}
 
@@ -614,8 +634,7 @@ void idUploadManager::ShutdownFrameBuffers( void ) {
 				glUnmapBuffer( GL_ARRAY_BUFFER );
 				frameBuffers[i].mapped = NULL;
 			}
-			glDeleteBuffersARB( 1, &frameBuffers[i].vbo );
-			frameBuffers[i].vbo = 0;
+			R_RendererUpload_DeleteBufferName( frameBuffers[i].vbo );
 		}
 	}
 	idVertexCache::InvalidateBufferBindings();

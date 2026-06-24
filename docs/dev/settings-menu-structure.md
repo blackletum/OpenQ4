@@ -12,9 +12,9 @@ Source files:
 - `content/baseoq4/pak0/guis/menu/settings/game.gui`
 - `content/baseoq4/pak0/guis/menu/settings/game_hovers.gui`
 - `src/framework/Session_menu.cpp`
-- `docs-dev/settings-menu-registry.json`
+- `docs/dev/settings-menu-registry.json`
 
-`docs-dev/settings-menu-registry.json` is the machine-readable inventory for the Settings surfaces touched by the current refactor. The coverage test uses it to validate source/widget presence, localization keys, cvar, GUI-state, or bind targets, UI ranges, shipped default keys, defaults, restart warnings, and accessibility notes for the registered rows, and it now asserts that every active Game Options value widget has a registry record.
+`docs/dev/settings-menu-registry.json` is the machine-readable inventory for the Settings surfaces touched by the current refactor. The coverage test uses it to validate source/widget presence, localization keys, cvar, GUI-state, or bind targets, UI ranges, shipped default keys, defaults, restart warnings, and accessibility notes for the registered rows, and it now asserts that every active Game Options value widget has a registry record.
 
 ## Widget Type Key
 

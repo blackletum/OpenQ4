@@ -7,7 +7,14 @@ import argparse
 import sys
 from pathlib import Path
 
-from openq4_pak import PAK0_NAME, PAK1_NAME, create_game_pk4, format_openq4_paks_header, write_text_if_changed
+from openq4_pak import (
+    PAK0_NAME,
+    PAK1_NAME,
+    copy_file_if_changed,
+    create_game_pk4,
+    format_openq4_paks_header,
+    write_text_if_changed,
+)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -33,10 +40,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def copy_if_changed(source: Path, destination: Path) -> None:
-    if destination.is_file() and source.read_bytes() == destination.read_bytes():
-        return
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(source.read_bytes())
+    copy_file_if_changed(source, destination)
+
+
+def require_pack_source_dir(path: Path, pak_name: str) -> Path:
+    if path.is_symlink():
+        raise RuntimeError(f"{pak_name} source directory must not be a symlink: {path}")
+    resolved = path.resolve()
+    if not resolved.is_dir():
+        raise RuntimeError(f"{pak_name} source directory not found: {resolved}")
+    return resolved
 
 
 def build_pack(pak_name: str, source_dir: Path, pak_out: Path) -> object:
@@ -55,8 +68,12 @@ def build_pack(pak_name: str, source_dir: Path, pak_out: Path) -> object:
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
 
-    pak0_source_dir = Path(args.pak0_source_dir).resolve()
-    pak1_source_dir = Path(args.pak1_source_dir).resolve()
+    try:
+        pak0_source_dir = require_pack_source_dir(Path(args.pak0_source_dir), PAK0_NAME)
+        pak1_source_dir = require_pack_source_dir(Path(args.pak1_source_dir), PAK1_NAME)
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     pak0_out = Path(args.pak0_out).resolve()
     pak1_out = Path(args.pak1_out).resolve()
     header_out = Path(args.header_out).resolve()

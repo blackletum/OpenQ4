@@ -29,7 +29,7 @@ $savePath = Join-Path $workspaceRoot ".home"
 $exePath = Join-Path $installDir "openQ4-client_x64.exe"
 $captureTemplate = Join-Path $workspaceRoot ".home\baseoq4\renderdoc\openq4"
 $captureDir = Split-Path -Parent $captureTemplate
-$renderDocDoc = Join-Path $workspaceRoot "docs-dev\renderdoc-workflow.md"
+$renderDocDoc = Join-Path $workspaceRoot (Join-Path "docs" (Join-Path "dev" "renderdoc-workflow.md"))
 
 if (-not (Test-Path -LiteralPath $exePath)) {
     throw "openQ4 client executable not found: $exePath"

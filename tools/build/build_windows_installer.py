@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,8 @@ PRODUCT_PUBLISHER = "DarkMatter Productions"
 SETUP_ICON_RELATIVE = Path("assets") / "icons" / "quake4.ico"
 TEMPLATE_RELATIVE = Path("tools") / "build" / "openQ4Installer.iss.in"
 SUPPORTED_ARCHES = ("x64", "x86", "arm64")
+VERSION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+){2,3}$")
+FILENAME_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 ARCHITECTURE_DIRECTIVES = {
@@ -83,7 +86,54 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def inno_string_literal(value: Path | str) -> str:
-    return '"' + str(value).replace('"', '""') + '"'
+    return '"' + inno_string_contents(value) + '"'
+
+
+def inno_string_contents(value: Path | str) -> str:
+    return str(value).replace('"', '""')
+
+
+def validate_version(value: str) -> str:
+    normalized = value.strip()
+    if VERSION_RE.fullmatch(normalized) is None:
+        raise ValueError("version must be a dotted numeric release version such as 0.1.010")
+    return normalized
+
+
+def validate_filename_token(value: str, label: str) -> str:
+    normalized = value.strip()
+    if FILENAME_TOKEN_RE.fullmatch(normalized) is None:
+        raise ValueError(f"{label} must be a file-name-safe token without slashes, spaces, or quotes")
+    return normalized
+
+
+def require_regular_file(path: Path, label: str) -> None:
+    if path.is_symlink():
+        raise FileNotFoundError(f"{label} must not be a symlink: {path}")
+    if not path.is_file():
+        raise FileNotFoundError(f"{label} not found: {path}")
+
+
+def require_directory_arg(path: Path, label: str, *, must_exist: bool) -> Path:
+    if path.is_symlink():
+        raise FileNotFoundError(f"{label} must not be a symlink: {path}")
+    if path.exists() and not path.is_dir():
+        raise FileNotFoundError(f"{label} exists but is not a directory: {path}")
+    if must_exist and not path.is_dir():
+        raise FileNotFoundError(f"{label} not found: {path}")
+    return path.resolve()
+
+
+def validate_output_paths(output_dir: Path, script_path: Path, installer_path: Path) -> None:
+    if output_dir.is_symlink():
+        raise RuntimeError(f"installer output directory must not be a symlink: {output_dir}")
+    if output_dir.exists() and not output_dir.is_dir():
+        raise RuntimeError(f"installer output path exists but is not a directory: {output_dir}")
+    for path in (script_path, installer_path):
+        if path.is_symlink():
+            raise RuntimeError(f"refusing to write installer output through symlink: {path}")
+        if path.exists() and not path.is_file():
+            raise RuntimeError(f"installer output path exists but is not a file: {path}")
 
 
 def validate_package_dir(package_dir: Path, arch: str) -> None:
@@ -105,11 +155,18 @@ def validate_package_dir(package_dir: Path, arch: str) -> None:
         package_dir / "baseoq4" / f"game-mp_{arch}.pdb",
     ]
 
-    missing = [path for path in required_paths if not path.is_file()]
+    missing = [path for path in required_paths if not path.is_file() and not path.is_symlink()]
     if missing:
         joined = "\n".join(f"  - {path}" for path in missing)
         raise FileNotFoundError(
             "required package payload files are missing:\n"
+            f"{joined}"
+        )
+    symlinks = [path for path in required_paths if path.is_symlink()]
+    if symlinks:
+        joined = "\n".join(f"  - {path}" for path in symlinks)
+        raise FileNotFoundError(
+            "required package payload files must not be symlinks:\n"
             f"{joined}"
         )
 
@@ -161,7 +218,7 @@ def render_installer_script(
     replacements = {
         "@@APP_ARCH@@": arch,
         "@@APP_VERSION@@": version,
-        "@@PACKAGE_SOURCE@@": str(package_dir),
+        "@@PACKAGE_SOURCE@@": inno_string_contents(package_dir),
         "@@LICENSE_FILE@@": inno_string_literal(package_dir / "LICENSE"),
         "@@OUTPUT_DIR@@": inno_string_literal(output_dir),
         "@@OUTPUT_BASENAME@@": installer_basename,
@@ -188,12 +245,19 @@ def compile_installer(iscc_path: Path, script_path: Path) -> None:
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
 
-    package_dir = Path(args.package_dir).resolve()
-    source_root = Path(args.source_root).resolve()
-    output_dir = Path(args.output_dir).resolve()
+    try:
+        version = validate_version(args.version)
+        version_tag = validate_filename_token(args.version_tag, "version tag")
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
-    if not package_dir.is_dir():
-        print(f"error: package directory not found: {package_dir}", file=sys.stderr)
+    try:
+        package_dir = require_directory_arg(Path(args.package_dir), "package directory", must_exist=True)
+        source_root = require_directory_arg(Path(args.source_root), "source root", must_exist=True)
+        output_dir = require_directory_arg(Path(args.output_dir), "installer output directory", must_exist=False)
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
 
     try:
@@ -203,30 +267,38 @@ def main(argv: list[str]) -> int:
         return 1
 
     template_path = source_root / TEMPLATE_RELATIVE
-    if not template_path.is_file():
-        print(f"error: installer template not found: {template_path}", file=sys.stderr)
+    try:
+        require_regular_file(template_path, "installer template")
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
 
     setup_icon_file = source_root / SETUP_ICON_RELATIVE
-    if not setup_icon_file.is_file():
-        print(f"error: installer icon not found: {setup_icon_file}", file=sys.stderr)
+    try:
+        require_regular_file(setup_icon_file, "installer icon")
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    script_path = output_dir / f"openq4-{version_tag}-windows-{args.arch}-setup.iss"
+    installer_path = output_dir / f"openq4-{version_tag}-windows-{args.arch}-setup.exe"
+    try:
+        validate_output_paths(output_dir, script_path, installer_path)
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
 
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    script_path = output_dir / f"openq4-{args.version_tag}-windows-{args.arch}-setup.iss"
     script_text = render_installer_script(
         template_path.read_text(encoding="utf-8"),
         package_dir=package_dir,
         output_dir=output_dir,
-        version=args.version,
-        version_tag=args.version_tag,
+        version=version,
+        version_tag=version_tag,
         arch=args.arch,
         setup_icon_file=setup_icon_file.resolve(),
     )
     script_path.write_text(script_text, encoding="utf-8", newline="\n")
-
-    installer_path = output_dir / f"openq4-{args.version_tag}-windows-{args.arch}-setup.exe"
 
     if args.skip_compile:
         print(f"Generated installer script: {script_path}")
@@ -252,7 +324,7 @@ def main(argv: list[str]) -> int:
         )
         return 1
 
-    print(f"Built {PRODUCT_NAME} Windows installer {args.version}")
+    print(f"Built {PRODUCT_NAME} Windows installer {version}")
     print(f"Installer: {installer_path}")
     print(f"Installer script: {script_path}")
     print(f"Compiler: {iscc_path}")

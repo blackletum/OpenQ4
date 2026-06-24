@@ -156,6 +156,10 @@ DARWIN_PLATFORM_SOURCES = (
 )
 
 
+class SourceListError(RuntimeError):
+    pass
+
+
 def add_source(
     source_set: set[str], ordered_sources: list[str], rel_path: pathlib.Path
 ) -> None:
@@ -174,6 +178,13 @@ def remove_source(
     ordered_sources[:] = [path for path in ordered_sources if path != normalized]
 
 
+def require_source_file(full_path: pathlib.Path) -> None:
+    if full_path.is_symlink():
+        raise SourceListError(f"Refusing symlinked source file: {full_path}")
+    if not full_path.is_file():
+        raise SourceListError(f"Missing expected source file: {full_path}")
+
+
 def add_required_source(
     source_set: set[str],
     ordered_sources: list[str],
@@ -181,10 +192,25 @@ def add_required_source(
     rel_path: str,
 ) -> None:
     full_path = source_root / rel_path
-    if not full_path.is_file():
-        print(f"Missing expected source file: {full_path}", file=sys.stderr)
-        raise FileNotFoundError(rel_path)
+    require_source_file(full_path)
     add_source(source_set, ordered_sources, pathlib.Path("src") / rel_path)
+
+
+def add_globbed_sources(
+    source_set: set[str],
+    ordered_sources: list[str],
+    source_root: pathlib.Path,
+    pattern: str,
+) -> None:
+    for match in sorted(source_root.glob(pattern)):
+        if match.is_symlink():
+            raise SourceListError(f"Refusing symlinked source file: {match}")
+        if match.is_file():
+            add_source(
+                source_set,
+                ordered_sources,
+                pathlib.Path("src") / match.relative_to(source_root),
+            )
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -231,38 +257,22 @@ def main(argv: list[str]) -> int:
 
     include_game = args.include_game == "true"
 
-    if include_game:
-        for rel in GAME_SOURCES:
-            path = source_root / rel
-            if not path.is_file():
-                print(f"Missing expected source file: {path}", file=sys.stderr)
-                return 1
-            add_source(source_set, ordered_sources, pathlib.Path("src") / rel)
-
-    for pattern in ENGINE_SOURCE_GLOBS:
-        matches = sorted(source_root.glob(pattern))
-        for match in matches:
-            if match.is_file():
-                add_source(
-                    source_set,
-                    ordered_sources,
-                    pathlib.Path("src") / match.relative_to(source_root),
-                )
-
-    if include_game:
-        for pattern in GAME_SOURCE_GLOBS:
-            matches = sorted(source_root.glob(pattern))
-            for match in matches:
-                if match.is_file():
-                    add_source(
-                        source_set,
-                        ordered_sources,
-                        pathlib.Path("src") / match.relative_to(source_root),
-                    )
-
     try:
+        if include_game:
+            for rel in GAME_SOURCES:
+                add_required_source(source_set, ordered_sources, source_root, rel)
+
+        for pattern in ENGINE_SOURCE_GLOBS:
+            add_globbed_sources(source_set, ordered_sources, source_root, pattern)
+
+        if include_game:
+            for pattern in GAME_SOURCE_GLOBS:
+                add_globbed_sources(source_set, ordered_sources, source_root, pattern)
+
         if args.host_system == "windows":
             for match in sorted(source_root.glob("sys/win32/*.cpp")):
+                if match.is_symlink():
+                    raise SourceListError(f"Refusing symlinked source file: {match}")
                 if match.is_file():
                     add_source(
                         source_set,
@@ -301,7 +311,8 @@ def main(argv: list[str]) -> int:
         else:
             print(f"Unsupported host system: {args.host_system}", file=sys.stderr)
             return 1
-    except FileNotFoundError:
+    except SourceListError as exc:
+        print(exc, file=sys.stderr)
         return 1
 
     if not ordered_sources:

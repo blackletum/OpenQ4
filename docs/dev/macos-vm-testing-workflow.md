@@ -1,6 +1,6 @@
 # macOS VM Testing Workflow
 
-This workflow is the macOS counterpart to `docs-dev/linux-mint-vmware-workflow.md`.
+This workflow is the macOS counterpart to `docs/dev/linux-mint-vmware-workflow.md`.
 It is intentionally SSH-based instead of VMware-on-Windows based: macOS test VMs
 must run on Apple-branded hardware or a compliant Apple-hosted service.
 
@@ -70,7 +70,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/macos/Invoke-openQ4Mac
 
 `-Action All` does the following:
 
-- verifies the macOS command-line toolchain
+- verifies the macOS command-line toolchain, including `xcrun`, `plutil`,
+  `lipo`, `otool`, and `codesign`
 - installs or updates a user-local Meson/Ninja venv
 - copies the Windows Quake 4 install into `~/openq4-work/Quake4`
 - copies `openQ4` and `openQ4-game` into the guest workspace
@@ -126,6 +127,14 @@ startup, real keyboard/mouse/controller input, audio output/device switching,
 windowed and fullscreen display modes, HiDPI/Retina behavior, and in-game
 OpenGL or Metal bridge coverage beyond hosted CI.
 
+Guest paths passed through `-MacWorkspace` and `-MacBasePath` may use a leading
+`~/`; the host workflow and guest scripts expand that prefix on the Apple host
+before syncing source trees, installing assets, building, or collecting results.
+Keep `-BuildDir` pointed at a dedicated build output directory such as
+`builddir`, `builddir-opengl`, or `builddir-metal`; the guest script refuses the
+repo root, source/content/tool trees, `.install`, symlinks, and files as Meson
+build directories.
+
 After `Signoff` or `All`, the host workflow automatically copies the matching
 guest result directories into a compressed archive at
 `.tmp/macos-vm/results/openq4-macos-results-<run-id>.tar.gz`. Use
@@ -135,7 +144,11 @@ remain only on the Apple host. The copied archive is validated automatically
 unless `-SkipResultArchiveValidation` is set.
 
 The automatic validation checks structure, both bridge reports, workflow logs,
-and renderer smoke/matrix output. To rerun it manually:
+staged payload evidence, asset-basepath evidence, and renderer smoke/matrix
+output. Collection is intentionally limited to the expected
+`<run-id>-signoff-<bridge>` directories so older build/smoke result directories
+with the same run ID cannot be mixed into final signoff evidence. To rerun it
+manually:
 
 ```powershell
 python tools/macos/validate_signoff_archive.py .tmp/macos-vm/results/openq4-macos-results-<run-id>.tar.gz

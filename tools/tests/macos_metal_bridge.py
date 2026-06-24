@@ -247,11 +247,43 @@ def validate_macos_app_bundle_validator_runtime() -> None:
         package.validate_macos_app_bundle(package_root, app_root, arch, version)
 
         write_test_file(app_contents / "MacOS" / "openQ4", client_bytes, 0o755)
+        write_test_file(app_contents / "Resources" / "openQ4.icns", b"")
+        expect_runtime_error(
+            "icon is empty",
+            lambda: package.validate_macos_app_bundle(package_root, app_root, arch, version),
+            "empty macOS app icon",
+        )
+
+        write_test_file(app_contents / "Resources" / "openQ4.icns", b"icns\n")
+        write_test_file(app_contents / "Info.plist", plistlib.dumps(["not-a-dictionary"]))
+        expect_runtime_error(
+            "dictionary root",
+            lambda: package.validate_macos_app_bundle(package_root, app_root, arch, version),
+            "macOS app Info.plist with non-dictionary root",
+        )
+
+        write_test_file(app_contents / "Info.plist", make_macos_plist_bytes(package, version))
         write_test_file(app_contents / "PkgInfo", b"BROKEN!!")
         expect_runtime_error(
             "valid PkgInfo",
             lambda: package.validate_macos_app_bundle(package_root, app_root, arch, version),
             "invalid macOS app PkgInfo",
+        )
+
+        missing_icon_package = work / "missing-icon-package"
+        missing_icon_install = work / "missing-icon-install"
+        write_test_file(missing_icon_package / f"openQ4-client_{arch}", client_bytes, 0o755)
+        missing_icon_install.mkdir(parents=True, exist_ok=True)
+        expect_runtime_error(
+            "app icon source was not found",
+            lambda: package.create_macos_app_bundle(
+                missing_icon_package,
+                missing_icon_install,
+                arch,
+                version,
+                "v0.2.000",
+            ),
+            "macOS app bundle creation without staged icon",
         )
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -350,6 +382,75 @@ def validate_macos_archive_validator_runtime() -> None:
                 version,
             ),
             "macOS archive with Finder metadata",
+        )
+
+        bad_lower_metadata_archive = work / "bad-lower-metadata.tar.gz"
+        write_test_targz_archive(
+            bad_lower_metadata_archive,
+            make_macos_archive_entries(
+                package,
+                package_root.name,
+                arch,
+                plist_bytes,
+                extra_entries={f"{package_root.name}/.ds_store": (b"metadata\n", 0o644)},
+            ),
+        )
+        expect_runtime_error(
+            "non-runtime metadata/debug entries",
+            lambda: package.validate_macos_archive_contents(
+                package_root,
+                bad_lower_metadata_archive,
+                "tar.gz",
+                arch,
+                version,
+            ),
+            "macOS archive with lowercase Finder metadata",
+        )
+
+        bad_appledouble_archive = work / "bad-appledouble.tar.gz"
+        write_test_targz_archive(
+            bad_appledouble_archive,
+            make_macos_archive_entries(
+                package,
+                package_root.name,
+                arch,
+                plist_bytes,
+                extra_entries={f"{package_root.name}/openQ4.app/Contents/Resources/._openQ4.icns": (b"metadata\n", 0o644)},
+            ),
+        )
+        expect_runtime_error(
+            "non-runtime metadata/debug entries",
+            lambda: package.validate_macos_archive_contents(
+                package_root,
+                bad_appledouble_archive,
+                "tar.gz",
+                arch,
+                version,
+            ),
+            "macOS archive with AppleDouble metadata",
+        )
+
+        bad_macosx_archive = work / "bad-macosx-dir.tar.gz"
+        write_test_targz_archive(
+            bad_macosx_archive,
+            make_macos_archive_entries(
+                package,
+                package_root.name,
+                arch,
+                plist_bytes,
+                extra_entries={f"{package_root.name}/__MACOSX/openQ4": (b"metadata\n", 0o644)},
+            ),
+        )
+        expect_runtime_error(
+            "non-runtime metadata/debug entries",
+            lambda: package.validate_macos_archive_contents(
+                package_root,
+                bad_macosx_archive,
+                "tar.gz",
+                arch,
+                version,
+            ),
+            "macOS archive with __MACOSX metadata",
         )
 
         bad_duplicate_archive = work / "bad-duplicate.tar.gz"
@@ -476,6 +577,62 @@ def validate_macos_archive_validator_runtime() -> None:
                 version,
             ),
             "macOS archive with incomplete localized plist strings",
+        )
+
+        bad_duplicate_localized_archive = work / "bad-duplicate-localized.tar.gz"
+        write_test_targz_archive(
+            bad_duplicate_localized_archive,
+            make_macos_archive_entries(
+                package,
+                package_root.name,
+                arch,
+                plist_bytes,
+                extra_entries={
+                    f"{package_root.name}/openQ4.app/Contents/Resources/English.lproj/InfoPlist.strings": (
+                        make_macos_localized_info_bytes(version) + b'CFBundleName = "openQ4";\n',
+                        0o644,
+                    )
+                },
+            ),
+        )
+        expect_runtime_error(
+            "duplicate key",
+            lambda: package.validate_macos_archive_contents(
+                package_root,
+                bad_duplicate_localized_archive,
+                "tar.gz",
+                arch,
+                version,
+            ),
+            "macOS archive with duplicate localized plist key",
+        )
+
+        bad_huge_metadata_archive = work / "bad-huge-metadata.tar.gz"
+        write_test_targz_archive(
+            bad_huge_metadata_archive,
+            make_macos_archive_entries(
+                package,
+                package_root.name,
+                arch,
+                plist_bytes,
+                extra_entries={
+                    f"{package_root.name}/openQ4.app/Contents/Info.plist": (
+                        b"x" * (package.MAX_MACOS_METADATA_MEMBER_BYTES + 1),
+                        0o644,
+                    )
+                },
+            ),
+        )
+        expect_runtime_error(
+            "metadata member is too large",
+            lambda: package.validate_macos_archive_contents(
+                package_root,
+                bad_huge_metadata_archive,
+                "tar.gz",
+                arch,
+                version,
+            ),
+            "macOS archive with oversized app metadata",
         )
 
         bad_symlink_archive = work / "bad-symlink.tar.gz"
@@ -605,6 +762,52 @@ def validate_macos_archive_validator_runtime() -> None:
             ),
             "out-of-package macOS archive entry",
         )
+
+        unsafe_empty_segment_archive = work / "unsafe-empty-segment.tar.gz"
+        write_test_targz_archive(
+            unsafe_empty_segment_archive,
+            make_macos_archive_entries(
+                package,
+                package_root.name,
+                arch,
+                plist_bytes,
+                extra_entries={f"{package_root.name}//escaped": (b"bad\n", 0o644)},
+            ),
+        )
+        expect_runtime_error(
+            "macOS archive contains unsafe or out-of-package path",
+            lambda: package.validate_macos_archive_contents(
+                package_root,
+                unsafe_empty_segment_archive,
+                "tar.gz",
+                arch,
+                version,
+            ),
+            "empty-segment macOS archive entry",
+        )
+
+        unsafe_dot_segment_archive = work / "unsafe-dot-segment.tar.gz"
+        write_test_targz_archive(
+            unsafe_dot_segment_archive,
+            make_macos_archive_entries(
+                package,
+                package_root.name,
+                arch,
+                plist_bytes,
+                extra_entries={f"{package_root.name}/./escaped": (b"bad\n", 0o644)},
+            ),
+        )
+        expect_runtime_error(
+            "macOS archive contains unsafe or out-of-package path",
+            lambda: package.validate_macos_archive_contents(
+                package_root,
+                unsafe_dot_segment_archive,
+                "tar.gz",
+                arch,
+                version,
+            ),
+            "dot-segment macOS archive entry",
+        )
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -648,12 +851,14 @@ def validate_macos_signing_config_runtime() -> None:
         list_entitlements = work / "list.entitlements"
         sandbox_entitlements = work / "sandbox.entitlements"
         debug_entitlements = work / "debug.entitlements"
+        notary_keychain = work / "notary.keychain-db"
 
         valid_entitlements.write_bytes(plistlib.dumps({"com.apple.security.files.user-selected.read-only": True}))
         invalid_entitlements.write_text("not a plist\n", encoding="utf-8")
         list_entitlements.write_bytes(plistlib.dumps(["not", "a", "dict"]))
         sandbox_entitlements.write_bytes(plistlib.dumps({"com.apple.security.app-sandbox": True}))
         debug_entitlements.write_bytes(plistlib.dumps({"com.apple.security.get-task-allow": True}))
+        notary_keychain.write_bytes(b"test keychain\n")
 
         expect_runtime_error(
             "not a valid plist",
@@ -683,7 +888,7 @@ def validate_macos_signing_config_runtime() -> None:
                 macos_entitlements=str(valid_entitlements),
                 macos_notarize=True,
                 macos_notary_keychain_profile="openq4-release-notary",
-                macos_notary_keychain=".tmp/notary.keychain-db",
+                macos_notary_keychain=str(notary_keychain),
             )
         )
         if (
@@ -693,6 +898,7 @@ def validate_macos_signing_config_runtime() -> None:
             or developer_id.entitlements != valid_entitlements.resolve()
             or not developer_id.notarize
             or developer_id.notary_keychain_profile != "openq4-release-notary"
+            or developer_id.notary_keychain != notary_keychain.resolve()
         ):
             raise AssertionError("Developer ID macOS signing config did not enable release signing requirements")
     finally:
@@ -981,6 +1187,36 @@ def validate_macos_staged_payload_validator_runtime() -> None:
         )
         shutil.rmtree(bad_dsym)
 
+        bad_metadata = install_root / ".DS_Store"
+        write_test_file(bad_metadata, b"finder\n")
+        expect_runtime_error(
+            "non-runtime artifacts",
+            lambda: validator.validate_macos_staged_metadata(
+                ROOT,
+                install_root,
+                game_dir,
+                [client],
+                [dedicated],
+            ),
+            "macOS staged payload with Finder metadata",
+        )
+        bad_metadata.unlink()
+
+        bad_appledouble = game_dir / "._pak0.pk4"
+        write_test_file(bad_appledouble, b"appledouble\n")
+        expect_runtime_error(
+            "non-runtime artifacts",
+            lambda: validator.validate_macos_staged_metadata(
+                ROOT,
+                install_root,
+                game_dir,
+                [client],
+                [dedicated],
+            ),
+            "macOS staged payload with AppleDouble metadata",
+        )
+        bad_appledouble.unlink()
+
         mp_module.unlink()
         expect_runtime_error(
             "architecture-matched game modules",
@@ -1112,7 +1348,9 @@ def validate_packaging_and_release_contract() -> None:
     reject(package, "if target == client_binary", "macOS standalone client signing")
     reject(package, "shutil.copy2(app_executable, client_binary)", "macOS signed app executable recopy")
     require(package, "get_package_executable_archive_paths", "POSIX archive executable mode preservation")
-    require(package, "ZipInfo.from_file", "POSIX archive executable mode preservation")
+    require(package, "DETERMINISTIC_ARCHIVE_TIMESTAMP", "POSIX archive deterministic metadata")
+    require(package, "ZipInfo(arcname, date_time=DETERMINISTIC_ARCHIVE_TIMESTAMP)", "POSIX archive deterministic metadata")
+    require(package, "mode = 0o100755", "POSIX archive executable mode preservation")
     require(package, "info.mode = 0o755", "POSIX archive executable mode preservation")
     require(package, "create_macos_dmg", "macOS DMG creation")
     require(package, "hdiutil_path", "macOS DMG hdiutil lookup")
@@ -1143,6 +1381,7 @@ def validate_packaging_and_release_contract() -> None:
     require(package, "MACOS_FORBIDDEN_ARCHIVE_NAMES", "macOS archive metadata validation")
     require(package, "MACOS_PKGINFO_BYTES", "macOS app PkgInfo validation")
     require(package, "MACOS_LOCALIZED_INFO_LOCALES", "macOS localized plist validation")
+    require(package, "MAX_MACOS_METADATA_MEMBER_BYTES", "macOS metadata size validation")
     require(package, "MACOS_LIPO_ARCHES", "macOS binary architecture validation")
     require(package, "validate_macos_package_file_modes", "macOS package mode validation")
     require(package, "validate_no_package_symlinks", "macOS package symlink validation")
@@ -1152,6 +1391,12 @@ def validate_packaging_and_release_contract() -> None:
     require(package, "validate_version_manifest_bytes", "macOS version manifest validation")
     require(package, "validate_macos_version_manifests", "macOS version manifest validation")
     require(package, "validate_macos_localized_info_bytes", "macOS localized plist validation")
+    require(package, "parse_macos_localized_info_strings", "macOS localized plist parsing")
+    require(package, "contains duplicate key", "macOS localized plist duplicate validation")
+    require(package, "validate_macos_archive_metadata_member_size", "macOS archive metadata size validation")
+    require(package, "macOS archive metadata member is too large", "macOS archive metadata size validation")
+    require(package, "require_non_empty_package_file", "macOS app non-empty metadata validation")
+    require(package, "macOS app icon source was not found", "macOS app icon source validation")
     require(package, "validate_macos_localized_info_files", "macOS localized plist validation")
     require(package, "macos_package_version_tag_from_name", "macOS archive version manifest validation")
     require(package, "validate_macos_archive_name", "macOS archive path validation")
@@ -1195,8 +1440,14 @@ def validate_packaging_and_release_contract() -> None:
     require(package, "game-mp_{arch}.dylib", "macOS archive game module validation")
     require(package, "pak1.pk4", "macOS archive level pack validation")
     require(package, "macOS archive contains non-runtime metadata/debug entries", "macOS archive metadata validation")
+    require(package, "MACOS_FORBIDDEN_ARCHIVE_PREFIXES", "macOS archive metadata validation")
+    require(package, "MACOS_FORBIDDEN_ARCHIVE_SUFFIXES", "macOS archive metadata validation")
+    require(package, "validate_no_macos_metadata_artifacts", "macOS package metadata validation")
+    require(package, "__MACOSX", "macOS archive metadata validation")
+    require(package, "._", "macOS archive metadata validation")
     require(package, "MACOS_EXPECTED_PLIST_VALUES", "macOS package Info.plist validation")
     require(package, "validate_macos_plist_values", "macOS package Info.plist validation")
+    require(package, "must contain a dictionary root", "macOS package Info.plist root validation")
     require(package, "validate_macos_app_bundle", "macOS package app validation")
     require(package, "validate_macos_archive_contents", "macOS package archive validation")
     require(package, '"CFBundleDisplayName": "openQ4"', "macOS package Info.plist validation")
@@ -1240,6 +1491,9 @@ def validate_packaging_and_release_contract() -> None:
     require(validator, "macOS staged game module is not executable", "macOS staged game module validation")
     require(validator, "MACOS_FORBIDDEN_XATTRS", "macOS staged quarantine validation")
     require(validator, "MACOS_NON_RUNTIME_PATTERNS", "macOS staged debug artifact validation")
+    require(validator, ".DS_Store", "macOS staged metadata validation")
+    require(validator, "._*", "macOS staged metadata validation")
+    require(validator, "__MACOSX", "macOS staged metadata validation")
     require(validator, "MACOS_LIPO_ARCHES", "macOS staged architecture validation")
     require(validator, "validate_no_macos_symlinks", "macOS staged symlink validation")
     require(validator, "validate_no_macos_unsafe_file_modes", "macOS staged mode validation")
@@ -1350,18 +1604,33 @@ def validate_packaging_and_release_contract() -> None:
 
 def validate_macos_workflow_security_contract() -> None:
     host = read("tools/macos/Invoke-openQ4MacOSWorkflow.ps1")
+    bootstrap = read("tools/macos/guest/openq4-macos-bootstrap.sh")
     assets = read("tools/macos/guest/openq4-macos-install-quake4-assets.sh")
     guest = read("tools/macos/guest/openq4-macos-sync-build-test.sh")
     signoff_validator = read("tools/macos/validate_signoff_archive.py")
     debug = read(".github/workflows/macos-debug.yml")
-    workflow_doc = read("docs-dev/macos-vm-testing-workflow.md")
+    workflow_doc = read("docs/dev/macos-vm-testing-workflow.md")
     validation_runner = read("tools/validation/openq4_validate.py")
 
     require(host, "Assert-NoArchiveLinks", "macOS host archive symlink guard")
+    require(host, "[ValidateRange(1, 65535)]", "macOS host SSH port validation")
+    require(host, '[ValidateSet("plain", "debug", "debugoptimized", "release", "minsize", "custom")]', "macOS host build type validation")
+    require(host, "[ValidateRange(1, 100000)]", "macOS host smoke limit validation")
+    require(host, "Invalid BuildDir", "macOS host builddir validation")
     require(host, "RemoteTempRoot", "macOS host per-run remote temp root")
+    require(host, "function Remove-RemoteTempRoot", "macOS host remote temp cleanup")
+    require(host, r"\A/tmp/openq4-macos-[0-9a-fA-F]{32}\z", "macOS host remote temp cleanup path guard")
+    require(host, "Refusing to remove unexpected macOS remote temp root", "macOS host remote temp cleanup path guard")
+    require(host, "Failed to remove macOS remote temp root", "macOS host remote temp cleanup warning")
+    require(host, "try {\n    Invoke-MacOSWorkflowMain\n} finally {\n    Remove-RemoteTempRoot", "macOS host remote temp cleanup finally")
     require(host, "BatchMode=yes", "macOS host non-interactive SSH")
+    require(host, "expand_remote_path", "macOS host remote tilde expansion")
+    require(host, "target_raw", "macOS host remote target path expansion")
+    require(host, "workspace_raw=__WORKSPACE__", "macOS host result workspace path expansion")
     require(host, "Unsafe archive path", "macOS host archive path validation")
     require(host, "Archive contains a symlink or special file", "macOS host archive special-file validation")
+    require(host, "tar -tvf", "macOS host archive type validation")
+    require(host, "including hardlinks", "macOS host archive hardlink validation")
     require(host, "rsync -a --delete", "macOS host safe temp extraction sync")
     require(host, "openQ4/.git", "macOS host source metadata exclusion")
     require(host, "openQ4/.codex", "macOS host local agent metadata exclusion")
@@ -1380,6 +1649,9 @@ def validate_macos_workflow_security_contract() -> None:
     require(host, "function Collect-MacOSResults", "macOS host result collection helper")
     require(host, "function Test-MacOSResultArchive", "macOS host result archive validation helper")
     require(host, 'openq4-macos-results-${RunId}.tar.gz', "macOS host result archive naming")
+    require(host, 'expected_bridges=(__BRIDGES__)', "macOS host bridge-specific result collection")
+    require(host, '${run_id}-signoff-${bridge}', "macOS host signoff-only result collection")
+    require(host, "macOS signoff result directory is incomplete", "macOS host incomplete signoff result guard")
     require(host, "No macOS result directories matched", "macOS host missing result guard")
     require(host, "-Action CollectResults requires -MacOSRunId <id>", "macOS host collect-results run ID guard")
     require(host, "validate_signoff_archive.py", "macOS host result archive validator")
@@ -1398,25 +1670,71 @@ def validate_macos_workflow_security_contract() -> None:
     require(host, 'foreach ($bridge in (Get-MacOSGraphicsBridgeRuns))', "macOS host multi-bridge loop")
     require(host, "-MacOSGraphicsBridge both is supported for Build, Signoff, and All", "macOS host multi-bridge guard")
     require(host, "Collect-MacOSResults -RunId $MacOSRunId", "macOS host automatic signoff result collection")
-    require(host, '"CollectResults" {\n            $shouldCollectResults = $true\n        }', "macOS host collect-results action")
+    collect_results_index = host.find('"CollectResults" {')
+    all_action_index = host.find('"All" {', collect_results_index)
+    if collect_results_index == -1 or all_action_index == -1:
+        raise AssertionError("Missing macOS host collect-results switch arm")
+    require(
+        host[collect_results_index:all_action_index],
+        "$shouldCollectResults = $true",
+        "macOS host collect-results action",
+    )
     require(host, "Test-MacOSResultArchive -ArchivePath $archivePath -RunId $MacOSRunId", "macOS host automatic signoff result validation")
 
+    for tool in ("xcrun", "plutil", "lipo", "otool", "codesign"):
+        require(bootstrap, f"require_command {tool}", f"macOS bootstrap {tool} validation")
+
     require(assets, "reject_unsafe_tar_entries", "macOS asset tar path validation")
+    require(assets, "expand_guest_path", "macOS asset guest tilde expansion")
     require(assets, "reject_unsafe_tree_entries", "macOS asset symlink validation")
     require(assets, "Unsafe asset archive path", "macOS asset tar path validation")
     require(assets, "Asset archive contains a symlink or special file", "macOS asset special-file validation")
+    require(assets, "tar -tvf", "macOS asset archive type validation")
+    require(assets, "including hardlinks", "macOS asset archive hardlink validation")
+    require(assets, "--exclude '/q4base/*.cfg'", "macOS asset personal config exclusion")
+    require(assets, "--exclude '/q4base/*.log'", "macOS asset personal log exclusion")
+    require(assets, "--exclude '/q4base/q4key'", "macOS asset private key exclusion")
+    require(assets, "--exclude '/q4base/quake4key'", "macOS asset private key exclusion")
+    require(assets, "--exclude '/q4mp/*.cfg'", "macOS multiplayer asset personal config exclusion")
+    require(assets, "--exclude '/q4mp/*.log'", "macOS multiplayer asset personal log exclusion")
     require(assets, "multiple q4base directories", "macOS asset ambiguity validation")
+    require(assets, "Installed asset directory has no q4base PK4 files", "macOS asset PK4 presence validation")
+    require(assets, "Installed Quake 4 asset PK4 count", "macOS asset PK4 install evidence")
     require(assets, "/tmp/openq4-macos-*/*", "macOS asset copied archive cleanup")
 
     require(guest, "resolve_under_repo", "macOS guest builddir containment")
     require(guest, "Path escapes the openQ4 repository", "macOS guest builddir containment")
+    require(guest, "expand_guest_path", "macOS guest tilde expansion")
+    require(guest, "require_safe_builddir", "macOS guest builddir safety validation")
+    require(guest, "OPENQ4_BUILDDIR must not resolve to the openQ4 repository root", "macOS guest builddir root guard")
+    require(guest, "OPENQ4_BUILDDIR must not target source, content, tool, git, or staged runtime directories", "macOS guest builddir owned-tree guard")
+    require(guest, "require_positive_integer", "macOS guest numeric option validation")
     require(guest, "OPENQ4_ALLOW_CROSS_ARCH_CLIENT", "macOS guest cross-arch launch opt-in")
     require(guest, "Missing staged macOS client for host architecture", "macOS guest exact-arch client selection")
+    require(guest, "count_q4base_pk4s", "macOS guest asset PK4 validation")
+    require(guest, "validate_asset_basepath", "macOS guest asset basepath validation")
+    require(guest, "Quake 4 asset basepath has no q4base PK4 files", "macOS guest asset basepath validation")
+    require(guest, "Validated Quake 4 asset basepath", "macOS guest asset validation evidence")
     require(guest, 'graphics_bridge="${OPENQ4_MACOS_GRAPHICS_BRIDGE:-opengl}"', "macOS guest bridge environment")
     require(guest, 'openal_provider="${OPENQ4_MACOS_OPENAL_PROVIDER:-apple_framework}"', "macOS guest OpenAL provider environment")
     require(guest, 'stamp="${OPENQ4_MACOS_RUN_ID:-$(date +%Y%m%d-%H%M%S)}"', "macOS guest host-controlled run ID")
-    require(guest, "Invalid OPENQ4_MACOS_RUN_ID", "macOS guest run ID validation")
+    require(guest, "require_result_token", "macOS guest result token validation")
+    require(guest, "require_choice", "macOS guest option choice validation")
+    require(guest, 'require_result_token "OPENQ4_MACOS_RUN_ID" "${stamp}"', "macOS guest run ID validation")
+    require(guest, 'require_choice "macOS workflow action" "${action}" build smoke renderer launcher signoff all', "macOS guest action validation")
+    require(guest, 'require_choice "OPENQ4_MACOS_GRAPHICS_BRIDGE" "${graphics_bridge}" opengl metal', "macOS guest bridge validation")
+    require(guest, 'require_choice "OPENQ4_MACOS_OPENAL_PROVIDER" "${openal_provider}" apple_framework system', "macOS guest OpenAL provider validation")
+    require_before(guest, 'require_choice "macOS workflow action" "${action}" build smoke renderer launcher signoff all', 'mkdir -p "${run_dir}"', "macOS guest validates action before result directory creation")
+    require_before(guest, 'require_choice "OPENQ4_MACOS_GRAPHICS_BRIDGE" "${graphics_bridge}" opengl metal', 'run_dir="${results_root}/${stamp}-${action}-${graphics_bridge}"', "macOS guest validates bridge before result directory naming")
+    require_before(guest, 'require_choice "OPENQ4_MACOS_OPENAL_PROVIDER" "${openal_provider}" apple_framework system', 'run_dir="${results_root}/${stamp}-${action}-${graphics_bridge}"', "macOS guest validates provider before logging starts")
     require(guest, 'run_dir="${results_root}/${stamp}-${action}-${graphics_bridge}"', "macOS guest bridge-specific results")
+    require(guest, 'require_choice "OPENQ4_BUILDTYPE" "${buildtype}" plain debug debugoptimized release minsize custom', "macOS guest buildtype validation")
+    require(guest, 'require_choice "OPENQ4_PLATFORM_BACKEND" "${platform_backend}" sdl3 native', "macOS guest platform backend validation")
+    require_before(guest, 'require_safe_builddir "${raw_builddir}" "${builddir}"', 'bash tools/build/meson_setup.sh setup --wipe "${builddir}" .', "macOS guest validates builddir before Meson setup")
+    require_before(guest, 'require_choice "OPENQ4_PLATFORM_BACKEND" "${platform_backend}" sdl3 native', 'bash tools/build/meson_setup.sh setup --wipe "${builddir}" .', "macOS guest validates backend before Meson setup")
+    require_before(guest, 'require_positive_integer "OPENQ4_SMOKE_LIMIT" "${smoke_limit}" 100000', 'python3 tools/tests/renderer_gameplay_benchmark.py', "macOS guest validates smoke limit before benchmark")
+    require_before(guest, 'require_positive_integer "OPENQ4_SMOKE_TIMEOUT" "${smoke_timeout}" 86400', 'python3 tools/tests/renderer_gameplay_benchmark.py', "macOS guest validates smoke timeout before benchmark")
+    require_before(guest, 'require_positive_integer "OPENQ4_RENDERER_TIMEOUT" "${renderer_timeout}" 86400', 'python3 tools/tests/renderer_validation_matrix.py', "macOS guest validates renderer timeout before matrix")
     require(guest, '"-Dmacos_graphics_bridge=${graphics_bridge}"', "macOS guest bridge setup option")
     require(guest, '"-Dmacos_openal_provider=${openal_provider}"', "macOS guest OpenAL setup option")
     require(guest, "shell_quote", "macOS guest launcher quoting")
@@ -1428,6 +1746,16 @@ def validate_macos_workflow_security_contract() -> None:
     require(guest, "Graphics bridge: ${graphics_bridge}", "macOS guest signoff bridge metadata")
     require(guest, "OpenAL provider: ${openal_provider}", "macOS guest signoff OpenAL metadata")
     require(guest, "Bridge-specific build and staged install completed.", "macOS guest signoff build evidence")
+    require(guest, "validate_staged_macos_payload", "macOS guest staged payload validation")
+    require(guest, "Staged macOS payload integrity checks completed.", "macOS guest staged payload evidence")
+    require(guest, "Quake 4 asset basepath validation completed.", "macOS guest asset validation signoff evidence")
+    require(guest, "Validated staged macOS payload", "macOS guest staged payload log evidence")
+    require(guest, "macOS staged install contains non-runtime metadata/debug entry", "macOS guest staged metadata validation")
+    require(guest, ".Spotlight-V100", "macOS guest staged metadata validation")
+    require(guest, ".Trashes", "macOS guest staged metadata validation")
+    require(guest, "macOS staged install contains non-dylib game modules", "macOS guest stale module validation")
+    require(guest, "lipo -archs", "macOS guest staged architecture validation")
+    require(guest, "Staged Binary Architectures", "macOS guest staged architecture evidence")
     require(guest, "SPDisplaysDataType", "macOS guest display inventory")
     require(guest, "SPAudioDataType", "macOS guest audio inventory")
     require(guest, "SPUSBDataType", "macOS guest USB inventory")
@@ -1436,7 +1764,19 @@ def validate_macos_workflow_security_contract() -> None:
 
     require(signoff_validator, "validate_signoff_archive", "macOS signoff archive validator")
     require(signoff_validator, "Archive path escapes through '..'", "macOS signoff archive path guard")
+    require(signoff_validator, "Archive path contains an empty segment", "macOS signoff archive path guard")
+    require(signoff_validator, "Archive path contains a dot segment", "macOS signoff archive path guard")
+    require(signoff_validator, "Archive contains a duplicate member", "macOS signoff archive duplicate guard")
     require(signoff_validator, "Archive contains a non-regular entry", "macOS signoff archive entry-type guard")
+    require(signoff_validator, "MAX_TEXT_MEMBER_BYTES", "macOS signoff archive text size guard")
+    require(signoff_validator, "MAX_ARCHIVE_MEMBER_BYTES", "macOS signoff archive member size guard")
+    require(signoff_validator, "RESULT_TOKEN_PATTERN", "macOS signoff archive action token guard")
+    require(signoff_validator, "Archive text member is too large", "macOS signoff archive text size guard")
+    require(signoff_validator, "Archive member is too large", "macOS signoff archive member size guard")
+    require(signoff_validator, "Invalid signoff archive action token", "macOS signoff archive action token guard")
+    require(signoff_validator, "Staged macOS payload integrity checks completed.", "macOS signoff archive staged payload evidence")
+    require(signoff_validator, "Quake 4 asset basepath validation completed.", "macOS signoff archive asset evidence")
+    require(signoff_validator, "Archive contains unexpected top-level result directories", "macOS signoff archive exact top-dir guard")
     require(signoff_validator, "macos-runtime-signoff.md", "macOS signoff archive report check")
     require(signoff_validator, "openq4-macos-workflow.log", "macOS signoff archive log check")
     require(signoff_validator, "renderer-smoke", "macOS signoff archive smoke output check")
@@ -1480,11 +1820,11 @@ def validate_macos_shell_entrypoints() -> None:
 
 def validate_docs_and_ci_hooks() -> None:
     building = read("BUILDING.md")
-    platform_support = read("docs-dev/platform-support.md")
-    migration = read("docs-dev/sdl3-linux-macos-migration.md")
-    getting_started = read("docs-user/getting-started.md")
+    platform_support = read("docs/dev/platform-support.md")
+    migration = read("docs/dev/sdl3-linux-macos-migration.md")
+    getting_started = read("docs/user/getting-started.md")
     package_readme = read("assets/release/README.html")
-    release_notes = read("docs-dev/release-completion.md")
+    release_notes = read("docs/dev/release-completion.md")
     validator = read("tools/validation/openq4_validate.py")
     push = read(".github/workflows/push-verification.yml")
     commit = read(".github/workflows/commit-validation.yml")

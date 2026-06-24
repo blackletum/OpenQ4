@@ -94,12 +94,26 @@ MACOS_FORBIDDEN_XATTRS = (
 )
 MACOS_FORBIDDEN_ARCHIVE_NAMES = (
     ".DS_Store",
+    "__MACOSX",
+    ".fseventsd",
+    ".Spotlight-V100",
+    ".Trashes",
+    "Icon\r",
+)
+MACOS_FORBIDDEN_ARCHIVE_PREFIXES = (
+    "._",
+)
+MACOS_FORBIDDEN_ARCHIVE_SUFFIXES = (
+    ".dSYM",
 )
 MACOS_PKGINFO_BYTES = b"APPL????"
 MACOS_LOCALIZED_INFO_LOCALES = (
     "English",
     "French",
 )
+MAX_MACOS_METADATA_MEMBER_BYTES = 64 * 1024
+DETERMINISTIC_ARCHIVE_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
+DETERMINISTIC_TAR_MTIME = 0
 
 MACOS_LIPO_ARCHES = {
     "arm64": "arm64",
@@ -267,6 +281,20 @@ def normalize_package_suffix(raw_suffix: str) -> str:
     return suffix
 
 
+PACKAGE_VERSION_RE = re.compile(
+    r"^[0-9]+(?:\.[0-9]+){2}(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$"
+)
+
+
+def validate_package_version(value: str) -> str:
+    version = value.strip()
+    if PACKAGE_VERSION_RE.fullmatch(version) is None:
+        raise ValueError(
+            "package version must be a semver-style value without spaces, slashes, or control characters"
+        )
+    return version
+
+
 def validate_package_path_token(value: str, label: str) -> str:
     token = value.strip()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", token):
@@ -275,11 +303,27 @@ def validate_package_path_token(value: str, label: str) -> str:
 
 
 def resolve_package_root(output_dir: Path, package_stem: str) -> Path:
-    package_root = (output_dir / package_stem).resolve()
+    raw_package_root = output_dir / package_stem
+    if raw_package_root.is_symlink():
+        raise ValueError(f"package root must not be a symlink: {raw_package_root}")
+    if raw_package_root.exists() and not raw_package_root.is_dir():
+        raise ValueError(f"package root exists but is not a directory: {raw_package_root}")
+
+    package_root = raw_package_root.resolve()
     resolved_output_dir = output_dir.resolve()
     if package_root == resolved_output_dir or not is_relative_to(package_root, resolved_output_dir):
         raise ValueError(f"package root escapes output directory: {package_root}")
     return package_root
+
+
+def require_package_directory(path: Path, label: str, *, must_exist: bool) -> Path:
+    if path.is_symlink():
+        raise ValueError(f"{label} must not be a symlink: {path}")
+    if path.exists() and not path.is_dir():
+        raise ValueError(f"{label} exists but is not a directory: {path}")
+    if must_exist and not path.is_dir():
+        raise ValueError(f"{label} not found: {path}")
+    return path.resolve()
 
 
 def copy_regular_file(source: Path, destination: Path) -> None:
@@ -341,7 +385,9 @@ def get_required_windows_game_symbols(arch: str) -> tuple[str, str]:
 
 def write_text_file(path: Path, lines: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if path.is_symlink():
+        path.unlink()
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
 def ensure_posix_executable(path: Path) -> None:
@@ -383,6 +429,29 @@ def validate_no_macos_forbidden_xattrs(root: Path) -> None:
             for path, attrs in offenders[:10]
         )
         raise RuntimeError(f"macOS package contains forbidden extended attributes: {joined}")
+
+
+def is_macos_non_runtime_metadata_path(path: Path) -> bool:
+    for part in path.parts:
+        normalized_part = part.lower()
+        if any(normalized_part == name.lower() for name in MACOS_FORBIDDEN_ARCHIVE_NAMES):
+            return True
+        if any(normalized_part.startswith(prefix.lower()) for prefix in MACOS_FORBIDDEN_ARCHIVE_PREFIXES):
+            return True
+        if any(normalized_part.endswith(suffix.lower()) for suffix in MACOS_FORBIDDEN_ARCHIVE_SUFFIXES):
+            return True
+    return False
+
+
+def validate_no_macos_metadata_artifacts(root: Path) -> None:
+    offenders = [
+        path
+        for path in root.rglob("*")
+        if is_macos_non_runtime_metadata_path(path.relative_to(root))
+    ]
+    if offenders:
+        joined = ", ".join(path.relative_to(root).as_posix() for path in offenders[:10])
+        raise RuntimeError(f"macOS package contains non-runtime metadata/debug entries: {joined}")
 
 
 def validate_no_package_symlinks(root: Path) -> None:
@@ -458,6 +527,7 @@ def validate_version_manifest_bytes(
     platform: str,
     arch: str,
 ) -> None:
+    validate_macos_metadata_bytes_size(data, f"{label} version manifest")
     values = parse_version_manifest_bytes(data, label)
     expected = {
         "version": version,
@@ -473,21 +543,46 @@ def validate_version_manifest_bytes(
             )
 
 
-def validate_macos_localized_info_bytes(data: bytes, label: str, version: str) -> None:
+def validate_macos_metadata_bytes_size(data: bytes, label: str) -> None:
+    if len(data) > MAX_MACOS_METADATA_MEMBER_BYTES:
+        raise RuntimeError(f"{label} is too large ({len(data)} bytes)")
+
+
+def parse_macos_localized_info_strings(data: bytes, label: str) -> dict[str, str]:
+    validate_macos_metadata_bytes_size(data, label)
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise RuntimeError(f"{label} is not UTF-8") from exc
 
-    required_tokens = (
-        'CFBundleName = "openQ4";',
-        f'CFBundleShortVersionString = "{version}";',
-        f'CFBundleGetInfoString = "openQ4 version {version}, Copyright 2026 DarkMatter Productions";',
-        'NSHumanReadableCopyright = "Copyright 2026 DarkMatter Productions";',
-    )
-    for token in required_tokens:
-        if token not in text:
-            raise RuntimeError(f"{label} is missing {token!r}")
+    values: dict[str, str] = {}
+    for line_number, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or (line.startswith("/*") and line.endswith("*/")):
+            continue
+        match = re.fullmatch(r'([A-Za-z0-9_]+)\s*=\s*"([^"\\]*)";', line)
+        if match is None:
+            raise RuntimeError(f"{label} contains malformed line {line_number}: {raw_line!r}")
+        key, value = match.groups()
+        if key in values:
+            raise RuntimeError(f"{label} contains duplicate key: {key}")
+        values[key] = value
+    return values
+
+
+def validate_macos_localized_info_bytes(data: bytes, label: str, version: str) -> None:
+    values = parse_macos_localized_info_strings(data, label)
+
+    expected_values = {
+        "CFBundleName": "openQ4",
+        "CFBundleShortVersionString": version,
+        "CFBundleGetInfoString": f"openQ4 version {version}, Copyright 2026 DarkMatter Productions",
+        "NSHumanReadableCopyright": "Copyright 2026 DarkMatter Productions",
+    }
+    for key, expected in expected_values.items():
+        actual = values.get(key)
+        if actual != expected:
+            raise RuntimeError(f"{label} {key} is {actual!r}; expected {expected!r}")
 
 
 def macos_package_version_tag_from_name(package_root: Path, arch: str) -> str:
@@ -613,10 +708,21 @@ def validate_macos_entitlements_file(entitlements: Path) -> None:
         raise RuntimeError(f"macOS entitlements file contains unsupported release entitlements: {joined}")
 
 
+def require_macos_signing_file(raw_path: Path, label: str) -> Path:
+    if raw_path.is_symlink():
+        raise RuntimeError(f"{label} must not be a symlink: {raw_path}")
+    path = raw_path.resolve()
+    if not path.is_file():
+        raise RuntimeError(f"{label} does not exist: {path}")
+    return path
+
+
 def resolve_macos_signing_config(args: argparse.Namespace) -> MacOSSigningConfig:
-    entitlements = Path(args.macos_entitlements).resolve() if args.macos_entitlements else None
-    if entitlements is not None and not entitlements.is_file():
-        raise RuntimeError(f"macOS entitlements file does not exist: {entitlements}")
+    entitlements = (
+        require_macos_signing_file(Path(args.macos_entitlements), "macOS entitlements file")
+        if args.macos_entitlements
+        else None
+    )
     if entitlements is not None:
         validate_macos_entitlements_file(entitlements)
 
@@ -642,6 +748,12 @@ def resolve_macos_signing_config(args: argparse.Namespace) -> MacOSSigningConfig
     if args.macos_notarize and notary_keychain_profile == "":
         raise RuntimeError("macOS notarization requires --macos-notary-keychain-profile")
 
+    notary_keychain = (
+        require_macos_signing_file(Path(args.macos_notary_keychain), "macOS notary keychain")
+        if args.macos_notary_keychain
+        else None
+    )
+
     return MacOSSigningConfig(
         mode="developer-id",
         identity=identity,
@@ -650,7 +762,7 @@ def resolve_macos_signing_config(args: argparse.Namespace) -> MacOSSigningConfig
         entitlements=entitlements,
         notarize=args.macos_notarize,
         notary_keychain_profile=notary_keychain_profile,
-        notary_keychain=Path(args.macos_notary_keychain).resolve() if args.macos_notary_keychain else None,
+        notary_keychain=notary_keychain,
     )
 
 
@@ -1185,7 +1297,13 @@ def create_release_archive(
     archive_format: str,
     executable_relative_paths: set[Path] | None = None,
 ) -> None:
-    if archive_path.exists() or archive_path.is_symlink():
+    if archive_path.is_symlink():
+        raise RuntimeError(f"release archive output must not be a symlink: {archive_path}")
+    if archive_path.exists():
+        if archive_path.is_dir():
+            raise RuntimeError(f"release archive output path is a directory: {archive_path}")
+        if not archive_path.is_file():
+            raise RuntimeError(f"release archive output path is not a regular file: {archive_path}")
         archive_path.unlink()
 
     symlinks = [path for path in package_root.rglob("*") if path.is_symlink()]
@@ -1209,12 +1327,13 @@ def create_release_archive(
                     continue
                 relative_path = path.relative_to(package_root)
                 arcname = (Path(package_root.name) / relative_path).as_posix()
-                info = ZipInfo.from_file(path, arcname)
+                info = ZipInfo(arcname, date_time=DETERMINISTIC_ARCHIVE_TIMESTAMP)
                 info.compress_type = ZIP_DEFLATED
+                mode = 0o100644
                 if relative_path.as_posix() in executable_archive_paths:
-                    mode = ((info.external_attr >> 16) | 0o100755) & 0o177777
-                    info.external_attr = mode << 16
-                    info.create_system = 3
+                    mode = 0o100755
+                info.external_attr = mode << 16
+                info.create_system = 3
                 with path.open("rb") as source, archive.open(info, "w") as target:
                     shutil.copyfileobj(source, target, length=1024 * 1024)
         return
@@ -1227,6 +1346,12 @@ def create_release_archive(
             relative_path = path.relative_to(package_root)
             arcname = (Path(package_root.name) / relative_path).as_posix()
             info = archive.gettarinfo(path, arcname=arcname)
+            info.uid = 0
+            info.gid = 0
+            info.uname = ""
+            info.gname = ""
+            info.mtime = DETERMINISTIC_TAR_MTIME
+            info.mode = 0o644
             if relative_path.as_posix() in executable_archive_paths:
                 info.mode = 0o755
             with path.open("rb") as handle:
@@ -1255,6 +1380,9 @@ def get_package_executable_archive_paths(
 
 
 def validate_macos_plist_values(plist: dict, label: str, version: str | None = None) -> None:
+    if not isinstance(plist, dict):
+        raise RuntimeError(f"{label} must contain a dictionary root")
+
     for key, expected in MACOS_EXPECTED_PLIST_VALUES.items():
         if plist.get(key) != expected:
             raise RuntimeError(f"{label} {key} is {plist.get(key)!r}; expected {expected!r}")
@@ -1271,11 +1399,14 @@ def validate_macos_plist_values(plist: dict, label: str, version: str | None = N
 
 
 def validate_macos_archive_name(name: str, package_prefix: str) -> None:
+    parts = name.split("/")
     if (
         name.startswith("/")
         or "\\" in name
         or re.match(r"^[A-Za-z]:", name) is not None
         or "/../" in f"/{name}/"
+        or "" in parts
+        or any(part in (".", "..") for part in parts)
         or not name.startswith(package_prefix)
     ):
         raise RuntimeError(f"macOS archive contains unsafe or out-of-package path: {name}")
@@ -1286,6 +1417,20 @@ def validate_macos_archive_mode(name: str, mode: int) -> None:
         raise RuntimeError(f"macOS archive entry has special mode bits: {name} ({mode:o})")
     if mode & 0o022:
         raise RuntimeError(f"macOS archive entry is group/other writable: {name} ({mode:o})")
+
+
+def is_macos_bounded_metadata_entry(name: str) -> bool:
+    return (
+        name.endswith("/Info.plist")
+        or name.endswith("/PkgInfo")
+        or name.endswith("/VERSION.txt")
+        or name.endswith(".lproj/InfoPlist.strings")
+    )
+
+
+def validate_macos_archive_metadata_member_size(name: str, size: int) -> None:
+    if is_macos_bounded_metadata_entry(name) and size > MAX_MACOS_METADATA_MEMBER_BYTES:
+        raise RuntimeError(f"macOS archive metadata member is too large: {name} ({size} bytes)")
 
 
 def record_macos_archive_entry(entry_names: set[str], name: str, package_prefix: str) -> None:
@@ -1349,6 +1494,7 @@ def validate_macos_archive_contents(
                 if info.create_system == 3 and mode_type not in (0, stat.S_IFREG):
                     raise RuntimeError(f"macOS archive contains non-regular entry: {name}")
                 record_macos_archive_entry(entry_names, name, package_prefix)
+                validate_macos_archive_metadata_member_size(name, info.file_size)
                 modes[name] = (info.external_attr >> 16) & 0o7777
                 validate_macos_archive_mode(name, modes[name])
             if plist_entry in entry_names:
@@ -1377,6 +1523,7 @@ def validate_macos_archive_contents(
                 if not member.isfile():
                     raise RuntimeError(f"macOS archive contains non-regular entry: {name}")
                 record_macos_archive_entry(entry_names, name, package_prefix)
+                validate_macos_archive_metadata_member_size(name, member.size)
                 modes[name] = member.mode & 0o7777
                 validate_macos_archive_mode(name, modes[name])
                 if name == plist_entry:
@@ -1404,12 +1551,7 @@ def validate_macos_archive_contents(
     bad_metadata_names = [
         name
         for name in sorted(entry_names)
-        if any(
-            part in MACOS_FORBIDDEN_ARCHIVE_NAMES
-            or part.startswith("._")
-            or part.endswith(".dSYM")
-            for part in Path(name).parts
-        )
+        if is_macos_non_runtime_metadata_path(Path(name))
     ]
     if bad_metadata_names:
         joined = ", ".join(bad_metadata_names[:5])
@@ -1685,6 +1827,13 @@ def validate_linux_package_metadata(package_root: Path, arch: str, *, allow_miss
             )
 
 
+def require_non_empty_package_file(path: Path, label: str) -> None:
+    if not path.is_file():
+        raise RuntimeError(f"{label} is missing: {path}")
+    if path.stat().st_size == 0:
+        raise RuntimeError(f"{label} is empty: {path}")
+
+
 def validate_macos_app_bundle(package_root: Path, app_root: Path, arch: str, version: str) -> None:
     client_binary = package_root / f"{PRODUCT_NAME}-client_{arch}"
     require_packaged_executable(client_binary, "macOS client binary")
@@ -1700,14 +1849,11 @@ def validate_macos_app_bundle(package_root: Path, app_root: Path, arch: str, ver
     app_version = app_contents / "Resources" / "VERSION.txt"
     app_pkginfo = app_contents / "PkgInfo"
 
-    if not app_plist.is_file():
-        raise RuntimeError(f"macOS app bundle is missing Info.plist: {app_plist}")
+    require_non_empty_package_file(app_plist, "macOS app bundle Info.plist")
     if not app_executable.is_file() or not os.access(app_executable, os.X_OK):
         raise RuntimeError(f"macOS app executable is missing or not executable: {app_executable}")
-    if not app_icon.is_file():
-        raise RuntimeError(f"macOS app bundle is missing its icon: {app_icon}")
-    if not app_version.is_file():
-        raise RuntimeError(f"macOS app bundle is missing its version manifest: {app_version}")
+    require_non_empty_package_file(app_icon, "macOS app bundle icon")
+    require_non_empty_package_file(app_version, "macOS app bundle version manifest")
     if not app_pkginfo.is_file() or app_pkginfo.read_bytes() != MACOS_PKGINFO_BYTES:
         raise RuntimeError(f"macOS app bundle is missing a valid PkgInfo file: {app_pkginfo}")
 
@@ -1750,6 +1896,9 @@ def create_macos_app_bundle(
         if icns_source.is_file():
             copy_regular_file(icns_source, app_resources / "openQ4.icns")
             break
+    if not (app_resources / "openQ4.icns").is_file():
+        expected = ", ".join(str(path) for path in icns_candidates)
+        raise RuntimeError(f"macOS app icon source was not found in staged install. Expected one of: {expected}")
 
     info_plist = app_contents / "Info.plist"
     write_text_file(
@@ -1815,26 +1964,27 @@ def main(argv: list[str]) -> int:
         print("error: archive format 'dmg' is only supported for macOS packages", file=sys.stderr)
         return 1
 
-    source_root = Path(args.source_root).resolve()
-    install_dir = (
-        Path(args.install_dir).resolve()
-        if args.install_dir is not None
-        else (source_root / ".install").resolve()
-    )
-    output_dir = Path(args.output_dir).resolve()
+    raw_source_root = Path(args.source_root)
+    raw_install_dir = Path(args.install_dir) if args.install_dir is not None else raw_source_root / ".install"
+    raw_output_dir = Path(args.output_dir)
 
-    if not install_dir.is_dir():
-        print(f"error: install directory not found: {install_dir}", file=sys.stderr)
-        return 1
-
-    install_game_dir = install_dir / GAME_DIR_NAME
-    if not install_game_dir.is_dir():
-        print(f"error: {GAME_DIR_NAME} directory not found: {install_game_dir}", file=sys.stderr)
+    try:
+        source_root = require_package_directory(raw_source_root, "source root", must_exist=True)
+        install_dir = require_package_directory(raw_install_dir, "install directory", must_exist=True)
+        output_dir = require_package_directory(raw_output_dir, "output directory", must_exist=False)
+        install_game_dir = require_package_directory(
+            install_dir / GAME_DIR_NAME,
+            f"{GAME_DIR_NAME} directory",
+            must_exist=True,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
+        version = validate_package_version(args.version)
         version_tag = validate_package_path_token(args.version_tag, "version tag")
         package_suffix = normalize_package_suffix(args.package_suffix)
     except ValueError as exc:
@@ -1859,7 +2009,7 @@ def main(argv: list[str]) -> int:
         generated_docs = generate_release_documentation(
             source_root=source_root,
             package_root=package_root,
-            version=args.version,
+            version=version,
             platform=args.platform,
             arch=args.arch,
         )
@@ -1872,7 +2022,7 @@ def main(argv: list[str]) -> int:
 
     write_version_manifest(
         package_root / "VERSION.txt",
-        version=args.version,
+        version=version,
         version_tag=version_tag,
         platform=args.platform,
         arch=args.arch,
@@ -1910,7 +2060,7 @@ def main(argv: list[str]) -> int:
         args.allow_missing_binaries,
     )
     try:
-        validate_packaged_mod_manifest(package_game_dir, args.version)
+        validate_packaged_mod_manifest(package_game_dir, version)
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -1970,21 +2120,22 @@ def main(argv: list[str]) -> int:
             package_root,
             install_dir,
             args.arch,
-            args.version,
+            version,
             version_tag,
         )
         try:
             validate_no_package_symlinks(package_root)
             validate_no_package_special_files(package_root)
             validate_macos_package_file_modes(package_root)
+            validate_no_macos_metadata_artifacts(package_root)
             strip_macos_forbidden_xattrs(package_root)
             validate_no_macos_forbidden_xattrs(package_root)
             normalize_macos_game_module_install_names(package_root, args.arch)
             macos_signing = resolve_macos_signing_config(args)
             sign_macos_payload(package_root, args.arch, macos_signing)
-            validate_macos_version_manifests(package_root, args.arch, args.version, version_tag)
-            validate_macos_localized_info_files(package_root, args.version)
-            validate_macos_app_bundle(package_root, macos_app_bundle, args.arch, args.version)
+            validate_macos_version_manifests(package_root, args.arch, version, version_tag)
+            validate_macos_localized_info_files(package_root, version)
+            validate_macos_app_bundle(package_root, macos_app_bundle, args.arch, version)
             validate_macos_binary_dependencies(package_root, args.arch)
             verify_macos_codesignature(package_root, args.arch)
             verify_macos_developer_id_signature(package_root, args.arch, macos_signing)
@@ -2022,13 +2173,13 @@ def main(argv: list[str]) -> int:
                     archive_path,
                     archive_format,
                     args.arch,
-                    args.version,
+                    version,
                 )
         except RuntimeError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
 
-    print(f"Packaged openQ4 release {args.version} for {args.platform}")
+    print(f"Packaged openQ4 release {version} for {args.platform}")
     print(f"Package directory: {package_root}")
     print(f"Release archive: {archive_path}")
     print(f"Archive format: {archive_format}")

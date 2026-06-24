@@ -129,7 +129,7 @@ def validate_linux_build_path_casing() -> None:
 
 
 def validate_release_note() -> None:
-    source = read("docs-dev/release-completion.md")
+    source = read("docs/dev/release-completion.md")
 
     require(source, "Loose-file lookups on case-sensitive Linux and macOS filesystems now resolve existing mixed-case directory segments", "release completion notes")
     require(source, "instead of assuming lowercase paths", "release completion notes")

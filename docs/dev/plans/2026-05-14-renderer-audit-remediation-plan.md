@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This plan audits the current modern OpenGL renderer against `docs-dev/plans/2026-05-14-renderer-recovery-performance-parity.md` after reports that framerate is still poor and lighting is broken.
+This plan audits the current modern OpenGL renderer against `docs/dev/plans/2026-05-14-renderer-recovery-performance-parity.md` after reports that framerate is still poor and lighting is broken.
 
 The conclusion is that the renderer has useful scaffolding, metrics, resource naming, and fallback hooks, but it is not yet a production replacement path. Several checklist items were marked complete before their acceptance gates were proven in real gameplay, and several implemented systems are still structural placeholders. The next implementation pass must prioritize correctness first, then make the correct path fast. The target remains high performance with no rendering-quality downgrade.
 

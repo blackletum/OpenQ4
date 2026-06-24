@@ -12,6 +12,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 
 ROOT_DOCS = (
@@ -20,6 +21,11 @@ ROOT_DOCS = (
     Path("TECHNICAL.md"),
     Path("TODO.md"),
 )
+SAFE_LINK_SCHEMES = {
+    "http",
+    "https",
+    "mailto",
+}
 
 
 SITE_CSS = r"""
@@ -632,9 +638,12 @@ def is_relative_to(path: Path, root: Path) -> bool:
 
 def validate_output_root(source_root: Path, output_root: Path) -> None:
     source_root = source_root.resolve()
+    raw_output_root = output_root
     output_root = output_root.resolve()
     output_anchor = Path(output_root.anchor).resolve()
 
+    if raw_output_root.is_symlink():
+        raise RuntimeError(f"refusing to generate release docs into a symlinked output directory: {raw_output_root}")
     if output_root == output_anchor:
         raise RuntimeError(f"refusing to replace filesystem root while generating docs: {output_root}")
     if output_root == source_root or is_relative_to(source_root, output_root):
@@ -654,21 +663,45 @@ def validate_output_root(source_root: Path, output_root: Path) -> None:
         raise RuntimeError(f"release docs output path exists but is not a directory: {output_root}")
 
 
+def validate_source_root(source_root: Path) -> Path:
+    if source_root.is_symlink():
+        raise RuntimeError(f"release docs source root must not be a symlink: {source_root}")
+    resolved = source_root.resolve()
+    if not resolved.is_dir():
+        raise RuntimeError(f"release docs source root not found: {resolved}")
+    return resolved
+
+
+def require_regular_doc_source(path: Path, relative: Path) -> None:
+    if path.is_symlink():
+        raise RuntimeError(f"refusing to package symlinked documentation source: {relative.as_posix()}")
+    if not path.is_file():
+        raise RuntimeError(f"documentation source is not a regular file: {relative.as_posix()}")
+
+
 def collect_doc_sources(source_root: Path) -> list[Path]:
     docs: list[Path] = []
     seen: set[str] = set()
 
     for relative in ROOT_DOCS:
-        if (source_root / relative).is_file():
+        candidate = source_root / relative
+        if candidate.exists() or candidate.is_symlink():
+            require_regular_doc_source(candidate, relative)
             docs.append(relative)
             seen.add(relative.as_posix().lower())
 
-    for base in (Path("docs-user"), Path("docs-dev")):
+    for base in (Path("docs/user"), Path("docs/dev")):
         base_path = source_root / base
         if not base_path.is_dir():
             continue
-        for path in sorted(base_path.rglob("*.md")):
+        for path in sorted(base_path.rglob("*")):
             relative = path.relative_to(source_root)
+            if path.is_symlink():
+                raise RuntimeError(f"refusing to package symlinked documentation source: {relative.as_posix()}")
+            if path.suffix.lower() != ".md":
+                continue
+            if not path.is_file():
+                continue
             key = relative.as_posix().lower()
             if key in seen:
                 continue
@@ -681,11 +714,11 @@ def collect_doc_sources(source_root: Path) -> list[Path]:
 def classify_group(relative: Path) -> str:
     if relative.parent == Path("."):
         return "Project"
-    if relative.parts[0] == "docs-user":
+    if len(relative.parts) >= 2 and relative.parts[0] == "docs" and relative.parts[1] == "user":
         return "User Guides"
-    if len(relative.parts) >= 2 and relative.parts[0] == "docs-dev" and relative.parts[1] == "proposals":
+    if len(relative.parts) >= 3 and relative.parts[0] == "docs" and relative.parts[1] == "dev" and relative.parts[2] == "proposals":
         return "Research and Proposals"
-    if len(relative.parts) >= 2 and relative.parts[0] == "docs-dev" and relative.parts[1] == "legacy":
+    if len(relative.parts) >= 3 and relative.parts[0] == "docs" and relative.parts[1] == "dev" and relative.parts[2] == "legacy":
         return "Legacy Notes"
     return "Developer Guides"
 
@@ -712,7 +745,14 @@ def rewrite_markdown_links(text: str) -> str:
     def replace(match: re.Match[str]) -> str:
         prefix, target, suffix = match.groups()
         stripped_target = target.strip()
-        if stripped_target.startswith(("http://", "https://", "mailto:", "#")):
+        if stripped_target.startswith("#"):
+            return match.group(0)
+
+        parsed = urlsplit(stripped_target)
+        if parsed.scheme:
+            scheme = parsed.scheme.lower()
+            if scheme not in SAFE_LINK_SCHEMES:
+                return prefix + "#" + suffix
             return match.group(0)
 
         hash_suffix = ""
@@ -727,6 +767,36 @@ def rewrite_markdown_links(text: str) -> str:
         return prefix + stripped_target + hash_suffix + suffix
 
     return pattern.sub(replace, text)
+
+
+def copy_docs_asset_tree(source_root: Path, destination_root: Path) -> None:
+    if source_root.is_symlink():
+        raise RuntimeError(f"refusing to copy symlinked documentation asset directory: {source_root}")
+    if not source_root.is_dir():
+        return
+
+    for path in sorted(source_root.rglob("*")):
+        relative = path.relative_to(source_root)
+        if path.is_symlink():
+            raise RuntimeError(f"refusing to copy symlinked documentation asset: {relative.as_posix()}")
+        destination = destination_root / relative
+        if path.is_dir():
+            destination.mkdir(parents=True, exist_ok=True)
+        elif path.is_file():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, destination)
+        else:
+            raise RuntimeError(f"refusing to copy non-regular documentation asset: {relative.as_posix()}")
+
+
+def copy_docs_auxiliary_file(source_root: Path, relative: Path, destination: Path) -> None:
+    source = source_root / relative
+    if source.is_symlink():
+        raise RuntimeError(f"refusing to copy symlinked documentation auxiliary file: {relative.as_posix()}")
+    if not source.is_file():
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
 
 
 def convert_github_callouts(text: str) -> str:
@@ -1111,8 +1181,8 @@ def render_index_page(
             '      <p class="lead">This package includes the project overview, build and technical references, user guides, developer notes, and proposal research converted into a browsable HTML site with internal links preserved.</p>',
             '      <div class="hero-actions">',
             '        <a class="button primary" href="README.html">Open Project Overview</a>',
-            '        <a class="button" href="docs-user/light-grids.html">User Guide Example</a>',
-            '        <a class="button" href="docs-dev/platform-support.html">Platform Roadmap</a>',
+            '        <a class="button" href="docs/user/light-grids.html">User Guide Example</a>',
+            '        <a class="button" href="docs/dev/platform-support.html">Platform Roadmap</a>',
             '      </div>',
             '      <div class="hero-meta">',
             f'        <span class="chip">Release {html.escape(version)}</span>',
@@ -1146,9 +1216,9 @@ def generate_release_docs_site(
     platform: str,
     arch: str,
 ) -> GeneratedDocSite:
-    source_root = source_root.resolve()
-    output_root = output_root.resolve()
+    source_root = validate_source_root(source_root)
     validate_output_root(source_root, output_root)
+    output_root = output_root.resolve()
 
     markdown_lib = require_markdown_module()
     specs = build_doc_specs(source_root)
@@ -1165,8 +1235,10 @@ def generate_release_docs_site(
     docs_assets_source = source_root / "assets" / "docs" / "img"
     if docs_assets_source.is_dir():
         docs_assets_dest = output_root / "assets" / "docs" / "img"
-        docs_assets_dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(docs_assets_source, docs_assets_dest, dirs_exist_ok=True)
+        copy_docs_asset_tree(docs_assets_source, docs_assets_dest)
+
+    for auxiliary in (Path("LICENSE"),):
+        copy_docs_auxiliary_file(source_root, auxiliary, output_root / auxiliary.name)
 
     for spec in specs:
         raw_text = (source_root / spec.source_relative).read_text(encoding="utf-8")
@@ -1218,8 +1290,8 @@ def generate_release_docs_site(
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     result = generate_release_docs_site(
-        source_root=Path(args.source_root).resolve(),
-        output_root=Path(args.output_dir).resolve(),
+        source_root=Path(args.source_root),
+        output_root=Path(args.output_dir),
         version=args.version,
         platform=args.platform,
         arch=args.arch,

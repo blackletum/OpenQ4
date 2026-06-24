@@ -8,12 +8,20 @@ import importlib.util
 import os
 import shutil
 import sys
+import uuid
 from pathlib import Path
 from types import ModuleType
 
 
 ROOT = Path(__file__).resolve().parents[2]
-WORK = ROOT / ".tmp" / "validation-hardening-test"
+WORK_BASE = ROOT / ".tmp" / "validation-hardening-test"
+
+
+def make_work_root() -> Path:
+    return WORK_BASE / f"{os.getpid()}-{uuid.uuid4().hex}"
+
+
+WORK = make_work_root()
 
 
 def load_module(name: str, path: Path) -> ModuleType:
@@ -93,6 +101,18 @@ def validate_positive_integer_arguments() -> None:
 def validate_source_and_build_dir_guards() -> None:
     VALIDATOR.validate_source_root(ROOT)
 
+    source_link = WORK / "source-root-link"
+    try:
+        os.symlink(ROOT, source_link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pass
+    else:
+        expect_validation_error(
+            lambda: VALIDATOR.validate_source_root(source_link),
+            "must not be a symlink",
+            "symlink source root",
+        )
+
     fake_root = WORK / "not-openq4"
     fake_root.mkdir(parents=True, exist_ok=True)
     expect_validation_error(
@@ -108,7 +128,7 @@ def validate_source_and_build_dir_guards() -> None:
         "ancestor build dir",
     )
     expect_validation_error(
-        lambda: VALIDATOR.validate_build_dir(ROOT, ROOT / "docs-dev" / "validation-build"),
+        lambda: VALIDATOR.validate_build_dir(ROOT, ROOT / "docs/dev" / "validation-build"),
         "must live under .tmp/ or use a builddir* name",
         "source-controlled build dir",
     )
@@ -121,8 +141,71 @@ def validate_source_and_build_dir_guards() -> None:
         "file build dir",
     )
 
+    symlink_target = WORK / "build-target"
+    symlink_build_dir = WORK / "build-link"
+    symlink_target.mkdir(parents=True, exist_ok=True)
+    try:
+        os.symlink(symlink_target, symlink_build_dir)
+    except (OSError, NotImplementedError):
+        pass
+    else:
+        expect_validation_error(
+            lambda: VALIDATOR.validate_build_dir(ROOT, symlink_build_dir),
+            "must not be a symlink",
+            "symlink build dir",
+        )
+
     VALIDATOR.validate_build_dir(ROOT, ROOT / "builddir-validation-hardening")
     VALIDATOR.validate_build_dir(ROOT, ROOT / ".tmp" / "validation-hardening" / "build")
+
+
+def validate_game_libs_repo_guards() -> None:
+    game_libs_target = WORK / "openQ4-game-real"
+    game_libs_link = WORK / "openQ4-game-link"
+    write_file(game_libs_target / "src" / "game" / "Game_local.cpp")
+
+    try:
+        os.symlink(game_libs_target, game_libs_link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        return
+
+    expect_validation_error(
+        lambda: VALIDATOR.ensure_game_libs_repo({"OPENQ4_GAMELIBS_REPO": str(game_libs_link)}),
+        "must not be a symlink",
+        "symlink GameLibs repository",
+    )
+
+    args = argparse.Namespace(game_libs_repo=str(game_libs_link), build_gamelibs=False, skip_icon_sync=False)
+    expect_validation_error(
+        lambda: VALIDATOR.validation_env(args, ROOT),
+        "must not be a symlink",
+        "symlink GameLibs CLI argument",
+    )
+
+    default_root = WORK / "default-gamelibs" / "openQ4"
+    default_target = WORK / "default-gamelibs" / "openQ4-game-real"
+    default_link = WORK / "default-gamelibs" / "openQ4-game"
+    write_file(default_root / "meson.build")
+    write_file(default_target / "src" / "game" / "Game_local.cpp")
+    try:
+        os.symlink(default_target, default_link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        return
+
+    default_args = argparse.Namespace(game_libs_repo="", build_gamelibs=False, skip_icon_sync=False)
+    original_default = os.environ.get("OPENQ4_GAMELIBS_REPO")
+    try:
+        os.environ.pop("OPENQ4_GAMELIBS_REPO", None)
+        expect_validation_error(
+            lambda: VALIDATOR.validation_env(default_args, default_root),
+            "must not be a symlink",
+            "default symlink GameLibs repository",
+        )
+    finally:
+        if original_default is None:
+            os.environ.pop("OPENQ4_GAMELIBS_REPO", None)
+        else:
+            os.environ["OPENQ4_GAMELIBS_REPO"] = original_default
 
 
 def validate_staged_symlink_guard() -> None:
@@ -283,11 +366,12 @@ def validate_validation_wiring() -> None:
     validator = (ROOT / "tools" / "validation" / "openq4_validate.py").read_text(encoding="utf-8")
     push = (ROOT / ".github" / "workflows" / "push-verification.yml").read_text(encoding="utf-8")
     commit = (ROOT / ".github" / "workflows" / "commit-validation.yml").read_text(encoding="utf-8")
-    release_notes = (ROOT / "docs-dev" / "release-completion.md").read_text(encoding="utf-8")
+    release_notes = (ROOT / "docs/dev" / "release-completion.md").read_text(encoding="utf-8")
 
     for token in (
         "positive_int",
         "validate_source_root",
+        "validate_game_libs_repo_path",
         "validate_build_dir",
         "validate_no_staged_symlinks",
         "validate_staged_architecture_set",
@@ -305,6 +389,38 @@ def validate_validation_wiring() -> None:
         if "validation_hardening.py" not in text:
             raise AssertionError(f"validation_hardening.py is not wired into {context}")
 
+    central_python_tests = (
+        "filesystem_mod_manifest.py",
+        "linux_arm64_ci_coverage.py",
+        "linux_gui_presentation_defaults.py",
+        "linux_pk4_legacy_tools.py",
+        "macos_signoff_archive.py",
+        "native_glx_shutdown.py",
+        "preprocessor_macro_safety.py",
+        "posix_monotonic_time.py",
+        "posix_network_resolution.py",
+        "posix_thread_shutdown.py",
+        "renderer_msaa_cvar_safety.py",
+        "renderer_supersampling_safety.py",
+        "settings_menu_coverage.py",
+    )
+    for test_name in central_python_tests:
+        if test_name not in validator:
+            raise AssertionError(f"{test_name} is not wired into local validation")
+        if test_name not in push:
+            raise AssertionError(f"{test_name} is not wired into push workflow smoke checks")
+        if test_name not in commit:
+            raise AssertionError(f"{test_name} is not wired into commit workflow smoke checks")
+
+    for build_script in (
+        "package_nightly.py",
+        "package_release.py",
+        "stage_windows_runtime.py",
+        "sync_icons.py",
+    ):
+        if build_script not in push or build_script not in commit:
+            raise AssertionError(f"{build_script} is not covered by workflow py_compile smoke checks")
+
     if "Validation runs now fail earlier" not in release_notes:
         raise AssertionError("release notes do not mention validation hardening")
 
@@ -314,6 +430,7 @@ def main() -> None:
     try:
         validate_positive_integer_arguments()
         validate_source_and_build_dir_guards()
+        validate_game_libs_repo_guards()
         validate_staged_symlink_guard()
         validate_recursive_non_runtime_scan()
         validate_engine_architecture_mismatch()

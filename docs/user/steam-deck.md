@@ -84,4 +84,4 @@ For deterministic testing, set `OPENQ4_QUAKE4_PATH` or `OPENQ4_QUAKE4_ROOT` to t
 - Suspend/resume and foreground/background SDL events release captured input, stop rumble, write the current config, and reacquire controllers when the app returns.
 - Native Wayland is supported through the SDL3 backend; XWayland remains available through `OPENQ4_FORCE_X11=1` or explicit SDL video-driver environment variables.
 - `OPENQ4_WAYLAND_DISABLE_LIBDECOR=1` is available as a native Wayland troubleshooting switch for compositor/libdecor problems.
-- The developer-facing Deck QA checklist lives in [../docs-dev/steam-deck-qa.md](../docs-dev/steam-deck-qa.md).
+- The developer-facing Deck QA checklist lives in [../dev/steam-deck-qa.md](../dev/steam-deck-qa.md).

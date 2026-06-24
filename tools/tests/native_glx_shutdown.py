@@ -78,7 +78,7 @@ def validate_glx_shutdown_order() -> None:
 
 
 def validate_release_note() -> None:
-    source = read("docs-dev/release-completion.md")
+    source = read("docs/dev/release-completion.md")
 
     require(source, "native Linux X11/GLX backend now closes its X display connection", "release completion notes")
     require(source, "before unloading GLX", "release completion notes")

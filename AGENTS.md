@@ -32,7 +32,7 @@ This file describes project goals, rules, and upstream credits for anyone workin
 - Keep repo-authored runtime overrides under `content/baseoq4/`; treat `.install/baseoq4/` as staged output rather than an editing target.
 - Prefer changes that match Quake 4 SDK expectations and shipped content behavior.
 - Document significant changes in the documentation and keep `README.md` accurate.
-- Treat release changelog maintenance as part of feature completion. User-facing curated release notes belong in `docs-dev/releases/vX.Y.Z.md`, and the manual release workflow will publish that file when it exists.
+- Treat release changelog maintenance as part of feature completion. User-facing curated release notes belong in `docs/dev/releases/vX.Y.Z.md`, and the manual release workflow will publish that file when it exists.
 - Write release notes for end users first: lead with the visible benefit, call out any action or compatibility note the reader needs, and avoid dumping internal implementation trivia unless it materially helps the audience.
 - Use `builddir/` as the standard Meson build output directory for local builds, VS Code tasks, and launch configurations.
 - Never add VS Code `preLaunchTask` entries to launch configurations; launch tasks must remain direct game launches.
@@ -54,7 +54,7 @@ This file describes project goals, rules, and upstream credits for anyone workin
 - For investigations, reference the log file written by `logFileName` (VS Code launch uses `logs/openq4.log`), located under `fs_savepath\<gameDir>\` (e.g. `${workspaceFolder}\\.home\\baseoq4\\logs\\openq4.log`).
 - For runtime validation, use mode-specific launch tasks: use the SP launch task for single-player testing and the MP launch task for multiplayer testing.
 - Do not treat main-menu startup as sufficient validation; enter in-game/map gameplay relevant to the change before concluding tests.
-- For macOS testing/debugging, use the compliant Apple-hardware VM/host workflow in `docs-dev/macos-vm-testing-workflow.md` and `tools/macos/Invoke-openQ4MacOSWorkflow.ps1`. Keep macOS installer/restore-image inventory under `E:\ISO\macos\`. Do not use Windows VMware macOS unlocker/Hackintosh-style setup guides for openQ4 automation.
+- For macOS testing/debugging, use the compliant Apple-hardware VM/host workflow in `docs/dev/macos-vm-testing-workflow.md` and `tools/macos/Invoke-openQ4MacOSWorkflow.ps1`. Keep macOS installer/restore-image inventory under `E:\ISO\macos\`. Do not use Windows VMware macOS unlocker/Hackintosh-style setup guides for openQ4 automation.
 - Use `.tmp/` directory in repository for any temporary files required for tasks.
 - Always consider cross-platform compatibility for any changes.
 
@@ -73,8 +73,8 @@ This file describes project goals, rules, and upstream credits for anyone workin
 
 **Release Changelog Workflow**
 1. Treat release-note maintenance as part of the definition of done for any shipped user-facing, packaging, compatibility, input, rendering, or platform change.
-2. Keep candidate release material current in `docs-dev/release-completion.md` while work is in progress.
-3. Before cutting or re-cutting a release, create or update `docs-dev/releases/vX.Y.Z.md` with polished release notes intended to be read directly by players and package users.
+2. Keep candidate release material current in `docs/dev/release-completion.md` while work is in progress.
+3. Before cutting or re-cutting a release, create or update `docs/dev/releases/vX.Y.Z.md` with polished release notes intended to be read directly by players and package users.
 4. Prefer a clean Markdown structure with short sections such as `Highlights`, `Upgrade Notes`, and `Change Log`, using concise bullets that scan well on GitHub releases.
 5. Write in benefit-first language: explain what changed, why it matters, and whether the reader needs to reinstall, replace files, or rebind anything.
 6. Keep curated notes free of internal-only clutter such as source paths, temporary investigation details, or commit-by-commit noise unless that detail is genuinely useful to the release audience.

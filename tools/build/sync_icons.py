@@ -26,7 +26,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv[1:])
 
 
-def ensure_file(path: Path) -> None:
+def ensure_file(path: Path, label: str = "icon file") -> None:
+    if path.is_symlink():
+        raise FileNotFoundError(f"{label} must not be a symlink: {path}")
     if not path.is_file():
         raise FileNotFoundError(f"required icon file not found: {path}")
 
@@ -57,6 +59,8 @@ def highest_png_source(icon_dir: Path) -> Path:
     highest: tuple[int, Path] | None = None
     for size in PNG_SIZES:
         candidate = icon_dir / f"quake4_{size}.png"
+        if candidate.is_symlink():
+            raise FileNotFoundError(f"source PNG icon must not be a symlink: {candidate}")
         if candidate.is_file():
             if highest is None or size > highest[0]:
                 highest = (size, candidate)
@@ -64,6 +68,13 @@ def highest_png_source(icon_dir: Path) -> Path:
     if highest is None:
         raise FileNotFoundError("no source PNG found in assets/icons")
     return highest[1]
+
+
+def ensure_writable_icon_output(path: Path) -> None:
+    if path.is_symlink():
+        raise RuntimeError(f"generated PNG icon output must not be a symlink: {path}")
+    if path.exists() and not path.is_file():
+        raise RuntimeError(f"generated PNG icon output path is not a regular file: {path}")
 
 
 def resize_png(src_png: Path, dst_png: Path, size: int) -> bool:
@@ -79,6 +90,7 @@ def resize_png(src_png: Path, dst_png: Path, size: int) -> bool:
         if image.mode not in ("RGBA", "LA"):
             image = image.convert("RGBA")
         resized = image.resize((size, size), Image.Resampling.LANCZOS)
+        ensure_writable_icon_output(dst_png)
         dst_png.parent.mkdir(parents=True, exist_ok=True)
         resized.save(dst_png, format="PNG")
     return True
@@ -89,8 +101,8 @@ def sync_icons(source_root: Path, check_only: bool) -> int:
     ico_path = icon_dir / "quake4.ico"
     icns_path = icon_dir / "quake4.icns"
 
-    ensure_file(ico_path)
-    ensure_file(icns_path)
+    ensure_file(ico_path, "ICO icon")
+    ensure_file(icns_path, "ICNS icon")
 
     ico_sizes = inspect_ico_sizes(ico_path)
     expected_ico_sizes = {(16, 16), (20, 20), (24, 24), (32, 32), (40, 40), (48, 48), (64, 64), (128, 128), (256, 256)}
@@ -104,6 +116,8 @@ def sync_icons(source_root: Path, check_only: bool) -> int:
     pending = 0
     for size in PNG_SIZES:
         path = icon_dir / f"quake4_{size}.png"
+        if path.is_symlink():
+            raise RuntimeError(f"PNG icon output must not be a symlink: {path}")
         if path.is_file():
             continue
 

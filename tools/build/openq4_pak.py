@@ -91,6 +91,8 @@ def file_md5_hex(path: Path) -> str:
 
 
 def write_text_if_changed(path: Path, contents: str) -> None:
+    if path.is_symlink():
+        path.unlink()
     if path.is_file() and path.read_text(encoding="utf-8") == contents:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -98,6 +100,8 @@ def write_text_if_changed(path: Path, contents: str) -> None:
 
 
 def _replace_file_if_changed(source: Path, destination: Path) -> None:
+    if destination.is_symlink():
+        destination.unlink()
     if destination.is_file() and filecmp.cmp(source, destination, shallow=False):
         source.unlink()
         return
@@ -114,6 +118,8 @@ def is_relative_to(path: Path, parent: Path) -> bool:
 
 
 def require_directory_inside(path: Path, parent: Path, label: str) -> Path:
+    if path.is_symlink():
+        raise RuntimeError(f"{label} directory must not be a symlink: {path}")
     resolved_path = path.resolve()
     resolved_parent = parent.resolve()
     if not resolved_path.is_dir():
@@ -150,8 +156,10 @@ def validate_pk4_arcname(name: str, pak_name: str, seen_names: set[str] | None =
 
 
 def copy_file_if_changed(source: Path, destination: Path) -> bool:
+    if source.is_symlink():
+        raise RuntimeError(f"refusing to copy symlinked source file: {source}")
     source = source.resolve()
-    if not source.is_file() or source.is_symlink():
+    if not source.is_file():
         raise RuntimeError(f"refusing to copy non-regular source file: {source}")
     if destination.is_symlink():
         destination.unlink()
@@ -211,6 +219,8 @@ def _iter_pk4_entries(source_dir: Path, pak_name: str) -> tuple[list[tuple[Path,
     entries: list[tuple[Path, str]] = []
     skipped_samples: list[str] = []
 
+    if source_dir.is_symlink():
+        raise RuntimeError(f"{pak_name} source directory must not be a symlink: {source_dir}")
     if not source_dir.is_dir():
         raise RuntimeError(f"{pak_name} source directory not found: {source_dir}")
 

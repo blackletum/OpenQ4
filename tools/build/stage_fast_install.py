@@ -54,6 +54,14 @@ def copy_if_changed(source: Path, destination: Path) -> bool:
 
 
 def validate_stage_roots(source_root: Path, build_dir: Path, install_dir: Path) -> None:
+    for label, path in (
+        ("source root", source_root),
+        ("build directory", build_dir),
+        ("install directory", install_dir),
+    ):
+        if path.is_symlink():
+            raise RuntimeError(f"fast staging {label} must not be a symlink: {path}")
+
     source_root = source_root.resolve()
     build_dir = build_dir.resolve()
     install_dir = install_dir.resolve()
@@ -63,8 +71,8 @@ def validate_stage_roots(source_root: Path, build_dir: Path, install_dir: Path) 
         raise RuntimeError(f"fast staging install directory must be {expected_install_dir}: {install_dir}")
     if not is_relative_to(build_dir, source_root):
         raise RuntimeError(f"fast staging build directory must stay under {source_root}: {build_dir}")
-    if build_dir == install_dir or is_relative_to(install_dir, build_dir):
-        raise RuntimeError(f"fast staging build directory must not contain the install directory: {build_dir}")
+    if build_dir == install_dir or is_relative_to(install_dir, build_dir) or is_relative_to(build_dir, install_dir):
+        raise RuntimeError(f"fast staging build and install directories must not overlap: {build_dir}")
 
 
 def remove_matches(root: Path, patterns: tuple[str, ...]) -> list[Path]:
@@ -95,14 +103,17 @@ def copy_matches(source_root: Path, destination_root: Path, patterns: tuple[str,
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
-    source_root = Path(args.source_root).resolve()
-    build_dir = Path(args.build_dir).resolve()
-    install_dir = Path(args.install_dir).resolve()
-    build_game_dir = build_dir / "baseoq4"
-    install_game_dir = install_dir / "baseoq4"
+    source_root = Path(args.source_root)
+    build_dir = Path(args.build_dir)
+    install_dir = Path(args.install_dir)
 
     try:
         validate_stage_roots(source_root, build_dir, install_dir)
+        source_root = source_root.resolve()
+        build_dir = build_dir.resolve()
+        install_dir = install_dir.resolve()
+        build_game_dir = build_dir / "baseoq4"
+        install_game_dir = install_dir / "baseoq4"
         install_dir.mkdir(parents=True, exist_ok=True)
         install_game_dir.mkdir(parents=True, exist_ok=True)
 

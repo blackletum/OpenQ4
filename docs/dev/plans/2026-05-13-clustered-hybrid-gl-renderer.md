@@ -524,7 +524,7 @@ Goal: make the renderer trustworthy across real content and drivers.
 
 - Completed: Added caps-level compatibility gates and a driver-quirk table that can mask unsafe UBO, MRT, timer-query, buffer-storage, and debug-context capabilities before tier selection. `gfxInfo` now reports the active driver-quirk report and compatibility-gate summary beside the selected tier and caps.
 - Validation matrix: `tools/tests/renderer_validation_matrix.py` now includes `renderer-compatibility-gates-selftest` as its own safe case, emits deterministic image-capture targets, RenderDoc forced-tier checklist entries, long-run `vid_restart`/map-transition loops, and the SP/MP gameplay sign-off matrix in both JSON and Markdown reports.
-- Docs: `docs-dev/renderer-validation-matrix.md` now documents the fallback-gate policy, deterministic captures, RenderDoc tier captures, long-run loops, SP/MP cases, presentation cvars, fullscreen/windowed coverage, and forced-tier coverage. `docs-dev/gl-renderer-modernization.md` now names the compatibility gates as part of the default-promotion story.
+- Docs: `docs/dev/renderer-validation-matrix.md` now documents the fallback-gate policy, deterministic captures, RenderDoc tier captures, long-run loops, SP/MP cases, presentation cvars, fullscreen/windowed coverage, and forced-tier coverage. `docs/dev/gl-renderer-modernization.md` now names the compatibility gates as part of the default-promotion story.
 - Cvars added/changed: None.
 - Metrics added/changed: No frame metrics changed; `gfxInfo` gained `Renderer driver quirks:` and `Renderer compatibility gates:` lines.
 - Self-tests added/changed: Added `rendererCompatibilityGatesSelfTest`; the safe validation matrix runs it separately to avoid the startup command-list budget.
@@ -566,7 +566,7 @@ Goal: make the modern renderer the default only when it has earned it.
 - [x] Keep `r_renderer arb2` and `r_glTier legacy` available.
 - [x] Remove diagnostic-only transitional code only after equivalent visible functionality exists.
 - [x] Keep shader/material fallback paths documented.
-- [x] Update `README.md`, `docs-dev/gl-renderer-modernization.md`, `docs-dev/renderer-validation-matrix.md`, and release notes.
+- [x] Update `README.md`, `docs/dev/gl-renderer-modernization.md`, `docs/dev/renderer-validation-matrix.md`, and release notes.
 - [x] Acceptance: default modern renderer is enabled only after SP/MP validation, RenderDoc workflow, and fallback escape hatches are all documented.
 
 ## Phase 17 Exit

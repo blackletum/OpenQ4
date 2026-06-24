@@ -76,9 +76,9 @@ def test_postaa_settings_surface_exposes_all_modes():
     repo_root = Path(__file__).resolve().parents[2]
     init_cpp = read_repo_file(Path("src") / "renderer" / "RenderSystem_init.cpp")
     system_gui = read_repo_file(Path("content") / "baseoq4" / "pak0" / "guis" / "menu" / "settings" / "system.gui")
-    structure_md = read_repo_file(Path("docs-dev") / "settings-menu-structure.md")
-    display_settings_md = read_repo_file(Path("docs-user") / "display-settings.md")
-    registry = json.loads((repo_root / "docs-dev" / "settings-menu-registry.json").read_text(encoding="utf-8"))["settings"]
+    structure_md = read_repo_file(Path("docs/dev") / "settings-menu-structure.md")
+    display_settings_md = read_repo_file(Path("docs/user") / "display-settings.md")
+    registry = json.loads((repo_root / "docs/dev" / "settings-menu-registry.json").read_text(encoding="utf-8"))["settings"]
 
     assert_true(
         '"post AA mode: 0 = off, 1 = SMAA 1x medium, 2 = SMAA 1x high, 3 = SMAA 1x ultra, 4 = SMAA 1x colour-edge prototype", 0, 4' in init_cpp,

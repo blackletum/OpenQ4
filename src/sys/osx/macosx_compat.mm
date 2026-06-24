@@ -36,6 +36,7 @@ If you have questions concerning this license or the applicable additional terms
 #import <mach-o/dyld.h>
 #import <mach/mach_time.h>
 #import <pthread.h>
+#import <errno.h>
 #import <limits.h>
 #import <stdlib.h>
 #import <string.h>
@@ -109,6 +110,96 @@ static bool Sys_CopyExecutablePath( char *outPath, size_t outPathSize ) {
 		free( pathBuffer );
 	}
 	return outPath[0] != '\0';
+}
+
+static void Sys_NormalizeMacOSDirectoryPath( idStr &path ) {
+	path.BackSlashesToSlashes();
+	while ( path.Length() > 1 && path[ path.Length() - 1 ] == '/' ) {
+		path.CapLength( path.Length() - 1 );
+	}
+}
+
+static bool Sys_IsAbsoluteMacOSPath( const idStr &path ) {
+	return path.Length() > 0 && path[0] == '/';
+}
+
+static bool Sys_DirectoryExists( const char *path ) {
+	struct stat st;
+	return path != NULL && path[0] != '\0' && stat( path, &st ) != -1 && S_ISDIR( st.st_mode );
+}
+
+static bool Sys_DirectoryIsWritable( const idStr &path ) {
+	return Sys_DirectoryExists( path.c_str() ) && access( path.c_str(), W_OK | X_OK ) == 0;
+}
+
+static bool Sys_EnsureMacOSDirectoryTree( const idStr &path ) {
+	if ( !Sys_IsAbsoluteMacOSPath( path ) ) {
+		common->Printf( "WARNING: refusing to create non-absolute macOS directory path '%s'\n", path.c_str() );
+		return false;
+	}
+	if ( Sys_DirectoryExists( path.c_str() ) ) {
+		return true;
+	}
+
+	idStr parent = path;
+	parent.StripFilename();
+	Sys_NormalizeMacOSDirectoryPath( parent );
+	if ( parent.Length() <= 0 || parent.Cmp( path.c_str() ) == 0 ) {
+		return false;
+	}
+	if ( !Sys_DirectoryExists( parent.c_str() ) && !Sys_EnsureMacOSDirectoryTree( parent ) ) {
+		return false;
+	}
+
+	if ( mkdir( path.c_str(), 0700 ) == -1 && errno != EEXIST ) {
+		common->Printf( "WARNING: could not create macOS directory '%s': %s\n", path.c_str(), strerror( errno ) );
+		return false;
+	}
+	if ( !Sys_DirectoryExists( path.c_str() ) ) {
+		common->Printf( "WARNING: macOS path '%s' exists but is not a directory\n", path.c_str() );
+		return false;
+	}
+	return true;
+}
+
+static bool Sys_SetUsableMacOSSavePath( const idStr &candidate, const char *label ) {
+	savepath = candidate;
+	Sys_NormalizeMacOSDirectoryPath( savepath );
+
+	if ( !Sys_IsAbsoluteMacOSPath( savepath ) ) {
+		common->Printf( "WARNING: skipping non-absolute macOS %s save path '%s'\n", label, savepath.c_str() );
+		return false;
+	}
+	if ( !Sys_EnsureMacOSDirectoryTree( savepath ) ) {
+		common->Printf( "WARNING: macOS %s save path '%s' could not be created\n", label, savepath.c_str() );
+		return false;
+	}
+	if ( !Sys_DirectoryIsWritable( savepath ) ) {
+		common->Printf( "WARNING: macOS %s save path '%s' is not writable\n", label, savepath.c_str() );
+		return false;
+	}
+	return true;
+}
+
+static bool Sys_GetMacOSHomeDirectory( idStr &homePath ) {
+	homePath.Clear();
+
+	const char *home = [NSHomeDirectory() fileSystemRepresentation];
+	if ( home == NULL || home[0] == '\0' ) {
+		home = getenv( "HOME" );
+	}
+	if ( home == NULL || home[0] != '/' ) {
+		return false;
+	}
+
+	char resolvedPath[PATH_MAX];
+	if ( realpath( home, resolvedPath ) != NULL ) {
+		homePath = resolvedPath;
+	} else {
+		homePath = home;
+	}
+	Sys_NormalizeMacOSDirectoryPath( homePath );
+	return Sys_IsAbsoluteMacOSPath( homePath );
 }
 
 static int Sys_RoundSystemRamMegabytes( unsigned long long bytes, int fallbackMegabytes ) {
@@ -217,16 +308,28 @@ Sys_DefaultSavePath
 ==============
 */
 const char *Sys_DefaultSavePath( void ) {
-	const char *home = [NSHomeDirectory() fileSystemRepresentation];
-	if ( home != NULL && home[0] != '\0' ) {
+	idStr home;
+	if ( Sys_GetMacOSHomeDirectory( home ) ) {
+		idStr candidate = home;
+		candidate.AppendPath( "Library" );
+		candidate.AppendPath( "Application Support" );
 #if defined( ID_DEMO_BUILD )
-		savepath = va( "%s/Library/Application Support/openQ4 Demo", home );
+		candidate.AppendPath( "openQ4 Demo" );
 #else
-		savepath = va( "%s/Library/Application Support/openQ4", home );
+		candidate.AppendPath( "openQ4" );
 #endif
-	} else {
-		savepath = Posix_Cwd();
+		if ( Sys_SetUsableMacOSSavePath( candidate, "Application Support" ) ) {
+			return savepath.c_str();
+		}
 	}
+
+	idStr cwd = Posix_Cwd();
+	if ( Sys_SetUsableMacOSSavePath( cwd, "cwd fallback" ) ) {
+		return savepath.c_str();
+	}
+
+	common->Printf( "WARNING: using current directory as unverified macOS save path fallback\n" );
+	savepath = Posix_Cwd();
 	return savepath.c_str();
 }
 

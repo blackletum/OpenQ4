@@ -78,7 +78,7 @@ def validate_validation_wiring() -> None:
 
 
 def validate_release_note() -> None:
-    source = read("docs-dev/release-completion.md")
+    source = read("docs/dev/release-completion.md")
 
     require(source, "Linux ARM64 save-game loading no longer crashes", "release completion notes")
     require(source, "16-byte aligned", "release completion notes")

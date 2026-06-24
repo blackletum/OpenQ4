@@ -123,7 +123,7 @@ def validate_linux_legacy_config_migration() -> None:
 
 
 def validate_release_note() -> None:
-    release_notes = read("docs-dev/release-completion.md")
+    release_notes = read("docs/dev/release-completion.md")
     require(release_notes, "GUI/font presentation atlases are protected from downsizing", "release completion notes")
 
 

@@ -196,6 +196,7 @@ def validate_hide_unhide_and_stubs() -> None:
     backend_sleep = function_body(source, "void *GLimp_BackEndSleep( void ) {")
     screen_parms = function_body(source, "bool GLimp_SetScreenParms( glimpParms_t parms ) {")
     activate = function_body(source, "void GLimp_ActivateContext( void ) {")
+    deactivate = function_body(source, "void GLimp_DeactivateContext( void ) {")
 
     for token in ("return true;", "return false;", "OSX_GetCGLContext() == NULL"):
         require(hide, token, "native macOS hide guard")
@@ -216,6 +217,10 @@ def validate_hide_unhide_and_stubs() -> None:
     require(hide, 'OSX_EnsureGLContextCurrent( "hide OpenGL" )', "native macOS hide current-context guard")
     require(unhide, 'OSX_EnsureGLContextCurrent( "unhide OpenGL" )', "native macOS unhide current-context guard")
     require(activate, 'OSX_EnsureGLContextCurrent( "activate context" )', "native macOS activate context guard")
+    require(deactivate, "OSX_GetNSGLContext() == nil || OSX_GetCGLContext() == NULL", "native macOS deactivate context guard")
+    require(deactivate, "[NSOpenGLContext currentContext] == OSX_GetNSGLContext()", "native macOS deactivate context ownership guard")
+    require(deactivate, "[NSOpenGLContext clearCurrentContext];", "native macOS deactivate context ownership guard")
+    require(deactivate, "glw_state._ctx_is_current = false;", "native macOS deactivate context state reset")
 
     reject(hide, "ReleaseAllDisplays();", "native macOS hide duplicate display release")
     require(spawn, "return false;", "native macOS render-thread unsupported stub")
@@ -388,6 +393,48 @@ def validate_objc_text_bridge_guards() -> None:
     require(sys_print, "if ( text == NULL ) {", "native macOS Sys_Print null guard")
 
 
+def validate_default_savepath_guards() -> None:
+    source = read("src/sys/osx/macosx_compat.mm")
+    default_savepath = function_body(source, "const char *Sys_DefaultSavePath( void ) {")
+    normalize = function_body(source, "static void Sys_NormalizeMacOSDirectoryPath( idStr &path ) {")
+    ensure_tree = function_body(source, "static bool Sys_EnsureMacOSDirectoryTree( const idStr &path ) {")
+    usable = function_body(source, "static bool Sys_SetUsableMacOSSavePath( const idStr &candidate, const char *label ) {")
+    writable = function_body(source, "static bool Sys_DirectoryIsWritable( const idStr &path ) {")
+    home = function_body(source, "static bool Sys_GetMacOSHomeDirectory( idStr &homePath ) {")
+
+    require(normalize, "path.BackSlashesToSlashes();", "native macOS directory path normalization")
+    require(normalize, "path.Length() > 1", "native macOS root-preserving slash trim")
+    require(normalize, "path.CapLength( path.Length() - 1 );", "native macOS root-preserving slash trim")
+
+    require(ensure_tree, "!Sys_IsAbsoluteMacOSPath( path )", "native macOS save path absolute guard")
+    require(ensure_tree, "refusing to create non-absolute macOS directory path", "native macOS save path absolute guard")
+    require(ensure_tree, "parent.StripFilename();", "native macOS save path parent walk")
+    require(ensure_tree, "!Sys_DirectoryExists( parent.c_str() ) && !Sys_EnsureMacOSDirectoryTree( parent )", "native macOS recursive save path creation")
+    require(ensure_tree, "mkdir( path.c_str(), 0700 )", "native macOS private save path permissions")
+    require(ensure_tree, "errno != EEXIST", "native macOS save path race guard")
+    require(ensure_tree, "!Sys_DirectoryExists( path.c_str() )", "native macOS save path directory verification")
+
+    require(usable, "Sys_NormalizeMacOSDirectoryPath( savepath );", "native macOS save path normalization")
+    require(usable, "!Sys_IsAbsoluteMacOSPath( savepath )", "native macOS save path absolute guard")
+    require(usable, "!Sys_EnsureMacOSDirectoryTree( savepath )", "native macOS save path creation guard")
+    require(usable, "!Sys_DirectoryIsWritable( savepath )", "native macOS save path writable guard")
+    require(writable, "W_OK | X_OK", "native macOS save path write/search guard")
+
+    require(home, "[NSHomeDirectory() fileSystemRepresentation]", "native macOS home directory lookup")
+    require(home, 'home = getenv( "HOME" );', "native macOS HOME fallback")
+    require(home, "home[0] != '/'", "native macOS absolute home guard")
+    require(home, "realpath( home, resolvedPath )", "native macOS home path canonicalization")
+    require(home, "Sys_NormalizeMacOSDirectoryPath( homePath );", "native macOS home path normalization")
+
+    require(default_savepath, 'candidate.AppendPath( "Library" );', "native macOS Application Support save path")
+    require(default_savepath, 'candidate.AppendPath( "Application Support" );', "native macOS Application Support save path")
+    require(default_savepath, 'candidate.AppendPath( "openQ4" );', "native macOS product save path")
+    require(default_savepath, 'Sys_SetUsableMacOSSavePath( candidate, "Application Support" )', "native macOS verified save path")
+    require(default_savepath, "idStr cwd = Posix_Cwd();", "native macOS cwd save path fallback")
+    require(default_savepath, 'Sys_SetUsableMacOSSavePath( cwd, "cwd fallback" )', "native macOS verified cwd save path fallback")
+    require(default_savepath, "using current directory as unverified macOS save path fallback", "native macOS final save path diagnostic")
+
+
 def main() -> None:
     validate_macos_source_manifest()
     validate_no_live_raw_string_builders()
@@ -397,6 +444,7 @@ def main() -> None:
     validate_display_and_gamma_guards()
     validate_native_input_capture_guards()
     validate_objc_text_bridge_guards()
+    validate_default_savepath_guards()
     print("macos_native_backend_guard: ok")
 
 

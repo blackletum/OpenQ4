@@ -18,12 +18,21 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv[1:])
 
 
+def require_pk4_input(path: Path, label: str) -> Path:
+    if path.is_symlink():
+        raise RuntimeError(f"{label} must not be a symlink: {path}")
+    resolved = path.resolve()
+    if not resolved.is_file():
+        raise RuntimeError(f"{label} not found: {path}")
+    return resolved
+
+
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
 
     try:
-        pak0_result = inspect_game_pk4(Path(args.pak0).resolve(), pak_name=PAK0_NAME)
-        pak1_result = inspect_game_pk4(Path(args.pak1).resolve(), pak_name=PAK1_NAME)
+        pak0_result = inspect_game_pk4(require_pk4_input(Path(args.pak0), PAK0_NAME), pak_name=PAK0_NAME)
+        pak1_result = inspect_game_pk4(require_pk4_input(Path(args.pak1), PAK1_NAME), pak_name=PAK1_NAME)
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

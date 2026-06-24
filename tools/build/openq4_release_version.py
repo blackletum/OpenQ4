@@ -206,6 +206,12 @@ CATEGORY_RULES: tuple[tuple[str, str, int, bool], ...] = (
     ("content/baseoq4/pak0/def/", "defs", 2, False),
     ("content/baseoq4/pak0/strings/", "localization", 1, False),
     ("content/baseoq4/", "content", 1, False),
+    ("assets/docs/", "docs", 0, False),
+    ("assets/icons/", "packaging", 2, False),
+    ("assets/linux/", "platform", 2, False),
+    ("assets/release/", "packaging", 2, False),
+    ("assets/splash/", "packaging", 2, False),
+    ("assets/img/", "packaging", 1, False),
     ("tools/build/", "build", 2, False),
     (".github/workflows/", "workflow", 2, False),
     ("meson.build", "build", 2, False),
@@ -215,9 +221,8 @@ CATEGORY_RULES: tuple[tuple[str, str, int, bool], ...] = (
 
 DOC_PREFIXES = (
     "docs/",
-    "docs-user/",
-    "docs-dev/",
-    "assets/",
+    "docs/user/",
+    "docs/dev/",
 )
 
 DOC_FILES = {

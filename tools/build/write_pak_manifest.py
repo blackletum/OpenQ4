@@ -18,7 +18,11 @@ def main(argv: list[str]) -> int:
         print(f"usage: {argv[0]} <source-root> <pak-name> <content-subdir> <manifest-out>", file=sys.stderr)
         return 2
 
-    source_root = Path(argv[1]).resolve()
+    raw_source_root = Path(argv[1])
+    if raw_source_root.is_symlink():
+        print(f"error: source root must not be a symlink: {raw_source_root}", file=sys.stderr)
+        return 1
+    source_root = raw_source_root.resolve()
     pak_name = argv[2].strip()
     subdir = normalize(argv[3])
     try:

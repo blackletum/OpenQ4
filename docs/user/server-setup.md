@@ -54,4 +54,4 @@ If you want to tune prediction or lag compensation behavior, see [Multiplayer Ne
 
 - openQ4 uses its own engine and game modules.
 - openQ4 is not a drop-in runtime for the original proprietary Quake 4 DLL mods.
-- For advanced configuration, file layout, and path behavior, see [TECHNICAL.md](../TECHNICAL.md).
+- For advanced configuration, file layout, and path behavior, see [TECHNICAL.md](../../TECHNICAL.md).

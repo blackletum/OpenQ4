@@ -34,4 +34,4 @@ Most player-facing options are available directly in the in-game menus:
 - `Settings -> Controls`
 - `Settings -> Game Options`
 
-If you want deeper technical details or console-level configuration, see [TECHNICAL.md](../TECHNICAL.md).
+If you want deeper technical details or console-level configuration, see [TECHNICAL.md](../../TECHNICAL.md).

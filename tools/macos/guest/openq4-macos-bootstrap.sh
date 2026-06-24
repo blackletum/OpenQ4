@@ -32,6 +32,11 @@ fi
 
 require_command git "Install Xcode Command Line Tools with: xcode-select --install"
 require_command clang "Install Xcode Command Line Tools with: xcode-select --install"
+require_command xcrun "Install Xcode Command Line Tools with: xcode-select --install"
+require_command plutil "Install Xcode Command Line Tools with: xcode-select --install"
+require_command lipo "Install Xcode Command Line Tools with: xcode-select --install"
+require_command otool "Install Xcode Command Line Tools with: xcode-select --install"
+require_command codesign "Install Xcode Command Line Tools with: xcode-select --install"
 require_command python3 "Install Xcode Command Line Tools or Homebrew Python."
 require_command rsync "rsync is expected on macOS for source and asset copies."
 

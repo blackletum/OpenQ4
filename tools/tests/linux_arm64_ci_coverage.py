@@ -183,7 +183,7 @@ def validate_assetless_game_bootstrap() -> None:
 
 
 def validate_release_note() -> None:
-    source = read("docs-dev/release-completion.md")
+    source = read("docs/dev/release-completion.md")
 
     require(source, "Linux builds and Wayland validation are harder to regress", "release completion notes")
     require(source, "OPENQ4_WAYLAND_DISABLE_LIBDECOR=1", "release completion notes")

@@ -164,7 +164,7 @@ def validate_edit_fields(setting: dict, source_text: str) -> None:
 
 
 def validate_settings_registry() -> None:
-    registry_path = ROOT / "docs-dev/settings-menu-registry.json"
+    registry_path = ROOT / "docs/dev/settings-menu-registry.json"
     registry = json.loads(read(registry_path))
     if registry.get("version") != 1:
         raise AssertionError("Settings registry version must be 1")

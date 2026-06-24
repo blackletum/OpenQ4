@@ -83,7 +83,7 @@ def validate_ram_total_helpers() -> None:
 
 
 def validate_release_note() -> None:
-    source = read("docs-dev/release-completion.md")
+    source = read("docs/dev/release-completion.md")
 
     require(source, "Linux and macOS memory handling now matches the Windows contract", "release completion notes")
     require(source, "real page-lock and unlock calls", "release completion notes")

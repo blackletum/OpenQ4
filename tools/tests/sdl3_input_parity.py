@@ -348,10 +348,10 @@ def validate_docs_and_ci() -> None:
     push = read(".github/workflows/push-verification.yml")
     commit = read(".github/workflows/commit-validation.yml")
     runner = read("tools/validation/openq4_validate.py")
-    input_docs = read("docs-user/input-settings.md")
-    platform_docs = read("docs-dev/platform-support.md")
-    migration = read("docs-dev/sdl3-linux-macos-migration.md")
-    release_completion = read("docs-dev/release-completion.md")
+    input_docs = read("docs/user/input-settings.md")
+    platform_docs = read("docs/dev/platform-support.md")
+    migration = read("docs/dev/sdl3-linux-macos-migration.md")
+    release_completion = read("docs/dev/release-completion.md")
 
     for haystack, context in (
         (push, "push verification workflow"),

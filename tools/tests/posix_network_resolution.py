@@ -67,7 +67,7 @@ def validate_legacy_message_format() -> None:
 
 
 def validate_release_note() -> None:
-    source = read("docs-dev/release-completion.md")
+    source = read("docs/dev/release-completion.md")
 
     require(source, "POSIX networking now uses modern address resolution", "release completion notes")
     require(source, "IPv6 literals and AAAA records", "release completion notes")

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -155,9 +156,14 @@ def write_stage_manifest(project_root: Path, gamelibs_root: Path, stage_root: Pa
 def validate_stage_manifest(stage_root: Path) -> None:
     stage_root = stage_root.resolve()
     manifest_path = stage_root / MANIFEST_NAME
+    if manifest_path.is_symlink():
+        raise RuntimeError(f"stage manifest must not be a symlink: {manifest_path}")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("format") != 1:
+        raise RuntimeError("stage manifest has unsupported format")
     files = manifest.get("files")
-    if not isinstance(files, list) or manifest.get("fileCount") != len(files):
+    file_count = manifest.get("fileCount")
+    if not isinstance(files, list) or not isinstance(file_count, int) or isinstance(file_count, bool) or file_count != len(files):
         raise RuntimeError("stage manifest file count is inconsistent")
 
     for entry in files:
@@ -165,6 +171,8 @@ def validate_stage_manifest(stage_root: Path) -> None:
         expected_hash = entry.get("sha256")
         if not isinstance(rel, str) or not isinstance(expected_hash, str):
             raise RuntimeError("stage manifest contains malformed file entry")
+        if re.fullmatch(r"[0-9a-f]{64}", expected_hash) is None:
+            raise RuntimeError(f"stage manifest contains malformed sha256 for {rel}")
 
         rel_path = Path(rel)
         if not rel_path.parts or rel_path.is_absolute() or any(part in ("", ".", "..") for part in rel_path.parts):
@@ -194,9 +202,22 @@ def main(argv: list[str]) -> int:
         )
         return 2
 
-    project_root = Path(argv[1]).resolve()
-    gamelibs_root = Path(argv[2]).resolve()
-    stage_root = Path(argv[3]).resolve()
+    raw_project_root = Path(argv[1])
+    raw_gamelibs_root = Path(argv[2])
+    if raw_project_root.is_symlink():
+        print(f"error: openQ4 root must not be a symlink: {raw_project_root}", file=sys.stderr)
+        return 1
+    if raw_gamelibs_root.is_symlink():
+        print(f"error: GameLibs root must not be a symlink: {raw_gamelibs_root}", file=sys.stderr)
+        return 1
+
+    project_root = raw_project_root.resolve()
+    gamelibs_root = raw_gamelibs_root.resolve()
+    raw_stage_root = Path(argv[3])
+    if raw_stage_root.is_symlink():
+        print(f"error: refusing to stage into symlink: {raw_stage_root}", file=sys.stderr)
+        return 1
+    stage_root = raw_stage_root.resolve()
 
     source_game_dir = gamelibs_root / "src" / "game"
     if not source_game_dir.is_dir():

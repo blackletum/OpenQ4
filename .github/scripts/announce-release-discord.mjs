@@ -19,6 +19,49 @@ function requireValue(value, name) {
   }
 }
 
+function validateGitHubRepoSlug(value) {
+  const normalized = value.trim();
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(normalized)) {
+    throw new Error("GITHUB_REPOSITORY must be an owner/name repository slug.");
+  }
+  return normalized;
+}
+
+function validateHttpsUrl(value, label, allowedHosts = null) {
+  const normalized = (value || "").trim();
+  requireValue(normalized, label);
+
+  let parsed;
+  try {
+    parsed = new URL(normalized);
+  } catch (error) {
+    throw new Error(`${label} must be an absolute https URL.`);
+  }
+
+  if (parsed.protocol !== "https:") {
+    throw new Error(`${label} must use https.`);
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error(`${label} must not include credentials.`);
+  }
+  if (/[\u0000-\u0020\u007f<>()\[\]`]/u.test(normalized)) {
+    throw new Error(`${label} contains characters that are unsafe in Discord Markdown.`);
+  }
+  if (allowedHosts && !allowedHosts.has(parsed.hostname.toLowerCase())) {
+    throw new Error(`${label} host is not allowed: ${parsed.hostname}`);
+  }
+  return parsed.href;
+}
+
+function validateDiscordWebhookUrl(value) {
+  const parsedUrl = validateHttpsUrl(value, "DISCORD_WEBHOOK_URL", new Set(["discord.com", "discordapp.com"]));
+  const parsed = new URL(parsedUrl);
+  if (!parsed.pathname.startsWith("/api/webhooks/")) {
+    throw new Error("DISCORD_WEBHOOK_URL must point at a Discord webhook API path.");
+  }
+  return parsed.href;
+}
+
 async function loadReleaseFromEvent() {
   const eventPath = process.env.GITHUB_EVENT_PATH;
   if (!eventPath) {
@@ -39,12 +82,12 @@ async function loadReleaseFromEvent() {
 }
 
 async function fetchReleaseByTag() {
-  requireValue(repoSlug, "GITHUB_REPOSITORY");
+  const safeRepoSlug = validateGitHubRepoSlug(repoSlug);
   requireValue(releaseTag, "RELEASE_TAG");
   requireValue(githubToken, "GITHUB_TOKEN");
 
   const response = await fetch(
-    `https://api.github.com/repos/${repoSlug}/releases/tags/${encodeURIComponent(releaseTag)}`,
+    `https://api.github.com/repos/${safeRepoSlug}/releases/tags/${encodeURIComponent(releaseTag)}`,
     {
       headers: {
         Accept: "application/vnd.github+json",
@@ -123,6 +166,10 @@ function limitText(text, maxLength) {
   return `${text.slice(0, maxLength - 3).trimEnd()}...`;
 }
 
+function markdownLink(label, rawUrl) {
+  return `[${label}](${validateHttpsUrl(rawUrl, `${label} URL`, new Set(["github.com"]))})`;
+}
+
 function findAssetBySuffix(assets, suffix) {
   return assets.find((asset) => asset.name.toLowerCase().endsWith(suffix));
 }
@@ -134,7 +181,11 @@ function buildDownloadLinks(release) {
     ["windows-arm64-setup.exe", "Windows ARM64 Installer"],
     ["linux-x64.tar.xz", "Linux x64"],
     ["linux-arm64.tar.xz", "Linux ARM64"],
+    ["macos-arm64-opengl.dmg", "macOS ARM64 OpenGL"],
+    ["macos-arm64-opengl-unsigned.tar.gz", "macOS ARM64 OpenGL unsigned"],
     ["macos-arm64-opengl.tar.gz", "macOS ARM64 OpenGL"],
+    ["macos-arm64-metal.dmg", "macOS ARM64 Metal"],
+    ["macos-arm64-metal-unsigned.tar.gz", "macOS ARM64 Metal unsigned"],
     ["macos-arm64-metal.tar.gz", "macOS ARM64 Metal"],
   ];
 
@@ -142,18 +193,18 @@ function buildDownloadLinks(release) {
   for (const [suffix, label] of desired) {
     const asset = findAssetBySuffix(assets, suffix);
     if (asset) {
-      links.push(`[${label}](${asset.browser_download_url})`);
+      links.push(markdownLink(label, asset.browser_download_url));
     }
   }
 
-  links.push(`[All downloads](${release.html_url})`);
+  links.push(markdownLink("All downloads", release.html_url));
   return limitText(links.join("\n"), 1000);
 }
 
 async function postDiscordPayload(payload) {
-  requireValue(webhookUrl, "DISCORD_WEBHOOK_URL");
+  const safeWebhookUrl = validateDiscordWebhookUrl(webhookUrl);
 
-  const response = await fetch(webhookUrl, {
+  const response = await fetch(safeWebhookUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -166,11 +217,13 @@ async function postDiscordPayload(payload) {
 
 async function main() {
   const release = await loadRelease();
+  const releaseUrl = validateHttpsUrl(release.html_url, "release html_url", new Set(["github.com"]));
+  const safeAvatarUrl = validateHttpsUrl(avatarUrl, "DISCORD_RELEASE_AVATAR_URL");
   const displayName = cleanReleaseName(release);
   const notes = (release.body || "").replace(/\r/g, "").trim();
   const intro = buildIntro(release, notes);
   const highlights = extractHighlights(notes);
-  const detailsLink = `[Full release notes and downloads](${release.html_url})`;
+  const detailsLink = `[Full release notes and downloads](${releaseUrl})`;
   const feedback = `Feedback is welcome in ${feedbackChannel}.`;
   const reservedLength = intro.length + feedback.length + detailsLink.length + 8;
   const highlightsSection = highlights
@@ -188,13 +241,13 @@ async function main() {
 
   const payload = {
     username: "openQ4 Releases",
-    avatar_url: avatarUrl,
+    avatar_url: safeAvatarUrl,
     allowed_mentions: { parse: ["roles"] },
     content: headline,
     embeds: [
       {
         title: displayName,
-        url: release.html_url,
+        url: releaseUrl,
         description,
         color: release.prerelease ? 0xd97a1f : 0x2d8f4e,
         fields: [

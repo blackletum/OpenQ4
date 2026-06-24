@@ -159,6 +159,8 @@ def validate_apple_gl21_vbo_quirk() -> None:
         '"2.1"',
         "Apple OpenGL 2.1 compatibility path uses CPU-backed vertex cache for ARB2 stability",
         '{ RENDERER_DRIVER_QUIRK_DISABLE_VBO, "disableVBO" }',
+        "selected=%s baseline=%d VBO=%d PBO=%d",
+        "VBO:%d PBO:%d",
     ):
         require(source, token, "Apple GL 2.1 VBO driver quirk")
 
@@ -170,6 +172,126 @@ def validate_apple_gl21_vbo_quirk() -> None:
         "caps.hasVBO != quirkCasesTable[i].expectedVBO",
     ):
         require(self_test, token, "renderer compatibility self-test Apple GL 2.1 VBO quirk")
+
+
+def validate_disabled_upload_bridge_state() -> None:
+    source = read("src/renderer/RendererUpload.cpp")
+    init_body = function_body(source, "void idUploadManager::Init( const renderBackendCaps_t &caps ) {")
+    delete_helper = function_body(source, "static void R_RendererUpload_DeleteBufferName( unsigned int &vbo ) {")
+
+    for token in (
+        "if ( requestedPath == UPLOAD_PATH_DISABLED )",
+        "frameBufferCount = 0;",
+        "const int activeRingBytes = requestedPath == UPLOAD_PATH_DISABLED ? 0 : ringBytes;",
+        "allocator.Init( activeRingBytes, requestedPath == UPLOAD_PATH_PERSISTENT )",
+        "ring.Init( activeRingBytes, requestedPath == UPLOAD_PATH_PERSISTENT )",
+        "hasSync = requestedPath != UPLOAD_PATH_DISABLED",
+        'const char *bridgeMode = "disabled"',
+        'bridgeMode = "streaming"',
+        "activeRingBytes / 1024",
+    ):
+        require(init_body, token, "disabled renderer upload bridge state")
+
+    for token in (
+        "if ( glDeleteBuffersARB != NULL )",
+        "glDeleteBuffersARB( 1, &vbo )",
+        "vbo = 0;",
+    ):
+        require(delete_helper, token, "renderer upload guarded buffer delete")
+
+    if source.count("glDeleteBuffersARB") != 2:
+        raise AssertionError("Renderer upload cleanup must route buffer deletes through R_RendererUpload_DeleteBufferName")
+    if source.count("R_RendererUpload_DeleteBufferName(") < 5:
+        raise AssertionError("Renderer upload cleanup no longer covers every expected buffer delete site")
+
+
+def validate_vertex_cache_bind_entry_point_guards() -> None:
+    source = read("src/renderer/VertexCache.cpp")
+    bind_array = function_body(source, "void idVertexCache::BindArrayBuffer( GLuint vbo ) {")
+    bind_index = function_body(source, "void idVertexCache::BindIndexBuffer( GLuint vbo ) {")
+
+    for body, context, shadow in (
+        (bind_array, "array-buffer bind wrapper", "vc_boundArrayBuffer = VERTCACHE_BIND_UNKNOWN;"),
+        (bind_index, "index-buffer bind wrapper", "vc_boundIndexBuffer = VERTCACHE_BIND_UNKNOWN;"),
+    ):
+        for token in (
+            "glBindBufferARB == NULL",
+            shadow,
+            "return;",
+        ):
+            require(body, token, context)
+
+
+def validate_hdr_pbo_uses_portable_guard() -> None:
+    source = read("src/renderer/draw_common.cpp")
+    readback = source_section(
+        source,
+        "const bool asyncReadbackSupported = glConfig.pixelBufferObjectAvailable;",
+        "rbHDRExposureReadbackIndex = readIndex;",
+    )
+    shutdown = source_section(
+        source,
+        "if ( rbHDRExposureReadbackPBOs[0] != 0 ) {",
+        "rbHDRExposureReadbackPBOs[0] = 0;",
+    )
+
+    for token in (
+        "glConfig.pixelBufferObjectAvailable",
+        "bool hdrAsyncReadbackActive",
+        "glGenBuffersARB",
+        "rbHDRExposureReadbackPBOs[i] == 0",
+        "hdrAsyncReadbackActive = false",
+        "glDeleteBuffersARB( 2, rbHDRExposureReadbackPBOs )",
+        "rbHDRExposureReadbackPBOs[0] = 0",
+        "rbHDRExposureReadbackPBOs[1] = 0",
+        "glBindBufferARB( GL_PIXEL_PACK_BUFFER_ARB, 0 )",
+        "glBindBufferARB( GL_PIXEL_PACK_BUFFER_ARB",
+        "glBufferDataARB( GL_PIXEL_PACK_BUFFER_ARB",
+        "glMapBufferARB( GL_PIXEL_PACK_BUFFER_ARB",
+        "glUnmapBufferARB( GL_PIXEL_PACK_BUFFER_ARB )",
+    ):
+        require(readback, token, "HDR auto-exposure portable PBO guard")
+
+    for token in (
+        "glDeleteBuffersARB != NULL",
+        "glDeleteBuffersARB( 2, rbHDRExposureReadbackPBOs )",
+    ):
+        require(shutdown, token, "HDR auto-exposure guarded PBO teardown")
+
+    for token in (
+        "GLEW_VERSION_2_1",
+        "GLEW_ARB_pixel_buffer_object",
+        "glGenBuffers( 2, rbHDRExposureReadbackPBOs )",
+        "glBindBuffer( GL_PIXEL_PACK_BUFFER",
+        "glMapBuffer( GL_PIXEL_PACK_BUFFER",
+        "glDeleteBuffers( 2, rbHDRExposureReadbackPBOs )",
+    ):
+        if token in readback or token in shutdown:
+            raise AssertionError(f"HDR auto-exposure PBO path bypasses portable guard: {token!r}")
+
+
+def validate_lightgrid_pbo_fails_closed() -> None:
+    source = read("src/renderer/RenderWorld_lightgrid.cpp")
+    use_async = function_body(source, "static bool LightGrid_UseAsyncReadback( int captureSize, int blends ) {")
+    constructor = function_body(source, "LightGridBakeReadbackPool( int requestedSlotCount, int captureSize, int captureBytes )")
+    destructor = function_body(source, "~LightGridBakeReadbackPool() {")
+
+    require(use_async, "glConfig.pixelBufferObjectAvailable", "light-grid async readback PBO gate")
+    for token in (
+        "glGenBuffersARB( slotCount, pboIds.Ptr() )",
+        "if ( pboIds[ i ] == 0 )",
+        "glDeleteBuffersARB != NULL",
+        "slots.Clear()",
+        "glBindBufferARB( GL_PIXEL_PACK_BUFFER_ARB, 0 )",
+        "return;",
+    ):
+        require(constructor, token, "light-grid async readback PBO allocation fallback")
+
+    for token in (
+        "glDeleteBuffersARB != NULL",
+        "glDeleteBuffersARB( slots.Num(), pboIds.Ptr() )",
+    ):
+        require(destructor, token, "light-grid async readback guarded PBO teardown")
 
 
 def validate_classic_arb2_vbo_offset_pointers() -> None:
@@ -208,8 +330,8 @@ def validate_docs_and_validation() -> None:
     validator = read("tools/validation/openq4_validate.py")
     commit = read(".github/workflows/commit-validation.yml")
     push = read(".github/workflows/push-verification.yml")
-    release = read("docs-dev/release-completion.md")
-    platform = read("docs-dev/platform-support.md")
+    release = read("docs/dev/release-completion.md")
+    platform = read("docs/dev/platform-support.md")
 
     for haystack, context in (
         (validator, "validation runner"),
@@ -220,9 +342,11 @@ def validate_docs_and_validation() -> None:
 
     require(release, "macOS renderer startup now validates the exact callable OpenGL entry points", "release completion notes")
     require(release, "Apple OpenGL 2.1 compatibility launches now disable the legacy VBO vertex cache", "release completion notes")
+    require(release, "Optional renderer buffer-object cleanup and PBO readbacks now follow the same macOS-safe capability gates", "release completion notes")
     require(release, "macOS ARB2 interaction draws now pass VBO byte offsets", "release completion notes")
     require(platform, "macOS startup validates both advertised OpenGL extensions and the callable entry points", "platform support docs")
     require(platform, "Apple OpenGL 2.1 compatibility contexts now disable the legacy VBO vertex cache", "platform support docs")
+    require(platform, "Optional buffer-object users share the same capability contract", "platform support docs")
     require(platform, "Classic ARB2 interaction draws use explicit `idDrawVert` VBO byte offsets", "platform support docs")
     for issue_comment in ISSUE_COMMENTS:
         require(release, issue_comment, "issue comment traceability")
@@ -231,6 +355,10 @@ def validate_docs_and_validation() -> None:
 def main() -> None:
     validate_renderer_entry_point_guards()
     validate_apple_gl21_vbo_quirk()
+    validate_disabled_upload_bridge_state()
+    validate_vertex_cache_bind_entry_point_guards()
+    validate_hdr_pbo_uses_portable_guard()
+    validate_lightgrid_pbo_fails_closed()
     validate_classic_arb2_vbo_offset_pointers()
     validate_docs_and_validation()
     print("macos_renderer_startup_guard: ok")

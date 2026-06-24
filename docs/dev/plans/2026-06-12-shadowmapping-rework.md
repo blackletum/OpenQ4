@@ -1,6 +1,6 @@
 # Shadow Mapping Rework — Diagnosis and Plan (2026-06-12)
 
-This plan supersedes the artifact-level guesses in `docs-dev/shadowmapping-issue-triage.md` and
+This plan supersedes the artifact-level guesses in `docs/dev/shadowmapping-issue-triage.md` and
 the strategy proposals (`shadow-mapping-assessment-30-04-2026.md`, `shadowmapping-new-improvements.md`)
 with a code-verified diagnosis, and defines the phased rework toward shadow maps becoming a
 worthy default replacement for stencil volumes.
@@ -103,7 +103,7 @@ The wrong sharing is temporal — both pipelines paid for every frame (defect 4)
 | A4 | Hardware-compare by default: `r_shadowMapDepthCompare 1`, `r_shadowMapPointDepthCompare 1`; compare-mode samplers switch to `GL_LINEAR` (hardware 2×2 PCF per tap), manual paths stay `GL_NEAREST`; PCSS-lite (`r_shadowMapFilterMode 2`) auto-selects the manual path instead of silently breaking | draw_arb2.cpp, RenderSystem_init.cpp |
 | A5 | Skip stencil volume linking + dynamic volume generation for lights that will render shadow maps (`r_shadowMapSkipStencilShadows`, default 1), with per-light sticky fallback on backend render-fail and auto-disable when `r_shadowMapMaxUpdatesPerView > 0`; static interactions keep one-time volume creation so fallback stays instant for them | Interaction.cpp, tr_light.cpp, draw_arb2.cpp, tr_local.h, RenderSystem_init.cpp |
 | A6 | Minor fixes: caster-reject reporting fall-through, PCSS guard `min→max` | Interaction.cpp, shadow_interaction.fs |
-| A7 | Docs: user shadow-mapping guide (new defaults, functional caster offset, new cvar), release-completion entry | docs-user, docs-dev |
+| A7 | Docs: user shadow-mapping guide (new defaults, functional caster offset, new cvar), release-completion entry | docs/user, docs/dev |
 | A8 | Validation: build, renderer validation matrix self-tests, gameplay benchmark `game/airdefense2` (projected/CSM) and point-light scene with screenshots, stencil-default regression run | tools/tests |
 
 ## Phase B: persistent shadow atlas (next)

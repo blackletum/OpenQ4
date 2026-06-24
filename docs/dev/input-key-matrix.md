@@ -9,7 +9,7 @@ This checklist audits SDL3 input parity against the legacy Win32 path for:
 - numpad
 - modifiers
 
-For player-facing setup instructions, see [../docs-user/input-settings.md](../docs-user/input-settings.md). This file is a developer audit, not the everyday controls guide.
+For player-facing setup instructions, see [../user/input-settings.md](../user/input-settings.md). This file is a developer audit, not the everyday controls guide.
 
 ## Method
 

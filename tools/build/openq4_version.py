@@ -287,6 +287,8 @@ def generate_header_text(
 
 def write_if_changed(path: Path, contents: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink():
+        path.unlink()
     if path.is_file() and path.read_text(encoding="utf-8") == contents:
         return
     path.write_text(contents, encoding="utf-8")

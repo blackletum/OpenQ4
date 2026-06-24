@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 RELEASE_TAG_RE = re.compile(r"^v(\d+\.\d+\.\d+)$")
 VERSION_TAG_RE = re.compile(r"^\d+\.\d+\.\d+$")
 REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+MARKDOWN_URL_UNSAFE_RE = re.compile(r"[\x00-\x20\x7f<>()\[\]`]")
 
 
 def run_git(source_root: Path, args: list[str]) -> str:
@@ -106,11 +107,14 @@ def find_tracked_release_notes(
     version_tag: str,
 ) -> Path | None:
     candidates = (
-        Path("docs-dev") / "releases" / f"{release_tag}.md",
-        Path("docs-dev") / "releases" / f"{version_tag}.md",
+        Path("docs/dev") / "releases" / f"{release_tag}.md",
+        Path("docs/dev") / "releases" / f"{version_tag}.md",
     )
     for relative in candidates:
-        if (source_root / relative).is_file():
+        candidate = source_root / relative
+        if candidate.is_symlink():
+            raise RuntimeError(f"tracked release notes must not be a symlink: {relative.as_posix()}")
+        if candidate.is_file():
             return relative
     return None
 
@@ -185,6 +189,8 @@ def validate_optional_https_url(value: str, label: str) -> str:
     parsed = urlparse(normalized)
     if parsed.scheme != "https" or not parsed.netloc:
         raise RuntimeError(f"{label} must be an absolute https URL, got: {value!r}")
+    if MARKDOWN_URL_UNSAFE_RE.search(normalized):
+        raise RuntimeError(f"{label} contains characters that are unsafe in generated Markdown links: {value!r}")
     return normalized
 
 
@@ -196,6 +202,19 @@ def non_negative_int(value: str) -> int:
     if parsed < 0:
         raise argparse.ArgumentTypeError(f"expected a non-negative integer, got: {value!r}")
     return parsed
+
+
+def validate_output_path(output_path: Path) -> Path:
+    raw_output = output_path
+    if raw_output.is_symlink():
+        raise RuntimeError(f"refusing to write release changelog through symlink: {raw_output}")
+    parent = raw_output.parent if raw_output.parent != Path("") else Path(".")
+    if parent.exists():
+        if parent.is_symlink():
+            raise RuntimeError(f"refusing to write release changelog into symlinked directory: {parent}")
+        if not parent.is_dir():
+            raise RuntimeError(f"release changelog output parent is not a directory: {parent}")
+    return raw_output
 
 
 def build_release_header(
@@ -351,7 +370,7 @@ def main(argv: list[str]) -> int:
             lines.append("- No commit metadata was available for this release.")
         lines.append("")
 
-    output_path = Path(args.output)
+    output_path = validate_output_path(Path(args.output))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines), encoding="utf-8")
     print(f"Wrote release changelog to {output_path}")

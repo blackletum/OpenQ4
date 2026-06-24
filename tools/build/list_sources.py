@@ -21,9 +21,17 @@ def main(argv: list[str]) -> int:
         )
         return 2
 
-    source_root = Path(argv[1]).resolve()
+    raw_source_root = Path(argv[1])
+    if raw_source_root.is_symlink():
+        print(f"error: source root must not be a symlink: {raw_source_root}", file=sys.stderr)
+        return 1
+    source_root = raw_source_root.resolve()
     subdir = normalize(argv[2]).strip("/")
-    target_root = (source_root / subdir).resolve()
+    raw_target_root = source_root / subdir
+    if raw_target_root.is_symlink():
+        print(f"error: source subtree must not be a symlink: {raw_target_root}", file=sys.stderr)
+        return 1
+    target_root = raw_target_root.resolve()
 
     if not target_root.is_dir():
         print(f"error: source subtree not found: {target_root}", file=sys.stderr)

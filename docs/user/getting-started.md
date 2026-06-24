@@ -77,7 +77,7 @@ openQ4-client_x64 +set fs_basepath "C:\path\to\Quake 4"
 
 Do not point it directly at `q4base/` or `baseoq4/`.
 
-For advanced path behavior and file layout details, see [TECHNICAL.md](../TECHNICAL.md).
+For advanced path behavior and file layout details, see [TECHNICAL.md](../../TECHNICAL.md).
 
 ## Next Steps
 

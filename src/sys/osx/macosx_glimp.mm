@@ -1627,7 +1627,14 @@ void GLimp_WakeBackEnd( void *data ) {
 
 // enable / disable context is just for the r_skipRenderContext debug option
 void GLimp_DeactivateContext( void ) {
-	OSX_GLContextClearCurrent();
+	if ( OSX_GetNSGLContext() == nil || OSX_GetCGLContext() == NULL ) {
+		glw_state._ctx_is_current = false;
+		return;
+	}
+	if ( [NSOpenGLContext currentContext] == OSX_GetNSGLContext() ) {
+		[NSOpenGLContext clearCurrentContext];
+	}
+	glw_state._ctx_is_current = false;
 }
 
 void GLimp_ActivateContext( void ) {

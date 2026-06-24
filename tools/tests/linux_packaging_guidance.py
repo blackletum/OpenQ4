@@ -40,7 +40,7 @@ def validate_building_packager_notes() -> None:
 
 
 def validate_platform_support() -> None:
-    source = read("docs-dev/platform-support.md")
+    source = read("docs/dev/platform-support.md")
 
     require(source, "Linux packaged compatibility floor", "platform support Linux floor")
     require(source, "Ubuntu 24.04", "platform support Linux floor")
@@ -50,7 +50,7 @@ def validate_platform_support() -> None:
 
 
 def validate_plan_status() -> None:
-    source = read("docs-dev/plans/2026-06-20-linux.md")
+    source = read("docs/dev/plans/2026-06-20-linux.md")
 
     require(source, "## Implementation status (June 20, 2026)", "Linux audit status appendix")
     require(source, "Native Wayland runtime CI", "Linux audit status appendix")
@@ -76,7 +76,7 @@ def validate_ci_wiring() -> None:
 
 
 def validate_release_note() -> None:
-    source = read("docs-dev/release-completion.md")
+    source = read("docs/dev/release-completion.md")
 
     require(source, "Linux packager guidance is clearer", "release completion notes")
     require(source, "SDL3 floor", "release completion notes")

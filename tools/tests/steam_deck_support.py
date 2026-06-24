@@ -286,13 +286,13 @@ def validate_sdl3_input_and_lifecycle() -> None:
 
 def validate_menu_and_docs() -> None:
     game_gui = read("content/baseoq4/pak0/guis/menu/settings/game.gui")
-    registry = read("docs-dev/settings-menu-registry.json")
-    release = read("docs-dev/release-completion.md")
-    steam_deck = read("docs-user/steam-deck.md")
-    input_settings = read("docs-user/input-settings.md")
-    getting_started = read("docs-user/getting-started.md")
+    registry = read("docs/dev/settings-menu-registry.json")
+    release = read("docs/dev/release-completion.md")
+    steam_deck = read("docs/user/steam-deck.md")
+    input_settings = read("docs/user/input-settings.md")
+    getting_started = read("docs/user/getting-started.md")
     package_readme = read("assets/release/README.html")
-    qa = read("docs-dev/steam-deck-qa.md")
+    qa = read("docs/dev/steam-deck-qa.md")
 
     for token in (
         "set_game_controller_gyro",

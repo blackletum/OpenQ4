@@ -42,6 +42,8 @@ def report_text(bridge: str, *, completed: bool) -> str:
 
 ## Automated Evidence
 - [x] Bridge-specific build and staged install completed.
+- [x] Staged macOS payload integrity checks completed.
+- [x] Quake 4 asset basepath validation completed.
 - [x] Renderer smoke profile completed with retail Quake 4 assets.
 - [x] macOS-facing renderer validation matrix completed.
 - [x] Desktop launcher was written for Finder/Terminal launch checks.
@@ -63,6 +65,8 @@ def log_text(bridge: str) -> str:
     return f"""Configuring openQ4 (debug, backend=sdl3, macos_graphics_bridge={bridge}, macos_openal_provider=apple_framework)
 Compiling openQ4
 Staging openQ4 into .install
+Validated staged macOS payload for arm64.
+Validated Quake 4 asset basepath: /Users/test/openq4-work/Quake4 (25 q4base PK4 files).
 Running openQ4 macOS renderer smoke
 Running macOS-facing renderer validation matrix
 Installed macOS launcher: /Users/test/Desktop/openQ4.command
@@ -70,12 +74,15 @@ macOS runtime signoff report: /Users/test/openq4-work/results/testrun-signoff-{b
 """
 
 
-def add_file(archive: tarfile.TarFile, name: str, text: str) -> None:
-    data = text.encode("utf-8")
+def add_bytes(archive: tarfile.TarFile, name: str, data: bytes) -> None:
     member = tarfile.TarInfo(name)
     member.mode = 0o644
     member.size = len(data)
     archive.addfile(member, io.BytesIO(data))
+
+
+def add_file(archive: tarfile.TarFile, name: str, text: str) -> None:
+    add_bytes(archive, name, text.encode("utf-8"))
 
 
 def write_archive(path: Path, *, bridges: tuple[str, ...], completed: bool = False) -> None:
@@ -90,6 +97,53 @@ def write_archive(path: Path, *, bridges: tuple[str, ...], completed: bool = Fal
             add_file(archive, f"{root}/openq4-macos-workflow.log", log_text(bridge))
             add_file(archive, f"{root}/renderer-smoke/report.json", "{}\n")
             add_file(archive, f"{root}/renderer-matrix/report.md", "# ok\n")
+
+
+def write_huge_log_archive(path: Path, *, bridge: str, max_text_member_bytes: int) -> None:
+    with tarfile.open(path, "w:gz") as archive:
+        root = f"testrun-signoff-{bridge}"
+        directory = tarfile.TarInfo(root)
+        directory.type = tarfile.DIRTYPE
+        directory.mode = 0o755
+        archive.addfile(directory)
+        add_file(archive, f"{root}/macos-runtime-signoff.md", report_text(bridge, completed=True))
+        add_bytes(archive, f"{root}/openq4-macos-workflow.log", b"x" * (max_text_member_bytes + 1))
+        add_file(archive, f"{root}/renderer-smoke/report.json", "{}\n")
+        add_file(archive, f"{root}/renderer-matrix/report.md", "# ok\n")
+
+
+def write_huge_payload_archive(path: Path, *, bridge: str, member_size: int) -> None:
+    with tarfile.open(path, "w:gz") as archive:
+        root = f"testrun-signoff-{bridge}"
+        directory = tarfile.TarInfo(root)
+        directory.type = tarfile.DIRTYPE
+        directory.mode = 0o755
+        archive.addfile(directory)
+        add_file(archive, f"{root}/macos-runtime-signoff.md", report_text(bridge, completed=True))
+        add_file(archive, f"{root}/openq4-macos-workflow.log", log_text(bridge))
+        add_bytes(archive, f"{root}/renderer-smoke/oversized.bin", b"x" * member_size)
+        add_file(archive, f"{root}/renderer-matrix/report.md", "# ok\n")
+
+
+def write_archive_with_unexpected_top_dir(path: Path) -> None:
+    with tarfile.open(path, "w:gz") as archive:
+        root = "testrun-signoff-opengl"
+        directory = tarfile.TarInfo(root)
+        directory.type = tarfile.DIRTYPE
+        directory.mode = 0o755
+        archive.addfile(directory)
+        add_file(archive, f"{root}/macos-runtime-signoff.md", report_text("opengl", completed=True))
+        add_file(archive, f"{root}/openq4-macos-workflow.log", log_text("opengl"))
+        add_file(archive, f"{root}/renderer-smoke/report.json", "{}\n")
+        add_file(archive, f"{root}/renderer-matrix/report.md", "# ok\n")
+        add_file(archive, "testrun-build-opengl/openq4-macos-workflow.log", "stale\n")
+
+
+def write_bad_member_archive(path: Path, name: str, *, duplicate: bool = False) -> None:
+    with tarfile.open(path, "w:gz") as archive:
+        add_file(archive, name, "bad\n")
+        if duplicate:
+            add_file(archive, name, "duplicate\n")
 
 
 def expect_error(fragment: str, callback) -> None:
@@ -150,6 +204,104 @@ def main() -> int:
                 run_id=None,
                 action="signoff",
                 bridges=("opengl", "metal"),
+                require_completed_checklist=False,
+            ),
+        )
+
+        duplicate_member = temp / "openq4-macos-results-duplicate.tar.gz"
+        write_bad_member_archive(
+            duplicate_member,
+            "testrun-signoff-opengl/openq4-macos-workflow.log",
+            duplicate=True,
+        )
+        expect_error(
+            "duplicate member",
+            lambda: validator.validate_signoff_archive(
+                duplicate_member,
+                run_id="testrun",
+                action="signoff",
+                bridges=("opengl",),
+                require_completed_checklist=False,
+            ),
+        )
+
+        empty_segment = temp / "openq4-macos-results-empty-segment.tar.gz"
+        write_bad_member_archive(empty_segment, "testrun-signoff-opengl//bad.txt")
+        expect_error(
+            "empty segment",
+            lambda: validator.validate_signoff_archive(
+                empty_segment,
+                run_id="testrun",
+                action="signoff",
+                bridges=("opengl",),
+                require_completed_checklist=False,
+            ),
+        )
+
+        dot_segment = temp / "openq4-macos-results-dot-segment.tar.gz"
+        write_bad_member_archive(dot_segment, "testrun-signoff-opengl/./bad.txt")
+        expect_error(
+            "dot segment",
+            lambda: validator.validate_signoff_archive(
+                dot_segment,
+                run_id="testrun",
+                action="signoff",
+                bridges=("opengl",),
+                require_completed_checklist=False,
+            ),
+        )
+
+        huge_log = temp / "openq4-macos-results-huge-log.tar.gz"
+        write_huge_log_archive(huge_log, bridge="opengl", max_text_member_bytes=validator.MAX_TEXT_MEMBER_BYTES)
+        expect_error(
+            "text member is too large",
+            lambda: validator.validate_signoff_archive(
+                huge_log,
+                run_id="testrun",
+                action="signoff",
+                bridges=("opengl",),
+                require_completed_checklist=False,
+            ),
+        )
+
+        huge_payload = temp / "openq4-macos-results-huge-payload.tar.gz"
+        previous_member_cap = validator.MAX_ARCHIVE_MEMBER_BYTES
+        validator.MAX_ARCHIVE_MEMBER_BYTES = 32
+        try:
+            write_huge_payload_archive(huge_payload, bridge="opengl", member_size=33)
+            expect_error(
+                "Archive member is too large",
+                lambda: validator.validate_signoff_archive(
+                    huge_payload,
+                    run_id="testrun",
+                    action="signoff",
+                    bridges=("opengl",),
+                    require_completed_checklist=False,
+                ),
+            )
+        finally:
+            validator.MAX_ARCHIVE_MEMBER_BYTES = previous_member_cap
+
+        expect_error(
+            "Invalid signoff archive action token",
+            lambda: validator.validate_signoff_archive(
+                completed,
+                run_id="testrun",
+                action="../signoff",
+                bridges=("opengl",),
+                require_completed_checklist=False,
+            ),
+        )
+
+        unexpected_top_dir = temp / "openq4-macos-results-unexpected-top-dir.tar.gz"
+        write_archive_with_unexpected_top_dir(unexpected_top_dir)
+        expect_error(
+            "unexpected top-level result directories",
+            lambda: validator.validate_signoff_archive(
+                unexpected_top_dir,
+                run_id="testrun",
+                action="signoff",
+                bridges=("opengl",),
                 require_completed_checklist=False,
             ),
         )

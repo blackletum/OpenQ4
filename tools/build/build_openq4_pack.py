@@ -32,16 +32,41 @@ def copy_if_changed(source: Path, destination: Path) -> None:
     copy_file_if_changed(source, destination)
 
 
+def require_pack_source_dir(path: Path, pak_name: str) -> Path:
+    if path.is_symlink():
+        raise RuntimeError(f"{pak_name} source directory must not be a symlink: {path}")
+    resolved = path.resolve()
+    if not resolved.is_dir():
+        raise RuntimeError(f"{pak_name} source directory not found: {resolved}")
+    return resolved
+
+
+def require_manifest_file(path: Path, pak_name: str) -> Path:
+    if path.is_symlink():
+        raise RuntimeError(f"{pak_name} source manifest must not be a symlink: {path}")
+    resolved = path.resolve()
+    if not resolved.is_file():
+        raise RuntimeError(f"{pak_name} source manifest not found: {path}")
+    return resolved
+
+
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
 
     pak_name = args.pak_name
-    source_dir = Path(args.source_dir).resolve()
+    try:
+        source_dir = require_pack_source_dir(Path(args.source_dir), pak_name)
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     pak_out = Path(args.out).resolve()
 
-    if args.manifest and not Path(args.manifest).resolve().is_file():
-        print(f"error: {pak_name} source manifest not found: {args.manifest}", file=sys.stderr)
-        return 1
+    if args.manifest:
+        try:
+            require_manifest_file(Path(args.manifest), pak_name)
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
 
     try:
         result = create_game_pk4(source_dir, pak_out, pak_name=pak_name)

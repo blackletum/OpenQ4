@@ -450,6 +450,14 @@ public:
 		glGenBuffersARB( slotCount, pboIds.Ptr() );
 
 		for ( int i = 0; i < slotCount; i++ ) {
+			if ( pboIds[ i ] == 0 ) {
+				if ( glDeleteBuffersARB != NULL ) {
+					glDeleteBuffersARB( slotCount, pboIds.Ptr() );
+				}
+				slots.Clear();
+				glBindBufferARB( GL_PIXEL_PACK_BUFFER_ARB, 0 );
+				return;
+			}
 			memset( &slots[ i ], 0, sizeof( slots[ i ] ) );
 			slots[ i ].pbo = pboIds[ i ];
 			glBindBufferARB( GL_PIXEL_PACK_BUFFER_ARB, slots[ i ].pbo );
@@ -468,7 +476,9 @@ public:
 		for ( int i = 0; i < slots.Num(); i++ ) {
 			pboIds[ i ] = slots[ i ].pbo;
 		}
-		glDeleteBuffersARB( slots.Num(), pboIds.Ptr() );
+		if ( glDeleteBuffersARB != NULL ) {
+			glDeleteBuffersARB( slots.Num(), pboIds.Ptr() );
+		}
 	}
 
 	bool IsEnabled() const {

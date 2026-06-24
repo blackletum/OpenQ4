@@ -79,7 +79,7 @@ def validate_documentation() -> None:
 
 
 def validate_release_note() -> None:
-    source = read("docs-dev/release-completion.md")
+    source = read("docs/dev/release-completion.md")
 
     require(source, "Linux sanitizer coverage now catches compile-time regressions", "release completion notes")
     require(source, "ASan+UBSan", "release completion notes")

@@ -6,16 +6,19 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import random
 import shutil
 import string
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-WORK = ROOT / ".tmp" / "linux-metadata-fuzz"
+WORK_BASE = ROOT / ".tmp" / "linux-metadata-fuzz"
+WORK = WORK_BASE / f"{os.getpid()}-{uuid.uuid4().hex}"
 STAGE_SCRIPT = ROOT / "tools" / "build" / "stage_gamelibs.py"
 MANIFEST_NAME = "openq4_gamelibs_stage_manifest.json"
 
@@ -199,8 +202,8 @@ def validate_source_contracts() -> None:
     packager = (ROOT / "tools" / "build" / "package_nightly.py").read_text(encoding="utf-8")
     shared = (ROOT / "tools" / "build" / "linux_metadata.py").read_text(encoding="utf-8")
     validation_runner = validator
-    release_notes = (ROOT / "docs-dev" / "release-completion.md").read_text(encoding="utf-8")
-    plan = (ROOT / "docs-dev" / "plans" / "2026-06-20-linux.md").read_text(encoding="utf-8")
+    release_notes = (ROOT / "docs/dev" / "release-completion.md").read_text(encoding="utf-8")
+    plan = (ROOT / "docs/dev" / "plans" / "2026-06-20-linux.md").read_text(encoding="utf-8")
 
     for token in (
         "more than one Exec key",

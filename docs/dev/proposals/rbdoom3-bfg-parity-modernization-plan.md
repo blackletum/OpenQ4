@@ -325,7 +325,7 @@ Mitigation:
 
 ## 9. Immediate Next Steps (Recommended Order)
 
-1. Create `docs-dev/proposals/rbdoom-shadow-modernization-spec.md` with Phase 1 technical design:
+1. Create `docs/dev/proposals/rbdoom-shadow-modernization-spec.md` with Phase 1 technical design:
    - atlas layout
    - pass ordering
    - cvar contract

@@ -14,10 +14,17 @@ class SignoffArchiveError(RuntimeError):
     pass
 
 
+MAX_TEXT_MEMBER_BYTES = 2 * 1024 * 1024
+MAX_ARCHIVE_MEMBER_BYTES = 64 * 1024 * 1024
+RESULT_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
 REQUIRED_REPORT_TOKENS = (
     "# macOS Runtime Signoff",
     "## Automated Evidence",
     "Bridge-specific build and staged install completed.",
+    "Staged macOS payload integrity checks completed.",
+    "Quake 4 asset basepath validation completed.",
     "Renderer smoke profile completed with retail Quake 4 assets.",
     "macOS-facing renderer validation matrix completed.",
     "Desktop launcher was written for Finder/Terminal launch checks.",
@@ -34,6 +41,8 @@ REQUIRED_LOG_TOKENS = (
     "Configuring openQ4",
     "Compiling openQ4",
     "Staging openQ4 into .install",
+    "Validated staged macOS payload",
+    "Validated Quake 4 asset basepath",
     "Running openQ4 macOS renderer smoke",
     "Running macOS-facing renderer validation matrix",
     "Installed macOS launcher",
@@ -59,11 +68,19 @@ def require(condition: bool, message: str) -> None:
 def validate_member(member: tarfile.TarInfo) -> None:
     name = member.name
     path = PurePosixPath(name)
+    parts = name.split("/")
     require(name != "", "Archive contains an empty path.")
     require("\\" not in name, f"Archive path uses backslashes: {name}")
     require(not path.is_absolute(), f"Archive path is absolute: {name}")
     require(".." not in path.parts, f"Archive path escapes through '..': {name}")
+    require("" not in parts, f"Archive path contains an empty segment: {name}")
+    require(not any(part == "." for part in parts), f"Archive path contains a dot segment: {name}")
     require(member.isfile() or member.isdir(), f"Archive contains a non-regular entry: {name}")
+    if member.isfile():
+        require(
+            member.size <= MAX_ARCHIVE_MEMBER_BYTES,
+            f"Archive member is too large: {name} ({member.size} bytes)",
+        )
 
 
 def read_text(archive: tarfile.TarFile, name: str) -> str:
@@ -72,6 +89,10 @@ def read_text(archive: tarfile.TarFile, name: str) -> str:
     except KeyError as exc:
         raise SignoffArchiveError(f"Missing required archive member: {name}") from exc
     require(member.isfile(), f"Required archive member is not a file: {name}")
+    require(
+        member.size <= MAX_TEXT_MEMBER_BYTES,
+        f"Archive text member is too large: {name} ({member.size} bytes)",
+    )
     stream = archive.extractfile(member)
     require(stream is not None, f"Unable to read archive member: {name}")
     try:
@@ -134,16 +155,35 @@ def validate_signoff_archive(
     require_completed_checklist: bool,
 ) -> str:
     require(archive_path.is_file(), f"Archive was not found: {archive_path}")
+    require(
+        RESULT_TOKEN_PATTERN.fullmatch(action) is not None,
+        f"Invalid signoff archive action token: {action}",
+    )
 
     with tarfile.open(archive_path, "r:gz") as archive:
         members = archive.getmembers()
         require(members, "Archive is empty.")
+        seen_members: set[str] = set()
         for member in members:
             validate_member(member)
+            normalized_name = member.name.rstrip("/")
+            if normalized_name:
+                require(
+                    normalized_name not in seen_members,
+                    f"Archive contains a duplicate member: {normalized_name}",
+                )
+                seen_members.add(normalized_name)
 
         member_names = {member.name.rstrip("/") for member in members}
         top_dirs = {PurePosixPath(name).parts[0] for name in member_names if PurePosixPath(name).parts}
         effective_run_id = run_id or infer_run_id(top_dirs, action, bridges)
+        expected_result_dirs = {f"{effective_run_id}-{action}-{bridge}" for bridge in bridges}
+        unexpected_top_dirs = sorted(top_dirs - expected_result_dirs)
+        require(
+            not unexpected_top_dirs,
+            "Archive contains unexpected top-level result directories: "
+            + ", ".join(unexpected_top_dirs[:10]),
+        )
 
         for bridge in bridges:
             result_dir = f"{effective_run_id}-{action}-{bridge}"

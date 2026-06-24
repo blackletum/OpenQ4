@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This plan replaces the completed checklist in `docs-dev/plans/2026-05-13-clustered-hybrid-gl-renderer.md` as the active recovery plan for the modern OpenGL renderer. The previous plan produced useful renderer scaffolding, but the current implementation is not yet a gameplay-ready performance renderer: a quick in-map run shows extremely low frame rate, repeated `idStr::snPrintf` overflow warnings, and visible rendering defects such as character model mirror stitching.
+This plan replaces the completed checklist in `docs/dev/plans/2026-05-13-clustered-hybrid-gl-renderer.md` as the active recovery plan for the modern OpenGL renderer. The previous plan produced useful renderer scaffolding, but the current implementation is not yet a gameplay-ready performance renderer: a quick in-map run shows extremely low frame rate, repeated `idStr::snPrintf` overflow warnings, and visible rendering defects such as character model mirror stitching.
 
 The goal is to turn the current side-path implementation into a high-performance clustered hybrid deferred/forward+ renderer while retaining the existing uncapped framerate work, keeping stock Quake 4 asset compatibility, and preserving ARB2 as the rollback path until the modern path proves parity and speed in real gameplay.
 
@@ -28,7 +28,7 @@ The completed plan is internally inconsistent with its own definition of done:
 - Modern visible auto-promotion and explicit `r_rendererModernVisible` are not represented consistently. `PrepareFrame` computes a local auto-promoted `modernVisibleRequested`, while stats and ownership analysis still derive `stats.modernVisibleRequested` directly from `r_rendererModernVisible` in multiple places (`src/renderer/ModernGLExecutor.cpp:990`, `src/renderer/ModernGLExecutor.cpp:2949`). This can make diagnostics and execution disagree.
 - The current shader library is not a final material implementation. G-buffer normals are constant, deferred lighting uses placeholder direction/attenuation logic, forward+ uses simplified lighting, and real bump/specular/material stage evaluation is not implemented (`src/renderer/ModernGLShaderLibrary.cpp:249`, `src/renderer/ModernGLShaderLibrary.cpp:340`).
 - Clustered lighting has fixed low ceilings: 128 lights, 8x6x16 clusters, and 4 lights per cluster (`src/renderer/ModernClusteredLighting.cpp:12`, `src/renderer/ModernClusteredLighting.cpp:16`). This guarantees overflow pressure in real scenes instead of scaling.
-- Shadow mapping currently lives mainly inside the ARB2 path as a GLSL island (`src/renderer/draw_arb2.cpp`), with projected lights, point lights, optional CSM, hashed-alpha cutout casters, and experimental translucent moments documented in `docs-user/shadow-mapping.md`. The modern renderer plan has to promote that work into shared light/caster/resource records instead of letting the new deferred/forward+ path bypass or duplicate it.
+- Shadow mapping currently lives mainly inside the ARB2 path as a GLSL island (`src/renderer/draw_arb2.cpp`), with projected lights, point lights, optional CSM, hashed-alpha cutout casters, and experimental translucent moments documented in `docs/user/shadow-mapping.md`. The modern renderer plan has to promote that work into shared light/caster/resource records instead of letting the new deferred/forward+ path bypass or duplicate it.
 - Existing shadow documentation and technical review call out the right quality goals and risks: fallback to legacy shadows when shadow maps fail, CSM stabilization and guard bands, cutout material fidelity, translucent-moment cost/limits, and structural artifact risks such as peter-panning or scattered projected shadows that cannot be solved by CVar tuning alone. These become renderer acceptance gates, not optional polish.
 - The active log contains tens of thousands of `idStr::snPrintf: overflow ... in 96` warnings. The primary renderer-side suspect is per-frame debug-name formatting into `materialResourceTextureBinding_t::debugName[96]` from full material image names (`src/renderer/MaterialResourceTable.h:105`, `src/renderer/MaterialResourceTable.cpp:351`). The ARB2 shadow-map overlay also has 96-byte debug lines that should be audited (`src/renderer/draw_arb2.cpp:6870`).
 
@@ -58,7 +58,7 @@ Goal: get a clean, repeatable baseline without losing the high-framerate work.
 - [ ] Run an ARB2 baseline with modern side paths disabled and record P50/P95/P99, GPU timings, draw counts, warnings, and screenshots.
 - [ ] Capture shadow baselines with `r_shadows 1`, `r_useShadowMap 0`, `r_useShadowMap 1`, `r_shadowMapCSM 0/1`, and `r_shadowMapTranslucentMoments 0/1` where supported. Record shadow-map pass time, mapped/fallback light counts, cascade count, atlas size, caster counts, and screenshots.
 - [ ] Run the same scene with each modern cvar enabled one at a time to identify the first severe FPS cliff.
-- [ ] Preserve high-refresh presentation acceptance from `docs-dev/high-framerate-rendering-plan.md`: presentation can exceed `60 Hz`, simulation remains `60 Hz`, modal/menu/cinematic paths still behave.
+- [ ] Preserve high-refresh presentation acceptance from `docs/dev/high-framerate-rendering-plan.md`: presentation can exceed `60 Hz`, simulation remains `60 Hz`, modal/menu/cinematic paths still behave.
 
 Acceptance:
 
@@ -224,7 +224,7 @@ Goal: make shadow mapping correct, budgeted, and integral to the modern renderer
 
 - [x] Create a shared per-frame shadow plan from the clustered light records. Each shadowed light must carry type, priority, update policy, caster lists, receiver policy, fallback reason, and estimated GPU cost.
 - [x] Move shadow-map resources into the render graph: projected atlases, point-light face atlases or cubemap-compatible layouts, cascade tiles, depth formats, translucent moment MRTs, resolve targets, and debug overlays must have named lifetime/resource ownership.
-- [x] Preserve the existing user-facing contract from `docs-user/shadow-mapping.md`: `r_shadows` remains the master switch, `r_useShadowMap` enables supported mapped lights, unavailable or failed shadow maps fall back to legacy shadows, and unsupported translucent moments fail closed.
+- [x] Preserve the existing user-facing contract from `docs/user/shadow-mapping.md`: `r_shadows` remains the master switch, `r_useShadowMap` enables supported mapped lights, unavailable or failed shadow maps fall back to legacy shadows, and unsupported translucent moments fail closed.
 - [x] Keep stencil shadows as a real fallback path for lights/materials that cannot be safely mapped. Fallback must be per light and counted; it must not leave the light unshadowed and must not double-shadow a modern receiver.
 - [ ] Promote projected-light and point-light shadow maps first, then CSM, then optional translucent moments. Do not block base shadow-map correctness on the experimental translucent path.
 - [ ] Make shadow-map correctness diagnostics authoritative: atlas/depth view, cascade index, projected UV, projected depth, projected W, invalid-coordinate mask, face/tile labels, and selected light metadata must be usable during gameplay and RenderDoc capture.
@@ -406,7 +406,7 @@ Goal: promote only after the renderer has earned it.
 
 - [x] Keep `r_rendererModernAutoPromote 0` until gameplay, captures, and benchmark gates pass on target hardware.
 - [x] Remove or clearly quarantine diagnostic-only side paths after their replacement passes are real.
-- [x] Update `README.md`, `docs-dev/gl-renderer-modernization.md`, `docs-dev/renderer-validation-matrix.md`, and release notes with actual user-visible benefits and compatibility notes.
+- [x] Update `README.md`, `docs/dev/gl-renderer-modernization.md`, `docs/dev/renderer-validation-matrix.md`, and release notes with actual user-visible benefits and compatibility notes.
 - [x] Document the rollback commands prominently: `r_renderer arb2`, `r_glTier legacy`, and modern cvar disables.
 
 Acceptance:
@@ -418,7 +418,7 @@ Completed implementation:
 
 - Added `Renderer default safety:` to `gfxInfo` and `rendererDefaultSafetySelfTest` as the Phase 13 conservative-default gate. The gate accepts `r_renderer best` or explicit `r_renderer arb2`, requires `r_glTier auto`, requires ARB2 rollback availability, and verifies that modern auto-promotion, executor/submit, visible/pass/debug, GPU-validation, bindless, and shader-reload cvars stay off unless explicitly requested.
 - Added `renderer-default-safety-selftest` to the safe validation matrix and default-promotion evidence list so archived rollback configs are tolerated but unsupported renderer requests and modern diagnostic side paths remain visible failures.
-- Updated `README.md`, `docs-dev/gl-renderer-modernization.md`, `docs-dev/renderer-validation-matrix.md`, and `docs-dev/release-completion.md` with the conservative-default status, rollback command set, and modern side-path quarantine guidance.
+- Updated `README.md`, `docs/dev/gl-renderer-modernization.md`, `docs/dev/renderer-validation-matrix.md`, and `docs/dev/release-completion.md` with the conservative-default status, rollback command set, and modern side-path quarantine guidance.
 - Validation passed for `tools/build/meson_setup.ps1 compile -C builddir`, `tools/build/meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects`, `python -m py_compile tools/tests/renderer_validation_matrix.py tools/tests/renderer_gameplay_benchmark.py`, `python tools/tests/renderer_validation_matrix.py --output-dir .tmp/renderer-validation/phase13-final-rerun` with 26/26 cases passing, and `python tools/tests/renderer_gameplay_benchmark.py --profile smoke --settle-frames 10 --sample-frames 10 --timeout 300 --output-dir .tmp/renderer-gameplay/phase13-smoke` with the SP `game/airdefense1` smoke passing. The smoke captured 10 renderer benchmark samples (`avg=13ms`, `p50=12ms`, `p95=15ms`, `p99=15ms`) and reported zero `idStr::snPrintf` overflow markers.
 
 ## Immediate Fix Order

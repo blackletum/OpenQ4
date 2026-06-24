@@ -438,6 +438,6 @@ On a standard local setup, logs are written under `fs_savepath/baseoq4/logs/`.
 
 ## Related Documentation
 
-- [README.md](../README.md)
-- [docs-user/shadow-mapping.md](shadow-mapping.md)
-- [TECHNICAL.md](../TECHNICAL.md)
+- [README.md](../../README.md)
+- [docs/user/shadow-mapping.md](shadow-mapping.md)
+- [TECHNICAL.md](../../TECHNICAL.md)

@@ -76,6 +76,13 @@ MACOS_FORBIDDEN_XATTRS = (
 )
 
 MACOS_NON_RUNTIME_PATTERNS = NON_RUNTIME_PATTERNS + (
+    ".DS_Store",
+    "._*",
+    "__MACOSX",
+    ".fseventsd",
+    ".Spotlight-V100",
+    ".Trashes",
+    "Icon\r",
     "*.dSYM",
     "*.pdb",
 )
@@ -186,6 +193,9 @@ def resolve_meson_wrapper(root: Path) -> list[str]:
 
 
 def validate_source_root(root: Path) -> None:
+    if root.is_symlink():
+        raise ValidationError(f"Source root must not be a symlink: {root}")
+
     if not root.is_dir():
         raise ValidationError(f"Source root does not exist or is not a directory: {root}")
 
@@ -207,6 +217,9 @@ def validate_source_root(root: Path) -> None:
 
 
 def validate_build_dir(root: Path, build_dir: Path) -> None:
+    if build_dir.is_symlink():
+        raise ValidationError(f"Build directory must not be a symlink: {build_dir}")
+
     if build_dir.exists() and not build_dir.is_dir():
         raise ValidationError(f"Build directory path exists but is not a directory: {build_dir}")
 
@@ -265,9 +278,9 @@ def install_args(build_dir: Path) -> list[str]:
 def validation_env(args: argparse.Namespace, root: Path) -> dict[str, str]:
     env = os.environ.copy()
     if args.game_libs_repo:
-        env["OPENQ4_GAMELIBS_REPO"] = str(Path(args.game_libs_repo).resolve())
+        env["OPENQ4_GAMELIBS_REPO"] = str(validate_game_libs_repo_path(Path(args.game_libs_repo)))
     elif "OPENQ4_GAMELIBS_REPO" not in env:
-        default_game_libs = (root / ".." / "openQ4-game").resolve()
+        default_game_libs = validate_game_libs_repo_path(root / ".." / "openQ4-game")
         env["OPENQ4_GAMELIBS_REPO"] = str(default_game_libs)
 
     if args.build_gamelibs:
@@ -279,17 +292,27 @@ def validation_env(args: argparse.Namespace, root: Path) -> dict[str, str]:
     return env
 
 
+def validate_game_libs_repo_path(game_libs_repo: Path) -> Path:
+    if game_libs_repo.is_symlink():
+        raise ValidationError(f"GameLibs repository must not be a symlink: {game_libs_repo}")
+    return game_libs_repo.resolve()
+
+
 def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) -> None:
     tests = [
         root / "tools" / "tests" / "campaign_split_state_transition.py",
+        root / "tools" / "tests" / "docs_link_integrity.py",
         root / "tools" / "tests" / "filesystem_case_segments.py",
         root / "tools" / "tests" / "filesystem_mod_manifest.py",
         root / "tools" / "tests" / "game_class_allocator_alignment.py",
         root / "tools" / "tests" / "gamelibs_staging.py",
         root / "tools" / "tests" / "hdr_postprocess_math.py",
+        root / "tools" / "tests" / "linux_arm64_ci_coverage.py",
+        root / "tools" / "tests" / "linux_gui_presentation_defaults.py",
         root / "tools" / "tests" / "linux_highdpi_mouse.py",
         root / "tools" / "tests" / "linux_metadata_fuzz.py",
         root / "tools" / "tests" / "linux_packaging_guidance.py",
+        root / "tools" / "tests" / "linux_pk4_legacy_tools.py",
         root / "tools" / "tests" / "linux_sanitizer_ci.py",
         root / "tools" / "tests" / "linux_sdl3_glew_loader.py",
         root / "tools" / "tests" / "linux_vsync_support.py",
@@ -300,13 +323,20 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "macos_signoff_archive.py",
         root / "tools" / "tests" / "macos_static_policy.py",
         root / "tools" / "tests" / "macos_metal_bridge.py",
+        root / "tools" / "tests" / "native_glx_shutdown.py",
         root / "tools" / "tests" / "openq4_pure_pack.py",
         root / "tools" / "tests" / "packaging_safety.py",
         root / "tools" / "tests" / "preprocessor_macro_safety.py",
         root / "tools" / "tests" / "posix_memory_management.py",
+        root / "tools" / "tests" / "posix_monotonic_time.py",
+        root / "tools" / "tests" / "posix_network_resolution.py",
+        root / "tools" / "tests" / "posix_thread_shutdown.py",
         root / "tools" / "tests" / "release_tooling_safety.py",
+        root / "tools" / "tests" / "renderer_msaa_cvar_safety.py",
+        root / "tools" / "tests" / "renderer_supersampling_safety.py",
         root / "tools" / "tests" / "sdl3_input_parity.py",
         root / "tools" / "tests" / "sdl3_multidisplay_windowing.py",
+        root / "tools" / "tests" / "settings_menu_coverage.py",
         root / "tools" / "tests" / "steam_deck_support.py",
         root / "tools" / "tests" / "startup_language_override.py",
         root / "tools" / "tests" / "validation_hardening.py",
@@ -325,7 +355,7 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
 
 
 def ensure_game_libs_repo(env: dict[str, str]) -> None:
-    game_libs_repo = Path(env["OPENQ4_GAMELIBS_REPO"])
+    game_libs_repo = validate_game_libs_repo_path(Path(env["OPENQ4_GAMELIBS_REPO"]))
     expected = game_libs_repo / "src" / "game"
     if not expected.is_dir():
         raise ValidationError(
@@ -989,11 +1019,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
-    root = Path(args.source_root).resolve() if args.source_root else repo_root_from_script()
-    validate_source_root(root)
+    raw_root = Path(args.source_root) if args.source_root else repo_root_from_script()
+    validate_source_root(raw_root)
+    root = raw_root.resolve()
     apply_profile_defaults(args, root)
-    build_dir = Path(args.build_dir).resolve()
-    validate_build_dir(root, build_dir)
+    raw_build_dir = Path(args.build_dir)
+    validate_build_dir(root, raw_build_dir)
+    build_dir = raw_build_dir.resolve()
     build_dir.parent.mkdir(parents=True, exist_ok=True)
     env = validation_env(args, root)
     wrapper = resolve_meson_wrapper(root)

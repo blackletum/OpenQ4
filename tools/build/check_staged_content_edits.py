@@ -55,12 +55,26 @@ def assert_inside(path: Path, root: Path) -> Path:
     return resolved_path
 
 
+def assert_path_entry_inside(path: Path, root: Path) -> None:
+    resolved_root = root.resolve()
+    resolved_parent = path.parent.resolve()
+    try:
+        resolved_parent.relative_to(resolved_root)
+    except ValueError as exc:
+        raise RuntimeError(f"refusing to remove path outside staged game directory: {path}") from exc
+
+
 def remove_stale_path(path: Path, staged_game_dir: Path) -> bool:
     if not path.exists() and not path.is_symlink():
         return False
 
+    if path.is_symlink():
+        assert_path_entry_inside(path, staged_game_dir)
+        path.unlink()
+        return True
+
     safe_path = assert_inside(path, staged_game_dir)
-    if safe_path.is_symlink() or safe_path.is_file():
+    if safe_path.is_file():
         safe_path.unlink()
         return True
     if safe_path.is_dir():
@@ -72,6 +86,8 @@ def remove_stale_path(path: Path, staged_game_dir: Path) -> bool:
 
 def prune_stale_loose_content(source_root: Path) -> list[Path]:
     staged_game_dir = source_root / ".install" / "baseoq4"
+    if staged_game_dir.is_symlink():
+        raise RuntimeError(f"refusing to prune symlinked staged game directory: {staged_game_dir}")
     if not staged_game_dir.is_dir():
         return []
 
@@ -89,14 +105,23 @@ def prune_stale_loose_content(source_root: Path) -> list[Path]:
     return removed
 
 
+def validate_source_root(path: Path) -> Path:
+    if path.is_symlink():
+        raise RuntimeError(f"source root must not be a symlink: {path}")
+    resolved = path.resolve()
+    if not resolved.is_dir():
+        raise RuntimeError(f"source root not found: {resolved}")
+    return resolved
+
+
 def main(argv: list[str]) -> int:
     if os.environ.get("OPENQ4_INSTALL_KEEP_STALE_LOOSE_CONTENT") == "1":
         return 0
 
     args = parse_args(argv)
-    source_root = Path(args.source_root).resolve()
 
     try:
+        source_root = validate_source_root(Path(args.source_root))
         removed = prune_stale_loose_content(source_root)
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)

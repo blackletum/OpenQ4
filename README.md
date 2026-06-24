@@ -24,7 +24,7 @@
   <img src="https://img.shields.io/github/forks/themuffinator/openQ4?style=for-the-badge&logo=github&label=Fork%20on%20GitHub" alt="Fork openQ4 on GitHub">
 </a>
 
-[Get Started](docs-user/getting-started.md) | [Features](#why-players-use-openq4) | [Player Docs](#player-guides) | [Build from Source](BUILDING.md) | [Technical Reference](TECHNICAL.md)
+[Get Started](docs/user/getting-started.md) | [Features](#why-players-use-openq4) | [Player Docs](#player-guides) | [Build from Source](BUILDING.md) | [Technical Reference](TECHNICAL.md)
 
 </div>
 
@@ -85,9 +85,9 @@ It is designed for players who want the original Quake 4 experience with a clean
 1. Install **Quake 4** from [Steam](https://store.steampowered.com/app/2210/Quake_4/) or [GOG](https://www.gog.com/en/game/quake_4).
 2. Download the latest openQ4 build from the [Releases page](https://github.com/themuffinator/openQ4/releases).
 3. Launch `openQ4-client_<arch>` (or `openQ4-steamdeck` on Steam Deck).
-4. If openQ4 does not find your Quake 4 install automatically, follow the path setup notes in the [Getting Started guide](docs-user/getting-started.md).
+4. If openQ4 does not find your Quake 4 install automatically, follow the path setup notes in the [Getting Started guide](docs/user/getting-started.md).
 
-**Need the step-by-step version?** Start with [docs-user/getting-started.md](docs-user/getting-started.md).
+**Need the step-by-step version?** Start with [docs/user/getting-started.md](docs/user/getting-started.md).
 
 ---
 
@@ -95,19 +95,19 @@ It is designed for players who want the original Quake 4 experience with a clean
 
 ### Start here
 
-- [Getting Started](docs-user/getting-started.md) - installation, first launch, and common setup questions
-- [Client Settings Guide](docs-user/client-settings.md) - where to find the most useful in-game settings
-- [Server Setup Guide](docs-user/server-setup.md) - basic dedicated server setup and common server variables
+- [Getting Started](docs/user/getting-started.md) - installation, first launch, and common setup questions
+- [Client Settings Guide](docs/user/client-settings.md) - where to find the most useful in-game settings
+- [Server Setup Guide](docs/user/server-setup.md) - basic dedicated server setup and common server variables
 
 ### Play and tune
 
-- [Display Settings](docs-user/display-settings.md) - fullscreen, windowed mode, resolution scale, and multi-monitor behavior
-- [Input Settings](docs-user/input-settings.md) - keyboard, mouse, controller, and binding help
-- [Gameplay Settings](docs-user/gameplay-settings.md) - gameplay and audio toggles for everyday play
-- [Steam Deck](docs-user/steam-deck.md) - launcher, controls, and Linux handheld notes
-- [Multiplayer Networking](docs-user/multiplayer-networking.md) - multiplayer tuning and lag-comp behavior
-- [Shadow Mapping](docs-user/shadow-mapping.md) - optional shadow-map settings and troubleshooting
-- [Light Grids](docs-user/light-grids.md) - advanced lighting guide for players and testers
+- [Display Settings](docs/user/display-settings.md) - fullscreen, windowed mode, resolution scale, and multi-monitor behavior
+- [Input Settings](docs/user/input-settings.md) - keyboard, mouse, controller, and binding help
+- [Gameplay Settings](docs/user/gameplay-settings.md) - gameplay and audio toggles for everyday play
+- [Steam Deck](docs/user/steam-deck.md) - launcher, controls, and Linux handheld notes
+- [Multiplayer Networking](docs/user/multiplayer-networking.md) - multiplayer tuning and lag-comp behavior
+- [Shadow Mapping](docs/user/shadow-mapping.md) - optional shadow-map settings and troubleshooting
+- [Light Grids](docs/user/light-grids.md) - advanced lighting guide for players and testers
 
 ### Build and technical docs
 

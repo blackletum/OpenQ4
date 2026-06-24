@@ -42,7 +42,7 @@ This status reflects compatibility with official Quake 4 assets (`q4base` PK4s),
 
 - ❌ **Ongoing Compatibility Sweep**: Additional map-by-map gameplay validation remains in progress to catch residual regressions
 
-Current known regressions and follow-up work are tracked in [TODO.md](TODO.md) and [docs-dev/release-completion.md](docs-dev/release-completion.md).
+Current known regressions and follow-up work are tracked in [TODO.md](TODO.md) and [docs/dev/release-completion.md](docs/dev/release-completion.md).
 
 ---
 
@@ -83,7 +83,7 @@ openQ4 automatically validates your Quake 4 installation to ensure you have legi
 
 **Configuration:**
 - `fs_validateOfficialPaks 1` (default) — Enable asset validation
-- See [official-pk4-checksums.md](docs-dev/official-pk4-checksums.md) for the checksum reference
+- See [official-pk4-checksums.md](docs/dev/official-pk4-checksums.md) for the checksum reference
 
 ---
 
@@ -129,7 +129,7 @@ openQ4 automatically validates your Quake 4 installation to ensure you have legi
 - `r_useRedundantStateFiltering 0|1` — Skip redundant legacy-backend GL calls (repeated program env parameters, vertex attrib array toggles, and vertex/index buffer rebinds); default `1`
 - `com_forceGenericSIMD 0|1` — Force the generic scalar math path instead of the SSE2 SIMD processor used for skinning, shadow, and bounds math on x86-64 (default `0`)
 - `r_hdrAutoExposureAsync 0|1` — Read the HDR auto-exposure luminance sample back asynchronously with one frame of latency instead of stalling the GPU pipeline every frame (default `1`)
-- See [docs-user/shadow-mapping.md](docs-user/shadow-mapping.md) for the full shadow-map CVar reference, presets, transparency behavior, and debug modes
+- See [docs/user/shadow-mapping.md](docs/user/shadow-mapping.md) for the full shadow-map CVar reference, presets, transparency behavior, and debug modes
 
 ### Resolution Scaling
 - `r_screenFraction` — `10..200`; values below `100` reduce or simulate reduced resolution, while values above `100` supersample the root scene in a single-sample offscreen target and resolve to the native back buffer

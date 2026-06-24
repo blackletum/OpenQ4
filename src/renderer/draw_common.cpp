@@ -3214,37 +3214,58 @@ static float RB_UpdateHDRAutoExposure( idImage *sceneImage, int viewportWidth, i
 
 	float averageLogLuminance = 0.0f;
 	bool haveLuminanceSample = false;
-	const bool asyncReadbackSupported = ( GLEW_VERSION_2_1 || GLEW_ARB_pixel_buffer_object ) != 0;
-	if ( r_hdrAutoExposureAsync.GetBool() && asyncReadbackSupported ) {
+	const bool asyncReadbackSupported = glConfig.pixelBufferObjectAvailable;
+	bool hdrAsyncReadbackActive = r_hdrAutoExposureAsync.GetBool() && asyncReadbackSupported;
+	if ( hdrAsyncReadbackActive ) {
 		// queue this frame's 1x1 luminance read into a pixel-pack buffer and
 		// consume the previous frame's sample; exposure adaptation is a slow
 		// temporal filter, so one frame of latency is invisible while the
 		// synchronous glReadPixels stall it replaces is not
 		if ( rbHDRExposureReadbackPBOs[0] == 0 ) {
-			glGenBuffers( 2, rbHDRExposureReadbackPBOs );
+			glGenBuffersARB( 2, rbHDRExposureReadbackPBOs );
+		}
+		for ( int i = 0; i < 2; i++ ) {
+			if ( rbHDRExposureReadbackPBOs[i] == 0 ) {
+				hdrAsyncReadbackActive = false;
+				break;
+			}
+		}
+		if ( hdrAsyncReadbackActive && !rbHDRExposureReadbackPrimed[0] && !rbHDRExposureReadbackPrimed[1] ) {
 			for ( int i = 0; i < 2; i++ ) {
-				glBindBuffer( GL_PIXEL_PACK_BUFFER, rbHDRExposureReadbackPBOs[i] );
-				glBufferData( GL_PIXEL_PACK_BUFFER, sizeof( GLfloat ) * 4, NULL, GL_STREAM_READ );
+				glBindBufferARB( GL_PIXEL_PACK_BUFFER_ARB, rbHDRExposureReadbackPBOs[i] );
+				glBufferDataARB( GL_PIXEL_PACK_BUFFER_ARB, sizeof( GLfloat ) * 4, NULL, GL_STREAM_READ_ARB );
 				rbHDRExposureReadbackPrimed[i] = false;
 			}
 		}
+		if ( !hdrAsyncReadbackActive ) {
+			if ( glDeleteBuffersARB != NULL ) {
+				glDeleteBuffersARB( 2, rbHDRExposureReadbackPBOs );
+			}
+			rbHDRExposureReadbackPBOs[0] = 0;
+			rbHDRExposureReadbackPBOs[1] = 0;
+			rbHDRExposureReadbackPrimed[0] = false;
+			rbHDRExposureReadbackPrimed[1] = false;
+			glBindBufferARB( GL_PIXEL_PACK_BUFFER_ARB, 0 );
+		}
+	}
 
+	if ( hdrAsyncReadbackActive ) {
 		const int writeIndex = rbHDRExposureReadbackIndex;
-		glBindBuffer( GL_PIXEL_PACK_BUFFER, rbHDRExposureReadbackPBOs[writeIndex] );
+		glBindBufferARB( GL_PIXEL_PACK_BUFFER_ARB, rbHDRExposureReadbackPBOs[writeIndex] );
 		glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_FLOAT, NULL );
 		rbHDRExposureReadbackPrimed[writeIndex] = true;
 
 		const int readIndex = writeIndex ^ 1;
 		if ( rbHDRExposureReadbackPrimed[readIndex] ) {
-			glBindBuffer( GL_PIXEL_PACK_BUFFER, rbHDRExposureReadbackPBOs[readIndex] );
-			const GLfloat *mapped = static_cast<const GLfloat *>( glMapBuffer( GL_PIXEL_PACK_BUFFER, GL_READ_ONLY ) );
+			glBindBufferARB( GL_PIXEL_PACK_BUFFER_ARB, rbHDRExposureReadbackPBOs[readIndex] );
+			const GLfloat *mapped = static_cast<const GLfloat *>( glMapBufferARB( GL_PIXEL_PACK_BUFFER_ARB, GL_READ_ONLY_ARB ) );
 			if ( mapped != NULL ) {
 				averageLogLuminance = mapped[0];
 				haveLuminanceSample = true;
-				glUnmapBuffer( GL_PIXEL_PACK_BUFFER );
+				glUnmapBufferARB( GL_PIXEL_PACK_BUFFER_ARB );
 			}
 		}
-		glBindBuffer( GL_PIXEL_PACK_BUFFER, 0 );
+		glBindBufferARB( GL_PIXEL_PACK_BUFFER_ARB, 0 );
 		rbHDRExposureReadbackIndex = readIndex;
 	} else {
 		GLfloat pixel[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
@@ -5193,7 +5214,9 @@ void RB_ShutdownScenePostProcess( void ) {
 	rbHDRLastAdaptationTime = -1.0f;
 	rbHDRExposureInitialized = false;
 	if ( rbHDRExposureReadbackPBOs[0] != 0 ) {
-		glDeleteBuffers( 2, rbHDRExposureReadbackPBOs );
+		if ( glDeleteBuffersARB != NULL ) {
+			glDeleteBuffersARB( 2, rbHDRExposureReadbackPBOs );
+		}
 	}
 	rbHDRExposureReadbackPBOs[0] = 0;
 	rbHDRExposureReadbackPBOs[1] = 0;

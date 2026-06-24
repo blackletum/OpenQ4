@@ -43,6 +43,7 @@ If you have questions concerning this license or the applicable additional terms
 
 static const int MAX_OSX_PROCESS_ARGS = 32;
 static const int MAX_OSX_PROCESS_COMMAND = 4096;
+static const int MAX_OSX_URL_LENGTH = 4096;
 
 static bool OSX_StringHasControlCharacters( const char *text ) {
 	if ( text == NULL ) {
@@ -66,14 +67,22 @@ static bool OSX_IsAbsolutePath( const char *path ) {
 	return path != NULL && path[0] == '/';
 }
 
-static void OSX_EnsureOwnerExecutable( const char *path ) {
+static bool OSX_EnsureOwnerExecutable( const char *path ) {
 	struct stat st;
 	if ( path == NULL || path[0] == '\0' || stat( path, &st ) == -1 || !S_ISREG( st.st_mode ) ) {
-		return;
+		return false;
 	}
-	if ( ( st.st_mode & S_IXUSR ) == 0 && chmod( path, st.st_mode | S_IXUSR ) == -1 ) {
+	if ( ( st.st_mode & S_IXUSR ) != 0 ) {
+		return true;
+	}
+	if ( chmod( path, st.st_mode | S_IXUSR ) == -1 ) {
 		common->Printf( "chmod +x %s failed: %s\n", path, strerror( errno ) );
+		return false;
 	}
+	if ( stat( path, &st ) == -1 || !S_ISREG( st.st_mode ) ) {
+		return false;
+	}
+	return ( st.st_mode & S_IXUSR ) != 0;
 }
 
 static bool OSX_ParseProcessCommandLine( const char *command, char *buffer, size_t bufferSize, char **argv, int maxArgv ) {
@@ -142,6 +151,9 @@ static bool OSX_URLHasSafeSchemeSyntax( const char *url ) {
 	if ( url == NULL || url[0] == '\0' || OSX_StringHasControlCharacters( url ) ) {
 		return false;
 	}
+	if ( strlen( url ) >= MAX_OSX_URL_LENGTH ) {
+		return false;
+	}
 	if ( !isalpha( static_cast<unsigned char>( url[0] ) ) ) {
 		return false;
 	}
@@ -181,7 +193,7 @@ static bool OSX_FileURLIsLocalRuntimeFile( NSURL *url ) {
 
 	NSString *pathString = [url path];
 	const char *path = pathString != nil ? [pathString fileSystemRepresentation] : NULL;
-	if ( path == NULL || !OSX_IsAbsolutePath( path ) || !OSX_IsRegularFile( path ) ) {
+	if ( path == NULL || OSX_StringHasControlCharacters( path ) || !OSX_IsAbsolutePath( path ) || !OSX_IsRegularFile( path ) ) {
 		return false;
 	}
 
@@ -200,7 +212,8 @@ static bool OSX_IsAllowedURL( NSURL *url ) {
 		return false;
 	}
 	if ( [scheme caseInsensitiveCompare:@"https"] == NSOrderedSame || [scheme caseInsensitiveCompare:@"http"] == NSOrderedSame ) {
-		return true;
+		NSString *host = [url host];
+		return host != nil && [host length] > 0;
 	}
 	if ( [scheme caseInsensitiveCompare:@"file"] == NSOrderedSame ) {
 		return OSX_FileURLIsLocalRuntimeFile( url );
@@ -266,7 +279,10 @@ static bool OSX_StartProcessArgs( char *const argv[], bool dofork ) {
 		return false;
 	}
 
-	OSX_EnsureOwnerExecutable( argv[0] );
+	if ( !OSX_EnsureOwnerExecutable( argv[0] ) ) {
+		common->Printf( "Sys_StartProcess '%s' rejected: executable bit is not set and could not be applied\n", argv[0] );
+		return false;
+	}
 
 	char **environment = OSX_CreateFilteredProcessEnvironment();
 	if ( environment == NULL ) {
@@ -304,34 +320,33 @@ void idSysLocal::OpenURL( const char *url, bool doexit ) {
 	static bool	quit_spamguard = false;
 
 	if ( quit_spamguard ) {
-		common->DPrintf( "Sys_OpenURL: already in a doexit sequence, ignoring %s\n", url ? url : "" );
+		common->DPrintf( "Sys_OpenURL: already in a doexit sequence, ignoring request\n" );
 		return;
 	}
 
-	common->Printf( "Open URL: %s\n", url ? url : "" );
 	if ( !OSX_URLHasSafeSchemeSyntax( url ) ) {
-		common->Printf( "OpenURL '%s' rejected: expected a URL with a safe scheme\n", url ? url : "" );
+		common->Printf( "OpenURL rejected: expected a bounded URL with a safe scheme\n" );
 		return;
 	}
-
 	NSString *urlString = [ NSString stringWithUTF8String: url ];
 	if ( urlString == nil ) {
-		common->Printf( "OpenURL '%s' rejected: URL is not valid UTF-8\n", url );
+		common->Printf( "OpenURL rejected: URL is not valid UTF-8\n" );
 		return;
 	}
 
 	NSURL *nsURL = [ NSURL URLWithString: urlString ];
 	if ( nsURL == nil || [ nsURL scheme ] == nil ) {
-		common->Printf( "OpenURL '%s' rejected: Foundation could not parse URL\n", url );
+		common->Printf( "OpenURL rejected: Foundation could not parse URL\n" );
 		return;
 	}
 	if ( !OSX_IsAllowedURL( nsURL ) ) {
-		common->Printf( "OpenURL '%s' rejected: scheme is not allowed\n", url );
+		common->Printf( "OpenURL rejected: scheme is not allowed\n" );
 		return;
 	}
 
+	common->Printf( "Open URL: %s\n", url );
 	if ( ![[ NSWorkspace sharedWorkspace ] openURL: nsURL ] ) {
-		common->Printf( "OpenURL '%s' failed\n", url );
+		common->Printf( "OpenURL failed after validation\n" );
 		return;
 	}
 
@@ -363,7 +378,7 @@ void Sys_DoStartProcess( const char *exeName, bool dofork ) {
 	char commandBuffer[MAX_OSX_PROCESS_COMMAND];
 	char *argv[MAX_OSX_PROCESS_ARGS];
 	if ( !OSX_ParseProcessCommandLine( exeName, commandBuffer, sizeof( commandBuffer ), argv, MAX_OSX_PROCESS_ARGS ) ) {
-		common->Printf( "Sys_DoStartProcess: invalid command line '%s'\n", exeName );
+		common->Printf( "Sys_DoStartProcess: invalid command line\n" );
 		return;
 	}
 

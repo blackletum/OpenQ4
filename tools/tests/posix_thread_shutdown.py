@@ -77,7 +77,7 @@ def validate_cross_platform_shims() -> None:
 
 
 def validate_release_note() -> None:
-    source = read("docs-dev/release-completion.md")
+    source = read("docs/dev/release-completion.md")
 
     require(source, "POSIX thread shutdown is now cooperative", "release completion notes")
     require(source, "no longer depends on `pthread_cancel()`", "release completion notes")

@@ -53,6 +53,10 @@ idVertexCache::BindArrayBuffer
 ==============
 */
 void idVertexCache::BindArrayBuffer( GLuint vbo ) {
+	if ( glBindBufferARB == NULL ) {
+		vc_boundArrayBuffer = VERTCACHE_BIND_UNKNOWN;
+		return;
+	}
 	if ( vbo == vc_boundArrayBuffer && r_useRedundantStateFiltering.GetBool() ) {
 		return;
 	}
@@ -66,6 +70,10 @@ idVertexCache::BindIndexBuffer
 ==============
 */
 void idVertexCache::BindIndexBuffer( GLuint vbo ) {
+	if ( glBindBufferARB == NULL ) {
+		vc_boundIndexBuffer = VERTCACHE_BIND_UNKNOWN;
+		return;
+	}
 	if ( vbo == vc_boundIndexBuffer && r_useRedundantStateFiltering.GetBool() ) {
 		return;
 	}

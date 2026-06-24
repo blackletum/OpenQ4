@@ -12,7 +12,7 @@ The top action items are straightforward. First, add a **native Deck input path*
 
 ## Scope and implementation surface
 
-This review is based on direct inspection of the two specified GitHub repositories and on primary official documentation from Valve, SDL, and Proton. In **OpenQ4**, the key Steam Deck surfaces are `docs-user/steam-deck.md`, `docs-user/input-settings.md`, `content/baseoq4/pak0/default.cfg`, `content/baseoq4/pak0/openq4_profile_steamdeck.cfg`, `assets/linux/openQ4-steamdeck.in`, `src/framework/Common.cpp`, `src/framework/FileSystem.cpp`, and `src/sys/sdl3/sdl3_backend.cpp`. In **openQ4-game**, I sampled the repo structure and likely gameplay runtime files to check whether Deck-specific behavior had been pushed into gameplay code; I did not find evidence that it had. citeturn50view0turn30view6turn30view7turn31view0turn31view4turn29view0turn35view0turn35view1turn22view3turn22view4turn23view6turn22view0turn22view2turn39view0turn42view0turn42view1turn45view0turn45view1turn45view2turn45view3turn45view6turn45view7turn45view8turn45view9
+This review is based on direct inspection of the two specified GitHub repositories and on primary official documentation from Valve, SDL, and Proton. In **OpenQ4**, the key Steam Deck surfaces are `docs/user/steam-deck.md`, `docs/user/input-settings.md`, `content/baseoq4/pak0/default.cfg`, `content/baseoq4/pak0/openq4_profile_steamdeck.cfg`, `assets/linux/openQ4-steamdeck.in`, `src/framework/Common.cpp`, `src/framework/FileSystem.cpp`, and `src/sys/sdl3/sdl3_backend.cpp`. In **openQ4-game**, I sampled the repo structure and likely gameplay runtime files to check whether Deck-specific behavior had been pushed into gameplay code; I did not find evidence that it had. citeturn50view0turn30view6turn30view7turn31view0turn31view4turn29view0turn35view0turn35view1turn22view3turn22view4turn23view6turn22view0turn22view2turn39view0turn42view0turn42view1turn45view0turn45view1turn45view2turn45view3turn45view6turn45view7turn45view8turn45view9
 
 The current implementation shape can be summarized like this. The **launcher** chooses environment defaults and injects the platform profile. The **engine** recognizes `com_platformProfile` and maps the only non-default profile name it accepts to `openq4_profile_steamdeck.cfg`. The **content config** supplies Deck-oriented default binds and a tiny profile override. The **SDL3 backend** is responsible for controller/joystick input, display environment reporting, and most platform-facing behavior. The **filesystem layer** tries to discover Quake 4 assets from native Steam roots and `libraryfolders.vdf`. I found no Vulkan-specific Deck path in the reviewed backend; the Deck path is implemented as SDL3 plus OpenGL-centric behavior, and the docs explicitly talk about Wayland-first OpenGL fallback ordering rather than Vulkan. citeturn29view0turn35view0turn35view1turn33view0turn31view0turn31view4turn22view0turn22view2turn22view3turn22view4turn23view6turn25view6turn24view12
 
@@ -94,7 +94,7 @@ Implementation status as of June 13, 2026:
 - Priority rounds: P1 through P6 complete.
 - Original engineering issues addressed in source/docs/tests: 6 / 6.
 - Automated validation status: passing for `steam_deck_support.py`, `settings_menu_coverage.py`, `openq4_validate.py push --skip-build`, `git diff --check`, and `tools/build/meson_setup.ps1 compile`.
-- Hardware QA status: 0 / 45 checked in `docs-dev/steam-deck-qa.md`; this remains a separate live-device sign-off task, not an implementation blocker.
+- Hardware QA status: 0 / 45 checked in `docs/dev/steam-deck-qa.md`; this remains a separate live-device sign-off task, not an implementation blocker.
 
 The detailed findings below are retained as the original review record. The checklist and audit above are the current implementation status.
 
@@ -110,7 +110,7 @@ Before the issue-by-issue analysis, one overarching point matters: in the sample
 
 **Severity and priority.** **High, P1.** The game still runs, but the Deck-specific behavior is easy to lose by accident, which makes bug reproduction and support harder than it needs to be. citeturn50view0turn29view0turn28view6
 
-**Code locations.** `assets/linux/openQ4-steamdeck.in` (single-line launcher file in the current repo revision), `docs-user/steam-deck.md:L248-L253,L295-L296`, `src/framework/Common.cpp:L2390-L2390,L3021-L3059`. citeturn29view0turn50view0turn35view0turn35view1
+**Code locations.** `assets/linux/openQ4-steamdeck.in` (single-line launcher file in the current repo revision), `docs/user/steam-deck.md:L248-L253,L295-L296`, `src/framework/Common.cpp:L2390-L2390,L3021-L3059`. citeturn29view0turn50view0turn35view0turn35view1
 
 **Reproduction steps.** On a Steam Deck or SteamOS 3.x desktop session, launch `openQ4-client_x64` directly instead of `openQ4-steamdeck`; inspect startup behavior and note that the documented Deck profile injection path is skipped. Then repeat with `openQ4-steamdeck` and compare config/profile behavior. citeturn50view0turn29view0
 
@@ -146,7 +146,7 @@ A more conservative packaging-only fix is to make every Deck-targeted desktop/St
 
 **Severity and priority.** **High, P1.** This is not a launch blocker, but it is the biggest functional gap relative to what Steam Deck hardware and SDL3 can do. citeturn49view2turn48view0
 
-**Code locations.** `src/sys/sdl3/sdl3_backend.cpp:L2439-L2488,L3746-L3871`, `content/baseoq4/pak0/default.cfg:L645-L706`, `docs-user/steam-deck.md:L254-L283`, `docs-user/input-settings.md:L317-L325,L395-L408,L462-L480`. citeturn22view0turn26view1turn37view0turn37view5turn37view6turn31view0turn31view3turn50view0turn30view6turn30view7
+**Code locations.** `src/sys/sdl3/sdl3_backend.cpp:L2439-L2488,L3746-L3871`, `content/baseoq4/pak0/default.cfg:L645-L706`, `docs/user/steam-deck.md:L254-L283`, `docs/user/input-settings.md:L317-L325,L395-L408,L462-L480`. citeturn22view0turn26view1turn37view0turn37view5turn37view6turn31view0turn31view3turn50view0turn30view6turn30view7
 
 **Reproduction steps.** On Steam Deck, disable any Steam Input configuration that translates gyro or touchpad into plain mouse/keyboard emulation, or create a pass-through profile. Then test three cases: gyro aiming, a touchpad swipe/cursor gesture, and multi-touch on UI surfaces. In the current implementation, the input path is expected to degrade to generic button/axis behavior or Steam-level mouse emulation instead of native engine semantics. Valve’s FAQ is the reference for why this matters: touch defaults to mouse behavior unless touch API pass-through is enabled, and gyro/trackpad-oriented schemes are recommended for camera control where appropriate. citeturn49view2
 
@@ -242,7 +242,7 @@ If the engine lacks a safe autosave hook that can be called from here, at minimu
 
 **Severity and priority.** **High, P1.** Not every Deck user will hit a visible bug, but this is the single biggest display-stack policy decision in the implementation, and it affects scaling, presentation, input focus, and future HDR/refresh work. The risk is amplified because I found no Vulkan-specific Deck path; the current Deck path is effectively OpenGL-plus-window-system policy. citeturn29view0turn50view0turn25view6turn24view12
 
-**Code locations.** `assets/linux/openQ4-steamdeck.in` (single-line launcher file), `docs-user/steam-deck.md:L248-L253,L295-L296`, `src/sys/sdl3/sdl3_backend.cpp:L2999-L3022`. citeturn29view0turn50view0turn22view2turn21view14
+**Code locations.** `assets/linux/openQ4-steamdeck.in` (single-line launcher file), `docs/user/steam-deck.md:L248-L253,L295-L296`, `src/sys/sdl3/sdl3_backend.cpp:L2999-L3022`. citeturn29view0turn50view0turn22view2turn21view14
 
 **Reproduction steps.** In a mixed session where both `WAYLAND_DISPLAY` and `DISPLAY` exist, launch `openQ4-steamdeck` with no explicit SDL video override and inspect logs; the expected current behavior is X11/XWayland. Then relaunch with `SDL_VIDEO_DRIVER=wayland` or `SDL_VIDEODRIVER=wayland` and compare window behavior, scaling, focus, and frame pacing. citeturn50view0turn22view2turn21view14
 
@@ -279,7 +279,7 @@ A stronger version is a two-stage launcher: first try native Wayland when availa
 
 **Severity and priority.** **Medium, P2.** On stock SteamOS or common Linux installs this may work fine, but it is brittle in exactly the places expert users and QA often deviate. citeturn50view0turn22view3turn23view6
 
-**Code locations.** `src/framework/FileSystem.cpp:L3423-L3495,L3579-L3637`, `docs-user/steam-deck.md:L284-L292`. citeturn22view3turn22view4turn23view1turn23view2turn23view6turn50view0
+**Code locations.** `src/framework/FileSystem.cpp:L3423-L3495,L3579-L3637`, `docs/user/steam-deck.md:L284-L292`. citeturn22view3turn22view4turn23view1turn23view2turn23view6turn50view0
 
 **Reproduction steps.** Test on a system where Steam lives outside the three hard-coded roots, or where `HOME` is not the best discovery anchor. Also test a Deck-like system with large external libraries on microSD and a user account using nonstandard XDG layout. Confirm whether auto-discovery still finds the Quake 4 retail root without a manual `fs_basepath`. citeturn50view0turn22view3turn23view6
 

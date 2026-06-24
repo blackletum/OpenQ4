@@ -357,7 +357,7 @@ Add separate PBR controls instead of overloading enhanced materials:
 
 ### Phase 7: Authoring And Tooling
 
-- [ ] Document material syntax and texture packing in `docs-dev` and user-facing docs when ready.
+- [ ] Document material syntax and texture packing in `docs/dev` and user-facing docs when ready.
 - [ ] Add Material Editor awareness if the tool is still maintained for openQ4 workflows.
 - [ ] Add optional import-helper guidance for glTF-style ORM maps.
 - [ ] Add sample PBR materials only if the project intentionally wants shipped sample content. Otherwise keep test assets under `.tmp/`.
@@ -376,8 +376,8 @@ Add separate PBR controls instead of overloading enhanced materials:
 - [ ] Run SP/MP gameplay with stock assets and PBR disabled/enabled.
 - [ ] Run a PBR test scene on `auto`, `gl33`, `gl41`, `gl43`, and `gl45` where available.
 - [ ] Capture RenderDoc on forced modern tiers.
-- [ ] Update `docs-dev/release-completion.md` only when user-visible PBR support lands.
-- [ ] Add curated release notes in `docs-dev/releases/vX.Y.Z.md` before shipping.
+- [ ] Update `docs/dev/release-completion.md` only when user-visible PBR support lands.
+- [ ] Add curated release notes in `docs/dev/releases/vX.Y.Z.md` before shipping.
 - [ ] Acceptance: no stock asset regression, PBR feature documented, rollback documented, shipped PBR assets have authored/explicit legacy fallback with zero approximate fallback unless explicitly waived, and release notes are player-readable.
 
 ## Validation Matrix Additions
@@ -447,9 +447,9 @@ Secondary:
 
 - `tools/tests/renderer_validation_matrix.py`
 - `tools/tests/renderer_gameplay_benchmark.py`
-- `docs-dev/gl-renderer-modernization.md`
-- `docs-dev/renderer-validation-matrix.md`
-- `docs-dev/release-completion.md`
+- `docs/dev/gl-renderer-modernization.md`
+- `docs/dev/renderer-validation-matrix.md`
+- `docs/dev/release-completion.md`
 - `README.md` when user-facing support is ready
 
 ## Definition Of Done

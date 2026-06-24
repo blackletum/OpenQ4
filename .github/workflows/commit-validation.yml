@@ -37,19 +37,86 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m py_compile tools/build/build_openq4_pack.py tools/build/build_pak0.py tools/build/build_windows_installer.py tools/build/generate_pak_header.py tools/build/generate_release_changelog.py tools/build/generate_release_docs.py tools/build/linux_metadata.py tools/build/list_pak_sources.py tools/build/openq4_pak.py tools/build/openq4_release_version.py tools/build/openq4_version.py tools/build/stage_fast_install.py tools/build/stage_gamelibs.py tools/build/windows_runtime.py tools/build/write_pak_manifest.py tools/validation/openq4_validate.py tools/tests/renderer_validation_matrix.py tools/tests/campaign_split_state_transition.py tools/tests/filesystem_case_segments.py tools/tests/game_class_allocator_alignment.py tools/tests/gamelibs_staging.py tools/tests/linux_arm64_ci_coverage.py tools/tests/linux_highdpi_mouse.py tools/tests/linux_metadata_fuzz.py tools/tests/linux_packaging_guidance.py tools/tests/linux_sanitizer_ci.py tools/tests/linux_sdl3_glew_loader.py tools/tests/linux_vsync_support.py tools/tests/loading_continue_input.py tools/tests/macos_native_backend_guard.py tools/tests/macos_renderer_startup_guard.py tools/tests/macos_sdl3_backend_guard.py tools/tests/macos_static_policy.py tools/tests/macos_metal_bridge.py tools/tests/openq4_pure_pack.py tools/tests/packaging_safety.py tools/tests/release_tooling_safety.py tools/tests/posix_memory_management.py tools/tests/sdl3_input_parity.py tools/tests/sdl3_multidisplay_windowing.py tools/tests/steam_deck_support.py tools/tests/startup_language_override.py tools/tests/validation_hardening.py tools/tests/vscode_fast_build.py
+          python -m py_compile \
+            tools/build/build_openq4_pack.py \
+            tools/build/build_pak0.py \
+            tools/build/build_windows_installer.py \
+            tools/build/check_staged_content_edits.py \
+            tools/build/generate_pak_header.py \
+            tools/build/generate_release_changelog.py \
+            tools/build/generate_release_docs.py \
+            tools/build/linux_metadata.py \
+            tools/build/list_pak_sources.py \
+            tools/build/openq4_pak.py \
+            tools/build/openq4_release_version.py \
+            tools/build/openq4_version.py \
+            tools/build/package_nightly.py \
+            tools/build/package_release.py \
+            tools/build/stage_fast_install.py \
+            tools/build/stage_gamelibs.py \
+            tools/build/stage_windows_runtime.py \
+            tools/build/sync_icons.py \
+            tools/build/windows_runtime.py \
+            tools/build/write_pak_manifest.py \
+            src/sys/linux/pk4/id_utils.py \
+            tools/validation/openq4_validate.py \
+            tools/tests/renderer_validation_matrix.py \
+            tools/tests/campaign_split_state_transition.py \
+            tools/tests/docs_link_integrity.py \
+            tools/tests/filesystem_case_segments.py \
+            tools/tests/filesystem_mod_manifest.py \
+            tools/tests/game_class_allocator_alignment.py \
+            tools/tests/gamelibs_staging.py \
+            tools/tests/hdr_postprocess_math.py \
+            tools/tests/linux_arm64_ci_coverage.py \
+            tools/tests/linux_gui_presentation_defaults.py \
+            tools/tests/linux_highdpi_mouse.py \
+            tools/tests/linux_metadata_fuzz.py \
+            tools/tests/linux_packaging_guidance.py \
+            tools/tests/linux_sanitizer_ci.py \
+            tools/tests/linux_sdl3_glew_loader.py \
+            tools/tests/linux_vsync_support.py \
+            tools/tests/loading_continue_input.py \
+            tools/tests/macos_native_backend_guard.py \
+            tools/tests/macos_renderer_startup_guard.py \
+            tools/tests/macos_sdl3_backend_guard.py \
+            tools/tests/macos_signoff_archive.py \
+            tools/tests/macos_static_policy.py \
+            tools/tests/macos_metal_bridge.py \
+            tools/tests/native_glx_shutdown.py \
+            tools/tests/openq4_pure_pack.py \
+            tools/tests/packaging_safety.py \
+            tools/tests/preprocessor_macro_safety.py \
+            tools/tests/posix_memory_management.py \
+            tools/tests/posix_monotonic_time.py \
+            tools/tests/posix_network_resolution.py \
+            tools/tests/posix_thread_shutdown.py \
+            tools/tests/release_tooling_safety.py \
+            tools/tests/renderer_msaa_cvar_safety.py \
+            tools/tests/renderer_supersampling_safety.py \
+            tools/tests/sdl3_input_parity.py \
+            tools/tests/sdl3_multidisplay_windowing.py \
+            tools/tests/settings_menu_coverage.py \
+            tools/tests/steam_deck_support.py \
+            tools/tests/startup_language_override.py \
+            tools/tests/validation_hardening.py \
+            tools/tests/vscode_fast_build.py
           bash -n tools/build/meson_setup.sh
           bash -n tools/validation/validate_push.sh
           bash -n tools/validation/validate_pr.sh
           python tools/tests/campaign_split_state_transition.py
+          python tools/tests/docs_link_integrity.py
           python tools/tests/filesystem_case_segments.py
+          python tools/tests/filesystem_mod_manifest.py
           python tools/tests/game_class_allocator_alignment.py
           python tools/tests/gamelibs_staging.py
           python tools/tests/hdr_postprocess_math.py
           python tools/tests/linux_arm64_ci_coverage.py
+          python tools/tests/linux_gui_presentation_defaults.py
           python tools/tests/linux_highdpi_mouse.py
           python tools/tests/linux_metadata_fuzz.py
           python tools/tests/linux_packaging_guidance.py
+          python tools/tests/linux_pk4_legacy_tools.py
           python tools/tests/linux_sanitizer_ci.py
           python tools/tests/linux_sdl3_glew_loader.py
           python tools/tests/linux_vsync_support.py
@@ -57,14 +124,23 @@ jobs:
           python tools/tests/macos_native_backend_guard.py
           python tools/tests/macos_renderer_startup_guard.py
           python tools/tests/macos_sdl3_backend_guard.py
+          python tools/tests/macos_signoff_archive.py
           python tools/tests/macos_static_policy.py
           python tools/tests/macos_metal_bridge.py
+          python tools/tests/native_glx_shutdown.py
           python tools/tests/openq4_pure_pack.py
           python tools/tests/packaging_safety.py
+          python tools/tests/preprocessor_macro_safety.py
           python tools/tests/release_tooling_safety.py
           python tools/tests/posix_memory_management.py
+          python tools/tests/posix_monotonic_time.py
+          python tools/tests/posix_network_resolution.py
+          python tools/tests/posix_thread_shutdown.py
+          python tools/tests/renderer_msaa_cvar_safety.py
+          python tools/tests/renderer_supersampling_safety.py
           python tools/tests/sdl3_input_parity.py
           python tools/tests/sdl3_multidisplay_windowing.py
+          python tools/tests/settings_menu_coverage.py
           python tools/tests/steam_deck_support.py
           python tools/tests/startup_language_override.py
           python tools/tests/validation_hardening.py

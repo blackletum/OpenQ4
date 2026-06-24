@@ -77,7 +77,12 @@ function Assert-WorkspacePath {
 
     $resolvedPath = [System.IO.Path]::GetFullPath($Path)
     $resolvedRoot = [System.IO.Path]::GetFullPath($RepoRoot)
-    if (-not $resolvedPath.StartsWith($resolvedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    $normalizedRoot = [System.IO.Path]::TrimEndingDirectorySeparator($resolvedRoot)
+    $rootPrefix = $normalizedRoot + [System.IO.Path]::DirectorySeparatorChar
+    if (
+        -not $resolvedPath.Equals($normalizedRoot, [System.StringComparison]::OrdinalIgnoreCase) -and
+        -not $resolvedPath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+    ) {
         throw "Refusing to operate on path outside the repository: '$resolvedPath'"
     }
 }

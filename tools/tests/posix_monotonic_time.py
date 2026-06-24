@@ -55,7 +55,7 @@ def validate_posix_elapsed_clock() -> None:
 
 
 def validate_release_note() -> None:
-    source = read("docs-dev/release-completion.md")
+    source = read("docs/dev/release-completion.md")
 
     require(source, "POSIX elapsed timing now uses a monotonic clock", "release completion notes")
     require(source, "frame/event deltas keep advancing steadily", "release completion notes")
