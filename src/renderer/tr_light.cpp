@@ -1169,25 +1169,6 @@ static const portalArea_t *R_DrawSurfAreaForGlobalPoint( const idVec3 &point ) {
 	return NULL;
 }
 
-static const portalArea_t *R_CurrentViewDrawSurfArea( void ) {
-	if ( tr.viewDef == NULL || tr.viewDef->renderWorld == NULL ) {
-		return NULL;
-	}
-
-	int areaNum = tr.viewDef->areaNum;
-	if ( areaNum < 0 || areaNum >= tr.viewDef->renderWorld->NumAreas() ) {
-		areaNum = tr.viewDef->renderWorld->PointInArea( tr.viewDef->initialViewAreaOrigin );
-	}
-	if ( areaNum < 0 || areaNum >= tr.viewDef->renderWorld->NumAreas() ) {
-		areaNum = tr.viewDef->renderWorld->PointInArea( tr.viewDef->renderView.vieworg );
-	}
-	if ( areaNum < 0 || areaNum >= tr.viewDef->renderWorld->NumAreas() ) {
-		return NULL;
-	}
-
-	return &tr.viewDef->renderWorld->portalAreas[ areaNum ];
-}
-
 static const portalArea_t *R_ResolveDrawSurfArea( const srfTriangles_t *tri, const viewEntity_t *space ) {
 	if ( tri == NULL || space == NULL || tr.viewDef == NULL || tr.viewDef->renderWorld == NULL ) {
 		return NULL;
@@ -1213,8 +1194,7 @@ static const portalArea_t *R_ResolveDrawSurfArea( const srfTriangles_t *tri, con
 		}
 	}
 
-	const portalArea_t *fallbackArea = R_FallbackDrawSurfArea( space );
-	return fallbackArea != NULL ? fallbackArea : R_CurrentViewDrawSurfArea();
+	return R_FallbackDrawSurfArea( space );
 }
 
 /*

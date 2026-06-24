@@ -29,8 +29,11 @@ SSE2_StoreVec3
 ============
 */
 ID_INLINE static void SSE2_StoreVec3( float *dst, __m128 v ) {
-	_mm_store_sd( (double *)dst, _mm_castps_pd( v ) );
-	_mm_store_ss( dst + 2, _mm_shuffle_ps( v, v, _MM_SHUFFLE( 2, 2, 2, 2 ) ) );
+	float lanes[4];
+	_mm_storeu_ps( lanes, v );
+	dst[0] = lanes[0];
+	dst[1] = lanes[1];
+	dst[2] = lanes[2];
 }
 
 /*

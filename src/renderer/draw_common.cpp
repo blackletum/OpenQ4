@@ -8012,16 +8012,17 @@ static bool RB_SurfaceHasLightGrid( const drawSurf_t *surf, const LightGrid *&li
 		return false;
 	}
 
-	if ( surf->area != NULL ) {
-		const LightGrid &candidate = surf->area->lightGrid;
-		if ( RB_LightGridIsUsable( candidate ) ) {
-			lightGrid = &candidate;
-			return true;
-		}
+	if ( surf->area == NULL ) {
+		return false;
 	}
 
-	lightGrid = RB_CurrentViewLightGrid();
-	return lightGrid != NULL;
+	const LightGrid &candidate = surf->area->lightGrid;
+	if ( !RB_LightGridIsUsable( candidate ) ) {
+		return false;
+	}
+
+	lightGrid = &candidate;
+	return true;
 }
 
 static int RB_CurrentViewLightGridArea( idRenderWorldLocal *world ) {

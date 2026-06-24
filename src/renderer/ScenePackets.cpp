@@ -1294,10 +1294,10 @@ static bool R_ScenePackets_DrawSurfLightGridEligible( const viewDef_t *viewDef, 
 	if ( drawSurf->space->modelDepthHack != 0.0f ) {
 		return false;
 	}
-	if ( drawSurf->area != NULL && R_ScenePackets_LightGridIsUsable( drawSurf->area->lightGrid ) ) {
-		return true;
+	if ( drawSurf->area == NULL ) {
+		return false;
 	}
-	return R_ScenePackets_CurrentViewLightGrid( viewDef ) != NULL;
+	return R_ScenePackets_LightGridIsUsable( drawSurf->area->lightGrid );
 }
 
 static bool R_ScenePackets_DrawSurfGUIEligible( const viewDef_t *viewDef, const drawSurf_t *drawSurf ) {

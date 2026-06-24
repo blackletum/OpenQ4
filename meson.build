@@ -714,6 +714,12 @@ else
   # Legacy idTech4-era code relies on implicit narrowing/pointer casts that
   # modern GCC/Clang reject as hard errors without permissive mode.
   shared_cpp_args += ['-fpermissive']
+  foreach aliasing_arg : ['-fno-strict-aliasing']
+    if cpp.has_argument(aliasing_arg) and cc.has_argument(aliasing_arg)
+      shared_cpp_args += aliasing_arg
+      shared_c_args += aliasing_arg
+    endif
+  endforeach
 endif
 
 if host_system == 'darwin'
