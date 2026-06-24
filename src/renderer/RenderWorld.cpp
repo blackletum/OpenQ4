@@ -205,7 +205,10 @@ qhandle_t idRenderWorldLocal::AddEffectDef(const renderEffect_t* reffect, int ti
 	if (effectHandle == -1) {
 		effectHandle = effectsDef.Append(NULL);
 	}
-	UpdateEffectDef( effectHandle, reffect, time );
+	if ( UpdateEffectDef( effectHandle, reffect, time ) ) {
+		FreeEffectDef( effectHandle );
+		return -1;
+	}
 	return effectHandle;
 }
 
@@ -269,7 +272,20 @@ bool idRenderWorldLocal::UpdateEffectDef(qhandle_t effectHandle, const renderEff
 		const float startTimeSeconds = static_cast<float>( time ) * 0.001f;
 		if ( !bse->PlayEffect( def, startTimeSeconds ) ) {
 			def->expired = true;
+			return true;
 		}
+	}
+
+	const float effectTimeSeconds = static_cast<float>( time ) * 0.001f;
+	def->updateFramenum = tr.frameCount;
+	if ( bse->ServiceEffect( def, effectTimeSeconds, effectTimeSeconds ) ) {
+		if ( def->dynamicModel ) {
+			delete def->dynamicModel;
+			def->dynamicModel = NULL;
+			def->dynamicModelFrameCount = 0;
+		}
+		def->expired = true;
+		return true;
 	}
 
 	return def->expired;
