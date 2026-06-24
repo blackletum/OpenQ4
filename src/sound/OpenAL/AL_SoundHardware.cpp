@@ -33,11 +33,16 @@ If you have questions concerning this license or the applicable additional terms
 	#include "../../../doomclassic/doom/i_sound.h"
 #endif
 
+#if defined( USE_SDL3 )
+	#include <SDL3/SDL.h>
+#endif
+
 idCVar s_showLevelMeter( "s_showLevelMeter", "0", CVAR_BOOL | CVAR_ARCHIVE, "Show VU meter" );
 idCVar s_meterTopTime( "s_meterTopTime", "1000", CVAR_INTEGER | CVAR_ARCHIVE, "How long (in milliseconds) peaks are displayed on the VU meter" );
 idCVar s_meterPosition( "s_meterPosition", "100 100 20 200", CVAR_ARCHIVE, "VU meter location (x y w h)" );
 idCVar s_device( "s_device", "-1", CVAR_INTEGER | CVAR_ARCHIVE, "Which audio device to use (listDevices to list, -1 for default)" );
 idCVar s_showPerfData( "s_showPerfData", "0", CVAR_BOOL, "Show sound backend performance data" );
+idCVar s_openALResampler( "s_openALResampler", "-2", CVAR_ARCHIVE | CVAR_INTEGER, "OpenAL Soft source resampler: -2 = quality auto, -1 = runtime default, 0+ = advertised resampler index" );
 extern idCVar s_useEAXReverb;
 extern idCVar s_deviceName;
 extern idCVar s_openALHRTF;
@@ -49,6 +54,169 @@ static const int OPENQ4_OPENAL_HRTF_OFF = 1;
 static const int OPENQ4_OPENAL_HRTF_ON = 2;
 static const int OPENQ4_OPENAL_SPEAKERS_STEREO = 2;
 static const int OPENQ4_OPENAL_SPEAKERS_SURROUND = 6;
+static const int OPENQ4_OPENAL_RESAMPLER_QUALITY_AUTO = -2;
+static const int OPENQ4_OPENAL_RESAMPLER_RUNTIME_DEFAULT = -1;
+
+#if defined( AL_EXT_SOURCE_RADIUS ) && defined( AL_SOURCE_RADIUS )
+	#define OPENQ4_OPENAL_SOURCE_RADIUS_SUPPORTED 1
+#else
+	#define OPENQ4_OPENAL_SOURCE_RADIUS_SUPPORTED 0
+#endif
+
+#if defined( AL_SOFT_callback_buffer ) && defined( AL_BUFFER_CALLBACK_FUNCTION_SOFT ) && defined( AL_BUFFER_CALLBACK_USER_PARAM_SOFT )
+	#define OPENQ4_OPENAL_CALLBACK_BUFFER_SUPPORTED 1
+#else
+	#define OPENQ4_OPENAL_CALLBACK_BUFFER_SUPPORTED 0
+#endif
+
+struct openQ4OpenALDiagnostics_t
+{
+	int alErrors;
+	int alcErrors;
+	int sampleUploadAttempts;
+	int sampleUploadRetries;
+	int sampleUploadContextMisses;
+	int sampleUploadFailures;
+	int queueFallbackEntries;
+	int queueFallbackRefusals;
+	int queueBuffersSubmitted;
+	int queueBuffersRefilled;
+	int queueUnderrunRestarts;
+	int deviceEvents;
+	int deviceReopenAttempts;
+	int deviceReopenSuccesses;
+	int deviceReopenFailures;
+	int soundRestarts;
+	int deferredUpdateErrors;
+	int efxFilterErrors;
+};
+
+static openQ4OpenALDiagnostics_t openQ4_openALDiagnostics;
+
+#if defined( AL_SOFT_source_resampler ) && defined( AL_NUM_RESAMPLERS_SOFT ) && defined( AL_DEFAULT_RESAMPLER_SOFT ) && defined( AL_SOURCE_RESAMPLER_SOFT ) && defined( AL_RESAMPLER_NAME_SOFT )
+	#define OPENQ4_OPENAL_SOURCE_RESAMPLER_SUPPORTED 1
+#else
+	#define OPENQ4_OPENAL_SOURCE_RESAMPLER_SUPPORTED 0
+#endif
+
+#if OPENQ4_OPENAL_SOURCE_RESAMPLER_SUPPORTED
+static LPALGETSTRINGISOFT qalGetStringiSOFT = NULL;
+#endif
+
+#if OPENQ4_OPENAL_CALLBACK_BUFFER_SUPPORTED
+static LPALBUFFERCALLBACKSOFT qalBufferCallbackSOFT = NULL;
+
+static ALsizei AL_APIENTRY openQ4_OpenALCallbackBufferProbe( ALvoid* userptr, ALvoid* sampledata, ALsizei numbytes ) AL_API_NOEXCEPT
+{
+	(void)userptr;
+	if( sampledata != NULL && numbytes > 0 )
+	{
+		memset( sampledata, 0, numbytes );
+	}
+	return numbytes > 0 ? numbytes : 0;
+}
+#endif
+
+/*
+========================
+idSoundHardware_OpenAL::CountDiagnosticEvent
+========================
+*/
+void idSoundHardware_OpenAL::CountDiagnosticEvent( openALDiagnosticCounter_t counter, int amount )
+{
+	if( amount <= 0 )
+	{
+		return;
+	}
+
+	switch( counter )
+	{
+		case OPENAL_DIAG_AL_ERRORS:
+			openQ4_openALDiagnostics.alErrors += amount;
+			break;
+		case OPENAL_DIAG_ALC_ERRORS:
+			openQ4_openALDiagnostics.alcErrors += amount;
+			break;
+		case OPENAL_DIAG_SAMPLE_UPLOAD_ATTEMPTS:
+			openQ4_openALDiagnostics.sampleUploadAttempts += amount;
+			break;
+		case OPENAL_DIAG_SAMPLE_UPLOAD_RETRIES:
+			openQ4_openALDiagnostics.sampleUploadRetries += amount;
+			break;
+		case OPENAL_DIAG_SAMPLE_UPLOAD_CONTEXT_MISSES:
+			openQ4_openALDiagnostics.sampleUploadContextMisses += amount;
+			break;
+		case OPENAL_DIAG_SAMPLE_UPLOAD_FAILURES:
+			openQ4_openALDiagnostics.sampleUploadFailures += amount;
+			break;
+		case OPENAL_DIAG_QUEUE_FALLBACK_ENTRIES:
+			openQ4_openALDiagnostics.queueFallbackEntries += amount;
+			break;
+		case OPENAL_DIAG_QUEUE_FALLBACK_REFUSALS:
+			openQ4_openALDiagnostics.queueFallbackRefusals += amount;
+			break;
+		case OPENAL_DIAG_QUEUE_BUFFERS_SUBMITTED:
+			openQ4_openALDiagnostics.queueBuffersSubmitted += amount;
+			break;
+		case OPENAL_DIAG_QUEUE_BUFFERS_REFILLED:
+			openQ4_openALDiagnostics.queueBuffersRefilled += amount;
+			break;
+		case OPENAL_DIAG_QUEUE_UNDERRUN_RESTARTS:
+			openQ4_openALDiagnostics.queueUnderrunRestarts += amount;
+			break;
+		case OPENAL_DIAG_DEVICE_EVENTS:
+			openQ4_openALDiagnostics.deviceEvents += amount;
+			break;
+		case OPENAL_DIAG_DEVICE_REOPEN_ATTEMPTS:
+			openQ4_openALDiagnostics.deviceReopenAttempts += amount;
+			break;
+		case OPENAL_DIAG_DEVICE_REOPEN_SUCCESSES:
+			openQ4_openALDiagnostics.deviceReopenSuccesses += amount;
+			break;
+		case OPENAL_DIAG_DEVICE_REOPEN_FAILURES:
+			openQ4_openALDiagnostics.deviceReopenFailures += amount;
+			break;
+		case OPENAL_DIAG_SOUND_RESTARTS:
+			openQ4_openALDiagnostics.soundRestarts += amount;
+			break;
+		case OPENAL_DIAG_DEFERRED_UPDATE_ERRORS:
+			openQ4_openALDiagnostics.deferredUpdateErrors += amount;
+			break;
+		case OPENAL_DIAG_EFX_FILTER_ERRORS:
+			openQ4_openALDiagnostics.efxFilterErrors += amount;
+			break;
+	}
+}
+
+/*
+========================
+idSoundHardware_OpenAL::PrintDiagnosticCounters
+========================
+*/
+void idSoundHardware_OpenAL::PrintDiagnosticCounters()
+{
+	common->Printf( "OpenAL diag: alErrors %d alcErrors %d uploadAttempts %d uploadRetries %d uploadContextMisses %d uploadFailures %d fallbackEntries %d fallbackRefusals %d\n",
+		openQ4_openALDiagnostics.alErrors,
+		openQ4_openALDiagnostics.alcErrors,
+		openQ4_openALDiagnostics.sampleUploadAttempts,
+		openQ4_openALDiagnostics.sampleUploadRetries,
+		openQ4_openALDiagnostics.sampleUploadContextMisses,
+		openQ4_openALDiagnostics.sampleUploadFailures,
+		openQ4_openALDiagnostics.queueFallbackEntries,
+		openQ4_openALDiagnostics.queueFallbackRefusals );
+
+	common->Printf( "OpenAL diag: queueBuffers %d queueRefills %d underrunRestarts %d deviceEvents %d reopenAttempts %d reopenSuccesses %d reopenFailures %d soundRestarts %d deferredErrors %d efxFilterErrors %d\n",
+		openQ4_openALDiagnostics.queueBuffersSubmitted,
+		openQ4_openALDiagnostics.queueBuffersRefilled,
+		openQ4_openALDiagnostics.queueUnderrunRestarts,
+		openQ4_openALDiagnostics.deviceEvents,
+		openQ4_openALDiagnostics.deviceReopenAttempts,
+		openQ4_openALDiagnostics.deviceReopenSuccesses,
+		openQ4_openALDiagnostics.deviceReopenFailures,
+		openQ4_openALDiagnostics.soundRestarts,
+		openQ4_openALDiagnostics.deferredUpdateErrors,
+		openQ4_openALDiagnostics.efxFilterErrors );
+}
 
 static bool openQ4_UseEnumerateAllDevices( ALCdevice* device ) {
 #if defined( ALC_ALL_DEVICES_SPECIFIER ) && defined( ALC_DEFAULT_ALL_DEVICES_SPECIFIER )
@@ -85,6 +253,87 @@ static ALCenum openQ4_GetDefaultPlaybackDeviceToken( ALCdevice* device ) {
 static const int OPENQ4_OPENAL_DEVICE_EVENT_DEFAULT_CHANGED = BIT( 0 );
 static const int OPENQ4_OPENAL_DEVICE_EVENT_ADDED = BIT( 1 );
 static const int OPENQ4_OPENAL_DEVICE_EVENT_REMOVED = BIT( 2 );
+static const int OPENQ4_OPENAL_DEVICE_EVENT_ALL = OPENQ4_OPENAL_DEVICE_EVENT_DEFAULT_CHANGED | OPENQ4_OPENAL_DEVICE_EVENT_ADDED | OPENQ4_OPENAL_DEVICE_EVENT_REMOVED;
+static const int OPENQ4_OPENAL_DEVICE_POLL_MSEC = 1000;
+static const int OPENQ4_OPENAL_DEVICE_EVENT_SETTLE_MSEC = 500;
+static const int OPENQ4_OPENAL_DEVICE_RECOVERY_COOLDOWN_MSEC = 1500;
+
+#if defined( USE_SDL3 )
+static SDL_AtomicInt openQ4_PendingOpenALDeviceEvents = { 0 };
+#else
+static volatile int openQ4_PendingOpenALDeviceEvents = 0;
+#endif
+
+static const char* openQ4_DeviceEventFlagName( const int flag )
+{
+	switch( flag )
+	{
+		case OPENQ4_OPENAL_DEVICE_EVENT_DEFAULT_CHANGED:
+			return "default changed";
+		case OPENQ4_OPENAL_DEVICE_EVENT_ADDED:
+			return "device added";
+		case OPENQ4_OPENAL_DEVICE_EVENT_REMOVED:
+			return "device removed";
+		default:
+			return "unknown";
+	}
+}
+
+static void openQ4_AppendDeviceEventName( idStr& eventNames, const int flag )
+{
+	if( eventNames.Length() > 0 )
+	{
+		eventNames += ", ";
+	}
+	eventNames += openQ4_DeviceEventFlagName( flag );
+}
+
+static void openQ4_AppendDeviceEventNames( idStr& eventNames, const int eventFlags )
+{
+	const int flags[] = {
+		OPENQ4_OPENAL_DEVICE_EVENT_DEFAULT_CHANGED,
+		OPENQ4_OPENAL_DEVICE_EVENT_ADDED,
+		OPENQ4_OPENAL_DEVICE_EVENT_REMOVED
+	};
+	for( int i = 0; i < sizeof( flags ) / sizeof( flags[ 0 ] ); ++i )
+	{
+		if( ( eventFlags & flags[ i ] ) != 0 )
+		{
+			openQ4_AppendDeviceEventName( eventNames, flags[ i ] );
+		}
+	}
+}
+
+static void openQ4_QueuePendingDeviceEventFlags( const int eventFlags )
+{
+	if( eventFlags != 0 )
+	{
+#if defined( USE_SDL3 )
+		for( ;; )
+		{
+			const int currentFlags = SDL_GetAtomicInt( &openQ4_PendingOpenALDeviceEvents );
+			const int newFlags = currentFlags | eventFlags;
+			if( newFlags == currentFlags || SDL_CompareAndSwapAtomicInt( &openQ4_PendingOpenALDeviceEvents, currentFlags, newFlags ) )
+			{
+				return;
+			}
+		}
+#else
+		openQ4_PendingOpenALDeviceEvents |= eventFlags;
+#endif
+	}
+}
+
+static int openQ4_ConsumePendingDeviceEventFlags()
+{
+#if defined( USE_SDL3 )
+	return SDL_SetAtomicInt( &openQ4_PendingOpenALDeviceEvents, 0 );
+#else
+	const int eventFlags = openQ4_PendingOpenALDeviceEvents;
+	openQ4_PendingOpenALDeviceEvents = 0;
+	return eventFlags;
+#endif
+}
 
 #if OPENQ4_OPENAL_SYSTEM_EVENTS_SUPPORTED
 typedef ALCenum ( ALC_APIENTRY *openq4_alcEventIsSupportedSOFT_t )( ALCenum eventType, ALCenum deviceType );
@@ -94,7 +343,6 @@ typedef void ( ALC_APIENTRY *openq4_alcEventCallbackSOFT_t )( ALCEVENTPROCTYPESO
 static openq4_alcEventIsSupportedSOFT_t qalcEventIsSupportedSOFT = NULL;
 static openq4_alcEventControlSOFT_t qalcEventControlSOFT = NULL;
 static openq4_alcEventCallbackSOFT_t qalcEventCallbackSOFT = NULL;
-static volatile int openQ4_PendingOpenALDeviceEvents = 0;
 
 static int openQ4_DeviceEventFlagForType( const ALCenum eventType )
 {
@@ -126,30 +374,6 @@ static ALCenum openQ4_DeviceEventTypeForFlag( const int flag )
 	}
 }
 
-static const char* openQ4_DeviceEventFlagName( const int flag )
-{
-	switch( flag )
-	{
-		case OPENQ4_OPENAL_DEVICE_EVENT_DEFAULT_CHANGED:
-			return "default changed";
-		case OPENQ4_OPENAL_DEVICE_EVENT_ADDED:
-			return "device added";
-		case OPENQ4_OPENAL_DEVICE_EVENT_REMOVED:
-			return "device removed";
-		default:
-			return "unknown";
-	}
-}
-
-static void openQ4_AppendDeviceEventName( idStr& eventNames, const int flag )
-{
-	if( eventNames.Length() > 0 )
-	{
-		eventNames += ", ";
-	}
-	eventNames += openQ4_DeviceEventFlagName( flag );
-}
-
 static void ALC_APIENTRY openQ4_OpenALDeviceEventCallback( ALCenum eventType, ALCenum deviceType, ALCdevice* device, ALCsizei length, const ALCchar* message, void* userParam ) ALC_API_NOEXCEPT
 {
 	(void)device;
@@ -165,7 +389,7 @@ static void ALC_APIENTRY openQ4_OpenALDeviceEventCallback( ALCenum eventType, AL
 	const int flag = openQ4_DeviceEventFlagForType( eventType );
 	if( flag != 0 )
 	{
-		openQ4_PendingOpenALDeviceEvents |= flag;
+		openQ4_QueuePendingDeviceEventFlags( flag );
 	}
 }
 
@@ -177,17 +401,6 @@ static bool openQ4_LoadSystemEventProcs( ALCdevice* device )
 	return qalcEventIsSupportedSOFT != NULL && qalcEventControlSOFT != NULL && qalcEventCallbackSOFT != NULL;
 }
 
-static int openQ4_ConsumePendingDeviceEventFlags()
-{
-	const int eventFlags = openQ4_PendingOpenALDeviceEvents;
-	openQ4_PendingOpenALDeviceEvents = 0;
-	return eventFlags;
-}
-#else
-static int openQ4_ConsumePendingDeviceEventFlags()
-{
-	return 0;
-}
 #endif
 
 #if defined( ALC_SOFT_reopen_device )
@@ -578,6 +791,358 @@ static void openQ4_ReportHrtfStatus( ALCdevice* device )
 }
 #endif
 
+/*
+========================
+openQ4_GetSourceResamplerName
+========================
+*/
+static const char* openQ4_GetSourceResamplerName( int index )
+{
+#if OPENQ4_OPENAL_SOURCE_RESAMPLER_SUPPORTED
+	if( qalGetStringiSOFT == NULL || index < 0 )
+	{
+		return NULL;
+	}
+	return qalGetStringiSOFT( AL_RESAMPLER_NAME_SOFT, index );
+#else
+	(void)index;
+	return NULL;
+#endif
+}
+
+/*
+========================
+openQ4_SourceResamplerQualityScore
+========================
+*/
+static int openQ4_SourceResamplerQualityScore( const char* name )
+{
+	if( name == NULL || name[0] == '\0' )
+	{
+		return 0;
+	}
+
+	const idStr resamplerName( name );
+	const bool isFast = resamplerName.Find( "fast", false ) >= 0;
+	const bool isSinc = resamplerName.Find( "sinc", false ) >= 0;
+	if( isSinc && resamplerName.Find( "47", false ) >= 0 )
+	{
+		return isFast ? 650 : 700;
+	}
+	if( isSinc && resamplerName.Find( "23", false ) >= 0 )
+	{
+		return isFast ? 550 : 600;
+	}
+	if( isSinc && resamplerName.Find( "11", false ) >= 0 )
+	{
+		return isFast ? 450 : 500;
+	}
+	if( resamplerName.Find( "bsinc24", false ) >= 0 )
+	{
+		return isFast ? 550 : 600;
+	}
+	if( resamplerName.Find( "bsinc12", false ) >= 0 )
+	{
+		return isFast ? 450 : 500;
+	}
+	if( resamplerName.Find( "gaussian", false ) >= 0 )
+	{
+		return 350;
+	}
+	if( resamplerName.Find( "cubic", false ) >= 0 )
+	{
+		return 300;
+	}
+	if( resamplerName.Find( "linear", false ) >= 0 )
+	{
+		return 200;
+	}
+	if( resamplerName.Find( "point", false ) >= 0 )
+	{
+		return 100;
+	}
+	return 1;
+}
+
+/*
+========================
+idSoundHardware_OpenAL::InitSourceResampler
+========================
+*/
+void idSoundHardware_OpenAL::InitSourceResampler()
+{
+	sourceResamplerAvailable = false;
+	sourceResamplerWarningIssued = false;
+	sourceResamplerCount = 0;
+	sourceResamplerDefault = OPENQ4_OPENAL_RESAMPLER_RUNTIME_DEFAULT;
+	sourceResamplerSelected = OPENQ4_OPENAL_RESAMPLER_RUNTIME_DEFAULT;
+
+#if OPENQ4_OPENAL_SOURCE_RESAMPLER_SUPPORTED
+	if( openalContext == NULL || alcGetCurrentContext() != openalContext )
+	{
+		return;
+	}
+	if( alIsExtensionPresent( "AL_SOFT_source_resampler" ) != AL_TRUE )
+	{
+		if( s_openALResampler.GetInteger() >= 0 )
+		{
+			common->Warning( "OpenAL source resampler index %d requested, but AL_SOFT_source_resampler is not available.", s_openALResampler.GetInteger() );
+		}
+		return;
+	}
+
+	qalGetStringiSOFT = reinterpret_cast<LPALGETSTRINGISOFT>( alGetProcAddress( "alGetStringiSOFT" ) );
+	if( qalGetStringiSOFT == NULL )
+	{
+		common->Warning( "OpenAL source resampler extension is reported, but alGetStringiSOFT is unavailable." );
+		return;
+	}
+
+	CheckALErrors();
+	ALint numResamplers = 0;
+	ALint defaultResampler = 0;
+	alGetIntegerv( AL_NUM_RESAMPLERS_SOFT, &numResamplers );
+	if( CheckALErrors() != AL_NO_ERROR || numResamplers <= 0 )
+	{
+		common->Warning( "OpenAL source resampler extension is reported, but no resamplers were enumerated." );
+		return;
+	}
+	alGetIntegerv( AL_DEFAULT_RESAMPLER_SOFT, &defaultResampler );
+	if( CheckALErrors() != AL_NO_ERROR || defaultResampler < 0 || defaultResampler >= numResamplers )
+	{
+		defaultResampler = 0;
+	}
+
+	sourceResamplerAvailable = true;
+	sourceResamplerCount = numResamplers;
+	sourceResamplerDefault = defaultResampler;
+	sourceResamplerSelected = defaultResampler;
+
+	int bestScore = openQ4_SourceResamplerQualityScore( openQ4_GetSourceResamplerName( defaultResampler ) );
+	for( int i = 0; i < sourceResamplerCount; i++ )
+	{
+		const char* name = openQ4_GetSourceResamplerName( i );
+		const int score = openQ4_SourceResamplerQualityScore( name );
+		common->Printf( "OpenAL source resampler %d%s: %s\n",
+			i,
+			i == sourceResamplerDefault ? " (runtime default)" : "",
+			name != NULL && name[0] != '\0' ? name : "<unknown>" );
+		if( score > bestScore )
+		{
+			bestScore = score;
+			sourceResamplerSelected = i;
+		}
+	}
+
+	if( s_openALResampler.GetInteger() == OPENQ4_OPENAL_RESAMPLER_QUALITY_AUTO )
+	{
+		common->Printf( "OpenAL source resampler quality-auto selected %d: %s\n",
+			sourceResamplerSelected,
+			openQ4_GetSourceResamplerName( sourceResamplerSelected ) != NULL ? openQ4_GetSourceResamplerName( sourceResamplerSelected ) : "<unknown>" );
+	}
+	else if( s_openALResampler.GetInteger() == OPENQ4_OPENAL_RESAMPLER_RUNTIME_DEFAULT )
+	{
+		common->Printf( "OpenAL source resampler using runtime default %d: %s\n",
+			sourceResamplerDefault,
+			openQ4_GetSourceResamplerName( sourceResamplerDefault ) != NULL ? openQ4_GetSourceResamplerName( sourceResamplerDefault ) : "<unknown>" );
+	}
+	else if( s_openALResampler.GetInteger() >= 0 && s_openALResampler.GetInteger() < sourceResamplerCount )
+	{
+		sourceResamplerSelected = s_openALResampler.GetInteger();
+		common->Printf( "OpenAL source resampler user-selected %d: %s\n",
+			sourceResamplerSelected,
+			openQ4_GetSourceResamplerName( sourceResamplerSelected ) != NULL ? openQ4_GetSourceResamplerName( sourceResamplerSelected ) : "<unknown>" );
+	}
+	else
+	{
+		common->Warning( "OpenAL source resampler index %d is out of range; using quality-auto selection %d.",
+			s_openALResampler.GetInteger(),
+			sourceResamplerSelected );
+	}
+
+	ALuint testSource = 0;
+	CheckALErrors();
+	alGenSources( 1, &testSource );
+	if( CheckALErrors() != AL_NO_ERROR || testSource == 0 )
+	{
+		common->Warning( "OpenAL source resampler selection could not be validated; using runtime source defaults." );
+		sourceResamplerAvailable = false;
+		return;
+	}
+
+	alSourcei( testSource, AL_SOURCE_RESAMPLER_SOFT, sourceResamplerSelected );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		common->Warning( "OpenAL source resampler %d was rejected; trying runtime default %d.", sourceResamplerSelected, sourceResamplerDefault );
+		CheckALErrors();
+		alSourcei( testSource, AL_SOURCE_RESAMPLER_SOFT, sourceResamplerDefault );
+		if( CheckALErrors() != AL_NO_ERROR )
+		{
+			common->Warning( "OpenAL runtime default source resampler was rejected; using runtime source defaults." );
+			sourceResamplerAvailable = false;
+		}
+		else
+		{
+			sourceResamplerSelected = sourceResamplerDefault;
+		}
+	}
+
+	alDeleteSources( 1, &testSource );
+	CheckALErrors();
+#else
+	if( s_openALResampler.GetInteger() >= 0 )
+	{
+		common->Warning( "OpenAL source resampler requested, but this build does not expose AL_SOFT_source_resampler symbols." );
+	}
+#endif
+}
+
+/*
+========================
+idSoundHardware_OpenAL::ApplySourceResampler
+========================
+*/
+void idSoundHardware_OpenAL::ApplySourceResampler( ALuint source )
+{
+#if OPENQ4_OPENAL_SOURCE_RESAMPLER_SUPPORTED
+	if( !sourceResamplerAvailable || !alIsSource( source ) )
+	{
+		return;
+	}
+
+	int selectedResampler = sourceResamplerSelected;
+	const int requestedResampler = s_openALResampler.GetInteger();
+	if( requestedResampler == OPENQ4_OPENAL_RESAMPLER_RUNTIME_DEFAULT )
+	{
+		selectedResampler = sourceResamplerDefault;
+	}
+	else if( requestedResampler >= 0 )
+	{
+		if( requestedResampler < sourceResamplerCount )
+		{
+			selectedResampler = requestedResampler;
+		}
+		else if( !sourceResamplerWarningIssued )
+		{
+			sourceResamplerWarningIssued = true;
+			common->Warning( "OpenAL source resampler index %d is out of range; using quality-auto selection %d.",
+				requestedResampler,
+				sourceResamplerSelected );
+		}
+	}
+
+	CheckALErrors();
+	alSourcei( source, AL_SOURCE_RESAMPLER_SOFT, selectedResampler );
+	if( CheckALErrors() != AL_NO_ERROR && !sourceResamplerWarningIssued )
+	{
+		sourceResamplerWarningIssued = true;
+		common->Warning( "OpenAL source resampler %d could not be applied; using runtime source defaults for later voices.", selectedResampler );
+	}
+#else
+	(void)source;
+#endif
+}
+
+/*
+========================
+idSoundHardware_OpenAL::ApplySourceRadius
+========================
+*/
+void idSoundHardware_OpenAL::ApplySourceRadius( ALuint source, float radius )
+{
+#if OPENQ4_OPENAL_SOURCE_RADIUS_SUPPORTED
+	if( !sourceRadiusAvailable || !alIsSource( source ) )
+	{
+		return;
+	}
+
+	const float clampedRadius = Max( 0.0f, radius );
+	CheckALErrors();
+	alSourcef( source, AL_SOURCE_RADIUS, clampedRadius );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		sourceRadiusAvailable = false;
+		if( !sourceRadiusWarningIssued )
+		{
+			sourceRadiusWarningIssued = true;
+			common->Warning( "OpenAL source-radius spatialization disabled for this session; AL_SOURCE_RADIUS was rejected." );
+		}
+	}
+#else
+	(void)source;
+	(void)radius;
+#endif
+}
+
+/*
+========================
+idSoundHardware_OpenAL::InitCallbackBufferSupport
+========================
+*/
+void idSoundHardware_OpenAL::InitCallbackBufferSupport()
+{
+	callbackBufferAvailable = false;
+	callbackBufferWarningIssued = false;
+
+#if OPENQ4_OPENAL_CALLBACK_BUFFER_SUPPORTED
+	qalBufferCallbackSOFT = NULL;
+	if( openalContext == NULL || alcGetCurrentContext() != openalContext )
+	{
+		return;
+	}
+	if( alIsExtensionPresent( "AL_SOFT_callback_buffer" ) != AL_TRUE )
+	{
+		return;
+	}
+
+	qalBufferCallbackSOFT = reinterpret_cast<LPALBUFFERCALLBACKSOFT>( alGetProcAddress( "alBufferCallbackSOFT" ) );
+	if( qalBufferCallbackSOFT == NULL )
+	{
+		callbackBufferWarningIssued = true;
+		common->Warning( "OpenAL callback-buffer extension is reported, but alBufferCallbackSOFT is unavailable." );
+		return;
+	}
+
+	ALuint testBuffer = 0;
+	CheckALErrors();
+	alGenBuffers( 1, &testBuffer );
+	if( CheckALErrors() != AL_NO_ERROR || testBuffer == 0 )
+	{
+		callbackBufferWarningIssued = true;
+		common->Warning( "OpenAL callback-buffer support could not be validated; scratch buffer allocation failed." );
+		return;
+	}
+
+	CheckALErrors();
+	qalBufferCallbackSOFT( testBuffer, AL_FORMAT_MONO16, 44100, openQ4_OpenALCallbackBufferProbe, NULL );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		callbackBufferWarningIssued = true;
+		common->Warning( "OpenAL callback-buffer support could not be validated; alBufferCallbackSOFT was rejected." );
+		alDeleteBuffers( 1, &testBuffer );
+		CheckALErrors();
+		return;
+	}
+
+	alDeleteBuffers( 1, &testBuffer );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		callbackBufferWarningIssued = true;
+		common->Warning( "OpenAL callback-buffer support could not be validated; scratch buffer cleanup failed." );
+		return;
+	}
+
+	callbackBufferAvailable = true;
+	common->Printf( "OpenAL callback buffers validated for future streaming path.\n" );
+#else
+	if( alIsExtensionPresent( "AL_SOFT_callback_buffer" ) == AL_TRUE && !callbackBufferWarningIssued )
+	{
+		callbackBufferWarningIssued = true;
+		common->Warning( "OpenAL callback-buffer extension is reported, but this build does not expose AL_SOFT_callback_buffer symbols." );
+	}
+#endif
+}
+
 
 /*
 ========================
@@ -597,7 +1162,21 @@ idSoundHardware_OpenAL::idSoundHardware_OpenAL()
 	reopenDeviceAvailable = false;
 	deferredUpdatesAvailable = false;
 	deferredUpdatesActive = false;
+	deferredUpdatesDisableLogged = false;
+	sourceResamplerAvailable = false;
+	sourceResamplerWarningIssued = false;
+	sourceResamplerCount = 0;
+	sourceResamplerDefault = OPENQ4_OPENAL_RESAMPLER_RUNTIME_DEFAULT;
+	sourceResamplerSelected = OPENQ4_OPENAL_RESAMPLER_RUNTIME_DEFAULT;
+	sourceRadiusAvailable = false;
+	sourceRadiusWarningIssued = false;
+	callbackBufferAvailable = false;
+	callbackBufferWarningIssued = false;
 	lastDeviceCheckTime = 0;
+	pendingDeviceEventFlags = 0;
+	pendingDeviceEventCheckTime = 0;
+	lastDeviceRecoveryTime = 0;
+	pendingSyntheticActiveDeviceDisconnect = false;
 	lastPerfPrintTime = 0;
 	openedWithDefaultFallback = false;
 	openedHrtfMode = openQ4_GetHrtfMode();
@@ -775,6 +1354,74 @@ void idSoundHardware_OpenAL::CaptureOpenedDeviceState( const char* requestedDevi
 	lastDeviceCheckTime = Sys_Milliseconds();
 }
 
+void idSoundHardware_OpenAL::ClearPendingDeviceRecoveryState() {
+	pendingDeviceEventFlags = 0;
+	pendingDeviceEventCheckTime = 0;
+	pendingSyntheticActiveDeviceDisconnect = false;
+}
+
+bool idSoundHardware_OpenAL::RecoverDeviceOrRequestRestart( const char* requestedDeviceName, const char* reason, const char* restartMessage ) {
+	if( TryReopenDevice( requestedDeviceName, reason ) )
+	{
+		return false;
+	}
+
+	common->Printf( "%s\n", restartMessage != NULL ? restartMessage : "OpenAL device recovery requires sound system restart." );
+	lastDeviceRecoveryTime = Sys_Milliseconds();
+	ClearPendingDeviceRecoveryState();
+	soundSystemLocal.SetNeedsRestart();
+	return true;
+}
+
+void idSoundHardware_OpenAL::QueueSyntheticActiveDeviceDisconnect() {
+	if( openalDevice == NULL )
+	{
+		common->Warning( "OpenAL synthetic active-device disconnect ignored; no playback device is open." );
+		return;
+	}
+
+	pendingSyntheticActiveDeviceDisconnect = true;
+	openQ4_QueuePendingDeviceEventFlags( OPENQ4_OPENAL_DEVICE_EVENT_REMOVED );
+	common->Printf( "OpenAL synthetic active-device disconnect queued for '%s'.\n", openedActiveDeviceName.Length() > 0 ? openedActiveDeviceName.c_str() : "<unknown>" );
+}
+
+void idSoundHardware_OpenAL::QueueSyntheticDefaultDeviceChange( const char* previousDefaultDeviceName ) {
+	if( openalDevice == NULL )
+	{
+		common->Warning( "OpenAL synthetic default-device change ignored; no playback device is open." );
+		return;
+	}
+	if( !openedRequestedDeviceName.IsEmpty() && !openedWithDefaultFallback )
+	{
+		common->Warning( "OpenAL synthetic default-device change ignored; requested device '%s' is active.", openedRequestedDeviceName.c_str() );
+		return;
+	}
+
+	idStrList deviceNames;
+	idStr currentDefaultDeviceName;
+	GetAvailablePlaybackDevices( deviceNames, currentDefaultDeviceName );
+	if( currentDefaultDeviceName.IsEmpty() )
+	{
+		common->Warning( "OpenAL synthetic default-device change ignored; system default playback device is unknown." );
+		return;
+	}
+
+	idStr simulatedPreviousDefaultDeviceName = SanitizeDeviceLabel( previousDefaultDeviceName );
+	if( simulatedPreviousDefaultDeviceName.IsEmpty() )
+	{
+		simulatedPreviousDefaultDeviceName = currentDefaultDeviceName;
+		simulatedPreviousDefaultDeviceName += " (synthetic previous)";
+	}
+	else if( simulatedPreviousDefaultDeviceName.Icmp( currentDefaultDeviceName ) == 0 )
+	{
+		simulatedPreviousDefaultDeviceName += " (synthetic previous)";
+	}
+
+	openedDefaultDeviceName = simulatedPreviousDefaultDeviceName;
+	openQ4_QueuePendingDeviceEventFlags( OPENQ4_OPENAL_DEVICE_EVENT_DEFAULT_CHANGED );
+	common->Printf( "OpenAL synthetic system default device change queued; previous default recorded as '%s'.\n", openedDefaultDeviceName.c_str() );
+}
+
 void idSoundHardware_OpenAL::EnableDeviceEventMonitoring() {
 	DisableDeviceEventMonitoring();
 
@@ -868,8 +1515,9 @@ void idSoundHardware_OpenAL::DisableDeviceEventMonitoring() {
 	{
 		qalcEventCallbackSOFT( NULL, NULL );
 	}
-	openQ4_ConsumePendingDeviceEventFlags();
 #endif
+	openQ4_ConsumePendingDeviceEventFlags();
+	pendingSyntheticActiveDeviceDisconnect = false;
 	deviceEventsEnabled = false;
 	enabledDeviceEventFlags = 0;
 }
@@ -882,6 +1530,8 @@ bool idSoundHardware_OpenAL::TryReopenDevice( const char* requestedDeviceName, c
 	{
 		return false;
 	}
+
+	CountDiagnosticEvent( OPENAL_DIAG_DEVICE_REOPEN_ATTEMPTS );
 
 	idStr reopenTargetDeviceName = normalizedRequestedDeviceName;
 	if( reopenTargetDeviceName.Length() > 0 )
@@ -896,6 +1546,8 @@ bool idSoundHardware_OpenAL::TryReopenDevice( const char* requestedDeviceName, c
 	}
 
 	const char* reopenDeviceName = reopenTargetDeviceName.Length() > 0 ? reopenTargetDeviceName.c_str() : NULL;
+	ALCint reopenContextAttributes[ 3 ];
+	const ALCint* requestedReopenContextAttributes = openQ4_BuildOutputModeContextAttributes( openalDevice, reopenContextAttributes );
 	if( normalizedRequestedDeviceName.Length() > 0 && reopenDeviceName == NULL )
 	{
 		common->Printf( "OpenAL %s; requested device '%s' is unavailable, attempting in-place device reopen to system default.\n", reason != NULL ? reason : "device change detected", normalizedRequestedDeviceName.c_str() );
@@ -906,15 +1558,27 @@ bool idSoundHardware_OpenAL::TryReopenDevice( const char* requestedDeviceName, c
 	}
 
 	(void)alcGetError( openalDevice );
-	const bool reopened = qalcReopenDeviceSOFT( openalDevice, reopenDeviceName, NULL ) == ALC_TRUE;
-	const ALCenum reopenError = CheckALCErrors( openalDevice );
+	bool reopened = qalcReopenDeviceSOFT( openalDevice, reopenDeviceName, requestedReopenContextAttributes ) == ALC_TRUE;
+	ALCenum reopenError = CheckALCErrors( openalDevice );
+	if( ( !reopened || reopenError != ALC_NO_ERROR ) && requestedReopenContextAttributes != NULL )
+	{
+		common->Warning( "OpenAL in-place device reopen rejected requested output mode; retrying with runtime default." );
+		(void)alcGetError( openalDevice );
+		reopened = qalcReopenDeviceSOFT( openalDevice, reopenDeviceName, NULL ) == ALC_TRUE;
+		reopenError = CheckALCErrors( openalDevice );
+	}
 	if( !reopened || reopenError != ALC_NO_ERROR )
 	{
+		CountDiagnosticEvent( OPENAL_DIAG_DEVICE_REOPEN_FAILURES );
 		common->Warning( "OpenAL in-place device reopen failed; falling back to sound system restart." );
 		return false;
 	}
 
+	CountDiagnosticEvent( OPENAL_DIAG_DEVICE_REOPEN_SUCCESSES );
+	openQ4_ApplyHrtfPreference( openalDevice );
 	CaptureOpenedDeviceState( normalizedRequestedDeviceName.c_str() );
+	lastDeviceRecoveryTime = Sys_Milliseconds();
+	ClearPendingDeviceRecoveryState();
 
 	if( openedDefaultDeviceName.Length() > 0 )
 	{
@@ -938,6 +1602,47 @@ bool idSoundHardware_OpenAL::TryReopenDevice( const char* requestedDeviceName, c
 #endif
 }
 
+void idSoundHardware_OpenAL::DisableEFXFilters( const char* reason ) {
+	if( !efxFiltersAvailable )
+	{
+		return;
+	}
+
+	efxFiltersAvailable = false;
+	CountDiagnosticEvent( OPENAL_DIAG_EFX_FILTER_ERRORS );
+	if( reason != NULL && reason[0] != '\0' )
+	{
+		common->Warning( "OpenAL EFX filter routing disabled for this session: %s.", reason );
+	}
+	else
+	{
+		common->Warning( "OpenAL EFX filter routing disabled for this session." );
+	}
+}
+
+void idSoundHardware_OpenAL::DisableDeferredUpdates( const char* reason ) {
+	if( !deferredUpdatesAvailable && !deferredUpdatesActive )
+	{
+		return;
+	}
+
+	deferredUpdatesAvailable = false;
+	deferredUpdatesActive = false;
+	CountDiagnosticEvent( OPENAL_DIAG_DEFERRED_UPDATE_ERRORS );
+	if( !deferredUpdatesDisableLogged )
+	{
+		deferredUpdatesDisableLogged = true;
+		if( reason != NULL && reason[0] != '\0' )
+		{
+			common->Warning( "OpenAL deferred source updates disabled for this session: %s.", reason );
+		}
+		else
+		{
+			common->Warning( "OpenAL deferred source updates disabled for this session." );
+		}
+	}
+}
+
 void idSoundHardware_OpenAL::BeginDeferredUpdates() {
 #if OPENQ4_OPENAL_DEFERRED_UPDATES_SUPPORTED
 	if( !deferredUpdatesAvailable || deferredUpdatesActive || openalContext == NULL || alcGetCurrentContext() != openalContext )
@@ -952,7 +1657,7 @@ void idSoundHardware_OpenAL::BeginDeferredUpdates() {
 	}
 	else
 	{
-		deferredUpdatesAvailable = false;
+		DisableDeferredUpdates( "alDeferUpdatesSOFT failed" );
 	}
 #endif
 }
@@ -968,38 +1673,23 @@ void idSoundHardware_OpenAL::EndDeferredUpdates() {
 	deferredUpdatesActive = false;
 	if( CheckALErrors() != AL_NO_ERROR )
 	{
-		deferredUpdatesAvailable = false;
+		DisableDeferredUpdates( "alProcessUpdatesSOFT failed" );
 	}
 #endif
 }
 
 bool idSoundHardware_OpenAL::UpdateDeviceMonitoring() {
 	const int nowTime = Sys_Milliseconds();
-	const int pendingDeviceEventFlags = openQ4_ConsumePendingDeviceEventFlags();
-	if( pendingDeviceEventFlags != 0 )
+	const int consumedDeviceEventFlags = openQ4_ConsumePendingDeviceEventFlags();
+	if( consumedDeviceEventFlags != 0 )
 	{
+		pendingDeviceEventFlags |= consumedDeviceEventFlags;
+		pendingDeviceEventCheckTime = nowTime + OPENQ4_OPENAL_DEVICE_EVENT_SETTLE_MSEC;
+		CountDiagnosticEvent( OPENAL_DIAG_DEVICE_EVENTS );
 		idStr eventNames;
-#if OPENQ4_OPENAL_SYSTEM_EVENTS_SUPPORTED
-		const int eventFlags[] = {
-			OPENQ4_OPENAL_DEVICE_EVENT_DEFAULT_CHANGED,
-			OPENQ4_OPENAL_DEVICE_EVENT_ADDED,
-			OPENQ4_OPENAL_DEVICE_EVENT_REMOVED
-		};
-		for( int i = 0; i < sizeof( eventFlags ) / sizeof( eventFlags[ 0 ] ); ++i )
-		{
-			if( ( pendingDeviceEventFlags & eventFlags[ i ] ) != 0 )
-			{
-				openQ4_AppendDeviceEventName( eventNames, eventFlags[ i ] );
-			}
-		}
-#endif
-		common->Printf( "OpenAL playback device event received: %s\n", eventNames.Length() > 0 ? eventNames.c_str() : "unknown" );
+		openQ4_AppendDeviceEventNames( eventNames, consumedDeviceEventFlags );
+		common->Printf( "OpenAL playback device event received: %s; checking after %d ms settle.\n", eventNames.Length() > 0 ? eventNames.c_str() : "unknown", OPENQ4_OPENAL_DEVICE_EVENT_SETTLE_MSEC );
 	}
-
-	if( pendingDeviceEventFlags == 0 && lastDeviceCheckTime + 1000 > nowTime ) {
-		return false;
-	}
-	lastDeviceCheckTime = nowTime;
 
 	const idStr requestedDeviceName = NormalizeRequestedDeviceName( s_deviceName.GetString() );
 	if( requestedDeviceName.Icmp( openedRequestedDeviceName ) != 0 ) {
@@ -1010,18 +1700,14 @@ bool idSoundHardware_OpenAL::UpdateDeviceMonitoring() {
 		} else {
 			common->Printf( "OpenAL requested device changed from '%s' to '%s'.\n", openedRequestedDeviceName.c_str(), requestedDeviceName.c_str() );
 		}
-		if( TryReopenDevice( requestedDeviceName.c_str(), "requested device changed" ) )
-		{
-			return false;
-		}
-		common->Printf( "OpenAL requested device change requires sound system restart.\n" );
-		soundSystemLocal.SetNeedsRestart();
-		return true;
+		return RecoverDeviceOrRequestRestart( requestedDeviceName.c_str(), "requested device changed", "OpenAL requested device change requires sound system restart." );
 	}
 
 	const int hrtfMode = openQ4_GetHrtfMode();
 	if( hrtfMode != openedHrtfMode ) {
 		common->Printf( "OpenAL HRTF mode changed from %s to %s; restarting sound system.\n", openQ4_HrtfModeName( openedHrtfMode ), openQ4_HrtfModeName( hrtfMode ) );
+		lastDeviceRecoveryTime = Sys_Milliseconds();
+		ClearPendingDeviceRecoveryState();
 		soundSystemLocal.SetNeedsRestart();
 		return true;
 	}
@@ -1029,8 +1715,45 @@ bool idSoundHardware_OpenAL::UpdateDeviceMonitoring() {
 	const int speakerCount = openQ4_GetSpeakerCount();
 	if( speakerCount != openedSpeakerCount ) {
 		common->Printf( "OpenAL speaker mode changed from %s to %s; restarting sound system.\n", openQ4_SpeakerCountName( openedSpeakerCount ), openQ4_SpeakerCountName( speakerCount ) );
+		lastDeviceRecoveryTime = Sys_Milliseconds();
+		ClearPendingDeviceRecoveryState();
 		soundSystemLocal.SetNeedsRestart();
 		return true;
+	}
+
+	int settledDeviceEventFlags = 0;
+	if( pendingDeviceEventFlags != 0 )
+	{
+		if( pendingDeviceEventCheckTime > nowTime )
+		{
+			return false;
+		}
+		if( lastDeviceRecoveryTime > 0 && lastDeviceRecoveryTime + OPENQ4_OPENAL_DEVICE_RECOVERY_COOLDOWN_MSEC > nowTime )
+		{
+			pendingDeviceEventCheckTime = lastDeviceRecoveryTime + OPENQ4_OPENAL_DEVICE_RECOVERY_COOLDOWN_MSEC;
+			return false;
+		}
+
+		settledDeviceEventFlags = pendingDeviceEventFlags;
+		pendingDeviceEventFlags = 0;
+		pendingDeviceEventCheckTime = 0;
+
+		idStr eventNames;
+		openQ4_AppendDeviceEventNames( eventNames, settledDeviceEventFlags );
+		common->Printf( "OpenAL checking settled playback device event: %s\n", eventNames.Length() > 0 ? eventNames.c_str() : "unknown" );
+	}
+	else if( lastDeviceCheckTime + OPENQ4_OPENAL_DEVICE_POLL_MSEC > nowTime )
+	{
+		return false;
+	}
+
+	lastDeviceCheckTime = nowTime;
+
+	if( pendingSyntheticActiveDeviceDisconnect && ( settledDeviceEventFlags & OPENQ4_OPENAL_DEVICE_EVENT_REMOVED ) != 0 )
+	{
+		pendingSyntheticActiveDeviceDisconnect = false;
+		common->Warning( "OpenAL synthetic device '%s' disconnected.", openedActiveDeviceName.Length() > 0 ? openedActiveDeviceName.c_str() : "<unknown>" );
+		return RecoverDeviceOrRequestRestart( openedRequestedDeviceName.c_str(), "synthetic active device disconnected", "OpenAL synthetic disconnected device recovery requires sound system restart." );
 	}
 
 #if defined( ALC_CONNECTED )
@@ -1039,13 +1762,7 @@ bool idSoundHardware_OpenAL::UpdateDeviceMonitoring() {
 		alcGetIntegerv( openalDevice, ALC_CONNECTED, 1, &connected );
 		if( CheckALCErrors( openalDevice ) == ALC_NO_ERROR && connected == ALC_FALSE ) {
 			common->Warning( "OpenAL device '%s' disconnected.", openedActiveDeviceName.c_str() );
-			if( TryReopenDevice( openedRequestedDeviceName.c_str(), "active device disconnected" ) )
-			{
-				return false;
-			}
-			common->Printf( "OpenAL disconnected device recovery requires sound system restart.\n" );
-			soundSystemLocal.SetNeedsRestart();
-			return true;
+			return RecoverDeviceOrRequestRestart( openedRequestedDeviceName.c_str(), "active device disconnected", "OpenAL disconnected device recovery requires sound system restart." );
 		}
 	}
 #endif
@@ -1056,24 +1773,19 @@ bool idSoundHardware_OpenAL::UpdateDeviceMonitoring() {
 
 	if( openedWithDefaultFallback && DeviceListContains( deviceNames, openedRequestedDeviceName.c_str() ) ) {
 		common->Printf( "OpenAL requested device '%s' is available again.\n", openedRequestedDeviceName.c_str() );
-		if( TryReopenDevice( openedRequestedDeviceName.c_str(), "requested device became available" ) )
-		{
-			return false;
-		}
-		common->Printf( "OpenAL requested device return requires sound system restart.\n" );
-		soundSystemLocal.SetNeedsRestart();
-		return true;
+		return RecoverDeviceOrRequestRestart( openedRequestedDeviceName.c_str(), "requested device became available", "OpenAL requested device return requires sound system restart." );
 	}
 
 	if( ( openedRequestedDeviceName.IsEmpty() || openedWithDefaultFallback ) && defaultDeviceName.Length() > 0 && defaultDeviceName.Icmp( openedDefaultDeviceName ) != 0 ) {
 		common->Printf( "OpenAL system default device changed from '%s' to '%s'.\n", openedDefaultDeviceName.c_str(), defaultDeviceName.c_str() );
-		if( TryReopenDevice( openedRequestedDeviceName.c_str(), "system default device changed" ) )
-		{
-			return false;
-		}
-		common->Printf( "OpenAL default device change requires sound system restart.\n" );
-		soundSystemLocal.SetNeedsRestart();
-		return true;
+		return RecoverDeviceOrRequestRestart( openedRequestedDeviceName.c_str(), "system default device changed", "OpenAL default device change requires sound system restart." );
+	}
+
+	if( settledDeviceEventFlags != 0 )
+	{
+		idStr eventNames;
+		openQ4_AppendDeviceEventNames( eventNames, settledDeviceEventFlags );
+		common->Printf( "OpenAL playback device event settled without recovery: %s\n", eventNames.Length() > 0 ? eventNames.c_str() : "unknown" );
 	}
 
 	return false;
@@ -1134,6 +1846,182 @@ void idSoundHardware_OpenAL::PrintALInfo()
 	CheckALErrors();
 }
 
+static const char* openQ4_OpenALSourceStateName( ALint state )
+{
+	switch( state )
+	{
+		case AL_INITIAL:
+			return "AL_INITIAL";
+		case AL_PLAYING:
+			return "AL_PLAYING";
+		case AL_PAUSED:
+			return "AL_PAUSED";
+		case AL_STOPPED:
+			return "AL_STOPPED";
+		default:
+			return "AL_UNKNOWN";
+	}
+}
+
+void openALSourceSelfTest_f( const idCmdArgs& args )
+{
+	(void)args;
+
+	idSoundHardware_OpenAL& hardware = soundSystemLocal.hardware;
+	ALCdevice* device = hardware.GetOpenALDevice();
+	ALCcontext* context = hardware.GetOpenALContext();
+	if( device == NULL || context == NULL )
+	{
+		idLib::Warning( "OpenAL source self-test requires an active OpenAL device and context." );
+		return;
+	}
+
+	ALCcontext* previousContext = alcGetCurrentContext();
+	const bool restoreContext = previousContext != context;
+	if( restoreContext && alcMakeContextCurrent( context ) == 0 )
+	{
+		CheckALCErrors( device );
+		idLib::Warning( "OpenAL source self-test could not make the sound context current." );
+		return;
+	}
+
+	static const int SELFTEST_SAMPLE_RATE = 44100;
+	static const int SELFTEST_FRAMES = SELFTEST_SAMPLE_RATE / 4;
+	static const float SELFTEST_FREQUENCY = 440.0f;
+	static const float SELFTEST_AMPLITUDE = 0.12f;
+	int16 samples[ SELFTEST_FRAMES ];
+	for( int i = 0; i < SELFTEST_FRAMES; ++i )
+	{
+		const float phase = idMath::TWO_PI * SELFTEST_FREQUENCY * static_cast<float>( i ) / static_cast<float>( SELFTEST_SAMPLE_RATE );
+		samples[i] = static_cast<int16>( idMath::Sin( phase ) * SELFTEST_AMPLITUDE * 32767.0f );
+	}
+
+	ALuint buffer = 0;
+	ALuint source = 0;
+	bool passed = false;
+	ALint state = AL_INITIAL;
+
+	CheckALErrors();
+	alGenBuffers( 1, &buffer );
+	if( CheckALErrors() == AL_NO_ERROR && buffer != 0 )
+	{
+		alBufferData( buffer, AL_FORMAT_MONO16, samples, sizeof( samples ), SELFTEST_SAMPLE_RATE );
+		if( CheckALErrors() == AL_NO_ERROR )
+		{
+			alGenSources( 1, &source );
+			if( CheckALErrors() == AL_NO_ERROR && source != 0 )
+			{
+				hardware.ApplySourceResampler( source );
+				hardware.ApplySourceRadius( source, 0.0f );
+				alSourcei( source, AL_BUFFER, buffer );
+				alSourcef( source, AL_GAIN, 0.1f );
+				alSourcei( source, AL_SOURCE_RELATIVE, AL_TRUE );
+				alSource3f( source, AL_POSITION, 0.0f, 0.0f, 0.0f );
+				alSource3f( source, AL_VELOCITY, 0.0f, 0.0f, 0.0f );
+				alSourcePlay( source );
+
+				if( CheckALErrors() == AL_NO_ERROR )
+				{
+					for( int attempt = 0; attempt < 10; ++attempt )
+					{
+						alGetSourcei( source, AL_SOURCE_STATE, &state );
+						if( CheckALErrors() != AL_NO_ERROR || state == AL_PLAYING )
+						{
+							break;
+						}
+						Sys_Sleep( 10 );
+					}
+					passed = state == AL_PLAYING;
+					if( passed )
+					{
+						Sys_Sleep( 100 );
+					}
+				}
+			}
+		}
+	}
+
+	if( source != 0 )
+	{
+		alSourceStop( source );
+		alSourcei( source, AL_BUFFER, 0 );
+		alDeleteSources( 1, &source );
+	}
+	if( buffer != 0 )
+	{
+		alDeleteBuffers( 1, &buffer );
+	}
+	CheckALErrors();
+
+	if( restoreContext )
+	{
+		alcMakeContextCurrent( previousContext );
+		CheckALCErrors( device );
+	}
+
+	if( passed )
+	{
+		idLib::Printf( "OpenAL source self-test: source entered %s with generated PCM16 mono playback.\n", openQ4_OpenALSourceStateName( state ) );
+	}
+	else
+	{
+		idLib::Warning( "OpenAL source self-test failed: source state %s.", openQ4_OpenALSourceStateName( state ) );
+	}
+}
+
+void openALSimulateDeviceEvent_f( const idCmdArgs& args )
+{
+	int eventFlags = 0;
+	if( args.Argc() <= 1 )
+	{
+		eventFlags = OPENQ4_OPENAL_DEVICE_EVENT_ALL;
+	}
+	else
+	{
+		for( int i = 1; i < args.Argc(); ++i )
+		{
+			const char* eventName = args.Argv( i );
+			if( idStr::Icmp( eventName, "all" ) == 0 )
+			{
+				eventFlags |= OPENQ4_OPENAL_DEVICE_EVENT_ALL;
+			}
+			else if( idStr::Icmp( eventName, "default" ) == 0 || idStr::Icmp( eventName, "defaultChanged" ) == 0 )
+			{
+				eventFlags |= OPENQ4_OPENAL_DEVICE_EVENT_DEFAULT_CHANGED;
+			}
+			else if( idStr::Icmp( eventName, "added" ) == 0 || idStr::Icmp( eventName, "add" ) == 0 )
+			{
+				eventFlags |= OPENQ4_OPENAL_DEVICE_EVENT_ADDED;
+			}
+			else if( idStr::Icmp( eventName, "removed" ) == 0 || idStr::Icmp( eventName, "remove" ) == 0 )
+			{
+				eventFlags |= OPENQ4_OPENAL_DEVICE_EVENT_REMOVED;
+			}
+			else
+			{
+				idLib::Printf( "usage: openALSimulateDeviceEvent [default|added|removed|all]\n" );
+				return;
+			}
+		}
+	}
+
+	idStr eventNames;
+	openQ4_AppendDeviceEventNames( eventNames, eventFlags );
+	openQ4_QueuePendingDeviceEventFlags( eventFlags );
+	idLib::Printf( "Queued synthetic OpenAL playback device event: %s\n", eventNames.Length() > 0 ? eventNames.c_str() : "unknown" );
+}
+
+void openALSimulateDefaultDeviceChange_f( const idCmdArgs& args )
+{
+	const char* previousDefaultDeviceName = ( args.Argc() > 1 ) ? args.Args( 1, -1 ) : NULL;
+	soundSystemLocal.hardware.QueueSyntheticDefaultDeviceChange( previousDefaultDeviceName );
+}
+
+void openALSimulateDeviceDisconnect_f( const idCmdArgs& args )
+{
+	soundSystemLocal.hardware.QueueSyntheticActiveDeviceDisconnect();
+}
+
 void listDevices_f( const idCmdArgs& args )
 {
 	idStrList deviceNames;
@@ -1171,6 +2059,10 @@ idSoundHardware_OpenAL::Init
 void idSoundHardware_OpenAL::Init()
 {
 	cmdSystem->AddCommand( "listDevices", listDevices_f, 0, "Lists the connected sound devices", NULL );
+	cmdSystem->AddCommand( "openALSourceSelfTest", openALSourceSelfTest_f, CMD_FL_SOUND | CMD_FL_CHEAT, "plays a generated tone through a temporary OpenAL source", NULL );
+	cmdSystem->AddCommand( "openALSimulateDeviceEvent", openALSimulateDeviceEvent_f, CMD_FL_SOUND | CMD_FL_CHEAT, "queues a synthetic OpenAL playback device event", NULL );
+	cmdSystem->AddCommand( "openALSimulateDefaultDeviceChange", openALSimulateDefaultDeviceChange_f, CMD_FL_SOUND | CMD_FL_CHEAT, "queues a synthetic OpenAL system default playback device change", NULL );
+	cmdSystem->AddCommand( "openALSimulateDeviceDisconnect", openALSimulateDeviceDisconnect_f, CMD_FL_SOUND | CMD_FL_CHEAT, "queues a synthetic OpenAL active playback device disconnect", NULL );
 
 	common->Printf( "Setup OpenAL device and context... " );
 
@@ -1257,6 +2149,7 @@ void idSoundHardware_OpenAL::Init()
 
 	deferredUpdatesAvailable = alIsExtensionPresent( "AL_SOFT_deferred_updates" ) == AL_TRUE && openQ4_LoadDeferredUpdateProcs();
 	deferredUpdatesActive = false;
+	deferredUpdatesDisableLogged = false;
 	if( deferredUpdatesAvailable )
 	{
 		common->Printf( "OpenAL deferred source updates enabled.\n" );
@@ -1265,10 +2158,19 @@ void idSoundHardware_OpenAL::Init()
 	{
 		common->Printf( "OpenAL source latency queries enabled.\n" );
 	}
-	if( alIsExtensionPresent( "AL_SOFT_callback_buffer" ) == AL_TRUE )
+	InitCallbackBufferSupport();
+#if OPENQ4_OPENAL_SOURCE_RADIUS_SUPPORTED
+	sourceRadiusAvailable = alIsExtensionPresent( "AL_EXT_SOURCE_RADIUS" ) == AL_TRUE;
+	sourceRadiusWarningIssued = false;
+	if( sourceRadiusAvailable )
 	{
-		common->Printf( "OpenAL callback buffers available.\n" );
+		common->Printf( "OpenAL source-radius spatialization enabled.\n" );
 	}
+#else
+	sourceRadiusAvailable = false;
+	sourceRadiusWarningIssued = false;
+#endif
+	InitSourceResampler();
 
 	CaptureOpenedDeviceState( requestedDeviceName.c_str() );
 	reopenDeviceAvailable = alcIsExtensionPresent( openalDevice, "ALC_SOFT_reopen_device" ) == ALC_TRUE && openQ4_LoadReopenDeviceProc( openalDevice );
@@ -1497,10 +2399,24 @@ void idSoundHardware_OpenAL::Shutdown()
 	alcCloseDevice( openalDevice );
 	openalDevice = NULL;
 	lastDeviceCheckTime = 0;
+	pendingDeviceEventFlags = 0;
+	pendingDeviceEventCheckTime = 0;
+	lastDeviceRecoveryTime = 0;
+	pendingSyntheticActiveDeviceDisconnect = false;
 	lastPerfPrintTime = 0;
 	reopenDeviceAvailable = false;
 	deferredUpdatesAvailable = false;
 	deferredUpdatesActive = false;
+	deferredUpdatesDisableLogged = false;
+	sourceResamplerAvailable = false;
+	sourceResamplerWarningIssued = false;
+	sourceResamplerCount = 0;
+	sourceResamplerDefault = OPENQ4_OPENAL_RESAMPLER_RUNTIME_DEFAULT;
+	sourceResamplerSelected = OPENQ4_OPENAL_RESAMPLER_RUNTIME_DEFAULT;
+	sourceRadiusAvailable = false;
+	sourceRadiusWarningIssued = false;
+	callbackBufferAvailable = false;
+	callbackBufferWarningIssued = false;
 	openedWithDefaultFallback = false;
 	openedHrtfMode = OPENQ4_OPENAL_HRTF_AUTO;
 	openedSpeakerCount = OPENQ4_OPENAL_SPEAKERS_SURROUND;
@@ -1601,21 +2517,76 @@ void idSoundHardware_OpenAL::PrintPerformanceData()
 	lastPerfPrintTime = nowTime;
 
 	int activeVoices = 0;
+	const int leasedVoices = Max( 0, voices.Num() - freeVoices.Num() - zombieVoices.Num() );
+	int openSources = 0;
+	int playingSources = 0;
+	int pausedSources = 0;
+	int initialSources = 0;
+	int stoppedSources = 0;
+	int otherSources = 0;
+	int staticPlaybackVoices = 0;
+	int streamingPlaybackVoices = 0;
+	int pendingPlaybackVoices = 0;
 	int latencyVoices = 0;
 	float totalLatencyMS = 0.0f;
 	float maxLatencyMS = 0.0f;
 
 	for( int i = 0; i < voices.Num(); i++ )
 	{
-		if( !voices[i].IsPlaying() )
+		idSoundVoice_OpenAL& voice = voices[i];
+		if( voice.playbackMode == idSoundVoice_OpenAL::OPENQ4_OPENAL_PLAYBACK_STREAMING )
+		{
+			streamingPlaybackVoices++;
+		}
+		else if( voice.playbackMode == idSoundVoice_OpenAL::OPENQ4_OPENAL_PLAYBACK_STATIC_ONESHOT ||
+				 voice.playbackMode == idSoundVoice_OpenAL::OPENQ4_OPENAL_PLAYBACK_STATIC_LEADIN ||
+				 voice.playbackMode == idSoundVoice_OpenAL::OPENQ4_OPENAL_PLAYBACK_STATIC_LOOP )
+		{
+			staticPlaybackVoices++;
+		}
+		else if( voice.currentSample != NULL || voice.leadinSample != NULL )
+		{
+			pendingPlaybackVoices++;
+		}
+
+		if( !alIsSource( voice.openalSource ) )
 		{
 			continue;
 		}
 
-		activeVoices++;
+		openSources++;
+		ALint state = AL_INITIAL;
+		alGetSourcei( voice.openalSource, AL_SOURCE_STATE, &state );
+		if( CheckALErrors() != AL_NO_ERROR )
+		{
+			otherSources++;
+			continue;
+		}
+
+		switch( state )
+		{
+			case AL_PLAYING:
+				playingSources++;
+				activeVoices++;
+				break;
+			case AL_PAUSED:
+				pausedSources++;
+				activeVoices++;
+				break;
+			case AL_INITIAL:
+				initialSources++;
+				break;
+			case AL_STOPPED:
+				stoppedSources++;
+				break;
+			default:
+				otherSources++;
+				break;
+		}
+
 		float offsetMS = 0.0f;
 		float latencyMS = 0.0f;
-		if( voices[i].GetPlaybackLatencyMS( offsetMS, latencyMS ) )
+		if( ( state == AL_PLAYING || state == AL_PAUSED ) && voice.GetPlaybackLatencyMS( offsetMS, latencyMS ) )
 		{
 			latencyVoices++;
 			totalLatencyMS += latencyMS;
@@ -1625,22 +2596,44 @@ void idSoundHardware_OpenAL::PrintPerformanceData()
 
 	if( latencyVoices > 0 )
 	{
-		common->Printf( "OpenAL perf: active voices %d/%d, free %d, zombies %d, output latency avg %.2f ms max %.2f ms\n",
+		common->Printf( "OpenAL perf: active voices %d/%d, leased %d, free %d, zombies %d, sources %d states playing %d paused %d initial %d stopped %d other %d modes static %d streaming %d pending %d, output latency avg %.2f ms max %.2f ms\n",
 			activeVoices,
 			voices.Num(),
+			leasedVoices,
 			freeVoices.Num(),
 			zombieVoices.Num(),
+			openSources,
+			playingSources,
+			pausedSources,
+			initialSources,
+			stoppedSources,
+			otherSources,
+			staticPlaybackVoices,
+			streamingPlaybackVoices,
+			pendingPlaybackVoices,
 			totalLatencyMS / latencyVoices,
 			maxLatencyMS );
 	}
 	else
 	{
-		common->Printf( "OpenAL perf: active voices %d/%d, free %d, zombies %d, source latency unavailable\n",
+		common->Printf( "OpenAL perf: active voices %d/%d, leased %d, free %d, zombies %d, sources %d states playing %d paused %d initial %d stopped %d other %d modes static %d streaming %d pending %d, source latency unavailable\n",
 			activeVoices,
 			voices.Num(),
+			leasedVoices,
 			freeVoices.Num(),
-			zombieVoices.Num() );
+			zombieVoices.Num(),
+			openSources,
+			playingSources,
+			pausedSources,
+			initialSources,
+			stoppedSources,
+			otherSources,
+			staticPlaybackVoices,
+			streamingPlaybackVoices,
+			pendingPlaybackVoices );
 	}
+
+	PrintDiagnosticCounters();
 }
 
 /*

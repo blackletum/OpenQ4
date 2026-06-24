@@ -81,7 +81,7 @@ public:
 		centerChannel = c;
 	}
 
-	void		SetInnerRadius( float r )
+	virtual void	SetInnerRadius( float r )
 	{
 		innerRadius = r;
 	}

@@ -107,12 +107,15 @@ static bool openQ4_ReadWaveExact( idWaveFile& wave, void* buffer, const int size
 	return wave.Read( buffer, size ) == ( size_t )size;
 }
 
-static bool openQ4_CanUploadSampleToOpenAL()
+static bool openQ4_MakeSampleOpenALContextCurrent( const char* operation, const char* sampleName, const bool warn )
 {
 	ALCcontext* const expectedContext = soundSystemLocal.hardware.GetOpenALContext();
 	if( expectedContext == NULL )
 	{
-		// Sound samples can be parsed before the OpenAL device is initialized.
+		if( warn )
+		{
+			common->Warning( "OpenAL %s skipped for '%s': no active OpenAL context.", operation, sampleName != NULL ? sampleName : "<unnamed>" );
+		}
 		return false;
 	}
 
@@ -122,11 +125,19 @@ static bool openQ4_CanUploadSampleToOpenAL()
 		return true;
 	}
 
-	if( currentContext == NULL )
+	if( alcMakeContextCurrent( expectedContext ) != 0 )
 	{
-		return alcMakeContextCurrent( expectedContext ) != 0;
+		if( currentContext != NULL )
+		{
+			common->DPrintf( "OpenAL %s for '%s' made the backend context current.\n", operation, sampleName != NULL ? sampleName : "<unnamed>" );
+		}
+		return true;
 	}
 
+	if( warn )
+	{
+		common->Warning( "OpenAL %s skipped for '%s': could not make the backend context current.", operation, sampleName != NULL ? sampleName : "<unnamed>" );
+	}
 	return false;
 }
 
@@ -141,6 +152,9 @@ idSoundSample_OpenAL::idSoundSample_OpenAL()
 	loaded = false;
 	neverPurge = false;
 	levelLoadReferenced = false;
+	openalUploadPending = false;
+	openalUploadWarningIssued = false;
+	openalFallbackWarningIssued = false;
 
 	memset( &format, 0, sizeof( format ) );
 
@@ -314,6 +328,105 @@ bool idSoundSample_OpenAL::LoadGeneratedSample( const idStr& filename )
 
 	return false;
 }
+
+/*
+========================
+idSoundSample_OpenAL::NormalizeForOpenALPlayback
+========================
+*/
+bool idSoundSample_OpenAL::NormalizeForOpenALPlayback( const char* sourceName )
+{
+	const char* const displayName = sourceName != NULL && sourceName[0] != '\0' ? sourceName : GetName();
+
+	if( buffers.Num() <= 0 || totalBufferSize <= 0 || format.basic.numChannels <= 0 || format.basic.samplesPerSec <= 0 )
+	{
+		idLib::Warning( "OpenAL sample '%s' has no playable PCM data.", displayName );
+		return false;
+	}
+
+	if( format.basic.numChannels != 1 && format.basic.numChannels != 2 )
+	{
+		idLib::Warning( "OpenAL sample '%s' has unsupported channel count %d.", displayName, format.basic.numChannels );
+		return false;
+	}
+
+	if( format.basic.formatTag == idWaveFile::FORMAT_EXTENSIBLE )
+	{
+		if( format.extra.extensible.subFormat.data1 != idWaveFile::FORMAT_PCM )
+		{
+			idLib::Warning( "OpenAL sample '%s' uses unsupported extensible WAV sub-format 0x%x.", displayName, format.extra.extensible.subFormat.data1 );
+			return false;
+		}
+		format.basic.formatTag = idWaveFile::FORMAT_PCM;
+		format.extraSize = 0;
+		memset( &format.extra, 0, sizeof( format.extra ) );
+	}
+
+	if( format.basic.formatTag == idWaveFile::FORMAT_PCM )
+	{
+		if( format.basic.bitsPerSample != 16 )
+		{
+			idLib::Warning( "OpenAL sample '%s' is %d-bit PCM; only 16-bit PCM is currently supported.", displayName, format.basic.bitsPerSample );
+			return false;
+		}
+		if( format.basic.blockSize != format.basic.numChannels * ( int )sizeof( int16 ) )
+		{
+			idLib::Warning( "OpenAL sample '%s' has invalid PCM block size %d.", displayName, format.basic.blockSize );
+			return false;
+		}
+		return true;
+	}
+
+	if( format.basic.formatTag == idWaveFile::FORMAT_ADPCM )
+	{
+		if( buffers.Num() != 1 || buffers[0].buffer == NULL || buffers[0].bufferSize <= 0 )
+		{
+			idLib::Warning( "OpenAL sample '%s' has invalid ADPCM buffer data.", displayName );
+			return false;
+		}
+
+		uint8* decodedBuffer = reinterpret_cast<uint8*>( buffers[0].buffer );
+		uint32 decodedSize = buffers[0].bufferSize;
+		if( MS_ADPCM_decode( &decodedBuffer, &decodedSize ) < 0 || decodedBuffer == NULL || decodedSize == 0 )
+		{
+			idLib::Warning( "OpenAL sample '%s' could not be decoded from ADPCM to PCM.", displayName );
+			return false;
+		}
+		if( decodedSize > ( uint32 )idMath::INT_MAX )
+		{
+			Mem_Free( decodedBuffer );
+			buffers[0].buffer = NULL;
+			buffers[0].bufferSize = 0;
+			idLib::Warning( "OpenAL sample '%s' decoded ADPCM data is too large.", displayName );
+			return false;
+		}
+
+		buffers[0].buffer = GPU_CONVERT_CPU_TO_CPU_CACHED_READONLY_ADDRESS( decodedBuffer );
+		buffers[0].bufferSize = ( int )decodedSize;
+		format.basic.formatTag = idWaveFile::FORMAT_PCM;
+		format.basic.bitsPerSample = 16;
+		format.basic.blockSize = format.basic.numChannels * sizeof( int16 );
+		format.basic.avgBytesPerSec = format.basic.samplesPerSec * format.basic.blockSize;
+		format.extraSize = 0;
+		memset( &format.extra, 0, sizeof( format.extra ) );
+
+		totalBufferSize = buffers[0].bufferSize;
+		buffers[0].numSamples = totalBufferSize / format.basic.blockSize;
+		playBegin = 0;
+		playLength = buffers[0].numSamples;
+		return true;
+	}
+
+	if( format.basic.formatTag == idWaveFile::FORMAT_XMA2 )
+	{
+		idLib::Warning( "OpenAL sample '%s' uses unsupported XMA2 data; falling back to the default sample.", displayName );
+		return false;
+	}
+
+	idLib::Warning( "OpenAL sample '%s' uses unsupported format tag 0x%x.", displayName, format.basic.formatTag );
+	return false;
+}
+
 /*
 ========================
 idSoundSample_OpenAL::Load
@@ -436,7 +549,17 @@ void idSoundSample_OpenAL::LoadResource()
 			//	}
 			//}
 
-			// upload PCM data to OpenAL
+			if( !NormalizeForOpenALPlayback( sampleName.c_str() ) )
+			{
+				MakeDefault();
+				return;
+			}
+
+			openalUploadPending = true;
+			openalUploadWarningIssued = false;
+			openalFallbackWarningIssued = false;
+
+			// Upload decoded PCM data to OpenAL when the backend context is available.
 			CreateOpenALBuffer();
 
 			return;
@@ -451,14 +574,50 @@ void idSoundSample_OpenAL::LoadResource()
 	return;
 }
 
-void idSoundSample_OpenAL::CreateOpenALBuffer()
+bool idSoundSample_OpenAL::CreateOpenALBuffer()
 {
-	if( !openQ4_CanUploadSampleToOpenAL() )
+	if( openalBuffer != 0 )
 	{
-		return;
+		openalUploadPending = false;
+		return true;
 	}
 
-	// build OpenAL buffer
+	if( !loaded || buffers.Num() <= 0 )
+	{
+		return false;
+	}
+
+	idSoundHardware_OpenAL::CountDiagnosticEvent( idSoundHardware_OpenAL::OPENAL_DIAG_SAMPLE_UPLOAD_ATTEMPTS );
+	if( openalUploadWarningIssued )
+	{
+		idSoundHardware_OpenAL::CountDiagnosticEvent( idSoundHardware_OpenAL::OPENAL_DIAG_SAMPLE_UPLOAD_RETRIES );
+	}
+
+	if( !NormalizeForOpenALPlayback( GetName() ) )
+	{
+		idSoundHardware_OpenAL::CountDiagnosticEvent( idSoundHardware_OpenAL::OPENAL_DIAG_SAMPLE_UPLOAD_FAILURES );
+		openalUploadPending = false;
+		return false;
+	}
+
+	const bool warnAboutContext = !openalUploadWarningIssued;
+	if( !openQ4_MakeSampleOpenALContextCurrent( "sample upload", GetName(), warnAboutContext ) )
+	{
+		idSoundHardware_OpenAL::CountDiagnosticEvent( idSoundHardware_OpenAL::OPENAL_DIAG_SAMPLE_UPLOAD_CONTEXT_MISSES );
+		openalUploadPending = true;
+		openalUploadWarningIssued = true;
+		return false;
+	}
+
+	const ALenum alFormat = GetOpenALBufferFormat();
+	if( alFormat == AL_NONE )
+	{
+		common->Warning( "idSoundSample_OpenAL::CreateOpenALBuffer: unsupported OpenAL buffer format for '%s'", GetName() );
+		idSoundHardware_OpenAL::CountDiagnosticEvent( idSoundHardware_OpenAL::OPENAL_DIAG_SAMPLE_UPLOAD_FAILURES );
+		openalUploadPending = false;
+		return false;
+	}
+
 	CheckALErrors();
 	alGenBuffers( 1, &openalBuffer );
 
@@ -467,76 +626,44 @@ void idSoundSample_OpenAL::CreateOpenALBuffer()
 		common->Error( "idSoundSample_OpenAL::CreateOpenALBuffer: error generating OpenAL hardware buffer" );
 	}
 
-	if( alIsBuffer( openalBuffer ) )
+	if( !alIsBuffer( openalBuffer ) )
 	{
-		CheckALErrors();
-
-		void* buffer = NULL;
-		uint32 bufferSize = 0;
-
-		if( format.basic.formatTag == idWaveFile::FORMAT_ADPCM )
-		{
-			// RB: decode idWaveFile::FORMAT_ADPCM to idWaveFile::FORMAT_PCM
-
-			buffer = buffers[0].buffer;
-			bufferSize = buffers[0].bufferSize;
-
-			if( MS_ADPCM_decode( ( uint8** ) &buffer, &bufferSize ) < 0 )
-			{
-				common->Error( "idSoundSample_OpenAL::CreateOpenALBuffer: could not decode ADPCM '%s' to 16 bit format", GetName() );
-			}
-
-			buffers[0].buffer = buffer;
-			buffers[0].bufferSize = bufferSize;
-
-			totalBufferSize = bufferSize;
-		}
-		else if( format.basic.formatTag == idWaveFile::FORMAT_XMA2 )
-		{
-			// RB: not used in the PC version of the BFG edition
-			common->Error( "idSoundSample_OpenAL::CreateOpenALBuffer: could not decode XMA2 '%s' to 16 bit format", GetName() );
-		}
-		else if( format.basic.formatTag == idWaveFile::FORMAT_EXTENSIBLE )
-		{
-			// RB: not used in the PC version of the BFG edition
-			common->Error( "idSoundSample_OpenAL::CreateOpenALBuffer: could not decode extensible WAV format '%s' to 16 bit format", GetName() );
-		}
-		else
-		{
-			// TODO concatenate buffers
-
-			assert( buffers.Num() == 1 );
-
-			buffer = buffers[0].buffer;
-			bufferSize = buffers[0].bufferSize;
-		}
+		openalBuffer = 0;
+		openalUploadPending = true;
+		idSoundHardware_OpenAL::CountDiagnosticEvent( idSoundHardware_OpenAL::OPENAL_DIAG_SAMPLE_UPLOAD_FAILURES );
+		return false;
+	}
 
 #if 0 //#if defined(AL_SOFT_buffer_samples)
-		if( alIsExtensionPresent( "AL_SOFT_buffer_samples" ) )
+	if( alIsExtensionPresent( "AL_SOFT_buffer_samples" ) )
+	{
+		ALenum type = AL_SHORT_SOFT;
+
+		if( format.basic.bitsPerSample != 16 )
 		{
-			ALenum type = AL_SHORT_SOFT;
-
-			if( format.basic.bitsPerSample != 16 )
-			{
-				//common->Error( "idSoundSample_OpenAL::LoadResource: '%s' not a 16 bit format", GetName() );
-			}
-
-			ALenum channels = NumChannels() == 1 ? AL_MONO_SOFT : AL_STEREO_SOFT;
-			ALenum alFormat = GetOpenALSoftFormat( channels, type );
-
-			alBufferSamplesSOFT( openalBuffer, format.basic.samplesPerSec, alFormat, BytesToFrames( bufferSize, channels, type ), channels, type, buffer );
-		}
-		else
-#endif
-		{
-			alBufferData( openalBuffer, GetOpenALBufferFormat(), buffer, bufferSize, format.basic.samplesPerSec );
+			//common->Error( "idSoundSample_OpenAL::LoadResource: '%s' not a 16 bit format", GetName() );
 		}
 
-		if( CheckALErrors() != AL_NO_ERROR )
-		{
-			common->Error( "idSoundSample_OpenAL::CreateOpenALBuffer: error loading data into OpenAL hardware buffer" );
-		}
+		ALenum channels = NumChannels() == 1 ? AL_MONO_SOFT : AL_STEREO_SOFT;
+		ALenum alFormat = GetOpenALSoftFormat( channels, type );
+
+		alBufferSamplesSOFT( openalBuffer, format.basic.samplesPerSec, alFormat, BytesToFrames( buffers[0].bufferSize, channels, type ), channels, type, buffers[0].buffer );
 	}
+	else
+#endif
+	{
+		assert( buffers.Num() == 1 );
+		alBufferData( openalBuffer, alFormat, buffers[0].buffer, buffers[0].bufferSize, format.basic.samplesPerSec );
+	}
+
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		common->Error( "idSoundSample_OpenAL::CreateOpenALBuffer: error loading data into OpenAL hardware buffer" );
+	}
+
+	openalUploadPending = false;
+	openalUploadWarningIssued = false;
+	return true;
 }
 
 /*
@@ -1103,6 +1230,9 @@ void idSoundSample_OpenAL::MakeDefault()
 
 	timestamp = FILE_NOT_FOUND_TIMESTAMP;
 	loaded = true;
+	openalUploadPending = false;
+	openalUploadWarningIssued = false;
+	openalFallbackWarningIssued = false;
 
 	memset( &format, 0, sizeof( format ) );
 	format.basic.formatTag = idWaveFile::FORMAT_PCM;
@@ -1117,6 +1247,10 @@ void idSoundSample_OpenAL::MakeDefault()
 	totalBufferSize = DEFAULT_NUM_SAMPLES * 2;// * sizeof( short );
 
 	short* defaultBuffer = ( short* )AllocBuffer( totalBufferSize, GetName() );
+	if( defaultBuffer == NULL )
+	{
+		common->Error( "idSoundSample_OpenAL::MakeDefault: could not allocate default sample" );
+	}
 	for( int i = 0; i < DEFAULT_NUM_SAMPLES; i += 2 )
 	{
 		float v = sin( idMath::PI * 2 * i / 64 );
@@ -1137,27 +1271,10 @@ void idSoundSample_OpenAL::MakeDefault()
 	playBegin = 0;
 	playLength = DEFAULT_NUM_SAMPLES;
 
-	if( !openQ4_CanUploadSampleToOpenAL() )
+	if( !s_noSound.GetBool() )
 	{
-		return;
-	}
-
-	CheckALErrors();
-	alGenBuffers( 1, &openalBuffer );
-
-	if( CheckALErrors() != AL_NO_ERROR )
-	{
-		common->Error( "idSoundSample_OpenAL::MakeDefault: error generating OpenAL hardware buffer" );
-	}
-
-	if( alIsBuffer( openalBuffer ) )
-	{
-		CheckALErrors();
-		alBufferData( openalBuffer, GetOpenALBufferFormat(), defaultBuffer, totalBufferSize, format.basic.samplesPerSec );
-		if( CheckALErrors() != AL_NO_ERROR )
-		{
-			common->Error( "idSoundSample_OpenAL::MakeDefault: error loading data into OpenAL hardware buffer" );
-		}
+		openalUploadPending = true;
+		CreateOpenALBuffer();
 	}
 }
 
@@ -1193,24 +1310,32 @@ void idSoundSample_OpenAL::FreeData()
 
 	if( openalBuffer != 0 )
 	{
-		if( soundSystemLocal.hardware.openalContext == NULL || alcGetCurrentContext() != soundSystemLocal.hardware.openalContext )
+		const ALuint bufferToDelete = openalBuffer;
+		openalBuffer = 0;
+		openalUploadPending = false;
+		openalUploadWarningIssued = false;
+		openalFallbackWarningIssued = false;
+
+		if( !openQ4_MakeSampleOpenALContextCurrent( "sample buffer delete", GetName(), true ) )
 		{
-			openalBuffer = 0;
 			return;
 		}
 
 		alGetError(); // clear any existing error
-		if( alIsBuffer( openalBuffer ) )
+		if( alIsBuffer( bufferToDelete ) )
 		{
-			alDeleteBuffers( 1, &openalBuffer );
+			alDeleteBuffers( 1, &bufferToDelete );
 			ALenum err = alGetError();
 			if( err != AL_NO_ERROR && err != AL_INVALID_NAME )
 			{
 				common->Warning( "idSoundSample_OpenAL::FreeData: error unloading OpenAL buffer (0x%x)", err );
 			}
 		}
-		openalBuffer = 0;
 	}
+
+	openalUploadPending = false;
+	openalUploadWarningIssued = false;
+	openalFallbackWarningIssued = false;
 }
 
 /*
@@ -1696,28 +1821,16 @@ ALenum idSoundSample_OpenAL::GetOpenALSoftFormat( ALenum channels, ALenum type )
 
 ALenum idSoundSample_OpenAL::GetOpenALBufferFormat() const
 {
-	ALenum alFormat;
-
-	if( format.basic.formatTag == idWaveFile::FORMAT_PCM )
+	if( NumChannels() == 1 )
 	{
-		alFormat = NumChannels() == 1 ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16;
+		return AL_FORMAT_MONO16;
 	}
-	else if( format.basic.formatTag == idWaveFile::FORMAT_ADPCM )
+	if( NumChannels() == 2 )
 	{
-		//alFormat = NumChannels() == 1 ? AL_FORMAT_MONO8 : AL_FORMAT_STEREO8;
-		alFormat = NumChannels() == 1 ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16;
-		//alFormat = NumChannels() == 1 ? AL_FORMAT_MONO_IMA4 : AL_FORMAT_STEREO_IMA4;
-	}
-	else if( format.basic.formatTag == idWaveFile::FORMAT_XMA2 )
-	{
-		alFormat = NumChannels() == 1 ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16;
-	}
-	else
-	{
-		alFormat = NumChannels() == 1 ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16;
+		return AL_FORMAT_STEREO16;
 	}
 
-	return alFormat;
+	return AL_NONE;
 }
 
 int32 idSoundSample_OpenAL::MS_ADPCM_nibble( MS_ADPCM_decodeState_t* state, int8 nybble )

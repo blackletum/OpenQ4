@@ -84,9 +84,11 @@ static LPALGETSOURCEDVSOFT qalGetSourcedvSOFT = NULL;
 
 idCVar s_skipHardwareSets( "s_skipHardwareSets", "0", CVAR_BOOL, "Do all calculation, but skip XA2 calls" );
 idCVar s_debugHardware( "s_debugHardware", "0", CVAR_BOOL, "Print a message any time a hardware voice changes" );
+static idCVar s_openALForcePCMQueue( "s_openALForcePCMQueue", "0", CVAR_BOOL, "force decoded PCM samples through queued OpenAL buffers for diagnostics" );
 
 // The whole system runs at this sample rate
 static int SYSTEM_SAMPLE_RATE = 44100;
+static const int OPENQ4_OPENAL_STREAMING_CHUNK_MSEC = 100;
 static float ONE_OVER_SYSTEM_SAMPLE_RATE = 1.0f / SYSTEM_SAMPLE_RATE;
 
 static const float OPENQ4_OPENAL_PORTAL_DIRECT_ATTENUATION_DB = -8.0f;
@@ -142,17 +144,27 @@ idSoundVoice_OpenAL::idSoundVoice_OpenAL()
 	:
 	triggered( false ),
 	openalSource( 0 ),
-	leadinSample( NULL ),
-	loopingSample( NULL ),
+	openalStreamingOffset( 0 ),
 	openalDirectFilter( 0 ),
 	openalAuxFilter( 0 ),
+	efxRoutingAttached( false ),
+	leadinSample( NULL ),
+	loopingSample( NULL ),
+	currentSample( NULL ),
+	playbackMode( OPENQ4_OPENAL_PLAYBACK_NONE ),
+	streamingSample( NULL ),
+	streamingBufferNumber( 0 ),
+	streamingBufferOffset( 0 ),
+	streamingEndOfStream( false ),
 	formatTag( 0 ),
 	numChannels( 0 ),
+	sourceVoiceRate( 0 ),
 	sampleRate( 0 ),
 	hasVUMeter( false ),
 	paused( true )
 {
-
+	memset( openalStreamingBuffer, 0, sizeof( openalStreamingBuffer ) );
+	memset( lastopenalStreamingBuffer, 0, sizeof( lastopenalStreamingBuffer ) );
 }
 
 /*
@@ -163,6 +175,17 @@ idSoundVoice_OpenAL::~idSoundVoice_OpenAL
 idSoundVoice_OpenAL::~idSoundVoice_OpenAL()
 {
 	DestroyInternal();
+}
+
+/*
+========================
+idSoundVoice_OpenAL::SetInnerRadius
+========================
+*/
+void idSoundVoice_OpenAL::SetInnerRadius( float r )
+{
+	idSoundVoice_Base::SetInnerRadius( r );
+	soundSystemLocal.hardware.ApplySourceRadius( openalSource, r );
 }
 
 /*
@@ -199,6 +222,23 @@ void idSoundVoice_OpenAL::Create( const idSoundSample* leadinSample_, const idSo
 
 	leadinSample = ( idSoundSample_OpenAL* )leadinSample_;
 	loopingSample = ( idSoundSample_OpenAL* )loopingSample_;
+	currentSample = NULL;
+	playbackMode = OPENQ4_OPENAL_PLAYBACK_NONE;
+	ResetStreamingState();
+
+	if( alIsSource( openalSource ) )
+	{
+		FlushSourceBuffers();
+	}
+
+	if( leadinSample != NULL && leadinSample->openalBuffer == 0 )
+	{
+		leadinSample->CreateOpenALBuffer();
+	}
+	if( loopingSample != NULL && loopingSample != leadinSample && loopingSample->openalBuffer == 0 )
+	{
+		loopingSample->CreateOpenALBuffer();
+	}
 
 	if( alIsSource( openalSource ) && CompatibleFormat( leadinSample ) )
 	{
@@ -279,6 +319,7 @@ void idSoundVoice_OpenAL::Create( const idSoundSample* leadinSample_, const idSo
 	//pSourceVoice->SetSourceSampleRate( sampleRate );
 	//pSourceVoice->SetVolume( 0.0f );
 
+	soundSystemLocal.hardware.ApplySourceResampler( openalSource );
 	alSourcei( openalSource, AL_SOURCE_RELATIVE, AL_TRUE );
 	alSource3f( openalSource, AL_POSITION, 0.0f, 0.0f, 0.0f );
 	alSource3f( openalSource, AL_VELOCITY, 0.0f, 0.0f, 0.0f );
@@ -306,29 +347,33 @@ void idSoundVoice_OpenAL::DestroyInternal()
 		}
 
 		// Detach buffers before deleting the source to avoid AL_INVALID_NAME on shutdown.
-		alSourcei( openalSource, AL_BUFFER, 0 );
+		FlushSourceBuffers();
 		alDeleteSources( 1, &openalSource );
 		openalSource = 0;
 
-		if( openalStreamingBuffer[0] && openalStreamingBuffer[1] && openalStreamingBuffer[2] )
+		for( int i = 0; i < MAX_QUEUED_BUFFERS; i++ )
 		{
-			CheckALErrors();
-
-			alDeleteBuffers( 3, &openalStreamingBuffer[0] );
-			if( CheckALErrors() == AL_NO_ERROR )
+			if( openalStreamingBuffer[i] != 0 && alIsBuffer( openalStreamingBuffer[i] ) )
 			{
-				openalStreamingBuffer[0] = openalStreamingBuffer[1] = openalStreamingBuffer[2] = 0;
+				CheckALErrors();
+				alDeleteBuffers( 1, &openalStreamingBuffer[i] );
+				if( CheckALErrors() == AL_NO_ERROR )
+				{
+					openalStreamingBuffer[i] = 0;
+				}
 			}
 		}
 
-		if( lastopenalStreamingBuffer[0] && lastopenalStreamingBuffer[1] && lastopenalStreamingBuffer[2] )
+		for( int i = 0; i < MAX_QUEUED_BUFFERS; i++ )
 		{
-			CheckALErrors();
-
-			alDeleteBuffers( 3, &lastopenalStreamingBuffer[0] );
-			if( CheckALErrors() == AL_NO_ERROR )
+			if( lastopenalStreamingBuffer[i] != 0 && alIsBuffer( lastopenalStreamingBuffer[i] ) )
 			{
-				lastopenalStreamingBuffer[0] = lastopenalStreamingBuffer[1] = lastopenalStreamingBuffer[2] = 0;
+				CheckALErrors();
+				alDeleteBuffers( 1, &lastopenalStreamingBuffer[i] );
+				if( CheckALErrors() == AL_NO_ERROR )
+				{
+					lastopenalStreamingBuffer[i] = 0;
+				}
 			}
 		}
 
@@ -337,6 +382,9 @@ void idSoundVoice_OpenAL::DestroyInternal()
 		hasVUMeter = false;
 	}
 	DestroyWetDryFilters();
+	currentSample = NULL;
+	playbackMode = OPENQ4_OPENAL_PLAYBACK_NONE;
+	ResetStreamingState();
 }
 
 /*
@@ -410,7 +458,11 @@ void idSoundVoice_OpenAL::Start( int offsetMS, int ssFlags )
 		return;
 	}
 
-	RestartAt( offsetSamples );
+	const int submittedBytes = RestartAt( offsetSamples );
+	if( submittedBytes <= 0 )
+	{
+		return;
+	}
 	Update();
 	UnPause();
 }
@@ -477,6 +529,486 @@ int idSoundVoice_OpenAL::RestartAt( int offsetSamples )
 
 /*
 ========================
+idSoundVoice_OpenAL::ResetStreamingState
+========================
+*/
+void idSoundVoice_OpenAL::ResetStreamingState()
+{
+	openalStreamingOffset = 0;
+	streamingSample = NULL;
+	streamingBufferNumber = 0;
+	streamingBufferOffset = 0;
+	streamingEndOfStream = false;
+}
+
+/*
+========================
+idSoundVoice_OpenAL::EnsureStreamingBuffers
+========================
+*/
+bool idSoundVoice_OpenAL::EnsureStreamingBuffers()
+{
+	for( int i = 0; i < MAX_QUEUED_BUFFERS; i++ )
+	{
+		if( openalStreamingBuffer[i] != 0 && alIsBuffer( openalStreamingBuffer[i] ) )
+		{
+			continue;
+		}
+
+		openalStreamingBuffer[i] = 0;
+		CheckALErrors();
+		alGenBuffers( 1, &openalStreamingBuffer[i] );
+		if( CheckALErrors() != AL_NO_ERROR || openalStreamingBuffer[i] == 0 )
+		{
+			common->Warning( "OpenAL could not allocate queued PCM fallback buffer." );
+			return false;
+		}
+	}
+
+	return true;
+}
+
+/*
+========================
+idSoundVoice_OpenAL::ValidateStreamingSample
+========================
+*/
+bool idSoundVoice_OpenAL::ValidateStreamingSample( idSoundSample_OpenAL* sample, ALenum& alFormat, int& blockBytes )
+{
+	alFormat = AL_NONE;
+	blockBytes = 0;
+
+	if( sample == NULL || sample->buffers.Num() <= 0 || sample->playLength <= 0 )
+	{
+		return false;
+	}
+
+	if( sample->format.basic.formatTag != idWaveFile::FORMAT_PCM ||
+			sample->format.basic.bitsPerSample != 16 ||
+			( sample->NumChannels() != 1 && sample->NumChannels() != 2 ) )
+	{
+		idSoundHardware_OpenAL::CountDiagnosticEvent( idSoundHardware_OpenAL::OPENAL_DIAG_QUEUE_FALLBACK_REFUSALS );
+		if( !sample->openalFallbackWarningIssued )
+		{
+			common->Warning( "OpenAL refused queued PCM fallback for '%s': formatTag=0x%x channels=%d bits=%d is not decoded mono/stereo PCM16.",
+				sample->GetName(),
+				sample->format.basic.formatTag,
+				sample->NumChannels(),
+				sample->format.basic.bitsPerSample );
+			sample->openalFallbackWarningIssued = true;
+		}
+		return false;
+	}
+
+	blockBytes = sample->format.basic.blockSize;
+	if( blockBytes != sample->NumChannels() * ( int )sizeof( int16 ) )
+	{
+		idSoundHardware_OpenAL::CountDiagnosticEvent( idSoundHardware_OpenAL::OPENAL_DIAG_QUEUE_FALLBACK_REFUSALS );
+		if( !sample->openalFallbackWarningIssued )
+		{
+			common->Warning( "OpenAL refused queued PCM fallback for '%s': invalid PCM block size %d.",
+				sample->GetName(),
+				blockBytes );
+			sample->openalFallbackWarningIssued = true;
+		}
+		return false;
+	}
+
+	alFormat = sample->NumChannels() == 1 ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16;
+	return true;
+}
+
+/*
+========================
+idSoundVoice_OpenAL::SetStreamingCursor
+========================
+*/
+bool idSoundVoice_OpenAL::SetStreamingCursor( idSoundSample_OpenAL* sample, int absoluteSampleFrame )
+{
+	if( sample == NULL || sample->buffers.Num() <= 0 || sample->playLength <= 0 )
+	{
+		streamingEndOfStream = true;
+		streamingSample = NULL;
+		return false;
+	}
+
+	const int beginFrame = sample->playBegin;
+	const int endFrame = sample->playBegin + sample->playLength;
+	if( absoluteSampleFrame < beginFrame )
+	{
+		absoluteSampleFrame = beginFrame;
+	}
+	if( absoluteSampleFrame >= endFrame )
+	{
+		streamingEndOfStream = true;
+		streamingSample = NULL;
+		return false;
+	}
+
+	const idSoundSample_OpenAL::sampleBuffer_t* sampleBuffers = sample->buffers.Ptr();
+	const int numBuffers = sample->buffers.Num();
+	if( sampleBuffers == NULL || numBuffers <= 0 || numBuffers > 16384 )
+	{
+		streamingEndOfStream = true;
+		streamingSample = NULL;
+		return false;
+	}
+
+	int previousNumSamples = 0;
+	for( int i = 0; i < numBuffers; i++ )
+	{
+		const idSoundSample_OpenAL::sampleBuffer_t& sampleBuffer = sampleBuffers[i];
+		if( sampleBuffer.buffer == NULL || sampleBuffer.bufferSize <= 0 || sampleBuffer.numSamples <= previousNumSamples )
+		{
+			previousNumSamples = sampleBuffer.numSamples;
+			continue;
+		}
+		if( sampleBuffer.numSamples > absoluteSampleFrame )
+		{
+			streamingSample = sample;
+			streamingBufferNumber = i;
+			streamingBufferOffset = absoluteSampleFrame - previousNumSamples;
+			streamingEndOfStream = false;
+			openalStreamingOffset = absoluteSampleFrame;
+			return true;
+		}
+		previousNumSamples = sampleBuffer.numSamples;
+	}
+
+	streamingEndOfStream = true;
+	streamingSample = NULL;
+	return false;
+}
+
+/*
+========================
+idSoundVoice_OpenAL::AdvanceStreamingCursor
+========================
+*/
+bool idSoundVoice_OpenAL::AdvanceStreamingCursor( int queuedFrames )
+{
+	if( streamingSample == NULL || queuedFrames < 0 )
+	{
+		streamingEndOfStream = true;
+		streamingSample = NULL;
+		return false;
+	}
+
+	const idSoundSample_OpenAL::sampleBuffer_t* sampleBuffers = streamingSample->buffers.Ptr();
+	const int numBuffers = streamingSample->buffers.Num();
+	if( sampleBuffers == NULL || streamingBufferNumber < 0 || streamingBufferNumber >= numBuffers )
+	{
+		streamingEndOfStream = true;
+		streamingSample = NULL;
+		return false;
+	}
+
+	const int previousNumSamples = streamingBufferNumber > 0 ? sampleBuffers[streamingBufferNumber - 1].numSamples : 0;
+	const int nextFrame = previousNumSamples + streamingBufferOffset + queuedFrames;
+	const int endFrame = streamingSample->playBegin + streamingSample->playLength;
+
+	if( nextFrame >= endFrame )
+	{
+		if( streamingSample == leadinSample && loopingSample != NULL )
+		{
+			return SetStreamingCursor( loopingSample, loopingSample->playBegin );
+		}
+		if( streamingSample == loopingSample && loopingSample != NULL )
+		{
+			return SetStreamingCursor( loopingSample, loopingSample->playBegin );
+		}
+
+		streamingEndOfStream = true;
+		streamingSample = NULL;
+		return false;
+	}
+
+	if( nextFrame >= sampleBuffers[streamingBufferNumber].numSamples )
+	{
+		return SetStreamingCursor( streamingSample, nextFrame );
+	}
+
+	streamingBufferOffset += queuedFrames;
+	openalStreamingOffset = nextFrame;
+	return true;
+}
+
+/*
+========================
+idSoundVoice_OpenAL::QueueNextStreamingBuffer
+========================
+*/
+bool idSoundVoice_OpenAL::QueueNextStreamingBuffer( ALuint buffer, int& queuedBytes )
+{
+	queuedBytes = 0;
+
+	for( int cursorAttempts = 0; cursorAttempts < 16384; cursorAttempts++ )
+	{
+		if( streamingEndOfStream || streamingSample == NULL )
+		{
+			return false;
+		}
+
+		ALenum alFormat = AL_NONE;
+		int blockBytes = 0;
+		if( !ValidateStreamingSample( streamingSample, alFormat, blockBytes ) )
+		{
+			streamingEndOfStream = true;
+			streamingSample = NULL;
+			return false;
+		}
+
+		const idSoundSample_OpenAL::sampleBuffer_t* sampleBuffers = streamingSample->buffers.Ptr();
+		const int numBuffers = streamingSample->buffers.Num();
+		if( sampleBuffers == NULL || streamingBufferNumber < 0 || streamingBufferNumber >= numBuffers )
+		{
+			streamingEndOfStream = true;
+			streamingSample = NULL;
+			return false;
+		}
+
+		const idSoundSample_OpenAL::sampleBuffer_t& sampleBuffer = sampleBuffers[streamingBufferNumber];
+		const int previousNumSamples = streamingBufferNumber > 0 ? sampleBuffers[streamingBufferNumber - 1].numSamples : 0;
+		const int framesInBuffer = sampleBuffer.numSamples - previousNumSamples;
+		const int absoluteFrame = previousNumSamples + streamingBufferOffset;
+		const int endFrame = streamingSample->playBegin + streamingSample->playLength;
+
+		if( sampleBuffer.buffer == NULL || sampleBuffer.bufferSize <= 0 || framesInBuffer <= 0 )
+		{
+			const int nextFrame = framesInBuffer > 0 ? sampleBuffer.numSamples : absoluteFrame + 1;
+			if( !SetStreamingCursor( streamingSample, nextFrame ) )
+			{
+				return false;
+			}
+			continue;
+		}
+
+		if( absoluteFrame < streamingSample->playBegin )
+		{
+			if( !SetStreamingCursor( streamingSample, streamingSample->playBegin ) )
+			{
+				return false;
+			}
+			continue;
+		}
+
+		if( absoluteFrame >= endFrame || streamingBufferOffset >= framesInBuffer )
+		{
+			if( !AdvanceStreamingCursor( 0 ) )
+			{
+				return false;
+			}
+			continue;
+		}
+
+		const int chunkFrames = Max( 1, ( int )MsecToSamples( OPENQ4_OPENAL_STREAMING_CHUNK_MSEC, streamingSample->SampleRate() ) );
+		const int framesToQueue = Min( Min( framesInBuffer - streamingBufferOffset, endFrame - absoluteFrame ), chunkFrames );
+		const int bytesToQueue = framesToQueue * blockBytes;
+		if( framesToQueue <= 0 || bytesToQueue <= 0 || streamingBufferOffset * blockBytes > sampleBuffer.bufferSize )
+		{
+			if( !AdvanceStreamingCursor( 0 ) )
+			{
+				return false;
+			}
+			continue;
+		}
+
+		const byte* const start = reinterpret_cast<const byte*>( sampleBuffer.buffer ) + streamingBufferOffset * blockBytes;
+		const int maxBytesFromOffset = sampleBuffer.bufferSize - streamingBufferOffset * blockBytes;
+		int clampedBytesToQueue = Min( bytesToQueue, maxBytesFromOffset );
+		clampedBytesToQueue -= clampedBytesToQueue % blockBytes;
+		if( clampedBytesToQueue <= 0 )
+		{
+			if( !AdvanceStreamingCursor( 0 ) )
+			{
+				return false;
+			}
+			continue;
+		}
+
+		CheckALErrors();
+		alBufferData( buffer, alFormat, start, clampedBytesToQueue, streamingSample->SampleRate() );
+		if( CheckALErrors() != AL_NO_ERROR )
+		{
+			common->Warning( "OpenAL queued PCM fallback could not fill buffer for '%s'.", streamingSample->GetName() );
+			streamingEndOfStream = true;
+			streamingSample = NULL;
+			return false;
+		}
+
+		alSourceQueueBuffers( openalSource, 1, &buffer );
+		if( CheckALErrors() != AL_NO_ERROR )
+		{
+			common->Warning( "OpenAL queued PCM fallback could not queue buffer for '%s'.", streamingSample->GetName() );
+			streamingEndOfStream = true;
+			streamingSample = NULL;
+			return false;
+		}
+
+		SetSampleRate( streamingSample->SampleRate(), 0 );
+		currentSample = streamingSample;
+		queuedBytes = clampedBytesToQueue;
+		idSoundHardware_OpenAL::CountDiagnosticEvent( idSoundHardware_OpenAL::OPENAL_DIAG_QUEUE_BUFFERS_SUBMITTED );
+		const int queuedFrames = clampedBytesToQueue / blockBytes;
+		AdvanceStreamingCursor( queuedFrames );
+		return true;
+	}
+
+	streamingEndOfStream = true;
+	streamingSample = NULL;
+	return false;
+}
+
+/*
+========================
+idSoundVoice_OpenAL::BeginStreaming
+========================
+*/
+int idSoundVoice_OpenAL::BeginStreaming( idSoundSample_OpenAL* sample, int bufferNumber, int offset )
+{
+	ALenum alFormat = AL_NONE;
+	int blockBytes = 0;
+	if( !ValidateStreamingSample( sample, alFormat, blockBytes ) )
+	{
+		return 0;
+	}
+
+	if( !EnsureStreamingBuffers() )
+	{
+		return 0;
+	}
+
+	const idSoundSample_OpenAL::sampleBuffer_t* sampleBuffers = sample->buffers.Ptr();
+	if( sampleBuffers == NULL || bufferNumber < 0 || bufferNumber >= sample->buffers.Num() )
+	{
+		return 0;
+	}
+
+	const int previousNumSamples = bufferNumber > 0 ? sampleBuffers[bufferNumber - 1].numSamples : 0;
+	const int absoluteSampleFrame = previousNumSamples + offset;
+
+	FlushSourceBuffers();
+	CheckALErrors();
+	alSourcei( openalSource, AL_LOOPING, AL_FALSE );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		return 0;
+	}
+	if( !SetStreamingCursor( sample, absoluteSampleFrame ) )
+	{
+		return 0;
+	}
+
+	playbackMode = OPENQ4_OPENAL_PLAYBACK_STREAMING;
+	currentSample = sample;
+
+	int totalQueuedBytes = 0;
+	for( int i = 0; i < MAX_QUEUED_BUFFERS; i++ )
+	{
+		int queuedBytes = 0;
+		if( !QueueNextStreamingBuffer( openalStreamingBuffer[i], queuedBytes ) )
+		{
+			break;
+		}
+		totalQueuedBytes += queuedBytes;
+	}
+
+	if( totalQueuedBytes <= 0 )
+	{
+		currentSample = NULL;
+		playbackMode = OPENQ4_OPENAL_PLAYBACK_NONE;
+		ResetStreamingState();
+		return 0;
+	}
+
+	return totalQueuedBytes;
+}
+
+/*
+========================
+idSoundVoice_OpenAL::PumpStreamingBuffers
+========================
+*/
+bool idSoundVoice_OpenAL::PumpStreamingBuffers()
+{
+	if( !alIsSource( openalSource ) || playbackMode != OPENQ4_OPENAL_PLAYBACK_STREAMING )
+	{
+		return false;
+	}
+
+	ALint processedBuffers = 0;
+	alGetSourcei( openalSource, AL_BUFFERS_PROCESSED, &processedBuffers );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		return false;
+	}
+
+	while( processedBuffers > 0 )
+	{
+		ALuint buffer = 0;
+		alSourceUnqueueBuffers( openalSource, 1, &buffer );
+		if( CheckALErrors() != AL_NO_ERROR )
+		{
+			return false;
+		}
+
+		int queuedBytes = 0;
+		if( QueueNextStreamingBuffer( buffer, queuedBytes ) )
+		{
+			idSoundHardware_OpenAL::CountDiagnosticEvent( idSoundHardware_OpenAL::OPENAL_DIAG_QUEUE_BUFFERS_REFILLED );
+		}
+		processedBuffers--;
+	}
+
+	ALint queuedBuffers = 0;
+	alGetSourcei( openalSource, AL_BUFFERS_QUEUED, &queuedBuffers );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		return false;
+	}
+
+	ALint state = AL_INITIAL;
+	alGetSourcei( openalSource, AL_SOURCE_STATE, &state );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		return false;
+	}
+
+	if( queuedBuffers > 0 )
+	{
+		if( ( state == AL_STOPPED || state == AL_INITIAL ) && !paused )
+		{
+			CheckALErrors();
+			alSourcePlay( openalSource );
+			if( CheckALErrors() != AL_NO_ERROR )
+			{
+				return false;
+			}
+			idSoundHardware_OpenAL::CountDiagnosticEvent( idSoundHardware_OpenAL::OPENAL_DIAG_QUEUE_UNDERRUN_RESTARTS );
+			if( s_debugHardware.GetBool() )
+			{
+				idLib::Printf( "%dms: %i restarted queued PCM fallback for %s after underrun\n",
+					Sys_Milliseconds(),
+					openalSource,
+					currentSample ? currentSample->GetName() : "<null>" );
+			}
+		}
+		return true;
+	}
+
+	if( state == AL_PLAYING || state == AL_PAUSED )
+	{
+		return true;
+	}
+
+	currentSample = NULL;
+	playbackMode = OPENQ4_OPENAL_PLAYBACK_NONE;
+	ResetStreamingState();
+	return false;
+}
+
+/*
+========================
 idSoundVoice_OpenAL::SubmitBuffer
 ========================
 */
@@ -518,86 +1050,59 @@ int idSoundVoice_OpenAL::SubmitBuffer( idSoundSample_OpenAL* sample, int bufferN
 	bufferContext->bufferNumber = bufferNumber;
 #endif
 
-	if( sample->openalBuffer != 0 )
+	const bool forceQueuedPCM = s_openALForcePCMQueue.GetBool();
+	if( sample->openalBuffer == 0 && !forceQueuedPCM )
 	{
+		sample->CreateOpenALBuffer();
+	}
+
+	if( sample->openalBuffer != 0 && !forceQueuedPCM )
+	{
+		CheckALErrors();
+		alSourcei( openalSource, AL_BUFFER, 0 );
 		alSourcei( openalSource, AL_BUFFER, sample->openalBuffer );
-		alSourcei( openalSource, AL_LOOPING, ( sample == loopingSample && loopingSample != NULL ? AL_TRUE : AL_FALSE ) );
+		const bool shouldLoop = ( sample == loopingSample && loopingSample != NULL );
+		alSourcei( openalSource, AL_LOOPING, shouldLoop ? AL_TRUE : AL_FALSE );
+		if( offset > 0 )
+		{
+			alSourcei( openalSource, AL_SAMPLE_OFFSET, offset );
+		}
+		if( CheckALErrors() != AL_NO_ERROR )
+		{
+			currentSample = NULL;
+			playbackMode = OPENQ4_OPENAL_PLAYBACK_NONE;
+			return 0;
+		}
+
+		SetSampleRate( sample->SampleRate(), 0 );
+		currentSample = sample;
+		if( shouldLoop )
+		{
+			playbackMode = OPENQ4_OPENAL_PLAYBACK_STATIC_LOOP;
+		}
+		else if( sample == leadinSample && loopingSample != NULL && loopingSample != sample )
+		{
+			playbackMode = OPENQ4_OPENAL_PLAYBACK_STATIC_LEADIN;
+		}
+		else
+		{
+			playbackMode = OPENQ4_OPENAL_PLAYBACK_STATIC_ONESHOT;
+		}
 
 		return sample->totalBufferSize;
 	}
 	else
 	{
-		ALint finishedbuffers;
-
-		if( !triggered )
+		idSoundHardware_OpenAL::CountDiagnosticEvent( idSoundHardware_OpenAL::OPENAL_DIAG_QUEUE_FALLBACK_ENTRIES );
+		if( !sample->openalFallbackWarningIssued )
 		{
-			alGetSourcei( openalSource, AL_BUFFERS_PROCESSED, &finishedbuffers );
-			alSourceUnqueueBuffers( openalSource, finishedbuffers, &openalStreamingBuffer[0] );
-			if( finishedbuffers == 3 )
-			{
-				triggered = true;
-			}
-		}
-		else
-		{
-			finishedbuffers = 3;
+			common->Warning( "OpenAL using queued PCM fallback for '%s' because %s.",
+				sample->GetName(),
+				forceQueuedPCM ? "s_openALForcePCMQueue is enabled" : "static upload is unavailable" );
+			sample->openalFallbackWarningIssued = true;
 		}
 
-		ALenum format;
-
-		if( sample->format.basic.formatTag == idWaveFile::FORMAT_PCM )
-		{
-			format = sample->NumChannels() == 1 ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16;
-		}
-		else if( sample->format.basic.formatTag == idWaveFile::FORMAT_ADPCM )
-		{
-			format = sample->NumChannels() == 1 ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16;
-		}
-		else if( sample->format.basic.formatTag == idWaveFile::FORMAT_XMA2 )
-		{
-			format = sample->NumChannels() == 1 ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16;
-		}
-		else
-		{
-			format = sample->NumChannels() == 1 ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16;
-		}
-
-		int rate = sample->SampleRate(); /*44100*/
-
-		for( int j = 0; j < finishedbuffers && j < 1; j++ )
-		{
-			/*
-			chan->GatherChannelSamples( chan->openalStreamingOffset * sample->objectInfo.nChannels, MIXBUFFER_SAMPLES * sample->objectInfo.nChannels, alignedInputSamples );
-			for( int i = 0; i < ( MIXBUFFER_SAMPLES * sample->objectInfo.nChannels ); i++ )
-			{
-				if( alignedInputSamples[i] < -32768.0f )
-					( ( short* )alignedInputSamples )[i] = -32768;
-				else if( alignedInputSamples[i] > 32767.0f )
-					( ( short* )alignedInputSamples )[i] = 32767;
-				else
-					( ( short* )alignedInputSamples )[i] = idMath::FtoiFast( alignedInputSamples[i] );
-			}
-			*/
-
-			//alBufferData( buffers[0], sample->NumChannels() == 1 ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16, sample->buffers[bufferNumber].buffer, sample->buffers[bufferNumber].bufferSize, sample->SampleRate() /*44100*/ );
-
-			alBufferData( openalStreamingBuffer[j], format, sampleBuffers[bufferNumber].buffer, sampleBuffers[bufferNumber].bufferSize, rate );
-			//openalStreamingOffset += MIXBUFFER_SAMPLES;
-		}
-
-		if( finishedbuffers > 0 )
-		{
-			//alSourceQueueBuffers( openalSource, finishedbuffers, &buffers[0] );
-			alSourceQueueBuffers( openalSource, 1, &openalStreamingBuffer[0] );
-
-			if( bufferNumber == 0 )
-			{
-				//alSourcePlay( openalSource );
-				triggered = false;
-			}
-
-			return sampleBuffers[bufferNumber].bufferSize;
-		}
+		return BeginStreaming( sample, bufferNumber, offset );
 	}
 
 	// should never happen
@@ -637,6 +1142,77 @@ idSoundVoice_OpenAL::Update
 */
 bool idSoundVoice_OpenAL::Update()
 {
+	if( !alIsSource( openalSource ) || leadinSample == NULL )
+	{
+		return false;
+	}
+
+	ALint state = AL_INITIAL;
+	alGetSourcei( openalSource, AL_SOURCE_STATE, &state );
+
+	if( playbackMode == OPENQ4_OPENAL_PLAYBACK_STATIC_LEADIN )
+	{
+		if( state == AL_STOPPED )
+		{
+			if( loopingSample == NULL || loopingSample == leadinSample )
+			{
+				currentSample = NULL;
+				playbackMode = OPENQ4_OPENAL_PLAYBACK_NONE;
+				return false;
+			}
+
+			if( loopingSample->openalBuffer == 0 && !loopingSample->CreateOpenALBuffer() )
+			{
+				currentSample = NULL;
+				playbackMode = OPENQ4_OPENAL_PLAYBACK_NONE;
+				return false;
+			}
+
+			alSourceStop( openalSource );
+			alSourcei( openalSource, AL_BUFFER, 0 );
+
+			if( SubmitBuffer( loopingSample, 0, 0 ) <= 0 )
+			{
+				currentSample = NULL;
+				playbackMode = OPENQ4_OPENAL_PLAYBACK_NONE;
+				return false;
+			}
+
+			alSourcePlay( openalSource );
+			paused = false;
+
+			if( s_debugHardware.GetBool() )
+			{
+				idLib::Printf( "%dms: %i transitioned %s to loop %s\n",
+					Sys_Milliseconds(),
+					openalSource,
+					leadinSample ? leadinSample->GetName() : "<null>",
+					loopingSample ? loopingSample->GetName() : "<null>" );
+			}
+		}
+		return true;
+	}
+
+	if( playbackMode == OPENQ4_OPENAL_PLAYBACK_STATIC_LOOP )
+	{
+		if( ( state == AL_STOPPED || state == AL_INITIAL ) && !paused )
+		{
+			alSourcePlay( openalSource );
+			return true;
+		}
+		return state == AL_PLAYING || state == AL_PAUSED;
+	}
+
+	if( playbackMode == OPENQ4_OPENAL_PLAYBACK_STATIC_ONESHOT )
+	{
+		return state == AL_PLAYING || state == AL_PAUSED;
+	}
+
+	if( playbackMode == OPENQ4_OPENAL_PLAYBACK_STREAMING )
+	{
+		return PumpStreamingBuffers();
+	}
+
 	/*
 	if( pSourceVoice == NULL || leadinSample == NULL )
 	{
@@ -666,7 +1242,7 @@ bool idSoundVoice_OpenAL::Update()
 	// we don't do this any longer because we pause and unpause explicitly when the soundworld is paused or unpaused
 	// UnPause();
 	*/
-	return true;
+	return false;
 }
 
 /*
@@ -739,7 +1315,7 @@ bool idSoundVoice_OpenAL::IsPlaying()
 
 	alGetSourcei( openalSource, AL_SOURCE_STATE, &state );
 
-	return ( state == AL_PLAYING );
+	return ( state == AL_PLAYING || state == AL_PAUSED );
 
 	//XAUDIO2_VOICE_STATE state;
 	//pSourceVoice->GetState( &state );
@@ -756,7 +1332,36 @@ void idSoundVoice_OpenAL::FlushSourceBuffers()
 {
 	if( alIsSource( openalSource ) )
 	{
-		//pSourceVoice->FlushSourceBuffers();
+		alSourceStop( openalSource );
+
+		ALint sourceType = AL_UNDETERMINED;
+		alGetSourcei( openalSource, AL_SOURCE_TYPE, &sourceType );
+		if( sourceType == AL_STREAMING )
+		{
+			ALint queuedBuffers = 0;
+			alGetSourcei( openalSource, AL_BUFFERS_QUEUED, &queuedBuffers );
+			while( queuedBuffers > 0 )
+			{
+				ALuint buffer = 0;
+				CheckALErrors();
+				alSourceUnqueueBuffers( openalSource, 1, &buffer );
+				if( CheckALErrors() != AL_NO_ERROR )
+				{
+					break;
+				}
+				queuedBuffers--;
+			}
+		}
+
+		CheckALErrors();
+		alSourcei( openalSource, AL_BUFFER, 0 );
+		alSourcei( openalSource, AL_LOOPING, AL_FALSE );
+		DetachWetDryRouting();
+		CheckALErrors();
+
+		ResetStreamingState();
+		currentSample = NULL;
+		playbackMode = OPENQ4_OPENAL_PLAYBACK_NONE;
 	}
 }
 
@@ -816,19 +1421,14 @@ void idSoundVoice_OpenAL::Stop()
 		return;
 	}
 
-	if( !paused )
+	if( s_debugHardware.GetBool() )
 	{
-		if( s_debugHardware.GetBool() )
-		{
-			idLib::Printf( "%dms: %i stopping %s\n", Sys_Milliseconds(), openalSource, leadinSample ? leadinSample->GetName() : "<null>" );
-		}
-
-		alSourceStop( openalSource );
-		alSourcei( openalSource, AL_BUFFER, 0 );
-
-		//pSourceVoice->Stop( 0, OPERATION_SET );
-		paused = true;
+		idLib::Printf( "%dms: %i stopping %s\n", Sys_Milliseconds(), openalSource, leadinSample ? leadinSample->GetName() : "<null>" );
 	}
+
+	FlushSourceBuffers();
+	//pSourceVoice->Stop( 0, OPERATION_SET );
+	paused = true;
 }
 
 /*
@@ -887,6 +1487,8 @@ idSoundVoice_OpenAL::ResetSampleRate
 */
 void idSoundVoice_OpenAL::SetSampleRate( uint32 newSampleRate, uint32 operationSet )
 {
+	sampleRate = newSampleRate;
+
 	/*
 	if( pSourceVoice == NULL || leadinSample == NULL )
 	{
@@ -935,44 +1537,98 @@ void idSoundVoice_OpenAL::SetSampleRate( uint32 newSampleRate, uint32 operationS
 idSoundVoice_OpenAL::CreateWetDryFilters
 ========================
 */
-void idSoundVoice_OpenAL::CreateWetDryFilters()
+bool idSoundVoice_OpenAL::CreateWetDryFilters()
 {
 #if OPENQ4_OPENAL_EFX_SUPPORTED
 	if( !soundSystemLocal.hardware.HasEFXFilters() || !openQ4_LoadVoiceEfxProcs() || !alIsSource( openalSource ) )
 	{
-		return;
+		return false;
 	}
+
+	const char* failureReason = NULL;
 	if( openalDirectFilter == 0 )
 	{
+		CheckALErrors();
 		qalGenFilters( 1, &openalDirectFilter );
-		if( CheckALErrors() == AL_NO_ERROR && openalDirectFilter != 0 )
+		if( CheckALErrors() != AL_NO_ERROR || openalDirectFilter == 0 )
+		{
+			openalDirectFilter = 0;
+			failureReason = "direct low-pass filter generation failed";
+		}
+		else
 		{
 			qalFilteri( openalDirectFilter, AL_FILTER_TYPE, AL_FILTER_LOWPASS );
 			qalFilterf( openalDirectFilter, AL_LOWPASS_GAIN, 1.0f );
 			qalFilterf( openalDirectFilter, AL_LOWPASS_GAINHF, 1.0f );
-			CheckALErrors();
-		}
-		else
-		{
-			openalDirectFilter = 0;
+			if( CheckALErrors() != AL_NO_ERROR )
+			{
+				failureReason = "direct low-pass filter initialization failed";
+			}
 		}
 	}
-	if( openalAuxFilter == 0 )
+	if( failureReason == NULL && openalAuxFilter == 0 )
 	{
+		CheckALErrors();
 		qalGenFilters( 1, &openalAuxFilter );
-		if( CheckALErrors() == AL_NO_ERROR && openalAuxFilter != 0 )
+		if( CheckALErrors() != AL_NO_ERROR || openalAuxFilter == 0 )
+		{
+			openalAuxFilter = 0;
+			failureReason = "auxiliary low-pass filter generation failed";
+		}
+		else
 		{
 			qalFilteri( openalAuxFilter, AL_FILTER_TYPE, AL_FILTER_LOWPASS );
 			qalFilterf( openalAuxFilter, AL_LOWPASS_GAIN, 1.0f );
 			qalFilterf( openalAuxFilter, AL_LOWPASS_GAINHF, 1.0f );
-			CheckALErrors();
-		}
-		else
-		{
-			openalAuxFilter = 0;
+			if( CheckALErrors() != AL_NO_ERROR )
+			{
+				failureReason = "auxiliary low-pass filter initialization failed";
+			}
 		}
 	}
+
+	if( failureReason != NULL )
+	{
+		soundSystemLocal.hardware.DisableEFXFilters( failureReason );
+		DestroyWetDryFilters();
+		return false;
+	}
+
+	return openalDirectFilter != 0 && openalAuxFilter != 0;
+#else
+	return false;
 #endif
+}
+
+/*
+========================
+idSoundVoice_OpenAL::DetachWetDryRouting
+========================
+*/
+bool idSoundVoice_OpenAL::DetachWetDryRouting()
+{
+#if OPENQ4_OPENAL_EFX_SUPPORTED
+	if( !alIsSource( openalSource ) )
+	{
+		efxRoutingAttached = false;
+		return true;
+	}
+	if( !efxRoutingAttached && openalDirectFilter == 0 && openalAuxFilter == 0 )
+	{
+		return true;
+	}
+
+	CheckALErrors();
+	alSourcei( openalSource, AL_DIRECT_FILTER, AL_FILTER_NULL );
+	alSource3i( openalSource, AL_AUXILIARY_SEND_FILTER, AL_EFFECTSLOT_NULL, 0, AL_FILTER_NULL );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		soundSystemLocal.hardware.DisableEFXFilters( "filter detach failed" );
+		return false;
+	}
+#endif
+	efxRoutingAttached = false;
+	return true;
 }
 
 /*
@@ -983,6 +1639,10 @@ idSoundVoice_OpenAL::DestroyWetDryFilters
 void idSoundVoice_OpenAL::DestroyWetDryFilters()
 {
 #if OPENQ4_OPENAL_EFX_SUPPORTED
+	if( !DetachWetDryRouting() )
+	{
+		return;
+	}
 	if( openalDirectFilter != 0 )
 	{
 		if( qalDeleteFilters != NULL )
@@ -1000,6 +1660,7 @@ void idSoundVoice_OpenAL::DestroyWetDryFilters()
 		openalAuxFilter = 0;
 	}
 #endif
+	efxRoutingAttached = false;
 }
 
 /*
@@ -1039,36 +1700,75 @@ void idSoundVoice_OpenAL::ApplyWetDryRouting()
 	const float wetFilterGain = effectiveWet * occlusionFilter.wetGain;
 
 #if OPENQ4_OPENAL_EFX_SUPPORTED
-	const bool hasEfxFilters = soundSystemLocal.hardware.HasEFXFilters() && openQ4_LoadVoiceEfxProcs();
-	if( hasEfxFilters )
+	bool hasEfxFilters = soundSystemLocal.hardware.HasEFXFilters() && openQ4_LoadVoiceEfxProcs();
+	if( hasEfxFilters && !CreateWetDryFilters() )
 	{
-		CreateWetDryFilters();
+		hasEfxFilters = false;
 	}
 
 	if( hasEfxFilters && openalDirectFilter != 0 )
 	{
+		CheckALErrors();
 		qalFilterf( openalDirectFilter, AL_LOWPASS_GAIN, directFilterGain );
 		qalFilterf( openalDirectFilter, AL_LOWPASS_GAINHF, occlusionFilter.directGainHF );
 		alSourcei( openalSource, AL_DIRECT_FILTER, openalDirectFilter );
 		alSourcef( openalSource, AL_GAIN, effectiveGain );
+		if( CheckALErrors() != AL_NO_ERROR )
+		{
+			soundSystemLocal.hardware.DisableEFXFilters( "direct low-pass filter routing failed" );
+			DetachWetDryRouting();
+			DestroyWetDryFilters();
+			alSourcef( openalSource, AL_GAIN, effectiveGain * directFilterGain );
+			CheckALErrors();
+			return;
+		}
+		efxRoutingAttached = true;
 	}
 	else
 	{
+		if( efxRoutingAttached || openalDirectFilter != 0 || openalAuxFilter != 0 )
+		{
+			DetachWetDryRouting();
+			DestroyWetDryFilters();
+		}
 		alSourcef( openalSource, AL_GAIN, effectiveGain * directFilterGain );
+		CheckALErrors();
 	}
 
 	if( hasEfxFilters && openalAuxFilter != 0 && soundSystemLocal.hardware.HasEFX() && soundSystemLocal.hardware.GetAuxEffectSlot() != 0 && wetFilterGain > 0.0f )
 	{
+		CheckALErrors();
 		qalFilterf( openalAuxFilter, AL_LOWPASS_GAIN, wetFilterGain );
 		qalFilterf( openalAuxFilter, AL_LOWPASS_GAINHF, occlusionFilter.wetGainHF );
 		alSource3i( openalSource, AL_AUXILIARY_SEND_FILTER, soundSystemLocal.hardware.GetAuxEffectSlot(), 0, openalAuxFilter );
+		if( CheckALErrors() != AL_NO_ERROR )
+		{
+			soundSystemLocal.hardware.DisableEFXFilters( "auxiliary send filter routing failed" );
+			DetachWetDryRouting();
+			DestroyWetDryFilters();
+			alSourcef( openalSource, AL_GAIN, effectiveGain * directFilterGain );
+			CheckALErrors();
+			return;
+		}
+		efxRoutingAttached = true;
 	}
 	else if( hasEfxFilters )
 	{
+		CheckALErrors();
 		alSource3i( openalSource, AL_AUXILIARY_SEND_FILTER, AL_EFFECTSLOT_NULL, 0, AL_FILTER_NULL );
+		if( CheckALErrors() != AL_NO_ERROR )
+		{
+			soundSystemLocal.hardware.DisableEFXFilters( "auxiliary send detach failed" );
+			DetachWetDryRouting();
+			DestroyWetDryFilters();
+			alSourcef( openalSource, AL_GAIN, effectiveGain * directFilterGain );
+			CheckALErrors();
+			return;
+		}
 	}
 #else
 	alSourcef( openalSource, AL_GAIN, effectiveGain * directFilterGain );
+	CheckALErrors();
 #endif
 }
 

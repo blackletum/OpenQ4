@@ -46,6 +46,23 @@ extern idCVar s_noSound;
 
 extern void WriteDeclCache( idDemoFile* f, int demoCategory, int demoCode, declType_t  declType );
 
+class idSoundDeferredUpdatesScope
+{
+public:
+	idSoundDeferredUpdatesScope()
+	{
+		soundSystemLocal.hardware.BeginDeferredUpdates();
+	}
+	~idSoundDeferredUpdatesScope()
+	{
+		soundSystemLocal.hardware.EndDeferredUpdates();
+	}
+
+private:
+	idSoundDeferredUpdatesScope( const idSoundDeferredUpdatesScope& );
+	idSoundDeferredUpdatesScope& operator=( const idSoundDeferredUpdatesScope& );
+};
+
 /*
 ========================
 idSoundWorldLocal::idSoundWorldLocal
@@ -475,54 +492,55 @@ void idSoundWorldLocal::Update()
 							   soundSystemLocal.hardware.GetNumFreeVoices(), soundSystemLocal.hardware.GetNumZombieVoices(),
 							   soundSystemLocal.activeStreamBufferContexts.Num(), soundSystemLocal.freeStreamBufferContexts.Num() );
 	}
-	soundSystemLocal.hardware.BeginDeferredUpdates();
-	for( int i = 0; i < activeEmitterChannels.Num(); i++ )
 	{
-		idSoundChannel* chan = activeEmitterChannels[i].channel;
-		chan->UpdateHardware( 0.0f, currentTime );
-
-		if( showVoices )
+		idSoundDeferredUpdatesScope deferredUpdates;
+		for( int i = 0; i < activeEmitterChannels.Num(); i++ )
 		{
-			idStr voiceLine;
-			voiceLine = va( "%5.1f db [%3i:%2i] %s", chan->volumeDB, chan->emitter->index, chan->logicalChannel, chan->CanMute() ? "" : " <CANT MUTE>\n" );
-			idSoundSample* leadinSample = chan->leadinSample;
-			idSoundSample* loopingSample = chan->loopingSample;
-			if( loopingSample == NULL )
-			{
-				voiceLine.Append( va( "%ikhz*%i %s\n", leadinSample->SampleRate() / 1000, leadinSample->NumChannels(), leadinSample->GetName() ) );
-			}
-			else if( loopingSample == leadinSample )
-			{
-				voiceLine.Append( va( "%ikhz*%i <LOOPING> %s\n", leadinSample->SampleRate() / 1000, leadinSample->NumChannels(), leadinSample->GetName() ) );
-			}
-			else
-			{
-				voiceLine.Append( va( "%ikhz*%i %s | %ikhz*%i %s\n", leadinSample->SampleRate() / 1000, leadinSample->NumChannels(), leadinSample->GetName(), loopingSample->SampleRate() / 1000, loopingSample->NumChannels(), loopingSample->GetName() ) );
-			}
-			showVoiceTable += voiceLine;
-		}
+			idSoundChannel* chan = activeEmitterChannels[i].channel;
+			chan->UpdateHardware( 0.0f, currentTime );
 
-		// Calculate shakes
-		if( chan->hardwareVoice == NULL )
-		{
-			continue;
-		}
-
-		const float channelAmplitude = chan->hardwareVoice->GetGain() * chan->currentAmplitude;
-		shakeAmp += chan->parms.shakes * channelAmplitude;
-
-		float channelRumble = idMath::Fabs( chan->parms.shakes ) * channelAmplitude;
-		if( ( chan->parms.soundShaderFlags & SSF_CAUSE_RUMBLE ) != 0 )
-		{
-			const float flaggedRumble = 0.35f * channelAmplitude;
-			if( channelRumble < flaggedRumble )
+			if( showVoices )
 			{
-				channelRumble = flaggedRumble;
+				idStr voiceLine;
+				voiceLine = va( "%5.1f db [%3i:%2i] %s", chan->volumeDB, chan->emitter->index, chan->logicalChannel, chan->CanMute() ? "" : " <CANT MUTE>\n" );
+				idSoundSample* leadinSample = chan->leadinSample;
+				idSoundSample* loopingSample = chan->loopingSample;
+				if( loopingSample == NULL )
+				{
+					voiceLine.Append( va( "%ikhz*%i %s\n", leadinSample->SampleRate() / 1000, leadinSample->NumChannels(), leadinSample->GetName() ) );
+				}
+				else if( loopingSample == leadinSample )
+				{
+					voiceLine.Append( va( "%ikhz*%i <LOOPING> %s\n", leadinSample->SampleRate() / 1000, leadinSample->NumChannels(), leadinSample->GetName() ) );
+				}
+				else
+				{
+					voiceLine.Append( va( "%ikhz*%i %s | %ikhz*%i %s\n", leadinSample->SampleRate() / 1000, leadinSample->NumChannels(), leadinSample->GetName(), loopingSample->SampleRate() / 1000, loopingSample->NumChannels(), loopingSample->GetName() ) );
+				}
+				showVoiceTable += voiceLine;
 			}
+
+			// Calculate shakes
+			if( chan->hardwareVoice == NULL )
+			{
+				continue;
+			}
+
+			const float channelAmplitude = chan->hardwareVoice->GetGain() * chan->currentAmplitude;
+			shakeAmp += chan->parms.shakes * channelAmplitude;
+
+			float channelRumble = idMath::Fabs( chan->parms.shakes ) * channelAmplitude;
+			if( ( chan->parms.soundShaderFlags & SSF_CAUSE_RUMBLE ) != 0 )
+			{
+				const float flaggedRumble = 0.35f * channelAmplitude;
+				if( channelRumble < flaggedRumble )
+				{
+					channelRumble = flaggedRumble;
+				}
+			}
+			rumbleAmp += channelRumble;
 		}
-		rumbleAmp += channelRumble;
 	}
-	soundSystemLocal.hardware.EndDeferredUpdates();
 	if( showVoices )
 	{
 //		static idOverlayHandle handle;
@@ -700,13 +718,13 @@ void idSoundWorldLocal::Pause()
 	{
 		pausedTime = soundSystemLocal.SoundTime();
 		isPaused = true;
-		// just pause all unmutable voices (normally just voice overs)
+		// Pause every active voice so OpenAL queue state cannot drain while the sound time is frozen.
 		for( int e = emitters.Num() - 1; e > 0; e-- )
 		{
 			for( int i = 0; i < emitters[e]->channels.Num(); i++ )
 			{
 				idSoundChannel* channel = emitters[e]->channels[i];
-				if( !channel->CanMute() && channel->hardwareVoice != NULL )
+				if( channel->hardwareVoice != NULL )
 				{
 					channel->hardwareVoice->Pause();
 				}
@@ -729,13 +747,13 @@ void idSoundWorldLocal::UnPause()
 		pauseFade.SetVolume( 0.0f );
 		pauseFade.Fade( 1.0f, s_unpauseFadeInTime.GetInteger(), GetSoundTime() );
 
-		// just unpause all unmutable voices (normally just voice overs)
+		// Resume every voice paused above; inactive voices ignore duplicate unpause requests.
 		for( int e = emitters.Num() - 1; e > 0; e-- )
 		{
 			for( int i = 0; i < emitters[e]->channels.Num(); i++ )
 			{
 				idSoundChannel* channel = emitters[e]->channels[i];
-				if( !channel->CanMute() && channel->hardwareVoice != NULL )
+				if( channel->hardwareVoice != NULL )
 				{
 					channel->hardwareVoice->UnPause();
 				}

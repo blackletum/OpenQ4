@@ -192,7 +192,10 @@ bool idMsgChannel::ReadMessageData( idBitMsg &out, const idBitMsg &msg ) {
 	// decompress message
 	idFile_BitMsg file( msg );
 	compressor->Init( &file, false, 3 );
-	if ( compressor->Read( out.GetData(), out.GetSize() ) != out.GetSize() ) {
+	const int decompressedBytes = compressor->Read( out.GetData(), out.GetSize() );
+	// Bitstream decompressors report their cursor, which can step past the logical
+	// output size on the final partial word.
+	if ( decompressedBytes < out.GetSize() ) {
 		common->Printf( "%s: truncated compressed message\n", Sys_NetAdrToString( remoteAddress ) );
 		return false;
 	}

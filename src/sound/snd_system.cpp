@@ -269,6 +269,7 @@ void ListSoundDecoders_f( const idCmdArgs& args )
 	idLib::Printf( "0 waiting decoders\n" );
 	idLib::Printf( "%d active decoders\n", numActiveDecoders );
 	idLib::Printf( "0 kB decoder memory in 0 blocks\n" );
+	idSoundHardware_OpenAL::PrintDiagnosticCounters();
 }
 
 /*
@@ -278,6 +279,8 @@ idSoundSystemLocal::Restart
 */
 void idSoundSystemLocal::Restart()
 {
+	idSoundHardware_OpenAL::CountDiagnosticEvent( idSoundHardware_OpenAL::OPENAL_DIAG_SOUND_RESTARTS );
+
 	const bool wasMuted = IsMuted();
 	SetMute( true );
 

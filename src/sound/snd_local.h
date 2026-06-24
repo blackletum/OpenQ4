@@ -117,6 +117,7 @@ ID_INLINE_EXTERN ALenum CheckALErrors_( const char* filename, int line )
 	ALenum err = alGetError();
 	if( err != AL_NO_ERROR )
 	{
+		idSoundHardware_OpenAL::CountDiagnosticEvent( idSoundHardware_OpenAL::OPENAL_DIAG_AL_ERRORS );
 		idLib::Printf( "OpenAL Error: %s (0x%x), @ %s %d\n", alGetString( err ), err, filename, line );
 	}
 	return err;
@@ -128,6 +129,7 @@ ID_INLINE_EXTERN ALCenum CheckALCErrors_( ALCdevice* device, const char* filenam
 	ALCenum err = alcGetError( device );
 	if( err != ALC_NO_ERROR )
 	{
+		idSoundHardware_OpenAL::CountDiagnosticEvent( idSoundHardware_OpenAL::OPENAL_DIAG_ALC_ERRORS );
 		idLib::Printf( "ALC Error: %s (0x%x), @ %s %d\n", alcGetString( device, err ), err, filename, linenum );
 	}
 	return err;

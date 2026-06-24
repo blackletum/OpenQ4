@@ -68,6 +68,7 @@ public:
 
 		alSourcef( openalSource, AL_PITCH, p );
 	}
+	void		SetInnerRadius( float r ) override;
 	void		SetWetLevel( float wet ) override
 	{
 		idSoundVoice_Base::SetWetLevel( wet );
@@ -140,11 +141,30 @@ private:
 	// Helper function to submit a buffer
 	int						SubmitBuffer( idSoundSample_OpenAL* sample, int bufferNumber, int offset );
 
+	bool					EnsureStreamingBuffers();
+	bool					ValidateStreamingSample( idSoundSample_OpenAL* sample, ALenum& alFormat, int& blockBytes );
+	bool					SetStreamingCursor( idSoundSample_OpenAL* sample, int absoluteSampleFrame );
+	bool					AdvanceStreamingCursor( int queuedFrames );
+	bool					QueueNextStreamingBuffer( ALuint buffer, int& queuedBytes );
+	int						BeginStreaming( idSoundSample_OpenAL* sample, int bufferNumber, int offset );
+	bool					PumpStreamingBuffers();
+	void					ResetStreamingState();
+
 	// Adjust the voice frequency based on the new sample rate for the buffer
 	void					SetSampleRate( uint32 newSampleRate, uint32 operationSet );
 	void					ApplyWetDryRouting();
-	void					CreateWetDryFilters();
+	bool					CreateWetDryFilters();
+	bool					DetachWetDryRouting();
 	void					DestroyWetDryFilters();
+
+	enum openQ4OpenALPlaybackMode_t
+	{
+		OPENQ4_OPENAL_PLAYBACK_NONE,
+		OPENQ4_OPENAL_PLAYBACK_STATIC_ONESHOT,
+		OPENQ4_OPENAL_PLAYBACK_STATIC_LEADIN,
+		OPENQ4_OPENAL_PLAYBACK_STATIC_LOOP,
+		OPENQ4_OPENAL_PLAYBACK_STREAMING
+	};
 
 	//IXAudio2SourceVoice* 	pSourceVoice;
 	bool					triggered;
@@ -154,9 +174,16 @@ private:
 	ALuint					lastopenalStreamingBuffer[3];
 	ALuint					openalDirectFilter;
 	ALuint					openalAuxFilter;
+	bool					efxRoutingAttached;
 
 	idSoundSample_OpenAL*	leadinSample;
 	idSoundSample_OpenAL*	loopingSample;
+	idSoundSample_OpenAL*	currentSample;
+	openQ4OpenALPlaybackMode_t playbackMode;
+	idSoundSample_OpenAL*	streamingSample;
+	int						streamingBufferNumber;
+	int						streamingBufferOffset;
+	bool					streamingEndOfStream;
 
 	// These are the fields from the sample format that matter to us for voice reuse
 	uint16					formatTag;

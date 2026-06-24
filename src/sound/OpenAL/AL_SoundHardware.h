@@ -56,6 +56,31 @@ public:
 	idSoundVoice* 	AllocateVoice( const idSoundSample* leadinSample, const idSoundSample* loopingSample );
 	void			FreeVoice( idSoundVoice* voice );
 
+	enum openALDiagnosticCounter_t
+	{
+		OPENAL_DIAG_AL_ERRORS,
+		OPENAL_DIAG_ALC_ERRORS,
+		OPENAL_DIAG_SAMPLE_UPLOAD_ATTEMPTS,
+		OPENAL_DIAG_SAMPLE_UPLOAD_RETRIES,
+		OPENAL_DIAG_SAMPLE_UPLOAD_CONTEXT_MISSES,
+		OPENAL_DIAG_SAMPLE_UPLOAD_FAILURES,
+		OPENAL_DIAG_QUEUE_FALLBACK_ENTRIES,
+		OPENAL_DIAG_QUEUE_FALLBACK_REFUSALS,
+		OPENAL_DIAG_QUEUE_BUFFERS_SUBMITTED,
+		OPENAL_DIAG_QUEUE_BUFFERS_REFILLED,
+		OPENAL_DIAG_QUEUE_UNDERRUN_RESTARTS,
+		OPENAL_DIAG_DEVICE_EVENTS,
+		OPENAL_DIAG_DEVICE_REOPEN_ATTEMPTS,
+		OPENAL_DIAG_DEVICE_REOPEN_SUCCESSES,
+		OPENAL_DIAG_DEVICE_REOPEN_FAILURES,
+		OPENAL_DIAG_SOUND_RESTARTS,
+		OPENAL_DIAG_DEFERRED_UPDATE_ERRORS,
+		OPENAL_DIAG_EFX_FILTER_ERRORS
+	};
+
+	static void		CountDiagnosticEvent( openALDiagnosticCounter_t counter, int amount = 1 );
+	static void		PrintDiagnosticCounters();
+
 	static bool		IsDefaultDeviceChoiceValue( const char* deviceName );
 	static void		BuildDeviceChoiceStrings( const char* requestedDeviceName, idStr& choiceNames, idStr& choiceValues );
 
@@ -85,6 +110,12 @@ public:
 	{
 		return efxFiltersAvailable;
 	}
+	bool			HasCallbackBuffers() const
+	{
+		return callbackBufferAvailable;
+	}
+	void			ApplySourceResampler( ALuint source );
+	void			ApplySourceRadius( ALuint source, float radius );
 	ALuint			GetAuxEffectSlot() const
 	{
 		return auxEffectSlot;
@@ -97,6 +128,8 @@ public:
 
 	static void		GetAvailablePlaybackDevices( idStrList& deviceNames, idStr& defaultDeviceName );
 	static idStr		GetActivePlaybackDeviceName( ALCdevice* device );
+	void			QueueSyntheticActiveDeviceDisconnect();
+	void			QueueSyntheticDefaultDeviceChange( const char* previousDefaultDeviceName );
 
 protected:
 	friend class idSoundSample_OpenAL;
@@ -116,6 +149,10 @@ private:
 
 	int					lastResetTime;
 	int					lastDeviceCheckTime;
+	int					pendingDeviceEventFlags;
+	int					pendingDeviceEventCheckTime;
+	int					lastDeviceRecoveryTime;
+	bool				pendingSyntheticActiveDeviceDisconnect;
 	int					lastPerfPrintTime;
 	bool				efxFiltersAvailable;
 	bool				efxEnabled;
@@ -126,6 +163,16 @@ private:
 	bool				reopenDeviceAvailable;
 	bool				deferredUpdatesAvailable;
 	bool				deferredUpdatesActive;
+	bool				deferredUpdatesDisableLogged;
+	bool				sourceResamplerAvailable;
+	bool				sourceResamplerWarningIssued;
+	int					sourceResamplerCount;
+	int					sourceResamplerDefault;
+	int					sourceResamplerSelected;
+	bool				sourceRadiusAvailable;
+	bool				sourceRadiusWarningIssued;
+	bool				callbackBufferAvailable;
+	bool				callbackBufferWarningIssued;
 	bool				openedWithDefaultFallback;
 	int					openedHrtfMode;
 	int					openedSpeakerCount;
@@ -151,6 +198,12 @@ private:
 	static idStr		SanitizeDeviceLabel( const char* deviceName );
 
 	void			CaptureOpenedDeviceState( const char* requestedDeviceName );
+	void			ClearPendingDeviceRecoveryState();
+	void			DisableDeferredUpdates( const char* reason );
+	void			DisableEFXFilters( const char* reason );
+	void			InitCallbackBufferSupport();
+	void			InitSourceResampler();
+	bool			RecoverDeviceOrRequestRestart( const char* requestedDeviceName, const char* reason, const char* restartMessage );
 	void			EnableDeviceEventMonitoring();
 	void			DisableDeviceEventMonitoring();
 	bool			TryReopenDevice( const char* requestedDeviceName, const char* reason );
