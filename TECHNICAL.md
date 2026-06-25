@@ -217,6 +217,8 @@ The manifest is a flat JSON object with these required string fields:
 
 `requiredopenQ4Version` is matched against the current openQ4 engine version. Mods without a manifest, or with a mismatched required engine version, are hidden from the mod menu and rejected for automatic mod switching.
 
+Game modules are optional for mods. At runtime, openQ4 first checks the selected mod directory for the active `game-sp_<arch>` or `game-mp_<arch>` module; if it is not present, the engine falls back to the matching module in `baseoq4/`. Content-only mods therefore need a compatible `mod.json` and their content files, not copied openQ4 dynamic libraries. Mods that intentionally ship custom game code can still provide their own module in the mod directory.
+
 Example:
 
 ```json

@@ -265,41 +265,14 @@ void idSoundVoice_OpenAL::Create( const idSoundSample* leadinSample_, const idSo
 
 		alSourcef( openalSource, AL_ROLLOFF_FACTOR, 0.0f );
 
-		//if( ( loopingSample == NULL && leadinSample->openalBuffer != 0 ) || ( loopingSample != NULL && soundShader->entries[0]->hardwareBuffer ) )
-		if( leadinSample->openalBuffer != 0 )
+		// Static buffers are attached by SubmitBuffer(). Queued fallback buffers
+		// are allocated lazily by EnsureStreamingBuffers() so stale buffer names
+		// from an old context cannot poison source creation.
+		alSourcei( openalSource, AL_BUFFER, 0 );
+		if( CheckALErrors() != AL_NO_ERROR )
 		{
-			alSourcei( openalSource, AL_BUFFER, 0 );
-
-			// handle uncompressed (non streaming) single shot and looping sounds
-			/*
-			if( triggered )
-			{
-				alSourcei( openalSource, AL_BUFFER, looping ? chan->soundShader->entries[0]->openalBuffer : leadinSample->openalBuffer );
-			}
-			*/
-		}
-		else
-		{
-			//if( triggered )
-
-			// handle streaming sounds (decode on the fly) both single shot AND looping
-
-			alSourcei( openalSource, AL_BUFFER, 0 );
-			alDeleteBuffers( 3, &lastopenalStreamingBuffer[0] );
-			lastopenalStreamingBuffer[0] = openalStreamingBuffer[0];
-			lastopenalStreamingBuffer[1] = openalStreamingBuffer[1];
-			lastopenalStreamingBuffer[2] = openalStreamingBuffer[2];
-
-			alGenBuffers( 3, &openalStreamingBuffer[0] );
-			/*
-			if( soundSystemLocal.alEAXSetBufferMode )
-			{
-				soundSystemLocal.alEAXSetBufferMode( 3, &chan->openalStreamingBuffer[0], alGetEnumValue( ID_ALCHAR "AL_STORAGE_ACCESSIBLE" ) );
-			}
-			*/
-			openalStreamingBuffer[0];
-			openalStreamingBuffer[1];
-			openalStreamingBuffer[2];
+			DestroyInternal();
+			return;
 		}
 
 		if( s_debugHardware.GetBool() )
@@ -1149,6 +1122,10 @@ bool idSoundVoice_OpenAL::Update()
 
 	ALint state = AL_INITIAL;
 	alGetSourcei( openalSource, AL_SOURCE_STATE, &state );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		return false;
+	}
 
 	if( playbackMode == OPENQ4_OPENAL_PLAYBACK_STATIC_LEADIN )
 	{
@@ -1314,6 +1291,10 @@ bool idSoundVoice_OpenAL::IsPlaying()
 	ALint state = AL_INITIAL;
 
 	alGetSourcei( openalSource, AL_SOURCE_STATE, &state );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		return false;
+	}
 
 	return ( state == AL_PLAYING || state == AL_PAUSED );
 

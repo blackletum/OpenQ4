@@ -56,6 +56,19 @@ It is designed for players who want the original Quake 4 experience with a clean
 
 ---
 
+## System requirements
+
+You need a legitimate Quake 4 install plus the openQ4 package that matches your operating system and CPU architecture.
+
+| Tier | Practical target |
+|---|---|
+| **Minimum** | 64-bit CPU, 4 GB RAM, a working OpenGL compatibility driver with ARB2-era vertex/fragment program support, and about 12 GB free for the openQ4 package plus retail Quake 4 assets. Use the `minimum` or `lowpower` performance preset on constrained systems. |
+| **Recommended** | Modern quad-core CPU, 8 GB RAM, OpenGL 4.1+ compatibility-class GPU with 2 GB+ VRAM, current graphics drivers, and 15 GB+ free. For high resolutions, `quality`, or `ultra`, 16 GB RAM and 6 GB+ VRAM gives much better headroom. |
+
+Packaged support currently focuses on Windows, Linux, Steam Deck/SteamOS, and Apple Silicon macOS. See the [Getting Started guide](docs/user/getting-started.md#system-requirements) for the platform-specific requirements and caveats.
+
+---
+
 ## Renderer showcase
 
 <p align="center">
@@ -95,7 +108,7 @@ It is designed for players who want the original Quake 4 experience with a clean
 
 ### Start here
 
-- [Getting Started](docs/user/getting-started.md) - installation, first launch, and common setup questions
+- [Getting Started](docs/user/getting-started.md) - system requirements, installation, first launch, and common setup questions
 - [Client Settings Guide](docs/user/client-settings.md) - where to find the most useful in-game settings
 - [Server Setup Guide](docs/user/server-setup.md) - basic dedicated server setup and common server variables
 

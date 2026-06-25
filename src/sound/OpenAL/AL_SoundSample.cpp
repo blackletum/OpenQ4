@@ -623,13 +623,19 @@ bool idSoundSample_OpenAL::CreateOpenALBuffer()
 
 	if( CheckALErrors() != AL_NO_ERROR )
 	{
-		common->Error( "idSoundSample_OpenAL::CreateOpenALBuffer: error generating OpenAL hardware buffer" );
+		common->Warning( "idSoundSample_OpenAL::CreateOpenALBuffer: error generating OpenAL hardware buffer for '%s'", GetName() );
+		openalBuffer = 0;
+		openalUploadPending = true;
+		openalUploadWarningIssued = true;
+		idSoundHardware_OpenAL::CountDiagnosticEvent( idSoundHardware_OpenAL::OPENAL_DIAG_SAMPLE_UPLOAD_FAILURES );
+		return false;
 	}
 
 	if( !alIsBuffer( openalBuffer ) )
 	{
 		openalBuffer = 0;
 		openalUploadPending = true;
+		openalUploadWarningIssued = true;
 		idSoundHardware_OpenAL::CountDiagnosticEvent( idSoundHardware_OpenAL::OPENAL_DIAG_SAMPLE_UPLOAD_FAILURES );
 		return false;
 	}
@@ -652,13 +658,38 @@ bool idSoundSample_OpenAL::CreateOpenALBuffer()
 	else
 #endif
 	{
-		assert( buffers.Num() == 1 );
+		if( buffers.Num() != 1 || buffers[0].buffer == NULL || buffers[0].bufferSize <= 0 )
+		{
+			common->Warning( "idSoundSample_OpenAL::CreateOpenALBuffer: invalid PCM buffer data for '%s'", GetName() );
+			if( openalBuffer != 0 && alIsBuffer( openalBuffer ) )
+			{
+				ALuint failedBuffer = openalBuffer;
+				alDeleteBuffers( 1, &failedBuffer );
+			}
+			openalBuffer = 0;
+			openalUploadPending = false;
+			openalUploadWarningIssued = true;
+			idSoundHardware_OpenAL::CountDiagnosticEvent( idSoundHardware_OpenAL::OPENAL_DIAG_SAMPLE_UPLOAD_FAILURES );
+			CheckALErrors();
+			return false;
+		}
 		alBufferData( openalBuffer, alFormat, buffers[0].buffer, buffers[0].bufferSize, format.basic.samplesPerSec );
 	}
 
 	if( CheckALErrors() != AL_NO_ERROR )
 	{
-		common->Error( "idSoundSample_OpenAL::CreateOpenALBuffer: error loading data into OpenAL hardware buffer" );
+		common->Warning( "idSoundSample_OpenAL::CreateOpenALBuffer: error loading data into OpenAL hardware buffer for '%s'", GetName() );
+		if( openalBuffer != 0 && alIsBuffer( openalBuffer ) )
+		{
+			ALuint failedBuffer = openalBuffer;
+			alDeleteBuffers( 1, &failedBuffer );
+			CheckALErrors();
+		}
+		openalBuffer = 0;
+		openalUploadPending = true;
+		openalUploadWarningIssued = true;
+		idSoundHardware_OpenAL::CountDiagnosticEvent( idSoundHardware_OpenAL::OPENAL_DIAG_SAMPLE_UPLOAD_FAILURES );
+		return false;
 	}
 
 	openalUploadPending = false;
@@ -1881,7 +1912,7 @@ int32 idSoundSample_OpenAL::MS_ADPCM_nibble( MS_ADPCM_decodeState_t* state, int8
 
 int idSoundSample_OpenAL::MS_ADPCM_decode( uint8** audio_buf, uint32* audio_len )
 {
-	static MS_ADPCM_decodeState_t	states[2];
+	MS_ADPCM_decodeState_t			states[2];
 	MS_ADPCM_decodeState_t*			state[2];
 
 	uint8* freeable, *encoded, *decoded;
@@ -1890,22 +1921,52 @@ int idSoundSample_OpenAL::MS_ADPCM_decode( uint8** audio_buf, uint32* audio_len 
 	int8 stereo;
 	int32 new_sample;
 
-	// Allocate the proper sized output buffer
+	if( audio_buf == NULL || *audio_buf == NULL || audio_len == NULL )
+	{
+		return ( -1 );
+	}
+	if( format.basic.numChannels != 1 && format.basic.numChannels != 2 )
+	{
+		return ( -1 );
+	}
+	if( format.basic.blockSize <= 0 || format.extra.adpcm.samplesPerBlock < 2 || format.extra.adpcm.numCoef == 0 || format.extra.adpcm.numCoef > 7 )
+	{
+		return ( -1 );
+	}
+
 	encoded_len = *audio_len;
+	const int32 originalEncodedLen = encoded_len;
+	const int headerBytes = format.basic.numChannels * ( ( int )sizeof( uint8 ) + 3 * ( int )sizeof( int16 ) );
+	if( encoded_len <= 0 || encoded_len % format.basic.blockSize != 0 || format.basic.blockSize < headerBytes )
+	{
+		return ( -1 );
+	}
+	const int payloadSamplesPerBlock = ( format.extra.adpcm.samplesPerBlock - 2 ) * format.basic.numChannels;
+	const int payloadBytesPerBlock = ( payloadSamplesPerBlock + 1 ) / 2;
+	if( payloadSamplesPerBlock < 0 || payloadBytesPerBlock > format.basic.blockSize - headerBytes )
+	{
+		return ( -1 );
+	}
+
 	encoded = *audio_buf;
 	freeable = *audio_buf;
 
-	*audio_len = ( encoded_len / format.basic.blockSize ) * format.extra.adpcm.samplesPerBlock * format.basic.numChannels * sizeof( int16 );
+	const uint64 decodedLen = ( uint64 )( encoded_len / format.basic.blockSize ) * ( uint64 )format.extra.adpcm.samplesPerBlock * ( uint64 )format.basic.numChannels * ( uint64 )sizeof( int16 );
+	if( decodedLen == 0 || decodedLen > ( uint64 )idMath::INT_MAX )
+	{
+		return ( -1 );
+	}
+	*audio_len = ( uint32 )decodedLen;
 
 	*audio_buf = ( uint8* ) Mem_Alloc( *audio_len );
 	if( *audio_buf == NULL )
 	{
 		//SDL_Error( SDL_ENOMEM );
+		*audio_buf = freeable;
+		*audio_len = originalEncodedLen;
 		return ( -1 );
 	}
 	decoded = *audio_buf;
-
-	assert( format.basic.numChannels == 1 || format.basic.numChannels == 2 );
 
 	// Get ready... Go!
 	stereo = ( format.basic.numChannels == 2 ) ? 1 : 0;
@@ -1917,8 +1978,13 @@ int idSoundSample_OpenAL::MS_ADPCM_decode( uint8** audio_buf, uint32* audio_len 
 		// Grab the initial information for this block
 		state[0]->hPredictor = *encoded++;
 
-		assert( state[0]->hPredictor < format.extra.adpcm.numCoef );
-		state[0]->hPredictor = idMath::ClampInt( 0, 6, state[0]->hPredictor );
+		if( state[0]->hPredictor >= format.extra.adpcm.numCoef )
+		{
+			Mem_Free( *audio_buf );
+			*audio_buf = freeable;
+			*audio_len = originalEncodedLen;
+			return ( -1 );
+		}
 
 		state[0]->coef1 = format.extra.adpcm.aCoef[state[0]->hPredictor].coef1;
 		state[0]->coef2 = format.extra.adpcm.aCoef[state[0]->hPredictor].coef2;
@@ -1927,8 +1993,13 @@ int idSoundSample_OpenAL::MS_ADPCM_decode( uint8** audio_buf, uint32* audio_len 
 		{
 			state[1]->hPredictor = *encoded++;
 
-			assert( state[1]->hPredictor < format.extra.adpcm.numCoef );
-			state[1]->hPredictor = idMath::ClampInt( 0, 6, state[1]->hPredictor );
+			if( state[1]->hPredictor >= format.extra.adpcm.numCoef )
+			{
+				Mem_Free( *audio_buf );
+				*audio_buf = freeable;
+				*audio_len = originalEncodedLen;
+				return ( -1 );
+			}
 
 			state[1]->coef1 = format.extra.adpcm.aCoef[state[1]->hPredictor].coef1;
 			state[1]->coef2 = format.extra.adpcm.aCoef[state[1]->hPredictor].coef2;

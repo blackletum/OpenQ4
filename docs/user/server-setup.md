@@ -7,6 +7,13 @@ This guide covers a simple way to host an openQ4 dedicated server.
 - A working openQ4 install
 - Access to the original Quake 4 retail assets
 - The `openQ4-ded_<arch>` executable from your openQ4 release or local build
+- A 64-bit host that matches the package architecture
+
+## Dedicated Server Requirements
+
+The dedicated server does not need a GPU or an OpenGL-capable desktop session, but it still needs the same retail `q4base/` assets and matching openQ4 game modules as the client.
+
+For light testing, plan on a modern 64-bit host with at least 2 GB RAM available to the operating system and server, plus the same package and Quake 4 asset storage described in the [Getting Started system requirements](getting-started.md#system-requirements). For public servers, prefer 4 GB+ RAM, a stable wired connection, and enough upload bandwidth for the player count you advertise.
 
 ## Quick Start
 

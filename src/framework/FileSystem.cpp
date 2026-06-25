@@ -6566,6 +6566,17 @@ int idFileSystemLocal::GetFileChecksum( idFile *file ) {
 	return ret;
 }
 
+static idFile *FS_OpenGameModuleFromExeDir( idFileSystemLocal *fileSystemLocal, const idStr &exeDir, const char *gameDir, const char *dllName, idStr &dllPath ) {
+	if ( !gameDir || !gameDir[0] ) {
+		return NULL;
+	}
+
+	dllPath = exeDir;
+	dllPath.AppendPath( gameDir );
+	dllPath.AppendPath( dllName );
+	return fileSystemLocal->OpenExplicitFileRead( dllPath );
+}
+
 /*
 =================
 idFileSystemLocal::FindDLL
@@ -6581,18 +6592,21 @@ void idFileSystemLocal::FindDLL( const char *name, char _dllPath[ MAX_OSPATH ], 
 	idStr exeDir = Sys_EXEPath();
 	exeDir.StripFilename();
 
-	// Only load openQ4 game modules staged next to the executable. Do not load
-	// executable code from PK4s, fs_savepath, fs_game search dirs, or pure-server
-	// code paks.
+	// Only load openQ4 game modules staged next to the executable. Mods may
+	// provide their own module, but content-only mods inherit baseoq4 modules.
+	// Do not load executable code from PK4s, fs_savepath, pure-server code paks,
+	// or loose files outside the executable/package root.
 	const char *moduleGameDir = fs_game.GetString();
 	if ( !moduleGameDir[0] ) {
 		moduleGameDir = OPENQ4_GAMEDIR;
 	}
-	if ( moduleGameDir[0] ) {
-		dllPath = exeDir;
-		dllPath.AppendPath( moduleGameDir );
-		dllPath.AppendPath( dllName );
-		dllFile = OpenExplicitFileRead( dllPath );
+	dllFile = FS_OpenGameModuleFromExeDir( this, exeDir, moduleGameDir, dllName, dllPath );
+
+	if ( !dllFile && idStr::Icmp( moduleGameDir, OPENQ4_GAMEDIR ) != 0 ) {
+		dllFile = FS_OpenGameModuleFromExeDir( this, exeDir, OPENQ4_GAMEDIR, dllName, dllPath );
+		if ( dllFile ) {
+			common->DPrintf( "Game DLL '%s' not found in mod directory '%s'; falling back to '%s'.\n", dllName, moduleGameDir, OPENQ4_GAMEDIR );
+		}
 	}
 
 	if ( !dllFile ) {

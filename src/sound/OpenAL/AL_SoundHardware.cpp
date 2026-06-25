@@ -2482,6 +2482,12 @@ idSoundVoice* idSoundHardware_OpenAL::AllocateVoice( const idSoundSample* leadin
 	if( voice != NULL )
 	{
 		voice->Create( leadinSample, loopingSample );
+		idSoundVoice_OpenAL* openalVoice = static_cast<idSoundVoice_OpenAL*>( voice );
+		if( !alIsSource( openalVoice->openalSource ) )
+		{
+			openalVoice->DestroyInternal();
+			return NULL;
+		}
 		freeVoices.Remove( voice );
 		return voice;
 	}

@@ -13,6 +13,7 @@ If you are setting up openQ4 for the first time, these are the areas most player
 ## Recommended First Checks
 
 - Set your preferred fullscreen or borderless mode
+- Run **Auto-Detect** for the Performance Preset if this is a new machine or you are near the [minimum requirements](getting-started.md#system-requirements)
 - Adjust mouse sensitivity or controller dead zone
 - Confirm your display target if you use multiple monitors
 - Pick whether you want extra visual effects such as bloom or shadow mapping

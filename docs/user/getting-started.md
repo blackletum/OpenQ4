@@ -6,14 +6,32 @@ This guide is for players who want to install openQ4 and start playing as quickl
 
 - A legitimate copy of **Quake 4** from [Steam](https://store.steampowered.com/app/2210/Quake_4/) or [GOG](https://www.gog.com/en/game/quake_4)
 - The latest openQ4 release from the [Releases page](https://github.com/themuffinator/openQ4/releases)
+- A release package that matches your operating system and CPU architecture (`x64` or `arm64`)
+- Enough free disk space for both the openQ4 package and the retail Quake 4 `q4base/` assets
 
 > [!NOTE]
 > openQ4 does not include Quake 4 assets. It uses the original retail game files from your existing installation.
 
+## System Requirements
+
+These requirements are practical guidance for the current beta packages. openQ4 can scale down through performance presets, but old or incomplete OpenGL drivers may still fail even when the raw hardware looks fast enough.
+
+| Component | Minimum | Recommended |
+|---|---|---|
+| CPU | 64-bit CPU matching the package architecture; dual-core class or better | Modern quad-core or better x64/arm64 CPU |
+| Operating system | Windows 7 or later; a modern 64-bit Linux desktop userspace comparable to Ubuntu 24.04; macOS 11 or later on Apple Silicon/arm64; SteamOS 3.x on Steam Deck | Windows 10/11, a current Linux distribution or SteamOS release, or an up-to-date Apple Silicon macOS install with maintained graphics drivers |
+| Memory | 4 GB RAM | 8 GB RAM for balanced play; 16 GB if you want higher presets, high resolutions, or room for background apps |
+| Graphics | OpenGL compatibility driver with the ARB2-era features openQ4 requires, including vertex/fragment program support; 1 GB VRAM is the practical low-end target | OpenGL 4.1+ compatibility-class GPU with 2 GB+ VRAM for balanced 1080p play; 6 GB+ VRAM for `quality`, `ultra`, high-resolution displays, or heavier post-processing |
+| Storage | About 12 GB free for openQ4 plus the retail Quake 4 assets | 15 GB+ free for the package, assets, saves, logs, crash dumps, and future updates |
+| Assets | Official retail Quake 4 `q4base/` PK4 files from Steam or GOG | The same assets left unmodified so default validation can confirm them cleanly |
+| Input and audio | Keyboard/mouse and a working audio output | Controller optional; Steam Deck controls use the Deck profile; broadband network recommended for online multiplayer |
+
+Use `Settings -> System -> Performance Preset -> Auto-Detect` or the console command `autoDetectPerformancePreset` after first launch if you are unsure where to start. Systems near the minimum should use `minimum`, `lowpower`, or `performance` before enabling expensive options such as high MSAA, high resolution scale, shadow maps, or heavier post-processing.
+
 ## Recommended Install Flow
 
 1. Install **Quake 4** through Steam or GOG.
-2. Download the openQ4 release that matches your CPU architecture.
+2. Download the openQ4 release that matches your platform and CPU architecture.
 3. Install or extract openQ4 to its **own folder**.
 4. Launch `openQ4-client_<arch>`.
 5. On Steam Deck, launch `openQ4-steamdeck` when it is included in the package.
@@ -44,12 +62,13 @@ If you prefer a self-contained setup, keep these side by side in the same root f
 
 - You can use the matching installer or the `.zip` release.
 - Windows release packages are meant to be self-contained.
+- Current validation focuses on Windows 11 and Windows 10. Windows 7/8/8.1 remain legacy compatibility targets rather than the main test matrix.
 - If openQ4 crashes, check the `crashes/` folder beside the executable for log and dump files.
 
 ### Linux and macOS
 
 - On Linux, extract the release archive to a folder of your choice.
-- Linux packages default to the SDL3 runtime path.
+- Linux packages default to the SDL3 runtime path and should be treated as targeting an Ubuntu 24.04-class 64-bit desktop userspace with working OpenGL plus Wayland/EGL or X11/GLX support.
 - macOS packages are for Apple Silicon/arm64 Macs. Intel Mac and universal2 packages are not published yet.
 - Credentialed macOS release runs publish signed/notarized OpenGL and Metal bridge DMGs. Releases without Apple Developer ID signing and notarization credentials publish clearly labeled `-unsigned.tar.gz` archives instead.
 - Unsigned macOS archives are ad-hoc signed only for bundle validity, are not notarized, and may require normal Gatekeeper approval on first launch.

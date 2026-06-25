@@ -21,6 +21,19 @@ def reject(haystack: str, needle: str, context: str) -> None:
         raise AssertionError(f"Unexpected {needle!r} in {context}")
 
 
+def require_before(haystack: str, first: str, second: str, context: str) -> None:
+    first_index = haystack.find(first)
+    if first_index == -1:
+        raise AssertionError(f"Missing {first!r} in {context}")
+
+    second_index = haystack.find(second)
+    if second_index == -1:
+        raise AssertionError(f"Missing {second!r} in {context}")
+
+    if first_index >= second_index:
+        raise AssertionError(f"Expected {first!r} before {second!r} in {context}")
+
+
 def cpp_function_body(source: str, signature: str) -> str:
     start = source.find(signature)
     if start == -1:
@@ -142,6 +155,27 @@ def validate_manifest_only_contract() -> None:
     require(get_mod_info, 'va( "missing %s"', "GetModInfo missing manifest diagnostic")
 
 
+def validate_game_module_fallback_contract() -> None:
+    source = read("src/framework/FileSystem.cpp")
+    helper = cpp_function_body(source, "static idFile *FS_OpenGameModuleFromExeDir(")
+    find_dll = cpp_function_body(source, "void idFileSystemLocal::FindDLL(")
+
+    require(helper, "dllPath.AppendPath( gameDir );", "game module package-dir helper")
+    require(helper, "dllPath.AppendPath( dllName );", "game module filename helper")
+    require(helper, "OpenExplicitFileRead( dllPath )", "game module explicit package-root load")
+
+    active_mod_probe = "FS_OpenGameModuleFromExeDir( this, exeDir, moduleGameDir, dllName, dllPath )"
+    baseoq4_fallback_probe = "FS_OpenGameModuleFromExeDir( this, exeDir, OPENQ4_GAMEDIR, dllName, dllPath )"
+    root_fallback_probe = "dllPath = exeDir;"
+
+    require(find_dll, active_mod_probe, "active mod game-module probe")
+    require(find_dll, baseoq4_fallback_probe, "baseoq4 game-module fallback")
+    require(find_dll, "idStr::Icmp( moduleGameDir, OPENQ4_GAMEDIR ) != 0", "duplicate baseoq4 fallback guard")
+    require(find_dll, "falling back to '%s'", "baseoq4 fallback diagnostic")
+    require_before(find_dll, active_mod_probe, baseoq4_fallback_probe, "game module fallback order")
+    require_before(find_dll, baseoq4_fallback_probe, root_fallback_probe, "baseoq4 before executable-root fallback")
+
+
 def validate_validation_coverage() -> None:
     validator = read("tools/validation/openq4_validate.py")
     require(validator, "filesystem_mod_manifest.py", "validation runner")
@@ -151,6 +185,7 @@ def main() -> None:
     validate_manifest_status_contract()
     validate_json_parser_contract()
     validate_manifest_only_contract()
+    validate_game_module_fallback_contract()
     validate_validation_coverage()
     print("filesystem_mod_manifest: ok")
 
