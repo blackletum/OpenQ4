@@ -528,6 +528,17 @@ void idSoundSystemLocal::Render()
 		return;
 	}
 
+	static int lastOpenALPostPlanBehavior = s_openALPostPlanBehavior.GetInteger();
+	const int currentOpenALPostPlanBehavior = s_openALPostPlanBehavior.GetInteger();
+	if( currentOpenALPostPlanBehavior != lastOpenALPostPlanBehavior )
+	{
+		idLib::Printf( "OpenAL post-plan behavior changed from %d to %d; restarting sound system.\n",
+			lastOpenALPostPlanBehavior,
+			currentOpenALPostPlanBehavior );
+		lastOpenALPostPlanBehavior = currentOpenALPostPlanBehavior;
+		needsRestart = true;
+	}
+
 	if( needsRestart )
 	{
 		needsRestart = false;

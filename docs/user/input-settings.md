@@ -123,7 +123,7 @@ seta in_joystickMoveCurve 1.0
 
 SDL gamepads use SDL's standard controller database, so Xbox, PlayStation, Steam Input, and similar pads should not need axis remapping. Generic SDL joysticks use raw axes with these auto defaults:
 
-Linux and experimental macOS SDL3 builds opt into SDL's HIDAPI controller backends by default so PlayStation, Switch, Steam, Steam Deck, and Xbox-class controllers can expose the same button, stick, trigger, rumble, battery, gyro, and touchpad capabilities available through the shared SDL3 path. Run `listControllers` to confirm which SDL driver, hint state, and capabilities are active for a connected device.
+Linux and macOS SDL3 builds opt into SDL's HIDAPI controller backends by default so PlayStation, Switch, Steam, Steam Deck, and Xbox-class controllers can expose the same button, stick, trigger, rumble, battery, gyro, and touchpad capabilities available through the shared SDL3 path. macOS builds remain experimental. Run `listControllers` to confirm which SDL driver, hint state, and capabilities are active for a connected device.
 
 | Cvar | Auto default | What it changes |
 |---|---:|---|
@@ -183,7 +183,7 @@ The shipped defaults are defined in `content/baseoq4/pak0/default.cfg`.
 
 ## Default Controller Buttons
 
-SDL gamepads use stable `JOY` button names so binds work across common Xbox, PlayStation, and Steam Input layouts. Controller support is first-class in SDL3 builds on Windows and Linux, while macOS controller support remains experimental. The native Linux, experimental native macOS, and legacy Win32 input fallbacks currently remain keyboard/mouse focused.
+SDL gamepads use stable `JOY` button names so binds work across common Xbox, PlayStation, and Steam Input layouts. Controller support is first-class in SDL3 builds on Windows, Linux, and macOS. macOS controller support remains part of the experimental macOS build track. The native Linux, experimental native macOS, and legacy Win32 input fallbacks currently remain keyboard/mouse focused.
 
 | Button | Default action |
 |---|---|

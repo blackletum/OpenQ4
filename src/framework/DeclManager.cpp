@@ -34,6 +34,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "../bse/BSE_API.h"
 // jmarshall end
 
+extern idCVar s_openALPostPlanBehavior;
+
 /*
 
 GUIs and script remain separately parsed
@@ -2376,8 +2378,12 @@ const idDecl *idDeclManagerLocal::FindType( declType_t type, const char *name, b
 	}
 
 	// mark it as referenced
-	decl->referencedThisLevel = true;
-	decl->everReferenced = true;
+	if ( type == DECL_SOUND && s_openALPostPlanBehavior.GetBool() ) {
+		decl->self->SetReferencedThisLevel();
+	} else {
+		decl->referencedThisLevel = true;
+		decl->everReferenced = true;
+	}
 	if ( insideLevelLoad ) {
 		decl->parsedOutsideLevelLoad = false;
 	}
