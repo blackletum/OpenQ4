@@ -33,6 +33,14 @@ If you have questions concerning this license or the applicable additional terms
 #include "tr_local.h"
 #include "DXT/DXTCodec.h"
 
+idCVar image_usePrecompressedTextures(
+	"image_usePrecompressedTextures",
+	"1",
+	CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+	"automatic DDS texture replacements: 0 = off, 1 = any supported DDS format, 2 = BC7/BPTC DDS only",
+	0,
+	2 );
+
 /*
 
 This file only has a single entry point:
@@ -618,6 +626,7 @@ static const int DDS_DXT10_HEADER_BYTES = 20;
 static const int DDS_DXGI_FORMAT_BC7_UNORM = 98;
 static const int DDS_DXGI_FORMAT_BC7_UNORM_SRGB = 99;
 static const int DDS_DX10_RESOURCE_DIMENSION_TEXTURE2D = 3;
+static const uint32 DDS_DX10_RESOURCE_MISC_TEXTURECUBE = 0x00000004;
 static const int DDS_MAX_MIP_LEVELS = 32;
 static const uint32 DDS_CAPS2_CUBEMAP = 0x00000200;
 static const uint32 DDS_CAPS2_VOLUME = 0x00200000;
@@ -641,6 +650,34 @@ static int R_DDSBlockSizeForStoredFormat( ddsStoredFormat_t format ) {
 	}
 }
 
+static int R_DDSMaxMipLevelsForSize( uint32 width, uint32 height ) {
+	if ( width == 0 || height == 0 ) {
+		return 0;
+	}
+
+	int levels = 1;
+	while ( ( width > 1 || height > 1 ) && levels < DDS_MAX_MIP_LEVELS ) {
+		width = Max( (uint32)1, width >> 1 );
+		height = Max( (uint32)1, height >> 1 );
+		levels++;
+	}
+	return levels;
+}
+
+static int R_DDSStoredMipLevelCount( uint32 headerFlags, uint32 mipMapCount, uint32 width, uint32 height ) {
+	if ( ( headerFlags & DDS_HEADER_FLAG_MIPMAPCOUNT ) == 0 || mipMapCount == 0 ) {
+		return 1;
+	}
+
+	const int maxLevelsForSize = R_DDSMaxMipLevelsForSize( width, height );
+	if ( maxLevelsForSize <= 0 ) {
+		return 0;
+	}
+
+	const int headerLevels = mipMapCount > (uint32)DDS_MAX_MIP_LEVELS ? DDS_MAX_MIP_LEVELS : (int)mipMapCount;
+	return Min( headerLevels, maxLevelsForSize );
+}
+
 static bool R_DDSLevelSizeIsAvailable( int fileSize, int dataOffset, uint32 width, uint32 height, ddsStoredFormat_t format ) {
 	const int blockSize = R_DDSBlockSizeForStoredFormat( format );
 	if ( blockSize <= 0 || width == 0 || height == 0 || width > 0x7fffffff || height > 0x7fffffff ) {
@@ -650,6 +687,46 @@ static bool R_DDSLevelSizeIsAvailable( int fileSize, int dataOffset, uint32 widt
 	const int64 blocksHigh = Max( (int64)1, ( (int64)height + 3 ) >> 2 );
 	const int64 levelSize = blocksWide * blocksHigh * blockSize;
 	return levelSize > 0 && levelSize <= 0x7fffffff && dataOffset >= 0 && dataOffset <= fileSize - (int)levelSize;
+}
+
+static bool R_DDSComputeLevelLayout( int fileSize, int dataOffset, uint32 width, uint32 height, ddsStoredFormat_t format, int numLevels, idList<int> *levelOffsets, idList<int> *levelSizes ) {
+	const int blockSize = R_DDSBlockSizeForStoredFormat( format );
+	if ( blockSize <= 0 || numLevels <= 0 || numLevels > DDS_MAX_MIP_LEVELS || width == 0 || height == 0 ||
+		 width > 0x7fffffff || height > 0x7fffffff ) {
+		return false;
+	}
+
+	if ( levelOffsets != NULL ) {
+		levelOffsets->SetNum( numLevels );
+	}
+	if ( levelSizes != NULL ) {
+		levelSizes->SetNum( numLevels );
+	}
+
+	int offset = dataOffset;
+	uint32 levelWidth = width;
+	uint32 levelHeight = height;
+	for ( int level = 0; level < numLevels; level++ ) {
+		const int64 blocksWide = Max( (int64)1, ( (int64)levelWidth + 3 ) >> 2 );
+		const int64 blocksHigh = Max( (int64)1, ( (int64)levelHeight + 3 ) >> 2 );
+		const int64 levelSize = blocksWide * blocksHigh * blockSize;
+		if ( levelSize <= 0 || levelSize > 0x7fffffff || offset < 0 || offset > fileSize - (int)levelSize ) {
+			return false;
+		}
+
+		if ( levelOffsets != NULL ) {
+			( *levelOffsets )[ level ] = offset;
+		}
+		if ( levelSizes != NULL ) {
+			( *levelSizes )[ level ] = (int)levelSize;
+		}
+
+		offset += (int)levelSize;
+		levelWidth = Max( (uint32)1, levelWidth >> 1 );
+		levelHeight = Max( (uint32)1, levelHeight >> 1 );
+	}
+
+	return true;
 }
 
 static ddsStoredFormat_t R_GetDDSStoredFormatFromBuffer( const byte *buffer, int fileSize, int *dataOffset, uint32 *width, uint32 *height, uint32 *mipMapCount ) {
@@ -691,15 +768,18 @@ static ddsStoredFormat_t R_GetDDSStoredFormatFromBuffer( const byte *buffer, int
 		}
 		const uint32 dxgiFormat = R_ReadLittleUInt32( buffer + DDS_HEADER_BYTES );
 		const uint32 resourceDimension = R_ReadLittleUInt32( buffer + DDS_HEADER_BYTES + 4 );
+		const uint32 miscFlag = R_ReadLittleUInt32( buffer + DDS_HEADER_BYTES + 8 );
 		const uint32 arraySize = R_ReadLittleUInt32( buffer + DDS_HEADER_BYTES + 12 );
 		if ( ( dxgiFormat == DDS_DXGI_FORMAT_BC7_UNORM || dxgiFormat == DDS_DXGI_FORMAT_BC7_UNORM_SRGB ) &&
 			 resourceDimension == DDS_DX10_RESOURCE_DIMENSION_TEXTURE2D &&
+			 ( miscFlag & DDS_DX10_RESOURCE_MISC_TEXTURECUBE ) == 0 &&
 			 arraySize == 1 ) {
 			format = DDS_STORED_FORMAT_BC7;
 			localDataOffset += DDS_DXT10_HEADER_BYTES;
 		}
 	} else if ( fourCC == R_MakeFourCC( 'B', 'C', '7', '0' ) ||
-				fourCC == R_MakeFourCC( 'B', 'C', '7', 'L' ) ) {
+				fourCC == R_MakeFourCC( 'B', 'C', '7', 'L' ) ||
+				fourCC == R_MakeFourCC( 'B', 'C', '7', ' ' ) ) {
 		format = DDS_STORED_FORMAT_BC7;
 	}
 
@@ -722,15 +802,69 @@ static ddsStoredFormat_t R_GetDDSStoredFormatFromBuffer( const byte *buffer, int
 	return format;
 }
 
-static ddsStoredFormat_t R_GetDDSStoredFormatFromFile( const char *name, ID_TIME_T *timestamp ) {
+static ddsStoredFormat_t R_GetDDSStoredFormatFromFile( const char *name, ID_TIME_T *timestamp, bool requireCompleteMipChain = false ) {
 	byte *buffer = NULL;
 	const int fileSize = fileSystem->ReadFile( name, (void **)&buffer, timestamp );
 	if ( buffer == NULL ) {
 		return DDS_STORED_FORMAT_INVALID;
 	}
-	const ddsStoredFormat_t format = R_GetDDSStoredFormatFromBuffer( buffer, fileSize, NULL, NULL, NULL, NULL );
+	int dataOffset = DDS_HEADER_BYTES;
+	uint32 ddsWidth = 0;
+	uint32 ddsHeight = 0;
+	uint32 mipMapCount = 0;
+	ddsStoredFormat_t format = R_GetDDSStoredFormatFromBuffer( buffer, fileSize, &dataOffset, &ddsWidth, &ddsHeight, &mipMapCount );
+	if ( format != DDS_STORED_FORMAT_INVALID && requireCompleteMipChain ) {
+		const uint32 headerFlags = R_ReadLittleUInt32( buffer + 8 );
+		const int numLevels = R_DDSStoredMipLevelCount( headerFlags, mipMapCount, ddsWidth, ddsHeight );
+		if ( numLevels <= 0 || !R_DDSComputeLevelLayout( fileSize, dataOffset, ddsWidth, ddsHeight, format, numLevels, NULL, NULL ) ) {
+			format = DDS_STORED_FORMAT_INVALID;
+		}
+	}
 	fileSystem->FreeFile( buffer );
 	return format;
+}
+
+static bool R_ImageNameHasDDSShadowPrefix( const idStr &name ) {
+	return name.Length() >= 4 && name[0] == 'd' && name[1] == 'd' && name[2] == 's' && name[3] == '/';
+}
+
+static bool R_TryResolvePreferredDDSImageSource( const idStr &candidateName, idStr &ddsName, ID_TIME_T *timestamp, bool allowPrecompressedDDS, bool *precompressedDDS ) {
+	ID_TIME_T ddsTimestamp = FILE_NOT_FOUND_TIMESTAMP;
+	const ddsStoredFormat_t format = R_GetDDSStoredFormatFromFile( candidateName.c_str(), &ddsTimestamp );
+	const int usePrecompressedTextures = image_usePrecompressedTextures.GetInteger();
+
+	if ( format == DDS_STORED_FORMAT_DXT1 || format == DDS_STORED_FORMAT_DXT5 ) {
+		if ( usePrecompressedTextures >= 2 ) {
+			return false;
+		}
+		ddsName = candidateName;
+		if ( timestamp != NULL ) {
+			*timestamp = ddsTimestamp;
+		}
+		if ( precompressedDDS != NULL ) {
+			*precompressedDDS = false;
+		}
+		return true;
+	}
+
+	if ( format == DDS_STORED_FORMAT_BC7 ) {
+		if ( !allowPrecompressedDDS || !glConfig.bptcTextureCompressionAvailable ) {
+			return false;
+		}
+		if ( R_GetDDSStoredFormatFromFile( candidateName.c_str(), NULL, true ) != DDS_STORED_FORMAT_BC7 ) {
+			return false;
+		}
+		ddsName = candidateName;
+		if ( timestamp != NULL ) {
+			*timestamp = ddsTimestamp;
+		}
+		if ( precompressedDDS != NULL ) {
+			*precompressedDDS = true;
+		}
+		return true;
+	}
+
+	return false;
 }
 
 /*
@@ -749,8 +883,13 @@ bool R_ResolvePreferredDDSImageSource( const char *cname, idStr &ddsName, ID_TIM
 		return false;
 	}
 
+	if ( image_usePrecompressedTextures.GetInteger() <= 0 ) {
+		return false;
+	}
+
 	idStr sourceName = cname;
 	sourceName.DefaultFileExtension( ".tga" );
+	sourceName.BackSlashesToSlashes();
 	sourceName.ToLower();
 
 	idStr ext;
@@ -759,29 +898,20 @@ bool R_ResolvePreferredDDSImageSource( const char *cname, idStr &ddsName, ID_TIM
 		return false;
 	}
 
-	ddsName = sourceName;
-	ddsName.StripFileExtension();
-	ddsName.DefaultFileExtension( ".dds" );
-
-	ID_TIME_T ddsTimestamp = FILE_NOT_FOUND_TIMESTAMP;
-	const ddsStoredFormat_t format = R_GetDDSStoredFormatFromFile( ddsName.c_str(), &ddsTimestamp );
-	if ( format == DDS_STORED_FORMAT_DXT1 || format == DDS_STORED_FORMAT_DXT5 ) {
-		if ( timestamp != NULL ) {
-			*timestamp = ddsTimestamp;
+	if ( !R_ImageNameHasDDSShadowPrefix( sourceName ) ) {
+		idStr shadowDDSName = "dds/";
+		shadowDDSName += sourceName;
+		shadowDDSName.StripFileExtension();
+		shadowDDSName.DefaultFileExtension( ".dds" );
+		if ( R_TryResolvePreferredDDSImageSource( shadowDDSName, ddsName, timestamp, allowPrecompressedDDS, precompressedDDS ) ) {
+			return true;
 		}
-		return true;
-	}
-	if ( format == DDS_STORED_FORMAT_BC7 && allowPrecompressedDDS && glConfig.bptcTextureCompressionAvailable ) {
-		if ( timestamp != NULL ) {
-			*timestamp = ddsTimestamp;
-		}
-		if ( precompressedDDS != NULL ) {
-			*precompressedDDS = true;
-		}
-		return true;
 	}
 
-	return false;
+	idStr siblingDDSName = sourceName;
+	siblingDDSName.StripFileExtension();
+	siblingDDSName.DefaultFileExtension( ".dds" );
+	return R_TryResolvePreferredDDSImageSource( siblingDDSName, ddsName, timestamp, allowPrecompressedDDS, precompressedDDS );
 }
 
 /*
@@ -789,7 +919,7 @@ bool R_ResolvePreferredDDSImageSource( const char *cname, idStr &ddsName, ID_TIM
 R_LoadPrecompressedDDS
 =============
 */
-bool R_LoadPrecompressedDDS( const char *cname, idBinaryImage &image, ID_TIME_T *timestamp ) {
+bool R_LoadPrecompressedDDS( const char *cname, idBinaryImage &image, ID_TIME_T *timestamp, textureUsage_t usage ) {
 	if ( cname == NULL || cname[0] == '\0' ) {
 		return false;
 	}
@@ -814,51 +944,13 @@ bool R_LoadPrecompressedDDS( const char *cname, idBinaryImage &image, ID_TIME_T 
 
 	bool loaded = false;
 	do {
-		const uint32 magic = R_ReadLittleUInt32( buffer + 0 );
-		const uint32 headerSize = R_ReadLittleUInt32( buffer + 4 );
 		const uint32 headerFlags = R_ReadLittleUInt32( buffer + 8 );
-		const uint32 ddsHeight = R_ReadLittleUInt32( buffer + 12 );
-		const uint32 ddsWidth = R_ReadLittleUInt32( buffer + 16 );
-		const uint32 mipMapCount = R_ReadLittleUInt32( buffer + 28 );
-		const uint32 pixelFormatSize = R_ReadLittleUInt32( buffer + 76 );
-		const uint32 pixelFormatFlags = R_ReadLittleUInt32( buffer + 80 );
-		const uint32 fourCC = R_ReadLittleUInt32( buffer + 84 );
-		const uint32 caps2 = R_ReadLittleUInt32( buffer + 112 );
-
-		if ( magic != R_MakeFourCC( 'D', 'D', 'S', ' ' ) ||
-			 headerSize != 124 ||
-			 pixelFormatSize != 32 ||
-			 ddsWidth == 0 ||
-			 ddsHeight == 0 ||
-			 ddsWidth > 0x7fffffff ||
-			 ddsHeight > 0x7fffffff ||
-			 ( caps2 & ( DDS_CAPS2_CUBEMAP | DDS_CAPS2_VOLUME ) ) != 0 ||
-			 ( pixelFormatFlags & DDS_PIXELFORMAT_FOURCC ) == 0 ) {
-			break;
-		}
-
 		int dataOffset = DDS_HEADER_BYTES;
-		bool isBC7 = false;
-		if ( fourCC == R_MakeFourCC( 'D', 'X', '1', '0' ) ) {
-			if ( fileSize < DDS_HEADER_BYTES + DDS_DXT10_HEADER_BYTES ) {
-				break;
-			}
-			const uint32 dxgiFormat = R_ReadLittleUInt32( buffer + DDS_HEADER_BYTES );
-			const uint32 resourceDimension = R_ReadLittleUInt32( buffer + DDS_HEADER_BYTES + 4 );
-			const uint32 arraySize = R_ReadLittleUInt32( buffer + DDS_HEADER_BYTES + 12 );
-			if ( ( dxgiFormat != DDS_DXGI_FORMAT_BC7_UNORM && dxgiFormat != DDS_DXGI_FORMAT_BC7_UNORM_SRGB ) ||
-				 resourceDimension != DDS_DX10_RESOURCE_DIMENSION_TEXTURE2D ||
-				 arraySize != 1 ) {
-				break;
-			}
-			dataOffset += DDS_DXT10_HEADER_BYTES;
-			isBC7 = true;
-		} else if ( fourCC == R_MakeFourCC( 'B', 'C', '7', '0' ) ||
-					fourCC == R_MakeFourCC( 'B', 'C', '7', 'L' ) ) {
-			isBC7 = true;
-		}
-
-		if ( !isBC7 ) {
+		uint32 ddsWidth = 0;
+		uint32 ddsHeight = 0;
+		uint32 mipMapCount = 0;
+		const ddsStoredFormat_t parsedFormat = R_GetDDSStoredFormatFromBuffer( buffer, fileSize, &dataOffset, &ddsWidth, &ddsHeight, &mipMapCount );
+		if ( parsedFormat != DDS_STORED_FORMAT_BC7 ) {
 			break;
 		}
 
@@ -867,39 +959,21 @@ bool R_LoadPrecompressedDDS( const char *cname, idBinaryImage &image, ID_TIME_T 
 			break;
 		}
 
-		const int numLevels = ( headerFlags & DDS_HEADER_FLAG_MIPMAPCOUNT ) != 0 && mipMapCount > 0 ?
-			( mipMapCount > (uint32)DDS_MAX_MIP_LEVELS ? DDS_MAX_MIP_LEVELS : (int)mipMapCount ) :
-			1;
+		const int numLevels = R_DDSStoredMipLevelCount( headerFlags, mipMapCount, ddsWidth, ddsHeight );
+		if ( numLevels <= 0 ) {
+			idLib::Warning( "Image file '%s' has invalid BC7/BPTC DDS mip metadata", name.c_str() );
+			break;
+		}
 		idList<int> levelOffsets;
 		idList<int> levelSizes;
-		levelOffsets.SetNum( numLevels );
-		levelSizes.SetNum( numLevels );
-
-		int offset = dataOffset;
-		int levelWidth = (int)ddsWidth;
-		int levelHeight = (int)ddsHeight;
-		for ( int level = 0; level < numLevels; level++ ) {
-			const int64 blocksWide = Max( (int64)1, ( (int64)levelWidth + 3 ) >> 2 );
-			const int64 blocksHigh = Max( (int64)1, ( (int64)levelHeight + 3 ) >> 2 );
-			const int64 levelSize = blocksWide * blocksHigh * 16;
-			if ( levelSize <= 0 || levelSize > 0x7fffffff || offset < 0 || offset > fileSize - (int)levelSize ) {
-				loaded = false;
-				break;
-			}
-			levelOffsets[ level ] = offset;
-			levelSizes[ level ] = (int)levelSize;
-			offset += (int)levelSize;
-
-			levelWidth = Max( 1, levelWidth >> 1 );
-			levelHeight = Max( 1, levelHeight >> 1 );
-			loaded = true;
-		}
-
-		if ( !loaded ) {
+		if ( !R_DDSComputeLevelLayout( fileSize, dataOffset, ddsWidth, ddsHeight, DDS_STORED_FORMAT_BC7, numLevels, &levelOffsets, &levelSizes ) ) {
+			idLib::Warning( "Image file '%s' has an incomplete BC7/BPTC DDS mip chain", name.c_str() );
 			break;
 		}
 
-		image.Load2DFromCompressedData( (int)ddsWidth, (int)ddsHeight, numLevels, FMT_BC7, CFM_DEFAULT, buffer, levelOffsets.Ptr(), levelSizes.Ptr() );
+		const textureColor_t colorFormat = usage == TD_BUMP ? CFM_NORMAL_DXT5 : CFM_DEFAULT;
+		image.Load2DFromCompressedData( (int)ddsWidth, (int)ddsHeight, numLevels, FMT_BC7, colorFormat, buffer, levelOffsets.Ptr(), levelSizes.Ptr() );
+		loaded = true;
 	} while ( false );
 
 	fileSystem->FreeFile( buffer );

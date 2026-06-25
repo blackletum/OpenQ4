@@ -52,6 +52,36 @@ static bool R_ShouldWriteGeneratedImages() {
 	return image_writeGeneratedImages.GetBool() || cvarSystem->GetCVarBool( "com_makingBuild" );
 }
 
+static bool R_BinaryImageFormatIsBlockCompressed( textureFormat_t format ) {
+	return format == FMT_DXT1 || format == FMT_DXT5 || format == FMT_BC7;
+}
+
+static int R_BinaryImageMinimumDataSize( textureFormat_t format, int width, int height ) {
+	if ( width <= 0 || height <= 0 ) {
+		return 0;
+	}
+
+	const int bitsForFormat = BitsForFormat( format );
+	if ( bitsForFormat <= 0 ) {
+		return 0;
+	}
+
+	int64 dataSize = 0;
+	if ( R_BinaryImageFormatIsBlockCompressed( format ) ) {
+		const int64 blocksWide = Max( (int64)1, ( (int64)width + 3 ) >> 2 );
+		const int64 blocksHigh = Max( (int64)1, ( (int64)height + 3 ) >> 2 );
+		const int64 bytesPerBlock = ( format == FMT_DXT1 ) ? 8 : 16;
+		dataSize = blocksWide * blocksHigh * bytesPerBlock;
+	} else {
+		dataSize = ( (int64)width * height * bitsForFormat + 7 ) / 8;
+	}
+
+	if ( dataSize <= 0 || dataSize > MAX_BINARY_IMAGE_DATA_SIZE ) {
+		return 0;
+	}
+	return (int)dataSize;
+}
+
 /*
 ========================
 idBinaryImage::Clear
@@ -519,6 +549,9 @@ bool idBinaryImage::LoadFromGeneratedFile( idFile * bFile, ID_TIME_T sourceFileT
 		 fileData.numLevels <= 0 || fileData.numLevels > MAX_BINARY_IMAGE_LEVELS ) {
 		return false;
 	}
+	if ( fileData.textureType == TT_CUBIC && fileData.width != fileData.height ) {
+		return false;
+	}
 
 	int numImages = fileData.numLevels;
 	if ( fileData.textureType == TT_CUBIC ) {
@@ -526,6 +559,8 @@ bool idBinaryImage::LoadFromGeneratedFile( idFile * bFile, ID_TIME_T sourceFileT
 	}
 
 	images.SetNum( numImages );
+	bool seenImages[6][MAX_BINARY_IMAGE_LEVELS];
+	memset( seenImages, 0, sizeof( seenImages ) );
 
 	for ( int i = 0; i < numImages; i++ ) {
 		idBinaryImageData &img = images[ i ];
@@ -548,18 +583,25 @@ bool idBinaryImage::LoadFromGeneratedFile( idFile * bFile, ID_TIME_T sourceFileT
 		} else if ( img.destZ < 0 || img.destZ >= 6 ) {
 			return false;
 		}
+		const int imageSide = fileData.textureType == TT_2D ? 0 : img.destZ;
+		if ( seenImages[ imageSide ][ img.level ] ) {
+			return false;
+		}
+		seenImages[ imageSide ][ img.level ] = true;
+
+		const int expectedWidth = Max( 1, fileData.width >> img.level );
+		const int expectedHeight = fileData.textureType == TT_CUBIC ? expectedWidth : Max( 1, fileData.height >> img.level );
 		if ( img.width <= 0 || img.width > MAX_BINARY_IMAGE_DIMENSION || img.height <= 0 || img.height > MAX_BINARY_IMAGE_DIMENSION ) {
+			return false;
+		}
+		if ( img.width != expectedWidth || img.height != expectedHeight ) {
 			return false;
 		}
 		if ( img.dataSize <= 0 || img.dataSize > MAX_BINARY_IMAGE_DATA_SIZE ) {
 			return false;
 		}
-		// DXT images need to be padded to 4x4 block sizes, but the original image
-		// sizes are still retained, so the stored data size may be larger than
-		// just the multiplication of dimensions
-		const int bitsForFormat = BitsForFormat( (textureFormat_t)fileData.format );
-		const long long minDataSize = ( (long long)img.width * img.height * bitsForFormat + 7 ) / 8;
-		if ( minDataSize <= 0 || minDataSize > MAX_BINARY_IMAGE_DATA_SIZE || img.dataSize < minDataSize ) {
+		const int expectedDataSize = R_BinaryImageMinimumDataSize( (textureFormat_t)fileData.format, expectedWidth, expectedHeight );
+		if ( expectedDataSize <= 0 || img.dataSize != expectedDataSize ) {
 			return false;
 		}
 		img.Alloc( img.dataSize );

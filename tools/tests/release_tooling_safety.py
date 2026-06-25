@@ -743,6 +743,29 @@ def validate_validation_wiring() -> None:
             raise AssertionError(f"docs_link_integrity.py is not wired into {context}")
 
 
+def validate_manual_release_optimized_builds() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "manual-release.yml").read_text(encoding="utf-8")
+
+    if '"--buildtype=debug",' in workflow or "--buildtype=debug " in workflow:
+        raise AssertionError("manual release workflow must not package debug binaries")
+    if '"--buildtype=debugoptimized",' not in workflow:
+        raise AssertionError("Windows release packaging is not using the optimized diagnostics build type")
+    if "bash tools/build/meson_setup.sh setup --wipe builddir . --backend ninja --buildtype=debugoptimized -Db_ndebug=true" not in workflow:
+        raise AssertionError("Linux/macOS release packaging is not using the optimized diagnostics build type")
+    if workflow.count("-Db_ndebug=true") < 2:
+        raise AssertionError("manual release packaging must disable runtime asserts on Windows and POSIX release builds")
+
+    gamelibs = (ROOT / "tools" / "build" / "build_gamelibs.ps1").read_text(encoding="utf-8")
+    for token in (
+        "[ValidateSet(\"plain\", \"debug\", \"debugoptimized\", \"release\", \"minsize\", \"custom\")]",
+        "OPENQ4_GAMELIBS_BUILDTYPE",
+        "\"release\"",
+        "--buildtype=$BuildType",
+    ):
+        if token not in gamelibs:
+            raise AssertionError(f"GameLibs helper is missing optimized-build token: {token}")
+
+
 def main() -> None:
     shutil.rmtree(WORK, ignore_errors=True)
     try:
@@ -762,6 +785,7 @@ def main() -> None:
         validate_windows_installer_input_escaping()
         validate_discord_release_download_suffixes()
         validate_validation_wiring()
+        validate_manual_release_optimized_builds()
     finally:
         shutil.rmtree(WORK, ignore_errors=True)
     print("release_tooling_safety: ok")

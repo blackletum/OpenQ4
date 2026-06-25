@@ -225,7 +225,7 @@ ID_INLINE void idImage::DeriveOpts() {
 			while ( temp_width > 1 || temp_height > 1 ) {
 				temp_width >>= 1;
 				temp_height >>= 1;
-				if ( ( opts.format == FMT_DXT1 || opts.format == FMT_DXT5 ) &&
+				if ( ( opts.format == FMT_DXT1 || opts.format == FMT_DXT5 || opts.format == FMT_BC7 ) &&
 					( ( temp_width & 0x3 ) != 0 || ( temp_height & 0x3 ) != 0 ) ) {
 						break;
 				}
@@ -246,6 +246,17 @@ static ID_INLINE bool R_GeneratedImageHeaderMatchesDerivedOpts( const bimageFile
 		return false;
 	}
 
+	return true;
+}
+
+static ID_INLINE bool R_BinaryImageHeaderSupportedByRenderer( const bimageFile_t &header ) {
+	const textureFormat_t format = (textureFormat_t)header.format;
+	if ( ( format == FMT_DXT1 || format == FMT_DXT5 ) && !glConfig.textureCompressionAvailable ) {
+		return false;
+	}
+	if ( format == FMT_BC7 && !glConfig.bptcTextureCompressionAvailable ) {
+		return false;
+	}
 	return true;
 }
 
@@ -556,7 +567,8 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 		}
 	}
 
-	if ( ( fileSystem->InProductionMode() && binaryFileTime != FILE_NOT_FOUND_TIMESTAMP ) || ( ( binaryFileTime != FILE_NOT_FOUND_TIMESTAMP )
+	const bool binaryImageAvailable = binaryFileTime != FILE_NOT_FOUND_TIMESTAMP && R_BinaryImageHeaderSupportedByRenderer( im.GetFileHeader() );
+	if ( ( fileSystem->InProductionMode() && binaryImageAvailable ) || ( binaryImageAvailable
 		&& R_GeneratedImageHeaderMatchesDerivedOpts( im.GetFileHeader(), opts, usage )
 		) ) {
 		const bimageFile_t & header = im.GetFileHeader();
@@ -618,7 +630,7 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 			int width, height;
 			byte * pic;
 
-			if ( selectedDDSImage && R_LoadPrecompressedDDS( loadSourceName, im, &sourceFileTime ) ) {
+			if ( selectedDDSImage && R_LoadPrecompressedDDS( loadSourceName, im, &sourceFileTime, usage ) ) {
 				const bimageFile_t &header = im.GetFileHeader();
 				opts.width = header.width;
 				opts.height = header.height;
@@ -629,8 +641,15 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 				sourceFileTimeKnown = true;
 				loadedPrecompressedDDS = true;
 			} else {
+				const char *fallbackLoadSourceName = loadSourceName;
+				if ( preferredDDSPrecompressed ) {
+					common->Warning( "Couldn't load preferred BC7/BPTC DDS replacement %s for %s; falling back to original source", loadSourceName, GetName() );
+					fallbackLoadSourceName = GetName();
+					sourceFileTime = FILE_NOT_FOUND_TIMESTAMP;
+				}
+
 				// load the full specification, and perform any image program calculations
-				R_LoadImageProgram( loadSourceName, &pic, &width, &height, &sourceFileTime, &usage );
+				R_LoadImageProgram( fallbackLoadSourceName, &pic, &width, &height, &sourceFileTime, &usage );
 
 				if ( pic == NULL ) {
 					if ( !R_ShouldSuppressMissingImageWarning( GetName() ) ) {
@@ -1386,12 +1405,23 @@ void idImage::Reload( bool force ) {
 
 	// check file times
 	if ( !force ) {
-		ID_TIME_T current;
+		ID_TIME_T current = FILE_NOT_FOUND_TIMESTAMP;
 		if ( cubeFiles != CF_2D ) {
 			R_LoadCubeImages( imgName, cubeFiles, NULL, NULL, &current );
 		} else {
-			// get the current values
-			R_LoadImageProgram( imgName, NULL, NULL, NULL, &current );
+			idStr sourceExtension;
+			idStr sourceName = imgName;
+			sourceName.ExtractFileExtension( sourceExtension );
+			idStr preferredDDSName;
+			ID_TIME_T preferredDDSFileTime = FILE_NOT_FOUND_TIMESTAMP;
+			if ( idStr::Icmp( sourceExtension.c_str(), "dds" ) != 0 &&
+				 R_IsPlainImageSourceName( imgName ) &&
+				 R_ResolvePreferredDDSImageSource( imgName, preferredDDSName, &preferredDDSFileTime, true, NULL ) ) {
+				current = preferredDDSFileTime;
+			} else {
+				// get the current values
+				R_LoadImageProgram( imgName, NULL, NULL, NULL, &current );
+			}
 		}
 		if ( current <= sourceFileTime ) {
 			return;

@@ -53,15 +53,22 @@ static int R_CompressedTextureSizeInBytes( textureFormat_t format, int width, in
 		return 0;
 	}
 
-	const int bitsPerPixel = BitsForFormat( format );
-	if ( bitsPerPixel <= 0 ) {
-		idLib::Error( "Invalid compressed texture format %d", format );
+	int bytesPerBlock = 0;
+	switch ( format ) {
+		case FMT_DXT1:
+			bytesPerBlock = 8;
+			break;
+		case FMT_DXT5:
+		case FMT_BC7:
+			bytesPerBlock = 16;
+			break;
+		default:
+			idLib::Error( "Invalid compressed texture format %d", format );
 	}
 
 	const int64 blocksWide = Max( (int64)1, ( (int64)width + 3 ) >> 2 );
 	const int64 blocksHigh = Max( (int64)1, ( (int64)height + 3 ) >> 2 );
-	const int64 bytesPerBlock = (int64)16 * bitsPerPixel / 8;
-	const int64 compressedSize = blocksWide * blocksHigh * bytesPerBlock;
+	const int64 compressedSize = blocksWide * blocksHigh * (int64)bytesPerBlock;
 	if ( compressedSize <= 0 || compressedSize > 0x7fffffff ) {
 		idLib::Error( "Compressed texture %dx%d format %d is too large", width, height, format );
 	}
@@ -405,6 +412,9 @@ void idImage::AllocImage() {
 		dataType = GL_UNSIGNED_BYTE;
 		break;
 	case FMT_BC7:
+		if ( !glConfig.bptcTextureCompressionAvailable ) {
+			idLib::Error( "%s requires BC7/BPTC texture support, but this renderer does not expose it\n", GetName() );
+		}
 		internalFormat = GL_COMPRESSED_RGBA_BPTC_UNORM;
 		dataFormat = GL_RGBA;
 		dataType = GL_UNSIGNED_BYTE;

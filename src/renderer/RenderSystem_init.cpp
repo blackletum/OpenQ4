@@ -989,15 +989,22 @@ static void R_CheckPortableExtensions( void ) {
 
 	// GL 1.3/GL_ARB_texture_compression + GL_S3_s3tc
 	// DRI drivers may have GL_ARB_texture_compression but no GL_EXT_texture_compression_s3tc
-	const bool textureCompressionAvailable = glConfig.glVersion >= 1.3f || R_CheckExtension( "GL_ARB_texture_compression" );
+	const bool textureCompressionAdvertised = glConfig.glVersion >= 1.3f || R_CheckExtension( "GL_ARB_texture_compression" );
+	const bool textureCompressionEntryPointsAvailable = glCompressedTexImage2DARB != NULL && glCompressedTexSubImage2DARB != NULL;
+	if ( textureCompressionAdvertised && !textureCompressionEntryPointsAvailable ) {
+		common->Printf( "X..texture compression entry points incomplete\n" );
+	}
+	const bool textureCompressionAvailable = textureCompressionAdvertised && textureCompressionEntryPointsAvailable;
 	if ( textureCompressionAvailable && R_CheckExtension( "GL_EXT_texture_compression_s3tc" ) ) {
 		glConfig.textureCompressionAvailable = true;
 	} else {
 		glConfig.textureCompressionAvailable = false;
 	}
+	const bool bptcTextureCompressionAdvertised =
+		glConfig.glVersion >= 4.2f || R_CheckExtension( "GL_ARB_texture_compression_bptc" ) || R_CheckExtension( "GL_EXT_texture_compression_bptc" );
 	glConfig.bptcTextureCompressionAvailable =
 		textureCompressionAvailable &&
-		( glConfig.glVersion >= 4.2f || R_CheckExtension( "GL_ARB_texture_compression_bptc" ) || R_CheckExtension( "GL_EXT_texture_compression_bptc" ) );
+		bptcTextureCompressionAdvertised;
 
 	// GL_EXT_texture_filter_anisotropic
 	glConfig.anisotropicAvailable = R_CheckExtension( "GL_EXT_texture_filter_anisotropic" );
@@ -3504,6 +3511,10 @@ void GfxInfo_f( const idCmdArgs &args ) {
 		glConfig.renderFeatures.renderGraph ? 1 : 0,
 		glConfig.renderFeatures.scenePackets ? 1 : 0,
 		glConfig.renderFeatures.legacyARB2Bridge ? 1 : 0 );
+	common->Printf(
+		"Texture compression: S3TC/DXT=%d BC7/BPTC=%d\n",
+		glConfig.textureCompressionAvailable ? 1 : 0,
+		glConfig.bptcTextureCompressionAvailable ? 1 : 0 );
 	{
 		char capsSummary[512];
 		RendererCaps_FormatSummary( glConfig.backendCaps, capsSummary, sizeof( capsSummary ) );

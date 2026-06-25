@@ -389,7 +389,7 @@ IMAGEFILES
 void R_LoadImage(const char* name, byte** pic, int* width, int* height, ID_TIME_T* timestamp, bool makePowerOf2);
 void R_LoadImageForUsage(const char* name, byte** pic, int* width, int* height, ID_TIME_T* timestamp, bool makePowerOf2, textureUsage_t usage);
 bool R_ResolvePreferredDDSImageSource(const char* name, idStr& ddsName, ID_TIME_T* timestamp, bool allowPrecompressedDDS, bool* precompressedDDS);
-bool R_LoadPrecompressedDDS(const char* name, idBinaryImage& image, ID_TIME_T* timestamp);
+bool R_LoadPrecompressedDDS(const char* name, idBinaryImage& image, ID_TIME_T* timestamp, textureUsage_t usage);
 // pic is in top to bottom raster format
 bool R_LoadCubeImages(const char* cname, cubeFiles_t extensions, byte* pic[6], int* size, ID_TIME_T* timestamp);
 

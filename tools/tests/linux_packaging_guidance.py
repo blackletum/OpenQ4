@@ -32,7 +32,7 @@ def validate_building_packager_notes() -> None:
     require(source, "OPENQ4_WAYLAND_DISABLE_LIBDECOR=1", "BUILDING libdecor opt-out")
     require(source, "OPENQ4_WAYLAND_PREFER_LIBDECOR=1", "BUILDING libdecor preference")
     require(source, "OPENQ4_WAYLAND_SYNC_WINDOW_OPS=1", "BUILDING sync window diagnostics")
-    require(source, "openQ4-<version>-linux-<arch>-debugsymbols.tar.xz", "BUILDING Linux debug symbols")
+    require(source, "openq4-<version>-linux-<arch>-debugsymbols.tar.xz", "BUILDING Linux debug symbols")
     require(source, "OPENQ4_GAMELIBS_REPO", "BUILDING GameLibs source-input path")
     require(source, "openq4_gamelibs_stage_manifest.json", "BUILDING GameLibs staging manifest")
     require(source, "validate_push.sh --install", "BUILDING package validation command")

@@ -1,6 +1,8 @@
 param(
     [string]$GameLibsRepo = "",
     [string]$BuildDir = "",
+    [ValidateSet("plain", "debug", "debugoptimized", "release", "minsize", "custom")]
+    [string]$BuildType = "",
     [switch]$SetupOnly
 )
 
@@ -15,6 +17,17 @@ if ([string]::IsNullOrWhiteSpace($GameLibsRepo)) {
 }
 if ([string]::IsNullOrWhiteSpace($BuildDir)) {
     $BuildDir = Join-Path $GameLibsRepo "builddir"
+}
+if ([string]::IsNullOrWhiteSpace($BuildType)) {
+    $BuildType = if ([string]::IsNullOrWhiteSpace($env:OPENQ4_GAMELIBS_BUILDTYPE)) {
+        "release"
+    } else {
+        $env:OPENQ4_GAMELIBS_BUILDTYPE.Trim()
+    }
+}
+$allowedBuildTypes = @("plain", "debug", "debugoptimized", "release", "minsize", "custom")
+if ($allowedBuildTypes -notcontains $BuildType) {
+    throw "Invalid GameLibs build type '$BuildType'. Expected one of: $($allowedBuildTypes -join ', ')."
 }
 
 $gameLibsRoot = [System.IO.Path]::GetFullPath($GameLibsRepo)
@@ -34,11 +47,12 @@ if (-not (Test-Path $gameLibsMesonSetup)) {
 Write-Host "Building openQ4 SDK game libraries from:"
 Write-Host "  Repo: $gameLibsRoot"
 Write-Host "  BuildDir: $gameLibsBuildDir"
+Write-Host "  BuildType: $BuildType"
 
 if ((Test-Path $gameLibsCoreData) -and (Test-Path $gameLibsBuildNinja)) {
-    & $gameLibsMesonSetup setup --reconfigure $gameLibsBuildDir $gameLibsRoot
+    & $gameLibsMesonSetup setup --reconfigure $gameLibsBuildDir $gameLibsRoot --buildtype=$BuildType
 } else {
-    & $gameLibsMesonSetup setup --wipe $gameLibsBuildDir $gameLibsRoot --backend ninja --buildtype=debug --vsenv
+    & $gameLibsMesonSetup setup --wipe $gameLibsBuildDir $gameLibsRoot --backend ninja --buildtype=$BuildType --vsenv
 }
 $setupExit = [int]$LASTEXITCODE
 if ($setupExit -ne 0) {
