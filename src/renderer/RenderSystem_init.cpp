@@ -3579,6 +3579,9 @@ void GfxInfo_f( const idCmdArgs &args ) {
 	if ( glConfig.preferSimpleLighting ) {
 		common->Printf( "Simple lighting compatibility mode preferred for this renderer\n" );
 	}
+	if ( glConfig.preferSimpleInteraction ) {
+		common->Printf( "Simple ARB interaction compatibility mode preferred for this renderer\n" );
+	}
 
 	//=============================
 

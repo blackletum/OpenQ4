@@ -114,6 +114,7 @@ typedef struct glconfig_s {
 // RAVEN BEGIN
 // dluetscher: added preferSimpleLighting flag
 	bool				preferSimpleLighting;	// for the ATI 9700 cards
+	bool				preferSimpleInteraction;	// driver quirk fallback for fragile ARB interaction uploads
 // RAVEN END
 #endif
 

@@ -10400,7 +10400,10 @@ static const char *RB_ARBProgramTargetName( GLenum target ) {
 static bool RB_IsRequiredLightingARBProgram( const progDef_t &prog ) {
 	return prog.ident == VPROG_INTERACTION ||
 		prog.ident == FPROG_INTERACTION ||
-		idStr::Icmp( prog.name, "interaction.vfp" ) == 0;
+		prog.ident == VPROG_SIMPLE_INTERACTION ||
+		prog.ident == FPROG_SIMPLE_INTERACTION ||
+		idStr::Icmp( prog.name, "interaction.vfp" ) == 0 ||
+		idStr::Icmp( prog.name, "SimpleInteraction.vfp" ) == 0;
 }
 
 static void RB_SetARBProgramPath( progDef_t &prog ) {
@@ -10439,12 +10442,28 @@ static progDef_t *RB_FindARBProgramRecord( GLenum target, GLuint ident ) {
 	return NULL;
 }
 
+static bool RB_DriverPrefersSimpleInteraction( void ) {
+	return glConfig.preferSimpleInteraction ||
+		( ( RendererDriverQuirks_LastReport().flags & RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION ) != 0 );
+}
+
+static bool RB_UseSimpleInteractionShader( void ) {
+	return r_useSimpleInteraction.GetBool() || RB_DriverPrefersSimpleInteraction();
+}
+
+static bool RB_ShouldSkipFullInteractionUpload( const progDef_t &prog ) {
+	return RB_DriverPrefersSimpleInteraction() &&
+		( prog.ident == VPROG_INTERACTION ||
+		  prog.ident == FPROG_INTERACTION ||
+		  idStr::Icmp( prog.name, "interaction.vfp" ) == 0 );
+}
+
 static GLuint RB_CurrentInteractionProgramIdent( GLenum target ) {
 	if ( r_testARBProgram.GetBool() ) {
 		return ( target == GL_VERTEX_PROGRAM_ARB ) ? VPROG_TEST : FPROG_TEST;
 	}
 
-	if ( r_useSimpleInteraction.GetBool() ) {
+	if ( RB_UseSimpleInteractionShader() ) {
 		return ( target == GL_VERTEX_PROGRAM_ARB ) ? VPROG_SIMPLE_INTERACTION : FPROG_SIMPLE_INTERACTION;
 	}
 
@@ -10456,7 +10475,7 @@ static const char *RB_CurrentInteractionProgramFamilyName( void ) {
 		return "test";
 	}
 
-	if ( r_useSimpleInteraction.GetBool() ) {
+	if ( RB_UseSimpleInteractionShader() ) {
 		return "simple";
 	}
 
@@ -10547,6 +10566,12 @@ void R_LoadARBProgram( int progIndex ) {
 	RB_ResetARBProgramStatus( prog );
 
 	common->Printf( "%s", fullPath.c_str() );
+
+	if ( RB_ShouldSkipFullInteractionUpload( prog ) ) {
+		common->Printf( ": skipped by renderer driver quirk; using SimpleInteraction.vfp\n" );
+		RB_SetARBProgramFailure( prog, "skipped by renderer driver quirk; using SimpleInteraction.vfp" );
+		return;
+	}
 
 	// load the program even if we don't support it, so
 	// fs_copyfiles can generate cross-platform data dumps
@@ -10787,6 +10812,7 @@ void R_ARB2_Init( void ) {
 	glConfig.allowARB2Path = false;
 	glConfig.preferNV20Path = false;
 	glConfig.preferSimpleLighting = false;
+	glConfig.preferSimpleInteraction = false;
 
 	common->Printf( "---------- R_ARB2_Init ----------\n" );
 
@@ -10826,6 +10852,11 @@ void R_ARB2_Init( void ) {
 	if ( legacyRadeonSimpleLighting ) {
 		glConfig.preferSimpleLighting = true;
 		common->Printf( "%s: prefers simple lighting\n", renderer.c_str() );
+	}
+
+	if ( ( RendererDriverQuirks_LastReport().flags & RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION ) != 0 ) {
+		glConfig.preferSimpleInteraction = true;
+		common->Printf( "%s: prefers simple ARB interaction shader for compatibility\n", renderer.c_str() );
 	}
 
 	common->Printf( "---------------------------------\n" );

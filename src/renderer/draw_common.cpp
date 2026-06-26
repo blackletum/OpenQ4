@@ -7893,8 +7893,10 @@ Lift the final scene toward a minimum brightness floor.
 ==================
 */
 static void RB_STD_ForceAmbient( void ) {
-	const GLuint interactionVertexProgram = r_testARBProgram.GetBool() ? VPROG_TEST : VPROG_INTERACTION;
-	const GLuint interactionFragmentProgram = r_testARBProgram.GetBool() ? FPROG_TEST : FPROG_INTERACTION;
+	const bool useSimpleInteraction = !r_testARBProgram.GetBool() &&
+		( r_useSimpleInteraction.GetBool() || glConfig.preferSimpleInteraction );
+	const GLuint interactionVertexProgram = r_testARBProgram.GetBool() ? VPROG_TEST : ( useSimpleInteraction ? VPROG_SIMPLE_INTERACTION : VPROG_INTERACTION );
+	const GLuint interactionFragmentProgram = r_testARBProgram.GetBool() ? FPROG_TEST : ( useSimpleInteraction ? FPROG_SIMPLE_INTERACTION : FPROG_INTERACTION );
 	const bool interactionRescueActive =
 		tr.backEndRenderer == BE_ARB2 &&
 		( !R_IsARBProgramValid( GL_VERTEX_PROGRAM_ARB, interactionVertexProgram ) ||

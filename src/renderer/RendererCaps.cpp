@@ -34,8 +34,8 @@ static const rendererDriverQuirkRule_t rg_driverQuirkRules[] = {
 		"Apple",
 		"",
 		"2.1",
-		RENDERER_DRIVER_QUIRK_DISABLE_VBO,
-		"Apple OpenGL 2.1 compatibility path uses CPU-backed vertex cache for ARB2 stability"
+		RENDERER_DRIVER_QUIRK_DISABLE_VBO | RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION,
+		"Apple OpenGL 2.1 compatibility path uses CPU-backed vertex cache and simple ARB interactions for stability"
 	},
 	{
 		"openQ4Test",
@@ -147,7 +147,8 @@ static void RendererDriverQuirks_FormatFlags( unsigned int flags, char *buffer, 
 		{ RENDERER_DRIVER_QUIRK_DISABLE_TIMER_QUERY, "disableTimerQuery" },
 		{ RENDERER_DRIVER_QUIRK_DISABLE_BUFFER_STORAGE, "disableBufferStorage" },
 		{ RENDERER_DRIVER_QUIRK_REJECT_DEBUG_CONTEXT, "rejectDebugContext" },
-		{ RENDERER_DRIVER_QUIRK_DISABLE_VBO, "disableVBO" }
+		{ RENDERER_DRIVER_QUIRK_DISABLE_VBO, "disableVBO" },
+		{ RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION, "preferSimpleInteraction" }
 	};
 
 	if ( flags == RENDERER_DRIVER_QUIRK_NONE ) {
@@ -1550,7 +1551,7 @@ bool RendererCompatibilityGates_RunSelfTest( void ) {
 		const char *vendor;
 		const char *renderer;
 		const char *version;
-		unsigned int expectedFlag;
+		unsigned int expectedFlags;
 		rendererTier_t expectedTier;
 		bool expectedTimerQuery;
 		bool expectedDebugContext;
@@ -1562,7 +1563,7 @@ bool RendererCompatibilityGates_RunSelfTest( void ) {
 		{ "openQ4Test", "Missing Timer Query", "1.0", RENDERER_DRIVER_QUIRK_DISABLE_TIMER_QUERY, RENDERER_TIER_TOP_GL46, false, true, true },
 		{ "openQ4Test", "Missing Buffer Storage", "1.0", RENDERER_DRIVER_QUIRK_DISABLE_BUFFER_STORAGE, RENDERER_TIER_GPU_DRIVEN_GL43, true, true, true },
 		{ "openQ4Test", "Rejected Debug Context", "1.0", RENDERER_DRIVER_QUIRK_REJECT_DEBUG_CONTEXT, RENDERER_TIER_TOP_GL46, true, false, true },
-		{ "Apple", "Apple M4 Max", "2.1 Metal", RENDERER_DRIVER_QUIRK_DISABLE_VBO, RENDERER_TIER_LEGACY_GL2_COMPAT, true, true, false }
+		{ "Apple", "Apple M4 Max", "2.1 Metal", RENDERER_DRIVER_QUIRK_DISABLE_VBO | RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION, RENDERER_TIER_LEGACY_GL2_COMPAT, true, true, false }
 	};
 
 	for ( int i = 0; i < static_cast<int>( sizeof( quirkCasesTable ) / sizeof( quirkCasesTable[0] ) ); ++i ) {
@@ -1577,7 +1578,7 @@ bool RendererCompatibilityGates_RunSelfTest( void ) {
 		RendererDriverQuirks_Apply( caps, driverInfo );
 		const rendererTier_t selected = RendererTier_Select( caps, RENDERER_TIER_PREF_AUTO );
 		const rendererDriverQuirkReport_t &report = RendererDriverQuirks_LastReport();
-		if ( ( report.flags & quirkCasesTable[i].expectedFlag ) == 0 ||
+		if ( ( report.flags & quirkCasesTable[i].expectedFlags ) != quirkCasesTable[i].expectedFlags ||
 			selected != quirkCasesTable[i].expectedTier ||
 			caps.hasTimerQuery != quirkCasesTable[i].expectedTimerQuery ||
 			caps.debugContext != quirkCasesTable[i].expectedDebugContext ||
