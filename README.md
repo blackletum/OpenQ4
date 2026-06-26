@@ -14,14 +14,15 @@
 <a href="https://github.com/themuffinator/openQ4/releases">
   <img src="https://img.shields.io/badge/Download-Latest%20Release-2d8f4e?style=for-the-badge&logo=github" alt="Download the latest openQ4 release">
 </a>
-<a href="https://discord.gg/T32mFejwR4">
-  <img src="https://img.shields.io/badge/Join%20the-Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join the openQ4 Discord server">
-</a>
 <a href="https://github.com/themuffinator/openQ4/stargazers">
   <img src="https://img.shields.io/github/stars/themuffinator/openQ4?style=for-the-badge&logo=github&label=Star%20on%20GitHub" alt="Star openQ4 on GitHub">
 </a>
 <a href="https://github.com/themuffinator/openQ4/fork">
   <img src="https://img.shields.io/github/forks/themuffinator/openQ4?style=for-the-badge&logo=github&label=Fork%20on%20GitHub" alt="Fork openQ4 on GitHub">
+</a>
+
+<a href="https://discord.gg/T32mFejwR4">
+  <img src="https://img.shields.io/badge/Join%20the-Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join the openQ4 Discord server">
 </a>
 
 [Get Started](docs/user/getting-started.md) | [Features](#why-players-use-openq4) | [Player Docs](#player-guides) | [Build from Source](BUILDING.md) | [Technical Reference](TECHNICAL.md)
