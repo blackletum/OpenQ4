@@ -33,11 +33,18 @@ def report_text(bridge: str, *, completed: bool) -> str:
 - Date (UTC): 2026-06-20T12:00:00Z
 - Host: test-mac
 - Architecture: arm64
+- Architecture policy: arm64-only experimental release matrix
+- OS matrix role: latest-public-macos
 - Graphics bridge: {bridge}
 - OpenAL provider: apple_framework
 - Build directory: builddir-{bridge}
+- openQ4 commit: 1111111111111111111111111111111111111111
+- openQ4 dirty: false
+- `openQ4-game` commit: 2222222222222222222222222222222222222222
+- `openQ4-game` dirty: false
 - Asset basepath: /Users/test/openq4-work/Quake4
 - Client: /Users/test/openq4-work/openQ4/.install/openQ4-client_arm64
+- Dedicated server: /Users/test/openq4-work/openQ4/.install/openQ4-ded_arm64
 - Results: /Users/test/openq4-work/results/testrun-signoff-{bridge}
 
 ## Automated Evidence
@@ -45,29 +52,60 @@ def report_text(bridge: str, *, completed: bool) -> str:
 - [x] Staged macOS payload integrity checks completed.
 - [x] Quake 4 asset basepath validation completed.
 - [x] Renderer smoke profile completed with retail Quake 4 assets.
+- [x] Multiplayer listen-server smoke completed with retail Quake 4 assets.
+- [x] MP game module path is present in the staged payload.
 - [x] macOS-facing renderer validation matrix completed.
 - [x] Desktop launcher was written for Finder/Terminal launch checks.
+- [x] Package layout contract is adjacent package root: openQ4.app, baseoq4/, and loose runtime files stay together.
 - Renderer smoke output: /Users/test/openq4-work/results/testrun-signoff-{bridge}/renderer-smoke
+- Renderer MP smoke output: /Users/test/openq4-work/results/testrun-signoff-{bridge}/renderer-mp-smoke
 - Renderer matrix output: /Users/test/openq4-work/results/testrun-signoff-{bridge}/renderer-matrix
 - Workflow log: /Users/test/openq4-work/results/testrun-signoff-{bridge}/openq4-macos-workflow.log
 
 ## Manual Hardware Checklist
 - [{checkbox}] Launch openQ4 from Finder or the Desktop launcher and enter a single-player map.
+- [{checkbox}] Launch openQ4.app from the mounted signed/notarized DMG or final release image and enter a single-player map.
+- [{checkbox}] Copy the whole package payload to a user-writable location, keeping openQ4.app beside baseoq4/ and loose runtime files, then launch openQ4.app there.
+- [{checkbox}] Move only openQ4.app away from baseoq4/ and loose runtime files; confirm the app-only move is unsupported with a clear adjacent-runtime error, or record that it now works.
+- [{checkbox}] Launch from Terminal with the package root as the working directory.
+- [{checkbox}] Confirm fs_basepath, fs_cdpath, and fs_savepath in logs for Finder/copied package and Terminal launches.
+- [{checkbox}] Confirm Gatekeeper assessment for signed/notarized DMGs, or record unsigned/unnotarized approval friction for development archives.
 - [{checkbox}] Verify keyboard text entry, console toggle, mouse-look, clicks, and wheel input.
 - [{checkbox}] Verify at least one SDL game controller, including hotplug and rumble when hardware supports it.
 - [{checkbox}] Verify audio output, volume changes, and at least one device switch or reconnect.
 - [{checkbox}] Verify windowed, fullscreen, selected-display, and HiDPI/Retina behavior on attached displays.
 - [{checkbox}] Verify the matching OpenGL or Metal bridge package path in actual gameplay, not only at the main menu.
+- [{checkbox}] Launch multiplayer, load the mp/q4dm1 listen-server path, confirm game-mp loads, connect a local client, and exit cleanly.
+- [{checkbox}] Launch the dedicated server binary, load an MP server configuration far enough to initialize game-mp, then shut it down cleanly.
 
 ## macOS Version
 ```text
 ProductName:        macOS
 ProductVersion:     15.5
+BuildVersion:       24F74
+```
+
+## Xcode And SDK
+```text
+Xcode: Xcode 16.4 Build version 16F6
+macOS SDK: 15.5
+macOS SDK path: /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.5.sdk
 ```
 
 ## Kernel
 ```text
 Darwin test-mac 24.5.0 arm64
+```
+
+## Hardware
+```text
+Hardware:
+
+    Hardware Overview:
+
+      Model Name: Mac mini
+      Chip: Apple M2
+      Total Number of Cores: 8
 ```
 
 ## Displays
@@ -115,6 +153,7 @@ Staging openQ4 into .install
 Validated staged macOS payload for arm64.
 Validated Quake 4 asset basepath: /Users/test/openq4-work/Quake4 (25 q4base PK4 files).
 Running openQ4 macOS renderer smoke
+Running openQ4 macOS multiplayer smoke
 Running macOS-facing renderer validation matrix
 Installed macOS launcher: /Users/test/Desktop/openQ4.command
 macOS runtime signoff report: /Users/test/openq4-work/results/testrun-signoff-{bridge}/macos-runtime-signoff.md
@@ -143,6 +182,7 @@ def write_archive(path: Path, *, bridges: tuple[str, ...], completed: bool = Fal
             add_file(archive, f"{root}/macos-runtime-signoff.md", report_text(bridge, completed=completed))
             add_file(archive, f"{root}/openq4-macos-workflow.log", log_text(bridge))
             add_file(archive, f"{root}/renderer-smoke/report.json", "{}\n")
+            add_file(archive, f"{root}/renderer-mp-smoke/report.json", "{}\n")
             add_file(archive, f"{root}/renderer-matrix/report.md", "# ok\n")
 
 
@@ -156,6 +196,7 @@ def write_huge_log_archive(path: Path, *, bridge: str, max_text_member_bytes: in
         add_file(archive, f"{root}/macos-runtime-signoff.md", report_text(bridge, completed=True))
         add_bytes(archive, f"{root}/openq4-macos-workflow.log", b"x" * (max_text_member_bytes + 1))
         add_file(archive, f"{root}/renderer-smoke/report.json", "{}\n")
+        add_file(archive, f"{root}/renderer-mp-smoke/report.json", "{}\n")
         add_file(archive, f"{root}/renderer-matrix/report.md", "# ok\n")
 
 
@@ -169,6 +210,7 @@ def write_huge_payload_archive(path: Path, *, bridge: str, member_size: int) -> 
         add_file(archive, f"{root}/macos-runtime-signoff.md", report_text(bridge, completed=True))
         add_file(archive, f"{root}/openq4-macos-workflow.log", log_text(bridge))
         add_bytes(archive, f"{root}/renderer-smoke/oversized.bin", b"x" * member_size)
+        add_file(archive, f"{root}/renderer-mp-smoke/report.json", "{}\n")
         add_file(archive, f"{root}/renderer-matrix/report.md", "# ok\n")
 
 
@@ -182,6 +224,7 @@ def write_archive_with_unexpected_top_dir(path: Path) -> None:
         add_file(archive, f"{root}/macos-runtime-signoff.md", report_text("opengl", completed=True))
         add_file(archive, f"{root}/openq4-macos-workflow.log", log_text("opengl"))
         add_file(archive, f"{root}/renderer-smoke/report.json", "{}\n")
+        add_file(archive, f"{root}/renderer-mp-smoke/report.json", "{}\n")
         add_file(archive, f"{root}/renderer-matrix/report.md", "# ok\n")
         add_file(archive, "testrun-build-opengl/openq4-macos-workflow.log", "stale\n")
 
@@ -196,6 +239,7 @@ def write_archive_with_metadata_under_result(path: Path) -> None:
         add_file(archive, f"{root}/macos-runtime-signoff.md", report_text("opengl", completed=True))
         add_file(archive, f"{root}/openq4-macos-workflow.log", log_text("opengl"))
         add_file(archive, f"{root}/renderer-smoke/report.json", "{}\n")
+        add_file(archive, f"{root}/renderer-mp-smoke/report.json", "{}\n")
         add_file(archive, f"{root}/renderer-matrix/report.md", "# ok\n")
         add_file(archive, f"{root}/renderer-smoke/.DS_Store", "finder\n")
 
@@ -211,6 +255,7 @@ def write_archive_with_case_duplicate(path: Path) -> None:
         add_file(archive, f"{root}/openq4-macos-workflow.log", log_text("opengl"))
         add_file(archive, f"{root}/renderer-smoke/report.json", "{}\n")
         add_file(archive, f"{root}/renderer-smoke/REPORT.json", "{}\n")
+        add_file(archive, f"{root}/renderer-mp-smoke/report.json", "{}\n")
         add_file(archive, f"{root}/renderer-matrix/report.md", "# ok\n")
 
 
@@ -220,6 +265,7 @@ def write_archive_with_output_dirs_only(path: Path) -> None:
         for name in (
             root,
             f"{root}/renderer-smoke",
+            f"{root}/renderer-mp-smoke",
             f"{root}/renderer-matrix",
         ):
             directory = tarfile.TarInfo(name)
@@ -240,6 +286,7 @@ def write_archive_with_report(path: Path, *, bridge: str, report: str) -> None:
         add_file(archive, f"{root}/macos-runtime-signoff.md", report)
         add_file(archive, f"{root}/openq4-macos-workflow.log", log_text(bridge))
         add_file(archive, f"{root}/renderer-smoke/report.json", "{}\n")
+        add_file(archive, f"{root}/renderer-mp-smoke/report.json", "{}\n")
         add_file(archive, f"{root}/renderer-matrix/report.md", "# ok\n")
 
 
@@ -253,6 +300,7 @@ def write_archive_with_log(path: Path, *, bridge: str, log: str) -> None:
         add_file(archive, f"{root}/macos-runtime-signoff.md", report_text(bridge, completed=True))
         add_file(archive, f"{root}/openq4-macos-workflow.log", log)
         add_file(archive, f"{root}/renderer-smoke/report.json", "{}\n")
+        add_file(archive, f"{root}/renderer-mp-smoke/report.json", "{}\n")
         add_file(archive, f"{root}/renderer-matrix/report.md", "# ok\n")
 
 
@@ -266,6 +314,7 @@ def write_archive_with_control_character_member(path: Path) -> None:
         add_file(archive, f"{root}/macos-runtime-signoff.md", report_text("opengl", completed=True))
         add_file(archive, f"{root}/openq4-macos-workflow.log", log_text("opengl"))
         add_file(archive, f"{root}/renderer-smoke/report.json", "{}\n")
+        add_file(archive, f"{root}/renderer-mp-smoke/report.json", "{}\n")
         add_file(archive, f"{root}/renderer-smoke/bad\nname.txt", "bad\n")
         add_file(archive, f"{root}/renderer-matrix/report.md", "# ok\n")
 
@@ -479,6 +528,26 @@ def main() -> int:
             ),
         )
 
+        missing_dedicated_report = temp / "openq4-macos-results-missing-dedicated.tar.gz"
+        write_archive_with_report(
+            missing_dedicated_report,
+            bridge="opengl",
+            report=report_text("opengl", completed=True).replace(
+                "- Dedicated server: /Users/test/openq4-work/openQ4/.install/openQ4-ded_arm64",
+                "- Dedicated server: not found",
+            ),
+        )
+        expect_error(
+            "staged dedicated server path",
+            lambda: validator.validate_signoff_archive(
+                missing_dedicated_report,
+                run_id="testrun",
+                action="signoff",
+                bridges=("opengl",),
+                require_completed_checklist=False,
+            ),
+        )
+
         wrong_smoke_report = temp / "openq4-macos-results-wrong-smoke-report.tar.gz"
         write_archive_with_report(
             wrong_smoke_report,
@@ -492,6 +561,26 @@ def main() -> int:
             "renderer-smoke output directory",
             lambda: validator.validate_signoff_archive(
                 wrong_smoke_report,
+                run_id="testrun",
+                action="signoff",
+                bridges=("opengl",),
+                require_completed_checklist=False,
+            ),
+        )
+
+        wrong_mp_smoke_report = temp / "openq4-macos-results-wrong-mp-smoke-report.tar.gz"
+        write_archive_with_report(
+            wrong_mp_smoke_report,
+            bridge="opengl",
+            report=report_text("opengl", completed=True).replace(
+                "- Renderer MP smoke output: /Users/test/openq4-work/results/testrun-signoff-opengl/renderer-mp-smoke",
+                "- Renderer MP smoke output: /tmp/openq4-wrong-renderer-mp-smoke",
+            ),
+        )
+        expect_error(
+            "renderer-mp-smoke output directory",
+            lambda: validator.validate_signoff_archive(
+                wrong_mp_smoke_report,
                 run_id="testrun",
                 action="signoff",
                 bridges=("opengl",),

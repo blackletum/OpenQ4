@@ -58,6 +58,12 @@ elif host_system == 'darwin'
   if macos_graphics_bridge == 'metal' and platform_backend_requested != 'sdl3'
     error('macos_graphics_bridge=metal requires platform_backend=sdl3 so the bridge stays on the shared SDL3 path instead of the native Cocoa backend.')
   endif
+  if platform_backend_requested == 'native'
+    warning(
+      'platform_backend=native on macOS is comparison-only diagnostic infrastructure. '
+      + 'Release packages use platform_backend=sdl3; do not treat the native Cocoa/OpenGL backend as supported release coverage.'
+    )
+  endif
 elif host_system != 'windows'
   error('Unsupported host system for platform backend selection: ' + host_system)
 endif

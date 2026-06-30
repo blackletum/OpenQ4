@@ -128,6 +128,11 @@ static bool Sys_DirectoryExists( const char *path ) {
 	return path != NULL && path[0] != '\0' && stat( path, &st ) != -1 && S_ISDIR( st.st_mode );
 }
 
+static bool Sys_ExecutableFileExists( const char *path ) {
+	struct stat st;
+	return path != NULL && path[0] != '\0' && stat( path, &st ) != -1 && S_ISREG( st.st_mode ) && access( path, X_OK ) == 0;
+}
+
 static bool Sys_DirectoryIsWritable( const idStr &path ) {
 	return Sys_DirectoryExists( path.c_str() ) && access( path.c_str(), W_OK | X_OK ) == 0;
 }
@@ -269,6 +274,130 @@ static bool Sys_DirectoryContainsGameDir( const idStr &candidate ) {
 	return stat( testbase.c_str(), &st ) != -1 && S_ISDIR( st.st_mode );
 }
 
+static bool Sys_GetAppBundlePackageRootFromExecutableDirectory( const idStr &exeDirectory, idStr &appDirectory, idStr &packageDirectory ) {
+	static const char appExecutableDirectorySuffix[] = "/Contents/MacOS";
+	const int suffixLength = sizeof( appExecutableDirectorySuffix ) - 1;
+
+	appDirectory.Clear();
+	packageDirectory.Clear();
+	if ( exeDirectory.Length() <= suffixLength ) {
+		return false;
+	}
+
+	idStr normalizedDirectory = exeDirectory;
+	normalizedDirectory.BackSlashesToSlashes();
+	Sys_NormalizeMacOSDirectoryPath( normalizedDirectory );
+	const char *suffixStart = normalizedDirectory.c_str() + normalizedDirectory.Length() - suffixLength;
+	if ( idStr::Cmp( suffixStart, appExecutableDirectorySuffix ) != 0 ) {
+		return false;
+	}
+
+	appDirectory = normalizedDirectory;
+	appDirectory.StripFilename(); // Contents
+	appDirectory.StripFilename(); // openQ4.app
+	idStr appName = appDirectory;
+	appName.StripPath();
+	if ( appName.Icmp( "openQ4.app" ) != 0 ) {
+		return false;
+	}
+
+	packageDirectory = appDirectory;
+	packageDirectory.StripFilename(); // extracted package root
+	return packageDirectory.Length() > 0;
+}
+
+static const char *Sys_MacOSPackageRuntimeArchSuffix( void ) {
+#if defined( __aarch64__ ) || defined( __arm64__ )
+	return "arm64";
+#elif defined( __x86_64__ )
+	return "x64";
+#elif defined( __i386__ )
+	return "x86";
+#else
+	return "unknown";
+#endif
+}
+
+static void Sys_AppendMissingMacOSPackageRootEntry( idStr &missingEntries, const char *entry ) {
+	if ( missingEntries.Length() > 0 ) {
+		missingEntries.Append( ", " );
+	}
+	missingEntries.Append( entry );
+}
+
+static void Sys_RequireMacOSPackageRootDirectory( const idStr &packageDirectory, const char *entry, idStr &missingEntries ) {
+	idStr testPath = packageDirectory;
+	testPath.AppendPath( entry );
+	if ( !Sys_DirectoryExists( testPath.c_str() ) ) {
+		Sys_AppendMissingMacOSPackageRootEntry( missingEntries, entry );
+	}
+}
+
+static void Sys_RequireMacOSPackageRootExecutable( const idStr &packageDirectory, const char *entry, idStr &missingEntries ) {
+	idStr testPath = packageDirectory;
+	testPath.AppendPath( entry );
+	if ( !Sys_ExecutableFileExists( testPath.c_str() ) ) {
+		Sys_AppendMissingMacOSPackageRootEntry( missingEntries, entry );
+	}
+}
+
+static idStr Sys_LocalizedMacOSPackageRootString( const char *key, const char *fallback ) {
+	NSString *keyString = [NSString stringWithUTF8String:key != NULL ? key : ""];
+	NSString *fallbackString = [NSString stringWithUTF8String:fallback != NULL ? fallback : ""];
+	NSString *localizedString = [[NSBundle mainBundle] localizedStringForKey:keyString value:fallbackString table:@"OpenQ4PackageRoot"];
+	if ( localizedString == nil || [localizedString length] == 0 ) {
+		localizedString = fallbackString;
+	}
+
+	const char *utf8String = [localizedString UTF8String];
+	if ( utf8String == NULL || utf8String[0] == '\0' ) {
+		utf8String = fallback != NULL ? fallback : "";
+	}
+	return idStr( utf8String );
+}
+
+static void Sys_ErrorIfMacOSAppBundlePackageRootIncomplete( const idStr &appDirectory, const idStr &packageDirectory ) {
+	idStr missingEntries;
+	const char *arch = Sys_MacOSPackageRuntimeArchSuffix();
+	char clientEntry[64];
+	char dedicatedEntry[64];
+	char spModuleEntry[96];
+	char mpModuleEntry[96];
+
+	idStr::snPrintf( clientEntry, sizeof( clientEntry ), "openQ4-client_%s", arch );
+	idStr::snPrintf( dedicatedEntry, sizeof( dedicatedEntry ), "openQ4-ded_%s", arch );
+	idStr::snPrintf( spModuleEntry, sizeof( spModuleEntry ), "%s/game-sp_%s.dylib", BASE_GAMEDIR, arch );
+	idStr::snPrintf( mpModuleEntry, sizeof( mpModuleEntry ), "%s/game-mp_%s.dylib", BASE_GAMEDIR, arch );
+
+	Sys_RequireMacOSPackageRootDirectory( packageDirectory, BASE_GAMEDIR, missingEntries );
+	Sys_RequireMacOSPackageRootExecutable( packageDirectory, clientEntry, missingEntries );
+	Sys_RequireMacOSPackageRootExecutable( packageDirectory, dedicatedEntry, missingEntries );
+	Sys_RequireMacOSPackageRootExecutable( packageDirectory, spModuleEntry, missingEntries );
+	Sys_RequireMacOSPackageRootExecutable( packageDirectory, mpModuleEntry, missingEntries );
+
+	if ( missingEntries.Length() == 0 ) {
+		return;
+	}
+
+	idStr title = Sys_LocalizedMacOSPackageRootString(
+		"OpenQ4PackageRootMissingTitle",
+		"openQ4.app adjacent package root is incomplete"
+	);
+	idStr body = Sys_LocalizedMacOSPackageRootString(
+		"OpenQ4PackageRootMissingBody",
+		"Keep openQ4.app, baseoq4/, openQ4-client_<arch>, and openQ4-ded_<arch> together in the same package folder. Moving only openQ4.app to /Applications is not supported yet."
+	);
+
+	Sys_Error(
+		"%s\n\n%s\n\nExpected adjacent package-root contract: openQ4.app, loose binaries, and baseoq4/ together.\nPackage root: %s\nApp path: %s\nMissing or unusable entries: %s",
+		title.c_str(),
+		body.c_str(),
+		packageDirectory.c_str(),
+		appDirectory.c_str(),
+		missingEntries.c_str()
+	);
+}
+
 static bool Sys_UseBasePathCandidate( const idStr &candidate, const char *label ) {
 	if ( !Sys_DirectoryContainsGameDir( candidate ) ) {
 		common->Printf( "no '%s' directory in %s path %s, skipping\n", BASE_GAMEDIR, label, candidate.c_str() );
@@ -280,24 +409,11 @@ static bool Sys_UseBasePathCandidate( const idStr &candidate, const char *label 
 }
 
 static bool Sys_UseAppBundleParentBasePathCandidate( const idStr &exeDirectory ) {
-	static const char appExecutableDirectorySuffix[] = "/Contents/MacOS";
-	const int suffixLength = sizeof( appExecutableDirectorySuffix ) - 1;
-
-	if ( exeDirectory.Length() <= suffixLength ) {
+	idStr appDirectory;
+	idStr packageDirectory;
+	if ( !Sys_GetAppBundlePackageRootFromExecutableDirectory( exeDirectory, appDirectory, packageDirectory ) ) {
 		return false;
 	}
-
-	idStr normalizedDirectory = exeDirectory;
-	normalizedDirectory.BackSlashesToSlashes();
-	const char *suffixStart = normalizedDirectory.c_str() + normalizedDirectory.Length() - suffixLength;
-	if ( idStr::Cmp( suffixStart, appExecutableDirectorySuffix ) != 0 ) {
-		return false;
-	}
-
-	idStr packageDirectory = normalizedDirectory;
-	packageDirectory.StripFilename(); // Contents
-	packageDirectory.StripFilename(); // openQ4.app
-	packageDirectory.StripFilename(); // extracted package root
 
 	return Sys_UseBasePathCandidate( packageDirectory, "app parent" );
 }
@@ -345,6 +461,14 @@ const char *Sys_DefaultBasePath( void ) {
 	exeDirectory = Sys_EXEPath();
 	if ( exeDirectory.Length() > 0 ) {
 		exeDirectory.StripFilename();
+		idStr appDirectory;
+		idStr appPackageDirectory;
+		if ( Sys_GetAppBundlePackageRootFromExecutableDirectory( exeDirectory, appDirectory, appPackageDirectory ) ) {
+			Sys_ErrorIfMacOSAppBundlePackageRootIncomplete( appDirectory, appPackageDirectory );
+			if ( Sys_UseBasePathCandidate( appPackageDirectory, "app parent" ) ) {
+				return basepath.c_str();
+			}
+		}
 		if ( Sys_UseBasePathCandidate( exeDirectory, "exe" ) ) {
 			return basepath.c_str();
 		}

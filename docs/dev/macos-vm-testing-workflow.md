@@ -77,6 +77,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/macos/Invoke-openQ4Mac
 - copies `openQ4` and `openQ4-game` into the guest workspace
 - configures, builds, and stages openQ4 through `tools/build/meson_setup.sh`
 - runs a renderer smoke profile against the copied Quake 4 assets
+- runs a multiplayer `mp/q4dm1` listen-server smoke profile against the copied Quake 4 assets
 - runs the experimental macOS-facing GL 4.1 renderer validation set
 - creates `~/Desktop/openQ4.command` pointing at the staged runtime and assets
 - writes a bridge-specific runtime signoff report when running `All` or `Signoff`
@@ -111,12 +112,14 @@ variants:
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/macos/Invoke-openQ4MacOSWorkflow.ps1 `
   -Action Signoff `
   -MacHost <host> `
-  -MacOSGraphicsBridge both
+  -MacOSGraphicsBridge both `
+  -MacOSOSMatrixRole latest-public-macos
 ```
 
 The signoff action builds and stages each selected bridge before running the
-smoke profile and experimental macOS-facing renderer matrix, installs the Desktop launcher,
-records `sw_vers`, kernel, display, audio, USB, and Bluetooth inventory, and
+single-player smoke profile, the multiplayer `mp/q4dm1` listen-server smoke
+profile, and the experimental macOS-facing renderer matrix, installs the Desktop launcher,
+records `sw_vers`, Xcode/macOS SDK, kernel, display, audio, USB, and Bluetooth inventory, and
 writes bridge-specific reports under
 `~/openq4-work/results/<timestamp>-signoff-opengl/macos-runtime-signoff.md` and
 `~/openq4-work/results/<timestamp>-signoff-metal/macos-runtime-signoff.md`.
@@ -124,9 +127,29 @@ When `-MacOSGraphicsBridge both` is selected, OpenGL uses `builddir-opengl` and
 Metal uses `builddir-metal` so Meson configuration state does not bleed between
 variants. Use those reports for the manual hardware checklist: Finder/launcher
 startup, real keyboard/mouse/controller input, audio output/device switching,
-windowed and fullscreen display modes, HiDPI/Retina behavior, and in-game
+windowed and fullscreen display modes, HiDPI/Retina behavior, SP gameplay, MP
+listen-server gameplay, dedicated-server startup where supported, and in-game
 OpenGL or Metal bridge coverage beyond hosted CI before macOS support can move
-out of its experimental state.
+out of its experimental state. The package UX part of that checklist follows
+`docs/dev/macos-package-layout-and-release-policy.md`: launch `openQ4.app` from
+the mounted signed/notarized DMG when one is available, copy the whole package
+payload to a user-writable location and launch it there, confirm terminal launch
+from the package root, record the app-only move result as unsupported unless it
+has deliberately been made to work, verify `fs_basepath`, `fs_cdpath`, and
+`fs_savepath` in the runtime logs, and record Gatekeeper behavior for the exact
+signed/notarized DMG or unsigned development archive under test.
+
+The `metal` bridge remains the OpenGL renderer path hosted through the SDL3/Cocoa
+Metal bridge integration; it is not a native Metal renderer. Native
+Cocoa/OpenGL backend runs with `-Dplatform_backend=native` are comparison-only
+diagnostics and are not a supported release backend; they do not replace SDL3
+OpenGL/Metal bridge package signoff.
+
+Use `-MacOSOSMatrixRole floor-candidate` when validating the oldest documented
+macOS floor, currently macOS 11, and `-MacOSOSMatrixRole latest-public-macos`
+when validating the latest public macOS release. Hosted CI package runs may use
+`current-hosted-ci-runner`, but hosted runner success is not a substitute for
+floor/latest runtime signoff on compliant Apple hardware.
 
 Guest paths passed through `-MacWorkspace` and `-MacBasePath` must be absolute POSIX paths or use a leading `~/`; the host workflow rejects relative, dot-segment, empty-segment, and backslash paths, and the guest scripts recheck that the paths are absolute after `~` expansion before syncing source trees, installing assets, building, or collecting results.
 Keep `-BuildDir` pointed at a dedicated build output directory such as
@@ -144,7 +167,8 @@ unless `-SkipResultArchiveValidation` is set.
 
 The automatic validation checks structure, both bridge reports, workflow logs,
 staged payload evidence, binary architecture evidence, macOS system/device
-inventory sections, asset-basepath evidence, and renderer smoke/matrix output.
+inventory sections, OS matrix role, Xcode/macOS SDK evidence, asset-basepath evidence, single-player smoke output,
+multiplayer `renderer-mp-smoke` output, and renderer matrix output.
 Collection is intentionally limited to the expected
 `<run-id>-signoff-<bridge>` directories so older build/smoke result directories
 with the same run ID cannot be mixed into final signoff evidence. To rerun it
@@ -171,23 +195,52 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/macos/Invoke-openQ4Mac
   -RequireCompletedSignoffChecklist
 ```
 
-The Apple OpenAL framework remains the default signoff audio provider. To test
-the system/OpenAL Soft-style path on the Apple host, add
-`-MacOSOpenALProvider system`; the selected provider is recorded in the signoff
-report.
+After the archive validates, generate and record the evidence index entry from
+the Windows host:
+
+```powershell
+python tools/macos/record_signoff_evidence.py `
+  .tmp/macos-vm/results/openq4-macos-results-<run-id>.tar.gz `
+  --version vX.Y.Z `
+  --package-artifact openq4-vX.Y.Z-macos-arm64-opengl.dmg `
+  --package-artifact openq4-vX.Y.Z-macos-arm64-metal.dmg `
+  --signing-status "signed and notarized DMGs" `
+  --release-note-limitation "macOS support remains experimental Apple Silicon/arm64" `
+  --update-index
+```
+
+Use `--artifact-url` when the validated `.tar.gz` evidence lives in an issue,
+release candidate, or external artifact store rather than only under `.tmp/`.
+The recorder re-runs `tools/macos/validate_signoff_archive.py` with
+`--require-completed-checklist`, computes the archive SHA-256, extracts the
+bridge reports, records the openQ4 and `openQ4-game` commits, updates
+`docs/dev/macos-signoff-evidence.md`, and leaves the release-completion evidence
+gate open until curated release notes link to the accepted record.
+
+The Apple OpenAL framework remains the default signoff and release audio
+provider through `macos_openal_provider=apple_framework`. To test the
+system/OpenAL Soft-style path on the Apple host, add
+`-MacOSOpenALProvider system`; treat that as migration-only local coverage, not
+release evidence. It is not release evidence that macOS packages bundle OpenAL Soft.
+The selected provider is recorded in the signoff report. The provider
+policy is tracked in
+`docs/dev/macos-openal-provider-policy.md`.
 
 ## Expected Validation
 
 For experimental macOS debugging, do not stop at static checks. Use this VM workflow for:
 
 - `renderer_gameplay_benchmark.py --profile smoke`
+- `renderer_gameplay_benchmark.py --profile smoke --cases mp-q4dm1-listen`
 - `renderer_validation_matrix.py --tiers auto,gl41`
 - staged launch from `~/Desktop/openQ4.command`
 - `macos-runtime-signoff.md` from `-Action Signoff -MacOSGraphicsBridge both` when collecting hardware signoff evidence
 - `.tmp/macos-vm/results/openq4-macos-results-<run-id>.tar.gz` copied back by the host workflow
 - `tools/macos/validate_signoff_archive.py` run against the collected archive
 - `-RequireCompletedSignoffChecklist` once manual hardware checks are filled in
+- `-MacOSOSMatrixRole floor-candidate` for macOS floor evidence and `-MacOSOSMatrixRole latest-public-macos` for latest public macOS evidence
 - `-Action CollectResults -MacOSRunId <run-id>` when re-collecting completed manual evidence
+- mounted-DMG, copied-package, terminal, app-only move, path-resolution log, and Gatekeeper checks from `docs/dev/macos-package-layout-and-release-policy.md`
 - log inspection under the guest `~/openq4-work/results/` run directory
 
 The remaining stock Quake 4 duplicate material warnings from retail assets are

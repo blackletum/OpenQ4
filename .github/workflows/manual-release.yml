@@ -18,6 +18,14 @@ on:
         required: false
         default: ""
         type: string
+      macos_support_tier:
+        description: macOS release support tier
+        required: true
+        default: experimental
+        type: choice
+        options:
+          - experimental
+          - first-class
 
 concurrency:
   group: openq4-manual-releases
@@ -43,6 +51,7 @@ jobs:
       bump_mode: ${{ steps.version.outputs.bump_mode }}
       release_matrix: ${{ steps.release_matrix.outputs.release_matrix }}
       macos_signed_release_enabled: ${{ steps.release_matrix.outputs.macos_signed_release_enabled }}
+      macos_support_tier: ${{ steps.release_matrix.outputs.macos_support_tier }}
       macos_release_reason: ${{ steps.release_matrix.outputs.macos_release_reason }}
 
     steps:
@@ -102,6 +111,7 @@ jobs:
           MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
           MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
           MACOS_NOTARY_APP_PASSWORD: ${{ secrets.MACOS_NOTARY_APP_PASSWORD }}
+          OPENQ4_MACOS_SUPPORT_TIER: ${{ inputs.macos_support_tier }}
         shell: bash
         run: |
           set -euo pipefail
@@ -174,6 +184,15 @@ jobs:
               for secret_name in required_macos_secrets
               if not os.environ.get(secret_name)
           ]
+          macos_support_tier = os.environ.get("OPENQ4_MACOS_SUPPORT_TIER", "experimental").strip() or "experimental"
+          if macos_support_tier not in {"experimental", "first-class"}:
+              raise SystemExit(f"Unsupported macOS support tier: {macos_support_tier}")
+          if macos_support_tier == "first-class" and missing_macos_secrets:
+              raise SystemExit(
+                  "First-class macOS releases require signed/notarized DMGs; "
+                  "missing Apple signing/notary repository secrets: "
+                  + ", ".join(missing_macos_secrets)
+              )
           macos_signed_release_enabled = not missing_macos_secrets
           macos_release_mode = "signed" if macos_signed_release_enabled else "unsigned"
           macos_archive_format = "dmg" if macos_signed_release_enabled else "tar.gz"
@@ -213,15 +232,18 @@ jobs:
           )
 
           if macos_signed_release_enabled:
-              macos_release_reason = "macOS signed/notarized DMG release artifacts enabled."
+              macos_release_reason = (
+                  f"macOS {macos_support_tier} signed/notarized DMG release artifacts enabled."
+              )
           else:
               macos_release_reason = (
-                  "macOS unsigned/unnotarized tar.gz release artifacts enabled "
+                  "Experimental macOS unsigned/unnotarized tar.gz release artifacts enabled as fallback output "
                   "because Apple signing/notary repository secrets are not configured: "
                   + ", ".join(missing_macos_secrets)
               )
 
           print("macos_signed_release_enabled=" + ("true" if macos_signed_release_enabled else "false"))
+          print(f"macos_support_tier={macos_support_tier}")
           print(f"macos_release_reason={macos_release_reason}")
           print("release_matrix=" + json.dumps({"include": matrix}, separators=(",", ":")))
           PY
@@ -584,9 +606,23 @@ jobs:
             echo "Expected package archive not found: ${archive_path}"
             exit 1
           fi
+          case "$(basename "${archive_path}")" in
+            *symbols*|*debugsymbols*)
+              echo "Runtime package archive name must not look like a symbol/debug artifact: ${archive_path}"
+              exit 1
+              ;;
+          esac
           if [ ! -d "${package_dir}" ]; then
             echo "Expected package directory not found: ${package_dir}"
             exit 1
+          fi
+          if [ "${{ matrix.platform }}" = "macos" ]; then
+            symbols_archive_path="${RUNNER_TEMP}/openq4-${{ needs.metadata.outputs.version_tag }}-macos-${{ matrix.binary_arch }}${{ matrix.package_suffix }}-symbols.tar.xz"
+            if [ ! -f "${symbols_archive_path}" ]; then
+              echo "Expected macOS dSYM symbol archive not found: ${symbols_archive_path}"
+              exit 1
+            fi
+            echo "symbols_archive_path=${symbols_archive_path}" >> "$GITHUB_OUTPUT"
           fi
           echo "archive_path=${archive_path}" >> "$GITHUB_OUTPUT"
           echo "package_dir=${package_dir}" >> "$GITHUB_OUTPUT"
@@ -634,6 +670,7 @@ jobs:
           app_exec="${app_root}/Contents/MacOS/openQ4"
           app_icon="${app_root}/Contents/Resources/openQ4.icns"
           app_version="${app_root}/Contents/Resources/VERSION.txt"
+          symbol_manifest="${{ steps.package.outputs.package_dir }}/SYMBOLS.txt"
           client_binary="${{ steps.package.outputs.package_dir }}/openQ4-client_${{ matrix.binary_arch }}"
           dedicated_binary="${{ steps.package.outputs.package_dir }}/openQ4-ded_${{ matrix.binary_arch }}"
           game_dir="${{ steps.package.outputs.package_dir }}/baseoq4"
@@ -658,6 +695,20 @@ jobs:
           fi
           if [ ! -f "${app_version}" ]; then
             echo "Missing macOS app version manifest: ${app_version}"
+            exit 1
+          fi
+          if [ ! -f "${symbol_manifest}" ]; then
+            echo "Missing macOS symbolication manifest: ${symbol_manifest}"
+            exit 1
+          fi
+          if ! grep -Fq "symbol_archive=openq4-${{ needs.metadata.outputs.version_tag }}-macos-${{ matrix.binary_arch }}${{ matrix.package_suffix }}-symbols.tar.xz" "${symbol_manifest}"; then
+            echo "macOS symbolication manifest does not point at the matching dSYM archive: ${symbol_manifest}"
+            cat "${symbol_manifest}"
+            exit 1
+          fi
+          if find "${{ steps.package.outputs.package_dir }}" -name '*.dSYM' -print -quit | grep -q .; then
+            echo "macOS runtime package directory must not contain .dSYM bundles."
+            find "${{ steps.package.outputs.package_dir }}" -name '*.dSYM' -print
             exit 1
           fi
           if [ ! -x "${client_binary}" ]; then
@@ -838,6 +889,14 @@ jobs:
           path: ${{ steps.package.outputs.archive_path }}
           if-no-files-found: error
 
+      - name: Upload macOS dSYM symbols
+        if: matrix.platform == 'macos'
+        uses: actions/upload-artifact@v6
+        with:
+          name: openq4-release-${{ needs.metadata.outputs.version_tag }}-macos-${{ matrix.binary_arch }}${{ matrix.package_suffix }}-symbols
+          path: ${{ steps.package.outputs.symbols_archive_path }}
+          if-no-files-found: error
+
       - name: Upload Linux debug symbols
         if: matrix.platform == 'linux'
         uses: actions/upload-artifact@v6
@@ -914,12 +973,16 @@ jobs:
           if [ "${{ needs.metadata.outputs.macos_signed_release_enabled }}" = "true" ]; then
             expected+=(
               "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64-opengl.dmg"
+              "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64-opengl-symbols.tar.xz"
               "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64-metal.dmg"
+              "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64-metal-symbols.tar.xz"
             )
           else
             expected+=(
               "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64-opengl-unsigned.tar.gz"
+              "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64-opengl-unsigned-symbols.tar.xz"
               "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64-metal-unsigned.tar.gz"
+              "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64-metal-unsigned-symbols.tar.xz"
             )
           fi
 

@@ -19,6 +19,8 @@ param(
     [string]$MacOSGraphicsBridge = "opengl",
     [ValidateSet("apple_framework", "system")]
     [string]$MacOSOpenALProvider = "apple_framework",
+    [ValidateSet("current-manual-signoff", "current-hosted-ci-runner", "floor-candidate", "latest-public-macos")]
+    [string]$MacOSOSMatrixRole = "current-manual-signoff",
     [ValidateSet("plain", "debug", "debugoptimized", "release", "minsize", "custom")]
     [string]$BuildType = "debug",
     [string]$BuildDir = "builddir",
@@ -655,6 +657,7 @@ function Invoke-BuildTestActionForBridge {
     $environment = @{
         "OPENQ4_MACOS_GRAPHICS_BRIDGE" = $Bridge
         "OPENQ4_MACOS_OPENAL_PROVIDER" = $MacOSOpenALProvider
+        "OPENQ4_MACOS_OS_MATRIX_ROLE" = $MacOSOSMatrixRole
         "OPENQ4_MACOS_RUN_ID" = $MacOSRunId
         "OPENQ4_BUILDDIR" = (Get-MacOSBridgeBuildDir -Bridge $Bridge)
     }

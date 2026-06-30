@@ -27,6 +27,7 @@ If you have questions concerning this license or the applicable additional terms
 */
 #include "../../idlib/precompiled.h"
 #include "posix_public.h"
+#include "../../renderer/RendererStartupDiagnostics.h"
 
 #include <string.h>
 #include <errno.h>
@@ -166,6 +167,9 @@ static void sig_handler( int signum, siginfo_t *info, void *context ) {
 	Posix_WriteSignalText( " (" );
 	Posix_WriteSignalNumber( signum );
 	Posix_WriteSignalText( "), exiting without unsafe engine shutdown\n" );
+	Posix_WriteSignalText( "openQ4: last renderer startup phase: " );
+	Posix_WriteSignalText( R_RendererStartupPhaseSignalName() );
+	Posix_WriteSignalText( "\n" );
 	_exit( 128 + signum );
 }
 

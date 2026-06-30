@@ -135,7 +135,7 @@
       <ul>
         <li>A legitimate Quake 4 installation from Steam or GOG.</li>
         <li>The stock retail PK4 files in a <code>q4base/</code> directory, available through openQ4's asset discovery or a manual <code>fs_basepath</code> setting.</li>
-        <li>A supported package target: Windows, Linux, Steam Deck/SteamOS, or experimental Apple Silicon macOS.</li>
+        <li>A supported package target: Windows, Linux, Steam Deck/SteamOS, or experimental Apple Silicon/arm64 macOS.</li>
         <li>Use <code>minimum</code>, <code>lowpower</code>, or <code>performance</code> presets on constrained systems before enabling expensive visual options.</li>
       </ul>
     </section>
@@ -167,11 +167,12 @@
     <section>
       <h2>Experimental macOS Notes</h2>
       <ul>
-        <li>macOS support is experimental. Current packages are for Apple Silicon/arm64 Macs only; Intel Mac and universal2 packages are not published yet.</li>
+        <li>macOS support is experimental. Current packages are for Apple Silicon/arm64 Macs on macOS 11 or later. Intel Mac and universal2 packages are not published yet, and Rosetta is not a supported release target.</li>
         <li>Credentialed experimental macOS release runs publish signed/notarized OpenGL and Metal bridge DMGs. Releases without Apple Developer ID signing and notarization credentials publish clearly labeled <code>-unsigned.tar.gz</code> archives instead.</li>
         <li>Unsigned macOS archives are ad-hoc signed only for bundle validity, are not notarized, and may require normal Gatekeeper approval on first launch.</li>
-        <li>The Metal package is a bridge mode around the existing OpenGL renderer, preserving stock-asset compatibility while Metal translation-layer work continues.</li>
-        <li>Open the DMG or unpack the <code>-unsigned.tar.gz</code> archive, then launch <code>openQ4.app</code>. Keep <code>openQ4.app</code>, <code>baseoq4/</code>, and the loose runtime files together.</li>
+        <li>The Metal package is a bridge mode around the existing OpenGL renderer, preserving stock-asset compatibility while Metal translation-layer work continues; it is not a native Metal renderer.</li>
+        <li>Open the DMG or unpack the <code>-unsigned.tar.gz</code> archive, then launch <code>openQ4.app</code>. Keep <code>openQ4.app</code>, <code>baseoq4/</code>, and the loose runtime files together as one adjacent package root; moving only <code>openQ4.app</code> to <code>/Applications</code> is not supported yet.</li>
+        <li>For experimental macOS crashes, attach full terminal output as text plus <code>openq4.log</code> and any matching <code>.ips</code> report. Run <code>collect_macos_support_info.sh</code> from the package root and see the <a href="docs/docs/user/macos-support-data.html">macOS support-data guide</a>.</li>
       </ul>
     </section>
 

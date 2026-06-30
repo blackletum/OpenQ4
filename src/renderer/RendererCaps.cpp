@@ -31,13 +31,6 @@ static const rendererDriverQuirkRule_t rg_driverQuirkRules[] = {
 		"Microsoft OpenGL-D3D translation path is limited to the legacy compatibility renderer"
 	},
 	{
-		"Apple",
-		"",
-		"2.1",
-		RENDERER_DRIVER_QUIRK_DISABLE_VBO | RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION,
-		"Apple OpenGL 2.1 compatibility path uses CPU-backed vertex cache and simple ARB interactions for stability"
-	},
-	{
 		"openQ4Test",
 		"Missing UBO",
 		"",
@@ -89,6 +82,71 @@ static bool RendererDriverQuirk_MatchesText( const char *value, const char *patt
 		return false;
 	}
 	return idStr::FindText( value, pattern, false ) >= 0;
+}
+
+static bool RendererDriverQuirk_ParseGLVersionPrefix( const char *version, int &major, int &minor ) {
+	major = 0;
+	minor = 0;
+	if ( version == NULL || version[0] == '\0' ) {
+		return false;
+	}
+
+	const char *cursor = version;
+	while ( *cursor != '\0' && ( *cursor < '0' || *cursor > '9' ) ) {
+		cursor++;
+	}
+	if ( *cursor == '\0' ) {
+		return false;
+	}
+
+	int parsedMajor = 0;
+	while ( *cursor >= '0' && *cursor <= '9' ) {
+		parsedMajor = parsedMajor * 10 + ( *cursor - '0' );
+		cursor++;
+	}
+	if ( *cursor != '.' ) {
+		return false;
+	}
+	cursor++;
+	if ( *cursor < '0' || *cursor > '9' ) {
+		return false;
+	}
+
+	int parsedMinor = 0;
+	while ( *cursor >= '0' && *cursor <= '9' ) {
+		parsedMinor = parsedMinor * 10 + ( *cursor - '0' );
+		cursor++;
+	}
+
+	major = parsedMajor;
+	minor = parsedMinor;
+	return true;
+}
+
+static bool RendererDriverQuirk_IsAppleGL21CompatibilityFallback( const renderBackendCaps_t &caps, const rendererDriverInfo_t &driverInfo ) {
+	if ( driverInfo.vendor == NULL || idStr::Icmp( driverInfo.vendor, "Apple" ) != 0 ) {
+		return false;
+	}
+
+	int versionMajor = 0;
+	int versionMinor = 0;
+	const bool parsedVersion = RendererDriverQuirk_ParseGLVersionPrefix( driverInfo.version, versionMajor, versionMinor );
+	if ( !parsedVersion ) {
+		versionMajor = driverInfo.glMajor;
+		versionMinor = driverInfo.glMinor;
+	}
+
+	const bool reportsGL21 = versionMajor == 2 && versionMinor == 1;
+	const bool selectedGL21 =
+		caps.glMajor == 2 && caps.glMinor == 1 &&
+		driverInfo.glMajor == 2 && driverInfo.glMinor == 1;
+	const bool selectedCompatibility =
+		driverInfo.profile == RENDERER_CONTEXT_PROFILE_COMPATIBILITY ||
+		driverInfo.hasFixedFunctionCompatibility ||
+		caps.profile == RENDERER_CONTEXT_PROFILE_COMPATIBILITY ||
+		caps.hasFixedFunctionCompatibility;
+
+	return ( reportsGL21 || selectedGL21 ) && selectedCompatibility;
 }
 
 static void RendererDriverQuirks_AppendSummary( const char *text ) {
@@ -784,6 +842,12 @@ void RendererDriverQuirks_Apply( renderBackendCaps_t &caps, const rendererDriver
 		RendererDriverQuirks_AppendSummary( rule.summary );
 	}
 
+	if ( RendererDriverQuirk_IsAppleGL21CompatibilityFallback( caps, driverInfo ) ) {
+		rg_driverQuirkReport.flags |= RENDERER_DRIVER_QUIRK_DISABLE_VBO | RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION;
+		rg_driverQuirkReport.rulesMatched++;
+		RendererDriverQuirks_AppendSummary( "Apple OpenGL 2.1 compatibility path uses CPU-backed vertex cache and simple ARB interactions for stability" );
+	}
+
 	if ( ( rg_driverQuirkReport.flags & RENDERER_DRIVER_QUIRK_FORCE_LEGACY ) != 0 ) {
 		RendererDriverQuirks_DisableModernBaseline( caps );
 	}
@@ -816,11 +880,30 @@ void RendererDriverQuirks_Apply( renderBackendCaps_t &caps, const rendererDriver
 	if ( rg_driverQuirkReport.rulesMatched > 0 ) {
 		char flags[128];
 		RendererDriverQuirks_FormatFlags( rg_driverQuirkReport.flags, flags, sizeof( flags ) );
+		const bool originalARB2Available =
+			originalCaps.hasFixedFunctionCompatibility &&
+			originalCaps.hasARBVertexProgram &&
+			originalCaps.hasARBFragmentProgram;
+		const bool currentARB2Available =
+			caps.hasFixedFunctionCompatibility &&
+			caps.hasARBVertexProgram &&
+			caps.hasARBFragmentProgram;
 		common->Printf(
-			"Renderer driver quirks: applied rules=%d flags=%s summary='%s'\n",
+			"Renderer driver quirks: applied rules=%d flags=%s summary='%s' selectedContext=%d.%d %s fixedFunction=%d VBO:%d->%d PBO:%d->%d simpleInteraction=%d ARB2:%d->%d\n",
 			rg_driverQuirkReport.rulesMatched,
 			flags,
-			rg_driverQuirkReport.summary );
+			rg_driverQuirkReport.summary,
+			driverInfo.glMajor,
+			driverInfo.glMinor,
+			RendererContextProfile_Name( driverInfo.profile ),
+			driverInfo.hasFixedFunctionCompatibility ? 1 : 0,
+			originalCaps.hasVBO ? 1 : 0,
+			caps.hasVBO ? 1 : 0,
+			originalCaps.hasPBO ? 1 : 0,
+			caps.hasPBO ? 1 : 0,
+			( rg_driverQuirkReport.flags & RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION ) != 0 ? 1 : 0,
+			originalARB2Available ? 1 : 0,
+			currentARB2Available ? 1 : 0 );
 	}
 }
 
@@ -1551,6 +1634,10 @@ bool RendererCompatibilityGates_RunSelfTest( void ) {
 		const char *vendor;
 		const char *renderer;
 		const char *version;
+		int glMajor;
+		int glMinor;
+		rendererContextProfile_t profile;
+		bool fixedFunction;
 		unsigned int expectedFlags;
 		rendererTier_t expectedTier;
 		bool expectedTimerQuery;
@@ -1558,22 +1645,40 @@ bool RendererCompatibilityGates_RunSelfTest( void ) {
 		bool expectedVBO;
 	};
 	const quirkCase_t quirkCasesTable[] = {
-		{ "openQ4Test", "Missing UBO", "1.0", RENDERER_DRIVER_QUIRK_DISABLE_UBO, RENDERER_TIER_LEGACY_GL2_COMPAT, true, true, true },
-		{ "openQ4Test", "Broken MRT", "1.0", RENDERER_DRIVER_QUIRK_DISABLE_MRT, RENDERER_TIER_LEGACY_GL2_COMPAT, true, true, true },
-		{ "openQ4Test", "Missing Timer Query", "1.0", RENDERER_DRIVER_QUIRK_DISABLE_TIMER_QUERY, RENDERER_TIER_TOP_GL46, false, true, true },
-		{ "openQ4Test", "Missing Buffer Storage", "1.0", RENDERER_DRIVER_QUIRK_DISABLE_BUFFER_STORAGE, RENDERER_TIER_GPU_DRIVEN_GL43, true, true, true },
-		{ "openQ4Test", "Rejected Debug Context", "1.0", RENDERER_DRIVER_QUIRK_REJECT_DEBUG_CONTEXT, RENDERER_TIER_TOP_GL46, true, false, true },
-		{ "Apple", "Apple M4 Max", "2.1 Metal", RENDERER_DRIVER_QUIRK_DISABLE_VBO | RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION, RENDERER_TIER_LEGACY_GL2_COMPAT, true, true, false }
+		{ "openQ4Test", "Missing UBO", "1.0", 4, 6, RENDERER_CONTEXT_PROFILE_COMPATIBILITY, true, RENDERER_DRIVER_QUIRK_DISABLE_UBO, RENDERER_TIER_LEGACY_GL2_COMPAT, true, true, true },
+		{ "openQ4Test", "Broken MRT", "1.0", 4, 6, RENDERER_CONTEXT_PROFILE_COMPATIBILITY, true, RENDERER_DRIVER_QUIRK_DISABLE_MRT, RENDERER_TIER_LEGACY_GL2_COMPAT, true, true, true },
+		{ "openQ4Test", "Missing Timer Query", "1.0", 4, 6, RENDERER_CONTEXT_PROFILE_COMPATIBILITY, true, RENDERER_DRIVER_QUIRK_DISABLE_TIMER_QUERY, RENDERER_TIER_TOP_GL46, false, true, true },
+		{ "openQ4Test", "Missing Buffer Storage", "1.0", 4, 6, RENDERER_CONTEXT_PROFILE_COMPATIBILITY, true, RENDERER_DRIVER_QUIRK_DISABLE_BUFFER_STORAGE, RENDERER_TIER_GPU_DRIVEN_GL43, true, true, true },
+		{ "openQ4Test", "Rejected Debug Context", "1.0", 4, 6, RENDERER_CONTEXT_PROFILE_COMPATIBILITY, true, RENDERER_DRIVER_QUIRK_REJECT_DEBUG_CONTEXT, RENDERER_TIER_TOP_GL46, true, false, true },
+		{ "Apple", "Apple M4 Max", "2.1 Metal", 2, 1, RENDERER_CONTEXT_PROFILE_COMPATIBILITY, true, RENDERER_DRIVER_QUIRK_DISABLE_VBO | RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION, RENDERER_TIER_LEGACY_GL2_COMPAT, true, true, false },
+		{ "Apple", "Apple M5", "2.1 Metal", 2, 1, RENDERER_CONTEXT_PROFILE_COMPATIBILITY, true, RENDERER_DRIVER_QUIRK_DISABLE_VBO | RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION, RENDERER_TIER_LEGACY_GL2_COMPAT, true, true, false },
+		{ "Apple", "Apple M4 Max macOS 15.x", "OpenGL 2.1 Metal", 2, 1, RENDERER_CONTEXT_PROFILE_COMPATIBILITY, true, RENDERER_DRIVER_QUIRK_DISABLE_VBO | RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION, RENDERER_TIER_LEGACY_GL2_COMPAT, true, true, false },
+		{ "Apple", "Apple M5 macOS 16 Tahoe", "OpenGL 2.1 Metal", 2, 1, RENDERER_CONTEXT_PROFILE_COMPATIBILITY, true, RENDERER_DRIVER_QUIRK_DISABLE_VBO | RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION, RENDERER_TIER_LEGACY_GL2_COMPAT, true, true, false },
+		{ "Apple", "unknown", "2.1 Metal", 2, 1, RENDERER_CONTEXT_PROFILE_COMPATIBILITY, true, RENDERER_DRIVER_QUIRK_DISABLE_VBO | RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION, RENDERER_TIER_LEGACY_GL2_COMPAT, true, true, false },
+		{ "Apple", "", "2.1 Metal", 2, 1, RENDERER_CONTEXT_PROFILE_COMPATIBILITY, true, RENDERER_DRIVER_QUIRK_DISABLE_VBO | RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION, RENDERER_TIER_LEGACY_GL2_COMPAT, true, true, false },
+		{ "Apple", "Apple Silicon modern context", "4.1 Metal", 4, 1, RENDERER_CONTEXT_PROFILE_CORE, false, RENDERER_DRIVER_QUIRK_NONE, RENDERER_TIER_MODERN_GL41, true, true, true }
 	};
 
 	for ( int i = 0; i < static_cast<int>( sizeof( quirkCasesTable ) / sizeof( quirkCasesTable[0] ) ); ++i ) {
-		caps = RendererTierSelect_TestCaps( 4, 6, RENDERER_CONTEXT_PROFILE_COMPATIBILITY, true, true, true, true );
+		caps = RendererTierSelect_TestCaps(
+			quirkCasesTable[i].glMajor,
+			quirkCasesTable[i].glMinor,
+			quirkCasesTable[i].profile,
+			true,
+			true,
+			true,
+			true );
+		caps.hasFixedFunctionCompatibility = quirkCasesTable[i].fixedFunction;
 		caps.debugContext = true;
 		caps.hasTimerQuery = true;
 		const rendererDriverInfo_t driverInfo = {
 			quirkCasesTable[i].vendor,
 			quirkCasesTable[i].renderer,
-			quirkCasesTable[i].version
+			quirkCasesTable[i].version,
+			quirkCasesTable[i].glMajor,
+			quirkCasesTable[i].glMinor,
+			quirkCasesTable[i].profile,
+			quirkCasesTable[i].fixedFunction
 		};
 		RendererDriverQuirks_Apply( caps, driverInfo );
 		const rendererTier_t selected = RendererTier_Select( caps, RENDERER_TIER_PREF_AUTO );

@@ -13,20 +13,23 @@ This guide covers openQ4 display/window settings for end users, including multi-
 
 ## Performance Presets
 
-The `com_performancePreset` cvar stores the selected preset. Use the Settings menu dropdown, or run `applyPerformancePreset <name>` from the console.
+The `com_performancePreset` cvar stores the selected preset. Use the Settings menu dropdown, or run `applyPerformancePreset [name]` from the console.
+Running `applyPerformancePreset` without a name applies the stored `com_performancePreset`; if that stored value is invalid, openQ4 falls back to `balanced`. Explicit unknown names are rejected without changing the current preset.
 
-| Preset | Intended use |
-|---|---|
-| `minimum` | Most constrained systems; uses 50% resolution scale, no AA, texture downsizing, and conservative audio mixing. |
-| `lowpower` | Raspberry Pi-class and other low-power systems; keeps authored rendering features on while reducing resolution scale, AA, post effects, texture pressure, and surround/EAX audio cost. |
-| `performance` | Modest desktops/handhelds aiming for smoother frame pacing, with lighter AA and audio-effect targets. |
-| `balanced` | General desktop default. |
-| `quality` | Strong desktop GPUs. |
-| `ultra` | Explicit high-end choice; Auto-Detect does not select this automatically. |
+| Preset | Display and AA | Texture and audio profile | Intended use |
+|---|---|---|---|
+| `minimum` | 50% scale, no AA, 30 FPS cap | Aggressive texture downsizing, one sound sample per shader, stereo, no EAX, lower emitter budget | Most constrained systems. |
+| `lowpower` | 75% scale, no AA, 30 FPS cap | Texture downsizing, one sound sample per shader, stereo, no EAX, lower emitter budget | Raspberry Pi-class and other low-power systems. |
+| `performance` | 85% scale, SMAA medium, 60 FPS cap | Full-size compressed textures, stereo, no EAX, moderate emitter budget | Modest desktops and handhelds aiming for smoother frame pacing. |
+| `balanced` | 100% scale, 2x MSAA, SMAA medium, 120 FPS cap | Full-size compressed textures, surround/EAX restored, full emitter budget | General desktop default. |
+| `quality` | 100% scale, 4x MSAA, SMAA medium, 144 FPS cap | Uncompressed normals, larger upload budget, surround/EAX restored | Strong desktop GPUs. |
+| `ultra` | 100% scale, 8x MSAA, SMAA medium, 240 FPS cap | Uncompressed runtime textures, high-end benchmark tag, surround/EAX restored | Explicit high-end choice; Auto-Detect does not select this automatically. |
 
-`autoDetectPerformancePreset` selects a conservative preset from platform signals, CPU architecture, system RAM, video RAM, and renderer capability flags, then applies it. On Raspberry Pi hosts or explicit `OPENQ4_LOWPOWER=1` / `OPENQ4_RASPBERRYPI=1` signals, it chooses `lowpower`.
+All presets keep optional shadow maps and subjective/modern post effects disabled, so the authored Quake 4 look remains the baseline. Enable shadow maps, bloom, SSAO, tone mapping, motion blur, or CRT filtering separately after choosing a preset if you want those effects.
 
-For package or platform validation, `performancePresetSelfTest` checks that the preset commands are registered, every preset is known to the menu-facing cvar, auto-detect returns a supported non-`ultra` preset, and the preset cvar mappings apply correctly.
+`autoDetectPerformancePreset` takes no arguments. It selects a conservative preset from platform signals, CPU architecture, system RAM, video RAM, and renderer capability flags, then applies it. Missing or implausible memory telemetry is treated as a conservative fallback instead of promoting the system to a higher preset. On Raspberry Pi hosts or explicit `OPENQ4_LOWPOWER=1` / `OPENQ4_RASPBERRYPI=1` signals, it chooses `lowpower`.
+
+For package or platform validation, `performancePresetSelfTest` checks that the preset commands are registered, every preset is known to the menu-facing cvar and command completion lists, auto-detect returns and applies a supported non-`ultra` preset, command arguments behave correctly, all preset writes are declared for backup/restore coverage, the preset progression stays coherent, the preset cvar mappings apply correctly, and the test restores touched cvar values, flags, and modified-state bookkeeping before finishing.
 
 ## Core Display Settings
 

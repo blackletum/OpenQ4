@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import plistlib
@@ -48,6 +49,11 @@ PRODUCT_NAME = "openQ4"
 GAME_DIR_NAME = "baseoq4"
 RELEASE_README_PATH = Path("assets") / "release" / "README.html"
 LICENSE_PATH = Path("LICENSE")
+MACOS_SUPPORT_INFO_SCRIPT_PATH = Path("tools") / "macos" / "collect_macos_support_info.sh"
+MACOS_SUPPORT_INFO_SCRIPT_NAME = "collect_macos_support_info.sh"
+MACOS_SYMBOL_MANIFEST_NAME = "SYMBOLS.txt"
+MACOS_SYMBOL_ARCHIVE_SUFFIX = ".tar.xz"
+GAMELIBS_STAGE_MANIFEST_PATH = Path(".tmp") / "gamelibs_stage" / "openq4_gamelibs_stage_manifest.json"
 SUPPORTED_ARCHES = ("x64", "x86", "arm64")
 
 PLATFORM_EXECUTABLE_EXT = {
@@ -112,6 +118,17 @@ MACOS_LOCALIZED_INFO_LOCALES = (
     "English",
     "French",
 )
+MACOS_PACKAGE_ROOT_ERROR_STRINGS_NAME = "OpenQ4PackageRoot.strings"
+MACOS_PACKAGE_ROOT_ERROR_STRINGS = {
+    "English": {
+        "OpenQ4PackageRootMissingTitle": "openQ4.app adjacent package root is incomplete",
+        "OpenQ4PackageRootMissingBody": "Keep openQ4.app, baseoq4/, openQ4-client_<arch>, and openQ4-ded_<arch> together in the same package folder. Moving only openQ4.app to /Applications is not supported yet.",
+    },
+    "French": {
+        "OpenQ4PackageRootMissingTitle": "La racine de paquet adjacente a openQ4.app est incomplete",
+        "OpenQ4PackageRootMissingBody": "Conservez openQ4.app, baseoq4/, openQ4-client_<arch> et openQ4-ded_<arch> ensemble dans le meme dossier de paquet. Deplacer seulement openQ4.app vers /Applications n'est pas encore pris en charge.",
+    },
+}
 MACOS_EXPECTED_APP_BUNDLE_DIRS = (
     "Contents",
     "Contents/MacOS",
@@ -130,6 +147,8 @@ MACOS_EXPECTED_APP_BUNDLE_FILES = (
     "Contents/Resources/VERSION.txt",
     "Contents/Resources/English.lproj/InfoPlist.strings",
     "Contents/Resources/French.lproj/InfoPlist.strings",
+    f"Contents/Resources/English.lproj/{MACOS_PACKAGE_ROOT_ERROR_STRINGS_NAME}",
+    f"Contents/Resources/French.lproj/{MACOS_PACKAGE_ROOT_ERROR_STRINGS_NAME}",
 )
 MACOS_OPTIONAL_APP_BUNDLE_SIGNATURE_FILES = (
     "Contents/_CodeSignature/CodeResources",
@@ -146,6 +165,12 @@ MACOS_LIPO_ARCHES = {
 MACOS_SIGNING_MODES = (
     "ad-hoc",
     "developer-id",
+)
+VERSION_REPOSITORY_METADATA_KEYS = (
+    "openq4_commit",
+    "openq4_dirty",
+    "openq4_game_commit",
+    "openq4_game_dirty",
 )
 MACOS_FORBIDDEN_ENTITLEMENTS = {
     "com.apple.security.app-sandbox": (
@@ -387,6 +412,17 @@ def copy_regular_tree(source_root: Path, destination_root: Path) -> None:
             copy_regular_file(path, destination)
         else:
             raise RuntimeError(f"refusing to package non-regular file from tree: {path}")
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def get_required_root_binaries(platform: str, arch: str) -> tuple[str, str]:
@@ -660,6 +696,18 @@ def validate_macos_localized_info_bytes(data: bytes, label: str, version: str) -
             raise RuntimeError(f"{label} {key} is {actual!r}; expected {expected!r}")
 
 
+def validate_macos_package_root_error_bytes(data: bytes, label: str, locale: str) -> None:
+    values = parse_macos_localized_info_strings(data, label)
+    expected_values = MACOS_PACKAGE_ROOT_ERROR_STRINGS.get(locale)
+    if expected_values is None:
+        raise RuntimeError(f"{label} has no expected localized package-root error strings")
+
+    for key, expected in expected_values.items():
+        actual = values.get(key)
+        if actual != expected:
+            raise RuntimeError(f"{label} {key} is {actual!r}; expected {expected!r}")
+
+
 def macos_package_version_tag_from_name(package_root: Path, arch: str) -> str:
     name = package_root.name
     prefix = "openq4-"
@@ -697,6 +745,17 @@ def validate_macos_localized_info_files(package_root: Path, version: str) -> Non
         except OSError as exc:
             raise RuntimeError(f"macOS localized InfoPlist.strings is unreadable: {path}") from exc
         validate_macos_localized_info_bytes(data, f"macOS {locale} InfoPlist.strings", version)
+
+        error_path = package_root / "openQ4.app" / "Contents" / "Resources" / f"{locale}.lproj" / MACOS_PACKAGE_ROOT_ERROR_STRINGS_NAME
+        try:
+            error_data = error_path.read_bytes()
+        except OSError as exc:
+            raise RuntimeError(f"macOS localized package-root error strings are unreadable: {error_path}") from exc
+        validate_macos_package_root_error_bytes(
+            error_data,
+            f"macOS {locale} package-root error strings",
+            locale,
+        )
 
 
 def macos_expected_lipo_arch(arch: str) -> str:
@@ -1082,6 +1141,86 @@ def notarize_macos_dmg_image(dmg_path: Path, config: MacOSSigningConfig) -> None
     )
 
 
+def package_git_value(root: Path, *args: str) -> str:
+    if not (root / ".git").exists():
+        return ""
+
+    completed = subprocess.run(
+        ["git", "-C", str(root), *args],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    if completed.returncode != 0:
+        return ""
+    return completed.stdout.strip()
+
+
+def package_git_dirty(root: Path) -> str:
+    if not package_git_value(root, "rev-parse", "--is-inside-work-tree"):
+        return "unavailable"
+    return "true" if package_git_value(root, "status", "--porcelain") else "false"
+
+
+def clean_version_metadata_value(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "unavailable"
+
+    text = str(value).strip()
+    if not text or "\n" in text or "\r" in text:
+        return "unavailable"
+    return text
+
+
+def read_staged_repository_metadata(source_root: Path) -> dict[str, str]:
+    manifest_path = source_root / GAMELIBS_STAGE_MANIFEST_PATH
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        return {}
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(manifest, dict):
+        return {}
+
+    return {
+        "openq4_commit": clean_version_metadata_value(manifest.get("projectGitCommit")),
+        "openq4_dirty": clean_version_metadata_value(manifest.get("projectGitDirty")),
+        "openq4_game_commit": clean_version_metadata_value(manifest.get("gameLibsGitCommit")),
+        "openq4_game_dirty": clean_version_metadata_value(manifest.get("gameLibsGitDirty")),
+    }
+
+
+def collect_package_repository_metadata(source_root: Path) -> dict[str, str]:
+    metadata = {key: "unavailable" for key in VERSION_REPOSITORY_METADATA_KEYS}
+    staged_metadata = read_staged_repository_metadata(source_root)
+    for key, value in staged_metadata.items():
+        if value != "unavailable":
+            metadata[key] = value
+
+    if metadata["openq4_commit"] == "unavailable":
+        metadata["openq4_commit"] = clean_version_metadata_value(
+            package_git_value(source_root, "rev-parse", "--verify", "HEAD")
+        )
+    if metadata["openq4_dirty"] == "unavailable":
+        metadata["openq4_dirty"] = package_git_dirty(source_root)
+
+    gamelibs_env = os.environ.get("OPENQ4_GAMELIBS_REPO", "").strip()
+    gamelibs_root = Path(gamelibs_env) if gamelibs_env else source_root.parent / "openQ4-game"
+    if metadata["openq4_game_commit"] == "unavailable":
+        metadata["openq4_game_commit"] = clean_version_metadata_value(
+            package_git_value(gamelibs_root, "rev-parse", "--verify", "HEAD")
+        )
+    if metadata["openq4_game_dirty"] == "unavailable":
+        metadata["openq4_game_dirty"] = package_git_dirty(gamelibs_root)
+
+    return metadata
+
+
 def write_version_manifest(
     destination: Path,
     *,
@@ -1089,17 +1228,309 @@ def write_version_manifest(
     version_tag: str,
     platform: str,
     arch: str,
+    repository_metadata: dict[str, str] | None = None,
 ) -> None:
-    write_text_file(
-        destination,
-        [
-            PRODUCT_NAME,
-            f"version={version}",
-            f"version_tag={version_tag}",
-            f"platform={platform}",
-            f"arch={arch}",
-        ],
+    lines = [
+        PRODUCT_NAME,
+        f"version={version}",
+        f"version_tag={version_tag}",
+        f"platform={platform}",
+        f"arch={arch}",
+    ]
+    if repository_metadata is not None:
+        for key in VERSION_REPOSITORY_METADATA_KEYS:
+            lines.append(f"{key}={clean_version_metadata_value(repository_metadata.get(key))}")
+
+    write_text_file(destination, lines)
+
+
+def macos_symbol_archive_stem(version_tag: str, arch: str, package_suffix: str) -> str:
+    return f"openq4-{version_tag}-macos-{arch}{package_suffix}-symbols"
+
+
+def macos_symbol_targets(package_root: Path, arch: str) -> list[tuple[Path, Path, Path]]:
+    return [
+        (
+            Path("openQ4.app") / "Contents" / "MacOS" / "openQ4",
+            package_root / "openQ4.app" / "Contents" / "MacOS" / "openQ4",
+            Path("dSYMs") / "openQ4.app.dSYM",
+        ),
+        (
+            Path(f"{PRODUCT_NAME}-client_{arch}"),
+            package_root / f"{PRODUCT_NAME}-client_{arch}",
+            Path("dSYMs") / f"{PRODUCT_NAME}-client_{arch}.dSYM",
+        ),
+        (
+            Path(f"{PRODUCT_NAME}-ded_{arch}"),
+            package_root / f"{PRODUCT_NAME}-ded_{arch}",
+            Path("dSYMs") / f"{PRODUCT_NAME}-ded_{arch}.dSYM",
+        ),
+        (
+            Path(GAME_DIR_NAME) / f"game-sp_{arch}.dylib",
+            package_root / GAME_DIR_NAME / f"game-sp_{arch}.dylib",
+            Path("dSYMs") / f"game-sp_{arch}.dylib.dSYM",
+        ),
+        (
+            Path(GAME_DIR_NAME) / f"game-mp_{arch}.dylib",
+            package_root / GAME_DIR_NAME / f"game-mp_{arch}.dylib",
+            Path("dSYMs") / f"game-mp_{arch}.dylib.dSYM",
+        ),
+    ]
+
+
+def macos_macho_uuid(binary_path: Path) -> str:
+    if sys.platform != "darwin":
+        return "unavailable"
+
+    dwarfdump_path = shutil.which("dwarfdump")
+    if dwarfdump_path is None:
+        raise RuntimeError("macOS symbol manifest generation requires dwarfdump")
+
+    completed = run_macos_command(
+        [dwarfdump_path, "--uuid", str(binary_path)],
+        label=f"reading Mach-O UUID for {binary_path}",
     )
+    uuid_lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    return "; ".join(uuid_lines) if uuid_lines else "unavailable"
+
+
+def write_macos_symbol_manifest(
+    package_root: Path,
+    *,
+    version: str,
+    version_tag: str,
+    arch: str,
+    package_suffix: str,
+    runtime_archive_name: str,
+) -> Path:
+    symbol_archive_name = f"{macos_symbol_archive_stem(version_tag, arch, package_suffix)}{MACOS_SYMBOL_ARCHIVE_SUFFIX}"
+    lines = [
+        "openQ4 macOS symbols",
+        "format=1",
+        f"version={version}",
+        f"version_tag={version_tag}",
+        "platform=macos",
+        f"arch={arch}",
+        f"package_suffix={package_suffix or '<none>'}",
+        f"runtime_archive={runtime_archive_name}",
+        f"symbol_archive={symbol_archive_name}",
+        "",
+        "binaries:",
+    ]
+
+    for relative_path, binary_path, dsym_relative_path in macos_symbol_targets(package_root, arch):
+        require_non_empty_package_file(binary_path, f"macOS symbol manifest binary {relative_path.as_posix()}")
+        lines.extend(
+            [
+                f"- path={relative_path.as_posix()}",
+                f"  sha256={sha256_file(binary_path)}",
+                f"  size={binary_path.stat().st_size}",
+                f"  macho_uuid={macos_macho_uuid(binary_path)}",
+                f"  dsym={dsym_relative_path.as_posix()}",
+            ]
+        )
+
+    manifest_path = package_root / MACOS_SYMBOL_MANIFEST_NAME
+    write_text_file(manifest_path, lines)
+    return manifest_path
+
+
+def validate_macos_symbol_manifest_bytes(
+    data: bytes,
+    label: str,
+    *,
+    version: str,
+    version_tag: str,
+    arch: str,
+    runtime_archive_name: str,
+    symbol_archive_name: str,
+) -> None:
+    validate_macos_metadata_bytes_size(data, label)
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError(f"{label} is not UTF-8") from exc
+
+    required_tokens = (
+        "openQ4 macOS symbols",
+        "format=1",
+        f"version={version}",
+        f"version_tag={version_tag}",
+        "platform=macos",
+        f"arch={arch}",
+        "runtime_archive=",
+        f"symbol_archive={symbol_archive_name}",
+        "binaries:",
+        "path=openQ4.app/Contents/MacOS/openQ4",
+        f"path={PRODUCT_NAME}-client_{arch}",
+        f"path={PRODUCT_NAME}-ded_{arch}",
+        f"path={GAME_DIR_NAME}/game-sp_{arch}.dylib",
+        f"path={GAME_DIR_NAME}/game-mp_{arch}.dylib",
+        "sha256=",
+        "macho_uuid=",
+        "dsym=dSYMs/openQ4.app.dSYM",
+    )
+    for token in required_tokens:
+        if token not in text:
+            raise RuntimeError(f"{label} is missing required token: {token}")
+
+
+def create_macos_dsym_bundle(binary_path: Path, dsym_path: Path) -> None:
+    if sys.platform != "darwin":
+        raise RuntimeError("macOS dSYM generation requires a macOS host")
+
+    dsymutil_path = shutil.which("dsymutil")
+    if dsymutil_path is None:
+        raise RuntimeError("macOS dSYM generation requires dsymutil")
+
+    if dsym_path.exists():
+        if dsym_path.is_dir():
+            shutil.rmtree(dsym_path)
+        else:
+            dsym_path.unlink()
+    dsym_path.parent.mkdir(parents=True, exist_ok=True)
+
+    run_macos_command(
+        [dsymutil_path, str(binary_path), "-o", str(dsym_path)],
+        label=f"generating dSYM bundle for {binary_path}",
+    )
+
+    dwarf_dir = dsym_path / "Contents" / "Resources" / "DWARF"
+    if not dwarf_dir.is_dir() or not any(path.is_file() for path in dwarf_dir.iterdir()):
+        raise RuntimeError(f"generated dSYM bundle has no DWARF payload: {dsym_path}")
+
+
+def create_macos_symbol_tarball(symbol_root: Path, archive_path: Path) -> None:
+    prepare_archive_output_path(archive_path, "macOS symbol archive output")
+
+    with tarfile.open(archive_path, "w:xz") as archive:
+        for path in sorted(symbol_root.rglob("*")):
+            if path.is_symlink():
+                raise RuntimeError(f"macOS symbol archive input contains a symlink: {path}")
+            if path.is_dir():
+                continue
+            if not path.is_file():
+                raise RuntimeError(f"macOS symbol archive input contains a non-regular file: {path}")
+
+            relative_path = path.relative_to(symbol_root)
+            arcname = (Path(symbol_root.name) / relative_path).as_posix()
+            info = archive.gettarinfo(path, arcname=arcname)
+            info.uid = 0
+            info.gid = 0
+            info.uname = ""
+            info.gname = ""
+            info.mtime = DETERMINISTIC_TAR_MTIME
+            info.mode = 0o644
+            with path.open("rb") as handle:
+                archive.addfile(info, handle)
+
+
+def validate_macos_symbol_archive_contents(
+    archive_path: Path,
+    symbol_root_name: str,
+    *,
+    version: str,
+    version_tag: str,
+    arch: str,
+    package_suffix: str,
+    runtime_archive_name: str,
+) -> None:
+    if not archive_path.is_file():
+        raise RuntimeError(f"macOS symbol archive was not created: {archive_path}")
+
+    package_prefix = symbol_root_name + "/"
+    expected_symbol_archive_name = f"{macos_symbol_archive_stem(version_tag, arch, package_suffix)}{MACOS_SYMBOL_ARCHIVE_SUFFIX}"
+    expected_entries = {
+        f"{package_prefix}{MACOS_SYMBOL_MANIFEST_NAME}",
+        f"{package_prefix}dSYMs/openQ4.app.dSYM/Contents/Resources/DWARF/openQ4",
+        f"{package_prefix}dSYMs/{PRODUCT_NAME}-client_{arch}.dSYM/Contents/Resources/DWARF/{PRODUCT_NAME}-client_{arch}",
+        f"{package_prefix}dSYMs/{PRODUCT_NAME}-ded_{arch}.dSYM/Contents/Resources/DWARF/{PRODUCT_NAME}-ded_{arch}",
+        f"{package_prefix}dSYMs/game-sp_{arch}.dylib.dSYM/Contents/Resources/DWARF/game-sp_{arch}.dylib",
+        f"{package_prefix}dSYMs/game-mp_{arch}.dylib.dSYM/Contents/Resources/DWARF/game-mp_{arch}.dylib",
+    }
+    forbidden_runtime_entries = {
+        f"{package_prefix}openQ4.app/Contents/MacOS/openQ4",
+        f"{package_prefix}{PRODUCT_NAME}-client_{arch}",
+        f"{package_prefix}{PRODUCT_NAME}-ded_{arch}",
+        f"{package_prefix}{GAME_DIR_NAME}/game-sp_{arch}.dylib",
+        f"{package_prefix}{GAME_DIR_NAME}/game-mp_{arch}.dylib",
+    }
+
+    entry_names: set[str] = set()
+    manifest_bytes: bytes | None = None
+    with tarfile.open(archive_path, "r:*") as archive:
+        for member in archive.getmembers():
+            name = member.name.rstrip("/")
+            if not name:
+                continue
+            if member.issym() or member.islnk():
+                raise RuntimeError(f"macOS symbol archive contains symlink entry: {name}")
+            if not member.isfile():
+                raise RuntimeError(f"macOS symbol archive contains non-regular entry: {name}")
+            validate_macos_archive_name(name, package_prefix)
+            validate_macos_archive_mode(name, member.mode & 0o7777)
+            entry_names.add(name)
+            if name == f"{package_prefix}{MACOS_SYMBOL_MANIFEST_NAME}":
+                extracted = archive.extractfile(member)
+                if extracted is not None:
+                    manifest_bytes = extracted.read()
+
+    missing_entries = sorted(expected_entries - entry_names)
+    if missing_entries:
+        joined = ", ".join(missing_entries)
+        raise RuntimeError(f"macOS symbol archive is missing required dSYM entries: {joined}")
+
+    leaked_runtime = sorted(forbidden_runtime_entries & entry_names)
+    if leaked_runtime:
+        joined = ", ".join(leaked_runtime)
+        raise RuntimeError(f"macOS symbol archive contains runtime payload entries: {joined}")
+
+    if manifest_bytes is None:
+        raise RuntimeError("macOS symbol archive manifest is missing")
+    validate_macos_symbol_manifest_bytes(
+        manifest_bytes,
+        "macOS symbol archive manifest",
+        version=version,
+        version_tag=version_tag,
+        arch=arch,
+        runtime_archive_name=runtime_archive_name,
+        symbol_archive_name=expected_symbol_archive_name,
+    )
+
+
+def create_macos_symbol_archive(
+    package_root: Path,
+    output_dir: Path,
+    *,
+    version: str,
+    version_tag: str,
+    arch: str,
+    package_suffix: str,
+    runtime_archive_name: str,
+) -> Path:
+    symbol_stem = macos_symbol_archive_stem(version_tag, arch, package_suffix)
+    symbol_root = output_dir / symbol_stem
+    symbol_archive_path = output_dir / f"{symbol_stem}{MACOS_SYMBOL_ARCHIVE_SUFFIX}"
+    if symbol_root.exists():
+        shutil.rmtree(symbol_root)
+    symbol_root.mkdir(parents=True, exist_ok=True)
+
+    copy_regular_file(package_root / MACOS_SYMBOL_MANIFEST_NAME, symbol_root / MACOS_SYMBOL_MANIFEST_NAME)
+    for _relative_path, binary_path, dsym_relative_path in macos_symbol_targets(package_root, arch):
+        require_packaged_executable(binary_path, "macOS dSYM source binary")
+        create_macos_dsym_bundle(binary_path, symbol_root / dsym_relative_path)
+
+    create_macos_symbol_tarball(symbol_root, symbol_archive_path)
+    validate_macos_symbol_archive_contents(
+        symbol_archive_path,
+        symbol_root.name,
+        version=version,
+        version_tag=version_tag,
+        arch=arch,
+        package_suffix=package_suffix,
+        runtime_archive_name=runtime_archive_name,
+    )
+    return symbol_archive_path
 
 
 def parse_stable_base_version(version: str) -> tuple[int, int, int] | None:
@@ -1166,7 +1597,22 @@ def write_macos_localized_info_strings(app_contents: Path, version: str) -> None
         )
 
 
-def copy_release_collateral(source_root: Path, package_root: Path) -> None:
+def write_macos_package_root_error_strings(app_contents: Path) -> None:
+    for locale, localized_strings in MACOS_PACKAGE_ROOT_ERROR_STRINGS.items():
+        lines = [
+            "/* Localized startup error for incomplete adjacent package roots */",
+            "",
+        ]
+        for key, value in localized_strings.items():
+            lines.append(f'{key} = "{value}";')
+
+        write_text_file(
+            app_contents / "Resources" / f"{locale}.lproj" / MACOS_PACKAGE_ROOT_ERROR_STRINGS_NAME,
+            lines,
+        )
+
+
+def copy_release_collateral(source_root: Path, package_root: Path, platform: str) -> None:
     collateral = (
         (source_root / RELEASE_README_PATH, package_root / "README.html"),
         (source_root / LICENSE_PATH, package_root / "LICENSE"),
@@ -1174,6 +1620,11 @@ def copy_release_collateral(source_root: Path, package_root: Path) -> None:
 
     for source, destination in collateral:
         copy_regular_file(source, destination)
+
+    if platform == "macos":
+        destination = package_root / MACOS_SUPPORT_INFO_SCRIPT_NAME
+        copy_regular_file(source_root / MACOS_SUPPORT_INFO_SCRIPT_PATH, destination)
+        ensure_posix_executable(destination)
 
 
 def generate_release_documentation(
@@ -1439,6 +1890,7 @@ def get_package_executable_archive_paths(
         executable_paths.update(Path(filename) for filename in copied_linux_launchers)
     elif platform == "macos":
         executable_paths.add(Path("openQ4.app") / "Contents" / "MacOS" / "openQ4")
+        executable_paths.add(Path(MACOS_SUPPORT_INFO_SCRIPT_NAME))
         executable_paths.update(
             {
                 Path(GAME_DIR_NAME) / f"game-sp_{arch}.dylib",
@@ -1494,7 +1946,9 @@ def is_macos_bounded_metadata_entry(name: str) -> bool:
         name.endswith("/Info.plist")
         or name.endswith("/PkgInfo")
         or name.endswith("/VERSION.txt")
+        or name.endswith(f"/{MACOS_SYMBOL_MANIFEST_NAME}")
         or name.endswith(".lproj/InfoPlist.strings")
+        or name.endswith(f".lproj/{MACOS_PACKAGE_ROOT_ERROR_STRINGS_NAME}")
         or name.endswith("/_CodeSignature/CodeResources")
     )
 
@@ -1548,6 +2002,8 @@ def validate_macos_archive_contents(
         f"{package_prefix}{GAME_DIR_NAME}/mod.json",
         f"{package_prefix}{GAME_DIR_NAME}/pak0.pk4",
         f"{package_prefix}{GAME_DIR_NAME}/pak1.pk4",
+        f"{package_prefix}{MACOS_SUPPORT_INFO_SCRIPT_NAME}",
+        f"{package_prefix}{MACOS_SYMBOL_MANIFEST_NAME}",
         f"{package_prefix}VERSION.txt",
         f"{package_prefix}openQ4.app/Contents/Info.plist",
         f"{package_prefix}openQ4.app/Contents/PkgInfo",
@@ -1556,11 +2012,14 @@ def validate_macos_archive_contents(
         f"{package_prefix}openQ4.app/Contents/Resources/VERSION.txt",
         f"{package_prefix}openQ4.app/Contents/Resources/English.lproj/InfoPlist.strings",
         f"{package_prefix}openQ4.app/Contents/Resources/French.lproj/InfoPlist.strings",
+        f"{package_prefix}openQ4.app/Contents/Resources/English.lproj/{MACOS_PACKAGE_ROOT_ERROR_STRINGS_NAME}",
+        f"{package_prefix}openQ4.app/Contents/Resources/French.lproj/{MACOS_PACKAGE_ROOT_ERROR_STRINGS_NAME}",
     }
     executable_entries = {
         client_entry,
         dedicated_entry,
         app_executable_entry,
+        f"{package_prefix}{MACOS_SUPPORT_INFO_SCRIPT_NAME}",
         f"{package_prefix}{GAME_DIR_NAME}/game-sp_{arch}.dylib",
         f"{package_prefix}{GAME_DIR_NAME}/game-mp_{arch}.dylib",
     }
@@ -1573,7 +2032,9 @@ def validate_macos_archive_contents(
     pkginfo_bytes: bytes | None = None
     root_version_bytes: bytes | None = None
     app_version_bytes: bytes | None = None
+    symbol_manifest_bytes: bytes | None = None
     localized_info_bytes: dict[str, bytes] = {}
+    localized_package_root_error_bytes: dict[str, bytes] = {}
     code_resources_bytes: bytes | None = None
     package_version_tag = macos_package_version_tag_from_name(package_root, arch)
     code_resources_entry = f"{package_prefix}openQ4.app/Contents/_CodeSignature/CodeResources"
@@ -1602,14 +2063,20 @@ def validate_macos_archive_contents(
                 pkginfo_bytes = archive.read(pkginfo_entry)
             root_version_entry = f"{package_prefix}VERSION.txt"
             app_version_entry = f"{package_prefix}openQ4.app/Contents/Resources/VERSION.txt"
+            symbol_manifest_entry = f"{package_prefix}{MACOS_SYMBOL_MANIFEST_NAME}"
             if root_version_entry in entry_names:
                 root_version_bytes = archive.read(root_version_entry)
             if app_version_entry in entry_names:
                 app_version_bytes = archive.read(app_version_entry)
+            if symbol_manifest_entry in entry_names:
+                symbol_manifest_bytes = archive.read(symbol_manifest_entry)
             for locale in MACOS_LOCALIZED_INFO_LOCALES:
                 entry = f"{package_prefix}openQ4.app/Contents/Resources/{locale}.lproj/InfoPlist.strings"
                 if entry in entry_names:
                     localized_info_bytes[locale] = archive.read(entry)
+                error_entry = f"{package_prefix}openQ4.app/Contents/Resources/{locale}.lproj/{MACOS_PACKAGE_ROOT_ERROR_STRINGS_NAME}"
+                if error_entry in entry_names:
+                    localized_package_root_error_bytes[locale] = archive.read(error_entry)
             if code_resources_entry in entry_names:
                 code_resources_bytes = archive.read(code_resources_entry)
     else:
@@ -1642,11 +2109,20 @@ def validate_macos_archive_contents(
                     extracted = archive.extractfile(member)
                     if extracted is not None:
                         app_version_bytes = extracted.read()
+                elif name == f"{package_prefix}{MACOS_SYMBOL_MANIFEST_NAME}":
+                    extracted = archive.extractfile(member)
+                    if extracted is not None:
+                        symbol_manifest_bytes = extracted.read()
                 elif name.startswith(f"{package_prefix}openQ4.app/Contents/Resources/") and name.endswith(".lproj/InfoPlist.strings"):
                     locale = Path(name).parts[-2].replace(".lproj", "")
                     extracted = archive.extractfile(member)
                     if extracted is not None:
                         localized_info_bytes[locale] = extracted.read()
+                elif name.startswith(f"{package_prefix}openQ4.app/Contents/Resources/") and name.endswith(f".lproj/{MACOS_PACKAGE_ROOT_ERROR_STRINGS_NAME}"):
+                    locale = Path(name).parts[-2].replace(".lproj", "")
+                    extracted = archive.extractfile(member)
+                    if extracted is not None:
+                        localized_package_root_error_bytes[locale] = extracted.read()
                 elif name == code_resources_entry:
                     extracted = archive.extractfile(member)
                     if extracted is not None:
@@ -1711,6 +2187,8 @@ def validate_macos_archive_contents(
         raise RuntimeError("macOS archive PkgInfo is missing or invalid")
     if root_version_bytes is None or app_version_bytes is None:
         raise RuntimeError("macOS archive version manifests are unreadable")
+    if symbol_manifest_bytes is None:
+        raise RuntimeError("macOS archive symbol manifest is unreadable")
     validate_version_manifest_bytes(
         root_version_bytes,
         "macOS archive package",
@@ -1727,11 +2205,28 @@ def validate_macos_archive_contents(
         platform="macos",
         arch=arch,
     )
+    validate_macos_symbol_manifest_bytes(
+        symbol_manifest_bytes,
+        "macOS archive symbol manifest",
+        version=version,
+        version_tag=package_version_tag,
+        arch=arch,
+        runtime_archive_name=archive_path.name,
+        symbol_archive_name=f"{package_root.name}-symbols{MACOS_SYMBOL_ARCHIVE_SUFFIX}",
+    )
     for locale in MACOS_LOCALIZED_INFO_LOCALES:
         data = localized_info_bytes.get(locale)
         if data is None:
             raise RuntimeError(f"macOS archive missing {locale} localized InfoPlist.strings")
         validate_macos_localized_info_bytes(data, f"macOS archive {locale} InfoPlist.strings", version)
+        error_data = localized_package_root_error_bytes.get(locale)
+        if error_data is None:
+            raise RuntimeError(f"macOS archive missing {locale} localized package-root error strings")
+        validate_macos_package_root_error_bytes(
+            error_data,
+            f"macOS archive {locale} package-root error strings",
+            locale,
+        )
     try:
         validate_macos_plist_values(
             plistlib.loads(plist_bytes),
@@ -2037,6 +2532,7 @@ def create_macos_app_bundle(
     arch: str,
     version: str,
     version_tag: str,
+    repository_metadata: dict[str, str] | None = None,
 ) -> Path:
     app_root = package_root / "openQ4.app"
     app_contents = app_root / "Contents"
@@ -2110,12 +2606,14 @@ def create_macos_app_bundle(
     )
     (app_contents / "PkgInfo").write_bytes(MACOS_PKGINFO_BYTES)
     write_macos_localized_info_strings(app_contents, version)
+    write_macos_package_root_error_strings(app_contents)
     write_version_manifest(
         app_resources / "VERSION.txt",
         version=version,
         version_tag=version_tag,
         platform="macos",
         arch=arch,
+        repository_metadata=repository_metadata,
     )
 
     return app_root
@@ -2156,7 +2654,11 @@ def main(argv: list[str]) -> int:
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    repository_metadata = collect_package_repository_metadata(source_root)
+
     package_stem = f"openq4-{version_tag}-{args.platform}-{args.arch}{package_suffix}"
+    archive_path = output_dir / f"{package_stem}{archive_suffix}"
+    macos_symbol_archive_path: Path | None = None
     try:
         package_root = resolve_package_root(output_dir, package_stem)
     except ValueError as exc:
@@ -2167,7 +2669,7 @@ def main(argv: list[str]) -> int:
     package_root.mkdir(parents=True, exist_ok=True)
 
     try:
-        copy_release_collateral(source_root, package_root)
+        copy_release_collateral(source_root, package_root, args.platform)
     except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -2192,6 +2694,7 @@ def main(argv: list[str]) -> int:
         version_tag=version_tag,
         platform=args.platform,
         arch=args.arch,
+        repository_metadata=repository_metadata,
     )
     missing_required = copy_required_binaries(
         args.platform,
@@ -2288,6 +2791,7 @@ def main(argv: list[str]) -> int:
             args.arch,
             version,
             version_tag,
+            repository_metadata,
         )
         try:
             validate_no_package_symlinks(package_root)
@@ -2300,6 +2804,18 @@ def main(argv: list[str]) -> int:
             normalize_macos_game_module_install_names(package_root, args.arch)
             macos_signing = resolve_macos_signing_config(args)
             sign_macos_payload(package_root, args.arch, macos_signing)
+            write_macos_symbol_manifest(
+                package_root,
+                version=version,
+                version_tag=version_tag,
+                arch=args.arch,
+                package_suffix=package_suffix,
+                runtime_archive_name=archive_path.name,
+            )
+            validate_no_macos_metadata_artifacts(package_root)
+            validate_no_macos_casefold_path_collisions(package_root)
+            strip_macos_forbidden_xattrs(package_root)
+            validate_no_macos_forbidden_xattrs(package_root)
             validate_macos_version_manifests(package_root, args.arch, version, version_tag)
             validate_macos_localized_info_files(package_root, version)
             validate_macos_app_bundle(package_root, macos_app_bundle, args.arch, version)
@@ -2317,7 +2833,6 @@ def main(argv: list[str]) -> int:
         copied_linux_launchers,
     )
 
-    archive_path = output_dir / f"{package_stem}{archive_suffix}"
     try:
         create_release_archive(
             package_root,
@@ -2342,6 +2857,15 @@ def main(argv: list[str]) -> int:
                     args.arch,
                     version,
                 )
+            macos_symbol_archive_path = create_macos_symbol_archive(
+                package_root,
+                output_dir,
+                version=version,
+                version_tag=version_tag,
+                arch=args.arch,
+                package_suffix=package_suffix,
+                runtime_archive_name=archive_path.name,
+            )
         except RuntimeError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
@@ -2370,6 +2894,8 @@ def main(argv: list[str]) -> int:
             print(f"  - {filename}")
     if macos_app_bundle is not None:
         print(f"macOS app bundle: {macos_app_bundle}")
+    if macos_symbol_archive_path is not None:
+        print(f"macOS dSYM symbol archive: {macos_symbol_archive_path}")
     if missing_required:
         print("Missing required runtime binaries:")
         for filename in missing_required:

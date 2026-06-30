@@ -129,8 +129,59 @@ def make_macos_localized_info_bytes(version: str) -> bytes:
     ).encode("utf-8")
 
 
+def make_macos_package_root_error_bytes(package, locale: str = "English") -> bytes:
+    lines = [
+        "/* Localized startup error for incomplete adjacent package roots */",
+        "",
+    ]
+    for key, value in package.MACOS_PACKAGE_ROOT_ERROR_STRINGS[locale].items():
+        lines.append(f'{key} = "{value}";')
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
 def make_macos_code_resources_bytes() -> bytes:
     return plistlib.dumps({"files": {}, "files2": {}, "rules": {}, "rules2": {}})
+
+
+def make_macos_symbol_manifest_bytes(package_name: str, arch: str, version: str, version_tag: str) -> bytes:
+    return (
+        "openQ4 macOS symbols\n"
+        "format=1\n"
+        f"version={version}\n"
+        f"version_tag={version_tag}\n"
+        "platform=macos\n"
+        f"arch={arch}\n"
+        "package_suffix=-opengl\n"
+        f"runtime_archive={package_name}.tar.gz\n"
+        f"symbol_archive={package_name}-symbols.tar.xz\n"
+        "\n"
+        "binaries:\n"
+        "- path=openQ4.app/Contents/MacOS/openQ4\n"
+        f"  sha256={'0' * 64}\n"
+        "  size=1\n"
+        "  macho_uuid=UUID: 00000000-0000-0000-0000-000000000001 (arm64) openQ4\n"
+        "  dsym=dSYMs/openQ4.app.dSYM\n"
+        f"- path=openQ4-client_{arch}\n"
+        f"  sha256={'1' * 64}\n"
+        "  size=1\n"
+        f"  macho_uuid=UUID: 00000000-0000-0000-0000-000000000002 (arm64) openQ4-client_{arch}\n"
+        f"  dsym=dSYMs/openQ4-client_{arch}.dSYM\n"
+        f"- path=openQ4-ded_{arch}\n"
+        f"  sha256={'2' * 64}\n"
+        "  size=1\n"
+        f"  macho_uuid=UUID: 00000000-0000-0000-0000-000000000003 (arm64) openQ4-ded_{arch}\n"
+        f"  dsym=dSYMs/openQ4-ded_{arch}.dSYM\n"
+        f"- path=baseoq4/game-sp_{arch}.dylib\n"
+        f"  sha256={'3' * 64}\n"
+        "  size=1\n"
+        f"  macho_uuid=UUID: 00000000-0000-0000-0000-000000000004 (arm64) game-sp_{arch}.dylib\n"
+        f"  dsym=dSYMs/game-sp_{arch}.dylib.dSYM\n"
+        f"- path=baseoq4/game-mp_{arch}.dylib\n"
+        f"  sha256={'4' * 64}\n"
+        "  size=1\n"
+        f"  macho_uuid=UUID: 00000000-0000-0000-0000-000000000005 (arm64) game-mp_{arch}.dylib\n"
+        f"  dsym=dSYMs/game-mp_{arch}.dylib.dSYM\n"
+    ).encode("utf-8")
 
 
 def make_macos_archive_entries(
@@ -151,6 +202,11 @@ def make_macos_archive_entries(
     localized_info = make_macos_localized_info_bytes(version)
     entries = {
         f"{prefix}VERSION.txt": (make_version_manifest_bytes(version, version_tag, "macos", arch), 0o644),
+        f"{prefix}{package.MACOS_SYMBOL_MANIFEST_NAME}": (
+            make_macos_symbol_manifest_bytes(package_name, arch, version, version_tag),
+            0o644,
+        ),
+        f"{prefix}{package.MACOS_SUPPORT_INFO_SCRIPT_NAME}": (b"#!/bin/sh\nexit 0\n", 0o755),
         f"{prefix}openQ4-client_{arch}": (client_bytes, client_mode),
         f"{prefix}openQ4-ded_{arch}": (b"dedicated-binary\n", dedicated_mode),
         f"{prefix}{package.GAME_DIR_NAME}/game-sp_{arch}.dylib": (b"sp-module\n", 0o755),
@@ -168,6 +224,14 @@ def make_macos_archive_entries(
         ),
         f"{prefix}openQ4.app/Contents/Resources/English.lproj/InfoPlist.strings": (localized_info, 0o644),
         f"{prefix}openQ4.app/Contents/Resources/French.lproj/InfoPlist.strings": (localized_info, 0o644),
+        f"{prefix}openQ4.app/Contents/Resources/English.lproj/{package.MACOS_PACKAGE_ROOT_ERROR_STRINGS_NAME}": (
+            make_macos_package_root_error_bytes(package, "English"),
+            0o644,
+        ),
+        f"{prefix}openQ4.app/Contents/Resources/French.lproj/{package.MACOS_PACKAGE_ROOT_ERROR_STRINGS_NAME}": (
+            make_macos_package_root_error_bytes(package, "French"),
+            0o644,
+        ),
     }
     if extra_entries:
         entries.update(extra_entries)
@@ -277,6 +341,14 @@ def validate_macos_app_bundle_validator_runtime() -> None:
         localized_info = make_macos_localized_info_bytes(version)
         write_test_file(app_contents / "Resources" / "English.lproj" / "InfoPlist.strings", localized_info)
         write_test_file(app_contents / "Resources" / "French.lproj" / "InfoPlist.strings", localized_info)
+        write_test_file(
+            app_contents / "Resources" / "English.lproj" / package.MACOS_PACKAGE_ROOT_ERROR_STRINGS_NAME,
+            make_macos_package_root_error_bytes(package, "English"),
+        )
+        write_test_file(
+            app_contents / "Resources" / "French.lproj" / package.MACOS_PACKAGE_ROOT_ERROR_STRINGS_NAME,
+            make_macos_package_root_error_bytes(package, "French"),
+        )
 
         package.validate_macos_app_bundle(package_root, app_root, arch, version)
 
@@ -1934,6 +2006,9 @@ def validate_packaging_and_release_contract() -> None:
     require(package, "openQ4-ded_{arch}", "macOS package archive validation")
     require(package, "English.lproj/InfoPlist.strings", "macOS package archive validation")
     require(package, "French.lproj/InfoPlist.strings", "macOS package archive validation")
+    require(package, "OpenQ4PackageRoot.strings", "macOS package localized package-root error validation")
+    require(package, "write_macos_package_root_error_strings", "macOS package localized package-root error writer")
+    require(package, "validate_macos_package_root_error_bytes", "macOS package localized package-root error validation")
     require(package, "macOS archive entry is not executable", "macOS package archive validation")
     require(package, "macOS archive contains unsafe or out-of-package path", "macOS package archive validation")
     require(package, "macOS archive Info.plist", "macOS package archive validation")
@@ -1952,6 +2027,9 @@ def validate_packaging_and_release_contract() -> None:
     require(compat, "Sys_UseAppBundleParentBasePathCandidate", "macOS app bundle base path validation")
     require(compat, "\"/Contents/MacOS\"", "macOS app bundle base path validation")
     require(compat, "\"app parent\"", "macOS app bundle base path validation")
+    require(compat, "Sys_ErrorIfMacOSAppBundlePackageRootIncomplete", "macOS app-only package-root startup diagnostic")
+    require(compat, "OpenQ4PackageRootMissingTitle", "macOS app-only package-root localized startup diagnostic")
+    require(compat, "Expected adjacent package-root contract: openQ4.app, loose binaries, and baseoq4/ together", "macOS app-only package-root contract diagnostic")
     require(main, "SDL_MAIN_HANDLED", "macOS SDL3 launch initialization")
     require(main, "static int SDLCALL OpenQ4_Main", "macOS SDL3 launch initialization")
     require(main, "SDL_RunApp(argc, argv, OpenQ4_Main, NULL)", "macOS SDL3 launch initialization")
@@ -2280,6 +2358,12 @@ def validate_macos_workflow_security_contract() -> None:
     require_before(guest, 'require_choice "OPENQ4_PLATFORM_BACKEND" "${platform_backend}" sdl3 native', 'bash tools/build/meson_setup.sh setup --wipe "${builddir}" .', "macOS guest validates backend before Meson setup")
     require_before(guest, 'require_positive_integer "OPENQ4_SMOKE_LIMIT" "${smoke_limit}" 100000', 'python3 tools/tests/renderer_gameplay_benchmark.py', "macOS guest validates smoke limit before benchmark")
     require_before(guest, 'require_positive_integer "OPENQ4_SMOKE_TIMEOUT" "${smoke_timeout}" 86400', 'python3 tools/tests/renderer_gameplay_benchmark.py', "macOS guest validates smoke timeout before benchmark")
+    require(guest, "run_mp_smoke", "macOS guest multiplayer smoke action")
+    require(guest, "OPENQ4_MP_SMOKE_TIMEOUT", "macOS guest MP smoke timeout control")
+    require(guest, "--cases mp-q4dm1-listen", "macOS guest MP smoke case")
+    require(guest, '--output-dir "${run_dir}/renderer-mp-smoke"', "macOS guest MP smoke output directory")
+    require(guest, "Running openQ4 macOS multiplayer smoke", "macOS guest MP smoke log evidence")
+    require_before(guest, 'require_positive_integer "OPENQ4_MP_SMOKE_TIMEOUT" "${mp_smoke_timeout}" 86400', '--cases mp-q4dm1-listen', "macOS guest validates MP smoke timeout before benchmark")
     require_before(guest, 'require_positive_integer "OPENQ4_RENDERER_TIMEOUT" "${renderer_timeout}" 86400', 'python3 tools/tests/renderer_validation_matrix.py', "macOS guest validates renderer timeout before matrix")
     require(guest, '"-Dmacos_graphics_bridge=${graphics_bridge}"', "macOS guest bridge setup option")
     require(guest, '"-Dmacos_openal_provider=${openal_provider}"', "macOS guest OpenAL setup option")
@@ -2300,6 +2384,8 @@ def validate_macos_workflow_security_contract() -> None:
     require(guest, "validate_staged_macos_payload", "macOS guest staged payload validation")
     require(guest, "Staged macOS payload integrity checks completed.", "macOS guest staged payload evidence")
     require(guest, "Quake 4 asset basepath validation completed.", "macOS guest asset validation signoff evidence")
+    require(guest, "Multiplayer listen-server smoke completed with retail Quake 4 assets.", "macOS guest signoff MP smoke evidence")
+    require(guest, "MP game module path is present in the staged payload.", "macOS guest signoff MP module evidence")
     require(guest, "Validated staged macOS payload", "macOS guest staged payload log evidence")
     require(guest, "Missing staged macOS support file", "macOS guest staged icon/splash validation")
     require(guest, "macOS staged install contains a symlink or special file", "macOS guest staged symlink/special validation")
@@ -2312,11 +2398,13 @@ def validate_macos_workflow_security_contract() -> None:
     require(guest, "macOS staged install contains stale or mismatched game module", "macOS guest stale dylib validation")
     require(guest, "lipo -archs", "macOS guest staged architecture validation")
     require(guest, "Staged Binary Architectures", "macOS guest staged architecture evidence")
+    require(guest, "Dedicated server: ${dedicated:-not found}", "macOS guest dedicated server signoff metadata")
     require(guest, "SPDisplaysDataType", "macOS guest display inventory")
+    require(guest, "SPHardwareDataType", "macOS guest hardware inventory")
     require(guest, "SPAudioDataType", "macOS guest audio inventory")
     require(guest, "SPUSBDataType", "macOS guest USB inventory")
     require(guest, "SPBluetoothDataType", "macOS guest Bluetooth inventory")
-    require(guest, "build_openq4\n    run_smoke\n    run_renderer_matrix\n    install_launcher\n    write_signoff_report", "macOS guest signoff run order")
+    require(guest, "build_openq4\n    run_smoke\n    run_mp_smoke\n    run_renderer_matrix\n    install_launcher\n    write_signoff_report", "macOS guest signoff run order")
 
     require(signoff_validator, "validate_signoff_archive", "macOS signoff archive validator")
     require(signoff_validator, "Archive path escapes through '..'", "macOS signoff archive path guard")
@@ -2338,7 +2426,9 @@ def validate_macos_workflow_security_contract() -> None:
     require(signoff_validator, "Archive member is too large", "macOS signoff archive member size guard")
     require(signoff_validator, "Archive contains too many members", "macOS signoff archive member-count guard")
     require(signoff_validator, "did not record a staged client path", "macOS signoff archive client evidence guard")
+    require(signoff_validator, "did not record a staged dedicated server path", "macOS signoff archive dedicated evidence guard")
     require(signoff_validator, "does not reference its renderer-smoke output directory", "macOS signoff archive report-output guard")
+    require(signoff_validator, "does not reference its renderer-mp-smoke output directory", "macOS signoff archive MP report-output guard")
     require(signoff_validator, "does not reference the expected signoff report path", "macOS signoff archive log-report guard")
     require(signoff_validator, "Invalid signoff archive action token", "macOS signoff archive action token guard")
     require(signoff_validator, "validate_result_token", "macOS signoff archive run ID token guard")
@@ -2349,8 +2439,10 @@ def validate_macos_workflow_security_contract() -> None:
     require(signoff_validator, "macos-runtime-signoff.md", "macOS signoff archive report check")
     require(signoff_validator, "openq4-macos-workflow.log", "macOS signoff archive log check")
     require(signoff_validator, "renderer-smoke", "macOS signoff archive smoke output check")
+    require(signoff_validator, "renderer-mp-smoke", "macOS signoff archive MP smoke output check")
     require(signoff_validator, "renderer-matrix", "macOS signoff archive matrix output check")
     require(signoff_validator, "## Staged Binary Architectures", "macOS signoff archive staged architecture evidence")
+    require(signoff_validator, "## Hardware", "macOS signoff archive hardware profile evidence")
     require(signoff_validator, "## Displays", "macOS signoff archive hardware inventory evidence")
     require(signoff_validator, "require_completed_checklist", "macOS signoff archive completed checklist gate")
     require(validation_runner, "macos_signoff_archive.py", "validation runner macOS signoff archive test")
@@ -2377,6 +2469,8 @@ def validate_macos_workflow_security_contract() -> None:
     require(workflow_doc, "-MacOSOpenALProvider system", "macOS workflow OpenAL provider documentation")
     require(workflow_doc, "macos-runtime-signoff.md", "macOS workflow signoff documentation")
     require(workflow_doc, "keyboard/mouse/controller input", "macOS workflow signoff documentation")
+    require(workflow_doc, "multiplayer `renderer-mp-smoke` output", "macOS workflow MP smoke documentation")
+    require(workflow_doc, "renderer_gameplay_benchmark.py --profile smoke --cases mp-q4dm1-listen", "macOS workflow MP smoke command documentation")
 
 
 def validate_macos_shell_entrypoints() -> None:

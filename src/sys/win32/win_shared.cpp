@@ -39,8 +39,14 @@ If you have questions concerning this license or the applicable additional terms
 #include <limits.h>
 #include <direct.h>
 #include <io.h>
+#include <dxgi.h>
 
 namespace {
+
+static const int OPENQ4_WIN32_FALLBACK_VIDEO_RAM_MB = 2048;
+static const int OPENQ4_WIN32_MAX_REASONABLE_VIDEO_RAM_MB = 256 * 1024;
+
+typedef HRESULT ( WINAPI *openQ4_CreateDXGIFactoryFn )( REFIID riid, void **factory );
 
 bool Sys_TryGetDriveFreeSpaceBytes( const char *path, DWORDLONG &freeBytes ) {
 	DWORDLONG bytesAvailable;
@@ -61,6 +67,57 @@ bool Sys_TryGetDriveFreeSpaceBytes( const char *path, DWORDLONG &freeBytes ) {
 	}
 
 	return false;
+}
+
+int Sys_QueryDXGIVideoRamMB( void ) {
+	HMODULE dxgiModule = LoadLibraryA( "dxgi.dll" );
+	if ( dxgiModule == NULL ) {
+		return 0;
+	}
+
+	openQ4_CreateDXGIFactoryFn createDXGIFactory = reinterpret_cast<openQ4_CreateDXGIFactoryFn>( GetProcAddress( dxgiModule, "CreateDXGIFactory" ) );
+	if ( createDXGIFactory == NULL ) {
+		FreeLibrary( dxgiModule );
+		return 0;
+	}
+
+	IDXGIFactory *factory = NULL;
+	if ( FAILED( createDXGIFactory( __uuidof( IDXGIFactory ), reinterpret_cast<void **>( &factory ) ) ) || factory == NULL ) {
+		FreeLibrary( dxgiModule );
+		return 0;
+	}
+
+	unsigned long long maxDedicatedBytes = 0;
+	for ( UINT adapterIndex = 0; ; ++adapterIndex ) {
+		IDXGIAdapter *adapter = NULL;
+		const HRESULT enumResult = factory->EnumAdapters( adapterIndex, &adapter );
+		if ( enumResult == DXGI_ERROR_NOT_FOUND ) {
+			break;
+		}
+		if ( FAILED( enumResult ) || adapter == NULL ) {
+			break;
+		}
+
+		DXGI_ADAPTER_DESC desc;
+		if ( SUCCEEDED( adapter->GetDesc( &desc ) ) &&
+			 static_cast<unsigned long long>( desc.DedicatedVideoMemory ) > maxDedicatedBytes ) {
+			maxDedicatedBytes = static_cast<unsigned long long>( desc.DedicatedVideoMemory );
+		}
+		adapter->Release();
+	}
+
+	factory->Release();
+	FreeLibrary( dxgiModule );
+
+	if ( maxDedicatedBytes == 0 ) {
+		return 0;
+	}
+
+	const unsigned long long megabytes = ( maxDedicatedBytes + ( 1024ULL * 1024ULL - 1ULL ) ) / ( 1024ULL * 1024ULL );
+	if ( megabytes == 0 || megabytes > OPENQ4_WIN32_MAX_REASONABLE_VIDEO_RAM_MB ) {
+		return 0;
+	}
+	return static_cast<int>( megabytes );
 }
 
 void Sys_NormalizeDriveProbePath( char *path ) {
@@ -218,7 +275,18 @@ returns in megabytes
 ================
 */
 int Sys_GetVideoRam(void) {
-	return 100 * 1024 * 1024;
+	static int cachedVideoRam = 0;
+	if ( cachedVideoRam > 0 ) {
+		return cachedVideoRam;
+	}
+
+	cachedVideoRam = Sys_QueryDXGIVideoRamMB();
+	if ( cachedVideoRam > 0 ) {
+		return cachedVideoRam;
+	}
+
+	cachedVideoRam = OPENQ4_WIN32_FALLBACK_VIDEO_RAM_MB;
+	return cachedVideoRam;
 }
 
 /*

@@ -156,6 +156,10 @@ typedef struct rendererDriverInfo_s {
 	const char					*vendor;
 	const char					*renderer;
 	const char					*version;
+	int							glMajor;
+	int							glMinor;
+	rendererContextProfile_t	profile;
+	bool						hasFixedFunctionCompatibility;
 } rendererDriverInfo_t;
 
 typedef struct rendererDriverQuirkReport_s {

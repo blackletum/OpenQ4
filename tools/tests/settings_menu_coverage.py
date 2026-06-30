@@ -163,6 +163,86 @@ def validate_edit_fields(setting: dict, source_text: str) -> None:
             reject(block, "numeric\t1", f"{setting['id']} {edit_name} signed input")
 
 
+def parse_cpp_string_array(source_text: str, symbol: str) -> list[str]:
+    pattern = re.compile(
+        rf"(?:static\s+)?const\s+char\s*\*\s*{re.escape(symbol)}\s*\[\]\s*=\s*\{{(?P<body>.*?)\}};",
+        re.DOTALL,
+    )
+    match = pattern.search(source_text)
+    if match is None:
+        raise AssertionError(f"Missing C++ string array {symbol}")
+    return re.findall(r'"([^"]+)"', match.group("body"))
+
+
+def parse_gui_choice_values(block: str, context: str) -> list[str]:
+    match = re.search(r'^\s*values\s+"([^"]+)"', block, re.MULTILINE)
+    if match is None:
+        raise AssertionError(f"Missing values list in {context}")
+    return match.group(1).split(";")
+
+
+def registry_setting(registry: dict, setting_id: str) -> dict:
+    for setting in registry.get("settings", []):
+        if setting.get("id") == setting_id:
+            return setting
+    raise AssertionError(f"Missing settings registry entry {setting_id}")
+
+
+def performance_doc_preset_order(display_docs: str) -> list[str]:
+    try:
+        section = display_docs.split("## Performance Presets", 1)[1].split("## Core Display Settings", 1)[0]
+    except IndexError as exc:
+        raise AssertionError("Display settings guide is missing the Performance Presets section") from exc
+    return re.findall(r"^\| `([^`]+)` \|", section, re.MULTILINE)
+
+
+def validate_performance_preset_wiring(
+    common_cpp: str,
+    system_gui: str,
+    session_menu: str,
+    registry_text: str,
+    display_docs: str,
+) -> None:
+    command_values = parse_cpp_string_array(common_cpp, "com_performancePresetArgs")
+    cvar_values = parse_cpp_string_array(common_cpp, "com_performancePresetValueStrings")
+    gui_values = parse_gui_choice_values(gui_block(system_gui, "set_sys_perf_preset_val"), "Performance Preset GUI")
+    registry = json.loads(registry_text)
+    preset_setting = registry_setting(registry, "system.performance_preset")
+    autodetect_setting = registry_setting(registry, "system.performance_autodetect")
+    docs_values = performance_doc_preset_order(display_docs)
+
+    if gui_values != command_values:
+        raise AssertionError(f"Performance Preset GUI values {gui_values!r} differ from engine command values {command_values!r}")
+    if preset_setting.get("values") != command_values:
+        raise AssertionError(
+            f"Performance Preset registry values {preset_setting.get('values')!r} differ from engine command values {command_values!r}"
+        )
+    if docs_values != command_values:
+        raise AssertionError(f"Performance Preset docs order {docs_values!r} differs from engine command values {command_values!r}")
+    if cvar_values[:1] != ["balanced"]:
+        raise AssertionError("com_performancePreset value strings must start with balanced for invalid-value fallback")
+    if sorted(value.lower() for value in cvar_values) != sorted(value.lower() for value in command_values):
+        raise AssertionError("com_performancePreset value strings must contain the same presets as command completion")
+
+    for token in (
+        "Common_ApplyPerformancePresetCommand",
+        "Common_AutoDetectPerformancePresetCommand",
+        "Common_PerformancePresetTargetIsDeclared",
+    ):
+        require(common_cpp, token, "Performance preset engine wiring")
+    for token in (
+        "AppendMainMenuCommandArgsUntilSeparator",
+        "RefreshMainMenuPerformancePresetGuiVars",
+        'presetArgs.AppendArg( "applyPerformancePreset" )',
+        'presetArgs.AppendArg( "autoDetectPerformancePreset" )',
+    ):
+        require(session_menu, token, "Performance preset menu bridge")
+    if preset_setting.get("adapter", {}).get("command") != "Common_ApplyPerformancePresetCommand":
+        raise AssertionError("Performance Preset registry adapter should point at Common_ApplyPerformancePresetCommand")
+    if autodetect_setting.get("adapter", {}).get("command") != "Common_AutoDetectPerformancePresetCommand":
+        raise AssertionError("Performance Auto-Detect registry adapter should point at Common_AutoDetectPerformancePresetCommand")
+
+
 def validate_settings_registry() -> None:
     registry_path = ROOT / "docs/dev/settings-menu-registry.json"
     registry = json.loads(read(registry_path))
@@ -578,12 +658,16 @@ def main() -> None:
     game_gui = read(ROOT / "content/baseoq4/pak0/guis/menu/settings/game.gui")
     game_hovers = read(ROOT / "content/baseoq4/pak0/guis/menu/settings/game_hovers.gui")
     session_menu = read(ROOT / "src/framework/Session_menu.cpp")
+    common_cpp = read(ROOT / "src/framework/Common.cpp")
     slider_window = read(ROOT / "src/ui/SliderWindow.cpp")
+    registry_text = read(ROOT / "docs/dev/settings-menu-registry.json")
+    display_docs = read(ROOT / "docs/user/display-settings.md")
     validate_value_entry_widgets(mainmenu, system_gui, audio_gui, popups_gui, game_gui)
     validate_legacy_settings_audit(mainmenu, system_gui, popups_gui)
     validate_settings_popups_extraction(mainmenu, popups_gui)
     validate_controls_pane_extraction(mainmenu, controls_gui)
     validate_scripted_pseudo_setting_adapters(game_gui, session_menu)
+    validate_performance_preset_wiring(common_cpp, system_gui, session_menu, registry_text, display_docs)
 
     require(mainmenu, '#include "guis/menu/settings/system.gui"', "System settings include")
     reject(mainmenu, "windowDef p_settings_sys", "mainmenu System pane extraction")

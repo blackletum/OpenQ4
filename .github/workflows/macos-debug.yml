@@ -111,9 +111,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python tools/tests/macos_apple_gl21_arb2_corridor.py
           python tools/tests/macos_renderer_startup_guard.py
+          python tools/tests/macos_renderer_phase_breadcrumbs.py
+          python tools/tests/macos_support_intake.py
+          python tools/tests/macos_symbolication_policy.py
+          python tools/tests/macos_gamelibs_alignment.py
+          python tools/tests/macos_local_validation_track.py
+          python tools/tests/macos_native_backend_containment.py
+          python tools/tests/macos_openal_provider_policy.py
+          python tools/tests/macos_package_robustness.py
           python tools/tests/macos_metal_bridge.py
           python tools/tests/filesystem_case_segments.py
+          bash -n tools/macos/collect_macos_support_info.sh
+          bash -n tools/validation/validate_macos_static.sh
           bash -n tools/macos/guest/openq4-macos-bootstrap.sh
           bash -n tools/macos/guest/openq4-macos-install-quake4-assets.sh
           bash -n tools/macos/guest/openq4-macos-sync-build-test.sh

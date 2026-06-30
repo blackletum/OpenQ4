@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "BinaryImage.h"
 #include "Image.h"
+#include "RendererStartupDiagnostics.h"
 #include "RenderTexture.h"
 #if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
 #include "../idlib/geometry/rvVertex.h"
@@ -1880,6 +1881,7 @@ DRAW_*
 
 void	R_ARB2_Init( void );
 void	RB_ARB2_DrawInteractions( void );
+void	RB_ResetARB2InteractionHandoffBreadcrumb( void );
 void	RB_ARB2_MD5R_DrawDepthElements( const drawSurf_t *surf );
 void	RB_ARB2_MD5R_DrawShadowElements( const drawSurf_t *surf, int numIndexes );
 void	RB_ARB2_MD5R_DrawBasicFog( const drawSurf_t *surf );

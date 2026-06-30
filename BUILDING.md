@@ -90,7 +90,7 @@ During configure, openQ4 stages the required game-library source inputs from ope
 
 ## Build Setup
 
-Third-party libraries such as SDL3, GLEW, OpenAL Soft, and stb_vorbis are managed as Meson subprojects. On Linux, the default SDL3 backend requires OpenGL plus the SDL3 runtime integration development packages, while X11/Xext are optional helpers used only when available for the SDL3 NVIDIA VRAM probe. The legacy `-Dplatform_backend=native` path still requires X11/GLX and VidMode development packages on Linux and the legacy Carbon framework on macOS. On experimental macOS builds, SDL3 is the default platform path and does not link Carbon; `-Dmacos_graphics_bridge=metal` enables the Metal-ready SDL3/Cocoa bridge while keeping the stock-compatible OpenGL renderer rather than introducing a native Metal rewrite. Experimental macOS releases currently use Apple's OpenAL framework for audio; `-Dmacos_openal_provider=system` is available for local migration testing with a system/OpenAL Soft dependency and `AL/...` headers.
+Third-party libraries such as SDL3, GLEW, OpenAL Soft, and stb_vorbis are managed as Meson subprojects. On Linux, the default SDL3 backend requires OpenGL plus the SDL3 runtime integration development packages, while X11/Xext are optional helpers used only when available for the SDL3 NVIDIA VRAM probe. The legacy `-Dplatform_backend=native` path still requires X11/GLX and VidMode development packages on Linux and the legacy Carbon framework on macOS. On experimental macOS builds, SDL3 is the default platform path and does not link Carbon; it is also the only release backend, while the native Cocoa/OpenGL backend is comparison-only diagnostic infrastructure. `-Dmacos_graphics_bridge=metal` enables the Metal-ready SDL3/Cocoa bridge while keeping the stock-compatible OpenGL renderer rather than introducing a native Metal rewrite. The renderer/backend policy is tracked in `docs/dev/macos-renderer-backend-policy.md`, and the legacy native backend containment policy is tracked in `docs/dev/macos-native-backend-containment-policy.md`. Experimental macOS releases currently use Apple's OpenAL framework for audio; `-Dmacos_openal_provider=system` is available only for local OpenAL Soft migration testing with a system/OpenAL Soft dependency (`dependency('openal')`) and `AL/...` headers. The macOS audio-provider policy is tracked in `docs/dev/macos-openal-provider-policy.md`.
 
 On current Debian/Ubuntu systems, install the SDL3/Linux package set (`binutils`, `libasound2-dev`, `libdbus-1-dev`, `libdecor-0-dev`, `libdrm-dev`, `libegl1-mesa-dev`, `libfribidi-dev`, `libgbm-dev`, `libgl1-mesa-dev`, `libibus-1.0-dev`, `libjack-dev`, `libopenal-dev`, `libpipewire-0.3-dev`, `libpulse-dev`, `libsndio-dev`, `libthai-dev`, `libudev-dev`, `libwayland-dev`, and `libxkbcommon-dev`). Add `libx11-dev`, `libxext-dev`, `libxcursor-dev`, `libxfixes-dev`, `libxi-dev`, `libxrandr-dev`, `libxss-dev`, `libxtst-dev`, `libxxf86dga-dev`, and `libxxf86vm-dev` when validating the optional SDL3 X11 helper path or the native Linux backend.
 
@@ -106,9 +106,9 @@ Pass any of these with `-D<option>=<value>` on the `meson setup` command line:
 | `build_games` | `true` | Build game modules |
 | `build_game_sp` | `true` | Build single-player game module |
 | `build_game_mp` | `true` | Build multiplayer game module |
-| `platform_backend` | `sdl3` | `sdl3` or `legacy_win32` on Windows, `sdl3` or `native` on Linux/experimental macOS |
+| `platform_backend` | `sdl3` | `sdl3` or `legacy_win32` on Windows, `sdl3` or `native` on Linux/experimental macOS; macOS `native` is comparison-only and not a release backend |
 | `macos_graphics_bridge` | `opengl` | Experimental macOS-only graphics bridge: `opengl` or `metal`; `metal` requires `platform_backend=sdl3` and keeps rendering on the OpenGL compatibility path |
-| `macos_openal_provider` | `apple_framework` | Experimental macOS-only audio provider: `apple_framework` for release builds, or `system` for OpenAL Soft migration testing with `dependency('openal')` |
+| `macos_openal_provider` | `apple_framework` | Experimental macOS-only audio provider: `apple_framework` for release builds, or `system` for local OpenAL Soft migration testing with `dependency('openal')`; current macOS packages do not bundle OpenAL Soft |
 | `version_track` | `dev` | Build track label (`stable`, `dev`, `beta`, `rc`) |
 | `version_iteration` | *(empty)* | Dot-separated iteration counter for pre-release builds |
 | `version_base_override` | *(empty)* | Override the generated release version without editing `meson.build` |
@@ -118,13 +118,39 @@ Pass any of these with `-D<option>=<value>` on the `meson setup` command line:
 
 ## Validation Scripts
 
-openQ4 includes two local validation profiles under `tools/validation/`. They share one Python runner and use the platform build wrappers so Windows validation still goes through `tools/build/meson_setup.ps1`.
+openQ4 includes local validation profiles under `tools/validation/`. They share one Python runner and use the platform build wrappers so Windows validation still goes through `tools/build/meson_setup.ps1`.
 
 GitHub Actions runs the same validation entrypoints on every pushed commit, pull request, and manual dispatch. Branch pushes run the faster push profile across Linux x64, Linux ARM64, experimental macOS ARM64, and Windows. Pull requests/manual dispatches run the full PR profile on Windows x64, Linux ARM64, and experimental macOS ARM64; the staged Linux ARM64 client also runs an assetless no-map renderer startup smoke under a virtual X display, and a native Wayland PR job runs the same renderer smoke under headless Weston with libdecor both enabled and disabled.
 
 Pull requests also run Linux Sanitizer Validation on x64 with ASan+UBSan enabled. This is a compile-focused lane for engine and staged game-module code, not a gameplay/runtime sanitizer pass yet; it disables precompiled headers to keep sanitizer diagnostics attached to normal translation units and skips install packaging so failures stay centered on configure/compile output.
 
-Experimental manual macOS release artifacts are Apple Silicon/arm64 only. Credentialed runs publish signed/notarized DMGs, while runs without Apple Developer ID signing and notarization credentials publish clearly labeled unsigned/unnotarized `-unsigned.tar.gz` archives. Intel Mac and universal2 packages are not published until a dedicated Intel runner or universal packaging lane is added. Local Intel builds may still be used for development bring-up, but they are outside the packaged release support matrix.
+Experimental manual macOS release artifacts are Apple Silicon/arm64 only. The detailed matrix policy lives in `docs/dev/macos-support-matrix-policy.md`: current packages are `arm64 only`, target macOS 11 or later, and require separate oldest-floor plus latest-public-macOS signoff evidence before macOS support can be promoted beyond experimental. Credentialed runs publish signed/notarized DMGs, while runs without Apple Developer ID signing and notarization credentials publish clearly labeled unsigned/unnotarized `-unsigned.tar.gz` archives. The manual release workflow defaults to `macos_support_tier=experimental`; selecting `macos_support_tier=first-class` fails the release matrix instead of publishing unsigned fallback packages when signing/notarization secrets are missing. Intel Mac and universal2 packages are not published until a dedicated Intel runner or universal packaging lane is added, and Rosetta is not a supported release target. Local Intel builds may still be used for development bring-up, but they are outside the packaged release support matrix.
+
+### macOS Static Validation
+
+Use this track for macOS support work when you do not have access to macOS. It runs static/policy tests, synthetic Apple GL 2.1 checks, synthetic macOS package/archive fixtures, shell syntax checks, and push/PR dry-run validation. It does not run openQ4 on macOS.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/validation/validate_macos_static.ps1
+```
+
+```bash
+bash tools/validation/validate_macos_static.sh
+```
+
+You can also call the shared runner directly:
+
+```bash
+python tools/validation/openq4_validate.py macos-static
+```
+
+When shared renderer code changed, renderer self-test binaries may be run only on an available non-macOS host after a local build/stage:
+
+```bash
+python tools/validation/openq4_validate.py macos-static --runtime --runtime-cases renderer-default-safety-selftest --runtime-tiers auto --runtime-basepath "" --runtime-skip-official-pak-validation
+```
+
+See `docs/dev/macos-local-validation-track.md` for the evidence boundary and the checks owned by this no-platform-access profile.
 
 ### Push Validation
 
@@ -228,7 +254,7 @@ meson compile -C builddir
 ## Building on Linux / Experimental macOS
 
 > [!NOTE]
-> As of March 30, 2026, Linux and experimental macOS default to the SDL3 backend. `-Dplatform_backend=native` remains available as the fallback POSIX comparison path. Native Wayland is handled through SDL3/Wayland/EGL on Linux, while `openQ4-steamdeck` still prefers XWayland when both `WAYLAND_DISPLAY` and `DISPLAY` are present unless `SDL_VIDEO_DRIVER` or `SDL_VIDEODRIVER` is already set.
+> As of March 30, 2026, Linux and experimental macOS default to the SDL3 backend. `-Dplatform_backend=native` remains available as the fallback POSIX comparison path, but on macOS it is diagnostic-only and not a supported release backend. Native Wayland is handled through SDL3/Wayland/EGL on Linux, while `openQ4-steamdeck` still prefers XWayland when both `WAYLAND_DISPLAY` and `DISPLAY` are present unless `SDL_VIDEO_DRIVER` or `SDL_VIDEODRIVER` is already set.
 
 ### Debug Build
 
@@ -243,7 +269,7 @@ bash tools/build/meson_setup.sh compile -C builddir
 ./builddir/openQ4-client_<arch>
 ```
 
-Use `-Dplatform_backend=native` during setup if you need to compare against the legacy Linux X11/GLX or experimental macOS Cocoa/OpenGL backend.
+Use `-Dplatform_backend=native` during setup if you need to compare against the legacy Linux X11/GLX backend or the experimental macOS Cocoa/OpenGL diagnostic backend. macOS native backend results are comparison data only; release packages and release support claims use SDL3.
 
 For experimental macOS Metal bring-up without a native renderer rewrite, configure with:
 
@@ -251,7 +277,7 @@ For experimental macOS Metal bring-up without a native renderer rewrite, configu
 bash tools/build/meson_setup.sh setup --wipe builddir . --backend ninja --buildtype=debug --wrap-mode=forcefallback -Dplatform_backend=sdl3 -Dmacos_graphics_bridge=metal
 ```
 
-This mode links the Metal/QuartzCore bridge frameworks, defaults SDL's render/GPU hints to Metal, and logs the active bridge during OpenGL startup. The visible renderer remains openQ4's OpenGL compatibility path so shipped Quake 4 asset behavior stays the guiding constraint.
+This mode links the Metal/QuartzCore bridge frameworks, defaults SDL's render/GPU hints to Metal, and logs the active bridge during OpenGL startup. The visible renderer remains openQ4's OpenGL compatibility path so shipped Quake 4 asset behavior stays the guiding constraint. It is a Metal bridge package, not a native Metal renderer.
 
 ### Linux Packager Notes
 
@@ -357,9 +383,9 @@ The `meson install` step (via the wrapper) stages all required binaries into `.i
 
 Release archives also generate a packaged offline HTML documentation site under `docs/`. If you run the release packager manually instead of using GitHub Actions, make sure `python -m pip install markdown` is available in the same environment.
 
-The manually dispatched GitHub release workflow publishes architecture-qualified release assets such as `openq4-<version>-windows-x64.zip`, `openq4-<version>-windows-arm64.zip`, `openq4-<version>-linux-x64.tar.xz`, and `openq4-<version>-linux-arm64.tar.xz`. The same workflow also publishes experimental macOS Apple Silicon/arm64 OpenGL and Metal bridge packages. When Apple signing and notarization credentials are configured, those experimental macOS packages are `openq4-<version>-macos-arm64-opengl.dmg` and `openq4-<version>-macos-arm64-metal.dmg`; otherwise they are clearly labeled fallback archives named `openq4-<version>-macos-arm64-opengl-unsigned.tar.gz` and `openq4-<version>-macos-arm64-metal-unsigned.tar.gz`. Release workflow packages use `version_track=stable` and Meson `buildtype=debugoptimized` with `b_ndebug=true` on every platform, giving end users optimized binaries while preserving diagnostics. Windows payloads include PDB files and write crash logs plus minidumps under `crashes/` beside the executable after unhandled exceptions. Linux release runs also publish detached debug-symbol archives such as `openq4-<version>-linux-x64-debugsymbols.tar.xz` and `openq4-<version>-linux-arm64-debugsymbols.tar.xz`. Credentialed experimental macOS release payloads are signed/stapled, packed into compressed DMG images, submitted for final DMG notarization/stapling, and verified with `hdiutil` before upload. Credential-free experimental macOS fallback archives are ad-hoc signed only for bundle validity, are not Developer ID signed or notarized, and stay marked `unsigned` in the filename. Windows release payloads also get native installer executables such as `openq4-<version>-windows-x64-setup.exe` and `openq4-<version>-windows-arm64-setup.exe`. Each installer is compiled from the already-packaged Windows release directory so its file set matches the archive instead of diverging from it, writes install metadata to the registry for upgrade detection, registers a normal Windows uninstaller entry, and can optionally register `openq4://` browser links.
+The manually dispatched GitHub release workflow publishes architecture-qualified release assets such as `openq4-<version>-windows-x64.zip`, `openq4-<version>-windows-arm64.zip`, `openq4-<version>-linux-x64.tar.xz`, and `openq4-<version>-linux-arm64.tar.xz`. The same workflow also publishes experimental macOS Apple Silicon/arm64 OpenGL and Metal bridge packages for macOS 11 or later. When Apple signing and notarization credentials are configured, those experimental macOS packages are `openq4-<version>-macos-arm64-opengl.dmg` and `openq4-<version>-macos-arm64-metal.dmg`; otherwise they are clearly labeled fallback archives named `openq4-<version>-macos-arm64-opengl-unsigned.tar.gz` and `openq4-<version>-macos-arm64-metal-unsigned.tar.gz`. macOS `macos-x64` and `macos-universal2` artifacts are intentionally not published by the current release matrix. A first-class macOS release must use the signed/notarized DMG path and current evidence in `docs/dev/macos-signoff-evidence.md` for both the documented macOS floor and latest public macOS; the workflow input `macos_support_tier=first-class` fails the metadata job when Apple signing/notary secrets are absent. Release workflow packages use `version_track=stable` and Meson `buildtype=debugoptimized` with `b_ndebug=true` on every platform, giving end users optimized binaries while preserving diagnostics. Windows payloads include PDB files and write crash logs plus minidumps under `crashes/` beside the executable after unhandled exceptions. Linux release runs also publish detached debug-symbol archives such as `openq4-<version>-linux-x64-debugsymbols.tar.xz` and `openq4-<version>-linux-arm64-debugsymbols.tar.xz`. Credentialed experimental macOS release payloads are signed/stapled, packed into compressed DMG images, submitted for final DMG notarization/stapling, and verified with `hdiutil` before upload. Credential-free experimental macOS fallback archives are ad-hoc signed only for bundle validity, are not Developer ID signed or notarized, and stay marked `unsigned` in the filename. Windows release payloads also get native installer executables such as `openq4-<version>-windows-x64-setup.exe` and `openq4-<version>-windows-arm64-setup.exe`. Each installer is compiled from the already-packaged Windows release directory so its file set matches the archive instead of diverging from it, writes install metadata to the registry for upgrade detection, registers a normal Windows uninstaller entry, and can optionally register `openq4://` browser links.
 
-Configure `MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64`, `MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD`, `MACOS_DEVELOPER_ID_APPLICATION_IDENTITY`, `MACOS_NOTARY_APPLE_ID`, `MACOS_NOTARY_TEAM_ID`, and `MACOS_NOTARY_APP_PASSWORD` as repository secrets when a signed/notarized experimental macOS release is required. The workflow imports the Developer ID Application certificate into a temporary keychain, signs macOS payloads with the Hardened Runtime, submits the package payload with `notarytool`, staples the app ticket, and validates the result with `codesign`, `spctl`, and `xcrun stapler validate`. If those secrets are absent, the manual release workflow still publishes experimental macOS packages as `-unsigned.tar.gz` archives that are ad-hoc signed, not notarized, and expected to trigger normal Gatekeeper warnings on first launch.
+Configure `MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64`, `MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD`, `MACOS_DEVELOPER_ID_APPLICATION_IDENTITY`, `MACOS_NOTARY_APPLE_ID`, `MACOS_NOTARY_TEAM_ID`, and `MACOS_NOTARY_APP_PASSWORD` as repository secrets when a signed/notarized experimental macOS release is required. The workflow imports the Developer ID Application certificate into a temporary keychain, signs macOS payloads with the Hardened Runtime, submits the package payload with `notarytool`, staples the app ticket, and validates the result with `codesign`, `spctl`, and `xcrun stapler validate`. If those secrets are absent, the manual release workflow still publishes experimental macOS packages as `-unsigned.tar.gz` archives that are ad-hoc signed, not notarized, and expected to trigger normal Gatekeeper warnings on first launch. Do not select `macos_support_tier=first-class` unless those secrets are configured and the current macOS signoff evidence is complete.
 
 Official experimental macOS release jobs do not pass a custom entitlements file by default. If an entitlement plist is supplied for a future release experiment, `tools/build/package_nightly.py` validates that it is a plist dictionary and rejects App Sandbox or `get-task-allow` entitlements until the project has a reviewed sandbox/file-access design. The current direct-distribution package relies on Hardened Runtime protections without sandboxing because openQ4 must read user-selected Quake 4 assets, saves, logs, and staged runtime overlays outside an App Sandbox container.
 

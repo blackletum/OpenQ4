@@ -158,12 +158,14 @@ def validate_apple_gl21_vbo_quirk() -> None:
 
     for token in (
         '"Apple"',
-        '"2.1"',
+        "RendererDriverQuirk_ParseGLVersionPrefix",
+        "RendererDriverQuirk_IsAppleGL21CompatibilityFallback",
+        "selectedCompatibility",
         "Apple OpenGL 2.1 compatibility path uses CPU-backed vertex cache and simple ARB interactions for stability",
         '{ RENDERER_DRIVER_QUIRK_DISABLE_VBO, "disableVBO" }',
         '{ RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION, "preferSimpleInteraction" }',
         "selected=%s baseline=%d VBO=%d PBO=%d",
-        "VBO:%d PBO:%d",
+        "selectedContext=%d.%d %s fixedFunction=%d VBO:%d->%d PBO:%d->%d simpleInteraction=%d ARB2:%d->%d",
     ):
         require(source, token, "Apple GL 2.1 VBO driver quirk")
 

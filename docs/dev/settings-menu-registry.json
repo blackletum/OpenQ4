@@ -10,6 +10,7 @@
     "game": "content/baseoq4/pak0/guis/menu/settings/game.gui",
     "game_hovers": "content/baseoq4/pak0/guis/menu/settings/game_hovers.gui",
     "session_menu": "src/framework/Session_menu.cpp",
+    "common": "src/framework/Common.cpp",
     "default_cfg": "content/baseoq4/pak0/default.cfg",
     "openq4_defaults_cfg": "content/baseoq4/pak0/openq4_defaults.cfg"
   },
@@ -1539,6 +1540,60 @@
       },
       "restart_required": false,
       "accessibility": "Slider with paired edit field; disabled when Ambient Light is off."
+    },
+    {
+      "id": "system.performance_preset",
+      "pane": "System",
+      "section": "Performance",
+      "path": "Settings > System > Performance > Performance Preset",
+      "source": "system",
+      "container": "set_sys_perf_preset",
+      "widgets": [
+        "set_sys_perf_preset_val"
+      ],
+      "widget_type": "choice",
+      "label_key": "#str_229976",
+      "choices_key": "#str_229977",
+      "values": [
+        "minimum",
+        "lowpower",
+        "performance",
+        "balanced",
+        "quality",
+        "ultra"
+      ],
+      "target_type": "cvar",
+      "target": "com_performancePreset",
+      "default": "balanced",
+      "adapter": {
+        "source": "common",
+        "command": "Common_ApplyPerformancePresetCommand"
+      },
+      "restart_required": true,
+      "accessibility": "Standard focusable choiceDef row that applies a coordinated engine performance profile."
+    },
+    {
+      "id": "system.performance_autodetect",
+      "pane": "System",
+      "section": "Performance",
+      "path": "Settings > System > Performance > Auto-Detect",
+      "source": "system",
+      "container": "set_sys_perf_autodetect_button",
+      "widgets": [
+        "set_sys_perf_autodetect_button",
+        "set_sys_perf_autodetect_text"
+      ],
+      "widget_type": "button",
+      "label_key": "#str_229978",
+      "target_type": "gui_state",
+      "target": "autoDetectPerformancePreset",
+      "default": "N/A",
+      "adapter": {
+        "source": "common",
+        "command": "Common_AutoDetectPerformancePresetCommand"
+      },
+      "restart_required": true,
+      "accessibility": "Focusable button that applies the detected performance preset and refreshes the System page."
     },
     {
       "id": "system.vsync",

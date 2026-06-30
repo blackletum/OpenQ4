@@ -100,6 +100,7 @@ static const drawSurf_t *g_packedDirectDrawSurf = NULL;
 static int g_packedDirectDrawVertexFormatIndex = -1;
 static const drawSurf_t *g_packedStageSurf = NULL;
 static int g_packedStageVertexFormatIndex = -1;
+static bool g_firstARB2InteractionHandoffBreadcrumb = false;
 
 static GLuint RB_CurrentInteractionProgramIdent( GLenum target );
 static const char *RB_CurrentInteractionProgramFamilyName( void );
@@ -10003,6 +10004,10 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 	if ( !surf ) {
 		return;
 	}
+	if ( !g_firstARB2InteractionHandoffBreadcrumb ) {
+		g_firstARB2InteractionHandoffBreadcrumb = true;
+		R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_FIRST_ARB2_INTERACTION_HANDOFF );
+	}
 	const drawSurf_t *firstSurf = surf;
 
 	// perform setup here that will be constant for all interactions
@@ -10458,6 +10463,18 @@ static bool RB_ShouldSkipFullInteractionUpload( const progDef_t &prog ) {
 		  idStr::Icmp( prog.name, "interaction.vfp" ) == 0 );
 }
 
+static bool RB_IsFullInteractionProgram( const progDef_t &prog ) {
+	return prog.ident == VPROG_INTERACTION ||
+		prog.ident == FPROG_INTERACTION ||
+		idStr::Icmp( prog.name, "interaction.vfp" ) == 0;
+}
+
+static bool RB_IsSimpleInteractionProgram( const progDef_t &prog ) {
+	return prog.ident == VPROG_SIMPLE_INTERACTION ||
+		prog.ident == FPROG_SIMPLE_INTERACTION ||
+		idStr::Icmp( prog.name, "SimpleInteraction.vfp" ) == 0;
+}
+
 static GLuint RB_CurrentInteractionProgramIdent( GLenum target ) {
 	if ( r_testARBProgram.GetBool() ) {
 		return ( target == GL_VERTEX_PROGRAM_ARB ) ? VPROG_TEST : FPROG_TEST;
@@ -10480,6 +10497,21 @@ static const char *RB_CurrentInteractionProgramFamilyName( void ) {
 	}
 
 	return "interaction";
+}
+
+static void RB_RecordCurrentInteractionSelectionBreadcrumb( void ) {
+	if ( RB_UseSimpleInteractionShader() ) {
+		R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_SIMPLE_SELECTION );
+	} else {
+		R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_FULL_SELECTION );
+	}
+	common->Printf( "renderer startup ARB interaction selection: family=%s vertex=%u fragment=%u colorMode=%s auto=%s override=%s\n",
+		RB_CurrentInteractionProgramFamilyName(),
+		RB_CurrentInteractionProgramIdent( GL_VERTEX_PROGRAM_ARB ),
+		RB_CurrentInteractionProgramIdent( GL_FRAGMENT_PROGRAM_ARB ),
+		RB_InteractionColorModeName( g_interactionVertexProgramColorMode ),
+		RB_InteractionColorModeName( g_interactionVertexProgramAutoColorMode ),
+		RB_InteractionColorOverrideName( g_interactionVertexProgramOverride ) );
 }
 
 static void RB_WarnInvalidARBProgramUse( progDef_t *prog, GLenum target, GLuint ident, const char *usage, bool required ) {
@@ -10510,6 +10542,24 @@ static bool RB_CurrentInteractionProgramsValid( void ) {
 	const GLuint fragmentProgram = RB_CurrentInteractionProgramIdent( GL_FRAGMENT_PROGRAM_ARB );
 	return R_IsARBProgramValid( GL_VERTEX_PROGRAM_ARB, vertexProgram ) &&
 		R_IsARBProgramValid( GL_FRAGMENT_PROGRAM_ARB, fragmentProgram );
+}
+
+static void RB_ErrorIfDriverRequiredSimpleInteractionFailed( void ) {
+	if ( !RB_DriverPrefersSimpleInteraction() ) {
+		return;
+	}
+
+	const progDef_t *vertexRecord = RB_FindARBProgramRecord( GL_VERTEX_PROGRAM_ARB, VPROG_SIMPLE_INTERACTION );
+	const progDef_t *fragmentRecord = RB_FindARBProgramRecord( GL_FRAGMENT_PROGRAM_ARB, FPROG_SIMPLE_INTERACTION );
+	if ( vertexRecord != NULL && vertexRecord->valid && fragmentRecord != NULL && fragmentRecord->valid ) {
+		return;
+	}
+
+	common->Error(
+		"Unsupported Apple OpenGL 2.1 compatibility path: required SimpleInteraction.vfp ARB programs failed to load "
+		"(vertex: %s, fragment: %s). The ARB2 interaction renderer cannot safely continue on this driver path.",
+		( vertexRecord != NULL && vertexRecord->failureReason[0] ) ? vertexRecord->failureReason : "unavailable",
+		( fragmentRecord != NULL && fragmentRecord->failureReason[0] ) ? fragmentRecord->failureReason : "unavailable" );
 }
 
 static void RB_WarnInteractionShaderRescueMode( void ) {
@@ -10565,9 +10615,16 @@ void R_LoadARBProgram( int progIndex ) {
 
 	RB_ResetARBProgramStatus( prog );
 
+	if ( RB_IsFullInteractionProgram( prog ) ) {
+		R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_FULL_UPLOAD );
+	} else if ( RB_IsSimpleInteractionProgram( prog ) ) {
+		R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_SIMPLE_UPLOAD );
+	}
+
 	common->Printf( "%s", fullPath.c_str() );
 
 	if ( RB_ShouldSkipFullInteractionUpload( prog ) ) {
+		R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_SKIP_FULL_UPLOAD );
 		common->Printf( ": skipped by renderer driver quirk; using SimpleInteraction.vfp\n" );
 		RB_SetARBProgramFailure( prog, "skipped by renderer driver quirk; using SimpleInteraction.vfp" );
 		return;
@@ -10644,6 +10701,7 @@ void R_LoadARBProgram( int progIndex ) {
 			detectedMode = ICM_PACKED;
 		}
 		g_interactionVertexProgramAutoColorMode = detectedMode;
+		R_SetRendererStartupPhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_COLOR_MODE );
 		RB_UpdateInteractionColorMode( true );
 	}
 
@@ -10732,10 +10790,13 @@ void R_ReloadARBPrograms_f( const idCmdArgs &args ) {
 	int		i;
 
 	g_interactionShaderRescueWarned = false;
+	R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_R_RELOAD_ARB_PROGRAMS );
 	common->Printf( "----- R_ReloadARBPrograms -----\n" );
 	for ( i = 0 ; progs[i].name[0] ; i++ ) {
 		R_LoadARBProgram( i );
 	}
+	RB_RecordCurrentInteractionSelectionBreadcrumb();
+	RB_ErrorIfDriverRequiredSimpleInteractionFailed();
 	common->Printf( "-------------------------------\n" );
 	if ( r_shaderReport.GetInteger() >= 1 ) {
 		R_ReportShaderPrograms_f( idCmdArgs() );
@@ -10809,6 +10870,7 @@ R_ARB2_Init
 ==================
 */
 void R_ARB2_Init( void ) {
+	R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_R_ARB2_INIT );
 	glConfig.allowARB2Path = false;
 	glConfig.preferNV20Path = false;
 	glConfig.preferSimpleLighting = false;
@@ -10862,4 +10924,8 @@ void R_ARB2_Init( void ) {
 	common->Printf( "---------------------------------\n" );
 
 	glConfig.allowARB2Path = true;
+}
+
+void RB_ResetARB2InteractionHandoffBreadcrumb( void ) {
+	g_firstARB2InteractionHandoffBreadcrumb = false;
 }

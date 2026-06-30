@@ -28,6 +28,13 @@ from linux_metadata import (  # noqa: E402
 
 
 PROFILE_DEFAULTS = {
+    "macos-static": {
+        "build_dir": "builddir",
+        "buildtype": "debug",
+        "clean": False,
+        "install": False,
+        "skip_build": True,
+    },
     "push": {
         "build_dir": "builddir",
         "buildtype": "debug",
@@ -41,6 +48,19 @@ PROFILE_DEFAULTS = {
         "install": True,
     },
 }
+
+MACOS_STATIC_PROFILE = "macos-static"
+MACOS_STATIC_SHELL_SYNTAX_FILES = (
+    "tools/build/meson_setup.sh",
+    "tools/macos/collect_macos_support_info.sh",
+    "tools/validation/validate_push.sh",
+    "tools/validation/validate_pr.sh",
+    "tools/validation/validate_macos_static.sh",
+)
+MACOS_STATIC_DRY_RUN_PROFILES = (
+    "push",
+    "pr",
+)
 
 STAGED_REQUIRED_GAME_FILES = (
     "mod.json",
@@ -318,11 +338,26 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "linux_sdl3_glew_loader.py",
         root / "tools" / "tests" / "linux_vsync_support.py",
         root / "tools" / "tests" / "loading_continue_input.py",
+        root / "tools" / "tests" / "macos_apple_gl21_arb2_corridor.py",
+        root / "tools" / "tests" / "macos_evidence_plumbing.py",
+        root / "tools" / "tests" / "macos_evidence_recording.py",
+        root / "tools" / "tests" / "macos_gamelibs_alignment.py",
+        root / "tools" / "tests" / "macos_local_validation_track.py",
+        root / "tools" / "tests" / "macos_matrix_policy.py",
         root / "tools" / "tests" / "macos_native_backend_guard.py",
+        root / "tools" / "tests" / "macos_native_backend_containment.py",
+        root / "tools" / "tests" / "macos_openal_provider_policy.py",
+        root / "tools" / "tests" / "macos_package_policy.py",
+        root / "tools" / "tests" / "macos_package_robustness.py",
+        root / "tools" / "tests" / "macos_renderer_backend_policy.py",
+        root / "tools" / "tests" / "macos_renderer_phase_breadcrumbs.py",
         root / "tools" / "tests" / "macos_renderer_startup_guard.py",
         root / "tools" / "tests" / "macos_sdl3_backend_guard.py",
         root / "tools" / "tests" / "macos_signoff_archive.py",
         root / "tools" / "tests" / "macos_static_policy.py",
+        root / "tools" / "tests" / "macos_support_claim_policy.py",
+        root / "tools" / "tests" / "macos_support_intake.py",
+        root / "tools" / "tests" / "macos_symbolication_policy.py",
         root / "tools" / "tests" / "macos_metal_bridge.py",
         root / "tools" / "tests" / "native_glx_shutdown.py",
         root / "tools" / "tests" / "openq4_pure_pack.py",
@@ -961,6 +996,57 @@ def run_runtime_matrix(args: argparse.Namespace, root: Path, env: dict[str, str]
     )
 
 
+def run_macos_static_shell_syntax_checks(args: argparse.Namespace, root: Path, env: dict[str, str]) -> None:
+    bash = shutil.which("bash")
+    if bash is None:
+        print("warning: bash was not found; skipping POSIX shell syntax checks for the macos-static profile.", file=sys.stderr)
+        return
+
+    for relative_path in MACOS_STATIC_SHELL_SYNTAX_FILES:
+        script = root / relative_path
+        if not script.is_file():
+            raise ValidationError(f"macos-static shell syntax target was not found: {script}")
+        run_command(
+            [bash, "-n", relative_path],
+            cwd=root,
+            env=env,
+            title=f"Shell syntax: {relative_path}",
+            dry_run=args.dry_run,
+        )
+
+
+def run_macos_static_dry_run_profiles(args: argparse.Namespace, root: Path, env: dict[str, str]) -> None:
+    runner = Path(__file__).resolve()
+    for profile in MACOS_STATIC_DRY_RUN_PROFILES:
+        run_command(
+            [
+                sys.executable,
+                str(runner),
+                profile,
+                "--skip-python-tests",
+                "--skip-build",
+                "--no-install",
+                "--dry-run",
+            ],
+            cwd=root,
+            env=env,
+            title=f"Dry-run validation profile: {profile}",
+            dry_run=args.dry_run,
+        )
+
+
+def run_macos_static_validation_track(args: argparse.Namespace, root: Path, env: dict[str, str]) -> None:
+    if args.runtime and host_is_macos():
+        raise ValidationError(
+            "The macos-static profile must not run openQ4 on macOS. "
+            "Run renderer self-test binaries only on available non-macOS hosts, "
+            "or use the documented Apple-hardware signoff workflow for macOS runtime evidence."
+        )
+
+    run_macos_static_shell_syntax_checks(args, root, env)
+    run_macos_static_dry_run_profiles(args, root, env)
+
+
 def check_dirty_worktree(args: argparse.Namespace, root: Path, env: dict[str, str]) -> None:
     if not args.fail_on_dirty:
         return
@@ -1002,6 +1088,8 @@ def apply_profile_defaults(args: argparse.Namespace, root: Path) -> None:
         args.clean = defaults["clean"]
     if args.install is None:
         args.install = defaults["install"]
+    if defaults.get("skip_build", False):
+        args.skip_build = True
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -1065,6 +1153,9 @@ def main(argv: list[str]) -> int:
 
         if not args.skip_python_tests:
             run_python_tests(args, root, env)
+
+        if args.profile == MACOS_STATIC_PROFILE:
+            run_macos_static_validation_track(args, root, env)
 
         if not args.skip_build:
             run_command(

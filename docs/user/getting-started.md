@@ -69,10 +69,12 @@ If you prefer a self-contained setup, keep these side by side in the same root f
 
 - On Linux, extract the release archive to a folder of your choice.
 - Linux packages default to the SDL3 runtime path and should be treated as targeting an Ubuntu 24.04-class 64-bit desktop userspace with working OpenGL plus Wayland/EGL or X11/GLX support.
-- macOS support is experimental. Current packages are for Apple Silicon/arm64 Macs only; Intel Mac and universal2 packages are not published yet.
+- macOS support is experimental. Current packages are for Apple Silicon/arm64 Macs on macOS 11 or later. Intel Mac and universal2 packages are not published yet, and Rosetta is not a supported release target.
 - Credentialed experimental macOS release runs publish signed/notarized OpenGL and Metal bridge DMGs. Releases without Apple Developer ID signing and notarization credentials publish clearly labeled `-unsigned.tar.gz` archives instead.
+- The Metal bridge package still uses openQ4's OpenGL renderer path; it is not a native Metal renderer.
 - Unsigned macOS archives are ad-hoc signed only for bundle validity, are not notarized, and may require normal Gatekeeper approval on first launch.
-- On macOS, open the DMG or unpack the `-unsigned.tar.gz` archive, then launch `openQ4.app`. Keep `openQ4.app`, `baseoq4/`, and the loose runtime files together.
+- On macOS, open the DMG or unpack the `-unsigned.tar.gz` archive, then launch `openQ4.app`. Keep `openQ4.app`, `baseoq4/`, and the loose runtime files together as one adjacent package root; moving only `openQ4.app` to `/Applications` is not supported yet.
+- For crashes like GitHub issue #73, attach full terminal output as text plus `openq4.log` and any `.ips` report. See [Experimental macOS Support Data](macos-support-data.md), and run `collect_macos_support_info.sh` from the package root when it is included.
 
 ### Steam Deck
 

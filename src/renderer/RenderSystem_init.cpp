@@ -915,6 +915,7 @@ R_CheckPortableExtensions
 ==================
 */
 static void R_CheckPortableExtensions( void ) {
+	R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_R_CHECK_PORTABLE_EXTENSIONS );
 	glConfig.glVersion = atof( glConfig.version_string );
 	R_ClearMissingRequiredOpenGLFeatures();
 
@@ -1162,7 +1163,11 @@ static void R_CheckPortableExtensions( void ) {
 	const rendererDriverInfo_t driverInfo = {
 		glConfig.vendor_string,
 		glConfig.renderer_string,
-		glConfig.version_string
+		glConfig.version_string,
+		glConfig.backendCaps.glMajor,
+		glConfig.backendCaps.glMinor,
+		glConfig.backendCaps.profile,
+		glConfig.backendCaps.hasFixedFunctionCompatibility
 	};
 	RendererDriverQuirks_Apply( glConfig.backendCaps, driverInfo );
 	if ( glConfig.ARBVertexBufferObjectAvailable && !glConfig.backendCaps.hasVBO ) {
@@ -1545,6 +1550,8 @@ void R_InitOpenGL( void ) {
 	int				i;
 
 	common->Printf( "----- R_InitOpenGL -----\n" );
+	R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_R_INIT_OPENGL );
+	RB_ResetARB2InteractionHandoffBreadcrumb();
 
 	if ( glConfig.isInitialized ) {
 		common->FatalError( "R_InitOpenGL called while active" );
@@ -1699,10 +1706,12 @@ void R_InitOpenGL( void ) {
 	R_RendererUpload_Init( glConfig.backendCaps );
 
 	// allocate the vertex array range or vertex objects
+	R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_VERTEX_CACHE_INIT );
 	vertexCache.Init();
 
 	// select which renderSystem we are going to use
 	r_renderer.SetModified();
+	R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_SET_BACK_END_RENDERER );
 	tr.SetBackEndRenderer();
 
 	// allocate the frame data, which may be more if smp is enabled
@@ -1710,6 +1719,7 @@ void R_InitOpenGL( void ) {
 
 	// Reset our gamma
 	R_SetColorMappings();
+	R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_READY );
 
 #ifdef _WIN32
 	static bool glCheck = false;

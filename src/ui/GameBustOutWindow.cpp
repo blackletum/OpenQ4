@@ -42,6 +42,33 @@ If you have questions concerning this license or the applicable additional terms
 
 #define S_UNIQUE_CHANNEL	6
 
+static const int GAME_BUSTOUT_MAX_SAVE_ENTITIES = 4096;
+
+static int GameBustOut_ReadSaveInt( idFile *savefile, const char *fieldName ) {
+	int value = 0;
+	const int offset = savefile->Tell();
+	const int bytesRead = savefile->Read( &value, sizeof( value ) );
+	if ( bytesRead != sizeof( value ) ) {
+		common->Error( "idGameBustOutWindow::ReadFromSaveGame: truncated %s at offset %d (read %d of %d)",
+			fieldName ? fieldName : "integer", offset, bytesRead, static_cast<int>( sizeof( value ) ) );
+	}
+	return value;
+}
+
+static void GameBustOut_ValidateSaveCount( const char *fieldName, int count ) {
+	if ( count < 0 || count > GAME_BUSTOUT_MAX_SAVE_ENTITIES ) {
+		common->Error( "idGameBustOutWindow::ReadFromSaveGame: invalid %s %d",
+			fieldName ? fieldName : "count", count );
+	}
+}
+
+static void GameBustOut_ValidateEntityIndex( const char *fieldName, int index, int entityCount ) {
+	if ( index < 0 || index >= entityCount ) {
+		common->Error( "idGameBustOutWindow::ReadFromSaveGame: invalid %s %d (entity count %d)",
+			fieldName ? fieldName : "entity index", index, entityCount );
+	}
+}
+
 /*
 *****************************************************************************
 * BOEntity	
@@ -259,7 +286,8 @@ void BOBrick::ReadFromSaveGame( idFile *savefile, idGameBustOutWindow *game ) {
 	savefile->Read( &isBroken, sizeof(isBroken) );
 
 	int index;
-	savefile->Read( &index, sizeof(index) );
+	index = GameBustOut_ReadSaveInt( savefile, "brick entity index" );
+	GameBustOut_ValidateEntityIndex( "brick entity index", index, game->entities.Num() );
 	ent = game->entities[index];
 }
 
@@ -504,9 +532,16 @@ idGameBustOutWindow::ReadFromSaveGame
 */
 void idGameBustOutWindow::ReadFromSaveGame( idFile *savefile ) {
 	idWindow::ReadFromSaveGame( savefile );
+	int i;
 
 	// Clear out existing paddle and entities from GUI load
 	delete paddle;
+	paddle = NULL;
+	balls.Clear();
+	powerUps.Clear();
+	for ( i = 0; i < BOARD_ROWS; i++ ) {
+		board[i].DeleteContents( true );
+	}
 	entities.DeleteContents( true );
 
 	gamerunning.ReadFromSaveGame( savefile );
@@ -536,11 +571,11 @@ void idGameBustOutWindow::ReadFromSaveGame( idFile *savefile ) {
 	savefile->Read( &ballsInPlay, sizeof(ballsInPlay) );
 	savefile->Read( &ballHitCeiling, sizeof(ballHitCeiling) );
 
-	int i;
 	int numberOfEnts;
 
 	// Read entities
-	savefile->Read( &numberOfEnts, sizeof(numberOfEnts) );
+	numberOfEnts = GameBustOut_ReadSaveInt( savefile, "entity count" );
+	GameBustOut_ValidateSaveCount( "entity count", numberOfEnts );
 	for ( i=0; i<numberOfEnts; i++ ) {
 		BOEntity *ent;
 
@@ -550,19 +585,23 @@ void idGameBustOutWindow::ReadFromSaveGame( idFile *savefile ) {
 	}
 
 	// Read balls
-	savefile->Read( &numberOfEnts, sizeof(numberOfEnts) );
+	numberOfEnts = GameBustOut_ReadSaveInt( savefile, "ball count" );
+	GameBustOut_ValidateSaveCount( "ball count", numberOfEnts );
 	for ( i=0; i<numberOfEnts; i++ ) {
 		int ballIndex;
-		savefile->Read( &ballIndex, sizeof(ballIndex) );
+		ballIndex = GameBustOut_ReadSaveInt( savefile, "ball entity index" );
+		GameBustOut_ValidateEntityIndex( "ball entity index", ballIndex, entities.Num() );
 		balls.Append( entities[ballIndex] );
 	}
 
 	// Read powerups
-	savefile->Read( &numberOfEnts, sizeof(numberOfEnts) );
+	numberOfEnts = GameBustOut_ReadSaveInt( savefile, "powerup count" );
+	GameBustOut_ValidateSaveCount( "powerup count", numberOfEnts );
 	for ( i=0; i<numberOfEnts; i++ ) {
 		int powerIndex;
-		savefile->Read( &powerIndex, sizeof(powerIndex) );
-		balls.Append( entities[powerIndex] );
+		powerIndex = GameBustOut_ReadSaveInt( savefile, "powerup entity index" );
+		GameBustOut_ValidateEntityIndex( "powerup entity index", powerIndex, entities.Num() );
+		powerUps.Append( entities[powerIndex] );
 	}
 
 	// Read paddle
@@ -572,7 +611,8 @@ void idGameBustOutWindow::ReadFromSaveGame( idFile *savefile ) {
 	// Read board
 	int row;
 	for ( row=0; row<BOARD_ROWS; row++ ) {
-		savefile->Read( &numberOfEnts, sizeof(numberOfEnts) );
+		numberOfEnts = GameBustOut_ReadSaveInt( savefile, "board row brick count" );
+		GameBustOut_ValidateSaveCount( "board row brick count", numberOfEnts );
 		for ( i=0; i<numberOfEnts; i++ ) {
 			BOBrick *brick = new BOBrick();
 			brick->ReadFromSaveGame( savefile, this );

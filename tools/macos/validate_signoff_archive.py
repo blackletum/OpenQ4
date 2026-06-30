@@ -42,16 +42,35 @@ REQUIRED_REPORT_TOKENS = (
     "Staged macOS payload integrity checks completed.",
     "Quake 4 asset basepath validation completed.",
     "Renderer smoke profile completed with retail Quake 4 assets.",
+    "Multiplayer listen-server smoke completed with retail Quake 4 assets.",
+    "MP game module path is present in the staged payload.",
     "macOS-facing renderer validation matrix completed.",
     "Desktop launcher was written for Finder/Terminal launch checks.",
+    "- openQ4 commit:",
+    "- openQ4 dirty:",
+    "- `openQ4-game` commit:",
+    "- `openQ4-game` dirty:",
+    "Package layout contract is adjacent package root",
     "## Manual Hardware Checklist",
+    "mounted signed/notarized DMG",
+    "whole package payload",
+    "Move only openQ4.app",
+    "package root as the working directory",
+    "fs_basepath",
+    "fs_cdpath",
+    "fs_savepath",
+    "Gatekeeper assessment",
     "keyboard text entry",
     "SDL game controller",
     "audio output",
     "windowed, fullscreen",
     "matching OpenGL or Metal bridge",
+    "multiplayer",
+    "dedicated server",
     "## macOS Version",
+    "## Xcode And SDK",
     "## Kernel",
+    "## Hardware",
     "## Displays",
     "## Audio Devices",
     "## USB Devices",
@@ -60,6 +79,7 @@ REQUIRED_REPORT_TOKENS = (
     "## Staged Binary Architectures",
     "openQ4-client_",
     "openQ4-ded_",
+    "Dedicated server:",
     "game-sp_",
     "game-mp_",
 )
@@ -72,6 +92,7 @@ REQUIRED_LOG_TOKENS = (
     "Validated staged macOS payload",
     "Validated Quake 4 asset basepath",
     "Running openQ4 macOS renderer smoke",
+    "Running openQ4 macOS multiplayer smoke",
     "Running macOS-facing renderer validation matrix",
     "Installed macOS launcher",
     "macOS runtime signoff report:",
@@ -188,14 +209,24 @@ def validate_report(
     for token in REQUIRED_REPORT_TOKENS:
         require(token in report, f"{bridge} signoff report is missing {token!r}.")
     require(f"- Graphics bridge: {bridge}" in report, f"{bridge} signoff report has wrong bridge metadata.")
+    require("- Architecture policy:" in report, f"{bridge} signoff report is missing architecture policy metadata.")
+    require("- OS matrix role:" in report, f"{bridge} signoff report is missing OS matrix role metadata.")
     require("- OpenAL provider:" in report, f"{bridge} signoff report is missing OpenAL provider metadata.")
     require("- Build directory:" in report, f"{bridge} signoff report is missing build directory metadata.")
     require("- Results:" in report, f"{bridge} signoff report is missing result directory metadata.")
     require("- Client: not found" not in report, f"{bridge} signoff report did not record a staged client path.")
+    require(
+        "- Dedicated server: not found" not in report,
+        f"{bridge} signoff report did not record a staged dedicated server path.",
+    )
     require(f"{result_dir}" in report, f"{bridge} signoff report does not reference its expected result directory.")
     require(
         f"{result_dir}/renderer-smoke" in report,
         f"{bridge} signoff report does not reference its renderer-smoke output directory.",
+    )
+    require(
+        f"{result_dir}/renderer-mp-smoke" in report,
+        f"{bridge} signoff report does not reference its renderer-mp-smoke output directory.",
     )
     require(
         f"{result_dir}/renderer-matrix" in report,
@@ -305,6 +336,10 @@ def validate_signoff_archive(
             require(
                 has_file_under(file_names, f"{result_dir}/renderer-smoke"),
                 f"{bridge} signoff archive is missing renderer-smoke output.",
+            )
+            require(
+                has_file_under(file_names, f"{result_dir}/renderer-mp-smoke"),
+                f"{bridge} signoff archive is missing renderer-mp-smoke output.",
             )
             require(
                 has_file_under(file_names, f"{result_dir}/renderer-matrix"),

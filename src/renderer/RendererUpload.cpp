@@ -697,6 +697,7 @@ const char *idUploadManager::PathName( void ) const {
 }
 
 void R_RendererUpload_Init( const renderBackendCaps_t &caps ) {
+	R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_R_RENDERER_UPLOAD_INIT );
 	rg_uploadManager.Init( caps );
 }
 

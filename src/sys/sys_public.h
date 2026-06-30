@@ -80,19 +80,26 @@ class idStr;
 // Mac OSX
 #if defined(MACOS_X) || defined(__APPLE__)
 
-#define BUILD_STRING				"MacOSX-universal"
 #define BUILD_OS_ID					1
 #ifdef __ppc__
+	#define	BUILD_STRING				"macos-ppc"
 	#define	CPUSTRING					"ppc"
 	#define CPU_EASYARGS				0
 #elif defined(__i386__)
+	#define	BUILD_STRING				"macos-x86"
 	#define	CPUSTRING					"x86"
 	#define CPU_EASYARGS				1
 #elif defined(__x86_64__)
+	#define	BUILD_STRING				"macos-x64"
 	#define	CPUSTRING					"x64"
 	#define CPU_EASYARGS				1
 #elif defined(__aarch64__) || defined(__arm64__)
+	#define	BUILD_STRING				"macos-arm64"
 	#define	CPUSTRING					"arm64"
+	#define CPU_EASYARGS				1
+#else
+	#define	BUILD_STRING				"macos-unknown"
+	#define	CPUSTRING					"unknown"
 	#define CPU_EASYARGS				1
 #endif
 

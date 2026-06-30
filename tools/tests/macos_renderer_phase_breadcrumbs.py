@@ -1,0 +1,249 @@
+#!/usr/bin/env python3
+"""Static checks for issue #73 renderer startup breadcrumbs."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+PLAN_PATH = "docs/dev/plans/2026-06-30-apple-support-no-macos-access.md"
+
+
+def read(relative_path: str) -> str:
+    return (ROOT / relative_path).read_text(encoding="utf-8")
+
+
+def require(haystack: str, needle: str, context: str) -> None:
+    if needle not in haystack:
+        raise AssertionError(f"Missing {needle!r} in {context}")
+
+
+def function_body(source: str, signature: str) -> str:
+    start = source.find(signature)
+    if start == -1:
+        raise AssertionError(f"Missing function signature {signature!r}")
+
+    depth = 0
+    for index in range(start, len(source)):
+        char = source[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start : index + 1]
+
+    raise AssertionError(f"Could not find end of function {signature!r}")
+
+
+def require_ordered(haystack: str, tokens: tuple[str, ...], context: str) -> None:
+    position = -1
+    for token in tokens:
+        next_position = haystack.find(token, position + 1)
+        if next_position == -1:
+            raise AssertionError(f"Missing ordered token {token!r} in {context}")
+        position = next_position
+
+
+def source_section(source: str, start_marker: str, end_marker: str) -> str:
+    start = source.find(start_marker)
+    if start == -1:
+        raise AssertionError(f"Missing section marker {start_marker!r}")
+    end = source.find(end_marker, start)
+    if end == -1:
+        raise AssertionError(f"Missing section end marker {end_marker!r}")
+    return source[start:end]
+
+
+def validate_diagnostics_module() -> None:
+    header = read("src/renderer/RendererStartupDiagnostics.h")
+    source = read("src/renderer/RendererStartupDiagnostics.cpp")
+
+    for token in (
+        "#include <signal.h>",
+        "RENDERER_STARTUP_PHASE_R_INIT_OPENGL",
+        "RENDERER_STARTUP_PHASE_R_CHECK_PORTABLE_EXTENSIONS",
+        "RENDERER_STARTUP_PHASE_R_ARB2_INIT",
+        "RENDERER_STARTUP_PHASE_R_RELOAD_ARB_PROGRAMS",
+        "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_FULL_UPLOAD",
+        "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_SIMPLE_UPLOAD",
+        "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_SKIP_FULL_UPLOAD",
+        "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_COLOR_MODE",
+        "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_FULL_SELECTION",
+        "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_SIMPLE_SELECTION",
+        "RENDERER_STARTUP_PHASE_R_RENDERER_UPLOAD_INIT",
+        "RENDERER_STARTUP_PHASE_VERTEX_CACHE_INIT",
+        "RENDERER_STARTUP_PHASE_SET_BACK_END_RENDERER",
+        "RENDERER_STARTUP_PHASE_READY",
+        "RENDERER_STARTUP_PHASE_FIRST_ARB2_INTERACTION_HANDOFF",
+        "void R_SetRendererStartupPhase",
+        "void R_RecordRendererStartupPhase",
+        "const char *R_RendererStartupPhaseSignalName",
+    ):
+        require(header, token, "renderer startup diagnostics header")
+
+    for token in (
+        "static volatile sig_atomic_t r_lastRendererStartupPhase",
+        "R_NormalizeRendererStartupPhase",
+        "renderer startup phase: %s",
+        "R_RendererStartupPhaseSignalName",
+        "first ARB2 interaction handoff",
+        "R_ReloadARBPrograms_f: interaction color mode",
+        "R_ReloadARBPrograms_f: skipped full interaction upload",
+        "R_ReloadARBPrograms_f: selected simple interaction",
+    ):
+        require(source, token, "renderer startup diagnostics source")
+
+
+def validate_posix_signal_bridge() -> None:
+    source = read("src/sys/posix/posix_signal.cpp")
+    fatal_body = function_body(source, "static void sig_handler( int signum, siginfo_t *info, void *context ) {")
+
+    for token in (
+        '#include "../../renderer/RendererStartupDiagnostics.h"',
+        'Posix_WriteSignalText( "openQ4: last renderer startup phase: " );',
+        "Posix_WriteSignalText( R_RendererStartupPhaseSignalName() );",
+    ):
+        require(source, token, "POSIX fatal signal renderer startup phase bridge")
+
+    require_ordered(
+        fatal_body,
+        (
+            'Posix_WriteSignalText( "openQ4: fatal signal " );',
+            'Posix_WriteSignalText( "), exiting without unsafe engine shutdown\\n" );',
+            'Posix_WriteSignalText( "openQ4: last renderer startup phase: " );',
+            "R_RendererStartupPhaseSignalName()",
+            "_exit( 128 + signum );",
+        ),
+        "POSIX fatal signal renderer startup phase output order",
+    )
+
+
+def validate_renderer_startup_order() -> None:
+    init_source = read("src/renderer/RenderSystem_init.cpp")
+    upload_source = read("src/renderer/RendererUpload.cpp")
+    draw_source = read("src/renderer/draw_arb2.cpp")
+
+    init_body = function_body(init_source, "void R_InitOpenGL( void ) {")
+    portable_body = function_body(init_source, "static void R_CheckPortableExtensions( void ) {")
+    upload_body = function_body(upload_source, "void R_RendererUpload_Init( const renderBackendCaps_t &caps ) {")
+    arb_init_body = function_body(draw_source, "void R_ARB2_Init( void ) {")
+    reload_body = function_body(draw_source, "void R_ReloadARBPrograms_f( const idCmdArgs &args ) {")
+    load_body = function_body(draw_source, "void R_LoadARBProgram( int progIndex ) {")
+    interaction_body = source_section(
+        draw_source,
+        "void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {",
+        "void RB_ARB2_DrawInteractions( void ) {",
+    )
+    reset_body = function_body(draw_source, "void RB_ResetARB2InteractionHandoffBreadcrumb( void ) {")
+
+    require_ordered(
+        init_body,
+        (
+            "R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_R_INIT_OPENGL );",
+            "RB_ResetARB2InteractionHandoffBreadcrumb();",
+            "R_CheckPortableExtensions();",
+            "R_ARB2_Init();",
+            "R_ReloadARBPrograms_f( idCmdArgs() );",
+            "R_RendererUpload_Init( glConfig.backendCaps );",
+            "R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_VERTEX_CACHE_INIT );",
+            "vertexCache.Init();",
+            "R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_SET_BACK_END_RENDERER );",
+            "tr.SetBackEndRenderer();",
+            "R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_READY );",
+        ),
+        "R_InitOpenGL renderer startup phase order",
+    )
+
+    require(portable_body, "R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_R_CHECK_PORTABLE_EXTENSIONS );", "portable extension phase")
+    require(arb_init_body, "R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_R_ARB2_INIT );", "ARB2 init phase")
+    require(reload_body, "R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_R_RELOAD_ARB_PROGRAMS );", "ARB reload phase")
+    require(reload_body, "RB_RecordCurrentInteractionSelectionBreadcrumb();", "ARB interaction selection breadcrumb")
+    require(upload_body, "R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_R_RENDERER_UPLOAD_INIT );", "renderer upload init phase")
+    require(reset_body, "g_firstARB2InteractionHandoffBreadcrumb = false;", "ARB2 handoff reset")
+
+    for token in (
+        "RB_IsFullInteractionProgram( prog )",
+        "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_FULL_UPLOAD",
+        "RB_IsSimpleInteractionProgram( prog )",
+        "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_SIMPLE_UPLOAD",
+        "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_SKIP_FULL_UPLOAD",
+        "R_SetRendererStartupPhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_COLOR_MODE );",
+    ):
+        require(load_body, token, "ARB program load interaction breadcrumbs")
+
+    for token in (
+        "g_firstARB2InteractionHandoffBreadcrumb",
+        "R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_FIRST_ARB2_INTERACTION_HANDOFF );",
+    ):
+        require(interaction_body, token, "first ARB2 interaction handoff breadcrumb")
+
+
+def validate_phase2_plan_status() -> None:
+    plan = read(PLAN_PATH)
+
+    for token in (
+        "## Phase 2: Add Crash-Useful Renderer Breadcrumbs",
+        '- [x] Add a tiny crash-safe "last renderer phase" string or enum updated before',
+        "- [x] Teach the POSIX signal handler to print the last renderer phase using only",
+        "- [x] Print the same phase state in normal logs before and after renderer",
+        "- [x] Add static validation that every renderer startup phase marker is present",
+        "- [x] Add a specific issue #73 breadcrumb around interaction program selection:",
+        "Phase 2 implementation status",
+        "src/renderer/RendererStartupDiagnostics.h",
+        "src/renderer/RendererStartupDiagnostics.cpp",
+        "src/sys/posix/posix_signal.cpp",
+        "tools/tests/macos_renderer_phase_breadcrumbs.py",
+    ):
+        require(plan, token, "Phase 2 Apple support plan")
+
+
+def validate_docs_and_release_notes() -> None:
+    support_doc = read("docs/user/macos-support-data.md")
+    release_notes = read("docs/dev/releases/v0.6.5.md")
+    release_completion = read("docs/dev/release-completion.md")
+
+    for source, context in (
+        (support_doc, "macOS support-data guide"),
+        (release_notes, "curated release notes"),
+        (release_completion, "release completion notes"),
+    ):
+        require(source, "last renderer startup phase", context)
+        require(source, "first ARB2 interaction handoff", context)
+
+
+def validate_ci_and_local_wiring() -> None:
+    local_runner = read("tools/validation/openq4_validate.py")
+    commit = read(".github/workflows/commit-validation.yml")
+    push = read(".github/workflows/push-verification.yml")
+    macos_debug = read(".github/workflows/macos-debug.yml")
+
+    for source, context in (
+        (local_runner, "local validation runner"),
+        (commit, "commit validation workflow"),
+        (push, "push verification workflow"),
+        (macos_debug, "macOS debug workflow"),
+    ):
+        require(source, "macos_renderer_phase_breadcrumbs.py", context)
+
+    for source, context in (
+        (commit, "commit validation workflow"),
+        (push, "push verification workflow"),
+        (macos_debug, "macOS debug workflow"),
+    ):
+        require(source, "python tools/tests/macos_renderer_phase_breadcrumbs.py", context)
+
+
+def main() -> None:
+    validate_diagnostics_module()
+    validate_posix_signal_bridge()
+    validate_renderer_startup_order()
+    validate_phase2_plan_status()
+    validate_docs_and_release_notes()
+    validate_ci_and_local_wiring()
+    print("macos_renderer_phase_breadcrumbs: ok")
+
+
+if __name__ == "__main__":
+    main()

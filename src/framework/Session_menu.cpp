@@ -878,6 +878,23 @@ static void RefreshMainMenuDisplayChoices( idUserInterface *gui ) {
 	gui->StateChanged( common->GetPresentationTime() );
 }
 
+static void RefreshMainMenuPerformancePresetGuiVars( idUserInterface *gui ) {
+	if ( gui == NULL ) {
+		return;
+	}
+
+	SetMainMenuVideoGuiVars( gui );
+	SetMainMenuQualityGuiVars( gui );
+	SyncMainMenuAspectVisibility( gui );
+	gui->StateChanged( common->GetPresentationTime() );
+}
+
+static void AppendMainMenuCommandArgsUntilSeparator( const idCmdArgs &sourceArgs, int &argIndex, idCmdArgs &commandArgs ) {
+	while ( argIndex < sourceArgs.Argc() && idStr::Cmp( sourceArgs.Argv( argIndex ), ";" ) != 0 ) {
+		commandArgs.AppendArg( sourceArgs.Argv( argIndex++ ) );
+	}
+}
+
 static void ApplyMainMenuDisplayModeChoice( idUserInterface *gui ) {
 	if ( gui == NULL ) {
 		return;
@@ -2493,25 +2510,21 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 
 		if ( !idStr::Icmp( cmd, "applyPerformancePreset" ) ) {
 			idUserInterface *gui = guiActive ? guiActive : guiMainMenu;
-			cmdSystem->BufferCommandText( CMD_EXEC_NOW, "applyPerformancePreset\n" );
-			SetMainMenuVideoGuiVars( gui );
-			SetMainMenuQualityGuiVars( gui );
-			SyncMainMenuAspectVisibility( gui );
-			if ( gui != NULL ) {
-				gui->StateChanged( common->GetPresentationTime() );
-			}
+			idCmdArgs presetArgs;
+			presetArgs.AppendArg( "applyPerformancePreset" );
+			AppendMainMenuCommandArgsUntilSeparator( args, icmd, presetArgs );
+			cmdSystem->BufferCommandArgs( CMD_EXEC_NOW, presetArgs );
+			RefreshMainMenuPerformancePresetGuiVars( gui );
 			continue;
 		}
 
 		if ( !idStr::Icmp( cmd, "autoDetectPerformancePreset" ) ) {
 			idUserInterface *gui = guiActive ? guiActive : guiMainMenu;
-			cmdSystem->BufferCommandText( CMD_EXEC_NOW, "autoDetectPerformancePreset\n" );
-			SetMainMenuVideoGuiVars( gui );
-			SetMainMenuQualityGuiVars( gui );
-			SyncMainMenuAspectVisibility( gui );
-			if ( gui != NULL ) {
-				gui->StateChanged( common->GetPresentationTime() );
-			}
+			idCmdArgs presetArgs;
+			presetArgs.AppendArg( "autoDetectPerformancePreset" );
+			AppendMainMenuCommandArgsUntilSeparator( args, icmd, presetArgs );
+			cmdSystem->BufferCommandArgs( CMD_EXEC_NOW, presetArgs );
+			RefreshMainMenuPerformancePresetGuiVars( gui );
 			continue;
 		}
 

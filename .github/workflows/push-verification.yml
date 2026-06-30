@@ -77,11 +77,26 @@ jobs:
             tools/tests/linux_sdl3_glew_loader.py \
             tools/tests/linux_vsync_support.py \
             tools/tests/loading_continue_input.py \
+            tools/tests/macos_apple_gl21_arb2_corridor.py \
+            tools/tests/macos_evidence_plumbing.py \
+            tools/tests/macos_evidence_recording.py \
+            tools/tests/macos_gamelibs_alignment.py \
+            tools/tests/macos_local_validation_track.py \
+            tools/tests/macos_matrix_policy.py \
             tools/tests/macos_native_backend_guard.py \
+            tools/tests/macos_native_backend_containment.py \
+            tools/tests/macos_openal_provider_policy.py \
+            tools/tests/macos_package_policy.py \
+            tools/tests/macos_package_robustness.py \
+            tools/tests/macos_renderer_backend_policy.py \
+            tools/tests/macos_renderer_phase_breadcrumbs.py \
             tools/tests/macos_renderer_startup_guard.py \
             tools/tests/macos_sdl3_backend_guard.py \
             tools/tests/macos_signoff_archive.py \
             tools/tests/macos_static_policy.py \
+            tools/tests/macos_support_claim_policy.py \
+            tools/tests/macos_support_intake.py \
+            tools/tests/macos_symbolication_policy.py \
             tools/tests/macos_metal_bridge.py \
             tools/tests/native_glx_shutdown.py \
             tools/tests/openq4_pure_pack.py \
@@ -102,6 +117,8 @@ jobs:
             tools/tests/validation_hardening.py \
             tools/tests/vscode_fast_build.py
           bash -n tools/build/meson_setup.sh
+          bash -n tools/macos/collect_macos_support_info.sh
+          bash -n tools/validation/validate_macos_static.sh
           bash -n tools/validation/validate_push.sh
           bash -n tools/validation/validate_pr.sh
           python tools/tests/campaign_split_state_transition.py
@@ -121,11 +138,26 @@ jobs:
           python tools/tests/linux_sdl3_glew_loader.py
           python tools/tests/linux_vsync_support.py
           python tools/tests/loading_continue_input.py
+          python tools/tests/macos_apple_gl21_arb2_corridor.py
+          python tools/tests/macos_evidence_plumbing.py
+          python tools/tests/macos_evidence_recording.py
+          python tools/tests/macos_gamelibs_alignment.py
+          python tools/tests/macos_local_validation_track.py
+          python tools/tests/macos_matrix_policy.py
           python tools/tests/macos_native_backend_guard.py
+          python tools/tests/macos_native_backend_containment.py
+          python tools/tests/macos_openal_provider_policy.py
+          python tools/tests/macos_package_policy.py
+          python tools/tests/macos_package_robustness.py
+          python tools/tests/macos_renderer_backend_policy.py
+          python tools/tests/macos_renderer_phase_breadcrumbs.py
           python tools/tests/macos_renderer_startup_guard.py
           python tools/tests/macos_sdl3_backend_guard.py
           python tools/tests/macos_signoff_archive.py
           python tools/tests/macos_static_policy.py
+          python tools/tests/macos_support_claim_policy.py
+          python tools/tests/macos_support_intake.py
+          python tools/tests/macos_symbolication_policy.py
           python tools/tests/macos_metal_bridge.py
           python tools/tests/native_glx_shutdown.py
           python tools/tests/openq4_pure_pack.py

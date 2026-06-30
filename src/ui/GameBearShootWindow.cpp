@@ -45,6 +45,33 @@ If you have questions concerning this license or the applicable additional terms
 idCVar bearTurretAngle( "bearTurretAngle", "0", CVAR_FLOAT, "" );
 idCVar bearTurretForce( "bearTurretForce", "200", CVAR_FLOAT, "" );
 
+static const int GAME_BEARSHOOT_MAX_SAVE_ENTITIES = 4096;
+
+static int GameBearShoot_ReadSaveInt( idFile *savefile, const char *fieldName ) {
+	int value = 0;
+	const int offset = savefile->Tell();
+	const int bytesRead = savefile->Read( &value, sizeof( value ) );
+	if ( bytesRead != sizeof( value ) ) {
+		common->Error( "idGameBearShootWindow::ReadFromSaveGame: truncated %s at offset %d (read %d of %d)",
+			fieldName ? fieldName : "integer", offset, bytesRead, static_cast<int>( sizeof( value ) ) );
+	}
+	return value;
+}
+
+static void GameBearShoot_ValidateSaveCount( const char *fieldName, int count ) {
+	if ( count < 0 || count > GAME_BEARSHOOT_MAX_SAVE_ENTITIES ) {
+		common->Error( "idGameBearShootWindow::ReadFromSaveGame: invalid %s %d",
+			fieldName ? fieldName : "count", count );
+	}
+}
+
+static void GameBearShoot_ValidateEntityIndex( const char *fieldName, int index, int entityCount ) {
+	if ( index < 0 || index >= entityCount ) {
+		common->Error( "idGameBearShootWindow::ReadFromSaveGame: invalid %s %d (entity count %d)",
+			fieldName ? fieldName : "entity index", index, entityCount );
+	}
+}
+
 /*
 *****************************************************************************
 * BSEntity	
@@ -303,7 +330,8 @@ void idGameBearShootWindow::ReadFromSaveGame( idFile *savefile ) {
 	savefile->Read( &windUpdateTime, sizeof(windUpdateTime) );
 
 	int numberOfEnts;
-	savefile->Read( &numberOfEnts, sizeof(numberOfEnts) );
+	numberOfEnts = GameBearShoot_ReadSaveInt( savefile, "entity count" );
+	GameBearShoot_ValidateSaveCount( "entity count", numberOfEnts );
 
 	for ( int i=0; i<numberOfEnts; i++ ) {
 		BSEntity *ent;
@@ -314,17 +342,23 @@ void idGameBearShootWindow::ReadFromSaveGame( idFile *savefile ) {
 	}
 
 	int index;
-	savefile->Read( &index, sizeof(index) );
+	index = GameBearShoot_ReadSaveInt( savefile, "turret entity index" );
+	GameBearShoot_ValidateEntityIndex( "turret entity index", index, entities.Num() );
 	turret = entities[index];
-	savefile->Read( &index, sizeof(index) );
+	index = GameBearShoot_ReadSaveInt( savefile, "bear entity index" );
+	GameBearShoot_ValidateEntityIndex( "bear entity index", index, entities.Num() );
 	bear = entities[index];
-	savefile->Read( &index, sizeof(index) );
+	index = GameBearShoot_ReadSaveInt( savefile, "helicopter entity index" );
+	GameBearShoot_ValidateEntityIndex( "helicopter entity index", index, entities.Num() );
 	helicopter = entities[index];
-	savefile->Read( &index, sizeof(index) );
+	index = GameBearShoot_ReadSaveInt( savefile, "goal entity index" );
+	GameBearShoot_ValidateEntityIndex( "goal entity index", index, entities.Num() );
 	goal = entities[index];
-	savefile->Read( &index, sizeof(index) );
+	index = GameBearShoot_ReadSaveInt( savefile, "wind entity index" );
+	GameBearShoot_ValidateEntityIndex( "wind entity index", index, entities.Num() );
 	wind = entities[index];
-	savefile->Read( &index, sizeof(index) );
+	index = GameBearShoot_ReadSaveInt( savefile, "gunblast entity index" );
+	GameBearShoot_ValidateEntityIndex( "gunblast entity index", index, entities.Num() );
 	gunblast = entities[index];
 }
 

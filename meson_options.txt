@@ -38,7 +38,7 @@ option(
   type: 'combo',
   choices: ['sdl3', 'legacy_win32', 'native'],
   value: 'sdl3',
-  description: 'Window/input backend. Windows: sdl3 or legacy_win32. Linux/macOS: sdl3 or native.',
+  description: 'Window/input backend. Windows: sdl3 or legacy_win32. Linux/macOS: sdl3 or native. The macOS native backend is comparison-only; release packages use sdl3.',
 )
 
 option(

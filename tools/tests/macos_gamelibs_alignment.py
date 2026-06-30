@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""Static checks for Phase 8 macOS GameLibs alignment."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+GAME_LIBS_ROOT = Path(os.environ.get("OPENQ4_GAMELIBS_REPO", ROOT.parent / "openQ4-game")).resolve()
+
+
+def read(relative_path: str) -> str:
+    return (ROOT / relative_path).read_text(encoding="utf-8")
+
+
+def read_game_libs(relative_path: str) -> str:
+    path = GAME_LIBS_ROOT / relative_path
+    if not path.is_file():
+        raise AssertionError(f"openQ4-game file not found: {path}")
+    return path.read_text(encoding="utf-8")
+
+
+def require(haystack: str, needle: str, context: str) -> None:
+    if needle not in haystack:
+        raise AssertionError(f"Missing {needle!r} in {context}")
+
+
+def reject(haystack: str, needle: str, context: str) -> None:
+    if needle in haystack:
+        raise AssertionError(f"Unexpected {needle!r} in {context}")
+
+
+def validate_companion_boundary() -> None:
+    if (ROOT / "src" / "game").exists():
+        raise AssertionError("openQ4 must not grow a local src/game mirror; use openQ4-game as the source input")
+
+    meson = read("meson.build")
+    stage_script = read("tools/build/stage_gamelibs.py")
+    for token in (
+        'root / ".." / "openQ4-game"',
+        "OPENQ4_GAMELIBS_REPO",
+        "stage_gamelibs.py",
+        "gamelibs_stage",
+        "openq4_gamelibs_stage_manifest.json",
+    ):
+        require(meson, token, "openQ4 Meson GameLibs staging contract")
+
+    for token in (
+        "copy_game_sources",
+        "gameLibsGitCommit",
+        "gameLibsGitDirty",
+        "projectGitCommit",
+        "projectGitDirty",
+    ):
+        require(stage_script, token, "openQ4 GameLibs staging manifest contract")
+
+
+def validate_companion_macos_contract() -> None:
+    meson = read_game_libs("src/meson.build")
+    workflow = read_game_libs(".github/workflows/commit-validation.yml")
+    readme = read_game_libs("README.md")
+
+    for token in (
+        "is_darwin and cpp.get_id() != 'clang'",
+        "['x86_64', 'aarch64'].contains(host_cpu_family)",
+        "game_arch = 'arm64'",
+        "sp_module_name = 'game-sp_' + game_arch",
+        "mp_module_name = 'game-mp_' + game_arch",
+        "name_suffix : 'dylib'",
+        "'-Wl,-install_name,@loader_path/' + sp_module_name + '.dylib'",
+        "'-Wl,-install_name,@loader_path/' + mp_module_name + '.dylib'",
+    ):
+        require(meson, token, "openQ4-game Meson macOS module contract")
+
+    for token in (
+        "game-sp_${module_arch}.dylib",
+        "game-mp_${module_arch}.dylib",
+        "otool -D",
+        'expected="@loader_path/${module}"',
+    ):
+        require(workflow, token, "openQ4-game macOS CI dylib/install-name contract")
+
+    for token in (
+        "game-sp_arm64.dylib",
+        "game-mp_arm64.dylib",
+        "@loader_path",
+        "ARM64 ABI static checks",
+    ):
+        require(readme, token, "openQ4-game README macOS GameLibs contract")
+
+
+def validate_build_string_contract() -> None:
+    sys_public = read("src/sys/sys_public.h")
+    reject(sys_public, "MacOSX-universal", "macOS build string contract")
+    for token in (
+        '"macos-ppc"',
+        '"macos-x86"',
+        '"macos-x64"',
+        '"macos-arm64"',
+        '"macos-unknown"',
+    ):
+        require(sys_public, token, "macOS architecture-specific build string contract")
+
+
+def validate_metadata_contract() -> None:
+    packager = read("tools/build/package_nightly.py")
+    collector = read("tools/macos/collect_macos_support_info.sh")
+    signoff = read("tools/macos/guest/openq4-macos-sync-build-test.sh")
+    validator = read("tools/macos/validate_signoff_archive.py")
+    signoff_fixture = read("tools/tests/macos_signoff_archive.py")
+
+    for token in (
+        "VERSION_REPOSITORY_METADATA_KEYS",
+        "GAMELIBS_STAGE_MANIFEST_PATH",
+        "collect_package_repository_metadata",
+        "read_staged_repository_metadata",
+        "openq4_commit",
+        "openq4_dirty",
+        "openq4_game_commit",
+        "openq4_game_dirty",
+        "repository_metadata=repository_metadata",
+    ):
+        require(packager, token, "macOS package VERSION metadata contract")
+
+    for token in (
+        "package/build-metadata.txt",
+        "package/app-VERSION.txt",
+        "openq4_commit",
+        "openq4_game_commit",
+        "game-sp_*.dylib",
+        "game-mp_*.dylib",
+    ):
+        require(collector, token, "macOS support collector build metadata contract")
+
+    for token in (
+        "git_commit_or_unavailable",
+        "git_dirty_or_unavailable",
+        "- openQ4 commit:",
+        "- openQ4 dirty:",
+        "- \\`openQ4-game\\` commit:",
+        "- \\`openQ4-game\\` dirty:",
+    ):
+        require(signoff, token, "macOS signoff provenance contract")
+
+    for token in (
+        "- openQ4 commit:",
+        "- openQ4 dirty:",
+        "- `openQ4-game` commit:",
+        "- `openQ4-game` dirty:",
+    ):
+        require(validator, token, "macOS signoff archive provenance validator")
+        require(signoff_fixture, token, "macOS signoff archive test fixture")
+
+
+def validate_phase8_docs() -> None:
+    plan = read("docs/dev/plans/2026-06-30-apple-support-no-macos-access.md")
+    release_completion = read("docs/dev/release-completion.md")
+    release_notes = read("docs/dev/releases/v0.6.5.md")
+    support_data = read("docs/user/macos-support-data.md")
+    signoff_evidence = read("docs/dev/macos-signoff-evidence.md")
+
+    for token in (
+        "## Phase 8: Align `openQ4-game`",
+        "Phase 8 implementation status",
+        "[x] Keep `openQ4-game` Darwin/Clang support",
+        "[x] Add or keep static tests for `.dylib` names",
+        "[x] Add or keep static tests for `@loader_path/<module>.dylib` install names",
+        "[x] Make build strings report the actual macOS architecture",
+        "[x] Add ABI/static checks for ARM64-sensitive game allocations",
+        "[x] Record both openQ4 and `openQ4-game` commits",
+    ):
+        require(plan, token, "Phase 8 plan checklist")
+
+    for token in (
+        "Experimental macOS GameLibs alignment",
+        "openQ4 and `openQ4-game` commits",
+        "ARM64-sensitive allocation",
+    ):
+        require(release_completion, token, "release completion notes")
+        require(release_notes, token, "curated release notes")
+
+    for token in (
+        "package/build-metadata.txt",
+        "openq4_commit",
+        "openq4_game_commit",
+    ):
+        require(support_data, token, "macOS support data guide")
+
+    require(signoff_evidence, "openQ4 and `openQ4-game` commit fields", "macOS signoff evidence index")
+
+
+def validate_wiring() -> None:
+    validator = read("tools/validation/openq4_validate.py")
+    commit = read(".github/workflows/commit-validation.yml")
+    push = read(".github/workflows/push-verification.yml")
+    macos_debug = read(".github/workflows/macos-debug.yml")
+    companion_workflow = read_game_libs(".github/workflows/commit-validation.yml")
+
+    require(validator, "macos_gamelibs_alignment.py", "local openQ4 validation wiring")
+
+    for workflow, context in (
+        (commit, "openQ4 commit validation workflow"),
+        (push, "openQ4 push verification workflow"),
+    ):
+        require(workflow, "tools/tests/macos_gamelibs_alignment.py", context)
+        if workflow.count("tools/tests/macos_gamelibs_alignment.py") < 2:
+            raise AssertionError(f"{context} should compile and run macos_gamelibs_alignment.py")
+
+    require(macos_debug, "python tools/tests/macos_gamelibs_alignment.py", "macOS debug static guards")
+    require(companion_workflow, "tools/tests/arm64_abi_contract.py", "openQ4-game static ABI workflow wiring")
+
+
+def main() -> None:
+    validate_companion_boundary()
+    validate_companion_macos_contract()
+    validate_build_string_contract()
+    validate_metadata_contract()
+    validate_phase8_docs()
+    validate_wiring()
+    print("macos_gamelibs_alignment: ok")
+
+
+if __name__ == "__main__":
+    main()

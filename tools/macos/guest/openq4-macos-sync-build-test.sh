@@ -4,6 +4,7 @@ set -euo pipefail
 action="${1:-build}"
 graphics_bridge="${OPENQ4_MACOS_GRAPHICS_BRIDGE:-opengl}"
 openal_provider="${OPENQ4_MACOS_OPENAL_PROVIDER:-apple_framework}"
+os_matrix_role="${OPENQ4_MACOS_OS_MATRIX_ROLE:-current-manual-signoff}"
 stamp="${OPENQ4_MACOS_RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
 
 expand_guest_path() {
@@ -137,6 +138,7 @@ require_result_token "OPENQ4_MACOS_RUN_ID" "${stamp}"
 require_choice "macOS workflow action" "${action}" build smoke renderer launcher signoff all
 require_choice "OPENQ4_MACOS_GRAPHICS_BRIDGE" "${graphics_bridge}" opengl metal
 require_choice "OPENQ4_MACOS_OPENAL_PROVIDER" "${openal_provider}" apple_framework system
+require_choice "OPENQ4_MACOS_OS_MATRIX_ROLE" "${os_matrix_role}" current-manual-signoff current-hosted-ci-runner floor-candidate latest-public-macos
 require_safe_guest_roots
 
 results_root="${workspace}/results"
@@ -293,6 +295,28 @@ host_lipo_arch() {
     esac
 }
 
+git_commit_or_unavailable() {
+    local path="$1"
+    if git -C "${path}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        git -C "${path}" rev-parse --verify HEAD 2>/dev/null || printf 'unavailable\n'
+    else
+        printf 'unavailable\n'
+    fi
+}
+
+git_dirty_or_unavailable() {
+    local path="$1"
+    if ! git -C "${path}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        printf 'unavailable\n'
+        return
+    fi
+    if [[ -n "$(git -C "${path}" status --porcelain 2>/dev/null)" ]]; then
+        printf 'true\n'
+    else
+        printf 'false\n'
+    fi
+}
+
 client_binary() {
     local arch
     arch="$(host_arch)"
@@ -323,6 +347,22 @@ client_binary() {
             return
         fi
     done
+}
+
+dedicated_binary() {
+    local arch
+    arch="$(host_arch)"
+    local preferred="${repo}/.install/openQ4-ded_${arch}"
+    if [[ -e "${preferred}" && -L "${preferred}" ]]; then
+        echo "Staged macOS dedicated server must not be a symlink: ${preferred}" >&2
+        return 1
+    fi
+    if [[ -f "${preferred}" && -x "${preferred}" ]]; then
+        printf '%s\n' "${preferred}"
+        return
+    fi
+    echo "Missing staged macOS dedicated server for host architecture ${arch}: ${repo}/.install/openQ4-ded_${arch}" >&2
+    return 1
 }
 
 count_q4base_pk4s() {
@@ -547,6 +587,53 @@ run_smoke() {
         --basepath "${basepath}"
 }
 
+run_mp_smoke() {
+    require_repo
+    cd "${repo}"
+
+    validate_asset_basepath
+
+    local client
+    if ! client="$(client_binary)"; then
+        exit 1
+    fi
+    if [[ -z "${client}" || ! -x "${client}" ]]; then
+        echo "Missing staged macOS client under ${repo}/.install. Run Build first." >&2
+        exit 1
+    fi
+
+    local mp_smoke_settle_frames="${OPENQ4_MP_SMOKE_SETTLE_FRAMES:-10}"
+    local mp_smoke_sample_frames="${OPENQ4_MP_SMOKE_SAMPLE_FRAMES:-10}"
+    local mp_smoke_timeout="${OPENQ4_MP_SMOKE_TIMEOUT:-360}"
+    local mp_smoke_port="${OPENQ4_MP_SMOKE_PORT:-28110}"
+    local mp_smoke_client_delay="${OPENQ4_MP_SMOKE_CLIENT_DELAY:-12}"
+    local mp_smoke_client_delay_frames="${OPENQ4_MP_SMOKE_CLIENT_DELAY_FRAMES:-480}"
+    require_positive_integer "OPENQ4_MP_SMOKE_SETTLE_FRAMES" "${mp_smoke_settle_frames}" 100000
+    require_positive_integer "OPENQ4_MP_SMOKE_SAMPLE_FRAMES" "${mp_smoke_sample_frames}" 100000
+    require_positive_integer "OPENQ4_MP_SMOKE_TIMEOUT" "${mp_smoke_timeout}" 86400
+    require_positive_integer "OPENQ4_MP_SMOKE_PORT" "${mp_smoke_port}" 65535
+    require_positive_integer "OPENQ4_MP_SMOKE_CLIENT_DELAY" "${mp_smoke_client_delay}" 3600
+    require_positive_integer "OPENQ4_MP_SMOKE_CLIENT_DELAY_FRAMES" "${mp_smoke_client_delay_frames}" 100000
+
+    echo "Running openQ4 macOS multiplayer smoke with ${client}"
+    python3 tools/tests/renderer_gameplay_benchmark.py \
+        --profile smoke \
+        --cases mp-q4dm1-listen \
+        --tiers auto \
+        --maxfps 240 \
+        --swap-intervals 0 \
+        --display-modes windowed \
+        --shadow-presets default \
+        --settle-frames "${mp_smoke_settle_frames}" \
+        --sample-frames "${mp_smoke_sample_frames}" \
+        --timeout "${mp_smoke_timeout}" \
+        --mp-port "${mp_smoke_port}" \
+        --mp-client-delay "${mp_smoke_client_delay}" \
+        --mp-client-delay-frames "${mp_smoke_client_delay_frames}" \
+        --output-dir "${run_dir}/renderer-mp-smoke" \
+        --basepath "${basepath}"
+}
+
 run_renderer_matrix() {
     require_repo
     cd "${repo}"
@@ -650,6 +737,16 @@ write_signoff_report() {
     report_tmp="$(mktemp "${run_dir}/macos-runtime-signoff.md.XXXXXX")"
     local client
     client="$(client_binary 2>/dev/null || true)"
+    local dedicated
+    dedicated="$(dedicated_binary 2>/dev/null || true)"
+    local openq4_commit
+    openq4_commit="$(git_commit_or_unavailable "${repo}")"
+    local openq4_dirty
+    openq4_dirty="$(git_dirty_or_unavailable "${repo}")"
+    local gamelibs_commit
+    gamelibs_commit="$(git_commit_or_unavailable "${gamelibs}")"
+    local gamelibs_dirty
+    gamelibs_dirty="$(git_dirty_or_unavailable "${gamelibs}")"
 
     {
         echo "# macOS Runtime Signoff"
@@ -657,11 +754,18 @@ write_signoff_report() {
         echo "- Date (UTC): $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
         echo "- Host: $(hostname)"
         echo "- Architecture: $(uname -m)"
+        echo "- Architecture policy: arm64-only experimental release matrix"
+        echo "- OS matrix role: ${os_matrix_role}"
         echo "- Graphics bridge: ${graphics_bridge}"
         echo "- OpenAL provider: ${openal_provider}"
         echo "- Build directory: ${OPENQ4_BUILDDIR:-builddir}"
+        echo "- openQ4 commit: ${openq4_commit}"
+        echo "- openQ4 dirty: ${openq4_dirty}"
+        echo "- \`openQ4-game\` commit: ${gamelibs_commit}"
+        echo "- \`openQ4-game\` dirty: ${gamelibs_dirty}"
         echo "- Asset basepath: ${basepath}"
         echo "- Client: ${client:-not found}"
+        echo "- Dedicated server: ${dedicated:-not found}"
         echo "- Results: ${run_dir}"
         echo
         echo "## Automated Evidence"
@@ -669,24 +773,38 @@ write_signoff_report() {
         echo "- [x] Staged macOS payload integrity checks completed."
         echo "- [x] Quake 4 asset basepath validation completed."
         echo "- [x] Renderer smoke profile completed with retail Quake 4 assets."
+        echo "- [x] Multiplayer listen-server smoke completed with retail Quake 4 assets."
+        echo "- [x] MP game module path is present in the staged payload."
         echo "- [x] macOS-facing renderer validation matrix completed."
         echo "- [x] Desktop launcher was written for Finder/Terminal launch checks."
+        echo "- [x] Package layout contract is adjacent package root: openQ4.app, baseoq4/, and loose runtime files stay together."
         echo "- Renderer smoke output: ${run_dir}/renderer-smoke"
+        echo "- Renderer MP smoke output: ${run_dir}/renderer-mp-smoke"
         echo "- Renderer matrix output: ${run_dir}/renderer-matrix"
         echo "- Workflow log: ${run_dir}/openq4-macos-workflow.log"
         echo
         echo "## Manual Hardware Checklist"
         echo "- [ ] Launch openQ4 from Finder or the Desktop launcher and enter a single-player map."
+        echo "- [ ] Launch openQ4.app from the mounted signed/notarized DMG or final release image and enter a single-player map."
+        echo "- [ ] Copy the whole package payload to a user-writable location, keeping openQ4.app beside baseoq4/ and loose runtime files, then launch openQ4.app there."
+        echo "- [ ] Move only openQ4.app away from baseoq4/ and loose runtime files; confirm the app-only move is unsupported with a clear adjacent-runtime error, or record that it now works."
+        echo "- [ ] Launch from Terminal with the package root as the working directory."
+        echo "- [ ] Confirm fs_basepath, fs_cdpath, and fs_savepath in logs for Finder/copied package and Terminal launches."
+        echo "- [ ] Confirm Gatekeeper assessment for signed/notarized DMGs, or record unsigned/unnotarized approval friction for development archives."
         echo "- [ ] Verify keyboard text entry, console toggle, mouse-look, clicks, and wheel input."
         echo "- [ ] Verify at least one SDL game controller, including hotplug and rumble when hardware supports it."
         echo "- [ ] Verify audio output, volume changes, and at least one device switch or reconnect."
         echo "- [ ] Verify windowed, fullscreen, selected-display, and HiDPI/Retina behavior on attached displays."
         echo "- [ ] Verify the matching OpenGL or Metal bridge package path in actual gameplay, not only at the main menu."
+        echo "- [ ] Launch multiplayer, load the mp/q4dm1 listen-server path, confirm game-mp loads, connect a local client, and exit cleanly."
+        echo "- [ ] Launch the dedicated server binary, load an MP server configuration far enough to initialize game-mp, then shut it down cleanly."
         echo "- [ ] Record any input, audio, display, renderer, package, Gatekeeper, or crash issues with logs from this results directory."
     } > "${report_tmp}"
 
+    append_command_report "${report_tmp}" "Xcode And SDK" bash -lc 'xcode="$(xcodebuild -version 2>/dev/null | tr "\n" " " | sed "s/[[:space:]]*$//")"; [ -n "${xcode}" ] || xcode="not found"; printf "Xcode: %s\n" "${xcode}"; sdk="$(xcrun --sdk macosx --show-sdk-version 2>/dev/null || true)"; [ -n "${sdk}" ] || sdk="not found"; printf "macOS SDK: %s\n" "${sdk}"; sdk_path="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || true)"; [ -n "${sdk_path}" ] || sdk_path="not found"; printf "macOS SDK path: %s\n" "${sdk_path}"'
     append_command_report "${report_tmp}" "macOS Version" sw_vers
     append_command_report "${report_tmp}" "Kernel" uname -a
+    append_command_report "${report_tmp}" "Hardware" system_profiler SPHardwareDataType
     append_command_report "${report_tmp}" "Displays" system_profiler SPDisplaysDataType
     append_command_report "${report_tmp}" "Audio Devices" system_profiler SPAudioDataType
     append_command_report "${report_tmp}" "USB Devices" system_profiler SPUSBDataType
@@ -701,6 +819,7 @@ write_signoff_report() {
 run_signoff() {
     build_openq4
     run_smoke
+    run_mp_smoke
     run_renderer_matrix
     install_launcher
     write_signoff_report

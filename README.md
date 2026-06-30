@@ -53,7 +53,7 @@ It is designed for players who want the original Quake 4 experience with a clean
 - **OpenAL audio** restored to the pre-plan compatibility path by default, with newer voice handling revalidated behind an opt-in gate.
 - **Improved input and quality-of-life features** including controller support, better console UX, and modern settings behavior.
 - **Single-player and multiplayer in one install** with active compatibility work aimed at the stock game.
-- **Cross-platform support** with Windows and Linux release packages, Steam Deck support on Linux, and experimental Apple Silicon macOS packages through the signed/notarized DMG lane for credentialed release runs.
+- **Cross-platform support** with Windows and Linux release packages, Steam Deck support on Linux, and experimental Apple Silicon/arm64 macOS OpenGL/Metal bridge packages through the signed/notarized DMG lane for credentialed release runs.
 - **Open development** with releases, issue tracking, and community feedback all happening in public.
 
 ---
@@ -67,7 +67,7 @@ You need a legitimate Quake 4 install plus the openQ4 package that matches your 
 | **Minimum** | 64-bit CPU, 4 GB RAM, a working OpenGL compatibility driver with ARB2-era vertex/fragment program support, and about 12 GB free for the openQ4 package plus retail Quake 4 assets. Use the `minimum` or `lowpower` performance preset on constrained systems. |
 | **Recommended** | Modern quad-core CPU, 8 GB RAM, OpenGL 4.1+ compatibility-class GPU with 2 GB+ VRAM, current graphics drivers, and 15 GB+ free. For high resolutions, `quality`, or `ultra`, 16 GB RAM and 6 GB+ VRAM gives much better headroom. |
 
-Packaged support currently focuses on Windows, Linux, Steam Deck/SteamOS, and experimental Apple Silicon macOS. See the [Getting Started guide](docs/user/getting-started.md#system-requirements) for the platform-specific requirements and caveats.
+Packaged support currently focuses on Windows, Linux, Steam Deck/SteamOS, and experimental Apple Silicon/arm64 macOS. See the [Getting Started guide](docs/user/getting-started.md#system-requirements) for the platform-specific requirements and caveats.
 
 ---
 
@@ -138,7 +138,7 @@ Packaged support currently focuses on Windows, Linux, Steam Deck/SteamOS, and ex
 - It is **not** a drop-in runtime for the original proprietary Quake 4 DLL mods.
 - The project is still in **beta development**, so compatibility work is ongoing.
 
-If you run into problems, please use the [issue tracker](https://github.com/themuffinator/openQ4/issues) and include crash logs or setup details when possible.
+If you run into problems, please use the [issue tracker](https://github.com/themuffinator/openQ4/issues) and include crash logs or setup details when possible. For experimental macOS crashes, use the [macOS support-data guide](docs/user/macos-support-data.md) before filing or updating an issue.
 
 ---
 
