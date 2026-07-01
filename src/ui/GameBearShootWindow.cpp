@@ -45,9 +45,15 @@ If you have questions concerning this license or the applicable additional terms
 idCVar bearTurretAngle( "bearTurretAngle", "0", CVAR_FLOAT, "" );
 idCVar bearTurretForce( "bearTurretForce", "200", CVAR_FLOAT, "" );
 
-static const int GAME_BEARSHOOT_MAX_SAVE_ENTITIES = 4096;
+static const int GAME_BEARSHOOT_MAX_SAVE_ENTITIES = 64;
+static const int GAME_BEARSHOOT_SAVE_MAGIC = 'O' | ( 'Q' << 8 ) | ( 'B' << 16 ) | ( 'S' << 24 );
+static const int GAME_BEARSHOOT_SAVE_VERSION = 1;
 
-static int GameBearShoot_ReadSaveInt( idFile *savefile, const char *fieldName ) {
+static void GameBearShoot_WriteSaveInt( idFile *savefile, const int value ) {
+	savefile->WriteInt( value );
+}
+
+static int GameBearShoot_ReadLegacySaveInt( idFile *savefile, const char *fieldName ) {
 	int value = 0;
 	const int offset = savefile->Tell();
 	const int bytesRead = savefile->Read( &value, sizeof( value ) );
@@ -56,6 +62,39 @@ static int GameBearShoot_ReadSaveInt( idFile *savefile, const char *fieldName ) 
 			fieldName ? fieldName : "integer", offset, bytesRead, static_cast<int>( sizeof( value ) ) );
 	}
 	return value;
+}
+
+static int GameBearShoot_ReadEndianSaveInt( idFile *savefile, const char *fieldName ) {
+	int value = 0;
+	const int offset = savefile->Tell();
+	const int bytesRead = savefile->ReadInt( value );
+	if ( bytesRead != sizeof( value ) ) {
+		common->Error( "idGameBearShootWindow::ReadFromSaveGame: truncated %s at offset %d (read %d of %d)",
+			fieldName ? fieldName : "integer", offset, bytesRead, static_cast<int>( sizeof( value ) ) );
+	}
+	return value;
+}
+
+static int GameBearShoot_ReadSaveInt( idFile *savefile, const char *fieldName, int saveVersion ) {
+	if ( saveVersion >= GAME_BEARSHOOT_SAVE_VERSION ) {
+		return GameBearShoot_ReadEndianSaveInt( savefile, fieldName );
+	}
+	return GameBearShoot_ReadLegacySaveInt( savefile, fieldName );
+}
+
+static int GameBearShoot_ReadSaveVersion( idFile *savefile ) {
+	const int markerOffset = savefile->Tell();
+	const int marker = GameBearShoot_ReadEndianSaveInt( savefile, "format marker" );
+	if ( marker != GAME_BEARSHOOT_SAVE_MAGIC ) {
+		savefile->Seek( markerOffset, FS_SEEK_SET );
+		return 0;
+	}
+
+	const int version = GameBearShoot_ReadEndianSaveInt( savefile, "format version" );
+	if ( version <= 0 || version > GAME_BEARSHOOT_SAVE_VERSION ) {
+		common->Error( "idGameBearShootWindow::ReadFromSaveGame: unsupported format version %d", version );
+	}
+	return version;
 }
 
 static void GameBearShoot_ValidateSaveCount( const char *fieldName, int count ) {
@@ -125,7 +164,8 @@ void BSEntity::WriteToSaveGame( idFile *savefile ) {
 BSEntity::ReadFromSaveGame
 ======================
 */
-void BSEntity::ReadFromSaveGame( idFile *savefile, idGameBearShootWindow* _game ) {
+void BSEntity::ReadFromSaveGame( idFile *savefile, idGameBearShootWindow* _game, int saveVersion ) {
+	(void)saveVersion;
 	game = _game;
 
 	game->ReadSaveGameString( materialName, savefile );
@@ -253,27 +293,30 @@ void idGameBearShootWindow::WriteToSaveGame( idFile *savefile ) {
 	onContinue.WriteToSaveGame( savefile );
 	onNewGame.WriteToSaveGame( savefile );
 
+	GameBearShoot_WriteSaveInt( savefile, GAME_BEARSHOOT_SAVE_MAGIC );
+	GameBearShoot_WriteSaveInt( savefile, GAME_BEARSHOOT_SAVE_VERSION );
+
 	savefile->Write( &timeSlice, sizeof(timeSlice) );
 	savefile->Write( &timeRemaining, sizeof(timeRemaining) );
 	savefile->Write( &gameOver, sizeof(gameOver) );
 
-	savefile->Write( &currentLevel, sizeof(currentLevel) );
-	savefile->Write( &goalsHit, sizeof(goalsHit) );
+	GameBearShoot_WriteSaveInt( savefile, currentLevel );
+	GameBearShoot_WriteSaveInt( savefile, goalsHit );
 	savefile->Write( &updateScore, sizeof(updateScore) );
 	savefile->Write( &bearHitTarget, sizeof(bearHitTarget) );
 
 	savefile->Write( &bearScale, sizeof(bearScale) );
 	savefile->Write( &bearIsShrinking, sizeof(bearIsShrinking) );
-	savefile->Write( &bearShrinkStartTime, sizeof(bearShrinkStartTime) );
+	GameBearShoot_WriteSaveInt( savefile, bearShrinkStartTime );
 
 	savefile->Write( &turretAngle, sizeof(turretAngle) );
 	savefile->Write( &turretForce, sizeof(turretForce) );
 
 	savefile->Write( &windForce, sizeof(windForce) );
-	savefile->Write( &windUpdateTime, sizeof(windUpdateTime) );
+	GameBearShoot_WriteSaveInt( savefile, windUpdateTime );
 
 	int numberOfEnts = entities.Num();
-	savefile->Write( &numberOfEnts, sizeof(numberOfEnts) );
+	GameBearShoot_WriteSaveInt( savefile, numberOfEnts );
 
 	for ( int i=0; i<numberOfEnts; i++ ) {
 		entities[i]->WriteToSaveGame( savefile );
@@ -281,17 +324,17 @@ void idGameBearShootWindow::WriteToSaveGame( idFile *savefile ) {
 
 	int index;
 	index = entities.FindIndex( turret );
-	savefile->Write( &index, sizeof(index) );
+	GameBearShoot_WriteSaveInt( savefile, index );
 	index = entities.FindIndex( bear );
-	savefile->Write( &index, sizeof(index) );
+	GameBearShoot_WriteSaveInt( savefile, index );
 	index = entities.FindIndex( helicopter );
-	savefile->Write( &index, sizeof(index) );
+	GameBearShoot_WriteSaveInt( savefile, index );
 	index = entities.FindIndex( goal );
-	savefile->Write( &index, sizeof(index) );
+	GameBearShoot_WriteSaveInt( savefile, index );
 	index = entities.FindIndex( wind );
-	savefile->Write( &index, sizeof(index) );
+	GameBearShoot_WriteSaveInt( savefile, index );
 	index = entities.FindIndex( gunblast );
-	savefile->Write( &index, sizeof(index) );
+	GameBearShoot_WriteSaveInt( savefile, index );
 }
 
 /*
@@ -310,54 +353,56 @@ void idGameBearShootWindow::ReadFromSaveGame( idFile *savefile ) {
 	onContinue.ReadFromSaveGame( savefile );
 	onNewGame.ReadFromSaveGame( savefile );
 
+	const int saveVersion = GameBearShoot_ReadSaveVersion( savefile );
+
 	savefile->Read( &timeSlice, sizeof(timeSlice) );
 	savefile->Read( &timeRemaining, sizeof(timeRemaining) );
 	savefile->Read( &gameOver, sizeof(gameOver) );
 
-	savefile->Read( &currentLevel, sizeof(currentLevel) );
-	savefile->Read( &goalsHit, sizeof(goalsHit) );
+	currentLevel = GameBearShoot_ReadSaveInt( savefile, "current level", saveVersion );
+	goalsHit = GameBearShoot_ReadSaveInt( savefile, "goals hit", saveVersion );
 	savefile->Read( &updateScore, sizeof(updateScore) );
 	savefile->Read( &bearHitTarget, sizeof(bearHitTarget) );
 
 	savefile->Read( &bearScale, sizeof(bearScale) );
 	savefile->Read( &bearIsShrinking, sizeof(bearIsShrinking) );
-	savefile->Read( &bearShrinkStartTime, sizeof(bearShrinkStartTime) );
+	bearShrinkStartTime = GameBearShoot_ReadSaveInt( savefile, "bear shrink start time", saveVersion );
 
 	savefile->Read( &turretAngle, sizeof(turretAngle) );
 	savefile->Read( &turretForce, sizeof(turretForce) );
 
 	savefile->Read( &windForce, sizeof(windForce) );
-	savefile->Read( &windUpdateTime, sizeof(windUpdateTime) );
+	windUpdateTime = GameBearShoot_ReadSaveInt( savefile, "wind update time", saveVersion );
 
 	int numberOfEnts;
-	numberOfEnts = GameBearShoot_ReadSaveInt( savefile, "entity count" );
+	numberOfEnts = GameBearShoot_ReadSaveInt( savefile, "entity count", saveVersion );
 	GameBearShoot_ValidateSaveCount( "entity count", numberOfEnts );
 
 	for ( int i=0; i<numberOfEnts; i++ ) {
 		BSEntity *ent;
 
 		ent = new BSEntity( this );
-		ent->ReadFromSaveGame( savefile, this );
+		ent->ReadFromSaveGame( savefile, this, saveVersion );
 		entities.Append( ent );
 	}
 
 	int index;
-	index = GameBearShoot_ReadSaveInt( savefile, "turret entity index" );
+	index = GameBearShoot_ReadSaveInt( savefile, "turret entity index", saveVersion );
 	GameBearShoot_ValidateEntityIndex( "turret entity index", index, entities.Num() );
 	turret = entities[index];
-	index = GameBearShoot_ReadSaveInt( savefile, "bear entity index" );
+	index = GameBearShoot_ReadSaveInt( savefile, "bear entity index", saveVersion );
 	GameBearShoot_ValidateEntityIndex( "bear entity index", index, entities.Num() );
 	bear = entities[index];
-	index = GameBearShoot_ReadSaveInt( savefile, "helicopter entity index" );
+	index = GameBearShoot_ReadSaveInt( savefile, "helicopter entity index", saveVersion );
 	GameBearShoot_ValidateEntityIndex( "helicopter entity index", index, entities.Num() );
 	helicopter = entities[index];
-	index = GameBearShoot_ReadSaveInt( savefile, "goal entity index" );
+	index = GameBearShoot_ReadSaveInt( savefile, "goal entity index", saveVersion );
 	GameBearShoot_ValidateEntityIndex( "goal entity index", index, entities.Num() );
 	goal = entities[index];
-	index = GameBearShoot_ReadSaveInt( savefile, "wind entity index" );
+	index = GameBearShoot_ReadSaveInt( savefile, "wind entity index", saveVersion );
 	GameBearShoot_ValidateEntityIndex( "wind entity index", index, entities.Num() );
 	wind = entities[index];
-	index = GameBearShoot_ReadSaveInt( savefile, "gunblast entity index" );
+	index = GameBearShoot_ReadSaveInt( savefile, "gunblast entity index", saveVersion );
 	GameBearShoot_ValidateEntityIndex( "gunblast entity index", index, entities.Num() );
 	gunblast = entities[index];
 }

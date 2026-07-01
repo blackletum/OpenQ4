@@ -27,6 +27,8 @@ Running `applyPerformancePreset` without a name applies the stored `com_performa
 
 All presets keep optional shadow maps and subjective/modern post effects disabled, so the authored Quake 4 look remains the baseline. Enable shadow maps, bloom, SSAO, tone mapping, motion blur, or CRT filtering separately after choosing a preset if you want those effects.
 
+Performance presets write video, texture-allocation, and audio backend cvars. Run `vid_restart` after applying one so renderer and texture allocation changes take effect; run `s_restart` as well if you want speaker/EAX/emitter-budget changes to rebuild the active sound backend immediately.
+
 `autoDetectPerformancePreset` takes no arguments. It selects a conservative preset from platform signals, CPU architecture, system RAM, video RAM, and renderer capability flags, then applies it. Missing or implausible memory telemetry is treated as a conservative fallback instead of promoting the system to a higher preset. On Raspberry Pi hosts or explicit `OPENQ4_LOWPOWER=1` / `OPENQ4_RASPBERRYPI=1` signals, it chooses `lowpower`.
 
 For package or platform validation, `performancePresetSelfTest` checks that the preset commands are registered, every preset is known to the menu-facing cvar and command completion lists, auto-detect returns and applies a supported non-`ultra` preset, command arguments behave correctly, all preset writes are declared for backup/restore coverage, the preset progression stays coherent, the preset cvar mappings apply correctly, and the test restores touched cvar values, flags, and modified-state bookkeeping before finishing.

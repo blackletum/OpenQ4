@@ -31,7 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 extern idCVar s_warnOnMissingSamples;
 extern idCVar s_openALEfxDebugMode;
-extern idCVar s_openALPostPlanBehavior;
+extern bool Sound_OpenALExperimentalVoicesEnabled();
 
 #if defined( AL_AUXILIARY_SEND_FILTER ) && defined( AL_DIRECT_FILTER ) && defined( AL_FILTER_LOWPASS ) && defined( AL_EFFECTSLOT_NULL ) && defined( AL_FILTER_NULL )
 	#define OPENQ4_OPENAL_EFX_SUPPORTED 1
@@ -214,7 +214,7 @@ void idSoundVoice_OpenAL::Create( const idSoundSample* leadinSample_, const idSo
 
 	leadinSample = ( idSoundSample_OpenAL* )leadinSample_;
 	loopingSample = ( idSoundSample_OpenAL* )loopingSample_;
-	if( s_openALPostPlanBehavior.GetBool() )
+	if( Sound_OpenALExperimentalVoicesEnabled() )
 	{
 		currentSample = NULL;
 		playbackMode = OPENQ4_OPENAL_PLAYBACK_NONE;
@@ -255,7 +255,7 @@ void idSoundVoice_OpenAL::Create( const idSoundSample* leadinSample_, const idSo
 
 		alSourcef( openalSource, AL_ROLLOFF_FACTOR, 0.0f );
 
-		if( s_openALPostPlanBehavior.GetBool() )
+		if( Sound_OpenALExperimentalVoicesEnabled() )
 		{
 			alSourcei( openalSource, AL_BUFFER, 0 );
 		}
@@ -332,7 +332,7 @@ idSoundVoice_OpenAL::DestroyInternal
 */
 void idSoundVoice_OpenAL::DestroyInternal()
 {
-	if( s_openALPostPlanBehavior.GetBool() )
+	if( Sound_OpenALExperimentalVoicesEnabled() )
 	{
 		if( alIsSource( openalSource ) )
 		{
@@ -463,7 +463,7 @@ void idSoundVoice_OpenAL::Start( int offsetMS, int ssFlags )
 		*/
 	}
 
-	if( s_openALPostPlanBehavior.GetBool() )
+	if( Sound_OpenALExperimentalVoicesEnabled() )
 	{
 		const int offsetSamples = MsecToSamples( Max( 0, offsetMS ), leadinSample->SampleRate() );
 		if( loopingSample == NULL && offsetSamples >= leadinSample->playLength )
@@ -501,7 +501,7 @@ idSoundVoice_OpenAL::RestartAt
 */
 int idSoundVoice_OpenAL::RestartAt( int offsetSamples )
 {
-	if( s_openALPostPlanBehavior.GetBool() )
+	if( Sound_OpenALExperimentalVoicesEnabled() )
 	{
 		if( offsetSamples < 0 )
 		{
@@ -1186,7 +1186,7 @@ int idSoundVoice_OpenAL::SubmitBuffer( idSoundSample_OpenAL* sample, int bufferN
 		return 0;
 	}
 
-	if( s_openALPostPlanBehavior.GetBool() )
+	if( Sound_OpenALExperimentalVoicesEnabled() )
 	{
 		const idSoundSample_OpenAL::sampleBuffer_t* sampleBuffers = NULL;
 		int numBuffers = 0;
@@ -1407,7 +1407,7 @@ idSoundVoice_OpenAL::Update
 */
 bool idSoundVoice_OpenAL::Update()
 {
-	if( s_openALPostPlanBehavior.GetBool() )
+	if( Sound_OpenALExperimentalVoicesEnabled() )
 	{
 		if( !alIsSource( openalSource ) || leadinSample == NULL )
 		{
@@ -1604,7 +1604,7 @@ idSoundVoice_OpenAL::IsPlaying
 */
 bool idSoundVoice_OpenAL::IsPlaying()
 {
-	if( s_openALPostPlanBehavior.GetBool() )
+	if( Sound_OpenALExperimentalVoicesEnabled() )
 	{
 		if( !alIsSource( openalSource ) )
 		{
@@ -1650,7 +1650,7 @@ idSoundVoice_OpenAL::FlushSourceBuffers
 */
 void idSoundVoice_OpenAL::FlushSourceBuffers()
 {
-	if( s_openALPostPlanBehavior.GetBool() )
+	if( Sound_OpenALExperimentalVoicesEnabled() )
 	{
 		if( alIsSource( openalSource ) )
 		{
@@ -1710,7 +1710,7 @@ idSoundVoice_OpenAL::Pause
 */
 void idSoundVoice_OpenAL::Pause()
 {
-	if( s_openALPostPlanBehavior.GetBool() && playbackMode == OPENQ4_OPENAL_PLAYBACK_NONE && currentSample == NULL )
+	if( Sound_OpenALExperimentalVoicesEnabled() && playbackMode == OPENQ4_OPENAL_PLAYBACK_NONE && currentSample == NULL )
 	{
 		paused = true;
 		return;
@@ -1726,7 +1726,16 @@ void idSoundVoice_OpenAL::Pause()
 		idLib::Printf( "%dms: %i pausing %s\n", Sys_Milliseconds(), openalSource, leadinSample ? leadinSample->GetName() : "<null>" );
 	}
 
+	CheckALErrors();
 	alSourcePause( openalSource );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		if( Sound_OpenALExperimentalVoicesEnabled() )
+		{
+			FlushSourceBuffers();
+		}
+		return;
+	}
 	//pSourceVoice->Stop( 0, OPERATION_SET );
 	paused = true;
 }
@@ -1738,7 +1747,7 @@ idSoundVoice_OpenAL::UnPause
 */
 void idSoundVoice_OpenAL::UnPause()
 {
-	if( s_openALPostPlanBehavior.GetBool() && playbackMode == OPENQ4_OPENAL_PLAYBACK_NONE && currentSample == NULL )
+	if( Sound_OpenALExperimentalVoicesEnabled() && playbackMode == OPENQ4_OPENAL_PLAYBACK_NONE && currentSample == NULL )
 	{
 		return;
 	}
@@ -1753,7 +1762,17 @@ void idSoundVoice_OpenAL::UnPause()
 		idLib::Printf( "%dms: %i unpausing %s\n", Sys_Milliseconds(), openalSource, leadinSample ? leadinSample->GetName() : "<null>" );
 	}
 
+	CheckALErrors();
 	alSourcePlay( openalSource );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		if( Sound_OpenALExperimentalVoicesEnabled() )
+		{
+			FlushSourceBuffers();
+		}
+		paused = true;
+		return;
+	}
 	//pSourceVoice->Start( 0, OPERATION_SET );
 	paused = false;
 }
@@ -1765,7 +1784,7 @@ idSoundVoice_OpenAL::Stop
 */
 void idSoundVoice_OpenAL::Stop()
 {
-	if( s_openALPostPlanBehavior.GetBool() )
+	if( Sound_OpenALExperimentalVoicesEnabled() )
 	{
 		if( !alIsSource( openalSource ) )
 		{

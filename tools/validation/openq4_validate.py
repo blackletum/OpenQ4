@@ -370,6 +370,7 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "release_tooling_safety.py",
         root / "tools" / "tests" / "renderer_msaa_cvar_safety.py",
         root / "tools" / "tests" / "renderer_supersampling_safety.py",
+        root / "tools" / "tests" / "savegame_corruption_contract.py",
         root / "tools" / "tests" / "sdl3_input_parity.py",
         root / "tools" / "tests" / "sdl3_multidisplay_windowing.py",
         root / "tools" / "tests" / "settings_menu_coverage.py",

@@ -32,6 +32,11 @@ If you have questions concerning this license or the applicable additional terms
 #if defined(USE_DOOMCLASSIC)
 	#include "../../../doomclassic/doom/i_sound.h"
 #endif
+#if defined(_WIN32)
+	#include <audioclient.h>
+	#include <mmreg.h>
+	#include <mmdeviceapi.h>
+#endif
 
 idCVar s_showLevelMeter( "s_showLevelMeter", "0", CVAR_BOOL | CVAR_ARCHIVE, "Show VU meter" );
 idCVar s_meterTopTime( "s_meterTopTime", "1000", CVAR_INTEGER | CVAR_ARCHIVE, "How long (in milliseconds) peaks are displayed on the VU meter" );
@@ -47,8 +52,12 @@ static const char* OPENQ4_AUDIO_DEVICE_DEFAULT_CHOICE = "__OPENQ4_DEFAULT_AUDIO_
 static const int OPENQ4_OPENAL_HRTF_AUTO = 0;
 static const int OPENQ4_OPENAL_HRTF_OFF = 1;
 static const int OPENQ4_OPENAL_HRTF_ON = 2;
+static const int OPENQ4_OPENAL_SPEAKERS_UNKNOWN = 0;
 static const int OPENQ4_OPENAL_SPEAKERS_STEREO = 2;
 static const int OPENQ4_OPENAL_SPEAKERS_SURROUND = 6;
+static const int OPENQ4_OPENAL_DEVICE_MODE_ATTRIBUTE_MAX = 5;
+static const int OPENQ4_OPENAL_SPEAKER_CLAMP_WARNING_INTERVAL_MS = 5000;
+static const int OPENQ4_OPENAL_WINDOWS_SPEAKER_CACHE_MS = 1000;
 
 static bool openQ4_UseEnumerateAllDevices( ALCdevice* device ) {
 #if defined( ALC_ALL_DEVICES_SPECIFIER ) && defined( ALC_DEFAULT_ALL_DEVICES_SPECIFIER )
@@ -319,7 +328,42 @@ static int openQ4_GetSpeakerCount()
 
 static const char* openQ4_SpeakerCountName( const int speakerCount )
 {
-	return ( speakerCount == OPENQ4_OPENAL_SPEAKERS_SURROUND ) ? "5.1 surround" : "stereo";
+	switch( speakerCount )
+	{
+		case OPENQ4_OPENAL_SPEAKERS_SURROUND:
+			return "5.1 surround";
+		case OPENQ4_OPENAL_SPEAKERS_STEREO:
+			return "stereo";
+		default:
+			return "unknown";
+	}
+}
+
+static int openQ4_LastSpeakerClampWarningTime = -1;
+static int openQ4_LastSpeakerClampWarningRequest = OPENQ4_OPENAL_SPEAKERS_UNKNOWN;
+static int openQ4_LastSpeakerClampWarningResolved = OPENQ4_OPENAL_SPEAKERS_UNKNOWN;
+
+static void openQ4_SetResolvedSpeakerCount( const int requestedSpeakerCount, const int resolvedSpeakerCount )
+{
+	const int nowTime = Sys_Milliseconds();
+	const bool repeatedWarning =
+		openQ4_LastSpeakerClampWarningTime >= 0 &&
+		openQ4_LastSpeakerClampWarningTime + OPENQ4_OPENAL_SPEAKER_CLAMP_WARNING_INTERVAL_MS > nowTime &&
+		openQ4_LastSpeakerClampWarningRequest == requestedSpeakerCount &&
+		openQ4_LastSpeakerClampWarningResolved == resolvedSpeakerCount;
+
+	if( !repeatedWarning )
+	{
+		common->Warning(
+			"OpenAL speaker request '%s' resolved to %s; updating s_numberOfSpeakers.",
+			openQ4_SpeakerCountName( requestedSpeakerCount ),
+			openQ4_SpeakerCountName( resolvedSpeakerCount ) );
+		openQ4_LastSpeakerClampWarningTime = nowTime;
+		openQ4_LastSpeakerClampWarningRequest = requestedSpeakerCount;
+		openQ4_LastSpeakerClampWarningResolved = resolvedSpeakerCount;
+	}
+
+	s_numberOfSpeakers.SetInteger( resolvedSpeakerCount );
 }
 
 #if defined( ALC_OUTPUT_MODE_SOFT ) && defined( ALC_ANY_SOFT ) && defined( ALC_STEREO_SOFT ) && defined( ALC_SURROUND_5_1_SOFT )
@@ -383,24 +427,114 @@ static ALCint openQ4_GetRequestedOutputMode()
 	return ( openQ4_GetSpeakerCount() == OPENQ4_OPENAL_SPEAKERS_SURROUND ) ? ALC_SURROUND_5_1_SOFT : ALC_STEREO_SOFT;
 }
 
-static const ALCint* openQ4_BuildOutputModeContextAttributes( ALCdevice* device, ALCint attributes[ 3 ] )
+static bool openQ4_QueryOutputMode( ALCdevice* device, ALCint& outputMode )
+{
+	if( device == NULL || alcIsExtensionPresent( device, "ALC_SOFT_output_mode" ) != AL_TRUE )
+	{
+		return false;
+	}
+
+	outputMode = ALC_ANY_SOFT;
+	alcGetIntegerv( device, ALC_OUTPUT_MODE_SOFT, 1, &outputMode );
+	return CheckALCErrors( device ) == ALC_NO_ERROR;
+}
+
+static int openQ4_SpeakerCountForOutputMode( const ALCint outputMode )
+{
+	switch( outputMode )
+	{
+#if defined( ALC_MONO_SOFT )
+		case ALC_MONO_SOFT:
+			return OPENQ4_OPENAL_SPEAKERS_STEREO;
+#endif
+		case ALC_STEREO_SOFT:
+#if defined( ALC_STEREO_BASIC_SOFT )
+		case ALC_STEREO_BASIC_SOFT:
+#endif
+#if defined( ALC_STEREO_UHJ_SOFT )
+		case ALC_STEREO_UHJ_SOFT:
+#endif
+#if defined( ALC_STEREO_HRTF_SOFT )
+		case ALC_STEREO_HRTF_SOFT:
+#endif
+			return OPENQ4_OPENAL_SPEAKERS_STEREO;
+#if defined( ALC_QUAD_SOFT )
+		case ALC_QUAD_SOFT:
+			return OPENQ4_OPENAL_SPEAKERS_SURROUND;
+#endif
+		case ALC_SURROUND_5_1_SOFT:
+#if defined( ALC_SURROUND_6_1_SOFT )
+		case ALC_SURROUND_6_1_SOFT:
+#endif
+#if defined( ALC_SURROUND_7_1_SOFT )
+		case ALC_SURROUND_7_1_SOFT:
+#endif
+			return OPENQ4_OPENAL_SPEAKERS_SURROUND;
+		default:
+			return OPENQ4_OPENAL_SPEAKERS_UNKNOWN;
+	}
+}
+
+static int openQ4_GetOpenALSpeakerCount( ALCdevice* device )
+{
+	ALCint outputMode = ALC_ANY_SOFT;
+	if( !openQ4_QueryOutputMode( device, outputMode ) )
+	{
+		return OPENQ4_OPENAL_SPEAKERS_STEREO;
+	}
+
+	const int speakerCount = openQ4_SpeakerCountForOutputMode( outputMode );
+	return speakerCount != OPENQ4_OPENAL_SPEAKERS_UNKNOWN ? speakerCount : OPENQ4_OPENAL_SPEAKERS_STEREO;
+}
+
+static bool openQ4_AppendHrtfDeviceModeAttributes( ALCdevice* device, ALCint attributes[ OPENQ4_OPENAL_DEVICE_MODE_ATTRIBUTE_MAX ], int& attributeIndex )
+{
+#if OPENQ4_OPENAL_HRTF_SUPPORTED
+	const int mode = openQ4_GetHrtfMode();
+	if( mode == OPENQ4_OPENAL_HRTF_AUTO || device == NULL || alcIsExtensionPresent( device, "ALC_SOFT_HRTF" ) != AL_TRUE )
+	{
+		return false;
+	}
+	if( attributeIndex + 2 >= OPENQ4_OPENAL_DEVICE_MODE_ATTRIBUTE_MAX )
+	{
+		return false;
+	}
+
+	attributes[attributeIndex++] = ALC_HRTF_SOFT;
+	attributes[attributeIndex++] = ( mode == OPENQ4_OPENAL_HRTF_ON ) ? ALC_TRUE : ALC_FALSE;
+	return true;
+#else
+	(void)device;
+	(void)attributes;
+	(void)attributeIndex;
+	return false;
+#endif
+}
+
+static const ALCint* openQ4_BuildDeviceModeContextAttributes( ALCdevice* device, ALCint attributes[ OPENQ4_OPENAL_DEVICE_MODE_ATTRIBUTE_MAX ] )
 {
 	attributes[0] = 0;
+	int attributeIndex = 0;
+	bool hasAttributes = false;
 	if( device == NULL || alcIsExtensionPresent( device, "ALC_SOFT_output_mode" ) != AL_TRUE )
 	{
 		if( openQ4_GetSpeakerCount() == OPENQ4_OPENAL_SPEAKERS_SURROUND )
 		{
 			common->Warning( "OpenAL output mode requested '%s', but ALC_SOFT_output_mode is not available.", openQ4_SpeakerCountName( openQ4_GetSpeakerCount() ) );
 		}
-		return NULL;
+	}
+	else
+	{
+		const ALCint outputMode = openQ4_GetRequestedOutputMode();
+		attributes[attributeIndex++] = ALC_OUTPUT_MODE_SOFT;
+		attributes[attributeIndex++] = outputMode;
+		common->Printf( "OpenAL output mode requested: %s\n", openQ4_OutputModeName( outputMode ) );
+		hasAttributes = true;
 	}
 
-	const ALCint outputMode = openQ4_GetRequestedOutputMode();
-	attributes[0] = ALC_OUTPUT_MODE_SOFT;
-	attributes[1] = outputMode;
-	attributes[2] = 0;
-	common->Printf( "OpenAL output mode requested: %s\n", openQ4_OutputModeName( outputMode ) );
-	return attributes;
+	hasAttributes = openQ4_AppendHrtfDeviceModeAttributes( device, attributes, attributeIndex ) || hasAttributes;
+	attributes[attributeIndex] = 0;
+	return hasAttributes ? attributes : NULL;
 }
 
 static void openQ4_ReportOutputMode( ALCdevice* device )
@@ -412,22 +546,53 @@ static void openQ4_ReportOutputMode( ALCdevice* device )
 	}
 
 	ALCint outputMode = ALC_ANY_SOFT;
-	alcGetIntegerv( device, ALC_OUTPUT_MODE_SOFT, 1, &outputMode );
-	if( CheckALCErrors( device ) == ALC_NO_ERROR )
+	if( openQ4_QueryOutputMode( device, outputMode ) )
 	{
 		common->Printf( "OpenAL output mode active: %s\n", openQ4_OutputModeName( outputMode ) );
 	}
 }
 #else
-static const ALCint* openQ4_BuildOutputModeContextAttributes( ALCdevice* device, ALCint attributes[ 3 ] )
+static int openQ4_GetOpenALSpeakerCount( ALCdevice* device )
 {
 	(void)device;
+	return OPENQ4_OPENAL_SPEAKERS_STEREO;
+}
+
+static bool openQ4_AppendHrtfDeviceModeAttributes( ALCdevice* device, ALCint attributes[ OPENQ4_OPENAL_DEVICE_MODE_ATTRIBUTE_MAX ], int& attributeIndex )
+{
+#if OPENQ4_OPENAL_HRTF_SUPPORTED
+	const int mode = openQ4_GetHrtfMode();
+	if( mode == OPENQ4_OPENAL_HRTF_AUTO || device == NULL || alcIsExtensionPresent( device, "ALC_SOFT_HRTF" ) != AL_TRUE )
+	{
+		return false;
+	}
+	if( attributeIndex + 2 >= OPENQ4_OPENAL_DEVICE_MODE_ATTRIBUTE_MAX )
+	{
+		return false;
+	}
+
+	attributes[attributeIndex++] = ALC_HRTF_SOFT;
+	attributes[attributeIndex++] = ( mode == OPENQ4_OPENAL_HRTF_ON ) ? ALC_TRUE : ALC_FALSE;
+	return true;
+#else
+	(void)device;
 	(void)attributes;
+	(void)attributeIndex;
+	return false;
+#endif
+}
+
+static const ALCint* openQ4_BuildDeviceModeContextAttributes( ALCdevice* device, ALCint attributes[ OPENQ4_OPENAL_DEVICE_MODE_ATTRIBUTE_MAX ] )
+{
+	attributes[0] = 0;
+	int attributeIndex = 0;
 	if( openQ4_GetSpeakerCount() == OPENQ4_OPENAL_SPEAKERS_SURROUND )
 	{
 		common->Warning( "OpenAL output mode requested '%s', but this build does not expose ALC_SOFT_output_mode symbols.", openQ4_SpeakerCountName( openQ4_GetSpeakerCount() ) );
 	}
-	return NULL;
+	const bool hasAttributes = openQ4_AppendHrtfDeviceModeAttributes( device, attributes, attributeIndex );
+	attributes[attributeIndex] = 0;
+	return hasAttributes ? attributes : NULL;
 }
 
 static void openQ4_ReportOutputMode( ALCdevice* device )
@@ -436,6 +601,240 @@ static void openQ4_ReportOutputMode( ALCdevice* device )
 	common->Printf( "OpenAL output mode: unavailable\n" );
 }
 #endif
+
+#if defined(_WIN32)
+static int openQ4_CachedWindowsDefaultPlaybackSpeakerCount = OPENQ4_OPENAL_SPEAKERS_UNKNOWN;
+static int openQ4_CachedWindowsDefaultPlaybackSpeakerCountTime = -1;
+
+static void openQ4_ReleaseCOMObject( IUnknown* object )
+{
+	if( object != NULL )
+	{
+		object->Release();
+	}
+}
+
+static bool openQ4_WindowsChannelMaskHasSurroundLayout( const DWORD channelMask )
+{
+	const DWORD stereoFrontMask = SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT;
+	const DWORD backSurroundMask = SPEAKER_BACK_LEFT | SPEAKER_BACK_RIGHT;
+	const DWORD sideSurroundMask = SPEAKER_SIDE_LEFT | SPEAKER_SIDE_RIGHT;
+	return ( channelMask & stereoFrontMask ) == stereoFrontMask &&
+		( ( channelMask & backSurroundMask ) == backSurroundMask ||
+			( channelMask & sideSurroundMask ) == sideSurroundMask );
+}
+
+static int openQ4_SpeakerCountForWindowsMixFormat( const WAVEFORMATEX* mixFormat )
+{
+	if( mixFormat == NULL )
+	{
+		return OPENQ4_OPENAL_SPEAKERS_UNKNOWN;
+	}
+	if( mixFormat->nChannels < OPENQ4_OPENAL_SPEAKERS_SURROUND )
+	{
+		return OPENQ4_OPENAL_SPEAKERS_STEREO;
+	}
+	if( mixFormat->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+		mixFormat->cbSize >= sizeof( WAVEFORMATEXTENSIBLE ) - sizeof( WAVEFORMATEX ) )
+	{
+		const WAVEFORMATEXTENSIBLE* extensibleFormat = reinterpret_cast<const WAVEFORMATEXTENSIBLE*>( mixFormat );
+		return openQ4_WindowsChannelMaskHasSurroundLayout( extensibleFormat->dwChannelMask ) ?
+			OPENQ4_OPENAL_SPEAKERS_SURROUND :
+			OPENQ4_OPENAL_SPEAKERS_STEREO;
+	}
+
+	return OPENQ4_OPENAL_SPEAKERS_SURROUND;
+}
+
+static int openQ4_QueryWindowsDefaultPlaybackSpeakerCount()
+{
+	HRESULT coInitResult = CoInitializeEx( NULL, COINIT_MULTITHREADED );
+	const bool shouldUninitializeCOM = SUCCEEDED( coInitResult );
+	if( FAILED( coInitResult ) && coInitResult != RPC_E_CHANGED_MODE )
+	{
+		return OPENQ4_OPENAL_SPEAKERS_UNKNOWN;
+	}
+
+	IMMDeviceEnumerator* enumerator = NULL;
+	IMMDevice* device = NULL;
+	IAudioClient* audioClient = NULL;
+	WAVEFORMATEX* mixFormat = NULL;
+	int speakerCount = OPENQ4_OPENAL_SPEAKERS_UNKNOWN;
+
+	HRESULT result = CoCreateInstance( __uuidof( MMDeviceEnumerator ), NULL, CLSCTX_ALL, __uuidof( IMMDeviceEnumerator ), reinterpret_cast<void**>( &enumerator ) );
+	if( SUCCEEDED( result ) )
+	{
+		result = enumerator->GetDefaultAudioEndpoint( eRender, eMultimedia, &device );
+		if( FAILED( result ) )
+		{
+			result = enumerator->GetDefaultAudioEndpoint( eRender, eConsole, &device );
+		}
+	}
+	if( SUCCEEDED( result ) )
+	{
+		result = device->Activate( __uuidof( IAudioClient ), CLSCTX_ALL, NULL, reinterpret_cast<void**>( &audioClient ) );
+	}
+	if( SUCCEEDED( result ) )
+	{
+		result = audioClient->GetMixFormat( &mixFormat );
+	}
+	if( SUCCEEDED( result ) && mixFormat != NULL )
+	{
+		speakerCount = openQ4_SpeakerCountForWindowsMixFormat( mixFormat );
+	}
+
+	if( mixFormat != NULL )
+	{
+		CoTaskMemFree( mixFormat );
+	}
+	openQ4_ReleaseCOMObject( audioClient );
+	openQ4_ReleaseCOMObject( device );
+	openQ4_ReleaseCOMObject( enumerator );
+
+	if( shouldUninitializeCOM )
+	{
+		CoUninitialize();
+	}
+
+	return speakerCount;
+}
+
+static int openQ4_GetWindowsDefaultPlaybackSpeakerCount( const bool forceRefresh = false )
+{
+	const int nowTime = Sys_Milliseconds();
+	if( !forceRefresh && openQ4_CachedWindowsDefaultPlaybackSpeakerCountTime >= 0 &&
+		openQ4_CachedWindowsDefaultPlaybackSpeakerCountTime + OPENQ4_OPENAL_WINDOWS_SPEAKER_CACHE_MS > nowTime )
+	{
+		return openQ4_CachedWindowsDefaultPlaybackSpeakerCount;
+	}
+
+	openQ4_CachedWindowsDefaultPlaybackSpeakerCount = openQ4_QueryWindowsDefaultPlaybackSpeakerCount();
+	openQ4_CachedWindowsDefaultPlaybackSpeakerCountTime = nowTime;
+	return openQ4_CachedWindowsDefaultPlaybackSpeakerCount;
+}
+
+static void openQ4_InvalidateWindowsDefaultPlaybackSpeakerCache()
+{
+	openQ4_CachedWindowsDefaultPlaybackSpeakerCount = OPENQ4_OPENAL_SPEAKERS_UNKNOWN;
+	openQ4_CachedWindowsDefaultPlaybackSpeakerCountTime = -1;
+}
+
+static void openQ4_ReportPlatformSpeakerSetup()
+{
+	const int speakerCount = openQ4_GetWindowsDefaultPlaybackSpeakerCount();
+	if( speakerCount != OPENQ4_OPENAL_SPEAKERS_UNKNOWN )
+	{
+		common->Printf( "Windows default playback speaker setup: %s\n", openQ4_SpeakerCountName( speakerCount ) );
+	}
+	else
+	{
+		common->Printf( "Windows default playback speaker setup: unavailable\n" );
+	}
+}
+#else
+static int openQ4_GetWindowsDefaultPlaybackSpeakerCount( const bool forceRefresh = false )
+{
+	(void)forceRefresh;
+	return OPENQ4_OPENAL_SPEAKERS_UNKNOWN;
+}
+
+static void openQ4_InvalidateWindowsDefaultPlaybackSpeakerCache()
+{
+}
+
+static void openQ4_ReportPlatformSpeakerSetup()
+{
+}
+#endif
+
+static const ALCchar* openQ4_GetSystemDefaultPlaybackDeviceName()
+{
+	return alcGetString( NULL, openQ4_GetDefaultPlaybackDeviceToken( NULL ) );
+}
+
+static bool openQ4_PlaybackDeviceNameIsSystemDefault( const char* deviceName )
+{
+	if( deviceName == NULL || deviceName[0] == '\0' )
+	{
+		return true;
+	}
+
+	const ALCchar* defaultDevice = openQ4_GetSystemDefaultPlaybackDeviceName();
+	if( defaultDevice == NULL || defaultDevice[0] == '\0' )
+	{
+		return false;
+	}
+
+	const idStr playbackDeviceName = deviceName;
+	return playbackDeviceName.Icmp( reinterpret_cast<const char*>( defaultDevice ) ) == 0;
+}
+
+static bool openQ4_ActiveDeviceIsSystemDefault( ALCdevice* device )
+{
+	if( device == NULL )
+	{
+		return true;
+	}
+
+	const idStr activeDeviceName = idSoundHardware_OpenAL::GetActivePlaybackDeviceName( device );
+	if( activeDeviceName.IsEmpty() )
+	{
+		return true;
+	}
+
+	return openQ4_PlaybackDeviceNameIsSystemDefault( activeDeviceName.c_str() );
+}
+
+static bool openQ4_ClampRequestedSpeakerCountForSystemDefault( const char* targetDeviceName, const int requestedSpeakerCount )
+{
+	if( requestedSpeakerCount != OPENQ4_OPENAL_SPEAKERS_SURROUND || !openQ4_PlaybackDeviceNameIsSystemDefault( targetDeviceName ) )
+	{
+		return false;
+	}
+
+	const int platformSpeakerCount = openQ4_GetWindowsDefaultPlaybackSpeakerCount();
+	if( platformSpeakerCount == OPENQ4_OPENAL_SPEAKERS_UNKNOWN || platformSpeakerCount >= OPENQ4_OPENAL_SPEAKERS_SURROUND )
+	{
+		return false;
+	}
+
+	openQ4_SetResolvedSpeakerCount( requestedSpeakerCount, platformSpeakerCount );
+	return true;
+}
+
+static int openQ4_GetEffectiveSpeakerCount( ALCdevice* device )
+{
+	const int openalSpeakerCount = openQ4_GetOpenALSpeakerCount( device );
+	if( openalSpeakerCount != OPENQ4_OPENAL_SPEAKERS_SURROUND || !openQ4_ActiveDeviceIsSystemDefault( device ) )
+	{
+		return openalSpeakerCount;
+	}
+
+	const int platformSpeakerCount = openQ4_GetWindowsDefaultPlaybackSpeakerCount();
+	if( platformSpeakerCount != OPENQ4_OPENAL_SPEAKERS_UNKNOWN &&
+		platformSpeakerCount < OPENQ4_OPENAL_SPEAKERS_SURROUND &&
+		openalSpeakerCount == OPENQ4_OPENAL_SPEAKERS_SURROUND )
+	{
+		return OPENQ4_OPENAL_SPEAKERS_STEREO;
+	}
+
+	return openalSpeakerCount;
+}
+
+static int openQ4_ApplyEffectiveSpeakerCount( ALCdevice* device, const int requestedSpeakerCount )
+{
+	const int effectiveSpeakerCount = openQ4_GetEffectiveSpeakerCount( device );
+	if( effectiveSpeakerCount != openQ4_GetSpeakerCount() )
+	{
+		openQ4_SetResolvedSpeakerCount( requestedSpeakerCount, effectiveSpeakerCount );
+	}
+	else
+	{
+		common->Printf( "OpenAL speaker setup active: %s\n", openQ4_SpeakerCountName( effectiveSpeakerCount ) );
+	}
+
+	return effectiveSpeakerCount;
+}
 
 #if OPENQ4_OPENAL_HRTF_SUPPORTED
 typedef const ALCchar* ( ALC_APIENTRY *openq4_alcGetStringiSOFT_t )( ALCdevice* device, ALCenum paramName, ALCsizei index );
@@ -771,7 +1170,7 @@ void idSoundHardware_OpenAL::CaptureOpenedDeviceState( const char* requestedDevi
 	openedActiveDeviceName = GetActivePlaybackDeviceName( openalDevice );
 	openedWithDefaultFallback = openedRequestedDeviceName.Length() > 0 && openedActiveDeviceName.Icmp( openedRequestedDeviceName ) != 0;
 	openedHrtfMode = openQ4_GetHrtfMode();
-	openedSpeakerCount = openQ4_GetSpeakerCount();
+	openedSpeakerCount = openQ4_GetEffectiveSpeakerCount( openalDevice );
 	lastDeviceCheckTime = Sys_Milliseconds();
 }
 
@@ -905,15 +1304,36 @@ bool idSoundHardware_OpenAL::TryReopenDevice( const char* requestedDeviceName, c
 		common->Printf( "OpenAL %s; attempting in-place device reopen to %s.\n", reason != NULL ? reason : "device change detected", reopenDeviceName != NULL ? reopenDeviceName : "system default" );
 	}
 
+	const int requestedSpeakerCount = openQ4_GetSpeakerCount();
+	openQ4_ClampRequestedSpeakerCountForSystemDefault( reopenDeviceName, requestedSpeakerCount );
+	ALCint reopenAttributes[ OPENQ4_OPENAL_DEVICE_MODE_ATTRIBUTE_MAX ];
+	const ALCint* requestedReopenAttributes = openQ4_BuildDeviceModeContextAttributes( openalDevice, reopenAttributes );
+
 	(void)alcGetError( openalDevice );
-	const bool reopened = qalcReopenDeviceSOFT( openalDevice, reopenDeviceName, NULL ) == ALC_TRUE;
-	const ALCenum reopenError = CheckALCErrors( openalDevice );
+	bool reopened = qalcReopenDeviceSOFT( openalDevice, reopenDeviceName, requestedReopenAttributes ) == ALC_TRUE;
+	ALCenum reopenError = CheckALCErrors( openalDevice );
+	bool reopenedWithRequestedAttributes = reopened && reopenError == ALC_NO_ERROR && requestedReopenAttributes != NULL;
+	if( ( !reopened || reopenError != ALC_NO_ERROR ) && requestedReopenAttributes != NULL )
+	{
+		common->Warning( "OpenAL in-place device reopen rejected requested device mode; retrying with runtime default." );
+		(void)alcGetError( openalDevice );
+		reopened = qalcReopenDeviceSOFT( openalDevice, reopenDeviceName, NULL ) == ALC_TRUE;
+		reopenError = CheckALCErrors( openalDevice );
+		reopenedWithRequestedAttributes = false;
+	}
 	if( !reopened || reopenError != ALC_NO_ERROR )
 	{
 		common->Warning( "OpenAL in-place device reopen failed; falling back to sound system restart." );
 		return false;
 	}
 
+	if( !reopenedWithRequestedAttributes )
+	{
+		openQ4_ApplyHrtfPreference( openalDevice );
+	}
+	openQ4_InvalidateWindowsDefaultPlaybackSpeakerCache();
+	openQ4_ReportPlatformSpeakerSetup();
+	openQ4_ApplyEffectiveSpeakerCount( openalDevice, requestedSpeakerCount );
 	CaptureOpenedDeviceState( normalizedRequestedDeviceName.c_str() );
 
 	if( openedDefaultDeviceName.Length() > 0 )
@@ -978,6 +1398,7 @@ bool idSoundHardware_OpenAL::UpdateDeviceMonitoring() {
 	const int pendingDeviceEventFlags = openQ4_ConsumePendingDeviceEventFlags();
 	if( pendingDeviceEventFlags != 0 )
 	{
+		openQ4_InvalidateWindowsDefaultPlaybackSpeakerCache();
 		idStr eventNames;
 #if OPENQ4_OPENAL_SYSTEM_EVENTS_SUPPORTED
 		const int eventFlags[] = {
@@ -1026,9 +1447,22 @@ bool idSoundHardware_OpenAL::UpdateDeviceMonitoring() {
 		return true;
 	}
 
+	const int requestedSpeakerCount = openQ4_GetSpeakerCount();
+	if( openQ4_ActiveDeviceIsSystemDefault( openalDevice ) )
+	{
+		openQ4_ClampRequestedSpeakerCountForSystemDefault( NULL, requestedSpeakerCount );
+	}
 	const int speakerCount = openQ4_GetSpeakerCount();
 	if( speakerCount != openedSpeakerCount ) {
 		common->Printf( "OpenAL speaker mode changed from %s to %s; restarting sound system.\n", openQ4_SpeakerCountName( openedSpeakerCount ), openQ4_SpeakerCountName( speakerCount ) );
+		soundSystemLocal.SetNeedsRestart();
+		return true;
+	}
+
+	const int activeSpeakerCount = openQ4_GetEffectiveSpeakerCount( openalDevice );
+	if( activeSpeakerCount != openedSpeakerCount ) {
+		common->Printf( "OpenAL active speaker setup changed from %s to %s; restarting sound system.\n", openQ4_SpeakerCountName( openedSpeakerCount ), openQ4_SpeakerCountName( activeSpeakerCount ) );
+		s_numberOfSpeakers.SetInteger( activeSpeakerCount );
 		soundSystemLocal.SetNeedsRestart();
 		return true;
 	}
@@ -1177,14 +1611,21 @@ void idSoundHardware_OpenAL::Init()
 	if( IsDefaultDeviceChoiceValue( s_deviceName.GetString() ) ) {
 		s_deviceName.SetString( "" );
 	}
+	openQ4_InvalidateWindowsDefaultPlaybackSpeakerCache();
 
+	const int requestedSpeakerCount = openQ4_GetSpeakerCount();
 	const idStr requestedDeviceName = NormalizeRequestedDeviceName( s_deviceName.GetString() );
+	const char* openedDeviceRequestName = NULL;
 	if( requestedDeviceName.Length() > 0 )
 	{
 		openalDevice = alcOpenDevice( requestedDeviceName.c_str() );
 		if( openalDevice == NULL )
 		{
 			common->Warning( "OpenAL device '%s' unavailable, falling back to the system default device.", requestedDeviceName.c_str() );
+		}
+		else
+		{
+			openedDeviceRequestName = requestedDeviceName.c_str();
 		}
 	}
 
@@ -1200,15 +1641,16 @@ void idSoundHardware_OpenAL::Init()
 		return;
 	}
 
+	openQ4_ClampRequestedSpeakerCountForSystemDefault( openedDeviceRequestName, requestedSpeakerCount );
 	openQ4_ApplyHrtfPreference( openalDevice );
 
-	ALCint openalContextAttributes[ 3 ];
-	const ALCint* requestedContextAttributes = openQ4_BuildOutputModeContextAttributes( openalDevice, openalContextAttributes );
+	ALCint openalContextAttributes[ OPENQ4_OPENAL_DEVICE_MODE_ATTRIBUTE_MAX ];
+	const ALCint* requestedContextAttributes = openQ4_BuildDeviceModeContextAttributes( openalDevice, openalContextAttributes );
 	openalContext = alcCreateContext( openalDevice, requestedContextAttributes );
 	if( openalContext == NULL && requestedContextAttributes != NULL )
 	{
 		CheckALCErrors( openalDevice );
-		common->Warning( "idSoundHardware_OpenAL::Init: alcCreateContext() rejected requested OpenAL output mode; retrying with runtime default." );
+		common->Warning( "idSoundHardware_OpenAL::Init: alcCreateContext() rejected requested OpenAL device mode; retrying with runtime default." );
 		openalContext = alcCreateContext( openalDevice, NULL );
 	}
 	if( openalContext == NULL )
@@ -1270,6 +1712,8 @@ void idSoundHardware_OpenAL::Init()
 		common->Printf( "OpenAL callback buffers available.\n" );
 	}
 
+	openQ4_ReportPlatformSpeakerSetup();
+	openQ4_ApplyEffectiveSpeakerCount( openalDevice, requestedSpeakerCount );
 	CaptureOpenedDeviceState( requestedDeviceName.c_str() );
 	reopenDeviceAvailable = alcIsExtensionPresent( openalDevice, "ALC_SOFT_reopen_device" ) == ALC_TRUE && openQ4_LoadReopenDeviceProc( openalDevice );
 	if( reopenDeviceAvailable )
@@ -1507,6 +1951,7 @@ void idSoundHardware_OpenAL::Shutdown()
 	openedRequestedDeviceName.Clear();
 	openedActiveDeviceName.Clear();
 	openedDefaultDeviceName.Clear();
+	openQ4_InvalidateWindowsDefaultPlaybackSpeakerCache();
 
 	/*
 	if( vuMeterRMS != NULL )

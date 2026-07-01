@@ -2700,7 +2700,7 @@ static bool Common_ApplyPerformancePreset( const openQ4PerformancePreset_t &pres
 	applied &= Common_SetPerformancePresetInt( preset.name, "s_maxEmitterChannels", preset.maxEmitterChannels, quiet );
 
 	if ( !quiet && applied ) {
-		common->Printf( "Applied performance preset '%s'. Run vid_restart to apply video-backend and texture allocation changes.\n", preset.name );
+		common->Printf( "Applied performance preset '%s'. Run vid_restart for video/texture changes and s_restart for audio backend changes.\n", preset.name );
 	} else if ( !quiet ) {
 		common->Printf( "Performance preset '%s' did not apply cleanly; see warnings above.\n", preset.name );
 	}

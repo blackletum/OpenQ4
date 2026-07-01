@@ -65,6 +65,14 @@ def require_localized(locales: dict[str, str], string_id: str, context: str) -> 
         require(lang_text, string_id, f"{context} localization for {locale}")
 
 
+def localized_string_value(locales: dict[str, str], locale: str, string_id: str, context: str) -> str:
+    lang_text = locales.get(locale, "")
+    match = re.search(rf'^\s*"{re.escape(string_id)}"\s+"([^"]*)"', lang_text, re.MULTILINE)
+    if match is None:
+        raise AssertionError(f"Missing {string_id!r} in {context} localization for {locale}")
+    return match.group(1)
+
+
 def normalize_bind_command(command: str) -> str:
     return command.strip().strip('"').lower()
 
@@ -202,10 +210,13 @@ def validate_performance_preset_wiring(
     session_menu: str,
     registry_text: str,
     display_docs: str,
+    locales: dict[str, str],
 ) -> None:
     command_values = parse_cpp_string_array(common_cpp, "com_performancePresetArgs")
     cvar_values = parse_cpp_string_array(common_cpp, "com_performancePresetValueStrings")
-    gui_values = parse_gui_choice_values(gui_block(system_gui, "set_sys_perf_preset_val"), "Performance Preset GUI")
+    preset_block = gui_block(system_gui, "set_sys_perf_preset_val")
+    autodetect_block = gui_block(system_gui, "set_sys_perf_autodetect_button")
+    gui_values = parse_gui_choice_values(preset_block, "Performance Preset GUI")
     registry = json.loads(registry_text)
     preset_setting = registry_setting(registry, "system.performance_preset")
     autodetect_setting = registry_setting(registry, "system.performance_autodetect")
@@ -223,6 +234,18 @@ def validate_performance_preset_wiring(
         raise AssertionError("com_performancePreset value strings must start with balanced for invalid-value fallback")
     if sorted(value.lower() for value in cvar_values) != sorted(value.lower() for value in command_values):
         raise AssertionError("com_performancePreset value strings must contain the same presets as command completion")
+    if preset_setting.get("choices_key") != "#str_229977":
+        raise AssertionError("Performance Preset registry choices key should point at #str_229977")
+    for locale in sorted(locales):
+        labels = localized_string_value(locales, locale, preset_setting["choices_key"], "Performance Preset choices").split(";")
+        if len(labels) != len(command_values):
+            raise AssertionError(
+                f"Performance Preset {locale} choices {labels!r} has {len(labels)} labels for {len(command_values)} engine values"
+            )
+        if any(not label.strip() for label in labels):
+            raise AssertionError(f"Performance Preset {locale} choices contain an empty label")
+    require(preset_block, 'set "cmd" "applyPerformancePreset" ;', "Performance Preset GUI apply action")
+    require(autodetect_block, 'set "cmd" "play main_menu_selection ; autoDetectPerformancePreset" ;', "Performance Auto-Detect GUI action")
 
     for token in (
         "Common_ApplyPerformancePresetCommand",
@@ -662,12 +685,13 @@ def main() -> None:
     slider_window = read(ROOT / "src/ui/SliderWindow.cpp")
     registry_text = read(ROOT / "docs/dev/settings-menu-registry.json")
     display_docs = read(ROOT / "docs/user/display-settings.md")
+    locales = load_locale_strings()
     validate_value_entry_widgets(mainmenu, system_gui, audio_gui, popups_gui, game_gui)
     validate_legacy_settings_audit(mainmenu, system_gui, popups_gui)
     validate_settings_popups_extraction(mainmenu, popups_gui)
     validate_controls_pane_extraction(mainmenu, controls_gui)
     validate_scripted_pseudo_setting_adapters(game_gui, session_menu)
-    validate_performance_preset_wiring(common_cpp, system_gui, session_menu, registry_text, display_docs)
+    validate_performance_preset_wiring(common_cpp, system_gui, session_menu, registry_text, display_docs, locales)
 
     require(mainmenu, '#include "guis/menu/settings/system.gui"', "System settings include")
     reject(mainmenu, "windowDef p_settings_sys", "mainmenu System pane extraction")

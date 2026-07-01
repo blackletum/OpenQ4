@@ -36,7 +36,8 @@ idCVar s_speakerFraction( "s_speakerFraction", "0.65", CVAR_ARCHIVE | CVAR_FLOAT
 idCVar s_radioChatterFraction( "s_radioChatterFraction", "0.5", CVAR_ARCHIVE | CVAR_FLOAT, "radio chatter attenuation fraction" );
 idCVar s_frequencyShift( "s_frequencyShift", "1", CVAR_BOOL, "enable sound shader frequency shift playback" );
 idCVar s_useOpenAL( "s_useOpenAL", "1", CVAR_ARCHIVE | CVAR_BOOL, "use OpenAL audio backend" );
-idCVar s_openALPostPlanBehavior( "s_openALPostPlanBehavior", "0", CVAR_ARCHIVE | CVAR_BOOL, "enable the gated OpenAL post-plan voice playback path; 0 uses the pre-plan sound implementation" );
+idCVar s_openALExperimentalVoices( "s_openALExperimentalVoices", "0", CVAR_ARCHIVE | CVAR_BOOL, "use the experimental OpenAL voice playback path with explicit source lifecycle and queued PCM fallback" );
+static idCVar s_openALPostPlanBehavior( "s_openALPostPlanBehavior", "0", CVAR_BOOL, "deprecated alias for s_openALExperimentalVoices" );
 idCVar s_deviceName( "s_deviceName", "", CVAR_ARCHIVE, "OpenAL device name override" );
 idCVar s_useEAXReverb( "s_useEAXReverb", "1", CVAR_ARCHIVE | CVAR_BOOL, "use EAX reverb if available" );
 idCVar s_openALHRTF( "s_openALHRTF", "0", CVAR_ARCHIVE | CVAR_INTEGER, "OpenAL Soft HRTF mode: 0 = auto, 1 = off, 2 = on", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
@@ -63,6 +64,31 @@ idSoundSystem* soundSystem = &soundSystemLocal;
 static const int SOUND_RUMBLE_DURATION_MSEC = 120;
 static const float SOUND_RUMBLE_STOP_THRESHOLD = 0.01f;
 static const float SOUND_RUMBLE_HIGH_MOTOR_SCALE = 0.75f;
+
+bool Sound_OpenALExperimentalVoicesEnabled()
+{
+	if( s_openALPostPlanBehavior.GetBool() )
+	{
+		static bool warnedLegacyPostPlanCVar = false;
+		if( !warnedLegacyPostPlanCVar )
+		{
+			idLib::Warning( "s_openALPostPlanBehavior is deprecated; migrating to s_openALExperimentalVoices." );
+			warnedLegacyPostPlanCVar = true;
+		}
+		if( !s_openALExperimentalVoices.GetBool() )
+		{
+			s_openALExperimentalVoices.SetBool( true );
+		}
+		s_openALPostPlanBehavior.SetBool( false );
+	}
+	if( ( s_openALPostPlanBehavior.GetFlags() & CVAR_ARCHIVE ) != 0 )
+	{
+		s_openALPostPlanBehavior.RemoveFlag( CVAR_ARCHIVE );
+		s_openALPostPlanBehavior.ClearModified();
+	}
+
+	return s_openALExperimentalVoices.GetBool();
+}
 
 static void Sound_UpdateControllerRumble( float amplitude )
 {
@@ -104,10 +130,19 @@ void TestSound_f( const idCmdArgs& args )
 		idLib::Printf( "Usage: testSound <file>\n" );
 		return;
 	}
-	if( soundSystemLocal.currentSoundWorld )
+	const char* soundName = args.Argv( 1 );
+	if( soundSystemLocal.currentSoundWorld == NULL )
 	{
-		soundSystemLocal.currentSoundWorld->PlayShaderDirectly( args.Argv( 1 ) );
+		idLib::Printf( "testSound: no active sound world for '%s'\n", soundName );
+		return;
 	}
+	const int handle = soundSystemLocal.currentSoundWorld->PlayShaderDirectly( soundName );
+	if( handle == 0 )
+	{
+		idLib::Printf( "testSound: failed to start '%s'\n", soundName );
+		return;
+	}
+	idLib::Printf( "testSound: started '%s' on handle %d\n", soundName, handle );
 }
 
 /*
@@ -528,14 +563,14 @@ void idSoundSystemLocal::Render()
 		return;
 	}
 
-	static int lastOpenALPostPlanBehavior = s_openALPostPlanBehavior.GetInteger();
-	const int currentOpenALPostPlanBehavior = s_openALPostPlanBehavior.GetInteger();
-	if( currentOpenALPostPlanBehavior != lastOpenALPostPlanBehavior )
+	static bool lastOpenALExperimentalVoices = Sound_OpenALExperimentalVoicesEnabled();
+	const bool currentOpenALExperimentalVoices = Sound_OpenALExperimentalVoicesEnabled();
+	if( currentOpenALExperimentalVoices != lastOpenALExperimentalVoices )
 	{
-		idLib::Printf( "OpenAL post-plan behavior changed from %d to %d; restarting sound system.\n",
-			lastOpenALPostPlanBehavior,
-			currentOpenALPostPlanBehavior );
-		lastOpenALPostPlanBehavior = currentOpenALPostPlanBehavior;
+		idLib::Printf( "OpenAL experimental voice path changed from %d to %d; restarting sound system.\n",
+			lastOpenALExperimentalVoices ? 1 : 0,
+			currentOpenALExperimentalVoices ? 1 : 0 );
+		lastOpenALExperimentalVoices = currentOpenALExperimentalVoices;
 		needsRestart = true;
 	}
 

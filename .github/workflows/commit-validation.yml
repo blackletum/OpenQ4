@@ -109,6 +109,7 @@ jobs:
             tools/tests/release_tooling_safety.py \
             tools/tests/renderer_msaa_cvar_safety.py \
             tools/tests/renderer_supersampling_safety.py \
+            tools/tests/savegame_corruption_contract.py \
             tools/tests/sdl3_input_parity.py \
             tools/tests/sdl3_multidisplay_windowing.py \
             tools/tests/settings_menu_coverage.py \
@@ -170,6 +171,7 @@ jobs:
           python tools/tests/posix_thread_shutdown.py
           python tools/tests/renderer_msaa_cvar_safety.py
           python tools/tests/renderer_supersampling_safety.py
+          python tools/tests/savegame_corruption_contract.py
           python tools/tests/sdl3_input_parity.py
           python tools/tests/sdl3_multidisplay_windowing.py
           python tools/tests/settings_menu_coverage.py

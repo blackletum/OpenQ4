@@ -34,7 +34,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "../bse/BSE_API.h"
 // jmarshall end
 
-extern idCVar s_openALPostPlanBehavior;
+extern bool Sound_OpenALExperimentalVoicesEnabled();
 
 /*
 
@@ -2378,7 +2378,7 @@ const idDecl *idDeclManagerLocal::FindType( declType_t type, const char *name, b
 	}
 
 	// mark it as referenced
-	if ( type == DECL_SOUND && s_openALPostPlanBehavior.GetBool() ) {
+	if ( type == DECL_SOUND && Sound_OpenALExperimentalVoicesEnabled() ) {
 		decl->self->SetReferencedThisLevel();
 	} else {
 		decl->referencedThisLevel = true;

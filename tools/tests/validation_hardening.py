@@ -402,6 +402,7 @@ def validate_validation_wiring() -> None:
         "posix_thread_shutdown.py",
         "renderer_msaa_cvar_safety.py",
         "renderer_supersampling_safety.py",
+        "savegame_corruption_contract.py",
         "settings_menu_coverage.py",
     )
     for test_name in central_python_tests:
