@@ -521,6 +521,17 @@ cpuid_t Sys_GetProcessorId( void ) {
 	return cpuid;
 }
 
+static bool Sys_IsTranslatedUnderRosetta( void ) {
+#if defined( __i386__ ) || defined( __x86_64__ )
+	int translated = 0;
+	size_t len = sizeof( translated );
+	if ( sysctlbyname( "sysctl.proc_translated", &translated, &len, NULL, 0 ) == 0 ) {
+		return translated == 1;
+	}
+#endif
+	return false;
+}
+
 /*
 ===============
 Sys_GetProcessorString
@@ -530,6 +541,9 @@ const char *Sys_GetProcessorString( void ) {
 #if defined( __aarch64__ ) || defined( __arm64__ )
 	return "arm64 CPU";
 #elif defined( __i386__ ) || defined( __x86_64__ )
+	if ( Sys_IsTranslatedUnderRosetta() ) {
+		return "x86 CPU with MMX/SSE/SSE2/SSE3 extensions (Rosetta translated)";
+	}
 	return "x86 CPU with MMX/SSE/SSE2/SSE3 extensions";
 #elif defined( __ppc__ ) || defined( __ppc64__ )
 	return "ppc CPU with AltiVec extensions";

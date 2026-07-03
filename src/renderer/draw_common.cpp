@@ -7899,7 +7899,8 @@ static void RB_STD_ForceAmbient( void ) {
 	const GLuint interactionFragmentProgram = r_testARBProgram.GetBool() ? FPROG_TEST : ( useSimpleInteraction ? FPROG_SIMPLE_INTERACTION : FPROG_INTERACTION );
 	const bool interactionRescueActive =
 		tr.backEndRenderer == BE_ARB2 &&
-		( !R_IsARBProgramValid( GL_VERTEX_PROGRAM_ARB, interactionVertexProgram ) ||
+		( glConfig.disableARB2Interactions ||
+			!R_IsARBProgramValid( GL_VERTEX_PROGRAM_ARB, interactionVertexProgram ) ||
 			!R_IsARBProgramValid( GL_FRAGMENT_PROGRAM_ARB, interactionFragmentProgram ) );
 	const float ambientFloor = interactionRescueActive ? 0.20f : 0.0f;
 	const float ambient = idMath::ClampFloat( 0.0f, 1.0f, Max( r_forceAmbient.GetFloat(), ambientFloor ) );

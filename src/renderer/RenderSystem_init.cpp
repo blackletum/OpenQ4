@@ -3592,6 +3592,9 @@ void GfxInfo_f( const idCmdArgs &args ) {
 	if ( glConfig.preferSimpleInteraction ) {
 		common->Printf( "Simple ARB interaction compatibility mode preferred for this renderer\n" );
 	}
+	if ( glConfig.disableARB2Interactions ) {
+		common->Printf( "ARB2 light interaction compatibility bypass active for this renderer\n" );
+	}
 
 	//=============================
 

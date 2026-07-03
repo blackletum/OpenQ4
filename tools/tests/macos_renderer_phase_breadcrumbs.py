@@ -77,6 +77,7 @@ def validate_diagnostics_module() -> None:
         "RENDERER_STARTUP_PHASE_SET_BACK_END_RENDERER",
         "RENDERER_STARTUP_PHASE_READY",
         "RENDERER_STARTUP_PHASE_FIRST_ARB2_INTERACTION_HANDOFF",
+        "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_DRIVER_BYPASS",
         "void R_SetRendererStartupPhase",
         "void R_RecordRendererStartupPhase",
         "const char *R_RendererStartupPhaseSignalName",
@@ -92,6 +93,7 @@ def validate_diagnostics_module() -> None:
         "R_ReloadARBPrograms_f: interaction color mode",
         "R_ReloadARBPrograms_f: skipped full interaction upload",
         "R_ReloadARBPrograms_f: selected simple interaction",
+        "ARB2 interaction driver bypass",
     ):
         require(source, token, "renderer startup diagnostics source")
 
@@ -136,6 +138,7 @@ def validate_renderer_startup_order() -> None:
         "void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {",
         "void RB_ARB2_DrawInteractions( void ) {",
     )
+    draw_interactions_body = function_body(draw_source, "void RB_ARB2_DrawInteractions( void ) {")
     reset_body = function_body(draw_source, "void RB_ResetARB2InteractionHandoffBreadcrumb( void ) {")
 
     require_ordered(
@@ -179,6 +182,12 @@ def validate_renderer_startup_order() -> None:
     ):
         require(interaction_body, token, "first ARB2 interaction handoff breadcrumb")
 
+    for token in (
+        "glConfig.disableARB2Interactions",
+        "R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_DRIVER_BYPASS );",
+    ):
+        require(draw_interactions_body, token, "ARB2 interaction driver bypass breadcrumb")
+
 
 def validate_phase2_plan_status() -> None:
     plan = read(PLAN_PATH)
@@ -190,6 +199,7 @@ def validate_phase2_plan_status() -> None:
         "- [x] Print the same phase state in normal logs before and after renderer",
         "- [x] Add static validation that every renderer startup phase marker is present",
         "- [x] Add a specific issue #73 breadcrumb around interaction program selection:",
+        "- [x] Add a specific issue #73 breadcrumb when Apple GL 2.1 bypasses",
         "Phase 2 implementation status",
         "src/renderer/RendererStartupDiagnostics.h",
         "src/renderer/RendererStartupDiagnostics.cpp",
@@ -211,6 +221,7 @@ def validate_docs_and_release_notes() -> None:
     ):
         require(source, "last renderer startup phase", context)
         require(source, "first ARB2 interaction handoff", context)
+        require(source, "ARB2 interaction driver bypass", context)
 
 
 def validate_ci_and_local_wiring() -> None:

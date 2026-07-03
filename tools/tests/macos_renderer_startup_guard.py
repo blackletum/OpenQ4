@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-ISSUE_COMMENTS = ("4730727130", "4749280134", "4749378065")
+ISSUE_COMMENTS = ("4730727130", "4749280134", "4749378065", "4874832470")
 
 
 def read(relative_path: str) -> str:
@@ -153,6 +153,8 @@ def validate_apple_gl21_vbo_quirk() -> None:
         "1u << 6",
         "RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION",
         "1u << 7",
+        "RENDERER_DRIVER_QUIRK_DISABLE_ARB2_INTERACTIONS",
+        "1u << 8",
     ):
         require(header, token, "renderer driver quirk flags")
 
@@ -161,9 +163,10 @@ def validate_apple_gl21_vbo_quirk() -> None:
         "RendererDriverQuirk_ParseGLVersionPrefix",
         "RendererDriverQuirk_IsAppleGL21CompatibilityFallback",
         "selectedCompatibility",
-        "Apple OpenGL 2.1 compatibility path uses CPU-backed vertex cache and simple ARB interactions for stability",
+        "Apple OpenGL 2.1 compatibility path uses CPU-backed vertex cache, simple ARB interaction programs, and bypassed ARB2 light interactions for stability",
         '{ RENDERER_DRIVER_QUIRK_DISABLE_VBO, "disableVBO" }',
         '{ RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION, "preferSimpleInteraction" }',
+        '{ RENDERER_DRIVER_QUIRK_DISABLE_ARB2_INTERACTIONS, "disableARB2Interactions" }',
         "selected=%s baseline=%d VBO=%d PBO=%d",
         "selectedContext=%d.%d %s fixedFunction=%d VBO:%d->%d PBO:%d->%d simpleInteraction=%d ARB2:%d->%d",
     ):
@@ -175,6 +178,7 @@ def validate_apple_gl21_vbo_quirk() -> None:
         '"2.1 Metal"',
         "RENDERER_DRIVER_QUIRK_DISABLE_VBO",
         "RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION",
+        "RENDERER_DRIVER_QUIRK_DISABLE_ARB2_INTERACTIONS",
         "expectedFlags",
         "caps.hasVBO != quirkCasesTable[i].expectedVBO",
     ):
@@ -342,6 +346,8 @@ def validate_apple_gl21_simple_interaction_fallback() -> None:
     for token in (
         "preferSimpleInteraction",
         "driver quirk fallback for fragile ARB interaction uploads",
+        "disableARB2Interactions",
+        "driver quirk fallback for fragile ARB2 light-interaction draws",
     ):
         require(renderer_header, token, "glconfig simple interaction fallback state")
 
@@ -355,12 +361,17 @@ def validate_apple_gl21_simple_interaction_fallback() -> None:
         "idStr::Icmp( prog.name, \"SimpleInteraction.vfp\" ) == 0",
         "glConfig.preferSimpleInteraction = true",
         "prefers simple ARB interaction shader for compatibility",
+        "glConfig.disableARB2Interactions = true",
+        "bypasses ARB2 light interactions for compatibility",
+        "Apple OpenGL 2.1 compatibility path bypassing ARB2 light interactions",
+        "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_DRIVER_BYPASS",
     ):
         require(arb2, token, "Apple GL 2.1 simple interaction fallback")
 
     force_ambient = function_body(common, "static void RB_STD_ForceAmbient( void ) {")
     for token in (
         "glConfig.preferSimpleInteraction",
+        "glConfig.disableARB2Interactions",
         "VPROG_SIMPLE_INTERACTION",
         "FPROG_SIMPLE_INTERACTION",
     ):
@@ -370,6 +381,11 @@ def validate_apple_gl21_simple_interaction_fallback() -> None:
         gfx_info,
         "Simple ARB interaction compatibility mode preferred for this renderer",
         "gfxInfo simple interaction fallback",
+    )
+    require(
+        gfx_info,
+        "ARB2 light interaction compatibility bypass active for this renderer",
+        "gfxInfo ARB2 interaction bypass",
     )
 
 
@@ -392,11 +408,13 @@ def validate_docs_and_validation() -> None:
     require(release, "Optional renderer buffer-object cleanup and PBO readbacks now follow the same macOS-safe capability gates", "release completion notes")
     require(release, "macOS ARB2 interaction draws now pass VBO byte offsets", "release completion notes")
     require(release, "Apple OpenGL 2.1 compatibility now skips the full ARB interaction shader upload", "release completion notes")
+    require(release, "Apple OpenGL 2.1 compatibility now bypasses ARB2 light interactions", "release completion notes")
     require(platform, "macOS startup validates both advertised OpenGL extensions and the callable entry points", "platform support docs")
     require(platform, "Apple OpenGL 2.1 compatibility contexts now disable the legacy VBO vertex cache", "platform support docs")
     require(platform, "Optional buffer-object users share the same capability contract", "platform support docs")
     require(platform, "Classic ARB2 interaction draws use explicit `idDrawVert` VBO byte offsets", "platform support docs")
     require(platform, "Apple OpenGL 2.1 compatibility also skips the full `interaction.vfp` upload", "platform support docs")
+    require(platform, "Apple OpenGL 2.1 compatibility now bypasses the ARB2 light-interaction pass", "platform support docs")
     for issue_comment in ISSUE_COMMENTS:
         require(release, issue_comment, "issue comment traceability")
 

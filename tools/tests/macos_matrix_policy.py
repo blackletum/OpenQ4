@@ -50,6 +50,7 @@ def validate_release_facing_docs() -> None:
     getting_started = read("docs/user/getting-started.md")
     package_readme = read("assets/release/README.html")
     release_completion = read("docs/dev/release-completion.md")
+    compat = read("src/sys/osx/macosx_compat.mm")
 
     for source, context in (
         (platform, "platform support documentation"),
@@ -97,6 +98,9 @@ def validate_release_facing_docs() -> None:
         "macOS floor-version evidence is recorded for the documented `macOS 11` floor",
         "release completion floor evidence gate",
     )
+    require(compat, "Sys_IsTranslatedUnderRosetta", "macOS Rosetta runtime CPU summary")
+    require(compat, "sysctl.proc_translated", "macOS Rosetta runtime CPU summary")
+    require(compat, "Rosetta translated", "macOS Rosetta runtime CPU summary")
 
 
 def validate_workflow_matrix_scope() -> None:

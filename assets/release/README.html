@@ -172,7 +172,7 @@
         <li>Unsigned macOS archives are ad-hoc signed only for bundle validity, are not notarized, and may require normal Gatekeeper approval on first launch.</li>
         <li>The Metal package is a bridge mode around the existing OpenGL renderer, preserving stock-asset compatibility while Metal translation-layer work continues; it is not a native Metal renderer.</li>
         <li>Open the DMG or unpack the <code>-unsigned.tar.gz</code> archive, then launch <code>openQ4.app</code>. Keep <code>openQ4.app</code>, <code>baseoq4/</code>, and the loose runtime files together as one adjacent package root; moving only <code>openQ4.app</code> to <code>/Applications</code> is not supported yet.</li>
-        <li>For experimental macOS crashes, attach full terminal output as text plus <code>openq4.log</code> and any matching <code>.ips</code> report. Run <code>collect_macos_support_info.sh</code> from the package root and see the <a href="docs/docs/user/macos-support-data.html">macOS support-data guide</a>.</li>
+        <li>For experimental macOS crashes, attach full terminal output as text plus <code>openq4.log</code> and any matching <code>.ips</code> report. Run <code>collect_macos_support_info.sh</code> from the package root to collect Rosetta, renderer, architecture, dependency, signing, and quarantine diagnostics, then see the <a href="docs/docs/user/macos-support-data.html">macOS support-data guide</a>.</li>
       </ul>
     </section>
 

@@ -101,6 +101,7 @@ static int g_packedDirectDrawVertexFormatIndex = -1;
 static const drawSurf_t *g_packedStageSurf = NULL;
 static int g_packedStageVertexFormatIndex = -1;
 static bool g_firstARB2InteractionHandoffBreadcrumb = false;
+static bool g_arb2InteractionDriverBypassWarned = false;
 
 static GLuint RB_CurrentInteractionProgramIdent( GLenum target );
 static const char *RB_CurrentInteractionProgramFamilyName( void );
@@ -10156,6 +10157,20 @@ RB_ARB2_DrawInteractions
 void RB_ARB2_DrawInteractions( void ) {
 	viewLight_t		*vLight;
 
+	if ( glConfig.disableARB2Interactions ) {
+		if ( r_interactionColorMode.IsModified() ) {
+			r_interactionColorMode.ClearModified();
+		}
+		RB_ShadowMapStatsReset();
+		RB_ShadowMapDebugOverlayReset();
+		if ( !g_arb2InteractionDriverBypassWarned ) {
+			g_arb2InteractionDriverBypassWarned = true;
+			R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_DRIVER_BYPASS );
+			common->Warning( "Apple OpenGL 2.1 compatibility path bypassing ARB2 light interactions to avoid issue #73 startup crash; scene lighting is degraded" );
+		}
+		return;
+	}
+
 	if ( r_interactionColorMode.IsModified() ) {
 		r_interactionColorMode.ClearModified();
 		RB_UpdateInteractionColorMode( true );
@@ -10875,6 +10890,7 @@ void R_ARB2_Init( void ) {
 	glConfig.preferNV20Path = false;
 	glConfig.preferSimpleLighting = false;
 	glConfig.preferSimpleInteraction = false;
+	glConfig.disableARB2Interactions = false;
 
 	common->Printf( "---------- R_ARB2_Init ----------\n" );
 
@@ -10921,6 +10937,11 @@ void R_ARB2_Init( void ) {
 		common->Printf( "%s: prefers simple ARB interaction shader for compatibility\n", renderer.c_str() );
 	}
 
+	if ( ( RendererDriverQuirks_LastReport().flags & RENDERER_DRIVER_QUIRK_DISABLE_ARB2_INTERACTIONS ) != 0 ) {
+		glConfig.disableARB2Interactions = true;
+		common->Printf( "%s: bypasses ARB2 light interactions for compatibility\n", renderer.c_str() );
+	}
+
 	common->Printf( "---------------------------------\n" );
 
 	glConfig.allowARB2Path = true;
@@ -10928,4 +10949,5 @@ void R_ARB2_Init( void ) {
 
 void RB_ResetARB2InteractionHandoffBreadcrumb( void ) {
 	g_firstARB2InteractionHandoffBreadcrumb = false;
+	g_arb2InteractionDriverBypassWarned = false;
 }

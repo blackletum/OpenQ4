@@ -46,6 +46,8 @@ const char *R_RendererStartupPhaseName( rendererStartupPhase_t phase ) {
 		return "renderer startup complete";
 	case RENDERER_STARTUP_PHASE_FIRST_ARB2_INTERACTION_HANDOFF:
 		return "first ARB2 interaction handoff";
+	case RENDERER_STARTUP_PHASE_ARB2_INTERACTION_DRIVER_BYPASS:
+		return "ARB2 interaction driver bypass";
 	default:
 		return "unknown renderer startup phase";
 	}

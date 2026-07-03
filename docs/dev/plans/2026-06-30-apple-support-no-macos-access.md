@@ -100,7 +100,7 @@ the work below.
 - [x] Add a macOS issue/support template requesting:
   - package version and artifact name
   - OpenGL vs Metal bridge package
-  - launch method: `openQ4.app` or loose client
+  - launch method: `openQ4.app`, loose client, or loose dedicated server
   - macOS version/build and hardware model
   - full terminal output, not a screenshot
   - `~/Library/Logs/DiagnosticReports` `.ips` crash report when available
@@ -108,6 +108,12 @@ the work below.
   - whether `openQ4.app`, loose binaries, and `baseoq4/` stayed together
 - [x] Add a short packaged `collect_macos_support_info.sh` helper that gathers
   safe metadata and logs into one archive for users to attach.
+- [x] Include renderer breadcrumbs, signing/Gatekeeper diagnostics, and
+  quarantine presence in the support archive without launching openQ4.
+- [x] Include Mach-O architecture, dependency, and game-module install-name
+  diagnostics in the support archive without launching openQ4.
+- [x] Include collector-process architecture and Rosetta translation state in
+  the support archive without launching openQ4.
 - [x] Make the helper redact obvious user secrets from paths or environment
   dumps before writing the archive.
 - [x] Add a docs page explaining how users can provide crash data without
@@ -119,12 +125,26 @@ the work below.
 
 - `.github/ISSUE_TEMPLATE/macos-crash-report.yml` now asks macOS crash
   reporters for issue #73-relevant version, package, launch method,
-  macOS/hardware, terminal output, `openq4.log`, DiagnosticReports, and
-  package-layout details.
+  macOS/hardware, terminal output, `openq4.log`, app/client/dedicated
+  DiagnosticReports, and package-layout details.
 - `tools/macos/collect_macos_support_info.sh` gathers safe host/package/log
   metadata into `openq4-macos-support-YYYYMMDD-HHMMSSZ.tar.gz`, redacts
   obvious user paths and email addresses, avoids environment dumps, does not
   launch openQ4, and does not copy retail `q4base` PK4 assets.
+- The collector now adds `system/rosetta.txt` for collector-process
+  architecture plus `sysctl.proc_translated` state,
+  `logs/renderer-summary.txt` for renderer startup,
+  driver-quirk, ARB2, and fatal-signal breadcrumbs,
+  `package/binary-architecture.txt` for read-only `file`/`lipo` architecture
+  output, `package/dylib-dependencies.txt` for read-only `otool` dependency
+  and game-module install-name output, `package/signing.txt` for read-only
+  `codesign`, `spctl --assess --type execute --verbose=4`, and
+  `xcrun stapler validate` output, and `package/quarantine.txt` for
+  extended-attribute names plus `com.apple.quarantine` presence without copying
+  xattr values.
+- The collector now also includes recent `openQ4-ded*.ips` and
+  `openQ4-ded*.crash` DiagnosticReports so dedicated-server reports are not
+  lost behind the client/app crash-report path.
 - `tools/build/package_nightly.py` includes the collector in macOS package
   roots and macOS archive validation so users can attach a single support
   archive without moving files around.
@@ -157,6 +177,8 @@ the work below.
 - [x] Add a specific issue #73 breadcrumb around interaction program selection:
   full interaction, simple interaction, skipped full upload, and selected color
   mode.
+- [x] Add a specific issue #73 breadcrumb when Apple GL 2.1 bypasses the ARB2
+  light-interaction pass after renderer startup.
 
 ### Phase 2 implementation status
 
@@ -176,6 +198,9 @@ the work below.
 - `src/renderer/draw_arb2.cpp` also records issue #73-specific ARB interaction
   details for full interaction upload, simple interaction upload, skipped full
   upload, selected interaction family, and selected color mode.
+- `src/renderer/draw_arb2.cpp` now records `ARB2 interaction driver bypass`
+  when the Apple GL 2.1 compatibility quirk skips ARB2 light interaction draws
+  to avoid the first-frame issue #73 crash.
 - `docs/user/macos-support-data.md`, `docs/dev/releases/v0.6.5.md`, and
   `docs/dev/release-completion.md` now tell support users and release
   maintainers to preserve the `last renderer startup phase` and
@@ -198,6 +223,8 @@ the work below.
   when `GL_ARB_vertex_buffer_object` is advertised.
 - [x] Add a static test proving Apple GL 2.1 prefers `SimpleInteraction.vfp`
   and skips the full `interaction.vfp` upload.
+- [x] Add a static test proving Apple GL 2.1 bypasses ARB2 light-interaction
+  draws on the fragile compatibility path and leaves a diagnostic breadcrumb.
 - [x] Add a fail-closed path if the simple interaction program cannot load:
   print a clear unsupported-Apple-OpenGL message instead of continuing into
   the first draw.
@@ -227,6 +254,9 @@ the work below.
 - Driver-quirk logging now records selected context, fixed-function state,
   VBO/PBO before/after values, simple-interaction preference, and ARB2
   compatibility availability in one line.
+- Apple GL 2.1 synthetic cases now also set the ARB2 light interaction bypass
+  quirk so issue #73 comment 4874832470-style M4 Max reports degrade lighting
+  instead of entering the fragile first-frame interaction draw.
 - `src/renderer/draw_arb2.cpp` already routes repeated required program binds
   through `R_BindARBProgram`; Phase 3 now adds
   `RB_ErrorIfDriverRequiredSimpleInteractionFailed()` so Apple GL 2.1 fallback

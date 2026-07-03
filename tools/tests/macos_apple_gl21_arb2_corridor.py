@@ -92,8 +92,8 @@ def validate_context_aware_apple_gl21_quirk() -> None:
 
     for token in (
         "RendererDriverQuirk_IsAppleGL21CompatibilityFallback( caps, driverInfo )",
-        "RENDERER_DRIVER_QUIRK_DISABLE_VBO | RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION",
-        "Apple OpenGL 2.1 compatibility path uses CPU-backed vertex cache and simple ARB interactions for stability",
+        "RENDERER_DRIVER_QUIRK_DISABLE_ARB2_INTERACTIONS",
+        "Apple OpenGL 2.1 compatibility path uses CPU-backed vertex cache, simple ARB interaction programs, and bypassed ARB2 light interactions for stability",
         "selectedContext=%d.%d %s fixedFunction=%d VBO:%d->%d PBO:%d->%d simpleInteraction=%d ARB2:%d->%d",
     ):
         require(apply_body, token, "Apple GL 2.1 quirk application and logging")
@@ -106,6 +106,7 @@ def validate_context_aware_apple_gl21_quirk() -> None:
         '"unknown"',
         '"2.1 Metal"',
         '"OpenGL 2.1 Metal"',
+        "RENDERER_DRIVER_QUIRK_DISABLE_ARB2_INTERACTIONS",
         '"Apple Silicon modern context"',
         "RENDERER_DRIVER_QUIRK_NONE",
         "expectedFlags",
@@ -155,6 +156,15 @@ def validate_simple_interaction_fail_closed() -> None:
         "RB_IsSimpleInteractionProgram( prog )",
     ):
         require(source, token, "Apple GL 2.1 skips full interaction upload and uses simple interaction")
+
+    for token in (
+        "glConfig.disableARB2Interactions",
+        "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_DRIVER_BYPASS",
+        "Apple OpenGL 2.1 compatibility path bypassing ARB2 light interactions",
+        "RB_ShadowMapStatsReset();",
+        "RB_ShadowMapDebugOverlayReset();",
+    ):
+        require(source, token, "Apple GL 2.1 bypasses fragile ARB2 light interactions")
 
 
 def validate_arb_entrypoint_and_binding_audit() -> None:
@@ -260,6 +270,7 @@ def validate_phase3_plan_status() -> None:
         "- [x] Log every driver quirk that changes `hasVBO`, simple-interaction",
         "- [x] Add a static test proving Apple GL 2.1 disables the VBO vertex cache even",
         "- [x] Add a static test proving Apple GL 2.1 prefers `SimpleInteraction.vfp`",
+        "- [x] Add a static test proving Apple GL 2.1 bypasses ARB2 light-interaction",
         "- [x] Add a fail-closed path if the simple interaction program cannot load:",
         "- [x] Audit every `glBindProgramARB`, `glProgramStringARB`,",
         "- [x] Move repeated ARB program binding checks behind small helpers where that",
@@ -288,6 +299,7 @@ def validate_docs_and_wiring() -> None:
     ):
         require(source, "Unsupported Apple OpenGL 2.1 compatibility path", context)
         require(source, "SimpleInteraction.vfp", context)
+        require(source, "ARB2 light interaction", context)
 
     for source, context in (
         (local_runner, "local validation runner"),

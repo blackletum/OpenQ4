@@ -87,6 +87,26 @@ launching openQ4. The report records the package root, app path, expected loose
 runtime paths, expected `baseoq4/` path, and any copied log lines that mention
 `fs_basepath`, `fs_cdpath`, or `fs_savepath`.
 
+The same archive also includes `package/binary-architecture.txt` and
+`package/dylib-dependencies.txt` without launching openQ4. These reports record
+read-only `file`/`lipo` architecture output, `otool -L` dependency output, and
+`otool -D` install names for game modules so maintainers can confirm the
+package shape when users report architecture, loader, or `@loader_path`
+failures.
+
+`package/signing.txt` uses the same Gatekeeper assessment shape as release
+validation, including `spctl --assess --type execute --verbose=4` and
+`xcrun stapler validate` where the local tools are available. Current release
+packages remain arm64-only, but the support archive also inspects any loose
+`x64` or `x86` executable names that happen to be present so accidental
+wrong-arch package contents are visible in intake data without becoming support
+claims.
+
+`system/rosetta.txt` records the collector process architecture and
+`sysctl.proc_translated` state. Rosetta remains outside the supported release
+matrix, but the report helps maintainers distinguish unsupported translated
+sessions from native arm64 package failures.
+
 ## Signoff Evidence Requirements
 
 Every completed macOS signoff archive for a release candidate must record:

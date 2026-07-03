@@ -46,6 +46,7 @@ body:
       options:
         - openQ4.app
         - openQ4-client_arm64 from Terminal
+        - openQ4-ded_arm64 from Terminal
         - Both openQ4.app and openQ4-client_arm64
         - Other
     validations:
@@ -70,7 +71,7 @@ body:
     id: terminal_output
     attributes:
       label: Full terminal output
-      description: Paste the complete terminal output as text, not a screenshot. Include the lines before and after `R_InitOpenGL`, `R_ReloadARBPrograms`, `using ARB2 renderSystem`, and any `fatal signal SIGSEGV`.
+      description: Paste the complete terminal output as text, not a screenshot. Include the lines before and after `R_InitOpenGL`, `R_ReloadARBPrograms`, `using ARB2 renderSystem`, dedicated-server startup if applicable, and any `fatal signal SIGSEGV`.
       render: text
     validations:
       required: true
@@ -133,6 +134,6 @@ body:
     id: support_archive
     attributes:
       label: Support-info archive
-      description: If your package includes `collect_macos_support_info.sh`, run it from the package root and attach the generated `openq4-macos-support-*.tar.gz` after reviewing its contents.
+      description: If your package includes `collect_macos_support_info.sh`, run it from the package root and attach the generated `openq4-macos-support-*.tar.gz` after reviewing its contents. Useful files include `system/rosetta.txt`, `logs/renderer-summary.txt`, `package/binary-architecture.txt`, `package/dylib-dependencies.txt`, `package/signing.txt`, and `package/quarantine.txt`.
     validations:
       required: false

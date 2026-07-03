@@ -24,6 +24,15 @@ def reject(haystack: str, needle: str, context: str) -> None:
         raise AssertionError(f"Unexpected {needle!r} in {context}")
 
 
+def require_segment(haystack: str, start: str, end: str, context: str) -> str:
+    try:
+        start_index = haystack.index(start)
+        end_index = haystack.index(end, start_index)
+    except ValueError as exc:
+        raise AssertionError(f"Could not find {context} segment") from exc
+    return haystack[start_index:end_index]
+
+
 def validate_issue_template() -> None:
     template = read(".github/ISSUE_TEMPLATE/macos-crash-report.yml")
 
@@ -38,6 +47,7 @@ def validate_issue_template() -> None:
         "Metal bridge",
         "openQ4.app",
         "openQ4-client_arm64 from Terminal",
+        "openQ4-ded_arm64 from Terminal",
         "macOS version and build",
         "Hardware model",
         "Full terminal output",
@@ -48,6 +58,12 @@ def validate_issue_template() -> None:
         "I kept `openQ4.app`, `baseoq4/`, the loose client/dedicated binaries, and runtime support files together.",
         "collect_macos_support_info.sh",
         "openq4-macos-support-*.tar.gz",
+        "system/rosetta.txt",
+        "logs/renderer-summary.txt",
+        "package/binary-architecture.txt",
+        "package/dylib-dependencies.txt",
+        "package/signing.txt",
+        "package/quarantine.txt",
     ):
         require(template, token, "macOS crash issue template")
 
@@ -68,15 +84,48 @@ def validate_support_collector() -> None:
         "system_profiler SPDisplaysDataType",
         "xcodebuild -version",
         "xcrun --sdk macosx --show-sdk-version",
+        "system/rosetta.txt",
+        "Rosetta is not a supported openQ4 release target",
+        "sysctl.proc_translated",
+        "codesign",
+        "spctl --assess --type execute --verbose=4",
+        "xcrun stapler validate",
+        "xattr",
+        "file",
+        "lipo -archs",
+        "otool -L",
+        "otool -D",
+        "com.apple.quarantine",
         "openQ4.app",
         "baseoq4",
         "openQ4-client_arm64",
+        "openQ4-ded_arm64",
         "collect_macos_support_info.sh",
         "openq4.log",
+        "logs/renderer-summary.txt",
+        "R_InitOpenGL",
+        "Renderer driver quirks",
+        "ARB2 interaction driver bypass",
+        "fatal signal SIGSEGV",
+        "package/binary-architecture.txt",
+        "Architecture checks do not launch openQ4.",
+        "package/dylib-dependencies.txt",
+        "Dependency and install-name checks do not launch openQ4.",
+        "package/signing.txt",
+        "Signing and Gatekeeper checks do not launch openQ4.",
+        "stapler validation failed; continuing support collection",
+        "package/quarantine.txt",
+        "Only extended-attribute names are listed; values are not copied.",
         "${HOME}/Library/Application Support/openQ4/baseoq4/logs/openq4.log",
         "~/Library/Logs/DiagnosticReports",
         "-name 'openQ4*.ips'",
         "-name 'openQ4*.crash'",
+        "-name 'openQ4-client*.ips'",
+        "-name 'openQ4-client*.crash'",
+        "-name 'openQ4-ded*.ips'",
+        "-name 'openQ4-ded*.crash'",
+        "tail -n 10",
+        "openQ4, openQ4-client, and openQ4-ded DiagnosticReports",
         "tar -czf",
         "does not dump the environment",
         "does not launch openQ4",
@@ -90,8 +139,38 @@ def validate_support_collector() -> None:
         "set >",
         "openQ4-client_arm64 >",
         "openQ4-client_arm64 2>",
+        "xattr -l",
+        "xattr -p",
+        "xattr -w",
     ):
         reject(script, token, "macOS support collector privacy/no-launch guard")
+
+    signing_segment = require_segment(
+        script,
+        "Signing and Gatekeeper checks do not launch openQ4.",
+        '} | redact_text > "${BUNDLE_DIR}/package/signing.txt"',
+        "macOS support collector signing",
+    )
+    quarantine_segment = require_segment(
+        script,
+        "Only extended-attribute names are listed; values are not copied.",
+        '} | redact_text > "${BUNDLE_DIR}/package/quarantine.txt"',
+        "macOS support collector quarantine",
+    )
+
+    for segment, context in (
+        (signing_segment, "macOS support collector signing"),
+        (quarantine_segment, "macOS support collector quarantine"),
+    ):
+        for token in (
+            "openQ4-client_arm64",
+            "openQ4-client_x64",
+            "openQ4-client_x86",
+            "openQ4-ded_arm64",
+            "openQ4-ded_x64",
+            "openQ4-ded_x86",
+        ):
+            require(segment, token, context)
 
 
 def validate_user_docs() -> None:
@@ -105,10 +184,21 @@ def validate_user_docs() -> None:
         "# Experimental macOS Support Data",
         "GitHub issue #73",
         "Full terminal output as text, not only a screenshot",
+        "openQ4-ded_arm64` from Terminal",
+        "./openQ4-ded_arm64 +set dedicated 1",
         "~/Library/Application Support/openQ4/baseoq4/logs/openq4.log",
         "~/Library/Logs/DiagnosticReports",
+        "~/Library/Logs/DiagnosticReports/openQ4-ded*.ips",
+        "~/Library/Logs/DiagnosticReports/openQ4-ded*.crash",
         "collect_macos_support_info.sh",
         "openq4-macos-support-YYYYMMDD-HHMMSSZ.tar.gz",
+        "system/rosetta.txt",
+        "logs/renderer-summary.txt",
+        "package/binary-architecture.txt",
+        "package/dylib-dependencies.txt",
+        "package/signing.txt",
+        "package/quarantine.txt",
+        "com.apple.quarantine",
         "does not dump the environment",
         "does not launch openQ4",
         "does not copy retail `q4base` PK4 assets",
@@ -119,7 +209,14 @@ def validate_user_docs() -> None:
     require(readme, "docs/user/macos-support-data.md", "README macOS support-data link")
     require(getting_started, "macos-support-data.md", "getting started macOS support-data link")
     require(package_readme, "docs/docs/user/macos-support-data.html", "packaged README macOS support-data link")
+    require(package_readme, "collect_macos_support_info.sh", "packaged README macOS collector mention")
     require(release_notes, "collect_macos_support_info.sh", "curated release notes macOS collector request")
+    require(release_notes, "system/rosetta.txt", "curated release notes Rosetta diagnostics mention")
+    require(release_notes, "logs/renderer-summary.txt", "curated release notes renderer-summary mention")
+    require(release_notes, "package/binary-architecture.txt", "curated release notes binary-architecture diagnostics mention")
+    require(release_notes, "package/dylib-dependencies.txt", "curated release notes dylib-dependencies diagnostics mention")
+    require(release_notes, "package/signing.txt", "curated release notes signing diagnostics mention")
+    require(release_notes, "package/quarantine.txt", "curated release notes quarantine diagnostics mention")
     require(release_notes, "../../user/macos-support-data.md", "curated release notes macOS support-data link")
 
 
@@ -156,6 +253,12 @@ def validate_phase1_plan_status() -> None:
         "docs/user/macos-support-data.md",
         "tools/macos/collect_macos_support_info.sh",
         "tools/tests/macos_support_intake.py",
+        "system/rosetta.txt",
+        "logs/renderer-summary.txt",
+        "package/binary-architecture.txt",
+        "package/dylib-dependencies.txt",
+        "package/signing.txt",
+        "package/quarantine.txt",
     ):
         require(plan, token, "Phase 1 Apple support plan")
 
