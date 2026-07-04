@@ -160,9 +160,9 @@ macOS runtime signoff report: /Users/test/openq4-work/results/testrun-signoff-{b
 """
 
 
-def add_bytes(archive: tarfile.TarFile, name: str, data: bytes) -> None:
+def add_bytes(archive: tarfile.TarFile, name: str, data: bytes, *, mode: int = 0o644) -> None:
     member = tarfile.TarInfo(name)
-    member.mode = 0o644
+    member.mode = mode
     member.size = len(data)
     archive.addfile(member, io.BytesIO(data))
 
@@ -326,6 +326,11 @@ def write_bad_member_archive(path: Path, name: str, *, duplicate: bool = False) 
             add_file(archive, name, "duplicate\n")
 
 
+def write_bad_mode_member_archive(path: Path, name: str, *, mode: int) -> None:
+    with tarfile.open(path, "w:gz") as archive:
+        add_bytes(archive, name, b"bad\n", mode=mode)
+
+
 def expect_error(fragment: str, callback) -> None:
     try:
         callback()
@@ -371,7 +376,9 @@ def main() -> int:
                 ),
             )
 
-        completed = temp / "openq4-macos-results-completed.tar.gz"
+        completed_dir = temp / "completed"
+        completed_dir.mkdir()
+        completed = completed_dir / "openq4-macos-results-testrun.tar.gz"
         write_archive(completed, bridges=("opengl", "metal"), completed=True)
         validator.validate_signoff_archive(
             completed,
@@ -379,6 +386,19 @@ def main() -> int:
             action="signoff",
             bridges=("opengl", "metal"),
             require_completed_checklist=True,
+        )
+
+        renamed_completed = temp / "openq4-macos-results-renamed.tar.gz"
+        write_archive(renamed_completed, bridges=("opengl", "metal"), completed=True)
+        expect_error(
+            "file name does not match run ID",
+            lambda: validator.validate_signoff_archive(
+                renamed_completed,
+                run_id="testrun",
+                action="signoff",
+                bridges=("opengl", "metal"),
+                require_completed_checklist=True,
+            ),
         )
 
         expect_error(
@@ -461,6 +481,40 @@ def main() -> int:
             ),
         )
 
+        group_writable_member = temp / "openq4-macos-results-group-writable.tar.gz"
+        write_bad_mode_member_archive(
+            group_writable_member,
+            "testrun-signoff-opengl/openq4-macos-workflow.log",
+            mode=0o664,
+        )
+        expect_error(
+            "group/other writable",
+            lambda: validator.validate_signoff_archive(
+                group_writable_member,
+                run_id="testrun",
+                action="signoff",
+                bridges=("opengl",),
+                require_completed_checklist=False,
+            ),
+        )
+
+        special_mode_member = temp / "openq4-macos-results-special-mode.tar.gz"
+        write_bad_mode_member_archive(
+            special_mode_member,
+            "testrun-signoff-opengl/openq4-macos-workflow.log",
+            mode=0o4644,
+        )
+        expect_error(
+            "special mode bits",
+            lambda: validator.validate_signoff_archive(
+                special_mode_member,
+                run_id="testrun",
+                action="signoff",
+                bridges=("opengl",),
+                require_completed_checklist=False,
+            ),
+        )
+
         huge_log = temp / "openq4-macos-results-huge-log.tar.gz"
         write_huge_log_archive(huge_log, bridge="opengl", max_text_member_bytes=validator.MAX_TEXT_MEMBER_BYTES)
         expect_error(
@@ -507,6 +561,22 @@ def main() -> int:
             )
         finally:
             validator.MAX_ARCHIVE_MEMBERS = previous_member_count_cap
+
+        previous_total_cap = validator.MAX_ARCHIVE_TOTAL_BYTES
+        validator.MAX_ARCHIVE_TOTAL_BYTES = 64
+        try:
+            expect_error(
+                "total expanded size",
+                lambda: validator.validate_signoff_archive(
+                    completed,
+                    run_id="testrun",
+                    action="signoff",
+                    bridges=("opengl",),
+                    require_completed_checklist=False,
+                ),
+            )
+        finally:
+            validator.MAX_ARCHIVE_TOTAL_BYTES = previous_total_cap
 
         missing_client_report = temp / "openq4-macos-results-missing-client.tar.gz"
         write_archive_with_report(

@@ -22,6 +22,72 @@ incoming="${workspace}/incoming-quake4"
 
 reject_unsafe_tar_entries() {
     local tar_path="$1"
+    python3 - "${tar_path}" <<'PY'
+import pathlib
+import sys
+import tarfile
+import unicodedata
+
+archive_path = pathlib.Path(sys.argv[1])
+forbidden_metadata_names = {
+    ".ds_store",
+    "__macosx",
+    ".fseventsd",
+    ".spotlight-v100",
+    ".trashes",
+    "icon\r",
+}
+seen_entries = set()
+seen_casefold_entries = {}
+
+
+def fail(message: str) -> None:
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def is_macos_metadata_path(parts):
+    for part in parts:
+        normalized = part.casefold()
+        if normalized in forbidden_metadata_names:
+            return True
+        if normalized.startswith("._") or normalized.endswith(".dsym"):
+            return True
+    return False
+
+
+try:
+    with tarfile.open(archive_path, "r:*") as archive:
+        for member in archive.getmembers():
+            raw_entry = member.name
+            entry = raw_entry.rstrip("/") if member.isdir() else raw_entry
+            parts = entry.split("/")
+            if (
+                entry in {"", ".", ".."}
+                or entry.startswith(("./", "/", "../"))
+                or "\\" in entry
+                or any(ord(character) < 32 or ord(character) == 127 for character in entry)
+                or "/../" in f"/{entry}/"
+                or "" in parts
+                or any(part in {".", ".."} for part in parts)
+            ):
+                fail(f"Unsafe asset archive path: {entry!r}")
+            if not (member.isfile() or member.isdir()):
+                fail(f"Asset archive contains a symlink or special file (including hardlinks): {entry}")
+            if is_macos_metadata_path(parts):
+                fail(f"Asset archive contains non-runtime macOS metadata/debug entry: {entry}")
+            if entry in seen_entries:
+                fail(f"Asset archive contains duplicate member: {entry}")
+            casefold_entry = unicodedata.normalize("NFC", entry).casefold()
+            previous = seen_casefold_entries.get(casefold_entry)
+            if previous is not None and previous != entry:
+                fail(f"Asset archive contains case-insensitive duplicate entries: {previous}, {entry}")
+            seen_entries.add(entry)
+            seen_casefold_entries[casefold_entry] = entry
+except tarfile.TarError as exc:
+    fail(f"Unable to inspect asset archive: {archive_path}: {exc}")
+PY
+
     COPYFILE_DISABLE=1 tar -tf "${tar_path}" | while IFS= read -r entry; do
         case "${entry}" in
             ""|"."|".."|./*|*/./*|*//*|/*|../*|*/../*|*/..|*\\*)

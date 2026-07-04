@@ -5,6 +5,7 @@ import importlib.util
 import io
 import os
 import plistlib
+import re
 import shutil
 import tarfile
 from pathlib import Path
@@ -238,7 +239,31 @@ def make_macos_archive_entries(
     return entries
 
 
-def write_test_targz_archive(archive_path: Path, entries: dict[str, tuple[bytes, int]]) -> None:
+def entries_with_runtime_archive_name(
+    entries: dict[str, tuple[bytes, int]],
+    archive_name: str,
+) -> dict[str, tuple[bytes, int]]:
+    updated: dict[str, tuple[bytes, int]] = {}
+    for name, (data, mode) in entries.items():
+        if name.endswith("/SYMBOLS.txt"):
+            data = re.sub(
+                rb"^runtime_archive=.*$",
+                f"runtime_archive={archive_name}".encode("utf-8"),
+                data,
+                flags=re.MULTILINE,
+            )
+        updated[name] = (data, mode)
+    return updated
+
+
+def write_test_targz_archive(
+    archive_path: Path,
+    entries: dict[str, tuple[bytes, int]],
+    *,
+    rewrite_runtime_archive: bool = True,
+) -> None:
+    if rewrite_runtime_archive:
+        entries = entries_with_runtime_archive_name(entries, archive_path.name)
     with tarfile.open(archive_path, "w:gz") as archive:
         for name, (data, mode) in entries.items():
             member = tarfile.TarInfo(name)
@@ -249,8 +274,11 @@ def write_test_targz_archive(archive_path: Path, entries: dict[str, tuple[bytes,
 
 
 def write_test_targz_archive_with_symlink(
-    archive_path: Path, entries: dict[str, tuple[bytes, int]], link_name: str
+    archive_path: Path,
+    entries: dict[str, tuple[bytes, int]],
+    link_name: str,
 ) -> None:
+    entries = entries_with_runtime_archive_name(entries, archive_path.name)
     with tarfile.open(archive_path, "w:gz") as archive:
         for name, (data, mode) in entries.items():
             member = tarfile.TarInfo(name)
@@ -267,8 +295,11 @@ def write_test_targz_archive_with_symlink(
 
 
 def write_test_targz_archive_with_fifo(
-    archive_path: Path, entries: dict[str, tuple[bytes, int]], fifo_name: str
+    archive_path: Path,
+    entries: dict[str, tuple[bytes, int]],
+    fifo_name: str,
 ) -> None:
+    entries = entries_with_runtime_archive_name(entries, archive_path.name)
     with tarfile.open(archive_path, "w:gz") as archive:
         for name, (data, mode) in entries.items():
             member = tarfile.TarInfo(name)
@@ -283,7 +314,14 @@ def write_test_targz_archive_with_fifo(
         archive.addfile(fifo)
 
 
-def write_test_zip_archive(archive_path: Path, entries: dict[str, tuple[bytes, int]]) -> None:
+def write_test_zip_archive(
+    archive_path: Path,
+    entries: dict[str, tuple[bytes, int]],
+    *,
+    rewrite_runtime_archive: bool = True,
+) -> None:
+    if rewrite_runtime_archive:
+        entries = entries_with_runtime_archive_name(entries, archive_path.name)
     with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as archive:
         for name, (data, mode) in entries.items():
             info = ZipInfo(name)
@@ -575,6 +613,97 @@ def validate_macos_archive_validator_runtime() -> None:
                 version,
             )
 
+        bad_runtime_archive_name = work / "bad-runtime-archive-name.tar.gz"
+        write_test_targz_archive(
+            bad_runtime_archive_name,
+            make_macos_archive_entries(package, package_root.name, arch, plist_bytes),
+            rewrite_runtime_archive=False,
+        )
+        expect_runtime_error(
+            "runtime_archive",
+            lambda: package.validate_macos_archive_contents(
+                package_root,
+                bad_runtime_archive_name,
+                "tar.gz",
+                arch,
+                version,
+            ),
+            "macOS archive whose symbol manifest names a different runtime archive",
+        )
+
+        missing_archive = work / "missing.tar.gz"
+        expect_runtime_error(
+            "macOS archive was not created",
+            lambda: package.validate_macos_archive_contents(
+                package_root,
+                missing_archive,
+                "tar.gz",
+                arch,
+                version,
+            ),
+            "macOS archive validator missing input",
+        )
+
+        expect_runtime_error(
+            "Unsupported macOS archive format",
+            lambda: package.validate_macos_archive_contents(
+                package_root,
+                work / "good.tar.gz",
+                "rar",
+                arch,
+                version,
+            ),
+            "macOS archive validator unsupported format",
+        )
+
+        linked_archive = work / "linked-good.tar.gz"
+        if make_symlink(work / "good.tar.gz", linked_archive):
+            expect_runtime_error(
+                "macOS archive path must not be a symlink",
+                lambda: package.validate_macos_archive_contents(
+                    package_root,
+                    linked_archive,
+                    "tar.gz",
+                    arch,
+                    version,
+                ),
+                "macOS archive validator symlink input",
+            )
+
+        previous_runtime_member_cap = package.MAX_MACOS_RUNTIME_ARCHIVE_MEMBERS
+        package.MAX_MACOS_RUNTIME_ARCHIVE_MEMBERS = max(1, len(entries) - 1)
+        try:
+            expect_runtime_error(
+                "macOS archive contains too many members",
+                lambda: package.validate_macos_archive_contents(
+                    package_root,
+                    work / "good.tar.gz",
+                    "tar.gz",
+                    arch,
+                    version,
+                ),
+                "macOS archive validator member-count cap",
+            )
+        finally:
+            package.MAX_MACOS_RUNTIME_ARCHIVE_MEMBERS = previous_runtime_member_cap
+
+        previous_runtime_total_cap = package.MAX_MACOS_RUNTIME_ARCHIVE_TOTAL_BYTES
+        package.MAX_MACOS_RUNTIME_ARCHIVE_TOTAL_BYTES = 4
+        try:
+            expect_runtime_error(
+                "macOS archive total expanded size is too large",
+                lambda: package.validate_macos_archive_contents(
+                    package_root,
+                    work / "good.tar.gz",
+                    "tar.gz",
+                    arch,
+                    version,
+                ),
+                "macOS archive validator total expanded size cap",
+            )
+        finally:
+            package.MAX_MACOS_RUNTIME_ARCHIVE_TOTAL_BYTES = previous_runtime_total_cap
+
         signed_entries = make_macos_archive_entries(
             package,
             package_root.name,
@@ -821,7 +950,10 @@ def validate_macos_archive_validator_runtime() -> None:
         )
 
         bad_duplicate_archive = work / "bad-duplicate.tar.gz"
-        duplicate_entries = make_macos_archive_entries(package, package_root.name, arch, plist_bytes)
+        duplicate_entries = entries_with_runtime_archive_name(
+            make_macos_archive_entries(package, package_root.name, arch, plist_bytes),
+            bad_duplicate_archive.name,
+        )
         with tarfile.open(bad_duplicate_archive, "w:gz") as archive:
             for name, (data, mode) in duplicate_entries.items():
                 for _ in range(2 if name.endswith("VERSION.txt") else 1):
@@ -909,6 +1041,33 @@ def validate_macos_archive_validator_runtime() -> None:
             ),
             "macOS archive with backslash path",
         )
+
+        for archive_format, archive_name, writer in (
+            ("tar.gz", "bad-control-path.tar.gz", write_test_targz_archive),
+            ("zip", "bad-control-path.zip", write_test_zip_archive),
+        ):
+            bad_control_path_archive = work / archive_name
+            writer(
+                bad_control_path_archive,
+                make_macos_archive_entries(
+                    package,
+                    package_root.name,
+                    arch,
+                    plist_bytes,
+                    extra_entries={f"{package_root.name}/baseoq4/bad\nname.txt": (b"bad\n", 0o644)},
+                ),
+            )
+            expect_runtime_error(
+                "unsafe",
+                lambda archive_path=bad_control_path_archive, archive_format=archive_format: package.validate_macos_archive_contents(
+                    package_root,
+                    archive_path,
+                    archive_format,
+                    arch,
+                    version,
+                ),
+                f"macOS {archive_format} archive with control-character path",
+            )
 
         bad_pkginfo_archive = work / "bad-pkginfo.tar.gz"
         write_test_targz_archive(
@@ -1884,6 +2043,7 @@ def validate_packaging_and_release_contract() -> None:
     require(package, "strip_macos_forbidden_xattrs", "macOS package quarantine validation")
     require(package, "validate_no_macos_forbidden_xattrs", "macOS package quarantine validation")
     require(package, "MACOS_FORBIDDEN_ARCHIVE_NAMES", "macOS archive metadata validation")
+    require(package, "is_macos_metadata_sidecar_path", "macOS metadata sidecar validation")
     require(package, "MACOS_PKGINFO_BYTES", "macOS app PkgInfo validation")
     require(package, "MACOS_LOCALIZED_INFO_LOCALES", "macOS localized plist validation")
     require(package, "MACOS_EXPECTED_APP_BUNDLE_DIRS", "macOS app bundle directory allowlist")
@@ -1938,13 +2098,46 @@ def validate_packaging_and_release_contract() -> None:
     require(package, "contains duplicate key", "macOS localized plist duplicate validation")
     require(package, "validate_macos_archive_metadata_member_size", "macOS archive metadata size validation")
     require(package, "macOS archive metadata member is too large", "macOS archive metadata size validation")
+    require(package, "MAX_MACOS_RUNTIME_ARCHIVE_MEMBERS", "macOS runtime archive member-count validation")
+    require(package, "MAX_MACOS_SYMBOL_ARCHIVE_MEMBERS", "macOS symbol archive member-count validation")
+    require(package, "MAX_MACOS_RUNTIME_ARCHIVE_TOTAL_BYTES", "macOS runtime archive total-size validation")
+    require(package, "MAX_MACOS_SYMBOL_ARCHIVE_TOTAL_BYTES", "macOS symbol archive total-size validation")
+    require(package, "macOS archive contains too many members", "macOS runtime archive member-count validation")
+    require(package, "macOS symbol archive contains too many members", "macOS symbol archive member-count validation")
+    require(package, "macOS archive total expanded size is too large", "macOS runtime archive total-size validation")
+    require(package, "macOS symbol archive total expanded size is too large", "macOS symbol archive total-size validation")
     require(package, "require_non_empty_package_file", "macOS app non-empty metadata validation")
     require(package, "macOS app icon source was not found", "macOS app icon source validation")
     require(package, "validate_macos_localized_info_files", "macOS localized plist validation")
     require(package, "macos_package_version_tag_from_name", "macOS archive version manifest validation")
+    require(package, "macos_package_suffix_from_name", "macOS archive package-suffix validation")
     require(package, "validate_macos_archive_name", "macOS archive path validation")
+    require(package, "validate_macos_manifest_archive_filename", "macOS symbol manifest archive filename validation")
+    require(package, "prepare_macos_symbol_staging_root", "macOS symbol staging preflight")
+    require(package, "prepare_macos_dsym_output_path", "macOS dSYM output preflight")
+    require(package, "macOS symbol staging root must not be a symlink", "macOS symbol staging symlink guard")
+    require(package, "macOS symbol staging root exists but is not a directory", "macOS symbol staging file guard")
+    require(package, "macOS dSYM output must not be a symlink", "macOS dSYM output symlink guard")
+    require(package, "macOS dSYM output exists but is not a directory", "macOS dSYM output file guard")
+    require(package, "macOS symbol archive input root must not be a symlink", "macOS symbol archive input root guard")
+    require(package, "macOS symbol archive output must not be inside the symbol staging root", "macOS symbol archive self-include guard")
+    require(package, "ord(character) < 32", "macOS archive control-character path validation")
     require(package, "validate_macos_archive_mode", "macOS archive mode validation")
     require(package, "record_macos_archive_entry", "macOS archive duplicate validation")
+    require(package, "contains duplicate key", "macOS symbol manifest duplicate key validation")
+    require(package, "contains unexpected header key", "macOS symbol manifest unknown key validation")
+    require(package, "contains unsafe archive filename", "macOS symbol manifest archive filename validation")
+    require(package, "package_suffix", "macOS symbol manifest package-suffix validation")
+    require(package, "runtime_archive", "macOS symbol manifest runtime archive validation")
+    require(package, "runtime_archive_name=archive_path.name", "macOS runtime archive exact manifest validation")
+    require(package, "symbol_archive", "macOS symbol manifest symbol archive validation")
+    require(package, "contains duplicate binary entry", "macOS symbol manifest duplicate binary validation")
+    require(package, "contains unexpected binary entries", "macOS symbol manifest unexpected binary validation")
+    require(package, "is missing binary entries", "macOS symbol manifest missing binary validation")
+    require(package, "has invalid sha256", "macOS symbol manifest hash validation")
+    require(package, "has invalid size", "macOS symbol manifest size validation")
+    require(package, "has invalid macho_uuid", "macOS symbol manifest Mach-O UUID validation")
+    require(package, "dsym is", "macOS symbol manifest dSYM mapping validation")
     require(package, "validate_no_macos_casefold_path_collisions", "macOS package case-collision validation")
     require(package, "case-insensitive duplicate", "macOS archive case-collision validation")
     require(package, "info.is_dir()", "macOS zip directory-entry validation")
@@ -2193,6 +2386,8 @@ def validate_macos_workflow_security_contract() -> None:
     require(host, '[ValidateSet("plain", "debug", "debugoptimized", "release", "minsize", "custom")]', "macOS host build type validation")
     require(host, "[ValidateRange(1, 100000)]", "macOS host smoke limit validation")
     require(host, "Invalid BuildDir", "macOS host builddir validation")
+    require(host, "Assert-SafeMacOSBuildDir", "macOS host builddir validation")
+    require(host, "BuildDir must live under .tmp/ or use a builddir* name", "macOS host builddir output-tree guard")
     require(host, "RemoteTempRoot", "macOS host per-run remote temp root")
     require(host, "function Remove-RemoteTempRoot", "macOS host remote temp cleanup")
     require(host, r"\A/tmp/openq4-macos-[0-9a-fA-F]{32}\z", "macOS host remote temp cleanup path guard")
@@ -2209,9 +2404,15 @@ def validate_macos_workflow_security_contract() -> None:
     require(host, "Remote extraction target must not be a symlink", "macOS host remote extract target symlink validation")
     require(host, "require_single_archive_root", "macOS host remote archive root validation")
     require(host, "Archive must contain exactly one top-level source root", "macOS host remote archive root validation")
+    require(host, "reject_unsafe_remote_archive_entries", "macOS host structured archive validation")
+    require(host, "tarfile.open", "macOS host structured archive validation")
+    require(host, "Unable to inspect remote archive", "macOS host malformed archive validation")
     require(host, "Unsafe archive path", "macOS host archive path validation")
     require(host, "case-insensitive path collision", "macOS host archive case-collision validation")
+    require(host, "Archive contains duplicate member", "macOS host duplicate archive validation")
+    require(host, "Archive contains non-runtime macOS metadata/debug entry", "macOS host metadata archive validation")
     require(host, "Archive contains a symlink or special file", "macOS host archive special-file validation")
+    require(host, "COPYFILE_DISABLE=1 tar -xf", "macOS host archive extraction copyfile suppression")
     require(host, "tar -tvf", "macOS host archive type validation")
     require(host, "including hardlinks", "macOS host archive hardlink validation")
     require(host, "rsync -a --delete", "macOS host safe temp extraction sync")
@@ -2278,6 +2479,11 @@ def validate_macos_workflow_security_contract() -> None:
         require(bootstrap, f"require_command {tool}", f"macOS bootstrap {tool} validation")
 
     require(assets, "reject_unsafe_tar_entries", "macOS asset tar path validation")
+    require(assets, "tarfile.open", "macOS asset tar structured validation")
+    require(assets, "ord(character) < 32", "macOS asset tar control-character validation")
+    require(assets, "Asset archive contains duplicate member", "macOS asset duplicate tar member validation")
+    require(assets, "case-insensitive duplicate entries", "macOS asset tar case-collision validation")
+    require(assets, "Unable to inspect asset archive", "macOS asset tar malformed-archive validation")
     require(assets, "expand_guest_path", "macOS asset guest tilde expansion")
     require(assets, "reject_unsafe_tree_entries", "macOS asset symlink validation")
     require(assets, "reject_macos_non_runtime_metadata_entries", "macOS asset metadata validation")
@@ -2314,6 +2520,7 @@ def validate_macos_workflow_security_contract() -> None:
     require(guest, "expand_guest_path", "macOS guest tilde expansion")
     require(guest, "require_safe_builddir", "macOS guest builddir safety validation")
     require(guest, "OPENQ4_BUILDDIR must not resolve to the openQ4 repository root", "macOS guest builddir root guard")
+    require(guest, "OPENQ4_BUILDDIR must live under .tmp/ or use a builddir* name", "macOS guest builddir output-tree guard")
     require(guest, "OPENQ4_BUILDDIR must not target source, content, tool, git, or staged runtime directories", "macOS guest builddir owned-tree guard")
     require(guest, "require_positive_integer", "macOS guest numeric option validation")
     require(guest, "require_safe_guest_roots", "macOS guest workspace/basepath validation")
@@ -2418,13 +2625,17 @@ def validate_macos_workflow_security_contract() -> None:
     require(signoff_validator, "Archive contains non-runtime macOS metadata/debug entry", "macOS signoff archive metadata guard")
     require(signoff_validator, "has_file_under", "macOS signoff archive output-file guard")
     require(signoff_validator, "Archive contains a non-regular entry", "macOS signoff archive entry-type guard")
+    require(signoff_validator, "Archive member has special mode bits", "macOS signoff archive mode guard")
+    require(signoff_validator, "Archive member is group/other writable", "macOS signoff archive mode guard")
     require(signoff_validator, "MAX_TEXT_MEMBER_BYTES", "macOS signoff archive text size guard")
     require(signoff_validator, "MAX_ARCHIVE_MEMBER_BYTES", "macOS signoff archive member size guard")
     require(signoff_validator, "MAX_ARCHIVE_MEMBERS", "macOS signoff archive member-count guard")
+    require(signoff_validator, "MAX_ARCHIVE_TOTAL_BYTES", "macOS signoff archive total-size guard")
     require(signoff_validator, "RESULT_TOKEN_PATTERN", "macOS signoff archive action token guard")
     require(signoff_validator, "Archive text member is too large", "macOS signoff archive text size guard")
     require(signoff_validator, "Archive member is too large", "macOS signoff archive member size guard")
     require(signoff_validator, "Archive contains too many members", "macOS signoff archive member-count guard")
+    require(signoff_validator, "Archive total expanded size is too large", "macOS signoff archive total-size guard")
     require(signoff_validator, "did not record a staged client path", "macOS signoff archive client evidence guard")
     require(signoff_validator, "did not record a staged dedicated server path", "macOS signoff archive dedicated evidence guard")
     require(signoff_validator, "does not reference its renderer-smoke output directory", "macOS signoff archive report-output guard")
@@ -2432,6 +2643,8 @@ def validate_macos_workflow_security_contract() -> None:
     require(signoff_validator, "does not reference the expected signoff report path", "macOS signoff archive log-report guard")
     require(signoff_validator, "Invalid signoff archive action token", "macOS signoff archive action token guard")
     require(signoff_validator, "validate_result_token", "macOS signoff archive run ID token guard")
+    require(signoff_validator, "expected_signoff_archive_name", "macOS signoff archive filename/run ID guard")
+    require(signoff_validator, "Archive file name does not match run ID", "macOS signoff archive filename/run ID guard")
     require(signoff_validator, "Bridge list contains duplicates", "macOS signoff archive duplicate bridge guard")
     require(signoff_validator, "Staged macOS payload integrity checks completed.", "macOS signoff archive staged payload evidence")
     require(signoff_validator, "Quake 4 asset basepath validation completed.", "macOS signoff archive asset evidence")
@@ -2483,6 +2696,11 @@ def validate_macos_shell_entrypoints() -> None:
         reject(source, "dirname --", relative_path)
         require(source, 'case "${BASH_SOURCE[0]}" in', relative_path)
         require(source, 'script_dir="$(CDPATH= cd "${script_dir}" && pwd)"', relative_path)
+
+    collector = read("tools/macos/collect_macos_support_info.sh")
+    reject(collector, "dirname --", "macOS support collector BSD dirname compatibility")
+    require(collector, 'case "$0" in', "macOS support collector script directory resolution")
+    require(collector, 'SCRIPT_DIR=$(CDPATH= cd "${script_dir}" && pwd -P)', "macOS support collector script directory resolution")
 
 
 def validate_docs_and_ci_hooks() -> None:

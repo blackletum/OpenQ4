@@ -123,6 +123,48 @@ def main() -> int:
             "updated evidence index",
         )
 
+        unsafe_artifact = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "tools" / "macos" / "record_signoff_evidence.py"),
+                str(archive),
+                "--version",
+                "vtest",
+                "--package-artifact",
+                "../openq4-vtest-macos-arm64-opengl.dmg",
+            ],
+            cwd=str(ROOT),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if unsafe_artifact.returncode == 0:
+            raise AssertionError("record_signoff_evidence accepted an unsafe package artifact path")
+        require(unsafe_artifact.stderr, "macOS signoff evidence recording failed", "unsafe package artifact error")
+        require(unsafe_artifact.stderr, "safe filename", "unsafe package artifact rejection")
+
+        missing_bridge_artifact = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "tools" / "macos" / "record_signoff_evidence.py"),
+                str(archive),
+                "--version",
+                "vtest",
+                "--package-artifact",
+                "openq4-vtest-macos-arm64-opengl.dmg",
+            ],
+            cwd=str(ROOT),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if missing_bridge_artifact.returncode == 0:
+            raise AssertionError("record_signoff_evidence accepted package artifacts missing a bridge")
+        require(missing_bridge_artifact.stderr, "macOS signoff evidence recording failed", "missing bridge artifact error")
+        require(missing_bridge_artifact.stderr, "missing the metal bridge artifact", "missing bridge artifact rejection")
+
     print("macos_evidence_recording: ok")
     return 0
 

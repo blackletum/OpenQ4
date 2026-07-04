@@ -18,6 +18,11 @@ def require(haystack: str, needle: str, context: str) -> None:
         raise AssertionError(f"Missing {needle!r} in {context}")
 
 
+def reject(haystack: str, needle: str, context: str) -> None:
+    if needle in haystack:
+        raise AssertionError(f"Unexpected {needle!r} in {context}")
+
+
 def validate_runtime_startup_error() -> None:
     compat = read("src/sys/osx/macosx_compat.mm")
 
@@ -36,15 +41,25 @@ def validate_runtime_startup_error() -> None:
         "Package root: %s",
         "App path: %s",
         "Missing or unusable entries: %s",
+        "Expected runtime architecture: %s",
+        "Existing mismatched runtime entries: %s",
+        "none detected",
         "openQ4.app",
         "BASE_GAMEDIR",
         "openQ4-client_%s",
         "openQ4-ded_%s",
         "%s/game-sp_%s.dylib",
         "%s/game-mp_%s.dylib",
+        "%s/game-sp_%s.dll",
+        "%s/game-mp_%s.so",
+        "Sys_AppendMacOSPackageRootIssue",
+        "Sys_AppendAlternateMacOSPackageRootEntries",
         "Sys_ExecutableFileExists",
         "Sys_RequireMacOSPackageRootExecutable",
         "Sys_RequireMacOSPackageRootDirectory",
+        '"missing"',
+        '"not executable"',
+        '"not a regular file"',
     ):
         require(compat, token, "macOS adjacent package-root startup diagnostic")
 
@@ -76,8 +91,35 @@ def validate_package_metadata_and_archive_guards() -> None:
         "validate_no_macos_metadata_artifacts",
         "validate_no_macos_casefold_path_collisions",
         "validate_macos_archive_metadata_member_size",
+        "macos_package_suffix_from_name",
+        "contains duplicate key",
+        "contains unexpected header key",
+        "validate_macos_manifest_archive_filename",
+        "contains unsafe archive filename",
+        "package_suffix",
+        "runtime_archive",
+        "runtime_archive_name=archive_path.name",
+        "symbol_archive",
+        "contains duplicate binary entry",
+        "contains unexpected binary entries",
+        "is missing binary entries",
+        "has invalid sha256",
+        "has invalid size",
+        "has invalid macho_uuid",
+        "dsym is",
+        "macOS archive path must not be a symlink",
+        "Unsupported macOS archive format for validation",
         "macOS archive contains symlink entry",
+        "ord(character) < 32",
         "macOS archive contains case-insensitive duplicate entries",
+        "MAX_MACOS_RUNTIME_ARCHIVE_MEMBERS",
+        "macOS archive contains too many members",
+        "MAX_MACOS_RUNTIME_ARCHIVE_TOTAL_BYTES",
+        "macOS archive total expanded size is too large",
+        "MAX_MACOS_SYMBOL_ARCHIVE_MEMBERS",
+        "macOS symbol archive contains too many members",
+        "MAX_MACOS_SYMBOL_ARCHIVE_TOTAL_BYTES",
+        "macOS symbol archive total expanded size is too large",
     ):
         require(package, token, "macOS archive hygiene guards")
 
@@ -111,6 +153,29 @@ def validate_support_info_path_resolution() -> None:
     support_doc = read("docs/user/macos-support-data.md")
 
     for token in (
+        'case "$0" in',
+        'SCRIPT_DIR=$(CDPATH= cd "${script_dir}" && pwd -P)',
+        "runtime_arch_token()",
+        "Detected runtime architecture token: %s",
+        "prepare_package_root()",
+        "Support package root must not be a symlink",
+        "Support package root must be an existing directory",
+        "prepare_output_target()",
+        "umask 077",
+        "ARCHIVE_TMP",
+        "Support archive target must not be a symlink or directory",
+        "Support archive target already exists",
+        "Support archive target appeared while collecting data",
+        "MAX_SUPPORT_TEXT_BYTES",
+        "MAX_CRASH_REPORT_BYTES",
+        "Source file was larger than",
+        "path_exists_for_inspection()",
+        "Skipped symlinked source:",
+        "copy_crash_report_if_safe()",
+        "archive-safe names",
+        "support collector does not follow symlinks",
+        'COPYFILE_DISABLE=1 tar -czf "${ARCHIVE_TMP}"',
+        'chmod 600 "${ARCHIVE_TMP}"',
         "package/path-resolution.txt",
         "Package root: %s",
         "App path: %s",
@@ -124,6 +189,7 @@ def validate_support_info_path_resolution() -> None:
         "does not launch openQ4",
     ):
         require(collector, token, "macOS support collector path-resolution report")
+    reject(collector, "dirname --", "macOS support collector portable script directory resolution")
 
     for token in (
         "`package/path-resolution.txt`",

@@ -133,6 +133,14 @@ static bool Sys_ExecutableFileExists( const char *path ) {
 	return path != NULL && path[0] != '\0' && stat( path, &st ) != -1 && S_ISREG( st.st_mode ) && access( path, X_OK ) == 0;
 }
 
+static bool Sys_MacOSPackageRootPathExists( const idStr &packageDirectory, const char *entry ) {
+	idStr testPath = packageDirectory;
+	testPath.AppendPath( entry );
+
+	struct stat st;
+	return stat( testPath.c_str(), &st ) != -1;
+}
+
 static bool Sys_DirectoryIsWritable( const idStr &path ) {
 	return Sys_DirectoryExists( path.c_str() ) && access( path.c_str(), W_OK | X_OK ) == 0;
 }
@@ -318,27 +326,98 @@ static const char *Sys_MacOSPackageRuntimeArchSuffix( void ) {
 #endif
 }
 
-static void Sys_AppendMissingMacOSPackageRootEntry( idStr &missingEntries, const char *entry ) {
+static void Sys_AppendMacOSPackageRootIssue( idStr &missingEntries, const char *entry, const char *reason ) {
 	if ( missingEntries.Length() > 0 ) {
 		missingEntries.Append( ", " );
 	}
 	missingEntries.Append( entry );
+	if ( reason != NULL && reason[0] != '\0' ) {
+		missingEntries.Append( " (" );
+		missingEntries.Append( reason );
+		missingEntries.Append( ")" );
+	}
+}
+
+static void Sys_AppendMacOSPackageRootFoundEntry( idStr &foundEntries, const char *entry ) {
+	if ( foundEntries.Length() > 0 ) {
+		foundEntries.Append( ", " );
+	}
+	foundEntries.Append( entry );
 }
 
 static void Sys_RequireMacOSPackageRootDirectory( const idStr &packageDirectory, const char *entry, idStr &missingEntries ) {
 	idStr testPath = packageDirectory;
 	testPath.AppendPath( entry );
-	if ( !Sys_DirectoryExists( testPath.c_str() ) ) {
-		Sys_AppendMissingMacOSPackageRootEntry( missingEntries, entry );
+
+	struct stat st;
+	if ( stat( testPath.c_str(), &st ) == -1 ) {
+		Sys_AppendMacOSPackageRootIssue( missingEntries, entry, "missing" );
+		return;
+	}
+	if ( !S_ISDIR( st.st_mode ) ) {
+		Sys_AppendMacOSPackageRootIssue( missingEntries, entry, "not a directory" );
+		return;
+	}
+	if ( access( testPath.c_str(), R_OK | X_OK ) != 0 ) {
+		Sys_AppendMacOSPackageRootIssue( missingEntries, entry, "not readable/searchable" );
 	}
 }
 
 static void Sys_RequireMacOSPackageRootExecutable( const idStr &packageDirectory, const char *entry, idStr &missingEntries ) {
 	idStr testPath = packageDirectory;
 	testPath.AppendPath( entry );
-	if ( !Sys_ExecutableFileExists( testPath.c_str() ) ) {
-		Sys_AppendMissingMacOSPackageRootEntry( missingEntries, entry );
+	if ( Sys_ExecutableFileExists( testPath.c_str() ) ) {
+		return;
 	}
+
+	struct stat st;
+	if ( stat( testPath.c_str(), &st ) == -1 ) {
+		Sys_AppendMacOSPackageRootIssue( missingEntries, entry, "missing" );
+		return;
+	}
+	if ( !S_ISREG( st.st_mode ) ) {
+		Sys_AppendMacOSPackageRootIssue( missingEntries, entry, "not a regular file" );
+		return;
+	}
+	if ( access( testPath.c_str(), X_OK ) != 0 ) {
+		Sys_AppendMacOSPackageRootIssue( missingEntries, entry, "not executable" );
+	}
+}
+
+static void Sys_AppendAlternateMacOSPackageRootEntryIfPresent( const idStr &packageDirectory, const char *entry, idStr &foundEntries ) {
+	if ( Sys_MacOSPackageRootPathExists( packageDirectory, entry ) ) {
+		Sys_AppendMacOSPackageRootFoundEntry( foundEntries, entry );
+	}
+}
+
+static void Sys_AppendAlternateMacOSPackageRootEntries( const idStr &packageDirectory, const char *expectedArch, idStr &foundEntries ) {
+	static const char *knownArchs[] = { "arm64", "x64", "x86" };
+	char entry[96];
+
+	for ( size_t i = 0; i < sizeof( knownArchs ) / sizeof( knownArchs[0] ); ++i ) {
+		const char *arch = knownArchs[i];
+		if ( idStr::Cmp( arch, expectedArch ) == 0 ) {
+			continue;
+		}
+
+		idStr::snPrintf( entry, sizeof( entry ), "openQ4-client_%s", arch );
+		Sys_AppendAlternateMacOSPackageRootEntryIfPresent( packageDirectory, entry, foundEntries );
+		idStr::snPrintf( entry, sizeof( entry ), "openQ4-ded_%s", arch );
+		Sys_AppendAlternateMacOSPackageRootEntryIfPresent( packageDirectory, entry, foundEntries );
+		idStr::snPrintf( entry, sizeof( entry ), "%s/game-sp_%s.dylib", BASE_GAMEDIR, arch );
+		Sys_AppendAlternateMacOSPackageRootEntryIfPresent( packageDirectory, entry, foundEntries );
+		idStr::snPrintf( entry, sizeof( entry ), "%s/game-mp_%s.dylib", BASE_GAMEDIR, arch );
+		Sys_AppendAlternateMacOSPackageRootEntryIfPresent( packageDirectory, entry, foundEntries );
+	}
+
+	idStr::snPrintf( entry, sizeof( entry ), "%s/game-sp_%s.dll", BASE_GAMEDIR, expectedArch );
+	Sys_AppendAlternateMacOSPackageRootEntryIfPresent( packageDirectory, entry, foundEntries );
+	idStr::snPrintf( entry, sizeof( entry ), "%s/game-mp_%s.dll", BASE_GAMEDIR, expectedArch );
+	Sys_AppendAlternateMacOSPackageRootEntryIfPresent( packageDirectory, entry, foundEntries );
+	idStr::snPrintf( entry, sizeof( entry ), "%s/game-sp_%s.so", BASE_GAMEDIR, expectedArch );
+	Sys_AppendAlternateMacOSPackageRootEntryIfPresent( packageDirectory, entry, foundEntries );
+	idStr::snPrintf( entry, sizeof( entry ), "%s/game-mp_%s.so", BASE_GAMEDIR, expectedArch );
+	Sys_AppendAlternateMacOSPackageRootEntryIfPresent( packageDirectory, entry, foundEntries );
 }
 
 static idStr Sys_LocalizedMacOSPackageRootString( const char *key, const char *fallback ) {
@@ -358,6 +437,7 @@ static idStr Sys_LocalizedMacOSPackageRootString( const char *key, const char *f
 
 static void Sys_ErrorIfMacOSAppBundlePackageRootIncomplete( const idStr &appDirectory, const idStr &packageDirectory ) {
 	idStr missingEntries;
+	idStr foundMismatchedEntries;
 	const char *arch = Sys_MacOSPackageRuntimeArchSuffix();
 	char clientEntry[64];
 	char dedicatedEntry[64];
@@ -379,6 +459,8 @@ static void Sys_ErrorIfMacOSAppBundlePackageRootIncomplete( const idStr &appDire
 		return;
 	}
 
+	Sys_AppendAlternateMacOSPackageRootEntries( packageDirectory, arch, foundMismatchedEntries );
+
 	idStr title = Sys_LocalizedMacOSPackageRootString(
 		"OpenQ4PackageRootMissingTitle",
 		"openQ4.app adjacent package root is incomplete"
@@ -389,12 +471,14 @@ static void Sys_ErrorIfMacOSAppBundlePackageRootIncomplete( const idStr &appDire
 	);
 
 	Sys_Error(
-		"%s\n\n%s\n\nExpected adjacent package-root contract: openQ4.app, loose binaries, and baseoq4/ together.\nPackage root: %s\nApp path: %s\nMissing or unusable entries: %s",
+		"%s\n\n%s\n\nExpected adjacent package-root contract: openQ4.app, loose binaries, and baseoq4/ together.\nExpected runtime architecture: %s\nPackage root: %s\nApp path: %s\nMissing or unusable entries: %s\nExisting mismatched runtime entries: %s",
 		title.c_str(),
 		body.c_str(),
+		arch,
 		packageDirectory.c_str(),
 		appDirectory.c_str(),
-		missingEntries.c_str()
+		missingEntries.c_str(),
+		foundMismatchedEntries.Length() > 0 ? foundMismatchedEntries.c_str() : "none detected"
 	);
 }
 

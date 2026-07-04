@@ -109,6 +109,17 @@ openq4-macos-support-YYYYMMDD-HHMMSSZ.tar.gz
 Review the archive before attaching it publicly. The collector redacts
 `/Users/<name>` paths and email-like strings, does not dump the environment,
 does not launch openQ4, and does not copy retail `q4base` PK4 assets.
+It also does not follow symlinked package, log, or crash-report inputs; skipped
+symlinks are recorded in the relevant report files instead of copying or
+inspecting their targets.
+If a DiagnosticReports filename contains unusual characters, the collector
+records a skipped-file note instead of placing that name into the support
+archive.
+Generated support archives are private by default and the collector refuses to
+overwrite an existing archive with the same timestamp. Very large copied text
+files are bounded: package/log text is limited to the final 2 MiB, and crash
+reports are limited to the final 8 MiB, with a truncation note written into the
+copied file.
 
 The archive includes `package/path-resolution.txt`. That file records the
 package root, app path, expected loose runtime paths, and any copied log lines

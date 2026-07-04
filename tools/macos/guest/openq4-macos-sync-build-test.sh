@@ -191,6 +191,13 @@ require_safe_builddir() {
         exit 2
     fi
 
+    local relative_builddir="${resolved_builddir#${repo}/}"
+    local first_segment="${relative_builddir%%/*}"
+    if [[ "${first_segment}" != ".tmp" && "${first_segment}" != builddir* ]]; then
+        echo "OPENQ4_BUILDDIR must live under .tmp/ or use a builddir* name: ${resolved_builddir}" >&2
+        exit 2
+    fi
+
     case "${resolved_builddir}" in
         "${repo}/.git"|\
         "${repo}/.git/"*|\

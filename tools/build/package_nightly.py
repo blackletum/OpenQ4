@@ -154,6 +154,10 @@ MACOS_OPTIONAL_APP_BUNDLE_SIGNATURE_FILES = (
     "Contents/_CodeSignature/CodeResources",
 )
 MAX_MACOS_METADATA_MEMBER_BYTES = 64 * 1024
+MAX_MACOS_RUNTIME_ARCHIVE_MEMBERS = 4096
+MAX_MACOS_SYMBOL_ARCHIVE_MEMBERS = 512
+MAX_MACOS_RUNTIME_ARCHIVE_TOTAL_BYTES = 8 * 1024 * 1024 * 1024
+MAX_MACOS_SYMBOL_ARCHIVE_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 DETERMINISTIC_ARCHIVE_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 DETERMINISTIC_TAR_MTIME = 0
 
@@ -387,6 +391,34 @@ def prepare_archive_output_path(archive_path: Path, label: str) -> None:
         archive_path.unlink()
 
 
+def prepare_macos_symbol_staging_root(symbol_root: Path, output_dir: Path) -> None:
+    if output_dir.is_symlink():
+        raise RuntimeError(f"macOS symbol output directory must not be a symlink: {output_dir}")
+    if symbol_root.is_symlink():
+        raise RuntimeError(f"macOS symbol staging root must not be a symlink: {symbol_root}")
+    if symbol_root.exists():
+        if not symbol_root.is_dir():
+            raise RuntimeError(f"macOS symbol staging root exists but is not a directory: {symbol_root}")
+        shutil.rmtree(symbol_root)
+    symbol_root.mkdir(parents=True, exist_ok=True)
+    if symbol_root.is_symlink() or not symbol_root.is_dir():
+        raise RuntimeError(f"macOS symbol staging root must be a real directory: {symbol_root}")
+
+
+def prepare_macos_dsym_output_path(dsym_path: Path) -> None:
+    if dsym_path.parent.is_symlink():
+        raise RuntimeError(f"macOS dSYM output parent must not be a symlink: {dsym_path.parent}")
+    if dsym_path.is_symlink():
+        raise RuntimeError(f"macOS dSYM output must not be a symlink: {dsym_path}")
+    if dsym_path.exists():
+        if not dsym_path.is_dir():
+            raise RuntimeError(f"macOS dSYM output exists but is not a directory: {dsym_path}")
+        shutil.rmtree(dsym_path)
+    dsym_path.parent.mkdir(parents=True, exist_ok=True)
+    if dsym_path.parent.is_symlink() or not dsym_path.parent.is_dir():
+        raise RuntimeError(f"macOS dSYM output parent must be a real directory: {dsym_path.parent}")
+
+
 def copy_regular_file(source: Path, destination: Path) -> None:
     if source.is_symlink():
         raise RuntimeError(f"refusing to package symlinked file: {source}")
@@ -503,13 +535,21 @@ def validate_no_macos_forbidden_xattrs(root: Path) -> None:
         raise RuntimeError(f"macOS package contains forbidden extended attributes: {joined}")
 
 
-def is_macos_non_runtime_metadata_path(path: Path) -> bool:
+def is_macos_metadata_sidecar_path(path: Path) -> bool:
     for part in path.parts:
         normalized_part = part.lower()
         if any(normalized_part == name.lower() for name in MACOS_FORBIDDEN_ARCHIVE_NAMES):
             return True
         if any(normalized_part.startswith(prefix.lower()) for prefix in MACOS_FORBIDDEN_ARCHIVE_PREFIXES):
             return True
+    return False
+
+
+def is_macos_non_runtime_metadata_path(path: Path) -> bool:
+    if is_macos_metadata_sidecar_path(path):
+        return True
+    for part in path.parts:
+        normalized_part = part.lower()
         if any(normalized_part.endswith(suffix.lower()) for suffix in MACOS_FORBIDDEN_ARCHIVE_SUFFIXES):
             return True
     return False
@@ -715,6 +755,14 @@ def macos_package_version_tag_from_name(package_root: Path, arch: str) -> str:
     if not name.startswith(prefix) or marker not in name:
         raise RuntimeError(f"macOS package directory name cannot provide version tag: {name}")
     return name[len(prefix) : name.index(marker)]
+
+
+def macos_package_suffix_from_name(package_root: Path, arch: str) -> str:
+    name = package_root.name
+    marker = f"-macos-{arch}"
+    if marker not in name:
+        raise RuntimeError(f"macOS package directory name cannot provide package suffix: {name}")
+    return name[name.index(marker) + len(marker) :]
 
 
 def validate_macos_version_manifests(package_root: Path, arch: str, version: str, version_tag: str) -> None:
@@ -1342,6 +1390,7 @@ def validate_macos_symbol_manifest_bytes(
     version: str,
     version_tag: str,
     arch: str,
+    package_suffix: str,
     runtime_archive_name: str,
     symbol_archive_name: str,
 ) -> None:
@@ -1351,28 +1400,132 @@ def validate_macos_symbol_manifest_bytes(
     except UnicodeDecodeError as exc:
         raise RuntimeError(f"{label} is not UTF-8") from exc
 
-    required_tokens = (
-        "openQ4 macOS symbols",
-        "format=1",
-        f"version={version}",
-        f"version_tag={version_tag}",
-        "platform=macos",
-        f"arch={arch}",
-        "runtime_archive=",
-        f"symbol_archive={symbol_archive_name}",
-        "binaries:",
-        "path=openQ4.app/Contents/MacOS/openQ4",
-        f"path={PRODUCT_NAME}-client_{arch}",
-        f"path={PRODUCT_NAME}-ded_{arch}",
-        f"path={GAME_DIR_NAME}/game-sp_{arch}.dylib",
-        f"path={GAME_DIR_NAME}/game-mp_{arch}.dylib",
-        "sha256=",
-        "macho_uuid=",
-        "dsym=dSYMs/openQ4.app.dSYM",
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "openQ4 macOS symbols":
+        raise RuntimeError(f"{label} has invalid header")
+
+    header_values: dict[str, str] = {}
+    for line in lines[1:]:
+        stripped = line.strip()
+        if stripped == "binaries:":
+            break
+        if not stripped:
+            continue
+        if "=" not in stripped:
+            raise RuntimeError(f"{label} contains malformed header line: {line}")
+        key, value = stripped.split("=", 1)
+        if key in header_values:
+            raise RuntimeError(f"{label} contains duplicate key: {key}")
+        header_values[key] = value
+
+    expected_values = {
+        "format": "1",
+        "version": version,
+        "version_tag": version_tag,
+        "platform": "macos",
+        "arch": arch,
+        "package_suffix": package_suffix or "<none>",
+        "symbol_archive": symbol_archive_name,
+    }
+    allowed_header_keys = set(expected_values) | {"runtime_archive"}
+    unexpected_header_keys = sorted(set(header_values) - allowed_header_keys)
+    if unexpected_header_keys:
+        raise RuntimeError(f"{label} contains unexpected header key: {', '.join(unexpected_header_keys)}")
+
+    symbol_archive = header_values.get("symbol_archive")
+    if symbol_archive is not None:
+        validate_macos_manifest_archive_filename(
+            symbol_archive,
+            f"{label} symbol_archive",
+            (MACOS_SYMBOL_ARCHIVE_SUFFIX,),
+        )
+
+    runtime_archive = header_values.get("runtime_archive")
+    if runtime_archive is None:
+        raise RuntimeError(f"{label} is missing required token: runtime_archive=")
+    validate_macos_manifest_archive_filename(
+        runtime_archive,
+        f"{label} runtime_archive",
+        tuple(ARCHIVE_SUFFIX.values()),
     )
-    for token in required_tokens:
-        if token not in text:
-            raise RuntimeError(f"{label} is missing required token: {token}")
+
+    for key, expected in expected_values.items():
+        actual = header_values.get(key)
+        if actual != expected:
+            raise RuntimeError(f"{label} {key} is {actual!r}; expected {expected!r}")
+    if runtime_archive_name and runtime_archive != runtime_archive_name:
+        raise RuntimeError(f"{label} runtime_archive is {runtime_archive!r}; expected {runtime_archive_name!r}")
+
+    expected_binaries = {
+        "openQ4.app/Contents/MacOS/openQ4": "dSYMs/openQ4.app.dSYM",
+        f"{PRODUCT_NAME}-client_{arch}": f"dSYMs/{PRODUCT_NAME}-client_{arch}.dSYM",
+        f"{PRODUCT_NAME}-ded_{arch}": f"dSYMs/{PRODUCT_NAME}-ded_{arch}.dSYM",
+        f"{GAME_DIR_NAME}/game-sp_{arch}.dylib": f"dSYMs/game-sp_{arch}.dylib.dSYM",
+        f"{GAME_DIR_NAME}/game-mp_{arch}.dylib": f"dSYMs/game-mp_{arch}.dylib.dSYM",
+    }
+    if "binaries:" not in [line.strip() for line in lines]:
+        raise RuntimeError(f"{label} is missing required token: binaries:")
+
+    binary_records: dict[str, dict[str, str]] = {}
+    current_path: str | None = None
+    in_binaries = False
+    for line in lines[1:]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped == "binaries:":
+            in_binaries = True
+            current_path = None
+            continue
+        if not in_binaries:
+            continue
+        if stripped.startswith("- path="):
+            current_path = stripped.removeprefix("- path=")
+            validate_macos_archive_name(current_path, "")
+            if current_path in binary_records:
+                raise RuntimeError(f"{label} contains duplicate binary entry: {current_path}")
+            binary_records[current_path] = {}
+            continue
+        if current_path is None:
+            raise RuntimeError(f"{label} contains binary metadata before a path: {line}")
+        if "=" not in stripped:
+            raise RuntimeError(f"{label} contains malformed binary line: {line}")
+        key, value = stripped.split("=", 1)
+        if key not in {"sha256", "size", "macho_uuid", "dsym"}:
+            raise RuntimeError(f"{label} contains unexpected binary field: {key}")
+        if key in binary_records[current_path]:
+            raise RuntimeError(f"{label} contains duplicate binary field {key}: {current_path}")
+        binary_records[current_path][key] = value
+
+    missing_binaries = sorted(set(expected_binaries) - set(binary_records))
+    if missing_binaries:
+        raise RuntimeError(f"{label} is missing binary entries: {', '.join(missing_binaries)}")
+    unexpected_binaries = sorted(set(binary_records) - set(expected_binaries))
+    if unexpected_binaries:
+        raise RuntimeError(f"{label} contains unexpected binary entries: {', '.join(unexpected_binaries)}")
+
+    for binary_path, expected_dsym in expected_binaries.items():
+        record = binary_records[binary_path]
+        for field in ("sha256", "size", "macho_uuid", "dsym"):
+            if field not in record:
+                raise RuntimeError(f"{label} binary {binary_path} is missing {field}")
+        if re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is None:
+            raise RuntimeError(f"{label} binary {binary_path} has invalid sha256")
+        if re.fullmatch(r"[0-9]+", record["size"]) is None or int(record["size"]) <= 0:
+            raise RuntimeError(f"{label} binary {binary_path} has invalid size")
+        macho_uuid = record["macho_uuid"].strip()
+        expected_macho_arch = MACOS_LIPO_ARCHES.get(arch, arch)
+        if (
+            not macho_uuid
+            or any(ord(character) < 32 or ord(character) == 127 for character in macho_uuid)
+            or re.fullmatch(r"UUID: [0-9A-Fa-f-]{36} \([A-Za-z0-9_]+\) .+", macho_uuid) is None
+            or f"({expected_macho_arch})" not in macho_uuid
+        ):
+            raise RuntimeError(f"{label} binary {binary_path} has invalid macho_uuid")
+        if record["dsym"] != expected_dsym:
+            raise RuntimeError(
+                f"{label} binary {binary_path} dsym is {record['dsym']!r}; expected {expected_dsym!r}"
+            )
 
 
 def create_macos_dsym_bundle(binary_path: Path, dsym_path: Path) -> None:
@@ -1383,12 +1536,7 @@ def create_macos_dsym_bundle(binary_path: Path, dsym_path: Path) -> None:
     if dsymutil_path is None:
         raise RuntimeError("macOS dSYM generation requires dsymutil")
 
-    if dsym_path.exists():
-        if dsym_path.is_dir():
-            shutil.rmtree(dsym_path)
-        else:
-            dsym_path.unlink()
-    dsym_path.parent.mkdir(parents=True, exist_ok=True)
+    prepare_macos_dsym_output_path(dsym_path)
 
     run_macos_command(
         [dsymutil_path, str(binary_path), "-o", str(dsym_path)],
@@ -1401,6 +1549,17 @@ def create_macos_dsym_bundle(binary_path: Path, dsym_path: Path) -> None:
 
 
 def create_macos_symbol_tarball(symbol_root: Path, archive_path: Path) -> None:
+    if symbol_root.is_symlink():
+        raise RuntimeError(f"macOS symbol archive input root must not be a symlink: {symbol_root}")
+    if not symbol_root.is_dir():
+        raise RuntimeError(f"macOS symbol archive input root was not found: {symbol_root}")
+    try:
+        if is_relative_to(archive_path.resolve(strict=False), symbol_root.resolve()):
+            raise RuntimeError(
+                f"macOS symbol archive output must not be inside the symbol staging root: {archive_path}"
+            )
+    except OSError as exc:
+        raise RuntimeError(f"macOS symbol archive paths could not be resolved safely: {exc}") from exc
     prepare_archive_output_path(archive_path, "macOS symbol archive output")
 
     with tarfile.open(archive_path, "w:xz") as archive:
@@ -1435,6 +1594,8 @@ def validate_macos_symbol_archive_contents(
     package_suffix: str,
     runtime_archive_name: str,
 ) -> None:
+    if archive_path.is_symlink():
+        raise RuntimeError(f"macOS symbol archive path must not be a symlink: {archive_path}")
     if not archive_path.is_file():
         raise RuntimeError(f"macOS symbol archive was not created: {archive_path}")
 
@@ -1457,9 +1618,17 @@ def validate_macos_symbol_archive_contents(
     }
 
     entry_names: set[str] = set()
+    casefold_entry_names: dict[str, str] = {}
     manifest_bytes: bytes | None = None
     with tarfile.open(archive_path, "r:*") as archive:
-        for member in archive.getmembers():
+        members = archive.getmembers()
+        if len(members) > MAX_MACOS_SYMBOL_ARCHIVE_MEMBERS:
+            raise RuntimeError(
+                "macOS symbol archive contains too many members: "
+                f"{len(members)} (max {MAX_MACOS_SYMBOL_ARCHIVE_MEMBERS})"
+            )
+        total_member_bytes = 0
+        for member in members:
             name = member.name.rstrip("/")
             if not name:
                 continue
@@ -1467,9 +1636,28 @@ def validate_macos_symbol_archive_contents(
                 raise RuntimeError(f"macOS symbol archive contains symlink entry: {name}")
             if not member.isfile():
                 raise RuntimeError(f"macOS symbol archive contains non-regular entry: {name}")
+            total_member_bytes += member.size
+            if total_member_bytes > MAX_MACOS_SYMBOL_ARCHIVE_TOTAL_BYTES:
+                raise RuntimeError(
+                    "macOS symbol archive total expanded size is too large: "
+                    f"{total_member_bytes} bytes (max {MAX_MACOS_SYMBOL_ARCHIVE_TOTAL_BYTES})"
+                )
             validate_macos_archive_name(name, package_prefix)
+            if is_macos_metadata_sidecar_path(Path(name)):
+                raise RuntimeError(f"macOS symbol archive contains non-runtime metadata/debug entry: {name}")
+            validate_macos_archive_metadata_member_size(name, member.size)
             validate_macos_archive_mode(name, member.mode & 0o7777)
+            if name in entry_names:
+                raise RuntimeError(f"macOS symbol archive contains duplicate entry: {name}")
+            casefold_key = macos_casefold_path_key(name)
+            previous = casefold_entry_names.get(casefold_key)
+            if previous is not None and previous != name:
+                raise RuntimeError(
+                    "macOS symbol archive contains case-insensitive duplicate entries: "
+                    f"{previous}, {name}"
+                )
             entry_names.add(name)
+            casefold_entry_names[casefold_key] = name
             if name == f"{package_prefix}{MACOS_SYMBOL_MANIFEST_NAME}":
                 extracted = archive.extractfile(member)
                 if extracted is not None:
@@ -1493,6 +1681,7 @@ def validate_macos_symbol_archive_contents(
         version=version,
         version_tag=version_tag,
         arch=arch,
+        package_suffix=package_suffix,
         runtime_archive_name=runtime_archive_name,
         symbol_archive_name=expected_symbol_archive_name,
     )
@@ -1511,9 +1700,7 @@ def create_macos_symbol_archive(
     symbol_stem = macos_symbol_archive_stem(version_tag, arch, package_suffix)
     symbol_root = output_dir / symbol_stem
     symbol_archive_path = output_dir / f"{symbol_stem}{MACOS_SYMBOL_ARCHIVE_SUFFIX}"
-    if symbol_root.exists():
-        shutil.rmtree(symbol_root)
-    symbol_root.mkdir(parents=True, exist_ok=True)
+    prepare_macos_symbol_staging_root(symbol_root, output_dir)
 
     copy_regular_file(package_root / MACOS_SYMBOL_MANIFEST_NAME, symbol_root / MACOS_SYMBOL_MANIFEST_NAME)
     for _relative_path, binary_path, dsym_relative_path in macos_symbol_targets(package_root, arch):
@@ -1926,12 +2113,28 @@ def validate_macos_archive_name(name: str, package_prefix: str) -> None:
         name.startswith("/")
         or "\\" in name
         or re.match(r"^[A-Za-z]:", name) is not None
+        or any(ord(character) < 32 or ord(character) == 127 for character in name)
         or "/../" in f"/{name}/"
         or "" in parts
         or any(part in (".", "..") for part in parts)
         or not name.startswith(package_prefix)
     ):
         raise RuntimeError(f"macOS archive contains unsafe or out-of-package path: {name}")
+
+
+def validate_macos_manifest_archive_filename(value: str, label: str, allowed_suffixes: tuple[str, ...]) -> None:
+    if (
+        "/" in value
+        or "\\" in value
+        or re.match(r"^[A-Za-z]:", value) is not None
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+        or value.startswith(".")
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", value)
+    ):
+        raise RuntimeError(f"{label} contains unsafe archive filename: {value}")
+    if not any(value.endswith(suffix) for suffix in allowed_suffixes):
+        suffixes = ", ".join(allowed_suffixes)
+        raise RuntimeError(f"{label} has unsupported archive suffix: {value} (expected one of: {suffixes})")
 
 
 def validate_macos_archive_mode(name: str, mode: int) -> None:
@@ -1981,6 +2184,13 @@ def record_macos_archive_entry(
 def validate_macos_archive_contents(
     package_root: Path, archive_path: Path, archive_format: str, arch: str, version: str
 ) -> None:
+    if archive_path.is_symlink():
+        raise RuntimeError(f"macOS archive path must not be a symlink: {archive_path}")
+    if not archive_path.is_file():
+        raise RuntimeError(f"macOS archive was not created: {archive_path}")
+    if archive_format not in {"tar.gz", "tar.xz", "zip"}:
+        raise RuntimeError(f"Unsupported macOS archive format for validation: {archive_format}")
+
     package_prefix = package_root.name + "/"
     app_bundle_prefix = f"{package_prefix}openQ4.app/"
     expected_app_bundle_entries = {
@@ -2041,7 +2251,14 @@ def validate_macos_archive_contents(
 
     if archive_format == "zip":
         with ZipFile(archive_path, "r") as archive:
-            for info in archive.infolist():
+            members = archive.infolist()
+            if len(members) > MAX_MACOS_RUNTIME_ARCHIVE_MEMBERS:
+                raise RuntimeError(
+                    "macOS archive contains too many members: "
+                    f"{len(members)} (max {MAX_MACOS_RUNTIME_ARCHIVE_MEMBERS})"
+                )
+            total_member_bytes = 0
+            for info in members:
                 name = info.filename.rstrip("/")
                 if not name:
                     continue
@@ -2052,6 +2269,12 @@ def validate_macos_archive_contents(
                     raise RuntimeError(f"macOS archive contains symlink entry: {name}")
                 if info.create_system == 3 and mode_type not in (0, stat.S_IFREG):
                     raise RuntimeError(f"macOS archive contains non-regular entry: {name}")
+                total_member_bytes += info.file_size
+                if total_member_bytes > MAX_MACOS_RUNTIME_ARCHIVE_TOTAL_BYTES:
+                    raise RuntimeError(
+                        "macOS archive total expanded size is too large: "
+                        f"{total_member_bytes} bytes (max {MAX_MACOS_RUNTIME_ARCHIVE_TOTAL_BYTES})"
+                    )
                 record_macos_archive_entry(entry_names, casefold_entry_names, name, package_prefix)
                 validate_macos_archive_metadata_member_size(name, info.file_size)
                 modes[name] = (info.external_attr >> 16) & 0o7777
@@ -2081,7 +2304,14 @@ def validate_macos_archive_contents(
                 code_resources_bytes = archive.read(code_resources_entry)
     else:
         with tarfile.open(archive_path, "r:*") as archive:
-            for member in archive.getmembers():
+            members = archive.getmembers()
+            if len(members) > MAX_MACOS_RUNTIME_ARCHIVE_MEMBERS:
+                raise RuntimeError(
+                    "macOS archive contains too many members: "
+                    f"{len(members)} (max {MAX_MACOS_RUNTIME_ARCHIVE_MEMBERS})"
+                )
+            total_member_bytes = 0
+            for member in members:
                 name = member.name.rstrip("/")
                 if not name:
                     continue
@@ -2089,6 +2319,12 @@ def validate_macos_archive_contents(
                     raise RuntimeError(f"macOS archive contains symlink entry: {name}")
                 if not member.isfile():
                     raise RuntimeError(f"macOS archive contains non-regular entry: {name}")
+                total_member_bytes += member.size
+                if total_member_bytes > MAX_MACOS_RUNTIME_ARCHIVE_TOTAL_BYTES:
+                    raise RuntimeError(
+                        "macOS archive total expanded size is too large: "
+                        f"{total_member_bytes} bytes (max {MAX_MACOS_RUNTIME_ARCHIVE_TOTAL_BYTES})"
+                    )
                 record_macos_archive_entry(entry_names, casefold_entry_names, name, package_prefix)
                 validate_macos_archive_metadata_member_size(name, member.size)
                 modes[name] = member.mode & 0o7777
@@ -2211,6 +2447,7 @@ def validate_macos_archive_contents(
         version=version,
         version_tag=package_version_tag,
         arch=arch,
+        package_suffix=macos_package_suffix_from_name(package_root, arch),
         runtime_archive_name=archive_path.name,
         symbol_archive_name=f"{package_root.name}-symbols{MACOS_SYMBOL_ARCHIVE_SUFFIX}",
     )

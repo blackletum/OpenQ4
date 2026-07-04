@@ -53,6 +53,9 @@ MACOS_STATIC_PROFILE = "macos-static"
 MACOS_STATIC_SHELL_SYNTAX_FILES = (
     "tools/build/meson_setup.sh",
     "tools/macos/collect_macos_support_info.sh",
+    "tools/macos/guest/openq4-macos-bootstrap.sh",
+    "tools/macos/guest/openq4-macos-install-quake4-assets.sh",
+    "tools/macos/guest/openq4-macos-sync-build-test.sh",
     "tools/validation/validate_push.sh",
     "tools/validation/validate_pr.sh",
     "tools/validation/validate_macos_static.sh",

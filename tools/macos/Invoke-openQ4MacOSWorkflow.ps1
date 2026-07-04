@@ -121,6 +121,29 @@ function Assert-SafeRemoteWorkflowPath {
     }
 }
 
+function Assert-SafeMacOSBuildDir {
+    param([AllowNull()][string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value) -or $Value -match '[\x00-\x20\x7f]') {
+        throw "Invalid BuildDir '$Value'. Use a non-empty relative build output path without whitespace or control characters."
+    }
+    if ($Value.StartsWith("-") -or $Value.StartsWith("/") -or $Value.StartsWith("~/") -or $Value -match '\\') {
+        throw "Invalid BuildDir '$Value'. Use a relative POSIX path under builddir* or .tmp/."
+    }
+    if ($Value -match '//') {
+        throw "Invalid BuildDir '$Value'. Empty POSIX path segments are not allowed."
+    }
+    if ($Value -match '(^|/)\.($|/)') {
+        throw "Invalid BuildDir '$Value'. Dot path segments are not allowed."
+    }
+    if ($Value -match '(^|/)\.\.($|/)') {
+        throw "Invalid BuildDir '$Value'. Parent-directory traversal is not allowed."
+    }
+    if (-not ($Value -like "builddir*" -or $Value -like ".tmp/*")) {
+        throw "Invalid BuildDir '$Value'. BuildDir must live under .tmp/ or use a builddir* name."
+    }
+}
+
 function Assert-LocalRegularFile {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -186,6 +209,7 @@ function Assert-MacOSWorkflowInputs {
     Assert-ValidMacHost
     Assert-SafeRemoteWorkflowPath -Label "MacWorkspace" -Value $MacWorkspace
     Assert-SafeRemoteWorkflowPath -Label "MacBasePath" -Value $MacBasePath
+    Assert-SafeMacOSBuildDir -Value $BuildDir
     if ($MacWorkspace.TrimEnd("/") -eq $MacBasePath.TrimEnd("/")) {
         throw "MacBasePath must not be the same directory as MacWorkspace; asset installation uses rsync --delete."
     }
@@ -429,13 +453,86 @@ prepare_remote_extract_target() {
 require_single_archive_root() {
     local archive_path="`$1"
     local archive_roots archive_root_count
-    archive_roots="`$(tar -tf "`$archive_path" | awk -F/ 'NF && `$1 != "" {print `$1}' | sort -u)"
+    archive_roots="`$(COPYFILE_DISABLE=1 tar -tf "`$archive_path" | awk -F/ 'NF && `$1 != "" {print `$1}' | sort -u)"
     archive_root_count="`$(printf '%s\n' "`$archive_roots" | sed '/^$/d' | wc -l | tr -d '[:space:]')"
     if [[ "`$archive_root_count" != "1" ]]; then
         echo "Archive must contain exactly one top-level source root before stripping components: `$archive_path" >&2
         printf '%s\n' "`$archive_roots" >&2
         exit 1
     fi
+}
+
+reject_unsafe_remote_archive_entries() {
+    local tar_path="`$1"
+    python3 - "`$tar_path" <<'PY'
+import pathlib
+import sys
+import tarfile
+import unicodedata
+
+archive_path = pathlib.Path(sys.argv[1])
+forbidden_metadata_names = {
+    ".ds_store",
+    "__macosx",
+    ".fseventsd",
+    ".spotlight-v100",
+    ".trashes",
+    "icon\r",
+}
+seen_entries = set()
+seen_casefold_entries = {}
+top_roots = set()
+
+
+def fail(message):
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def is_macos_metadata_path(parts):
+    for part in parts:
+        normalized = part.casefold()
+        if normalized in forbidden_metadata_names:
+            return True
+        if normalized.startswith("._") or normalized.endswith(".dsym"):
+            return True
+    return False
+
+
+try:
+    with tarfile.open(archive_path, "r:*") as archive:
+        for member in archive.getmembers():
+            raw_entry = member.name
+            entry = raw_entry.rstrip("/") if member.isdir() else raw_entry
+            parts = entry.split("/")
+            if (
+                entry in {"", ".", ".."}
+                or entry.startswith(("./", "/", "../"))
+                or "\\" in entry
+                or any(ord(character) < 32 or ord(character) == 127 for character in entry)
+                or "/../" in f"/{entry}/"
+                or "" in parts
+                or any(part in {".", ".."} for part in parts)
+            ):
+                fail(f"Unsafe archive path: {entry!r}")
+            if not (member.isfile() or member.isdir()):
+                fail(f"Archive contains a symlink or special file (including hardlinks): {entry}")
+            if is_macos_metadata_path(parts):
+                fail(f"Archive contains non-runtime macOS metadata/debug entry: {entry}")
+            if entry in seen_entries:
+                fail(f"Archive contains duplicate member: {entry}")
+            casefold_entry = unicodedata.normalize("NFC", entry).casefold()
+            previous = seen_casefold_entries.get(casefold_entry)
+            if previous is not None and previous != entry:
+                fail(f"Archive contains case-insensitive path collision: {previous}, {entry}")
+            seen_entries.add(entry)
+            seen_casefold_entries[casefold_entry] = entry
+            top_roots.add(parts[0])
+        if len(top_roots) != 1:
+            fail(f"Archive must contain exactly one top-level source root before stripping components: {archive_path}")
+except tarfile.TarError as exc:
+    fail(f"Unable to inspect remote archive: {archive_path}: {exc}")
+PY
 }
 
 archive_raw=$(Quote-Sh $RemoteArchive)
@@ -448,7 +545,9 @@ prepare_remote_extract_target "`$target"
 tmp_dir="`$(mktemp -d /tmp/openq4-extract.XXXXXX)"
 trap 'rm -rf "`$tmp_dir"' EXIT
 
-tar -tf "`$archive" | while IFS= read -r entry; do
+reject_unsafe_remote_archive_entries "`$archive"
+
+COPYFILE_DISABLE=1 tar -tf "`$archive" | while IFS= read -r entry; do
     case "`$entry" in
         ""|"."|".."|./*|*/./*|*//*|/*|../*|*/../*|*/..|*\\*)
             echo "Unsafe archive path: `$entry" >&2
@@ -459,7 +558,7 @@ done
 
 require_single_archive_root "`$archive"
 
-tar -tvf "`$archive" | while IFS= read -r listing; do
+COPYFILE_DISABLE=1 tar -tvf "`$archive" | while IFS= read -r listing; do
     entry_type="`${listing:0:1}"
     case "`$entry_type" in
         -|d)
@@ -471,7 +570,7 @@ tar -tvf "`$archive" | while IFS= read -r listing; do
     esac
 done
 
-tar -xf "`$archive" -C "`$tmp_dir" --strip-components 1
+COPYFILE_DISABLE=1 tar -xf "`$archive" -C "`$tmp_dir" --strip-components 1
 bad_entry="`$(find "`$tmp_dir" \( -type l -o \( ! -type f -a ! -type d \) \) -print -quit)"
 if [[ -n "`$bad_entry" ]]; then
     echo "Archive contains a symlink or special file: `$bad_entry" >&2
@@ -873,9 +972,6 @@ function Invoke-MacOSWorkflowMain {
     }
     if ($MacOSRunId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
         throw "Invalid MacOSRunId '$MacOSRunId'. Use letters, digits, dots, underscores, or dashes, starting with a letter or digit."
-    }
-    if ([string]::IsNullOrWhiteSpace($BuildDir) -or $BuildDir -match "[`r`n]") {
-        throw "Invalid BuildDir '$BuildDir'. Use a non-empty single-line path under the guest openQ4 repository."
     }
     $script:RemoteTempRoot = "/tmp/openq4-macos-$([System.Guid]::NewGuid().ToString("N"))"
     Invoke-MacSsh -Command "umask 077 && mkdir -p $(Quote-Sh $script:RemoteTempRoot)"

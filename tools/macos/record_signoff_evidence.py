@@ -21,6 +21,8 @@ DEFAULT_GAMELIBS_ROOT = ROOT.parent / "openQ4-game"
 NO_COMPLETED_STATUS = "- [ ] No completed macOS first-class support evidence is recorded yet."
 EVIDENCE_HISTORY_HEADING = "## Evidence History"
 CURRENT_RELEASE_HEADING = "## Current Release Evidence"
+PACKAGE_ARTIFACT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
+PACKAGE_ARTIFACT_SUFFIXES = (".dmg", ".tar.gz", ".tar.xz", ".zip")
 
 
 @dataclass(frozen=True)
@@ -223,6 +225,40 @@ def normalize_items(items: list[str], default: str) -> tuple[str, ...]:
     return cleaned or (default,)
 
 
+def artifact_casefold_key(value: str) -> str:
+    return value.casefold()
+
+
+def validate_package_artifacts(artifacts: list[str], bridges: tuple[str, ...]) -> tuple[str, ...]:
+    cleaned = tuple(artifact.strip() for artifact in artifacts if artifact.strip())
+    if not cleaned:
+        return ()
+
+    seen: dict[str, str] = {}
+    for artifact in cleaned:
+        if (
+            "/" in artifact
+            or "\\" in artifact
+            or any(ord(character) < 32 or ord(character) == 127 for character in artifact)
+            or PACKAGE_ARTIFACT_PATTERN.fullmatch(artifact) is None
+        ):
+            raise RuntimeError(f"Package artifact name is not a safe filename: {artifact!r}")
+        if not artifact.startswith("openq4-") or "-macos-arm64-" not in artifact:
+            raise RuntimeError(f"Package artifact is not an experimental macOS arm64 openQ4 artifact: {artifact}")
+        if not any(artifact.endswith(suffix) for suffix in PACKAGE_ARTIFACT_SUFFIXES):
+            raise RuntimeError(f"Package artifact has unsupported archive suffix: {artifact}")
+        key = artifact_casefold_key(artifact)
+        previous = seen.get(key)
+        if previous is not None:
+            raise RuntimeError(f"Package artifact names contain a case-insensitive duplicate: {previous}, {artifact}")
+        seen[key] = artifact
+
+    for bridge in bridges:
+        if not any(f"-{bridge}" in artifact for artifact in cleaned):
+            raise RuntimeError(f"Package artifacts are missing the {bridge} bridge artifact.")
+    return cleaned
+
+
 def build_evidence(args: argparse.Namespace, *, run_id: str, bridges: tuple[str, ...], reports: list[ReportData]) -> EvidenceData:
     hardware = first_section(reports, "Hardware")
     displays = first_section(reports, "Displays")
@@ -272,7 +308,7 @@ def build_evidence(args: argparse.Namespace, *, run_id: str, bridges: tuple[str,
         validator_result="passed with --require-completed-checklist",
         openq4_commit=args.openq4_commit or run_git_commit(ROOT),
         gamelibs_commit=args.gamelibs_commit or run_git_commit(args.gamelibs_root),
-        package_artifacts=tuple(args.package_artifact) or ("not recorded",),
+        package_artifacts=validate_package_artifacts(args.package_artifact, bridges) or ("not recorded",),
         signing_status=args.signing_status or "not recorded",
         architecture_policy=unique_metadata(reports, "Architecture policy"),
         architecture=architecture,
@@ -490,30 +526,34 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str]) -> int:
-    args = parse_args(argv)
-    args.archive = args.archive.resolve()
-    args.gamelibs_root = args.gamelibs_root.resolve()
-    args.index = args.index.resolve()
+    try:
+        args = parse_args(argv)
+        args.archive = args.archive.resolve()
+        args.gamelibs_root = args.gamelibs_root.resolve()
+        args.index = args.index.resolve()
 
-    validator = load_validator()
-    bridges = validator.parse_bridges(args.bridges)
-    run_id = validator.validate_signoff_archive(
-        args.archive,
-        run_id=args.run_id or None,
-        action=args.action,
-        bridges=bridges,
-        require_completed_checklist=True,
-    )
-    reports = read_reports(args.archive, run_id=run_id, action=args.action, bridges=bridges)
-    evidence = build_evidence(args, run_id=run_id, bridges=bridges, reports=reports)
+        validator = load_validator()
+        bridges = validator.parse_bridges(args.bridges)
+        run_id = validator.validate_signoff_archive(
+            args.archive,
+            run_id=args.run_id or None,
+            action=args.action,
+            bridges=bridges,
+            require_completed_checklist=True,
+        )
+        reports = read_reports(args.archive, run_id=run_id, action=args.action, bridges=bridges)
+        evidence = build_evidence(args, run_id=run_id, bridges=bridges, reports=reports)
 
-    record = format_history_record(evidence)
-    print(record)
+        record = format_history_record(evidence)
+        print(record)
 
-    if args.update_index:
-        update_index(args.index, evidence)
-        print(f"Updated macOS signoff evidence index: {args.index}")
-    return 0
+        if args.update_index:
+            update_index(args.index, evidence)
+            print(f"Updated macOS signoff evidence index: {args.index}")
+        return 0
+    except RuntimeError as exc:
+        print(f"macOS signoff evidence recording failed: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

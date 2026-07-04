@@ -155,7 +155,15 @@ Guest paths passed through `-MacWorkspace` and `-MacBasePath` must be absolute P
 Keep `-BuildDir` pointed at a dedicated build output directory such as
 `builddir`, `builddir-opengl`, or `builddir-metal`; the guest script refuses the
 repo root, source/content/tool trees, `.install`, symlinks, and files as Meson
-build directories.
+build directories. Host-side validation now also requires `-BuildDir` to be a
+relative `builddir*` path or a path under `.tmp/`, matching the local validation
+profile's build-output convention.
+
+Source, GameLibs, and retail asset transfer archives are rechecked on the Apple
+host before extraction. The workflow rejects malformed paths, control
+characters, duplicate members, case-insensitive member collisions, macOS
+metadata/debug sidecars, symlinks, hardlinks, and special files, then extracts
+with `COPYFILE_DISABLE=1` so AppleDouble sidecars do not appear during sync.
 
 After `Signoff` or `All`, the host workflow automatically copies the matching
 guest result directories into a compressed archive at
@@ -163,7 +171,9 @@ guest result directories into a compressed archive at
 `-MacOSRunId <id>` to choose a stable collection prefix, `-ResultCollectionDir`
 to store archives elsewhere, or `-SkipResultCollection` when the results should
 remain only on the Apple host. The copied archive is validated automatically
-unless `-SkipResultArchiveValidation` is set.
+unless `-SkipResultArchiveValidation` is set. The validator also requires the
+archive filename to keep the same `<run-id>` as the result directories, so do
+not rename the collected `.tar.gz` before recording signoff evidence.
 
 The automatic validation checks structure, both bridge reports, workflow logs,
 staged payload evidence, binary architecture evidence, macOS system/device
@@ -213,9 +223,11 @@ Use `--artifact-url` when the validated `.tar.gz` evidence lives in an issue,
 release candidate, or external artifact store rather than only under `.tmp/`.
 The recorder re-runs `tools/macos/validate_signoff_archive.py` with
 `--require-completed-checklist`, computes the archive SHA-256, extracts the
-bridge reports, records the openQ4 and `openQ4-game` commits, updates
-`docs/dev/macos-signoff-evidence.md`, and leaves the release-completion evidence
-gate open until curated release notes link to the accepted record.
+bridge reports, verifies that package artifact names are safe `openQ4` macOS
+arm64 filenames covering every requested graphics bridge, records the openQ4
+and `openQ4-game` commits, updates `docs/dev/macos-signoff-evidence.md`, and
+leaves the release-completion evidence gate open until curated release notes
+link to the accepted record.
 
 The Apple OpenAL framework remains the default signoff and release audio
 provider through `macos_openal_provider=apple_framework`. To test the

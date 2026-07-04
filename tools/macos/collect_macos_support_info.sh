@@ -2,8 +2,13 @@
 # Collect redacted macOS support data for experimental openQ4 crash reports.
 
 set -eu
+umask 077
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+case "$0" in
+    */*) script_dir=${0%/*} ;;
+    *) script_dir=. ;;
+esac
+SCRIPT_DIR=$(CDPATH= cd "${script_dir}" && pwd -P)
 PACKAGE_ROOT=${OPENQ4_PACKAGE_ROOT:-$SCRIPT_DIR}
 OUTPUT_DIR=${1:-$(pwd)}
 STAMP=$(date -u +"%Y%m%d-%H%M%SZ")
@@ -11,14 +16,72 @@ WORK_PARENT=$(mktemp -d "${TMPDIR:-/tmp}/openq4-support.XXXXXX")
 BUNDLE_NAME="openq4-macos-support-${STAMP}"
 BUNDLE_DIR="${WORK_PARENT}/${BUNDLE_NAME}"
 ARCHIVE_PATH="${OUTPUT_DIR%/}/${BUNDLE_NAME}.tar.gz"
+ARCHIVE_TMP="${OUTPUT_DIR%/}/.${BUNDLE_NAME}.$$.tar.gz.tmp"
+MAX_SUPPORT_TEXT_BYTES=2097152
+MAX_CRASH_REPORT_BYTES=8388608
+
+fail() {
+    printf '%s\n' "$*" >&2
+    exit 1
+}
 
 cleanup() {
+    if [ -n "${ARCHIVE_TMP:-}" ]; then
+        rm -f "${ARCHIVE_TMP}"
+    fi
     rm -rf "${WORK_PARENT}"
 }
 trap cleanup EXIT HUP INT TERM
 
+runtime_arch_token() {
+    case "$(uname -m 2>/dev/null || printf unknown)" in
+        arm64|aarch64) printf 'arm64\n' ;;
+        x86_64|amd64) printf 'x64\n' ;;
+        i386|i686) printf 'x86\n' ;;
+        *) uname -m 2>/dev/null || printf 'unknown\n' ;;
+    esac
+}
+
+RUNTIME_ARCH=$(runtime_arch_token)
+SKIPPED_CRASH_REPORT_INDEX=0
+
+prepare_package_root() {
+    if [ -L "${PACKAGE_ROOT}" ]; then
+        fail "Support package root must not be a symlink: ${PACKAGE_ROOT}"
+    fi
+    if [ ! -d "${PACKAGE_ROOT}" ]; then
+        fail "Support package root must be an existing directory: ${PACKAGE_ROOT}"
+    fi
+}
+
+prepare_output_target() {
+    if [ -z "${OUTPUT_DIR}" ]; then
+        fail "Support output directory must not be empty"
+    fi
+    if [ -L "${OUTPUT_DIR}" ]; then
+        fail "Support output directory must not be a symlink: ${OUTPUT_DIR}"
+    fi
+    if [ -e "${OUTPUT_DIR}" ] && [ ! -d "${OUTPUT_DIR}" ]; then
+        fail "Support output path exists but is not a directory: ${OUTPUT_DIR}"
+    fi
+    mkdir -p "${OUTPUT_DIR}"
+    if [ -L "${OUTPUT_DIR}" ] || [ ! -d "${OUTPUT_DIR}" ]; then
+        fail "Support output directory must be a real directory: ${OUTPUT_DIR}"
+    fi
+    if [ -L "${ARCHIVE_PATH}" ] || [ -d "${ARCHIVE_PATH}" ]; then
+        fail "Support archive target must not be a symlink or directory: ${ARCHIVE_PATH}"
+    fi
+    if [ -e "${ARCHIVE_PATH}" ]; then
+        fail "Support archive target already exists: ${ARCHIVE_PATH}"
+    fi
+    if [ -L "${ARCHIVE_TMP}" ] || [ -e "${ARCHIVE_TMP}" ]; then
+        fail "Support archive temporary target already exists: ${ARCHIVE_TMP}"
+    fi
+}
+
+prepare_package_root
+prepare_output_target
 mkdir -p "${BUNDLE_DIR}/system" "${BUNDLE_DIR}/package" "${BUNDLE_DIR}/logs" "${BUNDLE_DIR}/crash-reports"
-mkdir -p "${OUTPUT_DIR}"
 
 redact_text() {
     sed -E \
@@ -49,12 +112,53 @@ write_command() {
     } | redact_text > "${BUNDLE_DIR}/${target}"
 }
 
+path_exists_for_inspection() {
+    inspect_path=$1
+    if [ -L "${inspect_path}" ]; then
+        printf '\n-- %s --\n' "${inspect_path}"
+        printf '(skipped symlink; support collector does not follow symlinks)\n'
+        return 1
+    fi
+    [ -e "${inspect_path}" ]
+}
+
 copy_text_if_present() {
     source_path=$1
     target_path=$2
-    if [ -f "${source_path}" ]; then
-        redact_text < "${source_path}" > "${BUNDLE_DIR}/${target_path}"
+    max_bytes=${3:-$MAX_SUPPORT_TEXT_BYTES}
+    if [ -L "${source_path}" ]; then
+        write_text "${target_path}" \
+            "Skipped symlinked source: ${source_path}" \
+            "The support collector does not follow symlinks when copying package, log, or crash-report text."
+    elif [ -f "${source_path}" ]; then
+        source_bytes=$(wc -c < "${source_path}" 2>/dev/null | tr -d '[:space:]' || printf '0')
+        case "${source_bytes}" in
+            ''|*[!0123456789]*) source_bytes=0 ;;
+        esac
+        {
+            if [ "${source_bytes}" -gt "${max_bytes}" ]; then
+                printf 'Source file was larger than %s bytes and was truncated to its final %s bytes for this support archive: %s\n\n' "${max_bytes}" "${max_bytes}" "${source_path}"
+                tail -c "${max_bytes}" < "${source_path}" 2>/dev/null || cat "${source_path}"
+            else
+                cat "${source_path}"
+            fi
+        } | redact_text > "${BUNDLE_DIR}/${target_path}"
     fi
+}
+
+copy_crash_report_if_safe() {
+    crash_path=$1
+    crash_name=$(basename "${crash_path}")
+    case "${crash_name}" in
+        *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]*)
+            SKIPPED_CRASH_REPORT_INDEX=$((SKIPPED_CRASH_REPORT_INDEX + 1))
+            write_text "crash-reports/skipped-${SKIPPED_CRASH_REPORT_INDEX}.txt" \
+                "Skipped crash report with unsupported filename characters: ${crash_name}" \
+                "The support collector only copies DiagnosticReports files with archive-safe names."
+            return
+            ;;
+    esac
+    copy_text_if_present "${crash_path}" "crash-reports/${crash_name}" "${MAX_CRASH_REPORT_BYTES}"
 }
 
 write_command "system/sw_vers.txt" sw_vers
@@ -99,13 +203,14 @@ fi
 {
     printf 'Collector timestamp UTC: %s\n' "${STAMP}"
     printf 'Package root: %s\n' "${PACKAGE_ROOT}"
+    printf 'Detected runtime architecture token: %s\n' "${RUNTIME_ARCH}"
     printf 'Current directory: %s\n' "$(pwd)"
     printf '\nExpected adjacent package-root entries:\n'
     for entry in \
         "openQ4.app" \
         "baseoq4" \
-        "openQ4-client_arm64" \
-        "openQ4-ded_arm64" \
+        "openQ4-client_${RUNTIME_ARCH}" \
+        "openQ4-ded_${RUNTIME_ARCH}" \
         "collect_macos_support_info.sh" \
         "VERSION.txt" \
         "SYMBOLS.txt"
@@ -125,10 +230,11 @@ fi
 {
     printf 'Collector timestamp UTC: %s\n' "${STAMP}"
     printf 'Package root: %s\n' "${PACKAGE_ROOT}"
+    printf 'Detected runtime architecture token: %s\n' "${RUNTIME_ARCH}"
     printf 'App path: %s\n' "${PACKAGE_ROOT}/openQ4.app"
     printf 'App executable path: %s\n' "${PACKAGE_ROOT}/openQ4.app/Contents/MacOS/openQ4"
-    printf 'Expected loose client path: %s\n' "${PACKAGE_ROOT}/openQ4-client_arm64"
-    printf 'Expected loose dedicated-server path: %s\n' "${PACKAGE_ROOT}/openQ4-ded_arm64"
+    printf 'Expected loose client path: %s\n' "${PACKAGE_ROOT}/openQ4-client_${RUNTIME_ARCH}"
+    printf 'Expected loose dedicated-server path: %s\n' "${PACKAGE_ROOT}/openQ4-ded_${RUNTIME_ARCH}"
     printf 'Expected game directory path: %s\n' "${PACKAGE_ROOT}/baseoq4"
     printf 'Expected log keys: fs_basepath, fs_cdpath, fs_savepath\n'
     printf '\nCaptured filesystem path lines from available logs:\n'
@@ -140,7 +246,11 @@ fi
         "${HOME}/baseoq4/logs/openq4.log" \
         "${PACKAGE_ROOT}/baseoq4/logs/openq4.log"
     do
-        if [ -f "${log_path}" ]; then
+        if [ -L "${log_path}" ]; then
+            found_log=1
+            printf '\n-- %s --\n' "${log_path}"
+            printf '(skipped symlink; support collector does not follow symlinks)\n'
+        elif [ -f "${log_path}" ]; then
             found_log=1
             printf '\n-- %s --\n' "${log_path}"
             if grep -E 'fs_(basepath|cdpath|savepath)|Auto-detected fs_basepath|base path|cd path|save path' "${log_path}" > "${path_lines}" 2>/dev/null; then
@@ -166,7 +276,9 @@ fi
         "${PACKAGE_ROOT}/openQ4.app/Contents/Resources/VERSION.txt"
     do
         printf '\n-- %s --\n' "${manifest_path}"
-        if [ -f "${manifest_path}" ]; then
+        if [ -L "${manifest_path}" ]; then
+            printf '(skipped symlink; support collector does not follow symlinks)\n'
+        elif [ -f "${manifest_path}" ]; then
             if ! grep -E '^(version|version_tag|platform|arch|openq4_commit|openq4_dirty|openq4_game_commit|openq4_game_dirty)=' "${manifest_path}" 2>/dev/null; then
                 printf '(no recognized package build metadata keys found)\n'
             fi
@@ -185,7 +297,10 @@ fi
         "${PACKAGE_ROOT}/baseoq4"/game-sp_*.so \
         "${PACKAGE_ROOT}/baseoq4"/game-mp_*.so
     do
-        if [ -e "${module_path}" ]; then
+        if [ -L "${module_path}" ]; then
+            found_module=1
+            printf '%s (skipped symlink; support collector does not follow symlinks)\n' "${module_path}"
+        elif [ -e "${module_path}" ]; then
             found_module=1
             printf '%s\n' "${module_path}"
         fi
@@ -211,7 +326,7 @@ fi
         "${PACKAGE_ROOT}/baseoq4"/game-sp_*.dylib \
         "${PACKAGE_ROOT}/baseoq4"/game-mp_*.dylib
     do
-        if [ -e "${binary_path}" ]; then
+        if path_exists_for_inspection "${binary_path}"; then
             printf '\n-- %s --\n' "${binary_path}"
             if command -v file >/dev/null 2>&1; then
                 file "${binary_path}" 2>&1 || printf '(file inspection failed; continuing support collection)\n'
@@ -245,7 +360,7 @@ fi
             "${PACKAGE_ROOT}/baseoq4"/game-sp_*.dylib \
             "${PACKAGE_ROOT}/baseoq4"/game-mp_*.dylib
         do
-            if [ -e "${binary_path}" ]; then
+            if path_exists_for_inspection "${binary_path}"; then
                 printf '\n-- otool -L: %s --\n' "${binary_path}"
                 otool -L "${binary_path}" 2>&1 || printf '\n(otool dependency inspection failed; continuing support collection)\n'
                 case "${binary_path}" in
@@ -274,7 +389,11 @@ fi
         "${HOME}/baseoq4/logs/openq4.log" \
         "${PACKAGE_ROOT}/baseoq4/logs/openq4.log"
     do
-        if [ -f "${log_path}" ]; then
+        if [ -L "${log_path}" ]; then
+            found_log=1
+            printf '\n-- %s --\n' "${log_path}"
+            printf '(skipped symlink; support collector does not follow symlinks)\n'
+        elif [ -f "${log_path}" ]; then
             found_log=1
             printf '\n-- %s --\n' "${log_path}"
             if grep -E 'OpenAL (vendor|renderer|version|requested device|default device|active device|ALC version|EFX|HRTF|output mode)|idSoundHardware_OpenAL::Init|s_deviceName|s_useEAXReverb' "${log_path}" > "${openal_lines}" 2>/dev/null; then
@@ -306,7 +425,11 @@ fi
         "${HOME}/baseoq4/logs/openq4.log" \
         "${PACKAGE_ROOT}/baseoq4/logs/openq4.log"
     do
-        if [ -f "${log_path}" ]; then
+        if [ -L "${log_path}" ]; then
+            found_log=1
+            printf '\n-- %s --\n' "${log_path}"
+            printf '(skipped symlink; support collector does not follow symlinks)\n'
+        elif [ -f "${log_path}" ]; then
             found_log=1
             printf '\n-- %s --\n' "${log_path}"
             if grep -E 'R_InitOpenGL|R_ReloadARBPrograms|renderer startup phase|last renderer startup phase|first ARB2 interaction handoff|ARB2 interaction driver bypass|interaction color mode|renderer startup ARB interaction selection|Renderer driver quirks|Renderer bootstrap|Renderer upload manager|SDL3: graphics bridge|SDL3: reported OpenGL context|SDL3: OpenGL context|GL_ARB_vertex_buffer_object disabled|SimpleInteraction[.]vfp|Unsupported Apple OpenGL 2[.]1 compatibility path|bypassing ARB2 light interactions|using ARB2 renderSystem|fatal signal SIGSEGV' "${log_path}" > "${renderer_lines}" 2>/dev/null; then
@@ -343,7 +466,7 @@ fi
             "${PACKAGE_ROOT}/baseoq4"/game-sp_*.dylib \
             "${PACKAGE_ROOT}/baseoq4"/game-mp_*.dylib
         do
-            if [ -e "${signed_path}" ]; then
+            if path_exists_for_inspection "${signed_path}"; then
                 printf '\n-- codesign verify: %s --\n' "${signed_path}"
                 codesign --verify --deep --strict --verbose=4 "${signed_path}" 2>&1 || printf '\n(codesign verify failed; continuing support collection)\n'
                 printf '\n-- codesign display: %s --\n' "${signed_path}"
@@ -364,7 +487,7 @@ fi
             "${PACKAGE_ROOT}/openQ4-ded_x64" \
             "${PACKAGE_ROOT}/openQ4-ded_x86"
         do
-            if [ -e "${assessed_path}" ]; then
+            if path_exists_for_inspection "${assessed_path}"; then
                 printf '\n-- spctl assess: %s --\n' "${assessed_path}"
                 spctl --assess --type execute --verbose=4 "${assessed_path}" 2>&1 || printf '\n(spctl assessment failed; continuing support collection)\n'
             fi
@@ -377,7 +500,7 @@ fi
         for stapled_path in \
             "${PACKAGE_ROOT}/openQ4.app"
         do
-            if [ -e "${stapled_path}" ]; then
+            if path_exists_for_inspection "${stapled_path}"; then
                 printf '\n-- xcrun stapler validate: %s --\n' "${stapled_path}"
                 xcrun stapler validate "${stapled_path}" 2>&1 || printf '\n(stapler validation failed; continuing support collection)\n'
             fi
@@ -410,7 +533,7 @@ fi
             "${PACKAGE_ROOT}/baseoq4"/game-mp_*.dylib \
             "${PACKAGE_ROOT}/collect_macos_support_info.sh"
         do
-            if [ -e "${xattr_path}" ]; then
+            if path_exists_for_inspection "${xattr_path}"; then
                 printf '\n-- %s --\n' "${xattr_path}"
                 if xattr "${xattr_path}" > "${xattr_names}" 2>&1; then
                     if [ -s "${xattr_names}" ]; then
@@ -445,7 +568,11 @@ copy_text_if_present "${PACKAGE_ROOT}/baseoq4/logs/openq4.log" "logs/package-bas
 
 CRASH_DIR="${HOME}/Library/Logs/DiagnosticReports"
 CRASH_LIST="${WORK_PARENT}/crash-list.txt"
-if [ -d "${CRASH_DIR}" ]; then
+if [ -L "${CRASH_DIR}" ]; then
+    write_text "crash-reports/README.txt" \
+        "The macOS DiagnosticReports directory is a symlink and was skipped." \
+        "The support collector does not follow symlinks when copying crash-report text."
+elif [ -d "${CRASH_DIR}" ]; then
     find "${CRASH_DIR}" -type f \( \
         -name 'openQ4*.ips' -o \
         -name 'openQ4*.crash' -o \
@@ -456,8 +583,7 @@ if [ -d "${CRASH_DIR}" ]; then
     \) -mtime -30 -print | sort | tail -n 10 > "${CRASH_LIST}"
     if [ -s "${CRASH_LIST}" ]; then
         while IFS= read -r crash_path; do
-            crash_name=$(basename "${crash_path}")
-            copy_text_if_present "${crash_path}" "crash-reports/${crash_name}"
+            copy_crash_report_if_safe "${crash_path}"
         done < "${CRASH_LIST}"
     else
         write_text "crash-reports/README.txt" "No matching openQ4 crash reports were found in ~/Library/Logs/DiagnosticReports from the last 30 days."
@@ -469,6 +595,7 @@ fi
 write_text "README.txt" \
     "Review this archive before attaching it to a public issue." \
     "The collector redacts /Users/<name> paths and email-like strings, does not dump the environment, does not launch openQ4, and does not copy retail q4base PK4 assets." \
+    "The collector does not follow symlinked package, log, or crash-report inputs; skipped symlinks are recorded in the relevant report files." \
     "system/rosetta.txt records the collector process architecture and sysctl.proc_translated value so unsupported Rosetta/translated reports are easy to spot." \
     "package/build-metadata.txt records package VERSION.txt metadata, app VERSION.txt metadata, openQ4/openQ4-game commit fields when present, and the game module filenames in baseoq4/." \
     "package/binary-architecture.txt records file/lipo architecture output for package executables and game modules without launching openQ4." \
@@ -482,7 +609,13 @@ write_text "README.txt" \
     "If package/SYMBOLS.txt is present, include it with any .ips report so maintainers can pick the matching macOS dSYM symbol archive." \
     "For issue #73 style crashes, include full terminal output as text in the issue body too; this archive cannot recover terminal output that was not logged."
 
-tar -czf "${ARCHIVE_PATH}" -C "${WORK_PARENT}" "${BUNDLE_NAME}"
+COPYFILE_DISABLE=1 tar -czf "${ARCHIVE_TMP}" -C "${WORK_PARENT}" "${BUNDLE_NAME}"
+chmod 600 "${ARCHIVE_TMP}"
+if [ -L "${ARCHIVE_PATH}" ] || [ -e "${ARCHIVE_PATH}" ]; then
+    fail "Support archive target appeared while collecting data: ${ARCHIVE_PATH}"
+fi
+mv "${ARCHIVE_TMP}" "${ARCHIVE_PATH}"
+ARCHIVE_TMP=""
 
 printf 'Created %s\n' "${ARCHIVE_PATH}"
 printf 'Review the archive before attaching it to a public GitHub issue.\n'

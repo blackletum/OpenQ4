@@ -18,6 +18,7 @@ class SignoffArchiveError(RuntimeError):
 MAX_TEXT_MEMBER_BYTES = 2 * 1024 * 1024
 MAX_ARCHIVE_MEMBER_BYTES = 64 * 1024 * 1024
 MAX_ARCHIVE_MEMBERS = 4096
+MAX_ARCHIVE_TOTAL_BYTES = 512 * 1024 * 1024
 RESULT_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 MACOS_FORBIDDEN_ARCHIVE_NAMES = (
     ".DS_Store",
@@ -131,6 +132,9 @@ def validate_member(member: tarfile.TarInfo) -> None:
     require("" not in parts, f"Archive path contains an empty segment: {name}")
     require(not any(part == "." for part in parts), f"Archive path contains a dot segment: {name}")
     require(member.isfile() or member.isdir(), f"Archive contains a non-regular entry: {name}")
+    mode = member.mode & 0o7777
+    require(mode & 0o7000 == 0, f"Archive member has special mode bits: {name} ({mode:o})")
+    require(mode & 0o022 == 0, f"Archive member is group/other writable: {name} ({mode:o})")
     if member.isfile():
         require(
             member.size <= MAX_ARCHIVE_MEMBER_BYTES,
@@ -197,6 +201,10 @@ def validate_result_token(label: str, value: str) -> None:
 def has_file_under(file_names: set[str], prefix: str) -> bool:
     normalized = prefix.rstrip("/") + "/"
     return any(name.startswith(normalized) and name != normalized for name in file_names)
+
+
+def expected_signoff_archive_name(run_id: str) -> str:
+    return f"openq4-macos-results-{run_id}.tar.gz"
 
 
 def validate_report(
@@ -281,8 +289,16 @@ def validate_signoff_archive(
         seen_members: set[str] = set()
         seen_casefold_members: dict[str, str] = {}
         file_names: set[str] = set()
+        total_file_bytes = 0
         for member in members:
             validate_member(member)
+            if member.isfile():
+                total_file_bytes += member.size
+                require(
+                    total_file_bytes <= MAX_ARCHIVE_TOTAL_BYTES,
+                    "Archive total expanded size is too large: "
+                    f"{total_file_bytes} bytes (max {MAX_ARCHIVE_TOTAL_BYTES})",
+                )
             normalized_name = member.name.rstrip("/")
             if normalized_name:
                 require(
@@ -345,6 +361,13 @@ def validate_signoff_archive(
                 has_file_under(file_names, f"{result_dir}/renderer-matrix"),
                 f"{bridge} signoff archive is missing renderer-matrix output.",
             )
+
+        expected_archive_name = expected_signoff_archive_name(effective_run_id)
+        require(
+            archive_path.name == expected_archive_name,
+            "Archive file name does not match run ID: "
+            f"{archive_path.name} (expected {expected_archive_name})",
+        )
 
     return effective_run_id
 
