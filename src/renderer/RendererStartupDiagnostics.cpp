@@ -48,6 +48,14 @@ const char *R_RendererStartupPhaseName( rendererStartupPhase_t phase ) {
 		return "first ARB2 interaction handoff";
 	case RENDERER_STARTUP_PHASE_ARB2_INTERACTION_DRIVER_BYPASS:
 		return "ARB2 interaction driver bypass";
+	case RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_STATE_RESTORED:
+		return "ARB2 interaction bypass state restored";
+	case RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_LIGHT_SCALE:
+		return "ARB2 interaction bypass light scale";
+	case RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_AMBIENT_RESCUE:
+		return "ARB2 interaction bypass ambient rescue";
+	case RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_FRAME_TAIL:
+		return "ARB2 interaction bypass frame tail";
 	default:
 		return "unknown renderer startup phase";
 	}

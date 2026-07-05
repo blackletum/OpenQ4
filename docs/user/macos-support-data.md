@@ -12,7 +12,11 @@ program startup path.
 If your log contains `ARB2 interaction driver bypass`, openQ4 intentionally
 used a degraded Apple OpenGL 2.1 compatibility fallback that skips ARB2 light
 interaction drawing to avoid the known startup crash. Please still attach the
-terminal output and support archive if it crashes after that line.
+terminal output and support archive if it crashes after that line. Newer builds
+also print post-bypass breadcrumbs such as `ARB2 interaction bypass state
+restored`, `ARB2 interaction bypass light scale`, `ARB2 interaction bypass
+ambient rescue`, and `ARB2 interaction bypass frame tail` to identify the next
+classic renderer operation reached.
 
 ## What To Attach
 
@@ -77,6 +81,10 @@ For issue #73 style reports, keep the lines around these markers:
 - `last renderer startup phase`
 - `first ARB2 interaction handoff`
 - `ARB2 interaction driver bypass`
+- `ARB2 interaction bypass state restored`
+- `ARB2 interaction bypass light scale`
+- `ARB2 interaction bypass ambient rescue`
+- `ARB2 interaction bypass frame tail`
 - `ARB2 light interaction`
 - `Renderer upload manager`
 - `using ARB2 renderSystem`

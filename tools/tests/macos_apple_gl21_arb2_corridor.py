@@ -163,6 +163,9 @@ def validate_simple_interaction_fail_closed() -> None:
         "Apple OpenGL 2.1 compatibility path bypassing ARB2 light interactions",
         "RB_ShadowMapStatsReset();",
         "RB_ShadowMapDebugOverlayReset();",
+        "RB_ARB2_RestoreBypassedInteractionState();",
+        "GL_ClearStateDelta();",
+        "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_STATE_RESTORED",
     ):
         require(source, token, "Apple GL 2.1 bypasses fragile ARB2 light interactions")
 

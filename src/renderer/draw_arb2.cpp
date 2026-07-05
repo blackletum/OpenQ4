@@ -102,6 +102,7 @@ static const drawSurf_t *g_packedStageSurf = NULL;
 static int g_packedStageVertexFormatIndex = -1;
 static bool g_firstARB2InteractionHandoffBreadcrumb = false;
 static bool g_arb2InteractionDriverBypassWarned = false;
+static bool g_arb2InteractionBypassStateBreadcrumb = false;
 
 static GLuint RB_CurrentInteractionProgramIdent( GLenum target );
 static const char *RB_CurrentInteractionProgramFamilyName( void );
@@ -10154,6 +10155,34 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 RB_ARB2_DrawInteractions
 ==================
 */
+static void RB_ARB2_RestoreBypassedInteractionState( void ) {
+	GL_SelectTexture( 0 );
+	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
+	glDisableClientState( GL_COLOR_ARRAY );
+	glDisableClientState( GL_NORMAL_ARRAY );
+
+	if ( glDisableVertexAttribArrayARB != NULL ) {
+		glDisableVertexAttribArrayARB( 8 );
+		glDisableVertexAttribArrayARB( 9 );
+		glDisableVertexAttribArrayARB( 10 );
+		glDisableVertexAttribArrayARB( 11 );
+	}
+	if ( glConfig.ARBVertexProgramAvailable ) {
+		glDisable( GL_VERTEX_PROGRAM_ARB );
+	}
+	if ( glConfig.ARBFragmentProgramAvailable ) {
+		glDisable( GL_FRAGMENT_PROGRAM_ARB );
+	}
+
+	glStencilFunc( GL_ALWAYS, 128, 255 );
+	backEnd.currentSpace = NULL;
+	GL_ClearStateDelta();
+	if ( !g_arb2InteractionBypassStateBreadcrumb ) {
+		g_arb2InteractionBypassStateBreadcrumb = true;
+		R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_STATE_RESTORED );
+	}
+}
+
 void RB_ARB2_DrawInteractions( void ) {
 	viewLight_t		*vLight;
 
@@ -10168,6 +10197,7 @@ void RB_ARB2_DrawInteractions( void ) {
 			R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_DRIVER_BYPASS );
 			common->Warning( "Apple OpenGL 2.1 compatibility path bypassing ARB2 light interactions to avoid issue #73 startup crash; scene lighting is degraded" );
 		}
+		RB_ARB2_RestoreBypassedInteractionState();
 		return;
 	}
 
@@ -10950,4 +10980,5 @@ void R_ARB2_Init( void ) {
 void RB_ResetARB2InteractionHandoffBreadcrumb( void ) {
 	g_firstARB2InteractionHandoffBreadcrumb = false;
 	g_arb2InteractionDriverBypassWarned = false;
+	g_arb2InteractionBypassStateBreadcrumb = false;
 }

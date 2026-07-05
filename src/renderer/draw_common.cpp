@@ -9646,6 +9646,23 @@ static void RB_STD_DrawPlayerVisibilityEffects( drawSurf_t **drawSurfs, int numD
 
 //=========================================================================================
 
+static bool rbARB2InteractionBypassFrameBreadcrumbsComplete = false;
+
+static void RB_RecordARB2InteractionBypassFramePhase( rendererStartupPhase_t phase ) {
+	if ( !glConfig.disableARB2Interactions ) {
+		rbARB2InteractionBypassFrameBreadcrumbsComplete = false;
+		return;
+	}
+	if ( rbARB2InteractionBypassFrameBreadcrumbsComplete ) {
+		return;
+	}
+
+	R_RecordRendererStartupPhase( phase );
+	if ( phase == RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_FRAME_TAIL ) {
+		rbARB2InteractionBypassFrameBreadcrumbsComplete = true;
+	}
+}
+
 /*
 =============
 RB_STD_DrawView
@@ -9724,6 +9741,8 @@ void	RB_STD_DrawView( void ) {
 		RB_ARB2_DrawInteractions();
 	}
 
+	RB_RecordARB2InteractionBypassFramePhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_LIGHT_SCALE );
+
 	// disable stencil shadow test
 	glStencilFunc( GL_ALWAYS, 128, 255 );
 
@@ -9778,8 +9797,12 @@ void	RB_STD_DrawView( void ) {
 
 	R_ModernGLExecutor_SubmitForwardPlusDecalOverlay( backEnd.viewDef );
 
+	RB_RecordARB2InteractionBypassFramePhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_AMBIENT_RESCUE );
+
 	// Apply a configurable brightness floor after ambient/material passes.
 	RB_STD_ForceAmbient();
+
+	RB_RecordARB2InteractionBypassFramePhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_FRAME_TAIL );
 
 	// fob and blend lights
 	if ( R_ModernGLExecutor_LegacyPassCanSkipForView( RENDER_PASS_FOG_BLEND, backEnd.viewDef ) ) {

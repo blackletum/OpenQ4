@@ -71,7 +71,7 @@ body:
     id: terminal_output
     attributes:
       label: Full terminal output
-      description: Paste the complete terminal output as text, not a screenshot. Include the lines before and after `R_InitOpenGL`, `R_ReloadARBPrograms`, `using ARB2 renderSystem`, dedicated-server startup if applicable, and any `fatal signal SIGSEGV`.
+      description: Paste the complete terminal output as text, not a screenshot. Include the lines before and after `R_InitOpenGL`, `R_ReloadARBPrograms`, `using ARB2 renderSystem`, any `ARB2 interaction bypass` marker, dedicated-server startup if applicable, and any `fatal signal SIGSEGV`.
       render: text
     validations:
       required: true

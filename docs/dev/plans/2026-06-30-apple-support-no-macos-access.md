@@ -257,6 +257,11 @@ the work below.
 - Apple GL 2.1 synthetic cases now also set the ARB2 light interaction bypass
   quirk so issue #73 comment 4874832470-style M4 Max reports degrade lighting
   instead of entering the fragile first-frame interaction draw.
+- The July 5 issue #73 follow-up report for 0.6.91 reached
+  `ARB2 interaction driver bypass` before crashing, so
+  `src/renderer/draw_arb2.cpp` now restores the classic post-interaction GL
+  state baseline on the bypass path and `src/renderer/draw_common.cpp` records
+  post-bypass light-scale, ambient-rescue, and frame-tail breadcrumbs.
 - `src/renderer/draw_arb2.cpp` already routes repeated required program binds
   through `R_BindARBProgram`; Phase 3 now adds
   `RB_ErrorIfDriverRequiredSimpleInteractionFailed()` so Apple GL 2.1 fallback
