@@ -239,12 +239,20 @@ Ramp down volumes that are close to fadeDB so that fadeDB is DB_SILENCE
 */
 float MapVolumeFromFadeDB( const float volumeDB, const float fadeDB )
 {
+	if( FLOAT_IS_NAN( volumeDB ) || FLOAT_IS_NAN( fadeDB ) )
+	{
+		return DB_SILENCE;
+	}
 	if( volumeDB <= fadeDB )
 	{
 		return DB_SILENCE;
 	}
 
 	const float fadeOver = s_cushionFadeOver.GetFloat();
+	if( FLOAT_IS_NAN( fadeOver ) || fadeOver <= 0.0f )
+	{
+		return volumeDB;
+	}
 	const float fadeFrom = fadeDB + fadeOver;
 
 	if( volumeDB >= fadeFrom )
@@ -275,8 +283,9 @@ static float AdjustForCushionChannels( const idStaticList< idActiveChannel, MAX_
 									   const int uncushionedChannels, const float currentCushionDB, const float driftRate )
 {
 
+	const int firstCushionedChannel = idMath::ClampInt( 0, activeEmitterChannels.Num(), uncushionedChannels );
 	float	targetCushionDB;
-	if( activeEmitterChannels.Num() <= uncushionedChannels )
+	if( activeEmitterChannels.Num() <= firstCushionedChannel )
 	{
 		// we should be able to hear all of them
 		targetCushionDB = DB_SILENCE;
@@ -284,22 +293,31 @@ static float AdjustForCushionChannels( const idStaticList< idActiveChannel, MAX_
 	else
 	{
 		// we should be able to hear all of them
-		targetCushionDB = activeEmitterChannels[uncushionedChannels].channel->volumeDB;
+		targetCushionDB = activeEmitterChannels[firstCushionedChannel].channel->volumeDB;
+		const float requestedCushionFadeLimit = s_cushionFadeLimit.GetFloat();
+		const float cushionFadeLimit = FLOAT_IS_NAN( requestedCushionFadeLimit )
+									   ? -30.0f
+									   : idMath::ClampFloat( DB_SILENCE, 0.0f, requestedCushionFadeLimit );
+		if( FLOAT_IS_NAN( targetCushionDB ) )
+		{
+			targetCushionDB = DB_SILENCE;
+		}
 		if( targetCushionDB < DB_SILENCE )
 		{
 			targetCushionDB = DB_SILENCE;
 		}
-		else if( targetCushionDB > s_cushionFadeLimit.GetFloat() )
+		else if( targetCushionDB > cushionFadeLimit )
 		{
-			targetCushionDB = s_cushionFadeLimit.GetFloat();
+			targetCushionDB = cushionFadeLimit;
 		}
 	}
 
 	// linearly drift the currentTargetCushionDB towards targetCushionDB
-	float	driftedDB = currentCushionDB;
+	float	driftedDB = FLOAT_IS_NAN( currentCushionDB ) ? DB_SILENCE : currentCushionDB;
+	const float clampedDriftRate = ( FLOAT_IS_NAN( driftRate ) || driftRate <= 0.0f ) ? 0.0f : driftRate;
 	if( driftedDB < targetCushionDB )
 	{
-		driftedDB += driftRate;
+		driftedDB += clampedDriftRate;
 		if( driftedDB > targetCushionDB )
 		{
 			driftedDB = targetCushionDB;
@@ -307,7 +325,7 @@ static float AdjustForCushionChannels( const idStaticList< idActiveChannel, MAX_
 	}
 	else
 	{
-		driftedDB -= driftRate;
+		driftedDB -= clampedDriftRate;
 		if( driftedDB < targetCushionDB )
 		{
 			driftedDB = targetCushionDB;
@@ -457,7 +475,8 @@ void idSoundWorldLocal::Update()
 	// It isn't obvious what the exact best volume ramping method should be, just that
 	// it smoothly change frame to frame.
 	// ------------------
-	const int uncushionedChannels = maxEmitterChannels - s_cushionFadeChannels.GetInteger();
+	const int cushionFadeChannels = Max( 0, s_cushionFadeChannels.GetInteger() );
+	const int uncushionedChannels = idMath::ClampInt( 0, maxEmitterChannels, maxEmitterChannels - cushionFadeChannels );
 	currentCushionDB = AdjustForCushionChannels( activeEmitterChannels, uncushionedChannels,
 					   currentCushionDB, s_cushionFadeRate.GetFloat() * secondsPerFrame );
 

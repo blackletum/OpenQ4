@@ -149,6 +149,7 @@ def validate_renderer_startup_order() -> None:
     )
     draw_interactions_body = function_body(draw_source, "void RB_ARB2_DrawInteractions( void ) {")
     bypass_restore_body = function_body(draw_source, "static void RB_ARB2_RestoreBypassedInteractionState( void ) {")
+    disable_attrib_body = function_body(draw_source, "static void RB_ARB2_DisableInteractionVertexAttribArrays( void ) {")
     draw_view_body = function_body(common_source, "void\tRB_STD_DrawView( void ) {")
     bypass_frame_body = function_body(common_source, "static void RB_RecordARB2InteractionBypassFramePhase( rendererStartupPhase_t phase ) {")
     reset_body = function_body(draw_source, "void RB_ResetARB2InteractionHandoffBreadcrumb( void ) {")
@@ -202,17 +203,46 @@ def validate_renderer_startup_order() -> None:
         require(draw_interactions_body, token, "ARB2 interaction driver bypass breadcrumb")
 
     for token in (
-        "glEnableClientState( GL_TEXTURE_COORD_ARRAY );",
+        "RB_ARB2_ClearBypassedInteractionTextureState();",
         "glDisableClientState( GL_COLOR_ARRAY );",
         "glDisableClientState( GL_NORMAL_ARRAY );",
-        "glDisableVertexAttribArrayARB( 8 );",
+        "RB_ARB2_DisableInteractionVertexAttribArrays();",
         "glDisable( GL_VERTEX_PROGRAM_ARB );",
         "glDisable( GL_FRAGMENT_PROGRAM_ARB );",
+        "RB_ARB2_UnbindBypassedInteractionPrograms();",
         "glStencilFunc( GL_ALWAYS, 128, 255 );",
         "GL_ClearStateDelta();",
         "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_STATE_RESTORED",
     ):
         require(bypass_restore_body, token, "ARB2 interaction bypass state restore")
+
+    for token in (
+        "glDisableVertexAttribArrayARB == NULL",
+        "static const int attribs[] = { 1, 2, 5, 6, 7, 8, 9, 10, 11 };",
+        "glDisableVertexAttribArrayARB( attribs[i] );",
+    ):
+        require(disable_attrib_body, token, "ARB2 bypass interaction attribute cleanup")
+
+    texture_cleanup_body = function_body(draw_source, "static void RB_ARB2_ClearBypassedInteractionTextureState( void ) {")
+    for token in (
+        "maxStateUnits",
+        "maxInteractionUnit",
+        "GL_SelectTextureNoClient can leave the client active texture behind.",
+        "GL_SelectTexture( unit );",
+        "globalImages->BindNull();",
+        "glDisable( GL_TEXTURE_GEN_S );",
+        "glDisable( GL_TEXTURE_GEN_T );",
+        "glDisable( GL_TEXTURE_GEN_R );",
+        "glDisable( GL_TEXTURE_GEN_Q );",
+        "GL_TexEnv( GL_MODULATE );",
+        "glDisableClientState( GL_TEXTURE_COORD_ARRAY );",
+        "backEnd.glState.currenttmu = -1;",
+        "GL_SelectTexture( 0 );",
+        "glEnableClientState( GL_TEXTURE_COORD_ARRAY );",
+    ):
+        require(texture_cleanup_body, token, "ARB2 bypass interaction texture cleanup")
+    if texture_cleanup_body.count("backEnd.glState.currenttmu = -1;") < 2:
+        raise AssertionError("ARB2 bypass interaction texture cleanup must force texture selection before unit cleanup and unit 0 restore")
 
     for token in (
         "glConfig.disableARB2Interactions",

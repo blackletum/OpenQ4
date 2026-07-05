@@ -97,6 +97,7 @@ static const float OPENQ4_OPENAL_ENV_DIRECT_ATTENUATION_DB = -2.0f;
 static const float OPENQ4_OPENAL_ENV_DIRECT_HF_ATTENUATION_DB = -16.0f;
 static const float OPENQ4_OPENAL_ENV_WET_ATTENUATION_DB = -1.0f;
 static const float OPENQ4_OPENAL_ENV_WET_HF_ATTENUATION_DB = -12.0f;
+static const float OPENQ4_OPENAL_MAX_SOURCE_GAIN = 16.0f;
 
 struct openQ4OcclusionFilter_t
 {
@@ -108,13 +109,39 @@ struct openQ4OcclusionFilter_t
 
 static float OpenQ4_DBToClampedGain( const float db )
 {
+	if( FLOAT_IS_NAN( db ) )
+	{
+		return 0.0f;
+	}
 	return idMath::ClampFloat( 0.0f, 1.0f, DBtoLinear( db ) );
+}
+
+static float OpenQ4_SanitizeUnitValue( const float value )
+{
+	if( FLOAT_IS_NAN( value ) || value <= 0.0f )
+	{
+		return 0.0f;
+	}
+	if( value >= 1.0f )
+	{
+		return 1.0f;
+	}
+	return value;
+}
+
+static float OpenQ4_SanitizeSourceGain( const float sourceGain )
+{
+	if( FLOAT_IS_NAN( sourceGain ) || sourceGain <= 0.0f )
+	{
+		return 0.0f;
+	}
+	return idMath::ClampFloat( 0.0f, OPENQ4_OPENAL_MAX_SOURCE_GAIN, sourceGain );
 }
 
 static openQ4OcclusionFilter_t OpenQ4_BuildOcclusionFilter( const float occlusion, const float environmentMuffle )
 {
-	const float clampedOcclusion = idMath::ClampFloat( 0.0f, 1.0f, occlusion );
-	const float clampedEnvironmentMuffle = idMath::ClampFloat( 0.0f, 1.0f, environmentMuffle );
+	const float clampedOcclusion = OpenQ4_SanitizeUnitValue( occlusion );
+	const float clampedEnvironmentMuffle = OpenQ4_SanitizeUnitValue( environmentMuffle );
 
 	openQ4OcclusionFilter_t filter;
 	filter.directGain = OpenQ4_DBToClampedGain(
@@ -140,19 +167,24 @@ idSoundVoice_OpenAL::idSoundVoice_OpenAL
 */
 idSoundVoice_OpenAL::idSoundVoice_OpenAL()
 	:
-	triggered( false ),
 	openalSource( 0 ),
-	leadinSample( NULL ),
-	loopingSample( NULL ),
 	openalDirectFilter( 0 ),
 	openalAuxFilter( 0 ),
+	nextQueuedSample( NULL ),
+	nextQueuedBuffer( 0 ),
+	nextQueuedOffset( 0 ),
+	queuedBufferPlaybackActive( false ),
+	leadinSample( NULL ),
+	loopingSample( NULL ),
 	formatTag( 0 ),
 	numChannels( 0 ),
 	sampleRate( 0 ),
 	hasVUMeter( false ),
 	paused( true )
 {
-
+	openalStreamingBuffer[0] = 0;
+	openalStreamingBuffer[1] = 0;
+	openalStreamingBuffer[2] = 0;
 }
 
 /*
@@ -172,12 +204,131 @@ idSoundVoice_OpenAL::CompatibleFormat
 */
 bool idSoundVoice_OpenAL::CompatibleFormat( idSoundSample_OpenAL* s )
 {
-	if( alIsSource( openalSource ) )
+	if( s == NULL )
 	{
-		// If this voice has never been allocated, then it's compatible with everything
+		return false;
+	}
+
+	return !IsPlaying();
+}
+
+bool idSoundVoice_OpenAL::UsesStreamingBuffers() const
+{
+	return openalStreamingBuffer[0] != 0 || openalStreamingBuffer[1] != 0 || openalStreamingBuffer[2] != 0;
+}
+
+bool idSoundVoice_OpenAL::HasQueuedBufferState() const
+{
+	return queuedBufferPlaybackActive || nextQueuedSample != NULL;
+}
+
+void idSoundVoice_OpenAL::ResetQueuedBufferState()
+{
+	nextQueuedSample = NULL;
+	nextQueuedBuffer = 0;
+	nextQueuedOffset = 0;
+	queuedBufferPlaybackActive = false;
+}
+
+void idSoundVoice_OpenAL::DeleteStreamingBuffers()
+{
+	ALuint buffersToDelete[MAX_QUEUED_BUFFERS];
+	ALsizei numBuffersToDelete = 0;
+	for( int i = 0; i < MAX_QUEUED_BUFFERS; i++ )
+	{
+		if( openalStreamingBuffer[i] != 0 )
+		{
+			buffersToDelete[numBuffersToDelete++] = openalStreamingBuffer[i];
+		}
+	}
+	if( numBuffersToDelete > 0 )
+	{
+		CheckALErrors();
+		alDeleteBuffers( numBuffersToDelete, buffersToDelete );
+		CheckALErrors();
+	}
+	for( int i = 0; i < MAX_QUEUED_BUFFERS; i++ )
+	{
+		openalStreamingBuffer[i] = 0;
+	}
+}
+
+bool idSoundVoice_OpenAL::EnsureStreamingBuffers()
+{
+	if( UsesStreamingBuffers() )
+	{
 		return true;
 	}
 
+	CheckALErrors();
+	alGenBuffers( MAX_QUEUED_BUFFERS, openalStreamingBuffer );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		openalStreamingBuffer[0] = openalStreamingBuffer[1] = openalStreamingBuffer[2] = 0;
+		return false;
+	}
+	return true;
+}
+
+void idSoundVoice_OpenAL::AdvanceQueuedBuffer()
+{
+	if( nextQueuedSample == NULL )
+	{
+		return;
+	}
+
+	nextQueuedOffset = 0;
+	nextQueuedBuffer++;
+	if( nextQueuedBuffer < nextQueuedSample->buffers.Num() )
+	{
+		return;
+	}
+
+	if( nextQueuedSample == leadinSample && loopingSample != NULL )
+	{
+		SetNextQueuedSampleStart( loopingSample );
+		return;
+	}
+
+	if( nextQueuedSample == loopingSample && loopingSample != NULL )
+	{
+		SetNextQueuedSampleStart( loopingSample );
+		return;
+	}
+
+	nextQueuedSample = NULL;
+	nextQueuedBuffer = 0;
+	nextQueuedOffset = 0;
+}
+
+bool idSoundVoice_OpenAL::SetNextQueuedSampleStart( idSoundSample_OpenAL* sample )
+{
+	if( sample == NULL || sample->buffers.Num() <= 0 )
+	{
+		nextQueuedSample = NULL;
+		nextQueuedBuffer = 0;
+		nextQueuedOffset = 0;
+		return false;
+	}
+
+	const int startSample = Max( 0, sample->playBegin );
+	int previousNumSamples = 0;
+	for( int i = 0; i < sample->buffers.Num(); i++ )
+	{
+		const idSoundSample_OpenAL::sampleBuffer_t& sampleBuffer = sample->buffers[i];
+		if( sampleBuffer.numSamples > startSample )
+		{
+			nextQueuedSample = sample;
+			nextQueuedBuffer = i;
+			nextQueuedOffset = startSample - previousNumSamples;
+			return true;
+		}
+		previousNumSamples = sampleBuffer.numSamples;
+	}
+
+	nextQueuedSample = NULL;
+	nextQueuedBuffer = 0;
+	nextQueuedOffset = 0;
 	return false;
 }
 
@@ -190,28 +341,34 @@ void idSoundVoice_OpenAL::Create( const idSoundSample* leadinSample_, const idSo
 {
 	if( IsPlaying() )
 	{
-		// This should never hit
 		Stop();
-		return;
 	}
-
-	triggered = true;
 
 	leadinSample = ( idSoundSample_OpenAL* )leadinSample_;
 	loopingSample = ( idSoundSample_OpenAL* )loopingSample_;
+	ResetQueuedBufferState();
 
-	if( alIsSource( openalSource ) && CompatibleFormat( leadinSample ) )
+	if( leadinSample == NULL )
 	{
-		sampleRate = leadinSample->format.basic.samplesPerSec;
+		return;
+	}
+
+	if( leadinSample->openalBuffer == 0 && leadinSample->format.basic.formatTag != idWaveFile::FORMAT_XMA2 )
+	{
+		leadinSample->CreateOpenALBuffer();
+	}
+	if( loopingSample != NULL && loopingSample->openalBuffer == 0 && loopingSample->format.basic.formatTag != idWaveFile::FORMAT_XMA2 )
+	{
+		loopingSample->CreateOpenALBuffer();
+	}
+
+	if( alIsSource( openalSource ) )
+	{
+		FlushSourceBuffers();
 	}
 	else
 	{
 		DestroyInternal();
-		formatTag = leadinSample->format.basic.formatTag;
-		numChannels = leadinSample->format.basic.numChannels;
-		sampleRate = leadinSample->format.basic.samplesPerSec;
-
-		//soundSystemLocal.hardware.pXAudio2->CreateSourceVoice( &pSourceVoice, ( const WAVEFORMATEX* )&leadinSample->format, XAUDIO2_VOICE_USEFILTER, 4.0f, &streamContext );
 
 		CheckALErrors();
 
@@ -224,54 +381,31 @@ void idSoundVoice_OpenAL::Create( const idSoundSample* leadinSample_, const idSo
 		}
 
 		alSourcef( openalSource, AL_ROLLOFF_FACTOR, 0.0f );
+	}
 
-		//if( ( loopingSample == NULL && leadinSample->openalBuffer != 0 ) || ( loopingSample != NULL && soundShader->entries[0]->hardwareBuffer ) )
-		if( leadinSample->openalBuffer != 0 )
+	formatTag = leadinSample->format.basic.formatTag;
+	numChannels = leadinSample->format.basic.numChannels;
+	sampleRate = leadinSample->format.basic.samplesPerSec;
+
+	const bool needsStreamingBuffers = leadinSample->openalBuffer == 0 || ( loopingSample != NULL && loopingSample->openalBuffer == 0 );
+	if( needsStreamingBuffers )
+	{
+		EnsureStreamingBuffers();
+	}
+	else
+	{
+		DeleteStreamingBuffers();
+	}
+
+	if( s_debugHardware.GetBool() )
+	{
+		if( loopingSample == NULL || loopingSample == leadinSample )
 		{
-			alSourcei( openalSource, AL_BUFFER, 0 );
-
-			// handle uncompressed (non streaming) single shot and looping sounds
-			/*
-			if( triggered )
-			{
-				alSourcei( openalSource, AL_BUFFER, looping ? chan->soundShader->entries[0]->openalBuffer : leadinSample->openalBuffer );
-			}
-			*/
+			idLib::Printf( "%dms: %i created for %s\n", Sys_Milliseconds(), openalSource, leadinSample ? leadinSample->GetName() : "<null>" );
 		}
 		else
 		{
-			//if( triggered )
-
-			// handle streaming sounds (decode on the fly) both single shot AND looping
-
-			alSourcei( openalSource, AL_BUFFER, 0 );
-			alDeleteBuffers( 3, &lastopenalStreamingBuffer[0] );
-			lastopenalStreamingBuffer[0] = openalStreamingBuffer[0];
-			lastopenalStreamingBuffer[1] = openalStreamingBuffer[1];
-			lastopenalStreamingBuffer[2] = openalStreamingBuffer[2];
-
-			alGenBuffers( 3, &openalStreamingBuffer[0] );
-			/*
-			if( soundSystemLocal.alEAXSetBufferMode )
-			{
-				soundSystemLocal.alEAXSetBufferMode( 3, &chan->openalStreamingBuffer[0], alGetEnumValue( ID_ALCHAR "AL_STORAGE_ACCESSIBLE" ) );
-			}
-			*/
-			openalStreamingBuffer[0];
-			openalStreamingBuffer[1];
-			openalStreamingBuffer[2];
-		}
-
-		if( s_debugHardware.GetBool() )
-		{
-			if( loopingSample == NULL || loopingSample == leadinSample )
-			{
-				idLib::Printf( "%dms: %i created for %s\n", Sys_Milliseconds(), openalSource, leadinSample ? leadinSample->GetName() : "<null>" );
-			}
-			else
-			{
-				idLib::Printf( "%dms: %i created for %s and %s\n", Sys_Milliseconds(), openalSource, leadinSample ? leadinSample->GetName() : "<null>", loopingSample ? loopingSample->GetName() : "<null>" );
-			}
+			idLib::Printf( "%dms: %i created for %s and %s\n", Sys_Milliseconds(), openalSource, leadinSample ? leadinSample->GetName() : "<null>", loopingSample ? loopingSample->GetName() : "<null>" );
 		}
 	}
 
@@ -305,37 +439,13 @@ void idSoundVoice_OpenAL::DestroyInternal()
 			idLib::Printf( "%dms: %i destroyed\n", Sys_Milliseconds(), openalSource );
 		}
 
-		// Detach buffers before deleting the source to avoid AL_INVALID_NAME on shutdown.
-		alSourcei( openalSource, AL_BUFFER, 0 );
+		FlushSourceBuffers();
 		alDeleteSources( 1, &openalSource );
 		openalSource = 0;
-
-		if( openalStreamingBuffer[0] && openalStreamingBuffer[1] && openalStreamingBuffer[2] )
-		{
-			CheckALErrors();
-
-			alDeleteBuffers( 3, &openalStreamingBuffer[0] );
-			if( CheckALErrors() == AL_NO_ERROR )
-			{
-				openalStreamingBuffer[0] = openalStreamingBuffer[1] = openalStreamingBuffer[2] = 0;
-			}
-		}
-
-		if( lastopenalStreamingBuffer[0] && lastopenalStreamingBuffer[1] && lastopenalStreamingBuffer[2] )
-		{
-			CheckALErrors();
-
-			alDeleteBuffers( 3, &lastopenalStreamingBuffer[0] );
-			if( CheckALErrors() == AL_NO_ERROR )
-			{
-				lastopenalStreamingBuffer[0] = lastopenalStreamingBuffer[1] = lastopenalStreamingBuffer[2] = 0;
-			}
-		}
-
-		openalStreamingOffset = 0;
-
 		hasVUMeter = false;
 	}
+	DeleteStreamingBuffers();
+	ResetQueuedBufferState();
 	DestroyWetDryFilters();
 }
 
@@ -410,8 +520,14 @@ void idSoundVoice_OpenAL::Start( int offsetMS, int ssFlags )
 		return;
 	}
 
-	RestartAt( offsetSamples );
-	Update();
+	if( RestartAt( offsetSamples ) <= 0 )
+	{
+		return;
+	}
+	if( !Update() )
+	{
+		return;
+	}
 	UnPause();
 }
 
@@ -423,6 +539,7 @@ idSoundVoice_OpenAL::RestartAt
 int idSoundVoice_OpenAL::RestartAt( int offsetSamples )
 {
 	offsetSamples &= ~127;
+	ResetQueuedBufferState();
 
 	idSoundSample_OpenAL* sample = leadinSample;
 	if( sample == NULL )
@@ -467,7 +584,31 @@ int idSoundVoice_OpenAL::RestartAt( int offsetSamples )
 		const idSoundSample_OpenAL::sampleBuffer_t& sampleBuffer = sampleBuffers[i];
 		if( sampleBuffer.numSamples > sample->playBegin + offsetSamples )
 		{
-			return SubmitBuffer( sample, i, sample->playBegin + offsetSamples - previousNumSamples );
+			const int bufferOffset = sample->playBegin + offsetSamples - previousNumSamples;
+			FlushSourceBuffers();
+			if( sample->openalBuffer != 0 && ( loopingSample == NULL || sample == loopingSample ) )
+			{
+				alSourcei( openalSource, AL_BUFFER, sample->openalBuffer );
+				alSourcei( openalSource, AL_LOOPING, ( sample == loopingSample && loopingSample != NULL ? AL_TRUE : AL_FALSE ) );
+				if( bufferOffset > 0 )
+				{
+					alSourcei( openalSource, AL_SAMPLE_OFFSET, sample->playBegin + offsetSamples );
+				}
+				if( CheckALErrors() != AL_NO_ERROR )
+				{
+					return 0;
+				}
+				return sample->totalBufferSize;
+			}
+
+			if( sample->openalBuffer == 0 && !EnsureStreamingBuffers() )
+			{
+				return 0;
+			}
+			nextQueuedSample = sample;
+			nextQueuedBuffer = i;
+			nextQueuedOffset = bufferOffset;
+			return 1;
 		}
 		previousNumSamples = sampleBuffer.numSamples;
 	}
@@ -480,9 +621,9 @@ int idSoundVoice_OpenAL::RestartAt( int offsetSamples )
 idSoundVoice_OpenAL::SubmitBuffer
 ========================
 */
-int idSoundVoice_OpenAL::SubmitBuffer( idSoundSample_OpenAL* sample, int bufferNumber, int offset )
+int idSoundVoice_OpenAL::SubmitBuffer( idSoundSample_OpenAL* sample, int bufferNumber, int offset, ALuint streamBuffer )
 {
-	if( sample == NULL )
+	if( sample == NULL || !alIsSource( openalSource ) )
 	{
 		return 0;
 	}
@@ -505,129 +646,107 @@ int idSoundVoice_OpenAL::SubmitBuffer( idSoundSample_OpenAL* sample, int bufferN
 		return 0;
 	}
 
-#if 0
-	idSoundSystemLocal::bufferContext_t* bufferContext = soundSystemLocal.ObtainStreamBufferContext();
-	if( bufferContext == NULL )
-	{
-		idLib::Warning( "No free buffer contexts!" );
-		return 0;
-	}
-
-	bufferContext->voice = this;
-	bufferContext->sample = sample;
-	bufferContext->bufferNumber = bufferNumber;
-#endif
-
 	if( sample->openalBuffer != 0 )
 	{
-		alSourcei( openalSource, AL_BUFFER, sample->openalBuffer );
-		alSourcei( openalSource, AL_LOOPING, ( sample == loopingSample && loopingSample != NULL ? AL_TRUE : AL_FALSE ) );
+		ALuint staticBuffer = sample->openalBuffer;
+		alSourceQueueBuffers( openalSource, 1, &staticBuffer );
+		if( offset > 0 )
+		{
+			alSourcei( openalSource, AL_SAMPLE_OFFSET, offset );
+		}
+		if( CheckALErrors() != AL_NO_ERROR )
+		{
+			return 0;
+		}
 
 		return sample->totalBufferSize;
 	}
-	else
+
+	if( streamBuffer == 0 || sample->format.basic.blockSize <= 0 )
 	{
-		ALint finishedbuffers;
-
-		if( !triggered )
-		{
-			alGetSourcei( openalSource, AL_BUFFERS_PROCESSED, &finishedbuffers );
-			alSourceUnqueueBuffers( openalSource, finishedbuffers, &openalStreamingBuffer[0] );
-			if( finishedbuffers == 3 )
-			{
-				triggered = true;
-			}
-		}
-		else
-		{
-			finishedbuffers = 3;
-		}
-
-		ALenum format;
-
-		if( sample->format.basic.formatTag == idWaveFile::FORMAT_PCM )
-		{
-			format = sample->NumChannels() == 1 ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16;
-		}
-		else if( sample->format.basic.formatTag == idWaveFile::FORMAT_ADPCM )
-		{
-			format = sample->NumChannels() == 1 ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16;
-		}
-		else if( sample->format.basic.formatTag == idWaveFile::FORMAT_XMA2 )
-		{
-			format = sample->NumChannels() == 1 ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16;
-		}
-		else
-		{
-			format = sample->NumChannels() == 1 ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16;
-		}
-
-		int rate = sample->SampleRate(); /*44100*/
-
-		for( int j = 0; j < finishedbuffers && j < 1; j++ )
-		{
-			/*
-			chan->GatherChannelSamples( chan->openalStreamingOffset * sample->objectInfo.nChannels, MIXBUFFER_SAMPLES * sample->objectInfo.nChannels, alignedInputSamples );
-			for( int i = 0; i < ( MIXBUFFER_SAMPLES * sample->objectInfo.nChannels ); i++ )
-			{
-				if( alignedInputSamples[i] < -32768.0f )
-					( ( short* )alignedInputSamples )[i] = -32768;
-				else if( alignedInputSamples[i] > 32767.0f )
-					( ( short* )alignedInputSamples )[i] = 32767;
-				else
-					( ( short* )alignedInputSamples )[i] = idMath::FtoiFast( alignedInputSamples[i] );
-			}
-			*/
-
-			//alBufferData( buffers[0], sample->NumChannels() == 1 ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16, sample->buffers[bufferNumber].buffer, sample->buffers[bufferNumber].bufferSize, sample->SampleRate() /*44100*/ );
-
-			alBufferData( openalStreamingBuffer[j], format, sampleBuffers[bufferNumber].buffer, sampleBuffers[bufferNumber].bufferSize, rate );
-			//openalStreamingOffset += MIXBUFFER_SAMPLES;
-		}
-
-		if( finishedbuffers > 0 )
-		{
-			//alSourceQueueBuffers( openalSource, finishedbuffers, &buffers[0] );
-			alSourceQueueBuffers( openalSource, 1, &openalStreamingBuffer[0] );
-
-			if( bufferNumber == 0 )
-			{
-				//alSourcePlay( openalSource );
-				triggered = false;
-			}
-
-			return sampleBuffers[bufferNumber].bufferSize;
-		}
+		return 0;
 	}
 
-	// should never happen
-	return 0;
-
-	/*
-
-	XAUDIO2_BUFFER buffer = { 0 };
-	if( offset > 0 )
+	if( sample->format.basic.formatTag != idWaveFile::FORMAT_PCM )
 	{
-		int previousNumSamples = 0;
-		if( bufferNumber > 0 )
-		{
-			previousNumSamples = sample->buffers[bufferNumber - 1].numSamples;
-		}
-		buffer.PlayBegin = offset;
-		buffer.PlayLength = sample->buffers[bufferNumber].numSamples - previousNumSamples - offset;
+		return 0;
 	}
-	buffer.AudioBytes = sample->buffers[bufferNumber].bufferSize;
-	buffer.pAudioData = ( BYTE* )sample->buffers[bufferNumber].buffer;
-	buffer.pContext = bufferContext;
-	if( ( loopingSample == NULL ) && ( bufferNumber == sample->buffers.Num() - 1 ) )
+
+	const idSoundSample_OpenAL::sampleBuffer_t& sampleBuffer = sampleBuffers[bufferNumber];
+	if( sampleBuffer.buffer == NULL || sampleBuffer.bufferSize <= 0 )
 	{
-		buffer.Flags = XAUDIO2_END_OF_STREAM;
+		return 0;
 	}
-	pSourceVoice->SubmitSourceBuffer( &buffer );
 
-	return buffer.AudioBytes;
+	const int bytesPerSample = sample->format.basic.blockSize;
+	if( bytesPerSample <= 0 || sampleBuffer.bufferSize % bytesPerSample != 0 )
+	{
+		return 0;
+	}
 
-	*/
+	const int previousNumSamples = bufferNumber > 0 ? sampleBuffers[bufferNumber - 1].numSamples : 0;
+	const int bufferSamples = sampleBuffer.numSamples - previousNumSamples;
+	if( bufferSamples <= 0 )
+	{
+		return 0;
+	}
+
+	if( offset < 0 )
+	{
+		offset = 0;
+	}
+	if( offset >= bufferSamples || offset >= sampleBuffer.bufferSize / bytesPerSample )
+	{
+		return 0;
+	}
+
+	const int byteOffset = offset * bytesPerSample;
+	if( byteOffset < 0 || byteOffset >= sampleBuffer.bufferSize )
+	{
+		return 0;
+	}
+
+	const byte* audioData = reinterpret_cast<const byte*>( sampleBuffer.buffer ) + byteOffset;
+	const int audioBytes = sampleBuffer.bufferSize - byteOffset;
+	if( audioBytes <= 0 )
+	{
+		return 0;
+	}
+
+	alBufferData( streamBuffer, sample->GetOpenALBufferFormat(), audioData, audioBytes, sample->SampleRate() );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		return 0;
+	}
+
+	alSourceQueueBuffers( openalSource, 1, &streamBuffer );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		return 0;
+	}
+
+	return audioBytes;
+}
+
+bool idSoundVoice_OpenAL::QueueNextBuffer( ALuint streamBuffer )
+{
+	if( nextQueuedSample == NULL )
+	{
+		return false;
+	}
+
+	const int submittedBytes = SubmitBuffer( nextQueuedSample, nextQueuedBuffer, nextQueuedOffset, streamBuffer );
+	if( submittedBytes <= 0 )
+	{
+		nextQueuedSample = NULL;
+		nextQueuedBuffer = 0;
+		nextQueuedOffset = 0;
+		return false;
+	}
+
+	queuedBufferPlaybackActive = true;
+	AdvanceQueuedBuffer();
+	return true;
 }
 
 /*
@@ -637,36 +756,122 @@ idSoundVoice_OpenAL::Update
 */
 bool idSoundVoice_OpenAL::Update()
 {
-	/*
-	if( pSourceVoice == NULL || leadinSample == NULL )
+	if( !alIsSource( openalSource ) || leadinSample == NULL )
 	{
 		return false;
 	}
 
-	XAUDIO2_VOICE_STATE state;
-	pSourceVoice->GetState( &state );
-
-	const int srcChannels = leadinSample->NumChannels();
-
-	float pLevelMatrix[ MAX_CHANNELS_PER_VOICE * MAX_CHANNELS_PER_VOICE ] = { 0 };
-	CalculateSurround( srcChannels, pLevelMatrix, 1.0f );
-
-	if( s_skipHardwareSets.GetBool() )
+	if( !HasQueuedBufferState() )
 	{
 		return true;
 	}
 
-	pSourceVoice->SetOutputMatrix( soundSystemLocal.hardware.pMasterVoice, srcChannels, dstChannels, pLevelMatrix, OPERATION_SET );
+	const bool hadQueuedState = HasQueuedBufferState();
+	bool submittedAny = false;
 
-	assert( idMath::Fabs( gain ) <= XAUDIO2_MAX_VOLUME_LEVEL );
-	pSourceVoice->SetVolume( gain, OPERATION_SET );
+	ALint processedBuffers = 0;
+	alGetSourcei( openalSource, AL_BUFFERS_PROCESSED, &processedBuffers );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		return false;
+	}
 
-	SetSampleRate( sampleRate, OPERATION_SET );
+	ALuint recycledBuffers[MAX_QUEUED_BUFFERS];
+	int recycledCount = 0;
+	while( processedBuffers > 0 )
+	{
+		const int unqueueCount = Min( processedBuffers, MAX_QUEUED_BUFFERS - recycledCount );
+		if( unqueueCount <= 0 )
+		{
+			break;
+		}
+		alSourceUnqueueBuffers( openalSource, unqueueCount, &recycledBuffers[recycledCount] );
+		if( CheckALErrors() != AL_NO_ERROR )
+		{
+			ResetQueuedBufferState();
+			return false;
+		}
+		recycledCount += unqueueCount;
+		processedBuffers -= unqueueCount;
+	}
 
-	// we don't do this any longer because we pause and unpause explicitly when the soundworld is paused or unpaused
-	// UnPause();
-	*/
-	return true;
+	ALint queuedBuffers = 0;
+	alGetSourcei( openalSource, AL_BUFFERS_QUEUED, &queuedBuffers );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		return false;
+	}
+
+	if( UsesStreamingBuffers() )
+	{
+		ALuint buffersToFill[MAX_QUEUED_BUFFERS];
+		int buffersToFillCount = 0;
+
+		if( queuedBuffers == 0 && recycledCount == 0 )
+		{
+			for( int i = 0; i < MAX_QUEUED_BUFFERS; i++ )
+			{
+				if( openalStreamingBuffer[i] != 0 )
+				{
+					buffersToFill[buffersToFillCount++] = openalStreamingBuffer[i];
+				}
+			}
+		}
+		else
+		{
+			for( int i = 0; i < recycledCount; i++ )
+			{
+				buffersToFill[buffersToFillCount++] = recycledBuffers[i];
+			}
+		}
+
+		for( int i = 0; i < buffersToFillCount && nextQueuedSample != NULL; i++ )
+		{
+			if( QueueNextBuffer( buffersToFill[i] ) )
+			{
+				submittedAny = true;
+				queuedBuffers++;
+			}
+		}
+	}
+	else
+	{
+		while( queuedBuffers < MAX_QUEUED_BUFFERS && nextQueuedSample != NULL )
+		{
+			if( !QueueNextBuffer( 0 ) )
+			{
+				break;
+			}
+			submittedAny = true;
+			queuedBuffers++;
+		}
+	}
+
+	alGetSourcei( openalSource, AL_BUFFERS_QUEUED, &queuedBuffers );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		return false;
+	}
+
+	ALint state = AL_INITIAL;
+	alGetSourcei( openalSource, AL_SOURCE_STATE, &state );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		return false;
+	}
+
+	if( !paused && queuedBuffers > 0 && state != AL_PLAYING )
+	{
+		alSourcePlay( openalSource );
+		CheckALErrors();
+	}
+
+	if( queuedBuffers <= 0 && nextQueuedSample == NULL && state != AL_PLAYING )
+	{
+		queuedBufferPlaybackActive = false;
+	}
+
+	return queuedBuffers > 0 || state == AL_PLAYING || !hadQueuedState || submittedAny;
 }
 
 /*
@@ -754,10 +959,41 @@ idSoundVoice_OpenAL::FlushSourceBuffers
 */
 void idSoundVoice_OpenAL::FlushSourceBuffers()
 {
-	if( alIsSource( openalSource ) )
+	if( !alIsSource( openalSource ) )
 	{
-		//pSourceVoice->FlushSourceBuffers();
+		ResetQueuedBufferState();
+		return;
 	}
+
+	alSourceStop( openalSource );
+
+	ALint sourceType = AL_UNDETERMINED;
+	alGetSourcei( openalSource, AL_SOURCE_TYPE, &sourceType );
+	CheckALErrors();
+	if( sourceType == AL_STREAMING )
+	{
+		ALint queuedBuffers = 0;
+		alGetSourcei( openalSource, AL_BUFFERS_QUEUED, &queuedBuffers );
+		CheckALErrors();
+		while( queuedBuffers > 0 )
+		{
+			ALuint unqueuedBuffers[MAX_QUEUED_BUFFERS];
+			const int unqueueCount = Min( queuedBuffers, MAX_QUEUED_BUFFERS );
+			alSourceUnqueueBuffers( openalSource, unqueueCount, unqueuedBuffers );
+			if( CheckALErrors() != AL_NO_ERROR )
+			{
+				break;
+			}
+			queuedBuffers -= unqueueCount;
+		}
+	}
+
+	alSourcei( openalSource, AL_BUFFER, 0 );
+	alSourcei( openalSource, AL_LOOPING, AL_FALSE );
+	CheckALErrors();
+
+	paused = true;
+	ResetQueuedBufferState();
 }
 
 /*
@@ -816,19 +1052,12 @@ void idSoundVoice_OpenAL::Stop()
 		return;
 	}
 
-	if( !paused )
+	if( !paused && s_debugHardware.GetBool() )
 	{
-		if( s_debugHardware.GetBool() )
-		{
-			idLib::Printf( "%dms: %i stopping %s\n", Sys_Milliseconds(), openalSource, leadinSample ? leadinSample->GetName() : "<null>" );
-		}
-
-		alSourceStop( openalSource );
-		alSourcei( openalSource, AL_BUFFER, 0 );
-
-		//pSourceVoice->Stop( 0, OPERATION_SET );
-		paused = true;
+		idLib::Printf( "%dms: %i stopping %s\n", Sys_Milliseconds(), openalSource, leadinSample ? leadinSample->GetName() : "<null>" );
 	}
+
+	FlushSourceBuffers();
 }
 
 /*
@@ -1014,8 +1243,8 @@ void idSoundVoice_OpenAL::ApplyWetDryRouting()
 		return;
 	}
 
-	float effectiveDry = Max( 0.0f, dryLevel );
-	float effectiveWet = Max( 0.0f, wetLevel );
+	float effectiveDry = OpenQ4_SanitizeUnitValue( dryLevel );
+	float effectiveWet = OpenQ4_SanitizeUnitValue( wetLevel );
 
 	switch( s_openALEfxDebugMode.GetInteger() )
 	{
@@ -1031,9 +1260,7 @@ void idSoundVoice_OpenAL::ApplyWetDryRouting()
 			break;
 	}
 
-	effectiveDry = idMath::ClampFloat( 0.0f, 1.0f, effectiveDry );
-	effectiveWet = idMath::ClampFloat( 0.0f, 1.0f, effectiveWet );
-	const float effectiveGain = Max( 0.0f, gain );
+	const float effectiveGain = OpenQ4_SanitizeSourceGain( gain );
 	const openQ4OcclusionFilter_t occlusionFilter = OpenQ4_BuildOcclusionFilter( occlusion, environmentMuffle );
 	const float directFilterGain = effectiveDry * occlusionFilter.directGain;
 	const float wetFilterGain = effectiveWet * occlusionFilter.wetGain;
@@ -1096,5 +1323,8 @@ void idSoundVoice_OpenAL::OnBufferStart( idSoundSample_OpenAL* sample, int buffe
 		nextBuffer = 0;
 	}
 
-	SubmitBuffer( nextSample, nextBuffer, 0 );
+	nextQueuedSample = nextSample;
+	nextQueuedBuffer = nextBuffer;
+	nextQueuedOffset = 0;
+	Update();
 }

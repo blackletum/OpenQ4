@@ -61,6 +61,29 @@ static const float SOUND_FREQUENCY_SHIFT_MAX = 4.0f;
 static const float SOUND_OCCLUSION_PER_BLOCKED_PORTAL = 0.5f;
 static const float SOUND_ENVIROSUIT_OCCLUSION = 0.5f;
 
+static ID_INLINE float SoundSanitizeUnitValue( const float value, const float fallback )
+{
+	if( FLOAT_IS_NAN( value ) )
+	{
+		return fallback;
+	}
+	return idMath::ClampFloat( 0.0f, 1.0f, value );
+}
+
+static ID_INLINE float SoundSanitizePositiveValue( const float value, const float fallback )
+{
+	if( FLOAT_IS_NAN( value ) || value <= 0.0f )
+	{
+		return fallback;
+	}
+	return value;
+}
+
+static ID_INLINE float SoundSanitizeGainScale( const float value, const float fallback )
+{
+	return idMath::ClampFloat( 0.0f, 16.0f, SoundSanitizePositiveValue( value, fallback ) );
+}
+
 static ID_INLINE float VolumeScaleToDB( const float volumeScale )
 {
 	if( volumeScale <= 0.0f )
@@ -77,12 +100,22 @@ static ID_INLINE float SoundChannelFrequencyShift( const idSoundChannel* chan )
 		return 1.0f;
 	}
 
-	const float frequencyShift = chan->parms.frequencyShift > 0.0f ? chan->parms.frequencyShift : 1.0f;
+	const float frequencyShift = SoundSanitizePositiveValue( chan->parms.frequencyShift, 1.0f );
 	return idMath::ClampFloat( SOUND_FREQUENCY_SHIFT_MIN, SOUND_FREQUENCY_SHIFT_MAX, frequencyShift );
 }
 
 static void SoundWorldApplyDistanceFalloff( float& volumeScale, const float distance, const float minDistance, const float maxDistance )
 {
+	if( FLOAT_IS_NAN( volumeScale ) )
+	{
+		volumeScale = 0.0f;
+		return;
+	}
+	if( FLOAT_IS_NAN( distance ) || FLOAT_IS_NAN( minDistance ) || FLOAT_IS_NAN( maxDistance ) || maxDistance <= 0.0f )
+	{
+		return;
+	}
+
 	if( distance >= maxDistance )
 	{
 		volumeScale = 0.0f;
@@ -101,8 +134,8 @@ static void SoundWorldApplyDistanceFalloff( float& volumeScale, const float dist
 
 static ID_INLINE float SoundCombineOcclusion( const float a, const float b )
 {
-	const float clampedA = idMath::ClampFloat( 0.0f, 1.0f, a );
-	const float clampedB = idMath::ClampFloat( 0.0f, 1.0f, b );
+	const float clampedA = SoundSanitizeUnitValue( a, 0.0f );
+	const float clampedB = SoundSanitizeUnitValue( b, 0.0f );
 	return 1.0f - ( ( 1.0f - clampedA ) * ( 1.0f - clampedB ) );
 }
 
@@ -358,7 +391,7 @@ void idSoundChannel::UpdateVolume( int currentTime )
 		}
 	}
 
-	volumeScale *= s_volume.GetFloat();
+	volumeScale *= SoundSanitizeGainScale( s_volume.GetFloat(), 0.0f );
 	volumeScale *= volumeFade.GetVolume( currentTime );
 	volumeScale *= soundWorld->volumeFade.GetVolume( currentTime );
 	volumeScale *= soundWorld->pauseFade.GetVolume( currentTime );
@@ -382,21 +415,26 @@ void idSoundChannel::UpdateVolume( int currentTime )
 		{
 			if( IsRadioChatterChannel( this ) )
 			{
-				volumeScale *= s_radioChatterFraction.GetFloat();
+				volumeScale *= SoundSanitizeUnitValue( s_radioChatterFraction.GetFloat(), 1.0f );
 			}
 			else
 			{
-				volumeScale *= s_speakerFraction.GetFloat();
+				volumeScale *= SoundSanitizeUnitValue( s_speakerFraction.GetFloat(), 1.0f );
 			}
 		}
 	}
 
 	if( ( parms.soundShaderFlags & SSF_MUSIC ) != 0 )
 	{
-		volumeScale *= idMath::ClampFloat( 0.0f, 1.0f, s_musicVolume.GetFloat() );
+		volumeScale *= SoundSanitizeUnitValue( s_musicVolume.GetFloat(), 1.0f );
 	}
 
 	if( soundSystemLocal.musicMuted && ( parms.soundShaderFlags & SSF_MUSIC ) != 0 )
+	{
+		volumeScale = 0.0f;
+	}
+
+	if( FLOAT_IS_NAN( volumeScale ) || volumeScale <= 0.0f )
 	{
 		volumeScale = 0.0f;
 	}
@@ -450,6 +488,11 @@ void idSoundChannel::UpdateHardware( float volumeAdd, int currentTime )
 	// convert volumes from decibels to linear
 	const float mixedVolumeDB = volumeDB + volumeAdd;
 	float volume = mixedVolumeDB <= DB_SILENCE ? 0.0f : Max( 0.0f, DBtoLinear( mixedVolumeDB ) );
+	if( FLOAT_IS_NAN( volume ) )
+	{
+		volume = 0.0f;
+	}
+	volume = SoundSanitizeGainScale( volume, 0.0f );
 
 	if( ( parms.soundShaderFlags & SSF_UNCLAMPED ) == 0 )
 	{
@@ -516,13 +559,13 @@ void idSoundChannel::UpdateHardware( float volumeAdd, int currentTime )
 
 	hardwareVoice->SetGain( volume );
 	hardwareVoice->SetInnerRadius( parms.minDistance * METERS_TO_DOOM );
-	const float pitchScale = idMath::ClampFloat( 0.2f, 5.0f, com_timescale.GetFloat() );
+	const float pitchScale = idMath::ClampFloat( 0.2f, 5.0f, SoundSanitizePositiveValue( com_timescale.GetFloat(), 1.0f ) );
 	const float frequencyShift = SoundChannelFrequencyShift( this );
-	const float wetLevel = Max( 0.0f, parms.wetLevel );
-	const float dryLevel = Max( 0.0f, parms.dryLevel );
+	const float wetLevel = SoundSanitizeUnitValue( parms.wetLevel, 0.0f );
+	const float dryLevel = SoundSanitizeUnitValue( parms.dryLevel, 1.0f );
 	hardwareVoice->SetWetLevel( wetLevel );
 	hardwareVoice->SetDryLevel( dryLevel );
-	hardwareVoice->SetPitch( soundWorld->slowmoSpeed * pitchScale * frequencyShift );
+	hardwareVoice->SetPitch( SoundSanitizePositiveValue( soundWorld->slowmoSpeed, 1.0f ) * pitchScale * frequencyShift );
 
 	float portalOcclusion = 0.0f;
 	const bool allowPortalOcclusion = !global && !emitterIsListener && s_useOcclusion.GetBool() && ( parms.soundShaderFlags & SSF_NO_OCCLUSION ) == 0;

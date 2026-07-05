@@ -46,14 +46,20 @@ public:
 	{
 		idSoundVoice_Base::SetPosition( p );
 
-		alSource3f( openalSource, AL_POSITION, -p.y, p.z, -p.x );
+		if( alIsSource( openalSource ) )
+		{
+			alSource3f( openalSource, AL_POSITION, -p.y, p.z, -p.x );
+		}
 	}
 
 	void					SetVelocity( const idVec3& v ) override
 	{
 		idSoundVoice_Base::SetVelocity( v );
 
-		alSource3f( openalSource, AL_VELOCITY, -v.y, v.z, -v.x );
+		if( alIsSource( openalSource ) )
+		{
+			alSource3f( openalSource, AL_VELOCITY, -v.y, v.z, -v.x );
+		}
 	}
 
 	void					SetGain( float gain )
@@ -66,7 +72,10 @@ public:
 	{
 		idSoundVoice_Base::SetPitch( p );
 
-		alSourcef( openalSource, AL_PITCH, p );
+		if( alIsSource( openalSource ) )
+		{
+			alSourcef( openalSource, AL_PITCH, pitch );
+		}
 	}
 	void		SetWetLevel( float wet ) override
 	{
@@ -138,7 +147,15 @@ private:
 	int						RestartAt( int offsetSamples );
 
 	// Helper function to submit a buffer
-	int						SubmitBuffer( idSoundSample_OpenAL* sample, int bufferNumber, int offset );
+	int						SubmitBuffer( idSoundSample_OpenAL* sample, int bufferNumber, int offset, ALuint streamBuffer );
+	bool					QueueNextBuffer( ALuint streamBuffer );
+	void					AdvanceQueuedBuffer();
+	bool					SetNextQueuedSampleStart( idSoundSample_OpenAL* sample );
+	void					ResetQueuedBufferState();
+	void					DeleteStreamingBuffers();
+	bool					EnsureStreamingBuffers();
+	bool					UsesStreamingBuffers() const;
+	bool					HasQueuedBufferState() const;
 
 	// Adjust the voice frequency based on the new sample rate for the buffer
 	void					SetSampleRate( uint32 newSampleRate, uint32 operationSet );
@@ -147,13 +164,14 @@ private:
 	void					DestroyWetDryFilters();
 
 	//IXAudio2SourceVoice* 	pSourceVoice;
-	bool					triggered;
 	ALuint					openalSource;
-	ALuint					openalStreamingOffset;
 	ALuint					openalStreamingBuffer[3];
-	ALuint					lastopenalStreamingBuffer[3];
 	ALuint					openalDirectFilter;
 	ALuint					openalAuxFilter;
+	idSoundSample_OpenAL*	nextQueuedSample;
+	int						nextQueuedBuffer;
+	int						nextQueuedOffset;
+	bool					queuedBufferPlaybackActive;
 
 	idSoundSample_OpenAL*	leadinSample;
 	idSoundSample_OpenAL*	loopingSample;

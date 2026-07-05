@@ -57,33 +57,33 @@ public:
 
 	virtual void	SetGain( float g )
 	{
-		gain = g;
+		gain = ( FLOAT_IS_NAN( g ) || g <= 0.0f ) ? 0.0f : idMath::ClampFloat( 0.0f, 16.0f, g );
 	}
 
 	virtual void	SetPitch( float p )
 	{
-		pitch = p;
+		pitch = ( FLOAT_IS_NAN( p ) || p <= 0.0f ) ? 1.0f : idMath::ClampFloat( 0.01f, 64.0f, p );
 	}
 
 	virtual void	SetWetLevel( float wet )
 	{
-		wetLevel = wet;
+		wetLevel = FLOAT_IS_NAN( wet ) ? 0.0f : idMath::ClampFloat( 0.0f, 1.0f, wet );
 	}
 
 	virtual void	SetDryLevel( float dry )
 	{
-		dryLevel = dry;
+		dryLevel = FLOAT_IS_NAN( dry ) ? 1.0f : idMath::ClampFloat( 0.0f, 1.0f, dry );
 	}
 	// RB end
 
 	void		SetCenterChannel( float c )
 	{
-		centerChannel = c;
+		centerChannel = FLOAT_IS_NAN( c ) ? 0.0f : idMath::ClampFloat( 0.0f, 1.0f, c );
 	}
 
 	void		SetInnerRadius( float r )
 	{
-		innerRadius = r;
+		innerRadius = ( FLOAT_IS_NAN( r ) || r <= 0.0f ) ? 0.0f : r;
 	}
 	void		SetChannelMask( uint32 mask )
 	{
@@ -95,13 +95,13 @@ public:
 	// Controls portal/wall obstruction, where 0.0f = clear, 1.0f = fully obstructed
 	virtual void	SetOcclusion( float f )
 	{
-		occlusion = idMath::ClampFloat( 0.0f, 1.0f, f );
+		occlusion = FLOAT_IS_NAN( f ) ? 0.0f : idMath::ClampFloat( 0.0f, 1.0f, f );
 	}
 
 	// Controls listener/world muffling effects such as enviro-suit filtering
 	virtual void	SetEnvironmentMuffle( float f )
 	{
-		environmentMuffle = idMath::ClampFloat( 0.0f, 1.0f, f );
+		environmentMuffle = FLOAT_IS_NAN( f ) ? 0.0f : idMath::ClampFloat( 0.0f, 1.0f, f );
 	}
 
 	float		GetGain()

@@ -10155,24 +10155,66 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 RB_ARB2_DrawInteractions
 ==================
 */
-static void RB_ARB2_RestoreBypassedInteractionState( void ) {
+static void RB_ARB2_DisableInteractionVertexAttribArrays( void ) {
+	if ( glDisableVertexAttribArrayARB == NULL ) {
+		return;
+	}
+
+	static const int attribs[] = { 1, 2, 5, 6, 7, 8, 9, 10, 11 };
+	const int numAttribs = static_cast<int>( sizeof( attribs ) / sizeof( attribs[0] ) );
+	for ( int i = 0; i < numAttribs; i++ ) {
+		glDisableVertexAttribArrayARB( attribs[i] );
+	}
+}
+
+static void RB_ARB2_UnbindBypassedInteractionPrograms( void ) {
+	if ( glBindProgramARB == NULL ) {
+		return;
+	}
+	if ( glConfig.ARBVertexProgramAvailable ) {
+		glBindProgramARB( GL_VERTEX_PROGRAM_ARB, 0 );
+	}
+	if ( glConfig.ARBFragmentProgramAvailable ) {
+		glBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, 0 );
+	}
+}
+
+static void RB_ARB2_ClearBypassedInteractionTextureState( void ) {
+	const int maxStateUnits = Max( 0, Min( MAX_MULTITEXTURE_UNITS, Min( glConfig.maxTextureUnits, glConfig.maxTextureImageUnits ) ) );
+	const int maxInteractionUnit = Min( 6, maxStateUnits - 1 );
+
+	// GL_SelectTextureNoClient can leave the client active texture behind.
+	backEnd.glState.currenttmu = -1;
+	for ( int unit = maxInteractionUnit; unit >= 1; unit-- ) {
+		GL_SelectTexture( unit );
+		globalImages->BindNull();
+		glDisable( GL_TEXTURE_GEN_S );
+		glDisable( GL_TEXTURE_GEN_T );
+		glDisable( GL_TEXTURE_GEN_R );
+		glDisable( GL_TEXTURE_GEN_Q );
+		GL_TexEnv( GL_MODULATE );
+		glDisableClientState( GL_TEXTURE_COORD_ARRAY );
+	}
+
+	backEnd.glState.currenttmu = -1;
 	GL_SelectTexture( 0 );
+	globalImages->BindNull();
 	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
+}
+
+static void RB_ARB2_RestoreBypassedInteractionState( void ) {
+	RB_ARB2_ClearBypassedInteractionTextureState();
 	glDisableClientState( GL_COLOR_ARRAY );
 	glDisableClientState( GL_NORMAL_ARRAY );
 
-	if ( glDisableVertexAttribArrayARB != NULL ) {
-		glDisableVertexAttribArrayARB( 8 );
-		glDisableVertexAttribArrayARB( 9 );
-		glDisableVertexAttribArrayARB( 10 );
-		glDisableVertexAttribArrayARB( 11 );
-	}
+	RB_ARB2_DisableInteractionVertexAttribArrays();
 	if ( glConfig.ARBVertexProgramAvailable ) {
 		glDisable( GL_VERTEX_PROGRAM_ARB );
 	}
 	if ( glConfig.ARBFragmentProgramAvailable ) {
 		glDisable( GL_FRAGMENT_PROGRAM_ARB );
 	}
+	RB_ARB2_UnbindBypassedInteractionPrograms();
 
 	glStencilFunc( GL_ALWAYS, 128, 255 );
 	backEnd.currentSpace = NULL;

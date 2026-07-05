@@ -260,8 +260,9 @@ the work below.
 - The July 5 issue #73 follow-up report for 0.6.91 reached
   `ARB2 interaction driver bypass` before crashing, so
   `src/renderer/draw_arb2.cpp` now restores the classic post-interaction GL
-  state baseline on the bypass path and `src/renderer/draw_common.cpp` records
-  post-bypass light-scale, ambient-rescue, and frame-tail breadcrumbs.
+  state, texture-unit, and ARB program-binding baseline on the bypass path and
+  `src/renderer/draw_common.cpp` records post-bypass light-scale,
+  ambient-rescue, and frame-tail breadcrumbs.
 - `src/renderer/draw_arb2.cpp` already routes repeated required program binds
   through `R_BindARBProgram`; Phase 3 now adds
   `RB_ErrorIfDriverRequiredSimpleInteractionFailed()` so Apple GL 2.1 fallback

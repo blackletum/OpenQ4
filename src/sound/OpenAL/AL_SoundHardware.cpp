@@ -1535,7 +1535,9 @@ idSoundVoice* idSoundHardware_OpenAL::AllocateVoice( const idSoundSample* leadin
 	}
 	if( loopingSample != NULL )
 	{
-		if( ( leadinSample->format.basic.formatTag != loopingSample->format.basic.formatTag ) || ( leadinSample->format.basic.numChannels != loopingSample->format.basic.numChannels ) )
+		if( ( leadinSample->format.basic.formatTag != loopingSample->format.basic.formatTag ) ||
+			( leadinSample->format.basic.numChannels != loopingSample->format.basic.numChannels ) ||
+			( leadinSample->format.basic.samplesPerSec != loopingSample->format.basic.samplesPerSec ) )
 		{
 			idLib::Warning( "Leadin/looping format mismatch: %s & %s", leadinSample->GetName(), loopingSample->GetName() );
 			loopingSample = NULL;
@@ -1560,7 +1562,12 @@ idSoundVoice* idSoundHardware_OpenAL::AllocateVoice( const idSoundSample* leadin
 	if( voice != NULL )
 	{
 		voice->Create( leadinSample, loopingSample );
-		freeVoices.Remove( voice );
+		idSoundVoice_OpenAL* openalVoice = ( idSoundVoice_OpenAL* )voice;
+		if( !alIsSource( openalVoice->openalSource ) )
+		{
+			return NULL;
+		}
+		freeVoices.Remove( openalVoice );
 		return voice;
 	}
 
@@ -1574,11 +1581,22 @@ idSoundHardware_OpenAL::FreeVoice
 */
 void idSoundHardware_OpenAL::FreeVoice( idSoundVoice* voice )
 {
-	voice->Stop();
+	if( voice == NULL )
+	{
+		return;
+	}
 
-	// Stop() is asyncronous, so we won't flush bufferes until the
-	// voice on the zombie channel actually returns !IsPlaying()
-	zombieVoices.Append( voice );
+	idSoundVoice_OpenAL* openalVoice = ( idSoundVoice_OpenAL* )voice;
+	voice->Stop();
+	zombieVoices.Remove( openalVoice );
+
+	if( !openalVoice->IsPlaying() )
+	{
+		freeVoices.AddUnique( openalVoice );
+		return;
+	}
+
+	zombieVoices.AddUnique( openalVoice );
 }
 
 /*
@@ -1674,15 +1692,14 @@ void idSoundHardware_OpenAL::Update()
 		alListenerf( AL_GAIN, 1.0f );
 	}
 
-	// IXAudio2SourceVoice::Stop() has been called for every sound on the
-	// zombie list, but it is documented as asyncronous, so we have to wait
-	// until it actually reports that it is no longer playing.
+	// Stop() has already been requested for every zombie voice. Keep retrying
+	// until the backend reports that playback is fully drained.
 	for( int i = 0; i < zombieVoices.Num(); i++ )
 	{
 		zombieVoices[i]->FlushSourceBuffers();
 		if( !zombieVoices[i]->IsPlaying() )
 		{
-			freeVoices.Append( zombieVoices[i] );
+			freeVoices.AddUnique( zombieVoices[i] );
 			zombieVoices.RemoveIndex( i );
 			i--;
 		}
