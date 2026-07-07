@@ -110,6 +110,61 @@ MACOS_NON_RUNTIME_PATTERNS = NON_RUNTIME_PATTERNS + (
     "*.dSYM",
     "*.pdb",
 )
+MACOS_SUPPORT_INFO_SCRIPT_NAME = "collect_macos_support_info.sh"
+MAX_MACOS_SUPPORT_INFO_SCRIPT_BYTES = 256 * 1024
+MACOS_SUPPORT_INFO_REQUIRED_TOKENS = (
+    "#!/bin/sh",
+    "OPENQ4_PACKAGE_ROOT",
+    "ARCHIVE_TMP",
+    "MAX_SUPPORT_TEXT_BYTES",
+    "MAX_CRASH_REPORT_BYTES",
+    "MAX_SUPPORT_ARCHIVE_BYTES",
+    "COMMAND_OUTPUT_INDEX",
+    "command-output-",
+    'command_output=$(mktemp "${WORK_PARENT}/command-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")',
+    'copy_text_if_present "${command_output}" "${target}"',
+    "write_bounded_report()",
+    "report-output-",
+    'report_output=$(mktemp "${WORK_PARENT}/report-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")',
+    'copy_text_if_present "${report_output}" "${target}"',
+    "redact_text()",
+    "contains_control_chars()",
+    "Support package root must not contain control characters",
+    "Support output directory must not contain control characters",
+    ".XXXXXX.tar.gz.tmp",
+    "does not dump the environment",
+    "does not launch openQ4",
+    "does not copy retail q4base PK4 assets",
+    "truncated copy failed; source was not copied",
+    "COPYFILE_DISABLE=1 tar -czf",
+    "COPYFILE_DISABLE=1 tar -tzf",
+    "Support archive is empty or unreadable before publish",
+    "Support archive validation failed before publish",
+    "Support archive is too large before publish",
+    'ln "${ARCHIVE_TMP}" "${ARCHIVE_PATH}"',
+)
+MACOS_SUPPORT_INFO_FORBIDDEN_TOKENS = (
+    "printenv",
+    "env >",
+    "set >",
+    "openQ4-client_arm64 >",
+    "openQ4-client_arm64 2>",
+    "openQ4-client_x64 >",
+    "openQ4-client_x64 2>",
+    "openQ4-client_x86 >",
+    "openQ4-client_x86 2>",
+    "openQ4-ded_arm64 >",
+    "openQ4-ded_arm64 2>",
+    "openQ4-ded_x64 >",
+    "openQ4-ded_x64 2>",
+    "openQ4-ded_x86 >",
+    "openQ4-ded_x86 2>",
+    "xattr -l",
+    "xattr -p",
+    "xattr -w",
+    "|| cat",
+    'tail -c "${max_bytes}" < "${source_path}" 2>/dev/null || cat',
+)
 
 MACOS_LIPO_ARCHES = {
     "arm64": "arm64",
@@ -495,6 +550,49 @@ def require_posix_executable(path: Path, root: Path, label: str) -> None:
         raise ValidationError(f"{label} is not executable: {rel(path, root)}")
 
 
+def validate_macos_support_collector_script(root: Path, install_root: Path) -> None:
+    script_path = install_root / MACOS_SUPPORT_INFO_SCRIPT_NAME
+    if not script_path.is_file():
+        raise ValidationError(f"macOS staged payload is missing support collector: {rel(script_path, root)}")
+    require_posix_executable(script_path, root, "macOS support collector")
+
+    try:
+        script_size = script_path.stat().st_size
+    except OSError as exc:
+        raise ValidationError(f"macOS support collector is unreadable: {rel(script_path, root)}") from exc
+    if script_size > MAX_MACOS_SUPPORT_INFO_SCRIPT_BYTES:
+        raise ValidationError(
+            f"macOS support collector is too large: {rel(script_path, root)} "
+            f"({script_size} bytes)"
+        )
+
+    try:
+        script_data = script_path.read_bytes()
+    except OSError as exc:
+        raise ValidationError(f"macOS support collector is unreadable: {rel(script_path, root)}") from exc
+    try:
+        script_text = script_data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValidationError(f"macOS support collector is not UTF-8: {rel(script_path, root)}") from exc
+
+    if "\x00" in script_text:
+        raise ValidationError(f"macOS support collector contains NUL bytes: {rel(script_path, root)}")
+    if "\r" in script_text:
+        raise ValidationError(f"macOS support collector contains CRLF or carriage returns: {rel(script_path, root)}")
+
+    for token in MACOS_SUPPORT_INFO_REQUIRED_TOKENS:
+        if token not in script_text:
+            raise ValidationError(
+                f"macOS support collector is missing required marker {token!r}: {rel(script_path, root)}"
+            )
+    for token in MACOS_SUPPORT_INFO_FORBIDDEN_TOKENS:
+        if token in script_text:
+            raise ValidationError(
+                f"macOS support collector contains forbidden privacy/no-launch pattern {token!r}: "
+                f"{rel(script_path, root)}"
+            )
+
+
 def macos_forbidden_xattrs(path: Path) -> list[str]:
     try:
         names = os.listxattr(path)
@@ -759,6 +857,40 @@ def macos_binary_arch(path: Path, stem: str) -> str | None:
     return match.group(1)
 
 
+def is_macos_root_engine_binary(path: Path) -> bool:
+    return path.is_file() and (path.name.startswith("openQ4-client_") or path.name.startswith("openQ4-ded_"))
+
+
+def validate_macos_staged_root_engine_binaries(
+    root: Path,
+    install_root: Path,
+    client_arches: set[str],
+    dedicated_arches: set[str],
+) -> str:
+    all_arches = client_arches | dedicated_arches
+    if client_arches != dedicated_arches or len(all_arches) != 1:
+        raise ValidationError(
+            "macOS staged payload contains stale or mismatched root engine binaries: "
+            f"clients={sorted(client_arches)} dedicated={sorted(dedicated_arches)}"
+        )
+
+    arch = next(iter(all_arches))
+    expected_names = {
+        f"openQ4-client_{arch}",
+        f"openQ4-ded_{arch}",
+    }
+    stale_binaries = sorted(
+        path
+        for path in install_root.iterdir()
+        if is_macos_root_engine_binary(path) and path.name not in expected_names
+    )
+    if stale_binaries:
+        formatted = "\n".join(f"  - {rel(path, root)}" for path in stale_binaries)
+        raise ValidationError(f"macOS staged payload contains stale or mismatched root engine binaries:\n{formatted}")
+
+    return arch
+
+
 def validate_macos_staged_metadata(
     root: Path,
     install_root: Path,
@@ -773,6 +905,7 @@ def validate_macos_staged_metadata(
         raise ValidationError(f"macOS staged payload is missing app icon: {rel(icon_path, root)}")
     if not splash_path.is_file():
         raise ValidationError(f"macOS staged payload is missing startup splash asset: {rel(splash_path, root)}")
+    validate_macos_support_collector_script(root, install_root)
 
     client_arches: set[str] = set()
     for client in client_candidates:
@@ -790,11 +923,7 @@ def validate_macos_staged_metadata(
             raise ValidationError(f"Unexpected macOS dedicated-server binary name: {rel(dedicated, root)}")
         dedicated_arches.add(arch)
 
-    if client_arches != dedicated_arches:
-        raise ValidationError(
-            "macOS staged engine binary architecture mismatch: "
-            f"clients={sorted(client_arches)} dedicated={sorted(dedicated_arches)}"
-        )
+    staged_arch = validate_macos_staged_root_engine_binaries(root, install_root, client_arches, dedicated_arches)
 
     bad_game_modules = sorted(
         path
@@ -806,22 +935,21 @@ def validate_macos_staged_metadata(
         raise ValidationError(f"macOS staged payload contains non-dylib game modules:\n{formatted}")
 
     missing_game_modules: list[Path] = []
-    for arch in sorted(client_arches):
-        for module_name in (f"game-sp_{arch}.dylib", f"game-mp_{arch}.dylib"):
-            module_path = game_dir / module_name
-            if not module_path.is_file():
-                missing_game_modules.append(module_path)
-            elif not is_posix_executable(module_path):
-                raise ValidationError(f"macOS staged game module is not executable: {rel(module_path, root)}")
+    for module_name in (f"game-sp_{staged_arch}.dylib", f"game-mp_{staged_arch}.dylib"):
+        module_path = game_dir / module_name
+        if not module_path.is_file():
+            missing_game_modules.append(module_path)
+        elif not is_posix_executable(module_path):
+            raise ValidationError(f"macOS staged game module is not executable: {rel(module_path, root)}")
 
     if missing_game_modules:
         formatted = "\n".join(f"  - {rel(path, root)}" for path in missing_game_modules)
         raise ValidationError(f"macOS staged payload is missing architecture-matched game modules:\n{formatted}")
 
     expected_game_modules = {
-        game_dir / f"game-sp_{arch}.dylib" for arch in client_arches
+        game_dir / f"game-sp_{staged_arch}.dylib"
     } | {
-        game_dir / f"game-mp_{arch}.dylib" for arch in client_arches
+        game_dir / f"game-mp_{staged_arch}.dylib"
     }
     stale_game_modules = sorted(
         path
@@ -832,17 +960,16 @@ def validate_macos_staged_metadata(
         formatted = "\n".join(f"  - {rel(path, root)}" for path in stale_game_modules)
         raise ValidationError(f"macOS staged payload contains stale or mismatched game modules:\n{formatted}")
 
-    for arch in sorted(client_arches):
-        validate_macos_binary_architectures(
-            root,
-            arch,
-            [
-                install_root / f"openQ4-client_{arch}",
-                install_root / f"openQ4-ded_{arch}",
-                game_dir / f"game-sp_{arch}.dylib",
-                game_dir / f"game-mp_{arch}.dylib",
-            ],
-        )
+    validate_macos_binary_architectures(
+        root,
+        staged_arch,
+        [
+            install_root / f"openQ4-client_{staged_arch}",
+            install_root / f"openQ4-ded_{staged_arch}",
+            game_dir / f"game-sp_{staged_arch}.dylib",
+            game_dir / f"game-mp_{staged_arch}.dylib",
+        ],
+    )
 
     validate_no_macos_non_runtime_artifacts(root, install_root, game_dir)
     validate_no_macos_casefold_path_collisions(root, install_root)

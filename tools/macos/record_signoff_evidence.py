@@ -21,8 +21,12 @@ DEFAULT_GAMELIBS_ROOT = ROOT.parent / "openQ4-game"
 NO_COMPLETED_STATUS = "- [ ] No completed macOS first-class support evidence is recorded yet."
 EVIDENCE_HISTORY_HEADING = "## Evidence History"
 CURRENT_RELEASE_HEADING = "## Current Release Evidence"
-PACKAGE_ARTIFACT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 PACKAGE_ARTIFACT_SUFFIXES = (".dmg", ".tar.gz", ".tar.xz", ".zip")
+PACKAGE_ARTIFACT_PATTERN = re.compile(
+    r"^openq4-[A-Za-z0-9._+-]+-macos-arm64-(?P<bridge>opengl|metal)(?:-unsigned)?"
+    r"(?P<suffix>\.dmg|\.tar\.gz|\.tar\.xz|\.zip)$"
+)
+MAX_EVIDENCE_TEXT_VALUE_CHARS = 2048
 
 
 @dataclass(frozen=True)
@@ -165,17 +169,22 @@ def first_match(text: str, patterns: tuple[str, ...]) -> str:
 
 def read_reports(archive_path: Path, *, run_id: str, action: str, bridges: tuple[str, ...]) -> list[ReportData]:
     reports: list[ReportData] = []
-    with tarfile.open(archive_path, "r:gz") as archive:
-        for bridge in bridges:
-            result_dir = f"{run_id}-{action}-{bridge}"
-            report_name = f"{result_dir}/macos-runtime-signoff.md"
-            member = archive.getmember(report_name)
-            stream = archive.extractfile(member)
-            if stream is None:
-                raise RuntimeError(f"Unable to read archive member: {report_name}")
-            report = stream.read().decode("utf-8")
-            metadata, sections = split_report_sections(report)
-            reports.append(ReportData(bridge=bridge, metadata=metadata, sections=sections))
+    try:
+        with tarfile.open(archive_path, "r:gz") as archive:
+            for bridge in bridges:
+                result_dir = f"{run_id}-{action}-{bridge}"
+                report_name = f"{result_dir}/macos-runtime-signoff.md"
+                member = archive.getmember(report_name)
+                stream = archive.extractfile(member)
+                if stream is None:
+                    raise RuntimeError(f"Unable to read archive member: {report_name}")
+                report = stream.read().decode("utf-8")
+                metadata, sections = split_report_sections(report)
+                reports.append(ReportData(bridge=bridge, metadata=metadata, sections=sections))
+    except KeyError as exc:
+        raise RuntimeError(f"Validated signoff archive is missing an expected report member: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("Validated signoff archive report is not UTF-8 text") from exc
     return reports
 
 
@@ -235,28 +244,85 @@ def validate_package_artifacts(artifacts: list[str], bridges: tuple[str, ...]) -
         return ()
 
     seen: dict[str, str] = {}
+    artifact_bridges: set[str] = set()
     for artifact in cleaned:
         if (
             "/" in artifact
             or "\\" in artifact
             or any(ord(character) < 32 or ord(character) == 127 for character in artifact)
-            or PACKAGE_ARTIFACT_PATTERN.fullmatch(artifact) is None
         ):
             raise RuntimeError(f"Package artifact name is not a safe filename: {artifact!r}")
-        if not artifact.startswith("openq4-") or "-macos-arm64-" not in artifact:
-            raise RuntimeError(f"Package artifact is not an experimental macOS arm64 openQ4 artifact: {artifact}")
-        if not any(artifact.endswith(suffix) for suffix in PACKAGE_ARTIFACT_SUFFIXES):
+        match = PACKAGE_ARTIFACT_PATTERN.fullmatch(artifact)
+        if match is None:
+            raise RuntimeError(
+                "Package artifact is not an exact experimental macOS arm64 openQ4 "
+                f"opengl/metal package artifact: {artifact}"
+            )
+        if match.group("suffix") not in PACKAGE_ARTIFACT_SUFFIXES:
             raise RuntimeError(f"Package artifact has unsupported archive suffix: {artifact}")
+        artifact_bridges.add(match.group("bridge"))
         key = artifact_casefold_key(artifact)
         previous = seen.get(key)
         if previous is not None:
             raise RuntimeError(f"Package artifact names contain a case-insensitive duplicate: {previous}, {artifact}")
         seen[key] = artifact
 
+    requested_bridges = set(bridges)
+    unexpected_bridges = sorted(artifact_bridges - requested_bridges)
+    if unexpected_bridges:
+        raise RuntimeError(
+            "Package artifacts include unrequested bridge artifact(s): "
+            + ", ".join(unexpected_bridges)
+        )
+
     for bridge in bridges:
-        if not any(f"-{bridge}" in artifact for artifact in cleaned):
+        if bridge not in artifact_bridges:
             raise RuntimeError(f"Package artifacts are missing the {bridge} bridge artifact.")
     return cleaned
+
+
+def validate_evidence_text(label: str, value: str, *, allow_empty: bool = True) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        if allow_empty:
+            return ""
+        raise RuntimeError(f"{label} must not be empty.")
+    if len(cleaned) > MAX_EVIDENCE_TEXT_VALUE_CHARS:
+        raise RuntimeError(
+            f"{label} is too long: {len(cleaned)} characters "
+            f"(max {MAX_EVIDENCE_TEXT_VALUE_CHARS})"
+        )
+    if any(ord(character) < 32 or ord(character) == 127 for character in cleaned):
+        raise RuntimeError(f"{label} contains control characters.")
+    return cleaned
+
+
+def validate_evidence_text_items(label: str, values: list[str]) -> list[str]:
+    return [
+        validate_evidence_text(f"{label} entry", value, allow_empty=False)
+        for value in values
+        if value.strip()
+    ]
+
+
+def validate_recording_arguments(args: argparse.Namespace) -> None:
+    args.version = validate_evidence_text("version", args.version)
+    args.support_tier = validate_evidence_text("support tier", args.support_tier, allow_empty=False)
+    args.artifact_url = validate_evidence_text("artifact URL", args.artifact_url)
+    args.signing_status = validate_evidence_text("signing status", args.signing_status)
+    args.openq4_commit = validate_evidence_text("openQ4 commit", args.openq4_commit)
+    args.gamelibs_commit = validate_evidence_text("openQ4-game commit", args.gamelibs_commit)
+    args.known_exception = validate_evidence_text_items("known exception", args.known_exception)
+    args.release_note_limitation = validate_evidence_text_items(
+        "release-note limitation",
+        args.release_note_limitation,
+    )
+
+
+def resolve_recording_input(path: Path, label: str, *, reject_symlink: bool = True) -> Path:
+    if reject_symlink and path.is_symlink():
+        raise RuntimeError(f"{label} must not be a symlink: {path}")
+    return path.resolve()
 
 
 def build_evidence(args: argparse.Namespace, *, run_id: str, bridges: tuple[str, ...], reports: list[ReportData]) -> EvidenceData:
@@ -528,9 +594,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str]) -> int:
     try:
         args = parse_args(argv)
-        args.archive = args.archive.resolve()
-        args.gamelibs_root = args.gamelibs_root.resolve()
-        args.index = args.index.resolve()
+        args.archive = resolve_recording_input(args.archive, "Signoff archive")
+        args.gamelibs_root = resolve_recording_input(args.gamelibs_root, "GameLibs root", reject_symlink=False)
+        if args.update_index:
+            args.index = resolve_recording_input(args.index, "Evidence index")
+        else:
+            args.index = args.index.resolve()
+        validate_recording_arguments(args)
 
         validator = load_validator()
         bridges = validator.parse_bridges(args.bridges)
@@ -551,7 +621,7 @@ def main(argv: list[str]) -> int:
             update_index(args.index, evidence)
             print(f"Updated macOS signoff evidence index: {args.index}")
         return 0
-    except RuntimeError as exc:
+    except (RuntimeError, tarfile.TarError, OSError, UnicodeDecodeError) as exc:
         print(f"macOS signoff evidence recording failed: {exc}", file=sys.stderr)
         return 1
 

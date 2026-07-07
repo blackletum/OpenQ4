@@ -47,12 +47,26 @@ public:
 	// RB begin
 	virtual void	SetPosition( const idVec3& p )
 	{
-		position = p;
+		if( FLOAT_IS_NAN( p.x ) || FLOAT_IS_NAN( p.y ) || FLOAT_IS_NAN( p.z ) )
+		{
+			position.Zero();
+		}
+		else
+		{
+			position = p;
+		}
 	}
 
 	virtual void	SetVelocity( const idVec3& v )
 	{
-		velocity = v;
+		if( FLOAT_IS_NAN( v.x ) || FLOAT_IS_NAN( v.y ) || FLOAT_IS_NAN( v.z ) )
+		{
+			velocity.Zero();
+		}
+		else
+		{
+			velocity = v;
+		}
 	}
 
 	virtual void	SetGain( float g )

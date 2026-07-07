@@ -19,6 +19,7 @@ MAX_TEXT_MEMBER_BYTES = 2 * 1024 * 1024
 MAX_ARCHIVE_MEMBER_BYTES = 64 * 1024 * 1024
 MAX_ARCHIVE_MEMBERS = 4096
 MAX_ARCHIVE_TOTAL_BYTES = 512 * 1024 * 1024
+MAX_RESULT_TOKEN_CHARS = 80
 RESULT_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 MACOS_FORBIDDEN_ARCHIVE_NAMES = (
     ".DS_Store",
@@ -193,6 +194,11 @@ def infer_run_id(top_dirs: set[str], action: str, bridges: tuple[str, ...]) -> s
 
 def validate_result_token(label: str, value: str) -> None:
     require(
+        len(value) <= MAX_RESULT_TOKEN_CHARS,
+        f"Invalid signoff archive {label} token is too long: "
+        f"{len(value)} characters (max {MAX_RESULT_TOKEN_CHARS})",
+    )
+    require(
         RESULT_TOKEN_PATTERN.fullmatch(value) is not None,
         f"Invalid signoff archive {label} token: {value}",
     )
@@ -272,10 +278,7 @@ def validate_signoff_archive(
 ) -> str:
     require(archive_path.is_file(), f"Archive was not found: {archive_path}")
     require(not archive_path.is_symlink(), f"Archive path must not be a symlink: {archive_path}")
-    require(
-        RESULT_TOKEN_PATTERN.fullmatch(action) is not None,
-        f"Invalid signoff archive action token: {action}",
-    )
+    validate_result_token("action", action)
     if run_id is not None:
         validate_result_token("run ID", run_id)
 

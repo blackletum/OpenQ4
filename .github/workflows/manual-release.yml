@@ -434,6 +434,7 @@ jobs:
               ".install/openQ4-ded_${{ matrix.binary_arch }}"
               ".install/baseoq4/game-sp_${{ matrix.binary_arch }}.dylib"
               ".install/baseoq4/game-mp_${{ matrix.binary_arch }}.dylib"
+              ".install/collect_macos_support_info.sh"
               ".install/openQ4.icns"
               ".install/assets/splash/quake4_rt_bitmap_4001.bmp"
             )
@@ -445,7 +446,7 @@ jobs:
               fi
             done
 
-            for binary in ".install/openQ4-client_${{ matrix.binary_arch }}" ".install/openQ4-ded_${{ matrix.binary_arch }}"; do
+            for binary in ".install/openQ4-client_${{ matrix.binary_arch }}" ".install/openQ4-ded_${{ matrix.binary_arch }}" ".install/collect_macos_support_info.sh"; do
               if [ ! -x "${binary}" ]; then
                 echo "Missing executable bit on macOS staged binary: ${binary}"
                 exit 1
@@ -465,6 +466,42 @@ jobs:
               printf '  - %s\n' "${bad_macos_modules[@]}"
               exit 1
             fi
+            expected_macos_root_binaries=(
+              ".install/openQ4-client_${{ matrix.binary_arch }}"
+              ".install/openQ4-ded_${{ matrix.binary_arch }}"
+            )
+            for staged_binary in .install/openQ4-client_* .install/openQ4-ded_*; do
+              [ -e "${staged_binary}" ] || continue
+              matched=0
+              for expected_binary in "${expected_macos_root_binaries[@]}"; do
+                if [ "${staged_binary}" = "${expected_binary}" ]; then
+                  matched=1
+                  break
+                fi
+              done
+              if [ "${matched}" -eq 0 ]; then
+                echo "macOS staged payload contains stale or mismatched root engine binary: ${staged_binary}"
+                exit 1
+              fi
+            done
+            expected_macos_game_modules=(
+              ".install/baseoq4/game-sp_${{ matrix.binary_arch }}.dylib"
+              ".install/baseoq4/game-mp_${{ matrix.binary_arch }}.dylib"
+            )
+            for staged_module in .install/baseoq4/game-sp_*.dylib .install/baseoq4/game-mp_*.dylib; do
+              [ -e "${staged_module}" ] || continue
+              matched=0
+              for expected_module in "${expected_macos_game_modules[@]}"; do
+                if [ "${staged_module}" = "${expected_module}" ]; then
+                  matched=1
+                  break
+                fi
+              done
+              if [ "${matched}" -eq 0 ]; then
+                echo "macOS staged payload contains stale or mismatched game module: ${staged_module}"
+                exit 1
+              fi
+            done
           fi
 
       - name: Prepare Linux debug symbols
@@ -671,6 +708,7 @@ jobs:
           app_icon="${app_root}/Contents/Resources/openQ4.icns"
           app_version="${app_root}/Contents/Resources/VERSION.txt"
           symbol_manifest="${{ steps.package.outputs.package_dir }}/SYMBOLS.txt"
+          support_collector="${{ steps.package.outputs.package_dir }}/collect_macos_support_info.sh"
           client_binary="${{ steps.package.outputs.package_dir }}/openQ4-client_${{ matrix.binary_arch }}"
           dedicated_binary="${{ steps.package.outputs.package_dir }}/openQ4-ded_${{ matrix.binary_arch }}"
           game_dir="${{ steps.package.outputs.package_dir }}/baseoq4"
@@ -701,6 +739,73 @@ jobs:
             echo "Missing macOS symbolication manifest: ${symbol_manifest}"
             exit 1
           fi
+          if [ ! -x "${support_collector}" ]; then
+            echo "Missing or non-executable macOS support collector: ${support_collector}"
+            exit 1
+          fi
+          if LC_ALL=C grep -q $'\r' "${support_collector}"; then
+            echo "macOS support collector contains CRLF or carriage returns: ${support_collector}"
+            exit 1
+          fi
+          for support_token in \
+            "OPENQ4_PACKAGE_ROOT" \
+            "redact_text()" \
+            "contains_control_chars()" \
+            "Support package root must not contain control characters" \
+            "Support output directory must not contain control characters" \
+            ".XXXXXX.tar.gz.tmp" \
+            "MAX_SUPPORT_ARCHIVE_BYTES" \
+            "COMMAND_OUTPUT_INDEX" \
+            "command-output-" \
+            'command_output=$(mktemp "${WORK_PARENT}/command-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")' \
+            'copy_text_if_present "${command_output}" "${target}"' \
+            "write_bounded_report()" \
+            "report-output-" \
+            'report_output=$(mktemp "${WORK_PARENT}/report-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")' \
+            'copy_text_if_present "${report_output}" "${target}"' \
+            "does not dump the environment" \
+            "does not launch openQ4" \
+            "does not copy retail q4base PK4 assets" \
+            "truncated copy failed; source was not copied" \
+            "COPYFILE_DISABLE=1 tar -czf" \
+            "COPYFILE_DISABLE=1 tar -tzf" \
+            "Support archive is empty or unreadable before publish" \
+            "Support archive validation failed before publish" \
+            "Support archive is too large before publish" \
+            'ln "${ARCHIVE_TMP}" "${ARCHIVE_PATH}"'
+          do
+            if ! grep -Fq "${support_token}" "${support_collector}"; then
+              echo "macOS support collector is missing marker '${support_token}': ${support_collector}"
+              exit 1
+            fi
+          done
+          for forbidden_support_token in \
+            "printenv" \
+            "env >" \
+            "set >" \
+            "openQ4-client_arm64 >" \
+            "openQ4-client_arm64 2>" \
+            "openQ4-client_x64 >" \
+            "openQ4-client_x64 2>" \
+            "openQ4-client_x86 >" \
+            "openQ4-client_x86 2>" \
+            "openQ4-ded_arm64 >" \
+            "openQ4-ded_arm64 2>" \
+            "openQ4-ded_x64 >" \
+            "openQ4-ded_x64 2>" \
+            "openQ4-ded_x86 >" \
+            "openQ4-ded_x86 2>" \
+            "xattr -l" \
+            "xattr -p" \
+            "xattr -w" \
+            "|| cat" \
+            'tail -c "${max_bytes}" < "${source_path}" 2>/dev/null || cat'
+          do
+            if grep -Fq "${forbidden_support_token}" "${support_collector}"; then
+              echo "macOS support collector contains forbidden privacy/no-launch pattern '${forbidden_support_token}': ${support_collector}"
+              exit 1
+            fi
+          done
           if ! grep -Fq "symbol_archive=openq4-${{ needs.metadata.outputs.version_tag }}-macos-${{ matrix.binary_arch }}${{ matrix.package_suffix }}-symbols.tar.xz" "${symbol_manifest}"; then
             echo "macOS symbolication manifest does not point at the matching dSYM archive: ${symbol_manifest}"
             cat "${symbol_manifest}"

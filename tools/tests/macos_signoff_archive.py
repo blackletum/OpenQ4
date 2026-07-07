@@ -701,6 +701,28 @@ def main() -> int:
         )
 
         expect_error(
+            "token is too long",
+            lambda: validator.validate_signoff_archive(
+                completed,
+                run_id="a" * (validator.MAX_RESULT_TOKEN_CHARS + 1),
+                action="signoff",
+                bridges=("opengl",),
+                require_completed_checklist=False,
+            ),
+        )
+
+        expect_error(
+            "action token is too long",
+            lambda: validator.validate_signoff_archive(
+                completed,
+                run_id="testrun",
+                action="a" * (validator.MAX_RESULT_TOKEN_CHARS + 1),
+                bridges=("opengl",),
+                require_completed_checklist=False,
+            ),
+        )
+
+        expect_error(
             "Bridge list contains duplicates",
             lambda: validator.parse_bridges("opengl,opengl"),
         )

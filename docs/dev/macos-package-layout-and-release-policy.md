@@ -136,6 +136,15 @@ Unsigned `-unsigned.tar.gz` archives are allowed only for experimental or
 development fallback output. They must stay clearly marked as unsigned and
 unnotarized in artifact names, release notes, and user-facing docs.
 
+Runtime and symbol archive validation must match the declared package format. A
+`.tar.gz` runtime artifact is opened as gzip data, a `.tar.xz` runtime artifact
+is opened as xz data, and macOS dSYM symbol archives are opened as
+xz-compressed tarballs. Mislabeled tarballs fail validation instead of relying
+on auto-detection.
+
+Release archive, DMG, notarization, and symbol archive outputs must not be
+written inside the package or symbol tree they are archiving.
+
 Credentialed macOS release artifacts must keep these checks mandatory:
 
 - Developer ID Application signing.

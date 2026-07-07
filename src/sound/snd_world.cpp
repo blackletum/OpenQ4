@@ -342,6 +342,15 @@ static float AdjustForCushionChannels( const idStaticList< idActiveChannel, MAX_
 	return driftedDB;
 }
 
+static int SoundChannelHardwareWidth( const idSoundChannel* channel )
+{
+	if( channel == NULL || channel->leadinSample == NULL )
+	{
+		return 1;
+	}
+	return idMath::ClampInt( 1, MAX_CHANNELS_PER_VOICE, channel->leadinSample->NumChannels() );
+}
+
 /*
 ========================
 idSoundWorldLocal::Update
@@ -366,11 +375,7 @@ void idSoundWorldLocal::Update()
 	// A hardware channel is a channel from the sound file itself (IE: left, right, LFE)
 	// We only allow MAX_HARDWARE_CHANNELS channels, which may wind up being a smaller number of idSoundChannels
 	idStaticList< idActiveChannel, MAX_HARDWARE_VOICES > activeEmitterChannels;
-	int	maxEmitterChannels = s_maxEmitterChannels.GetInteger() + 1;	// +1 to leave room for insert-before-sort
-	if( maxEmitterChannels > MAX_HARDWARE_VOICES )
-	{
-		maxEmitterChannels = MAX_HARDWARE_VOICES;
-	}
+	const int maxEmitterChannels = idMath::ClampInt( 1, MAX_HARDWARE_VOICES, s_maxEmitterChannels.GetInteger() + 1 );	// +1 to leave room for insert-before-sort
 
 	int activeHardwareChannels = 0;
 	int	totalHardwareChannels = 0;
@@ -422,7 +427,7 @@ void idSoundWorldLocal::Update()
 			// Keep track of the total number of hardware channels.
 			// This is done after calculating the sort key to avoid a load-hit-store that
 			// would occur when using the sort key in the loop below after the Ftoi above.
-			const int sampleChannels = channel->leadinSample->NumChannels();
+			const int sampleChannels = SoundChannelHardwareWidth( channel );
 			totalHardwareChannels += sampleChannels;
 
 			// Find the location to insert this channel based on the sort key.
@@ -458,7 +463,7 @@ void idSoundWorldLocal::Update()
 				const int indexToRemove = activeEmitterChannels.Num() - 1;
 				idSoundChannel* const channelToMute = activeEmitterChannels[ indexToRemove ].channel;
 				channelToMute->Mute();
-				activeHardwareChannels -= channelToMute->leadinSample->NumChannels();
+				activeHardwareChannels -= SoundChannelHardwareWidth( channelToMute );
 				activeEmitterChannels.RemoveIndex( indexToRemove );
 			}
 		}
@@ -1271,6 +1276,7 @@ void idSoundWorldLocal::ReadFromSaveGame( idFile* savefile )
 			savefile->ReadInt( sf.fadeEndTime );
 			savefile->ReadFloat( sf.fadeStartVolume );
 			savefile->ReadFloat( sf.fadeEndVolume );
+			sf.Sanitize();
 			if( sf.fadeEndTime > 0 )
 			{
 				sf.fadeStartTime += timeDelta;
@@ -1301,6 +1307,7 @@ void idSoundWorldLocal::ReadFromSaveGame( idFile* savefile )
 		helper::ReadSoundFade( savefile, soundClassFade[c], timeDelta );
 	}
 	savefile->ReadFloat( slowmoSpeed );
+	SetSlowmoSpeed( slowmoSpeed );
 	savefile->ReadBool( enviroSuitActive );
 
 	savefile->ReadMat3( listener.axis );
@@ -1411,7 +1418,7 @@ void idSoundWorldLocal::FadeSoundClasses( const int soundClass, const float to, 
 		common->Error( "idSoundWorldLocal::FadeSoundClasses: bad soundClass %i", soundClass );
 		return;
 	}
-	soundClassFade[ soundClass ].Fade( idMath::dBToScale( to ), SEC2MS( over ), GetSoundTime() );
+	soundClassFade[ soundClass ].FadeDB( to, over, GetSoundTime() );
 }
 
 /*
@@ -1421,7 +1428,11 @@ idSoundWorldLocal::SetSlowmoSpeed
 */
 void idSoundWorldLocal::SetSlowmoSpeed( float speed )
 {
-	slowmoSpeed = speed;
+	if( FLOAT_IS_NAN( speed ) || speed <= 0.0f )
+	{
+		speed = 1.0f;
+	}
+	slowmoSpeed = idMath::ClampFloat( 0.01f, 64.0f, speed );
 }
 
 /*

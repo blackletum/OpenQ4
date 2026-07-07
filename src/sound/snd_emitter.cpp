@@ -60,6 +60,8 @@ static const float SOUND_FREQUENCY_SHIFT_MIN = 0.25f;
 static const float SOUND_FREQUENCY_SHIFT_MAX = 4.0f;
 static const float SOUND_OCCLUSION_PER_BLOCKED_PORTAL = 0.5f;
 static const float SOUND_ENVIROSUIT_OCCLUSION = 0.5f;
+static const int SOUND_FADE_MAX_MSEC = 24 * 60 * 60 * 1000;
+static const float SOUND_FADE_MAX_DB = 24.0f;
 
 static ID_INLINE float SoundSanitizeUnitValue( const float value, const float fallback )
 {
@@ -82,6 +84,39 @@ static ID_INLINE float SoundSanitizePositiveValue( const float value, const floa
 static ID_INLINE float SoundSanitizeGainScale( const float value, const float fallback )
 {
 	return idMath::ClampFloat( 0.0f, 16.0f, SoundSanitizePositiveValue( value, fallback ) );
+}
+
+static ID_INLINE float SoundSanitizeFadeScale( const float value, const float fallback )
+{
+	if( FLOAT_IS_NAN( value ) )
+	{
+		return fallback;
+	}
+	return idMath::ClampFloat( 0.0f, 16.0f, value );
+}
+
+static ID_INLINE int SoundSanitizeFadeMsec( const int length )
+{
+	return idMath::ClampInt( 0, SOUND_FADE_MAX_MSEC, length );
+}
+
+static ID_INLINE int SoundFadeSecondsToMsec( const float seconds )
+{
+	if( FLOAT_IS_NAN( seconds ) || seconds <= 0.0f )
+	{
+		return 0;
+	}
+	const float clampedSeconds = Min( seconds, MS2SEC( SOUND_FADE_MAX_MSEC ) );
+	return SEC2MS( clampedSeconds );
+}
+
+static ID_INLINE float SoundFadeDBToScale( const float db )
+{
+	if( FLOAT_IS_NAN( db ) )
+	{
+		return 0.0f;
+	}
+	return SoundSanitizeFadeScale( idMath::dBToScale( Min( db, SOUND_FADE_MAX_DB ) ), 0.0f );
 }
 
 static ID_INLINE float VolumeScaleToDB( const float volumeScale )
@@ -186,6 +221,7 @@ idSoundFade::SetVolume
 */
 void idSoundFade::SetVolume( float to )
 {
+	to = SoundSanitizeFadeScale( to, 1.0f );
 	fadeStartVolume = to;
 	fadeEndVolume = to;
 	fadeStartTime = 0;
@@ -199,6 +235,8 @@ idSoundFade::Fade
 */
 void idSoundFade::Fade( float to, int length, int soundTime )
 {
+	to = SoundSanitizeFadeScale( to, 0.0f );
+	length = SoundSanitizeFadeMsec( length );
 	int startTime = soundTime;
 	// if it is already fading to this volume at this rate, don't change it
 	if( fadeEndTime == startTime + length && fadeEndVolume == to )
@@ -213,6 +251,31 @@ void idSoundFade::Fade( float to, int length, int soundTime )
 
 /*
 ========================
+idSoundFade::FadeDB
+========================
+*/
+void idSoundFade::FadeDB( float toDB, float overSeconds, int soundTime )
+{
+	Fade( SoundFadeDBToScale( toDB ), SoundFadeSecondsToMsec( overSeconds ), soundTime );
+}
+
+/*
+========================
+idSoundFade::Sanitize
+========================
+*/
+void idSoundFade::Sanitize()
+{
+	fadeStartVolume = SoundSanitizeFadeScale( fadeStartVolume, 1.0f );
+	fadeEndVolume = SoundSanitizeFadeScale( fadeEndVolume, fadeStartVolume );
+	if( fadeEndTime < fadeStartTime )
+	{
+		fadeEndTime = fadeStartTime;
+	}
+}
+
+/*
+========================
 idSoundFade::GetVolume
 ========================
 */
@@ -221,21 +284,23 @@ float idSoundFade::GetVolume( const int soundTime ) const
 	const float fadeDuration = ( fadeEndTime - fadeStartTime );
 	const int currentTime = soundTime;
 	const float playTime = ( currentTime - fadeStartTime );
+	const float startVolume = SoundSanitizeFadeScale( fadeStartVolume, 1.0f );
+	const float endVolume = SoundSanitizeFadeScale( fadeEndVolume, startVolume );
 	if( fadeDuration <= 0.0f )
 	{
-		return fadeEndVolume;
+		return endVolume;
 	}
 	else if( currentTime >= fadeEndTime )
 	{
-		return fadeEndVolume;
+		return endVolume;
 	}
 	else if( currentTime > fadeStartTime )
 	{
-		return fadeStartVolume + ( fadeEndVolume - fadeStartVolume ) * playTime / fadeDuration;
+		return startVolume + ( endVolume - startVolume ) * playTime / fadeDuration;
 	}
 	else
 	{
-		return fadeStartVolume;
+		return startVolume;
 	}
 }
 
@@ -1308,8 +1373,6 @@ void idSoundEmitterLocal::FadeSound( const s_channelType channel, float to, floa
 		soundWorld->writeDemo->WriteFloat( over );
 	}
 
-	int overMSec = SEC2MS( over );
-
 	for( int i = 0; i < channels.Num(); i++ )
 	{
 		idSoundChannel* chan = channels[i];
@@ -1324,7 +1387,7 @@ void idSoundEmitterLocal::FadeSound( const s_channelType channel, float to, floa
 		}
 
 		// fade it
-		chan->volumeFade.Fade( idMath::dBToScale( to ), overMSec, soundWorld->GetSoundTime() );
+		chan->volumeFade.FadeDB( to, over, soundWorld->GetSoundTime() );
 	}
 }
 

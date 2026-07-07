@@ -79,6 +79,15 @@ def validate_support_collector() -> None:
         "ARCHIVE_TMP",
         "MAX_SUPPORT_TEXT_BYTES",
         "MAX_CRASH_REPORT_BYTES",
+        "MAX_SUPPORT_ARCHIVE_BYTES",
+        "COMMAND_OUTPUT_INDEX",
+        "command-output-",
+        'command_output=$(mktemp "${WORK_PARENT}/command-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")',
+        'copy_text_if_present "${command_output}" "${target}"',
+        "write_bounded_report()",
+        "report-output-",
+        'report_output=$(mktemp "${WORK_PARENT}/report-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")',
+        'copy_text_if_present "${report_output}" "${target}"',
         "redact_text()",
         "/Users/[^/[:space:]]+",
         "<email>",
@@ -91,15 +100,21 @@ def validate_support_collector() -> None:
         "system/rosetta.txt",
         "Rosetta is not a supported openQ4 release target",
         "sysctl.proc_translated",
+        "contains_control_chars()",
         "prepare_package_root()",
+        "Support package root must not contain control characters",
         "Support package root must not be a symlink",
         "Support package root must be an existing directory",
         "Support output directory must not be empty",
+        "Support output directory must not contain control characters",
         "Support archive target already exists",
-        "Support archive temporary target already exists",
+        "Unable to create support archive temporary target",
+        "Support archive temporary target must be a regular file",
+        ".XXXXXX.tar.gz.tmp",
         "Support archive target appeared while collecting data",
         "Source file was larger than",
         'tail -c "${max_bytes}"',
+        "truncated copy failed; source was not copied",
         "codesign",
         "spctl --assess --type execute --verbose=4",
         "xcrun stapler validate",
@@ -146,6 +161,11 @@ def validate_support_collector() -> None:
         "tail -n 10",
         "openQ4, openQ4-client, and openQ4-ded DiagnosticReports",
         "tar -czf",
+        "tar -tzf",
+        "Support archive is empty or unreadable before publish",
+        "Support archive validation failed before publish",
+        "Support archive is too large before publish",
+        'ln "${ARCHIVE_TMP}" "${ARCHIVE_PATH}"',
         'chmod 600 "${ARCHIVE_TMP}"',
         "does not dump the environment",
         "does not launch openQ4",
@@ -159,22 +179,34 @@ def validate_support_collector() -> None:
         "set >",
         "openQ4-client_arm64 >",
         "openQ4-client_arm64 2>",
+        "openQ4-client_x64 >",
+        "openQ4-client_x64 2>",
+        "openQ4-client_x86 >",
+        "openQ4-client_x86 2>",
+        "openQ4-ded_arm64 >",
+        "openQ4-ded_arm64 2>",
+        "openQ4-ded_x64 >",
+        "openQ4-ded_x64 2>",
+        "openQ4-ded_x86 >",
+        "openQ4-ded_x86 2>",
         "xattr -l",
         "xattr -p",
         "xattr -w",
+        "|| cat",
+        'tail -c "${max_bytes}" < "${source_path}" 2>/dev/null || cat',
     ):
         reject(script, token, "macOS support collector privacy/no-launch guard")
 
     signing_segment = require_segment(
         script,
         "Signing and Gatekeeper checks do not launch openQ4.",
-        '} | redact_text > "${BUNDLE_DIR}/package/signing.txt"',
+        '} | write_bounded_report "package/signing.txt"',
         "macOS support collector signing",
     )
     quarantine_segment = require_segment(
         script,
         "Only extended-attribute names are listed; values are not copied.",
-        '} | redact_text > "${BUNDLE_DIR}/package/quarantine.txt"',
+        '} | write_bounded_report "package/quarantine.txt"',
         "macOS support collector quarantine",
     )
 
@@ -244,10 +276,25 @@ def validate_user_docs() -> None:
 
 def validate_packaging_contract() -> None:
     packaging = read("tools/build/package_nightly.py")
+    validator = read("tools/validation/openq4_validate.py")
+    meson = read("meson.build")
 
     for token in (
         'MACOS_SUPPORT_INFO_SCRIPT_PATH = Path("tools") / "macos" / "collect_macos_support_info.sh"',
         'MACOS_SUPPORT_INFO_SCRIPT_NAME = "collect_macos_support_info.sh"',
+        "MACOS_SUPPORT_INFO_REQUIRED_TOKENS",
+        "MACOS_SUPPORT_INFO_FORBIDDEN_TOKENS",
+        "MAX_MACOS_SUPPORT_INFO_SCRIPT_BYTES",
+        "validate_macos_support_info_script_bytes",
+        "forbidden privacy/no-launch pattern",
+        "contains_control_chars()",
+        "Support package root must not contain control characters",
+        "Support output directory must not contain control characters",
+        ".XXXXXX.tar.gz.tmp",
+        "openQ4-client_x64 >",
+        "openQ4-ded_x64 >",
+        "|| cat",
+        'tail -c "${max_bytes}" < "${source_path}" 2>/dev/null || cat',
         "def copy_release_collateral(source_root: Path, package_root: Path, platform: str) -> None:",
         'if platform == "macos":',
         "source_root / MACOS_SUPPORT_INFO_SCRIPT_PATH",
@@ -258,6 +305,27 @@ def validate_packaging_contract() -> None:
         "copy_release_collateral(source_root, package_root, args.platform)",
     ):
         require(packaging, token, "macOS collector packaging contract")
+
+    for token in (
+        "MACOS_SUPPORT_INFO_FORBIDDEN_TOKENS",
+        "forbidden privacy/no-launch pattern",
+        "contains_control_chars()",
+        "Support package root must not contain control characters",
+        "Support output directory must not contain control characters",
+        ".XXXXXX.tar.gz.tmp",
+        "openQ4-client_x64 >",
+        "openQ4-ded_x64 >",
+        "|| cat",
+        'tail -c "${max_bytes}" < "${source_path}" 2>/dev/null || cat',
+    ):
+        require(validator, token, "macOS collector staged validation contract")
+
+    for token in (
+        "host_system == 'darwin'",
+        "'tools/macos/collect_macos_support_info.sh'",
+        "install_mode: 'rwxr-xr-x'",
+    ):
+        require(meson, token, "macOS collector Meson staging contract")
 
 
 def validate_phase1_plan_status() -> None:

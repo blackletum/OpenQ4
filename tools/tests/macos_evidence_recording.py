@@ -36,12 +36,34 @@ def reject(haystack: str, needle: str, context: str) -> None:
 
 def main() -> int:
     fixture = load_signoff_fixture()
+    recorder = (ROOT / "tools" / "macos" / "record_signoff_evidence.py").read_text(encoding="utf-8")
+    for token in (
+        "def resolve_recording_input",
+        "reject_symlink and path.is_symlink()",
+        'args.archive = resolve_recording_input(args.archive, "Signoff archive")',
+        "if args.update_index:",
+        'args.index = resolve_recording_input(args.index, "Evidence index")',
+        "def validate_evidence_text",
+        "contains control characters",
+        "MAX_EVIDENCE_TEXT_VALUE_CHARS",
+        "PACKAGE_ARTIFACT_PATTERN",
+        "(?P<bridge>opengl|metal)",
+        "artifact_bridges",
+        "unexpected_bridges",
+        "except (RuntimeError, tarfile.TarError, OSError, UnicodeDecodeError) as exc",
+    ):
+        require(recorder, token, "macOS signoff evidence symlink guard")
+
     with tempfile.TemporaryDirectory(prefix="openq4-macos-evidence-") as temp_root:
         temp = Path(temp_root)
         archive = temp / "openq4-macos-results-testrun.tar.gz"
         index = temp / "macos-signoff-evidence.md"
         fixture.write_archive(archive, bridges=("opengl", "metal"), completed=True)
         shutil.copy2(ROOT / "docs" / "dev" / "macos-signoff-evidence.md", index)
+        opengl_only_dir = temp / "opengl-only"
+        opengl_only_dir.mkdir()
+        opengl_only_archive = opengl_only_dir / "openq4-macos-results-testrun.tar.gz"
+        fixture.write_archive(opengl_only_archive, bridges=("opengl",), completed=True)
 
         command = [
             sys.executable,
@@ -164,6 +186,180 @@ def main() -> int:
             raise AssertionError("record_signoff_evidence accepted package artifacts missing a bridge")
         require(missing_bridge_artifact.stderr, "macOS signoff evidence recording failed", "missing bridge artifact error")
         require(missing_bridge_artifact.stderr, "missing the metal bridge artifact", "missing bridge artifact rejection")
+
+        ambiguous_bridge_artifact = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "tools" / "macos" / "record_signoff_evidence.py"),
+                str(archive),
+                "--version",
+                "vtest",
+                "--package-artifact",
+                "openq4-vtest-macos-arm64-opengl.dmg",
+                "--package-artifact",
+                "openq4-vtest-macos-arm64-metallic.dmg",
+            ],
+            cwd=str(ROOT),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if ambiguous_bridge_artifact.returncode == 0:
+            raise AssertionError("record_signoff_evidence accepted an imprecise bridge artifact name")
+        require(
+            ambiguous_bridge_artifact.stderr,
+            "macOS signoff evidence recording failed",
+            "ambiguous bridge artifact error",
+        )
+        require(
+            ambiguous_bridge_artifact.stderr,
+            "exact experimental macOS arm64 openQ4 opengl/metal package artifact",
+            "ambiguous bridge artifact rejection",
+        )
+
+        extra_bridge_artifact = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "tools" / "macos" / "record_signoff_evidence.py"),
+                str(opengl_only_archive),
+                "--version",
+                "vtest",
+                "--bridges",
+                "opengl",
+                "--package-artifact",
+                "openq4-vtest-macos-arm64-opengl.dmg",
+                "--package-artifact",
+                "openq4-vtest-macos-arm64-metal.dmg",
+            ],
+            cwd=str(ROOT),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if extra_bridge_artifact.returncode == 0:
+            raise AssertionError("record_signoff_evidence accepted an unrequested bridge artifact")
+        require(
+            extra_bridge_artifact.stderr,
+            "macOS signoff evidence recording failed",
+            "extra bridge artifact error",
+        )
+        require(
+            extra_bridge_artifact.stderr,
+            "unrequested bridge artifact",
+            "extra bridge artifact rejection",
+        )
+
+        unsafe_metadata = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "tools" / "macos" / "record_signoff_evidence.py"),
+                str(archive),
+                "--version",
+                "vtest",
+                "--package-artifact",
+                "openq4-vtest-macos-arm64-opengl.dmg",
+                "--package-artifact",
+                "openq4-vtest-macos-arm64-metal.dmg",
+                "--signing-status",
+                "signed\n## injected heading",
+            ],
+            cwd=str(ROOT),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if unsafe_metadata.returncode == 0:
+            raise AssertionError("record_signoff_evidence accepted control characters in evidence metadata")
+        require(unsafe_metadata.stderr, "macOS signoff evidence recording failed", "unsafe metadata error")
+        require(unsafe_metadata.stderr, "signing status contains control characters", "unsafe metadata rejection")
+
+        malformed_archive = temp / "openq4-macos-results-malformed.tar.gz"
+        malformed_archive.write_bytes(b"not a gzip archive\n")
+        malformed_result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "tools" / "macos" / "record_signoff_evidence.py"),
+                str(malformed_archive),
+                "--version",
+                "vtest",
+                "--package-artifact",
+                "openq4-vtest-macos-arm64-opengl.dmg",
+                "--package-artifact",
+                "openq4-vtest-macos-arm64-metal.dmg",
+            ],
+            cwd=str(ROOT),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if malformed_result.returncode == 0:
+            raise AssertionError("record_signoff_evidence accepted a malformed signoff archive")
+        require(malformed_result.stderr, "macOS signoff evidence recording failed", "malformed archive error")
+
+        symlink_archive = temp / "openq4-macos-results-symlink.tar.gz"
+        try:
+            symlink_archive.symlink_to(archive.name)
+        except (OSError, NotImplementedError):
+            pass
+        else:
+            symlink_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "tools" / "macos" / "record_signoff_evidence.py"),
+                    str(symlink_archive),
+                    "--version",
+                    "vtest",
+                    "--package-artifact",
+                    "openq4-vtest-macos-arm64-opengl.dmg",
+                    "--package-artifact",
+                    "openq4-vtest-macos-arm64-metal.dmg",
+                ],
+                cwd=str(ROOT),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            if symlink_result.returncode == 0:
+                raise AssertionError("record_signoff_evidence accepted a symlinked signoff archive")
+            require(symlink_result.stderr, "macOS signoff evidence recording failed", "symlink archive error")
+            require(symlink_result.stderr, "Signoff archive must not be a symlink", "symlink archive rejection")
+
+        symlink_index = temp / "macos-signoff-evidence-symlink.md"
+        try:
+            symlink_index.symlink_to(index.name)
+        except (OSError, NotImplementedError):
+            pass
+        else:
+            symlink_index_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "tools" / "macos" / "record_signoff_evidence.py"),
+                    str(archive),
+                    "--version",
+                    "vtest",
+                    "--package-artifact",
+                    "openq4-vtest-macos-arm64-opengl.dmg",
+                    "--package-artifact",
+                    "openq4-vtest-macos-arm64-metal.dmg",
+                    "--index",
+                    str(symlink_index),
+                    "--update-index",
+                ],
+                cwd=str(ROOT),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            if symlink_index_result.returncode == 0:
+                raise AssertionError("record_signoff_evidence accepted a symlinked evidence index")
+            require(symlink_index_result.stderr, "macOS signoff evidence recording failed", "symlink index error")
+            require(symlink_index_result.stderr, "Evidence index must not be a symlink", "symlink index rejection")
 
     print("macos_evidence_recording: ok")
     return 0

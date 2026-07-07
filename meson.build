@@ -969,6 +969,14 @@ if host_system != 'windows'
   )
 endif
 
+if host_system == 'darwin'
+  install_data(
+    'tools/macos/collect_macos_support_info.sh',
+    install_dir: install_root_dir,
+    install_mode: 'rwxr-xr-x',
+  )
+endif
+
 if host_system == 'linux'
   linux_desktop_conf = configuration_data()
   linux_desktop_conf.set('OPENQ4_CLIENT_BINARY', engine_client_binary_name)

@@ -48,7 +48,7 @@ public:
 
 		if( alIsSource( openalSource ) )
 		{
-			alSource3f( openalSource, AL_POSITION, -p.y, p.z, -p.x );
+			alSource3f( openalSource, AL_POSITION, -position.y, position.z, -position.x );
 		}
 	}
 
@@ -58,7 +58,7 @@ public:
 
 		if( alIsSource( openalSource ) )
 		{
-			alSource3f( openalSource, AL_VELOCITY, -v.y, v.z, -v.x );
+			alSource3f( openalSource, AL_VELOCITY, -velocity.y, velocity.z, -velocity.x );
 		}
 	}
 
@@ -145,6 +145,7 @@ private:
 
 	// Helper function used by the initial start as well as for looping a streamed buffer
 	int						RestartAt( int offsetSamples );
+	void					FailCreate();
 
 	// Helper function to submit a buffer
 	int						SubmitBuffer( idSoundSample_OpenAL* sample, int bufferNumber, int offset, ALuint streamBuffer );
@@ -156,6 +157,8 @@ private:
 	bool					EnsureStreamingBuffers();
 	bool					UsesStreamingBuffers() const;
 	bool					HasQueuedBufferState() const;
+	static bool				SampleHasPlayableOpenALPayload( const idSoundSample_OpenAL* sample );
+	bool					SourceHasPlayableBuffer() const;
 
 	// Adjust the voice frequency based on the new sample rate for the buffer
 	void					SetSampleRate( uint32 newSampleRate, uint32 operationSet );

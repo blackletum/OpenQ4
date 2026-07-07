@@ -34,6 +34,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$script:MacOSResultTokenMaxLength = 80
 $script:RemoteTempRoot = ""
 
 function Get-RepoRoot {
@@ -884,6 +885,7 @@ for bridge in "${expected_bridges[@]}"; do
         exit 1
     fi
     require_result_file_under "${path}" "renderer-smoke"
+    require_result_file_under "${path}" "renderer-mp-smoke"
     require_result_file_under "${path}" "renderer-matrix"
     matches+=("${path}")
 done
@@ -972,6 +974,9 @@ function Invoke-MacOSWorkflowMain {
     }
     if ($MacOSRunId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
         throw "Invalid MacOSRunId '$MacOSRunId'. Use letters, digits, dots, underscores, or dashes, starting with a letter or digit."
+    }
+    if ($MacOSRunId.Length -gt $script:MacOSResultTokenMaxLength) {
+        throw "Invalid MacOSRunId '$MacOSRunId'. Use at most $script:MacOSResultTokenMaxLength characters."
     }
     $script:RemoteTempRoot = "/tmp/openq4-macos-$([System.Guid]::NewGuid().ToString("N"))"
     Invoke-MacSsh -Command "umask 077 && mkdir -p $(Quote-Sh $script:RemoteTempRoot)"

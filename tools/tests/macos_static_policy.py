@@ -195,6 +195,23 @@ def validate_release_distribution_policy() -> None:
     require(package, "com.apple.security.get-task-allow", "macOS debug entitlement policy")
 
 
+def validate_package_root_runtime_policy() -> None:
+    compat = read("src/sys/osx/macosx_compat.mm")
+    package_directory = function_body(compat, "static void Sys_RequireMacOSPackageRootDirectory( const idStr &packageDirectory, const char *entry, idStr &missingEntries ) {")
+    package_executable = function_body(compat, "static void Sys_RequireMacOSPackageRootExecutable( const idStr &packageDirectory, const char *entry, idStr &missingEntries ) {")
+    executable_exists = function_body(compat, "static bool Sys_ExecutableFileExists( const char *path ) {")
+    path_exists = function_body(compat, "static bool Sys_MacOSPackageRootPathExists( const idStr &packageDirectory, const char *entry ) {")
+
+    require(compat, "static bool Sys_PathIsSymlink( const char *path )", "macOS package-root symlink helper")
+    require(compat, "lstat( path, &st )", "macOS package-root symlink helper")
+    require(path_exists, "return lstat( testPath.c_str(), &st ) != -1;", "macOS package-root mismatched-entry symlink diagnostic")
+    require(package_directory, "lstat( testPath.c_str(), &st )", "macOS package-root directory symlink guard")
+    require(package_directory, 'Sys_AppendMacOSPackageRootIssue( missingEntries, entry, "symlink" )', "macOS package-root directory symlink diagnostic")
+    require(package_executable, "lstat( testPath.c_str(), &st )", "macOS package-root executable symlink guard")
+    require(package_executable, 'Sys_AppendMacOSPackageRootIssue( missingEntries, entry, "symlink" )', "macOS package-root executable symlink diagnostic")
+    require(executable_exists, "!Sys_PathIsSymlink( path )", "macOS package-root executable symlink guard")
+
+
 def validate_ci_wiring() -> None:
     script = "tools/tests/macos_static_policy.py"
     validator = read("tools/validation/openq4_validate.py")
@@ -213,6 +230,7 @@ def main() -> None:
     validate_url_open_policy()
     validate_deprecated_api_boundaries()
     validate_release_distribution_policy()
+    validate_package_root_runtime_policy()
     validate_ci_wiring()
     print("macos_static_policy: ok")
 

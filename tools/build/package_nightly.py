@@ -16,7 +16,7 @@ import sys
 import tarfile
 import unicodedata
 from pathlib import Path
-from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
+from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile, ZipInfo
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -154,10 +154,68 @@ MACOS_OPTIONAL_APP_BUNDLE_SIGNATURE_FILES = (
     "Contents/_CodeSignature/CodeResources",
 )
 MAX_MACOS_METADATA_MEMBER_BYTES = 64 * 1024
+MAX_MACOS_SUPPORT_INFO_SCRIPT_BYTES = 256 * 1024
 MAX_MACOS_RUNTIME_ARCHIVE_MEMBERS = 4096
 MAX_MACOS_SYMBOL_ARCHIVE_MEMBERS = 512
 MAX_MACOS_RUNTIME_ARCHIVE_TOTAL_BYTES = 8 * 1024 * 1024 * 1024
 MAX_MACOS_SYMBOL_ARCHIVE_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
+MACOS_TAR_ARCHIVE_READ_MODES = {
+    "tar.gz": "r:gz",
+    "tar.xz": "r:xz",
+}
+MACOS_SUPPORT_INFO_REQUIRED_TOKENS = (
+    "#!/bin/sh",
+    "OPENQ4_PACKAGE_ROOT",
+    "ARCHIVE_TMP",
+    "MAX_SUPPORT_TEXT_BYTES",
+    "MAX_CRASH_REPORT_BYTES",
+    "MAX_SUPPORT_ARCHIVE_BYTES",
+    "COMMAND_OUTPUT_INDEX",
+    "command-output-",
+    'command_output=$(mktemp "${WORK_PARENT}/command-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")',
+    'copy_text_if_present "${command_output}" "${target}"',
+    "write_bounded_report()",
+    "report-output-",
+    'report_output=$(mktemp "${WORK_PARENT}/report-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")',
+    'copy_text_if_present "${report_output}" "${target}"',
+    "redact_text()",
+    "contains_control_chars()",
+    "Support package root must not contain control characters",
+    "Support output directory must not contain control characters",
+    ".XXXXXX.tar.gz.tmp",
+    "does not dump the environment",
+    "does not launch openQ4",
+    "does not copy retail q4base PK4 assets",
+    "truncated copy failed; source was not copied",
+    "COPYFILE_DISABLE=1 tar -czf",
+    "COPYFILE_DISABLE=1 tar -tzf",
+    "Support archive is empty or unreadable before publish",
+    "Support archive validation failed before publish",
+    "Support archive is too large before publish",
+    'ln "${ARCHIVE_TMP}" "${ARCHIVE_PATH}"',
+)
+MACOS_SUPPORT_INFO_FORBIDDEN_TOKENS = (
+    "printenv",
+    "env >",
+    "set >",
+    "openQ4-client_arm64 >",
+    "openQ4-client_arm64 2>",
+    "openQ4-client_x64 >",
+    "openQ4-client_x64 2>",
+    "openQ4-client_x86 >",
+    "openQ4-client_x86 2>",
+    "openQ4-ded_arm64 >",
+    "openQ4-ded_arm64 2>",
+    "openQ4-ded_x64 >",
+    "openQ4-ded_x64 2>",
+    "openQ4-ded_x86 >",
+    "openQ4-ded_x86 2>",
+    "xattr -l",
+    "xattr -p",
+    "xattr -w",
+    "|| cat",
+    'tail -c "${max_bytes}" < "${source_path}" 2>/dev/null || cat',
+)
 DETERMINISTIC_ARCHIVE_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 DETERMINISTIC_TAR_MTIME = 0
 
@@ -389,6 +447,14 @@ def prepare_archive_output_path(archive_path: Path, label: str) -> None:
         if not archive_path.is_file():
             raise RuntimeError(f"{label} path is not a regular file: {archive_path}")
         archive_path.unlink()
+
+
+def validate_archive_output_outside_input_tree(input_root: Path, archive_path: Path, label: str) -> None:
+    try:
+        if is_relative_to(archive_path.resolve(strict=False), input_root.resolve()):
+            raise RuntimeError(f"{label} must not be inside the archive input tree: {archive_path}")
+    except OSError as exc:
+        raise RuntimeError(f"{label} path could not be resolved safely: {exc}") from exc
 
 
 def prepare_macos_symbol_staging_root(symbol_root: Path, output_dir: Path) -> None:
@@ -627,9 +693,28 @@ def validate_macos_dmg_source_tree(package_root: Path) -> None:
     validate_no_package_symlinks(package_root)
     validate_no_package_special_files(package_root)
     validate_macos_package_file_modes(package_root)
+    validate_macos_package_support_collector(package_root)
     validate_no_macos_metadata_artifacts(package_root)
     validate_no_macos_casefold_path_collisions(package_root)
     validate_no_macos_forbidden_xattrs(package_root)
+
+
+def is_macos_root_engine_binary_name(name: str) -> bool:
+    return name.startswith(f"{PRODUCT_NAME}-client_") or name.startswith(f"{PRODUCT_NAME}-ded_")
+
+
+def validate_macos_package_root_engine_binaries(package_root: Path, arch: str) -> None:
+    expected_names = set(get_required_root_binaries("macos", arch))
+    offenders = sorted(
+        path.name
+        for path in package_root.iterdir()
+        if path.is_file()
+        and is_macos_root_engine_binary_name(path.name)
+        and path.name not in expected_names
+    )
+    if offenders:
+        joined = ", ".join(offenders[:10])
+        raise RuntimeError(f"macOS package contains stale or mismatched root engine binaries: {joined}")
 
 
 def parse_version_manifest_bytes(data: bytes, label: str) -> dict[str, str]:
@@ -685,6 +770,38 @@ def validate_version_manifest_bytes(
 def validate_macos_metadata_bytes_size(data: bytes, label: str) -> None:
     if len(data) > MAX_MACOS_METADATA_MEMBER_BYTES:
         raise RuntimeError(f"{label} is too large ({len(data)} bytes)")
+
+
+def validate_macos_support_info_script_bytes(data: bytes, label: str) -> None:
+    if len(data) > MAX_MACOS_SUPPORT_INFO_SCRIPT_BYTES:
+        raise RuntimeError(f"{label} is too large ({len(data)} bytes)")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError(f"{label} is not UTF-8") from exc
+    if "\x00" in text:
+        raise RuntimeError(f"{label} contains NUL bytes")
+    if "\r" in text:
+        raise RuntimeError(f"{label} contains CRLF or carriage returns")
+    for token in MACOS_SUPPORT_INFO_REQUIRED_TOKENS:
+        if token not in text:
+            raise RuntimeError(f"{label} is missing required marker {token!r}")
+    for token in MACOS_SUPPORT_INFO_FORBIDDEN_TOKENS:
+        if token in text:
+            raise RuntimeError(f"{label} contains forbidden privacy/no-launch pattern {token!r}")
+
+
+def validate_macos_package_support_collector(package_root: Path) -> None:
+    script_path = package_root / MACOS_SUPPORT_INFO_SCRIPT_NAME
+    if not script_path.is_file():
+        raise RuntimeError(f"macOS package support collector is missing: {script_path}")
+    if not os.access(script_path, os.X_OK):
+        raise RuntimeError(f"macOS package support collector is not executable: {script_path}")
+    try:
+        script_bytes = script_path.read_bytes()
+    except OSError as exc:
+        raise RuntimeError(f"macOS package support collector is unreadable: {script_path}") from exc
+    validate_macos_support_info_script_bytes(script_bytes, "macOS package support collector")
 
 
 def validate_macos_code_resources_bytes(data: bytes, label: str) -> None:
@@ -1620,8 +1737,16 @@ def validate_macos_symbol_archive_contents(
     entry_names: set[str] = set()
     casefold_entry_names: dict[str, str] = {}
     manifest_bytes: bytes | None = None
-    with tarfile.open(archive_path, "r:*") as archive:
-        members = archive.getmembers()
+    try:
+        archive_context = tarfile.open(archive_path, "r:xz")
+        try:
+            members = archive_context.getmembers()
+        except tarfile.TarError:
+            archive_context.close()
+            raise
+    except tarfile.TarError as exc:
+        raise RuntimeError(f"macOS symbol archive is not a valid xz-compressed tar archive: {archive_path}") from exc
+    with archive_context as archive:
         if len(members) > MAX_MACOS_SYMBOL_ARCHIVE_MEMBERS:
             raise RuntimeError(
                 "macOS symbol archive contains too many members: "
@@ -1809,8 +1934,13 @@ def copy_release_collateral(source_root: Path, package_root: Path, platform: str
         copy_regular_file(source, destination)
 
     if platform == "macos":
+        source = source_root / MACOS_SUPPORT_INFO_SCRIPT_PATH
+        validate_macos_support_info_script_bytes(
+            source.read_bytes(),
+            "macOS support collector",
+        )
         destination = package_root / MACOS_SUPPORT_INFO_SCRIPT_NAME
-        copy_regular_file(source_root / MACOS_SUPPORT_INFO_SCRIPT_PATH, destination)
+        copy_regular_file(source, destination)
         ensure_posix_executable(destination)
 
 
@@ -1984,6 +2114,7 @@ def create_macos_dmg(package_root: Path, archive_path: Path) -> None:
         raise RuntimeError("macOS DMG packaging requires a macOS host")
 
     validate_macos_dmg_source_tree(package_root)
+    validate_archive_output_outside_input_tree(package_root, archive_path, "macOS DMG output")
     prepare_archive_output_path(archive_path, "macOS DMG output")
     hdiutil_path = shutil.which("hdiutil")
     if hdiutil_path is None:
@@ -2012,6 +2143,7 @@ def create_release_archive(
     archive_format: str,
     executable_relative_paths: set[Path] | None = None,
 ) -> None:
+    validate_archive_output_outside_input_tree(package_root, archive_path, "release archive output")
     prepare_archive_output_path(archive_path, "release archive output")
 
     symlinks = [path for path in package_root.rglob("*") if path.is_symlink()]
@@ -2161,6 +2293,13 @@ def validate_macos_archive_metadata_member_size(name: str, size: int) -> None:
         raise RuntimeError(f"macOS archive metadata member is too large: {name} ({size} bytes)")
 
 
+def read_macos_zip_member(archive: ZipFile, name: str, archive_path: Path) -> bytes:
+    try:
+        return archive.read(name)
+    except BadZipFile as exc:
+        raise RuntimeError(f"macOS archive is not a valid zip archive: {archive_path}") from exc
+
+
 def record_macos_archive_entry(
     entry_names: set[str],
     casefold_entry_names: dict[str, str],
@@ -2204,6 +2343,7 @@ def validate_macos_archive_contents(
     client_entry = f"{package_prefix}openQ4-client_{arch}"
     dedicated_entry = f"{package_prefix}openQ4-ded_{arch}"
     app_executable_entry = f"{package_prefix}openQ4.app/Contents/MacOS/openQ4"
+    support_info_entry = f"{package_prefix}{MACOS_SUPPORT_INFO_SCRIPT_NAME}"
     expected_entries = {
         client_entry,
         dedicated_entry,
@@ -2212,7 +2352,7 @@ def validate_macos_archive_contents(
         f"{package_prefix}{GAME_DIR_NAME}/mod.json",
         f"{package_prefix}{GAME_DIR_NAME}/pak0.pk4",
         f"{package_prefix}{GAME_DIR_NAME}/pak1.pk4",
-        f"{package_prefix}{MACOS_SUPPORT_INFO_SCRIPT_NAME}",
+        support_info_entry,
         f"{package_prefix}{MACOS_SYMBOL_MANIFEST_NAME}",
         f"{package_prefix}VERSION.txt",
         f"{package_prefix}openQ4.app/Contents/Info.plist",
@@ -2229,7 +2369,7 @@ def validate_macos_archive_contents(
         client_entry,
         dedicated_entry,
         app_executable_entry,
-        f"{package_prefix}{MACOS_SUPPORT_INFO_SCRIPT_NAME}",
+        support_info_entry,
         f"{package_prefix}{GAME_DIR_NAME}/game-sp_{arch}.dylib",
         f"{package_prefix}{GAME_DIR_NAME}/game-mp_{arch}.dylib",
     }
@@ -2243,6 +2383,7 @@ def validate_macos_archive_contents(
     root_version_bytes: bytes | None = None
     app_version_bytes: bytes | None = None
     symbol_manifest_bytes: bytes | None = None
+    support_info_bytes: bytes | None = None
     localized_info_bytes: dict[str, bytes] = {}
     localized_package_root_error_bytes: dict[str, bytes] = {}
     code_resources_bytes: bytes | None = None
@@ -2250,7 +2391,11 @@ def validate_macos_archive_contents(
     code_resources_entry = f"{package_prefix}openQ4.app/Contents/_CodeSignature/CodeResources"
 
     if archive_format == "zip":
-        with ZipFile(archive_path, "r") as archive:
+        try:
+            archive_context = ZipFile(archive_path, "r")
+        except BadZipFile as exc:
+            raise RuntimeError(f"macOS archive is not a valid zip archive: {archive_path}") from exc
+        with archive_context as archive:
             members = archive.infolist()
             if len(members) > MAX_MACOS_RUNTIME_ARCHIVE_MEMBERS:
                 raise RuntimeError(
@@ -2280,31 +2425,41 @@ def validate_macos_archive_contents(
                 modes[name] = (info.external_attr >> 16) & 0o7777
                 validate_macos_archive_mode(name, modes[name])
             if plist_entry in entry_names:
-                plist_bytes = archive.read(plist_entry)
+                plist_bytes = read_macos_zip_member(archive, plist_entry, archive_path)
             pkginfo_entry = f"{package_prefix}openQ4.app/Contents/PkgInfo"
             if pkginfo_entry in entry_names:
-                pkginfo_bytes = archive.read(pkginfo_entry)
+                pkginfo_bytes = read_macos_zip_member(archive, pkginfo_entry, archive_path)
             root_version_entry = f"{package_prefix}VERSION.txt"
             app_version_entry = f"{package_prefix}openQ4.app/Contents/Resources/VERSION.txt"
             symbol_manifest_entry = f"{package_prefix}{MACOS_SYMBOL_MANIFEST_NAME}"
             if root_version_entry in entry_names:
-                root_version_bytes = archive.read(root_version_entry)
+                root_version_bytes = read_macos_zip_member(archive, root_version_entry, archive_path)
             if app_version_entry in entry_names:
-                app_version_bytes = archive.read(app_version_entry)
+                app_version_bytes = read_macos_zip_member(archive, app_version_entry, archive_path)
             if symbol_manifest_entry in entry_names:
-                symbol_manifest_bytes = archive.read(symbol_manifest_entry)
+                symbol_manifest_bytes = read_macos_zip_member(archive, symbol_manifest_entry, archive_path)
+            if support_info_entry in entry_names:
+                support_info_bytes = read_macos_zip_member(archive, support_info_entry, archive_path)
             for locale in MACOS_LOCALIZED_INFO_LOCALES:
                 entry = f"{package_prefix}openQ4.app/Contents/Resources/{locale}.lproj/InfoPlist.strings"
                 if entry in entry_names:
-                    localized_info_bytes[locale] = archive.read(entry)
+                    localized_info_bytes[locale] = read_macos_zip_member(archive, entry, archive_path)
                 error_entry = f"{package_prefix}openQ4.app/Contents/Resources/{locale}.lproj/{MACOS_PACKAGE_ROOT_ERROR_STRINGS_NAME}"
                 if error_entry in entry_names:
-                    localized_package_root_error_bytes[locale] = archive.read(error_entry)
+                    localized_package_root_error_bytes[locale] = read_macos_zip_member(archive, error_entry, archive_path)
             if code_resources_entry in entry_names:
-                code_resources_bytes = archive.read(code_resources_entry)
+                code_resources_bytes = read_macos_zip_member(archive, code_resources_entry, archive_path)
     else:
-        with tarfile.open(archive_path, "r:*") as archive:
-            members = archive.getmembers()
+        try:
+            archive_context = tarfile.open(archive_path, MACOS_TAR_ARCHIVE_READ_MODES[archive_format])
+            try:
+                members = archive_context.getmembers()
+            except tarfile.TarError:
+                archive_context.close()
+                raise
+        except tarfile.TarError as exc:
+            raise RuntimeError(f"macOS archive is not a valid {archive_format} archive: {archive_path}") from exc
+        with archive_context as archive:
             if len(members) > MAX_MACOS_RUNTIME_ARCHIVE_MEMBERS:
                 raise RuntimeError(
                     "macOS archive contains too many members: "
@@ -2349,6 +2504,10 @@ def validate_macos_archive_contents(
                     extracted = archive.extractfile(member)
                     if extracted is not None:
                         symbol_manifest_bytes = extracted.read()
+                elif name == support_info_entry:
+                    extracted = archive.extractfile(member)
+                    if extracted is not None:
+                        support_info_bytes = extracted.read()
                 elif name.startswith(f"{package_prefix}openQ4.app/Contents/Resources/") and name.endswith(".lproj/InfoPlist.strings"):
                     locale = Path(name).parts[-2].replace(".lproj", "")
                     extracted = archive.extractfile(member)
@@ -2413,6 +2572,21 @@ def validate_macos_archive_contents(
             f"macOS archive contains stale or mismatched game modules, including wrong-platform entries: {joined}"
         )
 
+    expected_root_binaries = {client_entry, dedicated_entry}
+    unexpected_root_binaries = sorted(
+        name
+        for name in entry_names
+        if name.startswith(package_prefix)
+        and "/" not in name.removeprefix(package_prefix)
+        and is_macos_root_engine_binary_name(Path(name).name)
+        and name not in expected_root_binaries
+    )
+    if unexpected_root_binaries:
+        joined = ", ".join(unexpected_root_binaries[:5])
+        raise RuntimeError(
+            f"macOS archive contains stale or mismatched root engine binaries, including wrong-architecture entries: {joined}"
+        )
+
     for entry in sorted(executable_entries):
         if modes.get(entry, 0) & 0o111 == 0:
             raise RuntimeError(f"macOS archive entry is not executable: {entry}")
@@ -2425,6 +2599,12 @@ def validate_macos_archive_contents(
         raise RuntimeError("macOS archive version manifests are unreadable")
     if symbol_manifest_bytes is None:
         raise RuntimeError("macOS archive symbol manifest is unreadable")
+    if support_info_bytes is None:
+        raise RuntimeError("macOS archive support collector is unreadable")
+    validate_macos_support_info_script_bytes(
+        support_info_bytes,
+        "macOS archive support collector",
+    )
     validate_version_manifest_bytes(
         root_version_bytes,
         "macOS archive package",
@@ -2907,7 +3087,7 @@ def main(argv: list[str]) -> int:
 
     try:
         copy_release_collateral(source_root, package_root, args.platform)
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     try:
@@ -3038,6 +3218,7 @@ def main(argv: list[str]) -> int:
             validate_no_macos_casefold_path_collisions(package_root)
             strip_macos_forbidden_xattrs(package_root)
             validate_no_macos_forbidden_xattrs(package_root)
+            validate_macos_package_root_engine_binaries(package_root, args.arch)
             normalize_macos_game_module_install_names(package_root, args.arch)
             macos_signing = resolve_macos_signing_config(args)
             sign_macos_payload(package_root, args.arch, macos_signing)
@@ -3053,6 +3234,7 @@ def main(argv: list[str]) -> int:
             validate_no_macos_casefold_path_collisions(package_root)
             strip_macos_forbidden_xattrs(package_root)
             validate_no_macos_forbidden_xattrs(package_root)
+            validate_macos_package_root_engine_binaries(package_root, args.arch)
             validate_macos_version_manifests(package_root, args.arch, version, version_tag)
             validate_macos_localized_info_files(package_root, version)
             validate_macos_app_bundle(package_root, macos_app_bundle, args.arch, version)

@@ -209,6 +209,8 @@ public:
 	void	Clear();
 	void	SetVolume( float to );
 	void	Fade( float to, int length, int soundTime );
+	void	FadeDB( float toDB, float overSeconds, int soundTime );
+	void	Sanitize();
 
 	float	GetVolume( int soundTime ) const;
 };

@@ -6,6 +6,7 @@ graphics_bridge="${OPENQ4_MACOS_GRAPHICS_BRIDGE:-opengl}"
 openal_provider="${OPENQ4_MACOS_OPENAL_PROVIDER:-apple_framework}"
 os_matrix_role="${OPENQ4_MACOS_OS_MATRIX_ROLE:-current-manual-signoff}"
 stamp="${OPENQ4_MACOS_RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
+RESULT_TOKEN_MAX_LENGTH=80
 
 expand_guest_path() {
     case "$1" in
@@ -36,6 +37,10 @@ require_result_token() {
             exit 2
             ;;
     esac
+    if (( ${#value} > RESULT_TOKEN_MAX_LENGTH )); then
+        echo "Invalid ${label} '${value}'. Use at most ${RESULT_TOKEN_MAX_LENGTH} characters." >&2
+        exit 2
+    fi
 }
 
 require_choice() {
@@ -443,6 +448,9 @@ validate_staged_macos_payload() {
         "${game_dir}/game-sp_${arch}.dylib"
         "${game_dir}/game-mp_${arch}.dylib"
     )
+    local required_scripts=(
+        "${install_root}/collect_macos_support_info.sh"
+    )
     local required_files=(
         "${install_root}/openQ4.icns"
         "${install_root}/assets/splash/quake4_rt_bitmap_4001.bmp"
@@ -455,9 +463,80 @@ validate_staged_macos_payload() {
             exit 1
         fi
     done
+    for path in "${required_scripts[@]}"; do
+        if [[ ! -f "${path}" || ! -x "${path}" ]]; then
+            echo "Missing or non-executable staged macOS support script: ${path}" >&2
+            exit 1
+        fi
+    done
     for path in "${required_files[@]}"; do
         if [[ ! -f "${path}" ]]; then
             echo "Missing staged macOS support file: ${path}" >&2
+            exit 1
+        fi
+    done
+    if LC_ALL=C grep -q $'\r' "${install_root}/collect_macos_support_info.sh"; then
+        echo "macOS staged support collector contains CRLF or carriage returns." >&2
+        exit 1
+    fi
+    local support_token
+    for support_token in \
+        "OPENQ4_PACKAGE_ROOT" \
+        "redact_text()" \
+        "contains_control_chars()" \
+        "Support package root must not contain control characters" \
+        "Support output directory must not contain control characters" \
+        ".XXXXXX.tar.gz.tmp" \
+        "MAX_SUPPORT_ARCHIVE_BYTES" \
+        "COMMAND_OUTPUT_INDEX" \
+        "command-output-" \
+        'command_output=$(mktemp "${WORK_PARENT}/command-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")' \
+        'copy_text_if_present "${command_output}" "${target}"' \
+        "write_bounded_report()" \
+        "report-output-" \
+        'report_output=$(mktemp "${WORK_PARENT}/report-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")' \
+        'copy_text_if_present "${report_output}" "${target}"' \
+        "does not dump the environment" \
+        "does not launch openQ4" \
+        "does not copy retail q4base PK4 assets" \
+        "truncated copy failed; source was not copied" \
+        "COPYFILE_DISABLE=1 tar -czf" \
+        "COPYFILE_DISABLE=1 tar -tzf" \
+        "Support archive is empty or unreadable before publish" \
+        "Support archive validation failed before publish" \
+        "Support archive is too large before publish" \
+        'ln "${ARCHIVE_TMP}" "${ARCHIVE_PATH}"'
+    do
+        if ! grep -Fq "${support_token}" "${install_root}/collect_macos_support_info.sh"; then
+            echo "macOS staged support collector is missing marker: ${support_token}" >&2
+            exit 1
+        fi
+    done
+    local forbidden_support_token
+    for forbidden_support_token in \
+        "printenv" \
+        "env >" \
+        "set >" \
+        "openQ4-client_arm64 >" \
+        "openQ4-client_arm64 2>" \
+        "openQ4-client_x64 >" \
+        "openQ4-client_x64 2>" \
+        "openQ4-client_x86 >" \
+        "openQ4-client_x86 2>" \
+        "openQ4-ded_arm64 >" \
+        "openQ4-ded_arm64 2>" \
+        "openQ4-ded_x64 >" \
+        "openQ4-ded_x64 2>" \
+        "openQ4-ded_x86 >" \
+        "openQ4-ded_x86 2>" \
+        "xattr -l" \
+        "xattr -p" \
+        "xattr -w" \
+        "|| cat" \
+        'tail -c "${max_bytes}" < "${source_path}" 2>/dev/null || cat'
+    do
+        if grep -Fq "${forbidden_support_token}" "${install_root}/collect_macos_support_info.sh"; then
+            echo "macOS staged support collector contains forbidden privacy/no-launch pattern: ${forbidden_support_token}" >&2
             exit 1
         fi
     done
@@ -481,6 +560,25 @@ validate_staged_macos_payload() {
         printf '%s\n' "${case_collision}" >&2
         exit 1
     fi
+
+    local expected_root_binaries=(
+        "${install_root}/openQ4-client_${arch}"
+        "${install_root}/openQ4-ded_${arch}"
+    )
+    while IFS= read -r path; do
+        local matched=0
+        local expected_binary
+        for expected_binary in "${expected_root_binaries[@]}"; do
+            if [[ "${path}" == "${expected_binary}" ]]; then
+                matched=1
+                break
+            fi
+        done
+        if [[ "${matched}" == "0" ]]; then
+            echo "macOS staged install contains stale or mismatched root engine binary: ${path}" >&2
+            exit 1
+        fi
+    done < <(find "${install_root}" -maxdepth 1 -type f \( -name 'openQ4-client_*' -o -name 'openQ4-ded_*' \) -print)
 
     if compgen -G "${game_dir}/game-*.dll" >/dev/null || compgen -G "${game_dir}/game-*.so" >/dev/null; then
         echo "macOS staged install contains non-dylib game modules." >&2

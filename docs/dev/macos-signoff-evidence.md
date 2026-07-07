@@ -10,6 +10,7 @@ macOS remains experimental unless the current release entry below points to a co
 
 - Use only compliant Apple hardware, a VM running on Apple hardware, or a hosted Apple Mac provider.
 - Collect final evidence with `tools/macos/Invoke-openQ4MacOSWorkflow.ps1 -Action CollectResults -MacOSRunId <id> -MacOSGraphicsBridge both -RequireCompletedSignoffChecklist`.
+- Keep `<id>` to 80 or fewer characters using only letters, digits, dots, underscores, or dashes, starting with a letter or digit.
 - Validate the collected archive with `python tools/macos/validate_signoff_archive.py <archive> --require-completed-checklist`.
 - Record accepted evidence with `python tools/macos/record_signoff_evidence.py <archive> --version vX.Y.Z --update-index` after adding package artifact names, signing status, and release-note limitations.
 - Record the SHA-256 of the exact archive that passed validation.

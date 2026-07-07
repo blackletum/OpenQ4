@@ -128,9 +128,14 @@ static bool Sys_DirectoryExists( const char *path ) {
 	return path != NULL && path[0] != '\0' && stat( path, &st ) != -1 && S_ISDIR( st.st_mode );
 }
 
+static bool Sys_PathIsSymlink( const char *path ) {
+	struct stat st;
+	return path != NULL && path[0] != '\0' && lstat( path, &st ) != -1 && S_ISLNK( st.st_mode );
+}
+
 static bool Sys_ExecutableFileExists( const char *path ) {
 	struct stat st;
-	return path != NULL && path[0] != '\0' && stat( path, &st ) != -1 && S_ISREG( st.st_mode ) && access( path, X_OK ) == 0;
+	return path != NULL && path[0] != '\0' && !Sys_PathIsSymlink( path ) && stat( path, &st ) != -1 && S_ISREG( st.st_mode ) && access( path, X_OK ) == 0;
 }
 
 static bool Sys_MacOSPackageRootPathExists( const idStr &packageDirectory, const char *entry ) {
@@ -138,7 +143,7 @@ static bool Sys_MacOSPackageRootPathExists( const idStr &packageDirectory, const
 	testPath.AppendPath( entry );
 
 	struct stat st;
-	return stat( testPath.c_str(), &st ) != -1;
+	return lstat( testPath.c_str(), &st ) != -1;
 }
 
 static bool Sys_DirectoryIsWritable( const idStr &path ) {
@@ -350,8 +355,12 @@ static void Sys_RequireMacOSPackageRootDirectory( const idStr &packageDirectory,
 	testPath.AppendPath( entry );
 
 	struct stat st;
-	if ( stat( testPath.c_str(), &st ) == -1 ) {
+	if ( lstat( testPath.c_str(), &st ) == -1 ) {
 		Sys_AppendMacOSPackageRootIssue( missingEntries, entry, "missing" );
+		return;
+	}
+	if ( S_ISLNK( st.st_mode ) ) {
+		Sys_AppendMacOSPackageRootIssue( missingEntries, entry, "symlink" );
 		return;
 	}
 	if ( !S_ISDIR( st.st_mode ) ) {
@@ -371,8 +380,12 @@ static void Sys_RequireMacOSPackageRootExecutable( const idStr &packageDirectory
 	}
 
 	struct stat st;
-	if ( stat( testPath.c_str(), &st ) == -1 ) {
+	if ( lstat( testPath.c_str(), &st ) == -1 ) {
 		Sys_AppendMacOSPackageRootIssue( missingEntries, entry, "missing" );
+		return;
+	}
+	if ( S_ISLNK( st.st_mode ) ) {
+		Sys_AppendMacOSPackageRootIssue( missingEntries, entry, "symlink" );
 		return;
 	}
 	if ( !S_ISREG( st.st_mode ) ) {

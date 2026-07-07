@@ -228,7 +228,7 @@ void idSoundVoice_Base::CalculateSurround( int srcChannels, float pLevelMatrix[ 
 		float centerFraction = OpenQ4_SanitizeMixFraction( centerChannel, 0.0f );
 
 		float sqrLength = p2.LengthSqr();
-		if( sqrLength <= 0.01f )
+		if( FLOAT_IS_NAN( sqrLength ) || sqrLength <= 0.01f )
 		{
 			// If we are on top of the listener, simply route all channels to each speaker equally
 			for( int i = 0; i < dstChannels; i++ )
@@ -290,10 +290,18 @@ void idSoundVoice_Base::CalculateSurround( int srcChannels, float pLevelMatrix[ 
 			// Divide the amplitude between the 2 closest speakers
 			float distA = ( speakerPositions[speakerA] - p2 ).Length();
 			float distB = ( speakerPositions[speakerB] - p2 ).Length();
-			float distCinv = 1.0f / ( distA + distB );
 			float volumes[MAX_CHANNELS_PER_VOICE] = { 0 };
-			volumes[channelA] = ( distB * distCinv );
-			volumes[channelB] = ( distA * distCinv );
+			const float distSum = distA + distB;
+			if( FLOAT_IS_NAN( distSum ) || distSum <= 0.0f )
+			{
+				volumes[channelA] = 1.0f;
+			}
+			else
+			{
+				float distCinv = 1.0f / distSum;
+				volumes[channelA] = ( distB * distCinv );
+				volumes[channelB] = ( distA * distCinv );
+			}
 			for( int i = 0; i < dstChannels; i++ )
 			{
 				pLevelMatrix[MATINDEX( 0, i )] = ( volumes[i] * spatialize ) + omni;

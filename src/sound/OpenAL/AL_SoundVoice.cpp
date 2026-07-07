@@ -159,7 +159,6 @@ static openQ4OcclusionFilter_t OpenQ4_BuildOcclusionFilter( const float occlusio
 	return filter;
 }
 
-
 /*
 ========================
 idSoundVoice_OpenAL::idSoundVoice_OpenAL
@@ -222,6 +221,57 @@ bool idSoundVoice_OpenAL::HasQueuedBufferState() const
 	return queuedBufferPlaybackActive || nextQueuedSample != NULL;
 }
 
+bool idSoundVoice_OpenAL::SampleHasPlayableOpenALPayload( const idSoundSample_OpenAL* sample )
+{
+	if( sample == NULL )
+	{
+		return false;
+	}
+	if( sample->playLength <= 0 || sample->buffers.Num() <= 0 || sample->format.basic.samplesPerSec <= 0 )
+	{
+		return false;
+	}
+	if( sample->openalBuffer != 0 )
+	{
+		return true;
+	}
+	return sample->format.basic.formatTag == idWaveFile::FORMAT_PCM &&
+		   sample->format.basic.blockSize > 0 &&
+		   sample->format.basic.numChannels > 0 &&
+		   sample->format.basic.numChannels <= 2;
+}
+
+bool idSoundVoice_OpenAL::SourceHasPlayableBuffer() const
+{
+	if( !alIsSource( openalSource ) )
+	{
+		return false;
+	}
+
+	ALint sourceType = AL_UNDETERMINED;
+	alGetSourcei( openalSource, AL_SOURCE_TYPE, &sourceType );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		return false;
+	}
+
+	if( sourceType == AL_STATIC )
+	{
+		ALint buffer = 0;
+		alGetSourcei( openalSource, AL_BUFFER, &buffer );
+		return CheckALErrors() == AL_NO_ERROR && buffer != 0;
+	}
+
+	if( sourceType == AL_STREAMING )
+	{
+		ALint queuedBuffers = 0;
+		alGetSourcei( openalSource, AL_BUFFERS_QUEUED, &queuedBuffers );
+		return CheckALErrors() == AL_NO_ERROR && queuedBuffers > 0;
+	}
+
+	return false;
+}
+
 void idSoundVoice_OpenAL::ResetQueuedBufferState()
 {
 	nextQueuedSample = NULL;
@@ -264,10 +314,23 @@ bool idSoundVoice_OpenAL::EnsureStreamingBuffers()
 	alGenBuffers( MAX_QUEUED_BUFFERS, openalStreamingBuffer );
 	if( CheckALErrors() != AL_NO_ERROR )
 	{
-		openalStreamingBuffer[0] = openalStreamingBuffer[1] = openalStreamingBuffer[2] = 0;
+		DeleteStreamingBuffers();
 		return false;
 	}
 	return true;
+}
+
+void idSoundVoice_OpenAL::FailCreate()
+{
+	DestroyInternal();
+	leadinSample = NULL;
+	loopingSample = NULL;
+	formatTag = 0;
+	numChannels = 0;
+	sampleRate = 0;
+	sourceVoiceRate = 0;
+	hasVUMeter = false;
+	paused = true;
 }
 
 void idSoundVoice_OpenAL::AdvanceQueuedBuffer()
@@ -362,6 +425,21 @@ void idSoundVoice_OpenAL::Create( const idSoundSample* leadinSample_, const idSo
 		loopingSample->CreateOpenALBuffer();
 	}
 
+	if( !SampleHasPlayableOpenALPayload( leadinSample ) ||
+			( loopingSample != NULL && !SampleHasPlayableOpenALPayload( loopingSample ) ) )
+	{
+		if( s_debugHardware.GetBool() )
+		{
+			idLib::Printf( "%dms: rejected unplayable OpenAL payload for %s%s%s\n",
+				Sys_Milliseconds(),
+				leadinSample ? leadinSample->GetName() : "<null>",
+				loopingSample != NULL ? " and " : "",
+				loopingSample != NULL ? loopingSample->GetName() : "" );
+		}
+		FailCreate();
+		return;
+	}
+
 	if( alIsSource( openalSource ) )
 	{
 		FlushSourceBuffers();
@@ -377,6 +455,7 @@ void idSoundVoice_OpenAL::Create( const idSoundSample* leadinSample_, const idSo
 			//if( pSourceVoice == NULL )
 		{
 			// If this hits, then we are most likely passing an invalid sample format, which should have been caught by the loader (and the sample defaulted)
+			FailCreate();
 			return;
 		}
 
@@ -390,7 +469,11 @@ void idSoundVoice_OpenAL::Create( const idSoundSample* leadinSample_, const idSo
 	const bool needsStreamingBuffers = leadinSample->openalBuffer == 0 || ( loopingSample != NULL && loopingSample->openalBuffer == 0 );
 	if( needsStreamingBuffers )
 	{
-		EnsureStreamingBuffers();
+		if( !EnsureStreamingBuffers() )
+		{
+			FailCreate();
+			return;
+		}
 	}
 	else
 	{
@@ -419,6 +502,11 @@ void idSoundVoice_OpenAL::Create( const idSoundSample* leadinSample_, const idSo
 
 	// RB: FIXME 0.0f ?
 	alSourcef( openalSource, AL_GAIN, 1.0f );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		FailCreate();
+		return;
+	}
 	CreateWetDryFilters();
 	ApplyWetDryRouting();
 
@@ -538,6 +626,7 @@ idSoundVoice_OpenAL::RestartAt
 */
 int idSoundVoice_OpenAL::RestartAt( int offsetSamples )
 {
+	offsetSamples = Max( 0, offsetSamples );
 	offsetSamples &= ~127;
 	ResetQueuedBufferState();
 
@@ -863,7 +952,16 @@ bool idSoundVoice_OpenAL::Update()
 	if( !paused && queuedBuffers > 0 && state != AL_PLAYING )
 	{
 		alSourcePlay( openalSource );
-		CheckALErrors();
+		if( CheckALErrors() != AL_NO_ERROR )
+		{
+			return false;
+		}
+
+		alGetSourcei( openalSource, AL_SOURCE_STATE, &state );
+		if( CheckALErrors() != AL_NO_ERROR )
+		{
+			return false;
+		}
 	}
 
 	if( queuedBuffers <= 0 && nextQueuedSample == NULL && state != AL_PLAYING )
@@ -1013,7 +1111,21 @@ void idSoundVoice_OpenAL::Pause()
 		idLib::Printf( "%dms: %i pausing %s\n", Sys_Milliseconds(), openalSource, leadinSample ? leadinSample->GetName() : "<null>" );
 	}
 
-	alSourcePause( openalSource );
+	ALint state = AL_INITIAL;
+	alGetSourcei( openalSource, AL_SOURCE_STATE, &state );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		return;
+	}
+
+	if( state == AL_PLAYING )
+	{
+		alSourcePause( openalSource );
+		if( CheckALErrors() != AL_NO_ERROR )
+		{
+			return;
+		}
+	}
 	//pSourceVoice->Stop( 0, OPERATION_SET );
 	paused = true;
 }
@@ -1035,7 +1147,22 @@ void idSoundVoice_OpenAL::UnPause()
 		idLib::Printf( "%dms: %i unpausing %s\n", Sys_Milliseconds(), openalSource, leadinSample ? leadinSample->GetName() : "<null>" );
 	}
 
+	if( HasQueuedBufferState() && !SourceHasPlayableBuffer() )
+	{
+		Update();
+	}
+
+	if( !SourceHasPlayableBuffer() )
+	{
+		paused = false;
+		return;
+	}
+
 	alSourcePlay( openalSource );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		return;
+	}
 	//pSourceVoice->Start( 0, OPERATION_SET );
 	paused = false;
 }

@@ -16,9 +16,10 @@ WORK_PARENT=$(mktemp -d "${TMPDIR:-/tmp}/openq4-support.XXXXXX")
 BUNDLE_NAME="openq4-macos-support-${STAMP}"
 BUNDLE_DIR="${WORK_PARENT}/${BUNDLE_NAME}"
 ARCHIVE_PATH="${OUTPUT_DIR%/}/${BUNDLE_NAME}.tar.gz"
-ARCHIVE_TMP="${OUTPUT_DIR%/}/.${BUNDLE_NAME}.$$.tar.gz.tmp"
+ARCHIVE_TMP=
 MAX_SUPPORT_TEXT_BYTES=2097152
 MAX_CRASH_REPORT_BYTES=8388608
+MAX_SUPPORT_ARCHIVE_BYTES=134217728
 
 fail() {
     printf '%s\n' "$*" >&2
@@ -44,8 +45,16 @@ runtime_arch_token() {
 
 RUNTIME_ARCH=$(runtime_arch_token)
 SKIPPED_CRASH_REPORT_INDEX=0
+COMMAND_OUTPUT_INDEX=0
+
+contains_control_chars() {
+    LC_ALL=C printf '%s' "$1" | grep -q '[[:cntrl:]]'
+}
 
 prepare_package_root() {
+    if contains_control_chars "${PACKAGE_ROOT}"; then
+        fail "Support package root must not contain control characters"
+    fi
     if [ -L "${PACKAGE_ROOT}" ]; then
         fail "Support package root must not be a symlink: ${PACKAGE_ROOT}"
     fi
@@ -57,6 +66,9 @@ prepare_package_root() {
 prepare_output_target() {
     if [ -z "${OUTPUT_DIR}" ]; then
         fail "Support output directory must not be empty"
+    fi
+    if contains_control_chars "${OUTPUT_DIR}"; then
+        fail "Support output directory must not contain control characters"
     fi
     if [ -L "${OUTPUT_DIR}" ]; then
         fail "Support output directory must not be a symlink: ${OUTPUT_DIR}"
@@ -74,8 +86,9 @@ prepare_output_target() {
     if [ -e "${ARCHIVE_PATH}" ]; then
         fail "Support archive target already exists: ${ARCHIVE_PATH}"
     fi
-    if [ -L "${ARCHIVE_TMP}" ] || [ -e "${ARCHIVE_TMP}" ]; then
-        fail "Support archive temporary target already exists: ${ARCHIVE_TMP}"
+    ARCHIVE_TMP=$(mktemp "${OUTPUT_DIR%/}/.${BUNDLE_NAME}.XXXXXX.tar.gz.tmp") || fail "Unable to create support archive temporary target in: ${OUTPUT_DIR}"
+    if [ -L "${ARCHIVE_TMP}" ] || [ ! -f "${ARCHIVE_TMP}" ]; then
+        fail "Support archive temporary target must be a regular file: ${ARCHIVE_TMP}"
     fi
 }
 
@@ -102,6 +115,8 @@ write_text() {
 write_command() {
     target=$1
     shift
+    COMMAND_OUTPUT_INDEX=$((COMMAND_OUTPUT_INDEX + 1))
+    command_output=$(mktemp "${WORK_PARENT}/command-output-${COMMAND_OUTPUT_INDEX}.XXXXXX") || fail "Unable to create support command temporary file"
     {
         printf '$'
         for part in "$@"; do
@@ -109,7 +124,9 @@ write_command() {
         done
         printf '\n\n'
         "$@" 2>&1 || printf '\n(command failed; continuing support collection)\n'
-    } | redact_text > "${BUNDLE_DIR}/${target}"
+    } > "${command_output}"
+    copy_text_if_present "${command_output}" "${target}" "${MAX_SUPPORT_TEXT_BYTES}"
+    rm -f "${command_output}"
 }
 
 path_exists_for_inspection() {
@@ -138,12 +155,23 @@ copy_text_if_present() {
         {
             if [ "${source_bytes}" -gt "${max_bytes}" ]; then
                 printf 'Source file was larger than %s bytes and was truncated to its final %s bytes for this support archive: %s\n\n' "${max_bytes}" "${max_bytes}" "${source_path}"
-                tail -c "${max_bytes}" < "${source_path}" 2>/dev/null || cat "${source_path}"
+                if ! tail -c "${max_bytes}" < "${source_path}" 2>/dev/null; then
+                    printf '(truncated copy failed; source was not copied)\n'
+                fi
             else
                 cat "${source_path}"
             fi
         } | redact_text > "${BUNDLE_DIR}/${target_path}"
     fi
+}
+
+write_bounded_report() {
+    target=$1
+    COMMAND_OUTPUT_INDEX=$((COMMAND_OUTPUT_INDEX + 1))
+    report_output=$(mktemp "${WORK_PARENT}/report-output-${COMMAND_OUTPUT_INDEX}.XXXXXX") || fail "Unable to create support report temporary file"
+    cat > "${report_output}"
+    copy_text_if_present "${report_output}" "${target}" "${MAX_SUPPORT_TEXT_BYTES}"
+    rm -f "${report_output}"
 }
 
 copy_crash_report_if_safe() {
@@ -186,7 +214,7 @@ write_command "system/displays.txt" system_profiler SPDisplaysDataType
     else
         printf '\nsysctl not found.\n'
     fi
-} | redact_text > "${BUNDLE_DIR}/system/rosetta.txt"
+} | write_bounded_report "system/rosetta.txt"
 
 if command -v xcodebuild >/dev/null 2>&1; then
     write_command "system/xcode.txt" xcodebuild -version
@@ -225,7 +253,7 @@ fi
     ls -la "${PACKAGE_ROOT}" 2>&1 || true
     printf '\nbaseoq4 listing:\n'
     ls -la "${PACKAGE_ROOT}/baseoq4" 2>&1 || true
-} | redact_text > "${BUNDLE_DIR}/package/layout.txt"
+} | write_bounded_report "package/layout.txt"
 
 {
     printf 'Collector timestamp UTC: %s\n' "${STAMP}"
@@ -264,7 +292,7 @@ fi
     if [ "${found_log}" -eq 0 ]; then
         printf 'No openq4.log files were found. fs_basepath, fs_cdpath, and fs_savepath values could not be copied without launching openQ4.\n'
     fi
-} | redact_text > "${BUNDLE_DIR}/package/path-resolution.txt"
+} | write_bounded_report "package/path-resolution.txt"
 
 {
     printf 'Collector timestamp UTC: %s\n' "${STAMP}"
@@ -308,7 +336,7 @@ fi
     if [ "${found_module}" -eq 0 ]; then
         printf '(no game module files found)\n'
     fi
-} | redact_text > "${BUNDLE_DIR}/package/build-metadata.txt"
+} | write_bounded_report "package/build-metadata.txt"
 
 {
     printf 'Collector timestamp UTC: %s\n' "${STAMP}"
@@ -341,7 +369,7 @@ fi
             fi
         fi
     done
-} | redact_text > "${BUNDLE_DIR}/package/binary-architecture.txt"
+} | write_bounded_report "package/binary-architecture.txt"
 
 {
     printf 'Collector timestamp UTC: %s\n' "${STAMP}"
@@ -374,7 +402,7 @@ fi
     else
         printf 'otool not found.\n'
     fi
-} | redact_text > "${BUNDLE_DIR}/package/dylib-dependencies.txt"
+} | write_bounded_report "package/dylib-dependencies.txt"
 
 {
     printf 'Collector timestamp UTC: %s\n' "${STAMP}"
@@ -410,7 +438,7 @@ fi
     elif [ "${found_audio_line}" -eq 0 ]; then
         printf '\nNo OpenAL vendor, renderer, device name, or EFX warning lines were found in the copied logs.\n'
     fi
-} | redact_text > "${BUNDLE_DIR}/logs/openal-summary.txt"
+} | write_bounded_report "logs/openal-summary.txt"
 
 {
     printf 'Collector timestamp UTC: %s\n' "${STAMP}"
@@ -446,7 +474,7 @@ fi
     elif [ "${found_renderer_line}" -eq 0 ]; then
         printf '\nNo renderer startup, driver-quirk, ARB2, or fatal-signal lines were found in the copied logs.\n'
     fi
-} | redact_text > "${BUNDLE_DIR}/logs/renderer-summary.txt"
+} | write_bounded_report "logs/renderer-summary.txt"
 
 {
     printf 'Collector timestamp UTC: %s\n' "${STAMP}"
@@ -508,7 +536,7 @@ fi
     else
         printf 'xcrun not found; stapler validation skipped.\n'
     fi
-} | redact_text > "${BUNDLE_DIR}/package/signing.txt"
+} | write_bounded_report "package/signing.txt"
 
 {
     printf 'Collector timestamp UTC: %s\n' "${STAMP}"
@@ -556,7 +584,7 @@ fi
     else
         printf 'xattr not found.\n'
     fi
-} | redact_text > "${BUNDLE_DIR}/package/quarantine.txt"
+} | write_bounded_report "package/quarantine.txt"
 
 copy_text_if_present "${PACKAGE_ROOT}/VERSION.txt" "package/VERSION.txt"
 copy_text_if_present "${PACKAGE_ROOT}/openQ4.app/Contents/Resources/VERSION.txt" "package/app-VERSION.txt"
@@ -610,11 +638,27 @@ write_text "README.txt" \
     "For issue #73 style crashes, include full terminal output as text in the issue body too; this archive cannot recover terminal output that was not logged."
 
 COPYFILE_DISABLE=1 tar -czf "${ARCHIVE_TMP}" -C "${WORK_PARENT}" "${BUNDLE_NAME}"
+archive_bytes=$(wc -c < "${ARCHIVE_TMP}" 2>/dev/null | tr -d '[:space:]' || printf '0')
+case "${archive_bytes}" in
+    ''|*[!0123456789]*) archive_bytes=0 ;;
+esac
+if [ "${archive_bytes}" -le 0 ]; then
+    fail "Support archive is empty or unreadable before publish: ${ARCHIVE_TMP}"
+fi
+if [ "${archive_bytes}" -gt "${MAX_SUPPORT_ARCHIVE_BYTES}" ]; then
+    fail "Support archive is too large before publish: ${archive_bytes} bytes (max ${MAX_SUPPORT_ARCHIVE_BYTES})"
+fi
+if ! COPYFILE_DISABLE=1 tar -tzf "${ARCHIVE_TMP}" >/dev/null 2>&1; then
+    fail "Support archive validation failed before publish: ${ARCHIVE_TMP}"
+fi
 chmod 600 "${ARCHIVE_TMP}"
 if [ -L "${ARCHIVE_PATH}" ] || [ -e "${ARCHIVE_PATH}" ]; then
     fail "Support archive target appeared while collecting data: ${ARCHIVE_PATH}"
 fi
-mv "${ARCHIVE_TMP}" "${ARCHIVE_PATH}"
+if ! ln "${ARCHIVE_TMP}" "${ARCHIVE_PATH}"; then
+    fail "Support archive target appeared while collecting data: ${ARCHIVE_PATH}"
+fi
+rm -f "${ARCHIVE_TMP}"
 ARCHIVE_TMP=""
 
 printf 'Created %s\n' "${ARCHIVE_PATH}"
