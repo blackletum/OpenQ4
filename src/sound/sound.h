@@ -106,6 +106,7 @@ typedef struct
 // sound classes are used to fade most sounds down inside cinematics, leaving dialog
 // flagged with a non-zero class full volume
 const int		SOUND_MAX_CLASSES		= 4;
+const int		SOUND_CLASS_MUSICAL		= 3;
 
 // it is somewhat tempting to make this a virtual class to hide the private
 // details here, but that doesn't fit easily with the decl manager at the moment.

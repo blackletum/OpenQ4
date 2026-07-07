@@ -88,6 +88,7 @@ idCVar s_debugHardware( "s_debugHardware", "0", CVAR_BOOL, "Print a message any 
 // The whole system runs at this sample rate
 static int SYSTEM_SAMPLE_RATE = 44100;
 static float ONE_OVER_SYSTEM_SAMPLE_RATE = 1.0f / SYSTEM_SAMPLE_RATE;
+static const int OPENAL_RESTART_SAMPLE_ALIGNMENT = 128;
 
 static const float OPENQ4_OPENAL_PORTAL_DIRECT_ATTENUATION_DB = -8.0f;
 static const float OPENQ4_OPENAL_PORTAL_DIRECT_HF_ATTENUATION_DB = -24.0f;
@@ -710,6 +711,7 @@ idSoundVoice_OpenAL::RestartAt
 int idSoundVoice_OpenAL::RestartAt( int offsetSamples )
 {
 	offsetSamples = Max( 0, offsetSamples );
+	offsetSamples &= ~( OPENAL_RESTART_SAMPLE_ALIGNMENT - 1 );
 	ResetQueuedBufferState();
 
 	idSoundSample_OpenAL* sample = leadinSample;

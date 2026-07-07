@@ -424,14 +424,15 @@ void idSoundWorldLocal::Update()
 		{
 			idSoundChannel* channel = emitters[e]->channels[i];
 
-			// check if this channel contributes at all
-			const bool canMute = channel->CanMute();
-			if( canMute && channel->volumeDB <= DB_SILENCE )
+			// Retail drops inaudible contributions before sorting, so silent channels
+			// cannot consume the dense-scene OpenAL voice budget.
+			if( channel->volumeDB <= DB_SILENCE )
 			{
-#if !defined(USE_OPENAL)
-				channel->Mute();
+				if( channel->CanMute() )
+				{
+					channel->Mute();
+				}
 				continue;
-#endif
 			}
 
 			const int sortKey = SoundChannelSortKey( channel, currentTime );
@@ -455,6 +456,7 @@ void idSoundWorldLocal::Update()
 			// Only insert at the end if there is room.
 			if( insertIndex == activeEmitterChannels.Num() )
 			{
+				// Always leave one spot free in activeEmitterChannels so a louder later sound can insert before sorting.
 				if( activeEmitterChannels.Num() >= maxEmitterChannels || activeHardwareChannels + sampleChannels > MAX_HARDWARE_CHANNELS )
 				{
 					// We don't have enough voices to play this, so mute it if it was playing.
@@ -468,6 +470,7 @@ void idSoundWorldLocal::Update()
 			activeHardwareChannels += sampleChannels;
 
 			// If we are over our voice limit or at our channel limit, mute sounds until it fits.
+			// Drop the tail when the temporary sort candidate pushes us past the real voice budget.
 			while( activeEmitterChannels.Num() > maxEmitterChannels || activeHardwareChannels > MAX_HARDWARE_CHANNELS )
 			{
 				const int indexToRemove = activeEmitterChannels.Num() - 1;
@@ -1236,6 +1239,7 @@ void idSoundWorldLocal::WriteToSaveGame( idFile* savefile )
 			savefile->WriteInt( channel->startTime );
 			savefile->WriteInt( channel->endTime );
 			savefile->WriteInt( channel->logicalChannel );
+			savefile->WriteInt( channel->choice );
 			savefile->WriteBool( channel->allowSlow );
 			helper::WriteShaderParms( savefile, channel->parms );
 			helper::WriteSoundFade( savefile, channel->volumeFade );
@@ -1267,6 +1271,9 @@ void idSoundWorldLocal::WriteToSaveGame( idFile* savefile )
 			}
 			savefile->WriteInt( leadin );
 			savefile->WriteInt( looping );
+			savefile->WriteInt( channel->lastFrequencyShiftTime );
+			savefile->WriteFloat( channel->lastFrequencyShift );
+			savefile->WriteFloat( channel->elapsedFrequencyShiftTime );
 		}
 	}
 }
@@ -1436,9 +1443,13 @@ void idSoundWorldLocal::ReadFromSaveGame( idFile* savefile )
 			idSoundChannel* channel = AllocSoundChannel();
 			emitter->channels[c] = channel;
 			channel->emitter = emitter;
+			channel->lastFrequencyShiftTime = 0;
+			channel->lastFrequencyShift = 1.0f;
+			channel->elapsedFrequencyShiftTime = 0.0f;
 			helper::ReadInt( savefile, channel->startTime, "channel start time" );
 			helper::ReadInt( savefile, channel->endTime, "channel end time" );
 			helper::ReadInt( savefile, channel->logicalChannel, "channel logical channel" );
+			helper::ReadInt( savefile, channel->choice, "channel sample choice" );
 			helper::ReadBool( savefile, channel->allowSlow, "channel allow-slow flag" );
 			helper::ReadShaderParms( savefile, channel->parms );
 			helper::ReadSoundFade( savefile, channel->volumeFade, timeDelta );
@@ -1470,6 +1481,29 @@ void idSoundWorldLocal::ReadFromSaveGame( idFile* savefile )
 			else if( channel->leadinSample != NULL && ( channel->parms.soundShaderFlags & SSF_LOOPING ) != 0 )
 			{
 				channel->loopingSample = channel->leadinSample;
+			}
+			helper::ReadInt( savefile, channel->lastFrequencyShiftTime, "channel frequency shift time" );
+			helper::ReadFloat( savefile, channel->lastFrequencyShift, "channel last frequency shift" );
+			helper::ReadFloat( savefile, channel->elapsedFrequencyShiftTime, "channel elapsed frequency shift time" );
+			if( channel->lastFrequencyShiftTime > 0 )
+			{
+				channel->lastFrequencyShiftTime += timeDelta;
+			}
+			else
+			{
+				channel->lastFrequencyShiftTime = 0;
+			}
+			if( FLOAT_IS_NAN( channel->lastFrequencyShift ) || channel->lastFrequencyShift <= 0.0f )
+			{
+				channel->lastFrequencyShift = 1.0f;
+			}
+			else
+			{
+				channel->lastFrequencyShift = idMath::ClampFloat( 0.25f, 4.0f, channel->lastFrequencyShift );
+			}
+			if( FLOAT_IS_NAN( channel->elapsedFrequencyShiftTime ) || channel->elapsedFrequencyShiftTime < 0.0f )
+			{
+				channel->elapsedFrequencyShiftTime = 0.0f;
 			}
 			channel->startTime += timeDelta;
 			if( channel->endTime == 0 )

@@ -55,19 +55,14 @@ static const int Q4_SOUND_CHANNEL_VOICE_1 = 2;
 static const int Q4_SOUND_CHANNEL_SPECIAL_ATTENUATION_EXEMPT_0 = 6;
 static const int Q4_SOUND_CHANNEL_SPECIAL_ATTENUATION_EXEMPT_1 = 7;
 static const int Q4_SOUND_CHANNEL_RADIO_CHATTER = 10;
-static const int Q4_SOUND_CLASS_SPECIAL_ATTENUATION_EXEMPT = 3;
 static const float SOUND_FREQUENCY_SHIFT_MIN = 0.25f;
 static const float SOUND_FREQUENCY_SHIFT_MAX = 4.0f;
 static const float SOUND_OCCLUSION_PER_BLOCKED_PORTAL = 0.5f;
 static const float SOUND_ENVIROSUIT_OCCLUSION = 0.5f;
 static const int SOUND_FADE_MAX_MSEC = 24 * 60 * 60 * 1000;
 static const float SOUND_FADE_MAX_DB = 24.0f;
-static const int SOUND_ONE_SHOT_PRIORITY_WINDOW_MSEC = 750;
-static const int SOUND_ONE_SHOT_PRIORITY_BOOST = 3600;
-static const int SOUND_RUMBLE_PRIORITY_BOOST = 1200;
-static const int SOUND_LOOP_PRIORITY_PENALTY = 1800;
-static const int SOUND_MUSIC_PRIORITY_PENALTY = 3600;
-static const int SOUND_VOICE_PRIORITY_BOOST = 100000;
+static const int SOUND_UNMUTABLE_PRIORITY_BOOST = 100000;
+static const int SOUND_CHANNEL_COMPLETION_GRACE_MSEC = 100;
 
 static ID_INLINE float SoundSanitizeUnitValue( const float value, const float fallback )
 {
@@ -145,6 +140,68 @@ static ID_INLINE float SoundChannelFrequencyShift( const idSoundChannel* chan )
 	return idMath::ClampFloat( SOUND_FREQUENCY_SHIFT_MIN, SOUND_FREQUENCY_SHIFT_MAX, frequencyShift );
 }
 
+static float SoundChannelPlaybackTimeMsec( idSoundChannel* chan, const int currentTime )
+{
+	if( chan == NULL || currentTime <= chan->startTime )
+	{
+		return 0.0f;
+	}
+
+	// Retail keeps a shifted sample clock per live channel instead of deriving every offset from wall time.
+	const float frequencyShift = SoundChannelFrequencyShift( chan );
+	if( chan->lastFrequencyShiftTime != 0 || frequencyShift != 1.0f )
+	{
+		float elapsed = 0.0f;
+		if( chan->lastFrequencyShiftTime != 0 )
+		{
+			elapsed = chan->elapsedFrequencyShiftTime + Max( 0, currentTime - chan->lastFrequencyShiftTime ) * chan->lastFrequencyShift;
+		}
+		else
+		{
+			elapsed = Max( 0, currentTime - chan->startTime ) * frequencyShift;
+		}
+
+		chan->lastFrequencyShift = frequencyShift;
+		chan->elapsedFrequencyShiftTime = Max( 0.0f, elapsed );
+		chan->lastFrequencyShiftTime = currentTime;
+		return chan->elapsedFrequencyShiftTime;
+	}
+
+	return currentTime - chan->startTime;
+}
+
+static bool SoundChannelHasCompleted( idSoundChannel* chan, const int currentTime )
+{
+	if( chan == NULL || chan->leadinSample == NULL )
+	{
+		return true;
+	}
+	if( chan->endTime == 1 )
+	{
+		return true;
+	}
+	if( currentTime < chan->startTime )
+	{
+		return false;
+	}
+	if( chan->IsLooping() )
+	{
+		return false;
+	}
+
+	const int length = chan->leadinSample->LengthInMsec();
+	if( length <= 0 )
+	{
+		return chan->endTime > 0 && chan->endTime < currentTime;
+	}
+	if( chan->lastFrequencyShiftTime == 0 )
+	{
+		return chan->endTime > 0 && chan->endTime < currentTime;
+	}
+
+	return SoundChannelPlaybackTimeMsec( chan, currentTime ) > length + SOUND_CHANNEL_COMPLETION_GRACE_MSEC;
+}
+
 static void SoundWorldApplyDistanceFalloff( float& volumeScale, const float distance, const float minDistance, const float maxDistance )
 {
 	if( FLOAT_IS_NAN( volumeScale ) )
@@ -211,88 +268,42 @@ static int SoundPriorityFromVolumeDB( float volumeDB )
 	return idMath::Ftoi( volumeDB * 100.0f );
 }
 
-static int SoundTransientPriorityBoost( const soundShaderParms_t& parms, const idSoundSample* leadinSample, const idSoundSample* loopingSample, const int ageMsec )
-{
-	if( leadinSample == NULL )
-	{
-		return 0;
-	}
-	if( ( parms.soundShaderFlags & ( SSF_LOOPING | SSF_MUSIC ) ) != 0 || loopingSample != NULL )
-	{
-		return 0;
-	}
-	if( ageMsec < 0 || ageMsec >= SOUND_ONE_SHOT_PRIORITY_WINDOW_MSEC )
-	{
-		return 0;
-	}
-
-	const int remaining = SOUND_ONE_SHOT_PRIORITY_WINDOW_MSEC - ageMsec;
-	int boost = SOUND_ONE_SHOT_PRIORITY_BOOST;
-	if( ( parms.soundShaderFlags & SSF_CAUSE_RUMBLE ) != 0 || ( !FLOAT_IS_NAN( parms.shakes ) && parms.shakes != 0.0f ) )
-	{
-		boost += SOUND_RUMBLE_PRIORITY_BOOST;
-	}
-	return idMath::Ftoi( boost * ( remaining / static_cast<float>( SOUND_ONE_SHOT_PRIORITY_WINDOW_MSEC ) ) );
-}
-
-static bool SoundCanReplaceEmitterChannelForAdmission( const soundShaderParms_t& parms, const int logicalChannel, const idSoundSample* leadinSample, const idSoundSample* loopingSample )
-{
-	if( SoundParmsAreVoicePlayback( parms, logicalChannel ) )
-	{
-		return true;
-	}
-	return SoundTransientPriorityBoost( parms, leadinSample, loopingSample, 0 ) > 0;
-}
-
-static int SoundAdmissionPriority( const soundShaderParms_t& parms, const int logicalChannel, const idSoundSample* leadinSample, const idSoundSample* loopingSample, const int ageMsec )
-{
-	int priority = SoundPriorityFromVolumeDB( VolumeScaleToDB( SoundSanitizeGainScale( parms.volume, 0.0f ) ) );
-	if( SoundParmsAreVoicePlayback( parms, logicalChannel ) )
-	{
-		priority += SOUND_VOICE_PRIORITY_BOOST;
-	}
-	if( ( parms.soundShaderFlags & SSF_LOOPING ) != 0 || loopingSample != NULL )
-	{
-		priority -= SOUND_LOOP_PRIORITY_PENALTY;
-	}
-	if( ( parms.soundShaderFlags & SSF_MUSIC ) != 0 )
-	{
-		priority -= SOUND_MUSIC_PRIORITY_PENALTY;
-	}
-	priority += SoundTransientPriorityBoost( parms, leadinSample, loopingSample, ageMsec );
-	return priority;
-}
-
-static int FindReplaceableChannelForPriority( const idStaticList< idSoundChannel*, MAX_CHANNELS_PER_EMITTER >& channels, const int newPriority, const int currentTime )
-{
-	int replaceIndex = -1;
-	int replacePriority = newPriority;
-	for( int i = 0; i < channels.Num(); i++ )
-	{
-		idSoundChannel* const channel = channels[i];
-		if( channel == NULL || !channel->CanMute() )
-		{
-			continue;
-		}
-		const int channelPriority = channel->AdmissionPriority( currentTime );
-		if( channelPriority >= newPriority )
-		{
-			continue;
-		}
-		if( replaceIndex == -1 || channelPriority < replacePriority )
-		{
-			replaceIndex = i;
-			replacePriority = channelPriority;
-		}
-	}
-	return replaceIndex;
-}
-
 static bool ReceivesQuake4ExtraAttenuation( const idSoundChannel* chan )
 {
 	return chan->logicalChannel != Q4_SOUND_CHANNEL_SPECIAL_ATTENUATION_EXEMPT_0 &&
 		   chan->logicalChannel != Q4_SOUND_CHANNEL_SPECIAL_ATTENUATION_EXEMPT_1 &&
-		   chan->parms.soundClass != Q4_SOUND_CLASS_SPECIAL_ATTENUATION_EXEMPT;
+		   chan->parms.soundClass != SOUND_CLASS_MUSICAL;
+}
+
+static bool SoundUsesMusicVolume( const soundShaderParms_t& parms )
+{
+	return ( parms.soundShaderFlags & SSF_MUSIC ) != 0 || parms.soundClass == SOUND_CLASS_MUSICAL;
+}
+
+static int SoundSampleChoiceFromDiversity( const int numEntries, const float diversity )
+{
+	if( numEntries <= 0 || FLOAT_IS_NAN( diversity ) )
+	{
+		return 0;
+	}
+
+	const int choice = static_cast<int>( diversity * numEntries );
+	if( choice < 0 || choice >= numEntries )
+	{
+		return 0;
+	}
+	return choice;
+}
+
+static int SoundLoopStartOffsetFromDiversity( const int lengthMsec, const float diversity )
+{
+	if( lengthMsec <= 0 || FLOAT_IS_NAN( diversity ) )
+	{
+		return 0;
+	}
+
+	const int offset = static_cast<int>( lengthMsec * diversity );
+	return Max( 0, offset );
 }
 
 /*
@@ -418,6 +429,7 @@ idSoundChannel::idSoundChannel()
 
 	startTime = 0;
 	endTime = 0;
+	lastFrequencyShiftTime = 0;
 	leadinSample = NULL;
 	loopingSample = NULL;
 	logicalChannel = SCHANNEL_ANY;
@@ -429,6 +441,8 @@ idSoundChannel::idSoundChannel()
 
 	volumeDB = DB_SILENCE;
 	currentAmplitude = 0.0f;
+	lastFrequencyShift = 1.0f;
+	elapsedFrequencyShiftTime = 0.0f;
 }
 
 /*
@@ -468,31 +482,8 @@ idSoundChannel::MixPrioritySortKey
 */
 int idSoundChannel::MixPrioritySortKey( const int currentTime ) const
 {
-	int priority = SoundPriorityFromVolumeDB( volumeDB );
-	if( IsVoicePlayback() )
-	{
-		priority += SOUND_VOICE_PRIORITY_BOOST;
-	}
-	if( IsLooping() )
-	{
-		priority -= SOUND_LOOP_PRIORITY_PENALTY;
-	}
-	if( ( parms.soundShaderFlags & SSF_MUSIC ) != 0 )
-	{
-		priority -= SOUND_MUSIC_PRIORITY_PENALTY;
-	}
-	priority += SoundTransientPriorityBoost( parms, leadinSample, loopingSample, currentTime - startTime );
-	return priority;
-}
-
-/*
-========================
-idSoundChannel::AdmissionPriority
-========================
-*/
-int idSoundChannel::AdmissionPriority( const int currentTime ) const
-{
-	return SoundAdmissionPriority( parms, logicalChannel, leadinSample, loopingSample, currentTime - startTime );
+	(void)currentTime;
+	return SoundPriorityFromVolumeDB( volumeDB ) + ( CanMute() ? 0 : SOUND_UNMUTABLE_PRIORITY_BOOST );
 }
 
 /*
@@ -529,16 +520,7 @@ idSoundChannel::CheckForCompletion
 */
 bool idSoundChannel::CheckForCompletion( int currentTime )
 {
-	if( leadinSample == NULL )
-	{
-		return true;
-	}
-	// endTime of 0 indicates a sound should loop forever
-	if( endTime > 0 && endTime < currentTime )
-	{
-		return true;
-	}
-	return false;
+	return SoundChannelHasCompleted( this, currentTime );
 }
 
 /*
@@ -561,7 +543,7 @@ void idSoundChannel::UpdateVolume( int currentTime )
 	{
 		return;
 	}
-	if( endTime > 0 && endTime < currentTime )
+	if( SoundChannelHasCompleted( this, currentTime ) )
 	{
 		return;
 	}
@@ -594,7 +576,7 @@ void idSoundChannel::UpdateVolume( int currentTime )
 	if( soundShader != NULL && leadinSample != NULL && soundShader->leadinVolume != 1.0f )
 	{
 		const int leadinLength = leadinSample->LengthInMsec();
-		const int relativeTime = currentTime - startTime;
+		const int relativeTime = idMath::FtoiFast( SoundChannelPlaybackTimeMsec( this, currentTime ) );
 		if( relativeTime >= 0 && relativeTime < leadinLength )
 		{
 			volumeScale = soundShader->leadinVolume;
@@ -634,12 +616,12 @@ void idSoundChannel::UpdateVolume( int currentTime )
 		}
 	}
 
-	if( ( parms.soundShaderFlags & SSF_MUSIC ) != 0 )
+	if( SoundUsesMusicVolume( parms ) )
 	{
 		volumeScale *= SoundSanitizeUnitValue( s_musicVolume.GetFloat(), 1.0f );
 	}
 
-	if( soundSystemLocal.musicMuted && ( parms.soundShaderFlags & SSF_MUSIC ) != 0 )
+	if( soundSystemLocal.musicMuted && SoundUsesMusicVolume( parms ) )
 	{
 		volumeScale = 0.0f;
 	}
@@ -687,10 +669,11 @@ void idSoundChannel::UpdateHardware( float volumeAdd, int currentTime )
 	{
 		return;
 	}
-	if( endTime > 0 && endTime < currentTime )
+	if( SoundChannelHasCompleted( this, currentTime ) )
 	{
 		return;
 	}
+	const int playbackTime = idMath::FtoiFast( SoundChannelPlaybackTimeMsec( this, currentTime ) );
 
 	// convert volumes from decibels to linear
 	const float mixedVolumeDB = volumeDB + volumeAdd;
@@ -728,7 +711,7 @@ void idSoundChannel::UpdateHardware( float volumeAdd, int currentTime )
 		}
 
 		issueStart = true;
-		startOffset = idMath::FtoiFast( ( currentTime - startTime ) * SoundChannelFrequencyShift( this ) );
+		startOffset = playbackTime;
 	}
 
 	if( omni || global || emitterIsListener )
@@ -791,7 +774,7 @@ void idSoundChannel::UpdateHardware( float volumeAdd, int currentTime )
 			hardwareVoice = NULL;
 			if( !IsLooping() )
 			{
-				endTime = currentTime;
+				endTime = 1;
 			}
 		}
 	}
@@ -803,7 +786,7 @@ void idSoundChannel::UpdateHardware( float volumeAdd, int currentTime )
 			hardwareVoice = NULL;
 			if( !IsLooping() )
 			{
-				endTime = currentTime;
+				endTime = 1;
 			}
 		}
 	}
@@ -1279,28 +1262,9 @@ int idSoundEmitterLocal::StartSound( const idSoundShader* shader, const s_channe
 		}
 	}
 
-	// kill any sound that is currently playing on this channel
-	if( channel != SCHANNEL_ANY )
-	{
-		for( int i = 0; i < channels.Num(); i++ )
-		{
-			idSoundChannel* chan = channels[i];
-			if( chan->soundShader && chan->logicalChannel == channel )
-			{
-				if( showStartSound )
-				{
-					idLib::Printf( S_COLOR_YELLOW "OVERRIDE %s: ", chan->soundShader->GetName() );
-				}
-				channels.RemoveIndex( i );
-				soundWorld->FreeSoundChannel( chan );
-				break;
-			}
-		}
-	}
-
 	idSoundSample* leadinSample = NULL;
 	idSoundSample* loopingSample = NULL;
-	int choice = idMath::ClampInt( 0, shader->entries.Num() - 1, ( int )( diversity * shader->entries.Num() ) );
+	int choice = SoundSampleChoiceFromDiversity( shader->entries.Num(), diversity );
 
 	if( ( chanParms.soundShaderFlags & SSF_NO_DUPS ) && shader->entries.Num() > 1 )
 	{
@@ -1319,6 +1283,25 @@ int idSoundEmitterLocal::StartSound( const idSoundShader* shader, const s_channe
 			if( channels[i]->leadinSample == selectedSample )
 			{
 				choice = ( choice + 1 ) % shader->entries.Num();
+				break;
+			}
+		}
+	}
+
+	// kill any sound that is currently playing on this channel after no_dups sees the outgoing sample
+	if( channel != SCHANNEL_ANY )
+	{
+		for( int i = 0; i < channels.Num(); i++ )
+		{
+			idSoundChannel* chan = channels[i];
+			if( chan->soundShader && chan->logicalChannel == channel )
+			{
+				if( showStartSound )
+				{
+					idLib::Printf( S_COLOR_YELLOW "OVERRIDE %s: ", chan->soundShader->GetName() );
+				}
+				channels.RemoveIndex( i );
+				soundWorld->FreeSoundChannel( chan );
 				break;
 			}
 		}
@@ -1350,29 +1333,11 @@ int idSoundEmitterLocal::StartSound( const idSoundShader* shader, const s_channe
 		CheckForCompletion( currentTime );	// as a last chance try to release finished sounds here
 		if( channels.Num() == channels.Max() )
 		{
-			const int newPriority = SoundAdmissionPriority( chanParms, channel, leadinSample, loopingSample, 0 );
-			const int replaceIndex = SoundCanReplaceEmitterChannelForAdmission( chanParms, channel, leadinSample, loopingSample )
-				? FindReplaceableChannelForPriority( channels, newPriority, currentTime )
-				: -1;
-			if( replaceIndex >= 0 )
+			if( showStartSound )
 			{
-				idSoundChannel* const replacedChannel = channels[replaceIndex];
-				if( showStartSound )
-				{
-					idLib::Printf( S_COLOR_YELLOW "EVICT %s: ",
-						replacedChannel != NULL && replacedChannel->soundShader != NULL ? replacedChannel->soundShader->GetName() : "<null>" );
-				}
-				channels.RemoveIndex( replaceIndex );
-				soundWorld->FreeSoundChannel( replacedChannel );
+				idLib::Printf( S_COLOR_RED "No free emitter channels!\n" );
 			}
-			else
-			{
-				if( showStartSound )
-				{
-					idLib::Printf( S_COLOR_RED "No free emitter channels!\n" );
-				}
-				return 0;
-			}
+			return 0;
 		}
 	}
 	idSoundChannel* chan = soundWorld->AllocSoundChannel();
@@ -1393,6 +1358,9 @@ int idSoundEmitterLocal::StartSound( const idSoundShader* shader, const s_channe
 	chan->leadinSample = leadinSample;
 	chan->loopingSample = loopingSample;
 	chan->allowSlow = allowSlow;
+	chan->lastFrequencyShiftTime = 0;
+	chan->lastFrequencyShift = 1.0f;
+	chan->elapsedFrequencyShiftTime = 0.0f;
 
 	// return length of sound in milliseconds
 	int length = chan->leadinSample->LengthInMsec();
@@ -1400,10 +1368,10 @@ int idSoundEmitterLocal::StartSound( const idSoundShader* shader, const s_channe
 	// adjust the start time based on diversity for looping sounds, so they don't all start at the same point
 	int startOffset = 0;
 
-	if( chan->IsLooping() && loopingSample == leadinSample && ( ( chanParms.soundShaderFlags & SSF_NO_RANDOMSTART ) == 0 ) )
+	if( chan->IsLooping() && ( ( chanParms.soundShaderFlags & SSF_NO_RANDOMSTART ) == 0 ) )
 	{
-		// looping sounds start at a random point...
-		startOffset = soundSystemLocal.random.RandomInt( length );
+		// Retail applies diversity to every looping shader, including leadin-then-loop pairs.
+		startOffset = SoundLoopStartOffsetFromDiversity( length, diversity );
 	}
 
 	chan->startTime = currentTime - startOffset;
@@ -1468,7 +1436,7 @@ void idSoundEmitterLocal::StopSound( const s_channelType channel )
 		soundWorld->writeDemo->WriteInt( channel );
 	}
 
-	for( int i = 0; i < channels.Num(); i++ )
+	for( int i = channels.Num() - 1; i >= 0; i-- )
 	{
 		idSoundChannel* chan = channels[i];
 
@@ -1478,11 +1446,11 @@ void idSoundEmitterLocal::StopSound( const s_channelType channel )
 		}
 		if( s_showStartSound.GetBool() )
 		{
-			idLib::Printf( "%dms: StopSound(%d:%d): %s\n", soundWorld->GetSoundTime(), index, channel, chan->soundShader->GetName() );
+			idLib::Printf( "%dms: StopSound(%d:%d): %s\n", soundWorld->GetSoundTime(), index, channel, chan->soundShader != NULL ? chan->soundShader->GetName() : "<null>" );
 		}
 
-		// This forces CheckForCompletion to return true
-		chan->endTime = 1;
+		channels.RemoveIndex( i );
+		soundWorld->FreeSoundChannel( chan );
 	}
 }
 
@@ -1574,24 +1542,15 @@ idSoundEmitterLocal::CurrentlyPlaying
 */
 bool idSoundEmitterLocal::CurrentlyPlaying( const s_channelType channel ) const
 {
-
-	if( channel == SCHANNEL_ANY )
-	{
-		return ( channels.Num() > 0 );
-	}
-
 	for( int i = 0; i < channels.Num(); ++i )
 	{
-		if( channels[i] != NULL && channels[i]->logicalChannel == channel )
+		if( channels[i] == NULL || channels[i]->soundShader == NULL || channels[i]->endTime == 1 )
 		{
-			if( channels[i]->endTime == 1 )
-			{
-				return false;
-			}
-			else
-			{
-				return true;
-			}
+			continue;
+		}
+		if( channel == SCHANNEL_ANY || channels[i]->logicalChannel == channel )
+		{
+			return true;
 		}
 	}
 
@@ -1616,7 +1575,7 @@ float idSoundEmitterLocal::CurrentAmplitude()
 	for( int i = 0; i < channels.Num(); i++ )
 	{
 		idSoundChannel* chan = channels[i];
-		if( chan == NULL || currentTime < chan->startTime || ( chan->endTime > 0 && currentTime >= chan->endTime ) )
+		if( chan == NULL || currentTime < chan->startTime || SoundChannelHasCompleted( chan, currentTime ) )
 		{
 			continue;
 		}
@@ -1627,7 +1586,7 @@ float idSoundEmitterLocal::CurrentAmplitude()
 			continue;
 		}
 
-		const int relativeTime = currentTime - chan->startTime;
+		const int relativeTime = idMath::FtoiFast( SoundChannelPlaybackTimeMsec( chan, currentTime ) );
 		const char* shakeData = chan->soundShader != NULL ? chan->soundShader->GetShakeData( chan->choice ) : "";
 		if( shakeData != NULL && shakeData[0] != '\0' )
 		{

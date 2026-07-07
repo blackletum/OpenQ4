@@ -242,7 +242,6 @@ public:
 	void	UpdateVolume( int currentTime );
 	void	UpdateHardware( float volumeAdd, int currentTime );
 	int		MixPrioritySortKey( int currentTime ) const;
-	int		AdmissionPriority( int currentTime ) const;
 
 	// returns true if this channel is marked as looping
 	bool	IsLooping() const;
@@ -251,6 +250,7 @@ public:
 
 	int						startTime;
 	int						endTime;
+	int						lastFrequencyShiftTime;
 	int						logicalChannel;
 	int						choice;
 	bool					allowSlow;
@@ -263,6 +263,8 @@ public:
 
 	float					volumeDB;			// last volume at which this channel will play (calculated in UpdateVolume)
 	float					currentAmplitude;	// current amplitude on the hardware voice
+	float					lastFrequencyShift;
+	float					elapsedFrequencyShiftTime;
 
 	// hardwareVoice will be freed and NULL'd when a sound is out of range,
 	// and reallocated when it comes back in range
