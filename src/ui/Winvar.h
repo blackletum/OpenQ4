@@ -34,6 +34,20 @@ If you have questions concerning this license or the applicable additional terms
 static const char *VAR_GUIPREFIX = "gui::";
 static const int VAR_GUIPREFIX_LEN = strlen(VAR_GUIPREFIX);
 
+static ID_INLINE void OpenQ4_ReadSaveGameBytes( idFile *savefile, void *buffer, int len, const char *context, const char *fieldName ) {
+	const int offset = savefile->Tell();
+	const int bytesRead = savefile->Read( buffer, len );
+	if ( bytesRead != len ) {
+		common->Error( "%s: truncated %s at offset %d (read %d of %d)",
+			context ? context : "savegame restore", fieldName ? fieldName : "data", offset, bytesRead, len );
+	}
+}
+
+template< class type >
+static ID_INLINE void OpenQ4_ReadSaveGameField( idFile *savefile, type &value, const char *context, const char *fieldName ) {
+	OpenQ4_ReadSaveGameBytes( savefile, &value, sizeof( value ), context, fieldName );
+}
+
 class idWindow;
 class idWinVar {
 public:
@@ -139,8 +153,8 @@ public:
 		savefile->Write( &data, sizeof( data ) );
 	}
 	virtual void ReadFromSaveGame( idFile *savefile ) {
-		savefile->Read( &eval, sizeof( eval ) );
-		savefile->Read( &data, sizeof( data ) );
+		OpenQ4_ReadSaveGameBytes( savefile, &eval, sizeof( eval ), "idWinBool::ReadFromSaveGame", "eval flag" );
+		OpenQ4_ReadSaveGameBytes( savefile, &data, sizeof( data ), "idWinBool::ReadFromSaveGame", "value" );
 	}
 
 	virtual float x( void ) const { return data ? 1.0f : 0.0f; };
@@ -235,13 +249,11 @@ public:
 		}
 	}
 	virtual void ReadFromSaveGame( idFile *savefile ) {
-		savefile->Read( &eval, sizeof( eval ) );
+		OpenQ4_ReadSaveGameBytes( savefile, &eval, sizeof( eval ), "idWinStr::ReadFromSaveGame", "eval flag" );
 
 		int len;
 		const int offset = savefile->Tell();
-		if ( savefile->Read( &len, sizeof( len ) ) != sizeof( len ) ) {
-			common->Error( "idWinStr::ReadFromSaveGame: truncated string length at offset %d", offset );
-		}
+		OpenQ4_ReadSaveGameBytes( savefile, &len, sizeof( len ), "idWinStr::ReadFromSaveGame", "string length" );
 		const int remainingBytes = Max( 0, savefile->Length() - savefile->Tell() );
 		const int maxSavedStringLength = 64 * 1024;
 		if ( len < 0 || len > maxSavedStringLength || len > remainingBytes ) {
@@ -250,9 +262,7 @@ public:
 		}
 		if ( len > 0 ) {
 			data.Fill( ' ', len );
-			if ( savefile->Read( &data[0], len ) != len ) {
-				common->Error( "idWinStr::ReadFromSaveGame: truncated string at offset %d", savefile->Tell() );
-			}
+			OpenQ4_ReadSaveGameBytes( savefile, &data[0], len, "idWinStr::ReadFromSaveGame", "string" );
 		} else {
 			data.Clear();
 		}
@@ -313,8 +323,8 @@ public:
 		savefile->Write( &data, sizeof( data ) );
 	}
 	virtual void ReadFromSaveGame( idFile *savefile ) {
-		savefile->Read( &eval, sizeof( eval ) );
-		savefile->Read( &data, sizeof( data ) );
+		OpenQ4_ReadSaveGameBytes( savefile, &eval, sizeof( eval ), "idWinInt::ReadFromSaveGame", "eval flag" );
+		OpenQ4_ReadSaveGameBytes( savefile, &data, sizeof( data ), "idWinInt::ReadFromSaveGame", "value" );
 	}
 
 	// no suitable conversion
@@ -372,8 +382,8 @@ public:
 		savefile->Write( &data, sizeof( data ) );
 	}
 	virtual void ReadFromSaveGame( idFile *savefile ) {
-		savefile->Read( &eval, sizeof( eval ) );
-		savefile->Read( &data, sizeof( data ) );
+		OpenQ4_ReadSaveGameBytes( savefile, &eval, sizeof( eval ), "idWinFloat::ReadFromSaveGame", "eval flag" );
+		OpenQ4_ReadSaveGameBytes( savefile, &data, sizeof( data ), "idWinFloat::ReadFromSaveGame", "value" );
 	}
 
 	virtual float x( void ) const { return data; };
@@ -482,8 +492,8 @@ public:
 		savefile->Write( &data, sizeof( data ) );
 	}
 	virtual void ReadFromSaveGame( idFile *savefile ) {
-		savefile->Read( &eval, sizeof( eval ) );
-		savefile->Read( &data, sizeof( data ) );
+		OpenQ4_ReadSaveGameBytes( savefile, &eval, sizeof( eval ), "idWinRectangle::ReadFromSaveGame", "eval flag" );
+		OpenQ4_ReadSaveGameBytes( savefile, &data, sizeof( data ), "idWinRectangle::ReadFromSaveGame", "value" );
 	}
 
 protected:
@@ -553,8 +563,8 @@ public:
 		savefile->Write( &data, sizeof( data ) );
 	}
 	virtual void ReadFromSaveGame( idFile *savefile ) {
-		savefile->Read( &eval, sizeof( eval ) );
-		savefile->Read( &data, sizeof( data ) );
+		OpenQ4_ReadSaveGameBytes( savefile, &eval, sizeof( eval ), "idWinVec2::ReadFromSaveGame", "eval flag" );
+		OpenQ4_ReadSaveGameBytes( savefile, &data, sizeof( data ), "idWinVec2::ReadFromSaveGame", "value" );
 	}
 
 protected:
@@ -643,8 +653,8 @@ public:
 		savefile->Write( &data, sizeof( data ) );
 	}
 	virtual void ReadFromSaveGame( idFile *savefile ) {
-		savefile->Read( &eval, sizeof( eval ) );
-		savefile->Read( &data, sizeof( data ) );
+		OpenQ4_ReadSaveGameBytes( savefile, &eval, sizeof( eval ), "idWinVec4::ReadFromSaveGame", "eval flag" );
+		OpenQ4_ReadSaveGameBytes( savefile, &data, sizeof( data ), "idWinVec4::ReadFromSaveGame", "value" );
 	}
 
 protected:
@@ -720,8 +730,8 @@ public:
 		savefile->Write( &data, sizeof( data ) );
 	}
 	virtual void ReadFromSaveGame( idFile *savefile ) {
-		savefile->Read( &eval, sizeof( eval ) );
-		savefile->Read( &data, sizeof( data ) );
+		OpenQ4_ReadSaveGameBytes( savefile, &eval, sizeof( eval ), "idWinVec3::ReadFromSaveGame", "eval flag" );
+		OpenQ4_ReadSaveGameBytes( savefile, &data, sizeof( data ), "idWinVec3::ReadFromSaveGame", "value" );
 	}
 
 protected:
@@ -836,13 +846,11 @@ public:
 		}
 	}
 	virtual void ReadFromSaveGame( idFile *savefile ) {
-		savefile->Read( &eval, sizeof( eval ) );
+		OpenQ4_ReadSaveGameBytes( savefile, &eval, sizeof( eval ), "idWinBackground::ReadFromSaveGame", "eval flag" );
 
 		int len;
 		const int offset = savefile->Tell();
-		if ( savefile->Read( &len, sizeof( len ) ) != sizeof( len ) ) {
-			common->Error( "idWinBackground::ReadFromSaveGame: truncated material name length at offset %d", offset );
-		}
+		OpenQ4_ReadSaveGameBytes( savefile, &len, sizeof( len ), "idWinBackground::ReadFromSaveGame", "material name length" );
 		const int remainingBytes = Max( 0, savefile->Length() - savefile->Tell() );
 		const int maxSavedStringLength = 64 * 1024;
 		if ( len < 0 || len > maxSavedStringLength || len > remainingBytes ) {
@@ -851,9 +859,7 @@ public:
 		}
 		if ( len > 0 ) {
 			data.Fill( ' ', len );
-			if ( savefile->Read( &data[0], len ) != len ) {
-				common->Error( "idWinBackground::ReadFromSaveGame: truncated material name at offset %d", savefile->Tell() );
-			}
+			OpenQ4_ReadSaveGameBytes( savefile, &data[0], len, "idWinBackground::ReadFromSaveGame", "material name" );
 		} else {
 			data.Clear();
 		}

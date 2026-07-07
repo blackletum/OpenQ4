@@ -184,6 +184,9 @@ idSoundVoice_OpenAL::idSoundVoice_OpenAL()
 	openalStreamingBuffer[0] = 0;
 	openalStreamingBuffer[1] = 0;
 	openalStreamingBuffer[2] = 0;
+	openalStreamingBufferQueued[0] = false;
+	openalStreamingBufferQueued[1] = false;
+	openalStreamingBufferQueued[2] = false;
 }
 
 /*
@@ -216,6 +219,35 @@ bool idSoundVoice_OpenAL::UsesStreamingBuffers() const
 	return openalStreamingBuffer[0] != 0 || openalStreamingBuffer[1] != 0 || openalStreamingBuffer[2] != 0;
 }
 
+int idSoundVoice_OpenAL::StreamingBufferIndex( const ALuint buffer ) const
+{
+	if( buffer == 0 )
+	{
+		return -1;
+	}
+	for( int i = 0; i < MAX_QUEUED_BUFFERS; i++ )
+	{
+		if( openalStreamingBuffer[i] == buffer )
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+
+bool idSoundVoice_OpenAL::IsStreamingBuffer( const ALuint buffer ) const
+{
+	return StreamingBufferIndex( buffer ) >= 0;
+}
+
+void idSoundVoice_OpenAL::ResetStreamingBufferQueueState()
+{
+	for( int i = 0; i < MAX_QUEUED_BUFFERS; i++ )
+	{
+		openalStreamingBufferQueued[i] = false;
+	}
+}
+
 bool idSoundVoice_OpenAL::HasQueuedBufferState() const
 {
 	return queuedBufferPlaybackActive || nextQueuedSample != NULL;
@@ -231,14 +263,16 @@ bool idSoundVoice_OpenAL::SampleHasPlayableOpenALPayload( const idSoundSample_Op
 	{
 		return false;
 	}
+	if( sample->format.basic.numChannels <= 0 || sample->format.basic.numChannels > 2 )
+	{
+		return false;
+	}
 	if( sample->openalBuffer != 0 )
 	{
 		return true;
 	}
 	return sample->format.basic.formatTag == idWaveFile::FORMAT_PCM &&
-		   sample->format.basic.blockSize > 0 &&
-		   sample->format.basic.numChannels > 0 &&
-		   sample->format.basic.numChannels <= 2;
+		   sample->format.basic.blockSize > 0;
 }
 
 bool idSoundVoice_OpenAL::SourceHasPlayableBuffer() const
@@ -266,7 +300,19 @@ bool idSoundVoice_OpenAL::SourceHasPlayableBuffer() const
 	{
 		ALint queuedBuffers = 0;
 		alGetSourcei( openalSource, AL_BUFFERS_QUEUED, &queuedBuffers );
-		return CheckALErrors() == AL_NO_ERROR && queuedBuffers > 0;
+		if( CheckALErrors() != AL_NO_ERROR || queuedBuffers <= 0 )
+		{
+			return false;
+		}
+
+		ALint processedBuffers = 0;
+		alGetSourcei( openalSource, AL_BUFFERS_PROCESSED, &processedBuffers );
+		if( CheckALErrors() != AL_NO_ERROR )
+		{
+			return false;
+		}
+
+		return queuedBuffers > Max( 0, processedBuffers );
 	}
 
 	return false;
@@ -300,6 +346,7 @@ void idSoundVoice_OpenAL::DeleteStreamingBuffers()
 	for( int i = 0; i < MAX_QUEUED_BUFFERS; i++ )
 	{
 		openalStreamingBuffer[i] = 0;
+		openalStreamingBufferQueued[i] = false;
 	}
 }
 
@@ -317,6 +364,7 @@ bool idSoundVoice_OpenAL::EnsureStreamingBuffers()
 		DeleteStreamingBuffers();
 		return false;
 	}
+	ResetStreamingBufferQueueState();
 	return true;
 }
 
@@ -340,20 +388,27 @@ void idSoundVoice_OpenAL::AdvanceQueuedBuffer()
 		return;
 	}
 
-	nextQueuedOffset = 0;
-	nextQueuedBuffer++;
-	if( nextQueuedBuffer < nextQueuedSample->buffers.Num() )
+	idSoundSample_OpenAL* const advancedSample = nextQueuedSample;
+	for( nextQueuedBuffer++; nextQueuedBuffer < advancedSample->buffers.Num(); nextQueuedBuffer++ )
 	{
-		return;
+		int bufferStart = 0;
+		int bufferSamples = 0;
+		int playableOffset = 0;
+		int playableSamples = 0;
+		if( GetPlayableBufferRange( advancedSample, nextQueuedBuffer, bufferStart, bufferSamples, playableOffset, playableSamples ) )
+		{
+			nextQueuedOffset = playableOffset;
+			return;
+		}
 	}
 
-	if( nextQueuedSample == leadinSample && loopingSample != NULL )
+	if( advancedSample == leadinSample && loopingSample != NULL )
 	{
 		SetNextQueuedSampleStart( loopingSample );
 		return;
 	}
 
-	if( nextQueuedSample == loopingSample && loopingSample != NULL )
+	if( advancedSample == loopingSample && loopingSample != NULL )
 	{
 		SetNextQueuedSampleStart( loopingSample );
 		return;
@@ -362,6 +417,44 @@ void idSoundVoice_OpenAL::AdvanceQueuedBuffer()
 	nextQueuedSample = NULL;
 	nextQueuedBuffer = 0;
 	nextQueuedOffset = 0;
+}
+
+bool idSoundVoice_OpenAL::GetPlayableBufferRange( const idSoundSample_OpenAL* sample, int bufferNumber, int& bufferStart, int& bufferSamples, int& playableOffset, int& playableSamples )
+{
+	bufferStart = 0;
+	bufferSamples = 0;
+	playableOffset = 0;
+	playableSamples = 0;
+
+	if( sample == NULL || bufferNumber < 0 || bufferNumber >= sample->buffers.Num() )
+	{
+		return false;
+	}
+	if( sample->playBegin < 0 || sample->playLength <= 0 || sample->playLength > idMath::INT_MAX - sample->playBegin )
+	{
+		return false;
+	}
+
+	const idSoundSample_OpenAL::sampleBuffer_t& sampleBuffer = sample->buffers[bufferNumber];
+	bufferStart = bufferNumber > 0 ? sample->buffers[bufferNumber - 1].numSamples : 0;
+	const int bufferEnd = sampleBuffer.numSamples;
+	if( bufferStart < 0 || bufferEnd <= bufferStart )
+	{
+		return false;
+	}
+
+	bufferSamples = bufferEnd - bufferStart;
+	const int playEnd = sample->playBegin + sample->playLength;
+	const int playableStart = Max( bufferStart, sample->playBegin );
+	const int playableEnd = Min( bufferEnd, playEnd );
+	if( playableEnd <= playableStart )
+	{
+		return false;
+	}
+
+	playableOffset = playableStart - bufferStart;
+	playableSamples = playableEnd - playableStart;
+	return playableOffset >= 0 && playableSamples > 0 && playableOffset + playableSamples <= bufferSamples;
 }
 
 bool idSoundVoice_OpenAL::SetNextQueuedSampleStart( idSoundSample_OpenAL* sample )
@@ -374,19 +467,19 @@ bool idSoundVoice_OpenAL::SetNextQueuedSampleStart( idSoundSample_OpenAL* sample
 		return false;
 	}
 
-	const int startSample = Max( 0, sample->playBegin );
-	int previousNumSamples = 0;
 	for( int i = 0; i < sample->buffers.Num(); i++ )
 	{
-		const idSoundSample_OpenAL::sampleBuffer_t& sampleBuffer = sample->buffers[i];
-		if( sampleBuffer.numSamples > startSample )
+		int bufferStart = 0;
+		int bufferSamples = 0;
+		int playableOffset = 0;
+		int playableSamples = 0;
+		if( GetPlayableBufferRange( sample, i, bufferStart, bufferSamples, playableOffset, playableSamples ) )
 		{
 			nextQueuedSample = sample;
 			nextQueuedBuffer = i;
-			nextQueuedOffset = startSample - previousNumSamples;
+			nextQueuedOffset = playableOffset;
 			return true;
 		}
-		previousNumSamples = sampleBuffer.numSamples;
 	}
 
 	nextQueuedSample = NULL;
@@ -496,17 +589,7 @@ void idSoundVoice_OpenAL::Create( const idSoundSample* leadinSample_, const idSo
 	//pSourceVoice->SetSourceSampleRate( sampleRate );
 	//pSourceVoice->SetVolume( 0.0f );
 
-	alSourcei( openalSource, AL_SOURCE_RELATIVE, AL_TRUE );
-	alSource3f( openalSource, AL_POSITION, 0.0f, 0.0f, 0.0f );
-	alSource3f( openalSource, AL_VELOCITY, 0.0f, 0.0f, 0.0f );
-
-	// RB: FIXME 0.0f ?
-	alSourcef( openalSource, AL_GAIN, 1.0f );
-	if( CheckALErrors() != AL_NO_ERROR )
-	{
-		FailCreate();
-		return;
-	}
+	ResetSourceMixState();
 	CreateWetDryFilters();
 	ApplyWetDryRouting();
 
@@ -542,7 +625,7 @@ void idSoundVoice_OpenAL::DestroyInternal()
 idSoundVoice_OpenAL::Start
 ========================
 */
-void idSoundVoice_OpenAL::Start( int offsetMS, int ssFlags )
+bool idSoundVoice_OpenAL::Start( int offsetMS, int ssFlags )
 {
 	if( s_debugHardware.GetBool() )
 	{
@@ -551,12 +634,12 @@ void idSoundVoice_OpenAL::Start( int offsetMS, int ssFlags )
 
 	if( !leadinSample )
 	{
-		return;
+		return false;
 	}
 
 	if( !alIsSource( openalSource ) )
 	{
-		return;
+		return false;
 	}
 
 	if( leadinSample->IsDefault() )
@@ -601,22 +684,22 @@ void idSoundVoice_OpenAL::Start( int offsetMS, int ssFlags )
 		*/
 	}
 
-	assert( offsetMS >= 0 );
+	offsetMS = Max( 0, offsetMS );
 	int offsetSamples = MsecToSamples( offsetMS, leadinSample->SampleRate() );
 	if( loopingSample == NULL && offsetSamples >= leadinSample->playLength )
 	{
-		return;
+		return false;
 	}
 
 	if( RestartAt( offsetSamples ) <= 0 )
 	{
-		return;
+		return false;
 	}
 	if( !Update() )
 	{
-		return;
+		return false;
 	}
-	UnPause();
+	return UnPause();
 }
 
 /*
@@ -627,7 +710,6 @@ idSoundVoice_OpenAL::RestartAt
 int idSoundVoice_OpenAL::RestartAt( int offsetSamples )
 {
 	offsetSamples = Max( 0, offsetSamples );
-	offsetSamples &= ~127;
 	ResetQueuedBufferState();
 
 	idSoundSample_OpenAL* sample = leadinSample;
@@ -638,9 +720,16 @@ int idSoundVoice_OpenAL::RestartAt( int offsetSamples )
 
 	if( offsetSamples >= leadinSample->playLength )
 	{
-		if( loopingSample != NULL && loopingSample->playLength > 0)
+		if( loopingSample != NULL && loopingSample->playLength > 0 )
 		{
-			offsetSamples %= loopingSample->playLength;
+			if( loopingSample == leadinSample )
+			{
+				offsetSamples %= loopingSample->playLength;
+			}
+			else
+			{
+				offsetSamples = ( offsetSamples - leadinSample->playLength ) % loopingSample->playLength;
+			}
 			sample = loopingSample;
 		}
 		else
@@ -671,9 +760,27 @@ int idSoundVoice_OpenAL::RestartAt( int offsetSamples )
 	for( int i = 0; i < numBuffers; i++ )
 	{
 		const idSoundSample_OpenAL::sampleBuffer_t& sampleBuffer = sampleBuffers[i];
+		if( sampleBuffer.numSamples <= previousNumSamples )
+		{
+			return 0;
+		}
 		if( sampleBuffer.numSamples > sample->playBegin + offsetSamples )
 		{
-			const int bufferOffset = sample->playBegin + offsetSamples - previousNumSamples;
+			int bufferStart = 0;
+			int bufferSamples = 0;
+			int playableOffset = 0;
+			int playableSamples = 0;
+			if( !GetPlayableBufferRange( sample, i, bufferStart, bufferSamples, playableOffset, playableSamples ) )
+			{
+				return 0;
+			}
+
+			const int startSample = sample->playBegin + offsetSamples;
+			const int bufferOffset = startSample - bufferStart;
+			if( bufferOffset < playableOffset || bufferOffset >= playableOffset + playableSamples )
+			{
+				return 0;
+			}
 			FlushSourceBuffers();
 			if( sample->openalBuffer != 0 && ( loopingSample == NULL || sample == loopingSample ) )
 			{
@@ -681,7 +788,7 @@ int idSoundVoice_OpenAL::RestartAt( int offsetSamples )
 				alSourcei( openalSource, AL_LOOPING, ( sample == loopingSample && loopingSample != NULL ? AL_TRUE : AL_FALSE ) );
 				if( bufferOffset > 0 )
 				{
-					alSourcei( openalSource, AL_SAMPLE_OFFSET, sample->playBegin + offsetSamples );
+					alSourcei( openalSource, AL_SAMPLE_OFFSET, startSample );
 				}
 				if( CheckALErrors() != AL_NO_ERROR )
 				{
@@ -748,7 +855,7 @@ int idSoundVoice_OpenAL::SubmitBuffer( idSoundSample_OpenAL* sample, int bufferN
 			return 0;
 		}
 
-		return sample->totalBufferSize;
+		return Max( 1, sample->totalBufferSize );
 	}
 
 	if( streamBuffer == 0 || sample->format.basic.blockSize <= 0 )
@@ -779,12 +886,30 @@ int idSoundVoice_OpenAL::SubmitBuffer( idSoundSample_OpenAL* sample, int bufferN
 	{
 		return 0;
 	}
+	int playableBufferStart = 0;
+	int playableBufferSamples = 0;
+	int playableOffset = 0;
+	int playableSamples = 0;
+	if( !GetPlayableBufferRange( sample, bufferNumber, playableBufferStart, playableBufferSamples, playableOffset, playableSamples ) )
+	{
+		return 0;
+	}
+	if( playableBufferStart != previousNumSamples || playableBufferSamples != bufferSamples )
+	{
+		return 0;
+	}
+	if( bufferSamples > sampleBuffer.bufferSize / bytesPerSample )
+	{
+		return 0;
+	}
 
 	if( offset < 0 )
 	{
 		offset = 0;
 	}
-	if( offset >= bufferSamples || offset >= sampleBuffer.bufferSize / bytesPerSample )
+	offset = Max( offset, playableOffset );
+	const int playableEndOffset = playableOffset + playableSamples;
+	if( offset >= playableEndOffset || offset >= sampleBuffer.bufferSize / bytesPerSample )
 	{
 		return 0;
 	}
@@ -796,7 +921,12 @@ int idSoundVoice_OpenAL::SubmitBuffer( idSoundSample_OpenAL* sample, int bufferN
 	}
 
 	const byte* audioData = reinterpret_cast<const byte*>( sampleBuffer.buffer ) + byteOffset;
-	const int audioBytes = sampleBuffer.bufferSize - byteOffset;
+	const int submitSamples = playableEndOffset - offset;
+	if( submitSamples <= 0 || submitSamples > ( sampleBuffer.bufferSize / bytesPerSample ) - offset )
+	{
+		return 0;
+	}
+	const int audioBytes = submitSamples * bytesPerSample;
 	if( audioBytes <= 0 )
 	{
 		return 0;
@@ -823,6 +953,10 @@ bool idSoundVoice_OpenAL::QueueNextBuffer( ALuint streamBuffer )
 	{
 		return false;
 	}
+	if( nextQueuedSample->openalBuffer == 0 && streamBuffer == 0 )
+	{
+		return false;
+	}
 
 	const int submittedBytes = SubmitBuffer( nextQueuedSample, nextQueuedBuffer, nextQueuedOffset, streamBuffer );
 	if( submittedBytes <= 0 )
@@ -831,6 +965,14 @@ bool idSoundVoice_OpenAL::QueueNextBuffer( ALuint streamBuffer )
 		nextQueuedBuffer = 0;
 		nextQueuedOffset = 0;
 		return false;
+	}
+	if( streamBuffer != 0 )
+	{
+		const int streamBufferIndex = StreamingBufferIndex( streamBuffer );
+		if( streamBufferIndex >= 0 )
+		{
+			openalStreamingBufferQueued[streamBufferIndex] = true;
+		}
 	}
 
 	queuedBufferPlaybackActive = true;
@@ -865,22 +1007,29 @@ bool idSoundVoice_OpenAL::Update()
 		return false;
 	}
 
-	ALuint recycledBuffers[MAX_QUEUED_BUFFERS];
-	int recycledCount = 0;
 	while( processedBuffers > 0 )
 	{
-		const int unqueueCount = Min( processedBuffers, MAX_QUEUED_BUFFERS - recycledCount );
+		ALuint unqueuedBuffers[MAX_QUEUED_BUFFERS];
+		const int unqueueCount = Min( processedBuffers, MAX_QUEUED_BUFFERS );
 		if( unqueueCount <= 0 )
 		{
 			break;
 		}
-		alSourceUnqueueBuffers( openalSource, unqueueCount, &recycledBuffers[recycledCount] );
+		alSourceUnqueueBuffers( openalSource, unqueueCount, unqueuedBuffers );
 		if( CheckALErrors() != AL_NO_ERROR )
 		{
 			ResetQueuedBufferState();
 			return false;
 		}
-		recycledCount += unqueueCount;
+		for( int i = 0; i < unqueueCount; i++ )
+		{
+			// Static leadins may share a queue with streamed loops; only voice-owned buffers are scratch.
+			const int streamBufferIndex = StreamingBufferIndex( unqueuedBuffers[i] );
+			if( streamBufferIndex >= 0 )
+			{
+				openalStreamingBufferQueued[streamBufferIndex] = false;
+			}
+		}
 		processedBuffers -= unqueueCount;
 	}
 
@@ -896,31 +1045,33 @@ bool idSoundVoice_OpenAL::Update()
 		ALuint buffersToFill[MAX_QUEUED_BUFFERS];
 		int buffersToFillCount = 0;
 
-		if( queuedBuffers == 0 && recycledCount == 0 )
+		for( int i = 0; i < MAX_QUEUED_BUFFERS; i++ )
 		{
-			for( int i = 0; i < MAX_QUEUED_BUFFERS; i++ )
+			if( openalStreamingBuffer[i] != 0 && !openalStreamingBufferQueued[i] )
 			{
-				if( openalStreamingBuffer[i] != 0 )
-				{
-					buffersToFill[buffersToFillCount++] = openalStreamingBuffer[i];
-				}
-			}
-		}
-		else
-		{
-			for( int i = 0; i < recycledCount; i++ )
-			{
-				buffersToFill[buffersToFillCount++] = recycledBuffers[i];
+				buffersToFill[buffersToFillCount++] = openalStreamingBuffer[i];
 			}
 		}
 
-		for( int i = 0; i < buffersToFillCount && nextQueuedSample != NULL; i++ )
+		int bufferToFillIndex = 0;
+		while( queuedBuffers < MAX_QUEUED_BUFFERS && nextQueuedSample != NULL )
 		{
-			if( QueueNextBuffer( buffersToFill[i] ) )
+			ALuint streamBuffer = 0;
+			if( nextQueuedSample->openalBuffer == 0 )
+			{
+				if( bufferToFillIndex >= buffersToFillCount )
+				{
+					break;
+				}
+				streamBuffer = buffersToFill[bufferToFillIndex++];
+			}
+			if( QueueNextBuffer( streamBuffer ) )
 			{
 				submittedAny = true;
 				queuedBuffers++;
+				continue;
 			}
+			break;
 		}
 	}
 	else
@@ -1041,8 +1192,17 @@ bool idSoundVoice_OpenAL::IsPlaying()
 	ALint state = AL_INITIAL;
 
 	alGetSourcei( openalSource, AL_SOURCE_STATE, &state );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		return false;
+	}
 
-	return ( state == AL_PLAYING );
+	if( state == AL_PLAYING || state == AL_PAUSED )
+	{
+		return true;
+	}
+
+	return HasQueuedBufferState() && SourceHasPlayableBuffer();
 
 	//XAUDIO2_VOICE_STATE state;
 	//pSourceVoice->GetState( &state );
@@ -1059,6 +1219,7 @@ void idSoundVoice_OpenAL::FlushSourceBuffers()
 {
 	if( !alIsSource( openalSource ) )
 	{
+		ResetStreamingBufferQueueState();
 		ResetQueuedBufferState();
 		return;
 	}
@@ -1091,6 +1252,7 @@ void idSoundVoice_OpenAL::FlushSourceBuffers()
 	CheckALErrors();
 
 	paused = true;
+	ResetStreamingBufferQueueState();
 	ResetQueuedBufferState();
 }
 
@@ -1135,11 +1297,15 @@ void idSoundVoice_OpenAL::Pause()
 idSoundVoice_OpenAL::UnPause
 ========================
 */
-void idSoundVoice_OpenAL::UnPause()
+bool idSoundVoice_OpenAL::UnPause()
 {
-	if( !alIsSource( openalSource ) || !paused )
+	if( !alIsSource( openalSource ) )
 	{
-		return;
+		return false;
+	}
+	if( !paused )
+	{
+		return true;
 	}
 
 	if( s_debugHardware.GetBool() )
@@ -1149,22 +1315,26 @@ void idSoundVoice_OpenAL::UnPause()
 
 	if( HasQueuedBufferState() && !SourceHasPlayableBuffer() )
 	{
-		Update();
+		if( !Update() )
+		{
+			return false;
+		}
 	}
 
 	if( !SourceHasPlayableBuffer() )
 	{
 		paused = false;
-		return;
+		return false;
 	}
 
 	alSourcePlay( openalSource );
 	if( CheckALErrors() != AL_NO_ERROR )
 	{
-		return;
+		return false;
 	}
 	//pSourceVoice->Start( 0, OPERATION_SET );
 	paused = false;
+	return true;
 }
 
 /*
@@ -1284,6 +1454,51 @@ void idSoundVoice_OpenAL::SetSampleRate( uint32 newSampleRate, uint32 operationS
 
 	pSourceVoice->SetFrequencyRatio( freqRatio, operationSet );
 	*/
+}
+
+/*
+========================
+idSoundVoice_OpenAL::ResetSourceMixState
+========================
+*/
+void idSoundVoice_OpenAL::ResetSourceMixState()
+{
+	position.Zero();
+	velocity.Zero();
+	gain = 0.0f;
+	centerChannel = 0.0f;
+	pitch = 1.0f;
+	wetLevel = 0.0f;
+	dryLevel = 1.0f;
+	innerRadius = 32.0f;
+	occlusion = 0.0f;
+	environmentMuffle = 0.0f;
+	channelMask = 0;
+	innerSampleRangeSqr = 0.0f;
+	outerSampleRangeSqr = 0.0f;
+
+	if( !alIsSource( openalSource ) )
+	{
+		return;
+	}
+
+	alSourcei( openalSource, AL_SOURCE_RELATIVE, AL_TRUE );
+	alSource3f( openalSource, AL_POSITION, 0.0f, 0.0f, 0.0f );
+	alSource3f( openalSource, AL_VELOCITY, 0.0f, 0.0f, 0.0f );
+	alSourcef( openalSource, AL_GAIN, 0.0f );
+	alSourcef( openalSource, AL_PITCH, 1.0f );
+	alSourcei( openalSource, AL_LOOPING, AL_FALSE );
+#if OPENQ4_OPENAL_EFX_SUPPORTED
+	if( soundSystemLocal.hardware.HasEFXFilters() && openQ4_LoadVoiceEfxProcs() )
+	{
+		alSourcei( openalSource, AL_DIRECT_FILTER, AL_FILTER_NULL );
+		if( soundSystemLocal.hardware.HasEFX() )
+		{
+			alSource3i( openalSource, AL_AUXILIARY_SEND_FILTER, AL_EFFECTSLOT_NULL, 0, AL_FILTER_NULL );
+		}
+	}
+#endif
+	CheckALErrors();
 }
 
 /*
@@ -1424,6 +1639,7 @@ void idSoundVoice_OpenAL::ApplyWetDryRouting()
 #else
 	alSourcef( openalSource, AL_GAIN, effectiveGain * directFilterGain );
 #endif
+	CheckALErrors();
 }
 
 /*
@@ -1435,23 +1651,15 @@ void idSoundVoice_OpenAL::OnBufferStart( idSoundSample_OpenAL* sample, int buffe
 {
 	//SetSampleRate( sample->SampleRate(), XAUDIO2_COMMIT_NOW );
 
-	idSoundSample_OpenAL* nextSample = sample;
-	int nextBuffer = bufferNumber + 1;
-	if( nextBuffer == sample->buffers.Num() )
+	if( sample == NULL || bufferNumber < 0 || bufferNumber >= sample->buffers.Num() )
 	{
-		if( sample == leadinSample )
-		{
-			if( loopingSample == NULL )
-			{
-				return;
-			}
-			nextSample = loopingSample;
-		}
-		nextBuffer = 0;
+		ResetQueuedBufferState();
+		return;
 	}
 
-	nextQueuedSample = nextSample;
-	nextQueuedBuffer = nextBuffer;
+	nextQueuedSample = sample;
+	nextQueuedBuffer = bufferNumber;
 	nextQueuedOffset = 0;
+	AdvanceQueuedBuffer();
 	Update();
 }

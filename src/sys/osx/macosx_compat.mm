@@ -287,6 +287,17 @@ static bool Sys_DirectoryContainsGameDir( const idStr &candidate ) {
 	return stat( testbase.c_str(), &st ) != -1 && S_ISDIR( st.st_mode );
 }
 
+static bool Sys_IsMacOSAppBundleDirectoryName( const idStr &appName ) {
+	static const char appBundleSuffix[] = ".app";
+	const int suffixLength = sizeof( appBundleSuffix ) - 1;
+	if ( appName.Length() <= suffixLength ) {
+		return false;
+	}
+
+	const char *suffixStart = appName.c_str() + appName.Length() - suffixLength;
+	return idStr::Icmp( suffixStart, appBundleSuffix ) == 0;
+}
+
 static bool Sys_GetAppBundlePackageRootFromExecutableDirectory( const idStr &exeDirectory, idStr &appDirectory, idStr &packageDirectory ) {
 	static const char appExecutableDirectorySuffix[] = "/Contents/MacOS";
 	const int suffixLength = sizeof( appExecutableDirectorySuffix ) - 1;
@@ -307,10 +318,10 @@ static bool Sys_GetAppBundlePackageRootFromExecutableDirectory( const idStr &exe
 
 	appDirectory = normalizedDirectory;
 	appDirectory.StripFilename(); // Contents
-	appDirectory.StripFilename(); // openQ4.app
+	appDirectory.StripFilename(); // *.app
 	idStr appName = appDirectory;
 	appName.StripPath();
-	if ( appName.Icmp( "openQ4.app" ) != 0 ) {
+	if ( !Sys_IsMacOSAppBundleDirectoryName( appName ) ) {
 		return false;
 	}
 

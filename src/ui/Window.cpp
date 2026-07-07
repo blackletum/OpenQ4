@@ -4644,11 +4644,11 @@ idWindow::ReadSaveGameTransition
 void idWindow::ReadSaveGameTransition( idTransitionData &trans, idFile *savefile ) {
 	int offset;
 
-	savefile->Read( &offset, sizeof( offset ) );
+	OpenQ4_ReadSaveGameField( savefile, offset, "idWindow::ReadSaveGameTransition", "offset" );
 	if ( offset != -1 ) {
 		idStr winName;
 		ReadSaveGameString( winName, savefile );
-		savefile->Read( &trans.interp, sizeof( trans.interp ) );
+		OpenQ4_ReadSaveGameField( savefile, trans.interp, "idWindow::ReadSaveGameTransition", "interpolate state" );
 		trans.data = NULL;
 		trans.offset = offset;
 		if ( winName.Length() ) {
@@ -4798,9 +4798,7 @@ void idWindow::ReadSaveGameString( idStr &string, idFile *savefile ) {
 	int len;
 	const int offset = savefile->Tell();
 
-	if ( savefile->Read( &len, sizeof( len ) ) != sizeof( len ) ) {
-		common->Error( "idWindow::ReadSaveGameString: truncated length at offset %d", offset );
-	}
+	OpenQ4_ReadSaveGameField( savefile, len, "idWindow::ReadSaveGameString", "length" );
 	const int remainingBytes = Max( 0, savefile->Length() - savefile->Tell() );
 	const int maxSavedStringLength = 64 * 1024;
 	if ( len < 0 || len > maxSavedStringLength || len > remainingBytes ) {
@@ -4809,8 +4807,8 @@ void idWindow::ReadSaveGameString( idStr &string, idFile *savefile ) {
 	}
 
 	string.Fill( ' ', len );
-	if ( len > 0 && savefile->Read( &string[0], len ) != len ) {
-		common->Error( "idWindow::ReadSaveGameString: truncated string at offset %d", savefile->Tell() );
+	if ( len > 0 ) {
+		OpenQ4_ReadSaveGameBytes( savefile, &string[0], len, "idWindow::ReadSaveGameString", "string" );
 	}
 }
 
@@ -4826,35 +4824,35 @@ void idWindow::ReadFromSaveGame( idFile *savefile ) {
 
 	ReadSaveGameString( cmd, savefile );
 
-	savefile->Read( &actualX, sizeof( actualX ) );
-	savefile->Read( &actualY, sizeof( actualY ) );
-	savefile->Read( &childID, sizeof( childID ) );
-	savefile->Read( &flags, sizeof( flags ) );
-	savefile->Read( &lastTimeRun, sizeof( lastTimeRun ) );
-	savefile->Read( &drawRect, sizeof( drawRect ) );
-	savefile->Read( &clientRect, sizeof( clientRect ) );
-	savefile->Read( &origin, sizeof( origin ) );
-	savefile->Read( &fontNum, sizeof( fontNum ) );
-	savefile->Read( &timeLine, sizeof( timeLine ) );
-	savefile->Read( &xOffset, sizeof( xOffset ) );
-	savefile->Read( &yOffset, sizeof( yOffset ) );
-	savefile->Read( &cursor, sizeof( cursor ) );
-	savefile->Read( &forceAspectWidth, sizeof( forceAspectWidth ) );
-	savefile->Read( &forceAspectHeight, sizeof( forceAspectHeight ) );
-	savefile->Read( &matScalex, sizeof( matScalex ) );
-	savefile->Read( &matScaley, sizeof( matScaley ) );
-	savefile->Read( &borderSize, sizeof( borderSize ) );
-	savefile->Read( &textAlign, sizeof( textAlign ) );
-	savefile->Read( &textAlignx, sizeof( textAlignx ) );
-	savefile->Read( &textAligny, sizeof( textAligny ) );
+	OpenQ4_ReadSaveGameField( savefile, actualX, "idWindow::ReadFromSaveGame", "actualX" );
+	OpenQ4_ReadSaveGameField( savefile, actualY, "idWindow::ReadFromSaveGame", "actualY" );
+	OpenQ4_ReadSaveGameField( savefile, childID, "idWindow::ReadFromSaveGame", "childID" );
+	OpenQ4_ReadSaveGameField( savefile, flags, "idWindow::ReadFromSaveGame", "flags" );
+	OpenQ4_ReadSaveGameField( savefile, lastTimeRun, "idWindow::ReadFromSaveGame", "last time run" );
+	OpenQ4_ReadSaveGameField( savefile, drawRect, "idWindow::ReadFromSaveGame", "draw rect" );
+	OpenQ4_ReadSaveGameField( savefile, clientRect, "idWindow::ReadFromSaveGame", "client rect" );
+	OpenQ4_ReadSaveGameField( savefile, origin, "idWindow::ReadFromSaveGame", "origin" );
+	OpenQ4_ReadSaveGameField( savefile, fontNum, "idWindow::ReadFromSaveGame", "font number" );
+	OpenQ4_ReadSaveGameField( savefile, timeLine, "idWindow::ReadFromSaveGame", "timeline" );
+	OpenQ4_ReadSaveGameField( savefile, xOffset, "idWindow::ReadFromSaveGame", "x offset" );
+	OpenQ4_ReadSaveGameField( savefile, yOffset, "idWindow::ReadFromSaveGame", "y offset" );
+	OpenQ4_ReadSaveGameField( savefile, cursor, "idWindow::ReadFromSaveGame", "cursor" );
+	OpenQ4_ReadSaveGameField( savefile, forceAspectWidth, "idWindow::ReadFromSaveGame", "force aspect width" );
+	OpenQ4_ReadSaveGameField( savefile, forceAspectHeight, "idWindow::ReadFromSaveGame", "force aspect height" );
+	OpenQ4_ReadSaveGameField( savefile, matScalex, "idWindow::ReadFromSaveGame", "material scale x" );
+	OpenQ4_ReadSaveGameField( savefile, matScaley, "idWindow::ReadFromSaveGame", "material scale y" );
+	OpenQ4_ReadSaveGameField( savefile, borderSize, "idWindow::ReadFromSaveGame", "border size" );
+	OpenQ4_ReadSaveGameField( savefile, textAlign, "idWindow::ReadFromSaveGame", "text align" );
+	OpenQ4_ReadSaveGameField( savefile, textAlignx, "idWindow::ReadFromSaveGame", "text align x" );
+	OpenQ4_ReadSaveGameField( savefile, textAligny, "idWindow::ReadFromSaveGame", "text align y" );
 	signed char savedTextStyle = 0;
 	float savedTextSpacing = 0.0f;
-	savefile->Read( &savedTextStyle, sizeof( savedTextStyle ) );
-	savefile->Read( &savedTextSpacing, sizeof( savedTextSpacing ) );
+	OpenQ4_ReadSaveGameField( savefile, savedTextStyle, "idWindow::ReadFromSaveGame", "text style" );
+	OpenQ4_ReadSaveGameField( savefile, savedTextSpacing, "idWindow::ReadFromSaveGame", "text spacing" );
 	textstyle = static_cast<float>( savedTextStyle );
 	textspacing = savedTextSpacing;
-	savefile->Read( &textShadow, sizeof( textShadow ) );
-	savefile->Read( &shear, sizeof( shear ) );
+	OpenQ4_ReadSaveGameField( savefile, textShadow, "idWindow::ReadFromSaveGame", "text shadow" );
+	OpenQ4_ReadSaveGameField( savefile, shear, "idWindow::ReadFromSaveGame", "shear" );
 
 	ReadSaveGameString( name, savefile );
 	ReadSaveGameString( comment, savefile );
@@ -4882,24 +4880,27 @@ void idWindow::ReadFromSaveGame( idFile *savefile ) {
 		definedVars[i]->ReadFromSaveGame( savefile );
 	}
 
-	savefile->Read( &textRect, sizeof( textRect ) );
+	OpenQ4_ReadSaveGameField( savefile, textRect, "idWindow::ReadFromSaveGame", "text rect" );
 
 	// Window pointers saved as the child ID of the window
 	int winID = -1;
+	focusedChild = NULL;
+	captureChild = NULL;
+	overChild = NULL;
 
-	savefile->Read( &winID, sizeof( winID ) );
+	OpenQ4_ReadSaveGameField( savefile, winID, "idWindow::ReadFromSaveGame", "focused child id" );
 	for ( i = 0; i < children.Num(); i++ ) {
 		if ( children[i]->childID == winID ) {
 			focusedChild = children[i];
 		}
 	}
-	savefile->Read( &winID, sizeof( winID ) );
+	OpenQ4_ReadSaveGameField( savefile, winID, "idWindow::ReadFromSaveGame", "capture child id" );
 	for ( i = 0; i < children.Num(); i++ ) {
 		if ( children[i]->childID == winID ) {
 			captureChild = children[i];
 		}
 	}
-	savefile->Read( &winID, sizeof( winID ) );
+	OpenQ4_ReadSaveGameField( savefile, winID, "idWindow::ReadFromSaveGame", "over child id" );
 	for ( i = 0; i < children.Num(); i++ ) {
 		if ( children[i]->childID == winID ) {
 			overChild = children[i];
@@ -4916,8 +4917,8 @@ void idWindow::ReadFromSaveGame( idFile *savefile ) {
 	// TimeLine Events
 	for ( i = 0; i < timeLineEvents.Num(); i++ ) {
 		if ( timeLineEvents[i] ) {
-			savefile->Read( &timeLineEvents[i]->pending, sizeof( timeLineEvents[i]->pending ) );
-			savefile->Read( &timeLineEvents[i]->time, sizeof( timeLineEvents[i]->time ) );
+			OpenQ4_ReadSaveGameField( savefile, timeLineEvents[i]->pending, "idWindow::ReadFromSaveGame", "timeline pending flag" );
+			OpenQ4_ReadSaveGameField( savefile, timeLineEvents[i]->time, "idWindow::ReadFromSaveGame", "timeline event time" );
 			if ( timeLineEvents[i]->event ) {
 				timeLineEvents[i]->event->ReadFromSaveGame( savefile );
 			}
@@ -4927,9 +4928,7 @@ void idWindow::ReadFromSaveGame( idFile *savefile ) {
 
 	// Transitions
 	int num;
-	if ( savefile->Read( &num, sizeof( num ) ) != sizeof( num ) ) {
-		common->Error( "idWindow::ReadFromSaveGame: truncated transition count for window '%s'", name.c_str() );
-	}
+	OpenQ4_ReadSaveGameField( savefile, num, "idWindow::ReadFromSaveGame", "transition count" );
 	if ( num < 0 || num > 4096 ) {
 		common->Error( "idWindow::ReadFromSaveGame: invalid transition count %d for window '%s'", num, name.c_str() );
 	}

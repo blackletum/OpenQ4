@@ -101,7 +101,7 @@ public:
 	void					Create( const idSoundSample* leadinSample, const idSoundSample* loopingSample );
 
 	// Start playing at a particular point in the buffer.  Does an Update() too
-	void					Start( int offsetMS, int ssFlags );
+	bool					Start( int offsetMS, int ssFlags );
 
 	// Stop playing.
 	void					Stop();
@@ -110,7 +110,7 @@ public:
 	void					Pause();
 
 	// Start consuming buffers again
-	void					UnPause();
+	bool					UnPause();
 
 	// Sends new position/volume/pitch information to the hardware
 	bool					Update();
@@ -152,16 +152,21 @@ private:
 	bool					QueueNextBuffer( ALuint streamBuffer );
 	void					AdvanceQueuedBuffer();
 	bool					SetNextQueuedSampleStart( idSoundSample_OpenAL* sample );
+	static bool				GetPlayableBufferRange( const idSoundSample_OpenAL* sample, int bufferNumber, int& bufferStart, int& bufferSamples, int& playableOffset, int& playableSamples );
 	void					ResetQueuedBufferState();
 	void					DeleteStreamingBuffers();
 	bool					EnsureStreamingBuffers();
 	bool					UsesStreamingBuffers() const;
+	int						StreamingBufferIndex( ALuint buffer ) const;
+	bool					IsStreamingBuffer( ALuint buffer ) const;
+	void					ResetStreamingBufferQueueState();
 	bool					HasQueuedBufferState() const;
 	static bool				SampleHasPlayableOpenALPayload( const idSoundSample_OpenAL* sample );
 	bool					SourceHasPlayableBuffer() const;
 
 	// Adjust the voice frequency based on the new sample rate for the buffer
 	void					SetSampleRate( uint32 newSampleRate, uint32 operationSet );
+	void					ResetSourceMixState();
 	void					ApplyWetDryRouting();
 	void					CreateWetDryFilters();
 	void					DestroyWetDryFilters();
@@ -169,6 +174,7 @@ private:
 	//IXAudio2SourceVoice* 	pSourceVoice;
 	ALuint					openalSource;
 	ALuint					openalStreamingBuffer[3];
+	bool					openalStreamingBufferQueued[3];
 	ALuint					openalDirectFilter;
 	ALuint					openalAuxFilter;
 	idSoundSample_OpenAL*	nextQueuedSample;

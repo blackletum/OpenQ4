@@ -29,6 +29,9 @@ If you have questions concerning this license or the applicable additional terms
 */
 #include "snd_local.h"
 
+static const int SOUND_SAVEGAME_MAX_EMITTERS = 8192;
+static const int SOUND_SAVEGAME_MAX_TOTAL_CHANNELS = 8192;
+
 idCVar s_lockListener( "s_lockListener", "0", CVAR_BOOL, "lock listener updates" );
 idCVar s_constantAmplitude( "s_constantAmplitude", "-1", CVAR_FLOAT, "" );
 idCVar s_maxEmitterChannels( "s_maxEmitterChannels", "48", CVAR_INTEGER, "Can be set lower than the absolute max of MAX_HARDWARE_VOICES" );
@@ -230,6 +233,8 @@ public:
 	int					sortKey;
 };
 
+static const int MAX_ACTIVE_EMITTER_CHANNEL_CANDIDATES = MAX_HARDWARE_VOICES + 1;
+
 /*
 ========================
 MapVolumeFromFadeDB
@@ -279,7 +284,7 @@ It isn't obvious what the exact best volume ramping method should be, just that
 it smoothly change frame to frame.
 ========================
 */
-static float AdjustForCushionChannels( const idStaticList< idActiveChannel, MAX_HARDWARE_VOICES >& activeEmitterChannels,
+static float AdjustForCushionChannels( const idStaticList< idActiveChannel, MAX_ACTIVE_EMITTER_CHANNEL_CANDIDATES >& activeEmitterChannels,
 									   const int uncushionedChannels, const float currentCushionDB, const float driftRate )
 {
 
@@ -351,6 +356,15 @@ static int SoundChannelHardwareWidth( const idSoundChannel* channel )
 	return idMath::ClampInt( 1, MAX_CHANNELS_PER_VOICE, channel->leadinSample->NumChannels() );
 }
 
+static int SoundChannelSortKey( const idSoundChannel* channel, const int currentTime )
+{
+	if( channel == NULL )
+	{
+		return idMath::Ftoi( DB_SILENCE * 100.0f );
+	}
+	return channel->MixPrioritySortKey( currentTime );
+}
+
 /*
 ========================
 idSoundWorldLocal::Update
@@ -374,8 +388,8 @@ void idSoundWorldLocal::Update()
 	// An idSoundChannel is a channel on an emitter, which may have an explicit channel assignment or SND_CHANNEL_ANY
 	// A hardware channel is a channel from the sound file itself (IE: left, right, LFE)
 	// We only allow MAX_HARDWARE_CHANNELS channels, which may wind up being a smaller number of idSoundChannels
-	idStaticList< idActiveChannel, MAX_HARDWARE_VOICES > activeEmitterChannels;
-	const int maxEmitterChannels = idMath::ClampInt( 1, MAX_HARDWARE_VOICES, s_maxEmitterChannels.GetInteger() + 1 );	// +1 to leave room for insert-before-sort
+	idStaticList< idActiveChannel, MAX_ACTIVE_EMITTER_CHANNEL_CANDIDATES > activeEmitterChannels;
+	const int maxEmitterChannels = idMath::ClampInt( 1, MAX_HARDWARE_VOICES, s_maxEmitterChannels.GetInteger() );
 
 	int activeHardwareChannels = 0;
 	int	totalHardwareChannels = 0;
@@ -420,9 +434,7 @@ void idSoundWorldLocal::Update()
 #endif
 			}
 
-			// Calculate the sort key.
-			// VO can't be stopped and restarted accurately, so always keep VO channels by adding a large value to the sort key.
-			const int sortKey = idMath::Ftoi( channel->volumeDB * 100.0f + ( canMute ? 0.0f : 100000.0f ) );
+			const int sortKey = SoundChannelSortKey( channel, currentTime );
 
 			// Keep track of the total number of hardware channels.
 			// This is done after calculating the sort key to avoid a load-hit-store that
@@ -443,8 +455,7 @@ void idSoundWorldLocal::Update()
 			// Only insert at the end if there is room.
 			if( insertIndex == activeEmitterChannels.Num() )
 			{
-				// Always leave one spot free in the 'activeEmitterChannels' so there is room to insert sort a potentially louder sound later.
-				if( activeEmitterChannels.Num() + 1 >= activeEmitterChannels.Max() || activeHardwareChannels + sampleChannels > MAX_HARDWARE_CHANNELS )
+				if( activeEmitterChannels.Num() >= maxEmitterChannels || activeHardwareChannels + sampleChannels > MAX_HARDWARE_CHANNELS )
 				{
 					// We don't have enough voices to play this, so mute it if it was playing.
 					channel->Mute();
@@ -457,8 +468,7 @@ void idSoundWorldLocal::Update()
 			activeHardwareChannels += sampleChannels;
 
 			// If we are over our voice limit or at our channel limit, mute sounds until it fits.
-			// If activeEmitterChannels is full, always remove the last one so there is room to insert sort a potentially louder sound later.
-			while( activeEmitterChannels.Num() == maxEmitterChannels || activeHardwareChannels > MAX_HARDWARE_CHANNELS )
+			while( activeEmitterChannels.Num() > maxEmitterChannels || activeHardwareChannels > MAX_HARDWARE_CHANNELS )
 			{
 				const int indexToRemove = activeEmitterChannels.Num() - 1;
 				idSoundChannel* const channelToMute = activeEmitterChannels[ indexToRemove ].channel;
@@ -1270,12 +1280,78 @@ void idSoundWorldLocal::ReadFromSaveGame( idFile* savefile )
 {
 	struct helper
 	{
+		static void ReadInt( idFile* savefile, int& value, const char* fieldName )
+		{
+			const int bytesRead = savefile->ReadInt( value );
+			if( bytesRead != sizeof( value ) )
+			{
+				common->Error( "idSoundWorldLocal::ReadFromSaveGame: truncated %s (read %d of %d)",
+					fieldName, bytesRead, static_cast<int>( sizeof( value ) ) );
+			}
+		}
+		static void ReadFloat( idFile* savefile, float& value, const char* fieldName )
+		{
+			const int bytesRead = savefile->ReadFloat( value );
+			if( bytesRead != sizeof( value ) )
+			{
+				common->Error( "idSoundWorldLocal::ReadFromSaveGame: truncated %s (read %d of %d)",
+					fieldName, bytesRead, static_cast<int>( sizeof( value ) ) );
+			}
+		}
+		static void ReadBool( idFile* savefile, bool& value, const char* fieldName )
+		{
+			const int bytesRead = savefile->ReadBool( value );
+			if( bytesRead != sizeof( byte ) )
+			{
+				common->Error( "idSoundWorldLocal::ReadFromSaveGame: truncated %s (read %d of %d)",
+					fieldName, bytesRead, static_cast<int>( sizeof( byte ) ) );
+			}
+		}
+		static void ReadVec3( idFile* savefile, idVec3& value, const char* fieldName )
+		{
+			const int bytesRead = savefile->ReadVec3( value );
+			if( bytesRead != sizeof( value ) )
+			{
+				common->Error( "idSoundWorldLocal::ReadFromSaveGame: truncated %s (read %d of %d)",
+					fieldName, bytesRead, static_cast<int>( sizeof( value ) ) );
+			}
+		}
+		static void ReadMat3( idFile* savefile, idMat3& value, const char* fieldName )
+		{
+			const int bytesRead = savefile->ReadMat3( value );
+			if( bytesRead != sizeof( value ) )
+			{
+				common->Error( "idSoundWorldLocal::ReadFromSaveGame: truncated %s (read %d of %d)",
+					fieldName, bytesRead, static_cast<int>( sizeof( value ) ) );
+			}
+		}
+		static void ReadString( idFile* savefile, idStr& value, const char* fieldName )
+		{
+			int len = 0;
+			ReadInt( savefile, len, fieldName );
+			if( len < 0 || len > MAX_STRING_CHARS )
+			{
+				common->Error( "idSoundWorldLocal::ReadFromSaveGame: invalid %s length %d", fieldName, len );
+			}
+			value.Clear();
+			if( len == 0 )
+			{
+				return;
+			}
+			value.Fill( ' ', len );
+			const int bytesRead = savefile->Read( &value[0], len );
+			if( bytesRead != len )
+			{
+				common->Error( "idSoundWorldLocal::ReadFromSaveGame: truncated %s payload (read %d of %d)",
+					fieldName, bytesRead, len );
+			}
+		}
 		static void ReadSoundFade( idFile* savefile, idSoundFade& sf, int timeDelta )
 		{
-			savefile->ReadInt( sf.fadeStartTime );
-			savefile->ReadInt( sf.fadeEndTime );
-			savefile->ReadFloat( sf.fadeStartVolume );
-			savefile->ReadFloat( sf.fadeEndVolume );
+			ReadInt( savefile, sf.fadeStartTime, "sound fade start time" );
+			ReadInt( savefile, sf.fadeEndTime, "sound fade end time" );
+			ReadFloat( savefile, sf.fadeStartVolume, "sound fade start volume" );
+			ReadFloat( savefile, sf.fadeEndVolume, "sound fade end volume" );
 			sf.Sanitize();
 			if( sf.fadeEndTime > 0 )
 			{
@@ -1285,20 +1361,24 @@ void idSoundWorldLocal::ReadFromSaveGame( idFile* savefile )
 		}
 		static void ReadShaderParms( idFile* savefile, soundShaderParms_t& parms )
 		{
-			savefile->ReadFloat( parms.minDistance );
-			savefile->ReadFloat( parms.maxDistance );
-			savefile->ReadFloat( parms.volume );
-			savefile->ReadFloat( parms.attenuatedVolume );
-			savefile->ReadFloat( parms.shakes );
-			savefile->ReadInt( parms.soundShaderFlags );
-			savefile->ReadInt( parms.soundClass );
-			savefile->ReadFloat( parms.frequencyShift );
-			savefile->ReadFloat( parms.wetLevel );
-			savefile->ReadFloat( parms.dryLevel );
+			ReadFloat( savefile, parms.minDistance, "sound min distance" );
+			ReadFloat( savefile, parms.maxDistance, "sound max distance" );
+			ReadFloat( savefile, parms.volume, "sound volume" );
+			ReadFloat( savefile, parms.attenuatedVolume, "sound attenuated volume" );
+			ReadFloat( savefile, parms.shakes, "sound shakes" );
+			ReadInt( savefile, parms.soundShaderFlags, "sound shader flags" );
+			ReadInt( savefile, parms.soundClass, "sound class" );
+			if( parms.soundClass < 0 || parms.soundClass >= SOUND_MAX_CLASSES )
+			{
+				common->Error( "idSoundWorldLocal::ReadFromSaveGame: invalid sound class %d", parms.soundClass );
+			}
+			ReadFloat( savefile, parms.frequencyShift, "sound frequency shift" );
+			ReadFloat( savefile, parms.wetLevel, "sound wet level" );
+			ReadFloat( savefile, parms.dryLevel, "sound dry level" );
 		}
 	};
 	int oldSoundTime = 0;
-	savefile->ReadInt( oldSoundTime );
+	helper::ReadInt( savefile, oldSoundTime, "old sound time" );
 	int timeDelta = GetSoundTime() - oldSoundTime;
 
 	helper::ReadSoundFade( savefile, volumeFade, timeDelta );
@@ -1306,26 +1386,27 @@ void idSoundWorldLocal::ReadFromSaveGame( idFile* savefile )
 	{
 		helper::ReadSoundFade( savefile, soundClassFade[c], timeDelta );
 	}
-	savefile->ReadFloat( slowmoSpeed );
+	helper::ReadFloat( savefile, slowmoSpeed, "slowmo speed" );
 	SetSlowmoSpeed( slowmoSpeed );
-	savefile->ReadBool( enviroSuitActive );
+	helper::ReadBool( savefile, enviroSuitActive, "enviro suit state" );
 
-	savefile->ReadMat3( listener.axis );
-	savefile->ReadVec3( listener.pos );
-	savefile->ReadInt( listener.id );
-	savefile->ReadInt( listener.area );
+	helper::ReadMat3( savefile, listener.axis, "listener axis" );
+	helper::ReadVec3( savefile, listener.pos, "listener position" );
+	helper::ReadInt( savefile, listener.id, "listener id" );
+	helper::ReadInt( savefile, listener.area, "listener area" );
 
-	savefile->ReadFloat( shakeAmp );
+	helper::ReadFloat( savefile, shakeAmp, "shake amplitude" );
 	rumbleAmp = 0.0f;
 
 	int numEmitters = 0;
-	savefile->ReadInt( numEmitters );
-	if( numEmitters < 1 || numEmitters > 65536 )
+	helper::ReadInt( savefile, numEmitters, "sound emitter count" );
+	if( numEmitters < 1 || numEmitters > SOUND_SAVEGAME_MAX_EMITTERS )
 	{
 		common->Error( "idSoundWorldLocal::ReadFromSaveGame: bad emitter count %d", numEmitters );
 	}
 	ClearAllSoundEmitters();
 	idStr shaderName;
+	int totalChannels = 0;
 	// Start at 1 because the local sound emitter is not saved
 	for( int e = 1; e < numEmitters; e++ )
 	{
@@ -1334,34 +1415,39 @@ void idSoundWorldLocal::ReadFromSaveGame( idFile* savefile )
 		assert( emitter->index == e );
 		assert( emitter->soundWorld == this );
 		assert( emitter->channels.Num() == 0 );
-		savefile->ReadBool( emitter->canFree );
-		savefile->ReadVec3( emitter->origin );
-		savefile->ReadInt( emitter->emitterId );
+		helper::ReadBool( savefile, emitter->canFree, "emitter can-free flag" );
+		helper::ReadVec3( savefile, emitter->origin, "emitter origin" );
+		helper::ReadInt( savefile, emitter->emitterId, "emitter listener id" );
 		helper::ReadShaderParms( savefile, emitter->parms );
 		int numChannels = 0;
-		savefile->ReadInt( numChannels );
-		if( numChannels < 0 || numChannels > 1024 )
+		helper::ReadInt( savefile, numChannels, "emitter channel count" );
+		if( numChannels < 0 || numChannels > MAX_CHANNELS_PER_EMITTER )
 		{
 			common->Error( "idSoundWorldLocal::ReadFromSaveGame: bad channel count %d", numChannels );
 		}
+		if( totalChannels > SOUND_SAVEGAME_MAX_TOTAL_CHANNELS - numChannels )
+		{
+			common->Error( "idSoundWorldLocal::ReadFromSaveGame: too many restored sound channels" );
+		}
+		totalChannels += numChannels;
 		emitter->channels.SetNum( numChannels );
 		for( int c = 0; c < numChannels; c++ )
 		{
 			idSoundChannel* channel = AllocSoundChannel();
 			emitter->channels[c] = channel;
 			channel->emitter = emitter;
-			savefile->ReadInt( channel->startTime );
-			savefile->ReadInt( channel->endTime );
-			savefile->ReadInt( channel->logicalChannel );
-			savefile->ReadBool( channel->allowSlow );
+			helper::ReadInt( savefile, channel->startTime, "channel start time" );
+			helper::ReadInt( savefile, channel->endTime, "channel end time" );
+			helper::ReadInt( savefile, channel->logicalChannel, "channel logical channel" );
+			helper::ReadBool( savefile, channel->allowSlow, "channel allow-slow flag" );
 			helper::ReadShaderParms( savefile, channel->parms );
 			helper::ReadSoundFade( savefile, channel->volumeFade, timeDelta );
-			savefile->ReadString( shaderName );
+			helper::ReadString( savefile, shaderName, "sound shader name" );
 			channel->soundShader = declManager->FindSound( shaderName );
 			int leadin = 0;
 			int looping = 0;
-			savefile->ReadInt( leadin );
-			savefile->ReadInt( looping );
+			helper::ReadInt( savefile, leadin, "channel leadin index" );
+			helper::ReadInt( savefile, looping, "channel looping index" );
 			// If the leadin sample is not valid (possible if the shader changed after saving) then the looping entry can't be valid either.
 			channel->leadinSample = NULL;
 			channel->loopingSample = NULL;

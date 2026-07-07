@@ -19,6 +19,8 @@ MAX_TEXT_MEMBER_BYTES = 2 * 1024 * 1024
 MAX_ARCHIVE_MEMBER_BYTES = 64 * 1024 * 1024
 MAX_ARCHIVE_MEMBERS = 4096
 MAX_ARCHIVE_TOTAL_BYTES = 512 * 1024 * 1024
+MAX_ARCHIVE_PATH_CHARS = 512
+MAX_ARCHIVE_PATH_SEGMENT_CHARS = 128
 MAX_RESULT_TOKEN_CHARS = 80
 RESULT_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 MACOS_FORBIDDEN_ARCHIVE_NAMES = (
@@ -124,6 +126,10 @@ def validate_member(member: tarfile.TarInfo) -> None:
     parts = name.split("/")
     require(name != "", "Archive contains an empty path.")
     require(
+        len(name) <= MAX_ARCHIVE_PATH_CHARS,
+        f"Archive path is too long: {len(name)} characters (max {MAX_ARCHIVE_PATH_CHARS})",
+    )
+    require(
         not any(ord(character) < 32 or ord(character) == 127 for character in name),
         f"Archive path contains a control character: {name!r}",
     )
@@ -132,6 +138,12 @@ def validate_member(member: tarfile.TarInfo) -> None:
     require(".." not in path.parts, f"Archive path escapes through '..': {name}")
     require("" not in parts, f"Archive path contains an empty segment: {name}")
     require(not any(part == "." for part in parts), f"Archive path contains a dot segment: {name}")
+    for part in parts:
+        require(
+            len(part) <= MAX_ARCHIVE_PATH_SEGMENT_CHARS,
+            f"Archive path segment is too long: {len(part)} characters "
+            f"(max {MAX_ARCHIVE_PATH_SEGMENT_CHARS}) in {name}",
+        )
     require(member.isfile() or member.isdir(), f"Archive contains a non-regular entry: {name}")
     mode = member.mode & 0o7777
     require(mode & 0o7000 == 0, f"Archive member has special mode bits: {name} ({mode:o})")
@@ -159,6 +171,16 @@ def is_macos_non_runtime_metadata_path(name: str) -> bool:
     return False
 
 
+def validate_text_member_contents(name: str, text: str) -> None:
+    for character in text:
+        if character in ("\n", "\r", "\t"):
+            continue
+        require(
+            ord(character) >= 32 and ord(character) != 127,
+            f"Archive text member contains an unsupported control character: {name}",
+        )
+
+
 def read_text(archive: tarfile.TarFile, name: str) -> str:
     try:
         member = archive.getmember(name)
@@ -172,9 +194,11 @@ def read_text(archive: tarfile.TarFile, name: str) -> str:
     stream = archive.extractfile(member)
     require(stream is not None, f"Unable to read archive member: {name}")
     try:
-        return stream.read().decode("utf-8")
+        text = stream.read().decode("utf-8")
     except UnicodeDecodeError as exc:
         raise SignoffArchiveError(f"Archive member is not UTF-8 text: {name}") from exc
+    validate_text_member_contents(name, text)
+    return text
 
 
 def infer_run_id(top_dirs: set[str], action: str, bridges: tuple[str, ...]) -> str:

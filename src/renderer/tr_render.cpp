@@ -679,6 +679,13 @@ void RB_DetermineLightScale( void ) {
 	int					i, j, numStages;
 	const shaderStage_t	*stage;
 
+	if ( tr.backEndRenderer == BE_ARB2 && glConfig.disableARB2Interactions ) {
+		backEnd.pc.maxLightValue = 1.0f;
+		backEnd.lightScale = 1.0f;
+		backEnd.overBright = 1.0f;
+		return;
+	}
+
 	// the light scale will be based on the largest color component of any surface
 	// that will be drawn.
 	// should we consider separating rgb scales?

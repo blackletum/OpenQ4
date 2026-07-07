@@ -663,21 +663,21 @@ idSimpleWindow::ReadFromSaveGame
 */
 void idSimpleWindow::ReadFromSaveGame( idFile *savefile ) {
 
-	savefile->Read( &flags, sizeof( flags ) );
-	savefile->Read( &drawRect, sizeof( drawRect ) );
-	savefile->Read( &clientRect, sizeof( clientRect ) );
-	savefile->Read( &textRect, sizeof( textRect ) );
-	savefile->Read( &origin, sizeof( origin ) );
-	savefile->Read( &fontNum, sizeof( fontNum ) );
-	savefile->Read( &matScalex, sizeof( matScalex ) );
-	savefile->Read( &matScaley, sizeof( matScaley ) );
-	savefile->Read( &borderSize, sizeof( borderSize ) );
-	savefile->Read( &textAlign, sizeof( textAlign ) );
-	savefile->Read( &textAlignx, sizeof( textAlignx ) );
-	savefile->Read( &textAligny, sizeof( textAligny ) );
-	savefile->Read( &textSpacing, sizeof( textSpacing ) );
-	savefile->Read( &textStyle, sizeof( textStyle ) );
-	savefile->Read( &textShadow, sizeof( textShadow ) );
+	OpenQ4_ReadSaveGameField( savefile, flags, "idSimpleWindow::ReadFromSaveGame", "flags" );
+	OpenQ4_ReadSaveGameField( savefile, drawRect, "idSimpleWindow::ReadFromSaveGame", "draw rect" );
+	OpenQ4_ReadSaveGameField( savefile, clientRect, "idSimpleWindow::ReadFromSaveGame", "client rect" );
+	OpenQ4_ReadSaveGameField( savefile, textRect, "idSimpleWindow::ReadFromSaveGame", "text rect" );
+	OpenQ4_ReadSaveGameField( savefile, origin, "idSimpleWindow::ReadFromSaveGame", "origin" );
+	OpenQ4_ReadSaveGameField( savefile, fontNum, "idSimpleWindow::ReadFromSaveGame", "font number" );
+	OpenQ4_ReadSaveGameField( savefile, matScalex, "idSimpleWindow::ReadFromSaveGame", "material scale x" );
+	OpenQ4_ReadSaveGameField( savefile, matScaley, "idSimpleWindow::ReadFromSaveGame", "material scale y" );
+	OpenQ4_ReadSaveGameField( savefile, borderSize, "idSimpleWindow::ReadFromSaveGame", "border size" );
+	OpenQ4_ReadSaveGameField( savefile, textAlign, "idSimpleWindow::ReadFromSaveGame", "text align" );
+	OpenQ4_ReadSaveGameField( savefile, textAlignx, "idSimpleWindow::ReadFromSaveGame", "text align x" );
+	OpenQ4_ReadSaveGameField( savefile, textAligny, "idSimpleWindow::ReadFromSaveGame", "text align y" );
+	OpenQ4_ReadSaveGameField( savefile, textSpacing, "idSimpleWindow::ReadFromSaveGame", "text spacing" );
+	OpenQ4_ReadSaveGameField( savefile, textStyle, "idSimpleWindow::ReadFromSaveGame", "text style" );
+	OpenQ4_ReadSaveGameField( savefile, textShadow, "idSimpleWindow::ReadFromSaveGame", "text shadow" );
 
 	text.ReadFromSaveGame( savefile );
 	visible.ReadFromSaveGame( savefile );
@@ -694,9 +694,7 @@ void idSimpleWindow::ReadFromSaveGame( idFile *savefile ) {
 	int stringLen;
 
 	const int stringOffset = savefile->Tell();
-	if ( savefile->Read( &stringLen, sizeof( stringLen ) ) != sizeof( stringLen ) ) {
-		common->Error( "idSimpleWindow::ReadFromSaveGame: truncated background length at offset %d", stringOffset );
-	}
+	OpenQ4_ReadSaveGameField( savefile, stringLen, "idSimpleWindow::ReadFromSaveGame", "background length" );
 	const int remainingBytes = Max( 0, savefile->Length() - savefile->Tell() );
 	const int maxSavedStringLength = 64 * 1024;
 	if ( stringLen < 0 || stringLen > maxSavedStringLength || stringLen > remainingBytes ) {
@@ -707,9 +705,7 @@ void idSimpleWindow::ReadFromSaveGame( idFile *savefile ) {
 		idStr backName;
 
 		backName.Fill( ' ', stringLen );
-		if ( savefile->Read( &(backName)[0], stringLen ) != stringLen ) {
-			common->Error( "idSimpleWindow::ReadFromSaveGame: truncated background name at offset %d", savefile->Tell() );
-		}
+		OpenQ4_ReadSaveGameBytes( savefile, &(backName)[0], stringLen, "idSimpleWindow::ReadFromSaveGame", "background name" );
 
 		background = declManager->FindMaterial( backName );
 		if ( background ) {

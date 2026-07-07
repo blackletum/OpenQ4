@@ -210,6 +210,20 @@ static bool GameSSD_ReadSaveBool( idFile *savefile, const char *fieldName ) {
 	return value;
 }
 
+static void GameSSD_ReadSaveBlock( idFile *savefile, void *data, const int size, const char *fieldName ) {
+	const int offset = savefile->Tell();
+	const int bytesRead = savefile->Read( data, size );
+	if ( bytesRead != size ) {
+		common->Error( "idGameSSDWindow::ReadFromSaveGame: truncated %s at offset %d (read %d of %d)",
+			fieldName ? fieldName : "block", offset, bytesRead, size );
+	}
+}
+
+template< class type >
+static void GameSSD_ReadSaveField( idFile *savefile, type &value, const char *fieldName ) {
+	GameSSD_ReadSaveBlock( savefile, &value, sizeof( value ), fieldName );
+}
+
 static int GameSSD_ReadSaveVersion( idFile *savefile ) {
 	const int markerOffset = savefile->Tell();
 	const int marker = GameSSD_ReadEndianSaveInt( savefile, "format marker" );
@@ -416,8 +430,8 @@ void SSDCrossHair::ReadFromSaveGame( idFile *savefile ) {
 
 	currentCrosshair = GameSSD_ReadSaveInt( savefile, "crosshair index" );
 	GameSSD_ValidateSaveIndex( "crosshair index", currentCrosshair, SSDCrossHair::CROSSHAIR_COUNT );
-	savefile->Read(&crosshairWidth, sizeof(crosshairWidth));
-	savefile->Read(&crosshairHeight, sizeof(crosshairHeight));
+	GameSSD_ReadSaveField( savefile, crosshairWidth, "crosshair width" );
+	GameSSD_ReadSaveField( savefile, crosshairHeight, "crosshair height" );
 
 }
 
@@ -489,28 +503,28 @@ void SSDEntity::ReadFromSaveGame( idFile *savefile,  idGameSSDWindow* _game ) {
 	GameSSD_ValidateEntityType( "entity", type );
 	game->ReadSaveGameString(materialName, savefile);
 	SetMaterial(materialName);
-	savefile->Read(&position, sizeof(position));
-	savefile->Read(&size, sizeof(size));
-	savefile->Read(&radius, sizeof(radius));
-	savefile->Read(&hitRadius, sizeof(hitRadius));
-	savefile->Read(&rotation, sizeof(rotation));
+	GameSSD_ReadSaveField( savefile, position, "entity position" );
+	GameSSD_ReadSaveField( savefile, size, "entity size" );
+	GameSSD_ReadSaveField( savefile, radius, "entity radius" );
+	GameSSD_ReadSaveField( savefile, hitRadius, "entity hit radius" );
+	GameSSD_ReadSaveField( savefile, rotation, "entity rotation" );
 
-	savefile->Read(&matColor, sizeof(matColor));
+	GameSSD_ReadSaveField( savefile, matColor, "entity material color" );
 
 	game->ReadSaveGameString(text, savefile);
-	savefile->Read(&textScale, sizeof(textScale));
-	savefile->Read(&foreColor, sizeof(foreColor));
+	GameSSD_ReadSaveField( savefile, textScale, "entity text scale" );
+	GameSSD_ReadSaveField( savefile, foreColor, "entity foreground color" );
 
 	game = _game;
 	currentTime = GameSSD_ReadSaveInt( savefile, "entity current time" );
 	lastUpdate = GameSSD_ReadSaveInt( savefile, "entity last update" );
 	elapsed = GameSSD_ReadSaveInt( savefile, "entity elapsed time" );
 
-	savefile->Read(&destroyed, sizeof(destroyed));
-	savefile->Read(&noHit, sizeof(noHit));
-	savefile->Read(&noPlayerDamage, sizeof(noPlayerDamage));
+	GameSSD_ReadSaveField( savefile, destroyed, "entity destroyed flag" );
+	GameSSD_ReadSaveField( savefile, noHit, "entity no-hit flag" );
+	GameSSD_ReadSaveField( savefile, noPlayerDamage, "entity no-player-damage flag" );
 
-	savefile->Read(&inUse, sizeof(inUse));
+	GameSSD_ReadSaveField( savefile, inUse, "entity in-use flag" );
 }
 
 void SSDEntity::EntityInit() {
@@ -703,8 +717,8 @@ void SSDMover::WriteToSaveGame( idFile *savefile ) {
 void SSDMover::ReadFromSaveGame( idFile *savefile,  idGameSSDWindow* _game  ) {
 	SSDEntity::ReadFromSaveGame(savefile, _game);
 
-	savefile->Read(&speed, sizeof(speed));
-	savefile->Read(&rotationSpeed, sizeof(rotationSpeed));
+	GameSSD_ReadSaveField( savefile, speed, "mover speed" );
+	GameSSD_ReadSaveField( savefile, rotationSpeed, "mover rotation speed" );
 }
 
 void SSDMover::MoverInit(const idVec3& _speed, float _rotationSpeed) {
@@ -984,7 +998,7 @@ void SSDExplosion::ReadFromSaveGame( idFile *savefile,  idGameSSDWindow* _game  
 	SSDEntity::ReadFromSaveGame(savefile, _game);
 	GameSSD_ValidateExpectedEntityType( "explosion entity", type, SSD_ENTITY_EXPLOSION );
 
-	savefile->Read(&finalSize, sizeof(finalSize));
+	GameSSD_ReadSaveField( savefile, finalSize, "explosion final size" );
 	length = GameSSD_ReadSaveInt( savefile, "explosion length" );
 	beginTime = GameSSD_ReadSaveInt( savefile, "explosion begin time" );
 	endTime = GameSSD_ReadSaveInt( savefile, "explosion end time" );
@@ -1002,8 +1016,8 @@ void SSDExplosion::ReadFromSaveGame( idFile *savefile,  idGameSSDWindow* _game  
 		common->Error( "idGameSSDWindow::ReadFromSaveGame: missing explosion buddy type %d id %d", type, id );
 	}
 
-	savefile->Read(&killBuddy, sizeof(killBuddy));
-	savefile->Read(&followBuddy, sizeof(followBuddy));
+	GameSSD_ReadSaveField( savefile, killBuddy, "explosion kill-buddy flag" );
+	GameSSD_ReadSaveField( savefile, followBuddy, "explosion follow-buddy flag" );
 }
 
 void SSDExplosion::Init(idGameSSDWindow* _game, const idVec3& _position, const idVec2& _size, int _length, int _type, SSDEntity* _buddy, bool _killBuddy, bool _followBuddy) {
@@ -1153,11 +1167,11 @@ void SSDPoints::ReadFromSaveGame( idFile *savefile,  idGameSSDWindow* _game  ) {
 	beginTime = GameSSD_ReadSaveInt( savefile, "points begin time" );
 	endTime = GameSSD_ReadSaveInt( savefile, "points end time" );
 
-	savefile->Read(&beginPosition, sizeof(beginPosition));
-	savefile->Read(&endPosition, sizeof(endPosition));
+	GameSSD_ReadSaveField( savefile, beginPosition, "points begin position" );
+	GameSSD_ReadSaveField( savefile, endPosition, "points end position" );
 
-	savefile->Read(&beginColor, sizeof(beginColor));
-	savefile->Read(&endColor, sizeof(endColor));
+	GameSSD_ReadSaveField( savefile, beginColor, "points begin color" );
+	GameSSD_ReadSaveField( savefile, endColor, "points end color" );
 }
 
 void SSDPoints::Init(idGameSSDWindow* _game, SSDEntity* _ent, int _points, int _length, int _distance, const idVec4& color) {
@@ -1301,12 +1315,12 @@ void SSDProjectile::ReadFromSaveGame( idFile *savefile,  idGameSSDWindow* _game 
 	SSDEntity::ReadFromSaveGame(savefile, _game);
 	GameSSD_ValidateExpectedEntityType( "projectile entity", type, SSD_ENTITY_PROJECTILE );
 
-	savefile->Read(&dir, sizeof(dir));
-	savefile->Read(&speed, sizeof(speed));
+	GameSSD_ReadSaveField( savefile, dir, "projectile direction" );
+	GameSSD_ReadSaveField( savefile, speed, "projectile speed" );
 	beginTime = GameSSD_ReadSaveInt( savefile, "projectile begin time" );
 	endTime = GameSSD_ReadSaveInt( savefile, "projectile end time" );
 
-	savefile->Read(&endPosition, sizeof(endPosition));
+	GameSSD_ReadSaveField( savefile, endPosition, "projectile end position" );
 }
 
 void SSDProjectile::Init(idGameSSDWindow* _game, const idVec3& _beginPosition, const idVec3& _endPosition, float _speed, float _size) {
@@ -1682,7 +1696,7 @@ void idGameSSDWindow::ReadFromSaveGame( idFile *savefile ) {
 	refreshGuiData.ReadFromSaveGame(savefile);
 
 	crosshair.ReadFromSaveGame(savefile);
-	savefile->Read(&screenBounds, sizeof(screenBounds));
+	GameSSD_ReadSaveField( savefile, screenBounds, "screen bounds" );
 
 	levelData.Clear();
 	asteroidData.Clear();

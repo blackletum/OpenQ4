@@ -19,6 +19,11 @@ def require(haystack: str, needle: str, context: str) -> None:
         raise AssertionError(f"Missing {needle!r} in {context}")
 
 
+def reject(haystack: str, needle: str, context: str) -> None:
+    if needle in haystack:
+        raise AssertionError(f"Unexpected {needle!r} in {context}")
+
+
 def function_body(source: str, signature: str) -> str:
     start = source.find(signature)
     if start == -1:
@@ -80,6 +85,7 @@ def validate_diagnostics_module() -> None:
         "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_DRIVER_BYPASS",
         "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_STATE_RESTORED",
         "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_LIGHT_SCALE",
+        "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_LIGHT_SCALE_SKIPPED",
         "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_AMBIENT_RESCUE",
         "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_FRAME_TAIL",
         "void R_SetRendererStartupPhase",
@@ -100,6 +106,7 @@ def validate_diagnostics_module() -> None:
         "ARB2 interaction driver bypass",
         "ARB2 interaction bypass state restored",
         "ARB2 interaction bypass light scale",
+        "ARB2 interaction bypass light scale skipped",
         "ARB2 interaction bypass ambient rescue",
         "ARB2 interaction bypass frame tail",
     ):
@@ -135,6 +142,7 @@ def validate_renderer_startup_order() -> None:
     upload_source = read("src/renderer/RendererUpload.cpp")
     common_source = read("src/renderer/draw_common.cpp")
     draw_source = read("src/renderer/draw_arb2.cpp")
+    render_source = read("src/renderer/tr_render.cpp")
 
     init_body = function_body(init_source, "void R_InitOpenGL( void ) {")
     portable_body = function_body(init_source, "static void R_CheckPortableExtensions( void ) {")
@@ -151,8 +159,10 @@ def validate_renderer_startup_order() -> None:
     bypass_restore_body = function_body(draw_source, "static void RB_ARB2_RestoreBypassedInteractionState( void ) {")
     disable_attrib_body = function_body(draw_source, "static void RB_ARB2_DisableInteractionVertexAttribArrays( void ) {")
     draw_view_body = function_body(common_source, "void\tRB_STD_DrawView( void ) {")
+    bypass_active_body = function_body(common_source, "static bool RB_ARB2InteractionBypassActive( void ) {")
     bypass_frame_body = function_body(common_source, "static void RB_RecordARB2InteractionBypassFramePhase( rendererStartupPhase_t phase ) {")
     reset_body = function_body(draw_source, "void RB_ResetARB2InteractionHandoffBreadcrumb( void ) {")
+    determine_light_scale_body = function_body(render_source, "void RB_DetermineLightScale( void ) {")
 
     require_ordered(
         init_body,
@@ -245,7 +255,22 @@ def validate_renderer_startup_order() -> None:
         raise AssertionError("ARB2 bypass interaction texture cleanup must force texture selection before unit cleanup and unit 0 restore")
 
     for token in (
+        "tr.backEndRenderer == BE_ARB2",
         "glConfig.disableARB2Interactions",
+    ):
+        require(bypass_active_body, token, "ARB2 interaction bypass active helper")
+
+    for token in (
+        "tr.backEndRenderer == BE_ARB2 && glConfig.disableARB2Interactions",
+        "backEnd.pc.maxLightValue = 1.0f;",
+        "backEnd.lightScale = 1.0f;",
+        "backEnd.overBright = 1.0f;",
+        "return;",
+    ):
+        require(determine_light_scale_body, token, "ARB2 bypass neutral light-scale state")
+
+    for token in (
+        "RB_ARB2InteractionBypassActive()",
         "rbARB2InteractionBypassFrameBreadcrumbsComplete",
         "R_RecordRendererStartupPhase( phase );",
         "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_FRAME_TAIL",
@@ -253,13 +278,28 @@ def validate_renderer_startup_order() -> None:
         require(bypass_frame_body, token, "ARB2 bypass frame-tail breadcrumb helper")
 
     for token in (
+        "if ( RB_ARB2InteractionBypassActive() ) {",
+        "RB_RecordARB2InteractionBypassFramePhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_LIGHT_SCALE_SKIPPED );",
+        "} else {",
         "RB_RecordARB2InteractionBypassFramePhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_LIGHT_SCALE );",
+        "glStencilFunc( GL_ALWAYS, 128, 255 );",
         "RB_STD_LightScale();",
         "RB_RecordARB2InteractionBypassFramePhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_AMBIENT_RESCUE );",
         "RB_STD_ForceAmbient();",
         "RB_RecordARB2InteractionBypassFramePhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_FRAME_TAIL );",
     ):
         require(draw_view_body, token, "ARB2 bypass draw-view frame-tail breadcrumbs")
+
+    bypass_light_scale_section = source_section(
+        draw_view_body,
+        "if ( RB_ARB2InteractionBypassActive() ) {",
+        "} else {",
+    )
+    for token in (
+        "RB_STD_LightScale();",
+        "glStencilFunc( GL_ALWAYS, 128, 255 );",
+    ):
+        reject(bypass_light_scale_section, token, "issue #73 comment 4894876958 light-scale bypass branch")
 
 
 def validate_phase2_plan_status() -> None:
@@ -297,6 +337,7 @@ def validate_docs_and_release_notes() -> None:
         require(source, "ARB2 interaction driver bypass", context)
         require(source, "ARB2 interaction bypass state", context)
         require(source, "ARB2 interaction bypass light scale", context)
+        require(source, "ARB2 interaction bypass light scale skipped", context)
         require(source, "ARB2 interaction bypass ambient", context)
         require(source, "ARB2 interaction bypass frame tail", context)
 

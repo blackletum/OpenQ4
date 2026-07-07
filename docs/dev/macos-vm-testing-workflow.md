@@ -20,6 +20,16 @@ framework, UTM, VMware Fusion, Parallels, or a hosted Mac provider.
 - Guest Quake 4 assets: `~/openq4-work/Quake4`
 - Guest results: `~/openq4-work/results/`
 
+The guest scripts resolve `~` through `HOME` by default. If an SSH service,
+launch agent, or hosted runner starts the scripts without `HOME`, pass
+`-MacHome /Users/<name>` to the host workflow or set `OPENQ4_GUEST_HOME` when
+running a guest script directly. The value must be an absolute macOS home
+directory without control characters; otherwise the scripts fail before
+creating work directories or launchers.
+The host workflow applies the same control-character check inside its remote
+archive-expansion and result-collection snippets when `-MacHome` is omitted and
+they fall back to the SSH session's `HOME`.
+
 `E:\ISO\macos\` is only an inventory/staging location on the Windows host. The
 actual VM creation still happens on the Apple host with the hypervisor you use
 there. Store Apple restore images, IPSW files, installer app archives, or a
@@ -151,7 +161,7 @@ when validating the latest public macOS release. Hosted CI package runs may use
 `current-hosted-ci-runner`, but hosted runner success is not a substitute for
 floor/latest runtime signoff on compliant Apple hardware.
 
-Guest paths passed through `-MacWorkspace` and `-MacBasePath` must be absolute POSIX paths or use a leading `~/`; the host workflow rejects relative, dot-segment, empty-segment, and backslash paths, and the guest scripts recheck that the paths are absolute after `~` expansion before syncing source trees, installing assets, building, or collecting results.
+Guest paths passed through `-MacWorkspace` and `-MacBasePath` must be absolute POSIX paths or use a leading `~/`; the host workflow rejects relative, dot-segment, empty-segment, control-character, and backslash paths, and the guest scripts recheck that the paths are absolute and control-character-free after `~` expansion before syncing source trees, installing assets, building, or collecting results. Keep `-MacBasePath` out of the workflow-reserved `openQ4/`, `openQ4-game/`, `incoming-quake4/`, and `results/` children under `-MacWorkspace`; when `-MacHome` is provided, host preflight expands `~/` before that reserved-child comparison, and the guest scripts repeat the check after resolving the actual home directory. The asset installer refuses those targets because it stages extraction under the workspace and installs assets with `rsync --delete`. Source sync also trims trailing slashes before appending `openQ4/` or `openQ4-game/`, so a workspace written as `~/openq4-work/` does not create double-slash remote extraction targets.
 Keep `-BuildDir` pointed at a dedicated build output directory such as
 `builddir`, `builddir-opengl`, or `builddir-metal`; the guest script refuses the
 repo root, source/content/tool trees, `.install`, symlinks, and files as Meson
@@ -170,10 +180,18 @@ guest result directories into a compressed archive at
 `.tmp/macos-vm/results/openq4-macos-results-<run-id>.tar.gz`. Use
 `-MacOSRunId <id>` to choose a stable collection prefix, `-ResultCollectionDir`
 to store archives elsewhere, or `-SkipResultCollection` when the results should
-remain only on the Apple host. The copied archive is validated automatically
+remain only on the Apple host. The local copy-back is downloaded to a
+same-directory temporary file, rejected if empty, and published without
+overwriting an existing archive for that run ID. On the Apple host, the remote
+tarball is also written to a same-directory temporary file, checked with
+`tar -tzf`, and hard-linked into the final copy-back name without replacing an
+existing target. The copied archive is validated automatically
 unless `-SkipResultArchiveValidation` is set. The validator also requires the
 archive filename to keep the same `<run-id>` as the result directories, so do
 not rename the collected `.tar.gz` before recording signoff evidence.
+Guest result directories must be new or empty before logging starts; if a
+previous run left files under `<run-id>-<action>-<bridge>`, choose a fresh
+`-MacOSRunId` or remove the stale directory before rerunning.
 
 The automatic validation checks structure, both bridge reports, workflow logs,
 staged payload evidence, binary architecture evidence, macOS system/device

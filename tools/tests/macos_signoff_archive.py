@@ -304,6 +304,26 @@ def write_archive_with_log(path: Path, *, bridge: str, log: str) -> None:
         add_file(archive, f"{root}/renderer-matrix/report.md", "# ok\n")
 
 
+def write_archive_with_text_control(path: Path, *, bridge: str, report: bool) -> None:
+    with tarfile.open(path, "w:gz") as archive:
+        root = f"testrun-signoff-{bridge}"
+        directory = tarfile.TarInfo(root)
+        directory.type = tarfile.DIRTYPE
+        directory.mode = 0o755
+        archive.addfile(directory)
+        report_body = report_text(bridge, completed=True)
+        log_body = log_text(bridge)
+        if report:
+            report_body += "\nNUL:\x00\n"
+        else:
+            log_body += "\nNUL:\x00\n"
+        add_file(archive, f"{root}/macos-runtime-signoff.md", report_body)
+        add_file(archive, f"{root}/openq4-macos-workflow.log", log_body)
+        add_file(archive, f"{root}/renderer-smoke/report.json", "{}\n")
+        add_file(archive, f"{root}/renderer-mp-smoke/report.json", "{}\n")
+        add_file(archive, f"{root}/renderer-matrix/report.md", "# ok\n")
+
+
 def write_archive_with_control_character_member(path: Path) -> None:
     with tarfile.open(path, "w:gz") as archive:
         root = "testrun-signoff-opengl"
@@ -481,6 +501,34 @@ def main() -> int:
             ),
         )
 
+        long_path = temp / "openq4-macos-results-long-path.tar.gz"
+        long_path_name = "testrun-signoff-opengl/" + "/".join(("segment%02d" % index) for index in range(70))
+        write_bad_member_archive(long_path, f"{long_path_name}/bad.txt")
+        expect_error(
+            "Archive path is too long",
+            lambda: validator.validate_signoff_archive(
+                long_path,
+                run_id="testrun",
+                action="signoff",
+                bridges=("opengl",),
+                require_completed_checklist=False,
+            ),
+        )
+
+        long_segment = temp / "openq4-macos-results-long-segment.tar.gz"
+        long_segment_name = "x" * (validator.MAX_ARCHIVE_PATH_SEGMENT_CHARS + 1)
+        write_bad_member_archive(long_segment, f"testrun-signoff-opengl/{long_segment_name}/bad.txt")
+        expect_error(
+            "Archive path segment is too long",
+            lambda: validator.validate_signoff_archive(
+                long_segment,
+                run_id="testrun",
+                action="signoff",
+                bridges=("opengl",),
+                require_completed_checklist=False,
+            ),
+        )
+
         group_writable_member = temp / "openq4-macos-results-group-writable.tar.gz"
         write_bad_mode_member_archive(
             group_writable_member,
@@ -521,6 +569,32 @@ def main() -> int:
             "text member is too large",
             lambda: validator.validate_signoff_archive(
                 huge_log,
+                run_id="testrun",
+                action="signoff",
+                bridges=("opengl",),
+                require_completed_checklist=False,
+            ),
+        )
+
+        control_text_report = temp / "openq4-macos-results-control-text-report.tar.gz"
+        write_archive_with_text_control(control_text_report, bridge="opengl", report=True)
+        expect_error(
+            "unsupported control character",
+            lambda: validator.validate_signoff_archive(
+                control_text_report,
+                run_id="testrun",
+                action="signoff",
+                bridges=("opengl",),
+                require_completed_checklist=False,
+            ),
+        )
+
+        control_text_log = temp / "openq4-macos-results-control-text-log.tar.gz"
+        write_archive_with_text_control(control_text_log, bridge="opengl", report=False)
+        expect_error(
+            "unsupported control character",
+            lambda: validator.validate_signoff_archive(
+                control_text_log,
                 run_id="testrun",
                 action="signoff",
                 bridges=("opengl",),

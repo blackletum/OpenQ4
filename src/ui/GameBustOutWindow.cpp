@@ -108,6 +108,24 @@ static void GameBustOut_ValidateEntityIndex( const char *fieldName, int index, i
 	}
 }
 
+static void GameBustOut_ReadSaveBlock( idFile *savefile, void *data, const int size, const char *fieldName ) {
+	OpenQ4_ReadSaveGameBytes( savefile, data, size, "idGameBustOutWindow::ReadFromSaveGame", fieldName );
+}
+
+template< class type >
+static void GameBustOut_ReadSaveField( idFile *savefile, type &value, const char *fieldName ) {
+	GameBustOut_ReadSaveBlock( savefile, &value, sizeof( value ), fieldName );
+}
+
+static powerupType_t GameBustOut_ReadSavePowerup( idFile *savefile, const char *fieldName, int saveVersion ) {
+	const int value = GameBustOut_ReadSaveInt( savefile, fieldName, saveVersion );
+	if ( value < POWERUP_NONE || value > POWERUP_MULTIBALL ) {
+		common->Error( "idGameBustOutWindow::ReadFromSaveGame: invalid %s %d",
+			fieldName ? fieldName : "powerup", value );
+	}
+	return static_cast<powerupType_t>( value );
+}
+
 /*
 *****************************************************************************
 * BOEntity	
@@ -164,21 +182,21 @@ BOEntity::ReadFromSaveGame
 void BOEntity::ReadFromSaveGame( idFile *savefile, idGameBustOutWindow* _game, int saveVersion ) {
 	game = _game;
 
-	savefile->Read( &visible, sizeof(visible) );
+	GameBustOut_ReadSaveField( savefile, visible, "entity visible flag" );
 
 	game->ReadSaveGameString( materialName, savefile );
 	SetMaterial( materialName );
 
-	savefile->Read( &width, sizeof(width) );
-	savefile->Read( &height, sizeof(height) );
+	GameBustOut_ReadSaveField( savefile, width, "entity width" );
+	GameBustOut_ReadSaveField( savefile, height, "entity height" );
 
-	savefile->Read( &color, sizeof(color) );
-	savefile->Read( &position, sizeof(position) );
-	savefile->Read( &velocity, sizeof(velocity) );
+	GameBustOut_ReadSaveField( savefile, color, "entity color" );
+	GameBustOut_ReadSaveField( savefile, position, "entity position" );
+	GameBustOut_ReadSaveField( savefile, velocity, "entity velocity" );
 
-	powerup = static_cast<powerupType_t>( GameBustOut_ReadSaveInt( savefile, "entity powerup", saveVersion ) );
-	savefile->Read( &removed, sizeof(removed) );
-	savefile->Read( &fadeOut, sizeof(fadeOut) );
+	powerup = GameBustOut_ReadSavePowerup( savefile, "entity powerup", saveVersion );
+	GameBustOut_ReadSaveField( savefile, removed, "entity removed flag" );
+	GameBustOut_ReadSaveField( savefile, fadeOut, "entity fade-out flag" );
 }
 
 /*
@@ -316,13 +334,13 @@ BOBrick::ReadFromSaveGame
 ======================
 */
 void BOBrick::ReadFromSaveGame( idFile *savefile, idGameBustOutWindow *game, int saveVersion ) {
-	savefile->Read( &x, sizeof(x) );
-	savefile->Read( &y, sizeof(y) );
-	savefile->Read( &width, sizeof(width) );
-	savefile->Read( &height, sizeof(height) );
+	GameBustOut_ReadSaveField( savefile, x, "brick x" );
+	GameBustOut_ReadSaveField( savefile, y, "brick y" );
+	GameBustOut_ReadSaveField( savefile, width, "brick width" );
+	GameBustOut_ReadSaveField( savefile, height, "brick height" );
 
-	powerup = static_cast<powerupType_t>( GameBustOut_ReadSaveInt( savefile, "brick powerup", saveVersion ) );
-	savefile->Read( &isBroken, sizeof(isBroken) );
+	powerup = GameBustOut_ReadSavePowerup( savefile, "brick powerup", saveVersion );
+	GameBustOut_ReadSaveField( savefile, isBroken, "brick broken flag" );
 
 	int index;
 	index = GameBustOut_ReadSaveInt( savefile, "brick entity index", saveVersion );
@@ -594,8 +612,8 @@ void idGameBustOutWindow::ReadFromSaveGame( idFile *savefile ) {
 
 	const int saveVersion = GameBustOut_ReadSaveVersion( savefile );
 
-	savefile->Read( &timeSlice, sizeof(timeSlice) );
-	savefile->Read( &gameOver, sizeof(gameOver) );
+	GameBustOut_ReadSaveField( savefile, timeSlice, "time slice" );
+	GameBustOut_ReadSaveField( savefile, gameOver, "game-over flag" );
 	numLevels = GameBustOut_ReadSaveInt( savefile, "level count", saveVersion );
 
 	// Board Data is loaded when GUI is loaded, don't need to save
@@ -603,17 +621,17 @@ void idGameBustOutWindow::ReadFromSaveGame( idFile *savefile ) {
 	numBricks = GameBustOut_ReadSaveInt( savefile, "brick count", saveVersion );
 	currentLevel = GameBustOut_ReadSaveInt( savefile, "current level", saveVersion );
 
-	savefile->Read( &updateScore, sizeof(updateScore) );
+	GameBustOut_ReadSaveField( savefile, updateScore, "update-score flag" );
 	gameScore = GameBustOut_ReadSaveInt( savefile, "score", saveVersion );
 	nextBallScore = GameBustOut_ReadSaveInt( savefile, "next ball score", saveVersion );
 
 	bigPaddleTime = GameBustOut_ReadSaveInt( savefile, "big paddle time", saveVersion );
-	savefile->Read( &paddleVelocity, sizeof(paddleVelocity) );
+	GameBustOut_ReadSaveField( savefile, paddleVelocity, "paddle velocity" );
 
-	savefile->Read( &ballSpeed, sizeof(ballSpeed) );
+	GameBustOut_ReadSaveField( savefile, ballSpeed, "ball speed" );
 	ballsRemaining = GameBustOut_ReadSaveInt( savefile, "balls remaining", saveVersion );
 	ballsInPlay = GameBustOut_ReadSaveInt( savefile, "balls in play", saveVersion );
-	savefile->Read( &ballHitCeiling, sizeof(ballHitCeiling) );
+	GameBustOut_ReadSaveField( savefile, ballHitCeiling, "ball-hit-ceiling flag" );
 
 	int numberOfEnts;
 

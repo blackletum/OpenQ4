@@ -11,6 +11,7 @@ esac
 SCRIPT_DIR=$(CDPATH= cd "${script_dir}" && pwd -P)
 PACKAGE_ROOT=${OPENQ4_PACKAGE_ROOT:-$SCRIPT_DIR}
 OUTPUT_DIR=${1:-$(pwd)}
+HOME_DIR=${HOME:-}
 STAMP=$(date -u +"%Y%m%d-%H%M%SZ")
 WORK_PARENT=$(mktemp -d "${TMPDIR:-/tmp}/openq4-support.XXXXXX")
 BUNDLE_NAME="openq4-macos-support-${STAMP}"
@@ -45,7 +46,6 @@ runtime_arch_token() {
 
 RUNTIME_ARCH=$(runtime_arch_token)
 SKIPPED_CRASH_REPORT_INDEX=0
-COMMAND_OUTPUT_INDEX=0
 
 contains_control_chars() {
     LC_ALL=C printf '%s' "$1" | grep -q '[[:cntrl:]]'
@@ -97,9 +97,20 @@ prepare_output_target
 mkdir -p "${BUNDLE_DIR}/system" "${BUNDLE_DIR}/package" "${BUNDLE_DIR}/logs" "${BUNDLE_DIR}/crash-reports"
 
 redact_text() {
+    sanitize_text | \
     sed -E \
         -e 's|/Users/[^/[:space:]]+|~|g' \
         -e 's|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|<email>|g'
+}
+
+sanitize_text() {
+    LC_ALL=C tr '\000-\010\013\014\015\016-\037\177' '?'
+}
+
+limit_stream_tail() {
+    max_bytes=$1
+    printf 'Support report output is limited to the final %s bytes before redaction.\n\n' "${max_bytes}"
+    tail -c "${max_bytes}"
 }
 
 write_text() {
@@ -115,18 +126,16 @@ write_text() {
 write_command() {
     target=$1
     shift
-    COMMAND_OUTPUT_INDEX=$((COMMAND_OUTPUT_INDEX + 1))
-    command_output=$(mktemp "${WORK_PARENT}/command-output-${COMMAND_OUTPUT_INDEX}.XXXXXX") || fail "Unable to create support command temporary file"
     {
         printf '$'
         for part in "$@"; do
             printf ' %s' "$part"
         done
         printf '\n\n'
-        "$@" 2>&1 || printf '\n(command failed; continuing support collection)\n'
-    } > "${command_output}"
-    copy_text_if_present "${command_output}" "${target}" "${MAX_SUPPORT_TEXT_BYTES}"
-    rm -f "${command_output}"
+        {
+            "$@" 2>&1 || printf '\n(command failed; continuing support collection)\n'
+        } | limit_stream_tail "${MAX_SUPPORT_TEXT_BYTES}"
+    } | redact_text > "${BUNDLE_DIR}/${target}"
 }
 
 path_exists_for_inspection() {
@@ -137,6 +146,16 @@ path_exists_for_inspection() {
         return 1
     fi
     [ -e "${inspect_path}" ]
+}
+
+write_openq4_log_candidate_paths() {
+    target=$1
+    : > "${target}"
+    if [ -n "${HOME_DIR}" ]; then
+        printf '%s\n' "${HOME_DIR}/Library/Application Support/openQ4/baseoq4/logs/openq4.log" >> "${target}"
+        printf '%s\n' "${HOME_DIR}/baseoq4/logs/openq4.log" >> "${target}"
+    fi
+    printf '%s\n' "${PACKAGE_ROOT}/baseoq4/logs/openq4.log" >> "${target}"
 }
 
 copy_text_if_present() {
@@ -167,11 +186,7 @@ copy_text_if_present() {
 
 write_bounded_report() {
     target=$1
-    COMMAND_OUTPUT_INDEX=$((COMMAND_OUTPUT_INDEX + 1))
-    report_output=$(mktemp "${WORK_PARENT}/report-output-${COMMAND_OUTPUT_INDEX}.XXXXXX") || fail "Unable to create support report temporary file"
-    cat > "${report_output}"
-    copy_text_if_present "${report_output}" "${target}" "${MAX_SUPPORT_TEXT_BYTES}"
-    rm -f "${report_output}"
+    limit_stream_tail "${MAX_SUPPORT_TEXT_BYTES}" | redact_text > "${BUNDLE_DIR}/${target}"
 }
 
 copy_crash_report_if_safe() {
@@ -266,14 +281,15 @@ fi
     printf 'Expected game directory path: %s\n' "${PACKAGE_ROOT}/baseoq4"
     printf 'Expected log keys: fs_basepath, fs_cdpath, fs_savepath\n'
     printf '\nCaptured filesystem path lines from available logs:\n'
+    if [ -z "${HOME_DIR}" ]; then
+        printf 'HOME was not set; home-scoped openq4.log paths were skipped.\n'
+    fi
 
     found_log=0
     path_lines="${WORK_PARENT}/path-lines.txt"
-    for log_path in \
-        "${HOME}/Library/Application Support/openQ4/baseoq4/logs/openq4.log" \
-        "${HOME}/baseoq4/logs/openq4.log" \
-        "${PACKAGE_ROOT}/baseoq4/logs/openq4.log"
-    do
+    log_candidates="${WORK_PARENT}/path-log-candidates.txt"
+    write_openq4_log_candidate_paths "${log_candidates}"
+    while IFS= read -r log_path; do
         if [ -L "${log_path}" ]; then
             found_log=1
             printf '\n-- %s --\n' "${log_path}"
@@ -287,7 +303,7 @@ fi
                 printf '(no fs_basepath, fs_cdpath, or fs_savepath lines found in this log)\n'
             fi
         fi
-    done
+    done < "${log_candidates}"
 
     if [ "${found_log}" -eq 0 ]; then
         printf 'No openq4.log files were found. fs_basepath, fs_cdpath, and fs_savepath values could not be copied without launching openQ4.\n'
@@ -408,15 +424,16 @@ fi
     printf 'Collector timestamp UTC: %s\n' "${STAMP}"
     printf 'Expected log keys: OpenAL vendor, OpenAL renderer, OpenAL version, OpenAL requested device, OpenAL default device, OpenAL active device, OpenAL EFX\n'
     printf '\nCaptured OpenAL and EFX lines from available logs:\n'
+    if [ -z "${HOME_DIR}" ]; then
+        printf 'HOME was not set; home-scoped openq4.log paths were skipped.\n'
+    fi
 
     found_log=0
     found_audio_line=0
     openal_lines="${WORK_PARENT}/openal-lines.txt"
-    for log_path in \
-        "${HOME}/Library/Application Support/openQ4/baseoq4/logs/openq4.log" \
-        "${HOME}/baseoq4/logs/openq4.log" \
-        "${PACKAGE_ROOT}/baseoq4/logs/openq4.log"
-    do
+    log_candidates="${WORK_PARENT}/openal-log-candidates.txt"
+    write_openq4_log_candidate_paths "${log_candidates}"
+    while IFS= read -r log_path; do
         if [ -L "${log_path}" ]; then
             found_log=1
             printf '\n-- %s --\n' "${log_path}"
@@ -431,7 +448,7 @@ fi
                 printf '(no OpenAL vendor, renderer, device, or EFX lines found in this log)\n'
             fi
         fi
-    done
+    done < "${log_candidates}"
 
     if [ "${found_log}" -eq 0 ]; then
         printf 'No openq4.log files were found. OpenAL vendor, renderer, device name, and EFX warning lines could not be copied without launching openQ4.\n'
@@ -444,15 +461,16 @@ fi
     printf 'Collector timestamp UTC: %s\n' "${STAMP}"
     printf 'Expected renderer keys: R_InitOpenGL, renderer startup phase, Renderer driver quirks, Renderer bootstrap, ARB2 interaction driver bypass, fatal signal\n'
     printf '\nCaptured renderer startup and crash lines from available logs:\n'
+    if [ -z "${HOME_DIR}" ]; then
+        printf 'HOME was not set; home-scoped openq4.log paths were skipped.\n'
+    fi
 
     found_log=0
     found_renderer_line=0
     renderer_lines="${WORK_PARENT}/renderer-lines.txt"
-    for log_path in \
-        "${HOME}/Library/Application Support/openQ4/baseoq4/logs/openq4.log" \
-        "${HOME}/baseoq4/logs/openq4.log" \
-        "${PACKAGE_ROOT}/baseoq4/logs/openq4.log"
-    do
+    log_candidates="${WORK_PARENT}/renderer-log-candidates.txt"
+    write_openq4_log_candidate_paths "${log_candidates}"
+    while IFS= read -r log_path; do
         if [ -L "${log_path}" ]; then
             found_log=1
             printf '\n-- %s --\n' "${log_path}"
@@ -467,7 +485,7 @@ fi
                 printf '(no renderer startup, driver-quirk, ARB2, or fatal-signal lines found in this log)\n'
             fi
         fi
-    done
+    done < "${log_candidates}"
 
     if [ "${found_log}" -eq 0 ]; then
         printf 'No openq4.log files were found. Renderer startup and crash lines could not be copied without launching openQ4.\n'
@@ -590,40 +608,54 @@ copy_text_if_present "${PACKAGE_ROOT}/VERSION.txt" "package/VERSION.txt"
 copy_text_if_present "${PACKAGE_ROOT}/openQ4.app/Contents/Resources/VERSION.txt" "package/app-VERSION.txt"
 copy_text_if_present "${PACKAGE_ROOT}/SYMBOLS.txt" "package/SYMBOLS.txt"
 copy_text_if_present "${PACKAGE_ROOT}/openQ4.app/Contents/Info.plist" "package/Info.plist"
-copy_text_if_present "${HOME}/Library/Application Support/openQ4/baseoq4/logs/openq4.log" "logs/home-openq4.log"
-copy_text_if_present "${HOME}/baseoq4/logs/openq4.log" "logs/home-baseoq4-openq4.log"
+if [ -n "${HOME_DIR}" ]; then
+    copy_text_if_present "${HOME_DIR}/Library/Application Support/openQ4/baseoq4/logs/openq4.log" "logs/home-openq4.log"
+    copy_text_if_present "${HOME_DIR}/baseoq4/logs/openq4.log" "logs/home-baseoq4-openq4.log"
+else
+    write_text "logs/home-paths-unavailable.txt" \
+        "HOME was not set; home-scoped openq4.log files were skipped." \
+        "Package-local logs were still inspected when present."
+fi
 copy_text_if_present "${PACKAGE_ROOT}/baseoq4/logs/openq4.log" "logs/package-baseoq4-openq4.log"
 
-CRASH_DIR="${HOME}/Library/Logs/DiagnosticReports"
 CRASH_LIST="${WORK_PARENT}/crash-list.txt"
-if [ -L "${CRASH_DIR}" ]; then
+if [ -z "${HOME_DIR}" ]; then
     write_text "crash-reports/README.txt" \
-        "The macOS DiagnosticReports directory is a symlink and was skipped." \
-        "The support collector does not follow symlinks when copying crash-report text."
-elif [ -d "${CRASH_DIR}" ]; then
-    find "${CRASH_DIR}" -type f \( \
-        -name 'openQ4*.ips' -o \
-        -name 'openQ4*.crash' -o \
-        -name 'openQ4-client*.ips' -o \
-        -name 'openQ4-client*.crash' -o \
-        -name 'openQ4-ded*.ips' -o \
-        -name 'openQ4-ded*.crash' \
-    \) -mtime -30 -print | sort | tail -n 10 > "${CRASH_LIST}"
-    if [ -s "${CRASH_LIST}" ]; then
-        while IFS= read -r crash_path; do
-            copy_crash_report_if_safe "${crash_path}"
-        done < "${CRASH_LIST}"
-    else
-        write_text "crash-reports/README.txt" "No matching openQ4 crash reports were found in ~/Library/Logs/DiagnosticReports from the last 30 days."
-    fi
+        "HOME was not set; the macOS DiagnosticReports directory could not be located." \
+        "The support collector continued without home-scoped crash reports."
 else
-    write_text "crash-reports/README.txt" "The macOS DiagnosticReports directory was not found."
+    CRASH_DIR="${HOME_DIR}/Library/Logs/DiagnosticReports"
+    if [ -L "${CRASH_DIR}" ]; then
+        write_text "crash-reports/README.txt" \
+            "The macOS DiagnosticReports directory is a symlink and was skipped." \
+            "The support collector does not follow symlinks when copying crash-report text."
+    elif [ -d "${CRASH_DIR}" ]; then
+        find "${CRASH_DIR}" -type f \( \
+            -name 'openQ4*.ips' -o \
+            -name 'openQ4*.crash' -o \
+            -name 'openQ4-client*.ips' -o \
+            -name 'openQ4-client*.crash' -o \
+            -name 'openQ4-ded*.ips' -o \
+            -name 'openQ4-ded*.crash' \
+        \) -mtime -30 -print | sort | tail -n 10 > "${CRASH_LIST}"
+        if [ -s "${CRASH_LIST}" ]; then
+            while IFS= read -r crash_path; do
+                copy_crash_report_if_safe "${crash_path}"
+            done < "${CRASH_LIST}"
+        else
+            write_text "crash-reports/README.txt" "No matching openQ4 crash reports were found in ~/Library/Logs/DiagnosticReports from the last 30 days."
+        fi
+    else
+        write_text "crash-reports/README.txt" "The macOS DiagnosticReports directory was not found."
+    fi
 fi
 
 write_text "README.txt" \
     "Review this archive before attaching it to a public issue." \
     "The collector redacts /Users/<name> paths and email-like strings, does not dump the environment, does not launch openQ4, and does not copy retail q4base PK4 assets." \
+    "Copied text is sanitized for embedded control characters, and command/report output is stream-limited before redaction so noisy tools cannot inflate the support archive." \
     "The collector does not follow symlinked package, log, or crash-report inputs; skipped symlinks are recorded in the relevant report files." \
+    "If HOME is not set, home-scoped logs and DiagnosticReports are skipped with an archive note instead of aborting collection." \
     "system/rosetta.txt records the collector process architecture and sysctl.proc_translated value so unsupported Rosetta/translated reports are easy to spot." \
     "package/build-metadata.txt records package VERSION.txt metadata, app VERSION.txt metadata, openQ4/openQ4-game commit fields when present, and the game module filenames in baseoq4/." \
     "package/binary-architecture.txt records file/lipo architecture output for package executables and game modules without launching openQ4." \

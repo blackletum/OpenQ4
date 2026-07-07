@@ -29,6 +29,9 @@ def validate_runtime_startup_error() -> None:
     for token in (
         "Sys_ErrorIfMacOSAppBundlePackageRootIncomplete",
         "Sys_GetAppBundlePackageRootFromExecutableDirectory",
+        "Sys_IsMacOSAppBundleDirectoryName",
+        'static const char appBundleSuffix[] = ".app";',
+        "idStr::Icmp( suffixStart, appBundleSuffix )",
         "Sys_LocalizedMacOSPackageRootString",
         "localizedStringForKey",
         'table:@"OpenQ4PackageRoot"',
@@ -62,6 +65,11 @@ def validate_runtime_startup_error() -> None:
         '"not a regular file"',
     ):
         require(compat, token, "macOS adjacent package-root startup diagnostic")
+    reject(
+        compat,
+        'appName.Icmp( "openQ4.app" )',
+        "macOS app-bundle runtime detection should tolerate renamed .app bundles",
+    )
 
 
 def validate_package_metadata_and_archive_guards() -> None:
@@ -131,6 +139,9 @@ def validate_package_metadata_and_archive_guards() -> None:
         "macOS package support collector",
         "forbidden privacy/no-launch pattern",
         "contains_control_chars()",
+        "sanitize_text()",
+        "limit_stream_tail()",
+        "Support report output is limited to the final",
         "Support package root must not contain control characters",
         "Support output directory must not contain control characters",
         ".XXXXXX.tar.gz.tmp",
@@ -191,6 +202,7 @@ def validate_support_info_path_resolution() -> None:
         "Support package root must not be a symlink",
         "Support package root must be an existing directory",
         "prepare_output_target()",
+        "HOME_DIR=${HOME:-}",
         "umask 077",
         "ARCHIVE_TMP",
         "Support archive target must not be a symlink or directory",
@@ -199,15 +211,15 @@ def validate_support_info_path_resolution() -> None:
         "MAX_SUPPORT_TEXT_BYTES",
         "MAX_CRASH_REPORT_BYTES",
         "MAX_SUPPORT_ARCHIVE_BYTES",
-        "COMMAND_OUTPUT_INDEX",
-        "command-output-",
-        'command_output=$(mktemp "${WORK_PARENT}/command-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")',
-        'copy_text_if_present "${command_output}" "${target}"',
+        "sanitize_text()",
+        "limit_stream_tail()",
+        "Support report output is limited to the final",
         "write_bounded_report()",
-        "report-output-",
-        'report_output=$(mktemp "${WORK_PARENT}/report-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")',
-        'copy_text_if_present "${report_output}" "${target}"',
         "Source file was larger than",
+        "write_openq4_log_candidate_paths()",
+        "HOME was not set; home-scoped openq4.log paths were skipped.",
+        "HOME was not set; home-scoped openq4.log files were skipped.",
+        "HOME was not set; the macOS DiagnosticReports directory could not be located.",
         "path_exists_for_inspection()",
         "Skipped symlinked source:",
         "copy_crash_report_if_safe()",
@@ -278,6 +290,7 @@ def validate_docs_plan_and_release_notes() -> None:
         (release_notes, "curated release notes"),
     ):
         require(source, "localized macOS startup error", context)
+        require(source, "renamed `.app`", context)
         require(source, "package/path-resolution.txt", context)
 
 

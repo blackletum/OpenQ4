@@ -14,10 +14,48 @@ require_command() {
     fi
 }
 
+contains_control_chars() {
+    LC_ALL=C printf '%s' "$1" | LC_ALL=C grep -q '[[:cntrl:]]'
+}
+
+require_guest_home() {
+    local home_value="${OPENQ4_GUEST_HOME:-${HOME:-}}"
+    if [[ -z "${home_value}" ]]; then
+        echo "HOME must be set or OPENQ4_GUEST_HOME must point to the macOS guest home directory." >&2
+        exit 2
+    fi
+    if contains_control_chars "${home_value}"; then
+        echo "OPENQ4_GUEST_HOME/HOME must not contain control characters." >&2
+        exit 2
+    fi
+    case "${home_value}" in
+        /*)
+            ;;
+        *)
+            echo "OPENQ4_GUEST_HOME/HOME must be an absolute POSIX path: ${home_value}" >&2
+            exit 2
+            ;;
+    esac
+    case "${home_value}" in
+        "/"|"."|".."|*\\*|*//*|*/./*|*/../*|*/.|*/..)
+            echo "OPENQ4_GUEST_HOME/HOME must be a clean absolute POSIX path: ${home_value}" >&2
+            exit 2
+            ;;
+    esac
+    if [[ ! -d "${home_value}" ]]; then
+        echo "macOS guest home directory does not exist: ${home_value}" >&2
+        exit 2
+    fi
+    printf '%s\n' "${home_value%/}"
+}
+
 if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "This bootstrap script must run inside macOS." >&2
     exit 1
 fi
+
+GUEST_HOME="$(require_guest_home)"
+export HOME="${GUEST_HOME}"
 
 log "Checking Xcode Command Line Tools..."
 if ! xcode-select -p >/dev/null 2>&1; then
@@ -52,16 +90,16 @@ Install Homebrew from https://brew.sh/ if the build later reports missing tools.
 EOF
 fi
 
-meson_venv="${HOME}/.local/share/openq4-meson-venv"
+meson_venv="${GUEST_HOME}/.local/share/openq4-meson-venv"
 log "Installing user-local Meson/Ninja into ${meson_venv}..."
 python3 -m venv "${meson_venv}"
 "${meson_venv}/bin/python" -m pip install --upgrade pip
 "${meson_venv}/bin/python" -m pip install --upgrade 'meson>=1.6' ninja
-mkdir -p "${HOME}/.local/bin"
-ln -sf "${meson_venv}/bin/meson" "${HOME}/.local/bin/meson"
-ln -sf "${meson_venv}/bin/ninja" "${HOME}/.local/bin/ninja"
+mkdir -p "${GUEST_HOME}/.local/bin"
+ln -sf "${meson_venv}/bin/meson" "${GUEST_HOME}/.local/bin/meson"
+ln -sf "${meson_venv}/bin/ninja" "${GUEST_HOME}/.local/bin/ninja"
 
-mkdir -p "${HOME}/openq4-work/results"
+mkdir -p "${GUEST_HOME}/openq4-work/results"
 
 cat <<'EOF'
 macOS bootstrap complete.

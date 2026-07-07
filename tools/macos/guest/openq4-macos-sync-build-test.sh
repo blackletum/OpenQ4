@@ -1,6 +1,49 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+contains_control_chars() {
+    LC_ALL=C printf '%s' "$1" | LC_ALL=C grep -q '[[:cntrl:]]'
+}
+
+require_guest_home() {
+    local home_value="${OPENQ4_GUEST_HOME:-${HOME:-}}"
+    if [[ -z "${home_value}" ]]; then
+        echo "HOME must be set or OPENQ4_GUEST_HOME must point to the macOS guest home directory." >&2
+        exit 2
+    fi
+    if contains_control_chars "${home_value}"; then
+        echo "OPENQ4_GUEST_HOME/HOME must not contain control characters." >&2
+        exit 2
+    fi
+    case "${home_value}" in
+        /*)
+            ;;
+        *)
+            echo "OPENQ4_GUEST_HOME/HOME must be an absolute POSIX path: ${home_value}" >&2
+            exit 2
+            ;;
+    esac
+    case "${home_value}" in
+        "/"|"."|".."|*\\*|*//*|*/./*|*/../*|*/.|*/..)
+            echo "OPENQ4_GUEST_HOME/HOME must be a clean absolute POSIX path: ${home_value}" >&2
+            exit 2
+            ;;
+    esac
+    if [[ ! -d "${home_value}" ]]; then
+        echo "macOS guest home directory does not exist: ${home_value}" >&2
+        exit 2
+    fi
+    printf '%s\n' "${home_value%/}"
+}
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+    echo "This build/test script must run inside macOS." >&2
+    exit 1
+fi
+
+GUEST_HOME="$(require_guest_home)"
+export HOME="${GUEST_HOME}"
+
 action="${1:-build}"
 graphics_bridge="${OPENQ4_MACOS_GRAPHICS_BRIDGE:-opengl}"
 openal_provider="${OPENQ4_MACOS_OPENAL_PROVIDER:-apple_framework}"
@@ -11,10 +54,10 @@ RESULT_TOKEN_MAX_LENGTH=80
 expand_guest_path() {
     case "$1" in
         "~")
-            printf '%s\n' "${HOME}"
+            printf '%s\n' "${GUEST_HOME}"
             ;;
         "~/"*)
-            printf '%s/%s\n' "${HOME}" "${1#~/}"
+            printf '%s/%s\n' "${GUEST_HOME}" "${1#~/}"
             ;;
         *)
             printf '%s\n' "$1"
@@ -22,7 +65,7 @@ expand_guest_path() {
     esac
 }
 
-workspace="$(expand_guest_path "${OPENQ4_GUEST_WORKSPACE:-${HOME}/openq4-work}")"
+workspace="$(expand_guest_path "${OPENQ4_GUEST_WORKSPACE:-${GUEST_HOME}/openq4-work}")"
 repo="${workspace}/openQ4"
 gamelibs="${workspace}/openQ4-game"
 basepath="$(expand_guest_path "${OPENQ4_BASEPATH:-${workspace}/Quake4}")"
@@ -83,15 +126,17 @@ require_positive_integer() {
 }
 
 require_safe_guest_roots() {
-    python3 - "${workspace}" "${basepath}" <<'PY'
+    python3 - "${workspace}" "${basepath}" "${GUEST_HOME}" <<'PY'
 import pathlib
 import sys
+import unicodedata
 
 workspace_raw = sys.argv[1]
 basepath_raw = sys.argv[2]
+guest_home_raw = sys.argv[3]
 workspace = pathlib.Path(workspace_raw).expanduser()
 basepath = pathlib.Path(basepath_raw).expanduser()
-home = pathlib.Path.home().resolve()
+home = pathlib.Path(guest_home_raw).resolve()
 root = pathlib.Path("/")
 
 
@@ -102,6 +147,8 @@ def fail(message: str) -> None:
 
 def require_absolute_after_expansion(label: str, raw_value: str, path: pathlib.Path) -> None:
     path_text = raw_value
+    if any(ord(character) < 32 or ord(character) == 127 for character in path_text):
+        fail(f"{label} must not contain control characters: {path_text!r}")
     if "\\" in path_text:
         fail(f"{label} must be a POSIX path without backslashes: {path_text}")
     if not path.is_absolute():
@@ -126,6 +173,26 @@ def resolve(label: str, raw_value: str, path: pathlib.Path) -> pathlib.Path:
     return resolved
 
 
+def path_key(path: pathlib.Path) -> str:
+    return unicodedata.normalize("NFC", path.as_posix().rstrip("/")).casefold()
+
+
+def path_is_same_or_under(candidate: pathlib.Path, parent: pathlib.Path) -> bool:
+    candidate_key = path_key(candidate)
+    parent_key = path_key(parent)
+    return candidate_key == parent_key or candidate_key.startswith(f"{parent_key}/")
+
+
+def require_basepath_outside_reserved_workspace_children() -> None:
+    reserved_children = ("openQ4", "openQ4-game", "incoming-quake4", "results")
+    for child in reserved_children:
+        reserved = workspace_resolved / child
+        if path_key(basepath_resolved) == path_key(reserved):
+            fail(f"OPENQ4_BASEPATH must not target reserved workflow directory {child}.")
+        if path_is_same_or_under(basepath_resolved, reserved):
+            fail(f"OPENQ4_BASEPATH must not live under reserved workflow directory {child}.")
+
+
 workspace_resolved = resolve("OPENQ4_GUEST_WORKSPACE", workspace_raw, workspace)
 basepath_resolved = resolve("OPENQ4_BASEPATH", basepath_raw, basepath)
 if basepath_resolved == workspace_resolved:
@@ -136,6 +203,7 @@ except ValueError:
     pass
 else:
     fail("OPENQ4_BASEPATH must not contain OPENQ4_GUEST_WORKSPACE.")
+require_basepath_outside_reserved_workspace_children()
 PY
 }
 
@@ -222,6 +290,19 @@ require_safe_builddir() {
     esac
 }
 
+require_empty_result_directory() {
+    local candidate="$1"
+    local existing_entry
+
+    existing_entry="$(find "${candidate}" -mindepth 1 -print -quit)"
+    if [[ -n "${existing_entry}" ]]; then
+        echo "macOS result directory already exists and is not empty: ${candidate}" >&2
+        echo "Use a fresh OPENQ4_MACOS_RUN_ID or remove the stale result directory before rerunning." >&2
+        echo "First existing entry: ${existing_entry}" >&2
+        exit 2
+    fi
+}
+
 prepare_run_dir() {
     local log_path="${run_dir}/openq4-macos-workflow.log"
 
@@ -247,11 +328,15 @@ prepare_run_dir() {
         echo "macOS result directory must be a directory: ${run_dir}" >&2
         exit 2
     fi
+    if [[ -d "${run_dir}" ]]; then
+        require_empty_result_directory "${run_dir}"
+    fi
     mkdir -p "${run_dir}"
     if [[ -L "${run_dir}" || ! -d "${run_dir}" ]]; then
         echo "macOS result directory must be a real directory: ${run_dir}" >&2
         exit 2
     fi
+    require_empty_result_directory "${run_dir}"
     if [[ -L "${log_path}" || -d "${log_path}" ]]; then
         echo "macOS workflow log path must not be a symlink or directory: ${log_path}" >&2
         exit 2
@@ -283,9 +368,9 @@ for path in sorted(root.rglob("*")):
 PY
 }
 
-if [[ -x "${HOME}/.local/bin/meson" ]]; then
-    export PATH="${HOME}/.local/bin:${PATH}"
-    export OPENQ4_MESON="${OPENQ4_MESON:-${HOME}/.local/bin/meson}"
+if [[ -x "${GUEST_HOME}/.local/bin/meson" ]]; then
+    export PATH="${GUEST_HOME}/.local/bin:${PATH}"
+    export OPENQ4_MESON="${OPENQ4_MESON:-${GUEST_HOME}/.local/bin/meson}"
 fi
 
 prepare_run_dir
@@ -488,14 +573,10 @@ validate_staged_macos_payload() {
         "Support output directory must not contain control characters" \
         ".XXXXXX.tar.gz.tmp" \
         "MAX_SUPPORT_ARCHIVE_BYTES" \
-        "COMMAND_OUTPUT_INDEX" \
-        "command-output-" \
-        'command_output=$(mktemp "${WORK_PARENT}/command-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")' \
-        'copy_text_if_present "${command_output}" "${target}"' \
+        "sanitize_text()" \
+        "limit_stream_tail()" \
+        "Support report output is limited to the final" \
         "write_bounded_report()" \
-        "report-output-" \
-        'report_output=$(mktemp "${WORK_PARENT}/report-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")' \
-        'copy_text_if_present "${report_output}" "${target}"' \
         "does not dump the environment" \
         "does not launch openQ4" \
         "does not copy retail q4base PK4 assets" \
@@ -800,8 +881,8 @@ append_staged_binary_arch_report() {
 
 install_launcher() {
     require_repo
-    mkdir -p "${HOME}/Desktop"
-    local launcher="${HOME}/Desktop/openQ4.command"
+    mkdir -p "${GUEST_HOME}/Desktop"
+    local launcher="${GUEST_HOME}/Desktop/openQ4.command"
     if [[ -L "${launcher}" || -d "${launcher}" || ( -e "${launcher}" && ! -f "${launcher}" ) ]]; then
         echo "Refusing to replace unsafe macOS launcher path: ${launcher}" >&2
         exit 1
@@ -820,7 +901,7 @@ install_launcher() {
     basepath_q="$(shell_quote "${basepath}")"
 
     local launcher_tmp
-    launcher_tmp="$(mktemp "${HOME}/Desktop/openQ4.command.XXXXXX")"
+    launcher_tmp="$(mktemp "${GUEST_HOME}/Desktop/openQ4.command.XXXXXX")"
     cat > "${launcher_tmp}" <<EOF
 #!/usr/bin/env bash
 cd ${install_dir_q}

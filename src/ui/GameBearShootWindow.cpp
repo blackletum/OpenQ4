@@ -111,6 +111,15 @@ static void GameBearShoot_ValidateEntityIndex( const char *fieldName, int index,
 	}
 }
 
+static void GameBearShoot_ReadSaveBlock( idFile *savefile, void *data, const int size, const char *fieldName ) {
+	OpenQ4_ReadSaveGameBytes( savefile, data, size, "idGameBearShootWindow::ReadFromSaveGame", fieldName );
+}
+
+template< class type >
+static void GameBearShoot_ReadSaveField( idFile *savefile, type &value, const char *fieldName ) {
+	GameBearShoot_ReadSaveBlock( savefile, &value, sizeof( value ), fieldName );
+}
+
 /*
 *****************************************************************************
 * BSEntity	
@@ -171,18 +180,18 @@ void BSEntity::ReadFromSaveGame( idFile *savefile, idGameBearShootWindow* _game,
 	game->ReadSaveGameString( materialName, savefile );
 	SetMaterial( materialName );
 
-	savefile->Read( &width, sizeof(width) );
-	savefile->Read( &height, sizeof(height) );
-	savefile->Read( &visible, sizeof(visible) );
+	GameBearShoot_ReadSaveField( savefile, width, "entity width" );
+	GameBearShoot_ReadSaveField( savefile, height, "entity height" );
+	GameBearShoot_ReadSaveField( savefile, visible, "entity visible flag" );
 
-	savefile->Read( &entColor, sizeof(entColor) );
-	savefile->Read( &position, sizeof(position) );
-	savefile->Read( &rotation, sizeof(rotation) );
-	savefile->Read( &rotationSpeed, sizeof(rotationSpeed) );
-	savefile->Read( &velocity, sizeof(velocity) );
+	GameBearShoot_ReadSaveField( savefile, entColor, "entity color" );
+	GameBearShoot_ReadSaveField( savefile, position, "entity position" );
+	GameBearShoot_ReadSaveField( savefile, rotation, "entity rotation" );
+	GameBearShoot_ReadSaveField( savefile, rotationSpeed, "entity rotation speed" );
+	GameBearShoot_ReadSaveField( savefile, velocity, "entity velocity" );
 
-	savefile->Read( &fadeIn, sizeof(fadeIn) );
-	savefile->Read( &fadeOut, sizeof(fadeOut) );
+	GameBearShoot_ReadSaveField( savefile, fadeIn, "entity fade-in flag" );
+	GameBearShoot_ReadSaveField( savefile, fadeOut, "entity fade-out flag" );
 }
 
 /*
@@ -355,23 +364,23 @@ void idGameBearShootWindow::ReadFromSaveGame( idFile *savefile ) {
 
 	const int saveVersion = GameBearShoot_ReadSaveVersion( savefile );
 
-	savefile->Read( &timeSlice, sizeof(timeSlice) );
-	savefile->Read( &timeRemaining, sizeof(timeRemaining) );
-	savefile->Read( &gameOver, sizeof(gameOver) );
+	GameBearShoot_ReadSaveField( savefile, timeSlice, "time slice" );
+	GameBearShoot_ReadSaveField( savefile, timeRemaining, "time remaining" );
+	GameBearShoot_ReadSaveField( savefile, gameOver, "game-over flag" );
 
 	currentLevel = GameBearShoot_ReadSaveInt( savefile, "current level", saveVersion );
 	goalsHit = GameBearShoot_ReadSaveInt( savefile, "goals hit", saveVersion );
-	savefile->Read( &updateScore, sizeof(updateScore) );
-	savefile->Read( &bearHitTarget, sizeof(bearHitTarget) );
+	GameBearShoot_ReadSaveField( savefile, updateScore, "update-score flag" );
+	GameBearShoot_ReadSaveField( savefile, bearHitTarget, "bear-hit-target flag" );
 
-	savefile->Read( &bearScale, sizeof(bearScale) );
-	savefile->Read( &bearIsShrinking, sizeof(bearIsShrinking) );
+	GameBearShoot_ReadSaveField( savefile, bearScale, "bear scale" );
+	GameBearShoot_ReadSaveField( savefile, bearIsShrinking, "bear shrinking flag" );
 	bearShrinkStartTime = GameBearShoot_ReadSaveInt( savefile, "bear shrink start time", saveVersion );
 
-	savefile->Read( &turretAngle, sizeof(turretAngle) );
-	savefile->Read( &turretForce, sizeof(turretForce) );
+	GameBearShoot_ReadSaveField( savefile, turretAngle, "turret angle" );
+	GameBearShoot_ReadSaveField( savefile, turretForce, "turret force" );
 
-	savefile->Read( &windForce, sizeof(windForce) );
+	GameBearShoot_ReadSaveField( savefile, windForce, "wind force" );
 	windUpdateTime = GameBearShoot_ReadSaveInt( savefile, "wind update time", saveVersion );
 
 	int numberOfEnts;

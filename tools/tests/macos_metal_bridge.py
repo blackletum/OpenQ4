@@ -8,7 +8,9 @@ import os
 import plistlib
 import re
 import shutil
+import sys
 import tarfile
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
@@ -46,6 +48,36 @@ def expect_runtime_error(fragment: str, callback, context: str) -> None:
             raise AssertionError(f"Unexpected error for {context}: {exc}") from exc
         return
     raise AssertionError(f"Expected RuntimeError containing {fragment!r} for {context}")
+
+
+def shell_heredoc_body(source: str, marker: str, context: str) -> str:
+    start = source.find(marker)
+    if start == -1:
+        raise AssertionError(f"Missing shell heredoc marker {marker!r} in {context}")
+    heredoc_start = source.find("<<'PY'\n", start)
+    if heredoc_start == -1:
+        raise AssertionError(f"Missing Python heredoc start after {marker!r} in {context}")
+    heredoc_start += len("<<'PY'\n")
+    heredoc_end = source.find("\nPY\n}", heredoc_start)
+    if heredoc_end == -1:
+        raise AssertionError(f"Missing Python heredoc end after {marker!r} in {context}")
+    return source[heredoc_start:heredoc_end]
+
+
+def run_embedded_python(body: str, argv: list[str], context: str) -> tuple[int, str]:
+    old_argv = sys.argv[:]
+    stderr = io.StringIO()
+    try:
+        sys.argv = ["embedded-python"] + argv
+        with contextlib.redirect_stderr(stderr):
+            try:
+                exec(compile(body, f"<{context}>", "exec"), {"__name__": "__embedded__"})
+            except SystemExit as exc:
+                code = exc.code if isinstance(exc.code, int) else 1
+                return code, stderr.getvalue()
+        return 0, stderr.getvalue()
+    finally:
+        sys.argv = old_argv
 
 
 def function_body(source: str, signature: str) -> str:
@@ -145,20 +177,22 @@ def make_macos_support_info_script_bytes(package) -> bytes:
     lines = [
         "#!/bin/sh",
         "OPENQ4_PACKAGE_ROOT=${OPENQ4_PACKAGE_ROOT:-.}",
+        "HOME_DIR=${HOME:-}",
         "ARCHIVE_TMP=${ARCHIVE_TMP:-openq4-macos-support.tmp.tar.gz}",
         "MAX_SUPPORT_TEXT_BYTES=2097152",
         "MAX_CRASH_REPORT_BYTES=8388608",
         "MAX_SUPPORT_ARCHIVE_BYTES=134217728",
-        "COMMAND_OUTPUT_INDEX=0",
-        'command_output=$(mktemp "${WORK_PARENT}/command-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")',
-        'copy_text_if_present "${command_output}" "${target}"',
+        "sanitize_text() { cat; }",
+        "limit_stream_tail() { cat; }",
+        'echo "Support report output is limited to the final"',
         "write_bounded_report() {",
-        'report_output=$(mktemp "${WORK_PARENT}/report-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")',
-        'copy_text_if_present "${report_output}" "${target}"',
+        "write_openq4_log_candidate_paths() {",
         "redact_text() { cat; }",
         "contains_control_chars() { return 1; }",
         'echo "Support package root must not contain control characters"',
         'echo "Support output directory must not contain control characters"',
+        'echo "HOME was not set; home-scoped openq4.log files were skipped."',
+        'echo "HOME was not set; the macOS DiagnosticReports directory could not be located."',
         'echo ".XXXXXX.tar.gz.tmp"',
         'echo "does not dump the environment"',
         'echo "does not launch openQ4"',
@@ -181,20 +215,22 @@ def make_validation_support_info_script_bytes(validator) -> bytes:
     lines = [
         "#!/bin/sh",
         "OPENQ4_PACKAGE_ROOT=${OPENQ4_PACKAGE_ROOT:-.}",
+        "HOME_DIR=${HOME:-}",
         "ARCHIVE_TMP=${ARCHIVE_TMP:-openq4-macos-support.tmp.tar.gz}",
         "MAX_SUPPORT_TEXT_BYTES=2097152",
         "MAX_CRASH_REPORT_BYTES=8388608",
         "MAX_SUPPORT_ARCHIVE_BYTES=134217728",
-        "COMMAND_OUTPUT_INDEX=0",
-        'command_output=$(mktemp "${WORK_PARENT}/command-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")',
-        'copy_text_if_present "${command_output}" "${target}"',
+        "sanitize_text() { cat; }",
+        "limit_stream_tail() { cat; }",
+        'echo "Support report output is limited to the final"',
         "write_bounded_report() {",
-        'report_output=$(mktemp "${WORK_PARENT}/report-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")',
-        'copy_text_if_present "${report_output}" "${target}"',
+        "write_openq4_log_candidate_paths() {",
         "redact_text() { cat; }",
         "contains_control_chars() { return 1; }",
         'echo "Support package root must not contain control characters"',
         'echo "Support output directory must not contain control characters"',
+        'echo "HOME was not set; home-scoped openq4.log files were skipped."',
+        'echo "HOME was not set; the macOS DiagnosticReports directory could not be located."',
         'echo ".XXXXXX.tar.gz.tmp"',
         'echo "does not dump the environment"',
         'echo "does not launch openQ4"',
@@ -2319,6 +2355,29 @@ def validate_macos_staged_payload_validator_runtime() -> None:
         )
         write_test_file(support_script, make_validation_support_info_script_bytes(validator), 0o755)
 
+        support_script_target = install_root / "collect_macos_support_info.real.sh"
+        write_test_file(support_script_target, make_validation_support_info_script_bytes(validator), 0o755)
+        support_script.unlink()
+        try:
+            support_script.symlink_to(support_script_target.name)
+        except (OSError, NotImplementedError):
+            write_test_file(support_script, make_validation_support_info_script_bytes(validator), 0o755)
+        else:
+            expect_runtime_error(
+                "Staged payload contains symlink entries",
+                lambda: validator.validate_macos_staged_metadata(
+                    ROOT,
+                    install_root,
+                    game_dir,
+                    [client],
+                    [dedicated],
+                ),
+                "macOS staged payload with symlinked support collector",
+            )
+            support_script.unlink()
+            write_test_file(support_script, make_validation_support_info_script_bytes(validator), 0o755)
+        support_script_target.unlink()
+
         bad_module = game_dir / f"game-sp_{arch}.so"
         write_test_file(bad_module, b"wrong\n")
         expect_runtime_error(
@@ -2758,6 +2817,10 @@ def validate_packaging_and_release_contract() -> None:
     require(compat, "BASE_GAMEDIR", "macOS base path validation")
     require(compat, "Sys_UseAppBundleParentBasePathCandidate", "macOS app bundle base path validation")
     require(compat, "\"/Contents/MacOS\"", "macOS app bundle base path validation")
+    require(compat, "Sys_IsMacOSAppBundleDirectoryName", "macOS renamed app bundle base path validation")
+    require(compat, 'static const char appBundleSuffix[] = ".app";', "macOS renamed app bundle base path validation")
+    require(compat, "idStr::Icmp( suffixStart, appBundleSuffix )", "macOS renamed app bundle base path validation")
+    reject(compat, 'appName.Icmp( "openQ4.app" )', "macOS renamed app bundle base path validation")
     require(compat, "\"app parent\"", "macOS app bundle base path validation")
     require(compat, "Sys_ErrorIfMacOSAppBundlePackageRootIncomplete", "macOS app-only package-root startup diagnostic")
     require(compat, "OpenQ4PackageRootMissingTitle", "macOS app-only package-root localized startup diagnostic")
@@ -2779,6 +2842,7 @@ def validate_packaging_and_release_contract() -> None:
     require(validator, "MACOS_SUPPORT_INFO_FORBIDDEN_TOKENS", "macOS staged support collector privacy validation")
     require(validator, "forbidden privacy/no-launch pattern", "macOS staged support collector privacy validation")
     require(validator, "macOS support collector contains CRLF or carriage returns", "macOS staged support collector line-ending validation")
+    require(validator, "validate_no_macos_symlinks(root, install_root)", "macOS staged symlink validation")
     require(validator, "openQ4.icns", "macOS staged payload validation")
     require(validator, "non-dylib game modules", "macOS staged payload validation")
     require(validator, "architecture-matched game modules", "macOS staged payload validation")
@@ -2885,6 +2949,9 @@ def validate_packaging_and_release_contract() -> None:
     require(release, ".install/collect_macos_support_info.sh", "manual release macOS support collector staging")
     require(release, "Missing or non-executable macOS support collector", "manual release macOS support collector validation")
     require(release, "contains_control_chars()", "manual release macOS support collector path-control validation")
+    require(release, "sanitize_text()", "manual release macOS support collector text sanitization validation")
+    require(release, "limit_stream_tail()", "manual release macOS support collector stream-bounding validation")
+    require(release, "Support report output is limited to the final", "manual release macOS support collector stream-bounding validation")
     require(release, ".XXXXXX.tar.gz.tmp", "manual release macOS support collector mktemp validation")
     require(release, "does not launch openQ4", "manual release macOS support collector no-launch validation")
     require(release, "does not copy retail q4base PK4 assets", "manual release macOS support collector privacy validation")
@@ -2928,15 +2995,33 @@ def validate_macos_workflow_security_contract() -> None:
     require(host, "Assert-ValidMacUser", "macOS host user validation")
     require(host, "Assert-ValidMacHost", "macOS host target validation")
     require(host, "Assert-SafeRemoteWorkflowPath", "macOS host remote path validation")
+    require(host, "Assert-MacBasePathNotReservedWorkspaceChild", "macOS host reserved workspace child guard")
+    require(host, "ConvertTo-RemoteWorkflowComparisonPath", "macOS host resolved remote path comparison")
+    require(host, "$MacHome.TrimEnd", "macOS host resolved remote path comparison")
+    require(host, "Normalize([System.Text.NormalizationForm]::FormC).ToLowerInvariant()", "macOS host normalized remote path comparison")
+    require(host, "MacBasePath must not target reserved workflow directory", "macOS host reserved workspace child diagnostic")
+    require(host, "[System.StringComparison]::OrdinalIgnoreCase", "macOS host reserved workspace child case-insensitive guard")
+    require(host, "Join-RemotePosixPath", "macOS host remote child path joining")
+    require(host, '[string]$MacHome = ""', "macOS host guest-home override parameter")
+    require(host, "Assert-SafeRemoteGuestHomePath", "macOS host guest-home override validation")
+    require(host, "Invalid MacHome", "macOS host guest-home override validation")
+    require(host, "Use an absolute POSIX path such as /Users/codex", "macOS host guest-home override validation")
+    require(host, "OPENQ4_GUEST_HOME=$(Quote-Sh $MacHome)", "macOS host guest-home override environment")
     require(host, "Use an absolute POSIX path or a ~/ path", "macOS host relative remote path rejection")
     require(host, "Empty POSIX path segments are not allowed", "macOS host empty remote path segment rejection")
     require(host, "Dot path segments are not allowed", "macOS host dot remote path segment rejection")
     require(host, "Assert-LocalRegularFile", "macOS host identity file validation")
     require(host, "Assert-LocalOutputFileTarget", "macOS host copy-back target validation")
+    require(host, "target already exists; refusing to overwrite", "macOS host copy-back no-overwrite validation")
+    require(host, "New-LocalOutputTempPath", "macOS host copy-back temporary publish")
     require(host, "Initialize-LocalDirectory", "macOS host local temp/result path validation")
     require(host, "MacBasePath must not be the same directory as MacWorkspace", "macOS host destructive asset target guard")
     require(host, 'Assert-LocalRegularFile -Path $Source -Label "macOS copy source"', "macOS host scp source validation")
-    require(host, 'Assert-LocalOutputFileTarget -Path $destinationFullPath -Label "macOS copy destination"', "macOS host scp destination validation")
+    require(host, 'Assert-LocalOutputFileTarget -Path $destinationFullPath -Label "macOS copy destination" -MustNotExist', "macOS host scp destination validation")
+    require(host, '[System.IO.File]::Move($temporaryDestination, $destinationFullPath)', "macOS host copy-back atomic publish")
+    require(host, 'Assert-LocalRegularFile -Path $temporaryDestination -Label "macOS temporary copy destination"', "macOS host copy-back temporary validation")
+    require(host, "macOS temporary copy destination is empty after scp", "macOS host copy-back empty archive validation")
+    require(host, "Remove-Item -LiteralPath $temporaryDestination -Force", "macOS host copy-back temporary cleanup")
     require(host, 'Assert-LocalRegularFile -Path $localScript -Label "Guest script"', "macOS host guest script symlink validation")
     require(host, "Source path was not a directory", "macOS host archive source validation")
     require(host, "$sourceItem.Attributes", "macOS host archive root symlink validation")
@@ -2958,6 +3043,14 @@ def validate_macos_workflow_security_contract() -> None:
     require(host, "try {\n    Invoke-MacOSWorkflowMain\n} finally {\n    Remove-RemoteTempRoot", "macOS host remote temp cleanup finally")
     require(host, "BatchMode=yes", "macOS host non-interactive SSH")
     require(host, "expand_remote_path", "macOS host remote tilde expansion")
+    require(host, "require_remote_home", "macOS host embedded remote home validation")
+    require(host, "REMOTE_HOME", "macOS host embedded remote home validation")
+    require(host, "guest_home_raw=__GUEST_HOME__", "macOS host result collection home placeholder")
+    require(host, 'Replace("__GUEST_HOME__", $guestHomeQ)', "macOS host result collection home placeholder replacement")
+    require(host, "MacHome/HOME must be an absolute POSIX path", "macOS host embedded remote home validation")
+    require(host, "MacHome/HOME must not contain control characters", "macOS host embedded remote home validation")
+    require(host, "grep -q '[[:cntrl:]]'", "macOS host embedded remote home control-character validation")
+    require(host, "HOME must be set or MacHome must provide the macOS guest home directory", "macOS host embedded remote home validation")
     require(host, "target_raw", "macOS host remote target path expansion")
     require(host, "workspace_raw=__WORKSPACE__", "macOS host result workspace path expansion")
     require(host, "require_regular_remote_archive", "macOS host remote archive regular-file validation")
@@ -2978,6 +3071,8 @@ def validate_macos_workflow_security_contract() -> None:
     require(host, "tar -tvf", "macOS host archive type validation")
     require(host, "including hardlinks", "macOS host archive hardlink validation")
     require(host, "rsync -a --delete", "macOS host safe temp extraction sync")
+    require(host, 'Join-RemotePosixPath -Base $MacWorkspace -Child "openQ4"', "macOS host remote source sync path joining")
+    require(host, 'Join-RemotePosixPath -Base $MacWorkspace -Child "openQ4-game"', "macOS host remote GameLibs sync path joining")
     require(host, "openQ4/.git", "macOS host source metadata exclusion")
     require(host, "openQ4/.codex", "macOS host local agent metadata exclusion")
     require(host, "openQ4-game/.git", "macOS host GameLibs metadata exclusion")
@@ -3001,6 +3096,14 @@ def validate_macos_workflow_security_contract() -> None:
     require(host, "Unsafe macOS workspace path for result collection", "macOS host result workspace validation")
     require(host, "Unsafe macOS result archive directory", "macOS host result archive directory validation")
     require(host, "Unsafe macOS result archive target", "macOS host result archive target validation")
+    require(host, "macOS result archive target already exists", "macOS host result archive no-overwrite validation")
+    require(host, "cleanup_result_archive_tmp", "macOS host remote result archive temporary cleanup")
+    require(host, 'archive_tmp="$(mktemp "${archive_parent}/.${archive##*/}.XXXXXX.tmp")"', "macOS host remote result archive temporary publish")
+    require(host, 'COPYFILE_DISABLE=1 tar -czf "${archive_tmp}"', "macOS host remote result archive temporary publish")
+    require(host, "macOS result archive is empty before publish", "macOS host remote result archive empty validation")
+    require(host, 'COPYFILE_DISABLE=1 tar -tzf "${archive_tmp}"', "macOS host remote result archive listing validation")
+    require(host, "macOS result archive validation failed before publish", "macOS host remote result archive listing validation")
+    require(host, 'ln "${archive_tmp}" "${archive}"', "macOS host remote result archive no-overwrite publish")
     require(host, "COPYFILE_DISABLE=1 tar -czf", "macOS host result tar copyfile suppression")
     require(host, "contains non-runtime metadata/debug entry", "macOS host result metadata preflight")
     require(host, "contains a symlink or special file", "macOS host result symlink/special preflight")
@@ -3042,6 +3145,23 @@ def validate_macos_workflow_security_contract() -> None:
 
     for tool in ("xcrun", "plutil", "lipo", "otool", "codesign"):
         require(bootstrap, f"require_command {tool}", f"macOS bootstrap {tool} validation")
+    for source, context in (
+        (bootstrap, "macOS bootstrap guest-home validation"),
+        (assets, "macOS asset guest-home validation"),
+        (guest, "macOS build/test guest-home validation"),
+    ):
+        require(source, "require_guest_home", context)
+        require(source, "OPENQ4_GUEST_HOME", context)
+        require(source, "contains_control_chars", context)
+        require(source, "OPENQ4_GUEST_HOME/HOME must not contain control characters", context)
+        require(source, 'GUEST_HOME="$(require_guest_home)"', context)
+        require(source, 'export HOME="${GUEST_HOME}"', context)
+        require(source, "macOS guest home directory does not exist", context)
+
+    require(assets, "This asset script must run inside macOS.", "macOS asset Darwin guard")
+    require(guest, "This build/test script must run inside macOS.", "macOS guest Darwin guard")
+    require_before(assets, 'if [[ "$(uname -s)" != "Darwin" ]]', 'GUEST_HOME="$(require_guest_home)"', "macOS asset validates host before guest-home resolution")
+    require_before(guest, 'if [[ "$(uname -s)" != "Darwin" ]]', 'GUEST_HOME="$(require_guest_home)"', "macOS guest validates host before guest-home resolution")
 
     require(assets, "reject_unsafe_tar_entries", "macOS asset tar path validation")
     require(assets, "tarfile.open", "macOS asset tar structured validation")
@@ -3055,10 +3175,21 @@ def validate_macos_workflow_security_contract() -> None:
     require(assets, "reject_case_insensitive_tree_collisions", "macOS asset case-collision validation")
     require(assets, "require_safe_asset_roots", "macOS asset root validation")
     require(assets, "workspace_raw = sys.argv[1]", "macOS asset raw root validation")
+    require(assets, "guest_home_raw = sys.argv[3]", "macOS asset explicit guest-home root validation")
+    require(assets, "home = pathlib.Path(guest_home_raw).resolve()", "macOS asset explicit guest-home root validation")
+    require(assets, "import unicodedata", "macOS asset root casefold dependency")
+    require(assets, "must not contain control characters", "macOS asset raw root control-character validation")
     require(assets, "segments = path_text.strip", "macOS asset raw path segment validation")
     require(assets, "must be an absolute path after ~ expansion", "macOS asset relative root rejection")
     require(assets, "must not contain dot or empty path segments", "macOS asset ambiguous root segment rejection")
+    require(assets, "require_basepath_outside_reserved_workspace_children", "macOS asset reserved workspace child guard")
+    require(assets, 'reserved_children = ("openQ4", "openQ4-game", "incoming-quake4", "results")', "macOS asset reserved workspace child list")
+    require(assets, "path_is_same_or_under", "macOS asset reserved workspace child case-insensitive guard")
+    require(assets, "casefold()", "macOS asset reserved workspace child case-insensitive guard")
+    require(assets, "Asset install basepath must not target a reserved workflow directory", "macOS asset reserved workspace child diagnostic")
+    require(assets, "Asset install basepath must not live under a reserved workflow directory", "macOS asset reserved workspace subtree diagnostic")
     require(assets, "OPENQ4_Q4_TAR must not be a symlink", "macOS asset archive symlink validation")
+    require(assets, "OPENQ4_Q4_TAR must not contain control characters", "macOS asset archive path control-character validation")
     require(assets, "COPYFILE_DISABLE=1 tar -xf", "macOS asset archive copyfile suppression")
     require(assets, "rsync --delete would remove workflow files", "macOS asset destructive target guard")
     require(assets, "Unsafe asset archive path", "macOS asset tar path validation")
@@ -3090,10 +3221,19 @@ def validate_macos_workflow_security_contract() -> None:
     require(guest, "require_positive_integer", "macOS guest numeric option validation")
     require(guest, "require_safe_guest_roots", "macOS guest workspace/basepath validation")
     require(guest, "workspace_raw = sys.argv[1]", "macOS guest raw root validation")
+    require(guest, "guest_home_raw = sys.argv[3]", "macOS guest explicit guest-home root validation")
+    require(guest, "home = pathlib.Path(guest_home_raw).resolve()", "macOS guest explicit guest-home root validation")
+    require(guest, "must not contain control characters", "macOS guest raw root control-character validation")
     require(guest, "segments = path_text.strip", "macOS guest raw path segment validation")
     require(guest, "must be an absolute path after ~ expansion", "macOS guest relative root rejection")
     require(guest, "must not contain dot or empty path segments", "macOS guest ambiguous root segment rejection")
     require(guest, "OPENQ4_BASEPATH must not contain OPENQ4_GUEST_WORKSPACE", "macOS guest destructive basepath guard")
+    require(guest, "require_basepath_outside_reserved_workspace_children", "macOS guest reserved workspace child guard")
+    require(guest, 'reserved_children = ("openQ4", "openQ4-game", "incoming-quake4", "results")', "macOS guest reserved workspace child list")
+    require(guest, "path_is_same_or_under", "macOS guest reserved workspace child case-insensitive guard")
+    require(guest, "casefold()", "macOS guest reserved workspace child case-insensitive guard")
+    require(guest, "OPENQ4_BASEPATH must not target reserved workflow directory", "macOS guest reserved workspace child diagnostic")
+    require(guest, "OPENQ4_BASEPATH must not live under reserved workflow directory", "macOS guest reserved workspace subtree diagnostic")
     require(guest, "OPENQ4_ALLOW_CROSS_ARCH_CLIENT", "macOS guest cross-arch launch opt-in")
     require(guest, "Missing staged macOS client for host architecture", "macOS guest exact-arch client selection")
     require(guest, "Staged macOS client must not be a symlink", "macOS guest client symlink validation")
@@ -3116,6 +3256,10 @@ def validate_macos_workflow_security_contract() -> None:
     require(guest, 'require_choice "OPENQ4_MACOS_GRAPHICS_BRIDGE" "${graphics_bridge}" opengl metal', "macOS guest bridge validation")
     require(guest, 'require_choice "OPENQ4_MACOS_OPENAL_PROVIDER" "${openal_provider}" apple_framework system', "macOS guest OpenAL provider validation")
     require(guest, "prepare_run_dir", "macOS guest result directory preparation")
+    require(guest, "require_empty_result_directory", "macOS guest stale result directory guard")
+    require(guest, "macOS result directory already exists and is not empty", "macOS guest stale result directory diagnostic")
+    require(guest, "Use a fresh OPENQ4_MACOS_RUN_ID or remove the stale result directory before rerunning", "macOS guest stale result directory diagnostic")
+    require(guest, 'find "${candidate}" -mindepth 1 -print -quit', "macOS guest stale result directory hidden-file guard")
     require(guest, "macOS results root must not be a symlink", "macOS guest result root symlink validation")
     require(guest, "macOS result directory must not be a symlink", "macOS guest result directory symlink validation")
     require(guest, "macOS workflow log path must not be a symlink or directory", "macOS guest workflow log symlink validation")
@@ -3144,7 +3288,7 @@ def validate_macos_workflow_security_contract() -> None:
     require(guest, "shlex.quote", "macOS guest launcher quoting")
     require(guest, "exec ${client_q} +set fs_basepath ${basepath_q}", "macOS guest launcher quoted exec")
     require(guest, "Refusing to replace unsafe macOS launcher path", "macOS guest launcher symlink validation")
-    require(guest, 'launcher_tmp="$(mktemp "${HOME}/Desktop/openQ4.command.XXXXXX")"', "macOS guest launcher atomic write")
+    require(guest, 'launcher_tmp="$(mktemp "${GUEST_HOME}/Desktop/openQ4.command.XXXXXX")"', "macOS guest launcher atomic write")
     require(guest, "Refusing to replace unsafe macOS signoff report path", "macOS guest report symlink validation")
     require(guest, 'report_tmp="$(mktemp "${run_dir}/macos-runtime-signoff.md.XXXXXX")"', "macOS guest report atomic write")
     require(guest, 'mv -f "${report_tmp}" "${report}"', "macOS guest report atomic publish")
@@ -3166,6 +3310,9 @@ def validate_macos_workflow_security_contract() -> None:
     require(guest, "Missing or non-executable staged macOS support script", "macOS guest staged support collector executable validation")
     require(guest, "macOS staged support collector is missing marker", "macOS guest staged support collector validation")
     require(guest, "contains_control_chars()", "macOS guest staged support collector path-control validation")
+    require(guest, "sanitize_text()", "macOS guest staged support collector text sanitization validation")
+    require(guest, "limit_stream_tail()", "macOS guest staged support collector stream-bounding validation")
+    require(guest, "Support report output is limited to the final", "macOS guest staged support collector stream-bounding validation")
     require(guest, ".XXXXXX.tar.gz.tmp", "macOS guest staged support collector mktemp validation")
     require(guest, "does not launch openQ4", "macOS guest staged support collector no-launch validation")
     require(guest, "does not copy retail q4base PK4 assets", "macOS guest staged support collector privacy validation")
@@ -3192,6 +3339,8 @@ def validate_macos_workflow_security_contract() -> None:
     require(guest, "SPAudioDataType", "macOS guest audio inventory")
     require(guest, "SPUSBDataType", "macOS guest USB inventory")
     require(guest, "SPBluetoothDataType", "macOS guest Bluetooth inventory")
+    require(workflow_doc, "OPENQ4_GUEST_HOME", "macOS workflow guest-home override documentation")
+    require(workflow_doc, "archive-expansion and result-collection snippets", "macOS workflow remote home fallback documentation")
     require(guest, "build_openq4\n    run_smoke\n    run_mp_smoke\n    run_renderer_matrix\n    install_launcher\n    write_signoff_report", "macOS guest signoff run order")
 
     require(signoff_validator, "validate_signoff_archive", "macOS signoff archive validator")
@@ -3258,8 +3407,15 @@ def validate_macos_workflow_security_contract() -> None:
     require(workflow_doc, "-SkipResultArchiveValidation", "macOS workflow result archive validation opt-out documentation")
     require(workflow_doc, "-RequireCompletedSignoffChecklist", "macOS workflow completed checklist validation documentation")
     require(workflow_doc, "must be absolute POSIX paths or use a leading `~/`", "macOS workflow absolute path documentation")
-    require(workflow_doc, "guest scripts recheck that the paths are absolute after `~` expansion", "macOS workflow guest path validation documentation")
+    require(workflow_doc, "guest scripts recheck that the paths are absolute and control-character-free after `~` expansion", "macOS workflow guest path validation documentation")
+    require(workflow_doc, "host preflight expands `~/` before that reserved-child comparison", "macOS workflow host reserved path documentation")
+    require(workflow_doc, "does not create double-slash remote extraction targets", "macOS workflow remote sync path joining documentation")
     require(workflow_doc, "-Action CollectResults -MacOSRunId <run-id>", "macOS workflow collect-results expected validation documentation")
+    require(workflow_doc, "same-directory temporary file", "macOS workflow local copy-back temporary publish documentation")
+    require(workflow_doc, "published without\noverwriting an existing archive", "macOS workflow local copy-back no-overwrite documentation")
+    require(workflow_doc, "remote\ntarball is also written to a same-directory temporary file", "macOS workflow remote result archive temporary publish documentation")
+    require(workflow_doc, "hard-linked into the final copy-back name without replacing", "macOS workflow remote result archive no-overwrite documentation")
+    require(workflow_doc, "Guest result directories must be new or empty before logging starts", "macOS workflow stale result directory documentation")
     require(workflow_doc, "tools/macos/validate_signoff_archive.py", "macOS workflow signoff archive validator documentation")
     require(workflow_doc, "--require-completed-checklist", "macOS workflow signoff archive completed checklist documentation")
     require(workflow_doc, "-MacOSOpenALProvider system", "macOS workflow OpenAL provider documentation")
@@ -3356,11 +3512,50 @@ def validate_docs_and_ci_hooks() -> None:
     require(commit, "tools/tests/macos_metal_bridge.py", "commit validation workflow")
 
 
+def validate_embedded_guest_root_validators_runtime() -> None:
+    assets = read("tools/macos/guest/openq4-macos-install-quake4-assets.sh")
+    guest = read("tools/macos/guest/openq4-macos-sync-build-test.sh")
+    asset_body = shell_heredoc_body(
+        assets,
+        "require_safe_asset_roots() {",
+        "macOS asset root validator",
+    )
+    guest_body = shell_heredoc_body(
+        guest,
+        "require_safe_guest_roots() {",
+        "macOS guest root validator",
+    )
+
+    temp_parent = ROOT / ".tmp"
+    temp_parent.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="macos-root-validator-", dir=temp_parent) as temp_dir:
+        root = Path(temp_dir)
+        home = root / "home"
+        home.mkdir()
+        workspace = home / "openq4-work"
+        basepath = workspace / "Quake4"
+
+        valid_args = [workspace.as_posix(), basepath.as_posix(), home.as_posix()]
+        for body, context in (
+            (asset_body, "macOS asset root validator"),
+            (guest_body, "macOS guest root validator"),
+        ):
+            code, stderr = run_embedded_python(body, valid_args, context)
+            if code != 0:
+                raise AssertionError(f"{context} rejected valid synthetic roots: {stderr}")
+
+            bad_args = [f"{workspace.as_posix()}\nunsafe", basepath.as_posix(), home.as_posix()]
+            code, stderr = run_embedded_python(body, bad_args, context)
+            if code == 0 or "must not contain control characters" not in stderr:
+                raise AssertionError(f"{context} did not reject control-character workspace paths: {stderr}")
+
+
 def main() -> None:
     validate_meson_contract()
     validate_sdl3_runtime_contract()
     validate_packaging_and_release_contract()
     validate_macos_workflow_security_contract()
+    validate_embedded_guest_root_validators_runtime()
     validate_macos_shell_entrypoints()
     validate_macos_app_bundle_validator_runtime()
     validate_macos_dmg_source_preflight_runtime()

@@ -1436,6 +1436,286 @@ ID_INLINE int idListSaveGameCompare( const fileTIME_T *a, const fileTIME_T *b ) 
 	return b->timeStamp - a->timeStamp;
 }
 
+static const int SESSION_MENU_MAX_SAVE_DESCRIPTION_BYTES = 8192;
+static const int SESSION_MENU_MAX_SAVEGAME_DICT_KV = 16384;
+static const int SESSION_MENU_MAX_SAVEGAME_BASENAME = 96;
+
+typedef struct sessionMenuSaveDescription_s {
+	idStr	saveName;
+	idStr	description;
+	idStr	screenshot;
+	bool	noOverwrite;
+} sessionMenuSaveDescription_t;
+
+static bool Session_MenuIsSafeSaveSlotName( const idStr &slotName ) {
+	if ( slotName.IsEmpty() || slotName.Length() > SESSION_MENU_MAX_SAVEGAME_BASENAME ) {
+		return false;
+	}
+
+	idStr scrubbedName = slotName;
+	sessLocal.ScrubSaveGameFileName( scrubbedName );
+	return scrubbedName.Icmp( slotName ) == 0;
+}
+
+static bool Session_MenuSaveDescriptionMatchesSlot( const idStr &slotName, const idStr &descriptionSaveName ) {
+	if ( descriptionSaveName.IsEmpty() ) {
+		return false;
+	}
+
+	idStr scrubbedName = descriptionSaveName;
+	sessLocal.ScrubSaveGameFileName( scrubbedName );
+	return scrubbedName.Icmp( slotName ) == 0;
+}
+
+static bool Session_MenuIsSafeSaveMaterialPath( const idStr &path ) {
+	if ( path.IsEmpty() ) {
+		return true;
+	}
+	if ( path.Length() >= MAX_STRING_CHARS || path[0] == '/' || path[0] == '\\' ) {
+		return false;
+	}
+	if ( idStr::FindText( path.c_str(), ".." ) >= 0 ) {
+		return false;
+	}
+
+	for ( int i = 0; i < path.Length(); i++ ) {
+		const unsigned char ch = static_cast<unsigned char>( path[i] );
+		if ( ch <= ' ' || ch >= 128 || ch == '\\' || ch == ':' || ch == '"' || ch == '<' || ch == '>' || ch == '|' ) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static bool Session_MenuReadSaveGameInt( idFile *file, int &value, const char *fieldName, const char *savePath ) {
+	const int offset = file->Tell();
+	const int bytesRead = file->ReadInt( value );
+	if ( bytesRead != sizeof( value ) ) {
+		common->Warning( "Savegame '%s' is truncated while reading %s at offset %d (read %d of %d)",
+			savePath ? savePath : "<unknown>", fieldName ? fieldName : "integer", offset, bytesRead, static_cast<int>( sizeof( value ) ) );
+		return false;
+	}
+	return true;
+}
+
+static bool Session_MenuReadSaveGameString( idFile *file, idStr &string, int maxLength, const char *fieldName, const char *savePath ) {
+	int len = 0;
+	const int lengthOffset = file->Tell();
+	if ( !Session_MenuReadSaveGameInt( file, len, fieldName, savePath ) ) {
+		string.Clear();
+		return false;
+	}
+
+	const int remainingBytes = Max( 0, file->Length() - file->Tell() );
+	if ( len < 0 || len > maxLength || len > remainingBytes ) {
+		common->Warning( "Savegame '%s' has invalid %s length %d at offset %d (remaining %d, max %d)",
+			savePath ? savePath : "<unknown>",
+			fieldName ? fieldName : "string",
+			len,
+			lengthOffset,
+			remainingBytes,
+			maxLength );
+		string.Clear();
+		return false;
+	}
+
+	string.Fill( ' ', len );
+	if ( len > 0 ) {
+		const int dataOffset = file->Tell();
+		const int bytesRead = file->Read( &string[0], len );
+		if ( bytesRead != len ) {
+			common->Warning( "Savegame '%s' is truncated while reading %s data at offset %d (read %d of %d)",
+				savePath ? savePath : "<unknown>", fieldName ? fieldName : "string", dataOffset, bytesRead, len );
+			string.Clear();
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static bool Session_MenuReadSaveGameCString( idFile *file, idStr &string, int maxLength, const char *fieldName, const char *savePath ) {
+	string.Clear();
+
+	const int offset = file->Tell();
+	for ( int len = 0; len < maxLength; len++ ) {
+		char ch = '\0';
+		const int bytesRead = file->Read( &ch, 1 );
+		if ( bytesRead != 1 ) {
+			common->Warning( "Savegame '%s' is truncated while reading %s at offset %d (read %d of 1)",
+				savePath ? savePath : "<unknown>", fieldName ? fieldName : "string", file->Tell(), bytesRead );
+			string.Clear();
+			return false;
+		}
+		if ( ch == '\0' ) {
+			return true;
+		}
+		string += ch;
+	}
+
+	common->Warning( "Savegame '%s' has unterminated %s at offset %d (max %d)",
+		savePath ? savePath : "<unknown>", fieldName ? fieldName : "string", offset, maxLength );
+	string.Clear();
+	return false;
+}
+
+static bool Session_MenuSkipSaveGameDict( idFile *file, const char *fieldName, const char *savePath ) {
+	int count = 0;
+	if ( !Session_MenuReadSaveGameInt( file, count, fieldName, savePath ) ) {
+		return false;
+	}
+	if ( count < 0 || count > SESSION_MENU_MAX_SAVEGAME_DICT_KV ) {
+		common->Warning( "Savegame '%s' has invalid %s key/value count %d (max %d)",
+			savePath ? savePath : "<unknown>",
+			fieldName ? fieldName : "dictionary",
+			count,
+			SESSION_MENU_MAX_SAVEGAME_DICT_KV );
+		return false;
+	}
+
+	for ( int i = 0; i < count; i++ ) {
+		idStr key;
+		idStr value;
+		if ( !Session_MenuReadSaveGameCString( file, key, MAX_STRING_CHARS, va( "%s key %d", fieldName ? fieldName : "dictionary", i ), savePath ) ||
+			 !Session_MenuReadSaveGameCString( file, value, MAX_STRING_CHARS, va( "%s value %d", fieldName ? fieldName : "dictionary", i ), savePath ) ) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static bool Session_MenuIsSupportedSaveGameName( const idStr &gameName ) {
+	return gameName.Icmp( SAVEGAME_GAME_NAME_RETAIL ) == 0 ||
+		gameName.Icmp( SAVEGAME_GAME_NAME_LEGACY_OPENQ4 ) == 0;
+}
+
+static bool Session_MenuSaveGameHeaderUsesEntityFilter( const idStr &gameName ) {
+	return gameName.Icmp( SAVEGAME_GAME_NAME_RETAIL ) == 0;
+}
+
+static bool Session_MenuIsCompatibleSaveGameVersion( const int version ) {
+	return version == SAVEGAME_VERSION ||
+		version == LEGACY_OPENQ4_SAVEGAME_VERSION ||
+		version == LEGACY_OPENQ4_SAVEGAME_VERSION_ALT;
+}
+
+static bool Session_MenuIsLoadableSaveGameSlot( const idStr &slotName ) {
+	if ( !Session_MenuIsSafeSaveSlotName( slotName ) ) {
+		common->Warning( "Ignoring savegame slot with unsafe filename '%s'", slotName.c_str() );
+		return false;
+	}
+
+	idStr savePath = va( "savegames/%s.save", slotName.c_str() );
+	idStr game = cvarSystem->GetCVarString( "fs_game" );
+	idFile *file = fileSystem->OpenFileRead( savePath.c_str(), true, game.Length() ? game.c_str() : NULL );
+	if ( file == NULL ) {
+		return false;
+	}
+
+	idStr gamename;
+	idStr saveMap;
+	idStr entityFilter;
+	int version = 0;
+	bool valid = true;
+	valid = valid && Session_MenuReadSaveGameString( file, gamename, MAX_STRING_CHARS, "game name", savePath.c_str() );
+	valid = valid && Session_MenuIsSupportedSaveGameName( gamename );
+	valid = valid && Session_MenuReadSaveGameInt( file, version, "version", savePath.c_str() );
+	valid = valid && Session_MenuIsCompatibleSaveGameVersion( version );
+	valid = valid && Session_MenuReadSaveGameString( file, saveMap, MAX_STRING_CHARS, "map name", savePath.c_str() );
+	if ( valid && Session_MenuSaveGameHeaderUsesEntityFilter( gamename ) ) {
+		valid = Session_MenuReadSaveGameString( file, entityFilter, MAX_STRING_CHARS, "entity filter", savePath.c_str() );
+	}
+	for ( int i = 0; valid && i < MAX_ASYNC_CLIENTS; i++ ) {
+		valid = Session_MenuSkipSaveGameDict( file, va( "persistent player info %d", i ), savePath.c_str() );
+	}
+	if ( valid && saveMap.IsEmpty() ) {
+		common->Warning( "Savegame '%s' has an empty map name", savePath.c_str() );
+		valid = false;
+	}
+
+	fileSystem->CloseFile( file );
+	return valid;
+}
+
+static bool Session_MenuReadSaveDescription( const idStr &slotName, sessionMenuSaveDescription_t &description ) {
+	description.saveName.Clear();
+	description.description.Clear();
+	description.screenshot.Clear();
+	description.noOverwrite = false;
+
+	if ( !Session_MenuIsSafeSaveSlotName( slotName ) ) {
+		common->Warning( "Ignoring save description for unsafe slot '%s'", slotName.c_str() );
+		return false;
+	}
+
+	idStr descriptionPath = va( "savegames/%s.txt", slotName.c_str() );
+	idStr game = cvarSystem->GetCVarString( "fs_game" );
+	idFile *file = fileSystem->OpenFileRead( descriptionPath.c_str(), true, game.Length() ? game.c_str() : NULL );
+	if ( file == NULL ) {
+		return false;
+	}
+
+	const int len = file->Length();
+	if ( len < 0 || len > SESSION_MENU_MAX_SAVE_DESCRIPTION_BYTES ) {
+		common->Warning( "Save description '%s' has invalid size %d (max %d)",
+			descriptionPath.c_str(), len, SESSION_MENU_MAX_SAVE_DESCRIPTION_BYTES );
+		fileSystem->CloseFile( file );
+		return false;
+	}
+
+	char *buffer = new char[ len + 1 ];
+	const int bytesRead = len > 0 ? file->Read( buffer, len ) : 0;
+	fileSystem->CloseFile( file );
+	if ( bytesRead != len ) {
+		common->Warning( "Save description '%s' is truncated (read %d of %d)",
+			descriptionPath.c_str(), bytesRead, len );
+		delete[] buffer;
+		return false;
+	}
+	buffer[ len ] = '\0';
+
+	bool valid = true;
+	{
+		idLexer src( buffer, len, descriptionPath.c_str(), LEXFL_NOERRORS | LEXFL_NOSTRINGCONCAT );
+		idToken tok;
+		if ( src.ReadToken( &tok ) ) {
+			description.saveName = tok;
+		} else {
+			valid = false;
+		}
+		if ( valid && src.ReadToken( &tok ) ) {
+			description.description = tok;
+		} else {
+			valid = false;
+		}
+		if ( valid && src.ReadToken( &tok ) ) {
+			description.screenshot = tok;
+		}
+		if ( valid && src.ReadToken( &tok ) ) {
+			description.noOverwrite = !idStr::Icmp( tok.c_str(), "nooverwrite" );
+		}
+	}
+
+	delete[] buffer;
+	if ( valid && !Session_MenuSaveDescriptionMatchesSlot( slotName, description.saveName ) ) {
+		common->Warning( "Save description '%s' names slot '%s', expected '%s'",
+			descriptionPath.c_str(), description.saveName.c_str(), slotName.c_str() );
+		valid = false;
+	}
+	if ( valid && ( description.saveName.Length() >= MAX_STRING_CHARS || description.description.Length() >= MAX_STRING_CHARS ) ) {
+		common->Warning( "Save description '%s' has an oversized display token", descriptionPath.c_str() );
+		valid = false;
+	}
+	if ( valid && !Session_MenuIsSafeSaveMaterialPath( description.screenshot ) ) {
+		common->Warning( "Save description '%s' has unsafe screenshot material '%s'",
+			descriptionPath.c_str(), description.screenshot.c_str() );
+		valid = false;
+	}
+	return valid;
+}
+
 /*
 ===============
 idSessionLocal::GetSaveGameList
@@ -1444,6 +1724,7 @@ idSessionLocal::GetSaveGameList
 void idSessionLocal::GetSaveGameList( idStrList &fileList, idList<fileTIME_T> &fileTimes ) {
 	int i;
 	idFileList *files;
+	idStrList rawFileList;
 
 	// NOTE: no fs_game_base for savegames
 	idStr game = cvarSystem->GetCVarString( "fs_game" );
@@ -1453,19 +1734,27 @@ void idSessionLocal::GetSaveGameList( idStrList &fileList, idList<fileTIME_T> &f
 		files = fileSystem->ListFiles( "savegames", ".save" );
 	}
 	
-	fileList = files->GetList();
+	rawFileList = files->GetList();
 	fileSystem->FreeFileList( files );
 
-	for ( i = 0; i < fileList.Num(); i++ ) {
-		ID_TIME_T timeStamp;
+	fileList.Clear();
+	fileTimes.Clear();
 
-		fileSystem->ReadFile( "savegames/" + fileList[i], NULL, &timeStamp );
-		fileList[i].StripLeading( '/' );
-		fileList[i].StripFileExtension();
+	for ( i = 0; i < rawFileList.Num(); i++ ) {
+		ID_TIME_T timeStamp;
+		idStr slotName = rawFileList[i];
+		slotName.StripLeading( '/' );
+		slotName.StripFileExtension();
+		if ( slotName.IsEmpty() || !Session_MenuIsLoadableSaveGameSlot( slotName ) ) {
+			continue;
+		}
+
+		fileSystem->ReadFile( va( "savegames/%s.save", slotName.c_str() ), NULL, &timeStamp );
 
 		fileTIME_T ft;
-		ft.index = i;
+		ft.index = fileList.Num();
 		ft.timeStamp = timeStamp;
+		fileList.Append( slotName );
 		fileTimes.Append( ft );
 	}
 
@@ -1502,12 +1791,9 @@ void idSessionLocal::SetSaveGameGuiVars( void ) {
 	for ( i = 0; i < fileList.Num(); i++ ) {
 		loadGameList[i] = fileList[fileTimes[i].index];
 
-		idLexer src(LEXFL_NOERRORS|LEXFL_NOSTRINGCONCAT);
-		if ( src.LoadFile( va("savegames/%s.txt", loadGameList[i].c_str()) ) ) {
-			idToken tok;
-			src.ReadToken( &tok );
-			src.ReadToken( &tok );
-			name = tok;
+		sessionMenuSaveDescription_t description;
+		if ( Session_MenuReadSaveDescription( loadGameList[i], description ) && description.description.Length() > 0 ) {
+			name = description.description;
 		} else {
 			name = loadGameList[i];
 		}
@@ -1732,16 +2018,11 @@ bool idSessionLocal::HandleSaveGameMenuCommand( idCmdArgs &args, int &icmd ) {
 					fileSystem->CloseFile( file );
 
 					// The file exists, see if it's an autosave
-					saveFileName.SetFileExtension(".txt");
-					idLexer src(LEXFL_NOERRORS|LEXFL_NOSTRINGCONCAT);
-					if ( src.LoadFile( saveFileName ) ) {
-						idToken tok;
-						idToken noOverwriteToken;
-						src.ReadToken( &tok ); // Name
-						src.ReadToken( &tok ); // Map
-						src.ReadToken( &tok ); // Screenshot
-						src.ReadToken( &noOverwriteToken ); // Optional no-overwrite marker
-						if ( !tok.IsEmpty() || !idStr::Icmp( noOverwriteToken.c_str(), "nooverwrite" ) ) {
+					idStr saveSlotName = saveGameName;
+					sessLocal.ScrubSaveGameFileName( saveSlotName );
+					sessionMenuSaveDescription_t description;
+					if ( Session_MenuReadSaveDescription( saveSlotName, description ) ) {
+						if ( description.screenshot.Length() > 0 || description.noOverwrite ) {
 							// NOTE: base/ gui doesn't handle that one
 							guiActive->HandleNamedEvent( "autosaveOverwriteError" );
 							return true;
@@ -1775,19 +2056,11 @@ bool idSessionLocal::HandleSaveGameMenuCommand( idCmdArgs &args, int &icmd ) {
 			const idMaterial *material;
 
 			idStr saveName, description, screenshot;
-			idLexer src(LEXFL_NOERRORS|LEXFL_NOSTRINGCONCAT);
-			if ( src.LoadFile( va("savegames/%s.txt", loadGameList[choice].c_str()) ) ) {
-				idToken tok;
-
-				src.ReadToken( &tok );
-				saveName = tok;
-
-				src.ReadToken( &tok );
-				description = tok;
-
-				src.ReadToken( &tok );
-				screenshot = tok;
-
+			sessionMenuSaveDescription_t saveDescription;
+			if ( Session_MenuReadSaveDescription( loadGameList[choice], saveDescription ) ) {
+				saveName = saveDescription.saveName;
+				description = saveDescription.description;
+				screenshot = saveDescription.screenshot;
 			} else {
 				saveName = loadGameList[choice];
 				description = loadGameList[choice];

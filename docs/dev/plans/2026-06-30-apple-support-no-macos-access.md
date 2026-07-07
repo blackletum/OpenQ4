@@ -130,7 +130,9 @@ the work below.
 - `tools/macos/collect_macos_support_info.sh` gathers safe host/package/log
   metadata into `openq4-macos-support-YYYYMMDD-HHMMSSZ.tar.gz`, redacts
   obvious user paths and email addresses, avoids environment dumps, does not
-  launch openQ4, and does not copy retail `q4base` PK4 assets.
+  launch openQ4, does not copy retail `q4base` PK4 assets, stream-limits
+  command/report output before redaction, and sanitizes copied public text so
+  embedded control characters cannot poison issue attachments.
 - The collector now adds `system/rosetta.txt` for collector-process
   architecture plus `sysctl.proc_translated` state,
   `logs/renderer-summary.txt` for renderer startup,
@@ -263,6 +265,11 @@ the work below.
   state, texture-unit, and ARB program-binding baseline on the bypass path and
   `src/renderer/draw_common.cpp` records post-bypass light-scale,
   ambient-rescue, and frame-tail breadcrumbs.
+- The July 6 issue #73 follow-up report for 0.6.92 reached
+  `ARB2 interaction bypass light scale` before crashing, so the bypass path now
+  forces a neutral light-scale/overbright state, skips the post-interaction
+  `RB_STD_LightScale()` fullscreen pass, and records
+  `ARB2 interaction bypass light scale skipped` before ambient rescue.
 - `src/renderer/draw_arb2.cpp` already routes repeated required program binds
   through `R_BindARBProgram`; Phase 3 now adds
   `RB_ErrorIfDriverRequiredSimpleInteractionFailed()` so Apple GL 2.1 fallback

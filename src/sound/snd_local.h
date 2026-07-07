@@ -55,11 +55,21 @@ SamplesToMsec
 */
 ID_INLINE_EXTERN uint32 MsecToSamples( uint32 msec, uint32 sampleRate )
 {
-	return ( msec * ( sampleRate / 100 ) ) / 10;
+	if( sampleRate == 0 )
+	{
+		return 0;
+	}
+	const uint64 samples = ( static_cast<uint64>( msec ) * static_cast<uint64>( sampleRate ) ) / 1000ULL;
+	return samples > static_cast<uint64>( idMath::INT_MAX ) ? static_cast<uint32>( idMath::INT_MAX ) : static_cast<uint32>( samples );
 }
 ID_INLINE_EXTERN uint32 SamplesToMsec( uint32 samples, uint32 sampleRate )
 {
-	return sampleRate < 100 ? 0 : ( samples * 10 ) / ( sampleRate / 100 );
+	if( sampleRate == 0 )
+	{
+		return 0;
+	}
+	const uint64 msec = ( static_cast<uint64>( samples ) * 1000ULL ) / static_cast<uint64>( sampleRate );
+	return msec > static_cast<uint64>( idMath::INT_MAX ) ? static_cast<uint32>( idMath::INT_MAX ) : static_cast<uint32>( msec );
 }
 
 /*
@@ -224,12 +234,15 @@ class idSoundChannel
 {
 public:
 	bool	CanMute() const;
+	bool	IsVoicePlayback() const;
 
 	void	Mute();
 	bool	CheckForCompletion( int currentTime );
 
 	void	UpdateVolume( int currentTime );
 	void	UpdateHardware( float volumeAdd, int currentTime );
+	int		MixPrioritySortKey( int currentTime ) const;
+	int		AdmissionPriority( int currentTime ) const;
 
 	// returns true if this channel is marked as looping
 	bool	IsLooping() const;

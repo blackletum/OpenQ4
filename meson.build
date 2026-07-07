@@ -422,6 +422,26 @@ if build_games
   endforeach
 
   game_sources = files(game_absolute_paths)
+
+  savegame_compat_header = custom_target(
+    'openq4_savegame_compat_generated',
+    output: 'openq4_savegame_compat_generated.h',
+    command: [
+      py,
+      meson.project_source_root() / 'tools' / 'build' / 'generate_savegame_compat_header.py',
+      '--project-root',
+      meson.project_source_root(),
+      '--game-stage-root',
+      game_stage_root,
+      '--header-out',
+      '@OUTPUT@',
+    ],
+    depend_files: files(engine_source_paths) + game_sources + files(
+      'tools/build/generate_savegame_compat_header.py',
+    ),
+    install: false,
+  )
+  game_sources += [savegame_compat_header]
 endif
 
 if build_engine

@@ -62,6 +62,12 @@ static const float SOUND_OCCLUSION_PER_BLOCKED_PORTAL = 0.5f;
 static const float SOUND_ENVIROSUIT_OCCLUSION = 0.5f;
 static const int SOUND_FADE_MAX_MSEC = 24 * 60 * 60 * 1000;
 static const float SOUND_FADE_MAX_DB = 24.0f;
+static const int SOUND_ONE_SHOT_PRIORITY_WINDOW_MSEC = 750;
+static const int SOUND_ONE_SHOT_PRIORITY_BOOST = 3600;
+static const int SOUND_RUMBLE_PRIORITY_BOOST = 1200;
+static const int SOUND_LOOP_PRIORITY_PENALTY = 1800;
+static const int SOUND_MUSIC_PRIORITY_PENALTY = 3600;
+static const int SOUND_VOICE_PRIORITY_BOOST = 100000;
 
 static ID_INLINE float SoundSanitizeUnitValue( const float value, const float fallback )
 {
@@ -184,6 +190,102 @@ static bool IsVoicePlaybackChannel( const idSoundChannel* chan )
 	return chan->logicalChannel == Q4_SOUND_CHANNEL_VOICE_0 ||
 		   chan->logicalChannel == Q4_SOUND_CHANNEL_VOICE_1 ||
 		   ( IsRadioChatterChannel( chan ) && ( chan->parms.soundShaderFlags & SSF_GLOBAL ) != 0 );
+}
+
+static bool SoundParmsAreVoicePlayback( const soundShaderParms_t& parms, const int logicalChannel )
+{
+	const int voiceFlags = SSF_VO | SSF_IS_VO | SSF_VO_FOR_PLAYER;
+	return ( parms.soundShaderFlags & voiceFlags ) != 0 ||
+		   logicalChannel == Q4_SOUND_CHANNEL_VOICE_0 ||
+		   logicalChannel == Q4_SOUND_CHANNEL_VOICE_1 ||
+		   ( logicalChannel == Q4_SOUND_CHANNEL_RADIO_CHATTER && ( parms.soundShaderFlags & SSF_GLOBAL ) != 0 );
+}
+
+static int SoundPriorityFromVolumeDB( float volumeDB )
+{
+	if( FLOAT_IS_NAN( volumeDB ) )
+	{
+		volumeDB = DB_SILENCE;
+	}
+	volumeDB = idMath::ClampFloat( DB_SILENCE, 24.0f, volumeDB );
+	return idMath::Ftoi( volumeDB * 100.0f );
+}
+
+static int SoundTransientPriorityBoost( const soundShaderParms_t& parms, const idSoundSample* leadinSample, const idSoundSample* loopingSample, const int ageMsec )
+{
+	if( leadinSample == NULL )
+	{
+		return 0;
+	}
+	if( ( parms.soundShaderFlags & ( SSF_LOOPING | SSF_MUSIC ) ) != 0 || loopingSample != NULL )
+	{
+		return 0;
+	}
+	if( ageMsec < 0 || ageMsec >= SOUND_ONE_SHOT_PRIORITY_WINDOW_MSEC )
+	{
+		return 0;
+	}
+
+	const int remaining = SOUND_ONE_SHOT_PRIORITY_WINDOW_MSEC - ageMsec;
+	int boost = SOUND_ONE_SHOT_PRIORITY_BOOST;
+	if( ( parms.soundShaderFlags & SSF_CAUSE_RUMBLE ) != 0 || ( !FLOAT_IS_NAN( parms.shakes ) && parms.shakes != 0.0f ) )
+	{
+		boost += SOUND_RUMBLE_PRIORITY_BOOST;
+	}
+	return idMath::Ftoi( boost * ( remaining / static_cast<float>( SOUND_ONE_SHOT_PRIORITY_WINDOW_MSEC ) ) );
+}
+
+static bool SoundCanReplaceEmitterChannelForAdmission( const soundShaderParms_t& parms, const int logicalChannel, const idSoundSample* leadinSample, const idSoundSample* loopingSample )
+{
+	if( SoundParmsAreVoicePlayback( parms, logicalChannel ) )
+	{
+		return true;
+	}
+	return SoundTransientPriorityBoost( parms, leadinSample, loopingSample, 0 ) > 0;
+}
+
+static int SoundAdmissionPriority( const soundShaderParms_t& parms, const int logicalChannel, const idSoundSample* leadinSample, const idSoundSample* loopingSample, const int ageMsec )
+{
+	int priority = SoundPriorityFromVolumeDB( VolumeScaleToDB( SoundSanitizeGainScale( parms.volume, 0.0f ) ) );
+	if( SoundParmsAreVoicePlayback( parms, logicalChannel ) )
+	{
+		priority += SOUND_VOICE_PRIORITY_BOOST;
+	}
+	if( ( parms.soundShaderFlags & SSF_LOOPING ) != 0 || loopingSample != NULL )
+	{
+		priority -= SOUND_LOOP_PRIORITY_PENALTY;
+	}
+	if( ( parms.soundShaderFlags & SSF_MUSIC ) != 0 )
+	{
+		priority -= SOUND_MUSIC_PRIORITY_PENALTY;
+	}
+	priority += SoundTransientPriorityBoost( parms, leadinSample, loopingSample, ageMsec );
+	return priority;
+}
+
+static int FindReplaceableChannelForPriority( const idStaticList< idSoundChannel*, MAX_CHANNELS_PER_EMITTER >& channels, const int newPriority, const int currentTime )
+{
+	int replaceIndex = -1;
+	int replacePriority = newPriority;
+	for( int i = 0; i < channels.Num(); i++ )
+	{
+		idSoundChannel* const channel = channels[i];
+		if( channel == NULL || !channel->CanMute() )
+		{
+			continue;
+		}
+		const int channelPriority = channel->AdmissionPriority( currentTime );
+		if( channelPriority >= newPriority )
+		{
+			continue;
+		}
+		if( replaceIndex == -1 || channelPriority < replacePriority )
+		{
+			replaceIndex = i;
+			replacePriority = channelPriority;
+		}
+	}
+	return replaceIndex;
 }
 
 static bool ReceivesQuake4ExtraAttenuation( const idSoundChannel* chan )
@@ -346,8 +448,51 @@ Never actually mute VO because we can't restart them precisely enough for lip sy
 */
 bool idSoundChannel::CanMute() const
 {
-	const int voiceFlags = SSF_VO | SSF_IS_VO | SSF_VO_FOR_PLAYER;
-	return ( parms.soundShaderFlags & voiceFlags ) == 0 && !IsVoicePlaybackChannel( this );
+	return !IsVoicePlayback();
+}
+
+/*
+========================
+idSoundChannel::IsVoicePlayback
+========================
+*/
+bool idSoundChannel::IsVoicePlayback() const
+{
+	return SoundParmsAreVoicePlayback( parms, logicalChannel ) || IsVoicePlaybackChannel( this );
+}
+
+/*
+========================
+idSoundChannel::MixPrioritySortKey
+========================
+*/
+int idSoundChannel::MixPrioritySortKey( const int currentTime ) const
+{
+	int priority = SoundPriorityFromVolumeDB( volumeDB );
+	if( IsVoicePlayback() )
+	{
+		priority += SOUND_VOICE_PRIORITY_BOOST;
+	}
+	if( IsLooping() )
+	{
+		priority -= SOUND_LOOP_PRIORITY_PENALTY;
+	}
+	if( ( parms.soundShaderFlags & SSF_MUSIC ) != 0 )
+	{
+		priority -= SOUND_MUSIC_PRIORITY_PENALTY;
+	}
+	priority += SoundTransientPriorityBoost( parms, leadinSample, loopingSample, currentTime - startTime );
+	return priority;
+}
+
+/*
+========================
+idSoundChannel::AdmissionPriority
+========================
+*/
+int idSoundChannel::AdmissionPriority( const int currentTime ) const
+{
+	return SoundAdmissionPriority( parms, logicalChannel, leadinSample, loopingSample, currentTime - startTime );
 }
 
 /*
@@ -499,10 +644,7 @@ void idSoundChannel::UpdateVolume( int currentTime )
 		volumeScale = 0.0f;
 	}
 
-	if( FLOAT_IS_NAN( volumeScale ) || volumeScale <= 0.0f )
-	{
-		volumeScale = 0.0f;
-	}
+	volumeScale = SoundSanitizeGainScale( volumeScale, 0.0f );
 
 	// store the new volume on the channel
 	volumeDB = volumeScale < SOUND_WORLD_VOLUME_EPSILON ? DB_SILENCE : VolumeScaleToDB( volumeScale );
@@ -643,11 +785,27 @@ void idSoundChannel::UpdateHardware( float volumeAdd, int currentTime )
 
 	if( issueStart )
 	{
-		hardwareVoice->Start( startOffset, parms.soundShaderFlags | ( parms.shakes == 0.0f ? SSF_NO_FLICKER : 0 ) );
+		if( !hardwareVoice->Start( startOffset, parms.soundShaderFlags | ( parms.shakes == 0.0f ? SSF_NO_FLICKER : 0 ) ) )
+		{
+			soundSystemLocal.FreeVoice( hardwareVoice );
+			hardwareVoice = NULL;
+			if( !IsLooping() )
+			{
+				endTime = currentTime;
+			}
+		}
 	}
 	else
 	{
-		hardwareVoice->Update();
+		if( !hardwareVoice->Update() )
+		{
+			soundSystemLocal.FreeVoice( hardwareVoice );
+			hardwareVoice = NULL;
+			if( !IsLooping() )
+			{
+				endTime = currentTime;
+			}
+		}
 	}
 }
 
@@ -1192,11 +1350,29 @@ int idSoundEmitterLocal::StartSound( const idSoundShader* shader, const s_channe
 		CheckForCompletion( currentTime );	// as a last chance try to release finished sounds here
 		if( channels.Num() == channels.Max() )
 		{
-			if( showStartSound )
+			const int newPriority = SoundAdmissionPriority( chanParms, channel, leadinSample, loopingSample, 0 );
+			const int replaceIndex = SoundCanReplaceEmitterChannelForAdmission( chanParms, channel, leadinSample, loopingSample )
+				? FindReplaceableChannelForPriority( channels, newPriority, currentTime )
+				: -1;
+			if( replaceIndex >= 0 )
 			{
-				idLib::Printf( S_COLOR_RED "No free emitter channels!\n" );
+				idSoundChannel* const replacedChannel = channels[replaceIndex];
+				if( showStartSound )
+				{
+					idLib::Printf( S_COLOR_YELLOW "EVICT %s: ",
+						replacedChannel != NULL && replacedChannel->soundShader != NULL ? replacedChannel->soundShader->GetName() : "<null>" );
+				}
+				channels.RemoveIndex( replaceIndex );
+				soundWorld->FreeSoundChannel( replacedChannel );
 			}
-			return 0;
+			else
+			{
+				if( showStartSound )
+				{
+					idLib::Printf( S_COLOR_RED "No free emitter channels!\n" );
+				}
+				return 0;
+			}
 		}
 	}
 	idSoundChannel* chan = soundWorld->AllocSoundChannel();

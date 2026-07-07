@@ -3,18 +3,27 @@
 
 from __future__ import annotations
 
+import os
 import re
 import struct
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+GAME_LIBS_ROOT = Path(os.environ.get("OPENQ4_GAMELIBS_REPO", ROOT.parent / "openQ4-game")).resolve()
 
 
 def read(relative_path: str) -> str:
     path = ROOT / relative_path
     if not path.is_file():
         raise AssertionError(f"Required source file not found: {path}")
+    return path.read_text(encoding="utf-8")
+
+
+def read_game_libs(relative_path: str) -> str:
+    path = GAME_LIBS_ROOT / relative_path
+    if not path.is_file():
+        raise AssertionError(f"Required openQ4-game source file not found: {path}")
     return path.read_text(encoding="utf-8")
 
 
@@ -406,8 +415,43 @@ def validate_ssd_restore_fuzz_model() -> None:
 
 def validate_session_source_contract() -> None:
     source = read("src/framework/Session.cpp")
+    menu_source = read("src/framework/Session_menu.cpp")
+    dict_source = read("src/idlib/Dict.cpp")
+    sound_world_source = read("src/sound/snd_world.cpp")
 
     for token in (
+        '#include "BuildVersion.h"',
+        "static bool Session_WriteSaveGameBytes( idFile *file, const void *buffer, int len, const char *fieldName, const char *savePath )",
+        "static bool Session_WriteSaveGameInt( idFile *file, int value, const char *fieldName, const char *savePath )",
+        "static bool Session_WriteSaveGameString( idFile *file, const char *string, int maxLength, const char *fieldName, const char *savePath )",
+        "static bool Session_WriteSaveGameCString( idFile *file, const char *string, int maxLength, const char *fieldName, const char *savePath )",
+        "static bool Session_WriteSaveGameDict( idFile *file, const idDict &dict, const char *fieldName, const char *savePath )",
+        "static bool Session_WriteSaveTextLine( idFile *file, const char *line, bool quoted, const char *fieldName, const char *savePath )",
+        "SESSION_OPENQ4_SAVEGAME_COMPATIBILITY_MAGIC",
+        "SESSION_OPENQ4_SAVEGAME_FOOTER_MAGIC",
+        "SESSION_OPENQ4_SAVEGAME_FOOTER_BYTES",
+        "SESSION_MAX_SAVE_DESCRIPTION_BYTES = 8192",
+        "SESSION_MAX_SAVE_PREVIEW_BYTES = 64 * 1024 * 1024",
+        "static bool Session_IsSafeSaveMaterialPath( const idStr &path )",
+        "static bool Session_SaveDescriptionMatchesSlot( const idStr &expectedSlotName, const idStr &descriptionSaveName )",
+        "static bool Session_ValidateStagedSaveDescription( const idStr &descriptionPath, const idStr &expectedSlotName, saveType_t saveType )",
+        "static bool Session_ValidateStagedSavePreview( const idStr &previewPath )",
+        "static bool Session_ValidateStagedSaveGamePayload( idFile *file, const idStr &savePath )",
+        "if ( marker != SESSION_OPENQ4_SAVEGAME_COMPATIBILITY_MAGIC )",
+        "if ( payloadBuild != BUILD_NUMBER )",
+        "const int footerOffset = fileLength - SESSION_OPENQ4_SAVEGAME_FOOTER_BYTES;",
+        "if ( footerMarker != SESSION_OPENQ4_SAVEGAME_FOOTER_MAGIC )",
+        "if ( savedFooterOffset != footerOffset )",
+        "if ( valid && !Session_SaveDescriptionMatchesSlot( expectedSlotName, sidecarSaveName ) )",
+        "if ( valid && !Session_IsSafeSaveMaterialPath( sidecarScreenshot ) )",
+        "if ( imageType != 2 && imageType != 10 )",
+        "if ( bitsPerPixel != 24 && bitsPerPixel != 32 )",
+        "Session_ValidateStagedSaveDescription( tempDescriptionFile, saveSlotFileName, saveType )",
+        "Session_ValidateStagedSavePreview( tempPreviewFile )",
+        "Session_RemoveRelativeSaveFile( tempPreviewFile );",
+        "if ( bytesWritten != len )",
+        "if ( bytesWritten != sizeof( value ) )",
+        "if ( count < 0 || count > SESSION_MAX_SAVEGAME_DICT_KV )",
         "static bool Session_ReadSaveGameInt( idFile *file, int &value, const char *fieldName, const char *savePath )",
         "if ( bytesRead != sizeof( value ) )",
         "static bool Session_ReadSaveGameString( idFile *file, idStr &string, int maxLength, const char *fieldName, const char *savePath )",
@@ -421,33 +465,388 @@ def validate_session_source_contract() -> None:
         "if ( count < 0 || count > SESSION_MAX_SAVEGAME_DICT_KV )",
         "Session_ReadSaveGameCString( file, key, MAX_STRING_CHARS",
         "Session_ReadSaveGameCString( file, value, MAX_STRING_CHARS",
+        "idDict loadedPersistentPlayerInfo[MAX_ASYNC_CLIENTS];",
+        "idFile *loadGameFile = fileSystem->OpenFileRead",
+        "loadingSaveGame = false;",
+        "savegameFile = NULL;",
+        "if ( headerValid && saveMap.IsEmpty() )",
+        "mapSpawnData.persistentPlayerInfo[i] = loadedPersistentPlayerInfo[i];",
+        "savegameFile = loadGameFile;",
+        "inFileName[i] <= ' '",
     ):
         require(source, token, "Session savegame corruption reader contract")
 
     for field_name in ("game name", "map name", "entity filter"):
         require_regex(
             source,
-            rf"Session_ReadSaveGameString\s*\(\s*savegameFile,\s*[^,]+,\s*MAX_STRING_CHARS,\s*\"{field_name}\"",
+            rf"Session_ReadSaveGameString\s*\(\s*loadGameFile,\s*[^,]+,\s*MAX_STRING_CHARS,\s*\"{field_name}\"",
             f"load savegame bounded {field_name} header read",
         )
 
-    require(source, "if ( !Session_IsSupportedSaveGameName( gamename ) )", "savegame header name allowlist")
+    require(source, "if ( headerValid && !Session_IsSupportedSaveGameName( gamename ) )", "savegame header name allowlist")
     require(source, "for ( i = 0; i < MAX_ASYNC_CLIENTS; i++ )", "fixed persistent-player dictionary slots")
     require_regex(
         source,
-        r"Session_ReadSaveGameDict\s*\(\s*savegameFile,\s*mapSpawnData\.persistentPlayerInfo\s*\[\s*i\s*\],"
+        r"Session_ReadSaveGameDict\s*\(\s*loadGameFile,\s*loadedPersistentPlayerInfo\s*\[\s*i\s*\],"
         r"\s*va\s*\(\s*\"persistent player info %d\"",
-        "bounded persistent-player dictionary reads",
+        "bounded persistent-player dictionary reads into temporary load state",
+    )
+    require_regex(
+        source,
+        r"for\s*\(\s*i\s*=\s*0;\s*i\s*<\s*MAX_ASYNC_CLIENTS;\s*i\+\+\s*\).*?"
+        r"mapSpawnData\.persistentPlayerInfo\s*\[\s*i\s*\]\s*=\s*loadedPersistentPlayerInfo\s*\[\s*i\s*\];",
+        "persistent-player dictionaries are committed after full header validation",
     )
     require_regex(
         source,
         r"Session_ReadSaveGameString\s*\(\s*file,\s*gamename,\s*MAX_STRING_CHARS,\s*\"game name\".*?"
-        r"Session_ReadSaveGameString\s*\(\s*file,\s*saveMap,\s*MAX_STRING_CHARS,\s*\"map name\"",
-        "staged save header validation uses bounded strings",
+        r"Session_ReadSaveGameString\s*\(\s*file,\s*saveMap,\s*MAX_STRING_CHARS,\s*\"map name\".*?"
+        r"Session_ReadSaveGameDict\s*\(\s*file,\s*persistentPlayerInfo.*?"
+        r"Session_ValidateStagedSaveGamePayload\s*\(\s*file,\s*savePath\s*\)",
+        "staged save validation uses bounded header/dict reads and payload footer check",
+    )
+    require_regex(
+        source,
+        r"Session_WriteSaveTextLine\s*\(\s*fileDesc,\s*escapedSlotName.*?"
+        r"if\s*\(\s*!descriptionWritten\s*\).*?"
+        r"Session_ValidateStagedSaveDescription\s*\(\s*tempDescriptionFile,\s*saveSlotFileName,\s*saveType\s*\)",
+        "staged save description write and validation cleanup",
+    )
+    require_regex(
+        source,
+        r"Session_WriteSaveGameString\s*\(\s*fileOut,\s*SAVEGAME_GAME_NAME_RETAIL.*?"
+        r"Session_WriteSaveGameDict\s*\(\s*fileOut,\s*mapSpawnData\.persistentPlayerInfo\s*\[\s*i\s*\].*?"
+        r"if\s*\(\s*!headerWritten\s*\)",
+        "staged save header write failure cleanup",
+    )
+
+    for token in (
+        "SESSION_MENU_MAX_SAVE_DESCRIPTION_BYTES = 8192",
+        "SESSION_MENU_MAX_SAVEGAME_DICT_KV = 16384",
+        "SESSION_MENU_MAX_SAVEGAME_BASENAME = 96",
+        "static bool Session_MenuIsSafeSaveSlotName( const idStr &slotName )",
+        "static bool Session_MenuSaveDescriptionMatchesSlot( const idStr &slotName, const idStr &descriptionSaveName )",
+        "static bool Session_MenuIsSafeSaveMaterialPath( const idStr &path )",
+        "sessLocal.ScrubSaveGameFileName( scrubbedName );",
+        "idStr::FindText( path.c_str(), \"..\" )",
+        "static bool Session_MenuReadSaveGameString( idFile *file, idStr &string, int maxLength, const char *fieldName, const char *savePath )",
+        "static bool Session_MenuReadSaveGameCString( idFile *file, idStr &string, int maxLength, const char *fieldName, const char *savePath )",
+        "static bool Session_MenuSkipSaveGameDict( idFile *file, const char *fieldName, const char *savePath )",
+        "static bool Session_MenuIsLoadableSaveGameSlot( const idStr &slotName )",
+        "static bool Session_MenuReadSaveDescription( const idStr &slotName, sessionMenuSaveDescription_t &description )",
+        "len > SESSION_MENU_MAX_SAVE_DESCRIPTION_BYTES",
+        "idLexer src( buffer, len, descriptionPath.c_str(), LEXFL_NOERRORS | LEXFL_NOSTRINGCONCAT );",
+        "!Session_MenuSaveDescriptionMatchesSlot( slotName, description.saveName )",
+        "!Session_MenuIsSafeSaveMaterialPath( description.screenshot )",
+        "!Session_MenuIsLoadableSaveGameSlot( slotName )",
+        "Session_MenuReadSaveDescription( loadGameList[i], description )",
+        "description.screenshot.Length() > 0 || description.noOverwrite",
+    ):
+        require(menu_source, token, "Session savegame menu/list contract")
+
+    for token in (
+        "static void DictWriteChecked( idFile *f, int bytesWritten, int expected, const char *detail, int offset )",
+        "idDict::WriteToFileHandle: failed to write %s at offset %d",
+        "if ( args.Num() < 0 || args.Num() > MAX_DICT_FILE_KV )",
+        "DictWriteChecked( f, f->Write( s, len + 1 ), len + 1, \"string\", offset );",
+        "DictWriteChecked( f, f->Write( &c, sizeof( c ) ), static_cast<int>( sizeof( c ) ), \"key/value count\", offset );",
+    ):
+        require(dict_source, token, "idDict savegame write contract")
+
+    for token in (
+        "SOUND_SAVEGAME_MAX_EMITTERS = 8192",
+        "SOUND_SAVEGAME_MAX_TOTAL_CHANNELS = 8192",
+        "static void ReadInt( idFile* savefile, int& value, const char* fieldName )",
+        "idSoundWorldLocal::ReadFromSaveGame: truncated %s",
+        "static void ReadString( idFile* savefile, idStr& value, const char* fieldName )",
+        "len < 0 || len > MAX_STRING_CHARS",
+        "parms.soundClass < 0 || parms.soundClass >= SOUND_MAX_CLASSES",
+        "numEmitters < 1 || numEmitters > SOUND_SAVEGAME_MAX_EMITTERS",
+        "numChannels < 0 || numChannels > MAX_CHANNELS_PER_EMITTER",
+        "totalChannels > SOUND_SAVEGAME_MAX_TOTAL_CHANNELS - numChannels",
+        "helper::ReadString( savefile, shaderName, \"sound shader name\" )",
+    ):
+        require(sound_world_source, token, "sound-world savegame restore corruption contract")
+
+
+def validate_gamelibs_save_payload_contract() -> None:
+    for module in ("game", "mpgame"):
+        save_header = read_game_libs(f"src/{module}/gamesys/SaveGame.h")
+        save_source = read_game_libs(f"src/{module}/gamesys/SaveGame.cpp")
+        game_header = read_game_libs(f"src/{module}/Game_local.h")
+        game_local = read_game_libs(f"src/{module}/Game_local.cpp")
+        actor_source = read_game_libs(f"src/{module}/Actor.cpp")
+        ai_move = read_game_libs(f"src/{module}/ai/AI_Move.cpp")
+        client_effect = read_game_libs(f"src/{module}/client/ClientEffect.cpp")
+        client_entity = read_game_libs(f"src/{module}/client/ClientEntity.cpp")
+        misc_source = read_game_libs(f"src/{module}/Misc.cpp")
+        mover_source = read_game_libs(f"src/{module}/Mover.cpp")
+        physics_af = read_game_libs(f"src/{module}/physics/Physics_AF.cpp")
+        script_interpreter = read_game_libs(f"src/{module}/script/Script_Interpreter.cpp")
+        script_program = read_game_libs(f"src/{module}/script/Script_Program.h")
+        script_program_source = read_game_libs(f"src/{module}/script/Script_Program.cpp")
+
+        for token in (
+            "OPENQ4_SAVEGAME_COMPATIBILITY_MAGIC = 'O' | ( 'Q' << 8 ) | ( '4' << 16 ) | ( 'S' << 24 )",
+            "OPENQ4_SAVEGAME_COMPATIBILITY_VERSION = 2",
+            "OPENQ4_SAVEGAME_SYNC_MAGIC = 'O' | ( 'Q' << 8 ) | ( '4' << 16 ) | ( 'Y' << 24 )",
+            "OPENQ4_SAVEGAME_FOOTER_MAGIC = 'O' | ( 'Q' << 8 ) | ( '4' << 16 ) | ( 'F' << 24 )",
+            '__has_include( "openq4_savegame_compat_generated.h" )',
+            '#define OPENQ4_SAVEGAME_COMPAT_SOURCE_HASH "standalone-openq4-game"',
+            "void\t\t\t\t\tWriteChecked( int bytesWritten, int expected, const char *detail, int offset );",
+            "void\t\t\t\t\tWriteSaveGameFooter( int numObjects );",
+            "void\t\t\t\t\tReadSyncId( const char *detail = \"unspecified\", const char *classname = NULL );",
+            "void\t\t\t\t\tReadSaveGameFooter( void );",
+            "bool\t\t\t\t\tIsOpenQ4SaveGameCompatible( void ) const;",
+            "const char *\t\t\tGetOpenQ4SaveGameCompatibilityError( void ) const;",
+            "int\t\t\t\t\t\topenQ4SaveGameCompatibilitySourceFileCount;",
+            "int\t\t\t\t\t\topenQ4SaveGameNextSyncId;",
+            "bool\t\t\t\t\topenQ4SaveGameSyncMarkersEnabled;",
+            "idStr\t\t\t\t\topenQ4SaveGameCompatibilityStamp;",
+            "idStr\t\t\t\t\topenQ4SaveGameCompatibilityError;",
+        ):
+            require(save_header, token, f"{module} savegame compatibility header")
+
+        for token in (
+            '#include "framework/BuildVersion.h"',
+            "static bool SaveGame_IsValidRenderBounds( const idBounds &bounds )",
+            "FLOAT_IS_NAN( bounds[0][i] ) || FLOAT_IS_NAN( bounds[1][i] )",
+            "bounds[1][i] - bounds[0][i] >= MAX_BOUND_SIZE",
+            "void idSaveGame::WriteChecked( int bytesWritten, int expected, const char *detail, int offset )",
+            "idSaveGame: failed to write %s at offset %d",
+            "WriteChecked( file->WriteInt( value ), static_cast<int>( sizeof( value ) ), \"int\", offset );",
+            "WriteChecked( file->Write( string, len ), len, \"string\", offset );",
+            "idSaveGame::WriteWinding: invalid point count %d",
+            "idSaveGame::WriteDict: invalid key/value count %d (max %d)",
+            "WriteInt( OPENQ4_SAVEGAME_COMPATIBILITY_MAGIC );",
+            "WriteInt( OPENQ4_SAVEGAME_COMPATIBILITY_VERSION );",
+            "WriteString( OPENQ4_SAVEGAME_COMPAT_SOURCE_HASH );",
+            "WriteInt( OPENQ4_SAVEGAME_COMPAT_SOURCE_FILE_COUNT );",
+            "WriteInt( OPENQ4_SAVEGAME_SYNC_MAGIC );",
+            "void idSaveGame::WriteSaveGameFooter( int numObjects )",
+            "WriteInt( OPENQ4_SAVEGAME_FOOTER_MAGIC );",
+            "ReadInt( marker );",
+            "if ( marker != OPENQ4_SAVEGAME_COMPATIBILITY_MAGIC )",
+            "if ( buildNumber == BUILD_NUMBER )",
+            "legacy save payload build %d does not match current build %d",
+            "ReadInt( openQ4SaveGameCompatibilityVersion );",
+            "ReadString( openQ4SaveGameCompatibilityStamp );",
+            "ReadInt( openQ4SaveGameCompatibilitySourceFileCount );",
+            "openQ4SaveGameCompatibilityVersion != OPENQ4_SAVEGAME_COMPATIBILITY_VERSION",
+            "payload build %d does not match current build %d",
+            "openQ4SaveGameCompatibilityStamp.Icmp( OPENQ4_SAVEGAME_COMPAT_SOURCE_HASH ) != 0",
+            "source snapshot %s does not match current snapshot %s",
+            "openQ4SaveGameCompatibilitySourceFileCount != OPENQ4_SAVEGAME_COMPAT_SOURCE_FILE_COUNT",
+            "void idRestoreGame::ReadSyncId( const char *detail, const char *classname )",
+            "marker mismatch while reading %s%s%s",
+            "sequence mismatch while reading %s%s%s",
+            "void idRestoreGame::ReadSaveGameFooter( void )",
+            "OPENQ4_SAVEGAME_FOOTER_MAGIC",
+            "unexpected trailing bytes after savegame payload",
+            "bool idRestoreGame::IsOpenQ4SaveGameCompatible( void ) const",
+            "const char *idRestoreGame::GetOpenQ4SaveGameCompatibilityError( void ) const",
+            "!SaveGame_IsValidRenderBounds( renderEntity.bounds )",
+            "idRestoreGame::ReadRenderEntity: invalid render bounds",
+        ):
+            require(save_source, token, f"{module} savegame compatibility source")
+
+        require_regex(
+            game_local,
+            r"savegame\.ReadBuildNumber\(\);.*?"
+            r"if\s*\(\s*!savegame\.IsOpenQ4SaveGameCompatible\(\)\s*\).*?"
+            r"GetOpenQ4SaveGameCompatibilityError\(\).*?"
+            r"return false;.*?"
+            r"savegame\.CreateObjects\(\);",
+            f"{module} savegame compatibility gate before object restore",
+        )
+
+        for token in (
+            "memset( &fl, 0, sizeof( fl ) );",
+            "path[i].reach = NULL;",
+            "path[i].seekPos.Zero();",
+            "pathLen\t\t\t\t= 0;",
+            "pathArea\t\t\t= 0;",
+            "pathTime\t\t\t= 0;",
+            "const int savedPathLen = ( pathLen >= 0 && pathLen <= MAX_PATH_LEN ) ? pathLen : 0;",
+            "savefile->WriteInt( savedPathLen );\t// cnicholson: Added unsaved vars",
+            "for (i=0; i< savedPathLen; ++i)",
+            "savefile->WriteInt( savedPathLen > 0 ? pathArea : 0 );",
+        ):
+            require(ai_move, token, f"{module} AI move savegame path initialization contract")
+
+        require(
+            script_program,
+            "NumFunctions( void ) { return functions.Num(); }",
+            f"{module} script program function-count accessor",
+        )
+
+        for token in (
+            "if ( callStackDepth < 0 || callStackDepth > MAX_STACK_DEPTH )",
+            "callStack[i].s < -1 || callStack[i].s >= gameLocal.program.NumStatements()",
+            "func_index >= gameLocal.program.NumFunctions()",
+            "func_index == -1",
+            "callStack[i].stackbase < 0 || callStack[i].stackbase > LOCALSTACK_SIZE",
+            "maxStackDepth < callStackDepth || maxStackDepth > MAX_STACK_DEPTH",
+            "localstackUsed < 0 || localstackUsed > LOCALSTACK_SIZE",
+            "memset( localstack, 0, sizeof( localstack ) );",
+            "savefile->Read( localstack, localstackUsed );",
+            "localstackBase < 0 || localstackBase > localstackUsed",
+            "maxLocalstackUsed < localstackUsed || maxLocalstackUsed > LOCALSTACK_SIZE",
+            "instructionPointer < -1 || instructionPointer >= gameLocal.program.NumStatements()",
+            "popParms < 0 || popParms > localstackUsed",
+            "unknown multi-frame event",
+            "multiFrameEvent = NULL;",
+        ):
+            require(script_interpreter, token, f"{module} script interpreter restore bounds contract")
+
+        for token in (
+            "MAX_SAVEGAME_ANIMATED_ANIMS",
+            "MAX_SAVEGAME_CLIENT_CRAWL_JOINTS",
+            "MAX_SAVEGAME_ACTOR_ATTACHMENTS",
+            "MAX_SAVEGAME_ELEVATOR_FLOORS",
+        ):
+            require(game_header, token, f"{module} savegame scalar/list limits")
+
+        for token in (
+            "channel < ANIMCHANNEL_ALL || channel >= ANIM_NumAnimChannels",
+            "idAnimState::Restore: invalid animation channel %d",
+            "idActor::Restore: invalid attachment animation channel %d",
+        ):
+            require(actor_source, token, f"{module} actor animation channel restore bounds")
+
+        for token in (
+            "entityNumber < -1 || entityNumber >= MAX_CENTITIES",
+            "rvClientEntity::Restore: invalid client entity number %d",
+        ):
+            require(client_entity, token, f"{module} client entity restore bounds")
+
+        for token in (
+            "jointStart < 0 || jointStart >= numJoints",
+            "jointEnd < 0 || jointEnd >= numJoints",
+            "crawlDir != -1 && crawlDir != 1",
+        ):
+            require(client_effect, token, f"{module} client crawl effect restore bounds")
+
+        for token in (
+            "num_anims < 0 || num_anims > MAX_SAVEGAME_ANIMATED_ANIMS",
+            "current_anim_index < 0 || current_anim_index > num_anims",
+            "anim < 0 || anim > animator.NumAnims()",
+        ):
+            require(misc_source, token, f"{module} idAnimated restore bounds")
+
+        for token in (
+            "savedState < INIT || savedState > WAITING_ON_DOORS",
+            "idElevator::Restore: invalid elevator state %d",
+            "num < 0 || num > MAX_SAVEGAME_ELEVATOR_FLOORS",
+            "idElevator::Restore: invalid floor count %d",
+        ):
+            require(mover_source, token, f"{module} elevator restore bounds")
+
+        for token in (
+            "idPhysics_AF::Restore: articulated body count mismatch %d (expected %d)",
+            "idPhysics_AF::Restore: articulated constraint count mismatch %d (expected %d)",
+        ):
+            require(physics_af, token, f"{module} articulated physics restore count contract")
+
+        for token in (
+            "top_functions < 0 || top_functions > functions.Num()",
+            "top_statements < 0 || top_statements > statements.Num()",
+            "top_types < 0 || top_types > types.Num()",
+            "top_defs < 0 || top_defs > varDefs.Num()",
+            "top_files < 0 || top_files > fileList.Num()",
+        ):
+            require(script_program_source, token, f"{module} script program restore watermark bounds")
+
+    meson = read("meson.build")
+    for token in (
+        "generate_savegame_compat_header.py",
+        "openq4_savegame_compat_generated.h",
+        "savegame_compat_header = custom_target",
+        "game_sources += [savegame_compat_header]",
+        "depend_files: files(engine_source_paths) + game_sources",
+    ):
+        require(meson, token, "Meson savegame compatibility header wiring")
+
+    generator = read("tools/build/generate_savegame_compat_header.py")
+    for token in (
+        "RELEVANCE_TOKENS",
+        "OPENQ4_SAVEGAME_COMPAT_SOURCE_HASH",
+        "OPENQ4_SAVEGAME_COMPAT_SOURCE_FILE_COUNT",
+        "write_if_changed",
+        "PROJECT_SCAN_DIRS",
+        "GAME_SCAN_DIRS",
+    ):
+        require(generator, token, "savegame compatibility header generator")
+
+    require(
+        read("docs/dev/release-completion.md"),
+        "new saves carry a generated engine/GameLibs source snapshot stamp plus payload sync markers and an end footer",
+        "release completion notes",
     )
 
 
 def validate_minigame_restore_contract() -> None:
+    ui_restore_contracts = {
+        "src/ui/Winvar.h": (
+            "static ID_INLINE void OpenQ4_ReadSaveGameBytes( idFile *savefile, void *buffer, int len, const char *context, const char *fieldName )",
+            "static ID_INLINE void OpenQ4_ReadSaveGameField( idFile *savefile, type &value, const char *context, const char *fieldName )",
+            "common->Error( \"%s: truncated %s at offset %d (read %d of %d)\"",
+            "OpenQ4_ReadSaveGameBytes( savefile, &eval, sizeof( eval ), \"idWinBool::ReadFromSaveGame\", \"eval flag\" )",
+            "OpenQ4_ReadSaveGameBytes( savefile, &data[0], len, \"idWinStr::ReadFromSaveGame\", \"string\" )",
+            "OpenQ4_ReadSaveGameBytes( savefile, &data[0], len, \"idWinBackground::ReadFromSaveGame\", \"material name\" )",
+        ),
+        "src/ui/Window.cpp": (
+            "OpenQ4_ReadSaveGameField( savefile, offset, \"idWindow::ReadSaveGameTransition\", \"offset\" )",
+            "OpenQ4_ReadSaveGameField( savefile, trans.interp, \"idWindow::ReadSaveGameTransition\", \"interpolate state\" )",
+            "OpenQ4_ReadSaveGameBytes( savefile, &string[0], len, \"idWindow::ReadSaveGameString\", \"string\" )",
+            "OpenQ4_ReadSaveGameField( savefile, actualX, \"idWindow::ReadFromSaveGame\", \"actualX\" )",
+            "focusedChild = NULL;",
+            "captureChild = NULL;",
+            "overChild = NULL;",
+            "OpenQ4_ReadSaveGameField( savefile, timeLineEvents[i]->pending, \"idWindow::ReadFromSaveGame\", \"timeline pending flag\" )",
+            "OpenQ4_ReadSaveGameField( savefile, num, \"idWindow::ReadFromSaveGame\", \"transition count\" )",
+        ),
+        "src/ui/SimpleWindow.cpp": (
+            "OpenQ4_ReadSaveGameField( savefile, flags, \"idSimpleWindow::ReadFromSaveGame\", \"flags\" )",
+            "OpenQ4_ReadSaveGameField( savefile, stringLen, \"idSimpleWindow::ReadFromSaveGame\", \"background length\" )",
+            "OpenQ4_ReadSaveGameBytes( savefile, &(backName)[0], stringLen, \"idSimpleWindow::ReadFromSaveGame\", \"background name\" )",
+        ),
+        "src/ui/GuiScript.cpp": (
+            "OpenQ4_ReadSaveGameField( savefile, conditionReg, \"idGuiScript::ReadFromSaveGame\", \"condition register\" )",
+        ),
+    }
+    for relative_path, tokens in ui_restore_contracts.items():
+        source = read(relative_path)
+        for token in tokens:
+            require(source, token, f"UI savegame restore short-read guard in {relative_path}")
+
+    ui_raw_read_regressions = {
+        "src/ui/Winvar.h": (
+            "savefile->Read( &eval",
+            "savefile->Read( &data",
+        ),
+        "src/ui/Window.cpp": (
+            "savefile->Read( &actualX",
+            "savefile->Read( &drawRect",
+            "savefile->Read( &winID",
+            "savefile->Read( &timeLineEvents",
+            "savefile->Read( &num, sizeof( num )",
+        ),
+        "src/ui/SimpleWindow.cpp": (
+            "savefile->Read( &flags",
+            "savefile->Read( &drawRect",
+            "savefile->Read( &stringLen",
+        ),
+        "src/ui/GuiScript.cpp": (
+            "savefile->Read( &conditionReg",
+        ),
+    }
+    for relative_path, needles in ui_raw_read_regressions.items():
+        source = read(relative_path)
+        for needle in needles:
+            if needle in source:
+                raise AssertionError(f"UI savegame restore field bypasses checked read helper: {needle!r} in {relative_path}")
+
     minigame_contracts = {
         "src/ui/GameBustOutWindow.cpp": (
             "GAME_BUSTOUT_MAX_SAVE_ENTITIES = 512",
@@ -469,6 +868,12 @@ def validate_minigame_restore_contract() -> None:
             "count < 0 || count > GAME_BUSTOUT_MAX_SAVE_ENTITIES",
             "GameBustOut_ValidateEntityIndex",
             "index < 0 || index >= entityCount",
+            "GameBustOut_ReadSaveBlock",
+            "GameBustOut_ReadSaveField",
+            "GameBustOut_ReadSavePowerup",
+            "value < POWERUP_NONE || value > POWERUP_MULTIBALL",
+            "powerup = GameBustOut_ReadSavePowerup( savefile, \"entity powerup\", saveVersion );",
+            "GameBustOut_ReadSaveField( savefile, ballSpeed, \"ball speed\" );",
             "ball entity index",
             "powerup entity index",
             "brick entity index",
@@ -493,6 +898,10 @@ def validate_minigame_restore_contract() -> None:
             "count < 0 || count > GAME_BEARSHOOT_MAX_SAVE_ENTITIES",
             "GameBearShoot_ValidateEntityIndex",
             "index < 0 || index >= entityCount",
+            "GameBearShoot_ReadSaveBlock",
+            "GameBearShoot_ReadSaveField",
+            "GameBearShoot_ReadSaveField( savefile, timeRemaining, \"time remaining\" );",
+            "GameBearShoot_ReadSaveField( savefile, windForce, \"wind force\" );",
             "turret entity index",
             "bear entity index",
             "gunblast entity index",
@@ -535,6 +944,8 @@ def validate_minigame_restore_contract() -> None:
             "GameSSD_ReadWeaponData",
             "GameSSD_WriteGameStats",
             "GameSSD_ReadGameStats",
+            "GameSSD_ReadSaveBlock",
+            "GameSSD_ReadSaveField",
             "GameSSD_WriteSaveInt( savefile, entCount );",
             "explosionPool[i].id = i;",
             "pointsPool[i].id = i;",
@@ -573,6 +984,10 @@ def validate_minigame_restore_contract() -> None:
             "id = GameSSD_ReadSaveInt( savefile, \"entity reference id\" );",
             "GameSSD_ValidateEntityReference( \"entity reference\", type, id );",
             "if( ent == NULL || !ent->inUse )",
+            "GameSSD_ReadSaveField( savefile, position, \"entity position\" );",
+            "GameSSD_ReadSaveField( savefile, finalSize, \"explosion final size\" );",
+            "GameSSD_ReadSaveField( savefile, dir, \"projectile direction\" );",
+            "GameSSD_ReadSaveField( savefile, screenBounds, \"screen bounds\" );",
         ),
     }
     for relative_path, tokens in minigame_contracts.items():
@@ -678,6 +1093,36 @@ def validate_minigame_restore_contract() -> None:
             if needle in source:
                 raise AssertionError(f"Minigame integer field still uses raw host-order IO: {needle!r} in {relative_path}")
 
+    raw_block_regressions = {
+        "src/ui/GameBustOutWindow.cpp": (
+            "savefile->Read( &visible",
+            "savefile->Read( &width",
+            "savefile->Read( &color",
+            "savefile->Read( &paddleVelocity",
+            "savefile->Read( &ballSpeed",
+        ),
+        "src/ui/GameBearShootWindow.cpp": (
+            "savefile->Read( &width",
+            "savefile->Read( &entColor",
+            "savefile->Read( &timeRemaining",
+            "savefile->Read( &bearScale",
+            "savefile->Read( &windForce",
+        ),
+        "src/ui/GameSSDWindow.cpp": (
+            "savefile->Read(&position",
+            "savefile->Read(&matColor",
+            "savefile->Read(&finalSize",
+            "savefile->Read(&beginPosition",
+            "savefile->Read(&dir",
+            "savefile->Read(&screenBounds",
+        ),
+    }
+    for relative_path, needles in raw_block_regressions.items():
+        source = read(relative_path)
+        for needle in needles:
+            if needle in source:
+                raise AssertionError(f"Minigame save field bypasses checked block reader: {needle!r} in {relative_path}")
+
     ssd_source = read("src/ui/GameSSDWindow.cpp")
     unchecked_ssd_restore_fields = (
         'count = GameSSD_ReadSaveInt( savefile, "asteroid count" );',
@@ -716,6 +1161,7 @@ def main() -> None:
     validate_header_fuzz_model()
     validate_ssd_restore_fuzz_model()
     validate_session_source_contract()
+    validate_gamelibs_save_payload_contract()
     validate_minigame_restore_contract()
     validate_validation_wiring()
     print("savegame_corruption_contract: ok")

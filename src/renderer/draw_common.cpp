@@ -9648,8 +9648,12 @@ static void RB_STD_DrawPlayerVisibilityEffects( drawSurf_t **drawSurfs, int numD
 
 static bool rbARB2InteractionBypassFrameBreadcrumbsComplete = false;
 
+static bool RB_ARB2InteractionBypassActive( void ) {
+	return tr.backEndRenderer == BE_ARB2 && glConfig.disableARB2Interactions;
+}
+
 static void RB_RecordARB2InteractionBypassFramePhase( rendererStartupPhase_t phase ) {
-	if ( !glConfig.disableARB2Interactions ) {
+	if ( !RB_ARB2InteractionBypassActive() ) {
 		rbARB2InteractionBypassFrameBreadcrumbsComplete = false;
 		return;
 	}
@@ -9741,13 +9745,17 @@ void	RB_STD_DrawView( void ) {
 		RB_ARB2_DrawInteractions();
 	}
 
-	RB_RecordARB2InteractionBypassFramePhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_LIGHT_SCALE );
+	if ( RB_ARB2InteractionBypassActive() ) {
+		RB_RecordARB2InteractionBypassFramePhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_LIGHT_SCALE_SKIPPED );
+	} else {
+		RB_RecordARB2InteractionBypassFramePhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_LIGHT_SCALE );
 
-	// disable stencil shadow test
-	glStencilFunc( GL_ALWAYS, 128, 255 );
+		// disable stencil shadow test
+		glStencilFunc( GL_ALWAYS, 128, 255 );
 
-	// uplight the entire screen to crutch up not having better blending range
-	RB_STD_LightScale();
+		// uplight the entire screen to crutch up not having better blending range
+		RB_STD_LightScale();
+	}
 
 	if ( r_portalsDistanceCull.GetBool() && backEnd.viewDef->viewEntitys && backEnd.viewDef->renderWorld != NULL ) {
 		backEnd.viewDef->renderWorld->RenderPortalFades();

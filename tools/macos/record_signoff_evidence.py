@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import tarfile
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -167,18 +168,21 @@ def first_match(text: str, patterns: tuple[str, ...]) -> str:
     return ""
 
 
-def read_reports(archive_path: Path, *, run_id: str, action: str, bridges: tuple[str, ...]) -> list[ReportData]:
+def read_reports(
+    archive_path: Path,
+    *,
+    run_id: str,
+    action: str,
+    bridges: tuple[str, ...],
+    validator,
+) -> list[ReportData]:
     reports: list[ReportData] = []
     try:
         with tarfile.open(archive_path, "r:gz") as archive:
             for bridge in bridges:
                 result_dir = f"{run_id}-{action}-{bridge}"
                 report_name = f"{result_dir}/macos-runtime-signoff.md"
-                member = archive.getmember(report_name)
-                stream = archive.extractfile(member)
-                if stream is None:
-                    raise RuntimeError(f"Unable to read archive member: {report_name}")
-                report = stream.read().decode("utf-8")
+                report = validator.read_text(archive, report_name)
                 metadata, sections = split_report_sections(report)
                 reports.append(ReportData(bridge=bridge, metadata=metadata, sections=sections))
     except KeyError as exc:
@@ -560,6 +564,30 @@ def update_evidence_history(text: str, record: str) -> str:
     return before + marker + updated_after
 
 
+def write_index_text_atomic(index_path: Path, text: str) -> None:
+    if index_path.parent.is_symlink():
+        raise RuntimeError(f"Evidence index parent must not be a symlink: {index_path.parent}")
+
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            newline="\n",
+            dir=index_path.parent,
+            prefix=f".{index_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(text)
+        temp_path.replace(index_path)
+    except Exception:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        raise
+
+
 def update_index(index_path: Path, data: EvidenceData) -> None:
     if index_path.is_symlink():
         raise RuntimeError(f"Evidence index must not be a symlink: {index_path}")
@@ -567,7 +595,7 @@ def update_index(index_path: Path, data: EvidenceData) -> None:
     text = update_current_status(text, data)
     text = replace_section(text, CURRENT_RELEASE_HEADING, format_current_release(data))
     text = update_evidence_history(text, format_history_record(data))
-    index_path.write_text(text, encoding="utf-8", newline="\n")
+    write_index_text_atomic(index_path, text)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -611,7 +639,7 @@ def main(argv: list[str]) -> int:
             bridges=bridges,
             require_completed_checklist=True,
         )
-        reports = read_reports(args.archive, run_id=run_id, action=args.action, bridges=bridges)
+        reports = read_reports(args.archive, run_id=run_id, action=args.action, bridges=bridges, validator=validator)
         evidence = build_evidence(args, run_id=run_id, bridges=bridges, reports=reports)
 
         record = format_history_record(evidence)

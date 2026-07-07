@@ -420,15 +420,26 @@ bool idDict::GetMatrix( const char *key, const char *defaultString, idMat3 &out 
 WriteString
 ================
 */
+static const int MAX_DICT_FILE_KV = 16384;
+
+static void DictWriteChecked( idFile *f, int bytesWritten, int expected, const char *detail, int offset ) {
+	if ( bytesWritten != expected ) {
+		idLib::common->Error( "idDict::WriteToFileHandle: failed to write %s at offset %d (wrote %d of %d)",
+			detail ? detail : "data", offset, bytesWritten, expected );
+	}
+}
+
 static void WriteString( const char *s, idFile *f ) {
+	if ( s == NULL ) {
+		s = "";
+	}
 	int	len = strlen( s );
 	if ( len >= MAX_STRING_CHARS-1 ) {
 		idLib::common->Error( "idDict::WriteToFileHandle: bad string" );
 	}
-	f->Write( s, strlen(s) + 1 );
+	const int offset = f->Tell();
+	DictWriteChecked( f, f->Write( s, len + 1 ), len + 1, "string", offset );
 }
-
-static const int MAX_DICT_FILE_KV = 16384;
 
 /*
 ================
@@ -561,8 +572,12 @@ idDict::WriteToFileHandle
 ================
 */
 void idDict::WriteToFileHandle( idFile *f ) const {
+	if ( args.Num() < 0 || args.Num() > MAX_DICT_FILE_KV ) {
+		idLib::common->Error( "idDict::WriteToFileHandle: invalid key/value count %d", args.Num() );
+	}
 	int c = LittleLong( args.Num() );
-	f->Write( &c, sizeof( c ) );
+	const int offset = f->Tell();
+	DictWriteChecked( f, f->Write( &c, sizeof( c ) ), static_cast<int>( sizeof( c ) ), "key/value count", offset );
 // RAVEN BEGIN
 // jnewquist: For loop was looking at c, which got swapped on Xenon!
 	for ( int i = 0; i < args.Num(); i++ ) {

@@ -24,6 +24,18 @@ def load_signoff_fixture():
     return module
 
 
+def load_recorder():
+    recorder_path = ROOT / "tools" / "macos" / "record_signoff_evidence.py"
+    spec = importlib.util.spec_from_file_location("record_signoff_evidence_for_test", recorder_path)
+    if spec is None or spec.loader is None:
+        raise AssertionError(f"Unable to import signoff evidence recorder: {recorder_path}")
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def require(haystack: str, needle: str, context: str) -> None:
     if needle not in haystack:
         raise AssertionError(f"Missing {needle!r} in {context}")
@@ -36,6 +48,8 @@ def reject(haystack: str, needle: str, context: str) -> None:
 
 def main() -> int:
     fixture = load_signoff_fixture()
+    recorder_module = load_recorder()
+    validator = recorder_module.load_validator()
     recorder = (ROOT / "tools" / "macos" / "record_signoff_evidence.py").read_text(encoding="utf-8")
     for token in (
         "def resolve_recording_input",
@@ -46,10 +60,17 @@ def main() -> int:
         "def validate_evidence_text",
         "contains control characters",
         "MAX_EVIDENCE_TEXT_VALUE_CHARS",
+        "def write_index_text_atomic",
+        "tempfile.NamedTemporaryFile",
+        "Evidence index parent must not be a symlink",
+        "temp_path.replace(index_path)",
+        "temp_path.unlink(missing_ok=True)",
         "PACKAGE_ARTIFACT_PATTERN",
         "(?P<bridge>opengl|metal)",
         "artifact_bridges",
         "unexpected_bridges",
+        "validator.read_text(archive, report_name)",
+        "reports = read_reports(args.archive, run_id=run_id, action=args.action, bridges=bridges, validator=validator)",
         "except (RuntimeError, tarfile.TarError, OSError, UnicodeDecodeError) as exc",
     ):
         require(recorder, token, "macOS signoff evidence symlink guard")
@@ -64,6 +85,25 @@ def main() -> int:
         opengl_only_dir.mkdir()
         opengl_only_archive = opengl_only_dir / "openq4-macos-results-testrun.tar.gz"
         fixture.write_archive(opengl_only_archive, bridges=("opengl",), completed=True)
+        oversized_report_archive = temp / "openq4-macos-results-oversized-report.tar.gz"
+        fixture.write_archive_with_report(
+            oversized_report_archive,
+            bridge="opengl",
+            report=fixture.report_text("opengl", completed=True) + ("x" * validator.MAX_TEXT_MEMBER_BYTES),
+        )
+
+        try:
+            recorder_module.read_reports(
+                oversized_report_archive,
+                run_id="testrun",
+                action="signoff",
+                bridges=("opengl",),
+                validator=validator,
+            )
+        except RuntimeError as exc:
+            require(str(exc), "Archive text member is too large", "bounded evidence report parser")
+        else:
+            raise AssertionError("record_signoff_evidence parsed an oversized signoff report member")
 
         command = [
             sys.executable,
@@ -97,6 +137,9 @@ def main() -> int:
         )
         output = result.stdout
         updated_index = index.read_text(encoding="utf-8")
+        leftover_index_temps = sorted(temp.glob(".macos-signoff-evidence.md.*.tmp"))
+        if leftover_index_temps:
+            raise AssertionError(f"record_signoff_evidence left temporary index files: {leftover_index_temps}")
 
         for token in (
             "### vtest",

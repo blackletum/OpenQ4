@@ -596,7 +596,7 @@ void idGuiScript::ReadFromSaveGame( idFile *savefile ) {
 		elseList->ReadFromSaveGame( savefile );
 	}
 
-	savefile->Read( &conditionReg, sizeof( conditionReg ) );
+	OpenQ4_ReadSaveGameField( savefile, conditionReg, "idGuiScript::ReadFromSaveGame", "condition register" );
 
 	for ( i = 0; i < parms.Num(); i++ ) {
 		if ( parms[i].own ) {

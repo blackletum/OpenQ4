@@ -23,6 +23,12 @@ container. The app must stay beside `baseoq4/` and the loose runtime files until
 the project deliberately migrates to `openQ4.app/Contents/Resources` or another
 self-contained layout.
 
+Release packages and archive validation require the bundle to be named
+`openQ4.app`. Runtime app-bundle detection still recognizes renamed `.app`
+bundles that keep the standard `*.app/Contents/MacOS` layout, so a hand-renamed
+bundle can report the same adjacent package-root diagnostic instead of falling
+through to generic base-path probing.
+
 ## Supported Launch Flows
 
 Supported for experimental macOS signoff:
@@ -86,6 +92,9 @@ pairing process.
 launching openQ4. The report records the package root, app path, expected loose
 runtime paths, expected `baseoq4/` path, and any copied log lines that mention
 `fs_basepath`, `fs_cdpath`, or `fs_savepath`.
+If `HOME` is absent in a sparse launch environment, the collector keeps the
+package-local log checks and records archive notes instead of aborting on
+home-scoped log or DiagnosticReports paths.
 
 The same archive also includes `package/binary-architecture.txt` and
 `package/dylib-dependencies.txt` without launching openQ4. These reports record

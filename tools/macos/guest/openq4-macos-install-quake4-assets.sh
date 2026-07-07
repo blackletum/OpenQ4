@@ -1,13 +1,56 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+contains_control_chars() {
+    LC_ALL=C printf '%s' "$1" | LC_ALL=C grep -q '[[:cntrl:]]'
+}
+
+require_guest_home() {
+    local home_value="${OPENQ4_GUEST_HOME:-${HOME:-}}"
+    if [[ -z "${home_value}" ]]; then
+        echo "HOME must be set or OPENQ4_GUEST_HOME must point to the macOS guest home directory." >&2
+        exit 2
+    fi
+    if contains_control_chars "${home_value}"; then
+        echo "OPENQ4_GUEST_HOME/HOME must not contain control characters." >&2
+        exit 2
+    fi
+    case "${home_value}" in
+        /*)
+            ;;
+        *)
+            echo "OPENQ4_GUEST_HOME/HOME must be an absolute POSIX path: ${home_value}" >&2
+            exit 2
+            ;;
+    esac
+    case "${home_value}" in
+        "/"|"."|".."|*\\*|*//*|*/./*|*/../*|*/.|*/..)
+            echo "OPENQ4_GUEST_HOME/HOME must be a clean absolute POSIX path: ${home_value}" >&2
+            exit 2
+            ;;
+    esac
+    if [[ ! -d "${home_value}" ]]; then
+        echo "macOS guest home directory does not exist: ${home_value}" >&2
+        exit 2
+    fi
+    printf '%s\n' "${home_value%/}"
+}
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+    echo "This asset script must run inside macOS." >&2
+    exit 1
+fi
+
+GUEST_HOME="$(require_guest_home)"
+export HOME="${GUEST_HOME}"
+
 expand_guest_path() {
     case "$1" in
         "~")
-            printf '%s\n' "${HOME}"
+            printf '%s\n' "${GUEST_HOME}"
             ;;
         "~/"*)
-            printf '%s/%s\n' "${HOME}" "${1#~/}"
+            printf '%s/%s\n' "${GUEST_HOME}" "${1#~/}"
             ;;
         *)
             printf '%s\n' "$1"
@@ -15,9 +58,9 @@ expand_guest_path() {
     esac
 }
 
-basepath="$(expand_guest_path "${OPENQ4_BASEPATH:-${HOME}/openq4-work/Quake4}")"
+basepath="$(expand_guest_path "${OPENQ4_BASEPATH:-${GUEST_HOME}/openq4-work/Quake4}")"
 archive="${OPENQ4_Q4_TAR:-}"
-workspace="$(expand_guest_path "${OPENQ4_GUEST_WORKSPACE:-${HOME}/openq4-work}")"
+workspace="$(expand_guest_path "${OPENQ4_GUEST_WORKSPACE:-${GUEST_HOME}/openq4-work}")"
 incoming="${workspace}/incoming-quake4"
 
 reject_unsafe_tar_entries() {
@@ -165,15 +208,17 @@ reject_macos_non_runtime_metadata_entries() {
 }
 
 require_safe_asset_roots() {
-    python3 - "${workspace}" "${basepath}" <<'PY'
+    python3 - "${workspace}" "${basepath}" "${GUEST_HOME}" <<'PY'
 import pathlib
 import sys
+import unicodedata
 
 workspace_raw = sys.argv[1]
 basepath_raw = sys.argv[2]
+guest_home_raw = sys.argv[3]
 workspace = pathlib.Path(workspace_raw).expanduser()
 basepath = pathlib.Path(basepath_raw).expanduser()
-home = pathlib.Path.home().resolve()
+home = pathlib.Path(guest_home_raw).resolve()
 root = pathlib.Path("/")
 
 
@@ -184,6 +229,8 @@ def fail(message: str) -> None:
 
 def require_absolute_after_expansion(label: str, raw_value: str, path: pathlib.Path) -> None:
     path_text = raw_value
+    if any(ord(character) < 32 or ord(character) == 127 for character in path_text):
+        fail(f"{label} must not contain control characters: {path_text!r}")
     if "\\" in path_text:
         fail(f"{label} must be a POSIX path without backslashes: {path_text}")
     if not path.is_absolute():
@@ -208,6 +255,32 @@ def resolve(label: str, raw_value: str, path: pathlib.Path) -> pathlib.Path:
     return resolved
 
 
+def path_key(path: pathlib.Path) -> str:
+    return unicodedata.normalize("NFC", path.as_posix().rstrip("/")).casefold()
+
+
+def path_is_same_or_under(candidate: pathlib.Path, parent: pathlib.Path) -> bool:
+    candidate_key = path_key(candidate)
+    parent_key = path_key(parent)
+    return candidate_key == parent_key or candidate_key.startswith(f"{parent_key}/")
+
+
+def require_basepath_outside_reserved_workspace_children() -> None:
+    reserved_children = ("openQ4", "openQ4-game", "incoming-quake4", "results")
+    for child in reserved_children:
+        reserved = workspace_resolved / child
+        if path_key(basepath_resolved) == path_key(reserved):
+            fail(
+                "Asset install basepath must not target a reserved workflow directory "
+                f"({child}); rsync --delete would remove workflow files."
+            )
+        if path_is_same_or_under(basepath_resolved, reserved):
+            fail(
+                "Asset install basepath must not live under a reserved workflow directory "
+                f"({child}); rsync --delete would remove workflow files."
+            )
+
+
 workspace_resolved = resolve("OPENQ4_GUEST_WORKSPACE", workspace_raw, workspace)
 basepath_resolved = resolve("OPENQ4_BASEPATH", basepath_raw, basepath)
 if basepath_resolved == workspace_resolved:
@@ -218,14 +291,14 @@ except ValueError:
     pass
 else:
     fail("Asset install basepath must not contain the workflow workspace; rsync --delete would remove workflow files.")
+require_basepath_outside_reserved_workspace_children()
 PY
 }
 
-if [[ "$(uname -s)" != "Darwin" ]]; then
-    echo "This asset script must run inside macOS." >&2
+if contains_control_chars "${archive}"; then
+    echo "OPENQ4_Q4_TAR must not contain control characters." >&2
     exit 1
 fi
-
 if [[ -z "${archive}" || ! -f "${archive}" ]]; then
     echo "OPENQ4_Q4_TAR must point to a Quake 4 asset tar copied to the macOS VM." >&2
     exit 1

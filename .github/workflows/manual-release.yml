@@ -755,14 +755,10 @@ jobs:
             "Support output directory must not contain control characters" \
             ".XXXXXX.tar.gz.tmp" \
             "MAX_SUPPORT_ARCHIVE_BYTES" \
-            "COMMAND_OUTPUT_INDEX" \
-            "command-output-" \
-            'command_output=$(mktemp "${WORK_PARENT}/command-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")' \
-            'copy_text_if_present "${command_output}" "${target}"' \
+            "sanitize_text()" \
+            "limit_stream_tail()" \
+            "Support report output is limited to the final" \
             "write_bounded_report()" \
-            "report-output-" \
-            'report_output=$(mktemp "${WORK_PARENT}/report-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")' \
-            'copy_text_if_present "${report_output}" "${target}"' \
             "does not dump the environment" \
             "does not launch openQ4" \
             "does not copy retail q4base PK4 assets" \

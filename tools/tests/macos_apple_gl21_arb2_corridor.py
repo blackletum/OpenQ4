@@ -126,8 +126,12 @@ def validate_context_aware_apple_gl21_quirk() -> None:
 
 def validate_simple_interaction_fail_closed() -> None:
     source = read("src/renderer/draw_arb2.cpp")
+    common_source = read("src/renderer/draw_common.cpp")
+    render_source = read("src/renderer/tr_render.cpp")
     reload_body = function_body(source, "void R_ReloadARBPrograms_f( const idCmdArgs &args ) {")
     failure_body = function_body(source, "static void RB_ErrorIfDriverRequiredSimpleInteractionFailed( void ) {")
+    draw_view_body = function_body(common_source, "void\tRB_STD_DrawView( void ) {")
+    determine_light_scale_body = function_body(render_source, "void RB_DetermineLightScale( void ) {")
 
     for token in (
         "RB_DriverPrefersSimpleInteraction()",
@@ -177,6 +181,32 @@ def validate_simple_interaction_fail_closed() -> None:
         "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_STATE_RESTORED",
     ):
         require(source, token, "Apple GL 2.1 bypasses fragile ARB2 light interactions")
+
+    for token in (
+        "tr.backEndRenderer == BE_ARB2 && glConfig.disableARB2Interactions",
+        "backEnd.pc.maxLightValue = 1.0f;",
+        "backEnd.lightScale = 1.0f;",
+        "backEnd.overBright = 1.0f;",
+    ):
+        require(determine_light_scale_body, token, "issue #73 comment 4894876958 neutral light-scale fallback")
+
+    for token in (
+        "RB_ARB2InteractionBypassActive()",
+        "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_LIGHT_SCALE_SKIPPED",
+        "ARB2 interaction bypass light scale skipped",
+    ):
+        require(common_source + read("src/renderer/RendererStartupDiagnostics.cpp"), token, "issue #73 comment 4894876958 light-scale skip breadcrumb")
+
+    bypass_light_scale_section = source_section(
+        draw_view_body,
+        "if ( RB_ARB2InteractionBypassActive() ) {",
+        "} else {",
+    )
+    for token in (
+        "RB_STD_LightScale();",
+        "glStencilFunc( GL_ALWAYS, 128, 255 );",
+    ):
+        reject(bypass_light_scale_section, token, "issue #73 comment 4894876958 light-scale bypass branch")
 
 
 def validate_arb_entrypoint_and_binding_audit() -> None:
@@ -312,6 +342,7 @@ def validate_docs_and_wiring() -> None:
         require(source, "Unsupported Apple OpenGL 2.1 compatibility path", context)
         require(source, "SimpleInteraction.vfp", context)
         require(source, "ARB2 light interaction", context)
+        require(source, "ARB2 interaction bypass light scale skipped", context)
 
     for source, context in (
         (local_runner, "local validation runner"),

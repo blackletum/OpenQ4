@@ -9,6 +9,7 @@ param(
     [int]$SshPort = 22,
     [string]$IdentityFile,
     [string]$MacWorkspace = "~/openq4-work",
+    [string]$MacHome = "",
     [string]$MacBasePath = "~/openq4-work/Quake4",
     [string]$HostQuake4Path = "C:\Program Files (x86)\Steam\steamapps\common\Quake 4",
     [string]$HostGameLibsPath,
@@ -122,6 +123,53 @@ function Assert-SafeRemoteWorkflowPath {
     }
 }
 
+function Assert-SafeRemoteGuestHomePath {
+    param([AllowNull()][string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value) -or $Value -match '[\x00-\x1f\x7f]') {
+        throw "Invalid MacHome '$Value'. Use a non-empty single-line absolute POSIX path."
+    }
+    if ($Value.StartsWith("-") -or $Value -match '\\') {
+        throw "Invalid MacHome '$Value'. Use an absolute POSIX path that does not begin with '-' or contain backslashes."
+    }
+    if (-not $Value.StartsWith("/")) {
+        throw "Invalid MacHome '$Value'. Use an absolute POSIX path such as /Users/codex."
+    }
+    if ($Value -match '//') {
+        throw "Invalid MacHome '$Value'. Empty POSIX path segments are not allowed."
+    }
+
+    $trimmed = $Value.TrimEnd("/")
+    if ($trimmed -in @("", ".", "..", "/")) {
+        throw "Invalid MacHome '$Value'. Refusing to use the filesystem root or a relative traversal path."
+    }
+    if ($Value -match '(^|/)\.($|/)') {
+        throw "Invalid MacHome '$Value'. Dot path segments are not allowed."
+    }
+    if ($Value -match '(^|/)\.\.($|/)') {
+        throw "Invalid MacHome '$Value'. Parent-directory traversal is not allowed."
+    }
+}
+
+function ConvertTo-RemoteWorkflowComparisonPath {
+    param([Parameter(Mandatory = $true)][string]$Value)
+
+    $path = $Value.TrimEnd("/")
+    if ($MacHome -and $path.StartsWith("~/", [System.StringComparison]::Ordinal)) {
+        $path = "$($MacHome.TrimEnd("/"))/$($path.Substring(2))"
+    }
+    return $path.Normalize([System.Text.NormalizationForm]::FormC).ToLowerInvariant()
+}
+
+function Join-RemotePosixPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Base,
+        [Parameter(Mandatory = $true)][string]$Child
+    )
+
+    return "$($Base.TrimEnd("/"))/$Child"
+}
+
 function Assert-SafeMacOSBuildDir {
     param([AllowNull()][string]$Value)
 
@@ -145,6 +193,22 @@ function Assert-SafeMacOSBuildDir {
     }
 }
 
+function Assert-MacBasePathNotReservedWorkspaceChild {
+    $workspace = ConvertTo-RemoteWorkflowComparisonPath -Value $MacWorkspace
+    $basePath = ConvertTo-RemoteWorkflowComparisonPath -Value $MacBasePath
+    $reservedChildren = @("openQ4", "openQ4-game", "incoming-quake4", "results")
+
+    foreach ($child in $reservedChildren) {
+        $reservedPath = "${workspace}/${child}".Normalize([System.Text.NormalizationForm]::FormC).ToLowerInvariant()
+        if (
+            $basePath.Equals($reservedPath, [System.StringComparison]::OrdinalIgnoreCase) -or
+            $basePath.StartsWith("${reservedPath}/", [System.StringComparison]::OrdinalIgnoreCase)
+        ) {
+            throw "MacBasePath must not target reserved workflow directory '${child}' or one of its children; asset installation uses rsync --delete."
+        }
+    }
+}
+
 function Assert-LocalRegularFile {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -164,7 +228,8 @@ function Assert-LocalRegularFile {
 function Assert-LocalOutputFileTarget {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string]$Label
+        [Parameter(Mandatory = $true)][string]$Label,
+        [switch]$MustNotExist
     )
 
     $fullPath = Get-FullPath $Path
@@ -178,7 +243,40 @@ function Assert-LocalOutputFileTarget {
         if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
             throw "${Label} target must not be a symlink, junction, or reparse point: $fullPath"
         }
+        if ($MustNotExist) {
+            throw "${Label} target already exists; refusing to overwrite: $fullPath"
+        }
     }
+}
+
+function New-LocalOutputTempPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$DestinationPath,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    $destinationFullPath = Get-FullPath $DestinationPath
+    $parent = Split-Path -Parent $destinationFullPath
+    $leaf = Split-Path -Leaf $destinationFullPath
+    Initialize-LocalDirectory -Path $parent -Label "${Label} parent directory" | Out-Null
+
+    for ($attempt = 0; $attempt -lt 100; $attempt++) {
+        $candidate = Join-Path $parent ".${leaf}.$([System.Guid]::NewGuid().ToString("N")).tmp"
+        try {
+            $stream = [System.IO.File]::Open(
+                $candidate,
+                [System.IO.FileMode]::CreateNew,
+                [System.IO.FileAccess]::Write,
+                [System.IO.FileShare]::None
+            )
+            $stream.Close()
+            return $candidate
+        } catch [System.IO.IOException] {
+            continue
+        }
+    }
+
+    throw "Unable to create ${Label} temporary file beside: $destinationFullPath"
 }
 
 function Initialize-LocalDirectory {
@@ -210,10 +308,14 @@ function Assert-MacOSWorkflowInputs {
     Assert-ValidMacHost
     Assert-SafeRemoteWorkflowPath -Label "MacWorkspace" -Value $MacWorkspace
     Assert-SafeRemoteWorkflowPath -Label "MacBasePath" -Value $MacBasePath
+    if ($MacHome) {
+        Assert-SafeRemoteGuestHomePath -Value $MacHome
+    }
     Assert-SafeMacOSBuildDir -Value $BuildDir
-    if ($MacWorkspace.TrimEnd("/") -eq $MacBasePath.TrimEnd("/")) {
+    if ((ConvertTo-RemoteWorkflowComparisonPath -Value $MacWorkspace) -eq (ConvertTo-RemoteWorkflowComparisonPath -Value $MacBasePath)) {
         throw "MacBasePath must not be the same directory as MacWorkspace; asset installation uses rsync --delete."
     }
+    Assert-MacBasePathNotReservedWorkspaceChild
     if ($IdentityFile) {
         Assert-LocalRegularFile -Path $IdentityFile -Label "IdentityFile"
     }
@@ -284,11 +386,27 @@ function Copy-FromMac {
     )
 
     $destinationFullPath = Get-FullPath $Destination
-    Assert-LocalOutputFileTarget -Path $destinationFullPath -Label "macOS copy destination"
+    Assert-LocalOutputFileTarget -Path $destinationFullPath -Label "macOS copy destination" -MustNotExist
+    $temporaryDestination = New-LocalOutputTempPath -DestinationPath $destinationFullPath -Label "macOS copy destination"
     $target = "${MacUser}@${MacHost}:$RemotePath"
-    & scp @(Get-ScpArgs) $target $destinationFullPath
-    if ($LASTEXITCODE -ne 0) {
-        throw "scp failed with exit code ${LASTEXITCODE}: $RemotePath -> $destinationFullPath"
+    $published = $false
+    try {
+        & scp @(Get-ScpArgs) $target $temporaryDestination
+        if ($LASTEXITCODE -ne 0) {
+            throw "scp failed with exit code ${LASTEXITCODE}: $RemotePath -> $destinationFullPath"
+        }
+        Assert-LocalRegularFile -Path $temporaryDestination -Label "macOS temporary copy destination"
+        $temporaryItem = Get-Item -LiteralPath $temporaryDestination -Force
+        if ($temporaryItem.Length -le 0) {
+            throw "macOS temporary copy destination is empty after scp: $temporaryDestination"
+        }
+        Assert-LocalOutputFileTarget -Path $destinationFullPath -Label "macOS copy destination" -MustNotExist
+        [System.IO.File]::Move($temporaryDestination, $destinationFullPath)
+        $published = $true
+    } finally {
+        if (-not $published -and (Test-Path -LiteralPath $temporaryDestination)) {
+            Remove-Item -LiteralPath $temporaryDestination -Force
+        }
     }
 }
 
@@ -405,16 +523,56 @@ function Expand-RemoteArchive {
         [Parameter(Mandatory = $true)][string]$RemoteTarget
     )
 
+    $guestHomeQ = Quote-Sh $MacHome
 $script = @"
 set -euo pipefail
+
+guest_home_raw=$guestHomeQ
+
+require_remote_home() {
+    local home_value="`$guest_home_raw"
+    if [[ -z "`$home_value" ]]; then
+        home_value="`${HOME:-}"
+    fi
+    if [[ -z "`$home_value" ]]; then
+        echo "HOME must be set or MacHome must provide the macOS guest home directory." >&2
+        exit 2
+    fi
+    if LC_ALL=C printf '%s' "`$home_value" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+        echo "MacHome/HOME must not contain control characters." >&2
+        exit 2
+    fi
+    case "`$home_value" in
+        /*)
+            ;;
+        *)
+            echo "MacHome/HOME must be an absolute POSIX path: `$home_value" >&2
+            exit 2
+            ;;
+    esac
+    case "`$home_value" in
+        "/"|"."|".."|*\\*|*//*|*/./*|*/../*|*/.|*/..)
+            echo "MacHome/HOME must be a clean absolute POSIX path: `$home_value" >&2
+            exit 2
+            ;;
+    esac
+    if [[ ! -d "`$home_value" ]]; then
+        echo "macOS guest home directory does not exist: `$home_value" >&2
+        exit 2
+    fi
+    printf '%s\n' "`${home_value%/}"
+}
+
+REMOTE_HOME="`$(require_remote_home)"
+export HOME="`$REMOTE_HOME"
 
 expand_remote_path() {
     case "`$1" in
         "~")
-            printf '%s\n' "`$HOME"
+            printf '%s\n' "`$REMOTE_HOME"
             ;;
         "~/"*)
-            printf '%s/%s\n' "`$HOME" "`${1#~/}"
+            printf '%s/%s\n' "`$REMOTE_HOME" "`${1#~/}"
             ;;
         *)
             printf '%s\n' "`$1"
@@ -432,7 +590,7 @@ require_regular_remote_archive() {
 
 prepare_remote_extract_target() {
     local target_path="`$1"
-    if [[ -z "`$target_path" || "`$target_path" == "/" || "`$target_path" == "`$HOME" ]]; then
+    if [[ -z "`$target_path" || "`$target_path" == "/" || "`$target_path" == "`$REMOTE_HOME" ]]; then
         echo "Refusing unsafe remote extraction target: `$target_path" >&2
         exit 1
     fi
@@ -639,6 +797,9 @@ function Invoke-GuestScript {
         "OPENQ4_GUEST_WORKSPACE=$(Quote-Sh $MacWorkspace)",
         "OPENQ4_BASEPATH=$(Quote-Sh $MacBasePath)"
     )
+    if ($MacHome) {
+        $envParts += "OPENQ4_GUEST_HOME=$(Quote-Sh $MacHome)"
+    }
     foreach ($key in $Environment.Keys) {
         $envParts += "$key=$(Quote-Sh ([string]$Environment[$key]))"
     }
@@ -674,7 +835,7 @@ function Sync-SourceTrees {
 
     $remoteRepoArchive = "$script:RemoteTempRoot/openQ4-source.tar"
     Copy-ToMac -Source $repoArchive -RemotePath $remoteRepoArchive
-    Expand-RemoteArchive -RemoteArchive $remoteRepoArchive -RemoteTarget "$MacWorkspace/openQ4"
+    Expand-RemoteArchive -RemoteArchive $remoteRepoArchive -RemoteTarget (Join-RemotePosixPath -Base $MacWorkspace -Child "openQ4")
 
     if (Test-Path -LiteralPath $HostGameLibsPath) {
         $gameLibsArchive = New-TransferArchive `
@@ -689,10 +850,10 @@ function Sync-SourceTrees {
                 "openQ4-game/builddir",
                 "openQ4-game/builddir_*",
                 "openQ4-game/builddir-*"
-            )
+        )
         $remoteGameLibsArchive = "$script:RemoteTempRoot/openQ4-game.tar"
         Copy-ToMac -Source $gameLibsArchive -RemotePath $remoteGameLibsArchive
-        Expand-RemoteArchive -RemoteArchive $remoteGameLibsArchive -RemoteTarget "$MacWorkspace/openQ4-game"
+        Expand-RemoteArchive -RemoteArchive $remoteGameLibsArchive -RemoteTarget (Join-RemotePosixPath -Base $MacWorkspace -Child "openQ4-game")
     } else {
         Write-Warning "openQ4-game was not found at $HostGameLibsPath; macOS build may fail until the companion repo is synced."
     }
@@ -785,19 +946,59 @@ function Collect-MacOSResults {
     $archiveName = "openq4-macos-results-${RunId}.tar.gz"
     $remoteArchive = "$script:RemoteTempRoot/$archiveName"
     $workspaceQ = Quote-Sh $MacWorkspace
+    $guestHomeQ = Quote-Sh $MacHome
     $runIdQ = Quote-Sh $RunId
     $archiveQ = Quote-Sh $remoteArchive
     $bridgesQ = ((Get-MacOSGraphicsBridgeRuns) | ForEach-Object { Quote-Sh $_ }) -join " "
 $script = @'
 set -euo pipefail
 
+guest_home_raw=__GUEST_HOME__
+
+require_remote_home() {
+    local home_value="${guest_home_raw}"
+    if [[ -z "${home_value}" ]]; then
+        home_value="${HOME:-}"
+    fi
+    if [[ -z "${home_value}" ]]; then
+        echo "HOME must be set or MacHome must provide the macOS guest home directory." >&2
+        exit 2
+    fi
+    if LC_ALL=C printf '%s' "${home_value}" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+        echo "MacHome/HOME must not contain control characters." >&2
+        exit 2
+    fi
+    case "${home_value}" in
+        /*)
+            ;;
+        *)
+            echo "MacHome/HOME must be an absolute POSIX path: ${home_value}" >&2
+            exit 2
+            ;;
+    esac
+    case "${home_value}" in
+        "/"|"."|".."|*\\*|*//*|*/./*|*/../*|*/.|*/..)
+            echo "MacHome/HOME must be a clean absolute POSIX path: ${home_value}" >&2
+            exit 2
+            ;;
+    esac
+    if [[ ! -d "${home_value}" ]]; then
+        echo "macOS guest home directory does not exist: ${home_value}" >&2
+        exit 2
+    fi
+    printf '%s\n' "${home_value%/}"
+}
+
+REMOTE_HOME="$(require_remote_home)"
+export HOME="${REMOTE_HOME}"
+
 expand_remote_path() {
     case "$1" in
         "~")
-            printf '%s\n' "$HOME"
+            printf '%s\n' "$REMOTE_HOME"
             ;;
         "~/"*)
-            printf '%s/%s\n' "$HOME" "${1#~/}"
+            printf '%s/%s\n' "$REMOTE_HOME" "${1#~/}"
             ;;
         *)
             printf '%s\n' "$1"
@@ -810,7 +1011,7 @@ workspace="$(expand_remote_path "${workspace_raw}")"
 run_id=__RUN_ID__
 archive=__ARCHIVE__
 expected_bridges=(__BRIDGES__)
-if [[ -z "${workspace}" || "${workspace}" == "/" || "${workspace}" == "${HOME}" || -L "${workspace}" || ! -d "${workspace}" ]]; then
+if [[ -z "${workspace}" || "${workspace}" == "/" || "${workspace}" == "${REMOTE_HOME}" || -L "${workspace}" || ! -d "${workspace}" ]]; then
     echo "Unsafe macOS workspace path for result collection: ${workspace}" >&2
     exit 1
 fi
@@ -899,14 +1100,36 @@ if [[ -z "${archive_parent}" || "${archive_parent}" == "${archive}" || -L "${arc
     echo "Unsafe macOS result archive directory: ${archive_parent}" >&2
     exit 1
 fi
-if [[ -e "${archive}" && ( -L "${archive}" || ! -f "${archive}" ) ]]; then
-    echo "Unsafe macOS result archive target: ${archive}" >&2
+if [[ -e "${archive}" ]]; then
+    if [[ -L "${archive}" || ! -f "${archive}" ]]; then
+        echo "Unsafe macOS result archive target: ${archive}" >&2
+    else
+        echo "macOS result archive target already exists: ${archive}" >&2
+    fi
     exit 1
 fi
-rm -f "${archive}"
-COPYFILE_DISABLE=1 tar -czf "${archive}" -- "${matches[@]}"
+archive_tmp=""
+cleanup_result_archive_tmp() {
+    if [[ -n "${archive_tmp}" && -e "${archive_tmp}" ]]; then
+        rm -f "${archive_tmp}"
+    fi
+}
+trap cleanup_result_archive_tmp EXIT
+archive_tmp="$(mktemp "${archive_parent}/.${archive##*/}.XXXXXX.tmp")"
+COPYFILE_DISABLE=1 tar -czf "${archive_tmp}" -- "${matches[@]}"
+if [[ ! -s "${archive_tmp}" ]]; then
+    echo "macOS result archive is empty before publish: ${archive_tmp}" >&2
+    exit 1
+fi
+if ! COPYFILE_DISABLE=1 tar -tzf "${archive_tmp}" >/dev/null; then
+    echo "macOS result archive validation failed before publish: ${archive_tmp}" >&2
+    exit 1
+fi
+ln "${archive_tmp}" "${archive}"
+rm -f "${archive_tmp}"
+archive_tmp=""
 '@
-    $script = $script.Replace("__WORKSPACE__", $workspaceQ).Replace("__RUN_ID__", $runIdQ).Replace("__ARCHIVE__", $archiveQ).Replace("__BRIDGES__", $bridgesQ)
+    $script = $script.Replace("__GUEST_HOME__", $guestHomeQ).Replace("__WORKSPACE__", $workspaceQ).Replace("__RUN_ID__", $runIdQ).Replace("__ARCHIVE__", $archiveQ).Replace("__BRIDGES__", $bridgesQ)
     Invoke-MacSsh -Command "bash -lc $(Quote-Sh $script)"
 
     $localArchive = Join-Path $ResultCollectionDir $archiveName

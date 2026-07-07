@@ -14,9 +14,11 @@ used a degraded Apple OpenGL 2.1 compatibility fallback that skips ARB2 light
 interaction drawing to avoid the known startup crash. Please still attach the
 terminal output and support archive if it crashes after that line. Newer builds
 also print post-bypass breadcrumbs such as `ARB2 interaction bypass state
-restored`, `ARB2 interaction bypass light scale`, `ARB2 interaction bypass
-ambient rescue`, and `ARB2 interaction bypass frame tail` to identify the next
-classic renderer operation reached.
+restored`, `ARB2 interaction bypass light scale skipped`,
+`ARB2 interaction bypass ambient rescue`, and `ARB2 interaction bypass frame
+tail` to identify the next classic renderer operation reached. Older 0.6.92
+test builds could stop at `ARB2 interaction bypass light scale`; newer builds
+skip that post-interaction light-scale pass on the degraded Apple GL 2.1 path.
 
 ## What To Attach
 
@@ -83,6 +85,7 @@ For issue #73 style reports, keep the lines around these markers:
 - `ARB2 interaction driver bypass`
 - `ARB2 interaction bypass state restored`
 - `ARB2 interaction bypass light scale`
+- `ARB2 interaction bypass light scale skipped`
 - `ARB2 interaction bypass ambient rescue`
 - `ARB2 interaction bypass frame tail`
 - `ARB2 light interaction`
@@ -117,9 +120,15 @@ openq4-macos-support-YYYYMMDD-HHMMSSZ.tar.gz
 Review the archive before attaching it publicly. The collector redacts
 `/Users/<name>` paths and email-like strings, does not dump the environment,
 does not launch openQ4, and does not copy retail `q4base` PK4 assets.
+Copied text is sanitized for embedded control characters, and command/report
+output is stream-limited before redaction so noisy system tools cannot inflate
+the support archive.
 It also does not follow symlinked package, log, or crash-report inputs; skipped
 symlinks are recorded in the relevant report files instead of copying or
 inspecting their targets.
+If the Terminal or automation environment did not set `HOME`, the collector
+still creates the archive and records notes that home-scoped logs and
+DiagnosticReports were skipped.
 If a DiagnosticReports filename contains unusual characters, the collector
 records a skipped-file note instead of placing that name into the support
 archive.

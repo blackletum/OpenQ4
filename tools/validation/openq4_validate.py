@@ -115,22 +115,22 @@ MAX_MACOS_SUPPORT_INFO_SCRIPT_BYTES = 256 * 1024
 MACOS_SUPPORT_INFO_REQUIRED_TOKENS = (
     "#!/bin/sh",
     "OPENQ4_PACKAGE_ROOT",
+    "HOME_DIR=${HOME:-}",
     "ARCHIVE_TMP",
     "MAX_SUPPORT_TEXT_BYTES",
     "MAX_CRASH_REPORT_BYTES",
     "MAX_SUPPORT_ARCHIVE_BYTES",
-    "COMMAND_OUTPUT_INDEX",
-    "command-output-",
-    'command_output=$(mktemp "${WORK_PARENT}/command-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")',
-    'copy_text_if_present "${command_output}" "${target}"',
     "write_bounded_report()",
-    "report-output-",
-    'report_output=$(mktemp "${WORK_PARENT}/report-output-${COMMAND_OUTPUT_INDEX}.XXXXXX")',
-    'copy_text_if_present "${report_output}" "${target}"',
+    "write_openq4_log_candidate_paths()",
+    "sanitize_text()",
     "redact_text()",
+    "limit_stream_tail()",
+    "Support report output is limited to the final",
     "contains_control_chars()",
     "Support package root must not contain control characters",
     "Support output directory must not contain control characters",
+    "HOME was not set; home-scoped openq4.log files were skipped.",
+    "HOME was not set; the macOS DiagnosticReports directory could not be located.",
     ".XXXXXX.tar.gz.tmp",
     "does not dump the environment",
     "does not launch openQ4",
@@ -905,6 +905,7 @@ def validate_macos_staged_metadata(
         raise ValidationError(f"macOS staged payload is missing app icon: {rel(icon_path, root)}")
     if not splash_path.is_file():
         raise ValidationError(f"macOS staged payload is missing startup splash asset: {rel(splash_path, root)}")
+    validate_no_macos_symlinks(root, install_root)
     validate_macos_support_collector_script(root, install_root)
 
     client_arches: set[str] = set()
@@ -1023,8 +1024,12 @@ def validate_staged_payload(root: Path, *, dry_run: bool) -> None:
 
     install_root = root / ".install"
     game_dir = install_root / "baseoq4"
+    if install_root.is_symlink():
+        raise ValidationError(f"Install root must not be a symlink: {install_root}")
     if not install_root.is_dir():
         raise ValidationError(f"Install root is missing: {install_root}")
+    if game_dir.is_symlink():
+        raise ValidationError(f"Staged game directory must not be a symlink: {game_dir}")
     if not game_dir.is_dir():
         raise ValidationError(f"Staged game directory is missing: {game_dir}")
 

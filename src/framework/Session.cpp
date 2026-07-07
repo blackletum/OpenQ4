@@ -30,6 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "Session_local.h"
+#include "BuildVersion.h"
 #define private public
 #define protected public
 #include "Game_local.h"
@@ -261,6 +262,263 @@ static bool Session_SaveGameHeaderUsesEntityFilter( const idStr &gameName ) {
 }
 
 static bool Session_IsCompatibleSaveGameVersion( const int version );
+static const int SESSION_MAX_SAVEGAME_DICT_KV = 16384;
+static const int SESSION_MAX_SAVE_DESCRIPTION_BYTES = 8192;
+static const int SESSION_MAX_SAVE_PREVIEW_BYTES = 64 * 1024 * 1024;
+static const char *SESSION_SAVEGAME_NO_OVERWRITE_TOKEN = "nooverwrite";
+static const int SESSION_OPENQ4_SAVEGAME_COMPATIBILITY_MAGIC = 'O' | ( 'Q' << 8 ) | ( '4' << 16 ) | ( 'S' << 24 );
+static const int SESSION_OPENQ4_SAVEGAME_COMPATIBILITY_VERSION = 2;
+static const int SESSION_OPENQ4_SAVEGAME_FOOTER_MAGIC = 'O' | ( 'Q' << 8 ) | ( '4' << 16 ) | ( 'F' << 24 );
+static const int SESSION_OPENQ4_SAVEGAME_FOOTER_VERSION = 1;
+static const int SESSION_OPENQ4_SAVEGAME_FOOTER_BYTES = 5 * static_cast<int>( sizeof( int ) );
+
+static bool Session_IsSafeSaveMaterialPath( const idStr &path ) {
+	if ( path.IsEmpty() ) {
+		return true;
+	}
+	if ( path.Length() >= MAX_STRING_CHARS || path[0] == '/' || path[0] == '\\' ) {
+		return false;
+	}
+	if ( idStr::FindText( path.c_str(), ".." ) >= 0 ) {
+		return false;
+	}
+
+	for ( int i = 0; i < path.Length(); i++ ) {
+		const unsigned char ch = static_cast<unsigned char>( path[i] );
+		if ( ch <= ' ' || ch >= 128 || ch == '\\' || ch == ':' || ch == '"' || ch == '<' || ch == '>' || ch == '|' ) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static bool Session_SaveDescriptionMatchesSlot( const idStr &expectedSlotName, const idStr &descriptionSaveName ) {
+	if ( expectedSlotName.IsEmpty() || descriptionSaveName.IsEmpty() ) {
+		return false;
+	}
+
+	idStr scrubbedName = descriptionSaveName;
+	sessLocal.ScrubSaveGameFileName( scrubbedName );
+	return scrubbedName.Icmp( expectedSlotName ) == 0;
+}
+
+static bool Session_WriteSaveGameBytes( idFile *file, const void *buffer, int len, const char *fieldName, const char *savePath ) {
+	if ( len < 0 ) {
+		common->Warning( "Savegame '%s' has invalid negative %s write length %d",
+			savePath ? savePath : "<unknown>", fieldName ? fieldName : "data", len );
+		return false;
+	}
+	if ( len == 0 ) {
+		return true;
+	}
+	if ( buffer == NULL ) {
+		common->Warning( "Savegame '%s' has null source while writing %s",
+			savePath ? savePath : "<unknown>", fieldName ? fieldName : "data" );
+		return false;
+	}
+
+	const int offset = file->Tell();
+	const int bytesWritten = file->Write( buffer, len );
+	if ( bytesWritten != len ) {
+		common->Warning( "Savegame '%s' failed while writing %s at offset %d (wrote %d of %d)",
+			savePath ? savePath : "<unknown>", fieldName ? fieldName : "data", offset, bytesWritten, len );
+		return false;
+	}
+
+	return true;
+}
+
+static bool Session_WriteSaveGameInt( idFile *file, int value, const char *fieldName, const char *savePath ) {
+	const int offset = file->Tell();
+	const int bytesWritten = file->WriteInt( value );
+	if ( bytesWritten != sizeof( value ) ) {
+		common->Warning( "Savegame '%s' failed while writing %s at offset %d (wrote %d of %d)",
+			savePath ? savePath : "<unknown>",
+			fieldName ? fieldName : "integer",
+			offset,
+			bytesWritten,
+			static_cast<int>( sizeof( value ) ) );
+		return false;
+	}
+	return true;
+}
+
+static bool Session_WriteSaveGameString( idFile *file, const char *string, int maxLength, const char *fieldName, const char *savePath ) {
+	if ( string == NULL ) {
+		string = "";
+	}
+
+	const int len = idStr::Length( string );
+	if ( len < 0 || len > maxLength ) {
+		common->Warning( "Savegame '%s' has invalid %s length %d (max %d)",
+			savePath ? savePath : "<unknown>", fieldName ? fieldName : "string", len, maxLength );
+		return false;
+	}
+
+	return Session_WriteSaveGameInt( file, len, fieldName, savePath ) &&
+		Session_WriteSaveGameBytes( file, string, len, fieldName, savePath );
+}
+
+static bool Session_WriteSaveGameCString( idFile *file, const char *string, int maxLength, const char *fieldName, const char *savePath ) {
+	if ( string == NULL ) {
+		string = "";
+	}
+
+	const int len = idStr::Length( string );
+	if ( len < 0 || len >= maxLength ) {
+		common->Warning( "Savegame '%s' has invalid %s length %d (max %d)",
+			savePath ? savePath : "<unknown>", fieldName ? fieldName : "string", len, maxLength - 1 );
+		return false;
+	}
+
+	return Session_WriteSaveGameBytes( file, string, len + 1, fieldName, savePath );
+}
+
+static bool Session_WriteSaveGameDict( idFile *file, const idDict &dict, const char *fieldName, const char *savePath ) {
+	const int count = dict.GetNumKeyVals();
+	if ( count < 0 || count > SESSION_MAX_SAVEGAME_DICT_KV ) {
+		common->Warning( "Savegame '%s' has invalid %s key/value count %d (max %d)",
+			savePath ? savePath : "<unknown>",
+			fieldName ? fieldName : "dictionary",
+			count,
+			SESSION_MAX_SAVEGAME_DICT_KV );
+		return false;
+	}
+
+	if ( !Session_WriteSaveGameInt( file, count, fieldName, savePath ) ) {
+		return false;
+	}
+
+	for ( int i = 0; i < count; i++ ) {
+		const idKeyValue *kv = dict.GetKeyVal( i );
+		if ( kv == NULL ) {
+			common->Warning( "Savegame '%s' has NULL %s key/value pair %d",
+				savePath ? savePath : "<unknown>", fieldName ? fieldName : "dictionary", i );
+			return false;
+		}
+		if ( !Session_WriteSaveGameCString( file, kv->GetKey(), MAX_STRING_CHARS, va( "%s key %d", fieldName ? fieldName : "dictionary", i ), savePath ) ||
+			 !Session_WriteSaveGameCString( file, kv->GetValue(), MAX_STRING_CHARS, va( "%s value %d", fieldName ? fieldName : "dictionary", i ), savePath ) ) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static bool Session_WriteSaveTextLine( idFile *file, const char *line, bool quoted, const char *fieldName, const char *savePath ) {
+	idStr output;
+	if ( quoted ) {
+		output = "\"";
+		output += line ? line : "";
+		output += "\"\n";
+	} else {
+		output = line ? line : "";
+		output += "\n";
+	}
+
+	return Session_WriteSaveGameBytes( file, output.c_str(), output.Length(), fieldName, savePath );
+}
+
+static bool Session_ValidateStagedSaveDescription( const idStr &descriptionPath, const idStr &expectedSlotName, saveType_t saveType ) {
+	idStr gameDir = cvarSystem->GetCVarString( "fs_game" );
+	idFile *file = fileSystem->OpenFileRead( descriptionPath.c_str(), true, gameDir.Length() ? gameDir.c_str() : NULL );
+	if ( file == NULL ) {
+		common->Warning( "Failed to reopen staged save description '%s' for validation", descriptionPath.c_str() );
+		return false;
+	}
+
+	const int len = file->Length();
+	if ( len <= 0 || len > SESSION_MAX_SAVE_DESCRIPTION_BYTES ) {
+		common->Warning( "Staged save description '%s' has invalid size %d (max %d)",
+			descriptionPath.c_str(), len, SESSION_MAX_SAVE_DESCRIPTION_BYTES );
+		fileSystem->CloseFile( file );
+		return false;
+	}
+
+	char *buffer = new char[ len + 1 ];
+	const int bytesRead = file->Read( buffer, len );
+	fileSystem->CloseFile( file );
+	if ( bytesRead != len ) {
+		common->Warning( "Staged save description '%s' is truncated (read %d of %d)",
+			descriptionPath.c_str(), bytesRead, len );
+		delete[] buffer;
+		return false;
+	}
+	buffer[ len ] = '\0';
+
+	idStr sidecarSaveName;
+	idStr sidecarDescription;
+	idStr sidecarScreenshot;
+	bool sidecarNoOverwrite = false;
+	bool valid = true;
+	{
+		idLexer src( buffer, len, descriptionPath.c_str(), LEXFL_NOERRORS | LEXFL_NOSTRINGCONCAT );
+		idToken tok;
+		if ( src.ReadToken( &tok ) ) {
+			sidecarSaveName = tok;
+		} else {
+			valid = false;
+		}
+		if ( valid && src.ReadToken( &tok ) ) {
+			sidecarDescription = tok;
+		} else {
+			valid = false;
+		}
+		if ( valid && src.ReadToken( &tok ) ) {
+			sidecarScreenshot = tok;
+		}
+		if ( valid && src.ReadToken( &tok ) ) {
+			if ( !idStr::Icmp( tok.c_str(), SESSION_SAVEGAME_NO_OVERWRITE_TOKEN ) ) {
+				sidecarNoOverwrite = true;
+			} else {
+				common->Warning( "Staged save description '%s' has unexpected token '%s'",
+					descriptionPath.c_str(), tok.c_str() );
+				valid = false;
+			}
+		}
+		if ( valid && src.ReadToken( &tok ) ) {
+			common->Warning( "Staged save description '%s' has trailing token '%s'",
+				descriptionPath.c_str(), tok.c_str() );
+			valid = false;
+		}
+	}
+
+	delete[] buffer;
+
+	if ( valid && !Session_SaveDescriptionMatchesSlot( expectedSlotName, sidecarSaveName ) ) {
+		common->Warning( "Staged save description '%s' names slot '%s', expected '%s'",
+			descriptionPath.c_str(), sidecarSaveName.c_str(), expectedSlotName.c_str() );
+		valid = false;
+	}
+	if ( valid && ( sidecarSaveName.Length() >= MAX_STRING_CHARS || sidecarDescription.Length() >= MAX_STRING_CHARS ) ) {
+		common->Warning( "Staged save description '%s' has an oversized display token", descriptionPath.c_str() );
+		valid = false;
+	}
+	if ( valid && !Session_IsSafeSaveMaterialPath( sidecarScreenshot ) ) {
+		common->Warning( "Staged save description '%s' has unsafe screenshot material '%s'",
+			descriptionPath.c_str(), sidecarScreenshot.c_str() );
+		valid = false;
+	}
+
+	const bool expectNoOverwrite = ( saveType == ST_AUTO || saveType == ST_CHECKPOINT );
+	if ( valid && sidecarNoOverwrite != expectNoOverwrite ) {
+		common->Warning( "Staged save description '%s' no-overwrite marker is %s but expected %s",
+			descriptionPath.c_str(), sidecarNoOverwrite ? "present" : "absent", expectNoOverwrite ? "present" : "absent" );
+		valid = false;
+	}
+	if ( valid && saveType == ST_AUTO && sidecarScreenshot.IsEmpty() ) {
+		common->Warning( "Staged autosave description '%s' is missing its loadscreen material", descriptionPath.c_str() );
+		valid = false;
+	}
+	if ( valid && saveType != ST_AUTO && !sidecarScreenshot.IsEmpty() ) {
+		common->Warning( "Staged save description '%s' unexpectedly names screenshot material '%s'",
+			descriptionPath.c_str(), sidecarScreenshot.c_str() );
+		valid = false;
+	}
+
+	return valid;
+}
 
 static bool Session_ReadSaveGameInt( idFile *file, int &value, const char *fieldName, const char *savePath ) {
 	const int offset = file->Tell();
@@ -335,8 +593,6 @@ static bool Session_ReadSaveGameCString( idFile *file, idStr &string, int maxLen
 }
 
 static bool Session_ReadSaveGameDict( idFile *file, idDict &dict, const char *fieldName, const char *savePath ) {
-	static const int SESSION_MAX_SAVEGAME_DICT_KV = 16384;
-
 	int count = 0;
 	if ( !Session_ReadSaveGameInt( file, count, fieldName, savePath ) ) {
 		dict.Clear();
@@ -367,6 +623,84 @@ static bool Session_ReadSaveGameDict( idFile *file, idDict &dict, const char *fi
 	return true;
 }
 
+static bool Session_ValidateStagedSaveGamePayload( idFile *file, const idStr &savePath ) {
+	const int payloadOffset = file->Tell();
+	const int fileLength = file->Length();
+	if ( fileLength <= 0 || payloadOffset < 0 || fileLength < payloadOffset + SESSION_OPENQ4_SAVEGAME_FOOTER_BYTES + 3 * static_cast<int>( sizeof( int ) ) ) {
+		common->Warning( "Staged savegame '%s' is too short for an openQ4 payload/footer (payload offset %d, length %d)",
+			savePath.c_str(), payloadOffset, fileLength );
+		return false;
+	}
+
+	int marker = 0;
+	int payloadVersion = 0;
+	int payloadBuild = 0;
+	if ( !Session_ReadSaveGameInt( file, marker, "payload marker", savePath.c_str() ) ||
+		 !Session_ReadSaveGameInt( file, payloadVersion, "payload version", savePath.c_str() ) ||
+		 !Session_ReadSaveGameInt( file, payloadBuild, "payload build", savePath.c_str() ) ) {
+		return false;
+	}
+
+	if ( marker != SESSION_OPENQ4_SAVEGAME_COMPATIBILITY_MAGIC ) {
+		common->Warning( "Staged savegame '%s' has invalid openQ4 payload marker 0x%08x",
+			savePath.c_str(), marker );
+		return false;
+	}
+	if ( payloadVersion != SESSION_OPENQ4_SAVEGAME_COMPATIBILITY_VERSION ) {
+		common->Warning( "Staged savegame '%s' has payload version %d, expected %d",
+			savePath.c_str(), payloadVersion, SESSION_OPENQ4_SAVEGAME_COMPATIBILITY_VERSION );
+		return false;
+	}
+	if ( payloadBuild != BUILD_NUMBER ) {
+		common->Warning( "Staged savegame '%s' has payload build %d, expected %d",
+			savePath.c_str(), payloadBuild, BUILD_NUMBER );
+		return false;
+	}
+
+	const int footerOffset = fileLength - SESSION_OPENQ4_SAVEGAME_FOOTER_BYTES;
+	if ( footerOffset <= payloadOffset || file->Seek( footerOffset, FS_SEEK_SET ) != 0 ) {
+		common->Warning( "Staged savegame '%s' has invalid payload footer offset %d (payload offset %d, length %d)",
+			savePath.c_str(), footerOffset, payloadOffset, fileLength );
+		return false;
+	}
+
+	int footerMarker = 0;
+	int footerVersion = 0;
+	int savedFooterOffset = 0;
+	int savedObjectCount = 0;
+	int savedSyncCount = 0;
+	if ( !Session_ReadSaveGameInt( file, footerMarker, "payload footer marker", savePath.c_str() ) ||
+		 !Session_ReadSaveGameInt( file, footerVersion, "payload footer version", savePath.c_str() ) ||
+		 !Session_ReadSaveGameInt( file, savedFooterOffset, "payload footer offset", savePath.c_str() ) ||
+		 !Session_ReadSaveGameInt( file, savedObjectCount, "payload footer object count", savePath.c_str() ) ||
+		 !Session_ReadSaveGameInt( file, savedSyncCount, "payload footer sync count", savePath.c_str() ) ) {
+		return false;
+	}
+
+	if ( footerMarker != SESSION_OPENQ4_SAVEGAME_FOOTER_MAGIC ) {
+		common->Warning( "Staged savegame '%s' has invalid payload footer marker 0x%08x",
+			savePath.c_str(), footerMarker );
+		return false;
+	}
+	if ( footerVersion != SESSION_OPENQ4_SAVEGAME_FOOTER_VERSION ) {
+		common->Warning( "Staged savegame '%s' has footer version %d, expected %d",
+			savePath.c_str(), footerVersion, SESSION_OPENQ4_SAVEGAME_FOOTER_VERSION );
+		return false;
+	}
+	if ( savedFooterOffset != footerOffset ) {
+		common->Warning( "Staged savegame '%s' footer offset %d does not match EOF footer offset %d",
+			savePath.c_str(), savedFooterOffset, footerOffset );
+		return false;
+	}
+	if ( savedObjectCount < 0 || savedSyncCount < 0 ) {
+		common->Warning( "Staged savegame '%s' has invalid footer counts (objects %d, sync markers %d)",
+			savePath.c_str(), savedObjectCount, savedSyncCount );
+		return false;
+	}
+
+	return true;
+}
+
 static bool Session_RelativeSaveFileExists( const idStr &relativePath ) {
 	idStr osPath = fileSystem->RelativePathToOSPath( relativePath.c_str(), "fs_savepath" );
 	idFile *file = fileSystem->OpenExplicitFileRead( osPath.c_str() );
@@ -374,6 +708,49 @@ static bool Session_RelativeSaveFileExists( const idStr &relativePath ) {
 		return false;
 	}
 	fileSystem->CloseFile( file );
+	return true;
+}
+
+static bool Session_ValidateStagedSavePreview( const idStr &previewPath ) {
+	idStr gameDir = cvarSystem->GetCVarString( "fs_game" );
+	idFile *file = fileSystem->OpenFileRead( previewPath.c_str(), true, gameDir.Length() ? gameDir.c_str() : NULL );
+	if ( file == NULL ) {
+		return false;
+	}
+
+	const int len = file->Length();
+	if ( len < 18 || len > SESSION_MAX_SAVE_PREVIEW_BYTES ) {
+		common->Warning( "Staged save preview '%s' has invalid size %d (max %d)",
+			previewPath.c_str(), len, SESSION_MAX_SAVE_PREVIEW_BYTES );
+		fileSystem->CloseFile( file );
+		return false;
+	}
+
+	unsigned char header[18];
+	const int bytesRead = file->Read( header, static_cast<int>( sizeof( header ) ) );
+	fileSystem->CloseFile( file );
+	if ( bytesRead != static_cast<int>( sizeof( header ) ) ) {
+		common->Warning( "Staged save preview '%s' is truncated while reading TGA header", previewPath.c_str() );
+		return false;
+	}
+
+	const int imageType = header[2];
+	const int width = header[12] | ( header[13] << 8 );
+	const int height = header[14] | ( header[15] << 8 );
+	const int bitsPerPixel = header[16];
+	if ( imageType != 2 && imageType != 10 ) {
+		common->Warning( "Staged save preview '%s' has unsupported TGA image type %d", previewPath.c_str(), imageType );
+		return false;
+	}
+	if ( width <= 0 || height <= 0 || width > 8192 || height > 8192 ) {
+		common->Warning( "Staged save preview '%s' has invalid dimensions %dx%d", previewPath.c_str(), width, height );
+		return false;
+	}
+	if ( bitsPerPixel != 24 && bitsPerPixel != 32 ) {
+		common->Warning( "Staged save preview '%s' has unsupported TGA bit depth %d", previewPath.c_str(), bitsPerPixel );
+		return false;
+	}
+
 	return true;
 }
 
@@ -489,9 +866,16 @@ static bool Session_ValidateStagedSaveGameHeader( const idStr &savePath ) {
 	if ( valid && Session_SaveGameHeaderUsesEntityFilter( gamename ) ) {
 		valid = Session_ReadSaveGameString( file, entityFilter, MAX_STRING_CHARS, "entity filter", savePath.c_str() );
 	}
+	for ( int i = 0; valid && i < MAX_ASYNC_CLIENTS; i++ ) {
+		idDict persistentPlayerInfo;
+		valid = Session_ReadSaveGameDict( file, persistentPlayerInfo, va( "persistent player info %d", i ), savePath.c_str() );
+	}
 	if ( valid && saveMap.IsEmpty() ) {
 		common->Warning( "Staged savegame '%s' has an empty map name", savePath.c_str() );
 		valid = false;
+	}
+	if ( valid ) {
+		valid = Session_ValidateStagedSaveGamePayload( file, savePath );
 	}
 
 	fileSystem->CloseFile( file );
@@ -908,7 +1292,6 @@ static bool Session_GetMapDeclDict( const char *mapPath, const char *entityFilte
 	return false;
 }
 
-static const char *SESSION_SAVEGAME_NO_OVERWRITE_TOKEN = "nooverwrite";
 static const char *SESSION_SAVE_DESC_AUTOSAVE_LABEL = "#str_107240";
 static const char *SESSION_SAVE_DESC_QUICKSAVE_LABEL = "#str_107241";
 static const char *SESSION_SAVE_DESC_CHECKPOINT_LABEL = "#str_107656";
@@ -4754,7 +5137,8 @@ void idSessionLocal::ScrubSaveGameFileName( idStr &saveFileName ) const {
 		} else if ( (const unsigned char)inFileName[i] >= 128 ) {
 			// high ascii chars
 			saveFileName += '_';
-		} else if ( inFileName[i] == ' ' ) {
+		} else if ( inFileName[i] <= ' ' ) {
+			// Avoid whitespace and control characters in save-slot filenames.
 			saveFileName += '_';
 		} else {
 			saveFileName += inFileName[i];
@@ -4793,7 +5177,7 @@ bool idSessionLocal::SaveGame( const char *saveName, saveType_t saveType ) {
 	return false;
 #else
 	int i;
-	idStr gameFile, previewFile, descriptionFile, tempGameFile, tempPreviewFile, tempDescriptionFile, mapName, saveSlotName;
+	idStr gameFile, previewFile, descriptionFile, tempGameFile, tempPreviewFile, tempDescriptionFile, mapName, saveSlotName, saveSlotFileName;
 	const idStr previousLastQuicksave = com_lastQuicksave.GetString();
 	const int previousLastCheckPoint = lastCheckPoint;
 	bool generatedSaveName = false;
@@ -4847,6 +5231,7 @@ bool idSessionLocal::SaveGame( const char *saveName, saveType_t saveType ) {
 		Session_RestoreGeneratedSaveState( *this, generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint );
 		return false;
 	}
+	saveSlotFileName = gameFile;
 
 	soundSystem->SetMute( true );
 
@@ -4931,31 +5316,62 @@ bool idSessionLocal::SaveGame( const char *saveName, saveType_t saveType ) {
 	menuDescription += mapDisplayName;
 	Session_EscapeSaveDescription( menuDescription );
 
-	fileDesc->Printf( "\"%s\"\n", escapedSlotName.c_str() );
-	fileDesc->Printf( "\"%s\"\n", menuDescription.c_str() );
+	bool descriptionWritten = true;
+	descriptionWritten = descriptionWritten && Session_WriteSaveTextLine( fileDesc, escapedSlotName.c_str(), true, "description slot name", tempDescriptionFile.c_str() );
+	descriptionWritten = descriptionWritten && Session_WriteSaveTextLine( fileDesc, menuDescription.c_str(), true, "description menu label", tempDescriptionFile.c_str() );
 
 	if ( saveType == ST_AUTO ) {
-		fileDesc->Printf( "\"%s\"\n", saveImage.c_str() );
+		descriptionWritten = descriptionWritten && Session_WriteSaveTextLine( fileDesc, saveImage.c_str(), true, "description preview image", tempDescriptionFile.c_str() );
 	} else {
-		fileDesc->Printf( "\"\"\n" );
+		descriptionWritten = descriptionWritten && Session_WriteSaveTextLine( fileDesc, "", true, "description preview image", tempDescriptionFile.c_str() );
 	}
 
 	if ( saveType == ST_AUTO || saveType == ST_CHECKPOINT ) {
-		fileDesc->Printf( "%s\n", SESSION_SAVEGAME_NO_OVERWRITE_TOKEN );
+		descriptionWritten = descriptionWritten && Session_WriteSaveTextLine( fileDesc, SESSION_SAVEGAME_NO_OVERWRITE_TOKEN, false, "description no-overwrite marker", tempDescriptionFile.c_str() );
 	}
 
 	fileSystem->CloseFile( fileDesc );
+	if ( !descriptionWritten ) {
+		common->Warning( "Failed to write description file '%s'\n", tempDescriptionFile.c_str() );
+		fileSystem->CloseFile( fileOut );
+		Session_RemoveStagedSaveFiles( tempGameFile, tempDescriptionFile, tempPreviewFile );
+		Session_RestoreGeneratedSaveState( *this, generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint );
+		syncNextGameFrame = true;
+		soundSystem->SetMute( insideExecuteMapChange );
+		return false;
+	}
+	if ( !Session_ValidateStagedSaveDescription( tempDescriptionFile, saveSlotFileName, saveType ) ) {
+		common->Warning( "Staged save description '%s' failed validation", tempDescriptionFile.c_str() );
+		fileSystem->CloseFile( fileOut );
+		Session_RemoveStagedSaveFiles( tempGameFile, tempDescriptionFile, tempPreviewFile );
+		Session_RestoreGeneratedSaveState( *this, generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint );
+		syncNextGameFrame = true;
+		soundSystem->SetMute( insideExecuteMapChange );
+		return false;
+	}
 
 	// Write SaveGame Header:
 	// Game Name / Version / Map Name / Entity Filter / Persistent Player Info
-	fileOut->WriteString( SAVEGAME_GAME_NAME_RETAIL );
-	fileOut->WriteInt( SAVEGAME_VERSION );
-	fileOut->WriteString( mapName );
-	fileOut->WriteString( mapSpawnData.serverInfo.GetString( "si_entityFilter" ) );
+	bool headerWritten = true;
+	headerWritten = headerWritten && Session_WriteSaveGameString( fileOut, SAVEGAME_GAME_NAME_RETAIL, MAX_STRING_CHARS, "game name", tempGameFile.c_str() );
+	headerWritten = headerWritten && Session_WriteSaveGameInt( fileOut, SAVEGAME_VERSION, "version", tempGameFile.c_str() );
+	headerWritten = headerWritten && Session_WriteSaveGameString( fileOut, mapName.c_str(), MAX_STRING_CHARS, "map name", tempGameFile.c_str() );
+	headerWritten = headerWritten && Session_WriteSaveGameString( fileOut, mapSpawnData.serverInfo.GetString( "si_entityFilter" ), MAX_STRING_CHARS, "entity filter", tempGameFile.c_str() );
 
 	for ( i = 0; i < MAX_ASYNC_CLIENTS; i++ ) {
 		mapSpawnData.persistentPlayerInfo[i] = game->GetPersistentPlayerInfo( i );
-		mapSpawnData.persistentPlayerInfo[i].WriteToFileHandle( fileOut );
+		headerWritten = headerWritten &&
+			Session_WriteSaveGameDict( fileOut, mapSpawnData.persistentPlayerInfo[i], va( "persistent player info %d", i ), tempGameFile.c_str() );
+	}
+
+	if ( !headerWritten ) {
+		common->Warning( "Failed to write savegame header '%s'\n", tempGameFile.c_str() );
+		fileSystem->CloseFile( fileOut );
+		Session_RemoveStagedSaveFiles( tempGameFile, tempDescriptionFile, tempPreviewFile );
+		Session_RestoreGeneratedSaveState( *this, generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint );
+		syncNextGameFrame = true;
+		soundSystem->SetMute( insideExecuteMapChange );
+		return false;
 	}
 
 	game->SaveGame( fileOut, saveType );
@@ -4972,7 +5388,10 @@ bool idSessionLocal::SaveGame( const char *saveName, saveType_t saveType ) {
 		return false;
 	}
 
-	const bool previewReady = ( saveType != ST_AUTO && Session_RelativeSaveFileExists( tempPreviewFile ) );
+	const bool previewReady = ( saveType != ST_AUTO && Session_ValidateStagedSavePreview( tempPreviewFile ) );
+	if ( saveType != ST_AUTO && !previewReady ) {
+		Session_RemoveRelativeSaveFile( tempPreviewFile );
+	}
 	sessionStagedSaveFile_t stagedFiles[3];
 	int numStagedFiles = 0;
 	Session_InitStagedSaveFile( stagedFiles[numStagedFiles++], tempGameFile, gameFile, true );
@@ -5013,7 +5432,9 @@ bool idSessionLocal::LoadGame( const char *saveName ) {
 	return false;
 #else
 	int i;
+	int loadedSavegameVersion = 0;
 	idStr in, loadFile, saveMap, gamename, entityFilter, requestedSaveName;
+	idDict loadedPersistentPlayerInfo[MAX_ASYNC_CLIENTS];
 
 	if ( IsMultiplayer() ) {
 		common->Printf( "Can't load during net play.\n" );
@@ -5054,84 +5475,70 @@ bool idSessionLocal::LoadGame( const char *saveName ) {
 	// Open savegame file
 	// only allow loads from the game directory because we don't want a base game to load
 	idStr game = cvarSystem->GetCVarString( "fs_game" );
-	savegameFile = fileSystem->OpenFileRead( in, true, game.Length() ? game : NULL );
+	idFile *loadGameFile = fileSystem->OpenFileRead( in, true, game.Length() ? game : NULL );
 
-	if ( savegameFile == NULL ) {
+	if ( loadGameFile == NULL ) {
 		common->Warning( "Couldn't open savegame file %s", in.c_str() );
 		return false;
 	}
 
-	loadingSaveGame = true;
+	loadingSaveGame = false;
+	savegameFile = NULL;
 
 	// Read in save game header
 	// Game Name / Version / Map Name / [Entity Filter] / Persistent Player Info
 
 	// game
-	if ( !Session_ReadSaveGameString( savegameFile, gamename, MAX_STRING_CHARS, "game name", in.c_str() ) ) {
-		loadingSaveGame = false;
-		fileSystem->CloseFile( savegameFile );
-		savegameFile = NULL;
-		return false;
-	}
-
-	// Accept both the retail Quake 4 save header and older openQ4-branded headers.
-	if ( !Session_IsSupportedSaveGameName( gamename ) ) {
-		common->Warning( "Attempted to load an invalid savegame header '%s' from %s",
-			gamename.c_str(), in.c_str() );
-
-		loadingSaveGame = false;
-		fileSystem->CloseFile( savegameFile );
-		savegameFile = NULL;
-		return false;
+	bool headerValid = true;
+	headerValid = headerValid && Session_ReadSaveGameString( loadGameFile, gamename, MAX_STRING_CHARS, "game name", in.c_str() );
+	if ( headerValid && !Session_IsSupportedSaveGameName( gamename ) ) {
+		common->Warning( "Attempted to load an invalid savegame header '%s' from %s", gamename.c_str(), in.c_str() );
+		headerValid = false;
 	}
 
 	// version
-	if ( !Session_ReadSaveGameInt( savegameFile, savegameVersion, "version", in.c_str() ) ) {
-		loadingSaveGame = false;
-		fileSystem->CloseFile( savegameFile );
-		savegameFile = NULL;
-		return false;
-	}
+	headerValid = headerValid && Session_ReadSaveGameInt( loadGameFile, loadedSavegameVersion, "version", in.c_str() );
 
 	// map
-	if ( !Session_ReadSaveGameString( savegameFile, saveMap, MAX_STRING_CHARS, "map name", in.c_str() ) ) {
-		loadingSaveGame = false;
-		fileSystem->CloseFile( savegameFile );
-		savegameFile = NULL;
-		return false;
-	}
+	headerValid = headerValid && Session_ReadSaveGameString( loadGameFile, saveMap, MAX_STRING_CHARS, "map name", in.c_str() );
 
 	// retail Quake 4 stores an entity filter after the map name.
 	// Older openQ4 saves omitted it, so only consume it from retail-style headers.
-	if ( Session_SaveGameHeaderUsesEntityFilter( gamename ) ) {
-		if ( !Session_ReadSaveGameString( savegameFile, entityFilter, MAX_STRING_CHARS, "entity filter", in.c_str() ) ) {
-			loadingSaveGame = false;
-			fileSystem->CloseFile( savegameFile );
-			savegameFile = NULL;
-			return false;
-		}
+	if ( headerValid && Session_SaveGameHeaderUsesEntityFilter( gamename ) ) {
+		headerValid = Session_ReadSaveGameString( loadGameFile, entityFilter, MAX_STRING_CHARS, "entity filter", in.c_str() );
 	} else {
 		entityFilter.Clear();
 	}
 
 	// persistent player info
-	for ( i = 0; i < MAX_ASYNC_CLIENTS; i++ ) {
-		if ( !Session_ReadSaveGameDict( savegameFile, mapSpawnData.persistentPlayerInfo[i], va( "persistent player info %d", i ), in.c_str() ) ) {
-			loadingSaveGame = false;
-			fileSystem->CloseFile( savegameFile );
-			savegameFile = NULL;
-			return false;
-		}
+	for ( i = 0; headerValid && i < MAX_ASYNC_CLIENTS; i++ ) {
+		headerValid = Session_ReadSaveGameDict( loadGameFile, loadedPersistentPlayerInfo[i], va( "persistent player info %d", i ), in.c_str() );
 	}
+	if ( headerValid && saveMap.IsEmpty() ) {
+		common->Warning( "Savegame '%s' has an empty map name", in.c_str() );
+		headerValid = false;
+	}
+	if ( !headerValid ) {
+		fileSystem->CloseFile( loadGameFile );
+		return false;
+	}
+
+	for ( i = 0; i < MAX_ASYNC_CLIENTS; i++ ) {
+		mapSpawnData.persistentPlayerInfo[i] = loadedPersistentPlayerInfo[i];
+	}
+	savegameVersion = loadedSavegameVersion;
 
 	// check the version, if it doesn't match, cancel the loadgame,
 	// but still load the map with the persistant playerInfo from the header
 	// so that the player doesn't lose too much progress.
 	if ( !Session_IsCompatibleSaveGameVersion( savegameVersion ) ) {
 		common->Warning( "Savegame Version mismatch: aborting loadgame and starting level with persistent data" );
-		loadingSaveGame = false;
-		fileSystem->CloseFile( savegameFile );
-		savegameFile = NULL;
+		fileSystem->CloseFile( loadGameFile );
+		loadGameFile = NULL;
+	} else {
+		loadingSaveGame = true;
+		savegameFile = loadGameFile;
+		loadGameFile = NULL;
 	}
 
 	common->DPrintf( "loading a v%d savegame\n", savegameVersion );

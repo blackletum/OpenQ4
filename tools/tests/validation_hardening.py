@@ -209,6 +209,36 @@ def validate_game_libs_repo_guards() -> None:
 
 
 def validate_staged_symlink_guard() -> None:
+    install_root_link_root = WORK / "symlink-install-root"
+    install_root_target = WORK / "symlink-install-target"
+    install_root_link_root.mkdir(parents=True, exist_ok=True)
+    install_root_target.mkdir(parents=True, exist_ok=True)
+    try:
+        os.symlink(install_root_target, install_root_link_root / ".install", target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pass
+    else:
+        expect_validation_error(
+            lambda: VALIDATOR.validate_staged_payload(install_root_link_root, dry_run=False),
+            "Install root must not be a symlink",
+            "symlink install root",
+        )
+
+    game_dir_link_root = WORK / "symlink-game-root"
+    game_dir_target = WORK / "symlink-game-target"
+    (game_dir_link_root / ".install").mkdir(parents=True, exist_ok=True)
+    game_dir_target.mkdir(parents=True, exist_ok=True)
+    try:
+        os.symlink(game_dir_target, game_dir_link_root / ".install" / "baseoq4", target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pass
+    else:
+        expect_validation_error(
+            lambda: VALIDATOR.validate_staged_payload(game_dir_link_root, dry_run=False),
+            "Staged game directory must not be a symlink",
+            "symlink staged game root",
+        )
+
     root = WORK / "symlink-payload"
     install_root = root / ".install"
     target = root / "outside.txt"
@@ -377,6 +407,8 @@ def validate_validation_wiring() -> None:
         "validate_staged_architecture_set",
         "validate_windows_symbols",
         "validate_no_non_runtime_artifacts",
+        "Install root must not be a symlink",
+        "Staged game directory must not be a symlink",
     ):
         if token not in validator:
             raise AssertionError(f"validation runner is missing {token}")
