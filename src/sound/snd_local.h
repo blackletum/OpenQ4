@@ -502,6 +502,7 @@ public:
 	virtual idSoundWorld* 	GetPlayingSoundWorld();
 
 	virtual idSoundWorld* GetSoundWorldFromId(int worldId);
+	virtual void			FreeSoundEmitter(int worldId, int handle, bool immediate);
 
 	// sends the current playing sound world information to the sound hardware
 	virtual void			Render();

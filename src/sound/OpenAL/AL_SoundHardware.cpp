@@ -1601,6 +1601,133 @@ void idSoundHardware_OpenAL::FreeVoice( idSoundVoice* voice )
 
 /*
 ========================
+OpenQ4_DiagnosticSampleName
+========================
+*/
+static void OpenQ4_DiagnosticSampleName( const idSoundSample_OpenAL* sample, idStr& name )
+{
+	if( sample == NULL )
+	{
+		name = "<none>";
+		return;
+	}
+
+	name = sample->GetName();
+
+	idStr extension;
+	name.ExtractFileExtension( extension );
+	if( extension.Length() == 0 && sample->IsLoaded() )
+	{
+		name += sample->IsCompressed() ? ".ogg" : ".wav";
+	}
+}
+
+/*
+========================
+idSoundHardware_OpenAL::ListPlayingVoices
+========================
+*/
+int idSoundHardware_OpenAL::ListPlayingVoices() const
+{
+	if( openalDevice == NULL )
+	{
+		idLib::Printf( "No active OpenAL device.\n" );
+		return 0;
+	}
+
+	int numPlaying = 0;
+	ALfloat listenerGain = 1.0f;
+	alGetListenerf( AL_GAIN, &listenerGain );
+	if( CheckALErrors() != AL_NO_ERROR )
+	{
+		listenerGain = 1.0f;
+	}
+
+	idLib::Printf( "Audible OpenAL voices\n" );
+	idLib::Printf( " # source   gain  pitch sample\n" );
+	idLib::Printf( "--- ------ ------ ------ ----------------\n" );
+
+	for( int i = 0; i < voices.Num(); i++ )
+	{
+		const idSoundVoice_OpenAL& voice = voices[i];
+		if( !alIsSource( voice.openalSource ) )
+		{
+			continue;
+		}
+
+		ALint state = AL_INITIAL;
+		alGetSourcei( voice.openalSource, AL_SOURCE_STATE, &state );
+		if( CheckALErrors() != AL_NO_ERROR || state != AL_PLAYING )
+		{
+			continue;
+		}
+
+		ALfloat sourceGain = 0.0f;
+		alGetSourcef( voice.openalSource, AL_GAIN, &sourceGain );
+		if( CheckALErrors() != AL_NO_ERROR || sourceGain <= 0.00001f )
+		{
+			continue;
+		}
+		const float effectiveGain = static_cast<float>( sourceGain * listenerGain );
+		if( effectiveGain <= 0.00001f )
+		{
+			continue;
+		}
+
+		ALfloat sourcePitch = 1.0f;
+		alGetSourcef( voice.openalSource, AL_PITCH, &sourcePitch );
+		if( CheckALErrors() != AL_NO_ERROR )
+		{
+			sourcePitch = voice.pitch;
+		}
+
+		ALint sourceType = AL_UNDETERMINED;
+		alGetSourcei( voice.openalSource, AL_SOURCE_TYPE, &sourceType );
+		if( CheckALErrors() != AL_NO_ERROR )
+		{
+			sourceType = AL_UNDETERMINED;
+		}
+
+		const idSoundSample_OpenAL* sample = NULL;
+		if( sourceType == AL_STATIC )
+		{
+			ALint openalBuffer = 0;
+			alGetSourcei( voice.openalSource, AL_BUFFER, &openalBuffer );
+			if( CheckALErrors() == AL_NO_ERROR )
+			{
+				if( voice.leadinSample != NULL && voice.leadinSample->openalBuffer == static_cast<ALuint>( openalBuffer ) )
+				{
+					sample = voice.leadinSample;
+				}
+				else if( voice.loopingSample != NULL && voice.loopingSample->openalBuffer == static_cast<ALuint>( openalBuffer ) )
+				{
+					sample = voice.loopingSample;
+				}
+			}
+		}
+		if( sample == NULL )
+		{
+			sample = voice.loopingSample != NULL ? voice.loopingSample : voice.leadinSample;
+		}
+
+		idStr sampleName;
+		OpenQ4_DiagnosticSampleName( sample, sampleName );
+
+		idLib::Printf( "%3d %6u %6.3f %6.3f %s\n",
+					   numPlaying,
+					   static_cast<unsigned int>( voice.openalSource ),
+					   effectiveGain,
+					   static_cast<float>( sourcePitch ),
+					   sampleName.c_str() );
+		numPlaying++;
+	}
+
+	idLib::Printf( "%d audible OpenAL voices\n", numPlaying );
+	return numPlaying;
+}
+
+/*
+========================
 idSoundHardware_OpenAL::PrintPerformanceData
 ========================
 */

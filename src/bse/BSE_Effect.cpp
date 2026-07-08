@@ -145,10 +145,7 @@ void rvBSE::Init(const rvDeclEffect* declEffect, renderEffect_s* parms, float ti
 	this->mCurrentWorldBounds.AddPoint(this->mCurrentOrigin + this->mCurrentLocalBounds[1]);
 	this->mSpriteSize.Zero();
 	UpdateFromOwner(parms, time, 1);
-	this->mReferenceSound = 0;
-	if (parms->referenceSoundHandle > 0) {
-		this->mReferenceSound = soundSystem->EmitterForIndex(SOUNDWORLD_GAME, parms->referenceSoundHandle);
-	}
+	this->mReferenceSoundHandle = parms->referenceSoundHandle;
 	UpdateSegments(time);
 	this->mOriginDistanceToCamera = 0.0;
 	this->mShortestDistanceToCamera = 0.0;
@@ -200,14 +197,15 @@ float rvBSE::GetOriginAttenuation(rvSegmentTemplate* st) const
 
 void rvBSE::UpdateSoundEmitter(rvSegmentTemplate* st, rvSegment* seg)
 {
-	if (!st || !seg || !mReferenceSound) {
+	idSoundEmitter* referenceSound = GetReferenceSound();
+	if (!st || !seg || !referenceSound) {
 		return;
 	}
 
 	if (GetStopped()) {
 		// Stop looping sounds when the owning effect is stopped.
 		if (st->GetSoundLooping() && (seg->mFlags & 2) != 0) {
-			mReferenceSound->StopSound(static_cast<s_channelType>(seg->mSegmentTemplateHandle + SCHANNEL_ONE));
+			referenceSound->StopSound(static_cast<s_channelType>(seg->mSegmentTemplateHandle + SCHANNEL_ONE));
 		}
 		return;
 	}
@@ -218,7 +216,7 @@ void rvBSE::UpdateSoundEmitter(rvSegmentTemplate* st, rvSegment* seg)
 
 	// Keep the emitter spatialized at the current effect origin so sound
 	// tracks moving/attached effects correctly.
-	mReferenceSound->UpdateEmitter(mCurrentOrigin, mCurrentVelocity, 0, &parms);
+	referenceSound->UpdateEmitter(mCurrentOrigin, mCurrentVelocity, 0, &parms);
 }
 const idVec3 rvBSE::GetInterpolatedOffset(float time) const
 {
@@ -271,6 +269,14 @@ void rvBSE::SetDuration(float time)
 const char* rvBSE::GetDeclName()
 {
 	return mDeclEffect->base->GetName();
+}
+
+idSoundEmitter* rvBSE::GetReferenceSound(void) const
+{
+	if (mReferenceSoundHandle <= 0) {
+		return NULL;
+	}
+	return soundSystem->EmitterForIndex(SOUNDWORLD_GAME, mReferenceSoundHandle);
 }
 
 void rvBSE::UpdateAttenuation()
@@ -572,8 +578,13 @@ idRenderModel* rvBSE::Render(idRenderModel* model, const struct renderEffect_s* 
 
 void rvBSE::Destroy()
 {
+	idSoundEmitter* referenceSound = GetReferenceSound();
+	if (referenceSound) {
+		referenceSound->StopSound(SCHANNEL_ANY);
+		soundSystem->FreeSoundEmitter(SOUNDWORLD_GAME, mReferenceSoundHandle, true);
+	}
 	mSegments.Clear();
-	mReferenceSound = NULL;
+	mReferenceSoundHandle = -1;
 }
 
 

@@ -123,6 +123,16 @@ This is called from the main thread.
 */
 idSoundEmitter* idSoundWorldLocal::AllocSoundEmitter()
 {
+	for( int i = 1; i < emitters.Num(); i++ )
+	{
+		idSoundEmitterLocal* emitter = emitters[i];
+		if( emitter != NULL && emitter->canFree && emitter->channels.Num() == 0 )
+		{
+			emitter->Reset();
+			return emitter;
+		}
+	}
+
 	idSoundEmitterLocal* emitter = emitterAllocator.Alloc();
 	emitter->Init( emitters.Append( emitter ), this );
 	return emitter;
@@ -398,20 +408,10 @@ void idSoundWorldLocal::Update()
 	int currentTime = GetSoundTime();
 	for( int e = emitters.Num() - 1; e >= 0; e-- )
 	{
-		// check for freeing a one-shot emitter that is finished playing
+		// Keep emitter indices stable for Quake 4 game/render handles. Freed
+		// emitters remain as reusable slots instead of collapsing the list.
 		if( emitters[e]->CheckForCompletion( currentTime ) )
 		{
-			// do a fast list collapse by swapping the last element into
-			// the slot we are deleting
-			emitters[e]->Reset();
-			emitterAllocator.Free( emitters[e] );
-			int lastEmitter = emitters.Num() - 1;
-			if( e != lastEmitter )
-			{
-				emitters[e] = emitters[lastEmitter];
-				emitters[e]->index = e;
-			}
-			emitters.SetNum( lastEmitter );
 			continue;
 		}
 
@@ -650,7 +650,7 @@ idSoundEmitter* idSoundWorldLocal::EmitterForIndex( int index )
 	}
 	if( index >= emitters.Num() )
 	{
-		idLib::Error( "idSoundWorldLocal::EmitterForIndex: %i >= %i", index, emitters.Num() );
+		return NULL;
 	}
 	return emitters[index];
 }
@@ -686,7 +686,12 @@ void idSoundWorldLocal::StopAllSounds()
 	rumbleAmp = 0.0f;
 	for( int i = 0; i < emitters.Num(); i++ )
 	{
+		const bool wasReusable = emitters[i]->canFree && emitters[i]->channels.Num() == 0;
 		emitters[i]->Reset();
+		if( wasReusable )
+		{
+			emitters[i]->canFree = true;
+		}
 	}
 }
 
@@ -1030,9 +1035,10 @@ void idSoundWorldLocal::ProcessDemoCommand( idDemoFile* readDemo )
 
 			while( emitters.Num() <= index )
 			{
-				// append a brand new one
-				AllocSoundEmitter();
+				idSoundEmitterLocal* emitter = emitterAllocator.Alloc();
+				emitter->Init( emitters.Append( emitter ), this );
 			}
+			emitters[index]->Reset();
 		}
 		break;
 		case SCMD_FREE:

@@ -148,7 +148,10 @@ ID_INLINE void idStrPool::FreeString( const idPoolStr *poolStr ) {
 				}
 			}
 		}
-		assert( i != -1 );
+		if ( i == -1 ) {
+			poolStr->numUsers = 0;
+			return;
+		}
 		assert( pool[i] == poolStr );
 		delete pool[i];
 		pool.RemoveIndex( i );

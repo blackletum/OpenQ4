@@ -691,91 +691,19 @@ windowDef Desktop
 		noclip	1
 		windowDef bg_rect_center_base
 		{
-			rect	0,0,640,480
+			rect	( 0 - "gui::virtual_screen_x_expand" ),( 0 - "gui::virtual_screen_y_expand" ),( 640 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 480 + ( "gui::virtual_screen_y_expand" * 2 ) )
 			visible	0
 			noevents	1
 		}
 		windowDef bg_rect_center_glitch
 		{
-			rect	9,-4,652,489
+			rect	( 5 - "gui::virtual_screen_x_expand" ),( -3 - "gui::virtual_screen_y_expand" ),( 650 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 486 + ( "gui::virtual_screen_y_expand" * 2 ) )
 			visible	0
 			noevents	1
 		}
 		windowDef bg_rect_center_zoom
 		{
-			rect	-16,-12,672,504
-			visible	0
-			noevents	1
-		}
-		windowDef bg_rect_left_base
-		{
-			rect	-640,0,640,480
-			visible	0
-			noevents	1
-		}
-		windowDef bg_rect_left_glitch
-		{
-			rect	-643,-4,652,489
-			visible	0
-			noevents	1
-		}
-		windowDef bg_rect_left_zoom
-		{
-			rect	-688,-12,672,504
-			visible	0
-			noevents	1
-		}
-		windowDef bg_rect_right_base
-		{
-			rect	640,0,640,480
-			visible	0
-			noevents	1
-		}
-		windowDef bg_rect_right_glitch
-		{
-			rect	661,-4,652,489
-			visible	0
-			noevents	1
-		}
-		windowDef bg_rect_right_zoom
-		{
-			rect	656,-12,672,504
-			visible	0
-			noevents	1
-		}
-		windowDef bg_rect_top_base
-		{
-			rect	0,-480,640,480
-			visible	0
-			noevents	1
-		}
-		windowDef bg_rect_top_glitch
-		{
-			rect	9,-493,652,489
-			visible	0
-			noevents	1
-		}
-		windowDef bg_rect_top_zoom
-		{
-			rect	-16,-516,672,504
-			visible	0
-			noevents	1
-		}
-		windowDef bg_rect_bottom_base
-		{
-			rect	0,480,640,480
-			visible	0
-			noevents	1
-		}
-		windowDef bg_rect_bottom_glitch
-		{
-			rect	9,485,652,489
-			visible	0
-			noevents	1
-		}
-		windowDef bg_rect_bottom_zoom
-		{
-			rect	-16,492,672,504
+			rect	( -24 - "gui::virtual_screen_x_expand" ),( -12 - "gui::virtual_screen_y_expand" ),( 688 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 504 + ( "gui::virtual_screen_y_expand" * 2 ) )
 			visible	0
 			noevents	1
 		}
@@ -788,84 +716,12 @@ windowDef Desktop
 			matcolor	1,1,1,1
 			noevents	1
 		}
-		windowDef bg_temp_left
-		{
-			rect	-640,0,640,480
-			visible	1
-			noclip	1
-			background	"gui::menu_bg_1_left"
-			matcolor	1,1,1,1
-			noevents	1
-		}
-		windowDef bg_temp_right
-		{
-			rect	640,0,640,480
-			visible	1
-			noclip	1
-			background	"gui::menu_bg_1_right"
-			matcolor	1,1,1,1
-			noevents	1
-		}
-		windowDef bg_temp_top
-		{
-			rect	0,-480,640,480
-			visible	1
-			noclip	1
-			background	"gui::menu_bg_1_top"
-			matcolor	1,1,1,1
-			noevents	1
-		}
-		windowDef bg_temp_bottom
-		{
-			rect	0,480,640,480
-			visible	1
-			noclip	1
-			background	"gui::menu_bg_1_bottom"
-			matcolor	1,1,1,1
-			noevents	1
-		}
 		windowDef bg_temp2
 		{
 			rect	0,0,640,480
 			visible	1
 			noclip	1
 			background	"gui::menu_bg_2"
-			matcolor	1,1,1,0
-			noevents	1
-		}
-		windowDef bg_temp2_left
-		{
-			rect	-640,0,640,480
-			visible	1
-			noclip	1
-			background	"gui::menu_bg_2_left"
-			matcolor	1,1,1,0
-			noevents	1
-		}
-		windowDef bg_temp2_right
-		{
-			rect	640,0,640,480
-			visible	1
-			noclip	1
-			background	"gui::menu_bg_2_right"
-			matcolor	1,1,1,0
-			noevents	1
-		}
-		windowDef bg_temp2_top
-		{
-			rect	0,-480,640,480
-			visible	1
-			noclip	1
-			background	"gui::menu_bg_2_top"
-			matcolor	1,1,1,0
-			noevents	1
-		}
-		windowDef bg_temp2_bottom
-		{
-			rect	0,480,640,480
-			visible	1
-			noclip	1
-			background	"gui::menu_bg_2_bottom"
 			matcolor	1,1,1,0
 			noevents	1
 		}
@@ -878,84 +734,12 @@ windowDef Desktop
 			matcolor	1,1,1,0
 			noevents	1
 		}
-		windowDef bg_temp3_left
-		{
-			rect	-640,0,640,480
-			visible	1
-			noclip	1
-			background	"gui::menu_bg_3_left"
-			matcolor	1,1,1,0
-			noevents	1
-		}
-		windowDef bg_temp3_right
-		{
-			rect	640,0,640,480
-			visible	1
-			noclip	1
-			background	"gui::menu_bg_3_right"
-			matcolor	1,1,1,0
-			noevents	1
-		}
-		windowDef bg_temp3_top
-		{
-			rect	0,-480,640,480
-			visible	1
-			noclip	1
-			background	"gui::menu_bg_3_top"
-			matcolor	1,1,1,0
-			noevents	1
-		}
-		windowDef bg_temp3_bottom
-		{
-			rect	0,480,640,480
-			visible	1
-			noclip	1
-			background	"gui::menu_bg_3_bottom"
-			matcolor	1,1,1,0
-			noevents	1
-		}
 		windowDef bg_temp4
 		{
 			rect	0,0,640,480
 			visible	1
 			noclip	1
 			background	"gui::menu_bg_4"
-			matcolor	1,1,1,0
-			noevents	1
-		}
-		windowDef bg_temp4_left
-		{
-			rect	-640,0,640,480
-			visible	1
-			noclip	1
-			background	"gui::menu_bg_4_left"
-			matcolor	1,1,1,0
-			noevents	1
-		}
-		windowDef bg_temp4_right
-		{
-			rect	640,0,640,480
-			visible	1
-			noclip	1
-			background	"gui::menu_bg_4_right"
-			matcolor	1,1,1,0
-			noevents	1
-		}
-		windowDef bg_temp4_top
-		{
-			rect	0,-480,640,480
-			visible	1
-			noclip	1
-			background	"gui::menu_bg_4_top"
-			matcolor	1,1,1,0
-			noevents	1
-		}
-		windowDef bg_temp4_bottom
-		{
-			rect	0,480,640,480
-			visible	1
-			noclip	1
-			background	"gui::menu_bg_4_bottom"
 			matcolor	1,1,1,0
 			noevents	1
 		}
@@ -968,40 +752,13 @@ windowDef Desktop
 			matcolor	1,1,1,0
 			noevents	1
 		}
-		windowDef bg_temp5_left
+		windowDef bg_edge_fade_mask
 		{
-			rect	-640,0,640,480
+			rect	( 0 - "gui::virtual_screen_x_expand" ),( 0 - "gui::virtual_screen_y_expand" ),( 640 + ( "gui::virtual_screen_x_expand" * 2 ) ),( 480 + ( "gui::virtual_screen_y_expand" * 2 ) )
 			visible	1
 			noclip	1
-			background	"gui::menu_bg_5_left"
-			matcolor	1,1,1,0
-			noevents	1
-		}
-		windowDef bg_temp5_right
-		{
-			rect	640,0,640,480
-			visible	1
-			noclip	1
-			background	"gui::menu_bg_5_right"
-			matcolor	1,1,1,0
-			noevents	1
-		}
-		windowDef bg_temp5_top
-		{
-			rect	0,-480,640,480
-			visible	1
-			noclip	1
-			background	"gui::menu_bg_5_top"
-			matcolor	1,1,1,0
-			noevents	1
-		}
-		windowDef bg_temp5_bottom
-		{
-			rect	0,480,640,480
-			visible	1
-			noclip	1
-			background	"gui::menu_bg_5_bottom"
-			matcolor	1,1,1,0
+			background	"gfx/guis/mainmenu/level_edge_fade"
+			matcolor	1,1,1,1
 			noevents	1
 		}
 		windowDef static
@@ -13369,78 +13126,22 @@ windowDef Desktop
 
 			onTime 0 {
 				set "bg_temp::matcolor_w" "1" ;
-				set "bg_temp_left::matcolor_w" "1" ;
-				set "bg_temp_right::matcolor_w" "1" ;
-				set "bg_temp_top::matcolor_w" "1" ;
-				set "bg_temp_bottom::matcolor_w" "1" ;
 				set "bg_temp2::matcolor_w" "0" ;
-				set "bg_temp2_left::matcolor_w" "0" ;
-				set "bg_temp2_right::matcolor_w" "0" ;
-				set "bg_temp2_top::matcolor_w" "0" ;
-				set "bg_temp2_bottom::matcolor_w" "0" ;
 				set "bg_temp3::matcolor_w" "0" ;
-				set "bg_temp3_left::matcolor_w" "0" ;
-				set "bg_temp3_right::matcolor_w" "0" ;
-				set "bg_temp3_top::matcolor_w" "0" ;
-				set "bg_temp3_bottom::matcolor_w" "0" ;
 				set "bg_temp4::matcolor_w" "0" ;
-				set "bg_temp4_left::matcolor_w" "0" ;
-				set "bg_temp4_right::matcolor_w" "0" ;
-				set "bg_temp4_top::matcolor_w" "0" ;
-				set "bg_temp4_bottom::matcolor_w" "0" ;
 				set "bg_temp5::matcolor_w" "0" ;
-				set "bg_temp5_left::matcolor_w" "0" ;
-				set "bg_temp5_right::matcolor_w" "0" ;
-				set "bg_temp5_top::matcolor_w" "0" ;
-				set "bg_temp5_bottom::matcolor_w" "0" ;
 				set "bg_temp::rect" "$bg_rect_center_base::rect" ;
-				set "bg_temp_left::rect" "$bg_rect_left_base::rect" ;
-				set "bg_temp_right::rect" "$bg_rect_right_base::rect" ;
-				set "bg_temp_top::rect" "$bg_rect_top_base::rect" ;
-				set "bg_temp_bottom::rect" "$bg_rect_bottom_base::rect" ;
 				set "bg_temp2::rect" "$bg_rect_center_base::rect" ;
-				set "bg_temp2_left::rect" "$bg_rect_left_base::rect" ;
-				set "bg_temp2_right::rect" "$bg_rect_right_base::rect" ;
-				set "bg_temp2_top::rect" "$bg_rect_top_base::rect" ;
-				set "bg_temp2_bottom::rect" "$bg_rect_bottom_base::rect" ;
 				set "bg_temp3::rect" "$bg_rect_center_base::rect" ;
-				set "bg_temp3_left::rect" "$bg_rect_left_base::rect" ;
-				set "bg_temp3_right::rect" "$bg_rect_right_base::rect" ;
-				set "bg_temp3_top::rect" "$bg_rect_top_base::rect" ;
-				set "bg_temp3_bottom::rect" "$bg_rect_bottom_base::rect" ;
 				set "bg_temp4::rect" "$bg_rect_center_base::rect" ;
-				set "bg_temp4_left::rect" "$bg_rect_left_base::rect" ;
-				set "bg_temp4_right::rect" "$bg_rect_right_base::rect" ;
-				set "bg_temp4_top::rect" "$bg_rect_top_base::rect" ;
-				set "bg_temp4_bottom::rect" "$bg_rect_bottom_base::rect" ;
 				set "bg_temp5::rect" "$bg_rect_center_base::rect" ;
-				set "bg_temp5_left::rect" "$bg_rect_left_base::rect" ;
-				set "bg_temp5_right::rect" "$bg_rect_right_base::rect" ;
-				set "bg_temp5_top::rect" "$bg_rect_top_base::rect" ;
-				set "bg_temp5_bottom::rect" "$bg_rect_bottom_base::rect" ;
 				transition "bg_temp::rect" "$bg_rect_center_base::rect" "$bg_rect_center_zoom::rect" "7000" ;
-				transition "bg_temp_left::rect" "$bg_rect_left_base::rect" "$bg_rect_left_zoom::rect" "7000" ;
-				transition "bg_temp_right::rect" "$bg_rect_right_base::rect" "$bg_rect_right_zoom::rect" "7000" ;
-				transition "bg_temp_top::rect" "$bg_rect_top_base::rect" "$bg_rect_top_zoom::rect" "7000" ;
-				transition "bg_temp_bottom::rect" "$bg_rect_bottom_base::rect" "$bg_rect_bottom_zoom::rect" "7000" ;
 			}
 
 			onTime 5000 {
 				transition "bg_temp::matcolor_w" "1" "0" "2000" ;
-				transition "bg_temp_left::matcolor_w" "1" "0" "2000" ;
-				transition "bg_temp_right::matcolor_w" "1" "0" "2000" ;
-				transition "bg_temp_top::matcolor_w" "1" "0" "2000" ;
-				transition "bg_temp_bottom::matcolor_w" "1" "0" "2000" ;
 				transition "bg_temp2::matcolor_w" "0" "1" "2000" ;
-				transition "bg_temp2_left::matcolor_w" "0" "1" "2000" ;
-				transition "bg_temp2_right::matcolor_w" "0" "1" "2000" ;
-				transition "bg_temp2_top::matcolor_w" "0" "1" "2000" ;
-				transition "bg_temp2_bottom::matcolor_w" "0" "1" "2000" ;
 				set "bg_temp2::rect" "$bg_rect_center_glitch::rect" ;
-				set "bg_temp2_left::rect" "$bg_rect_left_glitch::rect" ;
-				set "bg_temp2_right::rect" "$bg_rect_right_glitch::rect" ;
-				set "bg_temp2_top::rect" "$bg_rect_top_glitch::rect" ;
-				set "bg_temp2_bottom::rect" "$bg_rect_bottom_glitch::rect" ;
 				set "glitch_static::matcolor_w" "0.24" ;
 				set "glitch_scan::matcolor_w" "0.14" ;
 				set "glitch_band_top::matcolor_w" "0.20" ;
@@ -13450,28 +13151,12 @@ windowDef Desktop
 				transition "glitch_band_top::matcolor_w" "0.20" "0" "200" ;
 				transition "glitch_band_mid::matcolor_w" "0.16" "0" "240" ;
 				transition "bg_temp2::rect" "$bg_rect_center_glitch::rect" "$bg_rect_center_zoom::rect" "6800" ;
-				transition "bg_temp2_left::rect" "$bg_rect_left_glitch::rect" "$bg_rect_left_zoom::rect" "6800" ;
-				transition "bg_temp2_right::rect" "$bg_rect_right_glitch::rect" "$bg_rect_right_zoom::rect" "6800" ;
-				transition "bg_temp2_top::rect" "$bg_rect_top_glitch::rect" "$bg_rect_top_zoom::rect" "6800" ;
-				transition "bg_temp2_bottom::rect" "$bg_rect_bottom_glitch::rect" "$bg_rect_bottom_zoom::rect" "6800" ;
 			}
 
 			onTime 10000 {
 				transition "bg_temp2::matcolor_w" "1" "0" "2000" ;
-				transition "bg_temp2_left::matcolor_w" "1" "0" "2000" ;
-				transition "bg_temp2_right::matcolor_w" "1" "0" "2000" ;
-				transition "bg_temp2_top::matcolor_w" "1" "0" "2000" ;
-				transition "bg_temp2_bottom::matcolor_w" "1" "0" "2000" ;
 				transition "bg_temp3::matcolor_w" "0" "1" "2000" ;
-				transition "bg_temp3_left::matcolor_w" "0" "1" "2000" ;
-				transition "bg_temp3_right::matcolor_w" "0" "1" "2000" ;
-				transition "bg_temp3_top::matcolor_w" "0" "1" "2000" ;
-				transition "bg_temp3_bottom::matcolor_w" "0" "1" "2000" ;
 				set "bg_temp3::rect" "$bg_rect_center_glitch::rect" ;
-				set "bg_temp3_left::rect" "$bg_rect_left_glitch::rect" ;
-				set "bg_temp3_right::rect" "$bg_rect_right_glitch::rect" ;
-				set "bg_temp3_top::rect" "$bg_rect_top_glitch::rect" ;
-				set "bg_temp3_bottom::rect" "$bg_rect_bottom_glitch::rect" ;
 				set "glitch_static::matcolor_w" "0.24" ;
 				set "glitch_scan::matcolor_w" "0.14" ;
 				set "glitch_band_top::matcolor_w" "0.20" ;
@@ -13481,28 +13166,12 @@ windowDef Desktop
 				transition "glitch_band_top::matcolor_w" "0.20" "0" "200" ;
 				transition "glitch_band_mid::matcolor_w" "0.16" "0" "240" ;
 				transition "bg_temp3::rect" "$bg_rect_center_glitch::rect" "$bg_rect_center_zoom::rect" "6800" ;
-				transition "bg_temp3_left::rect" "$bg_rect_left_glitch::rect" "$bg_rect_left_zoom::rect" "6800" ;
-				transition "bg_temp3_right::rect" "$bg_rect_right_glitch::rect" "$bg_rect_right_zoom::rect" "6800" ;
-				transition "bg_temp3_top::rect" "$bg_rect_top_glitch::rect" "$bg_rect_top_zoom::rect" "6800" ;
-				transition "bg_temp3_bottom::rect" "$bg_rect_bottom_glitch::rect" "$bg_rect_bottom_zoom::rect" "6800" ;
 			}
 
 			onTime 15000 {
 				transition "bg_temp3::matcolor_w" "1" "0" "2000" ;
-				transition "bg_temp3_left::matcolor_w" "1" "0" "2000" ;
-				transition "bg_temp3_right::matcolor_w" "1" "0" "2000" ;
-				transition "bg_temp3_top::matcolor_w" "1" "0" "2000" ;
-				transition "bg_temp3_bottom::matcolor_w" "1" "0" "2000" ;
 				transition "bg_temp4::matcolor_w" "0" "1" "2000" ;
-				transition "bg_temp4_left::matcolor_w" "0" "1" "2000" ;
-				transition "bg_temp4_right::matcolor_w" "0" "1" "2000" ;
-				transition "bg_temp4_top::matcolor_w" "0" "1" "2000" ;
-				transition "bg_temp4_bottom::matcolor_w" "0" "1" "2000" ;
 				set "bg_temp4::rect" "$bg_rect_center_glitch::rect" ;
-				set "bg_temp4_left::rect" "$bg_rect_left_glitch::rect" ;
-				set "bg_temp4_right::rect" "$bg_rect_right_glitch::rect" ;
-				set "bg_temp4_top::rect" "$bg_rect_top_glitch::rect" ;
-				set "bg_temp4_bottom::rect" "$bg_rect_bottom_glitch::rect" ;
 				set "glitch_static::matcolor_w" "0.24" ;
 				set "glitch_scan::matcolor_w" "0.14" ;
 				set "glitch_band_top::matcolor_w" "0.20" ;
@@ -13512,28 +13181,12 @@ windowDef Desktop
 				transition "glitch_band_top::matcolor_w" "0.20" "0" "200" ;
 				transition "glitch_band_mid::matcolor_w" "0.16" "0" "240" ;
 				transition "bg_temp4::rect" "$bg_rect_center_glitch::rect" "$bg_rect_center_zoom::rect" "6800" ;
-				transition "bg_temp4_left::rect" "$bg_rect_left_glitch::rect" "$bg_rect_left_zoom::rect" "6800" ;
-				transition "bg_temp4_right::rect" "$bg_rect_right_glitch::rect" "$bg_rect_right_zoom::rect" "6800" ;
-				transition "bg_temp4_top::rect" "$bg_rect_top_glitch::rect" "$bg_rect_top_zoom::rect" "6800" ;
-				transition "bg_temp4_bottom::rect" "$bg_rect_bottom_glitch::rect" "$bg_rect_bottom_zoom::rect" "6800" ;
 			}
 
 			onTime 20000 {
 				transition "bg_temp4::matcolor_w" "1" "0" "2000" ;
-				transition "bg_temp4_left::matcolor_w" "1" "0" "2000" ;
-				transition "bg_temp4_right::matcolor_w" "1" "0" "2000" ;
-				transition "bg_temp4_top::matcolor_w" "1" "0" "2000" ;
-				transition "bg_temp4_bottom::matcolor_w" "1" "0" "2000" ;
 				transition "bg_temp5::matcolor_w" "0" "1" "2000" ;
-				transition "bg_temp5_left::matcolor_w" "0" "1" "2000" ;
-				transition "bg_temp5_right::matcolor_w" "0" "1" "2000" ;
-				transition "bg_temp5_top::matcolor_w" "0" "1" "2000" ;
-				transition "bg_temp5_bottom::matcolor_w" "0" "1" "2000" ;
 				set "bg_temp5::rect" "$bg_rect_center_glitch::rect" ;
-				set "bg_temp5_left::rect" "$bg_rect_left_glitch::rect" ;
-				set "bg_temp5_right::rect" "$bg_rect_right_glitch::rect" ;
-				set "bg_temp5_top::rect" "$bg_rect_top_glitch::rect" ;
-				set "bg_temp5_bottom::rect" "$bg_rect_bottom_glitch::rect" ;
 				set "glitch_static::matcolor_w" "0.24" ;
 				set "glitch_scan::matcolor_w" "0.14" ;
 				set "glitch_band_top::matcolor_w" "0.20" ;
@@ -13543,33 +13196,13 @@ windowDef Desktop
 				transition "glitch_band_top::matcolor_w" "0.20" "0" "200" ;
 				transition "glitch_band_mid::matcolor_w" "0.16" "0" "240" ;
 				transition "bg_temp5::rect" "$bg_rect_center_glitch::rect" "$bg_rect_center_zoom::rect" "6800" ;
-				transition "bg_temp5_left::rect" "$bg_rect_left_glitch::rect" "$bg_rect_left_zoom::rect" "6800" ;
-				transition "bg_temp5_right::rect" "$bg_rect_right_glitch::rect" "$bg_rect_right_zoom::rect" "6800" ;
-				transition "bg_temp5_top::rect" "$bg_rect_top_glitch::rect" "$bg_rect_top_zoom::rect" "6800" ;
-				transition "bg_temp5_bottom::rect" "$bg_rect_bottom_glitch::rect" "$bg_rect_bottom_zoom::rect" "6800" ;
 			}
 
 			onTime 25000 {
 				set "bg_temp::matcolor_w" "0" ;
-				set "bg_temp_left::matcolor_w" "0" ;
-				set "bg_temp_right::matcolor_w" "0" ;
-				set "bg_temp_top::matcolor_w" "0" ;
-				set "bg_temp_bottom::matcolor_w" "0" ;
 				transition "bg_temp5::matcolor_w" "1" "0" "2000" ;
-				transition "bg_temp5_left::matcolor_w" "1" "0" "2000" ;
-				transition "bg_temp5_right::matcolor_w" "1" "0" "2000" ;
-				transition "bg_temp5_top::matcolor_w" "1" "0" "2000" ;
-				transition "bg_temp5_bottom::matcolor_w" "1" "0" "2000" ;
 				transition "bg_temp::matcolor_w" "0" "1" "2000" ;
-				transition "bg_temp_left::matcolor_w" "0" "1" "2000" ;
-				transition "bg_temp_right::matcolor_w" "0" "1" "2000" ;
-				transition "bg_temp_top::matcolor_w" "0" "1" "2000" ;
-				transition "bg_temp_bottom::matcolor_w" "0" "1" "2000" ;
 				set "bg_temp::rect" "$bg_rect_center_glitch::rect" ;
-				set "bg_temp_left::rect" "$bg_rect_left_glitch::rect" ;
-				set "bg_temp_right::rect" "$bg_rect_right_glitch::rect" ;
-				set "bg_temp_top::rect" "$bg_rect_top_glitch::rect" ;
-				set "bg_temp_bottom::rect" "$bg_rect_bottom_glitch::rect" ;
 				set "glitch_static::matcolor_w" "0.24" ;
 				set "glitch_scan::matcolor_w" "0.14" ;
 				set "glitch_band_top::matcolor_w" "0.20" ;
@@ -13579,10 +13212,6 @@ windowDef Desktop
 				transition "glitch_band_top::matcolor_w" "0.20" "0" "200" ;
 				transition "glitch_band_mid::matcolor_w" "0.16" "0" "240" ;
 				transition "bg_temp::rect" "$bg_rect_center_glitch::rect" "$bg_rect_center_zoom::rect" "6800" ;
-				transition "bg_temp_left::rect" "$bg_rect_left_glitch::rect" "$bg_rect_left_zoom::rect" "6800" ;
-				transition "bg_temp_right::rect" "$bg_rect_right_glitch::rect" "$bg_rect_right_zoom::rect" "6800" ;
-				transition "bg_temp_top::rect" "$bg_rect_top_glitch::rect" "$bg_rect_top_zoom::rect" "6800" ;
-				transition "bg_temp_bottom::rect" "$bg_rect_bottom_glitch::rect" "$bg_rect_bottom_zoom::rect" "6800" ;
 				resettime "0" ;
 			}
 

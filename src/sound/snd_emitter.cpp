@@ -50,8 +50,6 @@ static const int SOUND_SHADER_SHAKE_RATE_HZ = 30;
 static const float SOUND_SHADER_MATERIAL_SHAKE_SCALE = 2800.0f;
 static const float SOUND_SHADER_SHAKE_NORMALIZE = 1.0f / 32768.0f;
 static const float SOUND_WORLD_VOLUME_EPSILON = 1.0f / 1024.0f;
-static const int Q4_SOUND_CHANNEL_VOICE_0 = 1;
-static const int Q4_SOUND_CHANNEL_VOICE_1 = 2;
 static const int Q4_SOUND_CHANNEL_SPECIAL_ATTENUATION_EXEMPT_0 = 6;
 static const int Q4_SOUND_CHANNEL_SPECIAL_ATTENUATION_EXEMPT_1 = 7;
 static const int Q4_SOUND_CHANNEL_RADIO_CHATTER = 10;
@@ -244,17 +242,13 @@ static bool IsRadioChatterChannel( const idSoundChannel* chan )
 
 static bool IsVoicePlaybackChannel( const idSoundChannel* chan )
 {
-	return chan->logicalChannel == Q4_SOUND_CHANNEL_VOICE_0 ||
-		   chan->logicalChannel == Q4_SOUND_CHANNEL_VOICE_1 ||
-		   ( IsRadioChatterChannel( chan ) && ( chan->parms.soundShaderFlags & SSF_GLOBAL ) != 0 );
+	return IsRadioChatterChannel( chan ) && ( chan->parms.soundShaderFlags & SSF_GLOBAL ) != 0;
 }
 
 static bool SoundParmsAreVoicePlayback( const soundShaderParms_t& parms, const int logicalChannel )
 {
 	const int voiceFlags = SSF_VO | SSF_IS_VO | SSF_VO_FOR_PLAYER;
 	return ( parms.soundShaderFlags & voiceFlags ) != 0 ||
-		   logicalChannel == Q4_SOUND_CHANNEL_VOICE_0 ||
-		   logicalChannel == Q4_SOUND_CHANNEL_VOICE_1 ||
 		   ( logicalChannel == Q4_SOUND_CHANNEL_RADIO_CHATTER && ( parms.soundShaderFlags & SSF_GLOBAL ) != 0 );
 }
 

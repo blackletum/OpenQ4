@@ -193,6 +193,18 @@ gfx/guis/mainmenu/btmbar_tile_right
 	}
 }
 
+gfx/guis/mainmenu/level_edge_fade
+{
+	noshadows
+	translucent
+	{
+		nopicmip
+		blend blend
+		map gfx/guis/mainmenu/level_edge_fade.tga
+		colored
+	}
+}
+
 gfx/guis/loading/bg_grid_tiled
 {
 	noshadows

@@ -4,6 +4,7 @@
 
 idStrPool		idDict::globalKeys;
 idStrPool		idDict::globalValues;
+bool			idDict::globalPoolsShutdown = false;
 
 /*
 ================
@@ -182,9 +183,11 @@ idDict::Clear
 void idDict::Clear( void ) {
 	int i;
 
-	for( i = 0; i < args.Num(); i++ ) {
-		globalKeys.FreeString( args[i].key );
-		globalValues.FreeString( args[i].value );
+	if ( !globalPoolsShutdown ) {
+		for( i = 0; i < args.Num(); i++ ) {
+			globalKeys.FreeString( args[i].key );
+			globalValues.FreeString( args[i].value );
+		}
 	}
 
 	args.Clear();
@@ -736,6 +739,7 @@ idDict::Init
 ================
 */
 void idDict::Init( void ) {
+	globalPoolsShutdown = false;
 	globalKeys.SetCaseSensitive( false );
 	globalValues.SetCaseSensitive( true );
 
@@ -754,8 +758,12 @@ idDict::Shutdown
 ================
 */
 void idDict::Shutdown( void ) {
+	if ( globalPoolsShutdown ) {
+		return;
+	}
 	globalKeys.Clear();
 	globalValues.Clear();
+	globalPoolsShutdown = true;
 }
 
 /*

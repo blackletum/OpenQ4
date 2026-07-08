@@ -165,6 +165,7 @@ private:
 	idHashIndex			argHash;
 	static idStrPool	globalKeys;
 	static idStrPool	globalValues;
+	static bool			globalPoolsShutdown;
 };
 
 

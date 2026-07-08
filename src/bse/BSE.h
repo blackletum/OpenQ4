@@ -471,7 +471,7 @@ public:
 	float					GetOriginAttenuation(rvSegmentTemplate* st) const;
 	void					UpdateAttenuation(void);
 
-	idSoundEmitter* GetReferenceSound(void) const { return(mReferenceSound); }
+	idSoundEmitter* GetReferenceSound(void) const;
 
 	float					GetRed(void) const { return(mTint[0]); }
 	float					GetGreen(void) const { return(mTint[1]); }
@@ -533,7 +533,7 @@ public:
 private:
 	// Fixed at spawn time
 	const rvDeclEffect* mDeclEffect;
-	idSoundEmitter* mReferenceSound;
+	int mReferenceSoundHandle;
 	idRenderWorld* mRenderWorld;
 
 	idVec3					mOriginalOrigin;			// Origin in world space

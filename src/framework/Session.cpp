@@ -1819,165 +1819,49 @@ static bool Session_PrepareExpandedLoadingBackground( const idStr &backgroundPat
 	return true;
 }
 
-static bool Session_EndsWithIgnoreCase( const idStr &value, const char *suffix ) {
-	if ( suffix == NULL || suffix[ 0 ] == '\0' ) {
-		return false;
-	}
-
-	const int valueLength = value.Length();
-	const int suffixLength = idStr::Length( suffix );
-	if ( valueLength < suffixLength ) {
-		return false;
-	}
-
-	return idStr::Icmp( value.c_str() + valueLength - suffixLength, suffix ) == 0;
-}
-
-static bool Session_IsMainMenuMontageLevelshotExcluded( const idStr &baseName ) {
-	return baseName.Icmp( "generic" ) == 0 ||
-		baseName.Icmp( "e3_load" ) == 0 ||
-		Session_EndsWithIgnoreCase( baseName, "_left" ) ||
-		Session_EndsWithIgnoreCase( baseName, "_right" ) ||
-		Session_EndsWithIgnoreCase( baseName, "_top" ) ||
-		Session_EndsWithIgnoreCase( baseName, "_bottom" );
-}
-
-static bool Session_StringListContainsNoCase( const idStrList &list, const idStr &value ) {
-	for ( int i = 0; i < list.Num(); i++ ) {
-		if ( list[ i ].Icmp( value ) == 0 ) {
-			return true;
-		}
-	}
-
-	return false;
-}
-
-static void Session_AppendMainMenuMontageCandidatesForExtension( const char *extension, idStrList &candidates ) {
-	idFileList *fileList = fileSystem->ListFiles( "gfx/guis/loadscreens", extension, true, true );
-	if ( fileList == NULL ) {
-		return;
-	}
-
-	for ( int i = 0; i < fileList->GetNumFiles(); i++ ) {
-		idStr levelshotPath = fileList->GetFile( i );
-		levelshotPath.BackSlashesToSlashes();
-		levelshotPath.StripFileExtension();
-
-		idStr baseName = levelshotPath;
-		baseName.StripPath();
-		if ( baseName.IsEmpty() || Session_IsMainMenuMontageLevelshotExcluded( baseName ) ) {
-			continue;
-		}
-		if ( Session_StringListContainsNoCase( candidates, levelshotPath ) ) {
-			continue;
-		}
-
-		idStr resolvedCenterPath;
-		if ( !Session_ResolveImageFilePath( levelshotPath, resolvedCenterPath ) ) {
-			continue;
-		}
-
-		idStr resolvedLeftPath;
-		idStr resolvedRightPath;
-		idStr resolvedTopPath;
-		idStr resolvedBottomPath;
-		if ( !Session_ResolveSiblingImageFilePath( resolvedCenterPath, "_left", resolvedLeftPath ) ||
-			!Session_ResolveSiblingImageFilePath( resolvedCenterPath, "_right", resolvedRightPath ) ||
-			!Session_ResolveSiblingImageFilePath( resolvedCenterPath, "_top", resolvedTopPath ) ||
-			!Session_ResolveSiblingImageFilePath( resolvedCenterPath, "_bottom", resolvedBottomPath ) ) {
-			continue;
-		}
-
-		candidates.Append( levelshotPath );
-	}
-
-	fileSystem->FreeFileList( fileList );
-}
-
-static void Session_BuildMainMenuMontageCandidates( idStrList &candidates ) {
-	static const char *supportedExtensions[] = { ".tga", ".dds", ".jpg", NULL };
-
-	candidates.Clear();
-	for ( int i = 0; supportedExtensions[ i ] != NULL; i++ ) {
-		Session_AppendMainMenuMontageCandidatesForExtension( supportedExtensions[ i ], candidates );
-	}
-}
-
-static bool Session_ResolveMainMenuMontageTileSet( const idStr &backgroundPath, idStr &centerPath, idStr &leftPath, idStr &rightPath, idStr &topPath, idStr &bottomPath ) {
-	if ( !Session_ResolveImageFilePath( backgroundPath, centerPath ) ) {
-		return false;
-	}
-
-	if ( !Session_ResolveSiblingImageFilePath( centerPath, "_left", leftPath ) ||
-		!Session_ResolveSiblingImageFilePath( centerPath, "_right", rightPath ) ||
-		!Session_ResolveSiblingImageFilePath( centerPath, "_top", topPath ) ||
-		!Session_ResolveSiblingImageFilePath( centerPath, "_bottom", bottomPath ) ) {
-		return false;
-	}
-
-	return true;
-}
-
 void idSessionLocal::SetMainMenuBackgroundMontageGuiVars( void ) {
-	static const int maxMontageShots = 5;
+	static const char *menuBackgrounds[] = {
+		"gfx/guis/mainmenu/level_mcc.dds",
+		"gfx/guis/mainmenu/level_convoy1.dds",
+		"gfx/guis/mainmenu/level_core1.dds",
+		"gfx/guis/mainmenu/level_process1_first.dds",
+		"gfx/guis/mainmenu/level_tram1.dds"
+	};
+	static const int numMenuBackgrounds = sizeof( menuBackgrounds ) / sizeof( menuBackgrounds[ 0 ] );
+	static const char *menuBackgroundMask = "gfx/guis/mainmenu/level_edge_fade";
 	static const char *fallbackBackground = "gfx/guis/loadscreens/generic";
 
 	if ( guiMainMenu == NULL ) {
 		return;
 	}
 
-	idStrList candidates;
-	Session_BuildMainMenuMontageCandidates( candidates );
-
-	idStrList selected;
-	selected = candidates;
-
-	if ( selected.Num() > 1 ) {
-		idRandom random( Sys_Milliseconds() ^ com_frameTime ^ selected.Num() );
-		for ( int i = selected.Num() - 1; i > 0; --i ) {
-			const int swapIndex = random.RandomInt( i + 1 );
-			if ( swapIndex == i ) {
-				continue;
-			}
-
-			idStr temp = selected[ i ];
-			selected[ i ] = selected[ swapIndex ];
-			selected[ swapIndex ] = temp;
-		}
-	}
-
-	const int uniqueShotCount = Min( maxMontageShots, selected.Num() );
-	for ( int i = 0; i < maxMontageShots; i++ ) {
-		idStr backgroundPath = fallbackBackground;
-		if ( uniqueShotCount > 0 ) {
-			backgroundPath = selected[ i % uniqueShotCount ];
-		}
-
-		idStr centerPath;
-		idStr leftPath;
-		idStr rightPath;
-		idStr topPath;
-		idStr bottomPath;
-		if ( !Session_ResolveMainMenuMontageTileSet( backgroundPath, centerPath, leftPath, rightPath, topPath, bottomPath ) ) {
-			if ( !Session_ResolveMainMenuMontageTileSet( fallbackBackground, centerPath, leftPath, rightPath, topPath, bottomPath ) ) {
-				continue;
+	for ( int i = 0; i < numMenuBackgrounds; i++ ) {
+		idStr resolvedPath;
+		if ( !Session_ResolveImageFilePath( menuBackgrounds[ i ], resolvedPath ) ) {
+			if ( !Session_ResolveImageFilePath( fallbackBackground, resolvedPath ) ) {
+				resolvedPath = fallbackBackground;
 			}
 		}
 
-		guiMainMenu->SetStateString( va( "menu_bg_%d", i + 1 ), centerPath.c_str() );
-		guiMainMenu->SetStateString( va( "menu_bg_%d_left", i + 1 ), leftPath.c_str() );
-		guiMainMenu->SetStateString( va( "menu_bg_%d_right", i + 1 ), rightPath.c_str() );
-		guiMainMenu->SetStateString( va( "menu_bg_%d_top", i + 1 ), topPath.c_str() );
-		guiMainMenu->SetStateString( va( "menu_bg_%d_bottom", i + 1 ), bottomPath.c_str() );
-		guiMainMenu->SetStateInt( va( "menu_bg_%d_canvasfill", i + 1 ), 0 );
-		declManager->FindMaterial( centerPath.c_str() )->SetSort( SS_GUI );
-		declManager->FindMaterial( leftPath.c_str() )->SetSort( SS_GUI );
-		declManager->FindMaterial( rightPath.c_str() )->SetSort( SS_GUI );
-		declManager->FindMaterial( topPath.c_str() )->SetSort( SS_GUI );
-		declManager->FindMaterial( bottomPath.c_str() )->SetSort( SS_GUI );
+		guiMainMenu->SetStateString( va( "menu_bg_%d", i + 1 ), resolvedPath.c_str() );
+
+		idMaterial *material = const_cast<idMaterial *>( declManager->FindMaterial( resolvedPath.c_str() ) );
+		if ( material != NULL ) {
+			material->EnsureNotPurged();
+			material->SetSort( SS_GUI );
+		}
+		if ( globalImages != NULL ) {
+			globalImages->ImageFromFile( resolvedPath.c_str(), TF_DEFAULT, TR_CLAMP, TD_DEFAULT, CF_2D, false );
+		}
 	}
 
-	guiMainMenu->SetStateInt( "menu_bg_count", Max( uniqueShotCount, 1 ) );
+	idMaterial *maskMaterial = const_cast<idMaterial *>( declManager->FindMaterial( menuBackgroundMask ) );
+	if ( maskMaterial != NULL ) {
+		maskMaterial->EnsureNotPurged();
+		maskMaterial->SetSort( SS_GUI );
+	}
+
+	guiMainMenu->SetStateInt( "menu_bg_count", numMenuBackgrounds );
 }
 
 static void Session_DrawFallbackLoadingScreen() {

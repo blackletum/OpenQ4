@@ -273,6 +273,20 @@ void ListSoundDecoders_f( const idCmdArgs& args )
 
 /*
 ========================
+ListPlayingSounds_f
+
+Lists OpenAL sources that are actually playing with non-zero effective gain.
+========================
+*/
+void ListPlayingSounds_f( const idCmdArgs& args )
+{
+	(void)args;
+
+	soundSystemLocal.hardware.ListPlayingVoices();
+}
+
+/*
+========================
 idSoundSystemLocal::Restart
 ========================
 */
@@ -350,6 +364,7 @@ void idSoundSystemLocal::Init()
 
 	cmdSystem->AddCommand( "testSound", TestSound_f, CMD_FL_SOUND, "tests a sound", idCmdSystem::ArgCompletion_SoundName );
 	cmdSystem->AddCommand( "listSounds", ListSounds_f, CMD_FL_SOUND, "lists all sounds" );
+	cmdSystem->AddCommand( "listPlayingSounds", ListPlayingSounds_f, CMD_FL_SOUND, "lists currently playing sounds" );
 	cmdSystem->AddCommand( "listSoundDecoders", ListSoundDecoders_f, CMD_FL_SOUND, "list active sound decoders" );
 	cmdSystem->AddCommand( "reloadSounds", ReloadSounds_f, CMD_FL_SOUND | CMD_FL_CHEAT, "reloads all sounds" );
 	cmdSystem->AddCommand( "s_restart", RestartSound_f, CMD_FL_SOUND, "restarts the sound system" );
@@ -891,5 +906,26 @@ idSoundWorld* idSoundSystemLocal::GetSoundWorldFromId(int worldId) {
 	default:
 		return session->sw;
 	}
+}
+
+void idSoundSystemLocal::FreeSoundEmitter(int worldId, int handle, bool immediate)
+{
+	if( handle <= 0 )
+	{
+		return;
+	}
+
+	idSoundWorldLocal* soundWorld = static_cast<idSoundWorldLocal*>( GetSoundWorldFromId( worldId ) );
+	if( soundWorld == NULL )
+	{
+		return;
+	}
+	idSoundEmitterLocal* emitter = static_cast<idSoundEmitterLocal*>( soundWorld->EmitterForIndex( handle ) );
+	if( emitter == NULL )
+	{
+		return;
+	}
+
+	emitter->Free( immediate );
 }
 // jmarshall
