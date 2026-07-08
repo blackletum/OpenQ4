@@ -1898,7 +1898,8 @@ void idWindow::Redraw(float x, float y) {
 	DrawBackground(drawRect);
 	DrawBorderAndCaption(drawRect);
 
-	if ( !( flags & WIN_NOCLIP) ) {
+	const bool pushWindowClip = !( flags & WIN_NOCLIP ) && !UsesSimpleWindowClipBehavior();
+	if ( pushWindowClip ) {
 		idRectangle clipRect = clientRect;
 		if ( flags & WIN_DESKTOP ) {
 			float xExpand = 0.0f;
@@ -1936,7 +1937,7 @@ void idWindow::Redraw(float x, float y) {
 	// Put transforms back to what they were before the children were processed
 	dc->SetTransformInfo(oldOrg, oldTrans);
 
-	if ( ! ( flags & WIN_NOCLIP ) ) {
+	if ( pushWindowClip ) {
 		dc->PopClipRect();
 	} 
 
@@ -5189,6 +5190,39 @@ bool idWindow::IsSimple() {
 	// compact idSimpleWindow path does not expose the full idWindow alias
 	// surface, so keep retail-style GUI semantics for all windows.
 	return false;
+}
+
+/*
+================
+idWindow::UsesSimpleWindowClipBehavior
+================
+*/
+bool idWindow::UsesSimpleWindowClipBehavior() const {
+	// Keep full idWindow instances for alias lookup while preserving retail's
+	// simple-window drawing behavior: simple leaves do not push a child clip.
+#ifdef ID_ALLOW_TOOLS
+	if ( com_editors & EDITOR_GUI ) {
+		return false;
+	}
+#endif
+	if ( numOps ) {
+		return false;
+	}
+	if ( flags & ( WIN_HCENTER | WIN_VCENTER ) ) {
+		return false;
+	}
+	if ( children.Num() || drawWindows.Num() ) {
+		return false;
+	}
+	for ( int i = 0; i < SCRIPT_COUNT; i++ ) {
+		if ( scripts[i] ) {
+			return false;
+		}
+	}
+	if ( timeLineEvents.Num() || namedEvents.Num() ) {
+		return false;
+	}
+	return forceAspectWidth == 640.0f && forceAspectHeight == 480.0f;
 }
 
 /*

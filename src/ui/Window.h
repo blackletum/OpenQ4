@@ -392,6 +392,7 @@ protected:
 	friend class idUserInterfaceLocal;
 	friend class idUserInterfaceManagerLocal;
 	bool IsSimple();
+	bool UsesSimpleWindowClipBehavior() const;
 	bool HasDirectChildReference( const idWindow *window ) const;
 	bool HasDescendantReference( const idWindow *window ) const;
 	void ClearTrackedWindowReference( const idWindow *window );

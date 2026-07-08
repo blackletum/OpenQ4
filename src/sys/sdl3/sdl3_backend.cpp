@@ -31,6 +31,7 @@ along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 #else
 #include "../win32/win_local.h"
 #endif
+#include "../sys_public.h"
 #include "../../framework/Common.h"
 #include "../../framework/Console.h"
 #include "../../framework/FileSystem.h"
@@ -3784,6 +3785,7 @@ static bool SDL3_ApplyScreenParms(glimpParms_t parms) {
 			common->DPrintf("SDL3: failed to hide render window: %s\n", SDL_GetError());
 		}
 	} else {
+		Sys_DestroySplash();
 		if (!SDL_ShowWindow(s_sdlWindow)) {
 			common->DPrintf("SDL3: failed to show render window: %s\n", SDL_GetError());
 		}

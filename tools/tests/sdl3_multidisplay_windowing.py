@@ -117,6 +117,7 @@ def validate_shared_backend_contract() -> None:
     require(screen_parms, "SDL3_ConstrainWindowRectToBounds", "window restore bounds constraint")
     require(screen_parms, "SDL3_SyncWindowAfterScreenChange", "post-transition compositor sync")
     require_before(screen_parms, "SDL_SetWindowFullscreen(s_sdlWindow, true)", "SDL_ShowWindow(s_sdlWindow)", "fullscreen startup shows window only after mode transition")
+    require_before(screen_parms, "Sys_DestroySplash();", "SDL_ShowWindow(s_sdlWindow)", "startup splash is destroyed at render-window handoff")
     require(leave_fullscreen, "SDL_SetWindowFullscreen(s_sdlWindow, false)", "fullscreen exit")
 
     require(refresh_placement, "win32.win_xpos.SetInteger(x)", "window position persistence")
@@ -136,6 +137,7 @@ def validate_shared_backend_contract() -> None:
 
 def validate_platform_wrappers() -> None:
     meson_sources = read("tools/build/meson_sources.py")
+    win_main = read("src/sys/win32/win_main.cpp")
     win = read("src/sys/win32/win_sdl3.cpp")
     linux = read("src/sys/linux/linux_sdl3.cpp")
     macos = read("src/sys/osx/macosx_sdl3.cpp")
@@ -154,6 +156,9 @@ def validate_platform_wrappers() -> None:
 
     require(linux, 'SDL3_QueryDesktopResolution(width, height, "SDL3 Linux")', "Linux desktop-resolution parity")
     require(macos, 'SDL3_QueryDesktopResolution(width, height, "SDL3 macOS")', "macOS desktop-resolution parity")
+    require(win_main, "SetProcessDpiAwarenessContext", "Windows SDL3 early DPI awareness")
+    require_before(win_main, 'GetProcAddress( shcore, "SetProcessDpiAwareness" )', 'GetProcAddress( user32, "SetProcessDPIAware" )', "Windows SDL3 per-monitor DPI fallback before legacy DPI fallback")
+    require_before(win_main, "Sys_SetProcessDpiAwarenessForEarlyWindows();", "Sys_CreateConsole();", "Windows SDL3 DPI awareness before splash")
 
     sys_display = function_body(macos, "CGDirectDisplayID Sys_DisplayToUse(void) {")
     require(sys_display, "r_screen.GetInteger()", "macOS r_screen compatibility selection")

@@ -230,6 +230,63 @@ static idStr Sys_FormatWindowsVersion( const OSVERSIONINFOEXW &version ) {
 	return versionName;
 }
 
+/*
+========================
+Sys_SetProcessDpiAwarenessForEarlyWindows
+
+SDL3 selects a high-DPI video mode during video initialization. The startup
+splash is a plain Win32 window created before that, so set process DPI
+awareness before any HWND exists to keep Windows from rescaling/repositioning
+the splash when SDL starts.
+========================
+*/
+static void Sys_SetProcessDpiAwarenessForEarlyWindows( void ) {
+#ifdef USE_SDL3
+	HMODULE user32 = GetModuleHandleA( "user32.dll" );
+	if ( user32 != NULL ) {
+		typedef BOOL ( WINAPI *SetProcessDpiAwarenessContextFn )( HANDLE );
+		SetProcessDpiAwarenessContextFn setProcessDpiAwarenessContext =
+			reinterpret_cast<SetProcessDpiAwarenessContextFn>( GetProcAddress( user32, "SetProcessDpiAwarenessContext" ) );
+		if ( setProcessDpiAwarenessContext != NULL ) {
+			static const HANDLE PER_MONITOR_AWARE_V2 = reinterpret_cast<HANDLE>( static_cast<INT_PTR>( -4 ) );
+			static const HANDLE PER_MONITOR_AWARE = reinterpret_cast<HANDLE>( static_cast<INT_PTR>( -3 ) );
+			if ( setProcessDpiAwarenessContext( PER_MONITOR_AWARE_V2 ) ||
+				 setProcessDpiAwarenessContext( PER_MONITOR_AWARE ) ||
+				 GetLastError() == ERROR_ACCESS_DENIED ) {
+				return;
+			}
+		}
+	}
+
+	HMODULE shcore = LoadLibraryA( "shcore.dll" );
+	if ( shcore != NULL ) {
+		typedef HRESULT ( WINAPI *SetProcessDpiAwarenessFn )( int );
+		SetProcessDpiAwarenessFn setProcessDpiAwareness =
+			reinterpret_cast<SetProcessDpiAwarenessFn>( GetProcAddress( shcore, "SetProcessDpiAwareness" ) );
+		if ( setProcessDpiAwareness != NULL ) {
+			static const int PROCESS_PER_MONITOR_DPI_AWARE = 2;
+			static const int PROCESS_SYSTEM_DPI_AWARE = 1;
+			const HRESULT perMonitorResult = setProcessDpiAwareness( PROCESS_PER_MONITOR_DPI_AWARE );
+			if ( perMonitorResult == S_OK || perMonitorResult == E_ACCESSDENIED ||
+				 setProcessDpiAwareness( PROCESS_SYSTEM_DPI_AWARE ) == S_OK ) {
+				FreeLibrary( shcore );
+				return;
+			}
+		}
+		FreeLibrary( shcore );
+	}
+
+	if ( user32 != NULL ) {
+		typedef BOOL ( WINAPI *SetProcessDPIAwareFn )( void );
+		SetProcessDPIAwareFn setProcessDPIAware =
+			reinterpret_cast<SetProcessDPIAwareFn>( GetProcAddress( user32, "SetProcessDPIAware" ) );
+		if ( setProcessDPIAware != NULL ) {
+			(void)setProcessDPIAware();
+		}
+	}
+#endif
+}
+
 bool Sys_HandlePrintScreenHotkey( bool pressed ) {
 	if ( !win32.win_printScreenToSystemTool.GetBool() ) {
 		return false;
@@ -1839,6 +1896,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		effectiveCmdLine = translatedCmdLine.c_str();
 	}
 	idStr::Copynz(sys_cmdline, effectiveCmdLine, sizeof(sys_cmdline));
+
+	Sys_SetProcessDpiAwarenessForEarlyWindows();
 
 	// done before Com/Sys_Init since we need this for error output
 	Sys_CreateConsole();
