@@ -18,6 +18,12 @@ Supported package roots contain these entries side by side:
 - `baseoq4/`
 - loose runtime support files such as icons, splash assets, docs, and version metadata
 
+The SP/MP game modules must live under `baseoq4/` as
+`game-sp_<arch>.dylib` and `game-mp_<arch>.dylib`. Do not copy openQ4 game
+modules into `q4base/`; that directory is for the retail Quake 4 asset PK4s,
+and the app-bundle startup preflight treats `q4base/game-*.dylib` as misplaced
+runtime payload rather than a valid package fix.
+
 `openQ4.app` is the Finder entry point, but it is not currently the full runtime
 container. The app must stay beside `baseoq4/` and the loose runtime files until
 the project deliberately migrates to `openQ4.app/Contents/Resources` or another

@@ -414,6 +414,15 @@ static void Sys_AppendAlternateMacOSPackageRootEntryIfPresent( const idStr &pack
 	}
 }
 
+static void Sys_AppendAlternateMacOSPackageRootGameModuleEntries( const idStr &packageDirectory, const char *gameDir, const char *arch, idStr &foundEntries ) {
+	char entry[96];
+
+	idStr::snPrintf( entry, sizeof( entry ), "%s/game-sp_%s.dylib", gameDir, arch );
+	Sys_AppendAlternateMacOSPackageRootEntryIfPresent( packageDirectory, entry, foundEntries );
+	idStr::snPrintf( entry, sizeof( entry ), "%s/game-mp_%s.dylib", gameDir, arch );
+	Sys_AppendAlternateMacOSPackageRootEntryIfPresent( packageDirectory, entry, foundEntries );
+}
+
 static void Sys_AppendAlternateMacOSPackageRootEntries( const idStr &packageDirectory, const char *expectedArch, idStr &foundEntries ) {
 	static const char *knownArchs[] = { "arm64", "x64", "x86" };
 	char entry[96];
@@ -428,19 +437,19 @@ static void Sys_AppendAlternateMacOSPackageRootEntries( const idStr &packageDire
 		Sys_AppendAlternateMacOSPackageRootEntryIfPresent( packageDirectory, entry, foundEntries );
 		idStr::snPrintf( entry, sizeof( entry ), "openQ4-ded_%s", arch );
 		Sys_AppendAlternateMacOSPackageRootEntryIfPresent( packageDirectory, entry, foundEntries );
-		idStr::snPrintf( entry, sizeof( entry ), "%s/game-sp_%s.dylib", BASE_GAMEDIR, arch );
-		Sys_AppendAlternateMacOSPackageRootEntryIfPresent( packageDirectory, entry, foundEntries );
-		idStr::snPrintf( entry, sizeof( entry ), "%s/game-mp_%s.dylib", BASE_GAMEDIR, arch );
-		Sys_AppendAlternateMacOSPackageRootEntryIfPresent( packageDirectory, entry, foundEntries );
+		Sys_AppendAlternateMacOSPackageRootGameModuleEntries( packageDirectory, OPENQ4_GAMEDIR, arch, foundEntries );
+		Sys_AppendAlternateMacOSPackageRootGameModuleEntries( packageDirectory, BASE_GAMEDIR, arch, foundEntries );
 	}
 
-	idStr::snPrintf( entry, sizeof( entry ), "%s/game-sp_%s.dll", BASE_GAMEDIR, expectedArch );
+	Sys_AppendAlternateMacOSPackageRootGameModuleEntries( packageDirectory, BASE_GAMEDIR, expectedArch, foundEntries );
+
+	idStr::snPrintf( entry, sizeof( entry ), "%s/game-sp_%s.dll", OPENQ4_GAMEDIR, expectedArch );
 	Sys_AppendAlternateMacOSPackageRootEntryIfPresent( packageDirectory, entry, foundEntries );
-	idStr::snPrintf( entry, sizeof( entry ), "%s/game-mp_%s.dll", BASE_GAMEDIR, expectedArch );
+	idStr::snPrintf( entry, sizeof( entry ), "%s/game-mp_%s.dll", OPENQ4_GAMEDIR, expectedArch );
 	Sys_AppendAlternateMacOSPackageRootEntryIfPresent( packageDirectory, entry, foundEntries );
-	idStr::snPrintf( entry, sizeof( entry ), "%s/game-sp_%s.so", BASE_GAMEDIR, expectedArch );
+	idStr::snPrintf( entry, sizeof( entry ), "%s/game-sp_%s.so", OPENQ4_GAMEDIR, expectedArch );
 	Sys_AppendAlternateMacOSPackageRootEntryIfPresent( packageDirectory, entry, foundEntries );
-	idStr::snPrintf( entry, sizeof( entry ), "%s/game-mp_%s.so", BASE_GAMEDIR, expectedArch );
+	idStr::snPrintf( entry, sizeof( entry ), "%s/game-mp_%s.so", OPENQ4_GAMEDIR, expectedArch );
 	Sys_AppendAlternateMacOSPackageRootEntryIfPresent( packageDirectory, entry, foundEntries );
 }
 
@@ -470,10 +479,10 @@ static void Sys_ErrorIfMacOSAppBundlePackageRootIncomplete( const idStr &appDire
 
 	idStr::snPrintf( clientEntry, sizeof( clientEntry ), "openQ4-client_%s", arch );
 	idStr::snPrintf( dedicatedEntry, sizeof( dedicatedEntry ), "openQ4-ded_%s", arch );
-	idStr::snPrintf( spModuleEntry, sizeof( spModuleEntry ), "%s/game-sp_%s.dylib", BASE_GAMEDIR, arch );
-	idStr::snPrintf( mpModuleEntry, sizeof( mpModuleEntry ), "%s/game-mp_%s.dylib", BASE_GAMEDIR, arch );
+	idStr::snPrintf( spModuleEntry, sizeof( spModuleEntry ), "%s/game-sp_%s.dylib", OPENQ4_GAMEDIR, arch );
+	idStr::snPrintf( mpModuleEntry, sizeof( mpModuleEntry ), "%s/game-mp_%s.dylib", OPENQ4_GAMEDIR, arch );
 
-	Sys_RequireMacOSPackageRootDirectory( packageDirectory, BASE_GAMEDIR, missingEntries );
+	Sys_RequireMacOSPackageRootDirectory( packageDirectory, OPENQ4_GAMEDIR, missingEntries );
 	Sys_RequireMacOSPackageRootExecutable( packageDirectory, clientEntry, missingEntries );
 	Sys_RequireMacOSPackageRootExecutable( packageDirectory, dedicatedEntry, missingEntries );
 	Sys_RequireMacOSPackageRootExecutable( packageDirectory, spModuleEntry, missingEntries );
