@@ -9,7 +9,7 @@ uniform float uAlphaTestEnabled;
 uniform float uAlphaHashEnabled;
 uniform float uAlphaHashStable;
 uniform float uPointShadowDepthMode;
-uniform float uPointShadowDepthCompare;
+uniform vec2 uShadowCasterDepthOffset;
 
 varying vec3 vPointShadowVector;
 varying vec2 vAlphaTexCoord;
@@ -68,10 +68,19 @@ void main() {
 	if ( rawDepth <= 0.0 || rawDepth >= 1.0 ) {
 		discard;
 	}
-	float depth = clamp( rawDepth, 0.0, 1.0 );
-	if ( uPointShadowDepthCompare > 0.5 ) {
-		gl_FragDepth = depth;
-	}
+	// glPolygonOffset cannot bias the stored radial depth (only the rasterized
+	// ordering depth), so the slope-scale caster offset is folded into the
+	// stored value here: x scales with the radial-depth slope, y is pre-scaled
+	// by the CPU to one resolvable depth-buffer step.
+	float depthSlope = max( abs( dFdx( rawDepth ) ), abs( dFdy( rawDepth ) ) );
+	float depth = clamp( rawDepth + uShadowCasterDepthOffset.x * depthSlope + uShadowCasterDepthOffset.y, 0.0, 1.0 );
+#ifdef OPENQ4_POINT_SHADOW_CASTER_DEPTH
+	// The hardware-compare path samples the depth cubemap against a radial
+	// reference, so the radial value replaces the rasterized fragment depth.
+	// Writing gl_FragDepth only in this variant keeps the default variant's
+	// fragment depth fully defined.
+	gl_FragDepth = depth;
+#endif
 	if ( uPointShadowDepthMode > 0.5 ) {
 		gl_FragColor = vec4( depth, depth, depth, 1.0 );
 		return;

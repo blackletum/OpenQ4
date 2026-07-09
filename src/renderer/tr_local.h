@@ -243,6 +243,9 @@ public:
 	bool					lightHasMoved;			// the light has changed its position since it was
 													// first added, so the prelight model is not valid
 
+	bool					shadowMapStencilFallbackSticky;	// the backend hit a shadow-map render failure on this
+													// light; keep generating stencil volumes for its fallback
+
 	float					modelMatrix[16];		// this is just a rearrangement of parms.axis and parms.origin
 
 	idRenderWorldLocal *	world;
@@ -1267,6 +1270,12 @@ extern idCVar r_shadowMapPointLights;	// 1 = opt into point-light shadow maps; 0
 extern idCVar r_shadowMapPointDepthCompare;	// 1 = use samplerCubeShadow depth compare for point maps when supported
 extern idCVar r_shadowMapStableAlphaHash;	// 1 = seed hashed alpha from stable world coordinates
 extern idCVar r_shadowMapMaxUpdatesPerView;	// shadow-map pass budget per backend view, 0 = unlimited
+extern idCVar r_shadowMapSkipStencilShadows;	// 1 = skip stencil volume generation/linking for lights that will render shadow maps
+
+// mirrors the backend shadow-map admission policy for front-end stencil-volume elision (tr_light.cpp)
+bool R_ShadowMapLightWillUseShadowMaps( const idRenderLightLocal *lightDef );
+// backend-published: shadow-map resources were successfully prepared this video generation (draw_arb2.cpp)
+bool RB_ShadowMapResourcesKnownGood( bool pointLight );
 extern idCVar r_shadowMapStaticCache;		// 1 = reuse resident static-only shadow-map passes
 extern idCVar r_shadowMapStaticHysteresisFrames;	// frames after dynamic casters before static reuse
 extern idCVar r_shadowMapResidentFrames;	// frames a resident static shadow map may remain unused

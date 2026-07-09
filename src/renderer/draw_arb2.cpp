@@ -1831,6 +1831,7 @@ typedef struct {
 	GLint			alphaTexCoordS;
 	GLint			alphaTexCoordT;
 	GLint			shadowDepthRow;
+	GLint			casterDepthOffset;
 	GLint			alphaTestEnabled;
 	GLint			alphaRef;
 	GLint			alphaTestMode;
@@ -1985,8 +1986,9 @@ typedef struct {
 	GLint			alphaHashEnabled;
 	GLint			alphaHashStable;
 	GLint			pointShadowDepthMode;
-	GLint			pointShadowDepthCompare;
+	GLint			casterDepthOffset;
 	GLint			alphaMap;
+	bool			depthCompareMode;
 } pointShadowCasterProgram_t;
 
 typedef struct {
@@ -2572,6 +2574,11 @@ static bool RB_ShadowMapDepthCompareEnabled( void ) {
 		|| debugMode == SHADOWMAP_DEBUGMODE_COMPARE_DELTA ) {
 		return false;
 	}
+	// PCSS-lite needs raw depth reads for its blocker search, which comparison
+	// samplers cannot provide; selecting filter mode 2 implies the manual path.
+	if ( idMath::ClampInt( 0, 2, r_shadowMapFilterMode.GetInteger() ) == 2 ) {
+		return false;
+	}
 	return r_shadowMapDepthCompare.GetBool();
 }
 
@@ -2606,10 +2613,6 @@ static void RB_PointShadowMapDisableDepthCompareForGeneration( void ) {
 
 static float RB_PointShadowMapDepthModeValue( void ) {
 	return RB_PointShadowMapHighPrecisionEnabled() ? 1.0f : 0.0f;
-}
-
-static float RB_PointShadowMapDepthCompareValue( void ) {
-	return RB_PointShadowMapDepthCompareEnabled() ? 1.0f : 0.0f;
 }
 
 static bool RB_TranslucentShadowMomentsRequested( void ) {
@@ -2770,6 +2773,40 @@ static float RB_ShadowMapPolygonFactor( void ) {
 
 static float RB_ShadowMapPolygonOffset( void ) {
 	return RB_ShadowMapDebugModeIs( SHADOWMAP_DEBUGMODE_CASTER_OFFSET_OFF ) ? 0.0f : r_shadowMapPolygonOffset.GetFloat();
+}
+
+// The shadow casters write their depth from the fragment shader, which makes
+// glPolygonOffset inert; the equivalent slope-scale offset is applied by the
+// caster shaders instead. The units term is pre-scaled here to one resolvable
+// step of the depth buffer to keep glPolygonOffset's parameter semantics.
+static void RB_ShadowMapSetCasterDepthOffsetUniform( GLint location ) {
+	if ( location < 0 ) {
+		return;
+	}
+	const float oneDepthStep = 1.0f / 16777216.0f;
+	glUniform2fARB( location, RB_ShadowMapPolygonFactor(), RB_ShadowMapPolygonOffset() * oneDepthStep );
+}
+
+// Published for the front-end stencil-volume elision policy: the front end
+// must keep generating stencil volumes until the backend has proven it can
+// create shadow-map resources in this video generation.
+static int g_shadowMapProjectedResourcesOkGeneration = -1;
+static int g_shadowMapPointResourcesOkGeneration = -1;
+
+bool RB_ShadowMapResourcesKnownGood( bool pointLight ) {
+	const int generation = pointLight ? g_shadowMapPointResourcesOkGeneration : g_shadowMapProjectedResourcesOkGeneration;
+	return generation == tr.videoRestartCount;
+}
+
+// A shadow-map render failure on a light whose stencil volumes were elided
+// would otherwise repeat every frame with an empty fallback; the sticky flag
+// restores volume generation for that light from the next frame on.
+static void RB_ShadowMapMarkStencilFallbackSticky( const viewLight_t *vLight ) {
+	if ( vLight == NULL || vLight->lightDef == NULL || vLight->lightDef->shadowMapStencilFallbackSticky ) {
+		return;
+	}
+	vLight->lightDef->shadowMapStencilFallbackSticky = true;
+	common->DPrintf( "shadow map pass failed for lightDef %d; restoring stencil volume generation\n", vLight->lightDef->index );
 }
 
 static int RB_CountDrawSurfChain( const drawSurf_t *surf ) {
@@ -4586,6 +4623,7 @@ static const char *programBaseName = "glprogs/shadow_proj_caster";
 	g_shadowMapCasterProgram.alphaTexCoordS = glGetUniformLocationARB( programObject, "uAlphaTexCoordS" );
 	g_shadowMapCasterProgram.alphaTexCoordT = glGetUniformLocationARB( programObject, "uAlphaTexCoordT" );
 	g_shadowMapCasterProgram.shadowDepthRow = glGetUniformLocationARB( programObject, "uShadowDepthRow" );
+	g_shadowMapCasterProgram.casterDepthOffset = glGetUniformLocationARB( programObject, "uShadowCasterDepthOffset" );
 	g_shadowMapCasterProgram.alphaTestEnabled = glGetUniformLocationARB( programObject, "uAlphaTestEnabled" );
 	g_shadowMapCasterProgram.alphaRef = glGetUniformLocationARB( programObject, "uAlphaRef" );
 	g_shadowMapCasterProgram.alphaTestMode = glGetUniformLocationARB( programObject, "uAlphaTestMode" );
@@ -4902,7 +4940,8 @@ static const char *programBaseName = "glprogs/shadow_point_caster";
 		return false;
 	}
 
-	if ( g_pointShadowCasterProgram.programObject != 0 && g_pointShadowCasterProgram.programGeneration == tr.videoRestartCount ) {
+	const bool depthCompareMode = RB_PointShadowMapDepthCompareEnabled();
+	if ( g_pointShadowCasterProgram.programObject != 0 && g_pointShadowCasterProgram.programGeneration == tr.videoRestartCount && g_pointShadowCasterProgram.depthCompareMode == depthCompareMode ) {
 		return g_pointShadowCasterProgram.programValid;
 	}
 
@@ -4933,7 +4972,30 @@ static const char *programBaseName = "glprogs/shadow_point_caster";
 	const GLcharARB *vertexSource = (const GLcharARB *)vertexBuffer;
 	const GLcharARB *fragmentSource = (const GLcharARB *)fragmentBuffer;
 	glShaderSourceARB( vertexShader, 1, &vertexSource, NULL );
-	glShaderSourceARB( fragmentShader, 1, &fragmentSource, NULL );
+	if ( depthCompareMode ) {
+		// The compare variant writes radial depth to gl_FragDepth; the default
+		// variant must not reference gl_FragDepth at all so the rasterized
+		// fragment depth stays defined on every execution path.
+		const char *fragmentVersionEnd = strchr( fragmentBuffer, '\n' );
+		if ( fragmentVersionEnd != NULL ) {
+			static const GLcharARB casterDepthDefine[] = "#define OPENQ4_POINT_SHADOW_CASTER_DEPTH 1\n";
+			const GLcharARB *fragmentSources[3] = {
+				(const GLcharARB *)fragmentBuffer,
+				casterDepthDefine,
+				(const GLcharARB *)( fragmentVersionEnd + 1 )
+			};
+			const GLint fragmentLengths[3] = {
+				static_cast<GLint>( fragmentVersionEnd - fragmentBuffer + 1 ),
+				static_cast<GLint>( sizeof( casterDepthDefine ) - 1 ),
+				-1
+			};
+			glShaderSourceARB( fragmentShader, 3, fragmentSources, fragmentLengths );
+		} else {
+			glShaderSourceARB( fragmentShader, 1, &fragmentSource, NULL );
+		}
+	} else {
+		glShaderSourceARB( fragmentShader, 1, &fragmentSource, NULL );
+	}
 	glCompileShaderARB( vertexShader );
 	glCompileShaderARB( fragmentShader );
 
@@ -4999,7 +5061,8 @@ static const char *programBaseName = "glprogs/shadow_point_caster";
 	g_pointShadowCasterProgram.alphaHashEnabled = glGetUniformLocationARB( programObject, "uAlphaHashEnabled" );
 	g_pointShadowCasterProgram.alphaHashStable = glGetUniformLocationARB( programObject, "uAlphaHashStable" );
 	g_pointShadowCasterProgram.pointShadowDepthMode = glGetUniformLocationARB( programObject, "uPointShadowDepthMode" );
-	g_pointShadowCasterProgram.pointShadowDepthCompare = glGetUniformLocationARB( programObject, "uPointShadowDepthCompare" );
+	g_pointShadowCasterProgram.casterDepthOffset = glGetUniformLocationARB( programObject, "uShadowCasterDepthOffset" );
+	g_pointShadowCasterProgram.depthCompareMode = depthCompareMode;
 	g_pointShadowCasterProgram.alphaMap = glGetUniformLocationARB( programObject, "uAlphaMap" );
 
 	common->Printf( "Loaded GLSL program '%s'\n", programBaseName );
@@ -5271,8 +5334,16 @@ static bool RB_ShadowMapEnsureResources( const viewLight_t *vLight ) {
 
 	GL_SelectTextureNoClient( 5 );
 	g_shadowMapDepthImage->Bind();
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, RB_ShadowMapDepthCompareEnabled() ? GL_COMPARE_R_TO_TEXTURE : GL_NONE );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL );
+	{
+		// Comparison sampling gets hardware 2x2 PCF from linear filtering; the
+		// manual path must read raw depth texels.
+		const bool depthCompare = RB_ShadowMapDepthCompareEnabled();
+		const GLint depthFilter = depthCompare ? GL_LINEAR : GL_NEAREST;
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, depthCompare ? GL_COMPARE_R_TO_TEXTURE : GL_NONE );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, depthFilter );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, depthFilter );
+	}
 	for ( int i = 0; i < 3; i++ ) {
 		if ( glConfig.maxTextureUnits >= 7 + i ) {
 			GL_SelectTextureNoClient( 6 + i );
@@ -5285,6 +5356,7 @@ static bool RB_ShadowMapEnsureResources( const viewLight_t *vLight ) {
 	}
 	backEnd.glState.currenttmu = -1;
 
+	g_shadowMapProjectedResourcesOkGeneration = tr.videoRestartCount;
 	return true;
 }
 
@@ -5342,7 +5414,11 @@ static bool RB_PointShadowMapEnsureResources( void ) {
 	g_pointShadowMapDepthImage = *depthImage;
 	g_pointShadowMapRenderTexture = *renderTexture;
 
-	return g_pointShadowMapColorImage != NULL && g_pointShadowMapDepthImage != NULL && g_pointShadowMapRenderTexture != NULL;
+	const bool resourcesOk = g_pointShadowMapColorImage != NULL && g_pointShadowMapDepthImage != NULL && g_pointShadowMapRenderTexture != NULL;
+	if ( resourcesOk ) {
+		g_shadowMapPointResourcesOkGeneration = tr.videoRestartCount;
+	}
+	return resourcesOk;
 }
 
 static bool RB_ShadowMapEnsureTranslucentResources( const viewLight_t *vLight ) {
@@ -5997,11 +6073,6 @@ static bool RB_ShadowMapResolveCasterDrawData( const drawSurf_t *surf, srfTriang
 	return true;
 }
 
-static void RB_ShadowMapRestorePolygonOffset( void ) {
-	glEnable( GL_POLYGON_OFFSET_FILL );
-	glPolygonOffset( RB_ShadowMapPolygonFactor(), RB_ShadowMapPolygonOffset() );
-}
-
 static void RB_ShadowMapModelMatrixRows( const float modelMatrix[16], float row0[4], float row1[4], float row2[4] );
 
 static bool RB_ShadowMapTextureStageHasBindableImage( const textureStage_t *texture ) {
@@ -6079,20 +6150,9 @@ static void RB_ShadowMapDisableCasterAlphaTest( void ) {
 	}
 }
 
-static void RB_ShadowMapDrawOpaqueCasterProgram( const drawSurf_t *surf, const srfTriangles_t *casterGeo, const int cascadeIndex ) {
-	glUseProgramObjectARB( g_shadowMapCasterProgram.programObject );
-	RB_ShadowMapSetCasterModelRows( surf );
-	RB_ShadowMapSetCasterDepthRow( surf, cascadeIndex );
-	RB_ShadowMapDisableCasterAlphaTest();
-	if ( g_shadowMapCasterProgram.alphaMap >= 0 ) {
-		glUniform1iARB( g_shadowMapCasterProgram.alphaMap, 0 );
-	}
-	if ( g_shadowMapCasterProgram.alphaRef >= 0 ) {
-		glUniform1fARB( g_shadowMapCasterProgram.alphaRef, 0.0f );
-	}
-	if ( g_shadowMapCasterProgram.alphaScale >= 0 ) {
-		glUniform1fARB( g_shadowMapCasterProgram.alphaScale, 1.0f );
-	}
+// The caster program stays bound for the whole pass; the chain sets the
+// per-space uniforms and the perforated path restores the alpha-test default.
+static void RB_ShadowMapDrawOpaqueCasterProgram( const srfTriangles_t *casterGeo ) {
 	RB_DrawElementsWithCounters( casterGeo );
 }
 
@@ -6371,17 +6431,10 @@ static void RB_ShadowMapDrawPerforatedCasterProgram( const drawSurf_t *surf, con
 	bool didDraw = false;
 
 	if ( shader == NULL || regs == NULL ) {
-		RB_ShadowMapDrawOpaqueCasterProgram( surf, casterGeo, cascadeIndex );
-		glUseProgramObjectARB( 0 );
+		RB_ShadowMapDrawOpaqueCasterProgram( casterGeo );
 		return;
 	}
 
-	glUseProgramObjectARB( g_shadowMapCasterProgram.programObject );
-	RB_ShadowMapSetCasterModelRows( surf );
-	RB_ShadowMapSetCasterDepthRow( surf, cascadeIndex );
-	if ( g_shadowMapCasterProgram.alphaMap >= 0 ) {
-		glUniform1iARB( g_shadowMapCasterProgram.alphaMap, 0 );
-	}
 	if ( g_shadowMapCasterProgram.alphaTestEnabled >= 0 ) {
 		glUniform1fARB( g_shadowMapCasterProgram.alphaTestEnabled, 1.0f );
 	}
@@ -6426,11 +6479,9 @@ static void RB_ShadowMapDrawPerforatedCasterProgram( const drawSurf_t *surf, con
 	GL_SelectTexture( 0 );
 	RB_ShadowMapSetAlphaTexCoordIdentity();
 	RB_ShadowMapDisableCasterAlphaTest();
-	glUseProgramObjectARB( 0 );
 
 	if ( !didDraw ) {
-		RB_ShadowMapDrawOpaqueCasterProgram( surf, casterGeo, cascadeIndex );
-		glUseProgramObjectARB( 0 );
+		RB_ShadowMapDrawOpaqueCasterProgram( casterGeo );
 	}
 }
 
@@ -6454,6 +6505,8 @@ static int RB_ShadowMapDrawCasterChain( const drawSurf_t *surf, const int cascad
 		if ( surf->space != backEnd.currentSpace ) {
 			backEnd.currentSpace = surf->space;
 			glLoadMatrixf( surf->space->modelMatrix );
+			RB_ShadowMapSetCasterModelRows( surf );
+			RB_ShadowMapSetCasterDepthRow( surf, cascadeIndex );
 		}
 
 		idDrawVert *ac = (idDrawVert *)vertexCache.Position( ambientCache );
@@ -6465,15 +6518,13 @@ static int RB_ShadowMapDrawCasterChain( const drawSurf_t *surf, const int cascad
 				RB_ShadowMapDrawPerforatedCasterProgram( surf, casterGeo, ac, cascadeIndex, useHashedAlpha );
 			} else {
 				RB_ShadowMapReportCasterSkip( surf, casterGeo, "unsupported-alpha-texgen-solid-depth" );
-				RB_ShadowMapDrawOpaqueCasterProgram( surf, casterGeo, cascadeIndex );
-				glUseProgramObjectARB( 0 );
+				RB_ShadowMapDrawOpaqueCasterProgram( casterGeo );
 			}
 			drawnCasters++;
 			continue;
 		}
 
-		RB_ShadowMapDrawOpaqueCasterProgram( surf, casterGeo, cascadeIndex );
-		glUseProgramObjectARB( 0 );
+		RB_ShadowMapDrawOpaqueCasterProgram( casterGeo );
 		drawnCasters++;
 	}
 
@@ -7098,9 +7149,24 @@ static bool RB_RenderShadowMap( const drawSurf_t *primaryCasters, const drawSurf
 
 	g_shadowMapRenderTexture->MakeCurrent();
 
-	glUseProgramObjectARB( 0 );
+	// One caster program serves every opaque and perforated caster in this
+	// pass; per-surface rebinding is unnecessary. The slope-scale caster
+	// offset lives in the shader because shader-written depth ignores
+	// glPolygonOffset.
+	glUseProgramObjectARB( g_shadowMapCasterProgram.programObject );
 	glDisable( GL_VERTEX_PROGRAM_ARB );
 	glDisable( GL_FRAGMENT_PROGRAM_ARB );
+	RB_ShadowMapSetCasterDepthOffsetUniform( g_shadowMapCasterProgram.casterDepthOffset );
+	RB_ShadowMapDisableCasterAlphaTest();
+	if ( g_shadowMapCasterProgram.alphaMap >= 0 ) {
+		glUniform1iARB( g_shadowMapCasterProgram.alphaMap, 0 );
+	}
+	if ( g_shadowMapCasterProgram.alphaRef >= 0 ) {
+		glUniform1fARB( g_shadowMapCasterProgram.alphaRef, 0.0f );
+	}
+	if ( g_shadowMapCasterProgram.alphaScale >= 0 ) {
+		glUniform1fARB( g_shadowMapCasterProgram.alphaScale, 1.0f );
+	}
 
 	glColorMask( GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE );
 	glEnable( GL_DEPTH_TEST );
@@ -7111,8 +7177,6 @@ static bool RB_RenderShadowMap( const drawSurf_t *primaryCasters, const drawSurf
 	glEnable( GL_SCISSOR_TEST );
 	glEnable( GL_CULL_FACE );
 	glCullFace( GL_BACK );
-	glEnable( GL_POLYGON_OFFSET_FILL );
-	glPolygonOffset( RB_ShadowMapPolygonFactor(), RB_ShadowMapPolygonOffset() );
 	const bool useHashedAlpha = RB_ShadowMapHashedAlphaEnabled();
 
 	for ( int cascadeIndex = 0; cascadeIndex < g_projectedShadowMapState.cascadeCount; cascadeIndex++ ) {
@@ -7136,7 +7200,7 @@ static bool RB_RenderShadowMap( const drawSurf_t *primaryCasters, const drawSurf
 		drawnCasterCount += RB_ShadowMapDrawCasterChain( quaternaryCasters, cascadeIndex, useHashedAlpha );
 	}
 
-	glDisable( GL_POLYGON_OFFSET_FILL );
+	glUseProgramObjectARB( 0 );
 
 	if ( backEnd.renderTexture != NULL ) {
 		backEnd.renderTexture->MakeCurrent();
@@ -7241,9 +7305,7 @@ static bool RB_RenderPointShadowMap( const drawSurf_t *primaryCasters, const dra
 	if ( g_pointShadowCasterProgram.pointShadowDepthMode >= 0 ) {
 		glUniform1fARB( g_pointShadowCasterProgram.pointShadowDepthMode, RB_PointShadowMapDepthModeValue() );
 	}
-	if ( g_pointShadowCasterProgram.pointShadowDepthCompare >= 0 ) {
-		glUniform1fARB( g_pointShadowCasterProgram.pointShadowDepthCompare, RB_PointShadowMapDepthCompareValue() );
-	}
+	RB_ShadowMapSetCasterDepthOffsetUniform( g_pointShadowCasterProgram.casterDepthOffset );
 	if ( g_pointShadowCasterProgram.alphaMap >= 0 ) {
 		glUniform1iARB( g_pointShadowCasterProgram.alphaMap, 0 );
 	}
@@ -7270,8 +7332,6 @@ static bool RB_RenderPointShadowMap( const drawSurf_t *primaryCasters, const dra
 	glDisable( GL_STENCIL_TEST );
 	glEnable( GL_CULL_FACE );
 	glCullFace( GL_BACK );
-	glEnable( GL_POLYGON_OFFSET_FILL );
-	glPolygonOffset( RB_ShadowMapPolygonFactor(), RB_ShadowMapPolygonOffset() );
 	glClearColor( 1.0f, 1.0f, 1.0f, 1.0f );
 
 	glMatrixMode( GL_PROJECTION );
@@ -7294,7 +7354,6 @@ static bool RB_RenderPointShadowMap( const drawSurf_t *primaryCasters, const dra
 		drawnCasterCount += RB_PointShadowMapDrawCasterChain( quaternaryCasters, lightModelViewMatrix );
 	}
 
-	glDisable( GL_POLYGON_OFFSET_FILL );
 	glUseProgramObjectARB( 0 );
 	glClearColor( clearColor[0], clearColor[1], clearColor[2], clearColor[3] );
 
@@ -7387,8 +7446,6 @@ static bool RB_RenderTranslucentShadowMap( const drawSurf_t *primaryCasters, con
 	glEnable( GL_SCISSOR_TEST );
 	glEnable( GL_CULL_FACE );
 	glCullFace( GL_BACK );
-	glEnable( GL_POLYGON_OFFSET_FILL );
-	glPolygonOffset( RB_ShadowMapPolygonFactor(), RB_ShadowMapPolygonOffset() );
 	glClearColor( 0.0f, 0.0f, 0.0f, 0.0f );
 
 	for ( int cascadeIndex = 0; cascadeIndex < g_projectedShadowMapState.cascadeCount; cascadeIndex++ ) {
@@ -7410,7 +7467,6 @@ static bool RB_RenderTranslucentShadowMap( const drawSurf_t *primaryCasters, con
 		RB_ShadowMapDrawTranslucentCasterChain( secondaryCasters, cascadeIndex );
 	}
 
-	glDisable( GL_POLYGON_OFFSET_FILL );
 	glUseProgramObjectARB( 0 );
 	glClearColor( clearColor[0], clearColor[1], clearColor[2], clearColor[3] );
 
@@ -7526,8 +7582,6 @@ static bool RB_RenderPointTranslucentShadowMap( const drawSurf_t *primaryCasters
 	glBlendFunc( GL_ONE, GL_ONE );
 	glEnable( GL_CULL_FACE );
 	glCullFace( GL_BACK );
-	glEnable( GL_POLYGON_OFFSET_FILL );
-	glPolygonOffset( RB_ShadowMapPolygonFactor(), RB_ShadowMapPolygonOffset() );
 	glClearColor( 0.0f, 0.0f, 0.0f, 0.0f );
 
 	glMatrixMode( GL_PROJECTION );
@@ -7548,7 +7602,6 @@ static bool RB_RenderPointTranslucentShadowMap( const drawSurf_t *primaryCasters
 		RB_PointShadowMapDrawTranslucentCasterChain( secondaryCasters, lightModelViewMatrix );
 	}
 
-	glDisable( GL_POLYGON_OFFSET_FILL );
 	glUseProgramObjectARB( 0 );
 	glClearColor( clearColor[0], clearColor[1], clearColor[2], clearColor[3] );
 
@@ -8858,8 +8911,12 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 	if ( g_shadowMapDepthImage != NULL ) {
 		GL_SelectTextureNoClient( 5 );
 		g_shadowMapDepthImage->Bind();
-		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, RB_ShadowMapDepthCompareEnabled() ? GL_COMPARE_R_TO_TEXTURE : GL_NONE );
+		const bool depthCompare = RB_ShadowMapDepthCompareEnabled();
+		const GLint depthFilter = depthCompare ? GL_LINEAR : GL_NEAREST;
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, depthCompare ? GL_COMPARE_R_TO_TEXTURE : GL_NONE );
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, depthFilter );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, depthFilter );
 	}
 	if ( g_shadowMapProgram.materialEnhanced >= 0 ) {
 		glUniform1fARB( g_shadowMapProgram.materialEnhanced, RB_EnhancedMaterialShadingActive() ? 1.0f : 0.0f );
@@ -9084,6 +9141,8 @@ static bool RB_GLSLPointShadowMap_CreateDrawInteractions( const drawSurf_t *surf
 		g_pointShadowMapDepthImage->Bind();
 		glTexParameteri( GL_TEXTURE_CUBE_MAP, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE );
 		glTexParameteri( GL_TEXTURE_CUBE_MAP, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL );
+		glTexParameteri( GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+		glTexParameteri( GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
 	} else if ( g_pointShadowMapColorImage != NULL ) {
 		g_pointShadowMapColorImage->Bind();
 		glTexParameteri( GL_TEXTURE_CUBE_MAP, GL_TEXTURE_COMPARE_MODE, GL_NONE );
@@ -9519,6 +9578,8 @@ static void RB_ShadowMapDebugOverlayDraw( void ) {
 	if ( g_shadowMapDepthImage != NULL ) {
 		g_shadowMapDepthImage->Bind();
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
 	} else {
 		globalImages->BindNull();
 	}
@@ -9675,6 +9736,13 @@ static void RB_ShadowMapDrawReceiverFallbacks( const viewLight_t *vLight, const 
 		return;
 	}
 
+	// Fallback receivers are shadowed by the light's stencil volumes even on
+	// mapped frames. If the front end elided those volumes, restore them from
+	// the next frame on so these receivers do not stay unshadowed.
+	if ( primaryShadowSurfs == NULL && secondaryShadowSurfs == NULL ) {
+		RB_ShadowMapMarkStencilFallbackSticky( vLight );
+	}
+
 	if ( passKind == SHADOWMAP_PASS_LOCAL ) {
 		g_shadowMapStats.receiverFallbackLocalPasses++;
 	} else {
@@ -9721,6 +9789,13 @@ static void RB_ShadowMapRunPass( const viewLight_t *vLight, shadowMapPassKind_t 
 	const bool haveStencilShadowSurfs = primaryShadowSurfs != NULL || secondaryShadowSurfs != NULL;
 
 	if ( !haveOpaqueCasters && !haveStencilShadowSurfs && !haveTranslucentCasters ) {
+		// The front end may have elided stencil volumes this light could still
+		// need (e.g. its only casters are translucent/forceShadows materials the
+		// map path cannot draw). Restore volume generation so the next frame can
+		// take the stencil-only path instead of rendering unshadowed.
+		if ( vLight != NULL && R_ShadowMapLightWillUseShadowMaps( vLight->lightDef ) ) {
+			RB_ShadowMapMarkStencilFallbackSticky( vLight );
+		}
 		if ( passKind == SHADOWMAP_PASS_LOCAL ) {
 			g_shadowMapStats.unshadowedLocalPasses++;
 		} else {
@@ -9743,6 +9818,7 @@ static void RB_ShadowMapRunPass( const viewLight_t *vLight, shadowMapPassKind_t 
 			primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters,
 			primaryShadowSurfs, secondaryShadowSurfs, interactions );
 		RB_ShadowMapPassReport( vLight, passKind, pointLight, passResult, primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters, primaryShadowSurfs, secondaryShadowSurfs, interactions );
+		RB_ShadowMapMarkStencilFallbackSticky( vLight );
 		RB_ShadowMapStencilFallback( vLight, passKind, primaryShadowSurfs, secondaryShadowSurfs, interactions );
 		return;
 	}
@@ -9787,6 +9863,7 @@ static void RB_ShadowMapRunPass( const viewLight_t *vLight, shadowMapPassKind_t 
 			g_shadowMapStats.maskFailGlobalPasses++;
 		}
 		RB_ShadowMapPassReport( vLight, passKind, pointLight, SHADOWMAP_PASS_RESULT_MASK_FAIL, primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters, primaryShadowSurfs, secondaryShadowSurfs, interactions );
+		RB_ShadowMapMarkStencilFallbackSticky( vLight );
 		RB_ShadowMapStencilFallback( vLight, passKind, primaryShadowSurfs, secondaryShadowSurfs, interactions );
 		return;
 	}
@@ -9799,6 +9876,7 @@ static void RB_ShadowMapRunPass( const viewLight_t *vLight, shadowMapPassKind_t 
 			g_shadowMapStats.fallbackGlobalPasses++;
 		}
 		RB_ShadowMapPassReport( vLight, passKind, pointLight, SHADOWMAP_PASS_RESULT_SCHEDULED_SKIP, primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters, primaryShadowSurfs, secondaryShadowSurfs, interactions );
+		RB_ShadowMapMarkStencilFallbackSticky( vLight );
 		RB_ShadowMapStencilFallback( vLight, passKind, primaryShadowSurfs, secondaryShadowSurfs, interactions );
 		return;
 	}
@@ -9864,6 +9942,7 @@ static void RB_ShadowMapRunPass( const viewLight_t *vLight, shadowMapPassKind_t 
 		}
 	}
 	RB_ShadowMapPassReport( vLight, passKind, pointLight, passResult, primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters, primaryShadowSurfs, secondaryShadowSurfs, interactions );
+	RB_ShadowMapMarkStencilFallbackSticky( vLight );
 	RB_ShadowMapStencilFallback( vLight, passKind, primaryShadowSurfs, secondaryShadowSurfs, interactions );
 }
 

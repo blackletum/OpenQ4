@@ -316,7 +316,7 @@ jobs:
           env LIBGL_ALWAYS_SOFTWARE=1 SDL_VIDEO_DRIVER=x11 SDL_VIDEODRIVER=x11 xvfb-run -a bash tools/validation/validate_pr.sh \
             --fail-on-dirty \
             --runtime \
-            --runtime-cases renderer-default-safety-selftest,sdl3-x11-display-diagnostics \
+            --runtime-cases renderer-default-safety-selftest,renderer-shadow-planner-selftest,renderer-shadow-projected-diagnostic,sdl3-x11-display-diagnostics \
             --runtime-tiers auto \
             --runtime-basepath "" \
             --runtime-skip-official-pak-validation

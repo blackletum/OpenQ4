@@ -94,6 +94,7 @@ idRenderLightLocal::idRenderLightLocal() {
 	memset( frustumWindings, 0, sizeof( frustumWindings ) );
 
 	lightHasMoved			= false;
+	shadowMapStencilFallbackSticky = false;
 	world					= NULL;
 	index					= 0;
 	areaNum					= 0;

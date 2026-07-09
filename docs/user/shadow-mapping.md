@@ -90,7 +90,7 @@ seta r_shadowMapStaticCache 1
 vid_restart
 ```
 
-For projected lights, `r_shadowMapFilterMode 2` enables the experimental PCSS-lite path when raw depth sampling is active. Leave `r_shadowMapDepthCompare 0` for that mode; hardware depth-compare sampling cannot run the blocker search needed for PCSS-lite.
+For projected lights, `r_shadowMapFilterMode 2` enables the experimental PCSS-lite path. Hardware depth-compare sampling cannot run the blocker search needed for PCSS-lite, so selecting filter mode 2 automatically switches the renderer to the manual raw-depth path even while `r_shadowMapDepthCompare 1` is set.
 
 ### Performance-Focused
 
@@ -129,6 +129,7 @@ vid_restart
 | `r_shadowMapCSM` | `0` | `0..1` | Enables cascaded shadow maps for projected lights. |
 | `r_shadowMapProjectedCSM` | `1` | `0..1` | Allows ordinary projected lights to use CSM when `r_shadowMapCSM` is enabled; parallel/global lights keep their dedicated large-coverage policy. |
 | `r_shadowMapConservativeCasters` | `1` | `0..1` | Keeps shadow-map caster submission separate from visible receiver scissors, so off-screen blockers can still shadow visible receivers. |
+| `r_shadowMapSkipStencilShadows` | `1` | `0..1` | Skips stencil shadow volume generation and linking for lights that will render shadow maps, removing the duplicate CPU shadow work. A light that fails a shadow-map pass automatically restores its stencil volumes on the next frame. |
 | `r_shadowMapSize` | `1024` | `128..4096` | Base shadow-map resolution. Higher values cost more VRAM and GPU time. |
 | `r_shadowMapFilterRadius` | `2.0` | `0..8` | Projected-light PCF filter radius in texels. |
 | `r_shadowMapFilterTaps` | `13` | `1..13` | Projected-light PCF tap budget. Values up to `1`, `5`, `9`, and `13` select progressively wider sample sets. |
@@ -138,8 +139,8 @@ vid_restart
 | `r_shadowMapPointFilterRadius` | `2.5` | `0..8` | Point-light PCF filter radius in texels. |
 | `r_shadowMapPointFilterTaps` | `13` | `1..13` | Point-light PCF tap budget. Values up to `1`, `5`, `9`, and `13` select progressively wider sample sets. |
 | `r_shadowMapPointFilterMode` | `0` | `0..1` | Point-light filter mode: fixed PCF or stable rotated Poisson. |
-| `r_shadowMapDepthCompare` | `0` | `0..1` | Uses hardware comparison sampling for projected depth maps. Leave off if a driver has trouble with GLSL shadow samplers. |
-| `r_shadowMapPointDepthCompare` | `0` | `0..1` | Uses hardware comparison sampling for point-light depth cubemaps when GLSL 1.30 support is available. |
+| `r_shadowMapDepthCompare` | `1` | `0..1` | Uses hardware comparison sampling (with hardware-filtered PCF taps) for projected depth maps. Selecting PCSS-lite (`r_shadowMapFilterMode 2`) automatically uses the manual raw-depth path instead. Set `0` if a driver has trouble with GLSL shadow samplers. |
+| `r_shadowMapPointDepthCompare` | `1` | `0..1` | Uses hardware comparison sampling for point-light depth cubemaps when GLSL 1.30 support is available. |
 | `r_shadowMapPointHighPrecision` | `1` | `0..1` | Stores point-light shadow depth in a high-precision float cubemap instead of the older packed RGBA8 depth path. |
 | `r_shadowMapPointLights` | `0` | `0..1` | Opts into experimental point-light shadow maps. When disabled, point lights use the legacy stencil shadow path even if `r_useShadowMap 1` is enabled. |
 | `r_shadowMapHashedAlpha` | `1` | `0..1` | Uses hashed alpha testing for perforated/alpha-tested casters when supported. |
@@ -247,8 +248,8 @@ Projected shadow maps store Quake 4's authored light falloff depth directly, so 
 | `r_shadowMapNormalBias` | `0.00075` | `0..0.05` | Extra projected-light bias on sloped receivers. |
 | `r_shadowMapTexelBiasScale` | `0.45` | `0..8` | Uses texel-aware receiver bias based on fitted cascade/light footprint. Constant bias acts as a compatibility floor. |
 | `r_shadowMapReceiverPlaneBias` | `0` | `0..1` | Allows derivative receiver-plane bias for wider projected-light filters. |
-| `r_shadowMapPolygonFactor` | `0.75` | `0..16` | Slope-scale caster polygon offset used while rendering shadow maps. |
-| `r_shadowMapPolygonOffset` | `0.5` | `0..64` | Constant caster polygon offset used while rendering shadow maps. |
+| `r_shadowMapPolygonFactor` | `0.75` | `0..16` | Slope-scale caster depth offset applied by the caster shaders while rendering shadow maps (shadow casters write shader depth, which `glPolygonOffset` cannot bias). |
+| `r_shadowMapPolygonOffset` | `0.5` | `0..64` | Constant caster depth offset in resolvable depth-buffer steps, applied by the caster shaders alongside the slope-scale term. |
 
 Point-light tuning:
 
@@ -317,7 +318,7 @@ Useful workflow:
 - If point-light shadows look too detached, reduce `r_shadowMapPointBias` or `r_shadowMapPointNormalBias`.
 - If projected-light shadows look detached, reduce `r_shadowMapBias`, `r_shadowMapNormalBias`, `r_shadowMapTexelBiasScale`, `r_shadowMapPolygonFactor`, or `r_shadowMapPolygonOffset` in small steps.
 - If projected-light acne appears only with large filter radii, try `r_shadowMapReceiverPlaneBias 1` before greatly increasing constant bias.
-- If PCSS-lite seems unchanged, confirm `r_shadowMapFilterMode 2` is active and `r_shadowMapDepthCompare 0` is still selected.
+- If PCSS-lite seems unchanged, confirm `r_shadowMapFilterMode 2` is active; the renderer selects the manual raw-depth path for that mode automatically.
 - If point-light depth compare causes shader trouble on a driver, leave `r_shadowMapPointDepthCompare 0`; the renderer falls back to the high-precision color-depth cubemap path.
 - If static-cache reuse hides expected updates while testing unusual content, set `r_shadowMapStaticCache 0` or reduce `r_shadowMapResidentFrames`.
 - If performance drops sharply after enabling translucent shadowing, turn off `r_shadowMapTranslucentMoments` first; it adds an extra pass for eligible lights.

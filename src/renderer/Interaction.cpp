@@ -1683,7 +1683,18 @@ void idInteraction::CreateInteraction( const idRenderModel *model ) {
 			interactionGenerated = true;
 		}
 
-		if ( surfaceCanCastStencilShadowVolume && shadowLODAdmitted ) {
+		// Dynamic-model volumes are regenerated every frame, so they can be
+		// elided while the light renders shadow maps; the next regeneration
+		// restores them if the backend flags a fallback. Static volumes are
+		// built once and kept so the per-light stencil fallback stays instant.
+		const bool suppressDynamicShadowVolume =
+			surfaceCanCastStencilShadowVolume && shadowLODAdmitted &&
+			model->IsDynamicModel() != DM_STATIC &&
+			R_ShadowMapLightWillUseShadowMaps( lightDef );
+		if ( suppressDynamicShadowVolume ) {
+			// shadow ownership stays with this interaction even without volumes
+			interactionGenerated = true;
+		} else if ( surfaceCanCastStencilShadowVolume && shadowLODAdmitted ) {
 
 			// if the light has an optimized shadow volume, don't create shadows for any models that are part of the base areas
 			if ( !R_LightHasRealPrelightModel( lightDef->parms ) || !model->IsStaticWorldModel() || !r_useOptimizedShadows.GetBool() ) {
@@ -2147,8 +2158,9 @@ void idInteraction::AddActiveInteraction( void ) {
 		srfTriangles_t *shadowTris = sint->shadowTris;
 
 		// the shadows will always have to be added, unless we can tell they
-		// are from a surface in an unconnected area
-		if ( shadowTris && !shadowMapCasterOnly ) {
+		// are from a surface in an unconnected area, or the light renders
+		// shadow maps this frame and its stencil volumes would go unused
+		if ( shadowTris && !shadowMapCasterOnly && !R_ShadowMapLightWillUseShadowMaps( lightDef ) ) {
 
 			// cull static shadows that have a non-empty bounds
 			// dynamic shadows that use the turboshadow code will not have valid

@@ -80,6 +80,11 @@ const float kShadowDebugReceiverFallbackReason = 14.0;
 
 float gShadowDebugState = 0.0;
 
+// Per-cascade screen-space depth gradients, computed in main() before any
+// divergent control flow: derivatives taken inside the cascade if-chains or
+// after data-dependent early returns are undefined at #version 110.
+vec4 gShadowDepthGradients = vec4( 0.0 );
+
 bool ProjectShadowCoord( vec4 shadowCoord, out vec2 localUv, out float depth );
 
 bool ShadowDebugModeIs( float mode ) {
@@ -187,7 +192,7 @@ float EffectiveShadowFilterRadius() {
 	float radius = uShadowFilterRadius;
 #ifndef OPENQ4_SHADOW_COMPARE
 	if ( uShadowFilterMode > 1.5 ) {
-		radius = max( radius, min( max( uShadowPCSSMaxRadius, 0.0 ), max( uShadowPCSSLightRadius, 0.0 ) ) );
+		radius = max( radius, max( max( uShadowPCSSMaxRadius, 0.0 ), max( uShadowPCSSLightRadius, 0.0 ) ) );
 	}
 #endif
 	return radius;
@@ -259,6 +264,19 @@ float CascadeTexelDepthBias( int cascadeIndex ) {
 	return uShadowTexelDepthBias[3];
 }
 
+float ShadowDepthGradient( int cascadeIndex ) {
+	if ( cascadeIndex <= 0 ) {
+		return gShadowDepthGradients.x;
+	}
+	if ( cascadeIndex == 1 ) {
+		return gShadowDepthGradients.y;
+	}
+	if ( cascadeIndex == 2 ) {
+		return gShadowDepthGradients.z;
+	}
+	return gShadowDepthGradients.w;
+}
+
 float ShadowReceiverBias( int cascadeIndex, float depth ) {
 	if ( ShadowDebugModeIs( kShadowDebugBiasOff ) ) {
 		return 0.0;
@@ -272,7 +290,7 @@ float ShadowReceiverBias( int cascadeIndex, float depth ) {
 	float texelBias = CascadeTexelDepthBias( cascadeIndex ) * ( 1.0 + slopeBias );
 	float receiverPlaneBias = 0.0;
 	if ( uShadowReceiverPlaneBias > 0.5 && !ShadowDebugModeIs( kShadowDebugReceiverPlaneBiasOff ) ) {
-		receiverPlaneBias = ( abs( dFdx( depth ) ) + abs( dFdy( depth ) ) ) * max( EffectiveShadowFilterRadius(), 1.0 );
+		receiverPlaneBias = ShadowDepthGradient( cascadeIndex ) * max( EffectiveShadowFilterRadius(), 1.0 );
 	}
 	float texelAwareBias = max( texelBias, receiverPlaneBias );
 	return max( max( scalarBias, 0.0 ), max( texelAwareBias, 0.0 ) );
@@ -763,6 +781,13 @@ void main() {
 	float ndotl = max( dot( lightDir, localNormal ), 0.0 );
 
 	gShadowDebugState = 0.0;
+	if ( uShadowReceiverPlaneBias > 0.5 ) {
+		gShadowDepthGradients = vec4(
+			abs( dFdx( vShadowCoord0.z ) ) + abs( dFdy( vShadowCoord0.z ) ),
+			abs( dFdx( vShadowCoord1.z ) ) + abs( dFdy( vShadowCoord1.z ) ),
+			abs( dFdx( vShadowCoord2.z ) ) + abs( dFdy( vShadowCoord2.z ) ),
+			abs( dFdx( vShadowCoord3.z ) ) + abs( dFdy( vShadowCoord3.z ) ) );
+	}
 
 	vec3 light = vec3( ndotl );
 	light *= texture2DProj( uLightFalloffMap, vLightFalloffTexCoord ).rgb;

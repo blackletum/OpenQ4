@@ -7,6 +7,7 @@ uniform float uAlphaTestMode;
 uniform float uAlphaScale;
 uniform float uAlphaHashEnabled;
 uniform float uAlphaHashStable;
+uniform vec2 uShadowCasterDepthOffset;
 
 varying vec2 vAlphaTexCoord;
 varying vec3 vAlphaHashCoord;
@@ -56,6 +57,10 @@ void main() {
 		}
 	}
 
-	gl_FragDepth = clamp( vShadowDepth, 0.0, 1.0 );
+	// Shader-written fragment depth bypasses glPolygonOffset, so the classic
+	// slope-scale caster offset must be applied here: x scales with the depth
+	// slope, y is pre-scaled by the CPU to one resolvable depth-buffer step.
+	float depthSlope = max( abs( dFdx( vShadowDepth ) ), abs( dFdy( vShadowDepth ) ) );
+	gl_FragDepth = clamp( vShadowDepth + uShadowCasterDepthOffset.x * depthSlope + uShadowCasterDepthOffset.y, 0.0, 1.0 );
 	gl_FragColor = vec4( 0.0 );
 }

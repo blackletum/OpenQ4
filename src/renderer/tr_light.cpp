@@ -1406,12 +1406,59 @@ static idRenderModel *R_ViewLightPrelightModel( viewLight_t *vLight ) {
 
 /*
 =================
+R_ShadowMapLightWillUseShadowMaps
+
+Front-end mirror of the backend shadow-map admission policy
+(RB_ShadowMapLightSupportReason). When this returns true the light's stencil
+shadow volumes are never drawn, so their generation and linking can be
+skipped. The mirror must stay conservative: any condition the backend could
+fail at render time is covered by the per-light sticky fallback flag and the
+backend-published resource generation.
+=================
+*/
+bool R_ShadowMapLightWillUseShadowMaps( const idRenderLightLocal *lightDef ) {
+	if ( !r_shadowMapSkipStencilShadows.GetBool() || !r_useShadowMap.GetBool() || !r_shadows.GetBool() ) {
+		return false;
+	}
+	// a per-view update budget can defer any light to the stencil path mid-frame
+	if ( r_shadowMapMaxUpdatesPerView.GetInteger() > 0 ) {
+		return false;
+	}
+	if ( lightDef == NULL || lightDef->shadowMapStencilFallbackSticky ) {
+		return false;
+	}
+	if ( lightDef->parms.noShadows || lightDef->parms.noDynamicShadows ) {
+		return false;
+	}
+	if ( lightDef->lightShader == NULL || lightDef->lightShader->IsAmbientLight() || !lightDef->lightShader->LightCastsShadows() ) {
+		return false;
+	}
+	if ( glConfig.maxTextureUnits < 6 || glConfig.maxTextureImageUnits < 6 ) {
+		return false;
+	}
+	if ( lightDef->parms.pointLight ) {
+		if ( !r_shadowMapPointLights.GetBool() || !glConfig.cubeMapAvailable ) {
+			return false;
+		}
+	}
+	return RB_ShadowMapResourcesKnownGood( lightDef->parms.pointLight );
+}
+
+/*
+=================
 R_AddOptimizedPrelightShadows
 =================
 */
 static void R_AddOptimizedPrelightShadows( viewLight_t *vLight ) {
 	idRenderModel *prelightModel = R_ViewLightPrelightModel( vLight );
 	if ( prelightModel == NULL ) {
+		return;
+	}
+
+	// prelight volumes are stencil-path inputs; a shadow-mapped light never
+	// draws them, and they remain available on the next frame if the backend
+	// flags a fallback
+	if ( R_ShadowMapLightWillUseShadowMaps( vLight->lightDef ) ) {
 		return;
 	}
 
