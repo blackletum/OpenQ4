@@ -423,6 +423,8 @@ typedef struct viewLight_s {
 	const struct drawSurf_s	*globalInteractions;		// get shadows from everything
 	const struct drawSurf_s	*localShadowMapCasters;		// ambient caster geometry that should not shadow local receivers
 	const struct drawSurf_s	*globalShadowMapCasters;	// ambient caster geometry that can shadow all receivers
+	const struct drawSurf_s	*localShadowMapDynamicCasters;	// dynamic (recently changing) casters, kept out of the
+	const struct drawSurf_s	*globalShadowMapDynamicCasters;	// static cache signature and composed over cached tiles
 	const struct drawSurf_s	*localTranslucentShadowMapCasters;	// blended caster geometry excluded from local-only receivers
 	const struct drawSurf_s	*globalTranslucentShadowMapCasters;	// blended caster geometry that can shadow all receivers
 	int						shadowMapCasterCount;

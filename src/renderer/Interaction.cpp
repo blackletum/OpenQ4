@@ -511,6 +511,13 @@ static void R_RecordShadowMapCaster( viewLight_t *vLight, const idRenderEntityLo
 		vLight->shadowMapExpandedCasterCount++;
 	}
 
+	// Dynamic casters are excluded from the signature: they are kept out of
+	// cached static tiles and composed over them per frame, so their motion
+	// must not invalidate the cache. Static casters hash transform and
+	// modification state so any change still forces a fresh static render.
+	if ( dynamicCaster ) {
+		return;
+	}
 	int hash = ( vLight->shadowMapCasterSignature != 0 ) ? vLight->shadowMapCasterSignature : static_cast<int>( 2166136261u );
 	hash = R_ShadowMapHashInt( hash, entityDef != NULL ? entityDef->index : -1 );
 	hash = R_ShadowMapHashInt( hash, shader != NULL ? static_cast<int>( shader->Coverage() ) : -1 );
@@ -518,7 +525,6 @@ static void R_RecordShadowMapCaster( viewLight_t *vLight, const idRenderEntityLo
 	hash = R_ShadowMapHashInt( hash, shader != NULL ? shader->GetNumStages() : 0 );
 	hash = R_ShadowMapHashInt( hash, translucent ? 1 : 0 );
 	hash = R_ShadowMapHashInt( hash, expandedCaster ? 1 : 0 );
-	hash = R_ShadowMapHashInt( hash, dynamicCaster ? 1 : 0 );
 	if ( entityDef != NULL ) {
 		hash = R_ShadowMapHashInt( hash, entityDef->lastModifiedFrameNum );
 		for ( int i = 0; i < 16; i++ ) {
@@ -2175,11 +2181,14 @@ void idInteraction::AddActiveInteraction( void ) {
 					R_TouchShadowMapCache( casterTris->indexCache );
 					R_RecordShadowMapCaster( vLight, entityDef, shadowShader, false, shadowMapCasterOnly );
 
+					// dynamic casters go to their own chains so cached static
+					// tiles stay valid while they move (composed per frame)
+					const bool dynamicCasterSurf = R_ShadowMapCasterIsDynamic( entityDef );
 					if ( shadowMapNoSelfShadow ) {
-						R_LinkShadowMapCasterSurf( &vLight->localShadowMapCasters,
+						R_LinkShadowMapCasterSurf( dynamicCasterSurf ? &vLight->localShadowMapDynamicCasters : &vLight->localShadowMapCasters,
 							casterTris, vEntity, &entityDef->parms, shadowShader, shadowScissor );
 					} else {
-						R_LinkShadowMapCasterSurf( &vLight->globalShadowMapCasters,
+						R_LinkShadowMapCasterSurf( dynamicCasterSurf ? &vLight->globalShadowMapDynamicCasters : &vLight->globalShadowMapCasters,
 							casterTris, vEntity, &entityDef->parms, shadowShader, shadowScissor );
 					}
 				}

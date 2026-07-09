@@ -2173,6 +2173,7 @@ typedef struct {
 	int					maskFailGlobalPasses;
 	int					scheduledSkipPasses;
 	int					shadowMapUpdates;
+	int					composePasses;		// static tiles blitted + dynamic casters drawn on top
 	int					subviewUpdates;		// updates spent in mirror/remote subviews this frame (main-view report)
 	int					cacheHitPasses;
 	int					cacheMissPasses;
@@ -3365,13 +3366,21 @@ static bool RB_ShadowMapStaticCacheable( const viewLight_t *vLight, const shadow
 	if ( !r_shadowMapStaticCache.GetBool() || vLight == NULL || RB_ShadowMapLightIndex( vLight ) < 0 ) {
 		return false;
 	}
-	if ( haveTranslucentCasters || vLight->shadowMapDynamicCasterCount > 0 || vLight->shadowMapCasterCount <= 0 ) {
+	// Dynamic casters no longer defeat caching for projected lights: they are
+	// excluded from the cache signature and composed over the cached static
+	// tiles per frame, so a walking character costs one blit plus its own
+	// draws instead of a full static-scene re-render. Point lights keep the
+	// old rule until the cube path gains composition (phase 5c).
+	const bool dynamicsDefeatCache = pointLight && vLight->shadowMapDynamicCasterCount > 0;
+	if ( haveTranslucentCasters || dynamicsDefeatCache || vLight->shadowMapCasterCount <= 0 ) {
 		const int lightIndex = RB_ShadowMapLightIndex( vLight );
 		shadowMapLightHistory_t *history = RB_ShadowMapFindLightHistory( lightIndex );
 		if ( history != NULL && vLight->shadowMapDynamicCasterCount > 0 ) {
 			history->lastDynamicFrame = tr.frameCount;
 			history->lastTouchedFrame = tr.frameCount;
-			RB_ShadowMapInvalidateLightCaches( lightIndex );
+			if ( dynamicsDefeatCache ) {
+				RB_ShadowMapInvalidateLightCaches( lightIndex );
+			}
 		}
 		return false;
 	}
@@ -3381,7 +3390,7 @@ static bool RB_ShadowMapStaticCacheable( const viewLight_t *vLight, const shadow
 	shadowMapLightHistory_t *history = RB_ShadowMapFindLightHistory( RB_ShadowMapLightIndex( vLight ) );
 	if ( history != NULL ) {
 		history->lastTouchedFrame = tr.frameCount;
-		if ( tr.frameCount - history->lastDynamicFrame < Max( 0, r_shadowMapStaticHysteresisFrames.GetInteger() ) ) {
+		if ( pointLight && tr.frameCount - history->lastDynamicFrame < Max( 0, r_shadowMapStaticHysteresisFrames.GetInteger() ) ) {
 			g_shadowMapStats.staticHysteresisPasses++;
 			return false;
 		}
@@ -3393,14 +3402,14 @@ static bool RB_ShadowMapStaticCacheableReadOnly( const viewLight_t *vLight, cons
 	if ( !r_shadowMapStaticCache.GetBool() || vLight == NULL || RB_ShadowMapLightIndex( vLight ) < 0 ) {
 		return false;
 	}
-	if ( haveTranslucentCasters || vLight->shadowMapDynamicCasterCount > 0 || vLight->shadowMapCasterCount <= 0 ) {
+	if ( haveTranslucentCasters || ( pointLight && vLight->shadowMapDynamicCasterCount > 0 ) || vLight->shadowMapCasterCount <= 0 ) {
 		return false;
 	}
 	if ( !pointLight && RB_ShadowMapCascadeCountForLight( vLight ) > 1 && !r_shadowMapCacheCSM.GetBool() ) {
 		return false;
 	}
 	const shadowMapLightHistory_t *history = RB_ShadowMapFindLightHistoryConst( RB_ShadowMapLightIndex( vLight ) );
-	if ( history != NULL && tr.frameCount - history->lastDynamicFrame < Max( 0, r_shadowMapStaticHysteresisFrames.GetInteger() ) ) {
+	if ( history != NULL && pointLight && tr.frameCount - history->lastDynamicFrame < Max( 0, r_shadowMapStaticHysteresisFrames.GetInteger() ) ) {
 		return false;
 	}
 	return true;
@@ -3662,7 +3671,7 @@ static void RB_ShadowMapCountCacheSlots( void ) {
 // pressure for every light without character-class casters nearby - the
 // LOCAL pass renders it, the GLOBAL pass cache-hits it the same frame.
 static shadowMapPassKind_t RB_ShadowMapCachePassKind( const viewLight_t *vLight, const shadowMapPassKind_t passKind ) {
-	if ( vLight != NULL && vLight->localShadowMapCasters == NULL && vLight->localTranslucentShadowMapCasters == NULL ) {
+	if ( vLight != NULL && vLight->localShadowMapCasters == NULL && vLight->localShadowMapDynamicCasters == NULL && vLight->localTranslucentShadowMapCasters == NULL ) {
 		return SHADOWMAP_PASS_GLOBAL;
 	}
 	return passKind;
@@ -6135,8 +6144,9 @@ static void RB_ShadowMapStatsReport( void ) {
 	}
 
 	common->Printf(
-		"SM metrics: updates=%d subviewUpdates=%d scheduledSkip=%d atlasTiles=%d/%d pointFaces=%d pointHiP=%d pointCmp=%d cpu(render=%.2f mask=%.2f) gpuSync=%.2f gpuQuery=%.2f/%d pending=%d texelWorld=[%.3f %.3f]\n",
+		"SM metrics: updates=%d composed=%d subviewUpdates=%d scheduledSkip=%d atlasTiles=%d/%d pointFaces=%d pointHiP=%d pointCmp=%d cpu(render=%.2f mask=%.2f) gpuSync=%.2f gpuQuery=%.2f/%d pending=%d texelWorld=[%.3f %.3f]\n",
 		g_shadowMapStats.shadowMapUpdates,
+		g_shadowMapStats.composePasses,
 		g_shadowMapStats.subviewUpdates,
 		g_shadowMapStats.scheduledSkipPasses,
 		g_shadowMapStats.projectedAtlasTilesRendered,
@@ -7639,35 +7649,61 @@ static void RB_PointShadowMapDrawTranslucentCasterChain( const drawSurf_t *surf,
 	RB_PointTranslucentShadowMapSetCoverageTexCoordIdentity();
 }
 
-static bool RB_RenderShadowMap( const drawSurf_t *primaryCasters, const drawSurf_t *secondaryCasters, const drawSurf_t *tertiaryCasters, const drawSurf_t *quaternaryCasters ) {
+// SHADOWMAP_RENDER_FULL: build state, clear tiles, draw every chain (the
+// scratch/uncacheable path, and cacheable lights without dynamic casters).
+// SHADOWMAP_RENDER_STATIC_ONLY: same, but draws only the static chains
+// (primary/secondary) - renders a light's cached static tiles.
+// SHADOWMAP_RENDER_COMPOSE_DYNAMIC: keep the current state (the cached
+// entry's), blit the entry's static tiles from the atlas over the scratch
+// target, then draw only the dynamic chains (tertiary/quaternary) on top
+// with no clear - a moving character costs one blit plus its own draws.
+typedef enum {
+	SHADOWMAP_RENDER_FULL = 0,
+	SHADOWMAP_RENDER_STATIC_ONLY,
+	SHADOWMAP_RENDER_COMPOSE_DYNAMIC
+} shadowMapRenderMode_t;
+
+static bool RB_RenderShadowMap( const drawSurf_t *primaryCasters, const drawSurf_t *secondaryCasters, const drawSurf_t *tertiaryCasters, const drawSurf_t *quaternaryCasters,
+	const shadowMapRenderMode_t renderMode = SHADOWMAP_RENDER_FULL, const projectedShadowMapCacheEntry_t *composeFrom = NULL ) {
 	if ( !RB_ShadowMapEnsureResources( backEnd.vLight ) ) {
 		return false;
 	}
 
+	const bool composeMode = renderMode == SHADOWMAP_RENDER_COMPOSE_DYNAMIC;
+	const bool drawStaticChains = renderMode != SHADOWMAP_RENDER_COMPOSE_DYNAMIC;
+	const bool drawDynamicChains = renderMode != SHADOWMAP_RENDER_STATIC_ONLY;
 	const bool haveOpaqueCasterChain =
-		primaryCasters != NULL ||
-		secondaryCasters != NULL ||
-		tertiaryCasters != NULL ||
-		quaternaryCasters != NULL;
+		( drawStaticChains && ( primaryCasters != NULL || secondaryCasters != NULL ) ) ||
+		( drawDynamicChains && ( tertiaryCasters != NULL || quaternaryCasters != NULL ) );
 	int drawnCasterCount = 0;
 	const GLboolean blendWasEnabled = glIsEnabled( GL_BLEND );
 	const GLboolean scissorWasEnabled = glIsEnabled( GL_SCISSOR_TEST );
 	const GLboolean stencilWasEnabled = glIsEnabled( GL_STENCIL_TEST );
 	const int savedFaceCulling = backEnd.glState.faceCulling;
 
-	RB_ShadowMapBuildProjectedState( backEnd.vLight, RB_ShadowMapTileSizeForLight( backEnd.vLight ) );
-	if ( !g_projectedShadowMapState.valid ) {
-		return false;
-	}
+	if ( composeMode ) {
+		// the state must stay the cached entry's: dynamic casters draw with
+		// the exact matrices the static tiles were rendered with
+		if ( composeFrom == NULL || !g_projectedShadowMapState.valid || glBlitFramebuffer == NULL
+			|| g_shadowMapAtlasRenderTexture == NULL || g_shadowMapRenderTexture == g_shadowMapAtlasRenderTexture ) {
+			return false;
+		}
+		g_shadowMapStats.composePasses++;
+	} else {
+		RB_ShadowMapBuildProjectedState( backEnd.vLight, RB_ShadowMapTileSizeForLight( backEnd.vLight ) );
+		if ( !g_projectedShadowMapState.valid ) {
+			return false;
+		}
 
-	g_shadowMapStats.shadowMapUpdates++;
-	if ( backEnd.viewDef != NULL && backEnd.viewDef->isSubview ) {
-		g_shadowMapSubviewUpdates++;
-	}
-	g_shadowMapStats.projectedAtlasTilesRendered += g_projectedShadowMapState.cascadeCount;
-	g_shadowMapStats.projectedAtlasTilesAllocated += Max( 1, g_projectedShadowMapState.atlasDiv * g_projectedShadowMapState.atlasDiv );
-	for ( int cascadeIndex = 0; cascadeIndex < g_projectedShadowMapState.cascadeCount; cascadeIndex++ ) {
-		RB_ShadowMapStatsRecordWorldTexelSize( g_projectedShadowMapState.worldTexelSize[cascadeIndex] );
+		g_shadowMapStats.shadowMapUpdates++;
+		if ( backEnd.viewDef != NULL && backEnd.viewDef->isSubview ) {
+			g_shadowMapSubviewUpdates++;
+		}
+		g_shadowMapStats.projectedAtlasTilesRendered += g_projectedShadowMapState.cascadeCount;
+		g_shadowMapStats.projectedAtlasTilesAllocated += Max( 1, g_projectedShadowMapState.atlasDiv * g_projectedShadowMapState.atlasDiv );
+		for ( int cascadeIndex = 0; cascadeIndex < g_projectedShadowMapState.cascadeCount; cascadeIndex++ ) {
+			RB_ShadowMapStatsRecordWorldTexelSize( g_projectedShadowMapState.worldTexelSize[cascadeIndex] );
+		}
 	}
 
 	g_shadowMapRenderTexture->MakeCurrent();
@@ -7682,6 +7718,20 @@ static bool RB_RenderShadowMap( const drawSurf_t *primaryCasters, const drawSurf
 			glReadBuffer( GL_BACK );
 		}
 		return false;
+	}
+
+	if ( composeMode ) {
+		// import the cached static tiles: blit the entry's atlas cell block
+		// over the scratch target (blit obeys scissor, so disable it first)
+		const int blockPixels = g_projectedShadowMapState.tileSize * g_projectedShadowMapState.atlasDiv;
+		const int srcX = composeFrom->atlasCellX * g_shadowMapAtlasCellSize;
+		const int srcY = composeFrom->atlasCellY * g_shadowMapAtlasCellSize;
+		glDisable( GL_SCISSOR_TEST );
+		glBindFramebuffer( GL_READ_FRAMEBUFFER, g_shadowMapAtlasRenderTexture->GetDeviceHandle() );
+		glBindFramebuffer( GL_DRAW_FRAMEBUFFER, g_shadowMapRenderTexture->GetDeviceHandle() );
+		glBlitFramebuffer( srcX, srcY, srcX + blockPixels, srcY + blockPixels,
+			0, 0, blockPixels, blockPixels, GL_DEPTH_BUFFER_BIT, GL_NEAREST );
+		glBindFramebuffer( GL_FRAMEBUFFER, g_shadowMapRenderTexture->GetDeviceHandle() );
 	}
 
 	// One caster program serves every opaque and perforated caster in this
@@ -7723,17 +7773,24 @@ static bool RB_RenderShadowMap( const drawSurf_t *primaryCasters, const drawSurf
 		R_ShadowMapClipPlanesToGLMatrix( g_projectedShadowMapState.clipPlanes[cascadeIndex], clipMatrix );
 		glViewport( tileX, tileY, g_projectedShadowMapState.tileSize, g_projectedShadowMapState.tileSize );
 		glScissor( tileX, tileY, g_projectedShadowMapState.tileSize, g_projectedShadowMapState.tileSize );
-		glClear( GL_DEPTH_BUFFER_BIT );
+		if ( !composeMode ) {
+			// compose mode draws over the blitted static tiles
+			glClear( GL_DEPTH_BUFFER_BIT );
+		}
 
 		glMatrixMode( GL_PROJECTION );
 		glLoadMatrixf( clipMatrix );
 		glMatrixMode( GL_MODELVIEW );
 
 		backEnd.currentSpace = NULL;
-		drawnCasterCount += RB_ShadowMapDrawCasterChain( primaryCasters, cascadeIndex, useHashedAlpha );
-		drawnCasterCount += RB_ShadowMapDrawCasterChain( secondaryCasters, cascadeIndex, useHashedAlpha );
-		drawnCasterCount += RB_ShadowMapDrawCasterChain( tertiaryCasters, cascadeIndex, useHashedAlpha );
-		drawnCasterCount += RB_ShadowMapDrawCasterChain( quaternaryCasters, cascadeIndex, useHashedAlpha );
+		if ( drawStaticChains ) {
+			drawnCasterCount += RB_ShadowMapDrawCasterChain( primaryCasters, cascadeIndex, useHashedAlpha );
+			drawnCasterCount += RB_ShadowMapDrawCasterChain( secondaryCasters, cascadeIndex, useHashedAlpha );
+		}
+		if ( drawDynamicChains ) {
+			drawnCasterCount += RB_ShadowMapDrawCasterChain( tertiaryCasters, cascadeIndex, useHashedAlpha );
+			drawnCasterCount += RB_ShadowMapDrawCasterChain( quaternaryCasters, cascadeIndex, useHashedAlpha );
+		}
 	}
 
 	// a two-sided caster may have left face culling disabled; the state
@@ -7793,7 +7850,8 @@ static bool RB_RenderShadowMap( const drawSurf_t *primaryCasters, const drawSurf
 	// may not resolve to ambient geometry that the shadow-map caster path can
 	// draw. Treat an all-skipped opaque caster set as a render miss so the pass
 	// falls back to the retail stencil path instead of sampling an empty map.
-	return !haveOpaqueCasterChain || drawnCasterCount > 0;
+	// compose mode always has valid static content behind the dynamics
+	return composeMode || !haveOpaqueCasterChain || drawnCasterCount > 0;
 }
 
 static bool RB_RenderPointShadowMap( const drawSurf_t *primaryCasters, const drawSurf_t *secondaryCasters, const drawSurf_t *tertiaryCasters, const drawSurf_t *quaternaryCasters ) {
@@ -10497,7 +10555,35 @@ static void RB_ShadowMapRunPass( const viewLight_t *vLight, shadowMapPassKind_t 
 	}
 
 	shadowMapSchedule_t schedule = RB_ShadowMapSchedulePass( vLight, passKind, pointLight, haveTranslucentCasters );
+
+	// cached projected lights with dynamic casters compose: blit the cached
+	// static tiles over scratch and draw only the dynamics on top
+	const bool composeDynamics = !pointLight
+		&& ( tertiaryCasters != NULL || quaternaryCasters != NULL )
+		&& schedule.projectedEntry != NULL;
+
 	if ( schedule.action == SHADOWMAP_SCHEDULE_REUSE ) {
+		if ( composeDynamics ) {
+			shadowMapTimedPhase_t composeTimer;
+			RB_ShadowMapBeginTimedPhase( composeTimer, vLight, passKind, SHADOWMAP_TIMING_MAP_RENDER );
+			RB_ShadowMapSelectScratchResources();
+			const bool composeOk = RB_RenderShadowMap( primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters,
+				SHADOWMAP_RENDER_COMPOSE_DYNAMIC, schedule.projectedEntry );
+			g_shadowMapStats.cpuRenderMilliseconds += RB_ShadowMapEndTimedPhase( composeTimer );
+			if ( !composeOk ) {
+				if ( passKind == SHADOWMAP_PASS_LOCAL ) {
+					g_shadowMapStats.fallbackLocalPasses++;
+					g_shadowMapStats.renderFailLocalPasses++;
+				} else {
+					g_shadowMapStats.fallbackGlobalPasses++;
+					g_shadowMapStats.renderFailGlobalPasses++;
+				}
+				RB_ShadowMapPassReport( vLight, passKind, pointLight, SHADOWMAP_PASS_RESULT_RENDER_FAIL, primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters, primaryShadowSurfs, secondaryShadowSurfs, interactions );
+				RB_ShadowMapMarkStencilFallbackSticky( vLight );
+				RB_ShadowMapStencilFallback( vLight, passKind, primaryShadowSurfs, secondaryShadowSurfs, interactions );
+				return;
+			}
+		}
 		shadowMapTimedPhase_t cacheReuseTimer;
 		RB_ShadowMapBeginTimedPhase( cacheReuseTimer, vLight, passKind, SHADOWMAP_TIMING_CACHE_REUSE );
 		const bool maskOk = pointLight ? RB_GLSLPointShadowMap_CreateDrawInteractions( interactions ) : RB_GLSLShadowMap_CreateDrawInteractions( interactions );
@@ -10553,12 +10639,25 @@ static void RB_ShadowMapRunPass( const viewLight_t *vLight, shadowMapPassKind_t 
 		return;
 	}
 
+	// when a cacheable projected light has dynamic casters, keep the cached
+	// atlas tiles static-only and layer the dynamics onto scratch afterwards
+	const bool composePlanned = composeDynamics && schedule.cacheable;
+
 	shadowMapTimedPhase_t renderTimer;
 	RB_ShadowMapBeginTimedPhase( renderTimer, vLight, passKind, SHADOWMAP_TIMING_MAP_RENDER );
-	const bool renderOk = pointLight ? RB_RenderPointShadowMap( primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters ) : RB_RenderShadowMap( primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters );
+	bool renderOk = pointLight ? RB_RenderPointShadowMap( primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters ) : RB_RenderShadowMap( primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters,
+		composePlanned ? SHADOWMAP_RENDER_STATIC_ONLY : SHADOWMAP_RENDER_FULL );
 	const float renderMilliseconds = RB_ShadowMapEndTimedPhase( renderTimer );
 	g_shadowMapStats.cpuRenderMilliseconds += renderMilliseconds;
 	RB_ShadowMapCompleteCacheUpdate( schedule, vLight, passKind, pointLight, renderOk );
+	if ( composePlanned && renderOk ) {
+		shadowMapTimedPhase_t composeTimer;
+		RB_ShadowMapBeginTimedPhase( composeTimer, vLight, passKind, SHADOWMAP_TIMING_MAP_RENDER );
+		RB_ShadowMapSelectScratchResources();
+		renderOk = RB_RenderShadowMap( primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters,
+			SHADOWMAP_RENDER_COMPOSE_DYNAMIC, schedule.projectedEntry );
+		g_shadowMapStats.cpuRenderMilliseconds += RB_ShadowMapEndTimedPhase( composeTimer );
+	}
 	if ( renderOk && haveTranslucentCasters && RB_TranslucentShadowMomentsRequested() ) {
 		if ( pointLight ) {
 			RB_RenderPointTranslucentShadowMap( translucentPrimaryCasters, translucentSecondaryCasters );
@@ -11077,11 +11176,11 @@ void RB_ARB2_DrawInteractions( void ) {
 				// shadow-map pass must only draw dedicated ambient-geometry casters:
 				// legacy stencil shadow chains resolve back to the same ambient
 				// surfaces and can double-submit overlapping collision/helper meshes.
-				RB_ShadowMapRunPass( vLight, SHADOWMAP_PASS_LOCAL, true, vLight->globalShadowMapCasters, NULL, NULL, NULL, vLight->globalShadows, NULL, vLight->localInteractions );
-				RB_ShadowMapRunPass( vLight, SHADOWMAP_PASS_GLOBAL, true, vLight->globalShadowMapCasters, vLight->localShadowMapCasters, NULL, NULL, vLight->globalShadows, vLight->localShadows, vLight->globalInteractions );
+				RB_ShadowMapRunPass( vLight, SHADOWMAP_PASS_LOCAL, true, vLight->globalShadowMapCasters, NULL, vLight->globalShadowMapDynamicCasters, NULL, vLight->globalShadows, NULL, vLight->localInteractions );
+				RB_ShadowMapRunPass( vLight, SHADOWMAP_PASS_GLOBAL, true, vLight->globalShadowMapCasters, vLight->localShadowMapCasters, vLight->globalShadowMapDynamicCasters, vLight->localShadowMapDynamicCasters, vLight->globalShadows, vLight->localShadows, vLight->globalInteractions );
 			} else {
-				RB_ShadowMapRunPass( vLight, SHADOWMAP_PASS_LOCAL, false, vLight->globalShadowMapCasters, NULL, NULL, NULL, vLight->globalShadows, NULL, vLight->localInteractions );
-				RB_ShadowMapRunPass( vLight, SHADOWMAP_PASS_GLOBAL, false, vLight->globalShadowMapCasters, vLight->localShadowMapCasters, NULL, NULL, vLight->globalShadows, vLight->localShadows, vLight->globalInteractions );
+				RB_ShadowMapRunPass( vLight, SHADOWMAP_PASS_LOCAL, false, vLight->globalShadowMapCasters, NULL, vLight->globalShadowMapDynamicCasters, NULL, vLight->globalShadows, NULL, vLight->localInteractions );
+				RB_ShadowMapRunPass( vLight, SHADOWMAP_PASS_GLOBAL, false, vLight->globalShadowMapCasters, vLight->localShadowMapCasters, vLight->globalShadowMapDynamicCasters, vLight->localShadowMapDynamicCasters, vLight->globalShadows, vLight->localShadows, vLight->globalInteractions );
 			}
 
 			if ( !r_skipTranslucent.GetBool() ) {

@@ -2875,6 +2875,8 @@ void R_RemoveUnecessaryViewLights( void ) {
 			vLight->globalShadows = NULL;
 			vLight->localShadowMapCasters = NULL;
 			vLight->globalShadowMapCasters = NULL;
+			vLight->localShadowMapDynamicCasters = NULL;
+			vLight->globalShadowMapDynamicCasters = NULL;
 			vLight->localTranslucentShadowMapCasters = NULL;
 			vLight->globalTranslucentShadowMapCasters = NULL;
 		}
