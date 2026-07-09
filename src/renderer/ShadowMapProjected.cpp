@@ -414,6 +414,36 @@ static void R_ShadowMapTransformPointToClip( const idVec3 &point, const idPlane 
 	}
 }
 
+// The cascade extent is quantized to a coarse geometric ladder so the crop's
+// scale - and with it the whole cascade texel grid - changes only when the
+// fitted bounds grow or shrink past a ladder step, instead of breathing with
+// every camera movement. Snapping the center alone cannot stabilize a crop
+// whose texel size changes each frame.
+static const float SHADOWMAP_CASCADE_EXTENT_LADDER = 1.25f;
+
+float R_ShadowMapQuantizeCascadeExtent( const float rawExtent, const int tileSize ) {
+	const float minExtent = 2.0f / Max( 1, tileSize );
+	if ( rawExtent <= minExtent ) {
+		return minExtent;
+	}
+	if ( rawExtent >= 1.0f ) {
+		return 1.0f;
+	}
+	const float steps = ceil( log( rawExtent / minExtent ) / log( SHADOWMAP_CASCADE_EXTENT_LADDER ) - 1.0e-4f );
+	return Min( 1.0f, minExtent * idMath::Pow( SHADOWMAP_CASCADE_EXTENT_LADDER, steps ) );
+}
+
+// One cascade texel spans (2 * extent / tileSize) in base NDC. Snapping the
+// crop center to that grid makes camera translation move the crop by whole
+// cascade texels, so resampled shadow edges cannot crawl. The previous code
+// snapped to the BASE projection's texel grid (2 / tileSize), which moves
+// the cascade grid by a fractional number of cascade texels per step and
+// therefore never stopped the shimmer it was meant to fix.
+float R_ShadowMapSnapCascadeCenter( const float rawCenter, const float quantizedExtent, const int tileSize ) {
+	const float snapStep = 2.0f * Max( quantizedExtent, 1.0e-6f ) / Max( 1, tileSize );
+	return floor( rawCenter / snapStep + 0.5f ) * snapStep;
+}
+
 static float R_ShadowMapProjectedKernelGuardNDC( const int tileSize ) {
 	const float texelStep = 2.0f / Max( 1, tileSize );
 	const float kernelRadius = Max( 0.5f, r_shadowMapFilterRadius.GetFloat() + 0.75f );
@@ -483,21 +513,27 @@ static bool R_ShadowMapBuildCascadeBounds( const idPlane baseClipPlanes[4], cons
 		return false;
 	}
 
-	const float pad = Max( 0.0f, r_shadowMapProjectionPad.GetFloat() * 0.5f );
+	// the authored projection pad is already baked into the base clip planes
+	// (R_ShadowMapBuildClipPlanes scales S/T by projectionScale); re-applying
+	// it to fitted extents compounded to ~30% wasted crop resolution at the
+	// default pad. Cascades only add the filter kernel guard.
 	const float filterGuard = R_ShadowMapProjectedKernelGuardNDC( tileSize );
 	idVec3 center = ( ndcMins + ndcMaxs ) * 0.5f;
 	idVec3 extent = ( ndcMaxs - ndcMins ) * 0.5f;
 
-	extent.x = Max( extent.x * ( 1.0f + pad * 2.0f ) + filterGuard, 2.0f / Max( 1, tileSize ) );
-	extent.y = Max( extent.y * ( 1.0f + pad * 2.0f ) + filterGuard, 2.0f / Max( 1, tileSize ) );
-	extent.z = Max( extent.z * ( 1.0f + pad ), 0.001f );
+	extent.x = Max( extent.x + filterGuard, 2.0f / Max( 1, tileSize ) );
+	extent.y = Max( extent.y + filterGuard, 2.0f / Max( 1, tileSize ) );
+	extent.z = Max( extent.z, 0.001f );
 
 	if ( r_shadowMapCascadeStabilize.GetBool() ) {
-		const float texelStep = 2.0f / Max( 1, tileSize );
-		center.x = floor( center.x / texelStep + 0.5f ) * texelStep;
-		center.y = floor( center.y / texelStep + 0.5f ) * texelStep;
-		extent.x = Max( texelStep, float( ceil( extent.x / texelStep ) ) * texelStep );
-		extent.y = Max( texelStep, float( ceil( extent.y / texelStep ) ) * texelStep );
+		extent.x = R_ShadowMapQuantizeCascadeExtent( extent.x, tileSize );
+		extent.y = R_ShadowMapQuantizeCascadeExtent( extent.y, tileSize );
+		// keep the crop inside the projection while preserving its quantized
+		// size, then snap in the cascade's own texel units
+		center.x = idMath::ClampFloat( -1.0f + extent.x, 1.0f - extent.x, center.x );
+		center.y = idMath::ClampFloat( -1.0f + extent.y, 1.0f - extent.y, center.y );
+		center.x = R_ShadowMapSnapCascadeCenter( center.x, extent.x, tileSize );
+		center.y = R_ShadowMapSnapCascadeCenter( center.y, extent.y, tileSize );
 	}
 
 	ndcMins = center - extent;
@@ -568,6 +604,58 @@ static void R_ShadowMapCollapseProjectedStateToSingleCascade( shadowMapProjected
 	state.texelDepthBias[0] = R_ShadowMapTexelDepthBias( state.worldTexelSize[0], state.depthRange[0] );
 }
 
+/*
+=================
+R_ShadowMapCascadeStabilitySelfTest
+
+Pins the stabilization guarantees (invariant I5 of the shadow plan):
+- the extent ladder never under-covers the raw fit, is idempotent, and holds
+  the crop scale constant while the raw fit varies within one ladder step;
+- translating the crop center by whole cascade-texel steps moves the snapped
+  center by exactly those steps, and sub-half-texel drift leaves it unchanged.
+The pre-rework code snapped to the base projection's texel grid, which this
+test rejects: it moves the cascade grid fractionally and still shimmers.
+=================
+*/
+bool R_ShadowMapCascadeStabilitySelfTest( void ) {
+	const int tileSize = 1024;
+	const float minExtent = 2.0f / tileSize;
+
+	for ( float raw = minExtent * 0.5f; raw < 1.2f; raw *= 1.07f ) {
+		const float quantized = R_ShadowMapQuantizeCascadeExtent( raw, tileSize );
+		if ( quantized + 1.0e-6f < Min( raw, 1.0f ) || quantized < minExtent || quantized > 1.0f ) {
+			common->Printf( "ShadowMap cascade stability self-test failed: ladder(%f) = %f under-covers\n", raw, quantized );
+			return false;
+		}
+		const float requantized = R_ShadowMapQuantizeCascadeExtent( quantized, tileSize );
+		if ( idMath::Fabs( requantized - quantized ) > quantized * 1.0e-4f ) {
+			common->Printf( "ShadowMap cascade stability self-test failed: ladder not idempotent (%f -> %f -> %f)\n", raw, quantized, requantized );
+			return false;
+		}
+	}
+
+	const float extent = R_ShadowMapQuantizeCascadeExtent( 0.37f, tileSize );
+	const float snapStep = 2.0f * extent / tileSize;
+	const float baseCenter = 0.123f * snapStep;
+	const float snappedBase = R_ShadowMapSnapCascadeCenter( baseCenter, extent, tileSize );
+	for ( int texels = 1; texels <= 64; texels++ ) {
+		const float snapped = R_ShadowMapSnapCascadeCenter( baseCenter + texels * snapStep, extent, tileSize );
+		if ( idMath::Fabs( ( snapped - snappedBase ) - texels * snapStep ) > snapStep * 1.0e-3f ) {
+			common->Printf( "ShadowMap cascade stability self-test failed: translation by %d texels moved the snapped center by %f texels\n",
+				texels, ( snapped - snappedBase ) / snapStep );
+			return false;
+		}
+	}
+	const float subTexel = R_ShadowMapSnapCascadeCenter( baseCenter + 0.3f * snapStep, extent, tileSize );
+	if ( idMath::Fabs( subTexel - snappedBase ) > snapStep * 1.0e-3f ) {
+		common->Printf( "ShadowMap cascade stability self-test failed: sub-texel drift moved the snapped center\n" );
+		return false;
+	}
+
+	common->Printf( "ShadowMap cascade stability self-test passed\n" );
+	return true;
+}
+
 void R_BuildShadowMapProjectedLightState( const viewLight_t *vLight, const viewDef_t *viewDef, const int tileSize, shadowMapProjectedLightState_t &state ) {
 	R_ShadowMapResetProjectedLightState( state );
 	if ( vLight == NULL || tileSize <= 0 ) {
@@ -607,17 +695,28 @@ void R_BuildShadowMapProjectedLightState( const viewLight_t *vLight, const viewD
 	}
 
 	float sliceNear = zNear;
+	float previousSliceNear = zNear;
 	for ( int cascadeIndex = 0; cascadeIndex < requestedCascadeCount; cascadeIndex++ ) {
 		const bool finalCascade = cascadeIndex == requestedCascadeCount - 1;
 		const float targetFar = finalCascade ? maxDistance : state.splitDepths[cascadeIndex];
 		const float sliceFar = Max( targetFar, sliceNear + 1.0f );
+		// The receiver blends cascade i toward i+1 inside the band ending at
+		// their shared split, sampling i+1 at depths in front of its slice.
+		// Fit each cascade over that band too (mirroring the shader's
+		// blendWidth = max(1, previousSpan * blend)), so blending can never
+		// sample outside the next cascade's crop and fade shadows to lit.
+		const float cascadeBlend = idMath::ClampFloat( 0.0f, 0.5f, r_shadowMapCascadeBlend.GetFloat() );
+		const float blendGrowth = ( cascadeIndex > 0 && cascadeBlend > 0.0f )
+			? Max( 1.0f, ( sliceNear - previousSliceNear ) * cascadeBlend )
+			: 0.0f;
+		const float fitSliceNear = Max( zNear, sliceNear - blendGrowth );
 		idVec3 ndcMins;
 		idVec3 ndcMaxs;
 		shadowMapProjectedCascadeFit_t &fit = state.cascadeFit[cascadeIndex];
 		fit.attempted = true;
 		fit.sliceNear = sliceNear;
 		fit.sliceFar = sliceFar;
-		fit.valid = R_ShadowMapBuildCascadeBounds( baseClipPlanes, viewDef, sliceNear, sliceFar, tileSize, fit, ndcMins, ndcMaxs );
+		fit.valid = R_ShadowMapBuildCascadeBounds( baseClipPlanes, viewDef, fitSliceNear, sliceFar, tileSize, fit, ndcMins, ndcMaxs );
 		if ( fit.valid ) {
 			if ( fit.mixedWSigns ) {
 				fit.fallbackReason = SHADOWMAP_PROJECTED_FALLBACK_MIXED_W_SIGNS;
@@ -640,6 +739,7 @@ void R_BuildShadowMapProjectedLightState( const viewLight_t *vLight, const viewD
 		// magnitude cannot jump across split boundaries
 		state.depthRange[cascadeIndex] = R_ShadowMapFalloffDepthExtent( baseClipPlanes );
 		state.texelDepthBias[cascadeIndex] = R_ShadowMapTexelDepthBias( state.worldTexelSize[cascadeIndex], state.depthRange[cascadeIndex] );
+		previousSliceNear = sliceNear;
 		sliceNear = sliceFar;
 	}
 }

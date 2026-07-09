@@ -2780,6 +2780,12 @@ bool RendererShadowPlanner_RunSelfTest( void ) {
 }
 
 bool RendererShadowProjectedDiagnostic_RunSelfTest( void ) {
+	// pure-math stabilization pins run regardless of planner availability
+	if ( !R_ShadowMapCascadeStabilitySelfTest() ) {
+		common->Printf( "RendererShadowProjectedDiagnostic self-test failed (cascade stability)\n" );
+		return false;
+	}
+
 	if ( !rg_modernShadowPlannerInitialized || !rg_modernShadowPlannerFeatures.scenePackets ) {
 		common->Printf( "RendererShadowProjectedDiagnostic self-test passed (planner unavailable)\n" );
 		return true;

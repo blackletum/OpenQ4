@@ -558,8 +558,13 @@ vec4 SampleShadow() {
 		return vec4( shadowInfo.x, float( cascadeIndex ), 0.0, 0.0 );
 	}
 
-	vec4 nextShadow = SampleCascadeByIndex( cascadeIndex + 1 );
 	float blend = clamp( ( vViewDepth - blendStart ) / blendWidth, 0.0, 1.0 );
+	if ( blend <= 0.02 ) {
+		// entering the band: the second cascade's contribution is invisible,
+		// skip its full filter kernel
+		return vec4( shadowInfo.x, float( cascadeIndex ), 0.0, 0.0 );
+	}
+	vec4 nextShadow = SampleCascadeByIndex( cascadeIndex + 1 );
 	float shadow = mix( shadowInfo.x, nextShadow.x, blend );
 	return vec4( shadow, float( cascadeIndex ), blend, 0.0 );
 }

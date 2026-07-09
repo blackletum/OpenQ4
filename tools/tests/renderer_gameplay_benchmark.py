@@ -250,6 +250,10 @@ PROFILE_DEFAULTS = {
         "cvars": (
             ("r_shadowMapPointLights", "1"),
             ("r_shadowMapReport", "1"),
+            # freeze game time so animation/effect/flicker state is identical
+            # at capture; without this, back-to-back captures of the same
+            # build differ by rms 7-27 and image comparison is meaningless
+            ("g_stopTime", "1"),
         ),
     },
     "postaa-state-poison": {
@@ -762,13 +766,22 @@ def compare_tga(actual: Path, reference: Path) -> dict[str, Any]:
     }
 
 
-def screenshot_reference_candidates(reference_dir: Path, screenshot: Path, savepath: Path) -> list[Path]:
+def screenshot_reference_candidates(
+    reference_dir: Path, screenshot: Path, savepath: Path, case_id: str | None = None
+) -> list[Path]:
+    # Case-scoped candidates take precedence: every case captures the same
+    # relative screenshot name (screenshots/renderer-bench/sp_0.tga), so a
+    # flat reference directory can only ever serve a single case per profile.
     candidates = [reference_dir / screenshot.name]
+    if case_id:
+        candidates.insert(0, reference_dir / case_id / screenshot.name)
     for game_dir in ("baseoq4", "q4base"):
         root = savepath / game_dir
         try:
             rel = screenshot.relative_to(root)
             candidates.insert(0, reference_dir / rel)
+            if case_id:
+                candidates.insert(0, reference_dir / case_id / rel)
         except ValueError:
             pass
     return candidates
@@ -781,6 +794,7 @@ def compare_screenshot_if_requested(
     rms_threshold: float,
     max_threshold: int,
     require_reference: bool,
+    case_id: str | None = None,
 ) -> dict[str, Any]:
     if screenshot is None:
         return {"status": "missing-screenshot"}
@@ -791,7 +805,7 @@ def compare_screenshot_if_requested(
     }
     if reference_dir is None:
         return result
-    for candidate in screenshot_reference_candidates(reference_dir, screenshot, savepath):
+    for candidate in screenshot_reference_candidates(reference_dir, screenshot, savepath, case_id):
         if candidate.exists():
             comparison = compare_tga(screenshot, candidate)
             comparison["actual"] = str(screenshot)
@@ -839,6 +853,7 @@ def evaluate_role_result(
         rms_threshold,
         max_threshold,
         require_reference,
+        spec.id,
     )
     missing: list[str] = []
     if timed_out:

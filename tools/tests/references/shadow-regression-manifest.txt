@@ -1,0 +1,8 @@
+# Blessed shadow-regression reference captures (local, not committed: ~11 MB each).
+# Regenerate + install: see tools/tests/references/README.md
+# Blessed at openQ4 shadow phase 3 (2026-07-09), windows-x64, 2560x1440 windowed, g_stopTime 1.
+f1023716934e972e2923b0af5ce9a6d94f86845ac034147143fe0ecb5c8b9c40   11059218  shadow-character-airdefense2_auto_fps240_vsync0_windowed_csm_best/screenshots/renderer-bench/sp_0.tga
+812a059b63cb11f64ebe113ec589fdac03c27facb35c8cdabd870120b65f92f0   11059218  shadow-csm-airdefense1_auto_fps240_vsync0_windowed_csm_best/screenshots/renderer-bench/sp_0.tga
+24e66adafab4347745fb169c9f88f6bdeb33ca1d058bda9241a92c175d870ead   11059218  shadow-cutout-storage2_auto_fps240_vsync0_windowed_csm_best/screenshots/renderer-bench/sp_0.tga
+abbd87603e9171f5bd3d4f6e14aab1145fbeec1371b50b9f1026413c41d89b36   11059218  shadow-point-storage2_auto_fps240_vsync0_windowed_csm_best/screenshots/renderer-bench/sp_0.tga
+ecabd6d8bbfbdd7b5b29a2e8dc00bbb21091a2b891d105474b3d30ca5eb85d2a   11059218  shadow-projected-airdefense2_auto_fps240_vsync0_windowed_csm_best/screenshots/renderer-bench/sp_0.tga

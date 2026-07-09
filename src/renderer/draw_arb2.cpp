@@ -40,6 +40,10 @@ If you have questions concerning this license or the applicable additional terms
 #include "cg_explicit.h"
 #include <ctype.h>
 
+#ifndef GL_TEXTURE_CUBE_MAP_SEAMLESS
+#define GL_TEXTURE_CUBE_MAP_SEAMLESS 0x884F
+#endif
+
 static ID_INLINE GLint RB_ShadowMapSafeStencilClearValue() {
 	const int stencilBits = idMath::ClampInt( 1, 30, ( glConfig.stencilBits > 0 ) ? glConfig.stencilBits : 8 );
 	return 1 << ( stencilBits - 1 );
@@ -5513,6 +5517,16 @@ static bool RB_PointShadowMapEnsureResources( void ) {
 	const bool resourcesOk = g_pointShadowMapColorImage != NULL && g_pointShadowMapDepthImage != NULL && g_pointShadowMapRenderTexture != NULL;
 	if ( resourcesOk ) {
 		g_shadowMapPointResourcesOkGeneration = tr.videoRestartCount;
+		// seamless cube filtering removes the face-border discontinuities PCF
+		// taps hit when their offsets cross a cube edge (global enable; other
+		// cube sampling only benefits)
+		static int seamlessGeneration = -1;
+		if ( seamlessGeneration != tr.videoRestartCount ) {
+			seamlessGeneration = tr.videoRestartCount;
+			if ( glConfig.glVersion >= 3.2f || GLCapabilityProbe_HasExtension( "GL_ARB_seamless_cube_map" ) ) {
+				glEnable( GL_TEXTURE_CUBE_MAP_SEAMLESS );
+			}
+		}
 	}
 	return resourcesOk;
 }
