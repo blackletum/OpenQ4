@@ -2073,6 +2073,17 @@ static idImage *			g_shadowMapDepthImage = NULL;
 static idRenderTexture *	g_shadowMapRenderTexture = NULL;
 static idImage *			g_shadowMapScratchDepthImage = NULL;
 static idRenderTexture *	g_shadowMapScratchRenderTexture = NULL;
+
+// One persistent depth atlas holds every cached projected light's tiles
+// simultaneously (uncacheable lights still render through the per-light
+// scratch texture). Cached lights render into cell blocks; the receiver
+// composes the cell origin into the per-light cascade rects at upload time,
+// so the per-light state convention (and planner parity) is untouched.
+static idImage *			g_shadowMapAtlasDepthImage = NULL;
+static idRenderTexture *	g_shadowMapAtlasRenderTexture = NULL;
+static int					g_shadowMapAtlasCellSize = 0;	// grid re-derives (and entries invalidate) when this changes
+static int					g_shadowMapActiveSlotOriginX = 0;	// pixel origin of the active render target's slot (0 for scratch)
+static int					g_shadowMapActiveSlotOriginY = 0;
 static idImage *			g_translucentShadowMomentImages[3] = { NULL, NULL, NULL };
 static idRenderTexture *	g_translucentShadowMapRenderTexture = NULL;
 static idImage *			g_pointShadowMapColorImage = NULL;
@@ -2238,6 +2249,12 @@ typedef struct {
 	float				cpuMilliseconds;
 	float				gpuMilliseconds;
 	float				worldTexelSize;
+	// normalized UV rect of the captured light's slot inside the bound
+	// texture (identity for scratch/point; a cell block inside the atlas)
+	float				slotU0;
+	float				slotV0;
+	float				slotU1;
+	float				slotV1;
 } shadowMapDebugOverlayState_t;
 
 static shadowMapDebugOverlayState_t	g_shadowMapDebugOverlayState;
@@ -2274,8 +2291,12 @@ typedef struct {
 	int							lastUsedFrame;
 	int							lastUpdatedFrame;
 	projectedShadowMapState_t	state;
-	idImage *					depthImage;
-	idRenderTexture *			renderTexture;
+	// tile placement inside the shared projected atlas: cell coordinates in
+	// the atlas grid and the block span (1 for single lights, atlasDiv for
+	// CSM lights). Entries no longer own textures; eviction just frees cells.
+	int							atlasCellX;
+	int							atlasCellY;
+	int							atlasCellSpan;
 } projectedShadowMapCacheEntry_t;
 
 typedef struct {
@@ -3198,6 +3219,8 @@ static void RB_ShadowMapSelectScratchResources( void ) {
 	g_activePointShadowMapCache = NULL;
 	g_shadowMapDepthImage = g_shadowMapScratchDepthImage;
 	g_shadowMapRenderTexture = g_shadowMapScratchRenderTexture;
+	g_shadowMapActiveSlotOriginX = 0;
+	g_shadowMapActiveSlotOriginY = 0;
 	g_pointShadowMapColorImage = g_pointShadowMapScratchColorImage;
 	g_pointShadowMapDepthImage = g_pointShadowMapScratchDepthImage;
 	g_pointShadowMapRenderTexture = g_pointShadowMapScratchRenderTexture;
@@ -3407,6 +3430,7 @@ static double RB_ShadowMapImageBytes( const idImage *image ) {
 static double RB_ShadowMapResidentBytes( void ) {
 	double bytes = 0.0;
 	bytes += RB_ShadowMapImageBytes( g_shadowMapScratchDepthImage );
+	bytes += RB_ShadowMapImageBytes( g_shadowMapAtlasDepthImage );
 	bytes += RB_ShadowMapImageBytes( g_pointShadowMapScratchColorImage );
 	bytes += RB_ShadowMapImageBytes( g_pointShadowMapScratchDepthImage );
 	for ( int i = 0; i < 3; i++ ) {
@@ -3414,7 +3438,7 @@ static double RB_ShadowMapResidentBytes( void ) {
 		bytes += RB_ShadowMapImageBytes( g_pointTranslucentShadowMomentImages[i] );
 	}
 	for ( int i = 0; i < SHADOWMAP_CACHE_MAX_SLOTS; i++ ) {
-		bytes += RB_ShadowMapImageBytes( g_projectedShadowMapCache[i].depthImage );
+		
 		bytes += RB_ShadowMapImageBytes( g_pointShadowMapCache[i].colorImage );
 		bytes += RB_ShadowMapImageBytes( g_pointShadowMapCache[i].depthImage );
 	}
@@ -3482,24 +3506,97 @@ static pointShadowMapCacheEntry_t *RB_ShadowMapFindPointCacheEntry( const int li
 	return NULL;
 }
 
-static projectedShadowMapCacheEntry_t *RB_ShadowMapAllocProjectedCacheEntry( void ) {
+// Atlas cell grid bookkeeping: entries occupy span x span cell blocks inside
+// the shared atlas. The grid is small (<= 8x8), so occupancy is re-derived
+// from the valid entries on every allocation.
+static const int SHADOWMAP_ATLAS_MAX_GRID = 8;
+
+static int RB_ShadowMapAtlasGridDim( void ) {
+	if ( g_shadowMapAtlasCellSize <= 0 ) {
+		return 0;
+	}
+	const int atlasSize = idMath::ClampInt( 2048, 8192, r_shadowMapAtlasSize.GetInteger() );
+	return idMath::ClampInt( 1, SHADOWMAP_ATLAS_MAX_GRID, atlasSize / g_shadowMapAtlasCellSize );
+}
+
+static bool RB_ShadowMapAtlasFindFreeBlock( const int span, int &cellX, int &cellY ) {
+	const int gridDim = RB_ShadowMapAtlasGridDim();
+	if ( span <= 0 || span > gridDim ) {
+		return false;
+	}
+	bool occupied[SHADOWMAP_ATLAS_MAX_GRID][SHADOWMAP_ATLAS_MAX_GRID];
+	memset( occupied, 0, sizeof( occupied ) );
+	for ( int i = 0; i < SHADOWMAP_CACHE_MAX_SLOTS; i++ ) {
+		const projectedShadowMapCacheEntry_t &entry = g_projectedShadowMapCache[i];
+		if ( !entry.valid ) {
+			continue;
+		}
+		for ( int y = entry.atlasCellY; y < entry.atlasCellY + entry.atlasCellSpan && y < gridDim; y++ ) {
+			for ( int x = entry.atlasCellX; x < entry.atlasCellX + entry.atlasCellSpan && x < gridDim; x++ ) {
+				occupied[y][x] = true;
+			}
+		}
+	}
+	for ( int y = 0; y + span <= gridDim; y++ ) {
+		for ( int x = 0; x + span <= gridDim; x++ ) {
+			bool blockFree = true;
+			for ( int by = 0; by < span && blockFree; by++ ) {
+				for ( int bx = 0; bx < span; bx++ ) {
+					if ( occupied[y + by][x + bx] ) {
+						blockFree = false;
+						break;
+					}
+				}
+			}
+			if ( blockFree ) {
+				cellX = x;
+				cellY = y;
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+static projectedShadowMapCacheEntry_t *RB_ShadowMapAllocProjectedCacheEntry( const int cellSpan ) {
 	const int slotLimit = RB_ShadowMapProjectedCacheSlotLimit();
-	if ( slotLimit <= 0 ) {
+	if ( slotLimit <= 0 || g_shadowMapAtlasCellSize <= 0 ) {
 		return NULL;
 	}
-	projectedShadowMapCacheEntry_t *oldest = &g_projectedShadowMapCache[0];
-	for ( int i = 0; i < slotLimit; i++ ) {
-		projectedShadowMapCacheEntry_t *entry = &g_projectedShadowMapCache[i];
-		if ( !entry->valid ) {
-			return entry;
+
+	projectedShadowMapCacheEntry_t *freeEntry = NULL;
+	for ( int attempt = 0; attempt <= slotLimit; attempt++ ) {
+		// find an unused entry record
+		freeEntry = NULL;
+		projectedShadowMapCacheEntry_t *oldest = NULL;
+		for ( int i = 0; i < slotLimit; i++ ) {
+			projectedShadowMapCacheEntry_t *entry = &g_projectedShadowMapCache[i];
+			if ( !entry->valid ) {
+				if ( freeEntry == NULL ) {
+					freeEntry = entry;
+				}
+				continue;
+			}
+			if ( oldest == NULL || entry->lastUsedFrame < oldest->lastUsedFrame ) {
+				oldest = entry;
+			}
 		}
-		if ( entry->lastUsedFrame < oldest->lastUsedFrame ) {
-			oldest = entry;
+		int cellX = 0;
+		int cellY = 0;
+		if ( freeEntry != NULL && RB_ShadowMapAtlasFindFreeBlock( cellSpan, cellX, cellY ) ) {
+			freeEntry->atlasCellX = cellX;
+			freeEntry->atlasCellY = cellY;
+			freeEntry->atlasCellSpan = cellSpan;
+			return freeEntry;
 		}
+		// no record or no free block: evict the least recently used entry and retry
+		if ( oldest == NULL ) {
+			return NULL;
+		}
+		oldest->valid = false;
+		g_shadowMapStats.cacheEvictions++;
 	}
-	oldest->valid = false;
-	g_shadowMapStats.cacheEvictions++;
-	return oldest;
+	return NULL;
 }
 
 static pointShadowMapCacheEntry_t *RB_ShadowMapAllocPointCacheEntry( void ) {
@@ -3525,8 +3622,10 @@ static pointShadowMapCacheEntry_t *RB_ShadowMapAllocPointCacheEntry( void ) {
 static void RB_ShadowMapSelectProjectedCacheEntry( projectedShadowMapCacheEntry_t *entry ) {
 	g_activeProjectedShadowMapCache = entry;
 	if ( entry != NULL ) {
-		g_shadowMapDepthImage = entry->depthImage;
-		g_shadowMapRenderTexture = entry->renderTexture;
+		g_shadowMapDepthImage = g_shadowMapAtlasDepthImage;
+		g_shadowMapRenderTexture = g_shadowMapAtlasRenderTexture;
+		g_shadowMapActiveSlotOriginX = entry->atlasCellX * g_shadowMapAtlasCellSize;
+		g_shadowMapActiveSlotOriginY = entry->atlasCellY * g_shadowMapAtlasCellSize;
 	}
 }
 
@@ -3633,6 +3732,9 @@ static shadowMapSchedule_t RB_ShadowMapSchedulePass( const viewLight_t *vLight, 
 					schedule.action = SHADOWMAP_SCHEDULE_REUSE;
 					schedule.budgetReuse = true;
 					g_shadowMapStats.cacheBudgetReusePasses++;
+					// the receiver must sample the stale map with the state it
+					// was rendered with, not whatever the previous light left
+					g_projectedShadowMapState = schedule.projectedEntry->state;
 					RB_ShadowMapSelectProjectedCacheEntry( schedule.projectedEntry );
 					return schedule;
 				}
@@ -3647,7 +3749,7 @@ static shadowMapSchedule_t RB_ShadowMapSchedulePass( const viewLight_t *vLight, 
 			schedule.pointEntry = RB_ShadowMapAllocPointCacheEntry();
 			RB_ShadowMapSelectPointCacheEntry( schedule.pointEntry );
 		} else {
-			schedule.projectedEntry = RB_ShadowMapAllocProjectedCacheEntry();
+			schedule.projectedEntry = RB_ShadowMapAllocProjectedCacheEntry( RB_ShadowMapAtlasDivForLight( vLight ) );
 			RB_ShadowMapSelectProjectedCacheEntry( schedule.projectedEntry );
 		}
 		if ( ( pointLight && schedule.pointEntry == NULL ) || ( !pointLight && schedule.projectedEntry == NULL ) ) {
@@ -3708,8 +3810,8 @@ static void RB_ShadowMapCompleteCacheUpdate( const shadowMapSchedule_t &schedule
 		entry->lastUsedFrame = tr.frameCount;
 		entry->lastUpdatedFrame = tr.frameCount;
 		entry->state = g_projectedShadowMapState;
-		entry->depthImage = g_shadowMapDepthImage;
-		entry->renderTexture = g_shadowMapRenderTexture;
+		// atlas cell placement was written at allocation; entries hold no textures
+		
 	}
 }
 
@@ -4364,12 +4466,13 @@ void RB_ShutdownShadowMapResources( void ) {
 	}
 
 	RB_ShadowMapDestroyRenderTexture( g_shadowMapScratchRenderTexture );
+	RB_ShadowMapDestroyRenderTexture( g_shadowMapAtlasRenderTexture );
 	RB_ShadowMapDestroyRenderTexture( g_translucentShadowMapRenderTexture );
 	RB_ShadowMapDestroyRenderTexture( g_pointShadowMapScratchRenderTexture );
 	RB_ShadowMapDestroyRenderTexture( g_pointTranslucentShadowMapRenderTexture );
 
 	for ( int i = 0; i < SHADOWMAP_CACHE_MAX_SLOTS; i++ ) {
-		RB_ShadowMapDestroyRenderTexture( g_projectedShadowMapCache[i].renderTexture );
+		
 		RB_ShadowMapDestroyRenderTexture( g_pointShadowMapCache[i].renderTexture );
 	}
 
@@ -4384,6 +4487,8 @@ void RB_ShutdownShadowMapResources( void ) {
 	g_shadowMapDepthImage = NULL;
 	g_shadowMapRenderTexture = NULL;
 	g_shadowMapScratchDepthImage = NULL;
+	g_shadowMapAtlasDepthImage = NULL;
+	g_shadowMapAtlasCellSize = 0;
 	g_shadowMapScratchRenderTexture = NULL;
 	memset( g_translucentShadowMomentImages, 0, sizeof( g_translucentShadowMomentImages ) );
 	g_translucentShadowMapRenderTexture = NULL;
@@ -5508,32 +5613,73 @@ static bool RB_ShadowMapEnsureResources( const viewLight_t *vLight ) {
 
 	const int shadowMapAtlasDiv = RB_ShadowMapAtlasDivForLight( vLight );
 	const int shadowMapSize = shadowMapTileSize * shadowMapAtlasDiv;
-	idImage **depthImage = g_activeProjectedShadowMapCache != NULL ? &g_activeProjectedShadowMapCache->depthImage : &g_shadowMapScratchDepthImage;
-	idRenderTexture **renderTexture = g_activeProjectedShadowMapCache != NULL ? &g_activeProjectedShadowMapCache->renderTexture : &g_shadowMapScratchRenderTexture;
-	const int cacheSlot = g_activeProjectedShadowMapCache != NULL ? static_cast<int>( g_activeProjectedShadowMapCache - g_projectedShadowMapCache ) : -1;
 
-	if ( *depthImage == NULL ) {
-		idImageOpts opts;
-		opts.textureType = TT_2D;
-		opts.format = FMT_DEPTH;
-		opts.width = shadowMapSize;
-		opts.height = shadowMapSize;
-		opts.numLevels = 1;
-		opts.isPersistant = true;
-		*depthImage = globalImages->ScratchImage( cacheSlot >= 0 ? va( "_shadowMapDepthCache%d", cacheSlot ) : "_shadowMapDepth", &opts, TF_NEAREST, TR_CLAMP, TD_DEPTH );
-	}
-
-	if ( *renderTexture == NULL ) {
-		*renderTexture = tr.CreateRenderTexture( NULL, *depthImage );
-		if ( *renderTexture != NULL ) {
-			// shadow targets are expendable: incompleteness falls back to stencil
-			( *renderTexture )->SetAllowIncomplete();
+	// keep the shared atlas resident whenever the projected path is live: its
+	// cell size tracks r_shadowMapSize, and a cell-size change invalidates
+	// every cached tile placement
+	{
+		const int atlasCellSize = idMath::ClampInt( 128, glConfig.maxTextureSize > 0 ? glConfig.maxTextureSize : 4096, r_shadowMapSize.GetInteger() );
+		const int atlasSize = Min( idMath::ClampInt( 2048, 8192, r_shadowMapAtlasSize.GetInteger() ), glConfig.maxTextureSize > 0 ? glConfig.maxTextureSize : 4096 );
+		if ( atlasCellSize != g_shadowMapAtlasCellSize ) {
+			for ( int i = 0; i < SHADOWMAP_CACHE_MAX_SLOTS; i++ ) {
+				g_projectedShadowMapCache[i].valid = false;
+			}
+			g_shadowMapAtlasCellSize = atlasCellSize;
 		}
-	} else if ( ( *renderTexture )->GetWidth() != shadowMapSize || ( *renderTexture )->GetHeight() != shadowMapSize ) {
-		tr.ResizeRenderTexture( *renderTexture, shadowMapSize, shadowMapSize );
+		if ( g_shadowMapAtlasDepthImage == NULL ) {
+			idImageOpts opts;
+			opts.textureType = TT_2D;
+			opts.format = FMT_DEPTH;
+			opts.width = atlasSize;
+			opts.height = atlasSize;
+			opts.numLevels = 1;
+			opts.isPersistant = true;
+			g_shadowMapAtlasDepthImage = globalImages->ScratchImage( "_shadowMapAtlas", &opts, TF_NEAREST, TR_CLAMP, TD_DEPTH );
+		}
+		if ( g_shadowMapAtlasRenderTexture == NULL && g_shadowMapAtlasDepthImage != NULL ) {
+			g_shadowMapAtlasRenderTexture = tr.CreateRenderTexture( NULL, g_shadowMapAtlasDepthImage );
+			if ( g_shadowMapAtlasRenderTexture != NULL ) {
+				g_shadowMapAtlasRenderTexture->SetAllowIncomplete();
+			}
+		} else if ( g_shadowMapAtlasRenderTexture != NULL && ( g_shadowMapAtlasRenderTexture->GetWidth() != atlasSize || g_shadowMapAtlasRenderTexture->GetHeight() != atlasSize ) ) {
+			tr.ResizeRenderTexture( g_shadowMapAtlasRenderTexture, atlasSize, atlasSize );
+			for ( int i = 0; i < SHADOWMAP_CACHE_MAX_SLOTS; i++ ) {
+				g_projectedShadowMapCache[i].valid = false;
+			}
+		}
 	}
-	g_shadowMapDepthImage = *depthImage;
-	g_shadowMapRenderTexture = *renderTexture;
+
+	if ( g_activeProjectedShadowMapCache != NULL ) {
+		// cached lights render into their cell block of the shared atlas
+		if ( g_shadowMapAtlasDepthImage == NULL || g_shadowMapAtlasRenderTexture == NULL ) {
+			return false;
+		}
+		g_shadowMapDepthImage = g_shadowMapAtlasDepthImage;
+		g_shadowMapRenderTexture = g_shadowMapAtlasRenderTexture;
+	} else {
+		if ( g_shadowMapScratchDepthImage == NULL ) {
+			idImageOpts opts;
+			opts.textureType = TT_2D;
+			opts.format = FMT_DEPTH;
+			opts.width = shadowMapSize;
+			opts.height = shadowMapSize;
+			opts.numLevels = 1;
+			opts.isPersistant = true;
+			g_shadowMapScratchDepthImage = globalImages->ScratchImage( "_shadowMapDepth", &opts, TF_NEAREST, TR_CLAMP, TD_DEPTH );
+		}
+
+		if ( g_shadowMapScratchRenderTexture == NULL ) {
+			g_shadowMapScratchRenderTexture = tr.CreateRenderTexture( NULL, g_shadowMapScratchDepthImage );
+			if ( g_shadowMapScratchRenderTexture != NULL ) {
+				// shadow targets are expendable: incompleteness falls back to stencil
+				g_shadowMapScratchRenderTexture->SetAllowIncomplete();
+			}
+		} else if ( g_shadowMapScratchRenderTexture->GetWidth() != shadowMapSize || g_shadowMapScratchRenderTexture->GetHeight() != shadowMapSize ) {
+			tr.ResizeRenderTexture( g_shadowMapScratchRenderTexture, shadowMapSize, shadowMapSize );
+		}
+		g_shadowMapDepthImage = g_shadowMapScratchDepthImage;
+		g_shadowMapRenderTexture = g_shadowMapScratchRenderTexture;
+	}
 
 	if ( g_shadowMapDepthImage == NULL || g_shadowMapRenderTexture == NULL ) {
 		return false;
@@ -5803,12 +5949,12 @@ static void RB_ShadowMapPurgeImage( idImage *image ) {
 }
 
 static bool RB_ShadowMapAnyResidentResources( void ) {
-	if ( g_shadowMapScratchRenderTexture != NULL || g_pointShadowMapScratchRenderTexture != NULL
+	if ( g_shadowMapScratchRenderTexture != NULL || g_pointShadowMapScratchRenderTexture != NULL || g_shadowMapAtlasRenderTexture != NULL
 		|| g_translucentShadowMapRenderTexture != NULL || g_pointTranslucentShadowMapRenderTexture != NULL ) {
 		return true;
 	}
 	for ( int i = 0; i < SHADOWMAP_CACHE_MAX_SLOTS; i++ ) {
-		if ( g_projectedShadowMapCache[i].renderTexture != NULL || g_pointShadowMapCache[i].renderTexture != NULL ) {
+		if ( g_pointShadowMapCache[i].renderTexture != NULL ) {
 			return true;
 		}
 	}
@@ -5820,6 +5966,7 @@ static bool RB_ShadowMapAnyResidentResources( void ) {
 // ScratchImage (which re-allocs unloaded images) when shadow maps re-enable.
 static void RB_ShadowMapPurgeIdleResources( void ) {
 	RB_ShadowMapPurgeImage( g_shadowMapScratchDepthImage );
+	RB_ShadowMapPurgeImage( g_shadowMapAtlasDepthImage );
 	RB_ShadowMapPurgeImage( g_pointShadowMapScratchColorImage );
 	RB_ShadowMapPurgeImage( g_pointShadowMapScratchDepthImage );
 	for ( int i = 0; i < 3; i++ ) {
@@ -5827,10 +5974,10 @@ static void RB_ShadowMapPurgeIdleResources( void ) {
 		RB_ShadowMapPurgeImage( g_pointTranslucentShadowMomentImages[i] );
 	}
 	for ( int i = 0; i < SHADOWMAP_CACHE_MAX_SLOTS; i++ ) {
-		RB_ShadowMapPurgeImage( g_projectedShadowMapCache[i].depthImage );
+		
 		RB_ShadowMapPurgeImage( g_pointShadowMapCache[i].colorImage );
 		RB_ShadowMapPurgeImage( g_pointShadowMapCache[i].depthImage );
-		g_projectedShadowMapCache[i].depthImage = NULL;
+		
 		g_pointShadowMapCache[i].colorImage = NULL;
 		g_pointShadowMapCache[i].depthImage = NULL;
 		g_projectedShadowMapCache[i].valid = false;
@@ -7568,8 +7715,10 @@ static bool RB_RenderShadowMap( const drawSurf_t *primaryCasters, const drawSurf
 
 	for ( int cascadeIndex = 0; cascadeIndex < g_projectedShadowMapState.cascadeCount; cascadeIndex++ ) {
 		float clipMatrix[16];
-		const int tileX = ( g_projectedShadowMapState.atlasDiv > 1 ) ? ( cascadeIndex % g_projectedShadowMapState.atlasDiv ) * g_projectedShadowMapState.tileSize : 0;
-		const int tileY = ( g_projectedShadowMapState.atlasDiv > 1 ) ? ( cascadeIndex / g_projectedShadowMapState.atlasDiv ) * g_projectedShadowMapState.tileSize : 0;
+		// cascade tile offsets are relative to the light's slot in the shared
+		// atlas (origin 0 when rendering into the per-light scratch texture)
+		const int tileX = g_shadowMapActiveSlotOriginX + ( ( g_projectedShadowMapState.atlasDiv > 1 ) ? ( cascadeIndex % g_projectedShadowMapState.atlasDiv ) * g_projectedShadowMapState.tileSize : 0 );
+		const int tileY = g_shadowMapActiveSlotOriginY + ( ( g_projectedShadowMapState.atlasDiv > 1 ) ? ( cascadeIndex / g_projectedShadowMapState.atlasDiv ) * g_projectedShadowMapState.tileSize : 0 );
 
 		R_ShadowMapClipPlanesToGLMatrix( g_projectedShadowMapState.clipPlanes[cascadeIndex], clipMatrix );
 		glViewport( tileX, tileY, g_projectedShadowMapState.tileSize, g_projectedShadowMapState.tileSize );
@@ -9334,7 +9483,25 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 		glUniform1fARB( g_shadowMapProgram.shadowPCSSMaxRadius, r_shadowMapPCSSMaxRadius.GetFloat() );
 	}
 	if ( g_shadowMapProgram.shadowAtlasRect >= 0 ) {
-		glUniform4fvARB( g_shadowMapProgram.shadowAtlasRect, SHADOWMAP_MAX_CASCADES, g_projectedShadowMapState.atlasRect[0].ToFloatPtr() );
+		// State rects stay in the per-light convention (planner parity depends
+		// on it); the light's atlas slot is composed here at upload time. For
+		// scratch renders the slot spans the whole texture, so the composition
+		// is the identity.
+		const float invAtlasWidth = 1.0f / Max( 1, g_shadowMapRenderTexture->GetWidth() );
+		const float invAtlasHeight = 1.0f / Max( 1, g_shadowMapRenderTexture->GetHeight() );
+		const float slotU0 = g_shadowMapActiveSlotOriginX * invAtlasWidth;
+		const float slotV0 = g_shadowMapActiveSlotOriginY * invAtlasHeight;
+		const float slotSpanU = ( g_projectedShadowMapState.tileSize * g_projectedShadowMapState.atlasDiv ) * invAtlasWidth;
+		const float slotSpanV = ( g_projectedShadowMapState.tileSize * g_projectedShadowMapState.atlasDiv ) * invAtlasHeight;
+		float composedRects[SHADOWMAP_MAX_CASCADES][4];
+		for ( int i = 0; i < SHADOWMAP_MAX_CASCADES; i++ ) {
+			const idVec4 &rect = g_projectedShadowMapState.atlasRect[i];
+			composedRects[i][0] = slotU0 + rect.x * slotSpanU;
+			composedRects[i][1] = slotV0 + rect.y * slotSpanV;
+			composedRects[i][2] = slotU0 + rect.z * slotSpanU;
+			composedRects[i][3] = slotV0 + rect.w * slotSpanV;
+		}
+		glUniform4fvARB( g_shadowMapProgram.shadowAtlasRect, SHADOWMAP_MAX_CASCADES, composedRects[0] );
 	}
 	if ( g_shadowMapProgram.shadowSplitDepths >= 0 ) {
 		glUniform1fvARB( g_shadowMapProgram.shadowSplitDepths, SHADOWMAP_MAX_CASCADES, g_projectedShadowMapState.splitDepths );
@@ -9873,6 +10040,18 @@ static void RB_ShadowMapDebugOverlayCapture( const viewLight_t *vLight, const sh
 	g_shadowMapDebugOverlayState.tileCount = pointLight ? 6 : Max( 1, g_projectedShadowMapState.cascadeCount );
 	g_shadowMapDebugOverlayState.atlasDiv = pointLight ? 3 : Max( 1, g_projectedShadowMapState.atlasDiv );
 	g_shadowMapDebugOverlayState.cascadeCount = pointLight ? 1 : Max( 1, g_projectedShadowMapState.cascadeCount );
+	g_shadowMapDebugOverlayState.slotU0 = 0.0f;
+	g_shadowMapDebugOverlayState.slotV0 = 0.0f;
+	g_shadowMapDebugOverlayState.slotU1 = 1.0f;
+	g_shadowMapDebugOverlayState.slotV1 = 1.0f;
+	if ( !pointLight && g_shadowMapRenderTexture != NULL ) {
+		const float invAtlasWidth = 1.0f / Max( 1, g_shadowMapRenderTexture->GetWidth() );
+		const float invAtlasHeight = 1.0f / Max( 1, g_shadowMapRenderTexture->GetHeight() );
+		g_shadowMapDebugOverlayState.slotU0 = g_shadowMapActiveSlotOriginX * invAtlasWidth;
+		g_shadowMapDebugOverlayState.slotV0 = g_shadowMapActiveSlotOriginY * invAtlasHeight;
+		g_shadowMapDebugOverlayState.slotU1 = g_shadowMapDebugOverlayState.slotU0 + ( g_projectedShadowMapState.tileSize * g_projectedShadowMapState.atlasDiv ) * invAtlasWidth;
+		g_shadowMapDebugOverlayState.slotV1 = g_shadowMapDebugOverlayState.slotV0 + ( g_projectedShadowMapState.tileSize * g_projectedShadowMapState.atlasDiv ) * invAtlasHeight;
+	}
 	g_shadowMapDebugOverlayState.casterCount =
 		RB_CountDrawSurfChain( primaryCasters ) +
 		RB_CountDrawSurfChain( secondaryCasters ) +
@@ -10108,7 +10287,9 @@ static void RB_ShadowMapDebugOverlayDraw( void ) {
 
 	if ( g_shadowMapDebugOverlayState.valid ) {
 		RB_ShadowMapDebugOverlaySetMode( SHADOW_DEBUG_OVERLAY_MODE_PANEL, idVec4( 1.0f, 1.0f, 1.0f, 1.0f ), 0.0f );
-		RB_ShadowMapDebugOverlaySubmitQuad( panelX, panelY, panelW, panelH, 0.0f, 0.0f, 1.0f, 1.0f );
+		RB_ShadowMapDebugOverlaySubmitQuad( panelX, panelY, panelW, panelH,
+			g_shadowMapDebugOverlayState.slotU0, g_shadowMapDebugOverlayState.slotV0,
+			g_shadowMapDebugOverlayState.slotU1, g_shadowMapDebugOverlayState.slotV1 );
 		RB_ShadowMapDebugOverlayDrawLabels( panelX, panelY, panelW, panelH );
 	}
 

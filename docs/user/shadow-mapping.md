@@ -132,6 +132,7 @@ vid_restart
 | `r_shadowMapSkipStencilShadows` | `1` | `0..1` | Skips stencil shadow volume generation and linking for lights that will render shadow maps, removing the duplicate CPU shadow work. A light that fails a shadow-map pass automatically restores its stencil volumes on the next frame. |
 | `r_shadowMapCasterCulling` | `2` | `0..2` | Caster face culling: `0` renders casters two-sided, `1` stores light-facing faces, `2` stores back faces (fewer acne artifacts, slight detachment on thin geometry). Materials declared `twoSided`/`backSided` are always honored, so grates, foliage, and curtains cast correctly in every mode. |
 | `r_shadowMapSize` | `1024` | `128..4096` | Base shadow-map resolution. Higher values cost more VRAM and GPU time. |
+| `r_shadowMapAtlasSize` | `4096` | `2048..8192` | Edge size of the shared projected-light shadow atlas. Cached projected lights occupy `r_shadowMapSize`-sized cells inside it (CSM lights use a 2x2 cell block), so all cached lights stay resident in one texture. |
 | `r_shadowMapFilterRadius` | `2.0` | `0..8` | Projected-light PCF filter radius in texels. |
 | `r_shadowMapFilterTaps` | `13` | `1..13` | Projected-light PCF tap budget. Values up to `1`, `5`, `9`, and `13` select progressively wider sample sets. |
 | `r_shadowMapFilterMode` | `0` | `0..2` | Projected-light filter mode: fixed PCF, stable rotated Poisson, or experimental PCSS-lite with raw depth sampling. |
