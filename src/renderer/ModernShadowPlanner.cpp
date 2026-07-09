@@ -572,7 +572,7 @@ static bool R_ModernShadowPlanner_ProjectBaseClipPlanesMatchLight( const modernS
 	}
 
 	idPlane expectedBaseClipPlanes[4];
-	R_ShadowMapBuildClipPlanes( descriptor.viewLight->lightProject, expectedBaseClipPlanes );
+	R_ShadowMapBuildBaseClipPlanesForLight( descriptor.viewLight, expectedBaseClipPlanes );
 	for ( int planeIndex = 0; planeIndex < 4; ++planeIndex ) {
 		for ( int componentIndex = 0; componentIndex < 4; ++componentIndex ) {
 			if ( !R_ModernShadowPlanner_FloatClose( descriptor.projectedBaseClipPlanes[planeIndex][componentIndex], expectedBaseClipPlanes[planeIndex][componentIndex] ) ) {
@@ -947,7 +947,7 @@ static modernShadowFallbackReason_t R_ModernShadowPlanner_SupportReason( const v
 	if ( glConfig.maxTextureUnits < 6 || glConfig.maxTextureImageUnits < 6 ) {
 		return MODERN_SHADOW_FALLBACK_TEXTURE_LIMIT;
 	}
-	if ( vLight->pointLight && !glConfig.cubeMapAvailable ) {
+	if ( R_ClassifyShadowMapLight( vLight ).pointLight && !glConfig.cubeMapAvailable ) {
 		return MODERN_SHADOW_FALLBACK_CUBEMAP_UNAVAILABLE;
 	}
 	return MODERN_SHADOW_FALLBACK_NONE;

@@ -1106,6 +1106,26 @@ void idRenderSystemLocal::BeginFrame( int windowWidth, int windowHeight ) {
 	// determine which back end we will use
 	SetBackEndRenderer();
 
+	// Interaction shadow state (stencil volume creation, shadow-map caster
+	// admission, translucent caster policy) is baked into cached interactions
+	// at creation time; toggling the cvars that drive it must rebuild them,
+	// or the stale decisions persist until the entity or light is otherwise
+	// modified ("shadows did not change after toggling the cvar" reports).
+	if ( r_useShadowMap.IsModified()
+		|| r_stencilTranslucentShadows.IsModified()
+		|| r_lod_shadows.IsModified()
+		|| r_shadowMapTranslucentMoments.IsModified()
+		|| r_shadowMapSkipStencilShadows.IsModified() ) {
+		r_useShadowMap.ClearModified();
+		r_stencilTranslucentShadows.ClearModified();
+		r_lod_shadows.ClearModified();
+		r_shadowMapTranslucentMoments.ClearModified();
+		r_shadowMapSkipStencilShadows.ClearModified();
+		if ( primaryWorld != NULL ) {
+			primaryWorld->FreeInteractions();
+		}
+	}
+
 	guiModel->Clear();
 	useUIViewportFor2D = true;
 	activeRenderTexture = NULL;

@@ -55,7 +55,11 @@ shadowMapLightClassification_t R_ClassifyShadowMapLight( const viewLight_t *vLig
 	memset( &classification, 0, sizeof( classification ) );
 
 	classification.lightClass = R_ShadowMapLightClassForViewLight( vLight );
-	classification.pointLight = vLight != NULL && vLight->pointLight;
+	// Parallel (sun) lights carry pointLight=true with a faked far-away origin;
+	// radial cube-map depth saturates for them, so they route through the
+	// projected machinery with a synthesized orthographic projection instead
+	// (R_ShadowMapBuildParallelClipPlanes).
+	classification.pointLight = vLight != NULL && vLight->pointLight && !vLight->parallel;
 	classification.projectedLight = !classification.pointLight;
 	classification.ordinaryProjectedLight = classification.lightClass == SHADOWMAP_LIGHT_PROJECTED;
 	classification.parallelLight = classification.lightClass == SHADOWMAP_LIGHT_PARALLEL;

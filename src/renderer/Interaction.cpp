@@ -77,7 +77,11 @@ static bool R_ShouldCreateInteractionShadow( idRenderEntityLocal *entityDef ) {
 		|| viewEntity->screenCoverage >= r_lod_shadows_percent.GetFloat()
 		|| viewEntity->distanceToCamera < entityDef->parms.shadowLODDistance ) {
 		if ( entityDef->LODModificationFrame < idLib::frameNumber ) {
-			const int retailRand = rand() & SHADOW_LOD_RETAIL_RAND_MASK;
+			// Deterministic stand-in for the retail rand(): identical demo
+			// playback must drop/hold entity shadows on identical frames, and
+			// the per-entity hash still staggers crowds across the hold window.
+			const unsigned int hash = ( static_cast<unsigned int>( entityDef->index ) * 2654435761u ) ^ ( static_cast<unsigned int>( idLib::frameNumber ) * 40503u );
+			const int retailRand = static_cast<int>( ( hash >> 8 ) & SHADOW_LOD_RETAIL_RAND_MASK );
 			entityDef->LODModificationFrame = idLib::frameNumber + static_cast<int>( static_cast<double>( retailRand ) * SHADOW_LOD_RANDOM_UNIT * SHADOW_LOD_MAX_FRAME_DELAY );
 		}
 		return true;
@@ -90,9 +94,14 @@ static bool R_CachedInteractionShadowLODAdmitted( surfaceInteraction_t *sint, id
 	if ( sint == NULL ) {
 		return R_ShouldCreateInteractionShadow( entityDef );
 	}
-	if ( !sint->shadowLODDecisionValid ) {
+	// Re-evaluate once per frame: a creation-time-only decision freezes the
+	// first verdict for the surface's lifetime, permanently dropping shadows
+	// for static entities first seen at distance (and never shedding them for
+	// entities first seen close). The check is a handful of compares.
+	if ( !sint->shadowLODDecisionValid || sint->shadowLODDecisionFrame != idLib::frameNumber ) {
 		sint->shadowLODAdmitted = R_ShouldCreateInteractionShadow( entityDef );
 		sint->shadowLODDecisionValid = true;
+		sint->shadowLODDecisionFrame = idLib::frameNumber;
 	}
 	return sint->shadowLODAdmitted;
 }
@@ -104,7 +113,7 @@ static bool R_TranslucentShadowMapMomentsSupportedForLight( const idRenderLightL
 		glConfig.maxTextureImageUnits >= 9 &&
 		glConfig.maxDrawBuffers >= 3 &&
 		glConfig.maxColorAttachments >= 3 &&
-		( lightDef == NULL || !lightDef->parms.pointLight || glConfig.cubeMapAvailable );
+		( lightDef == NULL || !lightDef->parms.pointLight || lightDef->parms.parallel || glConfig.cubeMapAvailable );
 }
 
 typedef struct {
@@ -499,7 +508,7 @@ static void R_RecordShadowMapRejectedCaster( viewLight_t *vLight, const shadowMa
 	}
 }
 
-static shadowMapCasterRejectReason_t R_ClassifyShadowMapCasterReject( const idRenderEntityLocal *entityDef, const viewEntity_t *vEntity, const surfaceInteraction_t *sint, const idMaterial *shadowShader, const bool isViewOnlyEntity, const bool translucentShadowMapSupported, const bool skipPointLightEmitterCaster, const bool sameSpectrumShadowMapCaster ) {
+static shadowMapCasterRejectReason_t R_ClassifyShadowMapCasterReject( const idRenderEntityLocal *entityDef, const viewEntity_t *vEntity, const surfaceInteraction_t *sint, const idMaterial *shadowShader, const bool isViewOnlyEntity, const bool translucentShadowMapSupported, const bool skipPointLightEmitterCaster, const bool sameSpectrumShadowMapCaster, const bool shadowLODAdmitted ) {
 	if ( entityDef == NULL || vEntity == NULL || sint == NULL || shadowShader == NULL ) {
 		return SHADOWMAP_CASTER_REJECT_UNKNOWN;
 	}
@@ -527,6 +536,9 @@ static shadowMapCasterRejectReason_t R_ClassifyShadowMapCasterReject( const idRe
 	}
 	if ( !sameSpectrumShadowMapCaster ) {
 		return SHADOWMAP_CASTER_REJECT_SPECTRUM_MISMATCH;
+	}
+	if ( !shadowLODAdmitted ) {
+		return SHADOWMAP_CASTER_REJECT_LOD;
 	}
 	return SHADOWMAP_CASTER_REJECT_UNKNOWN;
 }
@@ -1825,7 +1837,9 @@ void idInteraction::AddActiveInteraction( void ) {
 	const bool		shadowMapConservativeCandidate =
 		interactionHasShadows &&
 		R_ShadowMapConservativeCastersEnabled() &&
-		( vLight == NULL || !vLight->pointLight || r_shadowMapPointLights.GetBool() );
+		// parallel (sun) lights render through the projected path and depend on
+		// off-screen casters more than any other light class
+		( vLight == NULL || !vLight->pointLight || vLight->parallel || r_shadowMapPointLights.GetBool() );
 
 	if ( shadowMapConservativeCandidate && !R_ShadowMapEntityTouchesConnectedArea( entityDef ) ) {
 		R_RecordShadowMapRejectedCaster( vLight, SHADOWMAP_CASTER_REJECT_AREA_DISCONNECTED );
@@ -2085,7 +2099,7 @@ void idInteraction::AddActiveInteraction( void ) {
 				shadowMapsEnabled &&
 				R_TranslucentShadowMapMomentsSupportedForLight( lightDef );
 			const bool skipPointLightEmitterCaster =
-				vLight->pointLight &&
+				vLight->pointLight && !vLight->parallel &&
 				R_ShouldSkipPointLightEmitterCaster( shadowShader, sint->ambientTris, localLightOrigin, lightDef->parms.lightRadius );
 			const bool sameSpectrumShadowMapCaster =
 				R_ShadowMapShaderSpectrumMatchesLight( shadowShader, lightDef );
@@ -2113,7 +2127,7 @@ void idInteraction::AddActiveInteraction( void ) {
 				R_CachedInteractionShadowLODAdmitted( sint, entityDef );
 
 			if ( sint->ambientTris != NULL && !allowShadowMapCaster && !allowTranslucentShadowMapCaster ) {
-				R_RecordShadowMapRejectedCaster( vLight, R_ClassifyShadowMapCasterReject( entityDef, vEntity, sint, shadowShader, isViewOnlyEntity, translucentShadowMapSupported, skipPointLightEmitterCaster, sameSpectrumShadowMapCaster ) );
+				R_RecordShadowMapRejectedCaster( vLight, R_ClassifyShadowMapCasterReject( entityDef, vEntity, sint, shadowShader, isViewOnlyEntity, translucentShadowMapSupported, skipPointLightEmitterCaster, sameSpectrumShadowMapCaster, R_CachedInteractionShadowLODAdmitted( sint, entityDef ) ) );
 			}
 
 			if ( allowShadowMapCaster ) {

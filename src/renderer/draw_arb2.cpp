@@ -2551,6 +2551,8 @@ static const char *RB_ShadowMapCasterRejectReasonName( const shadowMapCasterReje
 		return "areaDisconnected";
 	case SHADOWMAP_CASTER_REJECT_SPECTRUM_MISMATCH:
 		return "spectrumMismatch";
+	case SHADOWMAP_CASTER_REJECT_LOD:
+		return "shadowLOD";
 	default:
 		return "unknown";
 	}
@@ -3663,7 +3665,7 @@ static bool RB_ShadowMapProjectedBaseClipPlanesMatchLight( const viewLight_t *vL
 	}
 
 	idPlane expectedBaseClipPlanes[4];
-	R_ShadowMapBuildClipPlanes( vLight->lightProject, expectedBaseClipPlanes );
+	R_ShadowMapBuildBaseClipPlanesForLight( vLight, expectedBaseClipPlanes );
 	for ( int planeIndex = 0; planeIndex < 4; planeIndex++ ) {
 		for ( int componentIndex = 0; componentIndex < 4; componentIndex++ ) {
 			if ( !RB_ShadowMapProjectedFloatClose( state.baseClipPlanes[planeIndex][componentIndex], expectedBaseClipPlanes[planeIndex][componentIndex] ) ) {
@@ -5641,7 +5643,9 @@ static shadowMapLightSupportReason_t RB_ShadowMapLightSupportReason( const viewL
 	if ( vLight->globalInteractions == NULL && vLight->localInteractions == NULL ) {
 		return SHADOWMAP_SUPPORT_NO_INTERACTIONS;
 	}
-	if ( vLight->pointLight ) {
+	// parallel lights carry pointLight=true but render through the projected
+	// path with a synthesized orthographic projection
+	if ( R_ClassifyShadowMapLight( vLight ).pointLight ) {
 		if ( !r_shadowMapPointLights.GetBool() ) {
 			return SHADOWMAP_SUPPORT_POINT_DISABLED;
 		}
@@ -8524,7 +8528,9 @@ static void RB_ShadowMapEstimateArb2CachePass( const viewLight_t *vLight, const 
 bool RB_ShadowMapEstimateArb2CacheOwnership( const viewLight_t *vLight, const viewDef_t *viewDef, shadowMapArb2CacheEstimate_t &estimate ) {
 	memset( &estimate, 0, sizeof( estimate ) );
 	estimate.lightIndex = RB_ShadowMapLightIndex( vLight );
-	estimate.pointLight = vLight != NULL && vLight->pointLight;
+	// classification routes parallel lights through the projected path
+	const bool estimatePointLight = R_ClassifyShadowMapLight( vLight ).pointLight;
+	estimate.pointLight = estimatePointLight;
 	estimate.staticCacheEnabled = r_shadowMapStaticCache.GetBool();
 	RB_ShadowMapArb2CacheSlotCountsReadOnly( estimate );
 
@@ -8537,12 +8543,12 @@ bool RB_ShadowMapEstimateArb2CacheOwnership( const viewLight_t *vLight, const vi
 	if ( vLight->globalInteractions == NULL && vLight->localInteractions == NULL ) {
 		return false;
 	}
-	if ( vLight->pointLight && !r_shadowMapPointLights.GetBool() ) {
+	if ( estimatePointLight && !r_shadowMapPointLights.GetBool() ) {
 		return false;
 	}
 
 	estimate.valid = true;
-	if ( vLight->pointLight ) {
+	if ( estimatePointLight ) {
 		RB_ShadowMapEstimateArb2CachePass( vLight, viewDef, estimate, SHADOWMAP_PASS_LOCAL, true, vLight->globalShadowMapCasters, NULL, NULL, NULL, vLight->globalShadows, NULL, vLight->localInteractions );
 		RB_ShadowMapEstimateArb2CachePass( vLight, viewDef, estimate, SHADOWMAP_PASS_GLOBAL, true, vLight->globalShadowMapCasters, vLight->localShadowMapCasters, NULL, NULL, vLight->globalShadows, vLight->localShadows, vLight->globalInteractions );
 	} else {
@@ -10527,7 +10533,7 @@ void RB_ARB2_DrawInteractions( void ) {
 
 			glStencilFunc( GL_ALWAYS, 128, 255 );
 
-			if ( vLight->pointLight ) {
+			if ( classification.pointLight ) {
 				// Point-light shadow maps use the same ownership split as the retail
 				// stencil path: local receivers see global casters, while global
 				// receivers see both global and noSelfShadow/local casters. The

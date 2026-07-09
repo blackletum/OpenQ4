@@ -247,12 +247,113 @@ static float R_ShadowMapSliceWorldTexelSize( const viewDef_t *viewDef, const flo
 // World width of the projected light's frustum at its far plane: the authored
 // projection spans +-right / +-up around the target axis. Projected (spot)
 // lights never populate lightRadius, so this is their only footprint source.
+// Parallel lights use the orthographic footprint of their radius box.
 static float R_ShadowMapProjectedFarPlaneWidth( const viewLight_t *vLight ) {
-	if ( vLight == NULL || vLight->lightDef == NULL || vLight->lightDef->parms.pointLight ) {
+	if ( vLight == NULL || vLight->lightDef == NULL ) {
 		return 0.0f;
 	}
 	const renderLight_t &parms = vLight->lightDef->parms;
+	if ( parms.parallel ) {
+		return 2.0f * Max( Max( idMath::Fabs( parms.lightRadius[0] ), idMath::Fabs( parms.lightRadius[1] ) ), idMath::Fabs( parms.lightRadius[2] ) );
+	}
+	if ( parms.pointLight ) {
+		return 0.0f;
+	}
 	return 2.0f * Max( parms.right.Length(), parms.up.Length() );
+}
+
+// Parallel (sun) lights fake their origin 100000 units away, so the point
+// cube path's radial depth saturates and their authored lightProject is a
+// point-light box mapping - neither can produce a usable shadow map.
+// Synthesize an orthographic projection in the shared clip-plane form
+// instead: S/T rows map the light volume's extent across the two axes
+// perpendicular to the light direction, the Q row is the constant 1 (no
+// divide, so no projective w instability anywhere in the fit), and the depth
+// row is a falloff plane along the light direction - exactly the convention
+// every caster/receiver path already speaks. The existing CSM crop, snapping,
+// and blend machinery then applies unchanged.
+bool R_ShadowMapBuildParallelClipPlanes( const viewLight_t *vLight, idPlane clipPlanes[4] ) {
+	if ( vLight == NULL || vLight->lightDef == NULL || !vLight->lightDef->parms.parallel ) {
+		return false;
+	}
+	const idRenderLightLocal *lightDef = vLight->lightDef;
+
+	idVec3 dir = lightDef->parms.lightCenter;
+	if ( dir.Normalize() < idMath::FLOAT_EPSILON ) {
+		// tr_lightrun defaults unspecified parallel directions to straight up
+		dir.Set( 0.0f, 0.0f, 1.0f );
+	}
+	// light rays travel opposite the authored direction (globalLightOrigin
+	// sits at origin + dir * 100000), so stored depth increases along -dir
+	const idVec3 depthAxis = -dir;
+	idVec3 right, up;
+	depthAxis.NormalVectors( right, up );
+
+	idBounds bounds;
+	if ( lightDef->frustumTris != NULL && !lightDef->frustumTris->bounds.IsCleared() ) {
+		bounds = lightDef->frustumTris->bounds;
+	} else {
+		const idVec3 radius(
+			idMath::Fabs( lightDef->parms.lightRadius[0] ),
+			idMath::Fabs( lightDef->parms.lightRadius[1] ),
+			idMath::Fabs( lightDef->parms.lightRadius[2] ) );
+		bounds[0] = lightDef->parms.origin - radius;
+		bounds[1] = lightDef->parms.origin + radius;
+	}
+
+	float minR = idMath::INFINITY, maxR = -idMath::INFINITY;
+	float minU = idMath::INFINITY, maxU = -idMath::INFINITY;
+	float minD = idMath::INFINITY, maxD = -idMath::INFINITY;
+	for ( int corner = 0; corner < 8; corner++ ) {
+		const idVec3 point(
+			bounds[( corner >> 0 ) & 1][0],
+			bounds[( corner >> 1 ) & 1][1],
+			bounds[( corner >> 2 ) & 1][2] );
+		const float r = point * right;
+		const float u = point * up;
+		const float d = point * depthAxis;
+		minR = Min( minR, r ); maxR = Max( maxR, r );
+		minU = Min( minU, u ); maxU = Max( maxU, u );
+		minD = Min( minD, d ); maxD = Max( maxD, d );
+	}
+
+	// apply the shared projection pad so filtering slack matches the
+	// projected path's padded planes
+	const float pad = R_ShadowMapProjectionPad();
+	const float halfR = Max( 1.0f, ( maxR - minR ) * 0.5f ) * ( 1.0f + pad * 2.0f );
+	const float halfU = Max( 1.0f, ( maxU - minU ) * 0.5f ) * ( 1.0f + pad * 2.0f );
+	const float extentD = Max( 1.0f, maxD - minD );
+	const float centerR = ( maxR + minR ) * 0.5f;
+	const float centerU = ( maxU + minU ) * 0.5f;
+
+	// S row: dot(p, right/halfR) - centerR/halfR in [-1,1]; T row likewise
+	clipPlanes[0].SetNormal( right / halfR );
+	clipPlanes[0][3] = -centerR / halfR;
+	clipPlanes[1].SetNormal( up / halfU );
+	clipPlanes[1][3] = -centerU / halfU;
+	// depth row: [0,1] across the lit volume along the light direction
+	clipPlanes[2].SetNormal( depthAxis / extentD );
+	clipPlanes[2][3] = -minD / extentD;
+	// orthographic w: constant 1
+	clipPlanes[3].SetNormal( idVec3( 0.0f, 0.0f, 0.0f ) );
+	clipPlanes[3][3] = 1.0f;
+	return true;
+}
+
+// Single authority for a light's base shadow projection: parallel lights get
+// the synthesized orthographic planes, everything else the padded authored
+// projection. Both the state builder and the parity validators must call
+// this so planner and ARB2 can never disagree about the contract.
+void R_ShadowMapBuildBaseClipPlanesForLight( const viewLight_t *vLight, idPlane clipPlanes[4] ) {
+	if ( vLight == NULL ) {
+		for ( int planeIndex = 0; planeIndex < 4; planeIndex++ ) {
+			clipPlanes[planeIndex].Zero();
+		}
+		return;
+	}
+	if ( !R_ShadowMapBuildParallelClipPlanes( vLight, clipPlanes ) ) {
+		R_ShadowMapBuildClipPlanes( vLight->lightProject, clipPlanes );
+	}
 }
 
 // World distance over which the stored falloff depth spans 0..1. The depth
@@ -474,7 +575,7 @@ void R_BuildShadowMapProjectedLightState( const viewLight_t *vLight, const viewD
 	}
 
 	idPlane baseClipPlanes[4];
-	R_ShadowMapBuildClipPlanes( vLight->lightProject, baseClipPlanes );
+	R_ShadowMapBuildBaseClipPlanesForLight( vLight, baseClipPlanes );
 
 	const int requestedCascadeCount = R_ClassifyShadowMapLight( vLight ).cascadeCount;
 	state.requestedCascadeCount = requestedCascadeCount;

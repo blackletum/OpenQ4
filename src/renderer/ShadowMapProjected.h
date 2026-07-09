@@ -68,6 +68,8 @@ const char *R_ShadowMapProjectedFallbackReasonName( int reason );
 float R_ShadowMapProjectionPad();
 float R_ShadowMapProjectionScale( float projectionPad );
 void R_ShadowMapBuildClipPlanes( const idPlane lightProject[4], idPlane clipPlanes[4] );
+bool R_ShadowMapBuildParallelClipPlanes( const viewLight_t *vLight, idPlane clipPlanes[4] );
+void R_ShadowMapBuildBaseClipPlanesForLight( const viewLight_t *vLight, idPlane clipPlanes[4] );
 void R_ShadowMapClipPlanesToGLMatrix( const idPlane clipPlanes[4], float matrix[16] );
 idVec4 R_ShadowMapBuildAtlasRect( int cascadeIndex, int atlasDiv );
 float R_ShadowMapTexelDepthBias( float worldTexelSize, float depthRange );

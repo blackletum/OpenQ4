@@ -1436,12 +1436,15 @@ bool R_ShadowMapLightWillUseShadowMaps( const idRenderLightLocal *lightDef ) {
 	if ( glConfig.maxTextureUnits < 6 || glConfig.maxTextureImageUnits < 6 ) {
 		return false;
 	}
-	if ( lightDef->parms.pointLight ) {
+	// parallel lights carry pointLight=true but render through the projected
+	// path with a synthesized orthographic projection (see shadow classification)
+	const bool pointLightPath = lightDef->parms.pointLight && !lightDef->parms.parallel;
+	if ( pointLightPath ) {
 		if ( !r_shadowMapPointLights.GetBool() || !glConfig.cubeMapAvailable ) {
 			return false;
 		}
 	}
-	return RB_ShadowMapResourcesKnownGood( lightDef->parms.pointLight );
+	return RB_ShadowMapResourcesKnownGood( pointLightPath );
 }
 
 /*
