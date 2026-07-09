@@ -2162,6 +2162,7 @@ typedef struct {
 	int					maskFailGlobalPasses;
 	int					scheduledSkipPasses;
 	int					shadowMapUpdates;
+	int					subviewUpdates;		// updates spent in mirror/remote subviews this frame (main-view report)
 	int					cacheHitPasses;
 	int					cacheMissPasses;
 	int					cacheReusePasses;
@@ -2870,6 +2871,11 @@ static void RB_ShadowMapResetCasterCull( void ) {
 	RB_ShadowMapApplyCasterCull( NULL );
 }
 
+// Subview (mirror/remote camera) shadow updates were previously invisible in
+// every report; the accumulator survives per-view stats resets and surfaces
+// in the main view's SM metrics line.
+static int g_shadowMapSubviewUpdates = 0;
+
 // A shadow-map render failure on a light whose stencil volumes were elided
 // would otherwise repeat every frame with an empty fallback; the sticky flag
 // restores volume generation for that light from the next frame on.
@@ -3429,6 +3435,31 @@ static void RB_ShadowMapExpireCaches( void ) {
 	}
 }
 
+// signature-agnostic lookups back the budget stale-reuse path: when the
+// per-view update budget is exhausted, the light's last rendered map (and the
+// receiver state it was rendered with) is reused as-is
+static projectedShadowMapCacheEntry_t *RB_ShadowMapFindProjectedCacheEntryAnySignature( const int lightIndex, const shadowMapPassKind_t passKind ) {
+	const int slotLimit = RB_ShadowMapProjectedCacheSlotLimit();
+	for ( int i = 0; i < slotLimit; i++ ) {
+		projectedShadowMapCacheEntry_t *entry = &g_projectedShadowMapCache[i];
+		if ( entry->valid && entry->lightIndex == lightIndex && entry->passKind == static_cast<int>( passKind ) ) {
+			return entry;
+		}
+	}
+	return NULL;
+}
+
+static pointShadowMapCacheEntry_t *RB_ShadowMapFindPointCacheEntryAnySignature( const int lightIndex, const shadowMapPassKind_t passKind ) {
+	const int slotLimit = RB_ShadowMapPointCacheSlotLimit();
+	for ( int i = 0; i < slotLimit; i++ ) {
+		pointShadowMapCacheEntry_t *entry = &g_pointShadowMapCache[i];
+		if ( entry->valid && entry->lightIndex == lightIndex && entry->passKind == static_cast<int>( passKind ) ) {
+			return entry;
+		}
+	}
+	return NULL;
+}
+
 static projectedShadowMapCacheEntry_t *RB_ShadowMapFindProjectedCacheEntry( const int lightIndex, const shadowMapPassKind_t passKind, const int signature ) {
 	const int slotLimit = RB_ShadowMapProjectedCacheSlotLimit();
 	for ( int i = 0; i < slotLimit; i++ ) {
@@ -3580,6 +3611,33 @@ static shadowMapSchedule_t RB_ShadowMapSchedulePass( const viewLight_t *vLight, 
 
 	const int updateBudget = r_shadowMapMaxUpdatesPerView.GetInteger();
 	if ( updateBudget > 0 && g_shadowMapStats.shadowMapUpdates >= updateBudget ) {
+		// Out of update budget: a stale cached map (last known shadows) is a
+		// far gentler degradation than flickering the light to stencil for a
+		// frame. Only cacheable lights qualify; anything with translucent
+		// casters keeps the full-content stencil fallback.
+		if ( schedule.cacheable ) {
+			if ( pointLight ) {
+				schedule.pointEntry = RB_ShadowMapFindPointCacheEntryAnySignature( lightIndex, passKind );
+				if ( schedule.pointEntry != NULL ) {
+					schedule.cacheHit = true;
+					schedule.action = SHADOWMAP_SCHEDULE_REUSE;
+					schedule.budgetReuse = true;
+					g_shadowMapStats.cacheBudgetReusePasses++;
+					RB_ShadowMapSelectPointCacheEntry( schedule.pointEntry );
+					return schedule;
+				}
+			} else {
+				schedule.projectedEntry = RB_ShadowMapFindProjectedCacheEntryAnySignature( lightIndex, passKind );
+				if ( schedule.projectedEntry != NULL ) {
+					schedule.cacheHit = true;
+					schedule.action = SHADOWMAP_SCHEDULE_REUSE;
+					schedule.budgetReuse = true;
+					g_shadowMapStats.cacheBudgetReusePasses++;
+					RB_ShadowMapSelectProjectedCacheEntry( schedule.projectedEntry );
+					return schedule;
+				}
+			}
+		}
 		schedule.action = SHADOWMAP_SCHEDULE_FALLBACK;
 		return schedule;
 	}
@@ -5794,6 +5852,13 @@ static void RB_ShadowMapStatsReset( void ) {
 		RB_ShadowMapPurgeIdleResources();
 	}
 
+	// subviews render before the main view; the main view's report claims
+	// the frame's accumulated subview update count
+	if ( backEnd.viewDef == NULL || !backEnd.viewDef->isSubview ) {
+		g_shadowMapStats.subviewUpdates = g_shadowMapSubviewUpdates;
+		g_shadowMapSubviewUpdates = 0;
+	}
+
 	RB_ShadowMapExpireCaches();
 	RB_ShadowMapCountCacheSlots();
 	g_shadowMapReportThisFrame = false;
@@ -5923,8 +5988,9 @@ static void RB_ShadowMapStatsReport( void ) {
 	}
 
 	common->Printf(
-		"SM metrics: updates=%d scheduledSkip=%d atlasTiles=%d/%d pointFaces=%d pointHiP=%d pointCmp=%d cpu(render=%.2f mask=%.2f) gpuSync=%.2f gpuQuery=%.2f/%d pending=%d texelWorld=[%.3f %.3f]\n",
+		"SM metrics: updates=%d subviewUpdates=%d scheduledSkip=%d atlasTiles=%d/%d pointFaces=%d pointHiP=%d pointCmp=%d cpu(render=%.2f mask=%.2f) gpuSync=%.2f gpuQuery=%.2f/%d pending=%d texelWorld=[%.3f %.3f]\n",
 		g_shadowMapStats.shadowMapUpdates,
+		g_shadowMapStats.subviewUpdates,
 		g_shadowMapStats.scheduledSkipPasses,
 		g_shadowMapStats.projectedAtlasTilesRendered,
 		g_shadowMapStats.projectedAtlasTilesAllocated,
@@ -7448,6 +7514,9 @@ static bool RB_RenderShadowMap( const drawSurf_t *primaryCasters, const drawSurf
 	}
 
 	g_shadowMapStats.shadowMapUpdates++;
+	if ( backEnd.viewDef != NULL && backEnd.viewDef->isSubview ) {
+		g_shadowMapSubviewUpdates++;
+	}
 	g_shadowMapStats.projectedAtlasTilesRendered += g_projectedShadowMapState.cascadeCount;
 	g_shadowMapStats.projectedAtlasTilesAllocated += Max( 1, g_projectedShadowMapState.atlasDiv * g_projectedShadowMapState.atlasDiv );
 	for ( int cascadeIndex = 0; cascadeIndex < g_projectedShadowMapState.cascadeCount; cascadeIndex++ ) {
@@ -7601,6 +7670,9 @@ static bool RB_RenderPointShadowMap( const drawSurf_t *primaryCasters, const dra
 	float projectionMatrix[16];
 	RB_PointShadowMapBuildProjectionMatrix( nearClip, farClip, projectionMatrix );
 	g_shadowMapStats.shadowMapUpdates++;
+	if ( backEnd.viewDef != NULL && backEnd.viewDef->isSubview ) {
+		g_shadowMapSubviewUpdates++;
+	}
 	g_shadowMapStats.pointFacesRendered += 6;
 	if ( RB_PointShadowMapHighPrecisionEnabled() ) {
 		g_shadowMapStats.pointHighPrecisionPasses++;

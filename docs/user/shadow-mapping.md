@@ -278,7 +278,7 @@ Practical advice:
 | `r_shadowMapDebugOverlay` | `0` | Draws a top-left mini-map of the selected shadow map plus frame counters. |
 | `r_shadowMapReport` | `0` | Shadow-map diagnostics: `0` off, `1` summary, `2` per-light decisions, `3` verbose receiver-submit decisions. |
 | `r_shadowMapReportInterval` | `30` | Frames between report prints when `r_shadowMapReport` is enabled. |
-| `r_shadowMapMaxUpdatesPerView` | `0` | Optional per-view shadow-map update budget. `0` means unlimited. |
+| `r_shadowMapMaxUpdatesPerView` | `0` | Optional per-view shadow-map update budget. `0` means unlimited. Lights over budget reuse their last cached map when one exists (shadows lag briefly instead of flickering to stencil); lights with no cached map fall back to stencil. |
 | `r_shadowMapGpuTimerQueries` | `1` | Uses non-blocking GL timer queries for shadow-map GPU timing when the driver supports them. |
 | `r_shadowMapGpuSyncTimings` | `0` | Diagnostic-only GPU-synchronized pass timing using `glFinish`; leave off during normal play. |
 | `reportShaderPrograms` | n/a | Prints current ARB/GLSL shader validity, including shadow programs. |

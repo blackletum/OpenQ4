@@ -323,6 +323,17 @@ default settings; split boundaries invisible in cascade-debug blend view.
 frame budget with zero I6 ladder violations; SM report shows cache hit-rate > 90 % for static
 scenes; no per-frame full re-renders attributable to sleeping entities.
 
+**Phase 4 outcome notes (2026-07-09):** items 1-2 landed as at-rest reclassification (the
+settled-corpse cliff); per-cascade/per-face culling, cache capacity/pass-collapse, VRAM
+visibility/purge, and budget stale-reuse landed; **point lights became the default mapped
+path** (field testing showed Q4 content is point-dominated, so `r_shadowMapPointLights 0`
+made the feature a near no-op). Three items are deliberately re-homed to Phase 5, where the
+atlas makes them structurally simple instead of throwaway plumbing on the scratch/cube model:
+layered static/dynamic composition (tile-to-tile copy in one texture vs per-face cube FBO
+blit juggling), the planner-authoritative importance-ordered budget (the planner becomes the
+allocator there anyway), and the subview single-cascade cache policy (tile sizing flows from
+one allocator instead of three consistency layers).
+
 ### Phase 5 — One architecture: persistent atlas + modern unification
 
 1. Persistent depth page atlas resource in the render graph (replacing the camera-MVP sidecar
