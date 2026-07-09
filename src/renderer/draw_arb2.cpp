@@ -5410,6 +5410,10 @@ static bool RB_ShadowMapEnsureResources( const viewLight_t *vLight ) {
 
 	if ( *renderTexture == NULL ) {
 		*renderTexture = tr.CreateRenderTexture( NULL, *depthImage );
+		if ( *renderTexture != NULL ) {
+			// shadow targets are expendable: incompleteness falls back to stencil
+			( *renderTexture )->SetAllowIncomplete();
+		}
 	} else if ( ( *renderTexture )->GetWidth() != shadowMapSize || ( *renderTexture )->GetHeight() != shadowMapSize ) {
 		tr.ResizeRenderTexture( *renderTexture, shadowMapSize, shadowMapSize );
 	}
@@ -5495,6 +5499,10 @@ static bool RB_PointShadowMapEnsureResources( void ) {
 
 	if ( *renderTexture == NULL ) {
 		*renderTexture = tr.CreateRenderTexture( *colorImage, *depthImage );
+		if ( *renderTexture != NULL ) {
+			// shadow targets are expendable: incompleteness falls back to stencil
+			( *renderTexture )->SetAllowIncomplete();
+		}
 	} else if ( ( *renderTexture )->GetWidth() != shadowMapSize || ( *renderTexture )->GetHeight() != shadowMapSize ) {
 		tr.ResizeRenderTexture( *renderTexture, shadowMapSize, shadowMapSize );
 	}
@@ -5551,6 +5559,9 @@ static bool RB_ShadowMapEnsureTranslucentResources( const viewLight_t *vLight ) 
 
 	if ( g_translucentShadowMapRenderTexture == NULL ) {
 		g_translucentShadowMapRenderTexture = tr.CreateRenderTexture( g_translucentShadowMomentImages[0], NULL, g_translucentShadowMomentImages[1], g_translucentShadowMomentImages[2] );
+		if ( g_translucentShadowMapRenderTexture != NULL ) {
+			g_translucentShadowMapRenderTexture->SetAllowIncomplete();
+		}
 	} else if ( g_translucentShadowMapRenderTexture->GetWidth() != shadowMapSize || g_translucentShadowMapRenderTexture->GetHeight() != shadowMapSize ) {
 		tr.ResizeRenderTexture( g_translucentShadowMapRenderTexture, shadowMapSize, shadowMapSize );
 	}
@@ -5594,6 +5605,9 @@ static bool RB_PointShadowMapEnsureTranslucentResources( void ) {
 
 	if ( g_pointTranslucentShadowMapRenderTexture == NULL ) {
 		g_pointTranslucentShadowMapRenderTexture = tr.CreateRenderTexture( g_pointTranslucentShadowMomentImages[0], NULL, g_pointTranslucentShadowMomentImages[1], g_pointTranslucentShadowMomentImages[2] );
+		if ( g_pointTranslucentShadowMapRenderTexture != NULL ) {
+			g_pointTranslucentShadowMapRenderTexture->SetAllowIncomplete();
+		}
 	} else if ( g_pointTranslucentShadowMapRenderTexture->GetWidth() != shadowMapSize || g_pointTranslucentShadowMapRenderTexture->GetHeight() != shadowMapSize ) {
 		tr.ResizeRenderTexture( g_pointTranslucentShadowMapRenderTexture, shadowMapSize, shadowMapSize );
 	}
@@ -7242,6 +7256,18 @@ static bool RB_RenderShadowMap( const drawSurf_t *primaryCasters, const drawSurf
 	}
 
 	g_shadowMapRenderTexture->MakeCurrent();
+	if ( g_shadowMapRenderTexture->IsKnownIncomplete() ) {
+		// incomplete shadow framebuffer: fail this pass so the light takes the
+		// stencil fallback instead of FatalError'ing the whole session
+		if ( backEnd.renderTexture != NULL ) {
+			backEnd.renderTexture->MakeCurrent();
+		} else {
+			idRenderTexture::BindNull();
+			glDrawBuffer( GL_BACK );
+			glReadBuffer( GL_BACK );
+		}
+		return false;
+	}
 
 	// One caster program serves every opaque and perforated caster in this
 	// pass; per-surface rebinding is unnecessary. The slope-scale caster
@@ -7395,6 +7421,21 @@ static bool RB_RenderPointShadowMap( const drawSurf_t *primaryCasters, const dra
 
 	const int shadowMapWidth = g_pointShadowMapRenderTexture->GetWidth();
 	const int shadowMapHeight = g_pointShadowMapRenderTexture->GetHeight();
+
+	// probe framebuffer completeness before touching pass state: an
+	// incomplete point shadow target fails the pass into the stencil
+	// fallback instead of FatalError'ing the whole session
+	g_pointShadowMapRenderTexture->MakeCurrent( 0 );
+	if ( g_pointShadowMapRenderTexture->IsKnownIncomplete() ) {
+		if ( backEnd.renderTexture != NULL ) {
+			backEnd.renderTexture->MakeCurrent();
+		} else {
+			idRenderTexture::BindNull();
+			glDrawBuffer( GL_BACK );
+			glReadBuffer( GL_BACK );
+		}
+		return false;
+	}
 
 	glUseProgramObjectARB( g_pointShadowCasterProgram.programObject );
 	glDisable( GL_VERTEX_PROGRAM_ARB );
@@ -8146,19 +8187,14 @@ static bool RB_SurfaceUsesGeneratedCharacterGeometry( const drawSurf_t *surf ) {
 	}
 #endif
 
-	if ( surf->space != NULL && surf->space->entityDef != NULL ) {
-		const renderEntity_t &renderEntity = surf->space->entityDef->parms;
-		if ( renderEntity.joints != NULL || renderEntity.numJoints > 0 ) {
-			return true;
-		}
-		if ( renderEntity.hModel != NULL && renderEntity.hModel->IsDynamicModel() != DM_STATIC ) {
-			return true;
-		}
-		if ( surf->space->entityDef->dynamicModel != NULL || surf->space->entityDef->cachedDynamicModel != NULL ) {
-			return true;
-		}
-	}
-
+	// CPU-skinned and cached dynamic models are deliberately NOT excluded:
+	// their ambient caches hold final-pose model-space vertices that the
+	// receiver program samples exactly like static geometry (the ARB2
+	// fallback lights them from the same vertex data). Only GPU-side posed
+	// geometry above, whose gl_Vertex is not the rendered position, needs
+	// the hard-stencil receiver fallback. Excluding every dynamic model here
+	// put hard stencil shadows on characters next to soft mapped world
+	// shadows in every scene.
 	return false;
 }
 
@@ -8230,6 +8266,13 @@ static bool RB_ShadowMapReceiverStageFilter( const shaderStage_t *surfaceStage, 
 
 typedef bool (*drawSurfFilter_t)( const drawSurf_t *surf );
 
+// Receivers that passed eligibility but whose vertex caches could not be
+// prepared are skipped by the mask pass. Tracking their count lets the run
+// pass stencil-fallback ONLY those surfaces instead of failing the whole
+// mask, which re-drew every already-lit interaction additively (visible
+// double-lighting whenever a single surface prepare failed).
+static int g_shadowMapMaskPrepareFailures = 0;
+
 static shadowMapReceiverFallbackReason_t RB_SurfaceShadowMapReceiverFallbackReason( const drawSurf_t *surf ) {
 	if ( surf == NULL || surf->geo == NULL || surf->space == NULL || surf->material == NULL || surf->shaderRegisters == NULL ) {
 		return SHADOWMAP_RECEIVER_FALLBACK_INVALID_SURFACE;
@@ -8253,6 +8296,18 @@ static bool RB_SurfaceEligibleForShadowMapReceiver( const drawSurf_t *surf ) {
 
 static bool RB_SurfaceNeedsShadowMapReceiverFallback( const drawSurf_t *surf ) {
 	return RB_SurfaceShadowMapReceiverFallbackReason( surf ) != SHADOWMAP_RECEIVER_FALLBACK_NONE;
+}
+
+// Filter for the partial mask-failure fallback: eligible receivers whose
+// vertex caches could not be prepared this frame (the prepare call is
+// idempotent, so re-evaluating it here selects exactly the surfaces the
+// mask pass skipped).
+static bool RB_SurfaceShadowMapReceiverPrepareFailed( const drawSurf_t *surf ) {
+	if ( RB_SurfaceShadowMapReceiverFallbackReason( surf ) != SHADOWMAP_RECEIVER_FALLBACK_NONE ) {
+		return false;	// handled by the receiver-fallback pass
+	}
+	idDrawVert *ambientVertexPointer = NULL;
+	return !RB_GLSLPrepareInteractionVertexCache( surf, ambientVertexPointer );
 }
 
 static bool RB_DrawSurfChainHasFilteredSurface( const drawSurf_t *surf, drawSurfFilter_t filter ) {
@@ -8330,6 +8385,14 @@ bool RB_ShadowMapArb2ReceiverFallbackSelfTest( void ) {
 	memset( &receiverGeo, 0, sizeof( receiverGeo ) );
 	receiverGeo.numIndexes = 3;
 
+	// deform-generated geometry is the class that genuinely cannot use the
+	// mapped receiver program; CPU-skinned jointed entities can (their
+	// ambient caches hold final-pose model-space vertices)
+	srfTriangles_t deformedGeo;
+	memset( &deformedGeo, 0, sizeof( deformedGeo ) );
+	deformedGeo.numIndexes = 3;
+	deformedGeo.deformedSurface = true;
+
 	viewEntity_t staticSpace;
 	viewEntity_t generatedSpace;
 	memset( &staticSpace, 0, sizeof( staticSpace ) );
@@ -8344,17 +8407,26 @@ bool RB_ShadowMapArb2ReceiverFallbackSelfTest( void ) {
 	generatedSpace.entityDef = &generatedEntity;
 
 	drawSurf_t eligibleReceiver;
+	drawSurf_t jointedReceiver;
 	drawSurf_t generatedReceiver;
 	drawSurf_t invalidReceiver;
 	memset( &eligibleReceiver, 0, sizeof( eligibleReceiver ) );
+	memset( &jointedReceiver, 0, sizeof( jointedReceiver ) );
 	memset( &generatedReceiver, 0, sizeof( generatedReceiver ) );
 	memset( &invalidReceiver, 0, sizeof( invalidReceiver ) );
 	eligibleReceiver.geo = &receiverGeo;
 	eligibleReceiver.space = &staticSpace;
 	eligibleReceiver.material = tr.defaultMaterial;
 	eligibleReceiver.shaderRegisters = shaderRegisters;
-	eligibleReceiver.nextOnLight = &generatedReceiver;
-	generatedReceiver.geo = &receiverGeo;
+	eligibleReceiver.nextOnLight = &jointedReceiver;
+	// pins the narrowed contract: a CPU-skinned jointed entity is a first
+	// class mapped receiver, not a hard-stencil fallback
+	jointedReceiver.geo = &receiverGeo;
+	jointedReceiver.space = &generatedSpace;
+	jointedReceiver.material = tr.defaultMaterial;
+	jointedReceiver.shaderRegisters = shaderRegisters;
+	jointedReceiver.nextOnLight = &generatedReceiver;
+	generatedReceiver.geo = &deformedGeo;
 	generatedReceiver.space = &generatedSpace;
 	generatedReceiver.material = tr.defaultMaterial;
 	generatedReceiver.shaderRegisters = shaderRegisters;
@@ -8363,6 +8435,7 @@ bool RB_ShadowMapArb2ReceiverFallbackSelfTest( void ) {
 	int fallbackReasons[SHADOWMAP_RECEIVER_FALLBACK_COUNT];
 	const int fallbackSurfaceCount = RB_CountShadowMapReceiverFallbackSurfaces( &eligibleReceiver, fallbackReasons );
 	if ( !RB_SurfaceEligibleForShadowMapReceiver( &eligibleReceiver )
+		|| !RB_SurfaceEligibleForShadowMapReceiver( &jointedReceiver )
 		|| RB_SurfaceShadowMapReceiverFallbackReason( &generatedReceiver ) != SHADOWMAP_RECEIVER_FALLBACK_GENERATED_GEOMETRY
 		|| fallbackSurfaceCount != 2
 		|| fallbackReasons[SHADOWMAP_RECEIVER_FALLBACK_GENERATED_GEOMETRY] != 1
@@ -9158,7 +9231,8 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 			debugWrappedCustomCount,
 			debugFirstMaterial != NULL ? debugFirstMaterial : "<none>" );
 	}
-	return ( submittedInteractions || processedReceivers ) && debugPrepareFailedCount == 0;
+	g_shadowMapMaskPrepareFailures = debugPrepareFailedCount;
+	return submittedInteractions || processedReceivers;
 }
 
 static bool RB_GLSLPointShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
@@ -9443,7 +9517,8 @@ static bool RB_GLSLPointShadowMap_CreateDrawInteractions( const drawSurf_t *surf
 			pointDebugAmbientPrimBatchCount,
 			pointDebugFirstMaterial != NULL ? pointDebugFirstMaterial : "<none>" );
 	}
-	return ( submittedInteractions || processedReceivers ) && pointDebugPrepareFailedCount == 0;
+	g_shadowMapMaskPrepareFailures = pointDebugPrepareFailedCount;
+	return submittedInteractions || processedReceivers;
 }
 
 static void RB_DrawMaterialInteractionsFiltered( const drawSurf_t *surf, drawSurfFilter_t filter ) {
@@ -9992,6 +10067,11 @@ static void RB_ShadowMapRunPass( const viewLight_t *vLight, shadowMapPassKind_t 
 				primaryShadowSurfs, secondaryShadowSurfs, interactions );
 			RB_ShadowMapTrackWrappedCustomGLSLReceivers( vLight, passKind, interactions );
 			RB_ShadowMapDrawReceiverFallbacks( vLight, passKind, primaryShadowSurfs, secondaryShadowSurfs, interactions );
+			if ( g_shadowMapMaskPrepareFailures > 0 ) {
+				// light only the surfaces the mask pass skipped; everything
+				// else was already drawn additively by the mapped pass
+				RB_ShadowMapStencilFallbackFiltered( primaryShadowSurfs, secondaryShadowSurfs, interactions, RB_SurfaceShadowMapReceiverPrepareFailed );
+			}
 			RB_ShadowMapPassReport( vLight, passKind, pointLight, SHADOWMAP_PASS_RESULT_CACHE_REUSE, primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters, primaryShadowSurfs, secondaryShadowSurfs, interactions );
 			return;
 		}
@@ -10062,6 +10142,11 @@ static void RB_ShadowMapRunPass( const viewLight_t *vLight, shadowMapPassKind_t 
 		}
 		RB_ShadowMapTrackWrappedCustomGLSLReceivers( vLight, passKind, interactions );
 		RB_ShadowMapDrawReceiverFallbacks( vLight, passKind, primaryShadowSurfs, secondaryShadowSurfs, interactions );
+		if ( g_shadowMapMaskPrepareFailures > 0 ) {
+			// light only the surfaces the mask pass skipped; everything else
+			// was already drawn additively by the mapped pass
+			RB_ShadowMapStencilFallbackFiltered( primaryShadowSurfs, secondaryShadowSurfs, interactions, RB_SurfaceShadowMapReceiverPrepareFailed );
+		}
 		RB_ShadowMapPassReport( vLight, passKind, pointLight, passResult, primaryCasters, secondaryCasters, tertiaryCasters, quaternaryCasters, primaryShadowSurfs, secondaryShadowSurfs, interactions );
 		return;
 	}

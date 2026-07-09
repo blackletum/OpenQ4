@@ -288,7 +288,16 @@ void idRenderTexture::InitRenderTexture(void) {
 
 
 	if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-		common->FatalError("idRenderTexture::InitRenderTexture: Failed to create rendertexture!");
+		if ( allowIncomplete ) {
+			if ( !knownIncomplete ) {
+				common->Warning( "idRenderTexture::InitRenderTexture: framebuffer '%s' is incomplete; callers will fall back", debugLabel.c_str() );
+			}
+			knownIncomplete = true;
+		} else {
+			common->FatalError("idRenderTexture::InitRenderTexture: Failed to create rendertexture!");
+		}
+	} else {
+		knownIncomplete = false;
 	}
 
 	CaptureAttachmentHandles();
@@ -350,7 +359,16 @@ void idRenderTexture::MakeCurrent( int cubeFace ) {
 	}
 
 	if ( glCheckFramebufferStatus( GL_FRAMEBUFFER ) != GL_FRAMEBUFFER_COMPLETE ) {
-		common->FatalError( "idRenderTexture::MakeCurrent: Cubemap framebuffer face is incomplete!" );
+		if ( allowIncomplete ) {
+			if ( !knownIncomplete ) {
+				common->Warning( "idRenderTexture::MakeCurrent: cubemap framebuffer face '%s' is incomplete; callers will fall back", debugLabel.c_str() );
+			}
+			knownIncomplete = true;
+		} else {
+			common->FatalError( "idRenderTexture::MakeCurrent: Cubemap framebuffer face is incomplete!" );
+		}
+	} else {
+		knownIncomplete = false;
 	}
 }
 

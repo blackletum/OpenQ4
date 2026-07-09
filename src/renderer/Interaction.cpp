@@ -346,6 +346,23 @@ static bool R_ShadowMapShaderCanCastTranslucent( const idMaterial *shader ) {
 	return R_ShadowMapMaterialPolicyCanCastTranslucent( R_ShadowMapMaterialCasterPolicyForShader( shader ) );
 }
 
+// Stencil parity: translucent materials that cast stencil volumes today
+// (forceShadows, or the default-on r_stencilTranslucentShadows lighting
+// class) must not silently lose their shadows when a light renders shadow
+// maps. When the opt-in moments tier is unavailable they cast binary depth
+// through the opaque caster chain - the same solid occlusion their stencil
+// volumes produce in the shipping path.
+static bool R_ShadowMapShaderCanCastStencilParityTranslucent( const idMaterial *shader ) {
+	if ( shader == NULL || shader->IsDedicatedCollisionSurface() || shader->HasGui() || shader->HasSubview() ) {
+		return false;
+	}
+	if ( shader->Coverage() != MC_TRANSLUCENT ) {
+		return false;
+	}
+	return shader->SurfaceCastsShadow() ||
+		( r_stencilTranslucentShadows.GetBool() && shader->ReceivesLighting() );
+}
+
 static bool R_ShadowMapShaderSpectrumMatchesLight( const idMaterial *shader, const idRenderLightLocal *lightDef ) {
 	return shader != NULL &&
 		( lightDef == NULL || lightDef->lightShader == NULL || shader->Spectrum() == lightDef->lightShader->Spectrum() );
@@ -1664,7 +1681,8 @@ void idInteraction::CreateInteraction( const idRenderModel *model ) {
 			( shader->SurfaceCastsShadow() || allowTranslucentStencilShadowCaster );
 		const bool surfaceCanCastDedicatedShadowMap =
 			shadowMapsEnabledForInteraction &&
-			R_ShadowMapShaderCanCastOpaque( shader );
+			( R_ShadowMapShaderCanCastOpaque( shader ) ||
+				( !translucentShadowMapsEnabledForInteraction && R_ShadowMapShaderCanCastStencilParityTranslucent( shader ) ) );
 		const bool surfaceCanCastTranslucentShadowMap =
 			translucentShadowMapsEnabledForInteraction &&
 			R_ShadowMapShaderCanCastTranslucent( shader );
@@ -2114,7 +2132,8 @@ void idInteraction::AddActiveInteraction( void ) {
 				// which creates long bogus wedge occluders. Reject only that geometric case
 				// instead of blanketing the entire textures/common_lights family.
 				!skipPointLightEmitterCaster &&
-				R_ShadowMapShaderCanCastOpaque( shadowShader ) &&
+				( R_ShadowMapShaderCanCastOpaque( shadowShader ) ||
+					( !translucentShadowMapSupported && R_ShadowMapShaderCanCastStencilParityTranslucent( shadowShader ) ) ) &&
 				R_CachedInteractionShadowLODAdmitted( sint, entityDef );
 			const bool allowTranslucentShadowMapCaster =
 				translucentShadowMapSupported &&

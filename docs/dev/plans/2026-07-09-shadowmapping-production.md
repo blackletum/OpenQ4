@@ -240,9 +240,13 @@ detaching (screenshot diff); bias heatmap (mode 7) shows smooth per-cascade tran
    **binary alpha-thresholded depth casters** by default (cheap, matches stencil parity), with
    the existing moments pipeline remaining the opt-in high-quality tier. Resolve the policy in
    one table so stencil and map admission can never diverge silently again.
-3. **Translucent receivers** (C3): run translucent interactions through the mapped receiver
-   program (they already skip depth writes); fall back to the stencil GEQUAL reuse where the
-   program variant is unavailable.
+3. **Translucent receivers** (C3): DEFERRED to Phase 5. Implementation review found the
+   plan-stated approach unsound: translucent interactions render through material *stages*
+   (per-stage blend modes), not the interaction receiver program, so they cannot be routed
+   through it. The stencil path shadows them via the stencil buffer masking arbitrary stage
+   draws — the mapped equivalent is a screen-space shadow mask, which belongs with the Phase 5
+   atlas architecture. Until then translucent receivers under mapped lights stay unshadowed
+   (retail stencil behavior before r_stencilTranslucentShadows).
 4. **Narrow the skinned-receiver exclusion** (C7) to genuinely GPU-skinned geometry (MD5R
    `primBatchMesh`/`skinToModelTransforms`); CPU-skinned MD5 receivers use the mapped path.
 5. **Mask-pass resilience** (C8): per-surface failure tracking; stencil-fallback only the failed
@@ -262,6 +266,10 @@ detaching (screenshot diff); bias heatmap (mode 7) shows smooth per-cascade tran
    collision.
 9. Verify against retail assets (dev-procedure rule 1) which SP defs set `flashlightPointLight`
    / `noshadows` so the effective caster population is enumerated, not assumed.
+   **Verified 2026-07-09**: retail defs set `flashlightPointLight 0` with authored projections
+   (`def/weapons/blaster.def`, `machinegun.def`, `def/ai/char_marine*.def`, plus level defs) —
+   the gun flashlight is a projected light in stock content, served by the projected path and
+   its authored-single-projection classification guard.
 
 *Acceptance:* A/B toggling `r_useShadowMap` on representative SP maps changes shadow *quality*,
 never shadow *existence* (I1 report diff is empty); parallel-light maps show cascaded sun

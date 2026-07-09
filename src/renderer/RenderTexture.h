@@ -67,6 +67,12 @@ public:
 
 	void					AddRenderImage(idImage *image);
 	void					InitRenderTexture(void);
+
+	// Opt-in soft failure for expendable targets (shadow maps): framebuffer
+	// incompleteness marks the texture unusable instead of FatalError, so the
+	// caller can fall back (e.g. to stencil shadows) and keep running.
+	ID_INLINE void			SetAllowIncomplete( void ) { allowIncomplete = true; }
+	ID_INLINE bool			IsKnownIncomplete( void ) const { return knownIncomplete; }
 private:
 	bool					NeedsAttachmentRefresh( void ) const;
 	void					CaptureAttachmentHandles( void );
@@ -75,6 +81,8 @@ private:
 	idList<idImage *>	colorImages;
 	idImage *			depthImage;
 	GLuint				deviceHandle;
+	bool				allowIncomplete = false;
+	bool				knownIncomplete = false;
 	idStr				debugLabel;
 	idList<GLuint>		cachedColorHandles;
 	GLuint				cachedDepthHandle;
