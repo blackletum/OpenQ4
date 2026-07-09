@@ -21,6 +21,7 @@ uniform vec4 uModelMatrixRow0;
 uniform vec4 uModelMatrixRow1;
 uniform vec4 uModelMatrixRow2;
 uniform vec4 uGlobalLightOrigin;
+uniform float uPointShadowNormalOffsetWorld;
 uniform vec2 uVertexColorParams;
 
 varying vec2 vBumpTexCoord;
@@ -57,7 +58,19 @@ void main() {
 	vLightVector = TangentSpaceVector( toLight );
 	vHalfAngleVector = TangentSpaceVector( normalize( toLight ) + normalize( toView ) );
 	vViewVector = TangentSpaceVector( toView );
-	vPointShadowVector = worldPos - uGlobalLightOrigin.xyz;
+	// Normal-offset shadows: push the sampled point along the world-space
+	// geometric normal by (texel footprint at this distance * slope) before
+	// forming the cube lookup vector. uPointShadowNormalOffsetWorld is the
+	// per-distance texel factor (2 * scale / cubeFaceWidth).
+	vec3 pointShadowVector = worldPos - uGlobalLightOrigin.xyz;
+	vec3 worldNormal = normalize( vec3(
+		dot( vec4( attr_Normal, 0.0 ), uModelMatrixRow0 ),
+		dot( vec4( attr_Normal, 0.0 ), uModelMatrixRow1 ),
+		dot( vec4( attr_Normal, 0.0 ), uModelMatrixRow2 ) ) );
+	float pointShadowLightCos = max( dot( normalize( attr_Normal ), localLightDir ), 0.0 );
+	float pointShadowSinTheta = sqrt( max( 1.0 - pointShadowLightCos * pointShadowLightCos, 0.0 ) );
+	float pointShadowNormalOffset = uPointShadowNormalOffsetWorld * length( pointShadowVector ) * pointShadowSinTheta;
+	vPointShadowVector = pointShadowVector + worldNormal * pointShadowNormalOffset;
 
 	vBumpTexCoord = vec2( dot( texCoord, uBumpMatrixS ), dot( texCoord, uBumpMatrixT ) );
 	vDiffuseTexCoord = vec2( dot( texCoord, uDiffuseMatrixS ), dot( texCoord, uDiffuseMatrixT ) );

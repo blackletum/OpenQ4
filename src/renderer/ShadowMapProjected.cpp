@@ -244,6 +244,31 @@ static float R_ShadowMapSliceWorldTexelSize( const viewDef_t *viewDef, const flo
 	return R_ShadowMapWorldTexelSizeFromSamples( samplePoints, sampleCount, tileSize );
 }
 
+// World width of the projected light's frustum at its far plane: the authored
+// projection spans +-right / +-up around the target axis. Projected (spot)
+// lights never populate lightRadius, so this is their only footprint source.
+static float R_ShadowMapProjectedFarPlaneWidth( const viewLight_t *vLight ) {
+	if ( vLight == NULL || vLight->lightDef == NULL || vLight->lightDef->parms.pointLight ) {
+		return 0.0f;
+	}
+	const renderLight_t &parms = vLight->lightDef->parms;
+	return 2.0f * Max( parms.right.Length(), parms.up.Length() );
+}
+
+// World distance over which the stored falloff depth spans 0..1. The depth
+// row is the authored falloff plane (clipPlanes[2] = lightProject[3]), whose
+// normal length is the reciprocal of that distance. This is the one true
+// normalization for converting world-space bias into stored-depth units; it
+// is identical for every cascade because the depth row is never cropped.
+static float R_ShadowMapFalloffDepthExtent( const idPlane baseClipPlanes[4] ) {
+	const idVec3 falloffNormal = baseClipPlanes[2].Normal();
+	const float normalLength = falloffNormal.Length();
+	if ( normalLength <= idMath::FLOAT_EPSILON ) {
+		return 1.0f;
+	}
+	return Max( 1.0f, 1.0f / normalLength );
+}
+
 static float R_ShadowMapLightWorldTexelSize( const viewLight_t *vLight, const int tileSize ) {
 	if ( vLight == NULL || tileSize <= 0 ) {
 		return 0.0f;
@@ -257,8 +282,22 @@ static float R_ShadowMapLightWorldTexelSize( const viewLight_t *vLight, const in
 		radius[2] = Max( idMath::Fabs( radius[2] ), idMath::Fabs( parms.lightRadius[2] ) + idMath::Fabs( parms.lightCenter[2] ) );
 	}
 
-	const float maxExtent = Max( Max( idMath::Fabs( radius.x ), idMath::Fabs( radius.y ) ), idMath::Fabs( radius.z ) ) * 2.0f;
+	float maxExtent = Max( Max( idMath::Fabs( radius.x ), idMath::Fabs( radius.y ) ), idMath::Fabs( radius.z ) ) * 2.0f;
+	maxExtent = Max( maxExtent, R_ShadowMapProjectedFarPlaneWidth( vLight ) );
 	return maxExtent / Max( 1, tileSize );
+}
+
+// Cascade texel footprint from the fitted light-space crop: crop NDC width
+// mapped back through the far-plane world width. Conservative (texels shrink
+// toward the light apex) and tied to the actual shadow-map texel grid,
+// unlike the camera-slice AABB which overestimates for rotated frusta.
+static float R_ShadowMapCascadeCropWorldTexelSize( const viewLight_t *vLight, const idVec3 &ndcMins, const idVec3 &ndcMaxs, const int tileSize ) {
+	const float farWidth = R_ShadowMapProjectedFarPlaneWidth( vLight );
+	if ( farWidth <= 0.0f || tileSize <= 0 ) {
+		return 0.0f;
+	}
+	const float cropNdcWidth = Max( ndcMaxs.x - ndcMins.x, ndcMaxs.y - ndcMins.y );
+	return farWidth * cropNdcWidth * 0.5f / Max( 1, tileSize );
 }
 
 float R_ShadowMapTexelDepthBias( const float worldTexelSize, const float depthRange ) {
@@ -423,7 +462,7 @@ static void R_ShadowMapCollapseProjectedStateToSingleCascade( shadowMapProjected
 	state.worldTexelSize[0] = R_ShadowMapLightWorldTexelSize( vLight, tileSize );
 	state.sliceNear[0] = sliceNear;
 	state.sliceFar[0] = sliceFar;
-	state.depthRange[0] = Max( sliceFar - sliceNear, 1.0f );
+	state.depthRange[0] = R_ShadowMapFalloffDepthExtent( baseClipPlanes );
 	state.clipZExtent[0] = 1.0f;
 	state.texelDepthBias[0] = R_ShadowMapTexelDepthBias( state.worldTexelSize[0], state.depthRange[0] );
 }
@@ -443,7 +482,7 @@ void R_BuildShadowMapProjectedLightState( const viewLight_t *vLight, const viewD
 
 	if ( requestedCascadeCount <= 1 || viewDef == NULL ) {
 		const float worldTexelSize = R_ShadowMapLightWorldTexelSize( vLight, tileSize );
-		const float depthRange = Max( worldTexelSize * Max( 1, tileSize ), 1.0f );
+		const float depthRange = R_ShadowMapFalloffDepthExtent( baseClipPlanes );
 		state.worldTexelSize[0] = worldTexelSize;
 		state.sliceNear[0] = 0.0f;
 		state.sliceFar[0] = depthRange;
@@ -487,14 +526,18 @@ void R_BuildShadowMapProjectedLightState( const viewLight_t *vLight, const viewD
 			R_ShadowMapBuildCascadeClipPlanes( baseClipPlanes, ndcMins, ndcMaxs, state.clipPlanes[cascadeIndex] );
 			state.biasScale[cascadeIndex] = R_ShadowMapCascadeBiasScale( ndcMins, ndcMaxs );
 			state.clipZExtent[cascadeIndex] = ndcMaxs.z - ndcMins.z;
-			state.worldTexelSize[cascadeIndex] = R_ShadowMapSliceWorldTexelSize( viewDef, sliceNear, sliceFar, tileSize );
+			const float cropTexelSize = R_ShadowMapCascadeCropWorldTexelSize( vLight, ndcMins, ndcMaxs, tileSize );
+			state.worldTexelSize[cascadeIndex] = cropTexelSize > 0.0f ? cropTexelSize : R_ShadowMapSliceWorldTexelSize( viewDef, sliceNear, sliceFar, tileSize );
 		} else {
 			R_ShadowMapCollapseProjectedStateToSingleCascade( state, vLight, baseClipPlanes, tileSize, zNear, maxDistance, cascadeIndex, fit.fallbackReason );
 			return;
 		}
 		state.sliceNear[cascadeIndex] = sliceNear;
 		state.sliceFar[cascadeIndex] = sliceFar;
-		state.depthRange[cascadeIndex] = sliceFar - sliceNear;
+		// stored depth is falloff-plane depth: bias normalization uses the
+		// light's falloff extent, identically for every cascade, so bias
+		// magnitude cannot jump across split boundaries
+		state.depthRange[cascadeIndex] = R_ShadowMapFalloffDepthExtent( baseClipPlanes );
 		state.texelDepthBias[cascadeIndex] = R_ShadowMapTexelDepthBias( state.worldTexelSize[cascadeIndex], state.depthRange[cascadeIndex] );
 		sliceNear = sliceFar;
 	}

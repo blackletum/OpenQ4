@@ -1265,6 +1265,8 @@ extern idCVar r_shadowMapFilterMode;	// projected-light filter mode
 extern idCVar r_shadowMapPointFilterMode;	// point-light filter mode
 extern idCVar r_shadowMapPCSSLightRadius;	// projected PCSS-lite blocker search radius
 extern idCVar r_shadowMapPCSSMaxRadius;	// projected PCSS-lite maximum filter radius
+extern idCVar r_shadowMapNormalOffsetScale;	// normal-offset receiver bias in shadow texels
+extern idCVar r_shadowMapCasterCulling;	// caster face culling: 0 = two-sided, 1 = light-facing, 2 = back faces
 extern idCVar r_shadowMapPointHighPrecision;	// 1 = store point shadow depth as high-precision float color
 extern idCVar r_shadowMapPointLights;	// 1 = opt into point-light shadow maps; 0 = legacy stencil fallback for point lights
 extern idCVar r_shadowMapPointDepthCompare;	// 1 = use samplerCubeShadow depth compare for point maps when supported

@@ -40,10 +40,6 @@ bool AlphaTestPass( float alpha ) {
 }
 
 void main() {
-	if ( vShadowDepth <= 0.0 || vShadowDepth >= 1.0 ) {
-		discard;
-	}
-
 	if ( uAlphaTestEnabled > 0.5 ) {
 		float alpha = texture2D( uAlphaMap, vAlphaTexCoord ).a * uAlphaScale;
 		if ( uAlphaHashEnabled > 0.5 && uAlphaTestMode > 0.5 ) {
@@ -55,6 +51,15 @@ void main() {
 		} else if ( !AlphaTestPass( alpha ) ) {
 			discard;
 		}
+	}
+
+	// Casters past the falloff plane clamp to the far depth instead of
+	// vanishing (better behaved under PCF near the falloff boundary); only
+	// apex-side geometry (depth <= 0), which cannot occlude anything inside
+	// the light volume, is discarded. The discard runs after the alpha fetch
+	// so the texture fetch's implicit derivatives stay defined.
+	if ( vShadowDepth <= 0.0 ) {
+		discard;
 	}
 
 	// Shader-written fragment depth bypasses glPolygonOffset, so the classic

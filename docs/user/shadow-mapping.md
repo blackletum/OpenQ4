@@ -130,6 +130,7 @@ vid_restart
 | `r_shadowMapProjectedCSM` | `1` | `0..1` | Allows ordinary projected lights to use CSM when `r_shadowMapCSM` is enabled; parallel/global lights keep their dedicated large-coverage policy. |
 | `r_shadowMapConservativeCasters` | `1` | `0..1` | Keeps shadow-map caster submission separate from visible receiver scissors, so off-screen blockers can still shadow visible receivers. |
 | `r_shadowMapSkipStencilShadows` | `1` | `0..1` | Skips stencil shadow volume generation and linking for lights that will render shadow maps, removing the duplicate CPU shadow work. A light that fails a shadow-map pass automatically restores its stencil volumes on the next frame. |
+| `r_shadowMapCasterCulling` | `2` | `0..2` | Caster face culling: `0` renders casters two-sided, `1` stores light-facing faces, `2` stores back faces (fewer acne artifacts, slight detachment on thin geometry). Materials declared `twoSided`/`backSided` are always honored, so grates, foliage, and curtains cast correctly in every mode. |
 | `r_shadowMapSize` | `1024` | `128..4096` | Base shadow-map resolution. Higher values cost more VRAM and GPU time. |
 | `r_shadowMapFilterRadius` | `2.0` | `0..8` | Projected-light PCF filter radius in texels. |
 | `r_shadowMapFilterTaps` | `13` | `1..13` | Projected-light PCF tap budget. Values up to `1`, `5`, `9`, and `13` select progressively wider sample sets. |
@@ -247,6 +248,7 @@ Projected shadow maps store Quake 4's authored light falloff depth directly, so 
 | `r_shadowMapBias` | `0.00016` | `0..0.05` | Constant receiver depth bias for projected lights. |
 | `r_shadowMapNormalBias` | `0.00075` | `0..0.05` | Extra projected-light bias on sloped receivers. |
 | `r_shadowMapTexelBiasScale` | `0.45` | `0..8` | Uses texel-aware receiver bias based on fitted cascade/light footprint. Constant bias acts as a compatibility floor. |
+| `r_shadowMapNormalOffsetScale` | `1.0` | `0..8` | Normal-offset bias in shadow texels: pushes the receiver sample point along the surface normal on sloped surfaces, fixing acne without detaching contact shadows. The preferred first knob for slope acne. |
 | `r_shadowMapReceiverPlaneBias` | `0` | `0..1` | Allows derivative receiver-plane bias for wider projected-light filters. |
 | `r_shadowMapPolygonFactor` | `0.75` | `0..16` | Slope-scale caster depth offset applied by the caster shaders while rendering shadow maps (shadow casters write shader depth, which `glPolygonOffset` cannot bias). |
 | `r_shadowMapPolygonOffset` | `0.5` | `0..64` | Constant caster depth offset in resolvable depth-buffer steps, applied by the caster shaders alongside the slope-scale term. |

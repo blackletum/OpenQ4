@@ -1792,6 +1792,7 @@ typedef struct {
 	GLint			shadowBias;
 	GLint			shadowNormalBias;
 	GLint			shadowTexelDepthBias;
+	GLint			shadowNormalOffsetWorld;
 	GLint			shadowReceiverPlaneBias;
 	GLint			shadowFilterRadius;
 	GLint			shadowFilterTaps;
@@ -1909,6 +1910,7 @@ typedef struct {
 	GLint			shadowBias;
 	GLint			shadowNormalBias;
 	GLint			pointShadowTexelDepthBias;
+	GLint			pointShadowNormalOffsetWorld;
 	GLint			shadowFilterRadius;
 	GLint			shadowFilterTaps;
 	GLint			shadowFilterMode;
@@ -2615,6 +2617,23 @@ static float RB_PointShadowMapDepthModeValue( void ) {
 	return RB_PointShadowMapHighPrecisionEnabled() ? 1.0f : 0.0f;
 }
 
+// GL_DEPTH_CLAMP (core 3.2 / ARB_depth_clamp / NV_depth_clamp) lets point
+// casters between the light and the cube-face near plane rasterize with
+// clamped depth instead of being clipped away; their color-packed radial
+// depth stays correct, so near-caster shadows are preserved.
+static bool g_shadowMapDepthClampAvailable = false;
+static int g_shadowMapDepthClampGeneration = -1;
+
+static bool RB_ShadowMapDepthClampAvailable( void ) {
+	if ( g_shadowMapDepthClampGeneration != tr.videoRestartCount ) {
+		g_shadowMapDepthClampGeneration = tr.videoRestartCount;
+		g_shadowMapDepthClampAvailable = glConfig.glVersion >= 3.2f
+			|| GLCapabilityProbe_HasExtension( "GL_ARB_depth_clamp" )
+			|| GLCapabilityProbe_HasExtension( "GL_NV_depth_clamp" );
+	}
+	return g_shadowMapDepthClampAvailable;
+}
+
 static bool RB_TranslucentShadowMomentsRequested( void ) {
 	return r_shadowMapTranslucentMoments.GetBool();
 }
@@ -2796,6 +2815,47 @@ static int g_shadowMapPointResourcesOkGeneration = -1;
 bool RB_ShadowMapResourcesKnownGood( bool pointLight ) {
 	const int generation = pointLight ? g_shadowMapPointResourcesOkGeneration : g_shadowMapProjectedResourcesOkGeneration;
 	return generation == tr.videoRestartCount;
+}
+
+// Shadow casters render in light space, where the mirrored-view logic in
+// GL_Cull does not apply. idTech4 winding makes the engine-front (visible)
+// side of a front-sided material the GL_BACK face, so:
+//   r_shadowMapCasterCulling 0: two-sided (no culling) - full coverage, most acne
+//   r_shadowMapCasterCulling 1: store light-facing engine-front faces (cull GL_FRONT)
+//   r_shadowMapCasterCulling 2: store engine-back faces (cull GL_BACK, the
+//     long-standing default here) - hides acne on closed meshes at the cost
+//     of slight detachment on thin geometry
+// Material twoSided/backSided cull types are always honored per surface;
+// previously every caster was drawn one-sided regardless of material, which
+// dropped foliage/grate/curtain casters from the map entirely.
+static int g_shadowMapCasterCullApplied = -1; // 0 = culling disabled, else the GLenum face
+
+static void RB_ShadowMapApplyCasterCull( const idMaterial *shader ) {
+	const int mode = idMath::ClampInt( 0, 2, r_shadowMapCasterCulling.GetInteger() );
+	const int materialCull = ( shader != NULL ) ? shader->GetCullType() : CT_FRONT_SIDED;
+	int desired = 0;
+	if ( mode != 0 && materialCull != CT_TWO_SIDED ) {
+		GLenum cullFace = ( mode == 1 ) ? GL_FRONT : GL_BACK;
+		if ( materialCull == CT_BACK_SIDED ) {
+			cullFace = ( cullFace == GL_FRONT ) ? GL_BACK : GL_FRONT;
+		}
+		desired = static_cast<int>( cullFace );
+	}
+	if ( desired == g_shadowMapCasterCullApplied ) {
+		return;
+	}
+	g_shadowMapCasterCullApplied = desired;
+	if ( desired == 0 ) {
+		glDisable( GL_CULL_FACE );
+		return;
+	}
+	glEnable( GL_CULL_FACE );
+	glCullFace( static_cast<GLenum>( desired ) );
+}
+
+static void RB_ShadowMapResetCasterCull( void ) {
+	g_shadowMapCasterCullApplied = -1;
+	RB_ShadowMapApplyCasterCull( NULL );
 }
 
 // A shadow-map render failure on a light whose stencil volumes were elided
@@ -3156,6 +3216,7 @@ static int RB_ShadowMapBuildPassSignatureForView( const viewLight_t *vLight, con
 	hash = RB_ShadowMapHashInt( hash, r_shadowMapStableAlphaHash.GetBool() ? 1 : 0 );
 	hash = RB_ShadowMapHashFloat( hash, RB_ShadowMapPolygonFactor() );
 	hash = RB_ShadowMapHashFloat( hash, RB_ShadowMapPolygonOffset() );
+	hash = RB_ShadowMapHashFloat( hash, static_cast<float>( idMath::ClampInt( 0, 2, r_shadowMapCasterCulling.GetInteger() ) ) );
 	if ( pointLight ) {
 		hash = RB_ShadowMapHashInt( hash, idMath::ClampInt( 128, 2048, r_shadowMapSize.GetInteger() ) );
 		hash = RB_ShadowMapHashInt( hash, RB_PointShadowMapHighPrecisionEnabled() ? 1 : 0 );
@@ -3782,6 +3843,29 @@ static bool RB_ShadowMapValidateProjectedStateContract( const viewLight_t *vLigh
 				return false;
 			}
 			previousSplit = splitDepth;
+		}
+	}
+
+	// Depth-convention invariants: caster and receiver agree by sharing one
+	// falloff depth row, which per-cascade cropping must never touch, and the
+	// bias depth normalization (falloff extent) is identical for every
+	// cascade. These are only consistent by parallel construction today; a
+	// refactor that splits the conventions must fail here, not on screen.
+	for ( int cascadeIndex = 0; cascadeIndex < cascadeCount; cascadeIndex++ ) {
+		for ( int i = 0; i < 4; i++ ) {
+			if ( state.clipPlanes[cascadeIndex][2][i] != state.baseClipPlanes[2][i]
+				|| state.clipPlanes[cascadeIndex][3][i] != state.baseClipPlanes[3][i] ) {
+				if ( reason != NULL ) {
+					*reason = "projected cascade depth/Q rows diverge from the base convention";
+				}
+				return false;
+			}
+		}
+		if ( idMath::Fabs( state.depthRange[cascadeIndex] - state.depthRange[0] ) > 0.01f ) {
+			if ( reason != NULL ) {
+				*reason = "projected cascade bias depth normalization is not uniform";
+			}
+			return false;
 		}
 	}
 
@@ -4498,6 +4582,7 @@ static const char *programBaseName = "glprogs/shadow_interaction";
 	g_shadowMapProgram.shadowBias = glGetUniformLocationARB( programObject, "uShadowBias" );
 	g_shadowMapProgram.shadowNormalBias = glGetUniformLocationARB( programObject, "uShadowNormalBias" );
 	g_shadowMapProgram.shadowTexelDepthBias = glGetUniformLocationARB( programObject, "uShadowTexelDepthBias[0]" );
+	g_shadowMapProgram.shadowNormalOffsetWorld = glGetUniformLocationARB( programObject, "uShadowNormalOffsetWorld[0]" );
 	g_shadowMapProgram.shadowReceiverPlaneBias = glGetUniformLocationARB( programObject, "uShadowReceiverPlaneBias" );
 	g_shadowMapProgram.shadowFilterRadius = glGetUniformLocationARB( programObject, "uShadowFilterRadius" );
 	g_shadowMapProgram.shadowFilterTaps = glGetUniformLocationARB( programObject, "uShadowFilterTaps" );
@@ -4907,6 +4992,7 @@ static const char *programBaseName = "glprogs/shadow_point_interaction";
 	g_pointShadowMapProgram.shadowBias = glGetUniformLocationARB( programObject, "uShadowBias" );
 	g_pointShadowMapProgram.shadowNormalBias = glGetUniformLocationARB( programObject, "uShadowNormalBias" );
 	g_pointShadowMapProgram.pointShadowTexelDepthBias = glGetUniformLocationARB( programObject, "uPointShadowTexelDepthBias" );
+	g_pointShadowMapProgram.pointShadowNormalOffsetWorld = glGetUniformLocationARB( programObject, "uPointShadowNormalOffsetWorld" );
 	g_pointShadowMapProgram.shadowFilterRadius = glGetUniformLocationARB( programObject, "uShadowFilterRadius" );
 	g_pointShadowMapProgram.shadowFilterTaps = glGetUniformLocationARB( programObject, "uShadowFilterTaps" );
 	g_pointShadowMapProgram.shadowFilterMode = glGetUniformLocationARB( programObject, "uShadowFilterMode" );
@@ -6509,6 +6595,8 @@ static int RB_ShadowMapDrawCasterChain( const drawSurf_t *surf, const int cascad
 			RB_ShadowMapSetCasterDepthRow( surf, cascadeIndex );
 		}
 
+		RB_ShadowMapApplyCasterCull( surf->material );
+
 		idDrawVert *ac = (idDrawVert *)vertexCache.Position( ambientCache );
 		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
 
@@ -6951,6 +7039,8 @@ static int RB_PointShadowMapDrawCasterChain( const drawSurf_t *surf, const float
 			glUniform4fvARB( g_pointShadowCasterProgram.modelMatrixRow2, 1, row2 );
 		}
 
+		RB_ShadowMapApplyCasterCull( surf->material );
+
 		idDrawVert *ac = (idDrawVert *)vertexCache.Position( ambientCache );
 		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
 
@@ -7175,8 +7265,7 @@ static bool RB_RenderShadowMap( const drawSurf_t *primaryCasters, const drawSurf
 	glDisable( GL_BLEND );
 	glDisable( GL_STENCIL_TEST );
 	glEnable( GL_SCISSOR_TEST );
-	glEnable( GL_CULL_FACE );
-	glCullFace( GL_BACK );
+	RB_ShadowMapResetCasterCull();
 	const bool useHashedAlpha = RB_ShadowMapHashedAlphaEnabled();
 
 	for ( int cascadeIndex = 0; cascadeIndex < g_projectedShadowMapState.cascadeCount; cascadeIndex++ ) {
@@ -7200,6 +7289,9 @@ static bool RB_RenderShadowMap( const drawSurf_t *primaryCasters, const drawSurf
 		drawnCasterCount += RB_ShadowMapDrawCasterChain( quaternaryCasters, cascadeIndex, useHashedAlpha );
 	}
 
+	// a two-sided caster may have left face culling disabled; the state
+	// restore below cannot re-enable it from the invalidated cull cache
+	glEnable( GL_CULL_FACE );
 	glUseProgramObjectARB( 0 );
 
 	if ( backEnd.renderTexture != NULL ) {
@@ -7273,7 +7365,10 @@ static bool RB_RenderPointShadowMap( const drawSurf_t *primaryCasters, const dra
 	const int savedFaceCulling = backEnd.glState.faceCulling;
 
 	const float farClip = RB_PointShadowMapLightFar( backEnd.vLight );
-	const float nearClip = idMath::ClampFloat( 0.5f, 16.0f, farClip * 0.01f );
+	// with depth clamp, casters inside the near plane still rasterize (their
+	// color-packed radial depth stays exact), so the near plane only shapes the
+	// ordering-depth distribution; without it, shrink the clipped-away zone
+	const float nearClip = idMath::ClampFloat( 0.5f, RB_ShadowMapDepthClampAvailable() ? 16.0f : 4.0f, farClip * 0.01f );
 	float projectionMatrix[16];
 	RB_PointShadowMapBuildProjectionMatrix( nearClip, farClip, projectionMatrix );
 	g_shadowMapStats.shadowMapUpdates++;
@@ -7330,8 +7425,10 @@ static bool RB_RenderPointShadowMap( const drawSurf_t *primaryCasters, const dra
 	glDepthFunc( GL_LEQUAL );
 	glDisable( GL_BLEND );
 	glDisable( GL_STENCIL_TEST );
-	glEnable( GL_CULL_FACE );
-	glCullFace( GL_BACK );
+	RB_ShadowMapResetCasterCull();
+	if ( RB_ShadowMapDepthClampAvailable() ) {
+		glEnable( GL_DEPTH_CLAMP_NV );
+	}
 	glClearColor( 1.0f, 1.0f, 1.0f, 1.0f );
 
 	glMatrixMode( GL_PROJECTION );
@@ -7354,6 +7451,12 @@ static bool RB_RenderPointShadowMap( const drawSurf_t *primaryCasters, const dra
 		drawnCasterCount += RB_PointShadowMapDrawCasterChain( quaternaryCasters, lightModelViewMatrix );
 	}
 
+	if ( RB_ShadowMapDepthClampAvailable() ) {
+		glDisable( GL_DEPTH_CLAMP_NV );
+	}
+	// a two-sided caster may have left face culling disabled; the state
+	// restore below cannot re-enable it from the invalidated cull cache
+	glEnable( GL_CULL_FACE );
 	glUseProgramObjectARB( 0 );
 	glClearColor( clearColor[0], clearColor[1], clearColor[2], clearColor[3] );
 
@@ -7537,7 +7640,10 @@ static bool RB_RenderPointTranslucentShadowMap( const drawSurf_t *primaryCasters
 	const GLboolean stencilWasEnabled = glIsEnabled( GL_STENCIL_TEST );
 	const int savedFaceCulling = backEnd.glState.faceCulling;
 	const float farClip = RB_PointShadowMapLightFar( backEnd.vLight );
-	const float nearClip = idMath::ClampFloat( 0.5f, 16.0f, farClip * 0.01f );
+	// with depth clamp, casters inside the near plane still rasterize (their
+	// color-packed radial depth stays exact), so the near plane only shapes the
+	// ordering-depth distribution; without it, shrink the clipped-away zone
+	const float nearClip = idMath::ClampFloat( 0.5f, RB_ShadowMapDepthClampAvailable() ? 16.0f : 4.0f, farClip * 0.01f );
 	float projectionMatrix[16];
 	RB_PointShadowMapBuildProjectionMatrix( nearClip, farClip, projectionMatrix );
 
@@ -7582,6 +7688,9 @@ static bool RB_RenderPointTranslucentShadowMap( const drawSurf_t *primaryCasters
 	glBlendFunc( GL_ONE, GL_ONE );
 	glEnable( GL_CULL_FACE );
 	glCullFace( GL_BACK );
+	if ( RB_ShadowMapDepthClampAvailable() ) {
+		glEnable( GL_DEPTH_CLAMP_NV );
+	}
 	glClearColor( 0.0f, 0.0f, 0.0f, 0.0f );
 
 	glMatrixMode( GL_PROJECTION );
@@ -7602,6 +7711,9 @@ static bool RB_RenderPointTranslucentShadowMap( const drawSurf_t *primaryCasters
 		RB_PointShadowMapDrawTranslucentCasterChain( secondaryCasters, lightModelViewMatrix );
 	}
 
+	if ( RB_ShadowMapDepthClampAvailable() ) {
+		glDisable( GL_DEPTH_CLAMP_NV );
+	}
 	glUseProgramObjectARB( 0 );
 	glClearColor( clearColor[0], clearColor[1], clearColor[2], clearColor[3] );
 
@@ -8845,6 +8957,14 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 	if ( g_shadowMapProgram.shadowTexelDepthBias >= 0 ) {
 		glUniform1fvARB( g_shadowMapProgram.shadowTexelDepthBias, SHADOWMAP_MAX_CASCADES, g_projectedShadowMapState.texelDepthBias );
 	}
+	if ( g_shadowMapProgram.shadowNormalOffsetWorld >= 0 ) {
+		float normalOffsets[SHADOWMAP_MAX_CASCADES];
+		const float normalOffsetScale = Max( 0.0f, r_shadowMapNormalOffsetScale.GetFloat() );
+		for ( int cascadeIndex = 0; cascadeIndex < SHADOWMAP_MAX_CASCADES; cascadeIndex++ ) {
+			normalOffsets[cascadeIndex] = g_projectedShadowMapState.worldTexelSize[cascadeIndex] * normalOffsetScale;
+		}
+		glUniform1fvARB( g_shadowMapProgram.shadowNormalOffsetWorld, SHADOWMAP_MAX_CASCADES, normalOffsets );
+	}
 	if ( g_shadowMapProgram.shadowReceiverPlaneBias >= 0 ) {
 		glUniform1fARB( g_shadowMapProgram.shadowReceiverPlaneBias, r_shadowMapReceiverPlaneBias.GetBool() ? 1.0f : 0.0f );
 	}
@@ -9070,7 +9190,15 @@ static bool RB_GLSLPointShadowMap_CreateDrawInteractions( const drawSurf_t *surf
 		}
 	}
 	if ( g_pointShadowMapProgram.shadowBias >= 0 ) {
-		glUniform1fARB( g_pointShadowMapProgram.shadowBias, r_shadowMapPointBias.GetFloat() );
+		float pointBias = r_shadowMapPointBias.GetFloat();
+		if ( !RB_PointShadowMapDepthCompareEnabled() ) {
+			// the manual compare path reads radial depth from color storage;
+			// floor the bias by that storage's quantization step near the far
+			// envelope (fp16 mantissa step in [0.5,1) vs 16-bit fixed packing)
+			const float storageStep = RB_PointShadowMapHighPrecisionEnabled() ? ( 1.0f / 2048.0f ) : ( 1.0f / 65025.0f );
+			pointBias = Max( pointBias, storageStep * 1.5f );
+		}
+		glUniform1fARB( g_pointShadowMapProgram.shadowBias, pointBias );
 	}
 	if ( g_pointShadowMapProgram.shadowNormalBias >= 0 ) {
 		glUniform1fARB( g_pointShadowMapProgram.shadowNormalBias, r_shadowMapPointNormalBias.GetFloat() );
@@ -9078,6 +9206,12 @@ static bool RB_GLSLPointShadowMap_CreateDrawInteractions( const drawSurf_t *surf
 	if ( g_pointShadowMapProgram.pointShadowTexelDepthBias >= 0 ) {
 		const float texelDepthBias = Max( 0.0f, r_shadowMapTexelBiasScale.GetFloat() ) / Max( 1, g_pointShadowMapRenderTexture->GetWidth() );
 		glUniform1fARB( g_pointShadowMapProgram.pointShadowTexelDepthBias, texelDepthBias );
+	}
+	if ( g_pointShadowMapProgram.pointShadowNormalOffsetWorld >= 0 ) {
+		// per-distance texel factor: a cube face spans 2*distance across
+		// width texels, so one texel at distance d is (2*d/width) world units
+		const float normalOffsetFactor = 2.0f * Max( 0.0f, r_shadowMapNormalOffsetScale.GetFloat() ) / Max( 1, g_pointShadowMapRenderTexture->GetWidth() );
+		glUniform1fARB( g_pointShadowMapProgram.pointShadowNormalOffsetWorld, normalOffsetFactor );
 	}
 	if ( g_pointShadowMapProgram.shadowFilterRadius >= 0 ) {
 		glUniform1fARB( g_pointShadowMapProgram.shadowFilterRadius, r_shadowMapPointFilterRadius.GetFloat() );

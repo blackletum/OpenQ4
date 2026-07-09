@@ -21,6 +21,7 @@ uniform vec4 uShadowRow0[4];
 uniform vec4 uShadowRow1[4];
 uniform vec4 uShadowRow2[4];
 uniform vec4 uShadowRow3[4];
+uniform float uShadowNormalOffsetWorld[4];
 uniform vec2 uVertexColorParams;
 
 varying vec2 vBumpTexCoord;
@@ -46,12 +47,18 @@ vec3 TangentSpaceVector( vec3 objectVector ) {
 		dot( attr_Normal, objectVector ) );
 }
 
-vec4 BuildShadowCoord( vec4 position, int index ) {
+// Normal-offset shadows: evaluate the shadow projection at a point pushed
+// along the geometric normal by (world texel size * slope). Shifting the
+// sampled point off the surface fixes self-shadow acne structurally where
+// pure depth-space bias would have to grow until contact shadows detach.
+// The shadow rows are localized planes, so the offset is model-space.
+vec4 BuildShadowCoord( vec4 position, vec3 normalOffsetDir, float sinTheta, int index ) {
+	vec4 offsetPosition = vec4( position.xyz + normalOffsetDir * ( uShadowNormalOffsetWorld[index] * sinTheta ), 1.0 );
 	return vec4(
-		dot( position, uShadowRow0[index] ),
-		dot( position, uShadowRow1[index] ),
-		dot( position, uShadowRow2[index] ),
-		dot( position, uShadowRow3[index] ) );
+		dot( offsetPosition, uShadowRow0[index] ),
+		dot( offsetPosition, uShadowRow1[index] ),
+		dot( offsetPosition, uShadowRow2[index] ),
+		dot( offsetPosition, uShadowRow3[index] ) );
 }
 
 void main() {
@@ -77,13 +84,16 @@ void main() {
 		dot( position, uLightProjectionT ),
 		0.0,
 		dot( position, uLightProjectionQ ) );
-	vShadowCoord0 = BuildShadowCoord( position, 0 );
-	vShadowCoord1 = BuildShadowCoord( position, 1 );
-	vShadowCoord2 = BuildShadowCoord( position, 2 );
-	vShadowCoord3 = BuildShadowCoord( position, 3 );
+	vec3 shadowNormal = normalize( attr_Normal );
+	float shadowLightCos = max( dot( shadowNormal, localLightDir ), 0.0 );
+	float shadowSinTheta = sqrt( max( 1.0 - shadowLightCos * shadowLightCos, 0.0 ) );
+	vShadowCoord0 = BuildShadowCoord( position, shadowNormal, shadowSinTheta, 0 );
+	vShadowCoord1 = BuildShadowCoord( position, shadowNormal, shadowSinTheta, 1 );
+	vShadowCoord2 = BuildShadowCoord( position, shadowNormal, shadowSinTheta, 2 );
+	vShadowCoord3 = BuildShadowCoord( position, shadowNormal, shadowSinTheta, 3 );
 
 	vVertexColor = gl_Color.rgb * uVertexColorParams.x + vec3( uVertexColorParams.y );
-	vShadowLightCos = max( dot( normalize( attr_Normal ), localLightDir ), 0.0 );
+	vShadowLightCos = shadowLightCos;
 	vViewDepth = max( -viewPosition.z, 0.0 );
 
 	gl_Position = ftransform();

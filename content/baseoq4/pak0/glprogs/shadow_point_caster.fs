@@ -64,10 +64,10 @@ void main() {
 	if ( uPointShadowFar <= 0.0 ) {
 		discard;
 	}
+	// Casters beyond the padded far envelope clamp to the far depth instead
+	// of vanishing; the receiver treats depth >= 1 as unshadowed, so clamping
+	// only improves filter behavior near the envelope boundary.
 	float rawDepth = length( vPointShadowVector ) / uPointShadowFar;
-	if ( rawDepth <= 0.0 || rawDepth >= 1.0 ) {
-		discard;
-	}
 	// glPolygonOffset cannot bias the stored radial depth (only the rasterized
 	// ordering depth), so the slope-scale caster offset is folded into the
 	// stored value here: x scales with the radial-depth slope, y is pre-scaled
