@@ -82,6 +82,13 @@ public:
 	{
 		return efxEnabled;
 	}
+	// true after Init() failed to open a device/context; the render loop uses
+	// this to keep the periodic re-init retry alive while the engine-set
+	// s_noSound silence is in effect
+	bool			InitFailed() const
+	{
+		return initFailed;
+	}
 	bool			HasEFXFilters() const
 	{
 		return efxFiltersAvailable;
@@ -127,6 +134,7 @@ private:
 	bool				reopenDeviceAvailable;
 	bool				deferredUpdatesAvailable;
 	bool				deferredUpdatesActive;
+	bool				initFailed;
 	bool				openedWithDefaultFallback;
 	int					openedHrtfMode;
 	int					openedSpeakerCount;

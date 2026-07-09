@@ -119,6 +119,7 @@ jobs:
           python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
           import os
+          import pathlib
 
           matrix = [
               {
@@ -193,6 +194,26 @@ jobs:
                   "missing Apple signing/notary repository secrets: "
                   + ", ".join(missing_macos_secrets)
               )
+          if macos_support_tier == "first-class":
+              evidence_path = pathlib.Path("docs/dev/macos-signoff-evidence.md")
+              evidence = evidence_path.read_text(encoding="utf-8")
+              incomplete_evidence_markers = [
+                  marker
+                  for marker in (
+                      "Evidence status: pending",
+                      "- [ ] No completed macOS first-class support evidence is recorded yet.",
+                  )
+                  if marker in evidence
+              ]
+              if incomplete_evidence_markers:
+                  raise SystemExit(
+                      "First-class macOS releases require completed signoff evidence in "
+                      f"{evidence_path}, but it still contains: "
+                      + "; ".join(repr(marker) for marker in incomplete_evidence_markers)
+                      + ". Validate the signoff archive and record it with "
+                      "tools/macos/record_signoff_evidence.py --update-index, or rerun "
+                      "with macos_support_tier=experimental."
+                  )
           macos_signed_release_enabled = not missing_macos_secrets
           macos_release_mode = "signed" if macos_signed_release_enabled else "unsigned"
           macos_archive_format = "dmg" if macos_signed_release_enabled else "tar.gz"
@@ -252,6 +273,7 @@ jobs:
     name: ${{ matrix.label }}
     needs: metadata
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/openQ4-game
     strategy:
@@ -396,6 +418,12 @@ jobs:
         run: |
           set -euo pipefail
           export OPENQ4_SKIP_GAMELIBS_SYNC=1
+
+          if [ "${{ matrix.platform }}" = "macos" ]; then
+            # Keep Meson subprojects (SDL3, GLEW, stb_vorbis) on the same macOS 11.0
+            # floor as the main project's -mmacosx-version-min=11.0 flags.
+            export MACOSX_DEPLOYMENT_TARGET=11.0
+          fi
 
           bash tools/build/meson_setup.sh setup --wipe builddir . --backend ninja --buildtype=debugoptimized -Db_ndebug=true --wrap-mode=forcefallback -Dplatform_backend=${{ matrix.platform_backend }} -Dmacos_graphics_bridge=${{ matrix.macos_graphics_bridge }} -Dmacos_openal_provider=${{ matrix.macos_openal_provider }} -Dversion_track=stable -Dversion_base_override=${{ needs.metadata.outputs.version }}
           bash tools/build/meson_setup.sh compile -C builddir
@@ -590,7 +618,16 @@ jobs:
             -k "${keychain_path}" \
             -P "${MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD}" \
             -T /usr/bin/codesign
-          security list-keychains -d user -s "${keychain_path}" $(security list-keychains -d user | tr -d '"')
+          # Keychain paths can contain spaces; keep them as array elements
+          # instead of relying on word splitting. macOS runners ship bash 3.2,
+          # so use a while-read loop instead of mapfile.
+          existing_keychains=()
+          while IFS= read -r keychain_line; do
+            if [ -n "${keychain_line}" ]; then
+              existing_keychains+=("${keychain_line}")
+            fi
+          done < <(security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"[[:space:]]*$//')
+          security list-keychains -d user -s "${keychain_path}" "${existing_keychains[@]}"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${keychain_password}" "${keychain_path}"
 
           xcrun notarytool store-credentials "${notary_profile}" \

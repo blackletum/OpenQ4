@@ -20,6 +20,13 @@ This file is part of the Doom 3 GPL Source Code. See docs/legal for details.
 #if defined( USE_SDL3 )
 #include <SDL3/SDL.h>
 #include <cmath>
+
+// sdl3_backend.cpp; applies platform SDL hint defaults (including the macOS
+// Metal bridge render-driver selection) before the first SDL video use.
+void Sys_SDL_ApplyVideoHintDefaults( void );
+// sdl3_backend.cpp; releases a (possibly fullscreen) game window so the
+// fatal-error console is actually visible.
+void Sys_SDL_EmergencyReleaseGameWindow( void );
 #endif
 
 static idCVar sys_consoleWindow(
@@ -250,21 +257,39 @@ static SDL_Renderer *Posix_CreateSupportRenderer( SDL_Window *window, const char
 		return NULL;
 	}
 
+	const char *purposeName = purpose != NULL ? purpose : "support";
+
 #if defined( MACOS_X ) && defined( OPENQ4_MACOS_METAL_BRIDGE )
 	SDL_Renderer *renderer = SDL_CreateRenderer( window, NULL );
 	if ( renderer != NULL ) {
+		// Report the driver SDL actually created, not just the requested hint;
+		// this is the Metal bridge package's observable signoff diagnostic.
+		const char *driverName = SDL_GetRendererName( renderer );
+		if ( driverName == NULL || driverName[0] == '\0' ) {
+			driverName = "unknown";
+		}
+		Sys_Printf( "SDL %s renderer: macOS Metal bridge created '%s' driver\n", purposeName, driverName );
+		if ( idStr::Icmp( driverName, "metal" ) != 0 ) {
+			Sys_Printf( "SDL %s renderer: macOS Metal bridge expected 'metal' but SDL selected '%s'\n", purposeName, driverName );
+		}
 		return renderer;
 	}
-	Sys_Printf( "SDL %s renderer: Metal/default renderer failed: %s; falling back to software\n", purpose != NULL ? purpose : "support", SDL_GetError() );
+	Sys_Printf( "SDL %s renderer: Metal/default renderer failed: %s; falling back to software\n", purposeName, SDL_GetError() );
 #endif
 
-	return SDL_CreateRenderer( window, "software" );
+	SDL_Renderer *softwareRenderer = SDL_CreateRenderer( window, "software" );
+	if ( softwareRenderer == NULL ) {
+		Sys_Printf( "SDL %s renderer: software renderer failed: %s\n", purposeName, SDL_GetError() );
+	}
+	return softwareRenderer;
 }
 
 static bool Posix_SplashEnsureVideo( void ) {
 	if ( Posix_SplashVideoReady() ) {
 		return true;
 	}
+
+	Sys_SDL_ApplyVideoHintDefaults();
 
 	if ( !SDL_InitSubSystem( SDL_INIT_VIDEO ) ) {
 		if ( !s_splashWindow.createFailed ) {
@@ -376,6 +401,13 @@ static void Posix_SplashBuildCandidates( idStrList &candidates ) {
 		Posix_SplashAppendPrefixedCandidate( candidates, exeDir.c_str(), "../" );
 		Posix_SplashAppendPrefixedCandidate( candidates, exeDir.c_str(), "../Resources/" );
 	}
+
+	// macOS .app launches keep the splash asset at the extracted package root,
+	// three levels above the in-bundle executable directory.
+	char packageRoot[MAX_OSPATH];
+	if ( Sys_GetPackageRootDirectory( packageRoot, sizeof( packageRoot ) ) ) {
+		Posix_SplashAppendCandidate( candidates, packageRoot, POSIX_SPLASH_BMP );
+	}
 }
 
 static bool Posix_SplashLoadTexture( void ) {
@@ -480,6 +512,8 @@ static bool Posix_ConsoleEnsureVideo( void ) {
 	if ( Posix_ConsoleVideoReady() ) {
 		return true;
 	}
+
+	Sys_SDL_ApplyVideoHintDefaults();
 
 	if ( !SDL_InitSubSystem( SDL_INIT_VIDEO ) ) {
 		if ( !s_consoleWindow.createFailed ) {
@@ -1257,7 +1291,24 @@ void Posix_ConsoleFrame( void ) {
 
 void Posix_ConsoleFatalErrorWait( void ) {
 #if defined( USE_SDL3 )
+	if ( !Posix_IsMainThread() ) {
+		// SDL window creation and event pumping are main-thread-only on
+		// macOS. A worker-thread fatal error keeps its message on
+		// stdout/stderr and the console buffer instead of crashing inside
+		// Cocoa before the text is ever shown.
+		Sys_Printf( "fatal error raised off the main thread; skipping the fatal error window\n" );
+		return;
+	}
+
 	s_consoleWindow.forceFatalWindow = true;
+	// An earlier transient console-window failure must not permanently
+	// suppress the forced fatal-error window; give it one fresh attempt.
+	if ( s_consoleWindow.window == NULL && s_consoleWindow.createFailed ) {
+		s_consoleWindow.createFailed = false;
+	}
+	// Release a frozen (possibly exclusive-fullscreen) game window so the
+	// error console is visible instead of stuck behind it.
+	Sys_SDL_EmergencyReleaseGameWindow();
 	Sys_ShowConsole( 1, true );
 	if ( s_consoleWindow.window == NULL || !Posix_ConsoleVideoReady() ) {
 		return;

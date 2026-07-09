@@ -39,6 +39,7 @@ If you have questions concerning this license or the applicable additional terms
 #endif
 
 extern idCVar com_skipLogoVideos;
+extern glconfig_t glConfig;
 
 idCVar	idSessionLocal::gui_configServerRate( "gui_configServerRate", "0", CVAR_GUI | CVAR_ARCHIVE | CVAR_ROM | CVAR_INTEGER, "" );
 idCVar gui_set_sys_scroll( "gui_set_sys_scroll", "0", CVAR_GUI | CVAR_INTEGER, "display menu scroll step", 0, 26 );
@@ -858,6 +859,11 @@ static void SetMainMenuQualityGuiVars( idUserInterface *gui ) {
 	gui->SetStateInt( "r_specularEnabled", cvarSystem->GetCVarBool( "r_skipSpecular" ) ? 0 : 1 );
 	gui->SetStateInt( "r_bumpEnabled", cvarSystem->GetCVarBool( "r_skipBump" ) ? 0 : 1 );
 	gui->SetStateInt( "r_skyEnabled", cvarSystem->GetCVarBool( "r_skipSky" ) ? 0 : 1 );
+	// Apple GL 2.1 compatibility state: while ARB2 light interactions are
+	// bypassed the shadow/specular/bump toggles have no visible effect, and
+	// SMAA post-AA needs GLSL 1.30; the settings GUI greys those rows.
+	gui->SetStateInt( "r_interactionsBypassed", glConfig.disableARB2Interactions ? 1 : 0 );
+	gui->SetStateInt( "r_postAAAvailable", ( glConfig.GLSLProgramAvailable && glConfig.GLSL130Available ) ? 1 : 0 );
 }
 
 static void SyncMainMenuAspectVisibility( idUserInterface *gui ) {
@@ -2735,8 +2741,9 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 						break;
 					}
 				} else {
-					// also turn off OpenAL so we fully go back to legacy mixer
-					cvarSystem->SetCVarBool( "s_useOpenAL", false );
+					// openQ4 has no legacy (non-OpenAL) mixer; leave
+					// s_useOpenAL untouched so IsEAXAvailable() keeps
+					// reporting real capability after re-enabling EAX.
 					cmdSystem->BufferCommandText( CMD_EXEC_NOW, "s_restart\n" );
 					// when you restart
 					MessageBox( MSG_OK, common->GetLanguageDict()->GetString( "#str_04137" ), common->GetLanguageDict()->GetString( "#str_07231" ), true );

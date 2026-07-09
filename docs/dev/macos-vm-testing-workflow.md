@@ -102,7 +102,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/macos/Invoke-openQ4Mac
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/macos/Invoke-openQ4MacOSWorkflow.ps1 -Action Smoke -MacHost <host>
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/macos/Invoke-openQ4MacOSWorkflow.ps1 -Action Renderer -MacHost <host>
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/macos/Invoke-openQ4MacOSWorkflow.ps1 -Action Launcher -MacHost <host>
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/macos/Invoke-openQ4MacOSWorkflow.ps1 -Action Signoff -MacHost <host>
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/macos/Invoke-openQ4MacOSWorkflow.ps1 -Action Signoff -MacHost <host> -MacOSOSMatrixRole latest-public-macos
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/macos/Invoke-openQ4MacOSWorkflow.ps1 -Action CollectResults -MacHost <host> -MacOSRunId <run-id>
 ```
 
@@ -159,7 +159,11 @@ Use `-MacOSOSMatrixRole floor-candidate` when validating the oldest documented
 macOS floor, currently macOS 11, and `-MacOSOSMatrixRole latest-public-macos`
 when validating the latest public macOS release. Hosted CI package runs may use
 `current-hosted-ci-runner`, but hosted runner success is not a substitute for
-floor/latest runtime signoff on compliant Apple hardware.
+floor/latest runtime signoff on compliant Apple hardware. Always pass an
+explicit `-MacOSOSMatrixRole` on `Signoff` runs: omitting it leaves the guest
+default `current-manual-signoff`, which counts toward neither the macOS floor
+nor latest-public promotion evidence (see
+`docs/dev/macos-support-matrix-policy.md`).
 
 Guest paths passed through `-MacWorkspace` and `-MacBasePath` must be absolute POSIX paths or use a leading `~/`; the host workflow rejects relative, dot-segment, empty-segment, control-character, and backslash paths, and the guest scripts recheck that the paths are absolute and control-character-free after `~` expansion before syncing source trees, installing assets, building, or collecting results. Keep `-MacBasePath` out of the workflow-reserved `openQ4/`, `openQ4-game/`, `incoming-quake4/`, and `results/` children under `-MacWorkspace`; when `-MacHome` is provided, host preflight expands `~/` before that reserved-child comparison, and the guest scripts repeat the check after resolving the actual home directory. The asset installer refuses those targets because it stages extraction under the workspace and installs assets with `rsync --delete`. Source sync also trims trailing slashes before appending `openQ4/` or `openQ4-game/`, so a workspace written as `~/openq4-work/` does not create double-slash remote extraction targets.
 Keep `-BuildDir` pointed at a dedicated build output directory such as

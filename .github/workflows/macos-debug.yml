@@ -133,6 +133,10 @@ jobs:
       - name: Configure
         if: steps.select.outputs.selected == 'true'
         shell: bash
+        env:
+          # Keep Meson subprojects (SDL3, GLEW, stb_vorbis) on the same macOS 11.0
+          # floor as the main project's -mmacosx-version-min=11.0 flags.
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
         run: |
           set -euo pipefail
           bash tools/build/meson_setup.sh setup --wipe builddir . \
@@ -145,6 +149,8 @@ jobs:
       - name: Compile
         if: steps.select.outputs.selected == 'true'
         shell: bash
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
         run: |
           set -euo pipefail
           bash tools/build/meson_setup.sh compile -C builddir
@@ -191,3 +197,66 @@ jobs:
           if-no-files-found: warn
           retention-days: ${{ fromJSON(inputs.retention_days) }}
           include-hidden-files: true
+
+  # Migration-corridor compile check: builds against Homebrew OpenAL Soft with
+  # -Dmacos_openal_provider=system. This is migration testing only, not release
+  # evidence; release packages stay on apple_framework. No packaging or signoff.
+  macos-openal-migration:
+    name: macOS OpenAL Soft Migration Corridor (compile only)
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/../openQ4-game
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fetch openQ4-game
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/themuffinator/openQ4-game.git "${OPENQ4_GAMELIBS_REPO}"
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Install Meson and Ninja
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install meson ninja
+
+      - name: Install OpenAL Soft
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install openal-soft
+          echo "PKG_CONFIG_PATH=$(brew --prefix openal-soft)/lib/pkgconfig" >> "${GITHUB_ENV}"
+
+      - name: Configure (system OpenAL)
+        shell: bash
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: |
+          set -euo pipefail
+          bash tools/build/meson_setup.sh setup --wipe builddir . \
+            --backend ninja \
+            --buildtype=debug \
+            --wrap-mode=forcefallback \
+            -Dplatform_backend=sdl3 \
+            -Dmacos_graphics_bridge=opengl \
+            -Dmacos_openal_provider=system
+
+      - name: Compile (system OpenAL)
+        shell: bash
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: |
+          set -euo pipefail
+          bash tools/build/meson_setup.sh compile -C builddir

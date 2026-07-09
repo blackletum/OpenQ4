@@ -86,8 +86,15 @@ Before changing the floor, update all of these together:
 Every completed macOS signoff record must include:
 
 - Architecture policy and actual CPU architecture.
-- OS matrix role: floor candidate, latest public macOS, or current hosted CI
-  runner.
+- OS matrix role. Valid roles are:
+  - `floor-candidate` for the documented macOS floor.
+  - `latest-public-macos` for the latest public macOS release.
+  - `current-hosted-ci-runner` for hosted CI package runs.
+  - `current-manual-signoff`, the default for ad-hoc manual signoff runs
+    (the guest-script default in
+    `tools/macos/guest/openq4-macos-sync-build-test.sh`). Evidence recorded
+    under this role counts toward neither the macOS floor nor latest-public
+    promotion evidence; pass an explicit role when the run should count.
 - macOS version and build.
 - Kernel version.
 - Xcode and macOS SDK version.

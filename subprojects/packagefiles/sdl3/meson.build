@@ -413,6 +413,10 @@ elif host_machine.subsystem() == 'macos'
   cdata.set('SDL_GPU_METAL', 1)
   cdata.set('SDL_VIDEO_VULKAN', 1)
   cdata.set('SDL_VIDEO_METAL', 1)
+  # The metal render sources are compiled via src/render/meson.build but stay
+  # empty translation units unless the driver define is set; the macOS Metal
+  # bridge selects this driver by name for splash/console renderers.
+  cdata.set('SDL_VIDEO_RENDER_METAL', 1)
   cdata.set('SDL_VIDEO_RENDER_VULKAN', 1)
   cdata.set('SDL_TIMER_UNIX', 1)
   sdl_deps += dependency(

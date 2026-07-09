@@ -6592,25 +6592,40 @@ void idFileSystemLocal::FindDLL( const char *name, char _dllPath[ MAX_OSPATH ], 
 	idStr exeDir = Sys_EXEPath();
 	exeDir.StripFilename();
 
-	// Only load openQ4 game modules staged next to the executable. Mods may
-	// provide their own module, but content-only mods inherit baseoq4 modules.
-	// Do not load executable code from PK4s, fs_savepath, pure-server code paks,
-	// or loose files outside the executable/package root.
+	// Only load openQ4 game modules staged next to the executable or in the
+	// package root the application bundle was extracted into (macOS stages the
+	// executable in openQ4.app/Contents/MacOS while game modules live at the
+	// package root). Mods may provide their own module, but content-only mods
+	// inherit baseoq4 modules. Do not load executable code from PK4s,
+	// fs_savepath, pure-server code paks, or loose files outside the
+	// executable/package root.
+	idStr moduleSearchRoots[2];
+	int numModuleSearchRoots = 0;
+	moduleSearchRoots[numModuleSearchRoots++] = exeDir;
+	char packageRoot[MAX_OSPATH];
+	if ( Sys_GetPackageRootDirectory( packageRoot, sizeof( packageRoot ) ) && exeDir.Icmp( packageRoot ) != 0 ) {
+		moduleSearchRoots[numModuleSearchRoots++] = packageRoot;
+	}
+
 	const char *moduleGameDir = fs_game.GetString();
 	if ( !moduleGameDir[0] ) {
 		moduleGameDir = OPENQ4_GAMEDIR;
 	}
-	dllFile = FS_OpenGameModuleFromExeDir( this, exeDir, moduleGameDir, dllName, dllPath );
+	for ( int i = 0; !dllFile && i < numModuleSearchRoots; i++ ) {
+		dllFile = FS_OpenGameModuleFromExeDir( this, moduleSearchRoots[i], moduleGameDir, dllName, dllPath );
+	}
 
 	if ( !dllFile && idStr::Icmp( moduleGameDir, OPENQ4_GAMEDIR ) != 0 ) {
-		dllFile = FS_OpenGameModuleFromExeDir( this, exeDir, OPENQ4_GAMEDIR, dllName, dllPath );
+		for ( int i = 0; !dllFile && i < numModuleSearchRoots; i++ ) {
+			dllFile = FS_OpenGameModuleFromExeDir( this, moduleSearchRoots[i], OPENQ4_GAMEDIR, dllName, dllPath );
+		}
 		if ( dllFile ) {
 			common->DPrintf( "Game DLL '%s' not found in mod directory '%s'; falling back to '%s'.\n", dllName, moduleGameDir, OPENQ4_GAMEDIR );
 		}
 	}
 
-	if ( !dllFile ) {
-		dllPath = exeDir;
+	for ( int i = 0; !dllFile && i < numModuleSearchRoots; i++ ) {
+		dllPath = moduleSearchRoots[i];
 		dllPath.AppendPath( dllName );
 		dllFile = OpenExplicitFileRead( dllPath );
 	}

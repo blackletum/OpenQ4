@@ -23,6 +23,24 @@ def reject(haystack: str, needle: str, context: str) -> None:
         raise AssertionError(f"Unexpected {needle!r} in {context}")
 
 
+def function_body(source: str, signature: str) -> str:
+    start = source.find(signature)
+    if start == -1:
+        raise AssertionError(f"Missing function signature {signature!r}")
+
+    depth = 0
+    for index in range(start, len(source)):
+        char = source[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start : index + 1]
+
+    raise AssertionError(f"Could not find end of function {signature!r}")
+
+
 def validate_runtime_startup_error() -> None:
     compat = read("src/sys/osx/macosx_compat.mm")
 
@@ -69,6 +87,28 @@ def validate_runtime_startup_error() -> None:
         compat,
         'appName.Icmp( "openQ4.app" )',
         "macOS app-bundle runtime detection should tolerate renamed .app bundles",
+    )
+
+
+def validate_game_module_package_root_probe() -> None:
+    filesystem = read("src/framework/FileSystem.cpp")
+    compat = read("src/sys/osx/macosx_compat.mm")
+
+    find_dll = function_body(
+        filesystem,
+        "void idFileSystemLocal::FindDLL( const char *name, char _dllPath[ MAX_OSPATH ], bool updateChecksum ) {",
+    )
+    for token in (
+        "Sys_GetPackageRootDirectory",
+        "moduleSearchRoots",
+    ):
+        require(find_dll, token, "FindDLL adjacent package-root game-module probe")
+
+    package_root = function_body(compat, "bool Sys_GetPackageRootDirectory( char *packageRoot, int packageRootSize ) {")
+    require(
+        package_root,
+        "Sys_GetAppBundlePackageRootFromExecutableDirectory",
+        "macOS Sys_GetPackageRootDirectory app-bundle package-root derivation",
     )
 
 
@@ -318,6 +358,7 @@ def validate_ci_wiring() -> None:
 
 def main() -> None:
     validate_runtime_startup_error()
+    validate_game_module_package_root_probe()
     validate_package_metadata_and_archive_guards()
     validate_release_path_policy()
     validate_support_info_path_resolution()

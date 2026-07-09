@@ -10535,6 +10535,14 @@ static progDef_t *RB_FindARBProgramRecord( GLenum target, GLuint ident ) {
 }
 
 static bool RB_DriverPrefersSimpleInteraction( void ) {
+	// Once R_ARB2_Init has run, glConfig.preferSimpleInteraction is the
+	// single source of truth: it is derived there from the driver quirk
+	// report and the r_appleARB2Interactions override (mode 2 clears it so
+	// the full interaction path is actually exercised). The raw quirk flag
+	// only backstops calls made before R_ARB2_Init.
+	if ( glConfig.allowARB2Path ) {
+		return glConfig.preferSimpleInteraction;
+	}
 	return glConfig.preferSimpleInteraction ||
 		( ( RendererDriverQuirks_LastReport().flags & RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION ) != 0 );
 }
@@ -11010,8 +11018,25 @@ void R_ARB2_Init( void ) {
 	}
 
 	if ( ( RendererDriverQuirks_LastReport().flags & RENDERER_DRIVER_QUIRK_DISABLE_ARB2_INTERACTIONS ) != 0 ) {
-		glConfig.disableARB2Interactions = true;
-		common->Printf( "%s: bypasses ARB2 light interactions for compatibility\n", renderer.c_str() );
+		// Diagnostic escape hatch for real-hardware signoff: the blanket
+		// bypass avoids the issue #73 startup crash but sacrifices all
+		// dynamic lighting; r_appleARB2Interactions lets testers re-enable
+		// the interaction path incrementally without rebuilding.
+		const int interactionOverride = r_appleARB2Interactions.GetInteger();
+		if ( interactionOverride == 1 ) {
+			glConfig.disableARB2Interactions = false;
+			glConfig.preferSimpleInteraction = true;
+			common->Printf( "%s: r_appleARB2Interactions 1 overrides the driver bypass quirk; attempting the simple ARB interaction path\n", renderer.c_str() );
+		} else if ( interactionOverride >= 2 ) {
+			glConfig.disableARB2Interactions = false;
+			// The PREFER_SIMPLE_INTERACTION quirk branch above set this; the
+			// full path cannot be exercised while it remains preferred.
+			glConfig.preferSimpleInteraction = false;
+			common->Printf( "%s: r_appleARB2Interactions 2 overrides the driver bypass quirk; attempting the full ARB2 interaction path\n", renderer.c_str() );
+		} else {
+			glConfig.disableARB2Interactions = true;
+			common->Printf( "%s: bypasses ARB2 light interactions for compatibility\n", renderer.c_str() );
+		}
 	}
 
 	common->Printf( "---------------------------------\n" );

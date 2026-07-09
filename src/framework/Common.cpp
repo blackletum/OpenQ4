@@ -5370,6 +5370,29 @@ static double Common_AdjustMachineSpecGHz( double ghz, cpuid_t cpu ) {
 }
 
 static int Common_DetectMachineSpec( double ghz, int vidRam, int sysRam, bool oldCard ) {
+#if defined( MACOS_X ) && ( defined( __aarch64__ ) || defined( __arm64__ ) )
+	// Apple Silicon reports no CPU frequency (hw.cpufrequency does not
+	// exist), and every arm64 Mac comfortably exceeds the 2005-era retail
+	// CPU thresholds, so classify by memory alone. Unified memory means a
+	// missing VRAM probe should fall back to a share of system memory
+	// instead of dropping the machine to the lowest tier.
+	if ( ghz <= 0.0 && !oldCard ) {
+		int effectiveVidRam = vidRam;
+		if ( effectiveVidRam <= 0 ) {
+			effectiveVidRam = sysRam / 2;
+		}
+		if ( effectiveVidRam >= 300 && sysRam >= 1000 ) {
+			return 3;
+		}
+		if ( effectiveVidRam >= 160 && sysRam >= 1000 ) {
+			return 2;
+		}
+		if ( effectiveVidRam >= 160 && sysRam >= 750 ) {
+			return 1;
+		}
+		return 0;
+	}
+#endif
 	if ( ghz >= 2.89f && vidRam >= 300 && sysRam >= 1000 && !oldCard ) {
 		return 3;
 	}

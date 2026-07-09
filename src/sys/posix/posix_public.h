@@ -39,6 +39,18 @@ void		Posix_EarlyInit( );
 // called after common has been initialized
 void		Posix_LateInit( );
 
+// true on the process main thread (or before Posix_EarlyInit records it);
+// Cocoa/SDL3 window and event APIs must stay on the main thread on macOS
+bool		Posix_IsMainThread( void );
+
+// append fatal error text to the always-writable save-path breadcrumb file
+// harvested by support tooling
+void		Posix_AppendFatalBreadcrumb( const char *text );
+// resolve and cache the breadcrumb path (called from Posix_LateInit)
+void		Posix_InitFatalBreadcrumbPath( void );
+// async-signal-safe append using the cached path only
+void		Posix_AppendFatalBreadcrumbRaw( const char *text );
+
 void		Posix_InitPThreads( );
 void		Posix_InitSigs( );
 void		Posix_ClearSigs( );

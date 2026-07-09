@@ -2,25 +2,37 @@
 """Static policy checks for macOS platform-risk boundaries."""
 
 from pathlib import Path
+import importlib.util
 import re
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
-ACTIVE_MACOS_SOURCES = (
-    "src/sys/posix/posix_main.cpp",
-    "src/sys/posix/posix_net.cpp",
-    "src/sys/posix/posix_signal.cpp",
-    "src/sys/posix/posix_syscon.cpp",
-    "src/sys/posix/posix_threads.cpp",
-    "src/sys/osx/macosx_compat.mm",
-    "src/sys/osx/macosx_event.mm",
-    "src/sys/osx/macosx_glimp.mm",
-    "src/sys/osx/macosx_misc.mm",
-    "src/sys/osx/macosx_sys.mm",
-    "src/sys/osx/macosx_sdl3.cpp",
-    "src/sys/osx/macosx_sdl3_main.cpp",
-)
+
+def load_meson_sources_module():
+    module_path = ROOT / "tools" / "build" / "meson_sources.py"
+    spec = importlib.util.spec_from_file_location("openq4_meson_sources", module_path)
+    if spec is None or spec.loader is None:
+        raise AssertionError(f"Could not load Meson source manifest module: {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def derive_active_macos_sources() -> tuple[str, ...]:
+    module = load_meson_sources_module()
+    sources = tuple(
+        sorted(
+            f"src/{relative_path}"
+            for relative_path in set(module.SDL3_DARWIN_SOURCES) | set(module.DARWIN_PLATFORM_SOURCES)
+        )
+    )
+    if not sources:
+        raise AssertionError("Derived active macOS source set is empty")
+    return sources
+
+
+ACTIVE_MACOS_SOURCES = derive_active_macos_sources()
 
 UNSAFE_PROCESS_PATTERNS = {
     "execvp": re.compile(r"\bexecvp\s*\("),

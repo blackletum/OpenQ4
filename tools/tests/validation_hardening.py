@@ -421,23 +421,20 @@ def validate_validation_wiring() -> None:
         if "validation_hardening.py" not in text:
             raise AssertionError(f"validation_hardening.py is not wired into {context}")
 
-    central_python_tests = (
-        "filesystem_mod_manifest.py",
-        "linux_arm64_ci_coverage.py",
-        "linux_gui_presentation_defaults.py",
-        "linux_pk4_legacy_tools.py",
-        "macos_signoff_archive.py",
-        "native_glx_shutdown.py",
-        "preprocessor_macro_safety.py",
-        "posix_monotonic_time.py",
-        "posix_network_resolution.py",
-        "posix_thread_shutdown.py",
-        "renderer_msaa_cvar_safety.py",
-        "renderer_supersampling_safety.py",
-        "savegame_corruption_contract.py",
-        "settings_menu_coverage.py",
-    )
-    for test_name in central_python_tests:
+    # Runtime drivers that need target hardware and retail assets; they are
+    # deliberately not wired into commit/push smoke validation.
+    smoke_wiring_allowlist = {
+        "renderer_gameplay_benchmark.py",
+    }
+    discovered_tests = sorted(path.name for path in (ROOT / "tools" / "tests").glob("*.py"))
+    if not discovered_tests:
+        raise AssertionError("no python tests discovered under tools/tests")
+    unknown_allowlist_entries = smoke_wiring_allowlist.difference(discovered_tests)
+    if unknown_allowlist_entries:
+        raise AssertionError(f"smoke wiring allowlist names missing tests: {sorted(unknown_allowlist_entries)}")
+    for test_name in discovered_tests:
+        if test_name in smoke_wiring_allowlist:
+            continue
         if test_name not in validator:
             raise AssertionError(f"{test_name} is not wired into local validation")
         if test_name not in push:

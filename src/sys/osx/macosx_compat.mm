@@ -330,6 +330,36 @@ static bool Sys_GetAppBundlePackageRootFromExecutableDirectory( const idStr &exe
 	return packageDirectory.Length() > 0;
 }
 
+/*
+==============
+Sys_GetPackageRootDirectory
+==============
+*/
+bool Sys_GetPackageRootDirectory( char *packageRoot, int packageRootSize ) {
+	if ( packageRoot == NULL || packageRootSize <= 0 ) {
+		return false;
+	}
+	packageRoot[0] = '\0';
+
+	idStr exeDirectory = Sys_EXEPath();
+	if ( exeDirectory.Length() <= 0 ) {
+		return false;
+	}
+	exeDirectory.StripFilename();
+
+	idStr appDirectory;
+	idStr packageDirectory;
+	if ( !Sys_GetAppBundlePackageRootFromExecutableDirectory( exeDirectory, appDirectory, packageDirectory ) ) {
+		return false;
+	}
+	if ( packageDirectory.Length() >= packageRootSize ) {
+		return false;
+	}
+
+	idStr::Copynz( packageRoot, packageDirectory.c_str(), packageRootSize );
+	return true;
+}
+
 static const char *Sys_MacOSPackageRuntimeArchSuffix( void ) {
 #if defined( __aarch64__ ) || defined( __arm64__ )
 	return "arm64";
@@ -782,8 +812,10 @@ int Sys_GetVideoRam( void ) {
 			continue;
 		}
 
+		// kCGLRPVideoMemoryMegabytes is a CGL enum constant (not a macro), so
+		// it must not be probed with #if defined(); it has existed since
+		// macOS 10.7, far below the 11.0 deployment floor.
 		GLint vramMB = 0;
-#if defined( kCGLRPVideoMemoryMegabytes )
 		err = CGLDescribeRenderer( rendererInfo, rendererIndex, kCGLRPVideoMemoryMegabytes, &vramMB );
 		if ( err == kCGLNoError && vramMB > 0 ) {
 			if ( static_cast<unsigned long>( vramMB ) > maxVRAM ) {
@@ -791,7 +823,6 @@ int Sys_GetVideoRam( void ) {
 			}
 			continue;
 		}
-#endif
 		GLint vramBytes = 0;
 		err = CGLDescribeRenderer( rendererInfo, rendererIndex, kCGLRPVideoMemory, &vramBytes );
 		if ( err == kCGLNoError && vramBytes > 0 ) {

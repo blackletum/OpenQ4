@@ -611,12 +611,15 @@ copy_text_if_present "${PACKAGE_ROOT}/openQ4.app/Contents/Info.plist" "package/I
 if [ -n "${HOME_DIR}" ]; then
     copy_text_if_present "${HOME_DIR}/Library/Application Support/openQ4/baseoq4/logs/openq4.log" "logs/home-openq4.log"
     copy_text_if_present "${HOME_DIR}/baseoq4/logs/openq4.log" "logs/home-baseoq4-openq4.log"
+    copy_text_if_present "${HOME_DIR}/Library/Application Support/openQ4/baseoq4/logs/fatal.txt" "logs/home-fatal.txt"
+    copy_text_if_present "${HOME_DIR}/baseoq4/logs/fatal.txt" "logs/home-baseoq4-fatal.txt"
 else
     write_text "logs/home-paths-unavailable.txt" \
         "HOME was not set; home-scoped openq4.log files were skipped." \
         "Package-local logs were still inspected when present."
 fi
 copy_text_if_present "${PACKAGE_ROOT}/baseoq4/logs/openq4.log" "logs/package-baseoq4-openq4.log"
+copy_text_if_present "${PACKAGE_ROOT}/baseoq4/logs/fatal.txt" "logs/package-baseoq4-fatal.txt"
 
 CRASH_LIST="${WORK_PARENT}/crash-list.txt"
 if [ -z "${HOME_DIR}" ]; then

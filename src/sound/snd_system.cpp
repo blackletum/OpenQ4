@@ -539,6 +539,14 @@ void idSoundSystemLocal::Render()
 	if( s_noSound.GetBool() )
 	{
 		Sound_UpdateControllerRumble( 0.0f );
+		if( hardware.InitFailed() )
+		{
+			// The engine silenced itself after a device/context failure; keep
+			// the hardware's periodic re-init retry alive so audio recovers
+			// when a device becomes available (it clears s_noSound and
+			// schedules a restart on success). User-set s_noSound stays quiet.
+			hardware.Update();
+		}
 		return;
 	}
 

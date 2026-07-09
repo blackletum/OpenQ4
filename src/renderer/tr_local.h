@@ -1209,6 +1209,7 @@ extern idCVar r_rendererOcclusion;	// enable conservative modern visibility and 
 extern idCVar r_rendererHiZ;	// allocate and build the modern scene Hi-Z depth pyramid
 extern idCVar r_useSimpleInteraction;	// use the simpler Quake 4 interaction program pair as a compatibility fallback
 extern idCVar r_interactionColorMode;	// interaction color mode: 0 auto, 1 packed env16.xy, 2 vector env16/env17
+extern idCVar r_appleARB2Interactions;	// Apple GL 2.1 bypass escape hatch: 0 bypass, 1 simple path, 2 full path
 extern idCVar r_shaderReport;			// shader diagnostics: 0 off, 1 summaries, 2 invalid-use warnings
 
 extern idCVar r_cgVertexProfile;		// arbvp1, vp20, vp30

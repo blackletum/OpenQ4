@@ -107,7 +107,7 @@ def validate_native_cocoa_context() -> None:
     require(ladder, "context != nil && [context cglContext] != NULL", "native macOS CGL context validation")
     require(ladder, "[context release];", "native macOS failed context cleanup")
 
-    set_context_macro = read("src/sys/osx/macosx_sys.h")
+    set_context_macro = read("src/sys/osx/macosx_native_gl.h")
     require(set_context_macro, "glw_state._cgl_ctx = [_context cglContext];", "native macOS context storage")
     require(set_context_macro, "glw_state._ctx_is_current = NO;", "native macOS context current-state reset")
 

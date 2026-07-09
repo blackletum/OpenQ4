@@ -16478,6 +16478,31 @@ windowDef Desktop
 				set "set_sys_ambientbr_valnum::forecolor" "$desktop::white_4" ;
 				set "set_sys_ambientbr_val::noevents" "1" ;
 			}
+			if ( "gui::r_interactionsBypassed" == 1 ) {
+				set "set_sys_shadows::forecolor" "1,1,1,0.4" ;
+				set "set_sys_shadows_val::forecolor" "1,1,1,0.4" ;
+				set "set_sys_shadows_val::noevents" "1" ;
+				set "set_sys_specular::forecolor" "1,1,1,0.4" ;
+				set "set_sys_specular_val::forecolor" "1,1,1,0.4" ;
+				set "set_sys_specular_val::noevents" "1" ;
+				set "set_sys_bump::forecolor" "1,1,1,0.4" ;
+				set "set_sys_bump_val::forecolor" "1,1,1,0.4" ;
+				set "set_sys_bump_val::noevents" "1" ;
+			} else {
+				set "set_sys_shadows::forecolor" "1,1,1,0.8" ;
+				set "set_sys_shadows_val::forecolor" "1,0.745,0.137,0.8" ;
+				set "set_sys_specular::forecolor" "1,1,1,0.8" ;
+				set "set_sys_specular_val::forecolor" "1,0.745,0.137,0.8" ;
+				set "set_sys_bump::forecolor" "1,1,1,0.8" ;
+				set "set_sys_bump_val::forecolor" "1,0.745,0.137,0.8" ;
+			}
+			if ( "gui::r_postAAAvailable" == 0 ) {
+				set "set_sys_postaa::forecolor" "1,1,1,0.4" ;
+				set "set_sys_postaa_val::forecolor" "1,1,1,0.4" ;
+			} else {
+				set "set_sys_postaa::forecolor" "1,1,1,0.8" ;
+				set "set_sys_postaa_val::forecolor" "1,0.745,0.137,0.8" ;
+			}
 		}
 
 		onNamedEvent hideSetSystem {

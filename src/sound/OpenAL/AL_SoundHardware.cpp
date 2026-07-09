@@ -42,6 +42,7 @@ extern idCVar s_useEAXReverb;
 extern idCVar s_deviceName;
 extern idCVar s_openALHRTF;
 extern idCVar s_numberOfSpeakers;
+extern idCVar s_noSound;
 
 static const char* OPENQ4_AUDIO_DEVICE_DEFAULT_CHOICE = "__OPENQ4_DEFAULT_AUDIO_DEVICE__";
 static const int OPENQ4_OPENAL_HRTF_AUTO = 0;
@@ -425,7 +426,9 @@ static const ALCint* openQ4_BuildOutputModeContextAttributes( ALCdevice* device,
 	(void)attributes;
 	if( openQ4_GetSpeakerCount() == OPENQ4_OPENAL_SPEAKERS_SURROUND )
 	{
-		common->Warning( "OpenAL output mode requested '%s', but this build does not expose ALC_SOFT_output_mode symbols.", openQ4_SpeakerCountName( openQ4_GetSpeakerCount() ) );
+		// Expected with default cvars on providers without ALC_SOFT_output_mode
+		// (e.g. Apple's OpenAL framework); status line, not a warning.
+		common->Printf( "OpenAL output mode '%s' requested, but this build does not expose ALC_SOFT_output_mode; using the runtime default.\n", openQ4_SpeakerCountName( openQ4_GetSpeakerCount() ) );
 	}
 	return NULL;
 }
@@ -567,7 +570,9 @@ static void openQ4_ApplyHrtfPreference( ALCdevice* device )
 	(void)device;
 	if( openQ4_GetHrtfMode() != OPENQ4_OPENAL_HRTF_AUTO )
 	{
-		common->Warning( "OpenAL HRTF requested '%s', but this build does not expose ALC_SOFT_HRTF symbols.", openQ4_HrtfModeName( openQ4_GetHrtfMode() ) );
+		// Providers without ALC_SOFT_HRTF (e.g. Apple's OpenAL framework)
+		// cannot honor the preference; status line, not a warning.
+		common->Printf( "OpenAL HRTF '%s' requested, but this build does not expose ALC_SOFT_HRTF; the runtime keeps its default behavior.\n", openQ4_HrtfModeName( openQ4_GetHrtfMode() ) );
 	}
 }
 
@@ -597,6 +602,8 @@ idSoundHardware_OpenAL::idSoundHardware_OpenAL()
 	reopenDeviceAvailable = false;
 	deferredUpdatesAvailable = false;
 	deferredUpdatesActive = false;
+	initFailed = false;
+	lastResetTime = 0;
 	lastDeviceCheckTime = 0;
 	lastPerfPrintTime = 0;
 	openedWithDefaultFallback = false;
@@ -1170,9 +1177,21 @@ idSoundHardware_OpenAL::Init
 */
 void idSoundHardware_OpenAL::Init()
 {
-	cmdSystem->AddCommand( "listDevices", listDevices_f, 0, "Lists the connected sound devices", NULL );
+	static bool listDevicesCommandAdded = false;
+	if( !listDevicesCommandAdded )
+	{
+		listDevicesCommandAdded = true;
+		cmdSystem->AddCommand( "listDevices", listDevices_f, 0, "Lists the connected sound devices", NULL );
+	}
 
-	common->Printf( "Setup OpenAL device and context... " );
+	// Periodic re-init retries after a failure run silently so a missing
+	// device does not spam the console once per second.
+	const bool quietRetry = initFailed;
+
+	if( !quietRetry )
+	{
+		common->Printf( "Setup OpenAL device and context... " );
+	}
 
 	if( IsDefaultDeviceChoiceValue( s_deviceName.GetString() ) ) {
 		s_deviceName.SetString( "" );
@@ -1194,9 +1213,14 @@ void idSoundHardware_OpenAL::Init()
 	}
 	if( openalDevice == NULL )
 	{
-		common->Printf( "Failed.\n" );
-		common->Warning( "idSoundHardware_OpenAL::Init: alcOpenDevice() failed; continuing without sound (s_noSound 1)." );
-		cvarSystem->SetCVarBool( "s_noSound", true );
+		if( !quietRetry )
+		{
+			common->Printf( "Failed.\n" );
+			common->Warning( "idSoundHardware_OpenAL::Init: alcOpenDevice() failed; continuing without sound (s_noSound 1); retrying periodically." );
+		}
+		initFailed = true;
+		s_noSound.SetBool( true );
+		s_noSound.ClearModified();
 		return;
 	}
 
@@ -1213,27 +1237,57 @@ void idSoundHardware_OpenAL::Init()
 	}
 	if( openalContext == NULL )
 	{
-		common->Printf( "Failed.\n" );
-		common->Warning( "idSoundHardware_OpenAL::Init: alcCreateContext() failed; continuing without sound (s_noSound 1)." );
+		if( !quietRetry )
+		{
+			common->Printf( "Failed.\n" );
+			common->Warning( "idSoundHardware_OpenAL::Init: alcCreateContext() failed; continuing without sound (s_noSound 1); retrying periodically." );
+		}
 		alcCloseDevice( openalDevice );
 		openalDevice = NULL;
-		cvarSystem->SetCVarBool( "s_noSound", true );
+		initFailed = true;
+		s_noSound.SetBool( true );
+		s_noSound.ClearModified();
 		return;
 	}
 
 	if( alcMakeContextCurrent( openalContext ) == 0 )
 	{
-		common->Printf( "Failed.\n" );
-		common->Warning( "idSoundHardware_OpenAL::Init: alcMakeContextCurrent() failed; continuing without sound (s_noSound 1)." );
+		if( !quietRetry )
+		{
+			common->Printf( "Failed.\n" );
+			common->Warning( "idSoundHardware_OpenAL::Init: alcMakeContextCurrent() failed; continuing without sound (s_noSound 1); retrying periodically." );
+		}
 		alcDestroyContext( openalContext );
 		openalContext = NULL;
 		alcCloseDevice( openalDevice );
 		openalDevice = NULL;
-		cvarSystem->SetCVarBool( "s_noSound", true );
+		initFailed = true;
+		s_noSound.SetBool( true );
+		s_noSound.ClearModified();
 		return;
 	}
 
-	common->Printf( "Done.\n" );
+	if( !quietRetry )
+	{
+		common->Printf( "Done.\n" );
+	}
+
+	if( initFailed )
+	{
+		// A previous Init() failure silenced the engine and the periodic
+		// retry just recovered the device. The engine's own s_noSound write
+		// cleared the modified flag, so a set flag here means the user
+		// changed the cvar since the failure; respect that and only lift
+		// engine-set silence.
+		initFailed = false;
+		if( s_noSound.GetBool() && !s_noSound.IsModified() )
+		{
+			s_noSound.SetBool( false );
+			s_noSound.ClearModified();
+		}
+		soundSystemLocal.SetNeedsRestart();
+		common->Printf( "OpenAL device recovered; scheduling sound system restart.\n" );
+	}
 
 	ALCint alcMajor = 0;
 	ALCint alcMinor = 0;
@@ -1364,7 +1418,9 @@ void idSoundHardware_OpenAL::Init()
 #else
 	if( s_useEAXReverb.GetBool() )
 	{
-		common->Warning( "OpenAL EFX requested but this build does not expose EFX symbols; wet send disabled." );
+		// Expected with default cvars on providers without EFX (e.g. Apple's
+		// OpenAL framework); status line, not a warning.
+		common->Printf( "OpenAL EFX is not available in this build; reverb wet send disabled.\n" );
 	}
 #endif
 

@@ -1128,6 +1128,20 @@ const char* Sys_EXEPath(void) {
 
 /*
 ==============
+Sys_GetPackageRootDirectory
+==============
+*/
+bool Sys_GetPackageRootDirectory(char* packageRoot, int packageRootSize) {
+	// Windows packages stage modules and assets next to the executable; there
+	// is no separate application-bundle package root.
+	if (packageRoot != NULL && packageRootSize > 0) {
+		packageRoot[0] = '\0';
+	}
+	return false;
+}
+
+/*
+==============
 Sys_ListFiles
 ==============
 */

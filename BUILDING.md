@@ -277,7 +277,7 @@ For experimental macOS Metal bring-up without a native renderer rewrite, configu
 bash tools/build/meson_setup.sh setup --wipe builddir . --backend ninja --buildtype=debug --wrap-mode=forcefallback -Dplatform_backend=sdl3 -Dmacos_graphics_bridge=metal
 ```
 
-This mode links the Metal/QuartzCore bridge frameworks, defaults SDL's render/GPU hints to Metal, and logs the active bridge during OpenGL startup. The visible renderer remains openQ4's OpenGL compatibility path so shipped Quake 4 asset behavior stays the guiding constraint. It is a Metal bridge package, not a native Metal renderer.
+This mode links the Metal/QuartzCore bridge frameworks and applies the SDL render/GPU hint defaults at first SDL video use — including the early startup splash/system-console windows — with a `metal,gpu,software` renderer-driver fallback list; the actually-created SDL renderer driver is logged as signoff evidence, and the active bridge is logged during OpenGL startup. The visible renderer remains openQ4's OpenGL compatibility path so shipped Quake 4 asset behavior stays the guiding constraint. It is a Metal bridge package, not a native Metal renderer.
 
 ### Linux Packager Notes
 

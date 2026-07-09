@@ -2514,6 +2514,21 @@ def validate_meson_contract() -> None:
     require(baseoq4_meson, "name_suffix: 'dylib'", "macOS game module dylib suffix")
     require(baseoq4_meson, "-Wl,-install_name,@loader_path/", "macOS game module install name")
 
+    sdl3_vendored_meson = read("subprojects/packagefiles/sdl3/meson.build")
+    sdl3_audio_meson = read("subprojects/packagefiles/sdl3/src/audio/meson.build")
+    require_before(
+        sdl3_vendored_meson,
+        "elif host_machine.subsystem() == 'macos'",
+        "cdata.set('SDL_VIDEO_RENDER_METAL', 1)",
+        "vendored SDL3 Darwin Metal render driver",
+    )
+    require_before(
+        sdl3_audio_meson,
+        "elif host_machine.system() == 'darwin'",
+        "cdata.set('SDL_AUDIO_DRIVER_COREAUDIO', 1)",
+        "vendored SDL3 Darwin CoreAudio driver",
+    )
+
     require(setup_sh, "macos_graphics_bridge", "Bash Meson wrapper option preservation")
     require(setup_sh, "macos_openal_provider", "Bash Meson wrapper OpenAL provider preservation")
     require(setup_ps1, '"macos_graphics_bridge"', "PowerShell Meson wrapper option preservation")
@@ -2526,10 +2541,13 @@ def validate_sdl3_runtime_contract() -> None:
     hints = function_body(source, "static void SDL3_SetVideoHintDefaults(void) {")
     summary = function_body(source, "static void SDL3_PrintGraphicsBridgeSummary(void) {")
     init = function_body(source, "bool GLimp_Init(glimpParms_t parms) {")
+    hint_wrapper = function_body(source, "void Sys_SDL_ApplyVideoHintDefaults(void) {")
     support_renderer = function_body(syscon, "static SDL_Renderer *Posix_CreateSupportRenderer( SDL_Window *window, const char *purpose ) {")
     console_create = function_body(syscon, "static bool Posix_ConsoleCreateWindow( void ) {")
     splash_create = function_body(syscon, "void Sys_ShowSplash( void ) {")
     splash_drain = function_body(syscon, "static void Posix_SplashDrainEvents( SDL_WindowID windowID ) {")
+    splash_ensure = function_body(syscon, "static bool Posix_SplashEnsureVideo( void ) {")
+    console_ensure = function_body(syscon, "static bool Posix_ConsoleEnsureVideo( void ) {")
 
     require(source, "OPENQ4_MACOS_METAL_BRIDGE", "SDL3 Metal bridge compile guard")
     require(source, "SDL3_IsMacOSMetalBridge", "SDL3 Metal bridge predicate")
@@ -2540,6 +2558,7 @@ def validate_sdl3_runtime_contract() -> None:
     require(hints, "SDL3_SetHintDefaultLogged(SDL_HINT_VIDEO_DRIVER", "macOS Metal bridge SDL video driver hint")
     require(hints, '"cocoa"', "macOS Metal bridge SDL video driver hint")
     require(hints, "SDL3_SetHintDefaultLogged(SDL_HINT_RENDER_DRIVER", "macOS Metal bridge render hint")
+    require(hints, '"metal,gpu,software"', "macOS Metal bridge render-driver fallback list")
     require(hints, "SDL3_SetHintDefaultLogged(SDL_HINT_GPU_DRIVER", "macOS Metal bridge GPU hint")
     require(hints, "SDL3_SetHintDefaultLogged(SDL_HINT_VIDEO_METAL_AUTO_RESIZE_DRAWABLE", "macOS Metal bridge drawable hint")
 
@@ -2547,8 +2566,14 @@ def validate_sdl3_runtime_contract() -> None:
     require(summary, "SDL_VIDEO_METAL_AUTO_RESIZE_DRAWABLE", "SDL3 Metal bridge hint log")
     require(init, "SDL3_PrintGraphicsBridgeSummary();", "SDL3 GL initialization")
 
+    require(hint_wrapper, "SDL3_SetVideoHintDefaults();", "early-startup SDL video hint wrapper")
+    require_before(splash_ensure, "Sys_SDL_ApplyVideoHintDefaults();", "SDL_InitSubSystem( SDL_INIT_VIDEO )", "splash hint defaults before SDL video init")
+    require_before(console_ensure, "Sys_SDL_ApplyVideoHintDefaults();", "SDL_InitSubSystem( SDL_INIT_VIDEO )", "console hint defaults before SDL video init")
+
     require(support_renderer, "OPENQ4_MACOS_METAL_BRIDGE", "Metal bridge support-window renderer path")
     require(support_renderer, "SDL_CreateRenderer( window, NULL )", "Metal bridge support-window default renderer")
+    require(support_renderer, "SDL_GetRendererName( renderer )", "Metal bridge support-window created-driver probe")
+    require(support_renderer, "macOS Metal bridge created '%s' driver", "Metal bridge support-window created-driver log")
     require(support_renderer, "falling back to software", "Metal bridge support-window renderer fallback")
     require(support_renderer, 'SDL_CreateRenderer( window, "software" )', "Metal bridge support-window software fallback")
     require(console_create, 'Posix_CreateSupportRenderer( s_consoleWindow.window, "system console" )', "Metal bridge system console renderer")

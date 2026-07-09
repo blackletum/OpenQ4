@@ -81,6 +81,9 @@ ARCHIVE_SUFFIX = {
     "tar.xz": ".tar.xz",
 }
 
+# Shared macOS compatibility floor: written to Info.plist LSMinimumSystemVersion
+# and enforced against each packaged binary's Mach-O minimum-OS load command.
+MACOS_MIN_SYSTEM_VERSION = "11.0"
 MACOS_EXPECTED_PLIST_VALUES = {
     "CFBundleExecutable": "openQ4",
     "CFBundleDisplayName": "openQ4",
@@ -1247,6 +1250,8 @@ def notarize_macos_app_bundle(package_root: Path, config: MacOSSigningConfig) ->
         "--keychain-profile",
         config.notary_keychain_profile,
         "--wait",
+        "--timeout",
+        "45m",
     ]
     if config.notary_keychain is not None:
         notary_command += ["--keychain", str(config.notary_keychain)]
@@ -1278,6 +1283,31 @@ def validate_macos_dmg_image(dmg_path: Path) -> None:
     run_macos_command([hdiutil_path, "imageinfo", str(dmg_path)], label=f"reading macOS DMG info for {dmg_path}")
 
 
+def sign_macos_dmg_image(dmg_path: Path, config: MacOSSigningConfig) -> None:
+    if sys.platform != "darwin" or config.mode != "developer-id":
+        return
+
+    codesign_path = shutil.which("codesign")
+    if codesign_path is None:
+        raise RuntimeError("macOS DMG signing requires codesign")
+
+    run_macos_codesign(
+        [codesign_path, "--force", "--sign", config.identity, "--timestamp", str(dmg_path)],
+        label=f"{config.mode} signing macOS DMG {dmg_path}",
+    )
+
+
+def verify_macos_dmg_developer_id_signature(dmg_path: Path, config: MacOSSigningConfig) -> None:
+    if sys.platform != "darwin" or config.mode != "developer-id":
+        return
+
+    details = macos_codesign_details(dmg_path)
+    if "Authority=Developer ID Application:" not in details:
+        raise RuntimeError(f"macOS DMG is not Developer ID Application signed: {dmg_path}")
+    if "Signature=adhoc" in details:
+        raise RuntimeError(f"macOS DMG is still ad-hoc signed: {dmg_path}")
+
+
 def notarize_macos_dmg_image(dmg_path: Path, config: MacOSSigningConfig) -> None:
     if sys.platform != "darwin" or not config.notarize:
         return
@@ -1294,6 +1324,8 @@ def notarize_macos_dmg_image(dmg_path: Path, config: MacOSSigningConfig) -> None
         "--keychain-profile",
         config.notary_keychain_profile,
         "--wait",
+        "--timeout",
+        "45m",
     ]
     if config.notary_keychain is not None:
         notary_command += ["--keychain", str(config.notary_keychain)]
@@ -2709,17 +2741,95 @@ def macos_otool_install_name(binary_path: Path) -> str:
     return lines[1] if len(lines) > 1 else ""
 
 
-def validate_macos_binary_dependencies(package_root: Path, arch: str) -> None:
-    if sys.platform != "darwin":
-        return
-
-    binary_paths = [
+def macos_dependency_validation_binaries(package_root: Path, arch: str) -> list[Path]:
+    return [
         package_root / f"{PRODUCT_NAME}-client_{arch}",
         package_root / f"{PRODUCT_NAME}-ded_{arch}",
         package_root / "openQ4.app" / "Contents" / "MacOS" / "openQ4",
         package_root / GAME_DIR_NAME / f"game-sp_{arch}.dylib",
         package_root / GAME_DIR_NAME / f"game-mp_{arch}.dylib",
     ]
+
+
+def macos_otool_minimum_os_version(binary_path: Path) -> str:
+    if sys.platform != "darwin":
+        return ""
+
+    otool_path = shutil.which("otool")
+    if otool_path is None:
+        raise RuntimeError("macOS minimum-OS validation requires otool")
+
+    completed = subprocess.run(
+        [otool_path, "-l", str(binary_path)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode != 0:
+        message = completed.stderr.strip() or completed.stdout.strip()
+        raise RuntimeError(f"otool failed for macOS binary {binary_path}: {message}")
+
+    build_version_minos = ""
+    version_min_macosx = ""
+    current_command = ""
+    for line in completed.stdout.splitlines():
+        fields = line.strip().split()
+        if len(fields) < 2:
+            continue
+        if fields[0] == "cmd":
+            current_command = fields[1]
+        elif current_command == "LC_BUILD_VERSION" and fields[0] == "minos":
+            build_version_minos = fields[1]
+        elif current_command == "LC_VERSION_MIN_MACOSX" and fields[0] == "version":
+            version_min_macosx = fields[1]
+
+    return build_version_minos or version_min_macosx
+
+
+def macos_version_components(version: str, label: str) -> tuple[int, ...]:
+    try:
+        components = tuple(int(component) for component in version.split("."))
+    except ValueError as exc:
+        raise RuntimeError(f"{label} is not a dotted-numeric macOS version: {version!r}") from exc
+
+    # Trailing zero components are insignificant ("11.0.0" == "11.0" == "11").
+    while components and components[-1] == 0:
+        components = components[:-1]
+    return components
+
+
+def validate_macos_binary_minimum_os_versions(package_root: Path, arch: str) -> None:
+    if sys.platform != "darwin":
+        return
+
+    declared_floor = macos_version_components(
+        MACOS_MIN_SYSTEM_VERSION, "macOS declared minimum system version"
+    )
+    for binary_path in macos_dependency_validation_binaries(package_root, arch):
+        require_packaged_executable(binary_path, "macOS minimum-OS validation binary")
+        minimum_os = macos_otool_minimum_os_version(binary_path)
+        if not minimum_os:
+            raise RuntimeError(
+                "macOS binary is missing LC_BUILD_VERSION/LC_VERSION_MIN_MACOSX "
+                f"minimum-OS metadata: {binary_path}"
+            )
+        binary_floor = macos_version_components(
+            minimum_os, f"macOS binary minimum-OS metadata for {binary_path}"
+        )
+        if binary_floor > declared_floor:
+            raise RuntimeError(
+                "macOS binary minimum OS exceeds the declared "
+                f"LSMinimumSystemVersion floor: {binary_path}: "
+                f"{minimum_os} > {MACOS_MIN_SYSTEM_VERSION}"
+            )
+
+
+def validate_macos_binary_dependencies(package_root: Path, arch: str) -> None:
+    if sys.platform != "darwin":
+        return
+
+    binary_paths = macos_dependency_validation_binaries(package_root, arch)
 
     for binary_path in binary_paths:
         require_packaged_executable(binary_path, "macOS dependency validation binary")
@@ -3008,7 +3118,7 @@ def create_macos_app_bundle(
             "<key>CFBundleVersion</key>",
             f"<string>{version}</string>",
             "<key>LSMinimumSystemVersion</key>",
-            "<string>11.0</string>",
+            f"<string>{MACOS_MIN_SYSTEM_VERSION}</string>",
             "<key>LSApplicationCategoryType</key>",
             "<string>public.app-category.games</string>",
             "<key>NSPrincipalClass</key>",
@@ -3239,6 +3349,7 @@ def main(argv: list[str]) -> int:
             validate_macos_localized_info_files(package_root, version)
             validate_macos_app_bundle(package_root, macos_app_bundle, args.arch, version)
             validate_macos_binary_dependencies(package_root, args.arch)
+            validate_macos_binary_minimum_os_versions(package_root, args.arch)
             verify_macos_codesignature(package_root, args.arch)
             verify_macos_developer_id_signature(package_root, args.arch, macos_signing)
             notarize_macos_app_bundle(package_root, macos_signing)
@@ -3266,6 +3377,8 @@ def main(argv: list[str]) -> int:
         try:
             if archive_format == "dmg":
                 validate_macos_dmg_image(archive_path)
+                sign_macos_dmg_image(archive_path, macos_signing)
+                verify_macos_dmg_developer_id_signature(archive_path, macos_signing)
                 notarize_macos_dmg_image(archive_path, macos_signing)
                 validate_macos_dmg_image(archive_path)
             else:

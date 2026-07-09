@@ -150,6 +150,14 @@ Posix_Exit
 ================
 */
 void Posix_Exit(int ret) {
+	if ( !Posix_IsMainThread() ) {
+		// A worker-thread fatal error exits through here. Joining the async
+		// thread from itself would recurse through common->Error until the
+		// stack overflows, and the SDL console teardown below is
+		// main-thread-only; exit immediately instead.
+		Sys_Printf( "Posix_Exit: called off the main thread; skipping shutdown teardown\n" );
+		_exit( set_exit ? set_exit : ret );
+	}
 	if ( tty_enabled ) {
 		Sys_Printf( "shutdown terminal support\n" );
 		if ( tcsetattr( 0, TCSADRAIN, &tty_tc ) == -1 ) {
@@ -867,12 +875,35 @@ bool Sys_AlreadyRunning( void ) {
 	return false;
 }
 
+static pthread_t posix_mainThread;
+static bool posix_mainThreadRecorded = false;
+
+/*
+===============
+Posix_IsMainThread
+
+Cocoa (and therefore SDL3 video on macOS) only tolerates window creation and
+event pumping on the process main thread; callers use this to keep those
+paths off worker threads such as the async timer thread.
+===============
+*/
+bool Posix_IsMainThread( void ) {
+	if ( !posix_mainThreadRecorded ) {
+		// Before Posix_EarlyInit records the identity, only the main thread
+		// can be running engine code.
+		return true;
+	}
+	return pthread_equal( pthread_self(), posix_mainThread ) != 0;
+}
+
 /*
 ===============
 Posix_EarlyInit
 ===============
 */
 void Posix_EarlyInit( void ) {
+	posix_mainThread = pthread_self();
+	posix_mainThreadRecorded = true;
 	memset( &asyncThread, 0, sizeof( asyncThread ) );
 	exit_spawn[0] = '\0';
 	Posix_InitSigs();
@@ -888,6 +919,7 @@ Posix_LateInit
 */
 void Posix_LateInit( void ) {
 	Posix_InitConsoleInput();
+	Posix_InitFatalBreadcrumbPath();
 	com_pid.SetInteger( getpid() );
 	common->Printf( "pid: %d\n", com_pid.GetInteger() );
 #ifdef __linux__
@@ -1445,6 +1477,96 @@ void Sys_VPrintf(const char *msg, va_list arg) {
 	tty_Show();
 }
 
+static char posix_fatalBreadcrumbPath[ MAX_OSPATH ];
+
+/*
+================
+Posix_InitFatalBreadcrumbPath
+
+Resolves and caches <savepath>/<gamedir>/logs/fatal.txt (creating the
+directories) so the fatal paths — including async-signal contexts that must
+not call into path resolution — only need open/write/close afterwards.
+================
+*/
+void Posix_InitFatalBreadcrumbPath( void ) {
+	if ( posix_fatalBreadcrumbPath[0] != '\0' ) {
+		return;
+	}
+
+	const char *savePath = Sys_DefaultSavePath();
+	if ( savePath == NULL || savePath[0] == '\0' ) {
+		return;
+	}
+
+	idStr directory = savePath;
+	directory.AppendPath( OPENQ4_GAMEDIR );
+	Sys_Mkdir( directory.c_str() );
+	directory.AppendPath( "logs" );
+	Sys_Mkdir( directory.c_str() );
+
+	idStr path = directory;
+	path.AppendPath( "fatal.txt" );
+	if ( path.Length() < (int)sizeof( posix_fatalBreadcrumbPath ) ) {
+		idStr::Copynz( posix_fatalBreadcrumbPath, path.c_str(), sizeof( posix_fatalBreadcrumbPath ) );
+	}
+}
+
+/*
+================
+Posix_AppendFatalBreadcrumbRaw
+
+Async-signal-safe once Posix_InitFatalBreadcrumbPath has run: only
+open/write/close on the cached path, no allocation or locale work.
+================
+*/
+void Posix_AppendFatalBreadcrumbRaw( const char *text ) {
+	if ( text == NULL || text[0] == '\0' || posix_fatalBreadcrumbPath[0] == '\0' ) {
+		return;
+	}
+
+	int fd = open( posix_fatalBreadcrumbPath, O_WRONLY | O_CREAT | O_APPEND, 0644 );
+	if ( fd == -1 ) {
+		return;
+	}
+
+	size_t length = 0;
+	while ( text[ length ] != '\0' ) {
+		length++;
+	}
+	(void)write( fd, text, length );
+	(void)write( fd, "\n", 1 );
+	close( fd );
+}
+
+/*
+================
+Posix_AppendFatalBreadcrumb
+
+Appends timestamped fatal error text to a small always-writable file in the
+save path so support tooling (including the macOS support collector) can
+harvest fatal errors that never reach the regular session log: init-phase
+errors, worker-thread errors, and signal deaths.
+================
+*/
+void Posix_AppendFatalBreadcrumb( const char *text ) {
+	if ( text == NULL || text[0] == '\0' ) {
+		return;
+	}
+
+	Posix_InitFatalBreadcrumbPath();
+
+	char stamped[ MAX_POSIX_PRINT_MSG + 64 ];
+	char stamp[64];
+	stamp[0] = '\0';
+	time_t now = time( NULL );
+	struct tm tmNow;
+	if ( localtime_r( &now, &tmNow ) != NULL ) {
+		strftime( stamp, sizeof( stamp ), "[%Y-%m-%d %H:%M:%S] ", &tmNow );
+	}
+	idStr::snPrintf( stamped, sizeof( stamped ), "%s%s", stamp, text );
+	Posix_AppendFatalBreadcrumbRaw( stamped );
+}
+
 /*
 ================
 Sys_Error
@@ -1466,6 +1588,7 @@ void Sys_Error(const char *error, ...) {
 	text[sizeof( text ) - 1] = '\0';
 
 	Sys_SetFatalError( text );
+	Posix_AppendFatalBreadcrumb( text );
 	Sys_Printf( "Sys_Error: %s\n", text );
 	Posix_ConsoleFatalErrorWait();
 

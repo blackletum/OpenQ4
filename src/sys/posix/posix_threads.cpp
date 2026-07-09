@@ -313,6 +313,17 @@ void Sys_CreateThread( xthread_t function, void *parms, xthreadPriority priority
 		Sys_LeaveCriticalSection( );
 		common->Error( "ERROR: pthread_attr_setdetachstate %s failed: %s\n", threadName, strerror( result ) );
 	}
+	// Platform defaults diverge widely (macOS: 512KB, Linux: usually 8MB);
+	// raise small defaults to a floor comfortably above what engine worker
+	// threads need, without shrinking platforms that already give more.
+	const size_t minWorkerStackSize = 4 * 1024 * 1024;
+	size_t defaultStackSize = 0;
+	if ( pthread_attr_getstacksize( &attr, &defaultStackSize ) == 0 && defaultStackSize < minWorkerStackSize ) {
+		result = pthread_attr_setstacksize( &attr, minWorkerStackSize );
+		if ( result != 0 ) {
+			common->Printf( "Sys_CreateThread: pthread_attr_setstacksize %s failed: %s; using the platform default\n", threadName, strerror( result ) );
+		}
+	}
 	pthread_t thread;
 	result = pthread_create( &thread, &attr, ( pthread_function_t )function, parms );
 	if ( result != 0 ) {

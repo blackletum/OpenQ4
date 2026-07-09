@@ -13,8 +13,9 @@ This document defines the long-term platform direction for openQ4 and how SDL3 +
   - arm64 (`aarch64`)
 - Keep original Quake 4 gameplay/module behavior compatible while modernizing platform and build layers.
 
-## Current Baseline (0.1.010 beta line)
+## Current Baseline (v0.6.x release line)
 
+- Published releases are currently on the `v0.6.x` line. The `0.1.010` version in `meson.build` is only the internal repo version floor consumed by the release-version helper (see `BUILDING.md`), not a released line.
 - Primary actively validated build targets: Windows x64, Linux x64/arm64, and experimental macOS arm64 through hosted CI/package generation.
 - Windows arm64 remains package-validated during bring-up, with runtime validation still required on hardware.
 - Experimental manual macOS release artifacts are Apple Silicon/arm64 only. The macOS support matrix policy is recorded in `docs/dev/macos-support-matrix-policy.md`: current user-facing releases are `arm64 only`, Intel Mac/`x86_64`, universal2, and Rosetta compatibility are not supported release targets, and the documented OS floor remains `macOS 11` until changed in Meson, package metadata, docs, workflows, and evidence together. Credentialed release runs publish signed/notarized DMGs; runs without Apple Developer ID signing and notarization credentials publish clearly labeled unsigned/unnotarized `-unsigned.tar.gz` archives. The manual release workflow defaults to `macos_support_tier=experimental`; `macos_support_tier=first-class` is a hard gate that requires signed/notarized DMGs and fails when Apple signing/notary secrets are missing. Intel Mac and universal2 packages are intentionally not claimed until the project adds a dedicated Intel validation runner or a universal packaging lane with architecture-specific launch checks.
@@ -50,6 +51,7 @@ This document defines the long-term platform direction for openQ4 and how SDL3 +
 - Hosted `macos-15` CI builds prove configure, build, package, signing, notarization, and static validation paths; they do not replace real Apple-hardware runtime signoff for the macOS 11 floor or the latest public macOS release.
 - First-class macOS support requires completed OpenGL and Metal bridge evidence for both the documented floor and latest public macOS, with architecture policy, CPU architecture, OS matrix role, Xcode version, and macOS SDK version recorded in `docs/dev/macos-signoff-evidence.md`.
 - Matrix expansion requirements are tracked in `docs/dev/macos-support-matrix-policy.md` and `docs/dev/plan/2026-06-30-macos-compatibility-support.md`.
+- Current audio limitations under the release OpenAL provider (Apple's OpenAL framework): no EFX reverb/occlusion filtering, no HRTF control, and stereo-only output mode. The `-Dmacos_openal_provider=system` build option exists as the migration corridor toward an OpenAL Soft-class provider, but it is not the packaged release default.
 
 ## macOS Renderer And Backend Policy
 

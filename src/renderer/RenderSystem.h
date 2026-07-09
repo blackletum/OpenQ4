@@ -87,6 +87,7 @@ typedef struct glconfig_s {
 // rjohnson: new shader stage system
 	bool				GLSLProgramAvailable;
 // RAVEN END
+	bool				GLSL130Available;			// GLSL >= 1.30; false on Apple GL 2.1 (GLSL 1.20). Feeds AA diagnostics and menu availability; the #version 130 post shaders themselves fail safe via material validation
 
 // RAVEN BEGIN
 // dluetscher: added check for NV_vertex_program and NV_fragment_program support

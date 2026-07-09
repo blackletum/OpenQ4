@@ -20,6 +20,21 @@ SDL3_FORBIDDEN_TOKENS = (
     "NSOpenGLContext",
     "NSOpenGLPixelFormat",
     "CGLContextObj",
+    # CGL context/present call surface; CGLQueryRendererInfo/CGLDescribeRenderer
+    # stay allowed for the SDL3-path VRAM probe in macosx_compat.mm.
+    "CGLCreateContext",
+    "CGLSetCurrentContext",
+    "CGLGetCurrentContext",
+    "CGLFlushDrawable",
+    "CGLSetFullScreen",
+    "CGLDestroyContext",
+    "aglCreateContext",
+)
+
+# Headers that are allowed to hold native NSOpenGL/CGL tokens; imported only by
+# the native comparison backend (macosx_glimp.mm).
+NATIVE_ONLY_OSX_HEADERS = (
+    "src/sys/osx/macosx_native_gl.h",
 )
 
 NATIVE_METAL_IMPLEMENTATION_TOKENS = (
@@ -98,7 +113,12 @@ def active_sources_containing(token: str, sources: set[str]) -> list[str]:
 
 def implementation_sources() -> list[Path]:
     paths: set[Path] = set()
-    for root in (SOURCE_ROOT / "renderer", SOURCE_ROOT / "sys" / "osx"):
+    for root in (
+        SOURCE_ROOT / "renderer",
+        SOURCE_ROOT / "sys" / "osx",
+        SOURCE_ROOT / "sys" / "posix",
+        SOURCE_ROOT / "sys" / "sdl3",
+    ):
         for path in root.rglob("*"):
             if path.suffix in {".c", ".cpp", ".h", ".m", ".mm"}:
                 paths.add(path)
@@ -145,6 +165,22 @@ def validate_sdl3_sources_are_carbon_free() -> None:
             if token in source:
                 raise AssertionError(
                     f"SDL3 Darwin source {relative_path} contains forbidden native token {token!r}"
+                )
+
+
+def validate_osx_headers_are_native_token_free() -> None:
+    for allowed in NATIVE_ONLY_OSX_HEADERS:
+        if not (ROOT / allowed).is_file():
+            raise AssertionError(f"Missing allowlisted native-only header {allowed!r}")
+    for path in sorted((SOURCE_ROOT / "sys" / "osx").rglob("*.h")):
+        relative = path.relative_to(ROOT).as_posix()
+        if relative in NATIVE_ONLY_OSX_HEADERS:
+            continue
+        source = path.read_text(encoding="utf-8", errors="ignore")
+        for token in SDL3_FORBIDDEN_TOKENS:
+            if token in source:
+                raise AssertionError(
+                    f"macOS header {relative} contains forbidden native token {token!r}"
                 )
 
 
@@ -281,6 +317,7 @@ def validate_ci_and_local_wiring() -> None:
 def main() -> None:
     validate_source_manifest_boundary()
     validate_sdl3_sources_are_carbon_free()
+    validate_osx_headers_are_native_token_free()
     validate_meson_framework_boundary()
     validate_native_metal_not_implemented()
     validate_policy_docs()

@@ -56,7 +56,9 @@ static const posixSignalRoute_t signalRoutes[] = {
 	{ -1, NULL, false }
 };
 
-static char fatalError[ 1024 ];
+// Sized to match POSIX_CONSOLE_FATAL_SIZE (posix_syscon.cpp) so the fatal
+// message is not truncated on its way to the console fatal buffer.
+static char fatalError[ 4096 ];
 static volatile sig_atomic_t pendingQuitSignal = 0;
 static volatile sig_atomic_t activeFatalSignal = 0;
 
@@ -170,6 +172,17 @@ static void sig_handler( int signum, siginfo_t *info, void *context ) {
 	Posix_WriteSignalText( "openQ4: last renderer startup phase: " );
 	Posix_WriteSignalText( R_RendererStartupPhaseSignalName() );
 	Posix_WriteSignalText( "\n" );
+
+	// Mirror the stderr breadcrumb into the save-path fatal file so support
+	// bundles capture signal deaths. Pure memory ops plus the raw
+	// open/write/close appender keep this async-signal-safe.
+	char breadcrumb[ 320 ];
+	strcpy( breadcrumb, "fatal signal " );
+	strcat( breadcrumb, Posix_SignalName( signum ) );
+	strcat( breadcrumb, "; last renderer startup phase: " );
+	strcat( breadcrumb, R_RendererStartupPhaseSignalName() );
+	Posix_AppendFatalBreadcrumbRaw( breadcrumb );
+
 	_exit( 128 + signum );
 }
 

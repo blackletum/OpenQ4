@@ -164,9 +164,11 @@ def validate_game_module_fallback_contract() -> None:
     require(helper, "dllPath.AppendPath( dllName );", "game module filename helper")
     require(helper, "OpenExplicitFileRead( dllPath )", "game module explicit package-root load")
 
-    active_mod_probe = "FS_OpenGameModuleFromExeDir( this, exeDir, moduleGameDir, dllName, dllPath )"
-    baseoq4_fallback_probe = "FS_OpenGameModuleFromExeDir( this, exeDir, OPENQ4_GAMEDIR, dllName, dllPath )"
-    root_fallback_probe = "dllPath = exeDir;"
+    # FindDLL probes every module search root (executable dir first, then the
+    # macOS .app package root when present) for each fallback tier in order.
+    active_mod_probe = "FS_OpenGameModuleFromExeDir( this, moduleSearchRoots[i], moduleGameDir, dllName, dllPath )"
+    baseoq4_fallback_probe = "FS_OpenGameModuleFromExeDir( this, moduleSearchRoots[i], OPENQ4_GAMEDIR, dllName, dllPath )"
+    root_fallback_probe = "dllPath = moduleSearchRoots[i];"
 
     require(find_dll, active_mod_probe, "active mod game-module probe")
     require(find_dll, baseoq4_fallback_probe, "baseoq4 game-module fallback")

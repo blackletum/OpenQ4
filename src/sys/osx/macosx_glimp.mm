@@ -33,7 +33,7 @@ In addition, the Doom 3 Source Code is also subject to certain additional terms.
 #import "macosx_glimp.h"
 
 #import "macosx_local.h"
-#import "macosx_sys.h"
+#import "macosx_native_gl.h"
 #import "macosx_display.h"
 
 #import <AppKit/AppKit.h>

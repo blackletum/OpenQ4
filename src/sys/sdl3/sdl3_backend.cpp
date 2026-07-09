@@ -483,7 +483,9 @@ static void SDL3_SetHintDefaultLogged(const char *name, const char *value, const
 		return;
 	}
 	if (!SDL_SetHintWithPriority(name, value, SDL_HINT_DEFAULT)) {
-		common->Printf("SDL3: failed to set %s hint %s=%s\n", context != NULL ? context : "default", name, value);
+		// Sys_Printf instead of common->Printf: the hint defaults are also
+		// applied before engine init by the early startup splash/console path.
+		Sys_Printf("SDL3: failed to set %s hint %s=%s\n", context != NULL ? context : "default", name, value);
 	}
 }
 
@@ -523,11 +525,28 @@ static void SDL3_SetVideoHintDefaults(void) {
 #if defined(OPENQ4_SDL3_DARWIN_HOST)
 	if (SDL3_IsMacOSMetalBridge()) {
 		SDL3_SetHintDefaultLogged(SDL_HINT_VIDEO_DRIVER, "cocoa", "macOS Metal bridge");
-		SDL3_SetHintDefaultLogged(SDL_HINT_RENDER_DRIVER, "metal", "macOS Metal bridge");
+		// Metal-first with graceful fallback so NULL-name SDL_CreateRenderer
+		// calls can never hard-fail when the Metal driver is unavailable.
+		SDL3_SetHintDefaultLogged(SDL_HINT_RENDER_DRIVER, "metal,gpu,software", "macOS Metal bridge");
 		SDL3_SetHintDefaultLogged(SDL_HINT_GPU_DRIVER, "metal", "macOS Metal bridge");
 		SDL3_SetHintDefaultLogged(SDL_HINT_VIDEO_METAL_AUTO_RESIZE_DRAWABLE, "1", "macOS Metal bridge");
 	}
 #endif
+}
+
+/*
+===============
+Sys_SDL_ApplyVideoHintDefaults
+
+Called by the early startup splash/console path before its
+SDL_InitSubSystem(SDL_INIT_VIDEO)/SDL_CreateRenderer calls so the platform
+hint defaults (including the macOS Metal bridge render-driver selection) are
+in effect for the first SDL video use of the process, not just for
+GLimp_Init. Safe to call repeatedly; the hints are set at default priority.
+===============
+*/
+void Sys_SDL_ApplyVideoHintDefaults(void) {
+	SDL3_SetVideoHintDefaults();
 }
 
 static void SDL3_UpdateVideoDriverProfile(void) {
@@ -3429,6 +3448,11 @@ static void SDL3_SnapshotCurrentWindowedPlacement(void) {
 	if (!s_sdlWindow || win32.cdsFullscreen || r_borderless.GetBool() || !SDL3_UseAbsoluteWindowPlacement()) {
 		return;
 	}
+	if ((SDL_GetWindowFlags(s_sdlWindow) & SDL_WINDOW_FULLSCREEN) != 0) {
+		// OS-initiated fullscreen (not tracked by win32.cdsFullscreen) must
+		// never be recorded as a windowed placement.
+		return;
+	}
 
 	int x = 0;
 	int y = 0;
@@ -3450,8 +3474,14 @@ static void SDL3_RefreshWindowPlacement(void) {
 	int height = 0;
 	int pixelWidth = 0;
 	int pixelHeight = 0;
-	const bool windowIsHidden = (SDL_GetWindowFlags(s_sdlWindow) & SDL_WINDOW_HIDDEN) != 0;
-	const bool canPersistWindowedPlacement = !windowIsHidden && !win32.cdsFullscreen && !s_screenParmTransitionActive;
+	const SDL_WindowFlags windowFlags = SDL_GetWindowFlags(s_sdlWindow);
+	const bool windowIsHidden = (windowFlags & SDL_WINDOW_HIDDEN) != 0;
+	// Check the actual SDL fullscreen flag as well as the engine's own
+	// bookkeeping: OS-initiated transitions (macOS green traffic-light
+	// button) never set win32.cdsFullscreen, and persisting the fullscreen
+	// space's forced move/resize would corrupt the saved windowed placement.
+	const bool windowIsFullscreen = (windowFlags & SDL_WINDOW_FULLSCREEN) != 0;
+	const bool canPersistWindowedPlacement = !windowIsHidden && !windowIsFullscreen && !win32.cdsFullscreen && !s_screenParmTransitionActive;
 	const bool isWindowedResizable = !r_borderless.GetBool();
 
 	const bool haveWindowPosition = SDL_GetWindowPosition(s_sdlWindow, &x, &y);
@@ -3544,6 +3574,54 @@ static void SDL3_PrintWaylandWindowState(const char *description) {
 		displayName);
 }
 
+#if defined(OPENQ4_SDL3_DARWIN_HOST)
+/*
+===============
+SDL3_FindExactPixelFullscreenMode
+
+Selects the fullscreen mode whose PIXEL dimensions (w/h scaled by
+pixel_density) exactly match the requested size. SDL_DisplayMode w/h are in
+points, so on Retina displays the native pixel resolutions only appear as
+high-density modes that point-based matching would misinterpret (a
+1920x1080-point 2x mode is 3840x2160 pixels).
+===============
+*/
+static bool SDL3_FindExactPixelFullscreenMode(SDL_DisplayID display, int pixelWidth, int pixelHeight, float requestedRefresh, SDL_DisplayMode &outMode) {
+	int modeCount = 0;
+	SDL_DisplayMode **modes = SDL_GetFullscreenDisplayModes(display, &modeCount);
+	if (modes == NULL) {
+		return false;
+	}
+
+	bool found = false;
+	float bestScore = 0.0f;
+	for (int i = 0; i < modeCount; ++i) {
+		const SDL_DisplayMode *candidate = modes[i];
+		if (candidate == NULL) {
+			continue;
+		}
+		const float density = candidate->pixel_density > 0.0f ? candidate->pixel_density : 1.0f;
+		const int candidatePixelWidth = (int)(candidate->w * density + 0.5f);
+		const int candidatePixelHeight = (int)(candidate->h * density + 0.5f);
+		if (candidatePixelWidth != pixelWidth || candidatePixelHeight != pixelHeight) {
+			continue;
+		}
+		// Nearest refresh to the request, or the highest available when no
+		// specific rate was requested.
+		const float score = requestedRefresh > 0.0f
+			? -fabsf(candidate->refresh_rate - requestedRefresh)
+			: candidate->refresh_rate;
+		if (!found || score > bestScore) {
+			found = true;
+			bestScore = score;
+			outMode = *candidate;
+		}
+	}
+	SDL_free(modes);
+	return found;
+}
+#endif
+
 static bool SDL3_LeaveFullscreenAndRestoreDesktopMode(void) {
 	if (!s_sdlWindow) {
 		return true;
@@ -3580,6 +3658,24 @@ static void SDL3_SyncWindowAfterScreenChange(const char *description) {
 			description != NULL ? description : "screen change",
 			SDL_GetError());
 	}
+}
+
+/*
+===============
+Sys_SDL_EmergencyReleaseGameWindow
+
+Called from the fatal-error console path before it shows the error window.
+A fatal error can arrive with the game window still in (exclusive)
+fullscreen; without releasing it the user sees a frozen fullscreen frame
+instead of the error text. Main-thread callers only.
+===============
+*/
+void Sys_SDL_EmergencyReleaseGameWindow(void) {
+	if (!s_sdlWindow) {
+		return;
+	}
+	(void)SDL3_LeaveFullscreenAndRestoreDesktopMode();
+	SDL_HideWindow(s_sdlWindow);
 }
 
 #if defined(_WIN32)
@@ -3674,8 +3770,22 @@ static bool SDL3_ApplyScreenParms(glimpParms_t parms) {
 			SDL_DisplayMode mode;
 			memset(&mode, 0, sizeof(mode));
 			const float requestedRefresh = parms.displayHz > 0 ? static_cast<float>(parms.displayHz) : 0.0f;
-			const bool hasClosestMode = display != 0 &&
-				SDL_GetClosestFullscreenDisplayMode(display, parms.width, parms.height, requestedRefresh, false, &mode);
+			bool hasClosestMode = false;
+#if defined(OPENQ4_SDL3_DARWIN_HOST)
+			// The menu offers pixel resolutions, but Retina displays expose
+			// their native pixel sizes only as high-density modes whose w/h
+			// are points. Prefer an exact pixel-size match so the requested
+			// resolution is honored in pixels; glConfig dimensions stay
+			// correct because they are read back via SDL_GetWindowSizeInPixels.
+			hasClosestMode = display != 0 &&
+				SDL3_FindExactPixelFullscreenMode(display, parms.width, parms.height, requestedRefresh, mode);
+#endif
+			// Point-size matching over the standard (1x-density) mode list;
+			// also the fallback when no exact Retina pixel match exists.
+			if (!hasClosestMode) {
+				hasClosestMode = display != 0 &&
+					SDL_GetClosestFullscreenDisplayMode(display, parms.width, parms.height, requestedRefresh, false, &mode);
+			}
 
 			if (hasClosestMode && mode.displayID == 0) {
 				mode.displayID = display;
@@ -3937,6 +4047,18 @@ static void SDL3_HandleWindowEvent(const SDL_WindowEvent &event, int eventTime) 
 			SDL3_InvalidateMenuMouseRouting();
 			break;
 
+		case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+		case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
+			// OS-initiated transitions (macOS green traffic-light button,
+			// Window menu) never pass through the engine's screen-parm path;
+			// keep derived state consistent with the actual window so
+			// placement persistence and cursor routing behave.
+			glConfig.isFullscreen = (event.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN) || win32.cdsFullscreen;
+			SDL3_RefreshWindowPlacement();
+			SDL3_InvalidateMenuMouseRouting();
+			SDL3_UpdateCursorVisibility();
+			break;
+
 		case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
 		case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
 			SDL3_InitDesktopMode();
@@ -3996,6 +4118,14 @@ static void SDL3_HandleWindowEvent(const SDL_WindowEvent &event, int eventTime) 
 
 bool Sys_SDL_PumpEvents(void) {
 #if defined(OPENQ4_SDL3_POSIX_HOST)
+	if (!Posix_IsMainThread()) {
+		// The async timer thread reaches this through Sys_PollMouseInputEvents
+		// when com_asyncInput is enabled. SDL event pumping and window APIs
+		// are main-thread-only on macOS (and not thread-safe anywhere), so
+		// off-thread callers skip the pump; the input queues they drain are
+		// already mutex-protected and the main loop keeps the pump fresh.
+		return false;
+	}
 	const bool gameWindowReady = s_sdlVideoActive && s_sdlWindow;
 	if (!gameWindowReady) {
 		SDL3_ProcessPendingLifecycleEvents(Sys_Milliseconds());
@@ -5019,6 +5149,14 @@ static int SDL3_BuildGLContextCandidates(rendererContextCandidate_t *candidates,
 	if (candidateCount > 0 && preference == RENDERER_TIER_PREF_AUTO && SDL3_IsNativeWaylandVideoDriver()) {
 		SDL3_MoveCompatibilityFallbacksToFront(candidates, candidateCount);
 		common->Printf("SDL3: native Wayland r_glTier auto will try the unversioned compatibility fallback before explicit profile contexts.\n");
+	}
+
+	if (candidateCount > 0 && preference == RENDERER_TIER_PREF_AUTO && s_sdlVideoDriver == SDL3_VIDEO_DRIVER_COCOA) {
+		// Apple OpenGL only offers 2.1 compatibility or 3.2+/4.1 core, so
+		// every versioned compatibility candidate above 2.1 is guaranteed to
+		// fail; try the unversioned compatibility fallback first.
+		SDL3_MoveCompatibilityFallbacksToFront(candidates, candidateCount);
+		common->Printf("SDL3: macOS r_glTier auto will try the unversioned compatibility fallback before explicit profile contexts.\n");
 	}
 
 	return candidateCount;

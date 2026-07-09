@@ -443,6 +443,7 @@ idCVar r_rendererOcclusion( "r_rendererOcclusion", "1", CVAR_RENDERER | CVAR_BOO
 idCVar r_rendererHiZ( "r_rendererHiZ", "1", CVAR_RENDERER | CVAR_BOOL, "allocate and build the modern scene Hi-Z depth pyramid when visibility culling has a depth producer" );
 idCVar r_useSimpleInteraction( "r_useSimpleInteraction", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use Quake 4's simpler ARB interaction shader pair as an explicit compatibility fallback; may reduce material lighting quality" );
 idCVar r_interactionColorMode( "r_interactionColorMode", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "interaction vertex-color mode: 0 = auto, 1 = packed env16.xy, 2 = vector env16/env17", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
+idCVar r_appleARB2Interactions( "r_appleARB2Interactions", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "Apple GL 2.1 ARB2 light-interaction handling when the driver bypass quirk is active: 0 = bypass interactions (safe default), 1 = attempt the simple interaction shader path, 2 = attempt the full interaction path; diagnostic escape hatch for real-hardware signoff, requires vid_restart", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 idCVar r_shaderReport( "r_shaderReport", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "shader diagnostics: 0 = off, 1 = startup/vid_restart summary, 2 = also warn on invalid program use", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 
 idCVar r_jitter( "r_jitter", "0", CVAR_RENDERER | CVAR_BOOL, "randomly subpixel jitter the projection matrix" );
@@ -1126,8 +1127,18 @@ static void R_CheckPortableExtensions( void ) {
 
 	// GL_ARB shader objects / GLSL
 	glConfig.GLSLProgramAvailable = R_CanUseGLSLPrograms();
+	glConfig.GLSL130Available = false;
 	if ( glConfig.GLSLProgramAvailable ) {
-		common->Printf( "...using GL_ARB shader objects + GLSL\n" );
+		// Apple GL 2.1 compatibility contexts stop at GLSL 1.20, which cannot
+		// compile the #version 130 post shaders (SMAA); record the ceiling so
+		// those paths can gate and report instead of failing at compile time.
+		const char *glslVersionString = (const char *)glGetString( GL_SHADING_LANGUAGE_VERSION );
+		int glslMajor = 0;
+		int glslMinor = 0;
+		if ( glslVersionString != NULL && sscanf( glslVersionString, "%d.%d", &glslMajor, &glslMinor ) == 2 ) {
+			glConfig.GLSL130Available = ( glslMajor > 1 ) || ( glslMajor == 1 && glslMinor >= 30 );
+		}
+		common->Printf( "...using GL_ARB shader objects + GLSL (version %s)\n", glslVersionString != NULL ? glslVersionString : "unknown" );
 	} else if ( r_inhibitFragmentProgram.GetBool() ) {
 		common->Printf( "X..GLSL shader objects disabled by r_inhibitFragmentProgram\n" );
 	} else if ( idAsyncNetwork::serverDedicated.GetBool() ) {
@@ -3409,6 +3420,10 @@ static void R_GfxInfoPrintAAState( void ) {
 	} else if ( !glConfig.GLSLProgramAvailable ) {
 		postAAEffective = false;
 		postAAReason = "glsl-unavailable";
+	} else if ( !glConfig.GLSL130Available ) {
+		// SMAA shaders require #version 130; Apple GL 2.1 stops at GLSL 1.20.
+		postAAEffective = false;
+		postAAReason = "glsl-130-unavailable";
 	}
 
 	char glMaxSamplesText[32];

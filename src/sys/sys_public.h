@@ -436,6 +436,13 @@ const char *	Sys_DefaultBasePath( void );
 const char *	Sys_DefaultSavePath( void );
 const char *	Sys_EXEPath( void );
 
+// When the executable runs from inside a platform application bundle (macOS
+// openQ4.app), returns true and fills packageRoot with the extracted package
+// directory the bundle sits in; game modules and loose assets are staged
+// there. Returns false on platforms and layouts without a separate package
+// root, in which case packageRoot is left empty.
+bool			Sys_GetPackageRootDirectory( char *packageRoot, int packageRootSize );
+
 // use fs_debug to verbose Sys_ListFiles
 // returns -1 if directory was not found (the list is cleared)
 int				Sys_ListFiles( const char *directory, const char *extension, idList<class idStr> &list );

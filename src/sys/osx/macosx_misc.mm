@@ -408,8 +408,12 @@ const char* OSX_GetLocalizedString( const char* key )
 		return localizedString.c_str();
 	}
 
+	// With an empty fallback value, Foundation returns the key itself when
+	// the lookup misses (and the guard below additionally maps any empty
+	// result to the key), so missing translations surface as the raw key
+	// name instead of the literal "No translation" as a key-binding label.
 	NSString *string = [ [ NSBundle mainBundle ] localizedStringForKey:lookupKey
-													 value:@"No translation" table:nil];
+													 value:@"" table:nil];
 	const char *localizedText = string != nil ? [string UTF8String] : NULL;
 	localizedString = ( localizedText != NULL && localizedText[0] != '\0' ) ? localizedText : key;
 	return localizedString.c_str();
