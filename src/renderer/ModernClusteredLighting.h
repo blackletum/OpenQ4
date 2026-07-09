@@ -45,7 +45,11 @@ enum rendererModernShadowDescriptorFlag_t {
 	RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_STABLE_CASCADE = 1 << 13,
 	RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_PROJECTED_STATE_READY = 1 << 14,
 	RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_PROJECTED_FALLBACK = 1 << 15,
-	RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_RECEIVER_PLANE_BIAS = 1 << 16
+	RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_RECEIVER_PLANE_BIAS = 1 << 16,
+	// projectedAtlasRect references a live cell of ARB2's persistent shadow
+	// atlas (signature-current, static content complete) - the only state in
+	// which the modern receiver may sample a projected shadow
+	RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_ATLAS_SLOT = 1 << 17
 };
 
 typedef struct rendererModernShadowDescriptor_s {
@@ -71,8 +75,14 @@ typedef struct rendererModernShadowDescriptor_s {
 	int		projectedValidSampleCount;
 	int		projectedSkippedSampleCount;
 	int		flags;
-	float	atlasRect[4];
-	float	tileAtlasRect[RENDERER_MODERN_SHADOW_DESCRIPTOR_MAX_TILES][4];
+	// freshness (I7): frame the planner built this descriptor, and the frame
+	// the referenced atlas cell's static content was last rendered
+	int		updateFrame;
+	int		atlasContentFrame;
+	int		atlasCellX;
+	int		atlasCellY;
+	int		atlasCellSpan;
+	bool	atlasSlotValid;
 	float	shadowMatrix[16];
 	float	viewShadowMatrix[RENDERER_MODERN_SHADOW_DESCRIPTOR_MAX_CASCADES][16];
 	float	projection[4];
@@ -154,6 +164,7 @@ typedef struct rendererClusteredLightingStats_s {
 	int		uploadedShadowDescriptors;
 	int		shadowDescriptorCapacity;
 	int		shadowReceiverBlockedLights;
+	int		shadowAtlasSlotBlockedLights;
 	int		culledLights;
 	int		clippedLights;
 	int		overflowLights;
@@ -212,6 +223,9 @@ int R_ModernClusteredLighting_NumLightDescriptors( void );
 const rendererModernLightDescriptor_t *R_ModernClusteredLighting_LightDescriptor( int index );
 int R_ModernClusteredLighting_NumShadowDescriptors( void );
 const rendererModernShadowDescriptor_t *R_ModernClusteredLighting_ShadowDescriptor( int index );
+// linked-size expectation for the shadow-descriptor UBO block, for std140
+// layout-drift introspection against the driver (M5)
+int R_ModernClusteredLighting_ShadowDescriptorUboBlockBytes( void );
 bool RendererClusterGrid_RunSelfTest( void );
 
 #endif /* !__MODERN_CLUSTERED_LIGHTING_H__ */

@@ -430,6 +430,11 @@ typedef struct modernGLExecutorStats_s {
 	int		modernVisibleShadowFallbackLights;
 	int		modernVisibleShadowSkippedLights;
 	int		modernVisibleShadowDescriptors;
+	// per-light gating (5c): lights that would visibly lose shadows in a
+	// modern-composed frame, and the consumable counts backing the verdict
+	int		modernVisibleShadowBlockedLights;
+	int		modernVisibleShadowConsumableLights;
+	int		modernVisibleShadowPointConstraintLights;
 	int		modernVisibleGuiModernPasses;
 	int		modernVisibleGuiDraws;
 	int		modernVisibleGuiReadyDraws;

@@ -272,10 +272,8 @@ void idImage::SetTexParameters() {
 	{
 		// only do aniso filtering on mip mapped images
 		if ( filter == TF_DEFAULT && hasMipChain ) {
-			int aniso = glConfig.maxTextureAnisotropy;
-			if ( aniso < 0 ) {
-				aniso = 0;
-			}
+			const float requestedAniso = static_cast<float>( Max( 1, cvarSystem->GetCVarInteger( "image_anisotropy" ) ) );
+			const float aniso = Min( requestedAniso, Max( 1.0f, glConfig.maxTextureAnisotropy ) );
 			glTexParameterf(target, GL_TEXTURE_MAX_ANISOTROPY_EXT, aniso );
 		} else {
 			glTexParameterf(target, GL_TEXTURE_MAX_ANISOTROPY_EXT, 1 );

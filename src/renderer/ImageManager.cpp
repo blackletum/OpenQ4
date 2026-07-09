@@ -38,10 +38,53 @@ idImageManager	imageManager;
 idImageManager * globalImages = &imageManager;
 
 idCVar preLoad_Images( "preLoad_Images", "1", CVAR_SYSTEM | CVAR_BOOL, "preload images during beginlevelload" );
+idCVar image_anisotropy(
+	"image_anisotropy",
+	"16",
+	CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+	"anisotropic filtering level for mipmapped material textures",
+	1,
+	16 );
+idCVar image_downSize(
+	"image_downSize",
+	"0",
+	CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
+	"downsize material textures to image_downSizeLimit" );
+idCVar image_downSizeLimit(
+	"image_downSizeLimit",
+	"0",
+	CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+	"maximum material texture dimension when image_downSize is enabled; 0 disables the limit",
+	0,
+	32768 );
+idCVar image_downSizeSpecular(
+	"image_downSizeSpecular",
+	"0",
+	CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
+	"downsize specular textures to image_downSizeSpecularLimit" );
+idCVar image_downSizeSpecularLimit(
+	"image_downSizeSpecularLimit",
+	"64",
+	CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+	"maximum specular texture dimension when image_downSizeSpecular is enabled; 0 disables the limit",
+	0,
+	32768 );
+idCVar image_downSizeBump(
+	"image_downSizeBump",
+	"0",
+	CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
+	"downsize bump textures to image_downSizeBumpLimit" );
+idCVar image_downSizeBumpLimit(
+	"image_downSizeBumpLimit",
+	"256",
+	CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+	"maximum bump texture dimension when image_downSizeBump is enabled; 0 disables the limit",
+	0,
+	32768 );
 idCVar image_ignoreHighQuality(
 	"image_ignoreHighQuality",
 	"0",
-	CVAR_RENDERER | CVAR_BOOL,
+	CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
 	"ignore material highquality / uncompressed image usage hints" );
 
 static void R_NormalizeInternalImageName( idStr& name ) {
@@ -103,6 +146,13 @@ void R_ReloadImages_f( const idCmdArgs &args ) {
 	}
 
 	globalImages->ReloadImages( all );
+}
+
+static void R_ImageDDSSelfTest_f( const idCmdArgs &args ) {
+	(void)args;
+	if ( !R_ImageDDS_RunSelfTest() ) {
+		common->Warning( "Image DDS self-test failed" );
+	}
 }
 
 typedef struct {
@@ -823,6 +873,7 @@ void idImageManager::Init() {
 
 	cmdSystem->AddCommand( "reloadImages", R_ReloadImages_f, CMD_FL_RENDERER, "reloads images" );
 	cmdSystem->AddCommand( "listImages", R_ListImages_f, CMD_FL_RENDERER, "lists images" );
+	cmdSystem->AddCommand( "imageDDSSelfTest", R_ImageDDSSelfTest_f, CMD_FL_RENDERER, "validates DDS naming and BC7 metadata handling" );
 	cmdSystem->AddCommand( "combineCubeImages", R_CombineCubeImages_f, CMD_FL_RENDERER, "combines six images for roq compression" );
 
 	// should forceLoadImages be here?

@@ -9,6 +9,7 @@
 #include "RendererBenchmarks.h"
 #include "RendererMetrics.h"
 #include "ShadowMapProjected.h"
+#include "ShadowMapArb2Parity.h"
 
 const int MODERN_CLUSTER_MAX_GRIDS = 16;
 const int MODERN_CLUSTER_MAX_LIGHTS_UBO = 256;
@@ -103,7 +104,21 @@ typedef struct modernClusterGridGpuParams_s {
 	float				viewToWorldX[4];
 	float				viewToWorldY[4];
 	float				viewToWorldZ[4];
+	// x=proj[0][0], y=proj[1][1], z=proj[2][0], w=proj[2][1]: the terms the
+	// deferred resolve needs for a real inverse-projection reconstruction
+	float				projection[4];
+	// x=proj[2][2], y=proj[3][2]: the actual depth mapping written by the
+	// scene projection (id's infinite-far crunch), so the deferred resolve
+	// inverts what the depth buffer really holds instead of assuming a
+	// finite-far frustum
+	float				projectionDepth[4];
 } modernClusterGridGpuParams_t;
+
+// hand-synced with the GLSL ModernClusterGridParams UBO block
+assert_sizeof( modernClusterGridGpuParams_t, 9 * 4 * sizeof( float ) );
+assert_offsetof( modernClusterGridGpuParams_t, viewToWorldZ, 96 );
+assert_offsetof( modernClusterGridGpuParams_t, projection, 112 );
+assert_offsetof( modernClusterGridGpuParams_t, projectionDepth, 128 );
 
 typedef struct modernClusterLightGpuRecord_s {
 	float				positionRadius[4];
@@ -118,6 +133,12 @@ typedef struct modernClusterLightGpuRecord_s {
 	float				projectQ[4];
 } modernClusterLightGpuRecord_t;
 
+// hand-synced with GLSL struct ModernClusterLightRecord; all-vec4 layout
+// keeps tight C packing identical to std140/std430
+assert_sizeof( modernClusterLightGpuRecord_t, 10 * 4 * sizeof( float ) );
+assert_offsetof( modernClusterLightGpuRecord_t, flags, 64 );
+assert_offsetof( modernClusterLightGpuRecord_t, projectQ, 144 );
+
 typedef struct modernClusterIndexGpuRecord_s {
 	GLuint				indices[4];
 } modernClusterIndexGpuRecord_t;
@@ -127,8 +148,12 @@ typedef struct modernClusterShadowDescriptorGpuRecord_s {
 	float				policy[4];
 	float				layout[4];
 	float				counts[4];
-	float				atlasRect[4];
-	float				tileAtlasRect[RENDERER_MODERN_SHADOW_DESCRIPTOR_MAX_TILES][4];
+	// freshness (I7): x = descriptor build frame modulo 2^20 (compared in
+	// the shader against the same modular stamp uploaded per bind, so a
+	// stale buffer fails visibly; ages baked at fill time would always read
+	// zero), y = atlas slot valid, z = atlas cell content age in frames,
+	// w = reserved
+	float				freshness[4];
 	float				shadowMatrix[RENDERER_MODERN_SHADOW_DESCRIPTOR_MAX_CASCADES][16];
 	float				cascadeSplitDepths[4];
 	float				cascadeBiasScale[4];
@@ -138,6 +163,25 @@ typedef struct modernClusterShadowDescriptorGpuRecord_s {
 	float				projection[4];
 	float				projectedAtlasRect[RENDERER_MODERN_SHADOW_DESCRIPTOR_MAX_CASCADES][4];
 } modernClusterShadowDescriptorGpuRecord_t;
+
+// The GLSL twin (struct ModernClusterShadowDescriptor in
+// ModernGLShaderLibrary.cpp) is hand-synced; every member is a vec4/mat4
+// multiple so tight C packing equals std140/std430. These pins turn silent
+// layout drift into a compile error.
+assert_sizeof( modernClusterShadowDescriptorGpuRecord_t, ( 5 * 4 + 4 * 16 + 6 * 4 + 4 * 4 ) * sizeof( float ) );
+assert_offsetof( modernClusterShadowDescriptorGpuRecord_t, identity, 0 );
+assert_offsetof( modernClusterShadowDescriptorGpuRecord_t, policy, 16 );
+assert_offsetof( modernClusterShadowDescriptorGpuRecord_t, layout, 32 );
+assert_offsetof( modernClusterShadowDescriptorGpuRecord_t, counts, 48 );
+assert_offsetof( modernClusterShadowDescriptorGpuRecord_t, freshness, 64 );
+assert_offsetof( modernClusterShadowDescriptorGpuRecord_t, shadowMatrix, 80 );
+assert_offsetof( modernClusterShadowDescriptorGpuRecord_t, cascadeSplitDepths, 336 );
+assert_offsetof( modernClusterShadowDescriptorGpuRecord_t, cascadeBiasScale, 352 );
+assert_offsetof( modernClusterShadowDescriptorGpuRecord_t, texelDepthBias, 368 );
+assert_offsetof( modernClusterShadowDescriptorGpuRecord_t, worldTexelSize, 384 );
+assert_offsetof( modernClusterShadowDescriptorGpuRecord_t, bias, 400 );
+assert_offsetof( modernClusterShadowDescriptorGpuRecord_t, projection, 416 );
+assert_offsetof( modernClusterShadowDescriptorGpuRecord_t, projectedAtlasRect, 432 );
 
 typedef struct modernClusterDebugPixel_s {
 	unsigned char		r;
@@ -531,6 +575,9 @@ static int R_ModernClusteredLighting_ShadowDescriptorFlags( const modernShadowLi
 	if ( shadow.modernReceiverSamplingReady ) {
 		flags |= RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_SAMPLING_READY;
 	}
+	if ( shadow.arb2AtlasSlotReady ) {
+		flags |= RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_ATLAS_SLOT;
+	}
 	if ( shadow.stableCascadeReady ) {
 		flags |= RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_STABLE_CASCADE;
 	}
@@ -606,7 +653,12 @@ static void R_ModernClusteredLighting_CopyPlannerShadowDescriptor( rendererModer
 	dst.projectedValidSampleCount = src.projectedValidSampleCount;
 	dst.projectedSkippedSampleCount = src.projectedSkippedSampleCount;
 	dst.flags = R_ModernClusteredLighting_ShadowDescriptorFlags( src );
-	memcpy( dst.atlasRect, src.atlasRect, sizeof( dst.atlasRect ) );
+	dst.updateFrame = src.updateFrame;
+	dst.atlasContentFrame = src.arb2AtlasContentFrame;
+	dst.atlasCellX = src.arb2AtlasCellX;
+	dst.atlasCellY = src.arb2AtlasCellY;
+	dst.atlasCellSpan = src.arb2AtlasCellSpan;
+	dst.atlasSlotValid = src.arb2AtlasSlotReady;
 	memcpy( dst.shadowMatrix, src.shadowMatrix, sizeof( dst.shadowMatrix ) );
 	for ( int cascadeIndex = 0; cascadeIndex < RENDERER_MODERN_SHADOW_DESCRIPTOR_MAX_CASCADES; ++cascadeIndex ) {
 		R_ModernClusteredLighting_SetIdentityMatrix( dst.viewShadowMatrix[cascadeIndex] );
@@ -625,10 +677,6 @@ static void R_ModernClusteredLighting_CopyPlannerShadowDescriptor( rendererModer
 	memcpy( dst.bias, src.bias, sizeof( dst.bias ) );
 	memcpy( dst.projectedBaseClipPlanes, src.projectedBaseClipPlanes, sizeof( dst.projectedBaseClipPlanes ) );
 
-	const int tileCount = Min( RENDERER_MODERN_SHADOW_DESCRIPTOR_MAX_TILES, MODERN_SHADOW_DESCRIPTOR_MAX_TILES );
-	for ( int tileIndex = 0; tileIndex < tileCount; ++tileIndex ) {
-		memcpy( dst.tileAtlasRect[tileIndex], src.tileAtlasRect[tileIndex], sizeof( dst.tileAtlasRect[tileIndex] ) );
-	}
 	const int cascadeCount = Min( RENDERER_MODERN_SHADOW_DESCRIPTOR_MAX_CASCADES, MODERN_SHADOW_DESCRIPTOR_MAX_CASCADES );
 	for ( int cascadeIndex = 0; cascadeIndex < cascadeCount; ++cascadeIndex ) {
 		dst.cascadeSplitDepths[cascadeIndex] = src.cascadeSplitDepths[cascadeIndex];
@@ -640,7 +688,16 @@ static void R_ModernClusteredLighting_CopyPlannerShadowDescriptor( rendererModer
 		dst.depthRange[cascadeIndex] = src.depthRange[cascadeIndex];
 		dst.clipZExtent[cascadeIndex] = src.clipZExtent[cascadeIndex];
 		memcpy( dst.projectedClipPlanes[cascadeIndex], src.projectedClipPlanes[cascadeIndex], sizeof( dst.projectedClipPlanes[cascadeIndex] ) );
-		memcpy( dst.projectedAtlasRect[cascadeIndex], src.projectedAtlasRect[cascadeIndex], sizeof( dst.projectedAtlasRect[cascadeIndex] ) );
+		if ( src.arb2AtlasSlotReady ) {
+			// the one true rect convention (5c): min/max UVs into the
+			// PERSISTENT atlas, composed from the light's live cache cell -
+			// the texture the modern receiver actually binds
+			memcpy( dst.projectedAtlasRect[cascadeIndex], src.arb2AtlasCascadeRect[cascadeIndex], sizeof( dst.projectedAtlasRect[cascadeIndex] ) );
+		} else {
+			// per-light convention rects; not consumable without a slot (the
+			// ATLAS_SLOT flag stays clear so the shader never samples these)
+			memcpy( dst.projectedAtlasRect[cascadeIndex], src.projectedAtlasRect[cascadeIndex], sizeof( dst.projectedAtlasRect[cascadeIndex] ) );
+		}
 		if ( !src.pointLight && src.projectedStateReady ) {
 			R_ModernClusteredLighting_BuildViewShadowMatrix( dst.viewShadowMatrix[cascadeIndex], viewDef, src.projectedClipPlanes[cascadeIndex] );
 		}
@@ -691,8 +748,12 @@ static void R_ModernClusteredLighting_FillShadowDescriptorGpuRecord( modernClust
 	dst.counts[1] = static_cast<float>( src.requestedCascadeCount );
 	dst.counts[2] = static_cast<float>( src.atlasDiv );
 	dst.counts[3] = static_cast<float>( src.projectedSampleCount );
-	memcpy( dst.atlasRect, src.atlasRect, sizeof( dst.atlasRect ) );
-	memcpy( dst.tileAtlasRect, src.tileAtlasRect, sizeof( dst.tileAtlasRect ) );
+	// modular stamp instead of raw frame number: frame counts overflow
+	// float precision on long soaks, the 2^20 residue stays exact
+	dst.freshness[0] = static_cast<float>( src.updateFrame & 0xFFFFF );
+	dst.freshness[1] = src.atlasSlotValid ? 1.0f : 0.0f;
+	dst.freshness[2] = src.atlasSlotValid ? static_cast<float>( idMath::ClampInt( 0, 1 << 20, tr.frameCount - src.atlasContentFrame ) ) : -1.0f;
+	dst.freshness[3] = 0.0f;
 	memcpy( dst.shadowMatrix, src.viewShadowMatrix, sizeof( dst.shadowMatrix ) );
 	memcpy( dst.cascadeSplitDepths, src.cascadeSplitDepths, sizeof( dst.cascadeSplitDepths ) );
 	memcpy( dst.cascadeBiasScale, src.cascadeBiasScale, sizeof( dst.cascadeBiasScale ) );
@@ -718,6 +779,14 @@ static void R_ModernClusteredLighting_ApplyShadowDescriptor( modernClusterLightR
 	record.shadowFallbackReason = shadow->fallbackReason;
 	stats.shadowDescriptorCount = Max( stats.shadowDescriptorCount, shadow->descriptorIndex + 1 );
 
+	// per-light gating (5c): a projected light is GPU-consumable only when
+	// its descriptor references a live persistent-atlas cell; a mapped light
+	// without one is blocked individually instead of poisoning the frame
+	const bool projectedSlotBlocked = !shadow->pointLight
+		&& ( shadow->policy == MODERN_SHADOW_POLICY_MAPPED || shadow->policy == MODERN_SHADOW_POLICY_CACHE_REUSE )
+		&& shadow->modernReceiverSamplingReady
+		&& !shadow->arb2AtlasSlotReady;
+
 	bool mappedShadowForModernReceiver = false;
 	if ( shadow->policy == MODERN_SHADOW_POLICY_MAPPED && !shadow->modernReceiverSamplingReady ) {
 		// Keep the modern light contribution renderable until deferred/forward+
@@ -726,6 +795,11 @@ static void R_ModernClusteredLighting_ApplyShadowDescriptor( modernClusterLightR
 		record.shadowPolicy = MODERN_SHADOW_POLICY_NONE;
 		record.shadowFallbackReason = MODERN_SHADOW_FALLBACK_RECEIVER_SAMPLING_UNAVAILABLE;
 		stats.shadowReceiverBlockedLights++;
+	} else if ( projectedSlotBlocked ) {
+		record.shadowDescriptorIndex = -1;
+		record.shadowPolicy = MODERN_SHADOW_POLICY_NONE;
+		record.shadowFallbackReason = MODERN_SHADOW_FALLBACK_RESOURCE_UNAVAILABLE;
+		stats.shadowAtlasSlotBlockedLights++;
 	} else if ( shadow->policy == MODERN_SHADOW_POLICY_MAPPED ) {
 		record.flags |= MODERN_CLUSTER_LIGHT_FLAG_SHADOW_MAPPED;
 		stats.shadowMappedLights++;
@@ -746,6 +820,12 @@ static void R_ModernClusteredLighting_ApplyShadowDescriptor( modernClusterLightR
 		stats.shadowFallbackLights++;
 	} else if ( shadow->policy == MODERN_SHADOW_POLICY_SKIPPED ) {
 		stats.shadowSkippedLights++;
+	}
+
+	if ( mappedShadowForModernReceiver && !shadow->pointLight && shadow->arb2AtlasSlotReady ) {
+		// the atlas cell this light record will present must not idle-expire
+		// under the GPU; this is the closest CPU point to actual consumption
+		RB_ShadowMapProjectedAtlasSlotMarkUsed( shadow->lightDefIndex );
 	}
 
 	if ( mappedShadowForModernReceiver && shadow->mapType == MODERN_SHADOW_MAP_CASCADE ) {
@@ -2050,10 +2130,22 @@ static void R_ModernClusteredLighting_BuildGridParams( const modernClusterGridRe
 		params.viewToWorldZ[0] = grid.viewDef->renderView.viewaxis[0].x;
 		params.viewToWorldZ[1] = grid.viewDef->renderView.viewaxis[0].y;
 		params.viewToWorldZ[2] = grid.viewDef->renderView.viewaxis[0].z;
+		// column-major GL projection: [0]=m00, [5]=m11, [8]=m20, [9]=m21,
+		// [10]=m22, [14]=m32
+		params.projection[0] = grid.viewDef->projectionMatrix[0];
+		params.projection[1] = grid.viewDef->projectionMatrix[5];
+		params.projection[2] = grid.viewDef->projectionMatrix[8];
+		params.projection[3] = grid.viewDef->projectionMatrix[9];
+		params.projectionDepth[0] = grid.viewDef->projectionMatrix[10];
+		params.projectionDepth[1] = grid.viewDef->projectionMatrix[14];
 	} else {
 		params.viewToWorldX[0] = 1.0f;
 		params.viewToWorldY[1] = 1.0f;
 		params.viewToWorldZ[2] = 1.0f;
+		params.projection[0] = 1.0f;
+		params.projection[1] = 1.0f;
+		params.projectionDepth[0] = -1.0f;
+		params.projectionDepth[1] = -2.0f * Max( 0.25f, grid.nearZ );
 	}
 }
 
@@ -2457,6 +2549,10 @@ const rendererModernShadowDescriptor_t *R_ModernClusteredLighting_ShadowDescript
 	return &rg_clusteredLightingFrame.shadowDescriptors[index];
 }
 
+int R_ModernClusteredLighting_ShadowDescriptorUboBlockBytes( void ) {
+	return static_cast<int>( sizeof( modernClusterShadowDescriptorGpuRecord_t ) ) * MODERN_CLUSTER_MAX_SHADOW_DESCRIPTORS_UBO;
+}
+
 static void R_ModernClusteredLighting_SetupSelfTestView( viewDef_t &view, viewLight_t *lights, idRenderLightLocal *lightDefs, int lightCount ) {
 	memset( &view, 0, sizeof( view ) );
 	view.renderView.width = 1280;
@@ -2618,7 +2714,7 @@ bool RendererClusterGrid_RunSelfTest( void ) {
 		viewLight_t shadowLights[2];
 		idRenderLightLocal shadowLightDefs[2];
 		R_ModernClusteredLighting_SetupSelfTestView( shadowView, shadowLights, shadowLightDefs, 2 );
-		const idMaterial *projectedLightShader = declManager != NULL ? declManager->FindMaterial( "lights/defaultProjectedLight" ) : tr.defaultMaterial;
+		const idMaterial *projectedLightShader = R_ModernShadowPlanner_SelfTestLightShader( "lights/defaultProjectedLight" );
 		if ( projectedLightShader == NULL ) {
 			projectedLightShader = tr.defaultMaterial;
 		}
@@ -2682,22 +2778,26 @@ bool RendererClusterGrid_RunSelfTest( void ) {
 			&& shadowRecord->shadowFallbackReason == MODERN_SHADOW_FALLBACK_NONE
 			&& ( shadowDescriptor->flags & ( RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_RECEIVER_BLOCKED | RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_SAMPLING_READY ) ) == RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_SAMPLING_READY
 			&& ( shadowRecord->flags & MODERN_CLUSTER_LIGHT_FLAG_SHADOW_MAPPED ) != 0;
-		const bool skippedLightMaterialValid =
-			shadowDescriptor != NULL
-			&& shadowRecord != NULL
-			&& shadowDescriptor->policy == MODERN_SHADOW_POLICY_SKIPPED
-			&& shadowDescriptor->fallbackReason == MODERN_SHADOW_FALLBACK_LIGHT_SHADER_NO_SHADOWS
-			&& shadowRecord->shadowPolicy == MODERN_SHADOW_POLICY_SKIPPED
-			&& shadowRecord->shadowFallbackReason == MODERN_SHADOW_FALLBACK_LIGHT_SHADER_NO_SHADOWS
+		// live receiver sampling without a persistent-atlas slot (5c): the
+		// synthetic light can never have a real ARB2 cache cell, so its
+		// cluster record is individually slot-blocked while the planner
+		// descriptor stays MAPPED - the designed per-light gating state
+		const bool slotBlockedHandoffValid =
+			samplingReady
+			&& shadowClusterStats.shadowAtlasSlotBlockedLights > 0
 			&& shadowClusterStats.shadowMappedLights == 0
-			&& shadowClusterStats.shadowFallbackLights == 0
-			&& shadowClusterStats.shadowSkippedLights > 0;
+			&& shadowRecord != NULL
+			&& shadowDescriptor != NULL
+			&& shadowRecord->shadowPolicy == MODERN_SHADOW_POLICY_NONE
+			&& shadowRecord->shadowFallbackReason == MODERN_SHADOW_FALLBACK_RESOURCE_UNAVAILABLE
+			&& ( shadowDescriptor->flags & RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_ATLAS_SLOT ) == 0
+			&& ( shadowRecord->flags & ( MODERN_CLUSTER_LIGHT_FLAG_SHADOW_MAPPED | MODERN_CLUSTER_LIGHT_FLAG_SHADOW_FALLBACK | MODERN_CLUSTER_LIGHT_FLAG_SHADOW_CASCADE | MODERN_CLUSTER_LIGHT_FLAG_SHADOW_POINT ) ) == 0;
 		if ( shadowStats.available
 			&& ( shadowClusterStats.shadowFallbackLights != 0
 				|| shadowClusterStats.shadowDescriptorCount != shadowStats.descriptorCount
 				|| shadowClusterStats.shadowDescriptorCapacity <= 0
-				|| ( !descriptorCommonValid && !skippedLightMaterialValid )
-				|| ( !skippedLightMaterialValid && !blockedHandoffValid && !sampledHandoffValid ) ) ) {
+				|| !descriptorCommonValid
+				|| ( !blockedHandoffValid && !sampledHandoffValid && !slotBlockedHandoffValid ) ) ) {
 			common->Printf(
 				"RendererClusterGrid self-test failed: shadow receiver handoff invalid (sampling=%d plannerBlocked=%d clusterBlocked=%d mapped=%d fallback=%d descriptors=%d/%d cap=%d policy=%d reason=%d flags=0x%x descPolicy=%d descReason=%d descMap=%d descCompare=%d descBias=%d descTiles=%d descFlags=0x%x)\n",
 				samplingReady ? 1 : 0,

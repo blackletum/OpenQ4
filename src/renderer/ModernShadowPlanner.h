@@ -73,7 +73,9 @@ enum modernShadowDescriptorInvariant_t {
 	MODERN_SHADOW_DESCRIPTOR_INVARIANT_PROJECTED_ATLAS = 1u << 3,
 	MODERN_SHADOW_DESCRIPTOR_INVARIANT_SPLIT_DEPTHS = 1u << 4,
 	MODERN_SHADOW_DESCRIPTOR_INVARIANT_PROJECTED_STATE = 1u << 5,
-	MODERN_SHADOW_DESCRIPTOR_INVARIANT_POLICY = 1u << 6
+	MODERN_SHADOW_DESCRIPTOR_INVARIANT_POLICY = 1u << 6,
+	MODERN_SHADOW_DESCRIPTOR_INVARIANT_ATLAS_SLOT = 1u << 7,
+	MODERN_SHADOW_DESCRIPTOR_INVARIANT_FRESHNESS = 1u << 8
 };
 
 typedef struct modernShadowLightDescriptor_s {
@@ -164,6 +166,16 @@ typedef struct modernShadowLightDescriptor_s {
 	bool				arb2CacheReuseAvailable;
 	bool				arb2CacheFullyReusable;
 	bool				arb2CacheBudgetIsolated;
+	// resolved persistent-atlas placement (5c): true when the light's GLOBAL
+	// cache entry holds live cells whose signature matches this frame's
+	// content and no dynamic casters are missing from the static tiles -
+	// the state in which modern receivers may sample the cell directly
+	bool				arb2AtlasSlotReady;
+	int					arb2AtlasCellX;
+	int					arb2AtlasCellY;
+	int					arb2AtlasCellSpan;
+	int					arb2AtlasContentFrame;
+	float				arb2AtlasCascadeRect[MODERN_SHADOW_DESCRIPTOR_MAX_CASCADES][4];
 	bool				atlasTileReady;
 	bool				casterPassReady;
 	bool				cutoutCasterReady;
@@ -275,6 +287,7 @@ typedef struct modernShadowPlannerStats_s {
 	int					arb2CacheAwareLights;
 	int					arb2CacheableLights;
 	int					arb2CacheReuseLights;
+	int					arb2AtlasSlotReadyLights;
 	int					arb2CacheFullyReusableLights;
 	int					arb2CacheBudgetIsolatedLights;
 	int					arb2FreshUpdateLights;
@@ -332,5 +345,8 @@ const char *ModernShadowFallbackReason_Name( modernShadowFallbackReason_t reason
 void R_ModernShadowPlanner_PrintGfxInfo( void );
 bool RendererShadowPlanner_RunSelfTest( void );
 bool RendererShadowProjectedDiagnostic_RunSelfTest( void );
+// shared by shadow self-tests: a light material guaranteed to cast shadows
+// even in assetless runs (M5: no trivial-pass escape)
+const idMaterial *R_ModernShadowPlanner_SelfTestLightShader( const char *materialName );
 
 #endif /* !__MODERN_SHADOW_PLANNER_H__ */

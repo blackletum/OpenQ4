@@ -195,6 +195,7 @@ private:
 	bool				defaulted;				// true if the default image was generated because a file couldn't be loaded
 	ID_TIME_T			sourceFileTime;			// the most recent of all images used in creation, for reloadImages command
 	ID_TIME_T			binaryFileTime;			// the time stamp of the binary file
+	idStr				loadedSourceName;		// source or automatic DDS replacement used by the last successful load
 
 	int					refCount;				// overall ref count
 	int					useCount;				// per-level material reference count
@@ -231,6 +232,7 @@ ID_INLINE idImage::idImage(const char* name) : imgName(name) {
 	defaulted = false;
 	sourceFileTime = FILE_NOT_FOUND_TIMESTAMP;
 	binaryFileTime = FILE_NOT_FOUND_TIMESTAMP;
+	loadedSourceName.Clear();
 	refCount = 0;
 	useCount = 0;
 }
@@ -389,7 +391,8 @@ IMAGEFILES
 void R_LoadImage(const char* name, byte** pic, int* width, int* height, ID_TIME_T* timestamp, bool makePowerOf2);
 void R_LoadImageForUsage(const char* name, byte** pic, int* width, int* height, ID_TIME_T* timestamp, bool makePowerOf2, textureUsage_t usage);
 bool R_ResolvePreferredDDSImageSource(const char* name, idStr& ddsName, ID_TIME_T* timestamp, bool allowPrecompressedDDS, bool* precompressedDDS);
-bool R_LoadPrecompressedDDS(const char* name, idBinaryImage& image, ID_TIME_T* timestamp, textureUsage_t usage);
+bool R_LoadPrecompressedDDS(const char* name, idBinaryImage& image, ID_TIME_T* timestamp, textureUsage_t usage, int downsizeLimit, bool useMipmaps);
+bool R_ImageDDS_RunSelfTest();
 // pic is in top to bottom raster format
 bool R_LoadCubeImages(const char* cname, cubeFiles_t extensions, byte* pic[6], int* size, ID_TIME_T* timestamp);
 

@@ -304,9 +304,61 @@ static void R_ModernShadowPlanner_ApplyArb2CacheEstimate( modernShadowLightDescr
 		estimate.cacheMissPasses == 0;
 }
 
+// Resolves the light's persistent-atlas placement (5c). The slot is
+// consumable by modern receivers only when the GLOBAL-pass cache entry's
+// signature matches this frame's content (the estimate replayed it) and the
+// static tiles are the light's complete content - dynamic casters are
+// composed over scratch per frame (5b) and never reach the atlas cell.
+static void R_ModernShadowPlanner_ResolveArb2AtlasSlot( modernShadowLightDescriptor_t &descriptor, const viewLight_t *vLight ) {
+	descriptor.arb2AtlasSlotReady = false;
+	descriptor.arb2AtlasCellX = -1;
+	descriptor.arb2AtlasCellY = -1;
+	descriptor.arb2AtlasCellSpan = 0;
+	descriptor.arb2AtlasContentFrame = -1;
+	memset( descriptor.arb2AtlasCascadeRect, 0, sizeof( descriptor.arb2AtlasCascadeRect ) );
+	if ( descriptor.pointLight || vLight == NULL || descriptor.lightDefIndex < 0 ) {
+		return;
+	}
+	shadowMapArb2AtlasSlot_t slot;
+	if ( !RB_ShadowMapProjectedAtlasSlotForLight( descriptor.lightDefIndex, slot ) ) {
+		return;
+	}
+	const bool contentCurrent = descriptor.arb2CacheEstimateValid
+		&& ( descriptor.arb2CacheHitPassMask & SHADOWMAP_ARB2_CACHE_PASS_GLOBAL ) != 0;
+	const bool staticContentComplete = vLight->shadowMapDynamicCasterCount == 0;
+	if ( !contentCurrent || !staticContentComplete ) {
+		return;
+	}
+	if ( slot.cascadeCount != Max( 1, descriptor.cascadeCount ) ) {
+		return;
+	}
+	descriptor.arb2AtlasCellX = slot.cellX;
+	descriptor.arb2AtlasCellY = slot.cellY;
+	descriptor.arb2AtlasCellSpan = slot.cellSpan;
+	descriptor.arb2AtlasContentFrame = slot.lastUpdatedFrame;
+	const int cascadeLimit = Min( MODERN_SHADOW_DESCRIPTOR_MAX_CASCADES, SHADOWMAP_PROJECTED_MAX_CASCADES );
+	for ( int i = 0; i < cascadeLimit; ++i ) {
+		descriptor.arb2AtlasCascadeRect[i][0] = slot.cascadeAtlasRect[i][0];
+		descriptor.arb2AtlasCascadeRect[i][1] = slot.cascadeAtlasRect[i][1];
+		descriptor.arb2AtlasCascadeRect[i][2] = slot.cascadeAtlasRect[i][2];
+		descriptor.arb2AtlasCascadeRect[i][3] = slot.cascadeAtlasRect[i][3];
+	}
+	descriptor.arb2AtlasSlotReady = true;
+	// LRU pinning happens at the consumption point (clustered-lighting light
+	// record build), not here: at init time the light's final policy is
+	// unknown, and pinning entries for budget-missed or invariant-demoted
+	// lights would distort ARB2's cache behavior.
+}
+
 static bool R_ModernShadowPlanner_CanIsolateArb2CacheOwnership( const modernShadowLightDescriptor_t &descriptor ) {
-	return !descriptor.modernReceiverSamplingReady
-		&& descriptor.arb2CacheEstimateValid
+	// With modern receiver sampling live, cache reuse stays budget-exempt
+	// only when the receivers can actually consume the cached tiles - the
+	// persistent-atlas slot (5c) makes that possible; without it the light
+	// must compete for a mapped update instead of silently losing shadows.
+	if ( descriptor.modernReceiverSamplingReady && !descriptor.arb2AtlasSlotReady ) {
+		return false;
+	}
+	return descriptor.arb2CacheEstimateValid
 		&& descriptor.arb2CacheFullyReusable
 		&& descriptor.arb2CacheHitPasses > 0
 		&& descriptor.arb2ShadowPasses > 0;
@@ -640,6 +692,10 @@ static const char *R_ModernShadowPlanner_InvariantFlagName( const unsigned int f
 		return "projected-state";
 	case MODERN_SHADOW_DESCRIPTOR_INVARIANT_POLICY:
 		return "policy";
+	case MODERN_SHADOW_DESCRIPTOR_INVARIANT_ATLAS_SLOT:
+		return "atlas-slot";
+	case MODERN_SHADOW_DESCRIPTOR_INVARIANT_FRESHNESS:
+		return "freshness";
 	default:
 		return "unknown";
 	}
@@ -859,6 +915,14 @@ static bool R_ModernShadowPlanner_ValidateProjectedDescriptor( modernShadowLight
 		}
 	}
 
+	if ( descriptor.arb2AtlasSlotReady ) {
+		valid &= R_ModernShadowPlanner_CheckDescriptorInvariant( descriptor, MODERN_SHADOW_DESCRIPTOR_INVARIANT_ATLAS_SLOT, descriptor.arb2AtlasCellSpan > 0 && descriptor.arb2AtlasCellX >= 0 && descriptor.arb2AtlasCellY >= 0, stage, "persistent-atlas slot cell placement is invalid" );
+		for ( int cascadeIndex = 0; cascadeIndex < activeCascadeCount; ++cascadeIndex ) {
+			valid &= R_ModernShadowPlanner_CheckDescriptorInvariant( descriptor, MODERN_SHADOW_DESCRIPTOR_INVARIANT_ATLAS_SLOT, R_ModernShadowPlanner_AtlasRectMinMaxReady( descriptor.arb2AtlasCascadeRect[cascadeIndex] ), stage, "persistent-atlas slot rectangle is outside normalized bounds" );
+		}
+		valid &= R_ModernShadowPlanner_CheckDescriptorInvariant( descriptor, MODERN_SHADOW_DESCRIPTOR_INVARIANT_FRESHNESS, descriptor.arb2AtlasContentFrame >= 0 && descriptor.arb2AtlasContentFrame <= tr.frameCount, stage, "persistent-atlas slot content frame is invalid" );
+	}
+
 	return valid;
 }
 
@@ -912,6 +976,7 @@ static void R_ModernShadowPlanner_SetDescriptorInvariantPolicy( modernShadowLigh
 	descriptor.stencilFallback = descriptor.policy == MODERN_SHADOW_POLICY_STENCIL_FALLBACK;
 	descriptor.cacheReuseCandidate = false;
 	descriptor.atlasTileReady = false;
+	descriptor.arb2AtlasSlotReady = false;
 }
 
 static modernShadowFallbackReason_t R_ModernShadowPlanner_SupportReason( const viewLight_t *vLight ) {
@@ -1017,6 +1082,7 @@ static void R_ModernShadowPlanner_InitDescriptor( modernShadowLightDescriptor_t 
 	descriptor.budgetClass = R_ModernShadowPlanner_BudgetClassForDescriptor( descriptor );
 	R_ModernShadowPlanner_InitDescriptorContract( descriptor, vLight, viewDef );
 	R_ModernShadowPlanner_ApplyArb2CacheEstimate( descriptor, vLight, viewDef );
+	R_ModernShadowPlanner_ResolveArb2AtlasSlot( descriptor, vLight );
 	descriptor.estimatedPixels = descriptor.resolution * descriptor.resolution * Max( 1, descriptor.tileCount );
 	const int scissorArea = vLight != NULL ? R_ModernShadowPlanner_ScissorArea( vLight->scissorRect ) : 0;
 	descriptor.priority =
@@ -1341,6 +1407,9 @@ static void R_ModernShadowPlanner_CountDescriptor( const modernShadowLightDescri
 		if ( descriptor.arb2CacheFullyReusable ) {
 			stats.arb2CacheFullyReusableLights++;
 		}
+		if ( descriptor.arb2AtlasSlotReady ) {
+			stats.arb2AtlasSlotReadyLights++;
+		}
 		if ( descriptor.arb2FreshUpdatePasses > 0 ) {
 			stats.arb2FreshUpdateLights++;
 		}
@@ -1444,6 +1513,7 @@ static void R_ModernShadowPlanner_FinalizeStats( modernShadowPlannerStats_t &sta
 	stats.arb2CacheAwareLights = 0;
 	stats.arb2CacheableLights = 0;
 	stats.arb2CacheReuseLights = 0;
+	stats.arb2AtlasSlotReadyLights = 0;
 	stats.arb2CacheFullyReusableLights = 0;
 	stats.arb2CacheBudgetIsolatedLights = 0;
 	stats.arb2FreshUpdateLights = 0;
@@ -1516,11 +1586,12 @@ static void R_ModernShadowPlanner_PrintArb2CacheStats( const modernShadowPlanner
 		return;
 	}
 	common->Printf(
-		"%s arb2Cache(lights aware=%d cacheable=%d reuse=%d full=%d isolated=%d fresh=%d budgetFallback=%d passes total=%d cacheable=%d hit=%d miss=%d fresh=%d budgetFallback=%d stencilOnly=%d receiverFallback=%d unshadowed=%d)\n",
+		"%s arb2Cache(lights aware=%d cacheable=%d reuse=%d atlasSlot=%d full=%d isolated=%d fresh=%d budgetFallback=%d passes total=%d cacheable=%d hit=%d miss=%d fresh=%d budgetFallback=%d stencilOnly=%d receiverFallback=%d unshadowed=%d)\n",
 		prefix != NULL ? prefix : "modernShadowPlan",
 		stats.arb2CacheAwareLights,
 		stats.arb2CacheableLights,
 		stats.arb2CacheReuseLights,
+		stats.arb2AtlasSlotReadyLights,
 		stats.arb2CacheFullyReusableLights,
 		stats.arb2CacheBudgetIsolatedLights,
 		stats.arb2FreshUpdateLights,
@@ -2099,28 +2170,38 @@ static bool R_ModernShadowPlanner_CompareDescriptorToArb2Parity( const char *lab
 	return true;
 }
 
-static bool R_ModernShadowPlanner_AllDescriptorsSkippedForNoShadowReasons( int expectedDescriptors, int &lightShaderNoShadows, int &noShadowsFlag ) {
-	lightShaderNoShadows = 0;
-	noShadowsFlag = 0;
-	if ( R_ModernShadowPlanner_NumDescriptors() != expectedDescriptors ) {
-		return false;
+// Resolves a light material that is guaranteed to cast shadows. Assetless
+// runs default light materials to a translucent (implicitly noShadows)
+// stand-in, which used to collapse the entire regression net into a trivial
+// "all lights skipped" pass (M5). When the on-disk material cannot cast
+// shadows, a minimal forceShadows material is synthesized so the mapped
+// path is always exercised. The synthetic decl is allocated OUTSIDE the
+// decl manager's file registry (the idMaterial::Validate pattern): a
+// registered phantom file would make reloadDecls FatalError on the missing
+// file, and a registry decl would be purged back to the noShadows default
+// text on every level load. The one-time allocation deliberately lives for
+// the process lifetime.
+const idMaterial *R_ModernShadowPlanner_SelfTestLightShader( const char *materialName ) {
+	if ( declManager == NULL ) {
+		return tr.defaultMaterial;
 	}
-	for ( int descriptorIndex = 0; descriptorIndex < expectedDescriptors; ++descriptorIndex ) {
-		const modernShadowLightDescriptor_t *descriptor = R_ModernShadowPlanner_DescriptorByIndex( descriptorIndex );
-		if ( descriptor == NULL || descriptor->policy != MODERN_SHADOW_POLICY_SKIPPED ) {
-			return false;
-		}
-		if ( descriptor->fallbackReason == MODERN_SHADOW_FALLBACK_LIGHT_SHADER_NO_SHADOWS ) {
-			lightShaderNoShadows++;
-			continue;
-		}
-		if ( descriptor->fallbackReason == MODERN_SHADOW_FALLBACK_NO_SHADOWS_FLAG ) {
-			noShadowsFlag++;
-			continue;
-		}
-		return false;
+	const idMaterial *material = declManager->FindMaterial( materialName );
+	if ( material != NULL && material->LightCastsShadows() ) {
+		return material;
 	}
-	return lightShaderNoShadows + noShadowsFlag == expectedDescriptors;
+	static idDecl *syntheticDecl = NULL;
+	if ( syntheticDecl == NULL ) {
+		syntheticDecl = declManager->AllocateDecl( DECL_MATERIAL );
+		if ( syntheticDecl != NULL ) {
+			const char *body = "{\n\tforceShadows\n\t{\n\t\tmap _white\n\t}\n}\n";
+			syntheticDecl->Parse( body, static_cast<int>( strlen( body ) ), false );
+		}
+	}
+	const idMaterial *synthetic = syntheticDecl != NULL ? static_cast<const idMaterial *>( syntheticDecl ) : NULL;
+	if ( synthetic != NULL && synthetic->LightCastsShadows() ) {
+		return synthetic;
+	}
+	return material != NULL ? material : tr.defaultMaterial;
 }
 
 bool RendererShadowPlanner_RunSelfTest( void ) {
@@ -2217,8 +2298,8 @@ bool RendererShadowPlanner_RunSelfTest( void ) {
 	idRenderLightLocal lightDefs[6];
 	memset( lights, 0, sizeof( lights ) );
 	memset( lightDefs, 0, sizeof( lightDefs ) );
-	const idMaterial *projectedLightShader = declManager != NULL ? declManager->FindMaterial( "lights/defaultProjectedLight" ) : tr.defaultMaterial;
-	const idMaterial *pointLightShader = declManager != NULL ? declManager->FindMaterial( "lights/defaultPointLight" ) : tr.defaultMaterial;
+	const idMaterial *projectedLightShader = R_ModernShadowPlanner_SelfTestLightShader( "lights/defaultProjectedLight" );
+	const idMaterial *pointLightShader = R_ModernShadowPlanner_SelfTestLightShader( "lights/defaultPointLight" );
 	if ( projectedLightShader == NULL ) {
 		projectedLightShader = tr.defaultMaterial;
 	}
@@ -2308,39 +2389,9 @@ bool RendererShadowPlanner_RunSelfTest( void ) {
 
 	R_ModernShadowPlanner_PrepareFrame( packetFrame, true );
 	const modernShadowPlannerStats_t stats = R_ModernShadowPlanner_Stats();
-	int noShadowLightShaderSkips = 0;
-	int noShadowFlagSkips = 0;
-	if ( stats.frameValid
-		&& stats.viewLightCount == 6
-		&& stats.descriptorCount == 6
-		&& stats.mappedLights == 0
-		&& stats.fallbackLights == 0
-		&& stats.skippedLights == 6
-		&& stats.descriptorInvariantFailures == 0
-		&& R_ModernShadowPlanner_AllDescriptorsSkippedForNoShadowReasons( 6, noShadowLightShaderSkips, noShadowFlagSkips ) ) {
-		common->Printf(
-			"RendererShadowPlanner regression coverage: projected=0 point=0 csm=0 budgetFallback=0 cacheReuse=0 fairness=0 throttleHistory=0 casterAdmission=1 receiverFallback=1 lod=0 arb2Parity=0 skippedLightShaderNoShadows=1 noShadowFlagSkips=%d lightShaderNoShadowSkips=%d\n",
-			noShadowFlagSkips,
-			noShadowLightShaderSkips );
-		common->Printf(
-			"RendererShadowPlanner self-test passed (skippedLightShaderNoShadows=1 noShadowFlagSkips=%d lightShaderNoShadowSkips=%d lights=%d descriptors=%d mapped=%d fallback=%d skipped=%d csm=%d/%d size=%d budget=%d atlas=%d/%d invariants=%d status=%s)\n",
-			noShadowFlagSkips,
-			noShadowLightShaderSkips,
-			stats.viewLightCount,
-			stats.descriptorCount,
-			stats.mappedLights,
-			stats.fallbackLights,
-			stats.skippedLights,
-			stats.cascadeLights,
-			stats.cascadeCount,
-			stats.shadowMapSize,
-			stats.maxMappedLights,
-			stats.atlasTiles,
-			stats.maxAtlasTiles,
-			stats.descriptorInvariantFailures,
-			stats.status );
-		return true;
-	}
+	// No trivial-pass escape (M5): the synthetic light materials are
+	// guaranteed to cast shadows, so an all-skipped frame here is a real
+	// regression and must fail loudly, not self-report as coverage.
 	if ( !stats.frameValid || stats.viewLightCount != 6 || stats.descriptorCount != 6 || stats.mappedLights <= 0 || stats.skippedLights < 2 || stats.cascadeLights <= 0 || stats.cascadeCount < 3 || stats.shadowMapSize <= 0 || stats.maxMappedLights <= 0 || stats.atlasTiles <= 0 || stats.receiverGuardedLights <= 0 || stats.receiverSamplingBlockedLights <= 0 || stats.descriptorInvariantFailures != 0 ) {
 		common->Printf(
 			"RendererShadowPlanner self-test failed: valid=%d lights=%d desc=%d mapped=%d fallback=%d skipped=%d csm=%d/%d size=%d budget=%d atlas=%d/%d guarded=%d blocked=%d invariants=%d mask=0x%08x status=%s\n",
@@ -2901,7 +2952,7 @@ bool RendererShadowProjectedDiagnostic_RunSelfTest( void ) {
 	idRenderLightLocal lightDef;
 	memset( &light, 0, sizeof( light ) );
 	memset( &lightDef, 0, sizeof( lightDef ) );
-	const idMaterial *projectedLightShader = declManager != NULL ? declManager->FindMaterial( "lights/defaultProjectedLight" ) : tr.defaultMaterial;
+	const idMaterial *projectedLightShader = R_ModernShadowPlanner_SelfTestLightShader( "lights/defaultProjectedLight" );
 	if ( projectedLightShader == NULL ) {
 		projectedLightShader = tr.defaultMaterial;
 	}
@@ -2966,31 +3017,8 @@ bool RendererShadowProjectedDiagnostic_RunSelfTest( void ) {
 	R_ModernShadowPlanner_PrepareFrame( packetFrame, true );
 	const modernShadowPlannerStats_t stats = R_ModernShadowPlanner_Stats();
 	const modernShadowLightDescriptor_t *descriptor = R_ModernShadowPlanner_DescriptorForLight( &light );
-	if ( stats.frameValid
-		&& stats.viewLightCount == 1
-		&& stats.descriptorCount == 1
-		&& stats.mappedLights == 0
-		&& stats.fallbackLights == 0
-		&& stats.skippedLights == 1
-		&& stats.descriptorInvariantFailures == 0
-		&& descriptor != NULL
-		&& descriptor->policy == MODERN_SHADOW_POLICY_SKIPPED
-		&& descriptor->fallbackReason == MODERN_SHADOW_FALLBACK_LIGHT_SHADER_NO_SHADOWS ) {
-		common->Printf( "SM projected-diagnostic scene=synthetic-flashlight skippedLightShaderNoShadows=1\n" );
-		common->Printf( "SM projected-diagnostic fallbackValidation(skippedLightShaderNoShadows=1)\n" );
-		common->Printf(
-			"RendererShadowProjectedDiagnostic self-test passed (skippedLightShaderNoShadows=1 lights=%d descriptors=%d mapped=%d fallback=%d skipped=%d csm=%d/%d invariants=%d status=%s projectedGate=skipped)\n",
-			stats.viewLightCount,
-			stats.descriptorCount,
-			stats.mappedLights,
-			stats.fallbackLights,
-			stats.skippedLights,
-			stats.cascadeLights,
-			stats.cascadeCount,
-			stats.descriptorInvariantFailures,
-			stats.status );
-		return true;
-	}
+	// No trivial-pass escape (M5): the synthetic flashlight material is
+	// guaranteed to cast shadows, so a skipped light here is a regression.
 	if ( !stats.frameValid || stats.viewLightCount != 1 || stats.descriptorCount != 1 || stats.descriptorInvariantFailures != 0 || stats.cascadeLights != 1 || stats.cascadeCount != 3 || stats.mappedLights != 1 || descriptor == NULL ) {
 		common->Printf(
 			"RendererShadowProjectedDiagnostic self-test failed: planner valid=%d lights=%d descriptors=%d mapped=%d fallback=%d skipped=%d csm=%d/%d invariants=%d mask=0x%08x descriptor=%d status=%s\n",

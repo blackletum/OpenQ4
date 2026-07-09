@@ -2732,6 +2732,17 @@ bool RB_ShadowMapTextureBindings( rendererShadowTextureBindings_t &bindings ) {
 		g_shadowMapDepthImage != NULL && projectedWidth > 0 && projectedHeight > 0 );
 	bindings.projectedAtlasReady = bindings.projectedAtlas.ready;
 
+	const int persistentWidth = g_shadowMapAtlasRenderTexture != NULL ? g_shadowMapAtlasRenderTexture->GetWidth() : 0;
+	const int persistentHeight = g_shadowMapAtlasRenderTexture != NULL ? g_shadowMapAtlasRenderTexture->GetHeight() : 0;
+	RB_ShadowMapFillTextureBinding(
+		bindings.projectedPersistentAtlas,
+		g_shadowMapAtlasDepthImage,
+		GL_TEXTURE_2D,
+		persistentWidth,
+		persistentHeight,
+		g_shadowMapAtlasDepthImage != NULL && persistentWidth > 0 && persistentHeight > 0 );
+	bindings.projectedPersistentAtlasReady = bindings.projectedPersistentAtlas.ready;
+
 	idImage *pointAtlasImage = ( bindings.pointDepthCompare && g_pointShadowMapDepthImage != NULL ) ? g_pointShadowMapDepthImage : g_pointShadowMapColorImage;
 	const int pointWidth = g_pointShadowMapRenderTexture != NULL ? g_pointShadowMapRenderTexture->GetWidth() : ( pointAtlasImage != NULL ? pointAtlasImage->GetUploadWidth() : 0 );
 	const int pointHeight = g_pointShadowMapRenderTexture != NULL ? g_pointShadowMapRenderTexture->GetHeight() : ( pointAtlasImage != NULL ? pointAtlasImage->GetUploadHeight() : 0 );
@@ -6204,6 +6215,24 @@ static void RB_ShadowMapStatsReport( void ) {
 		g_shadowMapStats.pointCacheSlotsUsed,
 		g_shadowMapStats.pointCacheSlotsTotal,
 		RB_ShadowMapResidentBytes() / ( 1024.0 * 1024.0 ) );
+	{
+		// modern consumption of the persistent atlas (5c): how many lights
+		// the planner resolved live atlas slots for, and whether the modern
+		// per-light gate would let a modern-composed frame keep its shadows
+		const modernShadowPlannerStats_t &modernShadowStats = R_ModernShadowPlanner_Stats();
+		if ( modernShadowStats.frameValid ) {
+			const rendererClusteredLightingStats_t &clusterStats = R_ModernClusteredLighting_Stats();
+			common->Printf(
+				"SM modern: atlasSlots=%d mapped=%d cacheReuse=%d slotBlocked=%d samplingBlocked=%d fallback=%d skipped=%d\n",
+				modernShadowStats.arb2AtlasSlotReadyLights,
+				modernShadowStats.mappedLights,
+				modernShadowStats.arb2CacheReuseLights,
+				clusterStats.shadowAtlasSlotBlockedLights,
+				clusterStats.shadowReceiverBlockedLights,
+				modernShadowStats.fallbackLights,
+				modernShadowStats.skippedLights );
+		}
+	}
 	common->Printf(
 		"SM casters: total=%d static=%d dynamic=%d alpha=%d translucent=%d expanded=%d rejected=%d lod(tests=%d rejected=%d alpha=%d translucent=%d)\n",
 		g_shadowMapStats.casterCount,
@@ -9107,6 +9136,86 @@ bool RB_ShadowMapEstimateArb2CacheOwnership( const viewLight_t *vLight, const vi
 		RB_ShadowMapEstimateArb2CachePass( vLight, viewDef, estimate, SHADOWMAP_PASS_GLOBAL, false, vLight->globalShadowMapCasters, vLight->localShadowMapCasters, NULL, NULL, vLight->globalShadows, vLight->localShadows, vLight->globalInteractions );
 	}
 	return estimate.shadowPasses > 0;
+}
+
+// A light can briefly own two GLOBAL entries: a signature change allocates a
+// new record without invalidating the old one (the old entry deliberately
+// backs ARB2's budget stale-reuse). Consumers of the persistent-atlas slot
+// need the entry ARB2 is actually maintaining, which is always the most
+// recently rendered one - a first-match lookup could export a stale sibling
+// as current content.
+static projectedShadowMapCacheEntry_t *RB_ShadowMapNewestProjectedGlobalEntry( const int lightIndex ) {
+	const int slotLimit = RB_ShadowMapProjectedCacheSlotLimit();
+	projectedShadowMapCacheEntry_t *newest = NULL;
+	for ( int i = 0; i < slotLimit; i++ ) {
+		projectedShadowMapCacheEntry_t *entry = &g_projectedShadowMapCache[i];
+		if ( entry->valid && entry->lightIndex == lightIndex && entry->passKind == static_cast<int>( SHADOWMAP_PASS_GLOBAL )
+			&& ( newest == NULL || entry->lastUpdatedFrame > newest->lastUpdatedFrame ) ) {
+			newest = entry;
+		}
+	}
+	return newest;
+}
+
+// Exposes a cached projected light's persistent-atlas placement so the modern
+// path can reference real tiles instead of aliasing whatever per-light target
+// the last ARB2 shadow pass selected. Read-only: must not touch LRU state.
+// Only the GLOBAL pass entry qualifies - modern shading is single-pass over
+// all receivers, and a LOCAL-only entry (global casters only) would
+// under-shadow. Rects are composed into persistent-atlas UV space with the
+// same math as the ARB2 receiver upload.
+bool RB_ShadowMapProjectedAtlasSlotForLight( const int lightDefIndex, shadowMapArb2AtlasSlot_t &slot ) {
+	memset( &slot, 0, sizeof( slot ) );
+	slot.lightIndex = lightDefIndex;
+	if ( lightDefIndex < 0 || g_shadowMapAtlasDepthImage == NULL || g_shadowMapAtlasRenderTexture == NULL || g_shadowMapAtlasCellSize <= 0 ) {
+		return false;
+	}
+	const projectedShadowMapCacheEntry_t *entry = RB_ShadowMapNewestProjectedGlobalEntry( lightDefIndex );
+	if ( entry == NULL || !entry->state.valid || entry->atlasCellSpan <= 0 ) {
+		return false;
+	}
+	const int atlasWidth = g_shadowMapAtlasRenderTexture->GetWidth();
+	const int atlasHeight = g_shadowMapAtlasRenderTexture->GetHeight();
+	if ( atlasWidth <= 0 || atlasHeight <= 0 ) {
+		return false;
+	}
+	slot.signature = entry->signature;
+	slot.cellX = entry->atlasCellX;
+	slot.cellY = entry->atlasCellY;
+	slot.cellSpan = entry->atlasCellSpan;
+	slot.cellSizePixels = g_shadowMapAtlasCellSize;
+	slot.atlasWidthPixels = atlasWidth;
+	slot.atlasHeightPixels = atlasHeight;
+	slot.tileSize = entry->state.tileSize;
+	slot.atlasDiv = entry->state.atlasDiv;
+	slot.cascadeCount = idMath::ClampInt( 1, SHADOWMAP_PROJECTED_MAX_CASCADES, entry->state.cascadeCount );
+	slot.lastUpdatedFrame = entry->lastUpdatedFrame;
+	slot.lastUsedFrame = entry->lastUsedFrame;
+	const float slotU0 = ( entry->atlasCellX * g_shadowMapAtlasCellSize ) / (float)atlasWidth;
+	const float slotV0 = ( entry->atlasCellY * g_shadowMapAtlasCellSize ) / (float)atlasHeight;
+	const float slotSpanU = ( entry->state.tileSize * entry->state.atlasDiv ) / (float)atlasWidth;
+	const float slotSpanV = ( entry->state.tileSize * entry->state.atlasDiv ) / (float)atlasHeight;
+	for ( int i = 0; i < SHADOWMAP_PROJECTED_MAX_CASCADES; i++ ) {
+		const idVec4 &rect = entry->state.atlasRect[i];
+		slot.cascadeAtlasRect[i][0] = slotU0 + rect.x * slotSpanU;
+		slot.cascadeAtlasRect[i][1] = slotV0 + rect.y * slotSpanV;
+		slot.cascadeAtlasRect[i][2] = slotU0 + rect.z * slotSpanU;
+		slot.cascadeAtlasRect[i][3] = slotV0 + rect.w * slotSpanV;
+	}
+	slot.valid = true;
+	return true;
+}
+
+// Pins an atlas entry against idle expiry while modern receivers are
+// presenting it. Callers must gate this on live modern consumption -
+// diagnostics-only planner runs must stay strictly read-only or they would
+// distort ARB2's cache LRU behavior. Targets the same newest entry the slot
+// export composed from.
+void RB_ShadowMapProjectedAtlasSlotMarkUsed( const int lightDefIndex ) {
+	projectedShadowMapCacheEntry_t *entry = RB_ShadowMapNewestProjectedGlobalEntry( lightDefIndex );
+	if ( entry != NULL ) {
+		entry->lastUsedFrame = tr.frameCount;
+	}
 }
 
 static void RB_ARB2_UploadCustomGLSLShaderParms( const shaderStage_t *stage, const float *regs, const drawInteraction_t *din ) {

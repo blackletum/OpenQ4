@@ -384,45 +384,6 @@ name contains GetName() upon entry
 	}
 }
 
-static bool R_ImageNameIsProgramOperator( const idToken &token ) {
-	return !token.Icmp( "heightmap" ) ||
-		!token.Icmp( "addnormals" ) ||
-		!token.Icmp( "smoothnormals" ) ||
-		!token.Icmp( "add" ) ||
-		!token.Icmp( "scale" ) ||
-		!token.Icmp( "invertAlpha" ) ||
-		!token.Icmp( "invertColor" ) ||
-		!token.Icmp( "makeIntensity" ) ||
-		!token.Icmp( "downsize" ) ||
-		!token.Icmp( "makeAlpha" );
-}
-
-static bool R_IsPlainImageSourceName( const char *imageName ) {
-	if ( imageName == NULL || imageName[0] == '\0' ) {
-		return false;
-	}
-
-	idLexer src;
-	src.LoadMemory( imageName, strlen( imageName ), imageName );
-	src.SetFlags( LEXFL_NOFATALERRORS | LEXFL_NOSTRINGCONCAT | LEXFL_NOSTRINGESCAPECHARS | LEXFL_ALLOWPATHNAMES );
-
-	idToken token;
-	if ( !src.ReadToken( &token ) ) {
-		src.FreeSource();
-		return false;
-	}
-	if ( R_ImageNameIsProgramOperator( token ) ) {
-		src.FreeSource();
-		return false;
-	}
-
-	idToken nextToken;
-	const bool hasExtraToken = src.ReadToken( &nextToken );
-	src.FreeSource();
-	return !hasExtraToken;
-}
-
-
 /*
 ===============
 ActuallyLoadImage
@@ -445,6 +406,15 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 	}
 
 	defaulted = false;
+	// File-backed options may have been replaced by a directly uploaded DDS on
+	// the previous load. Re-derive them from the image's declared usage so a
+	// cvar/path change can safely move between BC/DXT and ordinary RGBA data.
+	opts.format = FMT_NONE;
+	opts.colorFormat = CFM_DEFAULT;
+	opts.width = 0;
+	opts.height = 0;
+	opts.numLevels = 0;
+	opts.gammaMips = false;
 
 	bool sourceFileTimeKnown = false;
 	if ( com_productionMode.GetInteger() != 0 ) {
@@ -486,13 +456,35 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 	idStr preferredDDSName;
 	ID_TIME_T preferredDDSFileTime = FILE_NOT_FOUND_TIMESTAMP;
 	bool preferredDDSPrecompressed = false;
-	const bool preferredDDSImage = !explicitDDSImage &&
+	bool preferredDDSImage = !explicitDDSImage &&
 		cubeFiles == CF_2D &&
-		R_IsPlainImageSourceName( GetName() ) &&
 		R_ResolvePreferredDDSImageSource( GetName(), preferredDDSName, &preferredDDSFileTime, true, &preferredDDSPrecompressed );
+	if ( preferredDDSImage && !fileSystem->InProductionMode() ) {
+		ID_TIME_T originalSourceTime = FILE_NOT_FOUND_TIMESTAMP;
+		R_LoadImageProgram( GetName(), NULL, NULL, NULL, &originalSourceTime, &usage );
+		if ( originalSourceTime != FILE_NOT_FOUND_TIMESTAMP && preferredDDSFileTime < originalSourceTime ) {
+			if ( cvarSystem->GetCVarBool( "image_showPrecompressedTextures" ) ) {
+				common->Printf( "Ignoring stale DDS replacement %s for %s\n", preferredDDSName.c_str(), GetName() );
+			}
+			preferredDDSImage = false;
+			preferredDDSPrecompressed = false;
+			sourceFileTime = originalSourceTime;
+			sourceFileTimeKnown = true;
+		} else {
+			sourceFileTime = preferredDDSFileTime;
+			sourceFileTimeKnown = true;
+		}
+	}
+	if ( preferredDDSImage && cvarSystem->GetCVarBool( "image_showPrecompressedTextures" ) ) {
+		common->Printf( "Using DDS replacement %s for %s\n", preferredDDSName.c_str(), GetName() );
+	}
 	const char *loadSourceName = preferredDDSImage ? preferredDDSName.c_str() : GetName();
 	const bool selectedDDSImage = explicitDDSImage || preferredDDSImage;
 	const bool bypassGeneratedFile = explicitDDSImage || preferredDDSPrecompressed;
+	idStr selectedSourceName = GetName();
+	if ( preferredDDSImage ) {
+		selectedSourceName = preferredDDSName;
+	}
 	if ( preferredDDSImage && !preferredDDSPrecompressed ) {
 		generatedName = preferredDDSName;
 		GetGeneratedName( generatedName, usage, cubeFiles, allowDownSize, flags );
@@ -628,9 +620,13 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 			}
 		} else {
 			int width, height;
-			byte * pic;
+			byte *pic = NULL;
+			int precompressedDownsizeLimit = 0;
+			R_GetImageDownsizeLimit( usage, allowDownSize, precompressedDownsizeLimit );
+			const bool usePrecompressedMipmaps = ( flags & IMAGEFLAG_NOMIPS ) == 0 && filter != TF_LINEAR && filter != TF_NEAREST;
+			const bool tryDirectDDSLoad = selectedDDSImage && ( explicitDDSImage || preferredDDSPrecompressed );
 
-			if ( selectedDDSImage && R_LoadPrecompressedDDS( loadSourceName, im, &sourceFileTime, usage ) ) {
+			if ( tryDirectDDSLoad && R_LoadPrecompressedDDS( loadSourceName, im, &sourceFileTime, usage, precompressedDownsizeLimit, usePrecompressedMipmaps ) ) {
 				const bimageFile_t &header = im.GetFileHeader();
 				opts.width = header.width;
 				opts.height = header.height;
@@ -643,13 +639,21 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 			} else {
 				const char *fallbackLoadSourceName = loadSourceName;
 				if ( preferredDDSPrecompressed ) {
-					common->Warning( "Couldn't load preferred BC7/BPTC DDS replacement %s for %s; falling back to original source", loadSourceName, GetName() );
+					common->Warning( "Couldn't load preferred precompressed DDS replacement %s for %s; falling back to original source", loadSourceName, GetName() );
 					fallbackLoadSourceName = GetName();
+					selectedSourceName = GetName();
 					sourceFileTime = FILE_NOT_FOUND_TIMESTAMP;
 				}
 
 				// load the full specification, and perform any image program calculations
 				R_LoadImageProgram( fallbackLoadSourceName, &pic, &width, &height, &sourceFileTime, &usage );
+				if ( pic == NULL && preferredDDSImage && !preferredDDSPrecompressed ) {
+					common->Warning( "Couldn't decode preferred DDS replacement %s for %s; falling back to original source", loadSourceName, GetName() );
+					selectedSourceName = GetName();
+					sourceFileTime = FILE_NOT_FOUND_TIMESTAMP;
+					R_LoadImageProgram( GetName(), &pic, &width, &height, &sourceFileTime, &usage );
+				}
+				sourceFileTimeKnown = true;
 
 				if ( pic == NULL ) {
 					if ( !R_ShouldSuppressMissingImageWarning( GetName() ) ) {
@@ -697,6 +701,7 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 		const byte * data = im.GetImageData( i );
 		SubImageUpload( img.level, 0, 0, img.destZ, img.width, img.height, data );
 	}
+	loadedSourceName = selectedSourceName;
 }
 
 /*
@@ -777,7 +782,7 @@ static bool R_GetImageDownsizeLimit( textureUsage_t usage, bool allowDownSize, i
 		limit = cvarSystem->GetCVarInteger( "image_downSizeSpecularLimit" );
 	} else if ( usage == TD_BUMP && cvarSystem->GetCVarInteger( "image_downSizeBump" ) != 0 ) {
 		limit = cvarSystem->GetCVarInteger( "image_downSizeBumpLimit" );
-	} else if ( cvarSystem->GetCVarInteger( "image_downSize" ) != 0 || cvarSystem->GetCVarInteger( "image_downsize" ) != 0 ) {
+	} else if ( cvarSystem->GetCVarInteger( "image_downSize" ) != 0 ) {
 		limit = cvarSystem->GetCVarInteger( "image_downSizeLimit" );
 	}
 
@@ -1406,6 +1411,7 @@ void idImage::Reload( bool force ) {
 	// check file times
 	if ( !force ) {
 		ID_TIME_T current = FILE_NOT_FOUND_TIMESTAMP;
+		idStr currentSourceName = imgName;
 		if ( cubeFiles != CF_2D ) {
 			R_LoadCubeImages( imgName, cubeFiles, NULL, NULL, &current );
 		} else {
@@ -1415,15 +1421,24 @@ void idImage::Reload( bool force ) {
 			idStr preferredDDSName;
 			ID_TIME_T preferredDDSFileTime = FILE_NOT_FOUND_TIMESTAMP;
 			if ( idStr::Icmp( sourceExtension.c_str(), "dds" ) != 0 &&
-				 R_IsPlainImageSourceName( imgName ) &&
 				 R_ResolvePreferredDDSImageSource( imgName, preferredDDSName, &preferredDDSFileTime, true, NULL ) ) {
-				current = preferredDDSFileTime;
+				ID_TIME_T originalSourceTime = FILE_NOT_FOUND_TIMESTAMP;
+				if ( !fileSystem->InProductionMode() ) {
+					R_LoadImageProgram( imgName, NULL, NULL, NULL, &originalSourceTime );
+				}
+				if ( originalSourceTime != FILE_NOT_FOUND_TIMESTAMP && preferredDDSFileTime < originalSourceTime ) {
+					current = originalSourceTime;
+				} else {
+					current = preferredDDSFileTime;
+					currentSourceName = preferredDDSName;
+				}
 			} else {
 				// get the current values
 				R_LoadImageProgram( imgName, NULL, NULL, NULL, &current );
 			}
 		}
-		if ( current <= sourceFileTime ) {
+		const bool sourceSelectionChanged = loadedSourceName.Length() == 0 || loadedSourceName.Icmp( currentSourceName ) != 0;
+		if ( !sourceSelectionChanged && current <= sourceFileTime ) {
 			return;
 		}
 	}

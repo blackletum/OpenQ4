@@ -1256,6 +1256,7 @@ extern idCVar r_shadowMapTranslucentDensity;	// density scale applied when resol
 extern idCVar r_shadowMapTranslucentMinAlpha;	// minimum per-stage alpha considered by translucent shadow moments
 extern idCVar r_shadowMapCustomGLSLReceiverWrapper;	// 1 = map compatible custom GLSL receivers through stock interactions
 extern idCVar r_shadowMapReport;		// 0 = off, 1 = per-view summary, 2 = per-light joined planner/ARB2/modern decisions, 3 = verbose receiver-submit decisions
+extern idCVar r_shadowMapModernStrict;	// fail-visible modern shadow contract breaks (black light instead of silently unshadowed)
 extern idCVar r_shadowMapReportInterval;	// frames between shadow-map diagnostic reports
 extern idCVar r_shadowMapConservativeCasters;	// 1 = keep shadow-map caster submission independent from visible receiver scissors
 extern idCVar r_shadowMapProjectedCSM;	// 1 = allow ordinary projected lights to use CSM when r_shadowMapCSM is enabled
@@ -1592,11 +1593,16 @@ typedef struct rendererShadowTextureBinding_s {
 } rendererShadowTextureBinding_t;
 
 typedef struct rendererShadowTextureBindings_s {
+	// last-selected per-light target (scratch or atlas); ARB2-shaped alias
 	rendererShadowTextureBinding_t	projectedAtlas;
+	// the persistent projected atlas itself - stable identity across frames,
+	// the texture shadowMapArb2AtlasSlot_t cell rects index into
+	rendererShadowTextureBinding_t	projectedPersistentAtlas;
 	rendererShadowTextureBinding_t	pointAtlas;
 	rendererShadowTextureBinding_t	projectedMoments[RENDERER_SHADOW_TEXTURE_MOMENT_COUNT];
 	rendererShadowTextureBinding_t	pointMoments[RENDERER_SHADOW_TEXTURE_MOMENT_COUNT];
 	bool							projectedAtlasReady;
+	bool							projectedPersistentAtlasReady;
 	bool							pointAtlasReady;
 	bool							projectedMomentsReady;
 	bool							pointMomentsReady;

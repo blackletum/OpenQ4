@@ -4235,27 +4235,14 @@ static void R_ModernGLExecutor_SubmitVisibleDepth( modernGLExecutorStats_t &stat
 		}
 	}
 
-	if ( stats.visibleShadowResourceReady && shadowMap != NULL ) {
-		R_ModernGLExecutor_BeginDepthResourcePass( *shadowMap, false, "ModernGLExecutor visible shadow-depth clear" );
-		stats.visibleDepthClearOps++;
-		R_ModernGLExecutor_ExecuteVisibleDepthPass( RENDER_PASS_SHADOW_MAP, stats, "ModernGLExecutor visible shadow-depth pass" );
-		{
-			idGLDebugScope resolveScope( "ModernGLExecutor visible shadow-depth resolve" );
-			stats.visibleDepthResolveOps++;
-		}
-	} else {
-		const int commandCount = rg_modernGLSubmitPlan.NumCommands();
-		for ( int i = 0; i < commandCount; ++i ) {
-			const modernGLSubmitCommand_t &command = rg_modernGLSubmitPlan.Command( i );
-			if ( command.passCategory == RENDER_PASS_SHADOW_MAP ) {
-				stats.visibleDepthResourceFallbackDraws++;
-				stats.visibleShadowFallbackDraws++;
-				stats.visibleDepthMismatchDraws++;
-			} else if ( command.passCategory == RENDER_PASS_STENCIL_SHADOW ) {
-				stats.visibleStencilShadowFallbackDraws++;
-			}
-		}
-	}
+	// 5c: the camera-MVP shadow-depth sidecar is retired (M1). Modern shadow
+	// content comes from ARB2's persistent atlas via descriptor slot rects;
+	// rasterizing every caster with the camera matrix into the graph texture
+	// cost GPU time and produced nothing any receiver sampled. Shadow-map
+	// submit commands are deliberately not drawn and not counted as
+	// fallbacks - the per-light descriptor gate is the authority on shadow
+	// completeness for modern frames. The graph "shadowMap" resource stays
+	// resident for the visible-path contract self-test.
 
 	R_ModernGLExecutor_RestoreAfterSubmit( stats, "visible depth submit" );
 	stats.visibleDepthExecuted = stats.visibleDepthDraws > 0 || stats.visibleShadowDepthDraws > 0 || stats.visibleDepthClearOps > 0;
@@ -4919,6 +4906,12 @@ static bool R_ModernGLExecutor_BindModernShadowTextures( GLuint program, modernG
 
 	rendererShadowTextureBindings_t bindings;
 	RB_ShadowMapTextureBindings( bindings );
+	// the persistent atlas is the texture the descriptor slot rects index
+	// into; the per-light alias only stands in when no atlas exists yet
+	if ( bindings.projectedPersistentAtlasReady ) {
+		bindings.projectedAtlas = bindings.projectedPersistentAtlas;
+		bindings.projectedAtlasReady = true;
+	}
 	const bool samplerReady = R_ModernGLExecutor_SetShadowSamplerUniforms( program );
 	stats.shadowTextureBindingsReady = stats.shadowTextureBindingsReady || samplerReady;
 	stats.shadowTextureProjectedAtlasReady = stats.shadowTextureProjectedAtlasReady || bindings.projectedAtlasReady;
@@ -4932,6 +4925,17 @@ static bool R_ModernGLExecutor_BindModernShadowTextures( GLuint program, modernG
 		const GLint resourceState = glGetUniformLocation( program, "uModernShadowResourceState" );
 		const GLint samplerState = glGetUniformLocation( program, "uModernShadowSamplerState" );
 		const GLint momentState = glGetUniformLocation( program, "uModernShadowMomentState" );
+		const GLint contractState = glGetUniformLocation( program, "uModernShadowContractState" );
+		if ( contractState >= 0 ) {
+			// y carries the current frame's modular stamp; a bound descriptor
+			// buffer whose freshness.x disagrees was uploaded in another
+			// frame and fails visibly (I7)
+			glUniform4f(
+				contractState,
+				r_shadowMapModernStrict.GetBool() ? 1.0f : 0.0f,
+				static_cast<float>( tr.frameCount & 0xFFFFF ),
+				0.0f, 0.0f );
+		}
 		if ( resourceState >= 0 ) {
 			glUniform4f(
 				resourceState,
@@ -5805,23 +5809,84 @@ static void R_ModernGLExecutor_SetPassOwnership(
 	idStr::Copynz( slot.reason, reason != NULL ? reason : R_ModernGLExecutor_PassOwnerStateName( state ), sizeof( slot.reason ) );
 }
 
-static bool R_ModernGLExecutor_ModernVisibleShadowReceiversReady( const modernShadowPlannerStats_t &shadowStats, const modernGLExecutorStats_t &stats ) {
+static bool R_ModernGLExecutor_ModernVisibleShadowReceiversReady( const modernShadowPlannerStats_t &shadowStats, modernGLExecutorStats_t &stats ) {
 	if ( !r_shadows.GetBool() || !shadowStats.requested ) {
 		return true;
 	}
 	if ( !shadowStats.frameValid ) {
 		return false;
 	}
-	// Intentional skips such as ambient/no-receiver lights are diagnostics, not
-	// shadowing gaps. Mapped receivers without modern sampling remain blockers.
-	if ( shadowStats.fallbackLights > 0 || shadowStats.receiverSamplingBlockedLights > 0 ) {
+	// Per-light gating (5c): walk the descriptors and block only on lights
+	// that would visibly lose shadows in a modern-composed frame. Intentional
+	// skips stay diagnostics; cache-reuse lights with live persistent-atlas
+	// slots are consumable and no longer poison the whole frame.
+	int blockedLights = 0;
+	int consumableLights = 0;
+	int consumableProjectedLights = 0;
+	int consumablePointLights = 0;
+	// duplicate descriptors for one physical light (subview scenes) share
+	// its single cube, so the single-cube constraint counts distinct lights
+	int distinctPointLightDefs[8];
+	int distinctPointLightDefCount = 0;
+	bool distinctPointLightOverflow = false;
+	const int descriptorCount = R_ModernShadowPlanner_NumDescriptors();
+	for ( int descriptorIndex = 0; descriptorIndex < descriptorCount; ++descriptorIndex ) {
+		const modernShadowLightDescriptor_t *descriptor = R_ModernShadowPlanner_DescriptorByIndex( descriptorIndex );
+		if ( descriptor == NULL ) {
+			continue;
+		}
+		if ( descriptor->policy == MODERN_SHADOW_POLICY_MAPPED || descriptor->policy == MODERN_SHADOW_POLICY_CACHE_REUSE ) {
+			if ( !descriptor->modernReceiverSamplingReady ) {
+				blockedLights++;
+			} else if ( descriptor->pointLight ) {
+				consumableLights++;
+				bool seen = false;
+				for ( int i = 0; i < distinctPointLightDefCount; ++i ) {
+					if ( distinctPointLightDefs[i] == descriptor->lightDefIndex ) {
+						seen = true;
+						break;
+					}
+				}
+				if ( !seen ) {
+					if ( distinctPointLightDefCount < static_cast<int>( sizeof( distinctPointLightDefs ) / sizeof( distinctPointLightDefs[0] ) ) ) {
+						distinctPointLightDefs[distinctPointLightDefCount++] = descriptor->lightDefIndex;
+					} else {
+						distinctPointLightOverflow = true;
+					}
+					consumablePointLights++;
+				}
+			} else if ( descriptor->arb2AtlasSlotReady ) {
+				consumableLights++;
+				consumableProjectedLights++;
+			} else {
+				blockedLights++;
+			}
+		} else if ( descriptor->policy == MODERN_SHADOW_POLICY_STENCIL_FALLBACK ) {
+			// modern frames cannot draw stencil volumes; this light's shadows
+			// would silently vanish
+			blockedLights++;
+		}
+	}
+	// The modern point path samples one bound cube for every point light.
+	// Until the cube-array pool lands, a second distinct consumable point
+	// light would silently sample the wrong cube - fail closed, counted.
+	if ( consumablePointLights > 1 || distinctPointLightOverflow ) {
+		blockedLights += Max( 1, consumablePointLights - 1 );
+		stats.modernVisibleShadowPointConstraintLights = consumablePointLights;
+	}
+	stats.modernVisibleShadowBlockedLights = blockedLights;
+	stats.modernVisibleShadowConsumableLights = consumableLights;
+	if ( blockedLights > 0 ) {
 		return false;
 	}
-	if ( shadowStats.mappedLights > 0 && ( !stats.shadowTextureUnitsReady || !stats.shadowTextureBindingsReady ) ) {
+	// resource checks key on consumable lights: in the designed steady state
+	// every projected light is CACHE_REUSE with a slot and mappedLights is 0,
+	// so mapped-count keying would skip the binding contract entirely
+	if ( consumableLights > 0 && ( !stats.shadowTextureUnitsReady || !stats.shadowTextureBindingsReady ) ) {
 		return false;
 	}
-	const bool projectedShadowAtlasRequired = shadowStats.singleProjectedMappedLights > 0 || shadowStats.cascadeMappedLights > 0;
-	const bool pointShadowAtlasRequired = shadowStats.pointMappedLights > 0;
+	const bool projectedShadowAtlasRequired = consumableProjectedLights > 0 || shadowStats.singleProjectedMappedLights > 0 || shadowStats.cascadeMappedLights > 0;
+	const bool pointShadowAtlasRequired = consumablePointLights > 0 || shadowStats.pointMappedLights > 0;
 	if ( ( projectedShadowAtlasRequired && !stats.shadowTextureProjectedAtlasReady )
 		|| ( pointShadowAtlasRequired && !stats.shadowTexturePointAtlasReady ) ) {
 		return false;
@@ -5929,12 +5994,12 @@ static void R_ModernGLExecutor_FinalizePassOwnership( const idRenderGraph &graph
 			stats.visibleDepthResourceReady &&
 			stats.visibleDepthFallbackDraws == 0 &&
 			stats.visibleDepthMismatchDraws == 0;
+		// shadow-map "modern completeness" is descriptor truth, not sidecar
+		// draws (5c): every shadow-relevant light consumable per the
+		// per-light gate, atlas content live in ARB2's persistent atlas
 		const bool shadowMapModern =
-			stats.visibleShadowDepthDraws > 0 &&
-			stats.visibleShadowResourceReady &&
-			stats.visibleShadowFallbackDraws == 0 &&
-			stats.visibleStencilShadowFallbackDraws == 0 &&
-			stats.visibleDepthMismatchDraws == 0;
+			stats.modernVisibleShadowReady &&
+			stats.modernVisibleShadowBlockedLights == 0;
 		const bool gbufferModern =
 			stats.opaqueGBufferExecuted &&
 			stats.opaqueGBufferResourcesReady &&
@@ -5973,8 +6038,6 @@ static void R_ModernGLExecutor_FinalizePassOwnership( const idRenderGraph &graph
 			if ( R_ModernGLExecutor_PassExistsInGraph( graph, RENDER_PASS_STENCIL_SHADOW ) ) {
 				R_ModernGLExecutor_SetPassOwnership( RENDER_PASS_STENCIL_SHADOW, MODERN_GL_PASS_OWNER_MODERN, true, true, "modern-shadow-map-replaces-stencil" );
 			}
-		} else if ( R_ModernGLExecutor_PassExistsInGraph( graph, RENDER_PASS_SHADOW_MAP ) && stats.visibleShadowDepthDraws > 0 ) {
-			R_ModernGLExecutor_SetPassOwnership( RENDER_PASS_SHADOW_MAP, MODERN_GL_PASS_OWNER_MIXED, true, false, "shadow-map-sidecar-or-fallback" );
 		}
 		if ( gbufferModern && R_ModernGLExecutor_PassExistsInGraph( graph, RENDER_PASS_AMBIENT ) ) {
 			R_ModernGLExecutor_SetPassOwnership( RENDER_PASS_AMBIENT, MODERN_GL_PASS_OWNER_MODERN, true, true, "modern-gbuffer-complete" );
@@ -6011,7 +6074,7 @@ static void R_ModernGLExecutor_FinalizePassOwnership( const idRenderGraph &graph
 			rg_modernGLPassOwnership.failClosedRestores++;
 		}
 		R_ModernGLExecutor_RecordLegacyOrBlockedPass( graph, stats, RENDER_PASS_DEPTH, stats.visibleDepthRequested, stats.visibleDepthExecuted, "legacy-depth-or-sidecar", "modern-depth-blocked" );
-		R_ModernGLExecutor_RecordLegacyOrBlockedPass( graph, stats, RENDER_PASS_SHADOW_MAP, stats.visibleDepthRequested, stats.visibleShadowDepthDraws > 0, "legacy-shadow-or-sidecar", "modern-shadow-blocked" );
+		R_ModernGLExecutor_RecordLegacyOrBlockedPass( graph, stats, RENDER_PASS_SHADOW_MAP, stats.visibleDepthRequested, false, "legacy-shadow-atlas-producer", "modern-shadow-blocked" );
 		R_ModernGLExecutor_RecordLegacyOrBlockedPass( graph, stats, RENDER_PASS_AMBIENT, stats.opaqueGBufferRequested, stats.opaqueGBufferExecuted, "legacy-ambient-or-sidecar", "modern-gbuffer-blocked" );
 		R_ModernGLExecutor_RecordLegacyOrBlockedPass( graph, stats, RENDER_PASS_DEFERRED_RESOLVE, stats.deferredResolveRequested, stats.deferredResolveExecuted, "modern-deferred-sidecar", "modern-deferred-blocked" );
 		R_ModernGLExecutor_RecordLegacyOrBlockedPass( graph, stats, RENDER_PASS_FORWARD_PLUS, stats.forwardPlusRequested, stats.forwardPlusExecuted, "modern-forward-sidecar", "modern-forward-blocked" );
@@ -9094,13 +9157,30 @@ static bool R_ModernGLExecutor_ShadowBindingContractReady( const modernGLShaderP
 		rg_modernGLShadowPointMomentUniform,
 		"uModernShadowResourceState",
 		"uModernShadowSamplerState",
-		"uModernShadowMomentState"
+		"uModernShadowMomentState",
+		"uModernShadowContractState"
 	};
 	for ( int i = 0; i < static_cast<int>( sizeof( shadowBindingUniforms ) / sizeof( shadowBindingUniforms[0] ) ); ++i ) {
 		const GLint location = glGetUniformLocation != NULL ? glGetUniformLocation( program->program, shadowBindingUniforms[i] ) : -1;
 		if ( location < 0 ) {
 			common->Printf( "%s self-test failed: missing shadow binding %s\n", selfTestName, shadowBindingUniforms[i] );
 			return false;
+		}
+	}
+	// std140 layout introspection (M5): the CPU GPU-record struct and the
+	// GLSL shadow-descriptor block are hand-synced; ask the driver for the
+	// linked block size on the UBO path and reject drift instead of letting
+	// it silently shear every matrix after the divergent field.
+	if ( glGetUniformBlockIndex != NULL && glGetActiveUniformBlockiv != NULL ) {
+		const GLuint blockIndex = glGetUniformBlockIndex( program->program, "ModernClusterShadowDescriptors" );
+		if ( blockIndex != GL_INVALID_INDEX ) {
+			GLint blockBytes = 0;
+			glGetActiveUniformBlockiv( program->program, blockIndex, GL_UNIFORM_BLOCK_DATA_SIZE, &blockBytes );
+			const int expectedBytes = R_ModernClusteredLighting_ShadowDescriptorUboBlockBytes();
+			if ( blockBytes > 0 && blockBytes != expectedBytes ) {
+				common->Printf( "%s self-test failed: shadow descriptor UBO layout drift (linked=%d bytes, cpu=%d bytes)\n", selfTestName, blockBytes, expectedBytes );
+				return false;
+			}
 		}
 	}
 	return true;
