@@ -26,7 +26,7 @@ vid_restart
 Notes:
 - `r_shadows` must stay enabled for any shadow path to render.
 - If the shadow-map path is unavailable or fails for a light, openQ4 falls back to the legacy shadow path instead of leaving the light unshadowed.
-- Point lights use the legacy stencil shadow path by default; enable `r_shadowMapPointLights 1` only when testing the experimental point-light cubemap path.
+- Point lights shadow-map by default (`r_shadowMapPointLights 1`); they are the dominant light class in Quake 4 content. Set `r_shadowMapPointLights 0` to fall back to stencil shadows for point lights only.
 - Lights touching animated, deformed, or packed character receivers can also fall back to the legacy stencil path so stock character lighting, mirrored seams, and eye materials retain retail-style interaction behavior.
 - Modern renderer diagnostics keep lighting visible when shadow-map receiver sampling is not ready, but full modern visible-frame replacement stays fail-closed so the legacy path continues to provide the actual shadowed frame.
 - Most shadow cvars can be changed live, but `vid_restart` is the safest way to apply large changes such as map resolution, cascade layout, or switching the shadow pipeline on/off.
@@ -35,7 +35,7 @@ Notes:
 
 openQ4 currently supports:
 - Projected-light shadow maps for regular projected lights.
-- Experimental point-light shadow maps for omni/point lights when `r_shadowMapPointLights 1` is enabled.
+- Point-light cubemap shadow maps for omni/point lights (the dominant Quake 4 light class), on by default.
 - Optional projected-light cascaded shadow maps (CSM).
 - Alpha-tested transparency shadows for cutout materials such as fences, grates, and foliage cards.
 - Optional experimental translucent-shadow accumulation for some blended materials.
@@ -142,8 +142,9 @@ vid_restart
 | `r_shadowMapPointFilterMode` | `0` | `0..1` | Point-light filter mode: fixed PCF or stable rotated Poisson. |
 | `r_shadowMapDepthCompare` | `1` | `0..1` | Uses hardware comparison sampling (with hardware-filtered PCF taps) for projected depth maps. Selecting PCSS-lite (`r_shadowMapFilterMode 2`) automatically uses the manual raw-depth path instead. Set `0` if a driver has trouble with GLSL shadow samplers. |
 | `r_shadowMapPointDepthCompare` | `1` | `0..1` | Uses hardware comparison sampling for point-light depth cubemaps when GLSL 1.30 support is available. |
-| `r_shadowMapPointHighPrecision` | `1` | `0..1` | Stores point-light shadow depth in a high-precision float cubemap instead of the older packed RGBA8 depth path. |
-| `r_shadowMapPointLights` | `0` | `0..1` | Opts into experimental point-light shadow maps. When disabled, point lights use the legacy stencil shadow path even if `r_useShadowMap 1` is enabled. |
+| `r_shadowMapPointHighPrecision` | `0` | `0..1` | Stores point-light shadow depth in an fp16 color cubemap instead of packed RGBA8. The packed path quantizes finer at half the memory, and the default hardware-compare path samples the depth cubemap directly, so this only affects the manual fallback. |
+| `r_shadowMapPointLights` | `1` | `0..1` | Shadow-maps point lights when `r_useShadowMap 1` is enabled. Point lights are the dominant light class in Quake 4 content, so disabling this makes shadow mapping nearly a no-op; set `0` to fall back to stencil shadows for point lights only. |
+| `r_shadowMapPointSize` | `512` | `128..2048` | Point-light cube face resolution, separate from `r_shadowMapSize`: each cached point light stores six faces of color and depth, so cube resolution dominates shadow VRAM. |
 | `r_shadowMapHashedAlpha` | `1` | `0..1` | Uses hashed alpha testing for perforated/alpha-tested casters when supported. |
 | `r_shadowMapStableAlphaHash` | `1` | `0..1` | Seeds hashed alpha from world-space caster coordinates to reduce atlas/camera-space dither drift. |
 | `r_shadowMapProjectionPad` | `0.15` | `0..1` | Padding around projected-light shadow coverage. |

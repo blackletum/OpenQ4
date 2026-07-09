@@ -1008,6 +1008,9 @@ static void R_ModernShadowPlanner_InitDescriptor( modernShadowLightDescriptor_t 
 	descriptor.mapType = MODERN_SHADOW_MAP_PROJECTED;
 	if ( classification.pointLight ) {
 		descriptor.mapType = MODERN_SHADOW_MAP_POINT;
+		// point cubes have their own resolution knob; must match the ARB2
+		// clamp in RB_ShadowMapPointSizeValue for descriptor parity
+		descriptor.resolution = idMath::ClampInt( 128, 2048, r_shadowMapPointSize.GetInteger() );
 	} else if ( classification.csmEnabled ) {
 		descriptor.mapType = MODERN_SHADOW_MAP_CASCADE;
 	}

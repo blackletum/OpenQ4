@@ -2252,7 +2252,13 @@ typedef enum {
 	SHADOWMAP_PASS_RESULT_SCHEDULED_SKIP
 } shadowMapPassResult_t;
 
-static const int SHADOWMAP_CACHE_MAX_SLOTS = 8;
+static const int SHADOWMAP_CACHE_MAX_SLOTS = 16;
+
+// point cubes carry six faces of color+depth per slot, so they get their own
+// resolution knob instead of inheriting the projected atlas size
+static int RB_ShadowMapPointSizeValue( void ) {
+	return idMath::ClampInt( 128, 2048, r_shadowMapPointSize.GetInteger() );
+}
 static const int SHADOWMAP_LIGHT_HISTORY_SLOTS = 256;
 
 typedef struct {
@@ -3152,7 +3158,7 @@ bool RB_ShadowMapBuildArb2ParityState( const viewLight_t *vLight, const viewDef_
 		state.cascadeCount = 1;
 		state.tileCount = 6;
 		state.atlasDiv = 3;
-		state.tileSize = idMath::ClampInt( 128, 2048, shadowMapSize );
+		state.tileSize = RB_ShadowMapPointSizeValue();
 		state.valid = true;
 		return true;
 	}
@@ -3224,7 +3230,7 @@ static int RB_ShadowMapBuildPassSignatureForView( const viewLight_t *vLight, con
 	hash = RB_ShadowMapHashFloat( hash, RB_ShadowMapPolygonOffset() );
 	hash = RB_ShadowMapHashFloat( hash, static_cast<float>( idMath::ClampInt( 0, 2, r_shadowMapCasterCulling.GetInteger() ) ) );
 	if ( pointLight ) {
-		hash = RB_ShadowMapHashInt( hash, idMath::ClampInt( 128, 2048, r_shadowMapSize.GetInteger() ) );
+		hash = RB_ShadowMapHashInt( hash, RB_ShadowMapPointSizeValue() );
 		hash = RB_ShadowMapHashInt( hash, RB_PointShadowMapHighPrecisionEnabled() ? 1 : 0 );
 		hash = RB_ShadowMapHashInt( hash, RB_PointShadowMapDepthCompareEnabled() ? 1 : 0 );
 		hash = RB_ShadowMapHashFloat( hash, r_shadowMapPointFarScale.GetFloat() );
@@ -3519,7 +3525,21 @@ static void RB_ShadowMapCountCacheSlots( void ) {
 	}
 }
 
-static shadowMapSchedule_t RB_ShadowMapSchedulePass( const viewLight_t *vLight, const shadowMapPassKind_t passKind, const bool pointLight, const bool haveTranslucentCasters ) {
+// When a light has no noSelfShadow (local) casters, the LOCAL pass map
+// (global casters only) and the GLOBAL pass map (global + local casters)
+// have identical content. Collapsing their cache identity renders and
+// stores one map per light instead of two, halving update cost and slot
+// pressure for every light without character-class casters nearby - the
+// LOCAL pass renders it, the GLOBAL pass cache-hits it the same frame.
+static shadowMapPassKind_t RB_ShadowMapCachePassKind( const viewLight_t *vLight, const shadowMapPassKind_t passKind ) {
+	if ( vLight != NULL && vLight->localShadowMapCasters == NULL && vLight->localTranslucentShadowMapCasters == NULL ) {
+		return SHADOWMAP_PASS_GLOBAL;
+	}
+	return passKind;
+}
+
+static shadowMapSchedule_t RB_ShadowMapSchedulePass( const viewLight_t *vLight, const shadowMapPassKind_t requestedPassKind, const bool pointLight, const bool haveTranslucentCasters ) {
+	const shadowMapPassKind_t passKind = RB_ShadowMapCachePassKind( vLight, requestedPassKind );
 	shadowMapSchedule_t schedule;
 	memset( &schedule, 0, sizeof( schedule ) );
 	schedule.action = SHADOWMAP_SCHEDULE_UPDATE;
@@ -3580,7 +3600,10 @@ static shadowMapSchedule_t RB_ShadowMapSchedulePass( const viewLight_t *vLight, 
 	return schedule;
 }
 
-static void RB_ShadowMapCompleteCacheUpdate( const shadowMapSchedule_t &schedule, const viewLight_t *vLight, const shadowMapPassKind_t passKind, const bool pointLight, const bool renderOk ) {
+static void RB_ShadowMapCompleteCacheUpdate( const shadowMapSchedule_t &schedule, const viewLight_t *vLight, const shadowMapPassKind_t requestedPassKind, const bool pointLight, const bool renderOk ) {
+	// must mirror RB_ShadowMapSchedulePass's collapsed cache identity, or the
+	// stored entry would never be found by the collapsed lookup
+	const shadowMapPassKind_t passKind = RB_ShadowMapCachePassKind( vLight, requestedPassKind );
 	if ( !schedule.cacheable ) {
 		return;
 	}
@@ -5494,7 +5517,7 @@ static bool RB_PointShadowMapEnsureResources( void ) {
 		return false;
 	}
 
-	const int shadowMapSize = idMath::ClampInt( 128, 2048, r_shadowMapSize.GetInteger() );
+	const int shadowMapSize = RB_ShadowMapPointSizeValue();
 	idImage **colorImage = g_activePointShadowMapCache != NULL ? &g_activePointShadowMapCache->colorImage : &g_pointShadowMapScratchColorImage;
 	idImage **depthImage = g_activePointShadowMapCache != NULL ? &g_activePointShadowMapCache->depthImage : &g_pointShadowMapScratchDepthImage;
 	idRenderTexture **renderTexture = g_activePointShadowMapCache != NULL ? &g_activePointShadowMapCache->renderTexture : &g_pointShadowMapScratchRenderTexture;
@@ -5618,7 +5641,7 @@ static bool RB_PointShadowMapEnsureTranslucentResources( void ) {
 		return false;
 	}
 
-	const int shadowMapSize = idMath::ClampInt( 128, 2048, r_shadowMapSize.GetInteger() );
+	const int shadowMapSize = RB_ShadowMapPointSizeValue();
 
 	static const char *imageNames[3] = {
 		"_pointTranslucentShadowMapR",

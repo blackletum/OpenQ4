@@ -1269,7 +1269,8 @@ extern idCVar r_shadowMapPCSSMaxRadius;	// projected PCSS-lite maximum filter ra
 extern idCVar r_shadowMapNormalOffsetScale;	// normal-offset receiver bias in shadow texels
 extern idCVar r_shadowMapCasterCulling;	// caster face culling: 0 = two-sided, 1 = light-facing, 2 = back faces
 extern idCVar r_shadowMapPointHighPrecision;	// 1 = store point shadow depth as high-precision float color
-extern idCVar r_shadowMapPointLights;	// 1 = opt into point-light shadow maps; 0 = legacy stencil fallback for point lights
+extern idCVar r_shadowMapPointLights;	// 1 = shadow-map point lights (the dominant Q4 light class); 0 = stencil fallback for point lights
+extern idCVar r_shadowMapPointSize;	// point-light cube face resolution, separate from r_shadowMapSize
 extern idCVar r_shadowMapPointDepthCompare;	// 1 = use samplerCubeShadow depth compare for point maps when supported
 extern idCVar r_shadowMapStableAlphaHash;	// 1 = seed hashed alpha from stable world coordinates
 extern idCVar r_shadowMapMaxUpdatesPerView;	// shadow-map pass budget per backend view, 0 = unlimited
