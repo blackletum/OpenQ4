@@ -469,10 +469,24 @@ static bool R_ShadowMapCasterIsDynamic( const idRenderEntityLocal *entityDef ) {
 	if ( entityDef == NULL || entityDef->parms.hModel == NULL ) {
 		return true;
 	}
-	return entityDef->parms.callback != NULL ||
+	// An entity only defeats static shadow-map caching while it is actually
+	// changing: a transform/parms update (lastModifiedFrameNum) or a dynamic
+	// model regeneration (dynamicModelFrameCount). Skeletal and AF entities
+	// keep their callback and cached dynamic model forever, so classifying on
+	// those alone made every settled ragdoll/corpse permanently dynamic and
+	// forced a full shadow-map re-render of every containing light each
+	// frame. A resting entity's pose cannot change without one of the two
+	// frame counters advancing, and either advance also changes the caster
+	// signature hash, so reuse stays correct when it wakes.
+	const int recentFrame = tr.frameCount - 1;
+	if ( entityDef->lastModifiedFrameNum >= recentFrame ) {
+		return true;
+	}
+	const bool hasDynamicGeometry =
+		entityDef->parms.callback != NULL ||
 		entityDef->dynamicModel != NULL ||
-		entityDef->lastModifiedFrameNum >= tr.frameCount - 1 ||
 		entityDef->parms.hModel->IsDynamicModel() != DM_STATIC;
+	return hasDynamicGeometry && entityDef->dynamicModelFrameCount >= recentFrame;
 }
 
 static void R_RecordShadowMapCaster( viewLight_t *vLight, const idRenderEntityLocal *entityDef, const idMaterial *shader, const bool translucent, const bool expandedCaster ) {
@@ -2104,8 +2118,11 @@ void idInteraction::AddActiveInteraction( void ) {
 		// the shadow-map caster policy (spectrum match, emitter-panel geometry
 		// check, LOD admission) is per-surface work that only matters when the
 		// shadow-map path is active; the default stencil-only configuration
-		// skips it entirely
-		if ( r_useShadowMap.GetBool() ) {
+		// skips it entirely, as do point lights the backend will refuse
+		// (r_shadowMapPointLights 0 previously built full caster chains the
+		// backend never consumed)
+		if ( r_useShadowMap.GetBool()
+			&& ( !vLight->pointLight || vLight->parallel || r_shadowMapPointLights.GetBool() ) ) {
 			const bool isViewOnlyEntity =
 				( entityDef->parms.allowSurfaceInViewID != 0 &&
 					entityDef->parms.allowSurfaceInViewID == tr.viewDef->renderView.viewID ) ||

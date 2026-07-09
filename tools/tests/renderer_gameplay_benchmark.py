@@ -250,9 +250,13 @@ PROFILE_DEFAULTS = {
         "cvars": (
             ("r_shadowMapPointLights", "1"),
             ("r_shadowMapReport", "1"),
-            # freeze game time so animation/effect/flicker state is identical
-            # at capture; without this, back-to-back captures of the same
-            # build differ by rms 7-27 and image comparison is meaningless
+        ),
+        # Freeze game time from tic 0 so animation/effect/weapon-raise state
+        # is identical at capture. As a post-load cvar the freeze raced map
+        # load timing and captures froze on different tics run to run (camera
+        # micro-drift, weapon state deltas); as a launch cvar the capture
+        # state is the spawn state, every run.
+        "launchCvars": (
             ("g_stopTime", "1"),
         ),
     },
@@ -1462,9 +1466,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parsed = parser.parse_args(argv)
     try:
         profile_cvars = tuple(PROFILE_DEFAULTS[parsed.profile].get("cvars", ()))
+        profile_launch_cvars = tuple(PROFILE_DEFAULTS[parsed.profile].get("launchCvars", ()))
         profile_exec_commands = tuple(PROFILE_DEFAULTS[parsed.profile].get("execCommands", ()))
         parsed.extra_cvars = profile_cvars + parse_extra_cvars(parsed.set_cvar)
-        parsed.launch_cvars = parse_extra_cvars(parsed.set_launch_cvar)
+        parsed.launch_cvars = profile_launch_cvars + parse_extra_cvars(parsed.set_launch_cvar)
         parsed.exec_commands = profile_exec_commands + parse_exec_commands(parsed.exec_command)
     except ValueError as exc:
         parser.error(str(exc))

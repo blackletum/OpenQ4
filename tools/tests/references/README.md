@@ -35,17 +35,11 @@ A shadow rendering change that is *intended* to alter output must re-bless the s
 regression. References are machine/driver-specific: compare only against references
 captured on the same GPU/driver family.
 
-## Known capture variance
+## Determinism
 
-The profile freezes game time (`g_stopTime 1`), which makes
-`shadow-projected-airdefense2`, `shadow-character-airdefense2`, and
-`shadow-cutout-storage2` deterministic (run-to-run RMS < 1 against the default
-threshold of 2.0). Two cases still frame realtime-animated content that game time
-does not freeze (GUI monitor surfaces / sky):
-
-- `shadow-point-storage2` — run-to-run RMS ~8
-- `shadow-csm-airdefense1` — run-to-run RMS ~12
-
-Treat comparison failures on those two as signal only when the RMS moves well above
-those baselines (or inspect the diff visually); tightening them requires re-aiming
-the capture views away from realtime-animated surfaces.
+The profile freezes game time from tic 0 (`g_stopTime 1` as a *launch* cvar via the
+profile's `launchCvars`), so every run captures the exact spawn state. All five
+cases are bit-identical run to run on the same build (RMS 0.0, maxDelta 0), so any
+nonzero comparison is signal. Post-load freezing is not equivalent: it races map
+load timing and froze each run on a different tic (camera micro-drift, weapon-raise
+state deltas, RMS up to ~30 between runs of the same build).

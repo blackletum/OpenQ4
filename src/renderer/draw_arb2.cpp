@@ -3379,6 +3379,36 @@ static int RB_ShadowMapPointCacheSlotLimit( void ) {
 	return idMath::ClampInt( 0, SHADOWMAP_CACHE_MAX_SLOTS, r_shadowMapPointCacheSize.GetInteger() );
 }
 
+// Approximate resident shadow GPU memory, for the SM cache report line: the
+// cost was previously invisible, and nothing but a full vid_restart ever
+// reclaimed it.
+static double RB_ShadowMapImageBytes( const idImage *image ) {
+	if ( image == NULL ) {
+		return 0.0;
+	}
+	const idImageOpts &opts = image->GetOpts();
+	const double bytesPerPixel = ( opts.format == FMT_RGBA16F ) ? 8.0 : 4.0;
+	const double faces = ( opts.textureType == TT_CUBIC ) ? 6.0 : 1.0;
+	return (double)opts.width * (double)opts.height * bytesPerPixel * faces;
+}
+
+static double RB_ShadowMapResidentBytes( void ) {
+	double bytes = 0.0;
+	bytes += RB_ShadowMapImageBytes( g_shadowMapScratchDepthImage );
+	bytes += RB_ShadowMapImageBytes( g_pointShadowMapScratchColorImage );
+	bytes += RB_ShadowMapImageBytes( g_pointShadowMapScratchDepthImage );
+	for ( int i = 0; i < 3; i++ ) {
+		bytes += RB_ShadowMapImageBytes( g_translucentShadowMomentImages[i] );
+		bytes += RB_ShadowMapImageBytes( g_pointTranslucentShadowMomentImages[i] );
+	}
+	for ( int i = 0; i < SHADOWMAP_CACHE_MAX_SLOTS; i++ ) {
+		bytes += RB_ShadowMapImageBytes( g_projectedShadowMapCache[i].depthImage );
+		bytes += RB_ShadowMapImageBytes( g_pointShadowMapCache[i].colorImage );
+		bytes += RB_ShadowMapImageBytes( g_pointShadowMapCache[i].depthImage );
+	}
+	return bytes;
+}
+
 static void RB_ShadowMapExpireCaches( void ) {
 	const int residentFrames = Max( 1, r_shadowMapResidentFrames.GetInteger() );
 	for ( int i = 0; i < SHADOWMAP_CACHE_MAX_SLOTS; i++ ) {
@@ -5685,11 +5715,62 @@ static shadowMapLightSupportReason_t RB_ShadowMapLightSupportReason( const viewL
 	return RB_ShadowMapEnsureResources( vLight ) ? SHADOWMAP_SUPPORT_OK : SHADOWMAP_SUPPORT_RESOURCE_FAILURE;
 }
 
+static void RB_ShadowMapPurgeImage( idImage *image ) {
+	if ( image != NULL && image->IsLoaded() ) {
+		image->PurgeImage();
+	}
+}
+
+static bool RB_ShadowMapAnyResidentResources( void ) {
+	if ( g_shadowMapScratchRenderTexture != NULL || g_pointShadowMapScratchRenderTexture != NULL
+		|| g_translucentShadowMapRenderTexture != NULL || g_pointTranslucentShadowMapRenderTexture != NULL ) {
+		return true;
+	}
+	for ( int i = 0; i < SHADOWMAP_CACHE_MAX_SLOTS; i++ ) {
+		if ( g_projectedShadowMapCache[i].renderTexture != NULL || g_pointShadowMapCache[i].renderTexture != NULL ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Release all shadow GPU memory once the feature has been off for a while;
+// previously only a full vid_restart reclaimed it. Images re-allocate through
+// ScratchImage (which re-allocs unloaded images) when shadow maps re-enable.
+static void RB_ShadowMapPurgeIdleResources( void ) {
+	RB_ShadowMapPurgeImage( g_shadowMapScratchDepthImage );
+	RB_ShadowMapPurgeImage( g_pointShadowMapScratchColorImage );
+	RB_ShadowMapPurgeImage( g_pointShadowMapScratchDepthImage );
+	for ( int i = 0; i < 3; i++ ) {
+		RB_ShadowMapPurgeImage( g_translucentShadowMomentImages[i] );
+		RB_ShadowMapPurgeImage( g_pointTranslucentShadowMomentImages[i] );
+	}
+	for ( int i = 0; i < SHADOWMAP_CACHE_MAX_SLOTS; i++ ) {
+		RB_ShadowMapPurgeImage( g_projectedShadowMapCache[i].depthImage );
+		RB_ShadowMapPurgeImage( g_pointShadowMapCache[i].colorImage );
+		RB_ShadowMapPurgeImage( g_pointShadowMapCache[i].depthImage );
+		g_projectedShadowMapCache[i].depthImage = NULL;
+		g_pointShadowMapCache[i].colorImage = NULL;
+		g_pointShadowMapCache[i].depthImage = NULL;
+		g_projectedShadowMapCache[i].valid = false;
+		g_pointShadowMapCache[i].valid = false;
+	}
+	RB_ShutdownShadowMapResources();
+}
+
 static void RB_ShadowMapStatsReset( void ) {
 	memset( &g_shadowMapStats, 0, sizeof( g_shadowMapStats ) );
 	g_shadowMapStats.csmRequested = r_shadowMapCSM.GetBool();
 	g_shadowMapStats.projectedCsmRequested = r_shadowMapProjectedCSM.GetBool();
 	g_shadowMapStats.requestedCascadeCount = idMath::ClampInt( 1, SHADOWMAP_CLASSIFICATION_MAX_CASCADES, r_shadowMapCascadeCount.GetInteger() );
+
+	static int lastShadowMapActiveFrame = -1;
+	if ( r_useShadowMap.GetBool() || lastShadowMapActiveFrame < 0 ) {
+		lastShadowMapActiveFrame = tr.frameCount;
+	} else if ( tr.frameCount - lastShadowMapActiveFrame > 600 && RB_ShadowMapAnyResidentResources() ) {
+		RB_ShadowMapPurgeIdleResources();
+	}
+
 	RB_ShadowMapExpireCaches();
 	RB_ShadowMapCountCacheSlots();
 	g_shadowMapReportThisFrame = false;
@@ -5864,7 +5945,7 @@ static void RB_ShadowMapStatsReport( void ) {
 		g_shadowMapStats.gpuTimerPhasePending[SHADOWMAP_TIMING_RECEIVER_FALLBACK],
 		g_shadowMapStats.gpuTimerPhasePending[SHADOWMAP_TIMING_STENCIL_FALLBACK] );
 	common->Printf(
-		"SM cache: hit=%d miss=%d reuse=%d budgetReuse=%d evict=%d expired=%d hysteresis=%d projected=%d/%d point=%d/%d\n",
+		"SM cache: hit=%d miss=%d reuse=%d budgetReuse=%d evict=%d expired=%d hysteresis=%d projected=%d/%d point=%d/%d vramMB=%.1f\n",
 		g_shadowMapStats.cacheHitPasses,
 		g_shadowMapStats.cacheMissPasses,
 		g_shadowMapStats.cacheReusePasses,
@@ -5875,7 +5956,8 @@ static void RB_ShadowMapStatsReport( void ) {
 		g_shadowMapStats.projectedCacheSlotsUsed,
 		g_shadowMapStats.projectedCacheSlotsTotal,
 		g_shadowMapStats.pointCacheSlotsUsed,
-		g_shadowMapStats.pointCacheSlotsTotal );
+		g_shadowMapStats.pointCacheSlotsTotal,
+		RB_ShadowMapResidentBytes() / ( 1024.0 * 1024.0 ) );
 	common->Printf(
 		"SM casters: total=%d static=%d dynamic=%d alpha=%d translucent=%d expanded=%d rejected=%d lod(tests=%d rejected=%d alpha=%d translucent=%d)\n",
 		g_shadowMapStats.casterCount,
@@ -6603,6 +6685,45 @@ static void RB_ShadowMapDrawPerforatedCasterProgram( const drawSurf_t *surf, con
 	}
 }
 
+// Conservative per-cascade caster rejection: all eight world-space bounds
+// corners project outside the same side of the cascade's cropped NDC square.
+// Apex-side corners (w near zero) keep the caster, staying conservative.
+// Without this, CSM re-rasterized every caster into every cascade tile.
+static bool RB_ShadowMapCasterOutsideCascade( const drawSurf_t *surf, const srfTriangles_t *casterGeo, const int cascadeIndex ) {
+	if ( surf == NULL || surf->space == NULL || casterGeo == NULL || casterGeo->bounds.IsCleared() ) {
+		return false;
+	}
+	const int safeCascadeIndex = idMath::ClampInt( 0, SHADOWMAP_MAX_CASCADES - 1, cascadeIndex );
+	const idPlane *planes = g_projectedShadowMapState.clipPlanes[safeCascadeIndex];
+	const idBounds &bounds = casterGeo->bounds;
+	int outsideMask = 0x0F;
+	for ( int i = 0; i < 8; i++ ) {
+		const idVec3 corner( bounds[( i >> 0 ) & 1][0], bounds[( i >> 1 ) & 1][1], bounds[( i >> 2 ) & 1][2] );
+		idVec3 world;
+		R_LocalPointToGlobal( surf->space->modelMatrix, corner, world );
+		const float w = planes[3].Distance( world );
+		if ( w <= 1.0e-5f ) {
+			return false;
+		}
+		int mask = 0;
+		if ( planes[0].Distance( world ) < -w ) {
+			mask |= 1;
+		} else if ( planes[0].Distance( world ) > w ) {
+			mask |= 2;
+		}
+		if ( planes[1].Distance( world ) < -w ) {
+			mask |= 4;
+		} else if ( planes[1].Distance( world ) > w ) {
+			mask |= 8;
+		}
+		outsideMask &= mask;
+		if ( outsideMask == 0 ) {
+			return false;
+		}
+	}
+	return outsideMask != 0;
+}
+
 static int RB_ShadowMapDrawCasterChain( const drawSurf_t *surf, const int cascadeIndex, const bool useHashedAlpha ) {
 	int drawnCasters = 0;
 
@@ -6614,6 +6735,11 @@ static int RB_ShadowMapDrawCasterChain( const drawSurf_t *surf, const int cascad
 		}
 		if ( surf->space == NULL ) {
 			RB_ShadowMapReportCasterSkip( surf, casterGeo, "no-space" );
+			continue;
+		}
+
+		if ( g_projectedShadowMapState.cascadeCount > 1 && RB_ShadowMapCasterOutsideCascade( surf, casterGeo, cascadeIndex ) ) {
+			drawnCasters++;	// culled from this tile, not missing from the map
 			continue;
 		}
 
@@ -7038,7 +7164,38 @@ static void RB_PointShadowMapDrawPerforatedCaster( const drawSurf_t *surf, const
 	}
 }
 
-static int RB_PointShadowMapDrawCasterChain( const drawSurf_t *surf, const float lightModelViewMatrix[16] ) {
+// Conservative per-face caster rejection for the point cube: a bounding
+// sphere fully outside any of the face frustum's four 45-degree planes can
+// contribute nothing to that face. Cube faces follow the GL convention
+// (+X,-X,+Y,-Y,+Z,-Z in world axes), matching RB_PointShadowMapBuildViewAxis.
+// Without this, every caster was rasterized into all six faces.
+static bool RB_PointShadowMapCasterOutsideFace( const drawSurf_t *surf, const srfTriangles_t *casterGeo, const int cubeFace ) {
+	if ( surf == NULL || surf->space == NULL || casterGeo == NULL || casterGeo->bounds.IsCleared() || backEnd.vLight == NULL ) {
+		return false;
+	}
+	const idBounds &bounds = casterGeo->bounds;
+	idVec3 centerWorld;
+	R_LocalPointToGlobal( surf->space->modelMatrix, ( bounds[0] + bounds[1] ) * 0.5f, centerWorld );
+	const idVec3 delta = centerWorld - backEnd.vLight->globalLightOrigin;
+	const float radius = ( bounds[1] - bounds[0] ).Length() * 0.5f;
+	const int axis = cubeFace >> 1;
+	const float sign = ( cubeFace & 1 ) ? -1.0f : 1.0f;
+	const float axisDistance = sign * delta[axis];
+	const int otherAxis1 = ( axis + 1 ) % 3;
+	const int otherAxis2 = ( axis + 2 ) % 3;
+	// 45-degree plane distances are (axisDistance - |other|) / sqrt(2);
+	// compare against the sphere radius with the sqrt(2) folded in
+	const float slack = radius * 1.4142136f + 1.0f;
+	if ( axisDistance - idMath::Fabs( delta[otherAxis1] ) < -slack ) {
+		return true;
+	}
+	if ( axisDistance - idMath::Fabs( delta[otherAxis2] ) < -slack ) {
+		return true;
+	}
+	return false;
+}
+
+static int RB_PointShadowMapDrawCasterChain( const drawSurf_t *surf, const float lightModelViewMatrix[16], const int cubeFace ) {
 	int drawnCasters = 0;
 
 	for ( ; surf != NULL; surf = surf->nextOnLight ) {
@@ -7049,6 +7206,11 @@ static int RB_PointShadowMapDrawCasterChain( const drawSurf_t *surf, const float
 		}
 		if ( surf->space == NULL ) {
 			RB_ShadowMapReportCasterSkip( surf, casterGeo, "no-space" );
+			continue;
+		}
+
+		if ( RB_PointShadowMapCasterOutsideFace( surf, casterGeo, cubeFace ) ) {
+			drawnCasters++;	// culled from this face, not missing from the map
 			continue;
 		}
 
@@ -7504,10 +7666,10 @@ static bool RB_RenderPointShadowMap( const drawSurf_t *primaryCasters, const dra
 		glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
 
 		backEnd.currentSpace = NULL;
-		drawnCasterCount += RB_PointShadowMapDrawCasterChain( primaryCasters, lightModelViewMatrix );
-		drawnCasterCount += RB_PointShadowMapDrawCasterChain( secondaryCasters, lightModelViewMatrix );
-		drawnCasterCount += RB_PointShadowMapDrawCasterChain( tertiaryCasters, lightModelViewMatrix );
-		drawnCasterCount += RB_PointShadowMapDrawCasterChain( quaternaryCasters, lightModelViewMatrix );
+		drawnCasterCount += RB_PointShadowMapDrawCasterChain( primaryCasters, lightModelViewMatrix, cubeFace );
+		drawnCasterCount += RB_PointShadowMapDrawCasterChain( secondaryCasters, lightModelViewMatrix, cubeFace );
+		drawnCasterCount += RB_PointShadowMapDrawCasterChain( tertiaryCasters, lightModelViewMatrix, cubeFace );
+		drawnCasterCount += RB_PointShadowMapDrawCasterChain( quaternaryCasters, lightModelViewMatrix, cubeFace );
 	}
 
 	if ( RB_ShadowMapDepthClampAvailable() ) {
