@@ -3,12 +3,52 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
 GAME_LIBS_ROOT = Path(os.environ.get("OPENQ4_GAMELIBS_REPO", ROOT.parent / "openQ4-game")).resolve()
+
+# Engine-interface headers that openQ4-game carries as copies. The engine is
+# authoritative: any content drift changes the effective virtual layouts the
+# standalone-built game modules are compiled against, which breaks the ABI at
+# the engine/game boundary even when GAME_API_VERSION still matches.
+ENGINE_INTERFACE_HEADERS = (
+    "src/framework/BuildDefines.h",
+    "src/framework/BuildVersion.h",
+    "src/framework/CVarSystem.h",
+    "src/framework/CmdSystem.h",
+    "src/framework/Common.h",
+    "src/framework/DeclPDA.h",
+    "src/framework/DeclPlayerModel.h",
+    "src/framework/File.h",
+    "src/framework/FileSystem.h",
+    "src/framework/UsercmdGen.h",
+    "src/framework/async/NetworkSystem.h",
+    "src/framework/declAF.h",
+    "src/framework/declEntityDef.h",
+    "src/framework/declLipSync.h",
+    "src/framework/declManager.h",
+    "src/framework/declMatType.h",
+    "src/framework/declPlayback.h",
+    "src/framework/declSkin.h",
+    "src/framework/declTable.h",
+    "src/framework/licensee.h",
+    "src/renderer/Cinematic.h",
+    "src/renderer/ImageOpts.h",
+    "src/renderer/Material.h",
+    "src/renderer/Model.h",
+    "src/renderer/ModelManager.h",
+    "src/renderer/RenderSystem.h",
+    "src/renderer/RenderWorld.h",
+    "src/renderer/RendererCaps.h",
+    "src/sound/sound.h",
+    "src/sys/sys_public.h",
+    "src/ui/ListGUI.h",
+    "src/ui/UserInterface.h",
+)
 
 
 def read(relative_path: str) -> str:
@@ -30,6 +70,35 @@ def require(haystack: str, needle: str, context: str) -> None:
 def reject(haystack: str, needle: str, context: str) -> None:
     if needle in haystack:
         raise AssertionError(f"Unexpected {needle!r} in {context}")
+
+
+def normalized_content_hash(path: Path) -> str:
+    # Normalize line endings so checkout-time autocrlf differences between the
+    # two repositories do not mask or fake drift; everything else must match.
+    data = path.read_bytes().replace(b"\r\n", b"\n")
+    return hashlib.sha256(data).hexdigest()
+
+
+def validate_engine_interface_header_parity() -> None:
+    drifted: list[str] = []
+    for relative_path in ENGINE_INTERFACE_HEADERS:
+        engine_path = ROOT / relative_path
+        game_path = GAME_LIBS_ROOT / relative_path
+        if not engine_path.is_file():
+            raise AssertionError(f"openQ4 engine-interface header not found: {engine_path}")
+        if not game_path.is_file():
+            raise AssertionError(f"openQ4-game engine-interface header copy not found: {game_path}")
+        engine_hash = normalized_content_hash(engine_path)
+        game_hash = normalized_content_hash(game_path)
+        if engine_hash != game_hash:
+            drifted.append(f"{relative_path} (openQ4 {engine_hash[:12]} != openQ4-game {game_hash[:12]})")
+    if drifted:
+        raise AssertionError(
+            "engine-interface header copies in openQ4-game drifted from the authoritative openQ4 versions; "
+            "re-sync them from openQ4 src/ (standalone game modules built against drifted headers can "
+            "crash at the engine/game ABI boundary despite passing the GAME_API_VERSION check):\n  "
+            + "\n  ".join(drifted)
+        )
 
 
 def validate_companion_boundary() -> None:
@@ -213,6 +282,7 @@ def validate_wiring() -> None:
 
 
 def main() -> None:
+    validate_engine_interface_header_parity()
     validate_companion_boundary()
     validate_companion_macos_contract()
     validate_build_string_contract()
