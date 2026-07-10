@@ -22,6 +22,11 @@ def require(haystack: str, needle: str, context: str) -> None:
         raise AssertionError(f"Missing {needle!r} in {context}")
 
 
+def reject(haystack: str, needle: str, context: str) -> None:
+    if needle in haystack:
+        raise AssertionError(f"Unexpected {needle!r} in {context}")
+
+
 def require_count(haystack: str, needle: str, expected: int, context: str) -> None:
     actual = haystack.count(needle)
     if actual != expected:
@@ -160,6 +165,18 @@ def validate_runtime_flags() -> None:
     require(runner, '"--skip-official-pak-validation"', "validation profile renderer handoff")
 
 
+def validate_renderer_selftest_object_lifetime() -> None:
+    planner = read("src/renderer/ModernShadowPlanner.cpp")
+    executor = read("src/renderer/ModernGLExecutor.cpp")
+
+    for source, context in (
+        (planner, "modern shadow planner self-tests"),
+        (executor, "modern GL executor self-tests"),
+    ):
+        reject(source, "memset( lightDefs, 0, sizeof( lightDefs ) );", context)
+    reject(planner, "memset( &lightDef, 0, sizeof( lightDef ) );", "projected shadow diagnostic self-test")
+
+
 def validate_assetless_renderer_bootstrap() -> None:
     source = read("src/renderer/RenderSystem_init.cpp")
 
@@ -207,6 +224,7 @@ def main() -> None:
     validate_commit_workflow()
     validate_linux_hardening_contract()
     validate_runtime_flags()
+    validate_renderer_selftest_object_lifetime()
     validate_assetless_renderer_bootstrap()
     validate_assetless_game_bootstrap()
     validate_release_note()

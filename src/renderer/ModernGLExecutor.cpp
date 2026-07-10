@@ -10496,7 +10496,7 @@ bool RendererLowOverhead_RunSelfTest( void ) {
 	viewLight_t lights[2];
 	memset( lights, 0, sizeof( lights ) );
 	idRenderLightLocal lightDefs[2];
-	memset( lightDefs, 0, sizeof( lightDefs ) );
+	// idRenderLightLocal is polymorphic; its constructor clears its fields while preserving its vtable.
 	for ( int i = 0; i < 2; ++i ) {
 		lightDefs[i].index = i;
 		lightDefs[i].areaNum = -1;

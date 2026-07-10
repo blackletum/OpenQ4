@@ -2522,6 +2522,7 @@ def validate_meson_contract() -> None:
         "cdata.set('SDL_VIDEO_RENDER_METAL', 1)",
         "vendored SDL3 Darwin Metal render driver",
     )
+    require(sdl3_vendored_meson, "'AudioToolbox'", "vendored SDL3 Darwin AudioQueue framework")
     require_before(
         sdl3_audio_meson,
         "elif host_machine.system() == 'darwin'",

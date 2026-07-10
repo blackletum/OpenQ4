@@ -2297,7 +2297,7 @@ bool RendererShadowPlanner_RunSelfTest( void ) {
 	viewLight_t lights[6];
 	idRenderLightLocal lightDefs[6];
 	memset( lights, 0, sizeof( lights ) );
-	memset( lightDefs, 0, sizeof( lightDefs ) );
+	// idRenderLightLocal is polymorphic; its constructor clears its fields while preserving its vtable.
 	const idMaterial *projectedLightShader = R_ModernShadowPlanner_SelfTestLightShader( "lights/defaultProjectedLight" );
 	const idMaterial *pointLightShader = R_ModernShadowPlanner_SelfTestLightShader( "lights/defaultPointLight" );
 	if ( projectedLightShader == NULL ) {
@@ -2951,7 +2951,7 @@ bool RendererShadowProjectedDiagnostic_RunSelfTest( void ) {
 	viewLight_t light;
 	idRenderLightLocal lightDef;
 	memset( &light, 0, sizeof( light ) );
-	memset( &lightDef, 0, sizeof( lightDef ) );
+	// idRenderLightLocal is polymorphic; its constructor clears its fields while preserving its vtable.
 	const idMaterial *projectedLightShader = R_ModernShadowPlanner_SelfTestLightShader( "lights/defaultProjectedLight" );
 	if ( projectedLightShader == NULL ) {
 		projectedLightShader = tr.defaultMaterial;

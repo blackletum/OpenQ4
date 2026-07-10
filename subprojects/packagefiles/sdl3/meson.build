@@ -422,6 +422,7 @@ elif host_machine.subsystem() == 'macos'
   sdl_deps += dependency(
     'appleframeworks',
     modules: [
+      'AudioToolbox',
       'CoreFoundation',
       'Cocoa',
       'CoreAudio',
