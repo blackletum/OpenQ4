@@ -411,6 +411,7 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "macos_renderer_phase_breadcrumbs.py",
         root / "tools" / "tests" / "macos_renderer_startup_guard.py",
         root / "tools" / "tests" / "macos_sdl3_backend_guard.py",
+        root / "tools" / "tests" / "macos_shadow_policy.py",
         root / "tools" / "tests" / "macos_signoff_archive.py",
         root / "tools" / "tests" / "macos_static_policy.py",
         root / "tools" / "tests" / "macos_support_claim_policy.py",

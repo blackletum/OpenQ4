@@ -92,6 +92,7 @@ jobs:
             tools/tests/macos_renderer_phase_breadcrumbs.py \
             tools/tests/macos_renderer_startup_guard.py \
             tools/tests/macos_sdl3_backend_guard.py \
+            tools/tests/macos_shadow_policy.py \
             tools/tests/macos_signoff_archive.py \
             tools/tests/macos_static_policy.py \
             tools/tests/macos_support_claim_policy.py \
@@ -154,6 +155,7 @@ jobs:
           python tools/tests/macos_renderer_phase_breadcrumbs.py
           python tools/tests/macos_renderer_startup_guard.py
           python tools/tests/macos_sdl3_backend_guard.py
+          python tools/tests/macos_shadow_policy.py
           python tools/tests/macos_signoff_archive.py
           python tools/tests/macos_static_policy.py
           python tools/tests/macos_support_claim_policy.py
