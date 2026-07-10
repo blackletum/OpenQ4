@@ -1190,66 +1190,149 @@ void idSoundWorldLocal::WriteToSaveGame( idFile* savefile )
 {
 	struct helper
 	{
+		static void WriteChecked( idFile* savefile, int bytesWritten, int expected, const char* fieldName, int offset )
+		{
+			if( bytesWritten != expected )
+			{
+				common->Error( "idSoundWorldLocal::WriteToSaveGame: failed to write %s at offset %d (wrote %d of %d)",
+					fieldName, offset, bytesWritten, expected );
+			}
+		}
+		static void WriteInt( idFile* savefile, int value, const char* fieldName )
+		{
+			const int offset = savefile->Tell();
+			WriteChecked( savefile, savefile->WriteInt( value ), static_cast<int>( sizeof( value ) ), fieldName, offset );
+		}
+		static void WriteFloat( idFile* savefile, float value, const char* fieldName )
+		{
+			const int offset = savefile->Tell();
+			WriteChecked( savefile, savefile->WriteFloat( value ), static_cast<int>( sizeof( value ) ), fieldName, offset );
+		}
+		static void WriteBool( idFile* savefile, bool value, const char* fieldName )
+		{
+			const int offset = savefile->Tell();
+			WriteChecked( savefile, savefile->WriteBool( value ), static_cast<int>( sizeof( byte ) ), fieldName, offset );
+		}
+		static void WriteVec3( idFile* savefile, const idVec3& value, const char* fieldName )
+		{
+			const int offset = savefile->Tell();
+			WriteChecked( savefile, savefile->WriteVec3( value ), static_cast<int>( sizeof( value ) ), fieldName, offset );
+		}
+		static void WriteMat3( idFile* savefile, const idMat3& value, const char* fieldName )
+		{
+			const int offset = savefile->Tell();
+			WriteChecked( savefile, savefile->WriteMat3( value ), static_cast<int>( sizeof( value ) ), fieldName, offset );
+		}
+		static void WriteString( idFile* savefile, const char* value, const char* fieldName )
+		{
+			if( value == NULL )
+			{
+				value = "";
+			}
+			const int len = idStr::Length( value );
+			if( len < 0 || len > MAX_STRING_CHARS )
+			{
+				common->Error( "idSoundWorldLocal::WriteToSaveGame: invalid %s length %d", fieldName, len );
+			}
+			WriteInt( savefile, len, fieldName );
+			if( len > 0 )
+			{
+				const int offset = savefile->Tell();
+				WriteChecked( savefile, savefile->Write( value, len ), len, fieldName, offset );
+			}
+		}
 		static void WriteSoundFade( idFile* savefile, idSoundFade& sf )
 		{
-			savefile->WriteInt( sf.fadeStartTime );
-			savefile->WriteInt( sf.fadeEndTime );
-			savefile->WriteFloat( sf.fadeStartVolume );
-			savefile->WriteFloat( sf.fadeEndVolume );
+			WriteInt( savefile, sf.fadeStartTime, "sound fade start time" );
+			WriteInt( savefile, sf.fadeEndTime, "sound fade end time" );
+			WriteFloat( savefile, sf.fadeStartVolume, "sound fade start volume" );
+			WriteFloat( savefile, sf.fadeEndVolume, "sound fade end volume" );
 		}
 		static void WriteShaderParms( idFile* savefile, soundShaderParms_t& parms )
 		{
-			savefile->WriteFloat( parms.minDistance );
-			savefile->WriteFloat( parms.maxDistance );
-			savefile->WriteFloat( parms.volume );
-			savefile->WriteFloat( parms.attenuatedVolume );
-			savefile->WriteFloat( parms.shakes );
-			savefile->WriteInt( parms.soundShaderFlags );
-			savefile->WriteInt( parms.soundClass );
-			savefile->WriteFloat( parms.frequencyShift );
-			savefile->WriteFloat( parms.wetLevel );
-			savefile->WriteFloat( parms.dryLevel );
+			if( parms.soundClass < 0 || parms.soundClass >= SOUND_MAX_CLASSES )
+			{
+				common->Error( "idSoundWorldLocal::WriteToSaveGame: invalid sound class %d", parms.soundClass );
+			}
+			WriteFloat( savefile, parms.minDistance, "sound min distance" );
+			WriteFloat( savefile, parms.maxDistance, "sound max distance" );
+			WriteFloat( savefile, parms.volume, "sound volume" );
+			WriteFloat( savefile, parms.attenuatedVolume, "sound attenuated volume" );
+			WriteFloat( savefile, parms.shakes, "sound shakes" );
+			WriteInt( savefile, parms.soundShaderFlags, "sound shader flags" );
+			WriteInt( savefile, parms.soundClass, "sound class" );
+			WriteFloat( savefile, parms.frequencyShift, "sound frequency shift" );
+			WriteFloat( savefile, parms.wetLevel, "sound wet level" );
+			WriteFloat( savefile, parms.dryLevel, "sound dry level" );
 		}
 	};
-	savefile->WriteInt( GetSoundTime() );
+	helper::WriteInt( savefile, GetSoundTime(), "sound time" );
 
 	helper::WriteSoundFade( savefile, volumeFade );
 	for( int c = 0; c < SOUND_MAX_CLASSES; c++ )
 	{
 		helper::WriteSoundFade( savefile, soundClassFade[c] );
 	}
-	savefile->WriteFloat( slowmoSpeed );
-	savefile->WriteBool( enviroSuitActive );
+	helper::WriteFloat( savefile, slowmoSpeed, "slowmo speed" );
+	helper::WriteBool( savefile, enviroSuitActive, "enviro suit state" );
 
-	savefile->WriteMat3( listener.axis );
-	savefile->WriteVec3( listener.pos );
-	savefile->WriteInt( listener.id );
-	savefile->WriteInt( listener.area );
+	helper::WriteMat3( savefile, listener.axis, "listener axis" );
+	helper::WriteVec3( savefile, listener.pos, "listener position" );
+	helper::WriteInt( savefile, listener.id, "listener id" );
+	helper::WriteInt( savefile, listener.area, "listener area" );
 
-	savefile->WriteFloat( shakeAmp );
+	helper::WriteFloat( savefile, shakeAmp, "shake amplitude" );
 
 	int num = emitters.Num();
-	savefile->WriteInt( num );
+	while( num > 1 )
+	{
+		idSoundEmitterLocal* emitter = emitters[num - 1];
+		if( emitter == NULL || !emitter->canFree || emitter->channels.Num() != 0 )
+		{
+			break;
+		}
+		num--;
+	}
+	if( num < 1 || num > SOUND_SAVEGAME_MAX_EMITTERS )
+	{
+		common->Error( "idSoundWorldLocal::WriteToSaveGame: bad emitter count %d", num );
+	}
+	helper::WriteInt( savefile, num, "sound emitter count" );
+	int totalChannels = 0;
 	// Start at 1 because the local sound emitter is not saved
-	for( int e = 1; e < emitters.Num(); e++ )
+	for( int e = 1; e < num; e++ )
 	{
 		idSoundEmitterLocal* emitter = emitters[e];
-		savefile->WriteBool( emitter->canFree );
-		savefile->WriteVec3( emitter->origin );
-		savefile->WriteInt( emitter->emitterId );
+		if( emitter == NULL )
+		{
+			common->Error( "idSoundWorldLocal::WriteToSaveGame: NULL emitter at index %d", e );
+		}
+		const int numChannels = emitter->channels.Num();
+		if( numChannels < 0 || numChannels > MAX_CHANNELS_PER_EMITTER || totalChannels > SOUND_SAVEGAME_MAX_TOTAL_CHANNELS - numChannels )
+		{
+			common->Error( "idSoundWorldLocal::WriteToSaveGame: invalid channel count %d for emitter %d", numChannels, e );
+		}
+		totalChannels += numChannels;
+		helper::WriteBool( savefile, emitter->canFree, "emitter can-free flag" );
+		helper::WriteVec3( savefile, emitter->origin, "emitter origin" );
+		helper::WriteInt( savefile, emitter->emitterId, "emitter listener id" );
 		helper::WriteShaderParms( savefile, emitter->parms );
-		savefile->WriteInt( emitter->channels.Num() );
-		for( int c = 0; c < emitter->channels.Num(); c++ )
+		helper::WriteInt( savefile, numChannels, "emitter channel count" );
+		for( int c = 0; c < numChannels; c++ )
 		{
 			idSoundChannel* channel = emitter->channels[c];
-			savefile->WriteInt( channel->startTime );
-			savefile->WriteInt( channel->endTime );
-			savefile->WriteInt( channel->logicalChannel );
-			savefile->WriteInt( channel->choice );
-			savefile->WriteBool( channel->allowSlow );
+			if( channel == NULL || channel->soundShader == NULL )
+			{
+				common->Error( "idSoundWorldLocal::WriteToSaveGame: invalid channel %d for emitter %d", c, e );
+			}
+			helper::WriteInt( savefile, channel->startTime, "channel start time" );
+			helper::WriteInt( savefile, channel->endTime, "channel end time" );
+			helper::WriteInt( savefile, channel->logicalChannel, "channel logical channel" );
+			helper::WriteInt( savefile, channel->choice, "channel sample choice" );
+			helper::WriteBool( savefile, channel->allowSlow, "channel allow-slow flag" );
 			helper::WriteShaderParms( savefile, channel->parms );
 			helper::WriteSoundFade( savefile, channel->volumeFade );
-			savefile->WriteString( channel->soundShader->GetName() );
+			helper::WriteString( savefile, channel->soundShader->GetName(), "sound shader name" );
 			int leadin = -1;
 			int looping = -1;
 			for( int i = 0; i < channel->soundShader->entries.Num(); i++ )
@@ -1275,11 +1358,11 @@ void idSoundWorldLocal::WriteToSaveGame( idFile* savefile )
 					}
 				}
 			}
-			savefile->WriteInt( leadin );
-			savefile->WriteInt( looping );
-			savefile->WriteInt( channel->lastFrequencyShiftTime );
-			savefile->WriteFloat( channel->lastFrequencyShift );
-			savefile->WriteFloat( channel->elapsedFrequencyShiftTime );
+			helper::WriteInt( savefile, leadin, "channel leadin index" );
+			helper::WriteInt( savefile, looping, "channel looping index" );
+			helper::WriteInt( savefile, channel->lastFrequencyShiftTime, "channel frequency shift time" );
+			helper::WriteFloat( savefile, channel->lastFrequencyShift, "channel last frequency shift" );
+			helper::WriteFloat( savefile, channel->elapsedFrequencyShiftTime, "channel elapsed frequency shift time" );
 		}
 	}
 }
@@ -1342,9 +1425,11 @@ void idSoundWorldLocal::ReadFromSaveGame( idFile* savefile )
 		{
 			int len = 0;
 			ReadInt( savefile, len, fieldName );
-			if( len < 0 || len > MAX_STRING_CHARS )
+			const int remainingBytes = Max( 0, savefile->Length() - savefile->Tell() );
+			if( len < 0 || len > MAX_STRING_CHARS || len > remainingBytes )
 			{
-				common->Error( "idSoundWorldLocal::ReadFromSaveGame: invalid %s length %d", fieldName, len );
+				common->Error( "idSoundWorldLocal::ReadFromSaveGame: invalid %s length %d (remaining %d)",
+					fieldName, len, remainingBytes );
 			}
 			value.Clear();
 			if( len == 0 )
@@ -1423,11 +1508,17 @@ void idSoundWorldLocal::ReadFromSaveGame( idFile* savefile )
 	// Start at 1 because the local sound emitter is not saved
 	for( int e = 1; e < numEmitters; e++ )
 	{
-		idSoundEmitterLocal* emitter = ( idSoundEmitterLocal* )AllocSoundEmitter();
-		assert( emitter == emitters[e] );
-		assert( emitter->index == e );
-		assert( emitter->soundWorld == this );
-		assert( emitter->channels.Num() == 0 );
+		// Do not use AllocSoundEmitter here: a restored, free emitter with no
+		// channels is immediately reusable and would collapse the serialized
+		// index space before later emitters have been recreated.
+		idSoundEmitterLocal* emitter = emitterAllocator.Alloc();
+		const int restoredIndex = emitters.Append( emitter );
+		emitter->Init( restoredIndex, this );
+		if( restoredIndex != e || emitter->index != e || emitter->soundWorld != this || emitter->channels.Num() != 0 )
+		{
+			common->Error( "idSoundWorldLocal::ReadFromSaveGame: failed to recreate emitter index %d (got %d)",
+				e, restoredIndex );
+		}
 		helper::ReadBool( savefile, emitter->canFree, "emitter can-free flag" );
 		helper::ReadVec3( savefile, emitter->origin, "emitter origin" );
 		helper::ReadInt( savefile, emitter->emitterId, "emitter listener id" );

@@ -47,8 +47,8 @@ public:
 							idRenderTexture(idImage *colorImage, idImage *depthImage);
 							~idRenderTexture();
 
-	ID_INLINE int			GetWidth() const { return ( colorImages.Num() > 0 ) ? colorImages[0]->GetUploadWidth() : depthImage->GetUploadWidth(); }
-	ID_INLINE int			GetHeight() const { return (colorImages.Num() > 0) ? colorImages[0]->GetUploadHeight() : depthImage->GetUploadHeight(); }
+	ID_INLINE int			GetWidth() const { return ( colorImages.Num() > 0 ) ? colorImages[0]->GetUploadWidth() : ( depthImage != NULL ? depthImage->GetUploadWidth() : 0 ); }
+	ID_INLINE int			GetHeight() const { return ( colorImages.Num() > 0 ) ? colorImages[0]->GetUploadHeight() : ( depthImage != NULL ? depthImage->GetUploadHeight() : 0 ); }
 
 	ID_INLINE idImage *		GetColorImage(int idx) const { return colorImages[idx]; }
 	ID_INLINE idImage *		GetDepthImage() const { return depthImage; }
@@ -74,6 +74,8 @@ public:
 	ID_INLINE void			SetAllowIncomplete( void ) { allowIncomplete = true; }
 	ID_INLINE bool			IsKnownIncomplete( void ) const { return knownIncomplete; }
 private:
+	bool					HasCurrentDeviceHandle( void ) const;
+	void					ReleaseDeviceHandle( void );
 	bool					NeedsAttachmentRefresh( void ) const;
 	void					CaptureAttachmentHandles( void );
 	void					ApplyDebugLabel( void ) const;
@@ -81,6 +83,8 @@ private:
 	idList<idImage *>	colorImages;
 	idImage *			depthImage;
 	GLuint				deviceHandle;
+	int					deviceHandleGeneration;
+	unsigned int		validatedCubeFaces;
 	bool				allowIncomplete = false;
 	bool				knownIncomplete = false;
 	idStr				debugLabel;

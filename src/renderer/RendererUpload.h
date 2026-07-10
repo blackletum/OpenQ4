@@ -18,7 +18,11 @@ typedef struct rendererUploadStats_s {
 	int		frameSubDataWrites;
 	int		frameFencesSubmitted;
 	int		frameFencesRetired;
+	int		frameFenceSubmissionFailures;
 	int		frameFenceWaits;
+	int		frameFenceTimeouts;
+	int		frameFenceFallbacks;
+	int		frameFenceWaitFailures;
 	int		frameBufferIndex;
 	int		staticBuffersLive;
 	int		staticBytesLive;
@@ -154,7 +158,8 @@ private:
 
 	bool CreateFrameBuffers( uploadPath_t requestedPath );
 	void ShutdownFrameBuffers( void );
-	void RetireFrameFence( frameBuffer_t &frame );
+	bool RetireFrameFence( frameBuffer_t &frame, bool allowBlocking );
+	bool SelectFrameBufferForFrame( int preferredFrameBuffer );
 	void FenceCurrentFrame( void );
 	void UpdateAllocatorStats( void );
 	const char *PathName( void ) const;

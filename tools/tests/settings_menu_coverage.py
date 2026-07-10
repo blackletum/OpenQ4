@@ -251,8 +251,42 @@ def validate_performance_preset_wiring(
         "Common_ApplyPerformancePresetCommand",
         "Common_AutoDetectPerformancePresetCommand",
         "Common_PerformancePresetTargetIsDeclared",
+        "Common_RestorePerformancePresetCVars",
+        "Common_RestorePerformancePresetModifiedFlags",
+        "rejected target normalization did not roll back atomically",
     ):
         require(common_cpp, token, "Performance preset engine wiring")
+
+    implementation_start = common_cpp.index("typedef struct openQ4PerformancePreset_s")
+    implementation_end = common_cpp.index("Com_ReloadEngine_f", implementation_start)
+    implementation = common_cpp[implementation_start:implementation_end]
+    for obsolete_target in (
+        "OPENQ4_PERFORMANCE_PRESET_DYNAMIC_CVARS",
+        '"image_filter"',
+        '"image_lodbias"',
+        '"image_forceDownSize"',
+        '"image_roundDown"',
+        '"image_preload"',
+        '"image_useAllFormats"',
+        '"image_downsize"',
+        '"image_useCompression"',
+        '"image_useNormalCompression"',
+    ):
+        reject(implementation, obsolete_target, "Performance preset effective cvar targets")
+
+    image_manager = read(ROOT / "src/renderer/ImageManager.cpp")
+    gl_image = read(ROOT / "src/renderer/OpenGL/gl_Image.cpp")
+    for cvar_name in (
+        "image_anisotropy",
+        "image_downSize",
+        "image_downSizeLimit",
+        "image_downSizeSpecular",
+        "image_downSizeSpecularLimit",
+        "image_downSizeBump",
+        "image_downSizeBumpLimit",
+    ):
+        require(image_manager, f'"{cvar_name}"', f"registered performance preset cvar {cvar_name}")
+    require(gl_image, 'GetCVarInteger( "image_anisotropy" )', "effective anisotropic filtering control")
     for token in (
         "AppendMainMenuCommandArgsUntilSeparator",
         "RefreshMainMenuPerformancePresetGuiVars",

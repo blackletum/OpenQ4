@@ -32,6 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "tr_local.h"
 #include "DXT/DXTCodec.h"
 #include "RendererBootstrap.h"
+#include "GLDebugScope.h"
 #include "GLStateCache.h"
 #include "RendererBenchmarks.h"
 #include "RendererMetrics.h"
@@ -419,6 +420,8 @@ idCVar r_renderer( "r_renderer", "best", CVAR_RENDERER | CVAR_ARCHIVE, "hardware
 idCVar r_actualRenderer( "r_actualRenderer", "UNINITIALIZED", CVAR_RENDERER | CVAR_ROM, "actual active renderer backend after request/fallback selection" );
 idCVar r_glTier( "r_glTier", "auto", CVAR_RENDERER | CVAR_ARCHIVE, "OpenGL renderer tier: auto, legacy, gl33, gl41, gl43, gl45, gl46", r_glTierArgs, idCmdSystem::ArgCompletion_String<r_glTierArgs> );
 idCVar r_glDebugContext( "r_glDebugContext", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "request a debug OpenGL context when the platform backend supports it" );
+idCVar r_glDebugOutput( "r_glDebugOutput", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "report OpenGL driver debug messages when a debug context is active" );
+idCVar r_glDebugSynchronous( "r_glDebugSynchronous", "0", CVAR_RENDERER | CVAR_BOOL, "deliver OpenGL debug callbacks synchronously (diagnostic; may reduce performance)" );
 idCVar r_rendererMetrics( "r_rendererMetrics", "0", CVAR_RENDERER | CVAR_INTEGER, "renderer metrics: 0 = off, 1 = periodic summary, 2 = per-frame/pass detail", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 idCVar r_rendererGpuTimers( "r_rendererGpuTimers", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "sample GL timer queries when r_rendererMetrics is enabled and supported" );
 idCVar r_rendererBenchmarkPreset( "r_rendererBenchmarkPreset", "baseline", CVAR_RENDERER | CVAR_ARCHIVE, "renderer benchmark budget preset: low, baseline, modern, high-end", r_rendererBenchmarkPresetArgs, idCmdSystem::ArgCompletion_String<r_rendererBenchmarkPresetArgs> );
@@ -1704,6 +1707,7 @@ void R_InitOpenGL( void ) {
 
 	// recheck all the extensions (FIXME: this might be dangerous)
 	R_CheckPortableExtensions();
+	R_GLDebugOutput_Init();
 
 	// parse our vertex and fragment programs, possibly disably support for
 	// one of the paths if there was an error
@@ -1721,6 +1725,7 @@ void R_InitOpenGL( void ) {
 
 	cmdSystem->AddCommand( "reloadARBprograms", R_ReloadARBPrograms_f, CMD_FL_RENDERER, "reloads ARB programs" );
 	R_ReloadARBPrograms_f( idCmdArgs() );
+	R_GLDebugOutput_FlushMessages();
 
 	R_RendererUpload_Init( glConfig.backendCaps );
 
@@ -1772,6 +1777,8 @@ void GL_CheckErrors( void ) {
     int		err;
     char	s[64];
 	int		i;
+
+	R_GLDebugOutput_FlushMessages();
 
 	// check for up to 10 errors pending
 	for ( i = 0 ; i < 10 ; i++ ) {
@@ -3529,6 +3536,12 @@ void GfxInfo_f( const idCmdArgs &args ) {
 		glConfig.contextRequest.debugContext ? 1 : 0,
 		glConfig.backendCaps.debugContext ? 1 : 0,
 		glConfig.backendCaps.forwardCompatibleContext ? 1 : 0 );
+	common->Printf(
+		"GL debug output: supported=%d requested=%d callback=%d synchronous=%d\n",
+		R_GLDebugOutput_Available() ? 1 : 0,
+		r_glDebugOutput.GetBool() ? 1 : 0,
+		R_GLDebugOutput_Registered() ? 1 : 0,
+		R_GLDebugOutput_Registered() && r_glDebugSynchronous.GetBool() ? 1 : 0 );
 	R_GfxInfoPrintAAState();
 	common->Printf(
 		"Renderer features: modern=%d gl41=%d gpuDriven=%d lowOverhead=%d persistentUploads=%d DSA=%d multiBind=%d bindless=%d bindlessExperiment=%d renderGraph=%d scenePackets=%d legacyBridge=%d\n",
@@ -3584,7 +3597,7 @@ void GfxInfo_f( const idCmdArgs &args ) {
 	{
 		const rendererUploadStats_t &uploadStats = R_RendererUpload_Stats();
 		common->Printf(
-			"Renderer upload manager: frameStream=%s, staticAllocator=%d, buffers=%d index=%d, ring=%dKB, persistent=%d, mapRangeFallback=%d, staticLive=%d/%dKB, fences=%d/%d waits=%d, legacyBridge=%d\n",
+			"Renderer upload manager: frameStream=%s, staticAllocator=%d, buffers=%d index=%d, ring=%dKB, persistent=%d, mapRangeFallback=%d, staticLive=%d/%dKB, fences=%d/%d submitFailures=%d waits=%d timeouts=%d fallbacks=%d waitFailures=%d, legacyBridge=%d\n",
 			uploadStats.dynamicFrameBridge ? "enabled" : "disabled",
 			uploadStats.staticBufferAllocator ? 1 : 0,
 			uploadStats.ringBufferCount,
@@ -3596,7 +3609,11 @@ void GfxInfo_f( const idCmdArgs &args ) {
 			uploadStats.staticBytesLive / 1024,
 			uploadStats.frameFencesSubmitted,
 			uploadStats.frameFencesRetired,
+			uploadStats.frameFenceSubmissionFailures,
 			uploadStats.frameFenceWaits,
+			uploadStats.frameFenceTimeouts,
+			uploadStats.frameFenceFallbacks,
+			uploadStats.frameFenceWaitFailures,
 			uploadStats.legacyBridge ? 1 : 0 );
 	}
 
@@ -3703,6 +3720,7 @@ static void R_PerformFullVidRestart( bool forceWindow ) {
 	R_RendererUpload_Shutdown();
 	RendererBootstrap_Shutdown();
 	R_PurgeFramebufferCopyFBOs();
+	R_GLDebugOutput_Shutdown();
 	GLimp_Shutdown();
 	glConfig.isInitialized = false;
 
@@ -4237,6 +4255,7 @@ void idRenderSystemLocal::ShutdownOpenGL( void ) {
 	R_RendererUpload_Shutdown();
 	RendererBootstrap_Shutdown();
 	R_PurgeFramebufferCopyFBOs();
+	R_GLDebugOutput_Shutdown();
 	GLimp_Shutdown();
 	glConfig.isInitialized = false;
 	R_ClearActiveRenderTextures();

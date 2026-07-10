@@ -763,6 +763,7 @@ bool idModernGLSubmitPlan::AddCommand( const modernGLDrawPlanEntry_t &entry ) {
 	command.materialFlagsLocation = entry.materialFlagsLocation;
 	command.materialEnhancementLocation = entry.materialEnhancementLocation;
 	command.drawRecordModeLocation = entry.drawRecordModeLocation;
+	command.drawRecordCountLocation = entry.drawRecordCountLocation;
 	command.vertexStride = geo->vertexStride;
 	command.indexType = geo->indexType;
 	command.indexCount = entry.indexCount;
@@ -1133,6 +1134,16 @@ bool RendererModernGLSubmitPlan_RunSelfTest( void ) {
 		if ( submitPlan.Command( 0 ).materialTableIndex != submitPlan.Command( 0 ).materialRecordIndex ) {
 			common->Printf( "RendererModernGLSubmitPlan self-test failed: material table index mismatch\n" );
 			return false;
+		}
+		for ( int i = 0; i < submitPlan.NumCommands(); ++i ) {
+			const modernGLSubmitCommand_t &command = submitPlan.Command( i );
+			if ( command.drawPlanEntry == NULL
+				|| command.drawRecordModeLocation != command.drawPlanEntry->drawRecordModeLocation
+				|| command.drawRecordCountLocation != command.drawPlanEntry->drawRecordCountLocation
+				|| ( command.drawRecordModeLocation >= 0 ) != ( command.drawRecordCountLocation >= 0 ) ) {
+				common->Printf( "RendererModernGLSubmitPlan self-test failed: draw-record uniform propagation mismatch\n" );
+				return false;
+			}
 		}
 	}
 

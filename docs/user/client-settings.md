@@ -25,6 +25,7 @@ If you are setting up openQ4 for the first time, these are the areas most player
 - [Input Settings](input-settings.md) - keybinds, mouse tuning, controller support, and config-file behavior
 - [Gameplay Settings](gameplay-settings.md) - convenience toggles and a few gameplay/audio settings
 - [Shadow Mapping](shadow-mapping.md) - optional advanced shadow-map tuning
+- [DDS Texture Replacements](texture-replacements.md) - DXT/BC7 texture-pack layout and diagnostics
 - [Steam Deck](steam-deck.md) - launcher and handheld-specific input notes
 
 ## In-Game Menus

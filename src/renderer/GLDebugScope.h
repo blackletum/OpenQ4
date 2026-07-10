@@ -8,6 +8,11 @@
 
 bool R_GLDebugScope_Available( void );
 bool R_GLDebugObjectLabels_Available( void );
+bool R_GLDebugOutput_Available( void );
+bool R_GLDebugOutput_Registered( void );
+void R_GLDebugOutput_Init( void );
+void R_GLDebugOutput_Shutdown( void );
+void R_GLDebugOutput_FlushMessages( void );
 
 void R_GLDebug_LabelObject( GLenum identifier, GLuint name, const char *label );
 void R_GLDebug_LabelBuffer( GLuint name, const char *label );

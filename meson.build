@@ -442,6 +442,11 @@ if build_games
     install: false,
   )
   game_sources += [savegame_compat_header]
+  if build_engine
+    # Session preflights the exact GameLibs source stamp before tearing down
+    # the active map, so the engine target must see the same generated header.
+    openq4_engine_sources += [savegame_compat_header]
+  endif
 endif
 
 if build_engine

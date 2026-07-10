@@ -9,6 +9,8 @@
 static const int RENDERER_UPLOAD_MIN_FRAME_BUFFERS = 3;
 static const int RENDERER_UPLOAD_MIN_MEGS = 1;
 static const int RENDERER_UPLOAD_MAX_MEGS = 128;
+static const int RENDERER_UPLOAD_FENCE_WAIT_RETRIES = 2;
+static const GLuint64 RENDERER_UPLOAD_FENCE_WAIT_NS = 1000000ull;
 
 // buffer-name pool limits: per-frame regenerated surfaces are tens to a few
 // hundred KB, so a generous per-buffer cap keeps PurgeAll's world-sized
@@ -341,7 +343,10 @@ void idUploadManager::Init( const renderBackendCaps_t &caps ) {
 	Shutdown();
 
 	const bool lowOverheadPersistentDefault = glConfig.renderFeatures.persistentMappedUploads && r_rendererUploadPersistent.GetBool();
-	const bool usePersistent = lowOverheadPersistentDefault && caps.hasBufferStorage && caps.hasMapBufferRange && glBufferStorage != NULL && glMapBufferRange != NULL;
+	const bool syncAvailable = caps.hasSync && glFenceSync != NULL && glClientWaitSync != NULL && glDeleteSync != NULL;
+	// Persistent mappings reuse the same storage.  Without a complete fence
+	// contract the CPU can overwrite bytes that the GPU is still consuming.
+	const bool usePersistent = lowOverheadPersistentDefault && syncAvailable && caps.hasBufferStorage && caps.hasMapBufferRange && glBufferStorage != NULL && glMapBufferRange != NULL;
 	const bool useMapRange = caps.hasMapBufferRange && glMapBufferRange != NULL;
 	const int ringMegs = idMath::ClampInt( RENDERER_UPLOAD_MIN_MEGS, RENDERER_UPLOAD_MAX_MEGS, r_rendererUploadMegs.GetInteger() );
 	const int ringBytes = ringMegs * 1024 * 1024;
@@ -375,7 +380,7 @@ void idUploadManager::Init( const renderBackendCaps_t &caps ) {
 	stats.legacyBridge = true;
 	stats.dynamicFrameBridge = false;
 	stats.staticBufferAllocator = requestedPath != UPLOAD_PATH_DISABLED;
-	hasSync = requestedPath != UPLOAD_PATH_DISABLED && caps.hasSync && glFenceSync != NULL && glClientWaitSync != NULL && glDeleteSync != NULL;
+	hasSync = requestedPath != UPLOAD_PATH_DISABLED && syncAvailable;
 	stats.fenceSyncAvailable = hasSync;
 
 	if ( requestedPath != UPLOAD_PATH_DISABLED ) {
@@ -437,7 +442,11 @@ void idUploadManager::BeginFrame( int frameCount ) {
 	stats.frameSubDataWrites = 0;
 	stats.frameFencesSubmitted = 0;
 	stats.frameFencesRetired = 0;
+	stats.frameFenceSubmissionFailures = 0;
 	stats.frameFenceWaits = 0;
+	stats.frameFenceTimeouts = 0;
+	stats.frameFenceFallbacks = 0;
+	stats.frameFenceWaitFailures = 0;
 	stats.frameBufferIndex = 0;
 	allocator.BeginFrame();
 	UpdateAllocatorStats();
@@ -447,10 +456,11 @@ void idUploadManager::BeginFrame( int frameCount ) {
 		return;
 	}
 
-	currentFrameBuffer = frameCount % frameBufferCount;
+	const int preferredFrameBuffer = frameCount % frameBufferCount;
+	currentFrameBuffer = preferredFrameBuffer;
+	SelectFrameBufferForFrame( preferredFrameBuffer );
 	stats.frameBufferIndex = currentFrameBuffer;
 	frameBuffer_t &frame = frameBuffers[currentFrameBuffer];
-	RetireFrameFence( frame );
 
 	if ( path != UPLOAD_PATH_PERSISTENT ) {
 		idVertexCache::BindArrayBuffer( frame.vbo );
@@ -642,21 +652,109 @@ void idUploadManager::ShutdownFrameBuffers( void ) {
 	R_GLStateCache_InvalidateBufferBinding( GL_ARRAY_BUFFER, "renderer upload shutdown" );
 }
 
-void idUploadManager::RetireFrameFence( frameBuffer_t &frame ) {
+static bool R_RendererUpload_FenceSignaled( GLenum result ) {
+	return result == GL_ALREADY_SIGNALED || result == GL_CONDITION_SATISFIED;
+}
+
+static void R_RendererUpload_FailSafeFenceWait( rendererUploadStats_t &stats ) {
+	stats.frameFenceWaitFailures++;
+	stats.frameStalls++;
+	R_RendererMetrics_AddBufferStall();
+	// A failed sync wait gives us no proof that the mapped range is idle.
+	// Finish is deliberately conservative and only used on this driver-error
+	// path; continuing to write would risk GPU-visible corruption.
+	glFinish();
+}
+
+bool idUploadManager::RetireFrameFence( frameBuffer_t &frame, bool allowBlocking ) {
 	if ( frame.fence == NULL || !hasSync ) {
-		return;
+		return true;
 	}
 
 	const GLenum quickWait = glClientWaitSync( frame.fence, 0, 0 );
-	if ( quickWait == GL_TIMEOUT_EXPIRED ) {
-		stats.frameStalls++;
-		stats.frameFenceWaits++;
-		R_RendererMetrics_AddBufferStall();
-		glClientWaitSync( frame.fence, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED );
+	if ( R_RendererUpload_FenceSignaled( quickWait ) ) {
+		glDeleteSync( frame.fence );
+		frame.fence = NULL;
+		stats.frameFencesRetired++;
+		return true;
+	}
+	if ( quickWait == GL_WAIT_FAILED ) {
+		R_RendererUpload_FailSafeFenceWait( stats );
+		glDeleteSync( frame.fence );
+		frame.fence = NULL;
+		stats.frameFencesRetired++;
+		return true;
+	}
+	if ( quickWait != GL_TIMEOUT_EXPIRED ) {
+		R_RendererUpload_FailSafeFenceWait( stats );
+		glDeleteSync( frame.fence );
+		frame.fence = NULL;
+		stats.frameFencesRetired++;
+		return true;
+	}
+
+	stats.frameFenceTimeouts++;
+	if ( !allowBlocking ) {
+		return false;
+	}
+
+	stats.frameFenceWaits++;
+	for ( int retry = 0; retry < RENDERER_UPLOAD_FENCE_WAIT_RETRIES; ++retry ) {
+		const GLenum boundedWait = glClientWaitSync( frame.fence, GL_SYNC_FLUSH_COMMANDS_BIT, RENDERER_UPLOAD_FENCE_WAIT_NS );
+		if ( R_RendererUpload_FenceSignaled( boundedWait ) ) {
+			glDeleteSync( frame.fence );
+			frame.fence = NULL;
+			stats.frameFencesRetired++;
+			return true;
+		}
+		if ( boundedWait == GL_WAIT_FAILED ) {
+			R_RendererUpload_FailSafeFenceWait( stats );
+			glDeleteSync( frame.fence );
+			frame.fence = NULL;
+			stats.frameFencesRetired++;
+			return true;
+		}
+		if ( boundedWait == GL_TIMEOUT_EXPIRED ) {
+			stats.frameFenceTimeouts++;
+		}
+	}
+
+	stats.frameStalls++;
+	R_RendererMetrics_AddBufferStall();
+	const GLenum finalWait = glClientWaitSync( frame.fence, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED );
+	if ( !R_RendererUpload_FenceSignaled( finalWait ) ) {
+		stats.frameFenceWaitFailures++;
+		glFinish();
 	}
 	glDeleteSync( frame.fence );
 	frame.fence = NULL;
 	stats.frameFencesRetired++;
+	return true;
+}
+
+bool idUploadManager::SelectFrameBufferForFrame( int preferredFrameBuffer ) {
+	if ( frameBufferCount <= 0 ) {
+		return false;
+	}
+	preferredFrameBuffer = idMath::ClampInt( 0, frameBufferCount - 1, preferredFrameBuffer );
+	currentFrameBuffer = preferredFrameBuffer;
+	if ( RetireFrameFence( frameBuffers[currentFrameBuffer], false ) ) {
+		return true;
+	}
+
+	// A ring slot does not have to be reused in modulo order.  Prefer any
+	// already-idle slot before making the CPU wait for the nominal one.
+	for ( int i = 1; i < frameBufferCount; ++i ) {
+		const int candidate = ( preferredFrameBuffer + i ) % frameBufferCount;
+		if ( RetireFrameFence( frameBuffers[candidate], false ) ) {
+			currentFrameBuffer = candidate;
+			stats.frameFenceFallbacks++;
+			return true;
+		}
+	}
+
+	currentFrameBuffer = preferredFrameBuffer;
+	return RetireFrameFence( frameBuffers[currentFrameBuffer], true );
 }
 
 void idUploadManager::FenceCurrentFrame( void ) {
@@ -670,6 +768,14 @@ void idUploadManager::FenceCurrentFrame( void ) {
 	frame.fence = glFenceSync( GL_SYNC_GPU_COMMANDS_COMPLETE, 0 );
 	if ( frame.fence != NULL ) {
 		stats.frameFencesSubmitted++;
+	} else {
+		// Persistent storage must never be considered reusable without proof
+		// that the GPU has finished consuming it. A failed fence allocation is
+		// rare and already an error path, so finish conservatively here.
+		stats.frameFenceSubmissionFailures++;
+		stats.frameStalls++;
+		R_RendererMetrics_AddBufferStall();
+		glFinish();
 	}
 }
 
@@ -817,13 +923,17 @@ bool RendererUpload_RunSelfTest( void ) {
 	}
 
 	common->Printf(
-		"RendererUpload self-test passed (ring, allocator, static buffers, buffers=%d persistent=%d lowOverheadDefault=%d fences=%d/%d waits=%d sync=%d)\n",
+		"RendererUpload self-test passed (ring, allocator, static buffers, buffers=%d persistent=%d lowOverheadDefault=%d fences=%d/%d submitFailures=%d waits=%d timeouts=%d fallbacks=%d waitFailures=%d sync=%d)\n",
 		R_RendererUpload_Stats().ringBufferCount,
 		R_RendererUpload_Stats().persistentMapped ? 1 : 0,
 		R_RendererUpload_Stats().lowOverheadPersistentDefault ? 1 : 0,
 		R_RendererUpload_Stats().frameFencesSubmitted,
 		R_RendererUpload_Stats().frameFencesRetired,
+		R_RendererUpload_Stats().frameFenceSubmissionFailures,
 		R_RendererUpload_Stats().frameFenceWaits,
+		R_RendererUpload_Stats().frameFenceTimeouts,
+		R_RendererUpload_Stats().frameFenceFallbacks,
+		R_RendererUpload_Stats().frameFenceWaitFailures,
 		R_RendererUpload_Stats().fenceSyncAvailable ? 1 : 0 );
 	return true;
 }

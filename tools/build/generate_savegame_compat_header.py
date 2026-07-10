@@ -67,10 +67,15 @@ def iter_source_files(root: Path, rel_dir: str) -> list[Path]:
     return files
 
 
+def normalize_source_bytes(data: bytes) -> bytes:
+    """Make the compatibility stamp independent of checkout line endings."""
+    return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
 def read_bytes(path: Path) -> bytes:
     if path.is_symlink() or not path.is_file():
         raise RuntimeError(f"expected regular file: {path}")
-    return path.read_bytes()
+    return normalize_source_bytes(path.read_bytes())
 
 
 def source_is_relevant(data: bytes) -> bool:

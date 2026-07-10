@@ -23,6 +23,18 @@ def smoothstep(edge0, edge1, value):
     return t * t * (3.0 - 2.0 * t)
 
 
+def weapon_wheel_circle_of_confusion(view_distance, focus_distance, blur_range, blur_strength):
+    blur_factor = clamp(abs(view_distance - focus_distance) / blur_range, 0.0, 1.0)
+    return smoothstep(0.0, 1.0, blur_factor) * blur_strength
+
+
+def weapon_wheel_depth_edge_weight(center_distance, sample_distance):
+    depth_delta = abs(sample_distance - center_distance)
+    depth_tolerance = max(3.0, min(center_distance, sample_distance) * 0.04)
+    same_surface = 1.0 - smoothstep(depth_tolerance, depth_tolerance * 4.0, depth_delta)
+    return 0.02 + 0.98 * same_surface
+
+
 def mix(a, b, t):
     return tuple(x * (1.0 - t) + y * t for x, y in zip(a, b))
 
@@ -320,6 +332,29 @@ def test_hdr_shader_uses_scene_referred_inputs():
     assert_true("r_hdrAutoExposure.GetBool() && r_hdrToneMap.GetBool()" in draw_common, "auto exposure should not request HDR work when tonemap is off")
 
 
+def test_weapon_wheel_dof_quality_contract():
+    root = Path(__file__).resolve().parents[2]
+    shader = (root / "content" / "baseoq4" / "pak0" / "glprogs" / "blur.fs").read_text(encoding="utf-8")
+
+    previous = -1.0
+    for step in range(65):
+        coc = weapon_wheel_circle_of_confusion(16.0 + step, 16.0, 64.0, 1.0)
+        assert_true(coc >= previous - 1.0e-6, "weapon-wheel circle of confusion must grow monotonically away from focus")
+        assert_true(0.0 <= coc <= 1.0, "weapon-wheel circle of confusion must remain normalized")
+        previous = coc
+
+    half_strength = weapon_wheel_circle_of_confusion(80.0, 16.0, 64.0, 0.5)
+    assert_true(abs(half_strength - 0.5) < 1.0e-6, "weapon-wheel blend must scale the maximum circle of confusion")
+    assert_true(abs(weapon_wheel_depth_edge_weight(128.0, 128.0) - 1.0) < 1.0e-6, "same-surface DoF taps should keep full weight")
+    assert_true(weapon_wheel_depth_edge_weight(16.0, 128.0) <= 0.021, "large depth discontinuities should reject nearly all cross-surface color")
+
+    assert_true("GatherDepthAwareSample" in shader, "weapon-wheel DoF should use depth-aware color gathering")
+    assert_true(shader.count("GatherDepthAwareSample( uv") == 18, "weapon-wheel DoF should retain the balanced 18-tap circular kernel")
+    assert_true("24.0 * blurAmount" in shader, "weapon-wheel DoF radius should scale with the local circle of confusion")
+    assert_true("mix( 0.02, 1.0, sameSurface )" in shader, "weapon-wheel DoF should preserve the depth-edge rejection floor")
+    assert_true("vec2 tap1" not in shader, "weapon-wheel DoF should not regress to the sparse axial kernel")
+
+
 def test_scene_post_process_excludes_sidecar_views():
     draw_common = (Path(__file__).resolve().parents[2] / "src" / "renderer" / "draw_common.cpp").read_text(encoding="utf-8")
     main_scene_helper = cxx_function_body(
@@ -379,6 +414,7 @@ def main():
         test_modern_lighting_keeps_scene_referred_energy,
         test_bloom_shader_uses_saturation_aware_brightness,
         test_hdr_shader_uses_scene_referred_inputs,
+        test_weapon_wheel_dof_quality_contract,
         test_scene_post_process_excludes_sidecar_views,
         test_display_color_mapping_matches_legacy_curve_and_present_path,
     ]

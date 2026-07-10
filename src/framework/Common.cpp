@@ -159,8 +159,7 @@ static void Common_MigrateLinuxLegacyLowVRamTexturePreset( void ) {
 
 	const bool legacyTextureCap =
 		cvarSystem->GetCVarBool( "image_ignoreHighQuality" ) &&
-		( cvarSystem->GetCVarInteger( "image_downSize" ) != 0 ||
-			cvarSystem->GetCVarInteger( "image_downsize" ) != 0 ) &&
+		cvarSystem->GetCVarInteger( "image_downSize" ) != 0 &&
 		cvarSystem->GetCVarInteger( "image_downSizeLimit" ) == 256;
 	if ( !legacyTextureCap ) {
 		return;
@@ -178,7 +177,6 @@ static void Common_MigrateLinuxLegacyLowVRamTexturePreset( void ) {
 	com_videoRam.SetInteger( detectedVideoRam );
 	cvarSystem->SetCVarInteger( "image_ignoreHighQuality", 0, CVAR_ARCHIVE );
 	cvarSystem->SetCVarInteger( "image_downSize", 0, CVAR_ARCHIVE );
-	cvarSystem->SetCVarInteger( "image_downsize", 0, CVAR_ARCHIVE );
 	cvarSystem->SetCVarInteger( "image_downSizeLimit", 0, CVAR_ARCHIVE );
 	cvarSystem->SetCVarInteger( "image_downSizeSpecular", 0, CVAR_ARCHIVE );
 	cvarSystem->SetCVarInteger( "image_downSizeBump", 0, CVAR_ARCHIVE );
@@ -2269,7 +2267,7 @@ void Com_ExecMachineSpec_f( const idCmdArgs &args ) {
 		cvarSystem->SetCVarInteger( "image_downSizeSpecularLimit", 64, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "image_downSizeBumpLimit", 256, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "image_usePrecompressedTextures", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downsize", 0			, CVAR_ARCHIVE );
+		cvarSystem->SetCVarInteger( "image_downSize", 0, CVAR_ARCHIVE );
 		cvarSystem->SetCVarString( "image_filter", "GL_LINEAR_MIPMAP_LINEAR", CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "image_anisotropy", 16, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "image_useCompression", 0, CVAR_ARCHIVE );
@@ -2295,7 +2293,7 @@ void Com_ExecMachineSpec_f( const idCmdArgs &args ) {
 		cvarSystem->SetCVarInteger( "image_downSizeSpecularLimit", 64, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "image_downSizeBumpLimit", 256, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "image_usePrecompressedTextures", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downsize", 0, CVAR_ARCHIVE );
+		cvarSystem->SetCVarInteger( "image_downSize", 0, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "image_anisotropy", 8, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "image_useCompression", 1, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "image_ignoreHighQuality", 0, CVAR_ARCHIVE );
@@ -2424,8 +2422,6 @@ typedef struct openQ4PerformancePreset_s {
 	int downSizeLimit;
 	int downSize;
 	int ignoreHighQuality;
-	int useCompression;
-	int normalCompression;
 	int usePrecompressedTextures;
 	int maxSoundsPerShader;
 	int useShadowMap;
@@ -2445,12 +2441,36 @@ typedef struct openQ4PerformancePreset_s {
 } openQ4PerformancePreset_t;
 
 static const openQ4PerformancePreset_t OPENQ4_PERFORMANCE_PRESETS[] = {
-	{ "minimum",     0, "low",      50, 0, 0,  30, 1,  512, 1, 1, 1, 2, 1, 1, 0,  512, 1, 0, 0, 0, 0, 0, 1,  8, 3, 2, 0, 24 },
-	{ "lowpower",    0, "low",      75, 0, 0,  30, 1, 1024, 1, 1, 1, 2, 1, 1, 0,  512, 1, 0, 0, 0, 0, 0, 1,  8, 3, 2, 0, 32 },
-	{ "performance", 1, "baseline", 85, 0, 1,  60, 2,    0, 0, 0, 1, 2, 1, 0, 0, 1024, 2, 0, 0, 0, 0, 0, 1, 16, 4, 2, 0, 40 },
-	{ "balanced",    2, "baseline",100, 2, 1, 120, 4,    0, 0, 0, 1, 2, 1, 0, 0, 1024, 0, 0, 0, 0, 0, 0, 1, 16, 4, 6, 1, 48 },
-	{ "quality",     3, "modern",  100, 4, 1, 144, 8,    0, 0, 0, 1, 0, 1, 0, 0, 1024, 0, 0, 0, 0, 0, 0, 1, 32, 4, 6, 1, 48 },
-	{ "ultra",       3, "high-end",100, 8, 1, 240,16,    0, 0, 0, 0, 0, 0, 0, 0, 2048, 0, 0, 0, 0, 0, 0, 1, 32, 4, 6, 1, 48 }
+	{ "minimum", 0, "low",
+		50, 0, 0, 30,
+		1, 512, 1, 1, 1, 1,
+		0, 512, 1, 0, 0, 0, 0, 0, 1, 8, 3,
+		2, 0, 24 },
+	{ "lowpower", 0, "low",
+		75, 0, 0, 30,
+		1, 1024, 1, 1, 1, 1,
+		0, 512, 1, 0, 0, 0, 0, 0, 1, 8, 3,
+		2, 0, 32 },
+	{ "performance", 1, "baseline",
+		85, 0, 1, 60,
+		2, 0, 0, 0, 1, 0,
+		0, 1024, 2, 0, 0, 0, 0, 0, 1, 16, 4,
+		2, 0, 40 },
+	{ "balanced", 2, "baseline",
+		100, 2, 1, 120,
+		4, 0, 0, 0, 1, 0,
+		0, 1024, 0, 0, 0, 0, 0, 0, 1, 16, 4,
+		6, 1, 48 },
+	{ "quality", 3, "modern",
+		100, 4, 1, 144,
+		8, 0, 0, 0, 1, 0,
+		0, 1024, 0, 0, 0, 0, 0, 0, 1, 32, 4,
+		6, 1, 48 },
+	{ "ultra", 3, "high-end",
+		100, 8, 1, 240,
+		16, 0, 0, 0, 0, 0,
+		0, 2048, 0, 0, 0, 0, 0, 0, 1, 32, 4,
+		6, 1, 48 }
 };
 
 static const int OPENQ4_PERFORMANCE_PRESET_COUNT = static_cast<int>( sizeof( OPENQ4_PERFORMANCE_PRESETS ) / sizeof( OPENQ4_PERFORMANCE_PRESETS[0] ) );
@@ -2465,26 +2485,6 @@ static const int OPENQ4_PERFORMANCE_PRESET_UNKNOWN_VIDEO_RAM_MB = 2048;
 static const int OPENQ4_PERFORMANCE_PRESET_MAX_REASONABLE_SYSTEM_RAM_MB = 4 * 1024 * 1024;
 static const int OPENQ4_PERFORMANCE_PRESET_MAX_REASONABLE_VIDEO_RAM_MB = 256 * 1024;
 
-static const char *OPENQ4_PERFORMANCE_PRESET_DYNAMIC_CVARS[] = {
-	"image_filter",
-	"image_anisotropy",
-	"image_lodbias",
-	"image_forceDownSize",
-	"image_roundDown",
-	"image_preload",
-	"image_useAllFormats",
-	"image_downSize",
-	"image_downsize",
-	"image_downSizeLimit",
-	"image_downSizeSpecular",
-	"image_downSizeBump",
-	"image_downSizeSpecularLimit",
-	"image_downSizeBumpLimit",
-	"image_useCompression",
-	"image_useNormalCompression",
-	NULL
-};
-
 static const char *OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVARS[] = {
 	"com_performancePreset",
 	"com_machineSpec",
@@ -2493,23 +2493,14 @@ static const char *OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVARS[] = {
 	"r_multiSamples",
 	"r_postAA",
 	"com_maxfps",
-	"image_filter",
 	"image_anisotropy",
-	"image_lodbias",
-	"image_forceDownSize",
-	"image_roundDown",
-	"image_preload",
-	"image_useAllFormats",
 	"image_usePrecompressedTextures",
 	"image_downSize",
-	"image_downsize",
 	"image_downSizeLimit",
 	"image_downSizeSpecular",
 	"image_downSizeBump",
 	"image_downSizeSpecularLimit",
 	"image_downSizeBumpLimit",
-	"image_useCompression",
-	"image_useNormalCompression",
 	"image_ignoreHighQuality",
 	"image_writeGeneratedImages",
 	"s_maxSoundsPerShader",
@@ -2580,20 +2571,8 @@ static void Common_PrintAutoDetectPerformancePresetUsage( void ) {
 	common->Printf( "Usage: autoDetectPerformancePreset\n" );
 }
 
-static bool Common_PerformancePresetNameIsDynamicCVar( const char *name ) {
-	if ( name == NULL || name[0] == '\0' ) {
-		return false;
-	}
-	for ( int i = 0; OPENQ4_PERFORMANCE_PRESET_DYNAMIC_CVARS[i] != NULL; ++i ) {
-		if ( idStr::Icmp( OPENQ4_PERFORMANCE_PRESET_DYNAMIC_CVARS[i], name ) == 0 ) {
-			return true;
-		}
-	}
-	return false;
-}
-
 static bool Common_PerformancePresetTargetIsKnown( const char *name ) {
-	return cvarSystem->Find( name ) != NULL || Common_PerformancePresetNameIsDynamicCVar( name );
+	return name != NULL && name[0] != '\0' && cvarSystem->Find( name ) != NULL;
 }
 
 static bool Common_PerformancePresetAllTargetsKnown( const char *presetName, bool quiet ) {
@@ -2624,7 +2603,19 @@ static bool Common_SetPerformancePresetString( const char *presetName, const cha
 		return false;
 	}
 	cvarSystem->SetCVarString( cvarName, value != NULL ? value : "", CVAR_ARCHIVE );
-	return true;
+	const idCVar *cvar = cvarSystem->Find( cvarName );
+	if ( cvar != NULL && idStr::Icmp( cvar->GetString(), value != NULL ? value : "" ) == 0 ) {
+		return true;
+	}
+	if ( !quiet ) {
+		common->Warning(
+			"Performance preset '%s' could not set cvar '%s' to '%s' (actual '%s')",
+			presetName,
+			cvarName,
+			value != NULL ? value : "",
+			cvar != NULL ? cvar->GetString() : "<missing>" );
+	}
+	return false;
 }
 
 static bool Common_SetPerformancePresetInt( const char *presetName, const char *cvarName, int value, bool quiet ) {
@@ -2641,7 +2632,66 @@ static bool Common_SetPerformancePresetInt( const char *presetName, const char *
 		return false;
 	}
 	cvarSystem->SetCVarInteger( cvarName, value, CVAR_ARCHIVE );
-	return true;
+	const idCVar *cvar = cvarSystem->Find( cvarName );
+	if ( cvar != NULL && cvar->GetInteger() == value ) {
+		return true;
+	}
+	if ( !quiet ) {
+		common->Warning(
+			"Performance preset '%s' could not set cvar '%s' to %d (actual '%s')",
+			presetName,
+			cvarName,
+			value,
+			cvar != NULL ? cvar->GetString() : "<missing>" );
+	}
+	return false;
+}
+
+struct openQ4PerformancePresetCVarBackup_t {
+	const char *name;
+	bool valid;
+	int flags;
+	idStr value;
+};
+
+static void Common_BackupPerformancePresetCVars( openQ4PerformancePresetCVarBackup_t backups[OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT] ) {
+	for ( int i = 0; i < OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT; ++i ) {
+		backups[i].name = OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVARS[i];
+		idCVar *cvar = cvarSystem->Find( backups[i].name );
+		backups[i].valid = ( cvar != NULL );
+		backups[i].flags = backups[i].valid ? cvar->GetFlags() : 0;
+		backups[i].value = backups[i].valid ? cvar->GetString() : "";
+	}
+}
+
+static void Common_RestorePerformancePresetCVarFlags( idCVar *cvar, int flags ) {
+	if ( cvar == NULL ) {
+		return;
+	}
+
+	cvar->RemoveFlag( CVAR_ALL );
+	cvar->SetFlag( static_cast<cvarFlags_t>( flags ) );
+}
+
+static void Common_RestorePerformancePresetCVars( const openQ4PerformancePresetCVarBackup_t backups[OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT] ) {
+	for ( int i = 0; i < OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT; ++i ) {
+		idCVar *cvar = cvarSystem->Find( backups[i].name );
+		if ( backups[i].valid ) {
+			cvarSystem->SetCVarString( backups[i].name, backups[i].value.c_str(), CVAR_ARCHIVE );
+			cvar = cvarSystem->Find( backups[i].name );
+			Common_RestorePerformancePresetCVarFlags( cvar, backups[i].flags );
+		} else if ( cvar != NULL ) {
+			cvar->RemoveFlag( CVAR_ARCHIVE );
+			cvar->ClearModified();
+		}
+	}
+}
+
+static void Common_RestorePerformancePresetModifiedFlags( int modifiedFlags ) {
+	cvarSystem->ClearModifiedFlags( CVAR_ALL );
+	if ( modifiedFlags != 0 ) {
+		cvarSystem->SetModifiedFlags( modifiedFlags );
+	}
 }
 
 static bool Common_ApplyPerformancePreset( const openQ4PerformancePreset_t &preset, bool quiet = false ) {
@@ -2652,8 +2702,11 @@ static bool Common_ApplyPerformancePreset( const openQ4PerformancePreset_t &pres
 		return false;
 	}
 
+	openQ4PerformancePresetCVarBackup_t backups[OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT];
+	const int savedModifiedFlags = cvarSystem->GetModifiedFlags();
+	Common_BackupPerformancePresetCVars( backups );
+
 	bool applied = true;
-	applied &= Common_SetPerformancePresetString( preset.name, "com_performancePreset", preset.name, quiet );
 	applied &= Common_SetPerformancePresetInt( preset.name, "com_machineSpec", preset.machineSpec, quiet );
 
 	applied &= Common_SetPerformancePresetString( preset.name, "r_rendererBenchmarkPreset", preset.rendererBenchmarkPreset, quiet );
@@ -2662,23 +2715,14 @@ static bool Common_ApplyPerformancePreset( const openQ4PerformancePreset_t &pres
 	applied &= Common_SetPerformancePresetInt( preset.name, "r_postAA", preset.postAA, quiet );
 	applied &= Common_SetPerformancePresetInt( preset.name, "com_maxfps", preset.maxFps, quiet );
 
-	applied &= Common_SetPerformancePresetString( preset.name, "image_filter", "GL_LINEAR_MIPMAP_LINEAR", quiet );
 	applied &= Common_SetPerformancePresetInt( preset.name, "image_anisotropy", preset.anisotropy, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "image_lodbias", 0, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "image_forceDownSize", 0, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "image_roundDown", 1, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "image_preload", 1, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "image_useAllFormats", 1, quiet );
 	applied &= Common_SetPerformancePresetInt( preset.name, "image_usePrecompressedTextures", preset.usePrecompressedTextures, quiet );
 	applied &= Common_SetPerformancePresetInt( preset.name, "image_downSize", preset.downSize, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "image_downsize", preset.downSize, quiet );
 	applied &= Common_SetPerformancePresetInt( preset.name, "image_downSizeLimit", preset.downSizeLimit, quiet );
 	applied &= Common_SetPerformancePresetInt( preset.name, "image_downSizeSpecular", preset.downSize, quiet );
 	applied &= Common_SetPerformancePresetInt( preset.name, "image_downSizeBump", preset.downSize, quiet );
 	applied &= Common_SetPerformancePresetInt( preset.name, "image_downSizeSpecularLimit", 64, quiet );
 	applied &= Common_SetPerformancePresetInt( preset.name, "image_downSizeBumpLimit", preset.downSize != 0 ? 256 : 0, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "image_useCompression", preset.useCompression, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "image_useNormalCompression", preset.normalCompression, quiet );
 	applied &= Common_SetPerformancePresetInt( preset.name, "image_ignoreHighQuality", preset.ignoreHighQuality, quiet );
 	applied &= Common_SetPerformancePresetInt( preset.name, "image_writeGeneratedImages", 0, quiet );
 	applied &= Common_SetPerformancePresetInt( preset.name, "s_maxSoundsPerShader", preset.maxSoundsPerShader, quiet );
@@ -2699,10 +2743,20 @@ static bool Common_ApplyPerformancePreset( const openQ4PerformancePreset_t &pres
 	applied &= Common_SetPerformancePresetInt( preset.name, "s_useEAXReverb", preset.useEAXReverb, quiet );
 	applied &= Common_SetPerformancePresetInt( preset.name, "s_maxEmitterChannels", preset.maxEmitterChannels, quiet );
 
+	// Commit the public selection marker only after every profile target accepted
+	// its value. Any unexpected normalization failure rolls the whole apply back.
+	if ( applied ) {
+		applied = Common_SetPerformancePresetString( preset.name, "com_performancePreset", preset.name, quiet );
+	}
+	if ( !applied ) {
+		Common_RestorePerformancePresetCVars( backups );
+		Common_RestorePerformancePresetModifiedFlags( savedModifiedFlags );
+	}
+
 	if ( !quiet && applied ) {
 		common->Printf( "Applied performance preset '%s'. Run vid_restart for video/texture changes and s_restart for audio backend changes.\n", preset.name );
 	} else if ( !quiet ) {
-		common->Printf( "Performance preset '%s' did not apply cleanly; see warnings above.\n", preset.name );
+		common->Printf( "Performance preset '%s' did not apply cleanly and was rolled back; see warnings above.\n", preset.name );
 	}
 
 	return applied;
@@ -2864,13 +2918,6 @@ static void Com_AutoDetectPerformancePreset_f( const idCmdArgs &args ) {
 	Common_AutoDetectPerformancePresetCommand( args );
 }
 
-struct openQ4PerformancePresetCVarBackup_t {
-	const char *name;
-	bool valid;
-	int flags;
-	idStr value;
-};
-
 static const char *commonCommandCompletionMatch = NULL;
 static bool commonCommandCompletionFound = false;
 
@@ -2888,62 +2935,23 @@ static bool Common_CommandIsRegistered( const char *name ) {
 	return commonCommandCompletionFound;
 }
 
-static bool Common_PerformancePresetTargetsAreIntentionalAlias( const char *a, const char *b ) {
-	return ( idStr::Icmp( a, "image_downSize" ) == 0 && idStr::Icmp( b, "image_downsize" ) == 0 ) ||
-		( idStr::Icmp( a, "image_downsize" ) == 0 && idStr::Icmp( b, "image_downSize" ) == 0 );
-}
-
 static bool Common_ValidatePerformancePresetTargetCVars( void ) {
 	bool passed = true;
 	for ( int i = 0; i < OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT; ++i ) {
 		const char *cvarName = OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVARS[i];
 		if ( !Common_PerformancePresetTargetIsKnown( cvarName ) ) {
-			common->Printf( "PerformancePreset self-test failed: target cvar '%s' is neither registered nor a known legacy dynamic cvar\n", cvarName );
+			common->Printf( "PerformancePreset self-test failed: target cvar '%s' is not registered\n", cvarName );
 			passed = false;
 		}
 		for ( int j = i + 1; j < OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT; ++j ) {
 			const char *otherCvarName = OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVARS[j];
-			if ( idStr::Icmp( cvarName, otherCvarName ) == 0 &&
-				 !Common_PerformancePresetTargetsAreIntentionalAlias( cvarName, otherCvarName ) ) {
+			if ( idStr::Icmp( cvarName, otherCvarName ) == 0 ) {
 				common->Printf( "PerformancePreset self-test failed: duplicate target cvar '%s'\n", cvarName );
 				passed = false;
 			}
 		}
 	}
 	return passed;
-}
-
-static void Common_BackupPerformancePresetCVars( openQ4PerformancePresetCVarBackup_t backups[OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT] ) {
-	for ( int i = 0; i < OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT; ++i ) {
-		backups[i].name = OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVARS[i];
-		idCVar *cvar = cvarSystem->Find( backups[i].name );
-		backups[i].valid = ( cvar != NULL );
-		backups[i].flags = backups[i].valid ? cvar->GetFlags() : 0;
-		backups[i].value = backups[i].valid ? cvar->GetString() : "";
-	}
-}
-
-static void Common_RestorePerformancePresetCVarFlags( idCVar *cvar, int flags ) {
-	if ( cvar == NULL ) {
-		return;
-	}
-
-	cvar->RemoveFlag( CVAR_ALL );
-	cvar->SetFlag( static_cast<cvarFlags_t>( flags ) );
-}
-
-static void Common_RestorePerformancePresetCVars( const openQ4PerformancePresetCVarBackup_t backups[OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT] ) {
-	for ( int i = 0; i < OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT; ++i ) {
-		idCVar *cvar = cvarSystem->Find( backups[i].name );
-		if ( backups[i].valid ) {
-			cvarSystem->SetCVarString( backups[i].name, backups[i].value.c_str(), CVAR_ARCHIVE );
-			cvar = cvarSystem->Find( backups[i].name );
-			Common_RestorePerformancePresetCVarFlags( cvar, backups[i].flags );
-		} else if ( cvar != NULL ) {
-			cvar->RemoveFlag( CVAR_ARCHIVE );
-			cvar->ClearModified();
-		}
-	}
 }
 
 static bool Common_ValidatePerformancePresetCVarsRestored( const openQ4PerformancePresetCVarBackup_t backups[OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT] ) {
@@ -3014,6 +3022,19 @@ static bool Common_CheckPerformancePresetInt( const char *presetName, const char
 		return false;
 	}
 	return true;
+}
+
+static bool Common_CheckPerformancePresetTargetsArchived( const char *presetName ) {
+	bool passed = true;
+	for ( int i = 0; i < OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT; ++i ) {
+		const char *cvarName = OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVARS[i];
+		const idCVar *cvar = cvarSystem->Find( cvarName );
+		if ( cvar == NULL || ( cvar->GetFlags() & CVAR_ARCHIVE ) == 0 ) {
+			common->Printf( "PerformancePreset self-test failed: %s did not archive cvar %s\n", presetName, cvarName );
+			passed = false;
+		}
+	}
+	return passed;
 }
 
 static bool Common_PerformancePresetMultiSamplesAreValid( int samples ) {
@@ -3133,8 +3154,6 @@ static bool Common_ValidatePerformancePresetIntent( const openQ4PerformancePrese
 		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_screenFraction", preset.screenFraction, 100 );
 		passed &= Common_PerformancePresetCheckIntAtLeast( preset, "r_multiSamples", preset.multiSamples, 4 );
 		passed &= Common_PerformancePresetCheckIntAtLeast( preset, "image_anisotropy", preset.anisotropy, 8 );
-		passed &= Common_PerformancePresetCheckExpectedInt( preset, "image_useCompression", preset.useCompression, 1 );
-		passed &= Common_PerformancePresetCheckExpectedInt( preset, "image_useNormalCompression", preset.normalCompression, 0 );
 		passed &= Common_PerformancePresetCheckExpectedInt( preset, "image_usePrecompressedTextures", preset.usePrecompressedTextures, 1 );
 		passed &= Common_PerformancePresetCheckIntAtLeast( preset, "r_rendererUploadMegs", preset.uploadMegs, 32 );
 		passed &= Common_PerformancePresetCheckRestoredAudio( preset );
@@ -3144,8 +3163,6 @@ static bool Common_ValidatePerformancePresetIntent( const openQ4PerformancePrese
 		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_screenFraction", preset.screenFraction, 100 );
 		passed &= Common_PerformancePresetCheckIntAtLeast( preset, "r_multiSamples", preset.multiSamples, 8 );
 		passed &= Common_PerformancePresetCheckExpectedInt( preset, "image_anisotropy", preset.anisotropy, 16 );
-		passed &= Common_PerformancePresetCheckExpectedInt( preset, "image_useCompression", preset.useCompression, 0 );
-		passed &= Common_PerformancePresetCheckExpectedInt( preset, "image_useNormalCompression", preset.normalCompression, 0 );
 		passed &= Common_PerformancePresetCheckExpectedInt( preset, "image_usePrecompressedTextures", preset.usePrecompressedTextures, 0 );
 		passed &= Common_PerformancePresetCheckIntAtLeast( preset, "r_rendererUploadMegs", preset.uploadMegs, 32 );
 		passed &= Common_PerformancePresetCheckRestoredAudio( preset );
@@ -3205,8 +3222,6 @@ static bool Common_ValidatePerformancePresetProgression( void ) {
 
 		passed &= Common_PerformancePresetCheckNonIncreasingInt( previousPreset, preset, "image_downSize", previousPreset.downSize, preset.downSize );
 		passed &= Common_PerformancePresetCheckNonIncreasingInt( previousPreset, preset, "image_ignoreHighQuality", previousPreset.ignoreHighQuality, preset.ignoreHighQuality );
-		passed &= Common_PerformancePresetCheckNonIncreasingInt( previousPreset, preset, "image_useCompression", previousPreset.useCompression, preset.useCompression );
-		passed &= Common_PerformancePresetCheckNonIncreasingInt( previousPreset, preset, "image_useNormalCompression", previousPreset.normalCompression, preset.normalCompression );
 		passed &= Common_PerformancePresetCheckNonIncreasingInt( previousPreset, preset, "image_usePrecompressedTextures", previousPreset.usePrecompressedTextures, preset.usePrecompressedTextures );
 	}
 	return passed;
@@ -3231,8 +3246,6 @@ static bool Common_ValidatePerformancePresetDefinition( const openQ4PerformanceP
 		 preset.downSizeLimit < 0 ||
 		 ( preset.downSize != 0 && preset.downSize != 1 ) ||
 		 ( preset.ignoreHighQuality != 0 && preset.ignoreHighQuality != 1 ) ||
-		 ( preset.useCompression != 0 && preset.useCompression != 1 ) ||
-		 preset.normalCompression < 0 || preset.normalCompression > 2 ||
 		 preset.usePrecompressedTextures < 0 || preset.usePrecompressedTextures > 2 ||
 		 preset.maxSoundsPerShader < 0 ||
 		 ( preset.useShadowMap != 0 && preset.useShadowMap != 1 ) ||
@@ -3332,23 +3345,14 @@ static bool Common_ValidatePerformancePresetApplied( const openQ4PerformancePres
 	passed &= Common_CheckPerformancePresetInt( preset.name, "r_multiSamples", preset.multiSamples );
 	passed &= Common_CheckPerformancePresetInt( preset.name, "r_postAA", preset.postAA );
 	passed &= Common_CheckPerformancePresetInt( preset.name, "com_maxfps", preset.maxFps );
-	passed &= Common_CheckPerformancePresetString( preset.name, "image_filter", "GL_LINEAR_MIPMAP_LINEAR" );
 	passed &= Common_CheckPerformancePresetInt( preset.name, "image_anisotropy", preset.anisotropy );
-	passed &= Common_CheckPerformancePresetInt( preset.name, "image_lodbias", 0 );
-	passed &= Common_CheckPerformancePresetInt( preset.name, "image_forceDownSize", 0 );
-	passed &= Common_CheckPerformancePresetInt( preset.name, "image_roundDown", 1 );
-	passed &= Common_CheckPerformancePresetInt( preset.name, "image_preload", 1 );
-	passed &= Common_CheckPerformancePresetInt( preset.name, "image_useAllFormats", 1 );
 	passed &= Common_CheckPerformancePresetInt( preset.name, "image_usePrecompressedTextures", preset.usePrecompressedTextures );
 	passed &= Common_CheckPerformancePresetInt( preset.name, "image_downSize", preset.downSize );
-	passed &= Common_CheckPerformancePresetInt( preset.name, "image_downsize", preset.downSize );
 	passed &= Common_CheckPerformancePresetInt( preset.name, "image_downSizeLimit", preset.downSizeLimit );
 	passed &= Common_CheckPerformancePresetInt( preset.name, "image_downSizeSpecular", preset.downSize );
 	passed &= Common_CheckPerformancePresetInt( preset.name, "image_downSizeBump", preset.downSize );
 	passed &= Common_CheckPerformancePresetInt( preset.name, "image_downSizeSpecularLimit", 64 );
 	passed &= Common_CheckPerformancePresetInt( preset.name, "image_downSizeBumpLimit", preset.downSize != 0 ? 256 : 0 );
-	passed &= Common_CheckPerformancePresetInt( preset.name, "image_useCompression", preset.useCompression );
-	passed &= Common_CheckPerformancePresetInt( preset.name, "image_useNormalCompression", preset.normalCompression );
 	passed &= Common_CheckPerformancePresetInt( preset.name, "image_ignoreHighQuality", preset.ignoreHighQuality );
 	passed &= Common_CheckPerformancePresetInt( preset.name, "image_writeGeneratedImages", 0 );
 	passed &= Common_CheckPerformancePresetInt( preset.name, "s_maxSoundsPerShader", preset.maxSoundsPerShader );
@@ -3366,6 +3370,7 @@ static bool Common_ValidatePerformancePresetApplied( const openQ4PerformancePres
 	passed &= Common_CheckPerformancePresetInt( preset.name, "s_numberOfSpeakers", preset.numberOfSpeakers );
 	passed &= Common_CheckPerformancePresetInt( preset.name, "s_useEAXReverb", preset.useEAXReverb );
 	passed &= Common_CheckPerformancePresetInt( preset.name, "s_maxEmitterChannels", preset.maxEmitterChannels );
+	passed &= Common_CheckPerformancePresetTargetsArchived( preset.name );
 	return passed;
 }
 
@@ -3485,6 +3490,13 @@ static void Com_PerformancePresetSelfTest_f( const idCmdArgs &args ) {
 		const openQ4PerformancePreset_t *performancePreset = Common_FindPerformancePreset( "performance" );
 		if ( performancePreset != NULL ) {
 			Common_ApplyPerformancePreset( *performancePreset, true );
+			openQ4PerformancePreset_t invalidPreset = *performancePreset;
+			invalidPreset.anisotropy = 17;
+			if ( Common_ApplyPerformancePreset( invalidPreset, true ) ||
+				 !Common_ValidatePerformancePresetApplied( *performancePreset ) ) {
+				common->Printf( "PerformancePreset self-test failed: rejected target normalization did not roll back atomically\n" );
+				passed = false;
+			}
 			if ( Common_AutoDetectPerformancePresetCommand( idCmdArgs( "autoDetectPerformancePreset unexpected", false ), true ) ||
 				 !Common_ValidatePerformancePresetApplied( *performancePreset ) ) {
 				common->Printf( "PerformancePreset self-test failed: invalid auto-detect command argument mutated preset state\n" );
@@ -3495,10 +3507,7 @@ static void Com_PerformancePresetSelfTest_f( const idCmdArgs &args ) {
 
 	Common_RestorePerformancePresetCVars( backups );
 	passed &= Common_ValidatePerformancePresetCVarsRestored( backups );
-	cvarSystem->ClearModifiedFlags( CVAR_ALL );
-	if ( savedModifiedFlags != 0 ) {
-		cvarSystem->SetModifiedFlags( savedModifiedFlags );
-	}
+	Common_RestorePerformancePresetModifiedFlags( savedModifiedFlags );
 
 	if ( passed ) {
 		common->Printf( "PerformancePreset self-test passed (presets=%d autodetect=%s reason='%s')\n", OPENQ4_PERFORMANCE_PRESET_COUNT, detectedPresetName, reason.c_str() );

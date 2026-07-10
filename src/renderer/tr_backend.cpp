@@ -29,6 +29,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "tr_local.h"
+#include "GLDebugScope.h"
 #include "GLStateCache.h"
 #include "RenderGraph.h"
 #include "RenderGraphResources.h"
@@ -712,6 +713,7 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 	// r_debugRenderToTexture
 	int	c_draw3d = 0, c_draw2d = 0, c_setBuffers = 0, c_swapBuffers = 0, c_copyRenders = 0, c_specialEffects = 0, c_renderTargetOps = 0;
 
+	R_GLDebugOutput_FlushMessages();
 	if ( cmds->commandId == RC_NOP && !cmds->next ) {
 		return;
 	}

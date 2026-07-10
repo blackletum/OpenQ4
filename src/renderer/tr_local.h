@@ -1181,6 +1181,8 @@ extern idCVar r_renderer;				// arb, nv10, nv20, r200, gl2, etc
 extern idCVar r_actualRenderer;			// actual active renderer backend after fallback
 extern idCVar r_glTier;					// auto, legacy, gl33, gl41, gl43, gl45, gl46
 extern idCVar r_glDebugContext;			// request a debug GL context when the platform backend supports it
+extern idCVar r_glDebugOutput;			// report driver debug messages when a debug context is active
+extern idCVar r_glDebugSynchronous;		// synchronously deliver GL debug callbacks for diagnostics
 extern idCVar r_rendererMetrics;			// 0 off, 1 summary, 2 verbose per-frame/pass metrics
 extern idCVar r_rendererGpuTimers;		// sample GL timer queries when renderer metrics are enabled
 extern idCVar r_rendererBenchmarkPreset;	// benchmark budget preset

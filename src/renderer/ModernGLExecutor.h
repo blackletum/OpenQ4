@@ -211,6 +211,8 @@ typedef struct modernGLExecutorStats_s {
 	int		gpuDrivenHiZCandidates;
 	int		gpuDrivenHiZRejected;
 	int		gpuDrivenIndirectFallbacks;
+	int		gpuDrivenInvalidBucketIds;
+	int		gpuDrivenIndirectOverflow;
 	int		gpuDrivenClusterBins;
 	int		gpuDrivenCpuClusterBins;
 	int		gpuDrivenGpuClusterBins;

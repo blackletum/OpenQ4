@@ -319,7 +319,28 @@ WARNING_PATTERNS = {
     "snPrintfOverflow": re.compile(r"idStr::snPrintf:\s*overflow", re.IGNORECASE),
     "idStrWarning": re.compile(r"WARNING:\s+idStr", re.IGNORECASE),
     "shaderCompile": re.compile(r"(shader compile|program link).*(failed|error)|failed to compile", re.IGNORECASE),
-    "glError": re.compile(r"\bGL_INVALID_[A-Z_]+|OpenGL error", re.IGNORECASE),
+    "glError": re.compile(
+        r"\bGL_(?:INVALID_[A-Z_]+|OUT_OF_MEMORY|STACK_(?:OVERFLOW|UNDERFLOW)|CONTEXT_LOST)\b"
+        r"|OpenGL\s+error"
+        r"|\bGL\s+debug\s+callback\b[^\r\n]{0,160}\btype\s*=\s*(?:error|undefined)\b"
+        r"|\b(?:glGetError\s*(?:\(\s*\))?|GL_CheckErrors)\b[^\r\n]{0,48}"
+        r"(?:0x(?!0+\b)[0-9A-F]+|[1-9][0-9]{2,})\b",
+        re.IGNORECASE,
+    ),
+    "framebufferIncomplete": re.compile(
+        r"\bGL_FRAMEBUFFER_(?:INCOMPLETE[A-Z0-9_]*|UNSUPPORTED|UNDEFINED)\b"
+        r"|\b(?:framebuffer|FBO)\b[^\r\n]{0,64}\b(?:incomplete|unsupported)\b"
+        r"|\b(?:incomplete|unsupported)\b[^\r\n]{0,32}\bframebuffer\b",
+        re.IGNORECASE,
+    ),
+    "glDebugHighSeverity": re.compile(
+        r"\bGL_DEBUG_SEVERITY_HIGH\b"
+        r"|^(?=[^\r\n]*\b(?:GL|OpenGL)\b)"
+        r"(?=[^\r\n]*\b(?:debug|callback)\b)"
+        r"(?=[^\r\n]*(?:\bseverity\s*[:=]?\s*(?:high|0x9146|37190)\b|\bhigh[- ]severity\b|\[\s*high\s*\]))"
+        r"[^\r\n]*$",
+        re.IGNORECASE | re.MULTILINE,
+    ),
     "fatal": re.compile(r"Fatal Error|could not initialize OpenGL|Unable to initialize OpenGL", re.IGNORECASE),
     "mapStateMismatch": re.compile(r"ERROR:\s+openQ4 map state mismatch|openQ4 map state assertion", re.IGNORECASE),
 }
@@ -476,6 +497,7 @@ def common_args(
     append_set(args, "logFile", "2")
     append_set(args, "logFileName", f"logs/{log_name}")
     append_set(args, "developer", "1")
+    append_set(args, "r_ignoreGLErrors", "0")
     append_set(args, "r_fullscreen", "1" if spec.fullscreen else "0")
     append_set(args, "r_swapInterval", spec.swap_interval)
     append_set(args, "com_maxfps", spec.maxfps)
@@ -683,7 +705,12 @@ def extract_summary(text: str) -> dict[str, str]:
         "selectedTier": extract_last_line(text, "Selected renderer tier:"),
         "tierContract": extract_last_line(text, "Renderer tier contract:"),
     }
-    matches = re.findall(r"rendererBenchmark capture\(.*?samples=(\d+).*?p50=(\d+).*?p95=(\d+).*?p99=(\d+).*?pass=(\d+)", text)
+    matches = re.findall(
+        r"rendererBenchmark capture\(.*?samples=(\d+).*?p50=(\d+).*?p95=(\d+).*?p99=(\d+)"
+        r".*?\b(?:thresholdPass|pass)\s*=\s*(\d+)\b",
+        text,
+        re.IGNORECASE,
+    )
     if matches:
         samples, p50, p95, p99, threshold_pass = matches[-1]
         summary.update(
@@ -695,6 +722,12 @@ def extract_summary(text: str) -> dict[str, str]:
                 "thresholdPass": threshold_pass,
             }
         )
+    if "thresholdPass" not in summary:
+        for benchmark_line in (summary["benchmarkCapture"], summary["benchmarkInfo"]):
+            match = re.search(r"\b(?:thresholdPass|pass)\s*=\s*(\d+)\b", benchmark_line, re.IGNORECASE)
+            if match:
+                summary["thresholdPass"] = match.group(1)
+                break
     summary.update(parse_frame_pacing(summary["framePacing"]))
     return summary
 
@@ -844,9 +877,11 @@ def evaluate_role_result(
     max_p99_ms: float = 0.0,
 ) -> dict[str, Any]:
     log_path = find_log(savepath, log_name)
-    text = read_text(log_path)
-    if not text:
-        text = read_text(stdout_path) + "\n" + read_text(stderr_path)
+    text = "\n".join(
+        part
+        for part in (read_text(log_path), read_text(stdout_path), read_text(stderr_path))
+        if part
+    )
     screenshot = find_screenshot(savepath, screenshot_rel)
     warnings = warning_counts(text)
     summary = extract_summary(text)
@@ -868,6 +903,11 @@ def evaluate_role_result(
         missing.append("renderer benchmark capture line")
     if require_benchmark and "Renderer benchmark:" not in text:
         missing.append("gfxInfo benchmark line")
+    threshold_pass = summary.get("thresholdPass")
+    if require_benchmark and threshold_pass != "1":
+        missing.append(f"renderer benchmark thresholdPass={threshold_pass or 'missing'}")
+    elif threshold_pass is not None and threshold_pass != "1":
+        missing.append(f"renderer benchmark thresholdPass={threshold_pass}")
     if min_pacing_hz > 0.0:
         pacing_hz = summary_float(summary, "pacingHz")
         if pacing_hz is None:

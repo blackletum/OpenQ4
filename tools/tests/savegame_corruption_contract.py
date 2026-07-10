@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
 import struct
+import tempfile
 from pathlib import Path
 
 
@@ -436,12 +438,14 @@ def validate_session_source_contract() -> None:
         "static bool Session_SaveDescriptionMatchesSlot( const idStr &expectedSlotName, const idStr &descriptionSaveName )",
         "static bool Session_ValidateStagedSaveDescription( const idStr &descriptionPath, const idStr &expectedSlotName, saveType_t saveType )",
         "static bool Session_ValidateStagedSavePreview( const idStr &previewPath )",
-        "static bool Session_ValidateStagedSaveGamePayload( idFile *file, const idStr &savePath )",
+        "static bool Session_ValidateSaveGamePayload( idFile *file, const idStr &savePath, bool allowLegacyPayload )",
+        "OPENQ4_SAVEGAME_COMPAT_SOURCE_HASH",
+        "OPENQ4_SAVEGAME_COMPAT_SOURCE_FILE_COUNT",
         "if ( marker != SESSION_OPENQ4_SAVEGAME_COMPATIBILITY_MAGIC )",
-        "if ( payloadBuild != BUILD_NUMBER )",
+        "if ( valid && payloadBuild != BUILD_NUMBER )",
         "const int footerOffset = fileLength - SESSION_OPENQ4_SAVEGAME_FOOTER_BYTES;",
-        "if ( footerMarker != SESSION_OPENQ4_SAVEGAME_FOOTER_MAGIC )",
-        "if ( savedFooterOffset != footerOffset )",
+        "if ( valid && footerMarker != SESSION_OPENQ4_SAVEGAME_FOOTER_MAGIC )",
+        "if ( valid && savedFooterOffset != footerOffset )",
         "if ( valid && !Session_SaveDescriptionMatchesSlot( expectedSlotName, sidecarSaveName ) )",
         "if ( valid && !Session_IsSafeSaveMaterialPath( sidecarScreenshot ) )",
         "if ( imageType != 2 && imageType != 10 )",
@@ -499,10 +503,17 @@ def validate_session_source_contract() -> None:
     )
     require_regex(
         source,
+        r"Session_ReadSaveGameDict\s*\(\s*loadGameFile,\s*loadedPersistentPlayerInfo.*?"
+        r"Session_ValidateSaveGamePayload\s*\(\s*loadGameFile,\s*in,\s*true\s*\).*?"
+        r"mapSpawnData\.persistentPlayerInfo.*?ExecuteMapChange",
+        "gameplay payload is preflighted before load state is committed or the map changes",
+    )
+    require_regex(
+        source,
         r"Session_ReadSaveGameString\s*\(\s*file,\s*gamename,\s*MAX_STRING_CHARS,\s*\"game name\".*?"
         r"Session_ReadSaveGameString\s*\(\s*file,\s*saveMap,\s*MAX_STRING_CHARS,\s*\"map name\".*?"
         r"Session_ReadSaveGameDict\s*\(\s*file,\s*persistentPlayerInfo.*?"
-        r"Session_ValidateStagedSaveGamePayload\s*\(\s*file,\s*savePath\s*\)",
+        r"Session_ValidateSaveGamePayload\s*\(\s*file,\s*savePath,\s*false\s*\)",
         "staged save validation uses bounded header/dict reads and payload footer check",
     )
     require_regex(
@@ -556,6 +567,11 @@ def validate_session_source_contract() -> None:
     for token in (
         "SOUND_SAVEGAME_MAX_EMITTERS = 8192",
         "SOUND_SAVEGAME_MAX_TOTAL_CHANNELS = 8192",
+        "static void WriteChecked( idFile* savefile, int bytesWritten, int expected, const char* fieldName, int offset )",
+        "idSoundWorldLocal::WriteToSaveGame: failed to write %s at offset %d",
+        "while( num > 1 )",
+        "const int restoredIndex = emitters.Append( emitter );",
+        "Do not use AllocSoundEmitter here",
         "static void ReadInt( idFile* savefile, int& value, const char* fieldName )",
         "idSoundWorldLocal::ReadFromSaveGame: truncated %s",
         "static void ReadString( idFile* savefile, idStr& value, const char* fieldName )",
@@ -604,12 +620,16 @@ def validate_gamelibs_save_payload_contract() -> None:
             "bool\t\t\t\t\topenQ4SaveGameSyncMarkersEnabled;",
             "idStr\t\t\t\t\topenQ4SaveGameCompatibilityStamp;",
             "idStr\t\t\t\t\topenQ4SaveGameCompatibilityError;",
+            "idHashIndex\t\t\t\tobjectHash;",
         ):
             require(save_header, token, f"{module} savegame compatibility header")
 
         for token in (
             '#include "framework/BuildVersion.h"',
             "static bool SaveGame_IsValidRenderBounds( const idBounds &bounds )",
+            "static int SaveGame_ObjectHashKey( const idClass *obj )",
+            "static int SaveGame_FindObjectIndex( const idList<const idClass *> &objects, const idHashIndex &objectHash, const idClass *obj )",
+            "objectHash.Add( SaveGame_ObjectHashKey( obj ), index );",
             "FLOAT_IS_NAN( bounds[0][i] ) || FLOAT_IS_NAN( bounds[1][i] )",
             "bounds[1][i] - bounds[0][i] >= MAX_BOUND_SIZE",
             "void idSaveGame::WriteChecked( int bytesWritten, int expected, const char *detail, int offset )",
@@ -763,6 +783,7 @@ def validate_gamelibs_save_payload_contract() -> None:
         "openq4_savegame_compat_generated.h",
         "savegame_compat_header = custom_target",
         "game_sources += [savegame_compat_header]",
+        "openq4_engine_sources += [savegame_compat_header]",
         "depend_files: files(engine_source_paths) + game_sources",
     ):
         require(meson, token, "Meson savegame compatibility header wiring")
@@ -770,6 +791,8 @@ def validate_gamelibs_save_payload_contract() -> None:
     generator = read("tools/build/generate_savegame_compat_header.py")
     for token in (
         "RELEVANCE_TOKENS",
+        "normalize_source_bytes",
+        'data.replace(b"\\r\\n", b"\\n").replace(b"\\r", b"\\n")',
         "OPENQ4_SAVEGAME_COMPAT_SOURCE_HASH",
         "OPENQ4_SAVEGAME_COMPAT_SOURCE_FILE_COUNT",
         "write_if_changed",
@@ -783,6 +806,41 @@ def validate_gamelibs_save_payload_contract() -> None:
         "new saves carry a generated engine/GameLibs source snapshot stamp plus payload sync markers and an end footer",
         "release completion notes",
     )
+
+
+def validate_savegame_compat_stamp_model() -> None:
+    generator_path = ROOT / "tools" / "build" / "generate_savegame_compat_header.py"
+    spec = importlib.util.spec_from_file_location("openq4_savegame_compat_generator", generator_path)
+    if spec is None or spec.loader is None:
+        raise AssertionError("Could not load savegame compatibility generator")
+    generator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generator)
+
+    temp_root = ROOT / ".tmp"
+    temp_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="savegame-compat-stamp-", dir=temp_root) as raw_temp:
+        work = Path(raw_temp)
+        project_root = work / "openQ4"
+        game_root = work / "stage"
+        project_file = project_root / "src" / "framework" / "Session.cpp"
+        game_file = game_root / "src" / "game" / "Game_local.cpp"
+        project_file.parent.mkdir(parents=True)
+        game_file.parent.mkdir(parents=True)
+
+        project_file.write_bytes(b"void SaveGame();\n")
+        game_file.write_bytes(b"void Restore();\n")
+        lf_hash, lf_count = generator.build_digest(project_root, game_root)
+
+        project_file.write_bytes(b"void SaveGame();\r\n")
+        game_file.write_bytes(b"void Restore();\r\n")
+        crlf_hash, crlf_count = generator.build_digest(project_root, game_root)
+        if (crlf_hash, crlf_count) != (lf_hash, lf_count):
+            raise AssertionError("Savegame compatibility stamp varies with checkout line endings")
+
+        game_file.write_bytes(b"void Restore();\nvoid Save();\n")
+        changed_hash, changed_count = generator.build_digest(project_root, game_root)
+        if changed_hash == lf_hash or changed_count != lf_count:
+            raise AssertionError("Savegame compatibility stamp did not track a relevant semantic source change")
 
 
 def validate_minigame_restore_contract() -> None:
@@ -1162,6 +1220,7 @@ def main() -> None:
     validate_ssd_restore_fuzz_model()
     validate_session_source_contract()
     validate_gamelibs_save_payload_contract()
+    validate_savegame_compat_stamp_model()
     validate_minigame_restore_contract()
     validate_validation_wiring()
     print("savegame_corruption_contract: ok")

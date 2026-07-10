@@ -711,6 +711,47 @@ Bind
 Automatically enables 2D mapping or cube mapping if needed
 ==============
 */
+static bool R_IsValidTrackedTextureUnit( int texUnit ) {
+	if ( texUnit >= 0 && texUnit < MAX_MULTITEXTURE_UNITS &&
+		texUnit < glConfig.maxTextureUnits && texUnit < glConfig.maxTextureImageUnits ) {
+		return true;
+	}
+
+	common->Warning(
+		"idImage::Bind: tracked texture unit %d is outside limits (tracked=%d, textureUnits=%d, imageUnits=%d)",
+		texUnit,
+		MAX_MULTITEXTURE_UNITS,
+		glConfig.maxTextureUnits,
+		glConfig.maxTextureImageUnits );
+	return false;
+}
+
+static bool R_BindTextureToUnit( int texUnit, GLenum target, GLuint texture ) {
+	// Core/ARB DSA derives the target from an existing texture object. Binding
+	// zero has broader unbind semantics, so retain the target-specific paths for
+	// that case.
+	if ( texture != 0 && glConfig.backendCaps.hasDSA && glBindTextureUnit != NULL ) {
+		glBindTextureUnit( static_cast<GLuint>( texUnit ), texture );
+		return true;
+	}
+
+	if ( GLEW_EXT_direct_state_access && glBindMultiTextureEXT != NULL ) {
+		glBindMultiTextureEXT( GL_TEXTURE0_ARB + texUnit, target, texture );
+		return true;
+	}
+
+	// The compatibility renderer requires ARB multitexture, but keep this
+	// guard so an incomplete loader cannot turn an image bind into a null call.
+	if ( glActiveTextureARB == NULL ) {
+		common->Warning( "idImage::Bind: no texture-unit binding entry point is available" );
+		return false;
+	}
+
+	glActiveTextureARB( GL_TEXTURE0_ARB + texUnit );
+	glBindTexture( target, texture );
+	return true;
+}
+
 void idImage::Bind() {
 
 	//	RENDERLOG_PRINTF( "idImage::Bind( %s )\n", GetName() );
@@ -722,6 +763,9 @@ void idImage::Bind() {
 	}
 
 	const int texUnit = backEnd.glState.currenttmu;
+	if ( !R_IsValidTrackedTextureUnit( texUnit ) ) {
+		return;
+	}
 
 	tmu_t* tmu = &backEnd.glState.tmu[texUnit];
 
@@ -746,14 +790,16 @@ void idImage::Bind() {
 	// bind the texture
 	if (opts.textureType == TT_2D) {
 		if (tmu->current2DMap != texnum) {
-			tmu->current2DMap = texnum;
-			glBindMultiTextureEXT(GL_TEXTURE0_ARB + texUnit, GL_TEXTURE_2D, texnum);
+			if ( R_BindTextureToUnit( texUnit, GL_TEXTURE_2D, texnum ) ) {
+				tmu->current2DMap = texnum;
+			}
 		}
 	}
 	else if (opts.textureType == TT_CUBIC) {
 		if (tmu->currentCubeMap != texnum) {
-			tmu->currentCubeMap = texnum;
-			glBindMultiTextureEXT(GL_TEXTURE0_ARB + texUnit, GL_TEXTURE_CUBE_MAP_EXT, texnum);
+			if ( R_BindTextureToUnit( texUnit, GL_TEXTURE_CUBE_MAP_EXT, texnum ) ) {
+				tmu->currentCubeMap = texnum;
+			}
 		}
 	}
 

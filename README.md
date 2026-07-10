@@ -123,6 +123,7 @@ Packaged support currently focuses on Windows, Linux, Steam Deck/SteamOS, and ex
 - [Multiplayer Networking](docs/user/multiplayer-networking.md) - multiplayer tuning and lag-comp behavior
 - [Shadow Mapping](docs/user/shadow-mapping.md) - optional shadow-map settings and troubleshooting
 - [Light Grids](docs/user/light-grids.md) - advanced lighting guide for players and testers
+- [DDS Texture Replacements](docs/user/texture-replacements.md) - install and diagnose DXT/BC7 texture packs
 
 ### Build and technical docs
 

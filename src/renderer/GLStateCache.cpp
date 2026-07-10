@@ -158,9 +158,34 @@ int idGLStateCache::TextureTargetSlot( GLenum target ) const {
 		return 1;
 	case GL_TEXTURE_CUBE_MAP:
 		return 2;
+	case GL_TEXTURE_2D_ARRAY:
+		return 3;
+	case GL_TEXTURE_2D_MULTISAMPLE:
+		return 4;
+	case GL_TEXTURE_RECTANGLE:
+		return 5;
+	case GL_TEXTURE_1D:
+		return 6;
+	case GL_TEXTURE_1D_ARRAY:
+		return 7;
+	case GL_TEXTURE_BUFFER:
+		return 8;
+	case GL_TEXTURE_2D_MULTISAMPLE_ARRAY:
+		return 9;
+	case GL_TEXTURE_CUBE_MAP_ARRAY:
+		return 10;
 	default:
 		return -1;
 	}
+}
+
+static bool R_GLStateCache_TextureTargetSupported( GLenum target ) {
+	if ( target == GL_TEXTURE_CUBE_MAP_ARRAY ) {
+		return glConfig.backendCaps.glVersion >= 4.0f || GLEW_ARB_texture_cube_map_array;
+	}
+	// BindTextures is part of the modern renderer contract (GL 3.3+); every
+	// other standard multi-bind texture target is core by that baseline.
+	return true;
 }
 
 idGLStateCache::cachedGLuint_t *idGLStateCache::BufferBindingForTarget( GLenum target ) {
@@ -237,6 +262,9 @@ bool idGLStateCache::BindVertexArray( GLuint newVertexArray ) {
 	glBindVertexArray( newVertexArray );
 	vertexArray.valid = true;
 	vertexArray.value = newVertexArray;
+	// The element-array binding belongs to the VAO.  A cached value from the
+	// previous VAO cannot be used to suppress the next EBO bind.
+	elementArrayBuffer.valid = false;
 	RecordMiss( stats.vertexArrayMisses );
 	return true;
 }
@@ -378,17 +406,19 @@ bool idGLStateCache::ActiveTextureUnit( int unit ) {
 
 bool idGLStateCache::BindTexture( int unit, GLenum target, GLuint texture ) {
 	const int slot = TextureTargetSlot( target );
-	if ( unit < 0 || unit >= TextureUnitCount() || slot < 0 ) {
+	if ( unit < 0 || unit >= TextureUnitCount() || glBindTexture == NULL ) {
 		return false;
 	}
-	if ( textures[unit][slot].valid && textures[unit][slot].value == texture ) {
+	if ( slot >= 0 && textures[unit][slot].valid && textures[unit][slot].value == texture ) {
 		RecordHit();
 		return false;
 	}
 	ActiveTextureUnit( unit );
 	glBindTexture( target, texture );
-	textures[unit][slot].valid = true;
-	textures[unit][slot].value = texture;
+	if ( slot >= 0 ) {
+		textures[unit][slot].valid = true;
+		textures[unit][slot].value = texture;
+	}
 	RecordMiss( stats.textureMisses );
 	return true;
 }
@@ -409,6 +439,10 @@ bool idGLStateCache::BindSampler( int unit, GLuint sampler ) {
 }
 
 bool idGLStateCache::BindTextures( GLuint first, GLsizei count, const GLuint *textureNames ) {
+	return BindTextures( first, count, textureNames, NULL );
+}
+
+bool idGLStateCache::BindTextures( GLuint first, GLsizei count, const GLuint *textureNames, const GLenum *textureTargets ) {
 	if ( count <= 0 || textureNames == NULL || first >= static_cast<GLuint>( TextureUnitCount() ) ) {
 		return false;
 	}
@@ -417,19 +451,53 @@ bool idGLStateCache::BindTextures( GLuint first, GLsizei count, const GLuint *te
 		return false;
 	}
 	if ( glBindTextures == NULL ) {
+		static const GLenum knownTargets[GL_STATE_CACHE_TEXTURE_TARGET_SLOTS] = {
+			GL_TEXTURE_2D,
+			GL_TEXTURE_3D,
+			GL_TEXTURE_CUBE_MAP,
+			GL_TEXTURE_2D_ARRAY,
+			GL_TEXTURE_2D_MULTISAMPLE,
+			GL_TEXTURE_RECTANGLE,
+			GL_TEXTURE_1D,
+			GL_TEXTURE_1D_ARRAY,
+			GL_TEXTURE_BUFFER,
+			GL_TEXTURE_2D_MULTISAMPLE_ARRAY,
+			GL_TEXTURE_CUBE_MAP_ARRAY
+		};
 		bool issued = false;
 		for ( GLsizei i = 0; i < clampedCount; ++i ) {
-			issued = BindTexture( static_cast<int>( first + i ), GL_TEXTURE_2D, textureNames[i] ) || issued;
+			const int unit = static_cast<int>( first + i );
+			const GLenum target = textureTargets != NULL && textureTargets[i] != 0 ? textureTargets[i] : GL_TEXTURE_2D;
+			// A zero multi-bind entry clears every target on the unit.  A non-zero
+			// entry changes only the target with which that texture was created.
+			if ( textureNames[i] == 0 ) {
+				for ( int targetIndex = 0; targetIndex < GL_STATE_CACHE_TEXTURE_TARGET_SLOTS; ++targetIndex ) {
+					if ( R_GLStateCache_TextureTargetSupported( knownTargets[targetIndex] ) ) {
+						issued = BindTexture( unit, knownTargets[targetIndex], 0 ) || issued;
+					}
+				}
+			} else {
+				issued = BindTexture( unit, target, textureNames[i] ) || issued;
+			}
 		}
 		return issued;
 	}
 
-	const int texture2DSlot = TextureTargetSlot( GL_TEXTURE_2D );
 	int firstDirty = -1;
 	int lastDirty = -1;
 	for ( GLsizei i = 0; i < clampedCount; ++i ) {
 		const int unit = static_cast<int>( first + i );
-		if ( !textures[unit][texture2DSlot].valid || textures[unit][texture2DSlot].value != textureNames[i] ) {
+		const GLenum target = textureTargets != NULL && textureTargets[i] != 0 ? textureTargets[i] : GL_TEXTURE_2D;
+		const int slot = TextureTargetSlot( target );
+		bool unitDirty = false;
+		if ( textureNames[i] == 0 ) {
+			for ( int targetSlot = 0; targetSlot < GL_STATE_CACHE_TEXTURE_TARGET_SLOTS && !unitDirty; ++targetSlot ) {
+				unitDirty = !textures[unit][targetSlot].valid || textures[unit][targetSlot].value != 0;
+			}
+		} else {
+			unitDirty = slot < 0 || !textures[unit][slot].valid || textures[unit][slot].value != textureNames[i];
+		}
+		if ( unitDirty ) {
 			if ( firstDirty < 0 ) {
 				firstDirty = i;
 			}
@@ -446,11 +514,23 @@ bool idGLStateCache::BindTextures( GLuint first, GLsizei count, const GLuint *te
 	stats.hits += firstDirty + ( clampedCount - 1 - lastDirty );
 	for ( GLsizei i = firstDirty; i <= lastDirty; ++i ) {
 		const int unit = static_cast<int>( first + i );
-		bool unitChanged = texture2DSlot < 0 || !textures[unit][texture2DSlot].valid || textures[unit][texture2DSlot].value != textureNames[i];
-		memset( textures[unit], 0, sizeof( textures[unit] ) );
-		if ( texture2DSlot >= 0 ) {
-			textures[unit][texture2DSlot].valid = true;
-			textures[unit][texture2DSlot].value = textureNames[i];
+		const GLenum target = textureTargets != NULL && textureTargets[i] != 0 ? textureTargets[i] : GL_TEXTURE_2D;
+		const int slot = TextureTargetSlot( target );
+		bool unitChanged = false;
+		if ( textureNames[i] == 0 ) {
+			for ( int targetSlot = 0; targetSlot < GL_STATE_CACHE_TEXTURE_TARGET_SLOTS; ++targetSlot ) {
+				if ( !textures[unit][targetSlot].valid || textures[unit][targetSlot].value != 0 ) {
+					unitChanged = true;
+				}
+				textures[unit][targetSlot].valid = true;
+				textures[unit][targetSlot].value = 0;
+			}
+		} else {
+			unitChanged = slot < 0 || !textures[unit][slot].valid || textures[unit][slot].value != textureNames[i];
+			if ( slot >= 0 ) {
+				textures[unit][slot].valid = true;
+				textures[unit][slot].value = textureNames[i];
+			}
 		}
 		if ( unitChanged ) {
 			RecordMiss( stats.textureMisses );
@@ -820,6 +900,26 @@ bool RendererGLStateCache_RunSelfTest( void ) {
 		cache.BindVertexArray( 0 );
 		cache.BindVertexArray( 0 );
 	}
+	if ( glGenVertexArrays != NULL && glDeleteVertexArrays != NULL ) {
+		GLuint testVAOs[2] = { 0, 0 };
+		glGenVertexArrays( 2, testVAOs );
+		if ( testVAOs[0] != 0 && testVAOs[1] != 0 ) {
+			cache.BindVertexArray( testVAOs[0] );
+			cache.BindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
+			cache.BindVertexArray( testVAOs[1] );
+			const glStateCacheStats_t beforeElementBind = cache.Stats();
+			cache.BindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
+			if ( cache.Stats().misses <= beforeElementBind.misses ) {
+				common->Printf( "RendererGLStateCache self-test failed: VAO switch did not invalidate the element-buffer binding\n" );
+				cache.BindVertexArray( 0 );
+				glDeleteVertexArrays( 2, testVAOs );
+				return false;
+			}
+			cache.BindVertexArray( 0 );
+		}
+		glDeleteVertexArrays( 2, testVAOs );
+		cache.InvalidateAll( "self-test VAO cleanup" );
+	}
 	cache.BindBuffer( GL_ARRAY_BUFFER, 0 );
 	cache.BindBuffer( GL_ARRAY_BUFFER, 0 );
 	{
@@ -892,6 +992,12 @@ bool RendererGLStateCache_RunSelfTest( void ) {
 		GLuint textureNames[2] = { 0, 0 };
 		cache.BindTextures( 0, 2, textureNames );
 		cache.BindTextures( 0, 2, textureNames );
+	}
+	{
+		GLuint textureNames[3] = { 0, 0, 0 };
+		GLenum textureTargets[3] = { GL_TEXTURE_2D, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_2D_ARRAY };
+		cache.BindTextures( 0, 3, textureNames, textureTargets );
+		cache.BindTextures( 0, 3, textureNames, textureTargets );
 	}
 	if ( glBindSamplers != NULL ) {
 		GLuint samplerNames[2] = { 0, 0 };

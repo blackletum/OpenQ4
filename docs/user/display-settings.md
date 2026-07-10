@@ -18,20 +18,20 @@ Running `applyPerformancePreset` without a name applies the stored `com_performa
 
 | Preset | Display and AA | Texture and audio profile | Intended use |
 |---|---|---|---|
-| `minimum` | 50% scale, no AA, 30 FPS cap | Aggressive texture downsizing, one sound sample per shader, stereo, no EAX, lower emitter budget | Most constrained systems. |
-| `lowpower` | 75% scale, no AA, 30 FPS cap | Texture downsizing, one sound sample per shader, stereo, no EAX, lower emitter budget | Raspberry Pi-class and other low-power systems. |
-| `performance` | 85% scale, SMAA medium, 60 FPS cap | Full-size compressed textures, stereo, no EAX, moderate emitter budget | Modest desktops and handhelds aiming for smoother frame pacing. |
-| `balanced` | 100% scale, 2x MSAA, SMAA medium, 120 FPS cap | Full-size compressed textures, surround/EAX restored, full emitter budget | General desktop default. |
-| `quality` | 100% scale, 4x MSAA, SMAA medium, 144 FPS cap | Uncompressed normals, larger upload budget, surround/EAX restored | Strong desktop GPUs. |
-| `ultra` | 100% scale, 8x MSAA, SMAA medium, 240 FPS cap | Uncompressed runtime textures, high-end benchmark tag, surround/EAX restored | Explicit high-end choice; Auto-Detect does not select this automatically. |
+| `minimum` | 50% scale, no AA, 30 FPS cap | Aggressive texture downsizing, 1x anisotropy, one sound sample per shader, stereo, no EAX, lower emitter budget | Most constrained systems. |
+| `lowpower` | 75% scale, no AA, 30 FPS cap | Texture downsizing, 1x anisotropy, one sound sample per shader, stereo, no EAX, lower emitter budget | Raspberry Pi-class and other low-power systems. |
+| `performance` | 85% scale, SMAA medium, 60 FPS cap | Full-size textures, 2x anisotropy, stereo, no EAX, moderate emitter budget | Modest desktops and handhelds aiming for smoother frame pacing. |
+| `balanced` | 100% scale, 2x MSAA, SMAA medium, 120 FPS cap | Full-size textures, 4x anisotropy, surround/EAX restored, full emitter budget | General desktop default. |
+| `quality` | 100% scale, 4x MSAA, SMAA medium, 144 FPS cap | 8x anisotropy, DDS replacements enabled, larger upload budget, surround/EAX restored | Strong desktop GPUs. |
+| `ultra` | 100% scale, 8x MSAA, SMAA medium, 240 FPS cap | 16x anisotropy, source textures preferred over DDS replacements, high-end benchmark tag, surround/EAX restored | Explicit high-end choice; Auto-Detect does not select this automatically. |
 
 All presets keep optional shadow maps and subjective/modern post effects disabled, so the authored Quake 4 look remains the baseline. Enable shadow maps, bloom, SSAO, tone mapping, motion blur, or CRT filtering separately after choosing a preset if you want those effects.
 
-Performance presets write video, texture-allocation, and audio backend cvars. Run `vid_restart` after applying one so renderer and texture allocation changes take effect; run `s_restart` as well if you want speaker/EAX/emitter-budget changes to rebuild the active sound backend immediately.
+Performance presets write video, texture-allocation, texture-sampling, and audio backend cvars. Anisotropy is capped to the maximum supported by the active GPU. Run `vid_restart` after applying one so renderer, texture allocation, and sampler changes take effect; run `s_restart` as well if you want speaker/EAX/emitter-budget changes to rebuild the active sound backend immediately.
 
 `autoDetectPerformancePreset` takes no arguments. It selects a conservative preset from platform signals, CPU architecture, system RAM, video RAM, and renderer capability flags, then applies it. Missing or implausible memory telemetry is treated as a conservative fallback instead of promoting the system to a higher preset. On Raspberry Pi hosts or explicit `OPENQ4_LOWPOWER=1` / `OPENQ4_RASPBERRYPI=1` signals, it chooses `lowpower`.
 
-For package or platform validation, `performancePresetSelfTest` checks that the preset commands are registered, every preset is known to the menu-facing cvar and command completion lists, auto-detect returns and applies a supported non-`ultra` preset, command arguments behave correctly, all preset writes are declared for backup/restore coverage, the preset progression stays coherent, the preset cvar mappings apply correctly, and the test restores touched cvar values, flags, and modified-state bookkeeping before finishing.
+For package or platform validation, `performancePresetSelfTest` checks that the preset commands are registered, every preset is known to the menu-facing cvar and command completion lists, auto-detect returns and applies a supported non-`ultra` preset, command arguments behave correctly, all preset targets are registered and covered by backup/restore, rejected target normalization rolls back atomically, the preset progression stays coherent, the preset cvar mappings apply correctly, and the test restores touched cvar values, flags, and modified-state bookkeeping before finishing.
 
 ## Core Display Settings
 

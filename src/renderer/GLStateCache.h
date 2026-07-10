@@ -9,6 +9,7 @@
 
 const int GL_STATE_CACHE_MAX_TEXTURE_UNITS = 32;
 const int GL_STATE_CACHE_MAX_BUFFER_BINDINGS = 32;
+const int GL_STATE_CACHE_TEXTURE_TARGET_SLOTS = 11;
 
 typedef struct glStateCacheStats_s {
 	bool	initialized;
@@ -59,7 +60,10 @@ public:
 	bool ActiveTextureUnit( int unit );
 	bool BindTexture( int unit, GLenum target, GLuint texture );
 	bool BindSampler( int unit, GLuint sampler );
+	// Zero entries clear every standard texture target supported by the
+	// selected modern context, matching glBindTextures semantics.
 	bool BindTextures( GLuint first, GLsizei count, const GLuint *textureNames );
+	bool BindTextures( GLuint first, GLsizei count, const GLuint *textureNames, const GLenum *textureTargets );
 	bool BindSamplers( GLuint first, GLsizei count, const GLuint *samplerNames );
 	bool BindFramebuffer( GLenum target, GLuint framebuffer );
 
@@ -136,7 +140,7 @@ private:
 	cachedGLuint_t drawIndirectBuffer;
 	cachedBufferBaseBinding_t uniformBufferBase[GL_STATE_CACHE_MAX_BUFFER_BINDINGS];
 	cachedBufferBaseBinding_t shaderStorageBufferBase[GL_STATE_CACHE_MAX_BUFFER_BINDINGS];
-	cachedTextureBinding_t textures[GL_STATE_CACHE_MAX_TEXTURE_UNITS][3];
+	cachedTextureBinding_t textures[GL_STATE_CACHE_MAX_TEXTURE_UNITS][GL_STATE_CACHE_TEXTURE_TARGET_SLOTS];
 	cachedGLuint_t samplers[GL_STATE_CACHE_MAX_TEXTURE_UNITS];
 	cachedGLuint_t framebuffer;
 	cachedGLuint_t readFramebuffer;

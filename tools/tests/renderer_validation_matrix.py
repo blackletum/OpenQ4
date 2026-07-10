@@ -363,7 +363,28 @@ WARNING_PATTERNS = {
     "snPrintfOverflow": re.compile(r"idStr::snPrintf:\s*overflow", re.IGNORECASE),
     "idStrWarning": re.compile(r"WARNING:\s+idStr", re.IGNORECASE),
     "shaderCompileOrLink": re.compile(r"(shader compile|program link).*(failed|error)|failed to compile", re.IGNORECASE),
-    "glError": re.compile(r"\bGL_INVALID_[A-Z_]+|OpenGL error", re.IGNORECASE),
+    "glError": re.compile(
+        r"\bGL_(?:INVALID_[A-Z_]+|OUT_OF_MEMORY|STACK_(?:OVERFLOW|UNDERFLOW)|CONTEXT_LOST)\b"
+        r"|OpenGL\s+error"
+        r"|\bGL\s+debug\s+callback\b[^\r\n]{0,160}\btype\s*=\s*(?:error|undefined)\b"
+        r"|\b(?:glGetError\s*(?:\(\s*\))?|GL_CheckErrors)\b[^\r\n]{0,48}"
+        r"(?:0x(?!0+\b)[0-9A-F]+|[1-9][0-9]{2,})\b",
+        re.IGNORECASE,
+    ),
+    "framebufferIncomplete": re.compile(
+        r"\bGL_FRAMEBUFFER_(?:INCOMPLETE[A-Z0-9_]*|UNSUPPORTED|UNDEFINED)\b"
+        r"|\b(?:framebuffer|FBO)\b[^\r\n]{0,64}\b(?:incomplete|unsupported)\b"
+        r"|\b(?:incomplete|unsupported)\b[^\r\n]{0,32}\bframebuffer\b",
+        re.IGNORECASE,
+    ),
+    "glDebugHighSeverity": re.compile(
+        r"\bGL_DEBUG_SEVERITY_HIGH\b"
+        r"|^(?=[^\r\n]*\b(?:GL|OpenGL)\b)"
+        r"(?=[^\r\n]*\b(?:debug|callback)\b)"
+        r"(?=[^\r\n]*(?:\bseverity\s*[:=]?\s*(?:high|0x9146|37190)\b|\bhigh[- ]severity\b|\[\s*high\s*\]))"
+        r"[^\r\n]*$",
+        re.IGNORECASE | re.MULTILINE,
+    ),
 }
 
 
@@ -440,6 +461,9 @@ def common_args(
         "+set",
         "developer",
         "1",
+        "+set",
+        "r_ignoreGLErrors",
+        "0",
         "+set",
         "r_fullscreen",
         "0",
@@ -1535,14 +1559,12 @@ def run_case(
     if log_path is not None:
         log_text = log_path.read_text(encoding="utf-8", errors="replace")
         case_log_path.write_text(log_text, encoding="utf-8")
-    else:
-        if stdout_path.exists():
-            log_text += stdout_path.read_text(encoding="utf-8", errors="replace")
-        if stderr_path.exists():
-            log_text += "\n" + stderr_path.read_text(encoding="utf-8", errors="replace")
+    stdout_text = stdout_path.read_text(encoding="utf-8", errors="replace") if stdout_path.exists() else ""
+    stderr_text = stderr_path.read_text(encoding="utf-8", errors="replace") if stderr_path.exists() else ""
+    diagnostic_text = "\n".join(part for part in (log_text, stdout_text, stderr_text) if part)
 
-    warning_signatures = count_warning_signatures(log_text)
-    checks_ok, missing = evaluate_checks(log_text, case["checks"], warning_signatures)
+    warning_signatures = count_warning_signatures(diagnostic_text)
+    checks_ok, missing = evaluate_checks(diagnostic_text, case["checks"], warning_signatures)
     ok = exit_code == 0 and not timed_out and log_path is not None and checks_ok
     return {
         "id": case_id,
@@ -1558,7 +1580,7 @@ def run_case(
         "stderr": str(stderr_path),
         "missing": missing,
         "warningSignatures": warning_signatures,
-        "summary": extract_summary(log_text),
+        "summary": extract_summary(diagnostic_text),
     }
 
 

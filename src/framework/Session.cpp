@@ -31,6 +31,17 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "Session_local.h"
 #include "BuildVersion.h"
+#if defined( __has_include )
+#if __has_include( "openq4_savegame_compat_generated.h" )
+#include "openq4_savegame_compat_generated.h"
+#endif
+#endif
+#ifndef OPENQ4_SAVEGAME_COMPAT_SOURCE_HASH
+#define OPENQ4_SAVEGAME_COMPAT_SOURCE_HASH ""
+#endif
+#ifndef OPENQ4_SAVEGAME_COMPAT_SOURCE_FILE_COUNT
+#define OPENQ4_SAVEGAME_COMPAT_SOURCE_FILE_COUNT -1
+#endif
 #define private public
 #define protected public
 #include "Game_local.h"
@@ -271,6 +282,7 @@ static const int SESSION_OPENQ4_SAVEGAME_COMPATIBILITY_VERSION = 2;
 static const int SESSION_OPENQ4_SAVEGAME_FOOTER_MAGIC = 'O' | ( 'Q' << 8 ) | ( '4' << 16 ) | ( 'F' << 24 );
 static const int SESSION_OPENQ4_SAVEGAME_FOOTER_VERSION = 1;
 static const int SESSION_OPENQ4_SAVEGAME_FOOTER_BYTES = 5 * static_cast<int>( sizeof( int ) );
+static const int SESSION_OPENQ4_SAVEGAME_SOURCE_STAMP_MAX_BYTES = 128;
 
 static bool Session_IsSafeSaveMaterialPath( const idStr &path ) {
 	if ( path.IsEmpty() ) {
@@ -623,45 +635,82 @@ static bool Session_ReadSaveGameDict( idFile *file, idDict &dict, const char *fi
 	return true;
 }
 
-static bool Session_ValidateStagedSaveGamePayload( idFile *file, const idStr &savePath ) {
+static bool Session_ValidateSaveGamePayload( idFile *file, const idStr &savePath, bool allowLegacyPayload ) {
 	const int payloadOffset = file->Tell();
 	const int fileLength = file->Length();
-	if ( fileLength <= 0 || payloadOffset < 0 || fileLength < payloadOffset + SESSION_OPENQ4_SAVEGAME_FOOTER_BYTES + 3 * static_cast<int>( sizeof( int ) ) ) {
-		common->Warning( "Staged savegame '%s' is too short for an openQ4 payload/footer (payload offset %d, length %d)",
+	if ( fileLength <= 0 || payloadOffset < 0 || fileLength < payloadOffset + static_cast<int>( sizeof( int ) ) ) {
+		common->Warning( "Savegame '%s' is too short for a game payload (payload offset %d, length %d)",
 			savePath.c_str(), payloadOffset, fileLength );
 		return false;
 	}
 
 	int marker = 0;
-	int payloadVersion = 0;
-	int payloadBuild = 0;
-	if ( !Session_ReadSaveGameInt( file, marker, "payload marker", savePath.c_str() ) ||
-		 !Session_ReadSaveGameInt( file, payloadVersion, "payload version", savePath.c_str() ) ||
-		 !Session_ReadSaveGameInt( file, payloadBuild, "payload build", savePath.c_str() ) ) {
+	if ( !Session_ReadSaveGameInt( file, marker, "payload marker", savePath.c_str() ) ) {
+		file->Seek( payloadOffset, FS_SEEK_SET );
 		return false;
 	}
 
 	if ( marker != SESSION_OPENQ4_SAVEGAME_COMPATIBILITY_MAGIC ) {
-		common->Warning( "Staged savegame '%s' has invalid openQ4 payload marker 0x%08x",
-			savePath.c_str(), marker );
-		return false;
+		const bool legacyCompatible = allowLegacyPayload && marker == BUILD_NUMBER;
+		if ( !legacyCompatible ) {
+			common->Warning( "Savegame '%s' has unsupported legacy payload build/marker %d (expected build %d or marker 0x%08x)",
+				savePath.c_str(), marker, BUILD_NUMBER, SESSION_OPENQ4_SAVEGAME_COMPATIBILITY_MAGIC );
+		}
+		if ( file->Seek( payloadOffset, FS_SEEK_SET ) != 0 ) {
+			common->Warning( "Savegame '%s' failed to rewind to payload offset %d", savePath.c_str(), payloadOffset );
+			return false;
+		}
+		return legacyCompatible;
 	}
-	if ( payloadVersion != SESSION_OPENQ4_SAVEGAME_COMPATIBILITY_VERSION ) {
-		common->Warning( "Staged savegame '%s' has payload version %d, expected %d",
-			savePath.c_str(), payloadVersion, SESSION_OPENQ4_SAVEGAME_COMPATIBILITY_VERSION );
-		return false;
-	}
-	if ( payloadBuild != BUILD_NUMBER ) {
-		common->Warning( "Staged savegame '%s' has payload build %d, expected %d",
-			savePath.c_str(), payloadBuild, BUILD_NUMBER );
+
+	const int minimumStampedBytes = 5 * static_cast<int>( sizeof( int ) ) + SESSION_OPENQ4_SAVEGAME_FOOTER_BYTES;
+	if ( fileLength < payloadOffset + minimumStampedBytes ) {
+		common->Warning( "Savegame '%s' is too short for a stamped openQ4 payload/footer (payload offset %d, length %d)",
+			savePath.c_str(), payloadOffset, fileLength );
+		file->Seek( payloadOffset, FS_SEEK_SET );
 		return false;
 	}
 
+	int payloadVersion = 0;
+	int payloadBuild = 0;
+	idStr payloadSourceStamp;
+	int payloadSourceFileCount = 0;
+	bool valid =
+		Session_ReadSaveGameInt( file, payloadVersion, "payload version", savePath.c_str() ) &&
+		Session_ReadSaveGameInt( file, payloadBuild, "payload build", savePath.c_str() ) &&
+		Session_ReadSaveGameString( file, payloadSourceStamp, SESSION_OPENQ4_SAVEGAME_SOURCE_STAMP_MAX_BYTES, "payload source stamp", savePath.c_str() ) &&
+		Session_ReadSaveGameInt( file, payloadSourceFileCount, "payload source file count", savePath.c_str() );
+
+	if ( valid && payloadVersion != SESSION_OPENQ4_SAVEGAME_COMPATIBILITY_VERSION ) {
+		common->Warning( "Savegame '%s' has payload version %d, expected %d",
+			savePath.c_str(), payloadVersion, SESSION_OPENQ4_SAVEGAME_COMPATIBILITY_VERSION );
+		valid = false;
+	}
+	if ( valid && payloadBuild != BUILD_NUMBER ) {
+		common->Warning( "Savegame '%s' has payload build %d, expected %d",
+			savePath.c_str(), payloadBuild, BUILD_NUMBER );
+		valid = false;
+	}
+	if ( valid && payloadSourceFileCount < 0 ) {
+		common->Warning( "Savegame '%s' has invalid payload source file count %d",
+			savePath.c_str(), payloadSourceFileCount );
+		valid = false;
+	}
+	if ( valid && OPENQ4_SAVEGAME_COMPAT_SOURCE_FILE_COUNT >= 0 &&
+		 ( payloadSourceStamp.Icmp( OPENQ4_SAVEGAME_COMPAT_SOURCE_HASH ) != 0 ||
+		   payloadSourceFileCount != OPENQ4_SAVEGAME_COMPAT_SOURCE_FILE_COUNT ) ) {
+		common->Warning( "Savegame '%s' source snapshot %s (%d files) does not match current snapshot %s (%d files)",
+			savePath.c_str(),
+			payloadSourceStamp.c_str(), payloadSourceFileCount,
+			OPENQ4_SAVEGAME_COMPAT_SOURCE_HASH, OPENQ4_SAVEGAME_COMPAT_SOURCE_FILE_COUNT );
+		valid = false;
+	}
+
 	const int footerOffset = fileLength - SESSION_OPENQ4_SAVEGAME_FOOTER_BYTES;
-	if ( footerOffset <= payloadOffset || file->Seek( footerOffset, FS_SEEK_SET ) != 0 ) {
-		common->Warning( "Staged savegame '%s' has invalid payload footer offset %d (payload offset %d, length %d)",
+	if ( valid && ( footerOffset <= file->Tell() || file->Seek( footerOffset, FS_SEEK_SET ) != 0 ) ) {
+		common->Warning( "Savegame '%s' has invalid payload footer offset %d (payload offset %d, length %d)",
 			savePath.c_str(), footerOffset, payloadOffset, fileLength );
-		return false;
+		valid = false;
 	}
 
 	int footerMarker = 0;
@@ -669,36 +718,40 @@ static bool Session_ValidateStagedSaveGamePayload( idFile *file, const idStr &sa
 	int savedFooterOffset = 0;
 	int savedObjectCount = 0;
 	int savedSyncCount = 0;
-	if ( !Session_ReadSaveGameInt( file, footerMarker, "payload footer marker", savePath.c_str() ) ||
+	if ( valid && ( !Session_ReadSaveGameInt( file, footerMarker, "payload footer marker", savePath.c_str() ) ||
 		 !Session_ReadSaveGameInt( file, footerVersion, "payload footer version", savePath.c_str() ) ||
 		 !Session_ReadSaveGameInt( file, savedFooterOffset, "payload footer offset", savePath.c_str() ) ||
 		 !Session_ReadSaveGameInt( file, savedObjectCount, "payload footer object count", savePath.c_str() ) ||
-		 !Session_ReadSaveGameInt( file, savedSyncCount, "payload footer sync count", savePath.c_str() ) ) {
-		return false;
+		 !Session_ReadSaveGameInt( file, savedSyncCount, "payload footer sync count", savePath.c_str() ) ) ) {
+		valid = false;
 	}
 
-	if ( footerMarker != SESSION_OPENQ4_SAVEGAME_FOOTER_MAGIC ) {
-		common->Warning( "Staged savegame '%s' has invalid payload footer marker 0x%08x",
+	if ( valid && footerMarker != SESSION_OPENQ4_SAVEGAME_FOOTER_MAGIC ) {
+		common->Warning( "Savegame '%s' has invalid payload footer marker 0x%08x",
 			savePath.c_str(), footerMarker );
-		return false;
+		valid = false;
 	}
-	if ( footerVersion != SESSION_OPENQ4_SAVEGAME_FOOTER_VERSION ) {
-		common->Warning( "Staged savegame '%s' has footer version %d, expected %d",
+	if ( valid && footerVersion != SESSION_OPENQ4_SAVEGAME_FOOTER_VERSION ) {
+		common->Warning( "Savegame '%s' has footer version %d, expected %d",
 			savePath.c_str(), footerVersion, SESSION_OPENQ4_SAVEGAME_FOOTER_VERSION );
-		return false;
+		valid = false;
 	}
-	if ( savedFooterOffset != footerOffset ) {
-		common->Warning( "Staged savegame '%s' footer offset %d does not match EOF footer offset %d",
+	if ( valid && savedFooterOffset != footerOffset ) {
+		common->Warning( "Savegame '%s' footer offset %d does not match EOF footer offset %d",
 			savePath.c_str(), savedFooterOffset, footerOffset );
-		return false;
+		valid = false;
 	}
-	if ( savedObjectCount < 0 || savedSyncCount < 0 ) {
-		common->Warning( "Staged savegame '%s' has invalid footer counts (objects %d, sync markers %d)",
+	if ( valid && ( savedObjectCount < 0 || savedSyncCount < 0 ) ) {
+		common->Warning( "Savegame '%s' has invalid footer counts (objects %d, sync markers %d)",
 			savePath.c_str(), savedObjectCount, savedSyncCount );
-		return false;
+		valid = false;
 	}
 
-	return true;
+	if ( file->Seek( payloadOffset, FS_SEEK_SET ) != 0 ) {
+		common->Warning( "Savegame '%s' failed to rewind to payload offset %d", savePath.c_str(), payloadOffset );
+		return false;
+	}
+	return valid;
 }
 
 static bool Session_RelativeSaveFileExists( const idStr &relativePath ) {
@@ -875,7 +928,7 @@ static bool Session_ValidateStagedSaveGameHeader( const idStr &savePath ) {
 		valid = false;
 	}
 	if ( valid ) {
-		valid = Session_ValidateStagedSaveGamePayload( file, savePath );
+		valid = Session_ValidateSaveGamePayload( file, savePath, false );
 	}
 
 	fileSystem->CloseFile( file );
@@ -5397,6 +5450,11 @@ bool idSessionLocal::LoadGame( const char *saveName ) {
 	// persistent player info
 	for ( i = 0; headerValid && i < MAX_ASYNC_CLIENTS; i++ ) {
 		headerValid = Session_ReadSaveGameDict( loadGameFile, loadedPersistentPlayerInfo[i], va( "persistent player info %d", i ), in.c_str() );
+	}
+	if ( headerValid ) {
+		// Reject truncated, stale, or source-incompatible payloads before
+		// ExecuteMapChange tears down the currently running map.
+		headerValid = Session_ValidateSaveGamePayload( loadGameFile, in, true );
 	}
 	if ( headerValid && saveMap.IsEmpty() ) {
 		common->Warning( "Savegame '%s' has an empty map name", in.c_str() );

@@ -266,6 +266,7 @@ bool idModernGLDrawPlan::AddEntry( const drawPacket_t &draw, int drawPacketIndex
 	entry.materialFlagsLocation = program.materialFlagsLocation;
 	entry.materialEnhancementLocation = program.materialEnhancementLocation;
 	entry.drawRecordModeLocation = program.drawRecordModeLocation;
+	entry.drawRecordCountLocation = program.drawRecordCountLocation;
 	entry.drawPacketIndex = drawPacketIndex;
 	entry.materialRecordIndex = draw.materialRecordIndex;
 	entry.materialTableIndex = materialRecord.tableIndex;
@@ -591,7 +592,9 @@ bool RendererModernGLDrawPlan_RunSelfTest( void ) {
 			const modernGLDrawPlanEntry_t &entry = plan.Entry( i );
 			sawDepth = sawDepth || entry.shaderKind == MODERN_GL_SHADER_DEPTH;
 			sawMaterial = sawMaterial || R_ModernGLDrawPlan_IsMaterialPipeline( entry.pipeline );
-			if ( entry.modelViewProjectionLocation < 0 || entry.permutation.materialClass == RENDER_MATERIAL_NONE ) {
+			if ( entry.modelViewProjectionLocation < 0
+				|| entry.permutation.materialClass == RENDER_MATERIAL_NONE
+				|| ( entry.drawRecordModeLocation >= 0 ) != ( entry.drawRecordCountLocation >= 0 ) ) {
 				common->Printf( "RendererModernGLDrawPlan self-test failed: shader metadata mismatch\n" );
 				return false;
 			}
