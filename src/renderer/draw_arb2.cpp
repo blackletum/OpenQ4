@@ -2175,6 +2175,10 @@ typedef struct {
 	int					shadowMapUpdates;
 	int					composePasses;		// static tiles blitted + dynamic casters drawn on top
 	int					subviewUpdates;		// updates spent in mirror/remote subviews this frame (main-view report)
+	int					subviewReusePasses;	// subview passes served from cached maps under r_shadowMapSubviewPolicy 1
+	int					subviewFallbackPasses;	// subview passes sent to stencil by the subview policy
+	int					translucentReceiverPasses;	// translucent interaction chains drawn with shadow sampling (C3)
+	int					admissionDeniedPasses;	// passes denied a fresh update by importance-ordered budget admission
 	int					cacheHitPasses;
 	int					cacheMissPasses;
 	int					cacheReusePasses;
@@ -2341,6 +2345,25 @@ static pointShadowMapCacheEntry_t *		g_activePointShadowMapCache = NULL;
 static const int						SHADOWMAP_GPU_TIMER_QUERY_SLOTS = 64;
 static shadowMapGpuTimerQuery_t			g_shadowMapGpuTimerQuerySlots[SHADOWMAP_GPU_TIMER_QUERY_SLOTS];
 static int								g_shadowMapGpuTimerQueryCursor = 0;
+
+// Outcome of the current light's GLOBAL shadow pass: when it mapped, the
+// receiver-side state (projected state, bound depth textures) still reflects
+// that pass, so translucent receivers can sample the same map (C3 parity
+// with r_stencilTranslucentShadows). Reset per light in the interaction loop.
+typedef enum {
+	SHADOWMAP_GLOBAL_MAPPED_NONE = 0,
+	SHADOWMAP_GLOBAL_MAPPED_PROJECTED,
+	SHADOWMAP_GLOBAL_MAPPED_POINT
+} shadowMapGlobalMapped_t;
+static shadowMapGlobalMapped_t			g_shadowMapGlobalPassMapped = SHADOWMAP_GLOBAL_MAPPED_NONE;
+
+// Importance-ordered update admissions (M4): when r_shadowMapMaxUpdatesPerView
+// constrains the frame, the budget goes to the most important stale lights
+// instead of whichever came first in the light loop. Built once per view.
+static const int						SHADOWMAP_MAX_ADMITTED_LIGHTS = 128;
+static int								g_shadowMapAdmittedLightIndexes[SHADOWMAP_MAX_ADMITTED_LIGHTS];
+static int								g_shadowMapAdmittedLightCount = 0;
+static bool								g_shadowMapAdmissionsActive = false;
 
 typedef enum {
 	SHADOWMAP_SCHEDULE_UPDATE = 0,
@@ -2908,6 +2931,8 @@ static void RB_ShadowMapResetCasterCull( void ) {
 // every report; the accumulator survives per-view stats resets and surfaces
 // in the main view's SM metrics line.
 static int g_shadowMapSubviewUpdates = 0;
+static int g_shadowMapSubviewReusePasses = 0;
+static int g_shadowMapSubviewFallbackPasses = 0;
 
 // A shadow-map render failure on a light whose stencil volumes were elided
 // would otherwise repeat every frame with an empty fallback; the sticky flag
@@ -3688,12 +3713,32 @@ static shadowMapPassKind_t RB_ShadowMapCachePassKind( const viewLight_t *vLight,
 	return passKind;
 }
 
+static bool RB_ShadowMapUpdateAdmitted( const int lightIndex ) {
+	for ( int i = 0; i < g_shadowMapAdmittedLightCount; i++ ) {
+		if ( g_shadowMapAdmittedLightIndexes[i] == lightIndex ) {
+			return true;
+		}
+	}
+	return false;
+}
+
 static shadowMapSchedule_t RB_ShadowMapSchedulePass( const viewLight_t *vLight, const shadowMapPassKind_t requestedPassKind, const bool pointLight, const bool haveTranslucentCasters ) {
 	const shadowMapPassKind_t passKind = RB_ShadowMapCachePassKind( vLight, requestedPassKind );
 	shadowMapSchedule_t schedule;
 	memset( &schedule, 0, sizeof( schedule ) );
 	schedule.action = SHADOWMAP_SCHEDULE_UPDATE;
 	schedule.signature = RB_ShadowMapBuildPassSignature( vLight, passKind, pointLight );
+
+	// mirror/remote subviews never justify fresh map renders: policy 1
+	// serves them from the cache (signature hits below, stale reuse in the
+	// no-update block), policy 2 skips shadow maps in subviews entirely
+	const int subviewPolicy = idMath::ClampInt( 0, 2, r_shadowMapSubviewPolicy.GetInteger() );
+	const bool subviewView = backEnd.viewDef != NULL && backEnd.viewDef->isSubview;
+	if ( subviewView && subviewPolicy >= 2 ) {
+		g_shadowMapSubviewFallbackPasses++;
+		schedule.action = SHADOWMAP_SCHEDULE_FALLBACK;
+		return schedule;
+	}
 
 	RB_ShadowMapSelectScratchResources();
 	schedule.cacheable = RB_ShadowMapStaticCacheable( vLight, passKind, pointLight, haveTranslucentCasters );
@@ -3708,6 +3753,7 @@ static shadowMapSchedule_t RB_ShadowMapSchedulePass( const viewLight_t *vLight, 
 				g_shadowMapStats.cacheHitPasses++;
 				g_shadowMapStats.cacheReusePasses++;
 				g_shadowMapStats.cacheBudgetReusePasses += schedule.budgetReuse ? 1 : 0;
+				g_shadowMapSubviewReusePasses += subviewView ? 1 : 0;
 				RB_ShadowMapSelectPointCacheEntry( schedule.pointEntry );
 				return schedule;
 			}
@@ -3720,6 +3766,7 @@ static shadowMapSchedule_t RB_ShadowMapSchedulePass( const viewLight_t *vLight, 
 				g_shadowMapStats.cacheHitPasses++;
 				g_shadowMapStats.cacheReusePasses++;
 				g_shadowMapStats.cacheBudgetReusePasses += schedule.budgetReuse ? 1 : 0;
+				g_shadowMapSubviewReusePasses += subviewView ? 1 : 0;
 				g_projectedShadowMapState = schedule.projectedEntry->state;
 				RB_ShadowMapSelectProjectedCacheEntry( schedule.projectedEntry );
 				return schedule;
@@ -3729,10 +3776,19 @@ static shadowMapSchedule_t RB_ShadowMapSchedulePass( const viewLight_t *vLight, 
 	}
 
 	const int updateBudget = r_shadowMapMaxUpdatesPerView.GetInteger();
-	if ( updateBudget > 0 && g_shadowMapStats.shadowMapUpdates >= updateBudget ) {
-		// Out of update budget: a stale cached map (last known shadows) is a
-		// far gentler degradation than flickering the light to stencil for a
-		// frame. Only cacheable lights qualify; anything with translucent
+	const bool budgetExhausted = updateBudget > 0 && g_shadowMapStats.shadowMapUpdates >= updateBudget;
+	// importance admissions (M4): when the budget constrains the frame, the
+	// most important stale lights were selected up front; anything else is
+	// denied a fresh render even before the running count fills up
+	const bool admissionDenied = updateBudget > 0 && g_shadowMapAdmissionsActive && !RB_ShadowMapUpdateAdmitted( lightIndex );
+	const bool subviewDenied = subviewView && subviewPolicy == 1;
+	if ( budgetExhausted || admissionDenied || subviewDenied ) {
+		if ( admissionDenied && !budgetExhausted ) {
+			g_shadowMapStats.admissionDeniedPasses++;
+		}
+		// No fresh render allowed: a stale cached map (last known shadows) is
+		// a far gentler degradation than flickering the light to stencil for
+		// a frame. Only cacheable lights qualify; anything with translucent
 		// casters keeps the full-content stencil fallback.
 		if ( schedule.cacheable ) {
 			if ( pointLight ) {
@@ -3742,6 +3798,7 @@ static shadowMapSchedule_t RB_ShadowMapSchedulePass( const viewLight_t *vLight, 
 					schedule.action = SHADOWMAP_SCHEDULE_REUSE;
 					schedule.budgetReuse = true;
 					g_shadowMapStats.cacheBudgetReusePasses++;
+					g_shadowMapSubviewReusePasses += subviewDenied ? 1 : 0;
 					RB_ShadowMapSelectPointCacheEntry( schedule.pointEntry );
 					return schedule;
 				}
@@ -3752,6 +3809,7 @@ static shadowMapSchedule_t RB_ShadowMapSchedulePass( const viewLight_t *vLight, 
 					schedule.action = SHADOWMAP_SCHEDULE_REUSE;
 					schedule.budgetReuse = true;
 					g_shadowMapStats.cacheBudgetReusePasses++;
+					g_shadowMapSubviewReusePasses += subviewDenied ? 1 : 0;
 					// the receiver must sample the stale map with the state it
 					// was rendered with, not whatever the previous light left
 					g_projectedShadowMapState = schedule.projectedEntry->state;
@@ -3760,6 +3818,7 @@ static shadowMapSchedule_t RB_ShadowMapSchedulePass( const viewLight_t *vLight, 
 				}
 			}
 		}
+		g_shadowMapSubviewFallbackPasses += subviewDenied ? 1 : 0;
 		schedule.action = SHADOWMAP_SCHEDULE_FALLBACK;
 		return schedule;
 	}
@@ -6020,10 +6079,14 @@ static void RB_ShadowMapStatsReset( void ) {
 	}
 
 	// subviews render before the main view; the main view's report claims
-	// the frame's accumulated subview update count
+	// the frame's accumulated subview counters
 	if ( backEnd.viewDef == NULL || !backEnd.viewDef->isSubview ) {
 		g_shadowMapStats.subviewUpdates = g_shadowMapSubviewUpdates;
 		g_shadowMapSubviewUpdates = 0;
+		g_shadowMapStats.subviewReusePasses = g_shadowMapSubviewReusePasses;
+		g_shadowMapSubviewReusePasses = 0;
+		g_shadowMapStats.subviewFallbackPasses = g_shadowMapSubviewFallbackPasses;
+		g_shadowMapSubviewFallbackPasses = 0;
 	}
 
 	RB_ShadowMapExpireCaches();
@@ -6155,10 +6218,14 @@ static void RB_ShadowMapStatsReport( void ) {
 	}
 
 	common->Printf(
-		"SM metrics: updates=%d composed=%d subviewUpdates=%d scheduledSkip=%d atlasTiles=%d/%d pointFaces=%d pointHiP=%d pointCmp=%d cpu(render=%.2f mask=%.2f) gpuSync=%.2f gpuQuery=%.2f/%d pending=%d texelWorld=[%.3f %.3f]\n",
+		"SM metrics: updates=%d composed=%d subview(updates=%d reuse=%d fallback=%d) translucentReceivers=%d admissionDenied=%d scheduledSkip=%d atlasTiles=%d/%d pointFaces=%d pointHiP=%d pointCmp=%d cpu(render=%.2f mask=%.2f) gpuSync=%.2f gpuQuery=%.2f/%d pending=%d texelWorld=[%.3f %.3f]\n",
 		g_shadowMapStats.shadowMapUpdates,
 		g_shadowMapStats.composePasses,
 		g_shadowMapStats.subviewUpdates,
+		g_shadowMapStats.subviewReusePasses,
+		g_shadowMapStats.subviewFallbackPasses,
+		g_shadowMapStats.translucentReceiverPasses,
+		g_shadowMapStats.admissionDeniedPasses,
 		g_shadowMapStats.scheduledSkipPasses,
 		g_shadowMapStats.projectedAtlasTilesRendered,
 		g_shadowMapStats.projectedAtlasTilesAllocated,
@@ -6410,6 +6477,16 @@ static void RB_ShadowMapLightReport( const viewLight_t *vLight, shadowMapLightSu
 }
 
 static void RB_ShadowMapPassReport( const viewLight_t *vLight, shadowMapPassKind_t passKind, bool pointLight, shadowMapPassResult_t result, const drawSurf_t *primaryCasters, const drawSurf_t *secondaryCasters, const drawSurf_t *tertiaryCasters, const drawSurf_t *quaternaryCasters, const drawSurf_t *primaryShadowSurfs, const drawSurf_t *secondaryShadowSurfs, const drawSurf_t *interactions ) {
+	// every pass outcome flows through here, so this is the single place the
+	// GLOBAL pass's mapped state is recorded for the translucent receiver
+	// draw that follows the pass pair (C3)
+	if ( passKind == SHADOWMAP_PASS_GLOBAL ) {
+		if ( result == SHADOWMAP_PASS_RESULT_MAPPED || result == SHADOWMAP_PASS_RESULT_CACHE_REUSE ) {
+			g_shadowMapGlobalPassMapped = pointLight ? SHADOWMAP_GLOBAL_MAPPED_POINT : SHADOWMAP_GLOBAL_MAPPED_PROJECTED;
+		} else {
+			g_shadowMapGlobalPassMapped = SHADOWMAP_GLOBAL_MAPPED_NONE;
+		}
+	}
 	if ( idMath::ClampInt( 0, 2, r_shadowMapReport.GetInteger() ) < 2 || !g_shadowMapReportThisFrame ) {
 		return;
 	}
@@ -9138,6 +9215,109 @@ bool RB_ShadowMapEstimateArb2CacheOwnership( const viewLight_t *vLight, const vi
 	return estimate.shadowPasses > 0;
 }
 
+static projectedShadowMapCacheEntry_t *RB_ShadowMapNewestProjectedGlobalEntry( const int lightIndex );
+
+// Importance-ordered update admissions (M4): with a constrained update
+// budget, spend it on the most important stale lights instead of whichever
+// came first in the light loop. Round-robin fairness comes from the
+// staleness term - a starved light's score grows every frame until it wins
+// a slot. The modern planner's fairness boost folds in when the planner ran
+// this frame, making it authoritative where it is live. Deterministic:
+// score ties break on light index.
+static void RB_ShadowMapBuildUpdateAdmissions( void ) {
+	g_shadowMapAdmissionsActive = false;
+	g_shadowMapAdmittedLightCount = 0;
+	const int updateBudget = r_shadowMapMaxUpdatesPerView.GetInteger();
+	if ( updateBudget <= 0 || backEnd.viewDef == NULL || backEnd.viewDef->viewLights == NULL ) {
+		return;
+	}
+	if ( backEnd.viewDef->isSubview && idMath::ClampInt( 0, 2, r_shadowMapSubviewPolicy.GetInteger() ) > 0 ) {
+		// the subview policy already forbids fresh renders
+		return;
+	}
+
+	struct shadowMapAdmissionCandidate_t {
+		int	lightIndex;
+		int	cost;
+		int	score;
+	};
+	shadowMapAdmissionCandidate_t candidates[SHADOWMAP_MAX_ADMITTED_LIGHTS];
+	int candidateCount = 0;
+	int totalCost = 0;
+	for ( const viewLight_t *vLight = backEnd.viewDef->viewLights; vLight != NULL && candidateCount < SHADOWMAP_MAX_ADMITTED_LIGHTS; vLight = vLight->next ) {
+		shadowMapArb2CacheEstimate_t estimate;
+		if ( !RB_ShadowMapEstimateArb2CacheOwnership( vLight, backEnd.viewDef, estimate ) ) {
+			continue;
+		}
+		// budgetFallbackPasses folds back in: the estimate simulates the
+		// per-light budget, but admission needs the light's full desired
+		// update count. The estimate replays LOCAL/GLOBAL without the cache
+		// pass collapse, so for lights whose passes share one GLOBAL entry
+		// only the GLOBAL prediction is real - the raw sum would charge
+		// steady-state lights for updates they will never render.
+		const unsigned int desiredMask = estimate.freshUpdatePassMask | estimate.budgetFallbackPassMask;
+		const bool passesCollapse = vLight->localShadowMapCasters == NULL
+			&& vLight->localShadowMapDynamicCasters == NULL
+			&& vLight->localTranslucentShadowMapCasters == NULL;
+		const int cost = passesCollapse
+			? ( ( desiredMask & SHADOWMAP_ARB2_CACHE_PASS_GLOBAL ) != 0 ? 1 : 0 )
+			: estimate.freshUpdatePasses + estimate.budgetFallbackPasses;
+		if ( cost <= 0 ) {
+			continue;
+		}
+		int lastUpdatedFrame = -1;
+		if ( estimate.pointLight ) {
+			const pointShadowMapCacheEntry_t *entry = RB_ShadowMapFindPointCacheEntryAnySignature( estimate.lightIndex, SHADOWMAP_PASS_GLOBAL );
+			if ( entry != NULL ) {
+				lastUpdatedFrame = entry->lastUpdatedFrame;
+			}
+		} else {
+			const projectedShadowMapCacheEntry_t *entry = RB_ShadowMapNewestProjectedGlobalEntry( estimate.lightIndex );
+			if ( entry != NULL ) {
+				lastUpdatedFrame = entry->lastUpdatedFrame;
+			}
+		}
+		const int staleness = lastUpdatedFrame < 0 ? 64 : idMath::ClampInt( 0, 64, tr.frameCount - lastUpdatedFrame );
+		const idScreenRect &rect = vLight->scissorRect;
+		const int scissorArea = rect.IsEmpty() ? 0 : ( rect.x2 + 1 - rect.x1 ) * ( rect.y2 + 1 - rect.y1 );
+		int score = scissorArea / 32 + staleness * 512 + ( vLight->viewInsideLight ? 8192 : 0 );
+		const modernShadowLightDescriptor_t *planned = R_ModernShadowPlanner_DescriptorForLight( vLight );
+		if ( planned != NULL ) {
+			score += planned->fairnessBoost;
+		}
+		candidates[candidateCount].lightIndex = estimate.lightIndex;
+		candidates[candidateCount].cost = cost;
+		candidates[candidateCount].score = score;
+		candidateCount++;
+		totalCost += cost;
+	}
+	if ( candidateCount == 0 || totalCost <= updateBudget ) {
+		// everything fits; first-come order is already correct
+		return;
+	}
+
+	// insertion sort by (score desc, lightIndex asc); counts are small
+	for ( int i = 1; i < candidateCount; i++ ) {
+		const shadowMapAdmissionCandidate_t key = candidates[i];
+		int j = i - 1;
+		while ( j >= 0 && ( candidates[j].score < key.score || ( candidates[j].score == key.score && candidates[j].lightIndex > key.lightIndex ) ) ) {
+			candidates[j + 1] = candidates[j];
+			j--;
+		}
+		candidates[j + 1] = key;
+	}
+
+	int remaining = updateBudget;
+	for ( int i = 0; i < candidateCount && remaining > 0; i++ ) {
+		if ( candidates[i].cost > remaining ) {
+			continue;
+		}
+		g_shadowMapAdmittedLightIndexes[g_shadowMapAdmittedLightCount++] = candidates[i].lightIndex;
+		remaining -= candidates[i].cost;
+	}
+	g_shadowMapAdmissionsActive = true;
+}
+
 // A light can briefly own two GLOBAL entries: a signature change allocates a
 // new record without invalidating the old one (the old entry deliberately
 // backs ARB2's budget stale-reuse). Consumers of the persistent-atlas slot
@@ -11216,6 +11396,7 @@ void RB_ARB2_DrawInteractions( void ) {
 	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
 	RB_ShadowMapStatsReset();
 	RB_ShadowMapDebugOverlayReset();
+	RB_ShadowMapBuildUpdateAdmissions();
 
 	//
 	// for each light, perform adding and shadowing
@@ -11277,6 +11458,7 @@ void RB_ARB2_DrawInteractions( void ) {
 			RB_ShadowMapLightReport( vLight, supportReason );
 
 			glStencilFunc( GL_ALWAYS, 128, 255 );
+			g_shadowMapGlobalPassMapped = SHADOWMAP_GLOBAL_MAPPED_NONE;
 
 			if ( classification.pointLight ) {
 				// Point-light shadow maps use the same ownership split as the retail
@@ -11295,7 +11477,28 @@ void RB_ARB2_DrawInteractions( void ) {
 			if ( !r_skipTranslucent.GetBool() ) {
 				glStencilFunc( GL_ALWAYS, 128, 255 );
 				backEnd.depthFunc = GLS_DEPTHFUNC_LESS;
-				RB_DrawMaterialInteractions( vLight->translucentInteractions );
+				if ( r_shadowMapTranslucentReceivers.GetBool()
+					&& g_shadowMapGlobalPassMapped != SHADOWMAP_GLOBAL_MAPPED_NONE
+					&& vLight->translucentInteractions != NULL ) {
+					// stencil parity (C3): the GLOBAL pass just mapped, so its
+					// receiver state (projected state, bound depth map/cube) is
+					// still current - translucent receivers sample the same map
+					// the opaque receivers used. Surfaces the receiver path
+					// cannot draw (custom GLSL, generated geometry, prepare
+					// failures) keep their unshadowed contribution below.
+					g_shadowMapStats.translucentReceiverPasses++;
+					if ( g_shadowMapGlobalPassMapped == SHADOWMAP_GLOBAL_MAPPED_POINT ) {
+						RB_GLSLPointShadowMap_CreateDrawInteractions( vLight->translucentInteractions );
+					} else {
+						RB_GLSLShadowMap_CreateDrawInteractions( vLight->translucentInteractions );
+					}
+					RB_DrawMaterialInteractionsFiltered( vLight->translucentInteractions, RB_SurfaceNeedsShadowMapReceiverFallback );
+					if ( g_shadowMapMaskPrepareFailures > 0 ) {
+						RB_DrawMaterialInteractionsFiltered( vLight->translucentInteractions, RB_SurfaceShadowMapReceiverPrepareFailed );
+					}
+				} else {
+					RB_DrawMaterialInteractions( vLight->translucentInteractions );
+				}
 				backEnd.depthFunc = GLS_DEPTHFUNC_EQUAL;
 			}
 

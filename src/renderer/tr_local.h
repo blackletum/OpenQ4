@@ -1257,6 +1257,8 @@ extern idCVar r_shadowMapTranslucentMinAlpha;	// minimum per-stage alpha conside
 extern idCVar r_shadowMapCustomGLSLReceiverWrapper;	// 1 = map compatible custom GLSL receivers through stock interactions
 extern idCVar r_shadowMapReport;		// 0 = off, 1 = per-view summary, 2 = per-light joined planner/ARB2/modern decisions, 3 = verbose receiver-submit decisions
 extern idCVar r_shadowMapModernStrict;	// fail-visible modern shadow contract breaks (black light instead of silently unshadowed)
+extern idCVar r_shadowMapTranslucentReceivers;	// translucent surfaces sample the shadow map like opaque receivers
+extern idCVar r_shadowMapSubviewPolicy;	// 0 = full renders in subviews, 1 = reuse-or-stencil, 2 = always stencil
 extern idCVar r_shadowMapReportInterval;	// frames between shadow-map diagnostic reports
 extern idCVar r_shadowMapConservativeCasters;	// 1 = keep shadow-map caster submission independent from visible receiver scissors
 extern idCVar r_shadowMapProjectedCSM;	// 1 = allow ordinary projected lights to use CSM when r_shadowMapCSM is enabled

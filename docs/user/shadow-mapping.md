@@ -163,13 +163,17 @@ openQ4 can keep static-only shadow maps resident and reuse them across backend v
 | Setting | Default | Range | What it does |
 |---|---:|---:|---|
 | `r_shadowMapStaticCache` | `1` | `0..1` | Reuses resident shadow maps for static-only projected and point lights. |
-| `r_shadowMapStaticHysteresisFrames` | `2` | `0..120` | Frames to wait after dynamic casters disappear before a light becomes cacheable again. |
+| `r_shadowMapStaticHysteresisFrames` | `2` | `0..120` | Frames to wait after dynamic casters disappear before a point light becomes cacheable again. Projected lights stay cached while dynamic casters move: their static tiles persist in the atlas and the moving casters are composed on top each frame. |
 | `r_shadowMapResidentFrames` | `120` | `1..3600` | Frames an unused static shadow map can stay resident before its slot may be expired. |
-| `r_shadowMapProjectedCacheSize` | `4` | `0..8` | Static projected-light cache slots. |
-| `r_shadowMapPointCacheSize` | `4` | `0..8` | Static point-light cubemap cache slots. |
+| `r_shadowMapProjectedCacheSize` | `8` | `0..16` | Static projected-light cache slots inside the shared atlas. |
+| `r_shadowMapPointCacheSize` | `12` | `0..16` | Static point-light cubemap cache slots. |
 | `r_shadowMapCacheCSM` | `0` | `0..1` | Allows static-cache reuse for CSM/global shadow-map passes. Leave off unless you are testing a fixed-view or otherwise stable scene. |
+| `r_shadowMapSubviewPolicy` | `1` | `0..2` | Shadow maps in mirror/remote-camera subviews: `0` renders them like main views, `1` reuses cached maps or falls back to stencil (subviews never render fresh maps), `2` always uses stencil in subviews. |
+| `r_shadowMapTranslucentReceivers` | `1` | `0..1` | Lets translucent surfaces sample the shadow map like opaque receivers, matching the stencil path's `r_stencilTranslucentShadows` behavior. |
 
-`r_shadowMapMaxUpdatesPerView` still limits dynamic shadow-map work. Resident cache hits do not consume that update budget, so static light reuse can reduce update pressure without starving moving lights. Cache signatures include caster materials, alpha/hash settings, caster offset settings, point-light range/depth mode, and view-fitted CSM state, so changing those inputs forces a fresh shadow map instead of reusing stale resident data.
+`r_shadowMapMaxUpdatesPerView` still limits dynamic shadow-map work. Resident cache hits do not consume that update budget, so static light reuse can reduce update pressure without starving moving lights. When the budget constrains a frame, updates go to the most important stale lights first (screen coverage, staleness, and view proximity ordered), and starved lights age up the priority list so every light is eventually refreshed; denied lights reuse their last cached map when one exists. Cache signatures include caster materials, alpha/hash settings, caster offset settings, point-light range/depth mode, and view-fitted CSM state, so changing those inputs forces a fresh shadow map instead of reusing stale resident data.
+
+Projected lights with moving casters no longer pay full re-renders: the light's static geometry stays cached in the shared atlas, and each frame the cached tiles are copied and only the moving casters are drawn on top. A walking character in a cached light costs one small copy plus its own triangles.
 
 ## Transparency Shadowing
 
@@ -297,6 +301,9 @@ Practical advice:
 - `9`: PCF off
 - `10`: Caster polygon offset off
 - `11`: Receiver-plane/normal bias off
+- `12`: Compare-depth delta
+- `13`: Receiver eligibility
+- `14`: Receiver fallback reason
 
 Useful workflow:
 1. Enable `r_useShadowMap 1`.
@@ -308,7 +315,7 @@ Useful workflow:
 6. Point-light overlay tiles are face indices `0..5` in a `3x2` layout:
    `0 = +X`, `1 = -X`, `2 = +Y`, `3 = -Y`, `4 = +Z`, `5 = -Z`.
 7. Use `reportShaderPrograms` if the scene looks unlit or obviously wrong.
-8. Use `r_shadowMapReport 1`, `2`, or `3` for live diagnostic logging. Summary lines include point depth-compare usage as `pointCmp`, timer-query totals as `gpuQuery`, and the `SM cache:` line reports cache hits, misses, resident reuse, budget reuse, evictions, and active projected/point cache slots. Verbose projected CSM bias lines include per-cascade near/far range, fitted depth range, world texel size, and clip-space depth extent. Level `3` adds receiver-submit diagnostics for mapped-light cases that had visible receivers but no GLSL interaction submissions.
+8. Use `r_shadowMapReport 1`, `2`, or `3` for live diagnostic logging. Summary lines include point depth-compare usage as `pointCmp`, timer-query totals as `gpuQuery`, and the `SM cache:` line reports cache hits, misses, resident reuse, budget reuse, evictions, active projected/point cache slots, and resident shadow VRAM. The `SM metrics:` line reports per-frame updates, composed static/dynamic layer passes (`composed`), subview reuse/fallback activity, translucent receiver chains drawn with shadow sampling, and importance-budget denials. The `SM modern:` line summarizes the modern path's consumption of the persistent atlas (live atlas slots, mapped/cache-reuse lights, and per-light blocking counts). Verbose projected CSM bias lines include per-cascade near/far range, fitted depth range, world texel size, and clip-space depth extent. Level `3` adds receiver-submit diagnostics for mapped-light cases that had visible receivers but no GLSL interaction submissions.
    Per-light lines separate semantic light class from backing shadow-map resource shape. For example, a stock authored parallel light may report `class=parallel type=point` when it uses the point-resource path.
 9. When rejected casters are present, the `SM caster-reject:` line breaks them down by reason, such as view-only entities, depth-hack models, disconnected portal areas, GUI/subview surfaces, non-shadowing materials, or disabled/unsupported translucent casters.
 
@@ -326,6 +333,17 @@ Useful workflow:
 - If point-light depth compare causes shader trouble on a driver, leave `r_shadowMapPointDepthCompare 0`; the renderer falls back to the high-precision color-depth cubemap path.
 - If static-cache reuse hides expected updates while testing unusual content, set `r_shadowMapStaticCache 0` or reduce `r_shadowMapResidentFrames`.
 - If performance drops sharply after enabling translucent shadowing, turn off `r_shadowMapTranslucentMoments` first; it adds an extra pass for eligible lights.
+
+## Platform Support Matrix
+
+| Platform | Shadow maps | Notes |
+|---|---|---|
+| Windows (GL3.3+) | Supported | Primary development and validation platform; the bit-exact regression net runs here. |
+| Linux (GL3.3+) | Supported | Same GL feature path as Windows. |
+| Steam Deck | Supported | Recommended: `r_shadowMapSize 1024`, `r_shadowMapPointSize 512`, `r_shadowMapMaxUpdatesPerView 2`, `r_shadowMapCSM 1` with `r_shadowMapCascadeCount 3`. The importance-ordered update budget keeps per-frame shadow cost bounded. |
+| macOS (Apple legacy GL2.1 tier) | Stencil only | The Apple compatibility corridor lacks the GLSL/FBO feature set the shadow-map receiver and caster programs require. Lights fall back to the retail stencil path automatically; this is expected and documented behavior, not an error. |
+
+The shadow-map pipeline fails closed per light: any light that cannot complete the map path (missing capability, failed framebuffer, unsupported receiver) renders with the retail stencil path for that light instead of losing its shadows.
 
 ## Summary
 

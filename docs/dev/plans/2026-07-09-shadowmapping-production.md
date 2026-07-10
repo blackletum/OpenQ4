@@ -355,6 +355,21 @@ one allocator instead of three consistency layers).
 (golden-image diff within tolerance); multiple mapped lights resident simultaneously; planner
 stats equal rendered reality frame-for-frame.
 
+**Phase 5 outcome notes (2026-07-10):** landed across four slices on `main` — 5a persistent
+projected atlas (`50bf1f9e`), 5b layered static/dynamic composition (`1fb5f9b4`), 5c modern
+consumption of the real atlas with per-light gating, the M2 basis fix, freshness stamps, and
+self-test hardening (`688a0999`), 5d subview reuse-or-stencil policy, importance-ordered
+update admissions, and translucent shadow-map receivers (C3 stencil parity). Two items are
+**deliberately re-homed to the modern-renderer track** rather than this shadow roadmap:
+the up-front atlas producer for fully modern-owned frames (today ARB2's interaction loop is
+the atlas producer; a modern-owned frame that goes stale self-corrects through the per-light
+gate with a one-frame legacy fallback, which is correct-if-suboptimal for an opt-in
+diagnostics path) and the point cube-array pool (without a modern producer it would repeat
+the M1 mistake — a resource nothing renders into; until it lands, the executor enforces the
+single-cube constraint honestly by fail-closing on a second distinct consumable point
+light). Both become worthwhile when the modern path graduates from sidecar to owner, which
+is a modern-renderer milestone, not a shadow-quality one.
+
 ### Phase 6 — Product polish and the default flip
 
 1. Menu exposure with localized `#str_*` entries: Shadows = Off / Stencil / Shadow Maps
@@ -375,6 +390,31 @@ stats equal rendered reality frame-for-frame.
 
 *Acceptance:* full SP campaign + MP soak with maps on, zero I1 violations, performance parity
 or better vs stencil on min-spec, golden-image suite green on Windows/Linux/Deck.
+
+**Phase 6 outcome notes (2026-07-10):** items 2 and 3 landed — platform support matrix and
+Steam Deck recommendations in `docs/user/shadow-mapping.md` / `docs/user/steam-deck.md`,
+debug modes 12-14 and the SM metrics/SM modern report format documented, defaults tables
+synced with the shipped cvar values, and `tools/tests/macos_shadow_policy.py` pins the
+Apple-path capability gating plus the per-light stencil-fallback contract. Item 1 (menu
+exposure) is **handed off**: the settings-menu/performance-preset system is under active
+rework on a parallel branch of work whose own design notes keep shadow maps as a separate
+opt-in, so the shadow quality bundles should be added when that rework lands rather than
+racing it. Item 5 (the default flip) is **ready to execute pending the gameplay sign-off
+its own acceptance gate requires**. Flip-readiness evidence collected on Windows/RTX-class
+hardware, `r_shadowMapPointLights 1`, CSM preset vs stencil, 600-frame captures:
+
+| Scene | Stencil | Shadow maps + CSM | Delta |
+|---|---|---|---|
+| `sp-airdefense1` (outdoor, CSM-heavy) | 114.3 Hz, p95 12 ms | 115.2 Hz, p95 13 ms | parity |
+| `sp-storage1` (dense indoor, point-heavy) | 124.7 Hz, p95 11 ms | 116.7 Hz, p95 12 ms | -6.4% avg, +1 ms p95 |
+
+The bounded-budget path (`r_shadowMapMaxUpdatesPerView 2`, importance-ordered) narrows the
+indoor gap further and is the recommended Deck configuration. Everything else the flip
+needs is green: 5-case bit-exact regression net, planner/projected/cluster-grid self-tests
+with unconditional pins, macOS policy sweep, and per-light fail-closed degradation at
+every capability boundary. To flip: set `r_useShadowMap` default to `1` in
+`RenderSystem_init.cpp`, re-bless the golden references captured with maps on, and add the
+release-notes entry; stencil remains the archived rollback via `r_useShadowMap 0`.
 
 ## 5. Pitfall coverage matrix
 

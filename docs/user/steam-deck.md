@@ -62,6 +62,23 @@ Run `listControllers` from the console when diagnosing Deck input. It prints the
 - The automatic cap uses SDL's current display refresh and clamps it to the Deck-oriented `40..90` range. LCD Deck sessions normally land on `60`; OLED or higher-refresh sessions can land higher.
 - Set `com_maxfps` yourself to preserve a specific cap. Set `com_steamDeckAutoFrameCap 0` to disable the automatic default, or set `com_steamDeckFrameCap` to a nonzero value to choose the Deck default cap explicitly.
 
+### Shadow Maps on Deck
+
+Shadow maps run well on Deck-class hardware with a bounded update budget. Recommended settings:
+
+```cfg
+seta r_shadows 1
+seta r_useShadowMap 1
+seta r_shadowMapSize 1024
+seta r_shadowMapPointSize 512
+seta r_shadowMapCSM 1
+seta r_shadowMapCascadeCount 3
+seta r_shadowMapMaxUpdatesPerView 2
+vid_restart
+```
+
+With the update budget set, the renderer spends each frame's shadow renders on the most important stale lights and serves the rest from the resident cache, so shadow cost stays bounded in dense scenes. See `docs/user/shadow-mapping.md` for the full settings reference.
+
 ## Asset Discovery
 
 Linux Steam auto-discovery checks these roots and then expands any additional library folders from `libraryfolders.vdf`:
