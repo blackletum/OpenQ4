@@ -187,6 +187,7 @@ void idAsyncServer::Spawn( void ) {
 
 	// calculate a checksum on some of the essential data used
 	serverDataChecksum = declManager->GetChecksum();
+	common->DPrintf( "Server decl checksum: 0x%08x\n", static_cast<unsigned int>( serverDataChecksum ) );
 
 	// get a pseudo random server id, but don't use the id which is reserved for connectionless packets
 	serverId = Sys_Milliseconds() & CONNECTIONLESS_MESSAGE_ID_MASK;
@@ -1717,6 +1718,9 @@ void idAsyncServer::ProcessConnectMessage( const netadr_t from, const idBitMsg &
 
 	// check the client data - only for non pure servers
 	if ( !sessLocal.mapSpawnData.serverInfo.GetInt( "si_pure" ) && clientDataChecksum != serverDataChecksum ) {
+		common->DPrintf( "Decl checksum mismatch from %s: client=0x%08x server=0x%08x (non-pure)\n",
+			Sys_NetAdrToString( from ), static_cast<unsigned int>( clientDataChecksum ),
+			static_cast<unsigned int>( serverDataChecksum ) );
 		PrintOOB( from, SERVER_PRINT_MISC, "#str_04842" );
 		return;
 	}
@@ -1779,6 +1783,9 @@ void idAsyncServer::ProcessConnectMessage( const netadr_t from, const idBitMsg &
 
 	// push back decl checksum here when running pure. just an additional safe check
 	if ( sessLocal.mapSpawnData.serverInfo.GetInt( "si_pure" ) && clientDataChecksum != serverDataChecksum ) {
+		common->DPrintf( "Decl checksum mismatch from %s: client=0x%08x server=0x%08x (pure)\n",
+			Sys_NetAdrToString( from ), static_cast<unsigned int>( clientDataChecksum ),
+			static_cast<unsigned int>( serverDataChecksum ) );
 		PrintOOB( from, SERVER_PRINT_MISC, "#str_04844" );
 		return;
 	}
@@ -2521,7 +2528,7 @@ void idAsyncServer::RunFrame( bool allowBlocking ) {
 
 			idStr msg;
 			GetAsyncStatsAvgMsg( msg );
-			common->Printf( va( "%s\n", msg.c_str() ) );
+			common->Printf( "%s\n", msg.c_str() );
 
 			nextAsyncStatsTime = serverTime + 1000;
 		}

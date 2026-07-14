@@ -16,14 +16,14 @@ class rvDeclMatType : public idDecl
 {
 public:
 #endif
-						rvDeclMatType( void ) { *( ulong *)mTint = 0; }
+						rvDeclMatType( void ) { memset( mTint, 0, sizeof( mTint ) ); }
 						~rvDeclMatType( void ) {}
 
 	void				SetDescription( idStr &desc ) { mDescription = desc; }
 	const idStr			&GetDescription( void ) const { return( mDescription ); }
 
-	void				SetTint( byte tint[4] ) { *( ulong *)mTint = *( ulong *)tint; }
-	int					GetTint( void ) const { return( *( int *)mTint ); }
+	void				SetTint( const byte tint[4] ) { memcpy( mTint, tint, sizeof( mTint ) ); }
+	int					GetTint( void ) const { int tint; memcpy( &tint, mTint, sizeof( tint ) ); return tint; }
 
 	float				GetRed( void ) const { return( mTint[0] / 255.0f ); }
 	float				GetGreen( void ) const { return( mTint[1] / 255.0f ); }

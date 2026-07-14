@@ -1,6 +1,6 @@
 # macOS Support Matrix Policy
 
-Updated: 2026-06-30
+Updated: 2026-07-11
 
 This document defines the current macOS architecture and OS-version matrix for
 openQ4 releases. It records what is supported now, what is deliberately not
@@ -17,8 +17,10 @@ Current macOS release artifacts are experimental Apple Silicon/arm64 only:
 
 The current hosted CI and manual release lanes use GitHub-hosted `macos-15`
 runners for configure, build, staging, package, signing, notarization, and
-static validation. Hosted runner success is not a replacement for real
-Apple-hardware runtime signoff.
+static validation. Push jobs also require an assetless renderer launch for the
+OpenGL and Metal bridge variants, and release jobs launch the packaged app
+executable from a Finder-style unrelated working directory. Hosted runner
+success is not a replacement for real Apple-hardware gameplay signoff.
 
 ## Architecture Policy
 
@@ -54,7 +56,10 @@ Before claiming Intel Mac or universal2 support, openQ4 must have:
 The current packaged compatibility floor is `macOS 11` for the experimental
 Apple Silicon/arm64 release line. Meson sets `-mmacosx-version-min=11.0`, app
 metadata sets `LSMinimumSystemVersion` to `11.0`, and user-facing docs say
-macOS 11 or later.
+macOS 11 or later. The Bash Meson wrapper now supplies
+`MACOSX_DEPLOYMENT_TARGET=11.0` when it is unset so vendored dependencies and
+companion GameLibs inherit the same floor; an explicit dotted override remains
+available for deliberate local compatibility experiments.
 
 The validation policy is:
 

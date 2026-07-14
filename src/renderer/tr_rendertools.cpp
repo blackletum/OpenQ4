@@ -312,7 +312,7 @@ static void RB_RendertoolsDrawLightCountSurface( const drawSurf_t *surf ) {
 	}
 
 	const idDrawVert *ambientCache = (idDrawVert *)vertexCache.Position( tri->ambientCache );
-	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), &ambientCache->xyz );
+	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ambientCache, offsetof( idDrawVert, xyz ) ) );
 
 #if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
 	if ( tri->primBatchMesh != NULL && tri->ambientSurface != NULL ) {
@@ -1162,7 +1162,7 @@ static void RB_ShowShadowCount( void ) {
 				}
 
 				shadowCache_t *cache = (shadowCache_t *)vertexCache.Position( tri->shadowCache );
-				glVertexPointer( 4, GL_FLOAT, sizeof( *cache ), &cache->xyz );
+				glVertexPointer( 4, GL_FLOAT, sizeof( *cache ), RB_DrawVertAttributePointer( cache, offsetof( shadowCache_t, xyz ) ) );
 				RB_DrawElementsWithCounters( tri );
 			}
 		}

@@ -347,7 +347,10 @@ float ProjectedPCSSRadius( vec2 uv, float depth, int cascadeIndex, vec2 clampMin
 
 	float averageBlocker = blockerDepth / blockerCount;
 	float penumbra = ( depth - averageBlocker ) / max( averageBlocker, 1.0e-4 );
-	return clamp( max( uShadowFilterRadius, penumbra * uShadowPCSSLightRadius ), uShadowFilterRadius, uShadowPCSSMaxRadius );
+	// Keep the clamp ordered when a user deliberately sets a PCSS maximum
+	// below the base PCF radius.  A zero maximum still disables PCSS above.
+	float maxRadius = max( uShadowFilterRadius, uShadowPCSSMaxRadius );
+	return clamp( max( uShadowFilterRadius, penumbra * uShadowPCSSLightRadius ), uShadowFilterRadius, maxRadius );
 }
 #endif
 

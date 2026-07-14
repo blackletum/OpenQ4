@@ -42,6 +42,8 @@ typedef unsigned short int UINT2;
 /* UINT4 defines a four byte word */
 typedef uint32_t UINT4;
 
+static_assert( sizeof( UINT4 ) == 4, "MD4 requires 32-bit words" );
+
 /* MD4 context. */
 typedef struct {
 	UINT4 state[4];				/* state (ABCD) */

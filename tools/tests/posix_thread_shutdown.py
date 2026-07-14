@@ -76,6 +76,15 @@ def validate_cross_platform_shims() -> None:
     require(stub, "Sys_IsCurrentThreadStopRequested", "stub current thread stop helper")
 
 
+def validate_sdl_main_thread_contract() -> None:
+    source = read("src/sys/posix/posix_main.cpp")
+
+    require(source, "Skipping SDL clipboard read from a non-main thread.", "SDL clipboard read guard")
+    require(source, "Skipping SDL clipboard write from a non-main thread.", "SDL clipboard write guard")
+    if source.count("if ( !Posix_IsMainThread() )") < 3:
+        raise AssertionError("POSIX SDL teardown and both clipboard operations must reject worker-thread calls")
+
+
 def validate_release_note() -> None:
     source = read("docs/dev/release-completion.md")
 
@@ -88,6 +97,7 @@ def main() -> None:
     validate_posix_thread_teardown()
     validate_workers_observe_stop_requests()
     validate_cross_platform_shims()
+    validate_sdl_main_thread_contract()
     validate_release_note()
     print("posix_thread_shutdown: ok")
 

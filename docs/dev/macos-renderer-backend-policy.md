@@ -1,6 +1,6 @@
 # macOS Renderer And Backend Policy
 
-Updated: 2026-06-30
+Updated: 2026-07-11
 
 This document defines the current macOS renderer and platform-backend support
 policy. It exists so the OpenGL package, Metal bridge package, and legacy native
@@ -40,8 +40,11 @@ separate:
 - SP and MP in-game checks on real Apple hardware or a compliant Apple-hardware
   VM before any first-class support claim.
 
-Hosted CI package/build success is useful, but it is not a replacement for
-runtime evidence on the documented macOS floor and latest public macOS release.
+Hosted CI now performs an assetless renderer launch for both bridge variants,
+and release packaging launches the app executable from an unrelated working
+directory to exercise app-bundle path resolution. These are required smoke
+checks, but they are not a replacement for SP/MP gameplay evidence on the
+documented macOS floor and latest public macOS release.
 
 ## Apple OpenGL Risk
 
@@ -54,6 +57,19 @@ Known policy consequences:
 
 - macOS remains capped by Apple OpenGL behavior, including the OpenGL 4.1 core
   ceiling and fragile compatibility-context behavior.
+- Apple compatibility launches currently select a 2.1 compatibility context
+  because the visible renderer still needs fixed-function/ARB-era state. The
+  automatic interaction policy avoids the previously crashing ARB program on
+  ordinary stock surfaces by using the existing GLSL 1.10
+  `material_interaction` program with neutral values; generated or otherwise
+  ineligible surfaces use a CPU-pointer-safe `SimpleInteraction.vfp` fallback.
+- `r_appleARB2Interactions 3` retains the old ambient-only interaction bypass
+  strictly as an emergency recovery mode. It is not acceptable visual-parity
+  evidence. Modes `1` and `2` force the simple/full ARB paths for diagnosis.
+- Window/default-framebuffer MSAA support is not treated as proof that Apple
+  accepts the same sample count for offscreen RGBA8 + packed depth/stencil
+  targets. Game targets retry lower samples and fail into direct rendering
+  instead of terminating on an incomplete FBO.
 - Renderer compatibility work should continue to harden the OpenGL path, not
   hide OpenGL dependency behind Metal wording.
 - Release notes must call out any renderer limitation found during signoff.

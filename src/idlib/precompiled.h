@@ -322,6 +322,7 @@ public:
 #include <time.h>
 #include <ctype.h>
 #include <typeinfo>
+#include <atomic>
 #include <errno.h>
 #include <math.h>
 
@@ -404,7 +405,11 @@ const float MAX_BOUND_SIZE = 65536.0f;
 //-----------------------------------------------------
 
 #ifdef GAME_DLL
+#ifdef GAME_MPAPI
+#include "../mpgame/Game_local.h"
+#else
 #include "../game/Game_local.h"
+#endif
 #endif
 
 #ifndef Q4SDK

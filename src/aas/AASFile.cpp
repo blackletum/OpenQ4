@@ -731,7 +731,7 @@ bool idAASFileLocal::Write( const idStr &fileName, unsigned int mapFileCRC ) {
 			num++;
 		}
 // jmarshall: AAS 1.08 - numFeatures/firstFeature
-		aasFile->WriteFloatString( "\t%d ( %d %d %d %d %d %d %d %d %d %d ) %d {\n", i, areas[i].flags, areas[i].contents,
+		aasFile->WriteFloatString( "\t%d ( %d %d %d %d %d %d %d %d ) %d {\n", i, areas[i].flags, areas[i].contents,
 						areas[i].firstFace, areas[i].numFaces, areas[i].cluster, areas[i].clusterAreaNum, /*areas[i].numFeatures*/ 0, /*areas[i].firstFeature*/ 0, num );
 // jmarshall end
 		for ( reach = areas[i].reach; reach; reach = reach->next ) {

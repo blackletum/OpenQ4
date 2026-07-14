@@ -52,6 +52,7 @@ jobs:
             tools/build/openq4_version.py \
             tools/build/package_nightly.py \
             tools/build/package_release.py \
+            tools/build/verify_linux_arm64_release_evidence.py \
             tools/build/stage_fast_install.py \
             tools/build/stage_gamelibs.py \
             tools/build/stage_windows_runtime.py \
@@ -68,7 +69,18 @@ jobs:
             tools/tests/game_class_allocator_alignment.py \
             tools/tests/gamelibs_staging.py \
             tools/tests/hdr_postprocess_math.py \
+            tools/tests/linux_arm64_cross_compile.py \
             tools/tests/linux_arm64_ci_coverage.py \
+            tools/tests/linux_arm64_release_evidence.py \
+            tools/tests/linux_arm64_source_portability.py \
+            tools/tests/linux_dedicated_server_smoke.py \
+            tools/tests/linux_dedicated_server_smoke_contract.py \
+            tools/tests/linux_dedicated_stock_map_smoke.py \
+            tools/tests/linux_dedicated_stock_map_smoke_contract.py \
+            tools/tests/linux_physical_host_evidence.py \
+            tools/tests/linux_physical_host_evidence_contract.py \
+            tools/tests/linux_wayland_stock_sp_smoke.py \
+            tools/tests/linux_wayland_stock_sp_smoke_contract.py \
             tools/tests/linux_gui_presentation_defaults.py \
             tools/tests/linux_highdpi_mouse.py \
             tools/tests/linux_metadata_fuzz.py \
@@ -76,6 +88,7 @@ jobs:
             tools/tests/linux_sanitizer_ci.py \
             tools/tests/linux_sdl3_glew_loader.py \
             tools/tests/linux_vsync_support.py \
+            tools/tests/linux_wayland_build_contract.py \
             tools/tests/loading_continue_input.py \
             tools/tests/macos_apple_gl21_arb2_corridor.py \
             tools/tests/macos_evidence_plumbing.py \
@@ -109,6 +122,7 @@ jobs:
             tools/tests/posix_thread_shutdown.py \
             tools/tests/release_tooling_safety.py \
             tools/tests/renderer_msaa_cvar_safety.py \
+            tools/tests/renderer_screenshot_readback.py \
             tools/tests/renderer_supersampling_safety.py \
             tools/tests/savegame_corruption_contract.py \
             tools/tests/sdl3_input_parity.py \
@@ -130,7 +144,14 @@ jobs:
           python tools/tests/game_class_allocator_alignment.py
           python tools/tests/gamelibs_staging.py
           python tools/tests/hdr_postprocess_math.py
+          python tools/tests/linux_arm64_cross_compile.py
           python tools/tests/linux_arm64_ci_coverage.py
+          python tools/tests/linux_arm64_release_evidence.py
+          python tools/tests/linux_arm64_source_portability.py
+          python tools/tests/linux_dedicated_server_smoke_contract.py
+          python tools/tests/linux_dedicated_stock_map_smoke_contract.py
+          python tools/tests/linux_physical_host_evidence_contract.py
+          python tools/tests/linux_wayland_stock_sp_smoke_contract.py
           python tools/tests/linux_gui_presentation_defaults.py
           python tools/tests/linux_highdpi_mouse.py
           python tools/tests/linux_metadata_fuzz.py
@@ -139,6 +160,7 @@ jobs:
           python tools/tests/linux_sanitizer_ci.py
           python tools/tests/linux_sdl3_glew_loader.py
           python tools/tests/linux_vsync_support.py
+          python tools/tests/linux_wayland_build_contract.py
           python tools/tests/loading_continue_input.py
           python tools/tests/macos_apple_gl21_arb2_corridor.py
           python tools/tests/macos_evidence_plumbing.py
@@ -172,6 +194,7 @@ jobs:
           python tools/tests/posix_network_resolution.py
           python tools/tests/posix_thread_shutdown.py
           python tools/tests/renderer_msaa_cvar_safety.py
+          python tools/tests/renderer_screenshot_readback.py
           python tools/tests/renderer_supersampling_safety.py
           python tools/tests/savegame_corruption_contract.py
           python tools/tests/sdl3_input_parity.py
@@ -214,13 +237,13 @@ jobs:
           - name: macOS OpenGL Push Verification
             os: macos-15
             artifact_name: macos-opengl
-            runtime_smoke: false
+            runtime_smoke: true
             macos_graphics_bridge: opengl
             macos_openal_provider: apple_framework
           - name: macOS Metal Push Verification
             os: macos-15
             artifact_name: macos-metal
-            runtime_smoke: false
+            runtime_smoke: true
             macos_graphics_bridge: metal
             macos_openal_provider: apple_framework
     steps:
@@ -308,23 +331,49 @@ jobs:
             )
           fi
           if [[ "${{ matrix.runtime_smoke }}" == "true" ]]; then
+            runtime_cases="renderer-default-safety-selftest"
+            if [[ "${{ matrix.os }}" == ubuntu-* ]]; then
+              runtime_cases="${runtime_cases},renderer-shadow-planner-selftest,renderer-shadow-projected-diagnostic,sdl3-x11-display-diagnostics"
+            fi
             validation_args+=(
               --runtime
-              --runtime-cases renderer-default-safety-selftest,renderer-shadow-planner-selftest,renderer-shadow-projected-diagnostic,sdl3-x11-display-diagnostics
+              --runtime-cases "${runtime_cases}"
               --runtime-tiers auto
               --runtime-basepath ""
               --runtime-skip-official-pak-validation
             )
-            env LIBGL_ALWAYS_SOFTWARE=1 SDL_VIDEO_DRIVER=x11 SDL_VIDEODRIVER=x11 xvfb-run -a bash tools/validation/validate_push.sh "${validation_args[@]}"
-            env LIBGL_ALWAYS_SOFTWARE=1 OPENQ4_FORCE_X11=1 xvfb-run -a python tools/tests/renderer_validation_matrix.py \
-              --cases sdl3-force-x11-display-diagnostics \
-              --tiers auto \
-              --basepath "" \
-              --skip-official-pak-validation \
-              --output-dir .tmp/renderer-validation/force-x11
+            if [[ "${{ matrix.os }}" == ubuntu-* ]]; then
+              env LIBGL_ALWAYS_SOFTWARE=1 SDL_VIDEO_DRIVER=x11 SDL_VIDEODRIVER=x11 xvfb-run -a bash tools/validation/validate_push.sh "${validation_args[@]}"
+              env LIBGL_ALWAYS_SOFTWARE=1 OPENQ4_FORCE_X11=1 xvfb-run -a python tools/tests/renderer_validation_matrix.py \
+                --cases sdl3-force-x11-display-diagnostics \
+                --tiers auto \
+                --basepath "" \
+                --skip-official-pak-validation \
+                --output-dir .tmp/renderer-validation/force-x11
+            else
+              bash tools/validation/validate_push.sh "${validation_args[@]}"
+            fi
           else
             bash tools/validation/validate_push.sh "${validation_args[@]}"
           fi
+
+      - name: Run Linux dedicated server smoke
+        if: startsWith(matrix.os, 'ubuntu-')
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/tests/linux_dedicated_server_smoke.py \
+            --output-root .tmp/linux-dedicated-smoke/${{ matrix.artifact_name }}
+
+      - name: Publish Linux dedicated server smoke
+        if: always() && startsWith(matrix.os, 'ubuntu-')
+        uses: actions/upload-artifact@v6
+        with:
+          name: push-${{ matrix.artifact_name }}-dedicated-smoke
+          path: .tmp/linux-dedicated-smoke/${{ matrix.artifact_name }}
+          if-no-files-found: warn
+          retention-days: 14
+          include-hidden-files: true
 
       - name: Publish staged payload
         if: always()

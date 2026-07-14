@@ -61,7 +61,10 @@ def validate_shared_backend_contract() -> None:
     refresh_placement = function_body(source, "static void SDL3_RefreshWindowPlacement(void) {")
     screen_parms = function_body(source, "static bool SDL3_ApplyScreenParms(glimpParms_t parms) {")
     leave_fullscreen = function_body(source, "static bool SDL3_LeaveFullscreenAndRestoreDesktopMode(void) {")
+    display_event_name = function_body(source, "static const char *SDL3_DisplayEventName(SDL_EventType eventType) {")
+    display_event = function_body(source, "static void SDL3_HandleDisplayEvent(const SDL_DisplayEvent &event) {")
     window_event = function_body(source, "static void SDL3_HandleWindowEvent(const SDL_WindowEvent &event, int eventTime) {")
+    pump = function_body(source, "bool Sys_SDL_PumpEvents(void) {")
     init = function_body(source, "bool GLimp_Init(glimpParms_t parms) {")
 
     require(source, 'static idCVar r_screen("r_screen"', "SDL3 monitor selection cvar")
@@ -130,6 +133,25 @@ def validate_shared_backend_contract() -> None:
     require(window_event, "case SDL_EVENT_WINDOW_DISPLAY_CHANGED:", "display migration handling")
     require(window_event, "case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:", "display scale handling")
     require(window_event, "case SDL_EVENT_WINDOW_RESIZED:", "window resize handling")
+
+    for token in (
+        "SDL_EVENT_DISPLAY_ORIENTATION",
+        "SDL_EVENT_DISPLAY_ADDED",
+        "SDL_EVENT_DISPLAY_REMOVED",
+        "SDL_EVENT_DISPLAY_MOVED",
+        "SDL_EVENT_DISPLAY_DESKTOP_MODE_CHANGED",
+        "SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED",
+        "SDL_EVENT_DISPLAY_CONTENT_SCALE_CHANGED",
+        "SDL_EVENT_DISPLAY_USABLE_BOUNDS_CHANGED",
+    ):
+        require(display_event_name, token, "SDL3 process-wide display event naming")
+    require(display_event, "SDL3_InitDesktopMode();", "SDL3 display-event desktop refresh")
+    require(display_event, "SDL3_RefreshWindowPlacement();", "SDL3 display-event framebuffer refresh")
+    require(display_event, "SDL3_InvalidateMenuMouseRouting();", "SDL3 display-event mouse transform invalidation")
+    require(display_event, "SDL3_UpdateTextInputState();", "SDL3 display-event IME placement refresh")
+    require(pump, "event.type >= SDL_EVENT_DISPLAY_FIRST && event.type <= SDL_EVENT_DISPLAY_LAST", "SDL3 process-wide display event dispatch")
+    require(pump, "SDL3_HandleDisplayEvent(event.display);", "SDL3 process-wide display event handling")
+    require_before(pump, "SDL3_HandleDisplayEvent(event.display);", "SDL3_EventTargetsGameWindow(event)", "display events handled before per-window filtering")
 
     require(init, "SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN", "hidden SDL3 render-window startup")
     reject(init, "Sys_DestroySplash();", "SDL3 startup splash must survive until render window handoff")

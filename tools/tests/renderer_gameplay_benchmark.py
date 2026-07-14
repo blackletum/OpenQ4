@@ -493,7 +493,8 @@ def common_args(
     autoexec_delay_ms: int = 1000,
 ) -> list[str]:
     args: list[str] = []
-    append_set(args, "win_allowMultipleInstances", "1")
+    multiple_instance_cvar = "win_allowMultipleInstances" if os.name == "nt" else "sys_allowMultipleInstances"
+    append_set(args, multiple_instance_cvar, "1")
     append_set(args, "logFile", "2")
     append_set(args, "logFileName", f"logs/{log_name}")
     append_set(args, "developer", "1")

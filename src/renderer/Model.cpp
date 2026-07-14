@@ -121,6 +121,14 @@ bool idRenderModel::HasSeparateSilTraceMeshes( void ) const {
 
 /*
 ================
+idRenderModel::~idRenderModel
+================
+*/
+idRenderModel::~idRenderModel() {
+}
+
+/*
+================
 idRenderModelStatic::idRenderModelStatic
 ================
 */

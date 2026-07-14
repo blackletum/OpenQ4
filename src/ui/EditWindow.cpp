@@ -142,6 +142,39 @@ void idEditWindow::GainFocus() {
 	EnsureCursorVisible();
 }
 
+bool idEditWindow::GetTextInputState( idRectangle &area, float &cursorOffset ) {
+	if ( readonly || !visible || noEvents || ( flags & WIN_FOCUS ) == 0 ) {
+		return false;
+	}
+
+	area = textRect;
+	area.x += actualX - drawRect.x;
+	area.y += actualY - drawRect.y;
+	if ( area.w <= 0.0f || area.h <= 0.0f ) {
+		return false;
+	}
+
+	SetFont();
+	float cursorPixels = 0.0f;
+	const int boundedCursor = idMath::ClampInt( 0, text.Length(), cursorPos );
+	if ( password ) {
+		cursorPixels = boundedCursor * dc->CharWidth( '*', textScale, Q4_EDIT_WINDOW_TEXT_SPACING );
+	} else {
+		for ( int i = 0; i < boundedCursor; ) {
+			const int escapeLength = openQ4_EditWindowEscapeLength( &text[i] );
+			if ( escapeLength > 0 ) {
+				i += escapeLength;
+			} else {
+				cursorPixels += dc->CharWidth( text[i], textScale, Q4_EDIT_WINDOW_TEXT_SPACING );
+				i++;
+			}
+		}
+	}
+
+	cursorOffset = idMath::ClampFloat( 0.0f, area.w, cursorPixels - paintOffset );
+	return true;
+}
+
 void idEditWindow::Draw( int time, float x, float y ) {
 	idVec4 color = foreColor;
 

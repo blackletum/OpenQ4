@@ -201,11 +201,11 @@ CM_SetVertexSidedness
 ================
 */
 ID_INLINE void CM_SetVertexSidedness( cm_vertex_t *v, const idPluecker &vpl, const idPluecker &epl, const int bitNum ) {
-	if ( !(v->sideSet & (1<<bitNum)) ) {
+	if ( !(v->sideSet & (1u << bitNum)) ) {
 		float fl;
 		fl = vpl.PermutedInnerProduct( epl );
-		v->side = (v->side & ~(1<<bitNum)) | (FLOATSIGNBITSET(fl) << bitNum);
-		v->sideSet |= (1 << bitNum);
+		v->side = (v->side & ~(1u << bitNum)) | (FLOATSIGNBITSET(fl) << bitNum);
+		v->sideSet |= (1u << bitNum);
 	}
 }
 
@@ -217,11 +217,11 @@ CM_SetEdgeSidedness
 ================
 */
 ID_INLINE void CM_SetEdgeSidedness( cm_edge_t *edge, const idPluecker &vpl, const idPluecker &epl, const int bitNum ) {
-	if ( !(edge->sideSet & (1<<bitNum)) ) {
+	if ( !(edge->sideSet & (1u << bitNum)) ) {
 		float fl;
 		fl = vpl.PermutedInnerProduct( epl );
-		edge->side = (edge->side & ~(1<<bitNum)) | (FLOATSIGNBITSET(fl) << bitNum);
-		edge->sideSet |= (1 << bitNum);
+		edge->side = (edge->side & ~(1u << bitNum)) | (FLOATSIGNBITSET(fl) << bitNum);
+		edge->sideSet |= (1u << bitNum);
 	}
 }
 
@@ -264,7 +264,7 @@ void idCollisionModelManagerLocal::TranslateTrmEdgeThroughPolygon( cm_traceWork_
 		v2 = tw->model->vertices + edge->vertexNum[INTSIGNBITNOTSET(edgeNum)];
 		CM_SetVertexSidedness( v2, tw->polygonVertexPlueckerCache[i+1], trmEdge->pl, trmEdge->bitNum );
 		// if the polygon edge start and end vertex do not pass the trm edge at different sides
-		if ( !((v1->side ^ v2->side) & (1<<trmEdge->bitNum)) ) {
+		if ( !((v1->side ^ v2->side) & (1u << trmEdge->bitNum)) ) {
 			continue;
 		}
 		// if there is no possible collision between the trm edge and the polygon edge

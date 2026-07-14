@@ -6,7 +6,7 @@ This guide is for players who want to install openQ4 and start playing as quickl
 
 - A legitimate copy of **Quake 4** from [Steam](https://store.steampowered.com/app/2210/Quake_4/) or [GOG](https://www.gog.com/en/game/quake_4)
 - The latest openQ4 release from the [Releases page](https://github.com/themuffinator/openQ4/releases)
-- A release package that matches your operating system and CPU architecture (`x64` or `arm64`)
+- A release package that matches your operating system and CPU architecture (`x64` or `arm64`); Linux ARM64 downloads are currently preview packages
 - Enough free disk space for both the openQ4 package and the retail Quake 4 `q4base/` assets
 
 > [!NOTE]
@@ -19,7 +19,7 @@ These requirements are practical guidance for the current beta packages. openQ4 
 | Component | Minimum | Recommended |
 |---|---|---|
 | CPU | 64-bit CPU matching the package architecture; dual-core class or better | Modern quad-core or better x64/arm64 CPU |
-| Operating system | Windows 7 or later; a modern 64-bit Linux desktop userspace comparable to Ubuntu 24.04; experimental macOS 11 or later on Apple Silicon/arm64; SteamOS 3.x on Steam Deck | Windows 10/11, a current Linux distribution or SteamOS release, or an up-to-date Apple Silicon macOS install with maintained graphics drivers for experimental Mac testing |
+| Operating system | Windows 7 or later; a modern 64-bit Linux desktop userspace comparable to Ubuntu 24.04; preview Linux ARM64 on 64-bit little-endian AArch64 hardware; experimental macOS 11 or later on Apple Silicon/arm64; SteamOS 3.x on Steam Deck | Windows 10/11, a current Linux distribution or SteamOS release, or an up-to-date Apple Silicon macOS install with maintained graphics drivers for experimental Mac testing |
 | Memory | 4 GB RAM | 8 GB RAM for balanced play; 16 GB if you want higher presets, high resolutions, or room for background apps |
 | Graphics | OpenGL compatibility driver with the ARB2-era features openQ4 requires, including vertex/fragment program support; 1 GB VRAM is the practical low-end target | OpenGL 4.1+ compatibility-class GPU with 2 GB+ VRAM for balanced 1080p play; 6 GB+ VRAM for `quality`, `ultra`, high-resolution displays, or heavier post-processing |
 | Storage | About 12 GB free for openQ4 plus the retail Quake 4 assets | 15 GB+ free for the package, assets, saves, logs, crash dumps, and future updates |
@@ -65,10 +65,15 @@ If you prefer a self-contained setup, keep these side by side in the same root f
 - Current validation focuses on Windows 11 and Windows 10. Windows 7/8/8.1 remain legacy compatibility targets rather than the main test matrix.
 - If openQ4 crashes, check the `crashes/` folder beside the executable for log and dump files.
 
-### Linux and Experimental macOS
+### Linux
 
 - On Linux, extract the release archive to a folder of your choice.
 - Linux packages default to the SDL3 runtime path and should be treated as targeting an Ubuntu 24.04-class 64-bit desktop userspace with working OpenGL plus Wayland/EGL or X11/GLX support.
+- Linux ARM64 packages are preview builds until real ARM64 hardware completes native-Wayland SP/MP gameplay, dedicated-server, audio, input, and package signoff.
+- Linux ARM64 requires 64-bit little-endian AArch64 hardware and a desktop OpenGL compatibility driver. GLES-only boards are not covered by the current package.
+
+### Experimental macOS
+
 - macOS support is experimental. Current packages are for Apple Silicon/arm64 Macs on macOS 11 or later. Intel Mac and universal2 packages are not published yet, and Rosetta is not a supported release target.
 - Credentialed experimental macOS release runs publish signed/notarized OpenGL and Metal bridge DMGs. Releases without Apple Developer ID signing and notarization credentials publish clearly labeled `-unsigned.tar.gz` archives instead.
 - The Metal bridge package still uses openQ4's OpenGL renderer path; it is not a native Metal renderer.

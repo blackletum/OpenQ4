@@ -459,7 +459,7 @@ fi
 
 {
     printf 'Collector timestamp UTC: %s\n' "${STAMP}"
-    printf 'Expected renderer keys: R_InitOpenGL, renderer startup phase, Renderer driver quirks, Renderer bootstrap, ARB2 interaction driver bypass, fatal signal\n'
+    printf 'Expected renderer keys: R_InitOpenGL, renderer startup phase, Renderer driver quirks, interaction fallback, render-target/MSAA diagnostics, selected filesystem/module paths, fatal signal\n'
     printf '\nCaptured renderer startup and crash lines from available logs:\n'
     if [ -z "${HOME_DIR}" ]; then
         printf 'HOME was not set; home-scoped openq4.log paths were skipped.\n'
@@ -478,11 +478,11 @@ fi
         elif [ -f "${log_path}" ]; then
             found_log=1
             printf '\n-- %s --\n' "${log_path}"
-            if grep -E 'R_InitOpenGL|R_ReloadARBPrograms|renderer startup phase|last renderer startup phase|first ARB2 interaction handoff|ARB2 interaction driver bypass|interaction color mode|renderer startup ARB interaction selection|Renderer driver quirks|Renderer bootstrap|Renderer upload manager|SDL3: graphics bridge|SDL3: reported OpenGL context|SDL3: OpenGL context|GL_ARB_vertex_buffer_object disabled|SimpleInteraction[.]vfp|Unsupported Apple OpenGL 2[.]1 compatibility path|bypassing ARB2 light interactions|using ARB2 renderSystem|fatal signal SIGSEGV' "${log_path}" > "${renderer_lines}" 2>/dev/null; then
+            if grep -E 'R_InitOpenGL|R_ReloadARBPrograms|renderer startup phase|last renderer startup phase|first ARB2 interaction handoff|ARB2 interaction driver bypass|interaction color mode|renderer startup ARB interaction selection|Renderer driver quirks|Renderer bootstrap|Renderer upload manager|SDL3: graphics bridge|SDL3: reported OpenGL context|SDL3: OpenGL context|GL_ARB_vertex_buffer_object disabled|SimpleInteraction[.]vfp|material_interaction|GLSL material interaction|Apple OpenGL 2[.]1 interaction|Unsupported Apple OpenGL 2[.]1 compatibility path|bypassing ARB2 light interactions|using ARB2 renderSystem|idRenderTexture|GL_FRAMEBUFFER_|framebuffer .*incomplete|Forward render target MSAA:|MSAA requested|offscreen MSAA|_forwardRender|Filesystem paths:|Selected game module:|fatal signal SIGSEGV' "${log_path}" > "${renderer_lines}" 2>/dev/null; then
                 found_renderer_line=1
-                tail -n 200 "${renderer_lines}"
+                tail -n 260 "${renderer_lines}"
             else
-                printf '(no renderer startup, driver-quirk, ARB2, or fatal-signal lines found in this log)\n'
+                printf '(no renderer startup, interaction-fallback, render-target, filesystem/module, or fatal-signal lines found in this log)\n'
             fi
         fi
     done < "${log_candidates}"
@@ -490,7 +490,7 @@ fi
     if [ "${found_log}" -eq 0 ]; then
         printf 'No openq4.log files were found. Renderer startup and crash lines could not be copied without launching openQ4.\n'
     elif [ "${found_renderer_line}" -eq 0 ]; then
-        printf '\nNo renderer startup, driver-quirk, ARB2, or fatal-signal lines were found in the copied logs.\n'
+        printf '\nNo renderer startup, interaction-fallback, render-target, filesystem/module, or fatal-signal lines were found in the copied logs.\n'
     fi
 } | write_bounded_report "logs/renderer-summary.txt"
 

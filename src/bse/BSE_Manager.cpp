@@ -2,6 +2,11 @@
 //
 
 
+#include "../idlib/precompiled.h"
+#if defined(_MSC_VER)
+#pragma hdrstop
+#endif
+
 #include "BSE_Envelope.h"
 #include "BSE_Particle.h"
 #include "BSE.h"
@@ -344,7 +349,7 @@ void rvBSEManagerLocal::EndFrame(void) {
 	}
 
 	if (bse_speeds.GetInteger()) {
-		common->Printf("bse_active: %i particles: %i traces: %i texels: %i\n",
+		common->Printf("bse_active: %i particles: %i traces: %i texels: %g\n",
 			rvBSEManagerLocal::mPerfCounters[0],
 			rvBSEManagerLocal::mPerfCounters[2],
 			rvBSEManagerLocal::mPerfCounters[1],

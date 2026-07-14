@@ -243,10 +243,7 @@ def validate_sdl3_input_and_lifecycle() -> None:
     require(process_pending, "SDL3_HandleAppForegroundTransition(eventTime, \"event watch\")", "SDL3 pending foreground processing")
 
     for token in (
-        "Sys_GrabMouseCursor(false);",
-        "SDL3_StopControllerRumble();",
-        "SDL3_ReleaseGamepadState(eventTime);",
-        "SDL3_ReleaseJoystickState(eventTime);",
+        "SDL3_ReleaseFocusInputState(eventTime);",
         "common->WriteConfigToFile(CONFIG_FILE);",
     ):
         require(background, token, "SDL3 background transition")

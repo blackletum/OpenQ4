@@ -121,19 +121,19 @@ public:
 
 	template<class type> ID_INLINE size_t ReadBig(type& c) {
 		size_t r = Read(&c, sizeof(c));
-		idSwap::Big(c);
+		BigRevBytes(&c, sizeof(c), 1);
 		return r;
 	}
 
 	template<class type> ID_INLINE size_t ReadBigArray(type* c, int count) {
 		size_t r = Read(c, sizeof(c[0]) * count);
-		idSwap::BigArray(c, count);
+		BigRevBytes(c, sizeof(c[0]), count);
 		return r;
 	}
 
 	template<class type> ID_INLINE size_t WriteBig(const type& c) {
 		type b = c;
-		idSwap::Big(b);
+		BigRevBytes(&b, sizeof(b), 1);
 		return Write(&b, sizeof(b));
 	}
 

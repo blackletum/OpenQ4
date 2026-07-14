@@ -2518,7 +2518,7 @@ def validate_meson_contract() -> None:
     sdl3_audio_meson = read("subprojects/packagefiles/sdl3/src/audio/meson.build")
     require_before(
         sdl3_vendored_meson,
-        "elif host_machine.subsystem() == 'macos'",
+        "elif host_machine.system() == 'darwin'",
         "cdata.set('SDL_VIDEO_RENDER_METAL', 1)",
         "vendored SDL3 Darwin Metal render driver",
     )
@@ -2532,6 +2532,10 @@ def validate_meson_contract() -> None:
 
     require(setup_sh, "macos_graphics_bridge", "Bash Meson wrapper option preservation")
     require(setup_sh, "macos_openal_provider", "Bash Meson wrapper OpenAL provider preservation")
+    require(setup_sh, "configure_macos_deployment_target()", "Bash Meson wrapper macOS deployment-target setup")
+    require(setup_sh, 'export MACOSX_DEPLOYMENT_TARGET=11.0', "Bash Meson wrapper default macOS deployment target")
+    require(setup_sh, 'MACOSX_DEPLOYMENT_TARGET must be a dotted macOS version', "Bash Meson wrapper deployment-target validation")
+    require_before(setup_sh, "configure_macos_deployment_target", "resolve_meson_cmd", "Bash Meson wrapper deployment target precedes Meson/subproject execution")
     require(setup_ps1, '"macos_graphics_bridge"', "PowerShell Meson wrapper option preservation")
     require(setup_ps1, '"macos_openal_provider"', "PowerShell Meson wrapper OpenAL provider preservation")
 
@@ -2907,6 +2911,10 @@ def validate_packaging_and_release_contract() -> None:
     require(commit, "--fail-on-dirty \\", "commit validation macOS job")
     require(push, "macOS OpenGL Push Verification", "push verification macOS OpenGL job")
     require(push, "macOS Metal Push Verification", "push verification macOS Metal job")
+    if push.count("runtime_smoke: true") < 3:
+        raise AssertionError("push verification must require runtime smoke for Linux ARM64 and both macOS bridge jobs")
+    require(push, 'if [[ "${{ matrix.os }}" == ubuntu-* ]]', "push verification OS-specific runtime environment")
+    require(push, 'bash tools/validation/validate_push.sh "${validation_args[@]}"', "macOS hosted runtime smoke invocation")
     require(push, "macos-opengl", "push verification macOS OpenGL artifact")
     require(push, "macos-metal", "push verification macOS Metal artifact")
     require(push, "macos_openal_provider: apple_framework", "push verification macOS OpenAL provider")
@@ -2970,6 +2978,10 @@ def validate_packaging_and_release_contract() -> None:
     require(release, "xcrun stapler validate", "manual release stapled notarization validation")
     require(release, "macOS unsigned release archive is ad-hoc signed and not notarized.", "manual release unsigned notarization notice")
     require(release, "hdiutil verify", "manual release DMG validation")
+    require(release, "Smoke test macOS app-bundle path resolution", "manual release macOS app runtime smoke")
+    require(release, "finder-style-cwd", "manual release Finder-style working-directory smoke")
+    require(release, "+rendererDefaultSafetySelfTest", "manual release app renderer self-test")
+    require(release, 'grep -F "fs_cdpath=\'${package_dir}\'"', "manual release app package-root search validation")
     require(release, "hdiutil imageinfo", "manual release DMG validation")
     require(release, "spctl --assess --type execute", "manual release Gatekeeper validation")
     require(release, "check_macos_install_name", "manual release macOS install-name validation")

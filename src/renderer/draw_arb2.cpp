@@ -107,9 +107,11 @@ static int g_packedStageVertexFormatIndex = -1;
 static bool g_firstARB2InteractionHandoffBreadcrumb = false;
 static bool g_arb2InteractionDriverBypassWarned = false;
 static bool g_arb2InteractionBypassStateBreadcrumb = false;
+static bool g_appleGL21AutomaticInteractionPath = false;
 
 static GLuint RB_CurrentInteractionProgramIdent( GLenum target );
 static const char *RB_CurrentInteractionProgramFamilyName( void );
+static bool RB_UseSimpleInteractionShader( void );
 static void RB_WarnInteractionShaderRescueMode( void );
 
 static const float RB_ARB2_MD5RIdentityTextureMatrixRows[2][4] = {
@@ -1963,6 +1965,9 @@ typedef struct {
 	GLint			materialNormalScale;
 	GLint			materialSpecularBoost;
 	GLint			materialFresnel;
+	GLint			stockInteraction;
+	GLint			ambientLight;
+	GLint			ambientNormalMap;
 
 	GLint			bumpMap;
 	GLint			lightFalloffMap;
@@ -4730,6 +4735,9 @@ static bool RB_MaterialInteractionLoadProgram( void ) {
 	g_materialInteractionProgram.materialNormalScale = glGetUniformLocationARB( programObject, "uMaterialNormalScale" );
 	g_materialInteractionProgram.materialSpecularBoost = glGetUniformLocationARB( programObject, "uMaterialSpecularBoost" );
 	g_materialInteractionProgram.materialFresnel = glGetUniformLocationARB( programObject, "uMaterialFresnel" );
+	g_materialInteractionProgram.stockInteraction = glGetUniformLocationARB( programObject, "uStockInteraction" );
+	g_materialInteractionProgram.ambientLight = glGetUniformLocationARB( programObject, "uAmbientLight" );
+	g_materialInteractionProgram.ambientNormalMap = glGetUniformLocationARB( programObject, "uAmbientNormalMap" );
 	g_materialInteractionProgram.bumpMap = glGetUniformLocationARB( programObject, "uBumpMap" );
 	g_materialInteractionProgram.lightFalloffMap = glGetUniformLocationARB( programObject, "uLightFalloffMap" );
 	g_materialInteractionProgram.lightProjectionMap = glGetUniformLocationARB( programObject, "uLightProjectionMap" );
@@ -6427,8 +6435,17 @@ static void RB_ShadowMapLightReport( const viewLight_t *vLight, shadowMapLightSu
 		origin = vLight->globalLightOrigin;
 	}
 	const shadowMapLightClassification_t classification = R_ClassifyShadowMapLight( vLight );
+	const shadowMapProjectedFilterSettings_t filterSettings = R_ShadowMapProjectedFilterSettings( vLight );
+	const float reportedFilterRadius = classification.pointLight
+		? Max( 0.0f, r_shadowMapPointFilterRadius.GetFloat() )
+		: filterSettings.filterRadius;
+	const float reportedEffectiveFilterRadius = classification.pointLight
+		? reportedFilterRadius
+		: filterSettings.effectiveFilterRadius;
+	const float reportedPCSSLightRadius = classification.pointLight ? 0.0f : filterSettings.pcssLightRadius;
+	const float reportedPCSSMaxRadius = classification.pointLight ? 0.0f : filterSettings.pcssMaxRadius;
 	common->Printf(
-		"SM light[%d] '%s' origin=(%.1f %.1f %.1f) class=%s csm=%d projectedCSM=%d/%d cascades=%d tiles=%d atlasDiv=%d interactions(local=%d global=%d) shadows(local=%d global=%d) casters(total=%d alpha=%d trans=%d expanded=%d reject=%d lod=%d/%d/%d/%d) debug=%s support=%s\n",
+		"SM light[%d] '%s' origin=(%.1f %.1f %.1f) class=%s csm=%d projectedCSM=%d/%d cascades=%d tiles=%d atlasDiv=%d filter(distant=%d scale=%.2f radius=%.2f effective=%.2f pcss=%.2f/%.2f) interactions(local=%d global=%d) shadows(local=%d global=%d) casters(total=%d alpha=%d trans=%d expanded=%d reject=%d lod=%d/%d/%d/%d) debug=%s support=%s\n",
 		( vLight != NULL && vLight->lightDef != NULL ) ? vLight->lightDef->index : -1,
 		shaderName,
 		origin[0], origin[1], origin[2],
@@ -6439,6 +6456,12 @@ static void RB_ShadowMapLightReport( const viewLight_t *vLight, shadowMapLightSu
 		classification.cascadeCount,
 		classification.tileCount,
 		classification.atlasDiv,
+		filterSettings.distantSource ? 1 : 0,
+		filterSettings.filterScale,
+		reportedFilterRadius,
+		reportedEffectiveFilterRadius,
+		reportedPCSSLightRadius,
+		reportedPCSSMaxRadius,
 		RB_CountDrawSurfChain( vLight != NULL ? vLight->localInteractions : NULL ),
 		RB_CountDrawSurfChain( vLight != NULL ? vLight->globalInteractions : NULL ),
 		RB_CountDrawSurfChain( vLight != NULL ? vLight->localShadows : NULL ),
@@ -6998,7 +7021,7 @@ static void RB_ShadowMapDrawPerforatedCasterProgram( const drawSurf_t *surf, con
 	}
 
 	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
-	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>( &ac->st ) );
+	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, st ) ) );
 
 	const int stageCount = shader->GetNumStages();
 	for ( int stage = 0; stage < stageCount; stage++ ) {
@@ -7108,7 +7131,7 @@ static int RB_ShadowMapDrawCasterChain( const drawSurf_t *surf, const int cascad
 		RB_ShadowMapApplyCasterCull( surf->material );
 
 		idDrawVert *ac = (idDrawVert *)vertexCache.Position( ambientCache );
-		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
+		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, xyz ) ) );
 
 		const idMaterial *shader = surf->material;
 		if ( shader != NULL && shader->Coverage() == MC_PERFORATED ) {
@@ -7154,9 +7177,9 @@ static void RB_ShadowMapDrawTranslucentCasterChain( const drawSurf_t *surf, cons
 		}
 
 		idDrawVert *ac = (idDrawVert *)vertexCache.Position( ambientCache );
-		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
-		glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>( &ac->st ) );
-		glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), ac->color );
+		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, xyz ) ) );
+		glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, st ) ) );
+		glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, color ) ) );
 
 		const idMaterial *shader = surf->material;
 		const float *regs = surf->shaderRegisters;
@@ -7438,7 +7461,7 @@ static bool RB_PointShadowMapPrepareAlphaTestStage( const shaderStage_t *pStage,
 	}
 
 	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
-	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>( &ac->st ) );
+	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, st ) ) );
 	RB_PointShadowMapSetAlphaTexCoordMatrix( regs, &pStage->texture );
 
 	if ( g_pointShadowCasterProgram.alphaRef >= 0 ) {
@@ -7588,7 +7611,7 @@ static int RB_PointShadowMapDrawCasterChain( const drawSurf_t *surf, const float
 		RB_ShadowMapApplyCasterCull( surf->material );
 
 		idDrawVert *ac = (idDrawVert *)vertexCache.Position( ambientCache );
-		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
+		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, xyz ) ) );
 
 		const idMaterial *shader = surf->material;
 		if ( shader != NULL && shader->Coverage() == MC_PERFORATED ) {
@@ -7649,9 +7672,9 @@ static void RB_PointShadowMapDrawTranslucentCasterChain( const drawSurf_t *surf,
 		}
 
 		idDrawVert *ac = (idDrawVert *)vertexCache.Position( ambientCache );
-		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
-		glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>( &ac->st ) );
-		glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), ac->color );
+		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, xyz ) ) );
+		glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, st ) ) );
+		glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, color ) ) );
 
 		const idMaterial *shader = surf->material;
 		const float *regs = surf->shaderRegisters;
@@ -8416,18 +8439,23 @@ static float RB_EnhancedMaterialEnabledValue( void ) {
 	return RB_EnhancedMaterialShadingActive() ? 1.0f : 0.0f;
 }
 
-static void RB_MaterialInteractionSetEnhancementUniforms( const GLint normalScaleLocation, const GLint specularBoostLocation, const GLint fresnelLocation, const GLint enhancedLocation = -1 ) {
+static void RB_MaterialInteractionSetEnhancementUniforms( const GLint normalScaleLocation, const GLint specularBoostLocation, const GLint fresnelLocation, const GLint enhancedLocation = -1, const bool forceNeutralValues = false ) {
+	const float enhancedValue = forceNeutralValues ? 0.0f : RB_EnhancedMaterialEnabledValue();
+	const float normalScaleValue = forceNeutralValues ? 1.0f : RB_EnhancedMaterialNormalScaleValue();
+	const float specularBoostValue = forceNeutralValues ? 1.0f : RB_EnhancedMaterialSpecularBoostValue();
+	const float fresnelValue = forceNeutralValues ? 0.0f : RB_EnhancedMaterialFresnelValue();
+
 	if ( enhancedLocation >= 0 ) {
-		glUniform1fARB( enhancedLocation, RB_EnhancedMaterialEnabledValue() );
+		glUniform1fARB( enhancedLocation, enhancedValue );
 	}
 	if ( normalScaleLocation >= 0 ) {
-		glUniform1fARB( normalScaleLocation, RB_EnhancedMaterialNormalScaleValue() );
+		glUniform1fARB( normalScaleLocation, normalScaleValue );
 	}
 	if ( specularBoostLocation >= 0 ) {
-		glUniform1fARB( specularBoostLocation, RB_EnhancedMaterialSpecularBoostValue() );
+		glUniform1fARB( specularBoostLocation, specularBoostValue );
 	}
 	if ( fresnelLocation >= 0 ) {
-		glUniform1fARB( fresnelLocation, RB_EnhancedMaterialFresnelValue() );
+		glUniform1fARB( fresnelLocation, fresnelValue );
 	}
 }
 
@@ -8446,6 +8474,7 @@ static void RB_GLSLMaterial_DrawInteraction( const drawInteraction_t *din ) {
 	glUniform4fvARB( g_materialInteractionProgram.specularMatrixT, 1, din->specularMatrix[1].ToFloatPtr() );
 	glUniform4fvARB( g_materialInteractionProgram.diffuseColor, 1, din->diffuseColor.ToFloatPtr() );
 	glUniform4fvARB( g_materialInteractionProgram.specularColor, 1, din->specularColor.ToFloatPtr() );
+	glUniform1fARB( g_materialInteractionProgram.ambientLight, din->ambientLight ? 1.0f : 0.0f );
 
 	float modulate = 0.0f;
 	float add = 1.0f;
@@ -8475,6 +8504,8 @@ static void RB_GLSLMaterial_DrawInteraction( const drawInteraction_t *din ) {
 	din->diffuseImage->Bind();
 	GL_SelectTextureNoClient( 4 );
 	din->specularImage->Bind();
+	GL_SelectTextureNoClient( 5 );
+	globalImages->ambientNormalMap->Bind();
 
 	const idMaterial *surfaceMaterial = din->surf->material;
 	if ( surfaceMaterial && surfaceMaterial->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
@@ -8690,10 +8721,6 @@ static void RB_GLSLPointShadowMap_DrawInteraction( const drawInteraction_t *din 
 	}
 }
 
-static void *RB_DrawVertAttributePointer( const idDrawVert *base, const int byteOffset ) {
-	return reinterpret_cast<void *>( reinterpret_cast<uintptr_t>( base ) + byteOffset );
-}
-
 static bool RB_GLSLPrepareInteractionVertexCache( const drawSurf_t *surf, idDrawVert *&ambientVertexPointer ) {
 	ambientVertexPointer = NULL;
 
@@ -8822,6 +8849,15 @@ static bool RB_DrawSurfChainHasCustomGLSLLighting( const drawSurf_t *surf ) {
 		}
 	}
 	return false;
+}
+
+static bool RB_AppleGL21AutomaticInteractionPath( void ) {
+	return g_appleGL21AutomaticInteractionPath && !glConfig.disableARB2Interactions;
+}
+
+static bool RB_SurfaceEligibleForAppleGL21StockGLSLInteraction( const drawSurf_t *surf ) {
+	return RB_SurfaceEligibleForStockGLSLInteraction( surf ) &&
+		!RB_SurfaceHasActiveCustomGLSLLighting( surf );
 }
 
 static bool RB_SurfaceUsesWrappedCustomGLSLShadowReceiver( const drawSurf_t *surf ) {
@@ -9662,10 +9698,11 @@ static void RB_ARB2_CreateCustomGLSLDrawInteractions( const drawSurf_t *surf ) {
 	GL_SelectTexture( 0 );
 }
 
-static bool RB_GLSLMaterial_CreateDrawInteractions( const drawSurf_t *surf ) {
+static bool RB_GLSLMaterial_CreateDrawInteractions( const drawSurf_t *surf, const bool forceNeutralEnhancements ) {
 	if ( surf == NULL || !RB_MaterialInteractionLoadProgram() ) {
 		return false;
 	}
+	bool submittedInteractions = false;
 
 	GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHMASK | backEnd.depthFunc );
 
@@ -9688,10 +9725,18 @@ static bool RB_GLSLMaterial_CreateDrawInteractions( const drawSurf_t *surf ) {
 	if ( g_materialInteractionProgram.specularMap >= 0 ) {
 		glUniform1iARB( g_materialInteractionProgram.specularMap, 4 );
 	}
+	if ( g_materialInteractionProgram.ambientNormalMap >= 0 ) {
+		glUniform1iARB( g_materialInteractionProgram.ambientNormalMap, 5 );
+	}
 	RB_MaterialInteractionSetEnhancementUniforms(
 		g_materialInteractionProgram.materialNormalScale,
 		g_materialInteractionProgram.materialSpecularBoost,
-		g_materialInteractionProgram.materialFresnel );
+		g_materialInteractionProgram.materialFresnel,
+		-1,
+		forceNeutralEnhancements );
+	if ( g_materialInteractionProgram.stockInteraction >= 0 ) {
+		glUniform1fARB( g_materialInteractionProgram.stockInteraction, forceNeutralEnhancements ? 1.0f : 0.0f );
+	}
 
 	glEnableVertexAttribArrayARB( 8 );
 	glEnableVertexAttribArrayARB( 9 );
@@ -9713,6 +9758,7 @@ static bool RB_GLSLMaterial_CreateDrawInteractions( const drawSurf_t *surf ) {
 		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_XYZ_OFFSET ) );
 
 		RB_CreateSingleDrawInteractions( surf, RB_GLSLMaterial_DrawInteraction );
+		submittedInteractions = true;
 	}
 
 	glDisableVertexAttribArrayARB( 8 );
@@ -9722,6 +9768,9 @@ static bool RB_GLSLMaterial_CreateDrawInteractions( const drawSurf_t *surf ) {
 	glDisableClientState( GL_COLOR_ARRAY );
 
 	GL_SelectTextureNoClient( 4 );
+	globalImages->BindNull();
+
+	GL_SelectTextureNoClient( 5 );
 	globalImages->BindNull();
 	GL_SelectTextureNoClient( 3 );
 	globalImages->BindNull();
@@ -9735,7 +9784,7 @@ static bool RB_GLSLMaterial_CreateDrawInteractions( const drawSurf_t *surf ) {
 	glUseProgramObjectARB( 0 );
 	backEnd.glState.currenttmu = -1;
 	GL_SelectTexture( 0 );
-	return true;
+	return submittedInteractions;
 }
 
 static void RB_DrawMaterialInteractions( const drawSurf_t *surf ) {
@@ -9743,10 +9792,27 @@ static void RB_DrawMaterialInteractions( const drawSurf_t *surf ) {
 		return;
 	}
 
+	if ( RB_AppleGL21AutomaticInteractionPath() ) {
+		// The Apple 2.1 driver corridor is intentionally decided per surface.
+		// Ordinary stock geometry avoids the fragile ARB interaction program,
+		// while custom/generated/unprepared geometry gets the fail-closed simple
+		// ARB fallback instead of disabling lighting for the entire view.
+		for ( ; surf != NULL; surf = surf->nextOnLight ) {
+			drawSurf_t singleSurf = *surf;
+			singleSurf.nextOnLight = NULL;
+			if ( RB_SurfaceEligibleForAppleGL21StockGLSLInteraction( &singleSurf ) &&
+				RB_GLSLMaterial_CreateDrawInteractions( &singleSurf, true ) ) {
+				continue;
+			}
+			RB_ARB2_CreateDrawInteractions( &singleSurf );
+		}
+		return;
+	}
+
 	if ( !RB_DrawSurfChainHasCustomGLSLLighting( surf )
 		&& RB_EnhancedMaterialShadingActive()
 		&& RB_DrawSurfChainEligibleForStockGLSLInteractions( surf )
-		&& RB_GLSLMaterial_CreateDrawInteractions( surf ) ) {
+		&& RB_GLSLMaterial_CreateDrawInteractions( surf, false ) ) {
 		return;
 	}
 
@@ -9763,6 +9829,7 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 	glDisable( GL_VERTEX_PROGRAM_ARB );
 	glDisable( GL_FRAGMENT_PROGRAM_ARB );
 	glUseProgramObjectARB( g_shadowMapProgram.programObject );
+	const shadowMapProjectedFilterSettings_t filterSettings = R_ShadowMapProjectedFilterSettings( backEnd.vLight );
 
 	if ( g_shadowMapProgram.bumpMap >= 0 ) {
 		glUniform1iARB( g_shadowMapProgram.bumpMap, 0 );
@@ -9815,19 +9882,19 @@ static bool RB_GLSLShadowMap_CreateDrawInteractions( const drawSurf_t *surf ) {
 		glUniform1fARB( g_shadowMapProgram.shadowReceiverPlaneBias, r_shadowMapReceiverPlaneBias.GetBool() ? 1.0f : 0.0f );
 	}
 	if ( g_shadowMapProgram.shadowFilterRadius >= 0 ) {
-		glUniform1fARB( g_shadowMapProgram.shadowFilterRadius, r_shadowMapFilterRadius.GetFloat() );
+		glUniform1fARB( g_shadowMapProgram.shadowFilterRadius, filterSettings.filterRadius );
 	}
 	if ( g_shadowMapProgram.shadowFilterTaps >= 0 ) {
-		glUniform1fARB( g_shadowMapProgram.shadowFilterTaps, static_cast<float>( idMath::ClampInt( 1, 13, r_shadowMapFilterTaps.GetInteger() ) ) );
+		glUniform1fARB( g_shadowMapProgram.shadowFilterTaps, static_cast<float>( filterSettings.filterTaps ) );
 	}
 	if ( g_shadowMapProgram.shadowFilterMode >= 0 ) {
-		glUniform1fARB( g_shadowMapProgram.shadowFilterMode, static_cast<float>( idMath::ClampInt( 0, 2, r_shadowMapFilterMode.GetInteger() ) ) );
+		glUniform1fARB( g_shadowMapProgram.shadowFilterMode, static_cast<float>( filterSettings.filterMode ) );
 	}
 	if ( g_shadowMapProgram.shadowPCSSLightRadius >= 0 ) {
-		glUniform1fARB( g_shadowMapProgram.shadowPCSSLightRadius, r_shadowMapPCSSLightRadius.GetFloat() );
+		glUniform1fARB( g_shadowMapProgram.shadowPCSSLightRadius, filterSettings.pcssLightRadius );
 	}
 	if ( g_shadowMapProgram.shadowPCSSMaxRadius >= 0 ) {
-		glUniform1fARB( g_shadowMapProgram.shadowPCSSMaxRadius, r_shadowMapPCSSMaxRadius.GetFloat() );
+		glUniform1fARB( g_shadowMapProgram.shadowPCSSMaxRadius, filterSettings.pcssMaxRadius );
 	}
 	if ( g_shadowMapProgram.shadowAtlasRect >= 0 ) {
 		// State rects stay in the per-light convention (planner parity depends
@@ -11206,8 +11273,13 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 		// perform setup here that will not change over multiple interaction passes
 #if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
 		bool useClassicInteraction = true;
-		const rvMD5RVertexBufferDesc *packedDrawVertexBuffer =
-			( surf->geo != NULL && surf->geo->primBatchMesh != NULL ) ? R_MD5R_GetDrawVertexBufferForTri( surf->geo ) : NULL;
+		const rvMD5RVertexBufferDesc *packedDrawVertexBuffer = NULL;
+		// Packed MD5R programs are part of the full interaction family. The
+		// Apple compatibility corridor must stay on the validated simple ARB
+		// pair for every fallback surface, including generated characters.
+		if ( !RB_UseSimpleInteractionShader() && surf->geo != NULL && surf->geo->primBatchMesh != NULL ) {
+			packedDrawVertexBuffer = R_MD5R_GetDrawVertexBufferForTri( surf->geo );
+		}
 		if ( packedDrawVertexBuffer != NULL ) {
 			// the packed path (even a partially failed bind attempt) can change
 			// the bound vertex program, the attrib arrays, and the low env
@@ -11228,6 +11300,14 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 #else
 		{
 #endif
+			idDrawVert *ac = NULL;
+			if ( !RB_GLSLPrepareInteractionVertexCache( surf, ac ) ) {
+				// Invalid or unavailable cache data is a per-surface failure. Never
+				// dereference a null cache handle in the compatibility fallback.
+				classicInteractionStateValid = false;
+				continue;
+			}
+
 			if ( !classicInteractionStateValid || !r_useRedundantStateFiltering.GetBool() ) {
 				glDisableVertexAttribArrayARB( 1 );
 				glDisableVertexAttribArrayARB( 2 );
@@ -11243,7 +11323,6 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 			}
 
 			// set the vertex pointers
-			idDrawVert	*ac = (idDrawVert *)vertexCache.Position( surf->geo->ambientCache );
 			glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_COLOR_OFFSET ) );
 			glVertexAttribPointerARB( 11, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_NORMAL_OFFSET ) );
 			glVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_TANGENT1_OFFSET ) );
@@ -11311,7 +11390,7 @@ static void RB_ARB2_DisableInteractionVertexAttribArrays( void ) {
 	}
 }
 
-static void RB_ARB2_UnbindBypassedInteractionPrograms( void ) {
+static void RB_ARB2_UnbindInteractionPrograms( void ) {
 	if ( glBindProgramARB == NULL ) {
 		return;
 	}
@@ -11323,7 +11402,7 @@ static void RB_ARB2_UnbindBypassedInteractionPrograms( void ) {
 	}
 }
 
-static void RB_ARB2_ClearBypassedInteractionTextureState( void ) {
+static void RB_ARB2_ClearInteractionTextureState( void ) {
 	const int maxStateUnits = Max( 0, Min( MAX_MULTITEXTURE_UNITS, Min( glConfig.maxTextureUnits, glConfig.maxTextureImageUnits ) ) );
 	const int maxInteractionUnit = Min( 6, maxStateUnits - 1 );
 
@@ -11346,8 +11425,8 @@ static void RB_ARB2_ClearBypassedInteractionTextureState( void ) {
 	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
 }
 
-static void RB_ARB2_RestoreBypassedInteractionState( void ) {
-	RB_ARB2_ClearBypassedInteractionTextureState();
+static void RB_ARB2_RestoreInteractionState( const bool recordBypassBreadcrumb ) {
+	RB_ARB2_ClearInteractionTextureState();
 	glDisableClientState( GL_COLOR_ARRAY );
 	glDisableClientState( GL_NORMAL_ARRAY );
 
@@ -11358,15 +11437,22 @@ static void RB_ARB2_RestoreBypassedInteractionState( void ) {
 	if ( glConfig.ARBFragmentProgramAvailable ) {
 		glDisable( GL_FRAGMENT_PROGRAM_ARB );
 	}
-	RB_ARB2_UnbindBypassedInteractionPrograms();
+	RB_ARB2_UnbindInteractionPrograms();
+	if ( glUseProgramObjectARB != NULL ) {
+		glUseProgramObjectARB( 0 );
+	}
 
 	glStencilFunc( GL_ALWAYS, 128, 255 );
 	backEnd.currentSpace = NULL;
 	GL_ClearStateDelta();
-	if ( !g_arb2InteractionBypassStateBreadcrumb ) {
+	if ( recordBypassBreadcrumb && !g_arb2InteractionBypassStateBreadcrumb ) {
 		g_arb2InteractionBypassStateBreadcrumb = true;
 		R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_STATE_RESTORED );
 	}
+}
+
+static void RB_ARB2_RestoreBypassedInteractionState( void ) {
+	RB_ARB2_RestoreInteractionState( true );
 }
 
 void RB_ARB2_DrawInteractions( void ) {
@@ -11568,8 +11654,15 @@ void RB_ARB2_DrawInteractions( void ) {
 	RB_ShadowMapStatsReport();
 	RB_ShadowMapDebugOverlayDraw();
 
-	GL_SelectTexture( 0 );
-	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
+	if ( ( RendererDriverQuirks_LastReport().flags & RENDERER_DRIVER_QUIRK_DISABLE_ARB2_INTERACTIONS ) != 0 ) {
+		// Apple interaction routing switches between GLSL and ARB programs on a
+		// per-surface basis. Restore every touched compatibility-state family at
+		// the end of the pass so the following ambient/fog pass starts clean.
+		RB_ARB2_RestoreInteractionState( false );
+	} else {
+		GL_SelectTexture( 0 );
+		glEnableClientState( GL_TEXTURE_COORD_ARRAY );
+	}
 }
 
 //===================================================================================
@@ -11704,8 +11797,8 @@ static progDef_t *RB_FindARBProgramRecord( GLenum target, GLuint ident ) {
 static bool RB_DriverPrefersSimpleInteraction( void ) {
 	// Once R_ARB2_Init has run, glConfig.preferSimpleInteraction is the
 	// single source of truth: it is derived there from the driver quirk
-	// report and the r_appleARB2Interactions override (mode 2 clears it so
-	// the full interaction path is actually exercised). The raw quirk flag
+	// report and the r_appleARB2Interactions policy (mode 2 clears it so the
+	// full diagnostic path is actually exercised). The raw quirk flag
 	// only backstops calls made before R_ARB2_Init.
 	if ( glConfig.allowARB2Path ) {
 		return glConfig.preferSimpleInteraction;
@@ -11873,7 +11966,7 @@ void R_LoadARBProgram( int progIndex ) {
 	char	*fileBuffer;
 	char	*buffer;
 	idList<char> programBuffer;
-	char	*start, *end;
+	char	*start = NULL, *end;
 
 	RB_ResetARBProgramStatus( prog );
 
@@ -12133,6 +12226,7 @@ R_ARB2_Init
 */
 void R_ARB2_Init( void ) {
 	R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_R_ARB2_INIT );
+	g_appleGL21AutomaticInteractionPath = false;
 	glConfig.allowARB2Path = false;
 	glConfig.preferNV20Path = false;
 	glConfig.preferSimpleLighting = false;
@@ -12185,24 +12279,29 @@ void R_ARB2_Init( void ) {
 	}
 
 	if ( ( RendererDriverQuirks_LastReport().flags & RENDERER_DRIVER_QUIRK_DISABLE_ARB2_INTERACTIONS ) != 0 ) {
-		// Diagnostic escape hatch for real-hardware signoff: the blanket
-		// bypass avoids the issue #73 startup crash but sacrifices all
-		// dynamic lighting; r_appleARB2Interactions lets testers re-enable
-		// the interaction path incrementally without rebuilding.
+		// Route stock surfaces around the Apple 2.1 ARB interaction crash while
+		// retaining the validated simple ARB pair for per-surface fallback.
+		// Modes 1/2 are diagnostics and mode 3 preserves the old blanket bypass
+		// as an emergency recovery option for real-hardware testing.
 		const int interactionOverride = r_appleARB2Interactions.GetInteger();
-		if ( interactionOverride == 1 ) {
+		if ( interactionOverride == 0 ) {
 			glConfig.disableARB2Interactions = false;
 			glConfig.preferSimpleInteraction = true;
-			common->Printf( "%s: r_appleARB2Interactions 1 overrides the driver bypass quirk; attempting the simple ARB interaction path\n", renderer.c_str() );
-		} else if ( interactionOverride >= 2 ) {
+			g_appleGL21AutomaticInteractionPath = true;
+			common->Printf( "%s: r_appleARB2Interactions 0 uses automatic stock GLSL interactions with simple ARB per-surface fallback\n", renderer.c_str() );
+		} else if ( interactionOverride == 1 ) {
+			glConfig.disableARB2Interactions = false;
+			glConfig.preferSimpleInteraction = true;
+			common->Printf( "%s: r_appleARB2Interactions 1 forces the simple ARB interaction diagnostic path\n", renderer.c_str() );
+		} else if ( interactionOverride == 2 ) {
 			glConfig.disableARB2Interactions = false;
 			// The PREFER_SIMPLE_INTERACTION quirk branch above set this; the
 			// full path cannot be exercised while it remains preferred.
 			glConfig.preferSimpleInteraction = false;
-			common->Printf( "%s: r_appleARB2Interactions 2 overrides the driver bypass quirk; attempting the full ARB2 interaction path\n", renderer.c_str() );
+			common->Printf( "%s: r_appleARB2Interactions 2 forces the full ARB2 interaction diagnostic path\n", renderer.c_str() );
 		} else {
 			glConfig.disableARB2Interactions = true;
-			common->Printf( "%s: bypasses ARB2 light interactions for compatibility\n", renderer.c_str() );
+			common->Printf( "%s: r_appleARB2Interactions 3 activates the emergency ARB2 light-interaction bypass\n", renderer.c_str() );
 		}
 	}
 

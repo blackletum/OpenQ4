@@ -444,13 +444,17 @@ float R_ShadowMapSnapCascadeCenter( const float rawCenter, const float quantized
 	return floor( rawCenter / snapStep + 0.5f ) * snapStep;
 }
 
-static float R_ShadowMapProjectedKernelGuardNDC( const int tileSize ) {
+static float R_ShadowMapProjectedKernelGuardNDC( const viewLight_t *vLight, const int tileSize ) {
 	const float texelStep = 2.0f / Max( 1, tileSize );
-	const float kernelRadius = Max( 0.5f, r_shadowMapFilterRadius.GetFloat() + 0.75f );
+	const shadowMapProjectedFilterSettings_t filterSettings = R_ShadowMapProjectedFilterSettings( vLight );
+	// Match shadow_interaction.fs::ShadowAtlasGuardBand exactly.  In PCSS mode
+	// the blocker search / maximum penumbra, not the base PCF radius, is the
+	// authoritative bound.
+	const float kernelRadius = Max( 0.5f, filterSettings.effectiveFilterRadius + 0.75f );
 	return texelStep * kernelRadius;
 }
 
-static bool R_ShadowMapBuildCascadeBounds( const idPlane baseClipPlanes[4], const viewDef_t *viewDef, const float sliceNear, const float sliceFar, const int tileSize, shadowMapProjectedCascadeFit_t &fit, idVec3 &ndcMins, idVec3 &ndcMaxs ) {
+static bool R_ShadowMapBuildCascadeBounds( const viewLight_t *vLight, const idPlane baseClipPlanes[4], const viewDef_t *viewDef, const float sliceNear, const float sliceFar, const int tileSize, shadowMapProjectedCascadeFit_t &fit, idVec3 &ndcMins, idVec3 &ndcMaxs ) {
 	idVec3 samplePoints[SHADOWMAP_PROJECTED_CASCADE_SAMPLE_POINT_COUNT];
 	const int sampleCount = R_ShadowMapBuildSliceSamplePoints( viewDef, sliceNear, sliceFar, samplePoints );
 
@@ -517,7 +521,7 @@ static bool R_ShadowMapBuildCascadeBounds( const idPlane baseClipPlanes[4], cons
 	// (R_ShadowMapBuildClipPlanes scales S/T by projectionScale); re-applying
 	// it to fitted extents compounded to ~30% wasted crop resolution at the
 	// default pad. Cascades only add the filter kernel guard.
-	const float filterGuard = R_ShadowMapProjectedKernelGuardNDC( tileSize );
+	const float filterGuard = R_ShadowMapProjectedKernelGuardNDC( vLight, tileSize );
 	idVec3 center = ( ndcMins + ndcMaxs ) * 0.5f;
 	idVec3 extent = ( ndcMaxs - ndcMins ) * 0.5f;
 
@@ -716,7 +720,7 @@ void R_BuildShadowMapProjectedLightState( const viewLight_t *vLight, const viewD
 		fit.attempted = true;
 		fit.sliceNear = sliceNear;
 		fit.sliceFar = sliceFar;
-		fit.valid = R_ShadowMapBuildCascadeBounds( baseClipPlanes, viewDef, fitSliceNear, sliceFar, tileSize, fit, ndcMins, ndcMaxs );
+		fit.valid = R_ShadowMapBuildCascadeBounds( vLight, baseClipPlanes, viewDef, fitSliceNear, sliceFar, tileSize, fit, ndcMins, ndcMaxs );
 		if ( fit.valid ) {
 			if ( fit.mixedWSigns ) {
 				fit.fallbackReason = SHADOWMAP_PROJECTED_FALLBACK_MIXED_W_SIGNS;

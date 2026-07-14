@@ -22,7 +22,9 @@ def validate_building_packager_notes() -> None:
     source = read("BUILDING.md")
 
     require(source, "### Linux Packager Notes", "BUILDING Linux packager section")
+    require(source, "Meson 1.6.0 or newer", "BUILDING Meson floor")
     require(source, "SDL3 `>=3.4.4`", "BUILDING SDL3 floor")
+    require(source, "libopengl-dev", "BUILDING native OpenGL development dependency")
     require(source, "Ubuntu 24.04-class userspace", "BUILDING Linux userspace floor")
     require(source, "SDL_VIDEODRIVER=wayland", "BUILDING Wayland driver toggle")
     require(source, "SDL_VIDEO_DRIVER=wayland", "BUILDING Wayland driver toggle")
@@ -37,6 +39,7 @@ def validate_building_packager_notes() -> None:
     require(source, "openq4_gamelibs_stage_manifest.json", "BUILDING GameLibs staging manifest")
     require(source, "validate_push.sh --install", "BUILDING package validation command")
     require(source, "validate_pr.sh --runtime", "BUILDING runtime validation command")
+    require(source, "docs/dev/linux-arm64-cross-compilation.md", "BUILDING ARM64 cross-build guidance")
 
 
 def validate_platform_support() -> None:
@@ -44,7 +47,8 @@ def validate_platform_support() -> None:
 
     require(source, "Linux packaged compatibility floor", "platform support Linux floor")
     require(source, "Ubuntu 24.04", "platform support Linux floor")
-    require(source, "SDL3 Wayland/EGL or X11/GLX", "platform support display stack")
+    require(source, "desktop OpenGL plus EGL/Wayland or X11/GLX", "platform support display stack")
+    require(source, "Linux ARM64 currently means", "platform support ARM64 graphics boundary")
     require(source, "OPENQ4_FORCE_X11=1", "platform support XWayland fallback")
     require(source, "OPENQ4_WAYLAND_DISABLE_LIBDECOR=1", "platform support libdecor fallback")
 

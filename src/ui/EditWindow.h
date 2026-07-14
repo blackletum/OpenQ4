@@ -53,6 +53,7 @@ public:
 	
 	virtual void 		HandleBuddyUpdate(idWindow *buddy);
 	virtual void		Activate(bool activate, idStr &act);
+	bool				GetTextInputState( idRectangle &area, float &cursorOffset );
 	
 	void				RunNamedEvent( const char* eventName );
 	

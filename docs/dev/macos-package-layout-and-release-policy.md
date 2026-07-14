@@ -1,6 +1,6 @@
 # macOS Package Layout And Release Policy
 
-Updated: 2026-06-30
+Updated: 2026-07-11
 
 This document records the current macOS package support contract for openQ4.
 It is intentionally conservative while macOS remains experimental.
@@ -43,6 +43,10 @@ Supported for experimental macOS signoff:
 - Copy the whole package payload to a user-writable folder, keeping
   `openQ4.app`, `baseoq4/`, and the loose runtime files together, then
   double-click `openQ4.app`.
+- Finder/LaunchServices may supply an unrelated process working directory.
+  The app derives its adjacent package directory, validates it, and uses it as
+  `fs_cdpath`; retail Steam/GOG discovery remains an independent
+  `fs_basepath` source for `q4base`.
 - Launch from Terminal with the working directory at the package root.
 - Launch the loose `openQ4-client_<arch>` or `openQ4-ded_<arch>` binaries from
   the package root for diagnostics or dedicated-server work.
@@ -78,6 +82,12 @@ Moving only `openQ4.app` to `/Applications` is not supported yet
 ```
 
 Moving only `openQ4.app` is unsupported until a self-contained bundle migration is implemented.
+
+Hosted release validation launches the app executable from an unrelated
+temporary working directory and requires the log's `fs_cdpath` to resolve to
+the adjacent package root. This closes the path-selection blind spot without
+claiming that CI has exercised Finder UI, Gatekeeper prompts, mounted-DMG
+gameplay, or a copied package on end-user hardware.
 
 ## Symbol Artifacts
 

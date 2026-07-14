@@ -504,9 +504,11 @@ typedef struct huffmanNode_s {
 } huffmanNode_t;
 
 typedef struct huffmanCode_s {
-	unsigned long			bits[8];
+	uint32_t				bits[8];
 	int						numBits;
 } huffmanCode_t;
+
+static_assert( sizeof( uint32_t ) == 4, "Huffman storage words must be 32-bit" );
 
 // compression ratio = 64%
 static int huffmanFrequencies[] = {
@@ -604,7 +606,7 @@ void BuildHuffmanCode_r( huffmanNode_t *node, huffmanCode_t code, huffmanCode_t 
 			maxHuffmanBits = newCode.numBits;
 		}
 		BuildHuffmanCode_r( node->children[0], newCode, codes );
-		newCode.bits[code.numBits >> 5] |= 1 << ( code.numBits & 31 );
+		newCode.bits[code.numBits >> 5] |= 1u << ( code.numBits & 31 );
 		BuildHuffmanCode_r( node->children[1], newCode, codes );
 	} else {
 		assert( code.numBits <= sizeof( codes[0].bits ) * 8 );

@@ -179,7 +179,16 @@ static bool Sys_IsWaylandVideoDriverName(const char *driverName) {
 }
 
 static bool Sys_PreferDrmSysfsBeforeX11VideoRam(void) {
-	return SDL3_IsNativeWaylandVideoDriver() ||
+	const char *currentVideoDriver = SDL_GetCurrentVideoDriver();
+	if (Sys_IsWaylandVideoDriverName(currentVideoDriver) || SDL3_IsNativeWaylandVideoDriver()) {
+		return true;
+	}
+
+	const bool waylandSession = SDL3_EnvHasValue("WAYLAND_DISPLAY");
+	const bool explicitX11Fallback = SDL3_EnvFlagEnabled("OPENQ4_FORCE_X11") ||
+		SDL3_StringEquals(getenv("SDL_VIDEO_DRIVER"), "x11") ||
+		SDL3_StringEquals(getenv("SDL_VIDEODRIVER"), "x11");
+	return (waylandSession && !explicitX11Fallback) ||
 		Sys_IsWaylandVideoDriverName(getenv("SDL_VIDEO_DRIVER")) ||
 		Sys_IsWaylandVideoDriverName(getenv("SDL_VIDEODRIVER"));
 }

@@ -324,6 +324,7 @@ function Get-SetupArgsForExistingBuildDir {
 
     $optionNames = @(
         "platform_backend",
+        "linux_x11",
         "macos_graphics_bridge",
         "macos_openal_provider",
         "version_track",
@@ -419,19 +420,29 @@ function Test-GamelibsStageRefreshNeeded {
     }
 
     $resolvedGameLibsRepo = Get-openQ4GameLibsRepoPath -RepoRoot $RepoRoot -ConfiguredRepo $GameLibsRepo
-    $sourceGameDir = Join-Path $resolvedGameLibsRepo "src\game"
-    $stagedGameDir = Join-Path $RepoRoot ".tmp\gamelibs_stage\src\game"
+    $sourceGameDirs = @(
+        (Join-Path $resolvedGameLibsRepo "src\game"),
+        (Join-Path $resolvedGameLibsRepo "src\mpgame")
+    )
+    $stagedGameDirs = @(
+        (Join-Path $RepoRoot ".tmp\gamelibs_stage\src\game"),
+        (Join-Path $RepoRoot ".tmp\gamelibs_stage\src\mpgame")
+    )
 
-    if (-not (Test-Path $sourceGameDir)) {
+    if (@($sourceGameDirs | Where-Object { -not (Test-Path $_) }).Count -ne 0) {
         return $false
     }
 
-    if (-not (Test-Path $stagedGameDir)) {
+    if (@($stagedGameDirs | Where-Object { -not (Test-Path $_) }).Count -ne 0) {
         return $true
     }
 
-    $sourceLatest = Get-LatestFileWriteTimeUtc -DirectoryPath $sourceGameDir
-    $stageLatest = Get-LatestFileWriteTimeUtc -DirectoryPath $stagedGameDir
+    $sourceLatest = @(
+        $sourceGameDirs | ForEach-Object { Get-LatestFileWriteTimeUtc -DirectoryPath $_ }
+    ) | Where-Object { $null -ne $_ } | Sort-Object -Descending | Select-Object -First 1
+    $stageLatest = @(
+        $stagedGameDirs | ForEach-Object { Get-LatestFileWriteTimeUtc -DirectoryPath $_ }
+    ) | Where-Object { $null -ne $_ } | Sort-Object -Descending | Select-Object -First 1
 
     if ($null -eq $sourceLatest) {
         return $false

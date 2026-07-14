@@ -69,6 +69,9 @@ def validate_linux_sdl3_x11_helpers_are_optional() -> None:
     require(linux_sdl3, '#include "linux_shared.h"', "SDL3 Linux shared defaults")
     require(linux_sdl3, "Sys_QueryDrmSysfsVideoRamMB", "SDL3 Linux DRM sysfs VRAM probe")
     require(linux_sdl3, "Sys_PreferDrmSysfsBeforeX11VideoRam", "SDL3 Linux Wayland-first VRAM probe")
+    require(linux_sdl3, "SDL_GetCurrentVideoDriver()", "SDL3 Linux active-driver VRAM probe")
+    require(linux_sdl3, 'SDL3_EnvHasValue("WAYLAND_DISPLAY")', "SDL3 Linux pre-video Wayland-session VRAM probe")
+    require(linux_sdl3, 'SDL3_EnvFlagEnabled("OPENQ4_FORCE_X11")', "SDL3 Linux explicit XWayland VRAM probe")
     require(linux_sdl3, 'Sys_IsWaylandVideoDriverName(getenv("SDL_VIDEO_DRIVER"))', "SDL3 Linux explicit Wayland VRAM probe")
     require(linux_sdl3, 'Sys_IsWaylandVideoDriverName(getenv("SDL_VIDEODRIVER"))', "SDL3 Linux explicit legacy Wayland VRAM probe")
     require(linux_sdl3, "if (!preferDrmBeforeX11)", "SDL3 Linux skips X11 VRAM probe on native Wayland")
@@ -94,8 +97,10 @@ def validate_linux_sdl3_x11_helpers_are_optional() -> None:
 
     require(meson_sources, "LINUX_X11_HELPER_SOURCES", "optional Linux X11 helper sources")
     require(meson_sources, "--linux-x11-helpers", "optional Linux X11 helper source switch")
-    require(meson_build, "dependency('x11', required: false)", "optional SDL3 X11 dependency")
-    require(meson_build, "dependency('xext', required: false)", "optional SDL3 Xext dependency")
+    require(meson_build, "if not linux_x11_option.disabled()", "optional SDL3 X11 dependency gate")
+    require(meson_build, "dependency('x11', required: linux_x11_option)", "feature-controlled SDL3 X11 dependency")
+    require(meson_build, "dependency('xext', required: linux_x11_option)", "feature-controlled SDL3 Xext dependency")
+    require(meson_build, "sdl3_default_options += ['x11=disabled']", "native Wayland-only SDL configuration")
     require(meson_build, "-DOPENQ4_HAVE_X11_HELPERS=1", "optional X11 helper define")
 
 

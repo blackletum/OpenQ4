@@ -216,6 +216,7 @@ void idAsyncClient::ConnectToServer( const netadr_t adr ) {
 
 	// calculate a checksum on some of the essential data used
 	clientDataChecksum = declManager->GetChecksum();
+	common->DPrintf( "Client decl checksum: 0x%08x\n", static_cast<unsigned int>( clientDataChecksum ) );
 
 	// start challenging the server
 	clientState = CS_CHALLENGING;
@@ -1396,7 +1397,7 @@ bool idAsyncClient::ValidatePureServerChecksums( const netadr_t from, const idBi
 					message += va( common->GetLanguageDict()->GetString( "#str_06750" ), missingGamePakChecksum );
 				}
 
-				common->Printf( message );
+				common->Printf( "%s", message.c_str() );
 				cmdSystem->BufferCommandText( CMD_EXEC_NOW, "disconnect" );
 				session->MessageBox( MSG_OK, message, common->GetLanguageDict()->GetString( "#str_06735" ), true );
 			} else {

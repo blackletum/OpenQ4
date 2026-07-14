@@ -333,6 +333,12 @@ int Sys_ListFiles( const char *directory, const char *extension, idStrList &list
 	}
 	
 	while ((d = readdir(fdir)) != NULL) {
+		// readdir() exposes navigation entries that FindFirstFile does not.
+		// Never return them to recursive or case-recovery callers.
+		if ( d->d_name[0] == '.' &&
+			( d->d_name[1] == '\0' || ( d->d_name[1] == '.' && d->d_name[2] == '\0' ) ) ) {
+			continue;
+		}
 		idStr search = directory;
 		search.AppendPath( d->d_name );
 		if (stat(search.c_str(), &st) == -1)
@@ -648,10 +654,14 @@ void Sys_DLL_Unload( intptr_t handle ) {
 
 // ---------------------------------------------------------------------------
 
-// only relevant when specified on command line
+#if !defined( MACOS_X )
+// Only relevant when specified on the command line. macOS provides a
+// bundle-aware implementation in macosx_compat.mm so Finder launches can use
+// the adjacent package root even when their process working directory differs.
 const char *Sys_DefaultCDPath( void ) {
 	return Posix_Cwd();
 }
+#endif
 
 ID_TIME_T Sys_FileTimeStamp(FILE * fp) {
 	if ( fp == NULL ) {
@@ -685,6 +695,10 @@ void Sys_Sleep(int msec) {
 #if defined( OPENQ4_POSIX_OWNS_COMMON_SYS )
 char *Sys_GetClipboardData(void) {
 #if defined( USE_SDL3 )
+	if ( !Posix_IsMainThread() ) {
+		Sys_Printf( "Skipping SDL clipboard read from a non-main thread.\n" );
+		return NULL;
+	}
 	char *clipboardText = SDL_GetClipboardText();
 	if ( clipboardText == NULL || clipboardText[0] == '\0' ) {
 		if ( clipboardText != NULL ) {
@@ -719,6 +733,10 @@ char *Sys_GetClipboardData(void) {
 #if defined( OPENQ4_POSIX_OWNS_COMMON_SYS )
 void Sys_SetClipboardData( const char *string ) {
 #if defined( USE_SDL3 )
+	if ( !Posix_IsMainThread() ) {
+		Sys_Printf( "Skipping SDL clipboard write from a non-main thread.\n" );
+		return;
+	}
 	if ( !SDL_SetClipboardText( string != NULL ? string : "" ) ) {
 		Sys_Printf( "SDL_SetClipboardText failed: %s\n", SDL_GetError() );
 	}

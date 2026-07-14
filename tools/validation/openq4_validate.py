@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import os
 import platform
 import re
@@ -386,7 +387,15 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "game_class_allocator_alignment.py",
         root / "tools" / "tests" / "gamelibs_staging.py",
         root / "tools" / "tests" / "hdr_postprocess_math.py",
+        root / "tools" / "tests" / "linux_arm64_cross_compile.py",
         root / "tools" / "tests" / "linux_arm64_ci_coverage.py",
+        root / "tools" / "tests" / "linux_arm64_release_evidence.py",
+        root / "tools" / "tests" / "linux_arm64_source_portability.py",
+        root / "tools" / "tests" / "linux_dedicated_server_smoke_contract.py",
+        root / "tools" / "tests" / "linux_dedicated_stock_map_smoke_contract.py",
+        root / "tools" / "tests" / "linux_physical_host_evidence.py",
+        root / "tools" / "tests" / "linux_physical_host_evidence_contract.py",
+        root / "tools" / "tests" / "linux_wayland_stock_sp_smoke_contract.py",
         root / "tools" / "tests" / "linux_gui_presentation_defaults.py",
         root / "tools" / "tests" / "linux_highdpi_mouse.py",
         root / "tools" / "tests" / "linux_metadata_fuzz.py",
@@ -395,6 +404,7 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "linux_sanitizer_ci.py",
         root / "tools" / "tests" / "linux_sdl3_glew_loader.py",
         root / "tools" / "tests" / "linux_vsync_support.py",
+        root / "tools" / "tests" / "linux_wayland_build_contract.py",
         root / "tools" / "tests" / "loading_continue_input.py",
         root / "tools" / "tests" / "macos_apple_gl21_arb2_corridor.py",
         root / "tools" / "tests" / "macos_evidence_plumbing.py",
@@ -428,6 +438,7 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "posix_thread_shutdown.py",
         root / "tools" / "tests" / "release_tooling_safety.py",
         root / "tools" / "tests" / "renderer_msaa_cvar_safety.py",
+        root / "tools" / "tests" / "renderer_screenshot_readback.py",
         root / "tools" / "tests" / "renderer_supersampling_safety.py",
         root / "tools" / "tests" / "savegame_corruption_contract.py",
         root / "tools" / "tests" / "sdl3_input_parity.py",
@@ -452,12 +463,13 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
 
 def ensure_game_libs_repo(env: dict[str, str]) -> None:
     game_libs_repo = validate_game_libs_repo_path(Path(env["OPENQ4_GAMELIBS_REPO"]))
-    expected = game_libs_repo / "src" / "game"
-    if not expected.is_dir():
-        raise ValidationError(
-            "openQ4-game source directory was not found. "
-            f"Expected: {expected}"
-        )
+    for source_tree, label in (("game", "single-player"), ("mpgame", "multiplayer")):
+        expected = game_libs_repo / "src" / source_tree
+        if not expected.is_dir():
+            raise ValidationError(
+                f"openQ4-game {label} source directory was not found. "
+                f"Expected: {expected}"
+            )
 
 
 def find_any(root: Path, patterns: tuple[str, ...]) -> list[Path]:
@@ -503,6 +515,30 @@ def expected_game_module_suffix() -> str:
 
 def find_staged_game_modules(game_dir: Path, stem: str) -> list[Path]:
     return find_any(game_dir, (f"{stem}_*.dll", f"{stem}_*.so", f"{stem}_*.dylib"))
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def validate_distinct_game_modules(root: Path, sp_modules: list[Path], mp_modules: list[Path]) -> None:
+    sp_by_arch = {staged_binary_arch(path, "game-sp"): path for path in sp_modules}
+    mp_by_arch = {staged_binary_arch(path, "game-mp"): path for path in mp_modules}
+    for arch in sorted(set(sp_by_arch).intersection(mp_by_arch)):
+        sp_path = sp_by_arch[arch]
+        mp_path = mp_by_arch[arch]
+        if sp_path.stat().st_size != mp_path.stat().st_size:
+            continue
+        if file_sha256(sp_path) == file_sha256(mp_path):
+            raise ValidationError(
+                "Staged single-player and multiplayer game modules are byte-identical for "
+                f"{arch}: {rel(sp_path, root)} and {rel(mp_path, root)}. "
+                "The MP target must compile the companion src/mpgame source tree."
+            )
 
 
 def validate_staged_architecture_set(
@@ -815,12 +851,16 @@ def readelf_output(path: Path, args: list[str], root: Path) -> str:
     if readelf_path is None:
         raise ValidationError("Linux hardening validation requires readelf from binutils.")
 
+    readelf_env = os.environ.copy()
+    readelf_env["LC_ALL"] = "C"
+    readelf_env["LANG"] = "C"
     completed = subprocess.run(
         [readelf_path, *args, str(path)],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        env=readelf_env,
     )
     if completed.returncode != 0:
         message = completed.stderr.strip() or completed.stdout.strip()
@@ -828,9 +868,133 @@ def readelf_output(path: Path, args: list[str], root: Path) -> str:
     return completed.stdout
 
 
-def validate_linux_binary_hardening(root: Path, binary_paths: list[Path]) -> None:
-    for binary_path in binary_paths:
+LINUX_DEDICATED_COMMON_ALLOWED_NEEDED = frozenset(
+    {
+        # C/C++ and compiler runtimes used by supported GCC/Clang builds.
+        "libc.so",
+        "libc.so.6",
+        "libc++.so.1",
+        "libc++abi.so.1",
+        "libgcc_s.so.1",
+        "libstdc++.so.6",
+        "libunwind.so.1",
+        "libatomic.so.1",
+        "libssp.so.0",
+        # POSIX runtime libraries that remain separate on older glibc systems.
+        "libdl.so",
+        "libdl.so.2",
+        "libm.so",
+        "libm.so.6",
+        "libpthread.so",
+        "libpthread.so.0",
+        "librt.so",
+        "librt.so.1",
+    }
+)
+
+# Dynamic loaders normally appear in PT_INTERP rather than DT_NEEDED, but some
+# toolchain/runtime combinations record them as dependencies. Keep those names
+# architecture-specific so an x64 payload cannot silently accept an AArch64
+# loader (or vice versa). The musl libc/loader SONAMEs support local non-release
+# builds without weakening the client-library boundary.
+LINUX_DEDICATED_ARCH_ALLOWED_NEEDED = {
+    "x64": frozenset(
+        {
+            "ld-linux-x86-64.so.2",
+            "ld-musl-x86_64.so.1",
+            "libc.musl-x86_64.so.1",
+        }
+    ),
+    "arm64": frozenset(
+        {
+            "ld-linux-aarch64.so.1",
+            "ld-musl-aarch64.so.1",
+            "libc.musl-aarch64.so.1",
+        }
+    ),
+    "x86": frozenset(
+        {
+            "ld-linux.so.2",
+            "ld-musl-i386.so.1",
+            "libc.musl-x86.so.1",
+        }
+    ),
+}
+
+
+def linux_needed_libraries(root: Path, binary_path: Path) -> list[str]:
+    dynamic_section = readelf_output(binary_path, ["-W", "-d"], root)
+    return re.findall(
+        r"\(NEEDED\).*Shared library: \[([^\]]+)\]",
+        dynamic_section,
+    )
+
+
+def validate_linux_client_runtime_dependencies(
+    root: Path,
+    client_candidates: list[Path],
+) -> None:
+    for client_path in client_candidates:
+        forbidden = sorted(
+            library
+            for library in linux_needed_libraries(root, client_path)
+            if library.lower().startswith("libpipewire-")
+        )
+        if forbidden:
+            raise ValidationError(
+                "Linux client has a forbidden direct PipeWire runtime dependency: "
+                f"{rel(client_path, root)}: {', '.join(forbidden)}"
+            )
+
+
+def validate_linux_dedicated_runtime_dependencies(
+    root: Path,
+    runtime_binary_specs: list[tuple[Path, str]],
+) -> None:
+    for binary_path, arch in runtime_binary_specs:
+        architecture_allowed = LINUX_DEDICATED_ARCH_ALLOWED_NEEDED.get(arch)
+        if architecture_allowed is None:
+            raise ValidationError(
+                "Linux dedicated runtime dependency validation does not support architecture "
+                f"{arch or '<empty>'!r}: {rel(binary_path, root)}"
+            )
+        allowed = LINUX_DEDICATED_COMMON_ALLOWED_NEEDED | architecture_allowed
+        unexpected = sorted(
+            set(linux_needed_libraries(root, binary_path)).difference(allowed)
+        )
+        if unexpected:
+            raise ValidationError(
+                "Linux dedicated runtime component has non-core DT_NEEDED dependencies: "
+                f"{rel(binary_path, root)} ({arch}): {', '.join(unexpected)}"
+            )
+
+
+def validate_linux_binary_hardening(
+    root: Path,
+    binary_specs: list[tuple[Path, str, bool]],
+) -> None:
+    architecture_contract = {
+        "x64": ("ELF64", "Advanced Micro Devices X86-64"),
+        "arm64": ("ELF64", "AArch64"),
+        "x86": ("ELF32", "Intel 80386"),
+    }
+
+    for binary_path, staged_arch, is_game_module in binary_specs:
+        if staged_arch not in architecture_contract:
+            raise ValidationError(
+                f"Linux ELF validation has no architecture mapping for {staged_arch!r}: "
+                f"{rel(binary_path, root)}"
+            )
+
+        expected_class, expected_machine = architecture_contract[staged_arch]
         elf_header = readelf_output(binary_path, ["-h"], root)
+        class_line = next((line for line in elf_header.splitlines() if "Class:" in line), "")
+        machine_line = next((line for line in elf_header.splitlines() if "Machine:" in line), "")
+        if expected_class not in class_line or expected_machine not in machine_line:
+            raise ValidationError(
+                f"Linux ELF architecture does not match its staged name: {rel(binary_path, root)} "
+                f"(expected {expected_class}/{expected_machine})"
+            )
         if "Type:" not in elf_header or "DYN" not in elf_header:
             raise ValidationError(f"Linux binary is not PIE/ET_DYN: {rel(binary_path, root)}")
 
@@ -849,6 +1013,42 @@ def validate_linux_binary_hardening(root: Path, binary_paths: list[Path]) -> Non
         dynamic_section = readelf_output(binary_path, ["-W", "-d"], root)
         if "BIND_NOW" not in dynamic_section and "(NOW)" not in dynamic_section:
             raise ValidationError(f"Linux binary is missing immediate binding/BIND_NOW: {rel(binary_path, root)}")
+
+        if is_game_module:
+            symbols = readelf_output(binary_path, ["--wide", "--dyn-syms"], root)
+            public_symbols: list[tuple[str, str, str, str, str]] = []
+            for line in symbols.splitlines():
+                fields = line.split()
+                # readelf columns: Num, Value, Size, Type, Bind, Vis, Ndx, Name.
+                # Reject every externally visible definition except the module
+                # entry point. This includes weak, GNU-unique, and protected
+                # definitions that a GLOBAL/DEFAULT-only check would overlook.
+                if (
+                    len(fields) >= 8
+                    and fields[6] != "UND"
+                    and fields[4] in {"GLOBAL", "WEAK", "UNIQUE"}
+                    and fields[5] in {"DEFAULT", "PROTECTED"}
+                ):
+                    public_symbols.append(
+                        (fields[3], fields[4], fields[5], fields[6], fields[-1])
+                    )
+
+            expected_game_api = (
+                len(public_symbols) == 1
+                and public_symbols[0][0] == "FUNC"
+                and public_symbols[0][1] == "GLOBAL"
+                and public_symbols[0][2] == "DEFAULT"
+                and public_symbols[0][4] == "GetGameAPI"
+            )
+            if not expected_game_api:
+                public_summary = ", ".join(
+                    f"{symbol_type}/{binding}/{visibility}/{index} {name}"
+                    for symbol_type, binding, visibility, index, name in public_symbols
+                ) or "<none>"
+                raise ValidationError(
+                    "Linux game module must expose exactly one GLOBAL/DEFAULT/FUNC "
+                    f"GetGameAPI definition: {rel(binary_path, root)}; found {public_summary}"
+                )
 
 
 def macos_binary_arch(path: Path, stem: str) -> str | None:
@@ -1060,10 +1260,37 @@ def validate_staged_payload(root: Path, *, dry_run: bool) -> None:
         dedicated_candidates,
     )
     validate_no_staged_symlinks(root, install_root)
+    validate_distinct_game_modules(root, sp_modules, mp_modules)
 
     if host_is_linux():
         validate_linux_launch_metadata(root, install_root, client_candidates)
-        validate_linux_binary_hardening(root, client_candidates + dedicated_candidates)
+        linux_binary_specs: list[tuple[Path, str, bool]] = []
+        for binary_path in client_candidates:
+            linux_binary_specs.append(
+                (binary_path, staged_binary_arch(binary_path, "openQ4-client") or "", False)
+            )
+        for binary_path in dedicated_candidates:
+            linux_binary_specs.append(
+                (binary_path, staged_binary_arch(binary_path, "openQ4-ded") or "", False)
+            )
+        for binary_path in sp_modules:
+            linux_binary_specs.append(
+                (binary_path, staged_binary_arch(binary_path, "game-sp") or "", True)
+            )
+        for binary_path in mp_modules:
+            linux_binary_specs.append(
+                (binary_path, staged_binary_arch(binary_path, "game-mp") or "", True)
+            )
+        validate_linux_binary_hardening(root, linux_binary_specs)
+        validate_linux_client_runtime_dependencies(root, client_candidates)
+        dedicated_runtime_specs = [
+            (binary_path, staged_binary_arch(binary_path, "openQ4-ded") or "")
+            for binary_path in dedicated_candidates
+        ] + [
+            (binary_path, staged_binary_arch(binary_path, "game-mp") or "")
+            for binary_path in mp_modules
+        ]
+        validate_linux_dedicated_runtime_dependencies(root, dedicated_runtime_specs)
     if host_is_macos():
         validate_macos_staged_metadata(
             root,
@@ -1238,7 +1465,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--platform-backend", default="", help="Optional Meson platform_backend override.")
     parser.add_argument("--clean", dest="clean", action="store_true", default=None, help="Use Meson --wipe for setup.")
     parser.add_argument("--no-clean", dest="clean", action="store_false", help="Reconfigure/reuse an existing build directory.")
-    parser.add_argument("--install", dest="install", action="store_true", default=None, help="Run Meson install and staged payload checks.")
+    parser.add_argument(
+        "--install",
+        dest="install",
+        action="store_true",
+        default=None,
+        help="Run Meson install when building and validate the staged payload.",
+    )
     parser.add_argument("--no-install", dest="install", action="store_false", help="Skip Meson install and staged payload checks.")
     parser.add_argument("--skip-python-tests", action="store_true", help="Skip lightweight Python validation tests.")
     parser.add_argument("--skip-build", action="store_true", help="Skip Meson setup/compile/install steps.")
@@ -1317,7 +1550,13 @@ def main(argv: list[str]) -> int:
                     title="Meson install",
                     dry_run=args.dry_run,
                 )
-                validate_staged_payload(root, dry_run=args.dry_run)
+
+        # --skip-build suppresses setup, compile, and install, but an explicit
+        # --install still requests validation of the existing staged payload.
+        # Release workflows use this after staging and before mutating binaries
+        # for debug-symbol packaging.
+        if args.install:
+            validate_staged_payload(root, dry_run=args.dry_run)
 
         if args.runtime:
             if not args.install and not args.dry_run:

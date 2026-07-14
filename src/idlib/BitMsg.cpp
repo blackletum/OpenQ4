@@ -36,7 +36,7 @@ bool idBitMsg::CheckOverflow( int numBits ) {
 	assert( numBits >= 0 );
 	if ( numBits > GetRemainingWriteBits() ) {
 		if ( !allowOverflow ) {
-			idLib::common->FatalError( va( "idBitMsg: overflow without allowOverflow set: %d > %d*8", GetNumBitsWritten()+numBits, GetMaxSize() ) );
+			idLib::common->FatalError( "idBitMsg: overflow without allowOverflow set: %d > %d*8", GetNumBitsWritten() + numBits, GetMaxSize() );
 		}
 		if ( numBits > ( maxSize << 3 ) ) {
 			idLib::common->FatalError( "idBitMsg: %i bits is > full message size", numBits );

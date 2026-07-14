@@ -2,7 +2,7 @@ option(
   'use_pch',
   type: 'boolean',
   value: true,
-  description: 'Enable precompiled headers (src/idlib/precompiled.h).',
+  description: 'Compile src/idlib/precompiled.h as a PCH. When disabled, force-include it as a normal common header.',
 )
 
 option(
@@ -39,6 +39,13 @@ option(
   choices: ['sdl3', 'legacy_win32', 'native'],
   value: 'sdl3',
   description: 'Window/input backend. Windows: sdl3 or legacy_win32. Linux/macOS: sdl3 or native. The macOS native backend is comparison-only; release packages use sdl3.',
+)
+
+option(
+  'linux_x11',
+  type: 'feature',
+  value: 'auto',
+  description: 'Linux SDL3 X11/XWayland driver and optional engine X11 helpers. Disable for a native Wayland/EGL-only build.',
 )
 
 option(

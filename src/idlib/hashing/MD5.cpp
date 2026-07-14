@@ -258,8 +258,9 @@ MD5_BlockChecksum
 ===============
 */
 unsigned long MD5_BlockChecksum( const void *data, int length ) {
-	unsigned long	digest[4];
-	unsigned long	val;
+	static_assert( sizeof( unsigned int ) == 4, "MD5 requires 32-bit digest words" );
+	unsigned int	digest[4];
+	unsigned int	val;
 	MD5_CTX			ctx;
 
 	MD5_Init( &ctx );

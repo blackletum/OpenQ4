@@ -317,6 +317,45 @@ def validate_posix_console_guards() -> None:
     require(splash_drain, "failed to requeue non-splash event", "POSIX splash event requeue failure guard")
 
 
+def validate_sdl3_video_ownership() -> None:
+    console = read("src/sys/posix/posix_syscon.cpp")
+    public = read("src/sys/posix/posix_public.h")
+    backend = read("src/sys/sdl3/sdl3_backend.cpp")
+
+    splash_acquire = function_body(console, "static bool Posix_SplashEnsureVideo( void ) {")
+    splash_release = function_body(console, "static void Posix_SplashDestroy( void ) {")
+    console_acquire = function_body(console, "static bool Posix_ConsoleEnsureVideo( void ) {")
+    console_release = function_body(console, "void Posix_ShutdownConsole( void ) {")
+    destroy_splash = function_body(console, "void Sys_DestroySplash( void ) {")
+    gl_init = function_body(backend, "bool GLimp_Init(glimpParms_t parms) {")
+    gl_shutdown = function_body(backend, "void GLimp_Shutdown(void) {")
+
+    for body, owner, init_call, context in (
+        (splash_acquire, "s_splashWindow.videoInitializedBySplash", "SDL_InitSubSystem( SDL_INIT_VIDEO )", "POSIX splash SDL video ownership"),
+        (console_acquire, "s_consoleWindow.videoInitializedByConsole", "SDL_InitSubSystem( SDL_INIT_VIDEO )", "POSIX console SDL video ownership"),
+        (gl_init, "s_sdlVideoReferenceHeld", "SDL_InitSubSystem(SDL_INIT_VIDEO)", "SDL3 game-window video ownership"),
+    ):
+        require(body, owner, context)
+        require(body, init_call, context)
+
+    require_before(splash_acquire, "Sys_SDL_ApplyVideoHintDefaults();", "SDL_InitSubSystem( SDL_INIT_VIDEO )", "POSIX splash pre-video SDL defaults")
+    require_before(console_acquire, "Sys_SDL_ApplyVideoHintDefaults();", "SDL_InitSubSystem( SDL_INIT_VIDEO )", "POSIX console pre-video SDL defaults")
+
+    reject(gl_init, "SDL_WasInit(SDL_INIT_VIDEO)", "SDL3 game window must not borrow a support-window video reference")
+    reject(backend, "adopting video subsystem", "SDL3 game window ownership transfer")
+    reject(console, "Posix_ReleaseStartupSDLVideoOwnership", "POSIX startup video ownership transfer")
+    reject(public, "Posix_ReleaseStartupSDLVideoOwnership", "POSIX startup video ownership API")
+
+    for token in ("SDL_DestroyTexture", "SDL_DestroyRenderer", "SDL_DestroyWindow"):
+        require_before(splash_release, token, "SDL_QuitSubSystem( SDL_INIT_VIDEO )", "POSIX splash resource-before-video teardown")
+    require(destroy_splash, "Posix_SplashDestroy();", "POSIX splash releases its SDL video reference")
+
+    require_before(console_release, "SDL_DestroyRenderer", "SDL_QuitSubSystem( SDL_INIT_VIDEO )", "POSIX console renderer-before-video teardown")
+    require_before(console_release, "SDL_DestroyWindow", "SDL_QuitSubSystem( SDL_INIT_VIDEO )", "POSIX console window-before-video teardown")
+    require(gl_shutdown, "if (s_sdlVideoReferenceHeld && !preserveWindow)", "SDL3 game video release ownership guard")
+    require_before(gl_shutdown, "SDL_DestroyWindow(s_sdlWindow)", "SDL_QuitSubSystem(SDL_INIT_VIDEO)", "SDL3 game window-before-video teardown")
+
+
 def validate_posix_signal_guards() -> None:
     source = read("src/sys/posix/posix_signal.cpp")
     write_number = function_body(source, "static void Posix_WriteSignalNumber( int value ) {")
@@ -359,6 +398,7 @@ def main() -> None:
     validate_posix_glue_allocation_guards()
     validate_posix_thread_guards()
     validate_posix_console_guards()
+    validate_sdl3_video_ownership()
     validate_posix_signal_guards()
     validate_native_vram_probe_guards()
     validate_validation_wiring()

@@ -8,34 +8,24 @@ elif host_machine.system() == 'darwin'
 else
   cdata.set('SDL_VIDEO_DRIVER_WAYLAND', 1)
   subdir('wayland')
-  x11_dep = dependency(
-    'x11',
-    required: false,
-  )
-  xext_dep = dependency(
-    'xext',
-    required: false,
-  )
-  # xproto is required for some XInput2 functions
-  xproto_dep = dependency(
-    'xproto',
-    required: false,
-  )
-  # SDL3 assumes XInput2 is always available
-  xi_dep = dependency(
-    'xi',
-    required: false,
-  )
+  x11_option = get_option('x11')
+  if not x11_option.disabled()
+    x11_dep = dependency('x11', required: x11_option)
+    xext_dep = dependency('xext', required: x11_option)
+    # xproto is required for some XInput2 functions.
+    xproto_dep = dependency('xproto', required: x11_option)
+    # SDL3 assumes XInput2 is always available when the X11 driver is built.
+    xi_dep = dependency('xi', required: x11_option)
 
-
-  if x11_dep.found() and xext_dep.found() and xproto_dep.found() and xi_dep.found()
-    cdata.set('SDL_VIDEO_DRIVER_X11', 1)
-    cdata.set('SDL_VIDEO_DRIVER_X11_XINPUT2', 1)
-    sdl_deps += x11_dep
-    sdl_deps += xext_dep
-    sdl_deps += xproto_dep
-    sdl_deps += xi_dep
-    subdir('x11')
+    if x11_dep.found() and xext_dep.found() and xproto_dep.found() and xi_dep.found()
+      cdata.set('SDL_VIDEO_DRIVER_X11', 1)
+      cdata.set('SDL_VIDEO_DRIVER_X11_XINPUT2', 1)
+      sdl_deps += x11_dep
+      sdl_deps += xext_dep
+      sdl_deps += xproto_dep
+      sdl_deps += xi_dep
+      subdir('x11')
+    endif
   endif
 endif
 

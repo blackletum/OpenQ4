@@ -135,7 +135,7 @@
       <ul>
         <li>A legitimate Quake 4 installation from Steam or GOG.</li>
         <li>The stock retail PK4 files in a <code>q4base/</code> directory, available through openQ4's asset discovery or a manual <code>fs_basepath</code> setting.</li>
-        <li>A supported package target: Windows, Linux, Steam Deck/SteamOS, or experimental Apple Silicon/arm64 macOS.</li>
+        <li>A supported package target: Windows, Linux x64, Steam Deck/SteamOS, preview Linux ARM64, or experimental Apple Silicon/arm64 macOS.</li>
         <li>Use <code>minimum</code>, <code>lowpower</code>, or <code>performance</code> presets on constrained systems before enabling expensive visual options.</li>
       </ul>
     </section>
@@ -151,6 +151,15 @@
         <li>Open <code>docs/index.html</code> for the full offline documentation set, or use the installer-created Start Menu shortcuts on Windows.</li>
         <li>If auto-detection fails, launch with <code>+set fs_basepath "path\\to\\Quake 4"</code>, pointing at the retail root that contains <code>q4base/</code>.</li>
       </ol>
+    </section>
+
+    <section>
+      <h2>Linux ARM64 Preview Notes</h2>
+      <ul>
+        <li>Linux ARM64 packages remain preview builds until physical ARM64 hardware completes native-Wayland SP/MP gameplay, dedicated-server, audio, input, and package signoff.</li>
+        <li>The package requires 64-bit little-endian AArch64 hardware, an Ubuntu 24.04-class desktop userspace, and a desktop OpenGL compatibility driver with Wayland/EGL or X11/GLX support.</li>
+        <li>GLES-only boards are not covered by the current Linux ARM64 package.</li>
+      </ul>
     </section>
 
     <section>

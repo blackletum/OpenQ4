@@ -156,6 +156,7 @@ def validate_renderer_startup_order() -> None:
         "void RB_ARB2_DrawInteractions( void ) {",
     )
     draw_interactions_body = function_body(draw_source, "void RB_ARB2_DrawInteractions( void ) {")
+    interaction_restore_body = function_body(draw_source, "static void RB_ARB2_RestoreInteractionState( const bool recordBypassBreadcrumb ) {")
     bypass_restore_body = function_body(draw_source, "static void RB_ARB2_RestoreBypassedInteractionState( void ) {")
     disable_attrib_body = function_body(draw_source, "static void RB_ARB2_DisableInteractionVertexAttribArrays( void ) {")
     draw_view_body = function_body(common_source, "void\tRB_STD_DrawView( void ) {")
@@ -213,18 +214,21 @@ def validate_renderer_startup_order() -> None:
         require(draw_interactions_body, token, "ARB2 interaction driver bypass breadcrumb")
 
     for token in (
-        "RB_ARB2_ClearBypassedInteractionTextureState();",
+        "RB_ARB2_ClearInteractionTextureState();",
         "glDisableClientState( GL_COLOR_ARRAY );",
         "glDisableClientState( GL_NORMAL_ARRAY );",
         "RB_ARB2_DisableInteractionVertexAttribArrays();",
         "glDisable( GL_VERTEX_PROGRAM_ARB );",
         "glDisable( GL_FRAGMENT_PROGRAM_ARB );",
-        "RB_ARB2_UnbindBypassedInteractionPrograms();",
+        "RB_ARB2_UnbindInteractionPrograms();",
         "glStencilFunc( GL_ALWAYS, 128, 255 );",
         "GL_ClearStateDelta();",
         "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_STATE_RESTORED",
     ):
-        require(bypass_restore_body, token, "ARB2 interaction bypass state restore")
+        require(interaction_restore_body, token, "ARB2 interaction state restore")
+
+    require(bypass_restore_body, "RB_ARB2_RestoreInteractionState( true );", "ARB2 interaction bypass state restore wrapper")
+    require(draw_interactions_body, "RB_ARB2_RestoreInteractionState( false );", "Apple interaction draw state restore")
 
     for token in (
         "glDisableVertexAttribArrayARB == NULL",
@@ -233,7 +237,7 @@ def validate_renderer_startup_order() -> None:
     ):
         require(disable_attrib_body, token, "ARB2 bypass interaction attribute cleanup")
 
-    texture_cleanup_body = function_body(draw_source, "static void RB_ARB2_ClearBypassedInteractionTextureState( void ) {")
+    texture_cleanup_body = function_body(draw_source, "static void RB_ARB2_ClearInteractionTextureState( void ) {")
     for token in (
         "maxStateUnits",
         "maxInteractionUnit",

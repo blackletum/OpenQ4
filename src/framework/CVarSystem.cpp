@@ -1256,7 +1256,7 @@ void idCVarSystemLocal::ListByFlags( const idCmdArgs &args, cvarFlags_t flags ) 
 				string += ( cvar->GetFlags() & CVAR_ARCHIVE ) ?		"AR "	: "   ";
 				string += ( cvar->GetFlags() & CVAR_MODIFIED ) ?	"MO "	: "   ";
 				string += "\n";
-				common->Printf( string );
+				common->Printf( "%s", string.c_str() );
 			}
 			break;
 		}

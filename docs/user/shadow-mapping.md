@@ -136,6 +136,7 @@ vid_restart
 | `r_shadowMapFilterRadius` | `2.0` | `0..8` | Projected-light PCF filter radius in texels. |
 | `r_shadowMapFilterTaps` | `13` | `1..13` | Projected-light PCF tap budget. Values up to `1`, `5`, `9`, and `13` select progressively wider sample sets. |
 | `r_shadowMapFilterMode` | `0` | `0..2` | Projected-light filter mode: fixed PCF, stable rotated Poisson, or experimental PCSS-lite with raw depth sampling. |
+| `r_shadowMapDistantFilterScale` | `0.35` | `0..1` | Scales projected PCF and PCSS radii for parallel/global distant sources such as sky or sun lights. Their texels cover much more world space than local projectors, so a tighter kernel preserves caster silhouettes instead of over-blurring them. Set `1` to use the ordinary projected-light radii unchanged. |
 | `r_shadowMapPCSSLightRadius` | `4.0` | `0..16` | Projected PCSS-lite blocker search radius in shadow texels. |
 | `r_shadowMapPCSSMaxRadius` | `8.0` | `0..16` | Maximum projected PCSS-lite filter radius in shadow texels. |
 | `r_shadowMapPointFilterRadius` | `2.5` | `0..8` | Point-light PCF filter radius in texels. |
@@ -323,6 +324,7 @@ Useful workflow:
 
 - If shadows do not appear at all, check `r_shadows 1` and `r_useShadowMap 1`, then run `vid_restart`.
 - If projected-light shadows shimmer while moving, keep `r_shadowMapCSM 1` and `r_shadowMapCascadeStabilize 1`.
+- Parallel/global sky shadows automatically use the tighter `r_shadowMapDistantFilterScale 0.35` policy. If a particular outdoor scene still looks too soft, lower it toward `0`; if you want the old shared projected-light softness, set it to `1`.
 - If cutout materials cast solid-looking shadows, make sure `r_shadowMapHashedAlpha 1` is enabled and the material is actually alpha-tested with explicit texture coordinates. Unusual animated texgen cutouts may cast conservative solid depth until that stage type is supported.
 - If translucent shadows are too strong or too noisy, lower `r_shadowMapTranslucentDensity` or disable `r_shadowMapTranslucentMoments`.
 - If blended materials still do not cast translucent shadows, that material may be outside the currently supported stage set. Common additive pickup orbs are supported, but many particle/effect materials still are not.

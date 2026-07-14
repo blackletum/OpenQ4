@@ -219,10 +219,14 @@ def main(argv: list[str]) -> int:
         return 1
     stage_root = raw_stage_root.resolve()
 
-    source_game_dir = gamelibs_root / "src" / "game"
-    if not source_game_dir.is_dir():
-        print(f"error: game source directory not found: {source_game_dir}", file=sys.stderr)
-        return 1
+    source_game_dirs = {
+        "game": gamelibs_root / "src" / "game",
+        "mpgame": gamelibs_root / "src" / "mpgame",
+    }
+    for module_name, source_game_dir in source_game_dirs.items():
+        if not source_game_dir.is_dir():
+            print(f"error: {module_name} source directory not found: {source_game_dir}", file=sys.stderr)
+            return 1
 
     if not project_root.is_dir():
         print(f"error: openQ4 root not found: {project_root}", file=sys.stderr)
@@ -231,7 +235,9 @@ def main(argv: list[str]) -> int:
     try:
         validate_stage_root(project_root, gamelibs_root, stage_root)
         prepare_stage_root(stage_root)
-        staged_files = copy_game_sources(source_game_dir, stage_root / "src" / "game")
+        staged_files = []
+        for module_name, source_game_dir in source_game_dirs.items():
+            staged_files += copy_game_sources(source_game_dir, stage_root / "src" / module_name)
         staged_files += mirror_project_support_dirs(project_root, stage_root)
         write_stage_manifest(project_root, gamelibs_root, stage_root, staged_files)
         validate_stage_manifest(stage_root)

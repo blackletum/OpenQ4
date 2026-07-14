@@ -163,7 +163,7 @@ def validate_apple_gl21_vbo_quirk() -> None:
         "RendererDriverQuirk_ParseGLVersionPrefix",
         "RendererDriverQuirk_IsAppleGL21CompatibilityFallback",
         "selectedCompatibility",
-        "Apple OpenGL 2.1 compatibility path uses CPU-backed vertex cache, simple ARB interaction programs, and bypassed ARB2 light interactions for stability",
+        "Apple OpenGL 2.1 compatibility path uses a CPU-backed vertex cache with automatic stock GLSL interactions, simple ARB per-surface fallback, and an emergency interaction bypass",
         '{ RENDERER_DRIVER_QUIRK_DISABLE_VBO, "disableVBO" }',
         '{ RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION, "preferSimpleInteraction" }',
         '{ RENDERER_DRIVER_QUIRK_DISABLE_ARB2_INTERACTIONS, "disableARB2Interactions" }',
@@ -307,7 +307,8 @@ def validate_lightgrid_pbo_fails_closed() -> None:
 
 def validate_classic_arb2_vbo_offset_pointers() -> None:
     source = read("src/renderer/draw_arb2.cpp")
-    helper = function_body(source, "static void *RB_DrawVertAttributePointer( const idDrawVert *base, const int byteOffset ) {")
+    vertex_cache_header = read("src/renderer/VertexCache.h")
+    helper = function_body(vertex_cache_header, "ID_INLINE void *RB_DrawVertAttributePointer( const void *base, const size_t byteOffset ) {")
     classic_interactions = source_section(
         source,
         "// set the vertex pointers",
@@ -361,8 +362,13 @@ def validate_apple_gl21_simple_interaction_fallback() -> None:
         "idStr::Icmp( prog.name, \"SimpleInteraction.vfp\" ) == 0",
         "glConfig.preferSimpleInteraction = true",
         "prefers simple ARB interaction shader for compatibility",
+        "g_appleGL21AutomaticInteractionPath = true",
+        "automatic stock GLSL interactions with simple ARB per-surface fallback",
+        "RB_SurfaceEligibleForAppleGL21StockGLSLInteraction",
+        "RB_GLSLMaterial_CreateDrawInteractions( &singleSurf, true )",
+        "RB_ARB2_CreateDrawInteractions( &singleSurf )",
         "glConfig.disableARB2Interactions = true",
-        "bypasses ARB2 light interactions for compatibility",
+        "emergency ARB2 light-interaction bypass",
         "Apple OpenGL 2.1 compatibility path bypassing ARB2 light interactions",
         "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_DRIVER_BYPASS",
     ):
@@ -379,7 +385,12 @@ def validate_apple_gl21_simple_interaction_fallback() -> None:
 
     require(
         gfx_info,
-        "Simple ARB interaction compatibility mode preferred for this renderer",
+        "Apple GL 2.1 automatic stock GLSL interactions active with simple ARB per-surface fallback",
+        "gfxInfo automatic Apple GL 2.1 interactions",
+    )
+    require(
+        gfx_info,
+        "Simple ARB interaction per-surface fallback armed for this renderer",
         "gfxInfo simple interaction fallback",
     )
     require(

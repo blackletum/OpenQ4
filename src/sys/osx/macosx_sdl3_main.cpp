@@ -30,7 +30,9 @@ static void Sys_HandlePendingQuitSignal(void) {
 
 static int SDLCALL OpenQ4_Main(int argc, char **argv) {
 	Posix_EarlyInit();
+#ifndef ID_DEDICATED
 	Sys_ShowSplash();
+#endif
 
 	if (argc > 1 && argv != NULL) {
 		common->Init(argc - 1, const_cast<const char **>(&argv[1]), NULL);
@@ -38,7 +40,9 @@ static int SDLCALL OpenQ4_Main(int argc, char **argv) {
 		common->Init(0, NULL, NULL);
 	}
 
+#ifndef ID_DEDICATED
 	Sys_DestroySplash();
+#endif
 	Sys_HandlePendingQuitSignal();
 	Posix_LateInit();
 

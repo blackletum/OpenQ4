@@ -233,9 +233,9 @@ typedef enum {
 	DM_CONTINUOUS	// must be recreated for every single view (time dependent things like particles)
 } dynamicModel_t;
 
-typedef enum {
-	INVALID_JOINT				= -1
-} jointHandle_t;
+enum jointHandle_t : int {
+	INVALID_JOINT = -1
+};
 
 struct jointWeight_t {
 	float					weight;					// joint weight
@@ -399,8 +399,9 @@ public:
 #endif
 
 // rjohnson: added debugging code to try and catch a free error
-	// purges all the data before deleting
-	//virtual						~idRenderModel( void );
+	// Derived render models own geometry and must be destroyed through this
+	// interface when dynamic-model caches are retired.
+	virtual						~idRenderModel( void );
 // RAVEN END
 
 	// Loads static models only, dynamic models must be loaded by the modelManager

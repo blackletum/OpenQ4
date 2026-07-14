@@ -14,6 +14,23 @@ declare -a MESON_CMD=()
 PYTHON_CMD=""
 declare -a READ_ARRAY_RESULT=()
 
+configure_macos_deployment_target() {
+    local host_name=""
+    host_name="$(uname -s 2>/dev/null || true)"
+    [[ "${host_name}" == "Darwin" ]] || return 0
+
+    if [[ -z "${MACOSX_DEPLOYMENT_TARGET:-}" ]]; then
+        # Keep Meson subprojects and companion GameLibs on the same floor as
+        # the main project's -mmacosx-version-min setting.
+        export MACOSX_DEPLOYMENT_TARGET=11.0
+    elif [[ ! "${MACOSX_DEPLOYMENT_TARGET}" =~ ^[0-9]+([.][0-9]+){1,2}$ ]]; then
+        echo "MACOSX_DEPLOYMENT_TARGET must be a dotted macOS version, got '${MACOSX_DEPLOYMENT_TARGET}'." >&2
+        exit 1
+    fi
+
+    echo "macOS deployment target: ${MACOSX_DEPLOYMENT_TARGET}"
+}
+
 resolve_meson_cmd() {
     local candidate=""
     local python_cmd=""
@@ -88,6 +105,7 @@ read_nul_array() {
     done
 }
 
+configure_macos_deployment_target
 resolve_meson_cmd
 
 test_meson_build_directory() {
@@ -166,6 +184,134 @@ raise SystemExit(1)
 PY
 }
 
+resolve_gamelibs_repo_path() {
+    "${PYTHON_CMD}" - "${repo_root}" "${OPENQ4_GAMELIBS_REPO:-}" <<'PY'
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+raw = sys.argv[2].strip()
+repo = pathlib.Path(raw) if raw else root.parent / "openQ4-game"
+print(repo.resolve().as_posix())
+PY
+}
+
+test_gamelibs_stage_refresh_needed() {
+    local build_dir="$1"
+    test_meson_build_directory "${build_dir}" || return 1
+
+    local build_engine=""
+    local build_games=""
+    build_engine="$(get_meson_build_option_value "${build_dir}" build_engine || true)"
+    build_games="$(get_meson_build_option_value "${build_dir}" build_games || true)"
+    if [[ "${build_engine}" != "true" && "${build_games}" != "true" ]]; then
+        return 1
+    fi
+
+    local gamelibs_repo=""
+    gamelibs_repo="$(resolve_gamelibs_repo_path)"
+    local source_game_dirs=(
+        "${gamelibs_repo}/src/game"
+        "${gamelibs_repo}/src/mpgame"
+    )
+    local staged_game_dirs=(
+        "${repo_root}/.tmp/gamelibs_stage/src/game"
+        "${repo_root}/.tmp/gamelibs_stage/src/mpgame"
+    )
+
+    local directory_path=""
+    for directory_path in "${source_game_dirs[@]}"; do
+        [[ -d "${directory_path}" ]] || return 1
+    done
+    for directory_path in "${staged_game_dirs[@]}"; do
+        [[ -d "${directory_path}" ]] || return 0
+    done
+
+    if "${PYTHON_CMD}" - "${gamelibs_repo}" "${repo_root}/.tmp/gamelibs_stage" "${source_game_dirs[@]}" -- "${staged_game_dirs[@]}" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import sys
+
+gamelibs_root = pathlib.Path(sys.argv[1])
+stage_root = pathlib.Path(sys.argv[2])
+separator = sys.argv.index("--", 3)
+source_dirs = sys.argv[3:separator]
+staged_dirs = sys.argv[separator + 1:]
+
+
+def regular_files(directory_paths):
+    paths = []
+    for directory_path in directory_paths:
+        for root, _dirs, files in os.walk(directory_path):
+            root_path = pathlib.Path(root)
+            paths.extend(root_path / file_name for file_name in files)
+    return paths
+
+
+def latest_file_mtime_ns(paths):
+    latest = None
+    for path in paths:
+        mtime_ns = path.stat().st_mtime_ns
+        latest = mtime_ns if latest is None else max(latest, mtime_ns)
+    return latest
+
+source_files = regular_files(source_dirs)
+staged_files = regular_files(staged_dirs)
+source_relative_paths = {path.relative_to(gamelibs_root).as_posix() for path in source_files}
+staged_relative_paths = {path.relative_to(stage_root).as_posix() for path in staged_files}
+if source_relative_paths != staged_relative_paths:
+    raise SystemExit(0)
+source_latest = latest_file_mtime_ns(source_files)
+staged_latest = latest_file_mtime_ns(staged_files)
+if source_latest is None:
+    raise SystemExit(1)
+if staged_latest is None:
+    raise SystemExit(0)
+# Some mounted filesystems round copy timestamps down to whole seconds. Avoid
+# treating that copy precision loss as a source edit. Files in the ambiguous
+# interval are checked against the staging manifest so a real edit is not lost.
+timestamp_copy_tolerance_ns = 1_000_000_000
+if source_latest <= staged_latest:
+    raise SystemExit(1)
+if source_latest > staged_latest + timestamp_copy_tolerance_ns:
+    raise SystemExit(0)
+
+try:
+    manifest = json.loads(
+        (stage_root / "openq4_gamelibs_stage_manifest.json").read_text(encoding="utf-8")
+    )
+    manifest_hashes = {
+        entry["path"]: entry["sha256"]
+        for entry in manifest["files"]
+        if entry["path"].startswith(("src/game/", "src/mpgame/"))
+    }
+except (KeyError, OSError, TypeError, json.JSONDecodeError):
+    raise SystemExit(0)
+
+for source_path in source_files:
+    if source_path.stat().st_mtime_ns <= staged_latest:
+        continue
+    relative_path = source_path.relative_to(gamelibs_root).as_posix()
+    expected_hash = manifest_hashes.get(relative_path)
+    if expected_hash is None:
+        raise SystemExit(0)
+    digest = hashlib.sha256()
+    with source_path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    if digest.hexdigest() != expected_hash:
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+    then
+        return 0
+    else
+        return 1
+    fi
+}
+
 load_build_dir_info() {
     read_line_array < <(get_compile_build_dir "$@")
     BUILD_DIR="${READ_ARRAY_RESULT[0]}"
@@ -204,7 +350,7 @@ build_setup_args_for_existing_build_dir() {
 
     local option_name=""
     local option_value=""
-    for option_name in platform_backend macos_graphics_bridge macos_openal_provider version_track version_iteration version_base_override openal_root_override use_pch build_engine build_games build_game_sp build_game_mp enforce_msvc_2026; do
+    for option_name in platform_backend linux_x11 macos_graphics_bridge macos_openal_provider version_track version_iteration version_base_override openal_root_override use_pch build_engine build_games build_game_sp build_game_mp enforce_msvc_2026; do
         option_value="$(get_meson_build_option_value "${build_dir}" "${option_name}" || true)"
         if [[ -n "${option_value}" ]]; then
             SETUP_ARGS_RESULT+=("-D${option_name}=${option_value}")
@@ -350,6 +496,11 @@ if [[ "${command_name}" == "compile" || "${command_name}" == "install" ]]; then
         build_setup_args_for_existing_build_dir "${BUILD_DIR}"
         remove_build_directory "${BUILD_DIR}"
         run_meson "${SETUP_ARGS_RESULT[@]}"
+    fi
+
+    if test_gamelibs_stage_refresh_needed "${BUILD_DIR}"; then
+        echo "openQ4-game SP/MP sources changed since the last staged snapshot. Reconfiguring '${BUILD_DIR}'..."
+        run_meson setup --reconfigure "${BUILD_DIR}" "${repo_root}"
     fi
 
     if [[ "${BUILD_DIR_HAS_EXPLICIT}" == "0" ]]; then

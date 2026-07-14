@@ -301,7 +301,7 @@ void idParser::Error( const char *str, ... ) const {
 	idStr::vsnPrintf(text, sizeof(text), str, ap);
 	va_end(ap);
 	if ( idParser::scriptstack ) {
-		idParser::scriptstack->Error( text );
+		idParser::scriptstack->Error( "%s", text );
 	}
 }
 
@@ -318,7 +318,7 @@ void idParser::Warning( const char *str, ... ) const {
 	idStr::vsnPrintf(text, sizeof(text), str, ap);
 	va_end(ap);
 	if ( idParser::scriptstack ) {
-		idParser::scriptstack->Warning( text );
+		idParser::scriptstack->Warning( "%s", text );
 	}
 }
 
@@ -912,6 +912,83 @@ int idParser::ReadLine( idToken *token ) {
 	return true;
 }
 
+static bool Parser_IsAbsolutePath( const idStr& path ) {
+	return path.Length() > 0 &&
+		( path[0] == '/' || path[0] == '\\' || ( path.Length() > 1 && path[1] == ':' ) );
+}
+
+static bool Parser_StripLeadingGameDirectory( idStr& path, const char* gameDirectory ) {
+	if ( gameDirectory == NULL || gameDirectory[0] == '\0' ) {
+		return false;
+	}
+	const int directoryLength = idStr::Length( gameDirectory );
+	if ( idStr::Icmpn( path, gameDirectory, directoryLength ) != 0 ) {
+		return false;
+	}
+	if ( path.Length() == directoryLength ) {
+		path.Clear();
+		return true;
+	}
+	if ( path[directoryLength] != '/' && path[directoryLength] != '\\' ) {
+		return false;
+	}
+	path = path.Mid( directoryLength + 1, path.Length() - directoryLength - 1 );
+	return true;
+}
+
+static bool Parser_StripPackArchivePrefix( idStr& path ) {
+	const int pakPathPos = path.Find( ".pk4/", false );
+	if ( pakPathPos >= 0 ) {
+		path = path.Mid( pakPathPos + 5, path.Length() - pakPathPos - 5 );
+		return true;
+	}
+
+	// The caller strips the current filename first. A file at the archive root
+	// therefore leaves a base ending in just "pak-name.pk4", without a slash.
+	const int pakSuffixPos = path.Length() - 4;
+	if ( pakSuffixPos >= 0 && idStr::Icmp( path.c_str() + pakSuffixPos, ".pk4" ) == 0 ) {
+		path.Clear();
+		return true;
+	}
+
+	return false;
+}
+
+static void Parser_NormalizeIncludeBase( idStr& basePath ) {
+	basePath.BackSlashesToSlashes();
+	if ( Parser_StripPackArchivePrefix( basePath ) ) {
+		return;
+	}
+
+	idStr configuredGame;
+	idStr configuredGameBase;
+	if ( idLib::cvarSystem != NULL ) {
+		configuredGame = idLib::cvarSystem->GetCVarString( "fs_game" );
+		configuredGameBase = idLib::cvarSystem->GetCVarString( "fs_game_base" );
+		configuredGame.BackSlashesToSlashes();
+		configuredGameBase.BackSlashesToSlashes();
+		configuredGame.StripTrailing( '/' );
+		configuredGameBase.StripTrailing( '/' );
+	}
+
+	if ( Parser_StripLeadingGameDirectory( basePath, configuredGame.c_str() ) ||
+		Parser_StripLeadingGameDirectory( basePath, configuredGameBase.c_str() ) ||
+		Parser_StripLeadingGameDirectory( basePath, OPENQ4_GAMEDIR ) ||
+		Parser_StripLeadingGameDirectory( basePath, BASE_GAMEDIR ) ||
+		Parser_StripLeadingGameDirectory( basePath, BASE_MPGAMEDIR ) ) {
+		return;
+	}
+
+	// OSPathToRelativePath expects an absolute path. Passing an already-relative
+	// qpath produces a warning for every script include on case-sensitive hosts.
+	if ( Parser_IsAbsolutePath( basePath ) ) {
+		const char* relativePath = idLib::fileSystem->OSPathToRelativePath( basePath );
+		if ( relativePath != NULL && relativePath[0] != '\0' ) {
+			basePath = relativePath;
+		}
+	}
+}
+
 /*
 ================
 idParser::Directive_include
@@ -932,37 +1009,23 @@ int idParser::Directive_include( void ) {
 	}
 	if ( token.type == TT_STRING ) {
 		script = new idLexer;
-		// try relative to the current file
-		idStr basePath = scriptstack->GetFileName();
-		basePath.BackSlashesToSlashes();
-		basePath.StripFilename();
-
-		// Normalize to a game-relative path to avoid absolute OS/pk4 paths in includes.
-		idStr relBase = basePath;
-		int pakPos = relBase.Find( ".pk4/" );
-		if ( pakPos >= 0 ) {
-			relBase = relBase.Mid( pakPos + 5, relBase.Length() - ( pakPos + 5 ) );
-		} else {
-			const char *rel = idLib::fileSystem->OSPathToRelativePath( relBase );
-			if ( rel && rel[0] ) {
-				relBase = rel;
-			}
-		}
-
+		// Try relative to the current file, using a game-relative qpath even when
+		// the lexer reports an OS or pk4-backed filename.
+		idStr relBase = scriptstack->GetFileName();
+		relBase.BackSlashesToSlashes();
+		relBase.StripFilename();
+		Parser_NormalizeIncludeBase( relBase );
 		relBase.StripTrailing( '/' );
-		relBase.StripTrailing( '\\' );
 
 		idStr tokenStr = token.c_str();
 		tokenStr.BackSlashesToSlashes();
 
-		if ( relBase.Length() ) {
+		if ( relBase.Length() > 0 ) {
 			relBase += "/";
-			// Avoid duplicate prefixes when the include already starts with the base path.
-			if ( idStr::Icmpn( tokenStr, relBase, relBase.Length() ) == 0 ) {
-				path = tokenStr;
-			} else {
-				path = relBase + tokenStr;
-			}
+			// Avoid scripts/scripts/... when an include already carries its qpath.
+			path = ( idStr::Icmpn( tokenStr, relBase, relBase.Length() ) == 0 )
+				? tokenStr
+				: relBase + tokenStr;
 		} else {
 			path = tokenStr;
 		}
@@ -2131,7 +2194,7 @@ int idParser::Directive_eval( void ) {
 	token.whiteSpaceEnd_p = NULL;
 	token.linesCrossed = 0;
 	token.flags = 0;
-	sprintf(buf, "%d", abs(value));
+	sprintf( buf, "%ld", abs( value ) );
 	token = buf;
 	token.type = TT_NUMBER;
 	token.subtype = TT_INTEGER|TT_LONG|TT_DECIMAL;
@@ -2270,7 +2333,7 @@ int idParser::DollarDirective_evalint( void ) {
 	token.whiteSpaceEnd_p = NULL;
 	token.linesCrossed = 0;
 	token.flags = 0;
-	sprintf( buf, "%d", abs( value ) );
+	sprintf( buf, "%ld", abs( value ) );
 	token = buf;
 	token.type = TT_NUMBER;
 	token.subtype = TT_INTEGER | TT_LONG | TT_DECIMAL | TT_VALUESVALID;

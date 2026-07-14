@@ -164,6 +164,13 @@ def validate_game_libs_repo_guards() -> None:
     game_libs_link = WORK / "openQ4-game-link"
     write_file(game_libs_target / "src" / "game" / "Game_local.cpp")
 
+    expect_validation_error(
+        lambda: VALIDATOR.ensure_game_libs_repo({"OPENQ4_GAMELIBS_REPO": str(game_libs_target)}),
+        "multiplayer source directory was not found",
+        "missing multiplayer GameLibs source tree",
+    )
+    write_file(game_libs_target / "src" / "mpgame" / "Game_local.cpp")
+
     try:
         os.symlink(game_libs_target, game_libs_link, target_is_directory=True)
     except (OSError, NotImplementedError):
@@ -351,6 +358,159 @@ def validate_game_module_architecture_match() -> None:
     with_host_flags(True, False, False, assert_valid_arch_set)
 
 
+def validate_game_module_distinctness_guard() -> None:
+    root = WORK / "module-distinctness"
+    game_dir = root / ".install" / "baseoq4"
+    sp_module = game_dir / "game-sp_x64.so"
+    mp_module = game_dir / "game-mp_x64.so"
+    write_file(sp_module, b"same-module\n")
+    write_file(mp_module, b"same-module\n")
+
+    expect_validation_error(
+        lambda: VALIDATOR.validate_distinct_game_modules(root, [sp_module], [mp_module]),
+        "byte-identical",
+        "SP/MP game module distinctness",
+    )
+
+    write_file(mp_module, b"mp-module!!\n")
+    VALIDATOR.validate_distinct_game_modules(root, [sp_module], [mp_module])
+
+
+def validate_linux_runtime_dependency_guards() -> None:
+    root = WORK / "linux-dedicated-dependencies"
+    client_x64 = root / ".install" / "openQ4-client_x64"
+    client_arm64 = root / ".install" / "openQ4-client_arm64"
+    dedicated_x64 = root / ".install" / "openQ4-ded_x64"
+    dedicated_arm64 = root / ".install" / "openQ4-ded_arm64"
+    mp_x64 = root / ".install" / "baseoq4" / "game-mp_x64.so"
+    mp_arm64 = root / ".install" / "baseoq4" / "game-mp_arm64.so"
+    original_readelf_output = VALIDATOR.readelf_output
+    dynamic_section = ""
+
+    def fake_readelf_output(path: Path, args: list[str], source_root: Path) -> str:
+        if args != ["-W", "-d"]:
+            raise AssertionError(f"unexpected Linux dependency readelf arguments: {args!r}")
+        if path not in (
+            client_x64,
+            client_arm64,
+            dedicated_x64,
+            dedicated_arm64,
+            mp_x64,
+            mp_arm64,
+        ) or source_root != root:
+            raise AssertionError(f"unexpected Linux dependency path: {path}")
+        return dynamic_section
+
+    try:
+        VALIDATOR.readelf_output = fake_readelf_output
+        dynamic_section = """
+ 0x0000000000000001 (NEEDED)             Shared library: [libstdc++.so.6]
+ 0x0000000000000001 (NEEDED)             Shared library: [libgcc_s.so.1]
+ 0x0000000000000001 (NEEDED)             Shared library: [libm.so.6]
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+"""
+        VALIDATOR.validate_linux_client_runtime_dependencies(
+            root,
+            [client_x64, client_arm64],
+        )
+        VALIDATOR.validate_linux_dedicated_runtime_dependencies(
+            root,
+            [
+                (dedicated_x64, "x64"),
+                (dedicated_arm64, "arm64"),
+                (mp_x64, "x64"),
+                (mp_arm64, "arm64"),
+            ],
+        )
+
+        dynamic_section = """
+ 0x0000000000000001 (NEEDED)             Shared library: [ld-linux-x86-64.so.2]
+ 0x0000000000000001 (NEEDED)             Shared library: [libc++.so.1]
+ 0x0000000000000001 (NEEDED)             Shared library: [libc++abi.so.1]
+ 0x0000000000000001 (NEEDED)             Shared library: [libunwind.so.1]
+"""
+        VALIDATOR.validate_linux_dedicated_runtime_dependencies(
+            root,
+            [(dedicated_x64, "x64"), (mp_x64, "x64")],
+        )
+
+        dynamic_section = """
+ 0x0000000000000001 (NEEDED)             Shared library: [ld-linux-aarch64.so.1]
+ 0x0000000000000001 (NEEDED)             Shared library: [libatomic.so.1]
+ 0x0000000000000001 (NEEDED)             Shared library: [libgcc_s.so.1]
+"""
+        VALIDATOR.validate_linux_dedicated_runtime_dependencies(
+            root,
+            [(dedicated_arm64, "arm64"), (mp_arm64, "arm64")],
+        )
+
+        dynamic_section = (
+            " 0x0000000000000001 (NEEDED)             "
+            "Shared library: [libpipewire-0.3.so.0]\n"
+        )
+        expect_validation_error(
+            lambda: VALIDATOR.validate_linux_client_runtime_dependencies(
+                root,
+                [client_x64],
+            ),
+            "libpipewire-0.3.so.0",
+            "Linux client direct PipeWire dependency guard",
+        )
+
+        for forbidden_library in (
+            "libopenal.so.1",
+            "libOpenGL.so.0",
+            "libGL.so.1",
+            "libGLX.so.0",
+            "libEGL.so.1",
+            "libGLESv2.so.2",
+            "libvulkan.so.1",
+            "libSDL3.so.0",
+            "libpipewire-0.3.so.0",
+            "libwayland-client.so.0",
+            "libdecor-0.so.0",
+            "libX11.so.6",
+            "libXext.so.6",
+            "libxcb.so.1",
+            "libfuture-client-runtime.so.1",
+        ):
+            dynamic_section = (
+                " 0x0000000000000001 (NEEDED)             "
+                f"Shared library: [{forbidden_library}]\n"
+            )
+            expect_validation_error(
+                lambda: VALIDATOR.validate_linux_dedicated_runtime_dependencies(
+                    root,
+                    [(mp_x64, "x64")],
+                ),
+                forbidden_library,
+                f"Linux dedicated dependency guard for {forbidden_library}",
+            )
+
+        dynamic_section = (
+            " 0x0000000000000001 (NEEDED)             "
+            "Shared library: [ld-linux-aarch64.so.1]\n"
+        )
+        expect_validation_error(
+            lambda: VALIDATOR.validate_linux_dedicated_runtime_dependencies(
+                root,
+                [(dedicated_x64, "x64")],
+            ),
+            "ld-linux-aarch64.so.1",
+            "cross-architecture dedicated loader dependency",
+        )
+        expect_validation_error(
+            lambda: VALIDATOR.validate_linux_dedicated_runtime_dependencies(
+                root,
+                [(dedicated_x64, "riscv64")],
+            ),
+            "riscv64",
+            "unsupported dedicated dependency architecture",
+        )
+    finally:
+        VALIDATOR.readelf_output = original_readelf_output
+
+
 def validate_windows_pdb_architecture_match() -> None:
     root = WORK / "windows-pdb"
     install_root = root / ".install"
@@ -405,6 +565,9 @@ def validate_validation_wiring() -> None:
         "validate_build_dir",
         "validate_no_staged_symlinks",
         "validate_staged_architecture_set",
+        "validate_distinct_game_modules",
+        "validate_linux_client_runtime_dependencies",
+        "validate_linux_dedicated_runtime_dependencies",
         "validate_windows_symbols",
         "validate_no_non_runtime_artifacts",
         "Install root must not be a symlink",
@@ -421,9 +584,12 @@ def validate_validation_wiring() -> None:
         if "validation_hardening.py" not in text:
             raise AssertionError(f"validation_hardening.py is not wired into {context}")
 
-    # Runtime drivers that need target hardware and retail assets; they are
-    # deliberately not wired into commit/push smoke validation.
+    # Runtime drivers that need a built target package or retail assets; their
+    # static contracts are wired into lightweight local validation instead.
     smoke_wiring_allowlist = {
+        "linux_dedicated_server_smoke.py",
+        "linux_dedicated_stock_map_smoke.py",
+        "linux_wayland_stock_sp_smoke.py",
         "renderer_gameplay_benchmark.py",
     }
     discovered_tests = sorted(path.name for path in (ROOT / "tools" / "tests").glob("*.py"))
@@ -466,6 +632,8 @@ def main() -> None:
         validate_engine_architecture_mismatch()
         validate_game_module_suffix_guard()
         validate_game_module_architecture_match()
+        validate_game_module_distinctness_guard()
+        validate_linux_runtime_dependency_guards()
         validate_windows_pdb_architecture_match()
         validate_validation_wiring()
     finally:

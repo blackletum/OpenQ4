@@ -112,6 +112,38 @@ def validate_game_module_package_root_probe() -> None:
     )
 
 
+def validate_app_bundle_cd_path() -> None:
+    compat = read("src/sys/osx/macosx_compat.mm")
+    posix = read("src/sys/posix/posix_main.cpp")
+
+    cd_path = function_body(compat, "const char *Sys_DefaultCDPath( void ) {")
+    for token in (
+        "Sys_EXEPath",
+        "Sys_GetAppBundlePackageRootFromExecutableDirectory",
+        "Sys_ErrorIfMacOSAppBundlePackageRootIncomplete",
+        "cdpath = packageDirectory",
+        "return cdpath.c_str()",
+        "return Posix_Cwd()",
+    ):
+        require(cd_path, token, "macOS app-bundle CD-path selection")
+
+    derivation = cd_path.index("Sys_GetAppBundlePackageRootFromExecutableDirectory")
+    validation = cd_path.index("Sys_ErrorIfMacOSAppBundlePackageRootIncomplete")
+    selection = cd_path.index("cdpath = packageDirectory")
+    if not derivation < validation < selection:
+        raise AssertionError(
+            "macOS app-bundle package root must be derived and validated before becoming fs_cdpath"
+        )
+
+    require(
+        posix,
+        "#if !defined( MACOS_X )\n// Only relevant when specified on the command line.",
+        "non-macOS POSIX CD-path implementation guard",
+    )
+    posix_cd_path = function_body(posix, "const char *Sys_DefaultCDPath( void ) {")
+    require(posix_cd_path, "return Posix_Cwd()", "non-macOS POSIX CD-path fallback")
+
+
 def validate_package_metadata_and_archive_guards() -> None:
     package = read("tools/build/package_nightly.py")
 
@@ -359,6 +391,7 @@ def validate_ci_wiring() -> None:
 def main() -> None:
     validate_runtime_startup_error()
     validate_game_module_package_root_probe()
+    validate_app_bundle_cd_path()
     validate_package_metadata_and_archive_guards()
     validate_release_path_policy()
     validate_support_info_path_resolution()

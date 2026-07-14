@@ -391,7 +391,7 @@ void Posix_PollInput() {
 					char s = buf[0];
 					#ifdef XEVT_DBG
 						if (buf[1]!=0)
-							common->DPrintf("WARNING: got XLookupString buffer '%s' (%d)\n", buf, strlen(buf));
+							common->DPrintf("WARNING: got XLookupString buffer '%s' (%zu)\n", buf, strlen(buf));
 					#endif
 					#ifdef XEVT_DBG2
 						printf("SE_CHAR %s\n", buf);

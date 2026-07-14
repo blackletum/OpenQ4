@@ -338,7 +338,7 @@ Read an ENVL chunk from an LWO2 file.
 lwEnvelope *lwGetEnvelope( idFile *fp, int cksize )
 {
    lwEnvelope *env;
-   lwKey *key;
+   lwKey *key = NULL;
    lwPlugin *plug;
    unsigned int id;
    unsigned short sz;
@@ -1782,8 +1782,12 @@ static lwTexture *get_texture( char *s )
 {
    lwTexture *tex;
 
+   if ( !s ) return NULL;
    tex = (lwTexture*)Mem_ClearedAlloc( sizeof( lwTexture ) );
-   if ( !tex ) return NULL;
+   if ( !tex ) {
+      Mem_Free( s );
+      return NULL;
+   }
 
    tex->tmap.size.val[ 0 ] =
    tex->tmap.size.val[ 1 ] =
@@ -1821,8 +1825,8 @@ Read an lwSurface from an LWOB file.
 lwSurface *lwGetSurface5( idFile *fp, int cksize, lwObject *obj )
 {
    lwSurface *surf;
-   lwTexture *tex;
-   lwPlugin *shdr;
+   lwTexture *tex = NULL;
+   lwPlugin *shdr = NULL;
    char *s;
    float v[ 3 ];
    unsigned int id, flags;
@@ -1945,47 +1949,56 @@ lwSurface *lwGetSurface5( idFile *fp, int cksize, lwObject *obj )
          case ID_BTEX:
             s = (char*)getbytes( fp, sz );
             tex = get_texture( s );
+            if ( !tex ) goto Fail;
             lwListAdd( (void**)&surf->bump.tex, tex );
             break;
 
          case ID_CTEX:
             s = (char*)getbytes( fp, sz );
             tex = get_texture( s );
+            if ( !tex ) goto Fail;
             lwListAdd( (void**)&surf->color.tex, tex );
             break;
 
          case ID_DTEX:
             s = (char*)getbytes( fp, sz );
             tex = get_texture( s );
+            if ( !tex ) goto Fail;
             lwListAdd( (void**)&surf->diffuse.tex, tex );
             break;
 
          case ID_LTEX:
             s = (char*)getbytes( fp, sz );
             tex = get_texture( s );
+            if ( !tex ) goto Fail;
             lwListAdd( (void**)&surf->luminosity.tex, tex );
             break;
 
          case ID_RTEX:
             s = (char*)getbytes( fp, sz );
             tex = get_texture( s );
+            if ( !tex ) goto Fail;
             lwListAdd( (void**)&surf->reflection.val.tex, tex );
             break;
 
          case ID_STEX:
             s = (char*)getbytes( fp, sz );
             tex = get_texture( s );
+            if ( !tex ) goto Fail;
             lwListAdd( (void**)&surf->specularity.tex, tex );
             break;
 
          case ID_TTEX:
             s = (char*)getbytes( fp, sz );
             tex = get_texture( s );
+            if ( !tex ) goto Fail;
             lwListAdd( (void**)&surf->transparency.val.tex, tex );
             break;
 
          case ID_TFLG:
+            if ( !tex ) goto Fail;
             flags = getU2( fp );
+            i = 0;
 
             if ( flags & 1 ) i = 0;
             if ( flags & 2 ) i = 1;
@@ -2006,21 +2019,25 @@ lwSurface *lwGetSurface5( idFile *fp, int cksize, lwObject *obj )
             break;
 
          case ID_TSIZ:
+            if ( !tex ) goto Fail;
             for ( i = 0; i < 3; i++ )
                tex->tmap.size.val[ i ] = getF4( fp );
             break;
 
          case ID_TCTR:
+            if ( !tex ) goto Fail;
             for ( i = 0; i < 3; i++ )
                tex->tmap.center.val[ i ] = getF4( fp );
             break;
 
          case ID_TFAL:
+            if ( !tex ) goto Fail;
             for ( i = 0; i < 3; i++ )
                tex->tmap.falloff.val[ i ] = getF4( fp );
             break;
 
          case ID_TVEL:
+            if ( !tex ) goto Fail;
             for ( i = 0; i < 3; i++ )
                v[ i ] = getF4( fp );
             tex->tmap.center.eindex = add_tvel( tex->tmap.center.val, v,
@@ -2028,44 +2045,53 @@ lwSurface *lwGetSurface5( idFile *fp, int cksize, lwObject *obj )
             break;
 
          case ID_TCLR:
+            if ( !tex ) goto Fail;
             if ( tex->type == ID_PROC )
                for ( i = 0; i < 3; i++ )
                   tex->param.proc.value[ i ] = getU1( fp ) / 255.0f;
             break;
 
          case ID_TVAL:
+            if ( !tex ) goto Fail;
             tex->param.proc.value[ 0 ] = getI2( fp ) / 256.0f;
             break;
 
          case ID_TAMP:
+            if ( !tex ) goto Fail;
             if ( tex->type == ID_IMAP )
                tex->param.imap.amplitude.val = getF4( fp );
             break;
 
          case ID_TIMG:
+            if ( !tex ) goto Fail;
             s = getS0( fp );
             tex->param.imap.cindex = add_clip( s, &obj->clip, &obj->nclips );
             break;
 
          case ID_TAAS:
+            if ( !tex ) goto Fail;
             tex->param.imap.aa_strength = getF4( fp );
             tex->param.imap.aas_flags = 1;
             break;
 
          case ID_TREF:
+            if ( !tex ) goto Fail;
             tex->tmap.ref_object = (char*)getbytes( fp, sz );
             break;
 
          case ID_TOPC:
+            if ( !tex ) goto Fail;
             tex->opacity.val = getF4( fp );
             break;
 
          case ID_TFP0:
+            if ( !tex ) goto Fail;
             if ( tex->type == ID_IMAP )
                tex->param.imap.wrapw.val = getF4( fp );
             break;
 
          case ID_TFP1:
+            if ( !tex ) goto Fail;
             if ( tex->type == ID_IMAP )
                tex->param.imap.wraph.val = getF4( fp );
             break;
@@ -2079,6 +2105,7 @@ lwSurface *lwGetSurface5( idFile *fp, int cksize, lwObject *obj )
             break;
 
          case ID_SDAT:
+            if ( !shdr ) goto Fail;
             shdr->data = getbytes( fp, sz );
             break;
 

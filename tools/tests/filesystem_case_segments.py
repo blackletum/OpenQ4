@@ -11,6 +11,10 @@ def read(relative_path: str) -> str:
     return (ROOT / relative_path).read_text(encoding="utf-8")
 
 
+def read_companion(relative_path: str) -> str:
+    return (ROOT.parent / "openQ4-game" / relative_path).read_text(encoding="utf-8")
+
+
 def require(haystack: str, needle: str, context: str) -> None:
     if needle not in haystack:
         raise AssertionError(f"Missing {needle!r} in {context}")
@@ -77,6 +81,16 @@ def validate_filesystem_case_resolution() -> None:
     require(finder, "entries[i].Icmp( segment )", "case-insensitive segment finder")
 
     require(resolver, "resolvedPath.AppendPath( resolvedSegment );", "case-insensitive path resolver")
+    require(resolver, "const bool exactEntryMatches = stat( exactPath.c_str(), &exactStat ) == 0", "exact-case path fast path")
+    require(resolver, "directoryOnly ? S_ISDIR( exactStat.st_mode ) : !S_ISDIR( exactStat.st_mode )", "exact-case entry type check")
+    require(resolver, "#ifndef WIN32", "POSIX-only exact-case stat fast path")
+    require(resolver, "const bool exactEntryMatches = false;", "Windows case-recovery enumeration fallback")
+    require_order(resolver, "#ifndef WIN32", "struct stat exactStat;", "POSIX stat declaration guard")
+    require_order(resolver, "struct stat exactStat;", "#else", "POSIX stat declaration guard")
+    require_order(resolver, "#else", "const bool exactEntryMatches = false;", "Windows case-recovery enumeration fallback")
+    require_order(resolver, "const bool exactEntryMatches = false;", "#endif", "Windows compile-safe stat guard")
+    require(resolver, "if ( exactEntryMatches )", "exact-case path fast path")
+    require_order(resolver, "if ( exactEntryMatches )", "FindCaseInsensitiveOSPathEntry", "exact lookup before directory enumeration")
     require(resolver, "could not resolve %s segment", "case-insensitive path resolver diagnostics")
     require(resolver, "directoryOnly ? \"directory\" : \"file\"", "case-insensitive path resolver diagnostics")
     require(resolver, "ReplaceSeparators( resolvedPath );", "case-insensitive path resolver separator normalization")
@@ -100,6 +114,34 @@ def validate_posix_directory_diagnostics() -> None:
 
     reject(list_files, "case sensitivity of directory path can screw us up", "POSIX directory listing")
     require(list_files, 'strerror( errno )', "POSIX directory listing diagnostics")
+    require(list_files, "d->d_name[1] == '\\0'", "POSIX current-directory entry rejection")
+    require(list_files, "d->d_name[1] == '.' && d->d_name[2] == '\\0'", "POSIX parent-directory entry rejection")
+
+
+def validate_game_relative_include_paths() -> None:
+    filesystem = read("src/framework/FileSystem.cpp")
+    os_to_relative = function_body(filesystem, "const char *idFileSystemLocal::OSPathToRelativePath(")
+    engine_parser = read("src/idlib/Parser.cpp")
+    game_parser = read_companion("src/idlib/Parser.cpp")
+
+    require(os_to_relative, "base == OSPath || c1 == '/' || c1 == '\\\\'", "qpath-at-byte-zero recognition")
+    require(os_to_relative, "c2 == '\\0' || c2 == '/' || c2 == '\\\\'", "complete game-directory segment recognition")
+
+    for parser, context in (
+        (engine_parser, "engine parser include normalization"),
+        (game_parser, "GameLibs parser include normalization"),
+    ):
+        normalize = function_body(parser, "static void Parser_NormalizeIncludeBase(")
+        require(normalize, 'GetCVarString( "fs_game" )', context)
+        require(normalize, 'GetCVarString( "fs_game_base" )', context)
+        require(normalize, "Parser_StripLeadingGameDirectory( basePath, OPENQ4_GAMEDIR )", context)
+        require(normalize, "Parser_StripLeadingGameDirectory( basePath, BASE_MPGAMEDIR )", context)
+        require(normalize, "if ( Parser_IsAbsolutePath( basePath ) )", context)
+        require_order(normalize, "if ( Parser_IsAbsolutePath( basePath ) )", "OSPathToRelativePath( basePath )", context)
+
+    require(filesystem, '"Filesystem paths: fs_basepath=', "normal-verbosity filesystem support diagnostics")
+    common = read("src/framework/Common.cpp")
+    require(common, '"Selected game module: logical=', "normal-verbosity game-module support diagnostics")
 
 
 def validate_linux_build_path_casing() -> None:
@@ -151,6 +193,7 @@ def validate_validation_coverage() -> None:
 def main() -> None:
     validate_filesystem_case_resolution()
     validate_posix_directory_diagnostics()
+    validate_game_relative_include_paths()
     validate_linux_build_path_casing()
     validate_release_note()
     validate_validation_coverage()

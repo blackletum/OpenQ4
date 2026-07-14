@@ -38,6 +38,7 @@ along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 #include "../../framework/licensee.h"
 #include "../../framework/Session.h"
 #include "../../renderer/tr_local.h"
+#include "../../ui/EditWindow.h"
 
 #include <SDL3/SDL.h>
 
@@ -127,8 +128,13 @@ PFNWGLSETPBUFFERATTRIBARBPROC wglSetPbufferAttribARB;
 
 static SDL_Window *s_sdlWindow = NULL;
 static SDL_GLContext s_sdlContext = NULL;
-static bool s_sdlVideoActive = false;
+// True only while the game renderer holds its own SDL_INIT_VIDEO reference.
+// Splash and system-console windows hold separate references in posix_syscon.
+static bool s_sdlVideoReferenceHeld = false;
 static bool s_sdlTextInputActive = false;
+static bool s_sdlTextInputFailureLogged = false;
+static bool s_sdlUnsupportedTextInputLogged = false;
+static bool s_sdlFocusInputReleased = false;
 static bool s_sdlGamepadSubsystemActive = false;
 static bool s_sdlJoystickSubsystemActive = false;
 static SDL_Gamepad *s_sdlGamepad = NULL;
@@ -139,6 +145,7 @@ static bool s_sdlDiagnosticCommandsRegistered = false;
 static bool s_sdlDisplaySummaryLogged = false;
 static bool s_sdlVideoDriverSummaryLogged = false;
 static bool s_sdlGraphicsBridgeSummaryLogged = false;
+static bool s_sdlAppMetadataAttempted = false;
 static bool s_sdlLifecycleEventWatchRegistered = false;
 static SDL_AtomicInt s_sdlLifecyclePending = { 0 };
 static float s_sdlMouseWheelRemainderY = 0.0f;
@@ -361,51 +368,6 @@ static int SDL3_EventMilliseconds(Uint64 timestampNs) {
 	return static_cast<int>(timeMs);
 }
 
-static bool SDL3_DecodeNextUTF8Codepoint(const char *text, int &index, int &codepoint) {
-	const unsigned char lead = static_cast<unsigned char>(text[index]);
-	if (lead == '\0') {
-		codepoint = 0;
-		return false;
-	}
-
-	if (lead < 0x80) {
-		codepoint = lead;
-		++index;
-		return true;
-	}
-
-	int needed = 0;
-	int value = 0;
-	if ((lead & 0xE0) == 0xC0) {
-		needed = 1;
-		value = lead & 0x1F;
-	} else if ((lead & 0xF0) == 0xE0) {
-		needed = 2;
-		value = lead & 0x0F;
-	} else if ((lead & 0xF8) == 0xF0) {
-		needed = 3;
-		value = lead & 0x07;
-	} else {
-		codepoint = lead;
-		++index;
-		return true;
-	}
-
-	for (int i = 1; i <= needed; ++i) {
-		const unsigned char next = static_cast<unsigned char>(text[index + i]);
-		if ((next & 0xC0) != 0x80) {
-			codepoint = lead;
-			++index;
-			return true;
-		}
-		value = (value << 6) | (next & 0x3F);
-	}
-
-	index += needed + 1;
-	codepoint = value;
-	return true;
-}
-
 static void SDL3_ClearInputQueues(void) {
 	Sys_EnterCriticalSection(CRITICAL_SECTION_ONE);
 	s_keyboardHead = s_keyboardTail = 0;
@@ -437,7 +399,6 @@ static void SDL3_ClearInputQueues(void) {
 	s_ignoreNextMenuWarpMotion = false;
 	s_menuWarpWindowX = 0.0f;
 	s_menuWarpWindowY = 0.0f;
-	s_menuMouseInsideWindow = true;
 }
 
 static bool SDL3_IsMousePollActionValid(int action) {
@@ -504,6 +465,10 @@ static const char *SDL3_GraphicsBridgeDescription(void) {
 }
 
 static void SDL3_SetVideoHintDefaults(void) {
+	// openQ4 consumes committed UTF-8 text but does not render composition or
+	// candidate lists itself. Ask SDL to keep the platform-native IME UI so
+	// IBus/Fcitx (and the native services on other SDL hosts) remain usable.
+	(void)SDL_SetHintWithPriority(SDL_HINT_IME_IMPLEMENTED_UI, "none", SDL_HINT_DEFAULT);
 #if defined(OPENQ4_SDL3_LINUX_HOST)
 	const bool disableWaylandLibdecor = SDL3_EnvFlagEnabled("OPENQ4_WAYLAND_DISABLE_LIBDECOR");
 	if (SDL3_EnvFlagEnabled("OPENQ4_FORCE_X11") &&
@@ -534,18 +499,33 @@ static void SDL3_SetVideoHintDefaults(void) {
 #endif
 }
 
+static void SDL3_SetAppMetadataDefaults(void) {
+	if (s_sdlAppMetadataAttempted) {
+		return;
+	}
+	s_sdlAppMetadataAttempted = true;
+
+	// Keep the Wayland app_id aligned with the installed openq4.desktop file so
+	// compositors can group the window and select the packaged icon correctly.
+	if (!SDL_SetAppMetadata(GAME_NAME, PROJECT_VERSION, "openq4")) {
+		Sys_Printf("SDL3: failed to set application metadata: %s\n", SDL_GetError());
+	}
+}
+
 /*
 ===============
 Sys_SDL_ApplyVideoHintDefaults
 
 Called by the early startup splash/console path before its
-SDL_InitSubSystem(SDL_INIT_VIDEO)/SDL_CreateRenderer calls so the platform
-hint defaults (including the macOS Metal bridge render-driver selection) are
-in effect for the first SDL video use of the process, not just for
-GLimp_Init. Safe to call repeatedly; the hints are set at default priority.
+SDL_InitSubSystem(SDL_INIT_VIDEO)/SDL_CreateRenderer calls so application
+metadata and platform hint defaults (including the macOS Metal bridge
+render-driver selection) are in effect for the first SDL video use of the
+process, not just for GLimp_Init. Safe to call repeatedly; the hints are set
+at default priority and metadata is attempted once.
 ===============
 */
 void Sys_SDL_ApplyVideoHintDefaults(void) {
+	SDL3_SetAppMetadataDefaults();
 	SDL3_SetVideoHintDefaults();
 }
 
@@ -572,6 +552,16 @@ static void SDL3_UpdateVideoDriverProfile(void) {
 
 static bool SDL3_IsNativeWaylandVideoDriver(void) {
 	return s_sdlVideoDriver == SDL3_VIDEO_DRIVER_WAYLAND;
+}
+
+bool Sys_SDL_IsGameWindowFocused(void) {
+	if (s_sdlAppInBackground || !s_sdlVideoReferenceHeld || s_sdlWindow == NULL) {
+		return false;
+	}
+
+	const SDL_WindowFlags flags = SDL_GetWindowFlags(s_sdlWindow);
+	return (flags & SDL_WINDOW_INPUT_FOCUS) != 0 &&
+		(flags & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED)) == 0;
 }
 
 static bool SDL3_UseAbsoluteWindowPlacement(void) {
@@ -888,6 +878,105 @@ static bool SDL3_BuildGuiMouseTransform(sdl3GuiMouseTransform_t &transform) {
 	}
 
 	return true;
+}
+
+static bool SDL3_GetActiveGuiTextInputState(idRectangle &area, float &cursorOffset) {
+	idUserInterface *activeGui = SDL3_GetActiveMenuGui();
+	if (activeGui == NULL || activeGui->GetDesktop() == NULL) {
+		return false;
+	}
+
+	idEditWindow *editWindow = dynamic_cast<idEditWindow *>(activeGui->GetDesktop()->GetFocusedChild());
+	return editWindow != NULL && editWindow->GetTextInputState(area, cursorOffset);
+}
+
+static void SDL3_UpdateTextInputArea(void) {
+	if (!s_sdlWindow || !s_sdlTextInputActive) {
+		return;
+	}
+
+	int windowWidth = 0;
+	int windowHeight = 0;
+	if (!SDL_GetWindowSize(s_sdlWindow, &windowWidth, &windowHeight) ||
+			windowWidth <= 0 || windowHeight <= 0) {
+		return;
+	}
+
+	// Give the native IME a stable command-line area for the console. Focused
+	// GUI edit controls expose their exact field rectangle and visible caret
+	// offset below. Coordinates passed to SDL are logical window units, not
+	// high-DPI drawable pixels.
+	SDL_Rect textArea;
+	int cursorOffset = 0;
+	if (console != NULL && console->Active()) {
+		const int margin = idMath::ClampInt(0, windowWidth / 4, 8);
+		const int height = idMath::ClampInt(1, windowHeight, 32);
+		textArea.x = margin;
+		textArea.y = idMath::ClampInt(0, windowHeight - 1, windowHeight - height);
+		textArea.w = idMath::ClampInt(1, windowWidth, windowWidth - (margin * 2));
+		textArea.h = height;
+		cursorOffset = idMath::ClampInt(0, textArea.w, 16);
+	} else {
+		idRectangle guiArea;
+		float guiCursorOffset = 0.0f;
+		sdl3GuiMouseTransform_t transform;
+		if (!SDL3_GetActiveGuiTextInputState(guiArea, guiCursorOffset) ||
+				!SDL3_BuildGuiMouseTransform(transform)) {
+			return;
+		}
+
+		const float guiToPixelX = transform.xScale * (transform.drawAreaWidth / transform.guiWidth);
+		const float guiToPixelY = transform.yScale * (transform.drawAreaHeight / transform.guiHeight);
+		const float pixelX = transform.drawAreaX +
+			((guiArea.x * transform.xScale) + transform.xOffset) * (transform.drawAreaWidth / transform.guiWidth);
+		const float pixelY = transform.drawAreaY +
+			((guiArea.y * transform.yScale) + transform.yOffset) * (transform.drawAreaHeight / transform.guiHeight);
+		const int anchorX = idMath::ClampInt(0, windowWidth - 1, static_cast<int>(pixelX * transform.pixelToWindowX));
+		const int anchorY = idMath::ClampInt(0, windowHeight - 1, static_cast<int>(pixelY * transform.pixelToWindowY));
+		const int requestedWidth = static_cast<int>(guiArea.w * guiToPixelX * transform.pixelToWindowX);
+		const int requestedHeight = static_cast<int>(guiArea.h * guiToPixelY * transform.pixelToWindowY);
+		textArea.x = anchorX;
+		textArea.y = anchorY;
+		textArea.w = idMath::ClampInt(1, windowWidth - anchorX, requestedWidth);
+		textArea.h = idMath::ClampInt(1, windowHeight - anchorY, requestedHeight);
+		cursorOffset = idMath::ClampInt(
+			0,
+			textArea.w,
+			static_cast<int>(guiCursorOffset * guiToPixelX * transform.pixelToWindowX));
+	}
+
+	if (!SDL_SetTextInputArea(s_sdlWindow, &textArea, cursorOffset)) {
+		common->DPrintf("SDL3: text input candidate area could not be updated: %s\n", SDL_GetError());
+	}
+}
+
+static void SDL3_UpdateTextInputState(void) {
+	if (!s_sdlWindow) {
+		s_sdlTextInputActive = false;
+		return;
+	}
+
+	idRectangle guiTextArea;
+	float guiCursorOffset = 0.0f;
+	const bool consoleAcceptsText = console != NULL && console->Active();
+	const bool guiAcceptsText = SDL3_GetActiveGuiTextInputState(guiTextArea, guiCursorOffset);
+	const bool shouldAcceptText = win32.activeApp && (consoleAcceptsText || guiAcceptsText);
+	if (shouldAcceptText && !s_sdlTextInputActive) {
+		if (SDL_StartTextInput(s_sdlWindow)) {
+			s_sdlTextInputActive = true;
+			s_sdlTextInputFailureLogged = false;
+		} else if (!s_sdlTextInputFailureLogged) {
+			common->Printf("SDL3: text input could not be enabled: %s\n", SDL_GetError());
+			s_sdlTextInputFailureLogged = true;
+		}
+	} else if (!shouldAcceptText && s_sdlTextInputActive) {
+		(void)SDL_ClearComposition(s_sdlWindow);
+		(void)SDL_StopTextInput(s_sdlWindow);
+		s_sdlTextInputActive = false;
+		s_sdlTextInputFailureLogged = false;
+	}
+
+	SDL3_UpdateTextInputArea();
 }
 
 static bool SDL3_MapWindowMouseToGuiCursor(float windowMouseX, float windowMouseY, float &cursorX, float &cursorY) {
@@ -1927,6 +2016,59 @@ static void SDL3_HandleFingerEvent(const SDL_TouchFingerEvent &event, int eventT
 	}
 }
 
+static void SDL3_ReleaseFocusInputState(int eventTime) {
+	if (s_sdlFocusInputReleased) {
+		return;
+	}
+	s_sdlFocusInputReleased = true;
+
+	// Desktop focus changes do not necessarily produce the app-level
+	// background events used on handheld/mobile platforms. Release every
+	// latched input path here too so Alt+Tab cannot leave fullscreen relative
+	// mouse mode, controller buttons, triggers, hats, or axes stuck active.
+	SDL3_ClearInputQueues();
+	idKeyInput::ClearStates();
+	Sys_GrabMouseCursor(false);
+	SDL3_StopControllerRumble();
+	SDL3_ReleaseGamepadState(eventTime);
+	SDL3_ReleaseJoystickState(eventTime);
+	SDL3_ClearJoystickState();
+}
+
+static bool SDL3_IsUserInputEvent(Uint32 eventType) {
+	switch (eventType) {
+		case SDL_EVENT_KEY_DOWN:
+		case SDL_EVENT_KEY_UP:
+		case SDL_EVENT_TEXT_EDITING:
+		case SDL_EVENT_TEXT_EDITING_CANDIDATES:
+		case SDL_EVENT_TEXT_INPUT:
+		case SDL_EVENT_MOUSE_MOTION:
+		case SDL_EVENT_MOUSE_BUTTON_DOWN:
+		case SDL_EVENT_MOUSE_BUTTON_UP:
+		case SDL_EVENT_MOUSE_WHEEL:
+		case SDL_EVENT_GAMEPAD_REMAPPED:
+		case SDL_EVENT_GAMEPAD_STEAM_HANDLE_UPDATED:
+		case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+		case SDL_EVENT_GAMEPAD_BUTTON_UP:
+		case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+		case SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN:
+		case SDL_EVENT_GAMEPAD_TOUCHPAD_MOTION:
+		case SDL_EVENT_GAMEPAD_TOUCHPAD_UP:
+		case SDL_EVENT_GAMEPAD_SENSOR_UPDATE:
+		case SDL_EVENT_JOYSTICK_BUTTON_DOWN:
+		case SDL_EVENT_JOYSTICK_BUTTON_UP:
+		case SDL_EVENT_JOYSTICK_HAT_MOTION:
+		case SDL_EVENT_JOYSTICK_AXIS_MOTION:
+		case SDL_EVENT_FINGER_DOWN:
+		case SDL_EVENT_FINGER_MOTION:
+		case SDL_EVENT_FINGER_UP:
+		case SDL_EVENT_FINGER_CANCELED:
+			return true;
+		default:
+			return false;
+	}
+}
+
 static void SDL3_SetLifecyclePendingFlag(int flag) {
 	for (;;) {
 		const int currentFlags = SDL_GetAtomicInt(&s_sdlLifecyclePending);
@@ -2010,17 +2152,11 @@ static void SDL3_HandleAppBackgroundTransition(int eventTime, const char *reason
 	SDL3_InvalidateMenuMouseRouting();
 
 	common->Printf("SDL3: application entering background (%s); releasing input and writing config.\n", reason);
-	Sys_GrabMouseCursor(false);
-	SDL3_StopControllerRumble();
-	SDL3_ReleaseGamepadState(eventTime);
-	SDL3_ReleaseJoystickState(eventTime);
-	SDL3_ClearJoystickState();
+	SDL3_ReleaseFocusInputState(eventTime);
 	if (s_sdlGamepad && s_gamepadGyroEnabled) {
 		(void)SDL_SetGamepadSensorEnabled(s_sdlGamepad, SDL_SENSOR_GYRO, false);
 		s_gamepadGyroEnabled = false;
 	}
-	SDL3_ClearInputQueues();
-	idKeyInput::ClearStates();
 	SDL3_UpdateCursorVisibility();
 	if (session != NULL) {
 		session->SetPlayingSoundWorld();
@@ -2040,9 +2176,10 @@ static void SDL3_HandleAppForegroundTransition(int eventTime, const char *reason
 	}
 
 	s_sdlAppInBackground = false;
-	win32.activeApp = true;
+	win32.activeApp = Sys_SDL_IsGameWindowFocused();
 	win32.movingWindow = false;
-	s_menuMouseInsideWindow = true;
+	s_menuMouseInsideWindow = s_sdlWindow != NULL &&
+		(SDL_GetWindowFlags(s_sdlWindow) & SDL_WINDOW_MOUSE_FOCUS) != 0;
 	SDL3_InvalidateMenuMouseRouting();
 	SDL3_ClearInputQueues();
 	idKeyInput::ClearStates();
@@ -2055,7 +2192,10 @@ static void SDL3_HandleAppForegroundTransition(int eventTime, const char *reason
 	} else if (s_sdlJoystick) {
 		SDL3_UpdateJoystickAxes();
 	}
-	Sys_GrabMouseCursor(true);
+	if (win32.activeApp) {
+		s_sdlFocusInputReleased = false;
+		Sys_GrabMouseCursor(true);
+	}
 	SDL3_UpdateCursorVisibility();
 	if (session != NULL) {
 		session->SetPlayingSoundWorld();
@@ -4004,6 +4144,37 @@ static void SDL3_UpdateNativeWindowHandles(void) {
 #endif
 }
 
+static const char *SDL3_DisplayEventName(SDL_EventType eventType) {
+	switch (eventType) {
+		case SDL_EVENT_DISPLAY_ORIENTATION: return "orientation changed";
+		case SDL_EVENT_DISPLAY_ADDED: return "added";
+		case SDL_EVENT_DISPLAY_REMOVED: return "removed";
+		case SDL_EVENT_DISPLAY_MOVED: return "moved";
+		case SDL_EVENT_DISPLAY_DESKTOP_MODE_CHANGED: return "desktop mode changed";
+		case SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED: return "current mode changed";
+		case SDL_EVENT_DISPLAY_CONTENT_SCALE_CHANGED: return "content scale changed";
+		case SDL_EVENT_DISPLAY_USABLE_BOUNDS_CHANGED: return "usable bounds changed";
+		default: return "state changed";
+	}
+}
+
+static void SDL3_HandleDisplayEvent(const SDL_DisplayEvent &event) {
+	// Display events are process-wide, not associated with one SDL window. A
+	// dock/undock, monitor hotplug, mode change, or compositor scale change can
+	// therefore arrive without a matching window event. Refresh every derived
+	// display/framebuffer value and invalidate logical-to-pixel input routing so
+	// the next event cannot use stale monitor or high-DPI coordinates.
+	common->Printf(
+		"SDL3: display %s (id %u); refreshing desktop, window, and input state.\n",
+		SDL3_DisplayEventName(event.type),
+		static_cast<unsigned int>(event.displayID));
+	SDL3_InitDesktopMode();
+	SDL3_RefreshWindowPlacement();
+	SDL3_InvalidateMenuMouseRouting();
+	SDL3_UpdateCursorVisibility();
+	SDL3_UpdateTextInputState();
+}
+
 static void SDL3_HandleWindowEvent(const SDL_WindowEvent &event, int eventTime) {
 	switch (event.type) {
 		case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
@@ -4012,12 +4183,14 @@ static void SDL3_HandleWindowEvent(const SDL_WindowEvent &event, int eventTime) 
 
 		case SDL_EVENT_WINDOW_FOCUS_GAINED:
 			win32.activeApp = true;
+			s_sdlFocusInputReleased = false;
 #if !defined(OPENQ4_SDL3_POSIX_HOST)
 			win32.printScreenFocusReleaseUntil = 0;
 #endif
 			idKeyInput::ClearStates();
 			com_editorActive = false;
-			s_menuMouseInsideWindow = true;
+			s_menuMouseInsideWindow = s_sdlWindow != NULL &&
+				(SDL_GetWindowFlags(s_sdlWindow) & SDL_WINDOW_MOUSE_FOCUS) != 0;
 			SDL3_InvalidateMenuMouseRouting();
 			Sys_GrabMouseCursor(true);
 			SDL3_UpdateCursorVisibility();
@@ -4031,6 +4204,7 @@ static void SDL3_HandleWindowEvent(const SDL_WindowEvent &event, int eventTime) 
 			win32.movingWindow = false;
 			s_menuMouseInsideWindow = false;
 			SDL3_InvalidateMenuMouseRouting();
+			SDL3_ReleaseFocusInputState(eventTime);
 			SDL3_UpdateCursorVisibility();
 #if defined(_WIN32)
 			// Match the classic Win32 behavior Warfork uses: minimizing true fullscreen on
@@ -4067,21 +4241,29 @@ static void SDL3_HandleWindowEvent(const SDL_WindowEvent &event, int eventTime) 
 			SDL3_UpdateCursorVisibility();
 			break;
 
+		case SDL_EVENT_WINDOW_HIDDEN:
 		case SDL_EVENT_WINDOW_MINIMIZED:
 			win32.activeApp = false;
 			s_menuMouseInsideWindow = false;
 			SDL3_InvalidateMenuMouseRouting();
+			SDL3_ReleaseFocusInputState(eventTime);
 			SDL3_UpdateCursorVisibility();
 			if (session != NULL) {
 				session->SetPlayingSoundWorld();
 			}
 			break;
 
+		case SDL_EVENT_WINDOW_SHOWN:
 		case SDL_EVENT_WINDOW_RESTORED:
-			win32.activeApp = true;
-			s_menuMouseInsideWindow = true;
+			win32.activeApp = Sys_SDL_IsGameWindowFocused();
+			s_menuMouseInsideWindow = s_sdlWindow != NULL &&
+				(SDL_GetWindowFlags(s_sdlWindow) & SDL_WINDOW_MOUSE_FOCUS) != 0;
 			SDL3_RefreshWindowPlacement();
 			SDL3_InvalidateMenuMouseRouting();
+			if (win32.activeApp) {
+				s_sdlFocusInputReleased = false;
+				Sys_GrabMouseCursor(true);
+			}
 			SDL3_UpdateCursorVisibility();
 			if (session != NULL) {
 				session->SetPlayingSoundWorld();
@@ -4113,7 +4295,60 @@ static void SDL3_HandleWindowEvent(const SDL_WindowEvent &event, int eventTime) 
 			break;
 	}
 
+	SDL3_UpdateTextInputState();
 	(void)eventTime;
+}
+
+static bool SDL3_EventWindowID(const SDL_Event &event, SDL_WindowID &windowID) {
+	if (event.type >= SDL_EVENT_WINDOW_FIRST && event.type <= SDL_EVENT_WINDOW_LAST) {
+		windowID = event.window.windowID;
+		return true;
+	}
+
+	switch (event.type) {
+		case SDL_EVENT_KEY_DOWN:
+		case SDL_EVENT_KEY_UP:
+			windowID = event.key.windowID;
+			return true;
+		case SDL_EVENT_TEXT_EDITING:
+			windowID = event.edit.windowID;
+			return true;
+		case SDL_EVENT_TEXT_EDITING_CANDIDATES:
+			windowID = event.edit_candidates.windowID;
+			return true;
+		case SDL_EVENT_TEXT_INPUT:
+			windowID = event.text.windowID;
+			return true;
+		case SDL_EVENT_MOUSE_MOTION:
+			windowID = event.motion.windowID;
+			return true;
+		case SDL_EVENT_MOUSE_BUTTON_DOWN:
+		case SDL_EVENT_MOUSE_BUTTON_UP:
+			windowID = event.button.windowID;
+			return true;
+		case SDL_EVENT_MOUSE_WHEEL:
+			windowID = event.wheel.windowID;
+			return true;
+		case SDL_EVENT_FINGER_DOWN:
+		case SDL_EVENT_FINGER_UP:
+		case SDL_EVENT_FINGER_MOTION:
+		case SDL_EVENT_FINGER_CANCELED:
+			windowID = event.tfinger.windowID;
+			return true;
+		default:
+			windowID = 0;
+			return false;
+	}
+}
+
+static bool SDL3_EventTargetsGameWindow(const SDL_Event &event) {
+	SDL_WindowID eventWindowID = 0;
+	if (!SDL3_EventWindowID(event, eventWindowID)) {
+		return true;
+	}
+
+	const SDL_WindowID gameWindowID = s_sdlWindow != NULL ? SDL_GetWindowID(s_sdlWindow) : 0;
+	return gameWindowID != 0 && eventWindowID == gameWindowID;
 }
 
 bool Sys_SDL_PumpEvents(void) {
@@ -4126,7 +4361,7 @@ bool Sys_SDL_PumpEvents(void) {
 		// already mutex-protected and the main loop keeps the pump fresh.
 		return false;
 	}
-	const bool gameWindowReady = s_sdlVideoActive && s_sdlWindow;
+	const bool gameWindowReady = s_sdlVideoReferenceHeld && s_sdlWindow;
 	if (!gameWindowReady) {
 		SDL3_ProcessPendingLifecycleEvents(Sys_Milliseconds());
 		if (!Posix_ConsoleNeedsEventPump()) {
@@ -4145,12 +4380,13 @@ bool Sys_SDL_PumpEvents(void) {
 		return true;
 	}
 #else
-	if (!s_sdlVideoActive || !s_sdlWindow) {
+	if (!s_sdlVideoReferenceHeld || !s_sdlWindow) {
 		return false;
 	}
 #endif
 
 	SDL3_ProcessPendingLifecycleEvents(Sys_Milliseconds());
+	SDL3_UpdateTextInputState();
 
 	if (in_joystick.IsModified()) {
 		if (in_joystick.GetBool()) {
@@ -4237,12 +4473,26 @@ bool Sys_SDL_PumpEvents(void) {
 			continue;
 		}
 #endif
+		if (event.type >= SDL_EVENT_DISPLAY_FIRST && event.type <= SDL_EVENT_DISPLAY_LAST) {
+			SDL3_HandleDisplayEvent(event.display);
+			continue;
+		}
+		// Support windows share SDL's process-wide event queue. Never route a
+		// splash/console window event into the game's focus or input state.
+		if (!SDL3_EventTargetsGameWindow(event)) {
+			continue;
+		}
 
 		if (event.type >= SDL_EVENT_WINDOW_FIRST && event.type <= SDL_EVENT_WINDOW_LAST) {
 			if (event.window.type == SDL_EVENT_WINDOW_RESIZED) {
 				sawResizeEvent = true;
 			}
 			SDL3_HandleWindowEvent(event.window, eventTime);
+			continue;
+		}
+		if (!win32.activeApp && SDL3_IsUserInputEvent(event.type)) {
+			// Events already queued when focus was lost can arrive after the
+			// focus event. Do not relatch input until the game window is active.
 			continue;
 		}
 
@@ -4314,14 +4564,37 @@ bool Sys_SDL_PumpEvents(void) {
 				break;
 			}
 
+			case SDL_EVENT_TEXT_EDITING:
+			case SDL_EVENT_TEXT_EDITING_CANDIDATES:
+				// SDL_HINT_IME_IMPLEMENTED_UI=none keeps preedit and candidate
+				// rendering in the native IME. Only committed text is queued.
+				break;
+
 			case SDL_EVENT_TEXT_INPUT: {
+				if (!s_sdlTextInputActive) {
+					break;
+				}
 				const char *text = event.text.text;
-				for (int i = 0; text[i] != '\0'; ) {
-					int codepoint = 0;
-					if (!SDL3_DecodeNextUTF8Codepoint(text, i, codepoint) || codepoint == 0) {
+				size_t remaining = SDL_strlen(text);
+				while (remaining > 0) {
+					const Uint32 codepoint = SDL_StepUTF8(&text, &remaining);
+					if (codepoint == 0) {
 						break;
 					}
-					Sys_QueEvent(eventTime, SE_CHAR, codepoint, 0, 0, NULL);
+					// Quake 4 edit widgets, console fields, and stock bitmap fonts
+					// share an 8-bit character contract. Never narrow an arbitrary
+					// Unicode codepoint into a different visible byte; ignore commits
+					// outside the asset-supported range until those consumers and
+					// fonts gain an end-to-end Unicode representation.
+					if (codepoint == SDL_INVALID_UNICODE_CODEPOINT || codepoint > 0xff ||
+							!idStr::CharIsPrintable(static_cast<byte>(codepoint))) {
+						if (!s_sdlUnsupportedTextInputLogged) {
+							common->DPrintf("SDL3: ignoring committed text outside the stock single-byte font range.\n");
+							s_sdlUnsupportedTextInputLogged = true;
+						}
+						continue;
+					}
+					Sys_QueEvent(eventTime, SE_CHAR, static_cast<int>(codepoint), 0, 0, NULL);
 				}
 				break;
 			}
@@ -4815,15 +5088,18 @@ void IN_Frame(void) {
 	if (routeMenuMouse) {
 		shouldGrab = false;
 	}
+	if (!win32.activeApp) {
+		// Fullscreen must not bypass compositor focus. Session::Frame requests a
+		// grab every tick during gameplay, including frames already queued after
+		// focus loss, so keep relative mode disabled until focus is restored.
+		shouldGrab = false;
+	}
 
 	if (!win32.cdsFullscreen) {
 		if (win32.mouseReleased) {
 			shouldGrab = false;
 		}
 		if (win32.movingWindow) {
-			shouldGrab = false;
-		}
-		if (!win32.activeApp) {
 			shouldGrab = false;
 		}
 	}
@@ -4844,21 +5120,29 @@ void IN_Frame(void) {
 	}
 	s_menuMouseRouteActive = routeMenuMouse;
 	SDL3_UpdateCursorVisibility();
+	SDL3_UpdateTextInputState();
 }
 
 void Sys_GrabMouseCursor(bool grabIt) {
 #ifndef ID_DEDICATED
+	if (grabIt && !win32.activeApp) {
+		// Do not let the per-frame gameplay request consume the release marker;
+		// the focus-gained path needs that transition to reacquire explicitly.
+		IN_DeactivateMouse();
+		return;
+	}
 	const bool wasMouseReleased = win32.mouseReleased;
 	win32.mouseReleased = !grabIt;
-#if defined(OPENQ4_SDL3_POSIX_HOST)
+	if (!grabIt) {
+		// Explicit release requests must win even in fullscreen. IN_Frame keeps
+		// normal fullscreen gameplay captured, but focus/background transitions
+		// use this API specifically to hand the pointer back to the compositor.
+		IN_DeactivateMouse();
+		return;
+	}
 	if (wasMouseReleased != win32.mouseReleased) {
 		IN_Frame();
 	}
-#else
-	if (!grabIt) {
-		IN_Frame();
-	}
-#endif
 #else
 	(void)grabIt;
 #endif
@@ -4867,6 +5151,7 @@ void Sys_GrabMouseCursor(bool grabIt) {
 void Sys_InitInput(void) {
 	common->Printf("\n------- Input Initialization -------\n");
 	win32.activeApp = true;
+	s_sdlFocusInputReleased = false;
 	win32.mouseReleased = false;
 	win32.movingWindow = false;
 	win32.mouseGrabbed = SDL3_IsMouseCaptured();
@@ -4877,13 +5162,7 @@ void Sys_InitInput(void) {
 	s_menuMouseInsideWindow = true;
 	SDL3_UpdateCursorVisibility();
 
-	if (s_sdlWindow && !s_sdlTextInputActive) {
-		if (SDL_StartTextInput(s_sdlWindow)) {
-			s_sdlTextInputActive = true;
-		} else {
-			common->Printf("SDL3: text input could not be enabled: %s\n", SDL_GetError());
-		}
-	}
+	SDL3_UpdateTextInputState();
 
 	if (win32.in_mouse.GetBool()) {
 		Sys_GrabMouseCursor(false);
@@ -4927,6 +5206,7 @@ void Sys_ShutdownInput(void) {
 	IN_DeactivateMouse();
 
 	if (s_sdlWindow && s_sdlTextInputActive) {
+		(void)SDL_ClearComposition(s_sdlWindow);
 		(void)SDL_StopTextInput(s_sdlWindow);
 		s_sdlTextInputActive = false;
 	}
@@ -5304,22 +5584,17 @@ bool GLimp_Init(glimpParms_t parms) {
 
 	common->Printf("Initializing OpenGL subsystem (SDL3 backend)\n");
 	SDL3_SetMouseHintDefaults();
-	SDL3_SetVideoHintDefaults();
+	Sys_SDL_ApplyVideoHintDefaults();
 
-#if defined(OPENQ4_SDL3_POSIX_HOST)
-	if (!s_sdlVideoActive && (SDL_WasInit(SDL_INIT_VIDEO) & SDL_INIT_VIDEO) != 0) {
-		common->Printf("SDL3: adopting video subsystem initialized by early startup UI\n");
-		s_sdlVideoActive = true;
-		Posix_ReleaseStartupSDLVideoOwnership();
-	}
-#endif
-
-	if (!s_sdlVideoActive) {
+	if (!s_sdlVideoReferenceHeld) {
+		// SDL video initialization is reference counted. The game renderer must
+		// acquire its own reference instead of adopting the splash/console ref;
+		// otherwise GLimp_Shutdown can invalidate their cached SDL objects.
 		if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
 			common->Printf("SDL3: failed to initialize video subsystem: %s\n", SDL_GetError());
 			return false;
 		}
-		s_sdlVideoActive = true;
+		s_sdlVideoReferenceHeld = true;
 	}
 	SDL3_RegisterLifecycleEventWatch();
 	SDL3_UpdateVideoDriverProfile();
@@ -5491,6 +5766,7 @@ bool GLimp_Init(glimpParms_t parms) {
 	}
 
 	win32.activeApp = true;
+	s_sdlFocusInputReleased = false;
 	win32.wglErrors = 0;
 	GLimp_EnableLogging((r_logFile.GetInteger() != 0));
 
@@ -5533,6 +5809,7 @@ void GLimp_Shutdown(void) {
 		(void)SDL3_LeaveFullscreenAndRestoreDesktopMode();
 	}
 	if (s_sdlWindow && s_sdlTextInputActive) {
+		(void)SDL_ClearComposition(s_sdlWindow);
 		(void)SDL_StopTextInput(s_sdlWindow);
 		s_sdlTextInputActive = false;
 	}
@@ -5550,10 +5827,10 @@ void GLimp_Shutdown(void) {
 		s_sdlWindow = NULL;
 	}
 
-	if (s_sdlVideoActive && !preserveWindow) {
+	if (s_sdlVideoReferenceHeld && !preserveWindow) {
 		SDL3_UnregisterLifecycleEventWatch();
 		SDL_QuitSubSystem(SDL_INIT_VIDEO);
-		s_sdlVideoActive = false;
+		s_sdlVideoReferenceHeld = false;
 		s_sdlVideoDriver = SDL3_VIDEO_DRIVER_UNKNOWN;
 		idStr::snPrintf(s_sdlVideoDriverName, sizeof(s_sdlVideoDriverName), "unknown");
 		s_sdlGraphicsBridgeSummaryLogged = false;

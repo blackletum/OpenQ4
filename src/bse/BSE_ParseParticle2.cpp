@@ -3,6 +3,11 @@
 
 
 
+#include "../idlib/precompiled.h"
+#if defined(_MSC_VER)
+#pragma hdrstop
+#endif
+
 #include "BSE_Envelope.h"
 #include "BSE_Particle.h"
 #include "BSE.h"

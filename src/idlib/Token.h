@@ -158,7 +158,7 @@ public:
 	void			NumberValue( void );				// calculate values for a TT_NUMBER
 
 private:
-	unsigned long	intvalue;							// integer value
+	unsigned int	intvalue;							// 32-bit integer value used by the binary token format
 	double			floatvalue;							// floating point value
 	const char *	whiteSpaceStart_p;					// start of white space before token, only used by idLexer
 	const char *	whiteSpaceEnd_p;					// end of white space before token, only used by idLexer

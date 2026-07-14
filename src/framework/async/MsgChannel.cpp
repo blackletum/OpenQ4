@@ -50,7 +50,7 @@ All fragments will have the same sequence numbers.
 
 #define	MAX_PACKETLEN			1400		// max size of a network packet
 #define	FRAGMENT_SIZE			(MAX_PACKETLEN - 100)
-#define	FRAGMENT_BIT			(1<<31)
+#define	FRAGMENT_BIT			(1u<<31)
 
 idCVar net_channelShowPackets( "net_channelShowPackets", "0", CVAR_SYSTEM | CVAR_BOOL, "show all packets" );
 idCVar net_channelShowDrop( "net_channelShowDrop", "0", CVAR_SYSTEM | CVAR_BOOL, "show dropped packets" );
@@ -254,7 +254,7 @@ void idMsgChannel::SendNextFragment( idPort &port, const int time ) {
 	// write the packet
 	msg.Init( msgBuf, sizeof( msgBuf ) );
 	msg.WriteShort( id );
-	msg.WriteLong( outgoingSequence | FRAGMENT_BIT );
+	msg.WriteLong( static_cast<int>( static_cast<unsigned int>( outgoingSequence ) | FRAGMENT_BIT ) );
 
 	fragLength = FRAGMENT_SIZE;
 	if ( unsentFragmentStart + fragLength > unsentMsg.GetSize() ) {
@@ -387,8 +387,9 @@ bool idMsgChannel::Process( const netadr_t from, int time, idBitMsg &msg, int &s
 	sequence = msg.ReadLong();
 
 	// check for fragment information
-	if ( sequence & FRAGMENT_BIT ) {
-		sequence &= ~FRAGMENT_BIT;
+	const unsigned int sequenceBits = static_cast<unsigned int>( sequence );
+	if ( sequenceBits & FRAGMENT_BIT ) {
+		sequence = static_cast<int>( sequenceBits & ~FRAGMENT_BIT );
 		fragmented = true;
 	} else {
 		fragmented = false;

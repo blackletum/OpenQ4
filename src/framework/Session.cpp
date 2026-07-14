@@ -75,7 +75,9 @@ idCVar	com_skipLogoVideos( "com_skipLogoVideos", "1", CVAR_SYSTEM | CVAR_ARCHIVE
 idCVar	com_showLevelshotBounds( "com_showLevelshotBounds", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "draw a centered 4:3 frame guide for levelshot composition" );
 idCVar	s_muteUnfocused( "s_muteUnfocused", "1", CVAR_ARCHIVE | CVAR_BOOL, "mute all audio when the application is out of focus" );
 
-#if defined( _WIN32 )
+#if defined( USE_SDL3 )
+bool Sys_SDL_IsGameWindowFocused( void );
+#elif defined( _WIN32 )
 bool Sys_IsGameWindowFocused( void );
 #endif
 
@@ -2091,7 +2093,9 @@ static bool Session_IsLoadingContinueChar( int ch ) {
 }
 
 static bool Session_ShouldSilenceAudioWhenUnfocused() {
-#if defined( _WIN32 )
+#if defined( USE_SDL3 )
+	return s_muteUnfocused.GetBool() && !Sys_SDL_IsGameWindowFocused();
+#elif defined( _WIN32 )
 	return s_muteUnfocused.GetBool() && !Sys_IsGameWindowFocused();
 #else
 	return false;
@@ -3276,6 +3280,10 @@ Draws and captures the current state, then starts a wipe with that image
 ================
 */
 void idSessionLocal::StartWipe( const char *_wipeMaterial, bool hold ) {
+#ifdef ID_DEDICATED
+	// Dedicated servers never own a presentation surface to capture for wipes.
+	return;
+#endif
 	console->Close();
 
 	// render the current screen into a texture for the wipe model
@@ -3300,6 +3308,9 @@ idSessionLocal::CompleteWipe
 ================
 */
 void idSessionLocal::CompleteWipe() {
+#ifdef ID_DEDICATED
+	return;
+#endif
 	if ( com_ticNumber == 0 ) {
 		// if the async thread hasn't started, we would hang here
 		wipeStopTic = 0;
@@ -3321,6 +3332,11 @@ idSessionLocal::ShowLoadingGui
 ================
 */
 void idSessionLocal::ShowLoadingGui() {
+#ifdef ID_DEDICATED
+	// Dedicated servers have no loading GUI or initialized renderer. Map loads
+	// must continue directly instead of entering the client presentation loop.
+	return;
+#endif
 	if ( com_ticNumber == 0 ) {
 		return;
 	}
@@ -3707,7 +3723,7 @@ void idSessionLocal::StopPlayingRenderDemo() {
 		float	demoFPS = numDemoFrames / demoSeconds;
 		idStr	message = va( "%i frames rendered in %3.1f seconds = %3.1f fps\n", numDemoFrames, demoSeconds, demoFPS );
 
-		common->Printf( message );
+		common->Printf( "%s", message.c_str() );
 		if ( timeDemo == TD_YES_THEN_QUIT ) {
 			cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "quit\n" );
 		} else {
@@ -4305,6 +4321,10 @@ idSessionLocal::LoadLoadingGui
 ===============
 */
 void idSessionLocal::LoadLoadingGui( const char *mapName ) {
+#ifdef ID_DEDICATED
+	guiLoading = NULL;
+	return;
+#endif
 	// load / program a gui to stay up on the screen while loading
 	idStr stripped = mapName;
 	stripped.StripFileExtension();
@@ -4910,6 +4930,9 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 
 	// we are valid for game draws now
 	mapSpawned = true;
+#ifdef ID_DEDICATED
+	common->Printf( "Dedicated map ready: %s\n", mapString.c_str() );
+#endif
 	ResetFramePacingStats();
 	Sys_ClearEvents();
 }
@@ -5806,6 +5829,19 @@ void idSessionLocal::PacifierUpdate() {
 		return;
 	}
 
+#ifdef ID_DEDICATED
+	// Dedicated map loads have no client presentation path, but the server
+	// pacifier must still run often enough to keep connected clients alive.
+	const int dedicatedTime = Sys_Milliseconds();
+	const float dedicatedMinIntervalMs = Session_GetBlockingLoadFrameIntervalMsec();
+	if ( lastPacifierTime != 0 && static_cast<float>( dedicatedTime - lastPacifierTime ) < dedicatedMinIntervalMs ) {
+		return;
+	}
+	lastPacifierTime = dedicatedTime;
+	idAsyncNetwork::server.PacifierUpdate();
+	return;
+#endif
+
 	// never do pacifier screen updates while inside the
 	// drawing code, or we can have various recursive problems
 	if ( insideUpdateScreen ) {
@@ -6069,6 +6105,10 @@ idSessionLocal::UpdateScreen
 ===============
 */
 void idSessionLocal::UpdateScreen( bool outOfSequence ) {
+
+#ifdef ID_DEDICATED
+	return;
+#endif
 
 #ifdef _WIN32
 
@@ -6571,6 +6611,9 @@ void idSessionLocal::Init() {
 	menuSoundWorld = soundSystem->AllocSoundWorld( rw );
 
 	// we have a single instance of the main menu
+#ifdef ID_DEDICATED
+	common->Printf( "Dedicated server: skipping client GUI preload.\n" );
+#else
 #ifndef ID_DEMO_BUILD
 	guiMainMenu = uiManager->FindGui( "guis/mainmenu.gui", true, false, true );
 #else
@@ -6584,6 +6627,7 @@ void idSessionLocal::Init() {
 	guiMsg = uiManager->FindGui( "guis/msg.gui", true, false, true );
 	guiTakeNotes = uiManager->FindGui( "guis/takeNotes.gui", true, false, true );
 	guiIntro = uiManager->FindGui( "guis/intro.gui", true, false, true );
+#endif
 
 	whiteMaterial = declManager->FindMaterial( "_white" );
 

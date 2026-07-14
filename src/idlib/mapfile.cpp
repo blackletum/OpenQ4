@@ -15,7 +15,7 @@ FloatCRC
 ===============
 */
 ID_INLINE unsigned int FloatCRC( float f ) {
-	return *(unsigned int *)&f;
+	return idMath_FloatBits( f );
 }
 
 /*

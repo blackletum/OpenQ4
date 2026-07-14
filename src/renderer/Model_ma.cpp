@@ -753,9 +753,9 @@ void MA_ParseMesh(idParser& parser) {
 		pMesh->vertexes[vertexIndex] +=  pMesh->vertTransforms[i].ToVec3();
 	}
 	
-	MA_VERBOSE((va("MESH %s - parent %s\n", header.name, header.parent)));
-	MA_VERBOSE((va("\tverts:%d\n",maGlobal.currentObject->mesh.numVertexes)));
-	MA_VERBOSE((va("\tfaces:%d\n",maGlobal.currentObject->mesh.numFaces)));
+	MA_VERBOSE(("MESH %s - parent %s\n", header.name, header.parent));
+	MA_VERBOSE(("\tverts:%d\n", maGlobal.currentObject->mesh.numVertexes));
+	MA_VERBOSE(("\tfaces:%d\n", maGlobal.currentObject->mesh.numFaces));
 }
 
 void MA_ParseFileNode(idParser& parser) {

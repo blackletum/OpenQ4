@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import hashlib
 import shutil
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -85,6 +86,8 @@ def validate_filesystem_pure_pack_contract() -> None:
     source = read("src/framework/FileSystem.cpp")
     md5_header = read("src/idlib/hashing/MD5.h")
     md5_source = read("src/idlib/hashing/MD5.cpp")
+    async_client = read("src/framework/async/AsyncClient.cpp")
+    async_server = read("src/framework/async/AsyncServer.cpp")
     helper = function_body(source, "bool idFileSystemLocal::IsOpenQ4PurePack(")
     checksum_validator = function_body(source, "bool idFileSystemLocal::ValidateOpenQ4Paks(")
     misplaced_validator = function_body(source, "bool idFileSystemLocal::FindMisplacedOfficialPaks(")
@@ -115,6 +118,36 @@ def validate_filesystem_pure_pack_contract() -> None:
     require(md5_header, "MD5_FileChecksum", "MD5 file checksum declaration")
     require(md5_source, "MD5_FileChecksum", "MD5 file checksum implementation")
     require(md5_source, "fopen( path, \"rb\" )", "MD5 file checksum binary read")
+    require(
+        md5_source,
+        'static_assert( sizeof( unsigned int ) == 4, "MD5 requires 32-bit digest words" );',
+        "fixed-width MD5 digest contract",
+    )
+    require(md5_source, "unsigned int\tdigest[4];", "fixed-width MD5 digest storage")
+    require(md5_source, "unsigned int\tval;", "fixed-width MD5 checksum accumulator")
+    require(md5_source, "val = digest[0] ^ digest[1] ^ digest[2] ^ digest[3];", "MD5 word folding")
+    require(md5_source, "memset( ctx, 0, sizeof( *ctx ) );", "complete MD5 context clearing")
+    reject(md5_source, "unsigned long\tdigest[4];", "LP64-unsafe MD5 digest storage")
+    reject(md5_source, "memset( ctx, 0, sizeof( ctx ) );", "pointer-sized MD5 context clearing")
+
+    checksum_vectors = {
+        b"": 0x3B75655E,
+        b"abc": 0x275FA452,
+        b"openQ4": 0x8A8BAE9B,
+    }
+    for payload, expected in checksum_vectors.items():
+        digest_words = struct.unpack("<4I", hashlib.md5(payload).digest())
+        actual = digest_words[0] ^ digest_words[1] ^ digest_words[2] ^ digest_words[3]
+        if actual != expected:
+            raise AssertionError(
+                f"MD5 block-checksum semantics changed for {payload!r}: "
+                f"expected 0x{expected:08x}, got 0x{actual:08x}"
+            )
+
+    require(async_client, "Client decl checksum: 0x%08x", "client decl checksum diagnostic")
+    require(async_server, "Server decl checksum: 0x%08x", "server decl checksum diagnostic")
+    require(async_server, "client=0x%08x server=0x%08x (non-pure)", "non-pure mismatch diagnostic")
+    require(async_server, "client=0x%08x server=0x%08x (pure)", "pure mismatch diagnostic")
 
     require(status, "IsOpenQ4PurePack( pak )", "GetPackStatus openQ4 pure-pack check")
     require_order(
@@ -157,6 +190,11 @@ def validate_install_error_console_contract() -> None:
     require(posix_console, "statusText.Append( scan, 1 );", "POSIX console fatal status text")
     require(posix_console, "statusText = \"System console ready\";", "POSIX console ready status")
     require(posix_console, "s_consoleWindow.forceFatalWindow = true;", "POSIX fatal console forced visibility")
+    require(
+        posix_console,
+        "if ( !s_consoleWindow.forceFatalWindow &&\n\t\t ( cvarSystem == NULL || !cvarSystem->IsInitialized() || !sys_consoleWindow.GetBool() ) )",
+        "POSIX fatal console avoids released cvar storage",
+    )
     require(posix_console, "s_consoleWindow.exitRequested = true;", "POSIX fatal console quit/close exit")
     require(win_console, '"System console ready"', "Windows console ready status")
     require(win_console, "RGB(0x1b, 0x20, 0x0a)", "Windows console status background color")

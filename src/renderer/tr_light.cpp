@@ -1752,9 +1752,13 @@ unsigned long long R_HashJointMatrices( const idJointMat *joints, int numJoints 
 	unsigned long long hash = fnvOffset;
 	const int totalBytes = numJoints * static_cast<int>( sizeof( joints[0] ) );
 	const int wordCount = totalBytes / static_cast<int>( sizeof( unsigned long long ) );
-	const unsigned long long *words = reinterpret_cast<const unsigned long long *>( joints );
+	static_assert( sizeof( idJointMat ) % sizeof( unsigned long long ) == 0,
+		"joint matrix hashing expects complete 64-bit words" );
+	const byte *bytes = reinterpret_cast<const byte *>( joints );
 	for ( int i = 0; i < wordCount; ++i ) {
-		hash ^= words[i];
+		unsigned long long word;
+		memcpy( &word, bytes + i * sizeof( word ), sizeof( word ) );
+		hash ^= word;
 		hash *= fnvPrime;
 	}
 	return hash;
@@ -2008,7 +2012,9 @@ void R_AddDrawSurf( const srfTriangles_t *tri, const viewEntity_t *space, const 
 			tr.viewDef->maxDrawSurfs *= 2;
 		}
 		tr.viewDef->drawSurfs = (drawSurf_t **)R_FrameAlloc( tr.viewDef->maxDrawSurfs * sizeof( tr.viewDef->drawSurfs[0] ) );
-		memcpy( tr.viewDef->drawSurfs, old, count );
+		if ( count > 0 ) {
+			memcpy( tr.viewDef->drawSurfs, old, count );
+		}
 	}
 	tr.viewDef->drawSurfs[tr.viewDef->numDrawSurfs] = drawSurf;
 	tr.viewDef->numDrawSurfs++;

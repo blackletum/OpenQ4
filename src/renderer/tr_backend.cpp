@@ -555,8 +555,11 @@ const void	RB_SwapBuffers( const void *data ) {
 		RB_ApplyColorMappingsToBackBuffer();
 	}
 
-	// don't flip if drawing to front buffer
-	if ( !r_frontBuffer.GetBool() ) {
+	// Screenshot readback consumes the fully post-processed back buffer below.
+	// Keep that buffer owned by OpenGL until R_ReadTiledPixels has copied it;
+	// presenting an EGL window surface may discard its contents immediately.
+	// All ordinary frames retain the existing presentation path.
+	if ( !r_frontBuffer.GetBool() && !tr.takingScreenshot ) {
 	    GLimp_SwapBuffers();
 	}
 }
@@ -599,16 +602,24 @@ static void RB_SetRenderTexture(const void* data) {
 
 	cmd = (setRenderTargetCommand_t*)data;
 
-	if (cmd->renderTexture) {
+	if ( cmd->renderTexture != NULL && cmd->renderTexture->MakeCurrent() ) {
 		backEnd.renderTexture = cmd->renderTexture;
 		backEnd.feedbackRenderTexture = cmd->feedbackRenderTexture;
-		backEnd.renderTexture->MakeCurrent();
 	}
 	else {
 		backEnd.renderTexture = nullptr;
 		backEnd.feedbackRenderTexture = nullptr;
 		idRenderTexture::BindNull();
 	}
+}
+
+static void RB_RestoreTrackedRenderTexture( void ) {
+	if ( backEnd.renderTexture != NULL && backEnd.renderTexture->MakeCurrent() ) {
+		return;
+	}
+	backEnd.renderTexture = NULL;
+	backEnd.feedbackRenderTexture = NULL;
+	idRenderTexture::BindNull();
 }
 
 /*
@@ -621,14 +632,29 @@ static void RB_ResolveMSAA(const void* data) {
 
 	cmd = (resolveRenderTargetCommand_t*)data;
 
-	cmd->msaaRenderTexture->EnsureDeviceHandle();
-	cmd->destRenderTexture->EnsureDeviceHandle();
+	if ( cmd->msaaRenderTexture == NULL || cmd->destRenderTexture == NULL ||
+		!cmd->msaaRenderTexture->EnsureDeviceHandle() ||
+		!cmd->destRenderTexture->EnsureDeviceHandle() ) {
+		RB_RestoreTrackedRenderTexture();
+		return;
+	}
+
+	const GLuint sourceHandle = cmd->msaaRenderTexture->GetDeviceHandle();
+	const GLuint destinationHandle = cmd->destRenderTexture->GetDeviceHandle();
+	if ( sourceHandle == 0 || destinationHandle == 0 ) {
+		RB_RestoreTrackedRenderTexture();
+		return;
+	}
 
 	int width = cmd->msaaRenderTexture->GetWidth();
 	int height = cmd->msaaRenderTexture->GetHeight();
+	if ( width <= 0 || height <= 0 ) {
+		RB_RestoreTrackedRenderTexture();
+		return;
+	}
 
-	glBindFramebuffer(GL_READ_FRAMEBUFFER, cmd->msaaRenderTexture->GetDeviceHandle());
-	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, cmd->destRenderTexture->GetDeviceHandle());
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, sourceHandle);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destinationHandle);
 
 	// Resolve all of the render targets.
 	const int colorImageCount = cmd->msaaRenderTexture->GetNumColorImages();
@@ -655,12 +681,7 @@ static void RB_ResolveMSAA(const void* data) {
 
 	// restore the tracked render target so backEnd.renderTexture stays in
 	// sync with the bound framebuffer
-	if (backEnd.renderTexture) {
-		backEnd.renderTexture->MakeCurrent();
-	}
-	else {
-		idRenderTexture::BindNull();
-	}
+	RB_RestoreTrackedRenderTexture();
 }
 
 /*

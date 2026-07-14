@@ -252,7 +252,7 @@ R_ShowTriMemory_f
 ===============
 */
 void R_ShowTriSurfMemory_f( const idCmdArgs &args ) {
-	common->Printf( "%6d kB in %d triangle surfaces\n",
+	common->Printf( "%6zu kB in %d triangle surfaces\n",
 		( srfTrianglesAllocator.GetAllocCount() * sizeof( srfTriangles_t ) ) >> 10,
 			srfTrianglesAllocator.GetAllocCount() );
 
@@ -292,7 +292,7 @@ void R_ShowTriSurfMemory_f( const idCmdArgs &args ) {
 		triDupVertAllocator.GetBaseBlockMemory() >> 10, triDupVertAllocator.GetFreeBlockMemory() >> 10,
 			triDupVertAllocator.GetNumFreeBlocks(), triDupVertAllocator.GetNumEmptyBaseBlocks() );
 
-	common->Printf( "%6d kB total triangle memory\n",
+	common->Printf( "%6zu kB total triangle memory\n",
 		( srfTrianglesAllocator.GetAllocCount() * sizeof( srfTriangles_t ) +
 			triVertexAllocator.GetBaseBlockMemory() +
 			triIndexAllocator.GetBaseBlockMemory() +
@@ -631,8 +631,12 @@ srfTriangles_t *R_CopyStaticTriSurf( const srfTriangles_t *tri ) {
 	newTri->numVerts = tri->numVerts;
 	newTri->numIndexes = tri->numIndexes;
 	newTri->surfaceFlags = tri->surfaceFlags;
-	memcpy( newTri->verts, tri->verts, tri->numVerts * sizeof( newTri->verts[0] ) );
-	memcpy( newTri->indexes, tri->indexes, tri->numIndexes * sizeof( newTri->indexes[0] ) );
+	if ( tri->numVerts > 0 ) {
+		memcpy( newTri->verts, tri->verts, tri->numVerts * sizeof( newTri->verts[0] ) );
+	}
+	if ( tri->numIndexes > 0 ) {
+		memcpy( newTri->indexes, tri->indexes, tri->numIndexes * sizeof( newTri->indexes[0] ) );
+	}
 
 	return newTri;
 }
@@ -854,6 +858,10 @@ static int *R_CreateSilRemap( const srfTriangles_t *tri ) {
 	int		i, j, hashKey;
 	const idDrawVert *v1, *v2;
 
+	if ( tri->numVerts == 0 ) {
+		return NULL;
+	}
+
 	remap = (int *)R_ClearedStaticAlloc( tri->numVerts * sizeof( remap[0] ) );
 
 	if ( !r_useSilRemap.GetBool() ) {
@@ -952,7 +960,9 @@ void R_CreateDupVerts( srfTriangles_t *tri ) {
 	}
 
 	tri->dupVerts = triDupVertAllocator.Alloc( tri->numDupVerts * 2 );
-	memcpy( tri->dupVerts, tempDupVerts, tri->numDupVerts * 2 * sizeof( tri->dupVerts[0] ) );
+	if ( tri->numDupVerts > 0 ) {
+		memcpy( tri->dupVerts, tempDupVerts, tri->numDupVerts * 2 * sizeof( tri->dupVerts[0] ) );
+	}
 }
 
 /*
@@ -1228,7 +1238,10 @@ void R_IdentifySilEdges( srfTriangles_t *tri, bool omitCoplanarEdges ) {
 
 			if ( j == 3 ) {
 				// we can cull this sil edge
-				memmove( &silEdges[i], &silEdges[i+1], (numSilEdges-i-1) * sizeof( silEdges[i] ) );
+				const int numRemainingEdges = numSilEdges - i - 1;
+				if ( numRemainingEdges > 0 ) {
+					memmove( &silEdges[i], &silEdges[i+1], numRemainingEdges * sizeof( silEdges[i] ) );
+				}
 				c_coplanarCulled++;
 				numSilEdges--;
 				i--;
@@ -1243,7 +1256,9 @@ void R_IdentifySilEdges( srfTriangles_t *tri, bool omitCoplanarEdges ) {
 	c_totalSilEdges += numSilEdges;
 
 	// sort the sil edges based on plane number
-	qsort( silEdges, numSilEdges, sizeof( silEdges[0] ), SilEdgeSort );
+	if ( numSilEdges > 1 ) {
+		qsort( silEdges, numSilEdges, sizeof( silEdges[0] ), SilEdgeSort );
+	}
 
 	// count up the distribution.
 	// a perfectly built model should only have shared
@@ -1267,7 +1282,9 @@ void R_IdentifySilEdges( srfTriangles_t *tri, bool omitCoplanarEdges ) {
 
 	tri->numSilEdges = numSilEdges;
 	tri->silEdges = triSilEdgeAllocator.Alloc( numSilEdges );
-	memcpy( tri->silEdges, silEdges, numSilEdges * sizeof( tri->silEdges[0] ) );
+	if ( numSilEdges > 0 ) {
+		memcpy( tri->silEdges, silEdges, numSilEdges * sizeof( tri->silEdges[0] ) );
+	}
 }
 
 /*
@@ -1426,7 +1443,9 @@ static void	R_DuplicateMirroredVertexes( srfTriangles_t *tri ) {
 	int				numMirror;
 
 	tverts = (tangentVert_t *)_alloca16( tri->numVerts * sizeof( *tverts ) );
-	memset( tverts, 0, tri->numVerts * sizeof( *tverts ) );
+	if ( tri->numVerts > 0 ) {
+		memset( tverts, 0, tri->numVerts * sizeof( *tverts ) );
+	}
 
 	// determine texture polarity of each surface
 
@@ -1465,7 +1484,9 @@ static void	R_DuplicateMirroredVertexes( srfTriangles_t *tri ) {
 #else
 	idDrawVert *oldVerts = tri->verts;
 	R_AllocStaticTriSurfVerts( tri, totalVerts );
-	memcpy( tri->verts, oldVerts, tri->numVerts * sizeof( tri->verts[0] ) );
+	if ( tri->numVerts > 0 ) {
+		memcpy( tri->verts, oldVerts, tri->numVerts * sizeof( tri->verts[0] ) );
+	}
 	triVertexAllocator.Free( oldVerts );
 #endif
 
@@ -1630,10 +1651,14 @@ void R_BuildDominantTris( srfTriangles_t *tri ) {
 		ind[i].vertexNum = tri->indexes[i];
 		ind[i].faceNum = i / 3;
 	}
-	qsort( ind, tri->numIndexes, sizeof( *ind ), IndexSort );
+	if ( tri->numIndexes > 1 ) {
+		qsort( ind, tri->numIndexes, sizeof( *ind ), IndexSort );
+	}
 
 	tri->dominantTris = dt = triDominantTrisAllocator.Alloc( tri->numVerts );
-	memset( dt, 0, tri->numVerts * sizeof( dt[0] ) );
+	if ( tri->numVerts > 0 ) {
+		memset( dt, 0, tri->numVerts * sizeof( dt[0] ) );
+	}
 
 	for ( i = 0; i < tri->numIndexes; i += j ) {
 		float	maxArea = 0;
@@ -2011,8 +2036,11 @@ void R_RemoveDuplicatedTriangles( srfTriangles_t *tri ) {
 			for ( j = i + 3 ; j < tri->numIndexes ; j+=3 ) {
 				if ( tri->silIndexes[j] == a && tri->silIndexes[j+1] == b && tri->silIndexes[j+2] == c ) {
 					c_removed++;
-					memmove( tri->indexes + j, tri->indexes + j + 3, ( tri->numIndexes - j - 3 ) * sizeof( tri->indexes[0] ) );
-					memmove( tri->silIndexes + j, tri->silIndexes + j + 3, ( tri->numIndexes - j - 3 ) * sizeof( tri->silIndexes[0] ) );
+					const int numRemainingIndexes = tri->numIndexes - j - 3;
+					if ( numRemainingIndexes > 0 ) {
+						memmove( tri->indexes + j, tri->indexes + j + 3, numRemainingIndexes * sizeof( tri->indexes[0] ) );
+						memmove( tri->silIndexes + j, tri->silIndexes + j + 3, numRemainingIndexes * sizeof( tri->silIndexes[0] ) );
+					}
 					tri->numIndexes -= 3;
 					j -= 3;
 				}
@@ -2046,9 +2074,12 @@ void R_RemoveDegenerateTriangles( srfTriangles_t *tri ) {
 		c = tri->silIndexes[i+2];
 		if ( a == b || a == c || b == c ) {
 			c_removed++;
-			memmove( tri->indexes + i, tri->indexes + i + 3, ( tri->numIndexes - i - 3 ) * sizeof( tri->indexes[0] ) );
-			if ( tri->silIndexes ) {
-				memmove( tri->silIndexes + i, tri->silIndexes + i + 3, ( tri->numIndexes - i - 3 ) * sizeof( tri->silIndexes[0] ) );
+			const int numRemainingIndexes = tri->numIndexes - i - 3;
+			if ( numRemainingIndexes > 0 ) {
+				memmove( tri->indexes + i, tri->indexes + i + 3, numRemainingIndexes * sizeof( tri->indexes[0] ) );
+				if ( tri->silIndexes ) {
+					memmove( tri->silIndexes + i, tri->silIndexes + i + 3, numRemainingIndexes * sizeof( tri->silIndexes[0] ) );
+				}
 			}
 			tri->numIndexes -= 3;
 			i -= 3;
@@ -2098,6 +2129,10 @@ void R_RemoveUnusedVerts( srfTriangles_t *tri ) {
 	int		*mark;
 	int		index;
 	int		used;
+
+	if ( tri->numVerts == 0 ) {
+		return;
+	}
 
 	mark = (int *)R_ClearedStaticAlloc( tri->numVerts * sizeof( *mark ) );
 
@@ -2181,7 +2216,9 @@ srfTriangles_t	*R_MergeSurfaceList( const srfTriangles_t **surfaces, int numSurf
 	totalIndexes = 0;
 	for ( i = 0 ; i < numSurfaces ; i++ ) {
 		tri = surfaces[i];
-		memcpy( newTri->verts + totalVerts, tri->verts, tri->numVerts * sizeof( *tri->verts ) );
+		if ( tri->numVerts > 0 ) {
+			memcpy( newTri->verts + totalVerts, tri->verts, tri->numVerts * sizeof( *tri->verts ) );
+		}
 		for ( j = 0 ; j < tri->numIndexes ; j++ ) {
 			newTri->indexes[ totalIndexes + j ] = totalVerts + tri->indexes[j];
 		}
@@ -2307,7 +2344,9 @@ deformInfo_t *R_BuildDeformInfo( int numVerts, const idDrawVert *verts, int numI
 
 	tri.numVerts = numVerts;
 	R_AllocStaticTriSurfVerts( &tri, tri.numVerts );
-	SIMDProcessor->Memcpy( tri.verts, verts, tri.numVerts * sizeof( tri.verts[0] ) );
+	if ( tri.numVerts > 0 ) {
+		SIMDProcessor->Memcpy( tri.verts, verts, tri.numVerts * sizeof( tri.verts[0] ) );
+	}
 
 	tri.numIndexes = numIndexes;
 	R_AllocStaticTriSurfIndexes( &tri, tri.numIndexes );

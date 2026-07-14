@@ -61,7 +61,7 @@ If you have questions concerning this license or the applicable additional terms
 // functions that are not called every frame
 
 static void R_ErrorForUnsupportedCompatibilityOpenGL( void ) {
-	common->Error( common->GetLanguageDict()->GetString( "#str_41106" ) );
+	common->Error( "%s", common->GetLanguageDict()->GetString( "#str_41106" ) );
 }
 
 bool R_CheckExtension( char *name );
@@ -107,7 +107,7 @@ static void R_ErrorForMissingRequiredOpenGLFeatures( void ) {
 		R_ErrorForUnsupportedCompatibilityOpenGL();
 	}
 
-	common->Error( common->GetLanguageDict()->GetString( "#str_06780" ) );
+	common->Error( "%s", common->GetLanguageDict()->GetString( "#str_06780" ) );
 }
 
 static bool R_CheckGLSLProgramExtensions() {
@@ -312,6 +312,7 @@ idCVar r_shadowMapFilterTaps( "r_shadowMapFilterTaps", "13", CVAR_RENDERER | CVA
 idCVar r_shadowMapPointFilterTaps( "r_shadowMapPointFilterTaps", "13", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "point-light PCF tap budget: 1, 5, 9, or 13", 1, 13, idCmdSystem::ArgCompletion_Integer<1,13> );
 idCVar r_shadowMapFilterMode( "r_shadowMapFilterMode", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "projected-light shadow filter mode: 0 = fixed PCF, 1 = stable rotated Poisson, 2 = PCSS-lite when raw depth is available", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 idCVar r_shadowMapPointFilterMode( "r_shadowMapPointFilterMode", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "point-light shadow filter mode: 0 = fixed PCF, 1 = stable rotated Poisson", 0, 1, idCmdSystem::ArgCompletion_Integer<0,1> );
+idCVar r_shadowMapDistantFilterScale( "r_shadowMapDistantFilterScale", "0.35", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "scale projected PCF and PCSS radii for parallel/global sky lights whose shadow texels cover more world space", 0.0f, 1.0f );
 idCVar r_shadowMapPCSSLightRadius( "r_shadowMapPCSSLightRadius", "4.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "projected PCSS-lite blocker search radius in shadow texels", 0.0f, 16.0f );
 idCVar r_shadowMapPCSSMaxRadius( "r_shadowMapPCSSMaxRadius", "8.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "projected PCSS-lite maximum filter radius in shadow texels", 0.0f, 16.0f );
 idCVar r_shadowMapPointHighPrecision( "r_shadowMapPointHighPrecision", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "store point-light shadow depth in an fp16 color cubemap instead of packed RGBA8 depth. The packed path quantizes finer (1.5e-5 vs 4.9e-4 near the far envelope) at half the memory, and the default hardware-compare path samples the depth cubemap directly, so this only affects the manual fallback" );
@@ -454,7 +455,7 @@ idCVar r_rendererOcclusion( "r_rendererOcclusion", "1", CVAR_RENDERER | CVAR_BOO
 idCVar r_rendererHiZ( "r_rendererHiZ", "1", CVAR_RENDERER | CVAR_BOOL, "allocate and build the modern scene Hi-Z depth pyramid when visibility culling has a depth producer" );
 idCVar r_useSimpleInteraction( "r_useSimpleInteraction", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use Quake 4's simpler ARB interaction shader pair as an explicit compatibility fallback; may reduce material lighting quality" );
 idCVar r_interactionColorMode( "r_interactionColorMode", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "interaction vertex-color mode: 0 = auto, 1 = packed env16.xy, 2 = vector env16/env17", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
-idCVar r_appleARB2Interactions( "r_appleARB2Interactions", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "Apple GL 2.1 ARB2 light-interaction handling when the driver bypass quirk is active: 0 = bypass interactions (safe default), 1 = attempt the simple interaction shader path, 2 = attempt the full interaction path; diagnostic escape hatch for real-hardware signoff, requires vid_restart", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
+idCVar r_appleARB2Interactions( "r_appleARB2Interactions", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "Apple GL 2.1 light-interaction handling: 0 = automatic stock GLSL interactions with simple ARB per-surface fallback, 1 = force simple ARB diagnostic, 2 = force full ARB diagnostic, 3 = emergency interaction bypass; requires vid_restart", 0, 3, idCmdSystem::ArgCompletion_Integer<0,3> );
 idCVar r_shaderReport( "r_shaderReport", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "shader diagnostics: 0 = off, 1 = startup/vid_restart summary, 2 = also warn on invalid program use", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 
 idCVar r_jitter( "r_jitter", "0", CVAR_RENDERER | CVAR_BOOL, "randomly subpixel jitter the projection matrix" );
@@ -2241,7 +2242,11 @@ void R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref =
 				glReadBuffer( GL_BACK );
 			} else {
 				session->UpdateScreen();
-				glReadBuffer( GL_FRONT );
+				// RB_SwapBuffers leaves the fully post-processed frame in the back
+				// buffer while takingScreenshot is set. Reading it before presentation
+				// avoids relying on post-swap front-buffer preservation, which EGL
+				// window surfaces (including native Wayland) do not guarantee.
+				glReadBuffer( r_frontBuffer.GetBool() ? GL_FRONT : GL_BACK );
 			}
 
 			int w = oldWidth;
@@ -3629,8 +3634,16 @@ void GfxInfo_f( const idCmdArgs &args ) {
 	if ( glConfig.preferSimpleLighting ) {
 		common->Printf( "Simple lighting compatibility mode preferred for this renderer\n" );
 	}
+	const bool appleGL21AutomaticInteractions =
+		( RendererDriverQuirks_LastReport().flags & RENDERER_DRIVER_QUIRK_DISABLE_ARB2_INTERACTIONS ) != 0 &&
+		r_appleARB2Interactions.GetInteger() == 0 && !glConfig.disableARB2Interactions;
+	if ( appleGL21AutomaticInteractions ) {
+		common->Printf( "Apple GL 2.1 automatic stock GLSL interactions active with simple ARB per-surface fallback\n" );
+	}
 	if ( glConfig.preferSimpleInteraction ) {
-		common->Printf( "Simple ARB interaction compatibility mode preferred for this renderer\n" );
+		common->Printf( appleGL21AutomaticInteractions
+			? "Simple ARB interaction per-surface fallback armed for this renderer\n"
+			: "Simple ARB interaction compatibility mode preferred for this renderer\n" );
 	}
 	if ( glConfig.disableARB2Interactions ) {
 		common->Printf( "ARB2 light interaction compatibility bypass active for this renderer\n" );
@@ -4157,8 +4170,11 @@ void idRenderSystemLocal::Shutdown( void ) {
 	// free frame memory
 	R_ShutdownFrameData();
 
-	// free the vertex cache, which should have nothing allocated now
-	vertexCache.Shutdown();
+	// The dedicated renderer never creates an OpenGL context or initializes the
+	// vertex-cache list sentinels. Only tear the cache down after InitOpenGL.
+	if ( glConfig.isInitialized ) {
+		vertexCache.Shutdown();
+	}
 
 	R_ShutdownTriSurfData();
 

@@ -181,6 +181,13 @@ void *idVertexCache::Position( vertCache_t *buffer ) {
 		return (void *)buffer->offset;
 	}
 
+	// Client-memory array and index pointers are only interpreted as CPU
+	// addresses when both buffer-object targets are zero. Clear both here:
+	// Apple GL 2.1 deliberately uses a CPU-backed cache, r_useIndexBuffers is
+	// disabled in that mode, and another pass may still have left an EBO bound.
+	BindArrayBuffer( 0 );
+	BindIndexBuffer( 0 );
+
 	// virtual memory is a real pointer
 	return (void *)((byte *)buffer->virtMem + buffer->offset);
 }
@@ -299,6 +306,11 @@ void idVertexCache::Init() {
 	} else {
 		virtualMemory = true;
 		r_useIndexBuffers.SetBool( false );
+		// Establish the client-memory invariant immediately. Bind helpers are
+		// entry-point guarded, so this is also safe on implementations without
+		// ARB_vertex_buffer_object.
+		BindArrayBuffer( 0 );
+		BindIndexBuffer( 0 );
 		common->Printf( "WARNING: vertex array range in virtual memory (SLOW)\n" );
 	}
 
@@ -689,12 +701,11 @@ void idVertexCache::EndFrame() {
 	}
 #endif
 
-	if( !virtualMemory ) {
-		// unbind vertex buffers so normal virtual memory will be used in case
-		// r_useVertexBuffers / r_useIndexBuffers
-		BindArrayBuffer( 0 );
-		BindIndexBuffer( 0 );
-	}
+	// Always finish the frame with client-memory-safe bindings. Mixed upload
+	// paths can bind a buffer even while the legacy vertex cache is virtual,
+	// and redundant-state filtering makes the zero-bind free when already set.
+	BindArrayBuffer( 0 );
+	BindIndexBuffer( 0 );
 
 
 	currentFrame = tr.frameCount;

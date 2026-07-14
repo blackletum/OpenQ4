@@ -849,7 +849,10 @@ static void R_ModernShadowPlanner_InitDescriptorContract( modernShadowLightDescr
 	descriptor.depthFormat = descriptor.pointLight ? MODERN_SHADOW_DEPTH_FORMAT_PACKED_RGBA8 : MODERN_SHADOW_DEPTH_FORMAT_D24;
 	descriptor.compareMode = descriptor.pointLight ? MODERN_SHADOW_COMPARE_MANUAL_PACKED_DEPTH : MODERN_SHADOW_COMPARE_MANUAL_DEPTH;
 	descriptor.biasModel = descriptor.pointLight ? MODERN_SHADOW_BIAS_POINT_VECTOR : ( descriptor.mapType == MODERN_SHADOW_MAP_CASCADE ? MODERN_SHADOW_BIAS_CASCADE_SCALED : MODERN_SHADOW_BIAS_CONSTANT_NORMAL );
-	descriptor.pcfKernel = static_cast<int>( idMath::Ceil( descriptor.pointLight ? r_shadowMapPointFilterRadius.GetFloat() : r_shadowMapFilterRadius.GetFloat() ) );
+	const shadowMapProjectedFilterSettings_t projectedFilterSettings = R_ShadowMapProjectedFilterSettings( vLight );
+	descriptor.pcfKernel = static_cast<int>( idMath::Ceil( descriptor.pointLight
+		? r_shadowMapPointFilterRadius.GetFloat()
+		: projectedFilterSettings.effectiveFilterRadius ) );
 	descriptor.updateFrame = tr.frameCount;
 	descriptor.casterCount = R_ModernShadowPlanner_TotalCasterCount( descriptor );
 	descriptor.receiverCount = R_ModernShadowPlanner_TotalReceiverCount( descriptor );
@@ -2902,6 +2905,7 @@ bool RendererShadowProjectedDiagnostic_RunSelfTest( void ) {
 	rendererShadowProjectedDiagnosticFloatCVarRestore_t restoreNormalBias( r_shadowMapNormalBias );
 	rendererShadowProjectedDiagnosticFloatCVarRestore_t restoreTexelBiasScale( r_shadowMapTexelBiasScale );
 	rendererShadowProjectedDiagnosticFloatCVarRestore_t restoreFilterRadius( r_shadowMapFilterRadius );
+	rendererShadowProjectedDiagnosticFloatCVarRestore_t restoreDistantFilterScale( r_shadowMapDistantFilterScale );
 	rendererShadowProjectedDiagnosticFloatCVarRestore_t restorePCSSLightRadius( r_shadowMapPCSSLightRadius );
 	rendererShadowProjectedDiagnosticFloatCVarRestore_t restorePCSSMaxRadius( r_shadowMapPCSSMaxRadius );
 	rendererShadowProjectedDiagnosticStringCVarRestore_t restoreBenchmarkPreset( r_rendererBenchmarkPreset );
@@ -2927,6 +2931,7 @@ bool RendererShadowProjectedDiagnostic_RunSelfTest( void ) {
 	r_shadowMapNormalBias.SetFloat( 0.00075f );
 	r_shadowMapTexelBiasScale.SetFloat( 0.45f );
 	r_shadowMapFilterRadius.SetFloat( 2.0f );
+	r_shadowMapDistantFilterScale.SetFloat( 0.35f );
 	r_shadowMapPCSSLightRadius.SetFloat( 4.0f );
 	r_shadowMapPCSSMaxRadius.SetFloat( 8.0f );
 	r_rendererBenchmarkPreset.SetString( "baseline" );
@@ -3104,6 +3109,37 @@ bool RendererShadowProjectedDiagnostic_RunSelfTest( void ) {
 			classification.cascadeCount,
 			classification.tileCount,
 			classification.atlasDiv );
+		return false;
+	}
+	const shadowMapProjectedFilterSettings_t localFilterSettings = R_ShadowMapProjectedFilterSettings( &light );
+	if ( localFilterSettings.distantSource || !R_ModernShadowPlanner_FloatClose( localFilterSettings.filterScale, 1.0f ) || !R_ModernShadowPlanner_FloatClose( localFilterSettings.filterRadius, 2.0f ) || !R_ModernShadowPlanner_FloatClose( localFilterSettings.effectiveFilterRadius, 2.0f ) ) {
+		common->Printf(
+			"RendererShadowProjectedDiagnostic self-test failed: local filter distant=%d scale=%.3f radius=%.3f effective=%.3f\n",
+			localFilterSettings.distantSource ? 1 : 0,
+			localFilterSettings.filterScale,
+			localFilterSettings.filterRadius,
+			localFilterSettings.effectiveFilterRadius );
+		return false;
+	}
+
+	viewLight_t distantFilterLight = light;
+	idRenderLightLocal distantFilterLightDef = lightDef;
+	distantFilterLightDef.parms.parallel = true;
+	distantFilterLight.lightDef = &distantFilterLightDef;
+	distantFilterLight.parallel = true;
+	distantFilterLight.pointLight = true;
+	r_shadowMapFilterMode.SetInteger( 2 );
+	const shadowMapProjectedFilterSettings_t distantFilterSettings = R_ShadowMapProjectedFilterSettings( &distantFilterLight );
+	r_shadowMapFilterMode.SetInteger( 0 );
+	if ( !distantFilterSettings.distantSource || !R_ModernShadowPlanner_FloatClose( distantFilterSettings.filterScale, 0.35f ) || !R_ModernShadowPlanner_FloatClose( distantFilterSettings.filterRadius, 0.7f ) || !R_ModernShadowPlanner_FloatClose( distantFilterSettings.pcssLightRadius, 1.4f ) || !R_ModernShadowPlanner_FloatClose( distantFilterSettings.pcssMaxRadius, 2.8f ) || !R_ModernShadowPlanner_FloatClose( distantFilterSettings.effectiveFilterRadius, 2.8f ) ) {
+		common->Printf(
+			"RendererShadowProjectedDiagnostic self-test failed: distant filter distant=%d scale=%.3f radius=%.3f pcss=%.3f/%.3f effective=%.3f\n",
+			distantFilterSettings.distantSource ? 1 : 0,
+			distantFilterSettings.filterScale,
+			distantFilterSettings.filterRadius,
+			distantFilterSettings.pcssLightRadius,
+			distantFilterSettings.pcssMaxRadius,
+			distantFilterSettings.effectiveFilterRadius );
 		return false;
 	}
 

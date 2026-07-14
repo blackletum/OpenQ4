@@ -198,7 +198,6 @@ Dmap
 void Dmap( const idCmdArgs &args ) {
 	int			i;
 	int			start, end;
-	char		path[1024];
 	idStr		passedName;
 	bool		leaked = false;
 	bool		noCM = false;
@@ -309,8 +308,9 @@ void Dmap( const idCmdArgs &args ) {
 	bool region = false;
 	// if this isn't a regioned map, delete the last saved region map
 	if ( passedName.Right( 4 ) != ".reg" ) {
-		sprintf( path, "%s.reg", dmapGlobals.mapFileBase );
-		fileSystem->RemoveFile( path );
+		idStr regionPath = dmapGlobals.mapFileBase;
+		regionPath += ".reg";
+		fileSystem->RemoveFile( regionPath );
 	} else {
 		region = true;
 	}
@@ -319,8 +319,9 @@ void Dmap( const idCmdArgs &args ) {
 	passedName = stripped;
 
 	// delete any old line leak files
-	sprintf( path, "%s.lin", dmapGlobals.mapFileBase );
-	fileSystem->RemoveFile( path );
+	idStr leakPath = dmapGlobals.mapFileBase;
+	leakPath += ".lin";
+	fileSystem->RemoveFile( leakPath );
 
 
 	//

@@ -1855,7 +1855,24 @@ bool idFileSystemLocal::ResolveCaseInsensitiveOSPath( const char *path, idStr &r
 		const char *parentDirectory = resolvedPath.IsEmpty() ? "." : resolvedPath.c_str();
 		idStr resolvedSegment;
 
-		if ( !FindCaseInsensitiveOSPathEntry( parentDirectory, segment.c_str(), directoryOnly, resolvedSegment ) ) {
+		// Most mixed-case stock paths already use the exact on-disk spelling.  A
+		// direct stat avoids enumerating every parent directory for every loose-
+		// file probe (including probes for assets that ultimately live in PK4s).
+#ifndef WIN32
+		idStr exactPath = resolvedPath;
+		exactPath.AppendPath( segment );
+		struct stat exactStat;
+		const bool exactEntryMatches = stat( exactPath.c_str(), &exactStat ) == 0 &&
+			( directoryOnly ? S_ISDIR( exactStat.st_mode ) : !S_ISDIR( exactStat.st_mode ) );
+#else
+		// Windows has no S_ISDIR and does not need this optimization on its
+		// case-insensitive filesystem. Preserve the existing enumeration fallback
+		// if case recovery is explicitly enabled there.
+		const bool exactEntryMatches = false;
+#endif
+		if ( exactEntryMatches ) {
+			resolvedSegment = segment;
+		} else if ( !FindCaseInsensitiveOSPathEntry( parentDirectory, segment.c_str(), directoryOnly, resolvedSegment ) ) {
 			if ( fs_debug.GetBool() ) {
 				common->Printf( "idFileSystemLocal::ResolveCaseInsensitiveOSPath: could not resolve %s segment '%s' under '%s' while resolving '%s'\n",
 					directoryOnly ? "directory" : "file",
@@ -1998,7 +2015,8 @@ const char *idFileSystemLocal::OSPathToRelativePath( const char *OSPath ) {
 			c1 = *(base - 1);
 		}
 		c2 = *( base + strlen( BASE_GAMEDIR ) );
-		if ( ( c1 == '/' || c1 == '\\' ) && ( c2 == '/' || c2 == '\\' ) ) {
+		if ( ( base == OSPath || c1 == '/' || c1 == '\\' ) &&
+			( c2 == '\0' || c2 == '/' || c2 == '\\' ) ) {
 			break;
 		}
 		base = strstr( base + 1, BASE_GAMEDIR );
@@ -2022,7 +2040,8 @@ const char *idFileSystemLocal::OSPathToRelativePath( const char *OSPath ) {
 					c1 = *(base - 1);
 				}
 				c2 = *( base + strlen( fsgame ) );
-				if ( ( c1 == '/' || c1 == '\\' ) && ( c2 == '/' || c2 == '\\' ) ) {
+				if ( ( base == OSPath || c1 == '/' || c1 == '\\' ) &&
+					( c2 == '\0' || c2 == '/' || c2 == '\\' ) ) {
 					break;
 				}
 				base = strstr( base + 1, fsgame );
@@ -2042,6 +2061,10 @@ const char *idFileSystemLocal::OSPathToRelativePath( const char *OSPath ) {
 			}
 			return relativePath;
 		}
+		// A qpath containing only the game-directory segment is valid and maps
+		// to the VFS root; do not report it as an OS-path conversion failure.
+		relativePath[0] = '\0';
+		return relativePath;
 	}
 
 	if ( !ignoreWarning ) {
@@ -4144,7 +4167,7 @@ void idFileSystemLocal::Path_f( const idCmdArgs &args ) {
 				} else {
 					status += ")\n";
 				}
-				common->Printf( status.c_str() );
+				common->Printf( "%s", status.c_str() );
 			} else {
 				common->Printf( "%s (%i files)\n", sp->pack->pakFilename.c_str(), sp->pack->numfiles );
 			}
@@ -5520,8 +5543,17 @@ void idFileSystemLocal::Init( void ) {
 	if ( fs_savepath.GetString()[0] == '\0' ) {
 		fs_savepath.SetString( fs_homepath.GetString() );
 	}
-	// fs_cdpath is locked to the process current directory.
+	// fs_cdpath is locked to the platform default (the bundle-adjacent package
+	// root for a macOS app, otherwise the process current directory).
 	fs_cdpath.SetString( Sys_DefaultCDPath() );
+	common->Printf(
+		"Filesystem paths: fs_basepath='%s' fs_homepath='%s' fs_savepath='%s' fs_cdpath='%s' fs_game='%s' fs_game_base='%s'\n",
+		fs_basepath.GetString(),
+		fs_homepath.GetString(),
+		fs_savepath.GetString(),
+		fs_cdpath.GetString(),
+		fs_game.GetString(),
+		fs_game_base.GetString() );
 
 	// try to start up normally
 	Startup( );

@@ -689,9 +689,9 @@ typedef struct frameMemoryBlock_s {
 	struct frameMemoryBlock_s *next;
 	int		size;
 	int		used;
-	int		poop;			// so that base is 16 byte aligned
-	byte	base[4];	// dynamically allocated as [size]
+	alignas(16) byte base[4];	// dynamically allocated as [size]
 } frameMemoryBlock_t;
+static_assert( offsetof( frameMemoryBlock_t, base ) % 16 == 0, "frame allocator payload must remain 16-byte aligned" );
 
 // all of the information needed by the back end must be
 // contained in a frameData_t.  This entire structure is
@@ -938,7 +938,7 @@ public:
 	virtual idRenderTexture* CreateRenderTexture(idImage* albedoImage, idImage* depthImage, idImage* albedoImage2 = nullptr, idImage* albedoImage3 = nullptr);
 	virtual void			DestroyRenderTexture(idRenderTexture* renderTexture);
 	virtual void			ResizeImage(idImage* image, int width, int height);
-	virtual void			ResizeRenderTexture(idRenderTexture* renderTexture, int width, int height);
+	virtual bool			ResizeRenderTexture(idRenderTexture*& renderTexture, int width, int height);
 	virtual void			GetRenderTextureSize(idRenderTexture* renderTexture, int& renderTextureWidth, int& renderTextureHeight);
 	virtual void			SetRenderTextureDebugName(idRenderTexture* renderTexture, const char* label);
 	virtual void			BindRenderTexture(idRenderTexture* renderTexture, idRenderTexture* feedbackRenderTexture);
@@ -950,6 +950,7 @@ public:
 	virtual void			SetUseUIViewportFor2D( bool enable );
 	virtual bool			GetUseUIViewportFor2D( void ) const;
 	virtual void			GetImageSize(idImage* image, int& imageWidth, int& imageHeight);
+	virtual int				GetImageMSAASamples(idImage* image);
 public:
 	// internal functions
 							idRenderSystemLocal( void );
@@ -1217,7 +1218,7 @@ extern idCVar r_rendererOcclusion;	// enable conservative modern visibility and 
 extern idCVar r_rendererHiZ;	// allocate and build the modern scene Hi-Z depth pyramid
 extern idCVar r_useSimpleInteraction;	// use the simpler Quake 4 interaction program pair as a compatibility fallback
 extern idCVar r_interactionColorMode;	// interaction color mode: 0 auto, 1 packed env16.xy, 2 vector env16/env17
-extern idCVar r_appleARB2Interactions;	// Apple GL 2.1 bypass escape hatch: 0 bypass, 1 simple path, 2 full path
+extern idCVar r_appleARB2Interactions;	// Apple GL 2.1: 0 automatic GLSL/simple fallback, 1 simple diagnostic, 2 full diagnostic, 3 emergency bypass
 extern idCVar r_shaderReport;			// shader diagnostics: 0 off, 1 summaries, 2 invalid-use warnings
 
 extern idCVar r_cgVertexProfile;		// arbvp1, vp20, vp30
@@ -1271,6 +1272,7 @@ extern idCVar r_shadowMapFilterTaps;		// projected-light PCF tap budget
 extern idCVar r_shadowMapPointFilterTaps;	// point-light PCF tap budget
 extern idCVar r_shadowMapFilterMode;	// projected-light filter mode
 extern idCVar r_shadowMapPointFilterMode;	// point-light filter mode
+extern idCVar r_shadowMapDistantFilterScale;	// filter-radius scale for parallel/global projected sources
 extern idCVar r_shadowMapPCSSLightRadius;	// projected PCSS-lite blocker search radius
 extern idCVar r_shadowMapPCSSMaxRadius;	// projected PCSS-lite maximum filter radius
 extern idCVar r_shadowMapNormalOffsetScale;	// normal-offset receiver bias in shadow texels

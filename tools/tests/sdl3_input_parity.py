@@ -84,8 +84,17 @@ def validate_keyboard_and_mouse_contract() -> None:
     queue_button = function_body(source, "static void SDL3_QueueMouseButtonEvent(int key, bool down, int eventTime, bool pollState) {")
     consume_delta = function_body(source, "static int SDL3_ConsumeMouseDelta(float delta, float &remainder) {")
     activate_mouse = function_body(source, "void IN_ActivateMouse(void) {")
+    input_frame = function_body(source, "void IN_Frame(void) {")
+    grab_mouse = function_body(source, "void Sys_GrabMouseCursor(bool grabIt) {")
     mouse_capture_diag = function_body(source, "static void SDL3_MouseCaptureDiagnostics_f(const idCmdArgs &args) {")
     init_input = function_body(source, "void Sys_InitInput(void) {")
+    video_hints = function_body(source, "static void SDL3_SetVideoHintDefaults(void) {")
+    text_input_area = function_body(source, "static void SDL3_UpdateTextInputArea(void) {")
+    text_input_state = function_body(source, "static void SDL3_UpdateTextInputState(void) {")
+    window_event = function_body(source, "static void SDL3_HandleWindowEvent(const SDL_WindowEvent &event, int eventTime) {")
+    release_focus = function_body(source, "static void SDL3_ReleaseFocusInputState(int eventTime) {")
+    clear_queues = function_body(source, "static void SDL3_ClearInputQueues(void) {")
+    input_event = function_body(source, "static bool SDL3_IsUserInputEvent(Uint32 eventType) {")
     pump = function_body(source, "bool Sys_SDL_PumpEvents(void) {")
     poll_mouse = function_body(source, "int Sys_PollMouseInputEvents(void) {")
 
@@ -139,17 +148,67 @@ def validate_keyboard_and_mouse_contract() -> None:
     require(mouse_capture_diag, "IN_ActivateMouse();", "SDL3 mouse capture diagnostic activation")
     require(mouse_capture_diag, "IN_DeactivateMouse();", "SDL3 mouse capture diagnostic cleanup")
     require(source, "relative=%s grab=%s captured=%s", "SDL3 mouse capture diagnostic state")
+    require(input_frame, "if (!win32.activeApp)", "SDL3 fullscreen inactive-window capture gate")
+    require(grab_mouse, "if (grabIt && !win32.activeApp)", "SDL3 per-frame inactive-window capture rejection")
+    require(grab_mouse, "if (!grabIt)", "SDL3 explicit mouse release")
+    require(grab_mouse, "IN_DeactivateMouse();", "SDL3 fullscreen/compositor mouse release")
 
-    require(init_input, "SDL_StartTextInput(s_sdlWindow)", "SDL3 text input startup")
+    for token in (
+        "SDL3_ClearInputQueues();",
+        "idKeyInput::ClearStates();",
+        "Sys_GrabMouseCursor(false);",
+        "SDL3_StopControllerRumble();",
+        "SDL3_ReleaseGamepadState(eventTime);",
+        "SDL3_ReleaseJoystickState(eventTime);",
+        "SDL3_ClearJoystickState();",
+        "s_sdlFocusInputReleased",
+    ):
+        require(release_focus, token, "SDL3 desktop focus-loss input release")
+    require(source, "if (s_sdlAppInBackground || !s_sdlVideoReferenceHeld", "SDL3 lifecycle-aware focus query")
+    reject(clear_queues, "s_menuMouseInsideWindow = true", "SDL3 input-queue clear preserving compositor mouse focus")
+    require(window_event, "case SDL_EVENT_WINDOW_FOCUS_LOST:", "SDL3 focus-loss handling")
+    require(window_event, "case SDL_EVENT_WINDOW_HIDDEN:", "SDL3 hidden-window input release")
+    require(window_event, "case SDL_EVENT_WINDOW_MINIMIZED:", "SDL3 minimize handling")
+    require(window_event, "case SDL_EVENT_WINDOW_SHOWN:", "SDL3 shown-window focus recheck")
+    require(window_event, "case SDL_EVENT_WINDOW_RESTORED:", "SDL3 restored-window focus recheck")
+    require(window_event, "win32.activeApp = Sys_SDL_IsGameWindowFocused();", "SDL3 shown/restored focus query")
+    if window_event.count("SDL3_ReleaseFocusInputState(eventTime);") < 2:
+        raise AssertionError("SDL3 focus loss and hidden/minimized windows must release latched input")
+    for token in (
+        "SDL_EVENT_KEY_DOWN",
+        "SDL_EVENT_MOUSE_MOTION",
+        "SDL_EVENT_GAMEPAD_BUTTON_DOWN",
+        "SDL_EVENT_JOYSTICK_BUTTON_DOWN",
+        "SDL_EVENT_FINGER_DOWN",
+    ):
+        require(input_event, token, "SDL3 inactive-window input classification")
+    require(pump, "!win32.activeApp && SDL3_IsUserInputEvent(event.type)", "SDL3 inactive-window input rejection")
+
+    require(video_hints, 'SDL_HINT_IME_IMPLEMENTED_UI, "none"', "SDL3 native IME UI contract")
+    require(init_input, "SDL3_UpdateTextInputState();", "SDL3 text input initial state")
+    require(text_input_state, "consoleAcceptsText || guiAcceptsText", "SDL3 focused UI text-input routing")
+    require(text_input_state, "SDL3_GetActiveGuiTextInputState", "SDL3 focused edit-field query")
+    require(text_input_state, "SDL_StartTextInput(s_sdlWindow)", "SDL3 text input activation")
+    require(text_input_state, "SDL_ClearComposition(s_sdlWindow)", "SDL3 IME composition dismissal")
+    require(text_input_state, "SDL_StopTextInput(s_sdlWindow)", "SDL3 text input deactivation")
+    require(text_input_area, "SDL_SetTextInputArea(s_sdlWindow", "SDL3 native IME candidate placement")
+    require(text_input_area, "transform.pixelToWindowX", "SDL3 high-DPI candidate placement")
+    require(pump, "SDL3_UpdateTextInputState();", "SDL3 per-pump text input lifecycle")
+    require(pump, "SDL_StepUTF8(&text, &remaining)", "SDL3 strict committed UTF-8 decoding")
+    require(pump, "codepoint == SDL_INVALID_UNICODE_CODEPOINT || codepoint > 0xff", "SDL3 stock-font Unicode narrowing guard")
+    require(pump, "idStr::CharIsPrintable(static_cast<byte>(codepoint))", "SDL3 committed control-character rejection")
+    require(pump, "ignoring committed text outside the stock single-byte font range", "SDL3 unsupported text diagnostic")
     for token in (
         "SDL_EVENT_KEY_DOWN",
         "SDL_EVENT_KEY_UP",
         "SDL_EVENT_TEXT_INPUT",
+        "SDL_EVENT_TEXT_EDITING",
+        "SDL_EVENT_TEXT_EDITING_CANDIDATES",
         "SDL_EVENT_MOUSE_MOTION",
         "SDL_EVENT_MOUSE_BUTTON_DOWN",
         "SDL_EVENT_MOUSE_BUTTON_UP",
         "SDL_EVENT_MOUSE_WHEEL",
-        "SDL3_DecodeNextUTF8Codepoint",
+        "SDL_StepUTF8",
         "SDL3_ConsumeMouseDelta(event.motion.xrel, s_sdlRelativeMouseRemainderX)",
         "openQ4_AcceptingLoadingContinueInput()",
     ):
@@ -326,14 +385,7 @@ def validate_controller_contract() -> None:
     ):
         require(pump, token, "SDL3 controller event pump")
 
-    for token in (
-        "Sys_GrabMouseCursor(false);",
-        "SDL3_StopControllerRumble();",
-        "SDL3_ReleaseGamepadState(eventTime);",
-        "SDL3_ReleaseJoystickState(eventTime);",
-        "SDL3_ClearInputQueues();",
-    ):
-        require(background, token, "SDL3 background input release")
+    require(background, "SDL3_ReleaseFocusInputState(eventTime);", "SDL3 background input release")
     for token in (
         "SDL3_OpenFirstController();",
         "SDL3_UpdateGamepadSensorState(false);",
@@ -352,6 +404,7 @@ def validate_docs_and_ci() -> None:
     platform_docs = read("docs/dev/platform-support.md")
     migration = read("docs/dev/sdl3-linux-macos-migration.md")
     release_completion = read("docs/dev/release-completion.md")
+    session = read("src/framework/Session.cpp")
 
     for haystack, context in (
         (push, "push verification workflow"),
@@ -370,6 +423,8 @@ def validate_docs_and_ci() -> None:
     require(platform_docs, "keyboard, mouse, and controller input are routed through the shared SDL3 backend", "platform support docs")
     require(migration, "keyboard, mouse, controller, rumble, hotplug, gyro, touchpad, and touchscreen handling", "SDL3 migration docs")
     require(release_completion, "SDL3 input support is aligned across Windows, Linux, and macOS", "release completion notes")
+    require(session, "Sys_SDL_IsGameWindowFocused", "SDL3 unfocused-audio policy")
+    require(session, "s_muteUnfocused.GetBool() && !Sys_SDL_IsGameWindowFocused()", "SDL3 cross-platform unfocused-audio mute")
 
 
 def main() -> None:

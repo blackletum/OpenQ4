@@ -232,8 +232,8 @@ void RB_RenderTriangleSurface( const srfTriangles_t *tri ) {
 
 
 	idDrawVert *ac = (idDrawVert *)vertexCache.Position( tri->ambientCache );
-	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
-	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), ac->st.ToFloatPtr() );
+	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, xyz ) ) );
+	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, st ) ) );
 
 	RB_DrawElementsWithCounters( tri );
 }
@@ -588,7 +588,7 @@ void RB_BindStageTexture( const float *shaderRegisters, const textureStage_t *te
 
 	// texgens
 	if ( texture->texgen == TG_DIFFUSE_CUBE ) {
-		glTexCoordPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ((idDrawVert *)vertexCache.Position( surf->geo->ambientCache ))->normal.ToFloatPtr() );
+		glTexCoordPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( vertexCache.Position( surf->geo->ambientCache ), offsetof( idDrawVert, normal ) ) );
 	}
 	if ( texture->texgen == TG_SKYBOX_CUBE || texture->texgen == TG_WOBBLESKY_CUBE ) {
 		glTexCoordPointer( 3, GL_FLOAT, 0, vertexCache.Position( surf->dynamicTexCoords ) );
@@ -601,7 +601,7 @@ void RB_BindStageTexture( const float *shaderRegisters, const textureStage_t *te
 		glTexGenf( GL_T, GL_TEXTURE_GEN_MODE, GL_REFLECTION_MAP_EXT );
 		glTexGenf( GL_R, GL_TEXTURE_GEN_MODE, GL_REFLECTION_MAP_EXT );
 		glEnableClientState( GL_NORMAL_ARRAY );
-		glNormalPointer( GL_FLOAT, sizeof( idDrawVert ), ((idDrawVert *)vertexCache.Position( surf->geo->ambientCache ))->normal.ToFloatPtr() );
+		glNormalPointer( GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( vertexCache.Position( surf->geo->ambientCache ), offsetof( idDrawVert, normal ) ) );
 
 		glMatrixMode( GL_TEXTURE );
 		float	mat[16];
@@ -627,7 +627,7 @@ void RB_FinishStageTexture( const textureStage_t *texture, const drawSurf_t *sur
 	if ( texture->texgen == TG_DIFFUSE_CUBE || texture->texgen == TG_SKYBOX_CUBE 
 		|| texture->texgen == TG_WOBBLESKY_CUBE ) {
 		glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), 
-			(void *)&(((idDrawVert *)vertexCache.Position( surf->geo->ambientCache ))->st) );
+			RB_DrawVertAttributePointer( vertexCache.Position( surf->geo->ambientCache ), offsetof( idDrawVert, st ) ) );
 	}
 
 	if ( texture->texgen == TG_REFLECT_CUBE ) {

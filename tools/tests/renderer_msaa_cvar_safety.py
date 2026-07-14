@@ -150,6 +150,41 @@ def test_sdl3_logs_requested_selected_and_actual_msaa_attributes():
     assert_true("SDL3_LogGLContextAttributes(requestedMultiSamples, selectedMultiSamples);" in sdl3_backend, "SDL3 should pass requested/selected MSAA values into context logging")
 
 
+def test_render_texture_failures_degrade_and_retry_msaa():
+    # Keep the public game-side retry contract aligned with the engine's private
+    # FBO lifecycle without exposing idImage implementation details to GameLibs.
+    render_texture_h = read_repo_file(Path("src") / "renderer" / "RenderTexture.h")
+    render_texture_cpp = read_repo_file(Path("src") / "renderer" / "OpenGL" / "gl_RenderTexture.cpp")
+    render_system_cpp = read_repo_file(Path("src") / "renderer" / "RenderSystem.cpp")
+    backend_cpp = read_repo_file(Path("src") / "renderer" / "tr_backend.cpp")
+    game_render = read_companion_file(Path("src") / "game" / "Game_render.cpp")
+    game_render_system = read_companion_file(Path("src") / "renderer" / "RenderSystem.h")
+
+    assert_true("bool\t\t\t\t\tInitRenderTexture(void);" in render_texture_h, "FBO initialization should report success")
+    assert_true("R_FramebufferStatusName" in render_texture_cpp, "FBO failures should name the framebuffer status")
+    assert_true("GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE" in render_texture_cpp, "FBO diagnostics should identify multisample mismatch")
+    assert_true("GL context: vendor=" in render_texture_cpp, "FBO diagnostics should include renderer context")
+    assert_true("R_ReportFramebufferAttachment" in render_texture_cpp, "FBO diagnostics should describe attachments")
+    assert_true("return FailFramebuffer( framebufferStatus" in render_texture_cpp, "incomplete FBOs should take the recoverable failure path")
+    assert_true("Failed to create rendertexture" not in render_texture_cpp, "FBO incompleteness must not remain fatal")
+    assert_true("if ( !renderTexture->InitRenderTexture() )" in render_system_cpp, "render-system creation should reject incomplete FBOs")
+    assert_true("delete renderTexture;" in render_system_cpp and "return NULL;" in render_system_cpp, "failed initial FBOs should be destroyed and returned as NULL")
+    assert_true("R_IsRenderTextureFailureLatched" in render_system_cpp, "unchanged rejected attachment sets should not retry every frame")
+    assert_true("GetStorageGeneration()" in render_system_cpp and "contextGeneration" in render_system_cpp, "failure latch should retry after storage or context changes")
+    assert_true("idRenderTexture*& renderTexture" in render_system_cpp, "resize failure should be able to clear the owner's target pointer")
+    assert_true("renderTexture = NULL;" in render_system_cpp and "DestroyRenderTexture( failedRenderTexture );" in render_system_cpp, "failed resized targets should be retired instead of remaining non-null")
+    assert_true("cmd->msaaRenderTexture == NULL || cmd->destRenderTexture == NULL" in backend_cpp, "MSAA resolve should guard missing targets")
+    assert_true("!cmd->msaaRenderTexture->EnsureDeviceHandle()" in backend_cpp, "MSAA resolve should guard unusable targets")
+
+    assert_true("openQ4_NextLowerMSAASampleCount" in game_render, "game rendering should retry a lower MSAA step")
+    assert_true("renderSystem->GetImageMSAASamples" in game_render, "game rendering should use the allocated sample count")
+    assert_true("openQ4_NextLowerMSAASampleCount( Max( colorSamples, depthSamples ) )" in game_render, "mismatched attachments should retry the next tier below the larger allocated count")
+    assert_true("Min( colorSamples, depthSamples )" not in game_render, "mismatched attachments must not skip a compatible MSAA tier")
+    assert_true("Forward render target MSAA: requested %d, effective %d" in game_render, "game rendering should log requested and effective samples")
+    assert_true("falling back to direct rendering" in game_render, "total target failure should retain direct rendering")
+    assert_true("virtual int\t\t\t\tGetImageMSAASamples" in game_render_system, "GameLibs API should expose allocated sample count narrowly")
+
+
 def main():
     test_msaa_cvar_exposes_guarded_steps()
     test_msaa_cvar_normalizes_unsupported_values_before_gl_init()
@@ -158,6 +193,7 @@ def main():
     test_postaa_smaa_quality_presets_are_explicit_and_logged()
     test_sdl3_context_creation_has_msaa_fallback_ladder()
     test_sdl3_logs_requested_selected_and_actual_msaa_attributes()
+    test_render_texture_failures_degrade_and_retry_msaa()
     print("renderer_msaa_cvar_safety: ok")
     return 0
 

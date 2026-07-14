@@ -93,7 +93,7 @@ def validate_context_aware_apple_gl21_quirk() -> None:
     for token in (
         "RendererDriverQuirk_IsAppleGL21CompatibilityFallback( caps, driverInfo )",
         "RENDERER_DRIVER_QUIRK_DISABLE_ARB2_INTERACTIONS",
-        "Apple OpenGL 2.1 compatibility path uses CPU-backed vertex cache, simple ARB interaction programs, and bypassed ARB2 light interactions for stability",
+        "Apple OpenGL 2.1 compatibility path uses a CPU-backed vertex cache with automatic stock GLSL interactions, simple ARB per-surface fallback, and an emergency interaction bypass",
         "selectedContext=%d.%d %s fixedFunction=%d VBO:%d->%d PBO:%d->%d simpleInteraction=%d ARB2:%d->%d",
     ):
         require(apply_body, token, "Apple GL 2.1 quirk application and logging")
@@ -126,8 +126,20 @@ def validate_context_aware_apple_gl21_quirk() -> None:
 
 def validate_simple_interaction_fail_closed() -> None:
     source = read("src/renderer/draw_arb2.cpp")
+    init_source = read("src/renderer/RenderSystem_init.cpp")
     common_source = read("src/renderer/draw_common.cpp")
     render_source = read("src/renderer/tr_render.cpp")
+    arb_init_body = function_body(source, "void R_ARB2_Init( void ) {")
+    material_dispatch_body = function_body(source, "static void RB_DrawMaterialInteractions( const drawSurf_t *surf ) {")
+    material_draw_body = function_body(source, "static bool RB_GLSLMaterial_CreateDrawInteractions( const drawSurf_t *surf, const bool forceNeutralEnhancements ) {")
+    material_interaction_body = function_body(source, "static void RB_GLSLMaterial_DrawInteraction( const drawInteraction_t *din ) {")
+    material_fragment_shader = read("content/baseoq4/pak0/glprogs/material_interaction.fs")
+    arb_draw_body = source_section(
+        source,
+        "void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {",
+        "static void RB_ARB2_DisableInteractionVertexAttribArrays( void ) {",
+    )
+    restore_body = function_body(source, "static void RB_ARB2_RestoreInteractionState( const bool recordBypassBreadcrumb ) {")
     reload_body = function_body(source, "void R_ReloadARBPrograms_f( const idCmdArgs &args ) {")
     failure_body = function_body(source, "static void RB_ErrorIfDriverRequiredSimpleInteractionFailed( void ) {")
     draw_view_body = function_body(common_source, "void\tRB_STD_DrawView( void ) {")
@@ -153,6 +165,82 @@ def validate_simple_interaction_fail_closed() -> None:
         require(reload_body, token, "ARB reload simple interaction fail-closed call")
 
     for token in (
+        "0 = automatic stock GLSL interactions with simple ARB per-surface fallback",
+        "1 = force simple ARB diagnostic",
+        "2 = force full ARB diagnostic",
+        "3 = emergency interaction bypass",
+        "idCmdSystem::ArgCompletion_Integer<0,3>",
+    ):
+        require(init_source, token, "Apple GL 2.1 interaction policy cvar")
+
+    for token in (
+        "g_appleGL21AutomaticInteractionPath = true;",
+        "interactionOverride == 0",
+        "interactionOverride == 1",
+        "interactionOverride == 2",
+        "glConfig.disableARB2Interactions = true;",
+        "emergency ARB2 light-interaction bypass",
+    ):
+        require(arb_init_body, token, "Apple GL 2.1 interaction policy initialization")
+
+    for token in (
+        "RB_AppleGL21AutomaticInteractionPath()",
+        "RB_SurfaceEligibleForAppleGL21StockGLSLInteraction",
+        "singleSurf.nextOnLight = NULL;",
+        "RB_GLSLMaterial_CreateDrawInteractions( &singleSurf, true )",
+        "RB_ARB2_CreateDrawInteractions( &singleSurf );",
+    ):
+        require(material_dispatch_body, token, "Apple GL 2.1 per-surface GLSL/simple routing")
+
+    for token in (
+        "forceNeutralEnhancements",
+        "RB_MaterialInteractionSetEnhancementUniforms",
+        "g_materialInteractionProgram.stockInteraction",
+        "g_materialInteractionProgram.ambientNormalMap",
+        "submittedInteractions = true;",
+        "return submittedInteractions;",
+    ):
+        require(material_draw_body, token, "Apple GL 2.1 neutral stock GLSL interaction path")
+
+    for token in (
+        "din->ambientLight ? 1.0f : 0.0f",
+        "globalImages->ambientNormalMap->Bind()",
+    ):
+        require(material_interaction_body, token, "Apple GL 2.1 ambient interaction uniforms")
+
+    for token in (
+        "uniform float uStockInteraction;",
+        "uniform float uAmbientLight;",
+        "uniform samplerCube uAmbientNormalMap;",
+        "DecodeStockLocalNormal",
+        "StockSpecularTerm",
+        "textureCube( uAmbientNormalMap",
+    ):
+        require(material_fragment_shader, token, "Apple GL 2.1 stock-compatible GLSL interaction shader")
+
+    for token in (
+        "!RB_UseSimpleInteractionShader()",
+        "RB_GLSLPrepareInteractionVertexCache( surf, ac )",
+        "continue;",
+    ):
+        require(arb_draw_body, token, "Apple GL 2.1 hardened simple ARB fallback")
+    reject(
+        arb_draw_body,
+        "vertexCache.Position( surf->geo->ambientCache )",
+        "Apple GL 2.1 ARB fallback must use guarded cache preparation",
+    )
+
+    for token in (
+        "RB_ARB2_ClearInteractionTextureState();",
+        "RB_ARB2_DisableInteractionVertexAttribArrays();",
+        "RB_ARB2_UnbindInteractionPrograms();",
+        "glUseProgramObjectARB( 0 );",
+        "recordBypassBreadcrumb",
+        "GL_ClearStateDelta();",
+    ):
+        require(restore_body, token, "Apple GL 2.1 post-interaction state restore")
+
+    for token in (
         "static bool RB_ShouldSkipFullInteractionUpload( const progDef_t &prog )",
         "RB_DriverPrefersSimpleInteraction()",
         "RENDERER_STARTUP_PHASE_ARB2_INTERACTION_SKIP_FULL_UPLOAD",
@@ -170,11 +258,11 @@ def validate_simple_interaction_fail_closed() -> None:
         "RB_ARB2_RestoreBypassedInteractionState();",
         "RB_ARB2_DisableInteractionVertexAttribArrays",
         "static const int attribs[] = { 1, 2, 5, 6, 7, 8, 9, 10, 11 };",
-        "RB_ARB2_ClearBypassedInteractionTextureState",
+        "RB_ARB2_ClearInteractionTextureState",
         "GL_SelectTexture( unit );",
         "glDisable( GL_TEXTURE_GEN_S );",
         "glDisable( GL_TEXTURE_GEN_Q );",
-        "RB_ARB2_UnbindBypassedInteractionPrograms",
+        "RB_ARB2_UnbindInteractionPrograms",
         "glBindProgramARB( GL_VERTEX_PROGRAM_ARB, 0 );",
         "glBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, 0 );",
         "GL_ClearStateDelta();",
@@ -248,12 +336,15 @@ def validate_arb_entrypoint_and_binding_audit() -> None:
 def validate_upload_and_vertex_cache_static_coverage() -> None:
     upload = read("src/renderer/RendererUpload.cpp")
     vertex_cache = read("src/renderer/VertexCache.cpp")
+    vertex_cache_header = read("src/renderer/VertexCache.h")
     arb2 = read("src/renderer/draw_arb2.cpp")
 
     upload_init = function_body(upload, "void idUploadManager::Init( const renderBackendCaps_t &caps ) {")
     delete_helper = function_body(upload, "static void R_RendererUpload_DeleteBufferName( unsigned int &vbo ) {")
     position_body = function_body(vertex_cache, "void *idVertexCache::Position( vertCache_t *buffer ) {")
-    attr_helper = function_body(arb2, "static void *RB_DrawVertAttributePointer( const idDrawVert *base, const int byteOffset ) {")
+    init_body = function_body(vertex_cache, "void idVertexCache::Init() {")
+    end_frame_body = function_body(vertex_cache, "void idVertexCache::EndFrame() {")
+    attr_helper = function_body(vertex_cache_header, "ID_INLINE void *RB_DrawVertAttributePointer( const void *base, const size_t byteOffset ) {")
     interaction_section = source_section(arb2, "// set the vertex pointers", "// this may cause RB_ARB2_DrawInteraction")
 
     for token in (
@@ -277,8 +368,29 @@ def validate_upload_and_vertex_cache_static_coverage() -> None:
         "BindArrayBuffer( buffer->vbo )",
         "return (void *)buffer->offset",
         "return (void *)((byte *)buffer->virtMem + buffer->offset)",
+        "BindIndexBuffer( 0 )",
+        "BindArrayBuffer( 0 )",
     ):
         require(position_body, token, "CPU-backed and VBO-backed vertex-cache position contract")
+
+    cpu_position_section = source_section(
+        position_body,
+        "// Client-memory array and index pointers",
+        "// virtual memory is a real pointer",
+    )
+    for token in ("BindArrayBuffer( 0 );", "BindIndexBuffer( 0 );"):
+        require(cpu_position_section, token, "CPU vertex-cache pointer clears both buffer targets")
+    reject(cpu_position_section, "if ( buffer->indexBuffer )", "CPU pointer binding invariant must clear both targets")
+
+    virtual_init_section = source_section(
+        init_body,
+        "virtualMemory = true;",
+        'common->Printf( "WARNING: vertex array range in virtual memory (SLOW)\\n" );',
+    )
+    for token in ("BindArrayBuffer( 0 );", "BindIndexBuffer( 0 );"):
+        require(virtual_init_section, token, "virtual vertex-cache initialization binding invariant")
+        require(end_frame_body, token, "vertex-cache end-of-frame binding invariant")
+    reject(end_frame_body, "if( !virtualMemory )", "end-of-frame binding invariant must cover virtual caches")
 
     require(attr_helper, "reinterpret_cast<uintptr_t>( base ) + byteOffset", "VBO-safe draw-vertex attribute pointer helper")
     for token in (

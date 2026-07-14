@@ -52,6 +52,7 @@ jobs:
             tools/build/openq4_version.py \
             tools/build/package_nightly.py \
             tools/build/package_release.py \
+            tools/build/verify_linux_arm64_release_evidence.py \
             tools/build/stage_fast_install.py \
             tools/build/stage_gamelibs.py \
             tools/build/stage_windows_runtime.py \
@@ -68,7 +69,18 @@ jobs:
             tools/tests/game_class_allocator_alignment.py \
             tools/tests/gamelibs_staging.py \
             tools/tests/hdr_postprocess_math.py \
+            tools/tests/linux_arm64_cross_compile.py \
             tools/tests/linux_arm64_ci_coverage.py \
+            tools/tests/linux_arm64_release_evidence.py \
+            tools/tests/linux_arm64_source_portability.py \
+            tools/tests/linux_dedicated_server_smoke.py \
+            tools/tests/linux_dedicated_server_smoke_contract.py \
+            tools/tests/linux_dedicated_stock_map_smoke.py \
+            tools/tests/linux_dedicated_stock_map_smoke_contract.py \
+            tools/tests/linux_physical_host_evidence.py \
+            tools/tests/linux_physical_host_evidence_contract.py \
+            tools/tests/linux_wayland_stock_sp_smoke.py \
+            tools/tests/linux_wayland_stock_sp_smoke_contract.py \
             tools/tests/linux_gui_presentation_defaults.py \
             tools/tests/linux_highdpi_mouse.py \
             tools/tests/linux_metadata_fuzz.py \
@@ -76,6 +88,7 @@ jobs:
             tools/tests/linux_sanitizer_ci.py \
             tools/tests/linux_sdl3_glew_loader.py \
             tools/tests/linux_vsync_support.py \
+            tools/tests/linux_wayland_build_contract.py \
             tools/tests/loading_continue_input.py \
             tools/tests/macos_apple_gl21_arb2_corridor.py \
             tools/tests/macos_evidence_plumbing.py \
@@ -109,6 +122,7 @@ jobs:
             tools/tests/posix_thread_shutdown.py \
             tools/tests/release_tooling_safety.py \
             tools/tests/renderer_msaa_cvar_safety.py \
+            tools/tests/renderer_screenshot_readback.py \
             tools/tests/renderer_supersampling_safety.py \
             tools/tests/savegame_corruption_contract.py \
             tools/tests/sdl3_input_parity.py \
@@ -130,7 +144,14 @@ jobs:
           python tools/tests/game_class_allocator_alignment.py
           python tools/tests/gamelibs_staging.py
           python tools/tests/hdr_postprocess_math.py
+          python tools/tests/linux_arm64_cross_compile.py
           python tools/tests/linux_arm64_ci_coverage.py
+          python tools/tests/linux_arm64_release_evidence.py
+          python tools/tests/linux_arm64_source_portability.py
+          python tools/tests/linux_dedicated_server_smoke_contract.py
+          python tools/tests/linux_dedicated_stock_map_smoke_contract.py
+          python tools/tests/linux_physical_host_evidence_contract.py
+          python tools/tests/linux_wayland_stock_sp_smoke_contract.py
           python tools/tests/linux_gui_presentation_defaults.py
           python tools/tests/linux_highdpi_mouse.py
           python tools/tests/linux_metadata_fuzz.py
@@ -139,6 +160,7 @@ jobs:
           python tools/tests/linux_sanitizer_ci.py
           python tools/tests/linux_sdl3_glew_loader.py
           python tools/tests/linux_vsync_support.py
+          python tools/tests/linux_wayland_build_contract.py
           python tools/tests/loading_continue_input.py
           python tools/tests/macos_apple_gl21_arb2_corridor.py
           python tools/tests/macos_evidence_plumbing.py
@@ -172,6 +194,7 @@ jobs:
           python tools/tests/posix_network_resolution.py
           python tools/tests/posix_thread_shutdown.py
           python tools/tests/renderer_msaa_cvar_safety.py
+          python tools/tests/renderer_screenshot_readback.py
           python tools/tests/renderer_supersampling_safety.py
           python tools/tests/savegame_corruption_contract.py
           python tools/tests/sdl3_input_parity.py
@@ -236,6 +259,8 @@ jobs:
     timeout-minutes: 90
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/../openQ4-game
+      CC: gcc
+      CXX: g++
 
     steps:
       - name: Checkout
@@ -329,6 +354,23 @@ jobs:
             --skip-official-pak-validation \
             --output-dir .tmp/renderer-validation/force-x11
 
+      - name: Run Linux ARM64 dedicated server smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/tests/linux_dedicated_server_smoke.py \
+            --output-root .tmp/linux-dedicated-smoke/arm64
+
+      - name: Publish Linux ARM64 dedicated server smoke
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: commit-linux-arm64-dedicated-smoke
+          path: .tmp/linux-dedicated-smoke/arm64
+          if-no-files-found: warn
+          retention-days: 14
+          include-hidden-files: true
+
       - name: Publish renderer validation reports
         if: always()
         uses: actions/upload-artifact@v6
@@ -409,7 +451,8 @@ jobs:
               libxss-dev \
               libxtst-dev \
               libxxf86dga-dev \
-              libxxf86vm-dev; then
+              libxxf86vm-dev \
+              weston; then
               exit 0
             fi
 
@@ -435,7 +478,71 @@ jobs:
             --extra-setup-arg=-Duse_pch=false \
             --extra-setup-arg=-Db_sanitize=address,undefined
 
-      - name: Publish sanitizer build logs
+      - name: Stage sanitizer runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/build/meson_setup.sh install \
+            -C .tmp/validation/linux-sanitizer-builddir \
+            --no-rebuild \
+            --skip-subprojects
+
+      - name: Run sanitizer native Wayland smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          output_dir=".tmp/renderer-validation/sanitizer"
+          rm -rf "${output_dir}"
+          mkdir -p "${output_dir}"
+
+          export XDG_RUNTIME_DIR="${RUNNER_TEMP}/openq4-sanitizer-wayland-runtime"
+          rm -rf "${XDG_RUNTIME_DIR}"
+          mkdir -p "${XDG_RUNTIME_DIR}"
+          chmod 700 "${XDG_RUNTIME_DIR}"
+
+          weston_log="${output_dir}/weston.log"
+          weston --backend=headless-backend.so --socket=openq4-sanitizer-wayland --idle-time=0 --no-config >"${weston_log}" 2>&1 &
+          weston_pid=$!
+          cleanup() {
+            status=$?
+            if [ "${status}" -ne 0 ] && [ -f "${weston_log}" ]; then
+              echo "Weston log:"
+              cat "${weston_log}"
+            fi
+            kill "${weston_pid}" >/dev/null 2>&1 || true
+            wait "${weston_pid}" >/dev/null 2>&1 || true
+            exit "${status}"
+          }
+          trap cleanup EXIT
+
+          for attempt in {1..30}; do
+            if [ -S "${XDG_RUNTIME_DIR}/openq4-sanitizer-wayland" ]; then
+              break
+            fi
+            sleep 1
+          done
+          if [ ! -S "${XDG_RUNTIME_DIR}/openq4-sanitizer-wayland" ]; then
+            echo "Weston did not create the sanitizer Wayland socket."
+            exit 1
+          fi
+
+          export WAYLAND_DISPLAY=openq4-sanitizer-wayland
+          unset DISPLAY
+          export SDL_VIDEO_DRIVER=wayland
+          export SDL_VIDEODRIVER=wayland
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export OPENQ4_WAYLAND_DISABLE_LIBDECOR=1
+
+          python tools/tests/renderer_validation_matrix.py \
+            --cases sdl3-wayland-window-lifecycle \
+            --tiers auto \
+            --timeout 120 \
+            --basepath "" \
+            --skip-official-pak-validation \
+            --output-dir "${output_dir}"
+
+      - name: Publish sanitizer validation artifacts
         if: always()
         uses: actions/upload-artifact@v6
         with:
@@ -443,33 +550,96 @@ jobs:
           path: |
             .tmp/validation/linux-sanitizer-builddir/meson-logs
             .tmp/gamelibs_stage/openq4_gamelibs_stage_manifest.json
+            .tmp/renderer-validation/sanitizer
           if-no-files-found: warn
           retention-days: 14
           include-hidden-files: true
 
   linux-wayland:
-    name: Linux Wayland ${{ matrix.libdecor_label }} Commit Validation
-    runs-on: ubuntu-24.04
+    name: Linux ${{ matrix.arch_label }} ${{ matrix.compiler_label }} Wayland ${{ matrix.libdecor_label }} Commit Validation
+    runs-on: ${{ matrix.runner }}
     needs: script-smoke
     timeout-minutes: 90
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/../openQ4-game
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - libdecor_label: libdecor
+          - arch_label: x64
+            runner: ubuntu-24.04
+            expected_uname: x86_64
+            compiler_label: GCC
+            cc: gcc
+            cxx: g++
+            libdecor_label: libdecor
             disable_libdecor: "0"
+            prefer_libdecor: "1"
             sync_window_ops: "0"
-            artifact_suffix: libdecor
-          - libdecor_label: no-libdecor
+            linux_x11: auto
+            artifact_suffix: x64-libdecor
+          - arch_label: x64
+            runner: ubuntu-24.04
+            expected_uname: x86_64
+            compiler_label: GCC
+            cc: gcc
+            cxx: g++
+            libdecor_label: no-libdecor
             disable_libdecor: "1"
+            prefer_libdecor: "0"
             sync_window_ops: "0"
-            artifact_suffix: no-libdecor
-          - libdecor_label: sync-window-ops
+            linux_x11: disabled
+            artifact_suffix: x64-no-libdecor-wayland-only
+          - arch_label: x64
+            runner: ubuntu-24.04
+            expected_uname: x86_64
+            compiler_label: Clang
+            cc: clang
+            cxx: clang++
+            libdecor_label: no-libdecor
+            disable_libdecor: "1"
+            prefer_libdecor: "0"
+            sync_window_ops: "0"
+            linux_x11: disabled
+            artifact_suffix: x64-clang-no-libdecor-wayland-only
+          - arch_label: x64
+            runner: ubuntu-24.04
+            expected_uname: x86_64
+            compiler_label: GCC
+            cc: gcc
+            cxx: g++
+            libdecor_label: sync-window-ops
             disable_libdecor: "0"
+            prefer_libdecor: "0"
             sync_window_ops: "1"
-            artifact_suffix: sync-window-ops
+            linux_x11: auto
+            artifact_suffix: x64-sync-window-ops
+          - arch_label: ARM64
+            runner: ubuntu-24.04-arm
+            expected_uname: aarch64
+            compiler_label: GCC
+            cc: gcc
+            cxx: g++
+            libdecor_label: libdecor
+            disable_libdecor: "0"
+            prefer_libdecor: "1"
+            sync_window_ops: "0"
+            linux_x11: auto
+            artifact_suffix: arm64-libdecor
+          - arch_label: ARM64
+            runner: ubuntu-24.04-arm
+            expected_uname: aarch64
+            compiler_label: Clang
+            cc: clang
+            cxx: clang++
+            libdecor_label: no-libdecor
+            disable_libdecor: "1"
+            prefer_libdecor: "0"
+            sync_window_ops: "0"
+            linux_x11: disabled
+            artifact_suffix: arm64-clang-no-libdecor-wayland-only
 
     steps:
       - name: Checkout
@@ -494,6 +664,14 @@ jobs:
           set -euo pipefail
           python -m pip install --upgrade pip
           python -m pip install meson ninja
+
+      - name: Install Clang
+        if: matrix.compiler_label == 'Clang'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y clang
 
       - name: Install Linux Wayland dependencies
         shell: bash
@@ -583,6 +761,10 @@ jobs:
 
           export WAYLAND_DISPLAY=openq4-wayland
           unset DISPLAY
+          if [ "$(uname -m)" != "${{ matrix.expected_uname }}" ]; then
+            echo "Unexpected runner architecture: $(uname -m); expected ${{ matrix.expected_uname }}."
+            exit 1
+          fi
           export SDL_VIDEO_DRIVER=wayland
           export SDL_VIDEODRIVER=wayland
           export LIBGL_ALWAYS_SOFTWARE=1
@@ -591,6 +773,11 @@ jobs:
           else
             unset OPENQ4_WAYLAND_DISABLE_LIBDECOR
           fi
+          if [ "${{ matrix.prefer_libdecor }}" = "1" ]; then
+            export OPENQ4_WAYLAND_PREFER_LIBDECOR=1
+          else
+            unset OPENQ4_WAYLAND_PREFER_LIBDECOR
+          fi
           if [ "${{ matrix.sync_window_ops }}" = "1" ]; then
             export OPENQ4_WAYLAND_SYNC_WINDOW_OPS=1
           else
@@ -598,12 +785,65 @@ jobs:
           fi
 
           bash tools/validation/validate_pr.sh \
+            --build-dir builddir \
             --fail-on-dirty \
-            --runtime \
-            --runtime-cases renderer-default-safety-selftest,sdl3-wayland-window-lifecycle,sdl3-wayland-window-stress,sdl3-wayland-mouse-capture,sdl3-wayland-mouse-capture-stress,sdl3-wayland-display-diagnostics \
-            --runtime-tiers auto \
-            --runtime-basepath "" \
-            --runtime-skip-official-pak-validation
+            --extra-setup-arg=-Dlinux_x11=${{ matrix.linux_x11 }}
+
+          sdl_config="$(find builddir -name SDL_build_config.h -print -quit)"
+          test -n "${sdl_config}"
+          grep -F '#define HAVE_LIBDECOR_H 1' "${sdl_config}"
+          grep -F '#define SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC "libwayland-client.so.0"' "${sdl_config}"
+          grep -F '#define SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC_LIBDECOR "libdecor-0.so.0"' "${sdl_config}"
+          if [ "${{ matrix.linux_x11 }}" = "disabled" ]; then
+            grep -F '/* #undef SDL_VIDEO_DRIVER_X11 */' "${sdl_config}"
+            for binary in .install/openQ4-client_* .install/openQ4-ded_*; do
+              if readelf -W -d "${binary}" | grep -Eq 'libX11|libXext|libGLX'; then
+                echo "Native Wayland-only binary unexpectedly depends on X11/GLX: ${binary}"
+                exit 1
+              fi
+            done
+          fi
+
+          ld_debug_prefix="${RUNNER_TEMP}/openq4-wayland-loader-${{ matrix.artifact_suffix }}"
+          export LD_DEBUG=libs
+          export LD_DEBUG_OUTPUT="${ld_debug_prefix}"
+          python tools/tests/renderer_validation_matrix.py \
+            --cases renderer-default-safety-selftest,sdl3-wayland-window-lifecycle,sdl3-wayland-window-stress,sdl3-wayland-mouse-capture,sdl3-wayland-mouse-capture-stress,sdl3-wayland-display-diagnostics \
+            --tiers auto \
+            --basepath "" \
+            --skip-official-pak-validation
+          unset LD_DEBUG LD_DEBUG_OUTPUT
+
+          shopt -s nullglob
+          loader_logs=("${ld_debug_prefix}".*)
+          if [ "${#loader_logs[@]}" -eq 0 ]; then
+            echo "Dynamic-loader diagnostics were not produced."
+            exit 1
+          fi
+          if [ "${{ matrix.prefer_libdecor }}" = "1" ]; then
+            grep -hF 'libdecor-0.so.0' "${loader_logs[@]}" >/dev/null
+          elif [ "${{ matrix.disable_libdecor }}" = "1" ] && grep -hF 'libdecor-0.so.0' "${loader_logs[@]}" >/dev/null; then
+            echo "libdecor loaded despite OPENQ4_WAYLAND_DISABLE_LIBDECOR=1."
+            exit 1
+          fi
+
+      - name: Run Linux x64 dedicated server smoke
+        if: matrix.artifact_suffix == 'x64-libdecor'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/tests/linux_dedicated_server_smoke.py \
+            --output-root .tmp/linux-dedicated-smoke/x64
+
+      - name: Publish Linux x64 dedicated server smoke
+        if: always() && matrix.artifact_suffix == 'x64-libdecor'
+        uses: actions/upload-artifact@v6
+        with:
+          name: commit-linux-x64-dedicated-smoke
+          path: .tmp/linux-dedicated-smoke/x64
+          if-no-files-found: warn
+          retention-days: 14
+          include-hidden-files: true
 
       - name: Publish renderer validation reports
         if: always()

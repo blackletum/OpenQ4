@@ -570,9 +570,11 @@ Swap_Init
 */
 void Swap_Init( void ) {
 	byte	swaptest[2] = {1,0};
+	unsigned short swapvalue;
+	memcpy( &swapvalue, swaptest, sizeof( swapvalue ) );
 
 	// set the byte swapping variables in a portable manner	
-	if ( *(short *)swaptest == 1) {
+	if ( swapvalue == 1 ) {
 		// little endian ex: x86
 		_BigShort = ShortSwap;
 		_LittleShort = ShortNoSwap;
@@ -606,7 +608,9 @@ Swap_IsBigEndian
 */
 bool Swap_IsBigEndian( void ) {
 	byte	swaptest[2] = {1,0};
-	return *(short *)swaptest != 1;
+	unsigned short swapvalue;
+	memcpy( &swapvalue, swaptest, sizeof( swapvalue ) );
+	return swapvalue != 1;
 }
 
 /*

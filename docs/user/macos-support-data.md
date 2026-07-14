@@ -9,11 +9,19 @@ This page is especially useful for startup crashes like
 the last visible lines can be in the Apple OpenGL 2.1, ARB2, and interaction
 program startup path.
 
-If your log contains `ARB2 interaction driver bypass`, openQ4 intentionally
-used a degraded Apple OpenGL 2.1 compatibility fallback that skips ARB2 light
-interaction drawing to avoid the known startup crash. Please still attach the
-terminal output and support archive if it crashes after that line. Newer builds
-also print post-bypass breadcrumbs such as `ARB2 interaction bypass state
+Current builds default to `r_appleARB2Interactions 0`: stock surfaces use the
+GLSL 1.10 material-interaction shader with neutral Quake 4 lighting values,
+while unsupported/generated surfaces use a guarded `SimpleInteraction.vfp`
+fallback. This restores interaction lighting instead of accepting the flat,
+ambient-only image produced by the earlier workaround. Modes `1` and `2` force
+the simple/full ARB paths for diagnosis; mode `3` is the emergency no-interaction
+bypass and requires `vid_restart`.
+
+If a current log contains `ARB2 interaction driver bypass`, the emergency mode
+is active; older packages used that degraded bypass by default. It skips light
+interaction drawing to avoid the known startup crash, so attach the terminal
+output and support archive even if the game continues with visibly flat
+lighting. Bypass builds also print breadcrumbs such as `ARB2 interaction bypass state
 restored`, `ARB2 interaction bypass light scale skipped`,
 `ARB2 interaction bypass ambient rescue`, and `ARB2 interaction bypass frame
 tail` to identify the next classic renderer operation reached. Older 0.6.92
@@ -82,6 +90,8 @@ For issue #73 style reports, keep the lines around these markers:
 - `renderer startup phase`
 - `last renderer startup phase`
 - `first ARB2 interaction handoff`
+- `automatic stock GLSL interactions with simple ARB per-surface fallback`
+- `material_interaction`
 - `ARB2 interaction driver bypass`
 - `ARB2 interaction bypass state restored`
 - `ARB2 interaction bypass light scale`
@@ -93,6 +103,11 @@ For issue #73 style reports, keep the lines around these markers:
 - `using ARB2 renderSystem`
 - `Unsupported Apple OpenGL 2.1 compatibility path`
 - `SimpleInteraction.vfp`
+- `Forward render target MSAA: requested`
+- `idRenderTexture::InitRenderTexture`
+- `GL_FRAMEBUFFER_`
+- `Filesystem paths:`
+- `Selected game module:`
 - `fatal signal SIGSEGV`
 
 ## Run The Support Collector
@@ -154,9 +169,12 @@ or active device name, and `OpenAL EFX` warning/status lines without launching
 openQ4.
 
 The archive also includes `logs/renderer-summary.txt` when an existing log is
-available. It copies renderer startup, driver-quirk, ARB2 interaction, and
-fatal-signal breadcrumbs such as `R_InitOpenGL`, `Renderer driver quirks`,
-`ARB2 interaction driver bypass`, and `fatal signal SIGSEGV`.
+available. It copies renderer startup, driver-quirk, interaction fallback,
+render-target/MSAA, selected filesystem/module, and fatal-signal diagnostics.
+That includes lines such as `R_InitOpenGL`, `Renderer driver quirks`,
+`material_interaction`, `GL_FRAMEBUFFER_*`, `Forward render target MSAA`,
+`Filesystem paths:`, `Selected game module:`, `ARB2 interaction driver bypass`,
+and `fatal signal SIGSEGV`.
 
 The archive also includes `system/rosetta.txt`. That file records `arch`,
 `uname -m`, and `sysctl.proc_translated` output from the collector process so
@@ -236,5 +254,9 @@ baseoq4/
 collect_macos_support_info.sh
 ```
 
-Moving only `openQ4.app` to `/Applications` is not supported yet. If you tried
-that, mention it in the issue because it changes the failure mode.
+Finder may start the app with an unrelated process working directory; current
+builds derive the adjacent package root and use it as `fs_cdpath`, while a
+separately discovered Steam/GOG install remains `fs_basepath` for retail
+`q4base`. Moving only `openQ4.app` to `/Applications` is not supported yet.
+`baseoq4/` and the game dylibs are not embedded in the bundle. If you
+tried that, mention it in the issue because it changes the failure mode.

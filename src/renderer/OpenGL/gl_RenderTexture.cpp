@@ -47,6 +47,89 @@ static uint64_t R_GetAttachmentGeneration( idImage *image ) {
 	return ( image != nullptr ) ? image->GetStorageGeneration() : 0;
 }
 
+static const char* R_FramebufferStatusName( GLenum status ) {
+	switch ( status ) {
+		case GL_FRAMEBUFFER_COMPLETE:
+			return "GL_FRAMEBUFFER_COMPLETE";
+		case GL_FRAMEBUFFER_UNDEFINED:
+			return "GL_FRAMEBUFFER_UNDEFINED";
+		case GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT:
+			return "GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT";
+		case GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT:
+			return "GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT";
+		case GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER:
+			return "GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER";
+		case GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER:
+			return "GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER";
+		case GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS_EXT:
+			return "GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS_EXT";
+		case GL_FRAMEBUFFER_INCOMPLETE_FORMATS_EXT:
+			return "GL_FRAMEBUFFER_INCOMPLETE_FORMATS_EXT";
+		case GL_FRAMEBUFFER_UNSUPPORTED:
+			return "GL_FRAMEBUFFER_UNSUPPORTED";
+		case GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE:
+			return "GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE";
+		case GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS:
+			return "GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS";
+		case GL_FRAMEBUFFER_INCOMPLETE_LAYER_COUNT_ARB:
+			return "GL_FRAMEBUFFER_INCOMPLETE_LAYER_COUNT_ARB";
+		default:
+			return "GL_FRAMEBUFFER_STATUS_UNKNOWN";
+	}
+}
+
+static const char* R_TextureFormatName( textureFormat_t format ) {
+	switch ( format ) {
+		case FMT_RGBA8: return "RGBA8";
+		case FMT_XRGB8: return "XRGB8";
+		case FMT_ALPHA: return "ALPHA";
+		case FMT_L8A8: return "L8A8";
+		case FMT_LUM8: return "LUM8";
+		case FMT_INT8: return "INT8";
+		case FMT_DXT1: return "DXT1";
+		case FMT_DXT5: return "DXT5";
+		case FMT_DEPTH: return "DEPTH";
+		case FMT_X16: return "X16";
+		case FMT_Y16_X16: return "Y16_X16";
+		case FMT_RGB565: return "RGB565";
+		case FMT_DEPTH_STENCIL: return "DEPTH_STENCIL";
+		case FMT_RGBA16F: return "RGBA16F";
+		case FMT_BC7: return "BC7";
+		default: return "UNKNOWN";
+	}
+}
+
+static const char* R_TextureTypeName( textureType_t textureType ) {
+	switch ( textureType ) {
+		case TT_2D: return "2D";
+		case TT_CUBIC: return "CUBIC";
+		default: return "DISABLED";
+	}
+}
+
+static void R_ReportFramebufferAttachment( const char* role, int index, idImage* image ) {
+	if ( image == NULL ) {
+		common->Warning( "  %s[%d]: <none>", role, index );
+		return;
+	}
+
+	const idImageOpts& opts = image->GetOpts();
+	common->Warning(
+		"  %s[%d]: name='%s' handle=%u loaded=%d type=%s format=%s(%d) size=%dx%d samples=%d generation=%llu",
+		role,
+		index,
+		image->GetName(),
+		static_cast<unsigned int>( image->GetDeviceHandle() ),
+		image->IsLoaded() ? 1 : 0,
+		R_TextureTypeName( opts.textureType ),
+		R_TextureFormatName( opts.format ),
+		static_cast<int>( opts.format ),
+		opts.width,
+		opts.height,
+		opts.numMSAASamples,
+		static_cast<unsigned long long>( image->GetStorageGeneration() ) );
+}
+
 /*
 ========================
 idRenderTexture::idRenderTexture
@@ -135,7 +218,7 @@ bool idRenderTexture::HasCurrentDeviceHandle( void ) const {
 	// The render texture owns this name.  Generation validation prevents stale
 	// context aliases without putting a synchronous glIsFramebuffer query on
 	// every bind and handle lookup.
-	return R_IsRenderTextureHandleCurrent( deviceHandle, deviceHandleGeneration );
+	return !knownIncomplete && R_IsRenderTextureHandleCurrent( deviceHandle, deviceHandleGeneration );
 }
 
 /*
@@ -157,6 +240,55 @@ void idRenderTexture::ReleaseDeviceHandle( void ) {
 	deviceHandle = INVALID_RENDER_TEXTURE_HANDLE;
 	deviceHandleGeneration = -1;
 	validatedCubeFaces = 0;
+}
+
+/*
+================
+idRenderTexture::ReportFramebufferFailure
+================
+*/
+void idRenderTexture::ReportFramebufferFailure( GLenum status, const char* operation ) const {
+	const GLenum glError = glGetError();
+	common->Warning(
+		"idRenderTexture::%s: framebuffer '%s' failed with %s (0x%04x), GL error 0x%04x; target disabled so the caller can fall back",
+		operation,
+		debugLabel.Length() > 0 ? debugLabel.c_str() : "<unlabeled>",
+		R_FramebufferStatusName( status ),
+		static_cast<unsigned int>( status ),
+		static_cast<unsigned int>( glError ) );
+	common->Warning(
+		"  GL context: vendor='%s' renderer='%s' version='%s' actual=%d.%d %s request='%s' generation=%d",
+		glConfig.vendor_string != NULL ? glConfig.vendor_string : "unknown",
+		glConfig.renderer_string != NULL ? glConfig.renderer_string : "unknown",
+		glConfig.version_string != NULL ? glConfig.version_string : "unknown",
+		glConfig.backendCaps.glMajor,
+		glConfig.backendCaps.glMinor,
+		RendererContextProfile_Name( glConfig.backendCaps.profile ),
+		glConfig.contextRequest.label,
+		tr.glContextGeneration );
+	for ( int i = 0; i < colorImages.Num(); i++ ) {
+		R_ReportFramebufferAttachment( "color", i, colorImages[i] );
+	}
+	if ( depthImage != NULL ) {
+		R_ReportFramebufferAttachment( "depth", 0, depthImage );
+	}
+}
+
+/*
+================
+idRenderTexture::FailFramebuffer
+================
+*/
+bool idRenderTexture::FailFramebuffer( GLenum status, const char* operation ) {
+	ReportFramebufferFailure( status, operation );
+	CaptureAttachmentHandles();
+	if ( glConfig.isInitialized && glBindFramebuffer != NULL ) {
+		glBindFramebuffer( GL_FRAMEBUFFER, 0 );
+	}
+	ReleaseDeviceHandle();
+	knownIncomplete = true;
+	incompleteGeneration = tr.glContextGeneration;
+	return false;
 }
 /*
 ================
@@ -215,7 +347,12 @@ void idRenderTexture::CaptureAttachmentHandles( void ) {
 idRenderTexture::EnsureDeviceHandle
 ================
 */
-void idRenderTexture::EnsureDeviceHandle( void ) {
+bool idRenderTexture::EnsureDeviceHandle( void ) {
+	if ( knownIncomplete && incompleteGeneration != tr.glContextGeneration ) {
+		knownIncomplete = false;
+		incompleteGeneration = -1;
+	}
+
 	if ( deviceHandle != INVALID_RENDER_TEXTURE_HANDLE && deviceHandleGeneration != tr.glContextGeneration ) {
 		// Context loss invalidated the object. Do not call glIsFramebuffer or
 		// glDeleteFramebuffers on the old numeric name in the new namespace.
@@ -226,11 +363,19 @@ void idRenderTexture::EnsureDeviceHandle( void ) {
 	// Scratch images can be purged/reallocated in place when runtime renderer settings
 	// change. Rebuild the FBO attachments when that happens, even if the dimensions match.
 	if ( HasCurrentDeviceHandle() && !NeedsAttachmentRefresh() ) {
-		return;
+		return true;
 	}
 
+	// Do not recreate and re-report the same rejected attachment set every bind.
+	// A context change or image reallocation clears this latch and permits a retry.
+	if ( knownIncomplete && incompleteGeneration == tr.glContextGeneration && !NeedsAttachmentRefresh() ) {
+		return false;
+	}
+
+	knownIncomplete = false;
+	incompleteGeneration = -1;
 	ReleaseDeviceHandle();
-	InitRenderTexture();
+	return InitRenderTexture();
 }
 
 /*
@@ -238,17 +383,19 @@ void idRenderTexture::EnsureDeviceHandle( void ) {
 idRenderTexture::InitRenderTexture
 ================
 */
-void idRenderTexture::InitRenderTexture(void) {
+bool idRenderTexture::InitRenderTexture(void) {
 	if ( !glConfig.isInitialized ) {
-		return;
+		return false;
 	}
 	if ( glGenFramebuffers == NULL || glBindFramebuffer == NULL || glCheckFramebufferStatus == NULL ) {
 		if ( !knownIncomplete ) {
 			common->Warning( "idRenderTexture::InitRenderTexture: framebuffer entry points are unavailable for '%s'", debugLabel.c_str() );
 		}
 		knownIncomplete = true;
+		incompleteGeneration = tr.glContextGeneration;
+		CaptureAttachmentHandles();
 		ReleaseDeviceHandle();
-		return;
+		return false;
 	}
 
 	ReleaseDeviceHandle();
@@ -263,7 +410,9 @@ void idRenderTexture::InitRenderTexture(void) {
 			common->Warning( "idRenderTexture::InitRenderTexture: failed to allocate framebuffer '%s'", debugLabel.c_str() );
 		}
 		knownIncomplete = true;
-		return;
+		incompleteGeneration = tr.glContextGeneration;
+		CaptureAttachmentHandles();
+		return false;
 	}
 	deviceHandle = generatedHandle;
 	deviceHandleGeneration = tr.glContextGeneration;
@@ -339,24 +488,19 @@ void idRenderTexture::InitRenderTexture(void) {
 
 	const GLenum framebufferStatus = glCheckFramebufferStatus( GL_FRAMEBUFFER );
 	if ( framebufferStatus != GL_FRAMEBUFFER_COMPLETE ) {
-		if ( allowIncomplete ) {
-			if ( !knownIncomplete ) {
-				common->Warning( "idRenderTexture::InitRenderTexture: framebuffer '%s' is incomplete; callers will fall back", debugLabel.c_str() );
-			}
-			knownIncomplete = true;
-		} else {
-			common->FatalError("idRenderTexture::InitRenderTexture: Failed to create rendertexture!");
-		}
-	} else {
-		knownIncomplete = false;
-		if ( isTexture3D ) {
-			validatedCubeFaces |= 1u;
-		}
+		return FailFramebuffer( framebufferStatus, "InitRenderTexture" );
+	}
+
+	knownIncomplete = false;
+	incompleteGeneration = -1;
+	if ( isTexture3D ) {
+		validatedCubeFaces |= 1u;
 	}
 
 	CaptureAttachmentHandles();
 	ApplyDebugLabel();
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	return true;
 }
 
 /*
@@ -374,16 +518,17 @@ GLuint idRenderTexture::GetDeviceHandle(void) {
 idRenderTexture::MakeCurrent
 ================
 */
-void idRenderTexture::MakeCurrent(void) {
+bool idRenderTexture::MakeCurrent(void) {
 	if ( !glConfig.isInitialized || glBindFramebuffer == NULL ) {
-		return;
+		return false;
 	}
-	EnsureDeviceHandle();
-	if ( !HasCurrentDeviceHandle() ) {
-		return;
+	if ( !EnsureDeviceHandle() || !HasCurrentDeviceHandle() ) {
+		BindNull();
+		return false;
 	}
 	glBindFramebuffer(GL_FRAMEBUFFER, deviceHandle);
 	R_SetRenderTextureDrawBuffers( colorImages.Num() );
+	return true;
 }
 
 /*
@@ -391,13 +536,13 @@ void idRenderTexture::MakeCurrent(void) {
 idRenderTexture::MakeCurrent
 ================
 */
-void idRenderTexture::MakeCurrent( int cubeFace ) {
+bool idRenderTexture::MakeCurrent( int cubeFace ) {
 	if ( !glConfig.isInitialized || glBindFramebuffer == NULL ) {
-		return;
+		return false;
 	}
-	EnsureDeviceHandle();
-	if ( !HasCurrentDeviceHandle() ) {
-		return;
+	if ( !EnsureDeviceHandle() || !HasCurrentDeviceHandle() ) {
+		BindNull();
+		return false;
 	}
 	glBindFramebuffer( GL_FRAMEBUFFER, deviceHandle );
 
@@ -428,22 +573,18 @@ void idRenderTexture::MakeCurrent( int cubeFace ) {
 	const unsigned int faceBit = 1u << clampedCubeFace;
 	if ( ( validatedCubeFaces & faceBit ) != 0 ) {
 		knownIncomplete = false;
-		return;
+		return true;
 	}
 
-	if ( glCheckFramebufferStatus( GL_FRAMEBUFFER ) != GL_FRAMEBUFFER_COMPLETE ) {
-		if ( allowIncomplete ) {
-			if ( !knownIncomplete ) {
-				common->Warning( "idRenderTexture::MakeCurrent: cubemap framebuffer face '%s' is incomplete; callers will fall back", debugLabel.c_str() );
-			}
-			knownIncomplete = true;
-		} else {
-			common->FatalError( "idRenderTexture::MakeCurrent: Cubemap framebuffer face is incomplete!" );
-		}
-	} else {
-		knownIncomplete = false;
-		validatedCubeFaces |= faceBit;
+	const GLenum framebufferStatus = glCheckFramebufferStatus( GL_FRAMEBUFFER );
+	if ( framebufferStatus != GL_FRAMEBUFFER_COMPLETE ) {
+		return FailFramebuffer( framebufferStatus, "MakeCurrent(cubemap)" );
 	}
+
+	knownIncomplete = false;
+	incompleteGeneration = -1;
+	validatedCubeFaces |= faceBit;
+	return true;
 }
 
 /*
@@ -462,7 +603,7 @@ void idRenderTexture::BindNull(void) {
 idRenderTexture::Resize
 ================
 */
-void idRenderTexture::Resize(int width, int height) {
+bool idRenderTexture::Resize(int width, int height) {
 	idImage *target = nullptr;
 
 	if (colorImages.Num() > 0) {
@@ -473,12 +614,11 @@ void idRenderTexture::Resize(int width, int height) {
 	}
 	if ( target == nullptr ) {
 		common->Warning( "idRenderTexture::Resize: render texture has no attachments" );
-		return;
+		return false;
 	}
 
 	if (target->GetOpts().width == width && target->GetOpts().height == height) {
-		EnsureDeviceHandle();
-		return;
+		return EnsureDeviceHandle();
 	}
 
 	for(int i = 0; i < colorImages.Num(); i++) {
@@ -489,5 +629,5 @@ void idRenderTexture::Resize(int width, int height) {
 		depthImage->Resize(width, height);
 	}
 
-	InitRenderTexture();
+	return InitRenderTexture();
 }

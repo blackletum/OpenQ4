@@ -111,6 +111,19 @@ SDL3_LINUX_SOURCES = (
     "sys/linux/stack.cpp",
 )
 
+LINUX_DEDICATED_SOURCES = (
+    "sys/posix/posix_main.cpp",
+    "sys/posix/posix_net.cpp",
+    "sys/posix/posix_signal.cpp",
+    "sys/posix/posix_syscon.cpp",
+    "sys/posix/posix_threads.cpp",
+    "sys/linux/dedicated.cpp",
+    "sys/linux/main.cpp",
+    "sys/linux/stack.cpp",
+    "sys/stub/stub_gl.cpp",
+    "sys/stub/stub_openal.cpp",
+)
+
 LINUX_X11_HELPER_SOURCES = (
     "sys/linux/libXNVCtrl/NVCtrl.c",
 )
@@ -239,6 +252,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default="false",
         help="Include optional X11 helper sources for Linux SDL3 builds.",
     )
+    parser.add_argument(
+        "--target-kind",
+        choices=("client", "dedicated"),
+        default="client",
+        help="Select client or dedicated-server platform sources.",
+    )
     return parser.parse_args(argv)
 
 
@@ -294,12 +313,19 @@ def main(argv: list[str]) -> int:
                 for path in SDL3_WIN32_SOURCES:
                     remove_source(source_set, ordered_sources, path)
         elif args.host_system == "linux":
-            platform_sources = (
-                SDL3_LINUX_SOURCES if args.platform_backend == "sdl3" else LINUX_PLATFORM_SOURCES
-            )
+            if args.target_kind == "dedicated":
+                platform_sources = LINUX_DEDICATED_SOURCES
+            else:
+                platform_sources = (
+                    SDL3_LINUX_SOURCES if args.platform_backend == "sdl3" else LINUX_PLATFORM_SOURCES
+                )
             for rel_path in platform_sources:
                 add_required_source(source_set, ordered_sources, source_root, rel_path)
-            if args.platform_backend == "sdl3" and args.linux_x11_helpers == "true":
+            if (
+                args.target_kind == "client"
+                and args.platform_backend == "sdl3"
+                and args.linux_x11_helpers == "true"
+            ):
                 for rel_path in LINUX_X11_HELPER_SOURCES:
                     add_required_source(source_set, ordered_sources, source_root, rel_path)
         elif args.host_system == "darwin":

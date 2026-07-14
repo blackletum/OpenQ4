@@ -43,6 +43,8 @@ def validate_sdl3_highdpi_contract() -> None:
     source = read("src/sys/sdl3/sdl3_backend.cpp")
     hints = function_body(source, "static void SDL3_SetMouseHintDefaults(void) {")
     video_hints = function_body(source, "static void SDL3_SetVideoHintDefaults(void) {")
+    metadata = function_body(source, "static void SDL3_SetAppMetadataDefaults(void) {")
+    apply_video_defaults = function_body(source, "void Sys_SDL_ApplyVideoHintDefaults(void) {")
     display_list = function_body(source, "static void SDL3_PrintDisplayList(void) {")
     display_orientation = function_body(source, "static const char *SDL3_DisplayOrientationName(SDL_DisplayOrientation orientation) {")
     display_mode = function_body(source, "static void SDL3_FormatDisplayMode(const SDL_DisplayMode *mode, char *buffer, int bufferSize) {")
@@ -53,6 +55,8 @@ def validate_sdl3_highdpi_contract() -> None:
     consume = function_body(source, "static int SDL3_ConsumeMouseDelta(float delta, float &remainder) {")
     routed_delta = function_body(source, "static bool SDL3_UpdateRoutedMouseDelta(float menuMouseX, float menuMouseY, int &dx, int &dy) {")
     window_event = function_body(source, "static void SDL3_HandleWindowEvent(const SDL_WindowEvent &event, int eventTime) {")
+    event_window_id = function_body(source, "static bool SDL3_EventWindowID(const SDL_Event &event, SDL_WindowID &windowID) {")
+    event_targets_game = function_body(source, "static bool SDL3_EventTargetsGameWindow(const SDL_Event &event) {")
     sync_window = function_body(source, "static void SDL3_SyncWindowAfterScreenChange(const char *description) {")
     window_state = function_body(source, "static void SDL3_PrintWaylandWindowState(const char *description) {")
     screen_parms = function_body(source, "static bool SDL3_ApplyScreenParms(glimpParms_t parms) {")
@@ -79,6 +83,16 @@ def validate_sdl3_highdpi_contract() -> None:
     require(video_hints, '!SDL3_EnvHasValue("SDL_VIDEODRIVER")', "SDL3 legacy video driver override preservation")
     require(video_hints, 'disableWaylandLibdecor ? "0" : "1"', "SDL3 Wayland libdecor allow opt-out")
     require(video_hints, 'SDL_HINT_VIDEO_WAYLAND_SCALE_TO_DISPLAY, "0"', "SDL3 Wayland logical-size high-DPI hint")
+    require(metadata, 'SDL_SetAppMetadata(GAME_NAME, PROJECT_VERSION, "openq4")', "SDL3 stable application metadata")
+    require(metadata, "s_sdlAppMetadataAttempted", "SDL3 application metadata one-time guard")
+    require(apply_video_defaults, "SDL3_SetAppMetadataDefaults();", "SDL3 metadata before first video initialization")
+    require(apply_video_defaults, "SDL3_SetVideoHintDefaults();", "SDL3 platform video defaults")
+    if apply_video_defaults.index("SDL3_SetAppMetadataDefaults();") >= apply_video_defaults.index("SDL3_SetVideoHintDefaults();"):
+        raise AssertionError("SDL3 application metadata must be set before video hints/initialization")
+    require(read("assets/linux/openq4.desktop.in"), "Name=openQ4", "Linux desktop identity paired with SDL metadata")
+    require(init, "Sys_SDL_ApplyVideoHintDefaults();", "SDL3 game metadata and hints before video initialization")
+    if init.index("Sys_SDL_ApplyVideoHintDefaults();") >= init.index("SDL_InitSubSystem(SDL_INIT_VIDEO)"):
+        raise AssertionError("SDL3 game metadata and hints must be applied before video initialization")
     require(summary, "OPENQ4_FORCE_X11=%s OPENQ4_WAYLAND_DISABLE_LIBDECOR=%s OPENQ4_WAYLAND_PREFER_LIBDECOR=%s OPENQ4_WAYLAND_SYNC_WINDOW_OPS=%s", "SDL3 Linux video environment summary")
     require(summary, "SDL3: Wayland hints:", "SDL3 Wayland hint diagnostics")
     require(summary, "SDL_HINT_VIDEO_WAYLAND_ALLOW_LIBDECOR", "SDL3 Wayland libdecor hint diagnostics")
@@ -139,6 +153,22 @@ def validate_sdl3_highdpi_contract() -> None:
     require(routed_delta, "SDL3_ConsumeMouseDelta(menuMouseY - previousY, s_menuMouseRemainderY)", "SDL3 routed mouse delta")
     require(pump, "SDL3_ConsumeMouseDelta(event.motion.xrel, s_sdlRelativeMouseRemainderX)", "SDL3 captured relative mouse delta")
     require(pump, "SDL3_ConsumeMouseDelta(event.motion.yrel, s_sdlRelativeMouseRemainderY)", "SDL3 captured relative mouse delta")
+
+    for token in (
+        "event.window.windowID",
+        "event.key.windowID",
+        "event.text.windowID",
+        "event.motion.windowID",
+        "event.button.windowID",
+        "event.wheel.windowID",
+        "event.tfinger.windowID",
+    ):
+        require(event_window_id, token, "SDL3 window-scoped event identification")
+    require(event_targets_game, "SDL_GetWindowID(s_sdlWindow)", "SDL3 game window identity filter")
+    require(event_targets_game, "eventWindowID == gameWindowID", "SDL3 game window identity filter")
+    require(pump, "if (!SDL3_EventTargetsGameWindow(event))", "SDL3 support-window event isolation")
+    if pump.index("if (!SDL3_EventTargetsGameWindow(event))") >= pump.index("SDL3_HandleWindowEvent(event.window, eventTime)"):
+        raise AssertionError("SDL3 support-window events must be rejected before game window handling")
 
     require(window_event, "case SDL_EVENT_WINDOW_DISPLAY_CHANGED:", "SDL3 display migration handling")
     require(window_event, "case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:", "SDL3 display scale handling")

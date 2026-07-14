@@ -25,6 +25,7 @@ PROJECT_ALWAYS_FILES = (
 
 GAME_SCAN_DIRS = (
     "src/game",
+    "src/mpgame",
 )
 
 RELEVANCE_TOKENS = (

@@ -51,6 +51,13 @@ typedef struct vertCache_s {
 	int				frameUsed;			// it can't be purged if near the current frame
 } vertCache_t;
 
+// Position() may return a zero-valued byte offset when a VBO is bound.  Form
+// attribute addresses in integer space so offset zero never becomes null
+// pointer arithmetic or a null-base member access in the renderer back end.
+ID_INLINE void *RB_DrawVertAttributePointer( const void *base, const size_t byteOffset ) {
+	return reinterpret_cast<void *>( reinterpret_cast<uintptr_t>( base ) + byteOffset );
+}
+
 
 class idVertexCache {
 public:

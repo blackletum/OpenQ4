@@ -1068,15 +1068,19 @@ int main(int argc, const char **argv) {
 #endif
 	
 	Posix_EarlyInit( );
+#ifndef ID_DEDICATED
 	Sys_ReportWaylandRuntime();
 	Sys_ShowSplash();
+#endif
 
 	if ( argc > 1 ) {
 		common->Init( argc-1, &argv[1], NULL );
 	} else {
 		common->Init( 0, NULL, NULL );
 	}
+#ifndef ID_DEDICATED
 	Sys_DestroySplash();
+#endif
 
 	Sys_HandlePendingQuitSignal();
 	Posix_LateInit( );

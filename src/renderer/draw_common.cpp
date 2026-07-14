@@ -612,12 +612,12 @@ idImage *RB_ResolveGLSLShaderTextureImage( const newShaderStage_t *stage, int sl
 
 static inline void RB_SetStageVertexColorPointer( const drawSurf_t *surf, int stage, idDrawVert *ac ) {
 	if ( surf->decalColorCache != NULL && stage >= 0 && stage < surf->decalColorStageCount && surf->decalColorStride > 0 ) {
-		byte *colorData = (byte *)vertexCache.Position( surf->decalColorCache );
-		glColorPointer( 4, GL_UNSIGNED_BYTE, 0, colorData + surf->decalColorOffset + stage * surf->decalColorStride );
+		void *colorData = vertexCache.Position( surf->decalColorCache );
+		glColorPointer( 4, GL_UNSIGNED_BYTE, 0, RB_DrawVertAttributePointer( colorData, surf->decalColorOffset + stage * surf->decalColorStride ) );
 		return;
 	}
 
-	glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), (void *)&ac->color );
+	glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, color ) ) );
 }
 
 static bool RB_UseAlphaToCoverage( const idMaterial *shader ) {
@@ -2623,7 +2623,7 @@ static void RB_T_RenderMotionVectorSurface( const drawSurf_t *surf ) {
 	GL_Cull( surf->material->GetCullType() );
 
 	idDrawVert *ac = (idDrawVert *)vertexCache.Position( tri->ambientCache );
-	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
+	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, xyz ) ) );
 	RB_DrawElementsWithCounters( tri );
 	rbMotionVectorDrewSurface = true;
 }
@@ -4428,7 +4428,7 @@ static bool RB_PrepareStageTexturing( const shaderStage_t *pStage, const drawSur
 
 	// texgens
 	if ( pStage->texture.texgen == TG_DIFFUSE_CUBE ) {
-		glTexCoordPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->normal.ToFloatPtr() );
+		glTexCoordPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, normal ) ) );
 	}
 	if ( pStage->texture.texgen == TG_SKYBOX_CUBE || pStage->texture.texgen == TG_WOBBLESKY_CUBE ) {
 		glTexCoordPointer( 3, GL_FLOAT, 0, vertexCache.Position( surf->dynamicTexCoords ) );
@@ -4544,9 +4544,9 @@ static bool RB_PrepareStageTexturing( const shaderStage_t *pStage, const drawSur
 				bumpStage->texture.image->Bind();
 				GL_SelectTexture( 0 );
 
-				glNormalPointer( GL_FLOAT, sizeof( idDrawVert ), ac->normal.ToFloatPtr() );
-				glVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[1].ToFloatPtr() );
-				glVertexAttribPointerARB( 9, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[0].ToFloatPtr() );
+				glNormalPointer( GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, normal ) ) );
+				glVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_TANGENT1_OFFSET ) );
+				glVertexAttribPointerARB( 9, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_TANGENT0_OFFSET ) );
 
 				glEnableVertexAttribArrayARB( 9 );
 				glEnableVertexAttribArrayARB( 10 );
@@ -4563,7 +4563,7 @@ static bool RB_PrepareStageTexturing( const shaderStage_t *pStage, const drawSur
 				}
 
 				// per-pixel reflection mapping without a normal map
-				glNormalPointer( GL_FLOAT, sizeof( idDrawVert ), ac->normal.ToFloatPtr() );
+				glNormalPointer( GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, normal ) ) );
 				glEnableClientState( GL_NORMAL_ARRAY );
 
 				glEnable( GL_FRAGMENT_PROGRAM_ARB );
@@ -4577,7 +4577,7 @@ static bool RB_PrepareStageTexturing( const shaderStage_t *pStage, const drawSur
 			glTexGenf( GL_T, GL_TEXTURE_GEN_MODE, GL_REFLECTION_MAP_EXT );
 			glTexGenf( GL_R, GL_TEXTURE_GEN_MODE, GL_REFLECTION_MAP_EXT );
 			glEnableClientState( GL_NORMAL_ARRAY );
-			glNormalPointer( GL_FLOAT, sizeof( idDrawVert ), ac->normal.ToFloatPtr() );
+			glNormalPointer( GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, normal ) ) );
 
 			glMatrixMode( GL_TEXTURE );
 			float	mat[16];
@@ -4614,7 +4614,7 @@ void RB_FinishStageTexturing( const shaderStage_t *pStage, const drawSurf_t *sur
 
 	if ( pStage->texture.texgen == TG_DIFFUSE_CUBE || pStage->texture.texgen == TG_SKYBOX_CUBE
 		|| pStage->texture.texgen == TG_WOBBLESKY_CUBE ) {
-		glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), (void *)&ac->st );
+		glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, st ) ) );
 	}
 
 	if ( pStage->texture.texgen == TG_SCREEN ) {
@@ -5440,8 +5440,8 @@ static void RB_T_CaptureRVSpecialDepth( const drawSurf_t *surf ) {
 	color[3] = 1.0f;
 
 	idDrawVert *ac = (idDrawVert *)vertexCache.Position( tri->ambientCache );
-	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
-	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>( &ac->st ) );
+	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, xyz ) ) );
+	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, st ) ) );
 
 	bool drawSolid = ( shader->Coverage() == MC_OPAQUE );
 
@@ -5992,8 +5992,8 @@ void RB_T_FillDepthBuffer( const drawSurf_t *surf ) {
 	}
 
 	idDrawVert *ac = (idDrawVert *)vertexCache.Position( tri->ambientCache );
-	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
-	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>(&ac->st) );
+	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, xyz ) ) );
+	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, st ) ) );
 
 	bool drawSolid = false;
 
@@ -6554,8 +6554,8 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 	}
 
 	idDrawVert *ac = (idDrawVert *)vertexCache.Position( tri->ambientCache );
-	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
-	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>(&ac->st) );
+	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, xyz ) ) );
+	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, st ) ) );
 	bool resetTexCoords = false;
 
 	const int stageCount = shader->GetNumStages();
@@ -6578,7 +6578,7 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 		}
 
 		if ( resetTexCoords ) {
-			glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>( &ac->st ) );
+			glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, st ) ) );
 			resetTexCoords = false;
 		}
 
@@ -6746,9 +6746,9 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 
 			if ( !usingPackedMaterialStage ) {
 				RB_SetStageVertexColorPointer( surf, stage, ac );
-				glVertexAttribPointerARB( 9, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[0].ToFloatPtr() );
-				glVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[1].ToFloatPtr() );
-				glNormalPointer( GL_FLOAT, sizeof( idDrawVert ), ac->normal.ToFloatPtr() );
+				glVertexAttribPointerARB( 9, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_TANGENT0_OFFSET ) );
+				glVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_TANGENT1_OFFSET ) );
+				glNormalPointer( GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, normal ) ) );
 
 				glEnableClientState( GL_COLOR_ARRAY );
 				glEnableVertexAttribArrayARB( 9 );
@@ -7487,10 +7487,10 @@ static void RB_T_BlendLight( const drawSurf_t *surf ) {
 	// this gets used for both blend lights and shadow draws
 	if ( tri->ambientCache ) {
 		idDrawVert	*ac = (idDrawVert *)vertexCache.Position( tri->ambientCache );
-		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
+		glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, xyz ) ) );
 	} else if ( tri->shadowCache ) {
 		shadowCache_t	*sc = (shadowCache_t *)vertexCache.Position( tri->shadowCache );
-		glVertexPointer( 3, GL_FLOAT, sizeof( shadowCache_t ), sc->xyz.ToFloatPtr() );
+		glVertexPointer( 3, GL_FLOAT, sizeof( shadowCache_t ), RB_DrawVertAttributePointer( sc, offsetof( shadowCache_t, xyz ) ) );
 	}
 
 	RB_DrawElementsWithCounters( tri );
@@ -8517,7 +8517,7 @@ static bool RB_LightGridFindRepresentativeAlbedo( const drawSurf_t *surf, rbLigh
 }
 
 static bool RB_STD_DrawLightGridAlbedoStage( const drawSurf_t *surf, const shaderStage_t *albedoStage, int albedoStageIndex, idImage *bumpImage, const idVec4 bumpMatrix[2], const float *regs, const srfTriangles_t *tri, idDrawVert *ac ) {
-	if ( albedoStage == NULL || tri == NULL || ac == NULL ) {
+	if ( albedoStage == NULL || tri == NULL ) {
 		return false;
 	}
 
@@ -8553,7 +8553,7 @@ static bool RB_STD_DrawLightGridAlbedoStage( const drawSurf_t *surf, const shade
 	if ( albedoStage->texture.texgen == TG_POT_CORRECTION && surf->dynamicTexCoords != NULL ) {
 		glTexCoordPointer( 2, GL_FLOAT, 0, vertexCache.Position( surf->dynamicTexCoords ) );
 	} else {
-		glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>( &ac->st ) );
+		glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, st ) ) );
 	}
 	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_BUMP_MATRIX_S], 1, bumpMatrix[0].ToFloatPtr() );
 	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_BUMP_MATRIX_T], 1, bumpMatrix[1].ToFloatPtr() );
@@ -8776,21 +8776,21 @@ static bool RB_STD_DrawLightGridSurface( const drawSurf_t *surf, const LightGrid
 	}
 
 	idDrawVert *ac = (idDrawVert *)vertexCache.Position( tri->ambientCache );
-	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
-	glNormalPointer( GL_FLOAT, sizeof( idDrawVert ), ac->normal.ToFloatPtr() );
+	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, xyz ) ) );
+	glNormalPointer( GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, normal ) ) );
 	glEnableClientState( GL_NORMAL_ARRAY );
 	glDisableClientState( GL_COLOR_ARRAY );
 	glColor4f( 1.0f, 1.0f, 1.0f, 1.0f );
 
 	GL_SelectTexture( 0 );
 	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
-	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>( &ac->st ) );
+	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, st ) ) );
 	GL_SelectTexture( 1 );
 	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
-	glTexCoordPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->tangents[0].ToFloatPtr() );
+	glTexCoordPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_TANGENT0_OFFSET ) );
 	GL_SelectTexture( 2 );
 	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
-	glTexCoordPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->tangents[1].ToFloatPtr() );
+	glTexCoordPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_TANGENT1_OFFSET ) );
 	GL_SelectTexture( 0 );
 
 	glUniform4fvARB( rbLightGridIndirectStage.shaderParmLocations[RB_LIGHTGRID_UNIFORM_MODEL_MATRIX_ROW0], 1, row0 );
@@ -8856,7 +8856,7 @@ static bool RB_STD_DrawLightGridSurface( const drawSurf_t *surf, const LightGrid
 		if ( albedoBinding.stage != NULL && albedoBinding.stage->texture.texgen == TG_POT_CORRECTION && surf->dynamicTexCoords != NULL ) {
 			glTexCoordPointer( 2, GL_FLOAT, 0, vertexCache.Position( surf->dynamicTexCoords ) );
 		} else {
-			glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>( &ac->st ) );
+			glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, st ) ) );
 		}
 
 		if ( useVertexColorArray ) {
@@ -9366,13 +9366,10 @@ static bool RB_PlayerVisibilityPrepareSurface( const drawSurf_t *surf, idDrawVer
 	}
 
 	ac = static_cast<idDrawVert *>( vertexCache.Position( tri->ambientCache ) );
-	if ( ac == NULL ) {
-		return false;
-	}
 
 	GL_SelectTexture( 0 );
-	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
-	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), reinterpret_cast<void *>( &ac->st ) );
+	glVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, xyz ) ) );
+	glTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, st ) ) );
 	glDisableClientState( GL_COLOR_ARRAY );
 	return true;
 }
@@ -9496,7 +9493,7 @@ static bool RB_PlayerVisibilityDrawRimlightSurface( const drawSurf_t *surf ) {
 	glDisable( GL_STENCIL_TEST );
 	GL_Cull( surf->material->GetCullType() );
 
-	glNormalPointer( GL_FLOAT, sizeof( idDrawVert ), ac->normal.ToFloatPtr() );
+	glNormalPointer( GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, offsetof( idDrawVert, normal ) ) );
 	glEnableClientState( GL_NORMAL_ARRAY );
 	RB_PlayerVisibilitySetRimlightUniforms( surf, renderEntity );
 

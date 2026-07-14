@@ -1693,6 +1693,9 @@ idRenderSystemLocal::ResolveMSAA
 */
 void idRenderSystemLocal::ResolveMSAA(idRenderTexture* msaaRenderTexture, idRenderTexture* destRenderTexture, bool resolveDepth) {
 	resolveRenderTargetCommand_t* cmd;
+	if ( msaaRenderTexture == NULL || destRenderTexture == NULL ) {
+		return;
+	}
 
 	cmd = (resolveRenderTargetCommand_t*)R_GetCommandBuffer(sizeof(*cmd));
 	cmd->commandId = RC_RESOLVE_MSAA;
@@ -1911,6 +1914,15 @@ void idRenderSystemLocal::GetImageSize(idImage* image, int& imageWidth, int& ima
 
 /*
 ===============
+idRenderSystemLocal::GetImageMSAASamples
+===============
+*/
+int idRenderSystemLocal::GetImageMSAASamples( idImage* image ) {
+	return image != NULL ? image->GetOpts().numMSAASamples : 0;
+}
+
+/*
+===============
 idRenderSystemLocal::GetRenderTextureSize
 ===============
 */
@@ -2015,8 +2027,112 @@ void idRenderSystemLocal::SetPostProcessSMAAQuality(const idVec4& quality) {
 idRenderSystemLocal::ResizeRenderTexture
 ===============
 */
-void idRenderSystemLocal::ResizeRenderTexture(idRenderTexture* renderTexture, int width, int height) {
-	renderTexture->Resize(width, height);
+bool idRenderSystemLocal::ResizeRenderTexture(idRenderTexture*& renderTexture, int width, int height) {
+	if ( renderTexture == NULL ) {
+		return false;
+	}
+	if ( renderTexture->Resize( width, height ) ) {
+		return true;
+	}
+
+	idRenderTexture* failedRenderTexture = renderTexture;
+	renderTexture = NULL;
+	DestroyRenderTexture( failedRenderTexture );
+	return false;
+}
+
+struct renderTextureFailureKey_t {
+	idImage*	attachments[4];
+	uint64		storageGenerations[4];
+	int			contextGeneration;
+};
+
+static idList<renderTextureFailureKey_t> renderTextureFailureKeys;
+static const int MAX_RENDER_TEXTURE_FAILURE_KEYS = 64;
+
+static renderTextureFailureKey_t R_BuildRenderTextureFailureKey(
+	idImage* albedoImage,
+	idImage* depthImage,
+	idImage* albedoImage2,
+	idImage* albedoImage3 ) {
+	renderTextureFailureKey_t key;
+	key.attachments[0] = albedoImage;
+	key.attachments[1] = depthImage;
+	key.attachments[2] = albedoImage2;
+	key.attachments[3] = albedoImage3;
+	for ( int i = 0; i < 4; i++ ) {
+		key.storageGenerations[i] = key.attachments[i] != NULL
+			? key.attachments[i]->GetStorageGeneration()
+			: 0;
+	}
+	key.contextGeneration = tr.glContextGeneration;
+	return key;
+}
+
+static bool R_RenderTextureFailureHasSameAttachments(
+	const renderTextureFailureKey_t& lhs,
+	const renderTextureFailureKey_t& rhs ) {
+	for ( int i = 0; i < 4; i++ ) {
+		if ( lhs.attachments[i] != rhs.attachments[i] ) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool R_RenderTextureFailureKeysMatch(
+	const renderTextureFailureKey_t& lhs,
+	const renderTextureFailureKey_t& rhs ) {
+	if ( lhs.contextGeneration != rhs.contextGeneration ||
+		!R_RenderTextureFailureHasSameAttachments( lhs, rhs ) ) {
+		return false;
+	}
+	for ( int i = 0; i < 4; i++ ) {
+		if ( lhs.storageGenerations[i] != rhs.storageGenerations[i] ) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static void R_PruneRenderTextureFailureKeys( int contextGeneration ) {
+	for ( int i = renderTextureFailureKeys.Num() - 1; i >= 0; i-- ) {
+		if ( renderTextureFailureKeys[i].contextGeneration != contextGeneration ) {
+			renderTextureFailureKeys.RemoveIndex( i );
+		}
+	}
+}
+
+static bool R_IsRenderTextureFailureLatched( const renderTextureFailureKey_t& key ) {
+	R_PruneRenderTextureFailureKeys( key.contextGeneration );
+	for ( int i = 0; i < renderTextureFailureKeys.Num(); i++ ) {
+		if ( R_RenderTextureFailureKeysMatch( renderTextureFailureKeys[i], key ) ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static void R_LatchRenderTextureFailure( const renderTextureFailureKey_t& key ) {
+	R_PruneRenderTextureFailureKeys( key.contextGeneration );
+	for ( int i = 0; i < renderTextureFailureKeys.Num(); i++ ) {
+		if ( R_RenderTextureFailureHasSameAttachments( renderTextureFailureKeys[i], key ) ) {
+			renderTextureFailureKeys[i] = key;
+			return;
+		}
+	}
+	if ( renderTextureFailureKeys.Num() >= MAX_RENDER_TEXTURE_FAILURE_KEYS ) {
+		renderTextureFailureKeys.RemoveIndex( 0 );
+	}
+	renderTextureFailureKeys.Append( key );
+}
+
+static void R_ClearRenderTextureFailure( const renderTextureFailureKey_t& key ) {
+	for ( int i = renderTextureFailureKeys.Num() - 1; i >= 0; i-- ) {
+		if ( R_RenderTextureFailureHasSameAttachments( renderTextureFailureKeys[i], key ) ) {
+			renderTextureFailureKeys.RemoveIndex( i );
+		}
+	}
 }
 
 /*
@@ -2025,6 +2141,18 @@ idRenderSystemLocal::CreateRenderTexture
 ===============
 */
 idRenderTexture* idRenderSystemLocal::CreateRenderTexture(idImage* albedoImage, idImage* depthImage, idImage* albedoImage2, idImage* albedoImage3) {
+	// Creation runs on the active GL thread. Latch a rejected attachment/storage
+	// set so helpers that keep a NULL pointer do not recreate and re-log the same
+	// unsupported FBO every frame. Context changes and image reallocations retry.
+	const renderTextureFailureKey_t failureKey = R_BuildRenderTextureFailureKey(
+		albedoImage,
+		depthImage,
+		albedoImage2,
+		albedoImage3 );
+	if ( glConfig.isInitialized && R_IsRenderTextureFailureLatched( failureKey ) ) {
+		return NULL;
+	}
+
 	idRenderTexture* renderTexture = new idRenderTexture(albedoImage, depthImage);
 
 	if (albedoImage2)
@@ -2037,8 +2165,15 @@ idRenderTexture* idRenderSystemLocal::CreateRenderTexture(idImage* albedoImage, 
 		renderTexture->AddRenderImage(albedoImage3);
 	}
 
-	renderTexture->InitRenderTexture();
+	if ( !renderTexture->InitRenderTexture() ) {
+		if ( glConfig.isInitialized ) {
+			R_LatchRenderTextureFailure( failureKey );
+		}
+		delete renderTexture;
+		return NULL;
+	}
 
+	R_ClearRenderTextureFailure( failureKey );
 	return renderTexture;
 }
 

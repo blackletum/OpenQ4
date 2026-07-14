@@ -106,13 +106,13 @@ def validate_renderer_context_guard() -> None:
 
 
 def validate_platform_context_contract() -> None:
+    linux_dedicated = read("src/sys/linux/dedicated.cpp")
     backends = {
         "SDL3 backend": read("src/sys/sdl3/sdl3_backend.cpp"),
         "native GLX backend": read("src/sys/linux/glimp.cpp"),
         "native WGL backend": read("src/sys/win32/win_glimp.cpp"),
         "native macOS backend": read("src/sys/osx/macosx_glimp.mm"),
-        "Linux dedicated backend": read("src/sys/linux/dedicated.cpp"),
-        "stub backend": read("src/sys/stub/stub_gl.cpp"),
+        "Linux dedicated GL stub": read("src/sys/stub/stub_gl.cpp"),
     }
 
     for name, source in backends.items():
@@ -122,6 +122,12 @@ def validate_platform_context_contract() -> None:
     require(backends["native GLX backend"], "glXMakeCurrent( dpy, win, ctx )", "native GLX context contract")
     require(backends["native WGL backend"], "qwglMakeCurrent( win32.hDC, win32.hGLRC )", "native WGL context contract")
     require(backends["native macOS backend"], "return OSX_EnsureGLContextCurrent( operation );", "native macOS context contract")
+    require(linux_dedicated, "Sys_GetDesktopResolution", "Linux dedicated desktop-resolution stub")
+    require(
+        backends["Linux dedicated GL stub"],
+        "OpenQ4_GlewGetProcAddress",
+        "Linux dedicated GLEW resolver stub",
+    )
 
 
 def validate_ci_smoke() -> None:

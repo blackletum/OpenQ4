@@ -30,6 +30,10 @@ If you have questions concerning this license or the applicable additional terms
 #include "../posix/posix_public.h"
 #include "local.h"
 
+#if !defined( __linux__ ) || !defined( ID_DEDICATED )
+	#error "linux/dedicated.cpp is only for Linux dedicated-server builds"
+#endif
+
 /*
 ==========
 input
@@ -77,33 +81,13 @@ int Sys_GetVideoRam( void ) {
 	return 64;
 }
 
-/*
-==========
-GL
-==========
-*/
-
-void GLimp_EnableLogging( bool enable ) { }
-
-bool GLimp_Init( glimpParms_t a ) { return true; }
-
-void GLimp_SetGamma( unsigned short red[256], 
-				    unsigned short green[256],
-					unsigned short blue[256] ) { }
-
-bool GLimp_UseNativeGammaRamps( void ) { return false; }
-
-void GLimp_PreserveWindowOnShutdown( bool preserve ) { (void)preserve; }
-
-void GLimp_Shutdown( void ) { }
-
-void GLimp_SwapBuffers( void ) { }
-
-void GLimp_DeactivateContext( void ) { }
-
-void GLimp_ActivateContext( void ) { }
-
-bool GLimp_EnsureActiveContext( const char *operation ) { (void)operation; return true; }
-
-bool GLimp_SetScreenParms( glimpParms_t parms ) { return true; }
+bool Sys_GetDesktopResolution( int *width, int *height ) {
+	if ( width != NULL ) {
+		*width = 0;
+	}
+	if ( height != NULL ) {
+		*height = 0;
+	}
+	return false;
+}
 

@@ -55,27 +55,28 @@ public:
 
 	int						GetNumColorImages() const { return colorImages.Num(); }
 
-	void					Resize( int width, int height );
-	void					EnsureDeviceHandle( void );
+	bool					Resize( int width, int height );
+	bool					EnsureDeviceHandle( void );
 
-	void					MakeCurrent( void );
-	void					MakeCurrent( int cubeFace );
+	bool					MakeCurrent( void );
+	bool					MakeCurrent( int cubeFace );
 	static void				BindNull(void);
 
 	GLuint					GetDeviceHandle(void);
 	void					SetDebugLabel( const char *label );
 
 	void					AddRenderImage(idImage *image);
-	void					InitRenderTexture(void);
+	bool					InitRenderTexture(void);
 
-	// Opt-in soft failure for expendable targets (shadow maps): framebuffer
-	// incompleteness marks the texture unusable instead of FatalError, so the
-	// caller can fall back (e.g. to stencil shadows) and keep running.
-	ID_INLINE void			SetAllowIncomplete( void ) { allowIncomplete = true; }
+	// Compatibility no-op for older shadow-target call sites. FBO incompleteness
+	// is universally non-fatal now, including initial creation and resize.
+	ID_INLINE void			SetAllowIncomplete( void ) {}
 	ID_INLINE bool			IsKnownIncomplete( void ) const { return knownIncomplete; }
 private:
 	bool					HasCurrentDeviceHandle( void ) const;
 	void					ReleaseDeviceHandle( void );
+	bool					FailFramebuffer( GLenum status, const char *operation );
+	void					ReportFramebufferFailure( GLenum status, const char *operation ) const;
 	bool					NeedsAttachmentRefresh( void ) const;
 	void					CaptureAttachmentHandles( void );
 	void					ApplyDebugLabel( void ) const;
@@ -85,8 +86,8 @@ private:
 	GLuint				deviceHandle;
 	int					deviceHandleGeneration;
 	unsigned int		validatedCubeFaces;
-	bool				allowIncomplete = false;
 	bool				knownIncomplete = false;
+	int					incompleteGeneration = -1;
 	idStr				debugLabel;
 	idList<GLuint>		cachedColorHandles;
 	GLuint				cachedDepthHandle;

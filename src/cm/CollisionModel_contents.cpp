@@ -119,11 +119,11 @@ CM_SetTrmEdgeSidedness
 ================
 */
 #define CM_SetTrmEdgeSidedness( edge, bpl, epl, bitNum ) {							\
-	if ( !(edge->sideSet & (1<<bitNum)) ) {											\
+	if ( !(edge->sideSet & (1u<<bitNum)) ) {											\
 		float fl;																	\
 		fl = (bpl).PermutedInnerProduct( epl );										\
-		edge->side = (edge->side & ~(1<<bitNum)) | (FLOATSIGNBITSET(fl) << bitNum);	\
-		edge->sideSet |= (1 << bitNum);												\
+		edge->side = (edge->side & ~(1u<<bitNum)) | (FLOATSIGNBITSET(fl) << bitNum);	\
+		edge->sideSet |= (1u << bitNum);												\
 	}																				\
 }
 
@@ -133,17 +133,17 @@ CM_SetTrmPolygonSidedness
 ================
 */
 #define CM_SetTrmPolygonSidedness( v, plane, bitNum ) {								\
-	if ( !((v)->sideSet & (1<<bitNum)) ) {											\
+	if ( !((v)->sideSet & (1u<<bitNum)) ) {											\
 		float fl;																	\
 		fl = plane.Distance( (v)->p );												\
 		/* cannot use float sign bit because it is undetermined when fl == 0.0f */	\
 		if ( fl < 0.0f ) {															\
-			(v)->side |= (1 << bitNum);												\
+			(v)->side |= (1u << bitNum);												\
 		}																			\
 		else {																		\
-			(v)->side &= ~(1 << bitNum);											\
+			(v)->side &= ~(1u << bitNum);											\
 		}																			\
-		(v)->sideSet |= (1 << bitNum);												\
+		(v)->sideSet |= (1u << bitNum);												\
 	}																				\
 }
 

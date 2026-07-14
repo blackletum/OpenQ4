@@ -308,15 +308,87 @@ if host_machine.system() == 'linux'
   cdata.set('SDL_VIDEO_RENDER_VULKAN', 1)
   cdata.set('SDL_TIMER_UNIX', 1)
   sdl_deps += dependency('libudev')
-  sdl_deps += dependency('dbus-1')
-  sdl_deps += dependency('libpipewire-0.3')
-  sdl_deps += dependency('wayland-client')
-  sdl_deps += dependency('wayland-egl')
-  sdl_deps += dependency('wayland-cursor')
-  xkbcommon_dep = dependency('xkbcommon')
-  sdl_deps += xkbcommon_dep
+  dbus_dep = dependency('dbus-1')
+  sdl_deps += dbus_dep
+  # SDL's PipeWire backend already supports runtime dispatch. Keep the
+  # development dependency for its headers, but do not make every Linux
+  # client require PipeWire before SDL can try its other audio backends.
+  pipewire_dep = dependency('libpipewire-0.3')
+  sdl_deps += pipewire_dep.partial_dependency(
+    compile_args: true,
+    includes: true,
+  )
+  cdata.set_quoted('SDL_AUDIO_DRIVER_PIPEWIRE_DYNAMIC', 'libpipewire-0.3.so.0')
+  # Match SDL's supported Linux release configuration: compile against the
+  # Wayland interfaces, but load the compositor libraries by SONAME at runtime.
+  # This keeps native Wayland available without turning libdecor into a hard
+  # package dependency and makes SDL's ALLOW/PREFER_LIBDECOR hints effective.
+  wayland_client_dep = dependency('wayland-client', version: '>=1.18')
+  wayland_egl_dep = dependency('wayland-egl')
+  wayland_cursor_dep = dependency('wayland-cursor')
+  xkbcommon_dep = dependency('xkbcommon', version: '>=0.5.0')
+  egl_dep = dependency('egl')
+  foreach wayland_compile_dep : [
+    wayland_client_dep,
+    wayland_egl_dep,
+    wayland_cursor_dep,
+    xkbcommon_dep,
+    egl_dep,
+  ]
+    sdl_deps += wayland_compile_dep.partial_dependency(
+      compile_args: true,
+      includes: true,
+    )
+  endforeach
+  cdata.set_quoted('SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC', 'libwayland-client.so.0')
+  cdata.set_quoted('SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC_EGL', 'libwayland-egl.so.1')
+  cdata.set_quoted('SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC_CURSOR', 'libwayland-cursor.so.0')
+  cdata.set_quoted('SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC_XKBCOMMON', 'libxkbcommon.so.0')
+
+  xkbcommon_version = xkbcommon_dep.version().split('.')
+  if xkbcommon_version.length() >= 3
+    cdata.set('SDL_XKBCOMMON_VERSION_MAJOR', xkbcommon_version[0].to_int())
+    cdata.set('SDL_XKBCOMMON_VERSION_MINOR', xkbcommon_version[1].to_int())
+    cdata.set('SDL_XKBCOMMON_VERSION_PATCH', xkbcommon_version[2].to_int())
+  else
+    cdata.set('SDL_XKBCOMMON_VERSION_MAJOR', 0)
+    cdata.set('SDL_XKBCOMMON_VERSION_MINOR', 5)
+    cdata.set('SDL_XKBCOMMON_VERSION_PATCH', 0)
+  endif
+
+  libdecor_dep = dependency('libdecor-0', required: false)
+  if libdecor_dep.found()
+    sdl_deps += libdecor_dep.partial_dependency(
+      compile_args: true,
+      includes: true,
+    )
+    cdata.set('HAVE_LIBDECOR_H', 1)
+    cdata.set_quoted('SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC_LIBDECOR', 'libdecor-0.so.0')
+    libdecor_version = libdecor_dep.version().split('.')
+    if libdecor_version.length() >= 3
+      cdata.set('SDL_LIBDECOR_VERSION_MAJOR', libdecor_version[0].to_int())
+      cdata.set('SDL_LIBDECOR_VERSION_MINOR', libdecor_version[1].to_int())
+      cdata.set('SDL_LIBDECOR_VERSION_PATCH', libdecor_version[2].to_int())
+    else
+      cdata.set('SDL_LIBDECOR_VERSION_MAJOR', 0)
+      cdata.set('SDL_LIBDECOR_VERSION_MINOR', 1)
+      cdata.set('SDL_LIBDECOR_VERSION_PATCH', 0)
+    endif
+  endif
   cdata.set('HAVE_DBUS_DBUS_H', 1)
-  wayland_scanner = find_program('wayland-scanner')
+  # Fcitx uses SDL's dynamically-dispatched DBus layer and does not require a
+  # separate client library. IBus additionally needs its protocol headers.
+  cdata.set('HAVE_FCITX', 1)
+  cdata.set('SDL_USE_IME', 1)
+  ibus_dep = dependency('ibus-1.0', required: false)
+  if ibus_dep.found() and cc.has_header('sys/inotify.h')
+    sdl_deps += ibus_dep.partial_dependency(
+      compile_args: true,
+      includes: true,
+    )
+    cdata.set('HAVE_IBUS_IBUS_H', 1)
+  endif
+  wayland_scanner = find_program('wayland-scanner', native: true)
   subdir('wayland-protocols')
 elif host_machine.system() == 'windows'
 
@@ -395,7 +467,7 @@ elif host_machine.system() == 'windows'
   sdl_deps += cc.find_library('setupapi')
   sdl_deps += cc.find_library('winmm')
   sdl_deps += cc.find_library('opengl32')
-elif host_machine.subsystem() == 'macos'
+elif host_machine.system() == 'darwin'
   cdata.set('SDL_PLATFORM_APPLE', 1)
   cdata.set('SDL_THREAD_PTHREAD', 1)
   cdata.set('SDL_THREAD_PTHREAD_RECURSIVE_MUTEX', 1)
@@ -447,11 +519,6 @@ if get_option('default_library') == 'both' and cc.get_argument_syntax() == 'msvc
 endif
 
 subdir('src')
-
-# FIXME, this is to work around a bug in upstream headers
-cdata.set('SDL_LIBDECOR_VERSION_MAJOR', 99)
-cdata.set('SDL_LIBDECOR_VERSION_MINOR', 99)
-cdata.set('SDL_LIBDECOR_VERSION_PATCH', 99)
 
 configure_file(
   input: 'include/build_config/SDL_build_config.h.cmake',

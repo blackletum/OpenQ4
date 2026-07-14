@@ -591,6 +591,9 @@ idSIMD_Generic::Memcpy
 */
 void VPCALL idSIMD_Generic::Memcpy( void * RESTRICT dst, const void * RESTRICT src, const int count ) {
 	TIME_THIS_SCOPE("SIMD Memcpy");
+	if ( count <= 0 ) {
+		return;
+	}
 	memcpy( dst, src, count );
 }
 
@@ -601,6 +604,9 @@ idSIMD_Generic::Memset
 */
 void VPCALL idSIMD_Generic::Memset( void * RESTRICT dst, const int val, const int count ) {
 	TIME_THIS_SCOPE("SIMD Memset");
+	if ( count <= 0 ) {
+		return;
+	}
 	memset( dst, val, count );
 }
 
@@ -611,6 +617,9 @@ idSIMD_Generic::Zero16
 */
 void VPCALL idSIMD_Generic::Zero16( float * RESTRICT dst, const int count ) {
 	TIME_THIS_SCOPE("SIMD Zero16");
+	if ( count <= 0 ) {
+		return;
+	}
 	memset( dst, 0, count * sizeof( float ) );
 }
 

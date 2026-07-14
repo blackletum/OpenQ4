@@ -88,6 +88,7 @@ Notes:
 - `r_multiSamples` is hardware-limited and may be clamped by the driver/GPU.
 - Unsupported `r_multiSamples` values are normalized to the supported ladder before video startup (`1` becomes off; odd/intermediate values step up to `2`, `4`, `8`, or `16`).
 - On SDL3 builds, video startup retries lower MSAA requests if the window or GL context rejects the requested sample count (`16 -> 8 -> 4 -> 2 -> off`) and logs the requested, selected, and driver-reported multisample attributes.
+- The game scene target is validated separately from the window framebuffer. If a driver rejects the RGBA8 + depth/stencil offscreen target at the selected sample count, openQ4 retries lower samples down to `0`; if even the single-sample target is unavailable, it keeps running through the direct-render fallback and logs the exact framebuffer status and attachment details.
 - `gfxInfo` reports the active AA summary, including requested/effective MSAA, `GL_MAX_SAMPLES`, alpha-to-coverage, post AA mode, screen fraction, and supersampling state.
 - The Post AA startup/runtime log records the active SMAA edge mode, threshold, search steps, and local contrast scale so quality captures can be compared without guessing which shader contract was active.
 - Changing `r_multiSamples` should be followed by `vid_restart`.

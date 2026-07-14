@@ -2,7 +2,7 @@ project(
   'openQ4',
   ['c', 'cpp'],
   version: '0.1.010',
-  meson_version: '>=1.2.0',
+  meson_version: '>=1.6.0',
   default_options: ['c_std=c11', 'cpp_std=c++20', 'b_vscrt=static_from_buildtype'],
 )
 
@@ -22,10 +22,16 @@ elif host_cpu_family == 'aarch64'
 endif
 game_sp_binary_name = 'game-sp_' + binary_arch
 game_mp_binary_name = 'game-mp_' + binary_arch
+game_module_filename_suffix = '.so'
+if host_system == 'windows'
+  game_module_filename_suffix = '.dll'
+elif host_system == 'darwin'
+  game_module_filename_suffix = '.dylib'
+endif
 engine_client_binary_name = meson.project_name() + '-client_' + binary_arch
 engine_ded_binary_name = meson.project_name() + '-ded_' + binary_arch
 
-if host_cpu_family != 'x86_64'
+if host_cpu_family != 'x86_64' and not (host_system == 'linux' and host_cpu_family == 'aarch64')
   warning(
     'openQ4 currently targets x64 as the active compatibility baseline. '
     + 'Non-x64 builds are considered experimental during platform bring-up.'
@@ -77,8 +83,13 @@ if host_system == 'windows' and not use_sdl3_backend
   )
 endif
 
-python_mod = import('python')
-py = python_mod.find_installation('python3', required: true)
+if host_system == 'windows'
+  # Windows commonly enables a non-functional Microsoft Store python3.exe
+  # application alias. Prefer the real python.exe launcher there.
+  py = find_program('python', 'python3', native: true, required: true)
+else
+  py = find_program('python3', 'python', native: true, required: true)
+endif
 fs_mod = import('fs')
 if host_system == 'darwin'
   add_languages('objc', 'objcpp', required: true)
@@ -177,9 +188,12 @@ game_libs_source_root = ''
 game_libs_repo_summary = 'not required'
 game_stage_root = ''
 game_stage_game_root = ''
+game_stage_mpgame_root = ''
 game_stage_game_include_rel = '.tmp/gamelibs_stage/src/game'
+game_stage_mpgame_include_rel = '.tmp/gamelibs_stage/src/mpgame'
 bse_source_root = meson.project_source_root() / 'src' / 'bse'
-game_module_defs_file = ''
+game_sp_module_defs_file = ''
+game_mp_module_defs_file = ''
 
 if not build_engine and not build_games
   error('At least one build target must be enabled. Use -Dbuild_engine=true and/or -Dbuild_games=true.')
@@ -317,6 +331,9 @@ if needs_game_headers
   if not fs_mod.is_dir(game_libs_source_root / 'game')
     error('openQ4-game source directory not found: ' + game_libs_source_root / 'game')
   endif
+  if not fs_mod.is_dir(game_libs_source_root / 'mpgame')
+    error('openQ4-game multiplayer source directory not found: ' + game_libs_source_root / 'mpgame')
+  endif
 
   game_stage_result = run_command(
     py,
@@ -335,14 +352,22 @@ if needs_game_headers
   if not fs_mod.is_dir(game_stage_game_root)
     error('Staged game source directory not found: ' + game_stage_game_root)
   endif
+  game_stage_mpgame_root = game_stage_root / 'src' / 'mpgame'
+  if not fs_mod.is_dir(game_stage_mpgame_root)
+    error('Staged multiplayer game source directory not found: ' + game_stage_mpgame_root)
+  endif
   game_stage_manifest = game_stage_root / 'openq4_gamelibs_stage_manifest.json'
   if not fs_mod.is_file(game_stage_manifest)
     error('Staged openQ4-game source manifest not found: ' + game_stage_manifest)
   endif
 
-  game_module_defs_file = game_stage_game_root / 'Game.def'
-  if host_system == 'windows' and not fs_mod.is_file(game_module_defs_file)
-    error('Staged Game.def not found: ' + game_module_defs_file)
+  game_sp_module_defs_file = game_stage_game_root / 'Game.def'
+  game_mp_module_defs_file = game_stage_mpgame_root / 'mpgame.def'
+  if host_system == 'windows' and not fs_mod.is_file(game_sp_module_defs_file)
+    error('Staged Game.def not found: ' + game_sp_module_defs_file)
+  endif
+  if host_system == 'windows' and not fs_mod.is_file(game_mp_module_defs_file)
+    error('Staged mpgame.def not found: ' + game_mp_module_defs_file)
   endif
 
   game_libs_repo_summary = game_libs_repo_root
@@ -360,13 +385,26 @@ linux_xext_dep = disabler()
 linux_xxf86vm_dep = disabler()
 linux_gl_dep = disabler()
 linux_x11_helpers_enabled = false
+linux_x11_option = get_option('linux_x11')
 if build_engine and host_system == 'linux'
-  linux_gl_dep = cc.find_library('GL', required: true)
-  if use_sdl3_backend
-    linux_x11_dep = dependency('x11', required: false)
-    linux_xext_dep = dependency('xext', required: false)
-    linux_x11_helpers_enabled = linux_x11_dep.found() and linux_xext_dep.found()
+  if linux_x11_option.disabled()
+    linux_gl_dep = cc.find_library('OpenGL', required: true)
   else
+    linux_gl_dep = cc.find_library('OpenGL', required: false)
+    if not linux_gl_dep.found()
+      linux_gl_dep = cc.find_library('GL', required: true)
+    endif
+  endif
+  if use_sdl3_backend
+    if not linux_x11_option.disabled()
+      linux_x11_dep = dependency('x11', required: linux_x11_option)
+      linux_xext_dep = dependency('xext', required: linux_x11_option)
+      linux_x11_helpers_enabled = linux_x11_dep.found() and linux_xext_dep.found()
+    endif
+  else
+    if linux_x11_option.disabled()
+      error('linux_x11=disabled requires the SDL3 platform backend.')
+    endif
     linux_x11_dep = dependency('x11', required: true)
     linux_xext_dep = dependency('xext', required: true)
     linux_xxf86vm_dep = dependency('xxf86vm', required: true)
@@ -393,16 +431,41 @@ if engine_source_paths.length() == 0
   error('tools/build/meson_sources.py returned no engine source files.')
 endif
 
+dedicated_engine_source_paths = engine_source_paths
+if host_system == 'linux'
+  dedicated_engine_source_discovery = run_command(
+    py,
+    meson.project_source_root() / 'tools' / 'build' / 'meson_sources.py',
+    '--host-system',
+    host_system,
+    '--platform-backend',
+    platform_backend,
+    '--linux-x11-helpers',
+    'false',
+    '--include-game',
+    'false',
+    '--target-kind',
+    'dedicated',
+    check: true,
+  )
+  dedicated_engine_source_paths = dedicated_engine_source_discovery.stdout().strip().split('\n')
+  if dedicated_engine_source_paths.length() == 0
+    error('tools/build/meson_sources.py returned no Linux dedicated-server source files.')
+  endif
+endif
+
 openq4_engine_sources = files(engine_source_paths)
 if build_engine
   openq4_engine_sources += openq4_paks_generated_header
 endif
 
+game_sp_sources = []
+game_mp_sources = []
 game_sources = []
 bse_sources = []
 game_idlib_sources = []
 if build_games
-  game_source_discovery = run_command(
+  game_sp_source_discovery = run_command(
     py,
     meson.project_source_root() / 'tools' / 'build' / 'list_sources.py',
     game_stage_root,
@@ -411,17 +474,37 @@ if build_games
     'src/game/gamesys/Callbacks.cpp',
     check: true,
   )
-  game_source_paths = game_source_discovery.stdout().strip().split('\n')
-  if game_source_paths.length() == 0
-    error('tools/build/list_sources.py returned no game source files.')
+  game_sp_source_paths = game_sp_source_discovery.stdout().strip().split('\n')
+  if game_sp_source_paths.length() == 0
+    error('tools/build/list_sources.py returned no single-player game source files.')
   endif
 
-  game_absolute_paths = []
-  foreach rel_path : game_source_paths
-    game_absolute_paths += [game_stage_root / rel_path]
+  game_sp_absolute_paths = []
+  foreach rel_path : game_sp_source_paths
+    game_sp_absolute_paths += [game_stage_root / rel_path]
   endforeach
+  game_sp_sources = files(game_sp_absolute_paths)
 
-  game_sources = files(game_absolute_paths)
+  game_mp_source_discovery = run_command(
+    py,
+    meson.project_source_root() / 'tools' / 'build' / 'list_sources.py',
+    game_stage_root,
+    'src/mpgame',
+    'src/mpgame/Callbacks.cpp',
+    'src/mpgame/gamesys/Callbacks.cpp',
+    check: true,
+  )
+  game_mp_source_paths = game_mp_source_discovery.stdout().strip().split('\n')
+  if game_mp_source_paths.length() == 0
+    error('tools/build/list_sources.py returned no multiplayer game source files.')
+  endif
+
+  game_mp_absolute_paths = []
+  foreach rel_path : game_mp_source_paths
+    game_mp_absolute_paths += [game_stage_root / rel_path]
+  endforeach
+  game_mp_sources = files(game_mp_absolute_paths)
+  game_sources = game_sp_sources + game_mp_sources
 
   savegame_compat_header = custom_target(
     'openq4_savegame_compat_generated',
@@ -436,12 +519,13 @@ if build_games
       '--header-out',
       '@OUTPUT@',
     ],
-    depend_files: files(engine_source_paths) + game_sources + files(
+    depend_files: files(engine_source_paths) + game_sources + files(dedicated_engine_source_paths) + files(
       'tools/build/generate_savegame_compat_header.py',
     ),
     install: false,
   )
-  game_sources += [savegame_compat_header]
+  game_sp_sources += [savegame_compat_header]
+  game_mp_sources += [savegame_compat_header]
   if build_engine
     # Session preflights the exact GameLibs source stamp before tearing down
     # the active map, so the engine target must see the same generated header.
@@ -506,11 +590,20 @@ endif
 
 fallback_opt = ['default_library=static']
 glew_default_options = fallback_opt
+sdl3_default_options = fallback_opt
 if host_system == 'linux' and use_sdl3_backend
   glew_default_options += ['openq4_sdl3_loader=true']
+  if linux_x11_option.disabled()
+    sdl3_default_options += ['x11=disabled']
+  elif linux_x11_option.enabled()
+    sdl3_default_options += ['x11=enabled']
+  else
+    sdl3_default_options += ['x11=auto']
+  endif
 endif
 
 glew_dep = disabler()
+glew_dedicated_dep = disabler()
 stb_vorbis_dep = disabler()
 openal_dep = disabler()
 sdl3_dep = disabler()
@@ -520,6 +613,7 @@ if build_engine
   if host_system == 'linux' and use_sdl3_backend
     glew_sp = subproject('glew', default_options: glew_default_options)
     glew_dep = glew_sp.get_variable('glew_dep')
+    glew_dedicated_dep = glew_sp.get_variable('glew_dedicated_dep')
   else
     glew_dep = dependency(
       'glew',
@@ -527,6 +621,10 @@ if build_engine
       fallback: ['glew', 'glew_dep'],
       default_options: glew_default_options,
     )
+    if host_system == 'linux'
+      glew_dedicated_sp = subproject('glew', default_options: glew_default_options)
+      glew_dedicated_dep = glew_dedicated_sp.get_variable('glew_dedicated_dep')
+    endif
   endif
 
   stb_vorbis_dep = dependency(
@@ -571,13 +669,22 @@ if build_engine
   endif
 
   if use_sdl3_backend
-    sdl3_dep = dependency(
-      'sdl3',
-      version: '>=3.4.4',
-      required: true,
-      fallback: ['sdl3', 'sdl3_dep'],
-      default_options: fallback_opt,
-    )
+    if host_system == 'linux' and not linux_x11_option.auto()
+      # A system SDL's compiled video-driver set cannot be changed by a Meson
+      # feature option. Explicit linux_x11 modes therefore select the bundled
+      # SDL so enabled/disabled is a real build contract rather than a hint
+      # that silently depends on the distribution's SDL configuration.
+      sdl3_subproject = subproject('sdl3', default_options: sdl3_default_options)
+      sdl3_dep = sdl3_subproject.get_variable('sdl3_dep')
+    else
+      sdl3_dep = dependency(
+        'sdl3',
+        version: '>=3.4.4',
+        required: true,
+        fallback: ['sdl3', 'sdl3_dep'],
+        default_options: sdl3_default_options,
+      )
+    endif
   endif
 
   deps = [glew_dep, openal_dep, stb_vorbis_dep]
@@ -642,6 +749,24 @@ if build_engine
   endif
 endif
 
+dedicated_deps = deps
+if build_engine and host_system == 'linux'
+  # Keep compile-time OpenAL declarations and the static GLEW/vorbis code used
+  # by the common engine sources, but give the dedicated target no client-side
+  # audio, graphics, window-system, or SDL link dependency.
+  openal_headers_dep = openal_dep.partial_dependency(
+    compile_args: true,
+    includes: true,
+  )
+  dedicated_deps = [
+    glew_dedicated_dep,
+    openal_headers_dep,
+    stb_vorbis_dep,
+    dependency('threads', required: true),
+    cc.find_library('dl', required: true),
+  ]
+endif
+
 shared_cpp_args = ['-DUSE_OPENAL', '-DGLEW_NO_GLU']
 shared_c_args = ['-DGLEW_NO_GLU']
 shared_objcpp_args = []
@@ -649,6 +774,7 @@ shared_objc_args = []
 engine_link_args = []
 linux_executable_pie = false
 linux_module_link_hardening_args = []
+linux_cross_dso_sanitizer_cpp_args = []
 
 if host_system == 'windows'
   shared_cpp_args += ['-D_WINDOWS', '-DWIN32']
@@ -700,6 +826,15 @@ if host_system == 'linux'
   endforeach
   shared_cpp_args += linux_compile_hardening_args
   shared_c_args += linux_compile_hardening_args
+
+  if cpp.has_argument('-fno-sanitize=vptr')
+    # Engine and game translation units consume polymorphic interfaces whose
+    # key functions and RTTI live on the opposite side of the runtime-loaded
+    # game-module boundary. UBSan's vptr metadata cannot be resolved while
+    # preserving the executable/module ABI and each module's -z defs contract.
+    # Keep AddressSanitizer and every other requested UBSan check enabled.
+    linux_cross_dso_sanitizer_cpp_args += ['-fno-sanitize=vptr']
+  endif
 
   linux_link_hardening_args = []
   foreach hardening_arg : ['-Wl,-z,relro', '-Wl,-z,now', '-Wl,-z,noexecstack']
@@ -759,11 +894,25 @@ if host_system == 'darwin'
 endif
 
 pch_headers = []
+game_idlib_pch_headers = []
+game_module_pch_headers = []
+common_header_cpp_args = []
+common_header_path = meson.project_source_root() / 'src' / 'idlib' / 'precompiled.h'
 if get_option('use_pch')
   pch_headers = ['src/idlib/precompiled.h']
+  game_idlib_pch_headers = ['src/idlib/precompiled.h']
+  game_module_pch_headers = [common_header_path]
+else
+  # The legacy engine and SDK sources use precompiled.h as their common
+  # translation-unit prefix. Disabling compiler PCH generation must include
+  # the same declarations normally rather than silently changing the source
+  # contract and producing hundreds of order-dependent compile failures.
+  if cpp.get_argument_syntax() == 'msvc'
+    common_header_cpp_args = ['/FI' + common_header_path]
+  else
+    common_header_cpp_args = ['-include', common_header_path]
+  endif
 endif
-game_idlib_pch_headers = ['src/idlib/precompiled.h']
-game_module_pch_headers = [meson.project_source_root() / 'src' / 'idlib' / 'precompiled.h']
 
 src_include_dir = include_directories('src')
 src_idlib_include_dir = include_directories('src/idlib')
@@ -788,21 +937,31 @@ bse_client_include_dirs = [root_include_dir, src_include_dir, src_bse_include_di
 
 if needs_game_headers
   staged_game_include_dir = include_directories(game_stage_game_include_rel)
+  staged_mpgame_include_dir = include_directories(game_stage_mpgame_include_rel)
   engine_include_dirs += [staged_game_include_dir]
   game_idlib_include_dirs += [staged_game_include_dir]
-  game_include_dirs += [staged_game_include_dir]
+  game_include_dirs += [staged_game_include_dir, staged_mpgame_include_dir]
   bse_client_include_dirs += [staged_game_include_dir]
 endif
 
-engine_cpp_args = shared_cpp_args + ['-D__DOOM_DLL__']
+engine_cpp_args = shared_cpp_args + common_header_cpp_args + ['-D__DOOM_DLL__'] + linux_cross_dso_sanitizer_cpp_args
 engine_c_args = shared_c_args
 engine_objcpp_args = shared_objcpp_args + ['-D__DOOM_DLL__']
 engine_objc_args = shared_objc_args
-bse_cpp_args = shared_cpp_args
+bse_cpp_args = shared_cpp_args + common_header_cpp_args
 bse_c_args = shared_c_args
 bse_library = disabler()
 
 if build_engine
+  openq4_dedicated_sources = openq4_engine_sources
+  if host_system == 'linux'
+    openq4_dedicated_sources = files(dedicated_engine_source_paths)
+    openq4_dedicated_sources += openq4_paks_generated_header
+    if build_games
+      openq4_dedicated_sources += [savegame_compat_header]
+    endif
+  endif
+
   bse_library = static_library(
     'openq4_bse',
     bse_sources,
@@ -867,17 +1026,34 @@ if build_engine
     )
   endif
 
-  dedicated_cpp_args = engine_cpp_args + ['-DID_DEDICATED']
-  dedicated_c_args = engine_c_args + ['-DID_DEDICATED']
+  dedicated_engine_cpp_args = engine_cpp_args
+  dedicated_engine_c_args = engine_c_args
+  if host_system == 'linux'
+    dedicated_engine_cpp_args = []
+    foreach arg : engine_cpp_args
+      if not ['-DUSE_SDL3=1', '-DOPENQ4_HAVE_X11_HELPERS=1'].contains(arg)
+        dedicated_engine_cpp_args += arg
+      endif
+    endforeach
+    dedicated_engine_c_args = []
+    foreach arg : engine_c_args
+      if not ['-DUSE_SDL3=1', '-DOPENQ4_HAVE_X11_HELPERS=1'].contains(arg)
+        dedicated_engine_c_args += arg
+      endif
+    endforeach
+  endif
+
+  dedicated_cpp_args = dedicated_engine_cpp_args + ['-DID_DEDICATED']
+  dedicated_c_args = dedicated_engine_c_args + ['-DID_DEDICATED']
   dedicated_objcpp_args = engine_objcpp_args + ['-DID_DEDICATED']
   dedicated_objc_args = engine_objc_args + ['-DID_DEDICATED']
 
   if host_system == 'windows'
     executable(
       engine_ded_binary_name,
-      openq4_engine_sources,
+      openq4_dedicated_sources,
       include_directories: engine_include_dirs,
-      dependencies: deps,
+      dependencies: dedicated_deps,
       link_with: dedicated_link_with,
       cpp_args: dedicated_cpp_args,
       c_args: dedicated_c_args,
@@ -890,9 +1066,9 @@ if build_engine
   elif host_system == 'darwin'
     executable(
       engine_ded_binary_name,
-      openq4_engine_sources,
+      openq4_dedicated_sources,
       include_directories: engine_include_dirs,
-      dependencies: deps,
+      dependencies: dedicated_deps,
       link_with: dedicated_link_with,
       cpp_args: dedicated_cpp_args,
       c_args: dedicated_c_args,
@@ -906,9 +1082,9 @@ if build_engine
   else
     executable(
       engine_ded_binary_name,
-      openq4_engine_sources,
+      openq4_dedicated_sources,
       include_directories: engine_include_dirs,
-      dependencies: deps,
+      dependencies: dedicated_deps,
       link_with: dedicated_link_with,
       cpp_args: dedicated_cpp_args,
       c_args: dedicated_c_args,
@@ -921,9 +1097,11 @@ if build_engine
   endif
 endif
 
-game_common_cpp_args = shared_cpp_args + ['-DGAME_DLL']
+game_common_cpp_args = shared_cpp_args + common_header_cpp_args + ['-DGAME_DLL'] + linux_cross_dso_sanitizer_cpp_args
 game_common_c_args = shared_c_args
+game_target_override_options = ['cpp_std=c++17']
 game_module_link_args = []
+game_module_link_depends = []
 if host_system == 'windows'
   game_module_link_args = ['/FIXED:NO', '/LARGEADDRESSAWARE']
   if ['x86_64', 'aarch64'].contains(host_cpu_family)
@@ -945,6 +1123,12 @@ elif host_system == 'darwin'
   endforeach
 elif host_system == 'linux'
   game_module_link_args += linux_module_link_hardening_args
+  if cpp.has_link_argument('-Wl,-z,defs')
+    game_module_link_args += '-Wl,-z,defs'
+  endif
+  linux_game_module_export_map = files('tools/build/linux_game_module.map')
+  game_module_link_args += '-Wl,--version-script=' + linux_game_module_export_map[0].full_path()
+  game_module_link_depends += linux_game_module_export_map
 endif
 
 game_idlib_library = disabler()
@@ -956,13 +1140,57 @@ if build_engine or build_games
     cpp_args: game_common_cpp_args,
     c_args: game_common_c_args,
     cpp_pch: game_idlib_pch_headers,
+    override_options: game_target_override_options,
     pic: host_system == 'linux',
+    gnu_symbol_visibility: host_system == 'linux' ? 'hidden' : 'default',
     install: false,
   )
 endif
 
 if build_engine or (build_games and (build_game_sp or build_game_mp))
   subdir('content/baseoq4')
+endif
+
+if build_games and build_game_sp
+  custom_target(
+    'openq4_stage_game_sp_direct_run',
+    input: game_sp_module_target,
+    output: 'stage-game-sp-' + binary_arch + '.stamp',
+    command: [
+      py,
+      meson.project_source_root() / 'tools' / 'build' / 'stage_direct_run_game_module.py',
+      '--source',
+      '@INPUT@',
+      '--destination',
+      meson.current_build_dir() / 'baseoq4' / (game_sp_binary_name + game_module_filename_suffix),
+      '--stamp',
+      '@OUTPUT@',
+    ],
+    depend_files: files('tools/build/stage_direct_run_game_module.py'),
+    build_always_stale: true,
+    build_by_default: true,
+  )
+endif
+
+if build_games and build_game_mp
+  custom_target(
+    'openq4_stage_game_mp_direct_run',
+    input: game_mp_module_target,
+    output: 'stage-game-mp-' + binary_arch + '.stamp',
+    command: [
+      py,
+      meson.project_source_root() / 'tools' / 'build' / 'stage_direct_run_game_module.py',
+      '--source',
+      '@INPUT@',
+      '--destination',
+      meson.current_build_dir() / 'baseoq4' / (game_mp_binary_name + game_module_filename_suffix),
+      '--stamp',
+      '@OUTPUT@',
+    ],
+    depend_files: files('tools/build/stage_direct_run_game_module.py'),
+    build_always_stale: true,
+    build_by_default: true,
+  )
 endif
 
 if host_system == 'windows' and host_cpu_family == 'x86_64'
@@ -1110,6 +1338,7 @@ summary(
     'stb_vorbis': stb_vorbis_dep.found(),
     'Precompiled headers': get_option('use_pch'),
     'Dedicated server target': build_engine,
+    'Linux dedicated headless link split': build_engine and host_system == 'linux',
     'Install root': install_root_dir,
   },
   section: 'Build Features',

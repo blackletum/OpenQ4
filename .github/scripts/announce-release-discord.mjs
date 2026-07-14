@@ -190,7 +190,12 @@ function buildDownloadLinks(release) {
   ];
 
   const links = [];
+  const linuxArm64PreviewAsset = findAssetBySuffix(assets, "linux-arm64-preview.tar.xz");
   for (const [suffix, label] of desired) {
+    if (suffix === "linux-arm64.tar.xz" && linuxArm64PreviewAsset) {
+      links.push(markdownLink("Linux ARM64 preview", linuxArm64PreviewAsset.browser_download_url));
+      continue;
+    }
     const asset = findAssetBySuffix(assets, suffix);
     if (asset) {
       links.push(markdownLink(label, asset.browser_download_url));

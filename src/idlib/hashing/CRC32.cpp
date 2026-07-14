@@ -7,12 +7,18 @@
    Copyright (C) 1995-1998 Mark Adler
 */
 
-#define CRC32_INIT_VALUE	0xffffffffL
-#define CRC32_XOR_VALUE		0xffffffffL
+#include <stdint.h>
+
+typedef uint32_t crc32Word_t;
+
+static_assert( sizeof( crc32Word_t ) == 4, "CRC-32 requires a 32-bit word" );
+
+#define CRC32_INIT_VALUE	UINT32_C( 0xffffffff )
+#define CRC32_XOR_VALUE		UINT32_C( 0xffffffff )
 
 #ifdef CREATE_CRC_TABLE
 
-static unsigned long crctable[256];
+static crc32Word_t crctable[256];
 
 /*
    Generate a table for a byte-wise 32-bit CRC calculation on the polynomial:
@@ -41,18 +47,18 @@ static unsigned long crctable[256];
 
 void make_crc_table( void ) {
 	int i, j;
-	unsigned long c, poly;
+	crc32Word_t c, poly;
 	/* terms of polynomial defining this crc (except x^32): */
 	static const byte p[] = {0,1,2,4,5,7,8,10,11,12,16,22,23,26};
 
 	/* make exclusive-or pattern from polynomial (0xedb88320L) */
-	poly = 0L;
+	poly = 0;
 	for ( i = 0; i < sizeof( p ) / sizeof( byte ); i++ ) {
-		poly |= 1L << ( 31 - p[i] );
+		poly |= UINT32_C( 1 ) << ( 31 - p[i] );
 	}
 
 	for ( i = 0; i < 256; i++ ) {
-		c = (unsigned long)i;
+		c = static_cast<crc32Word_t>( i );
 		for ( j = 0; j < 8; j++ ) {
 			c = ( c & 1 ) ? poly ^ ( c >> 1 ) : ( c >> 1 );
 		}
@@ -65,7 +71,7 @@ void make_crc_table( void ) {
 /*
   Table of CRC-32's of all single-byte values (made by make_crc_table)
 */
-static unsigned long crctable[256] = {
+static const crc32Word_t crctable[256] = {
 	0x00000000L, 0x77073096L, 0xee0e612cL, 0x990951baL,
 	0x076dc419L, 0x706af48fL, 0xe963a535L, 0x9e6495a3L,
 	0x0edb8832L, 0x79dcb8a4L, 0xe0d5e91eL, 0x97d2d988L,
@@ -135,26 +141,28 @@ static unsigned long crctable[256] = {
 #endif
 
 void CRC32_InitChecksum( unsigned long &crcvalue ) {
-	crcvalue = CRC32_INIT_VALUE;
+	crcvalue = static_cast<unsigned long>( CRC32_INIT_VALUE );
 }
 
 void CRC32_Update( unsigned long &crcvalue, const byte data ) {
-	crcvalue = crctable[ ( crcvalue ^ data ) & 0xff ] ^ ( crcvalue >> 8 );
+	const crc32Word_t crc = static_cast<crc32Word_t>( crcvalue );
+	crcvalue = static_cast<unsigned long>( crctable[ ( crc ^ data ) & 0xffu ] ^ ( crc >> 8 ) );
 }
 
 void CRC32_UpdateChecksum( unsigned long &crcvalue, const void *data, int length ) {
-	unsigned long crc;
+	crc32Word_t crc;
 	const unsigned char *buf = (const unsigned char *) data;
 
-	crc = crcvalue;
+	crc = static_cast<crc32Word_t>( crcvalue );
 	while( length-- ) {
-		crc = crctable[ ( crc ^ ( *buf++ ) ) & 0xff ] ^ ( crc >> 8 );
+		crc = crctable[ ( crc ^ ( *buf++ ) ) & 0xffu ] ^ ( crc >> 8 );
 	}
-	crcvalue = crc;
+	crcvalue = static_cast<unsigned long>( crc );
 }
 
 void CRC32_FinishChecksum( unsigned long &crcvalue ) {
-	crcvalue ^= CRC32_XOR_VALUE;
+	const crc32Word_t crc = static_cast<crc32Word_t>( crcvalue ) ^ CRC32_XOR_VALUE;
+	crcvalue = static_cast<unsigned long>( crc );
 }
 
 unsigned long CRC32_BlockChecksum( const void *data, int length ) {

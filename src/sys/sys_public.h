@@ -158,7 +158,7 @@ class idStr;
 #define _alloca							alloca
 #define _alloca16( x )					((void *)((((intptr_t)alloca( (x)+15 )) + 15) & ~15))
 
-#define ALIGN16( x )					x
+#define ALIGN16( x )					__attribute__((aligned(16))) x
 #define PACKED							__attribute__((packed))
 
 #define PATHSEPERATOR_STR				"/"

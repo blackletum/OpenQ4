@@ -2308,7 +2308,7 @@ void idLexer::WriteBinaryToken(idToken *tok)
 			{
 				if(tok->subtype & TT_UNSIGNED)
 				{
-					unsigned long val = tok->GetUnsignedLongValue();
+					unsigned int val = static_cast<unsigned int>( tok->GetUnsignedLongValue() );
 					unsigned char byteVal = (unsigned char)val;
 					unsigned short shortVal = (unsigned short)val;
 				
@@ -2333,15 +2333,15 @@ void idLexer::WriteBinaryToken(idToken *tok)
 				}
 				else
 				{
-					long val = tok->GetIntValue();
-					char byteVal = (char)val;
+					int val = tok->GetIntValue();
+					signed char byteVal = static_cast<signed char>( val );
 					short shortVal = (short)val;
 				
 					if(byteVal == val)
 					{
 						prefix = BTT_MAKENUMBER_PREFIX(BTT_NUMBER, BTT_SUBTYPE_INT, BTT_STORED_1BYTE);
 						TextCompiler::WriteValue<unsigned char>(prefix, mBinaryFile, swapBytes);
-						TextCompiler::WriteValue<char>(byteVal, mBinaryFile, swapBytes);
+						TextCompiler::WriteValue<signed char>(byteVal, mBinaryFile, swapBytes);
 					}
 					else if(shortVal == val)
 					{
@@ -2365,14 +2365,14 @@ void idLexer::WriteBinaryToken(idToken *tok)
 					int intval = tok->GetIntValue();
 					if(((float)intval) == val)		// integral check
 					{
-						char byteVal = (char)intval;
+						signed char byteVal = static_cast<signed char>( intval );
 						short shortVal = (short)intval;
 					
 						if(byteVal == intval)
 						{
 							prefix = BTT_MAKENUMBER_PREFIX(BTT_NUMBER, BTT_SUBTYPE_FLOAT, BTT_STORED_1BYTE);
 							TextCompiler::WriteValue<unsigned char>(prefix, mBinaryFile, swapBytes);
-							TextCompiler::WriteValue<char>(byteVal, mBinaryFile, swapBytes);
+							TextCompiler::WriteValue<signed char>(byteVal, mBinaryFile, swapBytes);
 						}
 						else if(shortVal == intval)
 						{
@@ -2401,14 +2401,14 @@ void idLexer::WriteBinaryToken(idToken *tok)
 					int intval = tok->GetIntValue();
 					if(((float)intval) == val)		// integral check
 					{
-						char byteVal = (char)intval;
+						signed char byteVal = static_cast<signed char>( intval );
 						short shortVal = (short)intval;
 					
 						if(byteVal == intval)
 						{
 							prefix = BTT_MAKENUMBER_PREFIX(BTT_NUMBER, BTT_SUBTYPE_FLOAT, BTT_STORED_1BYTE);
 							TextCompiler::WriteValue<unsigned char>(prefix, mBinaryFile, swapBytes);
-							TextCompiler::WriteValue<char>(byteVal, mBinaryFile, swapBytes);
+							TextCompiler::WriteValue<signed char>(byteVal, mBinaryFile, swapBytes);
 						}
 						else if(shortVal == intval)
 						{
@@ -3661,12 +3661,12 @@ int Lexer::ReadToken(idToken *token)
 
 					switch(BTT_GET_SUBTYPE(prefix))
 					{
-						case BTT_SUBTYPE_INT:
+						case BTT_SUBTYPE_INT: {
 							switch(size)
 							{
 							case BTT_STORED_1BYTE:
-								token->intvalue = ReadValue<char>(OBJ);
-								unreadSize = sizeof(char);
+								token->intvalue = ReadValue<signed char>(OBJ);
+								unreadSize = sizeof(signed char);
 								break;
 							case BTT_STORED_2BYTE:
 								token->intvalue = ReadValue<short>(OBJ);
@@ -3681,19 +3681,20 @@ int Lexer::ReadToken(idToken *token)
 								assert(false);
 							}
 
-							token->floatvalue = token->intvalue;
+							const int signedValue = static_cast<int>( token->intvalue );
+							token->floatvalue = signedValue;
 							// I hate the fact that I have to copy into the string, but there's no way
 							// of easily knowing whether it is used later or not
 
-							// This conversion to a string assumes that long and int are the same
-							assert(sizeof(long) == sizeof(int));
+							// Binary token integer payloads are always 32-bit.
+							static_assert( sizeof( token->intvalue ) == 4, "binary token integers must be 32-bit" );
 
-							//ltoa(token->intvalue, buffer, 10);
-							idStr::snPrintf( buffer, buffersize, "%ld", token->intvalue );
-							assert(token->intvalue == atol(buffer));
+							idStr::snPrintf( buffer, buffersize, "%d", signedValue );
+							assert( signedValue == atoi( buffer ) );
 							*token = buffer;
 							token->subtype = TT_INTEGER | TT_DECIMAL | TT_VALUESVALID;
 						break;
+						}
 						
 						case BTT_SUBTYPE_UNSIGNEDINT:
 							switch(size)
@@ -3719,12 +3720,11 @@ int Lexer::ReadToken(idToken *token)
 							// I hate the fact that I have to copy into the string, but there's no way
 							// of easily knowing whether it is used later or not
 
-							// This conversion to a string assumes that long and int are the same
-							assert(sizeof(long) == sizeof(int));
+							// Binary token integer payloads are always 32-bit.
+							static_assert( sizeof( token->intvalue ) == 4, "binary token integers must be 32-bit" );
 
-							//ultoa(token->intvalue, buffer, 10);
-							idStr::snPrintf( buffer, buffersize, "%lu", token->intvalue );
-							assert(token->intvalue == ((unsigned long)atol(buffer)));
+							idStr::snPrintf( buffer, buffersize, "%u", token->intvalue );
+							assert( token->intvalue == static_cast<unsigned int>( strtoul( buffer, nullptr, 10 ) ) );
 							*token = buffer;
 							token->subtype = TT_INTEGER | TT_UNSIGNED | TT_DECIMAL | TT_VALUESVALID;
 							break;
@@ -3746,9 +3746,9 @@ int Lexer::ReadToken(idToken *token)
 								unreadSize = sizeof(short);
 								break;
 							case BTT_STORED_1BYTE:		// requested a float, but it was integral, so it was saved that way
-								token->floatvalue = ReadValue<char>(OBJ);
+								token->floatvalue = ReadValue<signed char>(OBJ);
 								token->intvalue = token->floatvalue;
-								unreadSize = sizeof(char);
+								unreadSize = sizeof(signed char);
 								break;
 							default:
 								assert(false);
@@ -3783,9 +3783,9 @@ int Lexer::ReadToken(idToken *token)
 								unreadSize = sizeof(short);
 								break;
 							case BTT_STORED_1BYTE:		// requested a float, but it was integral, so it was saved that way
-								token->floatvalue = ReadValue<char>(OBJ);
+								token->floatvalue = ReadValue<signed char>(OBJ);
 								token->intvalue = token->floatvalue;
-								unreadSize = sizeof(char);
+								unreadSize = sizeof(signed char);
 								break;
 							default:
 								assert(false);

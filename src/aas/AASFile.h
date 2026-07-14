@@ -384,6 +384,7 @@ public:
 	int							GetNumFaceIndexes(void) const { return faceIndex.Num(); }
 	const aasIndex_t& GetFaceIndex(int index) const { return faceIndex[index]; }
 	int							GetNumAreas(void) const { return areas.Num(); }
+	aasArea_t& GetArea(int index) { return areas[index]; }
 	const aasArea_t& GetArea(int index) const { return areas[index]; }
 	int							GetNumNodes(void) const { return nodes.Num(); }
 	const aasNode_t& GetNode(int index) const { return nodes[index]; }

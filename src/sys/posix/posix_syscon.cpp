@@ -31,7 +31,11 @@ void Sys_SDL_EmergencyReleaseGameWindow( void );
 
 static idCVar sys_consoleWindow(
 	"sys_consoleWindow",
+#ifdef ID_DEDICATED
+	"0",
+#else
 	"1",
+#endif
 	CVAR_SYSTEM | CVAR_BOOL | CVAR_ARCHIVE,
 	"enable the Linux/macOS SDL system console window"
 );
@@ -285,12 +289,16 @@ static SDL_Renderer *Posix_CreateSupportRenderer( SDL_Window *window, const char
 }
 
 static bool Posix_SplashEnsureVideo( void ) {
-	if ( Posix_SplashVideoReady() ) {
-		return true;
+	if ( s_splashWindow.videoInitializedBySplash ) {
+		return Posix_SplashVideoReady();
 	}
 
 	Sys_SDL_ApplyVideoHintDefaults();
 
+	// Take a distinct SDL video reference even when the renderer or console
+	// already initialized the subsystem. SDL destroys every video object when
+	// the final reference is released, so borrowing another owner's reference
+	// would leave our cached window/renderer pointers dangling on vid_restart.
 	if ( !SDL_InitSubSystem( SDL_INIT_VIDEO ) ) {
 		if ( !s_splashWindow.createFailed ) {
 			Sys_Printf( "SDL splash disabled: failed to initialize video subsystem: %s\n", SDL_GetError() );
@@ -472,7 +480,7 @@ static void Posix_SplashRender( void ) {
 	(void)SDL_RenderPresent( s_splashWindow.renderer );
 }
 
-static void Posix_SplashDestroy( bool releaseVideoSubsystem ) {
+static void Posix_SplashDestroy( void ) {
 	const SDL_WindowID destroyedWindowID = s_splashWindow.windowID;
 	if ( s_splashWindow.texture != NULL ) {
 		SDL_DestroyTexture( s_splashWindow.texture );
@@ -494,7 +502,7 @@ static void Posix_SplashDestroy( bool releaseVideoSubsystem ) {
 
 	Posix_SplashDrainEvents( destroyedWindowID );
 
-	if ( releaseVideoSubsystem && s_splashWindow.videoInitializedBySplash ) {
+	if ( s_splashWindow.videoInitializedBySplash ) {
 		SDL_QuitSubSystem( SDL_INIT_VIDEO );
 		s_splashWindow.videoInitializedBySplash = false;
 	}
@@ -509,12 +517,15 @@ static bool Posix_ConsoleVideoReady( void ) {
 }
 
 static bool Posix_ConsoleEnsureVideo( void ) {
-	if ( Posix_ConsoleVideoReady() ) {
-		return true;
+	if ( s_consoleWindow.videoInitializedByConsole ) {
+		return Posix_ConsoleVideoReady();
 	}
 
 	Sys_SDL_ApplyVideoHintDefaults();
 
+	// Keep an independent reference while console resources exist. This keeps
+	// them valid across renderer shutdown/reinitialization and pairs exactly
+	// with the console's SDL_QuitSubSystem call.
 	if ( !SDL_InitSubSystem( SDL_INIT_VIDEO ) ) {
 		if ( !s_consoleWindow.createFailed ) {
 			Sys_Printf( "SDL system console disabled: failed to initialize video subsystem: %s\n", SDL_GetError() );
@@ -594,7 +605,14 @@ static bool Posix_ConsoleCreateWindow( void ) {
 	if ( s_consoleWindow.window != NULL ) {
 		return true;
 	}
-	if ( s_consoleWindow.createFailed || ( !sys_consoleWindow.GetBool() && !s_consoleWindow.forceFatalWindow ) ) {
+	if ( s_consoleWindow.createFailed ) {
+		return false;
+	}
+	// Fatal errors reach this path after common->Shutdown() has released the
+	// registered cvar storage. A forced fatal window must therefore avoid every
+	// cvar access; normal console creation still requires a live cvar system.
+	if ( !s_consoleWindow.forceFatalWindow &&
+		 ( cvarSystem == NULL || !cvarSystem->IsInitialized() || !sys_consoleWindow.GetBool() ) ) {
 		return false;
 	}
 	if ( !Posix_ConsoleEnsureVideo() ) {
@@ -730,20 +748,37 @@ static void Posix_ConsoleHistory( int direction ) {
 	s_consoleWindow.inputField = s_consoleWindow.history[ s_consoleWindow.historyLine % POSIX_CONSOLE_HISTORY ];
 }
 
+static void Posix_ConsoleAppendUTF8( const char *text, bool stopAtLineBreak ) {
+	if ( text == NULL ) {
+		return;
+	}
+
+	size_t remaining = SDL_strlen( text );
+	while ( remaining > 0 ) {
+		const Uint32 codepoint = SDL_StepUTF8( &text, &remaining );
+		if ( codepoint == 0 ) {
+			break;
+		}
+		if ( stopAtLineBreak && ( codepoint == '\n' || codepoint == '\r' ) ) {
+			break;
+		}
+		if ( codepoint == SDL_INVALID_UNICODE_CODEPOINT || codepoint > 0xff ||
+			 !idStr::CharIsPrintable( static_cast<byte>( codepoint ) ) ) {
+			continue;
+		}
+
+		s_consoleWindow.inputField.CharEvent( static_cast<int>( codepoint ) );
+		s_consoleWindow.inputField.ClearAutoComplete();
+	}
+}
+
 static void Posix_ConsolePasteClipboard( void ) {
 	char *clipboardText = SDL_GetClipboardText();
 	if ( clipboardText == NULL ) {
 		return;
 	}
 
-	for ( const unsigned char *scan = reinterpret_cast<unsigned char *>( clipboardText ); *scan != '\0'; ++scan ) {
-		if ( *scan == '\n' || *scan == '\r' ) {
-			break;
-		}
-		if ( *scan >= ' ' ) {
-			s_consoleWindow.inputField.CharEvent( *scan );
-		}
-	}
+	Posix_ConsoleAppendUTF8( clipboardText, true );
 	SDL_free( clipboardText );
 }
 
@@ -868,16 +903,7 @@ static bool Posix_ConsoleHandleKey( const SDL_KeyboardEvent &keyEvent ) {
 }
 
 static void Posix_ConsoleHandleText( const char *text ) {
-	if ( text == NULL ) {
-		return;
-	}
-
-	for ( const unsigned char *scan = reinterpret_cast<const unsigned char *>( text ); *scan != '\0'; ++scan ) {
-		if ( *scan >= ' ' ) {
-			s_consoleWindow.inputField.CharEvent( *scan );
-			s_consoleWindow.inputField.ClearAutoComplete();
-		}
-	}
+	Posix_ConsoleAppendUTF8( text, false );
 }
 
 static void Posix_ConsoleBuildLines( const char *text, int maxColumns, idList<idStr> &lines ) {
@@ -1066,7 +1092,7 @@ static void Posix_ConsoleRender( void ) {
 }
 
 static void Posix_ConsoleShow( int visLevel, bool quitOnClose ) {
-	Posix_SplashDestroy( false );
+	Posix_SplashDestroy();
 	s_consoleWindow.quitOnClose = quitOnClose;
 
 	if ( visLevel < 0 || visLevel > 2 ) {
@@ -1290,6 +1316,12 @@ void Posix_ConsoleFrame( void ) {
 }
 
 void Posix_ConsoleFatalErrorWait( void ) {
+#ifdef ID_DEDICATED
+	// Headless servers already preserve fatal diagnostics on stderr, in the
+	// engine log, and in the fatal breadcrumb. Never replace that path with an
+	// SDL window that can block forever when no compositor is available.
+	return;
+#endif
 #if defined( USE_SDL3 )
 	if ( !Posix_IsMainThread() ) {
 		// SDL window creation and event pumping are main-thread-only on
@@ -1331,7 +1363,7 @@ void Posix_ConsoleFatalErrorWait( void ) {
 
 void Posix_ShutdownConsole( void ) {
 #if defined( USE_SDL3 )
-	Posix_SplashDestroy( true );
+	Posix_SplashDestroy();
 	Posix_ConsoleStopTextInput();
 	if ( s_consoleWindow.renderer != NULL ) {
 		SDL_DestroyRenderer( s_consoleWindow.renderer );
@@ -1350,15 +1382,8 @@ void Posix_ShutdownConsole( void ) {
 #endif
 }
 
-void Posix_ReleaseStartupSDLVideoOwnership( void ) {
-#if defined( USE_SDL3 )
-	s_splashWindow.videoInitializedBySplash = false;
-	s_consoleWindow.videoInitializedByConsole = false;
-#endif
-}
-
 void Sys_ShowSplash( void ) {
-#if defined( USE_SDL3 )
+#if defined( USE_SDL3 ) && !defined( ID_DEDICATED )
 	if ( s_splashWindow.window != NULL || s_splashWindow.createFailed ) {
 		return;
 	}
@@ -1385,14 +1410,14 @@ void Sys_ShowSplash( void ) {
 	s_splashWindow.windowID = SDL_GetWindowID( s_splashWindow.window );
 	if ( s_splashWindow.windowID == 0 ) {
 		Sys_Printf( "SDL splash disabled: failed to resolve window id: %s\n", SDL_GetError() );
-		Posix_SplashDestroy( true );
+		Posix_SplashDestroy();
 		s_splashWindow.createFailed = true;
 		return;
 	}
 	s_splashWindow.renderer = Posix_CreateSupportRenderer( s_splashWindow.window, "splash" );
 	if ( s_splashWindow.renderer == NULL ) {
 		Sys_Printf( "SDL splash disabled: failed to create renderer: %s\n", SDL_GetError() );
-		Posix_SplashDestroy( true );
+		Posix_SplashDestroy();
 		s_splashWindow.createFailed = true;
 		return;
 	}
@@ -1408,7 +1433,7 @@ void Sys_ShowSplash( void ) {
 
 void Sys_DestroySplash( void ) {
 #if defined( USE_SDL3 )
-	Posix_SplashDestroy( false );
+	Posix_SplashDestroy();
 #endif
 }
 

@@ -92,6 +92,32 @@ shadowMapLightClassification_t R_ClassifyShadowMapLight( const viewLight_t *vLig
 	return classification;
 }
 
+shadowMapProjectedFilterSettings_t R_ShadowMapProjectedFilterSettings( const viewLight_t *vLight ) {
+	shadowMapProjectedFilterSettings_t settings;
+	memset( &settings, 0, sizeof( settings ) );
+
+	const shadowMapLightClassification_t classification = R_ClassifyShadowMapLight( vLight );
+	// A global point light still uses the independently tuned point-light cube
+	// policy.  This specialization is only for large projected sources: parallel
+	// sunlight (including global+parallel sky lights) and global projectors.
+	settings.distantSource = classification.projectedLight && vLight != NULL
+		&& ( vLight->parallel || classification.globalLight );
+	settings.filterScale = settings.distantSource
+		? idMath::ClampFloat( 0.0f, 1.0f, r_shadowMapDistantFilterScale.GetFloat() )
+		: 1.0f;
+	settings.filterRadius = Max( 0.0f, r_shadowMapFilterRadius.GetFloat() ) * settings.filterScale;
+	settings.filterTaps = idMath::ClampInt( 1, 13, r_shadowMapFilterTaps.GetInteger() );
+	settings.filterMode = idMath::ClampInt( 0, 2, r_shadowMapFilterMode.GetInteger() );
+	settings.pcssLightRadius = Max( 0.0f, r_shadowMapPCSSLightRadius.GetFloat() ) * settings.filterScale;
+	settings.pcssMaxRadius = Max( 0.0f, r_shadowMapPCSSMaxRadius.GetFloat() ) * settings.filterScale;
+	settings.effectiveFilterRadius = settings.filterRadius;
+	if ( settings.filterMode == 2 ) {
+		settings.effectiveFilterRadius = Max( settings.effectiveFilterRadius,
+			Max( settings.pcssLightRadius, settings.pcssMaxRadius ) );
+	}
+	return settings;
+}
+
 const char *R_ShadowMapLightClassName( shadowMapLightClass_t lightClass ) {
 	switch ( lightClass ) {
 	case SHADOWMAP_LIGHT_POINT:

@@ -95,7 +95,7 @@ typedef void ( ALC_APIENTRY *openq4_alcEventCallbackSOFT_t )( ALCEVENTPROCTYPESO
 static openq4_alcEventIsSupportedSOFT_t qalcEventIsSupportedSOFT = NULL;
 static openq4_alcEventControlSOFT_t qalcEventControlSOFT = NULL;
 static openq4_alcEventCallbackSOFT_t qalcEventCallbackSOFT = NULL;
-static volatile int openQ4_PendingOpenALDeviceEvents = 0;
+static std::atomic<int> openQ4_PendingOpenALDeviceEvents( 0 );
 
 static int openQ4_DeviceEventFlagForType( const ALCenum eventType )
 {
@@ -166,7 +166,7 @@ static void ALC_APIENTRY openQ4_OpenALDeviceEventCallback( ALCenum eventType, AL
 	const int flag = openQ4_DeviceEventFlagForType( eventType );
 	if( flag != 0 )
 	{
-		openQ4_PendingOpenALDeviceEvents |= flag;
+		openQ4_PendingOpenALDeviceEvents.fetch_or( flag, std::memory_order_relaxed );
 	}
 }
 
@@ -180,9 +180,7 @@ static bool openQ4_LoadSystemEventProcs( ALCdevice* device )
 
 static int openQ4_ConsumePendingDeviceEventFlags()
 {
-	const int eventFlags = openQ4_PendingOpenALDeviceEvents;
-	openQ4_PendingOpenALDeviceEvents = 0;
-	return eventFlags;
+	return openQ4_PendingOpenALDeviceEvents.exchange( 0, std::memory_order_relaxed );
 }
 #else
 static int openQ4_ConsumePendingDeviceEventFlags()

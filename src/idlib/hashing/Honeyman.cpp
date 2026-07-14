@@ -2,12 +2,18 @@
 
 
 
-#define HONEYMAN_INIT_VALUE		0x00000000L
-#define HONEYMAN_XOR_VALUE		0x00000000L
+#include <stdint.h>
+
+typedef uint32_t honeymanWord_t;
+
+static_assert( sizeof( honeymanWord_t ) == 4, "Honeyman checksum requires a 32-bit word" );
+
+#define HONEYMAN_INIT_VALUE		UINT32_C( 0x00000000 )
+#define HONEYMAN_XOR_VALUE		UINT32_C( 0x00000000 )
 
 #ifdef CREATE_CRC_TABLE
 
-static unsigned long crctable[256];
+static honeymanWord_t crctable[256];
 
 /*
 	Create the CRC table for the simplified version of the pathalias hashing function.
@@ -31,10 +37,10 @@ static unsigned long crctable[256];
 
 void make_crc_table( void ) {
 
-	#define POLY 0x48000000L	/* 31-bit polynomial (avoids sign problems) */
+	#define POLY UINT32_C( 0x48000000 )	/* 31-bit polynomial (avoids sign problems) */
 
 	for ( int i = 0; i < 128; i++ ) {
-		int sum = 0;
+		honeymanWord_t sum = 0;
 		for ( int j = 7 - 1; j >= 0; --j ) {
 			if ( i & ( 1 << j ) ) {
 				sum ^= POLY >> j;
@@ -46,7 +52,7 @@ void make_crc_table( void ) {
 
 #else
 
-static unsigned long crctable[256] = {
+static const honeymanWord_t crctable[256] = {
 	0x00000000L, 0x48000000L, 0x24000000L, 0x6c000000L,
 	0x12000000L, 0x5a000000L, 0x36000000L, 0x7e000000L,
 	0x09000000L, 0x41000000L, 0x2d000000L, 0x65000000L,
@@ -84,26 +90,28 @@ static unsigned long crctable[256] = {
 #endif
 
 void Honeyman_InitChecksum( unsigned long &crcvalue ) {
-	crcvalue = HONEYMAN_INIT_VALUE;
+	crcvalue = static_cast<unsigned long>( HONEYMAN_INIT_VALUE );
 }
 
 void Honeyman_Update( unsigned long &crcvalue, const byte data ) {
-	crcvalue = ( ( crcvalue >> 7 ) ^ crctable[ ( crcvalue ^ data ) & 0x7f ] );
+	const honeymanWord_t crc = static_cast<honeymanWord_t>( crcvalue );
+	crcvalue = static_cast<unsigned long>( ( crc >> 7 ) ^ crctable[ ( crc ^ data ) & 0x7fu ] );
 }
 
 void Honeyman_UpdateChecksum( unsigned long &crcvalue, const void *data, int length ) {
-	unsigned long crc;
+	honeymanWord_t crc;
 	const unsigned char *buf = (const unsigned char *) data;
 
-	crc = crcvalue;
+	crc = static_cast<honeymanWord_t>( crcvalue );
 	while( length-- ) {
-		crc = ( ( crc >> 7 ) ^ crctable[ ( crc ^ *buf++ ) & 0x7f ] );
+		crc = ( crc >> 7 ) ^ crctable[ ( crc ^ *buf++ ) & 0x7fu ];
 	}
-	crcvalue = crc;
+	crcvalue = static_cast<unsigned long>( crc );
 }
 
 void Honeyman_FinishChecksum( unsigned long &crcvalue ) {
-	crcvalue ^= HONEYMAN_XOR_VALUE;
+	const honeymanWord_t crc = static_cast<honeymanWord_t>( crcvalue ) ^ HONEYMAN_XOR_VALUE;
+	crcvalue = static_cast<unsigned long>( crc );
 }
 
 unsigned long Honeyman_BlockChecksum( const void *data, int length ) {

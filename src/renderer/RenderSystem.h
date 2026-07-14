@@ -411,8 +411,9 @@ public:
 	// Resizes a image to the specified width and height.
 	virtual void			ResizeImage(idImage* image, int width, int height) = 0;
 
-	// Resizes a render texture to the specified width and height.
-	virtual void			ResizeRenderTexture(idRenderTexture* renderTexture, int width, int height) = 0;
+	// Resizes a render texture to the specified width and height. A failed target
+	// is queued for destruction and the caller's pointer is cleared.
+	virtual bool			ResizeRenderTexture(idRenderTexture*& renderTexture, int width, int height) = 0;
 
 	// Fills in the dimensions for the given render texture.
 	virtual void			GetRenderTextureSize(idRenderTexture* renderTexture, int& renderTextureWidth, int& renderTextureHeight) = 0;
@@ -444,6 +445,8 @@ public:
 
 	// Fills in the image dinem for the given image.
 	virtual void			GetImageSize(idImage* image, int& imageWidth, int& imageHeight) = 0;
+	// Returns the sample count actually allocated after driver-cap clamping.
+	virtual int				GetImageMSAASamples(idImage* image) = 0;
 // jmarshall end
 };
 

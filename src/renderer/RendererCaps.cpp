@@ -849,7 +849,7 @@ void RendererDriverQuirks_Apply( renderBackendCaps_t &caps, const rendererDriver
 			RENDERER_DRIVER_QUIRK_PREFER_SIMPLE_INTERACTION |
 			RENDERER_DRIVER_QUIRK_DISABLE_ARB2_INTERACTIONS;
 		rg_driverQuirkReport.rulesMatched++;
-		RendererDriverQuirks_AppendSummary( "Apple OpenGL 2.1 compatibility path uses CPU-backed vertex cache, simple ARB interaction programs, and bypassed ARB2 light interactions for stability" );
+		RendererDriverQuirks_AppendSummary( "Apple OpenGL 2.1 compatibility path uses a CPU-backed vertex cache with automatic stock GLSL interactions, simple ARB per-surface fallback, and an emergency interaction bypass" );
 	}
 
 	if ( ( rg_driverQuirkReport.flags & RENDERER_DRIVER_QUIRK_FORCE_LEGACY ) != 0 ) {

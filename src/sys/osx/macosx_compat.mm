@@ -49,6 +49,7 @@ If you have questions concerning this license or the applicable additional terms
 
 static idStr	basepath;
 static idStr	savepath;
+static idStr	cdpath;
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -543,6 +544,35 @@ static void Sys_ErrorIfMacOSAppBundlePackageRootIncomplete( const idStr &appDire
 		missingEntries.c_str(),
 		foundMismatchedEntries.Length() > 0 ? foundMismatchedEntries.c_str() : "none detected"
 	);
+}
+
+/*
+=============
+Sys_DefaultCDPath
+
+Finder and LaunchServices do not guarantee that an application's process
+working directory is the directory containing the app bundle. Keep loose
+binary launches on the normal POSIX current-directory behavior, but make an
+app-bundle launch search the adjacent package root for baseoq4 content. The
+package check belongs here rather than only in Sys_DefaultBasePath because
+retail q4base auto-discovery can bypass that fallback entirely.
+=============
+*/
+const char *Sys_DefaultCDPath( void ) {
+	idStr exeDirectory = Sys_EXEPath();
+	if ( exeDirectory.Length() > 0 ) {
+		exeDirectory.StripFilename();
+
+		idStr appDirectory;
+		idStr packageDirectory;
+		if ( Sys_GetAppBundlePackageRootFromExecutableDirectory( exeDirectory, appDirectory, packageDirectory ) ) {
+			Sys_ErrorIfMacOSAppBundlePackageRootIncomplete( appDirectory, packageDirectory );
+			cdpath = packageDirectory;
+			return cdpath.c_str();
+		}
+	}
+
+	return Posix_Cwd();
 }
 
 static bool Sys_UseBasePathCandidate( const idStr &candidate, const char *label ) {
