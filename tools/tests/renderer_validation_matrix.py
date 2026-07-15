@@ -1827,6 +1827,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--savepath", default="", help="Save path root. Defaults to <repo>/.home.")
     parser.add_argument("--output-dir", default="", help="Report/output directory. Defaults to <repo>/.tmp/renderer-validation/<timestamp>.")
     parser.add_argument(
+        "--executable",
+        default="",
+        help="Explicit client or launcher to test. Defaults to the host-matching staged client.",
+    )
+    parser.add_argument(
         "--skip-official-pak-validation",
         action="store_true",
         help="Disable official q4base PK4 validation for assetless engine-startup smoke checks.",
@@ -1889,7 +1894,16 @@ def main(argv: list[str]) -> int:
             print(f"  {item['criterion']}: {item['required']}")
         return 0
 
-    executable = find_client_executable(root)
+    if args.executable:
+        executable = Path(args.executable).resolve()
+        if not executable.is_file():
+            print(f"explicit client executable does not exist: {executable}", file=sys.stderr)
+            return 2
+        if os.name != "nt" and not os.access(executable, os.X_OK):
+            print(f"explicit client executable is not executable: {executable}", file=sys.stderr)
+            return 2
+    else:
+        executable = find_client_executable(root)
     savepath = Path(args.savepath).resolve() if args.savepath else root / ".home"
     savepath.mkdir(parents=True, exist_ok=True)
     timestamp = time.strftime("%Y%m%d-%H%M%S")

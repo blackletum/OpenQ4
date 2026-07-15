@@ -187,11 +187,18 @@ def make_macos_support_info_script_bytes(package) -> bytes:
         'echo "Support report output is limited to the final"',
         "write_bounded_report() {",
         "write_openq4_log_candidate_paths() {",
+        "write_openq4_renderer_config_candidate_paths() {",
         "redact_text() { cat; }",
         "contains_control_chars() { return 1; }",
         'echo "Support package root must not contain control characters"',
         'echo "Support output directory must not contain control characters"',
         'echo "HOME was not set; home-scoped openq4.log files were skipped."',
+        'echo "HOME was not set; saved openQ4Config.cfg paths were skipped."',
+        'echo "logs/renderer-config.txt"',
+        'echo "Game module search failed:"',
+        'echo "Game module load failed:"',
+        'echo "dlopen .* failed:"',
+        'echo "Only renderer and performance settings are copied"',
         'echo "HOME was not set; the macOS DiagnosticReports directory could not be located."',
         'echo ".XXXXXX.tar.gz.tmp"',
         'echo "does not dump the environment"',
@@ -225,11 +232,18 @@ def make_validation_support_info_script_bytes(validator) -> bytes:
         'echo "Support report output is limited to the final"',
         "write_bounded_report() {",
         "write_openq4_log_candidate_paths() {",
+        "write_openq4_renderer_config_candidate_paths() {",
         "redact_text() { cat; }",
         "contains_control_chars() { return 1; }",
         'echo "Support package root must not contain control characters"',
         'echo "Support output directory must not contain control characters"',
         'echo "HOME was not set; home-scoped openq4.log files were skipped."',
+        'echo "HOME was not set; saved openQ4Config.cfg paths were skipped."',
+        'echo "logs/renderer-config.txt"',
+        'echo "Game module search failed:"',
+        'echo "Game module load failed:"',
+        'echo "dlopen .* failed:"',
+        'echo "Only renderer and performance settings are copied"',
         'echo "HOME was not set; the macOS DiagnosticReports directory could not be located."',
         'echo ".XXXXXX.tar.gz.tmp"',
         'echo "does not dump the environment"',
@@ -281,12 +295,12 @@ def make_macos_symbol_manifest_bytes(package_name: str, arch: str, version: str,
         "  size=1\n"
         f"  macho_uuid=UUID: 00000000-0000-0000-0000-000000000003 (arm64) openQ4-ded_{arch}\n"
         f"  dsym=dSYMs/openQ4-ded_{arch}.dSYM\n"
-        f"- path=baseoq4/game-sp_{arch}.dylib\n"
+        f"- path=openQ4.app/Contents/Frameworks/game-sp_{arch}.dylib\n"
         f"  sha256={'3' * 64}\n"
         "  size=1\n"
         f"  macho_uuid=UUID: 00000000-0000-0000-0000-000000000004 (arm64) game-sp_{arch}.dylib\n"
         f"  dsym=dSYMs/game-sp_{arch}.dylib.dSYM\n"
-        f"- path=baseoq4/game-mp_{arch}.dylib\n"
+        f"- path=openQ4.app/Contents/Frameworks/game-mp_{arch}.dylib\n"
         f"  sha256={'4' * 64}\n"
         "  size=1\n"
         f"  macho_uuid=UUID: 00000000-0000-0000-0000-000000000005 (arm64) game-mp_{arch}.dylib\n"
@@ -319,11 +333,12 @@ def make_macos_archive_entries(
         f"{prefix}{package.MACOS_SUPPORT_INFO_SCRIPT_NAME}": (make_macos_support_info_script_bytes(package), 0o755),
         f"{prefix}openQ4-client_{arch}": (client_bytes, client_mode),
         f"{prefix}openQ4-ded_{arch}": (b"dedicated-binary\n", dedicated_mode),
-        f"{prefix}{package.GAME_DIR_NAME}/game-sp_{arch}.dylib": (b"sp-module\n", 0o755),
-        f"{prefix}{package.GAME_DIR_NAME}/game-mp_{arch}.dylib": (b"mp-module\n", 0o755),
-        f"{prefix}{package.GAME_DIR_NAME}/mod.json": (b'{"version":"0.2.000"}\n', 0o644),
-        f"{prefix}{package.GAME_DIR_NAME}/pak0.pk4": (b"pk4\n", 0o644),
-        f"{prefix}{package.GAME_DIR_NAME}/pak1.pk4": (b"pk4\n", 0o644),
+        f"{prefix}openQ4.app/Contents/Frameworks/game-sp_{arch}.dylib": (b"sp-module\n", 0o755),
+        f"{prefix}openQ4.app/Contents/Frameworks/game-mp_{arch}.dylib": (b"mp-module\n", 0o755),
+        f"{prefix}openQ4.app/Contents/Resources/{package.GAME_DIR_NAME}/mod.json": (b'{"version":"0.2.000"}\n', 0o644),
+        f"{prefix}openQ4.app/Contents/Resources/{package.GAME_DIR_NAME}/pak0.pk4": (b"pk4\n", 0o644),
+        f"{prefix}openQ4.app/Contents/Resources/{package.GAME_DIR_NAME}/pak1.pk4": (b"pk4\n", 0o644),
+        f"{prefix}openQ4.app/Contents/Resources/assets/splash/quake4_rt_bitmap_4001.bmp": (b"bmp\n", 0o644),
         f"{prefix}openQ4.app/Contents/Info.plist": (plist_bytes, 0o644),
         f"{prefix}openQ4.app/Contents/PkgInfo": (package.MACOS_PKGINFO_BYTES, 0o644),
         f"{prefix}openQ4.app/Contents/MacOS/openQ4": (client_bytes, app_exec_mode),
@@ -553,12 +568,20 @@ def validate_macos_app_bundle_validator_runtime() -> None:
     try:
         client_bytes = b"client-binary\n"
         write_test_file(package_root / f"openQ4-client_{arch}", client_bytes, 0o755)
-        (package_root / package.GAME_DIR_NAME).mkdir(parents=True, exist_ok=True)
         write_test_file(app_contents / "Info.plist", make_macos_plist_bytes(package, version))
         write_test_file(app_contents / "PkgInfo", package.MACOS_PKGINFO_BYTES)
         write_test_file(app_contents / "MacOS" / "openQ4", client_bytes, 0o755)
+        write_test_file(app_contents / "Frameworks" / f"game-sp_{arch}.dylib", b"sp-module\n", 0o755)
+        write_test_file(app_contents / "Frameworks" / f"game-mp_{arch}.dylib", b"mp-module\n", 0o755)
         write_test_file(app_contents / "Resources" / "openQ4.icns", b"icns\n")
         write_test_file(app_contents / "Resources" / "VERSION.txt", b"openQ4\n")
+        write_test_file(app_contents / "Resources" / package.GAME_DIR_NAME / "mod.json", b"{}\n")
+        write_test_file(app_contents / "Resources" / package.GAME_DIR_NAME / "pak0.pk4", b"pk4\n")
+        write_test_file(app_contents / "Resources" / package.GAME_DIR_NAME / "pak1.pk4", b"pk4\n")
+        write_test_file(
+            app_contents / "Resources" / "assets" / "splash" / "quake4_rt_bitmap_4001.bmp",
+            b"bmp\n",
+        )
         localized_info = make_macos_localized_info_bytes(version)
         write_test_file(app_contents / "Resources" / "English.lproj" / "InfoPlist.strings", localized_info)
         write_test_file(app_contents / "Resources" / "French.lproj" / "InfoPlist.strings", localized_info)
@@ -604,9 +627,8 @@ def validate_macos_app_bundle_validator_runtime() -> None:
             "macOS app bundle with unexpected nested payload",
         )
         unexpected_bundle_file.unlink()
-        unexpected_bundle_file.parent.rmdir()
 
-        unexpected_bundle_dir = app_contents / "Frameworks"
+        unexpected_bundle_dir = app_contents / "PlugIns"
         unexpected_bundle_dir.mkdir()
         expect_runtime_error(
             "unexpected directories",
@@ -635,6 +657,23 @@ def validate_macos_app_bundle_validator_runtime() -> None:
         )
 
         write_test_file(app_contents / "Info.plist", make_macos_plist_bytes(package, version))
+        missing_layout_plist = dict(package.MACOS_EXPECTED_PLIST_VALUES)
+        missing_layout_plist.pop(package.MACOS_RUNTIME_LAYOUT_KEY)
+        missing_layout_plist.update(
+            {
+                "CFBundleShortVersionString": version,
+                "CFBundleVersion": version,
+                "NSHighResolutionCapable": True,
+                "NSSupportsAutomaticGraphicsSwitching": True,
+            }
+        )
+        write_test_file(app_contents / "Info.plist", plistlib.dumps(missing_layout_plist))
+        expect_runtime_error(
+            "OpenQ4RuntimeLayout",
+            lambda: package.validate_macos_app_bundle(package_root, app_root, arch, version),
+            "macOS app Info.plist without self-contained runtime marker",
+        )
+        write_test_file(app_contents / "Info.plist", make_macos_plist_bytes(package, version))
         write_test_file(app_contents / "PkgInfo", b"BROKEN!!")
         expect_runtime_error(
             "valid PkgInfo",
@@ -645,6 +684,23 @@ def validate_macos_app_bundle_validator_runtime() -> None:
         missing_icon_package = work / "missing-icon-package"
         missing_icon_install = work / "missing-icon-install"
         write_test_file(missing_icon_package / f"openQ4-client_{arch}", client_bytes, 0o755)
+        write_test_file(missing_icon_package / package.GAME_DIR_NAME / "mod.json", b"{}\n")
+        write_test_file(missing_icon_package / package.GAME_DIR_NAME / "pak0.pk4", b"pk4\n")
+        write_test_file(missing_icon_package / package.GAME_DIR_NAME / "pak1.pk4", b"pk4\n")
+        write_test_file(
+            missing_icon_package / package.GAME_DIR_NAME / f"game-sp_{arch}.dylib",
+            b"sp-module\n",
+            0o755,
+        )
+        write_test_file(
+            missing_icon_package / package.GAME_DIR_NAME / f"game-mp_{arch}.dylib",
+            b"mp-module\n",
+            0o755,
+        )
+        write_test_file(
+            missing_icon_package / "assets" / "splash" / "quake4_rt_bitmap_4001.bmp",
+            b"bmp\n",
+        )
         missing_icon_install.mkdir(parents=True, exist_ok=True)
         expect_runtime_error(
             "app icon source was not found",
@@ -657,6 +713,63 @@ def validate_macos_app_bundle_validator_runtime() -> None:
             ),
             "macOS app bundle creation without staged icon",
         )
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def validate_macos_self_contained_app_creation_runtime() -> None:
+    package = load_package_module()
+    work = ROOT / ".tmp" / "macos-self-contained-app-contract"
+    package_root = work / "openq4-v0.2.000-macos-arm64-opengl"
+    install_dir = work / "install"
+    arch = "arm64"
+    version = "0.2.000"
+
+    shutil.rmtree(work, ignore_errors=True)
+    try:
+        write_test_file(package_root / f"openQ4-client_{arch}", b"client\n", 0o755)
+        write_test_file(package_root / package.GAME_DIR_NAME / "mod.json", b"{}\n")
+        write_test_file(package_root / package.GAME_DIR_NAME / "pak0.pk4", b"pak0\n")
+        write_test_file(package_root / package.GAME_DIR_NAME / "pak1.pk4", b"pak1\n")
+        write_test_file(
+            package_root / package.GAME_DIR_NAME / f"game-sp_{arch}.dylib",
+            b"sp\n",
+            0o755,
+        )
+        write_test_file(
+            package_root / package.GAME_DIR_NAME / f"game-mp_{arch}.dylib",
+            b"mp\n",
+            0o755,
+        )
+        write_test_file(
+            package_root / "assets" / "splash" / "quake4_rt_bitmap_4001.bmp",
+            b"bmp\n",
+        )
+        write_test_file(install_dir / "openQ4.icns", b"icns\n")
+
+        app_root = package.create_macos_app_bundle(
+            package_root,
+            install_dir,
+            arch,
+            version,
+            "v0.2.000",
+        )
+        package.validate_macos_app_bundle(package_root, app_root, arch, version)
+
+        if (package_root / package.GAME_DIR_NAME).exists():
+            raise AssertionError("macOS package must not duplicate game data beside a self-contained app")
+        if (package_root / "assets" / "splash").exists():
+            raise AssertionError("macOS package must not retain a duplicate splash tree beside the app")
+        for relative_path in (
+            package.MACOS_APP_GAME_DATA_DIR / "mod.json",
+            package.MACOS_APP_GAME_DATA_DIR / "pak0.pk4",
+            package.MACOS_APP_GAME_DATA_DIR / "pak1.pk4",
+            package.MACOS_APP_SPLASH_DIR / "quake4_rt_bitmap_4001.bmp",
+            package.MACOS_APP_FRAMEWORKS_DIR / f"game-sp_{arch}.dylib",
+            package.MACOS_APP_FRAMEWORKS_DIR / f"game-mp_{arch}.dylib",
+        ):
+            if not (app_root / relative_path).is_file():
+                raise AssertionError(f"macOS self-contained app is missing {relative_path}")
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -2065,8 +2178,9 @@ def validate_macos_signing_keeps_standalone_client_signature_runtime() -> None:
         client_binary = package_root / f"openQ4-client_{arch}"
         write_test_file(client_binary, b"unsigned-client\n", 0o755)
         write_test_file(package_root / f"openQ4-ded_{arch}", b"dedicated\n", 0o755)
-        write_test_file(package_root / package.GAME_DIR_NAME / f"game-sp_{arch}.dylib", b"sp\n", 0o755)
-        write_test_file(package_root / package.GAME_DIR_NAME / f"game-mp_{arch}.dylib", b"mp\n", 0o755)
+        framework_root = app_root / package.MACOS_APP_FRAMEWORKS_DIR
+        write_test_file(framework_root / f"game-sp_{arch}.dylib", b"sp\n", 0o755)
+        write_test_file(framework_root / f"game-mp_{arch}.dylib", b"mp\n", 0o755)
         write_test_file(app_executable, b"stale-app-executable\n", 0o755)
 
         calls = []
@@ -2076,9 +2190,9 @@ def validate_macos_signing_keeps_standalone_client_signature_runtime() -> None:
                 return "/usr/bin/codesign"
             return original_which(tool_name)
 
-        def fake_codesign_target(codesign_path, target, config):
+        def fake_codesign_target(codesign_path, target, config, *, include_entitlements=True):
             del codesign_path, config
-            calls.append(target.relative_to(package_root).as_posix())
+            calls.append((target.relative_to(package_root).as_posix(), include_entitlements))
             if target == app_root:
                 write_test_file(app_executable, app_executable.read_bytes() + b"bundle-signed\n", 0o755)
             else:
@@ -2103,11 +2217,11 @@ def validate_macos_signing_keeps_standalone_client_signature_runtime() -> None:
         )
 
         expected_calls = [
-            f"openQ4-client_{arch}",
-            f"openQ4-ded_{arch}",
-            f"{package.GAME_DIR_NAME}/game-sp_{arch}.dylib",
-            f"{package.GAME_DIR_NAME}/game-mp_{arch}.dylib",
-            "openQ4.app",
+            (f"openQ4-client_{arch}", True),
+            (f"openQ4-ded_{arch}", True),
+            (f"openQ4.app/Contents/Frameworks/game-sp_{arch}.dylib", False),
+            (f"openQ4.app/Contents/Frameworks/game-mp_{arch}.dylib", False),
+            ("openQ4.app", True),
         ]
         if calls != expected_calls:
             raise AssertionError(f"Unexpected macOS signing order: {calls!r}")
@@ -2139,8 +2253,7 @@ def validate_macos_install_name_normalization_runtime() -> None:
 
     shutil.rmtree(work, ignore_errors=True)
     try:
-        sp_module = package_root / package.GAME_DIR_NAME / f"game-sp_{arch}.dylib"
-        mp_module = package_root / package.GAME_DIR_NAME / f"game-mp_{arch}.dylib"
+        sp_module, mp_module = package.macos_embedded_game_module_paths(package_root, arch)
         write_test_file(sp_module, b"sp\n", 0o755)
         write_test_file(mp_module, b"mp\n", 0o755)
 
@@ -2549,6 +2662,9 @@ def validate_sdl3_runtime_contract() -> None:
     hint_wrapper = function_body(source, "void Sys_SDL_ApplyVideoHintDefaults(void) {")
     support_renderer = function_body(syscon, "static SDL_Renderer *Posix_CreateSupportRenderer( SDL_Window *window, const char *purpose ) {")
     console_create = function_body(syscon, "static bool Posix_ConsoleCreateWindow( void ) {")
+    console_presentation = function_body(syscon, "static void Posix_ConsoleApplyLogicalPresentation( int width, int height ) {")
+    console_coordinates = function_body(syscon, "static void Posix_ConsoleWindowToRenderCoordinates( float &x, float &y ) {")
+    console_click = function_body(syscon, "static void Posix_ConsoleClickButton( float x, float y ) {")
     splash_create = function_body(syscon, "void Sys_ShowSplash( void ) {")
     splash_drain = function_body(syscon, "static void Posix_SplashDrainEvents( SDL_WindowID windowID ) {")
     splash_ensure = function_body(syscon, "static bool Posix_SplashEnsureVideo( void ) {")
@@ -2582,6 +2698,12 @@ def validate_sdl3_runtime_contract() -> None:
     require(support_renderer, "falling back to software", "Metal bridge support-window renderer fallback")
     require(support_renderer, 'SDL_CreateRenderer( window, "software" )', "Metal bridge support-window software fallback")
     require(console_create, 'Posix_CreateSupportRenderer( s_consoleWindow.window, "system console" )', "Metal bridge system console renderer")
+    require(console_create, "Posix_ConsoleUpdateLayout();", "Metal bridge system console initial HiDPI layout")
+    require(console_presentation, "SDL_SetRenderLogicalPresentation(", "Retina system console logical presentation")
+    require(console_presentation, "SDL_LOGICAL_PRESENTATION_STRETCH", "Retina system console full-window presentation")
+    require(console_presentation, "s_consoleWindow.logicalWidth = width;", "Retina system console presentation cache")
+    require(console_coordinates, "SDL_RenderCoordinatesFromWindow(", "Retina system console pointer conversion")
+    require(console_click, "Posix_ConsoleWindowToRenderCoordinates( x, y );", "Retina system console clickable controls")
     require(splash_create, 'Posix_CreateSupportRenderer( s_splashWindow.window, "splash" )', "Metal bridge splash renderer")
     require_before(console_create, "if ( s_consoleWindow.windowID == 0 )", 'Posix_CreateSupportRenderer( s_consoleWindow.window, "system console" )', "Metal bridge system console window-id guard")
     require_before(splash_create, "if ( s_splashWindow.windowID == 0 )", 'Posix_CreateSupportRenderer( s_splashWindow.window, "splash" )', "Metal bridge splash window-id guard")
@@ -2613,6 +2735,7 @@ def validate_packaging_and_release_contract() -> None:
     require(package, "import subprocess", "macOS binary dependency validation")
     require(package, "shutil.copy2(client_binary, app_executable)", "macOS app executable creation")
     require(package, "macos_codesign_target(codesign_path, target, config)", "macOS standalone client signing")
+    require(package, "include_entitlements=False", "macOS nested-code entitlement isolation")
     reject(package, "if target == client_binary", "macOS standalone client signing")
     reject(package, "shutil.copy2(app_executable, client_binary)", "macOS signed app executable recopy")
     require(package, "get_package_executable_archive_paths", "POSIX archive executable mode preservation")
@@ -2817,6 +2940,7 @@ def validate_packaging_and_release_contract() -> None:
     require(package, '"CFBundleIconFile": "openQ4.icns"', "macOS package Info.plist validation")
     require(package, '"CFBundleName": "openQ4"', "macOS package Info.plist validation")
     require(package, '"LSApplicationCategoryType": "public.app-category.games"', "macOS package Info.plist validation")
+    require(package, 'MACOS_RUNTIME_LAYOUT_VALUE = "self-contained-v1"', "macOS self-contained runtime layout marker")
     require(package, '("CFBundleShortVersionString", "CFBundleVersion")', "macOS package Info.plist validation")
     require(package, "openQ4.app/Contents/PkgInfo", "macOS package PkgInfo validation")
     require(package, "openQ4-ded_{arch}", "macOS package archive validation")
@@ -2845,13 +2969,21 @@ def validate_packaging_and_release_contract() -> None:
     require(compat, "!Sys_PathIsSymlink( path )", "macOS app-only executable symlink guard")
     require(compat, "Sys_DirectoryContainsGameDir", "macOS base path validation")
     require(compat, "BASE_GAMEDIR", "macOS base path validation")
-    require(compat, "Sys_UseAppBundleParentBasePathCandidate", "macOS app bundle base path validation")
+    require(compat, "Sys_SelectMacOSAppBundleRuntimeRoots", "macOS app bundle runtime-root validation")
+    require(compat, "Sys_MacOSAppBundleDeclaresSelfContainedRuntime", "macOS self-contained app plist runtime marker")
+    require(compat, '@"OpenQ4RuntimeLayout"', "macOS self-contained app plist runtime marker")
+    require(compat, "Sys_GetSiblingSelfContainedAppRuntimeRoots", "macOS loose-binary self-contained runtime discovery")
+    require(compat, 'resourceDirectory.AppendPath( "Resources" )', "macOS self-contained app resource root")
+    require(compat, 'frameworkDirectory.AppendPath( "Frameworks" )', "macOS self-contained app module root")
     require(compat, "\"/Contents/MacOS\"", "macOS app bundle base path validation")
     require(compat, "Sys_IsMacOSAppBundleDirectoryName", "macOS renamed app bundle base path validation")
     require(compat, 'static const char appBundleSuffix[] = ".app";', "macOS renamed app bundle base path validation")
     require(compat, "idStr::Icmp( suffixStart, appBundleSuffix )", "macOS renamed app bundle base path validation")
     reject(compat, 'appName.Icmp( "openQ4.app" )', "macOS renamed app bundle base path validation")
-    require(compat, "\"app parent\"", "macOS app bundle base path validation")
+    require(compat, 'Sys_UseBasePathCandidate( packageRoot, "app runtime" )', "macOS app bundle base path validation")
+    require(compat, "Sys_ErrorIfMacOSAppBundleRuntimeIncomplete", "macOS damaged self-contained app diagnostic")
+    require(compat, "OpenQ4BundleRuntimeMissingTitle", "macOS self-contained app localized startup diagnostic")
+    require(compat, "Expected self-contained app contract: data in Contents/Resources/baseoq4 and signed game modules in Contents/Frameworks", "macOS self-contained app contract diagnostic")
     require(compat, "Sys_ErrorIfMacOSAppBundlePackageRootIncomplete", "macOS app-only package-root startup diagnostic")
     require(compat, "OpenQ4PackageRootMissingTitle", "macOS app-only package-root localized startup diagnostic")
     require(compat, "Expected adjacent package-root contract: openQ4.app, loose binaries, and baseoq4/ together", "macOS app-only package-root contract diagnostic")
@@ -2981,13 +3113,13 @@ def validate_packaging_and_release_contract() -> None:
     require(release, "Smoke test macOS app-bundle path resolution", "manual release macOS app runtime smoke")
     require(release, "finder-style-cwd", "manual release Finder-style working-directory smoke")
     require(release, "+rendererDefaultSafetySelfTest", "manual release app renderer self-test")
-    require(release, 'grep -F "fs_cdpath=\'${package_dir}\'"', "manual release app package-root search validation")
+    require(release, 'grep -F "fs_cdpath=\'${package_dir}/openQ4.app/Contents/Resources\'"', "manual release embedded app-resource search validation")
     require(release, "hdiutil imageinfo", "manual release DMG validation")
     require(release, "spctl --assess --type execute", "manual release Gatekeeper validation")
     require(release, "check_macos_install_name", "manual release macOS install-name validation")
     require(release, "@loader_path/game-sp_${{ matrix.binary_arch }}.dylib", "manual release macOS install-name validation")
     require(release, "check_macos_binary_dependencies", "manual release macOS dependency validation")
-    require(release, "otool -L", "manual release macOS dependency validation")
+    require(release, 'otool -arch "${macho_arch}" -L', "manual release macOS dependency validation")
     require(release, "unbundled non-system dependency", "manual release macOS dependency validation")
     require(release, "Missing macOS staged payload file", "manual release macOS staged validation")
     require(release, ".install/baseoq4/game-sp_${{ matrix.binary_arch }}.dylib", "manual release macOS staged validation")
@@ -3019,6 +3151,7 @@ def validate_packaging_and_release_contract() -> None:
     require(release, "check_plist_value LSApplicationCategoryType public.app-category.games", "manual release macOS app validation")
     require(release, "check_plist_value NSPrincipalClass NSApplication", "manual release macOS app validation")
     require(release, "check_plist_value NSSupportsAutomaticGraphicsSwitching true", "manual release macOS app validation")
+    require(release, "check_plist_value OpenQ4RuntimeLayout self-contained-v1", "manual release self-contained runtime marker validation")
     require(release, "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64-opengl.dmg", "manual release expected assets")
     require(release, "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64-metal.dmg", "manual release expected assets")
     require(release, "openq4-${{ needs.metadata.outputs.version_tag }}-macos-arm64-opengl-unsigned.tar.gz", "manual release unsigned expected assets")
@@ -3441,6 +3574,19 @@ def validate_macos_workflow_security_contract() -> None:
     require(debug, "bash -n tools/macos/guest/openq4-macos-bootstrap.sh", "macOS debug workflow guest script syntax check")
     require(debug, "bash -n tools/macos/guest/openq4-macos-install-quake4-assets.sh", "macOS debug workflow asset script syntax check")
     require(debug, "bash -n tools/macos/guest/openq4-macos-sync-build-test.sh", "macOS debug workflow build script syntax check")
+    for token in (
+        "Record hosted evidence scope",
+        "macos-debug-evidence-scope.txt",
+        "requested_bridge=${requested}",
+        "artifact_bridge=${bridge}",
+        "openq4_commit=\"$(git rev-parse HEAD)\"",
+        "openq4_game_commit=\"$(git -C \"${OPENQ4_GAMELIBS_REPO}\" rev-parse HEAD)\"",
+        "openq4_game_dirty=${openq4_game_dirty}",
+        "hosted build/package validation only; not a completed manual Apple-hardware gameplay signoff",
+        "both requested; this artifact contains only ${bridge}",
+        "the other bridge was intentionally not selected",
+    ):
+        require(debug, token, "macOS debug workflow evidence-scope contract")
     require(workflow_doc, "-Action Signoff", "macOS workflow signoff documentation")
     require(workflow_doc, "-Action CollectResults", "macOS workflow collect-results documentation")
     require(workflow_doc, "-MacOSGraphicsBridge both", "macOS workflow dual bridge signoff documentation")
@@ -3516,13 +3662,15 @@ def validate_docs_and_ci_hooks() -> None:
     require(building, "macos_openal_provider", "macOS OpenAL provider documentation")
     require(building, "system/OpenAL Soft dependency", "macOS OpenAL provider documentation")
     require(getting_started, "signed/notarized OpenGL and Metal bridge DMGs", "getting started guide")
-    require(getting_started, "Keep `openQ4.app`, `baseoq4/`, and the loose runtime files together", "getting started guide")
+    require(getting_started, "drag `openQ4.app` to `/Applications`", "getting started guide")
+    require(getting_started, "signed SP/MP modules", "getting started self-contained app guide")
     require(getting_started, "publish clearly labeled `-unsigned.tar.gz` archives", "getting started macOS credential fallback")
     require(getting_started, "ad-hoc signed only for bundle validity", "getting started macOS unsigned policy")
     require(getting_started, "macOS support is experimental. Current packages are for Apple Silicon/arm64 Macs", "getting started macOS architecture policy")
     require(getting_started, "Intel Mac and universal2 packages are not published yet", "getting started macOS architecture policy")
     require(package_readme, "signed/notarized OpenGL and Metal bridge DMGs", "release package README")
-    require(package_readme, "Keep <code>openQ4.app</code>, <code>baseoq4/</code>, and the loose runtime files together", "release package README")
+    require(package_readme, "drag <code>openQ4.app</code> to <code>/Applications</code>", "release package README")
+    require(package_readme, "signed SP/MP modules", "release package self-contained app guide")
     require(package_readme, "clearly labeled <code>-unsigned.tar.gz</code> archives", "release package macOS credential fallback")
     require(package_readme, "ad-hoc signed only for bundle validity", "release package macOS unsigned policy")
     require(package_readme, "macOS support is experimental. Current packages are for Apple Silicon/arm64 Macs", "release package macOS architecture policy")
@@ -3604,6 +3752,7 @@ def main() -> None:
     validate_embedded_guest_root_validators_runtime()
     validate_macos_shell_entrypoints()
     validate_macos_app_bundle_validator_runtime()
+    validate_macos_self_contained_app_creation_runtime()
     validate_macos_dmg_source_preflight_runtime()
     validate_macos_package_main_collateral_error_runtime()
     validate_macos_dmg_output_preflight_runtime()

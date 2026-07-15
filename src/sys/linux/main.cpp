@@ -633,6 +633,13 @@ bool Sys_GetPackageRootDirectory( char *packageRoot, int packageRootSize ) {
 	return false;
 }
 
+bool Sys_GetGameModuleRootDirectory( char *moduleRoot, int moduleRootSize ) {
+	if ( moduleRoot != NULL && moduleRootSize > 0 ) {
+		moduleRoot[0] = '\0';
+	}
+	return false;
+}
+
 /*
 ================
 Sys_DefaultBasePath

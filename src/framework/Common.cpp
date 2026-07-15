@@ -5168,9 +5168,13 @@ static const char *openQ4_SelectGameModuleBaseName( void ) {
 #else
 	#define OPENQ4_MODULE_ARCH_TAG "unknown"
 #endif
-static void openQ4_BuildGameModuleBinaryName( const char *moduleName, char outName[ MAX_OSPATH ] ) {
+static void openQ4_BuildGameModuleBinaryNameForArch( const char *moduleName, const char *archTag, char outName[ MAX_OSPATH ] ) {
 	const char *variant = ( moduleName && idStr::Icmp( moduleName, "game_mp" ) == 0 ) ? "mp" : "sp";
-	idStr::snPrintf( outName, MAX_OSPATH, "game-%s_%s", variant, OPENQ4_MODULE_ARCH_TAG );
+	idStr::snPrintf( outName, MAX_OSPATH, "game-%s_%s", variant, archTag );
+}
+
+static void openQ4_BuildGameModuleBinaryName( const char *moduleName, char outName[ MAX_OSPATH ] ) {
+	openQ4_BuildGameModuleBinaryNameForArch( moduleName, OPENQ4_MODULE_ARCH_TAG, outName );
 }
 
 static void openQ4_DisableBSEWithWarning( const char *reason, bool showDialog = true ) {
@@ -5244,6 +5248,9 @@ void idCommonLocal::LoadGameDLL( void ) {
 #ifdef __DOOM_DLL__
 	char			dllPath[ MAX_OSPATH ];
 	char			preferredGameModuleBinary[ MAX_OSPATH ];
+#if defined( MACOS_X ) || defined( __APPLE__ )
+	char			universalGameModuleBinary[ MAX_OSPATH ];
+#endif
 	const char *	selectedModuleBinary;
 
 	gameImport_t	gameImport;
@@ -5254,6 +5261,19 @@ void idCommonLocal::LoadGameDLL( void ) {
 	openQ4_BuildGameModuleBinaryName( gameModuleBaseName, preferredGameModuleBinary );
 	selectedModuleBinary = preferredGameModuleBinary;
 	fileSystem->FindDLL( selectedModuleBinary, dllPath, true );
+
+#if defined( MACOS_X ) || defined( __APPLE__ )
+	// Thin packages retain architecture-specific module names. A universal2
+	// package instead carries a single two-slice module per game variant, so
+	// both executable slices must converge on the same trusted module name.
+	if ( !dllPath[ 0 ] ) {
+		openQ4_BuildGameModuleBinaryNameForArch( gameModuleBaseName, "universal2", universalGameModuleBinary );
+		fileSystem->FindDLL( universalGameModuleBinary, dllPath, true );
+		if ( dllPath[ 0 ] ) {
+			selectedModuleBinary = universalGameModuleBinary;
+		}
+	}
+#endif
 
 	if ( !dllPath[ 0 ] ) {
 		common->FatalError(
@@ -5270,6 +5290,11 @@ void idCommonLocal::LoadGameDLL( void ) {
 	common->DPrintf( "Loading game DLL: '%s'\n", dllPath );
 	gameDLL = sys->DLL_Load( dllPath );
 	if ( !gameDLL ) {
+		common->Printf(
+			"Game module load failed: logical='%s' binary='%s' path='%s'; inspect the preceding platform loader error.\n",
+			gameModuleBaseName,
+			selectedModuleBinary,
+			dllPath );
 		common->FatalError( "couldn't load game dynamic library '%s'", selectedModuleBinary );
 		return;
 	}

@@ -41,6 +41,7 @@ def function_body(source: str, signature: str) -> str:
 
 def validate_sdl3_highdpi_contract() -> None:
     source = read("src/sys/sdl3/sdl3_backend.cpp")
+    syscon = read("src/sys/posix/posix_syscon.cpp")
     hints = function_body(source, "static void SDL3_SetMouseHintDefaults(void) {")
     video_hints = function_body(source, "static void SDL3_SetVideoHintDefaults(void) {")
     metadata = function_body(source, "static void SDL3_SetAppMetadataDefaults(void) {")
@@ -64,6 +65,10 @@ def validate_sdl3_highdpi_contract() -> None:
     mouse_capture_diagnostics = function_body(source, "static void SDL3_MouseCaptureDiagnostics_f(const idCmdArgs &args) {")
     pump = function_body(source, "bool Sys_SDL_PumpEvents(void) {")
     init = function_body(source, "bool GLimp_Init(glimpParms_t parms) {")
+    console_layout = function_body(syscon, "static void Posix_ConsoleUpdateLayout( void ) {")
+    console_presentation = function_body(syscon, "static void Posix_ConsoleApplyLogicalPresentation( int width, int height ) {")
+    console_coordinates = function_body(syscon, "static void Posix_ConsoleWindowToRenderCoordinates( float &x, float &y ) {")
+    console_click = function_body(syscon, "static void Posix_ConsoleClickButton( float x, float y ) {")
 
     require(hints, 'SDL_HINT_MOUSE_RELATIVE_SYSTEM_SCALE, "0"', "SDL3 unscaled relative mouse hint")
     require(hints, 'SDL_HINT_MOUSE_RELATIVE_WARP_MOTION, "0"', "SDL3 relative warp filtering hint")
@@ -115,6 +120,13 @@ def validate_sdl3_highdpi_contract() -> None:
     require(display_modes_command, "SDL_GetDisplayContentScale(display)", "SDL3 listDisplayModes display scale diagnostics")
     require(display_modes_command, "SDL3_FormatDisplayMode(mode, modeText, sizeof(modeText))", "SDL3 listDisplayModes pixel density diagnostics")
     require(init, "SDL_WINDOW_HIGH_PIXEL_DENSITY", "SDL3 high pixel density window creation")
+    require(syscon, "SDL_WINDOW_HIGH_PIXEL_DENSITY", "SDL3 system console high pixel density window creation")
+    require(console_layout, "SDL_GetWindowSize( s_consoleWindow.window, &width, &height )", "SDL3 system console logical window size")
+    require(console_layout, "Posix_ConsoleApplyLogicalPresentation( width, height );", "SDL3 system console logical presentation refresh")
+    require(console_presentation, "SDL_SetRenderLogicalPresentation(", "SDL3 system console HiDPI presentation")
+    require(console_presentation, "SDL_LOGICAL_PRESENTATION_STRETCH", "SDL3 system console full-window presentation")
+    require(console_coordinates, "SDL_RenderCoordinatesFromWindow(", "SDL3 system console pointer coordinate conversion")
+    require(console_click, "Posix_ConsoleWindowToRenderCoordinates( x, y );", "SDL3 system console HiDPI button input")
     require(sync_window, "SDL_SyncWindow(s_sdlWindow)", "SDL3 compositor window synchronization")
     require(window_state, "SDL_GetWindowPixelDensity(s_sdlWindow)", "SDL3 Wayland window pixel density diagnostics")
     require(window_state, "SDL_GetWindowDisplayScale(s_sdlWindow)", "SDL3 Wayland window display scale diagnostics")

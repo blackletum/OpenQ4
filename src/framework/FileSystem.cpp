@@ -5543,8 +5543,8 @@ void idFileSystemLocal::Init( void ) {
 	if ( fs_savepath.GetString()[0] == '\0' ) {
 		fs_savepath.SetString( fs_homepath.GetString() );
 	}
-	// fs_cdpath is locked to the platform default (the bundle-adjacent package
-	// root for a macOS app, otherwise the process current directory).
+	// fs_cdpath is locked to the platform content root (the app's Resources
+	// directory on macOS, otherwise the process current directory).
 	fs_cdpath.SetString( Sys_DefaultCDPath() );
 	common->Printf(
 		"Filesystem paths: fs_basepath='%s' fs_homepath='%s' fs_savepath='%s' fs_cdpath='%s' fs_game='%s' fs_game_base='%s'\n",
@@ -6609,6 +6609,22 @@ static idFile *FS_OpenGameModuleFromExeDir( idFileSystemLocal *fileSystemLocal, 
 	return fileSystemLocal->OpenExplicitFileRead( dllPath );
 }
 
+// Keep failed game-module searches diagnosable without weakening the trusted
+// executable/package-root loading policy.  This is especially useful for a
+// moved or damaged macOS app bundle, where the modules live in
+// Contents/Frameworks instead of next to the game data.
+static void FS_AppendGameModuleSearchPath( idStr &searchPaths, const idStr &root, const char *gameDir, const char *dllName ) {
+	idStr candidatePath = root;
+	if ( gameDir && gameDir[0] ) {
+		candidatePath.AppendPath( gameDir );
+	}
+	candidatePath.AppendPath( dllName );
+	if ( searchPaths.Length() > 0 ) {
+		searchPaths += " | ";
+	}
+	searchPaths += candidatePath;
+}
+
 /*
 =================
 idFileSystemLocal::FindDLL
@@ -6624,31 +6640,54 @@ void idFileSystemLocal::FindDLL( const char *name, char _dllPath[ MAX_OSPATH ], 
 	idStr exeDir = Sys_EXEPath();
 	exeDir.StripFilename();
 
-	// Only load openQ4 game modules staged next to the executable or in the
-	// package root the application bundle was extracted into (macOS stages the
-	// executable in openQ4.app/Contents/MacOS while game modules live at the
+	// Only load openQ4 game modules staged next to the executable or from the
+	// platform's trusted module root (self-contained macOS apps use the flat
+	// Contents/Frameworks code directory; legacy packages use their adjacent
 	// package root). Mods may provide their own module, but content-only mods
 	// inherit baseoq4 modules. Do not load executable code from PK4s,
 	// fs_savepath, pure-server code paks, or loose files outside the
 	// executable/package root.
-	idStr moduleSearchRoots[2];
+	idStr moduleSearchRoots[3];
 	int numModuleSearchRoots = 0;
 	moduleSearchRoots[numModuleSearchRoots++] = exeDir;
 	char packageRoot[MAX_OSPATH];
 	if ( Sys_GetPackageRootDirectory( packageRoot, sizeof( packageRoot ) ) && exeDir.Icmp( packageRoot ) != 0 ) {
 		moduleSearchRoots[numModuleSearchRoots++] = packageRoot;
 	}
+	char moduleRoot[MAX_OSPATH];
+	if ( Sys_GetGameModuleRootDirectory( moduleRoot, sizeof( moduleRoot ) ) ) {
+		bool duplicateRoot = false;
+		for ( int i = 0; i < numModuleSearchRoots; ++i ) {
+			if ( moduleSearchRoots[i].Icmp( moduleRoot ) == 0 ) {
+				duplicateRoot = true;
+				break;
+			}
+		}
+		if ( !duplicateRoot ) {
+			moduleSearchRoots[numModuleSearchRoots++] = moduleRoot;
+		}
+	}
 
 	const char *moduleGameDir = fs_game.GetString();
 	if ( !moduleGameDir[0] ) {
 		moduleGameDir = OPENQ4_GAMEDIR;
 	}
+	idStr trustedModuleRoots;
+	idStr attemptedModulePaths;
+	for ( int i = 0; i < numModuleSearchRoots; ++i ) {
+		if ( trustedModuleRoots.Length() > 0 ) {
+			trustedModuleRoots += " | ";
+		}
+		trustedModuleRoots += moduleSearchRoots[i];
+	}
 	for ( int i = 0; !dllFile && i < numModuleSearchRoots; i++ ) {
+		FS_AppendGameModuleSearchPath( attemptedModulePaths, moduleSearchRoots[i], moduleGameDir, dllName );
 		dllFile = FS_OpenGameModuleFromExeDir( this, moduleSearchRoots[i], moduleGameDir, dllName, dllPath );
 	}
 
 	if ( !dllFile && idStr::Icmp( moduleGameDir, OPENQ4_GAMEDIR ) != 0 ) {
 		for ( int i = 0; !dllFile && i < numModuleSearchRoots; i++ ) {
+			FS_AppendGameModuleSearchPath( attemptedModulePaths, moduleSearchRoots[i], OPENQ4_GAMEDIR, dllName );
 			dllFile = FS_OpenGameModuleFromExeDir( this, moduleSearchRoots[i], OPENQ4_GAMEDIR, dllName, dllPath );
 		}
 		if ( dllFile ) {
@@ -6657,6 +6696,7 @@ void idFileSystemLocal::FindDLL( const char *name, char _dllPath[ MAX_OSPATH ], 
 	}
 
 	for ( int i = 0; !dllFile && i < numModuleSearchRoots; i++ ) {
+		FS_AppendGameModuleSearchPath( attemptedModulePaths, moduleSearchRoots[i], NULL, dllName );
 		dllPath = moduleSearchRoots[i];
 		dllPath.AppendPath( dllName );
 		dllFile = OpenExplicitFileRead( dllPath );
@@ -6675,6 +6715,12 @@ void idFileSystemLocal::FindDLL( const char *name, char _dllPath[ MAX_OSPATH ], 
 		CloseFile( dllFile );
 		dllFile = NULL;
 	} else {
+		common->Printf(
+			"Game module search failed: binary='%s' requestedGameDir='%s' trustedRoots='%s' attemptedPaths='%s'\n",
+			dllName,
+			moduleGameDir,
+			trustedModuleRoots.c_str(),
+			attemptedModulePaths.c_str() );
 		dllPath = "";
 	}
 	idStr::snPrintf( _dllPath, MAX_OSPATH, "%s", dllPath.c_str() );

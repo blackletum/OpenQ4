@@ -436,12 +436,18 @@ const char *	Sys_DefaultBasePath( void );
 const char *	Sys_DefaultSavePath( void );
 const char *	Sys_EXEPath( void );
 
-// When the executable runs from inside a platform application bundle (macOS
-// openQ4.app), returns true and fills packageRoot with the extracted package
-// directory the bundle sits in; game modules and loose assets are staged
-// there. Returns false on platforms and layouts without a separate package
-// root, in which case packageRoot is left empty.
+// When the executable is associated with a platform application bundle
+// (macOS openQ4.app), returns true and fills packageRoot with the trusted
+// runtime-content root. Self-contained macOS apps use Contents/Resources;
+// legacy adjacent packages return the directory beside the bundle. Returns
+// false on platforms and layouts without a separate package root.
 bool			Sys_GetPackageRootDirectory( char *packageRoot, int packageRootSize );
+
+// Returns the trusted root used only for dynamic game-module discovery.
+// Self-contained macOS apps keep flat Mach-O dylibs in Contents/Frameworks;
+// legacy packages use their adjacent package root. Other platforms return
+// false because their normal executable directory is already searched.
+bool			Sys_GetGameModuleRootDirectory( char *moduleRoot, int moduleRootSize );
 
 // use fs_debug to verbose Sys_ListFiles
 // returns -1 if directory was not found (the list is cleared)

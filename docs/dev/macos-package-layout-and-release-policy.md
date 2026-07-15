@@ -1,38 +1,47 @@
 # macOS Package Layout And Release Policy
 
-Updated: 2026-07-11
+Updated: 2026-07-15
 
 This document records the current macOS package support contract for openQ4.
-It is intentionally conservative while macOS remains experimental.
+The client application is self-contained; loose binaries remain beside it for
+dedicated-server and diagnostic use while macOS remains experimental.
 
 ## Current Layout Decision
 
-The supported macOS package layout is an adjacent package root, not a
-self-contained drag-only app bundle.
+The supported macOS client layout is a self-contained, drag-installable
+`openQ4.app`:
 
-Supported package roots contain these entries side by side:
+- `Contents/MacOS/openQ4` contains the client executable.
+- `Contents/Resources/baseoq4/` contains `mod.json`, `pak0.pk4`, and `pak1.pk4`.
+- `Contents/Frameworks/` contains the flat, signed
+  `game-sp_<arch>.dylib` and `game-mp_<arch>.dylib` modules.
+- `Contents/Resources/assets/splash/` contains the startup splash resource.
 
-- `openQ4.app`
-- `openQ4-client_<arch>`
-- `openQ4-ded_<arch>`
-- `baseoq4/`
-- loose runtime support files such as icons, splash assets, docs, and version metadata
+Mach-O game modules deliberately live in `Contents/Frameworks`, not
+`Contents/Resources`: Apple treats `Frameworks` as a nested-code location and
+`Resources` as data. The packager signs each module before signing the outer
+app, does not copy app entitlements onto those nested libraries, validates their
+architecture, dependencies, install names, and deployment floor, and rejects
+stale or wrong-platform modules in either location.
 
-The SP/MP game modules must live under `baseoq4/` as
-`game-sp_<arch>.dylib` and `game-mp_<arch>.dylib`. Do not copy openQ4 game
-modules into `q4base/`; that directory is for the retail Quake 4 asset PK4s,
-and the app-bundle startup preflight treats `q4base/game-*.dylib` as misplaced
-runtime payload rather than a valid package fix.
+The distribution root also keeps `openQ4-client_<arch>`,
+`openQ4-ded_<arch>`, the support collector, version/symbol manifests, and
+documentation for command-line diagnostics and dedicated servers. Those loose
+binaries resolve content and game modules from the sibling self-contained app;
+the large `baseoq4` payload is not duplicated beside the bundle.
 
-`openQ4.app` is the Finder entry point, but it is not currently the full runtime
-container. The app must stay beside `baseoq4/` and the loose runtime files until
-the project deliberately migrates to `openQ4.app/Contents/Resources` or another
-self-contained layout.
+`.install/baseoq4/` remains the build/staging contract. Package generation
+moves that staged payload into the app's code/data locations through
+`tools/build/package_nightly.py` without changing the repository staging
+layout. `Contents/Info.plist` declares
+`OpenQ4RuntimeLayout=self-contained-v1`, so a damaged current app still gets
+the self-contained-runtime diagnostic even when its embedded data or module
+directories have been removed completely.
 
 Release packages and archive validation require the bundle to be named
 `openQ4.app`. Runtime app-bundle detection still recognizes renamed `.app`
 bundles that keep the standard `*.app/Contents/MacOS` layout, so a hand-renamed
-bundle can report the same adjacent package-root diagnostic instead of falling
+bundle retains the same self-contained runtime discovery instead of falling
 through to generic base-path probing.
 
 ## Supported Launch Flows
@@ -40,30 +49,28 @@ through to generic base-path probing.
 Supported for experimental macOS signoff:
 
 - Double-click `openQ4.app` from the mounted signed/notarized DMG payload.
-- Copy the whole package payload to a user-writable folder, keeping
-  `openQ4.app`, `baseoq4/`, and the loose runtime files together, then
-  double-click `openQ4.app`.
+- Drag only `openQ4.app` to `/Applications` or another user-writable folder,
+  then launch the copied app from Finder.
+- Copy the whole package payload when the loose client, dedicated server, or
+  support collector is also wanted.
 - Finder/LaunchServices may supply an unrelated process working directory.
-  The app derives its adjacent package directory, validates it, and uses it as
-  `fs_cdpath`; retail Steam/GOG discovery remains an independent
-  `fs_basepath` source for `q4base`.
-- Launch from Terminal with the working directory at the package root.
+  The app validates `Contents/Resources` and uses it as `fs_cdpath`; retail
+  Steam/GOG discovery remains an independent `fs_basepath` source for
+  `q4base`.
+- Launch the app executable from Terminal with any working directory.
 - Launch the loose `openQ4-client_<arch>` or `openQ4-ded_<arch>` binaries from
-  the package root for diagnostics or dedicated-server work.
+  package root; they discover the sibling app's embedded runtime.
 
-Unsupported until a self-contained bundle migration is implemented:
+Retail Quake 4 `q4base` assets are not bundled. Do not copy them into
+`openQ4.app`, because modifying a signed bundle invalidates its signature.
+Use the supported Steam/GOG discovery paths or explicit base-path selection.
 
-- Moving only `openQ4.app` away from its package root.
-- Copying only `openQ4.app` into `/Applications`.
-- Deleting or relocating adjacent `baseoq4/`, game dylibs, or loose runtime
-  support files without a documented replacement path.
+An incomplete new app produces a localized diagnostic that names missing
+`Contents/Resources/baseoq4` data or `Contents/Frameworks` modules. Engines
+from the transition period still accept a complete legacy adjacent package,
+but newly generated packages must use the self-contained layout.
 
-If a user launches an app-only move, the expected current result is a clear,
-actionable failure that identifies the missing adjacent runtime payload. If the
-failure is confusing, that is a packaging UX bug to fix before first-class
-macOS support.
-
-The current startup diagnostic title is:
+The legacy adjacent-package startup diagnostic title is:
 
 ```text
 openQ4.app adjacent package root is incomplete
@@ -75,17 +82,16 @@ The diagnostic must name this contract:
 Expected adjacent package-root contract: `openQ4.app`, loose binaries, and `baseoq4/` together
 ```
 
-It must also make this user action clear:
+It must also make clear that this applies only to legacy adjacent packages:
 
 ```text
-Moving only `openQ4.app` to `/Applications` is not supported yet
+Legacy adjacent packages need the app, loose binaries, and data together.
+Current self-contained packages support moving only `openQ4.app` to `/Applications`.
 ```
-
-Moving only `openQ4.app` is unsupported until a self-contained bundle migration is implemented.
 
 Hosted release validation launches the app executable from an unrelated
 temporary working directory and requires the log's `fs_cdpath` to resolve to
-the adjacent package root. This closes the path-selection blind spot without
+`openQ4.app/Contents/Resources`. This closes the path-selection blind spot without
 claiming that CI has exercised Finder UI, Gatekeeper prompts, mounted-DMG
 gameplay, or a copied package on end-user hardware.
 
@@ -106,7 +112,8 @@ pairing process.
 
 `collect_macos_support_info.sh` writes `package/path-resolution.txt` without
 launching openQ4. The report records the package root, app path, expected loose
-runtime paths, expected `baseoq4/` path, and any copied log lines that mention
+runtime paths, embedded `Contents/Resources/baseoq4` and
+`Contents/Frameworks` paths, and any copied log lines that mention
 `fs_basepath`, `fs_cdpath`, or `fs_savepath`.
 If `HOME` is absent in a sparse launch environment, the collector keeps the
 package-local log checks and records archive notes instead of aborting on
@@ -137,11 +144,12 @@ sessions from native arm64 package failures.
 Every completed macOS signoff archive for a release candidate must record:
 
 - Finder launch from the mounted DMG or final release image.
-- Finder launch after copying the whole package payload to a user-writable
-  location.
-- Terminal launch from the package root.
-- The app-only move result, either working or explicitly recorded as unsupported
-  with a clear error.
+- Finder launch after dragging only `openQ4.app` to `/Applications` or another
+  user-writable location.
+- Whole-package copied launch for loose-binary and support-tool coverage.
+- Terminal launch of the app executable from an unrelated working directory.
+- Confirmation that the copied app resolves `fs_cdpath` to its own
+  `Contents/Resources` and loads both signed modules from `Contents/Frameworks`.
 - `fs_basepath`, `fs_cdpath`, and `fs_savepath` log lines from Finder/copied
   package and terminal launches.
 - Gatekeeper behavior for the package under test, including `spctl` assessment
@@ -179,16 +187,11 @@ Credentialed macOS release artifacts must keep these checks mandatory:
 - app and DMG notarization/stapling.
 - `codesign`, `spctl`, `xcrun stapler validate`, and `hdiutil verify`.
 
-## Migration Trigger
+## Backward Compatibility
 
-If the project moves to a self-contained app bundle, update all of these
-together:
-
-- package allowlists in `tools/build/package_nightly.py`
-- app bundle generation and resource layout
-- game dylib install names and loader expectations
-- signing, notarization, and DMG validation
-- signoff archive validation and evidence fields
-- `BUILDING.md`, `docs/dev/platform-support.md`, user docs, release README, and
-  release notes
-- the macOS compatibility/support plan checklist
+The runtime keeps a legacy adjacent-package fallback so older experimental
+downloads can still launch when their original `openQ4.app`, `baseoq4/`, loose
+client, and loose dedicated binary remain together. New package generation,
+archive validation, signing, release smoke tests, support intake, and signoff
+evidence must use the self-contained contract. Remove the fallback only through
+an explicit compatibility decision with release-note notice.

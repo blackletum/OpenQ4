@@ -702,6 +702,7 @@ jobs:
           for attempt in 1 2 3; do
             if sudo apt-get update && sudo apt-get install -y \
               binutils \
+              desktop-file-utils \
               libasound2-dev \
               libdbus-1-dev \
               libdecor-0-dev \
@@ -1264,6 +1265,193 @@ jobs:
             --symbols-root "${{ steps.linux_symbols.outputs.debug_symbols_dir }}" \
             --work-root "${RUNNER_TEMP}"
 
+      - name: Build and validate Linux AppImage
+        if: matrix.platform == 'linux' && inputs.generate_linux_arm64_evidence_candidate == false
+        id: appimage
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tools_dir="${RUNNER_TEMP}/openq4-appimage-tools/${{ matrix.binary_arch }}"
+          mkdir -p "${tools_dir}"
+
+          case "${{ matrix.binary_arch }}" in
+            x64)
+              appimage_arch="x86_64"
+              linuxdeploy_sha256="c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d"
+              appimagetool_sha256="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
+              ;;
+            arm64)
+              appimage_arch="aarch64"
+              linuxdeploy_sha256="620095110d693282b8ebeb244a95b5e911cf8f65f76c88b4b47d16ae6346fcff"
+              appimagetool_sha256="f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158"
+              ;;
+            *)
+              echo "Unsupported AppImage release architecture: ${{ matrix.binary_arch }}"
+              exit 1
+              ;;
+          esac
+
+          linuxdeploy="${tools_dir}/linuxdeploy-${appimage_arch}.AppImage"
+          appimagetool="${tools_dir}/appimagetool-${appimage_arch}.AppImage"
+          runtime_file="${tools_dir}/runtime-${appimage_arch}"
+
+          curl --fail --location --retry 3 --retry-all-errors --proto '=https' --tlsv1.2 \
+            --output "${linuxdeploy}" \
+            "https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-${appimage_arch}.AppImage"
+          curl --fail --location --retry 3 --retry-all-errors --proto '=https' --tlsv1.2 \
+            --output "${appimagetool}" \
+            "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-${appimage_arch}.AppImage"
+          printf '%s  %s\n%s  %s\n' \
+            "${linuxdeploy_sha256}" "${linuxdeploy}" \
+            "${appimagetool_sha256}" "${appimagetool}" \
+            | sha256sum --check --strict
+          chmod 0755 "${linuxdeploy}" "${appimagetool}"
+
+          # Runtime control options are handled before mounting, so this must invoke the
+          # outer AppImage directly rather than the extracted appimagetool payload.
+          runtime_offset="$("${appimagetool}" --appimage-offset)"
+          python - "${appimagetool}" "${runtime_file}" "${runtime_offset}" <<'PY'
+          import os
+          import pathlib
+          import sys
+
+          source = pathlib.Path(sys.argv[1])
+          destination = pathlib.Path(sys.argv[2])
+          try:
+              offset = int(sys.argv[3], 10)
+          except ValueError as exc:
+              raise SystemExit(f"appimagetool returned an invalid runtime offset: {sys.argv[3]!r}") from exc
+          data = source.read_bytes()
+          if offset < 11 or offset >= len(data):
+              raise SystemExit(f"appimagetool runtime offset {offset} is outside the {len(data)}-byte tool")
+          runtime = data[:offset]
+          if runtime[:4] != b"\x7fELF" or runtime[8:11] != b"AI\x02":
+              raise SystemExit("appimagetool does not contain the expected type-2 runtime prefix")
+          destination.write_bytes(runtime)
+          os.chmod(destination, 0o755)
+          PY
+
+          appimage_name="openq4-${{ needs.metadata.outputs.version_tag }}${{ matrix.package_suffix }}-${appimage_arch}.AppImage"
+          appimage_path="${RUNNER_TEMP}/${appimage_name}"
+          python tools/build/package_linux_appimage.py \
+            --package-dir "${{ steps.package.outputs.package_dir }}" \
+            --symbols-dir "${{ steps.linux_symbols.outputs.debug_symbols_dir }}" \
+            --arch "${{ matrix.binary_arch }}" \
+            --version "${{ needs.metadata.outputs.version }}" \
+            --version-tag "${{ needs.metadata.outputs.version_tag }}" \
+            --package-suffix="${{ matrix.package_suffix }}" \
+            --source-date-epoch "${{ needs.metadata.outputs.source_date_epoch }}" \
+            --linuxdeploy "${linuxdeploy}" \
+            --appimagetool "${appimagetool}" \
+            --runtime-file "${runtime_file}" \
+            --work-root "${RUNNER_TEMP}" \
+            --output "${appimage_path}"
+
+          echo "appimage_path=${appimage_path}" >> "${GITHUB_OUTPUT}"
+
+      - name: Validate Linux AppImage under Wayland and X11
+        if: matrix.platform == 'linux' && inputs.generate_linux_arm64_evidence_candidate == false
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          appimage="${{ steps.appimage.outputs.appimage_path }}"
+          if [ -L "${appimage}" ] || [ ! -x "${appimage}" ]; then
+            echo "Linux AppImage is missing or not executable: ${appimage}"
+            exit 1
+          fi
+
+          runtime_root="${GITHUB_WORKSPACE}/.tmp/release-runtime/${{ matrix.binary_arch }}/appimage"
+          rm -rf "${runtime_root}"
+          mkdir -p "${runtime_root}/wayland" "${runtime_root}/x11"
+          export APPIMAGE_EXTRACT_AND_RUN=1
+
+          set +e
+          (
+            set -euo pipefail
+
+            export XDG_RUNTIME_DIR="${runtime_root}/wayland/xdg-runtime"
+            mkdir -p "${XDG_RUNTIME_DIR}"
+            chmod 0700 "${XDG_RUNTIME_DIR}"
+
+            weston_log="${runtime_root}/wayland/weston.log"
+            weston --backend=headless-backend.so --socket=openq4-appimage-wayland --idle-time=0 --no-config >"${weston_log}" 2>&1 &
+            weston_pid=$!
+            cleanup() {
+              status=$?
+              kill "${weston_pid}" >/dev/null 2>&1 || true
+              wait "${weston_pid}" >/dev/null 2>&1 || true
+              if [ "${status}" -ne 0 ] && [ -f "${weston_log}" ]; then
+                echo "AppImage Weston diagnostics:"
+                cat "${weston_log}"
+              fi
+              exit "${status}"
+            }
+            trap cleanup EXIT
+
+            for attempt in {1..30}; do
+              if [ -S "${XDG_RUNTIME_DIR}/openq4-appimage-wayland" ]; then
+                break
+              fi
+              sleep 1
+            done
+            if [ ! -S "${XDG_RUNTIME_DIR}/openq4-appimage-wayland" ]; then
+              echo "Weston did not create the AppImage-test Wayland socket."
+              exit 1
+            fi
+
+            export WAYLAND_DISPLAY=openq4-appimage-wayland
+            export SDL_VIDEO_DRIVER=wayland
+            export SDL_VIDEODRIVER=wayland
+            export LIBGL_ALWAYS_SOFTWARE=1
+            unset DISPLAY
+
+            python tools/tests/renderer_validation_matrix.py \
+              --executable "${{ steps.appimage.outputs.appimage_path }}" \
+              --cases sdl3-wayland-window-lifecycle \
+              --tiers auto \
+              --timeout 90 \
+              --basepath "" \
+              --savepath "${runtime_root}/wayland/save" \
+              --skip-official-pak-validation \
+              --output-dir "${runtime_root}/wayland/report"
+          )
+          wayland_status=$?
+
+          env -u WAYLAND_DISPLAY \
+            APPIMAGE_EXTRACT_AND_RUN=1 \
+            LIBGL_ALWAYS_SOFTWARE=1 \
+            SDL_VIDEO_DRIVER=x11 \
+            SDL_VIDEODRIVER=x11 \
+            xvfb-run -a --error-file="${runtime_root}/x11/xvfb.log" \
+            python tools/tests/renderer_validation_matrix.py \
+              --executable "${{ steps.appimage.outputs.appimage_path }}" \
+              --cases sdl3-x11-window-lifecycle \
+              --tiers auto \
+              --timeout 90 \
+              --basepath "" \
+              --savepath "${runtime_root}/x11/save" \
+              --skip-official-pak-validation \
+              --output-dir "${runtime_root}/x11/report"
+          x11_status=$?
+          set -e
+
+          if [ "${wayland_status}" -ne 0 ] || [ "${x11_status}" -ne 0 ]; then
+            echo "Linux AppImage runtime validation failed: Wayland=${wayland_status}, X11=${x11_status}."
+            exit 1
+          fi
+
+      - name: Publish Linux AppImage runtime diagnostics
+        if: ${{ failure() && matrix.platform == 'linux' && inputs.generate_linux_arm64_evidence_candidate == false }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: openq4-release-${{ needs.metadata.outputs.version_tag }}-linux-${{ matrix.binary_arch }}${{ matrix.package_suffix }}-appimage-diagnostics
+          path: .tmp/release-runtime/${{ matrix.binary_arch }}/appimage
+          if-no-files-found: warn
+          retention-days: 14
+          include-hidden-files: true
+
       - name: Verify first-class Linux ARM64 evidence against staged and packaged bytes
         if: matrix.platform == 'linux' && matrix.binary_arch == 'arm64' && needs.metadata.outputs.linux_arm64_support_tier == 'first-class'
         env:
@@ -1402,9 +1590,10 @@ jobs:
           support_collector="${{ steps.package.outputs.package_dir }}/collect_macos_support_info.sh"
           client_binary="${{ steps.package.outputs.package_dir }}/openQ4-client_${{ matrix.binary_arch }}"
           dedicated_binary="${{ steps.package.outputs.package_dir }}/openQ4-ded_${{ matrix.binary_arch }}"
-          game_dir="${{ steps.package.outputs.package_dir }}/baseoq4"
-          sp_module="${game_dir}/game-sp_${{ matrix.binary_arch }}.dylib"
-          mp_module="${game_dir}/game-mp_${{ matrix.binary_arch }}.dylib"
+          game_dir="${app_root}/Contents/Resources/baseoq4"
+          module_dir="${app_root}/Contents/Frameworks"
+          sp_module="${module_dir}/game-sp_${{ matrix.binary_arch }}.dylib"
+          mp_module="${module_dir}/game-mp_${{ matrix.binary_arch }}.dylib"
 
           if [ ! -f "${app_plist}" ]; then
             echo "Missing macOS app Info.plist: ${app_plist}"
@@ -1512,7 +1701,11 @@ jobs:
             exit 1
           fi
           if [ ! -d "${game_dir}" ]; then
-            echo "Missing macOS package game directory beside the app bundle: ${game_dir}"
+            echo "Missing macOS embedded game-data directory: ${game_dir}"
+            exit 1
+          fi
+          if [ -e "${{ steps.package.outputs.package_dir }}/baseoq4" ]; then
+            echo "macOS package must not duplicate baseoq4 beside the self-contained app bundle."
             exit 1
           fi
           for module in "${sp_module}" "${mp_module}"; do
@@ -1535,9 +1728,10 @@ jobs:
           fi
           macos_release_mode="${{ matrix.macos_release_mode }}"
           case "${{ matrix.binary_arch }}" in
-            arm64) expected_lipo_arch="arm64" ;;
-            x64) expected_lipo_arch="x86_64" ;;
-            x86) expected_lipo_arch="i386" ;;
+            arm64) expected_lipo_arches="arm64" ;;
+            x64) expected_lipo_arches="x86_64" ;;
+            x86) expected_lipo_arches="i386" ;;
+            universal2) expected_lipo_arches="arm64 x86_64" ;;
             *)
               echo "No lipo architecture mapping for ${{ matrix.binary_arch }}."
               exit 1
@@ -1545,8 +1739,10 @@ jobs:
           esac
           check_macos_binary_architecture() {
             binary="$1"
-            if ! lipo -archs "${binary}" | tr ' ' '\n' | grep -qx "${expected_lipo_arch}"; then
-              echo "macOS binary architecture mismatch: ${binary}; expected ${expected_lipo_arch}."
+            actual_lipo_arches="$(lipo -archs "${binary}" | tr ' ' '\n' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
+            expected_lipo_arches_sorted="$(printf '%s\n' ${expected_lipo_arches} | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
+            if [ "${actual_lipo_arches}" != "${expected_lipo_arches_sorted}" ]; then
+              echo "macOS binary architecture mismatch: ${binary}; expected ${expected_lipo_arches_sorted}, found ${actual_lipo_arches:-<none>}."
               lipo -archs "${binary}" || true
               exit 1
             fi
@@ -1590,34 +1786,38 @@ jobs:
           check_macos_install_name() {
             binary="$1"
             expected="$2"
-            actual="$(otool -D "${binary}" | sed -n '2p' | tr -d '[:space:]')"
-            if [ "${actual}" != "${expected}" ]; then
-              echo "macOS game module install name mismatch: ${binary}; expected ${expected}, found ${actual:-<empty>}."
-              exit 1
-            fi
+            for macho_arch in ${expected_lipo_arches}; do
+              actual="$(otool -arch "${macho_arch}" -D "${binary}" | sed -n '2p' | tr -d '[:space:]')"
+              if [ "${actual}" != "${expected}" ]; then
+                echo "macOS game module install name mismatch: ${binary} (${macho_arch}); expected ${expected}, found ${actual:-<empty>}."
+                exit 1
+              fi
+            done
           }
           check_macos_binary_dependencies() {
             binary="$1"
-            deps=()
-            while IFS= read -r dependency; do
-              if [ -n "${dependency}" ]; then
-                deps+=("${dependency}")
+            for macho_arch in ${expected_lipo_arches}; do
+              deps=()
+              while IFS= read -r dependency; do
+                if [ -n "${dependency}" ]; then
+                  deps+=("${dependency}")
+                fi
+              done < <(otool -arch "${macho_arch}" -L "${binary}" | sed '1d' | awk '{print $1}')
+
+              if [[ "${binary}" == *.dylib && "${#deps[@]}" -gt 0 ]]; then
+                deps=("${deps[@]:1}")
               fi
-            done < <(otool -L "${binary}" | sed '1d' | awk '{print $1}')
 
-            if [[ "${binary}" == *.dylib && "${#deps[@]}" -gt 0 ]]; then
-              deps=("${deps[@]:1}")
-            fi
-
-            for dependency in "${deps[@]}"; do
-              case "${dependency}" in
-                /System/Library/*|/usr/lib/*)
-                  ;;
-                *)
-                  echo "macOS binary has unbundled non-system dependency: ${binary} -> ${dependency}"
-                  exit 1
-                  ;;
-              esac
+              for dependency in "${deps[@]}"; do
+                case "${dependency}" in
+                  /System/Library/*|/usr/lib/*)
+                    ;;
+                  *)
+                    echo "macOS binary has unbundled non-system dependency: ${binary} (${macho_arch}) -> ${dependency}"
+                    exit 1
+                    ;;
+                esac
+              done
             done
           }
           for binary in "${app_exec}" "${client_binary}" "${dedicated_binary}" "${sp_module}" "${mp_module}"; do
@@ -1663,6 +1863,7 @@ jobs:
           check_plist_value NSPrincipalClass NSApplication
           check_plist_value NSHighResolutionCapable true
           check_plist_value NSSupportsAutomaticGraphicsSwitching true
+          check_plist_value OpenQ4RuntimeLayout self-contained-v1
           if [ "${{ matrix.archive_format }}" = "dmg" ]; then
             dmg_path="${{ steps.package.outputs.archive_path }}"
             if ! command -v hdiutil >/dev/null 2>&1; then
@@ -1737,7 +1938,7 @@ jobs:
           fi
           grep -F "RendererDefaultSafety self-test passed" "${smoke_log}" >/dev/null
           grep -F "Filesystem paths:" "${smoke_log}" >/dev/null
-          grep -F "fs_cdpath='${package_dir}'" "${smoke_log}" >/dev/null
+          grep -F "fs_cdpath='${package_dir}/openQ4.app/Contents/Resources'" "${smoke_log}" >/dev/null
 
       - name: Upload artifact
         if: inputs.generate_linux_arm64_evidence_candidate == false
@@ -1761,6 +1962,14 @@ jobs:
         with:
           name: openq4-release-${{ needs.metadata.outputs.version_tag }}-linux-${{ matrix.binary_arch }}${{ matrix.package_suffix }}-debugsymbols
           path: ${{ steps.linux_symbols.outputs.debug_symbols_path }}
+          if-no-files-found: error
+
+      - name: Upload Linux AppImage
+        if: matrix.platform == 'linux' && inputs.generate_linux_arm64_evidence_candidate == false
+        uses: actions/upload-artifact@v6
+        with:
+          name: openq4-release-${{ needs.metadata.outputs.version_tag }}-linux-${{ matrix.binary_arch }}${{ matrix.package_suffix }}-appimage
+          path: ${{ steps.appimage.outputs.appimage_path }}
           if-no-files-found: error
 
       - name: Upload Windows installer
@@ -1853,6 +2062,7 @@ jobs:
             "openq4-${{ needs.metadata.outputs.version_tag }}-windows-arm64-setup.exe"
             "openq4-${{ needs.metadata.outputs.version_tag }}-linux-x64.tar.xz"
             "openq4-${{ needs.metadata.outputs.version_tag }}-linux-x64-debugsymbols.tar.xz"
+            "openq4-${{ needs.metadata.outputs.version_tag }}-x86_64.AppImage"
           )
 
           echo "${{ needs.metadata.outputs.linux_arm64_release_reason }}"
@@ -1861,11 +2071,13 @@ jobs:
             expected+=(
               "openq4-${{ needs.metadata.outputs.version_tag }}-linux-arm64-preview.tar.xz"
               "openq4-${{ needs.metadata.outputs.version_tag }}-linux-arm64-preview-debugsymbols.tar.xz"
+              "openq4-${{ needs.metadata.outputs.version_tag }}-preview-aarch64.AppImage"
             )
           else
             expected+=(
               "openq4-${{ needs.metadata.outputs.version_tag }}-linux-arm64.tar.xz"
               "openq4-${{ needs.metadata.outputs.version_tag }}-linux-arm64-debugsymbols.tar.xz"
+              "openq4-${{ needs.metadata.outputs.version_tag }}-aarch64.AppImage"
             )
           fi
           if [ "${{ needs.metadata.outputs.macos_signed_release_enabled }}" = "true" ]; then
@@ -2012,11 +2224,13 @@ jobs:
               stale_linux_arm64_assets=(
                 "openq4-${{ needs.metadata.outputs.version_tag }}-linux-arm64.tar.xz"
                 "openq4-${{ needs.metadata.outputs.version_tag }}-linux-arm64-debugsymbols.tar.xz"
+                "openq4-${{ needs.metadata.outputs.version_tag }}-aarch64.AppImage"
               )
             else
               stale_linux_arm64_assets=(
                 "openq4-${{ needs.metadata.outputs.version_tag }}-linux-arm64-preview.tar.xz"
                 "openq4-${{ needs.metadata.outputs.version_tag }}-linux-arm64-preview-debugsymbols.tar.xz"
+                "openq4-${{ needs.metadata.outputs.version_tag }}-preview-aarch64.AppImage"
               )
             fi
             mapfile -t existing_release_assets < <(

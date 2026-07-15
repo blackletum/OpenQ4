@@ -45,6 +45,9 @@ runtime_arch_token() {
 }
 
 RUNTIME_ARCH=$(runtime_arch_token)
+APP_ROOT="${PACKAGE_ROOT}/openQ4.app"
+APP_RESOURCE_ROOT="${APP_ROOT}/Contents/Resources"
+APP_FRAMEWORK_ROOT="${APP_ROOT}/Contents/Frameworks"
 SKIPPED_CRASH_REPORT_INDEX=0
 
 contains_control_chars() {
@@ -158,6 +161,15 @@ write_openq4_log_candidate_paths() {
     printf '%s\n' "${PACKAGE_ROOT}/baseoq4/logs/openq4.log" >> "${target}"
 }
 
+write_openq4_renderer_config_candidate_paths() {
+    target=$1
+    : > "${target}"
+    if [ -n "${HOME_DIR}" ]; then
+        printf '%s\n' "${HOME_DIR}/Library/Application Support/openQ4/baseoq4/openQ4Config.cfg" >> "${target}"
+        printf '%s\n' "${HOME_DIR}/baseoq4/openQ4Config.cfg" >> "${target}"
+    fi
+}
+
 copy_text_if_present() {
     source_path=$1
     target_path=$2
@@ -248,10 +260,9 @@ fi
     printf 'Package root: %s\n' "${PACKAGE_ROOT}"
     printf 'Detected runtime architecture token: %s\n' "${RUNTIME_ARCH}"
     printf 'Current directory: %s\n' "$(pwd)"
-    printf '\nExpected adjacent package-root entries:\n'
+    printf '\nExpected self-contained app and diagnostic package entries:\n'
     for entry in \
         "openQ4.app" \
-        "baseoq4" \
         "openQ4-client_${RUNTIME_ARCH}" \
         "openQ4-ded_${RUNTIME_ARCH}" \
         "collect_macos_support_info.sh" \
@@ -266,19 +277,22 @@ fi
     done
     printf '\nPackage root listing:\n'
     ls -la "${PACKAGE_ROOT}" 2>&1 || true
-    printf '\nbaseoq4 listing:\n'
-    ls -la "${PACKAGE_ROOT}/baseoq4" 2>&1 || true
+    printf '\nEmbedded baseoq4 data listing:\n'
+    ls -la "${APP_RESOURCE_ROOT}/baseoq4" 2>&1 || true
+    printf '\nEmbedded game-module listing:\n'
+    ls -la "${APP_FRAMEWORK_ROOT}" 2>&1 || true
 } | write_bounded_report "package/layout.txt"
 
 {
     printf 'Collector timestamp UTC: %s\n' "${STAMP}"
     printf 'Package root: %s\n' "${PACKAGE_ROOT}"
     printf 'Detected runtime architecture token: %s\n' "${RUNTIME_ARCH}"
-    printf 'App path: %s\n' "${PACKAGE_ROOT}/openQ4.app"
-    printf 'App executable path: %s\n' "${PACKAGE_ROOT}/openQ4.app/Contents/MacOS/openQ4"
+    printf 'App path: %s\n' "${APP_ROOT}"
+    printf 'App executable path: %s\n' "${APP_ROOT}/Contents/MacOS/openQ4"
     printf 'Expected loose client path: %s\n' "${PACKAGE_ROOT}/openQ4-client_${RUNTIME_ARCH}"
     printf 'Expected loose dedicated-server path: %s\n' "${PACKAGE_ROOT}/openQ4-ded_${RUNTIME_ARCH}"
-    printf 'Expected game directory path: %s\n' "${PACKAGE_ROOT}/baseoq4"
+    printf 'Expected embedded game-data path: %s\n' "${APP_RESOURCE_ROOT}/baseoq4"
+    printf 'Expected embedded game-module path: %s\n' "${APP_FRAMEWORK_ROOT}"
     printf 'Expected log keys: fs_basepath, fs_cdpath, fs_savepath\n'
     printf '\nCaptured filesystem path lines from available logs:\n'
     if [ -z "${HOME_DIR}" ]; then
@@ -331,9 +345,11 @@ fi
         fi
     done
 
-    printf '\nGame module files in baseoq4:\n'
+    printf '\nGame module files in the app Frameworks directory (plus legacy adjacent locations):\n'
     found_module=0
     for module_path in \
+        "${APP_FRAMEWORK_ROOT}"/game-sp_*.dylib \
+        "${APP_FRAMEWORK_ROOT}"/game-mp_*.dylib \
         "${PACKAGE_ROOT}/baseoq4"/game-sp_*.dylib \
         "${PACKAGE_ROOT}/baseoq4"/game-mp_*.dylib \
         "${PACKAGE_ROOT}/baseoq4"/game-sp_*.dll \
@@ -360,7 +376,9 @@ fi
     printf 'Architecture checks do not launch openQ4.\n'
 
     for binary_path in \
-        "${PACKAGE_ROOT}/openQ4.app/Contents/MacOS/openQ4" \
+        "${APP_ROOT}/Contents/MacOS/openQ4" \
+        "${APP_FRAMEWORK_ROOT}"/game-sp_*.dylib \
+        "${APP_FRAMEWORK_ROOT}"/game-mp_*.dylib \
         "${PACKAGE_ROOT}/openQ4-client_arm64" \
         "${PACKAGE_ROOT}/openQ4-client_x64" \
         "${PACKAGE_ROOT}/openQ4-client_x86" \
@@ -394,7 +412,9 @@ fi
 
     if command -v otool >/dev/null 2>&1; then
         for binary_path in \
-            "${PACKAGE_ROOT}/openQ4.app/Contents/MacOS/openQ4" \
+            "${APP_ROOT}/Contents/MacOS/openQ4" \
+            "${APP_FRAMEWORK_ROOT}"/game-sp_*.dylib \
+            "${APP_FRAMEWORK_ROOT}"/game-mp_*.dylib \
             "${PACKAGE_ROOT}/openQ4-client_arm64" \
             "${PACKAGE_ROOT}/openQ4-client_x64" \
             "${PACKAGE_ROOT}/openQ4-client_x86" \
@@ -478,7 +498,7 @@ fi
         elif [ -f "${log_path}" ]; then
             found_log=1
             printf '\n-- %s --\n' "${log_path}"
-            if grep -E 'R_InitOpenGL|R_ReloadARBPrograms|renderer startup phase|last renderer startup phase|first ARB2 interaction handoff|ARB2 interaction driver bypass|interaction color mode|renderer startup ARB interaction selection|Renderer driver quirks|Renderer bootstrap|Renderer upload manager|SDL3: graphics bridge|SDL3: reported OpenGL context|SDL3: OpenGL context|GL_ARB_vertex_buffer_object disabled|SimpleInteraction[.]vfp|material_interaction|GLSL material interaction|Apple OpenGL 2[.]1 interaction|Unsupported Apple OpenGL 2[.]1 compatibility path|bypassing ARB2 light interactions|using ARB2 renderSystem|idRenderTexture|GL_FRAMEBUFFER_|framebuffer .*incomplete|Forward render target MSAA:|MSAA requested|offscreen MSAA|_forwardRender|Filesystem paths:|Selected game module:|fatal signal SIGSEGV' "${log_path}" > "${renderer_lines}" 2>/dev/null; then
+            if grep -E 'R_InitOpenGL|R_ReloadARBPrograms|renderer startup phase|last renderer startup phase|first ARB2 interaction handoff|ARB2 interaction driver bypass|interaction color mode|renderer startup ARB interaction selection|Renderer driver quirks|Renderer bootstrap|Renderer upload manager|SDL3: graphics bridge|SDL3: reported OpenGL context|SDL3: OpenGL context|GL_ARB_vertex_buffer_object disabled|SimpleInteraction[.]vfp|material_interaction|GLSL material interaction|Apple OpenGL 2[.]1 interaction|Unsupported Apple OpenGL 2[.]1 compatibility path|bypassing ARB2 light interactions|using ARB2 renderSystem|idRenderTexture|GL_FRAMEBUFFER_|framebuffer .*incomplete|Forward render target MSAA:|MSAA requested|offscreen MSAA|_forwardRender|Filesystem paths:|Selected game module:|Game module search failed:|Game module load failed:|dlopen .* failed:|fatal signal SIGSEGV' "${log_path}" > "${renderer_lines}" 2>/dev/null; then
                 found_renderer_line=1
                 tail -n 260 "${renderer_lines}"
             else
@@ -496,13 +516,52 @@ fi
 
 {
     printf 'Collector timestamp UTC: %s\n' "${STAMP}"
+    printf 'Only renderer and performance settings are copied: r_* plus com_machineSpec and com_performancePreset. Bindings, player/account, network, audio-device, and arbitrary config settings are excluded.\n'
+    printf '\nCaptured renderer/performance settings from safe saved configs:\n'
+    if [ -z "${HOME_DIR}" ]; then
+        printf 'HOME was not set; saved openQ4Config.cfg paths were skipped.\n'
+    fi
+
+    found_config=0
+    found_renderer_config_line=0
+    renderer_config_lines="${WORK_PARENT}/renderer-config-lines.txt"
+    renderer_config_candidates="${WORK_PARENT}/renderer-config-candidates.txt"
+    write_openq4_renderer_config_candidate_paths "${renderer_config_candidates}"
+    while IFS= read -r config_path; do
+        if [ -L "${config_path}" ]; then
+            found_config=1
+            printf '\n-- %s --\n' "${config_path}"
+            printf '(skipped symlink; support collector does not follow symlinks)\n'
+        elif [ -f "${config_path}" ]; then
+            found_config=1
+            printf '\n-- %s --\n' "${config_path}"
+            if grep -E '^[[:space:]]*seta?[[:space:]]+(r_[[:alnum:]_]+|com_(machineSpec|performancePreset))[[:space:]]+' "${config_path}" > "${renderer_config_lines}" 2>/dev/null; then
+                found_renderer_config_line=1
+                tail -n 240 "${renderer_config_lines}"
+            else
+                printf '(no renderer or performance settings were found in this config)\n'
+            fi
+        fi
+    done < "${renderer_config_candidates}"
+
+    if [ "${found_config}" -eq 0 ]; then
+        printf 'No saved openQ4Config.cfg files were found. Renderer settings could not be copied without launching openQ4.\n'
+    elif [ "${found_renderer_config_line}" -eq 0 ]; then
+        printf '\nNo renderer or performance settings were found in the inspected saved configs.\n'
+    fi
+} | write_bounded_report "logs/renderer-config.txt"
+
+{
+    printf 'Collector timestamp UTC: %s\n' "${STAMP}"
     printf 'Package root: %s\n' "${PACKAGE_ROOT}"
     printf 'Signing and Gatekeeper checks do not launch openQ4.\n'
 
     if command -v codesign >/dev/null 2>&1; then
         for signed_path in \
-            "${PACKAGE_ROOT}/openQ4.app" \
-            "${PACKAGE_ROOT}/openQ4.app/Contents/MacOS/openQ4" \
+            "${APP_ROOT}" \
+            "${APP_ROOT}/Contents/MacOS/openQ4" \
+            "${APP_FRAMEWORK_ROOT}"/game-sp_*.dylib \
+            "${APP_FRAMEWORK_ROOT}"/game-mp_*.dylib \
             "${PACKAGE_ROOT}/openQ4-client_arm64" \
             "${PACKAGE_ROOT}/openQ4-client_x64" \
             "${PACKAGE_ROOT}/openQ4-client_x86" \
@@ -525,7 +584,7 @@ fi
 
     if command -v spctl >/dev/null 2>&1; then
         for assessed_path in \
-            "${PACKAGE_ROOT}/openQ4.app" \
+            "${APP_ROOT}" \
             "${PACKAGE_ROOT}/openQ4-client_arm64" \
             "${PACKAGE_ROOT}/openQ4-client_x64" \
             "${PACKAGE_ROOT}/openQ4-client_x86" \
@@ -544,7 +603,7 @@ fi
 
     if command -v xcrun >/dev/null 2>&1; then
         for stapled_path in \
-            "${PACKAGE_ROOT}/openQ4.app"
+            "${APP_ROOT}"
         do
             if path_exists_for_inspection "${stapled_path}"; then
                 printf '\n-- xcrun stapler validate: %s --\n' "${stapled_path}"
@@ -566,8 +625,11 @@ fi
         xattr_names="${WORK_PARENT}/xattr-names.txt"
         for xattr_path in \
             "${PACKAGE_ROOT}" \
-            "${PACKAGE_ROOT}/openQ4.app" \
-            "${PACKAGE_ROOT}/openQ4.app/Contents/MacOS/openQ4" \
+            "${APP_ROOT}" \
+            "${APP_ROOT}/Contents/MacOS/openQ4" \
+            "${APP_RESOURCE_ROOT}/baseoq4" \
+            "${APP_FRAMEWORK_ROOT}"/game-sp_*.dylib \
+            "${APP_FRAMEWORK_ROOT}"/game-mp_*.dylib \
             "${PACKAGE_ROOT}/openQ4-client_arm64" \
             "${PACKAGE_ROOT}/openQ4-client_x64" \
             "${PACKAGE_ROOT}/openQ4-client_x86" \
@@ -620,6 +682,8 @@ else
 fi
 copy_text_if_present "${PACKAGE_ROOT}/baseoq4/logs/openq4.log" "logs/package-baseoq4-openq4.log"
 copy_text_if_present "${PACKAGE_ROOT}/baseoq4/logs/fatal.txt" "logs/package-baseoq4-fatal.txt"
+copy_text_if_present "${APP_RESOURCE_ROOT}/baseoq4/logs/openq4.log" "logs/app-resource-baseoq4-openq4.log"
+copy_text_if_present "${APP_RESOURCE_ROOT}/baseoq4/logs/fatal.txt" "logs/app-resource-baseoq4-fatal.txt"
 
 CRASH_LIST="${WORK_PARENT}/crash-list.txt"
 if [ -z "${HOME_DIR}" ]; then
@@ -660,7 +724,7 @@ write_text "README.txt" \
     "The collector does not follow symlinked package, log, or crash-report inputs; skipped symlinks are recorded in the relevant report files." \
     "If HOME is not set, home-scoped logs and DiagnosticReports are skipped with an archive note instead of aborting collection." \
     "system/rosetta.txt records the collector process architecture and sysctl.proc_translated value so unsupported Rosetta/translated reports are easy to spot." \
-    "package/build-metadata.txt records package VERSION.txt metadata, app VERSION.txt metadata, openQ4/openQ4-game commit fields when present, and the game module filenames in baseoq4/." \
+    "package/build-metadata.txt records package VERSION.txt metadata, app VERSION.txt metadata, openQ4/openQ4-game commit fields when present, and the game module filenames in the app Frameworks directory or a legacy adjacent baseoq4 directory." \
     "package/binary-architecture.txt records file/lipo architecture output for package executables and game modules without launching openQ4." \
     "package/dylib-dependencies.txt records otool dependency and game-module install-name output without launching openQ4." \
     "package/path-resolution.txt records the package root, app path, expected loose runtime paths, and any fs_basepath, fs_cdpath, or fs_savepath lines found in copied logs." \
@@ -668,6 +732,7 @@ write_text "README.txt" \
     "package/quarantine.txt lists extended-attribute names and com.apple.quarantine presence without copying extended-attribute values." \
     "logs/openal-summary.txt records OpenAL vendor, renderer, version, device, and EFX warning/status lines found in copied logs." \
     "logs/renderer-summary.txt records renderer startup, driver-quirk, ARB2 interaction, and fatal-signal breadcrumbs found in copied logs." \
+    "logs/renderer-config.txt records only renderer/performance settings (r_* plus named com settings) from safe saved configs; bindings, player/account, network, audio-device, and arbitrary config settings are excluded." \
     "crash-reports/ includes up to 10 recent matching openQ4, openQ4-client, and openQ4-ded DiagnosticReports files when macOS wrote them." \
     "If package/SYMBOLS.txt is present, include it with any .ips report so maintainers can pick the matching macOS dSYM symbol archive." \
     "For issue #73 style crashes, include full terminal output as text in the issue body too; this archive cannot recover terminal output that was not logged."

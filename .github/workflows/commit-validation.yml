@@ -50,6 +50,7 @@ jobs:
             tools/build/openq4_pak.py \
             tools/build/openq4_release_version.py \
             tools/build/openq4_version.py \
+            tools/build/assemble_macos_universal2.py \
             tools/build/package_nightly.py \
             tools/build/package_release.py \
             tools/build/verify_linux_arm64_release_evidence.py \
@@ -83,6 +84,7 @@ jobs:
             tools/tests/linux_wayland_stock_sp_smoke_contract.py \
             tools/tests/linux_gui_presentation_defaults.py \
             tools/tests/linux_highdpi_mouse.py \
+            tools/tests/linux_appimage_packaging.py \
             tools/tests/linux_metadata_fuzz.py \
             tools/tests/linux_packaging_guidance.py \
             tools/tests/linux_sanitizer_ci.py \
@@ -91,9 +93,12 @@ jobs:
             tools/tests/linux_wayland_build_contract.py \
             tools/tests/loading_continue_input.py \
             tools/tests/macos_apple_gl21_arb2_corridor.py \
+            tools/tests/macos_dedicated_server_smoke.py \
+            tools/tests/macos_dedicated_server_smoke_contract.py \
             tools/tests/macos_evidence_plumbing.py \
             tools/tests/macos_evidence_recording.py \
             tools/tests/macos_gamelibs_alignment.py \
+            tools/tests/macos_intel_ci.py \
             tools/tests/macos_local_validation_track.py \
             tools/tests/macos_matrix_policy.py \
             tools/tests/macos_native_backend_guard.py \
@@ -104,6 +109,7 @@ jobs:
             tools/tests/macos_renderer_backend_policy.py \
             tools/tests/macos_renderer_phase_breadcrumbs.py \
             tools/tests/macos_renderer_startup_guard.py \
+            tools/tests/macos_sanitizer_ci.py \
             tools/tests/macos_sdl3_backend_guard.py \
             tools/tests/macos_shadow_policy.py \
             tools/tests/macos_signoff_archive.py \
@@ -111,6 +117,9 @@ jobs:
             tools/tests/macos_support_claim_policy.py \
             tools/tests/macos_support_intake.py \
             tools/tests/macos_symbolication_policy.py \
+            tools/tests/macos_universal2_assembly.py \
+            tools/tests/macos_universal2_runtime.py \
+            tools/tests/macos_universal2_release_candidate.py \
             tools/tests/macos_metal_bridge.py \
             tools/tests/native_glx_shutdown.py \
             tools/tests/openq4_pure_pack.py \
@@ -154,6 +163,7 @@ jobs:
           python tools/tests/linux_wayland_stock_sp_smoke_contract.py
           python tools/tests/linux_gui_presentation_defaults.py
           python tools/tests/linux_highdpi_mouse.py
+          python tools/tests/linux_appimage_packaging.py
           python tools/tests/linux_metadata_fuzz.py
           python tools/tests/linux_packaging_guidance.py
           python tools/tests/linux_pk4_legacy_tools.py
@@ -163,9 +173,11 @@ jobs:
           python tools/tests/linux_wayland_build_contract.py
           python tools/tests/loading_continue_input.py
           python tools/tests/macos_apple_gl21_arb2_corridor.py
+          python tools/tests/macos_dedicated_server_smoke_contract.py
           python tools/tests/macos_evidence_plumbing.py
           python tools/tests/macos_evidence_recording.py
           python tools/tests/macos_gamelibs_alignment.py
+          python tools/tests/macos_intel_ci.py
           python tools/tests/macos_local_validation_track.py
           python tools/tests/macos_matrix_policy.py
           python tools/tests/macos_native_backend_guard.py
@@ -176,6 +188,7 @@ jobs:
           python tools/tests/macos_renderer_backend_policy.py
           python tools/tests/macos_renderer_phase_breadcrumbs.py
           python tools/tests/macos_renderer_startup_guard.py
+          python tools/tests/macos_sanitizer_ci.py
           python tools/tests/macos_sdl3_backend_guard.py
           python tools/tests/macos_shadow_policy.py
           python tools/tests/macos_signoff_archive.py
@@ -183,6 +196,9 @@ jobs:
           python tools/tests/macos_support_claim_policy.py
           python tools/tests/macos_support_intake.py
           python tools/tests/macos_symbolication_policy.py
+          python tools/tests/macos_universal2_assembly.py
+          python tools/tests/macos_universal2_runtime.py
+          python tools/tests/macos_universal2_release_candidate.py
           python tools/tests/macos_metal_bridge.py
           python tools/tests/native_glx_shutdown.py
           python tools/tests/openq4_pure_pack.py
@@ -862,6 +878,7 @@ jobs:
     timeout-minutes: 90
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/../openQ4-game
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
     strategy:
       fail-fast: false
       matrix:
@@ -909,12 +926,274 @@ jobs:
             --extra-setup-arg=-Dmacos_graphics_bridge=${{ matrix.macos_graphics_bridge }} \
             --extra-setup-arg=-Dmacos_openal_provider=${{ matrix.macos_openal_provider }}
 
-      - name: Publish staged payload
+      - name: Run macOS dedicated server smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/tests/macos_dedicated_server_smoke.py \
+            --output-root .tmp/macos-dedicated-smoke/${{ matrix.artifact_suffix }}
+
+      - name: Record macOS ARM64 thin-build provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/build/assemble_macos_universal2.py record \
+            --install-root .install \
+            --source-manifest .tmp/gamelibs_stage/openq4_gamelibs_stage_manifest.json \
+            --arch arm64 \
+            --graphics-bridge ${{ matrix.macos_graphics_bridge }} \
+            --openal-provider ${{ matrix.macos_openal_provider }} \
+            --deployment-target "${MACOSX_DEPLOYMENT_TARGET}" \
+            --build-type debug
+
+      - name: Publish macOS dedicated server smoke
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: commit-macos-arm64-${{ matrix.artifact_suffix }}-dedicated-smoke
+          path: .tmp/macos-dedicated-smoke/${{ matrix.artifact_suffix }}
+          if-no-files-found: warn
+          retention-days: 14
+          include-hidden-files: true
+
+      - name: Archive macOS ARM64 staged payload with modes
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload_archive=".tmp/macos-thin-payload/arm64-${{ matrix.artifact_suffix }}-payload.tar.gz"
+          mkdir -p "$(dirname "${payload_archive}")"
+          rm -f "${payload_archive}"
+          tar -C .install -czf "${payload_archive}" .
+          tar -tzf "${payload_archive}" >/dev/null
+
+      - name: Publish macOS ARM64 staged payload
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: commit-macos-arm64-${{ matrix.artifact_suffix }}-payload
-          path: .install
+          path: .tmp/macos-thin-payload/arm64-${{ matrix.artifact_suffix }}-payload.tar.gz
           if-no-files-found: warn
+          retention-days: 14
+          include-hidden-files: true
+
+  macos-x64:
+    name: macOS Intel x64 ${{ matrix.bridge_label }} Commit Validation
+    runs-on: macos-15-intel
+    needs: script-smoke
+    timeout-minutes: 90
+    env:
+      OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/../openQ4-game
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - bridge_label: OpenGL
+            macos_graphics_bridge: opengl
+            macos_openal_provider: apple_framework
+            artifact_suffix: opengl
+          - bridge_label: Metal
+            macos_graphics_bridge: metal
+            macos_openal_provider: apple_framework
+            artifact_suffix: metal
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify Intel host
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$(uname -m)" != "x86_64" ]]; then
+            echo "macOS Intel validation requires x86_64, found $(uname -m)."
+            exit 1
+          fi
+
+      - name: Fetch openQ4-game
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/themuffinator/openQ4-game.git "${OPENQ4_GAMELIBS_REPO}"
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Install Meson and Ninja
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install meson ninja
+
+      - name: Run selected validation profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/validation/validate_pr.sh \
+            --fail-on-dirty \
+            --platform-backend=sdl3 \
+            --extra-setup-arg=-Dmacos_graphics_bridge=${{ matrix.macos_graphics_bridge }} \
+            --extra-setup-arg=-Dmacos_openal_provider=${{ matrix.macos_openal_provider }}
+
+      - name: Run macOS dedicated server smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/tests/macos_dedicated_server_smoke.py \
+            --arch x64 \
+            --output-root .tmp/macos-dedicated-smoke/x64-${{ matrix.artifact_suffix }}
+
+      - name: Record macOS Intel thin-build provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/build/assemble_macos_universal2.py record \
+            --install-root .install \
+            --source-manifest .tmp/gamelibs_stage/openq4_gamelibs_stage_manifest.json \
+            --arch x64 \
+            --graphics-bridge ${{ matrix.macos_graphics_bridge }} \
+            --openal-provider ${{ matrix.macos_openal_provider }} \
+            --deployment-target "${MACOSX_DEPLOYMENT_TARGET}" \
+            --build-type debug
+
+      - name: Publish macOS Intel dedicated server smoke
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: commit-macos-x64-${{ matrix.artifact_suffix }}-dedicated-smoke
+          path: .tmp/macos-dedicated-smoke/x64-${{ matrix.artifact_suffix }}
+          if-no-files-found: warn
+          retention-days: 14
+          include-hidden-files: true
+
+      - name: Archive macOS Intel staged payload with modes
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload_archive=".tmp/macos-thin-payload/x64-${{ matrix.artifact_suffix }}-payload.tar.gz"
+          mkdir -p "$(dirname "${payload_archive}")"
+          rm -f "${payload_archive}"
+          tar -C .install -czf "${payload_archive}" .
+          tar -tzf "${payload_archive}" >/dev/null
+
+      - name: Publish macOS Intel staged payload
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: commit-macos-x64-${{ matrix.artifact_suffix }}-payload
+          path: .tmp/macos-thin-payload/x64-${{ matrix.artifact_suffix }}-payload.tar.gz
+          if-no-files-found: warn
+          retention-days: 14
+          include-hidden-files: true
+
+  macos-universal2:
+    # Pre-publication gate only; release artifacts remain arm64-only.
+    name: macOS universal2 ${{ matrix.bridge_label }} Assembly
+    runs-on: macos-15
+    needs:
+      - macos-arm64
+      - macos-x64
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - bridge_label: OpenGL
+            artifact_suffix: opengl
+          - bridge_label: Metal
+            artifact_suffix: metal
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Download macOS ARM64 thin payload
+        uses: actions/download-artifact@v5
+        with:
+          name: commit-macos-arm64-${{ matrix.artifact_suffix }}-payload
+          path: .tmp/macos-universal2/${{ matrix.artifact_suffix }}/arm64
+
+      - name: Download macOS Intel thin payload
+        uses: actions/download-artifact@v5
+        with:
+          name: commit-macos-x64-${{ matrix.artifact_suffix }}-payload
+          path: .tmp/macos-universal2/${{ matrix.artifact_suffix }}/x64
+
+      - name: Restore mode-preserving thin payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          corridor_root=".tmp/macos-universal2/${{ matrix.artifact_suffix }}"
+          for arch in arm64 x64; do
+            payload_archive="${corridor_root}/${arch}/${arch}-${{ matrix.artifact_suffix }}-payload.tar.gz"
+            if [ -L "${payload_archive}" ] || [ ! -f "${payload_archive}" ]; then
+              echo "Missing regular thin payload archive: ${payload_archive}"
+              exit 1
+            fi
+            tar -tzf "${payload_archive}" >/dev/null
+            tar -xzf "${payload_archive}" -C "${corridor_root}/${arch}"
+            rm -f "${payload_archive}"
+          done
+
+      - name: Assemble exact dual-slice staging tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          corridor_root=".tmp/macos-universal2/${{ matrix.artifact_suffix }}"
+          mkdir -p "${corridor_root}/package-output"
+          python tools/build/assemble_macos_universal2.py assemble \
+            --arm64-root "${corridor_root}/arm64" \
+            --x64-root "${corridor_root}/x64" \
+            --output-root "${corridor_root}/universal2" \
+            --assembly-manifest "${corridor_root}/assembly-manifest.json"
+
+      - name: Run native universal2 dedicated-server smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          corridor_root=".tmp/macos-universal2/${{ matrix.artifact_suffix }}"
+          python tools/tests/macos_dedicated_server_smoke.py \
+            --install-root "${corridor_root}/universal2" \
+            --arch universal2 \
+            --output-root "${corridor_root}/dedicated-smoke"
+
+      - name: Package and validate universal2 app
+        shell: bash
+        run: |
+          set -euo pipefail
+          corridor_root=".tmp/macos-universal2/${{ matrix.artifact_suffix }}"
+          export OPENQ4_UNIVERSAL_INSTALL_ROOT="${corridor_root}/universal2"
+          release_version="$(python -c 'import json, os; print(json.load(open(os.path.join(os.environ["OPENQ4_UNIVERSAL_INSTALL_ROOT"], "baseoq4", "mod.json"), encoding="utf-8"))["version"])')"
+          python tools/build/package_nightly.py \
+            --platform macos \
+            --arch universal2 \
+            --version "${release_version}" \
+            --version-tag universal2-ci \
+            --source-root . \
+            --install-dir "${corridor_root}/universal2" \
+            --output-dir "${corridor_root}/package-output" \
+            --archive-format tar.xz \
+            --package-suffix "-${{ matrix.artifact_suffix }}" \
+            --macos-signing-mode ad-hoc
+
+      - name: Publish universal2 assembly evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: commit-macos-universal2-${{ matrix.artifact_suffix }}
+          path: .tmp/macos-universal2/${{ matrix.artifact_suffix }}
+          if-no-files-found: error
           retention-days: 14
           include-hidden-files: true

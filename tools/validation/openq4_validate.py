@@ -123,6 +123,7 @@ MACOS_SUPPORT_INFO_REQUIRED_TOKENS = (
     "MAX_SUPPORT_ARCHIVE_BYTES",
     "write_bounded_report()",
     "write_openq4_log_candidate_paths()",
+    "write_openq4_renderer_config_candidate_paths()",
     "sanitize_text()",
     "redact_text()",
     "limit_stream_tail()",
@@ -131,6 +132,12 @@ MACOS_SUPPORT_INFO_REQUIRED_TOKENS = (
     "Support package root must not contain control characters",
     "Support output directory must not contain control characters",
     "HOME was not set; home-scoped openq4.log files were skipped.",
+    "HOME was not set; saved openQ4Config.cfg paths were skipped.",
+    "logs/renderer-config.txt",
+    "Game module search failed:",
+    "Game module load failed:",
+    "dlopen .* failed:",
+    "Only renderer and performance settings are copied",
     "HOME was not set; the macOS DiagnosticReports directory could not be located.",
     ".XXXXXX.tar.gz.tmp",
     "does not dump the environment",
@@ -168,9 +175,10 @@ MACOS_SUPPORT_INFO_FORBIDDEN_TOKENS = (
 )
 
 MACOS_LIPO_ARCHES = {
-    "arm64": "arm64",
-    "x64": "x86_64",
-    "x86": "i386",
+    "arm64": frozenset(("arm64",)),
+    "x64": frozenset(("x86_64",)),
+    "x86": frozenset(("i386",)),
+    "universal2": frozenset(("arm64", "x86_64")),
 }
 
 
@@ -398,6 +406,7 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "linux_wayland_stock_sp_smoke_contract.py",
         root / "tools" / "tests" / "linux_gui_presentation_defaults.py",
         root / "tools" / "tests" / "linux_highdpi_mouse.py",
+        root / "tools" / "tests" / "linux_appimage_packaging.py",
         root / "tools" / "tests" / "linux_metadata_fuzz.py",
         root / "tools" / "tests" / "linux_packaging_guidance.py",
         root / "tools" / "tests" / "linux_pk4_legacy_tools.py",
@@ -407,9 +416,11 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "linux_wayland_build_contract.py",
         root / "tools" / "tests" / "loading_continue_input.py",
         root / "tools" / "tests" / "macos_apple_gl21_arb2_corridor.py",
+        root / "tools" / "tests" / "macos_dedicated_server_smoke_contract.py",
         root / "tools" / "tests" / "macos_evidence_plumbing.py",
         root / "tools" / "tests" / "macos_evidence_recording.py",
         root / "tools" / "tests" / "macos_gamelibs_alignment.py",
+        root / "tools" / "tests" / "macos_intel_ci.py",
         root / "tools" / "tests" / "macos_local_validation_track.py",
         root / "tools" / "tests" / "macos_matrix_policy.py",
         root / "tools" / "tests" / "macos_native_backend_guard.py",
@@ -420,6 +431,7 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "macos_renderer_backend_policy.py",
         root / "tools" / "tests" / "macos_renderer_phase_breadcrumbs.py",
         root / "tools" / "tests" / "macos_renderer_startup_guard.py",
+        root / "tools" / "tests" / "macos_sanitizer_ci.py",
         root / "tools" / "tests" / "macos_sdl3_backend_guard.py",
         root / "tools" / "tests" / "macos_shadow_policy.py",
         root / "tools" / "tests" / "macos_signoff_archive.py",
@@ -427,6 +439,9 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "macos_support_claim_policy.py",
         root / "tools" / "tests" / "macos_support_intake.py",
         root / "tools" / "tests" / "macos_symbolication_policy.py",
+        root / "tools" / "tests" / "macos_universal2_assembly.py",
+        root / "tools" / "tests" / "macos_universal2_runtime.py",
+        root / "tools" / "tests" / "macos_universal2_release_candidate.py",
         root / "tools" / "tests" / "macos_metal_bridge.py",
         root / "tools" / "tests" / "native_glx_shutdown.py",
         root / "tools" / "tests" / "openq4_pure_pack.py",
@@ -727,11 +742,19 @@ def validate_no_macos_unsafe_file_modes(root: Path, install_root: Path) -> None:
         raise ValidationError(f"macOS staged payload contains unsafe file modes:\n{formatted}")
 
 
-def macos_expected_lipo_arch(arch: str) -> str:
+def macos_expected_lipo_arches(arch: str) -> frozenset[str]:
     expected = MACOS_LIPO_ARCHES.get(arch)
     if expected is None:
         raise ValidationError(f"macOS staged architecture {arch!r} has no lipo mapping")
     return expected
+
+
+def macos_expected_lipo_arch(arch: str) -> str:
+    """Return the singleton Mach-O slice for compatibility with thin-only callers."""
+    expected = macos_expected_lipo_arches(arch)
+    if len(expected) != 1:
+        raise ValidationError(f"macOS staged architecture {arch!r} is not a thin architecture")
+    return next(iter(expected))
 
 
 def macos_lipo_arches(binary_path: Path) -> set[str]:
@@ -760,14 +783,14 @@ def validate_macos_binary_architectures(root: Path, arch: str, binary_paths: lis
     if not host_is_macos():
         return
 
-    expected_arch = macos_expected_lipo_arch(arch)
+    expected_arches = macos_expected_lipo_arches(arch)
     for binary_path in binary_paths:
         actual_arches = macos_lipo_arches(binary_path)
-        if expected_arch not in actual_arches:
+        if actual_arches != expected_arches:
             actual = ", ".join(sorted(actual_arches)) or "<none>"
             raise ValidationError(
                 f"macOS staged binary architecture mismatch: {rel(binary_path, root)} "
-                f"expected {expected_arch}, found {actual}"
+                f"expected {', '.join(sorted(expected_arches))}, found {actual}"
             )
 
 

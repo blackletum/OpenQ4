@@ -176,7 +176,8 @@ def main() -> int:
             "Architecture policy, CPU architecture, and OS matrix role were recorded",
             "Xcode and macOS SDK versions were recorded",
             "macOS floor/latest public signoff coverage was recorded",
-            "Copied-package launch was checked",
+            "Dragging only `openQ4.app`",
+            "Whole-package copied launch was checked",
             "First-class macOS release artifacts are signed/notarized DMGs",
             "### vtest",
         ):

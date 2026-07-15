@@ -52,23 +52,24 @@ Attach or paste these items when possible:
 - OpenAL audio lines from `openq4.log` when present: `OpenAL vendor:`,
   `OpenAL renderer:`, `OpenAL active device:`, and any `OpenAL EFX ...`
   warning/status lines.
-- `system/rosetta.txt`, `logs/renderer-summary.txt`,
+- `system/rosetta.txt`, `logs/renderer-summary.txt`, `logs/renderer-config.txt`,
   `package/binary-architecture.txt`, `package/dylib-dependencies.txt`,
   `package/signing.txt`, and
   `package/quarantine.txt` from the support archive when present.
-- Whether `openQ4.app`, `baseoq4/`, the loose client/dedicated binaries, and
-  support files stayed together as one adjacent package root.
+- Whether `openQ4.app` was launched from the DMG or after being dragged to
+  `/Applications`, and whether loose client/dedicated tools were launched from
+  a whole copied package.
 
 Do not attach retail Quake 4 `q4base/*.pk4` assets.
 
 ## Capture Terminal Output
 
-From Terminal, run the client from the package root and redirect output to a
-text file:
+From Terminal, run the app executable from any working directory and redirect
+output to a text file:
 
 ```sh
-cd "/path/to/openQ4 package"
-./openQ4-client_arm64 > ~/Desktop/openq4-terminal.txt 2>&1
+cd /tmp
+"/Applications/openQ4.app/Contents/MacOS/openQ4" > ~/Desktop/openq4-terminal.txt 2>&1
 ```
 
 For dedicated-server reports, run the dedicated binary from the same package
@@ -108,6 +109,9 @@ For issue #73 style reports, keep the lines around these markers:
 - `GL_FRAMEBUFFER_`
 - `Filesystem paths:`
 - `Selected game module:`
+- `Game module search failed:`
+- `Game module load failed:`
+- `dlopen ... failed:`
 - `fatal signal SIGSEGV`
 
 ## Run The Support Collector
@@ -174,7 +178,27 @@ render-target/MSAA, selected filesystem/module, and fatal-signal diagnostics.
 That includes lines such as `R_InitOpenGL`, `Renderer driver quirks`,
 `material_interaction`, `GL_FRAMEBUFFER_*`, `Forward render target MSAA`,
 `Filesystem paths:`, `Selected game module:`, `ARB2 interaction driver bypass`,
+`Game module search failed:`, `Game module load failed:`, `dlopen ... failed:`,
 and `fatal signal SIGSEGV`.
+
+If a launch stops with `couldn't find game dynamic library`, include the
+`Game module search failed:` line. It lists only the trusted package locations
+that were checked, so maintainers can distinguish a damaged app from an older
+package layout. A current self-contained app should search its
+`openQ4.app/Contents/Frameworks` directory for `game-sp_arm64.dylib` and
+`game-mp_arm64.dylib`; do not manually copy game modules into retail `q4base`.
+
+If the module was found but the launch stops with `couldn't load game dynamic
+library`, include both `Game module load failed:` and the preceding
+`dlopen ... failed:` line. Together they identify the selected module and the
+platform loader's reason, such as a code-signing or dependent-library problem.
+
+The archive also includes `logs/renderer-config.txt` when a saved
+`openQ4Config.cfg` is available. It copies only renderer/performance cvar lines:
+`r_*`, `com_machineSpec`, and `com_performancePreset`. It does not copy
+bindings, player/account, network, audio-device, or arbitrary config settings.
+This lets maintainers compare graphics changes from issue #73-style reports
+without requesting a user's full personal config.
 
 The archive also includes `system/rosetta.txt`. That file records `arch`,
 `uname -m`, and `sysctl.proc_translated` output from the collector process so
@@ -243,20 +267,19 @@ system_profiler SPDisplaysDataType
 
 ## Package Layout Check
 
-The current macOS package is not a self-contained `.app` bundle. Keep these
-items together:
+The current macOS client is self-contained. It uses this internal layout:
 
 ```text
-openQ4.app
-openQ4-client_arm64
-openQ4-ded_arm64
-baseoq4/
-collect_macos_support_info.sh
+openQ4.app/Contents/MacOS/openQ4
+openQ4.app/Contents/Resources/baseoq4/
+openQ4.app/Contents/Frameworks/game-sp_arm64.dylib
+openQ4.app/Contents/Frameworks/game-mp_arm64.dylib
 ```
 
 Finder may start the app with an unrelated process working directory; current
-builds derive the adjacent package root and use it as `fs_cdpath`, while a
-separately discovered Steam/GOG install remains `fs_basepath` for retail
-`q4base`. Moving only `openQ4.app` to `/Applications` is not supported yet.
-`baseoq4/` and the game dylibs are not embedded in the bundle. If you
-tried that, mention it in the issue because it changes the failure mode.
+builds use embedded `Contents/Resources` as `fs_cdpath`, while a separately
+discovered Steam/GOG install remains `fs_basepath` for retail `q4base`. Dragging
+only `openQ4.app` to `/Applications` is supported. Keep the whole extracted
+package only when testing the loose diagnostic client, dedicated server, or
+support collector, which discover the sibling app runtime. Do not modify the
+signed app by adding retail assets.

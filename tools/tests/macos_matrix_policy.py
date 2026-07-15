@@ -29,7 +29,7 @@ def validate_matrix_policy_doc() -> None:
     for token in (
         "# macOS Support Matrix Policy",
         "Current macOS release artifacts are experimental Apple Silicon/arm64 only",
-        "The current policy is `arm64 only`",
+        "The current user-facing release policy is `arm64 only`",
         "Intel Mac / `x86_64` packages",
         "universal2 packages",
         "Rosetta as a supported compatibility layer",
@@ -121,11 +121,19 @@ def validate_workflow_matrix_scope() -> None:
 
     for token in ("macos-x64", "macos-universal2", "macOS x64", "macOS universal2"):
         reject(manual, token, "manual release macOS matrix")
-        reject(commit, token, "commit validation macOS matrix")
+
+    for token in ("macos-universal2", "macOS universal2"):
         reject(push, token, "push verification macOS matrix")
 
     require(commit, "macos-arm64:", "commit validation macOS arm64 job")
+    require(commit, "macos-x64:", "commit validation macOS Intel job")
+    require(commit, "macos-universal2:", "commit validation macOS universal2 assembly job")
+    require(commit, "Pre-publication gate", "commit validation universal2 evidence boundary")
+    require(commit, "runs-on: macos-15-intel", "commit validation macOS Intel runner")
+    require(commit, "commit-macos-x64-${{ matrix.artifact_suffix }}-payload", "commit validation Intel payload")
     require(push, "macos-15", "push verification hosted macOS runner")
+    require(push, "macOS Intel x64 OpenGL Push Verification", "push verification Intel OpenGL job")
+    require(push, "macOS Intel x64 Metal Push Verification", "push verification Intel Metal job")
 
 
 def validate_evidence_contract() -> None:
@@ -231,11 +239,11 @@ def validate_phase4_plan_status() -> None:
         "- [x] Decide architecture policy for Intel/universal2.",
         "- [x] Decide OS-version validation policy for the macOS 11 floor and latest public macOS.",
         "- [x] Add guardrails for the current arm64-only matrix and floor/latest evidence fields.",
-        "- [ ] Add runners, build lanes, and validation only for support claims the project is ready to make.",
+        "- [x] Add runners, build lanes, and validation only for support claims the project is ready to make.",
         "Phase 4 implementation status",
         "`docs/dev/macos-support-matrix-policy.md`",
         "`tools/tests/macos_matrix_policy.py`",
-        "Intel/universal2 expansion remains deferred",
+        "Intel release expansion remains deferred",
     ):
         require(plan, token, "macOS compatibility/support plan Phase 4 status")
 

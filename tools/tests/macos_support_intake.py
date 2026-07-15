@@ -55,11 +55,12 @@ def validate_issue_template() -> None:
         "~/Library/Application Support/openQ4/baseoq4/logs/openq4.log",
         "macOS crash report",
         "~/Library/Logs/DiagnosticReports",
-        "I kept `openQ4.app`, `baseoq4/`, the loose client/dedicated binaries, and runtime support files together.",
+        "I tested `openQ4.app` after dragging it independently",
         "collect_macos_support_info.sh",
         "openq4-macos-support-*.tar.gz",
         "system/rosetta.txt",
         "logs/renderer-summary.txt",
+        "logs/renderer-config.txt",
         "package/binary-architecture.txt",
         "package/dylib-dependencies.txt",
         "package/signing.txt",
@@ -128,6 +129,7 @@ def validate_support_collector() -> None:
         "collect_macos_support_info.sh",
         "openq4.log",
         "logs/renderer-summary.txt",
+        "logs/renderer-config.txt",
         "R_InitOpenGL",
         "Renderer driver quirks",
         "ARB2 interaction driver bypass",
@@ -140,6 +142,9 @@ def validate_support_collector() -> None:
         "_forwardRender",
         "Filesystem paths:",
         "Selected game module:",
+        "Game module search failed:",
+        "Game module load failed:",
+        "dlopen .* failed:",
         "fatal signal SIGSEGV",
         "package/binary-architecture.txt",
         "Architecture checks do not launch openQ4.",
@@ -151,8 +156,15 @@ def validate_support_collector() -> None:
         "package/quarantine.txt",
         "Only extended-attribute names are listed; values are not copied.",
         "write_openq4_log_candidate_paths()",
+        "write_openq4_renderer_config_candidate_paths()",
         "${HOME_DIR}/Library/Application Support/openQ4/baseoq4/logs/openq4.log",
+        "${HOME_DIR}/Library/Application Support/openQ4/baseoq4/openQ4Config.cfg",
+        "Only renderer and performance settings are copied",
+        "r_[[:alnum:]_]+",
+        "com_(machineSpec|performancePreset)",
+        "Bindings, player/account, network, audio-device, and arbitrary config settings are excluded.",
         "HOME was not set; home-scoped openq4.log paths were skipped.",
+        "HOME was not set; saved openQ4Config.cfg paths were skipped.",
         "HOME was not set; home-scoped openq4.log files were skipped.",
         "HOME was not set; the macOS DiagnosticReports directory could not be located.",
         "path_exists_for_inspection()",
@@ -207,6 +219,12 @@ def validate_support_collector() -> None:
     ):
         reject(script, token, "macOS support collector privacy/no-launch guard")
 
+    reject(
+        script,
+        'copy_text_if_present "${HOME_DIR}/Library/Application Support/openQ4/baseoq4/openQ4Config.cfg"',
+        "macOS support collector renderer-config privacy guard",
+    )
+
     signing_segment = require_segment(
         script,
         "Signing and Gatekeeper checks do not launch openQ4.",
@@ -256,6 +274,7 @@ def validate_user_docs() -> None:
         "openq4-macos-support-YYYYMMDD-HHMMSSZ.tar.gz",
         "system/rosetta.txt",
         "logs/renderer-summary.txt",
+        "logs/renderer-config.txt",
         "package/binary-architecture.txt",
         "package/dylib-dependencies.txt",
         "package/signing.txt",
@@ -266,7 +285,7 @@ def validate_user_docs() -> None:
         "does not copy retail `q4base` PK4 assets",
         "does not follow symlinked package, log, or crash-report inputs",
         "DiagnosticReports filename contains unusual characters",
-        "Moving only `openQ4.app` to `/Applications` is not supported yet.",
+        "only `openQ4.app` to `/Applications` is supported.",
     ):
         require(support_doc, token, "macOS support-data guide")
 
@@ -277,6 +296,7 @@ def validate_user_docs() -> None:
     require(release_notes, "collect_macos_support_info.sh", "curated release notes macOS collector request")
     require(release_notes, "system/rosetta.txt", "curated release notes Rosetta diagnostics mention")
     require(release_notes, "logs/renderer-summary.txt", "curated release notes renderer-summary mention")
+    require(release_notes, "logs/renderer-config.txt", "curated release notes renderer-config mention")
     require(release_notes, "package/binary-architecture.txt", "curated release notes binary-architecture diagnostics mention")
     require(release_notes, "package/dylib-dependencies.txt", "curated release notes dylib-dependencies diagnostics mention")
     require(release_notes, "package/signing.txt", "curated release notes signing diagnostics mention")
@@ -361,6 +381,7 @@ def validate_phase1_plan_status() -> None:
         "tools/tests/macos_support_intake.py",
         "system/rosetta.txt",
         "logs/renderer-summary.txt",
+        "logs/renderer-config.txt",
         "package/binary-architecture.txt",
         "package/dylib-dependencies.txt",
         "package/signing.txt",

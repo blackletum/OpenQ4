@@ -23,8 +23,8 @@ macOS remains experimental unless the current release entry below points to a co
 - Use the renderer/backend policy in `docs/dev/macos-renderer-backend-policy.md` and the containment policy in `docs/dev/macos-native-backend-containment-policy.md`: record OpenGL and Metal bridge evidence separately, do not treat the Metal bridge as native Metal, and do not treat `platform_backend=native` as release support evidence.
 - Do not mark a release entry complete if either bridge report has open checklist items.
 - Do not mark a release entry complete if SP, MP, Finder launch, terminal launch, input, audio, display, or package-layout checks were skipped without a documented exception.
-- Use the package contract in `docs/dev/macos-package-layout-and-release-policy.md`: the current supported layout is an adjacent package root, not a self-contained drag-only app bundle.
-- Record mounted-DMG launch, copied-package launch, app-only move behavior, path-resolution logs, and Gatekeeper assessment for the package artifacts under test.
+- Use the package contract in `docs/dev/macos-package-layout-and-release-policy.md`: the client is a self-contained drag-installable app with data under `Contents/Resources/baseoq4` and signed modules under `Contents/Frameworks`.
+- Record mounted-DMG launch, dragged-app launch, whole-package loose-tool launch, embedded path/module checks, path-resolution logs, and Gatekeeper assessment for the package artifacts under test.
 
 ## Current Status
 
@@ -32,7 +32,7 @@ macOS remains experimental unless the current release entry below points to a co
 - [ ] The next macOS signoff archive must include OpenGL and Metal bridge result directories.
 - [ ] The next macOS signoff archive must include `renderer-smoke`, `renderer-mp-smoke`, and `renderer-matrix` evidence for each bridge.
 - [ ] The next macOS signoff archive must include completed manual checklist items for SP, MP, Finder launch, terminal launch, input, audio, display, and package behavior.
-- [ ] The next macOS signoff archive must include mounted-DMG, copied-package, app-only move, `fs_basepath`/`fs_cdpath`/`fs_savepath`, and Gatekeeper evidence.
+- [ ] The next macOS signoff archive must include mounted-DMG, independently dragged-app, whole-package loose-tool, embedded resource/module path, `fs_basepath`/`fs_cdpath`/`fs_savepath`, and Gatekeeper evidence.
 - [ ] The next macOS signoff archive must include architecture policy, CPU architecture, OS matrix role, Xcode version, and macOS SDK version.
 - [ ] The next macOS signoff archive must include openQ4 and `openQ4-game` commit fields in each bridge report.
 - [ ] The next macOS signoff archive must keep OpenGL and Metal bridge renderer evidence separate and must not describe the Metal bridge as native Metal.
@@ -106,15 +106,15 @@ Current release checklist:
 - [ ] Finder or Desktop launcher startup was checked.
 - [ ] Terminal startup was checked.
 - [ ] Mounted signed/notarized DMG launch was checked, or unsigned archive behavior was recorded as an experimental exception.
-- [ ] Copied-package launch was checked after moving the whole package payload to a user-writable location.
-- [ ] Moving only `openQ4.app` was checked and either worked or failed with a clear adjacent-runtime error.
+- [ ] Dragging only `openQ4.app` to `/Applications` or another user-writable location was checked.
+- [ ] Whole-package copied launch was checked for loose client, dedicated-server, and support-tool sibling-runtime discovery.
 - [ ] `fs_basepath`, `fs_cdpath`, and `fs_savepath` were confirmed in logs for Finder/copied package and terminal launches.
 - [ ] Gatekeeper assessment was checked for signed/notarized DMGs, or unsigned/unnotarized approval friction was recorded for development archives.
 - [ ] Keyboard and mouse input were checked.
 - [ ] Controller hotplug/rumble was checked, or unavailable hardware was recorded as an exception.
 - [ ] Audio output, volume changes, and at least one device switch or reconnect were checked.
 - [ ] Windowed, fullscreen, selected-display, and HiDPI/Retina behavior were checked.
-- [ ] Package layout assumptions were checked, including `openQ4.app` beside `baseoq4/` and loose runtime files.
+- [ ] The app contained data under `Contents/Resources/baseoq4` and signed SP/MP modules under `Contents/Frameworks`, with no adjacent `baseoq4` duplicate.
 - [ ] Matching `openq4-<version>-macos-arm64-<bridge>-symbols.tar.xz` dSYM archives were recorded and matched against package `SYMBOLS.txt` manifests.
 - [ ] First-class macOS release artifacts are signed/notarized DMGs, or the release remains experimental and unsigned artifacts are labeled as development fallback output.
 - [ ] Architecture policy, CPU architecture, and OS matrix role were recorded.
@@ -189,7 +189,7 @@ Checklist:
 - [ ] OpenGL and Metal bridge reports are present.
 - [ ] `renderer-smoke`, `renderer-mp-smoke`, and `renderer-matrix` output exists for both bridges.
 - [ ] Manual hardware checklist is complete in both bridge reports.
-- [ ] Mounted-DMG, copied-package, app-only move, path-resolution log, and Gatekeeper package UX checks are complete or documented as exceptions.
+- [ ] Mounted-DMG, independently dragged-app, whole-package loose-tool, embedded resource/module path, path-resolution log, and Gatekeeper package UX checks are complete or documented as exceptions.
 - [ ] Matching macOS dSYM symbol archives and `SYMBOLS.txt` manifests are recorded for each tested runtime package.
 - [ ] Architecture policy, CPU architecture, OS matrix role, Xcode version, and macOS SDK version are recorded.
 - [ ] macOS floor and latest-public-macOS coverage are recorded or called out as remaining blockers for first-class support.

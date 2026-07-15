@@ -1,6 +1,6 @@
 # macOS Support Matrix Policy
 
-Updated: 2026-07-11
+Updated: 2026-07-15
 
 This document defines the current macOS architecture and OS-version matrix for
 openQ4 releases. It records what is supported now, what is deliberately not
@@ -15,7 +15,7 @@ Current macOS release artifacts are experimental Apple Silicon/arm64 only:
 - `openq4-<version>-macos-arm64-opengl-unsigned.tar.gz` for experimental fallback output
 - `openq4-<version>-macos-arm64-metal-unsigned.tar.gz` for experimental fallback output
 
-The current hosted CI and manual release lanes use GitHub-hosted `macos-15`
+The current arm64 CI and manual release lanes use GitHub-hosted `macos-15`
 runners for configure, build, staging, package, signing, notarization, and
 static validation. Push jobs also require an assetless renderer launch for the
 OpenGL and Metal bridge variants, and release jobs launch the packaged app
@@ -24,7 +24,8 @@ success is not a replacement for real Apple-hardware gameplay signoff.
 
 ## Architecture Policy
 
-The current policy is `arm64 only`.
+The current user-facing release policy is `arm64 only`. Experimental Intel
+build validation does not expand that release promise.
 
 Not supported by current user-facing macOS releases:
 
@@ -32,16 +33,40 @@ Not supported by current user-facing macOS releases:
 - universal2 packages.
 - Rosetta as a supported compatibility layer.
 
-Local x86_64 or Rosetta experiments may be useful for development, but they do
-not change the published support matrix. User-facing docs and release notes
-must continue to say Apple Silicon/arm64 only until the requirements below are
-met.
+Local or hosted x86_64 experiments and Rosetta experiments may be useful for
+development, but they do not change the published support matrix. User-facing
+docs and release notes must continue to say Apple Silicon/arm64 only until the
+requirements below are met.
+
+### Experimental Intel CI Corridor
+
+GitHub currently provides the standard x86_64 `macos-15-intel` runner documented
+in its [hosted-runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+openQ4 commit and push validation now configure thin Intel builds for both the
+OpenGL and Metal bridge variants, stage and architecture-check the client,
+dedicated server, and SP/MP dylibs, run the assetless renderer safety probe, and
+require the assetless dedicated server to initialize the staged MP module and
+shut down cleanly. `openQ4-game` has a matching standalone x64 job that verifies
+both module slices, install names, and the macOS 11 deployment floor.
+
+This corridor is experimental build/loader evidence only. It does not publish
+`macos-x64` downloads, claim Rosetta compatibility, or replace stock-asset SP,
+MP, audio, input, display, package, signing, notarization, and Gatekeeper tests
+on real Intel Apple hardware. Passing hosted results must be recorded before
+even the CI corridor is described as proven rather than configured.
+
+The hosted `macos-universal2` commit gate now merges matched thin artifacts for
+both bridge variants, checks the exact two-slice set, package-relative module
+IDs, per-slice dependencies/deployment metadata, dSYM UUID records, and a
+native assetless dedicated-server lifecycle. It remains pre-publication build
+evidence only: the single-download merge contract and remaining real-hardware
+signoff boundary are defined in `docs/dev/macos-universal2-design.md`.
 
 Before claiming Intel Mac or universal2 support, openQ4 must have:
 
 - An explicit release-lane decision: separate `macos-x64` artifacts or
   universal2 artifacts.
-- Matching openQ4 and `openQ4-game` CI coverage for every claimed architecture.
+- Passing matching openQ4 and `openQ4-game` CI coverage for every claimed architecture.
 - `lipo -archs` validation for the app executable, loose client, dedicated
   server, and both SP/MP game dylibs.
 - `otool -L` and install-name validation after any `lipo` combine step.

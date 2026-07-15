@@ -130,6 +130,40 @@ jobs:
           bash -n tools/macos/guest/openq4-macos-sync-build-test.sh
           python tools/validation/openq4_validate.py push --skip-build --no-install
 
+      - name: Record hosted evidence scope
+        if: steps.select.outputs.selected == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          requested="${{ inputs.bridge }}"
+          bridge="${{ matrix.bridge }}"
+          openq4_commit="$(git rev-parse HEAD)"
+          openq4_game_commit="$(git -C "${OPENQ4_GAMELIBS_REPO}" rev-parse HEAD)"
+          openq4_dirty=0
+          openq4_game_dirty=0
+          if [[ -n "$(git status --porcelain)" ]]; then
+            openq4_dirty=1
+          fi
+          if [[ -n "$(git -C "${OPENQ4_GAMELIBS_REPO}" status --porcelain)" ]]; then
+            openq4_game_dirty=1
+          fi
+          {
+            echo "workflow=macOS Debug"
+            echo "evidence_scope=hosted build/package validation only; not a completed manual Apple-hardware gameplay signoff"
+            echo "requested_bridge=${requested}"
+            echo "artifact_bridge=${bridge}"
+            echo "run_runtime_assetless=${{ inputs.run_runtime_assetless }}"
+            echo "openq4_commit=${openq4_commit}"
+            echo "openq4_game_commit=${openq4_game_commit}"
+            echo "openq4_dirty=${openq4_dirty}"
+            echo "openq4_game_dirty=${openq4_game_dirty}"
+            if [[ "${requested}" == "both" ]]; then
+              echo "bridge_coverage=both requested; this artifact contains only ${bridge}"
+            else
+              echo "bridge_coverage=${bridge} only; the other bridge was intentionally not selected"
+            fi
+          } > macos-debug-evidence-scope.txt
+
       - name: Configure
         if: steps.select.outputs.selected == 'true'
         shell: bash
@@ -190,6 +224,7 @@ jobs:
           name: macos-debug-${{ matrix.artifact_suffix }}
           path: |
             macos-debug-host.txt
+            macos-debug-evidence-scope.txt
             builddir/meson-logs
             .install
             .home

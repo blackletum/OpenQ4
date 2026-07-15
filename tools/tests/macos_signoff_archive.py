@@ -56,7 +56,7 @@ def report_text(bridge: str, *, completed: bool) -> str:
 - [x] MP game module path is present in the staged payload.
 - [x] macOS-facing renderer validation matrix completed.
 - [x] Desktop launcher was written for Finder/Terminal launch checks.
-- [x] Package layout contract is adjacent package root: openQ4.app, baseoq4/, and loose runtime files stay together.
+- [x] Package layout contract is self-contained app: data in Contents/Resources/baseoq4 and signed game modules in Contents/Frameworks.
 - Renderer smoke output: /Users/test/openq4-work/results/testrun-signoff-{bridge}/renderer-smoke
 - Renderer MP smoke output: /Users/test/openq4-work/results/testrun-signoff-{bridge}/renderer-mp-smoke
 - Renderer matrix output: /Users/test/openq4-work/results/testrun-signoff-{bridge}/renderer-matrix
@@ -65,9 +65,10 @@ def report_text(bridge: str, *, completed: bool) -> str:
 ## Manual Hardware Checklist
 - [{checkbox}] Launch openQ4 from Finder or the Desktop launcher and enter a single-player map.
 - [{checkbox}] Launch openQ4.app from the mounted signed/notarized DMG or final release image and enter a single-player map.
-- [{checkbox}] Copy the whole package payload to a user-writable location, keeping openQ4.app beside baseoq4/ and loose runtime files, then launch openQ4.app there.
-- [{checkbox}] Move only openQ4.app away from baseoq4/ and loose runtime files; confirm the app-only move is unsupported with a clear adjacent-runtime error, or record that it now works.
-- [{checkbox}] Launch from Terminal with the package root as the working directory.
+- [{checkbox}] Drag only openQ4.app to /Applications or another user-writable location, launch it there, and enter a single-player map.
+- [{checkbox}] Copy the whole package payload to a user-writable location and verify the loose client, dedicated server, and support collector still use the sibling app runtime.
+- [{checkbox}] Confirm the copied app contains baseoq4 data under Contents/Resources and signed SP/MP modules under Contents/Frameworks, with no adjacent baseoq4 duplicate.
+- [{checkbox}] Launch the app executable from Terminal with an unrelated working directory.
 - [{checkbox}] Confirm fs_basepath, fs_cdpath, and fs_savepath in logs for Finder/copied package and Terminal launches.
 - [{checkbox}] Confirm Gatekeeper assessment for signed/notarized DMGs, or record unsigned/unnotarized approval friction for development archives.
 - [{checkbox}] Verify keyboard text entry, console toggle, mouse-look, clicks, and wheel input.

@@ -144,8 +144,13 @@ def validate_companion_macos_contract() -> None:
         require(meson, token, "openQ4-game Meson macOS module contract")
 
     for token in (
+        "runner: macos-15",
+        "runner: macos-15-intel",
+        "module_arch: arm64",
+        "module_arch: x64",
         "game-sp_${module_arch}.dylib",
         "game-mp_${module_arch}.dylib",
+        "lipo -archs",
         "otool -D",
         'expected="@loader_path/${module}"',
     ):
@@ -225,6 +230,7 @@ def validate_metadata_contract() -> None:
 
 def validate_phase8_docs() -> None:
     plan = read("docs/dev/plans/2026-06-30-apple-support-no-macos-access.md")
+    compatibility_plan = read("docs/dev/plan/2026-06-30-macos-compatibility-support.md")
     release_completion = read("docs/dev/release-completion.md")
     release_notes = read("docs/dev/releases/v0.6.5.md")
     support_data = read("docs/user/macos-support-data.md")
@@ -258,6 +264,16 @@ def validate_phase8_docs() -> None:
         require(support_data, token, "macOS support data guide")
 
     require(signoff_evidence, "openQ4 and `openQ4-game` commit fields", "macOS signoff evidence index")
+
+    for token in (
+        "[x] Keep openQ4 staged builds as the release source of truth for game-module validation.",
+        "[x] Add a cross-repo validation note to the macOS evidence index",
+        "[x] Verify `@loader_path/game-*.dylib` install names in release validation",
+        "[x] Add `../openQ4-game` macOS x86_64 CI for the experimental Intel corridor.",
+        "[x] Keep `openQ4-game` README support claims aligned with openQ4 platform support docs.",
+        "[x] Add a small scripted check in openQ4",
+    ):
+        require(compatibility_plan, token, "MAC-007 compatibility-plan status")
 
 
 def validate_wiring() -> None:

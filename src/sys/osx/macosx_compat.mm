@@ -331,34 +331,13 @@ static bool Sys_GetAppBundlePackageRootFromExecutableDirectory( const idStr &exe
 	return packageDirectory.Length() > 0;
 }
 
-/*
-==============
-Sys_GetPackageRootDirectory
-==============
-*/
-bool Sys_GetPackageRootDirectory( char *packageRoot, int packageRootSize ) {
-	if ( packageRoot == NULL || packageRootSize <= 0 ) {
-		return false;
-	}
-	packageRoot[0] = '\0';
-
-	idStr exeDirectory = Sys_EXEPath();
-	if ( exeDirectory.Length() <= 0 ) {
-		return false;
-	}
-	exeDirectory.StripFilename();
-
-	idStr appDirectory;
-	idStr packageDirectory;
-	if ( !Sys_GetAppBundlePackageRootFromExecutableDirectory( exeDirectory, appDirectory, packageDirectory ) ) {
-		return false;
-	}
-	if ( packageDirectory.Length() >= packageRootSize ) {
-		return false;
-	}
-
-	idStr::Copynz( packageRoot, packageDirectory.c_str(), packageRootSize );
-	return true;
+static void Sys_GetMacOSAppBundleRuntimeDirectories( const idStr &appDirectory, idStr &resourceDirectory, idStr &frameworkDirectory ) {
+	resourceDirectory = appDirectory;
+	resourceDirectory.AppendPath( "Contents" );
+	resourceDirectory.AppendPath( "Resources" );
+	frameworkDirectory = appDirectory;
+	frameworkDirectory.AppendPath( "Contents" );
+	frameworkDirectory.AppendPath( "Frameworks" );
 }
 
 static const char *Sys_MacOSPackageRuntimeArchSuffix( void ) {
@@ -439,6 +418,28 @@ static void Sys_RequireMacOSPackageRootExecutable( const idStr &packageDirectory
 	}
 }
 
+static void Sys_RequireMacOSPackageRootRegularFile( const idStr &packageDirectory, const char *entry, idStr &missingEntries ) {
+	idStr testPath = packageDirectory;
+	testPath.AppendPath( entry );
+
+	struct stat st;
+	if ( lstat( testPath.c_str(), &st ) == -1 ) {
+		Sys_AppendMacOSPackageRootIssue( missingEntries, entry, "missing" );
+		return;
+	}
+	if ( S_ISLNK( st.st_mode ) ) {
+		Sys_AppendMacOSPackageRootIssue( missingEntries, entry, "symlink" );
+		return;
+	}
+	if ( !S_ISREG( st.st_mode ) ) {
+		Sys_AppendMacOSPackageRootIssue( missingEntries, entry, "not a regular file" );
+		return;
+	}
+	if ( access( testPath.c_str(), R_OK ) != 0 ) {
+		Sys_AppendMacOSPackageRootIssue( missingEntries, entry, "not readable" );
+	}
+}
+
 static void Sys_AppendAlternateMacOSPackageRootEntryIfPresent( const idStr &packageDirectory, const char *entry, idStr &foundEntries ) {
 	if ( Sys_MacOSPackageRootPathExists( packageDirectory, entry ) ) {
 		Sys_AppendMacOSPackageRootFoundEntry( foundEntries, entry );
@@ -499,6 +500,74 @@ static idStr Sys_LocalizedMacOSPackageRootString( const char *key, const char *f
 	return idStr( utf8String );
 }
 
+static void Sys_CollectMacOSGameModulePairIssues( const idStr &frameworkDirectory, const char *arch, idStr &missingEntries ) {
+	char spModuleEntry[64];
+	char mpModuleEntry[64];
+
+	idStr::snPrintf( spModuleEntry, sizeof( spModuleEntry ), "game-sp_%s.dylib", arch );
+	idStr::snPrintf( mpModuleEntry, sizeof( mpModuleEntry ), "game-mp_%s.dylib", arch );
+	Sys_RequireMacOSPackageRootExecutable( frameworkDirectory, spModuleEntry, missingEntries );
+	Sys_RequireMacOSPackageRootExecutable( frameworkDirectory, mpModuleEntry, missingEntries );
+}
+
+static void Sys_CollectMacOSAppBundleRuntimeIssues( const idStr &resourceDirectory, const idStr &frameworkDirectory, idStr &missingEntries ) {
+	idStr architectureModuleIssues;
+	idStr universalModuleIssues;
+
+	missingEntries.Clear();
+	Sys_RequireMacOSPackageRootDirectory( resourceDirectory, OPENQ4_GAMEDIR, missingEntries );
+	Sys_RequireMacOSPackageRootRegularFile( resourceDirectory, OPENQ4_GAMEDIR "/mod.json", missingEntries );
+	Sys_RequireMacOSPackageRootRegularFile( resourceDirectory, OPENQ4_GAMEDIR "/pak0.pk4", missingEntries );
+	Sys_RequireMacOSPackageRootRegularFile( resourceDirectory, OPENQ4_GAMEDIR "/pak1.pk4", missingEntries );
+
+	Sys_CollectMacOSGameModulePairIssues( frameworkDirectory, Sys_MacOSPackageRuntimeArchSuffix(), architectureModuleIssues );
+	if ( architectureModuleIssues.Length() == 0 ) {
+		return;
+	}
+
+	Sys_CollectMacOSGameModulePairIssues( frameworkDirectory, "universal2", universalModuleIssues );
+	if ( universalModuleIssues.Length() == 0 ) {
+		return;
+	}
+
+	Sys_AppendMacOSPackageRootIssue( missingEntries, architectureModuleIssues.c_str(), "architecture-specific module pair unavailable" );
+	Sys_AppendMacOSPackageRootIssue( missingEntries, universalModuleIssues.c_str(), "universal2 module pair unavailable" );
+}
+
+static bool Sys_MacOSAppBundleHasEmbeddedRuntimeMarker( const idStr &resourceDirectory, const idStr &frameworkDirectory ) {
+	return Sys_MacOSPackageRootPathExists( resourceDirectory, OPENQ4_GAMEDIR )
+		|| Sys_DirectoryExists( frameworkDirectory.c_str() );
+}
+
+static bool Sys_MacOSAppBundleDeclaresSelfContainedRuntime( const idStr &appDirectory ) {
+	NSString *appPath = [NSString stringWithUTF8String:appDirectory.c_str()];
+	NSBundle *appBundle = appPath != nil ? [NSBundle bundleWithPath:appPath] : nil;
+	NSString *runtimeLayout = [appBundle objectForInfoDictionaryKey:@"OpenQ4RuntimeLayout"];
+	return runtimeLayout != nil && [runtimeLayout isEqualToString:@"self-contained-v1"];
+}
+
+static void Sys_ErrorIfMacOSAppBundleRuntimeIncomplete( const idStr &appDirectory, const idStr &resourceDirectory, const idStr &frameworkDirectory, const idStr &missingEntries ) {
+	idStr title = Sys_LocalizedMacOSPackageRootString(
+		"OpenQ4BundleRuntimeMissingTitle",
+		"openQ4.app is incomplete"
+	);
+	idStr body = Sys_LocalizedMacOSPackageRootString(
+		"OpenQ4BundleRuntimeMissingBody",
+		"Reinstall the complete openQ4.app. Its game data and signed game modules must remain inside the application bundle."
+	);
+
+	Sys_Error(
+		"%s\n\n%s\n\nExpected self-contained app contract: data in Contents/Resources/baseoq4 and signed game modules in Contents/Frameworks.\nExpected runtime architecture: %s\nApp path: %s\nResource root: %s\nModule root: %s\nMissing or unusable entries: %s",
+		title.c_str(),
+		body.c_str(),
+		Sys_MacOSPackageRuntimeArchSuffix(),
+		appDirectory.c_str(),
+		resourceDirectory.c_str(),
+		frameworkDirectory.c_str(),
+		missingEntries.c_str()
+	);
+}
+
 static void Sys_ErrorIfMacOSAppBundlePackageRootIncomplete( const idStr &appDirectory, const idStr &packageDirectory ) {
 	idStr missingEntries;
 	idStr foundMismatchedEntries;
@@ -531,7 +600,7 @@ static void Sys_ErrorIfMacOSAppBundlePackageRootIncomplete( const idStr &appDire
 	);
 	idStr body = Sys_LocalizedMacOSPackageRootString(
 		"OpenQ4PackageRootMissingBody",
-		"Keep openQ4.app, baseoq4/, openQ4-client_<arch>, and openQ4-ded_<arch> together in the same package folder. Moving only openQ4.app to /Applications is not supported yet."
+		"This legacy package layout needs openQ4.app, baseoq4/, openQ4-client_<arch>, and openQ4-ded_<arch> together in the same package folder. Current self-contained packages support moving only openQ4.app to /Applications; reinstall this package to use that layout."
 	);
 
 	Sys_Error(
@@ -546,30 +615,118 @@ static void Sys_ErrorIfMacOSAppBundlePackageRootIncomplete( const idStr &appDire
 	);
 }
 
+static bool Sys_SelectMacOSAppBundleRuntimeRoots( const idStr &exeDirectory, idStr &contentRoot, idStr &moduleRoot ) {
+	idStr appDirectory;
+	idStr adjacentPackageDirectory;
+	if ( !Sys_GetAppBundlePackageRootFromExecutableDirectory( exeDirectory, appDirectory, adjacentPackageDirectory ) ) {
+		return false;
+	}
+
+	idStr resourceDirectory;
+	idStr frameworkDirectory;
+	Sys_GetMacOSAppBundleRuntimeDirectories( appDirectory, resourceDirectory, frameworkDirectory );
+	if ( Sys_MacOSAppBundleDeclaresSelfContainedRuntime( appDirectory )
+		|| Sys_MacOSAppBundleHasEmbeddedRuntimeMarker( resourceDirectory, frameworkDirectory ) ) {
+		idStr missingEntries;
+		Sys_CollectMacOSAppBundleRuntimeIssues( resourceDirectory, frameworkDirectory, missingEntries );
+		if ( missingEntries.Length() > 0 ) {
+			Sys_ErrorIfMacOSAppBundleRuntimeIncomplete( appDirectory, resourceDirectory, frameworkDirectory, missingEntries );
+		}
+		contentRoot = resourceDirectory;
+		moduleRoot = frameworkDirectory;
+		return true;
+	}
+
+	// Keep packages produced before the self-contained layout launchable while
+	// their adjacent runtime contract remains intact.
+	Sys_ErrorIfMacOSAppBundlePackageRootIncomplete( appDirectory, adjacentPackageDirectory );
+	contentRoot = adjacentPackageDirectory;
+	moduleRoot = adjacentPackageDirectory;
+	return true;
+}
+
+static bool Sys_GetSiblingSelfContainedAppRuntimeRoots( const idStr &exeDirectory, idStr &contentRoot, idStr &moduleRoot ) {
+	idStr appDirectory = exeDirectory;
+	appDirectory.AppendPath( "openQ4.app" );
+	idStr resourceDirectory;
+	idStr frameworkDirectory;
+	Sys_GetMacOSAppBundleRuntimeDirectories( appDirectory, resourceDirectory, frameworkDirectory );
+
+	idStr missingEntries;
+	Sys_CollectMacOSAppBundleRuntimeIssues( resourceDirectory, frameworkDirectory, missingEntries );
+	if ( missingEntries.Length() > 0 ) {
+		return false;
+	}
+
+	contentRoot = resourceDirectory;
+	moduleRoot = frameworkDirectory;
+	return true;
+}
+
+/*
+==============
+Sys_GetPackageRootDirectory
+==============
+*/
+bool Sys_GetPackageRootDirectory( char *packageRoot, int packageRootSize ) {
+	if ( packageRoot == NULL || packageRootSize <= 0 ) {
+		return false;
+	}
+	packageRoot[0] = '\0';
+
+	idStr exeDirectory = Sys_EXEPath();
+	if ( exeDirectory.Length() <= 0 ) {
+		return false;
+	}
+	exeDirectory.StripFilename();
+
+	idStr contentRoot;
+	idStr moduleRoot;
+	if ( !Sys_SelectMacOSAppBundleRuntimeRoots( exeDirectory, contentRoot, moduleRoot )
+		&& !Sys_GetSiblingSelfContainedAppRuntimeRoots( exeDirectory, contentRoot, moduleRoot ) ) {
+		return false;
+	}
+
+	return Sys_CopyPathIfFits( packageRoot, packageRootSize, contentRoot.c_str() );
+}
+
+bool Sys_GetGameModuleRootDirectory( char *moduleRootPath, int moduleRootSize ) {
+	if ( moduleRootPath == NULL || moduleRootSize <= 0 ) {
+		return false;
+	}
+	moduleRootPath[0] = '\0';
+
+	idStr exeDirectory = Sys_EXEPath();
+	if ( exeDirectory.Length() <= 0 ) {
+		return false;
+	}
+	exeDirectory.StripFilename();
+
+	idStr contentRoot;
+	idStr moduleRoot;
+	if ( !Sys_SelectMacOSAppBundleRuntimeRoots( exeDirectory, contentRoot, moduleRoot )
+		&& !Sys_GetSiblingSelfContainedAppRuntimeRoots( exeDirectory, contentRoot, moduleRoot ) ) {
+		return false;
+	}
+
+	return Sys_CopyPathIfFits( moduleRootPath, moduleRootSize, moduleRoot.c_str() );
+}
+
 /*
 =============
 Sys_DefaultCDPath
 
-Finder and LaunchServices do not guarantee that an application's process
-working directory is the directory containing the app bundle. Keep loose
-binary launches on the normal POSIX current-directory behavior, but make an
-app-bundle launch search the adjacent package root for baseoq4 content. The
-package check belongs here rather than only in Sys_DefaultBasePath because
-retail q4base auto-discovery can bypass that fallback entirely.
+Finder and LaunchServices do not guarantee an application's process working
+directory. Self-contained app launches use Contents/Resources; loose packaged
+binaries use that same content root when a sibling openQ4.app is present.
+Legacy adjacent packages remain supported by the runtime-root selector.
 =============
 */
 const char *Sys_DefaultCDPath( void ) {
-	idStr exeDirectory = Sys_EXEPath();
-	if ( exeDirectory.Length() > 0 ) {
-		exeDirectory.StripFilename();
-
-		idStr appDirectory;
-		idStr packageDirectory;
-		if ( Sys_GetAppBundlePackageRootFromExecutableDirectory( exeDirectory, appDirectory, packageDirectory ) ) {
-			Sys_ErrorIfMacOSAppBundlePackageRootIncomplete( appDirectory, packageDirectory );
-			cdpath = packageDirectory;
-			return cdpath.c_str();
-		}
+	char packageRoot[MAX_OSPATH];
+	if ( Sys_GetPackageRootDirectory( packageRoot, sizeof( packageRoot ) ) ) {
+		cdpath = packageRoot;
+		return cdpath.c_str();
 	}
 
 	return Posix_Cwd();
@@ -583,16 +740,6 @@ static bool Sys_UseBasePathCandidate( const idStr &candidate, const char *label 
 
 	basepath = candidate;
 	return true;
-}
-
-static bool Sys_UseAppBundleParentBasePathCandidate( const idStr &exeDirectory ) {
-	idStr appDirectory;
-	idStr packageDirectory;
-	if ( !Sys_GetAppBundlePackageRootFromExecutableDirectory( exeDirectory, appDirectory, packageDirectory ) ) {
-		return false;
-	}
-
-	return Sys_UseBasePathCandidate( packageDirectory, "app parent" );
 }
 
 /*
@@ -638,18 +785,12 @@ const char *Sys_DefaultBasePath( void ) {
 	exeDirectory = Sys_EXEPath();
 	if ( exeDirectory.Length() > 0 ) {
 		exeDirectory.StripFilename();
-		idStr appDirectory;
-		idStr appPackageDirectory;
-		if ( Sys_GetAppBundlePackageRootFromExecutableDirectory( exeDirectory, appDirectory, appPackageDirectory ) ) {
-			Sys_ErrorIfMacOSAppBundlePackageRootIncomplete( appDirectory, appPackageDirectory );
-			if ( Sys_UseBasePathCandidate( appPackageDirectory, "app parent" ) ) {
-				return basepath.c_str();
-			}
-		}
-		if ( Sys_UseBasePathCandidate( exeDirectory, "exe" ) ) {
+		char packageRoot[MAX_OSPATH];
+		if ( Sys_GetPackageRootDirectory( packageRoot, sizeof( packageRoot ) )
+			&& Sys_UseBasePathCandidate( packageRoot, "app runtime" ) ) {
 			return basepath.c_str();
 		}
-		if ( Sys_UseAppBundleParentBasePathCandidate( exeDirectory ) ) {
+		if ( Sys_UseBasePathCandidate( exeDirectory, "exe" ) ) {
 			return basepath.c_str();
 		}
 	}

@@ -23,19 +23,16 @@ def validate_package_layout_policy_doc() -> None:
 
     for token in (
         "# macOS Package Layout And Release Policy",
-        "adjacent package root, not a",
-        "self-contained drag-only app bundle",
+        "self-contained, drag-installable",
         "`openQ4.app`",
-        "`baseoq4/`",
-        "The SP/MP game modules must live under `baseoq4/`",
-        "Do not copy openQ4 game\nmodules into `q4base/`",
-        "app-bundle startup preflight treats `q4base/game-*.dylib` as misplaced",
-        "loose runtime support files",
+        "`Contents/Resources/baseoq4/`",
+        "`Contents/Frameworks/`",
+        "Mach-O game modules deliberately live in `Contents/Frameworks`",
+        "the large `baseoq4` payload is not duplicated",
         "Double-click `openQ4.app` from the mounted signed/notarized DMG payload.",
-        "Copy the whole package payload to a user-writable folder",
-        "Launch from Terminal with the working directory at the package root.",
-        "Moving only `openQ4.app` away from its package root.",
-        "unsupported until a self-contained bundle migration is implemented",
+        "Drag only `openQ4.app` to `/Applications`",
+        "Launch the app executable from Terminal with any working directory.",
+        "legacy adjacent-package fallback",
         "`fs_basepath`, `fs_cdpath`, and `fs_savepath`",
         "Gatekeeper behavior",
         "First-class macOS releases require signed and notarized DMGs",
@@ -56,19 +53,22 @@ def validate_signoff_evidence_contract() -> None:
     for token in (
         "docs/dev/macos-package-layout-and-release-policy.md",
         "mounted signed/notarized DMG",
-        "copy the whole package",
-        "app-only move",
+        "drag only the app",
+        "whole payload",
+        "embedded `Contents/Resources` and `Contents/Frameworks` paths",
         "`fs_basepath`, `fs_cdpath`, and",
         "Gatekeeper behavior",
     ):
         require(workflow_doc, token, "macOS workflow package UX documentation")
 
     for token in (
-        "Package layout contract is adjacent package root",
+        "Package layout contract is self-contained app",
         "mounted signed/notarized DMG",
+        "Drag only openQ4.app",
         "whole package payload",
-        "Move only openQ4.app",
-        "package root as the working directory",
+        "Contents/Resources",
+        "Contents/Frameworks",
+        "unrelated working directory",
         "fs_basepath",
         "fs_cdpath",
         "fs_savepath",
@@ -132,33 +132,33 @@ def validate_user_docs_and_package_readme() -> None:
 
     require(
         getting_started,
-        "Keep `openQ4.app`, `baseoq4/`, and the loose runtime files together as one adjacent package root",
+        "drag `openQ4.app` to `/Applications`",
         "getting started macOS package layout",
     )
     require(
         getting_started,
-        "moving only `openQ4.app` to `/Applications` is not supported yet",
-        "getting started app-only move limitation",
+        "The app contains openQ4's `baseoq4` data and signed SP/MP modules",
+        "getting started self-contained app contract",
     )
     require(
         package_readme,
-        "Keep <code>openQ4.app</code>, <code>baseoq4/</code>, and the loose runtime files together as one adjacent package root",
+        "drag <code>openQ4.app</code> to <code>/Applications</code>",
         "packaged README macOS package layout",
     )
     require(
         package_readme,
-        "moving only <code>openQ4.app</code> to <code>/Applications</code> is not supported yet",
-        "packaged README app-only move limitation",
+        "The app contains openQ4's runtime data and signed SP/MP modules",
+        "packaged README self-contained app contract",
     )
     require(
         platform_support,
-        "The current supported package contract is an adjacent package root",
-        "platform support adjacent package contract",
+        "self-contained drag-installable app",
+        "platform support self-contained app contract",
     )
     require(
         platform_support,
-        "moving only `openQ4.app` is unsupported",
-        "platform support app-only limitation",
+        "`Contents/Frameworks`",
+        "platform support nested-code contract",
     )
 
 
@@ -173,7 +173,7 @@ def validate_plan_status_and_ci_wiring() -> None:
         "Phase 3 implementation status",
         "`docs/dev/macos-package-layout-and-release-policy.md`",
         "macos_support_tier=first-class",
-        "mounted-DMG, copied-package, app-only move, path-resolution, and Gatekeeper results",
+        "mounted-DMG, independently dragged-app, whole-package loose-tool, embedded resource/module path, path-resolution, and Gatekeeper results",
     ):
         require(plan, token, "macOS compatibility/support plan Phase 3 status")
 

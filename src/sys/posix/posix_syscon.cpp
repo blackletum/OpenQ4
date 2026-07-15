@@ -133,6 +133,9 @@ struct posixConsoleWindow_t {
 	bool createFailed;
 	bool exitRequested;
 	bool forceFatalWindow;
+	bool logicalPresentationFailed;
+	int logicalWidth;
+	int logicalHeight;
 	int scrollLines;
 	idEditField inputField;
 	idEditField history[ POSIX_CONSOLE_HISTORY ];
@@ -151,6 +154,9 @@ struct posixConsoleWindow_t {
 		, createFailed( false )
 		, exitRequested( false )
 		, forceFatalWindow( false )
+		, logicalPresentationFailed( false )
+		, logicalWidth( 0 )
+		, logicalHeight( 0 )
 		, scrollLines( 0 )
 		, nextHistoryLine( 0 )
 		, historyLine( 0 ) {
@@ -410,8 +416,8 @@ static void Posix_SplashBuildCandidates( idStrList &candidates ) {
 		Posix_SplashAppendPrefixedCandidate( candidates, exeDir.c_str(), "../Resources/" );
 	}
 
-	// macOS .app launches keep the splash asset at the extracted package root,
-	// three levels above the in-bundle executable directory.
+	// macOS .app launches use the trusted content root (Contents/Resources for
+	// current packages, or the extracted package root for legacy packages).
 	char packageRoot[MAX_OSPATH];
 	if ( Sys_GetPackageRootDirectory( packageRoot, sizeof( packageRoot ) ) ) {
 		Posix_SplashAppendCandidate( candidates, packageRoot, POSIX_SPLASH_BMP );
@@ -538,6 +544,35 @@ static bool Posix_ConsoleEnsureVideo( void ) {
 	return true;
 }
 
+static void Posix_ConsoleApplyLogicalPresentation( int width, int height ) {
+	if ( s_consoleWindow.renderer == NULL || width <= 0 || height <= 0 ) {
+		return;
+	}
+	if ( s_consoleWindow.logicalWidth == width && s_consoleWindow.logicalHeight == height ) {
+		return;
+	}
+
+	// SDL renderers target the window's physical pixel size by default, while
+	// console layout and input use window coordinates. On a Retina/HiDPI
+	// display that otherwise draws a half-sized console in the upper-left
+	// quarter. Keep the renderer in the same coordinate space as the window.
+	if ( !SDL_SetRenderLogicalPresentation(
+			s_consoleWindow.renderer,
+			width,
+			height,
+			SDL_LOGICAL_PRESENTATION_STRETCH ) ) {
+		if ( !s_consoleWindow.logicalPresentationFailed ) {
+			Sys_Printf( "SDL system console: failed to apply HiDPI logical presentation: %s\n", SDL_GetError() );
+		}
+		s_consoleWindow.logicalPresentationFailed = true;
+		return;
+	}
+
+	s_consoleWindow.logicalPresentationFailed = false;
+	s_consoleWindow.logicalWidth = width;
+	s_consoleWindow.logicalHeight = height;
+}
+
 static void Posix_ConsoleUpdateLayout( void ) {
 	int width = POSIX_CONSOLE_WIDTH;
 	int height = POSIX_CONSOLE_HEIGHT;
@@ -551,6 +586,7 @@ static void Posix_ConsoleUpdateLayout( void ) {
 	if ( height < 240 ) {
 		height = 240;
 	}
+	Posix_ConsoleApplyLogicalPresentation( width, height );
 
 	const float margin = static_cast<float>( POSIX_CONSOLE_MARGIN );
 	const float buttonHeight = static_cast<float>( POSIX_CONSOLE_BUTTON_HEIGHT );
@@ -792,7 +828,22 @@ static bool Posix_ConsolePointInRect( float x, float y, const SDL_FRect &rect ) 
 	return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
 }
 
+static void Posix_ConsoleWindowToRenderCoordinates( float &x, float &y ) {
+	if ( s_consoleWindow.renderer == NULL ||
+		 s_consoleWindow.logicalWidth <= 0 || s_consoleWindow.logicalHeight <= 0 ) {
+		return;
+	}
+
+	float renderX = x;
+	float renderY = y;
+	if ( SDL_RenderCoordinatesFromWindow( s_consoleWindow.renderer, x, y, &renderX, &renderY ) ) {
+		x = renderX;
+		y = renderY;
+	}
+}
+
 static void Posix_ConsoleClickButton( float x, float y ) {
+	Posix_ConsoleWindowToRenderCoordinates( x, y );
 	if ( Posix_ConsolePointInRect( x, y, s_consoleWindow.layout.copyButtonRect ) ) {
 		Posix_ConsoleCopyAll();
 		return;
@@ -1375,6 +1426,9 @@ void Posix_ShutdownConsole( void ) {
 		s_consoleWindow.windowID = 0;
 	}
 	s_consoleWindow.visible = false;
+	s_consoleWindow.logicalPresentationFailed = false;
+	s_consoleWindow.logicalWidth = 0;
+	s_consoleWindow.logicalHeight = 0;
 	if ( s_consoleWindow.videoInitializedByConsole ) {
 		SDL_QuitSubSystem( SDL_INIT_VIDEO );
 		s_consoleWindow.videoInitializedByConsole = false;

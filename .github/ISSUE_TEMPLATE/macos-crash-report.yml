@@ -128,12 +128,12 @@ body:
       label: Package layout
       description: The current package must stay together as one adjacent root.
       options:
-        - label: I kept `openQ4.app`, `baseoq4/`, the loose client/dedicated binaries, and runtime support files together.
+        - label: I tested `openQ4.app` after dragging it independently, or kept the whole package when testing loose client/dedicated tools.
         - label: I moved only `openQ4.app` somewhere else, such as `/Applications`.
   - type: textarea
     id: support_archive
     attributes:
       label: Support-info archive
-      description: If your package includes `collect_macos_support_info.sh`, run it from the package root and attach the generated `openq4-macos-support-*.tar.gz` after reviewing its contents. Useful files include `system/rosetta.txt`, `logs/renderer-summary.txt`, `package/binary-architecture.txt`, `package/dylib-dependencies.txt`, `package/signing.txt`, and `package/quarantine.txt`.
+      description: If your package includes `collect_macos_support_info.sh`, run it from the package root and attach the generated `openq4-macos-support-*.tar.gz` after reviewing its contents. Useful files include `system/rosetta.txt`, `logs/renderer-summary.txt`, `logs/renderer-config.txt`, `package/binary-architecture.txt`, `package/dylib-dependencies.txt`, `package/signing.txt`, and `package/quarantine.txt`.
     validations:
       required: false

@@ -45,7 +45,15 @@ def validate_runtime_startup_error() -> None:
     compat = read("src/sys/osx/macosx_compat.mm")
 
     for token in (
+        "Sys_ErrorIfMacOSAppBundleRuntimeIncomplete",
         "Sys_ErrorIfMacOSAppBundlePackageRootIncomplete",
+        "Sys_SelectMacOSAppBundleRuntimeRoots",
+        "Sys_GetSiblingSelfContainedAppRuntimeRoots",
+        "OpenQ4BundleRuntimeMissingTitle",
+        "OpenQ4BundleRuntimeMissingBody",
+        "Expected self-contained app contract: data in Contents/Resources/baseoq4 and signed game modules in Contents/Frameworks",
+        'resourceDirectory.AppendPath( "Resources" )',
+        'frameworkDirectory.AppendPath( "Frameworks" )',
         "Sys_GetAppBundlePackageRootFromExecutableDirectory",
         "Sys_IsMacOSAppBundleDirectoryName",
         'static const char appBundleSuffix[] = ".app";',
@@ -56,8 +64,8 @@ def validate_runtime_startup_error() -> None:
         "OpenQ4PackageRootMissingTitle",
         "OpenQ4PackageRootMissingBody",
         "openQ4.app adjacent package root is incomplete",
-        "Keep openQ4.app, baseoq4/, openQ4-client_<arch>, and openQ4-ded_<arch> together",
-        "Moving only openQ4.app to /Applications is not supported yet.",
+        "This legacy package layout needs openQ4.app, baseoq4/, openQ4-client_<arch>, and openQ4-ded_<arch> together",
+        "Current self-contained packages support moving only openQ4.app to /Applications",
         "Expected adjacent package-root contract: openQ4.app, loose binaries, and baseoq4/ together",
         "Package root: %s",
         "App path: %s",
@@ -100,16 +108,19 @@ def validate_game_module_package_root_probe() -> None:
     )
     for token in (
         "Sys_GetPackageRootDirectory",
+        "Sys_GetGameModuleRootDirectory",
         "moduleSearchRoots",
     ):
-        require(find_dll, token, "FindDLL adjacent package-root game-module probe")
+        require(find_dll, token, "FindDLL trusted macOS game-module probe")
 
     package_root = function_body(compat, "bool Sys_GetPackageRootDirectory( char *packageRoot, int packageRootSize ) {")
     require(
         package_root,
-        "Sys_GetAppBundlePackageRootFromExecutableDirectory",
-        "macOS Sys_GetPackageRootDirectory app-bundle package-root derivation",
+        "Sys_SelectMacOSAppBundleRuntimeRoots",
+        "macOS Sys_GetPackageRootDirectory app-bundle runtime-root selection",
     )
+    module_root = function_body(compat, "bool Sys_GetGameModuleRootDirectory( char *moduleRootPath, int moduleRootSize ) {")
+    require(module_root, "Sys_SelectMacOSAppBundleRuntimeRoots", "macOS trusted module-root selection")
 
 
 def validate_app_bundle_cd_path() -> None:
@@ -118,22 +129,12 @@ def validate_app_bundle_cd_path() -> None:
 
     cd_path = function_body(compat, "const char *Sys_DefaultCDPath( void ) {")
     for token in (
-        "Sys_EXEPath",
-        "Sys_GetAppBundlePackageRootFromExecutableDirectory",
-        "Sys_ErrorIfMacOSAppBundlePackageRootIncomplete",
-        "cdpath = packageDirectory",
+        "Sys_GetPackageRootDirectory",
+        "cdpath = packageRoot",
         "return cdpath.c_str()",
         "return Posix_Cwd()",
     ):
         require(cd_path, token, "macOS app-bundle CD-path selection")
-
-    derivation = cd_path.index("Sys_GetAppBundlePackageRootFromExecutableDirectory")
-    validation = cd_path.index("Sys_ErrorIfMacOSAppBundlePackageRootIncomplete")
-    selection = cd_path.index("cdpath = packageDirectory")
-    if not derivation < validation < selection:
-        raise AssertionError(
-            "macOS app-bundle package root must be derived and validated before becoming fs_cdpath"
-        )
 
     require(
         posix,
@@ -310,7 +311,8 @@ def validate_support_info_path_resolution() -> None:
         "App executable path: %s",
         "Expected loose client path: %s",
         "Expected loose dedicated-server path: %s",
-        "Expected game directory path: %s",
+        "Expected embedded game-data path: %s",
+        "Expected embedded game-module path: %s",
         "Expected log keys: fs_basepath, fs_cdpath, fs_savepath",
         "grep -E 'fs_(basepath|cdpath|savepath)",
         "No openq4.log files were found. fs_basepath, fs_cdpath, and fs_savepath values could not be copied without launching openQ4.",
@@ -352,7 +354,8 @@ def validate_docs_plan_and_release_notes() -> None:
     for token in (
         "openQ4.app adjacent package root is incomplete",
         "Expected adjacent package-root contract: `openQ4.app`, loose binaries, and `baseoq4/` together",
-        "Moving only `openQ4.app` to `/Applications` is not supported yet",
+        "Legacy adjacent packages need the app, loose binaries, and data together",
+        "Current self-contained packages support moving only `openQ4.app` to `/Applications`",
         "`package/path-resolution.txt`",
     ):
         require(package_policy, token, "macOS package layout policy startup error and support path report")

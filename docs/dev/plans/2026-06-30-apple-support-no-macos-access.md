@@ -1,6 +1,6 @@
 # Apple Support Gap Plan Without macOS Access
 
-Updated: 2026-06-30
+Updated: 2026-07-15
 
 This plan records the Apple/macOS compatibility, support, and robustness gaps
 that can be worked from the current Windows/Linux development environment. It
@@ -135,9 +135,12 @@ the work below.
   embedded control characters cannot poison issue attachments.
 - The collector now adds `system/rosetta.txt` for collector-process
   architecture plus `sysctl.proc_translated` state,
-  `logs/renderer-summary.txt` for renderer startup,
-  driver-quirk, ARB2, and fatal-signal breadcrumbs,
-  `package/binary-architecture.txt` for read-only `file`/`lipo` architecture
+   `logs/renderer-summary.txt` for renderer startup,
+   driver-quirk, ARB2, and fatal-signal breadcrumbs,
+   `logs/renderer-config.txt` for a privacy-filtered renderer/performance cvar
+   snapshot that excludes bindings, player/account, network, audio-device, and
+   arbitrary config settings,
+   `package/binary-architecture.txt` for read-only `file`/`lipo` architecture
   output, `package/dylib-dependencies.txt` for read-only `otool` dependency
   and game-module install-name output, `package/signing.txt` for read-only
   `codesign`, `spctl --assess --type execute --verbose=4`, and
@@ -293,8 +296,8 @@ the work below.
   - `openQ4.app/Contents/MacOS/openQ4`
   - loose `openQ4-client_arm64`
   - loose `openQ4-ded_arm64`
-  - `baseoq4/game-sp_arm64.dylib`
-  - `baseoq4/game-mp_arm64.dylib`
+  - `openQ4.app/Contents/Frameworks/game-sp_arm64.dylib`
+  - `openQ4.app/Contents/Frameworks/game-mp_arm64.dylib`
 - [x] Document how to pair a user `.ips` report with the correct symbol archive.
 - [x] Add package-script tests that symbol archives cannot be mistaken for
   runtime payloads.

@@ -1,6 +1,6 @@
 # macOS Compatibility And Support Gap Plan
 
-Updated: 2026-06-30
+Updated: 2026-07-15
 
 This plan records the current Apple macOS compatibility and support gaps found during a repo audit and turns each gap into concrete work. It covers the engine repo, the release/package tooling, CI workflows, runtime validation assets, documentation, and the companion `openQ4-game` game-library repo consumed at build time.
 
@@ -27,13 +27,13 @@ The current tree has a substantial macOS bring-up foundation:
 
 - `meson.build` supports Darwin hosts, sets the deployment target to macOS 11.0, defaults to SDL3 on macOS, and exposes `macos_graphics_bridge=opengl|metal`.
 - `meson_options.txt` correctly describes the Metal path as a bridge around the SDL3/OpenGL renderer path, not a native Metal renderer.
-- `.github/workflows/commit-validation.yml` builds macOS arm64 on hosted macOS runners for both OpenGL and Metal bridge variants.
+- `.github/workflows/commit-validation.yml` builds macOS arm64 and experimental Intel x64 thin slices on hosted macOS runners for both OpenGL and Metal bridge variants, then verifies a non-publishing universal2 assembly corridor.
 - `.github/workflows/manual-release.yml` publishes macOS arm64 OpenGL and Metal packages; credentialed runs produce signed and notarized DMGs, while uncredentialed runs produce unsigned tarballs.
 - `tools/build/package_nightly.py` contains app bundle validation, strict macOS bundle allowlists, Developer ID signing, Hardened Runtime, notarization, stapling, DMG verification, and entitlement rejection for sandbox/get-task-allow.
 - `tools/tests/macos_static_policy.py`, `tools/tests/macos_metal_bridge.py`, `tools/tests/macos_renderer_startup_guard.py`, and `tools/tests/macos_signoff_archive.py` encode many macOS policy and packaging expectations.
 - `docs/dev/macos-vm-testing-workflow.md` documents a compliant Apple-hardware VM or host workflow with signoff archives and optional completed-checklist enforcement.
 - `docs/dev/platform-support.md`, `BUILDING.md`, `docs/user/getting-started.md`, and `assets/release/README.html` currently describe macOS as experimental Apple Silicon/arm64 support.
-- `../openQ4-game` has experimental standalone macOS Meson support for Darwin game modules and arm64 CI.
+- `../openQ4-game` has experimental standalone macOS Meson support for Darwin game modules plus hosted arm64 and Intel x64 CI.
 
 Despite that foundation, macOS should remain experimental until the gaps below are closed or explicitly accepted as unsupported.
 
@@ -55,17 +55,18 @@ Move macOS from experimental to first-class only when all of these are true:
 | ID | Gap | Risk | Priority |
 | --- | --- | --- | --- |
 | MAC-001 | No completed real Apple-hardware runtime signoff is checked into the release evidence trail. | CI can pass while input, audio, display, Gatekeeper, or runtime package behavior fails on real Macs. | P0 |
-| MAC-002 | macOS support is arm64-only, with no Intel or universal2 support decision beyond documentation. | Users on Intel Macs may assume support, and future universal builds lack a defined plan. | P1 |
+| MAC-002 | User-facing macOS releases remain arm64-only; thin Intel CI and a hosted universal2 assembly gate are configured but have no accepted hosted or real-hardware evidence. | Intel/universal build regressions can now be caught, but publishing before gameplay/package/signing proof would overstate compatibility. | P1 |
 | MAC-003 | The supported macOS version matrix is not backed by floor-version evidence. | The deployment target is macOS 11.0, but hosted validation mainly covers current hosted images. | P1 |
 | MAC-004 | Both macOS packages still depend on the OpenGL renderer path; Metal is a bridge, not a native renderer. | Apple OpenGL limitations may become the long-term blocker for reliable macOS rendering. | P1 |
 | MAC-005 | Audio support still defaults to Apple OpenAL, while OpenAL Soft/system-provider migration is incomplete. | Real audio device switching, hotplug, and provider differences may break or regress on Macs. | P0 |
-| MAC-006 | The macOS package layout is not a self-contained drag-only app bundle. | Finder, DMG, copied-folder, and working-directory behavior may diverge from user expectations. | P1 |
-| MAC-007 | `openQ4-game` macOS support is experimental and arm64-only in CI. | Engine releases can appear stronger than the game-library support they consume. | P1 |
-| MAC-008 | No macOS sanitizer or instrumentation lane exists for platform-sensitive changes. | macOS-only lifetime, Obj-C/C++ interop, filesystem, and loader bugs may escape compile/package CI. | P2 |
+| MAC-006 | The self-contained app implementation still needs real Finder, copied-app, mounted-DMG, and Gatekeeper evidence. | Static/package validation can pass while end-user installation behavior fails on real macOS. | P1 |
+| MAC-007 | `openQ4-game` has experimental ARM64 and Intel CI configured, but hosted Intel results and engine-mediated real gameplay evidence are still pending. | Engine releases can appear stronger than the game-library support they consume. | P1 |
+| MAC-008 | A manual macOS sanitizer lane now exists, but clean hosted results have not yet been recorded for both bridges. | macOS-only lifetime, Obj-C/C++ interop, filesystem, and loader bugs need repeatable instrumented evidence. | P2 |
 | MAC-009 | The legacy native macOS backend remains as a fallback without a clear maintenance policy. | Carbon/NSOpenGL fallback code can accumulate stale behavior or confuse support scope. | P2 |
 | MAC-010 | Unsigned macOS tarballs remain a release fallback when Apple credentials are absent. | Users may hit Gatekeeper friction, and first-class support can be undermined by unsigned artifacts. | P1 |
 | MAC-011 | macOS runtime validation is not yet tied into release-note and release-completion gates. | A release can ship with stale or missing support evidence even when docs say macOS is supported. | P1 |
 | MAC-012 | Multiplayer macOS validation is not called out as a required signoff path. | SP may work while MP input, networking, module loading, or menu flows regress. | P1 |
+| MAC-013 | The latest public engine revision does not yet reproduce the locally passing source state. | Hosted macOS output cannot be treated as current evidence until matching engine and GameLibs changes are committed and CI is green. | P0 |
 
 ## MAC-001: Real Apple-Hardware Runtime Signoff
 
@@ -109,12 +110,13 @@ Current state:
 
 - Public docs say macOS support is Apple Silicon/arm64 only.
 - Release workflows build `macos-arm64-opengl` and `macos-arm64-metal`.
-- `../openQ4-game` has arm64 macOS CI and Darwin x86_64 build logic, but no Intel Mac CI or universal2 release lane.
+- openQ4 and `../openQ4-game` now have dedicated `macos-15-intel` x86_64 CI jobs in addition to ARM64 jobs; clean hosted results have not yet been recorded for the new jobs.
+- Intel CI builds thin x64 outputs and runs assetless renderer/dedicated lifecycle checks, but there is still no Intel release lane, universal2 package, or real Intel gameplay/package/signing evidence.
 
 Gap:
 
-- The project has not decided whether Intel Mac support is intentionally out of scope, deferred, or planned through universal2 packages.
-- If universal2 is added later, the current release validation and package scripts need extra architecture gates.
+- Intel user-facing support remains deferred rather than silently implied by build-system capability.
+- If universal2 is added later, final combined binaries still need post-`lipo` install-name, signing, notarization, and runtime gates.
 
 Tasks:
 
@@ -122,16 +124,22 @@ Tasks:
 - [x] If staying arm64-only for now, keep the user docs explicit and add a regression test that prevents accidental Intel/universal2 claims in release-facing docs.
 - [x] Document the current architecture policy and expansion requirements in `docs/dev/macos-support-matrix-policy.md`.
 - [x] Confirm the current release workflow publishes only `macos-arm64-opengl` and `macos-arm64-metal` package variants.
-- [ ] If adding Intel support, secure an Intel Mac runner or hardware host for runtime signoff.
-- [ ] Add `../openQ4-game` macOS x86_64 CI before claiming engine Intel support.
-- [ ] Add openQ4 macOS x86_64 package validation or a universal2 build lane.
-- [ ] Extend package validation to check every executable and dylib slice with `lipo -archs`.
-- [ ] Re-run code signing, notarization, stapling, `spctl`, and install-name validation after `lipo` creation.
+- [x] Add a standard hosted Intel Mac runner for experimental compile, stage, assetless renderer, and dedicated-module-loader validation.
+- [ ] Secure physical Intel Apple hardware or a compliant Intel Mac host for stock-asset gameplay, audio/input/display, package, signing, and Gatekeeper signoff.
+- [x] Add `../openQ4-game` macOS x86_64 CI before claiming engine Intel support.
+- [x] Add openQ4 macOS x86_64 staged-package validation for both bridge variants.
+- [x] Extend package validation to check every executable and dylib slice with `lipo -archs`.
+- [x] Add a universal2 runtime module fallback so both executable slices can load one trusted merged SP/MP module pair without changing thin-package behavior.
+- [x] Document the universal2 merge, exact-slice, symbol, install-name, inside-out signing, notarization, and dual-architecture evidence contract.
+- [x] Implement the fail-closed universal2 merge/assembly job and final-package validator: matched thin provenance, mode-preserving thin artifact transfer, byte-identical shared payloads, exact dual Mach-O slices, per-slice metadata, final dSYMs, and native assetless dedicated-server smoke are required before CI uploads its evidence.
+- [x] Add a non-publishing universal2 candidate gate that can re-run code signing, notarization, stapling, `spctl`, and install-name validation after `lipo` creation when Developer ID mode is selected; hosted and hardware evidence remains pending.
 - [ ] Update release artifact naming to distinguish `macos-arm64`, `macos-x64`, and `macos-universal2`.
+- [ ] Record clean hosted results for the new openQ4 and `openQ4-game` Intel jobs.
 
 Validation:
 
-- For arm64-only: docs and workflow artifact names consistently say arm64, and tests fail on unsupported architecture claims.
+- For the arm64-only release line: user docs and release artifact names consistently say arm64 while CI artifacts are explicitly labeled experimental x64 evidence.
+- For thin Intel CI: `lipo -archs` reports only `x86_64` for the client, dedicated server, and game dylibs; renderer and dedicated-module assetless smokes pass for both bridge configurations.
 - For universal2: `lipo -archs` reports both `x86_64` and `arm64` for the app executable, dedicated server, and game dylibs.
 - Runtime signoff passes on both Apple Silicon and Intel hardware if Intel is claimed.
 
@@ -247,24 +255,32 @@ Exit criteria:
 
 Current state:
 
-- macOS packages include `openQ4.app`, loose runtime executables, `baseoq4/`, and game dylibs.
-- User docs tell users to keep the app, `baseoq4/`, and loose runtime files together.
-- Package validation checks app bundle structure and DMG integrity.
+- macOS package generation moves staged PK4 data into
+  `openQ4.app/Contents/Resources/baseoq4` and signed game dylibs into the flat
+  `Contents/Frameworks` nested-code location.
+- `openQ4.app` is drag-installable without the adjacent loose binaries; loose
+  diagnostic/client-server binaries discover the sibling app runtime.
+- Package validation checks bundle structure, no-duplication, archive paths,
+  architecture, dependencies, deployment floors, install names, nested signing,
+  symbols, Finder-style path selection, and DMG integrity.
 
 Gap:
 
-- The package is not a conventional self-contained drag-only `.app`.
-- Finder launch, copied-folder launch, mounted-DMG launch, and terminal launch can differ if working-directory or adjacent content discovery changes.
+- The self-contained implementation is not yet proven through the required
+  Finder, copied-app, mounted-DMG, Gatekeeper, and gameplay checks on real Apple
+  hardware.
 
 Tasks:
 
 - [x] Document the intended package layout as a support contract: self-contained app bundle, adjacent package root, or hybrid.
 - [ ] Validate launch by double-clicking `openQ4.app` from the mounted DMG.
 - [ ] Validate launch after copying the whole package folder to a user-writable location.
-- [ ] Validate launch after moving only `openQ4.app`; either make it work or document it as unsupported with a clear user-facing error.
+- [x] Implement app-only movement with embedded content roots, trusted Frameworks module discovery, loose-binary sibling discovery, and localized damaged-app diagnostics.
+- [x] Record trusted module roots and every checked module path on a missing-module failure, then retain that diagnostic in the privacy-filtered support archive.
+- [x] Record the selected module and platform-loader rejection when `dyld` cannot load a found module, then retain both diagnostics in the privacy-filtered support archive.
 - [ ] Confirm `fs_basepath`, `fs_cdpath`, and `fs_savepath` resolution in `logs/openq4.log` for Finder and terminal launches.
-- [x] Decide whether `baseoq4/` and game dylibs should move into `openQ4.app/Contents/Resources` or remain adjacent.
-- [ ] If the layout changes, update package allowlists, signing/notarization, DMG generation, install-name validation, release docs, and user docs together.
+- [x] Put PK4 data under `openQ4.app/Contents/Resources/baseoq4` and Mach-O game modules flat under `openQ4.app/Contents/Frameworks`.
+- [x] Update package allowlists, signing/notarization, DMG generation, install-name validation, symbols, support intake, release smoke, release docs, and user docs together.
 - [x] Add signoff checklist items for Finder launch from mounted DMG and from copied package.
 - [x] Add evidence-index fields for mounted-DMG launch, copied-package launch, app-only move behavior, path-resolution logs, and Gatekeeper assessment.
 - [x] Add validation coverage so future signoff archives must include the package UX checklist items.
@@ -273,7 +289,7 @@ Validation:
 
 - Runtime logs identify the expected base path, save path, and loaded game dylibs.
 - Gatekeeper assessment passes for the final user-facing package.
-- The app shows a localized, actionable error if required adjacent files are missing.
+- The app shows a localized, actionable error if required embedded data or signed modules are missing; complete legacy adjacent packages remain compatible.
 
 Exit criteria:
 
@@ -284,22 +300,22 @@ Exit criteria:
 Current state:
 
 - openQ4 consumes game-library sources from `../openQ4-game`.
-- The companion repo has experimental Darwin Meson support and arm64 CI.
+- The companion repo has experimental Darwin Meson support with ARM64 and Intel x64 CI jobs configured.
 - Standalone `openQ4-game` docs say gameplay validation must happen through the openQ4 engine checkout.
 
 Gap:
 
 - Engine macOS support can only be as strong as the game modules it stages.
-- There is no Intel game-library CI, and standalone module success does not prove runtime module loading in packaged openQ4.
+- Clean hosted Intel results are not yet recorded, and standalone module success does not prove runtime module loading in packaged openQ4.
 
 Tasks:
 
-- [ ] Keep openQ4 staged builds as the release source of truth for game-module validation.
-- [ ] Add a cross-repo validation note to the macOS evidence index: openQ4 commit, `openQ4-game` commit, staged game dylib names, and install names.
-- [ ] Verify `@loader_path/game-*.dylib` install names in release validation after every packaging change.
-- [ ] Add `../openQ4-game` macOS x86_64 CI if Intel support is planned.
-- [ ] Keep `openQ4-game` README support claims aligned with openQ4 platform support docs.
-- [ ] Add a small scripted check in openQ4, if practical, that validates staged macOS game dylib names and architecture against the selected package architecture.
+- [x] Keep openQ4 staged builds as the release source of truth for game-module validation.
+- [x] Add a cross-repo validation note to the macOS evidence index: openQ4 commit, `openQ4-game` commit, staged game dylib names, and install names.
+- [x] Verify `@loader_path/game-*.dylib` install names in release validation after every packaging change.
+- [x] Add `../openQ4-game` macOS x86_64 CI for the experimental Intel corridor.
+- [x] Keep `openQ4-game` README support claims aligned with openQ4 platform support docs.
+- [x] Add a small scripted check in openQ4, if practical, that validates staged macOS game dylib names and architecture against the selected package architecture.
 
 Validation:
 
@@ -317,7 +333,13 @@ Current state:
 
 - macOS hosted workflows compile and package variants.
 - Platform-specific static policy tests are strong.
-- No dedicated macOS ASan/UBSan or instrumentation lane is documented.
+- `.github/workflows/macos-sanitizer.yml` provides a manual arm64 ASan+UBSan
+  matrix for OpenGL and Metal bridge configurations.
+- The workflow disables PCH, builds the engine and staged game modules, checks
+  their instrumentation, runs an optional-by-input but default-on assetless
+  fail-fast smoke, and retains diagnostic artifacts.
+- `tools/tests/macos_sanitizer_ci.py` guards this contract in local, commit, and
+  push validation.
 
 Gap:
 
@@ -325,12 +347,13 @@ Gap:
 
 Tasks:
 
-- [ ] Add a manual macOS sanitizer workflow for platform-sensitive branches.
-- [ ] Start with engine and game-library compile coverage; add assetless smoke only if it is stable on hosted runners.
-- [ ] Disable or adjust PCH if required by sanitizer builds.
-- [ ] Capture sanitizer logs as artifacts.
-- [ ] Decide whether sanitizer runs are required for release candidates or remain manual debug tooling.
-- [ ] Document invocation in `BUILDING.md` or `docs/dev/platform-support.md`.
+- [x] Add a manual macOS sanitizer workflow for platform-sensitive branches.
+- [x] Start with engine and game-library compile coverage and a bounded assetless smoke.
+- [x] Disable PCH for sanitizer builds.
+- [x] Capture sanitizer, toolchain, build, staging, and runtime logs as artifacts.
+- [x] Keep sanitizer runs as manual debug tooling until hosted stability justifies a required lane.
+- [x] Document invocation in `BUILDING.md` and `docs/dev/platform-support.md`.
+- [ ] Run the manual sanitizer workflow for both bridges and record clean hosted results.
 
 Validation:
 
@@ -436,6 +459,7 @@ Current state:
 
 - Project rules require SP launch tasks for single-player testing and MP launch tasks for multiplayer testing.
 - macOS signoff docs call for in-game coverage but do not isolate MP as a separate required path in the gap checklist.
+- Commit and push jobs now contain a hosted assetless dedicated-server smoke for both bridge package configurations; a clean hosted result is still pending after publication of the workflow change.
 
 Gap:
 
@@ -445,7 +469,8 @@ Tasks:
 
 - [x] Add explicit MP steps to `macos-runtime-signoff.md` generation: launch MP package path, load MP game module, enter a local listen or test map flow, and exit cleanly.
 - [x] Validate `game-mp_arm64.dylib` loading from the staged package through the new MP listen-server smoke evidence path when signoff runs.
-- [ ] Validate the dedicated server binary starts on macOS and can load the MP game module far enough to initialize a local server configuration.
+- [x] Add a hosted assetless dedicated-server smoke that loads the staged MP module, reaches an initialized server frame, shuts down cleanly, and retains diagnostics.
+- [ ] Validate the dedicated server binary on real Apple hardware with retail assets and load the MP game module far enough to initialize a local server configuration.
 - [x] Capture MP logs separately from SP logs in signoff archives.
 - [ ] Add MP-specific known issues to release notes when they exist.
 
@@ -458,6 +483,34 @@ Validation:
 Exit criteria:
 
 - macOS support is not inferred from SP-only startup.
+
+## MAC-013: Reproducible Hosted Source State
+
+Current state:
+
+- The current local tree passes the macOS static profile, but it is dirty in both the engine and companion GameLibs checkout.
+- Public engine revision `a635c622` fails its validation-script-smoke job before macOS jobs start: `filesystem_case_segments.py` requires `Parser_NormalizeIncludeBase`, which is present in the current local source tree but not that public revision.
+- Staged payload manifests and hosted debug evidence record both engine and GameLibs commits plus dirty-state fields, so a future hosted artifact can identify the exact source pair it used.
+
+Gap:
+
+- A hosted macOS result from an older or independently cloned source pair cannot prove the current implementation, even when local static checks pass.
+
+Tasks:
+
+- [x] Record engine/GameLibs commit and dirty-state provenance in staged-package and hosted-debug evidence.
+- [ ] Commit and publish the matching engine and GameLibs source changes that make the current validation profile pass.
+- [ ] Record clean hosted OpenGL and Metal results from the published source pair before treating any hosted macOS result as current evidence.
+
+Validation:
+
+- The validation-script-smoke job passes on the published engine revision.
+- Hosted artifacts name the matching engine and GameLibs commits and report clean source state.
+- The ARM64 and Intel bridge jobs begin only after that source baseline is green.
+
+Exit criteria:
+
+- Every macOS hosted artifact used for release evidence is reproducible from published, clean engine and GameLibs commits.
 
 ## Recommended Work Order
 
@@ -490,6 +543,7 @@ Phase 1 implementation status:
 - [x] Added `tools/macos/record_signoff_evidence.py` to validate completed signoff archives, compute SHA-256, extract bridge reports, summarize hardware/OS/OpenAL/package metadata, and update `docs/dev/macos-signoff-evidence.md`.
 - [x] Added hardware profile capture (`system_profiler SPHardwareDataType`) to generated `macos-runtime-signoff.md` reports.
 - [x] Updated `tools/macos/validate_signoff_archive.py` so completed signoff archives must include `## Hardware` evidence.
+- [x] Added privacy-filtered `logs/renderer-config.txt` support evidence, capturing only renderer/performance cvars from safe saved configs so graphics-setting changes can be compared without collecting a full personal config.
 - [x] Added `tools/tests/macos_evidence_recording.py` and wired it into local, commit, and push validation.
 - [x] Documented the post-collection evidence recording command in `docs/dev/macos-vm-testing-workflow.md`.
 - [x] Updated `docs/dev/release-completion.md` so the macOS evidence gate requires the recorder step.
@@ -512,21 +566,22 @@ Phase 3: Package UX and release policy
 
 Phase 3 implementation status:
 
-- [x] Added `docs/dev/macos-package-layout-and-release-policy.md` with the current adjacent package-root support contract.
-- [x] Documented that moving only `openQ4.app` away from `baseoq4/` and loose runtime files is unsupported until a self-contained bundle migration is deliberately implemented.
+- [x] Recorded the self-contained contract and release requirements in `docs/dev/macos-package-layout-and-release-policy.md`.
+- [x] Migrated `openQ4.app` to a self-contained client contract with data in `Contents/Resources`, code in `Contents/Frameworks`, and no duplicated adjacent `baseoq4` payload.
+- [x] Retained a compatibility fallback for complete older adjacent packages and added localized diagnostics for damaged embedded runtimes.
 - [x] Updated the macOS VM/signoff workflow and generated signoff reports with mounted-DMG, copied-package, terminal, app-only move, path-resolution log, and Gatekeeper checklist items.
 - [x] Updated `docs/dev/macos-signoff-evidence.md` and `tools/macos/record_signoff_evidence.py` so accepted evidence records those package UX fields.
 - [x] Updated the manual release workflow with `macos_support_tier=first-class`, which fails when Apple Developer ID signing or notarization secrets are missing.
-- [x] Updated `BUILDING.md`, `docs/dev/platform-support.md`, `docs/user/getting-started.md`, `assets/release/README.html`, and `docs/dev/release-completion.md` with the adjacent-layout and signed/notarized first-class release policy.
+- [x] Updated `BUILDING.md`, `docs/dev/platform-support.md`, `docs/user/getting-started.md`, `assets/release/README.html`, and `docs/dev/release-completion.md` with the self-contained-app and signed/notarized first-class release policy.
 - [ ] Run the updated package UX checklist on real Apple hardware for both OpenGL and Metal bridge packages.
-- [ ] Record the real mounted-DMG, copied-package, app-only move, path-resolution, and Gatekeeper results in `docs/dev/macos-signoff-evidence.md`.
+- [ ] Record the real mounted-DMG, independently dragged-app, whole-package loose-tool, embedded resource/module path, path-resolution, and Gatekeeper results in `docs/dev/macos-signoff-evidence.md`.
 
 Phase 4: Matrix expansion
 
 - [x] Decide architecture policy for Intel/universal2.
 - [x] Decide OS-version validation policy for the macOS 11 floor and latest public macOS.
 - [x] Add guardrails for the current arm64-only matrix and floor/latest evidence fields.
-- [ ] Add runners, build lanes, and validation only for support claims the project is ready to make.
+- [x] Add runners, build lanes, and validation only for support claims the project is ready to make.
 
 Phase 4 implementation status:
 
@@ -535,9 +590,12 @@ Phase 4 implementation status:
 - [x] Added `-MacOSOSMatrixRole` to `tools/macos/Invoke-openQ4MacOSWorkflow.ps1` and `OPENQ4_MACOS_OS_MATRIX_ROLE` to the guest signoff script so floor-candidate, latest-public-macOS, hosted-CI, and manual-current runs can be recorded deliberately.
 - [x] Updated signoff report generation, archive validation, and evidence recording so accepted archives include architecture policy, CPU architecture, OS matrix role, Xcode version, and macOS SDK version.
 - [x] Added `tools/tests/macos_matrix_policy.py` and wired it into local, commit, and push validation to prevent accidental Intel/universal2 claims and to keep floor/latest evidence fields present.
+- [x] Added separate `macos-15-intel` OpenGL/Metal engine jobs and a matching companion GameLibs job, with thin-slice/floor/install-name checks plus assetless renderer and dedicated-module lifecycle coverage while keeping user-facing releases arm64-only.
+- [x] Added a manual non-publishing macOS universal2 candidate workflow that builds matched ARM64/Intel inputs, creates evidence artifacts for both bridge variants, and can perform final Developer ID signing, notarization, stapling, Gatekeeper, and per-slice install-name validation without publishing a release.
+- [ ] Record passing hosted results for the experimental Intel engine and GameLib jobs.
 - [ ] Run oldest-supported-version signoff with `-MacOSOSMatrixRole floor-candidate` on macOS 11 or update the documented floor before promotion.
 - [ ] Run latest-public-macOS signoff with `-MacOSOSMatrixRole latest-public-macos` for the release candidate before promotion.
-- [ ] Intel/universal2 expansion remains deferred until real Intel or universal build lanes, openQ4-game coverage, `lipo`/install-name validation, signing/notarization after lipo, and architecture-specific runtime signoff exist.
+- [ ] Intel release expansion remains deferred until the configured hosted jobs pass and real Intel gameplay, package, signing/notarization, Gatekeeper, and architecture-specific runtime signoff exist; universal2 additionally requires a final combine-and-resign lane.
 
 Phase 5: Renderer and backend future
 

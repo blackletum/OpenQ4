@@ -28,7 +28,7 @@ one crash:
 | P0 | Offscreen MSAA support was inferred from the window framebuffer and generic `GL_MAX_SAMPLES`; an incomplete FBO caused a generic fatal. | Render-target creation is nonfatal and diagnostic. The game retries effective samples down to `0`, records requested/effective values, and uses direct rendering if every attempt fails. |
 | P0 | Apple GL 2.1 defaulted to no interaction lighting. | Mode `0` routes eligible stock surfaces through neutral GLSL 1.10 interactions and uses a guarded simple-ARB fallback per surface. Mode `3` retains emergency bypass only. |
 | P0 | CPU vertex pointers could be interpreted as VBO offsets after another pass left an array/index buffer bound. | CPU-backed `Position` calls and frame boundaries establish zero buffer bindings; simple compatibility mode avoids packed MD5R interaction programs and prepares caches defensively. |
-| P0 | Finder/LaunchServices CWD could hide adjacent `baseoq4/` when retail assets were discovered elsewhere. | App-bundle launch derives and validates its package parent as `fs_cdpath`; retail auto-discovery remains `fs_basepath`. |
+| P0 | Finder/LaunchServices CWD could hide the openQ4 runtime when retail assets were discovered elsewhere. | App-bundle launch derives and validates embedded `Contents/Resources` as `fs_cdpath`; retail auto-discovery remains `fs_basepath`, and older complete adjacent packages retain a compatibility fallback. |
 | P1 | Script includes passed already-relative qpaths into an OS-path converter, producing a warning storm. | Engine and canonical GameLibs parsers recognize `baseoq4`, `q4base`, `fs_game`, `fs_game_base`, PK4 paths, and absolute paths explicitly. |
 | P1 | Routine macOS jobs compiled and packaged but did not require a launch. | Both hosted bridge jobs run an assetless renderer smoke; release jobs launch the app executable from a Finder-style unrelated CWD and verify its package root. |
 | P1 | Failure reports omitted the decisive FBO/MSAA/path/module lines. | The support collector preserves those diagnostics in `logs/renderer-summary.txt`. |
@@ -67,9 +67,9 @@ experimental, record:
 ## Deliberately Unchanged Scope
 
 - The release remains Apple Silicon/arm64 only.
-- The app bundle remains an adjacent-package launcher rather than a
-  self-contained bundle; app-only `/Applications` installation is still
-  unsupported and diagnosed clearly.
+- The renderer work itself did not require a package migration; the later
+  self-contained-app change now supports app-only `/Applications` installation
+  with data under `Contents/Resources` and modules under `Contents/Frameworks`.
 - Native Metal and the comparison-only native Cocoa/OpenGL backend are not
   promoted by this work. A native Metal renderer still requires a separate
   material/BSE/render-capture design and implementation plan.

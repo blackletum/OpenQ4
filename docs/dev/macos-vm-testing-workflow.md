@@ -142,12 +142,14 @@ listen-server gameplay, dedicated-server startup where supported, and in-game
 OpenGL or Metal bridge coverage beyond hosted CI before macOS support can move
 out of its experimental state. The package UX part of that checklist follows
 `docs/dev/macos-package-layout-and-release-policy.md`: launch `openQ4.app` from
-the mounted signed/notarized DMG when one is available, copy the whole package
-payload to a user-writable location and launch it there, confirm terminal launch
-from the package root, record the app-only move result as unsupported unless it
-has deliberately been made to work, verify `fs_basepath`, `fs_cdpath`, and
-`fs_savepath` in the runtime logs, and record Gatekeeper behavior for the exact
-signed/notarized DMG or unsigned development archive under test.
+the mounted signed/notarized DMG when one is available, drag only the app to
+`/Applications` or another user-writable location and launch it there, copy the
+whole payload separately to check loose client/server/support-tool sibling
+discovery, confirm Terminal launch from an unrelated working directory, verify
+embedded `Contents/Resources` and `Contents/Frameworks` paths plus
+`fs_basepath`, `fs_cdpath`, and `fs_savepath` in runtime logs, and record
+Gatekeeper behavior for the exact signed/notarized DMG or unsigned development
+archive under test.
 
 The `metal` bridge remains the OpenGL renderer path hosted through the SDL3/Cocoa
 Metal bridge integration; it is not a native Metal renderer. Native
@@ -274,7 +276,7 @@ For experimental macOS debugging, do not stop at static checks. Use this VM work
 - `-RequireCompletedSignoffChecklist` once manual hardware checks are filled in
 - `-MacOSOSMatrixRole floor-candidate` for macOS floor evidence and `-MacOSOSMatrixRole latest-public-macos` for latest public macOS evidence
 - `-Action CollectResults -MacOSRunId <run-id>` when re-collecting completed manual evidence
-- mounted-DMG, copied-package, terminal, app-only move, path-resolution log, and Gatekeeper checks from `docs/dev/macos-package-layout-and-release-policy.md`
+- mounted-DMG, independently dragged-app, whole-package loose-tool, terminal, embedded resource/module path, path-resolution log, and Gatekeeper checks from `docs/dev/macos-package-layout-and-release-policy.md`
 - log inspection under the guest `~/openq4-work/results/` run directory
 
 The remaining stock Quake 4 duplicate material warnings from retail assets are
@@ -288,10 +290,17 @@ If no Apple VM or hosted Mac is available yet, use the manual GitHub Actions
 workflow `.github/workflows/macos-debug.yml` as the interim experimental macOS debug target.
 It builds and stages the experimental macOS OpenGL and/or Metal bridge variants on Apple's
 hosted macOS runner, uploads `.install`, Meson logs, host diagnostics, and
-optional assetless renderer-probe logs.
+optional assetless renderer-probe logs. Each selected artifact also includes
+`macos-debug-evidence-scope.txt`, which records the requested bridge, the
+artifact's actual bridge, exact `openQ4` and `openQ4-game` commits, clean-tree
+state, and whether the optional probes were enabled.
+It explicitly marks hosted output as build/package evidence rather than a
+completed manual Apple-hardware gameplay signoff.
 
 Run it from GitHub Actions as **macOS Debug**. Use `bridge=both` for broad
 coverage, or pick `opengl`/`metal` while chasing a focused issue. Enable
 `run_runtime_assetless` only when startup/runtime logs are needed; hosted macOS
 runner display capabilities can vary, so that step is allowed to fail while
-still publishing whatever logs were produced.
+still publishing whatever logs were produced. A successful artifact from one
+selected bridge does not prove the other bridge; a `bridge=both` dispatch still
+publishes one scoped artifact per bridge.

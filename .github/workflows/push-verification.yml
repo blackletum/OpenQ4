@@ -50,6 +50,7 @@ jobs:
             tools/build/openq4_pak.py \
             tools/build/openq4_release_version.py \
             tools/build/openq4_version.py \
+            tools/build/assemble_macos_universal2.py \
             tools/build/package_nightly.py \
             tools/build/package_release.py \
             tools/build/verify_linux_arm64_release_evidence.py \
@@ -83,6 +84,7 @@ jobs:
             tools/tests/linux_wayland_stock_sp_smoke_contract.py \
             tools/tests/linux_gui_presentation_defaults.py \
             tools/tests/linux_highdpi_mouse.py \
+            tools/tests/linux_appimage_packaging.py \
             tools/tests/linux_metadata_fuzz.py \
             tools/tests/linux_packaging_guidance.py \
             tools/tests/linux_sanitizer_ci.py \
@@ -91,9 +93,12 @@ jobs:
             tools/tests/linux_wayland_build_contract.py \
             tools/tests/loading_continue_input.py \
             tools/tests/macos_apple_gl21_arb2_corridor.py \
+            tools/tests/macos_dedicated_server_smoke.py \
+            tools/tests/macos_dedicated_server_smoke_contract.py \
             tools/tests/macos_evidence_plumbing.py \
             tools/tests/macos_evidence_recording.py \
             tools/tests/macos_gamelibs_alignment.py \
+            tools/tests/macos_intel_ci.py \
             tools/tests/macos_local_validation_track.py \
             tools/tests/macos_matrix_policy.py \
             tools/tests/macos_native_backend_guard.py \
@@ -104,6 +109,7 @@ jobs:
             tools/tests/macos_renderer_backend_policy.py \
             tools/tests/macos_renderer_phase_breadcrumbs.py \
             tools/tests/macos_renderer_startup_guard.py \
+            tools/tests/macos_sanitizer_ci.py \
             tools/tests/macos_sdl3_backend_guard.py \
             tools/tests/macos_shadow_policy.py \
             tools/tests/macos_signoff_archive.py \
@@ -111,6 +117,9 @@ jobs:
             tools/tests/macos_support_claim_policy.py \
             tools/tests/macos_support_intake.py \
             tools/tests/macos_symbolication_policy.py \
+            tools/tests/macos_universal2_assembly.py \
+            tools/tests/macos_universal2_runtime.py \
+            tools/tests/macos_universal2_release_candidate.py \
             tools/tests/macos_metal_bridge.py \
             tools/tests/native_glx_shutdown.py \
             tools/tests/openq4_pure_pack.py \
@@ -154,6 +163,7 @@ jobs:
           python tools/tests/linux_wayland_stock_sp_smoke_contract.py
           python tools/tests/linux_gui_presentation_defaults.py
           python tools/tests/linux_highdpi_mouse.py
+          python tools/tests/linux_appimage_packaging.py
           python tools/tests/linux_metadata_fuzz.py
           python tools/tests/linux_packaging_guidance.py
           python tools/tests/linux_pk4_legacy_tools.py
@@ -163,9 +173,11 @@ jobs:
           python tools/tests/linux_wayland_build_contract.py
           python tools/tests/loading_continue_input.py
           python tools/tests/macos_apple_gl21_arb2_corridor.py
+          python tools/tests/macos_dedicated_server_smoke_contract.py
           python tools/tests/macos_evidence_plumbing.py
           python tools/tests/macos_evidence_recording.py
           python tools/tests/macos_gamelibs_alignment.py
+          python tools/tests/macos_intel_ci.py
           python tools/tests/macos_local_validation_track.py
           python tools/tests/macos_matrix_policy.py
           python tools/tests/macos_native_backend_guard.py
@@ -176,6 +188,7 @@ jobs:
           python tools/tests/macos_renderer_backend_policy.py
           python tools/tests/macos_renderer_phase_breadcrumbs.py
           python tools/tests/macos_renderer_startup_guard.py
+          python tools/tests/macos_sanitizer_ci.py
           python tools/tests/macos_sdl3_backend_guard.py
           python tools/tests/macos_shadow_policy.py
           python tools/tests/macos_signoff_archive.py
@@ -183,6 +196,9 @@ jobs:
           python tools/tests/macos_support_claim_policy.py
           python tools/tests/macos_support_intake.py
           python tools/tests/macos_symbolication_policy.py
+          python tools/tests/macos_universal2_assembly.py
+          python tools/tests/macos_universal2_runtime.py
+          python tools/tests/macos_universal2_release_candidate.py
           python tools/tests/macos_metal_bridge.py
           python tools/tests/native_glx_shutdown.py
           python tools/tests/openq4_pure_pack.py
@@ -243,6 +259,18 @@ jobs:
           - name: macOS Metal Push Verification
             os: macos-15
             artifact_name: macos-metal
+            runtime_smoke: true
+            macos_graphics_bridge: metal
+            macos_openal_provider: apple_framework
+          - name: macOS Intel x64 OpenGL Push Verification
+            os: macos-15-intel
+            artifact_name: macos-x64-opengl
+            runtime_smoke: true
+            macos_graphics_bridge: opengl
+            macos_openal_provider: apple_framework
+          - name: macOS Intel x64 Metal Push Verification
+            os: macos-15-intel
+            artifact_name: macos-x64-metal
             runtime_smoke: true
             macos_graphics_bridge: metal
             macos_openal_provider: apple_framework
@@ -371,6 +399,24 @@ jobs:
         with:
           name: push-${{ matrix.artifact_name }}-dedicated-smoke
           path: .tmp/linux-dedicated-smoke/${{ matrix.artifact_name }}
+          if-no-files-found: warn
+          retention-days: 14
+          include-hidden-files: true
+
+      - name: Run macOS dedicated server smoke
+        if: startsWith(matrix.os, 'macos-')
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/tests/macos_dedicated_server_smoke.py \
+            --output-root .tmp/macos-dedicated-smoke/${{ matrix.artifact_name }}
+
+      - name: Publish macOS dedicated server smoke
+        if: always() && startsWith(matrix.os, 'macos-')
+        uses: actions/upload-artifact@v6
+        with:
+          name: push-${{ matrix.artifact_name }}-dedicated-smoke
+          path: .tmp/macos-dedicated-smoke/${{ matrix.artifact_name }}
           if-no-files-found: warn
           retention-days: 14
           include-hidden-files: true

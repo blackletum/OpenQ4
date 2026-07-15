@@ -53,7 +53,7 @@ It is designed for players who want the original Quake 4 experience with a clean
 - **OpenAL audio** restored to the pre-plan compatibility path by default, with newer voice handling revalidated behind an opt-in gate.
 - **Improved input and quality-of-life features** including controller support, better console UX, and modern settings behavior.
 - **Single-player and multiplayer in one install** with active compatibility work aimed at the stock game.
-- **Cross-platform support** with Windows and Linux x64 release packages, preview Linux ARM64 packages, Steam Deck support on Linux, and experimental Apple Silicon/arm64 macOS OpenGL/Metal bridge packages through the signed/notarized DMG lane for credentialed release runs.
+- **Cross-platform support** with Windows packages, directly executable Linux AppImages and archives for x86_64 plus preview aarch64, Steam Deck support on Linux, and experimental Apple Silicon/arm64 macOS OpenGL/Metal bridge packages through the signed/notarized DMG lane for credentialed release runs.
 - **Open development** with releases, issue tracking, and community feedback all happening in public.
 
 ---
@@ -99,7 +99,7 @@ Packaged support currently focuses on Windows, Linux x64, Steam Deck/SteamOS, pr
 
 1. Install **Quake 4** from [Steam](https://store.steampowered.com/app/2210/Quake_4/) or [GOG](https://www.gog.com/en/game/quake_4).
 2. Download the latest openQ4 build from the [Releases page](https://github.com/themuffinator/openQ4/releases).
-3. Launch `openQ4-client_<arch>` (or `openQ4-steamdeck` on Steam Deck).
+3. On Linux, make the matching `x86_64` or `aarch64` AppImage executable and launch it; for an extracted archive, launch `openQ4-client_<arch>` (or `openQ4-steamdeck` on Steam Deck).
 4. If openQ4 does not find your Quake 4 install automatically, follow the path setup notes in the [Getting Started guide](docs/user/getting-started.md).
 
 **Need the step-by-step version?** Start with [docs/user/getting-started.md](docs/user/getting-started.md).

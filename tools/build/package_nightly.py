@@ -54,7 +54,7 @@ MACOS_SUPPORT_INFO_SCRIPT_NAME = "collect_macos_support_info.sh"
 MACOS_SYMBOL_MANIFEST_NAME = "SYMBOLS.txt"
 MACOS_SYMBOL_ARCHIVE_SUFFIX = ".tar.xz"
 GAMELIBS_STAGE_MANIFEST_PATH = Path(".tmp") / "gamelibs_stage" / "openq4_gamelibs_stage_manifest.json"
-SUPPORTED_ARCHES = ("x64", "x86", "arm64")
+SUPPORTED_ARCHES = ("x64", "x86", "arm64", "universal2")
 
 PLATFORM_EXECUTABLE_EXT = {
     "windows": ".exe",
@@ -84,6 +84,8 @@ ARCHIVE_SUFFIX = {
 # Shared macOS compatibility floor: written to Info.plist LSMinimumSystemVersion
 # and enforced against each packaged binary's Mach-O minimum-OS load command.
 MACOS_MIN_SYSTEM_VERSION = "11.0"
+MACOS_RUNTIME_LAYOUT_KEY = "OpenQ4RuntimeLayout"
+MACOS_RUNTIME_LAYOUT_VALUE = "self-contained-v1"
 MACOS_EXPECTED_PLIST_VALUES = {
     "CFBundleExecutable": "openQ4",
     "CFBundleDisplayName": "openQ4",
@@ -94,6 +96,7 @@ MACOS_EXPECTED_PLIST_VALUES = {
     "LSMinimumSystemVersion": "11.0",
     "LSApplicationCategoryType": "public.app-category.games",
     "NSPrincipalClass": "NSApplication",
+    MACOS_RUNTIME_LAYOUT_KEY: MACOS_RUNTIME_LAYOUT_VALUE,
 }
 MACOS_ALLOWED_RUNTIME_DEPENDENCY_PREFIXES = (
     "/System/Library/",
@@ -125,17 +128,29 @@ MACOS_PACKAGE_ROOT_ERROR_STRINGS_NAME = "OpenQ4PackageRoot.strings"
 MACOS_PACKAGE_ROOT_ERROR_STRINGS = {
     "English": {
         "OpenQ4PackageRootMissingTitle": "openQ4.app adjacent package root is incomplete",
-        "OpenQ4PackageRootMissingBody": "Keep openQ4.app, baseoq4/, openQ4-client_<arch>, and openQ4-ded_<arch> together in the same package folder. Moving only openQ4.app to /Applications is not supported yet.",
+        "OpenQ4PackageRootMissingBody": "This legacy package layout needs openQ4.app, baseoq4/, openQ4-client_<arch>, and openQ4-ded_<arch> together in the same package folder. Current self-contained packages support moving only openQ4.app to /Applications; reinstall this package to use that layout.",
+        "OpenQ4BundleRuntimeMissingTitle": "openQ4.app is incomplete",
+        "OpenQ4BundleRuntimeMissingBody": "Reinstall the complete openQ4.app. Its game data and signed game modules must remain inside the application bundle.",
     },
     "French": {
         "OpenQ4PackageRootMissingTitle": "La racine de paquet adjacente a openQ4.app est incomplete",
-        "OpenQ4PackageRootMissingBody": "Conservez openQ4.app, baseoq4/, openQ4-client_<arch> et openQ4-ded_<arch> ensemble dans le meme dossier de paquet. Deplacer seulement openQ4.app vers /Applications n'est pas encore pris en charge.",
+        "OpenQ4PackageRootMissingBody": "Cette ancienne disposition de paquet necessite que openQ4.app, baseoq4/, openQ4-client_<arch> et openQ4-ded_<arch> restent ensemble dans le meme dossier. Les paquets autonomes actuels permettent de deplacer seulement openQ4.app vers /Applications ; reinstallez ce paquet pour utiliser cette disposition.",
+        "OpenQ4BundleRuntimeMissingTitle": "openQ4.app est incomplete",
+        "OpenQ4BundleRuntimeMissingBody": "Reinstallez l'application openQ4.app complete. Ses donnees de jeu et ses modules de jeu signes doivent rester dans l'application.",
     },
 }
+MACOS_APP_FRAMEWORKS_DIR = Path("Contents") / "Frameworks"
+MACOS_APP_RESOURCES_DIR = Path("Contents") / "Resources"
+MACOS_APP_GAME_DATA_DIR = MACOS_APP_RESOURCES_DIR / GAME_DIR_NAME
+MACOS_APP_SPLASH_DIR = MACOS_APP_RESOURCES_DIR / "assets" / "splash"
 MACOS_EXPECTED_APP_BUNDLE_DIRS = (
     "Contents",
+    "Contents/Frameworks",
     "Contents/MacOS",
     "Contents/Resources",
+    f"Contents/Resources/{GAME_DIR_NAME}",
+    "Contents/Resources/assets",
+    "Contents/Resources/assets/splash",
     "Contents/Resources/English.lproj",
     "Contents/Resources/French.lproj",
 )
@@ -148,6 +163,10 @@ MACOS_EXPECTED_APP_BUNDLE_FILES = (
     "Contents/MacOS/openQ4",
     "Contents/Resources/openQ4.icns",
     "Contents/Resources/VERSION.txt",
+    f"Contents/Resources/{GAME_DIR_NAME}/mod.json",
+    f"Contents/Resources/{GAME_DIR_NAME}/pak0.pk4",
+    f"Contents/Resources/{GAME_DIR_NAME}/pak1.pk4",
+    "Contents/Resources/assets/splash/quake4_rt_bitmap_4001.bmp",
     "Contents/Resources/English.lproj/InfoPlist.strings",
     "Contents/Resources/French.lproj/InfoPlist.strings",
     f"Contents/Resources/English.lproj/{MACOS_PACKAGE_ROOT_ERROR_STRINGS_NAME}",
@@ -176,6 +195,7 @@ MACOS_SUPPORT_INFO_REQUIRED_TOKENS = (
     "MAX_SUPPORT_ARCHIVE_BYTES",
     "write_bounded_report()",
     "write_openq4_log_candidate_paths()",
+    "write_openq4_renderer_config_candidate_paths()",
     "sanitize_text()",
     "redact_text()",
     "limit_stream_tail()",
@@ -184,6 +204,9 @@ MACOS_SUPPORT_INFO_REQUIRED_TOKENS = (
     "Support package root must not contain control characters",
     "Support output directory must not contain control characters",
     "HOME was not set; home-scoped openq4.log files were skipped.",
+    "HOME was not set; saved openQ4Config.cfg paths were skipped.",
+    "logs/renderer-config.txt",
+    "Only renderer and performance settings are copied",
     "HOME was not set; the macOS DiagnosticReports directory could not be located.",
     ".XXXXXX.tar.gz.tmp",
     "does not dump the environment",
@@ -223,9 +246,10 @@ DETERMINISTIC_ARCHIVE_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 DETERMINISTIC_TAR_MTIME = 0
 
 MACOS_LIPO_ARCHES = {
-    "arm64": "arm64",
-    "x64": "x86_64",
-    "x86": "i386",
+    "arm64": frozenset(("arm64",)),
+    "x64": frozenset(("x86_64",)),
+    "x86": frozenset(("i386",)),
+    "universal2": frozenset(("arm64", "x86_64")),
 }
 MACOS_SIGNING_MODES = (
     "ad-hoc",
@@ -926,11 +950,19 @@ def validate_macos_localized_info_files(package_root: Path, version: str) -> Non
         )
 
 
-def macos_expected_lipo_arch(arch: str) -> str:
+def macos_expected_lipo_arches(arch: str) -> frozenset[str]:
     expected = MACOS_LIPO_ARCHES.get(arch)
     if expected is None:
         raise RuntimeError(f"macOS package architecture {arch!r} has no lipo mapping")
     return expected
+
+
+def macos_expected_lipo_arch(arch: str) -> str:
+    """Return the singleton Mach-O slice for compatibility with thin-only callers."""
+    expected = macos_expected_lipo_arches(arch)
+    if len(expected) != 1:
+        raise RuntimeError(f"macOS package architecture {arch!r} is not a thin architecture")
+    return next(iter(expected))
 
 
 def macos_lipo_arches(binary_path: Path) -> set[str]:
@@ -959,14 +991,14 @@ def validate_macos_binary_architectures(binary_paths: list[Path], arch: str) -> 
     if sys.platform != "darwin":
         return
 
-    expected_arch = macos_expected_lipo_arch(arch)
+    expected_arches = macos_expected_lipo_arches(arch)
     for binary_path in binary_paths:
         actual_arches = macos_lipo_arches(binary_path)
-        if expected_arch not in actual_arches:
+        if actual_arches != expected_arches:
             actual = ", ".join(sorted(actual_arches)) or "<none>"
             raise RuntimeError(
                 f"macOS binary architecture mismatch: {binary_path}: "
-                f"expected {expected_arch}, found {actual}"
+                f"expected {', '.join(sorted(expected_arches))}, found {actual}"
             )
 
 
@@ -1068,19 +1100,29 @@ def resolve_macos_signing_config(args: argparse.Namespace) -> MacOSSigningConfig
     )
 
 
+def macos_embedded_game_module_paths(package_root: Path, arch: str) -> tuple[Path, Path]:
+    framework_root = package_root / "openQ4.app" / MACOS_APP_FRAMEWORKS_DIR
+    return (
+        framework_root / f"game-sp_{arch}.dylib",
+        framework_root / f"game-mp_{arch}.dylib",
+    )
+
+
 def macos_signable_targets(package_root: Path, arch: str) -> list[Path]:
+    sp_module, mp_module = macos_embedded_game_module_paths(package_root, arch)
     return [
         package_root / f"{PRODUCT_NAME}-client_{arch}",
         package_root / f"{PRODUCT_NAME}-ded_{arch}",
-        package_root / GAME_DIR_NAME / f"game-sp_{arch}.dylib",
-        package_root / GAME_DIR_NAME / f"game-mp_{arch}.dylib",
+        sp_module,
+        mp_module,
     ]
 
 
 def macos_game_module_install_names(package_root: Path, arch: str) -> dict[Path, str]:
+    sp_module, mp_module = macos_embedded_game_module_paths(package_root, arch)
     return {
-        package_root / GAME_DIR_NAME / f"game-sp_{arch}.dylib": f"@loader_path/game-sp_{arch}.dylib",
-        package_root / GAME_DIR_NAME / f"game-mp_{arch}.dylib": f"@loader_path/game-mp_{arch}.dylib",
+        sp_module: f"@loader_path/game-sp_{arch}.dylib",
+        mp_module: f"@loader_path/game-mp_{arch}.dylib",
     }
 
 
@@ -1109,7 +1151,13 @@ def normalize_macos_game_module_install_names(package_root: Path, arch: str) -> 
         )
 
 
-def macos_codesign_target(codesign_path: str, target: Path, config: MacOSSigningConfig) -> None:
+def macos_codesign_target(
+    codesign_path: str,
+    target: Path,
+    config: MacOSSigningConfig,
+    *,
+    include_entitlements: bool = True,
+) -> None:
     command = [
         codesign_path,
         "--force",
@@ -1122,7 +1170,7 @@ def macos_codesign_target(codesign_path: str, target: Path, config: MacOSSigning
         command.append("--timestamp")
     else:
         command.append("--timestamp=none")
-    if config.entitlements is not None:
+    if include_entitlements and config.entitlements is not None:
         command += ["--entitlements", str(config.entitlements)]
     command.append(str(target))
 
@@ -1143,8 +1191,14 @@ def sign_macos_payload(package_root: Path, arch: str, config: MacOSSigningConfig
     client_binary = package_root / f"{PRODUCT_NAME}-client_{arch}"
     app_executable = app_root / "Contents" / "MacOS" / "openQ4"
 
+    embedded_modules = set(macos_embedded_game_module_paths(package_root, arch))
     for target in macos_signable_targets(package_root, arch):
-        macos_codesign_target(codesign_path, target, config)
+        if target in embedded_modules:
+            # Nested libraries are signed inside-out, but app entitlements belong
+            # only to the main executable rather than copied onto library code.
+            macos_codesign_target(codesign_path, target, config, include_entitlements=False)
+        else:
+            macos_codesign_target(codesign_path, target, config)
 
     # The app bundle can receive a bundle-scoped executable signature; keep the
     # loose client signed independently as a standalone binary.
@@ -1446,6 +1500,7 @@ def macos_symbol_archive_stem(version_tag: str, arch: str, package_suffix: str) 
 
 
 def macos_symbol_targets(package_root: Path, arch: str) -> list[tuple[Path, Path, Path]]:
+    sp_module, mp_module = macos_embedded_game_module_paths(package_root, arch)
     return [
         (
             Path("openQ4.app") / "Contents" / "MacOS" / "openQ4",
@@ -1463,13 +1518,13 @@ def macos_symbol_targets(package_root: Path, arch: str) -> list[tuple[Path, Path
             Path("dSYMs") / f"{PRODUCT_NAME}-ded_{arch}.dSYM",
         ),
         (
-            Path(GAME_DIR_NAME) / f"game-sp_{arch}.dylib",
-            package_root / GAME_DIR_NAME / f"game-sp_{arch}.dylib",
+            Path("openQ4.app") / MACOS_APP_FRAMEWORKS_DIR / f"game-sp_{arch}.dylib",
+            sp_module,
             Path("dSYMs") / f"game-sp_{arch}.dylib.dSYM",
         ),
         (
-            Path(GAME_DIR_NAME) / f"game-mp_{arch}.dylib",
-            package_root / GAME_DIR_NAME / f"game-mp_{arch}.dylib",
+            Path("openQ4.app") / MACOS_APP_FRAMEWORKS_DIR / f"game-mp_{arch}.dylib",
+            mp_module,
             Path("dSYMs") / f"game-mp_{arch}.dylib.dSYM",
         ),
     ]
@@ -1489,6 +1544,45 @@ def macos_macho_uuid(binary_path: Path) -> str:
     )
     uuid_lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
     return "; ".join(uuid_lines) if uuid_lines else "unavailable"
+
+
+def macos_macho_uuid_pairs(binary_path: Path, label: str) -> frozenset[tuple[str, str]]:
+    if sys.platform != "darwin":
+        return frozenset()
+
+    dwarfdump_path = shutil.which("dwarfdump")
+    if dwarfdump_path is None:
+        raise RuntimeError("macOS dSYM UUID validation requires dwarfdump")
+
+    completed = run_macos_command(
+        [dwarfdump_path, "--uuid", str(binary_path)],
+        label=f"reading Mach-O UUIDs for {label}",
+    )
+    pairs: set[tuple[str, str]] = set()
+    for line in completed.stdout.splitlines():
+        match = re.fullmatch(
+            r"UUID: ([0-9A-Fa-f-]{36}) \(([A-Za-z0-9_]+)\) .+",
+            line.strip(),
+        )
+        if match is None:
+            raise RuntimeError(f"macOS dSYM UUID output is malformed for {label}: {line!r}")
+        pair = (match.group(1).lower(), match.group(2))
+        if pair in pairs:
+            raise RuntimeError(f"macOS dSYM UUID output has duplicate slices for {label}: {line!r}")
+        pairs.add(pair)
+    if not pairs:
+        raise RuntimeError(f"macOS dSYM UUID output is empty for {label}")
+    return frozenset(pairs)
+
+
+def validate_macos_dsym_matches_binary(binary_path: Path, dsym_path: Path) -> None:
+    binary_uuids = macos_macho_uuid_pairs(binary_path, f"binary {binary_path}")
+    dsym_uuids = macos_macho_uuid_pairs(dsym_path, f"dSYM {dsym_path}")
+    if binary_uuids != dsym_uuids:
+        raise RuntimeError(
+            "macOS dSYM UUID slices do not match the distributed binary: "
+            f"{binary_path}: binary={sorted(binary_uuids)} dSYM={sorted(dsym_uuids)}"
+        )
 
 
 def write_macos_symbol_manifest(
@@ -1609,8 +1703,8 @@ def validate_macos_symbol_manifest_bytes(
         "openQ4.app/Contents/MacOS/openQ4": "dSYMs/openQ4.app.dSYM",
         f"{PRODUCT_NAME}-client_{arch}": f"dSYMs/{PRODUCT_NAME}-client_{arch}.dSYM",
         f"{PRODUCT_NAME}-ded_{arch}": f"dSYMs/{PRODUCT_NAME}-ded_{arch}.dSYM",
-        f"{GAME_DIR_NAME}/game-sp_{arch}.dylib": f"dSYMs/game-sp_{arch}.dylib.dSYM",
-        f"{GAME_DIR_NAME}/game-mp_{arch}.dylib": f"dSYMs/game-mp_{arch}.dylib.dSYM",
+        f"openQ4.app/Contents/Frameworks/game-sp_{arch}.dylib": f"dSYMs/game-sp_{arch}.dylib.dSYM",
+        f"openQ4.app/Contents/Frameworks/game-mp_{arch}.dylib": f"dSYMs/game-mp_{arch}.dylib.dSYM",
     }
     if "binaries:" not in [line.strip() for line in lines]:
         raise RuntimeError(f"{label} is missing required token: binaries:")
@@ -1663,12 +1757,23 @@ def validate_macos_symbol_manifest_bytes(
         if re.fullmatch(r"[0-9]+", record["size"]) is None or int(record["size"]) <= 0:
             raise RuntimeError(f"{label} binary {binary_path} has invalid size")
         macho_uuid = record["macho_uuid"].strip()
-        expected_macho_arch = MACOS_LIPO_ARCHES.get(arch, arch)
+        expected_macho_arches = macos_expected_lipo_arches(arch)
+        uuid_records = [item.strip() for item in macho_uuid.split(";") if item.strip()]
+        uuid_arches: set[str] = set()
+        valid_uuid_records = bool(uuid_records)
+        for uuid_record in uuid_records:
+            match = re.fullmatch(
+                r"UUID: [0-9A-Fa-f-]{36} \(([A-Za-z0-9_]+)\) .+",
+                uuid_record,
+            )
+            if match is None or match.group(1) in uuid_arches:
+                valid_uuid_records = False
+                break
+            uuid_arches.add(match.group(1))
         if (
-            not macho_uuid
+            not valid_uuid_records
             or any(ord(character) < 32 or ord(character) == 127 for character in macho_uuid)
-            or re.fullmatch(r"UUID: [0-9A-Fa-f-]{36} \([A-Za-z0-9_]+\) .+", macho_uuid) is None
-            or f"({expected_macho_arch})" not in macho_uuid
+            or uuid_arches != expected_macho_arches
         ):
             raise RuntimeError(f"{label} binary {binary_path} has invalid macho_uuid")
         if record["dsym"] != expected_dsym:
@@ -1762,8 +1867,8 @@ def validate_macos_symbol_archive_contents(
         f"{package_prefix}openQ4.app/Contents/MacOS/openQ4",
         f"{package_prefix}{PRODUCT_NAME}-client_{arch}",
         f"{package_prefix}{PRODUCT_NAME}-ded_{arch}",
-        f"{package_prefix}{GAME_DIR_NAME}/game-sp_{arch}.dylib",
-        f"{package_prefix}{GAME_DIR_NAME}/game-mp_{arch}.dylib",
+        f"{package_prefix}openQ4.app/Contents/Frameworks/game-sp_{arch}.dylib",
+        f"{package_prefix}openQ4.app/Contents/Frameworks/game-mp_{arch}.dylib",
     }
 
     entry_names: set[str] = set()
@@ -1862,7 +1967,9 @@ def create_macos_symbol_archive(
     copy_regular_file(package_root / MACOS_SYMBOL_MANIFEST_NAME, symbol_root / MACOS_SYMBOL_MANIFEST_NAME)
     for _relative_path, binary_path, dsym_relative_path in macos_symbol_targets(package_root, arch):
         require_packaged_executable(binary_path, "macOS dSYM source binary")
-        create_macos_dsym_bundle(binary_path, symbol_root / dsym_relative_path)
+        dsym_path = symbol_root / dsym_relative_path
+        create_macos_dsym_bundle(binary_path, dsym_path)
+        validate_macos_dsym_matches_binary(binary_path, dsym_path)
 
     create_macos_symbol_tarball(symbol_root, symbol_archive_path)
     validate_macos_symbol_archive_contents(
@@ -2244,19 +2351,27 @@ def get_package_executable_archive_paths(
         executable_paths.add(Path(MACOS_SUPPORT_INFO_SCRIPT_NAME))
         executable_paths.update(
             {
-                Path(GAME_DIR_NAME) / f"game-sp_{arch}.dylib",
-                Path(GAME_DIR_NAME) / f"game-mp_{arch}.dylib",
+                Path("openQ4.app") / MACOS_APP_FRAMEWORKS_DIR / f"game-sp_{arch}.dylib",
+                Path("openQ4.app") / MACOS_APP_FRAMEWORKS_DIR / f"game-mp_{arch}.dylib",
             }
         )
 
     return executable_paths
 
 
-def validate_macos_plist_values(plist: dict, label: str, version: str | None = None) -> None:
+def validate_macos_plist_values(
+    plist: dict,
+    label: str,
+    version: str | None = None,
+    *,
+    require_self_contained_runtime: bool = False,
+) -> None:
     if not isinstance(plist, dict):
         raise RuntimeError(f"{label} must contain a dictionary root")
 
     for key, expected in MACOS_EXPECTED_PLIST_VALUES.items():
+        if key == MACOS_RUNTIME_LAYOUT_KEY and not require_self_contained_runtime:
+            continue
         if plist.get(key) != expected:
             raise RuntimeError(f"{label} {key} is {plist.get(key)!r}; expected {expected!r}")
 
@@ -2368,6 +2483,11 @@ def validate_macos_archive_contents(
         f"{app_bundle_prefix}{relative_path}"
         for relative_path in MACOS_EXPECTED_APP_BUNDLE_FILES
     }
+    embedded_sp_module_entry = f"{app_bundle_prefix}Contents/Frameworks/game-sp_{arch}.dylib"
+    embedded_mp_module_entry = f"{app_bundle_prefix}Contents/Frameworks/game-mp_{arch}.dylib"
+    expected_app_bundle_entries.update(
+        {embedded_sp_module_entry, embedded_mp_module_entry}
+    )
     optional_app_bundle_entries = {
         f"{app_bundle_prefix}{relative_path}"
         for relative_path in MACOS_OPTIONAL_APP_BUNDLE_SIGNATURE_FILES
@@ -2379,11 +2499,11 @@ def validate_macos_archive_contents(
     expected_entries = {
         client_entry,
         dedicated_entry,
-        f"{package_prefix}{GAME_DIR_NAME}/game-sp_{arch}.dylib",
-        f"{package_prefix}{GAME_DIR_NAME}/game-mp_{arch}.dylib",
-        f"{package_prefix}{GAME_DIR_NAME}/mod.json",
-        f"{package_prefix}{GAME_DIR_NAME}/pak0.pk4",
-        f"{package_prefix}{GAME_DIR_NAME}/pak1.pk4",
+        embedded_sp_module_entry,
+        embedded_mp_module_entry,
+        f"{app_bundle_prefix}Contents/Resources/{GAME_DIR_NAME}/mod.json",
+        f"{app_bundle_prefix}Contents/Resources/{GAME_DIR_NAME}/pak0.pk4",
+        f"{app_bundle_prefix}Contents/Resources/{GAME_DIR_NAME}/pak1.pk4",
         support_info_entry,
         f"{package_prefix}{MACOS_SYMBOL_MANIFEST_NAME}",
         f"{package_prefix}VERSION.txt",
@@ -2402,8 +2522,8 @@ def validate_macos_archive_contents(
         dedicated_entry,
         app_executable_entry,
         support_info_entry,
-        f"{package_prefix}{GAME_DIR_NAME}/game-sp_{arch}.dylib",
-        f"{package_prefix}{GAME_DIR_NAME}/game-mp_{arch}.dylib",
+        embedded_sp_module_entry,
+        embedded_mp_module_entry,
     }
     plist_entry = f"{package_prefix}openQ4.app/Contents/Info.plist"
 
@@ -2588,13 +2708,17 @@ def validate_macos_archive_contents(
         )
 
     expected_game_modules = {
-        f"{package_prefix}{GAME_DIR_NAME}/game-sp_{arch}.dylib",
-        f"{package_prefix}{GAME_DIR_NAME}/game-mp_{arch}.dylib",
+        embedded_sp_module_entry,
+        embedded_mp_module_entry,
     }
     unexpected_game_modules = sorted(
         name
         for name in entry_names
-        if name.startswith(f"{package_prefix}{GAME_DIR_NAME}/game-")
+        if (
+            name.startswith(f"{package_prefix}{GAME_DIR_NAME}/game-")
+            or name.startswith(f"{app_bundle_prefix}Contents/Frameworks/game-")
+            or name.startswith(f"{app_bundle_prefix}Contents/Resources/{GAME_DIR_NAME}/game-")
+        )
         and Path(name).name.lower().endswith((".dll", ".so", ".dylib"))
         and name not in expected_game_modules
     )
@@ -2681,12 +2805,13 @@ def validate_macos_archive_contents(
             plistlib.loads(plist_bytes),
             "macOS archive Info.plist",
             version,
+            require_self_contained_runtime=True,
         )
     except plistlib.InvalidFileException as exc:
         raise RuntimeError(f"macOS archive Info.plist is invalid: {plist_entry}") from exc
 
 
-def macos_otool_dependencies(binary_path: Path) -> list[str]:
+def macos_otool_dependencies(binary_path: Path, *, macho_arch: str | None = None) -> list[str]:
     if sys.platform != "darwin":
         return []
 
@@ -2695,7 +2820,7 @@ def macos_otool_dependencies(binary_path: Path) -> list[str]:
         raise RuntimeError("macOS dependency validation requires otool")
 
     completed = subprocess.run(
-        [otool_path, "-L", str(binary_path)],
+        [otool_path, "-L", *(["-arch", macho_arch] if macho_arch else []), str(binary_path)],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -2718,7 +2843,7 @@ def macos_otool_dependencies(binary_path: Path) -> list[str]:
     return dependencies
 
 
-def macos_otool_install_name(binary_path: Path) -> str:
+def macos_otool_install_name(binary_path: Path, *, macho_arch: str | None = None) -> str:
     if sys.platform != "darwin" or binary_path.suffix != ".dylib":
         return ""
 
@@ -2727,7 +2852,7 @@ def macos_otool_install_name(binary_path: Path) -> str:
         raise RuntimeError("macOS install-name validation requires otool")
 
     completed = subprocess.run(
-        [otool_path, "-D", str(binary_path)],
+        [otool_path, "-D", *(["-arch", macho_arch] if macho_arch else []), str(binary_path)],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -2742,16 +2867,17 @@ def macos_otool_install_name(binary_path: Path) -> str:
 
 
 def macos_dependency_validation_binaries(package_root: Path, arch: str) -> list[Path]:
+    sp_module, mp_module = macos_embedded_game_module_paths(package_root, arch)
     return [
         package_root / f"{PRODUCT_NAME}-client_{arch}",
         package_root / f"{PRODUCT_NAME}-ded_{arch}",
         package_root / "openQ4.app" / "Contents" / "MacOS" / "openQ4",
-        package_root / GAME_DIR_NAME / f"game-sp_{arch}.dylib",
-        package_root / GAME_DIR_NAME / f"game-mp_{arch}.dylib",
+        sp_module,
+        mp_module,
     ]
 
 
-def macos_otool_minimum_os_version(binary_path: Path) -> str:
+def macos_otool_minimum_os_version(binary_path: Path, *, macho_arch: str | None = None) -> str:
     if sys.platform != "darwin":
         return ""
 
@@ -2760,7 +2886,7 @@ def macos_otool_minimum_os_version(binary_path: Path) -> str:
         raise RuntimeError("macOS minimum-OS validation requires otool")
 
     completed = subprocess.run(
-        [otool_path, "-l", str(binary_path)],
+        [otool_path, "-l", *(["-arch", macho_arch] if macho_arch else []), str(binary_path)],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -2808,21 +2934,22 @@ def validate_macos_binary_minimum_os_versions(package_root: Path, arch: str) -> 
     )
     for binary_path in macos_dependency_validation_binaries(package_root, arch):
         require_packaged_executable(binary_path, "macOS minimum-OS validation binary")
-        minimum_os = macos_otool_minimum_os_version(binary_path)
-        if not minimum_os:
-            raise RuntimeError(
-                "macOS binary is missing LC_BUILD_VERSION/LC_VERSION_MIN_MACOSX "
-                f"minimum-OS metadata: {binary_path}"
+        for macho_arch in sorted(macos_expected_lipo_arches(arch)):
+            minimum_os = macos_otool_minimum_os_version(binary_path, macho_arch=macho_arch)
+            if not minimum_os:
+                raise RuntimeError(
+                    "macOS binary is missing LC_BUILD_VERSION/LC_VERSION_MIN_MACOSX "
+                    f"minimum-OS metadata: {binary_path} ({macho_arch})"
+                )
+            binary_floor = macos_version_components(
+                minimum_os, f"macOS binary minimum-OS metadata for {binary_path} ({macho_arch})"
             )
-        binary_floor = macos_version_components(
-            minimum_os, f"macOS binary minimum-OS metadata for {binary_path}"
-        )
-        if binary_floor > declared_floor:
-            raise RuntimeError(
-                "macOS binary minimum OS exceeds the declared "
-                f"LSMinimumSystemVersion floor: {binary_path}: "
-                f"{minimum_os} > {MACOS_MIN_SYSTEM_VERSION}"
-            )
+            if binary_floor > declared_floor:
+                raise RuntimeError(
+                    "macOS binary minimum OS exceeds the declared "
+                    f"LSMinimumSystemVersion floor: {binary_path} ({macho_arch}): "
+                    f"{minimum_os} > {MACOS_MIN_SYSTEM_VERSION}"
+                )
 
 
 def validate_macos_binary_dependencies(package_root: Path, arch: str) -> None:
@@ -2837,25 +2964,28 @@ def validate_macos_binary_dependencies(package_root: Path, arch: str) -> None:
     validate_macos_binary_architectures(binary_paths, arch)
 
     for binary_path in binary_paths:
-        rejected_dependencies = [
-            dependency
-            for dependency in macos_otool_dependencies(binary_path)
-            if not dependency.startswith(MACOS_ALLOWED_RUNTIME_DEPENDENCY_PREFIXES)
-        ]
-        if rejected_dependencies:
-            joined = ", ".join(rejected_dependencies)
-            raise RuntimeError(
-                f"macOS binary has unbundled non-system dependencies: {binary_path}: {joined}"
-            )
+        for macho_arch in sorted(macos_expected_lipo_arches(arch)):
+            rejected_dependencies = [
+                dependency
+                for dependency in macos_otool_dependencies(binary_path, macho_arch=macho_arch)
+                if not dependency.startswith(MACOS_ALLOWED_RUNTIME_DEPENDENCY_PREFIXES)
+            ]
+            if rejected_dependencies:
+                joined = ", ".join(rejected_dependencies)
+                raise RuntimeError(
+                    "macOS binary has unbundled non-system dependencies: "
+                    f"{binary_path} ({macho_arch}): {joined}"
+                )
 
     expected_install_names = macos_game_module_install_names(package_root, arch)
     for binary_path, expected_install_name in expected_install_names.items():
-        actual_install_name = macos_otool_install_name(binary_path)
-        if actual_install_name != expected_install_name:
-            raise RuntimeError(
-                "macOS game module install name is not package-relative: "
-                f"{binary_path}: {actual_install_name!r}; expected {expected_install_name!r}"
-            )
+        for macho_arch in sorted(macos_expected_lipo_arches(arch)):
+            actual_install_name = macos_otool_install_name(binary_path, macho_arch=macho_arch)
+            if actual_install_name != expected_install_name:
+                raise RuntimeError(
+                    "macOS game module install name is not package-relative: "
+                    f"{binary_path} ({macho_arch}): {actual_install_name!r}; expected {expected_install_name!r}"
+                )
 
 
 def copy_optional_share_tree(platform: str, install_dir: Path, package_root: Path) -> bool:
@@ -2983,9 +3113,16 @@ def require_non_empty_package_file(path: Path, label: str) -> None:
 def validate_macos_app_bundle(package_root: Path, app_root: Path, arch: str, version: str) -> None:
     client_binary = package_root / f"{PRODUCT_NAME}-client_{arch}"
     require_packaged_executable(client_binary, "macOS client binary")
+    embedded_sp_module, embedded_mp_module = macos_embedded_game_module_paths(package_root, arch)
 
     expected_bundle_dirs = {Path(relative_path) for relative_path in MACOS_EXPECTED_APP_BUNDLE_DIRS}
     expected_bundle_files = {Path(relative_path) for relative_path in MACOS_EXPECTED_APP_BUNDLE_FILES}
+    expected_bundle_files.update(
+        {
+            embedded_sp_module.relative_to(app_root),
+            embedded_mp_module.relative_to(app_root),
+        }
+    )
     optional_signature_dirs = {Path(relative_path) for relative_path in MACOS_OPTIONAL_APP_BUNDLE_SIGNATURE_DIRS}
     optional_signature_files = {Path(relative_path) for relative_path in MACOS_OPTIONAL_APP_BUNDLE_SIGNATURE_FILES}
     allowed_bundle_dirs = expected_bundle_dirs | optional_signature_dirs
@@ -3027,8 +3164,10 @@ def validate_macos_app_bundle(package_root: Path, app_root: Path, arch: str, ver
         )
 
     package_game_dir = package_root / GAME_DIR_NAME
-    if not package_game_dir.is_dir():
-        raise RuntimeError(f"macOS package is missing {GAME_DIR_NAME}/ beside the app bundle: {package_game_dir}")
+    if package_game_dir.exists():
+        raise RuntimeError(
+            f"macOS package retained adjacent {GAME_DIR_NAME}/ instead of embedding it in openQ4.app: {package_game_dir}"
+        )
 
     app_contents = app_root / "Contents"
     app_plist = app_contents / "Info.plist"
@@ -3042,6 +3181,15 @@ def validate_macos_app_bundle(package_root: Path, app_root: Path, arch: str, ver
         raise RuntimeError(f"macOS app executable is missing or not executable: {app_executable}")
     require_non_empty_package_file(app_icon, "macOS app bundle icon")
     require_non_empty_package_file(app_version, "macOS app bundle version manifest")
+    for relative_path in (
+        MACOS_APP_GAME_DATA_DIR / "mod.json",
+        MACOS_APP_GAME_DATA_DIR / "pak0.pk4",
+        MACOS_APP_GAME_DATA_DIR / "pak1.pk4",
+        MACOS_APP_SPLASH_DIR / "quake4_rt_bitmap_4001.bmp",
+    ):
+        require_non_empty_package_file(app_root / relative_path, f"macOS embedded runtime file {relative_path}")
+    require_packaged_executable(embedded_sp_module, "macOS embedded SP game module")
+    require_packaged_executable(embedded_mp_module, "macOS embedded MP game module")
     if not app_pkginfo.is_file() or app_pkginfo.read_bytes() != MACOS_PKGINFO_BYTES:
         raise RuntimeError(f"macOS app bundle is missing a valid PkgInfo file: {app_pkginfo}")
 
@@ -3050,7 +3198,12 @@ def validate_macos_app_bundle(package_root: Path, app_root: Path, arch: str, ver
     except (OSError, plistlib.InvalidFileException) as exc:
         raise RuntimeError(f"macOS app Info.plist is unreadable: {app_plist}") from exc
 
-    validate_macos_plist_values(plist, "macOS app Info.plist", version)
+    validate_macos_plist_values(
+        plist,
+        "macOS app Info.plist",
+        version,
+        require_self_contained_runtime=True,
+    )
 
 
 def create_macos_app_bundle(
@@ -3063,9 +3216,11 @@ def create_macos_app_bundle(
 ) -> Path:
     app_root = package_root / "openQ4.app"
     app_contents = app_root / "Contents"
+    app_frameworks = app_root / MACOS_APP_FRAMEWORKS_DIR
     app_macos = app_contents / "MacOS"
     app_resources = app_contents / "Resources"
 
+    app_frameworks.mkdir(parents=True, exist_ok=True)
     app_macos.mkdir(parents=True, exist_ok=True)
     app_resources.mkdir(parents=True, exist_ok=True)
 
@@ -3076,6 +3231,43 @@ def create_macos_app_bundle(
     app_executable = app_macos / "openQ4"
     copy_regular_file(client_binary, app_executable)
     os.chmod(app_executable, 0o755)
+
+    staged_game_dir = package_root / GAME_DIR_NAME
+    if not staged_game_dir.is_dir():
+        raise RuntimeError(
+            f"macOS staged game directory is missing before self-contained app creation: {staged_game_dir}"
+        )
+    staged_sp_module = staged_game_dir / f"game-sp_{arch}.dylib"
+    staged_mp_module = staged_game_dir / f"game-mp_{arch}.dylib"
+    for path, label in (
+        (staged_game_dir / "mod.json", "macOS staged game metadata"),
+        (staged_game_dir / "pak0.pk4", "macOS staged pak0"),
+        (staged_game_dir / "pak1.pk4", "macOS staged pak1"),
+    ):
+        require_non_empty_package_file(path, label)
+    require_packaged_executable(staged_sp_module, "macOS staged SP game module")
+    require_packaged_executable(staged_mp_module, "macOS staged MP game module")
+
+    embedded_game_dir = app_root / MACOS_APP_GAME_DATA_DIR
+    shutil.move(str(staged_game_dir), str(embedded_game_dir))
+    shutil.move(
+        str(embedded_game_dir / staged_sp_module.name),
+        str(app_frameworks / staged_sp_module.name),
+    )
+    shutil.move(
+        str(embedded_game_dir / staged_mp_module.name),
+        str(app_frameworks / staged_mp_module.name),
+    )
+
+    staged_splash_dir = package_root / "assets" / "splash"
+    staged_splash = staged_splash_dir / "quake4_rt_bitmap_4001.bmp"
+    require_non_empty_package_file(staged_splash, "macOS staged splash image")
+    embedded_splash_dir = app_root / MACOS_APP_SPLASH_DIR
+    embedded_splash_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(staged_splash_dir), str(embedded_splash_dir))
+    staged_assets_dir = package_root / "assets"
+    if staged_assets_dir.is_dir() and not any(staged_assets_dir.iterdir()):
+        staged_assets_dir.rmdir()
 
     icns_candidates = [
         install_dir / "openQ4.icns",
@@ -3127,6 +3319,8 @@ def create_macos_app_bundle(
             "<true/>",
             "<key>NSSupportsAutomaticGraphicsSwitching</key>",
             "<true/>",
+            f"<key>{MACOS_RUNTIME_LAYOUT_KEY}</key>",
+            f"<string>{MACOS_RUNTIME_LAYOUT_VALUE}</string>",
             "</dict>",
             "</plist>",
         ],
@@ -3148,6 +3342,10 @@ def create_macos_app_bundle(
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+
+    if args.arch == "universal2" and args.platform != "macos":
+        print("error: universal2 is only supported for macOS packages", file=sys.stderr)
+        return 1
 
     archive_format = args.archive_format or DEFAULT_ARCHIVE_FORMAT[args.platform]
     archive_suffix = ARCHIVE_SUFFIX[archive_format]

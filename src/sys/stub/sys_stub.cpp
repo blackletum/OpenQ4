@@ -170,6 +170,20 @@ const char *Sys_DefaultBasePath(void) {
 	return "";
 }
 
+bool Sys_GetPackageRootDirectory( char *packageRoot, int packageRootSize ) {
+	if ( packageRoot != NULL && packageRootSize > 0 ) {
+		packageRoot[0] = '\0';
+	}
+	return false;
+}
+
+bool Sys_GetGameModuleRootDirectory( char *moduleRoot, int moduleRootSize ) {
+	if ( moduleRoot != NULL && moduleRootSize > 0 ) {
+		moduleRoot[0] = '\0';
+	}
+	return false;
+}
+
 int Sys_ListFiles( const char *directory, const char *extension, idStrList &list )
 {
 	struct dirent *d;

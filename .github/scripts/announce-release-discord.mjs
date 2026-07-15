@@ -179,7 +179,9 @@ function buildDownloadLinks(release) {
   const desired = [
     ["windows-x64-setup.exe", "Windows x64 Installer"],
     ["windows-arm64-setup.exe", "Windows ARM64 Installer"],
+    ["x86_64.appimage", "Linux x64 AppImage"],
     ["linux-x64.tar.xz", "Linux x64"],
+    ["aarch64.appimage", "Linux ARM64 AppImage"],
     ["linux-arm64.tar.xz", "Linux ARM64"],
     ["macos-arm64-opengl.dmg", "macOS ARM64 OpenGL"],
     ["macos-arm64-opengl-unsigned.tar.gz", "macOS ARM64 OpenGL unsigned"],
@@ -190,8 +192,13 @@ function buildDownloadLinks(release) {
   ];
 
   const links = [];
+  const linuxArm64PreviewAppImage = findAssetBySuffix(assets, "preview-aarch64.appimage");
   const linuxArm64PreviewAsset = findAssetBySuffix(assets, "linux-arm64-preview.tar.xz");
   for (const [suffix, label] of desired) {
+    if (suffix === "aarch64.appimage" && linuxArm64PreviewAppImage) {
+      links.push(markdownLink("Linux ARM64 preview AppImage", linuxArm64PreviewAppImage.browser_download_url));
+      continue;
+    }
     if (suffix === "linux-arm64.tar.xz" && linuxArm64PreviewAsset) {
       links.push(markdownLink("Linux ARM64 preview", linuxArm64PreviewAsset.browser_download_url));
       continue;
