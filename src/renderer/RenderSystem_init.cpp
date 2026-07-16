@@ -32,6 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "tr_local.h"
 #include "DXT/DXTCodec.h"
 #include "RendererBootstrap.h"
+#include "RendererModule.h"
 #include "GLDebugScope.h"
 #include "GLStateCache.h"
 #include "RendererBenchmarks.h"
@@ -208,6 +209,7 @@ static void GfxInfo_f( void );
 
 const char *r_rendererArgs[] = { "best", "arb", "arb2", "Cg", "exp", "nv10", "nv20", "r200", NULL };
 const char *r_glTierArgs[] = { "auto", "legacy", "gl33", "gl41", "gl43", "gl45", "gl46", NULL };
+const char *r_renderApiArgs[] = { "best", "gl", "vulkan", NULL };
 const char *r_rendererBenchmarkPresetArgs[] = { "low", "baseline", "modern", "high-end", NULL };
 const char *r_multiSamplesArgs[] = { "0", "2", "4", "8", "16", NULL };
 
@@ -420,6 +422,10 @@ idCVar r_brightness( "r_brightness", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FL
 idCVar r_renderer( "r_renderer", "best", CVAR_RENDERER | CVAR_ARCHIVE, "hardware specific renderer path to use", r_rendererArgs, idCmdSystem::ArgCompletion_String<r_rendererArgs> );
 idCVar r_actualRenderer( "r_actualRenderer", "UNINITIALIZED", CVAR_RENDERER | CVAR_ROM, "actual active renderer backend after request/fallback selection" );
 idCVar r_glTier( "r_glTier", "auto", CVAR_RENDERER | CVAR_ARCHIVE, "OpenGL renderer tier: auto, legacy, gl33, gl41, gl43, gl45, gl46", r_glTierArgs, idCmdSystem::ArgCompletion_String<r_glTierArgs> );
+idCVar r_renderApi( "r_renderApi", "gl", CVAR_RENDERER | CVAR_ARCHIVE, "rendering API: best = platform default (currently gl), gl = OpenGL, vulkan = native Vulkan renderer module (bring-up; falls back to gl). Takes effect on vid_restart.", r_renderApiArgs, idCmdSystem::ArgCompletion_String<r_renderApiArgs> );
+idCVar r_actualRenderApi( "r_actualRenderApi", "UNINITIALIZED", CVAR_RENDERER | CVAR_ROM, "rendering API actually active after request/fallback selection" );
+idCVar r_vkValidation( "r_vkValidation", "0", CVAR_RENDERER | CVAR_BOOL, "enable Vulkan validation layers for the Vulkan renderer module and rendererVkProbe" );
+idCVar r_vkDevice( "r_vkDevice", "-1", CVAR_RENDERER | CVAR_INTEGER, "Vulkan physical-device index override, -1 = automatic selection", -1, 15 );
 idCVar r_glDebugContext( "r_glDebugContext", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "request a debug OpenGL context when the platform backend supports it" );
 idCVar r_glDebugOutput( "r_glDebugOutput", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "report OpenGL driver debug messages when a debug context is active" );
 idCVar r_glDebugSynchronous( "r_glDebugSynchronous", "0", CVAR_RENDERER | CVAR_BOOL, "deliver OpenGL debug callbacks synchronously (diagnostic; may reduce performance)" );
@@ -671,6 +677,18 @@ static void R_RendererTierSelfTest_f( const idCmdArgs &args ) {
 	if ( !RendererTierSelect_RunSelfTest() ) {
 		common->Warning( "Renderer tier selector self-test failed" );
 	}
+}
+
+static void R_RendererModuleSelfTest_f( const idCmdArgs &args ) {
+	(void)args;
+	if ( !RendererModule_RunSelfTest() ) {
+		common->Warning( "Renderer module self-test failed" );
+	}
+}
+
+static void R_RendererVkProbe_f( const idCmdArgs &args ) {
+	const bool verbose = ( args.Argc() < 2 ) || ( idStr::Icmp( args.Argv( 1 ), "quiet" ) != 0 );
+	R_RendererModule_RunVulkanProbe( verbose );
 }
 
 static void R_RendererTierContractSelfTest_f( const idCmdArgs &args ) {
@@ -1591,6 +1609,10 @@ void R_InitOpenGL( void ) {
 	tr.viewportOffset[1] = 0;
 
 	R_NormalizeDisplayCvars();
+
+	// select the rendering API path (r_renderApi) before any window or
+	// context work; a failed non-GL selection falls back closed onto GL here
+	R_RendererModule_Boot();
 
 	//
 	// initialize OS specific portions of the renderSystem
@@ -3572,6 +3594,7 @@ void GfxInfo_f( const idCmdArgs &args ) {
 		RendererCaps_FormatSummary( glConfig.backendCaps, capsSummary, sizeof( capsSummary ) );
 		common->Printf( "Renderer caps: %s\n", capsSummary );
 	}
+	RendererModule_PrintGfxInfo();
 	RendererCompatibilityGates_PrintGfxInfo();
 	RendererTierContract_PrintGfxInfo();
 	RendererBootstrap_PrintGfxInfo();
@@ -3960,6 +3983,8 @@ void R_InitCommands( void ) {
 	cmdSystem->AddCommand( "makeAmbientMap", R_MakeAmbientMap_f, CMD_FL_RENDERER|CMD_FL_CHEAT, "makes an ambient map" );
 	cmdSystem->AddCommand( "benchmark", R_Benchmark_f, CMD_FL_RENDERER, "benchmark" );
 	cmdSystem->AddCommand( "gfxInfo", GfxInfo_f, CMD_FL_RENDERER, "show graphics info" );
+	cmdSystem->AddCommand( "rendererModuleSelfTest", R_RendererModuleSelfTest_f, CMD_FL_RENDERER, "run renderer module selection/loading self tests" );
+	cmdSystem->AddCommand( "rendererVkProbe", R_RendererVkProbe_f, CMD_FL_RENDERER, "load the Vulkan renderer module, run its device bring-up probe, and unload it" );
 	cmdSystem->AddCommand( "rendererTierSelfTest", R_RendererTierSelfTest_f, CMD_FL_RENDERER, "run renderer tier-selection self tests" );
 	cmdSystem->AddCommand( "rendererTierContractSelfTest", R_RendererTierContractSelfTest_f, CMD_FL_RENDERER, "run renderer tier workload-contract self tests" );
 	cmdSystem->AddCommand( "rendererContextLadderSelfTest", R_RendererContextLadderSelfTest_f, CMD_FL_RENDERER, "run renderer context ladder self tests" );
@@ -4274,6 +4299,7 @@ void idRenderSystemLocal::ShutdownOpenGL( void ) {
 	R_PurgeFramebufferCopyFBOs();
 	R_GLDebugOutput_Shutdown();
 	GLimp_Shutdown();
+	R_RendererModule_Shutdown();
 	glConfig.isInitialized = false;
 	R_ClearActiveRenderTextures();
 	useUIViewportFor2D = true;

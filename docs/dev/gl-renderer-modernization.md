@@ -20,7 +20,7 @@ The internal tier names are:
 - `TopGL46`
 - `NullRenderer`
 
-Metal and Vulkan are intentionally out of scope for this track.
+Metal and Vulkan are intentionally out of scope for this track. The native Vulkan renderer has its own module-based track in [plans/2026-07-16-vulkan-renderer.md](plans/2026-07-16-vulkan-renderer.md), selected with `r_renderApi` and failing closed onto the GL path described here.
 
 `gfxInfo` also prints `Renderer tier contract:`. That line is the quick audit for whether the selected tier has the workload model it claims:
 

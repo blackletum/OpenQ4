@@ -29,6 +29,7 @@ SAFE_TIERS = ("auto", "legacy", "gl33", "gl41", "gl43", "gl45", "gl46")
 ENGINE_MAX_STARTUP_COMMANDS = 64
 
 SELFTEST_CHECKS = [
+    ["RendererModule self-test passed"],
     ["RendererContextLadder self-test passed"],
     ["RendererTierSelect self-test passed"],
     ["RendererTierContract self-test passed"],
@@ -514,6 +515,7 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
         "+set",
         "r_rendererModernSubmit",
         "0",
+        "+rendererModuleSelfTest",
         "+rendererContextLadderSelfTest",
         "+rendererTierSelfTest",
         "+rendererTierContractSelfTest",
@@ -538,7 +540,7 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
             "category": "selftest",
             "description": "Renderer foundation, upload, metrics, packet, graph, material, geometry, shader, draw, submit, and executor self-tests.",
             "args": selftest_commands,
-            "checks": SELFTEST_CHECKS + [["Selected renderer tier:"], ["GL context request:"]],
+            "checks": SELFTEST_CHECKS + [["Selected renderer tier:"], ["GL context request:"], ["Renderer API: requested="]],
         },
         {
             "id": "renderer-visible-depth-selftest",

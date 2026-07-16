@@ -1147,6 +1147,68 @@ if build_engine or build_games
   )
 endif
 
+# Native Vulkan renderer module (roadmap: docs/dev/plans/2026-07-16-vulkan-renderer.md).
+# Loaded from the executable root when r_renderApi selects vulkan; the engine
+# falls back closed to GL when the module is absent or fails.
+build_renderer_vk = get_option('build_renderer_vk')
+if build_renderer_vk and host_system == 'darwin'
+  # docs/dev/macos-renderer-backend-policy.md: a non-GL macOS renderer needs
+  # its own decision-gate plan first; keep the module out of macOS builds.
+  build_renderer_vk = false
+endif
+
+renderer_vk_binary_name = 'renderer-vk_' + binary_arch
+if build_renderer_vk and build_engine
+  renderer_vk_include_dirs = include_directories(
+    'src/external/vulkan/include',
+    'src/external/volk',
+    'src/external/vma',
+  )
+  renderer_vk_sources = files(
+    'src/external/volk/volk.c',
+    'src/renderer/Vulkan/VulkanBringup.cpp',
+    'src/renderer/Vulkan/VulkanModule.cpp',
+    'src/renderer/Vulkan/VulkanVmaImpl.cpp',
+  )
+  renderer_vk_common_args = [
+    '-DVMA_STATIC_VULKAN_FUNCTIONS=0',
+    '-DVMA_DYNAMIC_VULKAN_FUNCTIONS=1',
+  ]
+  if host_system == 'windows'
+    renderer_vk_common_args += ['-DVK_USE_PLATFORM_WIN32_KHR', '-DWIN32_LEAN_AND_MEAN', '-DNOMINMAX']
+  endif
+  renderer_vk_link_args = []
+  renderer_vk_link_depends = []
+  renderer_vk_deps = []
+  if host_system == 'windows'
+    renderer_vk_link_args += ['/FIXED:NO', '/LARGEADDRESSAWARE']
+  elif host_system == 'linux'
+    renderer_vk_deps += [cc.find_library('dl', required: false)]
+    renderer_vk_link_args += linux_module_link_hardening_args
+    if cpp.has_link_argument('-Wl,-z,defs')
+      renderer_vk_link_args += '-Wl,-z,defs'
+    endif
+    linux_renderer_module_export_map = files('tools/build/linux_renderer_module.map')
+    renderer_vk_link_args += '-Wl,--version-script=' + linux_renderer_module_export_map[0].full_path()
+    renderer_vk_link_depends += linux_renderer_module_export_map
+  endif
+  renderer_vk_module_target = shared_module(
+    renderer_vk_binary_name,
+    renderer_vk_sources,
+    include_directories: renderer_vk_include_dirs,
+    cpp_args: renderer_vk_common_args,
+    c_args: renderer_vk_common_args,
+    override_options: ['cpp_std=c++17'],
+    dependencies: renderer_vk_deps,
+    link_args: renderer_vk_link_args,
+    link_depends: renderer_vk_link_depends,
+    gnu_symbol_visibility: host_system == 'linux' ? 'hidden' : 'default',
+    name_prefix: '',
+    install: true,
+    install_dir: install_root_dir,
+  )
+endif
+
 if build_engine or (build_games and (build_game_sp or build_game_mp))
   subdir('content/baseoq4')
 endif
@@ -1329,6 +1391,8 @@ summary(
     'Build game_mp': build_games and build_game_mp,
     'game_sp binary': game_sp_binary_name,
     'game_mp binary': game_mp_binary_name,
+    'Build Vulkan renderer module': build_renderer_vk and build_engine,
+    'Vulkan renderer binary': renderer_vk_binary_name,
     'Resource compiler': resource_compiler.found(),
     'SDL3': use_sdl3_backend and sdl3_dep.found(),
     'Linux X11 helpers': linux_x11_helpers_enabled,

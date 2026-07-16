@@ -11,6 +11,7 @@ This file tracks current known issues and upcoming features.
 
 ## Upcoming Features and Improvements
 
+- [ ] Native Vulkan renderer with full OpenGL parity behind dynamic renderer modules and `r_renderApi` — phased roadmap in [docs/dev/plans/2026-07-16-vulkan-renderer.md](docs/dev/plans/2026-07-16-vulkan-renderer.md); Phase A (module ABI, loader, fail-closed fallback, `renderer-vk` bring-up diagnostics) is in place.
 - [ ] Add an optional shadow mapping setting/path.
 - [ ] Review and port relevant features and improvements implemented in the last 5 years of RBDOOM3-BFG commits.
 - [ ] Merge shared code between MP/SP and streamline the process of switching between each.

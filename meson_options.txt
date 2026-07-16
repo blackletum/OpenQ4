@@ -34,6 +34,13 @@ option(
 )
 
 option(
+  'build_renderer_vk',
+  type: 'boolean',
+  value: true,
+  description: 'Build the native Vulkan renderer module (renderer-vk_<arch>). Skipped on macOS until the macOS renderer-backend policy admits a non-GL backend.',
+)
+
+option(
   'platform_backend',
   type: 'combo',
   choices: ['sdl3', 'legacy_win32', 'native'],
