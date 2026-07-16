@@ -106,6 +106,8 @@ Acceptance: default (`r_renderApi gl`) bit-identical behavior; `rendererVkProbe`
 
 ### Phase B — GL renderer behind the module seam (no Vulkan rendering yet)
 
+Staged in detail (with the audit-derived blocker index and file dispositions) in [2026-07-16-vulkan-renderer-phase-b.md](2026-07-16-vulkan-renderer-phase-b.md); stages B1–B3(partial) have landed.
+
 1. Extract `openq4_renderer_core` static library (frontend, packets/graph/planners, BinaryImage, ring bookkeeping) from engine source lists.
 2. Build `renderer-gl_<arch>` from the GL backend + core; move GLEW, GL link deps, and the context-ladder/window half behind the window-services import; engine executables become GL-link-free.
 3. Keep the statically-linked GL renderer available behind a build option during the transition; flip the default load path to the module only when pixel-identical.

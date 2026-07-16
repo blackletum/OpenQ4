@@ -1,0 +1,249 @@
+# Vulkan Renderer Phase B: Renderer Extraction Stages
+
+Date: 2026-07-16
+Status: B1 landed (73bccf7a); B2-prep and the B3 material-decl trampoline landed (a07c9ec1); B2 library carve, B3 bakeLightGrids relocation, and B4-B8 open
+
+Parent plan: [2026-07-16-vulkan-renderer.md](2026-07-16-vulkan-renderer.md). This staging plan was derived from a five-way symbol-level audit of engine/renderer coupling; file:line anchors reflect the tree at the audit commit (8bcdcdbf) and shift as stages land.
+
+---
+
+## 1. Stage sequence (each leaves main green: full build both targets + validation matrix + macOS token sweep)
+
+### B1 — Interface hygiene (engine call sites → public API; no build-system change)
+Static linking preserved throughout. Pure call-site conversions.
+
+| Change | Files |
+|---|---|
+| Promote `DrawStretchPic(idDrawVert*, glIndex_t*, int, int, const idMaterial*, bool clip, min/max)` to a pure virtual on `idRenderSystem` (un-comment RenderSystem.h:310, implement in idRenderSystemLocal); convert `tr.DrawStretchPic` calls | src/ui/DeviceContext.cpp:916,1065; src/renderer/RenderSystem.h; RenderSystem.cpp |
+| Move font-atlas DXT self-test (idImage::Bind/GetOpts/idImageOpts use) renderer-side behind new virtual `idRenderSystem::VerifyFontAtlasImage(const idMaterial*)` returning pass/fail+summary | src/ui/DeviceContext.cpp:1990-1997 |
+| Drop vestigial internal includes | framework/DeclManager.cpp:33 (tr_local.h), ui/RenderWindow.cpp:33 (tr_local.h → glconfig read only), ui/MarkerWindow.cpp:33+40 (Image.h, unused), renderer/RenderSystem_init.cpp:54 (ui/DeviceContext.h, unused) |
+| `com_productionMode.GetInteger()` → `cvarSystem->GetCVarInteger("com_productionMode")` | src/renderer/Image_load.cpp:432 |
+| New virtual `idRenderSystem::SetLoadingScreenSwapIntervalBypass(bool)` replacing free-fn call | framework/Session.cpp:6152; RenderSystem_init.cpp |
+| Route `GLimp_PreserveWindowOnShutdown`/`GLimp_Shutdown` callers off renderer decls: fwd-decl via a sys-owned header (`sys_public.h`), not tr_local.h | framework/Common.cpp:129,3581,3583; sys/win32/win_main.cpp:909 |
+
+Verify: Windows client+ded build, boot, main menu, GUI rendering (font atlas visible), demo smoke.
+
+### B2 — Shared image-utility library + Session compositing
+Create static lib **`imagetools`** (linked by engine AND, later, the module): `Image_files.cpp` (R_LoadImage/R_WriteTGA + format loaders), `Image_process.cpp` (R_ResampleTexture etc.), `DXT/*`, `jpeg-6/*`, `Color/ColorSpace.cpp`, plus `R_StaticAlloc/R_StaticFree` relocated out of tr_trisurf.cpp into it (counter hook optional-null; today they update `tr.pc` — parameterize).
+- Audit `Image_files.cpp` for `globalImages`/`tr` refs and sever (parameterize or move offending functions to Image_load.cpp which stays module-side).
+- Consumers stop including renderer/Image.h internals: framework/Session.cpp:1530-1871, framework/DeclMatType.cpp:95/112, ui/GameBustOutWindow.cpp:1003 → new `src/imagetools/ImageTools.h`.
+- `globalImages->ImageFromFile` at Session.cpp:1908 → new virtual `idRenderSystem::PreloadImage(const char* name)` (or reuse existing FindMaterial precache path).
+- meson: new `static_library('imagetools', ...)` linked into engine; remove those TUs from the renderer glob only in B8.
+
+Verify: build; splash/menu background compositing renders; `.hit` matType maps generate; TGA screenshot write.
+
+### B3 — Feature relocation behind interfaces
+1. **bakeLightGrids** → move Session.cpp:2272-2694 body into the renderer. New virtuals:
+   - `idRenderSystem::BakeCurrentLightGrids(const lightGridBakeOptions_t&, textBuffer* report)` — `lightGridBakeOptions_t` becomes a public POD in RenderSystem.h.
+   - `idRenderWorld::LightGridPackMatchesBakeOptions(...) / SetupLightGridForBake(...)` as needed; Session keeps only the command/UI shell. All `tr.primaryWorld`, `idRenderWorldLocal::portalAreas[].lightGrid.*`, `R_*LightGrid*` refs leave Session.cpp.
+2. **DECL_MATERIAL allocation**: replace `idDeclAllocator<idMaterial>` at DeclManager.cpp:1352 with an engine-side trampoline `static idDecl* MaterialDeclAllocator() { return renderSystem->AllocMaterialDecl(); }` + new virtual `idRenderSystem::AllocMaterialDecl()`. Allocation only happens on FindMaterial/parse, which post-dates renderer boot (module loads "before platform window creation" per RendererModule.h:57-59), so registration-at-declManager-Init stays put; only the `new` crosses via virtual.
+3. `tr.primaryWorld/primaryView` residual reads → new virtuals `idRenderSystem::GetPrimaryRenderWorld()` / `GetPrimaryRenderView()` if anything survives (2).
+
+Verify: bake a lightgrid on a test map, byte-compare pack output vs pre-change; load q4dm map; material hot-reload.
+
+### B4 — renderImport/renderExport completion (RENDER_API_VERSION → 2)
+Renderer-side conversions; still statically linked, engine binds pointers to its own statically-linked objects so behavior is identical.
+
+**renderImport_t additions** (RenderModuleAPI.h):
+```c
+idSession *                sessionInterface;   // demo IO, pacifier, sw/rw, IsMultiplayer
+idUserInterfaceManager *   uiManager;
+idCollisionModelManager *  collisionModelManager;
+rvBSEManager *             bse;
+```
+`idSession` crosses as-is (virtuals + public data members `readDemo/writeDemo/renderdemoVersion/rw/sw`) — same-compiler ABI, identical to the game-DLL convention; no callback-interface invention needed. Resolves the biggest renderer→engine blocker mechanically: RenderWorld_demo.cpp (~80 refs), RenderSystem.cpp:1250-1517, ModelManager.cpp:309/738/741, ImageManager.cpp:994, RenderSystem_init.cpp:1980/2267/3248/3337/3870/3955/4239-4246, Material.cpp:885, GuiModel.cpp:177, Model_md5.cpp:902-924 all switch from the `session` global to the imported pointer (module-side `static idSession* session` re-bound at GetRenderAPI).
+
+**renderModuleServices_t additions** (Sys_* shims — see §4).
+
+**renderExport_t addition**: `idRenderModelManager* renderModelManager;` — loader publishes both `renderSystem` and `renderModelManager` into engine globals when the module path activates (fixes Common.cpp:5319 gameImport wiring).
+
+**Call-site sweeps**:
+- `Sys_Milliseconds()` (~100 sites: tr_main, tr_backend, RenderWorld_lightgrid, RenderSystem, RenderWorld, ImageManager, ModelManager, Modern*) → `services->Milliseconds()` via a module-local inline wrapper.
+- `eventLoop->Milliseconds()` (RenderSystem.cpp:1230, RenderWorld_demo.cpp:348) → same wrapper (semantic check: eventLoop time vs Sys time — RenderWorld_demo wants com_frameTime-adjacent; if it matters add `services->EventMilliseconds`).
+- `bse->` calls (RenderWorld.cpp:263-343, RenderWorld_demo.cpp:173/890, tr_light.cpp:2524/2593) → imported pointer. rvBSEManager is already a virtual interface; `rvBSE*` stored in rvRenderEffectLocal stays opaque.
+- `uiManager->` (Material.cpp:2888/3055, tr_guisurf.cpp:345/355, RenderSystem_init.cpp:3956, RenderWorld_demo.cpp:1261), `collisionModelManager->` (ModelManager.cpp:210) → imported pointers.
+- `RenderDoc_IsInjected()` (RenderSystem_init.cpp:103) → new `services->IsRenderDocInjected()`.
+
+Verify: build all targets; demo record+playback round-trip; BSE effect map; level load pacifier; MD5R model with collision extraction.
+
+### B5 — Window-services seam + glConfig split (own session; highest design risk)
+1. Add `renderWindowServices_t` to RenderModuleAPI.h (§4) implemented by sys/sdl3; engine owns window/display/mode/input, module owns GL context.
+2. **Split glconfig_t**: new engine-owned `engineWindowState_t` (defined in a framework/sys header, instance in sys layer): `vidWidth, vidHeight, uiViewportX/Y/W/H, isFullscreen, displayHz`. All engine writers (sdl3_backend.cpp:3503-3572, 3655-3656, 4031/4230/5846; win_wndproc.cpp:274-275) and engine readers (Common.cpp:4811, Session.cpp:1654/1938, Session_menu.cpp:865, DeviceContext.cpp:325/1375, RenderWindow.cpp:82, linux/input.cpp) repoint to it. Module receives a `const engineWindowState_t*` in renderImport_t and mirrors into its glConfig each frame/resize. glConfig keeps context/caps fields (contextRequest, wgl_extensions_string, colorBits, extensions, tiers) module-side only.
+3. **Partition sdl3_backend.cpp**: context half (SDL3_SetGLAttributesForCandidate:5479, SDL_GL_CreateContext:5696, MakeCurrent/DestroyContext, SDL3_EnsureGLContextCurrent:5514, GLimp_SwapBuffers:5853, SDL3_ApplySwapInterval:4054, GLimp_ExtensionPointer:5999, SDL3_LoadWGLExtensions:4077 + wgl* globals, GLimp_Activate/Deactivate/EnsureActiveContext:5964-5972) moves to new `src/renderer/OpenGL/gl_ContextSDL3.cpp`; window half stays. Two-phase handshake: module supplies `framebufferDesc` (from RendererContextLadder_Build — already renderer code) → engine sets SDL attrs + creates window → returns populated `renderModuleWindowInfo_t` → module creates context. `win_qgl.cpp`, `win_gamma.cpp` GL parts move module-side (they are missing from LEGACY_WIN32_SOURCES today — fix the glob).
+4. **Carve R_InitOpenGL** (RenderSystem_init.cpp:1615-1660): `Sys_InitInput/Sys_ShutdownInput/Sys_GrabMouseCursor/Sys_GetDesktopResolution/R_GetModeInfo` policy moves to the engine window layer (called around window creation via window-services); renderer half keeps GLEW init + context ladder. Move `R_RendererModule_Boot()` call from RenderSystem_init.cpp:1615 to engine init (framework, before window creation).
+5. `SDL3_UpdateNativeWindowHandles` (4123): split — window handles engine-side; module reports context handle back via new export call, deleting the `win32.hGLRC` direct write (4127).
+6. Engine refs to renderer cvars (r_swapInterval/r_multiSamples/r_glTier/r_glDriver/r_glDebugContext/r_fullscreenDesktop/r_logFile) and `R_GetEffectiveSwapInterval` in remaining engine-side sdl3 code → services CVar_* calls; swap-interval logic itself moves module-side with the context half.
+7. SMP: `GLimp_SpawnRenderThread` — module requests thread creation via new `services->SpawnRenderThread(fn, name)`; context current-ness stays wholly module-side (wrapper moves with context half). BackEnd/FrontEndSleep/WakeBackEnd stay with the thread owner (engine services).
+8. Retire or identically split legacy win_glimp.cpp / linux/glimp.cpp / macosx_glimp.mm (diagnostic-only per meson.build) — prefer retire-to-unbuilt; keep the m4/logfunc generators with the module.
+
+Verify: vid_restart (both preserve-window and full), fullscreen toggle, multi-display, resize, mouse transform, SMP r_smp path, Linux/macOS CI (macos-debug.yml dispatch), macOS policy token sweep.
+
+### B6 — dmap geometry library (own session)
+Create static lib **`render_geo`** linked by engine AND module:
+- From tr_trisurf.cpp: R_AllocStaticTriSurf(+Verts/Indexes/SilIndexes), R_FreeStaticTriSurf(+SilIndexes), R_CreateSilIndexes, R_RangeCheckIndexes, R_RemoveDegenerateTriangles, R_CleanupTriangles, R_DeriveTangents.
+- tr_lightrun.cpp: R_DeriveLightData, R_FreeLightDefDerivedData, R_LightProjectionMatrix. tr_stencilshadow.cpp: R_CreateShadowVolume. Interaction.cpp: R_FreeInteractionCullInfo.
+- Pre-req audit: sever `tr` global / r_* cvar refs in each (parameterize; e.g. tri-surf allocators' `tr.pc` counters become an optional hook, r_useShadow* cvars read via cvarSystem string API or passed in options struct).
+- Struct defs dmap embeds by value (`idRenderLightLocal` dmap.h:181, `idRenderEntityLocal` shadowopt3.cpp:1248) move into the lib's public header `src/render_geo/RenderGeometry.h` (shared layout, both sides compile it).
+- Redirect dmap.h:29 and shadowopt3.cpp:33 off `../../../renderer/tr_local.h` → RenderGeometry.h; do NOT add src/renderer to dmap include dirs (guard against re-coupling).
+- **Delete** gldraw.cpp GL path (RB_SetGL2D + direct GL, gldraw.cpp:42-101, WIN32/`dmap -draw` debug-only) — stub Draw_ClearWindow unconditionally. Removes dmap's only backend symbol.
+- Rejected: dmap-on-interfaces (would leak private geometry into idRenderSystem) and dmap-in-module (drags cm/gameEdit/fileSystem into the module).
+- No work for editors/debugger/renderbump/roqvq/AAS builder: not in meson globs, gated by never-defined ID_ALLOW_TOOLS, AAS builder has no implementation.
+
+Verify: dmap a stock map, binary-compare .proc/.cm output pre/post.
+
+### B7 — Headless renderer for dedicated targets (own session; can parallel B6)
+- New engine-linked `src/framework/RenderSystemNull.cpp`: null `idRenderSystem` (+ null idRenderWorld/idRenderModelManager as needed by framework/Session/ui code paths active under ID_DEDICATED). After B1-B5 no keep-side code touches `tr`/`glConfig`/`R_StaticAlloc` (R_StaticAlloc now in imagetools), so surface is just the virtuals.
+- Windows ded: stop `openq4_dedicated_sources = openq4_engine_sources` (meson.build:956); ded = engine sources minus renderer globs plus RenderSystemNull; drop opengl32 from dedicated_deps.
+- Linux ded: retire stub_gl.cpp GLimp/gl* nulling (meson_sources.py:114-125) — nothing links gl* anymore.
+- Null renderer never loads render modules; material decls: null renderSystem's `AllocMaterialDecl()` returns a minimal idDecl-compatible stub OR ded keeps linking Material.cpp via renderer-core lib (decision point — prefer linking renderer-core static into ded for decl fidelity, GL-free after tr_local split).
+
+Verify: ded server boots, loads map, client connects from a full build.
+
+### B8 — Build partition + module flip (own session; final)
+1. **tr_local.h split** (pre-req for the core/gl lib boundary): extract GL-bearing pieces (glState/backEnd GL members, qgl.h include, GLimp decls) into `tr_gl_local.h`; tr_local.h becomes API-agnostic. Guard `precompiled.h:372` qgl.h include to module builds only (`#ifdef RENDERER_MODULE_BUILD`); interface headers at :373-378 stay.
+2. **meson_sources.py**: remove renderer globs (lines 67-71) from ENGINE_SOURCE_GLOBS; add `RENDERER_MODULE_GLOBS` + `--emit={engine,renderer}` (mirroring --include-game). Exclude `RendererModule.cpp` from module list, add to engine list; strip its tr_local.h include (RendererModule.cpp:4) to just RenderModuleAPI.h + sys decls.
+3. **Module targets**: `renderer_core` static lib (API-agnostic set) + `shared_module('renderer-gl_'+binary_arch, ...)` mirroring renderer_vk (meson.build:1160-1209): name_prefix '', linux_renderer_module.map, hidden visibility, RENDER_MODULE_EXPORT on GetRenderAPI (VulkanModule.cpp:34-40 pattern), install_root_dir. Deps: glew_dep + opengl32/linux_gl_dep/OpenGL-framework move OFF engine deps[] onto the module; sdl3_dep on BOTH; imagetools + render_geo linked by both.
+4. **Module idlib**: new `renderer_idlib` static lib — engine flavor (C++20, define `RENDERER_DLL` analogous to GAME_DLL; renderer code currently compiles under __DOOM_DLL__/C++20, so keep C++20, do not reuse the game's C++17 lib). Module PCH = precompiled.h with RENDERER_MODULE_BUILD (gets qgl.h, excludes game/Game.h + tools/* + AsyncNetwork via the same guard).
+5. `-DID_GL_HARDLINK` moves from shared_cpp_args (meson.build:783-786) to module-only args (non-Windows).
+6. **Flip**: RM_ExportCanRender (RendererModule.cpp:264) returns true for "gl"; loader publishes renderSystem+renderModelManager; `r_renderApi gl-static` (default initially) keeps the statically-linked path alive until soak completes, then default flips and static path is removed in a follow-up.
+7. Optional: module VERSIONINFO via new .rc + compile_resources (pattern openQ4Version.rc, VFT_DLL); otherwise ships unversioned like game/vk modules.
+
+Verify: full matrix — Windows client (module + static fallback), Windows ded, Linux client/ded, macOS, vid_restart, demo, dmap, arm64 validation loop, renderer parity screenshots.
+
+---
+
+## 2. Blocker → resolution index
+
+| # | Blocker (audit anchor) | Resolution | Stage |
+|---|---|---|---|
+| 1 | `tr.DrawStretchPic` vert/index overload (DeviceContext.cpp:916,1065) | Promote to idRenderSystem virtual | B1 |
+| 2 | idImage::Bind/GetOpts self-test (DeviceContext.cpp:1990) | `VerifyFontAtlasImage` virtual, test moves renderer-side | B1 |
+| 3 | R_LoadImage/Resample/WriteTGA/StaticAlloc in Session/DeclMatType/GameBustOut | `imagetools` static lib, linked both sides | B2 |
+| 4 | `globalImages->ImageFromFile` (Session.cpp:1908) | `PreloadImage` virtual | B2 |
+| 5 | bakeLightGrids reaches idRenderWorldLocal + R_*LightGrid* (Session.cpp:2272-2694) | Feature moves renderer-side behind `BakeCurrentLightGrids` | B3 |
+| 6 | `idDeclAllocator<idMaterial>` (DeclManager.cpp:1352) | Engine trampoline → `AllocMaterialDecl()` virtual | B3 |
+| 7 | R_SetLoadingScreenSwapIntervalBypass (Session.cpp:6152) | idRenderSystem virtual | B1 |
+| 8 | `session` global used pervasively (RenderWorld_demo etc.) | `idSession*` in renderImport_t (game-DLL data-member ABI precedent) | B4 |
+| 9 | `bse` global, bidirectional effects (tr_light.cpp:2593) | `rvBSEManager*` in import; rvBSE* stays opaque | B4 |
+| 10 | uiManager / collisionModelManager / eventLoop not in import | Add first two to import; eventLoop calls → services->Milliseconds | B4 |
+| 11 | renderModelManager not in export (Common.cpp:5319) | Add to renderExport_t; loader publishes | B4 |
+| 12 | Sys_Milliseconds ×100+, Sys threading/critsect (lightgrid pool, GLDebugScope) | services table additions (§4); bake pool stays module-side using service threads | B4 |
+| 13 | Sys_InitInput/GrabMouse/GetDesktopResolution/R_GetModeInfo inside R_InitOpenGL | Carve out engine-side, window-services handshake | B5 |
+| 14 | glConfig written by engine window layer (sdl3:3503+, win_wndproc:274) | Split: engine `engineWindowState_t` vs module glConfig caps | B5 |
+| 15 | GLimp_* inverted ownership; window/context API-ordering coupling (SDL attr-before-window, WGL SetPixelFormat, GLX visual) | Two-phase framebufferDesc handshake in window-services | B5 |
+| 16 | renderModuleWindowInfo_t never populated; win32.hGLRC reverse write | Engine populates on window create; module reports context handle via export call | B5 |
+| 17 | Engine links renderer cvars/fns (r_swapInterval, R_GetEffectiveSwapInterval, ladder) | Logic moves module-side; residual engine reads via services CVar_* | B5 |
+| 18 | SMP thread created engine-side, context module-side | services->SpawnRenderThread; context ops all module-side | B5 |
+| 19 | dmap links ~15 renderer internals + embeds idRenderLightLocal/idRenderEntityLocal by value | `render_geo` static lib + shared RenderGeometry.h; sever tr/cvar refs first | B6 |
+| 20 | gldraw.cpp RB_SetGL2D backend ref | Delete the `dmap -draw` GL path | B6 |
+| 21 | Dedicated targets statically link full renderer (stub_gl nulling) | RenderSystemNull + ded source-list split; retire stub_gl | B7 |
+| 22 | precompiled.h force-includes qgl.h/glew engine-wide; module can't compile game/Game.h+tools | RENDERER_MODULE_BUILD-guarded PCH | B8 |
+| 23 | Renderer globs fused into engine; loader inside the glob; boot call inside renderer | meson_sources partition; RendererModule.cpp → engine list; boot call → framework | B8, B5(boot) |
+| 24 | idlib flavor/ABI for module undefined | renderer_idlib: C++20 + RENDERER_DLL | B8 |
+| 25 | ID_GL_HARDLINK engine-wide | Module-only define | B8 |
+| 26 | RenderDoc_IsInjected, win_local.h include | services->IsRenderDocInjected; win_local.h moves with context half | B4/B5 |
+| 27 | AsyncNetwork.cpp:349-356 ShutdownOpenGL from async thread | Interface-clean; add thread-safety note to module Shutdown contract; verify at B8 flip | B8 |
+| 28 | BSE includes tr_local.h/Model_local.h (BSE_Segment.cpp:21 etc.) | BSE stays engine-side; repoint at split tr_local.h API-agnostic half (B8.1); if it needs GL half, escalate to its own seam task | B8 |
+
+---
+
+## 3. Disposition table — all of src/renderer
+
+**engine (stays in executables)**
+- RendererModule.cpp/.h (loader; decoupled from tr_local.h), RenderModuleAPI.h (shared)
+- Public interface headers, compiled both sides via PCH: RenderSystem.h, RenderWorld.h, Material.h, Model.h, ModelManager.h, Cinematic.h
+- New: RenderSystemNull.cpp (B7, lives in framework/)
+
+**shared static libs (linked by engine AND module)**
+- `imagetools` (B2): Image_files.cpp, Image_process.cpp, Color/ColorSpace.cpp, DXT/DXTDecoder.cpp, DXTEncoder.cpp, jpeg-6/*.c (+ R_StaticAlloc/Free relocated)
+- `render_geo` (B6): CPU extracts of tr_trisurf.cpp, tr_lightrun.cpp, tr_stencilshadow.cpp, Interaction.cpp + RenderGeometry.h (idRenderLightLocal/idRenderEntityLocal defs)
+
+**renderer-core (API-agnostic; static lib inside the module, reusable by renderer-vk later; nominal until tr_local.h split in B8.1)**
+- Models: Model.cpp, Model_ase/beam/liquid/lwo/ma/md3/md5/md5r/prt/sprite.cpp, Model_local.h, ModelManager.cpp, ModelDecal.cpp, ModelOverlay.cpp
+- Frontend: tr_main.cpp, tr_light.cpp, tr_deform.cpp, tr_polytope.cpp, tr_orderIndexes.cpp, tr_shadowbounds.cpp, tr_turboshadow.cpp, tr_subview.cpp, tr_trace.cpp, tr_font.cpp, tr_guisurf.cpp, remainder of tr_trisurf/tr_lightrun/tr_stencilshadow/Interaction after B6 extraction
+- World: RenderEntity.cpp, RenderWorld.cpp, RenderWorld_load.cpp, RenderWorld_demo.cpp, RenderWorld_local.h, ScenePackets.cpp/.h
+- Materials/decl: Material.cpp, MaterialResourceTable.cpp/.h
+- Images (CPU): BinaryImage.cpp/.h/BinaryImageData.h, Image_program.cpp, ImageOpts.h
+- Shadow/graph: ShadowMapClassification.cpp/.h, ShadowMapProjected.cpp/.h, ShadowMapArb2Parity.h, RenderGraph.cpp/.h
+- Misc: Cinematic.cpp, GuiModel.cpp/.h (GL-lean; verify at split), simplex.h, RendererBenchmarks.cpp/.h, RendererStartupDiagnostics.cpp/.h
+
+**renderer-gl (module-only)**
+- Backend: tr_backend.cpp, tr_render.cpp, tr_rendertools.cpp, draw_arb2.cpp, draw_common.cpp, draw_exp_stub.cpp, cg_explicit.cpp/.h
+- System: RenderSystem.cpp, RenderSystem_init.cpp, RendererCaps.cpp/.h, RendererMetrics.cpp/.h, RendererUpload.cpp/.h, RendererBootstrap.cpp/.h, GLStateCache.cpp/.h, GLDebugScope.cpp/.h, VertexCache.cpp/.h, GeometryResources.cpp/.h, RenderGraphResources.cpp/.h, RenderTexture.h
+- Images (GPU): Image.h, Image_load.cpp, Image_intrinsic.cpp, ImageManager.cpp, OpenGL/gl_Image.cpp, OpenGL/gl_RenderTexture.cpp
+- World (GL-touching): RenderWorld_lightgrid.cpp, RenderWorld_portals.cpp
+- Modern path: ModernClusteredLighting, ModernGLDrawPlan, ModernGLExecutor, ModernGLShaderLibrary, ModernGLSubmitPlan, ModernShadowPlanner (.cpp/.h)
+- GL headers/glue: qgl.h, qgl_linked.h, glext.h, wglext.h, smaa/, tr_local.h GL half (tr_gl_local.h post-split)
+- Relocated from sys (B5): gl_ContextSDL3.cpp (context half of sdl3_backend), win_qgl.cpp GL loader, win_gamma.cpp GL parts, glimp generators
+
+**Vulkan/** — already its own module (renderer-vk); untouched.
+
+---
+
+## 4. New boundary surfaces (exact)
+
+**renderModuleServices_t additions (v2):**
+```c
+// threading (lightgrid bake pool, GLDebugScope, SMP)
+uintptr_t (*CreateThread)( void (*fn)(void*), void *parm, const char *name );
+void      (*DestroyThread)( uintptr_t handle );
+void      (*Sleep)( int msec );
+bool      (*IsCurrentThreadStopRequested)( void );
+void      (*EnterCriticalSection)( int index );
+void      (*LeaveCriticalSection)( int index );
+// SMP render thread (engine owns thread, module owns context current-ness)
+bool      (*SpawnRenderThread)( void (*fn)(void) );
+// misc
+bool      (*IsRenderDocInjected)( void );
+const char *(*GetProcessorString)( void );
+```
+
+**renderWindowServices_t (new, in renderImport_t):**
+```c
+typedef struct renderFramebufferDesc_s {
+    int red, green, blue, alpha, depth, stencil;
+    int multiSamples;
+    bool stereo;
+    int glMajor, glMinor;               // 0 = no GL (vulkan module)
+    int glProfileFlags, glContextFlags; // core/compat/debug
+} renderFramebufferDesc_t;
+
+typedef struct renderWindowServices_s {
+    // two-phase create: attrs set BEFORE SDL_CreateWindow / SetPixelFormat / XCreateWindow
+    bool (*CreateWindowForFramebuffer)( const renderFramebufferDesc_t *desc,
+                                        const glimpParms_t *parms,        // width/height/fullscreen/displayHz
+                                        renderModuleWindowInfo_t *out );
+    void (*DestroyWindow)( bool preserveForRestart );
+    bool (*SetScreenParms)( const glimpParms_t *parms, renderModuleWindowInfo_t *out );
+    void (*GetDesktopResolution)( int *w, int *h );
+    bool (*SetGamma)( unsigned short r[256], unsigned short g[256], unsigned short b[256] );
+    const engineWindowState_t *windowState;   // engine-owned vid/viewport/fullscreen block
+} renderWindowServices_t;
+```
+Module keeps: context create/destroy/make-current, swap buffers, swap interval, extension-proc lookup (all against `renderModuleWindowInfo_t.sdlWindow`/native handles). Module reports context handle back via new export `void (*GetNativeContextHandle)(void**)` (replaces win32.hGLRC write).
+
+**renderImport_t additions:** `idSession *sessionInterface; idUserInterfaceManager *uiManager; idCollisionModelManager *collisionModelManager; rvBSEManager *bse; const renderWindowServices_t *windowServices;`
+
+**renderExport_t additions:** `idRenderModelManager *renderModelManager; void (*GetNativeContextHandle)(void **);`
+
+**New idRenderSystem virtuals:** `DrawStretchPic(idDrawVert*, glIndex_t*, int, int, const idMaterial*, bool, float min[2], float max[2])`; `AllocMaterialDecl()`; `PreloadImage(const char*)`; `SetLoadingScreenSwapIntervalBypass(bool)`; `BakeCurrentLightGrids(const lightGridBakeOptions_t&)`; `VerifyFontAtlasImage(const idMaterial*, char*, int)`; (`GetPrimaryRenderWorld()` if B3 leaves residual need).
+
+**engineWindowState_t (engine-owned, replaces glConfig window fields):** `vidWidth, vidHeight, uiViewportX, uiViewportY, uiViewportWidth, uiViewportHeight, isFullscreen, displayHz`.
+
+---
+
+## 5. Session scoping and risk
+
+**Current session (in order):**
+- **B1** — fully landable now. Low risk; each item independently revertible. Commit per item.
+- **B2** — landable this session if Image_files.cpp `tr`/`globalImages` audit comes back clean; otherwise land the Session/DeclMatType/GameBustOut call-site prep and defer the lib carve.
+- **B3** — start: material-decl trampoline (small, testable) and swap-bypass are same-session; bakeLightGrids relocation is a large code move — begin only if B1/B2 verify clean, else next session.
+
+**Own sessions:**
+- **B4** (import completion + Sys sweep): mechanical but wide (~150 call sites); one session. Risk: demo-file timing semantics (eventLoop vs Sys ms) — verify with demo round-trip; async-thread ShutdownOpenGL noted for B8.
+- **B5** (window seam): highest design risk — vid_restart/fullscreen/multi-display/SMP regressions, three platforms. Needs the macOS policy sweep and arm64 loop. One dedicated session minimum, likely two (SDL3 split, then legacy glimp retirement).
+- **B6** (dmap): risk concentrated in the tr/cvar severing audit of render_geo functions; verify by binary-comparing dmap output. One session.
+- **B7** (ded null renderer): moderate; enumerate which idRenderSystem virtuals ded actually exercises before writing stubs. One session; can run parallel to B6.
+- **B8** (partition + flip): depends on all prior; tr_local.h split is the long pole. Land partition with `r_renderApi gl-static` default, soak, then flip default in a follow-up commit. One to two sessions.
+
+**Standing constraints:** never `git add -A` (user works in parallel); commit directly to main per stage only after its verification passes; Windows builds need vcvars64 (VS 18 Insiders); run macOS token sweep after any B5/B8 edits touching macOS-facing files.
