@@ -713,6 +713,10 @@ public:
 	float				GetPortalFar(void) const { return portalDistanceFar; }
 	const idImage *		GetPortalImage(void) const { return portalImage; }
 
+						// name of the portal-sky capture image, for tools that must not
+						// reach into renderer image internals; NULL when none is set
+	const char *		GetPortalImageName( void ) const;
+
 	float				GetSurfaceArea(void) const { return surfaceArea; }
 	void				AddToSurfaceArea(float area) { surfaceArea += area; }
 

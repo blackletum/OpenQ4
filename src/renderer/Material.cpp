@@ -3874,6 +3874,18 @@ const char *idMaterial::DefaultDefinition() const {
 
 /*
 ===================
+idMaterial::GetPortalImageName
+===================
+*/
+const char *idMaterial::GetPortalImageName( void ) const {
+	if ( portalImage == NULL ) {
+		return NULL;
+	}
+	return portalImage->GetName();
+}
+
+/*
+===================
 idMaterial::GetBumpStage
 ===================
 */

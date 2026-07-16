@@ -642,7 +642,9 @@ void FreeDMapFile( void ) {
 
 	// free the map lights
 	for ( i = 0; i < dmapGlobals.mapLights.Num(); i++ ) {
-		R_FreeLightDefDerivedData( &dmapGlobals.mapLights[i]->def );
+		// dmap lights are standalone (no world/interactions); freeing the
+		// frustum releases everything R_DeriveLightData built for them
+		R_FreeLightDefFrustum( &dmapGlobals.mapLights[i]->def );
 	}
 	dmapGlobals.mapLights.DeleteContents( true );
 }

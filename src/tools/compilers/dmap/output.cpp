@@ -593,8 +593,8 @@ static void WriteOutputPortals( uEntity_t *e ) {
 			Write1DMatrix( procFile, 3, (*w)[j].ToFloatPtr() );
 		}
 
-		if ( iap->portalImage ) {
-			procFile->WriteFloatString( "( \"%s\" %.2f %.2f )", iap->portalImage->GetName(), iap->cullNear, iap->cullFar );
+		if ( iap->portalImageName.Length() > 0 ) {
+			procFile->WriteFloatString( "( \"%s\" %.2f %.2f )", iap->portalImageName.c_str(), iap->cullNear, iap->cullFar );
 		} else if ( iap->cullNear < 262144.0f || iap->cullFar < 262144.0f ) {
 			procFile->WriteFloatString( "( \"_black\" %.2f %.2f )", iap->cullNear, iap->cullFar );
 		}

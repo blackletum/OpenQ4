@@ -29,7 +29,8 @@ If you have questions concerning this license or the applicable additional terms
 
 
 
-#include "tr_local.h"
+#include "RenderGeometry.h"
+#include "../imagetools/ImageTools.h"
 
 #define MAX_POLYTOPE_PLANES		6
 

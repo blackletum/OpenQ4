@@ -82,6 +82,12 @@ IMAGETOOLS_SOURCE_GLOBS = [
     "imagetools/jpeg-6/*.c",
 ]
 
+# CPU render-geometry shared between the engine (dmap) and the renderer;
+# built as the openq4_render_geo static library
+RENDER_GEO_SOURCE_GLOBS = [
+    "render_geo/*.cpp",
+]
+
 GAME_SOURCE_GLOBS = [
     "game/ai/*.cpp",
     "game/anim/*.cpp",
@@ -266,7 +272,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--emit",
-        choices=("engine", "imagetools"),
+        choices=("engine", "imagetools", "render_geo"),
         default="engine",
         help="Emit engine target sources or the imagetools static-library sources.",
     )
@@ -288,15 +294,16 @@ def main(argv: list[str]) -> int:
 
     include_game = args.include_game == "true"
 
-    if args.emit == "imagetools":
+    if args.emit in ("imagetools", "render_geo"):
+        globs = IMAGETOOLS_SOURCE_GLOBS if args.emit == "imagetools" else RENDER_GEO_SOURCE_GLOBS
         try:
-            for pattern in IMAGETOOLS_SOURCE_GLOBS:
+            for pattern in globs:
                 add_globbed_sources(source_set, ordered_sources, source_root, pattern)
         except SourceListError as exc:
             print(exc, file=sys.stderr)
             return 1
         if not ordered_sources:
-            print("No imagetools source files discovered.", file=sys.stderr)
+            print(f"No {args.emit} source files discovered.", file=sys.stderr)
             return 1
         print("\n".join(ordered_sources))
         return 0

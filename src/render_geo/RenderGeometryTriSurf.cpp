@@ -29,7 +29,8 @@ If you have questions concerning this license or the applicable additional terms
 
 
 
-#include "tr_local.h"
+#include "RenderGeometry.h"
+#include "../imagetools/ImageTools.h"
 
 /*
 ==============================================================================
@@ -221,30 +222,6 @@ void R_ShutdownTriSurfData( void ) {
 #endif
 }
 
-/*
-===============
-R_PurgeTriSurfData
-===============
-*/
-void R_PurgeTriSurfData( frameData_t *frame ) {
-	// free deferred triangle surfaces
-	R_FreeDeferredTriSurfs( frame );
-
-	// free empty base blocks
-	triVertexAllocator.FreeEmptyBaseBlocks();
-	triIndexAllocator.FreeEmptyBaseBlocks();
-	triShadowVertexAllocator.FreeEmptyBaseBlocks();
-	triPlaneAllocator.FreeEmptyBaseBlocks();
-	triSilIndexAllocator.FreeEmptyBaseBlocks();
-	triSilEdgeAllocator.FreeEmptyBaseBlocks();
-	triDominantTrisAllocator.FreeEmptyBaseBlocks();
-	triMirroredVertAllocator.FreeEmptyBaseBlocks();
-	triDupVertAllocator.FreeEmptyBaseBlocks();
-#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
-	silTraceVertexAllocator.FreeEmptyBaseBlocks();
-	skinToModelTransformAllocator.FreeEmptyBaseBlocks();
-#endif
-}
 
 /*
 ===============
@@ -376,14 +353,7 @@ across frames (the packed light-tris path uses a frame-local tri copy for
 exactly this reason).
 ==============
 */
-static void R_FreeTriSurfVertCache( vertCache_t *&cache ) {
-	if ( cache != NULL ) {
-		if ( cache->tag != TAG_TEMP ) {
-			vertexCache.Free( cache );
-		}
-		cache = NULL;
-	}
-}
+// GPU vertex-cache release is renderer-owned; see the freeVertexCaches hook
 
 /*
 ==============
@@ -391,20 +361,8 @@ R_FreeStaticTriSurfVertexCaches
 ==============
 */
 void R_FreeStaticTriSurfVertexCaches( srfTriangles_t *tri ) {
-	if ( tri->ambientSurface == NULL ) {
-		// this is a real model surface
-		R_FreeTriSurfVertCache( tri->ambientCache );
-	} else {
-		// this is a light interaction surface that references
-		// a different ambient model surface
-		R_FreeTriSurfVertCache( tri->lightingCache );
-	}
-	R_FreeTriSurfVertCache( tri->indexCache );
-	if ( tri->shadowCache && ( tri->shadowVertexes != NULL || tri->verts != NULL ) ) {
-		// if we don't have tri->shadowVertexes, these are a reference to a
-		// shadowCache on the original surface, which a vertex program
-		// will take care of making unique for each light
-		R_FreeTriSurfVertCache( tri->shadowCache );
+	if ( RenderGeo_GetHooks().freeVertexCaches != NULL ) {
+		RenderGeo_GetHooks().freeVertexCaches( tri );
 	}
 }
 
@@ -532,41 +490,6 @@ void R_CheckStaticTriSurfMemory( const srfTriangles_t *tri ) {
 	}
 }
 
-/*
-==================
-R_FreeDeferredTriSurfs
-==================
-*/
-void R_FreeDeferredTriSurfs( frameData_t *frame ) {
-	srfTriangles_t	*tri, *next;
-
-	if ( !frame ) {
-		return;
-	}
-
-	for ( tri = frame->firstDeferredFreeTriSurf; tri; tri = next ) {
-		next = tri->nextDeferredFree;
-
-		if ( tri->ambientSurface == NULL ) {
-			continue;
-		}
-
-		if ( tri->topAmbientSurface != NULL
-			&& tri->verts == tri->topAmbientSurface->verts
-			&& tri->topAmbientSurface->referenceCount > 0 ) {
-			--tri->topAmbientSurface->referenceCount;
-			tri->topAmbientSurface = NULL;
-		}
-	}
-
-	for ( tri = frame->firstDeferredFreeTriSurf; tri; tri = next ) {
-		next = tri->nextDeferredFree;
-		R_ReallyFreeStaticTriSurf( tri );
-	}
-
-	frame->firstDeferredFreeTriSurf = NULL;
-	frame->lastDeferredFreeTriSurf = NULL;
-}
 
 /*
 ==============
@@ -576,8 +499,6 @@ This will defer the free until the current frame has run through the back end.
 ==============
 */
 void R_FreeStaticTriSurf( srfTriangles_t *tri ) {
-	frameData_t		*frame;
-
 	if ( !tri ) {
 		return;
 	}
@@ -585,23 +506,13 @@ void R_FreeStaticTriSurf( srfTriangles_t *tri ) {
 	if ( tri->nextDeferredFree ) {
 		common->Error( "R_FreeStaticTriSurf: freed a freed triangle" );
 	}
-	frame = frameData;
 
-	if ( !frame ) {
-		// command line utility, or rendering in editor preview mode ( force )
-		R_ReallyFreeStaticTriSurf( tri );
-	} else {
-#ifdef ID_DEBUG_MEMORY
-		R_CheckStaticTriSurfMemory( tri );
-#endif
-		tri->nextDeferredFree = NULL;
-		if ( frame->lastDeferredFreeTriSurf ) {
-			frame->lastDeferredFreeTriSurf->nextDeferredFree = tri;
-		} else {
-			frame->firstDeferredFreeTriSurf = tri;
-		}
-		frame->lastDeferredFreeTriSurf = tri;
+	// the renderer defers frees until the frame's back end has completed;
+	// command-line utilities (dmap) free immediately
+	if ( RenderGeo_GetHooks().deferFree != NULL && RenderGeo_GetHooks().deferFree( tri ) ) {
+		return;
 	}
+	R_ReallyFreeStaticTriSurf( tri );
 }
 
 /*
@@ -639,6 +550,30 @@ srfTriangles_t *R_CopyStaticTriSurf( const srfTriangles_t *tri ) {
 	}
 
 	return newTri;
+}
+
+/*
+===============
+RenderGeo_FreeEmptyBaseBlocks
+
+Allocator maintenance for the renderer's purge path; the allocators are
+library-private so the renderer cannot reach them directly.
+===============
+*/
+void RenderGeo_FreeEmptyBaseBlocks( void ) {
+	triVertexAllocator.FreeEmptyBaseBlocks();
+	triIndexAllocator.FreeEmptyBaseBlocks();
+	triShadowVertexAllocator.FreeEmptyBaseBlocks();
+	triPlaneAllocator.FreeEmptyBaseBlocks();
+	triSilIndexAllocator.FreeEmptyBaseBlocks();
+	triSilEdgeAllocator.FreeEmptyBaseBlocks();
+	triDominantTrisAllocator.FreeEmptyBaseBlocks();
+	triMirroredVertAllocator.FreeEmptyBaseBlocks();
+	triDupVertAllocator.FreeEmptyBaseBlocks();
+#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
+	silTraceVertexAllocator.FreeEmptyBaseBlocks();
+	skinToModelTransformAllocator.FreeEmptyBaseBlocks();
+#endif
 }
 
 /*
@@ -864,7 +799,7 @@ static int *R_CreateSilRemap( const srfTriangles_t *tri ) {
 
 	remap = (int *)R_ClearedStaticAlloc( tri->numVerts * sizeof( remap[0] ) );
 
-	if ( !r_useSilRemap.GetBool() ) {
+	if ( RenderGeo_GetHooks().useSilRemap != NULL && !RenderGeo_GetHooks().useSilRemap() ) {
 		for ( i = 0 ; i < tri->numVerts ; i++ ) {
 			remap[i] = i;
 		}
@@ -1193,7 +1128,7 @@ void R_IdentifySilEdges( srfTriangles_t *tri, bool omitCoplanarEdges ) {
 		R_DefineEdge( i3, i1, i );
 	}
 
-	if ( r_reportSilhouetteEdgeWarnings.GetBool() && ( c_duplicatedEdges || c_tripledEdges ) ) {
+	if ( RenderGeo_GetHooks().reportSilEdgeWarnings != NULL && RenderGeo_GetHooks().reportSilEdgeWarnings() && ( c_duplicatedEdges || c_tripledEdges ) ) {
 		common->DWarning( "%i duplicated edge directions, %i tripled edges", c_duplicatedEdges, c_tripledEdges );
 	}
 
@@ -1836,7 +1771,9 @@ void R_DeriveTangents( srfTriangles_t *tri, bool allocFacePlanes ) {
 		return;
 	}
 
-	tr.pc.c_tangentIndexes += tri->numIndexes;
+	if ( RenderGeo_GetHooks().countTangentIndexes != NULL ) {
+		RenderGeo_GetHooks().countTangentIndexes( tri->numIndexes );
+	}
 
 	if ( !tri->facePlanes && allocFacePlanes ) {
 		R_AllocStaticTriSurfPlanes( tri, tri->numIndexes );

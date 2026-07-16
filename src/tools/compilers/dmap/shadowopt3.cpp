@@ -30,7 +30,8 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "dmap.h"
-#include "../../../renderer/tr_local.h"
+// dmap uses the shared render-geometry library, not renderer internals
+#include "../../../imagetools/ImageTools.h"
 
 /*
 

@@ -29,7 +29,8 @@ If you have questions concerning this license or the applicable additional terms
 
 
 
-#include "tr_local.h"
+#include "RenderGeometry.h"
+#include "../imagetools/ImageTools.h"
 
 // tr_stencilShadow.c -- creaton of stencil shadow volumes
 
@@ -929,7 +930,10 @@ static void R_CreateShadowVolumeInFrustum( const idRenderEntityLocal *ent,
 		// an equal number of back vertexes
 //		R_ProjectPointsToFarPlane( ent, light, farPlane, firstShadowVert, numShadowVerts );
 
-		opt = SuperOptimizeOccluders( shadowVerts, shadowIndexes + firstShadowIndex, numCapIndexes, farPlane, lightOrigin );
+		if ( RenderGeo_GetHooks().superOptimize == NULL ) {
+			common->Error( "R_CreateShadowVolume: SG_OFFLINE requested without a shadow optimizer bound" );
+		}
+		opt = RenderGeo_GetHooks().superOptimize( shadowVerts, shadowIndexes + firstShadowIndex, numCapIndexes, farPlane, lightOrigin );
 
 		// pull off the non-optimized data
 		numShadowIndexes = firstShadowIndex;
@@ -1188,31 +1192,6 @@ void R_MakeShadowFrustums( idRenderLightLocal *light ) {
 	// right on the planes must have a sil plane created for them
 }
 
-/*
-=====================
-R_CreateTurboShadowVolumeForSurface
-
-Packed MD5R prim-batch surfaces only participate in the infinite turbo-shadow
-path. The classic capped stencil builder below assumes ordinary tri-surf
-geometry and should never be fed packed surfaces directly.
-=====================
-*/
-static srfTriangles_t *R_CreateTurboShadowVolumeForSurface( const idRenderEntityLocal *ent,
-		const srfTriangles_t *tri, const idRenderLightLocal *light, srfCullInfo_t &cullInfo ) {
-#if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
-	if ( tri->primBatchMesh != NULL ) {
-		if ( srfTriangles_t *packedShadowTri = R_CreatePackedTurboShadowVolume( ent, tri, light, cullInfo ) ) {
-			return packedShadowTri;
-		}
-	}
-#endif
-
-	if ( tr.backEndRendererHasVertexPrograms && r_useShadowVertexProgram.GetBool() ) {
-		return R_CreateVertexProgramTurboShadowVolume( ent, tri, light, cullInfo );
-	}
-
-	return R_CreateTurboShadowVolume( ent, tri, light, cullInfo );
-}
 
 /*
 =================
@@ -1248,7 +1227,7 @@ srfTriangles_t *R_CreateShadowVolume( const idRenderEntityLocal *ent,
 	srfTriangles_t	*newTri;
 	int		capPlaneBits;
 
-	if ( !r_shadows.GetBool() ) {
+	if ( RenderGeo_GetHooks().shadowsEnabled != NULL && !RenderGeo_GetHooks().shadowsEnabled() ) {
 		return NULL;
 	}
 
@@ -1264,13 +1243,18 @@ srfTriangles_t *R_CreateShadowVolume( const idRenderEntityLocal *ent,
 		common->Error( "R_CreateShadowVolume: tri->numVerts = %i", tri->numVerts );
 	}
 
-	tr.pc.c_createShadowVolumes++;
+	if ( RenderGeo_GetHooks().countShadowVolume != NULL ) {
+		RenderGeo_GetHooks().countShadowVolume();
+	}
 
 	// use the fast infinite projection in dynamic situations, which
 	// trades somewhat more overdraw and no cap optimizations for
 	// a very simple generation process
-	if ( optimize == SG_DYNAMIC && r_useTurboShadow.GetBool() ) {
-		return R_CreateTurboShadowVolumeForSurface( ent, tri, light, cullInfo );
+	if ( optimize == SG_DYNAMIC && RenderGeo_GetHooks().tryTurboShadow != NULL ) {
+		srfTriangles_t *turboTri = NULL;
+		if ( RenderGeo_GetHooks().tryTurboShadow( ent, tri, light, cullInfo, &turboTri ) ) {
+			return turboTri;
+		}
 	}
 
 #if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
@@ -1417,8 +1401,8 @@ srfTriangles_t *R_CreateShadowVolume( const idRenderEntityLocal *ent,
 		SIMDProcessor->Memcpy( newTri->indexes, shadowIndexes, newTri->numIndexes * sizeof( newTri->indexes[0] ) );
 	}
 
-	if ( optimize == SG_OFFLINE ) {
-		CleanupOptimizedShadowTris( newTri );
+	if ( optimize == SG_OFFLINE && RenderGeo_GetHooks().cleanupOptimizedShadowTris != NULL ) {
+		RenderGeo_GetHooks().cleanupOptimizedShadowTris( newTri );
 	}
 
 	return newTri;

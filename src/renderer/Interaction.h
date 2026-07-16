@@ -41,24 +41,9 @@ If you have questions concerning this license or the applicable additional terms
 ===============================================================================
 */
 
-#define LIGHT_TRIS_DEFERRED			((srfTriangles_t *)-1)
-#define LIGHT_CULL_ALL_FRONT		((byte *)-1)
-#define	LIGHT_CLIP_EPSILON			0.1f
-
-
-typedef struct {
-	// For each triangle a byte set to 1 if facing the light origin.
-	byte *					facing;
-
-	// For each vertex a byte with the bits [0-5] set if the
-	// vertex is at the back side of the corresponding clip plane.
-	// If the 'cullBits' pointer equals LIGHT_CULL_ALL_FRONT all
-	// vertices are at the front of all the clip planes.
-	byte *					cullBits;
-
-	// Clip planes in surface space used to calculate the cull bits.
-	idPlane					localClipPlanes[6];
-} srfCullInfo_t;
+// LIGHT_CULL_ALL_FRONT, LIGHT_CLIP_EPSILON, and srfCullInfo_t are defined by
+// the shared render-geometry library
+#include "../render_geo/RenderGeometry.h"
 
 
 typedef struct {		

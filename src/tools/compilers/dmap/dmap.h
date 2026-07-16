@@ -26,7 +26,7 @@ If you have questions concerning this license or the applicable additional terms
 ===========================================================================
 */
 
-#include "../../../renderer/tr_local.h"
+#include "../../../render_geo/RenderGeometry.h"
 
 
 typedef struct primitive_s {
@@ -341,7 +341,7 @@ typedef struct {
 	side_t	*side;
 	float	cullNear;
 	float	cullFar;
-	const idImage *portalImage;
+	idStr portalImageName;		// empty when the side material has no portal image
 } interAreaPortal_t;
 
 extern	interAreaPortal_t interAreaPortals[MAX_INTER_AREA_PORTALS];

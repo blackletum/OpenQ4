@@ -467,6 +467,19 @@ if imagetools_source_paths.length() == 0
 endif
 openq4_imagetools_sources = files(imagetools_source_paths)
 
+render_geo_source_discovery = run_command(
+  py,
+  meson.project_source_root() / 'tools' / 'build' / 'meson_sources.py',
+  '--emit',
+  'render_geo',
+  check: true,
+)
+render_geo_source_paths = render_geo_source_discovery.stdout().strip().split('\n')
+if render_geo_source_paths.length() == 0
+  error('tools/build/meson_sources.py returned no render_geo source files.')
+endif
+openq4_render_geo_sources = files(render_geo_source_paths)
+
 openq4_engine_sources = files(engine_source_paths)
 if build_engine
   openq4_engine_sources += openq4_paks_generated_header
@@ -999,11 +1012,24 @@ if build_engine
     pic: host_system == 'linux',
     install: false,
   )
+
+  # CPU render-geometry shared between dmap (engine) and the renderer;
+  # compiled with engine args so codegen matches the pre-carve build
+  render_geo_library = static_library(
+    'openq4_render_geo',
+    openq4_render_geo_sources,
+    include_directories: engine_include_dirs,
+    cpp_args: engine_cpp_args,
+    c_args: engine_c_args,
+    cpp_pch: pch_headers,
+    pic: host_system == 'linux',
+    install: false,
+  )
 endif
 
 if build_engine
-  client_link_with = [bse_library, imagetools_library]
-  dedicated_link_with = [bse_library, imagetools_library]
+  client_link_with = [bse_library, imagetools_library, render_geo_library]
+  dedicated_link_with = [bse_library, imagetools_library, render_geo_library]
 
   if host_system == 'windows'
     executable(

@@ -4131,6 +4131,10 @@ void idRenderSystemLocal::Init( void ) {
 	// image or model loading can call R_StaticAlloc
 	R_InstallImageToolsHooks();
 
+	// bind the shared render-geometry library to live renderer behavior
+	// before any model loading can allocate triangle surfaces
+	R_InstallRenderGeoHooks();
+
 	// clear all our internal state
 	viewCount = 1;		// so cleared structures never match viewCount
 	// we used to memset tr, but now that it is a class, we can't, so
