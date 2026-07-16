@@ -1323,6 +1323,12 @@ int idDeclFile::LoadAndParse( idFile *file ) {
 
 const char *listDeclStrings[] = { "current", "all", "ever", NULL };
 
+// material decls are renderer-owned types; allocate through the renderer
+// interface so framework code carries no renderer symbol dependency
+static idDecl *openQ4_MaterialDeclAllocator( void ) {
+	return renderSystem->AllocMaterialDecl();
+}
+
 /*
 ===================
 idDeclManagerLocal::Init
@@ -1348,7 +1354,7 @@ void idDeclManagerLocal::Init( void ) {
 
 	// decls used throughout the engine
 	RegisterDeclType( "table",				DECL_TABLE,			idDeclAllocator<idDeclTable> );
-	RegisterDeclType( "material",			DECL_MATERIAL,		idDeclAllocator<idMaterial> );
+	RegisterDeclType( "material",			DECL_MATERIAL,		openQ4_MaterialDeclAllocator );
 	RegisterDeclType( "skin",				DECL_SKIN,			idDeclAllocator<idDeclSkin> );
 	RegisterDeclType( "sound",				DECL_SOUND,			idDeclAllocator<idSoundShader> );
 	RegisterDeclType( "entityDef",			DECL_ENTITYDEF,		idDeclAllocator<idDeclEntityDef> );

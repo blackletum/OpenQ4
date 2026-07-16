@@ -343,6 +343,14 @@ public:
 	// keeps the loading screen presenting without vsync throttling during
 	// map changes; replaces the renderer-internal free-function call
 	virtual void			SetLoadingScreenSwapIntervalBypass( bool active ) = 0;
+
+	// allocates a material decl instance for the decl manager's DECL_MATERIAL
+	// registration; material construction is renderer-owned
+	virtual class idDecl *	AllocMaterialDecl( void ) = 0;
+
+	// resolves and uploads an image file ahead of first use (menu background
+	// preloading); replaces direct image-manager access from framework code
+	virtual void			PreloadImage( const char *name ) = 0;
 	virtual void			GlobalToNormalizedDeviceCoordinates( const idVec3 &global, idVec3 &ndc ) = 0;
 	virtual void			GetGLSettings( int& width, int& height ) = 0;
 //	virtual void			PrintMemInfo( MemInfo *mi ) = 0;

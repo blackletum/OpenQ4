@@ -907,6 +907,8 @@ public:
 	virtual bool			GetMaterialStageImageInfo( const idMaterial *material, int stageIndex, materialImageInfo_t &info );
 	virtual bool			UploadMaterialStageScratchImage( const idMaterial *material, int stageIndex, const byte *data, int width, int height );
 	virtual void			SetLoadingScreenSwapIntervalBypass( bool active );
+	virtual idDecl *		AllocMaterialDecl( void );
+	virtual void			PreloadImage( const char *name );
 	virtual void			FlushGui();
 	virtual void			GlobalToNormalizedDeviceCoordinates( const idVec3 &global, idVec3 &ndc );
 	virtual void			GetGLSettings( int& width, int& height );

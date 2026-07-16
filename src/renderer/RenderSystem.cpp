@@ -856,6 +856,33 @@ void idRenderSystemLocal::SetLoadingScreenSwapIntervalBypass( bool active ) {
 	R_SetLoadingScreenSwapIntervalBypass( active );
 }
 
+/*
+=============
+AllocMaterialDecl
+
+The decl manager registers DECL_MATERIAL with a trampoline through this
+virtual so framework code never instantiates renderer-owned types directly.
+=============
+*/
+idDecl *idRenderSystemLocal::AllocMaterialDecl( void ) {
+	return new idMaterial;
+}
+
+/*
+=============
+PreloadImage
+
+Uploads an image file ahead of first use so menu backgrounds present without
+a first-frame load hitch.
+=============
+*/
+void idRenderSystemLocal::PreloadImage( const char *name ) {
+	if ( globalImages == NULL || name == NULL || name[ 0 ] == '\0' ) {
+		return;
+	}
+	globalImages->ImageFromFile( name, TF_DEFAULT, TR_CLAMP, TD_DEFAULT, CF_2D, false );
+}
+
 void idRenderSystemLocal::SetUseUIViewportFor2D( bool enable ) {
 	if ( useUIViewportFor2D == enable ) {
 		return;

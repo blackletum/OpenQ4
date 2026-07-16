@@ -48,11 +48,7 @@ If you have questions concerning this license or the applicable additional terms
 #undef protected
 #undef private
 #include "../renderer/tr_local.h"
-
-void *R_StaticAlloc( int bytes );
-void R_StaticFree( void *data );
-
-extern glconfig_t	glConfig;
+#include "../renderer/ImageTools.h"
 
 idCVar	idSessionLocal::com_showAngles( "com_showAngles", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
 idCVar	idSessionLocal::com_minTics( "com_minTics", "1", CVAR_SYSTEM, "" );
@@ -1905,9 +1901,7 @@ void idSessionLocal::SetMainMenuBackgroundMontageGuiVars( void ) {
 			material->EnsureNotPurged();
 			material->SetSort( SS_GUI );
 		}
-		if ( globalImages != NULL ) {
-			globalImages->ImageFromFile( resolvedPath.c_str(), TF_DEFAULT, TR_CLAMP, TD_DEFAULT, CF_2D, false );
-		}
+		renderSystem->PreloadImage( resolvedPath.c_str() );
 	}
 
 	idMaterial *maskMaterial = const_cast<idMaterial *>( declManager->FindMaterial( menuBackgroundMask ) );
