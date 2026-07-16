@@ -160,7 +160,7 @@ static void Sys_XInstallGrabs( void ) {
 
 	XWarpPointer( dpy, None, win,
 				 0, 0, 0, 0,
-				 glConfig.vidWidth / 2, glConfig.vidHeight / 2 );
+				 engineWindowState.vidWidth / 2, engineWindowState.vidHeight / 2 );
 
 	XSync( dpy, False );
 
@@ -194,8 +194,8 @@ static void Sys_XInstallGrabs( void ) {
 		XWarpPointer( dpy, None, win, 0, 0, 0, 0, 0, 0 );
 #endif
 	} else {
-		mwx = glConfig.vidWidth / 2;
-		mwy = glConfig.vidHeight / 2;
+		mwx = engineWindowState.vidWidth / 2;
+		mwy = engineWindowState.vidHeight / 2;
 		mx = my = 0;
 	}
 	
@@ -227,7 +227,7 @@ void Sys_XUninstallGrabs(void) {
 	
 	XWarpPointer( dpy, None, win,
 				 0, 0, 0, 0,
-				 glConfig.vidWidth / 2, glConfig.vidHeight / 2);
+				 engineWindowState.vidWidth / 2, engineWindowState.vidHeight / 2);
 	
 	XUndefineCursor( dpy, win );
 
@@ -247,7 +247,7 @@ void Sys_GrabMouseCursor( bool grabIt ) {
 		return;
 	}
 	
-	if ( glConfig.isFullscreen ) {
+	if ( engineWindowState.isFullscreen ) {
 		if ( !grabIt ) {
 			return; // never ungrab while fullscreen
 		}
@@ -481,10 +481,10 @@ void Posix_PollInput() {
 				} else {
 					// if it's a center motion, we've just returned from our warp
 					// FIXME: we generate mouse delta on wrap return, but that lags us quite a bit from the initial event..
-					if (event.xmotion.x == glConfig.vidWidth / 2 &&
-						event.xmotion.y == glConfig.vidHeight / 2) {
-						mwx = glConfig.vidWidth / 2;
-						mwy = glConfig.vidHeight / 2;
+					if (event.xmotion.x == engineWindowState.vidWidth / 2 &&
+						event.xmotion.y == engineWindowState.vidHeight / 2) {
+						mwx = engineWindowState.vidWidth / 2;
+						mwy = engineWindowState.vidHeight / 2;
 
 						Posix_QueEvent( SE_MOUSE, mx, my, 0, NULL);
 
@@ -502,7 +502,7 @@ void Posix_PollInput() {
 
 					mwx = event.xmotion.x;
 					mwy = event.xmotion.y;
-				    XWarpPointer(dpy,None,win,0,0,0,0, (glConfig.vidWidth/2),(glConfig.vidHeight/2));
+				    XWarpPointer(dpy,None,win,0,0,0,0, (engineWindowState.vidWidth/2),(engineWindowState.vidHeight/2));
 				}
 			break;
 		}

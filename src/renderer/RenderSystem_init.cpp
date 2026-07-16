@@ -1638,6 +1638,8 @@ void R_InitOpenGL( void ) {
 		} else {
 			R_GetWindowedModeInfo( &parms.width, &parms.height );
 		}
+		engineWindowState.vidWidth = parms.width;
+		engineWindowState.vidHeight = parms.height;
 		glConfig.vidWidth = parms.width;
 		glConfig.vidHeight = parms.height;
 		parms.borderless = !parms.hiddenWindow && !parms.fullScreen && r_borderless.GetBool();

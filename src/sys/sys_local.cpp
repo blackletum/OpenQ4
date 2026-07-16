@@ -40,6 +40,10 @@ idCVar sys_lang( "sys_lang", "english", CVAR_SYSTEM | CVAR_ARCHIVE,  "", sysLang
 idSysLocal			sysLocal;
 idSys *				sys = &sysLocal;
 
+// engine-owned window state; written by the platform window layer, read by
+// GUI/session code (see sys_public.h)
+engineWindowState_t	engineWindowState;
+
 static idStr Sys_FormatDecimalUnit( double value, const char *unit, int decimals ) {
 	char buffer[64];
 	idStr result;

@@ -390,6 +390,33 @@ void			Sys_ClearEvents( void );
 void			Sys_InitInput( void );
 void			Sys_ShutdownInput( void );
 
+
+/*
+===============================================================================
+
+	Engine-owned window state (Phase B5a of the renderer-module seam).
+
+	The platform window layer owns these fields; GUI/session code reads them
+	here instead of through the renderer's glConfig. Until the window seam
+	completes (B5b), the platform layer also mirrors each write into glConfig
+	so the statically-linked renderer keeps frame-exact values.
+
+===============================================================================
+*/
+
+typedef struct engineWindowState_s {
+	int			vidWidth;			// framebuffer pixel size
+	int			vidHeight;
+	int			uiViewportX;		// UI-safe viewport inside the framebuffer
+	int			uiViewportY;
+	int			uiViewportWidth;
+	int			uiViewportHeight;
+	int			displayFrequency;
+	bool		isFullscreen;
+} engineWindowState_t;
+
+extern engineWindowState_t engineWindowState;
+
 // window/context teardown owned by the platform layer; declared here so
 // framework code does not need renderer-internal headers to reach them
 void			GLimp_Shutdown( void );

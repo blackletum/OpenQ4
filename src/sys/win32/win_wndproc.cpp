@@ -271,6 +271,8 @@ LONG WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam ) {
 					int w = rect.right - rect.left;
 					int h = rect.bottom - rect.top;
 					if (w > 0 && h > 0) {
+						engineWindowState.vidWidth = w;
+						engineWindowState.vidHeight = h;
 						glConfig.vidWidth = w;
 						glConfig.vidHeight = h;
 					}

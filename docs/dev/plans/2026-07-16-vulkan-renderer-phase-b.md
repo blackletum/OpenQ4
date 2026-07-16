@@ -1,7 +1,7 @@
 # Vulkan Renderer Phase B: Renderer Extraction Stages
 
 Date: 2026-07-16
-Status: B1 landed (73bccf7a); B2-prep/B3 trampoline (a07c9ec1); B2 carve (04128897); B3 bakeLightGrids (79df21e3) — framework/ui/sound hold zero renderer-internal includes; B4 ABI v2 (24f84ae7); B6a dmap -draw retirement (9dbdaa5c); B6 render_geo carve landed — dmap compiles against src/render_geo only, dmap output byte-identical, shared lib is tr/cvar/vertexCache-free with renderer hooks. B7 redesigned per audit (null renderer infeasible; ded keeps the real front-end, GL-free link co-sequenced with B8). B5 and B8 open; B5 audit steps recorded below.
+Status: B1 landed (73bccf7a); B2-prep/B3 trampoline (a07c9ec1); B2 carve (04128897); B3 bakeLightGrids (79df21e3) — framework/ui/sound hold zero renderer-internal includes; B4 ABI v2 (24f84ae7); B6a dmap -draw retirement (9dbdaa5c); B6 render_geo carve landed — dmap compiles against src/render_geo only, dmap output byte-identical, shared lib is tr/cvar/vertexCache-free with renderer hooks. B7 redesigned per audit (null renderer infeasible; ded keeps the real front-end, GL-free link co-sequenced with B8). B5a landed — engine-owned engineWindowState_t (sys_public.h) carries vid/uiViewport/fullscreen window state with the platform layer dual-writing glConfig until B5b moves the mirror behind the module import; engine readers (ui, framework, sys) repointed. B5b (context-half extraction + two-phase handshake) and B8 open; B5 audit steps recorded below.
 
 Parent plan: [2026-07-16-vulkan-renderer.md](2026-07-16-vulkan-renderer.md). This staging plan was derived from a five-way symbol-level audit of engine/renderer coupling; file:line anchors reflect the tree at the audit commit (8bcdcdbf) and shift as stages land.
 

@@ -826,10 +826,10 @@ static bool SDL3_BuildGuiMouseTransform(sdl3GuiMouseTransform_t &transform) {
 	transform.pixelToWindowY = static_cast<float>(windowHeight) / static_cast<float>(pixelHeight);
 
 	// Match the fullscreen-2D viewport region (selected monitor on multi-monitor spans).
-	transform.drawAreaX = static_cast<float>(glConfig.uiViewportX);
-	transform.drawAreaY = static_cast<float>(glConfig.uiViewportY);
-	transform.drawAreaWidth = static_cast<float>(glConfig.uiViewportWidth);
-	transform.drawAreaHeight = static_cast<float>(glConfig.uiViewportHeight);
+	transform.drawAreaX = static_cast<float>(engineWindowState.uiViewportX);
+	transform.drawAreaY = static_cast<float>(engineWindowState.uiViewportY);
+	transform.drawAreaWidth = static_cast<float>(engineWindowState.uiViewportWidth);
+	transform.drawAreaHeight = static_cast<float>(engineWindowState.uiViewportHeight);
 
 	if (transform.drawAreaWidth <= 0.0f || transform.drawAreaHeight <= 0.0f) {
 		transform.drawAreaX = 0.0f;
@@ -3499,11 +3499,32 @@ static int SDL3_ClampViewportPixel(double value, int minValue, int maxValue) {
 	return static_cast<int>(value);
 }
 
+static void SDL3_SetUIViewport( int x, int y, int width, int height ) {
+	engineWindowState.uiViewportX = x;
+	engineWindowState.uiViewportY = y;
+	engineWindowState.uiViewportWidth = width;
+	engineWindowState.uiViewportHeight = height;
+	// mirrored until the B5b window seam moves glConfig module-side
+	glConfig.uiViewportX = x;
+	glConfig.uiViewportY = y;
+	glConfig.uiViewportWidth = width;
+	glConfig.uiViewportHeight = height;
+}
+
+static void SDL3_SetVidSize( int width, int height ) {
+	engineWindowState.vidWidth = width;
+	engineWindowState.vidHeight = height;
+	glConfig.vidWidth = width;
+	glConfig.vidHeight = height;
+}
+
+static void SDL3_SetFullscreenState( bool fullscreen ) {
+	engineWindowState.isFullscreen = fullscreen;
+	glConfig.isFullscreen = fullscreen;
+}
+
 static void SDL3_UpdateDisplayViewport(SDL_DisplayID display, int windowX, int windowY, int windowWidth, int windowHeight, int pixelWidth, int pixelHeight) {
-	glConfig.uiViewportX = 0;
-	glConfig.uiViewportY = 0;
-	glConfig.uiViewportWidth = pixelWidth;
-	glConfig.uiViewportHeight = pixelHeight;
+	SDL3_SetUIViewport( 0, 0, pixelWidth, pixelHeight );
 
 	if (windowWidth <= 0 || windowHeight <= 0 || pixelWidth <= 0 || pixelHeight <= 0) {
 		return;
@@ -3559,17 +3580,11 @@ static void SDL3_UpdateDisplayViewport(SDL_DisplayID display, int windowX, int w
 		return;
 	}
 
-	glConfig.uiViewportX = pixelLeft;
-	glConfig.uiViewportY = pixelTop;
-	glConfig.uiViewportWidth = viewportWidth;
-	glConfig.uiViewportHeight = viewportHeight;
+	SDL3_SetUIViewport( pixelLeft, pixelTop, viewportWidth, viewportHeight );
 }
 
 static void SDL3_UpdateFullWindowViewport(int pixelWidth, int pixelHeight) {
-	glConfig.uiViewportX = 0;
-	glConfig.uiViewportY = 0;
-	glConfig.uiViewportWidth = pixelWidth;
-	glConfig.uiViewportHeight = pixelHeight;
+	SDL3_SetUIViewport( 0, 0, pixelWidth, pixelHeight );
 }
 
 static void SDL3_RecordWindowedPlacement(int x, int y, int width, int height) {
@@ -3652,8 +3667,7 @@ static void SDL3_RefreshWindowPlacement(void) {
 	}
 
 	if (pixelWidth > 0 && pixelHeight > 0) {
-		glConfig.vidWidth = pixelWidth;
-		glConfig.vidHeight = pixelHeight;
+		SDL3_SetVidSize( pixelWidth, pixelHeight );
 	}
 
 	if (SDL3_UseAbsoluteWindowPlacement()) {
@@ -4028,7 +4042,7 @@ static bool SDL3_ApplyScreenParms(glimpParms_t parms) {
 	}
 
 	win32.cdsFullscreen = parms.fullScreen;
-	glConfig.isFullscreen = parms.fullScreen;
+	SDL3_SetFullscreenState( parms.fullScreen );
 
 	if (parms.hiddenWindow) {
 		if (!SDL_HideWindow(s_sdlWindow)) {
@@ -4227,7 +4241,7 @@ static void SDL3_HandleWindowEvent(const SDL_WindowEvent &event, int eventTime) 
 			// Window menu) never pass through the engine's screen-parm path;
 			// keep derived state consistent with the actual window so
 			// placement persistence and cursor routing behave.
-			glConfig.isFullscreen = (event.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN) || win32.cdsFullscreen;
+			SDL3_SetFullscreenState( (event.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN) || win32.cdsFullscreen );
 			SDL3_RefreshWindowPlacement();
 			SDL3_InvalidateMenuMouseRouting();
 			SDL3_UpdateCursorVisibility();
@@ -5843,7 +5857,7 @@ void GLimp_Shutdown(void) {
 	win32.hGLRC = NULL;
 	if (!preserveWindow) {
 		win32.cdsFullscreen = false;
-		glConfig.isFullscreen = false;
+		SDL3_SetFullscreenState( false );
 	}
 
 	SDL3_ClearInputQueues();

@@ -4807,11 +4807,11 @@ void idCommonLocal::PrintLoadingMessage( const char *msg ) {
 	float textScaleX = 1.0f;
 	float textScaleY = 1.0f;
 
-	float viewportWidth = static_cast<float>( glConfig.uiViewportWidth );
-	float viewportHeight = static_cast<float>( glConfig.uiViewportHeight );
+	float viewportWidth = static_cast<float>( engineWindowState.uiViewportWidth );
+	float viewportHeight = static_cast<float>( engineWindowState.uiViewportHeight );
 	if ( viewportWidth <= 0.0f || viewportHeight <= 0.0f ) {
-		viewportWidth = static_cast<float>( glConfig.vidWidth );
-		viewportHeight = static_cast<float>( glConfig.vidHeight );
+		viewportWidth = static_cast<float>( engineWindowState.vidWidth );
+		viewportHeight = static_cast<float>( engineWindowState.vidHeight );
 	}
 
 	if ( viewportWidth > 0.0f && viewportHeight > 0.0f ) {

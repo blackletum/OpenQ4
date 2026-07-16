@@ -321,11 +321,11 @@ static void openQ4_SetRetailVirtualTransform( float width, float height, q4Virtu
 }
 
 static bool openQ4_GetCurrentViewportSize( float &windowWidth, float &windowHeight ) {
-	windowWidth = static_cast<float>( glConfig.uiViewportWidth );
-	windowHeight = static_cast<float>( glConfig.uiViewportHeight );
+	windowWidth = static_cast<float>( engineWindowState.uiViewportWidth );
+	windowHeight = static_cast<float>( engineWindowState.uiViewportHeight );
 	if ( windowWidth <= 0.0f || windowHeight <= 0.0f ) {
-		windowWidth = static_cast<float>( glConfig.vidWidth );
-		windowHeight = static_cast<float>( glConfig.vidHeight );
+		windowWidth = static_cast<float>( engineWindowState.vidWidth );
+		windowHeight = static_cast<float>( engineWindowState.vidHeight );
 	}
 	return windowWidth > 0.0f && windowHeight > 0.0f;
 }
@@ -1371,11 +1371,11 @@ void idDeviceContext::GetCinematic16x9Bars( float width, float height, idRectang
 }
 
 float idDeviceContext::GetCanvasAspect() const {
-	float windowWidth = static_cast<float>( glConfig.uiViewportWidth );
-	float windowHeight = static_cast<float>( glConfig.uiViewportHeight );
+	float windowWidth = static_cast<float>( engineWindowState.uiViewportWidth );
+	float windowHeight = static_cast<float>( engineWindowState.uiViewportHeight );
 	if ( windowWidth <= 0.0f || windowHeight <= 0.0f ) {
-		windowWidth = static_cast<float>( glConfig.vidWidth );
-		windowHeight = static_cast<float>( glConfig.vidHeight );
+		windowWidth = static_cast<float>( engineWindowState.vidWidth );
+		windowHeight = static_cast<float>( engineWindowState.vidHeight );
 	}
 
 	if ( windowWidth <= 0.0f || windowHeight <= 0.0f ) {

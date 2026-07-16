@@ -671,6 +671,7 @@ static bool GLW_CreateWindow( glimpParms_t parms ) {
 	SetForegroundWindow( win32.hWnd );
 	SetFocus( win32.hWnd );
 
+	engineWindowState.isFullscreen = parms.fullScreen;
 	glConfig.isFullscreen = parms.fullScreen;
 
 	return true;
@@ -914,6 +915,7 @@ bool GLimp_SetScreenParms( glimpParms_t parms ) {
 	}
 
 	win32.cdsFullscreen = parms.fullScreen;
+	engineWindowState.isFullscreen = parms.fullScreen;
 	glConfig.isFullscreen = parms.fullScreen;
 
 	if ( parms.fullScreen ) {
