@@ -136,6 +136,15 @@ def validate_posix_wrapper_refresh(work: Path) -> None:
     if result.returncode != 0:
         raise AssertionError(f"initial GameLibs stage failed: {result.stderr}")
 
+    # Simulate a mounted filesystem that loses copied source timestamps. The
+    # staged manifest still proves the files are identical, so the wrapper
+    # must not needlessly reconfigure Meson.
+    stale_stage_mtime_ns = baseline_mtime_ns - 2_000_000_000
+    for module_name in ("game", "mpgame"):
+        for staged_file in (stage_root / "src" / module_name).rglob("*"):
+            if staged_file.is_file():
+                os.utime(staged_file, ns=(stale_stage_mtime_ns, stale_stage_mtime_ns))
+
     build_dir = project_root / "builddir"
     write_file(build_dir / "meson-private" / "coredata.dat", "test\n")
     write_file(build_dir / "build.ninja", "# test\n")
@@ -250,7 +259,8 @@ def validate_source_contracts() -> None:
         '"${repo_root}/.tmp/gamelibs_stage/src/game"',
         '"${repo_root}/.tmp/gamelibs_stage/src/mpgame"',
         "latest_file_mtime_ns",
-        "source_latest > staged_latest",
+        "manifest_hashes",
+        "if source_latest <= staged_latest:",
         "run_meson setup --reconfigure",
     ):
         if token not in shell_wrapper:

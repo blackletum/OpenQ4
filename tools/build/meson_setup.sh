@@ -269,14 +269,12 @@ if source_latest is None:
     raise SystemExit(1)
 if staged_latest is None:
     raise SystemExit(0)
-# Some mounted filesystems round copy timestamps down to whole seconds. Avoid
-# treating that copy precision loss as a source edit. Files in the ambiguous
-# interval are checked against the staging manifest so a real edit is not lost.
-timestamp_copy_tolerance_ns = 1_000_000_000
+# The normal copy2 path preserves timestamps, so this avoids hashing GameLibs
+# on the common no-change path. When a filesystem loses timestamp precision,
+# verify potentially newer files against the staging manifest instead of
+# treating a timestamp gap as a source edit.
 if source_latest <= staged_latest:
     raise SystemExit(1)
-if source_latest > staged_latest + timestamp_copy_tolerance_ns:
-    raise SystemExit(0)
 
 try:
     manifest = json.loads(
