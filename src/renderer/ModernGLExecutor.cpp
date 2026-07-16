@@ -1599,6 +1599,21 @@ static void R_ModernGLExecutor_RecomputeModernVisibleFallbacks( modernGLExecutor
 	stats.modernVisibleCompatibilityReady = true;
 }
 
+// Post categories tracked as graph-visible but legacy-owned. Single source of
+// truth for both the ownership inventory and the compatibility self-test, so
+// retiring a category (e.g. RENDER_PASS_LENS_FLARE) keeps them in sync.
+static bool R_ModernGLExecutor_IsPostGraphPassCategory( renderPassCategory_t category ) {
+	switch ( category ) {
+	case RENDER_PASS_SSAO:
+	case RENDER_PASS_MOTION_BLUR:
+	case RENDER_PASS_BLOOM:
+	case RENDER_PASS_AUTHORED_POST:
+		return true;
+	default:
+		return false;
+	}
+}
+
 static void R_ModernGLExecutor_CountModernVisibleOwner( const renderGraphPass_t &pass, modernGLExecutorStats_t &stats ) {
 	if ( !stats.modernVisibleRequested ) {
 		return;
@@ -1638,13 +1653,6 @@ static void R_ModernGLExecutor_CountModernVisibleOwner( const renderGraphPass_t 
 			stats.modernVisibleGuiModernPasses++;
 		}
 		break;
-	case RENDER_PASS_SSAO:
-	case RENDER_PASS_MOTION_BLUR:
-	case RENDER_PASS_BLOOM:
-	case RENDER_PASS_AUTHORED_POST:
-		stats.modernVisiblePostGraphPasses++;
-		modernOwned = false;
-		break;
 	case RENDER_PASS_SPECIAL_EFFECTS:
 		stats.modernVisibleBSEFallbackPasses++;
 		modernOwned = false;
@@ -1654,6 +1662,9 @@ static void R_ModernGLExecutor_CountModernVisibleOwner( const renderGraphPass_t 
 		stats.modernVisiblePresentPasses++;
 		break;
 	default:
+		if ( R_ModernGLExecutor_IsPostGraphPassCategory( pass.category ) ) {
+			stats.modernVisiblePostGraphPasses++;
+		}
 		modernOwned = false;
 		break;
 	}
@@ -10272,12 +10283,16 @@ bool RendererModernCompatibility_RunSelfTest( void ) {
 		RENDER_PASS_SPECIAL_EFFECTS,
 		RENDER_PASS_PRESENT
 	};
+	int expectedPostGraphPasses = 0;
 	for ( int i = 0; i < sizeof( commandPasses ) / sizeof( commandPasses[0] ); ++i ) {
 		if ( !packetFrame.AddScene( NULL, true ) || !packetFrame.AddPass( commandPasses[i], true, true ) ) {
 			common->Printf( "RendererModernCompatibility self-test failed: could not add %s command pass\n", RenderPassCategory_Name( commandPasses[i] ) );
 			return false;
 		}
 		packetFrame.FinishScene();
+		if ( R_ModernGLExecutor_IsPostGraphPassCategory( commandPasses[i] ) ) {
+			expectedPostGraphPasses++;
+		}
 	}
 
 	idRenderGraph graph;
@@ -10318,10 +10333,11 @@ bool RendererModernCompatibility_RunSelfTest( void ) {
 			stats.modernVisibleGuiFallbackDraws );
 		return false;
 	}
-	if ( stats.modernVisiblePostGraphPasses < 5 || stats.modernVisiblePostFallbackPasses <= 0 || stats.modernVisibleCopyRenderFallbackPasses <= 0 ) {
+	if ( expectedPostGraphPasses <= 0 || stats.modernVisiblePostGraphPasses != expectedPostGraphPasses || stats.modernVisiblePostFallbackPasses <= 0 || stats.modernVisibleCopyRenderFallbackPasses <= 0 ) {
 		common->Printf(
-			"RendererModernCompatibility self-test failed: post ownership mismatch (graph=%d fallback=%d copy=%d)\n",
+			"RendererModernCompatibility self-test failed: post ownership mismatch (graph=%d expected=%d fallback=%d copy=%d)\n",
 			stats.modernVisiblePostGraphPasses,
+			expectedPostGraphPasses,
 			stats.modernVisiblePostFallbackPasses,
 			stats.modernVisibleCopyRenderFallbackPasses );
 		return false;
