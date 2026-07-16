@@ -1356,6 +1356,7 @@ idFile_InZip::idFile_InZip( void ) {
 	name = "invalid";
 	zipFilePos = 0;
 	fileSize = 0;
+	containerChecksum = 0;
 	memset( &z, 0, sizeof( z ) );
 }
 

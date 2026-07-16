@@ -37,7 +37,7 @@ idCVar image_usePrecompressedTextures(
 	"image_usePrecompressedTextures",
 	"1",
 	CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
-	"automatic DDS texture replacements: 0 = off, 1 = any supported DDS format, 2 = BC7/BPTC DDS only; dhewm3-compatible replacements belong under dds/",
+	"automatic DDS texture replacements: 0 = off, 1 = stock progimg plus supported DDS formats, 2 = BC7/BPTC DDS only; custom dhewm3-compatible replacements belong under dds/",
 	0,
 	2 );
 
@@ -652,6 +652,7 @@ enum ddsStoredFormat_t {
 	DDS_STORED_FORMAT_INVALID,
 	DDS_STORED_FORMAT_DXT1,
 	DDS_STORED_FORMAT_DXT5,
+	DDS_STORED_FORMAT_RXGB,
 	DDS_STORED_FORMAT_BC7
 };
 
@@ -669,6 +670,7 @@ static int R_DDSBlockSizeForStoredFormat( ddsStoredFormat_t format ) {
 		case DDS_STORED_FORMAT_DXT1:
 			return 8;
 		case DDS_STORED_FORMAT_DXT5:
+		case DDS_STORED_FORMAT_RXGB:
 		case DDS_STORED_FORMAT_BC7:
 			return 16;
 		default:
@@ -780,6 +782,8 @@ static bool R_ParseDDSFileInfo( const byte *header, int headerBytes, int fileSiz
 		format = DDS_STORED_FORMAT_DXT1;
 	} else if ( fourCC == R_MakeFourCC( 'D', 'X', 'T', '5' ) ) {
 		format = DDS_STORED_FORMAT_DXT5;
+	} else if ( fourCC == R_MakeFourCC( 'R', 'X', 'G', 'B' ) ) {
+		format = DDS_STORED_FORMAT_RXGB;
 	} else if ( fourCC == R_MakeFourCC( 'D', 'X', '1', '0' ) ) {
 		if ( headerBytes < DDS_HEADER_BYTES + DDS_DXT10_HEADER_BYTES || fileSize < DDS_HEADER_BYTES + DDS_DXT10_HEADER_BYTES ) {
 			return false;
@@ -910,6 +914,90 @@ static void R_ImageProgramToCompressedFileName( const char *imageProgram, idStr 
 	fileName.ToLower();
 }
 
+/*
+=============
+R_ImageProgramToRetailCompressedFileName
+
+Quake 4 ships precomputed image-program results below progimg/. The retail
+name encoding differs from Doom 3/dhewm3's dds/ convention: the outer
+function becomes a directory, nested functions use a double underscore, and
+arguments are joined with single underscores.
+=============
+*/
+static void R_ImageProgramToRetailCompressedFileName( const char *imageProgram, idStr &fileName ) {
+	fileName = "progimg/";
+	const char *s = imageProgram;
+
+	// A leading chain of image-program operators becomes directories. For
+	// example downsize(addnormals(...), 1) starts with
+	// progimg/downsize/addnormals/.
+	while ( s != NULL ) {
+		while ( *s == ' ' || *s == '\t' || *s == '\r' || *s == '\n' ) {
+			s++;
+		}
+		const char *operatorStart = s;
+		while ( idStr::CharIsAlpha( (byte)*s ) || idStr::CharIsNumeric( (byte)*s ) || *s == '_' ) {
+			s++;
+		}
+		const char *operatorEnd = s;
+		while ( *s == ' ' || *s == '\t' || *s == '\r' || *s == '\n' ) {
+			s++;
+		}
+		if ( operatorEnd == operatorStart || *s != '(' ) {
+			s = operatorStart;
+			break;
+		}
+		fileName.Append( operatorStart, operatorEnd - operatorStart );
+		fileName += "/";
+		s++;
+	}
+
+	int nestedParenthesisDepth = 0;
+	for ( ; s != NULL && *s != '\0'; s++ ) {
+		const char c = *s;
+		if ( c == '(' ) {
+			nestedParenthesisDepth++;
+			fileName += "__";
+		} else if ( c == ')' ) {
+			if ( nestedParenthesisDepth > 0 ) {
+				nestedParenthesisDepth--;
+			}
+		} else if ( c == ',' ) {
+			fileName += "_";
+		} else if ( c == ' ' || c == '\t' || c == '\r' || c == '\n' ) {
+			continue;
+		} else if ( c == '/' || c == '\\' ) {
+			fileName += nestedParenthesisDepth == 0 ? "/" : "_";
+		} else if ( c == '.' &&
+				( idStr::Icmpn( s, ".tga", 4 ) == 0 ||
+				  idStr::Icmpn( s, ".jpg", 4 ) == 0 ||
+				  idStr::Icmpn( s, ".dds", 4 ) == 0 ) ) {
+			s += 3;
+		} else {
+			fileName.Append( c );
+		}
+	}
+
+	fileName += ".dds";
+	fileName.BackSlashesToSlashes();
+	fileName.ToLower();
+}
+
+static bool R_ImageHasRetailProgramDDSName( const char *imageProgram ) {
+	if ( imageProgram == NULL || imageProgram[0] == '\0' ) {
+		return false;
+	}
+	if ( strchr( imageProgram, '(' ) != NULL ) {
+		return true;
+	}
+
+	// Retail cube sides are stored as plain progimg/gfx/env/... DDS files.
+	idStr sourceName = imageProgram;
+	sourceName.BackSlashesToSlashes();
+	sourceName.ToLower();
+	return sourceName.IcmpPrefix( "gfx/env/" ) == 0;
+}
+
 static bool R_TryResolvePreferredDDSImageSource( const idStr &candidateName, idStr &ddsName, ID_TIME_T *timestamp, bool allowPrecompressedDDS, bool *precompressedDDS ) {
 	ID_TIME_T ddsTimestamp = FILE_NOT_FOUND_TIMESTAMP;
 	ddsFileInfo_t info;
@@ -918,7 +1006,9 @@ static bool R_TryResolvePreferredDDSImageSource( const idStr &candidateName, idS
 	}
 	const int usePrecompressedTextures = image_usePrecompressedTextures.GetInteger();
 
-	if ( info.format == DDS_STORED_FORMAT_DXT1 || info.format == DDS_STORED_FORMAT_DXT5 ) {
+	if ( info.format == DDS_STORED_FORMAT_DXT1 ||
+		 info.format == DDS_STORED_FORMAT_DXT5 ||
+		 info.format == DDS_STORED_FORMAT_RXGB ) {
 		if ( usePrecompressedTextures >= 2 ) {
 			return false;
 		}
@@ -967,6 +1057,14 @@ bool R_ResolvePreferredDDSImageSource( const char *cname, idStr &ddsName, ID_TIM
 
 	if ( image_usePrecompressedTextures.GetInteger() <= 0 ) {
 		return false;
+	}
+
+	if ( R_ImageHasRetailProgramDDSName( cname ) ) {
+		idStr retailDDSName;
+		R_ImageProgramToRetailCompressedFileName( cname, retailDDSName );
+		if ( R_TryResolvePreferredDDSImageSource( retailDDSName, ddsName, timestamp, allowPrecompressedDDS, precompressedDDS ) ) {
+			return true;
+		}
 	}
 
 	idStr canonicalDDSName;
@@ -1050,7 +1148,9 @@ bool R_LoadPrecompressedDDS( const char *cname, idBinaryImage &image, ID_TIME_T 
 			idLib::Warning( "Image file '%s' uses BC7/BPTC DDS data, but this OpenGL renderer does not support GL_ARB_texture_compression_bptc", name.c_str() );
 			break;
 		}
-		if ( ( info.format == DDS_STORED_FORMAT_DXT1 || info.format == DDS_STORED_FORMAT_DXT5 ) && !glConfig.textureCompressionAvailable ) {
+		if ( ( info.format == DDS_STORED_FORMAT_DXT1 ||
+			   info.format == DDS_STORED_FORMAT_DXT5 ||
+			   info.format == DDS_STORED_FORMAT_RXGB ) && !glConfig.textureCompressionAvailable ) {
 			break;
 		}
 
@@ -1077,6 +1177,7 @@ bool R_LoadPrecompressedDDS( const char *cname, idBinaryImage &image, ID_TIME_T 
 				textureFormat = FMT_DXT1;
 				break;
 			case DDS_STORED_FORMAT_DXT5:
+			case DDS_STORED_FORMAT_RXGB:
 				textureFormat = FMT_DXT5;
 				break;
 			case DDS_STORED_FORMAT_BC7:
@@ -1089,7 +1190,9 @@ bool R_LoadPrecompressedDDS( const char *cname, idBinaryImage &image, ID_TIME_T 
 			break;
 		}
 
-		const bool rxgbNormal = usage == TD_BUMP && ( textureFormat == FMT_DXT5 || textureFormat == FMT_BC7 );
+		const bool rxgbNormal =
+			info.format == DDS_STORED_FORMAT_RXGB ||
+			( usage == TD_BUMP && ( textureFormat == FMT_DXT5 || textureFormat == FMT_BC7 ) );
 		const textureColor_t colorFormat = rxgbNormal ? CFM_NORMAL_DXT5 : CFM_DEFAULT;
 		image.Load2DFromCompressedData( selectedWidth, selectedHeight, selectedLevels, textureFormat, colorFormat,
 			buffer, levelOffsets.Ptr() + firstLevel, levelSizes.Ptr() + firstLevel );
@@ -1128,6 +1231,27 @@ bool R_ImageDDS_RunSelfTest() {
 		}
 	}
 
+	const imageProgramNameCase_t retailNameCases[] = {
+		{ "gfx/env/act_2/act2_forward.tga", "progimg/gfx/env/act_2/act2_forward.dds" },
+		{ "downsize( models/mapobjects/strogg/stroggos/clouds, 1)", "progimg/downsize/models/mapobjects/strogg/stroggos/clouds_1.dds" },
+		{ "makealpha( gfx/effects/armorvieweffect2)", "progimg/makealpha/gfx/effects/armorvieweffect2.dds" },
+		{ "heightmap( textures/rock/rock05a_h.tga, 8)", "progimg/heightmap/textures/rock/rock05a_h_8.dds" },
+		{ "addnormals( models/mapobjects/strogg/stroggos/stroggos_local, heightmap( models/mapobjects/strogg/stroggos/stroggos_h, 8))",
+		  "progimg/addnormals/models/mapobjects/strogg/stroggos/stroggos_local_heightmap__models_mapobjects_strogg_stroggos_stroggos_h_8.dds" },
+		{ "downsize( addnormals( models/vehicles/marine_fighter/marine_fighter_local, heightmap( models/vehicles/marine_fighter/marine_fighter_h, 2)), 1)",
+		  "progimg/downsize/addnormals/models/vehicles/marine_fighter/marine_fighter_local_heightmap__models_vehicles_marine_fighter_marine_fighter_h_2_1.dds" }
+	};
+
+	for ( int i = 0; i < (int)( sizeof( retailNameCases ) / sizeof( retailNameCases[0] ) ); i++ ) {
+		idStr actualDDSName;
+		R_ImageProgramToRetailCompressedFileName( retailNameCases[i].imageProgram, actualDDSName );
+		if ( actualDDSName.Icmp( retailNameCases[i].expectedDDSName ) != 0 ) {
+			common->Warning( "Image DDS self-test failed: retail '%s' mapped to '%s' instead of '%s'",
+				retailNameCases[i].imageProgram, actualDDSName.c_str(), retailNameCases[i].expectedDDSName );
+			return false;
+		}
+	}
+
 	byte header[ DDS_HEADER_BYTES + DDS_DXT10_HEADER_BYTES ];
 	memset( header, 0, sizeof( header ) );
 	R_WriteLittleUInt32( header + 0, R_MakeFourCC( 'D', 'D', 'S', ' ' ) );
@@ -1161,6 +1285,23 @@ bool R_ImageDDS_RunSelfTest() {
 	R_WriteLittleUInt32( header + DDS_HEADER_BYTES + 12, 1 );
 	if ( R_ParseDDSFileInfo( header, sizeof( header ), completeFileSize - 1, info ) ) {
 		common->Warning( "Image DDS self-test failed: truncated BC7 mip data was accepted" );
+		return false;
+	}
+
+	memset( header, 0, DDS_HEADER_BYTES );
+	R_WriteLittleUInt32( header + 0, R_MakeFourCC( 'D', 'D', 'S', ' ' ) );
+	R_WriteLittleUInt32( header + 4, 124 );
+	R_WriteLittleUInt32( header + 8, DDS_HEADER_FLAG_MIPMAPCOUNT );
+	R_WriteLittleUInt32( header + 12, 4 );
+	R_WriteLittleUInt32( header + 16, 4 );
+	R_WriteLittleUInt32( header + 28, 3 );
+	R_WriteLittleUInt32( header + 76, 32 );
+	R_WriteLittleUInt32( header + 80, DDS_PIXELFORMAT_FOURCC );
+	R_WriteLittleUInt32( header + 84, R_MakeFourCC( 'R', 'X', 'G', 'B' ) );
+	const int completeRXGBFileSize = DDS_HEADER_BYTES + 16 + 16 + 16;
+	if ( !R_ParseDDSFileInfo( header, DDS_HEADER_BYTES, completeRXGBFileSize, info ) ||
+		 info.format != DDS_STORED_FORMAT_RXGB || info.numLevels != 3 ) {
+		common->Warning( "Image DDS self-test failed: valid retail RXGB metadata was rejected" );
 		return false;
 	}
 
@@ -1217,6 +1358,7 @@ static void LoadDDS( const char *name, byte **pic, int *width, int *height, ID_T
 		DDS_COMPRESSION_DXT1,
 		DDS_COMPRESSION_DXT5
 	} compression;
+	bool storedRXGBNormalMap = false;
 
 	if ( fourCC == R_MakeFourCC( 'D', 'X', 'T', '1' ) ) {
 		blockSize = 8;
@@ -1224,6 +1366,10 @@ static void LoadDDS( const char *name, byte **pic, int *width, int *height, ID_T
 	} else if ( fourCC == R_MakeFourCC( 'D', 'X', 'T', '5' ) ) {
 		blockSize = 16;
 		compression = DDS_COMPRESSION_DXT5;
+	} else if ( fourCC == R_MakeFourCC( 'R', 'X', 'G', 'B' ) ) {
+		blockSize = 16;
+		compression = DDS_COMPRESSION_DXT5;
+		storedRXGBNormalMap = true;
 	} else {
 		fileSystem->FreeFile( buffer );
 		return;
@@ -1254,7 +1400,7 @@ static void LoadDDS( const char *name, byte **pic, int *width, int *height, ID_T
 	idDxtDecoder decoder;
 	if ( compression == DDS_COMPRESSION_DXT1 ) {
 		decoder.DecompressImageDXT1( buffer + dataOffset, decodedRgba, paddedWidth, paddedHeight );
-	} else if ( decodeRXGBNormalMap ) {
+	} else if ( storedRXGBNormalMap || decodeRXGBNormalMap ) {
 		decoder.DecompressNormalMapDXT5( buffer + dataOffset, decodedRgba, paddedWidth, paddedHeight );
 	} else {
 		decoder.DecompressImageDXT5( buffer + dataOffset, decodedRgba, paddedWidth, paddedHeight );

@@ -124,6 +124,7 @@ Packaged support currently focuses on Windows, Linux x64, Steam Deck/SteamOS, pr
 - [Shadow Mapping](docs/user/shadow-mapping.md) - optional shadow-map settings and troubleshooting
 - [Light Grids](docs/user/light-grids.md) - advanced lighting guide for players and testers
 - [DDS Texture Replacements](docs/user/texture-replacements.md) - install and diagnose DXT/BC7 texture packs
+- [Level-Load Cache](docs/user/level-load-cache.md) - generated animation cache behavior, controls, and cleanup
 
 ### Build and technical docs
 

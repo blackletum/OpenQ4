@@ -42,7 +42,8 @@ generation.
 */
 class idBinaryImage {
 public:
-	idBinaryImage( const char * name ) : imgName( name ) { }
+	idBinaryImage( const char * name ) : imgName( name ), loadedFileData( NULL ) { }
+	~idBinaryImage() { Clear(); }
 
 	const char *		GetName() const { return imgName.c_str(); }
 	void				SetName( const char *_name ) { imgName = _name; }
@@ -55,7 +56,7 @@ public:
 	ID_TIME_T			LoadFromGeneratedFile( ID_TIME_T sourceFileTime );
 	ID_TIME_T			LoadFromGeneratedFileUnchecked();
 	ID_TIME_T			WriteGeneratedFile( ID_TIME_T sourceFileTime );
-	bool				LoadFromFile( idFile *file );
+	bool				LoadFromFile( idFile *file, int dataBytes = -1 );
 	bool				WriteToFile( idFile *file, ID_TIME_T sourceFileTime );
 
 	const bimageFile_t &	GetFileHeader() const { return fileData; }
@@ -71,8 +72,9 @@ private:
 	class idBinaryImageData : public bimageImage_t {
 	public:
 		byte * data;
+		bool ownsData;
 
-		idBinaryImageData() : data( NULL ) { }
+		idBinaryImageData() : data( NULL ), ownsData( false ) { }
 		~idBinaryImageData() { Free(); }
 		idBinaryImageData & operator=( const idBinaryImageData & other ) {
 			if ( this == &other ) {
@@ -92,11 +94,12 @@ private:
 			return *this;
 		}
 		void Free() {
-			if ( data != NULL ) {
+			if ( data != NULL && ownsData ) {
 				Mem_Free( data );
-				data = NULL;
-				dataSize = 0;
 			}
+			data = NULL;
+			dataSize = 0;
+			ownsData = false;
 		}
 		void Alloc( int size ) {
 			Free();
@@ -105,14 +108,22 @@ private:
 			}
 			dataSize = size;
 			data = (byte *)Mem_Alloc( size );
+			ownsData = true;
+		}
+		void SetExternalData( byte *externalData, int size ) {
+			Free();
+			data = externalData;
+			dataSize = size;
+			ownsData = false;
 		}
 	};
 
 	idList< idBinaryImageData> images;
+	byte *				loadedFileData;
 
 private:
 	void				MakeGeneratedFileName( idStr & gfn );
-	bool				LoadFromGeneratedFile( idFile * f, ID_TIME_T sourceFileTime, bool validateSourceFileTime );
+	bool				LoadFromGeneratedFile( idFile * f, ID_TIME_T sourceFileTime, bool validateSourceFileTime, int dataBytes = -1 );
 };
 
 #endif // __BINARYIMAGE_H__

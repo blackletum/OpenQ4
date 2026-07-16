@@ -69,6 +69,7 @@ jobs:
             tools/tests/filesystem_mod_manifest.py \
             tools/tests/game_class_allocator_alignment.py \
             tools/tests/gamelibs_staging.py \
+            tools/tests/generated_animation_cache.py \
             tools/tests/hdr_postprocess_math.py \
             tools/tests/linux_arm64_cross_compile.py \
             tools/tests/linux_arm64_ci_coverage.py \
@@ -152,6 +153,7 @@ jobs:
           python tools/tests/filesystem_mod_manifest.py
           python tools/tests/game_class_allocator_alignment.py
           python tools/tests/gamelibs_staging.py
+          python tools/tests/generated_animation_cache.py
           python tools/tests/hdr_postprocess_math.py
           python tools/tests/linux_arm64_cross_compile.py
           python tools/tests/linux_arm64_ci_coverage.py

@@ -271,6 +271,7 @@ Generated on 2026-04-19.
 | `r_lightGridBakeMemoryMB` | src/renderer/RenderSystem_init.cpp:232 |
 | `r_lightGridBakeReadbackSlots` | src/renderer/RenderSystem_init.cpp:233 |
 | `r_lightGridBakeWorkers` | src/renderer/RenderSystem_init.cpp:230 |
+| `r_lightGridPreload` | src/renderer/RenderSystem_init.cpp:488 |
 | `r_logFile` | src/renderer/RenderSystem_init.cpp:258 |
 | `r_maxDisplayRefresh` | src/sys/osx/macosx_glimp.mm:47 |
 | `r_minDisplayRefresh` | src/sys/osx/macosx_glimp.mm:46 |

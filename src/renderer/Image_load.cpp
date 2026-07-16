@@ -384,6 +384,18 @@ name contains GetName() upon entry
 	}
 }
 
+static bool R_IsPreferredDDSStale( const idStr &preferredDDSName, ID_TIME_T preferredDDSFileTime, ID_TIME_T originalSourceTime ) {
+	if ( originalSourceTime == FILE_NOT_FOUND_TIMESTAMP || preferredDDSFileTime >= originalSourceTime ) {
+		return false;
+	}
+
+	// Retail PK4 timestamps can differ by one or two ZIP timestamp quanta even
+	// though progimg/ and its source were produced together. Loose overrides
+	// remain strict once they exceed that narrow stock-archive allowance.
+	const bool retailProgramDDS = preferredDDSName.IcmpPrefix( "progimg/" ) == 0;
+	return !retailProgramDDS || originalSourceTime - preferredDDSFileTime > 4;
+}
+
 /*
 ===============
 ActuallyLoadImage
@@ -462,7 +474,7 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 	if ( preferredDDSImage && !fileSystem->InProductionMode() ) {
 		ID_TIME_T originalSourceTime = FILE_NOT_FOUND_TIMESTAMP;
 		R_LoadImageProgram( GetName(), NULL, NULL, NULL, &originalSourceTime, &usage );
-		if ( originalSourceTime != FILE_NOT_FOUND_TIMESTAMP && preferredDDSFileTime < originalSourceTime ) {
+		if ( R_IsPreferredDDSStale( preferredDDSName, preferredDDSFileTime, originalSourceTime ) ) {
 			if ( cvarSystem->GetCVarBool( "image_showPrecompressedTextures" ) ) {
 				common->Printf( "Ignoring stale DDS replacement %s for %s\n", preferredDDSName.c_str(), GetName() );
 			}
@@ -1472,7 +1484,7 @@ void idImage::Reload( bool force ) {
 				if ( !fileSystem->InProductionMode() ) {
 					R_LoadImageProgram( imgName, NULL, NULL, NULL, &originalSourceTime );
 				}
-				if ( originalSourceTime != FILE_NOT_FOUND_TIMESTAMP && preferredDDSFileTime < originalSourceTime ) {
+				if ( R_IsPreferredDDSStale( preferredDDSName, preferredDDSFileTime, originalSourceTime ) ) {
 					current = originalSourceTime;
 				} else {
 					current = preferredDDSFileTime;

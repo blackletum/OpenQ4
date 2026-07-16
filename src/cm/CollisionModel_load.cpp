@@ -685,6 +685,8 @@ void idCollisionModelManagerLocal::FreeModelMemory( idCollisionModelLocal *model
 	model->isTrmModel = false;
 }
 
+static void CM_ReleaseRenderModelReference( idCollisionModelLocal *model );
+
 void idCollisionModelManagerLocal::FreeModel( idCollisionModel *_model ) {
 	idCollisionModelLocal* model = (idCollisionModelLocal*)_model;
 	if ( model == NULL ) {
@@ -704,9 +706,7 @@ void idCollisionModelManagerLocal::FreeModel( idCollisionModel *_model ) {
 		return;
 	}
 
-	if ( IsRenderModelName( model->name.c_str() ) && model->refCount > 0 ) {
-		model->refCount--;
-	}
+	CM_ReleaseRenderModelReference( model );
 }
 
 /*
@@ -3716,8 +3716,17 @@ static void CM_AddRenderModelReference( idCollisionModelLocal *model ) {
 	if ( model == NULL ) {
 		return;
 	}
-	if ( CM_IsRenderModelName( model->name.c_str() ) && model->refCount > 0 ) {
+	if ( CM_IsRenderModelName( model->name.c_str() ) ) {
 		model->refCount++;
+	}
+}
+
+static void CM_ReleaseRenderModelReference( idCollisionModelLocal *model ) {
+	if ( model == NULL ) {
+		return;
+	}
+	if ( CM_IsRenderModelName( model->name.c_str() ) && model->refCount > 0 ) {
+		model->refCount--;
 	}
 }
 
@@ -4170,29 +4179,11 @@ idCollisionModelManagerLocal::PreCacheModel
 ==================
 */
 void idCollisionModelManagerLocal::PreCacheModel( const char *mapName, const char *modelName ) {
-	idStr fullModelName;
-	idCollisionModelLocal *handle;
-
-	const char *fullName = GetFullModelName( mapName, modelName, fullModelName );
-	handle = static_cast<idCollisionModelLocal *>( FindModel( fullName ) );
-	if ( handle != NULL && handle->fileTime != static_cast<ID_TIME_T>( -1 ) ) {
-		return;
-	}
-	handle = FindEquivalentRenderModel( fullName );
-	if ( handle != NULL ) {
-		return;
-	}
-
-	if ( LoadModel( mapName, fullName, true ) != NULL ) {
-		handle = static_cast<idCollisionModelLocal *>( FindModel( fullName ) );
-		if ( handle == NULL || handle->fileTime == static_cast<ID_TIME_T>( -1 ) ) {
-			handle = FindEquivalentRenderModel( fullName );
-		}
-		if ( handle != NULL && handle->fileTime != static_cast<ID_TIME_T>( -1 ) ) {
-			return;
-		}
-		common->Warning( "idCollisionModelManagerLocal::PreCacheModel: collision file for '%s' contains different model", fullName );
-	}
+	// LoadModel already canonicalizes the name, checks the live cache, suppresses
+	// repeated misses, and validates any serialized collision model it loads.
+	// Precache only warms that cache, so release the temporary gameplay reference.
+	idCollisionModelLocal *model = static_cast<idCollisionModelLocal *>( LoadModel( mapName, modelName, true ) );
+	CM_ReleaseRenderModelReference( model );
 }
 
 /*
@@ -4215,14 +4206,14 @@ idCollisionModel *idCollisionModelManagerLocal::ExtractCollisionModel( idRenderM
 	const char *fullName = GetFullModelName( NULL, modelName, fullModelName );
 	const char *loadName = GetModelLoadFileName( NULL, modelName, loadFileName );
 
+	// Renderer extraction seeds the manager cache but does not transfer a
+	// gameplay-owned collision handle, so this path remains refcount-neutral.
 	handle = static_cast<idCollisionModelLocal *>( FindModel( fullName ) );
 	if ( handle != NULL && handle->fileTime != static_cast<ID_TIME_T>( -1 ) ) {
-		CM_AddRenderModelReference( handle );
 		return handle;
 	}
 	handle = FindEquivalentRenderModel( fullName );
 	if ( handle != NULL ) {
-		CM_AddRenderModelReference( handle );
 		return handle;
 	}
 
@@ -4232,7 +4223,6 @@ idCollisionModel *idCollisionModelManagerLocal::ExtractCollisionModel( idRenderM
 			handle = FindEquivalentRenderModel( fullName );
 		}
 		if ( handle != NULL && handle->fileTime != static_cast<ID_TIME_T>( -1 ) ) {
-			CM_AddRenderModelReference( handle );
 			return handle;
 		}
 		common->Warning( "idCollisionModelManagerLocal::ExtractCollisionModel: collision file for '%s' contains different model", fullName );
@@ -4247,7 +4237,6 @@ idCollisionModel *idCollisionModelManagerLocal::ExtractCollisionModel( idRenderM
 	if ( com_makingBuild.GetBool() ) {
 		WriteCollisionModelsToFile( fullName, modelIndex, modelIndex + 1, 0 );
 	}
-	CM_AddRenderModelReference( collisionModel );
 	return collisionModel;
 }
 
@@ -4457,7 +4446,9 @@ bool idCollisionModelManagerLocal::TrmFromModel(const char* mapName, const char 
 		return false;
 	}
 
-	return TrmFromModel( (idCollisionModelLocal *)model, trm );
+	const bool result = TrmFromModel( (idCollisionModelLocal *)model, trm );
+	CM_ReleaseRenderModelReference( static_cast<idCollisionModelLocal *>( model ) );
+	return result;
 }
 
 /*
@@ -4591,5 +4582,7 @@ int idCollisionModelManagerLocal::CompoundTrmFromModel( const char *mapName, con
 		return 0;
 	}
 
-	return CompoundTrmFromModel( static_cast<const idCollisionModelLocal *>( model ), trms, maxTrms );
+	const int numTrms = CompoundTrmFromModel( static_cast<const idCollisionModelLocal *>( model ), trms, maxTrms );
+	CM_ReleaseRenderModelReference( static_cast<idCollisionModelLocal *>( model ) );
+	return numTrms;
 }

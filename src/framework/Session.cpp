@@ -4673,6 +4673,7 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 	int mediaLoadSizeMsec = 0;
 	int mediaUiMsec = 0;
 	int settleMsec = 0;
+	int settleFrameMsec[10] = { 0 };
 
 	common->Printf( "--------- Map Initialization ---------\n" );
 	common->Printf( "Map: %s\n", mapString.c_str() );
@@ -4751,7 +4752,9 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 	if ( !idAsyncNetwork::IsActive() && !loadingSaveGame ) {
 		// run a few frames to allow everything to settle
 		for ( i = 0; i < 10; i++ ) {
+			const int settleFrameStart = Sys_Milliseconds();
 			game->RunFrame( mapSpawnData.mapSpawnUsercmd, 0, true, 0 ); // serverGameFrame isn't used
+			settleFrameMsec[i] = Sys_Milliseconds() - settleFrameStart;
 		}
 	}
 	settleMsec = Sys_Milliseconds() - phaseStart;
@@ -4778,6 +4781,20 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 			mediaLoadSizeMsec,
 			mediaUiMsec,
 			mediaFinishMsec );
+		if ( settleMsec > 0 ) {
+			common->Printf(
+				"Map settle frames: %d %d %d %d %d %d %d %d %d %d msec\n",
+				settleFrameMsec[0],
+				settleFrameMsec[1],
+				settleFrameMsec[2],
+				settleFrameMsec[3],
+				settleFrameMsec[4],
+				settleFrameMsec[5],
+				settleFrameMsec[6],
+				settleFrameMsec[7],
+				settleFrameMsec[8],
+				settleFrameMsec[9] );
+		}
 	}
 
 	// let the game trigger interaction generation after the first game frame

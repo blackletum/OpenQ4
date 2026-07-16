@@ -394,6 +394,7 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "filesystem_mod_manifest.py",
         root / "tools" / "tests" / "game_class_allocator_alignment.py",
         root / "tools" / "tests" / "gamelibs_staging.py",
+        root / "tools" / "tests" / "generated_animation_cache.py",
         root / "tools" / "tests" / "hdr_postprocess_math.py",
         root / "tools" / "tests" / "linux_arm64_cross_compile.py",
         root / "tools" / "tests" / "linux_arm64_ci_coverage.py",

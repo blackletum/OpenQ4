@@ -194,7 +194,11 @@ static int R_QsortImageName( const void* a, const void* b ) {
 	ea = (sortedImage_t *)a;
 	eb = (sortedImage_t *)b;
 
-	return idStr::Icmp( ea->image->GetName(), eb->image->GetName() );
+	const int nameCompare = idStr::Icmp( ea->image->GetName(), eb->image->GetName() );
+	if ( nameCompare != 0 ) {
+		return nameCompare;
+	}
+	return ea->index - eb->index;
 }
 
 /*
@@ -946,24 +950,71 @@ idImageManager::LoadLevelImages
 ===============
 */
 int idImageManager::LoadLevelImages( bool pacifier ) {
-	int	loadCount = 0;
+	idList<sortedImage_t> pendingImages;
+	pendingImages.SetNum( CountPendingLevelLoads() );
+	const bool profileLevelLoad = cvarSystem->GetCVarBool( "com_showLevelLoadTimes" );
+	uint64_t loadedStorageBytes = 0;
+	double measuredLoadMsec = 0.0;
+
+	int pendingIndex = 0;
 	for ( int i = 0 ; i < images.Num() ; i++ ) {
-		if ( pacifier ) {
-			//common->UpdateLevelLoadPacifier();
-
-		}
-
 		idImage	*image = images[ i ];
 		if ( image->generatorFunction ) {
 			continue;
 		}
 		if ( image->levelLoadReferenced && !image->IsLoaded() ) {
-			loadCount++;
-			image->ActuallyLoadImage( false );
-			session->AdvanceLoadingAssetQueue( 1 );
+			pendingImages[ pendingIndex ].image = image;
+			pendingImages[ pendingIndex ].size = 0;
+			pendingImages[ pendingIndex ].index = i;
+			pendingIndex++;
 		}
 	}
-	return loadCount;
+
+	if ( pendingImages.Num() > 1 ) {
+		qsort( pendingImages.Ptr(), pendingImages.Num(), sizeof( sortedImage_t ), R_QsortImageName );
+	}
+
+	for ( int i = 0; i < pendingImages.Num(); i++ ) {
+		if ( pacifier ) {
+			//common->UpdateLevelLoadPacifier();
+		}
+
+		idTimer loadTimer;
+		if ( profileLevelLoad ) {
+			loadTimer.Start();
+		}
+		pendingImages[ i ].image->ActuallyLoadImage( false );
+		if ( profileLevelLoad ) {
+			loadTimer.Stop();
+			const double imageLoadMsec = loadTimer.Milliseconds();
+			measuredLoadMsec += imageLoadMsec;
+			pendingImages[ i ].size = static_cast<int>( imageLoadMsec + 0.5 );
+			loadedStorageBytes += pendingImages[ i ].image->StorageSize();
+		}
+		session->AdvanceLoadingAssetQueue( 1 );
+	}
+
+	if ( profileLevelLoad && pendingImages.Num() > 0 ) {
+		qsort( pendingImages.Ptr(), pendingImages.Num(), sizeof( sortedImage_t ), R_QsortImageSizes );
+		common->Printf(
+			"Image load profile: files=%d measured=%.1f msec storage=%.1f MiB\n",
+			pendingImages.Num(),
+			measuredLoadMsec,
+			static_cast<double>( loadedStorageBytes ) / ( 1024.0 * 1024.0 ) );
+		const int slowImageCount = Min( 12, pendingImages.Num() );
+		for ( int i = 0; i < slowImageCount; i++ ) {
+			if ( pendingImages[ i ].size <= 0 ) {
+				break;
+			}
+			common->Printf(
+				"  image %4d msec %6.1f MiB %s\n",
+				pendingImages[ i ].size,
+				static_cast<double>( pendingImages[ i ].image->StorageSize() ) / ( 1024.0 * 1024.0 ),
+				pendingImages[ i ].image->GetName() );
+		}
+	}
+
+	return pendingImages.Num();
 }
 
 /*

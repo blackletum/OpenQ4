@@ -89,6 +89,10 @@ idBinaryImage::Clear
 */
 void idBinaryImage::Clear() {
 	images.Clear();
+	if ( loadedFileData != NULL ) {
+		Mem_Free( loadedFileData );
+		loadedFileData = NULL;
+	}
 	memset( &fileData, 0, sizeof( fileData ) );
 }
 
@@ -98,6 +102,8 @@ idBinaryImage::Load2DFromMemory
 ========================
 */
 void idBinaryImage::Load2DFromMemory( int width, int height, const byte * pic_const, int numLevels, textureFormat_t & textureFormat, textureColor_t & colorFormat, bool gammaMips, bool filterNeutralAlpha ) {
+	Clear();
+
 	fileData.textureType = TT_2D;
 	fileData.format = textureFormat;
 	fileData.colorFormat = colorFormat;
@@ -323,6 +329,8 @@ idBinaryImage::LoadCubeFromMemory
 ========================
 */
 void idBinaryImage::LoadCubeFromMemory( int width, const byte * pics[6], int numLevels, textureFormat_t & textureFormat, bool gammaMips ) {
+	Clear();
+
 	fileData.textureType = TT_CUBIC;
 	fileData.format = textureFormat;
 	fileData.colorFormat = CFM_DEFAULT;
@@ -504,8 +512,8 @@ ID_TIME_T idBinaryImage::LoadFromGeneratedFileUnchecked() {
 idBinaryImage::LoadFromFile
 ==========================
 */
-bool idBinaryImage::LoadFromFile( idFile *file ) {
-	return LoadFromGeneratedFile( file, FILE_NOT_FOUND_TIMESTAMP, false );
+bool idBinaryImage::LoadFromFile( idFile *file, int dataBytes ) {
+	return LoadFromGeneratedFile( file, FILE_NOT_FOUND_TIMESTAMP, false, dataBytes );
 }
 
 /*
@@ -515,10 +523,35 @@ idBinaryImage::LoadFromGeneratedFile
 Load the preprocessed image from the generated folder.
 ==========================
 */
-bool idBinaryImage::LoadFromGeneratedFile( idFile * bFile, ID_TIME_T sourceFileTime, bool validateSourceFileTime ) {
-	if ( bFile->Read( &fileData, sizeof( fileData ) ) != sizeof( fileData ) ) {
+bool idBinaryImage::LoadFromGeneratedFile( idFile * bFile, ID_TIME_T sourceFileTime, bool validateSourceFileTime, int dataBytes ) {
+	Clear();
+
+	const int fileStart = bFile->Tell();
+	const int remainingBytes = bFile->Length() - fileStart;
+	const int fileLength = dataBytes >= 0 ? dataBytes : remainingBytes;
+	if ( fileLength > remainingBytes ) {
 		return false;
 	}
+	if ( fileLength < (int)sizeof( fileData ) || fileLength > MAX_BINARY_IMAGE_DATA_SIZE ) {
+		return false;
+	}
+
+	// Read each binary image or packed chunk once. Mip payloads then remain as
+	// views into this single backing allocation instead of separate allocations.
+	loadedFileData = (byte *)Mem_Alloc( fileLength );
+	if ( loadedFileData == NULL ) {
+		return false;
+	}
+	if ( bFile->Read( loadedFileData, fileLength ) != fileLength ) {
+		Clear();
+		return false;
+	}
+
+	byte *cursor = loadedFileData;
+	const byte *fileEnd = loadedFileData + fileLength;
+	memcpy( &fileData, cursor, sizeof( fileData ) );
+	cursor += sizeof( fileData );
+
 	idSwapClass<bimageFile_t> swap;
 	swap.Big( fileData.sourceFileTime );
 	swap.Big( fileData.headerMagic );
@@ -530,26 +563,33 @@ bool idBinaryImage::LoadFromGeneratedFile( idFile * bFile, ID_TIME_T sourceFileT
 	swap.Big( fileData.numLevels );
 
 	if ( BIMAGE_MAGIC != fileData.headerMagic ) {
+		Clear();
 		return false;
 	}
 	if ( validateSourceFileTime && fileData.sourceFileTime != sourceFileTime && !fileSystem->InProductionMode()) {
+		Clear();
 		return false;
 	}
 	if ( fileData.textureType != TT_2D && fileData.textureType != TT_CUBIC ) {
+		Clear();
 		return false;
 	}
 	if ( fileData.format <= FMT_NONE || fileData.format > FMT_BC7 || BitsForFormat( (textureFormat_t)fileData.format ) <= 0 ) {
+		Clear();
 		return false;
 	}
 	if ( fileData.colorFormat < CFM_DEFAULT || fileData.colorFormat > CFM_GREEN_ALPHA ) {
+		Clear();
 		return false;
 	}
 	if ( fileData.width <= 0 || fileData.width > MAX_BINARY_IMAGE_DIMENSION ||
 		 fileData.height <= 0 || fileData.height > MAX_BINARY_IMAGE_DIMENSION ||
 		 fileData.numLevels <= 0 || fileData.numLevels > MAX_BINARY_IMAGE_LEVELS ) {
+		Clear();
 		return false;
 	}
 	if ( fileData.textureType == TT_CUBIC && fileData.width != fileData.height ) {
+		Clear();
 		return false;
 	}
 
@@ -564,9 +604,12 @@ bool idBinaryImage::LoadFromGeneratedFile( idFile * bFile, ID_TIME_T sourceFileT
 
 	for ( int i = 0; i < numImages; i++ ) {
 		idBinaryImageData &img = images[ i ];
-		if ( bFile->Read( &img, sizeof( bimageImage_t ) ) != sizeof( bimageImage_t ) ) {
+		if ( fileEnd - cursor < (int)sizeof( bimageImage_t ) ) {
+			Clear();
 			return false;
 		}
+		memcpy( static_cast<bimageImage_t *>( &img ), cursor, sizeof( bimageImage_t ) );
+		cursor += sizeof( bimageImage_t );
 		idSwapClass<bimageImage_t> swap;
 		swap.Big( img.level );
 		swap.Big( img.destZ );
@@ -574,17 +617,21 @@ bool idBinaryImage::LoadFromGeneratedFile( idFile * bFile, ID_TIME_T sourceFileT
 		swap.Big( img.height );
 		swap.Big( img.dataSize );
 		if ( img.level < 0 || img.level >= fileData.numLevels ) {
+			Clear();
 			return false;
 		}
 		if ( fileData.textureType == TT_2D ) {
 			if ( img.destZ != 0 ) {
+				Clear();
 				return false;
 			}
 		} else if ( img.destZ < 0 || img.destZ >= 6 ) {
+			Clear();
 			return false;
 		}
 		const int imageSide = fileData.textureType == TT_2D ? 0 : img.destZ;
 		if ( seenImages[ imageSide ][ img.level ] ) {
+			Clear();
 			return false;
 		}
 		seenImages[ imageSide ][ img.level ] = true;
@@ -592,26 +639,33 @@ bool idBinaryImage::LoadFromGeneratedFile( idFile * bFile, ID_TIME_T sourceFileT
 		const int expectedWidth = Max( 1, fileData.width >> img.level );
 		const int expectedHeight = fileData.textureType == TT_CUBIC ? expectedWidth : Max( 1, fileData.height >> img.level );
 		if ( img.width <= 0 || img.width > MAX_BINARY_IMAGE_DIMENSION || img.height <= 0 || img.height > MAX_BINARY_IMAGE_DIMENSION ) {
+			Clear();
 			return false;
 		}
 		if ( img.width != expectedWidth || img.height != expectedHeight ) {
+			Clear();
 			return false;
 		}
 		if ( img.dataSize <= 0 || img.dataSize > MAX_BINARY_IMAGE_DATA_SIZE ) {
+			Clear();
 			return false;
 		}
 		const int expectedDataSize = R_BinaryImageMinimumDataSize( (textureFormat_t)fileData.format, expectedWidth, expectedHeight );
 		if ( expectedDataSize <= 0 || img.dataSize != expectedDataSize ) {
+			Clear();
 			return false;
 		}
-		img.Alloc( img.dataSize );
-		if ( img.data == NULL ) {
+		if ( fileEnd - cursor < img.dataSize ) {
+			Clear();
 			return false;
 		}
+		img.SetExternalData( cursor, img.dataSize );
+		cursor += img.dataSize;
+	}
 
-		if ( bFile->Read( img.data, img.dataSize ) != img.dataSize ) {
-			return false;
-		}
+	if ( cursor != fileEnd ) {
+		Clear();
+		return false;
 	}
 
 	return true;

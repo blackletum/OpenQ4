@@ -8255,12 +8255,6 @@ static void RB_PurgeLightGridResidencyImages( LightGrid &lightGrid ) {
 	RB_PurgeLightGridResidencyImage( lightGrid.probeImage );
 }
 
-static bool RB_LightGridHasPackedImages( const LightGrid &lightGrid ) {
-	return lightGrid.packedIrradianceImage.packFileName.Length() > 0 ||
-		lightGrid.packedVisibilityImage.packFileName.Length() > 0 ||
-		lightGrid.packedProbeImage.packFileName.Length() > 0;
-}
-
 static void RB_TouchLightGridResidencyArea( idRenderWorldLocal *world, int areaIndex, int frameIndex ) {
 	if ( areaIndex < 0 || areaIndex >= world->numPortalAreas ) {
 		return;
@@ -8365,10 +8359,6 @@ static void RB_UpdateLightGridImageResidency( idRenderWorldLocal *world ) {
 	}
 	for ( int areaIndex = 0; areaIndex < world->numPortalAreas; areaIndex++ ) {
 		portalArea_t &area = world->portalAreas[ areaIndex ];
-		if ( RB_LightGridHasPackedImages( area.lightGrid ) ) {
-			continue;
-		}
-
 		const int lastTouchedFrame = rbLightGridResidencyLastTouched[areaIndex];
 		if ( lastTouchedFrame != LIGHTGRID_RESIDENCY_UNTOUCHED && frameIndex - lastTouchedFrame <= residencyFrames ) {
 			continue;

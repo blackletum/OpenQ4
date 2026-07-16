@@ -2333,7 +2333,7 @@ static lightGridPackedImageLoadResult_t LightGrid_LoadPackedImageRef( const ligh
 
 	idBinaryImage packedImage( image->GetName() );
 	const int chunkStart = file->Tell();
-	const bool readPayload = packedImage.LoadFromFile( file );
+	const bool readPayload = packedImage.LoadFromFile( file, ref.dataBytes );
 	const int chunkEnd = file->Tell();
 	fileSystem->CloseFile( file );
 	if ( !readPayload || chunkEnd - chunkStart != ref.dataBytes ) {
@@ -2827,6 +2827,12 @@ void idRenderWorldLocal::LoadLightGridImages( bool forceReloadLoaded ) {
 
 void idRenderWorldLocal::PreloadLightGridImages() {
 	if ( !tr.IsOpenGLRunning() ) {
+		return;
+	}
+	if ( !r_lightGridPreload.GetBool() ) {
+		common->DPrintf(
+			"LightGrid deferred atlas residency for %s; visible areas will stream on first use.\n",
+			mapName.c_str() );
 		return;
 	}
 

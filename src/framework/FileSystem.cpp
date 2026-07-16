@@ -5838,6 +5838,7 @@ idFile_InZip * idFileSystemLocal::ReadFileFromZip( pack_t *pak, fileInPack_t *pa
 	unzOpenCurrentFile( file->z );
 	file->zipFilePos = pakFile->pos;
 	file->fileSize = zfi->cur_file_info.uncompressed_size;
+	file->containerChecksum = pak->checksum;
 	return file;
 }
 

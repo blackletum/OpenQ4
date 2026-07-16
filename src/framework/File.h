@@ -62,6 +62,8 @@ public:
 	virtual int				Length( void );
 							// Return a time value for reload operations.
 	virtual ID_TIME_T			Timestamp( void );
+							// Return the checksum of the containing package, or zero for loose files.
+	virtual int				GetContainerChecksum( void ) const { return 0; }
 							// Returns offset in file.
 	virtual int				Tell( void );
 							// Forces flush on files being writting to.
@@ -261,6 +263,7 @@ public:
 	virtual int				Write( const void *buffer, int len );
 	virtual int				Length( void );
 	virtual ID_TIME_T			Timestamp( void );
+	virtual int				GetContainerChecksum( void ) const { return containerChecksum; }
 	virtual int				Tell( void );
 	virtual void			ForceFlush( void );
 	virtual void			Flush( void );
@@ -271,6 +274,7 @@ private:
 	idStr					fullPath;		// full file path including pak file name
 	int						zipFilePos;		// zip file info position in pak
 	int						fileSize;		// size of the file
+	int						containerChecksum;
 	void *					z;				// unzip info
 };
 
