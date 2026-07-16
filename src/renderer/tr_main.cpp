@@ -302,46 +302,27 @@ int R_CountFrameData( void ) {
 
 /*
 =================
-R_StaticAlloc
+R_ImageToolsCounters
+
+R_StaticAlloc/R_StaticFree moved into the shared imagetools library; the
+renderer keeps its performance counters through these installed hooks.
 =================
 */
-void *R_StaticAlloc( int bytes ) {
-	void	*buf;
-
+static void R_ImageToolsOnStaticAlloc( int bytes ) {
 	tr.pc.c_alloc++;
-
 	tr.staticAllocCount += bytes;
-
-    buf = Mem_Alloc( bytes );
-
-	// don't exit on failure on zero length allocations since the old code didn't
-	if ( !buf && ( bytes != 0 ) ) {
-		common->FatalError( "R_StaticAlloc failed on %i bytes", bytes );
-	}
-	return buf;
 }
 
-/*
-=================
-R_ClearedStaticAlloc
-=================
-*/
-void *R_ClearedStaticAlloc( int bytes ) {
-	void	*buf;
-
-	buf = R_StaticAlloc( bytes );
-	SIMDProcessor->Memset( buf, 0, bytes );
-	return buf;
-}
-
-/*
-=================
-R_StaticFree
-=================
-*/
-void R_StaticFree( void *data ) {
+static void R_ImageToolsOnStaticFree( void ) {
 	tr.pc.c_free++;
-    Mem_Free( data );
+}
+
+void R_InstallImageToolsHooks( void ) {
+	imageToolsAllocHooks_t allocHooks;
+
+	allocHooks.onStaticAlloc = R_ImageToolsOnStaticAlloc;
+	allocHooks.onStaticFree = R_ImageToolsOnStaticFree;
+	ImageTools_SetStaticAllocHooks( allocHooks );
 }
 
 /*

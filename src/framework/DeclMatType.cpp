@@ -1,7 +1,7 @@
 // DeclMatType.cpp
 //
 
-#include "../renderer/ImageTools.h"
+#include "../imagetools/ImageTools.h"
 
 static idCVar mat_useHitMaterials( "mat_useHitMaterials", "1", CVAR_SYSTEM | CVAR_BOOL, "use cached .hit material type maps when available" );
 static idCVar mat_writeHitMaterials( "mat_writeHitMaterials", "0", CVAR_SYSTEM | CVAR_BOOL, "write generated .hit material type maps to fs_savepath" );

@@ -1,7 +1,7 @@
 # Vulkan Renderer Phase B: Renderer Extraction Stages
 
 Date: 2026-07-16
-Status: B1 landed (73bccf7a); B2-prep and the B3 material-decl trampoline landed (a07c9ec1); B2 library carve, B3 bakeLightGrids relocation, and B4-B8 open
+Status: B1 landed (73bccf7a); B2-prep and the B3 material-decl trampoline landed (a07c9ec1); B2 library carve landed (src/imagetools: Image_files/Image_process/BinaryImage/Color/DXT/jpeg-6 as openq4_imagetools, alloc-hook + compression-caps severance); B3 bakeLightGrids relocation and B4-B8 open
 
 Parent plan: [2026-07-16-vulkan-renderer.md](2026-07-16-vulkan-renderer.md). This staging plan was derived from a five-way symbol-level audit of engine/renderer coupling; file:line anchors reflect the tree at the audit commit (8bcdcdbf) and shift as stages land.
 

@@ -65,15 +65,21 @@ ENGINE_SOURCE_GLOBS = [
     "idlib/hashing/*.cpp",
     "idlib/math/*.cpp",
     "renderer/*.cpp",
-    "renderer/Color/*.cpp",
-    "renderer/DXT/*.cpp",
-    "renderer/jpeg-6/*.c",
     "renderer/OpenGL/*.cpp",
     "tools/compilers/dmap/*.cpp",
     "sound/*.cpp",
     "sound/OpenAL/*.cpp",
     "sys/*.cpp",
     "ui/*.cpp",
+]
+
+# CPU image utilities shared between the engine and (post module-split) the
+# renderer modules; built as the openq4_imagetools static library
+IMAGETOOLS_SOURCE_GLOBS = [
+    "imagetools/*.cpp",
+    "imagetools/Color/*.cpp",
+    "imagetools/DXT/*.cpp",
+    "imagetools/jpeg-6/*.c",
 ]
 
 GAME_SOURCE_GLOBS = [
@@ -258,6 +264,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default="client",
         help="Select client or dedicated-server platform sources.",
     )
+    parser.add_argument(
+        "--emit",
+        choices=("engine", "imagetools"),
+        default="engine",
+        help="Emit engine target sources or the imagetools static-library sources.",
+    )
     return parser.parse_args(argv)
 
 
@@ -275,6 +287,19 @@ def main(argv: list[str]) -> int:
     ordered_sources: list[str] = []
 
     include_game = args.include_game == "true"
+
+    if args.emit == "imagetools":
+        try:
+            for pattern in IMAGETOOLS_SOURCE_GLOBS:
+                add_globbed_sources(source_set, ordered_sources, source_root, pattern)
+        except SourceListError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        if not ordered_sources:
+            print("No imagetools source files discovered.", file=sys.stderr)
+            return 1
+        print("\n".join(ordered_sources))
+        return 0
 
     try:
         if include_game:

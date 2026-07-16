@@ -454,6 +454,19 @@ if host_system == 'linux'
   endif
 endif
 
+imagetools_source_discovery = run_command(
+  py,
+  meson.project_source_root() / 'tools' / 'build' / 'meson_sources.py',
+  '--emit',
+  'imagetools',
+  check: true,
+)
+imagetools_source_paths = imagetools_source_discovery.stdout().strip().split('\n')
+if imagetools_source_paths.length() == 0
+  error('tools/build/meson_sources.py returned no imagetools source files.')
+endif
+openq4_imagetools_sources = files(imagetools_source_paths)
+
 openq4_engine_sources = files(engine_source_paths)
 if build_engine
   openq4_engine_sources += openq4_paks_generated_header
@@ -972,11 +985,25 @@ if build_engine
     pic: host_system == 'linux',
     install: false,
   )
+
+  # CPU image utilities shared between the engine and (post module-split) the
+  # renderer modules; compiled with engine args so codegen matches the
+  # pre-carve statically-linked behavior
+  imagetools_library = static_library(
+    'openq4_imagetools',
+    openq4_imagetools_sources,
+    include_directories: engine_include_dirs,
+    cpp_args: engine_cpp_args,
+    c_args: engine_c_args,
+    cpp_pch: pch_headers,
+    pic: host_system == 'linux',
+    install: false,
+  )
 endif
 
 if build_engine
-  client_link_with = [bse_library]
-  dedicated_link_with = [bse_library]
+  client_link_with = [bse_library, imagetools_library]
+  dedicated_link_with = [bse_library, imagetools_library]
 
   if host_system == 'windows'
     executable(

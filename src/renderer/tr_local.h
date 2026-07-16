@@ -29,7 +29,8 @@ If you have questions concerning this license or the applicable additional terms
 #ifndef __TR_LOCAL_H__
 #define __TR_LOCAL_H__
 
-#include "BinaryImage.h"
+#include "../imagetools/BinaryImage.h"
+#include "../imagetools/ImageTools.h"
 #include "Image.h"
 #include "RendererStartupDiagnostics.h"
 #include "RenderTexture.h"
@@ -2215,9 +2216,10 @@ void *R_FrameAlloc( int bytes );
 void *R_ClearedFrameAlloc( int bytes );
 void R_FrameFree( void *data );
 
-void *R_StaticAlloc( int bytes );		// just malloc with error checking
-void *R_ClearedStaticAlloc( int bytes );	// with memset
-void R_StaticFree( void *data );
+// R_StaticAlloc/R_ClearedStaticAlloc/R_StaticFree live in the shared
+// imagetools library (declared by ../imagetools/ImageTools.h, included above);
+// the renderer installs its performance-counter hooks at Init
+void R_InstallImageToolsHooks( void );
 
 
 /*

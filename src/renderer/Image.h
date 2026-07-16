@@ -72,7 +72,7 @@ static const unsigned int IMAGEFLAG_NOMIPS = BIT( 0 );
 static const unsigned int IMAGEFLAG_FILTER_NEUTRAL_ALPHA = BIT( 1 );
 
 #include "ImageOpts.h"
-#include "BinaryImage.h"
+#include "../imagetools/BinaryImage.h"
 
 #define	MAX_IMAGE_NAME	256
 

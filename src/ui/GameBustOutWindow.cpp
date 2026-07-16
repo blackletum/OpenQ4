@@ -29,7 +29,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "../framework/Session_local.h"
-#include "../renderer/ImageTools.h"
+#include "../imagetools/ImageTools.h"
 
 #include "DeviceContext.h"
 #include "Window.h"

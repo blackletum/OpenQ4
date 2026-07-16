@@ -48,7 +48,7 @@ If you have questions concerning this license or the applicable additional terms
 #undef protected
 #undef private
 #include "../renderer/tr_local.h"
-#include "../renderer/ImageTools.h"
+#include "../imagetools/ImageTools.h"
 
 idCVar	idSessionLocal::com_showAngles( "com_showAngles", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
 idCVar	idSessionLocal::com_minTics( "com_minTics", "1", CVAR_SYSTEM, "" );

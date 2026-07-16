@@ -30,7 +30,8 @@ If you have questions concerning this license or the applicable additional terms
 
 
 
-#include "tr_local.h"
+#include "../renderer/Image.h"
+#include "ImageTools.h"
 #include "DXT/DXTCodec.h"
 
 idCVar image_usePrecompressedTextures(
@@ -1017,13 +1018,13 @@ static bool R_TryResolvePreferredDDSImageSource( const idStr &candidateName, idS
 			*timestamp = ddsTimestamp;
 		}
 		if ( precompressedDDS != NULL ) {
-			*precompressedDDS = allowPrecompressedDDS && glConfig.textureCompressionAvailable;
+			*precompressedDDS = allowPrecompressedDDS && ImageTools_GetCompressionCaps().textureCompressionAvailable;
 		}
 		return true;
 	}
 
 	if ( info.format == DDS_STORED_FORMAT_BC7 ) {
-		if ( !allowPrecompressedDDS || !glConfig.bptcTextureCompressionAvailable ) {
+		if ( !allowPrecompressedDDS || !ImageTools_GetCompressionCaps().bptcTextureCompressionAvailable ) {
 			return false;
 		}
 		ddsName = candidateName;
@@ -1144,13 +1145,13 @@ bool R_LoadPrecompressedDDS( const char *cname, idBinaryImage &image, ID_TIME_T 
 			break;
 		}
 
-		if ( info.format == DDS_STORED_FORMAT_BC7 && !glConfig.bptcTextureCompressionAvailable ) {
-			idLib::Warning( "Image file '%s' uses BC7/BPTC DDS data, but this OpenGL renderer does not support GL_ARB_texture_compression_bptc", name.c_str() );
+		if ( info.format == DDS_STORED_FORMAT_BC7 && !ImageTools_GetCompressionCaps().bptcTextureCompressionAvailable ) {
+			idLib::Warning( "Image file '%s' uses BC7/BPTC DDS data, but the active renderer does not support BPTC texture compression", name.c_str() );
 			break;
 		}
 		if ( ( info.format == DDS_STORED_FORMAT_DXT1 ||
 			   info.format == DDS_STORED_FORMAT_DXT5 ||
-			   info.format == DDS_STORED_FORMAT_RXGB ) && !glConfig.textureCompressionAvailable ) {
+			   info.format == DDS_STORED_FORMAT_RXGB ) && !ImageTools_GetCompressionCaps().textureCompressionAvailable ) {
 			break;
 		}
 

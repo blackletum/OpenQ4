@@ -30,7 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "tr_local.h"
-#include "DXT/DXTCodec.h"
+#include "../imagetools/DXT/DXTCodec.h"
 #include "RendererBootstrap.h"
 #include "RendererModule.h"
 #include "GLDebugScope.h"
@@ -1041,6 +1041,15 @@ static void R_CheckPortableExtensions( void ) {
 	glConfig.bptcTextureCompressionAvailable =
 		textureCompressionAvailable &&
 		bptcTextureCompressionAdvertised;
+
+	// push the compression capabilities into the shared imagetools library,
+	// which gates precompressed-DDS selection without reading renderer globals
+	{
+		imageToolsCompressionCaps_t compressionCaps;
+		compressionCaps.textureCompressionAvailable = glConfig.textureCompressionAvailable;
+		compressionCaps.bptcTextureCompressionAvailable = glConfig.bptcTextureCompressionAvailable;
+		ImageTools_SetCompressionCaps( compressionCaps );
+	}
 
 	// GL_EXT_texture_filter_anisotropic
 	glConfig.anisotropicAvailable = R_CheckExtension( "GL_EXT_texture_filter_anisotropic" );
@@ -4114,9 +4123,13 @@ void idRenderSystemLocal::Clear( void ) {
 idRenderSystemLocal::Init
 ===============
 */
-void idRenderSystemLocal::Init( void ) {	
+void idRenderSystemLocal::Init( void ) {
 
 	common->Printf( "------- Initializing renderSystem --------\n" );
+
+	// route imagetools static-allocation counters into tr.pc before any
+	// image or model loading can call R_StaticAlloc
+	R_InstallImageToolsHooks();
 
 	// clear all our internal state
 	viewCount = 1;		// so cleared structures never match viewCount

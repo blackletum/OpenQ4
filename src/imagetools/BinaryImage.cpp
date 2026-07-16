@@ -36,7 +36,7 @@ If you have questions concerning this license or the applicable additional terms
 ================================================================================================
 */
 
-#include "tr_local.h"
+#include "../renderer/Image.h"
 #include "DXT/DXTCodec.h"
 #include "Color/ColorSpace.h"
 
@@ -111,7 +111,9 @@ void idBinaryImage::Load2DFromMemory( int width, int height, const byte * pic_co
 	fileData.height = height;
 	fileData.numLevels = numLevels;
 
-	byte * pic = (byte *)Mem_Alloc( width * height * 4, TAG_TEMP );
+	// note: this previously passed the renderer's vertex-cache TAG_TEMP enum
+	// as the allocator's debug tag byte — a port artifact, not a real tag
+	byte * pic = (byte *)Mem_Alloc( width * height * 4 );
 	memcpy( pic, pic_const, width * height * 4 );
 
 	if ( colorFormat == CFM_YCOCG_DXT5 ) {
@@ -143,7 +145,7 @@ void idBinaryImage::Load2DFromMemory( int width, int height, const byte * pic_co
 		byte *uploadPic = pic;
 
 		if ( filterNeutralAlpha ) {
-			uploadPic = (byte *)Mem_Alloc( scaledWidth * scaledHeight * 4, TAG_TEMP );
+			uploadPic = (byte *)Mem_Alloc( scaledWidth * scaledHeight * 4 );
 			memcpy( uploadPic, pic, scaledWidth * scaledHeight * 4 );
 			R_ApplyFilterNeutralAlpha( uploadPic, scaledWidth * scaledHeight );
 		}
