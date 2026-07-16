@@ -27,7 +27,12 @@
 ===============================================================================
 */
 
-#define RENDER_API_VERSION			1
+// version history:
+//  1 - Phase A bring-up handshake (services table, diagnostics surface)
+//  2 - Phase B4 import/export completion: session/uiManager/
+//      collisionModelManager/bse/eventLoop imports, renderModelManager
+//      export, sleep/critical-section/RenderDoc services
+#define RENDER_API_VERSION			2
 #define RENDER_API_ENTRY_POINT		"GetRenderAPI"
 
 class idSys;
@@ -38,6 +43,12 @@ class idFileSystem;
 class idDeclManager;
 class idSoundSystem;
 class idRenderSystem;
+class idRenderModelManager;
+class idSession;
+class idUserInterfaceManager;
+class idCollisionModelManager;
+class idEventLoop;
+class rvBSEManager;
 
 // bring-up-safe engine services; every callback is bound engine-side and
 // remains valid for the lifetime of the loaded module
@@ -50,6 +61,17 @@ typedef struct renderModuleServices_s {
 	int				( *CVar_GetInteger )( const char *name );
 	bool			( *CVar_GetBool )( const char *name );
 	void			( *CVar_SetString )( const char *name, const char *value );
+
+	// --- version 2 ---
+	void			( *Sleep )( int msec );
+	// engine critical-section slots (CRITICAL_SECTION_* indices)
+	void			( *EnterCriticalSection )( int index );
+	void			( *LeaveCriticalSection )( int index );
+	bool			( *IsRenderDocInjected )( void );
+	// worker-thread creation intentionally not carried yet: the light-grid
+	// bake pool's Sys_CreateThread signature (thread registry, priority,
+	// threadInfo_t) is resolved by the module-side forwarder design in
+	// Phase B8 (docs/dev/plans/2026-07-16-vulkan-renderer-phase-b.md)
 } renderModuleServices_t;
 
 // native window/surface handoff; zeroed until the engine has created a window
@@ -76,6 +98,14 @@ typedef struct renderImport_s {
 	idFileSystem *							fileSystem;
 	idDeclManager *							declManager;
 	idSoundSystem *							soundSystem;
+
+	// --- version 2: the remaining engine interfaces the renderer sources
+	// bind as globals inside the module (game-DLL convention) ---
+	idSession *								session;		// demo IO, pacifier, rw/sw
+	idUserInterfaceManager *				uiManager;
+	idCollisionModelManager *				collisionModelManager;
+	idEventLoop *							eventLoop;		// frame-time queries
+	rvBSEManager *							bse;			// effects system
 } renderImport_t;
 
 // diagnostics surface, valid even while the module cannot yet provide a full
@@ -95,6 +125,9 @@ typedef struct renderExport_s {
 	// full renderer interface; NULL while the module is bring-up/diagnostics
 	// only, which the loader treats as an instruction to fall back
 	idRenderSystem *						renderSystem;
+	// version 2: published alongside renderSystem when a module activates
+	// (the engine forwards it into gameImport for the game DLLs)
+	idRenderModelManager *					renderModelManager;
 	const renderModuleDiagnostics_t *		diagnostics;
 	// releases module resources; must be safe to call before Sys_DLL_Unload
 	// whenever GetRenderAPI has been called

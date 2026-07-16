@@ -4,6 +4,8 @@
 #include "tr_local.h"
 #include "RenderModuleAPI.h"
 #include "RendererModule.h"
+#include "../framework/RenderDoc.h"
+#include "../bse/BSEInterface.h"
 
 /*
 ===============================================================================
@@ -33,6 +35,11 @@ typedef struct rendererModuleState_s {
 	intptr_t				moduleHandle;
 	renderExport_t			moduleExport;
 	bool					moduleExportValid;
+	// engine-side interface pointers saved across a module activation so
+	// unload can restore them
+	idRenderSystem *		savedRenderSystem;
+	idRenderModelManager *	savedRenderModelManager;
+	bool					interfacesPublished;
 } rendererModuleState_t;
 
 static rendererModuleState_t rm_state;
@@ -96,6 +103,22 @@ static void RM_Services_CVarSetString( const char *name, const char *value ) {
 	cvarSystem->SetCVarString( name, value );
 }
 
+static void RM_Services_Sleep( int msec ) {
+	Sys_Sleep( msec );
+}
+
+static void RM_Services_EnterCriticalSection( int index ) {
+	Sys_EnterCriticalSection( index );
+}
+
+static void RM_Services_LeaveCriticalSection( int index ) {
+	Sys_LeaveCriticalSection( index );
+}
+
+static bool RM_Services_IsRenderDocInjected( void ) {
+	return RenderDoc_IsInjected();
+}
+
 static const renderModuleServices_t rm_services = {
 	RM_Services_Printf,
 	RM_Services_Warning,
@@ -105,7 +128,74 @@ static const renderModuleServices_t rm_services = {
 	RM_Services_CVarGetInteger,
 	RM_Services_CVarGetBool,
 	RM_Services_CVarSetString,
+	RM_Services_Sleep,
+	RM_Services_EnterCriticalSection,
+	RM_Services_LeaveCriticalSection,
+	RM_Services_IsRenderDocInjected,
 };
+
+/*
+====================
+RM_BuildImport
+
+Single import builder shared by the boot loader and the on-demand probe so
+the field set cannot drift between them.
+====================
+*/
+static void RM_BuildImport( renderImport_t &moduleImport ) {
+	memset( &moduleImport, 0, sizeof( moduleImport ) );
+	moduleImport.version = RENDER_API_VERSION;
+	moduleImport.services = &rm_services;
+	moduleImport.sys = ::sys;
+	moduleImport.common = ::common;
+	moduleImport.cvarSystem = ::cvarSystem;
+	moduleImport.cmdSystem = ::cmdSystem;
+	moduleImport.fileSystem = ::fileSystem;
+	moduleImport.declManager = ::declManager;
+	moduleImport.soundSystem = ::soundSystem;
+	moduleImport.session = ::session;
+	moduleImport.uiManager = ::uiManager;
+	moduleImport.collisionModelManager = ::collisionModelManager;
+	moduleImport.eventLoop = ::eventLoop;
+	moduleImport.bse = ::bse;
+}
+
+/*
+====================
+RM_PublishActiveModuleInterfaces
+
+Points the engine's renderer-interface globals at a module's exports. Dormant
+until the Phase B8 seam lets RM_ExportCanRender activate a full module; kept
+wired into the activation branch so the flip stays a one-line policy change.
+====================
+*/
+static void RM_PublishActiveModuleInterfaces( const renderExport_t &moduleExport ) {
+	rm_state.savedRenderSystem = ::renderSystem;
+	rm_state.savedRenderModelManager = ::renderModelManager;
+	rm_state.interfacesPublished = true;
+	if ( moduleExport.renderSystem != NULL ) {
+		::renderSystem = moduleExport.renderSystem;
+	}
+	if ( moduleExport.renderModelManager != NULL ) {
+		::renderModelManager = moduleExport.renderModelManager;
+	}
+}
+
+/*
+====================
+RM_RestorePublishedInterfaces
+====================
+*/
+static void RM_RestorePublishedInterfaces( void ) {
+	if ( !rm_state.interfacesPublished ) {
+		return;
+	}
+	::renderSystem = rm_state.savedRenderSystem;
+	::renderModelManager = rm_state.savedRenderModelManager;
+	rm_state.savedRenderSystem = NULL;
+	rm_state.savedRenderModelManager = NULL;
+	rm_state.interfacesPublished = false;
+}
 
 /*
 ====================
@@ -271,6 +361,7 @@ RM_UnloadModule
 ====================
 */
 static void RM_UnloadModule( void ) {
+	RM_RestorePublishedInterfaces();
 	if ( rm_state.moduleExportValid && rm_state.moduleExport.Shutdown != NULL ) {
 		rm_state.moduleExport.Shutdown();
 	}
@@ -336,16 +427,7 @@ static bool RM_TryLoadModuleApi( rendererModuleApi_t api, rendererModuleStatus_t
 	}
 
 	renderImport_t moduleImport;
-	memset( &moduleImport, 0, sizeof( moduleImport ) );
-	moduleImport.version = RENDER_API_VERSION;
-	moduleImport.services = &rm_services;
-	moduleImport.sys = ::sys;
-	moduleImport.common = ::common;
-	moduleImport.cvarSystem = ::cvarSystem;
-	moduleImport.cmdSystem = ::cmdSystem;
-	moduleImport.fileSystem = ::fileSystem;
-	moduleImport.declManager = ::declManager;
-	moduleImport.soundSystem = ::soundSystem;
+	RM_BuildImport( moduleImport );
 
 	renderExport_t *moduleExport = GetRenderAPI( &moduleImport );
 
@@ -367,6 +449,7 @@ static bool RM_TryLoadModuleApi( rendererModuleApi_t api, rendererModuleStatus_t
 	rm_state.moduleHandle = handle;
 	rm_state.moduleExport = *moduleExport;
 	rm_state.moduleExportValid = true;
+	RM_PublishActiveModuleInterfaces( rm_state.moduleExport );
 	status.activeApi = api;
 	status.disposition = RENDER_MODULE_DISPOSITION_MODULE;
 	return true;
@@ -498,16 +581,7 @@ bool R_RendererModule_RunVulkanProbe( bool verbose ) {
 		common->Printf( "rendererVkProbe: module has no %s entry point\n", RENDER_API_ENTRY_POINT );
 	} else {
 		renderImport_t moduleImport;
-		memset( &moduleImport, 0, sizeof( moduleImport ) );
-		moduleImport.version = RENDER_API_VERSION;
-		moduleImport.services = &rm_services;
-		moduleImport.sys = ::sys;
-		moduleImport.common = ::common;
-		moduleImport.cvarSystem = ::cvarSystem;
-		moduleImport.cmdSystem = ::cmdSystem;
-		moduleImport.fileSystem = ::fileSystem;
-		moduleImport.declManager = ::declManager;
-		moduleImport.soundSystem = ::soundSystem;
+		RM_BuildImport( moduleImport );
 
 		renderExport_t *moduleExport = GetRenderAPI( &moduleImport );
 
@@ -648,6 +722,34 @@ bool RendererModule_RunSelfTest( void ) {
 			numFailures++;
 		}
 		testExport.renderSystem = NULL;
+	}
+
+	// import completeness: every v2 interface pointer and service binding
+	// must be filled by the shared builder
+	{
+		renderImport_t testImport;
+		RM_BuildImport( testImport );
+		if ( testImport.version != RENDER_API_VERSION ) {
+			common->Warning( "rendererModuleSelfTest: import version must be RENDER_API_VERSION" );
+			numFailures++;
+		}
+		if ( testImport.services == NULL
+				|| testImport.services->Sleep == NULL
+				|| testImport.services->EnterCriticalSection == NULL
+				|| testImport.services->LeaveCriticalSection == NULL
+				|| testImport.services->IsRenderDocInjected == NULL ) {
+			common->Warning( "rendererModuleSelfTest: v2 service bindings incomplete" );
+			numFailures++;
+		}
+		if ( testImport.sys == NULL || testImport.common == NULL || testImport.cvarSystem == NULL
+				|| testImport.cmdSystem == NULL || testImport.fileSystem == NULL
+				|| testImport.declManager == NULL || testImport.soundSystem == NULL
+				|| testImport.session == NULL || testImport.uiManager == NULL
+				|| testImport.collisionModelManager == NULL || testImport.eventLoop == NULL
+				|| testImport.bse == NULL ) {
+			common->Warning( "rendererModuleSelfTest: v2 import interface pointers incomplete" );
+			numFailures++;
+		}
 	}
 
 	if ( numFailures > 0 ) {

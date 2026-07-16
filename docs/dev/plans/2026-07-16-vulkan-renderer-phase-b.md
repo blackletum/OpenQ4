@@ -57,12 +57,7 @@ rvBSEManager *             bse;
 
 **renderExport_t addition**: `idRenderModelManager* renderModelManager;` — loader publishes both `renderSystem` and `renderModelManager` into engine globals when the module path activates (fixes Common.cpp:5319 gameImport wiring).
 
-**Call-site sweeps**:
-- `Sys_Milliseconds()` (~100 sites: tr_main, tr_backend, RenderWorld_lightgrid, RenderSystem, RenderWorld, ImageManager, ModelManager, Modern*) → `services->Milliseconds()` via a module-local inline wrapper.
-- `eventLoop->Milliseconds()` (RenderSystem.cpp:1230, RenderWorld_demo.cpp:348) → same wrapper (semantic check: eventLoop time vs Sys time — RenderWorld_demo wants com_frameTime-adjacent; if it matters add `services->EventMilliseconds`).
-- `bse->` calls (RenderWorld.cpp:263-343, RenderWorld_demo.cpp:173/890, tr_light.cpp:2524/2593) → imported pointer. rvBSEManager is already a virtual interface; `rvBSE*` stored in rvRenderEffectLocal stays opaque.
-- `uiManager->` (Material.cpp:2888/3055, tr_guisurf.cpp:345/355, RenderSystem_init.cpp:3956, RenderWorld_demo.cpp:1261), `collisionModelManager->` (ModelManager.cpp:210) → imported pointers.
-- `RenderDoc_IsInjected()` (RenderSystem_init.cpp:103) → new `services->IsRenderDocInjected()`.
+**Symbol resolution — revised at implementation (no call-site sweep).** Renderer sources keep calling `Sys_Milliseconds`, `eventLoop->Milliseconds()`, `session->`, `bse->`, `uiManager->`, `collisionModelManager->`, and `RenderDoc_IsInjected` unchanged. Inside the module those names resolve exactly like they do in the game DLLs: the interface globals (`session`, `bse`, `uiManager`, `collisionModelManager`, `eventLoop`) become module-local variables bound from `renderImport_t` in `GetRenderAPI`, and the free functions (`Sys_Milliseconds`, `Sys_Sleep`, `Sys_EnterCriticalSection`, `Sys_LeaveCriticalSection`, `RenderDoc_IsInjected`) are defined by a small module-side forwarder TU over the services table, authored in B8 where the module link makes the required list explicit and linker-enforced. Worker-thread creation (`Sys_CreateThread` in the light-grid bake pool, with its thread-registry/priority/threadInfo_t signature) is also resolved by that B8 forwarder design rather than a premature simplified service. B4 landed the ABI (version 2), the loader import/publish wiring, and the engine-side service bindings.
 
 Verify: build all targets; demo record+playback round-trip; BSE effect map; level load pacifier; MD5R model with collision extraction.
 
