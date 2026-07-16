@@ -126,7 +126,6 @@ idCVar com_nextGameModule( "com_nextGameModule", "", CVAR_SYSTEM, "internal one-
 idCVar com_platformProfile( "com_platformProfile", "default", CVAR_SYSTEM | CVAR_INIT, "startup platform profile (default or steamdeck)" );
 
 static bool openQ4_IsValidGameModuleName( const char *moduleName );
-void GLimp_PreserveWindowOnShutdown( bool preserve );
 
 idCVar com_product_lang_ext( "com_product_lang_ext", "1", CVAR_INTEGER | CVAR_SYSTEM | CVAR_ARCHIVE, "Extension to use when creating language files." );
 idCVar r_skipGlowOverlay( "r_skipGlowOverlay", "0", CVAR_ARCHIVE | CVAR_RENDERER, "skip glow overlays when non-zero" );

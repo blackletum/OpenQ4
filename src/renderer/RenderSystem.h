@@ -137,7 +137,20 @@ typedef struct glconfig_s {
 
 } glconfig_t;
 
+// outside of TR since it shouldn't be cleared during ref re-init; the window
+// layer and GUI code read (and, until the renderer-module window seam lands,
+// write) the vid/viewport fields through this public declaration
+extern glconfig_t glConfig;
+
 typedef bool (*renderPortalSkyCaptureViewCallback_t)( const struct renderView_s *sourceView, struct renderView_s *portalSkyView );
+
+// backend-format facts about a material stage's image, for engine-side
+// self-tests that must not reach into renderer-internal image types
+typedef struct materialImageInfo_s {
+	int						numLevels;
+	bool					isDXT1Compressed;
+	bool					usesGreenAlphaColorFormat;
+} materialImageInfo_t;
 
 
 // font support 
@@ -307,7 +320,8 @@ public:
 	virtual void			SetColor( const idVec4 &rgba ) = 0;
 	virtual void			SetColor4( float r, float g, float b, float a ) = 0;
 
-//	virtual void			DrawStretchPic( const idDrawVert *verts, const glIndex_t *indexes, int vertCount, int indexCount, const idMaterial *material, bool clip = true ) = 0;
+	virtual void			DrawStretchPic( const idDrawVert *verts, const glIndex_t *indexes, int vertCount, int indexCount, const idMaterial *material,
+											bool clip = true, float x = 0.0f, float y = 0.0f, float w = 640.0f, float h = 480.0f ) = 0;
 	virtual void			DrawStretchPic( float x, float y, float w, float h, float s1, float t1, float s2, float t2, const idMaterial *material ) = 0;
 // RAVEN BEGIN
 // jnewquist: Deal with flipped back-buffer copies on Xenon
@@ -316,6 +330,19 @@ public:
 
 	virtual void			DrawStretchTri ( idVec2 p1, idVec2 p2, idVec2 p3, idVec2 t1, idVec2 t2, idVec2 t3, const idMaterial *material ) = 0;
 	virtual void			FlushGui() = 0;
+
+	// binds the stage's image and reports its uploaded format facts; returns
+	// false when the material/stage has no image
+	virtual bool			GetMaterialStageImageInfo( const idMaterial *material, int stageIndex, materialImageInfo_t &info ) = 0;
+
+	// uploads raw RGBA8 pixels into the stage's image (idImage::UploadScratch)
+	// for dynamically generated GUI content; returns false when the
+	// material/stage has no image
+	virtual bool			UploadMaterialStageScratchImage( const idMaterial *material, int stageIndex, const byte *data, int width, int height ) = 0;
+
+	// keeps the loading screen presenting without vsync throttling during
+	// map changes; replaces the renderer-internal free-function call
+	virtual void			SetLoadingScreenSwapIntervalBypass( bool active ) = 0;
 	virtual void			GlobalToNormalizedDeviceCoordinates( const idVec3 &global, idVec3 &ndc ) = 0;
 	virtual void			GetGLSettings( int& width, int& height ) = 0;
 //	virtual void			PrintMemInfo( MemInfo *mi ) = 0;

@@ -51,7 +51,6 @@ If you have questions concerning this license or the applicable additional terms
 #include "ModernShadowPlanner.h"
 #include "../framework/RenderDoc.h"
 #include "../framework/declEntityDef.h"
-#include "../ui/DeviceContext.h"
 
 // Detect the Microsoft software OpenGL wrapper and guide the user toward
 // installing proper vendor drivers.
@@ -732,6 +731,10 @@ static void R_RendererDefaultSafetySelfTest_f( const idCmdArgs &args ) {
 		common->Warning( "Renderer default safety self-test failed" );
 	}
 }
+
+// implemented in ui/DeviceContext.cpp; declared here rather than through
+// ui/DeviceContext.h so the renderer keeps no include edge into src/ui
+bool UI_FontParity_RunSelfTest( void );
 
 static void R_UIFontParitySelfTest_f( const idCmdArgs &args ) {
 	(void)args;

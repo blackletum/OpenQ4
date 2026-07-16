@@ -30,7 +30,6 @@ If you have questions concerning this license or the applicable additional terms
 #include "Window.h"
 #include "UserInterfaceLocal.h"
 #include "RenderWindow.h"
-#include "../renderer/tr_local.h"
 
 namespace {
 

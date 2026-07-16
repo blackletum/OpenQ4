@@ -801,6 +801,61 @@ void idRenderSystemLocal::DrawStretchPic( float x, float y, float w, float h, fl
 	guiModel->DrawStretchPic( x, y, w, h, s1, t1, s2, t2, material );
 }
 
+/*
+=============
+GetMaterialStageImageInfo
+
+Binds the stage's image and reports its uploaded format facts so engine-side
+self-tests never need renderer-internal image types.
+=============
+*/
+bool idRenderSystemLocal::GetMaterialStageImageInfo( const idMaterial *material, int stageIndex, materialImageInfo_t &info ) {
+	memset( &info, 0, sizeof( info ) );
+	if ( material == NULL || stageIndex < 0 || stageIndex >= material->GetNumStages() ) {
+		return false;
+	}
+	const shaderStage_t *stage = material->GetStage( stageIndex );
+	if ( stage == NULL || stage->texture.image == NULL ) {
+		return false;
+	}
+	idImage *image = stage->texture.image;
+	image->Bind();
+	const idImageOpts &opts = image->GetOpts();
+	info.numLevels = opts.numLevels;
+	info.isDXT1Compressed = ( opts.format == FMT_DXT1 );
+	info.usesGreenAlphaColorFormat = ( opts.colorFormat == CFM_GREEN_ALPHA );
+	return true;
+}
+
+/*
+=============
+UploadMaterialStageScratchImage
+
+Uploads raw RGBA8 pixels into a material stage's image for dynamically
+generated GUI content (player stat graphs).
+=============
+*/
+bool idRenderSystemLocal::UploadMaterialStageScratchImage( const idMaterial *material, int stageIndex, const byte *data, int width, int height ) {
+	if ( material == NULL || data == NULL || stageIndex < 0 || stageIndex >= material->GetNumStages() ) {
+		return false;
+	}
+	const shaderStage_t *stage = material->GetStage( stageIndex );
+	if ( stage == NULL || stage->texture.image == NULL ) {
+		return false;
+	}
+	stage->texture.image->UploadScratch( data, width, height );
+	return true;
+}
+
+/*
+=============
+SetLoadingScreenSwapIntervalBypass
+=============
+*/
+void idRenderSystemLocal::SetLoadingScreenSwapIntervalBypass( bool active ) {
+	R_SetLoadingScreenSwapIntervalBypass( active );
+}
+
 void idRenderSystemLocal::SetUseUIViewportFor2D( bool enable ) {
 	if ( useUIViewportFor2D == enable ) {
 		return;

@@ -6149,7 +6149,7 @@ void idSessionLocal::UpdateScreen( bool outOfSequence ) {
 		Sys_GrabMouseCursor( false );
 	}
 
-	R_SetLoadingScreenSwapIntervalBypass( insideExecuteMapChange );
+	renderSystem->SetLoadingScreenSwapIntervalBypass( insideExecuteMapChange );
 
 	renderSystem->BeginFrame( renderSystem->GetScreenWidth(), renderSystem->GetScreenHeight() );
 

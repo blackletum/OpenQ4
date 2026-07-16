@@ -429,7 +429,9 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 	opts.gammaMips = false;
 
 	bool sourceFileTimeKnown = false;
-	if ( com_productionMode.GetInteger() != 0 ) {
+	// read through the cvar system rather than the framework-owned idCVar
+	// object so this file stays linkable inside a renderer module
+	if ( cvarSystem->GetCVarInteger( "com_productionMode" ) != 0 ) {
 		sourceFileTime = FILE_NOT_FOUND_TIMESTAMP;
 		sourceFileTimeKnown = true;
 		if ( cubeFiles != CF_2D ) {

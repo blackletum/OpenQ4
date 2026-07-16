@@ -389,6 +389,11 @@ void			Sys_ClearEvents( void );
 // the main window is recreated
 void			Sys_InitInput( void );
 void			Sys_ShutdownInput( void );
+
+// window/context teardown owned by the platform layer; declared here so
+// framework code does not need renderer-internal headers to reach them
+void			GLimp_Shutdown( void );
+void			GLimp_PreserveWindowOnShutdown( bool preserve );
 void			Sys_ClearInputEvents( void );
 void			Sys_InitScanTable( void );
 const unsigned char *Sys_GetScanTable( void );

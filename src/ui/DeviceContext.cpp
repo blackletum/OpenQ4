@@ -31,7 +31,6 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "DeviceContext.h"
 #include "UserInterface.h"
-#include "../renderer/tr_local.h"
 
 idVec4 idDeviceContext::colorPurple;
 idVec4 idDeviceContext::colorOrange;
@@ -913,7 +912,7 @@ void idDeviceContext::DrawStretchPic(float x, float y, float w, float h, float s
 		}
 	}
 
-	tr.DrawStretchPic( &verts[0], &indexes[0], 4, 6, shader, hasTransform, 0.0f, 0.0f, static_cast<float>( VIRTUAL_WIDTH ), static_cast<float>( VIRTUAL_HEIGHT ) );
+	renderSystem->DrawStretchPic( &verts[0], &indexes[0], 4, 6, shader, hasTransform, 0.0f, 0.0f, static_cast<float>( VIRTUAL_WIDTH ), static_cast<float>( VIRTUAL_HEIGHT ) );
 	
 }
 
@@ -1062,7 +1061,7 @@ void idDeviceContext::DrawStretchPicRotated(float x, float y, float w, float h, 
 	}
 
 
-	tr.DrawStretchPic( &verts[0], &indexes[0], 4, 6, shader, ident || angle != 0.0f, 0.0f, 0.0f, static_cast<float>( VIRTUAL_WIDTH ), static_cast<float>( VIRTUAL_HEIGHT ) );
+	renderSystem->DrawStretchPic( &verts[0], &indexes[0], 4, 6, shader, ident || angle != 0.0f, 0.0f, 0.0f, static_cast<float>( VIRTUAL_WIDTH ), static_cast<float>( VIRTUAL_HEIGHT ) );
 }
 
 void idDeviceContext::DrawFilledRect( float x, float y, float w, float h, const idVec4 &color) {
@@ -1986,15 +1985,13 @@ bool UI_FontParity_RunSelfTest( void ) {
 	const idMaterial *fontAtlasMaterial = declManager->FindMaterial( va( "fonts/%s/marine_12.fontdat", fontAtlasLang.c_str() ), false );
 	ok &= openQ4_CheckBool( "hud radio marine atlas material", fontAtlasMaterial != NULL, true );
 	if ( fontAtlasMaterial != NULL && fontAtlasMaterial->GetNumStages() > 0 ) {
-		const shaderStage_t *fontAtlasStage = fontAtlasMaterial->GetStage( 0 );
-		idImage *fontAtlasImage = fontAtlasStage->texture.image;
-		ok &= openQ4_CheckBool( "hud radio marine atlas image", fontAtlasImage != NULL, true );
-		if ( fontAtlasImage != NULL ) {
-			fontAtlasImage->Bind();
-			const idImageOpts &fontAtlasOpts = fontAtlasImage->GetOpts();
-			ok &= openQ4_CheckInt( "hud radio marine atlas format", static_cast<int>( fontAtlasOpts.format ), static_cast<int>( FMT_DXT1 ) );
-			ok &= openQ4_CheckInt( "hud radio marine atlas color format", static_cast<int>( fontAtlasOpts.colorFormat ), static_cast<int>( CFM_GREEN_ALPHA ) );
-			ok &= openQ4_CheckInt( "hud radio marine atlas mip levels", fontAtlasOpts.numLevels, 4 );
+		materialImageInfo_t fontAtlasInfo;
+		const bool fontAtlasImagePresent = renderSystem->GetMaterialStageImageInfo( fontAtlasMaterial, 0, fontAtlasInfo );
+		ok &= openQ4_CheckBool( "hud radio marine atlas image", fontAtlasImagePresent, true );
+		if ( fontAtlasImagePresent ) {
+			ok &= openQ4_CheckBool( "hud radio marine atlas format", fontAtlasInfo.isDXT1Compressed, true );
+			ok &= openQ4_CheckBool( "hud radio marine atlas color format", fontAtlasInfo.usesGreenAlphaColorFormat, true );
+			ok &= openQ4_CheckInt( "hud radio marine atlas mip levels", fontAtlasInfo.numLevels, 4 );
 		}
 	}
 
