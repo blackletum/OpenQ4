@@ -883,6 +883,86 @@ void idRenderSystemLocal::PreloadImage( const char *name ) {
 	globalImages->ImageFromFile( name, TF_DEFAULT, TR_CLAMP, TD_DEFAULT, CF_2D, false );
 }
 
+/*
+=============
+GetDefaultLightGridBakeOptions
+=============
+*/
+void idRenderSystemLocal::GetDefaultLightGridBakeOptions( lightGridBakeOptions_t &options ) {
+	R_SetDefaultLightGridBakeOptions( options );
+}
+
+/*
+=============
+HasPrimaryRenderView
+=============
+*/
+bool idRenderSystemLocal::HasPrimaryRenderView( void ) {
+	return primaryWorld != NULL && primaryView != NULL;
+}
+
+/*
+=============
+GetCurrentLightGridBakeInfo
+
+Reports the primary world's map name and, after setting up the per-area
+grids under the given options, which portal areas hold valid grid points.
+The grid setup mutates the world's light-grid layout exactly as the
+session-side implementation previously did.
+=============
+*/
+bool idRenderSystemLocal::GetCurrentLightGridBakeInfo( const lightGridBakeOptions_t &options, idStr &mapName, idList<int> &validAreaIndices ) {
+	validAreaIndices.Clear();
+	if ( primaryWorld == NULL ) {
+		return false;
+	}
+
+	idRenderWorldLocal *world = primaryWorld;
+	mapName = world->mapName;
+
+	for ( int areaIndex = 0; areaIndex < world->numPortalAreas; areaIndex++ ) {
+		world->portalAreas[ areaIndex ].lightGrid.SetupGrid(
+			world->portalAreas[ areaIndex ].globalBounds,
+			world,
+			options.gridSize,
+			areaIndex,
+			world->numPortalAreas,
+			options.maxProbes,
+			true );
+		if ( world->portalAreas[ areaIndex ].lightGrid.CountValidGridPoints() > 0 ) {
+			validAreaIndices.Append( areaIndex );
+		}
+	}
+	return true;
+}
+
+/*
+=============
+LightGridFileMatchesBakeOptions
+=============
+*/
+bool idRenderSystemLocal::LightGridFileMatchesBakeOptions( const char *name, const lightGridBakeOptions_t &options ) {
+	return primaryWorld != NULL && R_LightGridFileMatchesBakeOptions( name, options, primaryWorld );
+}
+
+/*
+=============
+LightGridPackFileMatchesBakeOptions
+=============
+*/
+bool idRenderSystemLocal::LightGridPackFileMatchesBakeOptions( const char *name, const lightGridBakeOptions_t &options ) {
+	return primaryWorld != NULL && R_LightGridPackFileMatchesBakeOptions( name, options, primaryWorld );
+}
+
+/*
+=============
+BakeCurrentLightGrids
+=============
+*/
+bool idRenderSystemLocal::BakeCurrentLightGrids( const lightGridBakeOptions_t &options, const char *jobName ) {
+	return R_BakeCurrentLightGrids( options, jobName );
+}
+
 void idRenderSystemLocal::SetUseUIViewportFor2D( bool enable ) {
 	if ( useUIViewportFor2D == enable ) {
 		return;

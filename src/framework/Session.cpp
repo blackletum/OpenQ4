@@ -47,7 +47,6 @@ If you have questions concerning this license or the applicable additional terms
 #include "Game_local.h"
 #undef protected
 #undef private
-#include "../renderer/tr_local.h"
 #include "../imagetools/ImageTools.h"
 
 idCVar	idSessionLocal::com_showAngles( "com_showAngles", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
@@ -1851,7 +1850,7 @@ static bool Session_PrepareExpandedLoadingBackground( const idStr &backgroundPat
 	}
 
 	generatedPath = Session_MakeExpandedLoadingBackgroundPath( mapName, outputWidth, outputHeight );
-	R_WriteTGA( generatedPath.c_str(), composite.Ptr(), outputWidth, outputHeight );
+	R_WriteTGA( generatedPath.c_str(), composite.Ptr(), outputWidth, outputHeight, false, "fs_savepath" );
 
 	R_StaticFree( centerPic );
 	if ( leftPic ) {
@@ -2266,50 +2265,32 @@ static void Session_RemoveLightGridBakeOutputsForMap( const idStr &mapName ) {
 static bool Session_CurrentLightGridOutputsComplete( const lightGridBakeOptions_t &options, idStr &mapName, int &requiredAtlasCount ) {
 	requiredAtlasCount = 0;
 
-	if ( tr.primaryWorld == NULL ) {
+	idList<int> validAreaIndices;
+	if ( !renderSystem->GetCurrentLightGridBakeInfo( options, mapName, validAreaIndices ) ) {
 		return false;
 	}
-
-	idRenderWorldLocal *world = tr.primaryWorld;
-	mapName = world->mapName;
 	Session_NormalizeLightGridMapName( mapName );
 	if ( mapName.Length() <= 0 ) {
 		return false;
 	}
-
-	for ( int areaIndex = 0; areaIndex < world->numPortalAreas; areaIndex++ ) {
-		world->portalAreas[ areaIndex ].lightGrid.SetupGrid(
-			world->portalAreas[ areaIndex ].globalBounds,
-			world,
-			options.gridSize,
-			areaIndex,
-			world->numPortalAreas,
-			options.maxProbes,
-			true );
-		if ( world->portalAreas[ areaIndex ].lightGrid.CountValidGridPoints() > 0 ) {
-			requiredAtlasCount++;
-		}
-	}
+	requiredAtlasCount = validAreaIndices.Num();
 
 	idStr lightGridPath;
 	idStr atlasDir;
 	idStr packPath;
 	Session_BuildLightGridOutputPaths( mapName, lightGridPath, atlasDir, &packPath );
-	if ( fileSystem->FindFile( packPath.c_str(), true ) != FIND_NO && R_LightGridPackFileMatchesBakeOptions( packPath.c_str(), options, world ) ) {
+	if ( fileSystem->FindFile( packPath.c_str(), true ) != FIND_NO && renderSystem->LightGridPackFileMatchesBakeOptions( packPath.c_str(), options ) ) {
 		return true;
 	}
 	if ( fileSystem->FindFile( lightGridPath.c_str(), true ) == FIND_NO ) {
 		return false;
 	}
-	if ( !R_LightGridFileMatchesBakeOptions( lightGridPath.c_str(), options, world ) ) {
+	if ( !renderSystem->LightGridFileMatchesBakeOptions( lightGridPath.c_str(), options ) ) {
 		return false;
 	}
 
-	for ( int areaIndex = 0; areaIndex < world->numPortalAreas; areaIndex++ ) {
-		const LightGrid &lightGrid = world->portalAreas[ areaIndex ].lightGrid;
-		if ( lightGrid.CountValidGridPoints() <= 0 ) {
-			continue;
-		}
+	for ( int i = 0; i < validAreaIndices.Num(); i++ ) {
+		const int areaIndex = validAreaIndices[ i ];
 
 		idStr atlasPath = va( "%s/area%i_lightgrid_amb.tga", atlasDir.c_str(), areaIndex );
 		if ( fileSystem->FindFile( atlasPath.c_str(), true ) == FIND_NO ) {
@@ -2340,7 +2321,7 @@ static void Session_PrintLightGridBakeUsage() {
 
 static bool Session_ParseLightGridBakeArgs( const idCmdArgs &args, lightGridBakeOptions_t &options,
 	idList<idStr> &mapTargets, bool &bakeAll, bool &bakeAllMultiplayer, bool &forceBake, bool &autoQuit, int &resumeIndex, bool &helpRequested, bool &requestedTargets ) {
-	R_SetDefaultLightGridBakeOptions( options );
+	renderSystem->GetDefaultLightGridBakeOptions( options );
 	bakeAll = false;
 	bakeAllMultiplayer = false;
 	forceBake = false;
@@ -2593,7 +2574,7 @@ static bool Session_WaitForLightGridBakeView( const idStr &mapName ) {
 	const int maxFrames = 240;
 
 	for ( int frame = 0; frame < maxFrames && Sys_Milliseconds() - startMsec < maxWaitMsec; frame++ ) {
-		if ( tr.primaryWorld != NULL && tr.primaryView != NULL ) {
+		if ( renderSystem->HasPrimaryRenderView() ) {
 			if ( frame > 0 ) {
 				common->Printf( "bakeLightGrids: render view ready for %s after %i warm-up frame(s)\n", mapName.c_str(), frame );
 			}
@@ -2604,7 +2585,7 @@ static bool Session_WaitForLightGridBakeView( const idStr &mapName ) {
 	}
 
 	common->Printf( "bakeLightGrids: timed out waiting for render view after loading '%s'\n", mapName.c_str() );
-	return tr.primaryWorld != NULL && tr.primaryView != NULL;
+	return renderSystem->HasPrimaryRenderView();
 }
 
 static bool Session_LoadLightGridBakeMap( const idStr &mapName ) {
@@ -2658,7 +2639,7 @@ static bool Session_BakeLightGridCurrentMap( const lightGridBakeOptions_t &optio
 		return false;
 	}
 
-	if ( sessLocal.mapSpawned && ( !tr.primaryWorld || !tr.primaryView ) ) {
+	if ( sessLocal.mapSpawned && !renderSystem->HasPrimaryRenderView() ) {
 		idStr waitMapName = cvarSystem->GetCVarString( "si_map" );
 		if ( !Session_WaitForLightGridBakeView( waitMapName ) ) {
 			return false;
@@ -2685,7 +2666,7 @@ static bool Session_BakeLightGridCurrentMap( const lightGridBakeOptions_t &optio
 	}
 
 	const char *jobName = cvarSystem->GetCVarString( "si_map" );
-	return R_BakeCurrentLightGrids( options, ( jobName != NULL && jobName[ 0 ] != '\0' ) ? jobName : NULL );
+	return renderSystem->BakeCurrentLightGrids( options, ( jobName != NULL && jobName[ 0 ] != '\0' ) ? jobName : NULL );
 }
 
 static void Session_RunLightGridBake( const idCmdArgs &args ) {

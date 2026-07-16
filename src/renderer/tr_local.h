@@ -40,16 +40,8 @@ If you have questions concerning this license or the applicable additional terms
 
 class idRenderWorldLocal;
 
-typedef struct lightGridBakeOptions_s {
-	int					maxProbes;
-	int					bounces;
-	int					captureSize;
-	int					blends;
-	int					samples;
-	bool				separateAreas;
-	idVec3				gridSize;
-} lightGridBakeOptions_t;
-
+// lightGridBakeOptions_t is public (RenderSystem.h); the free-function bake
+// implementation stays renderer-internal behind the idRenderSystem virtuals
 void					R_SetDefaultLightGridBakeOptions( lightGridBakeOptions_t &options );
 bool					R_BakeCurrentLightGrids( const lightGridBakeOptions_t &options, const char *jobName = NULL );
 bool					R_LightGridFileMatchesBakeOptions( const char *name, const lightGridBakeOptions_t &options, const idRenderWorldLocal *world );
@@ -910,6 +902,12 @@ public:
 	virtual void			SetLoadingScreenSwapIntervalBypass( bool active );
 	virtual idDecl *		AllocMaterialDecl( void );
 	virtual void			PreloadImage( const char *name );
+	virtual void			GetDefaultLightGridBakeOptions( lightGridBakeOptions_t &options );
+	virtual bool			HasPrimaryRenderView( void );
+	virtual bool			GetCurrentLightGridBakeInfo( const lightGridBakeOptions_t &options, idStr &mapName, idList<int> &validAreaIndices );
+	virtual bool			LightGridFileMatchesBakeOptions( const char *name, const lightGridBakeOptions_t &options );
+	virtual bool			LightGridPackFileMatchesBakeOptions( const char *name, const lightGridBakeOptions_t &options );
+	virtual bool			BakeCurrentLightGrids( const lightGridBakeOptions_t &options, const char *jobName = NULL );
 	virtual void			FlushGui();
 	virtual void			GlobalToNormalizedDeviceCoordinates( const idVec3 &global, idVec3 &ndc );
 	virtual void			GetGLSettings( int& width, int& height );

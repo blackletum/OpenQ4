@@ -152,6 +152,18 @@ typedef struct materialImageInfo_s {
 	bool					usesGreenAlphaColorFormat;
 } materialImageInfo_t;
 
+// light-grid bake parameters for the bakeLightGrids command; the session
+// owns argument parsing and output-path policy, the renderer owns the bake
+typedef struct lightGridBakeOptions_s {
+	int					maxProbes;
+	int					bounces;
+	int					captureSize;
+	int					blends;
+	int					samples;
+	bool				separateAreas;
+	idVec3				gridSize;
+} lightGridBakeOptions_t;
+
 
 // font support 
 const int GLYPH_START = 0;
@@ -351,6 +363,21 @@ public:
 	// resolves and uploads an image file ahead of first use (menu background
 	// preloading); replaces direct image-manager access from framework code
 	virtual void			PreloadImage( const char *name ) = 0;
+
+	// light-grid baking (bakeLightGrids command); the world internals stay
+	// renderer-side while the session owns command flow and output paths
+	virtual void			GetDefaultLightGridBakeOptions( lightGridBakeOptions_t &options ) = 0;
+	// true when a primary world and view exist (a map is loaded and rendering)
+	virtual bool			HasPrimaryRenderView( void ) = 0;
+	// reports the primary world's map name and, after grid setup under the
+	// given options, the portal areas holding valid grid points; false when
+	// no primary world exists
+	virtual bool			GetCurrentLightGridBakeInfo( const lightGridBakeOptions_t &options, idStr &mapName, idList<int> &validAreaIndices ) = 0;
+	// verify existing bake outputs against the primary world and options
+	virtual bool			LightGridFileMatchesBakeOptions( const char *name, const lightGridBakeOptions_t &options ) = 0;
+	virtual bool			LightGridPackFileMatchesBakeOptions( const char *name, const lightGridBakeOptions_t &options ) = 0;
+	// bakes the currently loaded map's light grids; blocks until complete
+	virtual bool			BakeCurrentLightGrids( const lightGridBakeOptions_t &options, const char *jobName = NULL ) = 0;
 	virtual void			GlobalToNormalizedDeviceCoordinates( const idVec3 &global, idVec3 &ndc ) = 0;
 	virtual void			GetGLSettings( int& width, int& height ) = 0;
 //	virtual void			PrintMemInfo( MemInfo *mi ) = 0;
