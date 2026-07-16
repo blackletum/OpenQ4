@@ -28,7 +28,6 @@ If you have questions concerning this license or the applicable additional terms
 #include "../../idlib/precompiled.h"
 #include "../../renderer/tr_local.h"
 #include "../posix/posix_public.h"
-#include "local.h"
 
 #if !defined( __linux__ ) || !defined( ID_DEDICATED )
 	#error "linux/dedicated.cpp is only for Linux dedicated-server builds"

@@ -107,6 +107,7 @@ def main() -> None:
     )
 
     require(linux_dedicated, "Sys_GetDesktopResolution", "Linux dedicated platform stubs")
+    reject(linux_dedicated, '#include "local.h"', "Linux dedicated X11-free platform stubs")
     require(gl_stub, "OpenQ4_GlewGetProcAddress", "Linux dedicated GLEW stub")
     require(gl_stub, "GLimp_SetScreenParms", "Linux dedicated GLimp stubs")
     require(openal_stub, "alcOpenDevice", "Linux dedicated OpenAL stubs")
