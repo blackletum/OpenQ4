@@ -716,7 +716,7 @@ public:
 	virtual void			PreloadImage( const char *name );
 	virtual void			GetDefaultLightGridBakeOptions( lightGridBakeOptions_t &options );
 	virtual bool			HasPrimaryRenderView( void );
-	virtual bool			GetCurrentLightGridBakeInfo( const lightGridBakeOptions_t &options, idStr &mapName, idList<int> &validAreaIndices );
+	virtual bool			GetCurrentLightGridBakeInfo( const lightGridBakeOptions_t &options, char *mapName, int mapNameLength, int *validAreaIndices, int maxAreaIndices, int &numValidAreaIndices );
 	virtual bool			LightGridFileMatchesBakeOptions( const char *name, const lightGridBakeOptions_t &options );
 	virtual bool			LightGridPackFileMatchesBakeOptions( const char *name, const lightGridBakeOptions_t &options );
 	virtual bool			BakeCurrentLightGrids( const lightGridBakeOptions_t &options, const char *jobName = NULL );
@@ -767,6 +767,7 @@ public:
 	virtual bool			GetUseUIViewportFor2D( void ) const;
 	virtual void			GetImageSize(idImage* image, int& imageWidth, int& imageHeight);
 	virtual int				GetImageMSAASamples(idImage* image);
+	virtual const glconfig_t &	GetGLConfig( void ) const;
 public:
 	// internal functions
 							idRenderSystemLocal( void );

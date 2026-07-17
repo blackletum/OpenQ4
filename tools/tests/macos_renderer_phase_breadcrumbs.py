@@ -117,10 +117,15 @@ def validate_posix_signal_bridge() -> None:
     source = read("src/sys/posix/posix_signal.cpp")
     fatal_body = function_body(source, "static void sig_handler( int signum, siginfo_t *info, void *context ) {")
 
+    # module-only clients carry no renderer TUs; the breadcrumb resolves
+    # through the Posix_RendererStartupPhaseName wrapper, which falls back to
+    # a fixed marker there and to the real phase name on static builds
     for token in (
         '#include "../../renderer/RendererStartupDiagnostics.h"',
+        "static const char *Posix_RendererStartupPhaseName( void ) {",
+        "return R_RendererStartupPhaseSignalName();",
         'Posix_WriteSignalText( "openQ4: last renderer startup phase: " );',
-        "Posix_WriteSignalText( R_RendererStartupPhaseSignalName() );",
+        "Posix_WriteSignalText( Posix_RendererStartupPhaseName() );",
     ):
         require(source, token, "POSIX fatal signal renderer startup phase bridge")
 
@@ -130,7 +135,7 @@ def validate_posix_signal_bridge() -> None:
             'Posix_WriteSignalText( "openQ4: fatal signal " );',
             'Posix_WriteSignalText( "), exiting without unsafe engine shutdown\\n" );',
             'Posix_WriteSignalText( "openQ4: last renderer startup phase: " );',
-            "R_RendererStartupPhaseSignalName()",
+            "Posix_RendererStartupPhaseName()",
             "_exit( 128 + signum );",
         ),
         "POSIX fatal signal renderer startup phase output order",

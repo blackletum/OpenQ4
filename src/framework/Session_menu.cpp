@@ -862,8 +862,9 @@ static void SetMainMenuQualityGuiVars( idUserInterface *gui ) {
 	// Apple GL 2.1 compatibility state: while ARB2 light interactions are
 	// bypassed the shadow/specular/bump toggles have no visible effect, and
 	// SMAA post-AA needs GLSL 1.30; the settings GUI greys those rows.
-	gui->SetStateInt( "r_interactionsBypassed", glConfig.disableARB2Interactions ? 1 : 0 );
-	gui->SetStateInt( "r_postAAAvailable", ( glConfig.GLSLProgramAvailable && glConfig.GLSL130Available ) ? 1 : 0 );
+	const glconfig_t &rendererConfig = renderSystem->GetGLConfig();
+	gui->SetStateInt( "r_interactionsBypassed", rendererConfig.disableARB2Interactions ? 1 : 0 );
+	gui->SetStateInt( "r_postAAAvailable", ( rendererConfig.GLSLProgramAvailable && rendererConfig.GLSL130Available ) ? 1 : 0 );
 }
 
 static void SyncMainMenuAspectVisibility( idUserInterface *gui ) {

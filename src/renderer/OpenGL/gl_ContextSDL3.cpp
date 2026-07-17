@@ -530,6 +530,22 @@ void GLimp_SwapBuffers(void) {
 		(void)SDL3_ApplySwapInterval();
 	}
 
+	// the engine owns the window; poll its live state each present so this
+	// renderer's glConfig tracks resizes and UI-viewport changes (the
+	// engine does not mirror into a module renderer's glConfig)
+	if (s_glWindow && s_glWindowServices != NULL && s_glWindowServices->RefreshNativeWindowHandles != NULL) {
+		renderModuleWindowInfo_t windowInfo;
+		s_glWindowServices->RefreshNativeWindowHandles(&windowInfo);
+		if (windowInfo.pixelWidth > 0 && windowInfo.pixelHeight > 0) {
+			glConfig.vidWidth = windowInfo.pixelWidth;
+			glConfig.vidHeight = windowInfo.pixelHeight;
+		}
+		glConfig.uiViewportX = windowInfo.uiViewportX;
+		glConfig.uiViewportY = windowInfo.uiViewportY;
+		glConfig.uiViewportWidth = windowInfo.uiViewportWidth;
+		glConfig.uiViewportHeight = windowInfo.uiViewportHeight;
+	}
+
 	if (SDL3_EnsureGLContextCurrent("swap buffers") && !s_glWindowServices->SwapGLWindow()) {
 		common->Printf("SDL3: failed to swap window buffers: %s\n", R_GLVideoError());
 	}

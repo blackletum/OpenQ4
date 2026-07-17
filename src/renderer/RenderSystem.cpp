@@ -911,14 +911,19 @@ The grid setup mutates the world's light-grid layout exactly as the
 session-side implementation previously did.
 =============
 */
-bool idRenderSystemLocal::GetCurrentLightGridBakeInfo( const lightGridBakeOptions_t &options, idStr &mapName, idList<int> &validAreaIndices ) {
-	validAreaIndices.Clear();
+bool idRenderSystemLocal::GetCurrentLightGridBakeInfo( const lightGridBakeOptions_t &options, char *mapName, int mapNameLength, int *validAreaIndices, int maxAreaIndices, int &numValidAreaIndices ) {
+	numValidAreaIndices = 0;
+	if ( mapName != NULL && mapNameLength > 0 ) {
+		mapName[ 0 ] = '\0';
+	}
 	if ( primaryWorld == NULL ) {
 		return false;
 	}
 
 	idRenderWorldLocal *world = primaryWorld;
-	mapName = world->mapName;
+	if ( mapName != NULL && mapNameLength > 0 ) {
+		idStr::Copynz( mapName, world->mapName.c_str(), mapNameLength );
+	}
 
 	for ( int areaIndex = 0; areaIndex < world->numPortalAreas; areaIndex++ ) {
 		world->portalAreas[ areaIndex ].lightGrid.SetupGrid(
@@ -930,7 +935,10 @@ bool idRenderSystemLocal::GetCurrentLightGridBakeInfo( const lightGridBakeOption
 			options.maxProbes,
 			true );
 		if ( world->portalAreas[ areaIndex ].lightGrid.CountValidGridPoints() > 0 ) {
-			validAreaIndices.Append( areaIndex );
+			if ( validAreaIndices != NULL && numValidAreaIndices < maxAreaIndices ) {
+				validAreaIndices[ numValidAreaIndices ] = areaIndex;
+			}
+			numValidAreaIndices++;
 		}
 	}
 	return true;
@@ -2081,6 +2089,15 @@ idRenderSystemLocal::GetImageMSAASamples
 */
 int idRenderSystemLocal::GetImageMSAASamples( idImage* image ) {
 	return image != NULL ? image->GetOpts().numMSAASamples : 0;
+}
+
+/*
+===============
+idRenderSystemLocal::GetGLConfig
+===============
+*/
+const glconfig_t &idRenderSystemLocal::GetGLConfig( void ) const {
+	return glConfig;
 }
 
 /*

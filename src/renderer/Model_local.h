@@ -82,6 +82,7 @@ public:
 	virtual int					NearestJoint( int surfaceNum, int a, int b, int c ) const;
 	virtual bool				HasCollisionSurface( const struct renderEntity_s *ent ) const;
 	virtual idBounds			Bounds( const struct renderEntity_s *ent ) const;
+	virtual void				SetBounds( const idBounds &newBounds ) { bounds = newBounds; }
 	virtual void				ReadFromDemoFile( class idDemoFile *f );
 	virtual void				WriteToDemoFile( class idDemoFile *f );
 	virtual float				DepthHack() const;

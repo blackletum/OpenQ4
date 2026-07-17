@@ -17,8 +17,29 @@
 ===============================================================================
 */
 
-extern idCVar r_renderApi;
-extern idCVar r_actualRenderApi;
+// loader-owned cvars: defined here (not in a renderer TU) so they exist in
+// every build shape, including module-only clients that shed the static
+// renderer sources
+static const char *r_renderApiArgs[] = { "best", "gl", "vulkan", "gl-module", NULL };
+idCVar r_renderApi( "r_renderApi", "gl", CVAR_RENDERER | CVAR_ARCHIVE, "rendering API: best = platform default (currently gl), gl = OpenGL renderer (loaded as the renderer-gl module on module-only builds, statically linked elsewhere), vulkan = native Vulkan renderer module (bring-up; falls back to gl), gl-module = alias that always selects the OpenGL module. Module selections take effect on engine restart.", r_renderApiArgs, idCmdSystem::ArgCompletion_String<r_renderApiArgs> );
+idCVar r_actualRenderApi( "r_actualRenderApi", "UNINITIALIZED", CVAR_RENDERER | CVAR_ROM, "rendering API actually active after request/fallback selection" );
+
+// engine-side homes for window/gui cvars referenced by both the platform
+// backend (engine) and the renderer sources (module mirrors them in its
+// glue TU); defined here for the same every-build-shape reason
+idCVar r_fullscreenDesktop( "r_fullscreenDesktop", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "1 = native desktop fullscreen, 0 = exclusive mode using r_mode/r_customWidth/r_customHeight" );
+idCVar r_borderless( "r_borderless", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "1 = borderless window mode when r_fullscreen is 0" );
+idCVar r_windowWidth( "r_windowWidth", "1280", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "windowed mode width" );
+idCVar r_windowHeight( "r_windowHeight", "720", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "windowed mode height" );
+idCVar r_skipGuiShaders( "r_skipGuiShaders", "0", CVAR_RENDERER | CVAR_INTEGER, "1 = skip all gui elements on surfaces, 2 = skip drawing but still handle events, 3 = draw but skip events", 0, 3, idCmdSystem::ArgCompletion_Integer<0,3> );
+
+#ifdef OPENQ4_RENDERER_MODULE_ONLY
+// module-only clients have no renderer TUs; the engine-side interface
+// globals live here, NULL until RM_PublishActiveModuleInterfaces fills them
+// at first boot (before declManager->Init, so nothing dereferences earlier)
+idRenderSystem *		renderSystem = NULL;
+idRenderModelManager *	renderModelManager = NULL;
+#endif
 
 #if defined( _M_X64 ) || defined( __x86_64__ )
 	#define RENDERER_MODULE_ARCH_TAG "x64"
@@ -124,6 +145,10 @@ static bool RM_Services_IsRenderDocInjected( void ) {
 	return RenderDoc_IsInjected();
 }
 
+static void RM_Services_PrintRendererApiStatus( void ) {
+	RendererModule_PrintGfxInfo();
+}
+
 static const renderModuleServices_t rm_services = {
 	RM_Services_Printf,
 	RM_Services_Warning,
@@ -137,6 +162,7 @@ static const renderModuleServices_t rm_services = {
 	RM_Services_EnterCriticalSection,
 	RM_Services_LeaveCriticalSection,
 	RM_Services_IsRenderDocInjected,
+	RM_Services_PrintRendererApiStatus,
 };
 
 /*
@@ -400,14 +426,16 @@ candidate is now the active renderer path.
 ====================
 */
 static bool RM_TryLoadModuleApi( rendererModuleApi_t api, rendererModuleStatus_t &status ) {
+#ifndef OPENQ4_RENDERER_MODULE_ONLY
 	if ( api == RENDER_MODULE_API_GL ) {
-		// the OpenGL renderer is statically linked until the Phase B module
-		// seam lands; activating it is always possible
+		// this build shape statically links the OpenGL renderer; activating
+		// it is always possible
 		status.activeApi = RENDER_MODULE_API_GL;
 		status.disposition = ( status.requestedApi == RENDER_MODULE_API_GL ) ?
 				RENDER_MODULE_DISPOSITION_BUILTIN : RENDER_MODULE_DISPOSITION_FALLBACK;
 		return true;
 	}
+#endif
 
 	if ( !rm_state.activationAllowed ) {
 		// outside the first-boot activation window the engine has already
@@ -521,8 +549,11 @@ void R_RendererModule_Boot( void ) {
 		}
 	}
 	if ( !activated ) {
-		// the GL tail of the ladder cannot fail above; guard anyway
-		common->FatalError( "no renderer path could be activated (requested '%s')", requestedValue );
+		// on module-only builds the GL tail is the renderer-gl module, which
+		// can genuinely fail (missing/mis-staged binary); on static builds
+		// the tail cannot fail and this stays a guard
+		common->FatalError( "no renderer path could be activated (requested '%s'): %s", requestedValue,
+				status.fallbackReason[ 0 ] != '\0' ? status.fallbackReason : "no failure detail recorded" );
 		return;
 	}
 
@@ -581,10 +612,50 @@ static bool RM_PeekConfigRenderApi( char *outValue, int maxLength ) {
 
 /*
 ====================
+Loader-owned console commands
+
+Registered by the loader (not the renderer's R_InitCommands) so they exist
+and reach the real loader diagnostics in every build shape, including
+module-only clients where R_InitCommands runs inside the renderer module.
+====================
+*/
+static void R_RendererModuleSelfTest_f( const idCmdArgs &args ) {
+	(void)args;
+	if ( !RendererModule_RunSelfTest() ) {
+		common->Warning( "Renderer module self-test failed" );
+	}
+}
+
+static void R_RendererVkProbe_f( const idCmdArgs &args ) {
+	const bool verbose = ( args.Argc() < 2 ) || ( idStr::Icmp( args.Argv( 1 ), "quiet" ) != 0 );
+	R_RendererModule_RunVulkanProbe( verbose );
+}
+
+// implemented in ui/DeviceContext.cpp; declared here rather than through
+// ui/DeviceContext.h so this TU keeps no include edge into src/ui
+bool UI_FontParity_RunSelfTest( void );
+
+static void R_UIFontParitySelfTest_f( const idCmdArgs &args ) {
+	(void)args;
+	if ( !UI_FontParity_RunSelfTest() ) {
+		common->Warning( "UI font parity self-test failed" );
+	}
+}
+
+static void RM_RegisterCommands( void ) {
+	cmdSystem->AddCommand( "rendererModuleSelfTest", R_RendererModuleSelfTest_f, CMD_FL_RENDERER, "run renderer module selection/loading self tests" );
+	cmdSystem->AddCommand( "rendererVkProbe", R_RendererVkProbe_f, CMD_FL_RENDERER, "load the Vulkan renderer module, run its device bring-up probe, and unload it" );
+	cmdSystem->AddCommand( "uiFontParitySelfTest", R_UIFontParitySelfTest_f, CMD_FL_RENDERER, "run GUI font retail parity self tests" );
+}
+
+/*
+====================
 R_RendererModule_BootEarly
 ====================
 */
 void R_RendererModule_BootEarly( void ) {
+	RM_RegisterCommands();
+
 	char configValue[ 64 ];
 	if ( RM_PeekConfigRenderApi( configValue, sizeof( configValue ) ) ) {
 		r_renderApi.SetString( configValue );

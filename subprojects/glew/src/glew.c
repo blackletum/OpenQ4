@@ -49,7 +49,7 @@
 #  endif
 #elif defined(GLEW_EGL)
 #  include <GL/eglew.h>
-#elif defined(_WIN32)
+#elif defined(_WIN32) && !defined(OPENQ4_GLEW_SDL3_LOADER)
 /*
  * If NOGDI is defined, wingdi.h won't be included by windows.h, and thus
  * wglGetProcAddress won't be declared. It will instead be implicitly declared,
@@ -21676,7 +21676,7 @@ GLenum eglewInit (EGLDisplay display)
   return GLEW_OK;
 }
 
-#elif defined(_WIN32)
+#elif defined(_WIN32) && !defined(OPENQ4_GLEW_SDL3_LOADER)
 
 PFNWGLSETSTEREOEMITTERSTATE3DLPROC __wglewSetStereoEmitterState3DL = NULL;
 

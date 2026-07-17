@@ -56,7 +56,10 @@ Manager
 
 // tr_imageprogram.c
 
-#include "tr_local.h"
+// relocated from src/renderer in the Phase B closure: image programs are
+// CPU-only image math shared by the engine and the renderer modules
+#include "../renderer/Image.h"
+#include "ImageTools.h"
 
 /*
 

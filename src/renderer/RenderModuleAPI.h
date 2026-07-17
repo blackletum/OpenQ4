@@ -38,7 +38,11 @@
 //  4 - Phase B8 module completion: console import, input window services
 //      (InitInput/ShutdownInput/GrabMouseCursor) for the renderer's init and
 //      vid_restart sequencing
-#define RENDER_API_VERSION			4
+//  5 - Phase B closure: idRenderSystem vtable changes (POD
+//      GetCurrentLightGridBakeInfo, GetGLConfig) and idMaterial
+//      cross-module virtuals; a module built against a different layout
+//      must be rejected
+#define RENDER_API_VERSION			5
 #define RENDER_API_ENTRY_POINT		"GetRenderAPI"
 
 class idSys;
@@ -75,6 +79,10 @@ typedef struct renderModuleServices_s {
 	void			( *EnterCriticalSection )( int index );
 	void			( *LeaveCriticalSection )( int index );
 	bool			( *IsRenderDocInjected )( void );
+
+	// --- version 5: the loader owns request/active/disposition status; the
+	// module's gfxInfo routes here so the report stays truthful ---
+	void			( *PrintRendererApiStatus )( void );
 	// worker-thread creation intentionally not carried yet: the light-grid
 	// bake pool's Sys_CreateThread signature (thread registry, priority,
 	// threadInfo_t) is resolved by the module-side forwarder design in
@@ -89,6 +97,12 @@ typedef struct renderModuleWindowInfo_s {
 	void *			sdlWindow;				// SDL_Window* when the SDL3 backend is active
 	int				pixelWidth;
 	int				pixelHeight;
+	// --- version 5: live engine window state the module polls each present
+	// (the engine no longer mirrors sizes into a renderer-owned glConfig) ---
+	int				uiViewportX;
+	int				uiViewportY;
+	int				uiViewportWidth;
+	int				uiViewportHeight;
 } renderModuleWindowInfo_t;
 
 /*

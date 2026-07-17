@@ -351,6 +351,11 @@ idCVar idConsoleLocal::con_scrollLines( "con_scrollLines", "6", CVAR_INTEGER | C
 static float Con_GetConsoleXScale( void ) {
 	const float baseAspect = 4.0f / 3.0f;
 	float xScale = 1.0f;
+	// module-only clients publish renderSystem at first boot; early startup
+	// prints land before that and use the neutral scale
+	if ( renderSystem == NULL ) {
+		return xScale;
+	}
 	const int screenWidth = renderSystem->GetScreenWidth();
 	const int screenHeight = renderSystem->GetScreenHeight();
 

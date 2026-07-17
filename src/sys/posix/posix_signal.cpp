@@ -29,6 +29,17 @@ If you have questions concerning this license or the applicable additional terms
 #include "posix_public.h"
 #include "../../renderer/RendererStartupDiagnostics.h"
 
+// module-only clients carry no renderer TUs; the crash breadcrumb loses the
+// startup-phase detail rather than reaching into the module from a signal
+// handler
+static const char *Posix_RendererStartupPhaseName( void ) {
+#ifdef OPENQ4_RENDERER_MODULE_ONLY
+	return "unavailable (module renderer)";
+#else
+	return R_RendererStartupPhaseSignalName();
+#endif
+}
+
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
@@ -170,7 +181,7 @@ static void sig_handler( int signum, siginfo_t *info, void *context ) {
 	Posix_WriteSignalNumber( signum );
 	Posix_WriteSignalText( "), exiting without unsafe engine shutdown\n" );
 	Posix_WriteSignalText( "openQ4: last renderer startup phase: " );
-	Posix_WriteSignalText( R_RendererStartupPhaseSignalName() );
+	Posix_WriteSignalText( Posix_RendererStartupPhaseName() );
 	Posix_WriteSignalText( "\n" );
 
 	// Mirror the stderr breadcrumb into the save-path fatal file so support
@@ -180,7 +191,7 @@ static void sig_handler( int signum, siginfo_t *info, void *context ) {
 	strcpy( breadcrumb, "fatal signal " );
 	strcat( breadcrumb, Posix_SignalName( signum ) );
 	strcat( breadcrumb, "; last renderer startup phase: " );
-	strcat( breadcrumb, R_RendererStartupPhaseSignalName() );
+	strcat( breadcrumb, Posix_RendererStartupPhaseName() );
 	Posix_AppendFatalBreadcrumbRaw( breadcrumb );
 
 	_exit( 128 + signum );

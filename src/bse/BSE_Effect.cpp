@@ -499,19 +499,19 @@ idRenderModel* rvBSE::Render(idRenderModel* model, const struct renderEffect_s* 
 		return NULL;
 	}
 
-	idRenderModelStatic* renderModel = dynamic_cast<idRenderModelStatic*>(model);
-	if (model && !renderModel) {
-		renderModelManager->FreeModel(model);
-		model = NULL;
+	// virtual type discrimination, not dynamic_cast: the model may be
+	// allocated by the renderer module, whose idRenderModelStatic typeinfo
+	// is not linkable from the engine; every operation below goes through
+	// the idRenderModel interface
+	idRenderModel* renderModel = model;
+	if (renderModel && renderModel->IsDynamicModel() != DM_STATIC) {
+		renderModelManager->FreeModel(renderModel);
+		renderModel = NULL;
 	}
 
 	if (!renderModel) {
-		model = renderModelManager->AllocModel();
-		renderModel = dynamic_cast<idRenderModelStatic*>(model);
+		renderModel = renderModelManager->AllocModel();
 		if (!renderModel) {
-			if (model) {
-				renderModelManager->FreeModel(model);
-			}
 			common->Warning("^4BSE:^1 Unable to allocate runtime model for effect '%s'", mDeclEffect ? mDeclEffect->GetName() : "<unknown>");
 			return NULL;
 		}
@@ -572,8 +572,8 @@ idRenderModel* rvBSE::Render(idRenderModel* model, const struct renderEffect_s* 
 	if (!hasBounds) {
 		modelBounds.Zero();
 	}
-	renderModel->bounds = modelBounds;
-	DisplayDebugInfo(owner, view, renderModel->bounds);
+	renderModel->SetBounds(modelBounds);
+	DisplayDebugInfo(owner, view, modelBounds);
 	mLastRenderBounds = modelBounds;
 	mGrownRenderBounds = mLastRenderBounds;
 	mGrownRenderBounds.ExpandSelf(20.0f);

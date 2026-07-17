@@ -387,8 +387,6 @@ bool openQ4_ShouldCacheEntityDefMedia( bool noCaching ) {
 	return !noCaching && openQ4_GetActiveToolFlags( OPENQ4_ENTITYDEF_MEDIA_CACHE_TOOL_MASK ) == 0;
 }
 
-extern glconfig_t	glConfig;
-
 #ifdef _WIN32
 HWND			com_hwndMsg = NULL;
 bool			com_outputMsg = false;

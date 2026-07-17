@@ -288,6 +288,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default="engine",
         help="Emit engine target sources or one of the split library/module source lists.",
     )
+    parser.add_argument(
+        "--renderer",
+        choices=("static", "module"),
+        default="static",
+        help=(
+            "Renderer linkage for the engine emit. 'module' sheds the renderer "
+            "sources (the client loads renderer-gl_<arch> instead), keeping only "
+            "the engine-side loader TU."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -360,6 +370,14 @@ def main(argv: list[str]) -> int:
                         repo_root / "src",
                         pathlib.Path(path).relative_to("src").as_posix(),
                     )
+                if args.target_kind == "dedicated":
+                    # Phase B7: the Windows ded links no GL; win_qgl's loader
+                    # carries hard opengl32 imports and is replaced by the
+                    # GL 1.1 stub TU
+                    remove_source(source_set, ordered_sources, "src/sys/win32/win_qgl.cpp")
+                    add_required_source(
+                        source_set, ordered_sources, source_root, "sys/stub/stub_gl_win.cpp"
+                    )
             else:
                 for path in SDL3_WIN32_SOURCES:
                     remove_source(source_set, ordered_sources, path)
@@ -391,6 +409,24 @@ def main(argv: list[str]) -> int:
     except SourceListError as exc:
         print(exc, file=sys.stderr)
         return 1
+
+    if args.renderer == "module":
+        # Phase B8 F3: the module-only client sheds the renderer sources; the
+        # renderer-gl module carries them. Only the engine-side loader TU
+        # stays (RendererGLModule.cpp compiles empty without the module
+        # define, so dropping it here is equivalent and keeps lists minimal).
+        kept_renderer_sources = {"src/renderer/RendererModule.cpp"}
+        filtered_sources = []
+        for rel in ordered_sources:
+            normalized = rel.replace("\\", "/")
+            if normalized.startswith("src/renderer/") and normalized not in kept_renderer_sources:
+                source_set.discard(rel)
+                continue
+            filtered_sources.append(rel)
+        ordered_sources = filtered_sources
+        # the QGL loader only serves the statically linked renderer; its
+        # opengl32 imports have no place in a module-only client
+        remove_source(source_set, ordered_sources, "src/sys/win32/win_qgl.cpp")
 
     if not ordered_sources:
         print("No source files discovered.", file=sys.stderr)

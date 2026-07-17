@@ -74,7 +74,9 @@ def validate_glew_loader_hook() -> None:
 
 
 def validate_sdl3_backend_hook() -> None:
-    source = read("src/sys/sdl3/sdl3_backend.cpp")
+    # post-B5b the GLEW hook lives in the renderer-owned context seam TU and
+    # resolves through the window services rather than direct SDL calls
+    source = read("src/renderer/OpenGL/gl_ContextSDL3.cpp")
     hook = function_body(source, 'extern "C" openQ4GlewProcAddress_t OpenQ4_GlewGetProcAddress(const unsigned char *name) {')
     extension_pointer = function_body(source, "void *GLimp_ExtensionPointer(const char *name) {")
 
@@ -82,9 +84,15 @@ def validate_sdl3_backend_hook() -> None:
     require(source, "typedef void ( *openQ4GlewProcAddress_t ) (void);", "SDL3 GLEW hook typedef")
     require(hook, "if (name == NULL || name[0] == '\\0') {", "SDL3 GLEW hook null-name guard")
     require(hook, 'SDL3_EnsureGLContextCurrent("GLEW proc lookup")', "SDL3 GLEW hook current-context guard")
-    require(hook, "SDL_GL_GetProcAddress(reinterpret_cast<const char *>(name))", "SDL3 GLEW hook resolver")
+    require(hook, "s_glWindowServices->GetGLProcAddress(reinterpret_cast<const char *>(name))", "SDL3 GLEW hook resolver")
     require(extension_pointer, "if (name == NULL || name[0] == '\\0') {", "SDL3 extension pointer null-name guard")
     require(extension_pointer, 'SDL3_EnsureGLContextCurrent("extension proc lookup")', "SDL3 extension pointer current-context guard")
+
+    # the Windows dedicated GL-free link relies on the SDL3-loader define
+    # compiling out both wglew halves (declarations and implementation)
+    for relative_path in ("subprojects/glew/src/glew.c", "src/external/glew/glew.c"):
+        glew_source = read(relative_path)
+        require(glew_source, "#elif defined(_WIN32) && !defined(OPENQ4_GLEW_SDL3_LOADER)", f"{relative_path} wglew gating")
 
 
 def validate_renderer_context_guard() -> None:
@@ -108,7 +116,8 @@ def validate_renderer_context_guard() -> None:
 def validate_platform_context_contract() -> None:
     linux_dedicated = read("src/sys/linux/dedicated.cpp")
     backends = {
-        "SDL3 backend": read("src/sys/sdl3/sdl3_backend.cpp"),
+        # post-B5b the SDL3 context half lives in the renderer-owned seam TU
+        "SDL3 backend": read("src/renderer/OpenGL/gl_ContextSDL3.cpp"),
         "native GLX backend": read("src/sys/linux/glimp.cpp"),
         "native WGL backend": read("src/sys/win32/win_glimp.cpp"),
         "native macOS backend": read("src/sys/osx/macosx_glimp.mm"),

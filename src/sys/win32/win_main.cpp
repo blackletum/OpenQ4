@@ -905,9 +905,14 @@ void Sys_Error(const char* error, ...) {
 
 	// Common::Shutdown may already have torn down the renderer path.
 	// Avoid forcing GL shutdown when there is no active GL context.
+#ifndef OPENQ4_RENDERER_MODULE_ONLY
 	if ( renderSystem->IsOpenGLRunning() ) {
 		GLimp_Shutdown();
 	}
+#else
+	// module-only build: GLimp lives inside the renderer module; this is a
+	// fatal-exit path and the OS reclaims the context with the process
+#endif
 
 	// wait for the user to quit
 	while (1) {

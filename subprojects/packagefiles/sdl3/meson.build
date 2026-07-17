@@ -466,7 +466,9 @@ elif host_machine.system() == 'windows'
   sdl_deps += cc.find_library('imm32')
   sdl_deps += cc.find_library('setupapi')
   sdl_deps += cc.find_library('winmm')
-  sdl_deps += cc.find_library('opengl32')
+  # no opengl32: SDL3 loads the GL driver dynamically (WIN_GL_LoadLibrary);
+  # a static import lib here would drag GL back into openQ4's GL-free
+  # dedicated/module-only targets (verified: libSDL3.a has no wgl/gl imports)
 elif host_machine.system() == 'darwin'
   cdata.set('SDL_PLATFORM_APPLE', 1)
   cdata.set('SDL_THREAD_PTHREAD', 1)

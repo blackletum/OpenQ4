@@ -371,8 +371,11 @@ public:
 	virtual bool			HasPrimaryRenderView( void ) = 0;
 	// reports the primary world's map name and, after grid setup under the
 	// given options, the portal areas holding valid grid points; false when
-	// no primary world exists
-	virtual bool			GetCurrentLightGridBakeInfo( const lightGridBakeOptions_t &options, idStr &mapName, idList<int> &validAreaIndices ) = 0;
+	// no primary world exists. Caller-buffer out-params (idStr/idList must
+	// not resize across the renderer-module ABI): numValidAreaIndices always
+	// receives the true count; indices beyond maxAreaIndices are dropped and
+	// validAreaIndices may be NULL when only the count is wanted
+	virtual bool			GetCurrentLightGridBakeInfo( const lightGridBakeOptions_t &options, char *mapName, int mapNameLength, int *validAreaIndices, int maxAreaIndices, int &numValidAreaIndices ) = 0;
 	// verify existing bake outputs against the primary world and options
 	virtual bool			LightGridFileMatchesBakeOptions( const char *name, const lightGridBakeOptions_t &options ) = 0;
 	virtual bool			LightGridPackFileMatchesBakeOptions( const char *name, const lightGridBakeOptions_t &options ) = 0;
@@ -510,6 +513,11 @@ public:
 	// Returns the sample count actually allocated after driver-cap clamping.
 	virtual int				GetImageMSAASamples(idImage* image) = 0;
 // jmarshall end
+
+	// read-only view of the active renderer's GL configuration/capability
+	// state; the engine must not read the glConfig global directly (the
+	// renderer may live in a module whose glConfig is a separate object)
+	virtual const glconfig_t &	GetGLConfig( void ) const = 0;
 };
 
 extern idRenderSystem *		renderSystem;

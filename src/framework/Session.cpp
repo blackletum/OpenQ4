@@ -2265,15 +2265,27 @@ static void Session_RemoveLightGridBakeOutputsForMap( const idStr &mapName ) {
 static bool Session_CurrentLightGridOutputsComplete( const lightGridBakeOptions_t &options, idStr &mapName, int &requiredAtlasCount ) {
 	requiredAtlasCount = 0;
 
-	idList<int> validAreaIndices;
-	if ( !renderSystem->GetCurrentLightGridBakeInfo( options, mapName, validAreaIndices ) ) {
+	// caller-buffer out-params: idStr/idList must not resize across the
+	// renderer-module ABI
+	char bakeMapName[ MAX_OSPATH ];
+	static const int MAX_BAKE_AREAS = 4096;
+	int validAreaIndices[ MAX_BAKE_AREAS ];
+	int numValidAreaIndices = 0;
+	if ( !renderSystem->GetCurrentLightGridBakeInfo( options, bakeMapName, sizeof( bakeMapName ), validAreaIndices, MAX_BAKE_AREAS, numValidAreaIndices ) ) {
 		return false;
 	}
+	if ( numValidAreaIndices > MAX_BAKE_AREAS ) {
+		// more areas than the buffer holds: report incomplete so the bake
+		// re-runs rather than trusting a truncated completeness check
+		common->Warning( "Session_CurrentLightGridOutputsComplete: %d bake areas exceed the %d-entry buffer", numValidAreaIndices, MAX_BAKE_AREAS );
+		return false;
+	}
+	mapName = bakeMapName;
 	Session_NormalizeLightGridMapName( mapName );
 	if ( mapName.Length() <= 0 ) {
 		return false;
 	}
-	requiredAtlasCount = validAreaIndices.Num();
+	requiredAtlasCount = numValidAreaIndices;
 
 	idStr lightGridPath;
 	idStr atlasDir;
@@ -2289,7 +2301,7 @@ static bool Session_CurrentLightGridOutputsComplete( const lightGridBakeOptions_
 		return false;
 	}
 
-	for ( int i = 0; i < validAreaIndices.Num(); i++ ) {
+	for ( int i = 0; i < numValidAreaIndices; i++ ) {
 		const int areaIndex = validAreaIndices[ i ];
 
 		idStr atlasPath = va( "%s/area%i_lightgrid_amb.tga", atlasDir.c_str(), areaIndex );

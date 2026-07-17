@@ -497,7 +497,7 @@ public:
 	// I'm not really sure why this needs to be virtual...
 	virtual const char* ImageName(void) const;
 
-	void				ReloadImages(bool force) const;
+	virtual void		ReloadImages(bool force) const;
 
 	// returns number of stages this material contains
 	const int			GetNumStages(void) const { return numStages; }
@@ -632,7 +632,7 @@ public:
 	}
 
 	const rvDeclMatType* GetMaterialType(void) const { return(materialType); }
-	const rvDeclMatType* GetMaterialType(idVec2& tc) const;
+	virtual const rvDeclMatType* GetMaterialType(idVec2& tc) const;
 	byte* GetMaterialTypeArray(void) const { return(materialTypeArray); }
 	const char* GetMaterialTypeArrayName(void) const { return(materialTypeArrayName.c_str()); }
 
@@ -715,7 +715,7 @@ public:
 
 						// name of the portal-sky capture image, for tools that must not
 						// reach into renderer image internals; NULL when none is set
-	const char *		GetPortalImageName( void ) const;
+	virtual const char *	GetPortalImageName( void ) const;
 
 	float				GetSurfaceArea(void) const { return surfaceArea; }
 	void				AddToSurfaceArea(float area) { surfaceArea += area; }
@@ -724,28 +724,28 @@ public:
 
 						// returns the length, in milliseconds, of the videoMap on this material,
 						// or zero if it doesn't have one
-	int					CinematicLength(void) const;
+	virtual int			CinematicLength(void) const;
 
 	// Returns the current cinematic status enum value (see cinStatus_t in Cinematic.h).
-	int					CinematicStatus( int time ) const;
+	virtual int			CinematicStatus( int time ) const;
 
 	void				CloseCinematic(void) const;
 
-	void				ResetCinematicTime(int time) const;
+	virtual void		ResetCinematicTime(int time) const;
 
-	void				UpdateCinematic(int time) const;
+	virtual void		UpdateCinematic(int time) const;
 
 	//------------------------------------------------------------------
 
 						// gets an image for the editor to use
 	idImage* GetEditorImage(void) const;
-	int					GetImageWidth(void) const;
-	int					GetImageHeight(void) const;
+	virtual int			GetImageWidth(void) const;
+	virtual int			GetImageHeight(void) const;
 
 	void				SetGui(const char* _gui) const;
 
 	// just for resource tracking
-	void				SetImageClassifications(int tag) const;
+	virtual void		SetImageClassifications(int tag) const;
 
 	//------------------------------------------------------------------
 
@@ -771,7 +771,7 @@ public:
 	void				AddLevelLoadReference() { IncreaseUseCount(); }
 	int					GetUseCount() const { return useCount; }
 	int					GetGlobalUseCount() const { return globalUseCount; }
-	void				ResolveUse();
+	virtual void		ResolveUse();
 
 private:
 	// parse the entire material

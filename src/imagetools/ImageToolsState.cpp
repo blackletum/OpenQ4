@@ -2,6 +2,7 @@
 //
 
 #include "ImageTools.h"
+#include "../renderer/Image.h"		// textureFormat_t for BitsForFormat
 
 /*
 ===============================================================================
@@ -72,4 +73,36 @@ void R_StaticFree( void *data ) {
 		it_allocHooks.onStaticFree();
 	}
 	Mem_Free( data );
+}
+
+/*
+================
+BitsForFormat
+
+Relocated from the renderer in the Phase B closure: pure format math shared
+by the binary-image codecs and the renderer modules.
+================
+*/
+int BitsForFormat( textureFormat_t format ) {
+	switch ( format ) {
+		case FMT_NONE:		return 0;
+		case FMT_RGBA8:		return 32;
+		case FMT_XRGB8:		return 32;
+		case FMT_RGBA16F:	return 64;
+		case FMT_RGB565:	return 16;
+		case FMT_L8A8:		return 16;
+		case FMT_ALPHA:		return 8;
+		case FMT_LUM8:		return 8;
+		case FMT_INT8:		return 8;
+		case FMT_DXT1:		return 4;
+		case FMT_DXT5:		return 8;
+		case FMT_BC7:		return 8;
+		case FMT_DEPTH:		return 32;
+		case FMT_DEPTH_STENCIL:	return 32;
+		case FMT_X16:		return 16;
+		case FMT_Y16_X16:	return 32;
+		default:
+			assert( 0 );
+			return 0;
+	}
 }

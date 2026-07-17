@@ -3493,23 +3493,30 @@ static void SDL3_SetUIViewport( int x, int y, int width, int height ) {
 	engineWindowState.uiViewportY = y;
 	engineWindowState.uiViewportWidth = width;
 	engineWindowState.uiViewportHeight = height;
-	// mirrored until the B5b window seam moves glConfig module-side
+#ifndef OPENQ4_RENDERER_MODULE_ONLY
+	// mirrored for the statically linked renderer; module renderers poll
+	// this state through the window services each present
 	glConfig.uiViewportX = x;
 	glConfig.uiViewportY = y;
 	glConfig.uiViewportWidth = width;
 	glConfig.uiViewportHeight = height;
+#endif
 }
 
 static void SDL3_SetVidSize( int width, int height ) {
 	engineWindowState.vidWidth = width;
 	engineWindowState.vidHeight = height;
+#ifndef OPENQ4_RENDERER_MODULE_ONLY
 	glConfig.vidWidth = width;
 	glConfig.vidHeight = height;
+#endif
 }
 
 static void SDL3_SetFullscreenState( bool fullscreen ) {
 	engineWindowState.isFullscreen = fullscreen;
+#ifndef OPENQ4_RENDERER_MODULE_ONLY
 	glConfig.isFullscreen = fullscreen;
+#endif
 }
 
 static void SDL3_UpdateDisplayViewport(SDL_DisplayID display, int windowX, int windowY, int windowWidth, int windowHeight, int pixelWidth, int pixelHeight) {
@@ -5485,6 +5492,10 @@ static void SDL3_FillWindowInfo(renderModuleWindowInfo_t *outInfo) {
 #endif
 	outInfo->pixelWidth = engineWindowState.vidWidth;
 	outInfo->pixelHeight = engineWindowState.vidHeight;
+	outInfo->uiViewportX = engineWindowState.uiViewportX;
+	outInfo->uiViewportY = engineWindowState.uiViewportY;
+	outInfo->uiViewportWidth = engineWindowState.uiViewportWidth;
+	outInfo->uiViewportHeight = engineWindowState.uiViewportHeight;
 }
 
 static void SDL3_ParmsFromWindowParms(const renderWindowParms_t *src, glimpParms_t &dst) {
@@ -5832,9 +5843,14 @@ const renderWindowServices_t *Sys_GetRenderWindowServices(void) {
 /*
 ===============================================================================
 	Context half of the seam. Physically renderer-owned; compiled into this
-	translation unit until the Phase B8 module split gives it its own build.
+	translation unit only for build shapes that keep the statically linked
+	renderer (macOS, legacy backends, dedicated). Module-only clients get the
+	context half from the renderer module, which reaches this backend purely
+	through renderWindowServices_t.
 ===============================================================================
 */
+#ifndef OPENQ4_RENDERER_MODULE_ONLY
 #define OPENQ4_SDL3_CONTEXT_IMPL 1
 #define OPENQ4_SDL3_CONTEXT_ENCLOSED 1
 #include "../../renderer/OpenGL/gl_ContextSDL3.cpp"
+#endif

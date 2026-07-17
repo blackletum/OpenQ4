@@ -513,6 +513,10 @@ public:
 	// dynamic models should return a fast, conservative approximation
 	// static models should usually return the exact value
 	virtual idBounds			Bounds( const struct renderEntity_s *ent = NULL ) const = 0;
+	// replaces the model's culling bounds; used by runtime-geometry owners
+	// (BSE) that rebuild surfaces every frame and must not touch concrete
+	// model members across the renderer-module ABI
+	virtual void				SetBounds( const idBounds &newBounds ) = 0;
 	virtual bool				BoundsFromJoints( const idJointMat *joints, idBounds &bounds ) const;
 
 	// returns value != 0.0f if the model requires the depth hack

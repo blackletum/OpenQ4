@@ -67,6 +67,13 @@ idCVar com_purgeAll( "com_purgeAll", "0", CVAR_BOOL | CVAR_ARCHIVE | CVAR_SYSTEM
 idCVar com_makingBuild( "com_makingBuild", "0", CVAR_BOOL | CVAR_SYSTEM, "1 when making a build" );
 idCVar com_SingleDeclFile( "com_SingleDeclFile", "0", CVAR_SYSTEM | CVAR_BOOL, "load decls from a packed single .decls file instead of scanning loose decl folders" );
 idCVar r_skipGlowOverlay( "r_skipGlowOverlay", "0", CVAR_ARCHIVE | CVAR_RENDERER, "skip glow overlays when non-zero" );
+// window/gui cvars whose engine-side homes moved to the loader TU
+// (RendererModule.cpp); renderer sources reference the objects directly
+idCVar r_fullscreenDesktop( "r_fullscreenDesktop", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "1 = native desktop fullscreen, 0 = exclusive mode using r_mode/r_customWidth/r_customHeight" );
+idCVar r_borderless( "r_borderless", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "1 = borderless window mode when r_fullscreen is 0" );
+idCVar r_windowWidth( "r_windowWidth", "1280", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "windowed mode width" );
+idCVar r_windowHeight( "r_windowHeight", "720", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "windowed mode height" );
+idCVar r_skipGuiShaders( "r_skipGuiShaders", "0", CVAR_RENDERER | CVAR_INTEGER, "1 = skip all gui elements on surfaces, 2 = skip drawing but still handle events, 3 = draw but skip events", 0, 3, idCmdSystem::ArgCompletion_Integer<0,3> );
 
 static const renderModuleServices_t *rgm_services = NULL;
 static const renderWindowServices_t *rgm_windowServices = NULL;
@@ -321,22 +328,10 @@ void R_RendererModule_Shutdown( void ) {
 }
 
 void RendererModule_PrintGfxInfo( void ) {
-}
-
-bool RendererModule_RunSelfTest( void ) {
-	common->Printf( "rendererModuleSelfTest: loader diagnostics live in the engine; nothing to test inside the renderer module\n" );
-	return true;
-}
-
-bool R_RendererModule_RunVulkanProbe( bool verbose ) {
-	( void )verbose;
-	common->Printf( "rendererVkProbe: unavailable inside the renderer module; run it from the engine loader\n" );
-	return false;
-}
-
-bool UI_FontParity_RunSelfTest( void ) {
-	common->Printf( "fontParitySelfTest: unavailable inside the renderer module (ui/ is engine-side); skipped\n" );
-	return true;
+	// the loader owns the request/active/disposition status
+	if ( rgm_services != NULL && rgm_services->PrintRendererApiStatus != NULL ) {
+		rgm_services->PrintRendererApiStatus();
+	}
 }
 
 /*

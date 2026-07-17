@@ -1,7 +1,7 @@
 # Vulkan Renderer Phase B: Renderer Extraction Stages
 
 Date: 2026-07-16
-Status: B1 landed (73bccf7a); B2-prep/B3 trampoline (a07c9ec1); B2 carve (04128897); B3 bakeLightGrids (79df21e3) — framework/ui/sound hold zero renderer-internal includes; B4 ABI v2 (24f84ae7); B6a dmap -draw retirement (9dbdaa5c); B6 render_geo carve landed — dmap compiles against src/render_geo only, dmap output byte-identical, shared lib is tr/cvar/vertexCache-free with renderer hooks. B7 redesigned per audit (null renderer infeasible; ded keeps the real front-end, GL-free link co-sequenced with B8). B5a landed — engine-owned engineWindowState_t (sys_public.h) carries vid/uiViewport/fullscreen window state with the platform layer dual-writing glConfig until B5b moves the mirror behind the module import; engine readers (ui, framework, sys) repointed. B5b landed — the GL context half lives in renderer/OpenGL/gl_ContextSDL3.cpp (compiled into the SDL3 backend TU until B8) and reaches the engine window layer exclusively through renderWindowServices_t (ABI v3): module-driven candidate negotiation with per-attempt window recreation, split init/screen-parms/teardown, ctx-local window/context statics, hGLRC reverse write deleted, macOS token guards rebound to the seam. B8 F1+F2 landed — renderer-gl_x64 module builds from the shared renderer sources (engine build unchanged), ABI v4 (console import + input services), RendererGLModule glue TU, opt-in `r_renderApi gl-module` activation at first boot via R_RendererModule_BootEarly before declManager->Init; verified activating, rendering mp/q4dm2 gameplay, and shutting down cleanly. B7-interim (GL-free ded link) and F3 (static-renderer shed + default flip, post-soak) open.
+Status: B1 landed (73bccf7a); B2-prep/B3 trampoline (a07c9ec1); B2 carve (04128897); B3 bakeLightGrids (79df21e3) — framework/ui/sound hold zero renderer-internal includes; B4 ABI v2 (24f84ae7); B6a dmap -draw retirement (9dbdaa5c); B6 render_geo carve landed — dmap compiles against src/render_geo only, dmap output byte-identical, shared lib is tr/cvar/vertexCache-free with renderer hooks. B7 redesigned per audit (null renderer infeasible; ded keeps the real front-end, GL-free link co-sequenced with B8). B5a landed — engine-owned engineWindowState_t (sys_public.h) carries vid/uiViewport/fullscreen window state with the platform layer dual-writing glConfig until B5b moves the mirror behind the module import; engine readers (ui, framework, sys) repointed. B5b landed — the GL context half lives in renderer/OpenGL/gl_ContextSDL3.cpp (compiled into the SDL3 backend TU until B8) and reaches the engine window layer exclusively through renderWindowServices_t (ABI v3): module-driven candidate negotiation with per-attempt window recreation, split init/screen-parms/teardown, ctx-local window/context statics, hGLRC reverse write deleted, macOS token guards rebound to the seam. B8 F1+F2 landed — renderer-gl_x64 module builds from the shared renderer sources, ABI v4, RendererGLModule glue TU, opt-in `r_renderApi gl-module` first-boot activation; verified rendering mp/q4dm2 gameplay. PHASE B CLOSED (user-directed): capture gate met with sha256-identical static-vs-module captures; F3 landed — SDL3 Windows/Linux clients shed the static renderer entirely (GL-link-free client, `gl` default loads the module, fail-closed FatalError when missing; macOS/legacy/ded keep static); B7 landed — Windows ded drops opengl32 via gated GLEW + stub_gl_win.cpp (Linux ded was already GL-free); bake-info ABI hazard closed with a POD signature (ABI v5, vtable-change batch mirrored to openQ4-game). See the closure record in the B8 section.
 
 Parent plan: [2026-07-16-vulkan-renderer.md](2026-07-16-vulkan-renderer.md). This staging plan was derived from a five-way symbol-level audit of engine/renderer coupling; file:line anchors reflect the tree at the audit commit (8bcdcdbf) and shift as stages land.
 
@@ -153,6 +153,49 @@ renderer); the module is a parallel compilation of the same renderer sources.
 - Still open for F3 (post-soak): engine sheds the static renderer, ded
   GL-free source unification, default flip gated on pixel-identical
   captures + user gameplay soak sign-off.
+
+**PHASE B CLOSURE LANDED — as-implemented record (2026-07-17, user-directed).**
+
+- **Capture gate MET**: `renderer_gameplay_benchmark --profile smoke` with
+  launch cvars `g_stopTime=1 r_mode=-1 r_customWidth/Height=1280x720
+  r_gamma/brightness=1 r_multiSamples=0 r_borderless=0` produces
+  sha256-identical TGA captures for r_renderApi=gl (static) vs gl-module on
+  SP storage1 (full lit visual stack, SMAA on). The one divergence found —
+  borderless desktop-resize reaching only the engine's glConfig — was the
+  known module resize gap, fixed below, not a rendering difference.
+- **F3 client shed + default flip**: on SDL3 Windows/Linux clients
+  (`renderer_module_only_client` in meson; OPENQ4_RENDERER_MODULE_ONLY)
+  the client compiles NO renderer sources (meson_sources `--renderer
+  module` keeps only the loader TU), links no GL/GLEW (glew becomes a
+  partial_dependency; opengl32/libGL dropped; win_qgl dropped), and
+  `r_renderApi gl` (default) loads renderer-gl_<arch> — missing module is
+  a FatalError, there is no lower fallback. macOS/legacy backends and all
+  ded targets keep the static renderer unchanged.
+- **Cross-module completions for the shed**: idMaterial virtuals
+  (GetImageWidth/Height, Cinematic*, SetImageClassifications, ReloadImages,
+  GetPortalImageName, GetMaterialType(idVec2&), ResolveUse — MIRRORED),
+  idRenderModel::SetBounds virtual (MIRRORED) replacing BSE's
+  dynamic_cast member write, GetGLConfig() virtual (MIRRORED) replacing
+  Session_menu's direct glConfig reads, POD GetCurrentLightGridBakeInfo
+  (MIRRORED; closes the idStr&/idList& bake ABI hazard),
+  RENDER_API_VERSION 5. Image_program.cpp + BitsForFormat relocated to
+  imagetools (CPU image math both sides call). Loader cvars
+  (r_renderApi/r_actualRenderApi) plus window/gui cvars referenced by kept
+  engine TUs (r_borderless/r_fullscreenDesktop/r_windowWidth/
+  r_windowHeight/r_skipGuiShaders) moved to RendererModule.cpp with glue
+  mirrors module-side; loader commands (rendererModuleSelfTest,
+  rendererVkProbe, uiFontParitySelfTest) register from the loader.
+- **Module window-state polling**: the seam TU polls
+  RefreshNativeWindowHandles each present (vid size + uiViewport rect —
+  renderModuleWindowInfo_t v5 fields), replacing the engine-side glConfig
+  mirror writes which are now compiled only into static-renderer shapes.
+- **B7 Windows ded GL-free**: glew wglew halves gated behind
+  !OPENQ4_GLEW_SDL3_LOADER (both token-pinned glew.c copies;
+  linux_sdl3_glew_loader.py pins the gate), glew_dedicated builds on
+  Windows, ded deps drop opengl32 (GLAPI=extern strips GLEW's dllimport
+  decoration), win_qgl.cpp replaced by sys/stub/stub_gl_win.cpp (GL 1.1
+  no-ops + null qwglGetProcAddress + QGL no-ops + GLEW hook). Linux ded
+  was already GL-free (stub_gl.cpp).
 
 Original sketch (superseded where it conflicts with the record above):
 1. **tr_local.h split** (pre-req for the core/gl lib boundary): extract GL-bearing pieces (glState/backEnd GL members, qgl.h include, GLimp decls) into `tr_gl_local.h`; tr_local.h becomes API-agnostic. Guard `precompiled.h:372` qgl.h include to module builds only (`#ifdef RENDERER_MODULE_BUILD`); interface headers at :373-378 stay.

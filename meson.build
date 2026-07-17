@@ -412,6 +412,15 @@ if build_engine and host_system == 'linux'
   endif
 endif
 
+# Phase B8 F3: on SDL3 Windows/Linux the client executable sheds the
+# statically linked renderer and always loads the renderer-gl module
+# ('gl' resolves to the module there). macOS and the legacy backends keep
+# the static renderer; the dedicated targets keep it everywhere until the
+# server front-end story changes.
+renderer_module_only_client = build_engine and get_option('build_renderer_gl') and use_sdl3_backend and (host_system == 'windows' or host_system == 'linux')
+# Phase B7: the Windows SDL3 ded keeps the renderer front-end but links no GL
+windows_gl_free_ded = build_engine and host_system == 'windows' and use_sdl3_backend
+
 engine_source_discovery = run_command(
   py,
   meson.project_source_root() / 'tools' / 'build' / 'meson_sources.py',
@@ -423,6 +432,8 @@ engine_source_discovery = run_command(
   linux_x11_helpers_enabled ? 'true' : 'false',
   '--include-game',
   'false',
+  '--renderer',
+  renderer_module_only_client ? 'module' : 'static',
   check: true,
 )
 
@@ -432,6 +443,31 @@ if engine_source_paths.length() == 0
 endif
 
 dedicated_engine_source_paths = engine_source_paths
+if windows_gl_free_ded
+  # the Windows ded target keeps the static renderer (minus the GL link);
+  # discover its own list
+  dedicated_static_source_discovery = run_command(
+    py,
+    meson.project_source_root() / 'tools' / 'build' / 'meson_sources.py',
+    '--host-system',
+    host_system,
+    '--platform-backend',
+    platform_backend,
+    '--linux-x11-helpers',
+    'false',
+    '--include-game',
+    'false',
+    '--renderer',
+    'static',
+    '--target-kind',
+    'dedicated',
+    check: true,
+  )
+  dedicated_engine_source_paths = dedicated_static_source_discovery.stdout().strip().split('\n')
+  if dedicated_engine_source_paths.length() == 0
+    error('tools/build/meson_sources.py returned no Windows dedicated source files.')
+  endif
+endif
 if host_system == 'linux'
   dedicated_engine_source_discovery = run_command(
     py,
@@ -604,12 +640,14 @@ if build_engine or build_games
 endif
 
 resource_compiler = find_program('rc', 'windres', required: false)
+openq4_version_resources = []
 if host_system == 'windows' and resource_compiler.found()
   windows_mod = import('windows')
-  openq4_engine_sources += windows_mod.compile_resources(
+  openq4_version_resources = windows_mod.compile_resources(
     'src/sys/win32/rc/openQ4Version.rc',
     include_directories: [root_include_dir],
   )
+  openq4_engine_sources += openq4_version_resources
 endif
 
 is_msvc = cc.get_id() == 'msvc' and cpp.get_id() == 'msvc'
@@ -660,7 +698,7 @@ if build_engine
       fallback: ['glew', 'glew_dep'],
       default_options: glew_default_options,
     )
-    if host_system == 'linux'
+    if host_system == 'linux' or windows_gl_free_ded
       glew_dedicated_sp = subproject('glew', default_options: glew_default_options)
       glew_dedicated_dep = glew_dedicated_sp.get_variable('glew_dedicated_dep')
     endif
@@ -788,7 +826,52 @@ if build_engine
   endif
 endif
 
+client_deps = deps
+if renderer_module_only_client
+  # the module-only client compiles against GLEW declarations (via qgl.h in
+  # the precompiled header) but links no GL: the renderer-gl module carries
+  # GLEW/opengl32/libGL itself
+  glew_headers_dep = glew_dep.partial_dependency(
+    compile_args: true,
+    includes: true,
+  )
+  client_deps = [glew_headers_dep, openal_dep, stb_vorbis_dep]
+  if host_system == 'windows'
+    client_deps += [
+      cc.find_library('Dbghelp', required: true),
+      cc.find_library('Iphlpapi', required: true),
+      cc.find_library('Winmm', required: true),
+      cc.find_library('ws2_32', required: true),
+      sdl3_dep,
+    ]
+  else
+    client_deps += [
+      dependency('threads', required: true),
+      cc.find_library('dl', required: true),
+      sdl3_dep,
+    ]
+    if linux_x11_helpers_enabled
+      client_deps += [linux_x11_dep, linux_xext_dep]
+    endif
+  endif
+endif
+
 dedicated_deps = deps
+if windows_gl_free_ded
+  # Phase B7: the Windows ded keeps the renderer front-end but links no GL:
+  # opengl32 is dropped, GLEW builds in its hook-resolving dedicated flavor,
+  # and src/sys/stub/stub_gl_win.cpp satisfies the surviving GL 1.1 refs
+  dedicated_deps = [
+    glew_dedicated_dep,
+    openal_dep,
+    stb_vorbis_dep,
+    cc.find_library('Dbghelp', required: true),
+    cc.find_library('Iphlpapi', required: true),
+    cc.find_library('Winmm', required: true),
+    cc.find_library('ws2_32', required: true),
+    sdl3_dep,
+  ]
+endif
 if build_engine and host_system == 'linux'
   # Keep compile-time OpenAL declarations and the static GLEW/vorbis code used
   # by the common engine sources, but give the dedicated target no client-side
@@ -985,6 +1068,12 @@ endif
 
 engine_cpp_args = shared_cpp_args + common_header_cpp_args + ['-D__DOOM_DLL__'] + linux_cross_dso_sanitizer_cpp_args
 engine_c_args = shared_c_args
+# client-only flavor: module-only clients compile the loader/backend for the
+# shed-renderer shape (dedicated and library targets stay static-shaped)
+client_engine_cpp_args = engine_cpp_args
+if renderer_module_only_client
+  client_engine_cpp_args += ['-DOPENQ4_RENDERER_MODULE_ONLY']
+endif
 engine_objcpp_args = shared_objcpp_args + ['-D__DOOM_DLL__']
 engine_objc_args = shared_objc_args
 bse_cpp_args = shared_cpp_args + common_header_cpp_args
@@ -993,6 +1082,15 @@ bse_library = disabler()
 
 if build_engine
   openq4_dedicated_sources = openq4_engine_sources
+  if windows_gl_free_ded
+    # ded keeps the static renderer while the client sheds it
+    openq4_dedicated_sources = files(dedicated_engine_source_paths)
+    openq4_dedicated_sources += openq4_paks_generated_header
+    if build_games
+      openq4_dedicated_sources += [savegame_compat_header]
+    endif
+    openq4_dedicated_sources += openq4_version_resources
+  endif
   if host_system == 'linux'
     openq4_dedicated_sources = files(dedicated_engine_source_paths)
     openq4_dedicated_sources += openq4_paks_generated_header
@@ -1049,9 +1147,9 @@ if build_engine
       engine_client_binary_name,
       openq4_engine_sources,
       include_directories: engine_include_dirs,
-      dependencies: deps,
+      dependencies: client_deps,
       link_with: client_link_with,
-      cpp_args: engine_cpp_args,
+      cpp_args: client_engine_cpp_args,
       c_args: engine_c_args,
       cpp_pch: pch_headers,
       win_subsystem: 'windows',
@@ -1064,9 +1162,9 @@ if build_engine
       engine_client_binary_name,
       openq4_engine_sources,
       include_directories: engine_include_dirs,
-      dependencies: deps,
+      dependencies: client_deps,
       link_with: client_link_with,
-      cpp_args: engine_cpp_args,
+      cpp_args: client_engine_cpp_args,
       c_args: engine_c_args,
       objcpp_args: engine_objcpp_args,
       objc_args: engine_objc_args,
@@ -1080,9 +1178,9 @@ if build_engine
       engine_client_binary_name,
       openq4_engine_sources,
       include_directories: engine_include_dirs,
-      dependencies: deps,
+      dependencies: client_deps,
       link_with: client_link_with,
-      cpp_args: engine_cpp_args,
+      cpp_args: client_engine_cpp_args,
       c_args: engine_c_args,
       cpp_pch: pch_headers,
       link_args: engine_link_args,
@@ -1111,6 +1209,12 @@ if build_engine
 
   dedicated_cpp_args = dedicated_engine_cpp_args + ['-DID_DEDICATED']
   dedicated_c_args = dedicated_engine_c_args + ['-DID_DEDICATED']
+  if windows_gl_free_ded
+    # GLAPI=extern strips the dllimport decoration from GLEW's GL 1.1
+    # declarations so the dedicated GL stub's plain definitions link cleanly
+    dedicated_cpp_args += ['-DGLAPI=extern']
+    dedicated_c_args += ['-DGLAPI=extern']
+  endif
   dedicated_objcpp_args = engine_objcpp_args + ['-DID_DEDICATED']
   dedicated_objc_args = engine_objc_args + ['-DID_DEDICATED']
 

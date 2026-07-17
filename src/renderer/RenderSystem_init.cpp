@@ -208,7 +208,6 @@ static void GfxInfo_f( void );
 
 const char *r_rendererArgs[] = { "best", "arb", "arb2", "Cg", "exp", "nv10", "nv20", "r200", NULL };
 const char *r_glTierArgs[] = { "auto", "legacy", "gl33", "gl41", "gl43", "gl45", "gl46", NULL };
-const char *r_renderApiArgs[] = { "best", "gl", "vulkan", "gl-module", NULL };
 const char *r_rendererBenchmarkPresetArgs[] = { "low", "baseline", "modern", "high-end", NULL };
 const char *r_multiSamplesArgs[] = { "0", "2", "4", "8", "16", NULL };
 
@@ -273,11 +272,7 @@ idCVar r_msaaAlphaToCoverage( "r_msaaAlphaToCoverage", "1", CVAR_RENDERER | CVAR
 idCVar r_mode( "r_mode", "-2", CVAR_ARCHIVE | CVAR_RENDERER | CVAR_INTEGER, "video mode number (-2 = desktop native, -1 = custom, 0+ = predefined)" );
 idCVar r_displayRefresh( "r_displayRefresh", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NOCHEAT, "optional display refresh rate option for vid mode", 0.0f, 1000.0f );
 idCVar r_fullscreen( "r_fullscreen", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "0 = windowed, 1 = full screen" );
-idCVar r_fullscreenDesktop( "r_fullscreenDesktop", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "1 = native desktop fullscreen, 0 = exclusive mode using r_mode/r_customWidth/r_customHeight" );
-idCVar r_borderless( "r_borderless", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "1 = borderless window mode when r_fullscreen is 0" );
 idCVar r_hiddenWindow( "r_hiddenWindow", "0", CVAR_RENDERER | CVAR_BOOL, "create a hidden OpenGL window for batch renderer jobs" );
-idCVar r_windowWidth( "r_windowWidth", "1280", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "windowed mode width" );
-idCVar r_windowHeight( "r_windowHeight", "720", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "windowed mode height" );
 idCVar r_customWidth( "r_customWidth", "1920", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "custom screen width. set r_mode to -1 to activate" );
 idCVar r_customHeight( "r_customHeight", "1080", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "custom screen height. set r_mode to -1 to activate" );
 idCVar r_singleTriangle( "r_singleTriangle", "0", CVAR_RENDERER | CVAR_BOOL, "only draw a single triangle per primitive" );
@@ -421,8 +416,6 @@ idCVar r_brightness( "r_brightness", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FL
 idCVar r_renderer( "r_renderer", "best", CVAR_RENDERER | CVAR_ARCHIVE, "hardware specific renderer path to use", r_rendererArgs, idCmdSystem::ArgCompletion_String<r_rendererArgs> );
 idCVar r_actualRenderer( "r_actualRenderer", "UNINITIALIZED", CVAR_RENDERER | CVAR_ROM, "actual active renderer backend after request/fallback selection" );
 idCVar r_glTier( "r_glTier", "auto", CVAR_RENDERER | CVAR_ARCHIVE, "OpenGL renderer tier: auto, legacy, gl33, gl41, gl43, gl45, gl46", r_glTierArgs, idCmdSystem::ArgCompletion_String<r_glTierArgs> );
-idCVar r_renderApi( "r_renderApi", "gl", CVAR_RENDERER | CVAR_ARCHIVE, "rendering API: best = platform default (currently gl), gl = statically linked OpenGL, vulkan = native Vulkan renderer module (bring-up; falls back to gl), gl-module = OpenGL renderer as a dynamic module (soak path; falls back to gl). Module selections take effect on engine restart.", r_renderApiArgs, idCmdSystem::ArgCompletion_String<r_renderApiArgs> );
-idCVar r_actualRenderApi( "r_actualRenderApi", "UNINITIALIZED", CVAR_RENDERER | CVAR_ROM, "rendering API actually active after request/fallback selection" );
 idCVar r_vkValidation( "r_vkValidation", "0", CVAR_RENDERER | CVAR_BOOL, "enable Vulkan validation layers for the Vulkan renderer module and rendererVkProbe" );
 idCVar r_vkDevice( "r_vkDevice", "-1", CVAR_RENDERER | CVAR_INTEGER, "Vulkan physical-device index override, -1 = automatic selection", -1, 15 );
 idCVar r_glDebugContext( "r_glDebugContext", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "request a debug OpenGL context when the platform backend supports it" );
@@ -553,7 +546,6 @@ idCVar r_shadowMapPolygonFactor( "r_shadowMapPolygonFactor", "0.75", CVAR_RENDER
 idCVar r_shadowMapPolygonOffset( "r_shadowMapPolygonOffset", "0.5", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "constant depth bias used when rendering shadow-map casters", 0.0f, 64.0f );
 idCVar r_frontBuffer( "r_frontBuffer", "0", CVAR_RENDERER | CVAR_BOOL, "draw to front buffer for debugging" );
 idCVar r_skipSubviews( "r_skipSubviews", "0", CVAR_RENDERER | CVAR_INTEGER, "1 = don't render any gui elements on surfaces" );
-idCVar r_skipGuiShaders( "r_skipGuiShaders", "0", CVAR_RENDERER | CVAR_INTEGER, "1 = skip all gui elements on surfaces, 2 = skip drawing but still handle events, 3 = draw but skip events", 0, 3, idCmdSystem::ArgCompletion_Integer<0,3> );
 idCVar r_skipParticles( "r_skipParticles", "0", CVAR_RENDERER | CVAR_INTEGER, "1 = skip all particle systems", 0, 1, idCmdSystem::ArgCompletion_Integer<0,1> );
 idCVar r_subviewOnly( "r_subviewOnly", "0", CVAR_RENDERER | CVAR_BOOL, "1 = don't render main view, allowing subviews to be debugged" );
 idCVar r_shadows( "r_shadows", "1", CVAR_RENDERER | CVAR_BOOL  | CVAR_ARCHIVE, "enable shadows" );
@@ -678,18 +670,6 @@ static void R_RendererTierSelfTest_f( const idCmdArgs &args ) {
 	}
 }
 
-static void R_RendererModuleSelfTest_f( const idCmdArgs &args ) {
-	(void)args;
-	if ( !RendererModule_RunSelfTest() ) {
-		common->Warning( "Renderer module self-test failed" );
-	}
-}
-
-static void R_RendererVkProbe_f( const idCmdArgs &args ) {
-	const bool verbose = ( args.Argc() < 2 ) || ( idStr::Icmp( args.Argv( 1 ), "quiet" ) != 0 );
-	R_RendererModule_RunVulkanProbe( verbose );
-}
-
 static void R_RendererTierContractSelfTest_f( const idCmdArgs &args ) {
 	(void)args;
 	if ( !RendererTierContract_RunSelfTest() ) {
@@ -729,17 +709,6 @@ static void R_RendererDefaultSafetySelfTest_f( const idCmdArgs &args ) {
 	(void)args;
 	if ( !RendererDefaultSafety_RunSelfTest() ) {
 		common->Warning( "Renderer default safety self-test failed" );
-	}
-}
-
-// implemented in ui/DeviceContext.cpp; declared here rather than through
-// ui/DeviceContext.h so the renderer keeps no include edge into src/ui
-bool UI_FontParity_RunSelfTest( void );
-
-static void R_UIFontParitySelfTest_f( const idCmdArgs &args ) {
-	(void)args;
-	if ( !UI_FontParity_RunSelfTest() ) {
-		common->Warning( "UI font parity self-test failed" );
 	}
 }
 
@@ -3997,8 +3966,6 @@ void R_InitCommands( void ) {
 	cmdSystem->AddCommand( "makeAmbientMap", R_MakeAmbientMap_f, CMD_FL_RENDERER|CMD_FL_CHEAT, "makes an ambient map" );
 	cmdSystem->AddCommand( "benchmark", R_Benchmark_f, CMD_FL_RENDERER, "benchmark" );
 	cmdSystem->AddCommand( "gfxInfo", GfxInfo_f, CMD_FL_RENDERER, "show graphics info" );
-	cmdSystem->AddCommand( "rendererModuleSelfTest", R_RendererModuleSelfTest_f, CMD_FL_RENDERER, "run renderer module selection/loading self tests" );
-	cmdSystem->AddCommand( "rendererVkProbe", R_RendererVkProbe_f, CMD_FL_RENDERER, "load the Vulkan renderer module, run its device bring-up probe, and unload it" );
 	cmdSystem->AddCommand( "rendererTierSelfTest", R_RendererTierSelfTest_f, CMD_FL_RENDERER, "run renderer tier-selection self tests" );
 	cmdSystem->AddCommand( "rendererTierContractSelfTest", R_RendererTierContractSelfTest_f, CMD_FL_RENDERER, "run renderer tier workload-contract self tests" );
 	cmdSystem->AddCommand( "rendererContextLadderSelfTest", R_RendererContextLadderSelfTest_f, CMD_FL_RENDERER, "run renderer context ladder self tests" );
@@ -4006,7 +3973,6 @@ void R_InitCommands( void ) {
 	cmdSystem->AddCommand( "rendererBenchmarkSelfTest", R_RendererBenchmarkSelfTest_f, CMD_FL_RENDERER, "run renderer benchmark capture and percentile self tests" );
 	cmdSystem->AddCommand( "rendererDefaultPromotionSelfTest", R_RendererDefaultPromotionSelfTest_f, CMD_FL_RENDERER, "run renderer default-promotion gate self tests" );
 	cmdSystem->AddCommand( "rendererDefaultSafetySelfTest", R_RendererDefaultSafetySelfTest_f, CMD_FL_RENDERER, "run renderer conservative-default safety self tests" );
-	cmdSystem->AddCommand( "uiFontParitySelfTest", R_UIFontParitySelfTest_f, CMD_FL_RENDERER, "run GUI font retail parity self tests" );
 	cmdSystem->AddCommand( "rendererBenchmarkCapture", R_RendererBenchmarkCapture_f, CMD_FL_RENDERER, "print the latest renderer benchmark capture summary" );
 	cmdSystem->AddCommand( "rendererUploadSelfTest", R_RendererUploadSelfTest_f, CMD_FL_RENDERER, "run renderer upload stream self tests" );
 	cmdSystem->AddCommand( "rendererGpuTimerSelfTest", R_RendererGpuTimerSelfTest_f, CMD_FL_RENDERER, "run renderer GPU timer query self tests" );
