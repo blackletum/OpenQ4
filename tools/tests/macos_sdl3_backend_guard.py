@@ -141,7 +141,9 @@ def validate_macos_process_handoff_guards() -> None:
 
 
 def validate_sdl3_context_teardown_guards() -> None:
-    source = read("src/sys/sdl3/sdl3_backend.cpp")
+    # Phase B5b: the GL context half lives in the renderer-owned seam TU,
+    # compiled into the SDL3 backend until the module split (Phase B8)
+    source = read("src/renderer/OpenGL/gl_ContextSDL3.cpp")
     ensure_current = function_body(source, "static bool SDL3_EnsureGLContextCurrent(const char *operation) {")
     screen_parms = function_body(source, "bool GLimp_SetScreenParms(glimpParms_t parms) {")
     shutdown = function_body(source, "void GLimp_Shutdown(void) {")
@@ -151,20 +153,20 @@ def validate_sdl3_context_teardown_guards() -> None:
     extension = function_body(source, "void *GLimp_ExtensionPointer(const char *name) {")
 
     for token in (
-        "if (!s_sdlWindow || !s_sdlContext) {",
-        "SDL_GL_GetCurrentWindow() == s_sdlWindow && SDL_GL_GetCurrentContext() == s_sdlContext",
-        "SDL_GL_MakeCurrent(s_sdlWindow, s_sdlContext)",
-        "win32.wglErrors++;",
+        "if (!s_glWindow || !s_glContext) {",
+        "SDL_GL_GetCurrentWindow() == s_glWindow && SDL_GL_GetCurrentContext() == s_glContext",
+        "SDL_GL_MakeCurrent(s_glWindow, s_glContext)",
+        "s_glWindowServices->CountContextError();",
         "return false;",
     ):
         require(ensure_current, token, "SDL3 current-context helper")
 
     require(screen_parms, 'SDL3_EnsureGLContextCurrent("screen parm change")', "SDL3 screen-parm current-context guard")
-    require(shutdown, "if (s_sdlWindow) {\n\t\t\t(void)SDL_GL_MakeCurrent(s_sdlWindow, NULL);", "SDL3 shutdown context detach guard")
-    reject(shutdown, "(void)SDL_GL_MakeCurrent(s_sdlWindow, NULL);\n\t\t(void)SDL_GL_DestroyContext", "SDL3 shutdown unguarded context detach")
+    require(shutdown, "if (s_glWindow) {\n\t\t\t(void)SDL_GL_MakeCurrent(s_glWindow, NULL);", "SDL3 shutdown context detach guard")
+    reject(shutdown, "(void)SDL_GL_MakeCurrent(s_glWindow, NULL);\n\t\t(void)SDL_GL_DestroyContext", "SDL3 shutdown unguarded context detach")
 
-    require(swap, 'if (SDL3_EnsureGLContextCurrent("swap buffers") && !SDL_GL_SwapWindow(s_sdlWindow))', "SDL3 swap current-context guard")
-    reject(swap, "if (s_sdlWindow && !SDL_GL_SwapWindow(s_sdlWindow))", "SDL3 swap window-only guard")
+    require(swap, 'if (SDL3_EnsureGLContextCurrent("swap buffers") && !SDL_GL_SwapWindow(s_glWindow))', "SDL3 swap current-context guard")
+    reject(swap, "if (s_glWindow && !SDL_GL_SwapWindow(s_glWindow))", "SDL3 swap window-only guard")
 
     require(activate, 'SDL3_EnsureGLContextCurrent("activate context")', "SDL3 activate current-context guard")
     require(deactivate, 'if (!SDL3_EnsureGLContextCurrent("deactivate context")) {', "SDL3 deactivate current-context guard")
@@ -327,13 +329,15 @@ def validate_sdl3_video_ownership() -> None:
     console_acquire = function_body(console, "static bool Posix_ConsoleEnsureVideo( void ) {")
     console_release = function_body(console, "void Posix_ShutdownConsole( void ) {")
     destroy_splash = function_body(console, "void Sys_DestroySplash( void ) {")
-    gl_init = function_body(backend, "bool GLimp_Init(glimpParms_t parms) {")
-    gl_shutdown = function_body(backend, "void GLimp_Shutdown(void) {")
+    # Phase B5b: SDL video-subsystem ownership moved into the engine-side
+    # window services; the context TU's GLimp_Init/Shutdown drive them
+    gl_prepare = function_body(backend, "static bool SDL3_WindowServices_PrepareWindowSystem(void) {")
+    gl_finish_teardown = function_body(backend, "static void SDL3_WindowServices_FinishWindowTeardown(void) {")
 
     for body, owner, init_call, context in (
         (splash_acquire, "s_splashWindow.videoInitializedBySplash", "SDL_InitSubSystem( SDL_INIT_VIDEO )", "POSIX splash SDL video ownership"),
         (console_acquire, "s_consoleWindow.videoInitializedByConsole", "SDL_InitSubSystem( SDL_INIT_VIDEO )", "POSIX console SDL video ownership"),
-        (gl_init, "s_sdlVideoReferenceHeld", "SDL_InitSubSystem(SDL_INIT_VIDEO)", "SDL3 game-window video ownership"),
+        (gl_prepare, "s_sdlVideoReferenceHeld", "SDL_InitSubSystem(SDL_INIT_VIDEO)", "SDL3 game-window video ownership"),
     ):
         require(body, owner, context)
         require(body, init_call, context)
@@ -341,7 +345,7 @@ def validate_sdl3_video_ownership() -> None:
     require_before(splash_acquire, "Sys_SDL_ApplyVideoHintDefaults();", "SDL_InitSubSystem( SDL_INIT_VIDEO )", "POSIX splash pre-video SDL defaults")
     require_before(console_acquire, "Sys_SDL_ApplyVideoHintDefaults();", "SDL_InitSubSystem( SDL_INIT_VIDEO )", "POSIX console pre-video SDL defaults")
 
-    reject(gl_init, "SDL_WasInit(SDL_INIT_VIDEO)", "SDL3 game window must not borrow a support-window video reference")
+    reject(gl_prepare, "SDL_WasInit(SDL_INIT_VIDEO)", "SDL3 game window must not borrow a support-window video reference")
     reject(backend, "adopting video subsystem", "SDL3 game window ownership transfer")
     reject(console, "Posix_ReleaseStartupSDLVideoOwnership", "POSIX startup video ownership transfer")
     reject(public, "Posix_ReleaseStartupSDLVideoOwnership", "POSIX startup video ownership API")
@@ -352,8 +356,8 @@ def validate_sdl3_video_ownership() -> None:
 
     require_before(console_release, "SDL_DestroyRenderer", "SDL_QuitSubSystem( SDL_INIT_VIDEO )", "POSIX console renderer-before-video teardown")
     require_before(console_release, "SDL_DestroyWindow", "SDL_QuitSubSystem( SDL_INIT_VIDEO )", "POSIX console window-before-video teardown")
-    require(gl_shutdown, "if (s_sdlVideoReferenceHeld && !preserveWindow)", "SDL3 game video release ownership guard")
-    require_before(gl_shutdown, "SDL_DestroyWindow(s_sdlWindow)", "SDL_QuitSubSystem(SDL_INIT_VIDEO)", "SDL3 game window-before-video teardown")
+    require(gl_finish_teardown, "if (s_sdlVideoReferenceHeld && !s_teardownPreserveWindow)", "SDL3 game video release ownership guard")
+    require_before(gl_finish_teardown, "SDL_DestroyWindow(s_sdlWindow)", "SDL_QuitSubSystem(SDL_INIT_VIDEO)", "SDL3 game window-before-video teardown")
 
 
 def validate_posix_signal_guards() -> None:

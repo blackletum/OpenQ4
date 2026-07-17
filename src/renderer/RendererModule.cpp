@@ -158,6 +158,7 @@ static void RM_BuildImport( renderImport_t &moduleImport ) {
 	moduleImport.collisionModelManager = ::collisionModelManager;
 	moduleImport.eventLoop = ::eventLoop;
 	moduleImport.bse = ::bse;
+	moduleImport.windowServices = Sys_GetRenderWindowServices();
 }
 
 /*

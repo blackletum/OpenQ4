@@ -2091,3 +2091,9 @@ Sys_GrabMouseCursor
 */
 void Sys_GrabMouseCursor( bool grabIt ) { }
 
+// Phase B5b window-services seam: this backend does not implement it; the
+// SDL3 backend provides the real table
+#include "../../renderer/RenderModuleAPI.h"
+const renderWindowServices_t *Sys_GetRenderWindowServices( void ) {
+	return NULL;
+}

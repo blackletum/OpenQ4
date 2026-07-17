@@ -2655,10 +2655,14 @@ def validate_meson_contract() -> None:
 
 def validate_sdl3_runtime_contract() -> None:
     source = read("src/sys/sdl3/sdl3_backend.cpp")
+    # Phase B5b: GLimp_Init lives in the renderer-owned context seam TU and
+    # reaches the window layer through renderWindowServices_t
+    context_source = read("src/renderer/OpenGL/gl_ContextSDL3.cpp")
     syscon = read("src/sys/posix/posix_syscon.cpp")
     hints = function_body(source, "static void SDL3_SetVideoHintDefaults(void) {")
     summary = function_body(source, "static void SDL3_PrintGraphicsBridgeSummary(void) {")
-    init = function_body(source, "bool GLimp_Init(glimpParms_t parms) {")
+    prepare = function_body(source, "static bool SDL3_WindowServices_PrepareWindowSystem(void) {")
+    init = function_body(context_source, "bool GLimp_Init(glimpParms_t parms) {")
     hint_wrapper = function_body(source, "void Sys_SDL_ApplyVideoHintDefaults(void) {")
     support_renderer = function_body(syscon, "static SDL_Renderer *Posix_CreateSupportRenderer( SDL_Window *window, const char *purpose ) {")
     console_create = function_body(syscon, "static bool Posix_ConsoleCreateWindow( void ) {")
@@ -2685,7 +2689,8 @@ def validate_sdl3_runtime_contract() -> None:
 
     require(summary, "no native Metal renderer rewrite is selected", "SDL3 Metal bridge log")
     require(summary, "SDL_VIDEO_METAL_AUTO_RESIZE_DRAWABLE", "SDL3 Metal bridge hint log")
-    require(init, "SDL3_PrintGraphicsBridgeSummary();", "SDL3 GL initialization")
+    require(init, "PrepareWindowSystem()", "SDL3 GL initialization window bring-up")
+    require(prepare, "SDL3_PrintGraphicsBridgeSummary();", "SDL3 GL initialization bridge summary")
 
     require(hint_wrapper, "SDL3_SetVideoHintDefaults();", "early-startup SDL video hint wrapper")
     require_before(splash_ensure, "Sys_SDL_ApplyVideoHintDefaults();", "SDL_InitSubSystem( SDL_INIT_VIDEO )", "splash hint defaults before SDL video init")

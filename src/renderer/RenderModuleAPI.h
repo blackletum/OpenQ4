@@ -32,7 +32,10 @@
 //  2 - Phase B4 import/export completion: session/uiManager/
 //      collisionModelManager/bse/eventLoop imports, renderModelManager
 //      export, sleep/critical-section/RenderDoc services
-#define RENDER_API_VERSION			2
+//  3 - Phase B5b window services: the engine owns the window/display layer
+//      and the renderer drives context negotiation through
+//      renderWindowServices_t
+#define RENDER_API_VERSION			3
 #define RENDER_API_ENTRY_POINT		"GetRenderAPI"
 
 class idSys;
@@ -84,6 +87,80 @@ typedef struct renderModuleWindowInfo_s {
 	int				pixelHeight;
 } renderModuleWindowInfo_t;
 
+/*
+===============================================================================
+	Window services (version 3)
+
+	The engine owns the platform window, display enumeration, mode and
+	fullscreen policy, and input; the renderer module owns the rendering
+	context and drives the candidate negotiation loop through these
+	callbacks. Window recreation on context-attribute changes is expressed
+	by CreateWindowForFramebuffer/DestroyAttemptWindow so a failed context
+	attempt can retry with different attributes exactly like the previous
+	single-owner loop.
+===============================================================================
+*/
+
+// requested framebuffer/context attributes for one negotiation attempt
+typedef struct renderFramebufferDesc_s {
+	int				redBits, greenBits, blueBits, alphaBits, depthBits, stencilBits;
+	bool			doubleBuffer;
+	bool			stereo;
+	int				multiSamples;		// >1 enables MSAA buffers
+	bool			explicitGLVersion;	// else an unversioned request
+	int				glMajor, glMinor;
+	bool			glCoreProfile;		// else compatibility profile
+	bool			glDebugContext;
+} renderFramebufferDesc_t;
+
+// ABI-neutral mirror of the renderer's glimpParms_t
+typedef struct renderWindowParms_s {
+	int				width, height;
+	bool			fullScreen;
+	bool			borderless;
+	bool			hiddenWindow;
+	bool			stereo;
+	int				displayHz;
+	int				multiSamples;
+} renderWindowParms_t;
+
+typedef struct renderWindowServices_s {
+	// idempotent window-system bring-up: video subsystem, hints, lifecycle
+	// watch, display enumeration/diagnostics
+	bool			( *PrepareWindowSystem )( void );
+	// sets the framebuffer/context attributes and creates (or reuses a
+	// preserved) window with initial placement; *outReusedPreservedWindow
+	// tells the caller whether a failed attempt may destroy the window
+	bool			( *CreateWindowForFramebuffer )( const renderFramebufferDesc_t *desc, const renderWindowParms_t *parms,
+													 renderModuleWindowInfo_t *outInfo, bool *outReusedPreservedWindow );
+	// failed-candidate teardown; only destroys a window the current attempt
+	// created
+	void			( *DestroyAttemptWindow )( void );
+	// fullscreen/mode/placement application after context creation
+	bool			( *ApplyScreenParms )( const renderWindowParms_t *parms );
+	// refreshes native handles (HWND/HDC etc.) into outInfo
+	void			( *RefreshNativeWindowHandles )( renderModuleWindowInfo_t *outInfo );
+	// focus/active-app bookkeeping once the context is live
+	void			( *NotifyWindowReady )( void );
+	// pre-context-destroy window teardown (input, fullscreen restore, text
+	// input), preserve-aware via the engine-side preserve flag
+	void			( *BeginWindowTeardown )( void );
+	// post-context-destroy window teardown (window destroy, video unref,
+	// handle clears, input queues), preserve-aware
+	void			( *FinishWindowTeardown )( void );
+	void			( *GetDesktopResolution )( int *width, int *height );
+	// video-driver quirk: try the unversioned compatibility candidates first
+	// (native Wayland, Cocoa); *outMessage receives the log line to print
+	bool			( *PreferCompatibilityFallbackFirst )( const char **outMessage );
+	// context-error accounting (legacy wglErrors counter)
+	void			( *CountContextError )( void );
+} renderWindowServices_t;
+
+// engine-side accessor for the active platform backend's window services;
+// returns NULL on backends that do not implement the seam (legacy win32,
+// native Linux/macOS diagnostics paths, dedicated stubs)
+const renderWindowServices_t *Sys_GetRenderWindowServices( void );
+
 typedef struct renderImport_s {
 	int										version;		// RENDER_API_VERSION
 	const renderModuleServices_t *			services;
@@ -106,7 +183,11 @@ typedef struct renderImport_s {
 	idCollisionModelManager *				collisionModelManager;
 	idEventLoop *							eventLoop;		// frame-time queries
 	rvBSEManager *							bse;			// effects system
+
+	// --- version 3: engine window layer for the context-owning module ---
+	const renderWindowServices_t *			windowServices;	// NULL on non-seam backends
 } renderImport_t;
+
 
 // diagnostics surface, valid even while the module cannot yet provide a full
 // idRenderSystem; drives rendererVkProbe and module self-tests

@@ -38,6 +38,7 @@ along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 #include "../../framework/licensee.h"
 #include "../../framework/Session.h"
 #include "../../renderer/tr_local.h"
+#include "../../renderer/RenderModuleAPI.h"
 #include "../../ui/EditWindow.h"
 
 #include <SDL3/SDL.h>
@@ -127,7 +128,6 @@ PFNWGLSETPBUFFERATTRIBARBPROC wglSetPbufferAttribARB;
 #endif
 
 static SDL_Window *s_sdlWindow = NULL;
-static SDL_GLContext s_sdlContext = NULL;
 // True only while the game renderer holds its own SDL_INIT_VIDEO reference.
 // Splash and system-console windows hold separate references in posix_syscon.
 static bool s_sdlVideoReferenceHeld = false;
@@ -344,17 +344,6 @@ void* GLimp_ExtensionPointer(const char* name);
 bool QGL_Init(const char *dllname);
 void QGL_Shutdown(void);
 
-#if defined(OPENQ4_SDL3_POSIX_HOST)
-// The SDL3 POSIX backends reuse this translation unit but do not provide the
-// legacy platform GL logging hooks from the native GLX/Cocoa paths.
-void GLimp_EnableLogging(bool enable) {
-	static bool loggingEnabled = false;
-	if (enable != loggingEnabled) {
-		common->DPrintf("GLimp_EnableLogging - unavailable for SDL3 POSIX backend\n");
-		loggingEnabled = enable;
-	}
-}
-#endif
 
 static int SDL3_EventMilliseconds(Uint64 timestampNs) {
 	static const Uint64 SDL3_MAX_EVENT_MS = 0x7fffffffULL;
@@ -4065,59 +4054,7 @@ static bool SDL3_ApplyScreenParms(glimpParms_t parms) {
 	return true;
 }
 
-static bool SDL3_ApplySwapInterval(void) {
-	if (!s_sdlWindow || !s_sdlContext) {
-		return false;
-	}
 
-	const int requestedInterval = R_GetEffectiveSwapInterval();
-	if (!SDL_GL_SetSwapInterval(requestedInterval)) {
-		common->Printf("SDL3: failed to set swap interval %d: %s\n", requestedInterval, SDL_GetError());
-		return false;
-	}
-
-	int actualInterval = 0;
-	if (!SDL_GL_GetSwapInterval(&actualInterval)) {
-		common->Printf("SDL3: swap interval set to %d, but query failed: %s\n", requestedInterval, SDL_GetError());
-	} else if (actualInterval == requestedInterval) {
-		common->Printf("SDL3: swap interval set to %d\n", actualInterval);
-	} else {
-		common->Printf("SDL3: requested swap interval %d, driver reports %d\n", requestedInterval, actualInterval);
-	}
-
-	return true;
-}
-
-static void SDL3_LoadWGLExtensions(void) {
-#if defined(OPENQ4_SDL3_POSIX_HOST)
-	glConfig.wgl_extensions_string = "";
-	r_swapInterval.SetModified();
-#else
-	wglGetExtensionsStringARB = (PFNWGLGETEXTENSIONSSTRINGARBPROC)GLimp_ExtensionPointer("wglGetExtensionsStringARB");
-	if (wglGetExtensionsStringARB && win32.hDC) {
-		glConfig.wgl_extensions_string = (const char *)wglGetExtensionsStringARB(win32.hDC);
-	} else {
-		glConfig.wgl_extensions_string = "";
-	}
-
-	wglSwapIntervalEXT = (PFNWGLSWAPINTERVALEXTPROC)GLimp_ExtensionPointer("wglSwapIntervalEXT");
-	r_swapInterval.SetModified();
-
-	wglGetPixelFormatAttribivARB = (PFNWGLGETPIXELFORMATATTRIBIVARBPROC)GLimp_ExtensionPointer("wglGetPixelFormatAttribivARB");
-	wglGetPixelFormatAttribfvARB = (PFNWGLGETPIXELFORMATATTRIBFVARBPROC)GLimp_ExtensionPointer("wglGetPixelFormatAttribfvARB");
-	wglChoosePixelFormatARB = (PFNWGLCHOOSEPIXELFORMATARBPROC)GLimp_ExtensionPointer("wglChoosePixelFormatARB");
-
-	wglCreatePbufferARB = (PFNWGLCREATEPBUFFERARBPROC)GLimp_ExtensionPointer("wglCreatePbufferARB");
-	wglGetPbufferDCARB = (PFNWGLGETPBUFFERDCARBPROC)GLimp_ExtensionPointer("wglGetPbufferDCARB");
-	wglReleasePbufferDCARB = (PFNWGLRELEASEPBUFFERDCARBPROC)GLimp_ExtensionPointer("wglReleasePbufferDCARB");
-	wglDestroyPbufferARB = (PFNWGLDESTROYPBUFFERARBPROC)GLimp_ExtensionPointer("wglDestroyPbufferARB");
-	wglQueryPbufferARB = (PFNWGLQUERYPBUFFERARBPROC)GLimp_ExtensionPointer("wglQueryPbufferARB");
-
-	wglBindTexImageARB = (PFNWGLBINDTEXIMAGEARBPROC)GLimp_ExtensionPointer("wglBindTexImageARB");
-	wglReleaseTexImageARB = (PFNWGLRELEASETEXIMAGEARBPROC)GLimp_ExtensionPointer("wglReleaseTexImageARB");
-	wglSetPbufferAttribARB = (PFNWGLSETPBUFFERATTRIBARBPROC)GLimp_ExtensionPointer("wglSetPbufferAttribARB");
-#endif
-}
 
 static void SDL3_InitDesktopMode(void) {
 	const sdl3DisplaySelection_t selectedDisplay = SDL3_ResolveTargetDisplay(false);
@@ -4138,7 +4075,9 @@ static void SDL3_UpdateNativeWindowHandles(void) {
 #if defined(OPENQ4_SDL3_POSIX_HOST)
 	win32.hWnd = NULL;
 	win32.hDC = NULL;
-	win32.hGLRC = s_sdlContext;
+	// the rendering context handle is owned by the context half of the seam
+	// (renderer/OpenGL/gl_ContextSDL3.cpp); the old reverse write is gone
+	win32.hGLRC = NULL;
 #else
 	win32.hWnd = NULL;
 	win32.hDC = NULL;
@@ -5403,477 +5342,24 @@ bool Sys_SetJoystickRumble(float lowFrequency, float highFrequency, int duration
 	return true;
 }
 
-void GLimp_SetGamma(unsigned short red[256], unsigned short green[256], unsigned short blue[256]) {
-	(void)red;
-	(void)green;
-	(void)blue;
-}
 
-bool GLimp_UseNativeGammaRamps(void) {
-	return false;
-}
 
-static void SDL3_MoveCompatibilityFallbacksToFront(rendererContextCandidate_t *candidates, int candidateCount) {
-	int insertIndex = 0;
 
-	for (int i = 0; i < candidateCount; ++i) {
-		if (candidates[i].explicitVersion || candidates[i].profile != RENDERER_CONTEXT_PROFILE_COMPATIBILITY) {
-			continue;
-		}
 
-		if (i != insertIndex) {
-			rendererContextCandidate_t fallback = candidates[i];
-			memmove(&candidates[insertIndex + 1], &candidates[insertIndex], (i - insertIndex) * sizeof(candidates[0]));
-			candidates[insertIndex] = fallback;
-		}
-		++insertIndex;
-	}
-}
 
-static int SDL3_BuildGLContextCandidates(rendererContextCandidate_t *candidates, int maxCandidates) {
-	const rendererTierPreference_t preference = RendererTierPreference_FromString(r_glTier.GetString());
-	const bool keepAutoCompatibility = preference == RENDERER_TIER_PREF_AUTO;
-	const int candidateCount = RendererContextLadder_Build(
-		candidates,
-		maxCandidates,
-		preference,
-		r_glDebugContext.GetBool(),
-		keepAutoCompatibility);
 
-	if (candidateCount > 0 && preference == RENDERER_TIER_PREF_AUTO && SDL3_IsNativeWaylandVideoDriver()) {
-		SDL3_MoveCompatibilityFallbacksToFront(candidates, candidateCount);
-		common->Printf("SDL3: native Wayland r_glTier auto will try the unversioned compatibility fallback before explicit profile contexts.\n");
-	}
 
-	if (candidateCount > 0 && preference == RENDERER_TIER_PREF_AUTO && s_sdlVideoDriver == SDL3_VIDEO_DRIVER_COCOA) {
-		// Apple OpenGL only offers 2.1 compatibility or 3.2+/4.1 core, so
-		// every versioned compatibility candidate above 2.1 is guaranteed to
-		// fail; try the unversioned compatibility fallback first.
-		SDL3_MoveCompatibilityFallbacksToFront(candidates, candidateCount);
-		common->Printf("SDL3: macOS r_glTier auto will try the unversioned compatibility fallback before explicit profile contexts.\n");
-	}
 
-	return candidateCount;
-}
 
-static int SDL3_NormalizeMSAASampleFallback(const int samples) {
-	if (samples <= 1) {
-		return 0;
-	}
-	if (samples <= 2) {
-		return 2;
-	}
-	if (samples <= 4) {
-		return 4;
-	}
-	if (samples <= 8) {
-		return 8;
-	}
-	return 16;
-}
 
-static int SDL3_BuildMSAASampleFallbacks(const int requestedSamples, int *fallbacks, const int maxFallbacks) {
-	static const int sampleSteps[] = {16, 8, 4, 2, 0};
-	const int normalizedSamples = SDL3_NormalizeMSAASampleFallback(requestedSamples);
-	int fallbackCount = 0;
-
-	if (fallbacks == NULL || maxFallbacks <= 0) {
-		return 0;
-	}
-
-	for (int i = 0; i < static_cast<int>(sizeof(sampleSteps) / sizeof(sampleSteps[0])) && fallbackCount < maxFallbacks; ++i) {
-		if (sampleSteps[i] <= normalizedSamples) {
-			fallbacks[fallbackCount++] = sampleSteps[i];
-		}
-	}
-
-	return fallbackCount > 0 ? fallbackCount : 1;
-}
-
-static void SDL3_SetGLAttributesForCandidate(glimpParms_t parms, const rendererContextCandidate_t &candidate, const int multiSamples) {
-	SDL_GL_ResetAttributes();
-	(void)SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
-	(void)SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
-	(void)SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
-	(void)SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
-	(void)SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-	(void)SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
-	(void)SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-	if (parms.stereo) {
-		(void)SDL_GL_SetAttribute(SDL_GL_STEREO, 1);
-	}
-	if (multiSamples > 1) {
-		(void)SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
-		(void)SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, multiSamples);
-	}
-	if (candidate.explicitVersion) {
-		(void)SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, candidate.major);
-		(void)SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, candidate.minor);
-		(void)SDL_GL_SetAttribute(
-			SDL_GL_CONTEXT_PROFILE_MASK,
-			candidate.profile == RENDERER_CONTEXT_PROFILE_CORE
-				? SDL_GL_CONTEXT_PROFILE_CORE
-				: SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
-	}
-	(void)SDL_GL_SetAttribute(
-		SDL_GL_CONTEXT_FLAGS,
-		candidate.debugContext ? SDL_GL_CONTEXT_DEBUG_FLAG : 0);
-}
-
-static void SDL3_RecordGLContextCandidate(const rendererContextCandidate_t &candidate) {
-	memset(&glConfig.contextRequest, 0, sizeof(glConfig.contextRequest));
-	glConfig.contextRequest = candidate;
-}
-
-static bool SDL3_EnsureGLContextCurrent(const char *operation) {
-	if (!s_sdlWindow || !s_sdlContext) {
-		return false;
-	}
-
-	if (SDL_GL_GetCurrentWindow() == s_sdlWindow && SDL_GL_GetCurrentContext() == s_sdlContext) {
-		return true;
-	}
-
-	if (!SDL_GL_MakeCurrent(s_sdlWindow, s_sdlContext)) {
-		common->Printf("SDL3: failed to make GL context current for %s: %s\n", operation ? operation : "operation", SDL_GetError());
-		win32.wglErrors++;
-		return false;
-	}
-
-	return true;
-}
-
-static const char *SDL3_GLProfileMaskName(int profileMask) {
-	switch (profileMask) {
-		case SDL_GL_CONTEXT_PROFILE_COMPATIBILITY:
-			return "compatibility";
-		case SDL_GL_CONTEXT_PROFILE_CORE:
-			return "core";
-		case SDL_GL_CONTEXT_PROFILE_ES:
-			return "es";
-		default:
-			return "default";
-	}
-}
-
-static void SDL3_LogGLContextAttributes(const int requestedMultiSamples, const int selectedMultiSamples) {
-	int major = 0;
-	int minor = 0;
-	int profileMask = 0;
-	int flags = 0;
-	int multisampleBuffers = 0;
-	int multisampleSamples = 0;
-
-	const bool gotMajor = SDL_GL_GetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, &major);
-	const bool gotMinor = SDL_GL_GetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, &minor);
-	const bool gotProfile = SDL_GL_GetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, &profileMask);
-	const bool gotFlags = SDL_GL_GetAttribute(SDL_GL_CONTEXT_FLAGS, &flags);
-	const bool gotMultisampleBuffers = SDL_GL_GetAttribute(SDL_GL_MULTISAMPLEBUFFERS, &multisampleBuffers);
-	const bool gotMultisampleSamples = SDL_GL_GetAttribute(SDL_GL_MULTISAMPLESAMPLES, &multisampleSamples);
-
-	common->Printf(
-		"SDL3: reported OpenGL context attributes: version=%s%d.%d profile=%s flags=%s0x%x\n",
-		(gotMajor && gotMinor) ? "" : "<unreported> ",
-		major,
-		minor,
-		gotProfile ? SDL3_GLProfileMaskName(profileMask) : "unreported",
-		gotFlags ? "" : "<unreported> ",
-		flags);
-	common->Printf(
-		"SDL3: reported OpenGL multisample attributes: requested=%d selected=%d actualBuffers=%s%d actualSamples=%s%d\n",
-		requestedMultiSamples,
-		selectedMultiSamples,
-		gotMultisampleBuffers ? "" : "<unreported> ",
-		multisampleBuffers,
-		gotMultisampleSamples ? "" : "<unreported> ",
-		multisampleSamples);
-}
 
 void GLimp_PreserveWindowOnShutdown(bool preserve) {
 	s_preserveWindowOnShutdown = preserve;
 }
 
-bool GLimp_Init(glimpParms_t parms) {
-	const char *driverName;
 
-	common->Printf("Initializing OpenGL subsystem (SDL3 backend)\n");
-	SDL3_SetMouseHintDefaults();
-	Sys_SDL_ApplyVideoHintDefaults();
 
-	if (!s_sdlVideoReferenceHeld) {
-		// SDL video initialization is reference counted. The game renderer must
-		// acquire its own reference instead of adopting the splash/console ref;
-		// otherwise GLimp_Shutdown can invalidate their cached SDL objects.
-		if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
-			common->Printf("SDL3: failed to initialize video subsystem: %s\n", SDL_GetError());
-			return false;
-		}
-		s_sdlVideoReferenceHeld = true;
-	}
-	SDL3_RegisterLifecycleEventWatch();
-	SDL3_UpdateVideoDriverProfile();
-	SDL3_PrintVideoDriverSummary();
-	SDL3_PrintGraphicsBridgeSummary();
-	SDL3_ApplySteamDeckPerformanceDefaults();
 
-	if (!s_sdlDiagnosticCommandsRegistered) {
-		cmdSystem->AddCommand("listDisplays", SDL3_ListDisplays_f, CMD_FL_SYSTEM, "lists SDL3 displays and monitor indices");
-		cmdSystem->AddCommand("listDisplayModes", SDL3_ListDisplayModes_f, CMD_FL_SYSTEM, "lists SDL3 fullscreen display modes (optional display index)");
-		cmdSystem->AddCommand("listControllers", SDL3_ListControllers_f, CMD_FL_SYSTEM, "lists SDL3 controller, sensor, touchpad, and battery diagnostics");
-		cmdSystem->AddCommand("sdl3MouseCaptureDiagnostics", SDL3_MouseCaptureDiagnostics_f, CMD_FL_SYSTEM, "toggles SDL3 mouse capture and prints backend state; optional repeat count is clamped to 1..8");
-		s_sdlDiagnosticCommandsRegistered = true;
-	}
-
-	if (!s_sdlDisplaySummaryLogged) {
-		SDL3_PrintDisplayList();
-		s_sdlDisplaySummaryLogged = true;
-	}
-
-	SDL3_InitDesktopMode();
-
-	rendererContextCandidate_t contextCandidates[RENDERER_CONTEXT_LADDER_MAX_CANDIDATES];
-	const int contextCandidateCount = SDL3_BuildGLContextCandidates(contextCandidates, static_cast<int>(sizeof(contextCandidates) / sizeof(contextCandidates[0])));
-	if (contextCandidateCount <= 0) {
-		common->Printf("SDL3: no OpenGL context candidates were generated for r_glTier %s\n", r_glTier.GetString());
-		return false;
-	}
-
-	if (parms.hiddenWindow) {
-		parms.fullScreen = false;
-		parms.borderless = false;
-		common->Printf("SDL3: creating hidden OpenGL render window\n");
-	}
-
-	SDL_WindowFlags flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN;
-	if (!parms.fullScreen && parms.borderless) {
-		flags |= SDL_WINDOW_BORDERLESS;
-	}
-
-	const bool usingPreservedWindow = s_sdlWindow != NULL;
-	if (usingPreservedWindow) {
-		common->Printf("SDL3: reusing preserved OpenGL window\n");
-	}
-
-	const int requestedMultiSamples = SDL3_NormalizeMSAASampleFallback(parms.multiSamples);
-	parms.multiSamples = requestedMultiSamples;
-	int multiSampleFallbacks[5];
-	const int multiSampleFallbackCount = SDL3_BuildMSAASampleFallbacks(
-		requestedMultiSamples,
-		multiSampleFallbacks,
-		static_cast<int>(sizeof(multiSampleFallbacks) / sizeof(multiSampleFallbacks[0])));
-	int selectedMultiSamples = 0;
-
-	idStr lastContextError;
-	s_sdlContext = NULL;
-	for (int candidateIndex = 0; candidateIndex < contextCandidateCount; ++candidateIndex) {
-		const rendererContextCandidate_t &candidate = contextCandidates[candidateIndex];
-		for (int sampleIndex = 0; sampleIndex < multiSampleFallbackCount; ++sampleIndex) {
-			const int candidateMultiSamples = multiSampleFallbacks[sampleIndex];
-			SDL3_SetGLAttributesForCandidate(parms, candidate, candidateMultiSamples);
-
-			const bool createdWindowForAttempt = !usingPreservedWindow;
-			if (createdWindowForAttempt) {
-				s_sdlWindow = SDL_CreateWindow(GAME_NAME, parms.width, parms.height, flags);
-				if (!s_sdlWindow) {
-					lastContextError = SDL_GetError();
-					common->Printf("SDL3: could not create window for OpenGL context %s with MSAA samples=%d: %s\n", candidate.label, candidateMultiSamples, lastContextError.c_str());
-					continue;
-				}
-			}
-
-			if (createdWindowForAttempt && !parms.fullScreen && !parms.hiddenWindow) {
-				int targetX = win32.win_xpos.GetInteger();
-				int targetY = win32.win_ypos.GetInteger();
-				int targetWidth = parms.width;
-				int targetHeight = parms.height;
-
-				const sdl3DisplaySelection_t selectedDisplay = SDL3_ResolveTargetDisplay(false);
-				if (selectedDisplay.id != 0) {
-					SDL_Rect bounds;
-					if (SDL3_GetDisplayWindowedPlacementBounds(selectedDisplay.id, bounds)) {
-						const bool needsRecoveryPlacement = !SDL3_WindowRectIntersectsAnyDisplay(targetX, targetY, targetWidth, targetHeight);
-						const bool recenterIfOutside = (r_screen.GetInteger() >= 0) || needsRecoveryPlacement;
-						SDL3_ConstrainWindowRectToBounds(targetX, targetY, targetWidth, targetHeight, bounds, recenterIfOutside);
-					}
-				}
-
-				(void)SDL_SetWindowSize(s_sdlWindow, targetWidth, targetHeight);
-				(void)SDL3_SetWindowPositionCompat(
-					targetX,
-					targetY,
-					selectedDisplay.id,
-					r_screen.GetInteger() >= 0,
-					"place initial window");
-			}
-
-			common->Printf("SDL3: trying OpenGL context %s with MSAA samples=%d\n", candidate.label, candidateMultiSamples);
-			s_sdlContext = SDL_GL_CreateContext(s_sdlWindow);
-			if (s_sdlContext && SDL_GL_MakeCurrent(s_sdlWindow, s_sdlContext)) {
-				SDL3_RecordGLContextCandidate(candidate);
-				selectedMultiSamples = candidateMultiSamples;
-				common->Printf("SDL3: created OpenGL context %s with MSAA samples=%d\n", glConfig.contextRequest.label, selectedMultiSamples);
-				break;
-			}
-
-			lastContextError = SDL_GetError();
-			common->Printf("SDL3: OpenGL context %s with MSAA samples=%d failed: %s\n", candidate.label, candidateMultiSamples, lastContextError.c_str());
-			if (s_sdlContext) {
-				(void)SDL_GL_MakeCurrent(s_sdlWindow, NULL);
-				(void)SDL_GL_DestroyContext(s_sdlContext);
-				s_sdlContext = NULL;
-			}
-			if (createdWindowForAttempt) {
-				SDL_DestroyWindow(s_sdlWindow);
-				s_sdlWindow = NULL;
-			}
-		}
-		if (s_sdlContext) {
-			break;
-		}
-	}
-	if (!s_sdlContext) {
-		common->Printf("SDL3: could not create OpenGL context: %s\n", lastContextError.Length() > 0 ? lastContextError.c_str() : SDL_GetError());
-		return false;
-	}
-
-	if (!SDL_GL_MakeCurrent(s_sdlWindow, s_sdlContext)) {
-		common->Printf("SDL3: could not make context current: %s\n", SDL_GetError());
-		(void)SDL_GL_DestroyContext(s_sdlContext);
-		s_sdlContext = NULL;
-		if (!usingPreservedWindow) {
-			SDL_DestroyWindow(s_sdlWindow);
-			s_sdlWindow = NULL;
-		}
-		return false;
-	}
-	if (selectedMultiSamples != requestedMultiSamples) {
-		common->Printf("SDL3: r_multiSamples requested %d, using %d after context creation fallback\n", requestedMultiSamples, selectedMultiSamples);
-		r_multiSamples.SetInteger(selectedMultiSamples);
-		r_multiSamples.ClearModified();
-		parms.multiSamples = selectedMultiSamples;
-	}
-	SDL3_LogGLContextAttributes(requestedMultiSamples, selectedMultiSamples);
-
-#if defined(OPENQ4_SDL3_LINUX_HOST)
-	driverName = r_glDriver.GetString()[0] ? r_glDriver.GetString() : "libGL.so.1";
-#elif defined(OPENQ4_SDL3_DARWIN_HOST)
-	driverName = r_glDriver.GetString()[0] ? r_glDriver.GetString() : "OpenGL.framework";
-#else
-	driverName = r_glDriver.GetString()[0] ? r_glDriver.GetString() : "opengl32";
-#endif
-	if (!QGL_Init(driverName)) {
-		common->Printf("^3GLimp_Init() could not load r_glDriver \"%s\"^0\n", driverName);
-		GLimp_Shutdown();
-		return false;
-	}
-
-	if (!SDL3_ApplyScreenParms(parms)) {
-		GLimp_Shutdown();
-		return false;
-	}
-
-	SDL3_UpdateNativeWindowHandles();
-	SDL3_LoadWGLExtensions();
-	if (r_swapInterval.IsModified()) {
-		r_swapInterval.ClearModified();
-		(void)SDL3_ApplySwapInterval();
-	}
-
-	win32.activeApp = true;
-	s_sdlFocusInputReleased = false;
-	win32.wglErrors = 0;
-	GLimp_EnableLogging((r_logFile.GetInteger() != 0));
-
-	return true;
-}
-
-bool GLimp_SetScreenParms(glimpParms_t parms) {
-	if (parms.hiddenWindow) {
-		parms.fullScreen = false;
-		parms.borderless = false;
-	}
-
-	if (!SDL3_ApplyScreenParms(parms)) {
-		return false;
-	}
-
-	if (s_sdlWindow && s_sdlContext && !SDL3_EnsureGLContextCurrent("screen parm change")) {
-		return false;
-	}
-
-	SDL3_UpdateNativeWindowHandles();
-	r_swapInterval.SetModified();
-	if (r_swapInterval.IsModified()) {
-		r_swapInterval.ClearModified();
-		(void)SDL3_ApplySwapInterval();
-	}
-
-	return true;
-}
-
-void GLimp_Shutdown(void) {
-	common->Printf("Shutting down OpenGL subsystem (SDL3 backend)\n");
-	const bool preserveWindow = s_preserveWindowOnShutdown && s_sdlWindow != NULL;
-
-	SDL3_DisableWindowAspectSnap();
-	IN_DeactivateMouse();
-	SDL3_ShutdownControllerSubsystems();
-	s_sdlAppInBackground = false;
-	if (!preserveWindow) {
-		(void)SDL3_LeaveFullscreenAndRestoreDesktopMode();
-	}
-	if (s_sdlWindow && s_sdlTextInputActive) {
-		(void)SDL_ClearComposition(s_sdlWindow);
-		(void)SDL_StopTextInput(s_sdlWindow);
-		s_sdlTextInputActive = false;
-	}
-
-	if (s_sdlContext) {
-		if (s_sdlWindow) {
-			(void)SDL_GL_MakeCurrent(s_sdlWindow, NULL);
-		}
-		(void)SDL_GL_DestroyContext(s_sdlContext);
-		s_sdlContext = NULL;
-	}
-
-	if (s_sdlWindow && !preserveWindow) {
-		SDL_DestroyWindow(s_sdlWindow);
-		s_sdlWindow = NULL;
-	}
-
-	if (s_sdlVideoReferenceHeld && !preserveWindow) {
-		SDL3_UnregisterLifecycleEventWatch();
-		SDL_QuitSubSystem(SDL_INIT_VIDEO);
-		s_sdlVideoReferenceHeld = false;
-		s_sdlVideoDriver = SDL3_VIDEO_DRIVER_UNKNOWN;
-		idStr::snPrintf(s_sdlVideoDriverName, sizeof(s_sdlVideoDriverName), "unknown");
-		s_sdlGraphicsBridgeSummaryLogged = false;
-	}
-
-	if (!preserveWindow) {
-		win32.hWnd = NULL;
-	}
-	win32.hDC = NULL;
-	win32.hGLRC = NULL;
-	if (!preserveWindow) {
-		win32.cdsFullscreen = false;
-		SDL3_SetFullscreenState( false );
-	}
-
-	SDL3_ClearInputQueues();
-	QGL_Shutdown();
-}
-
-void GLimp_SwapBuffers(void) {
-	if (r_swapInterval.IsModified()) {
-		r_swapInterval.ClearModified();
-		(void)SDL3_ApplySwapInterval();
-	}
-
-	if (SDL3_EnsureGLContextCurrent("swap buffers") && !SDL_GL_SwapWindow(s_sdlWindow)) {
-		common->Printf("SDL3: failed to swap window buffers: %s\n", SDL_GetError());
-	}
-}
 
 /*
 ===========================================================
@@ -5975,58 +5461,283 @@ void GLimp_WakeBackEnd(void *data) {
 #endif
 }
 
-void GLimp_ActivateContext(void) {
-	(void)SDL3_EnsureGLContextCurrent("activate context");
-}
+/*
+===============================================================================
 
-bool GLimp_EnsureActiveContext(const char *operation) {
-	return SDL3_EnsureGLContextCurrent(operation);
-}
+	Phase B5b window services: the engine-owned half of the window/context
+	seam (docs/dev/plans/2026-07-16-vulkan-renderer-phase-b.md). The context
+	half lives in renderer/OpenGL/gl_ContextSDL3.cpp and drives these
+	callbacks; at Phase B8 they cross the renderer-module boundary through
+	renderImport_t.windowServices.
 
-void GLimp_DeactivateContext(void) {
-	if (!SDL3_EnsureGLContextCurrent("deactivate context")) {
-		return;
-	}
+===============================================================================
+*/
 
-	glFinish();
-	if (!SDL_GL_MakeCurrent(s_sdlWindow, NULL)) {
-		win32.wglErrors++;
-	}
-}
+static bool s_teardownPreserveWindow = false;
 
-#if defined(OPENQ4_SDL3_LINUX_HOST)
-typedef void ( *openQ4GlewProcAddress_t ) (void);
-
-extern "C" openQ4GlewProcAddress_t OpenQ4_GlewGetProcAddress(const unsigned char *name) {
-	if (name == NULL || name[0] == '\0') {
-		return NULL;
-	}
-	if (!SDL3_EnsureGLContextCurrent("GLEW proc lookup")) {
-		return NULL;
-	}
-
-	return reinterpret_cast<openQ4GlewProcAddress_t>(
-		SDL_GL_GetProcAddress(reinterpret_cast<const char *>(name)));
-}
-#endif
-
-void *GLimp_ExtensionPointer(const char *name) {
-	if (name == NULL || name[0] == '\0') {
-		return NULL;
-	}
-	if (!SDL3_EnsureGLContextCurrent("extension proc lookup")) {
-		return NULL;
-	}
-
-	void *proc = (void *)SDL_GL_GetProcAddress(name);
+static void SDL3_FillWindowInfo(renderModuleWindowInfo_t *outInfo) {
+	memset(outInfo, 0, sizeof(*outInfo));
+	outInfo->hasWindow = s_sdlWindow != NULL;
+	outInfo->sdlWindow = s_sdlWindow;
 #if !defined(OPENQ4_SDL3_POSIX_HOST)
-	if (!proc && qwglGetProcAddress) {
-		proc = (void *)qwglGetProcAddress(name);
-	}
+	outInfo->nativeWindowHandle = win32.hWnd;
+	outInfo->nativeDisplayHandle = win32.hDC;
 #endif
-
-	if (!proc) {
-		common->Printf("Couldn't find proc address for: %s\n", name);
-	}
-	return proc;
+	outInfo->pixelWidth = engineWindowState.vidWidth;
+	outInfo->pixelHeight = engineWindowState.vidHeight;
 }
+
+static void SDL3_ParmsFromWindowParms(const renderWindowParms_t *src, glimpParms_t &dst) {
+	memset(&dst, 0, sizeof(dst));
+	dst.width = src->width;
+	dst.height = src->height;
+	dst.fullScreen = src->fullScreen;
+	dst.borderless = src->borderless;
+	dst.hiddenWindow = src->hiddenWindow;
+	dst.stereo = src->stereo;
+	dst.displayHz = src->displayHz;
+	dst.multiSamples = src->multiSamples;
+}
+
+static void SDL3_ApplyFramebufferDesc(const renderFramebufferDesc_t *desc) {
+	SDL_GL_ResetAttributes();
+	(void)SDL_GL_SetAttribute(SDL_GL_RED_SIZE, desc->redBits);
+	(void)SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, desc->greenBits);
+	(void)SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, desc->blueBits);
+	(void)SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, desc->alphaBits);
+	(void)SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, desc->depthBits);
+	(void)SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, desc->stencilBits);
+	(void)SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, desc->doubleBuffer ? 1 : 0);
+	if (desc->stereo) {
+		(void)SDL_GL_SetAttribute(SDL_GL_STEREO, 1);
+	}
+	if (desc->multiSamples > 1) {
+		(void)SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
+		(void)SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, desc->multiSamples);
+	}
+	if (desc->explicitGLVersion) {
+		(void)SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, desc->glMajor);
+		(void)SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, desc->glMinor);
+		(void)SDL_GL_SetAttribute(
+			SDL_GL_CONTEXT_PROFILE_MASK,
+			desc->glCoreProfile ? SDL_GL_CONTEXT_PROFILE_CORE : SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+	}
+	(void)SDL_GL_SetAttribute(
+		SDL_GL_CONTEXT_FLAGS,
+		desc->glDebugContext ? SDL_GL_CONTEXT_DEBUG_FLAG : 0);
+}
+
+static bool SDL3_WindowServices_PrepareWindowSystem(void) {
+	SDL3_SetMouseHintDefaults();
+	Sys_SDL_ApplyVideoHintDefaults();
+
+	if (!s_sdlVideoReferenceHeld) {
+		// SDL video initialization is reference counted. The game renderer must
+		// acquire its own reference instead of adopting the splash/console ref;
+		// otherwise the window teardown can invalidate their cached SDL objects.
+		if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
+			common->Printf("SDL3: failed to initialize video subsystem: %s\n", SDL_GetError());
+			return false;
+		}
+		s_sdlVideoReferenceHeld = true;
+	}
+	SDL3_RegisterLifecycleEventWatch();
+	SDL3_UpdateVideoDriverProfile();
+	SDL3_PrintVideoDriverSummary();
+	SDL3_PrintGraphicsBridgeSummary();
+	SDL3_ApplySteamDeckPerformanceDefaults();
+
+	if (!s_sdlDiagnosticCommandsRegistered) {
+		cmdSystem->AddCommand("listDisplays", SDL3_ListDisplays_f, CMD_FL_SYSTEM, "lists SDL3 displays and monitor indices");
+		cmdSystem->AddCommand("listDisplayModes", SDL3_ListDisplayModes_f, CMD_FL_SYSTEM, "lists SDL3 fullscreen display modes (optional display index)");
+		cmdSystem->AddCommand("listControllers", SDL3_ListControllers_f, CMD_FL_SYSTEM, "lists SDL3 controller, sensor, touchpad, and battery diagnostics");
+		cmdSystem->AddCommand("sdl3MouseCaptureDiagnostics", SDL3_MouseCaptureDiagnostics_f, CMD_FL_SYSTEM, "toggles SDL3 mouse capture and prints backend state; optional repeat count is clamped to 1..8");
+		s_sdlDiagnosticCommandsRegistered = true;
+	}
+
+	if (!s_sdlDisplaySummaryLogged) {
+		SDL3_PrintDisplayList();
+		s_sdlDisplaySummaryLogged = true;
+	}
+
+	SDL3_InitDesktopMode();
+	return true;
+}
+
+static bool SDL3_WindowServices_CreateWindowForFramebuffer(const renderFramebufferDesc_t *desc, const renderWindowParms_t *parms,
+														   renderModuleWindowInfo_t *outInfo, bool *outReusedPreservedWindow) {
+	SDL3_ApplyFramebufferDesc(desc);
+
+	const bool reusePreserved = s_sdlWindow != NULL;
+	if (outReusedPreservedWindow != NULL) {
+		*outReusedPreservedWindow = reusePreserved;
+	}
+
+	if (reusePreserved) {
+		common->Printf("SDL3: reusing preserved OpenGL window\n");
+	} else {
+		SDL_WindowFlags flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN;
+		if (!parms->fullScreen && parms->borderless) {
+			flags |= SDL_WINDOW_BORDERLESS;
+		}
+
+		s_sdlWindow = SDL_CreateWindow(GAME_NAME, parms->width, parms->height, flags);
+		if (!s_sdlWindow) {
+			return false;
+		}
+
+		if (!parms->fullScreen && !parms->hiddenWindow) {
+			int targetX = win32.win_xpos.GetInteger();
+			int targetY = win32.win_ypos.GetInteger();
+			int targetWidth = parms->width;
+			int targetHeight = parms->height;
+
+			const sdl3DisplaySelection_t selectedDisplay = SDL3_ResolveTargetDisplay(false);
+			if (selectedDisplay.id != 0) {
+				SDL_Rect bounds;
+				if (SDL3_GetDisplayWindowedPlacementBounds(selectedDisplay.id, bounds)) {
+					const bool needsRecoveryPlacement = !SDL3_WindowRectIntersectsAnyDisplay(targetX, targetY, targetWidth, targetHeight);
+					const bool recenterIfOutside = (r_screen.GetInteger() >= 0) || needsRecoveryPlacement;
+					SDL3_ConstrainWindowRectToBounds(targetX, targetY, targetWidth, targetHeight, bounds, recenterIfOutside);
+				}
+			}
+
+			(void)SDL_SetWindowSize(s_sdlWindow, targetWidth, targetHeight);
+			(void)SDL3_SetWindowPositionCompat(
+				targetX,
+				targetY,
+				selectedDisplay.id,
+				r_screen.GetInteger() >= 0,
+				"place initial window");
+		}
+	}
+
+	SDL3_FillWindowInfo(outInfo);
+	return true;
+}
+
+static void SDL3_WindowServices_DestroyAttemptWindow(void) {
+	if (s_sdlWindow != NULL) {
+		SDL_DestroyWindow(s_sdlWindow);
+		s_sdlWindow = NULL;
+	}
+}
+
+static bool SDL3_WindowServices_ApplyScreenParms(const renderWindowParms_t *parms) {
+	glimpParms_t glimpParms;
+	SDL3_ParmsFromWindowParms(parms, glimpParms);
+	return SDL3_ApplyScreenParms(glimpParms);
+}
+
+static void SDL3_WindowServices_RefreshNativeWindowHandles(renderModuleWindowInfo_t *outInfo) {
+	SDL3_UpdateNativeWindowHandles();
+	if (outInfo != NULL) {
+		SDL3_FillWindowInfo(outInfo);
+	}
+}
+
+static void SDL3_WindowServices_NotifyWindowReady(void) {
+	win32.activeApp = true;
+	s_sdlFocusInputReleased = false;
+	win32.wglErrors = 0;
+}
+
+static void SDL3_WindowServices_BeginWindowTeardown(void) {
+	s_teardownPreserveWindow = s_preserveWindowOnShutdown && s_sdlWindow != NULL;
+
+	SDL3_DisableWindowAspectSnap();
+	IN_DeactivateMouse();
+	SDL3_ShutdownControllerSubsystems();
+	s_sdlAppInBackground = false;
+	if (!s_teardownPreserveWindow) {
+		(void)SDL3_LeaveFullscreenAndRestoreDesktopMode();
+	}
+	if (s_sdlWindow && s_sdlTextInputActive) {
+		(void)SDL_ClearComposition(s_sdlWindow);
+		(void)SDL_StopTextInput(s_sdlWindow);
+		s_sdlTextInputActive = false;
+	}
+}
+
+static void SDL3_WindowServices_FinishWindowTeardown(void) {
+	if (s_sdlWindow && !s_teardownPreserveWindow) {
+		SDL_DestroyWindow(s_sdlWindow);
+		s_sdlWindow = NULL;
+	}
+
+	if (s_sdlVideoReferenceHeld && !s_teardownPreserveWindow) {
+		SDL3_UnregisterLifecycleEventWatch();
+		SDL_QuitSubSystem(SDL_INIT_VIDEO);
+		s_sdlVideoReferenceHeld = false;
+		s_sdlVideoDriver = SDL3_VIDEO_DRIVER_UNKNOWN;
+		idStr::snPrintf(s_sdlVideoDriverName, sizeof(s_sdlVideoDriverName), "unknown");
+		s_sdlGraphicsBridgeSummaryLogged = false;
+	}
+
+	if (!s_teardownPreserveWindow) {
+		win32.hWnd = NULL;
+	}
+	win32.hDC = NULL;
+	win32.hGLRC = NULL;
+	if (!s_teardownPreserveWindow) {
+		win32.cdsFullscreen = false;
+		SDL3_SetFullscreenState( false );
+	}
+
+	SDL3_ClearInputQueues();
+	s_teardownPreserveWindow = false;
+}
+
+static void SDL3_WindowServices_GetDesktopResolution(int *width, int *height) {
+	(void)Sys_GetDesktopResolution(width, height);
+}
+
+static bool SDL3_WindowServices_PreferCompatibilityFallbackFirst(const char **outMessage) {
+	if (SDL3_IsNativeWaylandVideoDriver()) {
+		if (outMessage != NULL) {
+			*outMessage = "SDL3: native Wayland r_glTier auto will try the unversioned compatibility fallback before explicit profile contexts.\n";
+		}
+		return true;
+	}
+	if (s_sdlVideoDriver == SDL3_VIDEO_DRIVER_COCOA) {
+		// Apple OpenGL only offers 2.1 compatibility or 3.2+/4.1 core, so
+		// every versioned compatibility candidate above 2.1 is guaranteed to
+		// fail; try the unversioned compatibility fallback first.
+		if (outMessage != NULL) {
+			*outMessage = "SDL3: macOS r_glTier auto will try the unversioned compatibility fallback before explicit profile contexts.\n";
+		}
+		return true;
+	}
+	return false;
+}
+
+static void SDL3_WindowServices_CountContextError(void) {
+	win32.wglErrors++;
+}
+
+static const renderWindowServices_t s_sdl3WindowServices = {
+	SDL3_WindowServices_PrepareWindowSystem,
+	SDL3_WindowServices_CreateWindowForFramebuffer,
+	SDL3_WindowServices_DestroyAttemptWindow,
+	SDL3_WindowServices_ApplyScreenParms,
+	SDL3_WindowServices_RefreshNativeWindowHandles,
+	SDL3_WindowServices_NotifyWindowReady,
+	SDL3_WindowServices_BeginWindowTeardown,
+	SDL3_WindowServices_FinishWindowTeardown,
+	SDL3_WindowServices_GetDesktopResolution,
+	SDL3_WindowServices_PreferCompatibilityFallbackFirst,
+	SDL3_WindowServices_CountContextError,
+};
+
+const renderWindowServices_t *Sys_GetRenderWindowServices(void) {
+	return &s_sdl3WindowServices;
+}
+
+/*
+===============================================================================
+	Context half of the seam. Physically renderer-owned; compiled into this
+	translation unit until the Phase B8 module split gives it its own build.
+===============================================================================
+*/
+#define OPENQ4_SDL3_CONTEXT_IMPL 1
+#include "../../renderer/OpenGL/gl_ContextSDL3.cpp"
