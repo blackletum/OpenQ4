@@ -146,8 +146,10 @@ static idRenderModel *R_ModelManager_MaybeConvertMD5ToMD5R( idRenderModelMD5 *so
 		return NULL;
 	}
 
+	// cvar-system lookup, not idAsyncNetwork::serverDedicated: the renderer
+	// module cannot reference engine cvar objects across the DLL boundary
 	if ( sourceModel->IsDefaultModel()
-		|| idAsyncNetwork::serverDedicated.GetInteger() != 0 ) {
+		|| cvarSystem->GetCVarInteger( "net_serverDedicated" ) != 0 ) {
 		return sourceModel;
 	}
 

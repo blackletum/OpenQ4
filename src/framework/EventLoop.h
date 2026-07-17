@@ -60,7 +60,9 @@ public:
 
 					// Gets the current time in a way that will be journaled properly,
 					// as opposed to Sys_Milliseconds(), which always reads a real timer.
-	int				Milliseconds( void );
+					// Inline so the renderer module can call it without a
+					// cross-DLL member reference (Phase B8).
+	int				Milliseconds( void ) { return Sys_Milliseconds() - initialTimeOffset; }
 
 					// Returns the journal level, 1 = record, 2 = play back.
 	int				JournalLevel( void ) const;

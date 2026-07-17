@@ -480,6 +480,19 @@ if render_geo_source_paths.length() == 0
 endif
 openq4_render_geo_sources = files(render_geo_source_paths)
 
+renderer_gl_source_discovery = run_command(
+  py,
+  meson.project_source_root() / 'tools' / 'build' / 'meson_sources.py',
+  '--emit',
+  'renderer_gl',
+  check: true,
+)
+renderer_gl_source_paths = renderer_gl_source_discovery.stdout().strip().split('\n')
+if renderer_gl_source_paths.length() == 0
+  error('tools/build/meson_sources.py returned no renderer_gl source files.')
+endif
+openq4_renderer_gl_sources = files(renderer_gl_source_paths)
+
 openq4_engine_sources = files(engine_source_paths)
 if build_engine
   openq4_engine_sources += openq4_paks_generated_header
@@ -1255,6 +1268,78 @@ if build_renderer_vk and build_engine
     dependencies: renderer_vk_deps,
     link_args: renderer_vk_link_args,
     link_depends: renderer_vk_link_depends,
+    gnu_symbol_visibility: host_system == 'linux' ? 'hidden' : 'default',
+    name_prefix: '',
+    install: true,
+    install_dir: install_root_dir,
+  )
+endif
+
+# OpenGL renderer module (Phase B8, docs/dev/plans/2026-07-16-vulkan-renderer-phase-b.md).
+# Built from the same renderer sources the engine still links statically; the
+# engine keeps its static renderer until the module soak completes. Requires
+# the SDL3 window-services seam (gl_ContextSDL3.cpp compiles standalone via
+# OPENQ4_SDL3_CONTEXT_IMPL and drives the engine window through
+# renderWindowServices_t).
+build_renderer_gl = get_option('build_renderer_gl')
+if build_renderer_gl and (host_system == 'darwin' or platform_backend != 'sdl3')
+  build_renderer_gl = false
+endif
+
+renderer_gl_binary_name = 'renderer-gl_' + binary_arch
+if build_renderer_gl and build_engine
+  # the module's own idlib copy, compiled with engine flavor so codegen and
+  # interface layout match the renderer sources
+  renderer_idlib_library = static_library(
+    'openq4_renderer_idlib',
+    game_idlib_sources,
+    include_directories: engine_include_dirs,
+    cpp_args: engine_cpp_args,
+    c_args: engine_c_args,
+    cpp_pch: pch_headers,
+    pic: host_system == 'linux',
+    install: false,
+  )
+
+  renderer_gl_module_args = engine_cpp_args + [
+    '-DOPENQ4_RENDERER_GL_MODULE',
+    '-DOPENQ4_SDL3_CONTEXT_IMPL',
+  ]
+  renderer_gl_link_args = []
+  renderer_gl_link_depends = []
+  renderer_gl_deps = [glew_dep]
+  if host_system == 'windows'
+    # GLEW resolves GL procs through wglGetProcAddress on Windows
+    renderer_gl_deps += [cc.find_library('opengl32', required: true)]
+    renderer_gl_link_args += ['/FIXED:NO', '/LARGEADDRESSAWARE']
+  elif host_system == 'linux'
+    # direct GL 1.x entry points (glReadBuffer/glDrawBuffer/...) link against
+    # libGL; everything newer resolves through GLEW -> window services
+    renderer_gl_deps += [
+      cc.find_library('GL', required: true),
+      cc.find_library('dl', required: false),
+      cc.find_library('m', required: false),
+    ]
+    renderer_gl_link_args += linux_module_link_hardening_args
+    if cpp.has_link_argument('-Wl,-z,defs')
+      renderer_gl_link_args += '-Wl,-z,defs'
+    endif
+    renderer_gl_export_map = files('tools/build/linux_renderer_module.map')
+    renderer_gl_link_args += '-Wl,--version-script=' + renderer_gl_export_map[0].full_path()
+    renderer_gl_link_depends += renderer_gl_export_map
+  endif
+
+  renderer_gl_module_target = shared_module(
+    renderer_gl_binary_name,
+    openq4_renderer_gl_sources,
+    include_directories: engine_include_dirs,
+    cpp_args: renderer_gl_module_args,
+    c_args: engine_c_args,
+    cpp_pch: pch_headers,
+    link_with: [renderer_idlib_library, imagetools_library, render_geo_library],
+    dependencies: renderer_gl_deps,
+    link_args: renderer_gl_link_args,
+    link_depends: renderer_gl_link_depends,
     gnu_symbol_visibility: host_system == 'linux' ? 'hidden' : 'default',
     name_prefix: '',
     install: true,

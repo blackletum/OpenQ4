@@ -19,8 +19,9 @@
 */
 
 typedef enum {
-	RENDER_MODULE_API_GL,		// OpenGL renderer (currently statically linked)
+	RENDER_MODULE_API_GL,		// OpenGL renderer, statically linked (default)
 	RENDER_MODULE_API_VULKAN,	// native Vulkan renderer module
+	RENDER_MODULE_API_GL_MODULE,// OpenGL renderer as a dynamic module (opt-in Phase B8 soak path)
 	RENDER_MODULE_API_COUNT
 } rendererModuleApi_t;
 
@@ -55,8 +56,18 @@ void	R_RendererModule_BuildBinaryName( rendererModuleApi_t api, char *outName, i
 int		R_RendererModule_BuildFallbackLadder( rendererModuleApi_t requested, rendererModuleApi_t *outLadder, int maxEntries );
 
 // consumes r_renderApi and activates the selected renderer path; called at
-// the head of R_InitOpenGL, before platform window creation
+// the head of R_InitOpenGL, before platform window creation. Module
+// activation (publishing a module's idRenderSystem) is only permitted on the
+// first boot of the process; vid_restart re-boots can shuffle gl/vulkan
+// fallbacks but a module swap needs an engine restart.
 void	R_RendererModule_Boot( void );
+
+// first-boot entry called from idCommonLocal::InitGame BEFORE
+// renderSystem->Init(), so decl/material/font state binds to the renderer
+// instance that will actually draw. Peeks the archived r_renderApi value out
+// of the config file (config execution happens later in InitGame) and applies
+// command-line overrides before booting.
+void	R_RendererModule_BootEarly( void );
 
 // unloads any loaded renderer module; safe to call when none is loaded
 void	R_RendererModule_Shutdown( void );

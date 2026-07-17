@@ -58,8 +58,10 @@ public:
 	bool			OpenForWriting( const char *fileName );
 	void			Close();
 
-	const char *	ReadHashString();
-	void			WriteHashString( const char *str );
+	// virtual so the renderer module reaches them across the DLL boundary
+	// (Phase B8, docs/dev/plans/2026-07-16-vulkan-renderer-phase-b.md)
+	virtual const char *	ReadHashString();
+	virtual void			WriteHashString( const char *str );
 
 	void			ReadDict( idDict &dict );
 	void			WriteDict( const idDict &dict );

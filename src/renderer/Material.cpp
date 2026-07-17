@@ -2674,7 +2674,7 @@ void idMaterial::ParseMaterial( idLexer &src ) {
 		else if (!token.Icmp("materialImage")) {
 			src.ReadTokenOnLine(&token);
 			idStr hitImage = token;
-			materialTypeArray = MT_GetMaterialTypeArray( hitImage, MTAWidth, MTAHeight );
+			materialTypeArray = declManager->GetMaterialTypeArray( hitImage.c_str(), MTAWidth, MTAHeight );
 			materialTypeArrayName = token;
 			continue;
 		}

@@ -460,6 +460,12 @@ public:
 	virtual bool					Validate( declType_t type, int iIndex, idStr &strReportTo ) = 0;
 	virtual idDecl *				AllocateDecl( declType_t type ) = 0;
 
+	// interface wrapper over MT_GetMaterialTypeArray so the renderer module
+	// reaches the material-type decl data across the DLL boundary (Phase B8,
+	// docs/dev/plans/2026-07-16-vulkan-renderer-phase-b.md); const char*
+	// because idStr must never cross the module ABI by value
+	virtual byte *					GetMaterialTypeArray( const char *image, int &width, int &height ) = 0;
+
 #if defined(_XENON)
 // mwhitlock: Xenon texture streaming
 	virtual void					SetLightMaterialList(idList<idMaterial*>* materialList) = 0;

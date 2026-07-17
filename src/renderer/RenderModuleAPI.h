@@ -35,7 +35,10 @@
 //  3 - Phase B5b window services: the engine owns the window/display layer
 //      and the renderer drives context negotiation through
 //      renderWindowServices_t
-#define RENDER_API_VERSION			3
+//  4 - Phase B8 module completion: console import, input window services
+//      (InitInput/ShutdownInput/GrabMouseCursor) for the renderer's init and
+//      vid_restart sequencing
+#define RENDER_API_VERSION			4
 #define RENDER_API_ENTRY_POINT		"GetRenderAPI"
 
 class idSys;
@@ -52,6 +55,7 @@ class idUserInterfaceManager;
 class idCollisionModelManager;
 class idEventLoop;
 class rvBSEManager;
+class idConsole;
 
 // bring-up-safe engine services; every callback is bound engine-side and
 // remains valid for the lifetime of the loaded module
@@ -170,6 +174,12 @@ typedef struct renderWindowServices_s {
 	bool			( *GetGLAttribute )( int attribute, int *outValue );	// renderGLAttribute_t
 	void *			( *GetGLProcAddress )( const char *name );
 	const char *	( *GetVideoErrorString )( void );
+
+	// --- version 4: input bring-up/teardown, sequenced by the renderer's
+	// init and vid_restart paths exactly like the static build ---
+	void			( *InitInput )( void );
+	void			( *ShutdownInput )( void );
+	void			( *GrabMouseCursor )( bool grabIt );
 } renderWindowServices_t;
 
 // attribute selectors for renderWindowServices_t::GetGLAttribute; the
@@ -220,6 +230,9 @@ typedef struct renderImport_s {
 
 	// --- version 3: engine window layer for the context-owning module ---
 	const renderWindowServices_t *			windowServices;	// NULL on non-seam backends
+
+	// --- version 4: console handle for vid_restart sequencing ---
+	idConsole *								console;
 } renderImport_t;
 
 

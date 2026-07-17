@@ -20,8 +20,8 @@ GNU General Public License for more details.
 */
 
 #include "tr_local.h"
-#if defined( USE_SDL3 )
-#include <SDL3/SDL.h>
+#if !defined( _WIN32 )
+#include <unistd.h>
 #endif
 
 static const char *LGRID_FILE_ID = "LGRID";
@@ -2427,12 +2427,19 @@ static int LightGrid_GetBakeWorkerCount() {
 		return idMath::ClampInt( 1, LIGHTGRID_BAKE_MAX_WORKERS, requestedWorkers );
 	}
 
-#if defined( USE_SDL3 )
-	const int logicalCpuCount = SDL_GetNumLogicalCPUCores();
+	// platform CPU count, not SDL: renderer sources must stay free of
+	// windowing-library references so the module build never links SDL
+#if defined( _WIN32 )
+	SYSTEM_INFO systemInfo;
+	GetNativeSystemInfo( &systemInfo );
+	const int logicalCpuCount = ( int )systemInfo.dwNumberOfProcessors;
+#else
+	const long onlineCpus = sysconf( _SC_NPROCESSORS_ONLN );
+	const int logicalCpuCount = onlineCpus > 0 ? ( int )onlineCpus : 1;
+#endif
 	if ( logicalCpuCount > 1 ) {
 		return idMath::ClampInt( 1, LIGHTGRID_BAKE_MAX_WORKERS, logicalCpuCount - 1 );
 	}
-#endif
 
 	return 0;
 }

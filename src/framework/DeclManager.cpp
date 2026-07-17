@@ -343,6 +343,7 @@ public:
 	virtual void					RemoveDeclFile( const char *file );
 	virtual bool					Validate( declType_t type, int iIndex, idStr &strReportTo );
 	virtual idDecl *				AllocateDecl( declType_t type );
+	virtual byte *					GetMaterialTypeArray( const char *image, int &width, int &height );
 
 public:
 	static void					MakeNameCanonical( const char *name, char *result, int maxLength );
@@ -3002,6 +3003,18 @@ idDecl *idDeclManagerLocal::AllocateDecl( declType_t type ) {
 	decl->base = declBase;
 	declBase->self = decl;
 	return decl;
+}
+
+/*
+===================
+idDeclManagerLocal::GetMaterialTypeArray
+
+Interface wrapper so the renderer module reaches the material-type decl data
+across the DLL boundary (Phase B8).
+===================
+*/
+byte *idDeclManagerLocal::GetMaterialTypeArray( const char *image, int &width, int &height ) {
+	return MT_GetMaterialTypeArray( idStr( image ), width, height );
 }
 
 const rvDeclEffect* idDeclManagerLocal::EffectByIndex(int index, bool forceParse) {

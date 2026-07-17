@@ -5786,6 +5786,18 @@ static const char *SDL3_WindowServices_GetVideoErrorString(void) {
 	return SDL_GetError();
 }
 
+static void SDL3_WindowServices_InitInput(void) {
+	Sys_InitInput();
+}
+
+static void SDL3_WindowServices_ShutdownInput(void) {
+	Sys_ShutdownInput();
+}
+
+static void SDL3_WindowServices_GrabMouseCursor(bool grabIt) {
+	Sys_GrabMouseCursor(grabIt);
+}
+
 static const renderWindowServices_t s_sdl3WindowServices = {
 	SDL3_WindowServices_PrepareWindowSystem,
 	SDL3_WindowServices_CreateWindowForFramebuffer,
@@ -5808,6 +5820,9 @@ static const renderWindowServices_t s_sdl3WindowServices = {
 	SDL3_WindowServices_GetGLAttribute,
 	SDL3_WindowServices_GetGLProcAddress,
 	SDL3_WindowServices_GetVideoErrorString,
+	SDL3_WindowServices_InitInput,
+	SDL3_WindowServices_ShutdownInput,
+	SDL3_WindowServices_GrabMouseCursor,
 };
 
 const renderWindowServices_t *Sys_GetRenderWindowServices(void) {

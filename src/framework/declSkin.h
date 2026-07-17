@@ -44,7 +44,9 @@ public:
 	void					GetSkinTargetsList(idList<const idMaterial*>& outList) const;
 #endif
 // RAVEN END
-	const idMaterial *		RemapShaderBySkin( const idMaterial *shader ) const;
+	// virtual so the renderer module reaches it across the DLL boundary
+	// (Phase B8, docs/dev/plans/2026-07-16-vulkan-renderer-phase-b.md)
+	virtual const idMaterial *	RemapShaderBySkin( const idMaterial *shader ) const;
 
 							// model associations are just for the preview dialog in the editor
 // RAVEN BEGIN

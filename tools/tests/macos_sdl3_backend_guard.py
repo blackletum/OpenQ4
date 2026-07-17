@@ -152,28 +152,41 @@ def validate_sdl3_context_teardown_guards() -> None:
     deactivate = function_body(source, "void GLimp_DeactivateContext(void) {")
     extension = function_body(source, "void *GLimp_ExtensionPointer(const char *name) {")
 
+    # Post-F0 the seam TU drives every context operation through
+    # renderWindowServices_t; the SDL-level semantics are asserted on the
+    # backend's service implementations below.
     for token in (
         "if (!s_glWindow || !s_glContext) {",
-        "SDL_GL_GetCurrentWindow() == s_glWindow && SDL_GL_GetCurrentContext() == s_glContext",
-        "SDL_GL_MakeCurrent(s_glWindow, s_glContext)",
+        "s_glWindowServices->IsGLContextCurrent(s_glContext)",
+        "s_glWindowServices->MakeGLContextCurrent(s_glContext)",
         "s_glWindowServices->CountContextError();",
         "return false;",
     ):
         require(ensure_current, token, "SDL3 current-context helper")
 
     require(screen_parms, 'SDL3_EnsureGLContextCurrent("screen parm change")', "SDL3 screen-parm current-context guard")
-    require(shutdown, "if (s_glWindow) {\n\t\t\t(void)SDL_GL_MakeCurrent(s_glWindow, NULL);", "SDL3 shutdown context detach guard")
-    reject(shutdown, "(void)SDL_GL_MakeCurrent(s_glWindow, NULL);\n\t\t(void)SDL_GL_DestroyContext", "SDL3 shutdown unguarded context detach")
+    require(shutdown, "if (s_glWindow) {\n\t\t\t(void)windowServices->MakeGLContextCurrent(NULL);", "SDL3 shutdown context detach guard")
+    reject(shutdown, "(void)windowServices->MakeGLContextCurrent(NULL);\n\t\twindowServices->DestroyGLContext", "SDL3 shutdown unguarded context detach")
 
-    require(swap, 'if (SDL3_EnsureGLContextCurrent("swap buffers") && !SDL_GL_SwapWindow(s_glWindow))', "SDL3 swap current-context guard")
-    reject(swap, "if (s_glWindow && !SDL_GL_SwapWindow(s_glWindow))", "SDL3 swap window-only guard")
+    require(swap, 'if (SDL3_EnsureGLContextCurrent("swap buffers") && !s_glWindowServices->SwapGLWindow())', "SDL3 swap current-context guard")
+    reject(swap, "if (s_glWindow && !s_glWindowServices->SwapGLWindow())", "SDL3 swap window-only guard")
 
     require(activate, 'SDL3_EnsureGLContextCurrent("activate context")', "SDL3 activate current-context guard")
     require(deactivate, 'if (!SDL3_EnsureGLContextCurrent("deactivate context")) {', "SDL3 deactivate current-context guard")
     require_before(deactivate, 'if (!SDL3_EnsureGLContextCurrent("deactivate context")) {', "glFinish();", "SDL3 deactivate glFinish guard")
 
     require(extension, "if (name == NULL || name[0] == '\\0') {", "SDL3 extension null-name guard")
-    require_before(extension, "if (name == NULL || name[0] == '\\0') {", "SDL_GL_GetProcAddress(name)", "SDL3 extension lookup guard")
+    require_before(extension, "if (name == NULL || name[0] == '\\0') {", "s_glWindowServices->GetGLProcAddress(name)", "SDL3 extension lookup guard")
+
+    # the engine-side service implementations carry the SDL-level semantics
+    # the seam used to hold: current-ness compares BOTH window and context,
+    # and make-current targets the game window
+    backend = read("src/sys/sdl3/sdl3_backend.cpp")
+    is_current = function_body(backend, "static bool SDL3_WindowServices_IsGLContextCurrent(void *context) {")
+    require(is_current, "SDL_GL_GetCurrentWindow() == s_sdlWindow", "SDL3 service current-window comparison")
+    require(is_current, "SDL_GL_GetCurrentContext() == (SDL_GLContext)context", "SDL3 service current-context comparison")
+    make_current = function_body(backend, "static bool SDL3_WindowServices_MakeGLContextCurrent(void *context) {")
+    require(make_current, "SDL_GL_MakeCurrent(s_sdlWindow, (SDL_GLContext)context)", "SDL3 service make-current target")
 
 
 def validate_posix_glue_allocation_guards() -> None:

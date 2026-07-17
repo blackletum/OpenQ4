@@ -41,6 +41,13 @@ option(
 )
 
 option(
+  'build_renderer_gl',
+  type: 'boolean',
+  value: true,
+  description: 'Build the OpenGL renderer module (renderer-gl_<arch>) from the same renderer sources the engine still links statically. Requires the SDL3 platform backend; skipped on macOS until the module path is validated there.',
+)
+
+option(
   'platform_backend',
   type: 'combo',
   choices: ['sdl3', 'legacy_win32', 'native'],

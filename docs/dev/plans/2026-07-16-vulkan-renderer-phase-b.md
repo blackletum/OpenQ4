@@ -1,7 +1,7 @@
 # Vulkan Renderer Phase B: Renderer Extraction Stages
 
 Date: 2026-07-16
-Status: B1 landed (73bccf7a); B2-prep/B3 trampoline (a07c9ec1); B2 carve (04128897); B3 bakeLightGrids (79df21e3) — framework/ui/sound hold zero renderer-internal includes; B4 ABI v2 (24f84ae7); B6a dmap -draw retirement (9dbdaa5c); B6 render_geo carve landed — dmap compiles against src/render_geo only, dmap output byte-identical, shared lib is tr/cvar/vertexCache-free with renderer hooks. B7 redesigned per audit (null renderer infeasible; ded keeps the real front-end, GL-free link co-sequenced with B8). B5a landed — engine-owned engineWindowState_t (sys_public.h) carries vid/uiViewport/fullscreen window state with the platform layer dual-writing glConfig until B5b moves the mirror behind the module import; engine readers (ui, framework, sys) repointed. B5b landed — the GL context half lives in renderer/OpenGL/gl_ContextSDL3.cpp (compiled into the SDL3 backend TU until B8) and reaches the engine window layer exclusively through renderWindowServices_t (ABI v3): module-driven candidate negotiation with per-attempt window recreation, split init/screen-parms/teardown, ctx-local window/context statics, hGLRC reverse write deleted, macOS token guards rebound to the seam. B7-interim (GL-free ded link) and B8 (partition + flip) open.
+Status: B1 landed (73bccf7a); B2-prep/B3 trampoline (a07c9ec1); B2 carve (04128897); B3 bakeLightGrids (79df21e3) — framework/ui/sound hold zero renderer-internal includes; B4 ABI v2 (24f84ae7); B6a dmap -draw retirement (9dbdaa5c); B6 render_geo carve landed — dmap compiles against src/render_geo only, dmap output byte-identical, shared lib is tr/cvar/vertexCache-free with renderer hooks. B7 redesigned per audit (null renderer infeasible; ded keeps the real front-end, GL-free link co-sequenced with B8). B5a landed — engine-owned engineWindowState_t (sys_public.h) carries vid/uiViewport/fullscreen window state with the platform layer dual-writing glConfig until B5b moves the mirror behind the module import; engine readers (ui, framework, sys) repointed. B5b landed — the GL context half lives in renderer/OpenGL/gl_ContextSDL3.cpp (compiled into the SDL3 backend TU until B8) and reaches the engine window layer exclusively through renderWindowServices_t (ABI v3): module-driven candidate negotiation with per-attempt window recreation, split init/screen-parms/teardown, ctx-local window/context statics, hGLRC reverse write deleted, macOS token guards rebound to the seam. B8 F1+F2 landed — renderer-gl_x64 module builds from the shared renderer sources (engine build unchanged), ABI v4 (console import + input services), RendererGLModule glue TU, opt-in `r_renderApi gl-module` activation at first boot via R_RendererModule_BootEarly before declManager->Init; verified activating, rendering mp/q4dm2 gameplay, and shutting down cleanly. B7-interim (GL-free ded link) and F3 (static-renderer shed + default flip, post-soak) open.
 
 Parent plan: [2026-07-16-vulkan-renderer.md](2026-07-16-vulkan-renderer.md). This staging plan was derived from a five-way symbol-level audit of engine/renderer coupling; file:line anchors reflect the tree at the audit commit (8bcdcdbf) and shift as stages land.
 
@@ -95,6 +95,66 @@ Verify: dmap a stock map, binary-compare .proc/.cm output pre/post.
 Verify: ded server boots, loads map, client connects from a full build.
 
 ### B8 — Build partition + module flip (own session; final)
+
+**F1+F2 LANDED — as-implemented record (2026-07-17).** The landed design is
+simpler than the sketch below: no tr_local split and no renderer_core static
+lib were needed. The engine build is UNCHANGED (still statically links the
+renderer); the module is a parallel compilation of the same renderer sources.
+
+- `meson_sources.py --emit renderer_gl` = renderer/*.cpp + renderer/OpenGL/*.cpp
+  minus RendererModule.cpp (the loader stays engine-side).
+- `renderer-gl_x64` shared_module: engine include dirs/args/PCH plus
+  `-DOPENQ4_RENDERER_GL_MODULE -DOPENQ4_SDL3_CONTEXT_IMPL` (the seam TU
+  compiles standalone via its preamble), links renderer_idlib (game_idlib
+  sources compiled engine-flavor) + imagetools + render_geo + glew_dep
+  (+opengl32 on Windows; GLEW's SDL3-loader mode resolves procs through
+  OpenQ4_GlewGetProcAddress → window services, so the module links NO SDL).
+  Gated by `build_renderer_gl` (off on macOS / non-SDL3 backends).
+- `src/renderer/RendererGLModule.cpp` (guarded glue TU): engine-interface
+  globals bound from renderImport_t, idLib::Init + RegisterStaticVars +
+  idSIMD::InitProcessor (game-DLL idiom — missing idLib::Init was the first
+  boot crash), Sys_* forwarders over services (Milliseconds/Sleep/critsect/
+  RenderDoc/GetDesktopResolution), Sys_GetProcessorString via the
+  sys_cpustring cvar, module-local QGL + wgl pointer definitions (seam TU
+  standalone preamble), module-local bake worker-thread primitives
+  (win32/pthread, module-local g_threads registry), engine-only diagnostics
+  stubs (R_RendererModule_*/UI_FontParity), mirrors of engine cvar objects
+  the renderer references (developer/com_purgeAll/com_makingBuild/
+  com_SingleDeclFile/r_skipGlowOverlay), GetRenderAPI export.
+- ABI v4: renderImport_t.console + renderWindowServices_t Init/Shutdown-
+  Input/GrabMouseCursor (renderer init + vid_restart sequencing).
+- Cross-DLL call fixes: idDemoFile::Read/WriteHashString virtual,
+  idDeclSkin::RemapShaderBySkin virtual (MIRRORED to openQ4-game),
+  idDeclManager::GetMaterialTypeArray virtual (MIRRORED; const char* — an
+  idStr crossing the module ABI by value is freed on the wrong CRT heap,
+  which was the map-load crash), idEventLoop::Milliseconds inlined,
+  net_serverDedicated read via cvarSystem, lightgrid CPU count via
+  platform API instead of SDL.
+- F2 activation: `r_renderApi gl-module` (opt-in soak value; `gl` stays the
+  static default). `R_RendererModule_BootEarly()` runs in InitGame AFTER
+  AttachBSE and BEFORE declManager->Init() — every decl object must be
+  allocated by the renderer instance that will draw it (materials allocated
+  pre-publish carry the engine vtable and crash on the engine's never-
+  initialized cinematic tables). It peeks the archived r_renderApi out of
+  the config file (config exec happens later) and applies command-line
+  overrides via StartupVariable. Module activation is restricted to the
+  first boot: outside that window candidates are refused BEFORE loading
+  (a probe-load would register module static cvars whose ArgCompletion
+  pointers dangle after unload). Dedicated coerces to gl until B7.
+- Verified: gl-module activates, negotiates GL 3.3 compat + MSAA 8 through
+  the window services, loads mp/q4dm2 (267 entities), renders gameplay, and
+  shuts down cleanly; static default regression-checked (foundation/tier/
+  present matrix cases, SP gameplay smoke, ded boot, macOS sweep).
+- Known boundary hazard (deferred with lightgrid-bake scope):
+  GetCurrentLightGridBakeInfo writes idStr&/idList<int>& out-params across
+  the boundary; resizing on the module side frees engine-heap buffers on
+  the module heap in debug builds. Needs a POD signature before bake runs
+  under gl-module.
+- Still open for F3 (post-soak): engine sheds the static renderer, ded
+  GL-free source unification, default flip gated on pixel-identical
+  captures + user gameplay soak sign-off.
+
+Original sketch (superseded where it conflicts with the record above):
 1. **tr_local.h split** (pre-req for the core/gl lib boundary): extract GL-bearing pieces (glState/backEnd GL members, qgl.h include, GLimp decls) into `tr_gl_local.h`; tr_local.h becomes API-agnostic. Guard `precompiled.h:372` qgl.h include to module builds only (`#ifdef RENDERER_MODULE_BUILD`); interface headers at :373-378 stay.
 2. **meson_sources.py**: remove renderer globs (lines 67-71) from ENGINE_SOURCE_GLOBS; add `RENDERER_MODULE_GLOBS` + `--emit={engine,renderer}` (mirroring --include-game). Exclude `RendererModule.cpp` from module list, add to engine list; strip its tr_local.h include (RendererModule.cpp:4) to just RenderModuleAPI.h + sys decls.
 3. **Module targets**: `renderer_core` static lib (API-agnostic set) + `shared_module('renderer-gl_'+binary_arch, ...)` mirroring renderer_vk (meson.build:1160-1209): name_prefix '', linux_renderer_module.map, hidden visibility, RENDER_MODULE_EXPORT on GetRenderAPI (VulkanModule.cpp:34-40 pattern), install_root_dir. Deps: glew_dep + opengl32/linux_gl_dep/OpenGL-framework move OFF engine deps[] onto the module; sdl3_dep on BOTH; imagetools + render_geo linked by both.

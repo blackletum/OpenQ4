@@ -182,7 +182,7 @@ static bool R_CanUseGLSLPrograms() {
 		return false;
 	}
 
-	if ( idAsyncNetwork::serverDedicated.GetBool() ) {
+	if ( cvarSystem->GetCVarInteger( "net_serverDedicated" ) != 0 ) {
 		return false;
 	}
 
@@ -208,7 +208,7 @@ static void GfxInfo_f( void );
 
 const char *r_rendererArgs[] = { "best", "arb", "arb2", "Cg", "exp", "nv10", "nv20", "r200", NULL };
 const char *r_glTierArgs[] = { "auto", "legacy", "gl33", "gl41", "gl43", "gl45", "gl46", NULL };
-const char *r_renderApiArgs[] = { "best", "gl", "vulkan", NULL };
+const char *r_renderApiArgs[] = { "best", "gl", "vulkan", "gl-module", NULL };
 const char *r_rendererBenchmarkPresetArgs[] = { "low", "baseline", "modern", "high-end", NULL };
 const char *r_multiSamplesArgs[] = { "0", "2", "4", "8", "16", NULL };
 
@@ -421,7 +421,7 @@ idCVar r_brightness( "r_brightness", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FL
 idCVar r_renderer( "r_renderer", "best", CVAR_RENDERER | CVAR_ARCHIVE, "hardware specific renderer path to use", r_rendererArgs, idCmdSystem::ArgCompletion_String<r_rendererArgs> );
 idCVar r_actualRenderer( "r_actualRenderer", "UNINITIALIZED", CVAR_RENDERER | CVAR_ROM, "actual active renderer backend after request/fallback selection" );
 idCVar r_glTier( "r_glTier", "auto", CVAR_RENDERER | CVAR_ARCHIVE, "OpenGL renderer tier: auto, legacy, gl33, gl41, gl43, gl45, gl46", r_glTierArgs, idCmdSystem::ArgCompletion_String<r_glTierArgs> );
-idCVar r_renderApi( "r_renderApi", "gl", CVAR_RENDERER | CVAR_ARCHIVE, "rendering API: best = platform default (currently gl), gl = OpenGL, vulkan = native Vulkan renderer module (bring-up; falls back to gl). Takes effect on vid_restart.", r_renderApiArgs, idCmdSystem::ArgCompletion_String<r_renderApiArgs> );
+idCVar r_renderApi( "r_renderApi", "gl", CVAR_RENDERER | CVAR_ARCHIVE, "rendering API: best = platform default (currently gl), gl = statically linked OpenGL, vulkan = native Vulkan renderer module (bring-up; falls back to gl), gl-module = OpenGL renderer as a dynamic module (soak path; falls back to gl). Module selections take effect on engine restart.", r_renderApiArgs, idCmdSystem::ArgCompletion_String<r_renderApiArgs> );
 idCVar r_actualRenderApi( "r_actualRenderApi", "UNINITIALIZED", CVAR_RENDERER | CVAR_ROM, "rendering API actually active after request/fallback selection" );
 idCVar r_vkValidation( "r_vkValidation", "0", CVAR_RENDERER | CVAR_BOOL, "enable Vulkan validation layers for the Vulkan renderer module and rendererVkProbe" );
 idCVar r_vkDevice( "r_vkDevice", "-1", CVAR_RENDERER | CVAR_INTEGER, "Vulkan physical-device index override, -1 = automatic selection", -1, 15 );
@@ -1184,7 +1184,7 @@ static void R_CheckPortableExtensions( void ) {
 		common->Printf( "...using GL_ARB shader objects + GLSL (version %s)\n", glslVersionString != NULL ? glslVersionString : "unknown" );
 	} else if ( r_inhibitFragmentProgram.GetBool() ) {
 		common->Printf( "X..GLSL shader objects disabled by r_inhibitFragmentProgram\n" );
-	} else if ( idAsyncNetwork::serverDedicated.GetBool() ) {
+	} else if ( cvarSystem->GetCVarInteger( "net_serverDedicated" ) != 0 ) {
 		common->Printf( "X..GLSL shader objects disabled on dedicated server\n" );
 	} else {
 		common->Printf( "X..GLSL shader objects not found\n" );

@@ -30,6 +30,33 @@
 #include "../RenderModuleAPI.h"
 bool QGL_Init(const char *dllname);
 void QGL_Shutdown(void);
+void *GLimp_ExtensionPointer(const char *name);
+#if defined(_WIN32)
+// the wgl extension pointers win_local.h declares and win_qgl.cpp defines
+// engine-side live in this TU inside the module (RenderSystem_init.cpp
+// re-declares wglSwapIntervalEXT extern, so external linkage is required)
+#include "../wglext.h"
+PFNWGLGETEXTENSIONSSTRINGARBPROC wglGetExtensionsStringARB = NULL;
+PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT = NULL;
+PFNWGLGETPIXELFORMATATTRIBIVARBPROC wglGetPixelFormatAttribivARB = NULL;
+PFNWGLGETPIXELFORMATATTRIBFVARBPROC wglGetPixelFormatAttribfvARB = NULL;
+PFNWGLCHOOSEPIXELFORMATARBPROC wglChoosePixelFormatARB = NULL;
+PFNWGLCREATEPBUFFERARBPROC wglCreatePbufferARB = NULL;
+PFNWGLGETPBUFFERDCARBPROC wglGetPbufferDCARB = NULL;
+PFNWGLRELEASEPBUFFERDCARBPROC wglReleasePbufferDCARB = NULL;
+PFNWGLDESTROYPBUFFERARBPROC wglDestroyPbufferARB = NULL;
+PFNWGLQUERYPBUFFERARBPROC wglQueryPbufferARB = NULL;
+PFNWGLBINDTEXIMAGEARBPROC wglBindTexImageARB = NULL;
+PFNWGLRELEASETEXIMAGEARBPROC wglReleaseTexImageARB = NULL;
+PFNWGLSETPBUFFERATTRIBARBPROC wglSetPbufferAttribARB = NULL;
+#else
+#define OPENQ4_SDL3_POSIX_HOST 1
+#if defined(__linux__)
+// the module build has no linux_sdl3.cpp wrapper to define the host macro;
+// the GLEW SDL3-loader hook (OpenQ4_GlewGetProcAddress) hangs off it
+#define OPENQ4_SDL3_LINUX_HOST 1
+#endif
+#endif
 #endif
 
 // opaque handles into the engine's video instance; every operation on them
@@ -44,9 +71,10 @@ static const char *R_GLVideoError(void) {
 		? s_glWindowServices->GetVideoErrorString() : "unknown video error";
 }
 
-#if defined(OPENQ4_SDL3_POSIX_HOST)
-// The SDL3 POSIX backends reuse this translation unit but do not provide the
-// legacy platform GL logging hooks from the native GLX/Cocoa paths.
+#if defined(OPENQ4_SDL3_POSIX_HOST) || !defined(OPENQ4_SDL3_CONTEXT_ENCLOSED)
+// The SDL3 POSIX backends (and the standalone module build, which has no
+// win_glimp) reuse this translation unit but do not provide the legacy
+// platform GL logging hooks from the native GLX/Cocoa paths.
 void GLimp_EnableLogging(bool enable) {
 	static bool loggingEnabled = false;
 	if (enable != loggingEnabled) {

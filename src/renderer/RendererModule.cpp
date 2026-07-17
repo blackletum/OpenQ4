@@ -40,13 +40,18 @@ typedef struct rendererModuleState_s {
 	idRenderSystem *		savedRenderSystem;
 	idRenderModelManager *	savedRenderModelManager;
 	bool					interfacesPublished;
+	// module activation (publishing a module renderSystem) is only allowed
+	// during the first boot, before renderSystem->Init() binds engine state
+	// to the active renderer instance
+	bool					activationAllowed;
+	bool					everBooted;
 } rendererModuleState_t;
 
 static rendererModuleState_t rm_state;
 
 // module binary short tags; indexed by rendererModuleApi_t
-static const char *rm_moduleBinaryTags[ RENDER_MODULE_API_COUNT ] = { "gl", "vk" };
-static const char *rm_apiNames[ RENDER_MODULE_API_COUNT ] = { "gl", "vulkan" };
+static const char *rm_moduleBinaryTags[ RENDER_MODULE_API_COUNT ] = { "gl", "vk", "gl" };
+static const char *rm_apiNames[ RENDER_MODULE_API_COUNT ] = { "gl", "vulkan", "gl-module" };
 
 /*
 ====================
@@ -159,6 +164,7 @@ static void RM_BuildImport( renderImport_t &moduleImport ) {
 	moduleImport.eventLoop = ::eventLoop;
 	moduleImport.bse = ::bse;
 	moduleImport.windowServices = Sys_GetRenderWindowServices();
+	moduleImport.console = ::console;
 }
 
 /*
@@ -214,6 +220,10 @@ bool R_RendererModule_ParseApi( const char *value, rendererModuleApi_t &api ) {
 	}
 	if ( idStr::Icmp( value, "vulkan" ) == 0 || idStr::Icmp( value, "vk" ) == 0 ) {
 		api = RENDER_MODULE_API_VULKAN;
+		return true;
+	}
+	if ( idStr::Icmp( value, "gl-module" ) == 0 ) {
+		api = RENDER_MODULE_API_GL_MODULE;
 		return true;
 	}
 	if ( idStr::Icmp( value, "best" ) == 0 ) {
@@ -332,12 +342,10 @@ static bool RM_ValidateExport( const renderExport_t *moduleExport, bool &diagnos
 ====================
 RM_ExportCanRender
 
-Activation policy on top of shape validation: until the Phase B module seam
-lands, the engine cannot hand the frame loop to a module-provided
-idRenderSystem, so even a full export must not be reported as the active
-renderer — that would leave r_actualRenderApi/gfxInfo claiming a module
-renders while the builtin GL path draws every frame. Shared with the
-self-test so the policy cannot silently drift when Phase B flips it.
+Activation policy on top of shape validation: with the Phase B8 seam landed
+the engine can host a full module-provided idRenderSystem, so any export that
+carries one is activatable. Bring-up/diagnostics exports still refuse. Shared
+with the self-test so the policy cannot silently drift.
 ====================
 */
 static bool RM_ExportCanRender( const renderExport_t *moduleExport, const char **reason ) {
@@ -350,10 +358,7 @@ static bool RM_ExportCanRender( const renderExport_t *moduleExport, const char *
 		*reason = "module is bring-up/diagnostics only";
 		return false;
 	}
-	// Phase B (docs/dev/plans/2026-07-16-vulkan-renderer.md) replaces this
-	// constant refusal with the real renderSystem handoff
-	*reason = "engine does not yet host full renderer modules (Phase B seam pending)";
-	return false;
+	return true;
 }
 
 /*
@@ -402,6 +407,18 @@ static bool RM_TryLoadModuleApi( rendererModuleApi_t api, rendererModuleStatus_t
 		status.disposition = ( status.requestedApi == RENDER_MODULE_API_GL ) ?
 				RENDER_MODULE_DISPOSITION_BUILTIN : RENDER_MODULE_DISPOSITION_FALLBACK;
 		return true;
+	}
+
+	if ( !rm_state.activationAllowed ) {
+		// outside the first-boot activation window the engine has already
+		// bound decl/material/font state to the active renderer instance;
+		// don't even load the candidate — its GetRenderAPI would register
+		// module-side static cvars whose completion callbacks dangle after
+		// the unload
+		common->Warning( "r_renderApi '%s': renderer modules can only activate at engine startup; restart to apply",
+				R_RendererModule_ApiName( api ) );
+		RM_AppendFallbackReason( status, "renderer module activation requires an engine restart" );
+		return false;
 	}
 
 	char modulePath[ sizeof( status.modulePath ) ];
@@ -464,6 +481,15 @@ R_RendererModule_Boot
 void R_RendererModule_Boot( void ) {
 	rendererModuleStatus_t &status = rm_state.status;
 
+	if ( rm_state.interfacesPublished ) {
+		// a module renderSystem is live; re-boots (vid_restart) must not
+		// unload the code the engine is executing through
+		return;
+	}
+
+	rm_state.activationAllowed = !rm_state.everBooted;
+	rm_state.everBooted = true;
+
 	RM_UnloadModule();
 	memset( &status, 0, sizeof( status ) );
 
@@ -474,6 +500,14 @@ void R_RendererModule_Boot( void ) {
 	if ( !R_RendererModule_ParseApi( requestedValue, requestedApi ) ) {
 		common->Warning( "r_renderApi '%s' is not a valid rendering API; using 'gl'", requestedValue );
 	}
+#ifdef ID_DEDICATED
+	// the dedicated server keeps the statically linked front-end until the
+	// Phase B7 source unification; never activate a renderer module there
+	if ( requestedApi != RENDER_MODULE_API_GL ) {
+		common->Printf( "r_renderApi '%s' ignored on the dedicated server; using 'gl'\n", requestedValue );
+		requestedApi = RENDER_MODULE_API_GL;
+	}
+#endif
 	status.requestedApi = requestedApi;
 
 	rendererModuleApi_t ladder[ RENDER_MODULE_API_COUNT ];
@@ -503,6 +537,62 @@ void R_RendererModule_Boot( void ) {
 		common->Printf( "Renderer API: %s (%s)\n", R_RendererModule_ApiName( status.activeApi ),
 				status.disposition == RENDER_MODULE_DISPOSITION_MODULE ? "module" : "builtin" );
 	}
+}
+
+/*
+====================
+RM_PeekConfigRenderApi
+
+The archived r_renderApi value lives in the config file, but config execution
+happens after renderSystem->Init() — too late for the module swap. Peek the
+last r_renderApi set/seta out of the config text; command-line +set overrides
+are applied on top by the caller.
+====================
+*/
+static bool RM_PeekConfigRenderApi( char *outValue, int maxLength ) {
+	char *buffer = NULL;
+	if ( fileSystem->ReadFile( CONFIG_FILE, ( void ** )&buffer, NULL ) < 0 || buffer == NULL ) {
+		return false;
+	}
+
+	bool found = false;
+	idLexer src( buffer, idStr::Length( buffer ), CONFIG_FILE,
+			LEXFL_NOFATALERRORS | LEXFL_NOSTRINGCONCAT | LEXFL_ALLOWPATHNAMES | LEXFL_NOSTRINGESCAPECHARS );
+	idToken token, name, value;
+	while ( src.ReadToken( &token ) ) {
+		if ( token.Icmp( "set" ) != 0 && token.Icmp( "seta" ) != 0 ) {
+			src.SkipRestOfLine();
+			continue;
+		}
+		if ( !src.ReadTokenOnLine( &name ) || name.Icmp( "r_renderApi" ) != 0 ) {
+			src.SkipRestOfLine();
+			continue;
+		}
+		if ( src.ReadTokenOnLine( &value ) ) {
+			idStr::Copynz( outValue, value.c_str(), maxLength );
+			found = true;		// last occurrence wins, like config execution
+		}
+		src.SkipRestOfLine();
+	}
+
+	fileSystem->FreeFile( buffer );
+	return found;
+}
+
+/*
+====================
+R_RendererModule_BootEarly
+====================
+*/
+void R_RendererModule_BootEarly( void ) {
+	char configValue[ 64 ];
+	if ( RM_PeekConfigRenderApi( configValue, sizeof( configValue ) ) ) {
+		r_renderApi.SetString( configValue );
+	}
+	// command-line +set r_renderApi overrides the archived value
+	common->StartupVariable( "r_renderApi", false );
+
+	R_RendererModule_Boot();
 }
 
 /*
@@ -709,17 +799,18 @@ bool RendererModule_RunSelfTest( void ) {
 			numFailures++;
 		}
 
-		// activation policy: no export may become the active renderer until
-		// the Phase B seam can actually hand it the frame loop; when Phase B
-		// flips RM_ExportCanRender, this check must be updated deliberately
+		// activation policy: bring-up exports stay diagnostics-only; a full
+		// export is activatable now that the Phase B8 seam hosts module
+		// renderers (the first-boot activation window is enforced separately
+		// in RM_TryLoadModuleApi)
 		if ( RM_ExportCanRender( &testExport, &reason ) ) {
 			common->Warning( "rendererModuleSelfTest: diagnostics-only export must not be activatable" );
 			numFailures++;
 		}
 		static int dummyRenderSystemStorage;
 		testExport.renderSystem = reinterpret_cast<idRenderSystem *>( &dummyRenderSystemStorage );
-		if ( RM_ExportCanRender( &testExport, &reason ) ) {
-			common->Warning( "rendererModuleSelfTest: full exports must not activate before the Phase B module seam lands" );
+		if ( !RM_ExportCanRender( &testExport, &reason ) ) {
+			common->Warning( "rendererModuleSelfTest: full exports must be activatable with the Phase B8 seam landed" );
 			numFailures++;
 		}
 		testExport.renderSystem = NULL;

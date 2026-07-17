@@ -88,6 +88,18 @@ RENDER_GEO_SOURCE_GLOBS = [
     "render_geo/*.cpp",
 ]
 
+# renderer sources for the renderer-gl dynamic module; the loader stays
+# engine-side and the module glue TU (RendererGLModule.cpp) activates via
+# OPENQ4_RENDERER_GL_MODULE
+RENDERER_GL_SOURCE_GLOBS = [
+    "renderer/*.cpp",
+    "renderer/OpenGL/*.cpp",
+]
+
+RENDERER_GL_EXCLUDED_SOURCES = (
+    "src/renderer/RendererModule.cpp",
+)
+
 GAME_SOURCE_GLOBS = [
     "game/ai/*.cpp",
     "game/anim/*.cpp",
@@ -272,9 +284,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--emit",
-        choices=("engine", "imagetools", "render_geo"),
+        choices=("engine", "imagetools", "render_geo", "renderer_gl"),
         default="engine",
-        help="Emit engine target sources or the imagetools static-library sources.",
+        help="Emit engine target sources or one of the split library/module source lists.",
     )
     return parser.parse_args(argv)
 
@@ -294,14 +306,21 @@ def main(argv: list[str]) -> int:
 
     include_game = args.include_game == "true"
 
-    if args.emit in ("imagetools", "render_geo"):
-        globs = IMAGETOOLS_SOURCE_GLOBS if args.emit == "imagetools" else RENDER_GEO_SOURCE_GLOBS
+    if args.emit in ("imagetools", "render_geo", "renderer_gl"):
+        globs = {
+            "imagetools": IMAGETOOLS_SOURCE_GLOBS,
+            "render_geo": RENDER_GEO_SOURCE_GLOBS,
+            "renderer_gl": RENDERER_GL_SOURCE_GLOBS,
+        }[args.emit]
         try:
             for pattern in globs:
                 add_globbed_sources(source_set, ordered_sources, source_root, pattern)
         except SourceListError as exc:
             print(exc, file=sys.stderr)
             return 1
+        if args.emit == "renderer_gl":
+            for path in RENDERER_GL_EXCLUDED_SOURCES:
+                remove_source(source_set, ordered_sources, path)
         if not ordered_sources:
             print(f"No {args.emit} source files discovered.", file=sys.stderr)
             return 1

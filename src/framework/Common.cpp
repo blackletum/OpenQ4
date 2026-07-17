@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 //#include "../renderer/Image.h"
 #include "../bse/BSE_API.h"
+#include "../renderer/RendererModule.h"
 #include "RenderDoc.h"
 
 #if defined( USE_SDL3 )
@@ -5675,6 +5676,12 @@ void idCommonLocal::InitGame( void ) {
 	// attach the integrated BSE manager before decl initialization so DECL_EFFECT
 	// allocation is available when effect declarations are parsed.
 	AttachBSE();
+
+	// resolve the active renderer path (r_renderApi) before decl
+	// initialization, so every decl object the renderer allocates through
+	// AllocMaterialDecl carries the vtable of the renderer instance that
+	// will actually draw it (Phase B8 module seam)
+	R_RendererModule_BootEarly();
 
 	// initialize the declaration manager
 	declManager->Init();
