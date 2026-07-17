@@ -107,6 +107,51 @@ Verify: full matrix — Windows client (module + static fallback), Windows ded, 
 
 ---
 
+### B5b implementation blueprint (refined 2026-07-16 after B5a, from a full read of the live file)
+
+Constraints discovered on the live tree:
+- `sdl3_backend.cpp` is not compiled directly: `win_sdl3.cpp` / `linux_sdl3.cpp` / `macosx_sdl3.cpp` `#include` it whole after defining `OPENQ4_SDL3_*_HOST`. The context half must therefore be a standalone renderer TU: `src/renderer/OpenGL/gl_ContextSDL3.cpp`, guarded by a new `OPENQ4_SDL3_BACKEND` define added to engine args when `platform_backend=sdl3`, deriving its host from standard `_WIN32/__linux__/__APPLE__` macros. Legacy/native builds compile the guard file empty and keep their own GLimp_* (win_glimp.cpp etc.).
+- `QGL_Init/QGL_Shutdown` are declared locally in the backend (line 344) and defined in win_qgl.cpp (Windows) — the context TU re-declares them; win_qgl moves module-side at B8 as planned.
+- `Sys_GetRenderWindowServices()` (declared in RenderModuleAPI.h, engine-implemented) returns the services table; sdl3_backend implements it, and win_glimp.cpp / linux/glimp.cpp / macosx_glimp.mm / stub_gl.cpp each provide a NULL-returning fallback so every build config defines it exactly once. `RM_BuildImport` wires it into `renderImport_t.windowServices` (RENDER_API_VERSION 3).
+
+Services shape (ABI v3; the context half is the only caller pre-B8):
+```c
+typedef struct renderFramebufferDesc_s {
+    int  redBits, greenBits, blueBits, alphaBits, depthBits, stencilBits;
+    bool doubleBuffer, stereo;
+    int  multiSamples;            // >1 enables MSAA buffers
+    bool explicitGLVersion;       // else unversioned request
+    int  glMajor, glMinor;
+    bool glCoreProfile;           // else compatibility
+    bool glDebugContext;
+} renderFramebufferDesc_t;
+
+typedef struct renderWindowParms_s {   // ABI-neutral glimpParms_t mirror
+    int width, height; bool fullScreen, borderless, hiddenWindow, stereo;
+    int displayHz, multiSamples;
+} renderWindowParms_t;
+
+typedef struct renderWindowServices_s {
+    bool (*PrepareWindowSystem)( void );                    // GLimp_Init 5600-5632: hints, video-subsystem ref, lifecycle watch, driver summaries, diagnostic cmds, display list, InitDesktopMode
+    bool (*CreateWindowForFramebuffer)( const renderFramebufferDesc_t *, const renderWindowParms_t *, renderModuleWindowInfo_t *outInfo, bool *outReusedPreservedWindow );
+        // maps desc -> SDL_GL_SetAttribute stream byte-identically to the old
+        // SDL3_SetGLAttributesForCandidate (5493-5521, incl. SDL_GL_ResetAttributes),
+        // then SDL_CreateWindow with the 5647-5650 flags or preserved-window reuse
+        // (5652-5655), then initial windowed placement (5684-5707)
+    void (*DestroyAttemptWindow)( void );                   // failed-candidate teardown 5725-5728 (only when the attempt created the window; caller holds the reused flag)
+    bool (*ApplyScreenParms)( const renderWindowParms_t * );// SDL3_ApplyScreenParms
+    void (*RefreshNativeWindowHandles)( renderModuleWindowInfo_t * ); // hWnd/hDC half of SDL3_UpdateNativeWindowHandles; the hGLRC reverse write (POSIX 4127) is deleted
+    void (*NotifyWindowReady)( void );                      // 5782-5783 activeApp/focus flags
+    void (*BeginWindowTeardown)( void );                    // GLimp_Shutdown 5818-5829: aspect snap, mouse, controllers, fullscreen restore (preserve-aware), text input
+    void (*FinishWindowTeardown)( void );                   // 5839-5863: window destroy, video unref/lifecycle unwatch, hWnd/hDC clears, fullscreen state, input queues — all preserve-aware via the engine-side s_preserveWindowOnShutdown flag
+    void (*GetDesktopResolution)( int *w, int *h );
+} renderWindowServices_t;
+```
+
+Context TU contents (verbatim moves unless noted): GLimp_EnableLogging(350), SDL3_ApplySwapInterval(4054, keeps R_GetEffectiveSwapInterval), SDL3_LoadWGLExtensions(4077; wgl* globals stay in win_qgl until B8), GLimp_SetGamma/UseNativeGammaRamps(5406/5412 no-ops), SDL3_MoveCompatibilityFallbacksToFront/BuildGLContextCandidates/NormalizeMSAASampleFallback/BuildMSAASampleFallbacks(5402-5491), desc builder replacing SDL3_SetGLAttributesForCandidate's candidate->values mapping, SDL3_RecordGLContextCandidate(5523, glConfig.contextRequest), SDL3_EnsureGLContextCurrent(5528, s_sdlWindow/s_sdlContext -> ctx-local s_glWindow/s_glContext cached from window info), SDL3_GLProfileMaskName/LogGLContextAttributes(5546-5590), GLimp_Init (rebuilt: PrepareWindowSystem -> candidate x MSAA double loop calling CreateWindowForFramebuffer / SDL_GL_CreateContext / MakeCurrent / DestroyAttemptWindow per 5668-5733 semantics -> r_multiSamples writeback -> QGL_Init -> ApplyScreenParms -> RefreshNativeWindowHandles -> LoadWGLExtensions -> swap interval -> NotifyWindowReady), GLimp_SetScreenParms (5790-5812 with services ApplyScreenParms/RefreshNativeWindowHandles), GLimp_Shutdown (BeginWindowTeardown -> context destroy 5831-5837 -> QGL_Shutdown -> FinishWindowTeardown; note hGLRC clear becomes ctx-local), GLimp_SwapBuffers(5867), the SMP block 5886-5976 (dead code; keep symbols, win32.* event fields via TODO(B8) services), GLimp_Activate/Ensure/DeactivateContext(5978-5995), OpenQ4_GlewGetProcAddress(6000, Linux), GLimp_ExtensionPointer(6013).
+
+Residual renderer->sys global touches allowed pre-B8 with TODO(B8) markers: win32.wglErrors++ (EnsureCurrent/Deactivate), the SMP win32 event fields, win32.hGLRC ownership. Verify list unchanged from B5b step 12 (vid_restart full+partial+windowed-force, fullscreen toggle, preserve-window restart via ReloadGameModule, multi-display, matrix, gameplay smoke, WSL, macOS sweep).
+
 ## 2. Blocker → resolution index
 
 | # | Blocker (audit anchor) | Resolution | Stage |
