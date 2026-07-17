@@ -424,7 +424,7 @@ typedef struct {
 
 typedef struct {
 	renderCommand_t		commandId, *next;
-	GLenum	buffer;
+	unsigned int	buffer;
 	int		frameCount;
 } setBufferCommand_t;
 
@@ -1745,9 +1745,9 @@ bool	RB_ARB2_DrawPreparedPackedMD5RStageBatches( const srfTriangles_t *tri );
 bool	RB_ARB2_DrawPreparedPackedMD5RDirectBatches( const srfTriangles_t *tri );
 void	R_ReloadARBPrograms_f( const idCmdArgs &args );
 void	R_ReportShaderPrograms_f( const idCmdArgs &args );
-int		R_FindARBProgram( GLenum target, const char *program );
-bool	R_IsARBProgramValid( GLenum target, GLuint ident );
-bool	R_BindARBProgram( GLenum target, GLuint ident, const char *usage, bool required );
+int		R_FindARBProgram( unsigned int target, const char *program );
+bool	R_IsARBProgramValid( unsigned int target, unsigned int ident );
+bool	R_BindARBProgram( unsigned int target, unsigned int ident, const char *usage, bool required );
 void	RB_ShutdownShadowMapResources( void );
 
 typedef enum {

@@ -170,7 +170,7 @@ public:
 
 	static void			GetGeneratedName(idStr& _name, const textureUsage_t& _usage, const cubeFiles_t& _cube, bool allowDownSize = true, unsigned int flags = 0);
 
-	GLuint		GetDeviceHandle(void) { return texnum; }
+	unsigned int		GetDeviceHandle(void) { return texnum; }
 private:
 	friend class idImageManager;
 
@@ -200,14 +200,14 @@ private:
 	int					refCount;				// overall ref count
 	int					useCount;				// per-level material reference count
 
-	static const GLuint TEXTURE_NOT_LOADED = 0xFFFFFFFF;
+	static const unsigned int TEXTURE_NOT_LOADED = 0xFFFFFFFF;
 
-	GLuint				texnum;				// gl texture binding
+	unsigned int				texnum;				// gl texture binding
 
 	// we could derive these in subImageUpload each time if necessary
-	GLuint				internalFormat;
-	GLuint				dataFormat;
-	GLuint				dataType;
+	unsigned int				internalFormat;
+	unsigned int				dataFormat;
+	unsigned int				dataType;
 	uint64_t			storageGeneration;
 
 

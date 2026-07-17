@@ -38,7 +38,7 @@ typedef enum {
 } vertBlockTag_t;
 
 typedef struct vertCache_s {
-	GLuint			vbo;
+	unsigned int			vbo;
 	void			*virtMem;			// only one of vbo / virtMem will be set
 	bool			indexBuffer;		// holds indexes instead of vertexes
 
@@ -91,8 +91,8 @@ public:
 	// through these so the shadow state stays coherent; code that binds those
 	// targets behind our back (modern executor / GL state cache) must call
 	// InvalidateBufferBindings() before the legacy backend draws again.
-	static void		BindArrayBuffer( GLuint vbo );
-	static void		BindIndexBuffer( GLuint vbo );
+	static void		BindArrayBuffer( unsigned int vbo );
+	static void		BindIndexBuffer( unsigned int vbo );
 	static void		InvalidateBufferBindings();
 
 	// automatically freed at the end of the next frame

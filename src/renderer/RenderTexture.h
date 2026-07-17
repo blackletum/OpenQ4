@@ -62,7 +62,7 @@ public:
 	bool					MakeCurrent( int cubeFace );
 	static void				BindNull(void);
 
-	GLuint					GetDeviceHandle(void);
+	unsigned int					GetDeviceHandle(void);
 	void					SetDebugLabel( const char *label );
 
 	void					AddRenderImage(idImage *image);
@@ -75,22 +75,22 @@ public:
 private:
 	bool					HasCurrentDeviceHandle( void ) const;
 	void					ReleaseDeviceHandle( void );
-	bool					FailFramebuffer( GLenum status, const char *operation );
-	void					ReportFramebufferFailure( GLenum status, const char *operation ) const;
+	bool					FailFramebuffer( unsigned int status, const char *operation );
+	void					ReportFramebufferFailure( unsigned int status, const char *operation ) const;
 	bool					NeedsAttachmentRefresh( void ) const;
 	void					CaptureAttachmentHandles( void );
 	void					ApplyDebugLabel( void ) const;
 
 	idList<idImage *>	colorImages;
 	idImage *			depthImage;
-	GLuint				deviceHandle;
+	unsigned int				deviceHandle;
 	int					deviceHandleGeneration;
 	unsigned int		validatedCubeFaces;
 	bool				knownIncomplete = false;
 	int					incompleteGeneration = -1;
 	idStr				debugLabel;
-	idList<GLuint>		cachedColorHandles;
-	GLuint				cachedDepthHandle;
+	idList<unsigned int>		cachedColorHandles;
+	unsigned int				cachedDepthHandle;
 	idList<uint64_t>	cachedColorGenerations;
 	uint64_t			cachedDepthGeneration;
 };
