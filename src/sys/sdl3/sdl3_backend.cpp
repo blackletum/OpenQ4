@@ -5715,6 +5715,77 @@ static void SDL3_WindowServices_CountContextError(void) {
 	win32.wglErrors++;
 }
 
+static void *SDL3_WindowServices_CreateGLContext(void) {
+	if (!s_sdlWindow) {
+		return NULL;
+	}
+	return (void *)SDL_GL_CreateContext(s_sdlWindow);
+}
+
+static bool SDL3_WindowServices_MakeGLContextCurrent(void *context) {
+	if (!s_sdlWindow) {
+		return false;
+	}
+	return SDL_GL_MakeCurrent(s_sdlWindow, (SDL_GLContext)context);
+}
+
+static void SDL3_WindowServices_DestroyGLContext(void *context) {
+	if (context != NULL) {
+		(void)SDL_GL_DestroyContext((SDL_GLContext)context);
+	}
+}
+
+static bool SDL3_WindowServices_IsGLContextCurrent(void *context) {
+	return s_sdlWindow != NULL && context != NULL
+		&& SDL_GL_GetCurrentWindow() == s_sdlWindow
+		&& SDL_GL_GetCurrentContext() == (SDL_GLContext)context;
+}
+
+static bool SDL3_WindowServices_SwapGLWindow(void) {
+	return s_sdlWindow != NULL && SDL_GL_SwapWindow(s_sdlWindow);
+}
+
+static bool SDL3_WindowServices_SetGLSwapInterval(int interval) {
+	return SDL_GL_SetSwapInterval(interval);
+}
+
+static bool SDL3_WindowServices_GetGLSwapInterval(int *outInterval) {
+	return SDL_GL_GetSwapInterval(outInterval);
+}
+
+static bool SDL3_WindowServices_GetGLAttribute(int attribute, int *outValue) {
+	SDL_GLAttr sdlAttribute;
+	switch (attribute) {
+		case RENDER_GLATTR_CONTEXT_MAJOR_VERSION:	sdlAttribute = SDL_GL_CONTEXT_MAJOR_VERSION; break;
+		case RENDER_GLATTR_CONTEXT_MINOR_VERSION:	sdlAttribute = SDL_GL_CONTEXT_MINOR_VERSION; break;
+		case RENDER_GLATTR_CONTEXT_PROFILE_MASK:	sdlAttribute = SDL_GL_CONTEXT_PROFILE_MASK; break;
+		case RENDER_GLATTR_CONTEXT_FLAGS:			sdlAttribute = SDL_GL_CONTEXT_FLAGS; break;
+		case RENDER_GLATTR_MULTISAMPLE_BUFFERS:		sdlAttribute = SDL_GL_MULTISAMPLEBUFFERS; break;
+		case RENDER_GLATTR_MULTISAMPLE_SAMPLES:		sdlAttribute = SDL_GL_MULTISAMPLESAMPLES; break;
+		default: return false;
+	}
+	if (!SDL_GL_GetAttribute(sdlAttribute, outValue)) {
+		return false;
+	}
+	if (attribute == RENDER_GLATTR_CONTEXT_PROFILE_MASK) {
+		switch (*outValue) {
+			case SDL_GL_CONTEXT_PROFILE_CORE:			*outValue = RENDER_GLPROFILE_CORE; break;
+			case SDL_GL_CONTEXT_PROFILE_COMPATIBILITY:	*outValue = RENDER_GLPROFILE_COMPATIBILITY; break;
+			case SDL_GL_CONTEXT_PROFILE_ES:				*outValue = RENDER_GLPROFILE_ES; break;
+			default:									*outValue = RENDER_GLPROFILE_DEFAULT; break;
+		}
+	}
+	return true;
+}
+
+static void *SDL3_WindowServices_GetGLProcAddress(const char *name) {
+	return (void *)SDL_GL_GetProcAddress(name);
+}
+
+static const char *SDL3_WindowServices_GetVideoErrorString(void) {
+	return SDL_GetError();
+}
+
 static const renderWindowServices_t s_sdl3WindowServices = {
 	SDL3_WindowServices_PrepareWindowSystem,
 	SDL3_WindowServices_CreateWindowForFramebuffer,
@@ -5727,6 +5798,16 @@ static const renderWindowServices_t s_sdl3WindowServices = {
 	SDL3_WindowServices_GetDesktopResolution,
 	SDL3_WindowServices_PreferCompatibilityFallbackFirst,
 	SDL3_WindowServices_CountContextError,
+	SDL3_WindowServices_CreateGLContext,
+	SDL3_WindowServices_MakeGLContextCurrent,
+	SDL3_WindowServices_DestroyGLContext,
+	SDL3_WindowServices_IsGLContextCurrent,
+	SDL3_WindowServices_SwapGLWindow,
+	SDL3_WindowServices_SetGLSwapInterval,
+	SDL3_WindowServices_GetGLSwapInterval,
+	SDL3_WindowServices_GetGLAttribute,
+	SDL3_WindowServices_GetGLProcAddress,
+	SDL3_WindowServices_GetVideoErrorString,
 };
 
 const renderWindowServices_t *Sys_GetRenderWindowServices(void) {
@@ -5740,4 +5821,5 @@ const renderWindowServices_t *Sys_GetRenderWindowServices(void) {
 ===============================================================================
 */
 #define OPENQ4_SDL3_CONTEXT_IMPL 1
+#define OPENQ4_SDL3_CONTEXT_ENCLOSED 1
 #include "../../renderer/OpenGL/gl_ContextSDL3.cpp"

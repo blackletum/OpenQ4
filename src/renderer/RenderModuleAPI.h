@@ -154,7 +154,41 @@ typedef struct renderWindowServices_s {
 	bool			( *PreferCompatibilityFallbackFirst )( const char **outMessage );
 	// context-error accounting (legacy wglErrors counter)
 	void			( *CountContextError )( void );
+
+	// --- GL context primitives, executed on the engine's video instance ---
+	// The engine links the windowing library (SDL) exactly once; the module
+	// owns context lifetime and policy but performs the primitive operations
+	// through these callbacks so no second windowing-library instance ever
+	// touches the engine's window.
+	void *			( *CreateGLContext )( void );				// on the current game window
+	bool			( *MakeGLContextCurrent )( void *context );	// NULL detaches
+	void			( *DestroyGLContext )( void *context );
+	bool			( *IsGLContextCurrent )( void *context );
+	bool			( *SwapGLWindow )( void );
+	bool			( *SetGLSwapInterval )( int interval );
+	bool			( *GetGLSwapInterval )( int *outInterval );
+	bool			( *GetGLAttribute )( int attribute, int *outValue );	// renderGLAttribute_t
+	void *			( *GetGLProcAddress )( const char *name );
+	const char *	( *GetVideoErrorString )( void );
 } renderWindowServices_t;
+
+// attribute selectors for renderWindowServices_t::GetGLAttribute; the
+// profile-mask result is normalized to renderGLProfileValue_t
+typedef enum {
+	RENDER_GLATTR_CONTEXT_MAJOR_VERSION,
+	RENDER_GLATTR_CONTEXT_MINOR_VERSION,
+	RENDER_GLATTR_CONTEXT_PROFILE_MASK,
+	RENDER_GLATTR_CONTEXT_FLAGS,
+	RENDER_GLATTR_MULTISAMPLE_BUFFERS,
+	RENDER_GLATTR_MULTISAMPLE_SAMPLES,
+} renderGLAttribute_t;
+
+typedef enum {
+	RENDER_GLPROFILE_DEFAULT,
+	RENDER_GLPROFILE_CORE,
+	RENDER_GLPROFILE_COMPATIBILITY,
+	RENDER_GLPROFILE_ES,
+} renderGLProfileValue_t;
 
 // engine-side accessor for the active platform backend's window services;
 // returns NULL on backends that do not implement the seam (legacy win32,

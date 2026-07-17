@@ -23,10 +23,26 @@
 
 #ifdef OPENQ4_SDL3_CONTEXT_IMPL
 
-static SDL_Window *s_glWindow = NULL;
-static SDL_GLContext s_glContext = NULL;
+#ifndef OPENQ4_SDL3_CONTEXT_ENCLOSED
+// standalone module compilation (Phase B8): supply the declarations the
+// enclosing platform backend otherwise provides
+#include "../tr_local.h"
+#include "../RenderModuleAPI.h"
+bool QGL_Init(const char *dllname);
+void QGL_Shutdown(void);
+#endif
+
+// opaque handles into the engine's video instance; every operation on them
+// crosses through renderWindowServices_t
+static void *s_glWindow = NULL;
+static void *s_glContext = NULL;
 static void *s_glHDC = NULL;
 static const renderWindowServices_t *s_glWindowServices = NULL;
+
+static const char *R_GLVideoError(void) {
+	return ( s_glWindowServices != NULL && s_glWindowServices->GetVideoErrorString != NULL )
+		? s_glWindowServices->GetVideoErrorString() : "unknown video error";
+}
 
 #if defined(OPENQ4_SDL3_POSIX_HOST)
 // The SDL3 POSIX backends reuse this translation unit but do not provide the
@@ -57,12 +73,12 @@ static bool SDL3_EnsureGLContextCurrent(const char *operation) {
 		return false;
 	}
 
-	if (SDL_GL_GetCurrentWindow() == s_glWindow && SDL_GL_GetCurrentContext() == s_glContext) {
+	if (s_glWindowServices->IsGLContextCurrent(s_glContext)) {
 		return true;
 	}
 
-	if (!SDL_GL_MakeCurrent(s_glWindow, s_glContext)) {
-		common->Printf("SDL3: failed to make GL context current for %s: %s\n", operation ? operation : "operation", SDL_GetError());
+	if (!s_glWindowServices->MakeGLContextCurrent(s_glContext)) {
+		common->Printf("SDL3: failed to make GL context current for %s: %s\n", operation ? operation : "operation", R_GLVideoError());
 		if (s_glWindowServices != NULL && s_glWindowServices->CountContextError != NULL) {
 			s_glWindowServices->CountContextError();
 		}
@@ -78,14 +94,14 @@ static bool SDL3_ApplySwapInterval(void) {
 	}
 
 	const int requestedInterval = R_GetEffectiveSwapInterval();
-	if (!SDL_GL_SetSwapInterval(requestedInterval)) {
-		common->Printf("SDL3: failed to set swap interval %d: %s\n", requestedInterval, SDL_GetError());
+	if (!s_glWindowServices->SetGLSwapInterval(requestedInterval)) {
+		common->Printf("SDL3: failed to set swap interval %d: %s\n", requestedInterval, R_GLVideoError());
 		return false;
 	}
 
 	int actualInterval = 0;
-	if (!SDL_GL_GetSwapInterval(&actualInterval)) {
-		common->Printf("SDL3: swap interval set to %d, but query failed: %s\n", requestedInterval, SDL_GetError());
+	if (!s_glWindowServices->GetGLSwapInterval(&actualInterval)) {
+		common->Printf("SDL3: swap interval set to %d, but query failed: %s\n", requestedInterval, R_GLVideoError());
 	} else if (actualInterval == requestedInterval) {
 		common->Printf("SDL3: swap interval set to %d\n", actualInterval);
 	} else {
@@ -236,11 +252,11 @@ static void SDL3_RecordGLContextCandidate(const rendererContextCandidate_t &cand
 
 static const char *SDL3_GLProfileMaskName(int profileMask) {
 	switch (profileMask) {
-		case SDL_GL_CONTEXT_PROFILE_COMPATIBILITY:
+		case RENDER_GLPROFILE_COMPATIBILITY:
 			return "compatibility";
-		case SDL_GL_CONTEXT_PROFILE_CORE:
+		case RENDER_GLPROFILE_CORE:
 			return "core";
-		case SDL_GL_CONTEXT_PROFILE_ES:
+		case RENDER_GLPROFILE_ES:
 			return "es";
 		default:
 			return "default";
@@ -255,12 +271,12 @@ static void SDL3_LogGLContextAttributes(const int requestedMultiSamples, const i
 	int multisampleBuffers = 0;
 	int multisampleSamples = 0;
 
-	const bool gotMajor = SDL_GL_GetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, &major);
-	const bool gotMinor = SDL_GL_GetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, &minor);
-	const bool gotProfile = SDL_GL_GetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, &profileMask);
-	const bool gotFlags = SDL_GL_GetAttribute(SDL_GL_CONTEXT_FLAGS, &flags);
-	const bool gotMultisampleBuffers = SDL_GL_GetAttribute(SDL_GL_MULTISAMPLEBUFFERS, &multisampleBuffers);
-	const bool gotMultisampleSamples = SDL_GL_GetAttribute(SDL_GL_MULTISAMPLESAMPLES, &multisampleSamples);
+	const bool gotMajor = s_glWindowServices->GetGLAttribute(RENDER_GLATTR_CONTEXT_MAJOR_VERSION, &major);
+	const bool gotMinor = s_glWindowServices->GetGLAttribute(RENDER_GLATTR_CONTEXT_MINOR_VERSION, &minor);
+	const bool gotProfile = s_glWindowServices->GetGLAttribute(RENDER_GLATTR_CONTEXT_PROFILE_MASK, &profileMask);
+	const bool gotFlags = s_glWindowServices->GetGLAttribute(RENDER_GLATTR_CONTEXT_FLAGS, &flags);
+	const bool gotMultisampleBuffers = s_glWindowServices->GetGLAttribute(RENDER_GLATTR_MULTISAMPLE_BUFFERS, &multisampleBuffers);
+	const bool gotMultisampleSamples = s_glWindowServices->GetGLAttribute(RENDER_GLATTR_MULTISAMPLE_SAMPLES, &multisampleSamples);
 
 	common->Printf(
 		"SDL3: reported OpenGL context attributes: version=%s%d.%d profile=%s flags=%s0x%x\n",
@@ -332,26 +348,26 @@ bool GLimp_Init(glimpParms_t parms) {
 			SDL3_BuildFramebufferDesc(parms, candidate, candidateMultiSamples, framebufferDesc);
 
 			if (!s_glWindowServices->CreateWindowForFramebuffer(&framebufferDesc, &windowParms, &windowInfo, &reusedPreservedWindow)) {
-				lastContextError = SDL_GetError();
+				lastContextError = R_GLVideoError();
 				common->Printf("SDL3: could not create window for OpenGL context %s with MSAA samples=%d: %s\n", candidate.label, candidateMultiSamples, lastContextError.c_str());
 				continue;
 			}
-			s_glWindow = (SDL_Window *)windowInfo.sdlWindow;
+			s_glWindow = windowInfo.sdlWindow;
 
 			common->Printf("SDL3: trying OpenGL context %s with MSAA samples=%d\n", candidate.label, candidateMultiSamples);
-			s_glContext = SDL_GL_CreateContext(s_glWindow);
-			if (s_glContext && SDL_GL_MakeCurrent(s_glWindow, s_glContext)) {
+			s_glContext = s_glWindowServices->CreateGLContext();
+			if (s_glContext && s_glWindowServices->MakeGLContextCurrent(s_glContext)) {
 				SDL3_RecordGLContextCandidate(candidate);
 				selectedMultiSamples = candidateMultiSamples;
 				common->Printf("SDL3: created OpenGL context %s with MSAA samples=%d\n", glConfig.contextRequest.label, selectedMultiSamples);
 				break;
 			}
 
-			lastContextError = SDL_GetError();
+			lastContextError = R_GLVideoError();
 			common->Printf("SDL3: OpenGL context %s with MSAA samples=%d failed: %s\n", candidate.label, candidateMultiSamples, lastContextError.c_str());
 			if (s_glContext) {
-				(void)SDL_GL_MakeCurrent(s_glWindow, NULL);
-				(void)SDL_GL_DestroyContext(s_glContext);
+				(void)s_glWindowServices->MakeGLContextCurrent(NULL);
+				s_glWindowServices->DestroyGLContext(s_glContext);
 				s_glContext = NULL;
 			}
 			if (!reusedPreservedWindow) {
@@ -364,13 +380,13 @@ bool GLimp_Init(glimpParms_t parms) {
 		}
 	}
 	if (!s_glContext) {
-		common->Printf("SDL3: could not create OpenGL context: %s\n", lastContextError.Length() > 0 ? lastContextError.c_str() : SDL_GetError());
+		common->Printf("SDL3: could not create OpenGL context: %s\n", lastContextError.Length() > 0 ? lastContextError.c_str() : R_GLVideoError());
 		return false;
 	}
 
-	if (!SDL_GL_MakeCurrent(s_glWindow, s_glContext)) {
-		common->Printf("SDL3: could not make context current: %s\n", SDL_GetError());
-		(void)SDL_GL_DestroyContext(s_glContext);
+	if (!s_glWindowServices->MakeGLContextCurrent(s_glContext)) {
+		common->Printf("SDL3: could not make context current: %s\n", R_GLVideoError());
+		s_glWindowServices->DestroyGLContext(s_glContext);
 		s_glContext = NULL;
 		if (!reusedPreservedWindow) {
 			s_glWindowServices->DestroyAttemptWindow();
@@ -463,9 +479,9 @@ void GLimp_Shutdown(void) {
 
 	if (s_glContext) {
 		if (s_glWindow) {
-			(void)SDL_GL_MakeCurrent(s_glWindow, NULL);
+			(void)windowServices->MakeGLContextCurrent(NULL);
 		}
-		(void)SDL_GL_DestroyContext(s_glContext);
+		windowServices->DestroyGLContext(s_glContext);
 		s_glContext = NULL;
 	}
 	s_glHDC = NULL;
@@ -486,8 +502,8 @@ void GLimp_SwapBuffers(void) {
 		(void)SDL3_ApplySwapInterval();
 	}
 
-	if (SDL3_EnsureGLContextCurrent("swap buffers") && !SDL_GL_SwapWindow(s_glWindow)) {
-		common->Printf("SDL3: failed to swap window buffers: %s\n", SDL_GetError());
+	if (SDL3_EnsureGLContextCurrent("swap buffers") && !s_glWindowServices->SwapGLWindow()) {
+		common->Printf("SDL3: failed to swap window buffers: %s\n", R_GLVideoError());
 	}
 }
 
@@ -505,7 +521,7 @@ void GLimp_DeactivateContext(void) {
 	}
 
 	glFinish();
-	if (!SDL_GL_MakeCurrent(s_glWindow, NULL)) {
+	if (!s_glWindowServices->MakeGLContextCurrent(NULL)) {
 		if (s_glWindowServices != NULL && s_glWindowServices->CountContextError != NULL) {
 			s_glWindowServices->CountContextError();
 		}
@@ -524,7 +540,7 @@ extern "C" openQ4GlewProcAddress_t OpenQ4_GlewGetProcAddress(const unsigned char
 	}
 
 	return reinterpret_cast<openQ4GlewProcAddress_t>(
-		SDL_GL_GetProcAddress(reinterpret_cast<const char *>(name)));
+		s_glWindowServices->GetGLProcAddress(reinterpret_cast<const char *>(name)));
 }
 #endif
 
@@ -536,7 +552,7 @@ void *GLimp_ExtensionPointer(const char *name) {
 		return NULL;
 	}
 
-	void *proc = (void *)SDL_GL_GetProcAddress(name);
+	void *proc = s_glWindowServices->GetGLProcAddress(name);
 #if !defined(OPENQ4_SDL3_POSIX_HOST)
 	if (!proc && qwglGetProcAddress) {
 		proc = (void *)qwglGetProcAddress(name);
