@@ -19,6 +19,23 @@
 
 #include "../tr_local.h"
 #include "../RenderModuleAPI.h"
+
+// VMA consumption needs the CRT declarations the engine PCH poisons/undefs
+#undef snprintf
+#undef vsnprintf
+#ifndef INT_MAX
+#define INT_MAX		2147483647
+#endif
+#ifndef INT_MIN
+#define INT_MIN		( -2147483647 - 1 )
+#endif
+#ifndef UINT_MAX
+#define UINT_MAX	0xffffffffu
+#endif
+#include <cstdio>
+#include "volk.h"
+#include "vk_mem_alloc.h"
+
 #include "VulkanDevice.h"
 
 vkDeviceContext_t vkCtx;
@@ -418,10 +435,20 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
 	features13.dynamicRendering = VK_TRUE;
 	features13.synchronization2 = VK_TRUE;
 
+	// base features: anisotropic filtering when the device offers it (the
+	// sampler cache only enables it per-sampler when this succeeded)
+	VkPhysicalDeviceFeatures supported;
+	vkGetPhysicalDeviceFeatures( vkCtx.physicalDevice, &supported );
+	VkPhysicalDeviceFeatures2 features2;
+	memset( &features2, 0, sizeof( features2 ) );
+	features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+	features2.pNext = &features13;
+	features2.features.samplerAnisotropy = supported.samplerAnisotropy;
+
 	VkDeviceCreateInfo dci;
 	memset( &dci, 0, sizeof( dci ) );
 	dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-	dci.pNext = &features13;
+	dci.pNext = &features2;
 	dci.queueCreateInfoCount = 1;
 	dci.pQueueCreateInfos = &qci;
 	dci.enabledExtensionCount = 1;
@@ -460,6 +487,46 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
 		return false;
 	}
 
+	// VMA allocator over the volk-loaded entry points
+	{
+		VmaVulkanFunctions vmaFunctions;
+		memset( &vmaFunctions, 0, sizeof( vmaFunctions ) );
+		vmaFunctions.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
+		vmaFunctions.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
+
+		VmaAllocatorCreateInfo aci;
+		memset( &aci, 0, sizeof( aci ) );
+		aci.physicalDevice = vkCtx.physicalDevice;
+		aci.device = vkCtx.device;
+		aci.instance = vkCtx.instance;
+		aci.pVulkanFunctions = &vmaFunctions;
+		aci.vulkanApiVersion = VK_API_VERSION_1_3;
+		if ( vmaCreateAllocator( &aci, &vkCtx.allocator ) != VK_SUCCESS ) {
+			common->Warning( "Vulkan: VMA allocator creation failed" );
+			VK_Device_Shutdown();
+			return false;
+		}
+	}
+
+	// dedicated synchronous upload path
+	{
+		VkCommandBufferAllocateInfo ucbai;
+		memset( &ucbai, 0, sizeof( ucbai ) );
+		ucbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		ucbai.commandPool = vkCtx.commandPool;
+		ucbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		ucbai.commandBufferCount = 1;
+		VkFenceCreateInfo ufci;
+		memset( &ufci, 0, sizeof( ufci ) );
+		ufci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+		if ( vkAllocateCommandBuffers( vkCtx.device, &ucbai, &vkCtx.uploadCommandBuffer ) != VK_SUCCESS
+				|| vkCreateFence( vkCtx.device, &ufci, NULL, &vkCtx.uploadFence ) != VK_SUCCESS ) {
+			common->Warning( "Vulkan: upload path creation failed" );
+			VK_Device_Shutdown();
+			return false;
+		}
+	}
+
 	for ( int i = 0; i < VK_FRAMES_IN_FLIGHT; i++ ) {
 		VkSemaphoreCreateInfo semci;
 		memset( &semci, 0, sizeof( semci ) );
@@ -495,6 +562,18 @@ void VK_Device_Shutdown( void ) {
 		vkDeviceWaitIdle( vkCtx.device );
 	}
 	if ( vkCtx.device != VK_NULL_HANDLE ) {
+		// release the D-layer consumers first (images, executor, buffers)
+		{
+			extern void VK_Image_ShutdownAll( void );
+			extern void VK_GuiExecutor_Shutdown( void );
+			extern void VK_VertexCache_Shutdown( void );
+			VK_GuiExecutor_Shutdown();
+			VK_Image_ShutdownAll();
+			VK_VertexCache_Shutdown();
+		}
+		for ( int i = 0; i < VK_FRAMES_IN_FLIGHT; i++ ) {
+			VK_Device_FlushDeferredDestroys( i );
+		}
 		VK_Device_DestroySwapchainObjects();
 		for ( int i = 0; i < VK_FRAMES_IN_FLIGHT; i++ ) {
 			if ( vkCtx.acquireSemaphores[ i ] != VK_NULL_HANDLE ) {
@@ -503,6 +582,12 @@ void VK_Device_Shutdown( void ) {
 			if ( vkCtx.frameFences[ i ] != VK_NULL_HANDLE ) {
 				vkDestroyFence( vkCtx.device, vkCtx.frameFences[ i ], NULL );
 			}
+		}
+		if ( vkCtx.uploadFence != VK_NULL_HANDLE ) {
+			vkDestroyFence( vkCtx.device, vkCtx.uploadFence, NULL );
+		}
+		if ( vkCtx.allocator != NULL ) {
+			vmaDestroyAllocator( vkCtx.allocator );
 		}
 		if ( vkCtx.commandPool != VK_NULL_HANDLE ) {
 			vkDestroyCommandPool( vkCtx.device, vkCtx.commandPool, NULL );
@@ -542,6 +627,7 @@ void VK_Device_PresentClearFrame( const float clearColor[ 4 ] ) {
 	vkCtx.frameSlot = ( vkCtx.frameSlot + 1 ) % VK_FRAMES_IN_FLIGHT;
 
 	vkWaitForFences( vkCtx.device, 1, &vkCtx.frameFences[ slot ], VK_TRUE, UINT64_MAX );
+	VK_Device_FlushDeferredDestroys( slot );
 
 	uint32_t imageIndex = 0;
 	VkResult res = vkAcquireNextImageKHR( vkCtx.device, vkCtx.swapchain, UINT64_MAX,
@@ -673,6 +759,79 @@ void VK_Device_PresentClearFrame( const float clearColor[ 4 ] ) {
 	if ( res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR ) {
 		VK_Device_RecreateSwapchain();
 	}
+}
+
+/*
+====================
+VK_Device_ImmediateSubmit
+====================
+*/
+bool VK_Device_ImmediateSubmit( vkImmediateRecord_t record, void *user ) {
+	if ( vkCtx.device == VK_NULL_HANDLE || vkCtx.uploadCommandBuffer == VK_NULL_HANDLE ) {
+		return false;
+	}
+
+	vkResetCommandBuffer( vkCtx.uploadCommandBuffer, 0 );
+	VkCommandBufferBeginInfo cbbi;
+	memset( &cbbi, 0, sizeof( cbbi ) );
+	cbbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+	cbbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+	vkBeginCommandBuffer( vkCtx.uploadCommandBuffer, &cbbi );
+
+	record( vkCtx.uploadCommandBuffer, user );
+
+	vkEndCommandBuffer( vkCtx.uploadCommandBuffer );
+
+	VkSubmitInfo si;
+	memset( &si, 0, sizeof( si ) );
+	si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+	si.commandBufferCount = 1;
+	si.pCommandBuffers = &vkCtx.uploadCommandBuffer;
+	if ( vkQueueSubmit( vkCtx.graphicsQueue, 1, &si, vkCtx.uploadFence ) != VK_SUCCESS ) {
+		return false;
+	}
+	vkWaitForFences( vkCtx.device, 1, &vkCtx.uploadFence, VK_TRUE, UINT64_MAX );
+	vkResetFences( vkCtx.device, 1, &vkCtx.uploadFence );
+	return true;
+}
+
+/*
+====================
+VK_Device_DeferDestroy / VK_Device_FlushDeferredDestroys
+====================
+*/
+void VK_Device_DeferDestroy( VkImage image, VkImageView view, VkBuffer buffer, VmaAllocation allocation ) {
+	if ( image == VK_NULL_HANDLE && view == VK_NULL_HANDLE && buffer == VK_NULL_HANDLE && allocation == NULL ) {
+		return;
+	}
+	const int slot = vkCtx.frameSlot;
+	if ( vkCtx.numDeferredDestroys[ slot ] >= VK_MAX_DEFERRED_DESTROYS ) {
+		// queue full: block for safety rather than leak or free early
+		vkDeviceWaitIdle( vkCtx.device );
+		for ( int i = 0; i < VK_FRAMES_IN_FLIGHT; i++ ) {
+			VK_Device_FlushDeferredDestroys( i );
+		}
+	}
+	vkDeferredDestroy_t &entry = vkCtx.deferredDestroys[ slot ][ vkCtx.numDeferredDestroys[ slot ]++ ];
+	entry.image = image;
+	entry.view = view;
+	entry.buffer = buffer;
+	entry.allocation = allocation;
+}
+
+void VK_Device_FlushDeferredDestroys( int slot ) {
+	for ( int i = 0; i < vkCtx.numDeferredDestroys[ slot ]; i++ ) {
+		vkDeferredDestroy_t &entry = vkCtx.deferredDestroys[ slot ][ i ];
+		if ( entry.view != VK_NULL_HANDLE ) {
+			vkDestroyImageView( vkCtx.device, entry.view, NULL );
+		}
+		if ( entry.image != VK_NULL_HANDLE && vkCtx.allocator != NULL ) {
+			vmaDestroyImage( vkCtx.allocator, entry.image, entry.allocation );
+		} else if ( entry.buffer != VK_NULL_HANDLE && vkCtx.allocator != NULL ) {
+			vmaDestroyBuffer( vkCtx.allocator, entry.buffer, entry.allocation );
+		}
+	}
+	vkCtx.numDeferredDestroys[ slot ] = 0;
 }
 
 #endif /* OPENQ4_RENDERER_VK_MODULE */

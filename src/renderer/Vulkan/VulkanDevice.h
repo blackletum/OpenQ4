@@ -20,10 +20,29 @@
 
 #include "volk.h"
 
+// VMA handles as opaque forward declarations; TUs that call VMA include
+// vk_mem_alloc.h themselves (with the PCH-poison compensations)
+struct VmaAllocator_T;
+typedef struct VmaAllocator_T *VmaAllocator;
+struct VmaAllocation_T;
+typedef struct VmaAllocation_T *VmaAllocation;
+
 struct renderWindowServices_s;
 
 // per-slot frame synchronization (frames in flight)
 static const int VK_FRAMES_IN_FLIGHT = 2;
+
+// deferred GPU-object destruction: resources retired while their frame may
+// still be in flight are queued per slot and destroyed once that slot's
+// fence has been waited on
+typedef struct vkDeferredDestroy_s {
+	VkImage				image;
+	VkImageView			view;
+	VkBuffer			buffer;
+	VmaAllocation		allocation;
+} vkDeferredDestroy_t;
+
+static const int VK_MAX_DEFERRED_DESTROYS = 512;
 
 typedef struct vkDeviceContext_s {
 	bool				initialized;
@@ -57,6 +76,18 @@ typedef struct vkDeviceContext_s {
 	// requested swap interval the swapchain was created with; a change
 	// triggers recreation at the next present
 	int					swapInterval;
+
+	// --- Phase D ---
+	VmaAllocator		allocator;
+
+	// synchronous upload path: its own command buffer + fence, submitted and
+	// waited immediately (image/vertex data reaches the GPU before the frame
+	// that samples it is submitted)
+	VkCommandBuffer		uploadCommandBuffer;
+	VkFence				uploadFence;
+
+	vkDeferredDestroy_t	deferredDestroys[ VK_FRAMES_IN_FLIGHT ][ VK_MAX_DEFERRED_DESTROYS ];
+	int					numDeferredDestroys[ VK_FRAMES_IN_FLIGHT ];
 } vkDeviceContext_t;
 
 // the module-wide device context; valid while initialized is true
@@ -76,5 +107,18 @@ bool	VK_Device_RecreateSwapchain( void );
 // acquires, records a dynamic-rendering clear with the given color, and
 // presents; handles OUT_OF_DATE/SUBOPTIMAL by recreating and retrying once
 void	VK_Device_PresentClearFrame( const float clearColor[ 4 ] );
+
+// records commands into the dedicated upload command buffer, submits, and
+// blocks on the upload fence; safe mid-frame (the frame's own command
+// buffer is still recording, so the upload strictly precedes its submit)
+typedef void ( *vkImmediateRecord_t )( VkCommandBuffer cmd, void *user );
+bool	VK_Device_ImmediateSubmit( vkImmediateRecord_t record, void *user );
+
+// queues GPU objects for destruction once the current frame slot's fence
+// has cycled; any handle may be VK_NULL_HANDLE
+void	VK_Device_DeferDestroy( VkImage image, VkImageView view, VkBuffer buffer, VmaAllocation allocation );
+
+// drains the destroy queue for a slot whose fence has just been waited on
+void	VK_Device_FlushDeferredDestroys( int slot );
 
 #endif /* !__VULKANDEVICE_H__ */

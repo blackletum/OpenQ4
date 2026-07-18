@@ -1348,6 +1348,10 @@ void idCommonLocal::FatalError( const char *fmt, ... ) {
 	va_end( argptr );
 	errorMessage[sizeof(errorMessage)-1] = '\0';
 
+	// log the message before Shutdown closes the log file; Sys_Error output
+	// is invisible on windowed builds without an attached console
+	Printf( "********************\nFATAL: %s\n********************\n", errorMessage );
+
 	// Only attempt a renderer restart fallback when GL is actually live.
 	if ( renderSystem->IsOpenGLRunning() && cvarSystem->GetCVarBool( "r_fullscreen" ) ) {
 		cmdSystem->BufferCommandText( CMD_EXEC_NOW, "vid_restart partial windowed\n" );

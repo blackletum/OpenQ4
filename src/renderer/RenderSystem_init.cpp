@@ -4270,6 +4270,17 @@ void idRenderSystemLocal::InitOpenGL( void ) {
 		if ( !VK_InitRenderDevice() ) {
 			common->FatalError( "Vulkan renderer device initialization failed" );
 		}
+		// mirror the R_InitOpenGL tail the seam skips: the front-end needs
+		// the vertex cache, a resolved back end, frame data, and gamma
+		// tables before the first BeginFrame
+		vertexCache.Init();
+		r_renderer.SetModified();
+		tr.SetBackEndRenderer();
+		R_InitFrameData();
+		R_SetColorMappings();
+		// images loaded before the device existed stayed TEXTURE_NOT_LOADED,
+		// exactly like the GL half without a context; create them now
+		globalImages->ReloadImages( true );
 #else
 		int	err;
 

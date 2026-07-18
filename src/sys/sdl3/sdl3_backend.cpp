@@ -4335,6 +4335,7 @@ bool Sys_SDL_PumpEvents(void) {
 				continue;
 			}
 			if (event.type == SDL_EVENT_QUIT) {
+				common->Printf("SDL3: SDL_EVENT_QUIT received (console pump)\n");
 				cmdSystem->BufferCommandText(CMD_EXEC_APPEND, "quit\n");
 			}
 		}
@@ -4459,6 +4460,7 @@ bool Sys_SDL_PumpEvents(void) {
 
 		switch (event.type) {
 			case SDL_EVENT_QUIT:
+				common->Printf("SDL3: SDL_EVENT_QUIT received\n");
 				cmdSystem->BufferCommandText(CMD_EXEC_APPEND, "quit\n");
 				break;
 

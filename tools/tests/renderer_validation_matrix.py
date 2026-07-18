@@ -386,6 +386,8 @@ WARNING_PATTERNS = {
         r"[^\r\n]*$",
         re.IGNORECASE | re.MULTILINE,
     ),
+    "vulkanValidation": re.compile(r"Vulkan validation:"),
+    "vulkanCallFailed": re.compile(r"Vulkan[^\r\n]{0,48}\bvk[A-Z]\w+ failed"),
 }
 
 
@@ -1333,6 +1335,54 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
                 ["GL context request:"],
             ],
         },
+        {
+            "id": "renderer-vk-clear-startup",
+            "category": "vulkan",
+            "description": "Phase D Vulkan module startup: device + swapchain + GUI executor bring-up with validation layers on and zero validation-layer messages.",
+            "assetless": True,
+            "requiresVulkanModule": True,
+            "preservesConfig": True,
+            "args": [
+                "+set",
+                "r_renderApi",
+                "vulkan",
+                "+set",
+                "r_vkValidation",
+                "1",
+                "+gfxInfo",
+            ],
+            "checks": [
+                ["Renderer API: requested=vulkan active=vulkan disposition=module"],
+                ["----- VK_InitRenderDevice -----"],
+                ["Vulkan: created swapchain"],
+                ["Vulkan: GUI executor initialized"],
+                ["Vulkan renderer initialized"],
+            ],
+        },
+        {
+            "id": "renderer-vk-fallback-drill",
+            "category": "vulkan",
+            "description": "Renderer-module break drill: the staged renderer-vk module is hidden for the run, so a vulkan request must fall back to the OpenGL module and report the fallback disposition.",
+            "assetless": True,
+            "requiresVulkanModule": True,
+            "preservesConfig": True,
+            "hideVkModule": True,
+            "args": [
+                "+set",
+                "r_renderApi",
+                "vulkan",
+                "+gfxInfo",
+            ],
+            "checks": [
+                ["Loading renderer module: api='vulkan'"],
+                ["failed to load"],
+                ["renderer API fallback: requested 'vulkan', active 'gl'"],
+                ["Renderer API: requested=vulkan active=gl disposition=fallback"],
+                ["Renderer API fallback reason:"],
+                ["module load failed"],
+                ["created OpenGL context"],
+            ],
+        },
     ]
 
     for shader_tier in SHADER_LIBRARY_TIER_MATRIX:
@@ -1483,6 +1533,23 @@ def filter_driver_specific_cases(cases: list[dict[str, Any]]) -> list[dict[str, 
     ]
 
 
+def vk_module_path(root: Path) -> Path:
+    suffix = ".dll" if os.name == "nt" else ".so"
+    return root / ".install" / f"renderer-vk_{host_arch()}{suffix}"
+
+
+def filter_vulkan_module_cases(cases: list[dict[str, Any]], root: Path) -> list[dict[str, Any]]:
+    # the Vulkan cases need a staged renderer-vk module and a live Vulkan
+    # driver; headless Linux legs (Xvfb/WSL) offer neither, so they only run
+    # on a Windows host with the module staged next to the executable
+    if os.name == "nt" and vk_module_path(root).exists():
+        return cases
+    dropped = [case["id"] for case in cases if case.get("requiresVulkanModule")]
+    if dropped:
+        print(f"note: skipping Vulkan module cases (module not staged or non-Windows host): {', '.join(dropped)}")
+    return [case for case in cases if not case.get("requiresVulkanModule")]
+
+
 def find_log(savepath: Path, log_name: str) -> Path | None:
     candidates = [
         savepath / "baseoq4" / "logs" / log_name,
@@ -1585,21 +1652,44 @@ def run_case(
             f"case {case_id} passes {startup_commands} '+' startup commands; the engine keeps only the "
             f"first {ENGINE_MAX_STARTUP_COMMANDS} (MAX_CONSOLE_LINES) and would silently drop '+quit'"
         )
+    # drill lever: hide the staged renderer-vk module so the loader's
+    # fallback ladder is exercised for real, restoring it afterwards
+    module_path = vk_module_path(root)
+    hidden_module_path = module_path.with_name(module_path.name + ".drill-hidden")
+    hide_vk_module = bool(case.get("hideVkModule", False))
+    # cvars set on the command line are archived on exit; cases that opt
+    # renderer selection cvars in must not leak them into later cases or
+    # the user's config
+    config_path = savepath / "baseoq4" / "openQ4Config.cfg"
+    preserve_config = bool(case.get("preservesConfig", False))
+    saved_config = config_path.read_bytes() if preserve_config and config_path.exists() else None
+
     started = time.time()
     timed_out = False
-    with stdout_path.open("w", encoding="utf-8", errors="replace") as stdout_file, stderr_path.open("w", encoding="utf-8", errors="replace") as stderr_file:
-        process = subprocess.Popen(
-            [str(executable)] + args,
-            cwd=str(root / ".install"),
-            stdout=stdout_file,
-            stderr=stderr_file,
-        )
-        try:
-            exit_code = process.wait(timeout=timeout_seconds)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            process.kill()
-            exit_code = process.wait(timeout=10)
+    if hide_vk_module:
+        module_path.rename(hidden_module_path)
+    try:
+        with stdout_path.open("w", encoding="utf-8", errors="replace") as stdout_file, stderr_path.open("w", encoding="utf-8", errors="replace") as stderr_file:
+            process = subprocess.Popen(
+                [str(executable)] + args,
+                cwd=str(root / ".install"),
+                stdout=stdout_file,
+                stderr=stderr_file,
+            )
+            try:
+                exit_code = process.wait(timeout=timeout_seconds)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                process.kill()
+                exit_code = process.wait(timeout=10)
+    finally:
+        if hide_vk_module and hidden_module_path.exists():
+            hidden_module_path.rename(module_path)
+        if preserve_config:
+            if saved_config is None:
+                config_path.unlink(missing_ok=True)
+            else:
+                config_path.write_bytes(saved_config)
 
     elapsed = time.time() - started
     log_path = find_log(savepath, log_name)
@@ -1859,6 +1949,7 @@ def main(argv: list[str]) -> int:
         safe_cases = [case for case in safe_cases if case["id"] in requested]
     elif not args.list:
         safe_cases = filter_driver_specific_cases(safe_cases)
+        safe_cases = filter_vulkan_module_cases(safe_cases, root)
 
     if args.list:
         print("Automated safe cases:")

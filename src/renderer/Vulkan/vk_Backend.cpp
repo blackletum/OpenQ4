@@ -41,7 +41,14 @@ backEndState_t	backEnd;
 bool R_GetInitialWindowSize( bool fullScreen, int *width, int *height );
 
 static const renderWindowServices_t *vkBackendServices = NULL;
-static float vkClearColor[ 4 ] = { 0.4f, 0.0f, 0.25f, 1.0f };
+static float vkClearColor[ 4 ] = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+// vk_GuiExecutor.cpp
+void VK_GuiExecutor_SetClearColor( const float color[ 4 ] );
+void VK_GuiExecutor_Draw2DView( const viewDef_t *viewDef );
+bool VK_GuiExecutor_EnsureFrameOpen( void );
+bool VK_GuiExecutor_EndFrameAndPresent( void );
+bool VK_GuiExecutor_FrameIsOpen( void );
 
 /*
 ====================
@@ -82,6 +89,12 @@ static void VK_FillGLConfigFromDevice( void ) {
 	glConfig.vidHeight = (int)vkCtx.swapchainExtent.height;
 
 	glConfig.isFullscreen = r_fullscreen.GetBool();
+
+	// the front-end's standard (ARB2-shaped) path is what the Vulkan backend
+	// consumes; without this SetBackEndRenderer() finds no usable back end
+	// and FatalErrors on the first BeginFrame after a config marks
+	// r_renderer modified
+	glConfig.allowARB2Path = true;
 }
 
 /*
@@ -232,14 +245,22 @@ void GLimp_SwapBuffers( void ) {
 		if ( info.pixelWidth > 0 && info.pixelHeight > 0
 				&& ( (uint32_t)info.pixelWidth != vkCtx.swapchainExtent.width
 					|| (uint32_t)info.pixelHeight != vkCtx.swapchainExtent.height ) ) {
-			if ( VK_Device_RecreateSwapchain() ) {
-				glConfig.vidWidth = (int)vkCtx.swapchainExtent.width;
-				glConfig.vidHeight = (int)vkCtx.swapchainExtent.height;
+			// only recreate between frames; an open frame presents into the
+			// old swapchain and OUT_OF_DATE handling catches the rest
+			if ( !VK_GuiExecutor_FrameIsOpen() ) {
+				if ( VK_Device_RecreateSwapchain() ) {
+					glConfig.vidWidth = (int)vkCtx.swapchainExtent.width;
+					glConfig.vidHeight = (int)vkCtx.swapchainExtent.height;
+				}
 			}
 		}
 	}
 
-	VK_Device_PresentClearFrame( vkClearColor );
+	// present whatever the frame holds; a frame with no draws still clears
+	VK_GuiExecutor_SetClearColor( vkClearColor );
+	if ( VK_GuiExecutor_EnsureFrameOpen() ) {
+		VK_GuiExecutor_EndFrameAndPresent();
+	}
 }
 
 void GLimp_ActivateContext( void ) {
@@ -296,8 +317,8 @@ bool GLimp_SpawnRenderThread( void ( *function )( void ) ) {
 ====================
 RB_ExecuteBackEndCommands
 
-Phase C command consumption: honor the buffer-clear color choice, present
-on swap, and discard draw-bearing commands.
+Phase D command consumption: 2D views draw through the GUI executor; 3D
+views arrive with Phase E; RC_SWAP_BUFFERS closes and presents the frame.
 ====================
 */
 void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
@@ -312,29 +333,38 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 			case RC_SET_BUFFER: {
 				const setBufferCommand_t *cmd = (const setBufferCommand_t *)cmds;
 				backEnd.frameCount = cmd->frameCount;
-				// clear-color policy mirrors the GL RB_SetBuffer, with the
-				// Phase C animated default so presentation is visibly live
+				// clear-color policy mirrors the GL RB_SetBuffer; black
+				// otherwise (the swapchain load op always clears)
 				float c[ 3 ];
 				if ( sscanf( r_clear.GetString(), "%f %f %f", &c[ 0 ], &c[ 1 ], &c[ 2 ] ) == 3 ) {
 					vkClearColor[ 0 ] = c[ 0 ];
 					vkClearColor[ 1 ] = c[ 1 ];
 					vkClearColor[ 2 ] = c[ 2 ];
-				} else if ( r_clear.GetInteger() == 2 ) {
-					vkClearColor[ 0 ] = vkClearColor[ 1 ] = vkClearColor[ 2 ] = 0.0f;
+				} else if ( r_clear.GetInteger() == 1 ) {
+					vkClearColor[ 0 ] = 0.4f;
+					vkClearColor[ 1 ] = 0.0f;
+					vkClearColor[ 2 ] = 0.25f;
 				} else {
-					const float phase = ( Sys_Milliseconds() % 4000 ) * ( idMath::TWO_PI / 4000.0f );
-					vkClearColor[ 0 ] = 0.30f + 0.20f * idMath::Sin( phase );
-					vkClearColor[ 1 ] = 0.05f;
-					vkClearColor[ 2 ] = 0.25f + 0.15f * idMath::Sin( phase + 2.0f );
+					vkClearColor[ 0 ] = vkClearColor[ 1 ] = vkClearColor[ 2 ] = 0.0f;
 				}
 				vkClearColor[ 3 ] = 1.0f;
+				VK_GuiExecutor_SetClearColor( vkClearColor );
+				break;
+			}
+			case RC_DRAW_VIEW: {
+				const drawSurfsCommand_t *cmd = (const drawSurfsCommand_t *)cmds;
+				if ( cmd->viewDef != NULL && cmd->viewDef->viewEntitys == NULL ) {
+					// 2D view (GUI/console/cinematics)
+					VK_GuiExecutor_Draw2DView( cmd->viewDef );
+				}
+				// 3D views: Phase E
 				break;
 			}
 			case RC_SWAP_BUFFERS:
 				GLimp_SwapBuffers();
 				break;
 			default:
-				// draw/copy commands are consumed without effect in Phase C
+				// copy/capture commands arrive with Phase E+
 				break;
 		}
 	}
@@ -357,24 +387,7 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 // shared tr_main.cpp; only the global's home was the excluded tr_backend)
 frameData_t *frameData = NULL;
 
-// --- idImage GPU half (OpenGL/gl_Image.cpp; Phase D implements in Vulkan) ---
-void idImage::SubImageUpload( int mipLevel, int destX, int destY, int destZ, int width, int height, const void *pic, int pixelPitch ) const {
-	(void)mipLevel; (void)destX; (void)destY; (void)destZ; (void)width; (void)height; (void)pic; (void)pixelPitch;
-}
-
-void idImage::PurgeImage( void ) {
-	texnum = TEXTURE_NOT_LOADED;
-}
-
-void idImage::SetTexParameters( void ) {
-}
-
-void idImage::AllocImage( void ) {
-}
-
-void idImage::Resize( int width, int height ) {
-	(void)width; (void)height;
-}
+// idImage GPU half: real Vulkan implementation in vk_Image.cpp (Phase D)
 
 // --- idRenderTexture (OpenGL/gl_RenderTexture.cpp): bookkeeping-only until
 // the Vulkan render-target path lands (Phase E/H) ---

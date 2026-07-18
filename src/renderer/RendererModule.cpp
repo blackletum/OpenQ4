@@ -497,7 +497,8 @@ static bool RM_TryLoadModuleApi( rendererModuleApi_t api, rendererModuleStatus_t
 	rm_state.moduleExportValid = true;
 	RM_PublishActiveModuleInterfaces( rm_state.moduleExport );
 	status.activeApi = api;
-	status.disposition = RENDER_MODULE_DISPOSITION_MODULE;
+	status.disposition = ( status.requestedApi == api ) ?
+			RENDER_MODULE_DISPOSITION_MODULE : RENDER_MODULE_DISPOSITION_FALLBACK;
 	return true;
 }
 
