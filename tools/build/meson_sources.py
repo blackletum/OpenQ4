@@ -100,6 +100,31 @@ RENDERER_GL_EXCLUDED_SOURCES = (
     "src/renderer/RendererModule.cpp",
 )
 
+# renderer sources for the renderer-vk dynamic module (Phase C): the shared
+# front-end plus renderer/Vulkan/*, minus the loader and the GL-backend TUs
+# (replaced by Vulkan equivalents; mixed front-end TUs keep their GL call
+# sites satisfied by the module's GL stub TU + hook-resolving GLEW flavor)
+RENDERER_VK_SOURCE_GLOBS = [
+    "renderer/*.cpp",
+    "renderer/Vulkan/*.cpp",
+]
+
+RENDERER_VK_EXCLUDED_SOURCES = (
+    "src/renderer/RendererModule.cpp",
+    # GL backend, replaced wholesale
+    "src/renderer/draw_arb2.cpp",
+    "src/renderer/draw_common.cpp",
+    "src/renderer/tr_backend.cpp",
+    "src/renderer/tr_render.cpp",
+    "src/renderer/tr_rendertools.cpp",
+    "src/renderer/ModernGLExecutor.cpp",
+    "src/renderer/ModernGLShaderLibrary.cpp",
+    "src/renderer/RenderGraphResources.cpp",
+    "src/renderer/GLStateCache.cpp",
+    "src/renderer/GLDebugScope.cpp",
+    "src/renderer/RendererUpload.cpp",
+)
+
 GAME_SOURCE_GLOBS = [
     "game/ai/*.cpp",
     "game/anim/*.cpp",
@@ -284,7 +309,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--emit",
-        choices=("engine", "imagetools", "render_geo", "renderer_gl"),
+        choices=("engine", "imagetools", "render_geo", "renderer_gl", "renderer_vk"),
         default="engine",
         help="Emit engine target sources or one of the split library/module source lists.",
     )
@@ -316,11 +341,12 @@ def main(argv: list[str]) -> int:
 
     include_game = args.include_game == "true"
 
-    if args.emit in ("imagetools", "render_geo", "renderer_gl"):
+    if args.emit in ("imagetools", "render_geo", "renderer_gl", "renderer_vk"):
         globs = {
             "imagetools": IMAGETOOLS_SOURCE_GLOBS,
             "render_geo": RENDER_GEO_SOURCE_GLOBS,
             "renderer_gl": RENDERER_GL_SOURCE_GLOBS,
+            "renderer_vk": RENDERER_VK_SOURCE_GLOBS,
         }[args.emit]
         try:
             for pattern in globs:
@@ -330,6 +356,9 @@ def main(argv: list[str]) -> int:
             return 1
         if args.emit == "renderer_gl":
             for path in RENDERER_GL_EXCLUDED_SOURCES:
+                remove_source(source_set, ordered_sources, path)
+        if args.emit == "renderer_vk":
+            for path in RENDERER_VK_EXCLUDED_SOURCES:
                 remove_source(source_set, ordered_sources, path)
         if not ordered_sources:
             print(f"No {args.emit} source files discovered.", file=sys.stderr)

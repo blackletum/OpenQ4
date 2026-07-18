@@ -4,20 +4,29 @@
 /*
 ===============================================================================
 
-	renderer-gl module glue (Phase B8,
-	docs/dev/plans/2026-07-16-vulkan-renderer-phase-b.md).
+	Shared renderer-module glue (Phase B8 / Phase C,
+	docs/dev/plans/2026-07-16-vulkan-renderer-phase-b.md,
+	docs/dev/plans/2026-07-17-vulkan-phase-c.md).
 
-	Compiled ONLY into the renderer-gl dynamic module
-	(OPENQ4_RENDERER_GL_MODULE); the engine's renderer glob sees an empty
-	translation unit. Mirrors the game-DLL convention: defines the engine
-	interface globals the renderer sources bind against, initializes idlib,
-	provides the module-local forwarders for the engine free functions the
-	renderer calls, and exports GetRenderAPI.
+	Compiled ONLY into renderer dynamic modules (OPENQ4_RENDERER_MODULE,
+	with OPENQ4_RENDERER_GL_MODULE / OPENQ4_RENDERER_VK_MODULE selecting the
+	backend tail); the engine's renderer glob sees an empty translation
+	unit. Mirrors the game-DLL convention: defines the engine interface
+	globals the renderer sources bind against, initializes idlib, provides
+	the module-local forwarders for the engine free functions the renderer
+	calls, and exports GetRenderAPI.
 
 ===============================================================================
 */
 
-#ifdef OPENQ4_RENDERER_GL_MODULE
+#ifdef OPENQ4_RENDERER_MODULE
+
+#ifndef OPENQ4_RENDERER_BACKEND_NAME
+#define OPENQ4_RENDERER_BACKEND_NAME		"gl"
+#endif
+#ifndef OPENQ4_RENDERER_BACKEND_DESC
+#define OPENQ4_RENDERER_BACKEND_DESC		"openQ4 OpenGL renderer module"
+#endif
 
 #include "tr_local.h"
 #include "RenderModuleAPI.h"
@@ -334,9 +343,10 @@ void RendererModule_PrintGfxInfo( void ) {
 	}
 }
 
+#ifdef OPENQ4_RENDERER_GL_MODULE
 /*
 ====================
-QGL loader (module-local)
+QGL loader (module-local, GL backend only)
 
 Under the SDL3 seam all GL procs resolve through the window services; QGL
 only tracks the driver library handle on Windows for parity with the legacy
@@ -373,12 +383,26 @@ void QGL_Shutdown( void ) {
 }
 #endif
 
+#endif /* OPENQ4_RENDERER_GL_MODULE */
+
 /*
 ====================
 GetRenderAPI
 ====================
 */
+#ifdef OPENQ4_RENDERER_VK_MODULE
+// Vulkan backend tail hooks (VulkanModule.cpp / VulkanBringup.cpp); declared
+// at file scope so they keep C++ linkage even when called from inside the
+// extern-C GetRenderAPI body (block-scope externs there would take C linkage)
+void VK_ModuleBindServices( const renderModuleServices_t *services );
+const renderModuleDiagnostics_t *VK_GetModuleDiagnostics( void );
+void VK_Bringup_Shutdown( void );
+#endif
+
 static void RGM_Shutdown( void ) {
+#ifdef OPENQ4_RENDERER_VK_MODULE
+	VK_Bringup_Shutdown();
+#endif
 	idSIMD::Shutdown();
 	idLib::ShutDown();
 }
@@ -393,8 +417,8 @@ extern "C" RENDERER_GL_MODULE_EXPORT
 renderExport_t *GetRenderAPI( renderImport_t *moduleImport ) {
 	memset( &rgm_export, 0, sizeof( rgm_export ) );
 	rgm_export.version = RENDER_API_VERSION;
-	rgm_export.backendName = "gl";
-	rgm_export.moduleDescription = "openQ4 OpenGL renderer module";
+	rgm_export.backendName = OPENQ4_RENDERER_BACKEND_NAME;
+	rgm_export.moduleDescription = OPENQ4_RENDERER_BACKEND_DESC;
 	rgm_export.Shutdown = RGM_Shutdown;
 
 	if ( moduleImport == NULL || moduleImport->version != RENDER_API_VERSION || moduleImport->services == NULL ) {
@@ -403,6 +427,10 @@ renderExport_t *GetRenderAPI( renderImport_t *moduleImport ) {
 
 	rgm_services = moduleImport->services;
 	rgm_windowServices = moduleImport->windowServices;
+
+#ifdef OPENQ4_RENDERER_VK_MODULE
+	VK_ModuleBindServices( rgm_services );
+#endif
 
 	sys = moduleImport->sys;
 	common = moduleImport->common;
@@ -433,11 +461,16 @@ renderExport_t *GetRenderAPI( renderImport_t *moduleImport ) {
 	idCVar::RegisterStaticVars();
 
 	// initialize processor specific SIMD for the module's idlib copy
-	idSIMD::InitProcessor( "renderer-gl", cvarSystem->GetCVarBool( "com_forceGenericSIMD" ) );
+	idSIMD::InitProcessor( "renderer-" OPENQ4_RENDERER_BACKEND_NAME, cvarSystem->GetCVarBool( "com_forceGenericSIMD" ) );
 
 	rgm_export.renderSystem = renderSystem;			// the module's statically-initialized &tr
 	rgm_export.renderModelManager = renderModelManager;
+#ifdef OPENQ4_RENDERER_VK_MODULE
+	// the Vulkan backend keeps its bring-up diagnostics surface for the
+	// on-demand rendererVkProbe flow
+	rgm_export.diagnostics = VK_GetModuleDiagnostics();
+#endif
 	return &rgm_export;
 }
 
-#endif /* OPENQ4_RENDERER_GL_MODULE */
+#endif /* OPENQ4_RENDERER_MODULE */

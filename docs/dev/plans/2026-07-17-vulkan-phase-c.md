@@ -1,6 +1,10 @@
 # Vulkan Phase C — clear + present (staging plan)
 
-Status: recon complete (3-agent sweep, 2026-07-17); implementation staged below.
+Status: C1-C4 LANDED (2026-07-18) — r_renderApi vulkan boots the real game
+loop to the animated clear on NVIDIA RTX 4060 (Vulkan 1.4.325); swapchain
+resize/recreation live; vulkan->gl module-break fallback drill green. C5
+(vk matrix cases + validation-layer signatures in the matrix runner) is the
+remaining stage before Phase D.
 Parent roadmap: [2026-07-16-vulkan-renderer.md](2026-07-16-vulkan-renderer.md) Phase C.
 Prereq: Phase B closed — the renderer-module seam hosts full renderers; the
 SDL3 Windows/Linux clients are module-only ('gl' loads renderer-gl_<arch>).

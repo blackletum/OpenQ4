@@ -1484,6 +1484,23 @@ static void R_GetWindowedModeInfo( int *width, int *height ) {
 	}
 }
 
+/*
+====================
+R_GetInitialWindowSize
+
+Non-static wrapper over the mode/windowed sizing statics so alternative
+backends (the Vulkan module) derive the initial window size exactly like
+the GL bring-up does.
+====================
+*/
+bool R_GetInitialWindowSize( bool fullScreen, int *width, int *height ) {
+	if ( fullScreen ) {
+		return R_GetModeInfo( width, height, r_mode.GetInteger() );
+	}
+	R_GetWindowedModeInfo( width, height );
+	return true;
+}
+
 static int R_NormalizeMultiSamplesValue( const int samples ) {
 	if ( samples <= 1 ) {
 		return 0;
@@ -4244,8 +4261,16 @@ idRenderSystemLocal::InitOpenGL
 ========================
 */
 void idRenderSystemLocal::InitOpenGL( void ) {
-	// if OpenGL isn't started, start it now
+	// if the device isn't started, start it now
 	if ( !glConfig.isInitialized ) {
+#ifdef OPENQ4_RENDERER_VK_MODULE
+		// Vulkan backend seam (Phase C): device + swapchain bring-up through
+		// the window services; no GL ladder, caps probe, or program loads
+		extern bool VK_InitRenderDevice( void );
+		if ( !VK_InitRenderDevice() ) {
+			common->FatalError( "Vulkan renderer device initialization failed" );
+		}
+#else
 		int	err;
 
 		R_InitOpenGL();
@@ -4256,6 +4281,7 @@ void idRenderSystemLocal::InitOpenGL( void ) {
 		if ( err != GL_NO_ERROR ) {
 			common->Printf( "glGetError() = 0x%x\n", err );
 		}
+#endif
 	}
 }
 
@@ -4278,6 +4304,11 @@ void idRenderSystemLocal::ShutdownOpenGL( void ) {
 
 	// free the context and close the window
 	R_ShutdownFrameData();
+#ifdef OPENQ4_RENDERER_VK_MODULE
+	// Vulkan backend seam (Phase C): the GL executor/upload/graph/debug
+	// subsystems never initialized; device + window teardown is GLimp_Shutdown
+	GLimp_Shutdown();
+#else
 	R_RendererMetrics_ShutdownGpuTimers();
 	R_MaterialResourceTable_Shutdown();
 	R_RenderGraphResources_Shutdown();
@@ -4287,6 +4318,7 @@ void idRenderSystemLocal::ShutdownOpenGL( void ) {
 	R_PurgeFramebufferCopyFBOs();
 	R_GLDebugOutput_Shutdown();
 	GLimp_Shutdown();
+#endif
 	R_RendererModule_Shutdown();
 	glConfig.isInitialized = false;
 	R_ClearActiveRenderTextures();

@@ -1,55 +1,48 @@
 // Copyright (C) 2026 DarkMatter Productions
 //
 
-#include <string.h>
-
-#include "../RenderModuleAPI.h"
-#include "VulkanBringup.h"
-
 /*
 ===============================================================================
 
-	renderer-vk module entry point.
+	renderer-vk backend tail (Phase C,
+	docs/dev/plans/2026-07-17-vulkan-phase-c.md).
 
-	Phase A bring-up: the module proves the GetRenderAPI handshake and
-	exposes device diagnostics, but returns a NULL renderSystem so the
-	engine's fail-closed ladder keeps OpenGL visible. Later roadmap phases
-	replace the NULL with the full Vulkan idRenderSystem implementation.
+	The shared module glue (RendererGLModule.cpp under OPENQ4_RENDERER_MODULE)
+	owns the GetRenderAPI export and the engine-interface binding; this TU
+	supplies the Vulkan-specific pieces the glue attaches: the bring-up
+	diagnostics surface for the on-demand rendererVkProbe flow and the
+	services handoff for the probe path.
 
 ===============================================================================
 */
 
-static renderExport_t vk_moduleExport;
+#ifdef OPENQ4_RENDERER_VK_MODULE
 
-static void VK_Module_Shutdown( void ) {
-	VK_Bringup_Shutdown();
-}
+#include "../../idlib/precompiled.h"
+#pragma hdrstop
+
+#include "../RenderModuleAPI.h"
+#include "VulkanBringup.h"
 
 static const renderModuleDiagnostics_t vk_moduleDiagnostics = {
 	VK_Bringup_RunProbe,
 	VK_Bringup_RunDeviceSelfTest,
 };
 
-#if defined( _WIN32 )
-	#define RENDER_MODULE_EXPORT __declspec( dllexport )
-#else
-	#define RENDER_MODULE_EXPORT __attribute__( ( visibility( "default" ) ) )
-#endif
-
-extern "C" RENDER_MODULE_EXPORT
-renderExport_t *GetRenderAPI( renderImport_t *moduleImport ) {
-	memset( &vk_moduleExport, 0, sizeof( vk_moduleExport ) );
-	vk_moduleExport.version = RENDER_API_VERSION;
-	vk_moduleExport.backendName = "vulkan";
-	vk_moduleExport.moduleDescription = "openQ4 native Vulkan renderer (Phase A bring-up: instance/device/memory diagnostics)";
-	vk_moduleExport.renderSystem = NULL;	// bring-up: engine must fall back to GL for rendering
-	vk_moduleExport.diagnostics = &vk_moduleDiagnostics;
-	vk_moduleExport.Shutdown = VK_Module_Shutdown;
-
-	if ( moduleImport != NULL && moduleImport->version == RENDER_API_VERSION ) {
-		VK_Bringup_SetServices( moduleImport->services );
-	} else {
-		VK_Bringup_SetServices( NULL );
-	}
-	return &vk_moduleExport;
+const renderModuleDiagnostics_t *VK_GetModuleDiagnostics( void ) {
+	return &vk_moduleDiagnostics;
 }
+
+/*
+====================
+VK_ModuleBindServices
+
+Called by the shared glue after the import handshake so the bring-up /
+diagnostics layer can print through the engine.
+====================
+*/
+void VK_ModuleBindServices( const renderModuleServices_t *services ) {
+	VK_Bringup_SetServices( services );
+}
+
+#endif /* OPENQ4_RENDERER_VK_MODULE */

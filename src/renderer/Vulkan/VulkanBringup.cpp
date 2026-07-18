@@ -1,6 +1,11 @@
 // Copyright (C) 2026 DarkMatter Productions
 //
 
+// the engine PCH poisons snprintf/vsnprintf toward idStr; this bring-up TU
+// keeps its C-style formatting (services-only surface, no idStr dependency)
+#undef snprintf
+#undef vsnprintf
+#include <climits>
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>

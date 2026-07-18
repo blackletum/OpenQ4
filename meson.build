@@ -698,7 +698,7 @@ if build_engine
       fallback: ['glew', 'glew_dep'],
       default_options: glew_default_options,
     )
-    if host_system == 'linux' or windows_gl_free_ded
+    if host_system == 'linux' or host_system == 'windows'
       glew_dedicated_sp = subproject('glew', default_options: glew_default_options)
       glew_dedicated_dep = glew_dedicated_sp.get_variable('glew_dedicated_dep')
     endif
@@ -1317,68 +1317,6 @@ if build_engine or build_games
   )
 endif
 
-# Native Vulkan renderer module (roadmap: docs/dev/plans/2026-07-16-vulkan-renderer.md).
-# Loaded from the executable root when r_renderApi selects vulkan; the engine
-# falls back closed to GL when the module is absent or fails.
-build_renderer_vk = get_option('build_renderer_vk')
-if build_renderer_vk and host_system == 'darwin'
-  # docs/dev/macos-renderer-backend-policy.md: a non-GL macOS renderer needs
-  # its own decision-gate plan first; keep the module out of macOS builds.
-  build_renderer_vk = false
-endif
-
-renderer_vk_binary_name = 'renderer-vk_' + binary_arch
-if build_renderer_vk and build_engine
-  renderer_vk_include_dirs = include_directories(
-    'src/external/vulkan/include',
-    'src/external/volk',
-    'src/external/vma',
-  )
-  renderer_vk_sources = files(
-    'src/external/volk/volk.c',
-    'src/renderer/Vulkan/VulkanBringup.cpp',
-    'src/renderer/Vulkan/VulkanModule.cpp',
-    'src/renderer/Vulkan/VulkanVmaImpl.cpp',
-  )
-  renderer_vk_common_args = [
-    '-DVMA_STATIC_VULKAN_FUNCTIONS=0',
-    '-DVMA_DYNAMIC_VULKAN_FUNCTIONS=1',
-  ]
-  if host_system == 'windows'
-    renderer_vk_common_args += ['-DVK_USE_PLATFORM_WIN32_KHR', '-DWIN32_LEAN_AND_MEAN', '-DNOMINMAX']
-  endif
-  renderer_vk_link_args = []
-  renderer_vk_link_depends = []
-  renderer_vk_deps = []
-  if host_system == 'windows'
-    renderer_vk_link_args += ['/FIXED:NO', '/LARGEADDRESSAWARE']
-  elif host_system == 'linux'
-    renderer_vk_deps += [cc.find_library('dl', required: false)]
-    renderer_vk_link_args += linux_module_link_hardening_args
-    if cpp.has_link_argument('-Wl,-z,defs')
-      renderer_vk_link_args += '-Wl,-z,defs'
-    endif
-    linux_renderer_module_export_map = files('tools/build/linux_renderer_module.map')
-    renderer_vk_link_args += '-Wl,--version-script=' + linux_renderer_module_export_map[0].full_path()
-    renderer_vk_link_depends += linux_renderer_module_export_map
-  endif
-  renderer_vk_module_target = shared_module(
-    renderer_vk_binary_name,
-    renderer_vk_sources,
-    include_directories: renderer_vk_include_dirs,
-    cpp_args: renderer_vk_common_args,
-    c_args: renderer_vk_common_args,
-    override_options: ['cpp_std=c++17'],
-    dependencies: renderer_vk_deps,
-    link_args: renderer_vk_link_args,
-    link_depends: renderer_vk_link_depends,
-    gnu_symbol_visibility: host_system == 'linux' ? 'hidden' : 'default',
-    name_prefix: '',
-    install: true,
-    install_dir: install_root_dir,
-  )
-endif
-
 # OpenGL renderer module (Phase B8, docs/dev/plans/2026-07-16-vulkan-renderer-phase-b.md).
 # Built from the same renderer sources the engine still links statically; the
 # engine keeps its static renderer until the module soak completes. Requires
@@ -1390,9 +1328,17 @@ if build_renderer_gl and (host_system == 'darwin' or platform_backend != 'sdl3')
   build_renderer_gl = false
 endif
 
+# Vulkan module availability mirrors the GL module gating (needs the SDL3
+# window-services seam) plus the macOS renderer-backend policy carve-out
+build_renderer_vk = get_option('build_renderer_vk')
+if build_renderer_vk and (host_system == 'darwin' or platform_backend != 'sdl3')
+  build_renderer_vk = false
+endif
+renderer_vk_binary_name = 'renderer-vk_' + binary_arch
+
 renderer_gl_binary_name = 'renderer-gl_' + binary_arch
-if build_renderer_gl and build_engine
-  # the module's own idlib copy, compiled with engine flavor so codegen and
+if build_engine and (build_renderer_gl or build_renderer_vk)
+  # the modules' own idlib copy, compiled with engine flavor so codegen and
   # interface layout match the renderer sources
   renderer_idlib_library = static_library(
     'openq4_renderer_idlib',
@@ -1404,8 +1350,10 @@ if build_renderer_gl and build_engine
     pic: host_system == 'linux',
     install: false,
   )
-
+endif
+if build_renderer_gl and build_engine
   renderer_gl_module_args = engine_cpp_args + [
+    '-DOPENQ4_RENDERER_MODULE',
     '-DOPENQ4_RENDERER_GL_MODULE',
     '-DOPENQ4_SDL3_CONTEXT_IMPL',
   ]
@@ -1444,6 +1392,84 @@ if build_renderer_gl and build_engine
     dependencies: renderer_gl_deps,
     link_args: renderer_gl_link_args,
     link_depends: renderer_gl_link_depends,
+    gnu_symbol_visibility: host_system == 'linux' ? 'hidden' : 'default',
+    name_prefix: '',
+    install: true,
+    install_dir: install_root_dir,
+  )
+endif
+
+# Native Vulkan renderer module, full-module shape (Phase C,
+# docs/dev/plans/2026-07-17-vulkan-phase-c.md): the shared renderer front-end
+# with the GL backend replaced by the Vulkan backend. Mixed front-end TUs keep
+# their GL call sites satisfied by the hook-resolving GLEW flavor + the
+# module's GL stub TU; no GL and no SDL are linked.
+if build_renderer_vk and build_engine
+  renderer_vk_source_discovery = run_command(
+    py,
+    meson.project_source_root() / 'tools' / 'build' / 'meson_sources.py',
+    '--emit',
+    'renderer_vk',
+    check: true,
+  )
+  renderer_vk_source_paths = renderer_vk_source_discovery.stdout().strip().split('\n')
+  if renderer_vk_source_paths.length() == 0
+    error('tools/build/meson_sources.py returned no renderer_vk source files.')
+  endif
+  renderer_vk_sources = files(renderer_vk_source_paths)
+  renderer_vk_sources += files('src/external/volk/volk.c')
+
+  renderer_vk_include_dirs = [
+    engine_include_dirs,
+    include_directories(
+      'src/external/vulkan/include',
+      'src/external/volk',
+      'src/external/vma',
+    ),
+  ]
+  renderer_vk_module_args = engine_cpp_args + [
+    '-DOPENQ4_RENDERER_MODULE',
+    '-DOPENQ4_RENDERER_VK_MODULE',
+    '-DOPENQ4_RENDERER_BACKEND_NAME="vulkan"',
+    '-DOPENQ4_RENDERER_BACKEND_DESC="openQ4 native Vulkan renderer module"',
+    '-DVMA_STATIC_VULKAN_FUNCTIONS=0',
+    '-DVMA_DYNAMIC_VULKAN_FUNCTIONS=1',
+  ]
+  renderer_vk_c_args = engine_c_args
+  if host_system == 'windows'
+    renderer_vk_module_args += ['-DVK_USE_PLATFORM_WIN32_KHR', '-DGLAPI=extern']
+    renderer_vk_c_args += ['-DGLAPI=extern']
+  endif
+  renderer_vk_link_args = []
+  renderer_vk_link_depends = []
+  renderer_vk_deps = [glew_dedicated_dep]
+  if host_system == 'windows'
+    renderer_vk_link_args += ['/FIXED:NO', '/LARGEADDRESSAWARE']
+  elif host_system == 'linux'
+    renderer_vk_deps += [
+      cc.find_library('dl', required: false),
+      cc.find_library('m', required: false),
+    ]
+    renderer_vk_link_args += linux_module_link_hardening_args
+    if cpp.has_link_argument('-Wl,-z,defs')
+      renderer_vk_link_args += '-Wl,-z,defs'
+    endif
+    renderer_vk_export_map = files('tools/build/linux_renderer_module.map')
+    renderer_vk_link_args += '-Wl,--version-script=' + renderer_vk_export_map[0].full_path()
+    renderer_vk_link_depends += renderer_vk_export_map
+  endif
+
+  renderer_vk_module_target = shared_module(
+    renderer_vk_binary_name,
+    renderer_vk_sources,
+    include_directories: renderer_vk_include_dirs,
+    cpp_args: renderer_vk_module_args,
+    c_args: renderer_vk_c_args,
+    cpp_pch: pch_headers,
+    link_with: [renderer_idlib_library, imagetools_library, render_geo_library],
+    dependencies: renderer_vk_deps,
+    link_args: renderer_vk_link_args,
+    link_depends: renderer_vk_link_depends,
     gnu_symbol_visibility: host_system == 'linux' ? 'hidden' : 'default',
     name_prefix: '',
     install: true,

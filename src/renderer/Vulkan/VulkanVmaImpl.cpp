@@ -3,6 +3,22 @@
 // Vulkan Memory Allocator implementation translation unit. Kept separate so
 // the library's warnings and template instantiation stay out of module code.
 
+// the engine PCH poisons snprintf/vsnprintf toward idStr and idlib's Math.h
+// #undefs INT_MIN/INT_MAX (name-clash prevention); VMA and the std headers it
+// drags in (<limits>, <mutex>) need the real CRT declarations back
+#undef snprintf
+#undef vsnprintf
+#include <cstdio>
+#ifndef INT_MAX
+#define INT_MAX		2147483647
+#endif
+#ifndef INT_MIN
+#define INT_MIN		( -2147483647 - 1 )
+#endif
+#ifndef UINT_MAX
+#define UINT_MAX	0xffffffffu
+#endif
+
 #if defined( _MSC_VER )
 	#pragma warning( push )
 	#pragma warning( disable : 4100 4127 4189 4324 4505 )

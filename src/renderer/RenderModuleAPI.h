@@ -42,7 +42,11 @@
 //      GetCurrentLightGridBakeInfo, GetGLConfig) and idMaterial
 //      cross-module virtuals; a module built against a different layout
 //      must be rejected
-#define RENDER_API_VERSION			5
+//  6 - Phase C: Vulkan surface services — renderFramebufferDesc_t carries a
+//      surface kind so the engine creates the window for the right API, and
+//      the window services gain SDL-mediated Vulkan instance-extension and
+//      surface creation (the module never links SDL)
+#define RENDER_API_VERSION			6
 #define RENDER_API_ENTRY_POINT		"GetRenderAPI"
 
 class idSys;
@@ -119,6 +123,13 @@ typedef struct renderModuleWindowInfo_s {
 ===============================================================================
 */
 
+// which rendering API the window must be created for; zero-initialized
+// descs request a GL window, matching every pre-v6 caller
+typedef enum {
+	RENDER_SURFACE_GL = 0,
+	RENDER_SURFACE_VULKAN,
+} renderSurfaceKind_t;
+
 // requested framebuffer/context attributes for one negotiation attempt
 typedef struct renderFramebufferDesc_s {
 	int				redBits, greenBits, blueBits, alphaBits, depthBits, stencilBits;
@@ -129,6 +140,8 @@ typedef struct renderFramebufferDesc_s {
 	int				glMajor, glMinor;
 	bool			glCoreProfile;		// else compatibility profile
 	bool			glDebugContext;
+	// --- version 6 ---
+	int				surfaceKind;		// renderSurfaceKind_t; GL attributes above are ignored for Vulkan
 } renderFramebufferDesc_t;
 
 // ABI-neutral mirror of the renderer's glimpParms_t
@@ -190,10 +203,22 @@ typedef struct renderWindowServices_s {
 	const char *	( *GetVideoErrorString )( void );
 
 	// --- version 4: input bring-up/teardown, sequenced by the renderer's
-	// init and vid_restart paths exactly like the static build ---
+	// init and vid_restart sequencing exactly like the static build ---
 	void			( *InitInput )( void );
 	void			( *ShutdownInput )( void );
 	void			( *GrabMouseCursor )( bool grabIt );
+
+	// --- version 6: Vulkan surface primitives, executed on the engine's
+	// video instance (the module owns the VkInstance/device/swapchain but
+	// never links the windowing library). Handles are opaque here so this
+	// header stays Vulkan-free: vkInstance is the VkInstance handle,
+	// outVkSurface receives a VkSurfaceKHR (64-bit) ---
+	// copies up to maxNames required instance-extension name pointers
+	// (static engine-lifetime strings) and reports the true count
+	bool			( *GetVulkanInstanceExtensions )( const char **outNames, int maxNames, int *outCount );
+	// creates a surface on the current game window; false when the window
+	// was not created with RENDER_SURFACE_VULKAN or creation fails
+	bool			( *CreateVulkanSurface )( void *vkInstance, unsigned long long *outVkSurface );
 } renderWindowServices_t;
 
 // attribute selectors for renderWindowServices_t::GetGLAttribute; the

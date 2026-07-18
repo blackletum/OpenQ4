@@ -42,6 +42,7 @@ along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 #include "../../ui/EditWindow.h"
 
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_vulkan.h>
 
 #include <cmath>
 #include <cstdint>
@@ -5575,9 +5576,22 @@ static bool SDL3_WindowServices_PrepareWindowSystem(void) {
 	return true;
 }
 
+// which API the live window was created for; a preserved window of the
+// wrong kind cannot be reused across a renderer-API switch
+static int s_sdlWindowSurfaceKind = RENDER_SURFACE_GL;
+
 static bool SDL3_WindowServices_CreateWindowForFramebuffer(const renderFramebufferDesc_t *desc, const renderWindowParms_t *parms,
 														   renderModuleWindowInfo_t *outInfo, bool *outReusedPreservedWindow) {
-	SDL3_ApplyFramebufferDesc(desc);
+	const int requestedSurfaceKind = desc != NULL ? desc->surfaceKind : RENDER_SURFACE_GL;
+	if (requestedSurfaceKind == RENDER_SURFACE_GL) {
+		SDL3_ApplyFramebufferDesc(desc);
+	}
+
+	if (s_sdlWindow != NULL && s_sdlWindowSurfaceKind != requestedSurfaceKind) {
+		common->Printf("SDL3: preserved window is for a different rendering API; recreating\n");
+		SDL_DestroyWindow(s_sdlWindow);
+		s_sdlWindow = NULL;
+	}
 
 	const bool reusePreserved = s_sdlWindow != NULL;
 	if (outReusedPreservedWindow != NULL) {
@@ -5585,9 +5599,10 @@ static bool SDL3_WindowServices_CreateWindowForFramebuffer(const renderFramebuff
 	}
 
 	if (reusePreserved) {
-		common->Printf("SDL3: reusing preserved OpenGL window\n");
+		common->Printf("SDL3: reusing preserved %s window\n", requestedSurfaceKind == RENDER_SURFACE_VULKAN ? "Vulkan" : "OpenGL");
 	} else {
-		SDL_WindowFlags flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN;
+		SDL_WindowFlags flags = (requestedSurfaceKind == RENDER_SURFACE_VULKAN ? SDL_WINDOW_VULKAN : SDL_WINDOW_OPENGL)
+				| SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN;
 		if (!parms->fullScreen && parms->borderless) {
 			flags |= SDL_WINDOW_BORDERLESS;
 		}
@@ -5596,6 +5611,7 @@ static bool SDL3_WindowServices_CreateWindowForFramebuffer(const renderFramebuff
 		if (!s_sdlWindow) {
 			return false;
 		}
+		s_sdlWindowSurfaceKind = requestedSurfaceKind;
 
 		if (!parms->fullScreen && !parms->hiddenWindow) {
 			int targetX = win32.win_xpos.GetInteger();
@@ -5809,6 +5825,47 @@ static void SDL3_WindowServices_GrabMouseCursor(bool grabIt) {
 	Sys_GrabMouseCursor(grabIt);
 }
 
+static bool SDL3_WindowServices_GetVulkanInstanceExtensions(const char **outNames, int maxNames, int *outCount) {
+	if (outCount != NULL) {
+		*outCount = 0;
+	}
+	Uint32 sdlCount = 0;
+	const char *const *names = SDL_Vulkan_GetInstanceExtensions(&sdlCount);
+	if (names == NULL) {
+		common->Warning("SDL3: SDL_Vulkan_GetInstanceExtensions failed: %s", SDL_GetError());
+		return false;
+	}
+	if (outCount != NULL) {
+		*outCount = (int)sdlCount;
+	}
+	if (outNames != NULL) {
+		for (int i = 0; i < (int)sdlCount && i < maxNames; i++) {
+			outNames[i] = names[i];
+		}
+	}
+	return true;
+}
+
+static bool SDL3_WindowServices_CreateVulkanSurface(void *vkInstance, unsigned long long *outVkSurface) {
+	if (outVkSurface != NULL) {
+		*outVkSurface = 0;
+	}
+	if (s_sdlWindow == NULL || vkInstance == NULL || outVkSurface == NULL) {
+		return false;
+	}
+	if (s_sdlWindowSurfaceKind != RENDER_SURFACE_VULKAN) {
+		common->Warning("SDL3: CreateVulkanSurface on a window not created for Vulkan");
+		return false;
+	}
+	VkSurfaceKHR surface = 0;
+	if (!SDL_Vulkan_CreateSurface(s_sdlWindow, (VkInstance)vkInstance, NULL, &surface)) {
+		common->Warning("SDL3: SDL_Vulkan_CreateSurface failed: %s", SDL_GetError());
+		return false;
+	}
+	*outVkSurface = (unsigned long long)surface;
+	return true;
+}
+
 static const renderWindowServices_t s_sdl3WindowServices = {
 	SDL3_WindowServices_PrepareWindowSystem,
 	SDL3_WindowServices_CreateWindowForFramebuffer,
@@ -5834,6 +5891,8 @@ static const renderWindowServices_t s_sdl3WindowServices = {
 	SDL3_WindowServices_InitInput,
 	SDL3_WindowServices_ShutdownInput,
 	SDL3_WindowServices_GrabMouseCursor,
+	SDL3_WindowServices_GetVulkanInstanceExtensions,
+	SDL3_WindowServices_CreateVulkanSurface,
 };
 
 const renderWindowServices_t *Sys_GetRenderWindowServices(void) {
