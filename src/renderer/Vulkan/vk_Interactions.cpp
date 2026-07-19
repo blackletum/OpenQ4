@@ -665,7 +665,11 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 	interPass.viewport.maxDepth = 1.0f;
 
 	// batch state: one pipeline (ONE/ONE additive), depth test on with
-	// writes off (GLS_DEPTHMASK), bias off until a decal material needs it
+	// writes off (GLS_DEPTHMASK), bias off until a decal material needs it.
+	// The viewport is issued unconditionally: the depth-fill walk may have
+	// left a weapon depth-range (maxDepth 0.5) latched, and the pass's
+	// tracking assumes the baseline at entry
+	vkCmdSetViewport( cmd, 0, 1, &interPass.viewport );
 	vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
 	vkCmdSetDepthTestEnable( cmd, VK_TRUE );
 	vkCmdSetDepthWriteEnable( cmd, VK_FALSE );

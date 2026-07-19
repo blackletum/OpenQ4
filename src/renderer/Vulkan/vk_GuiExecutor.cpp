@@ -116,12 +116,14 @@ typedef struct vkDescriptorCacheEntry_s {
 // triples ring traffic. Direct-mapped on the geometry pointers; a
 // collision just re-uploads.
 static const int VK_TRI_MEMO_SIZE = 1024;	// power of two
-typedef struct vkTriUpload_s {
+typedef struct vkVertUpload_s {
 	const void *	vertKey;
-	const void *	idxKey;
 	int				vertexOffset;
+} vkVertUpload_t;
+typedef struct vkIdxUpload_s {
+	const void *	idxKey;
 	int				indexOffset;
-} vkTriUpload_t;
+} vkIdxUpload_t;
 
 typedef struct vkGuiExecutor_s {
 	bool				initialized;
@@ -161,7 +163,8 @@ typedef struct vkGuiExecutor_s {
 	float				clearColor[ 4 ];
 	int					boundVertexOffset;	// binding-0 ring offset of the last VK_Exec_BindTriGeometry
 
-	vkTriUpload_t		triMemo[ VK_TRI_MEMO_SIZE ];
+	vkVertUpload_t		vertMemo[ VK_TRI_MEMO_SIZE ];
+	vkIdxUpload_t		idxMemo[ VK_TRI_MEMO_SIZE ];
 } vkGuiExecutor_t;
 
 static vkGuiExecutor_t vkExec;
@@ -1004,7 +1007,8 @@ static bool VK_GuiExecutor_BeginFrame( void ) {
 	vkExec.vertexRings[ slot ].cursor = 0;
 	vkExec.indexRings[ slot ].cursor = 0;
 	vkExec.uniformRings[ slot ].cursor = 0;
-	memset( vkExec.triMemo, 0, sizeof( vkExec.triMemo ) );
+	memset( vkExec.vertMemo, 0, sizeof( vkExec.vertMemo ) );
+	memset( vkExec.idxMemo, 0, sizeof( vkExec.idxMemo ) );
 	return true;
 }
 
@@ -1094,28 +1098,47 @@ Shared surface helpers (2D + world views)
 bool VK_Exec_BindTriGeometry( VkCommandBuffer cmd, int slot, const srfTriangles_t *tri ) {
 	const void *vertKey = tri->ambientCache;
 	const void *idxKey = tri->indexes;
-	const unsigned int memoIndex = (unsigned int)( ( ( (uintptr_t)vertKey ) >> 4 ) & ( VK_TRI_MEMO_SIZE - 1 ) );
-	vkTriUpload_t &memo = vkExec.triMemo[ memoIndex ];
 
+	// independent vert/index memos: light-tris chains carry their own index
+	// subset over the SHARED ambient vertex array, so a combined memo would
+	// re-upload the full vertex payload once per light per surface
 	int vertexOffset;
+	{
+		const unsigned int memoIndex = (unsigned int)( ( ( (uintptr_t)vertKey ) >> 4 ) & ( VK_TRI_MEMO_SIZE - 1 ) );
+		vkVertUpload_t &memo = vkExec.vertMemo[ memoIndex ];
+		if ( memo.vertKey == vertKey && vertKey != NULL ) {
+			vertexOffset = memo.vertexOffset;
+		} else {
+			const idDrawVert *verts = (const idDrawVert *)vertexCache.Position( tri->ambientCache );
+			if ( verts == NULL ) {
+				return false;
+			}
+			vertexOffset = VK_Ring_Alloc( vkExec.vertexRings[ slot ], verts, tri->numVerts * (int)sizeof( idDrawVert ), 64 );
+			if ( vertexOffset < 0 ) {
+				return false;
+			}
+			if ( vertKey != NULL ) {
+				memo.vertKey = vertKey;
+				memo.vertexOffset = vertexOffset;
+			}
+		}
+	}
 	int indexOffset;
-	if ( memo.vertKey == vertKey && memo.idxKey == idxKey && vertKey != NULL ) {
-		vertexOffset = memo.vertexOffset;
-		indexOffset = memo.indexOffset;
-	} else {
-		const idDrawVert *verts = (const idDrawVert *)vertexCache.Position( tri->ambientCache );
-		if ( verts == NULL ) {
-			return false;
+	{
+		const unsigned int memoIndex = (unsigned int)( ( ( (uintptr_t)idxKey ) >> 4 ) & ( VK_TRI_MEMO_SIZE - 1 ) );
+		vkIdxUpload_t &memo = vkExec.idxMemo[ memoIndex ];
+		if ( memo.idxKey == idxKey && idxKey != NULL ) {
+			indexOffset = memo.indexOffset;
+		} else {
+			indexOffset = VK_Ring_Alloc( vkExec.indexRings[ slot ], tri->indexes, tri->numIndexes * (int)sizeof( glIndex_t ), 4 );
+			if ( indexOffset < 0 ) {
+				return false;
+			}
+			if ( idxKey != NULL ) {
+				memo.idxKey = idxKey;
+				memo.indexOffset = indexOffset;
+			}
 		}
-		vertexOffset = VK_Ring_Alloc( vkExec.vertexRings[ slot ], verts, tri->numVerts * (int)sizeof( idDrawVert ), 64 );
-		indexOffset = VK_Ring_Alloc( vkExec.indexRings[ slot ], tri->indexes, tri->numIndexes * (int)sizeof( glIndex_t ), 4 );
-		if ( vertexOffset < 0 || indexOffset < 0 ) {
-			return false;
-		}
-		memo.vertKey = vertKey;
-		memo.idxKey = idxKey;
-		memo.vertexOffset = vertexOffset;
-		memo.indexOffset = indexOffset;
 	}
 
 	VkDeviceSize vertexBindOffset = (VkDeviceSize)vertexOffset;
