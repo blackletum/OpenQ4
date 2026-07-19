@@ -20,6 +20,8 @@ COMMITTED = REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "gui_shaders
 SHADERS = [
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "gui.vert",
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "gui.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "sky.vert",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "sky.frag",
 ]
 
 
@@ -52,10 +54,11 @@ def main() -> int:
             print(f"vk_shader_header_pin: regeneration failed:\n{result.stdout}\n{result.stderr}", file=sys.stderr)
             return 1
         if regenerated.read_bytes() != COMMITTED.read_bytes():
+            shader_args = " ".join(s.relative_to(REPO_ROOT).as_posix() for s in SHADERS)
             print(
                 "vk_shader_header_pin: committed header is stale — regenerate with:\n"
                 "  python tools/build/spirv_to_header.py --header-out src/renderer/Vulkan/shaders/gui_shaders_spv.h "
-                "src/renderer/Vulkan/shaders/gui.vert src/renderer/Vulkan/shaders/gui.frag",
+                f"{shader_args}",
                 file=sys.stderr,
             )
             return 1

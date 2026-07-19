@@ -66,6 +66,7 @@ Executor state
 static const int VK_VERTEX_RING_BYTES = 32 * 1024 * 1024;
 static const int VK_INDEX_RING_BYTES = 8 * 1024 * 1024;
 static const int VK_MAX_GUI_PIPELINES = 64;
+static const int VK_MAX_CUBE_PIPELINES = 32;
 static const int VK_MAX_DESCRIPTOR_SETS = 4096;
 
 typedef struct vkRing_s {
@@ -80,6 +81,12 @@ typedef struct vkGuiPipeline_s {
 	int				blendBits;		// GLS src|dst blend bits
 	VkPipeline		pipeline;
 } vkGuiPipeline_t;
+
+typedef struct vkCubePipeline_s {
+	int				blendBits;		// GLS src|dst blend bits
+	bool			dirFromNormal;	// TG_DIFFUSE_CUBE: dir attribute reads the idDrawVert normal
+	VkPipeline		pipeline;
+} vkCubePipeline_t;
 
 typedef struct vkGuiPushConstants_s {
 	float			mvp[ 16 ];
@@ -111,11 +118,15 @@ typedef struct vkGuiExecutor_s {
 
 	VkShaderModule		vertModule;
 	VkShaderModule		fragModule;
+	VkShaderModule		skyVertModule;
+	VkShaderModule		skyFragModule;
 	VkDescriptorSetLayout setLayout;
 	VkDescriptorPool	descriptorPool;
 	VkPipelineLayout	pipelineLayout;
 	vkGuiPipeline_t		pipelines[ VK_MAX_GUI_PIPELINES ];
 	int					numPipelines;
+	vkCubePipeline_t	cubePipelines[ VK_MAX_CUBE_PIPELINES ];
+	int					numCubePipelines;
 	VkFormat			pipelineTargetFormat;	// swapchain format the pipelines were built for
 
 	vkRing_t			vertexRings[ VK_FRAMES_IN_FLIGHT ];
@@ -129,6 +140,7 @@ typedef struct vkGuiExecutor_s {
 	uint32_t			swapImageIndex;
 	VkCommandBuffer		cmd;
 	float				clearColor[ 4 ];
+	int					boundVertexOffset;	// binding-0 ring offset of the last VK_Exec_BindTriGeometry
 
 	vkTriUpload_t		triMemo[ VK_TRI_MEMO_SIZE ];
 } vkGuiExecutor_t;
@@ -228,55 +240,22 @@ static VkBlendFactor VK_BlendFactorFromGLSDst( int bits ) {
 	}
 }
 
-static VkPipeline VK_GuiExecutor_GetPipeline( int stateBits ) {
-	const int blendBits = stateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
-
-	for ( int i = 0; i < vkExec.numPipelines; i++ ) {
-		if ( vkExec.pipelines[ i ].blendBits == blendBits ) {
-			return vkExec.pipelines[ i ].pipeline;
-		}
-	}
-	if ( vkExec.numPipelines >= VK_MAX_GUI_PIPELINES ) {
-		common->Warning( "Vulkan: GUI pipeline cache exhausted" );
-		return vkExec.pipelines[ 0 ].pipeline;
-	}
-
+// shared graphics-pipeline assembly for the GUI and cube-texgen variants:
+// everything except the shader modules and vertex input is identical
+// (dynamic depth/cull/bias state, blend from the GLS bits, dynamic
+// rendering against the swapchain + depth formats, one layout)
+static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderModule fragModule,
+		const VkPipelineVertexInputStateCreateInfo *vertexInput, int blendBits ) {
 	VkPipelineShaderStageCreateInfo stages[ 2 ];
 	memset( stages, 0, sizeof( stages ) );
 	stages[ 0 ].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 	stages[ 0 ].stage = VK_SHADER_STAGE_VERTEX_BIT;
-	stages[ 0 ].module = vkExec.vertModule;
+	stages[ 0 ].module = vertModule;
 	stages[ 0 ].pName = "main";
 	stages[ 1 ].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 	stages[ 1 ].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-	stages[ 1 ].module = vkExec.fragModule;
+	stages[ 1 ].module = fragModule;
 	stages[ 1 ].pName = "main";
-
-	// idDrawVert: xyz@0, color ubyte4@12, st@56 (64-byte stride)
-	VkVertexInputBindingDescription binding;
-	memset( &binding, 0, sizeof( binding ) );
-	binding.stride = sizeof( idDrawVert );
-	binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-
-	VkVertexInputAttributeDescription attrs[ 3 ];
-	memset( attrs, 0, sizeof( attrs ) );
-	attrs[ 0 ].location = 0;
-	attrs[ 0 ].format = VK_FORMAT_R32G32B32_SFLOAT;
-	attrs[ 0 ].offset = 0;
-	attrs[ 1 ].location = 1;
-	attrs[ 1 ].format = VK_FORMAT_R8G8B8A8_UNORM;
-	attrs[ 1 ].offset = 12;
-	attrs[ 2 ].location = 2;
-	attrs[ 2 ].format = VK_FORMAT_R32G32_SFLOAT;
-	attrs[ 2 ].offset = 56;
-
-	VkPipelineVertexInputStateCreateInfo vertexInput;
-	memset( &vertexInput, 0, sizeof( vertexInput ) );
-	vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-	vertexInput.vertexBindingDescriptionCount = 1;
-	vertexInput.pVertexBindingDescriptions = &binding;
-	vertexInput.vertexAttributeDescriptionCount = 3;
-	vertexInput.pVertexAttributeDescriptions = attrs;
 
 	VkPipelineInputAssemblyStateCreateInfo inputAssembly;
 	memset( &inputAssembly, 0, sizeof( inputAssembly ) );
@@ -363,7 +342,7 @@ static VkPipeline VK_GuiExecutor_GetPipeline( int stateBits ) {
 	gpci.pNext = &rendering;
 	gpci.stageCount = 2;
 	gpci.pStages = stages;
-	gpci.pVertexInputState = &vertexInput;
+	gpci.pVertexInputState = vertexInput;
 	gpci.pInputAssemblyState = &inputAssembly;
 	gpci.pViewportState = &viewportState;
 	gpci.pRasterizationState = &raster;
@@ -375,12 +354,120 @@ static VkPipeline VK_GuiExecutor_GetPipeline( int stateBits ) {
 
 	VkPipeline pipeline = VK_NULL_HANDLE;
 	if ( vkCreateGraphicsPipelines( vkCtx.device, VK_NULL_HANDLE, 1, &gpci, NULL, &pipeline ) != VK_SUCCESS ) {
-		common->Warning( "Vulkan: GUI pipeline creation failed (blend 0x%x)", blendBits );
+		common->Warning( "Vulkan: pipeline creation failed (blend 0x%x)", blendBits );
+		return VK_NULL_HANDLE;
+	}
+	return pipeline;
+}
+
+static VkPipeline VK_GuiExecutor_GetPipeline( int stateBits ) {
+	const int blendBits = stateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
+
+	for ( int i = 0; i < vkExec.numPipelines; i++ ) {
+		if ( vkExec.pipelines[ i ].blendBits == blendBits ) {
+			return vkExec.pipelines[ i ].pipeline;
+		}
+	}
+	if ( vkExec.numPipelines >= VK_MAX_GUI_PIPELINES ) {
+		common->Warning( "Vulkan: GUI pipeline cache exhausted" );
+		return vkExec.pipelines[ 0 ].pipeline;
+	}
+
+	// idDrawVert: xyz@0, color ubyte4@12, st@56 (64-byte stride)
+	VkVertexInputBindingDescription binding;
+	memset( &binding, 0, sizeof( binding ) );
+	binding.stride = sizeof( idDrawVert );
+	binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+	VkVertexInputAttributeDescription attrs[ 3 ];
+	memset( attrs, 0, sizeof( attrs ) );
+	attrs[ 0 ].location = 0;
+	attrs[ 0 ].format = VK_FORMAT_R32G32B32_SFLOAT;
+	attrs[ 0 ].offset = 0;
+	attrs[ 1 ].location = 1;
+	attrs[ 1 ].format = VK_FORMAT_R8G8B8A8_UNORM;
+	attrs[ 1 ].offset = 12;
+	attrs[ 2 ].location = 2;
+	attrs[ 2 ].format = VK_FORMAT_R32G32_SFLOAT;
+	attrs[ 2 ].offset = 56;
+
+	VkPipelineVertexInputStateCreateInfo vertexInput;
+	memset( &vertexInput, 0, sizeof( vertexInput ) );
+	vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+	vertexInput.vertexBindingDescriptionCount = 1;
+	vertexInput.pVertexBindingDescriptions = &binding;
+	vertexInput.vertexAttributeDescriptionCount = 3;
+	vertexInput.pVertexAttributeDescriptions = attrs;
+
+	VkPipeline pipeline = VK_Exec_CreatePipeline( vkExec.vertModule, vkExec.fragModule, &vertexInput, blendBits );
+	if ( pipeline == VK_NULL_HANDLE ) {
 		return vkExec.numPipelines > 0 ? vkExec.pipelines[ 0 ].pipeline : VK_NULL_HANDLE;
 	}
 	vkExec.pipelines[ vkExec.numPipelines ].blendBits = blendBits;
 	vkExec.pipelines[ vkExec.numPipelines ].pipeline = pipeline;
 	vkExec.numPipelines++;
+	return pipeline;
+}
+
+// cube-texgen pipelines (TG_SKYBOX_CUBE / TG_WOBBLESKY_CUBE / TG_DIFFUSE_CUBE):
+// position from the idDrawVert stream plus a vec3 direction attribute — the
+// front-end texgen's tightly packed stream on binding 1 for the skies, or
+// the idDrawVert normal straight off binding 0 for diffuse cube maps
+static VkPipeline VK_GuiExecutor_GetCubePipeline( int stateBits, bool dirFromNormal ) {
+	const int blendBits = stateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
+
+	for ( int i = 0; i < vkExec.numCubePipelines; i++ ) {
+		if ( vkExec.cubePipelines[ i ].blendBits == blendBits
+				&& vkExec.cubePipelines[ i ].dirFromNormal == dirFromNormal ) {
+			return vkExec.cubePipelines[ i ].pipeline;
+		}
+	}
+	if ( vkExec.numCubePipelines >= VK_MAX_CUBE_PIPELINES ) {
+		common->Warning( "Vulkan: cube pipeline cache exhausted" );
+		return vkExec.cubePipelines[ 0 ].pipeline;
+	}
+
+	VkVertexInputBindingDescription bindings[ 2 ];
+	memset( bindings, 0, sizeof( bindings ) );
+	bindings[ 0 ].binding = 0;
+	bindings[ 0 ].stride = sizeof( idDrawVert );
+	bindings[ 0 ].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+	bindings[ 1 ].binding = 1;
+	bindings[ 1 ].stride = sizeof( idVec3 );
+	bindings[ 1 ].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+	VkVertexInputAttributeDescription attrs[ 2 ];
+	memset( attrs, 0, sizeof( attrs ) );
+	attrs[ 0 ].location = 0;
+	attrs[ 0 ].binding = 0;
+	attrs[ 0 ].format = VK_FORMAT_R32G32B32_SFLOAT;
+	attrs[ 0 ].offset = 0;
+	attrs[ 1 ].location = 1;
+	attrs[ 1 ].format = VK_FORMAT_R32G32B32_SFLOAT;
+	if ( dirFromNormal ) {
+		attrs[ 1 ].binding = 0;
+		attrs[ 1 ].offset = (uint32_t)offsetof( idDrawVert, normal );
+	} else {
+		attrs[ 1 ].binding = 1;
+		attrs[ 1 ].offset = 0;
+	}
+
+	VkPipelineVertexInputStateCreateInfo vertexInput;
+	memset( &vertexInput, 0, sizeof( vertexInput ) );
+	vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+	vertexInput.vertexBindingDescriptionCount = dirFromNormal ? 1 : 2;
+	vertexInput.pVertexBindingDescriptions = bindings;
+	vertexInput.vertexAttributeDescriptionCount = 2;
+	vertexInput.pVertexAttributeDescriptions = attrs;
+
+	VkPipeline pipeline = VK_Exec_CreatePipeline( vkExec.skyVertModule, vkExec.skyFragModule, &vertexInput, blendBits );
+	if ( pipeline == VK_NULL_HANDLE ) {
+		return VK_NULL_HANDLE;
+	}
+	vkExec.cubePipelines[ vkExec.numCubePipelines ].blendBits = blendBits;
+	vkExec.cubePipelines[ vkExec.numCubePipelines ].dirFromNormal = dirFromNormal;
+	vkExec.cubePipelines[ vkExec.numCubePipelines ].pipeline = pipeline;
+	vkExec.numCubePipelines++;
 	return pipeline;
 }
 
@@ -457,6 +544,18 @@ static bool VK_GuiExecutor_Init( void ) {
 	smci.pCode = (const uint32_t *)vk_gui_frag_spv;
 	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.fragModule ) != VK_SUCCESS ) {
 		common->Warning( "Vulkan: GUI fragment shader module creation failed" );
+		return false;
+	}
+	smci.codeSize = vk_sky_vert_spv_size;
+	smci.pCode = (const uint32_t *)vk_sky_vert_spv;
+	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.skyVertModule ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: sky vertex shader module creation failed" );
+		return false;
+	}
+	smci.codeSize = vk_sky_frag_spv_size;
+	smci.pCode = (const uint32_t *)vk_sky_frag_spv;
+	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.skyFragModule ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: sky fragment shader module creation failed" );
 		return false;
 	}
 
@@ -536,6 +635,11 @@ void VK_GuiExecutor_Shutdown( void ) {
 			vkDestroyPipeline( vkCtx.device, vkExec.pipelines[ i ].pipeline, NULL );
 		}
 	}
+	for ( int i = 0; i < vkExec.numCubePipelines; i++ ) {
+		if ( vkExec.cubePipelines[ i ].pipeline != VK_NULL_HANDLE ) {
+			vkDestroyPipeline( vkCtx.device, vkExec.cubePipelines[ i ].pipeline, NULL );
+		}
+	}
 	if ( vkExec.pipelineLayout != VK_NULL_HANDLE ) {
 		vkDestroyPipelineLayout( vkCtx.device, vkExec.pipelineLayout, NULL );
 	}
@@ -550,6 +654,12 @@ void VK_GuiExecutor_Shutdown( void ) {
 	}
 	if ( vkExec.fragModule != VK_NULL_HANDLE ) {
 		vkDestroyShaderModule( vkCtx.device, vkExec.fragModule, NULL );
+	}
+	if ( vkExec.skyVertModule != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, vkExec.skyVertModule, NULL );
+	}
+	if ( vkExec.skyFragModule != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, vkExec.skyFragModule, NULL );
 	}
 	for ( int i = 0; i < VK_FRAMES_IN_FLIGHT; i++ ) {
 		if ( vkExec.vertexRings[ i ].buffer != VK_NULL_HANDLE ) {
@@ -609,6 +719,10 @@ static bool VK_GuiExecutor_BeginFrame( void ) {
 			vkDestroyPipeline( vkCtx.device, vkExec.pipelines[ i ].pipeline, NULL );
 		}
 		vkExec.numPipelines = 0;
+		for ( int i = 0; i < vkExec.numCubePipelines; i++ ) {
+			vkDestroyPipeline( vkCtx.device, vkExec.cubePipelines[ i ].pipeline, NULL );
+		}
+		vkExec.numCubePipelines = 0;
 		vkExec.pipelineTargetFormat = vkCtx.swapchainFormat;
 	}
 
@@ -836,6 +950,7 @@ static bool VK_Exec_BindTriGeometry( VkCommandBuffer cmd, int slot, const srfTri
 	VkDeviceSize vertexBindOffset = (VkDeviceSize)vertexOffset;
 	vkCmdBindVertexBuffers( cmd, 0, 1, &vkExec.vertexRings[ slot ].buffer, &vertexBindOffset );
 	vkCmdBindIndexBuffer( cmd, vkExec.indexRings[ slot ].buffer, (VkDeviceSize)indexOffset, VK_INDEX_TYPE_UINT32 );
+	vkExec.boundVertexOffset = vertexOffset;	// the cube-texgen path re-binds binding 0 alongside its dir stream
 	return true;
 }
 
@@ -888,7 +1003,8 @@ static void VK_BuildSurfMVP( const viewDef_t *viewDef, const drawSurf_t *drawSur
 // the RB_STD_T_RenderShaderPasses ambient-stage walk shared by 2D views and
 // the world ambient passes. Geometry and scissor are already bound; mvp is
 // clip-z fixed. worldDepthState additionally applies each stage's GLS depth
-// bits and skips non-explicit texgens (cube texgens arrive later in E).
+// bits. Cube texgens (skybox/wobblesky/diffuse) draw through the cube
+// pipeline; reflect/screen texgens remain later-phase gaps.
 static void VK_Exec_DrawAmbientStages( const viewDef_t *viewDef, const drawSurf_t *drawSurf,
 		const srfTriangles_t *tri, const float mvp[ 16 ], bool worldDepthState ) {
 	VkCommandBuffer cmd = vkExec.cmd;
@@ -910,8 +1026,15 @@ static void VK_Exec_DrawAmbientStages( const viewDef_t *viewDef, const drawSurf_
 		if ( pStage->newStage != NULL ) {
 			continue;	// program stages: unsupported flat-render gap
 		}
-		if ( worldDepthState && pStage->texture.texgen != TG_EXPLICIT ) {
-			continue;	// cube/screen texgens land later in Phase E
+		// cube texgens draw through the cube pipeline; reflect/screen texgens
+		// remain later-phase gaps
+		const int texgen = pStage->texture.texgen;
+		const bool cubeStage = texgen == TG_SKYBOX_CUBE || texgen == TG_WOBBLESKY_CUBE || texgen == TG_DIFFUSE_CUBE;
+		if ( worldDepthState && texgen != TG_EXPLICIT && !cubeStage ) {
+			continue;
+		}
+		if ( ( texgen == TG_SKYBOX_CUBE || texgen == TG_WOBBLESKY_CUBE ) && drawSurf->dynamicTexCoords == NULL ) {
+			continue;	// the front-end texgen produced no direction stream
 		}
 
 		float color[ 4 ];
@@ -955,9 +1078,38 @@ static void VK_Exec_DrawAmbientStages( const viewDef_t *viewDef, const drawSurf_
 		if ( stageImage == NULL ) {
 			continue;
 		}
+		// cube stages sample through samplerCube; the descriptor's view must
+		// really be a cube view or validation trips
+		if ( cubeStage ) {
+			const vkImageEntry_t *cubeEntry = VK_Image_GetEntry( stageImage->GetDeviceHandle() );
+			if ( cubeEntry == NULL || !cubeEntry->isCube ) {
+				continue;
+			}
+		}
 		VkDescriptorSet descriptor = VK_GuiExecutor_GetImageDescriptor( stageImage->GetDeviceHandle() );
 		if ( descriptor == VK_NULL_HANDLE ) {
 			continue;
+		}
+
+		// skybox/wobblesky direction stream: the front-end texgen writes
+		// tightly packed vec3s into the CPU-backed vertex cache; stream them
+		// into the frame ring and bind them as binding 1 next to the re-bound
+		// idDrawVert stream (diffuse cube reads the idDrawVert normal off
+		// binding 0 instead, so no extra buffer is needed)
+		if ( texgen == TG_SKYBOX_CUBE || texgen == TG_WOBBLESKY_CUBE ) {
+			const void *dirCoords = vertexCache.Position( drawSurf->dynamicTexCoords );
+			if ( dirCoords == NULL ) {
+				continue;
+			}
+			const int slot = vkExec.frameSlot;
+			const int dirOffset = VK_Ring_Alloc( vkExec.vertexRings[ slot ], dirCoords,
+					tri->numVerts * (int)sizeof( idVec3 ), 16 );
+			if ( dirOffset < 0 ) {
+				continue;
+			}
+			VkBuffer dirBuffers[ 2 ] = { vkExec.vertexRings[ slot ].buffer, vkExec.vertexRings[ slot ].buffer };
+			VkDeviceSize dirOffsets[ 2 ] = { (VkDeviceSize)vkExec.boundVertexOffset, (VkDeviceSize)dirOffset };
+			vkCmdBindVertexBuffers( cmd, 0, 2, dirBuffers, dirOffsets );
 		}
 
 		vkGuiPushConstants_t push;
@@ -1047,9 +1199,23 @@ static void VK_Exec_DrawAmbientStages( const viewDef_t *viewDef, const drawSurf_
 			vkCmdSetDepthBias( cmd, r_offsetUnits.GetFloat() * pStage->privatePolygonOffset, 0.0f, r_offsetFactor.GetFloat() );
 		}
 
-		VkPipeline pipeline = VK_GuiExecutor_GetPipeline( pStage->drawStateBits );
+		VkPipeline pipeline;
+		if ( cubeStage ) {
+			pipeline = VK_GuiExecutor_GetCubePipeline( pStage->drawStateBits, texgen == TG_DIFFUSE_CUBE );
+		} else {
+			pipeline = VK_GuiExecutor_GetPipeline( pStage->drawStateBits );
+		}
 		if ( pipeline == VK_NULL_HANDLE ) {
 			continue;
+		}
+
+		// one-shot bring-up evidence that a cube texgen actually drew
+		if ( cubeStage ) {
+			static bool loggedFirstCubeStage = false;
+			if ( !loggedFirstCubeStage ) {
+				loggedFirstCubeStage = true;
+				common->Printf( "Vulkan: first cube-texgen stage drew (texgen %d, %s)\n", texgen, shader->GetName() );
+			}
 		}
 		vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
 		vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkExec.pipelineLayout, 0, 1, &descriptor, 0, NULL );
