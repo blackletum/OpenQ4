@@ -46,6 +46,7 @@ static float vkClearColor[ 4 ] = { 0.0f, 0.0f, 0.0f, 1.0f };
 // vk_GuiExecutor.cpp
 void VK_GuiExecutor_SetClearColor( const float color[ 4 ] );
 void VK_GuiExecutor_Draw2DView( const viewDef_t *viewDef );
+void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef );
 bool VK_GuiExecutor_EnsureFrameOpen( void );
 bool VK_GuiExecutor_EndFrameAndPresent( void );
 bool VK_GuiExecutor_FrameIsOpen( void );
@@ -95,6 +96,17 @@ static void VK_FillGLConfigFromDevice( void ) {
 	// and FatalErrors on the first BeginFrame after a config marks
 	// r_renderer modified
 	glConfig.allowARB2Path = true;
+
+	// capabilities Vulkan carries unconditionally that shared front-end code
+	// checks: NPOT (kills TG_POT_CORRECTION texgens), S3TC + BC7 (without
+	// these R_BinaryImageHeaderSupportedByRenderer REJECTS generated
+	// compressed .bimage files and lightgrid chunks — retail DDS loads
+	// bypass the check, which masked this at menu scope), cube maps
+	// (vk_Image allocates 6-layer CUBE_COMPATIBLE images since Phase D)
+	glConfig.textureNonPowerOfTwoAvailable = true;
+	glConfig.textureCompressionAvailable = true;
+	glConfig.bptcTextureCompressionAvailable = true;
+	glConfig.cubeMapAvailable = true;
 }
 
 /*
@@ -353,11 +365,15 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 			}
 			case RC_DRAW_VIEW: {
 				const drawSurfsCommand_t *cmd = (const drawSurfsCommand_t *)cmds;
-				if ( cmd->viewDef != NULL && cmd->viewDef->viewEntitys == NULL ) {
-					// 2D view (GUI/console/cinematics)
-					VK_GuiExecutor_Draw2DView( cmd->viewDef );
+				if ( cmd->viewDef != NULL ) {
+					if ( cmd->viewDef->viewEntitys == NULL ) {
+						// 2D view (GUI/console/cinematics)
+						VK_GuiExecutor_Draw2DView( cmd->viewDef );
+					} else {
+						// world view: depth prepass + ambient walks (Phase E)
+						VK_GuiExecutor_Draw3DView( cmd->viewDef );
+					}
 				}
-				// 3D views: Phase E
 				break;
 			}
 			case RC_SWAP_BUFFERS:

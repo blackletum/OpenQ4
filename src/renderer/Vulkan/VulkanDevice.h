@@ -80,6 +80,15 @@ typedef struct vkDeviceContext_s {
 	// --- Phase D ---
 	VmaAllocator		allocator;
 
+	// --- Phase E ---
+	// per-frame-slot depth/stencil attachment (two frames can overlap on the
+	// GPU, so a single shared depth image would race); recreated with the
+	// swapchain, transient contents (cleared per 3D view, never stored)
+	VkFormat			depthFormat;			// probed D24S8 or D32S8
+	VkImage				depthImages[ VK_FRAMES_IN_FLIGHT ];
+	VkImageView			depthViews[ VK_FRAMES_IN_FLIGHT ];
+	VmaAllocation		depthAllocations[ VK_FRAMES_IN_FLIGHT ];
+
 	// synchronous upload path: its own command buffer + fence, submitted and
 	// waited immediately (image/vertex data reaches the GPU before the frame
 	// that samples it is submitted)

@@ -92,6 +92,86 @@ static void VK_Device_DestroySwapchainObjects( void ) {
 		vkCtx.swapchain = VK_NULL_HANDLE;
 	}
 	vkCtx.swapchainImageCount = 0;
+
+	for ( int i = 0; i < VK_FRAMES_IN_FLIGHT; i++ ) {
+		if ( vkCtx.depthViews[ i ] != VK_NULL_HANDLE ) {
+			vkDestroyImageView( vkCtx.device, vkCtx.depthViews[ i ], NULL );
+			vkCtx.depthViews[ i ] = VK_NULL_HANDLE;
+		}
+		if ( vkCtx.depthImages[ i ] != VK_NULL_HANDLE ) {
+			vmaDestroyImage( vkCtx.allocator, vkCtx.depthImages[ i ], vkCtx.depthAllocations[ i ] );
+			vkCtx.depthImages[ i ] = VK_NULL_HANDLE;
+			vkCtx.depthAllocations[ i ] = NULL;
+		}
+	}
+}
+
+/*
+====================
+VK_Device_CreateDepthImages
+
+Per-frame-slot depth/stencil attachments sized to the swapchain. Stencil is
+carried now so the Phase G stencil-shadow work needs no format churn.
+====================
+*/
+static bool VK_Device_CreateDepthImages( void ) {
+	if ( vkCtx.depthFormat == VK_FORMAT_UNDEFINED ) {
+		const VkFormat candidates[ 2 ] = { VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D32_SFLOAT_S8_UINT };
+		for ( int i = 0; i < 2; i++ ) {
+			VkFormatProperties props;
+			vkGetPhysicalDeviceFormatProperties( vkCtx.physicalDevice, candidates[ i ], &props );
+			if ( props.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT ) {
+				vkCtx.depthFormat = candidates[ i ];
+				break;
+			}
+		}
+		if ( vkCtx.depthFormat == VK_FORMAT_UNDEFINED ) {
+			common->Warning( "Vulkan: no depth/stencil attachment format available" );
+			return false;
+		}
+	}
+
+	for ( int i = 0; i < VK_FRAMES_IN_FLIGHT; i++ ) {
+		VkImageCreateInfo ici;
+		memset( &ici, 0, sizeof( ici ) );
+		ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		ici.imageType = VK_IMAGE_TYPE_2D;
+		ici.format = vkCtx.depthFormat;
+		ici.extent.width = vkCtx.swapchainExtent.width;
+		ici.extent.height = vkCtx.swapchainExtent.height;
+		ici.extent.depth = 1;
+		ici.mipLevels = 1;
+		ici.arrayLayers = 1;
+		ici.samples = VK_SAMPLE_COUNT_1_BIT;
+		ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+		ici.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+
+		VmaAllocationCreateInfo vaci;
+		memset( &vaci, 0, sizeof( vaci ) );
+		vaci.usage = VMA_MEMORY_USAGE_AUTO;
+
+		if ( vmaCreateImage( vkCtx.allocator, &ici, &vaci, &vkCtx.depthImages[ i ],
+				&vkCtx.depthAllocations[ i ], NULL ) != VK_SUCCESS ) {
+			common->Warning( "Vulkan: depth image creation failed (%ux%u)",
+					vkCtx.swapchainExtent.width, vkCtx.swapchainExtent.height );
+			return false;
+		}
+
+		VkImageViewCreateInfo ivci;
+		memset( &ivci, 0, sizeof( ivci ) );
+		ivci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		ivci.image = vkCtx.depthImages[ i ];
+		ivci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		ivci.format = vkCtx.depthFormat;
+		ivci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+		ivci.subresourceRange.levelCount = 1;
+		ivci.subresourceRange.layerCount = 1;
+		if ( vkCreateImageView( vkCtx.device, &ivci, NULL, &vkCtx.depthViews[ i ] ) != VK_SUCCESS ) {
+			common->Warning( "Vulkan: depth image view creation failed" );
+			return false;
+		}
+	}
+	return true;
 }
 
 /*
@@ -240,6 +320,9 @@ static bool VK_Device_CreateSwapchain( void ) {
 		ivci.subresourceRange.layerCount = 1;
 		if ( vkCreateImageView( vkCtx.device, &ivci, NULL, &vkCtx.swapchainViews[ i ] ) != VK_SUCCESS ) {
 			common->Warning( "Vulkan: swapchain image view creation failed" );
+			// no half-built swapchain may survive: the frame path uses the
+			// per-image objects and depth images unconditionally
+			VK_Device_DestroySwapchainObjects();
 			return false;
 		}
 
@@ -248,8 +331,14 @@ static bool VK_Device_CreateSwapchain( void ) {
 		semci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 		if ( vkCreateSemaphore( vkCtx.device, &semci, NULL, &vkCtx.renderFinishedSemaphores[ i ] ) != VK_SUCCESS ) {
 			common->Warning( "Vulkan: render-finished semaphore creation failed" );
+			VK_Device_DestroySwapchainObjects();
 			return false;
 		}
+	}
+
+	if ( !VK_Device_CreateDepthImages() ) {
+		VK_Device_DestroySwapchainObjects();
+		return false;
 	}
 
 	common->Printf( "Vulkan: created swapchain %ux%u format=%d images=%u presentMode=%d\n",

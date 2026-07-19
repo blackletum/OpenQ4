@@ -61,8 +61,10 @@ void VK_VertexCache_Shutdown( void ) {
 Executor state
 ====================
 */
-static const int VK_VERTEX_RING_BYTES = 8 * 1024 * 1024;
-static const int VK_INDEX_RING_BYTES = 2 * 1024 * 1024;
+// world views stream all visible geometry through the rings each frame
+// (the vertex cache is CPU-backed); sized for q4dm2-scale 3D views
+static const int VK_VERTEX_RING_BYTES = 32 * 1024 * 1024;
+static const int VK_INDEX_RING_BYTES = 8 * 1024 * 1024;
 static const int VK_MAX_GUI_PIPELINES = 64;
 static const int VK_MAX_DESCRIPTOR_SETS = 4096;
 
@@ -92,6 +94,18 @@ typedef struct vkDescriptorCacheEntry_s {
 	unsigned int	generation;
 } vkDescriptorCacheEntry_t;
 
+// per-frame memo of surfaces already streamed into the rings: the depth
+// fill and the two ambient walks visit the same tris, and re-uploading
+// triples ring traffic. Direct-mapped on the geometry pointers; a
+// collision just re-uploads.
+static const int VK_TRI_MEMO_SIZE = 1024;	// power of two
+typedef struct vkTriUpload_s {
+	const void *	vertKey;
+	const void *	idxKey;
+	int				vertexOffset;
+	int				indexOffset;
+} vkTriUpload_t;
+
 typedef struct vkGuiExecutor_s {
 	bool				initialized;
 
@@ -115,9 +129,31 @@ typedef struct vkGuiExecutor_s {
 	uint32_t			swapImageIndex;
 	VkCommandBuffer		cmd;
 	float				clearColor[ 4 ];
+
+	vkTriUpload_t		triMemo[ VK_TRI_MEMO_SIZE ];
 } vkGuiExecutor_t;
 
 static vkGuiExecutor_t vkExec;
+
+/*
+====================
+VK_FixupClipSpaceZ
+
+The front-end builds GL-convention projections (NDC z in [-1,1]; the 2D
+ortho even lands gui verts at exactly -1). Vulkan clips to 0 <= z <= w, so
+every MVP is remapped at assembly: row2 = (row2 + row3) / 2. Window depth
+then matches GL's glDepthRange(0,1), keeping depth-compare parity for the
+world passes. Column-major float[16]: row2 = elements 2,6,10,14.
+====================
+*/
+void VK_FixupClipSpaceZ( float dst[ 16 ], const float src[ 16 ] ) {
+	if ( dst != src ) {
+		memcpy( dst, src, 16 * sizeof( float ) );
+	}
+	for ( int col = 0; col < 4; col++ ) {
+		dst[ col * 4 + 2 ] = 0.5f * ( src[ col * 4 + 2 ] + src[ col * 4 + 3 ] );
+	}
+}
 
 /*
 ====================
@@ -288,18 +324,38 @@ static VkPipeline VK_GuiExecutor_GetPipeline( int stateBits ) {
 	blendState.attachmentCount = 1;
 	blendState.pAttachments = &blendAttachment;
 
-	VkDynamicState dynamicStates[ 2 ] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+	// depth/cull/bias are core-1.3 dynamic state, so one pipeline per blend
+	// combination serves 2D (depth off) and the world passes (per-stage
+	// depth func/write, per-material cull, polygon-offset)
+	VkDynamicState dynamicStates[ 9 ] = {
+		VK_DYNAMIC_STATE_VIEWPORT,
+		VK_DYNAMIC_STATE_SCISSOR,
+		VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
+		VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
+		VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
+		VK_DYNAMIC_STATE_CULL_MODE,
+		VK_DYNAMIC_STATE_FRONT_FACE,
+		VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE,
+		VK_DYNAMIC_STATE_DEPTH_BIAS,
+	};
 	VkPipelineDynamicStateCreateInfo dynamicState;
 	memset( &dynamicState, 0, sizeof( dynamicState ) );
 	dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-	dynamicState.dynamicStateCount = 2;
+	dynamicState.dynamicStateCount = 9;
 	dynamicState.pDynamicStates = dynamicStates;
+
+	VkPipelineDepthStencilStateCreateInfo depthStencil;
+	memset( &depthStencil, 0, sizeof( depthStencil ) );
+	depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+	// test/write/compare are dynamic; stencil stays off until Phase G
 
 	VkPipelineRenderingCreateInfo rendering;
 	memset( &rendering, 0, sizeof( rendering ) );
 	rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
 	rendering.colorAttachmentCount = 1;
 	rendering.pColorAttachmentFormats = &vkCtx.swapchainFormat;
+	rendering.depthAttachmentFormat = vkCtx.depthFormat;
+	rendering.stencilAttachmentFormat = vkCtx.depthFormat;
 
 	VkGraphicsPipelineCreateInfo gpci;
 	memset( &gpci, 0, sizeof( gpci ) );
@@ -312,6 +368,7 @@ static VkPipeline VK_GuiExecutor_GetPipeline( int stateBits ) {
 	gpci.pViewportState = &viewportState;
 	gpci.pRasterizationState = &raster;
 	gpci.pMultisampleState = &multisample;
+	gpci.pDepthStencilState = &depthStencil;
 	gpci.pColorBlendState = &blendState;
 	gpci.pDynamicState = &dynamicState;
 	gpci.layout = vkExec.pipelineLayout;
@@ -537,6 +594,14 @@ static bool VK_GuiExecutor_BeginFrame( void ) {
 		}
 		return false;
 	}
+	// a failed mid-run recreate tears the swapchain down entirely; keep
+	// retrying until a usable swapchain (with depth images) exists
+	if ( vkCtx.swapchain == VK_NULL_HANDLE || vkCtx.depthImages[ vkCtx.frameSlot ] == VK_NULL_HANDLE ) {
+		if ( !VK_Device_RecreateSwapchain()
+				|| vkCtx.swapchain == VK_NULL_HANDLE || vkCtx.depthImages[ vkCtx.frameSlot ] == VK_NULL_HANDLE ) {
+			return false;
+		}
+	}
 	// swapchain format changes (rare) invalidate the pipeline set
 	if ( vkExec.pipelineTargetFormat != vkCtx.swapchainFormat ) {
 		vkDeviceWaitIdle( vkCtx.device );
@@ -577,23 +642,33 @@ static bool VK_GuiExecutor_BeginFrame( void ) {
 	cbbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 	vkBeginCommandBuffer( cmd, &cbbi );
 
-	VkImageMemoryBarrier2 toColor;
-	memset( &toColor, 0, sizeof( toColor ) );
-	toColor.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-	toColor.srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
-	toColor.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-	toColor.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-	toColor.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-	toColor.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-	toColor.image = vkCtx.swapchainImages[ imageIndex ];
-	toColor.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	toColor.subresourceRange.levelCount = 1;
-	toColor.subresourceRange.layerCount = 1;
+	VkImageMemoryBarrier2 toAttachment[ 2 ];
+	memset( toAttachment, 0, sizeof( toAttachment ) );
+	toAttachment[ 0 ].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+	toAttachment[ 0 ].srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
+	toAttachment[ 0 ].dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+	toAttachment[ 0 ].dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+	toAttachment[ 0 ].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	toAttachment[ 0 ].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	toAttachment[ 0 ].image = vkCtx.swapchainImages[ imageIndex ];
+	toAttachment[ 0 ].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	toAttachment[ 0 ].subresourceRange.levelCount = 1;
+	toAttachment[ 0 ].subresourceRange.layerCount = 1;
+	toAttachment[ 1 ].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+	toAttachment[ 1 ].srcStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+	toAttachment[ 1 ].dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+	toAttachment[ 1 ].dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+	toAttachment[ 1 ].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	toAttachment[ 1 ].newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+	toAttachment[ 1 ].image = vkCtx.depthImages[ slot ];
+	toAttachment[ 1 ].subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+	toAttachment[ 1 ].subresourceRange.levelCount = 1;
+	toAttachment[ 1 ].subresourceRange.layerCount = 1;
 	VkDependencyInfo dep;
 	memset( &dep, 0, sizeof( dep ) );
 	dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-	dep.imageMemoryBarrierCount = 1;
-	dep.pImageMemoryBarriers = &toColor;
+	dep.imageMemoryBarrierCount = 2;
+	dep.pImageMemoryBarriers = toAttachment;
 	vkCmdPipelineBarrier2( cmd, &dep );
 
 	VkRenderingAttachmentInfo color;
@@ -608,6 +683,18 @@ static bool VK_GuiExecutor_BeginFrame( void ) {
 	color.clearValue.color.float32[ 2 ] = vkExec.clearColor[ 2 ];
 	color.clearValue.color.float32[ 3 ] = vkExec.clearColor[ 3 ];
 
+	// depth/stencil attach for the whole frame; contents are transient (the
+	// world passes re-clear per 3D view via vkCmdClearAttachments)
+	VkRenderingAttachmentInfo depth;
+	memset( &depth, 0, sizeof( depth ) );
+	depth.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+	depth.imageView = vkCtx.depthViews[ slot ];
+	depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+	depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+	depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+	depth.clearValue.depthStencil.depth = 1.0f;
+	depth.clearValue.depthStencil.stencil = 128;
+
 	VkRenderingInfo ri;
 	memset( &ri, 0, sizeof( ri ) );
 	ri.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
@@ -615,7 +702,19 @@ static bool VK_GuiExecutor_BeginFrame( void ) {
 	ri.layerCount = 1;
 	ri.colorAttachmentCount = 1;
 	ri.pColorAttachments = &color;
+	ri.pDepthAttachment = &depth;
+	ri.pStencilAttachment = &depth;
 	vkCmdBeginRendering( cmd, &ri );
+
+	// baseline dynamic state: 2D semantics (depth/cull off); the world
+	// passes override per surface and the next 2D view resets here
+	vkCmdSetDepthTestEnable( cmd, VK_FALSE );
+	vkCmdSetDepthWriteEnable( cmd, VK_FALSE );
+	vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_ALWAYS );
+	vkCmdSetCullMode( cmd, VK_CULL_MODE_NONE );
+	vkCmdSetFrontFace( cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+	vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
+	vkCmdSetDepthBias( cmd, 0.0f, 0.0f, 0.0f );
 
 	vkExec.frameOpen = true;
 	vkExec.frameSlot = slot;
@@ -623,6 +722,7 @@ static bool VK_GuiExecutor_BeginFrame( void ) {
 	vkExec.cmd = cmd;
 	vkExec.vertexRings[ slot ].cursor = 0;
 	vkExec.indexRings[ slot ].cursor = 0;
+	memset( vkExec.triMemo, 0, sizeof( vkExec.triMemo ) );
 	return true;
 }
 
@@ -700,6 +800,275 @@ bool VK_GuiExecutor_EndFrameAndPresent( void ) {
 
 /*
 ====================
+Shared surface helpers (2D + world views)
+====================
+*/
+
+// memoized ring upload + bind: the depth fill and both ambient walks visit
+// the same tris; a hit re-binds without re-copying
+static bool VK_Exec_BindTriGeometry( VkCommandBuffer cmd, int slot, const srfTriangles_t *tri ) {
+	const void *vertKey = tri->ambientCache;
+	const void *idxKey = tri->indexes;
+	const unsigned int memoIndex = (unsigned int)( ( ( (uintptr_t)vertKey ) >> 4 ) & ( VK_TRI_MEMO_SIZE - 1 ) );
+	vkTriUpload_t &memo = vkExec.triMemo[ memoIndex ];
+
+	int vertexOffset;
+	int indexOffset;
+	if ( memo.vertKey == vertKey && memo.idxKey == idxKey && vertKey != NULL ) {
+		vertexOffset = memo.vertexOffset;
+		indexOffset = memo.indexOffset;
+	} else {
+		const idDrawVert *verts = (const idDrawVert *)vertexCache.Position( tri->ambientCache );
+		if ( verts == NULL ) {
+			return false;
+		}
+		vertexOffset = VK_Ring_Alloc( vkExec.vertexRings[ slot ], verts, tri->numVerts * (int)sizeof( idDrawVert ), 64 );
+		indexOffset = VK_Ring_Alloc( vkExec.indexRings[ slot ], tri->indexes, tri->numIndexes * (int)sizeof( glIndex_t ), 4 );
+		if ( vertexOffset < 0 || indexOffset < 0 ) {
+			return false;
+		}
+		memo.vertKey = vertKey;
+		memo.idxKey = idxKey;
+		memo.vertexOffset = vertexOffset;
+		memo.indexOffset = indexOffset;
+	}
+
+	VkDeviceSize vertexBindOffset = (VkDeviceSize)vertexOffset;
+	vkCmdBindVertexBuffers( cmd, 0, 1, &vkExec.vertexRings[ slot ].buffer, &vertexBindOffset );
+	vkCmdBindIndexBuffer( cmd, vkExec.indexRings[ slot ].buffer, (VkDeviceSize)indexOffset, VK_INDEX_TYPE_UINT32 );
+	return true;
+}
+
+// per-surface scissor: viewport base + drawSurf scissor (GL bottom-left)
+static void VK_Exec_SetSurfScissor( VkCommandBuffer cmd, const viewDef_t *viewDef, const drawSurf_t *drawSurf, int fbHeight ) {
+	const int vpX = viewDef->viewport.x1;
+	const int vpYGL = viewDef->viewport.y1;
+	const int vpW = viewDef->viewport.x2 - viewDef->viewport.x1 + 1;
+	const int vpH = viewDef->viewport.y2 - viewDef->viewport.y1 + 1;
+
+	VkRect2D scissor;
+	if ( !drawSurf->scissorRect.IsEmpty() ) {
+		const int scX = viewDef->viewport.x1 + drawSurf->scissorRect.x1;
+		const int scYGL = viewDef->viewport.y1 + drawSurf->scissorRect.y1;
+		const int scW = drawSurf->scissorRect.x2 - drawSurf->scissorRect.x1 + 1;
+		const int scH = drawSurf->scissorRect.y2 - drawSurf->scissorRect.y1 + 1;
+		scissor.offset.x = scX > 0 ? scX : 0;
+		scissor.offset.y = fbHeight - scYGL - scH;
+		if ( scissor.offset.y < 0 ) {
+			scissor.offset.y = 0;
+		}
+		scissor.extent.width = (uint32_t)( scW > 0 ? scW : 0 );
+		scissor.extent.height = (uint32_t)( scH > 0 ? scH : 0 );
+	} else {
+		scissor.offset.x = vpX;
+		scissor.offset.y = fbHeight - vpYGL - vpH;
+		scissor.extent.width = (uint32_t)vpW;
+		scissor.extent.height = (uint32_t)vpH;
+	}
+	vkCmdSetScissor( cmd, 0, 1, &scissor );
+}
+
+// mvp for a surface's space: GL projection (with the id depth hacks) times
+// the space's modelview, then the Vulkan clip-z fixup. cl_gunfov's weapon
+// projection refit is not carried into the module (rare tuner cvar).
+static void VK_BuildSurfMVP( const viewDef_t *viewDef, const drawSurf_t *drawSurf, float outMvp[ 16 ] ) {
+	const struct viewEntity_s *space = drawSurf->space;
+	float proj[ 16 ];
+	memcpy( proj, viewDef->projectionMatrix, sizeof( proj ) );
+	if ( space->modelDepthHack != 0.0f ) {
+		proj[ 14 ] -= space->modelDepthHack;
+	} else if ( space->weaponDepthHack ) {
+		proj[ 14 ] *= 0.25f;
+	}
+	float mvpGL[ 16 ];
+	myGlMultMatrix( space->modelViewMatrix, proj, mvpGL );
+	VK_FixupClipSpaceZ( outMvp, mvpGL );
+}
+
+// the RB_STD_T_RenderShaderPasses ambient-stage walk shared by 2D views and
+// the world ambient passes. Geometry and scissor are already bound; mvp is
+// clip-z fixed. worldDepthState additionally applies each stage's GLS depth
+// bits and skips non-explicit texgens (cube texgens arrive later in E).
+static void VK_Exec_DrawAmbientStages( const viewDef_t *viewDef, const drawSurf_t *drawSurf,
+		const srfTriangles_t *tri, const float mvp[ 16 ], bool worldDepthState ) {
+	VkCommandBuffer cmd = vkExec.cmd;
+	const idMaterial *shader = drawSurf->material;
+	const float *regs = drawSurf->shaderRegisters;
+
+	for ( int stageNum = 0; stageNum < shader->GetNumStages(); stageNum++ ) {
+		const shaderStage_t *pStage = shader->GetStage( stageNum );
+
+		if ( regs != NULL && regs[ pStage->conditionRegister ] == 0 ) {
+			continue;
+		}
+		if ( pStage->lighting != SL_AMBIENT ) {
+			continue;
+		}
+		if ( ( pStage->drawStateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS ) ) == ( GLS_SRCBLEND_ZERO | GLS_DSTBLEND_ONE ) ) {
+			continue;	// alpha-mask stage
+		}
+		if ( pStage->newStage != NULL ) {
+			continue;	// program stages: unsupported flat-render gap
+		}
+		if ( worldDepthState && pStage->texture.texgen != TG_EXPLICIT ) {
+			continue;	// cube/screen texgens land later in Phase E
+		}
+
+		float color[ 4 ];
+		if ( regs != NULL ) {
+			color[ 0 ] = regs[ pStage->color.registers[ 0 ] ];
+			color[ 1 ] = regs[ pStage->color.registers[ 1 ] ];
+			color[ 2 ] = regs[ pStage->color.registers[ 2 ] ];
+			color[ 3 ] = regs[ pStage->color.registers[ 3 ] ];
+		} else {
+			color[ 0 ] = color[ 1 ] = color[ 2 ] = color[ 3 ] = 1.0f;
+		}
+
+		// skip stages that can't change the framebuffer
+		const int blendBits = pStage->drawStateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
+		if ( color[ 0 ] <= 0 && color[ 1 ] <= 0 && color[ 2 ] <= 0
+				&& blendBits == ( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE ) ) {
+			continue;
+		}
+		if ( color[ 3 ] <= 0 && blendBits == ( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA ) ) {
+			continue;
+		}
+
+		// texture: cinematic or static image (RB_BindVariableStageImage contract)
+		idImage *stageImage = NULL;
+		if ( pStage->texture.cinematic != NULL ) {
+			if ( r_skipDynamicTextures.GetBool() ) {
+				stageImage = globalImages->defaultImage;
+			} else {
+				cinData_t cin = pStage->texture.cinematic->ImageForTime(
+						(int)( 1000 * ( viewDef->floatTime + viewDef->renderView.shaderParms[ 11 ] ) ) );
+				if ( cin.image != NULL ) {
+					globalImages->cinematicImage->UploadScratch( cin.image, cin.imageWidth, cin.imageHeight );
+					stageImage = globalImages->cinematicImage;
+				} else {
+					stageImage = globalImages->blackImage;
+				}
+			}
+		} else {
+			stageImage = pStage->texture.image;
+		}
+		if ( stageImage == NULL ) {
+			continue;
+		}
+		VkDescriptorSet descriptor = VK_GuiExecutor_GetImageDescriptor( stageImage->GetDeviceHandle() );
+		if ( descriptor == VK_NULL_HANDLE ) {
+			continue;
+		}
+
+		vkGuiPushConstants_t push;
+		memcpy( push.mvp, mvp, sizeof( push.mvp ) );
+		// decal surfaces bake regs-color (x depth fade) into the uploaded
+		// vertex colors; modulating by the regs color again double-applies
+		// it (the skip culls above still use the regs color)
+		const bool bakedDecalStageColor = drawSurf->decalColorCache != NULL
+				&& stageNum < drawSurf->decalColorStageCount
+				&& drawSurf->decalColorStride > 0
+				&& pStage->vertexColor != SVC_IGNORE;
+		if ( bakedDecalStageColor ) {
+			push.stageColor[ 0 ] = 1.0f;
+			push.stageColor[ 1 ] = 1.0f;
+			push.stageColor[ 2 ] = 1.0f;
+			push.stageColor[ 3 ] = 1.0f;
+		} else {
+			push.stageColor[ 0 ] = color[ 0 ];
+			push.stageColor[ 1 ] = color[ 1 ];
+			push.stageColor[ 2 ] = color[ 2 ];
+			push.stageColor[ 3 ] = color[ 3 ];
+		}
+
+		// texture matrix (2x3 from the stage registers)
+		if ( pStage->texture.hasMatrix && regs != NULL ) {
+			push.texMatrixS[ 0 ] = regs[ pStage->texture.matrix[ 0 ][ 0 ] ];
+			push.texMatrixS[ 1 ] = regs[ pStage->texture.matrix[ 0 ][ 1 ] ];
+			push.texMatrixS[ 2 ] = 0.0f;
+			push.texMatrixS[ 3 ] = regs[ pStage->texture.matrix[ 0 ][ 2 ] ];
+			push.texMatrixT[ 0 ] = regs[ pStage->texture.matrix[ 1 ][ 0 ] ];
+			push.texMatrixT[ 1 ] = regs[ pStage->texture.matrix[ 1 ][ 1 ] ];
+			push.texMatrixT[ 2 ] = 0.0f;
+			push.texMatrixT[ 3 ] = regs[ pStage->texture.matrix[ 1 ][ 2 ] ];
+			push.params[ 3 ] = 1.0f;
+		} else {
+			push.texMatrixS[ 0 ] = 1.0f; push.texMatrixS[ 1 ] = 0.0f; push.texMatrixS[ 2 ] = 0.0f; push.texMatrixS[ 3 ] = 0.0f;
+			push.texMatrixT[ 0 ] = 0.0f; push.texMatrixT[ 1 ] = 1.0f; push.texMatrixT[ 2 ] = 0.0f; push.texMatrixT[ 3 ] = 0.0f;
+			push.params[ 3 ] = 0.0f;
+		}
+
+		switch ( pStage->vertexColor ) {
+			case SVC_MODULATE:			push.params[ 0 ] = 1.0f; break;
+			case SVC_INVERSE_MODULATE:	push.params[ 0 ] = 2.0f; break;
+			default:					push.params[ 0 ] = 0.0f; break;
+		}
+
+		// alpha test from the GLS bits
+		switch ( pStage->drawStateBits & GLS_ATEST_BITS ) {
+			case GLS_ATEST_GE_128:
+				push.params[ 1 ] = 1.0f;
+				push.params[ 2 ] = 0.5f - ( 1.0f / 255.0f );
+				break;
+			case GLS_ATEST_LT_128:
+				// inverted compare is rare; approximate as none
+				push.params[ 1 ] = 0.0f;
+				push.params[ 2 ] = 0.0f;
+				break;
+			case GLS_ATEST_EQ_255:
+				push.params[ 1 ] = 1.0f;
+				push.params[ 2 ] = 1.0f - ( 1.0f / 255.0f );
+				break;
+			default:
+				push.params[ 1 ] = 0.0f;
+				push.params[ 2 ] = 0.0f;
+				break;
+		}
+
+		if ( worldDepthState ) {
+			// stage depth semantics from the material parse: opaque and
+			// perforated stages test EQUAL against the depth fill,
+			// translucents test LEQUAL; GLS_DEPTHMASK set = writes OFF
+			const int bits = pStage->drawStateBits;
+			VkCompareOp compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+			if ( bits & GLS_DEPTHFUNC_EQUAL ) {
+				compareOp = VK_COMPARE_OP_EQUAL;
+			} else if ( bits & GLS_DEPTHFUNC_ALWAYS ) {
+				compareOp = VK_COMPARE_OP_ALWAYS;
+			}
+			vkCmdSetDepthCompareOp( cmd, compareOp );
+			vkCmdSetDepthWriteEnable( cmd, ( bits & GLS_DEPTHMASK ) ? VK_FALSE : VK_TRUE );
+		}
+
+		// per-stage polygon offset (RB_PrepareStageTexturing contract)
+		const bool stagePolygonOffset = worldDepthState && pStage->privatePolygonOffset != 0.0f;
+		if ( stagePolygonOffset ) {
+			vkCmdSetDepthBiasEnable( cmd, VK_TRUE );
+			vkCmdSetDepthBias( cmd, r_offsetUnits.GetFloat() * pStage->privatePolygonOffset, 0.0f, r_offsetFactor.GetFloat() );
+		}
+
+		VkPipeline pipeline = VK_GuiExecutor_GetPipeline( pStage->drawStateBits );
+		if ( pipeline == VK_NULL_HANDLE ) {
+			continue;
+		}
+		vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
+		vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkExec.pipelineLayout, 0, 1, &descriptor, 0, NULL );
+		vkCmdPushConstants( cmd, vkExec.pipelineLayout,
+				VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), &push );
+		vkCmdDrawIndexed( cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
+
+		if ( stagePolygonOffset ) {
+			if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
+				vkCmdSetDepthBias( cmd, r_offsetUnits.GetFloat() * shader->GetPolygonOffset(), 0.0f, r_offsetFactor.GetFloat() );
+			} else {
+				vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
+			}
+		}
+	}
+}
+
+/*
+====================
 VK_GuiExecutor_Draw2DView
 
 The RB_STD_DrawShaderPasses contract for 2D views, on the swapchain.
@@ -719,6 +1088,14 @@ void VK_GuiExecutor_Draw2DView( const viewDef_t *viewDef ) {
 	const int slot = vkExec.frameSlot;
 	const int fbHeight = (int)vkCtx.swapchainExtent.height;
 
+	// 2D semantics regardless of what an earlier 3D view left behind
+	vkCmdSetDepthTestEnable( cmd, VK_FALSE );
+	vkCmdSetDepthWriteEnable( cmd, VK_FALSE );
+	vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_ALWAYS );
+	vkCmdSetCullMode( cmd, VK_CULL_MODE_NONE );
+	vkCmdSetFrontFace( cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+	vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
+
 	// GL bottom-left viewport -> Vulkan negative-height viewport
 	const int vpX = viewDef->viewport.x1;
 	const int vpYGL = viewDef->viewport.y1;
@@ -734,6 +1111,10 @@ void VK_GuiExecutor_Draw2DView( const viewDef_t *viewDef ) {
 	viewport.maxDepth = 1.0f;
 	vkCmdSetViewport( cmd, 0, 1, &viewport );
 
+	// the front-end ortho projection is the whole-view MVP
+	float mvp[ 16 ];
+	VK_FixupClipSpaceZ( mvp, viewDef->projectionMatrix );
+
 	for ( int surfNum = 0; surfNum < viewDef->numDrawSurfs; surfNum++ ) {
 		const drawSurf_t *drawSurf = viewDef->drawSurfs[ surfNum ];
 		const idMaterial *shader = drawSurf->material;
@@ -744,168 +1125,367 @@ void VK_GuiExecutor_Draw2DView( const viewDef_t *viewDef ) {
 		if ( tri == NULL || tri->numIndexes <= 0 || tri->indexes == NULL ) {
 			continue;
 		}
+		if ( !VK_Exec_BindTriGeometry( cmd, slot, tri ) ) {
+			continue;
+		}
+		VK_Exec_SetSurfScissor( cmd, viewDef, drawSurf, fbHeight );
+		VK_Exec_DrawAmbientStages( viewDef, drawSurf, tri, mvp, false );
+	}
+}
+
+/*
+====================
+VK_GuiExecutor_Draw3DView
+
+Phase E world consumer: RB_STD_DrawView's depth prepass + the two ambient
+shader-pass walks (pre-fog: decals and sort < SS_MEDIUM; post-fog:
+SS_MEDIUM..<SS_POST_PROCESS). Interactions, fog, and post-process surfaces
+belong to later phases.
+====================
+*/
+void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
+	if ( viewDef == NULL || viewDef->numDrawSurfs <= 0 ) {
+		return;
+	}
+	if ( !VK_GuiExecutor_BeginFrame() ) {
+		return;
+	}
+
+	backEnd.viewDef = (viewDef_t *)viewDef;
+
+	VkCommandBuffer cmd = vkExec.cmd;
+	const int slot = vkExec.frameSlot;
+	const int fbHeight = (int)vkCtx.swapchainExtent.height;
+
+	drawSurf_t **drawSurfs = (drawSurf_t **)viewDef->drawSurfs;
+	const int numDrawSurfs = viewDef->numDrawSurfs;
+
+	// GL bottom-left viewport -> Vulkan negative-height viewport
+	const int vpX = viewDef->viewport.x1;
+	const int vpYGL = viewDef->viewport.y1;
+	const int vpW = viewDef->viewport.x2 - viewDef->viewport.x1 + 1;
+	const int vpH = viewDef->viewport.y2 - viewDef->viewport.y1 + 1;
+
+	VkViewport viewport;
+	viewport.x = (float)vpX;
+	viewport.y = (float)( fbHeight - vpYGL );
+	viewport.width = (float)vpW;
+	viewport.height = -(float)vpH;
+	viewport.minDepth = 0.0f;
+	viewport.maxDepth = 1.0f;
+	vkCmdSetViewport( cmd, 0, 1, &viewport );
+
+	// every 3D view starts from clean depth/stencil, exactly like
+	// RB_BeginDrawingView's glClear (subviews are separate earlier commands).
+	// The rect must stay inside the render area (the viewDef can carry a
+	// stale, larger size for one frame across an OUT_OF_DATE recreate)
+	{
+		int x0 = vpX > 0 ? vpX : 0;
+		int y0 = fbHeight - vpYGL - vpH;
+		if ( y0 < 0 ) {
+			y0 = 0;
+		}
+		int x1 = vpX + vpW;
+		if ( x1 > (int)vkCtx.swapchainExtent.width ) {
+			x1 = (int)vkCtx.swapchainExtent.width;
+		}
+		int y1 = fbHeight - vpYGL;
+		if ( y1 > (int)vkCtx.swapchainExtent.height ) {
+			y1 = (int)vkCtx.swapchainExtent.height;
+		}
+		if ( x1 > x0 && y1 > y0 ) {
+			VkClearAttachment clearAtt;
+			memset( &clearAtt, 0, sizeof( clearAtt ) );
+			clearAtt.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+			clearAtt.clearValue.depthStencil.depth = 1.0f;
+			clearAtt.clearValue.depthStencil.stencil = 128;
+			VkClearRect clearRect;
+			memset( &clearRect, 0, sizeof( clearRect ) );
+			clearRect.rect.offset.x = x0;
+			clearRect.rect.offset.y = y0;
+			clearRect.rect.extent.width = (uint32_t)( x1 - x0 );
+			clearRect.rect.extent.height = (uint32_t)( y1 - y0 );
+			clearRect.layerCount = 1;
+			vkCmdClearAttachments( cmd, 1, &clearAtt, 1, &clearRect );
+		}
+	}
+
+	// per-space state tracking (matrix + weapon depth-range hack)
+	const struct viewEntity_s *currentSpace = NULL;
+	bool weaponDepthRange = false;
+	float mvp[ 16 ];
+	VK_FixupClipSpaceZ( mvp, viewDef->projectionMatrix );
+
+	// ---- pass 1: depth fill (RB_STD_FillDepthBuffer contract) ----
+	vkCmdSetDepthTestEnable( cmd, VK_TRUE );
+	vkCmdSetDepthWriteEnable( cmd, VK_TRUE );
+	vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_LESS_OR_EQUAL );
+	vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
+	// the GL fill runs under RB_BeginDrawingView's front-sided cull
+	vkCmdSetFrontFace( cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+	vkCmdSetCullMode( cmd, viewDef->isMirror ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT );
+
+	for ( int surfNum = 0; surfNum < numDrawSurfs; surfNum++ ) {
+		const drawSurf_t *drawSurf = drawSurfs[ surfNum ];
+		const idMaterial *shader = drawSurf->material;
+		const srfTriangles_t *tri = drawSurf->geo;
+		if ( shader == NULL || tri == NULL || !shader->IsDrawn() ) {
+			continue;
+		}
+		if ( tri->numIndexes <= 0 || tri->indexes == NULL ) {
+			continue;
+		}
+		if ( shader->Coverage() == MC_TRANSLUCENT ) {
+			continue;	// translucents neither write nor test here
+		}
+		if ( tri->ambientCache == NULL ) {
+			continue;
+		}
 		const float *regs = drawSurf->shaderRegisters;
 
-		// geometry into the frame rings (CPU-backed vertex cache)
-		const idDrawVert *verts = (const idDrawVert *)vertexCache.Position( tri->ambientCache );
-		if ( verts == NULL ) {
+		// if all stages are conditioned off, skip
+		int stage;
+		const int stageCount = shader->GetNumStages();
+		for ( stage = 0; stage < stageCount; stage++ ) {
+			const shaderStage_t *pStage = shader->GetStage( stage );
+			if ( regs == NULL || regs[ pStage->conditionRegister ] != 0 ) {
+				break;
+			}
+		}
+		if ( stage == stageCount ) {
 			continue;
 		}
-		const int vertexOffset = VK_Ring_Alloc( vkExec.vertexRings[ slot ], verts, tri->numVerts * (int)sizeof( idDrawVert ), 64 );
-		const int indexOffset = VK_Ring_Alloc( vkExec.indexRings[ slot ], tri->indexes, tri->numIndexes * (int)sizeof( glIndex_t ), 4 );
-		if ( vertexOffset < 0 || indexOffset < 0 ) {
+
+		if ( !VK_Exec_BindTriGeometry( cmd, slot, tri ) ) {
 			continue;
 		}
+		VK_Exec_SetSurfScissor( cmd, viewDef, drawSurf, fbHeight );
 
-		VkDeviceSize vertexBindOffset = (VkDeviceSize)vertexOffset;
-		vkCmdBindVertexBuffers( cmd, 0, 1, &vkExec.vertexRings[ slot ].buffer, &vertexBindOffset );
-		vkCmdBindIndexBuffer( cmd, vkExec.indexRings[ slot ].buffer, (VkDeviceSize)indexOffset, VK_INDEX_TYPE_UINT32 );
-
-		// per-surface scissor: viewport base + drawSurf scissor (GL bottom-left)
-		VkRect2D scissor;
-		if ( !drawSurf->scissorRect.IsEmpty() ) {
-			const int scX = viewDef->viewport.x1 + drawSurf->scissorRect.x1;
-			const int scYGL = viewDef->viewport.y1 + drawSurf->scissorRect.y1;
-			const int scW = drawSurf->scissorRect.x2 - drawSurf->scissorRect.x1 + 1;
-			const int scH = drawSurf->scissorRect.y2 - drawSurf->scissorRect.y1 + 1;
-			scissor.offset.x = scX > 0 ? scX : 0;
-			scissor.offset.y = fbHeight - scYGL - scH;
-			if ( scissor.offset.y < 0 ) {
-				scissor.offset.y = 0;
+		// space change: rebuild the MVP (depth hacks included) and the
+		// weapon depth-range window
+		if ( drawSurf->space != currentSpace ) {
+			currentSpace = drawSurf->space;
+			VK_BuildSurfMVP( viewDef, drawSurf, mvp );
+			const bool wantWeaponRange = drawSurf->space->weaponDepthHack;
+			if ( wantWeaponRange != weaponDepthRange ) {
+				weaponDepthRange = wantWeaponRange;
+				viewport.maxDepth = wantWeaponRange ? 0.5f : 1.0f;
+				vkCmdSetViewport( cmd, 0, 1, &viewport );
 			}
-			scissor.extent.width = (uint32_t)( scW > 0 ? scW : 0 );
-			scissor.extent.height = (uint32_t)( scH > 0 ? scH : 0 );
-		} else {
-			scissor.offset.x = vpX;
-			scissor.offset.y = fbHeight - vpYGL - vpH;
-			scissor.extent.width = (uint32_t)vpW;
-			scissor.extent.height = (uint32_t)vpH;
 		}
-		vkCmdSetScissor( cmd, 0, 1, &scissor );
 
-		for ( int stageNum = 0; stageNum < shader->GetNumStages(); stageNum++ ) {
-			const shaderStage_t *pStage = shader->GetStage( stageNum );
+		// polygon offset per material
+		if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
+			vkCmdSetDepthBiasEnable( cmd, VK_TRUE );
+			vkCmdSetDepthBias( cmd, r_offsetUnits.GetFloat() * shader->GetPolygonOffset(), 0.0f, r_offsetFactor.GetFloat() );
+		}
 
-			if ( regs != NULL && regs[ pStage->conditionRegister ] == 0 ) {
-				continue;
-			}
-			if ( pStage->lighting != SL_AMBIENT ) {
-				continue;
-			}
-			if ( ( pStage->drawStateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS ) ) == ( GLS_SRCBLEND_ZERO | GLS_DSTBLEND_ONE ) ) {
-				continue;	// alpha-mask stage
-			}
-			if ( pStage->newStage != NULL ) {
-				continue;	// program stages: Phase E territory
-			}
+		// subviews down-modulate instead of drawing black
+		const bool isSubview = shader->GetSort() == SS_SUBVIEW;
+		vkGuiPushConstants_t push;
+		memcpy( push.mvp, mvp, sizeof( push.mvp ) );
+		push.stageColor[ 0 ] = push.stageColor[ 1 ] = push.stageColor[ 2 ] = isSubview ? 1.0f : 0.0f;
+		push.stageColor[ 3 ] = 1.0f;
+		push.texMatrixS[ 0 ] = 1.0f; push.texMatrixS[ 1 ] = 0.0f; push.texMatrixS[ 2 ] = 0.0f; push.texMatrixS[ 3 ] = 0.0f;
+		push.texMatrixT[ 0 ] = 0.0f; push.texMatrixT[ 1 ] = 1.0f; push.texMatrixT[ 2 ] = 0.0f; push.texMatrixT[ 3 ] = 0.0f;
+		push.params[ 0 ] = 0.0f;	// SVC_IGNORE
+		push.params[ 1 ] = 0.0f;	// alpha test off (per-stage below)
+		push.params[ 2 ] = 0.0f;
+		push.params[ 3 ] = 0.0f;	// no texmatrix
 
-			float color[ 4 ];
-			if ( regs != NULL ) {
-				color[ 0 ] = regs[ pStage->color.registers[ 0 ] ];
-				color[ 1 ] = regs[ pStage->color.registers[ 1 ] ];
-				color[ 2 ] = regs[ pStage->color.registers[ 2 ] ];
-				color[ 3 ] = regs[ pStage->color.registers[ 3 ] ];
-			} else {
-				color[ 0 ] = color[ 1 ] = color[ 2 ] = color[ 3 ] = 1.0f;
-			}
+		const int fillBlendBits = isSubview ? ( GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ZERO ) : 0;
 
-			// skip stages that can't change the framebuffer
-			const int blendBits = pStage->drawStateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
-			if ( color[ 0 ] <= 0 && color[ 1 ] <= 0 && color[ 2 ] <= 0
-					&& blendBits == ( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE ) ) {
-				continue;
-			}
-			if ( color[ 3 ] <= 0 && blendBits == ( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA ) ) {
-				continue;
-			}
+		bool drawSolid = shader->Coverage() == MC_OPAQUE;
 
-			// texture: cinematic or static image (RB_BindVariableStageImage contract)
-			idImage *stageImage = NULL;
-			if ( pStage->texture.cinematic != NULL ) {
-				if ( r_skipDynamicTextures.GetBool() ) {
-					stageImage = globalImages->defaultImage;
-				} else {
-					cinData_t cin = pStage->texture.cinematic->ImageForTime(
-							(int)( 1000 * ( viewDef->floatTime + viewDef->renderView.shaderParms[ 11 ] ) ) );
-					if ( cin.image != NULL ) {
-						globalImages->cinematicImage->UploadScratch( cin.image, cin.imageWidth, cin.imageHeight );
-						stageImage = globalImages->cinematicImage;
+		if ( shader->Coverage() == MC_PERFORATED ) {
+			// alpha-tested stages punch holes; if none draws, fall back solid
+			bool didDraw = false;
+			for ( stage = 0; stage < stageCount; stage++ ) {
+				const shaderStage_t *pStage = shader->GetStage( stage );
+				if ( !pStage->hasAlphaTest ) {
+					continue;
+				}
+				if ( regs != NULL && regs[ pStage->conditionRegister ] == 0 ) {
+					continue;
+				}
+				didDraw = true;
+				const float stageAlpha = regs != NULL ? regs[ pStage->color.registers[ 3 ] ] : 1.0f;
+				if ( stageAlpha <= 0.0f ) {
+					continue;
+				}
+				if ( pStage->texture.image == NULL || pStage->texture.texgen != TG_EXPLICIT ) {
+					continue;
+				}
+				// only greater-style compares map onto the shader's test
+				if ( pStage->alphaTestMode != GL_GREATER ) {
+					continue;
+				}
+				VkDescriptorSet stageDescriptor = VK_GuiExecutor_GetImageDescriptor( pStage->texture.image->GetDeviceHandle() );
+				if ( stageDescriptor == VK_NULL_HANDLE ) {
+					continue;
+				}
+				// per-stage polygon offset (RB_PrepareStageTexturing contract)
+				const bool stagePolygonOffset = pStage->privatePolygonOffset != 0.0f;
+				if ( stagePolygonOffset ) {
+					vkCmdSetDepthBiasEnable( cmd, VK_TRUE );
+					vkCmdSetDepthBias( cmd, r_offsetUnits.GetFloat() * pStage->privatePolygonOffset, 0.0f, r_offsetFactor.GetFloat() );
+				}
+				push.stageColor[ 3 ] = stageAlpha;
+				push.params[ 1 ] = 1.0f;
+				push.params[ 2 ] = regs != NULL ? regs[ pStage->alphaTestRegister ] : 0.5f;
+				if ( pStage->texture.hasMatrix && regs != NULL ) {
+					push.texMatrixS[ 0 ] = regs[ pStage->texture.matrix[ 0 ][ 0 ] ];
+					push.texMatrixS[ 1 ] = regs[ pStage->texture.matrix[ 0 ][ 1 ] ];
+					push.texMatrixS[ 3 ] = regs[ pStage->texture.matrix[ 0 ][ 2 ] ];
+					push.texMatrixT[ 0 ] = regs[ pStage->texture.matrix[ 1 ][ 0 ] ];
+					push.texMatrixT[ 1 ] = regs[ pStage->texture.matrix[ 1 ][ 1 ] ];
+					push.texMatrixT[ 3 ] = regs[ pStage->texture.matrix[ 1 ][ 2 ] ];
+					push.params[ 3 ] = 1.0f;
+				}
+				VkPipeline pipeline = VK_GuiExecutor_GetPipeline( fillBlendBits );
+				if ( pipeline == VK_NULL_HANDLE ) {
+					continue;
+				}
+				vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
+				vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkExec.pipelineLayout, 0, 1, &stageDescriptor, 0, NULL );
+				vkCmdPushConstants( cmd, vkExec.pipelineLayout,
+						VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), &push );
+				vkCmdDrawIndexed( cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
+				if ( stagePolygonOffset ) {
+					if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
+						vkCmdSetDepthBias( cmd, r_offsetUnits.GetFloat() * shader->GetPolygonOffset(), 0.0f, r_offsetFactor.GetFloat() );
 					} else {
-						stageImage = globalImages->blackImage;
+						vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
 					}
 				}
-			} else {
-				stageImage = pStage->texture.image;
-			}
-			if ( stageImage == NULL ) {
-				continue;
-			}
-			VkDescriptorSet descriptor = VK_GuiExecutor_GetImageDescriptor( stageImage->GetDeviceHandle() );
-			if ( descriptor == VK_NULL_HANDLE ) {
-				continue;
-			}
-
-			vkGuiPushConstants_t push;
-			memcpy( push.mvp, viewDef->projectionMatrix, sizeof( push.mvp ) );
-			push.stageColor[ 0 ] = color[ 0 ];
-			push.stageColor[ 1 ] = color[ 1 ];
-			push.stageColor[ 2 ] = color[ 2 ];
-			push.stageColor[ 3 ] = color[ 3 ];
-
-			// texture matrix (2x3 from the stage registers)
-			if ( pStage->texture.hasMatrix && regs != NULL ) {
-				push.texMatrixS[ 0 ] = regs[ pStage->texture.matrix[ 0 ][ 0 ] ];
-				push.texMatrixS[ 1 ] = regs[ pStage->texture.matrix[ 0 ][ 1 ] ];
-				push.texMatrixS[ 2 ] = 0.0f;
-				push.texMatrixS[ 3 ] = regs[ pStage->texture.matrix[ 0 ][ 2 ] ];
-				push.texMatrixT[ 0 ] = regs[ pStage->texture.matrix[ 1 ][ 0 ] ];
-				push.texMatrixT[ 1 ] = regs[ pStage->texture.matrix[ 1 ][ 1 ] ];
-				push.texMatrixT[ 2 ] = 0.0f;
-				push.texMatrixT[ 3 ] = regs[ pStage->texture.matrix[ 1 ][ 2 ] ];
-				push.params[ 3 ] = 1.0f;
-			} else {
-				push.texMatrixS[ 0 ] = 1.0f; push.texMatrixS[ 1 ] = 0.0f; push.texMatrixS[ 2 ] = 0.0f; push.texMatrixS[ 3 ] = 0.0f;
-				push.texMatrixT[ 0 ] = 0.0f; push.texMatrixT[ 1 ] = 1.0f; push.texMatrixT[ 2 ] = 0.0f; push.texMatrixT[ 3 ] = 0.0f;
+				// restore solid-fill push defaults for the next stage
+				push.stageColor[ 3 ] = 1.0f;
+				push.params[ 1 ] = 0.0f;
+				push.params[ 2 ] = 0.0f;
 				push.params[ 3 ] = 0.0f;
 			}
-
-			switch ( pStage->vertexColor ) {
-				case SVC_MODULATE:			push.params[ 0 ] = 1.0f; break;
-				case SVC_INVERSE_MODULATE:	push.params[ 0 ] = 2.0f; break;
-				default:					push.params[ 0 ] = 0.0f; break;
+			if ( !didDraw ) {
+				drawSolid = true;
 			}
-
-			// alpha test from the GLS bits
-			switch ( pStage->drawStateBits & GLS_ATEST_BITS ) {
-				case GLS_ATEST_GE_128:
-					push.params[ 1 ] = 1.0f;
-					push.params[ 2 ] = 0.5f - ( 1.0f / 255.0f );
-					break;
-				case GLS_ATEST_LT_128:
-					// inverted compare is rare in 2D; approximate as none
-					push.params[ 1 ] = 0.0f;
-					push.params[ 2 ] = 0.0f;
-					break;
-				case GLS_ATEST_EQ_255:
-					push.params[ 1 ] = 1.0f;
-					push.params[ 2 ] = 1.0f - ( 1.0f / 255.0f );
-					break;
-				default:
-					push.params[ 1 ] = 0.0f;
-					push.params[ 2 ] = 0.0f;
-					break;
-			}
-
-			VkPipeline pipeline = VK_GuiExecutor_GetPipeline( pStage->drawStateBits );
-			if ( pipeline == VK_NULL_HANDLE ) {
-				continue;
-			}
-			vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
-			vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkExec.pipelineLayout, 0, 1, &descriptor, 0, NULL );
-			vkCmdPushConstants( cmd, vkExec.pipelineLayout,
-					VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), &push );
-			vkCmdDrawIndexed( cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
 		}
+
+		if ( drawSolid ) {
+			VkDescriptorSet whiteDescriptor = VK_GuiExecutor_GetImageDescriptor( globalImages->whiteImage->GetDeviceHandle() );
+			VkPipeline pipeline = VK_GuiExecutor_GetPipeline( fillBlendBits );
+			if ( whiteDescriptor != VK_NULL_HANDLE && pipeline != VK_NULL_HANDLE ) {
+				vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
+				vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkExec.pipelineLayout, 0, 1, &whiteDescriptor, 0, NULL );
+				vkCmdPushConstants( cmd, vkExec.pipelineLayout,
+						VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), &push );
+				vkCmdDrawIndexed( cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
+			}
+		}
+
+		if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
+			vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
+		}
+	}
+
+	// ---- passes 2+3: ambient shader walks split at the fog boundary ----
+	// post-process surfaces (sort >= SS_POST_PROCESS) need _currentRender
+	// captures (Phase H); the walks stop at that boundary
+	int processed = numDrawSurfs;
+	for ( int i = 0; i < numDrawSurfs; i++ ) {
+		if ( drawSurfs[ i ]->material != NULL && drawSurfs[ i ]->material->GetSort() >= SS_POST_PROCESS ) {
+			processed = i;
+			break;
+		}
+	}
+
+	if ( !r_skipAmbient.GetBool() ) {
+		for ( int pass = 0; pass < 2; pass++ ) {
+			for ( int surfNum = 0; surfNum < processed; surfNum++ ) {
+				const drawSurf_t *drawSurf = drawSurfs[ surfNum ];
+				const idMaterial *shader = drawSurf->material;
+				if ( shader == NULL || !shader->HasAmbient() || shader->IsPortalSky() ) {
+					continue;
+				}
+				if ( shader->SuppressInSubview() ) {
+					continue;
+				}
+
+				// pre-fog: decal materials + sort < SS_MEDIUM; post-fog:
+				// SS_MEDIUM..<SS_POST_PROCESS (RB_DrawSurfIs*FogMaterialPass)
+				const bool isDecal = drawSurf->decalColorCache != NULL
+						|| ( shader->GetSort() >= SS_DECAL && shader->GetSort() < SS_FAR );
+				bool inPass;
+				if ( pass == 0 ) {
+					inPass = isDecal ? !r_skipDecals.GetBool() : shader->GetSort() < SS_MEDIUM;
+				} else {
+					inPass = !isDecal && shader->GetSort() >= SS_MEDIUM && shader->GetSort() < SS_POST_PROCESS;
+				}
+				if ( !inPass ) {
+					continue;
+				}
+
+				const srfTriangles_t *tri = drawSurf->geo;
+				if ( tri == NULL || tri->numIndexes <= 0 || tri->indexes == NULL || tri->ambientCache == NULL ) {
+					continue;
+				}
+				if ( !VK_Exec_BindTriGeometry( cmd, slot, tri ) ) {
+					continue;
+				}
+				VK_Exec_SetSurfScissor( cmd, viewDef, drawSurf, fbHeight );
+
+				if ( drawSurf->space != currentSpace ) {
+					currentSpace = drawSurf->space;
+					const bool wantWeaponRange = drawSurf->space->weaponDepthHack;
+					if ( wantWeaponRange != weaponDepthRange ) {
+						weaponDepthRange = wantWeaponRange;
+						viewport.maxDepth = wantWeaponRange ? 0.5f : 1.0f;
+						vkCmdSetViewport( cmd, 0, 1, &viewport );
+					}
+				}
+				VK_BuildSurfMVP( viewDef, drawSurf, mvp );
+
+				// material cull with the mirror swap (GL_Cull contract)
+				switch ( shader->GetCullType() ) {
+					case CT_TWO_SIDED:
+						vkCmdSetCullMode( cmd, VK_CULL_MODE_NONE );
+						break;
+					case CT_BACK_SIDED:
+						vkCmdSetCullMode( cmd, viewDef->isMirror ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT );
+						break;
+					default:
+						vkCmdSetCullMode( cmd, viewDef->isMirror ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT );
+						break;
+				}
+
+				if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
+					vkCmdSetDepthBiasEnable( cmd, VK_TRUE );
+					vkCmdSetDepthBias( cmd, r_offsetUnits.GetFloat() * shader->GetPolygonOffset(), 0.0f, r_offsetFactor.GetFloat() );
+				}
+
+				vkCmdSetDepthTestEnable( cmd, VK_TRUE );
+				VK_Exec_DrawAmbientStages( viewDef, drawSurf, tri, mvp, true );
+
+				if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
+					vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
+				}
+			}
+		}
+	}
+
+	// leave 2D-friendly state for a following HUD view
+	if ( weaponDepthRange ) {
+		viewport.maxDepth = 1.0f;
+		vkCmdSetViewport( cmd, 0, 1, &viewport );
+	}
+	vkCmdSetDepthTestEnable( cmd, VK_FALSE );
+	vkCmdSetDepthWriteEnable( cmd, VK_FALSE );
+	vkCmdSetCullMode( cmd, VK_CULL_MODE_NONE );
+
+	// one-shot bring-up evidence that the world walk emitted real work
+	static bool loggedFirstWorldView = false;
+	if ( !loggedFirstWorldView ) {
+		loggedFirstWorldView = true;
+		common->Printf( "Vulkan: first world view drew %d surfaces (rings: %d KB verts, %d KB indexes)\n",
+				numDrawSurfs, vkExec.vertexRings[ slot ].cursor / 1024, vkExec.indexRings[ slot ].cursor / 1024 );
 	}
 }
 
