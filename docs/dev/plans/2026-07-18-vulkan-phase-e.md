@@ -1,6 +1,21 @@
 # Vulkan Phase E — world geometry: depth prepass + ambient/flat (staging plan)
 
-Status: recon complete (3-agent sweep, 2026-07-18); implementation staged below.
+Status: LANDED (2026-07-18/19) — core in 834bdaa8, cube-texgen skies in
+a7e79d35. mp/q4dm2 runs on Vulkan validation-clean: depth prepass + both
+ambient walks + TG_SKYBOX/WOBBLESKY/DIFFUSE_CUBE stages drawing (one-shot
+bring-up logs pin the evidence: "first world view drew N surfaces",
+"first cube-texgen stage drew"). An adversarial review confirmed and
+fixed four defects pre-landing: vkCmdClearAttachments rect clamped to
+the render area, fail-closed swapchain-recreate error paths (+ BeginFrame
+retry), decal surfaces push white stage color (regs color is baked into
+vertex colors), per-stage privatePolygonOffset as dynamic depth bias.
+Deviations from the staging plan: no vertex-cache VBO path was needed at
+all (deferred to Phase J per the recon); D24S8/D32S8 carries stencil now;
+newStage program stages remain skipped (flat-render gap, Phase F+);
+in-engine screenshots still read 0xCD garbage under vk (glReadPixels is
+a stub — real readback lands with the Phase H/I capture work). Visual
+soak sign-off by the user is pending; E2's ARBFragmentProgramAvailable
+material-parse decision stays conservative-false until then.
 Parent: [2026-07-16-vulkan-renderer.md](2026-07-16-vulkan-renderer.md) Phase E;
 Phase D record: [2026-07-18-vulkan-phase-d.md](2026-07-18-vulkan-phase-d.md).
 Milestone: q4dm2 level geometry visible on Vulkan — depth prepass + the two
