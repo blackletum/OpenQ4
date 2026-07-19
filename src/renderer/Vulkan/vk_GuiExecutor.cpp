@@ -51,6 +51,10 @@
 
 extern idCVar r_skipDynamicTextures;
 
+// vk_Interactions.cpp: the Phase F1 per-light interaction pass, inserted
+// between the depth fill and the ambient walks
+void VK_Interactions_DrawLights( const viewDef_t *viewDef );
+
 // no module-owned vertex-cache GPU state exists: the engine cache runs
 // CPU-backed under Vulkan and the executor streams into its own rings
 void VK_VertexCache_Shutdown( void ) {
@@ -68,6 +72,12 @@ static const int VK_INDEX_RING_BYTES = 8 * 1024 * 1024;
 static const int VK_MAX_GUI_PIPELINES = 64;
 static const int VK_MAX_CUBE_PIPELINES = 32;
 static const int VK_MAX_DESCRIPTOR_SETS = 4096;
+// per-draw interaction blocks stream through a dynamic uniform ring;
+// slices align to 256 (the guaranteed minUniformBufferOffsetAlignment
+// ceiling) and the descriptor range is one slice, not WHOLE_SIZE, so the
+// effective range stays under maxUniformBufferRange everywhere
+static const int VK_UNIFORM_RING_BYTES = 2 * 1024 * 1024;
+static const int VK_UNIFORM_SLICE_BYTES = 256;
 
 typedef struct vkRing_s {
 	VkBuffer		buffer;
@@ -120,9 +130,16 @@ typedef struct vkGuiExecutor_s {
 	VkShaderModule		fragModule;
 	VkShaderModule		skyVertModule;
 	VkShaderModule		skyFragModule;
+	VkShaderModule		interactionVertModule;
+	VkShaderModule		interactionFragModule;
 	VkDescriptorSetLayout setLayout;
+	VkDescriptorSetLayout uboSetLayout;		// one dynamic uniform buffer (interaction block ring)
 	VkDescriptorPool	descriptorPool;
 	VkPipelineLayout	pipelineLayout;
+	// interactions: 6 single-combined-sampler sets (0=specTable, 1=bump,
+	// 2=falloff, 3=lightProjection, 4=diffuse, 5=specular) + set 6 dynamic UBO
+	VkPipelineLayout	interactionPipelineLayout;
+	VkPipeline			interactionPipeline;	// lazily built; ONE/ONE additive
 	vkGuiPipeline_t		pipelines[ VK_MAX_GUI_PIPELINES ];
 	int					numPipelines;
 	vkCubePipeline_t	cubePipelines[ VK_MAX_CUBE_PIPELINES ];
@@ -131,6 +148,8 @@ typedef struct vkGuiExecutor_s {
 
 	vkRing_t			vertexRings[ VK_FRAMES_IN_FLIGHT ];
 	vkRing_t			indexRings[ VK_FRAMES_IN_FLIGHT ];
+	vkRing_t			uniformRings[ VK_FRAMES_IN_FLIGHT ];
+	VkDescriptorSet		uniformRingSets[ VK_FRAMES_IN_FLIGHT ];
 
 	vkDescriptorCacheEntry_t descriptorCache[ 4096 ];	// parallel to the image table
 
@@ -240,12 +259,13 @@ static VkBlendFactor VK_BlendFactorFromGLSDst( int bits ) {
 	}
 }
 
-// shared graphics-pipeline assembly for the GUI and cube-texgen variants:
-// everything except the shader modules and vertex input is identical
-// (dynamic depth/cull/bias state, blend from the GLS bits, dynamic
-// rendering against the swapchain + depth formats, one layout)
+// shared graphics-pipeline assembly for the GUI, cube-texgen, and
+// interaction variants: everything except the shader modules, vertex input,
+// and pipeline layout is identical (dynamic depth/cull/bias state, blend
+// from the GLS bits, dynamic rendering against the swapchain + depth
+// formats)
 static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderModule fragModule,
-		const VkPipelineVertexInputStateCreateInfo *vertexInput, int blendBits ) {
+		const VkPipelineVertexInputStateCreateInfo *vertexInput, int blendBits, VkPipelineLayout layout ) {
 	VkPipelineShaderStageCreateInfo stages[ 2 ];
 	memset( stages, 0, sizeof( stages ) );
 	stages[ 0 ].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -350,7 +370,7 @@ static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderMod
 	gpci.pDepthStencilState = &depthStencil;
 	gpci.pColorBlendState = &blendState;
 	gpci.pDynamicState = &dynamicState;
-	gpci.layout = vkExec.pipelineLayout;
+	gpci.layout = layout;
 
 	VkPipeline pipeline = VK_NULL_HANDLE;
 	if ( vkCreateGraphicsPipelines( vkCtx.device, VK_NULL_HANDLE, 1, &gpci, NULL, &pipeline ) != VK_SUCCESS ) {
@@ -399,7 +419,7 @@ static VkPipeline VK_GuiExecutor_GetPipeline( int stateBits ) {
 	vertexInput.vertexAttributeDescriptionCount = 3;
 	vertexInput.pVertexAttributeDescriptions = attrs;
 
-	VkPipeline pipeline = VK_Exec_CreatePipeline( vkExec.vertModule, vkExec.fragModule, &vertexInput, blendBits );
+	VkPipeline pipeline = VK_Exec_CreatePipeline( vkExec.vertModule, vkExec.fragModule, &vertexInput, blendBits, vkExec.pipelineLayout );
 	if ( pipeline == VK_NULL_HANDLE ) {
 		return vkExec.numPipelines > 0 ? vkExec.pipelines[ 0 ].pipeline : VK_NULL_HANDLE;
 	}
@@ -460,7 +480,7 @@ static VkPipeline VK_GuiExecutor_GetCubePipeline( int stateBits, bool dirFromNor
 	vertexInput.vertexAttributeDescriptionCount = 2;
 	vertexInput.pVertexAttributeDescriptions = attrs;
 
-	VkPipeline pipeline = VK_Exec_CreatePipeline( vkExec.skyVertModule, vkExec.skyFragModule, &vertexInput, blendBits );
+	VkPipeline pipeline = VK_Exec_CreatePipeline( vkExec.skyVertModule, vkExec.skyFragModule, &vertexInput, blendBits, vkExec.pipelineLayout );
 	if ( pipeline == VK_NULL_HANDLE ) {
 		return VK_NULL_HANDLE;
 	}
@@ -469,6 +489,63 @@ static VkPipeline VK_GuiExecutor_GetCubePipeline( int stateBits, bool dirFromNor
 	vkExec.cubePipelines[ vkExec.numCubePipelines ].pipeline = pipeline;
 	vkExec.numCubePipelines++;
 	return pipeline;
+}
+
+// interaction pipeline (Phase F1): full idDrawVert vertex input, fixed
+// ONE/ONE additive blend (the only state the GL interaction batch ever
+// uses), depth func/write and cull through the shared dynamic state.
+// Lazily built and dropped with the other pipelines on format changes.
+VkPipeline VK_Exec_InteractionPipeline( void ) {
+	if ( vkExec.interactionPipeline != VK_NULL_HANDLE ) {
+		return vkExec.interactionPipeline;
+	}
+	if ( vkExec.interactionVertModule == VK_NULL_HANDLE || vkExec.interactionFragModule == VK_NULL_HANDLE ) {
+		return VK_NULL_HANDLE;
+	}
+
+	// idDrawVert: xyz@0, color ubyte4@12, normal@16, tangent0@32,
+	// tangent1@44, st@56 (64-byte stride, one binding)
+	VkVertexInputBindingDescription binding;
+	memset( &binding, 0, sizeof( binding ) );
+	binding.stride = sizeof( idDrawVert );
+	binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+	VkVertexInputAttributeDescription attrs[ 6 ];
+	memset( attrs, 0, sizeof( attrs ) );
+	attrs[ 0 ].location = 0;
+	attrs[ 0 ].format = VK_FORMAT_R32G32B32_SFLOAT;
+	attrs[ 0 ].offset = (uint32_t)offsetof( idDrawVert, xyz );
+	attrs[ 1 ].location = 1;
+	attrs[ 1 ].format = VK_FORMAT_R8G8B8A8_UNORM;
+	attrs[ 1 ].offset = (uint32_t)offsetof( idDrawVert, color );
+	attrs[ 2 ].location = 2;
+	attrs[ 2 ].format = VK_FORMAT_R32G32B32_SFLOAT;
+	attrs[ 2 ].offset = (uint32_t)offsetof( idDrawVert, normal );
+	attrs[ 3 ].location = 3;
+	attrs[ 3 ].format = VK_FORMAT_R32G32B32_SFLOAT;
+	attrs[ 3 ].offset = (uint32_t)offsetof( idDrawVert, tangents );
+	attrs[ 4 ].location = 4;
+	attrs[ 4 ].format = VK_FORMAT_R32G32B32_SFLOAT;
+	attrs[ 4 ].offset = (uint32_t)( offsetof( idDrawVert, tangents ) + sizeof( idVec3 ) );
+	attrs[ 5 ].location = 5;
+	attrs[ 5 ].format = VK_FORMAT_R32G32_SFLOAT;
+	attrs[ 5 ].offset = (uint32_t)offsetof( idDrawVert, st );
+
+	VkPipelineVertexInputStateCreateInfo vertexInput;
+	memset( &vertexInput, 0, sizeof( vertexInput ) );
+	vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+	vertexInput.vertexBindingDescriptionCount = 1;
+	vertexInput.pVertexBindingDescriptions = &binding;
+	vertexInput.vertexAttributeDescriptionCount = 6;
+	vertexInput.pVertexAttributeDescriptions = attrs;
+
+	vkExec.interactionPipeline = VK_Exec_CreatePipeline( vkExec.interactionVertModule, vkExec.interactionFragModule,
+			&vertexInput, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE, vkExec.interactionPipelineLayout );
+	return vkExec.interactionPipeline;
+}
+
+VkPipelineLayout VK_Exec_InteractionPipelineLayout( void ) {
+	return vkExec.interactionPipelineLayout;
 }
 
 /*
@@ -558,6 +635,18 @@ static bool VK_GuiExecutor_Init( void ) {
 		common->Warning( "Vulkan: sky fragment shader module creation failed" );
 		return false;
 	}
+	smci.codeSize = vk_interaction_vert_spv_size;
+	smci.pCode = (const uint32_t *)vk_interaction_vert_spv;
+	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.interactionVertModule ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: interaction vertex shader module creation failed" );
+		return false;
+	}
+	smci.codeSize = vk_interaction_frag_spv_size;
+	smci.pCode = (const uint32_t *)vk_interaction_frag_spv;
+	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.interactionFragModule ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: interaction fragment shader module creation failed" );
+		return false;
+	}
 
 	VkDescriptorSetLayoutBinding bindingInfo;
 	memset( &bindingInfo, 0, sizeof( bindingInfo ) );
@@ -576,16 +665,31 @@ static bool VK_GuiExecutor_Init( void ) {
 		return false;
 	}
 
-	VkDescriptorPoolSize poolSize;
-	poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	poolSize.descriptorCount = VK_MAX_DESCRIPTOR_SETS;
+	// interaction block ring: one dynamic uniform buffer, both stages
+	VkDescriptorSetLayoutBinding uboBindingInfo;
+	memset( &uboBindingInfo, 0, sizeof( uboBindingInfo ) );
+	uboBindingInfo.binding = 0;
+	uboBindingInfo.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+	uboBindingInfo.descriptorCount = 1;
+	uboBindingInfo.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+	dslci.pBindings = &uboBindingInfo;
+	if ( vkCreateDescriptorSetLayout( vkCtx.device, &dslci, NULL, &vkExec.uboSetLayout ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: uniform descriptor set layout creation failed" );
+		return false;
+	}
+
+	VkDescriptorPoolSize poolSizes[ 2 ];
+	poolSizes[ 0 ].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	poolSizes[ 0 ].descriptorCount = VK_MAX_DESCRIPTOR_SETS;
+	poolSizes[ 1 ].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+	poolSizes[ 1 ].descriptorCount = VK_FRAMES_IN_FLIGHT;
 	VkDescriptorPoolCreateInfo dpci;
 	memset( &dpci, 0, sizeof( dpci ) );
 	dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 	dpci.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-	dpci.maxSets = VK_MAX_DESCRIPTOR_SETS;
-	dpci.poolSizeCount = 1;
-	dpci.pPoolSizes = &poolSize;
+	dpci.maxSets = VK_MAX_DESCRIPTOR_SETS + VK_FRAMES_IN_FLIGHT;
+	dpci.poolSizeCount = 2;
+	dpci.pPoolSizes = poolSizes;
 	if ( vkCreateDescriptorPool( vkCtx.device, &dpci, NULL, &vkExec.descriptorPool ) != VK_SUCCESS ) {
 		common->Warning( "Vulkan: descriptor pool creation failed" );
 		return false;
@@ -608,11 +712,52 @@ static bool VK_GuiExecutor_Init( void ) {
 		return false;
 	}
 
+	// interaction layout: slots 0..5 reuse the per-image single-sampler
+	// layout (cached per-image sets bind directly), slot 6 is the ring UBO;
+	// the push range keeps the shared 128B block
+	VkDescriptorSetLayout interactionSetLayouts[ 7 ];
+	for ( int i = 0; i < 6; i++ ) {
+		interactionSetLayouts[ i ] = vkExec.setLayout;
+	}
+	interactionSetLayouts[ 6 ] = vkExec.uboSetLayout;
+	plci.setLayoutCount = 7;
+	plci.pSetLayouts = interactionSetLayouts;
+	if ( vkCreatePipelineLayout( vkCtx.device, &plci, NULL, &vkExec.interactionPipelineLayout ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: interaction pipeline layout creation failed" );
+		return false;
+	}
+
 	for ( int i = 0; i < VK_FRAMES_IN_FLIGHT; i++ ) {
 		if ( !VK_Ring_Create( vkExec.vertexRings[ i ], VK_VERTEX_RING_BYTES, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT )
-				|| !VK_Ring_Create( vkExec.indexRings[ i ], VK_INDEX_RING_BYTES, VK_BUFFER_USAGE_INDEX_BUFFER_BIT ) ) {
+				|| !VK_Ring_Create( vkExec.indexRings[ i ], VK_INDEX_RING_BYTES, VK_BUFFER_USAGE_INDEX_BUFFER_BIT )
+				|| !VK_Ring_Create( vkExec.uniformRings[ i ], VK_UNIFORM_RING_BYTES, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT ) ) {
 			return false;
 		}
+
+		// one descriptor set per slot, written once: dynamic offsets select
+		// the 256B slice at bind time
+		VkDescriptorSetAllocateInfo dsai;
+		memset( &dsai, 0, sizeof( dsai ) );
+		dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		dsai.descriptorPool = vkExec.descriptorPool;
+		dsai.descriptorSetCount = 1;
+		dsai.pSetLayouts = &vkExec.uboSetLayout;
+		if ( vkAllocateDescriptorSets( vkCtx.device, &dsai, &vkExec.uniformRingSets[ i ] ) != VK_SUCCESS ) {
+			common->Warning( "Vulkan: uniform ring descriptor set allocation failed" );
+			return false;
+		}
+		VkDescriptorBufferInfo bufferInfo;
+		bufferInfo.buffer = vkExec.uniformRings[ i ].buffer;
+		bufferInfo.offset = 0;
+		bufferInfo.range = VK_UNIFORM_SLICE_BYTES;
+		VkWriteDescriptorSet write;
+		memset( &write, 0, sizeof( write ) );
+		write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		write.dstSet = vkExec.uniformRingSets[ i ];
+		write.descriptorCount = 1;
+		write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+		write.pBufferInfo = &bufferInfo;
+		vkUpdateDescriptorSets( vkCtx.device, 1, &write, 0, NULL );
 	}
 
 	vkExec.pipelineTargetFormat = vkCtx.swapchainFormat;
@@ -640,14 +785,23 @@ void VK_GuiExecutor_Shutdown( void ) {
 			vkDestroyPipeline( vkCtx.device, vkExec.cubePipelines[ i ].pipeline, NULL );
 		}
 	}
+	if ( vkExec.interactionPipeline != VK_NULL_HANDLE ) {
+		vkDestroyPipeline( vkCtx.device, vkExec.interactionPipeline, NULL );
+	}
 	if ( vkExec.pipelineLayout != VK_NULL_HANDLE ) {
 		vkDestroyPipelineLayout( vkCtx.device, vkExec.pipelineLayout, NULL );
+	}
+	if ( vkExec.interactionPipelineLayout != VK_NULL_HANDLE ) {
+		vkDestroyPipelineLayout( vkCtx.device, vkExec.interactionPipelineLayout, NULL );
 	}
 	if ( vkExec.descriptorPool != VK_NULL_HANDLE ) {
 		vkDestroyDescriptorPool( vkCtx.device, vkExec.descriptorPool, NULL );
 	}
 	if ( vkExec.setLayout != VK_NULL_HANDLE ) {
 		vkDestroyDescriptorSetLayout( vkCtx.device, vkExec.setLayout, NULL );
+	}
+	if ( vkExec.uboSetLayout != VK_NULL_HANDLE ) {
+		vkDestroyDescriptorSetLayout( vkCtx.device, vkExec.uboSetLayout, NULL );
 	}
 	if ( vkExec.vertModule != VK_NULL_HANDLE ) {
 		vkDestroyShaderModule( vkCtx.device, vkExec.vertModule, NULL );
@@ -661,12 +815,21 @@ void VK_GuiExecutor_Shutdown( void ) {
 	if ( vkExec.skyFragModule != VK_NULL_HANDLE ) {
 		vkDestroyShaderModule( vkCtx.device, vkExec.skyFragModule, NULL );
 	}
+	if ( vkExec.interactionVertModule != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, vkExec.interactionVertModule, NULL );
+	}
+	if ( vkExec.interactionFragModule != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, vkExec.interactionFragModule, NULL );
+	}
 	for ( int i = 0; i < VK_FRAMES_IN_FLIGHT; i++ ) {
 		if ( vkExec.vertexRings[ i ].buffer != VK_NULL_HANDLE ) {
 			vmaDestroyBuffer( vkCtx.allocator, vkExec.vertexRings[ i ].buffer, vkExec.vertexRings[ i ].allocation );
 		}
 		if ( vkExec.indexRings[ i ].buffer != VK_NULL_HANDLE ) {
 			vmaDestroyBuffer( vkCtx.allocator, vkExec.indexRings[ i ].buffer, vkExec.indexRings[ i ].allocation );
+		}
+		if ( vkExec.uniformRings[ i ].buffer != VK_NULL_HANDLE ) {
+			vmaDestroyBuffer( vkCtx.allocator, vkExec.uniformRings[ i ].buffer, vkExec.uniformRings[ i ].allocation );
 		}
 	}
 	memset( &vkExec, 0, sizeof( vkExec ) );
@@ -723,6 +886,10 @@ static bool VK_GuiExecutor_BeginFrame( void ) {
 			vkDestroyPipeline( vkCtx.device, vkExec.cubePipelines[ i ].pipeline, NULL );
 		}
 		vkExec.numCubePipelines = 0;
+		if ( vkExec.interactionPipeline != VK_NULL_HANDLE ) {
+			vkDestroyPipeline( vkCtx.device, vkExec.interactionPipeline, NULL );
+			vkExec.interactionPipeline = VK_NULL_HANDLE;
+		}
 		vkExec.pipelineTargetFormat = vkCtx.swapchainFormat;
 	}
 
@@ -836,6 +1003,7 @@ static bool VK_GuiExecutor_BeginFrame( void ) {
 	vkExec.cmd = cmd;
 	vkExec.vertexRings[ slot ].cursor = 0;
 	vkExec.indexRings[ slot ].cursor = 0;
+	vkExec.uniformRings[ slot ].cursor = 0;
 	memset( vkExec.triMemo, 0, sizeof( vkExec.triMemo ) );
 	return true;
 }
@@ -919,8 +1087,11 @@ Shared surface helpers (2D + world views)
 */
 
 // memoized ring upload + bind: the depth fill and both ambient walks visit
-// the same tris; a hit re-binds without re-copying
-static bool VK_Exec_BindTriGeometry( VkCommandBuffer cmd, int slot, const srfTriangles_t *tri ) {
+// the same tris; a hit re-binds without re-copying. Also serves the
+// interaction pass, where the light-tris chains carry their own index
+// subset over the shared ambient vertex cache (distinct idxKey, so memo
+// entries never alias across the subsets).
+bool VK_Exec_BindTriGeometry( VkCommandBuffer cmd, int slot, const srfTriangles_t *tri ) {
 	const void *vertKey = tri->ambientCache;
 	const void *idxKey = tri->indexes;
 	const unsigned int memoIndex = (unsigned int)( ( ( (uintptr_t)vertKey ) >> 4 ) & ( VK_TRI_MEMO_SIZE - 1 ) );
@@ -955,7 +1126,7 @@ static bool VK_Exec_BindTriGeometry( VkCommandBuffer cmd, int slot, const srfTri
 }
 
 // per-surface scissor: viewport base + drawSurf scissor (GL bottom-left)
-static void VK_Exec_SetSurfScissor( VkCommandBuffer cmd, const viewDef_t *viewDef, const drawSurf_t *drawSurf, int fbHeight ) {
+void VK_Exec_SetSurfScissor( VkCommandBuffer cmd, const viewDef_t *viewDef, const drawSurf_t *drawSurf, int fbHeight ) {
 	const int vpX = viewDef->viewport.x1;
 	const int vpYGL = viewDef->viewport.y1;
 	const int vpW = viewDef->viewport.x2 - viewDef->viewport.x1 + 1;
@@ -986,7 +1157,7 @@ static void VK_Exec_SetSurfScissor( VkCommandBuffer cmd, const viewDef_t *viewDe
 // mvp for a surface's space: GL projection (with the id depth hacks) times
 // the space's modelview, then the Vulkan clip-z fixup. cl_gunfov's weapon
 // projection refit is not carried into the module (rare tuner cvar).
-static void VK_BuildSurfMVP( const viewDef_t *viewDef, const drawSurf_t *drawSurf, float outMvp[ 16 ] ) {
+void VK_BuildSurfMVP( const viewDef_t *viewDef, const drawSurf_t *drawSurf, float outMvp[ 16 ] ) {
 	const struct viewEntity_s *space = drawSurf->space;
 	float proj[ 16 ];
 	memcpy( proj, viewDef->projectionMatrix, sizeof( proj ) );
@@ -998,6 +1169,48 @@ static void VK_BuildSurfMVP( const viewDef_t *viewDef, const drawSurf_t *drawSur
 	float mvpGL[ 16 ];
 	myGlMultMatrix( space->modelViewMatrix, proj, mvpGL );
 	VK_FixupClipSpaceZ( outMvp, mvpGL );
+}
+
+/*
+====================
+Interaction-pass accessors (vk_Interactions.cpp)
+
+vkExec stays file-static; the interaction TU reaches the frame state and
+the Phase F1 resources through these narrow hooks.
+====================
+*/
+VkCommandBuffer VK_Exec_ActiveCmd( void ) {
+	return vkExec.frameOpen ? vkExec.cmd : VK_NULL_HANDLE;
+}
+
+int VK_Exec_ActiveFrameSlot( void ) {
+	return vkExec.frameSlot;
+}
+
+// cached per-image descriptor; NULL when the image has no device backing or
+// (require2D) when its view is a cube — the interaction pipeline samples
+// every slot through sampler2D and a cube view would trip validation
+VkDescriptorSet VK_Exec_ImageDescriptor( unsigned int texnum, bool require2D ) {
+	if ( require2D ) {
+		const vkImageEntry_t *entry = VK_Image_GetEntry( texnum );
+		if ( entry == NULL || entry->isCube ) {
+			return VK_NULL_HANDLE;
+		}
+	}
+	return VK_GuiExecutor_GetImageDescriptor( texnum );
+}
+
+VkDescriptorSet VK_Exec_InteractionUniformSet( void ) {
+	return vkExec.uniformRingSets[ vkExec.frameSlot ];
+}
+
+// streams one interaction block into the frame's uniform ring; returns the
+// 256-aligned dynamic offset, or -1 on overflow
+int VK_Exec_InteractionUniformAlloc( const void *data, int bytes ) {
+	if ( bytes > VK_UNIFORM_SLICE_BYTES ) {
+		return -1;
+	}
+	return VK_Ring_Alloc( vkExec.uniformRings[ vkExec.frameSlot ], data, bytes, VK_UNIFORM_SLICE_BYTES );
 }
 
 // the RB_STD_T_RenderShaderPasses ambient-stage walk shared by 2D views and
@@ -1551,6 +1764,17 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 			vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
 		}
 	}
+
+	// ---- interactions: per-light bump/diffuse/specular (Phase F1) ----
+	// RB_STD_DrawView order: depth fill, then RB_ARB2_DrawInteractions,
+	// then the ambient walks. The pass tracks its own space/depth-range
+	// state and exits at maxDepth 1.0 with depth bias off; restart the
+	// walk baseline to match.
+	VK_Interactions_DrawLights( viewDef );
+	currentSpace = NULL;
+	weaponDepthRange = false;
+	viewport.maxDepth = 1.0f;
+	vkCmdSetViewport( cmd, 0, 1, &viewport );
 
 	// ---- passes 2+3: ambient shader walks split at the fog boundary ----
 	// post-process surfaces (sort >= SS_POST_PROCESS) need _currentRender

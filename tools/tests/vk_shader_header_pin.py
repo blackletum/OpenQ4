@@ -22,6 +22,8 @@ SHADERS = [
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "gui.frag",
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "sky.vert",
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "sky.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "interaction.vert",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "interaction.frag",
 ]
 
 

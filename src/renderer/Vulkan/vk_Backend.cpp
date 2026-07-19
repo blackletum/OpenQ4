@@ -473,11 +473,38 @@ void GL_SelectTextureNoClient( int unit ) {
 void GL_ClearStateDelta( void ) {
 }
 
+// faithful port of the excluded tr_render.cpp implementation: the Phase F1
+// interaction pass bakes light-stage texture matrices with it
 void RB_GetShaderTextureMatrix( const float *shaderRegisters, const textureStage_t *texture, float matrix[16] ) {
-	(void)shaderRegisters; (void)texture;
-	// identity until the Vulkan draw path lands (Phase E)
-	memset( matrix, 0, sizeof( float ) * 16 );
-	matrix[0] = matrix[5] = matrix[10] = matrix[15] = 1.0f;
+	matrix[0] = shaderRegisters[ texture->matrix[0][0] ];
+	matrix[4] = shaderRegisters[ texture->matrix[0][1] ];
+	matrix[8] = 0;
+	matrix[12] = shaderRegisters[ texture->matrix[0][2] ];
+
+	// we attempt to keep scrolls from generating incredibly large texture
+	// values, but center rotations and center scales can still generate
+	// offsets that need to be > 1
+	if ( matrix[12] < -40 || matrix[12] > 40 ) {
+		matrix[12] -= (int)matrix[12];
+	}
+
+	matrix[1] = shaderRegisters[ texture->matrix[1][0] ];
+	matrix[5] = shaderRegisters[ texture->matrix[1][1] ];
+	matrix[9] = 0;
+	matrix[13] = shaderRegisters[ texture->matrix[1][2] ];
+	if ( matrix[13] < -40 || matrix[13] > 40 ) {
+		matrix[13] -= (int)matrix[13];
+	}
+
+	matrix[2] = 0;
+	matrix[6] = 0;
+	matrix[10] = 1;
+	matrix[14] = 0;
+
+	matrix[3] = 0;
+	matrix[7] = 0;
+	matrix[11] = 0;
+	matrix[15] = 1;
 }
 
 // --- draw_arb2 surface ---
