@@ -53,7 +53,9 @@ def main() -> int:
         if result.returncode != 0:
             print(f"vk_shader_header_pin: regeneration failed:\n{result.stdout}\n{result.stderr}", file=sys.stderr)
             return 1
-        if regenerated.read_bytes() != COMMITTED.read_bytes():
+        # EOL-insensitive: a fresh checkout can materialize the committed
+        # header with LF while the generator writes platform line endings
+        if regenerated.read_bytes().replace(b"\r\n", b"\n") != COMMITTED.read_bytes().replace(b"\r\n", b"\n"):
             shader_args = " ".join(s.relative_to(REPO_ROOT).as_posix() for s in SHADERS)
             print(
                 "vk_shader_header_pin: committed header is stale — regenerate with:\n"
