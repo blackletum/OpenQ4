@@ -55,6 +55,14 @@ extern idCVar r_skipDynamicTextures;
 // between the depth fill and the ambient walks
 void VK_Interactions_DrawLights( const viewDef_t *viewDef );
 
+// vk_ShadowMap.cpp: module-owned shadow atlas teardown (Phase F2a)
+void VK_ShadowMap_Shutdown( void );
+
+// frame-scope split (Phase F2a): the swapchain rendering scope can be
+// suspended for the shadow atlas caster pass and resumed with loadOp LOAD
+bool VK_Exec_BeginMainRendering( bool clearColorDepth );
+void VK_Exec_EndMainRendering( void );
+
 // no module-owned vertex-cache GPU state exists: the engine cache runs
 // CPU-backed under Vulkan and the executor streams into its own rings
 void VK_VertexCache_Shutdown( void ) {
@@ -134,14 +142,25 @@ typedef struct vkGuiExecutor_s {
 	VkShaderModule		skyFragModule;
 	VkShaderModule		interactionVertModule;
 	VkShaderModule		interactionFragModule;
+	VkShaderModule		interactionShadowVertModule;
+	VkShaderModule		interactionShadowFragModule;
+	VkShaderModule		casterVertModule;
+	VkShaderModule		casterFragModule;
 	VkDescriptorSetLayout setLayout;
 	VkDescriptorSetLayout uboSetLayout;		// one dynamic uniform buffer (interaction block ring)
+	// shadow receiver set: binding 0 = atlas + compare sampler (fragment),
+	// binding 1 = dynamic uniform buffer (per-space shadow block ring slice)
+	VkDescriptorSetLayout shadowSetLayout;
 	VkDescriptorPool	descriptorPool;
 	VkPipelineLayout	pipelineLayout;
 	// interactions: 6 single-combined-sampler sets (0=specTable, 1=bump,
 	// 2=falloff, 3=lightProjection, 4=diffuse, 5=specular) + set 6 dynamic UBO
 	VkPipelineLayout	interactionPipelineLayout;
+	// shadow-receiving interactions add set 7 (atlas compare sampler + shadow UBO)
+	VkPipelineLayout	shadowInteractionPipelineLayout;
 	VkPipeline			interactionPipeline;	// lazily built; ONE/ONE additive
+	VkPipeline			shadowInteractionPipeline;	// lazily built; ONE/ONE additive + atlas sampling
+	VkPipeline			casterPipeline;			// lazily built; depth-only atlas caster
 	vkGuiPipeline_t		pipelines[ VK_MAX_GUI_PIPELINES ];
 	int					numPipelines;
 	vkCubePipeline_t	cubePipelines[ VK_MAX_CUBE_PIPELINES ];
@@ -152,11 +171,14 @@ typedef struct vkGuiExecutor_s {
 	vkRing_t			indexRings[ VK_FRAMES_IN_FLIGHT ];
 	vkRing_t			uniformRings[ VK_FRAMES_IN_FLIGHT ];
 	VkDescriptorSet		uniformRingSets[ VK_FRAMES_IN_FLIGHT ];
+	VkDescriptorSet		shadowSets[ VK_FRAMES_IN_FLIGHT ];
+	bool				shadowSetsHaveAtlas;	// binding 0 written with a live atlas view
 
 	vkDescriptorCacheEntry_t descriptorCache[ 4096 ];	// parallel to the image table
 
 	// frame-in-progress state
 	bool				frameOpen;
+	bool				mainScopeOpen;		// the swapchain dynamic-rendering scope is recording
 	int					frameSlot;
 	uint32_t			swapImageIndex;
 	VkCommandBuffer		cmd;
@@ -262,13 +284,15 @@ static VkBlendFactor VK_BlendFactorFromGLSDst( int bits ) {
 	}
 }
 
-// shared graphics-pipeline assembly for the GUI, cube-texgen, and
-// interaction variants: everything except the shader modules, vertex input,
-// and pipeline layout is identical (dynamic depth/cull/bias state, blend
-// from the GLS bits, dynamic rendering against the swapchain + depth
-// formats)
+// shared graphics-pipeline assembly for the GUI, cube-texgen, interaction,
+// and shadow-caster variants: everything except the shader modules, vertex
+// input, and pipeline layout is identical (dynamic depth/cull/bias state,
+// blend from the GLS bits, dynamic rendering against the swapchain + depth
+// formats). depthOnly pipelines target the shadow atlas: zero color
+// attachments, same depth/stencil format (the atlas reuses vkCtx.depthFormat)
 static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderModule fragModule,
-		const VkPipelineVertexInputStateCreateInfo *vertexInput, int blendBits, VkPipelineLayout layout ) {
+		const VkPipelineVertexInputStateCreateInfo *vertexInput, int blendBits, VkPipelineLayout layout,
+		bool depthOnly ) {
 	VkPipelineShaderStageCreateInfo stages[ 2 ];
 	memset( stages, 0, sizeof( stages ) );
 	stages[ 0 ].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -323,8 +347,8 @@ static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderMod
 	VkPipelineColorBlendStateCreateInfo blendState;
 	memset( &blendState, 0, sizeof( blendState ) );
 	blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-	blendState.attachmentCount = 1;
-	blendState.pAttachments = &blendAttachment;
+	blendState.attachmentCount = depthOnly ? 0 : 1;
+	blendState.pAttachments = depthOnly ? NULL : &blendAttachment;
 
 	// depth/cull/bias are core-1.3 dynamic state, so one pipeline per blend
 	// combination serves 2D (depth off) and the world passes (per-stage
@@ -354,8 +378,8 @@ static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderMod
 	VkPipelineRenderingCreateInfo rendering;
 	memset( &rendering, 0, sizeof( rendering ) );
 	rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-	rendering.colorAttachmentCount = 1;
-	rendering.pColorAttachmentFormats = &vkCtx.swapchainFormat;
+	rendering.colorAttachmentCount = depthOnly ? 0 : 1;
+	rendering.pColorAttachmentFormats = depthOnly ? NULL : &vkCtx.swapchainFormat;
 	rendering.depthAttachmentFormat = vkCtx.depthFormat;
 	rendering.stencilAttachmentFormat = vkCtx.depthFormat;
 
@@ -422,7 +446,7 @@ static VkPipeline VK_GuiExecutor_GetPipeline( int stateBits ) {
 	vertexInput.vertexAttributeDescriptionCount = 3;
 	vertexInput.pVertexAttributeDescriptions = attrs;
 
-	VkPipeline pipeline = VK_Exec_CreatePipeline( vkExec.vertModule, vkExec.fragModule, &vertexInput, blendBits, vkExec.pipelineLayout );
+	VkPipeline pipeline = VK_Exec_CreatePipeline( vkExec.vertModule, vkExec.fragModule, &vertexInput, blendBits, vkExec.pipelineLayout, false );
 	if ( pipeline == VK_NULL_HANDLE ) {
 		return vkExec.numPipelines > 0 ? vkExec.pipelines[ 0 ].pipeline : VK_NULL_HANDLE;
 	}
@@ -483,7 +507,7 @@ static VkPipeline VK_GuiExecutor_GetCubePipeline( int stateBits, bool dirFromNor
 	vertexInput.vertexAttributeDescriptionCount = 2;
 	vertexInput.pVertexAttributeDescriptions = attrs;
 
-	VkPipeline pipeline = VK_Exec_CreatePipeline( vkExec.skyVertModule, vkExec.skyFragModule, &vertexInput, blendBits, vkExec.pipelineLayout );
+	VkPipeline pipeline = VK_Exec_CreatePipeline( vkExec.skyVertModule, vkExec.skyFragModule, &vertexInput, blendBits, vkExec.pipelineLayout, false );
 	if ( pipeline == VK_NULL_HANDLE ) {
 		return VK_NULL_HANDLE;
 	}
@@ -494,27 +518,16 @@ static VkPipeline VK_GuiExecutor_GetCubePipeline( int stateBits, bool dirFromNor
 	return pipeline;
 }
 
-// interaction pipeline (Phase F1): full idDrawVert vertex input, fixed
-// ONE/ONE additive blend (the only state the GL interaction batch ever
-// uses), depth func/write and cull through the shared dynamic state.
-// Lazily built and dropped with the other pipelines on format changes.
-VkPipeline VK_Exec_InteractionPipeline( void ) {
-	if ( vkExec.interactionPipeline != VK_NULL_HANDLE ) {
-		return vkExec.interactionPipeline;
-	}
-	if ( vkExec.interactionVertModule == VK_NULL_HANDLE || vkExec.interactionFragModule == VK_NULL_HANDLE ) {
-		return VK_NULL_HANDLE;
-	}
-
-	// idDrawVert: xyz@0, color ubyte4@12, normal@16, tangent0@32,
-	// tangent1@44, st@56 (64-byte stride, one binding)
-	VkVertexInputBindingDescription binding;
+// full idDrawVert vertex input shared by the interaction pipelines:
+// xyz@0, color ubyte4@12, normal@16, tangent0@32, tangent1@44, st@56
+// (64-byte stride, one binding)
+static void VK_Exec_InteractionVertexInput( VkVertexInputBindingDescription &binding,
+		VkVertexInputAttributeDescription attrs[ 6 ], VkPipelineVertexInputStateCreateInfo &vertexInput ) {
 	memset( &binding, 0, sizeof( binding ) );
 	binding.stride = sizeof( idDrawVert );
 	binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-	VkVertexInputAttributeDescription attrs[ 6 ];
-	memset( attrs, 0, sizeof( attrs ) );
+	memset( attrs, 0, 6 * sizeof( attrs[ 0 ] ) );
 	attrs[ 0 ].location = 0;
 	attrs[ 0 ].format = VK_FORMAT_R32G32B32_SFLOAT;
 	attrs[ 0 ].offset = (uint32_t)offsetof( idDrawVert, xyz );
@@ -534,21 +547,105 @@ VkPipeline VK_Exec_InteractionPipeline( void ) {
 	attrs[ 5 ].format = VK_FORMAT_R32G32_SFLOAT;
 	attrs[ 5 ].offset = (uint32_t)offsetof( idDrawVert, st );
 
-	VkPipelineVertexInputStateCreateInfo vertexInput;
 	memset( &vertexInput, 0, sizeof( vertexInput ) );
 	vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 	vertexInput.vertexBindingDescriptionCount = 1;
 	vertexInput.pVertexBindingDescriptions = &binding;
 	vertexInput.vertexAttributeDescriptionCount = 6;
 	vertexInput.pVertexAttributeDescriptions = attrs;
+}
+
+// interaction pipeline (Phase F1): full idDrawVert vertex input, fixed
+// ONE/ONE additive blend (the only state the GL interaction batch ever
+// uses), depth func/write and cull through the shared dynamic state.
+// Lazily built and dropped with the other pipelines on format changes.
+VkPipeline VK_Exec_InteractionPipeline( void ) {
+	if ( vkExec.interactionPipeline != VK_NULL_HANDLE ) {
+		return vkExec.interactionPipeline;
+	}
+	if ( vkExec.interactionVertModule == VK_NULL_HANDLE || vkExec.interactionFragModule == VK_NULL_HANDLE ) {
+		return VK_NULL_HANDLE;
+	}
+
+	VkVertexInputBindingDescription binding;
+	VkVertexInputAttributeDescription attrs[ 6 ];
+	VkPipelineVertexInputStateCreateInfo vertexInput;
+	VK_Exec_InteractionVertexInput( binding, attrs, vertexInput );
 
 	vkExec.interactionPipeline = VK_Exec_CreatePipeline( vkExec.interactionVertModule, vkExec.interactionFragModule,
-			&vertexInput, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE, vkExec.interactionPipelineLayout );
+			&vertexInput, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE, vkExec.interactionPipelineLayout, false );
 	return vkExec.interactionPipeline;
 }
 
 VkPipelineLayout VK_Exec_InteractionPipelineLayout( void ) {
 	return vkExec.interactionPipelineLayout;
+}
+
+// shadow-receiving interaction variant (Phase F2a): same vertex input and
+// additive blend, plus set 7 (atlas compare sampler + per-space shadow UBO)
+VkPipeline VK_Exec_ShadowInteractionPipeline( void ) {
+	if ( vkExec.shadowInteractionPipeline != VK_NULL_HANDLE ) {
+		return vkExec.shadowInteractionPipeline;
+	}
+	if ( vkExec.interactionShadowVertModule == VK_NULL_HANDLE || vkExec.interactionShadowFragModule == VK_NULL_HANDLE
+			|| vkExec.shadowInteractionPipelineLayout == VK_NULL_HANDLE ) {
+		return VK_NULL_HANDLE;
+	}
+
+	VkVertexInputBindingDescription binding;
+	VkVertexInputAttributeDescription attrs[ 6 ];
+	VkPipelineVertexInputStateCreateInfo vertexInput;
+	VK_Exec_InteractionVertexInput( binding, attrs, vertexInput );
+
+	vkExec.shadowInteractionPipeline = VK_Exec_CreatePipeline( vkExec.interactionShadowVertModule, vkExec.interactionShadowFragModule,
+			&vertexInput, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE, vkExec.shadowInteractionPipelineLayout, false );
+	return vkExec.shadowInteractionPipeline;
+}
+
+VkPipelineLayout VK_Exec_ShadowInteractionPipelineLayout( void ) {
+	return vkExec.shadowInteractionPipelineLayout;
+}
+
+// depth-only shadow-map caster (Phase F2a): position + st off the idDrawVert
+// stream (perforated casters alpha-test; opaque draws ignore the texcoord),
+// zero color attachments, single-image layout (slot 0 = alpha map)
+VkPipeline VK_Exec_CasterPipeline( void ) {
+	if ( vkExec.casterPipeline != VK_NULL_HANDLE ) {
+		return vkExec.casterPipeline;
+	}
+	if ( vkExec.casterVertModule == VK_NULL_HANDLE || vkExec.casterFragModule == VK_NULL_HANDLE ) {
+		return VK_NULL_HANDLE;
+	}
+
+	VkVertexInputBindingDescription binding;
+	memset( &binding, 0, sizeof( binding ) );
+	binding.stride = sizeof( idDrawVert );
+	binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+	VkVertexInputAttributeDescription attrs[ 2 ];
+	memset( attrs, 0, sizeof( attrs ) );
+	attrs[ 0 ].location = 0;
+	attrs[ 0 ].format = VK_FORMAT_R32G32B32_SFLOAT;
+	attrs[ 0 ].offset = (uint32_t)offsetof( idDrawVert, xyz );
+	attrs[ 1 ].location = 1;
+	attrs[ 1 ].format = VK_FORMAT_R32G32_SFLOAT;
+	attrs[ 1 ].offset = (uint32_t)offsetof( idDrawVert, st );
+
+	VkPipelineVertexInputStateCreateInfo vertexInput;
+	memset( &vertexInput, 0, sizeof( vertexInput ) );
+	vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+	vertexInput.vertexBindingDescriptionCount = 1;
+	vertexInput.pVertexBindingDescriptions = &binding;
+	vertexInput.vertexAttributeDescriptionCount = 2;
+	vertexInput.pVertexAttributeDescriptions = attrs;
+
+	vkExec.casterPipeline = VK_Exec_CreatePipeline( vkExec.casterVertModule, vkExec.casterFragModule,
+			&vertexInput, 0, vkExec.pipelineLayout, true );
+	return vkExec.casterPipeline;
+}
+
+VkPipelineLayout VK_Exec_BasePipelineLayout( void ) {
+	return vkExec.pipelineLayout;
 }
 
 /*
@@ -650,6 +747,30 @@ static bool VK_GuiExecutor_Init( void ) {
 		common->Warning( "Vulkan: interaction fragment shader module creation failed" );
 		return false;
 	}
+	smci.codeSize = vk_interaction_shadow_vert_spv_size;
+	smci.pCode = (const uint32_t *)vk_interaction_shadow_vert_spv;
+	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.interactionShadowVertModule ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: shadow interaction vertex shader module creation failed" );
+		return false;
+	}
+	smci.codeSize = vk_interaction_shadow_frag_spv_size;
+	smci.pCode = (const uint32_t *)vk_interaction_shadow_frag_spv;
+	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.interactionShadowFragModule ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: shadow interaction fragment shader module creation failed" );
+		return false;
+	}
+	smci.codeSize = vk_shadow_caster_vert_spv_size;
+	smci.pCode = (const uint32_t *)vk_shadow_caster_vert_spv;
+	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.casterVertModule ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: shadow caster vertex shader module creation failed" );
+		return false;
+	}
+	smci.codeSize = vk_shadow_caster_frag_spv_size;
+	smci.pCode = (const uint32_t *)vk_shadow_caster_frag_spv;
+	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.casterFragModule ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: shadow caster fragment shader module creation failed" );
+		return false;
+	}
 
 	VkDescriptorSetLayoutBinding bindingInfo;
 	memset( &bindingInfo, 0, sizeof( bindingInfo ) );
@@ -681,16 +802,36 @@ static bool VK_GuiExecutor_Init( void ) {
 		return false;
 	}
 
+	// shadow receiver set: atlas compare sampler + per-space shadow block
+	// slice off the same uniform ring (second dynamic offset)
+	VkDescriptorSetLayoutBinding shadowBindings[ 2 ];
+	memset( shadowBindings, 0, sizeof( shadowBindings ) );
+	shadowBindings[ 0 ].binding = 0;
+	shadowBindings[ 0 ].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	shadowBindings[ 0 ].descriptorCount = 1;
+	shadowBindings[ 0 ].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+	shadowBindings[ 1 ].binding = 1;
+	shadowBindings[ 1 ].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+	shadowBindings[ 1 ].descriptorCount = 1;
+	shadowBindings[ 1 ].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+	dslci.bindingCount = 2;
+	dslci.pBindings = shadowBindings;
+	if ( vkCreateDescriptorSetLayout( vkCtx.device, &dslci, NULL, &vkExec.shadowSetLayout ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: shadow descriptor set layout creation failed" );
+		return false;
+	}
+	dslci.bindingCount = 1;
+
 	VkDescriptorPoolSize poolSizes[ 2 ];
 	poolSizes[ 0 ].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	poolSizes[ 0 ].descriptorCount = VK_MAX_DESCRIPTOR_SETS;
+	poolSizes[ 0 ].descriptorCount = VK_MAX_DESCRIPTOR_SETS + VK_FRAMES_IN_FLIGHT;
 	poolSizes[ 1 ].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-	poolSizes[ 1 ].descriptorCount = VK_FRAMES_IN_FLIGHT;
+	poolSizes[ 1 ].descriptorCount = 2 * VK_FRAMES_IN_FLIGHT;
 	VkDescriptorPoolCreateInfo dpci;
 	memset( &dpci, 0, sizeof( dpci ) );
 	dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 	dpci.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-	dpci.maxSets = VK_MAX_DESCRIPTOR_SETS + VK_FRAMES_IN_FLIGHT;
+	dpci.maxSets = VK_MAX_DESCRIPTOR_SETS + 2 * VK_FRAMES_IN_FLIGHT;
 	dpci.poolSizeCount = 2;
 	dpci.pPoolSizes = poolSizes;
 	if ( vkCreateDescriptorPool( vkCtx.device, &dpci, NULL, &vkExec.descriptorPool ) != VK_SUCCESS ) {
@@ -718,7 +859,7 @@ static bool VK_GuiExecutor_Init( void ) {
 	// interaction layout: slots 0..5 reuse the per-image single-sampler
 	// layout (cached per-image sets bind directly), slot 6 is the ring UBO;
 	// the push range keeps the shared 128B block
-	VkDescriptorSetLayout interactionSetLayouts[ 7 ];
+	VkDescriptorSetLayout interactionSetLayouts[ 8 ];
 	for ( int i = 0; i < 6; i++ ) {
 		interactionSetLayouts[ i ] = vkExec.setLayout;
 	}
@@ -727,6 +868,16 @@ static bool VK_GuiExecutor_Init( void ) {
 	plci.pSetLayouts = interactionSetLayouts;
 	if ( vkCreatePipelineLayout( vkCtx.device, &plci, NULL, &vkExec.interactionPipelineLayout ) != VK_SUCCESS ) {
 		common->Warning( "Vulkan: interaction pipeline layout creation failed" );
+		return false;
+	}
+
+	// shadow-receiving interactions: the same seven slots plus set 7 (atlas
+	// compare sampler + shadow block); dynamic offsets bind in set order,
+	// so offset 0 = interaction slice, offset 1 = shadow slice
+	interactionSetLayouts[ 7 ] = vkExec.shadowSetLayout;
+	plci.setLayoutCount = 8;
+	if ( vkCreatePipelineLayout( vkCtx.device, &plci, NULL, &vkExec.shadowInteractionPipelineLayout ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: shadow interaction pipeline layout creation failed" );
 		return false;
 	}
 
@@ -761,6 +912,17 @@ static bool VK_GuiExecutor_Init( void ) {
 		write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
 		write.pBufferInfo = &bufferInfo;
 		vkUpdateDescriptorSets( vkCtx.device, 1, &write, 0, NULL );
+
+		// shadow set per slot: the ring binding is written once here; the
+		// atlas image binding is (re)written when the atlas is created
+		dsai.pSetLayouts = &vkExec.shadowSetLayout;
+		if ( vkAllocateDescriptorSets( vkCtx.device, &dsai, &vkExec.shadowSets[ i ] ) != VK_SUCCESS ) {
+			common->Warning( "Vulkan: shadow descriptor set allocation failed" );
+			return false;
+		}
+		write.dstSet = vkExec.shadowSets[ i ];
+		write.dstBinding = 1;
+		vkUpdateDescriptorSets( vkCtx.device, 1, &write, 0, NULL );
 	}
 
 	vkExec.pipelineTargetFormat = vkCtx.swapchainFormat;
@@ -778,6 +940,7 @@ void VK_GuiExecutor_Shutdown( void ) {
 		memset( &vkExec, 0, sizeof( vkExec ) );
 		return;
 	}
+	VK_ShadowMap_Shutdown();
 	for ( int i = 0; i < vkExec.numPipelines; i++ ) {
 		if ( vkExec.pipelines[ i ].pipeline != VK_NULL_HANDLE ) {
 			vkDestroyPipeline( vkCtx.device, vkExec.pipelines[ i ].pipeline, NULL );
@@ -791,11 +954,20 @@ void VK_GuiExecutor_Shutdown( void ) {
 	if ( vkExec.interactionPipeline != VK_NULL_HANDLE ) {
 		vkDestroyPipeline( vkCtx.device, vkExec.interactionPipeline, NULL );
 	}
+	if ( vkExec.shadowInteractionPipeline != VK_NULL_HANDLE ) {
+		vkDestroyPipeline( vkCtx.device, vkExec.shadowInteractionPipeline, NULL );
+	}
+	if ( vkExec.casterPipeline != VK_NULL_HANDLE ) {
+		vkDestroyPipeline( vkCtx.device, vkExec.casterPipeline, NULL );
+	}
 	if ( vkExec.pipelineLayout != VK_NULL_HANDLE ) {
 		vkDestroyPipelineLayout( vkCtx.device, vkExec.pipelineLayout, NULL );
 	}
 	if ( vkExec.interactionPipelineLayout != VK_NULL_HANDLE ) {
 		vkDestroyPipelineLayout( vkCtx.device, vkExec.interactionPipelineLayout, NULL );
+	}
+	if ( vkExec.shadowInteractionPipelineLayout != VK_NULL_HANDLE ) {
+		vkDestroyPipelineLayout( vkCtx.device, vkExec.shadowInteractionPipelineLayout, NULL );
 	}
 	if ( vkExec.descriptorPool != VK_NULL_HANDLE ) {
 		vkDestroyDescriptorPool( vkCtx.device, vkExec.descriptorPool, NULL );
@@ -805,6 +977,9 @@ void VK_GuiExecutor_Shutdown( void ) {
 	}
 	if ( vkExec.uboSetLayout != VK_NULL_HANDLE ) {
 		vkDestroyDescriptorSetLayout( vkCtx.device, vkExec.uboSetLayout, NULL );
+	}
+	if ( vkExec.shadowSetLayout != VK_NULL_HANDLE ) {
+		vkDestroyDescriptorSetLayout( vkCtx.device, vkExec.shadowSetLayout, NULL );
 	}
 	if ( vkExec.vertModule != VK_NULL_HANDLE ) {
 		vkDestroyShaderModule( vkCtx.device, vkExec.vertModule, NULL );
@@ -823,6 +998,18 @@ void VK_GuiExecutor_Shutdown( void ) {
 	}
 	if ( vkExec.interactionFragModule != VK_NULL_HANDLE ) {
 		vkDestroyShaderModule( vkCtx.device, vkExec.interactionFragModule, NULL );
+	}
+	if ( vkExec.interactionShadowVertModule != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, vkExec.interactionShadowVertModule, NULL );
+	}
+	if ( vkExec.interactionShadowFragModule != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, vkExec.interactionShadowFragModule, NULL );
+	}
+	if ( vkExec.casterVertModule != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, vkExec.casterVertModule, NULL );
+	}
+	if ( vkExec.casterFragModule != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, vkExec.casterFragModule, NULL );
 	}
 	for ( int i = 0; i < VK_FRAMES_IN_FLIGHT; i++ ) {
 		if ( vkExec.vertexRings[ i ].buffer != VK_NULL_HANDLE ) {
@@ -893,6 +1080,14 @@ static bool VK_GuiExecutor_BeginFrame( void ) {
 			vkDestroyPipeline( vkCtx.device, vkExec.interactionPipeline, NULL );
 			vkExec.interactionPipeline = VK_NULL_HANDLE;
 		}
+		if ( vkExec.shadowInteractionPipeline != VK_NULL_HANDLE ) {
+			vkDestroyPipeline( vkCtx.device, vkExec.shadowInteractionPipeline, NULL );
+			vkExec.shadowInteractionPipeline = VK_NULL_HANDLE;
+		}
+		if ( vkExec.casterPipeline != VK_NULL_HANDLE ) {
+			vkDestroyPipeline( vkCtx.device, vkExec.casterPipeline, NULL );
+			vkExec.casterPipeline = VK_NULL_HANDLE;
+		}
 		vkExec.pipelineTargetFormat = vkCtx.swapchainFormat;
 	}
 
@@ -955,12 +1150,46 @@ static bool VK_GuiExecutor_BeginFrame( void ) {
 	dep.pImageMemoryBarriers = toAttachment;
 	vkCmdPipelineBarrier2( cmd, &dep );
 
+	vkExec.frameSlot = slot;
+	vkExec.swapImageIndex = imageIndex;
+	vkExec.cmd = cmd;
+	VK_Exec_BeginMainRendering( true );
+
+	vkExec.frameOpen = true;
+	vkExec.vertexRings[ slot ].cursor = 0;
+	vkExec.indexRings[ slot ].cursor = 0;
+	vkExec.uniformRings[ slot ].cursor = 0;
+	memset( vkExec.vertMemo, 0, sizeof( vkExec.vertMemo ) );
+	memset( vkExec.idxMemo, 0, sizeof( vkExec.idxMemo ) );
+	return true;
+}
+
+/*
+====================
+VK_Exec_BeginMainRendering / VK_Exec_EndMainRendering
+
+The swapchain dynamic-rendering scope, factored so the Phase F2a shadow
+pass can interrupt it mid-3D-view: end main rendering -> atlas caster scope
+-> resume with loadOp LOAD for color AND depth. The clear path is the frame
+open (byte-identical to the pre-split BeginFrame recording when no shadow
+maps render); the resume path re-establishes the same baseline dynamic
+state. Depth storeOp stays DONT_CARE on the r_useShadowMap 0 default and
+switches to STORE only when a shadow interruption may need the depth-fill
+contents to survive the scope break.
+====================
+*/
+bool VK_Exec_BeginMainRendering( bool clearColorDepth ) {
+	if ( vkExec.mainScopeOpen || vkExec.cmd == VK_NULL_HANDLE ) {
+		return vkExec.mainScopeOpen;
+	}
+	VkCommandBuffer cmd = vkExec.cmd;
+
 	VkRenderingAttachmentInfo color;
 	memset( &color, 0, sizeof( color ) );
 	color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-	color.imageView = vkCtx.swapchainViews[ imageIndex ];
+	color.imageView = vkCtx.swapchainViews[ vkExec.swapImageIndex ];
 	color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-	color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+	color.loadOp = clearColorDepth ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
 	color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 	color.clearValue.color.float32[ 0 ] = vkExec.clearColor[ 0 ];
 	color.clearValue.color.float32[ 1 ] = vkExec.clearColor[ 1 ];
@@ -972,10 +1201,11 @@ static bool VK_GuiExecutor_BeginFrame( void ) {
 	VkRenderingAttachmentInfo depth;
 	memset( &depth, 0, sizeof( depth ) );
 	depth.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-	depth.imageView = vkCtx.depthViews[ slot ];
+	depth.imageView = vkCtx.depthViews[ vkExec.frameSlot ];
 	depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-	depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-	depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+	depth.loadOp = clearColorDepth ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+	depth.storeOp = ( r_useShadowMap.GetBool() && r_shadows.GetBool() )
+			? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
 	depth.clearValue.depthStencil.depth = 1.0f;
 	depth.clearValue.depthStencil.stencil = 128;
 
@@ -1000,16 +1230,16 @@ static bool VK_GuiExecutor_BeginFrame( void ) {
 	vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
 	vkCmdSetDepthBias( cmd, 0.0f, 0.0f, 0.0f );
 
-	vkExec.frameOpen = true;
-	vkExec.frameSlot = slot;
-	vkExec.swapImageIndex = imageIndex;
-	vkExec.cmd = cmd;
-	vkExec.vertexRings[ slot ].cursor = 0;
-	vkExec.indexRings[ slot ].cursor = 0;
-	vkExec.uniformRings[ slot ].cursor = 0;
-	memset( vkExec.vertMemo, 0, sizeof( vkExec.vertMemo ) );
-	memset( vkExec.idxMemo, 0, sizeof( vkExec.idxMemo ) );
+	vkExec.mainScopeOpen = true;
 	return true;
+}
+
+void VK_Exec_EndMainRendering( void ) {
+	if ( !vkExec.mainScopeOpen ) {
+		return;
+	}
+	vkCmdEndRendering( vkExec.cmd );
+	vkExec.mainScopeOpen = false;
 }
 
 bool VK_GuiExecutor_EndFrameAndPresent( void ) {
@@ -1020,7 +1250,7 @@ bool VK_GuiExecutor_EndFrameAndPresent( void ) {
 	const uint32_t imageIndex = vkExec.swapImageIndex;
 	VkCommandBuffer cmd = vkExec.cmd;
 
-	vkCmdEndRendering( cmd );
+	VK_Exec_EndMainRendering();
 
 	VkImageMemoryBarrier2 toPresent;
 	memset( &toPresent, 0, sizeof( toPresent ) );
@@ -1234,6 +1464,46 @@ int VK_Exec_InteractionUniformAlloc( const void *data, int bytes ) {
 		return -1;
 	}
 	return VK_Ring_Alloc( vkExec.uniformRings[ vkExec.frameSlot ], data, bytes, VK_UNIFORM_SLICE_BYTES );
+}
+
+// the frame slot's shadow set (atlas compare sampler + shadow-block ring),
+// or NULL until the atlas descriptor has been written
+VkDescriptorSet VK_Exec_ShadowDescriptorSet( void ) {
+	return vkExec.shadowSetsHaveAtlas ? vkExec.shadowSets[ vkExec.frameSlot ] : VK_NULL_HANDLE;
+}
+
+// (re)points every frame slot's shadow set at the atlas view + compare
+// sampler (vk_ShadowMap.cpp calls this at atlas creation, before the set is
+// ever bound; recreation waits the device idle first). NULL view clears.
+bool VK_Exec_UpdateShadowAtlasDescriptors( VkImageView view, VkSampler sampler ) {
+	vkExec.shadowSetsHaveAtlas = false;
+	if ( view == VK_NULL_HANDLE || sampler == VK_NULL_HANDLE ) {
+		return true;
+	}
+	if ( !vkExec.initialized ) {
+		return false;
+	}
+	for ( int i = 0; i < VK_FRAMES_IN_FLIGHT; i++ ) {
+		if ( vkExec.shadowSets[ i ] == VK_NULL_HANDLE ) {
+			return false;
+		}
+		VkDescriptorImageInfo imageInfo;
+		memset( &imageInfo, 0, sizeof( imageInfo ) );
+		imageInfo.sampler = sampler;
+		imageInfo.imageView = view;
+		imageInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+		VkWriteDescriptorSet write;
+		memset( &write, 0, sizeof( write ) );
+		write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		write.dstSet = vkExec.shadowSets[ i ];
+		write.dstBinding = 0;
+		write.descriptorCount = 1;
+		write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		write.pImageInfo = &imageInfo;
+		vkUpdateDescriptorSets( vkCtx.device, 1, &write, 0, NULL );
+	}
+	vkExec.shadowSetsHaveAtlas = true;
+	return true;
 }
 
 // the RB_STD_T_RenderShaderPasses ambient-stage walk shared by 2D views and
