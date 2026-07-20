@@ -6,7 +6,8 @@
 
 	Vulkan interaction pass (Phase F1,
 	docs/dev/plans/2026-07-19-vulkan-phase-f.md) + stencil shadow volumes
-	(Phase G1, docs/dev/plans/2026-07-20-vulkan-phase-g.md).
+	(Phase G1, docs/dev/plans/2026-07-20-vulkan-phase-g.md) + fog and
+	blend lights (Phase G2, same plan doc).
 
 	Per-light bump/diffuse/specular interactions for every view light,
 	drawn between the depth fill and the ambient walks. Lights the
@@ -33,6 +34,14 @@
 	  r_skipBump/Diffuse/Specular substitutions and the both-black skip.
 	- RB_DetermineLightScale (tr_render.cpp:675-726).
 	- RB_BakeTextureMatrixIntoTexgen (draw_common.cpp:4365-4400).
+	- RB_STD_FogAllLights + RB_FogPass + RB_T_BasicFog (draw_common.cpp:
+	  7593-7816): fog and blend lights draw AFTER the pre-fog ambient walk
+	  (RB_STD_DrawView:9806), stencil disabled for the whole pass; fog =
+	  eye-depth/fog-plane texgen over the light's interaction chains at
+	  depth EQUAL plus the frustumTris cap at LEQUAL back-sided.
+	- RB_BlendLight + RB_T_BlendLight (draw_common.cpp:7462-7582): the
+	  light-shader stage walk projecting lightProject S/T/Q + falloff,
+	  per-stage blend bits and RGBA color.
 
 	Per-draw data rides the shared 128B push block (MVP + vertex-color
 	packing + ambient direction; the volume pipeline reuses it for MVP +
@@ -82,6 +91,9 @@ VkPipeline VK_Exec_PointShadowInteractionPipeline( void );
 VkPipelineLayout VK_Exec_ShadowInteractionPipelineLayout( void );
 VkPipeline VK_Exec_StencilShadowPipeline( void );
 VkPipelineLayout VK_Exec_BasePipelineLayout( void );
+VkPipeline VK_Exec_FogPipeline( void );
+VkPipeline VK_Exec_BlendLightPipeline( int stateBits );
+VkPipelineLayout VK_Exec_FogBlendPipelineLayout( void );
 VkDescriptorSet VK_Exec_ShadowDescriptorSet( void );
 VkDescriptorSet VK_Exec_ImageDescriptor( unsigned int texnum, bool require2D );
 VkDescriptorSet VK_Exec_InteractionUniformSet( void );
@@ -145,8 +157,19 @@ typedef struct vkPointShadowBlock_s {
 	float			biasParams[ 4 ];	// x: constant bias, y: normal bias, z: texel depth bias, w: per-distance normal-offset factor
 } vkPointShadowBlock_t;
 
+// std140 mirror of the fog/blend set-2 BlendLightBlock (5 vec4 = 80 bytes,
+// inside the 256B ring slice; rewritten per space — the planes are
+// model-local — and per light stage for the color)
+typedef struct vkBlendLightBlock_s {
+	float			lightProjectS[ 4 ];
+	float			lightProjectT[ 4 ];
+	float			lightProjectQ[ 4 ];
+	float			lightFalloffS[ 4 ];
+	float			color[ 4 ];
+} vkBlendLightBlock_t;
+
 // per-view pass state (space/depth-range tracking mirrors the Draw3DView
-// walks; reset per VK_Interactions_DrawLights call)
+// walks; reset per VK_Interactions_DrawLights / VK_Fog_DrawAllLights call)
 typedef struct vkInterPass_s {
 	const viewDef_t *	viewDef;
 	VkCommandBuffer		cmd;
@@ -184,6 +207,20 @@ typedef struct vkInterPass_s {
 	int					volumeDrawCount;		// volume draws (preload + z-pass)
 	int					volumePreloadCount;		// z-fail preload draws (internal volumes)
 	int					volumeSkipCount;		// prim-batch / cache-less shadow surfs skipped
+
+	// Phase G2 fog/blend lights (a separate pass invocation between the
+	// two ambient walks; reuses the space/viewport tracking above)
+	VkPipeline			pipelineFog;
+	VkPipelineLayout	layoutFogBlend;
+	const float *		blendTextureMatrix;	// current blend stage's texture matrix, NULL = none
+	int					blendSliceOffset;	// ring offset of the current space's blend block, -1 = unset
+	float				fogColor[ 4 ];		// current fog light's stage-0 color (alpha pinned 1)
+	float				blendColor[ 4 ];	// current blend stage's RGBA color
+	int					fogLightCount;
+	int					blendLightCount;
+	int					fogDrawCount;
+	int					blendDrawCount;
+	int					fogSkipCount;		// prim-batch / cache-less fog+blend surfs skipped
 } vkInterPass_t;
 
 static vkInterPass_t interPass;
@@ -1291,6 +1328,501 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 		if ( interPass.volumeSkipCount > 0 ) {
 			common->Printf( "Vulkan: stencil shadow pass skipped %d prim-batch/cache-less volumes\n",
 					interPass.volumeSkipCount );
+		}
+	}
+}
+
+/*
+===============================================================================
+
+	Phase G2: fog and blend lights.
+
+===============================================================================
+*/
+
+// the fog texgen plane scratch (indexed by fogPlaneIndex_t) is extern in
+// tr_local.h and owned by draw_common.cpp, which the vk module build
+// excludes — the module's definition lives here
+idPlane fogTexGenPlanes[4];
+
+/*
+====================
+VK_FogDistanceScale
+
+Port of RB_FogDistanceScale (draw_common.cpp:240): fog alphas up to 1.0
+select the default 500-unit ramp; larger alphas ARE the fog distance.
+====================
+*/
+static float VK_FogDistanceScale( float alpha ) {
+	if ( alpha <= 1.0f ) {
+		return -0.5f / DEFAULT_FOG_DISTANCE;
+	}
+	return -0.5f / alpha;
+}
+
+/*
+====================
+VK_T_BasicFog
+
+Port of RB_T_BasicFog (draw_common.cpp:7593): on space change the four
+texgen rows localize (tex0 S gains the +0.5 center bias, tex0 T is forced
+to the constant 0.5 row in-shader, tex1 T gains +FOG_ENTER, tex1 S — the
+zero-normal viewer-distance plane — transforms to itself) and ride the
+128B push block alongside the MVP and fog color; the push persists across
+the space's surfaces exactly like GL's latched texgen planes.
+
+Documented Phase G2 gaps (mirroring the interaction walk):
+- MD5R packed prim-batch surfaces (RB_ARB2_MD5R_DrawBasicFog) skip with a
+  counter; the packed vertex-program path is Phase I.
+- the shadowCache vertex fallback for cache-less light tris
+  (draw_common.cpp:7491-7494 is shared with RB_T_BlendLight) has no vk
+  analog; fog/blend chains carry ambient-cached tris in practice.
+====================
+*/
+static void VK_T_BasicFog( const drawSurf_t *surf ) {
+	const srfTriangles_t *tri = surf->geo;
+
+	if ( tri == NULL || R_TriHasPrimBatchMesh( tri ) || tri->ambientCache == NULL ) {
+		interPass.fogSkipCount++;
+		return;
+	}
+	if ( tri->numIndexes <= 0 || tri->indexes == NULL ) {
+		return;
+	}
+
+	if ( !VK_Exec_BindTriGeometry( interPass.cmd, interPass.slot, tri ) ) {
+		return;
+	}
+	VK_Exec_SetSurfScissor( interPass.cmd, interPass.viewDef, surf, interPass.fbHeight );
+
+	// space change: MVP (depth hacks included) + weapon depth-range + the
+	// localized fog planes into the push block
+	if ( surf->space != interPass.currentSpace ) {
+		interPass.currentSpace = surf->space;
+		VK_BuildSurfMVP( interPass.viewDef, surf, interPass.mvp );
+		const bool wantWeaponRange = surf->space->weaponDepthHack;
+		if ( wantWeaponRange != interPass.weaponDepthRange ) {
+			interPass.weaponDepthRange = wantWeaponRange;
+			interPass.viewport.maxDepth = wantWeaponRange ? 0.5f : 1.0f;
+			vkCmdSetViewport( interPass.cmd, 0, 1, &interPass.viewport );
+		}
+
+		vkInteractionPush_t push;
+		memset( &push, 0, sizeof( push ) );
+		memcpy( push.mvp, interPass.mvp, sizeof( push.mvp ) );
+
+		idPlane local;
+		R_GlobalPlaneToLocal( surf->space->modelMatrix, fogTexGenPlanes[FOG_DISTANCE_PLANE_S], local );
+		local[3] += 0.5f;
+		memcpy( push.a, local.ToFloatPtr(), sizeof( push.a ) );
+
+		R_GlobalPlaneToLocal( surf->space->modelMatrix, fogTexGenPlanes[FOG_ENTER_PLANE_T], local );
+		local[3] += FOG_ENTER;
+		memcpy( push.b, local.ToFloatPtr(), sizeof( push.b ) );
+
+		// constant per viewer: the zero-normal plane localizes to itself
+		R_GlobalPlaneToLocal( surf->space->modelMatrix, fogTexGenPlanes[FOG_ENTER_PLANE_S], local );
+		memcpy( push.c, local.ToFloatPtr(), sizeof( push.c ) );
+
+		memcpy( push.d, interPass.fogColor, sizeof( push.d ) );
+
+		vkCmdPushConstants( interPass.cmd, interPass.layoutFogBlend,
+				VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), &push );
+	}
+
+	vkCmdDrawIndexed( interPass.cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
+	interPass.fogDrawCount++;
+}
+
+/*
+====================
+VK_FogPass
+
+Port of RB_FogPass (draw_common.cpp:7633): stage-0 fog color and density,
+the view-space eye-depth S plane + scaled fogPlane texgen rows, then the
+light's interaction chains at depth EQUAL followed by the frustumTris cap
+at LEQUAL with back-sided cull under the full view scissor. The GL
+fixed-function hardening (programs off, color arrays off) is inherent
+here — the fog pipeline reads position only.
+====================
+*/
+static void VK_FogPass( const drawSurf_t *drawSurfs, const drawSurf_t *drawSurfs2 ) {
+	const viewLight_t *vLight = backEnd.vLight;
+	drawSurf_t ds;
+
+	// create a surface for the light frustum triangles, which are oriented
+	// drawn side out; if we ran out of vertex cache memory, skip it
+	const srfTriangles_t *frustumTris = vLight->frustumTris;
+	if ( frustumTris == NULL || frustumTris->ambientCache == NULL ) {
+		return;
+	}
+	memset( &ds, 0, sizeof( ds ) );
+	ds.space = &backEnd.viewDef->worldSpace;
+	ds.geo = frustumTris;
+	ds.scissorRect = backEnd.viewDef->scissor;
+
+	// find the current color and density of the fog; assume fog shaders
+	// have only a single stage
+	const idMaterial *lightShader = vLight->lightShader;
+	const float *regs = vLight->shaderRegisters;
+	const shaderStage_t *stage = lightShader->GetStage( 0 );
+
+	// glColor3fv: RGB from the stage registers, alpha pins to 1
+	interPass.fogColor[0] = regs[ stage->color.registers[0] ];
+	interPass.fogColor[1] = regs[ stage->color.registers[1] ];
+	interPass.fogColor[2] = regs[ stage->color.registers[2] ];
+	interPass.fogColor[3] = 1.0f;
+
+	// calculate the falloff planes
+	const float a = VK_FogDistanceScale( regs[ stage->color.registers[3] ] );
+
+	// tex0 S: eye depth off the view-space Z row (T is the constant 0.5
+	// row in-shader; the GL FOG_DISTANCE_PLANE_T is computed but always
+	// overridden per surface, so it is not carried)
+	fogTexGenPlanes[FOG_DISTANCE_PLANE_S][0] = a * backEnd.viewDef->worldSpace.modelViewMatrix[2];
+	fogTexGenPlanes[FOG_DISTANCE_PLANE_S][1] = a * backEnd.viewDef->worldSpace.modelViewMatrix[6];
+	fogTexGenPlanes[FOG_DISTANCE_PLANE_S][2] = a * backEnd.viewDef->worldSpace.modelViewMatrix[10];
+	fogTexGenPlanes[FOG_DISTANCE_PLANE_S][3] = a * backEnd.viewDef->worldSpace.modelViewMatrix[14];
+
+	// tex1 T: the fade plane, scaled so one texel ~ 1000 units
+	fogTexGenPlanes[FOG_ENTER_PLANE_T][0] = 0.001f * vLight->fogPlane[0];
+	fogTexGenPlanes[FOG_ENTER_PLANE_T][1] = 0.001f * vLight->fogPlane[1];
+	fogTexGenPlanes[FOG_ENTER_PLANE_T][2] = 0.001f * vLight->fogPlane[2];
+	fogTexGenPlanes[FOG_ENTER_PLANE_T][3] = 0.001f * vLight->fogPlane[3];
+
+	// tex1 S is based on the view origin
+	const float s = backEnd.viewDef->renderView.vieworg * fogTexGenPlanes[FOG_ENTER_PLANE_T].Normal()
+		+ fogTexGenPlanes[FOG_ENTER_PLANE_T][3];
+
+	fogTexGenPlanes[FOG_ENTER_PLANE_S][0] = 0;
+	fogTexGenPlanes[FOG_ENTER_PLANE_S][1] = 0;
+	fogTexGenPlanes[FOG_ENTER_PLANE_S][2] = 0;
+	fogTexGenPlanes[FOG_ENTER_PLANE_S][3] = FOG_ENTER + s;
+
+	// texture 0 = _fog, texture 1 = _fogEnter
+	VkDescriptorSet sets[ 2 ];
+	sets[ 0 ] = VK_Exec_ImageDescriptor( globalImages->fogImage->GetDeviceHandle(), true );
+	sets[ 1 ] = VK_Exec_ImageDescriptor( globalImages->fogEnterImage->GetDeviceHandle(), true );
+	if ( sets[ 0 ] == VK_NULL_HANDLE || sets[ 1 ] == VK_NULL_HANDLE ) {
+		return;
+	}
+
+	VkCommandBuffer cmd = interPass.cmd;
+	vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, interPass.pipelineFog );
+	vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, interPass.layoutFogBlend,
+			0, 2, sets, 0, NULL );
+
+	// GLS_DEPTHMASK | SRC_ALPHA/ONE_MINUS blend | GLS_DEPTHFUNC_EQUAL;
+	// the chains draw under the CT_FRONT_SIDED baseline
+	vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_EQUAL );
+	vkCmdSetCullMode( cmd, interPass.viewDef->isMirror ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT );
+
+	// draw it: global then local chains (each chain walk resets the space
+	// tracking exactly like RB_RenderDrawSurfChainWithFunction)
+	interPass.currentSpace = NULL;
+	for ( const drawSurf_t *surf = drawSurfs ; surf ; surf = surf->nextOnLight ) {
+		VK_T_BasicFog( surf );
+	}
+	interPass.currentSpace = NULL;
+	for ( const drawSurf_t *surf = drawSurfs2 ; surf ; surf = surf->nextOnLight ) {
+		VK_T_BasicFog( surf );
+	}
+
+	// the light frustum bounding planes aren't in the depth buffer, so use
+	// depthfunc_less (GLS_DEPTHFUNC_LESS -> glDepthFunc(GL_LEQUAL)) instead
+	// of depthfunc_equal, and CT_BACK_SIDED cull with the mirror swap
+	vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_LESS_OR_EQUAL );
+	vkCmdSetCullMode( cmd, interPass.viewDef->isMirror ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT );
+	interPass.currentSpace = NULL;
+	VK_T_BasicFog( &ds );
+	vkCmdSetCullMode( cmd, interPass.viewDef->isMirror ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT );
+}
+
+/*
+====================
+VK_T_BlendLight
+
+Port of RB_T_BlendLight (draw_common.cpp:7462): on space change the four
+lightProject planes localize (with the stage texture matrix folded into
+S/T via RB_BakeTextureMatrixIntoTexgen — the vk equivalent of GL's texture
+matrix) and stream with the stage color as a set-2 ring slice; the MVP
+rides the push block. Shares VK_T_BasicFog's prim-batch/cache-less gaps.
+====================
+*/
+static void VK_T_BlendLight( const drawSurf_t *surf ) {
+	const srfTriangles_t *tri = surf->geo;
+
+	if ( tri == NULL || R_TriHasPrimBatchMesh( tri ) || tri->ambientCache == NULL ) {
+		interPass.fogSkipCount++;
+		return;
+	}
+	if ( tri->numIndexes <= 0 || tri->indexes == NULL ) {
+		return;
+	}
+
+	if ( !VK_Exec_BindTriGeometry( interPass.cmd, interPass.slot, tri ) ) {
+		return;
+	}
+	VK_Exec_SetSurfScissor( interPass.cmd, interPass.viewDef, surf, interPass.fbHeight );
+
+	if ( surf->space != interPass.currentSpace ) {
+		interPass.currentSpace = surf->space;
+		VK_BuildSurfMVP( interPass.viewDef, surf, interPass.mvp );
+		const bool wantWeaponRange = surf->space->weaponDepthHack;
+		if ( wantWeaponRange != interPass.weaponDepthRange ) {
+			interPass.weaponDepthRange = wantWeaponRange;
+			interPass.viewport.maxDepth = wantWeaponRange ? 0.5f : 1.0f;
+			vkCmdSetViewport( interPass.cmd, 0, 1, &interPass.viewport );
+		}
+
+		idPlane lightProject[4];
+		for ( int i = 0 ; i < 4 ; i++ ) {
+			R_GlobalPlaneToLocal( surf->space->modelMatrix, backEnd.vLight->lightProject[i], lightProject[i] );
+		}
+		if ( interPass.blendTextureMatrix != NULL ) {
+			RB_BakeTextureMatrixIntoTexgen( lightProject, interPass.blendTextureMatrix );
+		}
+
+		vkBlendLightBlock_t block;
+		memset( &block, 0, sizeof( block ) );
+		memcpy( block.lightProjectS, lightProject[0].ToFloatPtr(), sizeof( block.lightProjectS ) );
+		memcpy( block.lightProjectT, lightProject[1].ToFloatPtr(), sizeof( block.lightProjectT ) );
+		memcpy( block.lightProjectQ, lightProject[2].ToFloatPtr(), sizeof( block.lightProjectQ ) );
+		memcpy( block.lightFalloffS, lightProject[3].ToFloatPtr(), sizeof( block.lightFalloffS ) );
+		memcpy( block.color, interPass.blendColor, sizeof( block.color ) );
+		interPass.blendSliceOffset = VK_Exec_InteractionUniformAlloc( &block, sizeof( block ) );
+
+		vkInteractionPush_t push;
+		memset( &push, 0, sizeof( push ) );
+		memcpy( push.mvp, interPass.mvp, sizeof( push.mvp ) );
+		vkCmdPushConstants( interPass.cmd, interPass.layoutFogBlend,
+				VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), &push );
+
+		// rebind set 2 at the space's slice (a ring overflow skips the
+		// space's draws)
+		if ( interPass.blendSliceOffset >= 0 ) {
+			VkDescriptorSet uniformSet = VK_Exec_InteractionUniformSet();
+			uint32_t dynamicOffset = (uint32_t)interPass.blendSliceOffset;
+			if ( uniformSet != VK_NULL_HANDLE ) {
+				vkCmdBindDescriptorSets( interPass.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+						interPass.layoutFogBlend, 2, 1, &uniformSet, 1, &dynamicOffset );
+			} else {
+				interPass.blendSliceOffset = -1;
+			}
+		}
+	}
+	if ( interPass.blendSliceOffset < 0 ) {
+		return;
+	}
+
+	vkCmdDrawIndexed( interPass.cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
+	interPass.blendDrawCount++;
+}
+
+/*
+====================
+VK_BlendLight
+
+Port of RB_BlendLight (draw_common.cpp:7508): every light-shader stage
+(condition-register gated) projects its texture through lightProject[0..2]
+with the falloff through lightProject[3], modulated by the stage's RGBA
+color and blended by the stage's blend keyword at depth EQUAL with writes
+off. GL's empty-chain early-out checks the FIRST list only — preserved.
+Stage alpha-test bits have no analog here (unused by light materials).
+====================
+*/
+static void VK_BlendLight( const drawSurf_t *drawSurfs, const drawSurf_t *drawSurfs2 ) {
+	const viewLight_t *vLight = backEnd.vLight;
+	float textureMatrix[16];
+
+	if ( !drawSurfs ) {
+		return;
+	}
+	if ( r_skipBlendLights.GetBool() ) {
+		return;
+	}
+	if ( vLight->falloffImage == NULL ) {
+		return;
+	}
+
+	// texture 1 gets the falloff texture (T pins to 0.5 in-shader)
+	VkDescriptorSet falloffSet = VK_Exec_ImageDescriptor( vLight->falloffImage->GetDeviceHandle(), true );
+	if ( falloffSet == VK_NULL_HANDLE ) {
+		return;
+	}
+
+	const idMaterial *lightShader = vLight->lightShader;
+	const float *regs = vLight->shaderRegisters;
+
+	const int lightStageCount = lightShader->GetNumStages();
+	for ( int i = 0 ; i < lightStageCount ; i++ ) {
+		const shaderStage_t *stage = lightShader->GetStage(i);
+
+		if ( !regs[ stage->conditionRegister ] ) {
+			continue;
+		}
+		if ( stage->texture.image == NULL ) {
+			continue;
+		}
+
+		// GL_State( GLS_DEPTHMASK | stage->drawStateBits | GLS_DEPTHFUNC_EQUAL ):
+		// the stage blend keyword selects the pipeline; depth writes off +
+		// EQUAL ride the dynamic state (re-asserted per stage — a fog cap
+		// may have left LEQUAL latched)
+		VkPipeline pipeline = VK_Exec_BlendLightPipeline( stage->drawStateBits );
+		VkDescriptorSet sets[ 2 ];
+		sets[ 0 ] = VK_Exec_ImageDescriptor( stage->texture.image->GetDeviceHandle(), true );
+		sets[ 1 ] = falloffSet;
+		if ( pipeline == VK_NULL_HANDLE || sets[ 0 ] == VK_NULL_HANDLE ) {
+			continue;
+		}
+
+		vkCmdBindPipeline( interPass.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
+		vkCmdBindDescriptorSets( interPass.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, interPass.layoutFogBlend,
+				0, 2, sets, 0, NULL );
+		vkCmdSetDepthCompareOp( interPass.cmd, VK_COMPARE_OP_EQUAL );
+		// blend lights draw under the CT_FRONT_SIDED baseline
+		vkCmdSetCullMode( interPass.cmd, interPass.viewDef->isMirror ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT );
+
+		if ( stage->texture.hasMatrix ) {
+			RB_GetShaderTextureMatrix( regs, &stage->texture, textureMatrix );
+			interPass.blendTextureMatrix = textureMatrix;
+		} else {
+			interPass.blendTextureMatrix = NULL;
+		}
+
+		// get the modulate values from the light, including alpha, unlike
+		// normal lights
+		interPass.blendColor[0] = regs[ stage->color.registers[0] ];
+		interPass.blendColor[1] = regs[ stage->color.registers[1] ];
+		interPass.blendColor[2] = regs[ stage->color.registers[2] ];
+		interPass.blendColor[3] = regs[ stage->color.registers[3] ];
+
+		interPass.currentSpace = NULL;
+		interPass.blendSliceOffset = -1;
+		for ( const drawSurf_t *surf = drawSurfs ; surf ; surf = surf->nextOnLight ) {
+			VK_T_BlendLight( surf );
+		}
+		interPass.currentSpace = NULL;
+		interPass.blendSliceOffset = -1;
+		for ( const drawSurf_t *surf = drawSurfs2 ; surf ; surf = surf->nextOnLight ) {
+			VK_T_BlendLight( surf );
+		}
+	}
+}
+
+/*
+====================
+VK_Fog_DrawAllLights
+
+Port of RB_STD_FogAllLights (draw_common.cpp:7762): fog and blend lights
+draw between the two ambient walks (RB_STD_DrawView:9806), over the
+lights' interaction chains only — translucentInteractions are never
+fogged. Stencil stays disabled for the whole pass (GL :7773; the stencil
+buffer still carries the volumes' 128 baseline and must not gate fog);
+the D3XP-disabled anti-double-fog stencil guard (GL :7782-7805 in #if 0)
+is not ported.
+
+Called from VK_GuiExecutor_Draw3DView between the ambient walks; exits
+with depth bias off and the depth-range baseline (maxDepth 1.0) restored.
+====================
+*/
+void VK_Fog_DrawAllLights( const viewDef_t *viewDef ) {
+	if ( viewDef == NULL || viewDef->viewLights == NULL ) {
+		return;
+	}
+	if ( r_skipFogLights.GetBool() || r_showOverDraw.GetInteger() != 0
+		 || viewDef->isXraySubview /* dont fog in xray mode*/
+		 ) {
+		return;
+	}
+
+	// keep the common no-fog view zero-cost: no state is touched unless a
+	// fog or blend light exists
+	viewLight_t *vLight;
+	for ( vLight = viewDef->viewLights ; vLight ; vLight = vLight->next ) {
+		if ( vLight->lightShader->IsFogLight() || vLight->lightShader->IsBlendLight() ) {
+			break;
+		}
+	}
+	if ( vLight == NULL ) {
+		return;
+	}
+
+	VkCommandBuffer cmd = VK_Exec_ActiveCmd();
+	if ( cmd == VK_NULL_HANDLE ) {
+		return;
+	}
+
+	memset( &interPass, 0, sizeof( interPass ) );
+	interPass.viewDef = viewDef;
+	interPass.cmd = cmd;
+	interPass.slot = VK_Exec_ActiveFrameSlot();
+	interPass.fbHeight = (int)vkCtx.swapchainExtent.height;
+	interPass.layoutFogBlend = VK_Exec_FogBlendPipelineLayout();
+	interPass.pipelineFog = VK_Exec_FogPipeline();
+	interPass.blendSliceOffset = -1;
+	if ( interPass.layoutFogBlend == VK_NULL_HANDLE ) {
+		return;
+	}
+
+	// GL bottom-left viewport -> Vulkan negative-height viewport, issued
+	// unconditionally: the pre-fog ambient walk may have left a weapon
+	// depth-range (maxDepth 0.5) latched (the interaction-pass convention)
+	const int vpX = viewDef->viewport.x1;
+	const int vpYGL = viewDef->viewport.y1;
+	const int vpW = viewDef->viewport.x2 - viewDef->viewport.x1 + 1;
+	const int vpH = viewDef->viewport.y2 - viewDef->viewport.y1 + 1;
+	interPass.viewport.x = (float)vpX;
+	interPass.viewport.y = (float)( interPass.fbHeight - vpYGL );
+	interPass.viewport.width = (float)vpW;
+	interPass.viewport.height = -(float)vpH;
+	interPass.viewport.minDepth = 0.0f;
+	interPass.viewport.maxDepth = 1.0f;
+	vkCmdSetViewport( cmd, 0, 1, &interPass.viewport );
+
+	// batch state: depth test on with writes off (GLS_DEPTHMASK); stencil
+	// disabled for the whole pass; bias off
+	vkCmdSetDepthTestEnable( cmd, VK_TRUE );
+	vkCmdSetDepthWriteEnable( cmd, VK_FALSE );
+	vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
+	vkCmdSetStencilTestEnable( cmd, VK_FALSE );
+	vkCmdSetFrontFace( cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+
+	for ( vLight = viewDef->viewLights ; vLight ; vLight = vLight->next ) {
+		backEnd.vLight = vLight;
+
+		if ( !vLight->lightShader->IsFogLight() && !vLight->lightShader->IsBlendLight() ) {
+			continue;
+		}
+
+		if ( vLight->lightShader->IsFogLight() ) {
+			if ( interPass.pipelineFog == VK_NULL_HANDLE ) {
+				continue;
+			}
+			interPass.fogLightCount++;
+			VK_FogPass( vLight->globalInteractions, vLight->localInteractions );
+		} else if ( vLight->lightShader->IsBlendLight() ) {
+			interPass.blendLightCount++;
+			VK_BlendLight( vLight->globalInteractions, vLight->localInteractions );
+		}
+	}
+
+	// restore the depth-range baseline for the post-fog ambient walk
+	if ( interPass.weaponDepthRange ) {
+		interPass.viewport.maxDepth = 1.0f;
+		vkCmdSetViewport( cmd, 0, 1, &interPass.viewport );
+	}
+
+	// one-shot bring-up evidence that the fog/blend pass emitted real work
+	static bool loggedFirstFogPass = false;
+	if ( !loggedFirstFogPass && ( interPass.fogDrawCount > 0 || interPass.blendDrawCount > 0 ) ) {
+		loggedFirstFogPass = true;
+		common->Printf( "Vulkan: first fog/blend pass: %d fog, %d blend lights\n",
+				interPass.fogLightCount, interPass.blendLightCount );
+		if ( interPass.fogSkipCount > 0 ) {
+			common->Printf( "Vulkan: fog/blend pass skipped %d prim-batch/cache-less surfaces\n",
+					interPass.fogSkipCount );
 		}
 	}
 }

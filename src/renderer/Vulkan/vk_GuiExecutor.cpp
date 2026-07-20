@@ -57,6 +57,9 @@ extern idCVar r_skipDynamicTextures;
 // vk_Interactions.cpp: the Phase F1 per-light interaction pass, inserted
 // between the depth fill and the ambient walks
 void VK_Interactions_DrawLights( const viewDef_t *viewDef );
+// vk_Interactions.cpp: the Phase G2 fog/blend light pass, inserted between
+// the two ambient walks (RB_STD_DrawView's fog point)
+void VK_Fog_DrawAllLights( const viewDef_t *viewDef );
 
 // frame-scope split (Phase F2a): the swapchain rendering scope can be
 // suspended for the shadow atlas caster pass and resumed with loadOp LOAD
@@ -79,6 +82,7 @@ static const int VK_VERTEX_RING_BYTES = 32 * 1024 * 1024;
 static const int VK_INDEX_RING_BYTES = 8 * 1024 * 1024;
 static const int VK_MAX_GUI_PIPELINES = 64;
 static const int VK_MAX_CUBE_PIPELINES = 32;
+static const int VK_MAX_BLEND_LIGHT_PIPELINES = 16;
 static const int VK_MAX_DESCRIPTOR_SETS = 4096;
 // per-draw interaction blocks stream through a dynamic uniform ring;
 // slices align to 256 (the guaranteed minUniformBufferOffsetAlignment
@@ -152,6 +156,10 @@ typedef struct vkGuiExecutor_s {
 	VkShaderModule		pointCasterFragModule;
 	VkShaderModule		stencilShadowVertModule;
 	VkShaderModule		stencilShadowFragModule;
+	VkShaderModule		fogVertModule;
+	VkShaderModule		fogFragModule;
+	VkShaderModule		blendLightVertModule;
+	VkShaderModule		blendLightFragModule;
 	VkDescriptorSetLayout setLayout;
 	VkDescriptorSetLayout uboSetLayout;		// one dynamic uniform buffer (interaction block ring)
 	// shadow receiver set: binding 0 = atlas + compare sampler (fragment),
@@ -164,16 +172,22 @@ typedef struct vkGuiExecutor_s {
 	VkPipelineLayout	interactionPipelineLayout;
 	// shadow-receiving interactions add set 7 (atlas compare sampler + shadow UBO)
 	VkPipelineLayout	shadowInteractionPipelineLayout;
+	// fog/blend lights: 2 single-combined-sampler sets (0=fog/projection,
+	// 1=fogEnter/falloff) + set 2 dynamic UBO (blend-light block ring)
+	VkPipelineLayout	fogBlendPipelineLayout;
 	VkPipeline			interactionPipeline;	// lazily built; ONE/ONE additive
 	VkPipeline			shadowInteractionPipeline;	// lazily built; ONE/ONE additive + atlas sampling
 	VkPipeline			pointShadowInteractionPipeline;	// lazily built; ONE/ONE additive + cube compare sampling
 	VkPipeline			casterPipeline;			// lazily built; depth-only atlas caster
 	VkPipeline			pointCasterPipeline;	// lazily built; depth-only cube-face caster
 	VkPipeline			stencilShadowPipeline;	// lazily built; stencil shadow volumes (color writes off)
+	VkPipeline			fogPipeline;			// lazily built; fog lights (SRC_ALPHA/ONE_MINUS_SRC_ALPHA)
 	vkGuiPipeline_t		pipelines[ VK_MAX_GUI_PIPELINES ];
 	int					numPipelines;
 	vkCubePipeline_t	cubePipelines[ VK_MAX_CUBE_PIPELINES ];
 	int					numCubePipelines;
+	vkGuiPipeline_t		blendLightPipelines[ VK_MAX_BLEND_LIGHT_PIPELINES ];	// per light-stage blend bits
+	int					numBlendLightPipelines;
 	VkFormat			pipelineTargetFormat;	// swapchain format the pipelines were built for
 
 	vkRing_t			vertexRings[ VK_FRAMES_IN_FLIGHT ];
@@ -761,6 +775,93 @@ VkPipelineLayout VK_Exec_BasePipelineLayout( void ) {
 	return vkExec.pipelineLayout;
 }
 
+// position-only idDrawVert stream shared by the fog/blend pipelines (the
+// GL fog/blend draws are fixed-function glVertexPointer(xyz)-only —
+// RB_T_RenderTriangleSurface / RB_T_BlendLight)
+static void VK_Exec_PositionVertexInput( VkVertexInputBindingDescription &binding,
+		VkVertexInputAttributeDescription &attr, VkPipelineVertexInputStateCreateInfo &vertexInput ) {
+	memset( &binding, 0, sizeof( binding ) );
+	binding.stride = sizeof( idDrawVert );
+	binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+	memset( &attr, 0, sizeof( attr ) );
+	attr.location = 0;
+	attr.format = VK_FORMAT_R32G32B32_SFLOAT;
+	attr.offset = (uint32_t)offsetof( idDrawVert, xyz );
+
+	memset( &vertexInput, 0, sizeof( vertexInput ) );
+	vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+	vertexInput.vertexBindingDescriptionCount = 1;
+	vertexInput.pVertexBindingDescriptions = &binding;
+	vertexInput.vertexAttributeDescriptionCount = 1;
+	vertexInput.pVertexAttributeDescriptions = &attr;
+}
+
+// fog light pipeline (Phase G2): fixed SRC_ALPHA/ONE_MINUS_SRC_ALPHA blend
+// (the only state RB_FogPass ever uses), position-only input; depth EQUAL
+// for the surface chains and LEQUAL for the frustumTris cap ride the
+// shared dynamic state. The fog shaders bind only sets 0/1 of the
+// fog/blend layout.
+VkPipeline VK_Exec_FogPipeline( void ) {
+	if ( vkExec.fogPipeline != VK_NULL_HANDLE ) {
+		return vkExec.fogPipeline;
+	}
+	if ( vkExec.fogVertModule == VK_NULL_HANDLE || vkExec.fogFragModule == VK_NULL_HANDLE
+			|| vkExec.fogBlendPipelineLayout == VK_NULL_HANDLE ) {
+		return VK_NULL_HANDLE;
+	}
+
+	VkVertexInputBindingDescription binding;
+	VkVertexInputAttributeDescription attr;
+	VkPipelineVertexInputStateCreateInfo vertexInput;
+	VK_Exec_PositionVertexInput( binding, attr, vertexInput );
+
+	vkExec.fogPipeline = VK_Exec_CreatePipeline( vkExec.fogVertModule, vkExec.fogFragModule,
+			&vertexInput, GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA,
+			vkExec.fogBlendPipelineLayout, false, false );
+	return vkExec.fogPipeline;
+}
+
+// blend-light pipelines (Phase G2): one per light-stage blend combination —
+// GL_State( GLS_DEPTHMASK | stage->drawStateBits | GLS_DEPTHFUNC_EQUAL ),
+// where only the blend factors are pipeline-level state
+VkPipeline VK_Exec_BlendLightPipeline( int stateBits ) {
+	const int blendBits = stateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
+
+	for ( int i = 0; i < vkExec.numBlendLightPipelines; i++ ) {
+		if ( vkExec.blendLightPipelines[ i ].blendBits == blendBits ) {
+			return vkExec.blendLightPipelines[ i ].pipeline;
+		}
+	}
+	if ( vkExec.blendLightVertModule == VK_NULL_HANDLE || vkExec.blendLightFragModule == VK_NULL_HANDLE
+			|| vkExec.fogBlendPipelineLayout == VK_NULL_HANDLE ) {
+		return VK_NULL_HANDLE;
+	}
+	if ( vkExec.numBlendLightPipelines >= VK_MAX_BLEND_LIGHT_PIPELINES ) {
+		common->Warning( "Vulkan: blend-light pipeline cache exhausted" );
+		return vkExec.blendLightPipelines[ 0 ].pipeline;
+	}
+
+	VkVertexInputBindingDescription binding;
+	VkVertexInputAttributeDescription attr;
+	VkPipelineVertexInputStateCreateInfo vertexInput;
+	VK_Exec_PositionVertexInput( binding, attr, vertexInput );
+
+	VkPipeline pipeline = VK_Exec_CreatePipeline( vkExec.blendLightVertModule, vkExec.blendLightFragModule,
+			&vertexInput, blendBits, vkExec.fogBlendPipelineLayout, false, false );
+	if ( pipeline == VK_NULL_HANDLE ) {
+		return VK_NULL_HANDLE;
+	}
+	vkExec.blendLightPipelines[ vkExec.numBlendLightPipelines ].blendBits = blendBits;
+	vkExec.blendLightPipelines[ vkExec.numBlendLightPipelines ].pipeline = pipeline;
+	vkExec.numBlendLightPipelines++;
+	return pipeline;
+}
+
+VkPipelineLayout VK_Exec_FogBlendPipelineLayout( void ) {
+	return vkExec.fogBlendPipelineLayout;
+}
+
 /*
 ====================
 Descriptors
@@ -920,6 +1021,30 @@ static bool VK_GuiExecutor_Init( void ) {
 		common->Warning( "Vulkan: stencil shadow fragment shader module creation failed" );
 		return false;
 	}
+	smci.codeSize = vk_fog_vert_spv_size;
+	smci.pCode = (const uint32_t *)vk_fog_vert_spv;
+	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.fogVertModule ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: fog vertex shader module creation failed" );
+		return false;
+	}
+	smci.codeSize = vk_fog_frag_spv_size;
+	smci.pCode = (const uint32_t *)vk_fog_frag_spv;
+	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.fogFragModule ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: fog fragment shader module creation failed" );
+		return false;
+	}
+	smci.codeSize = vk_blend_light_vert_spv_size;
+	smci.pCode = (const uint32_t *)vk_blend_light_vert_spv;
+	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.blendLightVertModule ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: blend light vertex shader module creation failed" );
+		return false;
+	}
+	smci.codeSize = vk_blend_light_frag_spv_size;
+	smci.pCode = (const uint32_t *)vk_blend_light_frag_spv;
+	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.blendLightFragModule ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: blend light fragment shader module creation failed" );
+		return false;
+	}
 
 	VkDescriptorSetLayoutBinding bindingInfo;
 	memset( &bindingInfo, 0, sizeof( bindingInfo ) );
@@ -1033,6 +1158,22 @@ static bool VK_GuiExecutor_Init( void ) {
 		return false;
 	}
 
+	// fog/blend lights (Phase G2): sets 0/1 reuse the per-image
+	// single-sampler layout (fog binds _fog + _fogEnter, blend binds the
+	// stage projection + falloff), set 2 is the ring UBO for the
+	// blend-light block (the fog shaders bind only sets 0/1); the push
+	// range keeps the shared 128B block
+	VkDescriptorSetLayout fogBlendSetLayouts[ 3 ];
+	fogBlendSetLayouts[ 0 ] = vkExec.setLayout;
+	fogBlendSetLayouts[ 1 ] = vkExec.setLayout;
+	fogBlendSetLayouts[ 2 ] = vkExec.uboSetLayout;
+	plci.setLayoutCount = 3;
+	plci.pSetLayouts = fogBlendSetLayouts;
+	if ( vkCreatePipelineLayout( vkCtx.device, &plci, NULL, &vkExec.fogBlendPipelineLayout ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: fog/blend pipeline layout creation failed" );
+		return false;
+	}
+
 	for ( int i = 0; i < VK_FRAMES_IN_FLIGHT; i++ ) {
 		if ( !VK_Ring_Create( vkExec.vertexRings[ i ], VK_VERTEX_RING_BYTES, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT )
 				|| !VK_Ring_Create( vkExec.indexRings[ i ], VK_INDEX_RING_BYTES, VK_BUFFER_USAGE_INDEX_BUFFER_BIT )
@@ -1121,6 +1262,14 @@ void VK_GuiExecutor_Shutdown( void ) {
 	if ( vkExec.stencilShadowPipeline != VK_NULL_HANDLE ) {
 		vkDestroyPipeline( vkCtx.device, vkExec.stencilShadowPipeline, NULL );
 	}
+	if ( vkExec.fogPipeline != VK_NULL_HANDLE ) {
+		vkDestroyPipeline( vkCtx.device, vkExec.fogPipeline, NULL );
+	}
+	for ( int i = 0; i < vkExec.numBlendLightPipelines; i++ ) {
+		if ( vkExec.blendLightPipelines[ i ].pipeline != VK_NULL_HANDLE ) {
+			vkDestroyPipeline( vkCtx.device, vkExec.blendLightPipelines[ i ].pipeline, NULL );
+		}
+	}
 	if ( vkExec.pipelineLayout != VK_NULL_HANDLE ) {
 		vkDestroyPipelineLayout( vkCtx.device, vkExec.pipelineLayout, NULL );
 	}
@@ -1129,6 +1278,9 @@ void VK_GuiExecutor_Shutdown( void ) {
 	}
 	if ( vkExec.shadowInteractionPipelineLayout != VK_NULL_HANDLE ) {
 		vkDestroyPipelineLayout( vkCtx.device, vkExec.shadowInteractionPipelineLayout, NULL );
+	}
+	if ( vkExec.fogBlendPipelineLayout != VK_NULL_HANDLE ) {
+		vkDestroyPipelineLayout( vkCtx.device, vkExec.fogBlendPipelineLayout, NULL );
 	}
 	if ( vkExec.descriptorPool != VK_NULL_HANDLE ) {
 		vkDestroyDescriptorPool( vkCtx.device, vkExec.descriptorPool, NULL );
@@ -1189,6 +1341,18 @@ void VK_GuiExecutor_Shutdown( void ) {
 	}
 	if ( vkExec.stencilShadowFragModule != VK_NULL_HANDLE ) {
 		vkDestroyShaderModule( vkCtx.device, vkExec.stencilShadowFragModule, NULL );
+	}
+	if ( vkExec.fogVertModule != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, vkExec.fogVertModule, NULL );
+	}
+	if ( vkExec.fogFragModule != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, vkExec.fogFragModule, NULL );
+	}
+	if ( vkExec.blendLightVertModule != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, vkExec.blendLightVertModule, NULL );
+	}
+	if ( vkExec.blendLightFragModule != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, vkExec.blendLightFragModule, NULL );
 	}
 	for ( int i = 0; i < VK_FRAMES_IN_FLIGHT; i++ ) {
 		if ( vkExec.vertexRings[ i ].buffer != VK_NULL_HANDLE ) {
@@ -1279,6 +1443,14 @@ static bool VK_GuiExecutor_BeginFrame( void ) {
 			vkDestroyPipeline( vkCtx.device, vkExec.stencilShadowPipeline, NULL );
 			vkExec.stencilShadowPipeline = VK_NULL_HANDLE;
 		}
+		if ( vkExec.fogPipeline != VK_NULL_HANDLE ) {
+			vkDestroyPipeline( vkCtx.device, vkExec.fogPipeline, NULL );
+			vkExec.fogPipeline = VK_NULL_HANDLE;
+		}
+		for ( int i = 0; i < vkExec.numBlendLightPipelines; i++ ) {
+			vkDestroyPipeline( vkCtx.device, vkExec.blendLightPipelines[ i ].pipeline, NULL );
+		}
+		vkExec.numBlendLightPipelines = 0;
 		vkExec.pipelineTargetFormat = vkCtx.swapchainFormat;
 	}
 
@@ -2133,8 +2305,9 @@ VK_GuiExecutor_Draw3DView
 
 Phase E world consumer: RB_STD_DrawView's depth prepass + the two ambient
 shader-pass walks (pre-fog: decals and sort < SS_MEDIUM; post-fog:
-SS_MEDIUM..<SS_POST_PROCESS). Interactions, fog, and post-process surfaces
-belong to later phases.
+SS_MEDIUM..<SS_POST_PROCESS), with the interaction pass (Phase F1) between
+the fill and the walks and the fog/blend light pass (Phase G2) between the
+walks. Post-process surfaces belong to Phase H.
 ====================
 */
 void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
@@ -2402,8 +2575,21 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 		}
 	}
 
-	if ( !r_skipAmbient.GetBool() ) {
-		for ( int pass = 0; pass < 2; pass++ ) {
+	for ( int pass = 0; pass < 2; pass++ ) {
+		// ---- fog and blend lights between the two walks (Phase G2) ----
+		// RB_STD_DrawView order: pre-fog material passes (draw_common.cpp:
+		// 9774), RB_STD_FogAllLights (:9806), post-fog passes (:9818) —
+		// fog runs regardless of r_skipAmbient. The pass tracks its own
+		// space/depth-range state and exits at maxDepth 1.0 with depth
+		// bias off; restart the walk baseline like the interaction pass.
+		if ( pass == 1 ) {
+			VK_Fog_DrawAllLights( viewDef );
+			currentSpace = NULL;
+			weaponDepthRange = false;
+			viewport.maxDepth = 1.0f;
+			vkCmdSetViewport( cmd, 0, 1, &viewport );
+		}
+		if ( !r_skipAmbient.GetBool() ) {
 			for ( int surfNum = 0; surfNum < processed; surfNum++ ) {
 				const drawSurf_t *drawSurf = drawSurfs[ surfNum ];
 				const idMaterial *shader = drawSurf->material;

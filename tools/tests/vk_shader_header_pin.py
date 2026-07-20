@@ -34,6 +34,10 @@ SHADERS = [
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "shadow_point_caster.frag",
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "shadow_volume.vert",
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "shadow_volume.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "fog.vert",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "fog.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "blend_light.vert",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "blend_light.frag",
 ]
 
 
