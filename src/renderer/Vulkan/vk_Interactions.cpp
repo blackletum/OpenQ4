@@ -66,6 +66,7 @@ void VK_BuildSurfMVP( const viewDef_t *viewDef, const drawSurf_t *drawSurf, floa
 VkPipeline VK_Exec_InteractionPipeline( void );
 VkPipelineLayout VK_Exec_InteractionPipelineLayout( void );
 VkPipeline VK_Exec_ShadowInteractionPipeline( void );
+VkPipeline VK_Exec_PointShadowInteractionPipeline( void );
 VkPipelineLayout VK_Exec_ShadowInteractionPipelineLayout( void );
 VkDescriptorSet VK_Exec_ShadowDescriptorSet( void );
 VkDescriptorSet VK_Exec_ImageDescriptor( unsigned int texnum, bool require2D );
@@ -120,6 +121,16 @@ typedef struct vkShadowBlock_s {
 	float			texelSize[ 4 ];		// x,y: 1 / atlas dimensions
 } vkShadowBlock_t;
 
+// std140 mirror of the point variant's set-7 ShadowBlock (Phase F2b,
+// 5 vec4 = 80 bytes; rewritten per space — the rows are the model matrix)
+typedef struct vkPointShadowBlock_s {
+	float			modelRow0[ 4 ];		// model -> world matrix rows
+	float			modelRow1[ 4 ];
+	float			modelRow2[ 4 ];
+	float			lightOriginFar[ 4 ];	// xyz: world light origin, w: far envelope
+	float			biasParams[ 4 ];	// x: constant bias, y: normal bias, z: texel depth bias, w: per-distance normal-offset factor
+} vkPointShadowBlock_t;
+
 // per-view pass state (space/depth-range tracking mirrors the Draw3DView
 // walks; reset per VK_Interactions_DrawLights call)
 typedef struct vkInterPass_s {
@@ -137,13 +148,16 @@ typedef struct vkInterPass_s {
 	int					lightCount;
 	int					drawCount;
 
-	// Phase F2a shadow-map receivers
-	bool				shadowPassPrepared;	// atlas rendered for this view
+	// Phase F2a/F2b shadow-map receivers
+	bool				shadowPassPrepared;	// shadow maps rendered for this view
 	VkPipeline			pipelineUnshadowed;
-	VkPipeline			pipelineShadowed;
+	VkPipeline			pipelineShadowed;		// projected receiver (atlas)
+	VkPipeline			pipelinePointShadowed;	// point receiver (cube)
 	VkPipelineLayout	layoutShadowed;
-	VkDescriptorSet		shadowSet;
-	bool				shadowActive;		// the shadow pipeline is bound
+	VkDescriptorSet		shadowSetAtlas;		// the executor's atlas set (projected lights)
+	VkDescriptorSet		shadowSet;			// active light's set-7 set (atlas or cube)
+	int					shadowMode;			// 0 = unshadowed, 1 = projected, 2 = point
+	bool				shadowActive;		// a shadow pipeline is bound
 	const vkShadowLightState_t *shadowState;	// current light's shadow state (shadowActive only)
 	int					shadowSliceOffset;	// ring offset of the current space's shadow block, -1 = unset
 	int					shadowLightCount;
@@ -448,16 +462,41 @@ static void VK_SubmitInteraction( drawInteraction_t *din ) {
 ====================
 VK_Inter_WriteShadowSlice
 
-Per-space shadow block (GL contract, draw_arb2.cpp:8552-8581): the light's
-world clip planes localized to the surface's model space CPU-side, plus the
-per-light composed atlas rect and bias scalars, streamed as a second 256B
-ring slice. Returns the dynamic offset or -1 on ring overflow.
+Per-space shadow block, streamed as a second 256B ring slice. Projected
+lights (GL contract, draw_arb2.cpp:8552-8581): the light's world clip planes
+localized to the surface's model space CPU-side, plus the per-light composed
+atlas rect and bias scalars. Point lights (RB_GLSLPointShadowMap_
+DrawInteraction contract): the model matrix rows (RB_ShadowMapModelMatrixRows),
+the global light origin + far envelope, and the point bias scalars. Returns
+the dynamic offset or -1 on ring overflow.
 ====================
 */
 static int VK_Inter_WriteShadowSlice( const viewEntity_t *space ) {
 	const vkShadowLightState_t *state = interPass.shadowState;
 	if ( state == NULL || space == NULL ) {
 		return -1;
+	}
+
+	if ( state->pointLight ) {
+		vkPointShadowBlock_t pointBlock;
+		memset( &pointBlock, 0, sizeof( pointBlock ) );
+		const float *m = space->modelMatrix;
+		for ( int i = 0 ; i < 4 ; i++ ) {
+			pointBlock.modelRow0[ i ] = m[ i * 4 + 0 ];
+			pointBlock.modelRow1[ i ] = m[ i * 4 + 1 ];
+			pointBlock.modelRow2[ i ] = m[ i * 4 + 2 ];
+		}
+		pointBlock.lightOriginFar[ 0 ] = state->vLight->globalLightOrigin[ 0 ];
+		pointBlock.lightOriginFar[ 1 ] = state->vLight->globalLightOrigin[ 1 ];
+		pointBlock.lightOriginFar[ 2 ] = state->vLight->globalLightOrigin[ 2 ];
+		pointBlock.lightOriginFar[ 3 ] = state->pointFar;
+		// the depth-compare path uses r_shadowMapPointBias directly; the GL
+		// storage-step floor only applies to the packed-color fallback
+		pointBlock.biasParams[ 0 ] = r_shadowMapPointBias.GetFloat();
+		pointBlock.biasParams[ 1 ] = r_shadowMapPointNormalBias.GetFloat();
+		pointBlock.biasParams[ 2 ] = state->texelDepthBias;
+		pointBlock.biasParams[ 3 ] = state->normalOffsetWorld;
+		return VK_Exec_InteractionUniformAlloc( &pointBlock, sizeof( pointBlock ) );
 	}
 
 	vkShadowBlock_t block;
@@ -487,20 +526,43 @@ static int VK_Inter_WriteShadowSlice( const viewEntity_t *space ) {
 ====================
 VK_Inter_SelectShadowMode
 
-Binds the shadowed or unshadowed interaction pipeline for the next chain.
-Entering a shadowed light invalidates the space tracking so the per-space
-shadow slice (per-LIGHT data) is rewritten even when the space is unchanged.
+Binds the projected-shadowed, point-shadowed, or unshadowed interaction
+pipeline for the next chain and selects the light's set-7 descriptor set
+(the shared atlas set, or the light's cube set). Entering a shadowed light
+invalidates the space tracking so the per-space shadow slice (per-LIGHT
+data) is rewritten even when the space is unchanged.
 ====================
 */
 static void VK_Inter_SelectShadowMode( const vkShadowLightState_t *state ) {
-	const bool wantShadow = state != NULL;
-	if ( wantShadow != interPass.shadowActive ) {
-		interPass.shadowActive = wantShadow;
-		vkCmdBindPipeline( interPass.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-				wantShadow ? interPass.pipelineShadowed : interPass.pipelineUnshadowed );
+	int wantMode = 0;
+	if ( state != NULL ) {
+		wantMode = state->pointLight ? 2 : 1;
 	}
+	// a missing per-class receiver pipeline (or point set) fails the light
+	// back to the unshadowed F1 path
+	if ( wantMode == 1 && ( interPass.pipelineShadowed == VK_NULL_HANDLE || interPass.shadowSetAtlas == VK_NULL_HANDLE ) ) {
+		wantMode = 0;
+		state = NULL;
+	}
+	if ( wantMode == 2 && ( interPass.pipelinePointShadowed == VK_NULL_HANDLE || state->pointSet == VK_NULL_HANDLE ) ) {
+		wantMode = 0;
+		state = NULL;
+	}
+
+	if ( wantMode != interPass.shadowMode ) {
+		interPass.shadowMode = wantMode;
+		VkPipeline pipeline = interPass.pipelineUnshadowed;
+		if ( wantMode == 1 ) {
+			pipeline = interPass.pipelineShadowed;
+		} else if ( wantMode == 2 ) {
+			pipeline = interPass.pipelinePointShadowed;
+		}
+		vkCmdBindPipeline( interPass.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
+	}
+	interPass.shadowActive = wantMode != 0;
 	interPass.shadowState = state;
-	if ( wantShadow ) {
+	interPass.shadowSet = ( wantMode == 2 ) ? state->pointSet : interPass.shadowSetAtlas;
+	if ( interPass.shadowActive ) {
 		interPass.currentSpace = NULL;
 		interPass.shadowSliceOffset = -1;
 	}
@@ -748,17 +810,20 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 	interPass.pipelineUnshadowed = pipeline;
 	interPass.shadowSliceOffset = -1;
 
-	// Phase F2a: classify + tile the view's shadow-map lights (CPU), then
-	// render the atlas in a frame-scope interruption BEFORE any batch state
-	// is set (the resume path re-establishes the executor baseline). Any
-	// failure simply leaves every light on the unshadowed F1 path.
+	// Phase F2a/F2b: classify + tile the view's shadow-map lights (CPU),
+	// then render the atlas + point cubes in a frame-scope interruption
+	// BEFORE any batch state is set (the resume path re-establishes the
+	// executor baseline). Any failure simply leaves the affected lights on
+	// the unshadowed F1 path.
 	if ( VK_ShadowMap_PrepareViewLights( viewDef ) > 0 ) {
 		interPass.pipelineShadowed = VK_Exec_ShadowInteractionPipeline();
+		interPass.pipelinePointShadowed = VK_Exec_PointShadowInteractionPipeline();
 		interPass.layoutShadowed = VK_Exec_ShadowInteractionPipelineLayout();
-		if ( interPass.pipelineShadowed != VK_NULL_HANDLE && interPass.layoutShadowed != VK_NULL_HANDLE ) {
+		if ( interPass.layoutShadowed != VK_NULL_HANDLE
+				&& ( interPass.pipelineShadowed != VK_NULL_HANDLE || interPass.pipelinePointShadowed != VK_NULL_HANDLE ) ) {
 			VK_ShadowMap_RenderAtlas( viewDef );
-			interPass.shadowSet = VK_Exec_ShadowDescriptorSet();
-			interPass.shadowPassPrepared = interPass.shadowSet != VK_NULL_HANDLE;
+			interPass.shadowSetAtlas = VK_Exec_ShadowDescriptorSet();
+			interPass.shadowPassPrepared = interPass.shadowSetAtlas != VK_NULL_HANDLE;
 		}
 	}
 
@@ -822,11 +887,12 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 
 		interPass.lightCount++;
 
-		// Phase F2a: lights with a rendered atlas tile draw their opaque
-		// interactions through the shadow-receiving pipeline; everything
-		// else (point lights, gated lights, resource failures) stays on the
-		// unshadowed F1 path. Both interaction sets sample the combined
-		// caster map; translucent receivers stay unshadowed scratch-first.
+		// Phase F2a/F2b: lights with a rendered atlas tile or depth cube draw
+		// their opaque interactions through the matching shadow-receiving
+		// pipeline; everything else (gated lights, pool exhaustion, resource
+		// failures) stays on the unshadowed F1 path. Both interaction sets
+		// sample the combined caster map; translucent receivers stay
+		// unshadowed scratch-first.
 		const vkShadowLightState_t *shadowState = NULL;
 		if ( interPass.shadowPassPrepared ) {
 			shadowState = VK_ShadowMap_LightState( vLight );

@@ -26,8 +26,12 @@ SHADERS = [
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "interaction.frag",
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "interaction_shadow.vert",
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "interaction_shadow.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "interaction_shadow_point.vert",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "interaction_shadow_point.frag",
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "shadow_caster.vert",
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "shadow_caster.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "shadow_point_caster.vert",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "shadow_point_caster.frag",
 ]
 
 

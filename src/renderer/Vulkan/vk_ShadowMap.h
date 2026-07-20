@@ -7,39 +7,49 @@
 /*
 ===============================================================================
 
-	Vulkan projected-light shadow maps (Phase F2a,
+	Vulkan shadow maps (Phase F2a projected + F2b point,
 	docs/dev/plans/2026-07-19-vulkan-phase-f.md).
 
-	Scratch-first: one module-owned depth atlas, a per-view row-scan tile
-	allocator, and a per-view caster pass rendered in a frame-scope
-	interruption before the interaction loop. No static caches, no CSM, no
-	translucent moments, no update budgets; point lights fall back to the
-	unshadowed Phase F1 path. Include after tr_local.h (idPlane/viewLight_t).
+	Scratch-first: one module-owned depth atlas with a per-view row-scan tile
+	allocator for projected/parallel lights, a small per-view pool of depth
+	cubes for point lights, and a per-view caster pass rendered in a
+	frame-scope interruption before the interaction loop. No static caches,
+	no CSM, no translucent moments, no update budgets. Include after
+	tr_local.h (idPlane/viewLight_t) and volk.h (VkDescriptorSet).
 
 ===============================================================================
 */
+
+// per-view point-light cube pool: lights past the pool render unshadowed
+static const int VK_SHADOW_MAX_POINT_CUBES = 8;
 
 // per-view, per-light shadow state the interaction pass consumes
 typedef struct vkShadowLightState_s {
 	const viewLight_t *	vLight;
 	bool				valid;
+	bool				pointLight;		// F2b: depth-cube path instead of an atlas tile
 	int					tileX;			// atlas tile origin, image (top-left) coordinates
 	int					tileY;
-	int					tileSize;
+	int					tileSize;		// atlas tile edge, or the cube face size for point lights
+	int					cubeIndex;		// point cube pool slot (pointLight only)
+	float				pointFar;		// padded radial far envelope (pointLight only)
+	VkDescriptorSet		pointSet;		// cube set-7 descriptor set for the active frame slot (pointLight only)
 	idPlane				clipPlanes[ 4 ];	// world-space light clip planes (S, T, depth, Q)
 	float				clipMatrix[ 16 ];	// GL-style projection over the clip planes
 	float				atlasRect[ 4 ];		// composed atlas UV rect (u0, v0, u1, v1); v span inverted
 	float				invAtlasSize[ 2 ];
 	float				texelDepthBias;
-	float				normalOffsetWorld;
+	float				normalOffsetWorld;	// projected: world units; point: per-distance texel factor
 } vkShadowLightState_t;
 
-// CPU phase: classify + gate the view's lights, build projected states, and
-// allocate atlas tiles; returns the number of shadow-map-ready lights
+// CPU phase: classify + gate the view's lights, build projected states /
+// claim point cubes, and allocate atlas tiles; returns the number of
+// shadow-map-ready lights
 int		VK_ShadowMap_PrepareViewLights( const viewDef_t *viewDef );
 
 // GPU phase: frame-scope interruption that renders every prepared light's
-// casters into the atlas, then resumes main rendering with LOAD
+// casters into the atlas / its depth cube, then resumes main rendering with
+// LOAD
 void	VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef );
 
 // prepared state for a light, or NULL when the light renders unshadowed
