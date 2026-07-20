@@ -1,0 +1,79 @@
+# Vulkan Phase G — stencil shadows, fog/blend lights, light-grid, F3 (staging plan)
+
+Status: recon complete (docs/dev/plans/phase-g-recon/ — READ THOSE FIRST);
+G1 staged.
+Parent: [2026-07-16-vulkan-renderer.md](2026-07-16-vulkan-renderer.md) Phase G;
+Phase F record: [2026-07-19-vulkan-phase-f.md](2026-07-19-vulkan-phase-f.md).
+Milestone: retail-default shadows (r_shadows 1, r_useShadowMap 0) render on
+Vulkan via stencil volumes; fog and blend lights draw; F3 (folded in from
+Phase F) lets the front-end shed stencil volumes when shadow maps own a
+light.
+
+## Decisions locked by recon (phase-g-recon/stencil-pass.md)
+
+- G1 = the RB_StencilShadowPass/RB_T_Shadow port. All stencil state is
+  core-1.3 dynamic (vkCmdSetStencilTestEnable/Op/CompareMask/WriteMask/
+  Reference with face masks) — no pipeline-cache growth; the volume draw
+  needs ONE new pipeline (shadowCache_t vec4-position vertex input,
+  color writes off via colorWriteMask-off pipeline variant, depth LEQUAL
+  no-write, depth bias from r_shadowPolygonFactor/-Offset via the
+  existing dynamic bias).
+- Volume vertex shader ports VPROG_STENCIL_SHADOW: w==1 verts stay at
+  the model position, w==0 verts project away from the local light
+  origin to infinity (the infinite projection with the clip-z fixup
+  already in place; verify far-cap clipping under the [0,1] remap).
+- Per-surface index-count selection ports RB_T_Shadow exactly:
+  r_useExternalShadows ladder, DSF_VIEW_INSIDE_SHADOW, viewInsideLight +
+  shadowCapPlaneBits/SHADOW_CAP_INFINITE → numIndexes vs
+  numShadowIndexesNoCaps vs NoFrontCaps, external flag.
+- Stencil sequences (two-sided single pass, the default under vk since
+  wrap ops + separate face state are core): preload z-fail for internal
+  volumes (front KEEP/DECR_WRAP/DECR_WRAP + back KEEP/INCR_WRAP/
+  INCR_WRAP, one draw), then z-pass (front KEEP/KEEP/INCR_WRAP + back
+  KEEP/KEEP/DECR_WRAP, one draw). frontSidedFace honors isMirror. The
+  mapping must account for the vk negative-height viewport winding
+  convention (front face CCW baseline) — derive against GL_Cull's
+  glCullFace(GL_FRONT) semantics like the E cull mapping did.
+- Exit contract: after a light's volumes draw, its interactions run with
+  stencil test enabled, compare GEQUAL ref 128 mask 255, ops KEEP — the
+  F1 interaction pass gains dynamic stencil enable per light (stencil
+  ALWAYS/off for unshadowed and shadow-mapped lights, GEQUAL/128 after
+  stencil volumes). Per-light stencil clear: scissored
+  vkCmdClearAttachments (stencil aspect, value 128) over
+  vLight->scissorRect when the light has shadow surfs.
+- Light order per light: globalShadows → localInteractions →
+  localShadows → globalInteractions (stencil ownership), translucent
+  after with GEQUAL kept when r_stencilTranslucentShadows.
+- Depth-bounds test (r_useDepthBoundsTest): requires the depthBounds
+  device feature — enable if supported at device creation, use
+  vkCmdSetDepthBounds (core dynamic when the feature is on) with the
+  surf scissorRect zmin/zmax; skip silently when unsupported.
+- Shadow volumes flow through the CPU-backed vertex cache like all
+  Phase E geometry: tri->shadowCache holds shadowCache_t (vec4, stride
+  16); a shadow variant of the ring uploader (vec4 stream) with the
+  vert/index memo pattern. MD5R prim-batch shadow surfaces: skip
+  (documented gap, packed VP path is Phase I).
+- r_showShadows debug path: defer to Phase I rendertools.
+
+## Stages
+
+G1. Stencil shadow volumes + interaction stencil integration (above).
+    Exit: q4dm2 + SP smoke with defaults (r_useShadowMap 0) show volume
+    draws (one-shot bring-up evidence) and stencil-tested interactions,
+    validation-clean; r_shadows 0 kills them; menu/2D unregressed.
+G2. Fog + blend lights per phase-g-recon/fog-blend.md: RB_STD_FogAllLights
+    port (fog plane S/T texgen math, _fog/_fogEnter textures, frustumTris
+    caps), blend-light stage walk over lightProject texgens.
+G3. Light-grid: per phase-g-recon/lightgrid-misc.md the draw-time path is
+    gated off under the vk pins (GLSLProgramAvailable false) — verify and
+    record the evidence; no implementation expected this phase.
+F3. (folded in) RB_ShadowMapResourcesKnownGood per-light-class honesty +
+    the sticky fallback contract (lightDef->shadowMapStencilFallbackSticky
+    set exactly like the GL backend on caster/receiver failure), keeping
+    the r_shadowMapMaxUpdatesPerView coupling — now meaningful because
+    stencil volumes exist as the fallback.
+
+Exit: retail-default lighting+shadows+fog on Vulkan for q4dm2 and SP
+smokes, validation-clean, both r_useShadowMap states correct, GL default
+untouched; full gate + Linux leg; user visual soak remains the promotion
+gate (Phase J).
