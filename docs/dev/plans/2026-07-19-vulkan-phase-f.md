@@ -1,7 +1,29 @@
 # Vulkan Phase F — interaction lighting + shadow maps (staging plan)
 
-Status: recon complete (docs/dev/plans/phase-f-recon/ — READ THOSE FIRST;
-they carry the file:line ground truth this plan compresses); F1 staged.
+Status: F1+F2 LANDED (2026-07-19/20) — F1 unshadowed interactions
+(1a13441e + review fixes f156a978: entry-viewport baseline, split
+vert/index memos), F2a projected shadow maps (d94750fb), F2b point-light
+cube shadows (45aa208f), F2 review fix (6e94da92: translucent receivers
+keep the shadow map per r_shadowMapTranslucentReceivers). Evidence on
+q4dm2 with r_useShadowMap 1: "first point shadow light: 3 point shadow
+lights, 512 cube faces" + "165 shadowed interactions across 3 shadow
+lights", zero validation-layer messages; defaults (r_useShadowMap 0)
+byte-identical behavior. The combined F2 adversarial review returned one
+confirmed minor finding (fixed) and refuted nothing else — the
+cross-frame image-sync and lifetime lenses found nothing.
+SEQUENCING CHANGE: F3 (RB_ShadowMapResourcesKnownGood honesty + the
+sticky stencil-fallback contract) moves AFTER Phase G1 lands stencil
+volumes — the fallback contract is only meaningful once a stencil path
+exists to fall back TO; eliding stencil volumes before then saves
+front-end cost but has nothing to restore on failure. F3 is folded into
+Phase G's exit criteria.
+Documented scratch-first divergences (revisit in Phase J): combined
+caster set per light (no LOCAL/GLOBAL stencil-ownership split),
+constant-only caster depth offset, no CSM/static caches/translucent
+moments/update budgets, radial-depth point convention (GL contract),
+no packed-color fallback, single 2x2 hardware PCF tap, per-face
+positive-height viewport CW-front winding (derivation in comments).
+Recon ground truth: docs/dev/plans/phase-f-recon/.
 Parent: [2026-07-16-vulkan-renderer.md](2026-07-16-vulkan-renderer.md) Phase F;
 Phase E record: [2026-07-18-vulkan-phase-e.md](2026-07-18-vulkan-phase-e.md).
 Milestone: q4dm2 lit by real per-light bump/diffuse/specular interactions on
