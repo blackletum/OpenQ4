@@ -908,7 +908,9 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 		VK_DrawInteractionChain( vLight->globalInteractions );
 
 		if ( !r_skipTranslucent.GetBool() ) {
-			VK_Inter_SelectShadowMode( NULL );
+			// translucent receivers keep the light's shadow map (GL default
+			// r_shadowMapTranslucentReceivers 1, draw_arb2.cpp:11566)
+			VK_Inter_SelectShadowMode( r_shadowMapTranslucentReceivers.GetBool() ? shadowState : NULL );
 			// GLS_DEPTHFUNC_LESS maps to glDepthFunc(GL_LEQUAL)
 			vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_LESS_OR_EQUAL );
 			VK_DrawInteractionChain( vLight->translucentInteractions );
