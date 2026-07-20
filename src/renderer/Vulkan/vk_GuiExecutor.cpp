@@ -150,6 +150,8 @@ typedef struct vkGuiExecutor_s {
 	VkShaderModule		casterFragModule;
 	VkShaderModule		pointCasterVertModule;
 	VkShaderModule		pointCasterFragModule;
+	VkShaderModule		stencilShadowVertModule;
+	VkShaderModule		stencilShadowFragModule;
 	VkDescriptorSetLayout setLayout;
 	VkDescriptorSetLayout uboSetLayout;		// one dynamic uniform buffer (interaction block ring)
 	// shadow receiver set: binding 0 = atlas + compare sampler (fragment),
@@ -167,6 +169,7 @@ typedef struct vkGuiExecutor_s {
 	VkPipeline			pointShadowInteractionPipeline;	// lazily built; ONE/ONE additive + cube compare sampling
 	VkPipeline			casterPipeline;			// lazily built; depth-only atlas caster
 	VkPipeline			pointCasterPipeline;	// lazily built; depth-only cube-face caster
+	VkPipeline			stencilShadowPipeline;	// lazily built; stencil shadow volumes (color writes off)
 	vkGuiPipeline_t		pipelines[ VK_MAX_GUI_PIPELINES ];
 	int					numPipelines;
 	vkCubePipeline_t	cubePipelines[ VK_MAX_CUBE_PIPELINES ];
@@ -291,14 +294,18 @@ static VkBlendFactor VK_BlendFactorFromGLSDst( int bits ) {
 }
 
 // shared graphics-pipeline assembly for the GUI, cube-texgen, interaction,
-// and shadow-caster variants: everything except the shader modules, vertex
-// input, and pipeline layout is identical (dynamic depth/cull/bias state,
-// blend from the GLS bits, dynamic rendering against the swapchain + depth
-// formats). depthOnly pipelines target the shadow atlas: zero color
-// attachments, same depth/stencil format (the atlas reuses vkCtx.depthFormat)
+// shadow-caster, and stencil-shadow variants: everything except the shader
+// modules, vertex input, and pipeline layout is identical (dynamic
+// depth/cull/bias/stencil state, blend from the GLS bits, dynamic rendering
+// against the swapchain + depth formats). depthOnly pipelines target the
+// shadow atlas: zero color attachments, same depth/stencil format (the
+// atlas reuses vkCtx.depthFormat). colorWriteOff keeps the swapchain color
+// attachment but masks every channel (GLS_COLORMASK|GLS_ALPHAMASK for the
+// stencil shadow volumes) — the write mask is not dynamic without EDS3, so
+// it is a pipeline-level variant
 static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderModule fragModule,
 		const VkPipelineVertexInputStateCreateInfo *vertexInput, int blendBits, VkPipelineLayout layout,
-		bool depthOnly ) {
+		bool depthOnly, bool colorWriteOff ) {
 	VkPipelineShaderStageCreateInfo stages[ 2 ];
 	memset( stages, 0, sizeof( stages ) );
 	stages[ 0 ].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -336,8 +343,10 @@ static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderMod
 
 	VkPipelineColorBlendAttachmentState blendAttachment;
 	memset( &blendAttachment, 0, sizeof( blendAttachment ) );
-	blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
-			| VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+	if ( !colorWriteOff ) {
+		blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+				| VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+	}
 	const VkBlendFactor srcFactor = VK_BlendFactorFromGLSSrc( blendBits );
 	const VkBlendFactor dstFactor = VK_BlendFactorFromGLSDst( blendBits );
 	if ( !( srcFactor == VK_BLEND_FACTOR_ONE && dstFactor == VK_BLEND_FACTOR_ZERO ) ) {
@@ -358,8 +367,14 @@ static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderMod
 
 	// depth/cull/bias are core-1.3 dynamic state, so one pipeline per blend
 	// combination serves 2D (depth off) and the world passes (per-stage
-	// depth func/write, per-material cull, polygon-offset)
-	VkDynamicState dynamicStates[ 9 ] = {
+	// depth func/write, per-material cull, polygon-offset). All five
+	// stencil states are dynamic on EVERY pipeline (Phase G1): test enable
+	// and op are core-1.3 promotions from extended_dynamic_state — the same
+	// mandatory family as CULL_MODE/FRONT_FACE above — and the masks +
+	// reference are core 1.0; the interaction pipelines can then toggle
+	// per-light stencil without pipeline-cache growth. The frame baseline
+	// (VK_Exec_BeginMainRendering) latches all five before any draw.
+	VkDynamicState dynamicStates[ 14 ] = {
 		VK_DYNAMIC_STATE_VIEWPORT,
 		VK_DYNAMIC_STATE_SCISSOR,
 		VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
@@ -369,17 +384,22 @@ static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderMod
 		VK_DYNAMIC_STATE_FRONT_FACE,
 		VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE,
 		VK_DYNAMIC_STATE_DEPTH_BIAS,
+		VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE,
+		VK_DYNAMIC_STATE_STENCIL_OP,
+		VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK,
+		VK_DYNAMIC_STATE_STENCIL_WRITE_MASK,
+		VK_DYNAMIC_STATE_STENCIL_REFERENCE,
 	};
 	VkPipelineDynamicStateCreateInfo dynamicState;
 	memset( &dynamicState, 0, sizeof( dynamicState ) );
 	dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-	dynamicState.dynamicStateCount = 9;
+	dynamicState.dynamicStateCount = 14;
 	dynamicState.pDynamicStates = dynamicStates;
 
 	VkPipelineDepthStencilStateCreateInfo depthStencil;
 	memset( &depthStencil, 0, sizeof( depthStencil ) );
 	depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-	// test/write/compare are dynamic; stencil stays off until Phase G
+	// depth test/write/compare and the whole stencil block are dynamic
 
 	VkPipelineRenderingCreateInfo rendering;
 	memset( &rendering, 0, sizeof( rendering ) );
@@ -452,7 +472,7 @@ static VkPipeline VK_GuiExecutor_GetPipeline( int stateBits ) {
 	vertexInput.vertexAttributeDescriptionCount = 3;
 	vertexInput.pVertexAttributeDescriptions = attrs;
 
-	VkPipeline pipeline = VK_Exec_CreatePipeline( vkExec.vertModule, vkExec.fragModule, &vertexInput, blendBits, vkExec.pipelineLayout, false );
+	VkPipeline pipeline = VK_Exec_CreatePipeline( vkExec.vertModule, vkExec.fragModule, &vertexInput, blendBits, vkExec.pipelineLayout, false, false );
 	if ( pipeline == VK_NULL_HANDLE ) {
 		return vkExec.numPipelines > 0 ? vkExec.pipelines[ 0 ].pipeline : VK_NULL_HANDLE;
 	}
@@ -513,7 +533,7 @@ static VkPipeline VK_GuiExecutor_GetCubePipeline( int stateBits, bool dirFromNor
 	vertexInput.vertexAttributeDescriptionCount = 2;
 	vertexInput.pVertexAttributeDescriptions = attrs;
 
-	VkPipeline pipeline = VK_Exec_CreatePipeline( vkExec.skyVertModule, vkExec.skyFragModule, &vertexInput, blendBits, vkExec.pipelineLayout, false );
+	VkPipeline pipeline = VK_Exec_CreatePipeline( vkExec.skyVertModule, vkExec.skyFragModule, &vertexInput, blendBits, vkExec.pipelineLayout, false, false );
 	if ( pipeline == VK_NULL_HANDLE ) {
 		return VK_NULL_HANDLE;
 	}
@@ -579,7 +599,7 @@ VkPipeline VK_Exec_InteractionPipeline( void ) {
 	VK_Exec_InteractionVertexInput( binding, attrs, vertexInput );
 
 	vkExec.interactionPipeline = VK_Exec_CreatePipeline( vkExec.interactionVertModule, vkExec.interactionFragModule,
-			&vertexInput, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE, vkExec.interactionPipelineLayout, false );
+			&vertexInput, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE, vkExec.interactionPipelineLayout, false, false );
 	return vkExec.interactionPipeline;
 }
 
@@ -604,7 +624,7 @@ VkPipeline VK_Exec_ShadowInteractionPipeline( void ) {
 	VK_Exec_InteractionVertexInput( binding, attrs, vertexInput );
 
 	vkExec.shadowInteractionPipeline = VK_Exec_CreatePipeline( vkExec.interactionShadowVertModule, vkExec.interactionShadowFragModule,
-			&vertexInput, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE, vkExec.shadowInteractionPipelineLayout, false );
+			&vertexInput, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE, vkExec.shadowInteractionPipelineLayout, false, false );
 	return vkExec.shadowInteractionPipeline;
 }
 
@@ -631,7 +651,7 @@ VkPipeline VK_Exec_PointShadowInteractionPipeline( void ) {
 
 	vkExec.pointShadowInteractionPipeline = VK_Exec_CreatePipeline( vkExec.interactionShadowPointVertModule,
 			vkExec.interactionShadowPointFragModule,
-			&vertexInput, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE, vkExec.shadowInteractionPipelineLayout, false );
+			&vertexInput, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE, vkExec.shadowInteractionPipelineLayout, false, false );
 	return vkExec.pointShadowInteractionPipeline;
 }
 
@@ -675,7 +695,7 @@ VkPipeline VK_Exec_CasterPipeline( void ) {
 	VK_Exec_CasterVertexInput( binding, attrs, vertexInput );
 
 	vkExec.casterPipeline = VK_Exec_CreatePipeline( vkExec.casterVertModule, vkExec.casterFragModule,
-			&vertexInput, 0, vkExec.pipelineLayout, true );
+			&vertexInput, 0, vkExec.pipelineLayout, true, false );
 	return vkExec.casterPipeline;
 }
 
@@ -695,8 +715,46 @@ VkPipeline VK_Exec_PointCasterPipeline( void ) {
 	VK_Exec_CasterVertexInput( binding, attrs, vertexInput );
 
 	vkExec.pointCasterPipeline = VK_Exec_CreatePipeline( vkExec.pointCasterVertModule, vkExec.pointCasterFragModule,
-			&vertexInput, 0, vkExec.pipelineLayout, true );
+			&vertexInput, 0, vkExec.pipelineLayout, true, false );
 	return vkExec.pointCasterPipeline;
+}
+
+// stencil shadow volume pipeline (Phase G1): the shadowCache_t vec4 stream
+// (one attribute, stride 16), color writes masked off (GLS_COLORMASK |
+// GLS_ALPHAMASK — a pipeline-level variant), blend irrelevant. Depth
+// LEQUAL/no-write, the two-sided wrap-op stencil sequencing, and the
+// r_shadowPolygonFactor/-Offset bias all ride the shared dynamic state.
+// Uses the base 128B-push layout; the shaders bind no descriptor sets.
+VkPipeline VK_Exec_StencilShadowPipeline( void ) {
+	if ( vkExec.stencilShadowPipeline != VK_NULL_HANDLE ) {
+		return vkExec.stencilShadowPipeline;
+	}
+	if ( vkExec.stencilShadowVertModule == VK_NULL_HANDLE || vkExec.stencilShadowFragModule == VK_NULL_HANDLE ) {
+		return VK_NULL_HANDLE;
+	}
+
+	VkVertexInputBindingDescription binding;
+	memset( &binding, 0, sizeof( binding ) );
+	binding.stride = sizeof( shadowCache_t );
+	binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+	VkVertexInputAttributeDescription attr;
+	memset( &attr, 0, sizeof( attr ) );
+	attr.location = 0;
+	attr.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+	attr.offset = 0;
+
+	VkPipelineVertexInputStateCreateInfo vertexInput;
+	memset( &vertexInput, 0, sizeof( vertexInput ) );
+	vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+	vertexInput.vertexBindingDescriptionCount = 1;
+	vertexInput.pVertexBindingDescriptions = &binding;
+	vertexInput.vertexAttributeDescriptionCount = 1;
+	vertexInput.pVertexAttributeDescriptions = &attr;
+
+	vkExec.stencilShadowPipeline = VK_Exec_CreatePipeline( vkExec.stencilShadowVertModule, vkExec.stencilShadowFragModule,
+			&vertexInput, 0, vkExec.pipelineLayout, false, true );
+	return vkExec.stencilShadowPipeline;
 }
 
 VkPipelineLayout VK_Exec_BasePipelineLayout( void ) {
@@ -848,6 +906,18 @@ static bool VK_GuiExecutor_Init( void ) {
 	smci.pCode = (const uint32_t *)vk_shadow_point_caster_frag_spv;
 	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.pointCasterFragModule ) != VK_SUCCESS ) {
 		common->Warning( "Vulkan: point shadow caster fragment shader module creation failed" );
+		return false;
+	}
+	smci.codeSize = vk_shadow_volume_vert_spv_size;
+	smci.pCode = (const uint32_t *)vk_shadow_volume_vert_spv;
+	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.stencilShadowVertModule ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: stencil shadow vertex shader module creation failed" );
+		return false;
+	}
+	smci.codeSize = vk_shadow_volume_frag_spv_size;
+	smci.pCode = (const uint32_t *)vk_shadow_volume_frag_spv;
+	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.stencilShadowFragModule ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: stencil shadow fragment shader module creation failed" );
 		return false;
 	}
 
@@ -1048,6 +1118,9 @@ void VK_GuiExecutor_Shutdown( void ) {
 	if ( vkExec.pointCasterPipeline != VK_NULL_HANDLE ) {
 		vkDestroyPipeline( vkCtx.device, vkExec.pointCasterPipeline, NULL );
 	}
+	if ( vkExec.stencilShadowPipeline != VK_NULL_HANDLE ) {
+		vkDestroyPipeline( vkCtx.device, vkExec.stencilShadowPipeline, NULL );
+	}
 	if ( vkExec.pipelineLayout != VK_NULL_HANDLE ) {
 		vkDestroyPipelineLayout( vkCtx.device, vkExec.pipelineLayout, NULL );
 	}
@@ -1110,6 +1183,12 @@ void VK_GuiExecutor_Shutdown( void ) {
 	}
 	if ( vkExec.pointCasterFragModule != VK_NULL_HANDLE ) {
 		vkDestroyShaderModule( vkCtx.device, vkExec.pointCasterFragModule, NULL );
+	}
+	if ( vkExec.stencilShadowVertModule != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, vkExec.stencilShadowVertModule, NULL );
+	}
+	if ( vkExec.stencilShadowFragModule != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, vkExec.stencilShadowFragModule, NULL );
 	}
 	for ( int i = 0; i < VK_FRAMES_IN_FLIGHT; i++ ) {
 		if ( vkExec.vertexRings[ i ].buffer != VK_NULL_HANDLE ) {
@@ -1195,6 +1274,10 @@ static bool VK_GuiExecutor_BeginFrame( void ) {
 		if ( vkExec.pointCasterPipeline != VK_NULL_HANDLE ) {
 			vkDestroyPipeline( vkCtx.device, vkExec.pointCasterPipeline, NULL );
 			vkExec.pointCasterPipeline = VK_NULL_HANDLE;
+		}
+		if ( vkExec.stencilShadowPipeline != VK_NULL_HANDLE ) {
+			vkDestroyPipeline( vkCtx.device, vkExec.stencilShadowPipeline, NULL );
+			vkExec.stencilShadowPipeline = VK_NULL_HANDLE;
 		}
 		vkExec.pipelineTargetFormat = vkCtx.swapchainFormat;
 	}
@@ -1337,6 +1420,17 @@ bool VK_Exec_BeginMainRendering( bool clearColorDepth ) {
 	vkCmdSetFrontFace( cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
 	vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
 	vkCmdSetDepthBias( cmd, 0.0f, 0.0f, 0.0f );
+
+	// stencil baseline: off with benign values. Every pipeline declares the
+	// five stencil dynamics (Phase G1), so all five must be latched before
+	// any draw of the frame; the stencil shadow pass owns the live values
+	// per light and restores test-off behind itself
+	vkCmdSetStencilTestEnable( cmd, VK_FALSE );
+	vkCmdSetStencilOp( cmd, VK_STENCIL_FACE_FRONT_AND_BACK, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP,
+			VK_STENCIL_OP_KEEP, VK_COMPARE_OP_ALWAYS );
+	vkCmdSetStencilCompareMask( cmd, VK_STENCIL_FACE_FRONT_AND_BACK, 255 );
+	vkCmdSetStencilWriteMask( cmd, VK_STENCIL_FACE_FRONT_AND_BACK, 255 );
+	vkCmdSetStencilReference( cmd, VK_STENCIL_FACE_FRONT_AND_BACK, 128 );
 
 	vkExec.mainScopeOpen = true;
 	return true;
@@ -1483,6 +1577,61 @@ bool VK_Exec_BindTriGeometry( VkCommandBuffer cmd, int slot, const srfTriangles_
 	vkCmdBindVertexBuffers( cmd, 0, 1, &vkExec.vertexRings[ slot ].buffer, &vertexBindOffset );
 	vkCmdBindIndexBuffer( cmd, vkExec.indexRings[ slot ].buffer, (VkDeviceSize)indexOffset, VK_INDEX_TYPE_UINT32 );
 	vkExec.boundVertexOffset = vertexOffset;	// the cube-texgen path re-binds binding 0 alongside its dir stream
+	return true;
+}
+
+// stencil-shadow-volume variant of the memoized upload (Phase G1): streams
+// the shadowCache_t vec4 stream (tri->shadowCache holds CPU pointers via
+// the CPU-backed vertex cache; the shadow tri's numVerts IS the cache
+// vertex count) plus the volume indexes. The memo keys share the ambient
+// tables — cache handles and index arrays never alias across the two
+// families, and a direct-mapped collision just re-uploads.
+bool VK_Exec_BindShadowGeometry( VkCommandBuffer cmd, int slot, const srfTriangles_t *tri ) {
+	const void *vertKey = tri->shadowCache;
+	const void *idxKey = tri->indexes;
+	if ( vertKey == NULL || idxKey == NULL || tri->numVerts <= 0 || tri->numIndexes <= 0 ) {
+		return false;
+	}
+
+	int vertexOffset;
+	{
+		const unsigned int memoIndex = (unsigned int)( ( ( (uintptr_t)vertKey ) >> 4 ) & ( VK_TRI_MEMO_SIZE - 1 ) );
+		vkVertUpload_t &memo = vkExec.vertMemo[ memoIndex ];
+		if ( memo.vertKey == vertKey ) {
+			vertexOffset = memo.vertexOffset;
+		} else {
+			const shadowCache_t *verts = (const shadowCache_t *)vertexCache.Position( tri->shadowCache );
+			if ( verts == NULL ) {
+				return false;
+			}
+			vertexOffset = VK_Ring_Alloc( vkExec.vertexRings[ slot ], verts, tri->numVerts * (int)sizeof( shadowCache_t ), 16 );
+			if ( vertexOffset < 0 ) {
+				return false;
+			}
+			memo.vertKey = vertKey;
+			memo.vertexOffset = vertexOffset;
+		}
+	}
+	int indexOffset;
+	{
+		const unsigned int memoIndex = (unsigned int)( ( ( (uintptr_t)idxKey ) >> 4 ) & ( VK_TRI_MEMO_SIZE - 1 ) );
+		vkIdxUpload_t &memo = vkExec.idxMemo[ memoIndex ];
+		if ( memo.idxKey == idxKey ) {
+			indexOffset = memo.indexOffset;
+		} else {
+			indexOffset = VK_Ring_Alloc( vkExec.indexRings[ slot ], tri->indexes, tri->numIndexes * (int)sizeof( glIndex_t ), 4 );
+			if ( indexOffset < 0 ) {
+				return false;
+			}
+			memo.idxKey = idxKey;
+			memo.indexOffset = indexOffset;
+		}
+	}
+
+	VkDeviceSize vertexBindOffset = (VkDeviceSize)vertexOffset;
+	vkCmdBindVertexBuffers( cmd, 0, 1, &vkExec.vertexRings[ slot ].buffer, &vertexBindOffset );
+	vkCmdBindIndexBuffer( cmd, vkExec.indexRings[ slot ].buffer, (VkDeviceSize)indexOffset, VK_INDEX_TYPE_UINT32 );
+	vkExec.boundVertexOffset = vertexOffset;
 	return true;
 }
 
@@ -1939,6 +2088,7 @@ void VK_GuiExecutor_Draw2DView( const viewDef_t *viewDef ) {
 	vkCmdSetCullMode( cmd, VK_CULL_MODE_NONE );
 	vkCmdSetFrontFace( cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
 	vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
+	vkCmdSetStencilTestEnable( cmd, VK_FALSE );
 
 	// GL bottom-left viewport -> Vulkan negative-height viewport
 	const int vpX = viewDef->viewport.x1;
@@ -2334,6 +2484,7 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 	vkCmdSetDepthTestEnable( cmd, VK_FALSE );
 	vkCmdSetDepthWriteEnable( cmd, VK_FALSE );
 	vkCmdSetCullMode( cmd, VK_CULL_MODE_NONE );
+	vkCmdSetStencilTestEnable( cmd, VK_FALSE );
 
 	// one-shot bring-up evidence that the world walk emitted real work
 	static bool loggedFirstWorldView = false;

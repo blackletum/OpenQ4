@@ -5,18 +5,28 @@
 ===============================================================================
 
 	Vulkan interaction pass (Phase F1,
-	docs/dev/plans/2026-07-19-vulkan-phase-f.md).
+	docs/dev/plans/2026-07-19-vulkan-phase-f.md) + stencil shadow volumes
+	(Phase G1, docs/dev/plans/2026-07-20-vulkan-phase-g.md).
 
-	Unshadowed per-light bump/diffuse/specular interactions for every view
-	light, drawn between the depth fill and the ambient walks. This is the
-	GL behavior for lights without shadow surfaces (stencil ALWAYS +
-	interactions) applied to all lights — the Phase E pipelines carry no
-	stencil state, and stencil shadows stay Phase G.
+	Per-light bump/diffuse/specular interactions for every view light,
+	drawn between the depth fill and the ambient walks. Lights the
+	shadow-map path (Phase F2) admits keep the receiver pipelines; every
+	OTHER light that carries shadow surfs stamps stencil volumes and draws
+	its interactions under the GEQUAL/128 exit contract — with the retail
+	default r_useShadowMap 0 that is EVERY shadow-casting light.
 
 	GL-free ports from TUs excluded from the vk module build:
 	- RB_ARB2_DrawInteractions light loop (draw_arb2.cpp:11458-11666):
 	  skip fog/blend/empty lights; opaque interactions (local then global)
 	  additive at depth EQUAL with writes off; translucent at depth LESS.
+	- The stencil-path per-light block (draw_arb2.cpp:11599-11649):
+	  scissored stencil clear to 128, then globalShadows →
+	  localInteractions → localShadows → globalInteractions (stencil
+	  ownership: noSelfShadow receivers are lit before the local volumes
+	  join), translucent GEQUAL under r_stencilTranslucentShadows.
+	- RB_StencilShadowPass + RB_T_Shadow (draw_common.cpp:7194-7444):
+	  two-sided single-pass wrap-op sequences, the per-surface
+	  index-count/external selection ladder, the GEQUAL/128/KEEP exit.
 	- RB_CreateSingleDrawInteractionsFiltered decomposition walk +
 	  R_SetDrawInteraction + RB_SubmittInteraction (tr_render.cpp:782-1033):
 	  light-stage × surface-stage pairing into drawInteraction_t, with the
@@ -25,10 +35,11 @@
 	- RB_BakeTextureMatrixIntoTexgen (draw_common.cpp:4365-4400).
 
 	Per-draw data rides the shared 128B push block (MVP + vertex-color
-	packing + ambient direction); everything else streams through the
-	executor's dynamic uniform ring as a std140 block on set 6. The six
-	texture slots bind cached per-image single-sampler sets (0=specular
-	table, 1=bump, 2=falloff, 3=light projection, 4=diffuse, 5=specular).
+	packing + ambient direction; the volume pipeline reuses it for MVP +
+	local light origin); everything else streams through the executor's
+	dynamic uniform ring as a std140 block on set 6. The six texture slots
+	bind cached per-image single-sampler sets (0=specular table, 1=bump,
+	2=falloff, 3=light projection, 4=diffuse, 5=specular).
 
 ===============================================================================
 */
@@ -61,6 +72,7 @@
 VkCommandBuffer VK_Exec_ActiveCmd( void );
 int VK_Exec_ActiveFrameSlot( void );
 bool VK_Exec_BindTriGeometry( VkCommandBuffer cmd, int slot, const srfTriangles_t *tri );
+bool VK_Exec_BindShadowGeometry( VkCommandBuffer cmd, int slot, const srfTriangles_t *tri );
 void VK_Exec_SetSurfScissor( VkCommandBuffer cmd, const viewDef_t *viewDef, const drawSurf_t *drawSurf, int fbHeight );
 void VK_BuildSurfMVP( const viewDef_t *viewDef, const drawSurf_t *drawSurf, float outMvp[ 16 ] );
 VkPipeline VK_Exec_InteractionPipeline( void );
@@ -68,6 +80,8 @@ VkPipelineLayout VK_Exec_InteractionPipelineLayout( void );
 VkPipeline VK_Exec_ShadowInteractionPipeline( void );
 VkPipeline VK_Exec_PointShadowInteractionPipeline( void );
 VkPipelineLayout VK_Exec_ShadowInteractionPipelineLayout( void );
+VkPipeline VK_Exec_StencilShadowPipeline( void );
+VkPipelineLayout VK_Exec_BasePipelineLayout( void );
 VkDescriptorSet VK_Exec_ShadowDescriptorSet( void );
 VkDescriptorSet VK_Exec_ImageDescriptor( unsigned int texnum, bool require2D );
 VkDescriptorSet VK_Exec_InteractionUniformSet( void );
@@ -162,6 +176,14 @@ typedef struct vkInterPass_s {
 	int					shadowSliceOffset;	// ring offset of the current space's shadow block, -1 = unset
 	int					shadowLightCount;
 	int					shadowDrawCount;
+
+	// Phase G1 stencil shadow volumes
+	VkPipeline			pipelineStencilShadow;	// vec4 volume stream, color writes off
+	VkPipelineLayout	layoutStencilShadow;	// the base 128B-push layout
+	int					stencilLightCount;		// lights that took the stencil path
+	int					volumeDrawCount;		// volume draws (preload + z-pass)
+	int					volumePreloadCount;		// z-fail preload draws (internal volumes)
+	int					volumeSkipCount;		// prim-batch / cache-less shadow surfs skipped
 } vkInterPass_t;
 
 static vkInterPass_t interPass;
@@ -570,6 +592,264 @@ static void VK_Inter_SelectShadowMode( const vkShadowLightState_t *state ) {
 
 /*
 ====================
+VK_Inter_StencilClear
+
+Per-light scissored stencil clear (draw_arb2.cpp:11600-11608 contract):
+vkCmdClearAttachments over the stencil aspect of vLight->scissorRect,
+converted exactly like VK_Exec_SetSurfScissor (viewport base + GL
+bottom-left -> Vulkan top-left flip) and CLAMPED to the render area — the
+Phase E lesson: the viewDef can carry a stale, larger size for one frame
+across an OUT_OF_DATE recreate, and an escaping rect is a validation
+failure. GL clears to the view-level latch (128, R_SafeStencilClearValue).
+====================
+*/
+static void VK_Inter_StencilClear( const viewLight_t *vLight ) {
+	const viewDef_t *viewDef = interPass.viewDef;
+	const idScreenRect &rect = vLight->scissorRect;
+	if ( rect.IsEmpty() ) {
+		// a degenerate light scissor clears (and later draws) nothing
+		return;
+	}
+
+	const int scX = viewDef->viewport.x1 + rect.x1;
+	const int scYGL = viewDef->viewport.y1 + rect.y1;
+	const int scW = rect.x2 - rect.x1 + 1;
+	const int scH = rect.y2 - rect.y1 + 1;
+
+	int x0 = scX > 0 ? scX : 0;
+	int y0 = interPass.fbHeight - scYGL - scH;
+	if ( y0 < 0 ) {
+		y0 = 0;
+	}
+	int x1 = scX + scW;
+	if ( x1 > (int)vkCtx.swapchainExtent.width ) {
+		x1 = (int)vkCtx.swapchainExtent.width;
+	}
+	int y1 = interPass.fbHeight - scYGL;
+	if ( y1 > (int)vkCtx.swapchainExtent.height ) {
+		y1 = (int)vkCtx.swapchainExtent.height;
+	}
+	if ( x1 <= x0 || y1 <= y0 ) {
+		return;
+	}
+
+	VkClearAttachment clearAtt;
+	memset( &clearAtt, 0, sizeof( clearAtt ) );
+	clearAtt.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT;
+	clearAtt.clearValue.depthStencil.stencil = 128;
+	VkClearRect clearRect;
+	memset( &clearRect, 0, sizeof( clearRect ) );
+	clearRect.rect.offset.x = x0;
+	clearRect.rect.offset.y = y0;
+	clearRect.rect.extent.width = (uint32_t)( x1 - x0 );
+	clearRect.rect.extent.height = (uint32_t)( y1 - y0 );
+	clearRect.layerCount = 1;
+	vkCmdClearAttachments( interPass.cmd, 1, &clearAtt, 1, &clearRect );
+}
+
+/*
+====================
+VK_StencilShadowPass
+
+Port of RB_StencilShadowPass + RB_T_Shadow (draw_common.cpp:7381-7444,
+:7207-7362) in the two-sided single-pass formulation ONLY: wrap ops and
+separate per-face stencil state are core Vulkan, so the GL capability gate
+(glStencilOpSeparate && GL_INCR_WRAP, :7420-7423) is unconditionally
+satisfied and the cull-flipped two-pass fallback never runs.
+
+Enter/exit stencil contract: the caller latched GEQUAL/128/KEEP after the
+per-light clear; this pass flips the per-face ops to ALWAYS + wrap writes
+for the volume draws and restores GEQUAL/128/KEEP (the GL exit at
+:7442-7443) so the light's interactions draw under the exit state.
+
+Face mapping (derivation, following the E/F cull-mapping precedent): the
+executor's negative-height viewport preserves GL winding parity under
+VK_FRONT_FACE_COUNTER_CLOCKWISE, so CT_FRONT_SIDED maps to
+VK_CULL_MODE_FRONT_BIT in non-mirror views (the Draw3DView depth fill /
+GL_Cull's glCullFace(GL_FRONT) convention) — i.e. a triangle GL classifies
+GL_BACK is a Vulkan back face. RB_T_Shadow assigns the legacy
+CT_FRONT_SIDED ops to frontSidedFace = isMirror ? GL_FRONT : GL_BACK
+(:7321), so those ops land on VK_STENCIL_FACE_BACK_BIT in non-mirror views
+and flip for mirrors.
+
+Documented Phase G1 gaps:
+- depth-bounds test (r_useDepthBoundsTest, GL :7271-7273, :7416-7418): the
+  optional depthBounds device feature is not enabled — skipped; pure
+  fill-rate optimization, no visual effect.
+- MD5R packed prim-batch volumes (md5rshadow.vp family) skip with a
+  counter; the packed vertex-program path is Phase I.
+- r_showShadows debug visualization: Phase I rendertools.
+====================
+*/
+static void VK_StencilShadowPass( const drawSurf_t *drawSurfs ) {
+	if ( !r_shadows.GetBool() || drawSurfs == NULL ) {
+		return;
+	}
+
+	VkCommandBuffer cmd = interPass.cmd;
+
+	vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, interPass.pipelineStencilShadow );
+
+	// GL_State(GLS_DEPTHMASK | GLS_COLORMASK | GLS_ALPHAMASK |
+	// GLS_DEPTHFUNC_LESS): color writes are off in the pipeline; depth
+	// tests LEQUAL with writes off
+	vkCmdSetDepthTestEnable( cmd, VK_TRUE );
+	vkCmdSetDepthWriteEnable( cmd, VK_FALSE );
+	vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_LESS_OR_EQUAL );
+
+	// glPolygonOffset(r_shadowPolygonFactor, -r_shadowPolygonOffset): the
+	// defaults (0, -1) give constant +1, slope 0 — bias IS on by default.
+	// GL units map to the Vulkan constant factor and GL factor to the
+	// slope factor (the Phase E polygon-offset mapping)
+	const bool shadowBias = r_shadowPolygonFactor.GetFloat() != 0.0f || r_shadowPolygonOffset.GetFloat() != 0.0f;
+	if ( shadowBias ) {
+		vkCmdSetDepthBiasEnable( cmd, VK_TRUE );
+		vkCmdSetDepthBias( cmd, -r_shadowPolygonOffset.GetFloat(), 0.0f, r_shadowPolygonFactor.GetFloat() );
+	}
+
+	// GL_Cull(CT_TWO_SIDED): both faces rasterize in one draw
+	vkCmdSetCullMode( cmd, VK_CULL_MODE_NONE );
+
+	// see the face-mapping derivation above
+	const VkStencilFaceFlags frontSidedFace = interPass.viewDef->isMirror ? VK_STENCIL_FACE_FRONT_BIT : VK_STENCIL_FACE_BACK_BIT;
+	const VkStencilFaceFlags backSidedFace = interPass.viewDef->isMirror ? VK_STENCIL_FACE_BACK_BIT : VK_STENCIL_FACE_FRONT_BIT;
+
+	for ( const drawSurf_t *surf = drawSurfs ; surf ; surf = surf->nextOnLight ) {
+		const srfTriangles_t *tri = surf->geo;
+
+		// MD5R packed prim-batch volumes ride their own vertex family
+		// (md5rshadow.vp + palette rows); cache-less surfs cannot draw
+		// (RB_T_Shadow skips them at :7226-7229)
+		if ( tri == NULL || R_TriHasPrimBatchMesh( tri ) || tri->shadowCache == NULL ) {
+			interPass.volumeSkipCount++;
+			continue;
+		}
+		if ( tri->numIndexes <= 0 || tri->indexes == NULL ) {
+			continue;
+		}
+
+		if ( !VK_Exec_BindShadowGeometry( cmd, interPass.slot, tri ) ) {
+			continue;
+		}
+		VK_Exec_SetSurfScissor( cmd, interPass.viewDef, surf, interPass.fbHeight );
+
+		// space change: MVP (depth hacks included) + weapon depth-range,
+		// sharing the pass tracking so the interleaved volume/interaction
+		// chains never rebuild redundantly (VK_BuildSurfMVP is the same
+		// function both walks use)
+		if ( surf->space != interPass.currentSpace ) {
+			interPass.currentSpace = surf->space;
+			VK_BuildSurfMVP( interPass.viewDef, surf, interPass.mvp );
+			const bool wantWeaponRange = surf->space->weaponDepthHack;
+			if ( wantWeaponRange != interPass.weaponDepthRange ) {
+				interPass.weaponDepthRange = wantWeaponRange;
+				interPass.viewport.maxDepth = wantWeaponRange ? 0.5f : 1.0f;
+				vkCmdSetViewport( cmd, 0, 1, &interPass.viewport );
+			}
+		}
+
+		// the local light origin rides the shared push block (the env[4]
+		// PP_LIGHT_ORIGIN contract, w = 0; draw_common.cpp:7211-7222).
+		// With r_useShadowVertexProgram 0 the front-end bakes CPU-projected
+		// caches whose w==0 verts are ALREADY light-relative directions —
+		// push a zero origin so the shader's subtract becomes the
+		// fixed-function pass-through
+		vkInteractionPush_t push;
+		memset( &push, 0, sizeof( push ) );
+		memcpy( push.mvp, interPass.mvp, sizeof( push.mvp ) );
+		if ( r_useShadowVertexProgram.GetBool() ) {
+			idVec4 localLight;
+			R_GlobalPointToLocal( surf->space->modelMatrix, backEnd.vLight->globalLightOrigin, localLight.ToVec3() );
+			localLight.w = 0.0f;
+			memcpy( push.a, localLight.ToFloatPtr(), sizeof( push.a ) );
+		}
+		vkCmdPushConstants( cmd, interPass.layoutStencilShadow,
+				VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), &push );
+
+		// we always draw the sil planes, but we may not need to draw the
+		// front or rear caps (RB_T_Shadow :7238-7268, verbatim)
+		int numIndexes;
+		bool external = false;
+
+		if ( !r_useExternalShadows.GetInteger() ) {
+			numIndexes = tri->numIndexes;
+		} else if ( r_useExternalShadows.GetInteger() == 2 ) { // force to no caps for testing
+			numIndexes = tri->numShadowIndexesNoCaps;
+		} else if ( !( surf->dsFlags & DSF_VIEW_INSIDE_SHADOW ) ) {
+			// if we aren't inside the shadow projection, no caps are ever needed
+			numIndexes = tri->numShadowIndexesNoCaps;
+			external = true;
+		} else if ( !backEnd.vLight->viewInsideLight && !( tri->shadowCapPlaneBits & SHADOW_CAP_INFINITE ) ) {
+			// if we are inside the shadow projection, but outside the light,
+			// and drawing a non-infinite shadow, we can skip some caps
+			if ( backEnd.vLight->viewSeesShadowPlaneBits & tri->shadowCapPlaneBits ) {
+				// we can see through a rear cap, so we need to draw it, but
+				// we can skip the caps on the actual surface
+				numIndexes = tri->numShadowIndexesNoFrontCaps;
+			} else {
+				// we don't need to draw any caps
+				numIndexes = tri->numShadowIndexesNoCaps;
+			}
+			external = true;
+		} else {
+			// must draw everything
+			numIndexes = tri->numIndexes;
+		}
+
+		// If this surface could not use external shadow optimizations, the
+		// front end already forced the "no caps" index counts back to the
+		// full count; treat it as internal to keep the robust stencil path
+		if ( numIndexes == tri->numIndexes ) {
+			external = false;
+		}
+		if ( numIndexes <= 0 ) {
+			continue;
+		}
+
+		// patent-free work around: "preload" the stencil buffer with the
+		// number of volumes clipped by the near or far plane (z-fail ops),
+		// then the traditional depth-pass draw. With wrap inc/dec the
+		// interleaved single-pass deltas are order-equivalent to the legacy
+		// two-pass sequence (draw_common.cpp:7313-7340). GL op order is
+		// (fail, zfail, zpass); Vulkan takes (fail, pass, depthFail)
+		if ( !external ) {
+			vkCmdSetStencilOp( cmd, frontSidedFace, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_DECREMENT_AND_WRAP,
+					VK_STENCIL_OP_DECREMENT_AND_WRAP, VK_COMPARE_OP_ALWAYS );
+			vkCmdSetStencilOp( cmd, backSidedFace, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_INCREMENT_AND_WRAP,
+					VK_STENCIL_OP_INCREMENT_AND_WRAP, VK_COMPARE_OP_ALWAYS );
+			vkCmdDrawIndexed( cmd, (uint32_t)numIndexes, 1, 0, 0, 0 );
+			interPass.volumeDrawCount++;
+			interPass.volumePreloadCount++;
+			backEnd.pc.c_shadowElements++;
+			backEnd.pc.c_shadowIndexes += numIndexes;
+			backEnd.pc.c_shadowVertexes += tri->numVerts;
+		}
+
+		// traditional depth-pass stencil shadows
+		vkCmdSetStencilOp( cmd, frontSidedFace, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_INCREMENT_AND_WRAP,
+				VK_STENCIL_OP_KEEP, VK_COMPARE_OP_ALWAYS );
+		vkCmdSetStencilOp( cmd, backSidedFace, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_DECREMENT_AND_WRAP,
+				VK_STENCIL_OP_KEEP, VK_COMPARE_OP_ALWAYS );
+		vkCmdDrawIndexed( cmd, (uint32_t)numIndexes, 1, 0, 0, 0 );
+		interPass.volumeDrawCount++;
+		backEnd.pc.c_shadowElements++;
+		backEnd.pc.c_shadowIndexes += numIndexes;
+		backEnd.pc.c_shadowVertexes += tri->numVerts;
+	}
+
+	// exit contract (GL :7430-7443): bias off, GEQUAL/128 with ops KEEP for
+	// the light's interactions (reference/masks stay latched from the light
+	// entry); cull is re-set per surface by every consumer, so the
+	// CT_FRONT_SIDED restore needs no explicit call
+	if ( shadowBias ) {
+		vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
+	}
+	vkCmdSetStencilOp( cmd, VK_STENCIL_FACE_FRONT_AND_BACK, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP,
+			VK_STENCIL_OP_KEEP, VK_COMPARE_OP_GREATER_OR_EQUAL );
+}
+
+/*
+====================
 VK_CreateSingleDrawInteractions
 
 Port of RB_CreateSingleDrawInteractionsFiltered (tr_render.cpp:875, no
@@ -810,6 +1090,12 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 	interPass.pipelineUnshadowed = pipeline;
 	interPass.shadowSliceOffset = -1;
 
+	// Phase G1: the stencil volume pipeline serves every shadow-casting
+	// light the shadow-map path does not admit; a missing pipeline (shader
+	// failure) leaves those lights on the unshadowed F1 path
+	interPass.pipelineStencilShadow = VK_Exec_StencilShadowPipeline();
+	interPass.layoutStencilShadow = VK_Exec_BasePipelineLayout();
+
 	// Phase F2a/F2b: classify + tile the view's shadow-map lights (CPU),
 	// then render the atlas + point cubes in a frame-scope interruption
 	// BEFORE any batch state is set (the resume path re-establishes the
@@ -902,18 +1188,75 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 		}
 		VK_Inter_SelectShadowMode( shadowState );
 
-		// opaque interactions test EQUAL against the depth fill
-		vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_EQUAL );
-		VK_DrawInteractionChain( vLight->localInteractions );
-		VK_DrawInteractionChain( vLight->globalInteractions );
+		// Phase G1: lights the shadow-map path did NOT admit stamp stencil
+		// volumes and draw their interactions under the GEQUAL/128 exit
+		// contract; admitted lights keep the F2 receiver path untouched.
+		// With the retail default r_useShadowMap 0 EVERY shadow-casting
+		// light takes the stencil path.
+		const bool stencilShadowLight = shadowState == NULL
+				&& interPass.pipelineStencilShadow != VK_NULL_HANDLE
+				&& r_shadows.GetBool()
+				&& ( vLight->globalShadows != NULL || vLight->localShadows != NULL );
+
+		if ( stencilShadowLight ) {
+			interPass.stencilLightCount++;
+
+			// scissored stencil clear to 128 over the light rect
+			VK_Inter_StencilClear( vLight );
+
+			// this light's interactions draw stencil-tested: GEQUAL ref 128
+			// compareMask 255, ops KEEP — GL leaves writeMask 255 but the
+			// KEEP ops never write. This is also the invariance state each
+			// volume pass enters from and restores to
+			vkCmdSetStencilTestEnable( cmd, VK_TRUE );
+			vkCmdSetStencilOp( cmd, VK_STENCIL_FACE_FRONT_AND_BACK, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP,
+					VK_STENCIL_OP_KEEP, VK_COMPARE_OP_GREATER_OR_EQUAL );
+			vkCmdSetStencilCompareMask( cmd, VK_STENCIL_FACE_FRONT_AND_BACK, 255 );
+			vkCmdSetStencilWriteMask( cmd, VK_STENCIL_FACE_FRONT_AND_BACK, 255 );
+			vkCmdSetStencilReference( cmd, VK_STENCIL_FACE_FRONT_AND_BACK, 128 );
+
+			// stencil ownership order (draw_arb2.cpp:11616-11630): global
+			// volumes darken the noSelfShadow (localInteractions) receivers
+			// first; the local volumes join before the self-shadowing
+			// (globalInteractions) receivers draw. Each volume pass leaves
+			// the volume pipeline + depth LEQUAL bound, so the interaction
+			// pipeline and the EQUAL opaque depth func are re-established
+			// after each one
+			VK_StencilShadowPass( vLight->globalShadows );
+			vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, interPass.pipelineUnshadowed );
+			vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_EQUAL );
+			VK_DrawInteractionChain( vLight->localInteractions );
+
+			VK_StencilShadowPass( vLight->localShadows );
+			vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, interPass.pipelineUnshadowed );
+			vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_EQUAL );
+			VK_DrawInteractionChain( vLight->globalInteractions );
+		} else {
+			// opaque interactions test EQUAL against the depth fill
+			vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_EQUAL );
+			VK_DrawInteractionChain( vLight->localInteractions );
+			VK_DrawInteractionChain( vLight->globalInteractions );
+		}
 
 		if ( !r_skipTranslucent.GetBool() ) {
 			// translucent receivers keep the light's shadow map (GL default
 			// r_shadowMapTranslucentReceivers 1, draw_arb2.cpp:11566)
 			VK_Inter_SelectShadowMode( r_shadowMapTranslucentReceivers.GetBool() ? shadowState : NULL );
+			// stencil path: translucent interactions keep GEQUAL only when
+			// they receive stencil shadows (draw_arb2.cpp:11636-11646,
+			// r_stencilTranslucentShadows default 1)
+			if ( stencilShadowLight && !r_stencilTranslucentShadows.GetBool() ) {
+				vkCmdSetStencilTestEnable( cmd, VK_FALSE );
+			}
 			// GLS_DEPTHFUNC_LESS maps to glDepthFunc(GL_LEQUAL)
 			vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_LESS_OR_EQUAL );
 			VK_DrawInteractionChain( vLight->translucentInteractions );
+		}
+
+		// stencil reset: the next light (and the ambient walks) start
+		// stencil-free
+		if ( stencilShadowLight ) {
+			vkCmdSetStencilTestEnable( cmd, VK_FALSE );
 		}
 	}
 
@@ -937,6 +1280,18 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 		loggedFirstShadowReceivers = true;
 		common->Printf( "Vulkan: first shadow-receiving interaction pass drew %d shadowed interactions across %d shadow lights\n",
 				interPass.shadowDrawCount, interPass.shadowLightCount );
+	}
+
+	// one-shot bring-up evidence that stencil shadow volumes drew (Phase G1)
+	static bool loggedFirstStencilShadowPass = false;
+	if ( !loggedFirstStencilShadowPass && interPass.volumeDrawCount > 0 ) {
+		loggedFirstStencilShadowPass = true;
+		common->Printf( "Vulkan: first stencil shadow pass: %d volumes (%d preload), %d lights\n",
+				interPass.volumeDrawCount, interPass.volumePreloadCount, interPass.stencilLightCount );
+		if ( interPass.volumeSkipCount > 0 ) {
+			common->Printf( "Vulkan: stencil shadow pass skipped %d prim-batch/cache-less volumes\n",
+					interPass.volumeSkipCount );
+		}
 	}
 }
 
