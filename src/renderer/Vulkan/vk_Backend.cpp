@@ -788,11 +788,17 @@ void R_RendererUpload_RecordLegacyUpload( int bytes ) {
 	(void)bytes;
 }
 
-// shadow-map / post-process resource teardown hooks
-bool RB_ShadowMapResourcesKnownGood( bool verbose ) {
-	(void)verbose;
-	return false;
+// vk_ShadowMap.cpp narrow accessor (the shadow module state stays file-static there)
+bool VK_ShadowMap_ResourcesKnownGood( bool pointLight );
+
+// Phase F3: per-light-class truth for the front-end stencil-volume elision
+// gate (R_ShadowMapLightWillUseShadowMaps, tr_light.cpp) — true once the
+// shadow module has proven the class's resources this video generation
+bool RB_ShadowMapResourcesKnownGood( bool pointLight ) {
+	return VK_ShadowMap_ResourcesKnownGood( pointLight );
 }
+
+// shadow-map / post-process resource teardown hooks
 
 void RB_ShutdownShadowMapResources( void ) {
 }

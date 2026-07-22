@@ -54,8 +54,14 @@
 	  rotated multi-tap receiver disc (r_shadowMapPointFilterRadius/Taps)
 	  reduces to the single hardware 2x2 PCF tap, matching the F2a
 	  projected receiver reduction.
-	- Any resource/pool/render failure leaves the light unshadowed (the
-	  Phase F1 path); there is no stencil fallback until Phase G.
+	- Phase F3 (docs/dev/plans/2026-07-20-vulkan-phase-g.md): the module
+	  publishes per-light-class resource generations consumed by
+	  RB_ShadowMapResourcesKnownGood — the front-end stencil-volume elision
+	  gate (R_ShadowMapLightWillUseShadowMaps, tr_light.cpp). Any
+	  resource/pool/render failure leaves the light unshadowed for the
+	  failing frame and marks lightDef->shadowMapStencilFallbackSticky
+	  (the GL RB_ShadowMapMarkStencilFallbackSticky contract), restoring
+	  front-end stencil volume generation from the next frame on.
 
 ===============================================================================
 */
@@ -152,10 +158,65 @@ static vkShadowMapState_t vkShadow;
 
 /*
 ====================
+Phase F3: per-light-class resource honesty + the sticky stencil fallback
+====================
+*/
+
+// Published for the front-end stencil-volume elision policy
+// (R_ShadowMapLightWillUseShadowMaps -> RB_ShadowMapResourcesKnownGood): the
+// front end must keep generating stencil volumes until the backend has proven
+// it can create each class's shadow-map resources in this video generation —
+// the GL contract (draw_arb2.cpp g_shadowMap*ResourcesOkGeneration). Reset
+// whenever the class's resources are destroyed.
+static int vkShadowProjectedResourcesOkGeneration = -1;
+static int vkShadowPointResourcesOkGeneration = -1;
+
+bool VK_ShadowMap_ResourcesKnownGood( bool pointLight ) {
+	// VK_ShadowMap_EnsureResources (atlas + compare sampler + atlas
+	// descriptor wiring) gates the whole view's shadow pass, point cubes
+	// included, so the projected generation is a prerequisite for BOTH
+	// classes
+	if ( vkShadowProjectedResourcesOkGeneration != tr.videoRestartCount ) {
+		return false;
+	}
+	if ( pointLight && vkShadowPointResourcesOkGeneration != tr.videoRestartCount ) {
+		return false;
+	}
+	return true;
+}
+
+// A shadow-map failure on a light whose stencil volumes were elided would
+// otherwise repeat every frame with no shadow at all; the sticky flag
+// restores volume generation for that light from the next frame on
+// (RB_ShadowMapMarkStencilFallbackSticky parity — the failing frame renders
+// the light unshadowed, exactly like the GL backend's failing frame).
+void VK_ShadowMap_MarkStencilFallbackSticky( const viewLight_t *vLight ) {
+	if ( vLight == NULL || vLight->lightDef == NULL || vLight->lightDef->shadowMapStencilFallbackSticky ) {
+		return;
+	}
+	vLight->lightDef->shadowMapStencilFallbackSticky = true;
+	common->DPrintf( "shadow map pass failed for lightDef %d; restoring stencil volume generation\n", vLight->lightDef->index );
+}
+
+void VK_ShadowMap_AbandonPreparedLights( void ) {
+	for ( int i = 0 ; i < vkShadow.numLights ; i++ ) {
+		if ( !vkShadow.lights[ i ].valid ) {
+			continue;
+		}
+		VK_ShadowMap_MarkStencilFallbackSticky( vkShadow.lights[ i ].vLight );
+		vkShadow.lights[ i ].valid = false;
+	}
+}
+
+/*
+====================
 Resources
 ====================
 */
 static void VK_ShadowMap_DestroyAtlas( void ) {
+	// the front end must stop eliding stencil volumes the moment the atlas
+	// is gone (VK_ShadowMap_ResourcesKnownGood)
+	vkShadowProjectedResourcesOkGeneration = -1;
 	if ( vkCtx.device == VK_NULL_HANDLE ) {
 		return;
 	}
@@ -192,6 +253,7 @@ static void VK_ShadowMap_DestroyPointCube( vkPointShadowCube_t &cube ) {
 }
 
 static void VK_ShadowMap_DestroyPointCubes( void ) {
+	vkShadowPointResourcesOkGeneration = -1;
 	if ( vkCtx.device == VK_NULL_HANDLE ) {
 		return;
 	}
@@ -202,6 +264,8 @@ static void VK_ShadowMap_DestroyPointCubes( void ) {
 }
 
 void VK_ShadowMap_Shutdown( void ) {
+	vkShadowProjectedResourcesOkGeneration = -1;
+	vkShadowPointResourcesOkGeneration = -1;
 	if ( vkCtx.device == VK_NULL_HANDLE ) {
 		memset( &vkShadow, 0, sizeof( vkShadow ) );
 		return;
@@ -229,6 +293,8 @@ static bool VK_ShadowMap_EnsureResources( void ) {
 	}
 
 	if ( vkShadow.atlasImage != VK_NULL_HANDLE && vkShadow.atlasSize == wantedSize ) {
+		// live resources are proof for the current video generation too
+		vkShadowProjectedResourcesOkGeneration = tr.videoRestartCount;
 		return true;
 	}
 
@@ -327,6 +393,9 @@ static bool VK_ShadowMap_EnsureResources( void ) {
 	}
 
 	vkShadow.atlasSize = wantedSize;
+	// the elision gate may open now: the backend has proven the projected
+	// resources in this video generation
+	vkShadowProjectedResourcesOkGeneration = tr.videoRestartCount;
 	return true;
 }
 
@@ -358,6 +427,8 @@ static bool VK_ShadowMap_EnsurePointCube( int index ) {
 
 	vkPointShadowCube_t &cube = vkShadow.pointCubes[ index ];
 	if ( cube.image != VK_NULL_HANDLE ) {
+		// live resources are proof for the current video generation too
+		vkShadowPointResourcesOkGeneration = tr.videoRestartCount;
 		return true;
 	}
 
@@ -424,6 +495,8 @@ static bool VK_ShadowMap_EnsurePointCube( int index ) {
 		return false;
 	}
 
+	// the point-light elision gate may open now (VK_ShadowMap_ResourcesKnownGood)
+	vkShadowPointResourcesOkGeneration = tr.videoRestartCount;
 	return true;
 }
 
@@ -551,7 +624,16 @@ int VK_ShadowMap_PrepareViewLights( const viewDef_t *viewDef ) {
 
 	for ( const viewLight_t *vLight = viewDef->viewLights ; vLight ; vLight = vLight->next ) {
 		if ( vkShadow.numLights >= VK_SHADOW_MAX_LIGHTS ) {
-			break;
+			// table full: a light the front end elided stencil volumes for
+			// would otherwise render unshadowed with nothing to restore it —
+			// keep scanning and mark every such light sticky, exactly like the
+			// no-caster / alloc-failure skips below (uniform sticky invariant;
+			// unreachable at default sizing but defense-in-depth if the atlas
+			// or tile size is tuned to overflow the table)
+			if ( R_ShadowMapLightWillUseShadowMaps( vLight->lightDef ) ) {
+				VK_ShadowMap_MarkStencilFallbackSticky( vLight );
+			}
+			continue;
 		}
 		if ( vLight->lightShader == NULL || vLight->lightShader->IsFogLight() || vLight->lightShader->IsBlendLight() ) {
 			continue;
@@ -573,6 +655,12 @@ int VK_ShadowMap_PrepareViewLights( const viewDef_t *viewDef ) {
 		// combined caster set (see the stencil-ownership divergence note above)
 		if ( vLight->globalShadowMapCasters == NULL && vLight->localShadowMapCasters == NULL
 				&& vLight->globalShadowMapDynamicCasters == NULL && vLight->localShadowMapDynamicCasters == NULL ) {
+			// GL parity (RB_ShadowMapRunPass no-caster branch): the front end
+			// may have elided stencil volumes this light still needs (e.g. its
+			// only casters are ones the map path cannot draw) — restore them
+			if ( R_ShadowMapLightWillUseShadowMaps( vLight->lightDef ) ) {
+				VK_ShadowMap_MarkStencilFallbackSticky( vLight );
+			}
 			continue;
 		}
 
@@ -581,6 +669,10 @@ int VK_ShadowMap_PrepareViewLights( const viewDef_t *viewDef ) {
 			resourcesOk = VK_ShadowMap_EnsureResources();
 		}
 		if ( !resourcesOk ) {
+			// the destroy path already reset the published generation, so the
+			// front end stops eliding volumes globally from the next frame;
+			// this light also gets the per-light restore (GL render-fail parity)
+			VK_ShadowMap_MarkStencilFallbackSticky( vLight );
 			return 0;
 		}
 
@@ -590,12 +682,18 @@ int VK_ShadowMap_PrepareViewLights( const viewDef_t *viewDef ) {
 			// r_shadowMapPointLights is the GL support-reason gate; pool
 			// exhaustion and cube failures leave the light unshadowed.
 			if ( !r_shadowMapPointLights.GetBool() ) {
+				// policy gate the front-end mirror checks identically
+				// (tr_light.cpp) — never elided, no sticky needed
 				continue;
 			}
 			if ( vkShadow.pointLightsUsed >= VK_SHADOW_MAX_POINT_CUBES ) {
+				// per-view pool exhausted: a mid-frame failure for a light the
+				// front end may have elided (F3 sticky contract)
+				VK_ShadowMap_MarkStencilFallbackSticky( vLight );
 				continue;
 			}
 			if ( !VK_ShadowMap_EnsurePointCube( vkShadow.pointLightsUsed ) ) {
+				VK_ShadowMap_MarkStencilFallbackSticky( vLight );
 				continue;
 			}
 
@@ -619,7 +717,10 @@ int VK_ShadowMap_PrepareViewLights( const viewDef_t *viewDef ) {
 		}
 
 		if ( classification.csmEnabled || classification.cascadeCount > 1 ) {
-			// scratch-first: no CSM (r_shadowMapCSM defaults 0)
+			// scratch-first: no CSM (r_shadowMapCSM defaults 0). The front-end
+			// mirror does not know about cascades, so restore any volumes it
+			// may have elided
+			VK_ShadowMap_MarkStencilFallbackSticky( vLight );
 			continue;
 		}
 
@@ -628,13 +729,16 @@ int VK_ShadowMap_PrepareViewLights( const viewDef_t *viewDef ) {
 		shadowMapProjectedLightState_t projectedState;
 		R_BuildShadowMapProjectedLightState( vLight, viewDef, tileSize, projectedState );
 		if ( !projectedState.valid || projectedState.cascadeCount != 1 ) {
+			VK_ShadowMap_MarkStencilFallbackSticky( vLight );
 			continue;
 		}
 
 		int tileX = 0;
 		int tileY = 0;
 		if ( !VK_ShadowMap_AllocTile( tileSize, tileX, tileY ) ) {
-			// atlas exhausted for this view: remaining lights render unshadowed
+			// atlas exhausted for this view: the light renders unshadowed this
+			// frame and regains its stencil volumes from the next frame on
+			VK_ShadowMap_MarkStencilFallbackSticky( vLight );
 			continue;
 		}
 
@@ -993,9 +1097,9 @@ void VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 		whiteSet = VK_Exec_ImageDescriptor( globalImages->whiteImage->GetDeviceHandle(), true );
 	}
 	if ( cmd == VK_NULL_HANDLE || whiteSet == VK_NULL_HANDLE ) {
-		for ( int i = 0 ; i < vkShadow.numLights ; i++ ) {
-			vkShadow.lights[ i ].valid = false;
-		}
+		// F3: every prepared light fails unshadowed this frame — restore
+		// their stencil volume generation from the next frame on
+		VK_ShadowMap_AbandonPreparedLights();
 		return;
 	}
 
@@ -1010,12 +1114,14 @@ void VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 		if ( light.pointLight ) {
 			if ( pointCasterPipeline == VK_NULL_HANDLE
 					|| vkShadow.pointCubes[ light.cubeIndex ].image == VK_NULL_HANDLE ) {
+				VK_ShadowMap_MarkStencilFallbackSticky( light.vLight );
 				light.valid = false;
 				continue;
 			}
 			pointCount++;
 		} else {
 			if ( casterPipeline == VK_NULL_HANDLE ) {
+				VK_ShadowMap_MarkStencilFallbackSticky( light.vLight );
 				light.valid = false;
 				continue;
 			}
@@ -1105,7 +1211,8 @@ void VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 			if ( drawnCasters <= 0 ) {
 				// nothing rendered into the tile: sampling an all-far map is
 				// harmless but pointless; keep the light unshadowed (GL treats an
-				// all-skipped caster set as a render miss)
+				// all-skipped caster set as a render miss and marks sticky)
+				VK_ShadowMap_MarkStencilFallbackSticky( light.vLight );
 				light.valid = false;
 			}
 
@@ -1211,7 +1318,9 @@ void VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 			}
 
 			if ( drawnCasters <= 0 ) {
-				// all-skipped caster set = render miss (RB_RenderPointShadowMap)
+				// all-skipped caster set = render miss (RB_RenderPointShadowMap);
+				// sticky restores the light's stencil volumes next frame
+				VK_ShadowMap_MarkStencilFallbackSticky( light.vLight );
 				light.valid = false;
 			}
 

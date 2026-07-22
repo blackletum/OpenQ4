@@ -55,6 +55,20 @@ void	VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef );
 // prepared state for a light, or NULL when the light renders unshadowed
 const vkShadowLightState_t *VK_ShadowMap_LightState( const viewLight_t *vLight );
 
+// Phase F3: per-light-class resource truth behind the tr_local.h hook
+// RB_ShadowMapResourcesKnownGood — the front-end stencil-volume elision
+// gate. True once this video generation has proven the class's resources.
+bool	VK_ShadowMap_ResourcesKnownGood( bool pointLight );
+
+// Phase F3 sticky fallback contract (GL RB_ShadowMapMarkStencilFallbackSticky
+// parity): a shadow-map failure on a light whose stencil volumes were elided
+// restores volume generation for that light from the next frame on
+void	VK_ShadowMap_MarkStencilFallbackSticky( const viewLight_t *vLight );
+
+// mark every still-valid prepared light sticky and drop it from the table:
+// the caller could not run or consume the shadow pass this view
+void	VK_ShadowMap_AbandonPreparedLights( void );
+
 // device-shutdown hook (device idle by contract)
 void	VK_ShadowMap_Shutdown( void );
 

@@ -77,3 +77,51 @@ Exit: retail-default lighting+shadows+fog on Vulkan for q4dm2 and SP
 smokes, validation-clean, both r_useShadowMap states correct, GL default
 untouched; full gate + Linux leg; user visual soak remains the promotion
 gate (Phase J).
+
+## G3 audit — light-grid rendering is inert under the vk pins (no work this phase)
+
+Verified against the code (recon: phase-g-recon/lightgrid-misc.md §1-2):
+- The entire draw-time light-grid path lives in the excluded
+  draw_common.cpp (RB_STD_LightGridIndirect :9142, inline variant :9085,
+  the dedicated lightgrid_indirect.fs GLSL program) — not compiled into
+  the vk module at all.
+- Every availability gate keys on `glConfig.GLSLProgramAvailable`, which
+  is NEVER set under vk (its only assignment is the GL extension probe
+  RenderSystem_init.cpp:1141 that VK_InitRenderDevice replaces; it stays
+  false from zero-init). `RB_STD_LightGridInlinePassAvailable` (:8974)
+  and `R_ScenePackets_DrawSurfLightGridEligible` (ScenePackets.cpp:1274)
+  therefore reject universally; the RENDER_PASS_LIGHT_GRID packet pass is
+  always empty. ModernGLExecutor hardcodes `lightGridModern = false`
+  (ModernGLExecutor.cpp:6094) — it's a legacy-pass-only feature even on
+  GL.
+- Net: under vk nothing samples, streams, or draws light-grid data. This
+  is a genuine parity gap (maps shipping .lightgrid files lose the
+  default-on indirect overlay), but it is NOT reachable by flipping a
+  gate — it requires a NEW vk pass (a SPIR-V port of the
+  lightgrid_indirect.fs semantics + atlas materialization through
+  vk_Image, which mechanically already works via AllocImage/
+  SubImageUpload). Deferred: it is an additive lit-overlay feature best
+  sequenced with the Phase H/I capture and long-tail work, not the
+  retail-default lighting Phase G targets. Front-end light-grid parse +
+  deferred image handles (RenderWorld_lightgrid.cpp) already run
+  harmlessly under vk.
+- Free-perf follow-up (Phase J note): with grids loaded,
+  `AnyLightGridAvailable()` is true, so the per-drawSurf PointInArea BSP
+  descent (tr_light.cpp:2024, gate tr_main.cpp:1278-1280) runs every
+  frame with zero vk consumers — a vk-side skip until a real light-grid
+  pass exists is free.
+
+## Landed record (2026-07-22)
+
+- G1 stencil shadow volumes: c98888ba (zero-finding review).
+- G2 fog + blend lights: b471b4b5 (zero-finding review, fog evidence on
+  game/storage2).
+- F3 shadow-map resource honesty + sticky fallback: this commit —
+  RB_ShadowMapResourcesKnownGood reports per-light-class truth keyed on
+  tr.videoRestartCount; every shadow-pass failure path marks
+  lightDef->shadowMapStencilFallbackSticky (GL parity). Verified on
+  game/storage1 via the SP benchmark harness: defaults draw 15 stencil
+  volumes with NO elision; r_useShadowMap 1 draws point shadows + "stencil
+  elision active: 1 of 1 shadow-mapped lights carry no stencil volumes";
+  zero validation both runs.
+- G3: audit only (above).

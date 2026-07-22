@@ -199,6 +199,7 @@ typedef struct vkInterPass_s {
 	int					shadowSliceOffset;	// ring offset of the current space's shadow block, -1 = unset
 	int					shadowLightCount;
 	int					shadowDrawCount;
+	int					elidedLightCount;	// shadow-mapped lights with no stencil chains (F3 elision evidence)
 
 	// Phase G1 stencil shadow volumes
 	VkPipeline			pipelineStencilShadow;	// vec4 volume stream, color writes off
@@ -1148,6 +1149,12 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 			interPass.shadowSetAtlas = VK_Exec_ShadowDescriptorSet();
 			interPass.shadowPassPrepared = interPass.shadowSetAtlas != VK_NULL_HANDLE;
 		}
+		if ( !interPass.shadowPassPrepared ) {
+			// Phase F3: the prepared lights cannot be consumed this view
+			// (missing pipelines/layout/descriptors) — restore their stencil
+			// volume generation from the next frame on
+			VK_ShadowMap_AbandonPreparedLights();
+		}
 	}
 
 	// the specular table rides slot 0 for every draw (ARB2 binds it once
@@ -1219,8 +1226,26 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 		const vkShadowLightState_t *shadowState = NULL;
 		if ( interPass.shadowPassPrepared ) {
 			shadowState = VK_ShadowMap_LightState( vLight );
+			// Phase F3: a missing per-class receiver pipeline (or point set)
+			// is a mid-frame failure — fall back BEFORE the stencil decision
+			// so restored volumes draw once regenerated, and mark the light's
+			// def so the front end restores them from the next frame on
+			if ( shadowState != NULL ) {
+				const bool receiverReady = shadowState->pointLight
+						? ( interPass.pipelinePointShadowed != VK_NULL_HANDLE && shadowState->pointSet != VK_NULL_HANDLE )
+						: ( interPass.pipelineShadowed != VK_NULL_HANDLE );
+				if ( !receiverReady ) {
+					VK_ShadowMap_MarkStencilFallbackSticky( vLight );
+					shadowState = NULL;
+				}
+			}
 			if ( shadowState != NULL ) {
 				interPass.shadowLightCount++;
+				// F3 elision evidence: the front end skipped this light's
+				// stencil volume generation entirely
+				if ( vLight->globalShadows == NULL && vLight->localShadows == NULL ) {
+					interPass.elidedLightCount++;
+				}
 			}
 		}
 		VK_Inter_SelectShadowMode( shadowState );
@@ -1329,6 +1354,16 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 			common->Printf( "Vulkan: stencil shadow pass skipped %d prim-batch/cache-less volumes\n",
 					interPass.volumeSkipCount );
 		}
+	}
+
+	// one-shot bring-up evidence the front end elided stencil volume
+	// generation for shadow-mapped lights (Phase F3
+	// RB_ShadowMapResourcesKnownGood honesty)
+	static bool loggedFirstElision = false;
+	if ( !loggedFirstElision && interPass.elidedLightCount > 0 ) {
+		loggedFirstElision = true;
+		common->Printf( "Vulkan: stencil elision active: %d of %d shadow-mapped lights carry no stencil volumes\n",
+				interPass.elidedLightCount, interPass.shadowLightCount );
 	}
 }
 
