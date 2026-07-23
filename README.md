@@ -93,6 +93,8 @@ Packaged support currently focuses on Windows, Linux x64, Steam Deck/SteamOS, pr
 </p>
 <p align="center"><sub>A second CRT comparison on mp/q4dm6 shows the same post-process across a brighter indoor arena.</sub></p>
 
+> **Renderer backends:** OpenGL is the default and only supported renderer. A native **Vulkan** backend is included but **experimental and opt-in** (`r_renderApi vulkan`, applied on engine restart) — it is under active development, may show visual artifacts or instability, and falls back to OpenGL on any failure. See [Display Settings → Renderer Backend](docs/user/display-settings.md#renderer-backend-opengl-default-vulkan-is-experimental).
+
 ---
 
 ## Quick start

@@ -50,6 +50,31 @@ For package or platform validation, `performancePresetSelfTest` checks that the 
 | `r_displayRefresh` | `0` | Requested fullscreen refresh rate (0 = default/driver choice). |
 | `r_screen` | `-1` | SDL3 monitor target (`-1` auto/current, `0..N` explicit index). |
 
+## Renderer Backend (OpenGL default; Vulkan is experimental)
+
+openQ4 ships with an **OpenGL renderer as the default and only supported
+backend**. A **native Vulkan renderer is included but is experimental and
+opt-in** — it is under active development, not feature-complete or
+performance-validated, and can show visual artifacts or instability. Do not
+use it for normal play; OpenGL remains the recommended renderer.
+
+| Setting | Default | What it does |
+|---|---:|---|
+| `r_renderApi` | `gl` | Renderer backend: `gl` (default, supported) or `vulkan` (**experimental**). `best` resolves to `gl` until the Vulkan backend clears its promotion evidence and sign-off. Takes effect on **engine restart**, not `vid_restart`. |
+| `r_actualRenderApi` | (read-only) | Reports the backend that actually initialized. If a Vulkan request fails, the engine **falls back to OpenGL** and this reports `gl`. |
+
+Notes:
+
+- The `vulkan` selection is archived to your config and applied at the next
+  engine start; restart openQ4 fully (not just `vid_restart`) to switch.
+- If Vulkan cannot initialize (no compatible driver/GPU, or a module error),
+  openQ4 logs a warning and renders with OpenGL so you are never left with a
+  black screen. Check `r_actualRenderApi` or `gfxInfo` to see the active
+  backend.
+- Experimental status means known issues are expected; please only file
+  Vulkan-specific reports with `openq4.log` and `gfxInfo`, and note that it is
+  not yet a release-supported path.
+
 ## Frame Cap
 
 | Setting | Default | What it does |
