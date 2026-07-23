@@ -1240,7 +1240,9 @@ void idCommonLocal::Error( const char *fmt, ... ) {
 	}
 
 	// if we don't have GL running, make it a fatal error
-	if ( !renderSystem->IsOpenGLRunning() ) {
+	// (module-only builds have a NULL renderSystem until the renderer module
+	// publishes its interfaces, which counts as "not running")
+	if ( !renderSystem || !renderSystem->IsOpenGLRunning() ) {
 		code = ERP_FATAL;
 	}
 
@@ -1302,7 +1304,9 @@ void idCommonLocal::Error( const char *fmt, ... ) {
 	}
 
 	// Only attempt a renderer restart fallback when GL is actually live.
-	if ( renderSystem->IsOpenGLRunning() && cvarSystem->GetCVarBool( "r_fullscreen" ) ) {
+	// renderSystem is NULL on module-only builds when erroring out before the
+	// renderer module has published its interfaces (e.g. filesystem startup).
+	if ( renderSystem && renderSystem->IsOpenGLRunning() && cvarSystem->GetCVarBool( "r_fullscreen" ) ) {
 		cmdSystem->BufferCommandText( CMD_EXEC_NOW, "vid_restart partial windowed\n" );
 	}
 
@@ -1353,7 +1357,10 @@ void idCommonLocal::FatalError( const char *fmt, ... ) {
 	Printf( "********************\nFATAL: %s\n********************\n", errorMessage );
 
 	// Only attempt a renderer restart fallback when GL is actually live.
-	if ( renderSystem->IsOpenGLRunning() && cvarSystem->GetCVarBool( "r_fullscreen" ) ) {
+	// renderSystem is NULL on module-only builds when a fatal error fires
+	// before the renderer module has published its interfaces (e.g. failing
+	// to open the log file during filesystem startup).
+	if ( renderSystem && renderSystem->IsOpenGLRunning() && cvarSystem->GetCVarBool( "r_fullscreen" ) ) {
 		cmdSystem->BufferCommandText( CMD_EXEC_NOW, "vid_restart partial windowed\n" );
 	}
 
@@ -5883,8 +5890,11 @@ void idCommonLocal::ShutdownGame( bool reloading ) {
 	// shut down the event loop
 	eventLoop->Shutdown();
 
-	// shut down the renderSystem
-	renderSystem->Shutdown();
+	// shut down the renderSystem; NULL on module-only builds when a fatal
+	// error shuts down before the renderer module published its interfaces
+	if ( renderSystem ) {
+		renderSystem->Shutdown();
+	}
 
 	// shutdown the decl manager while the game DLL is still loaded, because
 	// game-owned decl types (e.g. entity/fx decls) can have module-local vtables.
