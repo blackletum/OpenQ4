@@ -793,6 +793,24 @@ static float openQ4_FontSelectionScaleForViewport( float authoredScale, float ca
 	return authoredScale * Max( 1.0f, physicalScale );
 }
 
+// A scalable font rasterises its small/medium/large slots from one face at
+// 12/24/48 point, so their point-size-normalised metrics agree and picking a
+// larger slot only buys resolution.  The retail .fontdat atlases were authored
+// by hand per size and do not agree to the pixel, so picking a different one
+// there moves text.  Only the scalable slots carry the "ttf/" name prefix.
+static bool openQ4_FontAtlasesAreProportional( const fontInfoEx_t *font ) {
+	if ( font == NULL ) {
+		return false;
+	}
+	const fontInfo_t *slots[3] = { &font->fontInfoSmall, &font->fontInfoMedium, &font->fontInfoLarge };
+	for ( int i = 0; i < 3; i++ ) {
+		if ( idStr::Cmpn( slots[i]->name, "ttf/", 4 ) != 0 ) {
+			return false;
+		}
+	}
+	return true;
+}
+
 static float openQ4_FontSelectionScale( float authoredScale, float canvasWidth, float canvasHeight, bool aspectCorrect ) {
 	float viewportWidth = 0.0f;
 	float viewportHeight = 0.0f;
@@ -2226,11 +2244,18 @@ void idDeviceContext::SetFontByScale(float scale) {
 		return;
 	}
 	// The GUI scale is authored for a 640x480-era canvas, while the selected
-	// bitmap atlas is sampled at the final viewport resolution. Account for
-	// that physical enlargement so high-resolution displays use the 24/48-point
-	// source instead of magnifying a small atlas. Rendering still uses the
-	// authored scale below, so text layout and dimensions do not change.
-	const float selectionScale = openQ4_FontSelectionScale( scale, vidWidth, vidHeight, aspectCorrect );
+	// atlas is sampled at the final viewport resolution. Account for that
+	// physical enlargement so high-resolution displays use the 24/48-point
+	// source instead of magnifying a small atlas.
+	//
+	// useFont is also what TextWidth, MaxCharHeight and the DrawText advances
+	// read, so this may only move between atlases whose normalised metrics
+	// agree. Scalable slots qualify because one face produced all three; the
+	// retail .fontdat atlases do not, and moving between those would shift
+	// text width, line height and right alignment on a large window.
+	const float selectionScale = openQ4_FontAtlasesAreProportional( activeFont )
+		? openQ4_FontSelectionScale( scale, vidWidth, vidHeight, aspectCorrect )
+		: scale;
 	if (selectionScale <= gui_smallFontLimit.GetFloat()) {
 		useFont = &activeFont->fontInfoSmall;
 		activeFont->maxHeight = activeFont->maxHeightSmall;
@@ -3085,6 +3110,30 @@ bool UI_FontParity_RunSelfTest( void ) {
 		openQ4_FontSelectionScaleForViewport( 0.25f, 640.0f, 480.0f, 1920.0f, 1080.0f, true ), 0.5625f );
 	ok &= openQ4_CheckNear( "1440p font selection scale",
 		openQ4_FontSelectionScaleForViewport( 0.25f, 640.0f, 480.0f, 2560.0f, 1440.0f, true ), 0.75f );
+
+	// The enlargement above may only choose between atlases whose normalised
+	// metrics agree, because the chosen atlas is also what TextWidth,
+	// MaxCharHeight and the DrawText advances read. Scalable slots qualify;
+	// the hand-authored retail atlases do not.
+	fontInfoEx_t scalableAtlasFont = {};
+	idStr::Copynz( scalableAtlasFont.fontInfoSmall.name, "ttf/marine_12", sizeof( scalableAtlasFont.fontInfoSmall.name ) );
+	idStr::Copynz( scalableAtlasFont.fontInfoMedium.name, "ttf/marine_24", sizeof( scalableAtlasFont.fontInfoMedium.name ) );
+	idStr::Copynz( scalableAtlasFont.fontInfoLarge.name, "ttf/marine_48", sizeof( scalableAtlasFont.fontInfoLarge.name ) );
+	ok &= openQ4_CheckBool( "scalable atlases are proportional",
+		openQ4_FontAtlasesAreProportional( &scalableAtlasFont ), true );
+
+	fontInfoEx_t retailAtlasFont = {};
+	idStr::Copynz( retailAtlasFont.fontInfoSmall.name, "fonts/english/marine_12.fontdat", sizeof( retailAtlasFont.fontInfoSmall.name ) );
+	idStr::Copynz( retailAtlasFont.fontInfoMedium.name, "fonts/english/marine_24.fontdat", sizeof( retailAtlasFont.fontInfoMedium.name ) );
+	idStr::Copynz( retailAtlasFont.fontInfoLarge.name, "fonts/english/marine_48.fontdat", sizeof( retailAtlasFont.fontInfoLarge.name ) );
+	ok &= openQ4_CheckBool( "retail atlases are not proportional",
+		openQ4_FontAtlasesAreProportional( &retailAtlasFont ), false );
+
+	// A font that produced only some scalable slots must not qualify either.
+	fontInfoEx_t mixedAtlasFont = scalableAtlasFont;
+	idStr::Copynz( mixedAtlasFont.fontInfoLarge.name, "fonts/english/marine_48.fontdat", sizeof( mixedAtlasFont.fontInfoLarge.name ) );
+	ok &= openQ4_CheckBool( "mixed atlases are not proportional",
+		openQ4_FontAtlasesAreProportional( &mixedAtlasFont ), false );
 
 	glyphInfo_t glyph = {};
 	glyph.horiAdvance = 7.2f;
