@@ -246,20 +246,26 @@ would justify promoting it.
 - The sweep's completion line reports the yaw it started from and reached, so a
   capture proves the camera panned instead of trusting the request.
 
-### Pre-existing failure found while validating
+### Font parity failure found while validating, and fixed
 
-`tools/tests/renderer_validation_matrix.py` fails its
-`renderer-foundation-selftests` case on `uiFontParitySelfTest`. The HUD radio
-marine cases are off by one pixel in line height, baseline, glyph y, and
-overhang, the three radio strings are two pixels narrow, and the loading title
-measures 234 px against an expected 223 px. Everything else in the matrix
-passes 9/9, and the `push` validation profile is green.
+`renderer_validation_matrix` failed its `renderer-foundation-selftests` case
+on `uiFontParitySelfTest`: the HUD radio marine cases were a pixel out in line
+height, baseline, glyph y, and overhang, the three radio strings were two
+pixels narrow, and the loading title measured 234 px against a retail 223 px,
+moving its right-aligned x by 11 px.
 
-This is not from the work in this pass: rebuilding with the three engine
-changes reverted reproduces the identical failure, and the merged `main`
-commits do not touch `src/ui/DeviceContext.cpp`, which owns both the metrics
-and the self-test. It is recorded here because it was found during this
-pass's validation and still needs an owner.
+It was not from the optimization work -- rebuilding with those engine changes
+reverted reproduced it exactly -- but from `SetFontByScale` choosing its atlas
+from a viewport-enlarged scale. That selection is also what `TextWidth`,
+`MaxCharHeight`, and the `DrawText` advances read, so above roughly 1.5x
+enlargement the hand-authored retail `.fontdat` atlases started reporting
+different metrics. It reproduced only on a large window, which is why 1280x720
+and 640x480 both passed and the user's own 2538x1312 window did not.
+
+A scalable font rasterises its three slots from one face at 12/24/48 point, so
+their normalised metrics agree and a larger slot only adds resolution. The
+enlargement now applies to those fonts only; the retail atlases select on the
+authored scale and keep exact parity. The matrix is 36/36 again.
 
 ### Ranked remaining work
 
