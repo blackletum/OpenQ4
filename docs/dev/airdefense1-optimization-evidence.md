@@ -108,3 +108,169 @@ asset compatibility rather than an overlay-free executable. Representative
 OpenGL/Vulkan SP, screen-effect, and MP engine screenshots were reviewed for
 black output, invalid geometry, missing HUD, and obvious presentation defects;
 none were found.
+
+## 2026-08-31 camera-sweep pass
+
+This pass added a repeatable camera-motion capture for the same scene, then ran
+optimization and robustness rounds against it. All runs are Windows x64,
+bordered windowed, OpenGL, uncapped presentation, shipping renderer defaults,
+and stock retail assets. No mouse or keyboard input was synthesized.
+
+### The sweep capture
+
+Measuring a fixed spawn view only exercises one frustum. `benchmarkViewSweep`
+pans the local player's view a requested arc over a requested duration, driven
+entirely from game time inside `idPlayer::UpdateViewAngles`, so the same sweep
+is reproduced regardless of host frame rate and no operating-system input is
+involved. The completion line reports the arc it actually walked.
+
+The acceptance capture skips the loading-screen continue gate
+(`com_skipLoadingContinue 1`) and the opening cinematic
+(`g_autoSkipCinematics 1`), settles, then samples a full turn:
+
+```
+python tools/tests/renderer_gameplay_benchmark.py --cases sp-airdefense1 \
+  --tiers auto --maxfps 0 --swap-intervals 0 --display-modes windowed \
+  --render-api gl --pacing-only --no-gpu-timers --settle-frames 360 \
+  --exec-command "benchmarkViewSweep 360 12000" --sample-msec 13000
+```
+
+### Frame rate over a full 360-degree turn
+
+Three consecutive passing captures on the final build at 1280x720, each
+sampling one complete turn from the starting area:
+
+| Run | Samples | Average | P50 | P95 | P99 | Worst frame |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 | 3,472 | 284.1 Hz | 4 ms | 6 ms | 7 ms | 12 ms |
+| 2 | 3,544 | 298.7 Hz | 4 ms | 6 ms | 7 ms | 11 ms |
+| 3 | 3,363 | 282.8 Hz | 4 ms | 6 ms | 7 ms | 8 ms |
+
+Median 284.1 Hz, and six passing captures taken across this pass span
+282.8--313.1 Hz with an unchanged 6 / 7 ms P95 / P99. The worst single
+frame in any capture was 14 ms, so the turn holds well above the 100 FPS
+acceptance target throughout rather than averaging over a stall. The same
+sweep at 1920x1080 reported 310.8 Hz with an
+identical 6 / 7 ms P95 / P99 and a 10 ms worst frame, which matches the earlier
+finding that this scene is CPU/front-end limited rather than fill limited.
+Every run reported the sweep completing its full arc, and the end-of-sweep
+engine screenshots show the expected geometry, lighting, and HUD.
+
+### Where the load time goes
+
+Load timings need a save path that survives between runs. The gameplay
+benchmark deliberately requires a fresh output directory, so each of its runs
+regenerates the binary image cache and reports a first-visit load. A player
+pays that once. Warm medians of three runs, stock defaults:
+
+| Phase | msec |
+|---|---:|
+| Game media precache (models, sounds, animations, entity defs) | 4,140 |
+| Level image loading (1,718 files, 213 MiB) | 2,538 |
+| Cinematic fast-forward, only paid when the opening cinematic is skipped | 1,876 |
+| Render-world `.proc` parse | 1,355 |
+| Collision `.cm` parse | 805 |
+| Player spawn and remainder | ~570 |
+| **Total** | **11,282** |
+
+The load is almost entirely single-threaded CPU work: one complete run measured
+18.8 s of process CPU against 21.8 s of wall time on a 20-core host, so roughly
+nineteen cores are idle throughout. Parallel asset decode, not a faster parser,
+is the structural lever here.
+
+### Optimizations landed
+
+Both fixes are in the level-load cache manager and are behaviour neutral.
+
+1. **Semantic-hint matching was quadratic.** Every opened source was matched
+   against the whole recorded hint vector, and each comparison built up to
+   three temporary `std::string`s. `game/airdefense1` records 4,428 hints, so
+   the recording pass scaled as sources times hints. Hints are now indexed by
+   the three keys the match rules actually use (exact name, compiled-suffix
+   name, extension-stripped stem), and lookup takes the highest matching hint
+   index, which is the hint the old reverse scan stopped on.
+2. **Each semantic record re-opened its source.** A name already resolved in
+   the current generation is no longer resolved a second time; the repeat open
+   could only yield the identity the first one already learned.
+
+Measured on the level-load cache path (`com_levelLoadModernization 1`), warm
+medians of three runs:
+
+| | Before | After | Change |
+|---|---:|---:|---:|
+| Total load | 11,893 ms | 9,010 ms | -2,883 ms (-24.2%) |
+| Level image loading | 4,442 ms | 2,209 ms | -2,233 ms (-50.3%) |
+| First-visit total | 21,040 ms | 18,044 ms | -2,996 ms (-14.2%) |
+
+### `com_levelLoadModernization` remains default off
+
+With the fixes above, that path is now the fastest warm configuration measured
+for this map: 9,010 ms against 11,282 ms for the shipping default, a 20.1%
+reduction, driven by the generated world (1,355 -> 392 ms) and collision
+(805 -> 152 ms) caches.
+
+It is still slower on a first visit: 18,044 ms against 11,418 ms, because that
+visit both writes the generated caches and learns the replay manifest. Setting
+`com_levelLoadCacheWrite 0` only recovers about 1.3 s of that, so the remaining
+first-visit cost is the cache-miss and identity resolution work rather than the
+writes themselves.
+
+That trade -- roughly 6.6 s worse once against 2.3 s better every time after --
+is exactly the cold/warm qualification this feature's promotion gate is waiting
+on, so the default is unchanged. Reducing the first-visit cost is the work that
+would justify promoting it.
+
+### Robustness
+
+- The classic `.proc` `ParseModel` path now range-checks its file-provided
+  vertex and index counts and every index it reads. `ParseShadowModel` and the
+  binary render-world cache already applied those predicates; the text draw
+  surface path did not, and `FinishSurfaces` dereferences every index while
+  deriving tangents and silhouette edges. Verified against `game/airdefense1`,
+  `game/airdefense2`, `game/storage1`, `game/medlabs`, and `game/mcc_landing`:
+  no stock surface is rejected.
+- `idImageManager::LoadLevelImages` bounds its fill loop against the array it
+  pre-sized from `CountPendingLevelLoads`. The two share a predicate today, so
+  the bound cannot trip; without it a future divergence would be a silent heap
+  overflow rather than a dropped image.
+- `benchmarkViewSweep` clamps both console arguments, so a typo cannot produce
+  a NaN yaw or a sweep that never ends.
+
+### Diagnostics
+
+- `g_frametime` now prints the per-frame section breakdown that previously only
+  the airdefense1 skip probe could collect (view setup, AI, PVS, network event
+  queue, gravity, BSE start/end, active-list sort). This is what identified the
+  1.85 s "first settle frame" as the cinematic fast-forward loop -- roughly
+  11,600 simulation ticks inside one host frame -- rather than a slow frame.
+- The sweep's completion line reports the yaw it started from and reached, so a
+  capture proves the camera panned instead of trusting the request.
+
+### Pre-existing failure found while validating
+
+`tools/tests/renderer_validation_matrix.py` fails its
+`renderer-foundation-selftests` case on `uiFontParitySelfTest`. The HUD radio
+marine cases are off by one pixel in line height, baseline, glyph y, and
+overhang, the three radio strings are two pixels narrow, and the loading title
+measures 234 px against an expected 223 px. Everything else in the matrix
+passes 9/9, and the `push` validation profile is green.
+
+This is not from the work in this pass: rebuilding with the three engine
+changes reverted reproduces the identical failure, and the merged `main`
+commits do not touch `src/ui/DeviceContext.cpp`, which owns both the metrics
+and the self-test. It is recorded here because it was found during this
+pass's validation and still needs an owner.
+
+### Ranked remaining work
+
+1. Parallel level image decode. 1,718 files and 213 MiB of mostly independent
+   inflate and decode work currently run serially ahead of the serial GL
+   upload. This is the largest single remaining item and the one the idle core
+   count most clearly supports.
+2. First-visit cost of the level-load cache path. Closing that gap is what
+   turns `com_levelLoadModernization` from a warm-only win into a promotable
+   default.
+3. Preload replay coverage. The pipeline admits 64 of 4,428 learned sources and
+   peaks at 41 MiB of its 384 MiB staging budget, because each admitted source
+   holds an open file handle for the whole load. Lazily opening handles as the
+   pipeline consumes them would let the cap rise.

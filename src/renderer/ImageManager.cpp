@@ -1249,6 +1249,13 @@ int idImageManager::LoadLevelImages( bool pacifier ) {
 			continue;
 		}
 		if ( image->levelLoadReferenced && !image->IsLoaded() ) {
+			if ( pendingIndex >= pendingImages.Num() ) {
+				// CountPendingLevelLoads and this loop share a predicate today, so
+				// this cannot trip. Keep the bound anyway: the array is pre-sized
+				// from that count, and any future divergence would otherwise be a
+				// silent heap overflow rather than a dropped image.
+				break;
+			}
 			pendingImages[ pendingIndex ].image = image;
 			pendingImages[ pendingIndex ].size = 0;
 			pendingImages[ pendingIndex ].index = i;

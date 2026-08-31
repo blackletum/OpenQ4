@@ -31,6 +31,7 @@ any cached payload can be accepted.
 #include <iomanip>
 #include <limits>
 #include <mutex>
+#include <unordered_map>
 #include <set>
 #include <sstream>
 #include <string>
@@ -191,29 +192,39 @@ unsigned int DefaultPriority( const levelLoadResourceType_t type ) {
 	}
 }
 
+bool SemanticTypeUsesCompiledSuffix( const levelLoadResourceType_t type ) {
+	return type == LEVEL_LOAD_RESOURCE_ANIMATION ||
+		type == LEVEL_LOAD_RESOURCE_RENDER_MODEL || type == LEVEL_LOAD_RESOURCE_WORLD;
+}
+
+bool SemanticTypeMatchesByStem( const levelLoadResourceType_t type ) {
+	return type == LEVEL_LOAD_RESOURCE_IMAGE || type == LEVEL_LOAD_RESOURCE_SOUND;
+}
+
+std::string SemanticCompiledKey( const std::string &semanticName ) {
+	std::string compiledName = semanticName;
+	compiledName += Lexer::sCompiledFileSuffix.c_str();
+	return compiledName;
+}
+
+std::string SemanticStemKey( const std::string &path ) {
+	const std::size_t dot = path.find_last_of( '.' );
+	return dot == std::string::npos ? path : path.substr( 0, dot );
+}
+
 bool SemanticPathMatchesSource( const levelLoadResourceType_t type,
 		const std::string &semanticName, const std::string &sourcePath ) {
 	if ( semanticName == sourcePath ) {
 		return true;
 	}
-	if ( type == LEVEL_LOAD_RESOURCE_ANIMATION ||
-		type == LEVEL_LOAD_RESOURCE_RENDER_MODEL || type == LEVEL_LOAD_RESOURCE_WORLD ) {
-		std::string compiledName = semanticName;
-		compiledName += Lexer::sCompiledFileSuffix.c_str();
-		if ( compiledName == sourcePath ) {
-			return true;
-		}
+	if ( SemanticTypeUsesCompiledSuffix( type ) &&
+		SemanticCompiledKey( semanticName ) == sourcePath ) {
+		return true;
 	}
-	if ( type != LEVEL_LOAD_RESOURCE_IMAGE && type != LEVEL_LOAD_RESOURCE_SOUND ) {
+	if ( !SemanticTypeMatchesByStem( type ) ) {
 		return false;
 	}
-	const std::size_t semanticDot = semanticName.find_last_of( '.' );
-	const std::size_t sourceDot = sourcePath.find_last_of( '.' );
-	const std::string semanticStem = semanticDot == std::string::npos
-		? semanticName : semanticName.substr( 0, semanticDot );
-	const std::string sourceStem = sourceDot == std::string::npos
-		? sourcePath : sourcePath.substr( 0, sourceDot );
-	return semanticStem == sourceStem;
+	return SemanticStemKey( semanticName ) == SemanticStemKey( sourcePath );
 }
 
 bool BuildSourceIdentity( const std::string &normalizedPath, idFile *file,
@@ -533,6 +544,57 @@ struct idLevelLoadCacheManager::Impl {
 	idLevelLoadCache::Manifest learned;
 	idLevelLoadCache::ManifestExpectation expectation;
 	std::vector<SemanticHint> hints;
+	// Every opened source used to be matched against the whole hint vector,
+	// and each recorded hint re-opened its own source, so recording a level's
+	// media was quadratic in the hint count.  These indexes answer the same
+	// three match rules directly.  A key always maps to the newest hint that
+	// owns it, and lookup takes the highest matching hint index, which is the
+	// hint the old reverse scan would have stopped on.
+	std::unordered_map<std::string, std::size_t> hintExactIndex;
+	std::unordered_map<std::string, std::size_t> hintCompiledIndex;
+	std::unordered_map<std::string, std::size_t> hintStemIndex;
+
+	// Returns true when this exact semantic name had already been indexed
+	// during this generation, meaning its source identity is already learned.
+	bool IndexHint( const std::size_t hintIndex ) {
+		const SemanticHint &hint = hints[ hintIndex ];
+		const bool alreadyIndexed = hintExactIndex.find( hint.normalizedName ) != hintExactIndex.end();
+		hintExactIndex[ hint.normalizedName ] = hintIndex;
+		if ( SemanticTypeUsesCompiledSuffix( hint.type ) ) {
+			hintCompiledIndex[ SemanticCompiledKey( hint.normalizedName ) ] = hintIndex;
+		}
+		if ( SemanticTypeMatchesByStem( hint.type ) ) {
+			hintStemIndex[ SemanticStemKey( hint.normalizedName ) ] = hintIndex;
+		}
+		return alreadyIndexed;
+	}
+
+	void ClearHints() {
+		hints.clear();
+		hintExactIndex.clear();
+		hintCompiledIndex.clear();
+		hintStemIndex.clear();
+	}
+
+	const SemanticHint *FindHintForSource( const std::string &sourcePath ) const {
+		bool found = false;
+		std::size_t best = 0;
+		const auto consider = [&]( const std::unordered_map<std::string, std::size_t> &index,
+				const std::string &key ) {
+			const auto it = index.find( key );
+			if ( it == index.end() ) {
+				return;
+			}
+			if ( !found || it->second > best ) {
+				found = true;
+				best = it->second;
+			}
+		};
+		consider( hintExactIndex, sourcePath );
+		consider( hintCompiledIndex, sourcePath );
+		consider( hintStemIndex, SemanticStemKey( sourcePath ) );
+		return found ? &hints[ best ] : nullptr;
+	}
 	std::mutex mutex;
 
 	void ClosePipelineFiles() {
@@ -627,7 +689,7 @@ void idLevelLoadCacheManager::Begin( const char *mapKey, const char *gameMode,
 	impl->expectation.entityFilter = impl->learned.entityFilter;
 	impl->expectation.contentSignature = impl->learned.contentSignature;
 	impl->expectation.settingsSignature = impl->learned.settingsSignature;
-	impl->hints.clear();
+	impl->ClearHints();
 	impl->manifestMatched = false;
 	impl->manifestRemoved = false;
 	impl->generatedHits.store( 0, std::memory_order_relaxed );
@@ -781,7 +843,7 @@ void idLevelLoadCacheManager::Finish( const bool successful ) {
 		impl->completedGeneration = true;
 		impl->recording = true;
 	} else {
-		impl->hints.clear();
+		impl->ClearHints();
 		impl->learned = idLevelLoadCache::Manifest();
 		impl->completedGeneration = false;
 	}
@@ -814,7 +876,7 @@ void idLevelLoadCacheManager::Cancel() {
 			wroteFinalManifest ? 1 : 0 );
 	}
 	impl->pipeline.Reset();
-	impl->hints.clear();
+	impl->ClearHints();
 	impl->learned = idLevelLoadCache::Manifest();
 	impl->completedGeneration = false;
 }
@@ -826,6 +888,7 @@ void idLevelLoadCacheManager::RecordSemantic( const levelLoadResourceType_t type
 	if ( impl == nullptr || !NormalizePath( name, normalized ) ) {
 		return;
 	}
+	bool alreadyResolved = false;
 	{
 		std::lock_guard<std::mutex> lock( impl->mutex );
 		if ( !impl->recording || impl->hints.size() >= 65536 ) {
@@ -843,11 +906,19 @@ void idLevelLoadCacheManager::RecordSemantic( const levelLoadResourceType_t type
 			hint.options.assign( options, options + length );
 		}
 		impl->hints.push_back( std::move( hint ) );
+		alreadyResolved = impl->IndexHint( impl->hints.size() - 1 );
 	}
 
 	// A semantic lookup may be satisfied by an already resident manager object
 	// and therefore perform no source I/O this generation. Resolve only the
 	// identity (without reading bytes) so those real uses are still learned.
+	// Media is requested far more often than it is unique, and on a cold file
+	// cache each speculative open is a real disk touch, so a name that has
+	// already been resolved this generation is not resolved again: the second
+	// open would yield the identity the first one already learned.
+	if ( alreadyResolved ) {
+		return;
+	}
 	idFile *source = impl->fileSystem->OpenFileRead( normalized.c_str(), false );
 	if ( source != nullptr ) {
 		impl->fileSystem->CloseFile( source );
@@ -873,14 +944,11 @@ void idLevelLoadCacheManager::RecordOpenedSource( const char *path, idFile *sour
 	unsigned int priority = DefaultPriority( type );
 	unsigned int flags = 0;
 	std::vector<std::uint8_t> options;
-	for ( auto hint = impl->hints.rbegin(); hint != impl->hints.rend(); ++hint ) {
-		if ( SemanticPathMatchesSource( hint->type, hint->normalizedName, normalized ) ) {
-			type = hint->type;
-			priority = hint->priority;
-			flags = hint->flags;
-			options = hint->options;
-			break;
-		}
+	if ( const Impl::SemanticHint *hint = impl->FindHintForSource( normalized ) ) {
+		type = hint->type;
+		priority = hint->priority;
+		flags = hint->flags;
+		options = hint->options;
 	}
 	idLevelLoadCache::ManifestEntry entry;
 	entry.type = ToFormatType( type );
