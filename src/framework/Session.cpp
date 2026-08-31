@@ -312,6 +312,11 @@ static const char *SESSION_SAVEGAME_NO_OVERWRITE_TOKEN = "nooverwrite";
 static const int SESSION_OPENQ4_SAVEGAME_COMPATIBILITY_MAGIC = 'O' | ( 'Q' << 8 ) | ( '4' << 16 ) | ( 'S' << 24 );
 static const int SESSION_OPENQ4_SAVEGAME_COMPATIBILITY_VERSION = 3;
 static const int SESSION_OPENQ4_SAVEGAME_PREVIOUS_COMPATIBILITY_VERSION = 2;
+// Oldest v3 payload this build has a verified decoder for. Saves at or above it
+// restore cleanly; the released v0.10 payload (build 1) still desyncs part way
+// through, and it did so only after the running map had been torn down. Refuse
+// anything below the verified floor during preflight, while the session is intact.
+static const int SESSION_OPENQ4_SAVEGAME_MINIMUM_SUPPORTED_BUILD = 661;
 static const int SESSION_OPENQ4_SAVEGAME_FOOTER_MAGIC = 'O' | ( 'Q' << 8 ) | ( '4' << 16 ) | ( 'F' << 24 );
 static const int SESSION_OPENQ4_SAVEGAME_FOOTER_VERSION = 1;
 static const int SESSION_OPENQ4_SAVEGAME_FOOTER_BYTES = 5 * static_cast<int>( sizeof( int ) );
@@ -322,36 +327,8 @@ static const int SESSION_OPENQ4_SAVEGAME_SOURCE_STAMP_MAX_BYTES = 128;
 static const int SESSION_OPENQ4_SAVEGAME_ABI_STAMP_MAX_BYTES = 96;
 static const char *SESSION_LEGACY_SAVEGAME_WIRE_ABI = "windows-msvcabi-x64-le-raw1";
 
-struct sessionSaveGameV2Snapshot_t {
-	int build;
-	const char *sourceHash;
-	int sourceFileCount;
-	const char *wireABI;
-};
-
-static const sessionSaveGameV2Snapshot_t SESSION_OPENQ4_SAVEGAME_V2_SNAPSHOTS[] = {
-	{ 639, "d64f5bd29149262e67ce65107ea44b3f10af22011e7af354f23ca01550210fde", 404, "windows-msvcabi-x64-le-raw1" },
-	{ 614, "0c27fa5c6ef48b1bfe44c7be82b8a696772af4625eeefeed25de27da9640dd3f", 404, "windows-msvcabi-x64-le-raw1" },
-	{ 556, "871e5811e1732be750b18374b3d537aa38a91a050fb94cef847e2e3d39769cc2", 218, "windows-msvcabi-x64-le-raw1" },
-	{ 544, "82b545ffb5c9d8d27239eb8d1ed7eb5a22db1c40410dec4f3752f6f90fe76a60", 218, "windows-msvcabi-x64-le-raw1" },
-	{ 544, "ab567aef25905e8cf52e191523bc591f671b8cee3e63939a67af692bde3de446", 218, "windows-msvcabi-x64-le-raw1" },
-	{ 544, "9b26849ccdc3652aad892fdeeb5f219b631119fe601de00eb691fb5b4c13e02f", 218, "windows-msvcabi-x64-le-raw1" }
-};
-
 #ifndef ID_DEDICATED
 static const char *Session_GetSaveGameWireABI( void );
-
-static bool Session_IsSupportedSaveGameV2Snapshot( int build, const idStr &sourceHash, int sourceFileCount ) {
-	for ( int i = 0; i < static_cast<int>( sizeof( SESSION_OPENQ4_SAVEGAME_V2_SNAPSHOTS ) / sizeof( SESSION_OPENQ4_SAVEGAME_V2_SNAPSHOTS[0] ) ); i++ ) {
-		const sessionSaveGameV2Snapshot_t &snapshot = SESSION_OPENQ4_SAVEGAME_V2_SNAPSHOTS[i];
-		if ( build == snapshot.build && sourceFileCount == snapshot.sourceFileCount &&
-			 sourceHash.Icmp( snapshot.sourceHash ) == 0 &&
-			 idStr::Icmp( Session_GetSaveGameWireABI(), snapshot.wireABI ) == 0 ) {
-			return true;
-		}
-	}
-	return false;
-}
 
 static const char *Session_GetSaveGameWireABI( void ) {
 #if defined( _WIN32 )
@@ -896,15 +873,19 @@ static bool Session_ValidateSaveGamePayload( idFile *file, const idStr &savePath
 	}
 
 	if ( valid && payloadVersion == SESSION_OPENQ4_SAVEGAME_PREVIOUS_COMPATIBILITY_VERSION ) {
-		if ( !Session_IsSupportedSaveGameV2Snapshot( payloadBuild, payloadSourceStamp, payloadSourceFileCount ) ) {
-			common->Warning( "Savegame '%s' uses an unsupported v%d source snapshot %s (%d files), build %d",
-				savePath.c_str(), payloadVersion, payloadSourceStamp.c_str(), payloadSourceFileCount, payloadBuild );
-			valid = false;
-		}
+		// Every v2 snapshot that was tested against a real save desynced part way
+		// through the restore, so none of them are claimed any more.
+		common->Warning( "Savegame '%s' was written by an older openQ4 (v%d payload, build %d) and cannot be restored by this build",
+			savePath.c_str(), payloadVersion, payloadBuild );
+		valid = false;
 	} else if ( valid ) {
 		if ( payloadWireABI.Icmp( Session_GetSaveGameWireABI() ) != 0 ) {
 			common->Warning( "Savegame '%s' wire ABI '%s' is incompatible with this '%s' build",
 				savePath.c_str(), payloadWireABI.c_str(), Session_GetSaveGameWireABI() );
+			valid = false;
+		} else if ( payloadBuild < SESSION_OPENQ4_SAVEGAME_MINIMUM_SUPPORTED_BUILD ) {
+			common->Warning( "Savegame '%s' was written by an older openQ4 (build %d, below build %d, the oldest this build can restore)",
+				savePath.c_str(), payloadBuild, SESSION_OPENQ4_SAVEGAME_MINIMUM_SUPPORTED_BUILD );
 			valid = false;
 		} else if ( payloadBuild != BUILD_NUMBER ||
 				OPENQ4_SAVEGAME_COMPAT_SOURCE_FILE_COUNT < 0 ||
