@@ -652,6 +652,16 @@ void idSimpleWindow::WriteToSaveGame( idFile *savefile ) {
 		return;
 	}
 
+	OpenQ4_SanitizeSaveGameWinVar( text, "idSimpleWindow::WriteToSaveGame", name.c_str(), "text" );
+	OpenQ4_SanitizeSaveGameWinVar( visible, "idSimpleWindow::WriteToSaveGame", name.c_str(), "visible" );
+	OpenQ4_SanitizeSaveGameWinVar( rect, "idSimpleWindow::WriteToSaveGame", name.c_str(), "rect" );
+	OpenQ4_SanitizeSaveGameWinVar( backColor, "idSimpleWindow::WriteToSaveGame", name.c_str(), "backColor" );
+	OpenQ4_SanitizeSaveGameWinVar( matColor, "idSimpleWindow::WriteToSaveGame", name.c_str(), "matColor" );
+	OpenQ4_SanitizeSaveGameWinVar( foreColor, "idSimpleWindow::WriteToSaveGame", name.c_str(), "foreColor" );
+	OpenQ4_SanitizeSaveGameWinVar( borderColor, "idSimpleWindow::WriteToSaveGame", name.c_str(), "borderColor" );
+	OpenQ4_SanitizeSaveGameWinVar( textScale, "idSimpleWindow::WriteToSaveGame", name.c_str(), "textScale" );
+	OpenQ4_SanitizeSaveGameWinVar( rotate, "idSimpleWindow::WriteToSaveGame", name.c_str(), "rotate" );
+	OpenQ4_SanitizeSaveGameWinVar( shear, "idSimpleWindow::WriteToSaveGame", name.c_str(), "shear" );
 	text.WriteToSaveGame( savefile );
 	visible.WriteToSaveGame( savefile );
 	rect.WriteToSaveGame( savefile );

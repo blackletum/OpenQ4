@@ -590,6 +590,13 @@ void idGuiScript::WriteToSaveGame( idFile *savefile ) {
 			if ( parms[i].var == NULL ) {
 				common->Error( "idGuiScript::WriteToSaveGame: owned parameter %d has no variable", i );
 			}
+			// A script parameter is an evaluated GUI expression result and owns no name.
+			// Zero the affected components rather than refusing the save over one.
+			if ( !parms[i].var->IsFinite() ) {
+				common->Warning( "idGuiScript::WriteToSaveGame: owned parameter %d holds a non-finite value; "
+					"saving zero for the affected components", i );
+				parms[i].var->SanitizeNonFinite();
+			}
 			parms[i].var->WriteToSaveGame( savefile );
 		}
 	}

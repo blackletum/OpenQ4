@@ -5122,6 +5122,17 @@ void idWindow::WriteToSaveGame( idFile *savefile ) {
 	}
 
 	// WinVars
+	OpenQ4_SanitizeSaveGameWinVar( noTime, "idWindow::WriteToSaveGame", name.c_str(), "noTime" );
+	OpenQ4_SanitizeSaveGameWinVar( visible, "idWindow::WriteToSaveGame", name.c_str(), "visible" );
+	OpenQ4_SanitizeSaveGameWinVar( rect, "idWindow::WriteToSaveGame", name.c_str(), "rect" );
+	OpenQ4_SanitizeSaveGameWinVar( backColor, "idWindow::WriteToSaveGame", name.c_str(), "backColor" );
+	OpenQ4_SanitizeSaveGameWinVar( matColor, "idWindow::WriteToSaveGame", name.c_str(), "matColor" );
+	OpenQ4_SanitizeSaveGameWinVar( foreColor, "idWindow::WriteToSaveGame", name.c_str(), "foreColor" );
+	OpenQ4_SanitizeSaveGameWinVar( hoverColor, "idWindow::WriteToSaveGame", name.c_str(), "hoverColor" );
+	OpenQ4_SanitizeSaveGameWinVar( borderColor, "idWindow::WriteToSaveGame", name.c_str(), "borderColor" );
+	OpenQ4_SanitizeSaveGameWinVar( textScale, "idWindow::WriteToSaveGame", name.c_str(), "textScale" );
+	OpenQ4_SanitizeSaveGameWinVar( noEvents, "idWindow::WriteToSaveGame", name.c_str(), "noEvents" );
+	OpenQ4_SanitizeSaveGameWinVar( rotate, "idWindow::WriteToSaveGame", name.c_str(), "rotate" );
 	noTime.WriteToSaveGame( savefile );
 	visible.WriteToSaveGame( savefile );
 	rect.WriteToSaveGame( savefile );
@@ -5144,6 +5155,8 @@ void idWindow::WriteToSaveGame( idFile *savefile ) {
 				i, name.c_str(), gui->GetSourceFile() );
 			return;
 		}
+		OpenQ4_SanitizeSaveGameWinVar( *definedVars[i], "idWindow::WriteToSaveGame", name.c_str(),
+			definedVars[i]->GetName() );
 		definedVars[i]->WriteToSaveGame( savefile );
 	}
 
