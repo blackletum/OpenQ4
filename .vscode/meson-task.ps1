@@ -9,7 +9,7 @@ Set-StrictMode -Version Latest
 
 $workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $mesonWrapper = Join-Path $workspaceRoot 'tools\build\meson_setup.ps1'
-$buildDir = Join-Path $workspaceRoot 'builddir'
+$buildDir = Join-Path $workspaceRoot 'builddir-perf'
 $installDir = Join-Path $workspaceRoot '.install'
 $fastStageScript = Join-Path $workspaceRoot 'tools\build\stage_fast_install.py'
 $checkStagedContentScript = Join-Path $workspaceRoot 'tools\build\check_staged_content_edits.py'
@@ -49,7 +49,7 @@ switch ($Action) {
                 '--backend',
                 'ninja',
                 '--buildtype',
-                'debug',
+                'debugoptimized',
                 '--wrap-mode=forcefallback'
             )
         } else {
@@ -61,7 +61,7 @@ switch ($Action) {
                 '--backend',
                 'ninja',
                 '--buildtype',
-                'debug',
+                'debugoptimized',
                 '--wrap-mode=forcefallback'
             )
         }

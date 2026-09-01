@@ -425,9 +425,23 @@ displays, or release packages.
 
 ### VS Code Fast Build
 
-Use **Build openQ4 (Meson Debug)** as the default local/agent build from VS Code. It runs the Meson compile path, lets Ninja skip unaffected code and PK4 targets, then incrementally copies only changed runtime files from `builddir/` into `.install/` for the existing launch configurations.
+Use **Build openQ4 (Meson Optimized)** as the default local/agent build from VS Code. It runs the Meson compile path, lets Ninja skip unaffected code and PK4 targets, then incrementally copies only changed runtime files from `builddir-perf/` into `.install/` for the existing launch configurations.
 
-Use **Full Build and Stage openQ4 (Meson Debug)** when you intentionally need the full configure + compile + `meson install --no-rebuild --skip-subprojects` path. If you add or remove files under `content/baseoq4/pak0/` or `content/baseoq4/pak1/`, run **Configure openQ4 (Meson Debug)** once so Meson refreshes the pack dependency list; edits to existing content files are picked up by the fast build.
+That directory is configured `debugoptimized`, not `debug`, because the launch
+configurations run whatever this task stages into `.install/`. An unoptimized
+client is roughly half the frame rate: `game/airdefense1` measured 146.5 Hz
+against 315.7 Hz for the same source. `debugoptimized` keeps full debug symbols,
+so the `cppvsdbg` launch configurations still work; expect the usual optimized-code
+stepping and inlining behaviour. `tools/tests/vscode_fast_build.py` pins the
+optimization level so this cannot regress silently.
+
+`builddir/` is left alone for `tools/validation/openq4_validate.py`, which
+configures it `debug` on purpose. Keep the two separate: pointing both at one
+directory makes every validation run and every VS Code build reconfigure the
+other's optimization level and force a full rebuild. Use the Debug Build steps
+below when you genuinely want an unoptimized client.
+
+Use **Full Build and Stage openQ4 (Meson Optimized)** when you intentionally need the full configure + compile + `meson install --no-rebuild --skip-subprojects` path. If you add or remove files under `content/baseoq4/pak0/` or `content/baseoq4/pak1/`, run **Configure openQ4 (Meson Optimized)** once so Meson refreshes the pack dependency list; edits to existing content files are picked up by the fast build.
 
 ### Debug Build
 

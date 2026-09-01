@@ -41,21 +41,21 @@ def validate_tasks() -> None:
     if len(default_tasks) != 1:
         raise AssertionError(f"Expected exactly one default build task, found {len(default_tasks)}")
 
-    fast_build = find_task(tasks, "Build openQ4 (Meson Debug)")
+    fast_build = find_task(tasks, "Build openQ4 (Meson Optimized)")
     if fast_build is not default_tasks[0]:
-        raise AssertionError("Build openQ4 (Meson Debug) must be the default VS Code build task")
+        raise AssertionError("Build openQ4 (Meson Optimized) must be the default VS Code build task")
     if fast_build.get("dependsOn"):
         raise AssertionError("Fast default build must not depend on configure or full install tasks")
     if "fastbuild" not in fast_build.get("args", []):
         raise AssertionError("Fast default build must invoke meson-task.ps1 fastbuild")
 
-    full_build = find_task(tasks, "Full Build and Stage openQ4 (Meson Debug)")
+    full_build = find_task(tasks, "Full Build and Stage openQ4 (Meson Optimized)")
     if full_build.get("dependsOrder") != "sequence":
         raise AssertionError("Full build task must keep ordered configure, compile, install steps")
     for label in (
-        "Configure openQ4 (Meson Debug)",
-        "Compile openQ4 (Meson Debug)",
-        "Stage openQ4 Install Tree (Meson Debug)",
+        "Configure openQ4 (Meson Optimized)",
+        "Compile openQ4 (Meson Optimized)",
+        "Stage openQ4 Install Tree (Meson Optimized)",
     ):
         if label not in full_build.get("dependsOn", []):
             raise AssertionError(f"Full build task is missing dependency {label!r}")
@@ -65,6 +65,11 @@ def validate_wrapper() -> None:
     wrapper = read(".vscode/meson-task.ps1")
     require(wrapper, "[ValidateSet('setup', 'compile', 'install', 'fastbuild')]", "VS Code Meson wrapper actions")
     require(wrapper, "stage_fast_install.py", "VS Code fast build staging script")
+    # The launch configurations run whatever this build stages into .install, so it
+    # has to be optimized. Configuring it as a plain debug build measured 146.5 Hz
+    # against 315.7 Hz for the same source on game/airdefense1.
+    require(wrapper, "'debugoptimized'", "VS Code build must configure an optimized buildtype")
+    reject(wrapper, "'debug',", "VS Code build must not configure an unoptimized buildtype")
     require(wrapper, "check_staged_content_edits.py", "VS Code fast build staged content guard")
     require(wrapper, "'compile',", "VS Code fast build compiles through Meson")
     require(wrapper, "'--install-dir',", "VS Code fast build stages .install incrementally")

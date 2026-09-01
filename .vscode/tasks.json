@@ -2,7 +2,7 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Configure openQ4 (Meson Debug)",
+      "label": "Configure openQ4 (Meson Optimized)",
       "type": "shell",
       "command": "powershell",
       "args": [
@@ -16,7 +16,7 @@
       "problemMatcher": []
     },
     {
-      "label": "Compile openQ4 (Meson Debug)",
+      "label": "Compile openQ4 (Meson Optimized)",
       "type": "shell",
       "command": "powershell",
       "args": [
@@ -32,7 +32,7 @@
       ]
     },
     {
-      "label": "Stage openQ4 Install Tree (Meson Debug)",
+      "label": "Stage openQ4 Install Tree (Meson Optimized)",
       "type": "shell",
       "command": "powershell",
       "args": [
@@ -46,7 +46,7 @@
       "problemMatcher": []
     },
     {
-      "label": "Build openQ4 (Meson Debug)",
+      "label": "Build openQ4 (Meson Optimized)",
       "type": "shell",
       "command": "powershell",
       "args": [
@@ -66,12 +66,12 @@
       ]
     },
     {
-      "label": "Full Build and Stage openQ4 (Meson Debug)",
+      "label": "Full Build and Stage openQ4 (Meson Optimized)",
       "dependsOrder": "sequence",
       "dependsOn": [
-        "Configure openQ4 (Meson Debug)",
-        "Compile openQ4 (Meson Debug)",
-        "Stage openQ4 Install Tree (Meson Debug)"
+        "Configure openQ4 (Meson Optimized)",
+        "Compile openQ4 (Meson Optimized)",
+        "Stage openQ4 Install Tree (Meson Optimized)"
       ],
       "problemMatcher": []
     },
@@ -128,7 +128,7 @@
       ],
       "dependsOrder": "sequence",
       "dependsOn": [
-        "Full Build and Stage openQ4 (Meson Debug)"
+        "Full Build and Stage openQ4 (Meson Optimized)"
       ],
       "options": {
         "cwd": "${workspaceFolder}\\.install"
