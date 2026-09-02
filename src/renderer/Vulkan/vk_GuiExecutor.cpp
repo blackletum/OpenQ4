@@ -829,7 +829,7 @@ static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderMod
 	gpci.layout = layout;
 
 	VkPipeline pipeline = VK_NULL_HANDLE;
-	if ( vkCreateGraphicsPipelines( vkCtx.device, VK_NULL_HANDLE, 1, &gpci, NULL, &pipeline ) != VK_SUCCESS ) {
+	if ( vkCreateGraphicsPipelines( vkCtx.device, vkCtx.pipelineCache, 1, &gpci, NULL, &pipeline ) != VK_SUCCESS ) {
 		common->Warning( "Vulkan: pipeline creation failed (blend 0x%x)", blendBits );
 		return VK_NULL_HANDLE;
 	}
@@ -2095,7 +2095,7 @@ static bool VK_GpuSkinning_InitResources( void ) {
 	cpci.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
 	cpci.stage = stage;
 	cpci.layout = vkExec.gpuSkinningPipelineLayout;
-	if ( vkCreateComputePipelines( vkCtx.device, VK_NULL_HANDLE, 1, &cpci, NULL,
+	if ( vkCreateComputePipelines( vkCtx.device, vkCtx.pipelineCache, 1, &cpci, NULL,
 			&vkExec.gpuSkinningPipeline ) != VK_SUCCESS ) {
 		common->Warning( "Vulkan: GPU skinning compute pipeline creation failed" );
 		VK_GpuSkinning_DestroyResources();
@@ -3098,6 +3098,17 @@ static bool VK_GuiExecutor_BeginFrame( void ) {
 		vkFreeDescriptorSets( vkCtx.device, vkExec.descriptorPool,
 				(uint32_t)vkExec.numRetiredSets[ slot ], vkExec.retiredSets[ slot ] );
 		vkExec.numRetiredSets[ slot ] = 0;
+	}
+
+	// A present-mode change needs a new swapchain. GL re-applies its swap
+	// interval on every present; the Vulkan equivalent only ever ran inside
+	// VK_Device_PresentClearFrame, which nothing calls, so toggling vsync did
+	// nothing here until something else forced a rebuild. Do it before the
+	// acquire, where the old swapchain is not yet in use this frame.
+	if ( R_GetEffectiveSwapInterval() != vkCtx.swapInterval ) {
+		if ( !VK_Device_RecreateSwapchain() ) {
+			return false;
+		}
 	}
 
 	uint32_t imageIndex = 0;
@@ -7181,6 +7192,7 @@ static bool VK_Exec_DrawBumpyProgramStage( const viewDef_t *viewDef,
 	vkCmdPushConstants( vkExec.cmd, vkExec.interactionPipelineLayout,
 			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 			0, sizeof( push ), &push );
+	VK_Device_CountDrawIndexed( (int)( tri->numIndexes ), (int)( tri->numVerts ) );
 	vkCmdDrawIndexed( vkExec.cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
 	return true;
 }
@@ -7302,6 +7314,7 @@ static bool VK_Exec_DrawRefractiveGlassStage( const viewDef_t *viewDef,
 	vkCmdPushConstants( vkExec.cmd, vkExec.interactionPipelineLayout,
 			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 			0, sizeof( push ), &push );
+	VK_Device_CountDrawIndexed( (int)( tri->numIndexes ), (int)( tri->numVerts ) );
 	vkCmdDrawIndexed( vkExec.cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
 	return true;
 }
@@ -7803,6 +7816,7 @@ static bool VK_Exec_DrawGLSLProgramStage( const viewDef_t *viewDef,
 	vkCmdPushConstants( vkExec.cmd, vkExec.interactionPipelineLayout,
 			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 			0, sizeof( push ), &push );
+	VK_Device_CountDrawIndexed( (int)( tri->numIndexes ), (int)( tri->numVerts ) );
 	vkCmdDrawIndexed( vkExec.cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
 
 	static bool loggedFamily[ VK_GLSL_PROGRAM_FAMILY_COUNT ];
@@ -8000,6 +8014,7 @@ static bool VK_Exec_DrawRVSpecialBlur( const viewDef_t *viewDef ) {
 	vkCmdPushConstants( vkExec.cmd, vkExec.interactionPipelineLayout,
 			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 			0, sizeof( push ), &push );
+	VK_Device_CountDrawIndexed( (int)( 6 ), (int)( 4 ) );
 	vkCmdDrawIndexed( vkExec.cmd, 6, 1, 0, 0, 0 );
 	return true;
 }
@@ -8199,6 +8214,7 @@ static bool VK_Exec_DrawRVSpecialAL( const viewDef_t *viewDef ) {
 		vkCmdPushConstants( vkExec.cmd, vkExec.interactionPipelineLayout,
 				VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 				0, sizeof( push ), &push );
+		VK_Device_CountDrawIndexed( (int)( 6 ), (int)( 4 ) );
 		vkCmdDrawIndexed( vkExec.cmd, 6, 1, 0, 0, 0 );
 		drawnLights++;
 	}
@@ -8396,6 +8412,7 @@ static void VK_Exec_DrawProgramStage( const viewDef_t *viewDef,
 		vkCmdPushConstants( vkExec.cmd, vkExec.interactionPipelineLayout,
 				VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 				0, sizeof( push ), &push );
+		VK_Device_CountDrawIndexed( (int)( tri->numIndexes ), (int)( tri->numVerts ) );
 		vkCmdDrawIndexed( vkExec.cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
 
 		static bool loggedMonochromeProgram = false;
@@ -8574,6 +8591,7 @@ static void VK_Exec_DrawProgramStage( const viewDef_t *viewDef,
 	vkCmdPushConstants( vkExec.cmd, vkExec.interactionPipelineLayout,
 			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 			0, sizeof( push ), &push );
+	VK_Device_CountDrawIndexed( (int)( tri->numIndexes ), (int)( tri->numVerts ) );
 	vkCmdDrawIndexed( vkExec.cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
 
 	static bool loggedHeatHazeFamily[ 4 ] = { false, false, false, false };
@@ -8998,6 +9016,7 @@ static void VK_Exec_DrawAmbientStages( const viewDef_t *viewDef, const drawSurf_
 		}
 		vkCmdPushConstants( cmd, stageLayout,
 				VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), &push );
+		VK_Device_CountDrawIndexed( (int)( tri->numIndexes ), (int)( tri->numVerts ) );
 		vkCmdDrawIndexed( cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
 
 		if ( stagePolygonOffset ) {
@@ -9905,6 +9924,7 @@ static bool VK_ClassicGui_DrawOwnedViewForScope( const viewDef_t *viewDef,
 			vkCmdPushConstants( cmd, vkExec.pipelineLayout,
 				VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 				0, sizeof( push ), &push );
+			VK_Device_CountDrawIndexed( (int)( drawPlan.draw->indexCount ), (int)( drawPlan.draw->vertexCount ) );
 			vkCmdDrawIndexed( cmd,
 				static_cast<std::uint32_t>( drawPlan.draw->indexCount ),
 				1, static_cast<std::uint32_t>( drawPlan.draw->firstIndex ),
@@ -10694,6 +10714,7 @@ static void VK_ClassicWorldAmbient_DrawPhase(
 			vkCmdPushConstants( cmd, vkExec.pipelineLayout,
 				VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 				0, sizeof( push ), &push );
+			VK_Device_CountDrawIndexed( (int)( drawPlan.draw->indexCount ), (int)( drawPlan.draw->vertexCount ) );
 			vkCmdDrawIndexed( cmd,
 				static_cast<std::uint32_t>( drawPlan.draw->indexCount ), 1,
 				static_cast<std::uint32_t>( drawPlan.draw->firstIndex ),
@@ -11157,6 +11178,7 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 				}
 				vkCmdPushConstants( cmd, vkExec.pipelineLayout,
 						VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), &push );
+				VK_Device_CountDrawIndexed( (int)( tri->numIndexes ), (int)( tri->numVerts ) );
 				vkCmdDrawIndexed( cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
 				if ( stagePolygonOffset ) {
 					if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
@@ -11190,6 +11212,7 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 				}
 				vkCmdPushConstants( cmd, vkExec.pipelineLayout,
 						VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), &push );
+				VK_Device_CountDrawIndexed( (int)( tri->numIndexes ), (int)( tri->numVerts ) );
 				vkCmdDrawIndexed( cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
 			}
 		}

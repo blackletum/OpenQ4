@@ -8,11 +8,10 @@ load. Reliability mechanisms and implementation detail are documented in
 
 | Save payload | Current decision |
 | --- | --- |
-| Version 3, exact wire-ABI stamp and valid integrity/footer | Supported format path; build/source drift is diagnostic only |
-| Version 3, released v0.10 build/source tuple on Windows/MSVC x64 `raw1` | Supported by an exact decoder for its two absent player liquid-state fields and optimized empty physics frame |
+| Version 3, exact wire-ABI stamp, build at or above the verified floor, valid integrity/footer | Supported format path; build/source drift is diagnostic only |
+| Version 3, build below the verified floor | Rejected before map teardown |
 | Version 3, different wire-ABI stamp | Rejected before map teardown |
-| Version 2, exact tuple in the allowlist below | Supported only on Windows/MSVC x64 little-endian `raw1` |
-| Version 2, any other tuple | Rejected before map teardown |
+| Version 2, any tuple | Rejected before map teardown |
 | Unstamped legacy payload | Accepted only when its marker equals the current build and the runtime stamp is Windows/MSVC x64 little-endian `raw1` |
 | Empty, negative-length, or over-512-MiB `.save` | Rejected before header or CRC preflight |
 | Payload version newer than 3 | Rejected; no forward-compatibility guessing |
@@ -65,28 +64,58 @@ sequence to accept that known omission, while current writers derive class-frame
 ownership from source declarations so optimization can no longer alter the wire
 format.
 
-## Exact Version 2 Allowlist
+## Version 2 Is No Longer Claimed
 
-Version 2 did not carry its own wire-ABI field. The current reader assigns v2 only
-to the known Windows/MSVC x64 little-endian `raw1` lineage and accepts exactly
-these `(build, source SHA-256, source-file count)` tuples:
+Version 2 did not carry its own wire-ABI field, and support for it was expressed
+as an allowlist of `(build, source SHA-256, source-file count)` tuples. On
+2026-08-31 every one of those tuples that a real save existed for was tested:
+builds 544 (three distinct hashes), 556, and 614. All five desynced part way
+through the restore, and did so only after the running map had been torn down --
+the outcome this policy exists to prevent.
 
-| Build | Source SHA-256 | Files |
-| ---: | --- | ---: |
-| 639 | `d64f5bd29149262e67ce65107ea44b3f10af22011e7af354f23ca01550210fde` | 404 |
-| 614 | `0c27fa5c6ef48b1bfe44c7be82b8a696772af4625eeefeed25de27da9640dd3f` | 404 |
-| 556 | `871e5811e1732be750b18374b3d537aa38a91a050fb94cef847e2e3d39769cc2` | 218 |
-| 544 | `82b545ffb5c9d8d27239eb8d1ed7eb5a22db1c40410dec4f3752f6f90fe76a60` | 218 |
-| 544 | `ab567aef25905e8cf52e191523bc591f671b8cee3e63939a67af692bde3de446` | 218 |
-| 544 | `9b26849ccdc3652aad892fdeeb5f219b631119fe601de00eb691fb5b4c13e02f` | 218 |
+The allowlist was therefore removed rather than corrected. It asserted support
+that had never been demonstrated against a real save, and the tuples that were
+demonstrable were all wrong. Version 2 payloads are now refused during preflight
+with a message naming their provenance. Current writers never create v2 saves.
 
-The three tuple fields plus the running Windows x64 `raw1` ABI are all required
-in practice. A matching build alone, hash alone, hash prefix, or file count is
-insufficient. Current writers never create new v2 saves.
+Restoring a v2 claim requires the same evidence any other claim does: a reviewed
+byte-layout comparison, a successful real SP save/load of a save in that exact
+format, corruption-contract coverage, and a release-note entry.
 
-An allowlist addition requires a reviewed byte-layout comparison, a successful
-real SP save/load on the target Windows x64 runtime, corruption-contract coverage,
-and a release-note entry. The allowlist must not be broadened speculatively.
+## The Verified Build Floor
+
+Within version 3, support is expressed as the oldest build whose layout a
+verified decoder covers (`SESSION_OPENQ4_SAVEGAME_MINIMUM_SUPPORTED_BUILD`,
+currently 661). Payloads below it are refused during preflight.
+
+661 is where the first of the two player liquid fields entered the save. Builds
+from 661 upward restore cleanly, including the range that previously failed;
+below it the only sample available, the released v0.10 payload (build 1),
+desynced part way through the restore even with its bounded field decoder, so
+that lineage is no longer claimed either.
+
+Lowering the floor requires a real save in the older format that restores
+cleanly, not a layout argument alone.
+
+## Fields Added Within A Version
+
+A field added to a saved class without a version bump splits the format in two
+even though both halves report the same version. Each such field therefore
+carries the build that introduced it, and the reader consults that build rather
+than a snapshot identity:
+
+| Field | Added by | Build |
+| --- | --- | ---: |
+| `idPhysics_Player::swimSpeed` | openQ4-game `2cc5a61`, 2026-08-13 | 661 |
+| `idPlayer::nextLiquidSurfaceSoundTime` | openQ4-game `d06a09d`, 2026-08-19 | 721 |
+
+These two landed six days apart, so a save can legitimately carry the first and
+not the second. A single boolean gated both against one hard-coded v0.10 tuple,
+which answered "present" for every other v3 payload: every save written between
+those builds read a field its file does not contain and desynced the rest of the
+restore. Adding a field this way is still discouraged -- a version bump is
+clearer -- but when it happens the threshold must be recorded here and in both
+game trees.
 
 ## Unstamped Legacy Payloads
 
@@ -106,8 +135,8 @@ whole-file CRC/footer retroactively.
 Backward compatibility means a newer runtime reading an older save. It is
 supported only through an explicit decoder or allowlist:
 
-- current v3 on the exact ABI path;
-- the exact released v0.10 v3 snapshot through its bounded player-field decoder
+- current v3 on the exact ABI path at or above the verified build floor;
+- fields added within v3, through their recorded per-field build thresholds
   and legacy empty-physics-frame recognition;
 - the six exact v2 snapshots above on Windows x64 `raw1`; and
 - the narrow same-build unstamped Windows x64 legacy path.

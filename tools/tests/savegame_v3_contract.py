@@ -17,12 +17,6 @@ MAX_SAVEGAME_BYTES = 512 * 1024 * 1024
 INTEGRITY_TRAILER_BYTES = 16
 MENU_GUI_ASPECT = 640.0 / 480.0
 MENU_PREVIEW_BOUNDS = (25.0, 78.0, 183.0, 137.0)
-V3_PRE_PLAYER_LIQUID_FIELDS_SNAPSHOT = (
-    1,
-    "19351be39d2d4077a74294c0442707ef9565fc7a2fa9af9b81e05fc9aca8b220",
-    404,
-    "windows-msvcabi-x64-le-raw1",
-)
 
 
 def read(path: Path) -> str:
@@ -300,38 +294,68 @@ def validate_source_contracts() -> None:
         if constant(source, "OPENQ4_SAVEGAME_PREVIOUS_COMPATIBILITY_VERSION") != 2:
             raise AssertionError(f"{context} previous save reader differs from engine v2")
 
-    engine_snapshots = snapshot_tuples(session, "SESSION_OPENQ4_SAVEGAME_V2_SNAPSHOTS")
-    sp_snapshots = snapshot_tuples(sp, "OPENQ4_SAVEGAME_V2_SNAPSHOTS")
-    mp_snapshots = snapshot_tuples(mp, "OPENQ4_SAVEGAME_V2_SNAPSHOTS")
-    if engine_snapshots != sp_snapshots or engine_snapshots != mp_snapshots:
-        raise AssertionError("Engine/SP/MP v2 compatibility allowlists differ")
-    if any(wire_abi != "windows-msvcabi-x64-le-raw1" for _, _, _, wire_abi in engine_snapshots):
-        raise AssertionError("Ambiguous unstamped v2 snapshots must stay restricted to their known wire ABI")
+    # A save is only claimed when a verified decoder exists for its layout. The
+    # per-snapshot allowlists made that claim for tuples that were never
+    # exercised against a real save, and every one that was later tested
+    # desynced part way through the restore - after the running map had already
+    # been torn down. They are replaced by a build floor plus per-field build
+    # thresholds, so nothing may reintroduce a tuple allowlist.
+    for source, context in (
+        (session, "engine"),
+        (sp, "SP GameLib"),
+        (mp, "MP GameLib"),
+    ):
+        for banned in (
+            "SAVEGAME_V2_SNAPSHOTS",
+            "V3_PRE_PLAYER_LIQUID_FIELDS_SNAPSHOTS",
+            "IsSupportedV2Snapshot",
+            "IsV3PrePlayerLiquidFieldsSnapshot",
+        ):
+            if banned in source:
+                raise AssertionError(
+                    f"{context} still carries the {banned} compatibility allowlist; "
+                    "save support must come from a verified decoder, not a tuple list"
+                )
 
-    sp_pre_liquid_snapshots = snapshot_tuples(
-        sp, "OPENQ4_SAVEGAME_V3_PRE_PLAYER_LIQUID_FIELDS_SNAPSHOTS"
-    )
-    mp_pre_liquid_snapshots = snapshot_tuples(
-        mp, "OPENQ4_SAVEGAME_V3_PRE_PLAYER_LIQUID_FIELDS_SNAPSHOTS"
-    )
-    expected_pre_liquid_snapshots = [V3_PRE_PLAYER_LIQUID_FIELDS_SNAPSHOT]
-    if sp_pre_liquid_snapshots != expected_pre_liquid_snapshots or mp_pre_liquid_snapshots != expected_pre_liquid_snapshots:
-        raise AssertionError("SP/MP v0.10 player-liquid compatibility snapshots differ from the approved tuple")
+    minimum_build = constant(session, "SESSION_OPENQ4_SAVEGAME_MINIMUM_SUPPORTED_BUILD")
+    if minimum_build <= 0:
+        raise AssertionError("Engine must declare the oldest v3 build it can restore")
+
+    # The two player liquid fields landed in different builds, so they need
+    # independent thresholds; one boolean for both is what made saves written
+    # between them read a field their file does not contain.
+    sp_swim = constant(sp, "OPENQ4_SAVEGAME_BUILD_WITH_PLAYER_SWIM_SPEED")
+    mp_swim = constant(mp, "OPENQ4_SAVEGAME_BUILD_WITH_PLAYER_SWIM_SPEED")
+    sp_sound = constant(sp, "OPENQ4_SAVEGAME_BUILD_WITH_PLAYER_LIQUID_SOUND")
+    mp_sound = constant(mp, "OPENQ4_SAVEGAME_BUILD_WITH_PLAYER_LIQUID_SOUND")
+    if sp_swim != mp_swim or sp_sound != mp_sound:
+        raise AssertionError("SP/MP player liquid field build thresholds differ")
+    if sp_swim >= sp_sound:
+        raise AssertionError("swimSpeed was added before nextLiquidSurfaceSoundTime; thresholds must reflect that")
+    if minimum_build > sp_swim:
+        raise AssertionError(
+            "The verified build floor must not exclude saves the liquid thresholds still describe"
+        )
 
     for source, header, class_header, player, physics_player, context in (
         (sp, sp_h, sp_class_h, sp_player, sp_physics_player, "SP GameLib"),
         (mp, mp_h, mp_class_h, mp_player, mp_physics_player, "MP GameLib"),
     ):
         for token in (
-            "SaveGame_IsV3PrePlayerLiquidFieldsSnapshot",
-            "bool idRestoreGame::HasOpenQ4PlayerLiquidSaveFields",
+            "bool idRestoreGame::HasOpenQ4PlayerSwimSpeedSaveField",
+            "bool idRestoreGame::HasOpenQ4PlayerLiquidSoundSaveField",
+            "bool idRestoreGame::HasOpenQ4PlayerLiquidSaveFieldForBuild",
             "HasNextSerializedEmptyClassFrame",
             'idStr::Icmp( cls->classname, "idPhysics" ) == 0',
             "!cls->saveDeclaredHere",
             "!cls->restoreDeclaredHere",
         ):
             require(source, token, f"{context} v0.10 compatibility decoder")
-        require(header, "HasOpenQ4PlayerLiquidSaveFields( void ) const", f"{context} compatibility accessor")
+        for accessor in (
+            "HasOpenQ4PlayerSwimSpeedSaveField( void ) const",
+            "HasOpenQ4PlayerLiquidSoundSaveField( void ) const",
+        ):
+            require(header, accessor, f"{context} compatibility accessor")
         for token in (
             "struct idMemberFunctionOwner",
             "struct idMemberFunctionDeclaredHere",
@@ -350,23 +374,23 @@ def validate_source_contracts() -> None:
         if re.search(
             r"ReadInt\s*\(\s*previousWaterType\s*\)\s*;\s*"
             r"nextLiquidSurfaceSoundTime\s*=\s*0\s*;\s*"
-            r"if\s*\(\s*savefile->HasOpenQ4PlayerLiquidSaveFields\s*\(\s*\)\s*\)\s*\{\s*"
+            r"if\s*\(\s*savefile->HasOpenQ4PlayerLiquidSoundSaveField\s*\(\s*\)\s*\)\s*\{\s*"
             r"savefile->ReadInt\s*\(\s*nextLiquidSurfaceSoundTime\s*\)\s*;\s*\}\s*"
             r"savefile->ReadInt\s*\(\s*nextLiquidDamageTime\s*\)",
             player,
             re.DOTALL,
         ) is None:
-            raise AssertionError(f"{context} does not restore the pre-v0.10 liquid-sound timer layout")
+            raise AssertionError(f"{context} does not gate the liquid-sound timer on the build that added it")
         if re.search(
             r"ReadFloat\s*\(\s*playerSpeed\s*\)\s*;\s*"
             r"swimSpeed\s*=\s*0\.0f\s*;\s*"
-            r"if\s*\(\s*savefile->HasOpenQ4PlayerLiquidSaveFields\s*\(\s*\)\s*\)\s*\{\s*"
+            r"if\s*\(\s*savefile->HasOpenQ4PlayerSwimSpeedSaveField\s*\(\s*\)\s*\)\s*\{\s*"
             r"savefile->ReadFloat\s*\(\s*swimSpeed\s*\)\s*;\s*\}\s*"
             r"savefile->ReadVec3\s*\(\s*viewForward\s*\)",
             physics_player,
             re.DOTALL,
         ) is None:
-            raise AssertionError(f"{context} does not restore the pre-v0.10 swim-speed layout")
+            raise AssertionError(f"{context} does not gate swim speed on the build that added it")
 
     require(session, 'SESSION_LEGACY_SAVEGAME_WIRE_ABI = "windows-msvcabi-x64-le-raw1"',
             "engine unstamped legacy ABI restriction")

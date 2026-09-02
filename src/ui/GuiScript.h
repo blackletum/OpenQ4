@@ -65,7 +65,7 @@ public:
 		return sz;
 	}
 
-	void WriteToSaveGame( idFile *savefile );
+	void WriteToSaveGame( idFile *savefile, const char *context );
 	void ReadFromSaveGame( idFile *savefile );
 
 protected:
@@ -99,7 +99,7 @@ public:
 	void ReadFromDemoFile( class idDemoFile *f ) {};
 	void WriteToDemoFile( class idDemoFile *f ) {};
 
-	void WriteToSaveGame( idFile *savefile );
+	void WriteToSaveGame( idFile *savefile, const char *context );
 	void ReadFromSaveGame( idFile *savefile );
 };
 

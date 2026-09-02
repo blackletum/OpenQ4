@@ -462,6 +462,8 @@ namespace {
 	static const int RENDER_WORLD_CACHE_MAX_MODELS = 65536;
 	static const int RENDER_WORLD_CACHE_MAX_MODEL_PAYLOAD = 128 * 1024 * 1024;
 	static const uint64_t RENDER_WORLD_CACHE_MAX_MODEL_MEMORY = 384ULL * 1024ULL * 1024ULL;
+	static const int RENDER_WORLD_CACHE_MAX_SURFACE_VERTS = 1 << 20;
+	static const int RENDER_WORLD_CACHE_MAX_SURFACE_INDEXES = 1 << 24;
 	static const int RENDER_WORLD_CACHE_MAX_SHADOW_VERTS = 1 << 20;
 	static const int RENDER_WORLD_CACHE_MAX_SHADOW_INDEXES = 1 << 24;
 	static const int RENDER_WORLD_CACHE_MAX_AREAS = 4096;
@@ -1625,6 +1627,17 @@ idRenderModel *idRenderWorldLocal::ParseModel( Lexer *src ) {
 		tri->numVerts = src->ParseInt();
 		tri->numIndexes = src->ParseInt();
 
+		// FinishSurfaces below dereferences every index while deriving tangents
+		// and silhouette edges, so the file-provided counts have to be sane
+		// before anything is allocated.  ParseShadowModel and the binary
+		// render-world cache already apply the same predicates.
+		if ( tri->numVerts < 0 || tri->numVerts > RENDER_WORLD_CACHE_MAX_SURFACE_VERTS
+				|| tri->numIndexes < 0 || tri->numIndexes > RENDER_WORLD_CACHE_MAX_SURFACE_INDEXES
+				|| ( tri->numIndexes % 3 ) != 0 ) {
+			src->Error( "R_ParseModel: bad surface counts" );
+			return NULL;
+		}
+
 		R_AllocStaticTriSurfVerts( tri, tri->numVerts );
 		for ( j = 0 ; j < tri->numVerts ; j++ ) {
 // jmarshall - quake 4 proc format
@@ -1664,7 +1677,12 @@ idRenderModel *idRenderWorldLocal::ParseModel( Lexer *src ) {
 
 		R_AllocStaticTriSurfIndexes( tri, tri->numIndexes );
 		for ( j = 0 ; j < tri->numIndexes ; j++ ) {
-			tri->indexes[j] = src->ParseInt();
+			const int index = src->ParseInt();
+			if ( index < 0 || index >= tri->numVerts ) {
+				src->Error( "R_ParseModel: index %i out of range (%i verts)", index, tri->numVerts );
+				return NULL;
+			}
+			tri->indexes[j] = index;
 		}
 		src->ExpectTokenString( "}" );
 

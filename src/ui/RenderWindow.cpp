@@ -174,6 +174,10 @@ void idRenderWindow::CommonInit() {
 	useLight[0] = true;
 
 	modelOrigin.Zero();
+	// RenderWindowRotationToAxis reads this every frame and nothing else
+	// initialized it, so a .gui that never sets modelRotate oriented its model
+	// from whatever the allocation happened to contain.
+	modelRotate.Zero();
 	viewOffset = idVec4( -128.0f, 0.0f, 0.0f, 1.0f );
 	outlineColor.Zero();
 	rimlightColor.Zero();

@@ -29,6 +29,7 @@ If you have questions concerning this license or the applicable additional terms
 #ifndef __WINVAR_H__
 #define __WINVAR_H__
 
+#include <cmath>
 #include "Rectangle.h"
 
 static const char VAR_GUIPREFIX[] = "gui::";
@@ -209,6 +210,11 @@ public:
 	virtual size_t Size() {	size_t sz = (name) ? strlen(name) : 0; return sz + sizeof(*this); }
 
 	virtual void WriteToSaveGame( idFile *savefile ) = 0;
+	// A GUI register can end up holding a non-finite expression result. Saving must
+	// not fail over one, so the register asks before writing and replaces the
+	// affected components instead of refusing the whole save.
+	virtual bool IsFinite() const { return true; }
+	virtual void SanitizeNonFinite() {}
 	virtual void ReadFromSaveGame( idFile *savefile ) = 0;
 
 	virtual float x( void ) const = 0;
@@ -226,9 +232,22 @@ protected:
 	bool eval;
 };
 
+// Window-owned variables are plain members rather than named registers, so a
+// non-finite value in one has no name of its own to report. The window does have
+// a name, so it sanitizes on the way out and says which variable it was. Losing a
+// cosmetic colour or rect component beats losing the save and the running map.
+ID_INLINE void OpenQ4_SanitizeSaveGameWinVar( idWinVar &var, const char *context, const char *windowName, const char *varName ) {
+	if ( var.IsFinite() ) {
+		return;
+	}
+	common->Warning( "%s: window '%s' %s holds a non-finite value; saving zero for the affected components",
+		context ? context : "savegame write", windowName ? windowName : "", varName ? varName : "variable" );
+	var.SanitizeNonFinite();
+}
+
 class idWinBool : public idWinVar {
 public:
-	idWinBool() : idWinVar() {};
+	idWinBool() : idWinVar(), data( false ) {};
 	~idWinBool() {};
 	virtual void Init(const char *_name, idWindow *win) { idWinVar::Init(_name, win);
 		if (guiDict) {
@@ -417,7 +436,7 @@ protected:
 
 class idWinInt : public idWinVar {
 public:
-	idWinInt() : idWinVar() {};
+	idWinInt() : idWinVar(), data( 0 ) {};
 	~idWinInt() {};
 	virtual void Init(const char *_name, idWindow *win) {
 		idWinVar::Init(_name,  win);
@@ -476,9 +495,13 @@ protected:
 
 class idWinFloat : public idWinVar {
 public:
+	virtual bool IsFinite() const { return std::isfinite( data ); }
+	virtual void SanitizeNonFinite() {
+		if ( !std::isfinite( data ) ) { data = 0.0f; }
+	}
 	friend class idWinFloatPtr;
 
-	idWinFloat() : idWinVar() {};
+	idWinFloat() : idWinVar(), data( 0.0f ) {};
 	~idWinFloat() {};
 	virtual void Init(const char *_name, idWindow *win) {
 		idWinVar::Init(_name, win);
@@ -535,6 +558,13 @@ protected:
 
 class idWinRectangle : public idWinVar {
 public:
+	virtual bool IsFinite() const { return std::isfinite( data.x ) && std::isfinite( data.y ) && std::isfinite( data.w ) && std::isfinite( data.h ); }
+	virtual void SanitizeNonFinite() {
+		if ( !std::isfinite( data.x ) ) { data.x = 0.0f; }
+		if ( !std::isfinite( data.y ) ) { data.y = 0.0f; }
+		if ( !std::isfinite( data.w ) ) { data.w = 0.0f; }
+		if ( !std::isfinite( data.h ) ) { data.h = 0.0f; }
+	}
 	idWinRectangle() : idWinVar() {};
 	~idWinRectangle() {};
 	virtual void Init(const char *_name, idWindow *win) {
@@ -648,7 +678,12 @@ protected:
 
 class idWinVec2 : public idWinVar {
 public:
-	idWinVec2() : idWinVar() {};
+	virtual bool IsFinite() const { return std::isfinite( data.x ) && std::isfinite( data.y ); }
+	virtual void SanitizeNonFinite() {
+		if ( !std::isfinite( data.x ) ) { data.x = 0.0f; }
+		if ( !std::isfinite( data.y ) ) { data.y = 0.0f; }
+	}
+	idWinVec2() : idWinVar(), data( 0.0f, 0.0f ) {};
 	~idWinVec2() {};
 	virtual void Init(const char *_name, idWindow *win) {
 		idWinVar::Init(_name, win);
@@ -723,7 +758,14 @@ class idWinVec4 : public idWinVar {
 	friend class idWinFloatPtr;
 
 public:	
-	idWinVec4() : idWinVar() {};
+	virtual bool IsFinite() const { return std::isfinite( data.x ) && std::isfinite( data.y ) && std::isfinite( data.z ) && std::isfinite( data.w ); }
+	virtual void SanitizeNonFinite() {
+		if ( !std::isfinite( data.x ) ) { data.x = 0.0f; }
+		if ( !std::isfinite( data.y ) ) { data.y = 0.0f; }
+		if ( !std::isfinite( data.z ) ) { data.z = 0.0f; }
+		if ( !std::isfinite( data.w ) ) { data.w = 0.0f; }
+	}
+	idWinVec4() : idWinVar(), data( 0.0f, 0.0f, 0.0f, 0.0f ) {};
 	~idWinVec4() {};
 	virtual void Init(const char *_name, idWindow *win) {
 		idWinVar::Init(_name, win);
@@ -817,7 +859,13 @@ protected:
 
 class idWinVec3 : public idWinVar {
 public:
-	idWinVec3() : idWinVar() {};
+	virtual bool IsFinite() const { return std::isfinite( data.x ) && std::isfinite( data.y ) && std::isfinite( data.z ); }
+	virtual void SanitizeNonFinite() {
+		if ( !std::isfinite( data.x ) ) { data.x = 0.0f; }
+		if ( !std::isfinite( data.y ) ) { data.y = 0.0f; }
+		if ( !std::isfinite( data.z ) ) { data.z = 0.0f; }
+	}
+	idWinVec3() : idWinVar(), data( 0.0f, 0.0f, 0.0f ) {};
 	~idWinVec3() {};
 	virtual void Init(const char *_name, idWindow *win) {
 		idWinVar::Init(_name, win);

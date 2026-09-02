@@ -475,7 +475,7 @@ def validate_session_source_contract() -> None:
         "SESSION_OPENQ4_SAVEGAME_INTEGRITY_BYTES",
         "SESSION_OPENQ4_SAVEGAME_COMPATIBILITY_VERSION = 3",
         "SESSION_OPENQ4_SAVEGAME_PREVIOUS_COMPATIBILITY_VERSION = 2",
-        "static bool Session_IsSupportedSaveGameV2Snapshot( int build, const idStr &sourceHash, int sourceFileCount )",
+        "SESSION_OPENQ4_SAVEGAME_MINIMUM_SUPPORTED_BUILD",
         "static const char *Session_GetSaveGameWireABI( void )",
         "SESSION_MAX_SAVE_DESCRIPTION_BYTES = 8192",
         "SESSION_MAX_SAVE_PREVIEW_BYTES = 64 * 1024 * 1024",
@@ -487,7 +487,7 @@ def validate_session_source_contract() -> None:
         "OPENQ4_SAVEGAME_COMPAT_SOURCE_HASH",
         "OPENQ4_SAVEGAME_COMPAT_SOURCE_FILE_COUNT",
         "if ( marker != SESSION_OPENQ4_SAVEGAME_COMPATIBILITY_MAGIC )",
-        "!Session_IsSupportedSaveGameV2Snapshot( payloadBuild, payloadSourceStamp, payloadSourceFileCount )",
+        "payloadBuild < SESSION_OPENQ4_SAVEGAME_MINIMUM_SUPPORTED_BUILD",
         "payloadWireABI.Icmp( Session_GetSaveGameWireABI() ) != 0",
         "static bool Session_CalculateSaveGameChecksum( idFile *file, int protectedLength, unsigned int &checksum, const idStr &savePath )",
         "static bool Session_AppendSaveGameIntegrityTrailer( const idStr &relativePath )",
@@ -735,8 +735,9 @@ def validate_gamelibs_save_payload_contract() -> None:
             "ReadString( openQ4SaveGameCompatibilityStamp );",
             "ReadInt( openQ4SaveGameCompatibilitySourceFileCount );",
             "openQ4SaveGameCompatibilityVersion != OPENQ4_SAVEGAME_COMPATIBILITY_VERSION",
-            "static bool SaveGame_IsSupportedV2Snapshot( int build, const idStr &sourceHash, int sourceFileCount )",
-            "!SaveGame_IsSupportedV2Snapshot( buildNumber, openQ4SaveGameCompatibilityStamp, openQ4SaveGameCompatibilitySourceFileCount )",
+            "OPENQ4_SAVEGAME_BUILD_WITH_PLAYER_SWIM_SPEED",
+            "OPENQ4_SAVEGAME_BUILD_WITH_PLAYER_LIQUID_SOUND",
+            "has no verified decoder",
             "ReadString( savedWireABI );",
             "savedWireABI.Icmp( OpenQ4SaveGameWireABI() ) != 0",
             "Schema-compatible save source differs",
@@ -957,6 +958,96 @@ def validate_savegame_compat_stamp_model() -> None:
         changed_hash, changed_count = generator.build_digest(project_root, game_root)
         if changed_hash == lf_hash or changed_count != lf_count:
             raise AssertionError("Savegame compatibility stamp did not track a relevant semantic source change")
+
+
+# A GUI variable that leaves its payload uninitialized reaches the savegame writer
+# holding whatever the heap last left there. game/airdefense1 lost a save that way:
+# a scalar transition operand such as "-180" fills only x through sscanf, so an
+# uninitialized idWinVec4 carried three indeterminate floats into the write and the
+# non-finite guard unloaded the running map. Types that zero themselves are exempt,
+# and idRectangle's own constructor is pinned so that exemption stays true.
+WINVAR_SELF_INITIALIZING_DATA_TYPES = ("idStr", "idRectangle")
+
+
+def parse_winvar_classes() -> dict[str, dict[str, str | None]]:
+    source = read("src/ui/Winvar.h")
+    boundaries = [
+        (match.start(), match.group(1))
+        for match in re.finditer(r"^class\s+(\w+)\s*:\s*public\s+(?:idWinVar|idWinStr)\s*\{", source, re.MULTILINE)
+    ]
+    if not boundaries:
+        raise AssertionError("No idWinVar subclasses found in src/ui/Winvar.h")
+
+    offsets = [offset for offset, _ in boundaries] + [len(source)]
+    classes: dict[str, dict[str, str | None]] = {}
+    for index, (_, class_name) in enumerate(boundaries):
+        block = source[offsets[index] : offsets[index + 1]]
+        members = [
+            match.group(1).replace(" ", "")
+            for match in re.finditer(r"^\s*([A-Za-z_][\w]*\s*\*?)\s+data\s*;", block, re.MULTILINE)
+            if "return" not in match.group(0)
+        ]
+        if len(members) != 1:
+            raise AssertionError(f"{class_name} must declare exactly one data member, found {members!r}")
+        constructor = re.search(r"\b%s\s*\(\s*\)\s*:\s*([^{]*)\{" % re.escape(class_name), block)
+        classes[class_name] = {
+            "data_type": members[0],
+            "initializers": constructor.group(1) if constructor else None,
+        }
+    return classes
+
+
+def validate_gui_winvar_initialization_contract() -> None:
+    classes = parse_winvar_classes()
+    for class_name, details in classes.items():
+        data_type = details["data_type"]
+        initializers = details["initializers"]
+        if data_type in WINVAR_SELF_INITIALIZING_DATA_TYPES:
+            continue
+        if initializers is None:
+            raise AssertionError(
+                f"{class_name} has no default constructor initializer list, so its {data_type} data is indeterminate"
+            )
+        if re.search(r"\bdata\s*\(", initializers) is None:
+            raise AssertionError(
+                f"{class_name} must initialize its {data_type} data in the default constructor; "
+                f"an indeterminate value reaches the savegame writer. Got: {initializers.strip()!r}"
+            )
+
+    for required in ("idWinVec2", "idWinVec3", "idWinVec4", "idWinFloat"):
+        if required not in classes:
+            raise AssertionError(f"src/ui/Winvar.h no longer declares {required}")
+
+    # The exemption above is only sound while idRectangle zeroes itself.
+    require_regex(
+        read("src/ui/Rectangle.h"),
+        r"idRectangle\s*\(\s*\)\s*\{\s*x\s*=\s*y\s*=\s*w\s*=\s*h\s*=\s*0",
+        "idRectangle default constructor",
+    )
+
+    # idVec2/3/4 deliberately leave their members alone, which is why the winvars
+    # above have to initialize theirs. Pin that so the exemption is never widened.
+    vector_source = read("src/idlib/math/Vector.h")
+    for vector_type in ("idVec2", "idVec3", "idVec4"):
+        constructor = re.search(
+            r"ID_INLINE %s::%s\( void \) \{(?P<body>.*?)\}" % (vector_type, vector_type),
+            vector_source,
+            re.DOTALL,
+        )
+        if constructor is None:
+            raise AssertionError(f"{vector_type} default constructor not found in src/idlib/math/Vector.h")
+        if re.search(r"\b[xyzw]\s*=", constructor.group("body")):
+            raise AssertionError(
+                f"{vector_type} now initializes its members; revisit the idWinVar initialization contract"
+            )
+
+    # A transition operand that names a var which does not resolve keeps its literal
+    # text, which parses as nothing, so the transition silently runs from zero.
+    require(
+        read("src/ui/GuiScript.cpp"),
+        "which is not a valid var; the transition uses zero for it",
+        "unresolved transition source diagnostic",
+    )
 
 
 def validate_gui_register_restore_contract() -> None:
@@ -1593,6 +1684,7 @@ def main() -> None:
     validate_gamelibs_save_payload_contract()
     validate_savegame_compat_stamp_model()
     validate_gui_register_restore_contract()
+    validate_gui_winvar_initialization_contract()
     validate_gui_stream_alignment_contract()
     validate_minigame_restore_contract()
     validate_validation_wiring()

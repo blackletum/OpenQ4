@@ -314,6 +314,17 @@ void idRegister::WriteToSaveGame( idFile *savefile ) {
 	}
 	RegExp_WriteSaveGameString( savefile, name, "name" );
 
+	// The variable itself usually carries no name, so a refusal deeper in could not
+	// say which register was at fault. Catch it here, where the name is known, and
+	// keep the save: a register holds an evaluated GUI expression, so a zeroed
+	// component costs a frame of cosmetic state rather than the whole save and the
+	// running map with it.
+	if ( !var->IsFinite() ) {
+		common->Warning( "idRegister::WriteToSaveGame: register '%s' holds a non-finite value; "
+			"saving zero for the affected components", name.c_str() );
+		var->SanitizeNonFinite();
+	}
+
 	var->WriteToSaveGame( savefile );
 }
 
