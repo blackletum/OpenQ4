@@ -1510,9 +1510,10 @@ void R_RendererUpload_RecordLegacyUpload( int bytes ) {
 bool VK_ShadowMap_ResourcesKnownGood( bool pointLight );
 
 // Phase F3 hook for the front-end stencil-volume elision gate
-// (R_ShadowMapLightWillUseShadowMaps, tr_light.cpp). Vulkan deliberately
-// remains conservative until per-view atlas/cube/material admission can be
-// proven before front-end submission, preserving same-frame stencil fallback.
+// (R_ShadowMapLightWillUseShadowMaps, tr_light.cpp). Vulkan reports the same
+// per-light-class generation truth OpenGL does; a later per-view admission
+// miss degrades to one unshadowed frame plus a sticky volume restore rather
+// than to a dropped receiver.
 bool RB_ShadowMapResourcesKnownGood( bool pointLight ) {
 	return VK_ShadowMap_ResourcesKnownGood( pointLight );
 }

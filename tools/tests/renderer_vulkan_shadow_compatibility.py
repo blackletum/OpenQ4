@@ -3965,7 +3965,7 @@ def validate_exact_static_cache_and_admission_contract() -> None:
     resources_known_good = braced_body(
         shadow_map,
         "bool VK_ShadowMap_ResourcesKnownGood(",
-        "conservative Vulkan shadow resource truth",
+        "Vulkan shadow resource truth",
     )
     require_order(
         resources_known_good,
@@ -3979,15 +3979,31 @@ def validate_exact_static_cache_and_admission_contract() -> None:
         ),
         "generation-gated Vulkan shadow resource truth",
     )
-    if "return true;" in resources_known_good:
-        raise AssertionError(
-            "Vulkan resource truth must remain conservative until pre-front-end admission is safe"
-        )
-    if resources_known_good.count("return false;") < 3 or not compact(
+    # The front-end elision gate (R_ShadowMapLightWillUseShadowMaps) may only
+    # shed a light's stencil volumes once both class generations prove out, so
+    # the two guarded falses must precede the single trailing true.
+    if resources_known_good.count("return false;") != 2 or not compact(
         resources_known_good
-    ).endswith("return false; }"):
+    ).endswith("return true; }"):
         raise AssertionError(
-            "Vulkan resource truth must end in an unconditional false after its generation checks"
+            "Vulkan resource truth must report generation truth: two guarded falses then true"
+        )
+
+    # A per-view admission miss lands after the front end has already elided
+    # volumes, so every unresolved receiver must still draw unshadowed. The
+    # 2026-07-24 fail-closed shape (dropping the light contribution) is what
+    # forced the conservative gate; it must not return.
+    interactions = read("src/renderer/Vulkan/vk_Interactions.cpp")
+    for unresolved_receiver_fallback in (
+        """if ( !localReceiverDrawn && vLight->localInteractions != NULL ) {""",
+        """if ( !globalOpaqueReceiverDrawn
+            && vLight->globalInteractions != NULL ) {""",
+        "translucentUsesUnshadowedFallback",
+    ):
+        require_compact(
+            interactions,
+            unresolved_receiver_fallback,
+            "unresolved Vulkan receivers draw unshadowed instead of vanishing",
         )
 
     require_compact(

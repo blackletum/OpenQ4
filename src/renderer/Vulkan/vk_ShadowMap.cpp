@@ -315,17 +315,24 @@ bool VK_ShadowMap_ResourcesKnownGood( bool pointLight ) {
 		return false;
 	}
 
-	// Resource creation alone is not enough to discard the same-frame
-	// stencil fallback. Projected atlas blocks, point-cube ownership slots,
-	// and material representability are admitted per backend view after the
-	// front end has already decided whether to build/link shadow volumes.
-	// Keep the volumes until Vulkan has a capacity-safe pre-front-end
-	// admission contract; otherwise an atlas/pool/material miss must use the
-	// retained ownership stencil path in the same frame.
+	// Per-view atlas blocks, point-cube ownership slots, and caster
+	// representability are still admitted after the front end has decided
+	// whether to build volumes, so an admission miss can leave an elided
+	// light with no volume to fall back to in the same frame. That is the
+	// OpenGL contract too (draw_arb2.cpp RB_ShadowMapResourcesKnownGood
+	// reports the same generation truth): the miss costs one unshadowed
+	// frame, and VK_ShadowMap_MarkStencilFallbackSticky restores volume
+	// generation from the next frame on.
 	//
-	// The generation checks above remain useful resource truth and make this
-	// policy a one-line promotion once admission becomes provably safe.
-	return false;
+	// This stayed conservative only while an unresolved receiver was dropped
+	// fail-closed. VK_Inter_DrawAllLights now draws every unresolved opaque
+	// and translucent receiver unshadowed instead of discarding the light's
+	// contribution, so a same-frame miss degrades exactly as it does on GL.
+	// The shared front-end mirror (R_ShadowMapLightWillUseShadowMaps) also
+	// refuses to elide under a non-zero r_shadowMapMaxUpdatesPerView or a
+	// subview policy above 0, so neither discretionary policy can strand an
+	// elided light.
+	return true;
 }
 
 // A hard shadow-map failure marks the light sticky even though Vulkan already

@@ -114,9 +114,11 @@ const vkShadowPassState_t *VK_ShadowMap_PassState(
 	const vkShadowLightState_t *lightState, vkShadowReceiverPass_t receiverPass );
 
 // Phase F3: per-light-class resource truth behind the tr_local.h hook
-// RB_ShadowMapResourcesKnownGood. Vulkan currently keeps this conservative
-// (false) after proving the resources because per-view atlas/cube/material
-// admission happens too late to discard same-frame fallback volumes safely.
+// RB_ShadowMapResourcesKnownGood, so the front end may stop generating and
+// linking stencil volumes for shadow-mapped lights. Per-view atlas/cube/
+// material admission still happens after that decision; a miss draws the
+// light unshadowed for one frame and marks it sticky, which is the OpenGL
+// contract.
 bool	VK_ShadowMap_ResourcesKnownGood( bool pointLight );
 
 // Phase F3 sticky fallback contract (GL RB_ShadowMapMarkStencilFallbackSticky
