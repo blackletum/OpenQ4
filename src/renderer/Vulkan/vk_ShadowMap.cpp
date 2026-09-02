@@ -145,6 +145,7 @@ typedef struct vkProjectedShadowCacheEntry_s {
 	int					blockSize;	// tileSize * atlasDiv: a CSM light's resident
 									// content is the whole contiguous cascade block
 	int					lastUsedFrame;
+	int					lastUpdatedFrame;	// content write, not view touch
 	shadowMapProjectedLightState_t projectedState;
 	VkImage				image;
 	VmaAllocation		allocation;
@@ -161,6 +162,7 @@ typedef struct vkPointShadowCacheEntry_s {
 	int					signature;
 	int					size;
 	int					lastUsedFrame;
+	int					lastUpdatedFrame;	// content write, not view touch
 	float				pointFar;
 	float				lightOrigin[ 3 ];
 	vkPointShadowCube_t	cube;
@@ -1050,6 +1052,7 @@ static void VK_ShadowMap_ClearProjectedEntryMetadata(
 	entry.signature = 0;
 	entry.tileSize = 0;
 	entry.lastUsedFrame = 0;
+	entry.lastUpdatedFrame = 0;
 }
 
 static void VK_ShadowMap_ClearPointEntryMetadata(
@@ -1062,6 +1065,7 @@ static void VK_ShadowMap_ClearPointEntryMetadata(
 	entry.signature = 0;
 	entry.size = 0;
 	entry.lastUsedFrame = 0;
+	entry.lastUpdatedFrame = 0;
 }
 
 static void VK_ShadowMap_InvalidateLightCaches(
@@ -1082,6 +1086,23 @@ static void VK_ShadowMap_InvalidateLightCaches(
 			VK_ShadowMap_ClearPointEntryMetadata( point );
 		}
 	}
+}
+
+// Pure lookup for the read-only admission estimate: unlike
+// VK_ShadowMap_FindLightHistory it never claims or evicts a slot.
+static const vkShadowLightHistory_t *VK_ShadowMap_FindLightHistoryConst(
+		const idRenderWorldLocal *renderWorld, const int lightIndex ) {
+	if ( renderWorld == NULL || lightIndex < 0 ) {
+		return NULL;
+	}
+	for ( int i = 0 ; i < VK_SHADOW_LIGHT_HISTORY_SLOTS ; i++ ) {
+		const vkShadowLightHistory_t &history = vkShadow.lightHistory[ i ];
+		if ( history.valid && history.renderWorld == renderWorld
+				&& history.lightIndex == lightIndex ) {
+			return &history;
+		}
+	}
+	return NULL;
 }
 
 static vkShadowLightHistory_t *VK_ShadowMap_FindLightHistory(
@@ -1444,6 +1465,77 @@ static int VK_ShadowMap_AllocPointCacheEntry( void ) {
 	return selected;
 }
 
+/*
+====================
+Importance-ordered update admission (RB_ShadowMapBuildUpdateAdmissions)
+
+r_shadowMapMaxUpdatesPerView caps fresh renders per backend view. Spending
+that cap in view-light-list order lets an off-screen light behind the camera
+consume the budget a large, stale, on-screen one needed, and the loser keeps
+a visibly wrong map. Score every candidate first, then admit greedily.
+
+Everything here is read-only: the estimate must not reserve a cache slot, age
+a light's history, or invalidate an entry, because the real scheduling walk
+runs afterwards and would then see state it did not create.
+====================
+*/
+
+static const int VK_SHADOW_MAX_ADMITTED_LIGHTS = 128;
+static int vkShadowAdmittedLightIndexes[ VK_SHADOW_MAX_ADMITTED_LIGHTS ];
+static int vkShadowAdmittedLightCount = 0;
+static bool vkShadowAdmissionsActive = false;
+
+static bool VK_ShadowMap_UpdateAdmitted( const int lightIndex ) {
+	for ( int i = 0 ; i < vkShadowAdmittedLightCount ; i++ ) {
+		if ( vkShadowAdmittedLightIndexes[ i ] == lightIndex ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// VK_ShadowMap_StaticCacheable without its history and invalidation side
+// effects (RB_ShadowMapStaticCacheableReadOnly parity).
+static bool VK_ShadowMap_StaticCacheableReadOnly(
+		const viewLight_t *vLight, const viewDef_t *viewDef,
+		const bool pointLight, const int cascadeCount ) {
+	const idRenderWorldLocal *renderWorld =
+			viewDef != NULL ? viewDef->renderWorld : NULL;
+	const int lightIndex = VK_ShadowMap_LightIndex( vLight );
+	if ( !r_shadowMapStaticCache.GetBool() || vLight == NULL
+			|| renderWorld == NULL || lightIndex < 0
+			|| vLight->shadowMapCasterCount <= 0
+			|| vLight->shadowMapStaticCasterCount <= 0
+			|| vLight->shadowMapAlphaCasterCount > 0
+			|| vLight->shadowMapTranslucentCasterCount > 0
+			|| vLight->globalTranslucentShadowMapCasters != NULL
+			|| vLight->localTranslucentShadowMapCasters != NULL ) {
+		return false;
+	}
+	const bool haveDynamicCasters =
+			vLight->shadowMapDynamicCasterCount > 0
+			|| vLight->globalShadowMapDynamicCasters != NULL
+			|| vLight->localShadowMapDynamicCasters != NULL;
+	if ( haveDynamicCasters
+			&& ( pointLight
+				|| r_rendererSharedWorldInteraction.GetBool() ) ) {
+		return false;
+	}
+	if ( !pointLight && cascadeCount > 1
+			&& !r_shadowMapCacheCSM.GetBool() ) {
+		return false;
+	}
+	const vkShadowLightHistory_t *history =
+			VK_ShadowMap_FindLightHistoryConst( renderWorld, lightIndex );
+	if ( history != NULL && pointLight
+			&& tr.frameCount - history->lastDynamicFrame
+				< Max( 0,
+						r_shadowMapStaticHysteresisFrames.GetInteger() ) ) {
+		return false;
+	}
+	return true;
+}
+
 static vkShadowSchedule_t VK_ShadowMap_SchedulePass(
 		const viewLight_t *vLight, const viewDef_t *viewDef,
 		const vkShadowReceiverPass_t requestedPass,
@@ -1521,9 +1613,14 @@ static vkShadowSchedule_t VK_ShadowMap_SchedulePass(
 		vkShadow.subviewFallbacks++;
 		return schedule;
 	}
+	// Importance ordering decides WHICH lights spend a limited budget; the
+	// running count still decides when it is gone.
 	const int updateBudget = r_shadowMapMaxUpdatesPerView.GetInteger();
+	const bool admissionDenied = updateBudget > 0
+			&& vkShadowAdmissionsActive
+			&& !VK_ShadowMap_UpdateAdmitted( lightIndex );
 	if ( updateBudget > 0
-			&& vkShadow.freshUpdates >= updateBudget
+			&& ( vkShadow.freshUpdates >= updateBudget || admissionDenied )
 			&& !mapRequiredForCorrectness ) {
 		schedule.action = VK_SHADOW_SCHEDULE_FALLBACK;
 		schedule.cacheEntry = -1;
@@ -1929,6 +2026,255 @@ static void VK_ShadowMap_ReportViewCache( const viewDef_t *viewDef ) {
 			pointSlots, pointLimit );
 }
 
+// A resident entry matching this signature exists, without reserving it.
+static const vkProjectedShadowCacheEntry_t *VK_ShadowMap_PeekProjectedCacheEntry(
+		const idRenderWorldLocal *renderWorld, const int lightIndex,
+		const vkShadowReceiverPass_t passKind, const int signature,
+		const int tileSize, const int blockSize ) {
+	const int limit = VK_ShadowMap_ProjectedCacheSlotLimit();
+	for ( int i = 0 ; i < limit ; i++ ) {
+		const vkProjectedShadowCacheEntry_t &entry =
+				vkShadow.projectedCache[ i ];
+		if ( entry.valid && !entry.reserved
+				&& entry.generation == tr.videoRestartCount
+				&& entry.renderWorld == renderWorld
+				&& entry.lightIndex == lightIndex
+				&& entry.passKind == passKind
+				&& entry.signature == signature
+				&& entry.tileSize == tileSize
+				&& entry.blockSize == blockSize
+				&& entry.image != VK_NULL_HANDLE ) {
+			return &entry;
+		}
+	}
+	return NULL;
+}
+
+static const vkPointShadowCacheEntry_t *VK_ShadowMap_PeekPointCacheEntry(
+		const idRenderWorldLocal *renderWorld, const int lightIndex,
+		const vkShadowReceiverPass_t passKind, const int signature,
+		const int size ) {
+	const int limit = VK_ShadowMap_PointCacheSlotLimit();
+	for ( int i = 0 ; i < limit ; i++ ) {
+		const vkPointShadowCacheEntry_t &entry =
+				vkShadow.pointCache[ i ];
+		if ( entry.valid && !entry.reserved
+				&& entry.generation == tr.videoRestartCount
+				&& entry.renderWorld == renderWorld
+				&& entry.lightIndex == lightIndex
+				&& entry.passKind == passKind
+				&& entry.signature == signature
+				&& entry.size == size
+				&& entry.cube.image != VK_NULL_HANDLE ) {
+			return &entry;
+		}
+	}
+	return NULL;
+}
+
+// Fresh ownership renders this light would need, and how stale its newest
+// resident content is. Returns false when the light needs no fresh update.
+static bool VK_ShadowMap_EstimateUpdateCost( const viewLight_t *vLight,
+		const viewDef_t *viewDef, int &cost, int &staleness ) {
+	cost = 0;
+	staleness = 64;
+	if ( vLight == NULL || vLight->lightShader == NULL
+			|| vLight->lightShader->IsFogLight()
+			|| vLight->lightShader->IsBlendLight()
+			|| vLight->lightShader->IsAmbientLight()
+			|| !vLight->lightShader->LightCastsShadows() ) {
+		return false;
+	}
+	if ( vLight->lightDef != NULL
+			&& ( vLight->lightDef->parms.noShadows
+				|| vLight->lightDef->parms.noDynamicShadows ) ) {
+		return false;
+	}
+	const int lightIndex = VK_ShadowMap_LightIndex( vLight );
+	const idRenderWorldLocal *renderWorld =
+			viewDef != NULL ? viewDef->renderWorld : NULL;
+	if ( lightIndex < 0 || renderWorld == NULL ) {
+		return false;
+	}
+
+	const shadowMapLightClassification_t classification =
+			R_ClassifyShadowMapLight( vLight );
+	const bool pointLight = classification.pointLight;
+	if ( pointLight && !r_shadowMapPointLights.GetBool() ) {
+		return false;
+	}
+	const bool hasTranslucentReceivers =
+			r_shadowMapTranslucentReceivers.GetBool()
+			&& vLight->translucentInteractions != NULL;
+	const bool passNeeded[ VK_SHADOW_RECEIVER_PASS_COUNT ] = {
+		vLight->localInteractions != NULL,
+		vLight->globalInteractions != NULL || hasTranslucentReceivers
+	};
+
+	int resourceSize = 0;
+	int atlasDiv = 1;
+	int cascadeCount = 1;
+	if ( pointLight ) {
+		resourceSize = VK_ShadowMap_PointSizeValue();
+	} else {
+		atlasDiv = idMath::ClampInt( 1, 2, classification.atlasDiv );
+		// The atlas is created lazily by the first light that needs it, so
+		// on the first view of a generation there is nothing to measure
+		// against yet. Fall back to the configured edge; the scheduling
+		// walk clamps against the real one either way.
+		const int atlasEdge = vkShadow.atlasSize > 0 ? vkShadow.atlasSize
+				: idMath::ClampInt( 2048, 8192,
+						r_shadowMapAtlasSize.GetInteger() );
+		const int maxTileSize = atlasEdge / atlasDiv;
+		if ( maxTileSize < 128 ) {
+			return false;
+		}
+		resourceSize = idMath::ClampInt( 128, maxTileSize,
+				r_shadowMapSize.GetInteger() );
+		cascadeCount = idMath::ClampInt( 1,
+				SHADOWMAP_PROJECTED_MAX_CASCADES,
+				classification.cascadeCount );
+	}
+	const bool cacheable = VK_ShadowMap_StaticCacheableReadOnly(
+			vLight, viewDef, pointLight, cascadeCount );
+	const int blockSize = resourceSize * atlasDiv;
+
+	int newestUpdatedFrame = -1;
+	for ( int passIndex = 0 ; passIndex < VK_SHADOW_RECEIVER_PASS_COUNT ;
+			passIndex++ ) {
+		const vkShadowReceiverPass_t receiverPass =
+				(vkShadowReceiverPass_t)passIndex;
+		if ( !passNeeded[ passIndex ]
+				|| !VK_ShadowMap_PassHasCasters( vLight, receiverPass ) ) {
+			continue;
+		}
+		// A GLOBAL map with no local casters aliases the LOCAL one and costs
+		// nothing extra, exactly as the scheduling walk decides.
+		if ( receiverPass == VK_SHADOW_RECEIVER_GLOBAL
+				&& !VK_ShadowMap_HasLocalCasters( vLight )
+				&& passNeeded[ VK_SHADOW_RECEIVER_LOCAL ]
+				&& VK_ShadowMap_PassHasCasters( vLight,
+						VK_SHADOW_RECEIVER_LOCAL ) ) {
+			continue;
+		}
+		const vkShadowReceiverPass_t cachePass =
+				VK_ShadowMap_CachePassKind( vLight, receiverPass );
+		const int signature =
+				VK_ShadowMap_BuildPassSignatureForView( vLight, viewDef,
+						cachePass, pointLight, resourceSize, atlasDiv,
+						cascadeCount );
+		if ( cacheable ) {
+			if ( pointLight ) {
+				const vkPointShadowCacheEntry_t *entry =
+						VK_ShadowMap_PeekPointCacheEntry( renderWorld,
+								lightIndex, cachePass, signature,
+								resourceSize );
+				if ( entry != NULL ) {
+					newestUpdatedFrame = Max( newestUpdatedFrame,
+							entry->lastUpdatedFrame );
+					continue;
+				}
+			} else {
+				const vkProjectedShadowCacheEntry_t *entry =
+						VK_ShadowMap_PeekProjectedCacheEntry( renderWorld,
+								lightIndex, cachePass, signature,
+								resourceSize, blockSize );
+				if ( entry != NULL ) {
+					newestUpdatedFrame = Max( newestUpdatedFrame,
+							entry->lastUpdatedFrame );
+					continue;
+				}
+			}
+		}
+		cost++;
+	}
+
+	staleness = newestUpdatedFrame < 0 ? 64
+			: idMath::ClampInt( 0, 64, tr.frameCount - newestUpdatedFrame );
+	return cost > 0;
+}
+
+static void VK_ShadowMap_BuildUpdateAdmissions( const viewDef_t *viewDef ) {
+	vkShadowAdmissionsActive = false;
+	vkShadowAdmittedLightCount = 0;
+	const int updateBudget = r_shadowMapMaxUpdatesPerView.GetInteger();
+	if ( updateBudget <= 0 || viewDef == NULL
+			|| viewDef->viewLights == NULL ) {
+		return;
+	}
+	if ( viewDef->isSubview
+			&& idMath::ClampInt( 0, 2,
+					r_shadowMapSubviewPolicy.GetInteger() ) > 0 ) {
+		// the subview policy already forbids fresh renders
+		return;
+	}
+
+	struct vkShadowAdmissionCandidate_t {
+		int	lightIndex;
+		int	cost;
+		int	score;
+	};
+	vkShadowAdmissionCandidate_t candidates[ VK_SHADOW_MAX_ADMITTED_LIGHTS ];
+	int candidateCount = 0;
+	int totalCost = 0;
+	for ( const viewLight_t *vLight = viewDef->viewLights ;
+			vLight != NULL
+				&& candidateCount < VK_SHADOW_MAX_ADMITTED_LIGHTS ;
+			vLight = vLight->next ) {
+		int cost = 0;
+		int staleness = 0;
+		if ( !VK_ShadowMap_EstimateUpdateCost( vLight, viewDef, cost,
+				staleness ) ) {
+			continue;
+		}
+		const idScreenRect &rect = vLight->scissorRect;
+		const int scissorArea = rect.IsEmpty() ? 0
+				: ( rect.x2 + 1 - rect.x1 ) * ( rect.y2 + 1 - rect.y1 );
+		// Screen coverage, how wrong the resident content already is, and
+		// whether the camera stands inside the light. The GL score adds the
+		// modern planner's fairness boost; that planner stays dormant under
+		// Vulkan, so the remaining terms carry the ordering.
+		candidates[ candidateCount ].lightIndex =
+				VK_ShadowMap_LightIndex( vLight );
+		candidates[ candidateCount ].cost = cost;
+		candidates[ candidateCount ].score = scissorArea / 32
+				+ staleness * 512
+				+ ( vLight->viewInsideLight ? 8192 : 0 );
+		candidateCount++;
+		totalCost += cost;
+	}
+	if ( candidateCount == 0 || totalCost <= updateBudget ) {
+		// everything fits; first-come order is already correct
+		return;
+	}
+
+	// insertion sort by (score desc, lightIndex asc); counts are small
+	for ( int i = 1 ; i < candidateCount ; i++ ) {
+		const vkShadowAdmissionCandidate_t key = candidates[ i ];
+		int j = i - 1;
+		while ( j >= 0
+				&& ( candidates[ j ].score < key.score
+					|| ( candidates[ j ].score == key.score
+						&& candidates[ j ].lightIndex
+							> key.lightIndex ) ) ) {
+			candidates[ j + 1 ] = candidates[ j ];
+			j--;
+		}
+		candidates[ j + 1 ] = key;
+	}
+
+	int remaining = updateBudget;
+	for ( int i = 0 ; i < candidateCount && remaining > 0 ; i++ ) {
+		if ( candidates[ i ].cost > remaining ) {
+			continue;
+		}
+		vkShadowAdmittedLightIndexes[ vkShadowAdmittedLightCount++ ] =
+				candidates[ i ].lightIndex;
+		remaining -= candidates[ i ].cost;
+	}
+	vkShadowAdmissionsActive = true;
+}
+
 /*
 ====================
 VK_ShadowMap_PrepareViewLights
@@ -1964,6 +2310,9 @@ int VK_ShadowMap_PrepareViewLights( const viewDef_t *viewDef,
 		return 0;
 	}
 	VK_ShadowMap_BeginCacheView( viewDef );
+	// Decide which lights a limited r_shadowMapMaxUpdatesPerView should
+	// spend on before any of them can claim it in list order.
+	VK_ShadowMap_BuildUpdateAdmissions( viewDef );
 
 	int prepared = 0;
 	bool resourcesChecked = false;
@@ -3731,6 +4080,7 @@ static void VK_ShadowMap_FinalizeCachePasses(
 				cache.signature = pass.cacheSignature;
 				cache.size = light.tileSize;
 				cache.lastUsedFrame = tr.frameCount;
+				cache.lastUpdatedFrame = tr.frameCount;
 				cache.pointFar = light.pointFar;
 				for ( int originIndex = 0 ; originIndex < 3 ;
 						originIndex++ ) {
@@ -3764,6 +4114,7 @@ static void VK_ShadowMap_FinalizeCachePasses(
 				cache.blockSize =
 						VK_ShadowMap_ProjectedBlockSize( light );
 				cache.lastUsedFrame = tr.frameCount;
+				cache.lastUpdatedFrame = tr.frameCount;
 				cache.projectedState = light.projectedState;
 			}
 		}

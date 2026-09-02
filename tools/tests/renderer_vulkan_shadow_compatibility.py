@@ -5834,6 +5834,150 @@ def validate_shadow_debug_mode_contract() -> None:
                 )
 
 
+def validate_update_admission_contract() -> None:
+    """RB_ShadowMapBuildUpdateAdmissions parity.
+
+    A limited r_shadowMapMaxUpdatesPerView spent in view-light-list order lets
+    an off-screen light consume the budget a large, stale, on-screen one
+    needed. Score first, then admit greedily. The estimate runs before the
+    scheduling walk, so it must not reserve a slot, age a history, or
+    invalidate an entry -- the walk would then see state it did not create.
+    """
+    shadow_map = read("src/renderer/Vulkan/vk_ShadowMap.cpp")
+
+    build = braced_body(
+        shadow_map,
+        "static void VK_ShadowMap_BuildUpdateAdmissions(",
+        "importance-ordered update admission",
+    )
+    require_order(
+        build,
+        (
+            # an unlimited budget or a policy that already forbids fresh
+            # renders needs no ordering at all
+            "const int updateBudget = r_shadowMapMaxUpdatesPerView.GetInteger();",
+            "if ( updateBudget <= 0",
+            "r_shadowMapSubviewPolicy.GetInteger() ) > 0 )",
+            "VK_ShadowMap_EstimateUpdateCost( vLight, viewDef, cost, staleness )",
+            # GL's score: screen coverage, staleness, camera inside the light
+            """candidates[ candidateCount ].score = scissorArea / 32
+                + staleness * 512
+                + ( vLight->viewInsideLight ? 8192 : 0 );""",
+            # everything fits: first-come order is already correct
+            "if ( candidateCount == 0 || totalCost <= updateBudget )",
+            "return;",
+            # (score desc, lightIndex asc), then greedy admission
+            """while ( j >= 0
+                && ( candidates[ j ].score < key.score
+                    || ( candidates[ j ].score == key.score
+                        && candidates[ j ].lightIndex
+                            > key.lightIndex ) ) )""",
+            "int remaining = updateBudget;",
+            "if ( candidates[ i ].cost > remaining )",
+            "continue;",
+            "remaining -= candidates[ i ].cost;",
+            "vkShadowAdmissionsActive = true;",
+        ),
+        "importance-ordered update admission",
+    )
+
+    # The estimate must be side-effect free. FindProjectedCacheEntry and
+    # FindPointCacheEntry reserve; StaticCacheable ages history and can
+    # invalidate. The read-only peers exist for exactly that reason.
+    estimate = braced_body(
+        shadow_map,
+        "static bool VK_ShadowMap_EstimateUpdateCost(",
+        "read-only update-cost estimate",
+    )
+    for mutating in (
+        "VK_ShadowMap_FindProjectedCacheEntry(",
+        "VK_ShadowMap_FindPointCacheEntry(",
+        "VK_ShadowMap_AllocProjectedCacheEntry(",
+        "VK_ShadowMap_AllocPointCacheEntry(",
+        "VK_ShadowMap_StaticCacheable(",
+        "VK_ShadowMap_InvalidateLightCaches(",
+    ):
+        if mutating in estimate:
+            raise AssertionError(
+                f"The admission estimate must not call the mutating {mutating!r}"
+            )
+    for read_only in (
+        "VK_ShadowMap_StaticCacheableReadOnly(",
+        "VK_ShadowMap_PeekPointCacheEntry(",
+        "VK_ShadowMap_PeekProjectedCacheEntry(",
+    ):
+        require(estimate, read_only, "read-only admission estimate")
+
+    history_const = braced_body(
+        shadow_map,
+        "static const vkShadowLightHistory_t *VK_ShadowMap_FindLightHistoryConst(",
+        "pure light-history lookup",
+    )
+    for mutating in ("oldest", "= tr.frameCount", "history.valid = true"):
+        if mutating in history_const:
+            raise AssertionError(
+                "The const history lookup must never claim or evict a slot"
+            )
+
+    # Staleness needs the frame the CONTENT was written, not the frame a view
+    # last touched the slot; a cache hit refreshes the latter every frame.
+    for entry_marker, context in (
+        ("typedef struct vkProjectedShadowCacheEntry_s", "projected entry"),
+        ("typedef struct vkPointShadowCacheEntry_s", "point entry"),
+    ):
+        entry = braced_body(shadow_map, entry_marker, context)
+        require_compact(
+            entry,
+            "int lastUpdatedFrame;",
+            f"{context} records its content write",
+        )
+    finalize = braced_body(
+        shadow_map,
+        "static void VK_ShadowMap_FinalizeCachePasses(",
+        "resident entry publication",
+    )
+    if finalize.count("lastUpdatedFrame = tr.frameCount;") != 2:
+        raise AssertionError(
+            "Both resident classes must stamp their content-write frame on publication"
+        )
+
+    # Ordering decides WHICH lights spend a limited budget; the running count
+    # still decides when it is gone, and a required map bypasses both.
+    schedule = braced_body(
+        shadow_map,
+        "static vkShadowSchedule_t VK_ShadowMap_SchedulePass(",
+        "budget admission gate",
+    )
+    require_compact(
+        schedule,
+        """const bool admissionDenied = updateBudget > 0
+            && vkShadowAdmissionsActive
+            && !VK_ShadowMap_UpdateAdmitted( lightIndex );""",
+        "scheduling honours the admission list",
+    )
+    require_compact(
+        schedule,
+        """if ( updateBudget > 0
+                && ( vkShadow.freshUpdates >= updateBudget || admissionDenied )
+                && !mapRequiredForCorrectness ) {""",
+        "a correctness-required map still bypasses the budget",
+    )
+
+    prepare = braced_body(
+        shadow_map,
+        "int VK_ShadowMap_PrepareViewLights(",
+        "per-view admission build",
+    )
+    require_order(
+        prepare,
+        (
+            "VK_ShadowMap_BeginCacheView( viewDef );",
+            "VK_ShadowMap_BuildUpdateAdmissions( viewDef );",
+        ),
+        "admissions are built before any light can claim the budget",
+    )
+
+
 def validate_ci_registration() -> None:
     validator = read("tools/validation/openq4_validate.py")
     commit = read(".github/workflows/commit-validation.yml")
@@ -5869,6 +6013,7 @@ def main() -> None:
     validate_dynamic_caster_composition_contract()
     validate_csm_static_cache_contract()
     validate_shadow_debug_mode_contract()
+    validate_update_admission_contract()
     validate_packed_shadow_geometry()
     validate_fail_closed_target_and_stencil_behavior()
     validate_ci_registration()
