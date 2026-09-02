@@ -142,6 +142,8 @@ typedef struct vkProjectedShadowCacheEntry_s {
 	vkShadowReceiverPass_t passKind;
 	int					signature;
 	int					tileSize;
+	int					blockSize;	// tileSize * atlasDiv: a CSM light's resident
+									// content is the whole contiguous cascade block
 	int					lastUsedFrame;
 	shadowMapProjectedLightState_t projectedState;
 	VkImage				image;
@@ -459,8 +461,8 @@ static void VK_ShadowMap_DestroyProjectedCaches( void ) {
 }
 
 static void VK_ShadowMap_DestroyAtlas( void ) {
-	// Reset class resource truth when the atlas disappears. Vulkan still
-	// publishes conservative false to the front end.
+	// Reset class resource truth when the atlas disappears: the front-end
+	// elision gate must see false again until the resources prove out.
 	vkShadowProjectedResourcesOkGeneration = -1;
 	VK_ShadowMap_DestroyProjectedCaches();
 	if ( vkCtx.device == VK_NULL_HANDLE ) {
@@ -1159,12 +1161,17 @@ static bool VK_ShadowMap_StaticCacheable(
 		return false;
 	}
 
-	// Vulkan does not cache composed alpha/translucent maps, and it
-	// deliberately excludes view-fitted CSM until a separately verified
-	// exact receiver-state contract exists.
-	if ( !pointLight && ( cascadeCount != 1 || atlasDiv != 1 ) ) {
+	// Vulkan does not cache composed alpha/translucent maps. View-fitted CSM
+	// reuse follows the GL gate (RB_ShadowMapStaticCacheable): a resident
+	// cascade block was fitted to the camera it was rendered from, and
+	// AllocateProjectedPass restores that exact fit along with the tiles, so
+	// the reuse is self-consistent but deliberately stale. That is why
+	// r_shadowMapCacheCSM defaults off on both backends.
+	if ( !pointLight && cascadeCount > 1
+			&& !r_shadowMapCacheCSM.GetBool() ) {
 		return false;
 	}
+	(void)atlasDiv;
 	if ( passKind == VK_SHADOW_RECEIVER_LOCAL
 			&& vLight->globalShadowMapCasters == NULL ) {
 		return false;
@@ -1264,13 +1271,28 @@ static bool VK_ShadowMap_EnsureProjectedCacheConfiguration(
 	return true;
 }
 
-static bool VK_ShadowMap_EnsureProjectedCacheImage( const int index ) {
+// blockSize is the resident content's edge: one tile for an ordinary
+// projected light, tileSize * atlasDiv for a cached CSM block. A slot reused
+// at a different block edge retires its image first; the device is idled
+// because frames in flight may still reference it.
+static bool VK_ShadowMap_EnsureProjectedCacheImage( const int index,
+		const int blockSize ) {
 	if ( index < 0 || index >= VK_SHADOW_MAX_CACHE_SLOTS
-			|| vkShadow.projectedCacheTileSize <= 0 ) {
+			|| vkShadow.projectedCacheTileSize <= 0 || blockSize <= 0 ) {
 		return false;
 	}
 	vkProjectedShadowCacheEntry_t &entry =
 			vkShadow.projectedCache[ index ];
+	if ( entry.image != VK_NULL_HANDLE
+			&& entry.blockSize != blockSize ) {
+		vkDeviceWaitIdle( vkCtx.device );
+		vmaDestroyImage( vkCtx.allocator, entry.image,
+				entry.allocation );
+		entry.image = VK_NULL_HANDLE;
+		entry.allocation = NULL;
+		entry.layout = VK_IMAGE_LAYOUT_UNDEFINED;
+		VK_ShadowMap_ClearProjectedEntryMetadata( entry );
+	}
 	if ( entry.image != VK_NULL_HANDLE ) {
 		return true;
 	}
@@ -1280,8 +1302,8 @@ static bool VK_ShadowMap_EnsureProjectedCacheImage( const int index ) {
 	ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
 	ici.imageType = VK_IMAGE_TYPE_2D;
 	ici.format = vkCtx.shadowDepthFormat;
-	ici.extent.width = (uint32_t)vkShadow.projectedCacheTileSize;
-	ici.extent.height = (uint32_t)vkShadow.projectedCacheTileSize;
+	ici.extent.width = (uint32_t)blockSize;
+	ici.extent.height = (uint32_t)blockSize;
 	ici.extent.depth = 1;
 	ici.mipLevels = 1;
 	ici.arrayLayers = 1;
@@ -1300,13 +1322,14 @@ static bool VK_ShadowMap_EnsureProjectedCacheImage( const int index ) {
 		return false;
 	}
 	entry.layout = VK_IMAGE_LAYOUT_UNDEFINED;
+	entry.blockSize = blockSize;
 	return true;
 }
 
 static int VK_ShadowMap_FindProjectedCacheEntry(
 		const idRenderWorldLocal *renderWorld, const int lightIndex,
 		const vkShadowReceiverPass_t passKind, const int signature,
-		const int tileSize ) {
+		const int tileSize, const int blockSize ) {
 	const int limit = VK_ShadowMap_ProjectedCacheSlotLimit();
 	for ( int i = 0 ; i < limit ; i++ ) {
 		vkProjectedShadowCacheEntry_t &entry =
@@ -1318,6 +1341,7 @@ static int VK_ShadowMap_FindProjectedCacheEntry(
 				&& entry.passKind == passKind
 				&& entry.signature == signature
 				&& entry.tileSize == tileSize
+				&& entry.blockSize == blockSize
 				&& entry.image != VK_NULL_HANDLE
 				&& entry.layout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL ) {
 			entry.lastUsedFrame = tr.frameCount;
@@ -1354,7 +1378,7 @@ static int VK_ShadowMap_FindPointCacheEntry(
 }
 
 static int VK_ShadowMap_AllocProjectedCacheEntry(
-		const int tileSize ) {
+		const int tileSize, const int blockSize ) {
 	const int limit = VK_ShadowMap_ProjectedCacheSlotLimit();
 	if ( limit <= 0
 			|| !VK_ShadowMap_EnsureProjectedCacheConfiguration(
@@ -1378,11 +1402,13 @@ static int VK_ShadowMap_AllocProjectedCacheEntry(
 		}
 	}
 	if ( selected < 0
-			|| !VK_ShadowMap_EnsureProjectedCacheImage( selected ) ) {
+			|| !VK_ShadowMap_EnsureProjectedCacheImage( selected,
+					blockSize ) ) {
 		return -1;
 	}
 	VK_ShadowMap_ClearProjectedEntryMetadata(
 			vkShadow.projectedCache[ selected ] );
+	vkShadow.projectedCache[ selected ].blockSize = blockSize;
 	vkShadow.projectedCache[ selected ].reserved = true;
 	return selected;
 }
@@ -1456,6 +1482,11 @@ static vkShadowSchedule_t VK_ShadowMap_SchedulePass(
 	schedule.cacheable = VK_ShadowMap_StaticCacheable(
 			vLight, viewDef, schedule.cachePassKind, pointLight,
 			cascadeCount, atlasDiv );
+	// A CSM light's resident content is the whole contiguous cascade block,
+	// not one tile; ordinary projected lights keep atlasDiv 1 and are
+	// unaffected.
+	const int projectedBlockSize = resourceSize
+			* idMath::ClampInt( 1, 2, atlasDiv );
 
 	const idRenderWorldLocal *renderWorld =
 			viewDef != NULL ? viewDef->renderWorld : NULL;
@@ -1469,7 +1500,8 @@ static vkShadowSchedule_t VK_ShadowMap_SchedulePass(
 				: VK_ShadowMap_FindProjectedCacheEntry(
 						renderWorld, lightIndex,
 						schedule.cachePassKind,
-						schedule.signature, resourceSize );
+						schedule.signature, resourceSize,
+						projectedBlockSize );
 		if ( schedule.cacheEntry >= 0 ) {
 			schedule.action = VK_SHADOW_SCHEDULE_REUSE;
 			if ( pointLight ) {
@@ -1511,7 +1543,7 @@ static vkShadowSchedule_t VK_ShadowMap_SchedulePass(
 		schedule.cacheEntry = pointLight
 				? VK_ShadowMap_AllocPointCacheEntry()
 				: VK_ShadowMap_AllocProjectedCacheEntry(
-						resourceSize );
+						resourceSize, projectedBlockSize );
 		// Cache allocation is optional. Failure remains a normal fresh
 		// scratch/atlas update and never bypasses shadowing.
 	}
@@ -1593,6 +1625,14 @@ static bool VK_ShadowMap_PassHasCasters( const viewLight_t *vLight,
 // A receiver ownership's dynamic caster chains, in the same LOCAL/GLOBAL
 // split VK_ShadowMap_PassHasCasters uses: LOCAL maps contain global casters,
 // GLOBAL maps contain global + local casters.
+// The physical edge of a projected light's resident/atlas content: one tile
+// for an ordinary projector, the contiguous atlasDiv^2 cascade block for CSM.
+static int VK_ShadowMap_ProjectedBlockSize(
+		const vkShadowLightState_t &light ) {
+	return light.tileSize
+			* idMath::ClampInt( 1, 2, light.projectedState.atlasDiv );
+}
+
 static bool VK_ShadowMap_PassHasDynamicCasters( const viewLight_t *vLight,
 		const vkShadowReceiverPass_t receiverPass ) {
 	if ( vLight == NULL ) {
@@ -3115,6 +3155,8 @@ static bool VK_ClassicShadow_ValidatePhysicalPass(
 			&& cache->renderWorld == view.viewDef->renderWorld
 			&& cache->signature == pass.cacheSignature
 			&& cache->tileSize == light.tileSize
+			&& cache->blockSize
+				== VK_ShadowMap_ProjectedBlockSize( light )
 			&& cache->image != VK_NULL_HANDLE
 			&& cache->layout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 	}
@@ -3719,6 +3761,8 @@ static void VK_ShadowMap_FinalizeCachePasses(
 								light.vLight, receiverPass );
 				cache.signature = pass.cacheSignature;
 				cache.tileSize = light.tileSize;
+				cache.blockSize =
+						VK_ShadowMap_ProjectedBlockSize( light );
 				cache.lastUsedFrame = tr.frameCount;
 				cache.projectedState = light.projectedState;
 			}
@@ -3855,6 +3899,8 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 							|| cache->signature
 								!= pass.cacheSignature
 							|| cache->tileSize != light.tileSize
+							|| cache->blockSize
+								!= VK_ShadowMap_ProjectedBlockSize( light )
 							|| cache->image == VK_NULL_HANDLE
 							|| cache->layout
 								!= VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL ) {
@@ -4209,7 +4255,8 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 							vkShadow.atlasImage,
 							pass.tileX, pass.tileY,
 							cache.image, 0, 0,
-							light.tileSize );
+							VK_ShadowMap_ProjectedBlockSize(
+									light ) );
 					VK_ShadowMap_ImageBarrier( cmd, cache.image, 1,
 							VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 							VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
@@ -4291,7 +4338,8 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 							cache.image, 0, 0,
 							vkShadow.atlasImage,
 							pass.tileX, pass.tileY,
-							light.tileSize );
+							VK_ShadowMap_ProjectedBlockSize(
+									light ) );
 				}
 			}
 		}

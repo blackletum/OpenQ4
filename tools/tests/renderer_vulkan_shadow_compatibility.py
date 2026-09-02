@@ -4249,7 +4249,7 @@ def validate_exact_static_cache_and_admission_contract() -> None:
         "dynamic caster cache exclusion",
     )
     for exclusion in (
-        "haveDynamicCasters",
+        "dynamicsDefeatCache",
         "vLight->shadowMapCasterCount <= 0",
         "vLight->shadowMapStaticCasterCount <= 0",
         "vLight->shadowMapAlphaCasterCount > 0",
@@ -4258,13 +4258,17 @@ def validate_exact_static_cache_and_admission_contract() -> None:
         "vLight->localTranslucentShadowMapCasters != NULL",
     ):
         require(static_gate, exclusion, f"opaque static-only exclusion {exclusion}")
+    # GL parity: view-fitted CSM reuse is an opt-in cvar gate, not a
+    # structural exclusion. AllocateProjectedPass restores the resident fit
+    # along with the tiles, so the reuse is self-consistent but stale, which
+    # is why r_shadowMapCacheCSM defaults off on both backends.
     require_compact(
         static_gate,
-        """if ( !pointLight
-            && ( cascadeCount != 1 || atlasDiv != 1 ) ) {
+        """if ( !pointLight && cascadeCount > 1
+            && !r_shadowMapCacheCSM.GetBool() ) {
             return false;
         }""",
-        "projected CSM cache exclusion",
+        "projected CSM cache gate",
     )
     require(
         static_gate,
@@ -4361,7 +4365,7 @@ def validate_exact_static_cache_and_admission_contract() -> None:
         (
             "static int VK_ShadowMap_AllocProjectedCacheEntry(",
             "projected cache LRU allocation",
-            "VK_ShadowMap_EnsureProjectedCacheImage( selected )",
+            "VK_ShadowMap_EnsureProjectedCacheImage( selected, blockSize )",
             "projectedCache",
         ),
         (
@@ -4637,7 +4641,7 @@ def validate_exact_static_cache_and_admission_contract() -> None:
                 vkShadow.atlasImage,
                 pass.tileX, pass.tileY,
                 cache.image, 0, 0,
-                light.tileSize );""",
+                VK_ShadowMap_ProjectedBlockSize( light ) );""",
             "cache.layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;",
             "if ( haveCacheHits )",
             "VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL",
@@ -4645,7 +4649,7 @@ def validate_exact_static_cache_and_admission_contract() -> None:
                 cache.image, 0, 0,
                 vkShadow.atlasImage,
                 pass.tileX, pass.tileY,
-                light.tileSize );""",
+                VK_ShadowMap_ProjectedBlockSize( light ) );""",
             "VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL",
             "vkShadow.atlasLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;",
         ),
@@ -5509,9 +5513,9 @@ def validate_dynamic_caster_composition_contract() -> None:
         render,
         (
             # publication copies the static-only tile out first ...
-            "VK_ShadowMap_CopyDepthTile( cmd, vkShadow.atlasImage, pass.tileX, pass.tileY, cache.image, 0, 0, light.tileSize );",
+            "VK_ShadowMap_CopyDepthTile( cmd, vkShadow.atlasImage, pass.tileX, pass.tileY, cache.image, 0, 0, VK_ShadowMap_ProjectedBlockSize( light ) );",
             # ... then a resident hit restores its static tile ...
-            "VK_ShadowMap_CopyDepthTile( cmd, cache.image, 0, 0, vkShadow.atlasImage, pass.tileX, pass.tileY, light.tileSize );",
+            "VK_ShadowMap_CopyDepthTile( cmd, cache.image, 0, 0, vkShadow.atlasImage, pass.tileX, pass.tileY, VK_ShadowMap_ProjectedBlockSize( light ) );",
             # ... and only then do the dynamics compose over both.
             "if ( projectedComposeCount > 0 && casterPipeline != VK_NULL_HANDLE )",
             "depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;",
@@ -5525,6 +5529,118 @@ def validate_dynamic_caster_composition_contract() -> None:
         raise AssertionError(
             "The compose scope must preserve the cached tile instead of clearing it"
         )
+
+
+def validate_csm_static_cache_contract() -> None:
+    """r_shadowMapCacheCSM parity.
+
+    A cached CSM light's resident content is the whole contiguous cascade
+    block, not one tile. Copying or matching a single tile would restore a
+    quarter of the cascades and leave the rest holding whatever the atlas
+    row-scan last put there, so the physical block edge is part of both the
+    slot's identity and every transfer.
+    """
+    shadow_map = read("src/renderer/Vulkan/vk_ShadowMap.cpp")
+
+    block_size = braced_body(
+        shadow_map,
+        "static int VK_ShadowMap_ProjectedBlockSize(",
+        "projected resident block edge",
+    )
+    require_compact(
+        block_size,
+        """return light.tileSize
+            * idMath::ClampInt( 1, 2, light.projectedState.atlasDiv );""",
+        "block edge is tileSize * atlasDiv",
+    )
+
+    require_compact(
+        shadow_map,
+        "int blockSize;",
+        "resident entries record their physical block edge",
+    )
+
+    ensure_image = braced_body(
+        shadow_map,
+        "static bool VK_ShadowMap_EnsureProjectedCacheImage(",
+        "projected cache image creation",
+    )
+    require_order(
+        ensure_image,
+        (
+            # a slot reused at a different block edge retires its image first
+            "if ( entry.image != VK_NULL_HANDLE && entry.blockSize != blockSize )",
+            "vkDeviceWaitIdle( vkCtx.device );",
+            "vmaDestroyImage( vkCtx.allocator, entry.image, entry.allocation );",
+            "VK_ShadowMap_ClearProjectedEntryMetadata( entry );",
+            "ici.extent.width = (uint32_t)blockSize;",
+            "ici.extent.height = (uint32_t)blockSize;",
+            "entry.blockSize = blockSize;",
+        ),
+        "block-sized resident images retire on a size change",
+    )
+
+    find_entry = braced_body(
+        shadow_map,
+        "static int VK_ShadowMap_FindProjectedCacheEntry(",
+        "projected exact resident lookup",
+    )
+    require_compact(
+        find_entry,
+        "&& entry.blockSize == blockSize",
+        "an exact hit must match the physical block edge",
+    )
+
+    schedule = braced_body(
+        shadow_map,
+        "static vkShadowSchedule_t VK_ShadowMap_SchedulePass(",
+        "projected cache scheduling",
+    )
+    require_compact(
+        schedule,
+        """const int projectedBlockSize = resourceSize
+            * idMath::ClampInt( 1, 2, atlasDiv );""",
+        "scheduling derives the cascade block edge",
+    )
+    for threaded in (
+        "schedule.signature, resourceSize, projectedBlockSize );",
+        "VK_ShadowMap_AllocProjectedCacheEntry( resourceSize, projectedBlockSize );",
+    ):
+        require_compact(
+            schedule, threaded, "block edge reaches lookup and allocation"
+        )
+
+    render = braced_body(
+        shadow_map,
+        "bool VK_ShadowMap_RenderAtlas(",
+        "cached shadow rendering",
+    )
+    require_compact(
+        render,
+        "|| cache->blockSize != VK_ShadowMap_ProjectedBlockSize( light )",
+        "a resident hit revalidates the physical block edge",
+    )
+    finalize = braced_body(
+        shadow_map,
+        "static void VK_ShadowMap_FinalizeCachePasses(",
+        "resident entry publication",
+    )
+    require_compact(
+        finalize,
+        "cache.blockSize = VK_ShadowMap_ProjectedBlockSize( light );",
+        "publication records the physical block edge",
+    )
+
+    validate_pass = braced_body(
+        shadow_map,
+        "static bool VK_ClassicShadow_ValidatePhysicalPass(",
+        "sealed-stream physical reconciliation",
+    )
+    require_compact(
+        validate_pass,
+        "&& cache->blockSize == VK_ShadowMap_ProjectedBlockSize( light )",
+        "the sealed stream reconciles the same block edge",
+    )
 
 
 def validate_ci_registration() -> None:
@@ -5560,6 +5676,7 @@ def main() -> None:
     validate_shadow_contact_and_gl_robustness_contract()
     validate_exact_static_cache_and_admission_contract()
     validate_dynamic_caster_composition_contract()
+    validate_csm_static_cache_contract()
     validate_packed_shadow_geometry()
     validate_fail_closed_target_and_stencil_behavior()
     validate_ci_registration()
