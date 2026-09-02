@@ -215,7 +215,11 @@ typedef struct vkShadowMapState_s {
 	int					pointFreshUpdates;
 	int					composePasses;	// cached static tiles + this view's dynamics
 	int					budgetFallbacks;
+	int					admissionDenied;	// budget spent on higher-scoring lights
 	int					subviewFallbacks;
+	int					atlasTilesRendered;	// cascade tiles whose depth was written
+	int					atlasTilesAllocated;	// atlasDiv^2 blocks claimed
+	int					pointFacesRendered;
 	int					numLights;
 	vkShadowLightState_t lights[ VK_SHADOW_MAX_LIGHTS ];
 } vkShadowMapState_t;
@@ -435,6 +439,10 @@ static void VK_ShadowMap_ReleasePreparedLights( const bool markSticky ) {
 	vkShadow.projectedFreshUpdates = 0;
 	vkShadow.pointFreshUpdates = 0;
 	vkShadow.composePasses = 0;
+	vkShadow.admissionDenied = 0;
+	vkShadow.atlasTilesRendered = 0;
+	vkShadow.atlasTilesAllocated = 0;
+	vkShadow.pointFacesRendered = 0;
 }
 
 void VK_ShadowMap_AbandonPreparedLights( void ) {
@@ -1002,8 +1010,11 @@ static int VK_ShadowMap_BuildPassSignatureForView(
 
 	if ( pointLight ) {
 		hash = VK_ShadowMap_HashInt( hash, resourceSize );
-		hash = VK_ShadowMap_HashInt( hash,
-				r_shadowMapPointHighPrecision.GetBool() ? 1 : 0 );
+		// r_shadowMapPointHighPrecision selects between OpenGL's packed
+		// RGBA8 and fp16 colour cubes. Vulkan always stores native depth,
+		// which quantizes finer than either, so the cvar cannot change this
+		// cube's contents and must not partition the cache -- hashing it
+		// would discard every resident point map on an inert toggle.
 		hash = VK_ShadowMap_HashInt( hash,
 				r_shadowMapPointDepthCompare.GetBool() ? 1 : 0 );
 		hash = VK_ShadowMap_HashFloat( hash,
@@ -1625,6 +1636,11 @@ static vkShadowSchedule_t VK_ShadowMap_SchedulePass(
 		schedule.action = VK_SHADOW_SCHEDULE_FALLBACK;
 		schedule.cacheEntry = -1;
 		vkShadow.budgetFallbacks++;
+		if ( admissionDenied ) {
+			// separable from an exhausted budget: this light lost the
+			// ordering, it did not merely arrive late
+			vkShadow.admissionDenied++;
+		}
 		return schedule;
 	}
 
@@ -1987,6 +2003,111 @@ static void VK_ShadowMap_AliasPass( vkShadowLightState_t &light,
 	light.passes[ receiverPass ].resourcePass = resourcePass;
 }
 
+// Approximate resident shadow GPU memory (RB_ShadowMapResidentBytes
+// parity): the atlas, every created resident projected image, and every
+// created cube. The cost was otherwise invisible, and only a vid_restart
+// ever reclaimed it.
+static double VK_ShadowMap_DepthBytesPerPixel( void ) {
+	switch ( vkCtx.shadowDepthFormat ) {
+	case VK_FORMAT_D16_UNORM:
+		return 2.0;
+	case VK_FORMAT_D24_UNORM_S8_UINT:
+	case VK_FORMAT_X8_D24_UNORM_PACK32:
+	case VK_FORMAT_D32_SFLOAT:
+		return 4.0;
+	case VK_FORMAT_D32_SFLOAT_S8_UINT:
+		return 8.0;
+	default:
+		return 4.0;
+	}
+}
+
+static double VK_ShadowMap_ResidentBytes( void ) {
+	const double bytesPerPixel = VK_ShadowMap_DepthBytesPerPixel();
+	double bytes = 0.0;
+	if ( vkShadow.atlasImage != VK_NULL_HANDLE ) {
+		bytes += (double)vkShadow.atlasSize * (double)vkShadow.atlasSize
+				* bytesPerPixel;
+	}
+	for ( int i = 0 ; i < VK_SHADOW_MAX_CACHE_SLOTS ; i++ ) {
+		const vkProjectedShadowCacheEntry_t &projected =
+				vkShadow.projectedCache[ i ];
+		if ( projected.image != VK_NULL_HANDLE ) {
+			bytes += (double)projected.blockSize
+					* (double)projected.blockSize * bytesPerPixel;
+		}
+		if ( vkShadow.pointCache[ i ].cube.image != VK_NULL_HANDLE ) {
+			bytes += (double)vkShadow.pointCubeFaceSize
+					* (double)vkShadow.pointCubeFaceSize * bytesPerPixel
+					* 6.0;
+		}
+	}
+	for ( int i = 0 ; i < VK_SHADOW_MAX_POINT_CUBES ; i++ ) {
+		if ( vkShadow.pointCubes[ i ].image != VK_NULL_HANDLE ) {
+			bytes += (double)vkShadow.pointCubeFaceSize
+					* (double)vkShadow.pointCubeFaceSize * bytesPerPixel
+					* 6.0;
+		}
+	}
+	return bytes;
+}
+
+// r_shadowMapReport 2: one line per admitted light, naming the decision each
+// receiver ownership reached. The view-level counters say how much happened;
+// this says which light it happened to.
+static void VK_ShadowMap_ReportViewLights( void ) {
+	if ( r_shadowMapReport.GetInteger() < 2 ) {
+		return;
+	}
+	for ( int i = 0 ; i < vkShadow.numLights ; i++ ) {
+		const vkShadowLightState_t &light = vkShadow.lights[ i ];
+		const viewLight_t *vLight = light.vLight;
+		if ( vLight == NULL ) {
+			continue;
+		}
+		const shadowMapLightClassification_t classification =
+				R_ClassifyShadowMapLight( vLight );
+		const char *outcome[ VK_SHADOW_RECEIVER_PASS_COUNT ];
+		for ( int passIndex = 0 ;
+				passIndex < VK_SHADOW_RECEIVER_PASS_COUNT ; passIndex++ ) {
+			const vkShadowPassState_t &pass = light.passes[ passIndex ];
+			if ( !pass.valid ) {
+				outcome[ passIndex ] = "stencil";
+			} else if ( pass.resourcePass
+					!= (vkShadowReceiverPass_t)passIndex ) {
+				outcome[ passIndex ] = "alias";
+			} else if ( pass.cacheHit ) {
+				outcome[ passIndex ] = pass.composeDynamic
+						? "reuse+compose" : "reuse";
+			} else if ( pass.cacheUpdate ) {
+				outcome[ passIndex ] = pass.composeDynamic
+						? "publish+compose" : "publish";
+			} else {
+				outcome[ passIndex ] = "scratch";
+			}
+		}
+		common->Printf(
+				"SM pass light[%d] '%s' class=%s type=%s csm=%d cascades=%d atlasDiv=%d tile=%d LOCAL=%s GLOBAL=%s casters(static=%d dynamic=%d alpha=%d) receivers(local=%d global=%d translucent=%d)\n",
+				vLight->lightDef != NULL ? vLight->lightDef->index : -1,
+				vLight->lightShader != NULL
+						? vLight->lightShader->GetName() : "<null>",
+				R_ShadowMapLightClassName( classification.lightClass ),
+				light.pointLight ? "point" : "projected",
+				classification.csmEnabled ? 1 : 0,
+				light.pointLight ? 1 : light.projectedState.cascadeCount,
+				light.pointLight ? 1 : light.projectedState.atlasDiv,
+				light.tileSize,
+				outcome[ VK_SHADOW_RECEIVER_LOCAL ],
+				outcome[ VK_SHADOW_RECEIVER_GLOBAL ],
+				vLight->shadowMapStaticCasterCount,
+				vLight->shadowMapDynamicCasterCount,
+				vLight->shadowMapAlphaCasterCount,
+				vLight->localInteractions != NULL ? 1 : 0,
+				vLight->globalInteractions != NULL ? 1 : 0,
+				vLight->translucentInteractions != NULL ? 1 : 0 );
+	}
+}
+
 static void VK_ShadowMap_ReportViewCache( const viewDef_t *viewDef ) {
 	if ( r_shadowMapReport.GetInteger() < 1 ) {
 		return;
@@ -2012,7 +2133,7 @@ static void VK_ShadowMap_ReportViewCache( const viewDef_t *viewDef ) {
 				|| vkShadow.pointCache[ i ].reserved ) ? 1 : 0;
 	}
 	common->Printf(
-			"Vulkan shadow cache: view=%s exact=%d/%d projected/point fresh=%d/%d composed=%d fallback=%d budget/%d subview slots=%d/%d projected %d/%d point\n",
+			"Vulkan shadow cache: view=%s exact=%d/%d projected/point fresh=%d/%d composed=%d fallback=%d budget (%d admission)/%d subview tiles=%d/%d pointFaces=%d resident=%.1fMB slots=%d/%d projected %d/%d point\n",
 			( viewDef != NULL && viewDef->isSubview )
 				? "subview" : "main",
 			vkShadow.projectedCacheHits,
@@ -2021,9 +2142,30 @@ static void VK_ShadowMap_ReportViewCache( const viewDef_t *viewDef ) {
 			vkShadow.pointFreshUpdates,
 			vkShadow.composePasses,
 			vkShadow.budgetFallbacks,
+			vkShadow.admissionDenied,
 			vkShadow.subviewFallbacks,
+			vkShadow.atlasTilesRendered,
+			vkShadow.atlasTilesAllocated,
+			vkShadow.pointFacesRendered,
+			VK_ShadowMap_ResidentBytes() / ( 1024.0 * 1024.0 ),
 			projectedSlots, projectedLimit,
 			pointSlots, pointLimit );
+	// r_shadowMapGpuTimerQueries and r_shadowMapGpuSyncTimings stay
+	// OpenGL-only: one needs a Vulkan timestamp query pool scoped to the
+	// shadow pass, and the other is a glFinish construct with no Vulkan
+	// equivalent. Say so rather than printing zeroes that read as fast.
+	if ( r_shadowMapGpuTimerQueries.GetBool()
+			|| r_shadowMapGpuSyncTimings.GetBool() ) {
+		common->Printf(
+				"Vulkan shadow timings: GPU shadow-pass timing is OpenGL-only"
+				" (r_shadowMapGpuTimerQueries / r_shadowMapGpuSyncTimings)\n" );
+	}
+	if ( r_shadowMapPointHighPrecision.GetBool() ) {
+		common->Printf(
+				"Vulkan shadow storage: r_shadowMapPointHighPrecision is"
+				" OpenGL-only; point cubes always store native depth\n" );
+	}
+	VK_ShadowMap_ReportViewLights();
 }
 
 // A resident entry matching this signature exists, without reserving it.
@@ -2300,6 +2442,10 @@ int VK_ShadowMap_PrepareViewLights( const viewDef_t *viewDef,
 	vkShadow.projectedFreshUpdates = 0;
 	vkShadow.pointFreshUpdates = 0;
 	vkShadow.composePasses = 0;
+	vkShadow.admissionDenied = 0;
+	vkShadow.atlasTilesRendered = 0;
+	vkShadow.atlasTilesAllocated = 0;
+	vkShadow.pointFacesRendered = 0;
 	vkShadow.budgetFallbacks = 0;
 	vkShadow.subviewFallbacks = 0;
 
@@ -4443,6 +4589,8 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 					int drawnCasters = 0;
 					const int cascadeCount = idMath::ClampInt( 1, SHADOWMAP_PROJECTED_MAX_CASCADES, light.projectedState.cascadeCount );
 					const int atlasDiv = idMath::ClampInt( 1, 2, light.projectedState.atlasDiv );
+					vkShadow.atlasTilesRendered += cascadeCount;
+					vkShadow.atlasTilesAllocated += atlasDiv * atlasDiv;
 					for ( int cascadeIndex = 0 ;
 							cascadeIndex < cascadeCount ;
 							cascadeIndex++ ) {
@@ -4981,6 +5129,7 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 						classicPass != NULL
 							? classicPass->pass->point.lightOrigin[ 2 ]
 							: light.pointLightOrigin[ 2 ] );
+				vkShadow.pointFacesRendered += 6;
 				for ( int cubeFace = 0 ; cubeFace < 6 ; cubeFace++ ) {
 					float faceViewMatrix[ 16 ];
 					VK_ShadowMap_PointFaceViewMatrix(

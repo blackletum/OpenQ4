@@ -5978,6 +5978,112 @@ def validate_update_admission_contract() -> None:
     )
 
 
+def validate_shadow_report_and_storage_honesty() -> None:
+    """r_shadowMapReport depth, and cvars that cannot lie about Vulkan.
+
+    A report that prints zeroes for work a backend never does reads as "fast"
+    rather than "not implemented", so the two GL-only timing cvars and the
+    GL-only point storage cvar announce themselves instead.
+    """
+    shadow_map = read("src/renderer/Vulkan/vk_ShadowMap.cpp")
+    init = read("src/renderer/RenderSystem_init.cpp")
+
+    report = braced_body(
+        shadow_map,
+        "static void VK_ShadowMap_ReportViewCache(",
+        "per-view shadow report",
+    )
+    require_order(
+        report,
+        (
+            "if ( r_shadowMapReport.GetInteger() < 1 )",
+            "r_shadowMapReportInterval.GetInteger()",
+            "vkShadow.admissionDenied,",
+            "vkShadow.atlasTilesRendered,",
+            "vkShadow.atlasTilesAllocated,",
+            "vkShadow.pointFacesRendered,",
+            "VK_ShadowMap_ResidentBytes() / ( 1024.0 * 1024.0 ),",
+            "VK_ShadowMap_ReportViewLights();",
+        ),
+        "the view line reports what the view actually spent",
+    )
+    # Silence would read as zero cost; these have no Vulkan implementation.
+    require_compact(
+        report,
+        """if ( r_shadowMapGpuTimerQueries.GetBool()
+            || r_shadowMapGpuSyncTimings.GetBool() ) {""",
+        "GL-only shadow timing cvars announce themselves",
+    )
+    require_compact(
+        report,
+        "if ( r_shadowMapPointHighPrecision.GetBool() ) {",
+        "GL-only point storage cvar announces itself",
+    )
+
+    per_light = braced_body(
+        shadow_map,
+        "static void VK_ShadowMap_ReportViewLights(",
+        "per-light shadow decisions",
+    )
+    require_compact(
+        per_light,
+        "if ( r_shadowMapReport.GetInteger() < 2 )",
+        "per-light decisions are report level 2",
+    )
+    # Each ownership names the decision it reached, including the two that
+    # only exist once composition and aliasing do.
+    for outcome in (
+        '"stencil"',
+        '"alias"',
+        '"reuse+compose"',
+        '"reuse"',
+        '"publish+compose"',
+        '"publish"',
+        '"scratch"',
+    ):
+        require(per_light, outcome, "per-light ownership outcome")
+
+    resident = braced_body(
+        shadow_map,
+        "static double VK_ShadowMap_ResidentBytes(",
+        "resident shadow memory",
+    )
+    require_order(
+        resident,
+        (
+            "vkShadow.atlasImage != VK_NULL_HANDLE",
+            "projected.image != VK_NULL_HANDLE",
+            "vkShadow.pointCache[ i ].cube.image != VK_NULL_HANDLE",
+            "vkShadow.pointCubes[ i ].image != VK_NULL_HANDLE",
+        ),
+        "every created shadow image counts toward resident memory",
+    )
+
+    # An inert cvar must not partition the cache: hashing it would discard
+    # every resident point map on a toggle that changes nothing.
+    signature = braced_body(
+        shadow_map,
+        "static int VK_ShadowMap_BuildPassSignatureForView(",
+        "resident cache signature",
+    )
+    if "r_shadowMapPointHighPrecision.GetBool()" in signature:
+        raise AssertionError(
+            "Vulkan point cubes always store native depth, so the storage cvar"
+            " must not partition their cache"
+        )
+    require(
+        signature,
+        "r_shadowMapPointDepthCompare.GetBool()",
+        "the compare mode still partitions the point cache",
+    )
+
+    require(
+        init,
+        "OpenGL only: the Vulkan backend always stores native depth",
+        "the point storage cvar documents its backend scope",
+    )
+
+
 def validate_ci_registration() -> None:
     validator = read("tools/validation/openq4_validate.py")
     commit = read(".github/workflows/commit-validation.yml")
@@ -6014,6 +6120,7 @@ def main() -> None:
     validate_csm_static_cache_contract()
     validate_shadow_debug_mode_contract()
     validate_update_admission_contract()
+    validate_shadow_report_and_storage_honesty()
     validate_packed_shadow_geometry()
     validate_fail_closed_target_and_stencil_behavior()
     validate_ci_registration()
