@@ -34,17 +34,22 @@ def validate_mode(directory: str) -> None:
         "weapon == NULL || weapon->GetZoomGui() == NULL",
         "renderView != NULL ? renderView->viewaxis : firstPersonViewAxis",
         'weapon->GetZoomGui()->SetStateFloat( "playerYaw", presentedViewAxis.ToAngles().yaw );',
-        "UpdateZoomGuiViewState();",
         "Redraw( gameLocal.time );",
     ):
         require(player_cpp, token, label)
 
-    draw_hud = player_cpp.index("void idPlayer::DrawHUD( idUserInterface *_hud )")
-    update_call = player_cpp.index("UpdateZoomGuiViewState();", draw_hud)
-    debug_read = player_cpp.index('State().GetFloat( "playerYaw" )', draw_hud)
-    first_redraw = player_cpp.index("Redraw( gameLocal.time );", debug_read)
-    if update_call > debug_read or update_call > first_redraw:
-        raise AssertionError(f"{label} updates scope yaw after it is inspected or drawn")
+    # The scope GUI is an in-world surface drawn with the 3D scene, so its yaw has
+    # to be set during presentation setup. Updating it from DrawHUD ran during the
+    # 2D overlay, after R_RenderGuiSurf had already drawn the scope that frame,
+    # leaving the compass one frame behind the gun whenever the view was turning.
+    if "UpdateZoomGuiViewState();" in player_cpp:
+        raise AssertionError(f"{label} still updates scope yaw from the 2D overlay pass")
+    game_local = read(GAME_ROOT / "src" / directory / "Game_local.cpp")
+    prepare = game_local.index("void idGameLocal::PreparePlayerSceneForRender( idPlayer *player )")
+    calc_view = game_local.index("player->CalculateRenderView();", prepare)
+    update_call = game_local.index("player->UpdateZoomGuiViewState();", prepare)
+    if update_call < calc_view:
+        raise AssertionError(f"{label} updates scope yaw before the render view exists")
 
     if "rvWeaponMachinegun::Think" in machinegun or "playerViewAxis.ToAngles().yaw" in machinegun:
         raise AssertionError(f"{label} still writes scope yaw from simulation-time weapon state")

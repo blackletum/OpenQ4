@@ -6873,6 +6873,17 @@ static bool RB_SoftParticleStageContractSupported( const drawSurf_t *surf, const
 	if ( ( surf->dsFlags & DSF_BSE_EFFECT ) == 0 || ( surf->geo->surfaceFlags & STF_SOFT_PARTICLE_CANDIDATE ) == 0 ) {
 		return false;
 	}
+	// The fade compares this fragment's depth against the scene depth buffer, so
+	// it is only meaningful for surfaces whose depth is in the same range as the
+	// world's.  A weapon or model depth hack rewrites the projection for its
+	// space, so effects bolted to the view weapon - nailgun glow, muzzle work,
+	// weapon display glow - would fade against depths they cannot be compared
+	// with, washing out and flickering as the gun bobs.  RB_SSAOWorldDepthSurfFilter
+	// excludes them from its depth read for the same reason.
+	if ( surf->space == NULL || surf->space->weaponDepthHack ||
+			surf->space->modelDepthHack != 0.0f ) {
+		return false;
+	}
 	if ( R_TriHasPrimBatchMesh( surf->geo ) || pStage->newStage != NULL ) {
 		return false;
 	}
