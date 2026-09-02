@@ -1,9 +1,9 @@
 # Vulkan shadow maps — OpenGL parity closure (staging plan)
 
-Status: S1-S3 LANDED (2026-09-02) - stencil-volume elision (22eb0060),
-dynamic-caster composition (742c7b91), CSM static caching (2bc4b5ff).
-S4-S7 remain. S1 and S2 change runtime behaviour that token pins cannot
-fully cover, and still want the user's own gameplay sign-off.
+Status: S1-S7 LANDED (2026-09-02). One item is deliberately left open and one
+is deliberately out of scope; both are named below. S1, S2 and S5 change
+runtime behaviour that token pins cannot fully cover, and still want the
+user's own gameplay sign-off.
 
 Goal doc for the remaining Vulkan shadow-mapping gaps after Phase
 F2a/F2b + the 2026-07-24 shadow parity follow-up. Parent:
@@ -23,21 +23,21 @@ Most `r_shadowMap*` cvars that never appear under `src/renderer/Vulkan/`
 are still honoured there — they reach Vulkan through the shared
 `R_ShadowMapProjectedFilterSettings`,
 `R_BuildShadowMapProjectedLightState`, and `ClassicInteractionDomain`
-seals. A cvar-name grep overstates the gap. Vulkan already has CSM,
+seals. A cvar-name grep overstates the gap. Vulkan already had CSM,
 the 1/5/9/13 PCF tiers, rotated Poisson, PCSS-lite, receiver-plane
 bias, normal-offset, hashed alpha, caster culling, subview policy,
 update budgets, and both the projected-atlas and point-cube static
-caches. The verified remainder is below.
+caches. The verified remainder was:
 
-| # | Gap | GL reference | Vulkan state |
-| - | --- | ------------ | ------------ |
-| S1 | stencil volumes never elided | `draw_arb2.cpp:2996` returns generation truth | `vk_ShadowMap.cpp:327` hard-returns `false` |
-| S2 | no cached-static + dynamic compose | `SHADOWMAP_RENDER_COMPOSE_DYNAMIC`, `draw_arb2.cpp:8179` | `VK_ShadowMap_StaticCacheable` bails + invalidates on any dynamic caster, `vk_ShadowMap.cpp:1113` |
-| S3 | no CSM static caching | gated on `r_shadowMapCacheCSM` | `cascadeCount != 1 \|\| atlasDiv != 1` excluded unconditionally, `vk_ShadowMap.cpp:1141` |
-| S4 | no receiver debug modes / overlay | `uShadowDebugMode` (15 modes), `uShadowReceiverDebugReason`, `shadow_debug_overlay.vs/fs` | absent; `r_shadowMapDebugMode` / `r_shadowMapDebugOverlay` inert |
-| S5 | no importance-ordered admission | `RB_ShadowMapBuildUpdateAdmissions`, `draw_arb2.cpp:9916` | view-light-list order |
-| S6 | thin `r_shadowMapReport` | levels 1/2/3 + GPU timer queries + resident bytes | one cache line at level >= 1 |
-| S7 | `r_shadowMapPointHighPrecision` inert | packed RGBA8 / fp16 colour cube | always native depth cube; cvar silently does nothing |
+| # | Gap | Landed as |
+| - | --- | --------- |
+| S1 | stencil volumes never elided | `22eb0060` |
+| S2 | no cached-static + dynamic compose | `742c7b91` |
+| S3 | no CSM static caching | `2bc4b5ff` |
+| S4 | no receiver debug modes | `981583bf` (overlay still open) |
+| S5 | no importance-ordered admission | `c188c798` |
+| S6 | thin `r_shadowMapReport` | `b930d486` |
+| S7 | `r_shadowMapPointHighPrecision` inert | `b930d486` |
 
 ## Correction to the 2026-07-24 Vulkan stencil-elision revert
 
@@ -47,65 +47,97 @@ Air Defense run had a light whose volume was elided before the backend
 learned its admission could not be satisfied, and "the affected receiver
 had to be skipped fail-closed".
 
-That hazard no longer exists. `vk_Interactions.cpp:4081-4095` now draws
-the receiver unshadowed when nothing else resolved — "a transient loss
-of shadowing is preferable to dropping the light contribution for a
+That hazard no longer exists. `vk_Interactions.cpp` now draws the
+receiver unshadowed when nothing else resolved — "a transient loss of
+shadowing is preferable to dropping the light contribution for a
 complete frame" — which is exactly the OpenGL contract
 (`RB_ShadowMapMarkStencilFallbackSticky` then a stencil fallback over a
-possibly empty volume chain). The conservative return is now
-over-conservative relative to the code it guards, so S1 is unblocked.
+possibly empty volume chain). The conservative return was therefore
+over-conservative relative to the code it guarded, and S1 flipped it.
 
 Residual per-view Vulkan-specific miss sources after S1: atlas row-scan
 exhaustion, point-cube pool exhaustion, and caster representability.
 Each costs one unshadowed frame plus a sticky restore, which is the
 cost OpenGL already accepts. The shared front-end mirror
-(`R_ShadowMapLightWillUseShadowMaps`, `tr_light.cpp:1529`) already
-refuses to elide under a non-zero `r_shadowMapMaxUpdatesPerView` or in
-a subview with a non-zero `r_shadowMapSubviewPolicy`, so those two
-policies cannot strand an elided light on either backend.
+(`R_ShadowMapLightWillUseShadowMaps`) already refuses to elide under a
+non-zero `r_shadowMapMaxUpdatesPerView` or in a subview with a non-zero
+`r_shadowMapSubviewPolicy`, so those two policies cannot strand an
+elided light on either backend.
 
-## Stages
+## Landed record (2026-09-02)
 
 S1. `VK_ShadowMap_ResourcesKnownGood` reports the per-light-class
-    generation truth it already tracks, instead of `false`. Pin the
-    fail-open receiver contract so a later change cannot silently
-    reintroduce the 2026-07-24 fail-closed shape. Exit: shadow-mapped
-    lights carry no stencil volumes on Vulkan; an admission miss draws
-    the light unshadowed and marks it sticky.
+    generation truth it already tracked. Shadow-mapped lights no longer
+    extrude and link silhouette volumes nothing draws. The fail-open
+    receiver contract is pinned so the 2026-07-24 shape cannot return
+    unnoticed.
 
-S2. Cached-static + dynamic-caster composition for projected lights.
-    Stop treating a dynamic caster as cache-defeating: keep the cache
-    entry static-only, `vkCmdCopyImage` the resident cell into the
-    view's atlas tile, then draw only `*ShadowMapDynamicCasters` over
-    it. Mirrors `SHADOWMAP_RENDER_STATIC_ONLY` +
-    `SHADOWMAP_RENDER_COMPOSE_DYNAMIC`. Exit: a light with a moving
-    caster costs one copy plus its dynamic draws, not a full static
-    re-render.
+S2. Cached-static + dynamic-caster composition for projected lights. A
+    pass that publishes or restores a cache entry renders its static
+    chains only; after publication and restore a second depth scope with
+    loadOp LOAD draws just the dynamic chains into the same tile. A
+    composed cache hit revalidates the caster pipeline and
+    representability that an exact hit normally inherits from the update
+    which published its signature.
 
-S3. CSM static caching behind `r_shadowMapCacheCSM`, reusing S2's
-    cell/copy machinery for the `atlasDiv^2` block. Exit: the
-    unconditional `cascadeCount != 1` exclusion becomes the GL cvar
-    gate plus an exact receiver-state signature.
+    Composition is a legacy-walker feature on BOTH backends: the sealed
+    domain sets `allowCacheReuse` false for any pass with dynamic
+    casters, and OpenGL composes only in `RB_ARB2_DrawInteractions`.
+    Vulkan keeps the old conservative rule while
+    `r_rendererSharedWorldInteraction` can own the view, so a composed
+    hit can never fail the domain's physical reconciliation. That
+    coupling is load-bearing — see the comment at the `composeDynamic`
+    assignment.
 
-S4. Receiver debug modes in `interaction_shadow.frag` /
-    `interaction_shadow_point.frag` driven by the existing shadow ABI,
-    plus the `r_shadowMapDebugOverlay` mini-map. Exit: the 15
-    `shadowMapDebugMode_t` modes read the same on both backends.
+S3. CSM static caching behind `r_shadowMapCacheCSM`. Resident projected
+    entries carry the physical block edge (`tileSize * atlasDiv`); the
+    image is created at that edge, a slot reused at a different edge
+    retires its image first, and the edge joins the entry's identity so
+    a lookup cannot return a differently shaped block. Reuse restores
+    the resident fit along with the tiles, so it is self-consistent but
+    deliberately stale — which is why the cvar defaults off.
 
-S5. Importance-ordered update admission: port the
-    scissor-area / staleness / `viewInsideLight` / fairness score so a
-    limited `r_shadowMapMaxUpdatesPerView` spends its budget on the
-    same lights OpenGL would pick.
+S4. Receiver debug modes in both Vulkan interaction shaders, driven
+    through the shadow ABI. Coordinate rejection moved into a shared
+    `ProjectShadowCoord` so the invalid-mask view classifies exactly
+    what sampling rejected; the selected cascade and split blend are
+    recorded during sampling so a view describes the sample the lit path
+    took. Mode 10 is caster-side and zeroes the shadow pass's offsets.
+    Modes 13/14 upload reason 0 because Vulkan admits shadow maps per
+    light, not per receiver surface.
 
-S6. `r_shadowMapReport` levels 2/3 with per-light decisions, plus
-    resident-byte accounting and Vulkan timestamp queries for the
-    `r_shadowMapGpuTimerQueries` / `r_shadowMapGpuSyncTimings` pair.
+S5. Importance-ordered update admission. Cost is the ownership maps a
+    light would render fresh; score is screen coverage, staleness of its
+    newest resident content, and whether the camera stands inside the
+    light. The estimate is side-effect free (read-only peers of the
+    cacheability test, both resident lookups, and the history lookup),
+    because the scheduling walk runs afterwards and would otherwise see
+    state it did not create.
 
-S7. `r_shadowMapPointHighPrecision` honesty on Vulkan: either implement
-    the colour-cube storage path or document the cvar as OpenGL-only
-    and report it as such in the shadow report. Vulkan's native depth
-    cube quantises better than either colour format, so the documented
-    no-op is the expected resolution.
+S6. `r_shadowMapReport` level 1 gains admission denials separately from
+    an exhausted budget, tiles rendered against blocks allocated, cube
+    faces, and resident memory; level 2 adds a per-light line naming
+    each ownership's decision.
+
+S7. `r_shadowMapPointHighPrecision` is documented OpenGL-only and
+    announced in the Vulkan report. It also no longer partitions the
+    Vulkan point cache, where toggling it discarded every resident map
+    without being able to change a depth cube's contents.
+
+## Still open
+
+- `r_shadowMapDebugOverlay` (the shadow mini-map with its stats readout)
+  remains OpenGL-only. It is a separate 2D pass with its own program
+  (`glprogs/shadow_debug_overlay.*`), not part of the receiver shaders
+  S4 covered. `r_shadowMapDebugMode 1` already visualizes atlas UV and
+  depth per pixel, which is why this was ranked last.
+- GPU shadow-pass timings (`r_shadowMapGpuTimerQueries`,
+  `r_shadowMapGpuSyncTimings`) need a Vulkan timestamp query pool scoped
+  to the shadow pass; the second is a `glFinish` construct with no
+  Vulkan equivalent. Both announce themselves in the Vulkan report
+  rather than printing zeroes that read as "fast".
+- Translucent shadow moments stay excluded on Vulkan, per the Phase F
+  closure.
 
 ## Validation
 
@@ -115,9 +147,14 @@ Build plus the token-pinning suite; no in-game runs in this track.
 powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 compile -C builddir
 python tools/tests/renderer_vulkan_shadow_compatibility.py
 python tools/tests/renderer_vulkan_world_interaction_compatibility.py
+python tools/tests/vk_shader_header_pin.py
+python tools/tests/macos_shadow_policy.py
 ```
 
-Each stage extends `renderer_vulkan_shadow_compatibility.py` with pins
-for the contract it introduces. S1 and S2 change runtime behaviour that
-token pins cannot fully cover; both need the user's own gameplay
-sign-off before the `r_useShadowMap` default flip is reconsidered.
+Each stage extended `renderer_vulkan_shadow_compatibility.py` with pins
+for the contract it introduced, and each new pin was checked by breaking
+the source it guards and confirming the failure. Token pins cannot cover
+runtime behaviour, so S1 (lights lose their stencil volumes), S2 (moving
+casters compose over cached tiles) and S5 (which lights spend a limited
+budget) still want the user's own gameplay sign-off before the
+`r_useShadowMap` default flip is reconsidered.
