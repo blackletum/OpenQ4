@@ -209,6 +209,7 @@ typedef struct vkShadowMapState_s {
 	int					pointCacheHits;
 	int					projectedFreshUpdates;
 	int					pointFreshUpdates;
+	int					composePasses;	// cached static tiles + this view's dynamics
 	int					budgetFallbacks;
 	int					subviewFallbacks;
 	int					numLights;
@@ -429,6 +430,7 @@ static void VK_ShadowMap_ReleasePreparedLights( const bool markSticky ) {
 	vkShadow.pointCacheHits = 0;
 	vkShadow.projectedFreshUpdates = 0;
 	vkShadow.pointFreshUpdates = 0;
+	vkShadow.composePasses = 0;
 }
 
 void VK_ShadowMap_AbandonPreparedLights( void ) {
@@ -1121,28 +1123,43 @@ static bool VK_ShadowMap_StaticCacheable(
 			&& ( vLight->shadowMapDynamicCasterCount > 0
 				|| vLight->globalShadowMapDynamicCasters != NULL
 				|| vLight->localShadowMapDynamicCasters != NULL );
-	if ( history != NULL ) {
-		history->lastTouchedFrame = tr.frameCount;
-		if ( haveDynamicCasters ) {
-			history->lastDynamicFrame = tr.frameCount;
-			VK_ShadowMap_InvalidateLightCaches(
-					renderWorld, lightIndex );
-		}
-	}
-
+	// GL parity (RB_ShadowMapStaticCacheable): dynamic casters no longer
+	// defeat a PROJECTED light's cache. The front end already keeps them out
+	// of shadowMapCasterSignature, so the resident entry holds static depth
+	// only and this view composes the dynamics over the restored tile
+	// (vkShadowPassState_t::composeDynamic). The point-cube path has no
+	// composition, so there dynamics still defeat the cache outright.
+	//
+	// Composition is a legacy-walker feature on both backends. The sealed
+	// domain sets allowCacheReuse false for any pass with dynamic casters
+	// (ClassicInteractionDomain.cpp), and OpenGL likewise composes only in
+	// RB_ARB2_DrawInteractions, never in its shared-stream executor. Keep the
+	// old conservative rule while that opt-in stream can own the view so a
+	// composed hit can never fail the domain's physical reconciliation.
+	const bool dynamicsDefeatCache = haveDynamicCasters
+			&& ( pointLight
+				|| r_rendererSharedWorldInteraction.GetBool() );
 	if ( !r_shadowMapStaticCache.GetBool() || vLight == NULL
 			|| renderWorld == NULL || lightIndex < 0
-			|| haveDynamicCasters
+			|| dynamicsDefeatCache
 			|| vLight->shadowMapCasterCount <= 0
 			|| vLight->shadowMapStaticCasterCount <= 0
 			|| vLight->shadowMapAlphaCasterCount > 0
 			|| vLight->shadowMapTranslucentCasterCount > 0
 			|| vLight->globalTranslucentShadowMapCasters != NULL
 			|| vLight->localTranslucentShadowMapCasters != NULL ) {
+		if ( history != NULL && haveDynamicCasters ) {
+			history->lastDynamicFrame = tr.frameCount;
+			history->lastTouchedFrame = tr.frameCount;
+			if ( dynamicsDefeatCache ) {
+				VK_ShadowMap_InvalidateLightCaches(
+						renderWorld, lightIndex );
+			}
+		}
 		return false;
 	}
 
-	// Vulkan does not cache composed dynamic/alpha/translucent maps, and it
+	// Vulkan does not cache composed alpha/translucent maps, and it
 	// deliberately excludes view-fitted CSM until a separately verified
 	// exact receiver-state contract exists.
 	if ( !pointLight && ( cascadeCount != 1 || atlasDiv != 1 ) ) {
@@ -1158,11 +1175,16 @@ static bool VK_ShadowMap_StaticCacheable(
 		return false;
 	}
 
-	if ( history != NULL
-			&& tr.frameCount - history->lastDynamicFrame
-				< Max( 0,
-						r_shadowMapStaticHysteresisFrames.GetInteger() ) ) {
-		return false;
+	if ( history != NULL ) {
+		history->lastTouchedFrame = tr.frameCount;
+		// Only the point path bakes dynamics into the cached content, so only
+		// it must wait out the hysteresis after they disappear.
+		if ( pointLight
+				&& tr.frameCount - history->lastDynamicFrame
+					< Max( 0,
+							r_shadowMapStaticHysteresisFrames.GetInteger() ) ) {
+			return false;
+		}
 	}
 	return true;
 }
@@ -1568,6 +1590,21 @@ static bool VK_ShadowMap_PassHasCasters( const viewLight_t *vLight,
 			|| vLight->localShadowMapDynamicCasters != NULL );
 }
 
+// A receiver ownership's dynamic caster chains, in the same LOCAL/GLOBAL
+// split VK_ShadowMap_PassHasCasters uses: LOCAL maps contain global casters,
+// GLOBAL maps contain global + local casters.
+static bool VK_ShadowMap_PassHasDynamicCasters( const viewLight_t *vLight,
+		const vkShadowReceiverPass_t receiverPass ) {
+	if ( vLight == NULL ) {
+		return false;
+	}
+	if ( vLight->globalShadowMapDynamicCasters != NULL ) {
+		return true;
+	}
+	return receiverPass == VK_SHADOW_RECEIVER_GLOBAL
+		&& vLight->localShadowMapDynamicCasters != NULL;
+}
+
 static int VK_ShadowMap_ReceiverMask(
 		const vkShadowReceiverPass_t receiverPass ) {
 	return receiverPass == VK_SHADOW_RECEIVER_LOCAL
@@ -1685,6 +1722,20 @@ static bool VK_ShadowMap_AllocateProjectedPass( vkShadowLightState_t &light,
 			&& schedule.cacheEntry >= 0;
 	pass.cacheEntry = schedule.cacheEntry;
 	pass.cacheSignature = schedule.signature;
+	// Cached projected content is static-only. A pass that publishes or
+	// restores such an entry must draw this view's dynamic casters over the
+	// tile afterwards; an uncached scratch pass still draws every chain in
+	// one go.
+	//
+	// This can only become true when VK_ShadowMap_StaticCacheable admitted a
+	// light that has dynamic casters, which its dynamicsDefeatCache term
+	// permits for projected lights only while the sealed shared stream is
+	// off. That coupling is load-bearing: the sealed stream draws each pass's
+	// complete caster plan and never composes, so a composed pass reaching it
+	// would publish dynamics into a tile later reused as static content.
+	pass.composeDynamic = ( pass.cacheHit || pass.cacheUpdate )
+			&& VK_ShadowMap_PassHasDynamicCasters( light.vLight,
+					receiverPass );
 	pass.cubeIndex = -1;
 	pass.tileX = tileX;
 	pass.tileY = tileY;
@@ -1824,13 +1875,14 @@ static void VK_ShadowMap_ReportViewCache( const viewDef_t *viewDef ) {
 				|| vkShadow.pointCache[ i ].reserved ) ? 1 : 0;
 	}
 	common->Printf(
-			"Vulkan shadow cache: view=%s exact=%d/%d projected/point fresh=%d/%d fallback=%d budget/%d subview slots=%d/%d projected %d/%d point\n",
+			"Vulkan shadow cache: view=%s exact=%d/%d projected/point fresh=%d/%d composed=%d fallback=%d budget/%d subview slots=%d/%d projected %d/%d point\n",
 			( viewDef != NULL && viewDef->isSubview )
 				? "subview" : "main",
 			vkShadow.projectedCacheHits,
 			vkShadow.pointCacheHits,
 			vkShadow.projectedFreshUpdates,
 			vkShadow.pointFreshUpdates,
+			vkShadow.composePasses,
 			vkShadow.budgetFallbacks,
 			vkShadow.subviewFallbacks,
 			projectedSlots, projectedLimit,
@@ -1861,6 +1913,7 @@ int VK_ShadowMap_PrepareViewLights( const viewDef_t *viewDef,
 	vkShadow.pointCacheHits = 0;
 	vkShadow.projectedFreshUpdates = 0;
 	vkShadow.pointFreshUpdates = 0;
+	vkShadow.composePasses = 0;
 	vkShadow.budgetFallbacks = 0;
 	vkShadow.subviewFallbacks = 0;
 
@@ -2606,6 +2659,50 @@ static int VK_ShadowMap_DrawCasterChain( vkCasterPassCtx_t &ctx,
 		}
 	}
 
+	return drawnCasters;
+}
+
+// GL RB_RenderShadowMap chain selection. SHADOWMAP_RENDER_STATIC_ONLY draws
+// the two static chains into a tile that will be published as cached content;
+// SHADOWMAP_RENDER_COMPOSE_DYNAMIC draws the two dynamic chains over depth
+// that is already present; an uncached full render draws all four. LOCAL maps
+// take only the global chains, GLOBAL maps add the local ones.
+typedef enum vkShadowChainSelect_e {
+	VK_SHADOW_CHAINS_ALL = 0,
+	VK_SHADOW_CHAINS_STATIC_ONLY,
+	VK_SHADOW_CHAINS_DYNAMIC_ONLY
+} vkShadowChainSelect_t;
+
+static int VK_ShadowMap_DrawPassCasters( vkCasterPassCtx_t &ctx,
+		const vkShadowLightState_t &light,
+		const vkShadowReceiverPass_t receiverPass,
+		const int cascadeIndex,
+		const vkShadowChainSelect_t select ) {
+	const viewLight_t *vLight = light.vLight;
+	if ( vLight == NULL ) {
+		return 0;
+	}
+	const bool drawStatic = select != VK_SHADOW_CHAINS_DYNAMIC_ONLY;
+	const bool drawDynamic = select != VK_SHADOW_CHAINS_STATIC_ONLY;
+	const bool globalOwnership =
+			receiverPass == VK_SHADOW_RECEIVER_GLOBAL;
+	int drawnCasters = 0;
+	if ( drawStatic ) {
+		drawnCasters += VK_ShadowMap_DrawCasterChain( ctx, light,
+				cascadeIndex, vLight->globalShadowMapCasters );
+	}
+	if ( drawDynamic ) {
+		drawnCasters += VK_ShadowMap_DrawCasterChain( ctx, light,
+				cascadeIndex, vLight->globalShadowMapDynamicCasters );
+	}
+	if ( globalOwnership && drawStatic ) {
+		drawnCasters += VK_ShadowMap_DrawCasterChain( ctx, light,
+				cascadeIndex, vLight->localShadowMapCasters );
+	}
+	if ( globalOwnership && drawDynamic ) {
+		drawnCasters += VK_ShadowMap_DrawCasterChain( ctx, light,
+				cascadeIndex, vLight->localShadowMapDynamicCasters );
+	}
 	return drawnCasters;
 }
 
@@ -3651,6 +3748,9 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 		? vkClassicShadowTransaction.pointFreshCount : 0;
 	int pointHitCount = classicCommit
 		? vkClassicShadowTransaction.pointHitCount : 0;
+	// Projected passes whose cached tile holds static depth only and still owe
+	// this view's dynamic casters a LOAD-op scope after publication/restore.
+	int projectedComposeCount = 0;
 	VkPipeline casterPipeline = classicCommit
 		? vkClassicShadowTransaction.projectedCasterPipeline
 		: VK_Exec_CasterPipeline();
@@ -3760,8 +3860,22 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 								!= VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL ) {
 						VK_ShadowMap_InvalidatePassResource(
 								light, receiverPass );
+					} else if ( pass.composeDynamic
+							&& ( casterPipeline == VK_NULL_HANDLE
+								|| !VK_ShadowMap_PassCastersRepresentable(
+										light, receiverPass ) ) ) {
+						// An exact hit normally needs neither a caster
+						// pipeline nor representability, because the update
+						// that published the signature already proved both.
+						// A composed hit still has live dynamic casters to
+						// draw, so it needs both again.
+						VK_ShadowMap_InvalidatePassResource(
+								light, receiverPass );
 					} else {
 						projectedCount++;
+						if ( pass.composeDynamic ) {
+							projectedComposeCount++;
+						}
 					}
 					continue;
 				}
@@ -3786,6 +3900,9 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 				}
 				projectedCount++;
 				projectedFreshCount++;
+				if ( pass.composeDynamic ) {
+					projectedComposeCount++;
+				}
 			}
 		}
 	}
@@ -3959,30 +4076,16 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 								VK_ClassicShadow_DrawProjectedPass(
 									ctx, *classicPass, cascadeIndex );
 						} else {
-						const viewLight_t *vLight = light.vLight;
-						drawnCasters +=
-								VK_ShadowMap_DrawCasterChain(
-										ctx, light,
-										cascadeIndex,
-										vLight->globalShadowMapCasters );
-						drawnCasters +=
-								VK_ShadowMap_DrawCasterChain(
-										ctx, light,
-										cascadeIndex,
-										vLight->globalShadowMapDynamicCasters );
-						if ( receiverPass
-								== VK_SHADOW_RECEIVER_GLOBAL ) {
+							// A pass that will publish this tile as a cache
+							// entry renders static depth only; its dynamics
+							// compose over the published copy below.
 							drawnCasters +=
-									VK_ShadowMap_DrawCasterChain(
-											ctx, light,
+									VK_ShadowMap_DrawPassCasters(
+											ctx, light, receiverPass,
 											cascadeIndex,
-											vLight->localShadowMapCasters );
-							drawnCasters +=
-									VK_ShadowMap_DrawCasterChain(
-											ctx, light,
-											cascadeIndex,
-											vLight->localShadowMapDynamicCasters );
-						}
+											pass.composeDynamic
+												? VK_SHADOW_CHAINS_STATIC_ONLY
+												: VK_SHADOW_CHAINS_ALL );
 						}
 					}
 					// A fully transparent represented perforated chain emits
@@ -4191,6 +4294,137 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 							light.tileSize );
 				}
 			}
+		}
+
+		// GL SHADOWMAP_RENDER_COMPOSE_DYNAMIC (draw_arb2.cpp): every cached
+		// tile now holds this light's STATIC depth, whether it was just
+		// published or restored from a resident entry. Re-enter the atlas with
+		// loadOp LOAD and draw only the dynamic chains over it, so a moving
+		// caster costs one copy plus its own draws instead of a full static
+		// re-render. The cascade clip state is the light's own, so the dynamics
+		// land in exactly the projection the static tiles were rendered with.
+		if ( projectedComposeCount > 0
+				&& casterPipeline != VK_NULL_HANDLE ) {
+			// The tiles reaching this scope were produced by depth writes,
+			// cache-publication transfer reads, or resident-restore transfer
+			// writes. One layout cannot describe every producer, so take the
+			// union like the closing transition does.
+			VK_ShadowMap_ImageBarrier( cmd, vkShadow.atlasImage, 1,
+					atlasLayout,
+					VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+					VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT
+						| VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT
+						| VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+					VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+						| VK_ACCESS_2_TRANSFER_READ_BIT
+						| VK_ACCESS_2_TRANSFER_WRITE_BIT,
+					VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT
+						| VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+					VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+						| VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT );
+			atlasLayout =
+					VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+			VkRenderingAttachmentInfo depth;
+			memset( &depth, 0, sizeof( depth ) );
+			depth.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+			depth.imageView = vkShadow.atlasAttachmentView;
+			depth.imageLayout =
+					VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+			depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+			depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+			VkRenderingInfo ri;
+			memset( &ri, 0, sizeof( ri ) );
+			ri.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+			ri.renderArea.extent.width = (uint32_t)vkShadow.atlasSize;
+			ri.renderArea.extent.height = (uint32_t)vkShadow.atlasSize;
+			ri.layerCount = 1;
+			ri.pDepthAttachment = &depth;
+			ri.pStencilAttachment =
+					vkCtx.shadowDepthHasStencil ? &depth : NULL;
+			vkCmdBeginRendering( cmd, &ri );
+
+			// The fresh scope may not have run at all (a view of pure cache
+			// hits), so re-establish the whole caster state here.
+			vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+					casterPipeline );
+			vkCmdSetDepthTestEnable( cmd, VK_TRUE );
+			vkCmdSetDepthWriteEnable( cmd, VK_TRUE );
+			vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_LESS_OR_EQUAL );
+			vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
+			vkCmdSetDepthBias( cmd, 0.0f, 0.0f, 0.0f );
+			vkCmdSetStencilTestEnable( cmd, VK_FALSE );
+			vkCmdSetFrontFace( cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+			ctx.boundCullMode = (VkCullModeFlags)~0u;
+
+			for ( int i = 0 ; i < vkShadow.numLights ; i++ ) {
+				vkShadowLightState_t &light = vkShadow.lights[ i ];
+				if ( !light.valid || light.pointLight ) {
+					continue;
+				}
+				for ( int passIndex = 0 ;
+						passIndex < VK_SHADOW_RECEIVER_PASS_COUNT ;
+						passIndex++ ) {
+					const vkShadowReceiverPass_t receiverPass =
+							(vkShadowReceiverPass_t)passIndex;
+					vkShadowPassState_t &pass =
+							light.passes[ passIndex ];
+					if ( !pass.valid || !pass.composeDynamic
+							|| pass.resourcePass != receiverPass ) {
+						continue;
+					}
+					const int cascadeCount = idMath::ClampInt( 1,
+							SHADOWMAP_PROJECTED_MAX_CASCADES,
+							light.projectedState.cascadeCount );
+					const int atlasDiv = idMath::ClampInt( 1, 2,
+							light.projectedState.atlasDiv );
+					ctx.unsupportedCaster = false;
+					for ( int cascadeIndex = 0 ;
+							cascadeIndex < cascadeCount ;
+							cascadeIndex++ ) {
+						const int cascadeTileX = pass.tileX
+								+ ( cascadeIndex % atlasDiv )
+									* light.tileSize;
+						const int cascadeTileY = pass.tileY
+								+ ( cascadeIndex / atlasDiv )
+									* light.tileSize;
+
+						VkViewport viewport;
+						viewport.x = (float)cascadeTileX;
+						viewport.y = (float)( cascadeTileY
+								+ light.tileSize );
+						viewport.width = (float)light.tileSize;
+						viewport.height = -(float)light.tileSize;
+						viewport.minDepth = 0.0f;
+						viewport.maxDepth = 1.0f;
+						vkCmdSetViewport( cmd, 0, 1, &viewport );
+
+						VkRect2D scissor;
+						scissor.offset.x = cascadeTileX;
+						scissor.offset.y = cascadeTileY;
+						scissor.extent.width =
+								(uint32_t)light.tileSize;
+						scissor.extent.height =
+								(uint32_t)light.tileSize;
+						vkCmdSetScissor( cmd, 0, 1, &scissor );
+
+						VK_ShadowMap_DrawPassCasters( ctx, light,
+								receiverPass, cascadeIndex,
+								VK_SHADOW_CHAINS_DYNAMIC_ONLY );
+					}
+					// The static half of this map is already published or
+					// resident and correct; only the composed dynamics can
+					// fail here, and a partial compose would shadow some
+					// receivers while leaking others.
+					if ( ctx.unsupportedCaster ) {
+						VK_ShadowMap_InvalidatePassResource(
+								light, receiverPass );
+					}
+				}
+			}
+			vkCmdEndRendering( cmd );
+			vkShadow.composePasses += projectedComposeCount;
 		}
 
 		// The atlas can contain tiles whose last meaningful access came from

@@ -51,6 +51,10 @@ typedef struct vkShadowPassState_s {
 	vkShadowReceiverPass_t resourcePass;
 	bool				cacheHit;		// exact resident entry supplies this pass
 	bool				cacheUpdate;	// fresh render will publish this entry
+	bool				composeDynamic;	// projected only: the cached tile holds STATIC
+									// depth, and this view's dynamic casters are drawn
+									// over it after publication/restore (the GL
+									// SHADOWMAP_RENDER_COMPOSE_DYNAMIC contract)
 	int					cacheEntry;	// class-specific resident slot, -1 when uncached
 	int					cacheSignature;
 	int					tileX;			// atlas block origin, image (top-left) coordinates

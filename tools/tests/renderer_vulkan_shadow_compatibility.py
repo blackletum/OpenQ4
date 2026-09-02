@@ -1163,21 +1163,44 @@ def validate_receiver_ownership_split() -> None:
         "bool VK_ShadowMap_RenderAtlas(",
         "shadow-map caster rendering",
     )
+    # Projected ownership passes route their chains through the shared
+    # static/dynamic selector so the compose split lives in one place; the
+    # point cube pass still walks the four chains itself, because a cube has
+    # no composition path.
+    pass_casters = braced_body(
+        shadow_map,
+        "static int VK_ShadowMap_DrawPassCasters(",
+        "projected ownership caster chain selection",
+    )
     for token in (
         "vLight->globalShadowMapCasters",
         "vLight->globalShadowMapDynamicCasters",
         "vLight->localShadowMapCasters",
         "vLight->localShadowMapDynamicCasters",
     ):
-        if render.count(token) < 2:
+        if pass_casters.count(token) < 1 or render.count(token) < 1:
             raise AssertionError(
                 f"Projected and point ownership passes must both retain caster chain {token!r}"
             )
+    for global_only_chain in (
+        "vLight->localShadowMapCasters",
+        "vLight->localShadowMapDynamicCasters",
+    ):
+        if f"globalOwnership && drawStatic" not in pass_casters or (
+            f"globalOwnership && drawDynamic" not in pass_casters
+        ):
+            raise AssertionError(
+                "Projected GLOBAL resources must gate the local caster chains on ownership"
+            )
+        if global_only_chain not in pass_casters:
+            raise AssertionError(
+                f"Projected GLOBAL resources must add local caster chain {global_only_chain!r}"
+            )
     if compact(render).count(
         compact("receiverPass == VK_SHADOW_RECEIVER_GLOBAL")
-    ) < 2:
+    ) < 1:
         raise AssertionError(
-            "Projected and point GLOBAL resources must both add local caster chains"
+            "Point GLOBAL resources must add local caster chains"
         )
 
     interactions = read("src/renderer/Vulkan/vk_Interactions.cpp")
@@ -1499,14 +1522,38 @@ def validate_csm_atlas_and_receiver_contract() -> None:
             "viewport.y = (float)( cascadeTileY + light.tileSize );",
             "scissor.offset.x = cascadeTileX;",
             "scissor.offset.y = cascadeTileY;",
-            "VK_ShadowMap_DrawCasterChain( ctx, light, cascadeIndex, vLight->globalShadowMapCasters )",
-            "VK_ShadowMap_DrawCasterChain( ctx, light, cascadeIndex, vLight->globalShadowMapDynamicCasters )",
-            "if ( receiverPass == VK_SHADOW_RECEIVER_GLOBAL )",
-            "VK_ShadowMap_DrawCasterChain( ctx, light, cascadeIndex, vLight->localShadowMapCasters )",
-            "VK_ShadowMap_DrawCasterChain( ctx, light, cascadeIndex, vLight->localShadowMapDynamicCasters )",
+            """VK_ShadowMap_DrawPassCasters( ctx, light, receiverPass,
+                cascadeIndex, pass.composeDynamic
+                    ? VK_SHADOW_CHAINS_STATIC_ONLY
+                    : VK_SHADOW_CHAINS_ALL )""",
             "VK_ShadowMap_InvalidatePassResource( light, receiverPass );",
         ),
         "complete per-cascade ownership rendering",
+    )
+
+    # The selector is the single place the four chains are split into the
+    # GL SHADOWMAP_RENDER_STATIC_ONLY / _COMPOSE_DYNAMIC / full sets.
+    pass_casters = braced_body(
+        shadow_map,
+        "static int VK_ShadowMap_DrawPassCasters(",
+        "projected ownership caster chain selection",
+    )
+    require_order(
+        pass_casters,
+        (
+            "const bool drawStatic = select != VK_SHADOW_CHAINS_DYNAMIC_ONLY;",
+            "const bool drawDynamic = select != VK_SHADOW_CHAINS_STATIC_ONLY;",
+            "const bool globalOwnership = receiverPass == VK_SHADOW_RECEIVER_GLOBAL;",
+            "if ( drawStatic )",
+            "VK_ShadowMap_DrawCasterChain( ctx, light, cascadeIndex, vLight->globalShadowMapCasters )",
+            "if ( drawDynamic )",
+            "VK_ShadowMap_DrawCasterChain( ctx, light, cascadeIndex, vLight->globalShadowMapDynamicCasters )",
+            "if ( globalOwnership && drawStatic )",
+            "VK_ShadowMap_DrawCasterChain( ctx, light, cascadeIndex, vLight->localShadowMapCasters )",
+            "if ( globalOwnership && drawDynamic )",
+            "VK_ShadowMap_DrawCasterChain( ctx, light, cascadeIndex, vLight->localShadowMapDynamicCasters )",
+        ),
+        "static/dynamic caster chain selection",
     )
 
     interactions = read("src/renderer/Vulkan/vk_Interactions.cpp")
@@ -5359,6 +5406,127 @@ def validate_fail_closed_target_and_stencil_behavior() -> None:
     )
 
 
+def validate_dynamic_caster_composition_contract() -> None:
+    """GL SHADOWMAP_RENDER_STATIC_ONLY / _COMPOSE_DYNAMIC parity.
+
+    A projected light with a moving caster must keep its resident entry,
+    which holds STATIC depth only, and draw the dynamic chains over the
+    published or restored tile. Re-rendering the whole static scene every
+    frame is the behaviour this replaces, so the pieces that make the split
+    safe are pinned here rather than left to reading.
+    """
+    shadow_map = read("src/renderer/Vulkan/vk_ShadowMap.cpp")
+    header = read("src/renderer/Vulkan/vk_ShadowMap.h")
+
+    require_compact(
+        header,
+        "bool composeDynamic;",
+        "projected compose flag on the ownership pass state",
+    )
+
+    cacheable = braced_body(
+        shadow_map,
+        "static bool VK_ShadowMap_StaticCacheable(",
+        "static cache admission",
+    )
+    # Only the point path bakes dynamics into cached content. Projected
+    # dynamics compose, so they must not defeat or invalidate the cache --
+    # except while the opt-in shared stream can own the view, whose sealed
+    # allowCacheReuse forbids a composed hit on both backends.
+    require_compact(
+        cacheable,
+        """const bool dynamicsDefeatCache = haveDynamicCasters
+            && ( pointLight
+                || r_rendererSharedWorldInteraction.GetBool() );""",
+        "projected dynamics keep the cache, point dynamics defeat it",
+    )
+    require_compact(
+        cacheable,
+        """if ( dynamicsDefeatCache ) {
+            VK_ShadowMap_InvalidateLightCaches( renderWorld, lightIndex );
+        }""",
+        "only a cache-defeating class invalidates resident entries",
+    )
+    if compact(cacheable).count(compact("|| haveDynamicCasters")) != 0:
+        raise AssertionError(
+            "Projected dynamic casters must no longer reject static cacheability outright"
+        )
+    require_compact(
+        cacheable,
+        """if ( pointLight
+                && tr.frameCount - history->lastDynamicFrame
+                    < Max( 0,
+                            r_shadowMapStaticHysteresisFrames.GetInteger() ) ) {""",
+        "static hysteresis applies only to the baked point path",
+    )
+
+    allocate = braced_body(
+        shadow_map,
+        "static bool VK_ShadowMap_AllocateProjectedPass(",
+        "projected ownership allocation",
+    )
+    require_compact(
+        allocate,
+        """pass.composeDynamic = ( pass.cacheHit || pass.cacheUpdate )
+            && VK_ShadowMap_PassHasDynamicCasters( light.vLight,
+                    receiverPass );""",
+        "cached projected passes owe their dynamic casters a compose draw",
+    )
+
+    dynamic_chains = braced_body(
+        shadow_map,
+        "static bool VK_ShadowMap_PassHasDynamicCasters(",
+        "ownership dynamic caster presence",
+    )
+    require_order(
+        dynamic_chains,
+        (
+            "if ( vLight->globalShadowMapDynamicCasters != NULL )",
+            "return true;",
+            """return receiverPass == VK_SHADOW_RECEIVER_GLOBAL
+                && vLight->localShadowMapDynamicCasters != NULL;""",
+        ),
+        "LOCAL maps see global dynamics, GLOBAL maps add local dynamics",
+    )
+
+    render = braced_body(
+        shadow_map,
+        "bool VK_ShadowMap_RenderAtlas(",
+        "shadow-map caster rendering",
+    )
+    # An exact hit normally skips caster validation because the update that
+    # published the signature proved it. A composed hit still draws live
+    # casters, so it must prove the pipeline and representability again.
+    require_compact(
+        render,
+        """} else if ( pass.composeDynamic
+                && ( casterPipeline == VK_NULL_HANDLE
+                    || !VK_ShadowMap_PassCastersRepresentable(
+                            light, receiverPass ) ) ) {""",
+        "composed cache hits revalidate their live dynamic casters",
+    )
+    require_order(
+        render,
+        (
+            # publication copies the static-only tile out first ...
+            "VK_ShadowMap_CopyDepthTile( cmd, vkShadow.atlasImage, pass.tileX, pass.tileY, cache.image, 0, 0, light.tileSize );",
+            # ... then a resident hit restores its static tile ...
+            "VK_ShadowMap_CopyDepthTile( cmd, cache.image, 0, 0, vkShadow.atlasImage, pass.tileX, pass.tileY, light.tileSize );",
+            # ... and only then do the dynamics compose over both.
+            "if ( projectedComposeCount > 0 && casterPipeline != VK_NULL_HANDLE )",
+            "depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;",
+            """VK_ShadowMap_DrawPassCasters( ctx, light, receiverPass, cascadeIndex,
+                VK_SHADOW_CHAINS_DYNAMIC_ONLY )""",
+            "vkCmdEndRendering( cmd );",
+        ),
+        "compose runs after publication and restore, never before",
+    )
+    if "VK_ATTACHMENT_LOAD_OP_LOAD" not in render:
+        raise AssertionError(
+            "The compose scope must preserve the cached tile instead of clearing it"
+        )
+
+
 def validate_ci_registration() -> None:
     validator = read("tools/validation/openq4_validate.py")
     commit = read(".github/workflows/commit-validation.yml")
@@ -5391,6 +5559,7 @@ def main() -> None:
     validate_point_receiver_world_bias_contract()
     validate_shadow_contact_and_gl_robustness_contract()
     validate_exact_static_cache_and_admission_contract()
+    validate_dynamic_caster_composition_contract()
     validate_packed_shadow_geometry()
     validate_fail_closed_target_and_stencil_behavior()
     validate_ci_registration()
