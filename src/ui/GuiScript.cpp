@@ -874,6 +874,12 @@ void idGuiScript::FixupParms(idWindow *win) {
 
 			if ( (*str[0]) == '$' ) {
 				dest = win->GetWinVarByName ( (const char*)(*str) + 1, true, &owner );
+				if ( !dest ) {
+					// The unresolved token stays the operand, and none of it parses as a number,
+					// so the transition runs from zero rather than from the var it names.
+					common->Warning( "Window %s in gui %s: transition parameter %d references %s, which is not a valid var; the transition uses zero for it",
+						win->GetName(), win->GetGui()->GetSourceFile(), c, str->c_str() );
+				}
 			} else {
 				dest = NULL;
 			}

@@ -267,6 +267,50 @@ their normalised metrics agree and a larger slot only adds resolution. The
 enlargement now applies to those fonts only; the retail atlases select on the
 authored scale and keep exact parity. The matrix is 36/36 again.
 
+### Save loss found while validating, and where it came from
+
+Autosaving during `game/airdefense1` aborted with
+`idWinVec4::WriteToSaveGame: refusing non-finite y`, which unloads the running
+map, so the player lost both the save and the session. The refusal was replaced
+with per-component sanitizing, and the guards were given enough context to name
+the offending variable, which identified it as a GUI script parameter rather
+than a window colour. That left the source of the non-finite value open.
+
+It was not an expression result. `idGuiScript::FixupParms` converts the two
+value operands of a `transition` into freshly allocated `idWinVec4`s, and
+`idWinVec4::Set` fills them through `sscanf` without checking how many
+components matched. Stock GUIs transition scalars -- `transition "L1::rotate"
+"-180" "-270" "1000"`, `transition "access::forecolor_w" ".7" "1" "0"` -- so one
+component parses and three keep whatever the object already held. `idVec2`,
+`idVec3` and `idVec4` deliberately leave their members alone in their default
+constructors, so what those three components held was the previous contents of
+the heap.
+
+That explains the two things the failure report could not. The value was
+non-finite rather than merely wrong, because indeterminate bytes read as floats
+usually are. And it appeared at parameter 2 on OpenGL against parameter 1 on
+Vulkan: an expression that produced a NaN would have produced it at the same
+parameter on both backends, while heap contents differ between the two
+processes.
+
+The fix is the one-line initializer each affected `idWinVar` now carries. The
+sanitizing guards are kept as a backstop for anything else that reaches the
+writer non-finite. `savegame_corruption_contract` pins the invariant: every
+`idWinVar` whose payload does not zero itself must initialize it in its default
+constructor, `idRectangle` must keep zeroing itself for its exemption to hold,
+and `idVec2`/`idVec3`/`idVec4` must keep not doing so, since that is why the
+initializers are required. Reverting any one initializer fails the contract.
+
+An unresolved `$var` transition operand was silent about the same thing: the
+lookup fails, the literal token is kept, none of it parses, and the transition
+runs from zero. It now warns and names the window, the GUI source file, and the
+parameter index, matching the save-time diagnostic's numbering.
+
+Verified on the current build at 1280x720 windowed, settled gameplay, engine
+`saveGame`: OpenGL and Vulkan both complete with zero non-finite warnings, zero
+unresolved-transition warnings, and an 8.5 MB save, against a run that
+previously warned on every attempt.
+
 ### Ranked remaining work
 
 1. Parallel level image decode. 1,718 files and 213 MiB of mostly independent
