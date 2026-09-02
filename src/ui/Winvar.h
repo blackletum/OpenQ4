@@ -247,7 +247,7 @@ ID_INLINE void OpenQ4_SanitizeSaveGameWinVar( idWinVar &var, const char *context
 
 class idWinBool : public idWinVar {
 public:
-	idWinBool() : idWinVar() {};
+	idWinBool() : idWinVar(), data( false ) {};
 	~idWinBool() {};
 	virtual void Init(const char *_name, idWindow *win) { idWinVar::Init(_name, win);
 		if (guiDict) {
@@ -436,7 +436,7 @@ protected:
 
 class idWinInt : public idWinVar {
 public:
-	idWinInt() : idWinVar() {};
+	idWinInt() : idWinVar(), data( 0 ) {};
 	~idWinInt() {};
 	virtual void Init(const char *_name, idWindow *win) {
 		idWinVar::Init(_name,  win);
@@ -501,7 +501,7 @@ public:
 	}
 	friend class idWinFloatPtr;
 
-	idWinFloat() : idWinVar() {};
+	idWinFloat() : idWinVar(), data( 0.0f ) {};
 	~idWinFloat() {};
 	virtual void Init(const char *_name, idWindow *win) {
 		idWinVar::Init(_name, win);
@@ -683,7 +683,7 @@ public:
 		if ( !std::isfinite( data.x ) ) { data.x = 0.0f; }
 		if ( !std::isfinite( data.y ) ) { data.y = 0.0f; }
 	}
-	idWinVec2() : idWinVar() {};
+	idWinVec2() : idWinVar(), data( 0.0f, 0.0f ) {};
 	~idWinVec2() {};
 	virtual void Init(const char *_name, idWindow *win) {
 		idWinVar::Init(_name, win);
@@ -765,7 +765,7 @@ public:
 		if ( !std::isfinite( data.z ) ) { data.z = 0.0f; }
 		if ( !std::isfinite( data.w ) ) { data.w = 0.0f; }
 	}
-	idWinVec4() : idWinVar() {};
+	idWinVec4() : idWinVar(), data( 0.0f, 0.0f, 0.0f, 0.0f ) {};
 	~idWinVec4() {};
 	virtual void Init(const char *_name, idWindow *win) {
 		idWinVar::Init(_name, win);
@@ -865,7 +865,7 @@ public:
 		if ( !std::isfinite( data.y ) ) { data.y = 0.0f; }
 		if ( !std::isfinite( data.z ) ) { data.z = 0.0f; }
 	}
-	idWinVec3() : idWinVar() {};
+	idWinVec3() : idWinVar(), data( 0.0f, 0.0f, 0.0f ) {};
 	~idWinVec3() {};
 	virtual void Init(const char *_name, idWindow *win) {
 		idWinVar::Init(_name, win);

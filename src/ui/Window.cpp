@@ -5173,10 +5173,15 @@ void idWindow::WriteToSaveGame( idFile *savefile ) {
 	}
 
 
+	// The scripts and events below have no back-pointer to this window, so a
+	// diagnostic raised inside one could not say where it came from. Name it here.
+	const idStr scriptContext = idStr( "window '" ) + name.c_str() + "' in gui '" +
+		( gui != NULL ? gui->GetSourceFile() : "<none>" ) + "'";
+
 	// Scripts
 	for ( i = 0; i < SCRIPT_COUNT; i++ ) {
 		if ( scripts[i] ) {
-			scripts[i]->WriteToSaveGame( savefile );
+			scripts[i]->WriteToSaveGame( savefile, scriptContext.c_str() );
 		}
 	}
 
@@ -5191,7 +5196,7 @@ void idWindow::WriteToSaveGame( idFile *savefile ) {
 			 !OpenQ4_WriteSaveGameInt( savefile, timeLineEvents[i]->time, "idWindow::WriteToSaveGame", "timeline event time" ) ) {
 			return;
 		}
-		timeLineEvents[i]->event->WriteToSaveGame( savefile );
+		timeLineEvents[i]->event->WriteToSaveGame( savefile, scriptContext.c_str() );
 	}
 
 	// Transitions
@@ -5217,7 +5222,7 @@ void idWindow::WriteToSaveGame( idFile *savefile ) {
 		if ( !WriteSaveGameString( namedEvents[i]->mName, savefile ) ) {
 			return;
 		}
-		namedEvents[i]->mEvent->WriteToSaveGame( savefile );
+		namedEvents[i]->mEvent->WriteToSaveGame( savefile, scriptContext.c_str() );
 	}
 
 	// regList

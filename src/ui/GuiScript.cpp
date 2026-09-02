@@ -562,21 +562,21 @@ idGuiScript::~idGuiScript() {
 idGuiScript::WriteToSaveGame
 =========================
 */
-void idGuiScript::WriteToSaveGame( idFile *savefile ) {
+void idGuiScript::WriteToSaveGame( idFile *savefile, const char *context ) {
 	int i;
 	if ( savefile == NULL ) {
-		common->Error( "idGuiScript::WriteToSaveGame: NULL output file" );
+		common->Error( "idGuiScript::WriteToSaveGame: NULL output file for %s", context );
 	}
 
 	if ( ifList ) {
-		ifList->WriteToSaveGame( savefile );
+		ifList->WriteToSaveGame( savefile, context );
 	}
 	if ( elseList ) {
-		elseList->WriteToSaveGame( savefile );
+		elseList->WriteToSaveGame( savefile, context );
 	}
 
 	if ( conditionReg < -1 || conditionReg >= MAX_EXPRESSION_REGISTERS ) {
-		common->Error( "idGuiScript::WriteToSaveGame: invalid condition register %d", conditionReg );
+		common->Error( "idGuiScript::WriteToSaveGame: invalid condition register %d for %s", conditionReg, context );
 	}
 	const int conditionOffset = savefile->Tell();
 	const int conditionBytes = savefile->WriteInt( conditionReg );
@@ -588,13 +588,13 @@ void idGuiScript::WriteToSaveGame( idFile *savefile ) {
 	for ( i = 0; i < parms.Num(); i++ ) {
 		if ( parms[i].own ) {
 			if ( parms[i].var == NULL ) {
-				common->Error( "idGuiScript::WriteToSaveGame: owned parameter %d has no variable", i );
+				common->Error( "idGuiScript::WriteToSaveGame: owned parameter %d has no variable for %s", i, context );
 			}
 			// A script parameter is an evaluated GUI expression result and owns no name.
 			// Zero the affected components rather than refusing the save over one.
 			if ( !parms[i].var->IsFinite() ) {
-				common->Warning( "idGuiScript::WriteToSaveGame: owned parameter %d holds a non-finite value; "
-					"saving zero for the affected components", i );
+				common->Warning( "idGuiScript::WriteToSaveGame: %s owned parameter %d holds a non-finite value; "
+					"saving zero for the affected components", context, i );
 				parms[i].var->SanitizeNonFinite();
 			}
 			parms[i].var->WriteToSaveGame( savefile );
@@ -942,17 +942,17 @@ void idGuiScriptList::FixupParms(idWindow *win) {
 idGuiScriptList::WriteToSaveGame
 =========================
 */
-void idGuiScriptList::WriteToSaveGame( idFile *savefile ) {
+void idGuiScriptList::WriteToSaveGame( idFile *savefile, const char *context ) {
 	int i;
 	if ( savefile == NULL ) {
-		common->Error( "idGuiScriptList::WriteToSaveGame: NULL output file" );
+		common->Error( "idGuiScriptList::WriteToSaveGame: NULL output file for %s", context );
 	}
 
 	for ( i = 0; i < list.Num(); i++ ) {
 		if ( list[i] == NULL ) {
-			common->Error( "idGuiScriptList::WriteToSaveGame: NULL script at index %d", i );
+			common->Error( "idGuiScriptList::WriteToSaveGame: NULL script at index %d for %s", i, context );
 		}
-		list[i]->WriteToSaveGame( savefile );
+		list[i]->WriteToSaveGame( savefile, context );
 	}
 }
 
