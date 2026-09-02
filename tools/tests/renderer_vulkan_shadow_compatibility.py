@@ -1980,7 +1980,8 @@ def validate_shadow_filtering_contract() -> None:
         receiver_bias,
         (
             "float receiverPlaneBias = 0.0;",
-            "if (shadow.pcssParams.w > 0.5)",
+            """if (shadow.pcssParams.w > 0.5
+                && !ShadowDebugModeIs(kShadowDebugReceiverPlaneBiasOff))""",
             "ShadowDepthGradient(cascadeIndex)",
             "max(shadow.pcssParams.z, 1.0)",
             "max(max(texelBias, receiverPlaneBias), 0.0)",
@@ -1996,7 +1997,9 @@ def validate_shadow_filtering_contract() -> None:
     require_order(
         blocker_search,
         (
-            "shadow.filterParams.z < 1.5 || shadow.filterParams.w > 0.5",
+            """ShadowDebugModeIs(kShadowDebugPCFOff)
+                || shadow.filterParams.z < 1.5
+                || shadow.filterParams.w > 0.5""",
             "float compareDepth = depth - ShadowReceiverBias(cascadeIndex);",
             "float blockerDepth = 0.0;",
             "float blockerCount = 0.0;",
@@ -5643,6 +5646,194 @@ def validate_csm_static_cache_contract() -> None:
     )
 
 
+def validate_shadow_debug_mode_contract() -> None:
+    """r_shadowMapDebugMode parity with glprogs/shadow_interaction.fs.
+
+    The visualizations are only useful if they describe the sample the lit
+    path actually took and if mode 0 costs nothing, so the selector reaches
+    both receiver classes through the shadow ABI, the views run after
+    sampling, and every debug branch is gated behind an explicit mode test.
+    """
+    projected = read("src/renderer/Vulkan/shaders/interaction_shadow.frag")
+    point = read("src/renderer/Vulkan/shaders/interaction_shadow_point.frag")
+    interactions = read("src/renderer/Vulkan/vk_Interactions.cpp")
+    shadow_map = read("src/renderer/Vulkan/vk_ShadowMap.cpp")
+
+    # The selector rides the shadow block, not a pipeline variant.
+    for source, context in (
+        (projected, "projected receiver debug ABI"),
+        (point, "point receiver debug ABI"),
+    ):
+        require_compact(
+            source,
+            "vec4 debugParams;",
+            context,
+        )
+        require_compact(
+            source,
+            """bool ShadowDebugModeIs(float mode) {
+                return abs(shadow.debugParams.x - mode) < 0.5;
+            }""",
+            context,
+        )
+
+    # std140 mirrors must grow with the block or the shader reads garbage.
+    require_compact(
+        interactions,
+        "float debugParams[ 4 ];",
+        "std140 debug selector mirrors",
+    )
+    require_compact(
+        interactions,
+        """static_assert( sizeof( vkShadowBlock_t ) == 480,
+            "projected shadow std140 block must remain 30 vec4s" );""",
+        "projected block size follows the debug selector",
+    )
+    require_compact(
+        interactions,
+        """static_assert( sizeof( vkPointShadowBlock_t ) == 128,
+            "point shadow std140 block must remain 8 vec4s" );""",
+        "point block size follows the debug selector",
+    )
+
+    # Every block writer uploads it: the sealed stream and the legacy walker,
+    # projected and point. A writer that forgot would silently show mode 0.
+    if interactions.count("debugParams[ 0 ] = VK_ShadowMap_DebugModeValue();") != 4:
+        raise AssertionError(
+            "All four shadow block writers must upload the debug selector"
+        )
+    require_compact(
+        interactions,
+        """static float VK_ShadowMap_DebugModeValue( void ) {
+            return (float)idMath::ClampInt( 0, SHADOWMAP_DEBUGMODE_COUNT - 1,
+                    r_shadowMapDebugMode.GetInteger() );
+        }""",
+        "one clamped source for the uploaded debug selector",
+    )
+
+    # Mode 10 is a caster-side view: it belongs to the shadow pass, not the
+    # receiver, exactly as RB_ShadowMapPolygonFactor/-Offset do it.
+    require_compact(
+        shadow_map,
+        """const bool casterOffsetOff = idMath::ClampInt( 0,
+            SHADOWMAP_DEBUGMODE_COUNT - 1,
+            r_shadowMapDebugMode.GetInteger() )
+                == SHADOWMAP_DEBUGMODE_CASTER_OFFSET_OFF;""",
+        "caster-offset debug view",
+    )
+    require_compact(
+        shadow_map,
+        """ctx.slopeFactor = casterOffsetOff
+            ? 0.0f : r_shadowMapPolygonFactor.GetFloat();""",
+        "caster-offset debug view zeroes the slope term",
+    )
+
+    # The visualizations must run AFTER the sample, so the cascade they
+    # describe is the one that was shaded.
+    projected_main = braced_body(projected, "void main(", "projected receiver main")
+    require_order(
+        projected_main,
+        (
+            "SampleShadowFactor()",
+            "if (ShadowVisualDebugMode())",
+            "outColor = ShadowDebugOutput();",
+            "light *= SampleShadowFactor();",
+            "if (ShadowVisualDebugMode())",
+            "outColor = ShadowDebugOutput();",
+        ),
+        "projected views replace the lit output after sampling",
+    )
+    point_main = braced_body(point, "void main(", "point receiver main")
+    require_order(
+        point_main,
+        (
+            "SampleShadowFactor()",
+            "if (ShadowVisualDebugMode())",
+            "outColor = PointShadowDebugOutput();",
+            "light *= SampleShadowFactor();",
+            "if (ShadowVisualDebugMode())",
+            "outColor = PointShadowDebugOutput();",
+        ),
+        "point views replace the lit output after sampling",
+    )
+
+    # The selected cascade and its split blend are recorded during sampling.
+    sample_factor = braced_body(
+        projected, "float SampleShadowFactor(", "projected cascade selection"
+    )
+    require_order(
+        sample_factor,
+        (
+            "gShadowCascadeIndex = cascadeIndex;",
+            "gShadowCascadeBlend = 0.0;",
+            "gShadowCascadeBlend = blend;",
+        ),
+        "the views describe the shaded cascade",
+    )
+
+    # Coordinate rejection is classified once, shared by sampling and the
+    # invalid-mask view, so the two cannot disagree.
+    project_coord = braced_body(
+        projected, "bool ProjectShadowCoord(", "projected coordinate rejection"
+    )
+    require_order(
+        project_coord,
+        (
+            "gShadowDebugState = max(gShadowDebugState, 1.0);",
+            "gShadowDebugState = max(gShadowDebugState, 2.0);",
+            "return true;",
+        ),
+        "rejection classes recorded for the invalid-mask view",
+    )
+    sample_cascade = braced_body(
+        projected, "float SampleShadowCascade(", "projected cascade sampling"
+    )
+    require_compact(
+        sample_cascade,
+        "if (!ProjectShadowCoord(shadowCoord, localUv, depth))",
+        "sampling and the views project through one helper",
+    )
+
+    # The suppression views alter the sample instead of replacing the output.
+    receiver_bias = braced_body(
+        projected, "float ShadowReceiverBias(", "projected receiver bias"
+    )
+    require_compact(
+        receiver_bias,
+        """if (ShadowDebugModeIs(kShadowDebugBiasOff)) {
+            return 0.0;
+        }""",
+        "bias-off view",
+    )
+    require_compact(
+        receiver_bias,
+        """float normalBias = ShadowDebugModeIs(kShadowDebugReceiverPlaneBiasOff)
+            ? 0.0 : shadow.biasParams.y;""",
+        "receiver-plane-bias-off view",
+    )
+    point_bias = braced_body(
+        point, "float ShadowReceiverBias(", "point receiver bias"
+    )
+    require_compact(
+        point_bias,
+        """if (ShadowDebugModeIs(kShadowDebugBiasOff)) {
+            return 0.0;
+        }""",
+        "point bias-off view",
+    )
+
+    # Mode 0 must not pay for any of this: every debug read is behind a test.
+    for source, context in (
+        (projected, "projected receiver"),
+        (point, "point receiver"),
+    ):
+        for guarded in ("ShadowDebugModeIs(", "shadow.debugParams.x"):
+            if guarded not in source:
+                raise AssertionError(
+                    f"{context} lost its guarded debug selector {guarded!r}"
+                )
+
+
 def validate_ci_registration() -> None:
     validator = read("tools/validation/openq4_validate.py")
     commit = read(".github/workflows/commit-validation.yml")
@@ -5677,6 +5868,7 @@ def main() -> None:
     validate_exact_static_cache_and_admission_contract()
     validate_dynamic_caster_composition_contract()
     validate_csm_static_cache_contract()
+    validate_shadow_debug_mode_contract()
     validate_packed_shadow_geometry()
     validate_fail_closed_target_and_stencil_behavior()
     validate_ci_registration()

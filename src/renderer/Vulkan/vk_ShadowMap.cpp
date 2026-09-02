@@ -3992,9 +3992,18 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 		: VK_Exec_BasePipelineLayout();
 	ctx.whiteSet = whiteSet;
 	ctx.boundCullMode = (VkCullModeFlags)~0u;
-	ctx.slopeFactor = r_shadowMapPolygonFactor.GetFloat();
+	// r_shadowMapDebugMode 10 isolates the caster-side offset from receiver
+	// bias by zeroing it, exactly as RB_ShadowMapPolygonFactor/-Offset do.
+	const bool casterOffsetOff = idMath::ClampInt( 0,
+			SHADOWMAP_DEBUGMODE_COUNT - 1,
+			r_shadowMapDebugMode.GetInteger() )
+				== SHADOWMAP_DEBUGMODE_CASTER_OFFSET_OFF;
+	ctx.slopeFactor = casterOffsetOff
+			? 0.0f : r_shadowMapPolygonFactor.GetFloat();
 	// pre-scaled to one resolvable depth-buffer step (glPolygonOffset parity)
-	ctx.constOffset = r_shadowMapPolygonOffset.GetFloat() * ( 1.0f / 16777216.0f );
+	ctx.constOffset = ( casterOffsetOff
+			? 0.0f : r_shadowMapPolygonOffset.GetFloat() )
+			* ( 1.0f / 16777216.0f );
 
 	if ( projectedCount > 0 ) {
 		VkImageLayout atlasLayout = vkShadow.atlasLayout;

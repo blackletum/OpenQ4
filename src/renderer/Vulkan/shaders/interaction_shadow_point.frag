@@ -56,6 +56,7 @@ layout(set = 7, binding = 1, std140) uniform ShadowBlock {
     vec4 biasParams;     // x: constant bias, y: normal bias, z: texel depth bias, w: per-distance normal-offset factor
     vec4 filterParams;   // x: radius, y: taps, z: mode, w: cube texel scale
     vec4 samplingParams; // x: hardware compare enabled
+    vec4 debugParams;    // x: r_shadowMapDebugMode, y: receiver fallback reason
 } shadow;
 
 layout(location = 0) in vec2 vBumpTexCoord;
@@ -71,6 +72,33 @@ layout(location = 9) in float vShadowLightCos;
 layout(location = 10) in vec3 vViewVector;
 
 layout(location = 0) out vec4 outColor;
+
+// The point-cube subset of shadowMapDebugMode_t (tr_local.h), matching
+// glprogs/shadow_point_interaction.fs: a cube has no atlas rect, cascade
+// ladder, or projected w to visualize.
+const float kShadowDebugProjectedDepth = 4.0;
+const float kShadowDebugBiasOff = 8.0;
+const float kShadowDebugPCFOff = 9.0;
+const float kShadowDebugReceiverPlaneBiasOff = 11.0;
+const float kShadowDebugCompareDelta = 12.0;
+const float kShadowDebugReceiverEligibility = 13.0;
+const float kShadowDebugReceiverFallbackReason = 14.0;
+
+bool ShadowDebugModeIs(float mode) {
+    return abs(shadow.debugParams.x - mode) < 0.5;
+}
+
+bool ShadowReceiverDebugMode() {
+    return ShadowDebugModeIs(kShadowDebugReceiverEligibility)
+        || ShadowDebugModeIs(kShadowDebugReceiverFallbackReason);
+}
+
+bool ShadowVisualDebugMode() {
+    return ShadowDebugModeIs(1.0)
+        || ShadowDebugModeIs(kShadowDebugProjectedDepth)
+        || ShadowDebugModeIs(kShadowDebugCompareDelta)
+        || ShadowReceiverDebugMode();
+}
 
 vec3 SafeNormalize(vec3 value) {
     return value * inversesqrt(max(dot(value, value), 1.0e-8));
@@ -136,11 +164,15 @@ mat2 ShadowOffsetRotation(vec3 direction) {
 }
 
 float ShadowReceiverBias() {
+    if (ShadowDebugModeIs(kShadowDebugBiasOff)) {
+        return 0.0;
+    }
     float lightCos = clamp(vShadowLightCos, 0.20, 1.0);
     float sinTheta = sqrt(max(1.0 - lightCos * lightCos, 0.0));
     float slopeBias = min(sinTheta / lightCos, 4.0);
-    float scalarBias = shadow.biasParams.x
-        + shadow.biasParams.y * sinTheta;
+    float normalBias = ShadowDebugModeIs(kShadowDebugReceiverPlaneBiasOff)
+        ? 0.0 : shadow.biasParams.y;
+    float scalarBias = shadow.biasParams.x + normalBias * sinTheta;
     float texelBias = shadow.biasParams.z * (1.0 + slopeBias);
     return max(max(scalarBias, 0.0), max(texelBias, 0.0));
 }
@@ -171,7 +203,8 @@ float SampleShadowFactor() {
     }
     vec3 direction = SafeNormalize(vPointShadowVector);
 
-    float filterRadius = shadow.filterParams.x;
+    float filterRadius = ShadowDebugModeIs(kShadowDebugPCFOff)
+        ? 0.0 : shadow.filterParams.x;
     if (filterRadius <= 0.0 || shadow.filterParams.w <= 0.0) {
         return SamplePointShadowCompare(direction, depth);
     }
@@ -232,6 +265,74 @@ float SampleShadowFactor() {
     return result * (1.0 / 13.0);
 }
 
+// Vulkan admits shadow maps per light rather than per receiver surface, so a
+// receiver that reached this shader is always eligible and the reason the CPU
+// uploads is 0. The ladder is kept whole so the two backends read alike if a
+// per-surface reason ever appears.
+vec4 PointReceiverDebugOutput() {
+    float reason = floor(shadow.debugParams.y + 0.5);
+    if (ShadowDebugModeIs(kShadowDebugReceiverEligibility)) {
+        if (reason < 0.5) {
+            return vec4(0.0, 0.95, 0.18, 1.0);
+        }
+        if (reason < 1.5) {
+            return vec4(0.0, 0.85, 1.0, 1.0);
+        }
+        return vec4(1.0, 0.18, 0.08, 1.0);
+    }
+
+    if (reason < 0.5) {
+        return vec4(0.0, 0.85, 0.16, 1.0);
+    }
+    if (reason < 1.5) {
+        return vec4(0.0, 0.82, 1.0, 1.0);
+    }
+    if (reason < 2.5) {
+        return vec4(1.0, 0.08, 0.08, 1.0);
+    }
+    if (reason < 3.5) {
+        return vec4(0.95, 0.12, 1.0, 1.0);
+    }
+    if (reason < 4.5) {
+        return vec4(1.0, 0.86, 0.08, 1.0);
+    }
+    return vec4(1.0, 0.45, 0.0, 1.0);
+}
+
+vec4 PointShadowDebugOutput() {
+    if (ShadowReceiverDebugMode()) {
+        return PointReceiverDebugOutput();
+    }
+    float far = shadow.lightOriginFar.w;
+    if (!(far > 0.0)) {
+        return vec4(1.0, 0.0, 1.0, 1.0);
+    }
+
+    float depth = length(vPointShadowVector) / far;
+    if (depth <= 0.0 || depth >= 1.0) {
+        return vec4(1.0, 1.0, 0.0, 1.0);
+    }
+    vec3 direction = SafeNormalize(vPointShadowVector);
+    float storedDepth = RawPointShadowDepth(direction);
+
+    if (ShadowDebugModeIs(kShadowDebugCompareDelta)) {
+        float delta = depth - ShadowReceiverBias() - storedDepth;
+        float magnitude = clamp(abs(delta) * 64.0, 0.0, 1.0);
+        vec3 litColor = vec3(0.1, 0.35, 1.0);
+        vec3 shadowColor = vec3(1.0, 0.16, 0.08);
+        vec3 nearColor = vec3(0.0, 1.0, 0.22);
+        vec3 signColor = (delta > 0.0) ? shadowColor : litColor;
+        return vec4(mix(nearColor, signColor, magnitude), 1.0);
+    }
+
+    if (ShadowDebugModeIs(kShadowDebugProjectedDepth)) {
+        return vec4(vec3(depth), 1.0);
+    }
+
+    // mode 1: the cube lookup direction with its stored radial depth
+    return vec4(direction * 0.5 + 0.5, clamp(storedDepth, 0.0, 1.0));
+}
+
 void main() {
     if (pc.d.x > 1.5) {
         outColor = vec4(0.0, 1.0, 0.0, 0.0);
@@ -253,8 +354,13 @@ void main() {
     if (pc.d.x > 0.5) {
         vec3 localNormal = bumpSample.rgb * 2.0 - 1.0;
         localNormal.xy *= pc.d.w;
-        outColor = vec4(EvaluatePackedPBR(SafeNormalize(localNormal),
-            diffuseTexCoord, specularTexCoord, SampleShadowFactor()), 0.0);
+        vec3 packed = EvaluatePackedPBR(SafeNormalize(localNormal),
+            diffuseTexCoord, specularTexCoord, SampleShadowFactor());
+        if (ShadowVisualDebugMode()) {
+            outColor = PointShadowDebugOutput();
+            return;
+        }
+        outColor = vec4(packed, 0.0);
         return;
     }
     vec3 localNormal = vec3(bumpSample.a, bumpSample.g, bumpSample.b) * 2.0 - 1.0;
@@ -266,6 +372,10 @@ void main() {
     light *= textureProj(lightFalloffMap, vLightFalloffTexCoord).rgb;
     light *= textureProj(lightProjectionMap, vLightProjectionTexCoord).rgb;
     light *= SampleShadowFactor();
+    if (ShadowVisualDebugMode()) {
+        outColor = PointShadowDebugOutput();
+        return;
+    }
 
     vec3 diffuse = texture(diffuseMap, diffuseTexCoord).rgb * inter.diffuseColor.rgb;
     diffuse = ApplyFlatDiffuseSweep(diffuse, vLightFalloffTexCoord.z);

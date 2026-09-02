@@ -63,6 +63,7 @@ layout(set = 7, binding = 1, std140) uniform ShadowBlock {
     vec4 texelSize;    // x,y: 1 / atlas dimensions
     vec4 filterParams; // x: radius, y: taps, z: mode, w: hardware compare
     vec4 pcssParams;   // x: light radius, y: max radius, z: effective radius, w: receiver-plane bias
+    vec4 debugParams;  // x: r_shadowMapDebugMode, y: receiver fallback reason
 } shadow;
 
 layout(location = 0) in vec2 vBumpTexCoord;
@@ -83,10 +84,55 @@ layout(location = 14) in float vViewDepth;
 
 layout(location = 0) out vec4 outColor;
 
+// shadowMapDebugMode_t (tr_local.h), matching glprogs/shadow_interaction.fs.
+const float kShadowDebugAtlas = 1.0;
+const float kShadowDebugCascadeIndex = 2.0;
+const float kShadowDebugProjectedUV = 3.0;
+const float kShadowDebugProjectedDepth = 4.0;
+const float kShadowDebugProjectedW = 5.0;
+const float kShadowDebugInvalidMask = 6.0;
+const float kShadowDebugBiasHeatmap = 7.0;
+const float kShadowDebugBiasOff = 8.0;
+const float kShadowDebugPCFOff = 9.0;
+const float kShadowDebugCasterOffsetOff = 10.0;
+const float kShadowDebugReceiverPlaneBiasOff = 11.0;
+const float kShadowDebugCompareDelta = 12.0;
+const float kShadowDebugReceiverEligibility = 13.0;
+const float kShadowDebugReceiverFallbackReason = 14.0;
+
+bool ShadowDebugModeIs(float mode) {
+    return abs(shadow.debugParams.x - mode) < 0.5;
+}
+
+// Modes that replace the lit output entirely, rather than only suppressing a
+// term of the ordinary sample.
+bool ShadowVisualDebugMode() {
+    return (shadow.debugParams.x > 0.5
+            && shadow.debugParams.x < kShadowDebugBiasOff - 0.5)
+        || ShadowDebugModeIs(kShadowDebugCompareDelta)
+        || ShadowDebugModeIs(kShadowDebugReceiverEligibility)
+        || ShadowDebugModeIs(kShadowDebugReceiverFallbackReason);
+}
+
+bool ShadowReceiverDebugMode() {
+    return ShadowDebugModeIs(kShadowDebugReceiverEligibility)
+        || ShadowDebugModeIs(kShadowDebugReceiverFallbackReason);
+}
+
 // Computed in main before any divergent receiver control flow. Derivatives
 // inside the cascade selector would be undefined for neighboring fragments
 // that choose different cascades.
 vec4 gShadowDepthGradients = vec4(0.0);
+
+// Worst coordinate rejection seen while sampling this fragment: 1 = the w
+// component was unusable, 2 = the projected coordinate was not finite. The
+// invalid-mask view reads it after sampling.
+float gShadowDebugState = 0.0;
+
+// Cascade selection and split blend of the sample the lit output used, so the
+// visualizations describe the pixel that was actually shaded.
+int gShadowCascadeIndex = 0;
+float gShadowCascadeBlend = 0.0;
 
 vec3 SafeNormalize(vec3 value) {
     return value * inversesqrt(max(dot(value, value), 1.0e-8));
@@ -192,16 +238,21 @@ float ShadowDepthGradient(int cascadeIndex) {
 }
 
 float ShadowReceiverBias(int cascadeIndex) {
+    if (ShadowDebugModeIs(kShadowDebugBiasOff)) {
+        return 0.0;
+    }
     float lightCos = clamp(vShadowLightCos, 0.20, 1.0);
     float sinTheta = sqrt(max(1.0 - lightCos * lightCos, 0.0));
     float slopeBias = min(sinTheta / lightCos, 4.0);
-    float scalarBias = (shadow.biasParams.x
-        + shadow.biasParams.y * sinTheta)
+    float normalBias = ShadowDebugModeIs(kShadowDebugReceiverPlaneBiasOff)
+        ? 0.0 : shadow.biasParams.y;
+    float scalarBias = (shadow.biasParams.x + normalBias * sinTheta)
         * CascadeComponent(shadow.cascadeBiasScale, cascadeIndex);
     float texelBias = CascadeComponent(shadow.texelDepthBias,
         cascadeIndex) * (1.0 + slopeBias);
     float receiverPlaneBias = 0.0;
-    if (shadow.pcssParams.w > 0.5) {
+    if (shadow.pcssParams.w > 0.5
+            && !ShadowDebugModeIs(kShadowDebugReceiverPlaneBiasOff)) {
         receiverPlaneBias = ShadowDepthGradient(cascadeIndex)
             * max(shadow.pcssParams.z, 1.0);
     }
@@ -224,8 +275,10 @@ float RawShadowDepth(vec2 uv) {
 
 float ProjectedPCSSRadius(vec2 uv, float depth, int cascadeIndex,
         vec2 clampMin, vec2 clampMax, vec2 texelStep, mat2 rotation) {
-    float baseRadius = shadow.filterParams.x;
-    if (shadow.filterParams.z < 1.5 || shadow.filterParams.w > 0.5
+    float baseRadius = ShadowDebugModeIs(kShadowDebugPCFOff)
+        ? 0.0 : shadow.filterParams.x;
+    if (ShadowDebugModeIs(kShadowDebugPCFOff)
+            || shadow.filterParams.z < 1.5 || shadow.filterParams.w > 0.5
             || shadow.pcssParams.x <= 0.0
             || shadow.pcssParams.y <= 0.0) {
         return baseRadius;
@@ -285,22 +338,39 @@ float ProjectedPCSSRadius(vec2 uv, float depth, int cascadeIndex,
         baseRadius, maxRadius);
 }
 
-float SampleShadowCascade(vec4 shadowCoord, vec4 atlasRect,
-        int cascadeIndex) {
+bool ProjectShadowCoord(vec4 shadowCoord, out vec2 localUv,
+        out float depth) {
     float w = shadowCoord.w;
     // !(w > eps) also rejects NaN.
     if (!(w > 1.0e-5) || w > 65536.0) {
-        return 1.0;
+        gShadowDebugState = max(gShadowDebugState, 1.0);
+        localUv = vec2(0.0);
+        depth = 0.0;
+        return false;
     }
 
     vec2 projectedXY = shadowCoord.xy / w;
-    float depth = shadowCoord.z;
-    vec3 projected = vec3(projectedXY, depth);
+    float projectedDepth = shadowCoord.z;
+    vec3 projected = vec3(projectedXY, projectedDepth);
     if (any(isnan(projected)) || any(isinf(projected))
             || any(greaterThan(abs(projected), vec3(65536.0)))) {
+        gShadowDebugState = max(gShadowDebugState, 2.0);
+        localUv = vec2(0.0);
+        depth = 0.0;
+        return false;
+    }
+    localUv = projectedXY * 0.5 + 0.5;
+    depth = projectedDepth;
+    return true;
+}
+
+float SampleShadowCascade(vec4 shadowCoord, vec4 atlasRect,
+        int cascadeIndex) {
+    vec2 localUv;
+    float depth;
+    if (!ProjectShadowCoord(shadowCoord, localUv, depth)) {
         return 1.0;
     }
-    vec2 localUv = projectedXY * 0.5 + 0.5;
     if (localUv.x <= 0.0 || localUv.x >= 1.0
             || localUv.y <= 0.0 || localUv.y >= 1.0) {
         return 1.0;
@@ -317,7 +387,8 @@ float SampleShadowCascade(vec4 shadowCoord, vec4 atlasRect,
     vec2 rectMax = max(atlasRect.xy, atlasRect.zw);
     vec2 texelStep = shadow.texelSize.xy
         * sign(atlasRect.zw - atlasRect.xy);
-    float guardRadius = max(0.5, shadow.pcssParams.z + 0.75);
+    float guardRadius = ShadowDebugModeIs(kShadowDebugPCFOff)
+        ? 0.5 : max(0.5, shadow.pcssParams.z + 0.75);
     vec2 guardBand = abs(shadow.texelSize.xy) * guardRadius;
     vec2 clampMin = rectMin + guardBand;
     vec2 clampMax = rectMax - guardBand;
@@ -404,6 +475,8 @@ float SampleCascadeByIndex(int cascadeIndex) {
 
 float SampleShadowFactor() {
     int cascadeIndex = SelectShadowCascade(vViewDepth);
+    gShadowCascadeIndex = cascadeIndex;
+    gShadowCascadeBlend = 0.0;
     float shadowFactor = SampleCascadeByIndex(cascadeIndex);
     int lastInteriorIndex = ShadowCascadeCount() - 2;
     float cascadeBlend = shadow.biasParams.z;
@@ -425,8 +498,173 @@ float SampleShadowFactor() {
     if (blend <= 0.02) {
         return shadowFactor;
     }
+    gShadowCascadeBlend = blend;
     return mix(shadowFactor, SampleCascadeByIndex(cascadeIndex + 1),
         blend);
+}
+
+vec4 CascadeDebugColor(int cascadeIndex) {
+    if (cascadeIndex <= 0) {
+        return vec4(1.0, 0.2, 0.2, 1.0);
+    }
+    if (cascadeIndex == 1) {
+        return vec4(0.2, 1.0, 0.2, 1.0);
+    }
+    if (cascadeIndex == 2) {
+        return vec4(0.2, 0.5, 1.0, 1.0);
+    }
+    return vec4(1.0, 0.85, 0.2, 1.0);
+}
+
+vec4 ShadowCoordWDebugOutput(vec4 shadowCoord) {
+    if (isnan(shadowCoord.w)) {
+        return vec4(1.0, 0.0, 1.0, 1.0);
+    }
+    float absW = abs(shadowCoord.w);
+    float danger = 1.0 - clamp(absW / 0.25, 0.0, 1.0);
+    float intensity = 0.3 + 0.7 * clamp(absW / 4.0, 0.0, 1.0);
+    vec3 signColor = (shadowCoord.w < 0.0)
+        ? vec3(1.0, 0.2, 0.2) : vec3(0.2, 0.6, 1.0);
+    vec3 color = mix(signColor, vec3(1.0, 1.0, 0.0), danger);
+    return vec4(color * intensity, 1.0);
+}
+
+vec4 ShadowCompareDeltaDebugOutput(int cascadeIndex) {
+    vec2 localUv;
+    float depth;
+    if (!ProjectShadowCoord(ShadowCoordByIndex(cascadeIndex), localUv,
+            depth)) {
+        return vec4(1.0, 0.0, 1.0, 1.0);
+    }
+    if (localUv.x <= 0.0 || localUv.x >= 1.0
+            || localUv.y <= 0.0 || localUv.y >= 1.0
+            || depth <= 0.0 || depth >= 1.0) {
+        return vec4(1.0, 1.0, 0.0, 1.0);
+    }
+
+    vec4 atlasRect = AtlasRectByIndex(cascadeIndex);
+    vec2 atlasUv = mix(atlasRect.xy, atlasRect.zw, localUv);
+    float storedDepth = RawShadowDepth(atlasUv);
+    float delta = depth - ShadowReceiverBias(cascadeIndex) - storedDepth;
+    float magnitude = clamp(abs(delta) * 64.0, 0.0, 1.0);
+    vec3 litColor = vec3(0.1, 0.35, 1.0);
+    vec3 shadowColor = vec3(1.0, 0.16, 0.08);
+    vec3 nearColor = vec3(0.0, 1.0, 0.22);
+    vec3 signColor = (delta > 0.0) ? shadowColor : litColor;
+    return vec4(mix(nearColor, signColor, magnitude), 1.0);
+}
+
+// Vulkan admits shadow maps per light rather than per receiver surface, so a
+// receiver that reached this shader is always eligible and the reason the CPU
+// uploads is 0. The ladder is kept whole so the two backends read alike if a
+// per-surface reason ever appears.
+vec4 ShadowReceiverDebugOutput() {
+    float reason = floor(shadow.debugParams.y + 0.5);
+    if (ShadowDebugModeIs(kShadowDebugReceiverEligibility)) {
+        if (reason < 0.5) {
+            return vec4(0.0, 0.95, 0.18, 1.0);
+        }
+        if (reason < 1.5) {
+            return vec4(0.0, 0.85, 1.0, 1.0);
+        }
+        return vec4(1.0, 0.18, 0.08, 1.0);
+    }
+
+    if (reason < 0.5) {
+        return vec4(0.0, 0.85, 0.16, 1.0);
+    }
+    if (reason < 1.5) {
+        return vec4(0.0, 0.82, 1.0, 1.0);
+    }
+    if (reason < 2.5) {
+        return vec4(1.0, 0.08, 0.08, 1.0);
+    }
+    if (reason < 3.5) {
+        return vec4(0.95, 0.12, 1.0, 1.0);
+    }
+    if (reason < 4.5) {
+        return vec4(1.0, 0.86, 0.08, 1.0);
+    }
+    return vec4(1.0, 0.45, 0.0, 1.0);
+}
+
+vec4 ShadowDebugOutput() {
+    if (ShadowReceiverDebugMode()) {
+        return ShadowReceiverDebugOutput();
+    }
+
+    int cascadeIndex = gShadowCascadeIndex;
+    vec2 localUv;
+    float depth;
+    bool validCoord = ProjectShadowCoord(ShadowCoordByIndex(cascadeIndex),
+        localUv, depth);
+
+    if (shadow.debugParams.x < kShadowDebugCascadeIndex + 0.5) {
+        if (shadow.debugParams.x < kShadowDebugAtlas + 0.5) {
+            if (!validCoord) {
+                return vec4(1.0, 0.0, 1.0, 1.0);
+            }
+            vec4 atlasRect = AtlasRectByIndex(cascadeIndex);
+            vec2 atlasUv = mix(atlasRect.xy, atlasRect.zw, localUv);
+            return vec4(atlasUv, RawShadowDepth(atlasUv), 1.0);
+        }
+        vec4 cascadeColor = CascadeDebugColor(cascadeIndex);
+        if (gShadowCascadeBlend > 0.0) {
+            int nextCascadeIndex =
+                (cascadeIndex + 1 < ShadowCascadeCount())
+                    ? (cascadeIndex + 1) : (ShadowCascadeCount() - 1);
+            cascadeColor.rgb = mix(cascadeColor.rgb,
+                CascadeDebugColor(nextCascadeIndex).rgb,
+                gShadowCascadeBlend);
+        }
+        return cascadeColor;
+    }
+
+    if (shadow.debugParams.x < kShadowDebugProjectedUV + 0.5) {
+        if (!validCoord) {
+            return vec4(1.0, 0.0, 1.0, 1.0);
+        }
+        return vec4(localUv, 1.0 - localUv.x, 1.0);
+    }
+
+    if (shadow.debugParams.x < kShadowDebugProjectedDepth + 0.5) {
+        if (!validCoord) {
+            return vec4(1.0, 0.0, 1.0, 1.0);
+        }
+        return vec4(vec3(depth), 1.0);
+    }
+
+    if (shadow.debugParams.x < kShadowDebugProjectedW + 0.5) {
+        return ShadowCoordWDebugOutput(ShadowCoordByIndex(cascadeIndex));
+    }
+
+    if (ShadowDebugModeIs(kShadowDebugCompareDelta)) {
+        return ShadowCompareDeltaDebugOutput(cascadeIndex);
+    }
+
+    if (shadow.debugParams.x > kShadowDebugInvalidMask + 0.5
+            && shadow.debugParams.x < kShadowDebugBiasHeatmap + 0.5) {
+        if (!validCoord) {
+            return vec4(1.0, 0.0, 1.0, 1.0);
+        }
+        float bias = ShadowReceiverBias(cascadeIndex);
+        float heat = clamp(bias * 400.0, 0.0, 1.0);
+        return vec4(heat, 1.0 - abs(heat - 0.5) * 2.0, 1.0 - heat, 1.0);
+    }
+
+    vec3 invalidColor = vec3(0.0);
+    if (gShadowDebugState > 1.5) {
+        invalidColor = vec3(1.0, 0.0, 1.0);
+    } else if (gShadowDebugState > 0.5) {
+        invalidColor = vec3(1.0, 0.0, 0.0);
+    } else if (!validCoord) {
+        invalidColor = vec3(1.0, 0.0, 1.0);
+    } else if (localUv.x <= 0.0 || localUv.x >= 1.0
+            || localUv.y <= 0.0 || localUv.y >= 1.0
+            || depth <= 0.0 || depth >= 1.0) {
+        invalidColor = vec3(1.0, 1.0, 0.0);
+    }
+    return vec4(invalidColor, 1.0);
 }
 
 void main() {
@@ -458,8 +696,14 @@ void main() {
     if (pc.d.x > 0.5) {
         vec3 localNormal = bumpSample.rgb * 2.0 - 1.0;
         localNormal.xy *= pc.d.w;
-        outColor = vec4(EvaluatePackedPBR(SafeNormalize(localNormal),
-            diffuseTexCoord, specularTexCoord, SampleShadowFactor()), 0.0);
+        vec3 packed = EvaluatePackedPBR(SafeNormalize(localNormal),
+            diffuseTexCoord, specularTexCoord, SampleShadowFactor());
+        // Sample first: the views describe the cascade the lit path chose.
+        if (ShadowVisualDebugMode()) {
+            outColor = ShadowDebugOutput();
+            return;
+        }
+        outColor = vec4(packed, 0.0);
         return;
     }
     vec3 localNormal = vec3(bumpSample.a, bumpSample.g, bumpSample.b) * 2.0 - 1.0;
@@ -471,6 +715,10 @@ void main() {
     light *= textureProj(lightFalloffMap, vLightFalloffTexCoord).rgb;
     light *= textureProj(lightProjectionMap, vLightProjectionTexCoord).rgb;
     light *= SampleShadowFactor();
+    if (ShadowVisualDebugMode()) {
+        outColor = ShadowDebugOutput();
+        return;
+    }
 
     vec3 diffuse = texture(diffuseMap, diffuseTexCoord).rgb * inter.diffuseColor.rgb;
     diffuse = ApplyFlatDiffuseSweep(diffuse, vLightFalloffTexCoord.z);

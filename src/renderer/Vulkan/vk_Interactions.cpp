@@ -183,7 +183,18 @@ typedef struct vkShadowBlock_s {
 	float			texelSize[ 4 ];		// x,y: 1 / atlas dimensions
 	float			filterParams[ 4 ];	// x: radius, y: taps, z: mode, w: hardware compare
 	float			pcssParams[ 4 ];	// x: light radius, y: max radius, z: effective radius, w: receiver-plane bias
+	float			debugParams[ 4 ];	// x: r_shadowMapDebugMode, y: receiver fallback reason
 } vkShadowBlock_t;
+
+// r_shadowMapDebugMode reaches both receiver shaders through the shadow ABI
+// (glprogs uShadowDebugMode parity). Vulkan admits shadow maps per light
+// rather than per receiver surface, so every receiver that reaches a shadowed
+// pipeline is eligible and its fallback reason is 0; the shader keeps the
+// whole reason ladder so the two backends read alike if that ever changes.
+static float VK_ShadowMap_DebugModeValue( void ) {
+	return (float)idMath::ClampInt( 0, SHADOWMAP_DEBUGMODE_COUNT - 1,
+			r_shadowMapDebugMode.GetInteger() );
+}
 
 // std140 mirror of the point variant's set-7 ShadowBlock (Phase F2b,
 // 7 vec4 = 112 bytes; rewritten per space — the rows are the model matrix)
@@ -195,12 +206,16 @@ typedef struct vkPointShadowBlock_s {
 	float			biasParams[ 4 ];	// x: constant bias, y: normal bias, z: texel depth bias, w: per-distance normal-offset factor
 	float			filterParams[ 4 ];	// x: radius, y: taps, z: mode, w: cube texel scale
 	float			samplingParams[ 4 ];	// x: hardware compare enabled
+	float			debugParams[ 4 ];	// x: r_shadowMapDebugMode, y: receiver fallback reason
 } vkPointShadowBlock_t;
 
-static_assert( sizeof( vkShadowBlock_t ) == 464,
-		"projected shadow std140 block must remain 29 vec4s" );
-static_assert( sizeof( vkPointShadowBlock_t ) == 112,
-		"point shadow std140 block must remain 7 vec4s" );
+// VK_Exec_ShadowUniformAlloc rejects anything past its 512-byte ring
+// slice, so the projected block has two vec4s of headroom left. Growing
+// it further needs a larger slice, not just a bigger struct.
+static_assert( sizeof( vkShadowBlock_t ) == 480,
+		"projected shadow std140 block must remain 30 vec4s" );
+static_assert( sizeof( vkPointShadowBlock_t ) == 128,
+		"point shadow std140 block must remain 8 vec4s" );
 static_assert( sizeof( vkInteractionBlock_t ) == 240,
 		"interaction std140 block must remain 15 vec4s" );
 static_assert( sizeof( vkShadowBlock_t ) <= 512 &&
@@ -700,6 +715,7 @@ static bool VK_ClassicInteraction_BuildMappedShadowBlock(
 			/ static_cast<float>( Max( 1, mapPass.point.faceSize ) );
 		block.samplingParams[ 0 ] = mapPass.point.depthCompare
 			? 1.0f : 0.0f;
+		block.debugParams[ 0 ] = VK_ShadowMap_DebugModeValue();
 		return true;
 	}
 
@@ -772,6 +788,7 @@ static bool VK_ClassicInteraction_BuildMappedShadowBlock(
 	block.pcssParams[ 2 ] = mapPass.projected.filter.effectiveFilterRadius;
 	block.pcssParams[ 3 ] = mapPass.projected.receiverPlaneBias
 		? 1.0f : 0.0f;
+	block.debugParams[ 0 ] = VK_ShadowMap_DebugModeValue();
 	return true;
 }
 
@@ -2585,6 +2602,7 @@ static int VK_Inter_WriteShadowSlice( const viewEntity_t *space ) {
 				2.0f / (float)Max( 1, state->tileSize );
 		pointBlock.samplingParams[ 0 ] =
 				r_shadowMapPointDepthCompare.GetBool() ? 1.0f : 0.0f;
+		pointBlock.debugParams[ 0 ] = VK_ShadowMap_DebugModeValue();
 		return VK_Exec_ShadowUniformAlloc( &pointBlock,
 				sizeof( pointBlock ) );
 	}
@@ -2663,6 +2681,7 @@ static int VK_Inter_WriteShadowSlice( const viewEntity_t *space ) {
 	block.pcssParams[ 2 ] = filterSettings.effectiveFilterRadius;
 	block.pcssParams[ 3 ] =
 			r_shadowMapReceiverPlaneBias.GetBool() ? 1.0f : 0.0f;
+	block.debugParams[ 0 ] = VK_ShadowMap_DebugModeValue();
 
 	return VK_Exec_ShadowUniformAlloc( &block, sizeof( block ) );
 }
