@@ -1594,6 +1594,7 @@ static void VK_ClassicInteraction_DrawReceiverRange(
 		vkCmdPushConstants( prepared.cmd, layout,
 			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 			0, sizeof( plan.push ), &plan.push );
+		VK_Device_CountDrawIndexed( (int)( primitive.indexCount ), (int)( primitive.vertexCount ) );
 		vkCmdDrawIndexed( prepared.cmd,
 			static_cast<uint32_t>( primitive.indexCount ), 1, 0, 0, 0 );
 		prepared.submittedDraws++;
@@ -2382,6 +2383,7 @@ static void VK_DrawSingleInteractionMode( const drawInteraction_t *din,
 	interPass.imageSetsValid = true;
 	vkCmdPushConstants( interPass.cmd, layout,
 			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), &push );
+	VK_Device_CountDrawIndexed( (int)( din->surf->geo->numIndexes ), (int)( din->surf->geo->numVerts ) );
 	vkCmdDrawIndexed( interPass.cmd, (uint32_t)din->surf->geo->numIndexes, 1, 0, 0, 0 );
 	interPass.drawCount++;
 	if ( nativePBR ) {
@@ -3914,9 +3916,13 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 			interPass.stencilLightCount++;
 
 			// LOCAL and GLOBAL can independently require a full fallback or a
-			// map supplement. Clear and rebuild stencil per receiver so a
-			// supplement-only chain can never be contaminated by full-volume
-			// casters that are already represented in the filtered map.
+			// map supplement, so a supplement-only chain must never be
+			// contaminated by full-volume casters already represented in the
+			// filtered map. Stencil is therefore rebuilt per receiver whenever the
+			// two chains differ -- but when they are the same chain, GLOBAL builds
+			// on what LOCAL already stamped, as the OpenGL path does.
+			const drawSurf_t *localBranchVolumes = NULL;
+			bool localBranchStampComplete = false;
 			if ( localStencilFallback ) {
 				VK_Inter_SelectShadowMode( NULL, NULL );
 				VK_Inter_StencilClear( vLight );
@@ -3936,6 +3942,8 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 							: vLight->globalShadows;
 				const bool localVolumePassComplete =
 						VK_StencilShadowPass( localGlobalVolumes );
+				localBranchVolumes = localGlobalVolumes;
+				localBranchStampComplete = localVolumePassComplete;
 				vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
 						interPass.pipelineUnshadowed );
 				vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_EQUAL );
@@ -3963,7 +3971,6 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 
 			if ( globalStencilFallback ) {
 				VK_Inter_SelectShadowMode( NULL, NULL );
-				VK_Inter_StencilClear( vLight );
 				vkCmdSetStencilTestEnable( cmd, VK_TRUE );
 				vkCmdSetStencilOp( cmd, VK_STENCIL_FACE_FRONT_AND_BACK,
 						VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP,
@@ -3984,8 +3991,20 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 							translucentMapNeedsSupplement )
 							? vLight->localShadowMapStencilSupplements
 							: vLight->localShadows;
-				const bool globalVolumePassComplete =
-						VK_StencilShadowPass( globalGlobalVolumes );
+				// The LOCAL branch already stamped this exact chain and the receiver
+				// draws between the two keep stencil (KEEP/KEEP/KEEP), so its result
+				// is still resident. Build on it the way the OpenGL path does -- one
+				// clear, globalShadows stamped once, then localShadows on top --
+				// instead of clearing and rasterizing the same volumes again.
+				const bool reuseLocalBranchStencil =
+						localBranchStampComplete &&
+						localBranchVolumes == globalGlobalVolumes;
+				if ( !reuseLocalBranchStencil ) {
+					VK_Inter_StencilClear( vLight );
+				}
+				const bool globalVolumePassComplete = reuseLocalBranchStencil
+						? true
+						: VK_StencilShadowPass( globalGlobalVolumes );
 				const bool localVolumePassComplete =
 						VK_StencilShadowPass( globalLocalVolumes );
 				vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -5176,6 +5195,7 @@ void VK_ClassicFogBlend_DrawOwnedView( const viewDef_t *viewDef ) {
 		vkCmdPushConstants( prepared.cmd, prepared.layout,
 			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 			0, sizeof( plan.push ), &plan.push );
+		VK_Device_CountDrawIndexed( (int)( plan.primitive->indexCount ), (int)( plan.primitive->vertexCount ) );
 		vkCmdDrawIndexed( prepared.cmd,
 			static_cast<uint32_t>( plan.primitive->indexCount ),
 			1, 0, 0, 0 );
@@ -5326,6 +5346,7 @@ static void VK_T_BasicFog( const drawSurf_t *surf ) {
 				VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), &push );
 	}
 
+	VK_Device_CountDrawIndexed( (int)( tri->numIndexes ), (int)( tri->numVerts ) );
 	vkCmdDrawIndexed( interPass.cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
 	interPass.fogDrawCount++;
 }
@@ -5511,6 +5532,7 @@ static void VK_T_BlendLight( const drawSurf_t *surf ) {
 		return;
 	}
 
+	VK_Device_CountDrawIndexed( (int)( tri->numIndexes ), (int)( tri->numVerts ) );
 	vkCmdDrawIndexed( interPass.cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
 	interPass.blendDrawCount++;
 }

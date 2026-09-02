@@ -498,9 +498,11 @@ static bool VK_Device_CreateSwapchain( void ) {
 		return false;
 	}
 
-	// present mode from r_swapInterval: 0 = IMMEDIATE (or MAILBOX when
-	// IMMEDIATE is absent), else FIFO (always available)
-	const int requestedInterval = r_swapInterval.GetInteger();
+	// present mode from the effective swap interval: 0 = IMMEDIATE (or MAILBOX
+	// when IMMEDIATE is absent), else FIFO (always available). Read through
+	// R_GetEffectiveSwapInterval so the loading-screen vsync bypass
+	// (r_disableVSyncDuringLevelLoad) reaches Vulkan the way it reaches GL.
+	const int requestedInterval = R_GetEffectiveSwapInterval();
 	VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
 	if ( requestedInterval == 0 ) {
 		uint32_t modeCount = 0;
@@ -658,6 +660,130 @@ static bool VK_Device_CreateSwapchain( void ) {
 		common->Warning( "Vulkan: swapchain does not support transfer-source captures; screenshots and backbuffer feedback are unavailable" );
 	}
 	return true;
+}
+
+/*
+====================
+VK_Device_CountDrawIndexed
+====================
+*/
+void VK_Device_CountDrawIndexed( int indexCount, int vertexCount ) {
+	backEnd.pc.c_drawElements++;
+	backEnd.pc.c_drawIndexes += indexCount;
+	backEnd.pc.c_drawVertexes += vertexCount;
+}
+
+/*
+====================
+Pipeline cache
+
+The driver keeps its compiled pipelines in an opaque blob. Without one, every
+session re-compiles every pipeline the moment its material/state combination is
+first drawn, which shows up as first-encounter hitching rather than as a lower
+average frame rate. The blob is a disposable generated cache under fs_savepath:
+it is read from the savepath only, never from a PK4, and a blob that does not
+match this device is discarded rather than handed to the driver.
+====================
+*/
+static const char *VK_PIPELINE_CACHE_FILE = "generated/vulkan/pipeline.cache";
+
+// VkPipelineCacheHeaderVersionOne: 32 bytes, little-endian.
+static const int VK_PIPELINE_CACHE_HEADER_BYTES = 32;
+
+static bool VK_Device_PipelineCacheBlobMatchesDevice( const byte *blob, int blobBytes ) {
+	if ( blob == NULL || blobBytes < VK_PIPELINE_CACHE_HEADER_BYTES ) {
+		return false;
+	}
+	uint32_t headerSize = 0;
+	uint32_t headerVersion = 0;
+	uint32_t vendorID = 0;
+	uint32_t deviceID = 0;
+	memcpy( &headerSize, blob + 0, sizeof( headerSize ) );
+	memcpy( &headerVersion, blob + 4, sizeof( headerVersion ) );
+	memcpy( &vendorID, blob + 8, sizeof( vendorID ) );
+	memcpy( &deviceID, blob + 12, sizeof( deviceID ) );
+	if ( headerSize != (uint32_t)VK_PIPELINE_CACHE_HEADER_BYTES ||
+			headerVersion != (uint32_t)VK_PIPELINE_CACHE_HEADER_VERSION_ONE ) {
+		return false;
+	}
+	if ( vendorID != vkCtx.deviceProperties.vendorID ||
+			deviceID != vkCtx.deviceProperties.deviceID ) {
+		return false;
+	}
+	return memcmp( blob + 16, vkCtx.deviceProperties.pipelineCacheUUID, VK_UUID_SIZE ) == 0;
+}
+
+static bool VK_Device_CreatePipelineCache( void ) {
+	VkPipelineCacheCreateInfo pcci;
+	memset( &pcci, 0, sizeof( pcci ) );
+	pcci.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+
+	byte *blob = NULL;
+	int blobBytes = 0;
+	const char *osPath = fileSystem->RelativePathToOSPath( VK_PIPELINE_CACHE_FILE, "fs_savepath" );
+	idFile *file = osPath != NULL ? fileSystem->OpenExplicitFileRead( osPath ) : NULL;
+	if ( file != NULL ) {
+		const int length = file->Length();
+		if ( length >= VK_PIPELINE_CACHE_HEADER_BYTES && length < ( 256 << 20 ) ) {
+			blob = (byte *)Mem_Alloc( length );
+			if ( file->Read( blob, length ) == length ) {
+				blobBytes = length;
+			} else {
+				Mem_Free( blob );
+				blob = NULL;
+			}
+		}
+		fileSystem->CloseFile( file );
+	}
+
+	if ( blob != NULL && !VK_Device_PipelineCacheBlobMatchesDevice( blob, blobBytes ) ) {
+		// a blob from another GPU or driver build: start empty rather than hand
+		// the driver data the spec does not require it to reject
+		common->Printf( "Vulkan: discarding pipeline cache written by a different device/driver\n" );
+		Mem_Free( blob );
+		blob = NULL;
+		blobBytes = 0;
+	}
+	if ( blob != NULL ) {
+		pcci.initialDataSize = (size_t)blobBytes;
+		pcci.pInitialData = blob;
+	}
+
+	const VkResult res = vkCreatePipelineCache( vkCtx.device, &pcci, NULL, &vkCtx.pipelineCache );
+	if ( blob != NULL ) {
+		Mem_Free( blob );
+	}
+	if ( res != VK_SUCCESS ) {
+		// not fatal: pipeline creation accepts VK_NULL_HANDLE
+		vkCtx.pipelineCache = VK_NULL_HANDLE;
+		common->Warning( "Vulkan: pipeline cache creation failed (%d); pipelines will not be cached",
+				static_cast<int>( res ) );
+		return false;
+	}
+	common->Printf( "Vulkan: pipeline cache %s\n", blobBytes > 0 ? "restored" : "created empty" );
+	return true;
+}
+
+static void VK_Device_SavePipelineCache( void ) {
+	if ( vkCtx.device == VK_NULL_HANDLE || vkCtx.pipelineCache == VK_NULL_HANDLE ) {
+		return;
+	}
+	size_t blobBytes = 0;
+	if ( vkGetPipelineCacheData( vkCtx.device, vkCtx.pipelineCache, &blobBytes, NULL ) != VK_SUCCESS
+			|| blobBytes < (size_t)VK_PIPELINE_CACHE_HEADER_BYTES ) {
+		return;
+	}
+	byte *blob = (byte *)Mem_Alloc( (int)blobBytes );
+	if ( vkGetPipelineCacheData( vkCtx.device, vkCtx.pipelineCache, &blobBytes, blob ) != VK_SUCCESS ) {
+		Mem_Free( blob );
+		return;
+	}
+	idFile *file = fileSystem->OpenFileWrite( VK_PIPELINE_CACHE_FILE, "fs_savepath" );
+	if ( file != NULL ) {
+		file->Write( blob, (int)blobBytes );
+		fileSystem->CloseFile( file );
+	}
+	Mem_Free( blob );
 }
 
 /*
@@ -1069,6 +1195,9 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
 		}
 	}
 
+	// not fatal if it fails: pipeline creation accepts VK_NULL_HANDLE
+	VK_Device_CreatePipelineCache();
+
 	if ( !VK_Device_CreateSwapchain() ) {
 		VK_Device_Shutdown();
 		return false;
@@ -1086,6 +1215,11 @@ VK_Device_Shutdown
 void VK_Device_Shutdown( void ) {
 	if ( vkCtx.device != VK_NULL_HANDLE ) {
 		vkDeviceWaitIdle( vkCtx.device );
+	}
+	if ( vkCtx.pipelineCache != VK_NULL_HANDLE ) {
+		VK_Device_SavePipelineCache();
+		vkDestroyPipelineCache( vkCtx.device, vkCtx.pipelineCache, NULL );
+		vkCtx.pipelineCache = VK_NULL_HANDLE;
 	}
 	if ( vkCtx.device != VK_NULL_HANDLE && vkCtx.allocator != NULL ) {
 		// an open batch is abandoned, never submitted: the images it records

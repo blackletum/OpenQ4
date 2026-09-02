@@ -544,6 +544,10 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 			case RC_DRAW_VIEW: {
 				const drawSurfsCommand_t *cmd = (const drawSurfsCommand_t *)cmds;
 				if ( cmd->viewDef != NULL ) {
+					// RB_DrawView accounts this for OpenGL, and the Vulkan backend does
+					// not route through it, so the renderer metrics would otherwise read
+					// zero surfaces on this backend.
+					backEnd.pc.c_surfaces += cmd->viewDef->numDrawSurfs;
 					const classicSubviewDomainView_t *sharedSubview =
 						VK_ClassicSubview_Preflight( cmd->viewDef );
 					pendingSharedSubview = sharedSubview != NULL

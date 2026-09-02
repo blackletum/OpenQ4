@@ -107,6 +107,11 @@ typedef struct vkDeviceContext_s {
 	// triggers recreation at the next present
 	int					swapInterval;
 
+	// Driver-owned pipeline blob, seeded from and written back to a
+	// disposable fs_savepath cache so a session does not re-compile every
+	// pipeline the last one already built.
+	VkPipelineCache		pipelineCache;
+
 	// --- Phase D ---
 	VmaAllocator		allocator;
 
@@ -158,6 +163,12 @@ void	VK_Device_Shutdown( void );
 // recreates the swapchain (resize / OUT_OF_DATE / swap-interval change);
 // reads the current window pixel size through the services
 bool	VK_Device_RecreateSwapchain( void );
+
+// Accounts one ordinary indexed draw the way the OpenGL backend's
+// RB_DrawElementsWithCounters does, so both backends report the same
+// workload. Shadow-volume draws keep their own c_shadow* counters, which
+// is also what GL does, so they must not be passed here.
+void	VK_Device_CountDrawIndexed( int indexCount, int vertexCount );
 
 // acquires, records a dynamic-rendering clear with the given color, and
 // presents; handles OUT_OF_DATE/SUBOPTIMAL by recreating and retrying once
