@@ -55,7 +55,9 @@ It is designed for players who want the original Quake 4 experience with a clean
 ## Why players use openQ4
 
 - **Modern display support** for widescreen, ultrawide, multi-monitor, borderless, and fullscreen setups.
-- **Optional visual upgrades** such as bloom, HDR, anti-aliasing, baked light grids, soft particles, and enhanced shadow options.
+- **Optional visual upgrades** such as bloom, HDR, anti-aliasing, baked light grids, and enhanced shadow options, plus soft particles that fade effects into the world instead of cutting a hard edge against it.
+- **Smoother motion at high refresh rates.** The camera, weapons, movers, and everything riding them are drawn on an interpolated presentation clock between the game's 60 Hz ticks, so a 144 Hz or 240 Hz display shows motion at its own rate. Simulation, networking, collision, demos, and saves keep their original timing.
+- **Real liquids** with wading, swimming, drowning, and damaging slime and lava, plus underwater visuals and audio. Retail Quake 4 has none of this, so liquids are something you author - see the [Liquids guide](docs/user/liquids.md).
 - **Reliable OpenAL audio** with compatibility-first voice handling; experimental macOS packages bundle OpenAL Soft so large stock levels are not constrained by Apple's legacy buffer pool.
 - **Improved input and quality-of-life features** including controller support, better console UX, and modern settings behavior.
 - **Single-player and multiplayer in one install** with active compatibility work aimed at the stock game.
@@ -63,6 +65,7 @@ It is designed for players who want the original Quake 4 experience with a clean
 - **A stock-map Arena Campaign** (experimental) with five escalating bot tiers, varied combat game types, boss matches, and persistent ladder progress beside the original story.
 - **A unified demo library and player** with pause, speed, stepping, rewind/fast-forward controls, honest legacy-format status, and full-world free-fly/player-follow playback for server-side multi-view recordings.
 - **Cross-platform support** with Windows packages, directly executable Linux AppImages and archives for x86_64 plus preview aarch64, Steam Deck support on Linux, and experimental Apple Silicon/arm64 macOS OpenGL/Metal bridge packages through the signed/notarized DMG lane for credentialed release runs.
+- **Opt-in renderer modernization**, each piece default-off and independently reversible: [temporal AA/upscaling with GPU-time dynamic resolution](docs/user/temporal-presentation.md), [bounded volumetrics, screen-space reflections, and indirect light](docs/user/advanced-screen-space-lighting.md), GPU skeletal animation, and guarded PBR materials with authored specular probes. These are previews rather than finished features, and a single setting rolls the whole set back.
 - **Open development** with releases, issue tracking, and community feedback all happening in public.
 
 ---
@@ -124,6 +127,7 @@ Packaged support currently focuses on Windows, Linux x64, Steam Deck/SteamOS, pr
 - [Getting Started](docs/user/getting-started.md) - system requirements, installation, first launch, and common setup questions
 - [Client Settings Guide](docs/user/client-settings.md) - where to find the most useful in-game settings
 - [Server Setup Guide](docs/user/server-setup.md) - basic dedicated server setup and common server variables
+- [Server and Remote-Console Security](docs/user/server-security.md) - the authenticated `rcon2` protocol and password handling
 
 ### Play and tune
 
@@ -133,10 +137,13 @@ Packaged support currently focuses on Windows, Linux x64, Steam Deck/SteamOS, pr
 - [Arena Campaign](docs/user/arena-campaign.md) (experimental) - single-player arena tiers, unlock rules, maps, game types, and bot rosters
 - [Steam Deck](docs/user/steam-deck.md) - launcher, controls, and Linux handheld notes
 - [Multiplayer Networking](docs/user/multiplayer-networking.md) (experimental) - multiplayer tuning and lag-comp behavior
+- [Competitive Matches](docs/user/competitive-matches.md) (experimental) - match framework, rules, and warmup behaviour
 - [Demo Library and Multi-View Demos](docs/user/multiview-demos.md) - browse formats, use playback controls, and record or replay complete multiplayer matches
+- [Liquids](docs/user/liquids.md) - water, slime, and lava behaviour, and how to author them
 - [Shadow Mapping](docs/user/shadow-mapping.md) - optional shadow-map settings and troubleshooting
 - [Light Grids](docs/user/light-grids.md) - advanced lighting guide for players and testers
 - [Advanced Screen-Space Lighting](docs/user/advanced-screen-space-lighting.md) (experimental) - bounded froxel volumetrics, SSR, SSGI, performance controls, and one-setting rollback
+- [Temporal AA and Dynamic Resolution](docs/user/temporal-presentation.md) (experimental) - temporal anti-aliasing/upscaling and GPU-time resolution scaling
 - [Cel Shading](docs/user/cel-shading.md) - banded lighting and outline settings for the cel-shaded look
 - [DDS Texture Replacements](docs/user/texture-replacements.md) - install and diagnose DXT/BC7 texture packs
 - [Level-Load Cache](docs/user/level-load-cache.md) - learned preload and generated model, world, collision, and animation cache behavior, controls, rollback, and cleanup

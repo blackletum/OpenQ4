@@ -131,6 +131,35 @@ openQ4 automatically validates your Quake 4 installation to ensure you have legi
 - `r_hdrAutoExposureAsync 0|1` — Read the HDR auto-exposure luminance sample back asynchronously with one frame of latency instead of stalling the GPU pipeline every frame (default `1`)
 - See [docs/user/shadow-mapping.md](docs/user/shadow-mapping.md) for the full shadow-map CVar reference, presets, transparency behavior, and debug modes
 
+### Renderer Backend
+- `r_renderApi best|gl|vulkan|gl-module` — Rendering API; default `gl`. `vulkan` selects the experimental native Vulkan module and applies on engine restart, falling back to OpenGL if initialization fails
+- See [docs/user/display-settings.md](docs/user/display-settings.md#renderer-backend-opengl-default-vulkan-is-experimental)
+
+### Presentation Clock
+- `g_presentationInterpolation 0|1` — Draw movers, and everything riding them, on the same interpolated presentation time as the first-person camera instead of the 60 Hz simulation clock (default `1`). Setting `0` puts the camera and every entity back on the simulation clock together
+- `g_showPresentationPose 0|1` — Developer diagnostic: report per frame whether the local player reached the presentation clock, and the root transform, joint modifier, animation time, and drawn joint the frame used (default `0`)
+
+### Modernization Paths (experimental, default-off)
+
+Each of these is independently reversible, and `r_rendererModernQuality 0` rolls
+back every Milestone F domain at once. They are previews rather than finished
+features; see the [idTech 5 modernization roadmap](docs/dev/idtech5-modernization-roadmap.md)
+for scope and the [engine capability matrix](docs/dev/engine-capability-matrix.md)
+for authoritative status.
+
+- `r_temporalAA 0|1` — Native-history temporal anti-aliasing/upscaling on OpenGL and Vulkan (default `0`); SMAA remains the immediate rollback
+- `r_rendererDynamicResolution 0|1` — GPU-time driven resolution scaling (default `0`), tuned with `r_dynamicResolutionMinScale` / `r_dynamicResolutionMaxScale`
+- `r_rendererModernQuality 0|1` — Master gate for the modern material and advanced-lighting domains (default `1`); `0` rolls all of them back together
+- `r_pbrMaterials 0|1` — Guarded metallic/roughness lighting for dual-authored `pbr { ... }` materials (default `0`); retail materials keep their classic fallback
+- `r_rendererReflectionProbes 0|1` — Authored, bounded OpenGL specular probes (default `0`); incomplete probe data returns to the analytic environment
+- `r_rendererClusteredDecals 0|1` — Bounded OpenGL clustered-decal corridor (default `0`)
+- `r_rendererFroxelVolumetrics 0|1` — Bounded view-aligned froxel volumetrics (default `0`)
+- `r_rendererSSR 0|1` — Bounded depth-normal screen-space reflections (default `0`)
+- `r_rendererSSGI 0|1` — Fixed-tap depth-derived screen-space indirect light (default `0`)
+- `r_gpuSkinning 0|1` — Backend compute skinning for eligible MD5/MD5R surfaces (default `0`); CPU positions stay authoritative for gameplay and stencil volumes
+- `com_levelLoadModernization 0|1` — Learned level-load preload plus generated model, world, collision, and animation caches (default `0`); private to `fs_savepath` and falls back to the installed assets
+- See [docs/user/temporal-presentation.md](docs/user/temporal-presentation.md), [docs/user/advanced-screen-space-lighting.md](docs/user/advanced-screen-space-lighting.md), and [docs/user/level-load-cache.md](docs/user/level-load-cache.md)
+
 ### Resolution Scaling
 - `r_screenFraction` — `10..200`; values below `100` reduce or simulate reduced resolution, while values above `100` supersample the root scene in a single-sample offscreen target and resolve to the native back buffer
 - `r_resolutionScaleMode 0` — Legacy cropped viewport scaling below native resolution
