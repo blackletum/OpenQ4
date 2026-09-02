@@ -311,16 +311,69 @@ Verified on the current build at 1280x720 windowed, settled gameplay, engine
 unresolved-transition warnings, and an 8.5 MB save, against a run that
 previously warned on every attempt.
 
+## 2026-09-02 image-load phase accounting
+
+The ranked list below previously called for parallel image decode on the premise
+that the image phase was "mostly independent inflate and decode work". The
+profile reported one wall time for the whole set, so that premise had never been
+checked. `LoadLevelImages` now reports where the time actually goes -- source
+timestamp probes, generated-cache reads, source read/decode, and GPU upload --
+each with a call count. Measured on `game/airdefense1`, 1280x720 windowed, warm.
+
+The map has to be measured twice, because `image_usePrecompressedTextures`
+selects two different pipelines and it is archived, so a configured client and a
+fresh one do not load the same way:
+
+| Phase | default (`image_usePrecompressedTextures 1`) | DDS path off |
+|---|---:|---:|
+| Source timestamp probe | 731.9 ms / 1,725 | 370.9 ms / 1,725 |
+| Generated `.bimage` read | 408.0 ms / 80 | 6,393.9 ms / 1,731 |
+| Source read and decode | 1,349.3 ms / 1,653 | 21.6 ms / 2 |
+| GPU allocate and upload | 949.5 ms / 1,728 | 400.7 ms / 1,728 |
+| Measured total | 4,744.9 ms | 7,195.3 ms |
+| Reported storage | 213.4 MiB | 1,258.2 MiB |
+
+**Decode is not the cost.** With the DDS path on, the 1,653 source loads are
+almost all precompressed-DDS reads: that visit wrote 41 generated files, which
+is the number of images that actually reached the CPU decode/compress path, and
+matches the rule `R_ShouldWriteGeneratedImages` documents. With the DDS path off
+every image is served from the generated cache and the decode branch is entered
+twice. In neither configuration is there a meaningful amount of decode work to
+spread across cores.
+
+**The cost is file I/O.** Either the DDS sources (1,349 ms) or the generated
+cache (6,394 ms) dominate, and both are reads. The same conclusion falls out of
+the OS page cache: the identical 1,258 MiB workload takes 14,694 ms on a cold
+file cache and 1,458 ms warm, a 10x swing with no change in CPU or GPU work.
+
+**The probe is waste.** 1,725 of those calls are `R_LoadImageProgram` invoked
+with null pixel outputs purely to learn a source timestamp. `idFileSystem::ReadFile`
+with a null buffer still performs a complete `OpenFileRead` and closes it without
+reading a byte, and for a PK4 member that means `unzReOpen` (a fresh `fopen` of
+the pak), a central-directory seek, a 64 KiB read buffer, and an inflate window.
+`idFile_InZip::Timestamp` then returns a hardcoded `0`. Every one of those opens
+is performed to receive a constant.
+
 ### Ranked remaining work
 
-1. Parallel level image decode. 1,718 files and 213 MiB of mostly independent
-   inflate and decode work currently run serially ahead of the serial GL
-   upload. This is the largest single remaining item and the one the idle core
-   count most clearly supports.
-2. First-visit cost of the level-load cache path. Closing that gap is what
+1. Answer the source timestamp probe without opening the PK4 member. Worth
+   371--732 ms depending on configuration, needs no threading, and the length a
+   null-buffer `ReadFile` also returns is already in the central directory the
+   pak keeps open. The care required is in the side effects the current path has
+   on the way past: pure-pak status, `pak->referenced`, the asset log, and the
+   learned level-load manifest.
+2. Parallel level image read. This is the real bulk, but it is reads, not
+   decode, and the obvious design does not work: `FinishLevelLoadCache`
+   (`Session.cpp`) joins the pipeline and drains every handle before
+   `EndLevelLoad` runs, so a prefetch pump driven from the image path is inert,
+   and the existing substitution hook only replaces the payload read after the
+   handle has already been opened -- which is the part that costs. Any design
+   has to prefetch during the ~7 s of `gameInit` that precedes the image phase,
+   and has to cover the open, not just the inflate.
+3. First-visit cost of the level-load cache path. Closing that gap is what
    turns `com_levelLoadModernization` from a warm-only win into a promotable
    default.
-3. Preload replay coverage. The pipeline admits 64 of 4,428 learned sources and
+4. Preload replay coverage. The pipeline admits 64 of 4,428 learned sources and
    peaks at 41 MiB of its 384 MiB staging budget, because each admitted source
    holds an open file handle for the whole load. Lazily opening handles as the
    pipeline consumes them would let the cap rise.

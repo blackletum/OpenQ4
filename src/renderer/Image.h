@@ -458,6 +458,28 @@ public:
 
 extern idImageManager* globalImages;		// pointer to global list for the rest of the system
 
+// Level-load image phase accounting. LoadLevelImages reports one wall time for
+// the whole set, which cannot say whether a load is spending it probing source
+// timestamps, reading the generated cache, decoding, or uploading. Those four
+// have different remedies, so ActuallyLoadImage accumulates them separately.
+struct imageLoadPhaseTimings_t {
+	double			probeMsec;			// source timestamp probes taken without reading a payload
+	double			generatedMsec;		// generated .bimage cache reads
+	double			decodeMsec;			// source read, decode, compress, and cache write
+	double			uploadMsec;			// AllocImage and SubImageUpload
+	int				probeCount;
+	int				generatedCount;
+	int				decodeCount;
+	int				uploadCount;
+
+	void			Clear() {
+						probeMsec = generatedMsec = decodeMsec = uploadMsec = 0.0;
+						probeCount = generatedCount = decodeCount = uploadCount = 0;
+					}
+};
+
+extern imageLoadPhaseTimings_t imageLoadPhaseTimings;
+
 int MakePowerOfTwo(int num);
 
 /*

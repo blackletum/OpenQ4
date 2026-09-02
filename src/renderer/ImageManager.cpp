@@ -1188,6 +1188,7 @@ void idImageManager::BeginLevelLoad() {
 	// search paths are stable for the whole load, so DDS replacement probes
 	// can be memoized until EndLevelLoad finishes LoadLevelImages
 	R_SetDDSProbeCacheActive( true );
+	imageLoadPhaseTimings.Clear();
 
 	for ( int i = 0 ; i < images.Num() ; i++ ) {
 		idImage	*image = images[ i ];
@@ -1294,6 +1295,15 @@ int idImageManager::LoadLevelImages( bool pacifier ) {
 			pendingImages.Num(),
 			measuredLoadMsec,
 			static_cast<double>( loadedStorageBytes ) / ( 1024.0 * 1024.0 ) );
+		// Which of the four costs a load is actually paying decides what is worth
+		// optimizing: a timestamp probe reads no payload but still opens a PK4
+		// member, while a generated-cache hit skips decoding entirely.
+		common->Printf(
+			"  phases: probe=%.1f/%d generated=%.1f/%d decode=%.1f/%d upload=%.1f/%d msec/calls\n",
+			imageLoadPhaseTimings.probeMsec, imageLoadPhaseTimings.probeCount,
+			imageLoadPhaseTimings.generatedMsec, imageLoadPhaseTimings.generatedCount,
+			imageLoadPhaseTimings.decodeMsec, imageLoadPhaseTimings.decodeCount,
+			imageLoadPhaseTimings.uploadMsec, imageLoadPhaseTimings.uploadCount );
 		const int slowImageCount = Min( 12, pendingImages.Num() );
 		for ( int i = 0; i < slowImageCount; i++ ) {
 			if ( pendingImages[ i ].size <= 0 ) {

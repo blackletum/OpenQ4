@@ -149,6 +149,26 @@ static unsigned int R_GetImageDownsizeSignature( const char *name, textureUsage_
 static void R_DownsizeLoadedImageData( const char *name, textureUsage_t usage, bool allowDownSize, byte *&pic, int &width, int &height );
 static void R_DownsizeLoadedCubeImageData( const char *name, textureUsage_t usage, bool allowDownSize, byte *pics[6], int &size );
 
+imageLoadPhaseTimings_t imageLoadPhaseTimings;
+
+// Image loading is single-threaded (see parseBuffer in Image_program.cpp), so a
+// plain accumulator is safe here.
+class idScopedImageLoadPhase {
+public:
+	idScopedImageLoadPhase( double &accumulator, int &counter ) : target( accumulator ) {
+		counter++;
+		timer.Start();
+	}
+	~idScopedImageLoadPhase() {
+		timer.Stop();
+		target += timer.Milliseconds();
+	}
+
+private:
+	double &	target;
+	idTimer		timer;
+};
+
 static void R_LoadImageProgramForDeclaredUsage( const char *name, byte **pic, int *width, int *height,
 	ID_TIME_T *timestamp, textureUsage_t &usage ) {
 	// Classic image programs infer TD_BUMP for normal-producing operations.
@@ -567,7 +587,10 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 		R_ResolvePreferredDDSImageSource( GetName(), preferredDDSName, &preferredDDSFileTime, true, &preferredDDSPrecompressed );
 	if ( preferredDDSImage && !fileSystem->InProductionMode() ) {
 		ID_TIME_T originalSourceTime = FILE_NOT_FOUND_TIMESTAMP;
-		R_LoadImageProgramForDeclaredUsage( GetName(), NULL, NULL, NULL, &originalSourceTime, usage );
+		{
+			idScopedImageLoadPhase probePhase( imageLoadPhaseTimings.probeMsec, imageLoadPhaseTimings.probeCount );
+			R_LoadImageProgramForDeclaredUsage( GetName(), NULL, NULL, NULL, &originalSourceTime, usage );
+		}
 		if ( R_IsPreferredDDSStale( preferredDDSName, preferredDDSFileTime, originalSourceTime ) ) {
 			if ( cvarSystem->GetCVarBool( "image_showPrecompressedTextures" ) ) {
 				common->Printf( "Ignoring stale DDS replacement %s for %s\n", preferredDDSName.c_str(), GetName() );
@@ -620,6 +643,7 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 	if ( bypassGeneratedFile ) {
 		binaryFileTime = FILE_NOT_FOUND_TIMESTAMP;
 	} else {
+		idScopedImageLoadPhase generatedPhase( imageLoadPhaseTimings.generatedMsec, imageLoadPhaseTimings.generatedCount );
 		binaryFileTime = im.LoadFromGeneratedFileUnchecked();
 	}
 
@@ -666,6 +690,7 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 		}
 		if ( !productionMode ) {
 			if ( !sourceFileTimeKnown ) {
+				idScopedImageLoadPhase probePhase( imageLoadPhaseTimings.probeMsec, imageLoadPhaseTimings.probeCount );
 				if ( cubeFiles != CF_2D ) {
 					R_LoadCubeImages( GetName(), cubeFiles, NULL, NULL, &sourceFileTime );
 				} else if ( preferredDDSImage ) {
@@ -693,7 +718,10 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 
 	bool generatedImageAccepted = acceptGeneratedImage( binaryFileTime );
 	if ( !generatedImageAccepted && !bypassGeneratedFile ) {
-		binaryFileTime = im.LoadFromCompactGeneratedFileUnchecked();
+		{
+			idScopedImageLoadPhase generatedPhase( imageLoadPhaseTimings.generatedMsec, imageLoadPhaseTimings.generatedCount );
+			binaryFileTime = im.LoadFromCompactGeneratedFileUnchecked();
+		}
 		generatedImageAccepted = acceptGeneratedImage( binaryFileTime );
 	}
 	if ( generatedImageAccepted ) {
@@ -709,6 +737,7 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 		//	fileSystem->AddImagePreload( GetName(), filter, repeat, usage, cubeFiles );
 		//}
 	} else {
+		idScopedImageLoadPhase decodePhase( imageLoadPhaseTimings.decodeMsec, imageLoadPhaseTimings.decodeCount );
 		im.Clear();
 		bool loadedPrecompressedDDS = false;
 		if ( cubeFiles != CF_2D ) {
@@ -851,14 +880,16 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 		}
 	}
 
-	AllocImage();
+	{
+		idScopedImageLoadPhase uploadPhase( imageLoadPhaseTimings.uploadMsec, imageLoadPhaseTimings.uploadCount );
+		AllocImage();
 
-
-	const int imageCount = im.NumImages();
-	for ( int i = 0; i < imageCount; i++ ) {
-		const bimageImage_t & img = im.GetImageHeader( i );
-		const byte * data = im.GetImageData( i );
-		SubImageUpload( img.level, 0, 0, img.destZ, img.width, img.height, data );
+		const int imageCount = im.NumImages();
+		for ( int i = 0; i < imageCount; i++ ) {
+			const bimageImage_t & img = im.GetImageHeader( i );
+			const byte * data = im.GetImageData( i );
+			SubImageUpload( img.level, 0, 0, img.destZ, img.width, img.height, data );
+		}
 	}
 	loadedSourceName = selectedSourceName;
 }
