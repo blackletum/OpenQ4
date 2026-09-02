@@ -1,8 +1,12 @@
 # Vulkan shadow maps — OpenGL parity closure (staging plan)
 
-Status: PLANNED (2026-09-02). Goal doc for the remaining Vulkan
-shadow-mapping gaps after Phase F2a/F2b + the 2026-07-24 shadow parity
-follow-up. Parent:
+Status: S1-S3 LANDED (2026-09-02) - stencil-volume elision (22eb0060),
+dynamic-caster composition (742c7b91), CSM static caching (2bc4b5ff).
+S4-S7 remain. S1 and S2 change runtime behaviour that token pins cannot
+fully cover, and still want the user's own gameplay sign-off.
+
+Goal doc for the remaining Vulkan shadow-mapping gaps after Phase
+F2a/F2b + the 2026-07-24 shadow parity follow-up. Parent:
 [2026-07-19-vulkan-phase-f.md](2026-07-19-vulkan-phase-f.md);
 stencil/F3 record: [2026-07-20-vulkan-phase-g.md](2026-07-20-vulkan-phase-g.md).
 
