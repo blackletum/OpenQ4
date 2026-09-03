@@ -22,6 +22,9 @@ windowDef Desktop
 	float	"curr"	0
 	float	"match_tab"	0
 	float	"match_confirm"	0
+	// Set while the compact connect-time join panel owns the menu instead
+	// of the full in-game chrome.
+	float	"quickjoin"	0
   	float	"team_strogg_offset"	"desktop::itemheight" * "gui::num_marine_players" + 16
   	float	"team_marine_offset"	"desktop::itemheight" * "gui::num_strogg_players" + 16
 	float	"strogg_offset"	0
@@ -70,7 +73,11 @@ windowDef Desktop
 	}
 
 	onESC {
-		if ( "desktop::match_confirm" != 0 ) {
+		if ( "desktop::quickjoin" == 1 ) {
+			// Backing out of the join panel leaves the player spectating; the
+			// full menu is one more ESC away.
+			set "cmd" "play main_menu_selection close" ;
+		} else if ( "desktop::match_confirm" != 0 ) {
 			set "desktop::match_confirm" "0" ;
 		} else if ( "desktop::ingame" == 1 && ( "desktop::curr" <= 14 || "desktop::curr" == 21 ) ) {
 			set "gui::match_referee_credential" "" ;
@@ -111,11 +118,13 @@ windowDef Desktop
 
 	onNamedEvent changeteam_marine_no {
 		set "join_t_msg::text" "#str_202039" ;
+		set "qj_msg::text" "#str_202039" ;
 		resettime "anim_changeteam" "0" ;
 	}
 
 	onNamedEvent changeteam_marine_same {
 		set "join_t_msg::text" "#str_202040" ;
+		set "qj_msg::text" "#str_202040" ;
 		resettime "anim_changeteam" "0" ;		
 	}
 
@@ -125,11 +134,13 @@ windowDef Desktop
 
 	onNamedEvent changeteam_strogg_no {
 		set "join_t_msg::text" "#str_202041" ;
+		set "qj_msg::text" "#str_202041" ;
 		resettime "anim_changeteam" "0" ;
 	}
 
 	onNamedEvent changeteam_strogg_same {
 		set "join_t_msg::text" "#str_202042" ;
+		set "qj_msg::text" "#str_202042" ;
 		resettime "anim_changeteam" "0" ;
 	}
 
@@ -198,11 +209,30 @@ windowDef Desktop
 		
 		set "p_join::visible" "1" ;
 
-		resettime "anim_in" "0" ;
+		// openQ4: a connect-time join is answered by the compact join panel,
+		// not by the whole in-game menu, so the chrome and its intro
+		// animation stay down until the player asks for the menu.
+		if ( "gui::initial_join" == 1 ) {
+			set "desktop::quickjoin" "1" ;
+			set "desktop::dest" "2" ;
+			set "desktop::curr" "2" ;
+			set "p_main::visible" "0" ;
+			set "p_btns::visible" "0" ;
+			set "p_quickjoin::visible" "1" ;
+			set "qj_msg::visible" "0" ;
+		} else {
+			set "desktop::quickjoin" "0" ;
+			set "p_main::visible" "1" ;
+			set "p_btns::visible" "1" ;
+			set "p_quickjoin::visible" "0" ;
+
+			resettime "anim_in" "0" ;
+		}
 	}
 
 	onNamedEvent initialJoin {
 		set "desktop::active" "0" ;
+		set "desktop::quickjoin" "1" ;
 		set "desktop::dest" "2" ;
 		set "desktop::curr" "2" ;
 
@@ -218,9 +248,6 @@ windowDef Desktop
 		namedevent "p_btns::hideVote" ;
 		namedevent "p_btns::hideVcfg" ;
 
-		set "p_join::rect" "0,0,640,480" ;
-		set "p_join::visible" "1" ;
-		set "p_joinblock::visible" "1" ;
 		set "p_players::visible" "0" ;
 		set "p_vote::visible" "0" ;
 		set "p_settings::visible" "0" ;
@@ -230,8 +257,12 @@ windowDef Desktop
 		set "p_voiceconfig::visible" "0" ;
 		set "join_t_msg::visible" "0" ;
 
-		namedevent "p_btns::showMain" ;
-		namedevent "p_btns::showJoin" ;
+		// Only the compact panel is up: the menu chrome, its Join tab and the
+		// chat log all stay down until the player asks for the menu.
+		set "p_main::visible" "0" ;
+		set "p_btns::visible" "0" ;
+		set "p_quickjoin::visible" "1" ;
+		set "qj_msg::visible" "0" ;
 	}
 
 	onEvent {
@@ -6105,13 +6136,15 @@ windowDef Desktop
 			}
 
 			onTime +50 {
-				set "join_t_msg::visible" "1" ;				
+				set "join_t_msg::visible" "1" ;
+				set "qj_msg::visible" "1" ;
 			}
 
 			onTime +1500 {
 				set "desktop::active" "0" ;
 				
 				set "join_t_msg::visible" "0" ;
+				set "qj_msg::visible" "0" ;
 				
 				namedevent "p_btns::showMain" ;
 				namedevent "p_btns::showJoin" ;
@@ -9452,6 +9485,361 @@ windowDef Desktop
 				}
 			}
 
+		}
+	}
+
+	// -------------------------------------------------------------------
+	// Compact connect-time join panel.
+	//
+	// Everything here is authored inside the plain 640x480 canvas and never
+	// reads "gui::virtual_screen_x_expand", so the panel keeps its 4:3 shape
+	// and stays centred on a wide screen instead of stretching across it.
+	// The live map behind it is pushed out of focus by the game module
+	// (idMultiplayerGame::SetJoinScreenSoftFocus), so the panel deliberately
+	// does not dim the rest of the screen.
+	//
+	// The button set comes from "gui::join_team_mode" / "gui::join_tourney_mode"
+	// rather than a copy of the gametype table.
+	// -------------------------------------------------------------------
+	windowDef p_quickjoin
+	{
+		rect	0,0,640,480
+		visible	0
+
+		windowDef qj_panel
+		{
+			rect		116,140,408,200
+			backcolor	0.035,0.045,0.032,0.94
+			bordercolor	0.45,0.5,0.27,1
+			bordersize	1
+			noevents	1
+		}
+		windowDef qj_panel_grad
+		{
+			rect		117,141,406,198
+			background	"gfx/guis/mainmenu/bg_darkgrad"
+			matcolor	0.545,0.588,0.294,0.14
+			noevents	1
+		}
+
+		windowDef qj_title
+		{
+			rect		132,152,376,26
+			forecolor	0.96,0.97,0.9,1
+			text		"gui::join_match_title"
+			textscale	0.3
+			font		"fonts/marine"
+			noevents	1
+		}
+		windowDef qj_rule
+		{
+			rect		132,180,376,1
+			backcolor	0.45,0.5,0.27,0.8
+			noevents	1
+		}
+		windowDef qj_state
+		{
+			rect		132,188,190,20
+			forecolor	0.95,0.72,0.25,1
+			text		"gui::join_match_state"
+			textscale	0.22
+			font		"fonts/lowpixel"
+			noevents	1
+		}
+		windowDef qj_limit
+		{
+			rect		132,212,190,16
+			forecolor	0.72,0.76,0.63,1
+			text		"gui::join_match_limit"
+			textscale	0.17
+			font		"fonts/lowpixel"
+			noevents	1
+		}
+		windowDef qj_players
+		{
+			rect		132,228,190,16
+			forecolor	0.72,0.76,0.63,1
+			text		"gui::join_match_players"
+			textscale	0.17
+			font		"fonts/lowpixel"
+			noevents	1
+		}
+		windowDef qj_server
+		{
+			rect		132,244,190,16
+			forecolor	0.55,0.58,0.48,1
+			text		"gui::join_match_server"
+			textscale	0.17
+			font		"fonts/lowpixel"
+			noevents	1
+		}
+
+		// -------------------------------------------------- free-for-all modes
+		windowDef qj_b_join
+		{
+			rect		336,196,172,34
+			visible		( "gui::join_team_mode" == 0 && "gui::join_tourney_mode" == 0 )
+			backcolor	0.30,0.10,0.07,0.96
+			bordercolor	0.95,0.72,0.25,1
+			bordersize	1
+
+			onMouseEnter {
+				if ( "desktop::active" == 0 ) {
+					set "backcolor" "0.45,0.16,0.09,0.98" ;
+					set "cmd" "play main_menu_mouseover" ;
+				}
+			}
+			onMouseExit {
+				set "backcolor" "0.30,0.10,0.07,0.96" ;
+			}
+			onAction {
+				if ( "desktop::active" == 0 ) {
+					set "cmd" "play main_menu_selection join auto close" ;
+				}
+			}
+		}
+		windowDef qj_t_join
+		{
+			rect		336,203,172,20
+			visible		( "gui::join_team_mode" == 0 && "gui::join_tourney_mode" == 0 )
+			forecolor	0.98,0.98,0.94,1
+			text		"#str_200187"
+			textscale	0.28
+			textalign	1
+			font		"fonts/lowpixel"
+			noevents	1
+		}
+
+		// ---------------------------------------------------------- Tourney
+		windowDef qj_b_tourney
+		{
+			rect		336,196,172,34
+			visible		( "gui::join_tourney_mode" == 1 )
+			backcolor	0.30,0.10,0.07,0.96
+			bordercolor	0.95,0.72,0.25,1
+			bordersize	1
+
+			onMouseEnter {
+				if ( "desktop::active" == 0 ) {
+					set "backcolor" "0.45,0.16,0.09,0.98" ;
+					set "cmd" "play main_menu_mouseover" ;
+				}
+			}
+			onMouseExit {
+				set "backcolor" "0.30,0.10,0.07,0.96" ;
+			}
+			onAction {
+				if ( "desktop::active" == 0 ) {
+					set "cmd" "play main_menu_selection toggleTourney close" ;
+				}
+			}
+		}
+		windowDef qj_t_tourney
+		{
+			rect		336,203,172,20
+			visible		( "gui::join_tourney_mode" == 1 )
+			forecolor	0.98,0.98,0.94,1
+			text		"gui::toggleTourneyButton"
+			textscale	0.28
+			textalign	1
+			font		"fonts/lowpixel"
+			noevents	1
+		}
+
+		// ------------------------------------------------------- team modes
+		windowDef qj_b_auto
+		{
+			rect		336,188,172,32
+			visible		( "gui::join_team_mode" == 1 )
+			backcolor	0.30,0.10,0.07,0.96
+			bordercolor	0.95,0.72,0.25,1
+			bordersize	1
+
+			onMouseEnter {
+				if ( "desktop::active" == 0 ) {
+					set "backcolor" "0.45,0.16,0.09,0.98" ;
+					set "cmd" "play main_menu_mouseover" ;
+				}
+			}
+			onMouseExit {
+				set "backcolor" "0.30,0.10,0.07,0.96" ;
+			}
+			onAction {
+				if ( "desktop::active" == 0 ) {
+					set "cmd" "play main_menu_selection join auto close" ;
+				}
+			}
+		}
+		windowDef qj_t_auto
+		{
+			rect		336,195,172,20
+			visible		( "gui::join_team_mode" == 1 )
+			forecolor	0.98,0.98,0.94,1
+			text		"#str_200192"
+			textscale	0.28
+			textalign	1
+			font		"fonts/lowpixel"
+			noevents	1
+		}
+		windowDef qj_b_marine
+		{
+			rect		336,224,172,28
+			visible		( "gui::join_team_mode" == 1 )
+			backcolor	0.07,0.075,0.055,0.98
+			bordercolor	0.3,0.34,0.2,1
+			bordersize	1
+
+			onMouseEnter {
+				if ( "desktop::active" == 0 ) {
+					set "backcolor" "0.27,0.15,0.04,0.98" ;
+					set "bordercolor" "0.95,0.49,0.06,1" ;
+					set "cmd" "play main_menu_mouseover" ;
+				}
+			}
+			onMouseExit {
+				set "backcolor" "0.07,0.075,0.055,0.98" ;
+				set "bordercolor" "0.3,0.34,0.2,1" ;
+			}
+			onAction {
+				if ( "desktop::active" == 0 ) {
+					set "cmd" "play main_menu_selection" ;
+					consoleCMD "CheckTeamBalance marine changeteam_marine_yes changeteam_marine_no changeteam_marine_same" ;
+				}
+			}
+		}
+		windowDef qj_t_marine
+		{
+			rect		336,230,172,18
+			visible		( "gui::join_team_mode" == 1 )
+			forecolor	0.86,0.88,0.8,1
+			text		"#str_200193"
+			textscale	0.24
+			textalign	1
+			font		"fonts/lowpixel"
+			noevents	1
+		}
+		windowDef qj_b_strogg
+		{
+			rect		336,256,172,28
+			visible		( "gui::join_team_mode" == 1 )
+			backcolor	0.07,0.075,0.055,0.98
+			bordercolor	0.3,0.34,0.2,1
+			bordersize	1
+
+			onMouseEnter {
+				if ( "desktop::active" == 0 ) {
+					set "backcolor" "0.27,0.15,0.04,0.98" ;
+					set "bordercolor" "0.95,0.49,0.06,1" ;
+					set "cmd" "play main_menu_mouseover" ;
+				}
+			}
+			onMouseExit {
+				set "backcolor" "0.07,0.075,0.055,0.98" ;
+				set "bordercolor" "0.3,0.34,0.2,1" ;
+			}
+			onAction {
+				if ( "desktop::active" == 0 ) {
+					set "cmd" "play main_menu_selection" ;
+					consoleCMD "CheckTeamBalance strogg changeteam_strogg_yes changeteam_strogg_no changeteam_strogg_same" ;
+				}
+			}
+		}
+		windowDef qj_t_strogg
+		{
+			rect		336,262,172,18
+			visible		( "gui::join_team_mode" == 1 )
+			forecolor	0.86,0.88,0.8,1
+			text		"#str_200194"
+			textscale	0.24
+			textalign	1
+			font		"fonts/lowpixel"
+			noevents	1
+		}
+
+		// ------------------------------------------------------- spectating
+		windowDef qj_b_spectate
+		{
+			rect		336,238,172,30
+			visible		( "gui::join_team_mode" == 0 && "gui::join_tourney_mode" == 0 )
+			backcolor	0.07,0.075,0.055,0.98
+			bordercolor	0.3,0.34,0.2,1
+			bordersize	1
+
+			onMouseEnter {
+				if ( "desktop::active" == 0 ) {
+					set "backcolor" "0.27,0.15,0.04,0.98" ;
+					set "bordercolor" "0.95,0.49,0.06,1" ;
+					set "cmd" "play main_menu_mouseover" ;
+				}
+			}
+			onMouseExit {
+				set "backcolor" "0.07,0.075,0.055,0.98" ;
+				set "bordercolor" "0.3,0.34,0.2,1" ;
+			}
+			onAction {
+				if ( "desktop::active" == 0 ) {
+					set "cmd" "play main_menu_selection join spectator close" ;
+				}
+			}
+		}
+		windowDef qj_t_spectate
+		{
+			rect		336,244,172,18
+			visible		( "gui::join_team_mode" == 0 && "gui::join_tourney_mode" == 0 )
+			forecolor	0.86,0.88,0.8,1
+			text		"#str_200195"
+			textscale	0.24
+			textalign	1
+			font		"fonts/lowpixel"
+			noevents	1
+		}
+		windowDef qj_b_tspectate
+		{
+			rect		336,288,172,28
+			visible		( "gui::join_team_mode" == 1 )
+			backcolor	0.07,0.075,0.055,0.98
+			bordercolor	0.3,0.34,0.2,1
+			bordersize	1
+
+			onMouseEnter {
+				if ( "desktop::active" == 0 ) {
+					set "backcolor" "0.27,0.15,0.04,0.98" ;
+					set "bordercolor" "0.95,0.49,0.06,1" ;
+					set "cmd" "play main_menu_mouseover" ;
+				}
+			}
+			onMouseExit {
+				set "backcolor" "0.07,0.075,0.055,0.98" ;
+				set "bordercolor" "0.3,0.34,0.2,1" ;
+			}
+			onAction {
+				if ( "desktop::active" == 0 ) {
+					set "cmd" "play main_menu_selection join spectator close" ;
+				}
+			}
+		}
+		windowDef qj_t_tspectate
+		{
+			rect		336,294,172,18
+			visible		( "gui::join_team_mode" == 1 )
+			forecolor	0.86,0.88,0.8,1
+			text		"#str_200195"
+			textscale	0.24
+			textalign	1
+			font		"fonts/lowpixel"
+			noevents	1
+		}
+
+		// Team-balance refusals surface here instead of the Join tab's notice.
+		windowDef qj_msg
+		{
+			rect		132,316,376,18
+			visible		0
+			forecolor	0.95,0.6,0.1,1
+			text		""
+			textscale	0.19
+			font		"fonts/lowpixel"
+			noevents	1
 		}
 	}
 }

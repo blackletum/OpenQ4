@@ -915,4 +915,12 @@
 	"#str_42801"	"%s utonął"
 	"#str_42802"	"%s rozpuścił się w szlamie"
 	"#str_42803"	"%s spłonął w lawie"
+
+	"#str_42810"	"%d/%d GRACZY"
+	"#str_42811"	"ROZGRZEWKA"
+	"#str_42812"	"START MECZU"
+	"#str_42813"	"MECZ W TOKU"
+	"#str_42814"	"NAGŁA ŚMIERĆ"
+	"#str_42815"	"KONIEC MECZU"
+	"#str_42816"	"OCZEKIWANIE NA GRACZY"
 }

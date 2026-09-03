@@ -915,4 +915,12 @@
 	"#str_42801"	"%s drowned"
 	"#str_42802"	"%s dissolved in slime"
 	"#str_42803"	"%s burned in lava"
+
+	"#str_42810"	"%d/%d PLAYERS"
+	"#str_42811"	"MATCH WARMUP"
+	"#str_42812"	"MATCH STARTING"
+	"#str_42813"	"MATCH IN PROGRESS"
+	"#str_42814"	"SUDDEN DEATH"
+	"#str_42815"	"MATCH OVER"
+	"#str_42816"	"WAITING FOR PLAYERS"
 }

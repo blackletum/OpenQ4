@@ -915,4 +915,12 @@
 	"#str_42801"	"%s è annegato"
 	"#str_42802"	"%s si è dissolto nella melma"
 	"#str_42803"	"%s è bruciato nella lava"
+
+	"#str_42810"	"%d/%d GIOCATORI"
+	"#str_42811"	"RISCALDAMENTO"
+	"#str_42812"	"AVVIO PARTITA"
+	"#str_42813"	"PARTITA IN CORSO"
+	"#str_42814"	"MORTE IMPROVVISA"
+	"#str_42815"	"PARTITA CONCLUSA"
+	"#str_42816"	"IN ATTESA DI GIOCATORI"
 }
