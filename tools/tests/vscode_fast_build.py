@@ -125,9 +125,11 @@ def validate_launch_configs() -> None:
                 for index, token in enumerate(args[:-2])
                 if token in ("+set", "+seta") and args[index + 1] == "ui_autoJoin"
             ]
-            if values != ["1"]:
+            # The interactive configurations start at the join screen, which is the
+            # shipped default; the automated MP profiles below still pin it to 1.
+            if values != ["0"]:
                 raise AssertionError(
-                    f"MP launch config {config.get('name')!r} must set ui_autoJoin exactly once to 1"
+                    f"MP launch config {config.get('name')!r} must set ui_autoJoin exactly once to 0"
                 )
     if not mp_configs:
         raise AssertionError("Expected at least one VS Code MP launch configuration")
@@ -163,8 +165,16 @@ def validate_mp_autojoin_policy() -> None:
     )
 
     guide = read("AGENTS.md")
-    require(guide, "Keep `ui_autoJoin 1` enabled for multiplayer testing", "agent MP test policy")
-    require(guide, "explicit `+set ui_autoJoin 0`", "join-menu test exception")
+    require(
+        guide,
+        "keep an explicit `+set ui_autoJoin 1`",
+        "agent MP test policy",
+    )
+    require(
+        guide,
+        "pass `+set ui_autoJoin 0`",
+        "interactive join-screen launch policy",
+    )
 
 
 def validate_validation_coverage() -> None:
