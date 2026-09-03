@@ -323,9 +323,9 @@ Useful workflow:
 1. Enable `r_useShadowMap 1`.
 2. Set `r_shadowMapDebugMode 1` to inspect projected atlas/depth content.
 3. Set `r_shadowMapDebugOverlay 1` to keep a live mini-map in the top-left corner while you play.
-4. Use `r_singleLight` to lock the overlay to one light; otherwise it follows the last successfully rendered mapped light that frame.
+4. Use `r_singleLight` to lock the overlay to one light; otherwise OpenGL follows the last successfully rendered mapped light that frame, and Vulkan shows the first light in its prepared table (stable while the view is).
 5. The overlay stats are:
-   `POINT` / `PROJ` = light type, `L` / `G` = local/global interaction pass, `F` / `C` = point faces or projected cascades, `MAP` / `FB` = whether the selected pass stayed on shadow maps or fell back. The extra caster row reports alpha, translucent, rejected, and expanded off-screen caster counts.
+   `POINT` / `PROJ` = light type, `L` / `G` = local/global interaction pass, `F` / `C` = point faces or projected cascades, `MAP` / `FB` = whether the selected pass stayed on shadow maps or fell back. On OpenGL the extra caster row reports alpha, translucent, rejected, and expanded off-screen caster counts. Vulkan reports its own accounting instead: the selected pass's cache decision (`SCRATCH`, `REUSE`, `PUB`, or either with `+DYN` when this view's dynamic casters composed over cached static depth) and its tile size and caster split, then `HIT` projected/point cache hits, `NEW` projected/point fresh updates, `CMP` composed passes, `TILE` atlas tiles rendered against allocated, `FACE` cube faces rendered, and `FB` budget/admission/subview fallbacks.
 6. Point-light overlay tiles are face indices `0..5` in a `3x2` layout:
    `0 = +X`, `1 = -X`, `2 = +Y`, `3 = -Y`, `4 = +Z`, `5 = -Z`.
 7. Use `reportShaderPrograms` if the scene looks unlit or obviously wrong.

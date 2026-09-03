@@ -178,7 +178,10 @@ enum vkSpecialPipelineKind_t {
 	VK_SPECIAL_SHADOW_INTERACTION,
 	VK_SPECIAL_POINT_SHADOW_INTERACTION,
 	VK_SPECIAL_STENCIL_SHADOW,
-	VK_SPECIAL_FOG
+	VK_SPECIAL_FOG,
+	VK_SPECIAL_SHADOW_OVERLAY_PANEL,
+	VK_SPECIAL_SHADOW_OVERLAY_POINT_PANEL,
+	VK_SPECIAL_SHADOW_OVERLAY_TEXT
 };
 
 typedef struct vkSpecialPipeline_s {
@@ -194,6 +197,17 @@ typedef struct vkGuiPushConstants_s {
 	float			texMatrixT[ 4 ];
 	float			params[ 4 ];	// x: vertexColorMode, y: alphaTest, z: alphaTestRef, w: texMatrix enable
 } vkGuiPushConstants_t;
+
+// r_shadowMapDebugOverlay: one axis-aligned rectangle per draw. Deliberately
+// smaller than vkGuiPushConstants_t so it stays inside the 128-byte push
+// range every Vulkan implementation guarantees.
+typedef struct vkShadowOverlayPush_s {
+	float			rect[ 4 ];		// x, y, w, h in framebuffer pixels (top-left origin)
+	float			uvRect[ 4 ];	// u0, v0, u1, v1 of the sampled region
+	float			color[ 4 ];		// solid/glyph/border color
+	float			params[ 4 ];	// x: glyph slot (< 0 = solid), y: grid divisions, z: active tiles
+	float			screen[ 4 ];	// x: framebuffer width, y: framebuffer height
+} vkShadowOverlayPush_t;
 
 typedef struct vkBumpyEnvironmentBlock_s {
 	float			localViewOrigin[ 4 ];
@@ -316,6 +330,10 @@ typedef struct vkGuiExecutor_s {
 	VkShaderModule		pointCasterFragModule;
 	VkShaderModule		stencilShadowVertModule;
 	VkShaderModule		stencilShadowFragModule;
+	VkShaderModule		shadowOverlayVertModule;
+	VkShaderModule		shadowOverlayFragModule;
+	VkShaderModule		shadowOverlayPointFragModule;
+	VkShaderModule		shadowOverlayTextFragModule;
 	VkShaderModule		fogVertModule;
 	VkShaderModule		fogFragModule;
 	VkShaderModule		blendLightVertModule;
@@ -338,6 +356,10 @@ typedef struct vkGuiExecutor_s {
 	VkPipelineLayout	interactionPipelineLayout;
 	// shadow-receiving interactions add set 7 (atlas compare sampler + shadow UBO)
 	VkPipelineLayout	shadowInteractionPipelineLayout;
+	// r_shadowMapDebugOverlay: set 0 is the same shadow receiver layout, so the
+	// atlas set and the point cube sets bind unchanged; the text variant
+	// declares no sampler and binds no set at all
+	VkPipelineLayout	shadowOverlayPipelineLayout;
 	// fog/blend lights: 2 single-combined-sampler sets (0=fog/projection,
 	// 1=fogEnter/falloff) + set 2 dynamic UBO (blend-light block ring)
 	VkPipelineLayout	fogBlendPipelineLayout;
@@ -1380,6 +1402,61 @@ VkPipeline VK_Exec_PointShadowInteractionPipeline( void ) {
 				vkExec.interactionShadowPointFragModule,
 				&vertexInput, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE,
 				vkExec.shadowInteractionPipelineLayout, false, false, target ) );
+}
+
+/*
+====================
+r_shadowMapDebugOverlay pipelines
+
+Three variants over one vertex stage that builds its quad from
+gl_VertexIndex, so the overlay needs no vertex ring, no index ring, and no
+geometry state of its own. The two panel variants differ only in the view
+type they declare for set 0 binding 2 (the raw shadow sampler), which the
+shadow set layout leaves open; the text variant declares no sampler so the
+"no map" readout can draw with nothing bound. All three are SRC_ALPHA /
+ONE_MINUS_SRC_ALPHA over the live scene, matching the GL overlay's
+GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA.
+====================
+*/
+static VkPipeline VK_Exec_ShadowOverlayPipelineVariant( vkSpecialPipelineKind_t kind,
+		VkShaderModule fragModule ) {
+	const vkPipelineTarget_t target = VK_Exec_CurrentPipelineTarget();
+	VkPipeline cached = VK_Exec_FindSpecialPipeline( kind, target );
+	if ( cached != VK_NULL_HANDLE ) {
+		return cached;
+	}
+	if ( vkExec.shadowOverlayVertModule == VK_NULL_HANDLE
+			|| fragModule == VK_NULL_HANDLE
+			|| vkExec.shadowOverlayPipelineLayout == VK_NULL_HANDLE ) {
+		return VK_NULL_HANDLE;
+	}
+
+	// no vertex input at all: the quad corners come from gl_VertexIndex
+	VkPipelineVertexInputStateCreateInfo vertexInput;
+	memset( &vertexInput, 0, sizeof( vertexInput ) );
+	vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+	return VK_Exec_StoreSpecialPipeline( kind, target,
+			VK_Exec_CreatePipeline( vkExec.shadowOverlayVertModule, fragModule,
+				&vertexInput, GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA,
+				vkExec.shadowOverlayPipelineLayout, false, false, target ) );
+}
+
+VkPipeline VK_Exec_ShadowOverlayPanelPipeline( bool pointLight ) {
+	return pointLight
+		? VK_Exec_ShadowOverlayPipelineVariant( VK_SPECIAL_SHADOW_OVERLAY_POINT_PANEL,
+			vkExec.shadowOverlayPointFragModule )
+		: VK_Exec_ShadowOverlayPipelineVariant( VK_SPECIAL_SHADOW_OVERLAY_PANEL,
+			vkExec.shadowOverlayFragModule );
+}
+
+VkPipeline VK_Exec_ShadowOverlayTextPipeline( void ) {
+	return VK_Exec_ShadowOverlayPipelineVariant( VK_SPECIAL_SHADOW_OVERLAY_TEXT,
+			vkExec.shadowOverlayTextFragModule );
+}
+
+VkPipelineLayout VK_Exec_ShadowOverlayPipelineLayout( void ) {
+	return vkExec.shadowOverlayPipelineLayout;
 }
 
 // position + st off the idDrawVert stream, shared by the caster pipelines
@@ -2498,6 +2575,30 @@ static bool VK_GuiExecutor_Init( void ) {
 		common->Warning( "Vulkan: stencil shadow fragment shader module creation failed" );
 		return false;
 	}
+	smci.codeSize = vk_shadow_debug_overlay_vert_spv_size;
+	smci.pCode = (const uint32_t *)vk_shadow_debug_overlay_vert_spv;
+	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.shadowOverlayVertModule ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: shadow overlay vertex shader module creation failed" );
+		return false;
+	}
+	smci.codeSize = vk_shadow_debug_overlay_frag_spv_size;
+	smci.pCode = (const uint32_t *)vk_shadow_debug_overlay_frag_spv;
+	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.shadowOverlayFragModule ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: shadow overlay panel fragment shader module creation failed" );
+		return false;
+	}
+	smci.codeSize = vk_shadow_debug_overlay_point_frag_spv_size;
+	smci.pCode = (const uint32_t *)vk_shadow_debug_overlay_point_frag_spv;
+	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.shadowOverlayPointFragModule ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: shadow overlay point panel fragment shader module creation failed" );
+		return false;
+	}
+	smci.codeSize = vk_shadow_debug_overlay_text_frag_spv_size;
+	smci.pCode = (const uint32_t *)vk_shadow_debug_overlay_text_frag_spv;
+	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.shadowOverlayTextFragModule ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: shadow overlay text fragment shader module creation failed" );
+		return false;
+	}
 	smci.codeSize = vk_fog_vert_spv_size;
 	smci.pCode = (const uint32_t *)vk_fog_vert_spv;
 	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.fogVertModule ) != VK_SUCCESS ) {
@@ -2644,6 +2745,23 @@ static bool VK_GuiExecutor_Init( void ) {
 		common->Warning( "Vulkan: shadow interaction pipeline layout creation failed" );
 		return false;
 	}
+
+	// r_shadowMapDebugOverlay: the shadow receiver set layout at slot 0, so
+	// the published atlas set and any point cube set bind straight into the
+	// overlay's panel pipelines. Its own smaller push range keeps every
+	// overlay rectangle inside the guaranteed 128 bytes.
+	VkPushConstantRange overlayPushRange;
+	overlayPushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+	overlayPushRange.offset = 0;
+	overlayPushRange.size = sizeof( vkShadowOverlayPush_t );
+	plci.setLayoutCount = 1;
+	plci.pSetLayouts = &vkExec.shadowSetLayout;
+	plci.pPushConstantRanges = &overlayPushRange;
+	if ( vkCreatePipelineLayout( vkCtx.device, &plci, NULL, &vkExec.shadowOverlayPipelineLayout ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: shadow overlay pipeline layout creation failed" );
+		return false;
+	}
+	plci.pPushConstantRanges = &pushRange;
 
 	// fog/blend lights (Phase G2): sets 0/1 reuse the per-image
 	// single-sampler layout (fog binds _fog + _fogEnter, blend binds the
@@ -2815,6 +2933,9 @@ void VK_GuiExecutor_Shutdown( void ) {
 	if ( vkExec.shadowInteractionPipelineLayout != VK_NULL_HANDLE ) {
 		vkDestroyPipelineLayout( vkCtx.device, vkExec.shadowInteractionPipelineLayout, NULL );
 	}
+	if ( vkExec.shadowOverlayPipelineLayout != VK_NULL_HANDLE ) {
+		vkDestroyPipelineLayout( vkCtx.device, vkExec.shadowOverlayPipelineLayout, NULL );
+	}
 	if ( vkExec.fogBlendPipelineLayout != VK_NULL_HANDLE ) {
 		vkDestroyPipelineLayout( vkCtx.device, vkExec.fogBlendPipelineLayout, NULL );
 	}
@@ -2946,6 +3067,18 @@ void VK_GuiExecutor_Shutdown( void ) {
 	}
 	if ( vkExec.stencilShadowFragModule != VK_NULL_HANDLE ) {
 		vkDestroyShaderModule( vkCtx.device, vkExec.stencilShadowFragModule, NULL );
+	}
+	if ( vkExec.shadowOverlayVertModule != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, vkExec.shadowOverlayVertModule, NULL );
+	}
+	if ( vkExec.shadowOverlayFragModule != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, vkExec.shadowOverlayFragModule, NULL );
+	}
+	if ( vkExec.shadowOverlayPointFragModule != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, vkExec.shadowOverlayPointFragModule, NULL );
+	}
+	if ( vkExec.shadowOverlayTextFragModule != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, vkExec.shadowOverlayTextFragModule, NULL );
 	}
 	if ( vkExec.fogVertModule != VK_NULL_HANDLE ) {
 		vkDestroyShaderModule( vkCtx.device, vkExec.fogVertModule, NULL );
@@ -3592,6 +3725,16 @@ int VK_Exec_ActiveFramebufferWidth( void ) {
 
 int VK_Exec_ActiveFramebufferHeight( void ) {
 	return vkExec.frameOpen ? (int)vkExec.activeExtent.height : (int)vkCtx.swapchainExtent.height;
+}
+
+// Is the dynamic-rendering scope actually recording? VK_Exec_ActiveCmd only
+// reports an open frame, and a pass that interrupts the scope can fail to
+// resume it, so a consumer that appends draws of its own has to ask. Unlike
+// VK_Exec_SharedInteractionTargetReady this accepts any active target: the
+// scene can legitimately be rendering into an offscreen image.
+bool VK_Exec_MainRenderingScopeOpen( void ) {
+	return vkExec.frameOpen && vkExec.mainScopeOpen
+		&& vkExec.cmd != VK_NULL_HANDLE;
 }
 
 bool VK_Exec_ActiveTargetHasStencil( void ) {
@@ -6230,19 +6373,16 @@ bool VK_Exec_BindRawShadowGeometry( VkCommandBuffer cmd, int slot,
 	return true;
 }
 
-// Per-surface scissor: viewport base + drawSurf scissor (GL bottom-left).
-// When r_useScissor is disabled, retain RB_BeginDrawingView's view-level
-// scissor instead of expanding subviews to the whole viewport.
-void VK_Exec_SetSurfScissor( VkCommandBuffer cmd, const viewDef_t *viewDef, const drawSurf_t *drawSurf, int fbHeight ) {
+// Viewport base + a GL bottom-left request rect, clipped to the viewport and
+// flipped into Vulkan framebuffer coordinates.
+static void VK_Exec_SetScissorRect( VkCommandBuffer cmd, const viewDef_t *viewDef,
+		const idScreenRect &requested, int fbHeight ) {
 	const int vpX = viewDef->viewport.x1;
 	const int vpYGL = viewDef->viewport.y1;
 	const int vpW = viewDef->viewport.x2 - viewDef->viewport.x1 + 1;
 	const int vpH = viewDef->viewport.y2 - viewDef->viewport.y1 + 1;
 
 	VkRect2D scissor;
-	const idScreenRect &requested =
-			( r_useScissor.GetBool() && !drawSurf->scissorRect.IsEmpty() )
-				? drawSurf->scissorRect : viewDef->scissor;
 	if ( !requested.IsEmpty() ) {
 		const int requestedX0 = vpX + requested.x1;
 		const int requestedY0GL = vpYGL + requested.y1;
@@ -6269,6 +6409,23 @@ void VK_Exec_SetSurfScissor( VkCommandBuffer cmd, const viewDef_t *viewDef, cons
 		scissor.extent.height = (uint32_t)( y1 - y0 );
 	}
 	vkCmdSetScissor( cmd, 0, 1, &scissor );
+}
+
+// Per-surface scissor: viewport base + drawSurf scissor (GL bottom-left).
+// When r_useScissor is disabled, retain RB_BeginDrawingView's view-level
+// scissor instead of expanding subviews to the whole viewport.
+void VK_Exec_SetSurfScissor( VkCommandBuffer cmd, const viewDef_t *viewDef, const drawSurf_t *drawSurf, int fbHeight ) {
+	VK_Exec_SetScissorRect( cmd, viewDef,
+			( r_useScissor.GetBool() && !drawSurf->scissorRect.IsEmpty() )
+				? drawSurf->scissorRect : viewDef->scissor,
+			fbHeight );
+}
+
+// The view's own scissor, with no surface refinement. Vulkan has no scissor
+// query, so a pass that needs a full-framebuffer rect of its own restores
+// this rather than whatever per-surface rect happened to be latched.
+void VK_Exec_SetViewScissor( VkCommandBuffer cmd, const viewDef_t *viewDef, int fbHeight ) {
+	VK_Exec_SetScissorRect( cmd, viewDef, viewDef->scissor, fbHeight );
 }
 
 // mvp for a surface's space: GL projection (with the id depth hacks) times
@@ -11238,6 +11395,14 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 		VK_ClassicInteraction_DrawOwnedView( viewDef );
 	} else {
 		VK_Interactions_DrawLights( viewDef );
+	}
+	// r_shadowMapDebugOverlay draws where RB_ARB2_DrawInteractions draws it:
+	// after the last receiver, while the shadow atlas and point cubes still
+	// hold this view's contents. One call site covers both walkers and the
+	// views where neither drew a light, exactly like the GL overlay's "NO
+	// MAP" state. r_skipInteractions suppresses it on both backends.
+	if ( !r_skipInteractions.GetBool() ) {
+		VK_ShadowMap_DebugOverlayDraw( viewDef );
 	}
 	currentSpace = NULL;
 	weaponDepthRange = false;

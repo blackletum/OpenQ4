@@ -140,6 +140,7 @@ Packaged support currently focuses on Windows, Linux x64, Steam Deck/SteamOS, pr
 - [Competitive Matches](docs/user/competitive-matches.md) (experimental) - match framework, rules, and warmup behaviour
 - [Demo Library and Multi-View Demos](docs/user/multiview-demos.md) - browse formats, use playback controls, and record or replay complete multiplayer matches
 - [Liquids](docs/user/liquids.md) - water, slime, and lava behaviour, and how to author them
+- [Classic Dynamic Lights](docs/user/classic-dynamic-lights.md) - Quake II/III style dynamic lights on muzzle flashes, bright projectiles, and explosions
 - [Shadow Mapping](docs/user/shadow-mapping.md) - optional shadow-map settings and troubleshooting
 - [Light Grids](docs/user/light-grids.md) - advanced lighting guide for players and testers
 - [Advanced Screen-Space Lighting](docs/user/advanced-screen-space-lighting.md) (experimental) - bounded froxel volumetrics, SSR, SSGI, performance controls, and one-setting rollback

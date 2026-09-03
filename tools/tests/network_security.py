@@ -457,7 +457,21 @@ def validate_snapshot_decode_bounds() -> None:
         multiplayer = function_body(source, "void idMultiplayerGame::ReadFromSnapshot(", label)
         require(multiplayer, "ingame[ MAX_CLIENTS / 8 ] = { 0 }", label)
         require(multiplayer, "msg.IsReadOverflowed()", label)
-        require(multiplayer, "!ent->IsType( idPlayer::GetClassType() )", label)
+        # The decode half must depend on the in-game bitmap alone.  Gating it on
+        # gameLocal.entities[ i ] rejected well formed snapshots and disconnected
+        # the client: a slot is in-game on the server well before its entity has
+        # ever been inside this client's PVS, and the entity is destroyed again on
+        # a reliable DELETE_ENT that is not ordered against the snapshot clearing
+        # the bit.  The entity is checked in the apply half instead, which is the
+        # only place it is dereferenced.
+        require(multiplayer, "haveLocalPlayerEntity", label)
+        require(multiplayer, "hasTourneyState[ i ] && haveLocalPlayerEntity", label)
+        require_before(
+            multiplayer,
+            "decodedPlayerState[ i ].fragCount = msg.ReadBits(",
+            "haveLocalPlayerEntity",
+            label,
+        )
         require(multiplayer, "newInstance >= MAX_INSTANCES", label)
         require(multiplayer, "mpPlayerState_t decodedPlayerState[ MAX_CLIENTS ]", label)
         require(multiplayer, "hasTourneyState[ MAX_CLIENTS ] = { false }", label)
@@ -879,6 +893,36 @@ def validate_documentation_and_registration() -> None:
     require(read("tools/validation/openq4_validate.py"), '"network_security.py"', "local validation registration")
 
 
+def validate_network_rate_budget() -> None:
+    """The rate cap must clear a full server's snapshot, and the one-time
+    migration off the legacy value must name the same figure as the default.
+
+    The channel's token bucket refuses whole snapshots until the previous packet
+    has been paid for at this rate, so a cap below snapshotSize * snapshotHz does
+    not shed bytes - it sheds updates, and with them every replicated projectile,
+    effect and event.  Measured at the legacy 25600 B/s: 2-3 snapshots a second
+    against the 20 asked for, on ~2.9KB snapshots.
+    """
+    label = "network rate budget"
+    async_network = read("src/framework/async/AsyncNetwork.cpp")
+    common = read("src/framework/Common.cpp")
+
+    require(async_network, 'serverMaxClientRate( "net_serverMaxClientRate", "128000"', label)
+    require(async_network, 'clientMaxRate( "net_clientMaxRate", "128000"', label)
+    require(async_network, 'serverSnapshotDelay( "net_serverSnapshotDelay", "33"', label)
+
+    require(common, "static const int legacyNetworkRate = 25600;", label)
+    require(common, "static const int modernNetworkRate = 128000;", label)
+    require(common, "Common_MigrateLegacyNetworkRateCaps();", label)
+
+    # The snapshot rate the server asks for has to be affordable inside the cap
+    # for a snapshot big enough to matter, or the limiter silently wins.
+    snapshot_hz = 1000 // 33
+    assert 128000 // snapshot_hz >= 4096, (
+        f"{label}: cap leaves only {128000 // snapshot_hz} bytes per snapshot"
+    )
+
+
 def main() -> None:
     validate_crypto_and_native_vectors()
     validate_secure_random_and_connection_challenges()
@@ -889,6 +933,7 @@ def main() -> None:
     validate_pure_admission_fail_closed()
     validate_private_cvar_handling()
     validate_remote_dictionary_authority()
+    validate_network_rate_budget()
     validate_documentation_and_registration()
     print("network_security: ok")
 

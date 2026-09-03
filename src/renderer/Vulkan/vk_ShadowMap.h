@@ -134,6 +134,12 @@ void	VK_ShadowMap_MarkStencilFallbackSticky( const viewLight_t *vLight );
 // the caller could not run or consume the shadow pass this view
 void	VK_ShadowMap_AbandonPreparedLights( void );
 
+// r_shadowMapDebugOverlay: draw the selected shadow map as a top-left
+// mini-map with a stats readout (GL RB_ShadowMapDebugOverlayDraw parity).
+// Must be called at the end of the interaction pass, inside the open main
+// rendering scope; it issues its own viewport and restores the view scissor.
+void	VK_ShadowMap_DebugOverlayDraw( const viewDef_t *viewDef );
+
 // device-shutdown hook (device idle by contract)
 void	VK_ShadowMap_Shutdown( void );
 

@@ -26,7 +26,7 @@ idCVar bse_showBounds("bse_showbounds", "0", CVAR_BOOL, "display debug bounding 
 idCVar bse_physics("bse_physics", "1", CVAR_BOOL, "disable effect physics");
 idCVar bse_debris("bse_debris", "1", CVAR_BOOL, "disable effect debris");
 idCVar bse_singleEffect("bse_singleEffect", "", 0, "set to the name of the effect that is only played");
-idCVar bse_rateLimit("bse_rateLimit", "1", CVAR_FLOAT, "rate limit for spawned effects");
+idCVar bse_rateLimit("bse_rateLimit", "6", CVAR_FLOAT, "rate limit for spawned effects");
 idCVar bse_rateCost("bse_rateCost", "1", CVAR_FLOAT, "rate cost multiplier for spawned effects");
 idCVar bse_scale("bse_scale", "1", CVAR_FLOAT, "global BSE scaling for spawn/detail");
 idCVar bse_maxParticles("bse_maxParticles", "2048", CVAR_INTEGER, "maximum per-segment particle allocation");
@@ -63,10 +63,25 @@ float effectCosts[EC_MAX] = { 0.0f, 0.1f, 0.1f };
 
 // How much rate budget each category pays back per second.  The buckets used to
 // drain one 0.1 step per StartFrame() call, and the game only reaches StartFrame
-// from idGameLocal::RunFrame at the fixed 60Hz game tic, so 6.0/sec reproduces
+// from idGameLocal::RunFrame at the fixed 60Hz game tic, so 6.0/sec reproduced
 // the drain the server has always had - without inheriting its dependence on
 // who calls StartFrame, or on the caller's frame rate.
-static const float BSE_RATE_DECAY_PER_SEC = 6.0f;
+//
+// That drain, and the matching bse_rateLimit of 1, were far too tight to survive
+// multiplayer.  At 0.1 per effect they bought a burst of ten EC_IMPACT effects
+// and sixty a second, and EC_IMPACT is charged once per hitscan impact by
+// idGameLocal::HitScan: the multiplayer shotgun alone fires eleven pellets in a
+// single frame, so one blast overran the whole burst budget and the rest of its
+// impacts vanished silently.  Clients had it worse still - they replay every
+// hitscan the server batched into one 50ms snapshot in a single frame, so the
+// bursts arriving there are several server frames' worth at once.
+//
+// Sized instead against what the game can legitimately produce: a burst of ~60
+// impacts covers two simultaneous shotgun blasts inside one client batch, and
+// 250/sec covers a full server of hitscan weapons firing continuously.  The
+// limiter is still there for genuinely pathological effect storms, which is what
+// it is for; it no longer fires during ordinary combat.
+static const float BSE_RATE_DECAY_PER_SEC = 25.0f;
 
 idBlockAlloc<rvBSE, 256, 0>	rvBSEManagerLocal::effects;
 idVec3						rvBSEManagerLocal::mCubeNormals[6];

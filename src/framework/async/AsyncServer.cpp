@@ -803,6 +803,9 @@ void idAsyncServer::ClearClient( int clientNum ) {
 	client.snapshotSequence = 0;
 	client.acknowledgeSnapshotSequence = 0;
 	client.numDuplicatedUsercmds = 0;
+	client.statsSnapshotsSent = 0;
+	client.statsSnapshotBytes = 0;
+	client.statsSendsRefusedByRate = 0;
 }
 
 /*
@@ -1383,6 +1386,12 @@ bool idAsyncServer::SendSnapshotToClient( int clientNum ) {
 
 	// write the snapshot
 	msg.Init( msgBuf, sizeof( msgBuf ) );
+	// openQ4: a snapshot carries the game's whole queued unreliable batch as well
+	// as every entity state, and idBitMsg's default answer to running out of room
+	// is common->FatalError - so the busiest moment of a match could take the
+	// server down outright.  Let it overflow, then find out below and drop that one
+	// snapshot instead.  The overflow itself is reported by CheckOverflow.
+	msg.SetAllowOverflow( true );
 	msg.WriteLong( gameInitId );
 	msg.WriteByte( SERVER_UNRELIABLE_MESSAGE_SNAPSHOT );
 	msg.WriteLong( client.snapshotSequence );
@@ -1427,12 +1436,28 @@ bool idAsyncServer::SendSnapshotToClient( int clientNum ) {
 	}
 	msg.WriteByte( MAX_ASYNC_CLIENTS );
 
+	// openQ4: an overflowed idBitMsg has already rewound its own write cursor, so
+	// what is in the buffer is a mixture of the head and the tail of the snapshot.
+	// Sending it would hand the client an undecodable snapshot and disconnect it.
+	if ( msg.IsOverflowed() ) {
+		common->DWarning( "client %d: snapshot %d overflowed the message buffer and was dropped",
+						  clientNum, client.snapshotSequence );
+		client.lastSnapshotTime = serverTime;
+		client.lastSnapshotGameFrame = gameFrame;
+		client.snapshotSequence++;
+		client.numDuplicatedUsercmds = 0;
+		return true;
+	}
+
 	// openQ4: a refused send used to look exactly like a successful one.  The
 	// snapshot and its unreliable batch are gone either way at this point, but say
 	// so rather than leaving a client quietly starved of entity and effect updates.
 	if ( client.channel.SendMessage( serverPort, serverTime, msg ) == -1 ) {
 		common->DWarning( "client %d: snapshot %d dropped, %d bytes did not fit the channel",
 						  clientNum, client.snapshotSequence, msg.GetSize() );
+	} else {
+		client.statsSnapshotsSent++;
+		client.statsSnapshotBytes += msg.GetSize();
 	}
 
 	client.lastSnapshotTime = serverTime;
@@ -3309,6 +3334,11 @@ void idAsyncServer::RunFrame( bool allowBlocking ) {
 
 		// if the channel is not yet ready to send new data
 		if ( !client.channel.ReadyToSend( serverTime ) ) {
+			if ( client.clientState == SCS_INGAME &&
+				 serverTime - client.lastSnapshotTime >= idAsyncNetwork::serverSnapshotDelay.GetInteger() ) {
+				// a snapshot was due and the rate limiter took it
+				client.statsSendsRefusedByRate++;
+			}
 			continue;
 		}
 
@@ -3331,8 +3361,34 @@ void idAsyncServer::RunFrame( bool allowBlocking ) {
 
 		UpdateAsyncStatsAvg();
 
+		// openQ4: this used to be dedicated-only, which meant the one number that
+		// explains "clients stop getting effects when it gets busy" - the update
+		// rate a client is actually served, against the rate that was asked for -
+		// could not be read on the listen server most testing happens on.
+		const bool statsDue = serverTime >= nextAsyncStatsTime;
+		if ( statsDue ) {
+			for ( i = 0; i < MAX_ASYNC_CLIENTS; i++ ) {
+				serverClient_t &statsClient = clients[i];
+				if ( statsClient.clientState != SCS_INGAME || i == localClientNum ) {
+					continue;
+				}
+				if ( statsClient.statsSnapshotsSent > 0 || statsClient.statsSendsRefusedByRate > 0 ) {
+					common->Printf( "client %d: %d snapshots/s (asked %d), avg %d bytes, %d refused by rate, cap %d B/s\n",
+									i, statsClient.statsSnapshotsSent,
+									1000 / Max( 1, idAsyncNetwork::serverSnapshotDelay.GetInteger() ),
+									statsClient.statsSnapshotsSent > 0 ?
+										statsClient.statsSnapshotBytes / statsClient.statsSnapshotsSent : 0,
+									statsClient.statsSendsRefusedByRate,
+									statsClient.channel.GetMaxOutgoingRate() );
+				}
+				statsClient.statsSnapshotsSent = 0;
+				statsClient.statsSnapshotBytes = 0;
+				statsClient.statsSendsRefusedByRate = 0;
+			}
+		}
+
 		// dedicated will verbose to console
-		if ( idAsyncNetwork::serverDedicated.GetBool() && serverTime >= nextAsyncStatsTime ) {
+		if ( idAsyncNetwork::serverDedicated.GetBool() && statsDue ) {
 			common->Printf( "delay = %d msec, total outgoing rate = %d KB/s, total incoming rate = %d KB/s\n", GetDelay(), 
 							GetOutgoingRate() >> 10, GetIncomingRate() >> 10 );
 
@@ -3352,7 +3408,9 @@ void idAsyncServer::RunFrame( bool allowBlocking ) {
 			idStr msg;
 			GetAsyncStatsAvgMsg( msg );
 			common->Printf( "%s\n", msg.c_str() );
+		}
 
+		if ( statsDue ) {
 			nextAsyncStatsTime = serverTime + 1000;
 		}
 	}

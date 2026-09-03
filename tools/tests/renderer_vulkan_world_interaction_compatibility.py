@@ -251,8 +251,21 @@ def validate_scissor_and_depth_bounds_state() -> None:
             ? drawSurf->scissorRect : viewDef->scissor""",
         "surface/view scissor selection",
     )
+    # The clamp and the issue live in the shared rect helper, which the
+    # view-level entry point (r_shadowMapDebugOverlay's restore) also uses.
+    require(scissor, "fbHeight", "bounded Vulkan interaction scissor")
+    require(
+        scissor,
+        "VK_Exec_SetScissorRect( cmd, viewDef,",
+        "the surface scissor issues through the shared rect helper",
+    )
+    scissor_rect = braced_body(
+        executor,
+        "static void VK_Exec_SetScissorRect( VkCommandBuffer cmd, const viewDef_t *viewDef,",
+        "Vulkan scissor rect helper",
+    )
     for token in ("viewDef->viewport", "fbHeight", "vkCmdSetScissor"):
-        require(scissor, token, "bounded Vulkan interaction scissor")
+        require(scissor_rect, token, "bounded Vulkan interaction scissor")
 
     interactions = read("src/renderer/Vulkan/vk_Interactions.cpp")
     stencil_clear = braced_body(
