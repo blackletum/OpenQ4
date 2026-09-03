@@ -84,6 +84,7 @@
 #include "vk_mem_alloc.h"
 
 #include "VulkanDevice.h"
+#include "VulkanGpuFrameTiming.h"
 #include "vk_ShadowMap.h"
 
 // vk_GuiExecutor.cpp narrow accessors (vkExec stays file-static there)
@@ -532,6 +533,7 @@ static void VK_ShadowMap_DestroyPointCubes( void ) {
 }
 
 void VK_ShadowMap_Shutdown( void ) {
+	VK_ShadowGpuTiming_Shutdown();
 	vkShadowProjectedResourcesOkGeneration = -1;
 	vkShadowPointResourcesOkGeneration = -1;
 	if ( vkCtx.device == VK_NULL_HANDLE ) {
@@ -2150,15 +2152,30 @@ static void VK_ShadowMap_ReportViewCache( const viewDef_t *viewDef ) {
 			VK_ShadowMap_ResidentBytes() / ( 1024.0 * 1024.0 ),
 			projectedSlots, projectedLimit,
 			pointSlots, pointLimit );
-	// r_shadowMapGpuTimerQueries and r_shadowMapGpuSyncTimings stay
-	// OpenGL-only: one needs a Vulkan timestamp query pool scoped to the
-	// shadow pass, and the other is a glFinish construct with no Vulkan
-	// equivalent. Say so rather than printing zeroes that read as fast.
+	// GPU shadow-pass timings. The numbers are what resolved during this
+	// view, so they lag the work by a frame or more -- the same lagged
+	// attribution the OpenGL shadow stats carry.
+	const vkShadowGpuTimingReport_t &timing = VK_ShadowGpuTiming_Report();
 	if ( r_shadowMapGpuTimerQueries.GetBool()
 			|| r_shadowMapGpuSyncTimings.GetBool() ) {
-		common->Printf(
-				"Vulkan shadow timings: GPU shadow-pass timing is OpenGL-only"
-				" (r_shadowMapGpuTimerQueries / r_shadowMapGpuSyncTimings)\n" );
+		if ( !timing.available ) {
+			common->Printf(
+					"Vulkan shadow timings: unavailable"
+					" (device reports no usable graphics timestamps)\n" );
+		} else {
+			common->Printf(
+					"Vulkan shadow timings: gpu%s=%.2f/%d pending=%d dropped=%d"
+					" map=%.2f/%d reuse=%.2f/%d\n",
+					timing.synchronized ? "Sync" : "Query",
+					timing.totalMilliseconds,
+					timing.samples,
+					timing.pending,
+					timing.dropped,
+					timing.phaseMilliseconds[ VK_SHADOW_TIMING_MAP_RENDER ],
+					timing.phaseSamples[ VK_SHADOW_TIMING_MAP_RENDER ],
+					timing.phaseMilliseconds[ VK_SHADOW_TIMING_CACHE_REUSE ],
+					timing.phaseSamples[ VK_SHADOW_TIMING_CACHE_REUSE ] );
+		}
 	}
 	if ( r_shadowMapPointHighPrecision.GetBool() ) {
 		common->Printf(
@@ -4502,9 +4519,16 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 			? 0.0f : r_shadowMapPolygonOffset.GetFloat() )
 			* ( 1.0f / 16777216.0f );
 
+	// Resolve whatever the GPU finished since the last view and start this
+	// view's report. Every span below opens outside a dynamic-rendering
+	// scope, because resetting its query pair inside one is illegal.
+	VK_ShadowGpuTiming_BeginView( ctx.slot );
+
 	if ( projectedCount > 0 ) {
 		VkImageLayout atlasLayout = vkShadow.atlasLayout;
 		if ( projectedFreshCount > 0 ) {
+			VK_ShadowGpuTiming_BeginPhase( cmd,
+					VK_SHADOW_TIMING_MAP_RENDER );
 			VK_ShadowMap_ImageBarrier( cmd, vkShadow.atlasImage, 1,
 					atlasLayout,
 					VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
@@ -4666,6 +4690,8 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 				}
 			}
 			vkCmdEndRendering( cmd );
+			VK_ShadowGpuTiming_EndPhase( cmd,
+					VK_SHADOW_TIMING_MAP_RENDER );
 		} else {
 			VK_ShadowMap_ImageBarrier( cmd, vkShadow.atlasImage, 1,
 					atlasLayout,
@@ -4700,6 +4726,30 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 					haveCacheUpdates = true;
 				}
 			}
+		}
+		bool haveCacheHits = false;
+		for ( int i = 0 ; i < vkShadow.numLights ; i++ ) {
+			const vkShadowLightState_t &light =
+					vkShadow.lights[ i ];
+			if ( !light.valid || light.pointLight ) {
+				continue;
+			}
+			for ( int passIndex = 0 ;
+					passIndex < VK_SHADOW_RECEIVER_PASS_COUNT ;
+					passIndex++ ) {
+				const vkShadowPassState_t &pass =
+						light.passes[ passIndex ];
+				haveCacheHits = haveCacheHits
+						|| ( pass.valid && pass.cacheHit
+							&& pass.resourcePass
+								== (vkShadowReceiverPass_t)passIndex );
+			}
+		}
+		// Publication and restore are one phase: both are resident-cache
+		// transfers, and OpenGL reports them together as reuse.
+		if ( haveCacheUpdates || haveCacheHits ) {
+			VK_ShadowGpuTiming_BeginPhase( cmd,
+					VK_SHADOW_TIMING_CACHE_REUSE );
 		}
 		if ( haveCacheUpdates ) {
 			const VkPipelineStageFlags2 srcStage =
@@ -4778,24 +4828,6 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 			}
 		}
 
-		bool haveCacheHits = false;
-		for ( int i = 0 ; i < vkShadow.numLights ; i++ ) {
-			const vkShadowLightState_t &light =
-					vkShadow.lights[ i ];
-			if ( !light.valid || light.pointLight ) {
-				continue;
-			}
-			for ( int passIndex = 0 ;
-					passIndex < VK_SHADOW_RECEIVER_PASS_COUNT ;
-					passIndex++ ) {
-				const vkShadowPassState_t &pass =
-						light.passes[ passIndex ];
-				haveCacheHits = haveCacheHits
-						|| ( pass.valid && pass.cacheHit
-							&& pass.resourcePass
-								== (vkShadowReceiverPass_t)passIndex );
-			}
-		}
 		if ( haveCacheHits ) {
 			if ( atlasLayout
 					!= VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL ) {
@@ -4852,6 +4884,11 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 			}
 		}
 
+		if ( haveCacheUpdates || haveCacheHits ) {
+			VK_ShadowGpuTiming_EndPhase( cmd,
+					VK_SHADOW_TIMING_CACHE_REUSE );
+		}
+
 		// GL SHADOWMAP_RENDER_COMPOSE_DYNAMIC (draw_arb2.cpp): every cached
 		// tile now holds this light's STATIC depth, whether it was just
 		// published or restored from a resident entry. Re-enter the atlas with
@@ -4861,6 +4898,10 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 		// land in exactly the projection the static tiles were rendered with.
 		if ( projectedComposeCount > 0
 				&& casterPipeline != VK_NULL_HANDLE ) {
+			// OpenGL times compose under MAP_RENDER too; the composed=
+			// counter is what separates it in the report.
+			VK_ShadowGpuTiming_BeginPhase( cmd,
+					VK_SHADOW_TIMING_MAP_RENDER );
 			// The tiles reaching this scope were produced by depth writes,
 			// cache-publication transfer reads, or resident-restore transfer
 			// writes. One layout cannot describe every producer, so take the
@@ -4980,6 +5021,8 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 				}
 			}
 			vkCmdEndRendering( cmd );
+			VK_ShadowGpuTiming_EndPhase( cmd,
+					VK_SHADOW_TIMING_MAP_RENDER );
 			vkShadow.composePasses += projectedComposeCount;
 		}
 
@@ -5004,6 +5047,7 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 	}
 
 	if ( pointFreshCount > 0 ) {
+		VK_ShadowGpuTiming_BeginPhase( cmd, VK_SHADOW_TIMING_MAP_RENDER );
 		vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pointCasterPipeline );
 		vkCmdSetDepthTestEnable( cmd, VK_TRUE );
 		vkCmdSetDepthWriteEnable( cmd, VK_TRUE );
@@ -5207,6 +5251,7 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 				}
 			}
 		}
+		VK_ShadowGpuTiming_EndPhase( cmd, VK_SHADOW_TIMING_MAP_RENDER );
 	}
 
 	// order the suspended main scope's color/depth attachment writes against
@@ -5234,6 +5279,9 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 
 	const bool resumedMainRendering = VK_Exec_BeginMainRendering( false );
 	if ( !resumedMainRendering ) {
+		// This command buffer will not be submitted, so its timestamps will
+		// never resolve; a synchronized read would wait on them forever.
+		VK_ShadowGpuTiming_AbandonView();
 		VK_ShadowMap_AbandonPreparedLights();
 		common->Warning( "Vulkan: failed to resume the main rendering scope after shadow maps" );
 	} else {

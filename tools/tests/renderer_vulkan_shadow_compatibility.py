@@ -6007,12 +6007,18 @@ def validate_shadow_report_and_storage_honesty() -> None:
         ),
         "the view line reports what the view actually spent",
     )
-    # Silence would read as zero cost; these have no Vulkan implementation.
+    # The timing cvars now drive real measurements, but a device without
+    # usable timestamps must say so rather than printing a convincing zero.
     require_compact(
         report,
         """if ( r_shadowMapGpuTimerQueries.GetBool()
             || r_shadowMapGpuSyncTimings.GetBool() ) {""",
-        "GL-only shadow timing cvars announce themselves",
+        "the shadow timing cvars gate the timing line",
+    )
+    require_compact(
+        report,
+        "if ( !timing.available ) {",
+        "a device without usable timestamps reports unavailable",
     )
     require_compact(
         report,
@@ -6084,6 +6090,154 @@ def validate_shadow_report_and_storage_honesty() -> None:
     )
 
 
+def validate_shadow_gpu_timing_contract() -> None:
+    """r_shadowMapGpuTimerQueries / r_shadowMapGpuSyncTimings on Vulkan.
+
+    OpenGL brackets each shadow phase with glFinish. Vulkan cannot: the pass
+    is being RECORDED, so there is nothing submitted to wait for. Timestamp
+    spans measure it instead, and the synchronized mode is applied at readback.
+
+    Two properties keep that safe. Resetting a query pair is illegal inside a
+    dynamic-rendering scope, so every span opens outside one. And a wait on a
+    span whose command buffer was never submitted would never return, so the
+    wait is gated on an age past which the frame loop has already waited that
+    slot's fence, with an age-out behind it.
+    """
+    timing = read("src/renderer/Vulkan/VulkanGpuFrameTiming.cpp")
+    header = read("src/renderer/Vulkan/VulkanGpuFrameTiming.h")
+    shadow_map = read("src/renderer/Vulkan/vk_ShadowMap.cpp")
+
+    require_compact(
+        header,
+        """typedef enum vkShadowTimingPhase_e {
+            VK_SHADOW_TIMING_MAP_RENDER = 0,""",
+        "the phase split OpenGL reports",
+    )
+
+    begin_view = braced_body(
+        timing,
+        "void VK_ShadowGpuTiming_BeginView(",
+        "per-view shadow timing resolve",
+    )
+    # A span from the current frame has not been submitted; waiting on it
+    # would hang, so it is only ever carried.
+    require_compact(
+        begin_view,
+        """if ( span.frameNumber >= tr.frameCount ) {
+            vkShadowTimingReport.pending++;
+            continue;
+        }""",
+        "spans recorded this frame are never resolved",
+    )
+    require_compact(
+        begin_view,
+        """VK_ShadowGpuTiming_ResolveSpan( span, i,
+            synchronized && age > VK_FRAMES_IN_FLIGHT );""",
+        "the synchronized wait is gated on a retired frame slot",
+    )
+    require_compact(
+        begin_view,
+        "if ( age > VK_SHADOW_TIMING_MAX_SPAN_AGE_FRAMES ) {",
+        "a span whose submission never happened is dropped, not waited on",
+    )
+    # A span opened and never closed holds two queries forever.
+    require_compact(
+        begin_view,
+        """if ( !span.open
+                || tr.frameCount - span.frameNumber
+                    > VK_FRAMES_IN_FLIGHT ) {""",
+        "an unclosed span is reclaimed instead of leaking its queries",
+    )
+
+    resolve = braced_body(
+        timing,
+        "static void VK_ShadowGpuTiming_ResolveSpan(",
+        "shadow timing readback",
+    )
+    require_compact(
+        resolve,
+        """if ( synchronized ) {
+            flags |= VK_QUERY_RESULT_WAIT_BIT;
+        }""",
+        "synchronized mode waits rather than dropping",
+    )
+    require_compact(
+        resolve,
+        """if ( result == VK_NOT_READY ) {""",
+        "an unready poll is carried, not counted as zero",
+    )
+
+    begin_phase = braced_body(
+        timing,
+        "void VK_ShadowGpuTiming_BeginPhase(",
+        "shadow timing span open",
+    )
+    require_order(
+        begin_phase,
+        (
+            "const int index = VK_ShadowGpuTiming_ClaimSpan( phase );",
+            # ring pressure must degrade to a lost sample, never to a stall
+            "if ( index < 0 )",
+            "vkShadowTimingReport.dropped++;",
+            "vkCmdResetQueryPool( commandBuffer, vkShadowTimingQueryPool, firstQuery, 2 );",
+            "vkCmdWriteTimestamp( commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,",
+        ),
+        "a span resets its queries before writing its begin timestamp",
+    )
+
+    # Every span must open outside a dynamic-rendering scope, because
+    # vkCmdResetQueryPool is illegal inside one. Check each open site is
+    # followed by vkCmdBeginRendering rather than preceded by it.
+    render = braced_body(
+        shadow_map,
+        "bool VK_ShadowMap_RenderAtlas(",
+        "shadow pass timing spans",
+    )
+    compact_render = compact(render)
+    for opened_before_scope in (
+        # fresh projected scope
+        """VK_ShadowGpuTiming_BeginPhase( cmd,
+            VK_SHADOW_TIMING_MAP_RENDER );
+            VK_ShadowMap_ImageBarrier( cmd, vkShadow.atlasImage, 1,""",
+        # resident transfers
+        """if ( haveCacheUpdates || haveCacheHits ) {
+            VK_ShadowGpuTiming_BeginPhase( cmd,
+                VK_SHADOW_TIMING_CACHE_REUSE );
+        }""",
+        # point cube faces, opened before the first per-face scope
+        """VK_ShadowGpuTiming_BeginPhase( cmd, VK_SHADOW_TIMING_MAP_RENDER );
+            vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pointCasterPipeline );""",
+    ):
+        require_compact(
+            render,
+            opened_before_scope,
+            "spans open outside a dynamic-rendering scope",
+        )
+    # Compose is timed as MAP_RENDER, the same phase split OpenGL uses.
+    if compact_render.count(
+        compact("VK_ShadowGpuTiming_BeginPhase( cmd, VK_SHADOW_TIMING_MAP_RENDER )")
+    ) != 3:
+        raise AssertionError(
+            "The fresh, compose and point regions must all be timed as MAP_RENDER"
+        )
+    if compact_render.count(
+        compact("VK_ShadowGpuTiming_EndPhase( cmd, VK_SHADOW_TIMING_MAP_RENDER )")
+    ) != 3:
+        raise AssertionError( "Every MAP_RENDER span must be closed" )
+
+    # A view whose main scope never resumes is never submitted.
+    require_compact(
+        render,
+        "VK_ShadowGpuTiming_AbandonView();",
+        "an unsubmitted view releases its spans",
+    )
+    require_compact(
+        shadow_map,
+        "VK_ShadowGpuTiming_Shutdown();",
+        "the query pool retires with the shadow resources",
+    )
+
+
 def validate_ci_registration() -> None:
     validator = read("tools/validation/openq4_validate.py")
     commit = read(".github/workflows/commit-validation.yml")
@@ -6121,6 +6275,7 @@ def main() -> None:
     validate_shadow_debug_mode_contract()
     validate_update_admission_contract()
     validate_shadow_report_and_storage_honesty()
+    validate_shadow_gpu_timing_contract()
     validate_packed_shadow_geometry()
     validate_fail_closed_target_and_stencil_behavior()
     validate_ci_registration()

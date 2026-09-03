@@ -1,6 +1,6 @@
 # Vulkan shadow maps — OpenGL parity closure (staging plan)
 
-Status: S1-S7 LANDED (2026-09-02). One item is deliberately left open and one
+Status: S1-S8 LANDED (2026-09-02). One item is deliberately left open and one
 is deliberately out of scope; both are named below. S1, S2 and S5 change
 runtime behaviour that token pins cannot fully cover, and still want the
 user's own gameplay sign-off.
@@ -38,6 +38,7 @@ caches. The verified remainder was:
 | S5 | no importance-ordered admission | `c188c798` |
 | S6 | thin `r_shadowMapReport` | `b930d486` |
 | S7 | `r_shadowMapPointHighPrecision` inert | `b930d486` |
+| S8 | no GPU shadow-pass timings | this commit |
 
 ## Correction to the 2026-07-24 Vulkan stencil-elision revert
 
@@ -124,6 +125,27 @@ S7. `r_shadowMapPointHighPrecision` is documented OpenGL-only and
     Vulkan point cache, where toggling it discarded every resident map
     without being able to change a depth cube's contents.
 
+S8. GPU shadow-pass timings. Timestamp spans measure the pass in the two
+    phases OpenGL reports: `map` (the fresh atlas scope, the compose
+    scope, and the point cube faces, the same grouping GL uses) and
+    `reuse` (the resident publish and restore transfers).
+
+    OpenGL brackets each phase with `glFinish` under
+    `r_shadowMapGpuSyncTimings`. Vulkan structurally cannot: the pass is
+    being RECORDED, so nothing is submitted to wait for. The synchronized
+    mode is applied at readback instead, where it means no sample is ever
+    dropped rather than a stall for accuracy -- the wait is gated on an
+    age past which the frame loop has already waited that slot's fence,
+    so it returns immediately. That is a better trade than `glFinish`,
+    but it is not the same behaviour.
+
+    Three failure modes are closed deliberately: a span whose command
+    buffer was never submitted ages out instead of being waited on; a
+    span opened but never closed is reclaimed instead of leaking its
+    query pair; and ring pressure degrades to a dropped sample, never to
+    a stall. Every span opens outside a dynamic-rendering scope, because
+    resetting its query pair inside one is illegal.
+
 ## Still open
 
 - `r_shadowMapDebugOverlay` (the shadow mini-map with its stats readout)
@@ -131,11 +153,6 @@ S7. `r_shadowMapPointHighPrecision` is documented OpenGL-only and
   (`glprogs/shadow_debug_overlay.*`), not part of the receiver shaders
   S4 covered. `r_shadowMapDebugMode 1` already visualizes atlas UV and
   depth per pixel, which is why this was ranked last.
-- GPU shadow-pass timings (`r_shadowMapGpuTimerQueries`,
-  `r_shadowMapGpuSyncTimings`) need a Vulkan timestamp query pool scoped
-  to the shadow pass; the second is a `glFinish` construct with no
-  Vulkan equivalent. Both announce themselves in the Vulkan report
-  rather than printing zeroes that read as "fast".
 - Translucent shadow moments stay excluded on Vulkan, per the Phase F
   closure.
 
