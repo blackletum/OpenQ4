@@ -38,8 +38,8 @@ caches. The verified remainder was:
 | S5 | no importance-ordered admission | `c188c798` |
 | S6 | thin `r_shadowMapReport` | `b930d486` |
 | S7 | `r_shadowMapPointHighPrecision` inert | `b930d486` |
-| S8 | no GPU shadow-pass timings | this commit |
-| S9 | `r_shadowMapDebugOverlay` OpenGL-only | this commit |
+| S8 | no GPU shadow-pass timings | `2d1567af` |
+| S9 | `r_shadowMapDebugOverlay` OpenGL-only | `fe6db0e7` |
 
 ## Correction to the 2026-07-24 Vulkan stencil-elision revert
 
