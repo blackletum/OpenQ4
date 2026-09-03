@@ -457,7 +457,21 @@ def validate_snapshot_decode_bounds() -> None:
         multiplayer = function_body(source, "void idMultiplayerGame::ReadFromSnapshot(", label)
         require(multiplayer, "ingame[ MAX_CLIENTS / 8 ] = { 0 }", label)
         require(multiplayer, "msg.IsReadOverflowed()", label)
-        require(multiplayer, "!ent->IsType( idPlayer::GetClassType() )", label)
+        # The decode half must depend on the in-game bitmap alone.  Gating it on
+        # gameLocal.entities[ i ] rejected well formed snapshots and disconnected
+        # the client: a slot is in-game on the server well before its entity has
+        # ever been inside this client's PVS, and the entity is destroyed again on
+        # a reliable DELETE_ENT that is not ordered against the snapshot clearing
+        # the bit.  The entity is checked in the apply half instead, which is the
+        # only place it is dereferenced.
+        require(multiplayer, "haveLocalPlayerEntity", label)
+        require(multiplayer, "hasTourneyState[ i ] && haveLocalPlayerEntity", label)
+        require_before(
+            multiplayer,
+            "decodedPlayerState[ i ].fragCount = msg.ReadBits(",
+            "haveLocalPlayerEntity",
+            label,
+        )
         require(multiplayer, "newInstance >= MAX_INSTANCES", label)
         require(multiplayer, "mpPlayerState_t decodedPlayerState[ MAX_CLIENTS ]", label)
         require(multiplayer, "hasTourneyState[ MAX_CLIENTS ] = { false }", label)
