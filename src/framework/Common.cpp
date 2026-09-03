@@ -146,6 +146,7 @@ static bool openQ4_IsValidGameModuleName( const char *moduleName );
 idCVar com_product_lang_ext( "com_product_lang_ext", "1", CVAR_INTEGER | CVAR_SYSTEM | CVAR_ARCHIVE, "Extension to use when creating language files." );
 idCVar r_skipGlowOverlay( "r_skipGlowOverlay", "0", CVAR_ARCHIVE | CVAR_RENDERER, "skip glow overlays when non-zero" );
 static idCVar r_borderlessDefaultMigrated( "r_borderlessDefaultMigrated", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "one-time migration flag for legacy bordered window defaults" );
+static idCVar net_rateDefaultMigrated( "net_rateDefaultMigrated", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "one-time migration flag for the legacy 25600 B/s network rate caps" );
 
 static void Common_MigrateLegacyConsoleAllowCVar( void ) {
 	idCVar *legacyAllowConsole = cvarSystem->Find( "com_allowConsole" );
@@ -211,6 +212,44 @@ static void Common_MigrateLegacyBorderlessWindowDefault( void ) {
 
 	r_borderlessDefaultMigrated.SetBool( true );
 #endif
+}
+
+/*
+==================
+Common_MigrateLegacyNetworkRateCaps
+
+net_serverMaxClientRate / net_clientMaxRate are archived, so raising their
+defaults reaches new installs only.  Everyone who has ever run openQ4 keeps the
+25600 B/s these shipped with, and that cap does not shed bytes - the channel's
+token bucket refuses whole snapshots until the previous packet has been paid
+for, so any snapshot over ~1280 bytes drags the update rate below the one the
+server was asked for.  Measured on a listen server, a client being served ~2.9KB
+snapshots got 2-3 a second instead of 20.
+
+Only the exact legacy default is rewritten: anyone who deliberately chose a rate
+did not type 25600, and their choice is left alone.  Once.
+==================
+*/
+static void Common_MigrateLegacyNetworkRateCaps( void ) {
+	if ( net_rateDefaultMigrated.GetBool() ) {
+		return;
+	}
+
+	// Kept in step with the defaults in idAsyncNetwork; tools/tests/network_security.py
+	// pins the pair so they cannot drift apart silently.
+	static const int legacyNetworkRate = 25600;
+	static const int modernNetworkRate = 128000;
+	static const char * const rateCVars[] = { "net_serverMaxClientRate", "net_clientMaxRate" };
+	for ( int i = 0; i < 2; i++ ) {
+		if ( cvarSystem->GetCVarInteger( rateCVars[i] ) != legacyNetworkRate ) {
+			continue;
+		}
+		common->Printf( "Migrating legacy network config: %s %d -> %d B/s\n",
+						rateCVars[i], legacyNetworkRate, modernNetworkRate );
+		cvarSystem->SetCVarInteger( rateCVars[i], modernNetworkRate, CVAR_ARCHIVE );
+	}
+
+	net_rateDefaultMigrated.SetBool( true );
 }
 
 static int commonLastPresentationCap = -1;
@@ -6884,6 +6923,7 @@ void idCommonLocal::InitGame( void ) {
 	}
 	Common_MigrateLinuxLegacyLowVRamTexturePreset();
 	Common_MigrateLegacyBorderlessWindowDefault();
+	Common_MigrateLegacyNetworkRateCaps();
 
 	// cvars are initialized, but not the rendering system. Allow preference startup dialog
 	Sys_DoPreferences();
