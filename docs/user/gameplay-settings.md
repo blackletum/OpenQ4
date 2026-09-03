@@ -12,6 +12,8 @@ The auto-skip cinematics, corpse cleanup, and corpse sink controls are also avai
 | `g_corpseRemoveDelaySP` | `0` | Single-player | Controls how long SP corpses remain before disappearing. `0` uses stock timing, `-1` disables corpse removal. |
 | `g_corpseRemoveDelayMP` | `0` | Multiplayer | Controls how long MP corpses remain before disappearing. `0` uses stock timing, `-1` disables corpse removal. |
 | `g_corpseSink` | `0` | SP and MP game code | Selects corpse sink mode instead of the normal dissolve or burn-away behavior. |
+| `g_classicDynamicLights` | `1` | SP and MP game code | Quake II/III style dynamic lights on muzzle flashes, bright projectiles and explosions. On by default. |
+| `g_classicDynamicLightScale` | `1` | SP and MP game code | Radius multiplier for the classic dynamic lights, `0.25` to `4`. |
 | `s_musicVolume` | `0.5` | Client audio | Controls music volume independently of the main sound mix. |
 | `hud_damageNumbers` | `0` | Multiplayer client | Floating damage numbers over the players you hit. `0` off, `1` opponents only, `2` all damage you deal. |
 | `hud_damageNumberStyle` | `1` | Multiplayer client | How damage numbers are coloured. `1` white through red, `2` one colour per damage band, `3` one colour per weapon. |
@@ -201,6 +203,19 @@ seta hud_damageNumbers 1
 seta hud_damageNumberStyle 2
 seta hud_damageNumberScale 1.25
 ```
+
+## Classic Dynamic Lights
+
+`g_classicDynamicLights` restores the Quake II / Quake III habit of lighting the world from the
+action: muzzle flashes throw a short, wide pool of light, bright projectiles carry their own glow,
+and explosions flash the surrounding geometry. It is on by default, and the colors come from the
+shipped Quake 4 assets.
+
+`g_classicDynamicLightScale` scales the radius of all of them between `0.25` and `4`. Lower it
+before turning the feature off if the effect is stronger than you want.
+
+See [Classic Dynamic Lights](classic-dynamic-lights.md) for the per-weapon colors, the content
+override keys, and the `testClassicLight` console command.
 
 ## Example Presets
 
