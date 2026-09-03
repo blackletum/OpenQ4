@@ -915,4 +915,12 @@
 	"#str_42801"	"%s s'est noyé"
 	"#str_42802"	"%s s'est dissous dans la vase"
 	"#str_42803"	"%s a brûlé dans la lave"
+
+	"#str_42810"	"%d/%d JOUEURS"
+	"#str_42811"	"ÉCHAUFFEMENT"
+	"#str_42812"	"DÉBUT DU MATCH"
+	"#str_42813"	"MATCH EN COURS"
+	"#str_42814"	"MORT SUBITE"
+	"#str_42815"	"MATCH TERMINÉ"
+	"#str_42816"	"EN ATTENTE DE JOUEURS"
 }

@@ -915,4 +915,12 @@
 	"#str_42801"	"%s se ahogó"
 	"#str_42802"	"%s se disolvió en el cieno"
 	"#str_42803"	"%s ardió en la lava"
+
+	"#str_42810"	"%d/%d JUGADORES"
+	"#str_42811"	"CALENTAMIENTO"
+	"#str_42812"	"LA PARTIDA VA A EMPEZAR"
+	"#str_42813"	"PARTIDA EN CURSO"
+	"#str_42814"	"MUERTE SÚBITA"
+	"#str_42815"	"PARTIDA TERMINADA"
+	"#str_42816"	"ESPERANDO JUGADORES"
 }
