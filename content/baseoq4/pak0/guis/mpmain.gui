@@ -6185,6 +6185,28 @@ windowDef Desktop
 			}
 
 		}
+		// The join panel's Settings symbol restores the menu chrome and then
+		// runs the Settings tab's own selection once anim_in has settled.
+		windowDef anim_qj_settings
+		{
+			rect	0,0,1,1
+			visible	1
+			notime	1
+
+			onTime 300 {
+				set "desktop::active" "1" ;
+				set "desktop::dest" "5" ;
+				namedevent "p_btns::hideMain" ;
+				namedevent "p_anims::chooseCurr" ;
+				namedevent "p_anims::resetMain0" ;
+
+				set "b5::matcolor_w" "1" ;
+				set "t_b5::forecolor" "$desktop::orange" ;
+				set "b5_corner::matcolor" "$desktop::orange" ;
+				set "t_b5::textscale" "0.26" ;
+			}
+
+		}
 	}
 	windowDef p_btns
 	{
@@ -9491,106 +9513,309 @@ windowDef Desktop
 	// -------------------------------------------------------------------
 	// Compact connect-time join panel.
 	//
-	// Everything here is authored inside the plain 640x480 canvas and never
-	// reads "gui::virtual_screen_x_expand", so the panel keeps its 4:3 shape
-	// and stays centred on a wide screen instead of stretching across it.
-	// The live map behind it is pushed out of focus by the game module
+	// Drawn in the Quake 4 menu idiom: the tooltip frame set gives the
+	// 45-degree corner chamfers and the olive inner rail, the header carries a
+	// b3_light wash and a corner marker, and every button is a Quake 4 plate
+	// (45-degree cut at the bottom left, highlight down the left and along the
+	// bottom, fading away to the right) with a marine-font label and its own
+	// corner marker.  Read docs/dev/ui-visual-design.md before changing any of
+	// this - it records the rules the rest of the menus follow.
+	//
+	// Everything is authored inside the plain 640x480 canvas and never reads
+	// "gui::virtual_screen_x_expand", so the panel keeps its 4:3 shape and
+	// stays centred on a wide screen instead of stretching across it.  The
+	// live map behind it is pushed out of focus by the game module
 	// (idMultiplayerGame::SetJoinScreenSoftFocus), so the panel deliberately
 	// does not dim the rest of the screen.
 	//
-	// The button set comes from "gui::join_team_mode" / "gui::join_tourney_mode"
-	// rather than a copy of the gametype table.
+	// The frame comes in two heights and the button set from
+	// "gui::join_team_mode" / "gui::join_tourney_mode", so the panel is only
+	// ever as tall as the choices that gametype offers and the GUI never
+	// carries its own copy of the gametype table.
 	// -------------------------------------------------------------------
 	windowDef p_quickjoin
 	{
 		rect	0,0,640,480
 		visible	0
 
-		windowDef qj_panel
+		windowDef qj_frame_top_c
 		{
-			rect		116,140,408,200
-			backcolor	0.035,0.045,0.032,0.94
-			bordercolor	0.45,0.5,0.27,1
-			bordersize	1
+			rect		116,140,408,16
+			visible		( "gui::join_team_mode" == 0 )
+			background	"gfx/guis/mainmenu/tooltip_edge"
+			matcolor	1,1,1,0.95
 			noevents	1
 		}
-		windowDef qj_panel_grad
+		windowDef qj_frame_mid_c
 		{
-			rect		117,141,406,198
+			rect		116,156,408,128
+			visible		( "gui::join_team_mode" == 0 )
+			background	"gfx/guis/mainmenu/tooltip_mid"
+			matcolor	1,1,1,0.95
+			noevents	1
+		}
+		windowDef qj_frame_btm_c
+		{
+			rect		116,284,408,16
+			visible		( "gui::join_team_mode" == 0 )
+			background	"gfx/guis/mainmenu/tooltip_edge"
+			matcolor	1,1,1,0.95
+			matscalex	-1
+			matscaley	-1
+			noevents	1
+		}
+		windowDef qj_screen_c
+		{
+			rect		120,144,400,152
+			visible		( "gui::join_team_mode" == 0 )
+			background	"gfx/guis/mainmenu/screen"
+			matcolor	0.09,0.11,0.07,0.88
+			noevents	1
+		}
+		windowDef qj_grad_c
+		{
+			rect		120,144,400,152
+			visible		( "gui::join_team_mode" == 0 )
+			background	"gfx/guis/mainmenu/bg_darkgrad"
+			matcolor	0.545,0.588,0.294,0.14
+			noevents	1
+		}
+		windowDef qj_frame_top_t
+		{
+			rect		116,140,408,16
+			visible		( "gui::join_team_mode" == 1 )
+			background	"gfx/guis/mainmenu/tooltip_edge"
+			matcolor	1,1,1,0.95
+			noevents	1
+		}
+		windowDef qj_frame_mid_t
+		{
+			rect		116,156,408,160
+			visible		( "gui::join_team_mode" == 1 )
+			background	"gfx/guis/mainmenu/tooltip_mid"
+			matcolor	1,1,1,0.95
+			noevents	1
+		}
+		windowDef qj_frame_btm_t
+		{
+			rect		116,316,408,16
+			visible		( "gui::join_team_mode" == 1 )
+			background	"gfx/guis/mainmenu/tooltip_edge"
+			matcolor	1,1,1,0.95
+			matscalex	-1
+			matscaley	-1
+			noevents	1
+		}
+		windowDef qj_screen_t
+		{
+			rect		120,144,400,184
+			visible		( "gui::join_team_mode" == 1 )
+			background	"gfx/guis/mainmenu/screen"
+			matcolor	0.09,0.11,0.07,0.88
+			noevents	1
+		}
+		windowDef qj_grad_t
+		{
+			rect		120,144,400,184
+			visible		( "gui::join_team_mode" == 1 )
 			background	"gfx/guis/mainmenu/bg_darkgrad"
 			matcolor	0.545,0.588,0.294,0.14
 			noevents	1
 		}
 
+		windowDef qj_head
+		{
+			rect		120,144,400,26
+			visible		1
+			background	"gfx/guis/mainmenu/b3_light"
+			matcolor	1,1,1,0.16
+			noevents	1
+		}
+		windowDef qj_title_corner
+		{
+			rect		128,153,9,9
+			visible		1
+			background	"gfx/guis/mainmenu/corner"
+			matcolor	0.564,0.603,0.286,0.7
+			noevents	1
+		}
 		windowDef qj_title
 		{
-			rect		132,152,376,26
-			forecolor	0.96,0.97,0.9,1
+			rect		142,148,300,22
+			visible		1
+			forecolor	1,1,1,0.85
 			text		"gui::join_match_title"
-			textscale	0.3
+			textscale	0.27
 			font		"fonts/marine"
+			textspacing	-1
 			noevents	1
 		}
-		windowDef qj_rule
+		windowDef qj_head_sep
 		{
-			rect		132,180,376,1
-			backcolor	0.45,0.5,0.27,0.8
+			rect		446,147,4,21
+			visible		1
+			background	"gfx/guis/mainmenu/vert_line2"
+			matcolor	1,1,1,0.28
 			noevents	1
 		}
-		windowDef qj_state
+		windowDef qj_head_rule
 		{
-			rect		132,188,190,20
-			forecolor	0.95,0.72,0.25,1
-			text		"gui::join_match_state"
-			textscale	0.22
-			font		"fonts/lowpixel"
-			noevents	1
-		}
-		windowDef qj_limit
-		{
-			rect		132,212,190,16
-			forecolor	0.72,0.76,0.63,1
-			text		"gui::join_match_limit"
-			textscale	0.17
-			font		"fonts/lowpixel"
-			noevents	1
-		}
-		windowDef qj_players
-		{
-			rect		132,228,190,16
-			forecolor	0.72,0.76,0.63,1
-			text		"gui::join_match_players"
-			textscale	0.17
-			font		"fonts/lowpixel"
-			noevents	1
-		}
-		windowDef qj_server
-		{
-			rect		132,244,190,16
-			forecolor	0.55,0.58,0.48,1
-			text		"gui::join_match_server"
-			textscale	0.17
-			font		"fonts/lowpixel"
+			rect		120,168,400,6
+			visible		1
+			background	"gfx/guis/mainmenu/horiz_line2"
+			matcolor	1,1,1,0.3
 			noevents	1
 		}
 
-		// -------------------------------------------------- free-for-all modes
-		windowDef qj_b_join
+		windowDef qj_b_settings
 		{
-			rect		336,196,172,34
-			visible		( "gui::join_team_mode" == 0 && "gui::join_tourney_mode" == 0 )
-			backcolor	0.30,0.10,0.07,0.96
-			bordercolor	0.95,0.72,0.25,1
-			bordersize	1
+			rect		454,146,30,23
+			visible		1
+			background	"gfx/guis/mainmenu/b4_light"
+			matcolor	0.545,0.588,0.294,0.35
 
 			onMouseEnter {
 				if ( "desktop::active" == 0 ) {
-					set "backcolor" "0.45,0.16,0.09,0.98" ;
+					stoptransitions "qj_b_settings" ;
+					set "qj_b_settings::matcolor_w" "1" ;
+					transition "qj_i_settings::matcolor" "$desktop::white_8" "$desktop::orange" "0" ;
 					set "cmd" "play main_menu_mouseover" ;
 				}
 			}
 			onMouseExit {
-				set "backcolor" "0.30,0.10,0.07,0.96" ;
+				if ( "desktop::active" == 0 ) {
+					transition "qj_b_settings::matcolor_w" "1" "0.35" "300" ;
+					transition "qj_i_settings::matcolor" "$desktop::orange" "$desktop::white_8" "300" ;
+				}
+			}
+			onAction {
+				if ( "desktop::active" == 0 ) {
+					set "cmd" "play main_menu_selection" ;
+					// Hand the menu back its full chrome, then walk to Settings the
+					// way the Settings tab does once the intro has settled.
+					set "desktop::quickjoin" "0" ;
+					set "p_quickjoin::visible" "0" ;
+					set "p_main::visible" "1" ;
+					set "p_btns::visible" "1" ;
+					set "desktop::curr" "2" ;
+					resettime "anim_in" "0" ;
+					resettime "anim_qj_settings" "0" ;
+				}
+			}
+		}
+		windowDef qj_i_settings
+		{
+			rect		461,149,16,16
+			visible		1
+			background	"gfx/guis/common/gear1_still"
+			matcolor	1,1,1,0.8
+			noevents	1
+		}
+		windowDef qj_b_leave
+		{
+			rect		488,146,30,23
+			visible		1
+			background	"gfx/guis/mainmenu/b4_light"
+			matcolor	0.545,0.588,0.294,0.35
+
+			onMouseEnter {
+				if ( "desktop::active" == 0 ) {
+					stoptransitions "qj_b_leave" ;
+					set "qj_b_leave::matcolor_w" "1" ;
+					transition "qj_i_leave::matcolor" "$desktop::white_8" "$desktop::orange" "0" ;
+					set "cmd" "play main_menu_mouseover" ;
+				}
+			}
+			onMouseExit {
+				if ( "desktop::active" == 0 ) {
+					transition "qj_b_leave::matcolor_w" "1" "0.35" "300" ;
+					transition "qj_i_leave::matcolor" "$desktop::orange" "$desktop::white_8" "300" ;
+				}
+			}
+			onAction {
+				if ( "desktop::active" == 0 ) {
+					set "cmd" "exec disconnect play main_menu_selection" ;
+				}
+			}
+		}
+		windowDef qj_i_leave
+		{
+			rect		495,149,16,16
+			visible		1
+			background	"gfx/guis/mainmenu/icon_arrow"
+			matcolor	1,1,1,0.8
+			noevents	1
+		}
+
+		windowDef qj_state
+		{
+			rect		132,180,190,20
+			visible		1
+			forecolor	0.890,0.537,0,1
+			text		"gui::join_match_state"
+			textscale	0.24
+			font		"fonts/lowpixel"
+			textspacing	-1
+			noevents	1
+		}
+		windowDef qj_limit
+		{
+			rect		132,206,190,16
+			visible		1
+			forecolor	0.72,0.76,0.63,1
+			text		"gui::join_match_limit"
+			textscale	0.17
+			font		"fonts/lowpixel"
+			textspacing	-1
+			noevents	1
+		}
+		windowDef qj_players
+		{
+			rect		132,222,190,16
+			visible		1
+			forecolor	0.72,0.76,0.63,1
+			text		"gui::join_match_players"
+			textscale	0.17
+			font		"fonts/lowpixel"
+			textspacing	-1
+			noevents	1
+		}
+		windowDef qj_server
+		{
+			rect		132,238,190,16
+			visible		1
+			forecolor	0.55,0.58,0.48,1
+			text		"gui::join_match_server"
+			textscale	0.17
+			font		"fonts/lowpixel"
+			textspacing	-1
+			noevents	1
+		}
+
+		windowDef qj_b_join
+		{
+			rect		336,190,172,32
+			visible		( "gui::join_team_mode" == 0 && "gui::join_tourney_mode" == 0 )
+			background	"gfx/guis/mainmenu/b6_light"
+			matcolor	0.545,0.588,0.294,0.62
+
+			onMouseEnter {
+				if ( "desktop::active" == 0 ) {
+					stoptransitions "qj_b_join" ;
+					set "qj_b_join::matcolor_w" "1" ;
+					transition "qj_t_join::forecolor" "$desktop::white_8" "$desktop::orange" "0" ;
+					transition "qj_c_join::matcolor" "$desktop::orange_4" "$desktop::orange" "0" ;
+					set "qj_t_join::textscale" "0.27" ;
+					set "cmd" "play main_menu_mouseover" ;
+				}
+			}
+			onMouseExit {
+				if ( "desktop::active" == 0 ) {
+					transition "qj_b_join::matcolor_w" "1" "0.62" "300" ;
+					transition "qj_t_join::forecolor" "$desktop::orange" "$desktop::white_8" "300" ;
+					transition "qj_c_join::matcolor" "$desktop::orange" "$desktop::orange_4" "300" ;
+					transition "qj_t_join::textscale" "0.27" "0.26" "300" ;
+				}
 			}
 			onAction {
 				if ( "desktop::active" == 0 ) {
@@ -9600,33 +9825,97 @@ windowDef Desktop
 		}
 		windowDef qj_t_join
 		{
-			rect		336,203,172,20
+			rect		352,197,140,18
 			visible		( "gui::join_team_mode" == 0 && "gui::join_tourney_mode" == 0 )
-			forecolor	0.98,0.98,0.94,1
+			forecolor	1,1,1,0.8
 			text		"#str_200187"
-			textscale	0.28
-			textalign	1
-			font		"fonts/lowpixel"
+			textscale	0.26
+			font		"fonts/marine"
+			textspacing	-1
 			noevents	1
 		}
-
-		// ---------------------------------------------------------- Tourney
-		windowDef qj_b_tourney
+		windowDef qj_c_join
 		{
-			rect		336,196,172,34
-			visible		( "gui::join_tourney_mode" == 1 )
-			backcolor	0.30,0.10,0.07,0.96
-			bordercolor	0.95,0.72,0.25,1
-			bordersize	1
+			rect		344,203,9,9
+			visible		( "gui::join_team_mode" == 0 && "gui::join_tourney_mode" == 0 )
+			background	"gfx/guis/mainmenu/corner"
+			matcolor	0.890,0.537,0,0.4
+			noevents	1
+		}
+		windowDef qj_b_spectate
+		{
+			rect		336,230,172,28
+			visible		( "gui::join_team_mode" == 0 && "gui::join_tourney_mode" == 0 )
+			background	"gfx/guis/mainmenu/b6_light"
+			matcolor	0.545,0.588,0.294,0.28
 
 			onMouseEnter {
 				if ( "desktop::active" == 0 ) {
-					set "backcolor" "0.45,0.16,0.09,0.98" ;
+					stoptransitions "qj_b_spectate" ;
+					set "qj_b_spectate::matcolor_w" "1" ;
+					transition "qj_t_spectate::forecolor" "$desktop::white_8" "$desktop::orange" "0" ;
+					transition "qj_c_spectate::matcolor" "$desktop::corner" "$desktop::orange" "0" ;
+					set "qj_t_spectate::textscale" "0.25" ;
 					set "cmd" "play main_menu_mouseover" ;
 				}
 			}
 			onMouseExit {
-				set "backcolor" "0.30,0.10,0.07,0.96" ;
+				if ( "desktop::active" == 0 ) {
+					transition "qj_b_spectate::matcolor_w" "1" "0.28" "300" ;
+					transition "qj_t_spectate::forecolor" "$desktop::orange" "$desktop::white_8" "300" ;
+					transition "qj_c_spectate::matcolor" "$desktop::orange" "$desktop::corner" "300" ;
+					transition "qj_t_spectate::textscale" "0.25" "0.24" "300" ;
+				}
+			}
+			onAction {
+				if ( "desktop::active" == 0 ) {
+					set "cmd" "play main_menu_selection join spectator close" ;
+				}
+			}
+		}
+		windowDef qj_t_spectate
+		{
+			rect		352,236,140,17
+			visible		( "gui::join_team_mode" == 0 && "gui::join_tourney_mode" == 0 )
+			forecolor	1,1,1,0.8
+			text		"#str_200195"
+			textscale	0.24
+			font		"fonts/marine"
+			textspacing	-1
+			noevents	1
+		}
+		windowDef qj_c_spectate
+		{
+			rect		344,241,9,9
+			visible		( "gui::join_team_mode" == 0 && "gui::join_tourney_mode" == 0 )
+			background	"gfx/guis/mainmenu/corner"
+			matcolor	0.564,0.603,0.286,0.4
+			noevents	1
+		}
+		windowDef qj_b_tourney
+		{
+			rect		336,190,172,32
+			visible		( "gui::join_tourney_mode" == 1 )
+			background	"gfx/guis/mainmenu/b6_light"
+			matcolor	0.545,0.588,0.294,0.62
+
+			onMouseEnter {
+				if ( "desktop::active" == 0 ) {
+					stoptransitions "qj_b_tourney" ;
+					set "qj_b_tourney::matcolor_w" "1" ;
+					transition "qj_t_tourney::forecolor" "$desktop::white_8" "$desktop::orange" "0" ;
+					transition "qj_c_tourney::matcolor" "$desktop::orange_4" "$desktop::orange" "0" ;
+					set "qj_t_tourney::textscale" "0.23" ;
+					set "cmd" "play main_menu_mouseover" ;
+				}
+			}
+			onMouseExit {
+				if ( "desktop::active" == 0 ) {
+					transition "qj_b_tourney::matcolor_w" "1" "0.62" "300" ;
+					transition "qj_t_tourney::forecolor" "$desktop::orange" "$desktop::white_8" "300" ;
+					transition "qj_c_tourney::matcolor" "$desktop::orange" "$desktop::orange_4" "300" ;
+					transition "qj_t_tourney::textscale" "0.23" "0.22" "300" ;
+				}
 			}
 			onAction {
 				if ( "desktop::active" == 0 ) {
@@ -9636,33 +9925,47 @@ windowDef Desktop
 		}
 		windowDef qj_t_tourney
 		{
-			rect		336,203,172,20
+			rect		352,198,140,18
 			visible		( "gui::join_tourney_mode" == 1 )
-			forecolor	0.98,0.98,0.94,1
+			forecolor	1,1,1,0.8
 			text		"gui::toggleTourneyButton"
-			textscale	0.28
-			textalign	1
-			font		"fonts/lowpixel"
+			textscale	0.22
+			font		"fonts/marine"
+			textspacing	-1
 			noevents	1
 		}
-
-		// ------------------------------------------------------- team modes
+		windowDef qj_c_tourney
+		{
+			rect		344,203,9,9
+			visible		( "gui::join_tourney_mode" == 1 )
+			background	"gfx/guis/mainmenu/corner"
+			matcolor	0.890,0.537,0,0.4
+			noevents	1
+		}
 		windowDef qj_b_auto
 		{
-			rect		336,188,172,32
+			rect		336,182,172,32
 			visible		( "gui::join_team_mode" == 1 )
-			backcolor	0.30,0.10,0.07,0.96
-			bordercolor	0.95,0.72,0.25,1
-			bordersize	1
+			background	"gfx/guis/mainmenu/b6_light"
+			matcolor	0.545,0.588,0.294,0.62
 
 			onMouseEnter {
 				if ( "desktop::active" == 0 ) {
-					set "backcolor" "0.45,0.16,0.09,0.98" ;
+					stoptransitions "qj_b_auto" ;
+					set "qj_b_auto::matcolor_w" "1" ;
+					transition "qj_t_auto::forecolor" "$desktop::white_8" "$desktop::orange" "0" ;
+					transition "qj_c_auto::matcolor" "$desktop::orange_4" "$desktop::orange" "0" ;
+					set "qj_t_auto::textscale" "0.27" ;
 					set "cmd" "play main_menu_mouseover" ;
 				}
 			}
 			onMouseExit {
-				set "backcolor" "0.30,0.10,0.07,0.96" ;
+				if ( "desktop::active" == 0 ) {
+					transition "qj_b_auto::matcolor_w" "1" "0.62" "300" ;
+					transition "qj_t_auto::forecolor" "$desktop::orange" "$desktop::white_8" "300" ;
+					transition "qj_c_auto::matcolor" "$desktop::orange" "$desktop::orange_4" "300" ;
+					transition "qj_t_auto::textscale" "0.27" "0.26" "300" ;
+				}
 			}
 			onAction {
 				if ( "desktop::active" == 0 ) {
@@ -9672,33 +9975,47 @@ windowDef Desktop
 		}
 		windowDef qj_t_auto
 		{
-			rect		336,195,172,20
+			rect		352,189,140,18
 			visible		( "gui::join_team_mode" == 1 )
-			forecolor	0.98,0.98,0.94,1
+			forecolor	1,1,1,0.8
 			text		"#str_200192"
-			textscale	0.28
-			textalign	1
-			font		"fonts/lowpixel"
+			textscale	0.26
+			font		"fonts/marine"
+			textspacing	-1
+			noevents	1
+		}
+		windowDef qj_c_auto
+		{
+			rect		344,195,9,9
+			visible		( "gui::join_team_mode" == 1 )
+			background	"gfx/guis/mainmenu/corner"
+			matcolor	0.890,0.537,0,0.4
 			noevents	1
 		}
 		windowDef qj_b_marine
 		{
-			rect		336,224,172,28
+			rect		336,218,172,28
 			visible		( "gui::join_team_mode" == 1 )
-			backcolor	0.07,0.075,0.055,0.98
-			bordercolor	0.3,0.34,0.2,1
-			bordersize	1
+			background	"gfx/guis/mainmenu/b6_light"
+			matcolor	0.545,0.588,0.294,0.28
 
 			onMouseEnter {
 				if ( "desktop::active" == 0 ) {
-					set "backcolor" "0.27,0.15,0.04,0.98" ;
-					set "bordercolor" "0.95,0.49,0.06,1" ;
+					stoptransitions "qj_b_marine" ;
+					set "qj_b_marine::matcolor_w" "1" ;
+					transition "qj_t_marine::forecolor" "$desktop::white_8" "$desktop::orange" "0" ;
+					transition "qj_c_marine::matcolor" "$desktop::corner" "$desktop::orange" "0" ;
+					set "qj_t_marine::textscale" "0.25" ;
 					set "cmd" "play main_menu_mouseover" ;
 				}
 			}
 			onMouseExit {
-				set "backcolor" "0.07,0.075,0.055,0.98" ;
-				set "bordercolor" "0.3,0.34,0.2,1" ;
+				if ( "desktop::active" == 0 ) {
+					transition "qj_b_marine::matcolor_w" "1" "0.28" "300" ;
+					transition "qj_t_marine::forecolor" "$desktop::orange" "$desktop::white_8" "300" ;
+					transition "qj_c_marine::matcolor" "$desktop::orange" "$desktop::corner" "300" ;
+					transition "qj_t_marine::textscale" "0.25" "0.24" "300" ;
+				}
 			}
 			onAction {
 				if ( "desktop::active" == 0 ) {
@@ -9709,33 +10026,47 @@ windowDef Desktop
 		}
 		windowDef qj_t_marine
 		{
-			rect		336,230,172,18
+			rect		352,224,140,17
 			visible		( "gui::join_team_mode" == 1 )
-			forecolor	0.86,0.88,0.8,1
+			forecolor	1,1,1,0.8
 			text		"#str_200193"
 			textscale	0.24
-			textalign	1
-			font		"fonts/lowpixel"
+			font		"fonts/marine"
+			textspacing	-1
+			noevents	1
+		}
+		windowDef qj_c_marine
+		{
+			rect		344,229,9,9
+			visible		( "gui::join_team_mode" == 1 )
+			background	"gfx/guis/mainmenu/corner"
+			matcolor	0.564,0.603,0.286,0.4
 			noevents	1
 		}
 		windowDef qj_b_strogg
 		{
-			rect		336,256,172,28
+			rect		336,250,172,28
 			visible		( "gui::join_team_mode" == 1 )
-			backcolor	0.07,0.075,0.055,0.98
-			bordercolor	0.3,0.34,0.2,1
-			bordersize	1
+			background	"gfx/guis/mainmenu/b6_light"
+			matcolor	0.545,0.588,0.294,0.28
 
 			onMouseEnter {
 				if ( "desktop::active" == 0 ) {
-					set "backcolor" "0.27,0.15,0.04,0.98" ;
-					set "bordercolor" "0.95,0.49,0.06,1" ;
+					stoptransitions "qj_b_strogg" ;
+					set "qj_b_strogg::matcolor_w" "1" ;
+					transition "qj_t_strogg::forecolor" "$desktop::white_8" "$desktop::orange" "0" ;
+					transition "qj_c_strogg::matcolor" "$desktop::corner" "$desktop::orange" "0" ;
+					set "qj_t_strogg::textscale" "0.25" ;
 					set "cmd" "play main_menu_mouseover" ;
 				}
 			}
 			onMouseExit {
-				set "backcolor" "0.07,0.075,0.055,0.98" ;
-				set "bordercolor" "0.3,0.34,0.2,1" ;
+				if ( "desktop::active" == 0 ) {
+					transition "qj_b_strogg::matcolor_w" "1" "0.28" "300" ;
+					transition "qj_t_strogg::forecolor" "$desktop::orange" "$desktop::white_8" "300" ;
+					transition "qj_c_strogg::matcolor" "$desktop::orange" "$desktop::corner" "300" ;
+					transition "qj_t_strogg::textscale" "0.25" "0.24" "300" ;
+				}
 			}
 			onAction {
 				if ( "desktop::active" == 0 ) {
@@ -9746,71 +10077,47 @@ windowDef Desktop
 		}
 		windowDef qj_t_strogg
 		{
-			rect		336,262,172,18
+			rect		352,256,140,17
 			visible		( "gui::join_team_mode" == 1 )
-			forecolor	0.86,0.88,0.8,1
+			forecolor	1,1,1,0.8
 			text		"#str_200194"
 			textscale	0.24
-			textalign	1
-			font		"fonts/lowpixel"
+			font		"fonts/marine"
+			textspacing	-1
 			noevents	1
 		}
-
-		// ------------------------------------------------------- spectating
-		windowDef qj_b_spectate
+		windowDef qj_c_strogg
 		{
-			rect		336,238,172,30
-			visible		( "gui::join_team_mode" == 0 && "gui::join_tourney_mode" == 0 )
-			backcolor	0.07,0.075,0.055,0.98
-			bordercolor	0.3,0.34,0.2,1
-			bordersize	1
-
-			onMouseEnter {
-				if ( "desktop::active" == 0 ) {
-					set "backcolor" "0.27,0.15,0.04,0.98" ;
-					set "bordercolor" "0.95,0.49,0.06,1" ;
-					set "cmd" "play main_menu_mouseover" ;
-				}
-			}
-			onMouseExit {
-				set "backcolor" "0.07,0.075,0.055,0.98" ;
-				set "bordercolor" "0.3,0.34,0.2,1" ;
-			}
-			onAction {
-				if ( "desktop::active" == 0 ) {
-					set "cmd" "play main_menu_selection join spectator close" ;
-				}
-			}
-		}
-		windowDef qj_t_spectate
-		{
-			rect		336,244,172,18
-			visible		( "gui::join_team_mode" == 0 && "gui::join_tourney_mode" == 0 )
-			forecolor	0.86,0.88,0.8,1
-			text		"#str_200195"
-			textscale	0.24
-			textalign	1
-			font		"fonts/lowpixel"
+			rect		344,261,9,9
+			visible		( "gui::join_team_mode" == 1 )
+			background	"gfx/guis/mainmenu/corner"
+			matcolor	0.564,0.603,0.286,0.4
 			noevents	1
 		}
 		windowDef qj_b_tspectate
 		{
-			rect		336,288,172,28
+			rect		336,282,172,28
 			visible		( "gui::join_team_mode" == 1 )
-			backcolor	0.07,0.075,0.055,0.98
-			bordercolor	0.3,0.34,0.2,1
-			bordersize	1
+			background	"gfx/guis/mainmenu/b6_light"
+			matcolor	0.545,0.588,0.294,0.28
 
 			onMouseEnter {
 				if ( "desktop::active" == 0 ) {
-					set "backcolor" "0.27,0.15,0.04,0.98" ;
-					set "bordercolor" "0.95,0.49,0.06,1" ;
+					stoptransitions "qj_b_tspectate" ;
+					set "qj_b_tspectate::matcolor_w" "1" ;
+					transition "qj_t_tspectate::forecolor" "$desktop::white_8" "$desktop::orange" "0" ;
+					transition "qj_c_tspectate::matcolor" "$desktop::corner" "$desktop::orange" "0" ;
+					set "qj_t_tspectate::textscale" "0.25" ;
 					set "cmd" "play main_menu_mouseover" ;
 				}
 			}
 			onMouseExit {
-				set "backcolor" "0.07,0.075,0.055,0.98" ;
-				set "bordercolor" "0.3,0.34,0.2,1" ;
+				if ( "desktop::active" == 0 ) {
+					transition "qj_b_tspectate::matcolor_w" "1" "0.28" "300" ;
+					transition "qj_t_tspectate::forecolor" "$desktop::orange" "$desktop::white_8" "300" ;
+					transition "qj_c_tspectate::matcolor" "$desktop::orange" "$desktop::corner" "300" ;
+					transition "qj_t_tspectate::textscale" "0.25" "0.24" "300" ;
+				}
 			}
 			onAction {
 				if ( "desktop::active" == 0 ) {
@@ -9820,25 +10127,34 @@ windowDef Desktop
 		}
 		windowDef qj_t_tspectate
 		{
-			rect		336,294,172,18
+			rect		352,288,140,17
 			visible		( "gui::join_team_mode" == 1 )
-			forecolor	0.86,0.88,0.8,1
+			forecolor	1,1,1,0.8
 			text		"#str_200195"
 			textscale	0.24
-			textalign	1
-			font		"fonts/lowpixel"
+			font		"fonts/marine"
+			textspacing	-1
+			noevents	1
+		}
+		windowDef qj_c_tspectate
+		{
+			rect		344,293,9,9
+			visible		( "gui::join_team_mode" == 1 )
+			background	"gfx/guis/mainmenu/corner"
+			matcolor	0.564,0.603,0.286,0.4
 			noevents	1
 		}
 
 		// Team-balance refusals surface here instead of the Join tab's notice.
 		windowDef qj_msg
 		{
-			rect		132,316,376,18
+			rect		132,260,196,36
 			visible		0
 			forecolor	0.95,0.6,0.1,1
 			text		""
-			textscale	0.19
+			textscale	0.17
 			font		"fonts/lowpixel"
+			textspacing	-1
 			noevents	1
 		}
 	}
