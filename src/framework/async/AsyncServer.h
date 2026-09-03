@@ -158,6 +158,15 @@ typedef struct serverClient_s {
 	int					snapshotSequence;
 	int					acknowledgeSnapshotSequence;
 	int					numDuplicatedUsercmds;
+	// openQ4: what a client actually receives, as opposed to what
+	// net_serverSnapshotDelay asks for.  The channel's token bucket refuses a send
+	// until the previous packet has been paid for at net_serverMaxClientRate, so a
+	// snapshot larger than rate/snapshotHz silently pushes the real update rate
+	// below the configured one - and every replicated effect, event and projectile
+	// update rides the snapshot.  com_showAsyncStats reports these.
+	int					statsSnapshotsSent;
+	int					statsSnapshotBytes;
+	int					statsSendsRefusedByRate;
 
 	char				guid[12];  // Even Balance - M. Quinn
 
