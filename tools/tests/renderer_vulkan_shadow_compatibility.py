@@ -6238,6 +6238,455 @@ def validate_shadow_gpu_timing_contract() -> None:
     )
 
 
+def validate_shadow_debug_overlay_contract() -> None:
+    """r_shadowMapDebugOverlay: the GL mini-map, sampled safely on Vulkan.
+
+    The overlay reads live shadow resources from inside the scene's render
+    scope, which is the only place in the module where a diagnostic touches
+    the same images the receivers just sampled. Each pin below guards one way
+    that could go wrong.
+    """
+
+    shadow_map = read("src/renderer/Vulkan/vk_ShadowMap.cpp")
+    executor = read("src/renderer/Vulkan/vk_GuiExecutor.cpp")
+    header = read("src/renderer/Vulkan/vk_ShadowMap.h")
+
+    require(
+        header,
+        "void\tVK_ShadowMap_DebugOverlayDraw( const viewDef_t *viewDef );",
+        "the overlay is exported for the interaction walkers' caller",
+    )
+
+    # One call site, after BOTH walkers, so the overlay covers the shared
+    # ownership path, the legacy walker, and the views where neither drew a
+    # light (the GL "NO MAP" state). r_skipInteractions suppresses it exactly
+    # like the GL pass it belongs to.
+    if executor.count("VK_ShadowMap_DebugOverlayDraw(") != 1:
+        raise AssertionError(
+            "The Vulkan shadow overlay must have exactly one call site, so both"
+            " interaction walkers and the light-less views reach it identically"
+        )
+    require_order(
+        executor,
+        (
+            "VK_ClassicInteraction_DrawOwnedView( viewDef );",
+            "VK_Interactions_DrawLights( viewDef );",
+            "if ( !r_skipInteractions.GetBool() ) {",
+            "VK_ShadowMap_DebugOverlayDraw( viewDef );",
+        ),
+        "the overlay draws after the interaction dispatch, under r_skipInteractions",
+    )
+
+    overlay = braced_body(
+        shadow_map,
+        "void VK_ShadowMap_DebugOverlayDraw( const viewDef_t *viewDef ) {",
+        "Vulkan shadow debug overlay draw",
+    )
+    select = braced_body(
+        shadow_map,
+        "static bool VK_ShadowMap_OverlaySelect( const viewDef_t *viewDef,",
+        "Vulkan shadow debug overlay selection",
+    )
+
+    require(
+        overlay,
+        "if ( !r_shadowMapDebugOverlay.GetBool() || viewDef == NULL ) {",
+        "the overlay is gated on its own cvar",
+    )
+
+    # The shadow pass interrupts the dynamic-rendering scope. Appending draws
+    # to a scope that failed to resume is invalid usage, not a cosmetic bug.
+    require_order(
+        overlay,
+        (
+            "if ( !VK_Exec_MainRenderingScopeOpen() ) {",
+            "return;",
+            "draw.cmd = VK_Exec_ActiveCmd();",
+        ),
+        "the overlay proves the render scope is recording before it records",
+    )
+    require(
+        executor,
+        "bool VK_Exec_MainRenderingScopeOpen( void ) {",
+        "the executor exposes the recording state the overlay checks",
+    )
+    require_compact(
+        executor,
+        "return vkExec.frameOpen && vkExec.mainScopeOpen && vkExec.cmd != VK_NULL_HANDLE;",
+        "the scope query answers for the frame AND the scope",
+    )
+
+    # A stale table is worse than no table: the panel would show another
+    # view's light while claiming to describe this one. Shared ownership can
+    # reach a view that prepared nothing at all (shadowMapPassCount 0).
+    require(
+        shadow_map,
+        "const viewDef_t *\tpreparedView;",
+        "the module records which view produced the light table",
+    )
+    prepare = braced_body(
+        shadow_map,
+        "int VK_ShadowMap_PrepareViewLights( const viewDef_t *viewDef,",
+        "prepared-view stamp",
+    )
+    require_order(
+        prepare,
+        ("vkShadow.numLights = 0;", "vkShadow.preparedView = viewDef;"),
+        "preparation stamps the view that owns the table",
+    )
+    release = braced_body(
+        shadow_map,
+        "static void VK_ShadowMap_ReleasePreparedLights( const bool markSticky ) {",
+        "prepared-view stamp release",
+    )
+    require_order(
+        release,
+        ("vkShadow.numLights = 0;", "vkShadow.preparedView = NULL;"),
+        "releasing the table clears the view that owned it",
+    )
+    require_order(
+        select,
+        (
+            "if ( viewDef == NULL || vkShadow.preparedView != viewDef ) {",
+            "return false;",
+        ),
+        "the overlay refuses a light table another view prepared",
+    )
+    require(
+        overlay,
+        "const bool viewPrepared = ( vkShadow.preparedView == viewDef );",
+        "the readout knows whether the view counters describe this view",
+    )
+    for counter in (
+        "vkShadow.projectedCacheHits",
+        "vkShadow.pointCacheHits",
+        "vkShadow.projectedFreshUpdates",
+        "vkShadow.pointFreshUpdates",
+        "vkShadow.composePasses",
+        "vkShadow.atlasTilesRendered",
+        "vkShadow.atlasTilesAllocated",
+        "vkShadow.pointFacesRendered",
+        "vkShadow.budgetFallbacks",
+        "vkShadow.admissionDenied",
+        "vkShadow.subviewFallbacks",
+    ):
+        require_compact(
+            overlay,
+            f"viewPrepared ? {counter} : 0",
+            "every displayed view counter reports zero for a view that prepared nothing",
+        )
+
+    # Both shadow descriptor families declare DEPTH_STENCIL_READ_ONLY_OPTIMAL.
+    # Sampling through a descriptor whose declared layout disagrees with the
+    # image is undefined, and the overlay runs after a pass that legitimately
+    # leaves images in transfer/attachment layouts on some paths.
+    require_compact(
+        select,
+        "const bool atlasReadable = vkShadow.atlasImage != VK_NULL_HANDLE"
+        " && vkShadow.atlasLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;",
+        "the projected panel samples the atlas only in the layout its descriptor declares",
+    )
+    require_compact(
+        select,
+        "const VkDescriptorSet atlasSet = atlasReadable"
+        " ? VK_Exec_ShadowDescriptorSet() : VK_NULL_HANDLE;",
+        "an unreadable atlas yields no descriptor rather than a mismatched one",
+    )
+    require_compact(
+        select,
+        "if ( cube == NULL || cube->image == VK_NULL_HANDLE"
+        " || cube->layout != VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL ) {",
+        "the point panel samples a cube only in the layout its descriptor declares",
+    )
+
+    # The cube resolution must agree with the render walk's, or the panel
+    # would show a different image than the receivers sampled.
+    pass_cube = braced_body(
+        shadow_map,
+        "static const vkPointShadowCube_t *VK_ShadowMap_OverlayPassCube(",
+        "overlay point cube resolution",
+    )
+    require_order(
+        pass_cube,
+        (
+            "if ( pass.cacheEntry >= 0 && pass.cacheEntry < VK_SHADOW_MAX_CACHE_SLOTS ) {",
+            "return &vkShadow.pointCache[ pass.cacheEntry ].cube;",
+            "if ( pass.cubeIndex >= 0 && pass.cubeIndex < VK_SHADOW_MAX_POINT_CUBES ) {",
+            "return &vkShadow.pointCubes[ pass.cubeIndex ];",
+        ),
+        "the overlay resolves a pass's cube the way the point render walk does",
+    )
+
+    # An aliased pass points at the other ownership's resource, which is
+    # already reachable under the name of the pass that owns it.
+    require_compact(
+        select,
+        "if ( !pass.valid || pass.resourcePass != (vkShadowReceiverPass_t)passIndex ) { continue; }",
+        "only a receiver ownership that owns its own resource is shown",
+    )
+    require(
+        select,
+        "if ( singleLight >= 0 && lightDefIndex != singleLight ) {",
+        "r_singleLight selects the displayed light exactly, as it does on OpenGL",
+    )
+
+    # The interaction pass leaves a negative-height viewport for GL winding
+    # parity; reusing it would flip the panel and its text. Vulkan cannot
+    # query the scissor the shared walker last latched, so the overlay
+    # restores the view rect explicitly instead of leaving a per-primitive one.
+    require_order(
+        overlay,
+        (
+            "viewport.height = (float)fbHeight;",
+            "vkCmdSetViewport( draw.cmd, 0, 1, &viewport );",
+            "vkCmdSetScissor( draw.cmd, 0, 1, &scissor );",
+            "VK_Exec_SetViewScissor( draw.cmd, viewDef, fbHeight );",
+        ),
+        "the overlay owns its viewport/scissor and restores the view scissor",
+    )
+    if "viewport.height = -" in overlay:
+        raise AssertionError(
+            "The overlay's own viewport must be positive-height: its vertex"
+            " stage maps top-left pixels straight to Vulkan clip space"
+        )
+    require(
+        executor,
+        "void VK_Exec_SetViewScissor( VkCommandBuffer cmd, const viewDef_t *viewDef, int fbHeight ) {",
+        "the executor exposes the view scissor the overlay restores",
+    )
+
+    # 2D semantics over the finished scene, exactly like the GL overlay's
+    # GLS_DEPTHFUNC_ALWAYS + depth/stencil disable.
+    for state in (
+        "vkCmdSetDepthTestEnable( draw.cmd, VK_FALSE );",
+        "vkCmdSetDepthWriteEnable( draw.cmd, VK_FALSE );",
+        "vkCmdSetStencilTestEnable( draw.cmd, VK_FALSE );",
+        "vkCmdSetCullMode( draw.cmd, VK_CULL_MODE_NONE );",
+        "vkCmdSetDepthBiasEnable( draw.cmd, VK_FALSE );",
+    ):
+        require(overlay, state, "the overlay latches 2D dynamic state before drawing")
+
+    # shadowSetLayout carries the receivers' dynamic shadow block at binding 1,
+    # so binding the panel set without an offset is invalid even though the
+    # panel shaders never read it.
+    require_compact(
+        overlay,
+        "vkCmdBindDescriptorSets( draw.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,"
+        " draw.layout, 0, 1, &selection.panelSet, 1, &dynamicOffset );",
+        "the panel set binds with the dynamic offset its layout requires",
+    )
+    require_order(
+        overlay,
+        ("if ( drawPanel ) {", "vkCmdBindDescriptorSets( draw.cmd"),
+        "no descriptor set is bound when there is no panel to sample",
+    )
+
+    # A diagnostic that moves backEnd.pc changes the numbers r_rendererMetrics
+    # reports while it is on, and the GL overlay's immediate-mode quads never
+    # reach those counters either. Every overlay draw is emitted by the quad
+    # helper, so both it and the entry point have to stay silent.
+    quad = braced_body(
+        shadow_map,
+        "static void VK_ShadowMap_OverlayQuad( vkShadowOverlayDraw_t &draw,",
+        "overlay quad emitter",
+    )
+    require(quad, "vkCmdDraw( draw.cmd, 6, 1, 0, 0 );", "the overlay emits its quads here")
+    for source, name in ( ( overlay, "entry point" ), ( quad, "quad emitter" ) ):
+        if "VK_Device_Count" in source:
+            raise AssertionError(
+                f"The overlay {name} must not account its own draws: it would"
+                " move the renderer counters it exists to help read"
+            )
+
+    validate_shadow_debug_overlay_pipelines(executor)
+    validate_shadow_debug_overlay_shaders()
+
+
+def validate_shadow_debug_overlay_pipelines(executor: str) -> None:
+    """The overlay's three pipelines and the layout they share."""
+
+    require(
+        executor,
+        "typedef struct vkShadowOverlayPush_s {",
+        "the overlay declares its own push block",
+    )
+    require_compact(
+        executor,
+        "overlayPushRange.size = sizeof( vkShadowOverlayPush_t );",
+        "the overlay layout advertises its own push range",
+    )
+    # 128 bytes is the guaranteed maxPushConstantsSize; the overlay block must
+    # stay inside it on every implementation, not just the ones tested.
+    push_block = braced_body(
+        executor,
+        "typedef struct vkShadowOverlayPush_s {",
+        "overlay push block",
+    )
+    vec4s = push_block.count("[ 4 ];")
+    if vec4s * 16 > 128:
+        raise AssertionError(
+            f"The overlay push block is {vec4s * 16} bytes; the guaranteed"
+            " maxPushConstantsSize is 128"
+        )
+
+    variant = braced_body(
+        executor,
+        "static VkPipeline VK_Exec_ShadowOverlayPipelineVariant( vkSpecialPipelineKind_t kind,",
+        "overlay pipeline variant",
+    )
+    require_compact(
+        variant,
+        "vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;",
+        "the overlay pipelines declare a vertex input state",
+    )
+    if "pVertexBindingDescriptions" in variant or "pVertexAttributeDescriptions" in variant:
+        raise AssertionError(
+            "The overlay generates its quad from gl_VertexIndex; binding a"
+            " vertex buffer would make a diagnostic compete for the frame rings"
+        )
+    require_compact(
+        variant,
+        "GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA",
+        "the overlay blends over the scene like the GL overlay's GL_State",
+    )
+    require_compact(
+        variant,
+        "vkExec.shadowOverlayPipelineLayout, false, false, target",
+        "the overlay pipelines keep the scene's color attachment",
+    )
+
+    # Three variants: the two panels differ only in the view type they declare
+    # for the raw sampler, and the text variant needs no sampler at all so the
+    # "NO MAP" readout can draw with nothing bound.
+    for kind in (
+        "VK_SPECIAL_SHADOW_OVERLAY_PANEL",
+        "VK_SPECIAL_SHADOW_OVERLAY_POINT_PANEL",
+        "VK_SPECIAL_SHADOW_OVERLAY_TEXT",
+    ):
+        require(executor, kind, "the overlay pipeline kinds are distinct cache keys")
+    require_compact(
+        executor,
+        "VkPipeline VK_Exec_ShadowOverlayPanelPipeline( bool pointLight ) {"
+        " return pointLight"
+        " ? VK_Exec_ShadowOverlayPipelineVariant( VK_SPECIAL_SHADOW_OVERLAY_POINT_PANEL,"
+        " vkExec.shadowOverlayPointFragModule )"
+        " : VK_Exec_ShadowOverlayPipelineVariant( VK_SPECIAL_SHADOW_OVERLAY_PANEL,"
+        " vkExec.shadowOverlayFragModule ); }",
+        "the light class picks the panel variant whose sampler view type matches",
+    )
+    require_compact(
+        executor,
+        "plci.setLayoutCount = 1; plci.pSetLayouts = &vkExec.shadowSetLayout;"
+        " plci.pPushConstantRanges = &overlayPushRange;",
+        "the overlay layout reuses the shadow receiver set layout at slot 0",
+    )
+
+
+def validate_shadow_debug_overlay_shaders() -> None:
+    """The three overlay shaders and their committed SPIR-V registration."""
+
+    panel = read("src/renderer/Vulkan/shaders/shadow_debug_overlay.frag")
+    point_panel = read("src/renderer/Vulkan/shaders/shadow_debug_overlay_point.frag")
+    text = read("src/renderer/Vulkan/shaders/shadow_debug_overlay_text.frag")
+    vertex = read("src/renderer/Vulkan/shaders/shadow_debug_overlay.vert")
+
+    require(
+        vertex,
+        "kCorners[gl_VertexIndex]",
+        "the overlay quad comes from the vertex index, not a vertex buffer",
+    )
+    # Vulkan clip space already puts y = -1 at the top row, so the GL vertex
+    # program's flip must NOT be reproduced here.
+    require(
+        vertex,
+        "vec2 clip = pixel / extent * 2.0 - 1.0;",
+        "top-left pixels map straight to Vulkan clip space",
+    )
+
+    # Binding 2 is the raw (compare-disabled, NEAREST) sampler. Binding 0 is
+    # the LEQUAL compare sampler, whose result is a shadow test, not the
+    # stored depth the panel is supposed to show.
+    require(
+        panel,
+        "layout(set = 0, binding = 2) uniform sampler2D shadowRawMap;",
+        "the projected panel reads stored depth through the raw sampler",
+    )
+    require(
+        point_panel,
+        "layout(set = 0, binding = 2) uniform samplerCube shadowRawMap;",
+        "the point panel reads stored depth through the raw cube sampler",
+    )
+    for source, name in (
+        (panel, "projected panel"),
+        (point_panel, "point panel"),
+        (text, "text"),
+    ):
+        if "binding = 0" in source or "Shadow " in source:
+            raise AssertionError(
+                f"The overlay {name} shader must not sample the compare"
+                " sampler: a shadow-test result is not the stored depth"
+            )
+
+    # The "NO MAP" readout has to draw when there is no shadow resource at
+    # all, so its shader may not statically use a descriptor.
+    if "uniform sampler" in text:
+        raise AssertionError(
+            "The overlay text shader must declare no sampler, or the 'NO MAP'"
+            " state would need a descriptor set that does not exist"
+        )
+    require(
+        text,
+        "const uvec2 kFont[44]",
+        "the 5x7 font lives in exactly one shader",
+    )
+    for source, name in ((panel, "projected panel"), (point_panel, "point panel")):
+        if "kFont" in source:
+            raise AssertionError(
+                f"The overlay {name} shader must not duplicate the font: the"
+                " text variant owns every glyph and solid fill"
+            )
+
+    # Vulkan point cubes always store native depth (r_shadowMapPointHighPrecision
+    # is OpenGL-only), so the packed two-channel decode the GL overlay needs
+    # must not be carried over.
+    if "UnpackDepth" in point_panel or "1.0 / 255.0" in point_panel:
+        raise AssertionError(
+            "Vulkan point cubes store native depth; the overlay must not decode"
+            " the OpenGL packed-color encoding"
+        )
+
+    # The cascade grid must line up with the panel's own edges wherever in the
+    # atlas the light's block landed, so it is computed in panel-local space
+    # while only the sample coordinate comes from the block rect.
+    require(
+        panel,
+        "vec2 sampleUv = mix(pc.uvRect.xy, pc.uvRect.zw, fragLocal);",
+        "the sampled coordinate spans the light's atlas block",
+    )
+    require_compact(
+        panel,
+        "float tileIndex = floor(fragLocal.x * divisions)"
+        " + floor(fragLocal.y * divisions) * divisions;",
+        "the cascade grid is panel-local, not atlas-local",
+    )
+    if "uvRect" in panel.split("float tileIndex")[1]:
+        raise AssertionError(
+            "The panel's cascade grid must not depend on the block rect, or it"
+            " would drift with the light's atlas allocation"
+        )
+
+    pin = read("tools/tests/vk_shader_header_pin.py")
+    committed = read("src/renderer/Vulkan/shaders/gui_shaders_spv.h")
+    for shader, array in (
+        ("shadow_debug_overlay.vert", "vk_shadow_debug_overlay_vert_spv"),
+        ("shadow_debug_overlay.frag", "vk_shadow_debug_overlay_frag_spv"),
+        ("shadow_debug_overlay_point.frag", "vk_shadow_debug_overlay_point_frag_spv"),
+        ("shadow_debug_overlay_text.frag", "vk_shadow_debug_overlay_text_frag_spv"),
+    ):
+        require(pin, f'"{shader}"', "every overlay shader is pinned to the committed header")
+        require(committed, f"{array}[]", "every overlay shader is embedded in the committed header")
+
+
 def validate_ci_registration() -> None:
     validator = read("tools/validation/openq4_validate.py")
     commit = read(".github/workflows/commit-validation.yml")
@@ -6278,6 +6727,7 @@ def main() -> None:
     validate_shadow_gpu_timing_contract()
     validate_packed_shadow_geometry()
     validate_fail_closed_target_and_stencil_behavior()
+    validate_shadow_debug_overlay_contract()
     validate_ci_registration()
     print("renderer_vulkan_shadow_compatibility: ok")
 

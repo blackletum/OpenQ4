@@ -103,6 +103,14 @@ bool VK_Exec_BeginMainRendering( bool clearColorDepth );
 void VK_Exec_EndMainRendering( void );
 bool VK_Exec_UpdateShadowAtlasDescriptors( VkImageView view, VkSampler compareSampler, VkSampler rawSampler );
 bool VK_Exec_CreateShadowCubeSets( VkImageView cubeView, VkSampler compareSampler, VkSampler rawSampler, VkDescriptorSet sets[ VK_FRAMES_IN_FLIGHT ] );
+VkDescriptorSet VK_Exec_ShadowDescriptorSet( void );
+VkPipeline VK_Exec_ShadowOverlayPanelPipeline( bool pointLight );
+VkPipeline VK_Exec_ShadowOverlayTextPipeline( void );
+VkPipelineLayout VK_Exec_ShadowOverlayPipelineLayout( void );
+int VK_Exec_ActiveFramebufferWidth( void );
+int VK_Exec_ActiveFramebufferHeight( void );
+bool VK_Exec_MainRenderingScopeOpen( void );
+void VK_Exec_SetViewScissor( VkCommandBuffer cmd, const viewDef_t *viewDef, int fbHeight );
 void VK_Exec_FreeShadowCubeSets( VkDescriptorSet sets[ VK_FRAMES_IN_FLIGHT ] );
 void VK_FixupClipSpaceZ( float dst[ 16 ], const float src[ 16 ] );
 
@@ -222,6 +230,10 @@ typedef struct vkShadowMapState_s {
 	int					atlasTilesAllocated;	// atlasDiv^2 blocks claimed
 	int					pointFacesRendered;
 	int					numLights;
+	// The view whose PrepareViewLights produced the table below. Shared
+	// ownership can reach a view that prepared nothing (shadowMapPassCount 0),
+	// which would otherwise leave the previous view's lights readable.
+	const viewDef_t *	preparedView;
 	vkShadowLightState_t lights[ VK_SHADOW_MAX_LIGHTS ];
 } vkShadowMapState_t;
 
@@ -430,6 +442,7 @@ static void VK_ShadowMap_ReleasePreparedLights( const bool markSticky ) {
 		vkShadow.lights[ i ].valid = false;
 	}
 	vkShadow.numLights = 0;
+	vkShadow.preparedView = NULL;
 	vkShadow.nextTileX = 0;
 	vkShadow.nextTileY = 0;
 	vkShadow.nextTileRowHeight = 0;
@@ -2449,6 +2462,7 @@ shared front-end helpers and take a contiguous cascade block.
 int VK_ShadowMap_PrepareViewLights( const viewDef_t *viewDef,
 		const bool stencilFallbackAvailable ) {
 	vkShadow.numLights = 0;
+	vkShadow.preparedView = viewDef;
 	vkShadow.nextTileX = 0;
 	vkShadow.nextTileY = 0;
 	vkShadow.nextTileRowHeight = 0;
@@ -5318,6 +5332,479 @@ void VK_ShadowMap_CommitClassicInteractionView(
 	vkClassicShadowTransaction.active = false;
 	vkClassicShadowTransaction.ready = false;
 	vkClassicShadowTransaction.view = NULL;
+}
+
+/*
+===============================================================================
+
+	r_shadowMapDebugOverlay (OpenGL RB_ShadowMapDebugOverlayDraw parity)
+
+	A top-left mini-map of one shadow map plus a stats readout, drawn at the
+	end of the interaction pass into the live scene exactly where the OpenGL
+	overlay draws it.
+
+	Unlike the OpenGL driver, nothing is captured while the shadow pass runs:
+	the per-view light table survives until the next PrepareViewLights, so the
+	overlay selects from it afterwards and reads the same state the receivers
+	sampled. vkShadow.preparedView is what makes that safe — a view that
+	prepared no lights (or handed the pass back) must not display the previous
+	view's table.
+
+	Geometry is generated in the vertex shader from gl_VertexIndex, so the
+	overlay allocates nothing: every rectangle is one push-constant block and
+	one six-vertex draw.
+
+===============================================================================
+*/
+
+typedef struct vkShadowOverlayPush_s {
+	float			rect[ 4 ];
+	float			uvRect[ 4 ];
+	float			color[ 4 ];
+	float			params[ 4 ];
+	float			screen[ 4 ];
+} vkShadowOverlayPush_t;
+
+// params.x sentinel: fill the rectangle with color instead of a font cell
+static const float VK_SHADOW_OVERLAY_SOLID = -1.0f;
+
+typedef struct vkShadowOverlaySelection_s {
+	bool			valid;
+	bool			pointLight;
+	bool			globalPass;		// the shown resource belongs to GLOBAL receivers
+	int				lightDefIndex;
+	int				tileCount;		// cascades inside the block, or 6 cube faces
+	int				atlasDiv;
+	int				tileSize;
+	int				staticCasters;
+	int				dynamicCasters;
+	int				alphaCasters;
+	const char *	outcome;		// how this pass got its contents
+	VkDescriptorSet	panelSet;
+	float			uvRect[ 4 ];	// image-oriented block rect (identity for cubes)
+} vkShadowOverlaySelection_t;
+
+typedef struct vkShadowOverlayDraw_s {
+	VkCommandBuffer		cmd;
+	VkPipelineLayout	layout;
+	VkPipeline			panelPipeline;
+	VkPipeline			textPipeline;
+	VkPipeline			boundPipeline;
+	float				screen[ 2 ];
+} vkShadowOverlayDraw_t;
+
+// Compact font slot for shadow_debug_overlay_text.frag: space, 0-9, A-Z, and
+// the punctuation the readout uses. Everything else renders blank rather than
+// a wrong glyph.
+static int VK_ShadowMap_OverlayGlyphSlot( const char c ) {
+	if ( c >= '0' && c <= '9' ) {
+		return 1 + ( c - '0' );
+	}
+	if ( c >= 'A' && c <= 'Z' ) {
+		return 11 + ( c - 'A' );
+	}
+	if ( c >= 'a' && c <= 'z' ) {
+		return 11 + ( c - 'a' );
+	}
+	switch ( c ) {
+	case '/':	return 37;
+	case '-':	return 38;
+	case '.':	return 39;
+	case ':':	return 40;
+	case '?':	return 41;
+	case '%':	return 42;
+	case '+':	return 43;
+	default:	return 0;
+	}
+}
+
+static void VK_ShadowMap_OverlayQuad( vkShadowOverlayDraw_t &draw,
+		VkPipeline pipeline, const float x, const float y,
+		const float w, const float h, const idVec4 &color,
+		const float glyphSlot, const float divisions,
+		const float activeTiles, const float uvRect[ 4 ] ) {
+	if ( pipeline == VK_NULL_HANDLE ) {
+		return;
+	}
+	if ( pipeline != draw.boundPipeline ) {
+		vkCmdBindPipeline( draw.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
+		draw.boundPipeline = pipeline;
+	}
+
+	vkShadowOverlayPush_t push;
+	memset( &push, 0, sizeof( push ) );
+	push.rect[ 0 ] = x;
+	push.rect[ 1 ] = y;
+	push.rect[ 2 ] = w;
+	push.rect[ 3 ] = h;
+	if ( uvRect != NULL ) {
+		for ( int i = 0 ; i < 4 ; i++ ) {
+			push.uvRect[ i ] = uvRect[ i ];
+		}
+	} else {
+		push.uvRect[ 2 ] = 1.0f;
+		push.uvRect[ 3 ] = 1.0f;
+	}
+	for ( int i = 0 ; i < 4 ; i++ ) {
+		push.color[ i ] = color[ i ];
+	}
+	push.params[ 0 ] = glyphSlot;
+	push.params[ 1 ] = divisions;
+	push.params[ 2 ] = activeTiles;
+	push.screen[ 0 ] = draw.screen[ 0 ];
+	push.screen[ 1 ] = draw.screen[ 1 ];
+
+	vkCmdPushConstants( draw.cmd, draw.layout,
+			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+			0, sizeof( push ), &push );
+	// deliberately unaccounted: the GL overlay's immediate-mode quads never
+	// reach backEnd.pc either, and a diagnostic must not move the counters
+	// the diagnostic is there to read
+	vkCmdDraw( draw.cmd, 6, 1, 0, 0 );
+}
+
+static void VK_ShadowMap_OverlaySolid( vkShadowOverlayDraw_t &draw,
+		const float x, const float y, const float w, const float h,
+		const idVec4 &color ) {
+	VK_ShadowMap_OverlayQuad( draw, draw.textPipeline, x, y, w, h, color,
+			VK_SHADOW_OVERLAY_SOLID, 1.0f, 0.0f, NULL );
+}
+
+// Two passes for a dark drop shadow under the readout, as the OpenGL overlay
+// does; the scene behind it is arbitrary, so unshadowed text is unreadable.
+static void VK_ShadowMap_OverlayString( vkShadowOverlayDraw_t &draw,
+		const float x, const float y, const float scale,
+		const idVec4 &color, const char *text ) {
+	if ( text == NULL || text[ 0 ] == '\0' ) {
+		return;
+	}
+
+	const float glyphW = 6.0f * scale;
+	const float glyphH = 9.0f * scale;
+	const float advance = glyphW + scale;
+	const idVec4 shadowColor( 0.0f, 0.0f, 0.0f, color[ 3 ] * 0.85f );
+
+	for ( int pass = 0 ; pass < 2 ; pass++ ) {
+		const idVec4 &passColor = ( pass == 0 ) ? shadowColor : color;
+		const float offset = ( pass == 0 ) ? 1.0f : 0.0f;
+		float drawX = x + offset;
+		for ( const char *c = text ; *c != '\0' ; c++ ) {
+			const int slot = VK_ShadowMap_OverlayGlyphSlot( *c );
+			if ( slot != 0 ) {
+				VK_ShadowMap_OverlayQuad( draw, draw.textPipeline, drawX,
+						y + offset, glyphW, glyphH, passColor,
+						(float)slot, 1.0f, 0.0f, NULL );
+			}
+			drawX += advance;
+		}
+	}
+}
+
+// How this receiver ownership got the contents the panel is showing.
+static const char *VK_ShadowMap_OverlayOutcome( const vkShadowPassState_t &pass ) {
+	if ( pass.cacheHit ) {
+		return pass.composeDynamic ? "REUSE+DYN" : "REUSE";
+	}
+	if ( pass.cacheUpdate ) {
+		return pass.composeDynamic ? "PUB+DYN" : "PUB";
+	}
+	return "SCRATCH";
+}
+
+// The point cube backing one prepared pass, or NULL. Mirrors the resolution
+// the point render walk uses, so the overlay cannot sample a different image
+// than the receivers did.
+static const vkPointShadowCube_t *VK_ShadowMap_OverlayPassCube(
+		const vkShadowPassState_t &pass ) {
+	if ( pass.cacheEntry >= 0 && pass.cacheEntry < VK_SHADOW_MAX_CACHE_SLOTS ) {
+		return &vkShadow.pointCache[ pass.cacheEntry ].cube;
+	}
+	if ( pass.cubeIndex >= 0 && pass.cubeIndex < VK_SHADOW_MAX_POINT_CUBES ) {
+		return &vkShadow.pointCubes[ pass.cubeIndex ];
+	}
+	return NULL;
+}
+
+/*
+====================
+VK_ShadowMap_OverlaySelect
+
+r_singleLight picks its light exactly; otherwise the first prepared light in
+table order wins, which is stable across frames as long as the view is. Only
+a pass that OWNS its resource is shown: an aliased pass points at the other
+ownership's tile, which is already on screen under its own name.
+
+Every candidate must also be samplable RIGHT NOW. Both descriptor set families
+declare VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, so a light whose image
+did not end the shadow pass in that layout is skipped rather than sampled
+through a descriptor that disagrees with the image.
+====================
+*/
+static bool VK_ShadowMap_OverlaySelect( const viewDef_t *viewDef,
+		vkShadowOverlaySelection_t &selection ) {
+	memset( &selection, 0, sizeof( selection ) );
+	selection.lightDefIndex = -1;
+	selection.outcome = "";
+	selection.uvRect[ 2 ] = 1.0f;
+	selection.uvRect[ 3 ] = 1.0f;
+
+	if ( viewDef == NULL || vkShadow.preparedView != viewDef ) {
+		return false;
+	}
+
+	const int singleLight = r_singleLight.GetInteger();
+	const bool atlasReadable = vkShadow.atlasImage != VK_NULL_HANDLE
+			&& vkShadow.atlasLayout
+				== VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+	const VkDescriptorSet atlasSet = atlasReadable
+			? VK_Exec_ShadowDescriptorSet() : VK_NULL_HANDLE;
+
+	for ( int i = 0 ; i < vkShadow.numLights ; i++ ) {
+		const vkShadowLightState_t &light = vkShadow.lights[ i ];
+		if ( !light.valid || light.vLight == NULL ) {
+			continue;
+		}
+		const int lightDefIndex = light.vLight->lightDef != NULL
+				? light.vLight->lightDef->index : -1;
+		if ( singleLight >= 0 && lightDefIndex != singleLight ) {
+			continue;
+		}
+
+		for ( int passIndex = 0 ;
+				passIndex < VK_SHADOW_RECEIVER_PASS_COUNT ; passIndex++ ) {
+			const vkShadowPassState_t &pass = light.passes[ passIndex ];
+			if ( !pass.valid
+					|| pass.resourcePass != (vkShadowReceiverPass_t)passIndex ) {
+				continue;
+			}
+
+			VkDescriptorSet panelSet = VK_NULL_HANDLE;
+			if ( light.pointLight ) {
+				const vkPointShadowCube_t *cube =
+						VK_ShadowMap_OverlayPassCube( pass );
+				if ( cube == NULL || cube->image == VK_NULL_HANDLE
+						|| cube->layout
+							!= VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL ) {
+					continue;
+				}
+				panelSet = pass.pointSet;
+			} else {
+				panelSet = atlasSet;
+			}
+			if ( panelSet == VK_NULL_HANDLE ) {
+				continue;
+			}
+
+			selection.valid = true;
+			selection.pointLight = light.pointLight;
+			selection.globalPass = ( passIndex == VK_SHADOW_RECEIVER_GLOBAL );
+			selection.lightDefIndex = lightDefIndex;
+			selection.tileSize = light.tileSize;
+			selection.outcome = VK_ShadowMap_OverlayOutcome( pass );
+			selection.panelSet = panelSet;
+			selection.staticCasters = light.vLight->shadowMapStaticCasterCount;
+			selection.dynamicCasters = light.vLight->shadowMapDynamicCasterCount;
+			selection.alphaCasters = light.vLight->shadowMapAlphaCasterCount;
+			if ( light.pointLight ) {
+				selection.tileCount = 6;
+				selection.atlasDiv = 3;
+			} else {
+				selection.atlasDiv = Max( 1, light.projectedState.atlasDiv );
+				selection.tileCount = idMath::ClampInt( 1,
+						selection.atlasDiv * selection.atlasDiv,
+						Max( 1, light.projectedState.cascadeCount ) );
+				// The panel shows the light's whole atlasDiv^2 block, so the
+				// shader's cascade grid lines up with the panel's own edges no
+				// matter where in the atlas the block was allocated.
+				const int blockSize = light.tileSize * selection.atlasDiv;
+				const float invAtlas = light.invAtlasSize[ 0 ];
+				selection.uvRect[ 0 ] = (float)pass.tileX * invAtlas;
+				selection.uvRect[ 1 ] = (float)pass.tileY * invAtlas;
+				selection.uvRect[ 2 ] =
+						(float)( pass.tileX + blockSize ) * invAtlas;
+				selection.uvRect[ 3 ] =
+						(float)( pass.tileY + blockSize ) * invAtlas;
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
+/*
+====================
+VK_ShadowMap_DebugOverlayDraw
+
+Called at the end of the interaction pass, inside the open main rendering
+scope, by whichever walker owned the view. Issues its own full-framebuffer
+positive-height viewport (the interaction pass leaves a negative-height one
+that would flip the panel) and restores the view scissor behind itself,
+because Vulkan cannot query the rect the shared walker last latched.
+====================
+*/
+void VK_ShadowMap_DebugOverlayDraw( const viewDef_t *viewDef ) {
+	if ( !r_shadowMapDebugOverlay.GetBool() || viewDef == NULL ) {
+		return;
+	}
+
+	// The shadow pass interrupts the main rendering scope and can fail to
+	// resume it. Appending draws to a closed scope is invalid, so the overlay
+	// asks rather than assuming the interaction pass left one open.
+	if ( !VK_Exec_MainRenderingScopeOpen() ) {
+		return;
+	}
+
+	vkShadowOverlayDraw_t draw;
+	memset( &draw, 0, sizeof( draw ) );
+	draw.cmd = VK_Exec_ActiveCmd();
+	draw.layout = VK_Exec_ShadowOverlayPipelineLayout();
+	draw.textPipeline = VK_Exec_ShadowOverlayTextPipeline();
+	if ( draw.cmd == VK_NULL_HANDLE || draw.layout == VK_NULL_HANDLE
+			|| draw.textPipeline == VK_NULL_HANDLE ) {
+		return;
+	}
+
+	const int fbWidth = VK_Exec_ActiveFramebufferWidth();
+	const int fbHeight = VK_Exec_ActiveFramebufferHeight();
+	if ( fbWidth <= 0 || fbHeight <= 0 ) {
+		return;
+	}
+	draw.screen[ 0 ] = (float)fbWidth;
+	draw.screen[ 1 ] = (float)fbHeight;
+
+	vkShadowOverlaySelection_t selection;
+	if ( VK_ShadowMap_OverlaySelect( viewDef, selection ) ) {
+		draw.panelPipeline =
+				VK_Exec_ShadowOverlayPanelPipeline( selection.pointLight );
+	}
+	const bool drawPanel = selection.valid
+			&& draw.panelPipeline != VK_NULL_HANDLE;
+
+	// The view counters describe the view that prepared the table; a view that
+	// prepared nothing reports nothing rather than the previous view's work.
+	const bool viewPrepared = ( vkShadow.preparedView == viewDef );
+
+	VkViewport viewport;
+	viewport.x = 0.0f;
+	viewport.y = 0.0f;
+	viewport.width = (float)fbWidth;
+	viewport.height = (float)fbHeight;
+	viewport.minDepth = 0.0f;
+	viewport.maxDepth = 1.0f;
+	vkCmdSetViewport( draw.cmd, 0, 1, &viewport );
+
+	VkRect2D scissor;
+	scissor.offset.x = 0;
+	scissor.offset.y = 0;
+	scissor.extent.width = (uint32_t)fbWidth;
+	scissor.extent.height = (uint32_t)fbHeight;
+	vkCmdSetScissor( draw.cmd, 0, 1, &scissor );
+
+	vkCmdSetDepthTestEnable( draw.cmd, VK_FALSE );
+	vkCmdSetDepthWriteEnable( draw.cmd, VK_FALSE );
+	vkCmdSetDepthCompareOp( draw.cmd, VK_COMPARE_OP_ALWAYS );
+	vkCmdSetDepthBiasEnable( draw.cmd, VK_FALSE );
+	vkCmdSetStencilTestEnable( draw.cmd, VK_FALSE );
+	vkCmdSetCullMode( draw.cmd, VK_CULL_MODE_NONE );
+	vkCmdSetFrontFace( draw.cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+	if ( vkCtx.depthBoundsSupported ) {
+		vkCmdSetDepthBoundsTestEnable( draw.cmd, VK_FALSE );
+	}
+
+	if ( drawPanel ) {
+		// Both panel variants read set 0 binding 2 only, but binding 1 is the
+		// receivers' shadow block, so the layout still wants its one dynamic
+		// offset.
+		const uint32_t dynamicOffset = 0;
+		vkCmdBindDescriptorSets( draw.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+				draw.layout, 0, 1, &selection.panelSet, 1, &dynamicOffset );
+	}
+
+	const float margin = 8.0f;
+	const float panelW = 192.0f;
+	const float panelH = selection.pointLight ? 128.0f : 192.0f;
+	const float statsH = 52.0f;
+	const float outerW = panelW + 12.0f;
+	const float outerH = panelH + statsH + 18.0f;
+	const float panelX = margin + 6.0f;
+	const float panelY = margin + 6.0f;
+	const float statsY = panelY + panelH + 8.0f;
+	const idVec4 outerColor( 0.02f, 0.03f, 0.04f, 0.78f );
+	const idVec4 panelFrameColor = selection.pointLight
+			? idVec4( 0.92f, 0.70f, 0.18f, 0.95f )
+			: idVec4( 0.15f, 0.78f, 0.95f, 0.95f );
+	const idVec4 failColor( 0.85f, 0.24f, 0.20f, 0.95f );
+	const idVec4 textColor( 0.96f, 0.96f, 0.92f, 0.98f );
+	const idVec4 labelColor( 0.95f, 0.95f, 0.95f, 0.95f );
+	const idVec4 &frameColor = drawPanel ? panelFrameColor : failColor;
+
+	VK_ShadowMap_OverlaySolid( draw, margin, margin, outerW, outerH, outerColor );
+	VK_ShadowMap_OverlaySolid( draw, panelX - 2.0f, panelY - 2.0f,
+			panelW + 4.0f, panelH + 4.0f, frameColor );
+
+	if ( drawPanel ) {
+		VK_ShadowMap_OverlayQuad( draw, draw.panelPipeline, panelX, panelY,
+				panelW, panelH, frameColor, VK_SHADOW_OVERLAY_SOLID,
+				(float)selection.atlasDiv, (float)selection.tileCount,
+				selection.uvRect );
+
+		const int columns = Max( 1, selection.pointLight ? 3 : selection.atlasDiv );
+		const int rows = Max( 1, selection.pointLight ? 2 : selection.atlasDiv );
+		const float tileW = panelW / (float)columns;
+		const float tileH = panelH / (float)rows;
+		for ( int tileIndex = 0 ; tileIndex < selection.tileCount ; tileIndex++ ) {
+			const int col = tileIndex % columns;
+			const int row = tileIndex / columns;
+			char label[ 8 ];
+			idStr::snPrintf( label, sizeof( label ), "%d", tileIndex );
+			VK_ShadowMap_OverlayString( draw,
+					panelX + col * tileW + 4.0f, panelY + row * tileH + 4.0f,
+					0.9f, labelColor, label );
+		}
+	} else {
+		VK_ShadowMap_OverlaySolid( draw, panelX, panelY, panelW, panelH,
+				idVec4( 0.02f, 0.02f, 0.03f, 0.92f ) );
+	}
+
+	char line1[ 64 ];
+	char line2[ 64 ];
+	char line3[ 64 ];
+	char line4[ 64 ];
+	if ( drawPanel ) {
+		idStr::snPrintf( line1, sizeof( line1 ), "%s %c L%d %c%d MAP",
+				selection.pointLight ? "POINT" : "PROJ",
+				selection.globalPass ? 'G' : 'L',
+				selection.lightDefIndex,
+				selection.pointLight ? 'F' : 'C',
+				selection.tileCount );
+		idStr::snPrintf( line2, sizeof( line2 ), "%s T%d CAST %d/%d A%d",
+				selection.outcome, selection.tileSize,
+				selection.staticCasters, selection.dynamicCasters,
+				selection.alphaCasters );
+	} else {
+		idStr::Copynz( line1, "NO MAP", sizeof( line1 ) );
+		idStr::Copynz( line2, "NO CAST", sizeof( line2 ) );
+	}
+	idStr::snPrintf( line3, sizeof( line3 ), "HIT %d/%d NEW %d/%d CMP %d",
+			viewPrepared ? vkShadow.projectedCacheHits : 0,
+			viewPrepared ? vkShadow.pointCacheHits : 0,
+			viewPrepared ? vkShadow.projectedFreshUpdates : 0,
+			viewPrepared ? vkShadow.pointFreshUpdates : 0,
+			viewPrepared ? vkShadow.composePasses : 0 );
+	idStr::snPrintf( line4, sizeof( line4 ), "TILE %d/%d FACE %d FB %d/%d/%d",
+			viewPrepared ? vkShadow.atlasTilesRendered : 0,
+			viewPrepared ? vkShadow.atlasTilesAllocated : 0,
+			viewPrepared ? vkShadow.pointFacesRendered : 0,
+			viewPrepared ? vkShadow.budgetFallbacks : 0,
+			viewPrepared ? vkShadow.admissionDenied : 0,
+			viewPrepared ? vkShadow.subviewFallbacks : 0 );
+
+	VK_ShadowMap_OverlayString( draw, panelX, statsY, 0.9f, textColor, line1 );
+	VK_ShadowMap_OverlayString( draw, panelX, statsY + 10.0f, 0.8f, textColor, line2 );
+	VK_ShadowMap_OverlayString( draw, panelX, statsY + 20.0f, 0.8f, textColor, line3 );
+	VK_ShadowMap_OverlayString( draw, panelX, statsY + 30.0f, 0.8f, textColor, line4 );
+
+	VK_Exec_SetViewScissor( draw.cmd, viewDef, fbHeight );
 }
 
 #endif /* OPENQ4_RENDERER_VK_MODULE */

@@ -1,7 +1,7 @@
 # Vulkan shadow maps — OpenGL parity closure (staging plan)
 
-Status: S1-S8 LANDED (2026-09-02). One item is deliberately left open and one
-is deliberately out of scope; both are named below. S1, S2 and S5 change
+Status: S1-S9 LANDED (2026-09-02); every verified gap is closed. One item
+is deliberately out of scope and is named below. S1, S2 and S5 change
 runtime behaviour that token pins cannot fully cover, and still want the
 user's own gameplay sign-off.
 
@@ -39,6 +39,7 @@ caches. The verified remainder was:
 | S6 | thin `r_shadowMapReport` | `b930d486` |
 | S7 | `r_shadowMapPointHighPrecision` inert | `b930d486` |
 | S8 | no GPU shadow-pass timings | this commit |
+| S9 | `r_shadowMapDebugOverlay` OpenGL-only | this commit |
 
 ## Correction to the 2026-07-24 Vulkan stencil-elision revert
 
@@ -146,13 +147,53 @@ S8. GPU shadow-pass timings. Timestamp spans measure the pass in the two
     a stall. Every span opens outside a dynamic-rendering scope, because
     resetting its query pair inside one is illegal.
 
-## Still open
+S9. `r_shadowMapDebugOverlay`. The mini-map and its stats readout, drawn
+    at the end of the interaction pass where `RB_ARB2_DrawInteractions`
+    draws them, from one call site that covers both interaction walkers
+    and the views where neither drew a light.
 
-- `r_shadowMapDebugOverlay` (the shadow mini-map with its stats readout)
-  remains OpenGL-only. It is a separate 2D pass with its own program
-  (`glprogs/shadow_debug_overlay.*`), not part of the receiver shaders
-  S4 covered. `r_shadowMapDebugMode 1` already visualizes atlas UV and
-  depth per pixel, which is why this was ranked last.
+    Three pipelines over one vertex stage that builds its quad from
+    `gl_VertexIndex`, so the overlay allocates nothing. The two panel
+    variants differ only in the view type they declare for set 0
+    binding 2, which is the same shadow receiver set layout the
+    interaction pipelines use — the published atlas set and the point
+    cube sets bind unchanged. The text variant declares no sampler at
+    all, which is what lets the "NO MAP" readout draw when there is no
+    shadow resource to bind, and keeps the 5x7 font in exactly one
+    shader instead of three.
+
+    Nothing is captured while the shadow pass runs, unlike the OpenGL
+    driver's `RB_ShadowMapDebugOverlayCapture`: the per-view light table
+    survives until the next `PrepareViewLights`, so the overlay selects
+    from it afterwards. `vkShadow.preparedView` is what makes that safe —
+    shared ownership can reach a view that prepared nothing at all, and
+    the previous view's table must not be displayed as this view's.
+
+    Two things the overlay must prove before it samples. The render
+    scope: the shadow pass interrupts it and can fail to resume, so
+    `VK_Exec_MainRenderingScopeOpen` gates every recorded command. The
+    image layout: both descriptor families declare
+    `DEPTH_STENCIL_READ_ONLY_OPTIMAL`, so a light whose atlas or cube did
+    not end the pass in that layout is skipped rather than sampled
+    through a descriptor that disagrees with the image.
+
+    Two deliberate differences from OpenGL. The panel's cascade grid is
+    computed in panel-local space while only the sample coordinate comes
+    from the light's atlas block, so the grid lines up with the panel's
+    own edges wherever the block was allocated; the GL fragment program
+    grids on the slot UV, which drifts once the slot is not at the
+    atlas origin. And the point panel reads native depth directly,
+    because Vulkan cubes never carry the packed two-channel encoding
+    `r_shadowMapPointHighPrecision` selects on OpenGL (S7).
+
+    The readout carries Vulkan's own accounting rather than a
+    transliteration of the GL counters: the selected pass's cache
+    decision and caster split, then the view's cache hits, fresh
+    updates, composed passes, tiles, cube faces, and the three fallback
+    classes S5 and S6 separated.
+
+## Deliberately out of scope
+
 - Translucent shadow moments stay excluded on Vulkan, per the Phase F
   closure.
 
