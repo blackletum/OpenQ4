@@ -84,7 +84,7 @@
 #include "vk_mem_alloc.h"
 
 #include "VulkanDevice.h"
-#include "VulkanGpuFrameTiming.h"
+#include "VulkanShadowTiming.h"
 #include "vk_ShadowMap.h"
 
 // vk_GuiExecutor.cpp narrow accessors (vkExec stays file-static there)

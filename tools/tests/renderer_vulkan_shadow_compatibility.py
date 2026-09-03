@@ -6097,14 +6097,18 @@ def validate_shadow_gpu_timing_contract() -> None:
     is being RECORDED, so there is nothing submitted to wait for. Timestamp
     spans measure it instead, and the synchronized mode is applied at readback.
 
+    It lives in its own TU because renderer_temporal_presentation pins that
+    VulkanGpuFrameTiming.cpp never waits at all -- a file-scoped guarantee
+    that dynamic-resolution timing cannot block the frame.
+
     Two properties keep that safe. Resetting a query pair is illegal inside a
     dynamic-rendering scope, so every span opens outside one. And a wait on a
     span whose command buffer was never submitted would never return, so the
     wait is gated on an age past which the frame loop has already waited that
     slot's fence, with an age-out behind it.
     """
-    timing = read("src/renderer/Vulkan/VulkanGpuFrameTiming.cpp")
-    header = read("src/renderer/Vulkan/VulkanGpuFrameTiming.h")
+    timing = read("src/renderer/Vulkan/VulkanShadowTiming.cpp")
+    header = read("src/renderer/Vulkan/VulkanShadowTiming.h")
     shadow_map = read("src/renderer/Vulkan/vk_ShadowMap.cpp")
 
     require_compact(
