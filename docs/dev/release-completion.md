@@ -1,5 +1,6 @@
 # openQ4 Release Completion List
 
+- [x] Manual macOS release validation now recognizes the package's exact `@rpath/libopenal.1.dylib` dependency only when the pinned runtime exists inside `openQ4.app/Contents/Frameworks`. The redundant workflow audit also verifies that runtime's architecture, system-only dependencies, code signature, and install name before accepting either experimental macOS package.
 - [x] Controller menu navigation now clears stale mouse highlights, hides the idle pointer, and traverses visible controls in both directions. Moving or clicking the mouse restores pointer control.
 - [x] Players can reduce light-grid upload stutter through Settings > Display > Post FX > Preload Light Grids. The option applies on the next map load and explains its loading-time and video-memory costs; the default remains off.
 
