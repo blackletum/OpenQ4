@@ -154,7 +154,7 @@ public:
 	virtual jointHandle_t		GetJointHandle( const char *name ) const;
 	virtual const char *		GetJointName( jointHandle_t handle ) const;
 	virtual const idJointQuat *	GetDefaultPose( void ) const;
-	virtual int					NearestJoint( int surfaceNum, int a, int b, int c ) const;
+	virtual int					NearestJoint( int surfaceId, int a, int b, int c ) const;
 	virtual bool				HasCollisionSurface( const struct renderEntity_s *ent ) const;
 	virtual idBounds			Bounds( const struct renderEntity_s *ent ) const;
 	virtual void				SetBounds( const idBounds &newBounds ) { bounds = newBounds; }
@@ -286,7 +286,7 @@ public:
 	virtual const char *		GetJointName( jointHandle_t handle ) const;
 	virtual const idJointQuat *	GetDefaultPose( void ) const;
 	virtual const idJointMat *	GetSkinSpaceToLocalMats( void ) const;
-	virtual int					NearestJoint( int surfaceNum, int a, int b, int c ) const;
+	virtual int					NearestJoint( int surfaceId, int a, int b, int c ) const;
 	virtual int					GetSurfaceMask( const char *surface ) const;
 	virtual renderModelCacheType_t LevelLoadCachePayloadType() const;
 	virtual bool				WriteLevelLoadCachePayload( idFile &file ) const;
@@ -569,7 +569,7 @@ public:
 	virtual const char *		GetJointName( jointHandle_t handle ) const;
 	virtual const idJointQuat *	GetDefaultPose( void ) const;
 	virtual const idJointMat *	GetSkinSpaceToLocalMats( void ) const;
-	virtual int					NearestJoint( int surfaceNum, int a, int b, int c ) const;
+	virtual int					NearestJoint( int surfaceId, int a, int b, int c ) const;
 	virtual int					GetSurfaceMask( const char *surface ) const;
 	virtual int					Memory() const;
 	virtual renderModelCacheType_t LevelLoadCachePayloadType() const;

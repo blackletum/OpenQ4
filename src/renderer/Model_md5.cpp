@@ -2002,20 +2002,20 @@ const char *idRenderModelMD5::GetJointName( jointHandle_t handle ) const {
 idRenderModelMD5::NearestJoint
 ====================
 */
-int idRenderModelMD5::NearestJoint( int surfaceNum, int a, int b, int c ) const {
-	int i;
-	const idMD5Mesh *mesh;
-
-	if ( surfaceNum > meshes.Num() ) {
-		common->Error( "idRenderModelMD5::NearestJoint: surfaceNum > meshes.Num()" );
+int idRenderModelMD5::NearestJoint( int surfaceId, int a, int b, int c ) const {
+	// Dynamic snapshots retain the source mesh number as their stable surface ID.
+	// Two-sided materials add a reversed surface with the same vertices and an
+	// offset ID, so both generated surfaces resolve to the same authored mesh.
+	int meshIndex = surfaceId;
+	if ( meshIndex >= MD5_BackSideSurfaceIdOffset ) {
+		meshIndex -= MD5_BackSideSurfaceIdOffset;
 	}
 
-	for ( mesh = meshes.Ptr(), i = 0; i < meshes.Num(); i++, mesh++ ) {
-		if ( mesh->surfaceNum == surfaceNum ) {
-			return mesh->NearestJoint( a, b, c );
-		}
+	if ( meshIndex < 0 || meshIndex >= meshes.Num() ) {
+		return 0;
 	}
-	return 0;
+
+	return meshes[ meshIndex ].NearestJoint( a, b, c );
 }
 
 /*
