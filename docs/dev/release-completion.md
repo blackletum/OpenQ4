@@ -1,5 +1,8 @@
 # openQ4 Release Completion List
 
+- [x] Controller menu navigation now clears stale mouse highlights, hides the idle pointer, and traverses visible controls in both directions. Moving or clicking the mouse restores pointer control.
+- [x] Players can reduce light-grid upload stutter through Settings > Display > Post FX > Preload Light Grids. The option applies on the next map load and explains its loading-time and video-memory costs; the default remains off.
+
 Use this file as the source list for release changelog entries.
 
 Process:

@@ -923,4 +923,7 @@
 	"#str_42814"	"MORT SUBITE"
 	"#str_42815"	"MATCH TERMINÉ"
 	"#str_42816"	"EN ATTENTE DE JOUEURS"
+
+	"#str_42820"	"Précharger la lumière"
+	"#str_42821"	"Transitions plus fluides ; chargement plus long, plus de mémoire vidéo.\nActif au prochain chargement de carte."
 }

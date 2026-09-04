@@ -923,4 +923,7 @@
 	"#str_42814"	"MUERTE SÚBITA"
 	"#str_42815"	"PARTIDA TERMINADA"
 	"#str_42816"	"ESPERANDO JUGADORES"
+
+	"#str_42820"	"Precargar iluminación"
+	"#str_42821"	"Transiciones fluidas; cargas más largas, más memoria de vídeo.\nSe aplica al cargar el siguiente mapa."
 }

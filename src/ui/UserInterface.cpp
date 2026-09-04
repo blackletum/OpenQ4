@@ -320,6 +320,7 @@ idUserInterfaceLocal::idUserInterfaceLocal() {
 	interactive = false;
 	uniqued = false;
 	initialized = false;
+	controllerNavigation = false;
 	bindHandler = NULL;
 	lightColorVar = NULL;
 	//so the reg eval in gui parsing doesn't get bogus values
@@ -508,6 +509,9 @@ void idUserInterfaceLocal::Redraw( int _time, bool useAspectCorrection ) {
 }
 
 void idUserInterfaceLocal::DrawCursor() {
+	if ( controllerNavigation ) {
+		return;
+	}
 	if ( !desktop || desktop->GetFlags() & WIN_MENUGUI ) {
 		uiManagerLocal.dc.DrawCursor(&cursorX, &cursorY, 32.0f );
 	} else {

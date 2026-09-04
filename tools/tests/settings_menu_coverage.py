@@ -952,7 +952,7 @@ def main() -> None:
             require(game_hovers, f"windowDef {row}_hover", "Game Options hovers")
 
     system_surface = system_gui + "\n" + popups_gui + "\n" + mainmenu
-    for token in ("high\t26", "cvar\tgui_set_sys_scroll"):
+    for token in ("high\t28", "cvar\tgui_set_sys_scroll"):
         require(system_surface, token, "System scroll coverage")
     for token in (
         "windowDef set_sys_section",
@@ -965,7 +965,7 @@ def main() -> None:
         'set "gui::gui_set_sys_scroll" "9"',
         'set "gui::gui_set_sys_scroll" "14"',
         'set "gui::gui_set_sys_scroll" "21"',
-        'set "gui::gui_set_sys_scroll" "26"',
+        'set "gui::gui_set_sys_scroll" "28"',
         'set "cmd" "applySettingsScroll system"',
         "set_sys_section_choice::noevents",
     ):
@@ -1005,7 +1005,7 @@ def main() -> None:
     reject(mainmenu, 'set "gui_set_audio_scroll"', "Audio scroll GUI state assignment")
     reject(audio_gui + mainmenu, "set gui_set_audio_scroll", "Audio scroll cvar command")
     for token in (
-        'gui_set_sys_scroll( "gui_set_sys_scroll", "0", CVAR_GUI | CVAR_INTEGER, "display menu scroll step", 0, 26 )',
+        'gui_set_sys_scroll( "gui_set_sys_scroll", "0", CVAR_GUI | CVAR_INTEGER, "display menu scroll step", 0, 28 )',
         'gui_set_game_scroll( "gui_set_game_scroll", "0", CVAR_GUI | CVAR_INTEGER, "game menu scroll step", 0, 46 )',
         "HandleMainMenuSettingsScrollInput( guiActive, event->evValue )",
         'MainMenuWindowStateEqualsInt( gui, "desktop::curr", page.expectedPage )',
@@ -1018,8 +1018,8 @@ def main() -> None:
         '"set_game_content::rect"',
         '"set_sys_content::rect"',
         '"set_audio_content::rect"',
-        "914",
-        "858",
+        "958",
+        "902",
         "24.0f",
     ):
         require(session_menu, token, "C++ settings scroll bounds")

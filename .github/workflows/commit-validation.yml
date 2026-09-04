@@ -230,6 +230,7 @@ jobs:
             tools/tests/savegame_pointer_width_safety.py \
             tools/tests/savegame_v3_contract.py \
             tools/tests/sdl3_input_parity.py \
+            tools/tests/menu_controller_navigation.py \
             tools/tests/sdl3_multidisplay_windowing.py \
             tools/tests/settings_menu_coverage.py \
             tools/tests/steam_deck_support.py \
@@ -393,6 +394,7 @@ jobs:
           python tools/tests/savegame_pointer_width_safety.py
           python tools/tests/savegame_v3_contract.py
           python tools/tests/sdl3_input_parity.py
+          python tools/tests/menu_controller_navigation.py
           python tools/tests/sdl3_multidisplay_windowing.py
           python tools/tests/settings_menu_coverage.py
           python tools/tests/steam_deck_support.py

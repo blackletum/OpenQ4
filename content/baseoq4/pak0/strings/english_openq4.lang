@@ -923,4 +923,7 @@
 	"#str_42814"	"SUDDEN DEATH"
 	"#str_42815"	"MATCH OVER"
 	"#str_42816"	"WAITING FOR PLAYERS"
+
+	"#str_42820"	"Preload Light Grids"
+	"#str_42821"	"Smoother area changes; longer loads, more video memory.\nApplies next map load."
 }

@@ -437,6 +437,10 @@ openQ4-client_x64.exe +set logFileName logs/openq4_lightgrids.log +bakeLightGrid
 
 On a standard local setup, logs are written under `fs_savepath/baseoq4/logs/`.
 
+### Reducing traversal stutter
+
+Use **Settings > Display > Post FX > Preload Light Grids** to load all baked light-grid atlases during the next map load. This can avoid upload-related pauses when entering new areas, at the cost of longer loading and more video memory. The default remains off. From the console, use `r_lightGridPreload 1`, then reload the map or load a save.
+
 ## Related Documentation
 
 - [README.md](../../README.md)

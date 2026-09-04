@@ -545,6 +545,7 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "savegame_pointer_width_safety.py",
         root / "tools" / "tests" / "savegame_v3_contract.py",
         root / "tools" / "tests" / "sdl3_input_parity.py",
+        root / "tools" / "tests" / "menu_controller_navigation.py",
         root / "tools" / "tests" / "sdl3_multidisplay_windowing.py",
         root / "tools" / "tests" / "settings_menu_coverage.py",
         root / "tools" / "tests" / "source_charset_integrity.py",

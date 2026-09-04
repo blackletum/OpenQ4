@@ -280,6 +280,7 @@ The pane has two display layouts:
 | Label | Widget type | Value widget | Target | Values or range | Notes |
 |---|---|---|---|---|---|
 | Renderer Fallback | `choiceDef` | `set_sys_vidqual_val` | `r_renderer` | `best;arb2` | Displays `Auto;ARB2`. This is the compatibility rollback selector, not the historical multi-backend picker; legacy console/config values still fall back in engine code. Marks `desktop::vidwarn`. |
+| Preload Light Grids | `choiceDef` | `set_sys_preload_val` | `r_lightGridPreload` | `No;Yes` | Preloads baked lighting on the next map load. Help explains smoother traversal, longer loads, and higher VRAM use. |
 | Irradiance Volumes | `choiceDef` | `set_sys_irradiance_val` | `r_useLightGrid` | `No;Yes` | Enables baked light-grid indirect diffuse when available. |
 | Bloom | `choiceDef` | `set_sys_bloom_val` | `r_bloom` | `No;Yes` | Boolean picker. |
 | SSAO | `choiceDef` | `set_sys_ssao_val` | `r_ssao` | `No;Yes` | Boolean picker. |
