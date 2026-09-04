@@ -1635,6 +1635,7 @@ jobs:
           sp_module="${module_dir}/game-sp_${{ matrix.binary_arch }}.dylib"
           mp_module="${module_dir}/game-mp_${{ matrix.binary_arch }}.dylib"
           renderer_module="${module_dir}/renderer-vk_${{ matrix.binary_arch }}.dylib"
+          openal_runtime="${module_dir}/libopenal.1.dylib"
 
           if [ ! -f "${app_plist}" ]; then
             echo "Missing macOS app Info.plist: ${app_plist}"
@@ -1853,6 +1854,12 @@ jobs:
                 case "${dependency}" in
                   /System/Library/*|/usr/lib/*)
                     ;;
+                  @rpath/libopenal.1.dylib)
+                    if [ ! -f "${openal_runtime}" ]; then
+                      echo "macOS binary requires the bundled OpenAL Soft runtime, but it is missing: ${openal_runtime}"
+                      exit 1
+                    fi
+                    ;;
                   *)
                     echo "macOS binary has unbundled non-system dependency: ${binary} (${macho_arch}) -> ${dependency}"
                     exit 1
@@ -1861,7 +1868,7 @@ jobs:
               done
             done
           }
-          for binary in "${app_exec}" "${client_binary}" "${dedicated_binary}" "${sp_module}" "${mp_module}" "${renderer_module}"; do
+          for binary in "${app_exec}" "${client_binary}" "${dedicated_binary}" "${sp_module}" "${mp_module}" "${renderer_module}" "${openal_runtime}"; do
             check_macos_binary_architecture "${binary}"
             check_macos_binary_dependencies "${binary}"
             check_macos_codesignature "${binary}"
@@ -1883,6 +1890,7 @@ jobs:
           check_macos_install_name "${sp_module}" "@loader_path/game-sp_${{ matrix.binary_arch }}.dylib"
           check_macos_install_name "${mp_module}" "@loader_path/game-mp_${{ matrix.binary_arch }}.dylib"
           check_macos_install_name "${renderer_module}" "@loader_path/renderer-vk_${{ matrix.binary_arch }}.dylib"
+          check_macos_install_name "${openal_runtime}" "@rpath/libopenal.1.dylib"
           check_plist_value() {
             key="$1"
             expected="$2"

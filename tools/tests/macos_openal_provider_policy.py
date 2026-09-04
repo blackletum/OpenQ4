@@ -107,6 +107,14 @@ def validate_release_workflows() -> None:
 
     require(manual, '"platform": "macos"', "manual release macOS matrix")
     require(manual, '"macos_openal_provider": "system"', "manual release OpenAL Soft pin")
+    for token in (
+        'openal_runtime="${module_dir}/libopenal.1.dylib"',
+        "@rpath/libopenal.1.dylib)",
+        'if [ ! -f "${openal_runtime}" ]; then',
+        '"${renderer_module}" "${openal_runtime}"',
+        'check_macos_install_name "${openal_runtime}" "@rpath/libopenal.1.dylib"',
+    ):
+        require(manual, token, "manual release bundled OpenAL dependency audit")
     for source, context in (
         (manual, "manual release workflow"),
         (commit, "commit validation workflow"),
