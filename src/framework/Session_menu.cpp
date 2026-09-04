@@ -43,7 +43,7 @@ extern idCVar com_skipLogoVideos;
 extern glconfig_t glConfig;
 
 idCVar	idSessionLocal::gui_configServerRate( "gui_configServerRate", "0", CVAR_GUI | CVAR_ARCHIVE | CVAR_ROM | CVAR_INTEGER, "" );
-idCVar gui_set_sys_scroll( "gui_set_sys_scroll", "0", CVAR_GUI | CVAR_INTEGER, "display menu scroll step", 0, 26 );
+idCVar gui_set_sys_scroll( "gui_set_sys_scroll", "0", CVAR_GUI | CVAR_INTEGER, "display menu scroll step", 0, 28 );
 idCVar gui_set_audio_scroll( "gui_set_audio_scroll", "0", CVAR_GUI | CVAR_INTEGER, "audio menu scroll step", 0.0f, 0.0f );
 idCVar gui_set_game_scroll( "gui_set_game_scroll", "0", CVAR_GUI | CVAR_INTEGER, "game menu scroll step", 0, 46 );
 
@@ -3328,10 +3328,10 @@ static const mainMenuSettingsScrollPage_t MAINMENU_SETTINGS_SCROLL_PAGES[] = {
 		"sys_section_choice",
 		22,
 		0,
-		26,
+		28,
 		-24,
 		-88,
-		914,
+		958,
 		22.0f
 	},
 	{
@@ -3432,7 +3432,7 @@ static int MainMenuSettingsSectionChoiceForScroll( const mainMenuSettingsScrollP
 		if ( scrollValue < 21 ) {
 			return 3;
 		}
-		if ( scrollValue < 26 ) {
+		if ( scrollValue < 28 ) {
 			return 4;
 		}
 		return 5;
@@ -3476,8 +3476,8 @@ static bool ApplyMainMenuSettingsScrollPage( idUserInterface *gui, const mainMen
 	int contentHeight = page.contentHeight;
 	float stepY = page.stepY;
 	if ( idStr::Icmp( page.name, "system" ) == 0 && gui->GetStateInt( "display_count", "0" ) <= 1 ) {
-		contentHeight = 858;
-		stepY = 18.5f;
+		contentHeight = 902;
+		stepY = 19.5f;
 	}
 
 	const int scrollOffset = idMath::Ftoi( stepY * static_cast<float>( scrollValue ) + 0.5f );
@@ -4160,4 +4160,3 @@ void idSessionLocal::HandleNoteCommands( const char *menuCommand ) {
 		cvarSystem->SetCVarBool( "con_noPrint", bCon );
 	}
 }
-

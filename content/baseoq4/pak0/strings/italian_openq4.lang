@@ -923,4 +923,7 @@
 	"#str_42814"	"MORTE IMPROVVISA"
 	"#str_42815"	"PARTITA CONCLUSA"
 	"#str_42816"	"IN ATTESA DI GIOCATORI"
+
+	"#str_42820"	"Precarica griglie luce"
+	"#str_42821"	"Passaggi più fluidi; caricamenti più lunghi, più memoria video.\nSi applica al prossimo caricamento mappa."
 }

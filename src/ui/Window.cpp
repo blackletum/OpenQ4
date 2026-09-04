@@ -274,69 +274,48 @@ static bool WindowHasNativeEnterHandling( idWindow *window ) {
 		dynamic_cast<idListWindow *>( window ) != NULL;
 }
 
+static void CollectFocusWindows( idWindow *window, idList<idWindow *> &candidates ) {
+	for ( int i = 0; i < window->GetChildCount(); ++i ) {
+		idWindow *child = window->GetChild( i );
+		if ( child == NULL || !child->IsVisible() || child->HasNoEvents() ) {
+			continue;
+		}
+		if ( child->GetFlags() & WIN_CANFOCUS ) {
+			candidates.Append( child );
+		} else {
+			CollectFocusWindows( child, candidates );
+		}
+	}
+}
+
 static bool NavigateFocus( idWindow *window, int direction, bool runHoverScripts = false ) {
 	if ( window == NULL || direction == 0 ) {
 		return false;
 	}
 
+	// Build one visible traversal order in both directions. Hidden pages can
+	// retain focus, and walking their parents used to trap navigation there.
+	idList<idWindow *> candidates;
+	CollectFocusWindows( window, candidates );
+	if ( candidates.Num() == 0 ) {
+		return false;
+	}
 	idWindow *currentFocus = window->GetFocusedChild();
-	idWindow *child = currentFocus;
-	idWindow *parent = child ? child->GetParent() : window;
-
-	while ( parent ) {
-		bool foundFocus = false;
-		bool recurse = false;
-		int index = 0;
-		if ( child ) {
-			index = parent->GetChildIndex( child ) + direction;
-		} else if ( direction < 0 ) {
-			index = parent->GetChildCount() - 1;
-		}
-		while ( index < parent->GetChildCount() && index >= 0 ) {
-			idWindow *testWindow = parent->GetChild( index );
-			if ( testWindow == currentFocus ) {
-				// we managed to wrap around and get back to our starting window
-				foundFocus = true;
-				break;
+	const int currentIndex = candidates.FindIndex( currentFocus );
+	const int nextIndex = currentIndex < 0
+		? ( direction < 0 ? candidates.Num() - 1 : 0 )
+		: ( currentIndex + ( direction < 0 ? -1 : 1 ) + candidates.Num() ) % candidates.Num();
+	idWindow *nextFocus = candidates[ nextIndex ];
+	if ( nextFocus != currentFocus ) {
+		window->SetFocus( nextFocus, false );
+		if ( runHoverScripts ) {
+			if ( currentFocus != NULL ) {
+				currentFocus->MouseExit();
 			}
-			if ( testWindow && !testWindow->HasNoEvents() && testWindow->IsVisible() ) {
-				if ( testWindow->GetFlags() & WIN_CANFOCUS ) {
-					idWindow *lastFocus = window->SetFocus( testWindow, false );
-					if ( runHoverScripts ) {
-						if ( lastFocus != NULL && lastFocus != testWindow ) {
-							lastFocus->MouseExit();
-						}
-						testWindow->MouseEnter();
-					}
-					foundFocus = true;
-					break;
-				} else if ( testWindow->GetChildCount() > 0 ) {
-					parent = testWindow;
-					child = NULL;
-					recurse = true;
-					break;
-				}
-			}
-			index += direction;
-		}
-		if ( foundFocus ) {
-			return true;
-		}
-		if ( recurse ) {
-			continue;
-		}
-
-		// We didn't find anything, so go back up to our parent.
-		child = parent;
-		parent = child->GetParent();
-		if ( parent != NULL && parent->GetGui() != NULL && parent == parent->GetGui()->GetDesktop() ) {
-			// We got back to the desktop, so wrap around but don't actually go to the desktop.
-			parent = NULL;
-			child = NULL;
+			nextFocus->MouseEnter();
 		}
 	}
-
-	return false;
+	return true;
 }
 }
 
@@ -849,6 +828,22 @@ void idWindow::MouseExit() {
 	RunScript(ON_MOUSEEXIT);
 }
 
+void idWindow::ClearMouseHover() {
+	// Hover is a path through nested containers, independent of focusedChild.
+	// Clear the whole path so an old mouse highlight cannot outlive takeover.
+	for ( int i = 0; i < children.Num(); ++i ) {
+		children[i]->ClearMouseHover();
+	}
+	hover = false;
+	if ( overChild != NULL ) {
+		overChild->MouseExit();
+		gui->GetPendingCmd() += overChild->cmd;
+		gui->GetPendingCmd() += " ; ";
+		overChild->cmd.Clear();
+		overChild = NULL;
+	}
+}
+
 
 /*
 ================
@@ -1193,7 +1188,8 @@ const char *idWindow::HandleEvent(const sysEvent_t *event, bool *updateVisuals) 
 		return "";
 	}
 
-	if ( TranslateControllerMenuKey( event, translatedEvent, controllerFocusDirection ) ) {
+	const bool controllerEvent = TranslateControllerMenuKey( event, translatedEvent, controllerFocusDirection );
+	if ( controllerEvent ) {
 		event = &translatedEvent;
 	}
 
@@ -1208,6 +1204,26 @@ const char *idWindow::HandleEvent(const sysEvent_t *event, bool *updateVisuals) 
 		RunTimeEvents(gui->GetTime());
 		CalcRects(0,0);
 		dc->SetCursor( idDeviceContext::CURSOR_ARROW );
+
+		if ( controllerEvent && event->evValue2 && !gui->ControllerNavigation() && !GetCaptureChild() ) {
+			ClearMouseHover();
+			gui->SetControllerNavigation( true );
+			if ( focusedChild != NULL ) {
+				focusedChild->MouseEnter();
+			}
+		} else if ( gui->ControllerNavigation() ) {
+			const bool mouseMoved = event->evType == SE_MOUSE && ( event->evValue != 0 || event->evValue2 != 0 );
+			const bool mousePressed = event->evType == SE_KEY && event->evValue2 &&
+				event->evValue >= K_MOUSE1 && event->evValue <= K_MWHEELUP;
+			if ( mouseMoved || mousePressed ) {
+				if ( focusedChild != NULL ) {
+					focusedChild->MouseExit();
+				}
+				ClearMouseHover();
+				gui->SetControllerNavigation( false );
+				RouteMouseCoords( 0, 0 );
+			}
+		}
 	}
 
 	if (visible && !noEvents) {
@@ -1390,7 +1406,7 @@ const char *idWindow::HandleEvent(const sysEvent_t *event, bool *updateVisuals) 
 				}
 			}
 
-		} else if (event->evType == SE_MOUSE) {
+		} else if (event->evType == SE_MOUSE && !gui->ControllerNavigation()) {
 			if (updateVisuals) {
 				*updateVisuals = true;
 			}

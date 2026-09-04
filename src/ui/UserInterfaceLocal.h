@@ -84,6 +84,8 @@ public:
 	virtual idWindow *			GetDesktop() const { return desktop; }
 	void						SetBindHandler( idWindow *win ) { bindHandler = win; }
 	bool						Active() const { return active; }
+	bool						ControllerNavigation() const { return controllerNavigation; }
+	void						SetControllerNavigation( bool enabled ) { controllerNavigation = enabled; }
 	int							GetTime() const { return time; }
 	void						SetTime( int _time ) { time = _time; }
 
@@ -102,6 +104,7 @@ private:
 	bool						interactive;
 	bool						uniqued;
 	bool						initialized;
+	bool						controllerNavigation; // transient menu ownership; never serialized
 
 	idDict						state;
 	idWindow *					desktop;

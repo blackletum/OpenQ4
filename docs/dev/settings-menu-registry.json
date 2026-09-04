@@ -1894,6 +1894,26 @@
       "accessibility": "Standard focusable choiceDef row."
     },
     {
+      "id": "system.light_grid_preload",
+      "pane": "System",
+      "section": "Post Effects",
+      "path": "Settings > Display > Post FX > Preload Light Grids",
+      "source": "system",
+      "container": "set_sys_preload",
+      "widgets": [
+        "set_sys_preload_val",
+        "set_sys_preload_help"
+      ],
+      "widget_type": "choice",
+      "label_key": "#str_42820",
+      "choices_key": "#str_200059",
+      "target_type": "cvar",
+      "target": "r_lightGridPreload",
+      "default": "0",
+      "restart_required": false,
+      "accessibility": "Focusable choice. Localized help explains loading and VRAM costs; applies on the next map load."
+    },
+    {
       "id": "system.ui_aspect",
       "pane": "System",
       "section": "Display Sizing",

@@ -310,6 +310,7 @@ public:
 	virtual void Moved();
 	virtual void Draw(int time, float x, float y);
 	virtual void MouseExit();
+	void ClearMouseHover();
 	virtual void MouseEnter();
 	virtual void DrawBackground(const idRectangle &drawRect);
 	virtual const char *RouteMouseCoords(float xd, float yd);

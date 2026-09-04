@@ -923,4 +923,7 @@
 	"#str_42814"	"NAGŁA ŚMIERĆ"
 	"#str_42815"	"KONIEC MECZU"
 	"#str_42816"	"OCZEKIWANIE NA GRACZY"
+
+	"#str_42820"	"Wczytaj siatki światła"
+	"#str_42821"	"Płynniejsze przejścia; dłuższe ładowanie, więcej pamięci wideo.\nDziała od następnego wczytania mapy."
 }

@@ -50,7 +50,7 @@
 							} else if ( "gui::sys_section_choice" == 4 ) {
 								set "gui::gui_set_sys_scroll" "21" ;
 							} else {
-								set "gui::gui_set_sys_scroll" "26" ;
+								set "gui::gui_set_sys_scroll" "28" ;
 							}
 							set "cmd" "applySettingsScroll system" ;
 						}
@@ -983,7 +983,7 @@
 				}
 				windowDef set_sys_bloom
 				{
-					rect	259,668,172,18
+					rect	259,712,172,18
 					visible	1
 					forecolor	1,1,1,0.8
 					text	"#str_41082"
@@ -992,7 +992,7 @@
 				}
 				choiceDef set_sys_bloom_val
 				{
-					rect	468,668,160,15
+					rect	468,712,160,15
 					visible	1
 					forecolor	1,0.745,0.137,0.8
 					choiceType	0
@@ -1014,7 +1014,7 @@
 				}
 				windowDef set_sys_ssao
 				{
-					rect	259,690,172,18
+					rect	259,734,172,18
 					visible	1
 					forecolor	1,1,1,0.8
 					text	"#str_41088"
@@ -1023,7 +1023,7 @@
 				}
 				choiceDef set_sys_ssao_val
 				{
-					rect	468,690,160,15
+					rect	468,734,160,15
 					visible	1
 					forecolor	1,0.745,0.137,0.8
 					choiceType	0
@@ -1038,14 +1038,14 @@
 				}
 				windowDef set_sys_b22
 				{
-					rect	228,666,377,25
+					rect	228,710,377,25
 					visible	1
 					background	"gfx/guis/mainmenu/b3_light"
 					matcolor	0.545,0.588,0.294,0.4
 				}
 				windowDef set_sys_tonemap
 				{
-					rect	259,712,172,18
+					rect	259,756,172,18
 					visible	1
 					forecolor	1,1,1,0.8
 					text	"#str_41084"
@@ -1054,7 +1054,7 @@
 				}
 				choiceDef set_sys_tonemap_val
 				{
-					rect	468,712,160,15
+					rect	468,756,160,15
 					visible	1
 					forecolor	1,0.745,0.137,0.8
 					choiceType	0
@@ -1069,14 +1069,14 @@
 				}
 				windowDef set_sys_b23
 				{
-					rect	228,688,377,25
+					rect	228,732,377,25
 					visible	1
 					background	"gfx/guis/mainmenu/b3_light"
 					matcolor	0.545,0.588,0.294,0.4
 				}
 				windowDef set_sys_crt
 				{
-					rect	259,734,172,18
+					rect	259,778,172,18
 					visible	1
 					forecolor	1,1,1,0.8
 					text	"#str_41090"
@@ -1085,7 +1085,7 @@
 				}
 				choiceDef set_sys_crt_val
 				{
-					rect	468,734,160,15
+					rect	468,778,160,15
 					visible	1
 					forecolor	1,0.745,0.137,0.8
 					choiceType	0
@@ -1100,7 +1100,7 @@
 				}
 				windowDef set_sys_b24
 				{
-					rect	228,710,377,25
+					rect	228,754,377,25
 					visible	1
 					background	"gfx/guis/mainmenu/b3_light"
 					matcolor	0.545,0.588,0.294,0.4
@@ -1129,9 +1129,45 @@
 						set "cmd" "play main_menu_selection" ;
 					}
 				}
+
+				windowDef set_sys_preload_bg {
+					rect 228,666,377,25
+					background "gfx/guis/mainmenu/b3_light"
+					matcolor 0.545,0.588,0.294,0.4
+				}
+				windowDef set_sys_preload {
+					rect 259,668,205,18
+					forecolor 1,1,1,0.8
+					text "#str_42820"
+					textscale 0.22
+					textspacing -1
+					font "fonts/lowpixel"
+				}
+				choiceDef set_sys_preload_val {
+					rect 468,668,137,15
+					forecolor 1,0.745,0.137,0.8
+					choiceType 0
+					choices "#str_200059"
+					cvar "r_lightGridPreload"
+					textscale 0.24
+					textspacing -1
+					font "fonts/lowpixel"
+					onAction {
+						set "cmd" "play main_menu_selection" ;
+					}
+				}
+				windowDef set_sys_preload_help {
+					rect 259,686,346,26
+					forecolor 1,1,1,0.6
+					text "#str_42821"
+					textscale 0.16
+					textspacing -1
+					font "fonts/lowpixel"
+					noevents 1
+				}
 				windowDef set_sys_display_tuning
 				{
-					rect	259,762,327,13
+					rect	259,806,327,13
 					visible	1
 					forecolor	1,1,1,0.4
 					text	"#str_229943"
@@ -1140,14 +1176,14 @@
 				}
 				windowDef set_sys_b25
 				{
-					rect	228,732,377,25
+					rect	228,776,377,25
 					visible	1
 					background	"gfx/guis/mainmenu/b3_light"
 					matcolor	0.545,0.588,0.294,0.4
 				}
 				windowDef set_sys_ui_aspect
 				{
-					rect	259,778,172,18
+					rect	259,822,172,18
 					visible	1
 					forecolor	1,1,1,0.8
 					text	"#str_229944"
@@ -1156,7 +1192,7 @@
 				}
 				choiceDef set_sys_ui_aspect_val
 				{
-					rect	468,778,160,15
+					rect	468,822,160,15
 					visible	1
 					forecolor	1,0.745,0.137,0.8
 					choiceType	0
@@ -1171,14 +1207,14 @@
 				}
 				windowDef set_sys_b26
 				{
-					rect	228,776,377,25
+					rect	228,820,377,25
 					visible	1
 					background	"gfx/guis/mainmenu/b3_light"
 					matcolor	0.545,0.588,0.294,0.4
 				}
 				windowDef set_sys_refresh
 				{
-					rect	259,800,172,18
+					rect	259,844,172,18
 					visible	1
 					forecolor	1,1,1,0.8
 					text	"#str_229945"
@@ -1187,7 +1223,7 @@
 				}
 				choiceDef set_sys_refresh_val
 				{
-					rect	468,800,160,15
+					rect	468,844,160,15
 					visible	1
 					forecolor	1,0.745,0.137,0.8
 					choiceType	1
@@ -1208,14 +1244,14 @@
 				}
 				windowDef set_sys_b27
 				{
-					rect	228,798,377,25
+					rect	228,842,377,25
 					visible	1
 					background	"gfx/guis/mainmenu/b3_light"
 					matcolor	0.545,0.588,0.294,0.4
 				}
 				windowDef set_sys_window_width
 				{
-					rect	259,822,172,18
+					rect	259,866,172,18
 					visible	1
 					forecolor	1,1,1,0.8
 					text	"#str_229946"
@@ -1224,7 +1260,7 @@
 				}
 				editDef set_sys_window_width_val
 				{
-					rect	468,822,160,18
+					rect	468,866,160,18
 					visible	1
 					forecolor	1,0.745,0.137,0.8
 					cvar	r_windowWidth
@@ -1247,14 +1283,14 @@
 				}
 				windowDef set_sys_b28
 				{
-					rect	228,820,377,25
+					rect	228,864,377,25
 					visible	1
 					background	"gfx/guis/mainmenu/b3_light"
 					matcolor	0.545,0.588,0.294,0.4
 				}
 				windowDef set_sys_window_height
 				{
-					rect	259,844,172,18
+					rect	259,888,172,18
 					visible	1
 					forecolor	1,1,1,0.8
 					text	"#str_229947"
@@ -1263,7 +1299,7 @@
 				}
 				editDef set_sys_window_height_val
 				{
-					rect	468,844,160,18
+					rect	468,888,160,18
 					visible	1
 					forecolor	1,0.745,0.137,0.8
 					cvar	r_windowHeight
@@ -1286,14 +1322,14 @@
 				}
 				windowDef set_sys_b29
 				{
-					rect	228,842,377,25
+					rect	228,886,377,25
 					visible	1
 					background	"gfx/guis/mainmenu/b3_light"
 					matcolor	0.545,0.588,0.294,0.4
 				}
 				windowDef set_sys_custom_width
 				{
-					rect	259,866,172,18
+					rect	259,910,172,18
 					visible	1
 					forecolor	1,1,1,0.8
 					text	"#str_229948"
@@ -1302,7 +1338,7 @@
 				}
 				editDef set_sys_custom_width_val
 				{
-					rect	468,866,160,18
+					rect	468,910,160,18
 					visible	1
 					forecolor	1,0.745,0.137,0.8
 					cvar	r_customWidth
@@ -1326,21 +1362,21 @@
 				}
 				windowDef set_sys_b30
 				{
-					rect	228,864,377,25
+					rect	228,908,377,25
 					visible	1
 					background	"gfx/guis/mainmenu/b3_light"
 					matcolor	0.545,0.588,0.294,0.4
 				}
 				windowDef set_sys_b31
 				{
-					rect	228,886,377,25
+					rect	228,930,377,25
 					visible	1
 					background	"gfx/guis/mainmenu/b3_light"
 					matcolor	0.545,0.588,0.294,0.4
 				}
 				windowDef set_sys_custom_height
 				{
-					rect	259,888,172,18
+					rect	259,932,172,18
 					visible	1
 					forecolor	1,1,1,0.8
 					text	"#str_229949"
@@ -1349,7 +1385,7 @@
 				}
 				editDef set_sys_custom_height_val
 				{
-					rect	468,888,160,18
+					rect	468,932,160,18
 					visible	1
 					forecolor	1,0.745,0.137,0.8
 					cvar	r_customHeight
@@ -1417,7 +1453,7 @@
 					forecolor	1,1,1,0.8
 					matcolor	1,1,1,0.4
 					low	0
-					high	26
+					high	28
 					step	1
 					vertical	1
 					scrollbar	1

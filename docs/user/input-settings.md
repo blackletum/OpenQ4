@@ -320,3 +320,7 @@ On Steam Deck or SteamOS, direct `openQ4-client_x64` launches auto-select this p
 If you want a final personal override layer that survives menu changes, place your preferred `seta` and `bind` commands in `autoexec.cfg`.
 
 For Steam Deck launcher details and Deck-specific notes, see [steam-deck.md](steam-deck.md).
+
+### Switching between controller and mouse in menus
+
+Controller navigation clears the old mouse highlight and hides the menu pointer. Moving or clicking the mouse restores pointer control. Directional navigation follows the visible controls in either direction and wraps at the ends; hidden pages cannot retain navigation focus. Binding capture still receives the original controller button.
