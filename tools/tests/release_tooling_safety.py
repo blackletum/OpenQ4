@@ -777,6 +777,56 @@ def validate_discord_release_download_suffixes() -> None:
             raise AssertionError(f"Discord release announcer is missing validation token {token!r}")
 
 
+def validate_draft_releases_never_announce() -> None:
+    """A draft has no tag, no audience, and must reach no Discord channel."""
+
+    workflow = (ROOT / ".github" / "workflows" / "manual-release.yml").read_text(encoding="utf-8")
+    announcer = (ROOT / ".github" / "scripts" / "announce-release-discord.mjs").read_text(encoding="utf-8")
+    broadcast = (ROOT / ".github" / "workflows" / "discord-release.yml").read_text(encoding="utf-8")
+
+    if "      draft:\n        description:" not in workflow:
+        raise AssertionError("manual release workflow is missing the draft dispatch input")
+
+    discord_offset = workflow.index("  discord:\n    name: Announce On Discord")
+    discord_steps_offset = workflow.index("    steps:", discord_offset)
+    if (
+        "needs.release.result == 'success' && inputs.draft == false"
+        not in workflow[discord_offset:discord_steps_offset]
+    ):
+        raise AssertionError("draft releases must skip the Discord announcement job")
+
+    release_create_offset = workflow.index("- name: Create or update release")
+    release_create_step = workflow[release_create_offset:discord_offset]
+    for token in (
+        "RELEASE_DRAFT: ${{ inputs.draft }}",
+        'if [ "${RELEASE_DRAFT}" != "true" ] && [ "${RELEASE_DRAFT}" != "false" ]; then',
+        "create_args+=(--draft)",
+        '--json isDraft,targetCommitish',
+        "was requested as a draft but reports isDraft=",
+        "Draft release ${tag} records target",
+    ):
+        if token not in release_create_step:
+            raise AssertionError(f"draft release publication is missing token: {token}")
+
+    draft_branch_offset = release_create_step.index('if [ "${RELEASE_DRAFT}" = "true" ]; then\n            # A draft is not a release')
+    publish_offset = release_create_step.index('-f draft=false')
+    if draft_branch_offset > publish_offset:
+        raise AssertionError("the draft branch must short-circuit before the release is published")
+    if "exit 0" not in release_create_step[draft_branch_offset:publish_offset]:
+        raise AssertionError("the draft branch must exit before clearing the draft flag")
+
+    if "if (release.draft) {" not in announcer:
+        raise AssertionError("Discord release announcer must refuse to announce a draft")
+
+    if "types: [published]" not in broadcast:
+        raise AssertionError("the Discord broadcast workflow must only fire on published releases")
+    for forbidden in ("created", "prereleased", "released", "edited"):
+        if f"types: [{forbidden}" in broadcast:
+            raise AssertionError(
+                f"the Discord broadcast workflow must not fire on release '{forbidden}' events"
+            )
+
+
 def validate_validation_wiring() -> None:
     validator = (ROOT / "tools" / "validation" / "openq4_validate.py").read_text(encoding="utf-8")
     push = (ROOT / ".github" / "workflows" / "push-verification.yml").read_text(encoding="utf-8")
@@ -1582,6 +1632,7 @@ def main() -> None:
         validate_windows_installer_symlink_guards()
         validate_windows_installer_input_escaping()
         validate_discord_release_download_suffixes()
+        validate_draft_releases_never_announce()
         validate_validation_wiring()
         validate_manual_release_optimized_builds()
         validate_manual_release_linux_staged_gate()

@@ -49,6 +49,11 @@ on:
         options:
           - experimental
           - first-class
+      draft:
+        description: Leave the release as an unpublished draft (no Discord announcement)
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: openq4-manual-releases
@@ -2257,9 +2262,15 @@ jobs:
           LINUX_ARM64_SUPPORT_TIER: ${{ needs.metadata.outputs.linux_arm64_support_tier }}
           OPENQ4_SOURCE_SHA: ${{ needs.metadata.outputs.openq4_source_sha }}
           RELEASE_ASSET_MANIFEST: ${{ steps.release_assets.outputs.asset_manifest }}
+          RELEASE_DRAFT: ${{ inputs.draft }}
         shell: bash
         run: |
           set -euo pipefail
+
+          if [ "${RELEASE_DRAFT}" != "true" ] && [ "${RELEASE_DRAFT}" != "false" ]; then
+            echo "Invalid draft selector: ${RELEASE_DRAFT@Q}"
+            exit 1
+          fi
 
           tag="${{ needs.metadata.outputs.release_tag }}"
           name="${{ needs.metadata.outputs.release_name }}"
@@ -2355,11 +2366,16 @@ jobs:
               --notes-file "${notes}"
             gh release upload "${tag}" "${assets[@]}" --repo "${GITHUB_REPOSITORY}" --clobber
           else
-            gh release create "${tag}" "${assets[@]}" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --target "${target}" \
-              --title "${name}" \
+            create_args=(
+              --repo "${GITHUB_REPOSITORY}"
+              --target "${target}"
+              --title "${name}"
               --notes-file "${notes}"
+            )
+            if [ "${RELEASE_DRAFT}" = "true" ]; then
+              create_args+=(--draft)
+            fi
+            gh release create "${tag}" "${assets[@]}" "${create_args[@]}"
           fi
 
           mapfile -t published_release_assets < <(
@@ -2399,6 +2415,39 @@ jobs:
             fi
           done
 
+          if [ "${RELEASE_DRAFT}" = "true" ]; then
+            # A draft is not a release: GitHub creates no git tag for it, fires no
+            # release event, and the release-by-tag REST endpoint never returns it.
+            # Read it back through gh, which falls back to the draft listing.
+            gh release edit "${tag}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --draft \
+              --prerelease=false
+            draft_state="$(
+              gh release view "${tag}" \
+                --repo "${GITHUB_REPOSITORY}" \
+                --json isDraft,targetCommitish \
+                --jq '[(.isDraft | tostring), .targetCommitish] | join(" ")'
+            )"
+            draft_is_draft="${draft_state%% *}"
+            draft_release_target="${draft_state##* }"
+            if [ "${draft_is_draft}" != "true" ]; then
+              echo "Release ${tag} was requested as a draft but reports isDraft=${draft_is_draft}."
+              exit 1
+            fi
+            if [ "${draft_release_target}" != "${target}" ]; then
+              echo "Draft release ${tag} records target ${draft_release_target}, expected ${target}."
+              exit 1
+            fi
+            {
+              echo "### Draft release staged"
+              echo "- Tag: \`${tag}\` (unpublished; no git tag exists until the draft is published)"
+              echo "- Target: \`${target}\`"
+              echo "- Discord announcement: skipped for drafts"
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
           release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" --jq .id)"
           gh api \
             --method PATCH \
@@ -2421,7 +2470,7 @@ jobs:
   discord:
     name: Announce On Discord
     needs: [metadata, release]
-    if: ${{ needs.release.result == 'success' }}
+    if: ${{ needs.release.result == 'success' && inputs.draft == false }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

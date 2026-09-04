@@ -229,6 +229,12 @@ async function postDiscordPayload(payload) {
 
 async function main() {
   const release = await loadRelease();
+  if (release.draft) {
+    // A draft is not published: it has no git tag, no permanent download URLs,
+    // and no audience yet. Announcing one would link a release nobody can see.
+    console.log(`Refusing to announce draft release ${release.tag_name || releaseTag}.`);
+    return;
+  }
   const releaseUrl = validateHttpsUrl(release.html_url, "release html_url", new Set(["github.com"]));
   const safeAvatarUrl = validateHttpsUrl(avatarUrl, "DISCORD_RELEASE_AVATAR_URL");
   const displayName = cleanReleaseName(release);
