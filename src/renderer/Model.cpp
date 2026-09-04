@@ -1927,7 +1927,7 @@ const idJointQuat *idRenderModelStatic::GetDefaultPose( void ) const {
 idRenderModelStatic::NearestJoint
 ================
 */
-int idRenderModelStatic::NearestJoint( int surfaceNum, int a, int b, int c ) const {
+int idRenderModelStatic::NearestJoint( int surfaceId, int a, int b, int c ) const {
 	return INVALID_JOINT;
 }
 

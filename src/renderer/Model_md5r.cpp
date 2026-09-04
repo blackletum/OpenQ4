@@ -6114,16 +6114,13 @@ const idJointMat *rvRenderModelMD5R::GetSkinSpaceToLocalMats() const {
 rvRenderModelMD5R::NearestJoint
 ========================
 */
-int rvRenderModelMD5R::NearestJoint( int surfaceNum, int a, int b, int c ) const {
-	if ( surfaceNum > meshes.Num() ) {
-		common->Error( "rvRenderModelMD5R::NearestJoint: surfaceNum > meshes.Num()" );
-	}
-
+int rvRenderModelMD5R::NearestJoint( int surfaceId, int a, int b, int c ) const {
 	const idList<rvMD5RVertexBufferDesc> &vertexBuffers = GetVertexBuffers();
 
 	for ( int meshIndex = 0; meshIndex < meshes.Num(); ++meshIndex ) {
 		const rvMD5RMesh &mesh = meshes[ meshIndex ];
-		if ( mesh.surfaceNum != surfaceNum ) {
+		if ( surfaceId != mesh.meshIdentifier
+			&& surfaceId != mesh.meshIdentifier + MD5R_BackSideSurfaceIdOffset ) {
 			continue;
 		}
 

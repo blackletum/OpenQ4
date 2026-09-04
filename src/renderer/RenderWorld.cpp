@@ -1601,7 +1601,7 @@ bool idRenderWorldLocal::ModelTrace( modelTrace_t &trace, qhandle_t entityHandle
 // jmarshall
 			trace.materialType = R_GetMaterialTypeForTrace( trace.material, surf->geometry, localTrace );
 // jmarshall end
-			trace.jointNumber = refEnt->hModel->NearestJoint( i, localTrace.indexes[0], localTrace.indexes[1], localTrace.indexes[2] );
+			trace.jointNumber = refEnt->hModel->NearestJoint( surf->id, localTrace.indexes[0], localTrace.indexes[1], localTrace.indexes[2] );
 		}
 	}
 
@@ -1759,8 +1759,9 @@ bool idRenderWorldLocal::Trace( modelTrace_t &trace, const idVec3 &start, const 
 					trace.material = shader;
 					trace.materialType = R_GetMaterialTypeForTrace( trace.material, surf->geometry, localTrace );
 					trace.entity = &def->parms;
-					// Dynamic snapshots don't own joint-weight metadata; ask the source model.
-					trace.jointNumber = def->parms.hModel->NearestJoint( j, localTrace.indexes[0], localTrace.indexes[1], localTrace.indexes[2] );
+					// Dynamic snapshots don't own joint-weight metadata; use their stable
+					// surface ID to ask the source model for the matching authored mesh.
+					trace.jointNumber = def->parms.hModel->NearestJoint( surf->id, localTrace.indexes[0], localTrace.indexes[1], localTrace.indexes[2] );
 
 					traceBounds.Clear();
 					traceBounds.AddPoint( start );
