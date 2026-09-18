@@ -52,12 +52,16 @@ resolves every reference in the candidate model.
 | Type | Value | Notes |
 | --- | --- | --- |
 | `number` | Number | Property-specific range, e.g. opacity 0–1 |
-| `length` | Number plus explicit `unit` | `dp`, `px`, or layout `%` |
+| `length` | Number plus explicit `unit` | `dp`, `px`, font-relative `em`, or layout `%` |
 | `color` | `[r,g,b,a]` | Straight sRGB, each channel 0–1 |
 | `keyword` | One allowed keyword | Validated for the specific property |
 | `font` | Font identifier | Host resolves the font family |
 | `text` | `#str_*` localization key | Runtime translates then escapes markup |
 | `transform` | `[x,y,sx,sy,degrees]` plus `unit` | Translation uses `dp` or `px`; scales are dimensionless |
+
+The [independent text-scale contract](text-scale.md) applies to absolute font
+size, line height and tracking at presentation. Use `em` for dimensions that
+must grow with typography; fixed `dp` furniture retains its own scale.
 
 The current node types are `group`, `text` and `vector`. Each has an `id`, `type`, optional
 `properties`, `children`, `mask`, `control` and `extensions`. Text content belongs only to text

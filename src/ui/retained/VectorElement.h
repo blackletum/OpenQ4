@@ -16,7 +16,13 @@ public:
 	// always invalidated, including when replacing an already rendered copy.
 	void CopyArtworkFrom(const VectorGeometry& source);
 	void Render(Rml::Element& element, bool inheritOpacity);
+	bool HitTest(Rml::Element& element, Rml::Vector2f outputPoint);
+	bool HasHitArea(Rml::Element& element);
 private:
+	bool PrepareHitGeometry(Rml::Element& element, Rml::Vector2f& origin);
+	std::vector<VectorMesh> hitGeometry;
+	std::array<double,6> hitSignature{};
+	bool hitPrepared = false, hitValid = false, hitArea = false;
 	std::vector<VectorPath> paths;
 	std::vector<VectorMesh> compiled;
 	std::vector<Rml::Geometry> geometry;
@@ -32,10 +38,13 @@ public:
 	void Configure(const Node& node, Host& host, RuntimeStatistics& statistics);
 	void CopyArtworkFrom(const VectorElement& source);
 	void RenderMask() { mask.Render(*this,false); }
+	bool AllowsMaskedPoint(Rml::Vector2f point) { return !hasMask || mask.HitTest(*this,point); }
+	bool HasMaskArea() { return !hasMask || mask.HasHitArea(*this); }
 protected:
 	void OnRender() override { paint.Render(*this,true); }
 private:
 	VectorGeometry paint, mask;
+	bool hasMask = false;
 };
 class VectorMaskInstancer final : public Rml::DecoratorInstancer {
 public:

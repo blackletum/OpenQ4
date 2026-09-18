@@ -40,7 +40,7 @@ struct FloatMode {
 #endif
 };
 static StateValues Values() {
- StateValues v;for(const auto& [k,f]:SettingsEffectCatalogV1())v[k]=f.type==0?StateValue(0.0):f.type==1?StateValue(false):StateValue(std::string("original"));
+ StateValues v;for(const auto& [k,f]:SettingsEffectCatalogV2())v[k]=f.type==0?StateValue(0.0):f.type==1?StateValue(false):StateValue(std::string("original"));
  v["r_windowWidth"]=1280.0;v["r_windowHeight"]=720.0;v["r_customWidth"]=1280.0;v["r_customHeight"]=720.0;v["r_screen"]=-1.0;
  return v;
 }
@@ -55,7 +55,7 @@ static StateValues Placement(const StateValues& a,const StateValues& b) {
 }
 static SettingsEffectRecoveryJournal Sample(unsigned mask) {
  SettingsEffectRecoveryJournal j;j.attempt="123456789abcdef0123456789abcdef0";j.baseline=Values();j.target=j.baseline;
- for(const auto& [k,f]:SettingsEffectCatalogV1())if((f.effects&mask)!=0) {
+ for(const auto& [k,f]:SettingsEffectCatalogV2())if((f.effects&mask)!=0) {
   j.target[k]=f.type==0?StateValue(std::get<double>(j.target.at(k))+1):f.type==1?StateValue(true):StateValue(std::string("target"));
  }
  if(!mask)j.target["r_brightness"]=1.25;
@@ -83,20 +83,88 @@ static void Reject(const std::string& bad) {
  CHECK(!DecodeSettingsJournalRecord(bad,SystemSettingsHost::Schema(),out,e));CHECK(!e.empty()&&out.Value()==prior&&out.Schema()==2);
 }
 static void CatalogAndPlans() {
- CHECK(SettingsEffectCatalogV1().size()==53);CHECK(SystemSettingsHost::Catalog().size()==53);
- for(const auto& field:SystemSettingsHost::Catalog()){const auto& p=SettingsEffectCatalogV1().at(field.key);CHECK(p.type==field.type&&p.effects==field.effects);}
+ CHECK(SettingsEffectCatalogV1().size()==53);CHECK(SettingsEffectCatalogV2().size()==55);CHECK(SystemSettingsHost::Catalog().size()==55);
+ for(const auto& field:SystemSettingsHost::Catalog()){const auto& p=SettingsEffectCatalogV2().at(field.key);CHECK(p.type==field.type&&p.effects==field.effects);}
+ for(const auto& [key,field]:SettingsEffectCatalogV1())CHECK(SettingsEffectCatalogV2().at(key)==field);
+ for(const auto* key:{"ui_retainedScale","ui_retainedTextScale"}) {
+  CHECK(!SettingsEffectCatalogV1().contains(key));const auto& field=SettingsEffectCatalogV2().at(key);
+  CHECK(field.type==0&&field.effects==0);
+ }
  for(unsigned mask=0;mask<64;++mask) {
   auto j=Sample(mask);CHECK(j.plan.changeMask==mask&&j.plan.domainMask==(mask&31));
   CHECK(j.plan.completion==((mask&1)?SettingsEffectCompletion::DisplayConfirmed:SettingsEffectCompletion::Automatic));
   CHECK(j.plan.rendererStrategy==((mask&19)?SettingsRendererStrategy::CoalescedDevice:SettingsRendererStrategy::None));
   std::string e;CHECK(ValidateSettingsEffectPlan(j.plan,j.baseline,j.target,SystemSettingsHost::Schema(),e));
-  for(unsigned bad=0;bad<6;++bad){auto p=j.plan;if(bad==0)p.version=2;if(bad==1)p.changeMask^=1;if(bad==2)p.domainMask^=4;if(bad==3)p.completion=static_cast<SettingsEffectCompletion>(12);if(bad==4)p.rendererStrategy=static_cast<SettingsRendererStrategy>(12);if(bad==5)p.domainMask|=32;CHECK(!ValidateSettingsEffectPlan(p,j.baseline,j.target,SystemSettingsHost::Schema(),e));}
+  for(unsigned bad=0;bad<6;++bad){auto p=j.plan;if(bad==0)p.version=1;if(bad==1)p.changeMask^=1;if(bad==2)p.domainMask^=4;if(bad==3)p.completion=static_cast<SettingsEffectCompletion>(12);if(bad==4)p.rendererStrategy=static_cast<SettingsRendererStrategy>(12);if(bad==5)p.domainMask|=32;CHECK(!ValidateSettingsEffectPlan(p,j.baseline,j.target,SystemSettingsHost::Schema(),e));}
  }
  auto j=Sample(0);std::string e;SettingsEffectPlan p;p.version=77;const auto old=p;
  auto schema=SystemSettingsHost::Schema();schema["future"]=0;CHECK(!BuildSettingsEffectPlan(j.baseline,j.target,schema,p,e)&&p==old);
  schema=SystemSettingsHost::Schema();schema["r_bloom"]=0;CHECK(!BuildSettingsEffectPlan(j.baseline,j.target,schema,p,e)&&p==old);
  CHECK(!BuildSettingsEffectPlan(j.baseline,j.baseline,SystemSettingsHost::Schema(),p,e)&&p==old);
  j.target.erase("r_bloom");CHECK(!BuildSettingsEffectPlan(j.baseline,j.target,SystemSettingsHost::Schema(),p,e)&&p==old);
+}
+static void CatalogCompatibility() {
+ std::map<std::string,std::size_t> legacySchema;
+ for(const auto& [key,field]:SettingsEffectCatalogV1())legacySchema.emplace(key,field.type);
+ auto effect=Sample(1);effect.baseline.erase("ui_retainedScale");effect.baseline.erase("ui_retainedTextScale");
+ effect.target.erase("ui_retainedScale");effect.target.erase("ui_retainedTextScale");
+ std::string error,bytes;CHECK(BuildSettingsEffectPlan(effect.baseline,effect.target,legacySchema,effect.plan,error)&&effect.plan.version==1);
+ CHECK(EncodeSettingsEffectJournal(effect,legacySchema,bytes,error));
+ SettingsJournalRecord record;CHECK(DecodeSettingsJournalRecord(bytes,legacySchema,record,error));
+ CHECK(std::get<SettingsEffectRecoveryJournal>(*record.Value()).plan.version==1);
+ CHECK(!DecodeSettingsJournalRecord(bytes,SystemSettingsHost::Schema(),record,error));
+ CHECK(!ValidateSettingsEffectPlan(effect.plan,effect.baseline,effect.target,SystemSettingsHost::Schema(),error));
+ SettingsRecoveryJournal old;old.attempt=effect.attempt;old.baseline=effect.baseline;old.target=effect.target;old.patch=effect.patch;
+ old.displayRestore=effect.displayRestore;old.displayTarget=effect.displayTarget;old.placement=effect.placement;
+ auto live=Values();live["ui_retainedScale"]=1.75;live["ui_retainedTextScale"]=1.5;
+ for(auto state:{SettingsJournalState::Pending,SettingsJournalState::Confirmed}) {
+  old.state=state;std::string frozen;CHECK(BaselineEncodeSettingsJournal(old,legacySchema,frozen,error));
+  CHECK(EncodeSettingsJournal(old,legacySchema,bytes,error)&&bytes==frozen);
+  SettingsRecoveryJournal upgraded;CHECK(DecodeSystemSettingsJournal(bytes,live,upgraded,error));
+  CHECK(upgraded.state==state&&upgraded.attempt==old.attempt&&SettingsValuesEqual(upgraded.patch,old.patch));
+  for(const auto* key:{"ui_retainedScale","ui_retainedTextScale"})
+   CHECK(SettingsValueEqual(upgraded.baseline.at(key),live.at(key))&&SettingsValueEqual(upgraded.target.at(key),live.at(key))&&!upgraded.patch.contains(key));
+  for(const auto& [key,value]:old.baseline)CHECK(SettingsValueEqual(value,upgraded.baseline.at(key))&&SettingsValueEqual(old.target.at(key),upgraded.target.at(key)));
+  CHECK(SettingsValuesEqual(upgraded.displayRestore,old.displayRestore)&&SettingsValuesEqual(upgraded.displayTarget,old.displayTarget)&&SettingsValuesEqual(upgraded.placement,old.placement));
+  const auto reject=[&](const std::string& input,const StateValues& current) {
+   SettingsRecoveryJournal output;output.attempt="untouched";output.baseline={{"sentinel",true}};
+   CHECK(!DecodeSystemSettingsJournal(input,current,output,error));
+   CHECK(output.attempt=="untouched"&&output.baseline==StateValues({{"sentinel",true}}));
+  };
+  auto invalid=live;invalid.erase("ui_retainedTextScale");reject(bytes,invalid);
+  invalid=live;invalid["ui_retainedScale"]=true;reject(bytes,invalid);
+  invalid=live;invalid["ui_retainedTextScale"]=std::numeric_limits<double>::quiet_NaN();reject(bytes,invalid);
+  reject(bytes+"\n",live);reject(bytes.substr(0,bytes.size()/2),live);
+  auto partial=upgraded;partial.baseline.erase("ui_retainedScale");partial.target.erase("ui_retainedScale");
+  auto partialSchema=SystemSettingsHost::Schema();partialSchema.erase("ui_retainedScale");std::string malformed;
+  CHECK(EncodeSettingsJournal(partial,partialSchema,malformed,error));reject(malformed,live);
+  // Current records retain their recorded size ownership rather than being
+  // enriched from a later live preference read.
+  upgraded.target["ui_retainedScale"]=2.0;upgraded.patch["ui_retainedScale"]=2.0;
+  CHECK(EncodeSettingsJournal(upgraded,SystemSettingsHost::Schema(),bytes,error));
+  live["ui_retainedScale"]=1.25;SettingsRecoveryJournal current;
+  CHECK(DecodeSystemSettingsJournal(bytes,live,current,error));
+  CHECK(SettingsValueEqual(current.baseline.at("ui_retainedScale"),1.75)&&SettingsValueEqual(current.target.at("ui_retainedScale"),2.0));
+  live["ui_retainedScale"]=1.75;
+ }
+ CHECK(EncodeSettingsJournal(old,legacySchema,bytes,error));
+ SettingsRecoveryJournal measured;allocations=0;CHECK(DecodeSystemSettingsJournal(bytes,live,measured,error));const auto count=allocations;
+#if defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL > 0
+ // Match the existing schema-2 qualification boundary below. JsonCpp's
+ // noexcept default-string constructor can terminate on a debug proxy refusal;
+ // the release-STL sweep covers every decoder site. Still deny the wrapper's
+ // first staging allocation under MSVC debug and verify unchanged output.
+ const unsigned denialCount=1;
+ std::printf("LIMIT debug-STL JsonCpp SYSTEM upgrade denial sweep unavailable (%u allocation sites)\n",count);
+#else
+ const unsigned denialCount=count;
+#endif
+ for(unsigned n=0;n<denialCount;++n) {
+  faultPoint=n;
+  SettingsRecoveryJournal output;output.attempt="untouched";failAfter=n;
+  const bool ok=DecodeSystemSettingsJournal(bytes,live,output,error);failAfter=-1;
+  CHECK(!ok&&output.attempt=="untouched"&&output.baseline.empty()&&output.patch.empty());
+ }
 }
 static void RoundTrips() {
  std::string e;
@@ -114,12 +182,12 @@ static void RoundTrips() {
 static void Forgery() {
  const auto b=Encode(Sample(63));
  for(const auto& pair:std::initializer_list<std::pair<std::string,std::string>>{
-  {"\"schema\":2","\"schema\":1"},{"\"schema\":2","\"schema\":2.0"},{"\"plan.version\":1","\"plan.version\":2"},
+  {"\"schema\":2","\"schema\":1"},{"\"schema\":2","\"schema\":2.0"},{"\"plan.version\":2","\"plan.version\":3"},
   {"\"plan.changeMask\":63","\"plan.changeMask\":31"},{"\"plan.domainMask\":31","\"plan.domainMask\":63"},
   {"\"plan.domainMask\":31","\"plan.domainMask\":30"},{"\"plan.changeMask\":63","\"plan.changeMask\":63.1"},
-  {"display-confirmed","automatic"},{"coalesced-device","none"},{"\"plan.version\":1","\"plan.version\":true"},
-  {"\"plan.version\":1","\"plan.version\":1,\n\"plan.unknown\":0"},
-  {"\"plan.version\":1","\"plan.version\":1,\n\"plan.version\":1"},
+  {"display-confirmed","automatic"},{"coalesced-device","none"},{"\"plan.version\":2","\"plan.version\":true"},
+  {"\"plan.version\":2","\"plan.version\":2,\n\"plan.unknown\":0"},
+  {"\"plan.version\":2","\"plan.version\":2,\n\"plan.version\":2"},
   {"\"imageTarget.sample\":\"opaque\",\n",""},{"\"patch.r_borderless\":true,\n",""},
   {"\"patch.r_borderless\":true","\"patch.r_borderless\":false"},{"\"placement.target.width\":1281","\"placement.target.width\":1280"},
   {"\"placement.target.normalValid\":true","\"placement.target.normalValid\":0"},
@@ -142,7 +210,7 @@ static void Forgery() {
  }
  Reject(Replace(b,"recovery 2","recovery 1"));Reject(Replace(b,"recovery 2","recovery 3"));Reject(b+"\n");
  for(std::size_t i=0;i<b.size();i+=37)Reject(b.substr(0,i));
- auto absent=b;absent.erase(absent.find("\"plan.version\""),std::string("\"plan.version\":1,\n").size());Reject(Checksum(absent));
+ auto absent=b;absent.erase(absent.find("\"plan.version\""),std::string("\"plan.version\":2,\n").size());Reject(Checksum(absent));
 }
 static void Bounds() {
  auto j=Sample(4);std::string bytes="untouched",e;
@@ -175,7 +243,7 @@ static void ExactNumbers() {
  CHECK(BuildSettingsEffectPlan(b,next,SystemSettingsHost::Schema(),plan,error)&&plan.changeMask==0);
  auto tiny=Sample(4);tiny.baseline["r_brightness"]=1.0;tiny.target["r_brightness"]=tiny.patch["r_brightness"]=std::bit_cast<double>(std::uint64_t(2));
  Reject(Replace(Encode(tiny),"\"patch.r_brightness\":9.8813129168249309e-324","\"patch.r_brightness\":0"));
- Reject(Replace(Encode(Sample(4)),"\"plan.version\":1","\"plan.version\":4.9406564584124654e-324"));
+ Reject(Replace(Encode(Sample(4)),"\"plan.version\":2","\"plan.version\":4.9406564584124654e-324"));
 }
 static void SchemaOne() {
  const std::map<std::string,std::size_t> schema{{"brightness",0},{"fullscreen",1},{"mode",2}};
@@ -230,4 +298,4 @@ int main(){
  _set_abort_behavior(0,_WRITE_ABORT_MSG|_CALL_REPORTFAULT);
  for(int kind:{_CRT_WARN,_CRT_ERROR,_CRT_ASSERT}){(void)kind;_CrtSetReportMode(kind,_CRTDBG_MODE_FILE);_CrtSetReportFile(kind,_CRTDBG_FILE_STDERR);}
 #endif
- CatalogAndPlans();RoundTrips();Forgery();Bounds();ExactNumbers();SchemaOne();PreserveDisplay();AllocationAtomicity();std::printf("PASS %u settings effect journal checks\n",checks);}
+ CatalogAndPlans();CatalogCompatibility();RoundTrips();Forgery();Bounds();ExactNumbers();SchemaOne();PreserveDisplay();AllocationAtomicity();std::printf("PASS %u settings effect journal checks\n",checks);}

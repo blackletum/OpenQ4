@@ -10,6 +10,7 @@ class idRenderTexture;
 
 #include "ImageOpts.h"
 #include "RendererCaps.h"
+#include "RetainedFontTypes.h"
 // jmarshall end
 
 /*
@@ -710,6 +711,13 @@ public:
 		idRenderTexture *sceneDepthTarget,
 		idRenderTexture *historyReadTarget,
 		idRenderTexture *historyWriteTarget ) = 0;
+
+	// Retained text uses physical output pixels rather than legacy 12/24/48
+	// slots. Appended ABI slots; reset only after all retained views and queued
+	// submissions have released their old glyph references.
+	virtual bool GetRetainedFontMetrics(const char* face, int pixels, renderFontMetrics_t& out) = 0;
+	virtual bool GetRetainedFontGlyph(const char* face, int pixels, unsigned int scalar, renderFontGlyph_t& out) = 0;
+	virtual void ResetRetainedFontCache() = 0;
 };
 
 extern idRenderSystem *		renderSystem;

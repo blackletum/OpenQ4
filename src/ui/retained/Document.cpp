@@ -30,6 +30,7 @@ bool ValidProperty(const std::string& name, const Value& value) {
 			{"pointer-events",{"auto","none"}},
 			{"overflow",{"visible","hidden","auto","scroll"}}, {"text-align",{"left","center","right"}},
 			{"white-space",{"normal","pre","nowrap","pre-wrap","pre-line"}},
+			{"word-break",{"normal","break-all","break-word"}},
 			{"flex-direction",{"row","row-reverse","column","column-reverse"}},
 			{"flex-wrap",{"nowrap","wrap","wrap-reverse"}},
 			{"justify-content",{"flex-start","flex-end","center","space-between","space-around","space-evenly"}},
@@ -662,7 +663,7 @@ private:
 			Fields(value,path,{"type","value","unit","extensions"});
 			Require(value["unit"].isString(),value,path+"/unit","Length/transform requires an explicit unit");
 			result.unit = value["unit"].asString();
-			Require(result.unit == "dp" || result.unit == "px" || (type == "length" && result.unit == "%"),value["unit"],path+"/unit","Expected dp, px or a layout percentage; transforms require dp or px");
+			Require(result.unit == "dp" || result.unit == "px" || (type == "length" && (result.unit == "%" || result.unit == "em")),value["unit"],path+"/unit","Expected dp, px, em or a layout percentage; transforms require dp or px");
 		} else Fields(value,path,{"type","value","extensions"});
 		if (type == "number" || type == "length") {
 			result.type = type == "number" ? ValueType::Number : ValueType::Length;
@@ -797,7 +798,7 @@ private:
 			else if (role == "toggle") Fields(control,p,{"role","action","label","enabled","states","navigation","value","mixed","parts","extensions"});
 			else if (role == "slider") Fields(control,p,{"role","action","label","enabled","states","navigation","value","minimum","maximum","step","decimals","orientation","parts","extensions"});
 			else if (role == "choice") Fields(control,p,{"role","action","label","enabled","states","navigation","value","parts","visibleRows","options","scrollbar","placementBounds","extensions"});
-			else if (role == "number") Fields(control,p,{"role","action","label","enabled","states","navigation","value","minimum","maximum","exponent","maxBytes","parts","extensions"});
+			else if (role == "number") Fields(control,p,{"role","action","label","enabled","states","navigation","value","minimum","maximum","exponent","integer","maxBytes","parts","extensions"});
 			else if (role == "scrollbar") Fields(control,p,{"role","label","enabled","states","navigation","viewport","orientation","lineStep","minimumThumb","parts","extensions"});
             else Require(false,control["role"],p+"/role","Supported roles are button, toggle, slider, choice, number and scrollbar");
 			result.control.emplace(); auto& parsed = *result.control;
@@ -869,6 +870,11 @@ private:
 						Require(control["exponent"].isBool(),control["exponent"],p+"/exponent","Number exponent policy must be Boolean");
 						spec.exponent = control["exponent"].asBool();
 					}
+					if (control.isMember("integer")) {
+						Require(control["integer"].isBool(),control["integer"],p+"/integer","Number integer policy must be Boolean");
+						spec.integer = control["integer"].asBool();
+					}
+					Require(!spec.integer || std::ceil(spec.minimum) <= std::floor(spec.maximum),control,p,"Integer number bounds must include an integer");
 					if (control.isMember("maxBytes")) {
 						Require(control["maxBytes"].isUInt() && control["maxBytes"].asUInt() >= 1 && control["maxBytes"].asUInt() <= 65536,
 							control["maxBytes"],p+"/maxBytes","Number edit size must be 1..65536 bytes");

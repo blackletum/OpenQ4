@@ -46,6 +46,7 @@ public:
 	bool Read(StateValues& values, std::string& error) override;
 	bool Defaults(StateValues& values, std::string& error) override;
 	bool Validate(const StateValues& baseline, const StateValues& candidate, std::string& error) override;
+	bool ValidateDraft(const StateValues& baseline, const StateValues& candidate, std::string& error) override;
 	// Validate the recorded original edit using registered/catalog constraints.
 	// Its historical display topology is verified separately by recovery records;
 	// an unused historical monitor must not be required on the current host.

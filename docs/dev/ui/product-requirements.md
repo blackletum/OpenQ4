@@ -7,6 +7,39 @@ the [completion plan](../plans/ui-product-completion.md), the
 [visual specification](../ui-visual-design.md) into implementation ownership,
 dependencies, concrete evidence and explicit unfinished work.
 
+The [17 September implementation audit](masked-input-review.md) records current
+delivery gaps and the shared vector-mask input repair. `INP-007` remains partial;
+requirement counts, migration acceptance and final gates are unchanged.
+
+The subsequent [independent text-scale increment](text-scale.md) implements
+runtime typography and responsive SYSTEM layout. `LAY-004` is now partial;
+the [interface preference increment](interface-size-preferences.md) adds normal
+scale/reset controls and window fitting, making `LAY-003` partial as well.
+The [output-size font increment](output-size-fonts.md) now adds bounded shared
+physical-size glyph atlases, making `TXT-002` partial. Font style/weight,
+largest animated transform density, complete text services and screen/editor
+qualification remain required. All 271 migrations and seven final gates remain
+unaccepted.
+
+The [paired-field visibility repair](paired-field-focus.md) makes the SYSTEM
+brightness and ambient-light sliders grow with their numeric readouts. Focus
+keeps the complete pair visible at the qualified text sizes. It adds partial
+`LAY-004` evidence without changing requirement counts or acceptance.
+
+The [SYSTEM display-control increment](display-controls.md) adds four typed
+display drafts and guards MSAA against the active strict display path's
+capabilities. It contributes partial `BEH-002` and `FLOW-002` evidence; complete
+display catalogs, effects, dependent controls, visible window behavior and the
+screen/editor gate remain unaccepted.
+
+The [SYSTEM dimension-field increment](dimension-controls.md) adds four exact
+whole-pixel editors and dependent availability. Draft validation permits
+intermediate width/height pairs; Apply still requires a supported complete
+request. This adds partial `BEH-002` and `FLOW-002` evidence without changing
+requirement counts, migration acceptance or final gates.
+Its expanded-language matrix also repairs focus reveal for oversized numeric
+fields, adding partial `LAY-004` evidence while preserving deliberate scrolling.
+
 An earlier recorded increment starts from engine `17b106daa1827d6e50c786f99ea5970b1e8b91cf` and companion
 `1cd33980f072ac3d78978a07b388b4b6fe6b5eb2`. The register also identifies the current
 [manager/snapshot foundation](instance-persistence.md) as partial
@@ -291,7 +324,7 @@ The [full renderer shutdown increment](image-recovery-ownership.md), based on en
 
 The [editor file publication increment](editor-file-safety.md), based on engine `a11a00181b5997993bb9e225bad63a6422386311`, adds actual native creation of complete new files without replacing an existing or racing document. Windows Clang and MSVC each pass 340 checks, GCC with sanitizers passes 344, and all three reject seven compiled mutations. The full engine build and 78 UI suites pass. Windows symlink and DrvFS FIFO limitations are recorded. This file-only increment has no new game captures. Save As/autosave UI, live document association, overwrite/conflict handling and crash/relaunch recovery remain required. No requirement status, migration acceptance or final gate changes. Evidence: `.tmp/ui/editor-new-file/validation-evidence.json`, SHA-256 `846413e35eb34ed965a57005aa6eb724b5c8d3dbc2fb46f65ba30711a509cc63`.
 
-There are **66 partial, 160 pending and one verified requirement**. `BEH-002`
+There are **69 partial, 157 pending and one verified requirement**. `BEH-002`
 remains partial for the implemented settings transaction/service boundary.
 `BEH-005` remains partial for committed action delivery and cancellation; stock
 sounds and the complete device/modal/widget behavior still require implementation

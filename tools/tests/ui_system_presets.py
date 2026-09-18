@@ -57,7 +57,7 @@ class Presets(unittest.TestCase):
         self.assertEqual(numbers.compose(self.page),self.page)
         self.assertEqual(numbers.compose(presets.compose(self.page)),presets.compose(numbers.compose(self.page)))
     def test_placement_and_existing_order(self):
-        self.assertEqual([n['id'] for n in self.nodes['settings-body']['children']],['performance-band','image-column','render-column'])
+        self.assertEqual([n['id'] for n in self.nodes['settings-body']['children']],['performance-band','interface-band','display-column','dimensions-column','image-column','render-column'])
         self.assertEqual([n['id'] for n in self.nodes['performance-band']['children']],['settings_preset','settings_autodetect'])
         self.assertEqual(self.nodes['performance-band']['properties']['flex-wrap'],presets.keyword('wrap'))
         for id in ('settings_preset','settings_autodetect'):
@@ -75,7 +75,7 @@ class Presets(unittest.TestCase):
         files=sorted((ROOT/'content/baseoq4/pak0/strings').glob('*_openq4.lang'))
         self.assertEqual({f.stem for f in files},{n+'_openq4' for n in ('english','french','italian','spanish','polish','russian')})
         for file in files:
-            for id in ('229976','229977','229978','229985'):
+            for id in ('229976','229977','229978','230010'):
                 values=re.findall(r'"#str_'+id+r'"\s+"([^"\r\n]+)"',file.read_text(encoding='utf-8'))
                 self.assertEqual(len(values),1,file.name+id)
                 if id=='229977':self.assertEqual(len(values[0].split(';')),6)

@@ -891,7 +891,7 @@
                       },
                       "text": {
                         "type": "text",
-                        "value": "#str_229982"
+                        "value": "#str_230007"
                       },
                       "white-space": {
                         "type": "keyword",
@@ -1183,7 +1183,7 @@
                   },
                   "text": {
                     "type": "text",
-                    "value": "#str_229985"
+                    "value": "#str_230010"
                   },
                   "color": {
                     "type": "color",

@@ -85,7 +85,7 @@ bool EncodeSettingsJournal(const SettingsRecoveryJournal& journal,
 		if (payload.size() > 2) payload += ",\n";
 		payload += Quote(key) + ":";
 		if (const auto number = std::get_if<double>(&value)) {
-			std::string encoded;
+			std::string encoded(0,'\0');
 			const double canonical = SettingsValueEqual(value,StateValue(0.0)) ? 0.0 : *number;
 			if (!SettingsNumberText(canonical,SettingsNumberFormat::GeneralRoundTrip,encoded))
 				return Fail(error,"Cannot serialize settings journal number");
@@ -106,7 +106,7 @@ bool DecodeSettingsJournal(const std::string& bytes,
 		return Fail(error,"Invalid settings journal header or byte budget");
 	const auto payload = bytes.substr(magic.size()+9);
 	if (Checksum(payload) != bytes.substr(magic.size(),8)) return Fail(error,"Settings journal checksum mismatch");
-	StateValues flat; std::vector<Diagnostic> diagnostics;
+	StateValues flat; std::vector<Diagnostic> diagnostics(0);
 	if (!ParseStateValues(payload,flat,diagnostics)) return Fail(error,"Invalid typed settings journal payload");
 	SettingsRecoveryJournal candidate;
 	if (!flat.contains("schema") || flat.at("schema") != StateValue(1.0) || !flat.contains("state") ||
@@ -130,7 +130,7 @@ bool DecodeSettingsJournal(const std::string& bytes,
 		else return Fail(error,"Unknown settings journal map");
 		values->emplace(key.substr(dot+1),value);
 	}
-	std::string canonical;
+	std::string canonical(0,'\0');
 	if (!EncodeSettingsJournal(candidate,catalog,canonical,error)) return false;
 	if (canonical != bytes) return Fail(error,"Settings journal is not canonical");
 	journal = std::move(candidate); error.clear(); return true;
@@ -256,7 +256,7 @@ bool DecodeEffect(const std::string& bytes,const std::map<std::string,std::size_
  if (!ParseStateValues(payload,flat,diagnostics)) return Fail(error,"Invalid typed settings effect journal payload");
  unsigned schema=0; std::string state(0,'\0'),completion(0,'\0'),strategy(0,'\0');
  if (!ReadUnsigned(flat,"schema",2,schema) || schema!=2 || !ReadText(flat,"attempt",j.attempt) || !ReadText(flat,"state",state) ||
-  !ReadUnsigned(flat,"plan.version",1,j.plan.version) || j.plan.version!=1 ||
+  !ReadUnsigned(flat,"plan.version",2,j.plan.version) || (j.plan.version!=1 && j.plan.version!=2) ||
   !ReadUnsigned(flat,"plan.changeMask",63,j.plan.changeMask) || !ReadUnsigned(flat,"plan.domainMask",31,j.plan.domainMask) ||
   !ReadText(flat,"plan.completion",completion) || !ReadText(flat,"plan.rendererStrategy",strategy))
   return Fail(error,"Invalid settings effect journal schema or plan");
@@ -295,6 +295,35 @@ bool DecodeEffect(const std::string& bytes,const std::map<std::string,std::size_
  return true;
 }
 } // namespace
+bool DecodeSystemSettingsJournal(const std::string& bytes,const StateValues& current,
+ SettingsRecoveryJournal& journal,std::string& error) {
+ try {
+  std::map<std::string,std::size_t> catalog,legacy;
+  for (const auto& [key,field]:SettingsEffectCatalogV2()) catalog.emplace(key,field.type);
+  for (const auto& [key,field]:SettingsEffectCatalogV1()) legacy.emplace(key,field.type);
+  if (current.size()!=catalog.size()) return Fail(error,"SYSTEM recovery needs a complete current catalog read");
+  for (const auto& [key,type]:catalog) {
+   const auto value=current.find(key);
+   if (value==current.end() || value->second.index()!=type || !ValidStateValue(value->second))
+    return Fail(error,"SYSTEM recovery current catalog keys, types or values changed");
+  }
+  SettingsRecoveryJournal candidate;
+  if (!DecodeSettingsJournal(bytes,catalog,candidate,error)) {
+   if (!DecodeSettingsJournal(bytes,legacy,candidate,error)) return false;
+   for (const auto& [key,type]:catalog) if (!legacy.contains(key)) {
+    candidate.baseline.emplace(key,current.at(key));
+    candidate.target.emplace(key,current.at(key));
+   }
+   if (!Valid(candidate,catalog,error)) return false;
+  }
+  // Publish only after complete decoding/extension. Member swaps cannot allocate
+  // in MSVC debug containers, including an allocation failure while staging.
+  std::swap(journal.state,candidate.state); journal.attempt.swap(candidate.attempt);
+  journal.baseline.swap(candidate.baseline); journal.target.swap(candidate.target); journal.patch.swap(candidate.patch);
+  journal.displayRestore.swap(candidate.displayRestore); journal.displayTarget.swap(candidate.displayTarget);
+  journal.placement.swap(candidate.placement); error.clear(); return true;
+ } catch (...) { return EffectFail(error,"SYSTEM settings journal upgrade allocation failed"); }
+}
 bool EncodeSettingsEffectJournal(const SettingsEffectRecoveryJournal& journal,
  const std::map<std::string,std::size_t>& catalog,std::string& bytes,std::string& error) {
  try {

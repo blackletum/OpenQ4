@@ -129,6 +129,7 @@ struct ChoiceSpec {
 struct NumberSpec {
 	double minimum = 0, maximum = 1;
 	bool exponent = true;
+	bool integer = false; // New proposals must represent an exact decimal integer.
 	unsigned maxBytes = 1024;
 	// A positioned/clipped viewport owns direct absolute text and paint parts.
 	// Their transform is shared through the viewport; validation stays outside.

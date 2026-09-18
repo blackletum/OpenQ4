@@ -8,6 +8,14 @@
 
 using namespace openq4;
 using namespace openq4::ui;
+bool EngineSettingsDisplayHost::SupportsMultisampling() const {
+	rendererDisplayState_t state{};
+	if (!R_RendererModule_QueryDisplay(&state) || !state.rendererReady || !state.windowValid || !state.presentation.available)
+		return false;
+	const auto api = R_RendererModule_GetStatus().activeApi;
+	// Vulkan's strict device initialization currently requires zero samples.
+	return api == RENDER_MODULE_API_GL || api == RENDER_MODULE_API_GL_MODULE || api == RENDER_MODULE_API_GLES;
+}
 namespace {
 bool Fail(std::string& error, const char* message) { error = message; return false; }
 bool ObserveDevice(rendererDisplayState_t& state, SettingsDisplayObservation& output, std::string& error) {
@@ -230,7 +238,9 @@ bool EngineSettingsDisplayHost::Startup(std::string& error) {
 	const auto read=DurableReadExact(journalPath,SettingsJournalMaxBytes,bytes,error);
 	if (read==DurableReadResult::Missing) { Clear(); return true; }
 	blocked=true;
-	if (read!=DurableReadResult::Present || !DecodeSettingsJournal(bytes,SystemSettingsHost::Schema(),journal,error)) return false;
+	StateValues currentCatalog;
+	if (read!=DurableReadResult::Present || !settings.Read(currentCatalog,error) ||
+		!DecodeSystemSettingsJournal(bytes,currentCatalog,journal,error)) return false;
 	ownsJournal=true; writtenBytes=bytes;
 	if (journal.placement.size()!=18 || !ReadPlacement(journal.placement,"baseline.",placement) ||
 		!ReadPlacement(journal.placement,"target.",committedPlacement)) return Fail(error,"Invalid settings recovery placement metadata");

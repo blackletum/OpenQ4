@@ -311,7 +311,7 @@ def number_contract(model: dict, nodes: dict) -> None:
     local_message = both(pending,idle,op('||',op('==',state('settings.phase'),0),op('==',state('settings.phase'),1)))
     declarations=model.get('state',{});actions=model.get('actions',{});events=model.get('events',{})
     require(declarations.get('ui.numberDraftsPending'),{'type':'boolean','initial':False},'pending authority')
-    require(declarations.get('ui.numberDraftMessage'),{'type':'string','initial':'#str_229982'},'message authority')
+    require(declarations.get('ui.numberDraftMessage'),{'type':'string','initial':'#str_230007'},'message authority')
     for name,operation in (('focusNumberDraft','ui.numberDrafts.focus'),('apply','settings.system.apply'),
                            ('applyExit','settings.system.applyExit'),('cancel','settings.system.cancel'),('dismiss','ui.dismiss')):
         require(actions.get(name),{'operation':operation,'arguments':{}},'action '+name)
@@ -347,7 +347,7 @@ def number_contract(model: dict, nodes: dict) -> None:
     require(bindings.get(('settings-message','text')),op('select',local_message,state('ui.numberDraftMessage'),state('settings.message')),'urgent service message priority')
     pairs={'settings_brightness':('r_brightness',.5,2), 'settings_ambient':('r_forceAmbient',0,1)}
     require({id for id,node in nodes.items() if node.get('control',{}).get('role')=='number'},
-            {id+'_number' for id in pairs},'complete paired Number inventory')
+            {id+'_number' for id in pairs} | {'settings_window_width','settings_window_height','settings_custom_width','settings_custom_height'},'complete Number inventory')
     for slider_id,(key,minimum,maximum) in pairs.items():
         number_id=slider_id+'_number';slider=nodes.get(slider_id,{}).get('control',{});number=nodes[number_id].get('control',{})
         require(slider.get('role'),'slider','original slider identity '+slider_id)
@@ -387,10 +387,10 @@ def _number(value: str, expected: float) -> bool:
     return math.isfinite(number) and math.isclose(number, expected, rel_tol=1e-8, abs_tol=1e-8)
 
 
-def tga_dimensions(raw: bytes) -> tuple[int, int] | None:
+def tga_dimensions(raw: bytes, expected_size: tuple[int, int] = (1280,720)) -> tuple[int, int] | None:
     if len(raw) < 18 or raw[1] != 0 or raw[2] not in (2, 10) or raw[16] not in (24, 32): return None
     size = struct.unpack_from('<HH',raw,12)
-    if size != (1280,720): return None
+    if size != expected_size or not all(0 < value <= 16384 for value in size): return None
     channels, offset, pixels = raw[16]//8, 18+raw[0], size[0]*size[1]
     if raw[2] == 2: return size if len(raw) >= offset+pixels*channels else None
     decoded = 0
@@ -589,6 +589,8 @@ def capture(args) -> int:
         'g_autoExecAfterMapLoad':'system-page.cfg', 'g_autoExecAfterMapLoadDelayMs':'3000',
         'com_skipLoadingContinue':'1', 'com_loadingContinueAutoAdvance':'1', 'com_maxfps':'60',
         'ui_autoJoin':'1' if args.mode=='mp' else '0', 'ui_retainedScale':'1', 'ui_retainedDensity':str(density),
+        'ui_retainedTextScale':str(args.text_scale),
+        'sys_lang':args.language,
         'ui_retainedTrace':'1', 'ui_retainedSystem':'1', 'ui_retainedReducedMotion':'0'}
     command = [str(executable)]
     for key,value in overrides.items(): command += ['+set',key,value]
@@ -600,8 +602,9 @@ def capture(args) -> int:
         index += count
     binaries = [executable] + sorted(runtime.glob('renderer-*')) + sorted((runtime/'baseoq4').glob('game-*'))
     metadata = {'status':'running', 'profile':profile['name'], 'mode':args.mode, 'renderer':args.renderer,
-        'command':command, 'cwd':str(runtime), 'source':source, 'script_sha256':digest(cfg), 'density':density, 'ui_scale':1,
+        'command':command, 'cwd':str(runtime), 'source':source, 'script_sha256':digest(cfg), 'density':density, 'ui_scale':1, 'text_scale':args.text_scale, 'language':args.language,
         'windowed':True, 'hidden_window':True, 'host_input_injection':False, 'capture_method':'engine screenshot after active map gameplay',
+        'timeout_seconds':args.timeout,
         'binaries':{str(path.relative_to(runtime)):digest(path) for path in binaries if path.is_file()}}
     report = output/'capture.json'
     def save(): report.write_text(json.dumps(metadata,indent=2)+'\n',encoding='utf-8')
@@ -613,7 +616,7 @@ def capture(args) -> int:
             options.update(startupinfo=startup,creationflags=subprocess.CREATE_NO_WINDOW)
         process = subprocess.Popen(command,cwd=runtime,stdout=process_log,stderr=subprocess.STDOUT,**options)
         print(f'SYSTEM page {args.mode}/{args.renderer}: PID {process.pid}, hidden/windowed, no host input.',flush=True)
-        try: metadata['returncode'] = process.wait(timeout=240)
+        try: metadata['returncode'] = process.wait(timeout=args.timeout)
         except subprocess.TimeoutExpired:
             process.terminate()
             try: process.wait(timeout=10)
@@ -653,7 +656,11 @@ def main() -> int:
     parser.add_argument('--runtime',type=Path,default=ROOT/'.install')
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--density',type=float,choices=(1.25,2.0))
+    parser.add_argument('--text-scale',type=float,choices=(1.0,1.5,2.0),default=1.0)
+    parser.add_argument('--language',choices=('english','spanish','polish','russian','french','italian'),default='english')
+    parser.add_argument('--timeout',type=int,default=240,help='Maximum game-process duration in seconds')
     args = parser.parse_args()
+    if args.timeout <= 0: parser.error('--timeout must be positive')
     try: return capture(args)
     except (OSError,ValueError,StopIteration) as error:
         print(f'SYSTEM page capture failed: {error}',flush=True); return 1

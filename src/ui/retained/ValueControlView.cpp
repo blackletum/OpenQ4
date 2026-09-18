@@ -138,6 +138,10 @@ struct ValueControlView::Impl {
 		if (found == authored.at(id).end() || found->second.type != ValueType::Length) return fallback;
 		if (found->second.unit == "dp") return static_cast<float>(found->second.data[0])*ratio;
 		if (found->second.unit == "px") return static_cast<float>(found->second.data[0]);
+		if (found->second.unit == "em") {
+			const auto* element=Element(id);
+			return element ? static_cast<float>(found->second.data[0])*element->GetComputedValues().font_size() : fallback;
+		}
 		return fallback;
 	}
 	bool Inheritance(const Entry& entry, const ChoiceSpec& choice) {
@@ -165,7 +169,7 @@ struct ValueControlView::Impl {
 			for (const auto* key:{"transform","perspective","transform-origin","perspective-origin",
                 "position","display","visibility","left","top","right","bottom","width","height","min-width","max-width","min-height","max-height",
                 "padding-left","padding-right","padding-top","padding-bottom","border-left-width","border-right-width","border-top-width","border-bottom-width",
-                "margin-left","margin-right","margin-top","margin-bottom","font-size","font-family","line-height","letter-spacing","text-transform","white-space","flex-basis","flex-grow","flex-shrink","flex-direction","flex-wrap","row-gap","column-gap"}) {
+                "margin-left","margin-right","margin-top","margin-bottom","font-size","font-family","line-height","letter-spacing","text-transform","white-space","word-break","flex-basis","flex-grow","flex-shrink","flex-direction","flex-wrap","row-gap","column-gap"}) {
 				const auto* property=element->GetLocalProperty(key);
 				result.transforms.push_back(property?property->ToString():std::string{});
 			}
@@ -176,8 +180,9 @@ struct ValueControlView::Impl {
 			result.geometry.push_back(font.font_size());result.geometry.push_back(font.line_height().value);
 			result.geometry.push_back(font.letter_spacing());result.transforms.push_back(font.font_family());
 			result.geometry.push_back(static_cast<int>(font.text_transform()));result.geometry.push_back(static_cast<int>(font.white_space()));
+			result.geometry.push_back(static_cast<int>(font.word_break()));
 			result.transforms.push_back(label->GetInnerRML());
-			for (const auto* key:{"font-size","font-family","line-height","letter-spacing","font-style","font-weight","text-transform","white-space"}) {
+			for (const auto* key:{"font-size","font-family","line-height","letter-spacing","font-style","font-weight","text-transform","white-space","word-break"}) {
 				const auto* property=label->GetLocalProperty(key);result.transforms.push_back(property?property->ToString():std::string{});
 			}
 		}
@@ -255,6 +260,18 @@ struct ValueControlView::Impl {
         }
         (void)entry;return values;
     }
+	bool PopupWidth(const ChoiceSpec& choice, float outerWidth, float dp) {
+		auto* popup=Element(choice.popup);auto* viewport=Element(choice.viewport);
+		bool changed=Property(choice.popup,"width",Pixels(CssExtent(popup,outerWidth,false)));
+		if (choice.scrollbar) {
+			const auto frame=popup->GetBox().GetFrameSize(Rml::BoxArea::Border)+popup->GetBox().GetFrameSize(Rml::BoxArea::Padding);
+			const float trackWidth=Element(choice.scrollbar->track)->GetBox().GetSize(Rml::BoxArea::Border).x;
+			const float leading=viewport->GetAbsoluteOffset(Rml::BoxArea::Border).x-popup->GetAbsoluteOffset(Rml::BoxArea::Content).x;
+			const float viewportWidth=std::max(0.f,outerWidth-frame.x-trackWidth-8*dp-leading);
+			changed|=Property(choice.viewport,"width",Pixels(CssExtent(viewport,viewportWidth,false)));
+		}
+		return changed;
+	}
 	bool Popup(Entry& entry, const ChoiceSpec& choice, const WidgetViewState& view, Interaction& interaction, const std::string& id, int width, int height, float ratio,
 		const std::function<double(const std::string&)>& opacity) {
 		entry.scrollReady=false;
@@ -360,9 +377,26 @@ struct ValueControlView::Impl {
 			const float gutter=choice.scrollbar?Element(choice.scrollbar->track)->GetBox().GetSize(Rml::BoxArea::Border).x+8*ratio:0;
 			const float minimumWidth=std::max(AuthoredLength(choice.popup,"min-width",ratio,0),minimumRowWidth+frame.x+viewportFrame.x+gutter);
 			PopupRegion region;PopupPlacement placement;
-			if (!entry.placementContext || !Region(entry,width,height,ratio,region,true) ||
-				!PlacePopup(region,{anchor.Left(),anchor.Top(),anchor.Width(),anchor.Height()},std::max(anchor.Width(),minimumWidth),
-					minimumWidth,std::max(desired,minimumRow+chrome),minimumRow+chrome,placement)) {
+			if (!entry.placementContext || !Region(entry,width,height,ratio,region,true)) {
+				interaction.InvalidateChoicePopup(id,view.popupToken);
+				return Display(choice.popup,false)||changed;
+			}
+			const PopupRect anchorBox{anchor.Left(),anchor.Top(),anchor.Width(),anchor.Height()};
+			const float preferredWidth=std::max(anchor.Width(),minimumWidth);
+			const bool fits=PlacePopup(region,anchorBox,preferredWidth,minimumWidth,
+				std::max(desired,minimumRow+chrome),minimumRow+chrome,placement);
+			if (!fits && !PlacePopup(region,anchorBox,preferredWidth,minimumWidth,1,1,placement)) {
+				interaction.InvalidateChoicePopup(id,view.popupToken);
+				return Display(choice.popup,false)||changed;
+			}
+			// Rows still describe the previous width. Resolve the new width and
+			// its scrollbar gutter before testing a complete row's height, or a
+			// formerly wrapped translation can incorrectly refuse a valid opening.
+			// This pass remains unmeasured and cannot authorize an option action.
+			const bool widthChanged=PopupWidth(choice,static_cast<float>(placement.rectangle.width),ratio);
+			changed|=widthChanged;
+			if (!fits) {
+				if (widthChanged) return true;
 				interaction.InvalidateChoicePopup(id,view.popupToken);
 				return Display(choice.popup,false)||changed;
 			}
@@ -381,7 +415,7 @@ struct ValueControlView::Impl {
 		const auto documentOffset = document->GetAbsoluteOffset(Rml::BoxArea::Padding);
 		changed |= Property(choice.popup,"left",Pixels(x-documentOffset.x-popup->GetBox().GetEdge(Rml::BoxArea::Margin,Rml::BoxEdge::Left)));
 		changed |= Property(choice.popup,"top",Pixels(y-documentOffset.y-popup->GetBox().GetEdge(Rml::BoxArea::Margin,Rml::BoxEdge::Top)));
-		changed |= Property(choice.popup,"width",Pixels(CssExtent(popup,outerWidth,false)));
+		changed |= PopupWidth(choice,outerWidth,ratio);
 		changed |= Property(choice.popup,"height",Pixels(CssExtent(popup,outerHeight,true)));
 		changed |= Property(choice.viewport,"height",Pixels(CssExtent(viewport,visibleHeight+viewportFrame.y,true)));
 		changed |= Property(choice.content,"top",Pixels(-scroll));

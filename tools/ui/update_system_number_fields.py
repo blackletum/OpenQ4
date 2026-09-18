@@ -67,7 +67,10 @@ def draft_guards(result):
     conjunction = lambda *args: reduce(lambda a,b: op('&&',a,b),args)
     pending = state('ui.numberDraftsPending')
     result['state']['ui.numberDraftsPending'] = {'type': 'boolean', 'initial': False}
-    result['state']['ui.numberDraftMessage'] = {'type': 'string', 'initial': '#str_229982'}
+    result['state']['ui.numberDraftMessage'] = {'type': 'string', 'initial': '#str_230007'}
+    result['presentationVariables']['numberDraftsPending'] = {
+        'type': 'boolean', 'initial': False, 'value': state('ui.numberDraftsPending')}
+    result['aliases']['numberDraftsPending'] = {'variable': 'numberDraftsPending'}
     result['actions']['focusNumberDraft'] = {'operation': 'ui.numberDrafts.focus', 'arguments': {}}
     editing = conjunction(state('settings.open'),op('==',state('settings.phase'),1))
     closed = conjunction(op('!',state('settings.open')),op('==',state('settings.phase'),0))
@@ -117,23 +120,28 @@ def compose(document):
         label['properties']['margin-bottom'] = length(8)
         plate = copy.deepcopy(nodes[slider_id + '-plate'])
         slider['children'] = [child for child in slider['children'] if child['id'] not in (label['id'], plate['id'])]
-        slider['properties'].update({'width': length(160), 'min-width': length(128), 'height': length(36),
-            'min-height': length(36), 'padding': length(7), 'margin-bottom': length(0),
+        # The paired Number viewport grows with independent text scale. Match
+        # its height so focus reveal includes the whole adjacent value, and
+        # center the fixed-size track inside the enlarged hit/focus rectangle.
+        slider['properties'].update({'width': length(160), 'min-width': length(128), 'height': length(2.25, 'em'),
+            'min-height': length(2.25, 'em'), 'padding': length(7), 'margin-bottom': length(0),
+            'display': keyword('flex'), 'flex-direction': keyword('column'), 'justify-content': keyword('center'),
             'flex-grow': value('number', 2), 'flex-shrink': value('number', 1)})
         for child in slider['children']:
             if child['id'] == control['parts']['value']: child['properties']['display'] = keyword('none')
-            if child['id'] == control['parts']['track']: child['properties']['margin-top'] = length(0)
+            if child['id'] == control['parts']['track']:
+                child['properties'].update({'margin-top': length(0), 'flex-shrink': value('number', 0)})
         # These IDs remain stable for edit/selection/proposal ownership. The
         # Number is a sibling, never an illegally nested semantic control.
         parts = {part: number_id + '-' + part for part in ('viewport', 'text', 'selection', 'caret', 'composition', 'validation')}
         field_plate = copy.deepcopy(plate); field_plate['id'] = number_id + '-plate'
         field_focus = copy.deepcopy(nodes[slider_id + '-focus']); field_focus['id'] = number_id + '-focus'
         text = node(parts['text'], 'text', base('absolute') | {
-            'left': length(10), 'top': length(6), 'width': length(4096), 'height': length(23),
-            'text': value('text', '#str_229982'), 'font-family': value('font', 'marine'),
+            'left': length(10), 'top': length(.375, 'em'), 'width': length(4096), 'height': length(1.4375, 'em'),
+            'text': value('text', '#str_230007'), 'font-family': value('font', 'marine'),
             'font-size': length(16), 'line-height': length(23),
             'color': value('color', [1, 1, 1, .88]), 'white-space': keyword('pre'), 'text-align': keyword('left')})
-        viewport = node(parts['viewport'], properties={'width': length(100, '%'), 'height': length(36),
+        viewport = node(parts['viewport'], properties={'width': length(100, '%'), 'height': length(2.25, 'em'),
             'overflow': keyword('hidden')}, children=[field_plate, field_focus,
             paint(parts['selection'], 0, 23, [.8902, .5373, 0, .4]), text,
             paint(parts['caret'], 1, 23, [1, 1, 1, 1]), paint(parts['composition'], 0, 1, [.8902, .5373, 0, 1])])
@@ -141,8 +149,8 @@ def compose(document):
             'text': value('text', validation_key), 'font-family': value('font', 'marine'),
             'font-size': length(14), 'line-height': length(20), 'white-space': keyword('normal'),
             'color': value('color', [.8941, .4275, .3373, 1])})
-        number = node(number_id, properties={'width': length(112), 'min-width': length(96),
-            'min-height': length(36), 'flex-grow': value('number', 1), 'flex-shrink': value('number', 1)}, children=[viewport, validation])
+        number = node(number_id, properties={'width': length(7, 'em'), 'min-width': length(6, 'em'),
+            'min-height': length(2.25, 'em'), 'flex-grow': value('number', 1), 'flex-shrink': value('number', 1)}, children=[viewport, validation])
         number['control'] = {'role': 'number', 'label': control['label'], 'action': control['action'],
             'value': copy.deepcopy(control['value']), 'minimum': control['minimum'], 'maximum': control['maximum'],
             'exponent': True, 'maxBytes': 128, 'parts': parts,

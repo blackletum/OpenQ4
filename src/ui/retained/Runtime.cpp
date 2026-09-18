@@ -488,8 +488,9 @@ private:
 	Host& host;
 };
 
-// Transitional font backend using the engine's scalable Quake 4 font service.
-// General shaping and arbitrary-size rasterisation are subsequent stage 2 work.
+// Output-sized glyphs come from the host's retained font cache. Shared runs
+// keep measurement, number-field geometry and submitted glyphs consistent.
+// Style/weight selection and shaping remain separate font-service work.
 class Fonts final : public Rml::FontEngineInterface {
 	struct Face { std::string family; int size; Rml::FontMetrics metrics; };
 public:
@@ -654,7 +655,14 @@ struct Host::Shared { LayerPool layers; };
 Host::Host() = default;
 Host::~Host() = default;
 
-float Viewport::DpRatio() const { return Positive(displayScale) * std::clamp(Positive(userScale), .75f, 2.f); }
+float Viewport::DpRatio() const { return Positive(displayScale) * std::clamp(Positive(userScale), .75f, 2.f) * std::min(Positive(fitScale), 1.f); }
+void Viewport::FitToMinimum(float widthDp, float heightDp) {
+	fitScale = 1;
+	if (width <= 0 || height <= 0 || !std::isfinite(widthDp) || !std::isfinite(heightDp) || widthDp <= 0 || heightDp <= 0) return;
+	const float requested = DpRatio();
+	fitScale = std::min({1.f, width / (widthDp * requested), height / (heightDp * requested)});
+}
+float Viewport::TextRatio() const { return std::clamp(Positive(textScale), 1.f, 2.f); }
 void Viewport::WindowToDocument(float x, float y, float& outX, float& outY) const {
 	outX = x * Positive(pixelDensityX) - originX;
 	outY = y * Positive(pixelDensityY) - originY;
@@ -691,6 +699,9 @@ struct Runtime::Impl {
 	bool scrollLayoutDirty=false, preserveRestoredScroll=false;
 	NumberControlView numberView;
 	Viewport viewport;
+	std::string focusLayoutId;
+	std::vector<Rml::Vector2f> focusLayout;
+	bool focusLayoutVisible = false;
 	std::vector<std::string> controls;
 	float pointerX = 0, pointerY = 0;
 	float windowPointerX = 0, windowPointerY = 0;
@@ -765,7 +776,9 @@ struct Runtime::Impl {
 	void CollectInputEligibility(const Node& node, bool inherited = true) {
 		const auto display = PresentedProperty({node.id,"display"});
 		const auto events = PresentedProperty({node.id,"pointer-events"});
-		const bool allowed = inherited && (!display || display->text != "none") && (!events || events->text != "none");
+		auto* element = document->GetElementById(node.id);
+		const bool maskArea = !node.mask || (element && static_cast<VectorElement*>(element)->HasMaskArea());
+		const bool allowed = inherited && maskArea && (!display || display->text != "none") && (!events || events->text != "none");
 		inputAllowed[node.id] = allowed;
 		for (const auto& child : node.children) CollectInputEligibility(child,allowed);
 	}
@@ -796,6 +809,75 @@ struct Runtime::Impl {
 		if (std::isfinite(seconds)) time = std::max(time,seconds);
 		for (const auto& change : interaction.TakeFeedback()) motion.Play(change.timeline,time);
 	}
+	Rml::Element* NumberViewport(Rml::Element* element) const {
+		const auto* node = element && canonical ? canonical->Model().FindNode(element->GetId()) : nullptr;
+		const auto* number = node && node->control ? std::get_if<NumberSpec>(&node->control->widget) : nullptr;
+		return number ? document->GetElementById(number->viewport) : nullptr;
+	}
+	static bool ProjectedBounds(Rml::Element* element, Rml::Element* parent, Rml::Vector2f& minimum, Rml::Vector2f& maximum) {
+		Rml::Array<Rml::Vector2f,4> quad;
+		if (!element || !element->IsVisible(true) || !Rml::ElementUtilities::GetBorderBoxQuad(quad,element)) return false;
+		const auto origin = parent->GetAbsoluteOffset(Rml::BoxArea::Border) + Rml::Vector2f(parent->GetClientLeft(),parent->GetClientTop());
+		for (size_t i = 0; i < quad.size(); ++i) {
+			auto point = quad[i];
+			if (!parent->Project(point) || !std::isfinite(point.x) || !std::isfinite(point.y)) return false;
+			point -= origin;
+			if (i == 0) minimum = maximum = point;
+			else { minimum.x = std::min(minimum.x,point.x); minimum.y = std::min(minimum.y,point.y);
+				maximum.x = std::max(maximum.x,point.x); maximum.y = std::max(maximum.y,point.y); }
+		}
+		return true;
+	}
+	bool FocusBounds(Rml::Element* element, Rml::Element* parent, Rml::Vector2f& minimum, Rml::Vector2f& maximum) const {
+		if (!ProjectedBounds(element,parent,minimum,maximum)) return false;
+		// A translated label or validation message can make a Number control
+		// taller than its scroll body. Reveal the editable value on oversized
+		// axes; retain the complete control, including its label, wherever it fits.
+		const bool oversizedX = maximum.x-minimum.x > parent->GetClientWidth();
+		const bool oversizedY = maximum.y-minimum.y > parent->GetClientHeight();
+		if (auto* viewport = NumberViewport(element); viewport && (oversizedX || oversizedY)) {
+			Rml::Vector2f low, high;
+			if (!ProjectedBounds(viewport,parent,low,high)) return false;
+			if (oversizedX) { minimum.x = low.x; maximum.x = high.x; }
+			if (oversizedY) { minimum.y = low.y; maximum.y = high.y; }
+		}
+		return true;
+	}
+	std::vector<Rml::Vector2f> FocusLayout() const {
+		std::vector<Rml::Vector2f> result;
+		if (!document) return result;
+		auto* target = document->GetElementById(interaction.Focused());
+		if (auto* viewport = NumberViewport(target)) target = viewport;
+		for (auto* element = target; element && element != document; element = element->GetParentNode()) {
+			// Relative layout and client extents exclude scroll offsets. A user
+			// can deliberately scroll away without an unchanged focus undoing it.
+			result.push_back(element->GetRelativeOffset(Rml::BoxArea::Border));
+			result.push_back(element->GetBox().GetSize(Rml::BoxArea::Border));
+			result.push_back({element->GetClientWidth(),element->GetClientHeight()});
+		}
+		return result;
+	}
+	bool FocusVisible() const {
+		if (!document) return false;
+		auto* element = document->GetElementById(interaction.Focused());
+		Rml::Array<Rml::Vector2f,4> quad;
+		if (!element || !element->IsVisible(true) || !Rml::ElementUtilities::GetBorderBoxQuad(quad,element)) return false;
+		for (auto* parent = element->GetParentNode(); parent; parent = parent->GetParentNode()) {
+			const auto& style = parent->GetComputedValues();
+			using Rml::Style::Overflow;
+			const bool x = style.overflow_x() != Overflow::Visible && style.overflow_x() != Overflow::Hidden;
+			const bool y = style.overflow_y() != Overflow::Visible && style.overflow_y() != Overflow::Hidden;
+			if (!x && !y) continue;
+			Rml::Vector2f low, high;
+			if (!FocusBounds(element,parent,low,high)) return false;
+			if ((x && (low.x < -.5f || high.x > parent->GetClientWidth()+.5f)) ||
+				(y && (low.y < -.5f || high.y > parent->GetClientHeight()+.5f))) return false;
+		}
+		return true;
+	}
+	void RememberFocusLayout() {
+		focusLayoutId=interaction.Focused();focusLayout=FocusLayout();focusLayoutVisible=FocusVisible();
+	}
 	bool RevealFocus(bool preserveAuthoredAxes = false) {
 		if (!document || !context) return false;
 		auto* element = document->GetElementById(interaction.Focused());
@@ -816,21 +898,8 @@ struct Runtime::Impl {
 			const bool scrollY = !(preserveAuthoredAxes && scrollView.OwnsAxis(parent,true)) && style.overflow_y() != Overflow::Visible && style.overflow_y() != Overflow::Hidden &&
 				parent->GetScrollHeight() > parent->GetClientHeight();
 			if (!scrollX && !scrollY) continue;
-			Rml::Array<Rml::Vector2f,4> quad;
-			if (!Rml::ElementUtilities::GetBorderBoxQuad(quad,element)) break;
-			const auto origin = parent->GetAbsoluteOffset(Rml::BoxArea::Border) +
-				Rml::Vector2f(parent->GetClientLeft(),parent->GetClientTop());
 			Rml::Vector2f minimum, maximum;
-			bool valid = true;
-			for (size_t i = 0; i < quad.size(); ++i) {
-				auto point = quad[i];
-				if (!parent->Project(point) || !std::isfinite(point.x) || !std::isfinite(point.y)) { valid = false; break; }
-				point -= origin;
-				if (i == 0) minimum = maximum = point;
-				else { minimum.x = std::min(minimum.x,point.x); minimum.y = std::min(minimum.y,point.y);
-					maximum.x = std::max(maximum.x,point.x); maximum.y = std::max(maximum.y,point.y); }
-			}
-			if (!valid) break;
+			if (!FocusBounds(element,parent,minimum,maximum)) break;
 			const auto delta = [margin](float low, float high, float client) {
 				if (!std::isfinite(client) || client <= 0) return 0.f;
 				// Reduce the inset for a nearly full-size control. An oversized
@@ -853,11 +922,30 @@ struct Runtime::Impl {
 				context->GetRootElement()->UpdateGeometryForProjection();
 			}
 		}
+		RememberFocusLayout();
 		return changed;
 	}
-	std::string HitControl() const {
-		if (!pointerPresent || !canonical || !document || pointerX < 0 || pointerY < 0 || pointerX >= viewport.width || pointerY >= viewport.height) return {};
-		auto* element = context->GetElementAtPoint({pointerX,pointerY},nullptr,document);
+	Rml::Element* HitElement() const {
+		if (!pointerPresent || !context || !document || pointerX < 0 || pointerY < 0 || pointerX >= viewport.width || pointerY >= viewport.height) return nullptr;
+		const Rml::Vector2f point(pointerX,pointerY);
+		std::map<Rml::Element*,bool> checked;
+		const auto allowed = [&](Rml::Element* element) {
+			for (auto* ancestor = element; ancestor && ancestor != document; ancestor = ancestor->GetParentNode()) {
+				if (ancestor->GetTagName() != "q4-node" && ancestor->GetTagName() != "q4-vector") continue;
+				// Popup parts have live visibility owned by the widget view; their
+				// canonical closed-state display value is not the current layout.
+				// Owning controls still enforce semantic eligibility at dispatch.
+				if (!ancestor->IsVisible() || ancestor->GetComputedValues().pointer_events() == Rml::Style::PointerEvents::None) return false;
+				auto [entry,inserted] = checked.emplace(ancestor,false);
+				if (inserted) entry->second = static_cast<VectorElement*>(ancestor)->AllowsMaskedPoint(point);
+				if (!entry->second) return false;
+			}
+			return true;
+		};
+		return context->GetElementAtPoint(point,nullptr,document,allowed);
+	}
+	std::string HitControl(Rml::Element* element) const {
+		if (!canonical) return {};
 		for (; element && element != document; element = element->GetParentNode()) {
 			const auto* node = canonical->Model().FindNode(element->GetId());
 			if (node && node->control) {
@@ -913,9 +1001,8 @@ struct Runtime::Impl {
 		}
 		interaction.SetBounds(bounds,freshLayout);
         valueView.ValidatePlacement(interaction,viewport.width,viewport.height,viewport.DpRatio(),refreshPopup && !freshLayout);
-		const auto hit = HitControl();
-		auto* element = pointerPresent && pointerNavigation && pointerX >= 0 && pointerY >= 0 && pointerX < viewport.width && pointerY < viewport.height ?
-			context->GetElementAtPoint({pointerX,pointerY},nullptr,document) : nullptr;
+		auto* element = pointerNavigation ? HitElement() : nullptr;
+		const auto hit = HitControl(element);
 		const auto scrollbar=scrollView.PointerPart(element,pointerX,pointerY,interaction);
         if(!scrollbar.control.empty()) interaction.PointerPart(scrollbar.control,scrollbar.invalidProjection?std::nullopt:scrollbar.fraction,{},scrollbar.thumb);
         else {
@@ -930,11 +1017,24 @@ struct Runtime::Impl {
 	bool ApplyMotion(const RuntimeCanvasIdentity* expected=nullptr) {
         const auto current=[&]{return !expected || (ownerCanvas->alive && !ownerCanvas->retiring && ownerCanvas->identity==*expected);};
         if (!document || !canonical || !current()) return false;
+		// The inherited document default participates once. Explicit absolute
+		// typography below replaces it; em values use the resulting parent/font
+		// metrics and must never receive this multiplier a second time.
+		Value defaultFont; defaultFont.type=ValueType::Length; defaultFont.unit="dp";
+		defaultFont.data[0]=16*viewport.TextRatio();
+		const auto defaultCss=defaultFont.Css();
+		if (applied[{"","font-size"}]!=defaultCss) {
+			document->SetProperty("font-size",defaultCss); applied[{"","font-size"}]=defaultCss;
+		}
 		for (const auto& [key,animated] : motion.Values()) {
 			const auto bound = state.Properties().find(key);
 			const auto& value = bound == state.Properties().end() ? animated : bound->second;
 			const bool opacity = key.second == "opacity";
-			const auto string = opacity ? (value.data[0] < 1 ? "opacity("+value.Css()+")" : "none") :
+			std::string string;
+			if (value.type==ValueType::Length && (value.unit=="dp" || value.unit=="px") &&
+				(key.second=="font-size" || key.second=="line-height" || key.second=="letter-spacing")) {
+				auto scaled=value; scaled.data[0]*=viewport.TextRatio(); string=scaled.Css();
+			} else string = opacity ? (value.data[0] < 1 ? "opacity("+value.Css()+")" : "none") :
 				value.type == ValueType::Text ? host.Translate(value.text) : value.Css();
 			if(!current())return false;
 			auto previous = applied.find(key);
@@ -1010,6 +1110,8 @@ std::unique_ptr<Runtime::PreparedDocument> Runtime::PrepareDocument(RuntimeCanva
         if(!std::isfinite(options.seconds) || options.seconds<0 || options.viewport.width<=0 || options.viewport.height<=0 ||
             !std::isfinite(options.viewport.displayScale) || options.viewport.displayScale<=0 ||
             !std::isfinite(options.viewport.userScale) || options.viewport.userScale<=0 ||
+            !std::isfinite(options.viewport.textScale) || options.viewport.textScale<=0 ||
+            !std::isfinite(options.viewport.fitScale) || options.viewport.fitScale<=0 ||
             !std::isfinite(options.viewport.pixelDensityX) || options.viewport.pixelDensityX<=0 ||
             !std::isfinite(options.viewport.pixelDensityY) || options.viewport.pixelDensityY<=0 ||
             !std::isfinite(options.viewport.originX) || !std::isfinite(options.viewport.originY))return {};
@@ -1086,6 +1188,7 @@ void Runtime::Shutdown() {
 	if (!impl->initialized) return;
 	impl->valueView.Reset();
 	impl->scrollView.Reset();impl->scrollLayoutDirty=impl->preserveRestoredScroll=false;
+	impl->focusLayoutId.clear();impl->focusLayout.clear();impl->focusLayoutVisible=false;
 	impl->numberView.Reset();
 	{
 		ContextClock clock(*impl->services,impl->time,impl->strictPreparation?&impl->preparationFailed:nullptr);
@@ -1112,6 +1215,7 @@ void Runtime::CloseDocument() {
 	impl->sourcePath.clear();
 	impl->valueView.Reset();
 	impl->scrollView.Reset();impl->scrollLayoutDirty=impl->preserveRestoredScroll=false;
+	impl->focusLayoutId.clear();impl->focusLayout.clear();impl->focusLayoutVisible=false;
 	impl->numberView.Reset();
 	impl->canonical.reset(); impl->applied.clear(); impl->motion.Reset({});
 	impl->state = {}; impl->appliedStateRevision = 0; impl->stateError.clear();
@@ -1561,8 +1665,9 @@ bool Runtime::Layout(const Viewport& viewport,double seconds) {
         impl->viewport.width=viewport.width;impl->viewport.height=viewport.height;
 		impl->interaction.InvalidateLayout(); impl->interaction.Cancel(); impl->Feedback(seconds); return false;
 	}
+	const bool textScaleChanged = impl->viewport.TextRatio() != viewport.TextRatio();
 	const bool viewportChanged = impl->viewport.width != viewport.width || impl->viewport.height != viewport.height ||
-		impl->viewport.DpRatio() != viewport.DpRatio();
+		impl->viewport.DpRatio() != viewport.DpRatio() || textScaleChanged;
 	impl->scrollView.PreserveDensity(viewport.DpRatio());
 	impl->viewport = viewport;
 	if (impl->pointerPresent) viewport.WindowToDocument(impl->windowPointerX,impl->windowPointerY,impl->pointerX,impl->pointerY);
@@ -1583,8 +1688,10 @@ bool Runtime::Layout(const Viewport& viewport,double seconds) {
 		const bool focusChanged = before != impl->interaction.Focused();
 		// Preserve restored/reflowed offsets only on axes owned by authored bars.
 		// Other axes and legacy ancestors still reveal the current control.
-		const bool preserveAuthoredAxes = impl->preserveRestoredScroll || (viewportChanged && !focusChanged);
-		const bool revealed = (focusChanged || (pass == 0 && (viewportChanged || impl->preserveRestoredScroll))) && impl->RevealFocus(preserveAuthoredAxes);
+		const bool preserveAuthoredAxes = !textScaleChanged && (impl->preserveRestoredScroll || (viewportChanged && !focusChanged));
+		const bool focusReflow = impl->focusLayoutVisible && !viewportChanged && !impl->preserveRestoredScroll &&
+			impl->focusLayoutId == impl->interaction.Focused() && impl->focusLayout != impl->FocusLayout();
+		const bool revealed = (focusChanged || focusReflow || (pass == 0 && (viewportChanged || impl->preserveRestoredScroll))) && impl->RevealFocus(preserveAuthoredAxes);
 		if (focusChanged) impl->ApplyMotion();
 		const auto* focusedNode = impl->canonical ? impl->canonical->Model().FindNode(impl->interaction.Focused()) : nullptr;
 		auto* focusedNumber = focusedNode && focusedNode->control && focusedNode->control->role == ControlRole::Number ?
@@ -1603,6 +1710,8 @@ bool Runtime::Layout(const Viewport& viewport,double seconds) {
 		}
 	}
 	impl->preserveRestoredScroll=false;
+	impl->context->GetRootElement()->UpdateGeometryForProjection();
+	impl->RememberFocusLayout();
 	return true;
 }
 void Runtime::Frame(const Viewport& viewport, double seconds) {
@@ -1676,7 +1785,9 @@ void Runtime::PointerMove(float x, float y, double seconds) {
 }
 void Runtime::PointerButton(bool down, double seconds) {
     if(!Mutate())return;
- impl->pointerNavigation = true; if(!impl->UpdateInteraction(seconds,false,true))return; impl->interaction.Pointer(down); impl->ApplyScrollCommands(); impl->Feedback(seconds); }
+ impl->pointerNavigation = true; if(!impl->UpdateInteraction(seconds,false,true))return; impl->interaction.Pointer(down); impl->ApplyScrollCommands();
+ if(down) impl->RememberFocusLayout();
+ impl->Feedback(seconds); }
 void Runtime::PointerWheel(int rows, double seconds) {
     if(!Mutate())return;
 
@@ -1700,14 +1811,17 @@ void Runtime::PointerWheel(int rows, double seconds) {
 	}
 	if (!impl->pointerPresent || !impl->context || !impl->document || impl->pointerX < 0 || impl->pointerY < 0 ||
 		impl->pointerX >= impl->viewport.width || impl->pointerY >= impl->viewport.height) return;
-	if (auto* hit = impl->context->GetElementAtPoint({impl->pointerX,impl->pointerY},nullptr,impl->document)) {
+	if (auto* hit = impl->HitElement()) {
         const auto target=impl->scrollView.WheelTarget(hit,impl->interaction);
         if(!target.empty()) {
+            impl->focusLayoutVisible=false;
             impl->interaction.ScrollPulse(target,rows>0?ScrollStep::LineForward:ScrollStep::LineBackward);
             impl->ApplyScrollCommands();impl->Feedback(seconds);return;
         }
-        if (auto* scroll = hit->GetClosestScrollableContainer(); scroll && impl->interaction.AllowsNode(scroll->GetId()))
+        if (auto* scroll = hit->GetClosestScrollableContainer(); scroll && impl->interaction.AllowsNode(scroll->GetId())) {
+            impl->focusLayoutVisible=false;
             scroll->SetScrollTop(scroll->GetScrollTop()+(rows > 0 ? 36.f : -36.f)*impl->viewport.DpRatio());
+        }
     }
 }
 void Runtime::MenuAction(MenuInput input, bool down, double seconds) {

@@ -49,7 +49,8 @@ bool HasScrollOffset(const Control& control) {
 bool ValidNumber(const Control& control) {
 	const auto* spec = std::get_if<NumberSpec>(&control.widget);
 	return spec && control.value && control.value->type == 0 && std::isfinite(spec->minimum) &&
-		std::isfinite(spec->maximum) && spec->minimum <= spec->maximum && spec->maxBytes > 0 && spec->maxBytes <= TextInputMaxBytes;
+		std::isfinite(spec->maximum) && spec->minimum <= spec->maximum &&
+		(!spec->integer || std::ceil(spec->minimum) <= std::floor(spec->maximum)) && spec->maxBytes > 0 && spec->maxBytes <= TextInputMaxBytes;
 }
 // JSON numeric authoring expresses a decimal lattice. Floating multiply/add
 // can land one ULP beside that lattice (3 * .025 -> .07500000000000001).
@@ -83,7 +84,7 @@ double SliderTickValue(const SliderSpec& spec,long double tick) {
 }
 TextNumberPolicy NumberPolicy(const Control& control) {
 	const auto& spec = std::get<NumberSpec>(control.widget);
-	return {spec.minimum,spec.maximum,spec.exponent};
+	return {spec.minimum,spec.maximum,spec.exponent,spec.integer};
 }
 bool NativeUnsettled(const NativeTextEditorView& view) {
 	return view.barrier.collectionOpen || view.barrier.group || view.awaitingSettlement || !view.presentation.compositions.empty();

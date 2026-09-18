@@ -65,7 +65,8 @@
 // 15 - Private strict first-device initialization for durable display recovery.
 // 16 - Checked image/material policy restart receipt (private renderer service).
 // 17 - Owned portable image recovery preparation/capture and checked consumption.
-#define RENDER_API_VERSION			17
+// 18 - Append-only retained output-size font metrics/glyph/reset services.
+#define RENDER_API_VERSION			18
 #define RENDER_API_ENTRY_POINT		"GetRenderAPI"
 
 class idSys;

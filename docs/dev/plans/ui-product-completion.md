@@ -65,6 +65,47 @@ declaring that choice proven for the whole product.
 
 ### Current implementation progress
 
+The [17 September audit and masked-input repair](../ui/masked-input-review.md)
+reviews the current branch against M1–M6. It connects canonical mask coverage to
+stacking-order pointer queries, compound controls and wheel routing, and excludes
+empty/transparent masked subtrees from focus. `INP-007` stays partial; full
+intersection-aware focus, transformed overflow clipping and all screen/editor/
+corpus/platform gates remain required. Historical revision-bound findings below
+retain their original scope.
+
+The same audit repairs stale settings status IDs left by the language-table
+merge and restores the SYSTEM capture and native-input header validation paths.
+No requirement status or product acceptance changes.
+
+The [independent text-scale increment](../ui/text-scale.md) adds 100–200%
+typography without changing fixed furniture or input coordinates, with responsive
+SYSTEM fields/columns and modal actions. Dropdown layout measures its new width
+before deciding whether a full row fits. The [interface preference increment](../ui/interface-size-preferences.md)
+adds ordinary transactional scale choices/reset and root-menu fitting. Complete
+font services, the native editor and all screen/platform acceptance remain
+outstanding. `LAY-003` and `LAY-004` are partial. The subsequent
+[output-size font increment](../ui/output-size-fonts.md) makes `TXT-002` partial
+with physical-size glyph atlases and shared measurement/drawing metrics.
+Style/weight, animated transform density and complete text services remain open.
+The [paired-field visibility repair](../ui/paired-field-focus.md) keeps the
+brightness and ambient sliders aligned with their numeric readouts at enlarged
+text sizes. It adds bounded `LAY-004` evidence without accepting the screen.
+
+The [SYSTEM display-control increment](../ui/display-controls.md) adds fullscreen,
+borderless, fullscreen policy and MSAA drafts with the existing display recovery
+flow. Read-only backend availability prevents unsupported MSAA requests through
+the strict settings path. Dynamic catalogs, dependent-setting presentation,
+complete effects, actual fullscreen/window-manager qualification and the editor
+round trip remain open; `BEH-002` and `FLOW-002` stay partial.
+
+The [SYSTEM dimension-field increment](../ui/dimension-controls.md) adds the four
+window/custom fullscreen editors with exact whole-pixel input and dependent
+availability. Individually valid drafts may temporarily form an unsupported
+display request; Apply remains disabled until the complete request validates.
+Custom dimensions select Custom mode in one atomic edit. Dynamic capability
+choices, visible fullscreen, native input, remaining effects and the full
+screen/editor gate stay open.
+
 The historical [typed value-control increment](../ui/value-controls.md), based on engine
 `b3bf279b4347329cd8a45a4533536adc0510e860`, adds canonical toggle, stepped slider
 and constrained choice controls with authoritative readback, immutable typed

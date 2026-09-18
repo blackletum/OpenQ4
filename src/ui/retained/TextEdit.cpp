@@ -46,6 +46,34 @@ bool Replacement(std::string_view source, const TextEditPolicy& policy, std::str
 	if (!FieldText(candidate,policy,error)) return false;
 	out = std::move(candidate); return true;
 }
+bool ValidNumberPolicy(const TextNumberPolicy& policy) {
+	return std::isfinite(policy.minimum) && std::isfinite(policy.maximum) && policy.minimum <= policy.maximum &&
+		(!policy.integer || std::ceil(policy.minimum) <= std::floor(policy.maximum));
+}
+// Called only after decimal grammar validation. Count the decimal places that
+// would remain after shifting by the exponent; binary64 conversion could hide
+// a fractional suffix (for example, 1280.00000000000000001).
+bool DecimalInteger(std::string_view text) {
+	int fraction = 0, trailingZeros = 0, exponent = 0;
+	bool point = false, nonzero = false;
+	std::size_t at = (text.front() == '+' || text.front() == '-') ? 1 : 0;
+	for (; at < text.size() && text[at] != 'e' && text[at] != 'E'; ++at) {
+		if (text[at] == '.') { point = true; continue; }
+		if (point) ++fraction;
+		if (text[at] == '0') ++trailingZeros;
+		else { nonzero = true; trailingZeros = 0; }
+	}
+	if (!nonzero) return true;
+	if (at < text.size()) {
+		++at; const bool negative = text[at] == '-';
+		if (text[at] == '+' || text[at] == '-') ++at;
+		// The input limit bounds every relevant mantissa count. Saturation avoids
+		// overflow without letting an arbitrarily long exponent wrap its sign.
+		for (; at < text.size(); ++at) exponent = std::min(int(TextInputMaxBytes)+1,exponent*10+(text[at]-'0'));
+		if (negative) exponent = -exponent;
+	}
+	return exponent >= fraction-trailingZeros;
+}
 }
 
 bool TextEditBuffer::Reset(std::string_view text, const TextEditPolicy& candidatePolicy, std::string& error) {
@@ -156,7 +184,7 @@ bool TextEditBuffer::Redo(std::string& error) {
 }
 
 TextNumberStatus ParseTextNumber(std::string_view text, const TextNumberPolicy& policy, double& value) {
-	if (!std::isfinite(policy.minimum) || !std::isfinite(policy.maximum) || policy.minimum > policy.maximum)
+	if (!ValidNumberPolicy(policy))
 		return TextNumberStatus::InvalidPolicy;
 	if (text.empty()) return TextNumberStatus::Empty;
 	if (text.size() > TextInputMaxBytes) return TextNumberStatus::Invalid;
@@ -178,6 +206,7 @@ TextNumberStatus ParseTextNumber(std::string_view text, const TextNumberPolicy& 
 		if (at == exponentStart) return at == text.size() ? TextNumberStatus::Incomplete : TextNumberStatus::Invalid;
 	}
 	if (at != text.size()) return TextNumberStatus::Invalid;
+	if (policy.integer && !DecimalInteger(text)) return TextNumberStatus::Invalid;
 	// from_chars deliberately excludes leading '+', which the field accepts.
 	if (text.front() == '+') text.remove_prefix(1);
 	double candidate = 0;
@@ -188,7 +217,7 @@ TextNumberStatus ParseTextNumber(std::string_view text, const TextNumberPolicy& 
 	value = candidate; return TextNumberStatus::Valid;
 }
 bool FormatTextNumber(double value, const TextNumberPolicy& policy, std::string& text, std::string& error) {
-	if (!std::isfinite(policy.minimum) || !std::isfinite(policy.maximum) || policy.minimum > policy.maximum)
+	if (!ValidNumberPolicy(policy))
 		return Fail(error, "Invalid numeric field policy");
 	if (!std::isfinite(value)) return Fail(error, "Cannot edit a non-finite numeric value");
 	// Fixed shortest forms of all binary64 values fit within 768 characters,

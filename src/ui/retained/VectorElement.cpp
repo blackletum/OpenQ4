@@ -3,6 +3,7 @@
 #include "Runtime.h"
 #include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/ElementUtilities.h>
 #include <RmlUi/Core/RenderManager.h>
 #include <RmlUi/Core/PropertyDefinition.h>
 #include <algorithm>
@@ -13,13 +14,65 @@ namespace openq4::ui {
 void VectorGeometry::Configure(const std::vector<VectorPath>& source, Host& owner, RuntimeStatistics& measurements) {
 	paths = source; host = &owner; statistics = &measurements;
 	compiled.clear(); geometry.clear(); valid = false; previousOpacity = -1;
+	hitGeometry.clear(); hitPrepared = hitValid = hitArea = false;
 }
 void VectorGeometry::CopyArtworkFrom(const VectorGeometry& source) {
 	paths = source.paths; host = source.host; statistics = source.statistics;
 	compiled.clear(); geometry.clear(); valid = false; previousOpacity = -1;
+	hitGeometry.clear(); hitPrepared = hitValid = hitArea = false;
 }
 void VectorElement::CopyArtworkFrom(const VectorElement& source) {
 	paint.CopyArtworkFrom(source.paint); mask.CopyArtworkFrom(source.mask);
+	hasMask = source.hasMask;
+}
+bool VectorGeometry::PrepareHitGeometry(Rml::Element& element, Rml::Vector2f& origin) {
+	if (!host || !element.GetContext()) return false;
+	const double density = element.GetContext()->GetDensityIndependentPixelRatio();
+	const auto size = element.GetBox().GetSize(Rml::BoxArea::Border);
+	Rml::Array<Rml::Vector2f,4> quad;
+	if (!std::isfinite(density) || density <= 0 || size.x <= 0 || size.y <= 0 ||
+		!Rml::ElementUtilities::GetBorderBoxQuad(quad,&element)) return false;
+	// The renderer currently supports affine canonical surfaces only. Do not
+	// invent a different projected hit surface for unsupported perspective.
+	if ((quad[2]-(quad[1]+quad[3]-quad[0])).Magnitude() > .05f) return false;
+	origin = quad[0];
+	VectorOptions options;
+	options.widthDp = size.x/density; options.heightDp = size.y/density;
+	options.transform = {(quad[1].x-origin.x)/options.widthDp,(quad[1].y-origin.y)/options.widthDp,
+		(quad[3].x-origin.x)/options.heightDp,(quad[3].y-origin.y)/options.heightDp,0,0};
+	options.antialias = false; options.tolerancePixels = .025;
+	const std::array<double,6> signature{options.widthDp,options.heightDp,options.transform.a,
+		options.transform.b,options.transform.c,options.transform.d};
+	if (hitPrepared && signature == hitSignature) { ++statistics->vectorHitCacheHits; return hitValid; }
+	hitSignature = signature; hitPrepared = true; hitValid = hitArea = false; hitGeometry.clear();
+	for (const auto& path : paths) {
+		VectorMesh mesh; std::string error;
+		++statistics->vectorHitPathsCompiled;
+		if (!TessellatePath(path,options,mesh,error)) {
+			host->Log(true,"Vector mask input "+element.GetId()+"/"+error);
+			hitGeometry.clear(); hitArea = false; return false;
+		}
+		for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+			const auto& a = mesh.vertices[mesh.indices[i]];
+			const auto& b = mesh.vertices[mesh.indices[i+1]];
+			const auto& c = mesh.vertices[mesh.indices[i+2]];
+			if (std::abs((b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x)) > 1e-20 &&
+				(a.a > 0 || b.a > 0 || c.a > 0)) hitArea = true;
+		}
+		hitGeometry.push_back(std::move(mesh));
+	}
+	hitValid = true; return true;
+}
+bool VectorGeometry::HasHitArea(Rml::Element& element) {
+	Rml::Vector2f origin;
+	return PrepareHitGeometry(element,origin) && hitArea;
+}
+bool VectorGeometry::HitTest(Rml::Element& element, Rml::Vector2f point) {
+	Rml::Vector2f origin;
+	if (!PrepareHitGeometry(element,origin) || !hitArea) return false;
+	const VectorPoint local{point.x-origin.x,point.y-origin.y};
+	for (const auto& mesh : hitGeometry) if (HitTestPaintedMesh(mesh,local)) return true;
+	return false;
 }
 void VectorGeometry::Render(Rml::Element& element, bool inheritOpacity) {
 	auto* manager = element.GetRenderManager();
@@ -109,6 +162,7 @@ void VectorGeometry::Render(Rml::Element& element, bool inheritOpacity) {
 	manager->SetState(state);
 }
 void VectorElement::Configure(const Node& node, Host& owner, RuntimeStatistics& measurements) {
+	hasMask = node.mask.has_value();
 	paint.Configure(node.paths,owner,measurements);
 	mask.Configure(node.mask ? *node.mask : std::vector<VectorPath>{},owner,measurements);
 }

@@ -1,6 +1,8 @@
 // Copyright (C) 2026 DarkMatter Productions. GPL-3.0-or-later.
 #pragma once
 #include "SettingsTransaction.h"
+#include <functional>
+#include <utility>
 
 namespace openq4::ui {
 
@@ -43,8 +45,13 @@ public:
 // and queue recovery but never recurse into a device restart or persistence.
 class SettingsDisplayController {
 public:
-	SettingsDisplayController(SettingsTransaction& transaction, SettingsDisplayHost& host)
-		: transaction(transaction), host(host) {}
+	// Blocking hosts supply the same monotonic clock used for Frame. It is
+	// sampled after restart returns, so reconstruction cannot consume the
+	// subsequent first-presentation window. Nonblocking simulations may keep
+	// using their explicitly supplied frame time by omitting the callback.
+	SettingsDisplayController(SettingsTransaction& transaction, SettingsDisplayHost& host,
+		std::function<double()> currentTime = {})
+		: transaction(transaction), host(host), currentTime(std::move(currentTime)) {}
 	SettingsResult Apply(std::uint64_t owner, double now,
 		SettingsCompletion completion = SettingsCompletion::UserConfirmation);
 	SettingsResult Keep(std::uint64_t owner, std::uint64_t request, double now);
@@ -74,8 +81,10 @@ private:
 	void Reset();
 	bool Observe(bool restoring, SettingsDisplayObservation& observed, std::string& error);
 	bool Fresh(const SettingsDisplayObservation&, const SettingsDisplayObservation&) const;
+	bool BeginPresentationWait(double frameTime, std::string& error);
 	SettingsTransaction& transaction;
 	SettingsDisplayHost& host;
+	std::function<double()> currentTime;
 	SettingsDisplayStage stage = SettingsDisplayStage::Idle;
 	SettingsResult result;
 	SettingsAttempt attempt;

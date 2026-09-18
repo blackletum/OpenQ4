@@ -29,11 +29,14 @@ void UI_SettingsRenderFrame::Presented() {}
 
 namespace {
 using namespace openq4::ui;
+double Now() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 struct Service {
     SystemSettingsHost host;
     SettingsTransaction transaction{host};
     EngineSettingsDisplayHost device{host};
-    SettingsDisplayController display{transaction,device};
+    SettingsDisplayController display{transaction,device,Now};
     std::set<std::uint64_t> owners;
     std::set<std::uint64_t> confirmationOwners;
     std::map<std::uint64_t,SettingsResult> results;
@@ -65,9 +68,6 @@ bool FrameOwner(const Service& service) {
         service.owners.contains(renderFrame.owner) && service.confirmationOwners.contains(renderFrame.owner) &&
         service.display.Owner() == renderFrame.owner && service.display.Request() == renderFrame.request;
 }
-double Now() {
-    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
-}
 bool NoArguments(const std::string& operation) {
     return operation == "settings.system.begin" || operation == "settings.system.defaults" || operation == "settings.system.autodetect" ||
         operation == "settings.system.cancel" || operation == "settings.system.apply" ||
@@ -79,10 +79,21 @@ bool RequestToken(const std::string& value, std::uint64_t& token) {
     const auto result=std::from_chars(value.data(),value.data()+value.size(),token);
     return result.ec==std::errc() && result.ptr==value.data()+value.size() && token!=0;
 }
-bool Supported(Service& service,std::uint64_t owner) {
+bool Supported(Service& service,std::uint64_t owner,bool* invalidDraft = nullptr) {
+    if (invalidDraft) *invalidDraft = false;
     const auto effects=SystemSettingsHost::ChangedEffects(service.transaction.Baseline(),service.transaction.Draft());
-    return !service.device.RecoveryActive() && (effects & ~unsigned(SystemSettingDisplayRestart))==0 &&
-        (!effects || service.confirmationOwners.contains(owner));
+    const auto samples=service.transaction.Draft().find("r_multiSamples");
+    if (samples!=service.transaction.Draft().end() && std::get<double>(samples->second)!=0 &&
+        !SettingsValueEqual(samples->second,service.transaction.Baseline().at("r_multiSamples")) &&
+        !service.device.SupportsMultisampling()) return false;
+    if (service.device.RecoveryActive() || (effects & ~unsigned(SystemSettingDisplayRestart))!=0 ||
+        (effects && !service.confirmationOwners.contains(owner))) return false;
+    std::string error;
+    bool valid = false;
+    try { valid = service.host.Validate(service.transaction.Baseline(),service.transaction.Draft(),error); }
+    catch (...) { valid = false; }
+    if (invalidDraft) *invalidDraft = !valid;
+    return valid;
 }
 void TraceExit(const Service::ExitIdentity& identity, const char* event) {
     if (cvarSystem->GetCVarBool("ui_retainedTrace"))
@@ -122,16 +133,16 @@ SettingsResult CompleteExit(Service& service, Service::ExitIdentity identity) {
 }
 const char* Message(SettingsCode code, SettingsPhase phase, bool dirty) {
     switch (code) {
-        case SettingsCode::Busy: return "#str_229983";
-        case SettingsCode::NotOpen: return "#str_229984";
+        case SettingsCode::Busy: return "#str_230008";
+        case SettingsCode::NotOpen: return "#str_230009";
         case SettingsCode::Invalid:
-        case SettingsCode::ApplyFailed: return "#str_229985";
-        case SettingsCode::Conflict: return "#str_229986";
-        case SettingsCode::RollbackFailed: return "#str_229987";
+        case SettingsCode::ApplyFailed: return "#str_230010";
+        case SettingsCode::Conflict: return "#str_230011";
+        case SettingsCode::RollbackFailed: return "#str_230012";
         default: break;
     }
-    if (phase == SettingsPhase::Confirming) return "#str_229988";
-    return dirty ? "#str_229989" : "#str_229982";
+    if (phase == SettingsPhase::Confirming) return "#str_230013";
+    return dirty ? "#str_230014" : "#str_230007";
 }
 }
 
@@ -452,7 +463,7 @@ bool UI_SettingsDispatch(std::uint64_t owner, const ActionInvocation& action, st
     else if (action.operation == "settings.system.apply" || action.operation == "settings.system.applyExit") {
         if (transaction.Owner() == owner && transaction.Phase() == SettingsPhase::Editing &&
             !Supported(service,owner))
-            result = {SettingsCode::Invalid,"System settings batch requires unsupported effects or an owning confirmation view"};
+            result = {SettingsCode::Invalid,"System settings batch is invalid, requires unsupported effects or lacks an owning confirmation view"};
         else if (SystemSettingsHost::ChangedRequiresDisplayRestart(transaction.Baseline(),transaction.Draft()))
             result=service.display.Apply(owner,Now());
         else result = transaction.Apply(owner,Now());
@@ -475,7 +486,7 @@ bool UI_SettingsDispatch(std::uint64_t owner, const ActionInvocation& action, st
 const std::map<std::string,std::size_t>& UI_SettingsStateSchema() {
     static const auto schema = [] {
         std::map<std::string,std::size_t> result{{"settings.open",1},{"settings.dirty",1},
-            {"settings.busy",1},{"settings.canApply",1},{"settings.message",2},{"settings.phase",0},
+            {"settings.busy",1},{"settings.canApply",1},{"settings.message",2},{"settings.phase",0},{"settings.msaaAvailable",1},
             {"settings.request",2},{"settings.canConfirm",1},{"settings.canRevert",1},{"settings.canRetry",1},{"settings.remaining",0},{"settings.confirmationVisible",1}};
         for (const auto& [key,type] : SystemSettingsHost::Schema()) {
             result.emplace("settings.draft."+key,type);
@@ -495,9 +506,13 @@ bool UI_SettingsRead(std::uint64_t owner, StateValues& values) {
     const bool dirty = own && transaction.Dirty();
     const auto result = service.results.find(owner);
     const auto code = result == service.results.end() ? SettingsCode::Ok : result->second.code;
+    bool invalidDraft = false;
+    const bool canApply = own && phase == SettingsPhase::Editing && dirty && !service.display.Active() &&
+        Supported(service,owner,&invalidDraft);
     StateValues candidate{{"settings.open",own},{"settings.dirty",dirty},
         {"settings.busy",(transaction.Owner() != 0 && !own) || (own && service.display.Active()) || service.device.StartupActive()},
-        {"settings.canApply",own && phase == SettingsPhase::Editing && dirty && !service.display.Active() && Supported(service,owner)},
+        {"settings.canApply",canApply},
+        {"settings.msaaAvailable",service.device.SupportsMultisampling()},
         {"settings.request",own && service.display.Active()?std::to_string(service.display.Request()):std::string()},
         {"settings.canConfirm",own && service.display.CanConfirm(Now())},
         {"settings.canRevert",own && service.display.CanRevert()},
@@ -506,6 +521,7 @@ bool UI_SettingsRead(std::uint64_t owner, StateValues& values) {
         {"settings.confirmationVisible",own && service.display.ConfirmationVisible()},
         {"settings.phase",static_cast<double>(phase)},
         {"settings.message",std::string(Message(code,phase,dirty))}};
+    if (invalidDraft && code == SettingsCode::Ok) candidate["settings.message"] = std::string("#str_230023");
     if (own) switch (service.display.Stage()) {
         case SettingsDisplayStage::QueuedApply: case SettingsDisplayStage::AwaitApply:
             candidate["settings.message"]=std::string("#str_229990"); break;

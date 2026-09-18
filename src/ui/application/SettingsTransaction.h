@@ -39,6 +39,11 @@ public:
 	virtual bool Read(StateValues& values, std::string& error) = 0;
 	virtual bool Defaults(StateValues& values, std::string& error) = 0;
 	virtual bool Validate(const StateValues& baseline, const StateValues& candidate, std::string& error) = 0;
+	// Drafts may contain an intermediate combination of individually valid
+	// fields. Apply/Prepare/Execute still call Validate for the complete target.
+	// The default preserves the original strict behavior for existing hosts.
+	virtual bool ValidateDraft(const StateValues& baseline, const StateValues& candidate,
+		std::string& error) { return Validate(baseline,candidate,error); }
 	// Hosts with editor-only ranges may allow an original custom value here,
 	// while still enforcing writable types, device limits and coupled settings.
 	virtual bool ValidateRollback(const StateValues& original, const StateValues& current,
@@ -130,6 +135,7 @@ private:
 	SettingsResult AccessAttempt(std::uint64_t requestedOwner, std::uint64_t request);
 	bool Read(StateValues& values, std::string& error, bool requireSchema = true);
 	bool Validate(const StateValues& candidate, std::string& error);
+	bool ValidateDraft(const StateValues& candidate, std::string& error);
 	SettingsResult Rollback(bool preserveDraft, SettingsCode recoveredCode = SettingsCode::Ok,
 		const std::string& reason = {});
 	void Close();

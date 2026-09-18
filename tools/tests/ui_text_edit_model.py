@@ -36,6 +36,8 @@ def main() -> None:
         'mutant-empty-commit-delete': changed(source, 'event.kind == TextInputKind::CancelComposition || event.text.empty()', 'event.kind == TextInputKind::CancelComposition'),
         'mutant-unbounded-history': changed(source, 'while (HistoryEntries() > MaxHistoryEntries || HistoryTextBytes() > MaxHistoryTextBytes)', 'while (false)'),
         'mutant-quantized-number': changed(source, 'value = candidate; return TextNumberStatus::Valid;', 'value = std::round(candidate); return TextNumberStatus::Valid;'),
+        'mutant-integer-fraction': changed(source, 'if (policy.integer && !DecimalInteger(text))', 'if (false)'),
+        'mutant-integer-decimal-shift': changed(source, 'return exponent >= fraction-trailingZeros;', 'return exponent >= fraction+trailingZeros;'),
         'mutant-reset-composition-loss': changed(source, 'if (!ValidPolicy(candidatePolicy,error)', 'composition.reset();\n\tif (!ValidPolicy(candidatePolicy,error)'),
         'mutant-no-scalar-selection-check': changed(source,
             'if (!Boundary(state.text,anchor) || !Boundary(state.text,caret)) return Fail(error, "Selection splits a scalar or exceeds the buffer");', ''),

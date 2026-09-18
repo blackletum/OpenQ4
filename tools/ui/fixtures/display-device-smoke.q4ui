@@ -291,7 +291,7 @@
 "settings.dirty":{"type":"boolean","initial":false},
 "settings.canApply":{"type":"boolean","initial":false},
 "settings.phase":{"type":"number","initial":0},
-"settings.message":{"type":"string","initial":"#str_229982"},
+"settings.message":{"type":"string","initial":"#str_230007"},
 "settings.draft.r_brightness":{"type":"number","initial":0},
 "settings.baseline.r_brightness":{"type":"number","initial":0},
 "settings.draft.r_shadows":{"type":"boolean","initial":false},

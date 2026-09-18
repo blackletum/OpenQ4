@@ -14,6 +14,38 @@ high-quality UI product at an id Tech 5 standard.
 The [product requirement register](../ui/product-requirements.md) tracks the
 full normative scope, milestone ownership and acceptance evidence.
 
+The [17 September implementation audit](../ui/masked-input-review.md) refreshes
+delivery priorities and repairs vector-mask pointer/focus eligibility. The
+complete runtime/editor/corpus scope and every remaining stage gate stay open.
+
+The [independent text-scale increment](../ui/text-scale.md) adds runtime
+100–200% typography and responsive SYSTEM field, column, status and modal layout.
+The subsequent [interface preference increment](../ui/interface-size-preferences.md)
+adds transactional scale choices/reset and a root-menu window-fit limit.
+Complete screen/editor qualification remains required; the full plan stays active.
+
+The [output-size font increment](../ui/output-size-fonts.md) replaces the
+retained adapter's fixed 48-point slot with bounded physical-size glyph atlases.
+`TXT-002` remains partial: style/weight, largest animated transform density,
+complete text services and full qualification are still required.
+
+The [paired-field visibility repair](../ui/paired-field-focus.md) aligns
+SYSTEM slider and numeric viewport heights under independent text scaling.
+Focus now reveals their complete paired values; full `LAY-004` and product
+acceptance remain open.
+
+The [SYSTEM display-control increment](../ui/display-controls.md) adds four
+existing catalog settings to the production document and observes the strict
+display path's MSAA availability. Fullscreen/window-manager qualification,
+dynamic catalogs, complete effects and the editor round trip remain required;
+`BEH-002` and `FLOW-002` stay partial.
+
+The [SYSTEM dimension-field increment](../ui/dimension-controls.md) adds window
+and custom fullscreen width/height, exact integer text validation and dependent
+availability. Intermediate dimensions remain drafts; complete capability checks
+guard Apply. Dynamic display/resolution/refresh choices, visible fullscreen,
+native input, complete effects and the editor remain required. No gate closes.
+
 ## Objective and immutable completion scope
 
 Plan, implement and publish a complete idTech 5-esque replacement for openQ4's

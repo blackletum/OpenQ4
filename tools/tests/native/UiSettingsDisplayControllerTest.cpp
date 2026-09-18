@@ -121,8 +121,8 @@ struct Fixture {
     Storage storage{boundary};
     SettingsTransaction transaction{storage};
     Display display{boundary};
-    SettingsDisplayController controller{transaction,display};
-    Fixture() {
+    SettingsDisplayController controller;
+    Fixture(std::function<double()> clock = {}) : controller(transaction,display,std::move(clock)) {
         display.controller = &controller;
         Code(transaction.Begin(owner),SettingsCode::Ok,"open owner transaction");
         Code(transaction.Edit(owner,{{"width",960.0},{"samples",4.0}}),SettingsCode::Ok,"stage display edit");
@@ -149,6 +149,43 @@ struct Fixture {
         Check(!controller.Active() && !transaction.AsyncPending() && !boundary.journal,"verified restore releases all ownership");
     }
 };
+
+void BlockingRestartClock() {
+    { double wall=0;Fixture f([&]{return wall;});
+      f.display.restartHook=[&]{wall+=60;};f.Execute();
+      Check(f.controller.OwnerDrawn(f.owner,f.controller.Request()),"slow restart still accepts its exact owner draw");
+      f.display.Present();wall=61;f.controller.Frame(wall,true);
+      Check(f.controller.CanConfirm(wall) && f.controller.Remaining(wall)==15 && f.display.restores==0,
+          "blocking restart duration does not consume presentation or confirmation time");
+      Code(f.controller.Revert(f.owner,f.controller.Request()),SettingsCode::Ok,"revert after slow restart");
+      wall=62;f.controller.Frame(wall,true);
+      Check(wall==122 && f.controller.Stage()==SettingsDisplayStage::AwaitRestore,"slow restoration receives its own presentation window");
+      f.controller.Frame(141.9,true,false);Check(f.controller.Stage()==SettingsDisplayStage::AwaitRestore,"restore waits without extending its original deadline");
+      f.display.Present();f.controller.Frame(141.99,true);
+      Check(!f.controller.Active() && !f.boundary.journal && f.storage.live==Initial(),"fresh restored presentation finishes before post-restart deadline"); }
+    for(bool restoring:{false,true}) {
+      double wall=0;Fixture f([&]{return wall;});
+      if(restoring){f.Confirming();Code(f.controller.Revert(f.owner,f.controller.Request()),SettingsCode::Ok,"queue clock-bound restore");wall=2;}
+      else f.Queue();
+      f.display.restartHook=[&]{wall+=60;};f.controller.Frame(wall,true);
+      const double completed=wall;
+      f.controller.Frame(completed+19,true,false);f.controller.Frame(completed+19.5,true,false);
+      if(!restoring)Check(f.controller.OwnerDrawn(f.owner,f.controller.Request()),"late owner draw alone cannot renew deadline");
+      f.display.Present();f.controller.Frame(completed+20,true,false);
+      Check(f.controller.Stage()==(restoring?SettingsDisplayStage::Recovery:SettingsDisplayStage::QueuedRestore) && !f.controller.CanConfirm(completed+20),
+          "exact twenty-second presentation deadline remains strict after slow work");
+    }
+    for(double invalid:{-1.0,1.0,std::numeric_limits<double>::quiet_NaN(),std::numeric_limits<double>::infinity(),std::numeric_limits<double>::max()}) {
+      Fixture f([=]{return invalid;});f.Queue(2);f.controller.Frame(2,true);
+      Check(f.controller.Stage()==SettingsDisplayStage::QueuedRestore && f.controller.LastResult().code==SettingsCode::Invalid && f.boundary.journal && f.display.persists==0,
+          "invalid post-restart clock queues recovery while preserving journal ownership");
+    }
+    { Fixture f([]()->double{throw std::runtime_error("clock failed");});f.Queue();f.controller.Frame(0,true);
+      Check(f.controller.Stage()==SettingsDisplayStage::QueuedRestore && f.boundary.journal,"throwing completion clock retains recovery ownership"); }
+    { double wall=0;Fixture f([&]{return wall;});f.Confirming();Code(f.controller.Revert(f.owner,f.controller.Request()),SettingsCode::Ok,"queue invalid-clock restore");
+      wall=std::numeric_limits<double>::quiet_NaN();f.controller.Frame(2,true);
+      Check(f.controller.Stage()==SettingsDisplayStage::Recovery && f.boundary.journal && f.display.finishes==0,"invalid restoration clock cannot retire recovery evidence"); }
+}
 
 void OrderingAndIdentity() {
     Fixture f;
@@ -555,6 +592,7 @@ void AutomaticTransactionAuthority() {
 } // namespace
 
 int main() {
+    BlockingRestartClock();
     OrderingAndIdentity(); PreparationAndClose(); PresentationAndDeadlines();
     PartialFailureAndRecovery(); KeepUncertaintyAndFinish(); CallbackClose();
     CrossInstanceAndRestoreObservation(); ThrowingBoundaries();

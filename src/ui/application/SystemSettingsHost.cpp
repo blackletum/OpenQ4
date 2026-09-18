@@ -296,6 +296,8 @@ const std::vector<SystemSettingDescriptor>& SystemSettingsHost::Catalog() {
 		Number("r_windowHeight", 240, 16384, "#str_229947", SystemSettingDisplayRestart),
 		Number("r_windowWidth", 320, 16384, "#str_229946", SystemSettingDisplayRestart),
 		Boolean("ui_aspectCorrection", "#str_229944"),
+		Number("ui_retainedScale", .75, 2, "#str_230015", SystemSettingImmediate, {}, false),
+		Number("ui_retainedTextScale", 1, 2, "#str_230016", SystemSettingImmediate, {}, false),
 		Number("com_machineSpec", -1, 3), Number("com_maxfps", 0, 1000), Number("image_anisotropy", 1, 16),
 		Boolean("image_downSize", "", SystemSettingImageReload), Boolean("image_downSizeBump", "", SystemSettingImageReload),
 		Number("image_downSizeBumpLimit", 0, 32768, "", SystemSettingImageReload),
@@ -397,6 +399,12 @@ bool SystemSettingsHost::Defaults(StateValues& values, std::string& error) {
 }
 bool SystemSettingsHost::Validate(const StateValues& baseline, const StateValues& candidate, std::string& error) {
 	return ValidateCandidate(nullptr, baseline, candidate, error);
+}
+bool SystemSettingsHost::ValidateDraft(const StateValues& baseline, const StateValues& candidate, std::string& error) {
+	// Width and height are separate edits. Keep their types, writable ownership
+	// and ranges strict, but defer topology and coupled device-mode checks until
+	// the complete draft is considered for Apply. This performs no device work.
+	return ValidateCandidate(nullptr,baseline,candidate,error,false);
 }
 bool SystemSettingsHost::ValidateSavedTarget(const StateValues& baseline, const StateValues& candidate, std::string& error) {
 	return ValidateCandidate(nullptr,baseline,candidate,error,false);

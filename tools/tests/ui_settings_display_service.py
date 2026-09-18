@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exercise production engine display-service methods with counted platform I/O.
 
-Uses the real 53-key SYSTEM host, display request/recovery helpers, journal codec
+Uses the real 55-key SYSTEM host, display request/recovery helpers, journal codec
 and strict JSON/value parser. Native persistence, renderer and placement lease
 are counted doubles: this tests ordering/ownership, not devices or power loss.
 """
@@ -118,6 +118,8 @@ bool Sys_BuildWindowPlacementCommit(std::uint64_t token,const sysWindowPlacement
 }
 bool Sys_WindowPlacementLeaseActive(){return geometryToken!=0;}
 bool R_RendererModule_QueryDisplay(rendererDisplayState_t* out){if(!queryOkay)return false;*out=actual;return true;}
+static rendererModuleStatus_t moduleStatus{};
+const rendererModuleStatus_t& R_RendererModule_GetStatus(){return moduleStatus;}
 static void ApplyActual(const renderWindowRequest_t& r){
     ++actual.presentation.generation;actual.presentation.samples=r.parms.multiSamples;actual.presentation.swapInterval=r.swapInterval;
     auto& w=actual.window;w.displayId=r.displayId;w.displayIndex=r.displayIndex;
@@ -142,7 +144,21 @@ static void ResetFixture(){
     geometryFailure=geometryPartial=false;queryOkay=restartOkay=true;displayOrder={1,2};displayCount=2;primaryDisplay=1;currentDisplay=2;configWrites=restarts=initializations=0;archived.clear();
     Seed();localCVarSystem.variables.at("r_swapInterval").value="1";actual=Actual();actual.window.hidden=false;actual.window.focused=true;
     geometry={actual.window.windowX,actual.window.windowY,1280,720,actual.window.windowX,actual.window.windowY,1280,720,true};
-    trace.clear();writes=0;
+    trace.clear();writes=0;moduleStatus.activeApi=RENDER_MODULE_API_GL;
+}
+static void MultisamplingCapability(){
+    ResetFixture();SystemSettingsHost settings;EngineSettingsDisplayHost host(settings);
+    for(const auto api:{RENDER_MODULE_API_GL,RENDER_MODULE_API_GL_MODULE,RENDER_MODULE_API_GLES,RENDER_MODULE_API_VULKAN,RENDER_MODULE_API_COUNT}){
+        moduleStatus.activeApi=api;
+        Check(host.SupportsMultisampling()==(api==RENDER_MODULE_API_GL || api==RENDER_MODULE_API_GL_MODULE || api==RENDER_MODULE_API_GLES),"backend MSAA policy follows active renderer");
+    }
+    moduleStatus.activeApi=RENDER_MODULE_API_GL;
+    queryOkay=false;Check(!host.SupportsMultisampling(),"missing observation disables MSAA");queryOkay=true;
+    actual.rendererReady=false;Check(!host.SupportsMultisampling(),"unready renderer disables MSAA");actual.rendererReady=true;
+    actual.windowValid=false;Check(!host.SupportsMultisampling(),"missing window disables MSAA");actual.windowValid=true;
+    actual.presentation.available=false;Check(!host.SupportsMultisampling(),"missing presentation disables MSAA");actual.presentation.available=true;
+    Check(host.SupportsMultisampling(),"capability recovers with valid observation");
+    Check(writes==0 && configWrites==0 && restarts==0 && initializations==0 && files.empty() && leases.empty() && geometryToken==0,"capability observation has no setting or device side effects");
 }
 static SettingsAttempt Attempt(SystemSettingsHost& settings,bool dimensions=true){
     SettingsAttempt a{17,71,Live(settings),{}, {}};a.target=a.baseline;
@@ -190,6 +206,20 @@ static SettingsAttempt PendingForStartup(SystemSettingsHost& settings,bool confi
     configWrites=0;writes=0;trace.clear();return a;
 }
 static void StartupCases(){
+    // A pre-preferences schema-1 record owns only its original 53 keys.
+    // Replay the real service, including byte ownership and final persistence.
+    for(bool confirmed:{false,true}){ResetFixture();SystemSettingsHost settings;auto a=PendingForStartup(settings,confirmed);
+      auto legacy=Journal();auto schema=SystemSettingsHost::Schema();
+      for(const auto* key:{"ui_retainedScale","ui_retainedTextScale"}){schema.erase(key);legacy.baseline.erase(key);legacy.target.erase(key);}
+      std::string bytes;Check(schema.size()==53 && EncodeSettingsJournal(legacy,schema,bytes,error),"encode authentic old catalog journal");files[journalFile]=bytes;
+      for(const auto& [key,value]:a.patch)localCVarSystem.variables.at(key).value=FormatPresentationValue(StatePresentation(confirmed?a.baseline.at(key):value));
+      localCVarSystem.variables.at("ui_retainedScale").value="1.75";localCVarSystem.variables.at("ui_retainedTextScale").value="1.5";
+      EngineSettingsDisplayHost host(settings);Check(host.Startup(error),"old catalog recovers through production startup");
+      auto current=Live(settings);Check(current.at("ui_retainedScale")==StateValue(1.75) && current.at("ui_retainedTextScale")==StateValue(1.5),"old recovery never claims new size preferences");
+      Check(current.at("r_multiSamples")==(confirmed?a.target:a.baseline).at("r_multiSamples"),"old recovery chooses correct side");
+      Check(files.at(journalFile)==bytes && configWrites==0,"original bytes remain authoritative before qualification");
+      Check(host.InitializeDisplay(error),"old record initializes recorded display");Present();host.StartupFrame(1,true);
+      Check(configWrites==1 && !host.RecoveryActive() && !files.contains(journalFile),"qualified old recovery persists then retires original bytes");}
     for(bool confirmed:{false,true}){ResetFixture();SystemSettingsHost settings;auto a=PendingForStartup(settings,confirmed);
       // Simulate config loading either original or transaction-written values;
       // unrelated external archive changes survive both directions.
@@ -348,7 +378,7 @@ static void ExactCatalogCases(){
     }
 }
 
-int main(){ExactCatalogCases();RuntimeJournal();StartupCases();GeometryAndStartupFailures();StartupClockCases();CommitOwnershipCases();ReindexedStartupRetry();UnusedTopologyCases();std::printf("UI settings display service passed: %d checks\n",checks);}
+int main(){MultisamplingCapability();ExactCatalogCases();RuntimeJournal();StartupCases();GeometryAndStartupFailures();StartupClockCases();CommitOwnershipCases();ReindexedStartupRetry();UnusedTopologyCases();std::printf("UI settings display service passed: %d checks\n",checks);}
 
 '''
 

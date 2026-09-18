@@ -48,6 +48,7 @@ def trace(mode='sp',renderer='gl'):
             owner+=17
             lines += ['RETAINED_GUI_LOADED '+capture.PAGE,'OPENQ4_SYSTEM operation=open result=1',route(stage,mode)]
         generation=10+stage['restarts']; sequence=100+index*100
+        width,height=stage.get('size',(1280,720))
         if stage['display']=='apply': request+=1
         active_request=request
         if stage['display']=='restore': active_request=request+1
@@ -65,7 +66,7 @@ def trace(mode='sp',renderer='gl'):
         if stage['display']=='apply': lines.append('UI_SETTINGS_JOURNAL state=pending durable=1')
         if stage['display'] in ('apply','restore'):
             if renderer=='vulkan': lines += [f'GPU frame timing reset: generation={2+stage["restarts"]} reason=recoverable vid_restart',VK_INIT,CACHE_WARNING]
-            lines.append(f'UI_SETTINGS_DEVICE restore={int(stage["display"]=="restore")} epoch=2 generation={generation} submitted={sequence} presented={sequence} failures=0 width=1280 height=720')
+            lines.append(f'UI_SETTINGS_DEVICE restore={int(stage["display"]=="restore")} epoch=2 generation={generation} submitted={sequence} presented={sequence} failures=0 width={width} height={height}')
             display_stage(2 if stage['display']=='apply' else 6,active_request)
             lines.append(f'RETAINED_GUI_RESOURCE path={capture.PAGE} event=restored')
             if stage['display']=='apply':
@@ -89,17 +90,22 @@ def trace(mode='sp',renderer='gl'):
                 lines.append(f'GUI_VALUE {field}={value}')
             for i,control in enumerate(capture.CONTROLS):
                 lines.append(f'RETAINED_GUI_WIDGET id={control} role={(2,3)[i]} type=0 accepted={stage["values"][6+i*2]} pending=0 proposed=0 rejected=0 token=0 popup=0 firstVisible=0')
+            if stage['name'] in ('display_draft','display_dialog','keep_draft','keep_dialog'):
+                lines.append('RETAINED_GUI_CHOICE_SCROLL id=settings_vsync open=0 opening=0 revision=81 offsetDp=0 available=1 usable=0 density=1.25 viewport=147.5 range=0 offset=0 track=147.5 thumb=147.5 position=0 travel=0 geometry=15')
+            else:
+                lines.append('RETAINED_GUI_CHOICE_SCROLL id=settings_vsync open=0 opening=0 revision=0 offsetDp=0 available=0 usable=0 density=1 viewport=0 range=0 offset=0 track=0 thumb=0 position=0 travel=0 geometry=0')
             focus=('discard_keep_editing' if stage['values'][5] else 'settings_revert' if stage['values'][11]
                    else 'settings_back' if stage['name']=='continued' else 'settings_brightness')
             lines.append(f'RETAINED_GUI path={capture.PAGE} focus={focus} revision=7 active=1 brightness={stage["live"]} shadows=1 contexts=1')
-        lines.append(f'DISPLAY_PROBE operation=report result=1 observed=1 epoch=2 generation={generation} ready=1 window=1 available=1 outcome=2 submitted={sequence+12} presented={sequence+12} failures=0 native=0 restart={4+stage["restarts"]} logical=1280x720 pixel=1280x720 display=1 position=24,24 hidden=1 fullscreen=0 maximized=0 samples=0 interval={stage["interval"]} valid={7 if renderer=="vulkan" else 3}')
+        lines.append(f'DISPLAY_PROBE operation=report result=1 observed=1 epoch=2 generation={generation} ready=1 window=1 available=1 outcome=2 submitted={sequence+12} presented={sequence+12} failures=0 native=0 restart={4+stage["restarts"]} logical={width}x{height} pixel={width}x{height} display=1 position=24,24 hidden=1 fullscreen=0 maximized=0 samples=0 interval={stage["interval"]} valid={7 if renderer=="vulkan" else 3}')
     return '\n'.join(lines+[capture.COMPLETE])+'\n'
 
 
-def image():
+def image(size=(1280,720)):
     header=bytearray(18); header[2]=2; header[16]=24
-    struct.pack_into('<HH',header,12,1280,720)
-    return bytes(header)+bytes(range(256))*10800
+    struct.pack_into('<HH',header,12,*size)
+    count=size[0]*size[1]*3
+    return bytes(header)+(bytes(range(256))*((count+255)//256))[:count]
 
 
 def package(path,raw,extra=False):
@@ -130,6 +136,50 @@ class ExitOracleTests(unittest.TestCase):
             self.assertEqual(len(result['devices']),3)
             self.assertFalse(result['replacement_acceptance'])
             self.assertFalse(result['full_system_acceptance'])
+
+    def test_actual_size_changes_follow_each_stage(self):
+        rows=copy.deepcopy(capture.stages())
+        for row in rows:
+            row['size']=(960,600) if row['name'] in ('display_confirm','keep_confirm','keep_exit','reopen_kept','finished') else (1280,720)
+        with patch.object(capture,'stages',return_value=rows):
+            log=trace();self.assertTrue(capture.qualify(log,'sp','gl')['passed'])
+            for match in re.finditer(r'(?:logical|pixel)=\d+x\d+|width=\d+|height=\d+',log):
+                invalid=log[:match.start()]+match[0].split('=')[0]+'=1'+log[match.end():]
+                self.reject(invalid)
+
+    def test_number_operations_are_bound_to_authored_stage(self):
+        rows=copy.deepcopy(capture.stages())
+        rows[0]['commands']+=['openq4_retainedGui number begin "settings_window_width"']
+        with patch.object(capture,'stages',return_value=rows):
+            log=trace();self.assertTrue(capture.qualify(log,'sp','gl')['passed'])
+            for replacement in ('', 'RETAINED_GUI_OPERATION number failed',
+                                'RETAINED_GUI_OPERATION number passed\nRETAINED_GUI_OPERATION number passed'):
+                self.reject(log.replace('RETAINED_GUI_OPERATION number passed',replacement,1))
+        self.reject(log)
+
+    def test_closed_choice_geometry(self):
+        log=trace();line=next(row for row in log.splitlines() if row.startswith('RETAINED_GUI_CHOICE_SCROLL '))
+        for pair in line.split()[1:]:
+            key,value=pair.split('=')
+            for replacement in ('99','nan','',value+' extra=0'):
+                self.reject(log.replace(line,line.replace(pair,key+'='+replacement),1))
+
+    def test_capture_timeout_bounds(self):
+        for timeout in (True,0,29,1801,240.5):
+            with self.assertRaisesRegex(ValueError,'Timeout'):
+                capture.capture(SimpleNamespace(output=ROOT/'.tmp/unused-exit-capture',runtime=ROOT/'.install',timeout=timeout))
+
+    def test_cached_choice_geometry(self):
+        log=trace();line=next(row for row in log.splitlines() if row.startswith('RETAINED_GUI_CHOICE_SCROLL ') and 'available=1' in row)
+        for old,new in (('open=0','open=1'),('opening=0','opening=1'),('available=1','available=0'),('usable=0','usable=1'),
+                        ('revision=81','revision=0'),('revision=81','revision=-1'),('density=1.25','density=nan'),
+                        ('density=1.25','density=0'),('viewport=147.5','viewport=0'),('viewport=147.5','viewport=721'),
+                        ('range=0','range=1'),('offset=0','offset=1'),('track=147.5','track=100'),('thumb=147.5','thumb=100'),
+                        ('geometry=15','geometry=0'),('revision=81','revision=82'),('geometry=15','geometry=16')):
+            self.reject(log.replace(line,line.replace(old,new),1))
+        # Other valid measured sizes are allowed, without inventing a single
+        # font/density-specific rectangle for every captured production page.
+        self.assertTrue(capture.qualify(log.replace('density=1.25','density=1.5').replace('147.5','177'),'sp','gl')['passed'])
 
     def test_every_required_observation_missing_or_replayed(self):
         original=trace().splitlines()
@@ -315,8 +365,11 @@ class ExitOracleTests(unittest.TestCase):
 
     def test_real_source_and_mocked_capture_bindings(self):
         production=(ROOT/'content/baseoq4/pak0'/capture.PAGE).read_bytes()
-        for mode,renderer,defect in [('sp','gl',None),('mp','vulkan',None)]+[('sp','gl',x) for x in ('source','binary','warning','image','journal','config','exit','script','baseline')]:
+        for mode,renderer,defect in [('sp','gl',None),('mp','vulkan',None)]+[('sp','gl',x) for x in ('source','binary','warning','image','image-size','journal','config','exit','script','baseline')]:
             with self.subTest(mode=mode,defect=defect),tempfile.TemporaryDirectory(prefix='system-exit-oracle-',dir=ROOT/'.tmp') as directory:
+                rows=copy.deepcopy(capture.stages())
+                for row in rows:
+                    row['size']=(960,600) if row['name'] in ('display_confirm','keep_confirm','keep_exit','reopen_kept','finished') else (1280,720)
                 root=Path(directory); runtime=root/'.install'; runtime.mkdir(); (root/'.tmp').mkdir()
                 executable=runtime/('openQ4-client_x64.exe' if capture.os.name=='nt' else 'openQ4-client_x64'); executable.write_bytes(b'never executed')
                 source=root/'content/baseoq4/pak0'/capture.PAGE; source.parent.mkdir(parents=True); source.write_bytes(production)
@@ -335,7 +388,10 @@ class ExitOracleTests(unittest.TestCase):
                     log=trace(mode,renderer)+(STOCK_WARNING+'\n' if mode=='mp' else '')
                     if defect=='warning': log+='WARNING: new failure\n'
                     (game/'logs/openq4.log').write_text(log,encoding='utf-8')
-                    for name in capture.SCREENSHOTS: (game/f'screenshots/system-exit-{name}.tga').write_bytes(image() if defect!='image' else b'bad')
+                    for row in rows:
+                        if row['shot']:
+                            raw=image((1280,720) if defect=='image-size' else row['size']) if defect!='image' else b'bad'
+                            (game/f'screenshots/system-exit-{row["shot"]}.tga').write_bytes(raw)
                     (game/'.settings-recovery.lock').write_bytes(b'')
                     (game/'openQ4Config.cfg').write_text(configuration().replace('"1.1"','"1"') if defect=='config' else configuration(),encoding='utf-8')
                     if defect=='journal': (game/'ui-settings-recovery.dat').write_bytes(b'unfinished')
@@ -344,7 +400,7 @@ class ExitOracleTests(unittest.TestCase):
                     if defect=='script': (game/'system-exit.cfg').write_text('changed\n',encoding='utf-8')
                     if defect=='baseline': baseline.write_text('WARNING: changed approval\n',encoding='utf-8')
                     return SimpleNamespace(pid=77,wait=lambda timeout:1 if defect=='exit' else 0)
-                with patch.object(capture,'ROOT',root),patch.object(capture.subprocess,'Popen',side_effect=launch),contextlib.redirect_stdout(io.StringIO()):
+                with patch.object(capture,'ROOT',root),patch.object(capture,'stages',return_value=rows),patch.object(capture.subprocess,'Popen',side_effect=launch),contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(capture.capture(args),int(defect is not None))
                     with self.assertRaisesRegex(ValueError,'new output'): capture.capture(args)
                 self.assertEqual(len(calls),1); command,kwargs=calls[0]
@@ -359,7 +415,8 @@ class ExitOracleTests(unittest.TestCase):
                 self.assertEqual(metadata['source_unchanged'],defect!='source')
                 self.assertEqual(metadata['binaries_unchanged'],defect!='binary')
                 self.assertFalse((output/'save/baseoq4'/capture.PAGE).exists())
-                self.assertEqual((output/'save/baseoq4/system-exit.cfg').read_text(encoding='utf-8'),'changed\n' if defect=='script' else capture.script())
+                with patch.object(capture,'stages',return_value=rows):
+                    self.assertEqual((output/'save/baseoq4/system-exit.cfg').read_text(encoding='utf-8'),'changed\n' if defect=='script' else capture.script())
 
     def test_matching_packaged_bytes_do_not_excuse_changed_control_contract(self):
         raw=(ROOT/'content/baseoq4/pak0'/capture.PAGE).read_text(encoding='utf-8')

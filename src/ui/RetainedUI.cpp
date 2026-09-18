@@ -53,6 +53,8 @@ struct retainedUIPreparedEdit_t {
 namespace {
 idCVar ui_retainedScale("ui_retainedScale", "1", CVAR_GUI | CVAR_FLOAT | CVAR_ARCHIVE,
 	"retained UI density multiplier", .75f, 2.f);
+idCVar ui_retainedTextScale("ui_retainedTextScale", "1", CVAR_GUI | CVAR_FLOAT | CVAR_ARCHIVE,
+	"retained UI text size multiplier, independent of furniture", 1.f, 2.f);
 idCVar ui_retainedDensity("ui_retainedDensity", "0", CVAR_GUI | CVAR_FLOAT,
 	"retained UI test density override; zero uses the window display scale", 0.f, 8.f);
 idCVar ui_retainedReducedMotion("ui_retainedReducedMotion", "0", CVAR_GUI | CVAR_BOOL | CVAR_ARCHIVE,
@@ -200,6 +202,19 @@ public:
 		renderSystem->BindRenderTexture(restore ? layers[restore-1].target : nullptr,nullptr);
 	}
 	openq4::ui::FontMetrics GetFontMetrics(const std::string& family, int size) override {
+		renderFontMetrics_t metrics;
+		const std::string key = FontFamily(family);
+		std::string path = va("fonts/%s/%s",cvarSystem->GetCVarString("sys_lang"),key.c_str());
+		bool scalable = renderSystem->GetRetainedFontMetrics(path.c_str(),size,metrics);
+		if (!scalable) {
+			path = "fonts/english/"+key;
+			scalable = renderSystem->GetRetainedFontMetrics(path.c_str(),size,metrics);
+		}
+		if (scalable) {
+			scalableFaces[key] = path;
+			return {metrics.ascent,metrics.descent,metrics.lineSpacing,metrics.xHeight};
+		}
+		ReportFontFallback();
 		const fontInfo_t* font = Font(family);
 		if (!font || font->pointSize <= 0) return {};
 		const float scale = size / font->pointSize;
@@ -207,6 +222,12 @@ public:
 		return {font->ascender*scale, font->descender*scale, font->fontHeight*scale, x ? x->height*scale : size*.5f};
 	}
 	openq4::ui::Glyph GetGlyph(const std::string& family, int size, std::uint32_t codepoint) override {
+		const auto found = scalableFaces.find(FontFamily(family));
+		renderFontGlyph_t scaled;
+		if (found != scalableFaces.end() && renderSystem->GetRetainedFontGlyph(found->second.c_str(),size,codepoint,scaled))
+			return {scaled.advance,scaled.left,scaled.top,scaled.width,scaled.height,
+				scaled.u0,scaled.v0,scaled.u1,scaled.v1,scaled.image};
+		ReportFontFallback();
 		const fontInfo_t* font = Font(family);
 		if (!font || font->pointSize <= 0) return {};
 		const idMaterial* material = NULL;
@@ -219,6 +240,8 @@ public:
 			material ? material->GetName() : ""};
 	}
 	void Reset() {
+		renderSystem->ResetRetainedFontCache();
+		scalableFaces.clear(); fontFallbackReported = false;
 		fonts.clear();
 		ClearLayers();
 	}
@@ -230,8 +253,18 @@ public:
 private:
 	struct Layer { idRenderTexture* target = nullptr; const idMaterial* material = nullptr; const idMaterial* maskMaterial = nullptr; int width = 0, height = 0; };
 	std::vector<Layer> layers;
+	static std::string FontFamily(const std::string& family) {
+		return family == "marine" ? "marine" : family == "lowpixel" ? "lowpixel" : "chain";
+	}
+	void ReportFontFallback() {
+		if (fontFallbackReported) return;
+		fontFallbackReported = true;
+		common->Warning("retained UI: output-size font unavailable or cache limit reached; using legacy font fallback");
+	}
+	bool fontFallbackReported = false;
+	std::map<std::string,std::string> scalableFaces;
 	const fontInfo_t* Font(const std::string& family) {
-		const std::string key = family == "marine" ? "marine" : family == "lowpixel" ? "lowpixel" : "chain";
+		const std::string key = FontFamily(family);
 		auto found = fonts.find(key);
 		if (found == fonts.end()) {
 			auto font = std::make_unique<fontInfoEx_t>();
@@ -788,6 +821,10 @@ bool RetainedUI_DefaultViewport(openq4::ui::Viewport& viewport) {
 	viewport.height = engineWindowState.uiViewportHeight;
 	viewport.displayScale = ui_retainedDensity.GetFloat() > 0 ? ui_retainedDensity.GetFloat() : engineWindowState.displayScale;
 	viewport.userScale = ui_retainedScale.GetFloat();
+	viewport.textScale = ui_retainedTextScale.GetFloat();
+	// Keep root-menu decisions and the size reset reachable. The requested
+	// CVars remain intact, and larger windows automatically restore that size.
+	viewport.FitToMinimum(640, 480);
 	viewport.pixelDensityX = engineWindowState.pixelDensityX; viewport.pixelDensityY = engineWindowState.pixelDensityY;
 	viewport.originX = static_cast<float>(engineWindowState.uiViewportX); viewport.originY = static_cast<float>(engineWindowState.uiViewportY);
 	return viewport.width > 0 && viewport.height > 0;

@@ -9,7 +9,9 @@ namespace openq4::ui {
 enum class SettingsJournalState { Pending, Confirmed };
 struct SettingsRecoveryJournal {
 	SettingsJournalState state = SettingsJournalState::Pending;
-	std::string attempt; // 128 random bits as lowercase hex; never a process owner.
+	// The explicit empty constructor can report MSVC debug-proxy allocation
+	// failure; basic_string's default noexcept constructor would terminate.
+	std::string attempt = std::string(0,'\0'); // 128 random bits as lowercase hex; never a process owner.
 	StateValues baseline, target, patch;
 	StateValues displayRestore, displayTarget, placement;
 };
@@ -22,6 +24,14 @@ bool EncodeSettingsJournal(const SettingsRecoveryJournal& journal,
 	const std::map<std::string,std::size_t>& catalog, std::string& bytes, std::string& error);
 bool DecodeSettingsJournal(const std::string& bytes,
 	const std::map<std::string,std::size_t>& catalog, SettingsRecoveryJournal& journal, std::string& error);
+
+// SYSTEM startup accepts the current 55-field schema-1 catalog or the exact
+// original 53-field catalog. Only the latter is extended, with both new UI
+// preferences copied from a complete current read into baseline and target.
+// Its patch and ownership of the original on-disk bytes remain unchanged.
+// This never supplies defaults or claims ownership of a previously absent key.
+bool DecodeSystemSettingsJournal(const std::string& bytes, const StateValues& current,
+	SettingsRecoveryJournal& journal, std::string& error);
 
 // Schema 2 is an envelope for the same recovery file, not a second journal.
 // Domain maps are bounded typed opaque records. The caller must separately

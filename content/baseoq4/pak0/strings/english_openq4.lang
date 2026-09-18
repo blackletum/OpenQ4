@@ -997,4 +997,16 @@
 	"#str_230004"	"Enter a number from 0.5 to 2."
 	"#str_230005"	"Enter a number from 0 to 1."
 	"#str_230006"	"Commit each field, or discard your unfinished edits."
+
+	// Retained SYSTEM interface-size preferences.
+	"#str_230015"	"UI scale"
+	"#str_230016"	"Text size"
+	"#str_230017"	"Reset UI sizes"
+	"#str_230018"	"Interface"
+	"#str_230019"	"Large sizes may be reduced to fit the window."
+	"#str_230020"	"Off;2x;4x;8x;16x"
+	"#str_230021"	"Enter a whole number from 320 to 16384."
+	"#str_230022"	"Enter a whole number from 240 to 16384."
+	"#str_230023"	"Choose a supported display, size and refresh rate before applying."
+	"#str_230024"	"Custom size is used by exclusive fullscreen. Editing it selects Custom resolution."
 }

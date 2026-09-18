@@ -108,7 +108,7 @@ See [native text delivery](text-input-routing.md) for the remaining input route.
 ## Authoring and rendering
 
 The control requires `value`, a typed numeric `action`, finite `minimum` and
-`maximum`, optional `exponent` and `maxBytes`, and these named `parts`:
+`maximum`, optional `exponent`, `integer` and `maxBytes`, and these named `parts`:
 
 | Part | Required relationship and purpose |
 | --- | --- |
@@ -118,6 +118,19 @@ The control requires `value`, a typed numeric `action`, finite `minimum` and
 | `caret` | Independent geometry directly inside the viewport; opacity controls blink |
 | `composition` | Independent underline geometry directly inside the viewport |
 | `validation` | Localized text inside the control and outside the clipped viewport |
+
+`integer` defaults to false. When true, the decimal text must describe a whole
+number before binary floating-point conversion; a tiny fractional suffix cannot
+be rounded into an accepted integer. Bounds must contain at least one integer.
+The independent `exponent` policy still controls exponent syntax. Invalid text
+remains editable, and observed finite custom values retain their exact readback
+instead of being rounded to fit the editor. The [SYSTEM dimension fields](dimension-controls.md)
+use this policy for whole-pixel sizes.
+
+Focus reveal uses the complete control when it fits. When labels or validation
+make a Number control exceed an ancestor's scroll area, it prioritizes the
+editing viewport on that axis. Projected viewport geometry also participates
+in visibility and reflow checks. Unchanged frames preserve deliberate scrolling.
 
 The viewport may share a transform with its contents. Individual transforms on
 the text and editing geometry are forbidden. Their derived position, dimensions,

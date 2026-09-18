@@ -53,7 +53,8 @@ struct Decl {
 };
 int main(){
     for(const char* name:{"_retained/_ttfatlasx_fonts_english_marine_48","_RETAINED/_TTFATLASX_FONTS_FRENCH_MARINE_96",
-        "_retained/_ttfatlas_fonts_english_marine_24","_retainedSolid","_retainedLayer/17","_retainedMask/5"}){
+        "_retained/_ttfatlas_fonts_english_marine_24","_retained/_ttfatlasr_0","_RETAINED/_TTFATLASR_31",
+        "_retainedSolid","_retainedLayer/17","_retainedMask/5"}){
         for(int type:{DECL_MATERIAL,DECL_ENTITYDEF,DECL_SKIN})for(bool generated:{false,true})for(bool implicit:{false,true}){
             Decl decl;decl.name=name;decl.type=type;decl.generatedDefaultText=generated;decl.implicit=implicit;
             warnings=0;decl.ParseWarning();
@@ -62,7 +63,8 @@ int main(){
     }
     for(const char* name:{"_retained/fonts/marine.tga","guis/assets/fontpage","textures/missing",
         "_retained/_ttfatlasxyz_fonts_marine_48","_retained/_ttfatlasxfonts_marine_48",
-        "prefix_retained/_ttfatlasx_fonts_marine_48","_ttfatlasx_fonts_marine_48","_retainedSolidOther"}){
+        "prefix_retained/_ttfatlasx_fonts_marine_48","_ttfatlasx_fonts_marine_48","_retainedSolidOther",
+        "_retained/_ttfatlasrOther","_retained/_ttfatlasr","_ttfatlasr_0"}){
         Decl decl;decl.name=name;warnings=0;decl.ParseWarning();assert(warnings==1);
     }
     Decl ordinary;ordinary.name="textures/ordinary";

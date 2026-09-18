@@ -480,6 +480,20 @@ bool TessellatePath(const VectorPath& path, const VectorOptions& options, Vector
 	catch (const std::bad_alloc&) { diagnostic = path.id+": vector allocation failed"; }
 	return false;
 }
+bool HitTestPaintedMesh(const VectorMesh& mesh, VectorPoint point) {
+	if (!Finite(point)) return false;
+	for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+		const auto& a = mesh.vertices[mesh.indices[i]];
+		const auto& b = mesh.vertices[mesh.indices[i+1]];
+		const auto& c = mesh.vertices[mesh.indices[i+2]];
+		const double area = Cross({b.x-a.x,b.y-a.y},{c.x-a.x,c.y-a.y});
+		if (!std::isfinite(area) || std::abs(area) <= 1e-20) continue;
+		const double u = Cross(point-VectorPoint{a.x,a.y},{c.x-a.x,c.y-a.y})/area;
+		const double v = Cross({b.x-a.x,b.y-a.y},point-VectorPoint{a.x,a.y})/area;
+		if (u >= 0 && v >= 0 && u+v <= 1 && (1-u-v)*a.a+u*b.a+v*c.a > 0) return true;
+	}
+	return false;
+}
 bool HitTestPath(const VectorPath& path, const VectorOptions& options, VectorPoint point, bool& hit, std::string& diagnostic) {
 	VectorMesh mesh;
 	if (!Finite(point)) { diagnostic = path.id+": invalid hit-test coordinate"; return false; }

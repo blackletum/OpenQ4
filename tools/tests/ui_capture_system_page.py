@@ -49,7 +49,14 @@ def trace(mode='sp', renderer='gl'):
             lines += [f'GUI_VALUE {field}={value}' for field,value in zip(capture.FIELDS,stage['values'])]
             values = tuple(stage['values'][index] for index in capture.VALUE_INDICES)
             for i,control in enumerate(capture.CONTROLS):
-                lines.append(f'RETAINED_GUI_WIDGET id={control} role={capture.ROLES[i]} type={capture.TYPES[i]} accepted={values[i]} pending=0 proposed=0 rejected=0 token=0 popup={stage["popup"] if i==2 else 0} firstVisible={stage["resolution_first"] if control=="settings_resolution_scale" else 0}')
+                lines.append(f'RETAINED_GUI_WIDGET id={control} role={capture.ROLES[i]} type={capture.TYPES[i]} accepted={values[i]} pending=0 proposed=0 rejected=0 token=0 popup={stage["popup"] if i==2 else 0} firstVisible=0')
+                if capture.ROLES[i]==3:
+                    opened=bool(i==2 and stage['popup'])
+                    scrolled=bool(control=='settings_resolution_scale' and stage['resolution_scrolled'])
+                    available=opened or scrolled
+                    lines.append(f'RETAINED_GUI_CHOICE_SCROLL id={control} open={int(opened)} opening={int(available)} revision=1 '
+                                 f'offsetDp={40 if scrolled else 0} available={int(available)} usable={int(available)} density=1 '
+                                 f'viewport=80 range=160 offset={40 if scrolled else 0} track=80 thumb=36 position=0 travel=44 geometry={int(available)}')
             lines.append(f'RETAINED_GUI path={capture.PAGE} focus=settings_brightness revision=7 active=1 brightness={stage["live"]} shadows=1 contexts=1')
     lines += [capture.COMPLETE]
     return '\n'.join(lines)+'\n'
@@ -268,6 +275,17 @@ class SystemPageOracleTests(unittest.TestCase):
         self.assertEqual(capture.tga_dimensions(bytes(header)+packets),(1280,720))
         self.assertIsNone(capture.tga_dimensions(bytes(header)+packets[:-1]))
 
+    def test_tga_size_is_bound_to_expected_stage(self):
+        header=bytearray(image()[:18]);struct.pack_into('<HH',header,12,960,600)
+        raw=bytes(header)+bytes(960*600*3)
+        self.assertEqual(capture.tga_dimensions(raw,(960,600)),(960,600))
+        self.assertIsNone(capture.tga_dimensions(raw))
+        self.assertIsNone(capture.tga_dimensions(raw,(960,599)))
+        self.assertIsNone(capture.tga_dimensions(raw[:-1],(960,600)))
+        self.assertIsNone(capture.tga_dimensions(image(),(960,600)))
+        struct.pack_into('<HH',header,12,0,600)
+        self.assertIsNone(capture.tga_dimensions(bytes(header),(0,600)))
+
     def test_packaged_source_precedence_and_exact_member_binding(self):
         with tempfile.TemporaryDirectory(prefix='system-package-order-',dir=ROOT/'.tmp') as directory:
             runtime=Path(directory); game=runtime/'baseoq4'
@@ -364,7 +382,7 @@ class SystemPageOracleTests(unittest.TestCase):
                          'args':['+set','R_FULLSCREEN','1','+seta','ui_retainedSystem','0','+set','in_mouse','1','+set','ui_autoJoin','0']+gameplay}
                 (root/'.vscode/launch.json').write_text(json.dumps({'configurations':[profile]}),encoding='utf-8')
                 assets=root/'assets'; (assets/'q4base').mkdir(parents=True)
-                output=root/'.tmp/evidence'; args=SimpleNamespace(output=output,runtime=runtime,assets=assets,mode=mode,renderer=renderer,density=None)
+                output=root/'.tmp/evidence'; args=SimpleNamespace(output=output,runtime=runtime,assets=assets,mode=mode,renderer=renderer,density=None,text_scale=1.5,language='french',timeout=360)
                 calls=[]
                 def launch(command,**kwargs):
                     calls.append((command,kwargs)); game=output/'save/baseoq4'; (game/'logs').mkdir(); (game/'screenshots').mkdir()
@@ -379,7 +397,7 @@ class SystemPageOracleTests(unittest.TestCase):
                 values={command[i+1].lower():command[i+2] for i in range(len(command)-2) if command[i].lower() in ('+set','+seta')}
                 for key,value in {'r_fullscreen':'0','r_fullscreenDesktop':'0','r_borderless':'0','r_hiddenWindow':'1',
                                   'in_mouse':'0','in_joystick':'0','in_joystickRumble':'0','ui_retainedSystem':'1',
-                                  'r_renderApi':renderer,'ui_autoJoin':'1' if mode=='mp' else '0',
+                                  'r_renderApi':renderer,'ui_autoJoin':'1' if mode=='mp' else '0','ui_retainedTextScale':'1.5','sys_lang':'french',
                                   'g_autoExecAfterMapLoadDelayMs':'3000','g_autoExecAfterMapLoad':'system-page.cfg'}.items():
                     self.assertEqual(values[key.lower()],value)
                 for _,_,key,_,seed in capture.EXTRA_ROWS: self.assertEqual(values[key.lower()],str(seed))
@@ -389,6 +407,9 @@ class SystemPageOracleTests(unittest.TestCase):
                 self.assertEqual((output/'save/baseoq4/system-page.cfg').read_text(encoding='utf-8'),capture.script())
                 metadata=json.loads((output/'capture.json').read_text(encoding='utf-8'))
                 self.assertEqual(metadata['status'],'failed' if changed else 'captured_pending_visual_and_warning_review')
+                self.assertEqual(metadata['text_scale'],1.5)
+                self.assertEqual(metadata['language'],'french')
+                self.assertEqual(metadata['timeout_seconds'],360)
                 self.assertEqual(len(metadata['screenshots']),9); self.assertEqual(metadata['source_unchanged'],not changed)
                 self.assertEqual(metadata['source']['staged']['effective']['member'],capture.PAGE)
                 self.assertEqual(Path(metadata['source']['staged']['effective']['package']).name,'pak0.pk4')

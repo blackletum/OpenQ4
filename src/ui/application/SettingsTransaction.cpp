@@ -107,6 +107,9 @@ bool SettingsTransaction::Read(StateValues& values, std::string& error, bool req
 bool SettingsTransaction::Validate(const StateValues& candidate, std::string& error) {
 	return ValidSnapshot(candidate,&baseline,error) && Invoke([&] { return host.Validate(baseline,candidate,error); },error);
 }
+bool SettingsTransaction::ValidateDraft(const StateValues& candidate, std::string& error) {
+	return ValidSnapshot(candidate,&baseline,error) && Invoke([&] { return host.ValidateDraft(baseline,candidate,error); },error);
+}
 
 void SettingsTransaction::Close() {
 	phase = SettingsPhase::Closed; owner = 0; deadline = 0; lastTime = -1;
@@ -147,7 +150,7 @@ bool SettingsTransaction::MergeEdit(const StateValues& partial,StateValues& outp
   }
   candidate[key]=value;
  }
- if(!Validate(candidate,error))return false;
+ if(!ValidateDraft(candidate,error))return false;
  output.swap(candidate);return true;
 }
 SettingsResult SettingsTransaction::Edit(std::uint64_t requestedOwner,const StateValues& partial) {
@@ -200,7 +203,7 @@ SettingsResult SettingsTransaction::Defaults(std::uint64_t requestedOwner) {
 	if (auto access = Access(requestedOwner); access.code != SettingsCode::Ok) return access;
 	if (phase != SettingsPhase::Editing) return Result(SettingsCode::Busy,"Settings are awaiting confirmation or recovery");
 	StateValues candidate; std::string error;
-	if (!Invoke([&] { return host.Defaults(candidate,error); },error) || !Validate(candidate,error))
+	if (!Invoke([&] { return host.Defaults(candidate,error); },error) || !ValidateDraft(candidate,error))
 		return Result(SettingsCode::Invalid,std::move(error));
 	draft = std::move(candidate);
 	return Result(SettingsCode::Ok);

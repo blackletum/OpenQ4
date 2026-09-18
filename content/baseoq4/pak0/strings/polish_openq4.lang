@@ -1006,4 +1006,16 @@
 	"#str_230004"	"Wpisz liczbę od 0.5 do 2."
 	"#str_230005"	"Wpisz liczbę od 0 do 1."
 	"#str_230006"	"Zatwierdź każde pole lub odrzuć niedokończone zmiany."
+
+	// Retained SYSTEM interface-size preferences.
+	"#str_230015"	"Skala interfejsu"
+	"#str_230016"	"Rozmiar tekstu"
+	"#str_230017"	"Przywróć rozmiary"
+	"#str_230018"	"Interfejs"
+	"#str_230019"	"Duże rozmiary mogą zostać zmniejszone, aby zmieścić się w oknie."
+	"#str_230020"	"Wył.;2x;4x;8x;16x"
+	"#str_230021"	"Wpisz liczbę całkowitą od 320 do 16384."
+	"#str_230022"	"Wpisz liczbę całkowitą od 240 do 16384."
+	"#str_230023"	"Przed zastosowaniem wybierz obsługiwany ekran, rozmiar i częstotliwość odświeżania."
+	"#str_230024"	"Własny rozmiar dotyczy wyłącznego pełnego ekranu. Jego edycja wybiera własną rozdzielczość."
 }

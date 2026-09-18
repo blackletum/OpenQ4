@@ -659,7 +659,7 @@
             "properties": {
               "text": {
                 "type": "text",
-                "value": "#str_229982"
+                "value": "#str_230007"
               },
               "font-size": {
                 "type": "length",
@@ -7193,7 +7193,7 @@
     },
     "settings.message": {
       "type": "string",
-      "initial": "#str_229982"
+      "initial": "#str_230007"
     },
     "settings.request": {
       "type": "string",

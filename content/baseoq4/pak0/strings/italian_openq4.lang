@@ -997,4 +997,16 @@
 	"#str_230004"	"Inserisci un numero da 0.5 a 2."
 	"#str_230005"	"Inserisci un numero da 0 a 1."
 	"#str_230006"	"Conferma ogni campo o scarta le modifiche incomplete."
+
+	// Retained SYSTEM interface-size preferences.
+	"#str_230015"	"Scala interfaccia"
+	"#str_230016"	"Dimensione testo"
+	"#str_230017"	"Ripristina dimensioni"
+	"#str_230018"	"Interfaccia"
+	"#str_230019"	"Le dimensioni maggiori possono essere ridotte per adattarsi alla finestra."
+	"#str_230020"	"No;2x;4x;8x;16x"
+	"#str_230021"	"Inserisci un numero intero da 320 a 16384."
+	"#str_230022"	"Inserisci un numero intero da 240 a 16384."
+	"#str_230023"	"Scegli schermo, dimensioni e frequenza supportati prima di applicare."
+	"#str_230024"	"Le dimensioni personalizzate si usano a schermo intero esclusivo. Modificarle seleziona la risoluzione personalizzata."
 }

@@ -678,6 +678,47 @@ void AsyncFailureBoundaries() {
 	Expect(transaction.PrepareApply(7,std::numeric_limits<double>::quiet_NaN(),untouched),SettingsCode::Invalid,"invalid async time rejected before preparation");
 	Check(untouched.owner == 23 && untouched.request == 24 && !transaction.AsyncPending() && host.writes.size() == noWrites,"invalid async prepare is atomic");
 }
+void CoupledDrafts() {
+	struct CoupledHost final : SettingsHost {
+		StateValues live{{"width",1280.0},{"height",720.0}};
+		unsigned writes=0;bool supported=true,throwDraft=false;
+		bool Read(StateValues& out,std::string&)override{out=live;return true;}
+		bool Defaults(StateValues& out,std::string&)override{out={{"width",1600.0},{"height",720.0}};return true;}
+		bool ValidateDraft(const StateValues&,const StateValues& candidate,std::string&)override{
+			if(throwDraft)throw 1;
+			for(const auto& [key,value]:candidate){const auto n=std::get<double>(value);if(n<240||n>16384||std::floor(n)!=n)return false;}
+			return true;
+		}
+		bool Validate(const StateValues& before,const StateValues& candidate,std::string& error)override{
+			return ValidateDraft(before,candidate,error)&&supported&&
+				((candidate.at("width")==StateValue(1280.0)&&candidate.at("height")==StateValue(720.0))||
+				 (candidate.at("width")==StateValue(1600.0)&&candidate.at("height")==StateValue(900.0)));
+		}
+		bool Write(const StateValues& patch,std::string&)override{++writes;for(const auto& [key,value]:patch)live.at(key)=value;return true;}
+		bool NeedsConfirmation(const StateValues&,const StateValues&)const override{return true;}
+	} host;
+	SettingsTransaction tx(host);Expect(tx.Begin(5),SettingsCode::Ok,"begin coupled dimension draft");
+	const auto baseline=host.live;
+	Expect(tx.Edit(5,{{"width",1600.0}}),SettingsCode::Ok,"first axis stages even though pair is incomplete");
+	Check(host.live==baseline&&host.writes==0,"intermediate combination never writes host settings");
+	const auto draft=tx.Draft();host.throwDraft=true;
+	Expect(tx.Edit(5,{{"height",900.0}}),SettingsCode::Invalid,"throwing draft validation is contained");
+	Check(tx.Draft()==draft,"failed draft check preserves intermediate edit");host.throwDraft=false;
+	Expect(tx.Edit(5,{{"height",900.5}}),SettingsCode::Invalid,"individual field constraints remain strict");
+	Expect(tx.Apply(5,1),SettingsCode::Invalid,"synchronous Apply requires complete supported pair");
+	SettingsAttempt attempt{99,98,{}, {}, {}};
+	Expect(tx.PrepareApply(5,2,attempt),SettingsCode::Invalid,"async preparation requires complete supported pair");
+	Check(!tx.AsyncPending()&&attempt.owner==99&&attempt.request==98&&host.writes==0,"invalid pair creates no request or writes");
+	Expect(tx.EditGenerated(5,[](StateValues& patch,std::string&){patch={{"height",900.0}};return true;}),SettingsCode::Ok,"generated second axis completes draft");
+	Expect(tx.PrepareApply(5,3,attempt),SettingsCode::Ok,"complete pair can prepare");host.supported=false;
+	Expect(tx.ExecuteApply(5,attempt.request),SettingsCode::Invalid,"capability loss after preparation is checked before writes");
+	Check(host.writes==0&&host.live==baseline&&tx.AsyncPending(),"failed execution keeps request for explicit recovery");
+	CoupledHost defaultsHost;SettingsTransaction defaults(defaultsHost);Expect(defaults.Begin(6),SettingsCode::Ok,"begin defaults draft");
+	Expect(defaults.Defaults(6),SettingsCode::Ok,"Defaults can stage individually valid incomplete tuple");
+	Expect(defaults.Apply(6,1),SettingsCode::Invalid,"Defaults cannot bypass Apply validation");
+	Expect(defaults.Cancel(6),SettingsCode::Ok,"incomplete draft can be discarded without writes");
+	Check(defaultsHost.writes==0&&defaultsHost.live==baseline,"discard preserves original complete live state");
+}
 } // namespace
 
 int main() {
@@ -694,5 +735,6 @@ int main() {
 	AsyncPersistenceAndConflicts();
 	AsyncPartialWritesAndRetry();
 	AsyncFailureBoundaries();
+	CoupledDrafts();
 	std::puts("UI settings: owned drafts, bounded edits, synchronous compatibility, async prepare/execute/complete, unique tokens, durable confirmation boundary, conflict-safe recovery and reentrancy passed");
 }

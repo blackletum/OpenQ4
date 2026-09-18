@@ -2,7 +2,7 @@
 """Exercise production settings service, transaction and config-write guards.
 
 Compiles the real service/transaction/display controller and Common public
-config wrappers, with real core headers and value validation. A four-field host,
+config wrappers, with real core headers and value validation. A five-field host,
 counted device observations and checked-config edge stand in for engine I/O.
 The checked writer itself has native fault tests in
 settings_configuration_persistence.py. No synthetic observation qualifies an
@@ -47,7 +47,7 @@ static void Check(bool condition,const char* message) {
     if(!condition) { std::fprintf(stderr,"FAIL: %s\n",message);std::exit(1); }
 }
 static StateValues Initial() {
-    return {{"r_brightness",1.0},{"r_mode",0.0},{"r_renderer",std::string("best")},{"r_shadows",true}};
+    return {{"r_brightness",1.0},{"r_mode",0.0},{"r_multiSamples",0.0},{"r_renderer",std::string("best")},{"r_shadows",true}};
 }
 static struct HostData {
     StateValues live=Initial(),defaults=Initial();
@@ -56,10 +56,11 @@ static struct HostData {
     std::vector<StateValues> writes;
     bool failRead=false,failDefaults=false,refuseWrite=false,partialWrite=false,confirm=false;
     bool allowNearZero=false; // Comparison-only fixture: continuous zero-capable numeric setting.
+    bool unsupportedTuple=false,throwPreflight=false;
 } host;
 namespace openq4::ui {
 const std::map<std::string,size_t>& SystemSettingsHost::Schema() {
-    static const std::map<std::string,size_t> schema={{"r_brightness",0},{"r_mode",0},{"r_renderer",2},{"r_shadows",1}};
+    static const std::map<std::string,size_t> schema={{"r_brightness",0},{"r_mode",0},{"r_multiSamples",0},{"r_renderer",2},{"r_shadows",1}};
     return schema;
 }
 bool SystemSettingsHost::Read(StateValues& result,std::string& error) {
@@ -78,7 +79,7 @@ bool SystemSettingsHost::Defaults(StateValues& result,std::string& error) {
     ++host.defaultReads;if(host.failDefaults) { error="bounded defaults failed";return false; }
     result=host.defaults;return true;
 }
-bool SystemSettingsHost::Validate(const StateValues&,const StateValues& target,std::string& error) {
+bool SystemSettingsHost::ValidateDraft(const StateValues&,const StateValues& target,std::string& error) {
     ++host.validations;
     if(target.size()!=Schema().size()) { error="bounded catalog size";return false; }
     for(const auto& [key,type]:Schema()) {
@@ -89,6 +90,12 @@ bool SystemSettingsHost::Validate(const StateValues&,const StateValues& target,s
     const auto& renderer=std::get<std::string>(target.at("r_renderer"));
     if(brightness<(host.allowNearZero?0:.5) || brightness>2 || mode<0 || mode>2 || mode!=std::floor(mode) ||
        (renderer!="best" && renderer!="arb2")) { error="bounded range/choice";return false; }
+    return true;
+}
+bool SystemSettingsHost::Validate(const StateValues& before,const StateValues& target,std::string& error) {
+    if(host.throwPreflight)throw 42;
+    if(!ValidateDraft(before,target,error))return false;
+    if(host.unsupportedTuple){error="unsupported display tuple";return false;}
     return true;
 }
 bool SystemSettingsHost::ValidateRollback(const StateValues&,const StateValues& current,
@@ -107,11 +114,11 @@ bool SystemSettingsHost::Write(const StateValues& patch,std::string& error) {
     return true;
 }
 bool SystemSettingsHost::RequiresDeviceWork(const StateValues& before,const StateValues& target) {
-    return before.at("r_mode")!=target.at("r_mode") || before.at("r_renderer")!=target.at("r_renderer");
+    return before.at("r_mode")!=target.at("r_mode") || before.at("r_multiSamples")!=target.at("r_multiSamples") || before.at("r_renderer")!=target.at("r_renderer");
 }
 unsigned SystemSettingsHost::ChangedEffects(const StateValues& before,const StateValues& target) {
     if(before.empty() || target.empty())return 0;
-    return (before.at("r_mode")!=target.at("r_mode")?unsigned(SystemSettingDisplayRestart):0u) |
+    return (before.at("r_mode")!=target.at("r_mode") || before.at("r_multiSamples")!=target.at("r_multiSamples")?unsigned(SystemSettingDisplayRestart):0u) |
         (before.at("r_renderer")!=target.at("r_renderer")?unsigned(SystemSettingRendererResources):0u);
 }
 bool SystemSettingsHost::ChangedRequiresDisplayRestart(const StateValues& before,const StateValues& target) {
@@ -171,6 +178,7 @@ struct idCommonLocal {
 static struct DeviceData {
     SettingsDisplayObservation observation{1,1,0,0,0,true,false,true,false};
     bool held=false,startup=false,blocked=false,refusePrepare=false,refusePersist=false,refuseRestart=false,refuseFinish=false;
+    bool msaaSupported=true;
     int prepares=0,cancels=0,restarts=0,restores=0,observes=0,persists=0,finishes=0,startups=0,frames=0,shutdowns=0;
 } deviceData;
 class EngineSettingsDisplayHost final:public SettingsDisplayHost {
@@ -207,6 +215,7 @@ public:
     void Shutdown(){++deviceData.shutdowns;deviceData.held=false;}
     bool RecoveryActive()const noexcept{return deviceData.held || deviceData.startup || deviceData.blocked;}
     bool StartupActive()const noexcept{return deviceData.startup;}
+    bool SupportsMultisampling()const{return deviceData.msaaSupported;}
 };
 // Execute the production Session::UpdateScreen frame boundary with a counted
 // synchronous renderer. No window, GPU or input APIs are used by these doubles.
@@ -251,11 +260,11 @@ static void Expect(std::uint64_t owner,const std::string& key,const StateValue& 
 static std::uint64_t Begin() {
     const auto owner=UI_SettingsCreateOwner();
     Check(owner && Dispatch(owner,"begin"),"create and begin");
-    Expect(owner,"open",true);Expect(owner,"message",std::string("#str_229982"));return owner;
+    Expect(owner,"open",true);Expect(owner,"message",std::string("#str_230007"));return owner;
 }
 static void Private(std::uint64_t owner,bool busy) {
     const auto values=Read(owner);
-    Check(values.size()==12,"nonowner gets status only, no catalog snapshots");
+    Check(values.size()==13,"nonowner gets status only, no catalog snapshots");
     Check(values.at("settings.open")==StateValue(false) && values.at("settings.busy")==StateValue(busy),"nonowner ownership flags");
     Check(values.at("settings.dirty")==StateValue(false) && values.at("settings.canApply")==StateValue(false),"nonowner cannot inspect draft");
     Check(values.at("settings.phase")==StateValue(0.0),"nonowner phase is closed");
@@ -264,12 +273,12 @@ static std::uint64_t Pending() {
     const auto owner=Begin();host.confirm=true;
     Check(Dispatch(owner,"edit",{{"r_brightness",1.5}}) && Dispatch(owner,"apply"),"apply a bounded confirmation change");
     Expect(owner,"phase",static_cast<double>(SettingsPhase::Confirming));
-    Expect(owner,"message",std::string("#str_229988"));
+    Expect(owner,"message",std::string("#str_230013"));
     Check(UI_SettingsBlocksConfigWrite(),"confirmation blocks all config writes");return owner;
 }
 static void Validation() {
     const auto& schema=UI_SettingsStateSchema();
-    Check(schema.size()==20 && schema.at("settings.message")==2 && schema.at("settings.open")==1 &&
+    Check(schema.size()==23 && schema.at("settings.msaaAvailable")==1 && schema.at("settings.message")==2 && schema.at("settings.open")==1 &&
           schema.at("settings.phase")==0,"service status schema types");
     for(const auto& [key,type]:SystemSettingsHost::Schema())
         Check(schema.at("settings.draft."+key)==type && schema.at("settings.baseline."+key)==type,"typed snapshot schema");
@@ -313,9 +322,10 @@ static void Ownership() {
     const auto draft=Read(first);const int reads=host.reads,validations=host.validations;
     for(const char* op:{"begin","edit","defaults","apply","applyExit","confirm","revert","cancel"}) {
         Check(!Dispatch(second,op,std::string(op)=="edit"?StateValues{{"r_shadows",false}}:StateValues{}),"foreign operation rejected");
-        Private(second,true);Expect(second,"message",std::string("#str_229983"));
+        Private(second,true);Expect(second,"message",std::string("#str_230008"));
     }
-    Check(Read(first)==draft && host.reads==reads && host.validations==validations && host.writes.empty(),"foreign owner cannot inspect or mutate host/draft");
+    Check(host.reads==reads && host.validations==validations && host.writes.empty(),"foreign owner cannot inspect or mutate host/draft");
+    Check(Read(first)==draft,"owner read revalidates Apply without changing the draft");
     Check(Dispatch(first,"begin") && Read(first)==draft && host.reads==reads,"same-owner begin keeps unsaved draft");
     UI_SettingsCloseOwner(second);Check(Read(first)==draft,"closing nonowner preserves current draft");
     UI_SettingsReleaseOwner(second);output=sentinel;
@@ -327,7 +337,7 @@ static void Drafts() {
     Check(!Dispatch(owner,"edit",{{"r_brightness",1.5},{"r_mode",1.5}}),"whole merged draft validated atomically");
     Expect(owner,"draft.r_brightness",1.0);
     Check(Dispatch(owner,"edit",{{"r_brightness",1.5},{"r_shadows",false}}),"draft immediate settings");
-    Expect(owner,"message",std::string("#str_229989"));Expect(owner,"canApply",true);
+    Expect(owner,"message",std::string("#str_230014"));Expect(owner,"canApply",true);
     Check(host.live==Initial() && host.writes.empty() && !UI_SettingsBlocksConfigWrite(),"editing does not apply or block durable baseline");
     Check(Dispatch(owner,"apply"),"apply immediate draft");
     Check(host.writes==std::vector<StateValues>{{{"r_brightness",1.5},{"r_shadows",false}}},"write only changed values");
@@ -353,7 +363,7 @@ static void Drafts() {
     const auto fresh=UI_SettingsCreateOwner();
     Check(Dispatch(fresh,"cancel"),"registered local-only owner can discard without opening a transaction");
     Check(!Dispatch(fresh,"edit",{{"r_brightness",1.4}}),"closed edit rejected");
-    Expect(fresh,"message",std::string("#str_229984"));
+    Expect(fresh,"message",std::string("#str_230009"));
 }
 static void Devices() {
     const auto owner=Begin();
@@ -362,7 +372,7 @@ static void Devices() {
         Check(Dispatch(owner,"edit",patch),"device changes may be drafted");
         Expect(owner,"canApply",false);const auto baseline=host.live;const int reads=host.reads;
         Check(!Dispatch(owner,"apply") && host.writes.empty() && host.reads==reads && host.live==baseline,"reject full device batch before any live write/read");
-        Expect(owner,"message",std::string("#str_229985"));Expect(owner,"phase",static_cast<double>(SettingsPhase::Editing));
+        Expect(owner,"message",std::string("#str_230010"));Expect(owner,"phase",static_cast<double>(SettingsPhase::Editing));
         Check(Dispatch(owner,"revert"),"discard device draft");
     }
     Check(Dispatch(owner,"edit",{{"r_brightness",1.5}}) && Dispatch(owner,"apply"),"immediate edits remain usable after device rejection");
@@ -371,8 +381,8 @@ static void Conflict() {
     const auto owner=Begin();Check(Dispatch(owner,"edit",{{"r_brightness",1.5}}),"draft before conflict");
     host.live["r_shadows"]=false;
     Check(!Dispatch(owner,"apply") && host.writes.empty(),"external change rejects stale batch without writes");
-    Expect(owner,"message",std::string("#str_229986"));
-    UI_SettingsFrame();Expect(owner,"message",std::string("#str_229986"));
+    Expect(owner,"message",std::string("#str_230011"));
+    UI_SettingsFrame();Expect(owner,"message",std::string("#str_230011"));
     Check(Dispatch(owner,"cancel") && Dispatch(owner,"begin"),"reopen refreshes external baseline");
     Expect(owner,"baseline.r_shadows",false);
     Check(host.live.at("r_shadows")==StateValue(false),"conflict handling preserves external values");
@@ -383,14 +393,14 @@ static void ApplyFailure() {
     Check(!Dispatch(owner,"apply") && host.live==Initial(),"partial apply restores exact owned writes");
     Check(host.writes.size()==2 && host.writes.back()==StateValues{{"r_brightness",1.0}},"rollback restores only successfully changed key");
     Expect(owner,"draft.r_brightness",1.5);Expect(owner,"draft.r_shadows",false);
-    Expect(owner,"message",std::string("#str_229985"));
-    UI_SettingsFrame();Expect(owner,"message",std::string("#str_229985"));
+    Expect(owner,"message",std::string("#str_230010"));
+    UI_SettingsFrame();Expect(owner,"message",std::string("#str_230010"));
     Check(Dispatch(owner,"apply") && host.live.at("r_brightness")==StateValue(1.5),"failed immediate draft remains retryable");
 }
 static void Confirmation() {
     const auto owner=Pending();Expect(owner,"canApply",false);
     Check(Dispatch(owner,"confirm") && !UI_SettingsBlocksConfigWrite(),"confirmation commits and releases persistence block");
-    Expect(owner,"baseline.r_brightness",1.5);Expect(owner,"message",std::string("#str_229982"));
+    Expect(owner,"baseline.r_brightness",1.5);Expect(owner,"message",std::string("#str_230007"));
     Check(Dispatch(owner,"edit",{{"r_brightness",1.7}}) && Dispatch(owner,"apply"),"second pending change");
     Check(Dispatch(owner,"cancel") && !UI_SettingsBlocksConfigWrite(),"cancel pending change restores baseline");
     Expect(owner,"open",true);Expect(owner,"phase",static_cast<double>(SettingsPhase::Editing));
@@ -425,11 +435,11 @@ static void Orphan(bool divergent) {
     Check(!Dispatch(waiter,"begin") && host.writes.size()==writes && host.reads==reads,"explicit begin queues recovery without synchronous host I/O");
     Private(waiter,true);UI_SettingsFrame();
     Check(host.live==afterFailure && UI_SettingsBlocksConfigWrite(),"failed recovery never transfers ownership or overwrites divergence");
-    Expect(waiter,"message",std::string(divergent?"#str_229986":"#str_229987"));Private(waiter,true);
+    Expect(waiter,"message",std::string(divergent?"#str_230011":"#str_230012"));Private(waiter,true);
     const int failedReads=host.reads;UI_SettingsFrame();Check(host.reads==failedReads,"failed queued attempt is not retried each frame");
     if(divergent)host.live["r_brightness"]=1.0;else host.refuseWrite=false;
     Check(!Dispatch(waiter,"begin"),"safe recovery still waits for frame");
-    UI_SettingsFrame();Expect(waiter,"open",true);Expect(waiter,"message",std::string("#str_229982"));
+    UI_SettingsFrame();Expect(waiter,"open",true);Expect(waiter,"message",std::string("#str_230007"));
     Expect(waiter,"baseline.r_brightness",1.0);
     Check(!UI_SettingsBlocksConfigWrite() && host.live==Initial(),"safe recovery opens waiting owner with fresh baseline");
 }
@@ -518,6 +528,28 @@ static void ConfirmationCapability() {
     Check(!Dispatch(owner,"apply") && host.writes.empty() && deviceData.prepares==0,"capability cannot authorize unsupported effects in a mixed batch");
     UI_SettingsConfirmationDocument(owner,DocumentModel{});Check(Dispatch(owner,"revert"),"clear mixed draft");
     Check(Dispatch(owner,"edit",{{"r_mode",1.0}}),"display redraft");Expect(owner,"canApply",false);
+}
+static void MultisamplingCapability() {
+    const auto owner=Begin();UI_SettingsConfirmationDocument(owner,ConfirmationDocument());
+    Expect(owner,"msaaAvailable",true);
+    Check(Dispatch(owner,"edit",{{"r_multiSamples",2.0}}),"MSAA edit only stages a draft");
+    Expect(owner,"canApply",true);
+    deviceData.msaaSupported=false;Expect(owner,"msaaAvailable",false);Expect(owner,"canApply",false);
+    Check(!Dispatch(owner,"apply") && !Dispatch(owner,"applyExit") && host.writes.empty() && deviceData.prepares==0,
+          "unsupported backend refuses MSAA before all live writes and display preparation");
+    Check(!Dispatch(owner,"edit",{{"settings.msaaAvailable",true}}),"read-only capability is not a setting");
+    deviceData.msaaSupported=true;Expect(owner,"canApply",true);
+    Check(Dispatch(owner,"cancel"),"discard unsupported draft");
+    host.live["r_multiSamples"]=4.0;deviceData.msaaSupported=false;
+    Check(Dispatch(owner,"begin"),"observe existing nonzero MSAA on unsupported renderer");
+    UI_SettingsConfirmationDocument(owner,ConfirmationDocument());
+    Check(Dispatch(owner,"edit",{{"r_brightness",1.5}}),"unrelated immediate edit with unchanged MSAA");
+    Expect(owner,"canApply",true);
+    Check(Dispatch(owner,"apply") && host.writes.size()==1 && deviceData.prepares==0 && host.live.at("r_multiSamples")==StateValue(4.0),
+          "unchanged observed MSAA never prevents an unrelated immediate apply");
+    Check(Dispatch(owner,"edit",{{"r_multiSamples",0.0}}),"MSAA can be disabled while capability is unavailable");
+    Expect(owner,"canApply",true);
+    Check(Dispatch(owner,"cancel"),"discard remaining display draft");
 }
 static std::string AwaitDisplay(std::uint64_t owner,const char* operation="apply") {
     UI_SettingsConfirmationDocument(owner,ConfirmationDocument());
@@ -716,7 +748,7 @@ static void TimeoutFrame() {
     Check(UI_SettingsBlocksConfigWrite(),"expired confirmation stays blocked until frame");
     UI_SettingsFrame();
     Check(host.live==Initial() && !UI_SettingsBlocksConfigWrite(),"normal frame expires and rolls back confirmation");
-    Expect(owner,"phase",static_cast<double>(SettingsPhase::Editing));Expect(owner,"message",std::string("#str_229982"));
+    Expect(owner,"phase",static_cast<double>(SettingsPhase::Editing));Expect(owner,"message",std::string("#str_230007"));
 }
 static void NoExit(std::uint64_t owner) {
     Check(!UI_SettingsExitReady(owner) && !UI_SettingsConsumeExit(owner) && !UI_SettingsExitReady(owner),
@@ -727,7 +759,7 @@ static void ExitImmediate(bool noop) {
     NoExit(owner);
     Check(Dispatch(owner,"apply"),"ordinary clean apply remains open");NoExit(owner);
     if(!noop)Check(Dispatch(owner,"edit",{{"r_brightness",1.5},{"r_shadows",false}}),"immediate draft before apply-exit");
-    const auto expected=noop?Initial():StateValues{{"r_brightness",1.5},{"r_mode",0.0},{"r_renderer",std::string("best")},{"r_shadows",false}};
+    auto expected=Initial();if(!noop){expected["r_brightness"]=1.5;expected["r_shadows"]=false;}
     const auto writes=host.writes.size();
     Check(Dispatch(owner,"applyExit"),"successful immediate/no-op apply-exit");
     Check(host.live==expected && host.writes.size()==writes+(noop?0:1),"exact apply patch and no cancellation writes");
@@ -930,6 +962,20 @@ static void Presets(const std::string& scenario) {
     }
     Check(host.live==original&&host.writes.empty(),"all generated service paths have zero live writes");
 }
+static void DisplayDraftPreflight() {
+    const auto owner=Begin();UI_SettingsConfirmationDocument(owner,ConfirmationDocument());
+    host.unsupportedTuple=true;
+    Check(Dispatch(owner,"edit",{{"r_mode",1.0}}),"individually valid display field stages through incomplete tuple");
+    Expect(owner,"canApply",false);Expect(owner,"message",std::string("#str_230023"));
+    Expect(owner,"draft.r_mode",1.0);Expect(owner,"baseline.r_mode",0.0);
+    Check(!Dispatch(owner,"apply")&&!Dispatch(owner,"applyExit"),"invalid coupled draft cannot Apply through either route");
+    Check(host.writes.empty()&&deviceData.prepares==0&&deviceData.restarts==0&&!UI_SettingsBlocksConfigWrite(),"preflight refusal causes no writes, journal or restart");
+    host.unsupportedTuple=false;Check(Dispatch(owner,"edit",{{"r_brightness",1.5}}),"next edit can finish tuple");
+    Expect(owner,"canApply",true);Expect(owner,"message",std::string("#str_230014"));
+    host.throwPreflight=true;Expect(owner,"canApply",false);Expect(owner,"message",std::string("#str_230023"));
+    Check(!Dispatch(owner,"apply")&&host.writes.empty()&&deviceData.prepares==0,"throwing preflight fails closed");
+    host.throwPreflight=false;Check(Dispatch(owner,"cancel")&&host.live==Initial(),"Cancel discards intermediate tuple without changing host");
+}
 int main(int argc,char** argv) {
     Check(argc==2,"scenario required");const std::string name=argv[1];
     if(name.starts_with("preset_"))Presets(name.substr(7));else if(name.starts_with("exact_"))ExactValues(name.substr(6));else if(name=="validation")Validation();else if(name=="ownership")Ownership();
@@ -940,6 +986,8 @@ int main(int argc,char** argv) {
     else if(name=="orphan_divergence")Orphan(true);else if(name=="waiting_close")Waiting(false);
     else if(name=="waiting_release")Waiting(true);else if(name=="persistence")Persistence();
     else if(name=="timeout_frame")TimeoutFrame();else if(name=="capability")ConfirmationCapability();
+    else if(name=="msaa_capability")MultisamplingCapability();
+    else if(name=="display_draft_preflight")DisplayDraftPreflight();
     else if(name=="display_keep")DisplayDelivery(false);else if(name=="display_persist_failure")DisplayDelivery(true);
     else if(name=="display_close_queued")DisplayClose(false);else if(name=="display_close_written")DisplayClose(true);
     else if(name=="startup_shutdown")StartupShutdown();else if(name=="stale_display_actions")StaleDisplayActions();
@@ -965,7 +1013,7 @@ SCENARIOS = (
     'validation', 'ownership', 'drafts', 'devices', 'conflict', 'apply_failure',
     'confirmation', 'abandon_editing', 'abandon_pending', 'orphan_refusal',
     'orphan_divergence', 'waiting_close', 'waiting_release', 'persistence',
-    'timeout_frame', 'capability', 'display_keep', 'display_persist_failure',
+    'timeout_frame', 'capability', 'msaa_capability', 'display_draft_preflight', 'display_keep', 'display_persist_failure',
     'display_close_queued', 'display_close_written', 'startup_shutdown', 'stale_display_actions',
     'frame_outside','frame_skipped','frame_submit_only','frame_present_only',
     'frame_readback_before_draw','frame_readback_after_draw','frame_readback_during_end',

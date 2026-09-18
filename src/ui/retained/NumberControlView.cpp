@@ -202,6 +202,10 @@ struct NumberControlView::Impl {
 	float Length(const std::string& id,const std::string& key,float ratio,float reference,float fallback) const {
 		const auto found=authored.at(id).find(key); if (found==authored.at(id).end() || found->second.type!=ValueType::Length) return fallback;
 		const auto& value=found->second;
+		if (value.unit=="em") {
+			const auto* element=Element(id);
+			return element ? static_cast<float>(value.data[0])*element->GetComputedValues().font_size() : fallback;
+		}
 		return static_cast<float>(value.data[0])*(value.unit=="dp" ? ratio : value.unit=="%" ? reference*.01f : 1.f);
 	}
 	bool Rectangle(const Entry& entry,const std::string& id,float x,float y,float width,float height) {
@@ -258,7 +262,7 @@ bool NumberControlView::Paint(const Interaction& interaction,float ratio,double 
 		const bool active=edit && edit->active && interaction.Focused()==id && interaction.CanActivate(id);
 		std::string text,error;
 		if (edit) text=Presented(*edit);
-		else if (!FormatTextNumber(std::get<double>(view->accepted),{spec.minimum,spec.maximum,spec.exponent},text,error)) { fail(); continue; }
+		else if (!FormatTextNumber(std::get<double>(view->accepted),{spec.minimum,spec.maximum,spec.exponent,spec.integer},text,error)) { fail(); continue; }
 		const bool edited=edit && (edit->identity!=entry.identity || !impl->SamePresentation(entry,*edit));
 		entry.nativePresentation=edit ? edit->nativePresentation : std::nullopt;
 		entry.nativeUnsettled=edit && edit->nativeUnsettled;

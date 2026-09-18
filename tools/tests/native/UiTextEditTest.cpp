@@ -198,6 +198,16 @@ static void Numbers() {
 		}
 	}
 	Check(FormatTextNumber(2,{0,1,false},text,error) && text=="2","out-of-bounds readback remains visible without clamping");
+	const TextNumberPolicy integers{-1000,1000,true,true};
+	for (const auto& sample : std::vector<std::pair<std::string,double>>{{"+320",320},{"320.000",320},{"3.20e2",320},{"32000e-2",320},{"-.000",-0.0},{"1000e-3",1}})
+		Check(ParseTextNumber(sample.first,integers,value)==TextNumberStatus::Valid && value==sample.second,"exact decimal integer syntax remains accepted");
+	for (const auto* fractional : {"320.5","320.00000000000000001","999.99999999999999999","3.21e1","1001e-3","1e-999999"}) {
+		value=123;
+		Check(ParseTextNumber(fractional,integers,value)==TextNumberStatus::Invalid && value==123,"integer field rejects true decimal fractions before binary rounding");
+	}
+	Check(ParseTextNumber("1",{.1,.9,true,true},value)==TextNumberStatus::InvalidPolicy,"integer range must contain an integer");
+	Check(ParseTextNumber("1e2",{-1000,1000,false,true},value)==TextNumberStatus::Invalid,"integer exponent policy remains independent");
+	Check(FormatTextNumber(320.5,integers,text,error) && text=="320.5","integer field preserves a custom fractional readback without rounding");
 	const auto before=text;
 	Check(!FormatTextNumber(std::numeric_limits<double>::quiet_NaN(),policy,text,error) && text==before,"failed numeric formatting leaves output unchanged");
 	Check(!FormatTextNumber(0,{1,0,false},text,error) && text==before,"invalid formatting policy preserves output");

@@ -90,6 +90,15 @@ double SettingsDisplayController::Remaining(double now) const noexcept {
 bool SettingsDisplayController::Fresh(const SettingsDisplayObservation& observed, const SettingsDisplayObservation& baseline) const {
 	return observed.submitted > baseline.submitted && observed.presented > baseline.presented;
 }
+bool SettingsDisplayController::BeginPresentationWait(double frameTime, std::string& error) {
+	double completed = frameTime;
+	if (currentTime && !Invoke([&]{ completed = currentTime(); return true; },error)) return false;
+	const double deadline = completed+DeviceTimeout;
+	if (!Clock(completed,lastTime) || !Clock(completed,frameTime) || !std::isfinite(deadline) || deadline <= completed) {
+		error = "Display completion clock moved backwards or is invalid"; return false;
+	}
+	lastTime = completed; waitDeadline = deadline; return true;
+}
 bool SettingsDisplayController::Observe(bool restoring, SettingsDisplayObservation& observed, std::string& error) {
 	if (!Invoke([&]{ return host.Observe(restoring,observed,error); },error)) return false;
 	if (!observed.ready || !observed.epoch || !observed.generation || observed.epoch != device.epoch ||
@@ -165,7 +174,9 @@ void SettingsDisplayController::Frame(double now, bool ownerAlive, bool allowWor
 			Restore(SettingsCode::ApplyFailed,error.empty()?"Display restart did not return a ready device":error,true); return;
 		}
 		if (closing) { Restore(SettingsCode::Ok,{},false); return; }
-		drawn = false; waitDeadline = now+DeviceTimeout; stage = SettingsDisplayStage::AwaitApply;
+		if (!BeginPresentationWait(now,error)) { Restore(SettingsCode::Invalid,error,true); return; }
+		if (closing) { Restore(SettingsCode::Ok,{},false); return; }
+		drawn = false; stage = SettingsDisplayStage::AwaitApply;
 	} else if (stage == SettingsDisplayStage::QueuedRestore) {
 		if (!executed) {
 			if (prepared && !Invoke([&]{ return host.CancelPreparation(error); },error)) { Recover(SettingsCode::RollbackFailed,error); return; }
@@ -183,7 +194,8 @@ void SettingsDisplayController::Frame(double now, bool ownerAlive, bool allowWor
 		if (!Invoke([&]{ return host.Restart(true,device,error); },error) || !device.ready || !device.epoch || !device.generation) {
 			Recover(SettingsCode::RollbackFailed,error.empty()?"Display restoration did not return a ready device":error); return;
 		}
-		waitDeadline = now+DeviceTimeout; stage = SettingsDisplayStage::AwaitRestore;
+		if (!BeginPresentationWait(now,error)) { Recover(SettingsCode::RollbackFailed,error); return; }
+		stage = SettingsDisplayStage::AwaitRestore;
 	} else if (stage == SettingsDisplayStage::QueuedKeep || stage == SettingsDisplayStage::QueuedAutomaticCommit) {
 		if (!confirmPrepared) {
 			SettingsAttempt confirmation;

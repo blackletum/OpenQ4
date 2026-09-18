@@ -86,6 +86,22 @@ fields, [performance preset and Auto-Detect draft controls](docs/dev/ui/performa
 discard/apply-and-return flows with authored modal focus ownership.
 [Its dropdowns](docs/dev/ui/choice-scrollbars.md) use cut-corner vector frames
 and fit readable option lists inside the settings panel at larger UI scales.
+[Independent text size](docs/dev/ui/text-scale.md) supports 100–200% typography
+with flowing fields and scrollable dialog text. SYSTEM now has transactional
+[UI/text size controls and reset](docs/dev/ui/interface-size-preferences.md),
+with saved preferences and a window-fit limit that keeps actions reachable.
+[Output-size glyph rasterization](docs/dev/ui/output-size-fonts.md) now uses
+bounded shared atlases. Font styles, shaping, animated transform density and
+complete screen/editor qualification remain open.
+[Paired SYSTEM sliders and numeric fields](docs/dev/ui/paired-field-focus.md)
+now grow together with text, keeping their values visible when focused.
+[SYSTEM display controls](docs/dev/ui/display-controls.md) add fullscreen,
+borderless, fullscreen policy and MSAA to the existing draft and confirmation
+flow. Vulkan MSAA changes remain unavailable through this strict display path;
+complete display catalogs and screen qualification remain open.
+[Window and custom fullscreen dimensions](docs/dev/ui/dimension-controls.md)
+now have precise whole-pixel fields. Apply checks the complete display request,
+and window resizing uses the same Keep/Revert flow.
 The shared [effect coordinator](docs/dev/ui/settings-effect-execution.md) adds
 automatic completion and a checked in-place audio foundation. Mixed effect
 execution, portable recovery and the complete settings page remain in development.
@@ -262,7 +278,7 @@ Bug reports, compatibility reports, testing feedback, and code contributions are
 - **themuffinator** - openQ4 development and maintenance
 - **[Emile Belanger (emileb)](https://github.com/emileb)** - contributor and original author of the Android port, SigmaTouch integration, OpenGL ES 3.0 renderer, GLES shader variants, ETC2/EAC compression, and associated mobile memory/loading work. This integration builds on his [Android branch](https://github.com/emileb/openQ4/tree/android) and [GLES shader-variants branch](https://github.com/emileb/openQ4/tree/gles-shader-variants); see the [contribution and adaptation record](docs/dev/android-gles-integration.md).
 - **DarkMatter Productions** - project stewardship and website
-- **[The RmlUi Team, CodePoint, Shift Technology and contributors](https://github.com/mikke89/RmlUi/tree/6.3)** - MIT-licensed retained layout library used by the `idtech5-ui` runtime integration, with openQ4 extensions for [geometry synchronization](https://github.com/themuffinator/openQ4/blob/e3e65887480368191df154a9b52cce69d8e72140/subprojects/packagefiles/rmlui/projection-geometry.patch), [positioned overflow](https://github.com/themuffinator/openQ4/blob/e3e65887480368191df154a9b52cce69d8e72140/subprojects/packagefiles/rmlui/positioned-overflow.patch) and [exact focus geometry](subprojects/packagefiles/rmlui/README.openq4.md); [retained licence notice](docs/licenses/RmlUi.txt).
+- **[The RmlUi Team, CodePoint, Shift Technology and contributors](https://github.com/mikke89/RmlUi/tree/6.3)** - MIT-licensed retained layout library used by the `idtech5-ui` runtime integration, with openQ4 extensions for [geometry synchronization](https://github.com/themuffinator/openQ4/blob/e3e65887480368191df154a9b52cce69d8e72140/subprojects/packagefiles/rmlui/projection-geometry.patch), [positioned overflow](https://github.com/themuffinator/openQ4/blob/e3e65887480368191df154a9b52cce69d8e72140/subprojects/packagefiles/rmlui/positioned-overflow.patch), and [exact focus geometry and masked targeting](subprojects/packagefiles/rmlui/README.openq4.md); [retained licence notice](docs/licenses/RmlUi.txt).
 - **[Baptiste Lepilleur and the JsonCpp authors](https://github.com/open-source-parsers/jsoncpp/tree/1.9.6)** - JSON document parser used under its MIT option for editable retained UI sources; [retained licence notice](docs/licenses/JsonCpp.txt).
 - **[Mikko Mononen, Eric Veach and the libtess2 contributors](https://github.com/memononen/libtess2/tree/8dbd6483e920311a58c9af10a10beb278efebc36)** - SGI-B-2.0 polygon tessellator used by native retained vector paths with an [openQ4 precision patch](subprojects/packagefiles/libtess2/double-precision.patch); [retained licence notice](docs/licenses/libtess2.txt).
 - **[Q2REX Project Team](https://github.com/themuffinator/Q2REX)** - design reference for the native [multiplayer chat panel, scaling and history](docs/user/multiplayer-chat.md)

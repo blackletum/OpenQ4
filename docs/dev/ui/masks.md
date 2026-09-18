@@ -143,8 +143,11 @@ This is canonical alpha masking, not implementation of RmlUi's separate
 stencil-style `EnableClipMask`/`RenderToClipMask` interface. General blend modes,
 same-layer/backdrop filters, reusable layer textures and other effects remain
 unsupported. Canonical properties do not expose those unsupported operations.
-Mask control points and paints are source-editable; direct timeline/game binding,
-mask-aware interaction policies, editor tools and world-surface integration remain
-open. Shared GUI ownership, cropped targets, total GPU pool trimming, optimized
+Mask control points and paints are source-editable. The
+[17 September input update](masked-input-review.md) adds positive-alpha pointer
+targeting and excludes empty masked subtrees from focus. Full control/mask
+intersection for focus, direct timeline/game binding, editor tools and
+world-surface integration remain open. Shared GUI ownership, cropped targets,
+total GPU pool trimming, optimized
 CPU/GPU pacing, Linux/macOS/GLES and the full GUI corpus remain qualification
 gates. No stock GUI resource becomes accepted merely by passing this fixture.

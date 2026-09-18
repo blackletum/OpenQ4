@@ -2,6 +2,50 @@
 
 ## Unreleased — `idtech5-ui` development
 
+- The experimental SYSTEM page adds window and custom fullscreen width/height
+  fields with localized whole-pixel validation. Custom dimensions select Custom
+  resolution automatically. Unsupported display combinations remain editable
+  drafts and cannot Apply; window resizing uses Keep/Revert confirmation.
+  Oversized numeric fields keep their editable value visible when translated
+  labels or validation text exceed the available scroll area.
+  Display, resolution and refresh-rate choice catalogs remain in development.
+
+- The opt-in modern SYSTEM page adds fullscreen, borderless, fullscreen policy
+  and MSAA controls to its Apply/Keep/Revert flow. MSAA is unavailable through
+  this page on Vulkan because its strict display-change path does not yet
+  support those requests. Vulkan's scene-rendering MSAA remains separate.
+  Blocking video reload time no longer consumes the subsequent 20-second
+  presentation wait. The separate 15-second Keep/Revert countdown is unchanged.
+
+- SYSTEM brightness and ambient-light sliders now grow with enlarged text.
+  Their numeric values stay fully visible when focusing either control, and
+  the paired field frames remain aligned.
+
+- Experimental modern UI text now rasterizes at its displayed size, improving
+  enlarged text and fractional UI scaling. Shared glyph atlases stay stable
+  through view changes and rebuild after language or video changes. Replace
+  the client and renderer modules together; older modules are rejected.
+  Full font, language and interface qualification remains in development.
+
+- The experimental modern UI supports independently enlarged text using
+  `ui_retainedTextScale` (`1`–`2`, default `1`). SYSTEM fields and dialogs grow
+  with the text, long messages scroll while actions stay visible, and translated
+  dropdowns remeasure their rows after widening. Changing status messages keep
+  the active control visible while preserving deliberate scrolling.
+  SYSTEM now offers UI scale and text size controls plus Reset UI sizes through
+  its normal Apply/Discard flow. Saved sizes survive restart; very large sizes
+  fit the window so reset and essential actions remain reachable. Complete
+  interface qualification remains in development.
+
+- Modern SYSTEM settings again show the correct localized Ready, unsaved-change,
+  confirmation and error messages after the language-table merge. Page generation
+  and validation use the same current string IDs.
+
+- The experimental modern UI respects vector-mask holes when targeting controls
+  and scrolling. Empty or fully transparent masked panels no longer retain
+  keyboard focus. Partly transparent controls and active drags remain usable.
+  Full UI replacement and editor qualification remain in development.
+
 - SYSTEM dropdowns now fit inside the settings panel with cut-corner vector
   framing. Lists open above a control when needed, preserve readable row sizes,
   and scroll within the available space without covering the action footer.

@@ -20,7 +20,14 @@ struct Viewport {
 	float displayScale = 1, userScale = 1;
 	float pixelDensityX = 1, pixelDensityY = 1;
 	float originX = 0, originY = 0;
+	// Typography scales separately from layout density and pointer coordinates.
+	float textScale = 1;
+	// Optional root-menu safety fit, separate from the saved preferences.
+	// Surface/editor viewports retain 1 unless their owner requests fitting.
+	float fitScale = 1;
 	float DpRatio() const;
+	float TextRatio() const;
+	void FitToMinimum(float widthDp, float heightDp);
 	void WindowToDocument(float x, float y, float& outX, float& outY) const;
 };
 
@@ -66,6 +73,7 @@ struct RuntimeStatistics {
 	double frameMilliseconds = 0, updateMilliseconds = 0, renderMilliseconds = 0;
 	double vectorCompileMilliseconds = 0, vectorUploadMilliseconds = 0;
 	std::uint64_t vectorElements = 0, vectorPathsCompiled = 0, vectorCacheHits = 0, vectorUploads = 0;
+	std::uint64_t vectorHitPathsCompiled = 0, vectorHitCacheHits = 0;
 	std::uint64_t geometryCompiles = 0, drawCalls = 0, submittedVertices = 0, submittedIndices = 0;
 	std::uint64_t residentGeometryCount = 0, residentGeometryBytes = 0;
 	std::uint64_t visibleVectorCacheBytes = 0;

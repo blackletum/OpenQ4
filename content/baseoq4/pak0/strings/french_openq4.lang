@@ -997,4 +997,16 @@
 	"#str_230004"	"Saisissez un nombre de 0.5 à 2."
 	"#str_230005"	"Saisissez un nombre de 0 à 1."
 	"#str_230006"	"Validez chaque champ ou abandonnez les modifications inachevées."
+
+	// Retained SYSTEM interface-size preferences.
+	"#str_230015"	"Taille de l’interface"
+	"#str_230016"	"Taille du texte"
+	"#str_230017"	"Réinitialiser les tailles"
+	"#str_230018"	"Interface"
+	"#str_230019"	"Les grandes tailles peuvent être réduites pour tenir dans la fenêtre."
+	"#str_230020"	"Non;2x;4x;8x;16x"
+	"#str_230021"	"Entrez un nombre entier de 320 à 16384."
+	"#str_230022"	"Entrez un nombre entier de 240 à 16384."
+	"#str_230023"	"Choisissez un écran, une taille et une fréquence compatibles avant d’appliquer."
+	"#str_230024"	"La taille personnalisée sert au plein écran exclusif. La modifier sélectionne la résolution personnalisée."
 }

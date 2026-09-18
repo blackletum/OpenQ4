@@ -9,9 +9,8 @@ bool Fail(std::string& error, const char* message) noexcept {
 }
 }
 const std::map<std::string,SettingsEffectField>& SettingsEffectCatalogV1() {
- // Audited projection of SystemSettingsHost::Catalog. The native test compares
- // every entry against that actual catalog; a catalog change needs a deliberate
- // version/compatibility decision, not a silent recovery reinterpretation.
+ // Immutable original 53-field projection. Existing effect journals retain
+ // this meaning; additional fields belong to a new catalog version.
  static const std::map<std::string,SettingsEffectField> catalog = {
 	{"com_performancePreset",{2,32}},
 	{"r_bloom",{1,0}},
@@ -70,13 +69,24 @@ const std::map<std::string,SettingsEffectField>& SettingsEffectCatalogV1() {
  };
  return catalog;
 }
+const std::map<std::string,SettingsEffectField>& SettingsEffectCatalogV2() {
+ static const auto catalog=[] {
+  auto result=SettingsEffectCatalogV1();
+  result.emplace("ui_retainedScale",SettingsEffectField{0,0});
+  result.emplace("ui_retainedTextScale",SettingsEffectField{0,0});
+  return result;
+ }();
+ return catalog;
+}
 bool BuildSettingsEffectPlan(const StateValues& baseline, const StateValues& target,
  const std::map<std::string,std::size_t>& catalog, SettingsEffectPlan& output, std::string& error) {
  try {
-  const auto& audited=SettingsEffectCatalogV1();
+  const bool legacy=catalog.size()==SettingsEffectCatalogV1().size();
+  const auto& audited=legacy?SettingsEffectCatalogV1():SettingsEffectCatalogV2();
   if (catalog.size()!=audited.size() || baseline.size()!=audited.size() || target.size()!=audited.size())
    return Fail(error,"Settings effect catalog or complete snapshots changed");
-  SettingsEffectPlan candidate; bool changed=false; std::size_t baselineBytes=0,targetBytes=0;
+  SettingsEffectPlan candidate; candidate.version=legacy?1u:2u;
+  bool changed=false; std::size_t baselineBytes=0,targetBytes=0;
   for (const auto& [key,field]:audited) {
    const auto declared=catalog.find(key); const auto old=baseline.find(key),next=target.find(key);
    if (declared==catalog.end() || declared->second!=field.type || old==baseline.end() || next==target.end() ||

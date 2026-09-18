@@ -326,7 +326,12 @@ static void PositionedOverflowBoundaries(TestHost& host) {
 			view.runtime.SetPresentationAlias("body-content::rect","0 0 220 80",true,error),"shrink absolute content and move its lower child into the new extent");view.Frame();
 		Check(Near(view.BoxOf("upper").y,view.BoxOf("body").y+10),"relayout shrinks scroll extent and clamps old offset instead of accumulating it");
 		Check(view.runtime.SetPresentationAlias("body::rect","20 30 240 40",true,error),"resize scroll viewport smaller");view.Frame();
-		auto body=view.BoxOf("body");view.Point(body.x+100,body.y+20);view.runtime.PointerWheel(1,view.time);view.Frame();
+		auto body=view.BoxOf("body"),lower=view.BoxOf("lower");
+		Check(lower.y>=body.y-.5f&&lower.y+lower.height<=body.y+body.height+.5f,"shrinking layout retains the previously visible lower focus");
+		view.Point(body.x+100,body.y+20);
+		view.runtime.PointerWheel(-1,view.time);view.Frame();view.runtime.PointerWheel(-1,view.time);view.Frame();
+		Check(Near(view.BoxOf("upper").y,body.y+10),"explicit wheel restores origin after focus reveal");
+		view.runtime.PointerWheel(1,view.time);view.Frame();
 		Check(Near(view.BoxOf("upper").y,body.y+10-36),"smaller viewport exposes fresh bounded absolute scroll range");
 		Check(view.runtime.SetPresentationAlias("body::rect","20 30 240 140",true,error),"resize scroll viewport larger");
 		view.viewport.width=320;view.viewport.height=200;view.Frame();

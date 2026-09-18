@@ -64,6 +64,7 @@ struct State {
     idRenderSystem* savedRenderSystem=nullptr;idRenderModelManager* savedRenderModelManager=nullptr;
 } rm_state;
 static uint64_t rm_displayModuleEpoch=1;
+static rendererImageRecoveryLease_t rm_imageRecoveryLease{};
 static bool rm_displayProbeSaved=false;
 static renderWindowRequest_t rm_displayProbeRestore={};
 static uint64_t rm_displayProbeEpoch=0;
@@ -73,14 +74,14 @@ static renderWindowRequest_t submitted={};
 static renderWindowServices_t windowServices={};
 static const renderWindowServices_t* rm_displayVideoPin=nullptr;
 static bool servicesAvailable=true,windowAvailable=true,restartOkay=true,queryRace=false,epochRace=false,throwBackend=false;
-static bool retainOkay=true,destroyDeviceOnFailure=false;
+static bool retainOkay=true,destroyDeviceOnFailure=false,unloadOkay=true;
 static bool initializeOkay=true,initialReady=true;
 static int moduleQueries=0,builtinQueries=0,moduleRestarts=0,builtinRestarts=0;
 static int moduleInitializes=0,builtinInitializes=0;
 static int videoRetains=0,videoReleases=0,videoReferences=0;
 static std::vector<std::string> lifetime;
 static void RM_RestorePublishedInterfaces();
-static void RM_UnloadModule(){lifetime.push_back("unload");RM_RestorePublishedInterfaces();rm_state.moduleExportValid=false;rm_state.moduleExport={};}
+static bool RM_UnloadModule(){lifetime.push_back("unload");if(!unloadOkay)return false;RM_RestorePublishedInterfaces();rm_state.moduleExportValid=false;rm_state.moduleExport={};return true;}
 const renderWindowServices_t* Sys_GetRenderWindowServices(){return servicesAvailable?&windowServices:nullptr;}
 static bool RetainVideo(){++videoRetains;lifetime.push_back("retain");if(!retainOkay)return false;++videoReferences;return true;}
 static void ReleaseVideo(){assert(videoReferences==1);--videoReferences;++videoReleases;lifetime.push_back("release");}
@@ -124,7 +125,7 @@ static void Reset(){
     rm_state={};rm_displayModuleEpoch=1;rm_displayProbeSaved=false;rm_displayProbeRestore={};rm_displayProbeEpoch=0;
     renderSystem=&builtinRenderer;renderModelManager=&builtinModels;builtinRenderer={};moduleRenderer={};
     servicesAvailable=windowAvailable=restartOkay=true;queryRace=epochRace=throwBackend=false;
-    retainOkay=true;destroyDeviceOnFailure=false;videoRetains=videoReleases=0;lifetime.clear();
+    retainOkay=unloadOkay=true;destroyDeviceOnFailure=false;videoRetains=videoReleases=0;lifetime.clear();
     initializeOkay=initialReady=true;moduleInitializes=builtinInitializes=0;
     moduleQueries=builtinQueries=moduleRestarts=builtinRestarts=0;logs.clear();submitted={};
     windowServices={};windowServices.QueryWindowState=QueryWindow;windowServices.ApplyScreenParmsStrict=ApplyWindow;
@@ -233,6 +234,12 @@ static void VideoLifetime(){
     assert((lifetime==std::vector<std::string>{"retain","restart","restart","restart","release"}));
     restartOkay=false;
     assert(!R_RendererModule_TryDeviceRestart(&request,error,sizeof(error)) && videoReferences==1);
+    // Current image-recovery ownership may refuse module teardown. Keep the
+    // display pin and epoch until the renderer actually retires its resources.
+    unloadOkay=false;const auto epoch=rm_displayModuleEpoch;
+    lifetime.clear();R_RendererModule_Shutdown();
+    assert(videoReferences==1 && rm_displayVideoPin && rm_displayModuleEpoch==epoch && videoReleases==3);
+    assert((lifetime==std::vector<std::string>{"unload"}));unloadOkay=true;
     lifetime.clear();R_RendererModule_Shutdown();
     assert(!videoReferences && !rm_displayVideoPin && videoRetains==5 && videoReleases==4);
     assert((lifetime==std::vector<std::string>{"unload","release"}));

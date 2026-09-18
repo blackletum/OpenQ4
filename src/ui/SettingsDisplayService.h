@@ -27,6 +27,9 @@ public:
 	bool RecoveryActive() const noexcept { return startup || blocked || processLease.IsHeld(); }
 	bool StartupActive() const noexcept { return startup; }
 	const std::string& RecoveryError() const noexcept { return recoveryError; }
+	// Active backend policy, not a promise that every sample count is supported
+	// by the current device. Strict Apply still validates the actual request.
+	bool SupportsMultisampling() const;
 
 private:
 	bool Paths(std::string& error);

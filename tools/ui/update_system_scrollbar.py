@@ -69,7 +69,7 @@ def compose(document):
     wrapper = {'id': 'settings-scroll-region', 'type': 'group', 'properties': {
         'position': keyword('relative'), 'display': keyword('flex'), 'box-sizing': keyword('border-box'),
         'width': length(100, '%'), 'height': length(0), 'flex-grow': number(1), 'flex-shrink': number(1),
-        'min-height': length(0), 'column-gap': length(8), 'margin-top': length(8), 'margin-bottom': length(8),
+        'min-height': length(3, 'em'), 'column-gap': length(8), 'margin-top': length(4), 'margin-bottom': length(4),
         'align-items': keyword('stretch'), 'opacity': number(1)}, 'children': [body, bar]}
     for i, child in enumerate(panel['children']):
         if child['id'] in ('settings-body', 'settings-scroll-region'):
@@ -77,7 +77,10 @@ def compose(document):
             break
     else:
         raise ValueError('SYSTEM body must remain inside its panel')
-    tail_prefixes = ('settings_preset.', 'settings_autodetect.',
+    tail_prefixes = ('settings_window_width.', 'settings_window_height.', 'settings_custom_width.', 'settings_custom_height.',
+                     'settings_fullscreen.', 'settings_borderless.', 'settings_fullscreen_policy.', 'settings_msaa.',
+                     'settings_ui_scale.', 'settings_text_scale.', 'settings_reset_sizes.',
+                     'settings_preset.', 'settings_autodetect.',
                      'settings_brightness_number.', 'settings_ambient_number.')
     tail = [t for t in result['timelines'] if t['id'].startswith(tail_prefixes)]
     result['timelines'] = [t for t in result['timelines']

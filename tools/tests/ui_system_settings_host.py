@@ -152,14 +152,18 @@ static void Seed() {
     localCVarSystem.variables.at("r_customWidth").value="1920";
     localCVarSystem.variables.at("r_customHeight").value="1080";
     localCVarSystem.variables.at("r_fullscreenDesktop").value="1";
+    for(const auto* key:{"ui_retainedScale","ui_retainedTextScale"}) {
+        localCVarSystem.variables.at(key).value="1";
+        localCVarSystem.variables.at(key).SetDefault("1");
+    }
 }
 '''
 
 MAIN = r'''
 int main() {
     Seed();SystemSettingsHost host;std::string error;StateValues original;
-    assert(SystemSettingsHost::Schema().size()==53 && host.Read(original,error));
-    assert(original.size()==53 && writes==0);
+    assert(SystemSettingsHost::Schema().size()==55 && host.Read(original,error));
+    assert(original.size()==55 && writes==0);
     assert(std::get<double>(original.at("r_brightness"))==1.2345678901234567);
     assert(original.at("r_screenFraction")==StateValue(90.0));
     assert(original.at("image_usePrecompressedTextures")==StateValue(2.0));
@@ -174,8 +178,18 @@ int main() {
     StateValues failed={{"sentinel",true}};
     assert(!host.Read(failed,error) && failed==StateValues({{"sentinel",true}}));
     brightness.flags&=~CVAR_PRIVATE;
-    StateValues defaults;assert(host.Defaults(defaults,error) && defaults.size()==53 && writes==0);
+    StateValues defaults;assert(host.Defaults(defaults,error) && defaults.size()==55 && writes==0);
     assert(defaults.at("r_brightness")==StateValue(1.0));
+    assert(defaults.at("ui_retainedScale")==StateValue(1.0) && defaults.at("ui_retainedTextScale")==StateValue(1.0));
+    for(const auto* key:{"ui_retainedScale","ui_retainedTextScale"}) {
+        auto sized=original;sized[key]=1.375;
+        assert(host.Validate(original,sized,error) && !host.RequiresDeviceWork(original,sized) && !host.NeedsConfirmation(original,sized));
+        sized[key]=2.0;assert(host.Validate(original,sized,error));
+        sized[key]=2.001;assert(!host.Validate(original,sized,error));
+        sized[key]=std::string("1.25");assert(!host.Validate(original,sized,error));
+        sized[key]=std::string(key)=="ui_retainedScale"?.75:1.0;assert(host.Validate(original,sized,error));
+        sized[key]=std::string(key)=="ui_retainedScale"?.749:.999;assert(!host.Validate(original,sized,error));
+    }
     brightness.SetDefault("nan");failed={{"sentinel",true}};
     assert(!host.Defaults(failed,error) && failed==StateValues({{"sentinel",true}}));brightness.SetDefault("1");
 
@@ -239,6 +253,14 @@ int main() {
     candidate=original;candidate["r_fullscreen"]=true;candidate["r_fullscreenDesktop"]=false;candidate["r_mode"]=-1.0;
     candidate["r_displayRefresh"]=60.0;
     assert(host.Validate(original,candidate,error) && queriedDisplay==2);
+    auto incompleteSize=candidate;incompleteSize["r_customWidth"]=1280.0;
+    const int draftQueries=windowQueries;
+    assert(host.ValidateDraft(original,incompleteSize,error) && windowQueries==draftQueries);
+    assert(!host.Validate(original,incompleteSize,error)); // Incomplete width/height pair cannot Apply.
+    incompleteSize["r_customWidth"]=1280.5;assert(!host.ValidateDraft(original,incompleteSize,error));
+    incompleteSize["r_customWidth"]=319.0;assert(!host.ValidateDraft(original,incompleteSize,error));
+    incompleteSize=candidate;incompleteSize["r_screen"]=99.0;
+    assert(host.ValidateDraft(original,incompleteSize,error) && !host.Validate(original,incompleteSize,error));
     candidate["r_displayRefresh"]=144.0;assert(!host.Validate(original,candidate,error));
     candidate["r_displayRefresh"]=60.0;candidate["r_multiScreen"]=1.0;assert(!host.Validate(original,candidate,error));
     candidate["r_multiScreen"]=0.0;candidate["r_customWidth"]=3840.0;candidate["r_customHeight"]=2160.0;
@@ -291,7 +313,7 @@ int main() {
     Seed();
     localCVarSystem.variables.at("r_brightness").value="1.2junk";failed={{"sentinel",true}};
     assert(!host.Read(failed,error) && failed==StateValues({{"sentinel",true}}));
-    std::puts("SYSTEM settings host: 53-key catalog, defaults, exact decimals, validation/rollback, patch refusal and display classification passed");
+    std::puts("SYSTEM settings host: 55-key catalog, defaults, exact decimals, validation/rollback, patch refusal and display classification passed");
 }
 '''
 
@@ -305,9 +327,11 @@ def source_checks(host_source):
     system = (ROOT / 'content/baseoq4/pak0/guis/menu/settings/system.gui').read_text(encoding='utf-8')
     page = set(re.findall(r'\bcvar\s+"?([a-zA-Z_]\w*)', system)) - {'gui_set_sys_scroll'}
     page |= {'r_mode', 'r_skipBump', 'r_skipSky', 'r_skipSpecular'}
+    # The retained replacement adds independent interface preferences.
+    page |= {'ui_retainedScale', 'ui_retainedTextScale'}
     catalog = set(re.findall(r'(?:Number|Boolean|String)\("(\w+)"', host_source))
     assert {key.lower() for key in page | preset_keys} == {key.lower() for key in catalog}
-    assert len(preset_keys) == 32 and len(catalog) == 53
+    assert len(preset_keys) == 32 and len(catalog) == 55
     renderer = (ROOT / 'src/renderer/RenderSystem_init.cpp').read_text(encoding='utf-8')
     modes = renderer.split('vidmode_t r_vidModes[] = {', 1)[1].split('};', 1)[0]
     expected = {int(mode): (int(width), int(height)) for mode, width, height in re.findall(r'\{\s*(\d+),\s*(\d+),\s*(\d+)\s*\}', modes)}

@@ -224,6 +224,15 @@ speaker count and budget fields are integers.
 
 ## Implemented transaction and service boundary
 
+The later [dimension-field increment](dimension-controls.md) separates draft
+validation from Apply validation. Individual edits retain complete typed,
+writable and range-checked snapshots while allowing intermediate width/height
+combinations. Apply readiness, preparation and execution validate the complete
+display request against current capabilities. Draft validation performs no
+device work; rollback and recovery keep their existing strict checks. Existing
+hosts retain full validation by default. The revision-bound checkpoint below
+records the earlier implementation.
+
 The implementation increment follows engine baseline
 `15e35beaf11a1f1942ba25e9431211f64c1ef7f1`; the companion remains
 `1cd33980f072ac3d78978a07b388b4b6fe6b5eb2`. It adds the engine-independent

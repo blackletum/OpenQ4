@@ -46,7 +46,8 @@ class PairedNumbers(unittest.TestCase):
     def test_complete_authored_slider_inventory(self):
         self.assertEqual({id for id,n in self.nodes.items() if n.get('control',{}).get('role')=='slider'},set(component.PAIRS))
         self.assertEqual({id for id,n in self.nodes.items() if n.get('control',{}).get('role')=='number'},
-                         {id+'_number' for id in component.PAIRS})
+                         {id+'_number' for id in component.PAIRS} |
+                         {'settings_window_width','settings_window_height','settings_custom_width','settings_custom_height'})
 
     def test_shared_authoritative_proposal_and_finite_range(self):
         for slider_id,(key,_) in component.PAIRS.items():
@@ -67,8 +68,15 @@ class PairedNumbers(unittest.TestCase):
             self.assertEqual(controls['properties']['flex-wrap'],component.keyword('wrap'))
             self.assertEqual(controls['properties']['column-gap'],component.length(8))
             self.assertEqual(self.nodes[slider_id]['properties']['min-width'],component.length(128))
-            self.assertEqual(number['properties']['min-width'],component.length(96))
-            self.assertEqual(self.nodes[number['control']['parts']['viewport']]['properties']['height'],component.length(36))
+            self.assertEqual(number['properties']['min-width'],component.length(6,'em'))
+            self.assertEqual(self.nodes[number['control']['parts']['viewport']]['properties']['height'],component.length(2.25,'em'))
+            slider=self.nodes[slider_id]
+            self.assertEqual(slider['properties']['height'],component.length(2.25,'em'))
+            self.assertEqual(slider['properties']['min-height'],component.length(2.25,'em'))
+            self.assertEqual(slider['properties']['display'],component.keyword('flex'))
+            self.assertEqual(slider['properties']['flex-direction'],component.keyword('column'))
+            self.assertEqual(slider['properties']['justify-content'],component.keyword('center'))
+            self.assertEqual(self.nodes[slider['control']['parts']['track']]['properties']['flex-shrink'],component.value('number',0))
             self.assertEqual(self.nodes[slider_id+'-label']['properties']['width'],component.length(100,'%'))
             for owner in controls['children']:
                 def scan(node):
@@ -120,12 +128,27 @@ class PairedNumbers(unittest.TestCase):
 
     def test_engine_owned_local_draft_declarations_and_localization(self):
         self.assertEqual(self.page['state']['ui.numberDraftsPending'],{'type':'boolean','initial':False})
-        self.assertEqual(self.page['state']['ui.numberDraftMessage'],{'type':'string','initial':'#str_229982'})
+        self.assertEqual(self.page['state']['ui.numberDraftMessage'],{'type':'string','initial':'#str_230007'})
         self.assertEqual(self.page['actions']['focusNumberDraft'],{'operation':'ui.numberDrafts.focus','arguments':{}})
         for path in (ROOT/'content/baseoq4/pak0/strings').glob('*_openq4.lang'):
             text=path.read_text(encoding='utf-8')
             for key in ('#str_230004','#str_230005','#str_230006'):
                 self.assertEqual(len(re.findall('"'+key+'"',text)),1,(path,key))
+
+    def test_service_status_keys_resolve_in_each_locale(self):
+        service=(ROOT/'src/ui/SettingsService.cpp').read_text(encoding='utf-8')
+        keys=set(re.findall(r'"(#str_[0-9]+)"',service))
+        for path in (ROOT/'content/baseoq4/pak0/strings').glob('*_openq4.lang'):
+            entries=re.findall(r'"(#str_[0-9]+)"\s+"([^"\n]*)"',path.read_text(encoding='utf-8'))
+            for key in keys:
+                values=[text for candidate,text in entries if candidate==key]
+                self.assertEqual(len(values),1,(path.name,key))
+                self.assertTrue(values[0].strip(),(path.name,key))
+        english=dict(re.findall(r'"(#str_[0-9]+)"\s+"([^"\n]*)"',
+            (ROOT/'content/baseoq4/pak0/strings/english_openq4.lang').read_text(encoding='utf-8')))
+        ready=self.page['state']['ui.numberDraftMessage']['initial']
+        self.assertEqual(english[ready],'Ready')
+        self.assertIn(ready,keys)
 
     def test_apply_and_apply_exit_guards_and_visual_state(self):
         bindings={binding['id']:binding['value'] for binding in self.page['bindings']}

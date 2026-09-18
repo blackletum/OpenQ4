@@ -65,6 +65,8 @@ static void Schema() {
 		[](auto& s) { Number(s)["control"]["minimum"] = 3; },
 		[](auto& s) { Number(s)["control"]["maximum"] = "2"; },
 		[](auto& s) { Number(s)["control"]["exponent"] = 1; },
+		[](auto& s) { Number(s)["control"]["integer"] = 1; },
+		[](auto& s) { Number(s)["control"]["integer"] = true; Number(s)["control"]["minimum"] = 1.1; Number(s)["control"]["maximum"] = 1.9; },
 		[](auto& s) { Number(s)["control"]["maxBytes"] = 0; },
 		[](auto& s) { Number(s)["control"]["maxBytes"] = 65537; },
 		[](auto& s) { Number(s)["control"]["step"] = .1; },
@@ -279,7 +281,22 @@ static void PendingAndFailureBoundaries() {
 	shortField.values["number"].value = 1.25; shortField.Reset(); shortField.input.Focus("number");
 	Check(!shortField.input.BeginNumberEdit("number",shortField.error) && !shortField.View().number && std::get<double>(shortField.View().accepted) == 1.25,"too-small local budget reports failure without truncating actual readback");
 }
+static void IntegerProposals() {
+	auto source=Source();Number(source)["control"]["integer"]=true;
+	Document document;std::vector<Diagnostic> diagnostics;
+	Check(document.Load(Encode(source),diagnostics)&&std::get<NumberSpec>(document.Model().FindNode("number")->control->widget).integer,"integer policy survives canonical compilation");
+	Fixture f;auto& spec=std::get<NumberSpec>(f.model.root.children[0].control->widget);
+	spec.minimum=320;spec.maximum=16384;spec.integer=true;spec.exponent=false;
+	f.values["number"].value=1280.5;f.Reset();f.Begin();
+	Check(f.View().number->state.text=="1280.5","integer editor preserves observed noninteger value");
+	for(const auto* text:{"1280.5","1280.00000000000000001","319","16385","1e3"}) {
+		f.Text(text);const auto identity=f.Identity();
+		Check(!f.input.CommitNumberEdit("number",identity,f.error)&&f.input.TakeActions().empty()&&f.View().number->state.text==text,"invalid size remains editable and produces no proposal");
+	}
+	f.Text("1600");auto action=f.Commit();
+	Check(action.proposal&&std::get<double>(*action.proposal)==1600&&f.input.CanDispatchControlAction(action),"whole pixel size emits one exact typed proposal");
+}
 int main() {
-	Schema(); CommitAndReadback(); EditingAndComposition(); LifetimesAndConflicts(); PolicyAndSliderCompatibility(); PendingAndFailureBoundaries();
+	Schema(); CommitAndReadback(); EditingAndComposition(); LifetimesAndConflicts(); PolicyAndSliderCompatibility(); PendingAndFailureBoundaries();IntegerProposals();
 	std::printf("UI number controls: %u checks passed\n",checks); return 0;
 }

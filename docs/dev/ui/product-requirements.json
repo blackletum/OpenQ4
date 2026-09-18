@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "id_namespace": "openq4.ui.product",
-  "date": "2026-09-11",
+  "date": "2026-09-17",
   "status": "Implementation incomplete; this register preserves full product scope and does not accept any production GUI.",
   "baseline": {
-    "engine_revision": "a11a00181b5997993bb9e225bad63a6422386311",
+    "engine_revision": "85c011754b800409e5e471b454ac4d658b6f3d00",
     "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
     "effective_gui_count": 271,
     "translated_or_accepted_resources": 0,
@@ -14,27 +14,27 @@
     "visual": {
       "path": "docs/dev/ui-visual-design.md",
       "authority": "normative visual, interaction and editor contract",
-      "sha256": "74d68e59b88deadea881c3ef10b53823caf619c0628dddc02389d85cf92cdfb1"
+      "sha256": "6b328e2e0e5c937ae9cd3830186682d4f30a43f2e77881c00ed735f841d48348"
     },
     "product": {
       "path": "docs/dev/plans/ui-product-completion.md",
       "authority": "normative completion scope, milestones and final audit",
-      "sha256": "6ebebb725e4836150ca1cbbb4e9af8c023d6b26720915738507c7743bcab7690"
+      "sha256": "58a978601d15947621192b3c0a96b36ba83ea3ed473d384bb4aa7660e53b4caf"
     },
     "original": {
       "path": "docs/dev/plans/idtech5-ui.md",
       "authority": "original immutable scope and stage gates",
-      "sha256": "9bb5e007b6db111a647e346772179fa077b61306e6d24bfa7ba5ae7ac4d7fd33"
+      "sha256": "7f4e66a7887e1efdfb1ad5fae3bae38f95c830c86b40d0656caf9cb872db312e"
     },
     "inventory": {
       "path": "docs/dev/ui/inventory-report.md",
       "authority": "inventory method and scope limits",
-      "sha256": "de3efcada6a2527338d428771cb3617a46e4abe85f863540a2dcd8246545792f"
+      "sha256": "c7c1e3df85795992414735c33473c44b768ed6a4c6ffedab24d460a6697bb58c"
     },
     "import": {
       "path": "docs/dev/ui/legacy-import.md",
       "authority": "native import evidence and unresolved semantics",
-      "sha256": "53c12297980d8de9abce17c213b756b2ae4401f40cca8ebd536dee524b5536f4"
+      "sha256": "4afdcf8fee99fe08f33477f8a2649b6923d21be476c675aaeacf853ea0e99371"
     }
   },
   "milestones": {
@@ -100,91 +100,91 @@
       "kind": "source_audit",
       "path": "docs/dev/plans/ui-product-completion.md",
       "scope": "Published audit at 80bb3939; source limitations corroborated by current Document/Runtime inspection. Historical tests and captures are not a fresh product qualification.",
-      "sha256": "6ebebb725e4836150ca1cbbb4e9af8c023d6b26720915738507c7743bcab7690"
+      "sha256": "58a978601d15947621192b3c0a96b36ba83ea3ed473d384bb4aa7660e53b4caf"
     },
     "document-foundation": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/document-format.md",
       "scope": "Typed JSONC, stable IDs, value edits and motion only; components, structure editing and full model unfinished.",
-      "sha256": "6c9f9aa3826bec5d89c7189847b6d25f119ea2cda357da5bf4c929e088b8323f"
+      "sha256": "caf58e730de9a4be19a9a8387136b43a45d62b5c0d62c9fb8ee50df090bc34cc"
     },
     "binding-foundation": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/bindings.md",
       "scope": "Typed atomic state, read-only CVar polling and presentation bindings; application operations and semantic translation unfinished.",
-      "sha256": "c18b796aaa9620d7887377d1ddfc55292debc4820fd2f67dd47a14c198db8574"
+      "sha256": "cb874a9a1ff9b34b659a3da875c5e4074174d5ac0509a81dab7845165889147f"
     },
     "input-foundation": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/input-routing.md",
       "scope": "Semantic button/device ownership fixtures; no full widget, text, touch or platform acceptance.",
-      "sha256": "60cc7f7c2aa6f37e8fb9feab8e6767a60ad2f89c64d0e03a719281a7814311a3"
+      "sha256": "e967c46002356597b6b89f25e5e9be539a3e83b030083a24ee56b55ee84ef157"
     },
     "interaction-foundation": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/interaction.md",
       "scope": "Button focus/modal/navigation fixtures; authored path/mask-aware interaction and full control set unfinished.",
-      "sha256": "da6cca7bab87b48c324caf48428f2ceddf1a07666c29fc11035e41d995962c42"
+      "sha256": "040685874de839d9dfe77bdaedb2373aa4817ba89b35f91031d81ff1263c6e50"
     },
     "vector-foundation": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/vector-paths.md",
       "scope": "Native paths, fills, stroke unions and linear paints; all required primitive variants, production artwork and editor unfinished.",
-      "sha256": "8b03abdc6fea73cff2cacfafde9eae939c95ce69bc30c13b5652a3477c527a20"
+      "sha256": "f00905f741829f706f68571b2172ac04c911b8d4ced779b84d0fdaffca808c56"
     },
     "coverage-foundation": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/coverage-antialiasing.md",
       "scope": "Independent analytic coverage checks and limited backend captures; broad matrix and optimized fractional motion unfinished.",
-      "sha256": "e1216502763ac4838ff3bcbe097806f3bbf22c9487bf5b7b324a54a65e2e6fb8"
+      "sha256": "bf4e4cd79700ea767167ca4ccb9d5894f7a423a6210fb5487cc4161dcd95bd70"
     },
     "composition-foundation": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/composition.md",
       "scope": "Isolated opacity with GL/Vulkan fixture evidence; complete surfaces, clipping, GPU lifetime and resource qualification unfinished.",
-      "sha256": "b8c105ecdf78f3bf7398a5b2bf82a91e097a41967ae48e2fba3de314c6bcde73"
+      "sha256": "cffc1c99900f70285797371a210a617fb7d849f6caa2a55c41611838696b1a04"
     },
     "mask-foundation": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/masks.md",
       "scope": "Canonical editable alpha masks with holes and nesting; transformed overflow/input agreement and full platform/corpus evidence unfinished.",
-      "sha256": "33e7dd876746e00232b5bc3be2bde6306bc618da43aa92cb2d46845f9d2ec5c0"
+      "sha256": "2bb38d6ab4881795e4d30e7807d6df82d81b674411fe3fec6c2dfe63d01e9529"
     },
     "instance-foundation": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/instances.md",
       "scope": "Independent core contexts and same-host-frame target guard; engine multi-view/world surfaces and durable snapshots unfinished.",
-      "sha256": "d8c424e6bf6bd4af0466e7b3968c0d4954c38644b836decea8d10b4f4d7be605"
+      "sha256": "fc6707c5a78a4676b5f0f25048b51781f9c9a7431231c44c4cbd2cdc7bcd6452"
     },
     "bridge-foundation": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/presentation-bridge.md",
       "scope": "Backend-neutral public presentation operations; retained alias mapping and application dispatcher unfinished.",
-      "sha256": "9582c744b0948968c9d3e1e9d4cea8eaebd330b9e7448bee4b67edcc0b3e883b"
+      "sha256": "5f26f6fdd37c8012cfa24b1c5a0cb876e8fd1f9e5e4cf8a3fe7ee1a5b7110bb4"
     },
     "import-foundation": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/legacy-import.md",
       "scope": "271 native exports, 269 syntax-clean records; no semantic/behavioral/visual acceptance.",
-      "sha256": "53c12297980d8de9abce17c213b756b2ae4401f40cca8ebd536dee524b5536f4"
+      "sha256": "4afdcf8fee99fe08f33477f8a2649b6923d21be476c675aaeacf853ea0e99371"
     },
     "performance-foundation": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/runtime-performance.md",
       "scope": "Debug CPU fixture counters; release GPU/frame pacing/resource budgets unqualified.",
-      "sha256": "fdbf68b893512e370f04ed2c1cf8a3b39eda64f244f17945c15ae2dcc5b458c6"
+      "sha256": "ab201017099126e0625611b2f8e562c3f211c733097d87914c7bf8b853a13071"
     },
     "instance-persistence-foundation": {
       "kind": "qualified_foundation_checkpoint",
       "path": "docs/dev/ui/instance-persistence.md",
       "scope": "Historical checkpoint b87b703b: M1 foundation: private manager-neutral ownership, canonical subset snapshots, preview renderer/language restoration and backend-aware full restart. Native and production-method tests pass; reviewed hidden windowed SP/OpenGL 125% and MP/Vulkan 200% gameplay captures preserve checkpoint, modal/focus/availability and input ownership through same-language reload and full video restart. Normal retained adapter, complete widget/script snapshots, engine multi-view/world rendering and game-save framing remain unfinished. No production GUI or final gate accepted.",
-      "sha256": "1db931d2854b760153343af5eb3a1f4eb4831a4666a5f94c1dea8d80ed14b6a5",
+      "sha256": "5f4df4ab250978a275f54adf500f418bbefd7d1bd9e8e27f53980de547a92318",
       "local_capture_summary": ".tmp/ui/persistence-review/summary.json"
     },
     "managed-application-foundation": {
       "kind": "qualified_foundation_checkpoint",
       "path": "docs/dev/ui/managed-application.md",
-      "sha256": "128cc449315ed1321675facd4c0610e10ebf59e45d13e726457c5d5b815ec8b0",
+      "sha256": "582483ca50f1f933c3a657d4a5108cd21cd5515a181d3ec384088483016086ed",
       "baseline_engine_revision": "b87b703b799cbf120d74b4aed122883a42b0ad68",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "local_capture_summary": ".tmp/ui/managed-review/summary.json",
@@ -193,7 +193,7 @@
     "presentation-alias-foundation": {
       "kind": "qualified_foundation_checkpoint",
       "path": "docs/dev/ui/presentation-aliases.md",
-      "sha256": "96bb49dc57ef23bf94fbea310a04f8ba7491ee3cd15e3ed02f98730ca21687d6",
+      "sha256": "4ff27023fe35c520706fa45ee8893da273a924c7ebf84021fbf888ba9e8f20da",
       "scope": "M1 subset: explicit root/qualified aliases, shared typed metadata independent of State(), canonical property/rect/visible/noevents conversion, atomic explicit/transient expression ownership, snapshot version 2 with exact-source version 1 reads, and immediate ancestor input eligibility. Six native suites and the production adapter harness qualify this implementation subset. Five source/binary-bound hidden windowed Windows SP/OpenGL and MP/Vulkan alias captures plus a sixth typed-settings regression passed their semantic oracles; four alias captures include independent peer lifetime and same-language/video reconstruction. Reviewed SDR render-target images and brightness/gamma comparisons remain limited to the recorded host/backend cases. Full semantic lowering, components/events, material/vector paint mappings, production GUI acceptance, game-save/demo compatibility and the native editor remain open. No requirement or migration entry is accepted by this checkpoint.",
       "baseline_engine_revision": "e075e4a2e64e0ff790a1f435ae0854aa51650308",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
@@ -202,7 +202,7 @@
     "event-program-foundation": {
       "kind": "qualified_foundation_checkpoint",
       "path": "docs/dev/ui/event-programs.md",
-      "sha256": "7afc2263f5324754ace56159e329403a02f30190eab67e4366dcfff7c3e8e727",
+      "sha256": "ac88d99b0dd896cc1fdfd3b94a02c68566bc63e333a4fe2e5c09a8fb220cbde6",
       "baseline_engine_revision": "25813aaf96f0a9dfe36e1be0fd29bbce8cea93df",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "local_capture_summary": ".tmp/ui/events-review/capture-evidence.json",
@@ -212,7 +212,7 @@
     "settings-transaction-foundation": {
       "kind": "qualified_foundation_checkpoint",
       "path": "docs/dev/ui/system-settings-contract.md",
-      "sha256": "972b3764d147bfa8369813411a645d163b58ded1d6fb18011d827c4c0862df7a",
+      "sha256": "5d8cf9945a31b9e9b4637a4926b4a6450a7ff2dfee1006caabfff043d88bf75b",
       "baseline_engine_revision": "15e35beaf11a1f1942ba25e9431211f64c1ef7f1",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "local_capture_summary": ".tmp/ui/settings-review/capture-evidence.json",
@@ -223,7 +223,7 @@
     "display-device-foundation": {
       "kind": "qualified_foundation_checkpoint",
       "path": "docs/dev/ui/display-device-contract.md",
-      "sha256": "47e78250425fbe0f0e390b5612d6e08260e77e002021f76d5998eb84a29a3569",
+      "sha256": "80a9b3ac01bf363aba92a86e4d6dd2aa7be931ea9112d6e9a70568479bb964ca",
       "baseline_engine_revision": "962b179c0e4214df2ebde38e98cb3e090b75fdd6",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "local_capture_summary": ".tmp/ui/display-review/capture-policy-evidence.json",
@@ -240,7 +240,7 @@
       "local_capture_summary_sha256": "1f3e66f316a689ccaae2bf0c1e08c322deb296a0539852047a8a0c9ef0b00521",
       "local_capture_status": "qualified_subset",
       "scope": "M2 display transaction integration: queued Apply/Keep/Revert/Retry with never-reused owner/request identities, strict actual-device matching, exact synchronous owner-frame presentation receipt followed by a fresh presentation, 15-second confirmation and 20-second device deadline. A canonical Pending/Confirmed journal, checked durable configuration replacement, exclusive process/window-placement leases, conflict-safe replay and renderer-private ABI15 strict first-device initialization protect interrupted settings changes. Native suites and counted production-method tests cover failures, partial writes, stale identities, uncertain persistence, invalid recovery records and historical display remapping. Source/binary-bound hidden windowed Windows SP/OpenGL and MP/Vulkan captures exercise two actual display changes, Keep/Revert, resource recreation and engine-rendered confirmation panels. Separate two-process recovery captures retain a real unconfirmed journal; Confirmed variants explicitly inject only the approved marker and checksum and do not claim a real Keep crash or power-cut test. This qualifies the recorded diagnostic subset only. Complete audio/resource effects, presets/Auto-Detect, production SYSTEM controls/artwork, editor round trips, visible window-manager/fullscreen/multi-monitor behavior, other platforms and the complete 271-GUI product remain unaccepted.",
-      "sha256": "acf5fbf9023cbf00b98270f3ac1253a8b3d21d55a6d0beb10d317b753ef68742"
+      "sha256": "600c1f3784e304c0f382041be3bc5a498ef8ce54d1b50c3baa3d0ece1240b559"
     },
     "value-controls-foundation": {
       "kind": "qualified_foundation_checkpoint",
@@ -251,7 +251,7 @@
       "scope": "M2 implementation subset: canonical typed toggle, stepped slider and constrained choice roles, atomic authoritative value/mixed/option readbacks, invocation-local immutable edit operands and acknowledged proposals. Authored stable vector parts have compiler-enforced geometry and property ownership; derived popup placement, tentative selection/drag state, source cancellation and versioned widget snapshots support the subset. The packaged openq4.system document declares the complete 53-field draft/baseline service schema and presents eight initial immediate image controls with local dirty-discard and eligible display-confirmation panels. A non-archived default-off ui_retainedSystem option selects the normal Session child route, preserving its exact parent and service-owned return guard. The final Windows build/package stage and 13 native UI suites pass; the production Session boundary passes 173 checks and the capture runner passes 15 tests with 444 rejected altered-log cases. Source/binary-bound hidden windowed Windows SP/OpenGL at 125% and MP/Vulkan at 200%, both at 1280x720, each pass 18 normal Session stages after active gameplay. Draft/readback/apply, dirty Back/continue/discard, tentative/committed choice, language/video recovery with an unapplied draft, exact parent return and fresh-owner reopen are covered. All 14 engine render-target images were reviewed, including column reflow, popup placement and distinct disabled Apply; SP has no warnings/errors, MP retains 94 baseline warnings with no new warning messages or errors. These are semantic integration and static-view checks, not full physical-input, transition, display/platform/language or artwork qualification. Precise numeric text entry/IME, complete controls and setting inventory, effect/preset executors, full source-derived artwork/transitions, touch/accessibility/scrollbars, editor round trips and full platform/corpus qualification remain required. Discard currently resets the draft and stays on the page. No requirement, milestone, production screen or migration entry is accepted.",
       "local_capture_summary": ".tmp/ui/value-controls-review/capture-evidence.json",
       "local_capture_summary_sha256": "2c5c14d4d0a9d0fb8cc8d45dab9af39fdc9e6c4ab017f93a1f6a3e49c3cf1a40",
-      "sha256": "948cfd1c87e67ab38ea25a0dc33fd995553472b4ab19dd44d7010ae4713412d1"
+      "sha256": "4e6b146f25f47473ee20f9fa5907e857fdcaa642c888e97fbf414f558ecdacc2"
     },
     "system-exit-foundation": {
       "kind": "implementation_checkpoint",
@@ -262,7 +262,7 @@
       "scope": "Qualified M2 implementation subset: the default-off normal SYSTEM page presents 16 typed value controls, retaining 53 draft/baseline fields and editable vector parts. Dirty Back offers localized Keep editing, ordered Cancel/discard-and-exit and typed Apply-and-exit. The private one-use receipt binds owner/request and permits return only after immediate success or successful Keep and completed persistence; failures, Revert, timeout and recovery cancel exit intent. Authored modal scopes establish safe focus before first draw, restore eligible prior focus, quarantine held sources and reject stale queued Back/click/value descriptors across scope replacement. Snapshot version 4 preserves authored scope history and pending focus while fresh host readbacks win. Repeated wheel routing avoids unchanged pointer replay. The final Windows build, 15 native UI suites, 79 settings-service scenarios, 173 Session checks, adapter checks, 29 capture-tool tests, 5,747 page checks and 12 localized-label CPU layout cases passed. Four source-bound hidden windowed SP/OpenGL at 125% and MP/Vulkan at 200% normal Session captures after active gameplay cover 92 stages and 34 reviewed engine images, including VSync, Revert/Keep, parent return and persisted reopening. Source/build inputs, binaries, packages, tools, logs, images and bounded warning accounting are hash-bound. Full effects and renderer parity, UI-only native-resolution composition, precise numeric entry/IME, all 31 settings, display catalogs, Defaults/presets/Auto-Detect, complete modal/scrollbar behavior, source-derived artwork/transitions, native editor round trips and the complete platform/language/display/physical-input matrix remain required. No requirement, milestone, production screen or migration is accepted.",
       "local_capture_summary": ".tmp/ui/system-exit-review/capture-evidence.json",
       "local_capture_summary_sha256": "ddde52034403036ca1821dbb75aed11961404b311032149d1d2ff1c35f213b74",
-      "sha256": "0d3574ce89791c03cccc514a2a65ef12487c0b199de2c3b92e2320008c26502a"
+      "sha256": "f2a50576a2059b4332fdc6dba1d9c2a88eb9f27ef7c3c5b4938927862e12fbff"
     },
     "native-output-foundation": {
       "kind": "implementation_checkpoint",
@@ -271,7 +271,7 @@
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "qualification_status": "bounded_gl_native_output_increment_qualified",
       "scope": "Bounded OpenGL implementation: the completed-frame resolution-scale hook is inert and obsolete scene-present markers are removed. Existing main-scene sizing and spatial/temporal resolves, supersampling clamp and explicit legacy mode-0 crop are preserved. The final integrated production-method harness passes 1,220 checks and rejects seven compiled mutations against counted graphics doubles; full DrawView setup is only statically guarded. Final integrated build/tests and source/binary-bound hidden windowed Windows SP/OpenGL before/after captures at 1280x720 and 125% density qualify static unfocused UI-only RGB output for mode 1 at 50/85/125/200% and modes 2/3 at 50/85% against mode 1 at 100%. All eight compared ordinary cases have zero changed RGB channels and zero maximum delta over 2,764,800 channels each; preserved baseline differences demonstrate the former filtering. 24 engine images were reviewed. 39 unchanged baseline warnings and no new warning messages or errors in each run. Moving-world captures and recorded scene extents are supporting observations, not proof of actual world-target execution, input equality or performance. Mode 0 at 50% is measured separately and exempt; modes 2/3 above native are not in the image matrix. CRT parity, the pre-existing GL mode-3 world-filtering mismatch, dynamic resolution, every UI surface and input/cinematic/subtitle geometry, complete renderer/platform qualification and M6 remain open. No requirement or migration is accepted.",
-      "sha256": "60d520e518a67459cc738ef53203f475442a389f82f93cbc3f56799bb0c73e6c",
+      "sha256": "dc48fc1bd0f4c375dc1ac49fa2802867bf7388d98c01058ec5e170b8b32830e1",
       "local_capture_summary": ".tmp/ui/native-output-review/capture-evidence.json",
       "local_capture_summary_sha256": "a609e0fb10e9cd4e9f139e5c4382330006815aa24e9940534ff19da68482cbdf",
       "local_dependency_summary": ".tmp/ui/native-output-review/rmlui-source-qualified.json",
@@ -280,7 +280,7 @@
     "text-entry-foundation": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/text-entry-foundation.md",
-      "sha256": "90022c241469f232d2ba5fe9bc6646efbc3255482ae0181c0edc6b8703f71fb0",
+      "sha256": "eae52f62888a4cd51a9374e14332760ce7c8217d3b186fbed2cb4d81d8d5aee5",
       "baseline_engine_revision": "e3e65887480368191df154a9b52cce69d8e72140",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Validated scalar UTF-8 commit/preedit records, atomic local edit buffer, bounded undo/redo and exact finite numeric parsing/formatting. Checked clipboard primitives enabled only for patched bundled Windows SDL; other providers make no SDL calls. Pending-only event-payload cleanup on Windows/POSIX. Integrated Windows build, four native suites, compiled actual-method checks and hidden SP/OpenGL gameplay/menu smoke pass within their recorded scope. No live field, native clipboard exchange, owner-aware IME delivery, shared shaped caret/grapheme/bidi editing, migration or product acceptance.",
@@ -290,7 +290,7 @@
     "numeric-fields": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/numeric-fields.md",
-      "sha256": "2d12f462f97a77acbcbbccde45fb16db2c5da0a91dc182b6e4097fd1cbffacc8",
+      "sha256": "af8ff68dd153b92d292da15755cb63219465386ee9f6596fde500642d240bb65",
       "baseline_engine_revision": "17b106daa1827d6e50c786f99ea5970b1e8b91cf",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Canonical Number role with exact decimal proposals, local invalid/conflicting drafts, explicit conflict decisions, bounded undo/redo and inactive snapshot restoration. Font drawing and numeric geometry share bounded immutable unshaped scalar runs; authored selection/caret/preedit ink uses actual Rml line placement and scroll. Current host readbacks guard edits, numeric dispatch and success acknowledgement. Final Windows build and21 retained-UI suites pass. Hidden windowed SP/OpenGL125% and MP/Vulkan200% managed diagnostic fixtures after gameplay qualify the recorded semantic/rendered subset; ordinary SYSTEM regression preserves tested native UI pixels. Event-journal decoding/ownership checks retain historical native layout. No native field keyboard/clipboard/IME route, full shaping/grapheme/bidi, production precise-entry integration, editor, screen/migration or product acceptance.",
@@ -305,7 +305,7 @@
       "scope": "Current-buffer numeric editing commands, atomic range undo, held-key owner isolation and per-event captured modifier/repeat metadata. Portable native-text broker, strict wire codec, SDL ingress and reviewed Windows observer foundation; observer disabled pending owner/ordered native dispatch integration. Windows build and 27 retained-UI suites pass; two windowed gameplay-based semantic command captures cover 32 operations and ten engine images at SP/OpenGL125% and MP/Vulkan200%. Counted adapter, journal, edit-buffer and actual SDL observer tests reject behavioral mutations. No native character/clipboard/IME field route, physical-device acceptance, full international text, production precise-entry screen, migration, editor or product acceptance.",
       "local_capture_summary": ".tmp/ui/text-routing-integration/validation-evidence.json",
       "local_capture_summary_sha256": "1d62bddd483805ef0576b87571a5d4bae0d7a93c70283e15f8c1d8c366552bc4",
-      "sha256": "ffcc498423ef304f4970cd7ba4a9392b2f082e0ebcc3a0148584739117b540bb"
+      "sha256": "fc433726dd1cf1ff900a897b53cd93edca85fd28137b4e3ab6b11ba3eee2a3b5"
     },
     "native-owner-store": {
       "kind": "implementation_checkpoint",
@@ -315,7 +315,7 @@
       "scope": "Exact managed editor ownership, engine queue continuity, portable native shadow document and actual Windows SDK text store with application-origin text/selection/layout notifications. First disabled SDL dispatch fence does not prove lossless earlier-event consumption. Windows build and29UI suites plus updatedCOM suite pass; source-bound SP/GL125% and MP/Vulkan200% gameplay captures cover32semantic operations and10engine images. Native field routing, checked queue consumer, complete composition/shaping, production controls, editor, migrations and final gates remain unaccepted.",
       "local_capture_summary": ".tmp/ui/native-owner-integration/validation-evidence.json",
       "local_capture_summary_sha256": "c9313dc2a1361368626a4d5b225e19f39be03fbe8e330bc573c42e8f6aaa168b",
-      "sha256": "ffcc498423ef304f4970cd7ba4a9392b2f082e0ebcc3a0148584739117b540bb"
+      "sha256": "fc433726dd1cf1ff900a897b53cd93edca85fd28137b4e3ab6b11ba3eee2a3b5"
     },
     "precise-system-fields": {
       "kind": "implementation_checkpoint",
@@ -323,7 +323,7 @@
       "baseline_engine_revision": "a20fd8dde759b0f056b3f0ba438af803a272350b",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Paired precise SYSTEM brightness fields, localized validation and checked clipboard commands; complete local draft barriers guard Apply, Defaults, colliding edits and exit. Completed cancellation precedes local Discard; Keep Editing refreshes real projected layout before resuming the field. Windows build and 32 UI suites pass, including real-Rml modal focus and growing-validation scroll regressions. SP/OpenGL at 125% and MP/Vulkan at 200% each reach gameplay, then pass 37 semantic operations with 17 reviewed engine images; notices, safe draft continuation, Apply, Discard and reopen are covered within this subset. Generated slider tick noise and very small ambient CVar readback remain open precision defects. SDL checked consumption and owned event collections plus portable multi-offer composition reconciliation are implemented; native activation remains disabled. No native character/IME, full international text, complete page/editor, platform, migration or product acceptance.",
-      "sha256": "2d12f462f97a77acbcbbccde45fb16db2c5da0a91dc182b6e4097fd1cbffacc8",
+      "sha256": "af8ff68dd153b92d292da15755cb63219465386ee9f6596fde500642d240bb65",
       "local_capture_summary": ".tmp/ui/native-editing-integration/validation-evidence.json",
       "local_capture_summary_sha256": "42a470e87f6fc1e0014c62a21cc4bb7fd4c313a697f9e5f86833420f1ab4e5f3"
     },
@@ -335,7 +335,7 @@
       "scope": "SYSTEM authored slider ticks retain clean decimal text and fixed CVar serialization preserves tested small and custom values. Windows build and 36 UI suites pass; SP/OpenGL 125% and MP/Vulkan 200% each pass 38 semantic operations with 12 reviewed engine images after gameplay. Actual Runtime/Rml owns complete native Number presentation, directed selection and all composition ranges while preserving stable local history; checked preparation precedes native synchronization and allocation-free local publication. Windows SDK collection scopes and copied SDL hooks admit exact callbacks, while the portable coordinator reconciles owned FIFO offers. Live managed/provider/Session integration remains pending and native activation is disabled. Focus reveal spacing, exact persistent recovery, actual native IME, full page/editor/platform/migration and product qualification remain open.",
       "local_capture_summary": ".tmp/ui/native-field-binding-integration/validation-evidence.json",
       "local_capture_summary_sha256": "60fcd7fdb106e2ce6c0fa27372e09a8a48ba93c06cba59a629d4fa6330582720",
-      "sha256": "2d12f462f97a77acbcbbccde45fb16db2c5da0a91dc182b6e4097fd1cbffacc8"
+      "sha256": "af8ff68dd153b92d292da15755cb63219465386ee9f6596fde500642d240bb65"
     },
     "native-managed-bridge": {
       "kind": "implementation_checkpoint",
@@ -346,7 +346,7 @@
       "qualification_status": "bounded_checkpoint_qualified",
       "local_capture_summary": ".tmp/ui/native-managed-bridge-integration/validation-evidence.json",
       "local_capture_summary_sha256": "bf2732fa8c57a7947b73af55ccc525d3856220080badd6eab1b0e1039b9f8573",
-      "sha256": "2d12f462f97a77acbcbbccde45fb16db2c5da0a91dc182b6e4097fd1cbffacc8"
+      "sha256": "af8ff68dd153b92d292da15755cb63219465386ee9f6596fde500642d240bb65"
     },
     "performance-preset-drafts": {
       "kind": "implementation_checkpoint",
@@ -356,7 +356,7 @@
       "scope": "Shared six-profile catalog and ordered 32 assignments preserve Common behavior; typed preset/Auto-Detect operations merge under an owned guarded transaction with exact failure atomicity and all 21 unrelated fields preserved. Production SYSTEM uses source-derived vector controls, six existing locale tables, guarded local Number drafts, transient highlight and authoritative readback before proposal acknowledgement. Native Runtime/RmlUi covers 48 locale/wider-glyph/density/resize cases; integrated gameplay evidence is bounded separately. Complete effect execution/persistence, actual font/platform matrix, every production page, editor and migration remain unaccepted.",
       "local_capture_summary": ".tmp/ui/preset-session-integration/validation-evidence.json",
       "local_capture_summary_sha256": "69ccd3f6872a47cf9fa66f632c969c426e9e95f61098ee7b93f9f7c317e526b8",
-      "sha256": "1ad432c346b36cbf88badb4ecb214c74e95721bb41de584639432e565d24e642"
+      "sha256": "93d2a73902b0f30eb2ca128a336b7bfd87fdf8c89a27c9d8757563997b129f82"
     },
     "windows-text-session": {
       "kind": "implementation_checkpoint",
@@ -366,12 +366,12 @@
       "scope": "One constructing-STA Windows text-session controller binds exact editor/native/window/module/association/registration leases through checked SDK activation and quiescence collections. Cleanup retires the engine adoption lease, requires ordinary disposition, retires the store and uses a fresh provider/ledger gate before native ACK. Replacement ownership cannot be disabled or unregistered by fault cleanup. Counted SDK 4544 checks and 19 compiled mutations cover this boundary; the OS COM factory and installed text services are not invoked. Production activation, Session sidecars/pumps, native text/composition/candidate routing, all host input and full text/editor/product qualification remain incomplete.",
       "local_capture_summary": ".tmp/ui/preset-session-integration/validation-evidence.json",
       "local_capture_summary_sha256": "69ccd3f6872a47cf9fa66f632c969c426e9e95f61098ee7b93f9f7c317e526b8",
-      "sha256": "ffcc498423ef304f4970cd7ba4a9392b2f082e0ebcc3a0148584739117b540bb"
+      "sha256": "fc433726dd1cf1ff900a897b53cd93edca85fd28137b4e3ab6b11ba3eee2a3b5"
     },
     "settings-effect-foundations": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/settings-effect-execution.md",
-      "sha256": "7c4e93c8cf58caee8f0adc5be69a3c9895b22d35e975a0842a27ed53b55bb03a",
+      "sha256": "9495df08627b70b5521ccb023a980df3a7f3064b4c4abf109bcb4925dfab8872",
       "baseline_engine_revision": "efcfdb0ffe6eaffa11dbf2ced026495539156478",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Automatic completion waits for real effect readiness and a fresh present; owner close during commit preparation restores before persistence. Checked OpenAL leases gain untouched cancellation and non-releasing finalization. Schema2 adds strict versioned effect-plan envelopes and immutable decoding while the production host remains schema1. Full mixed execution, portable renderer/audio reconstruction and live recovery remain required.",
@@ -381,7 +381,7 @@
     "native-disposition-storage": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/text-input-routing.md",
-      "sha256": "ffcc498423ef304f4970cd7ba4a9392b2f082e0ebcc3a0148584739117b540bb",
+      "sha256": "fc433726dd1cf1ff900a897b53cd93edca85fd28137b4e3ab6b11ba3eee2a3b5",
       "baseline_engine_revision": "efcfdb0ffe6eaffa11dbf2ced026495539156478",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Native ordinary-event accounting preserves both actual fixed scheduling orders, failed-prefix quarantine, sysEvent sidecars and scalar keyboard/mouse polled-slot ownership. Actual-code compiled mutation suites qualify these boundaries. Storage removal is not delivery; route lifecycle, cancellation, native text provenance, real provider activation and all host/platform qualification remain required.",
@@ -391,7 +391,7 @@
     "system-compact-opening": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/performance-presets.md",
-      "sha256": "1ad432c346b36cbf88badb4ecb214c74e95721bb41de584639432e565d24e642",
+      "sha256": "93d2a73902b0f30eb2ca128a336b7bfd87fdf8c89a27c9d8757563997b129f82",
       "baseline_engine_revision": "efcfdb0ffe6eaffa11dbf2ced026495539156478",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Compact preset row and asymmetric wrapping footer preserve one-line real Marine-font Apply text and the complete first brightness row at 200% in reviewed English Vulkan gameplay. OpenGL at 125% also reviewed. All47 integrated UI suites pass including 41,623 deterministic Runtime checks across48 locale/wider-glyph/density/resize cases. Visible scrollbar, complete controls, every real-font/platform state and product acceptance remain required.",
@@ -401,7 +401,7 @@
     "renderer-image-recovery": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/settings-effect-execution.md",
-      "sha256": "7c4e93c8cf58caee8f0adc5be69a3c9895b22d35e975a0842a27ed53b55bb03a",
+      "sha256": "9495df08627b70b5521ccb023a980df3a7f3064b4c4abf109bcb4925dfab8872",
       "baseline_engine_revision": "d6abeabc7e2e348ea11ce50a7671b830e77a15b1",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Checked coalesced image/material restart, original failed-recovery inventory, monotonic resource instance IDs and metadata mutation invalidation. Full engine/modules and49 UI suites pass. Four render-target images after SP/OpenGL125% and MP/Vulkan200% gameplay/ordinary restart qualify compatibility only. Actual checked-policy Apply, portable consumed-policy/content reconstruction, complete settings/editor/migration remain unaccepted.",
@@ -411,7 +411,7 @@
     "native-retirement-foundations": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/native-input-retirement.md",
-      "sha256": "3f2f8ec996b4fc2286755e3db6856655b87222b9ee213af625005ddb0eb42e41",
+      "sha256": "4f99ef901deda5e38f207cfeab0672185409088c22fc10f3384824e560a07ad5",
       "baseline_engine_revision": "b2cb00dfb87cc8663cd8e895dcccce37d9c1faa1",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Original native route, retired issued-ticket observation and exact managed UI presence are qualified as independent proofs. Actual store cancellation and production publishers remain in progress; native input is not enabled.",
@@ -421,7 +421,7 @@
     "consumed-settings-recovery": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/settings-effect-execution.md",
-      "sha256": "7c4e93c8cf58caee8f0adc5be69a3c9895b22d35e975a0842a27ed53b55bb03a",
+      "sha256": "9495df08627b70b5521ccb023a980df3a7f3064b4c4abf109bcb4925dfab8872",
       "baseline_engine_revision": "b2cb00dfb87cc8663cd8e895dcccce37d9c1faa1",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Portable no-effect audio requested/observed state and captured renderer policy/output completion records. Full build and56 UI suites pass; four reviewed render-target images after windowed gameplay and ordinary video restart qualify compatibility only. Content identity, DDS/cube exact reduction, cold recovery, full EFX and mixed settings Apply remain unaccepted.",
@@ -431,7 +431,7 @@
     "native-retirement-storage": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/native-input-retirement.md",
-      "sha256": "3f2f8ec996b4fc2286755e3db6856655b87222b9ee213af625005ddb0eb42e41",
+      "sha256": "4f99ef901deda5e38f207cfeab0672185409088c22fc10f3384824e560a07ad5",
       "baseline_engine_revision": "5e0d3ebf20234415815a72c914fe788953e4367b",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Exact original-head Peek/Take transfers payload and complete sidecar ownership once; checked empty slices release separately. Full engine integration preserves the game C++17 boundary. Terminal disposition, native ACK, production publishers/driver and held-source inhibition remain required; live native input is not enabled.",
@@ -441,7 +441,7 @@
     "checked-image-reduction": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/settings-effect-execution.md",
-      "sha256": "7c4e93c8cf58caee8f0adc5be69a3c9895b22d35e975a0842a27ed53b55bb03a",
+      "sha256": "9495df08627b70b5521ccb023a980df3a7f3064b4c4abf109bcb4925dfab8872",
       "baseline_engine_revision": "5e0d3ebf20234415815a72c914fe788953e4367b",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "DDS mip reachability resolves once from the original source; decoded cube reduction is atomic across six faces, resampling is exact or refused, and binary 2D/cube assembly checks every allocation/caller. Full build and ordinary windowed GL/Vulkan gameplay/restart qualify compatibility. Content identity, portable reconstruction, checked driver failure and mixed SYSTEM Apply remain unaccepted.",
@@ -451,7 +451,7 @@
     "checked-upload-storage": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/settings-effect-execution.md",
-      "sha256": "7c4e93c8cf58caee8f0adc5be69a3c9895b22d35e975a0842a27ed53b55bb03a",
+      "sha256": "9495df08627b70b5521ccb023a980df3a7f3064b4c4abf109bcb4925dfab8872",
       "baseline_engine_revision": "5e0d3ebf20234415815a72c914fe788953e4367b",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Actual GL dynamic upload allocation metadata, partial cleanup and persistent-to-streaming fallback bookkeeping are qualified by production-method tests and ordinary gameplay. Queries preserve outputs on refusal and call no graphics getter. Upload completion, Vulkan allocation readback and complete renderer resource accounting remain required.",
@@ -461,7 +461,7 @@
     "authored-scrollbars": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/scrollbars.md",
-      "sha256": "c552d411c3d1cc536fdc5f7123d6b3d4eca30aa760c9fd0d77c6596f4e828c52",
+      "sha256": "d94bf57d1e0cf026ae86670bbd0cfa639a154ad13f380f3fd0786c1a25f023cc",
       "baseline_engine_revision": "5e0d3ebf20234415815a72c914fe788953e4367b",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Canonical authored vector scrollbar and actual Rml scroll geometry with bounded local commands, pointer-focus preservation, modal/source cancellation, measured thumb drag/paging/wheel/navigation and one-time logical dp restoration/clamping. SYSTEM composition has reviewed engine opening captures at125% GL/SP and200% Vulkan/MP after gameplay and ordinary restart. 61 integrated UI suites pass. Touch/physical-device qualification, complete artwork/state galleries, editor support, remaining screens and full platform acceptance remain required.",
@@ -471,7 +471,7 @@
     "native-route-publication": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/native-input-publication.md",
-      "sha256": "8ea08f8c28e74a1bda750c082c3b709bff4bfd295fe437c4ad6b5ac36287ac81",
+      "sha256": "3806bbcc2a32d4168f6584347a4b383054e77d886952cffe8d150d45e6ac5c0d",
       "baseline_engine_revision": "d16c5b9e7935a273e274ea6c5956729d0da62c85",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Production Session/managed-GUI/SDL-window publications invalidate original ownership before mutation; exact binding and typed emission inventory retain failed-admission and deferred-child identity. Copied controller retirement facts remain separate. Full build,64 UI suites,17 adapter mutations and reviewed windowed gameplay/restart/SYSTEM captures pass. No live native activation or terminal backlog disposal is claimed.",
@@ -481,7 +481,7 @@
     "legacy-alpha-semantics": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/legacy-import.md",
-      "sha256": "53c12297980d8de9abce17c213b756b2ae4401f40cca8ebd536dee524b5536f4",
+      "sha256": "4afdcf8fee99fe08f33477f8a2649b6923d21be476c675aaeacf853ea0e99371",
       "baseline_engine_revision": "d16c5b9e7935a273e274ea6c5956729d0da62c85",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Native expression/fixup methods establish conditional unbound-after-fixup zero semantics for bare-backslash alpha terms. The importer preserves unresolved source/span/diagnostic and custom fragments. Windows/Linux63 actual-method assertions with8 mutants and19 importer tests pass; exact live table/window binding and evaluated alpha remain required. No GUI acceptance or unconditional lowering.",
@@ -491,7 +491,7 @@
     "legacy-native-alpha-observation": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/legacy-import.md",
-      "sha256": "53c12297980d8de9abce17c213b756b2ae4401f40cca8ebd536dee524b5536f4",
+      "sha256": "4afdcf8fee99fe08f33477f8a2649b6923d21be476c675aaeacf853ea0e99371",
       "baseline_engine_revision": "fae10f2d5bd610369b42f042780d9cd8f24aa19d",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Fresh initialized native core4/hub4 instances in SP/GL and MP/Vulkan establish missing table, completed null fixup, mapped alpha register6 and actual matColor alpha0 with enabled evaluation and no dictionary. Exact root bytes and fresh token exports match; measured parser intervals are clean after separately retained material preload. Full build/stage,65 UI suites and15 integrated mutants pass. No include-closure, timeline, retained lowering or replacement acceptance.",
@@ -511,7 +511,7 @@
     "native-terminal-transfer-disposal": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/native-input-publication.md",
-      "sha256": "8ea08f8c28e74a1bda750c082c3b709bff4bfd295fe437c4ad6b5ac36287ac81",
+      "sha256": "3806bbcc2a32d4168f6584347a4b383054e77d886952cffe8d150d45e6ac5c0d",
       "baseline_engine_revision": "2e95a66bab30b1acd3f315f86f3570f142965b1d",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Private typed issuance/transfer claim joins real platform,pushed,keyboard and mouse stores to actual Take/disposal state and terminal ledger census; exact head recheck after source callbacks. Checked original-route disposal/release refuses unknown,external,stored or in-flight ownership. Actual Windows/POSIX store tests and integrated compiled mutants pass; normal sink dispatch,fence turnover,held-source/native activation remain unconnected.",
@@ -521,7 +521,7 @@
     "authored-choice-scrollbars": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/choice-scrollbars.md",
-      "sha256": "a5337ed8bd66c320a72b4dc8013dd4880a94478fdbfdde26e1f136062706691a",
+      "sha256": "bf7f1fb74906e6545a127ecff6f356799ae66c8d2f58b7f2dcad7b7391e9369c",
       "baseline_engine_revision": "fc4443cb071022e29b429c9b74731dfa9b0c3b86",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Four SYSTEM choices own editable vector scrollbars with fresh geometry, logical offsets, transient gestures and strict semantic presentation APIs. Full build,69 UI suites,compiled mutations,Linux sanitizers and20 reviewed windowed engine images pass. Fitting bars are hidden. Physical/native input, full popup framing/safe-area placement, editor and complete state galleries remain required.",
@@ -531,7 +531,7 @@
     "canonical-document-editing": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/document-editing.md",
-      "sha256": "cf20206a3083c4f469b504a4477206b43d0c9339a318e88c009209c10846ab14",
+      "sha256": "d93896c191fac791aa005c053b2bedf3b8356c14f749594d1983753040e0203f",
       "baseline_engine_revision": "1bcb4aec68fbaa3187ca5ffea30720f003f57f1f",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Validated source-preserving insert/remove/move/value batches with exact owner/revision, bounded shared history and allocation-free undo/redo. Full build and70 UI suites pass; integrated Clang364+6+2 checks and14 compiled mutants pass. Isolated MSVC and GCC sanitizer evidence covers the frozen core. No visible editor, joint canvas publication, file-save or product acceptance.",
@@ -541,7 +541,7 @@
     "owned-image-recovery": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/image-recovery-ownership.md",
-      "sha256": "b009cc32eaeb98bce3386f463135db1e5546d24345ded374ab4ea58c6e765ab3",
+      "sha256": "82f27745fb77431e4d67f9b2dbe9b5b3e1ff837f2de049bc4bf9d630873b3b07",
       "baseline_engine_revision": "b880d593e358d64276bccbb0ec58c3b83f5e5011",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Exact whole-cohort preparation retains both immutable CPU directions before policy mutation, strict durable envelope and initialized-inventory cold reconstruction. Real coordinator/loader/module/codec/journal checks and integrated mutations pass. All-cohort reconstruction, quiescent built-in disposal, pre-first-device recovery and full mixed Apply remain required.",
@@ -551,7 +551,7 @@
     "native-sink-driver": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/native-input-driver.md",
-      "sha256": "09cebf650f3b02c12f3353e3bb222e9ef1fd125db178a930ea30cfbb903f30be",
+      "sha256": "b4883422b147bfbca658b93cdfe489f9587ab2b947516166b922d8ca588e817e",
       "baseline_engine_revision": "b880d593e358d64276bccbb0ec58c3b83f5e5011",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Actual Session/poll sinks join exact owned transfers, fixed ledger schedule, held-source quarantine and checked completion/retirement. Integrated Clang16581 checks per projection,44 fatal edges and26 compiled mutants; frozen MSVC debug, sanitized GCC and SDK evidence. No live translator/bootstrap/provider activation or complete input acceptance.",
@@ -561,7 +561,7 @@
     "image-owner-shutdown": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/image-recovery-ownership.md",
-      "sha256": "b009cc32eaeb98bce3386f463135db1e5546d24345ded374ab4ea58c6e765ab3",
+      "sha256": "82f27745fb77431e4d67f9b2dbe9b5b3e1ff837f2de049bc4bf9d630873b3b07",
       "baseline_engine_revision": "7733297d306b944d4b16f9c147247712e228925c",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Actual full renderer Shutdown admits only the idle original owner thread and releases both CPU recovery sets/census after complete original-manager cleanup. Clang, MSVC debug and sanitized GCC each pass569 checks and12 compiled mutations;77 UI suites and four passive engine images pass. General Common/fatal teardown, complete retail reconstruction and mixed Apply remain required.",
@@ -571,12 +571,62 @@
     "editor-new-file": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/editor-file-safety.md",
-      "sha256": "f230d95828b46ab05646abb602959011410a9910b30079b173e008fe8e251d31",
+      "sha256": "7eae7b10952fb0d97558058775b897b7d33b59023387b8b8541bfb4eba318c15",
       "baseline_engine_revision": "a11a00181b5997993bb9e225bad63a6422386311",
       "companion_revision": "1cd33980f072ac3d78978a07b388b4b6fe6b5eb2",
       "scope": "Actual native new-file publication refuses a competing creator at publication, after complete writes/sync/close. Windows Clang/MSVC340 and GCC sanitizer344 checks plus7 compiled mutants each; full build and78 UI suites pass. Save As/autosave UI, complete overwrite/conflict/crash recovery and editor acceptance remain required.",
       "local_capture_summary": ".tmp/ui/editor-new-file/validation-evidence.json",
       "local_capture_summary_sha256": "846413e35eb34ed965a57005aa6eb724b5c8d3dbc2fb46f65ba30711a509cc63"
+    },
+    "masked-input-review": {
+      "kind": "implementation_checkpoint",
+      "path": "docs/dev/ui/masked-input-review.md",
+      "baseline_engine_revision": "85c011754b800409e5e471b454ac4d658b6f3d00",
+      "companion_revision": "a4946f8b28c53bb32ec323bddcf0e2276bc8492c",
+      "scope": "17 September plan audit: actual ancestor vector-mask pointer queries, positive-alpha hole/stroke/gradient coverage and empty-mask subtree focus. Repairs eight stale settings status translation keys. All 83 UI suites and final bounded SP/OpenGL and MP/Vulkan SYSTEM gameplay captures passed. No full control/mask focus intersection, transformed overflow, physical input, optimized/platform qualification or product acceptance.",
+      "local_capture_summary": ".tmp/ui/masked-input-review/validation-evidence.json",
+      "local_capture_summary_sha256": "05dda04d28ea4da2171537901a60a30c8408961efd1814a585f649e60c54d7bb",
+      "sha256": "57d96a9c4053c571b2b885f6babfbf906868959de2c74dd33263efef5e9dd369"
+    },
+    "independent-text-scale": {
+      "kind": "implementation_checkpoint",
+      "path": "docs/dev/ui/text-scale.md",
+      "baseline_engine_revision": "85c011754b800409e5e471b454ac4d658b6f3d00",
+      "companion_revision": "a4946f8b28c53bb32ec323bddcf0e2276bc8492c",
+      "scope": "Independent 100–200% runtime typography with font-relative dimensions and responsive SYSTEM layout. All 85 registered UI suites pass, including 211,245 checks across 84 six-locale/expanded-glyph layout combinations. Thirty engine screenshots were reviewed after windowed SP/OpenGL and MP/Vulkan gameplay. Normal preference/reset controls, arbitrary-size glyph rasterization, full GUI/editor/platform qualification and product acceptance remain outstanding.",
+      "local_capture_summary": ".tmp/ui/text-scale/validation-evidence.json",
+      "sha256": "e42c2b99c3958af80d0461eaae31ab6d9ea6f83e4690d013d92515dbf30a5831",
+      "local_capture_summary_sha256": "38289b7f0057c6de8dd1670f20251d00e6e53033841782097060bc3cfae98139"
+    },
+    "interface-size-preferences": {
+      "kind": "implementation_checkpoint",
+      "path": "docs/dev/ui/interface-size-preferences.md",
+      "sha256": "c9a559c4f7603154cc584a896d5c59de3a5fe6a8ebd6643fe232ee76ce6029c7",
+      "scope": "Transactional 75–200% UI and 100–200% text scale, two-field reset, root-menu window fitting and legacy display-journal catalog recovery. Bounded SYSTEM qualification; no full screen/editor/product acceptance."
+    },
+    "output-size-fonts": {
+      "kind": "implementation_checkpoint",
+      "path": "docs/dev/ui/output-size-fonts.md",
+      "sha256": "ed0f2f02df5a301e437fddcf44798032a7e792f452197b0f0b51bd8c1a85603a",
+      "scope": "Bounded physical-size retained glyph cache with shared immutable atlases, scalar lookup, legacy fallback and coordinated resource resets. Normal-face rasterization foundation only; style/weight, largest animated transform density, shaping, complete font and product qualification remain required."
+    },
+    "paired-field-focus": {
+      "kind": "implementation_checkpoint",
+      "path": "docs/dev/ui/paired-field-focus.md",
+      "sha256": "142c9b6b0e28fb5bc41787431a65e56124c52ec26967ace44205e4af4a17d8c5",
+      "scope": "Shared text-relative heights and centered tracks keep the authored SYSTEM brightness/ambient slider and numeric viewport pairs aligned and visible when focused. Bounded production-page evidence only; full LAY-004, control, editor and UI-corpus acceptance remain required."
+    },
+    "system-display-controls": {
+      "kind": "implementation_checkpoint",
+      "path": "docs/dev/ui/display-controls.md",
+      "scope": "Four production SYSTEM display controls reuse typed draft/confirmation ownership and editable vector artwork. Read-only strict-backend availability gates and visibly dims MSAA, including authoritative pre-write refusal. A fresh completion clock preserves the presentation window after blocking Apply and restoration restarts. Bounded page/service/gameplay qualification only; complete display catalogs, dependent presentation, effects, visible window/platform behavior, editor and product acceptance remain required.",
+      "sha256": "5693d7876c6215e7cf973650b971bcac2926958614c4da12a595550f397d22e9"
+    },
+    "system-dimensions": {
+      "kind": "implementation_checkpoint",
+      "path": "docs/dev/ui/dimension-controls.md",
+      "scope": "Four production SYSTEM window/custom fullscreen dimension fields use exact decimal-integer validation, dependent availability and owned typed drafts. Custom edits select Custom mode atomically. Separate intrinsic draft validation allows intermediate tuples while full capability checks still guard Apply, preparation and execution. Bounded native and hidden/windowed gameplay qualification only; dynamic display/resolution/refresh catalogs, visible fullscreen/platform behavior, native input, remaining effects, editor and complete product acceptance stay open.",
+      "sha256": "336d30920bf71a3acb590f4dce9ce9d56b2b0cd36a12c2d6b4f17c63fc3b08bd"
     }
   },
   "groups": {
@@ -2018,10 +2068,13 @@
         "checked-upload-storage",
         "exact-image-content-recovery",
         "owned-image-recovery",
-        "image-owner-shutdown"
+        "image-owner-shutdown",
+        "masked-input-review",
+        "system-display-controls",
+        "system-dimensions"
       ],
       "acceptance_evidence": [],
-      "remaining": "The typed settings service and asynchronous display confirmation retain their previously qualified scopes. Local numeric drafts guard Apply, Apply and Exit, Defaults, colliding sibling edits and dismissal; Discard requires completed service cancellation and an unchanged complete local editor inventory. Queued rollback, stale callbacks and recovery preserve unfinished text. Exact typed comparison and FTZ/DAZ-independent journal number serialization now cover transaction, display validation and startup recovery, preserving observed originals while signed zeros share the canonical zero representation. Shared profile and Auto-Detect draft expansion now preserve all unrelated edits with guarded atomic publication. Complete actual audio/resource/input effects, preset execution and persistence, all dependent production controls, Defaults and the full Apply/Cancel/discard-and-exit matrix. Qualify visible focus/window-placement/fullscreen/multi-monitor failures and timeout/restart recovery across supported platforms. CVar values alone never prove device success; counted recovery and synthetic startup evidence do not qualify a power loss, actual interrupted confirmation or every persistent recovery path. Exact DDS and previously observed cache CPU reconstruction now has source-byte and canonical output evidence; decoded/program/default images, material cohorts, durable content retention, native reconstruction and full mixed-effect recovery remain required."
+      "remaining": "The typed settings service and asynchronous display confirmation retain their previously qualified scopes. Local numeric drafts guard Apply, Apply and Exit, Defaults, colliding sibling edits and dismissal; Discard requires completed service cancellation and an unchanged complete local editor inventory. Queued rollback, stale callbacks and recovery preserve unfinished text. Exact typed comparison and FTZ/DAZ-independent journal number serialization now cover transaction, display validation and startup recovery, preserving observed originals while signed zeros share the canonical zero representation. Shared profile and Auto-Detect draft expansion now preserve all unrelated edits with guarded atomic publication. Complete actual audio/resource/input effects, preset execution and persistence, all dependent production controls, Defaults and the full Apply/Cancel/discard-and-exit matrix. Qualify visible focus/window-placement/fullscreen/multi-monitor failures and timeout/restart recovery across supported platforms. CVar values alone never prove device success; counted recovery and synthetic startup evidence do not qualify a power loss, actual interrupted confirmation or every persistent recovery path. Exact DDS and previously observed cache CPU reconstruction now has source-byte and canonical output evidence; decoded/program/default images, material cohorts, durable content retention, native reconstruction and full mixed-effect recovery remain required. The 17 September audit repairs stale Ready, dirty, confirmation and error translation IDs, with every service status key checked against all shipped locales and bounded final SYSTEM gameplay captures. This repairs message presentation without accepting the remaining transaction or complete screen scope. The display-control increment adds fullscreen, borderless, fullscreen policy and MSAA to the owned draft/confirmation flow. Backend availability disables MSAA on the currently unsupported strict Vulkan display path and refuses changed nonzero requests before live writes; Vulkan scene MSAA remains separate. Complete dynamic catalogs, dependent-setting presentation, actual fullscreen/window-manager qualification and the full requirement remain open. The dimension-field increment adds window/custom fullscreen width and height with exact whole-pixel validation and dependent availability. Intrinsic draft validation permits intermediate pairs; Apply readiness, preparation and execution still require the complete current-capability request. Custom size and mode selection share one atomic patch. Complete dynamic display/resolution/refresh catalogs, visible fullscreen/platform behavior, native input, remaining effects and full screen/editor acceptance stay open."
     },
     {
       "id": "BEH-003",
@@ -2516,10 +2569,12 @@
       "acceptance_evidence_needed": [
         "Normal settings operation/readback and small-viewport/extreme-scale recovery in SP/MP and editor."
       ],
-      "status": "pending",
-      "current_evidence": [],
+      "status": "partial",
+      "current_evidence": [
+        "interface-size-preferences"
+      ],
       "acceptance_evidence": [],
-      "remaining": "Implementation and acceptance evidence covering the entire stated requirement are required.",
+      "remaining": "Qualify real fonts across every state/modal, every GUI and the native editor across supported platforms, including independent HUD/world-surface scale policy. Normal SYSTEM Apply/reset/Discard and archived-setting restart/readback are a bounded increment, not acceptance of the full requirement.",
       "constraints": {
         "default_percent": 100,
         "min_percent": 75,
@@ -2547,10 +2602,15 @@
       "acceptance_evidence_needed": [
         "100/150/200% text with independent UI/density settings, existing long translations and expansion fixture; persisted settings readback."
       ],
-      "status": "pending",
-      "current_evidence": [],
+      "status": "partial",
+      "current_evidence": [
+        "independent-text-scale",
+        "interface-size-preferences",
+        "paired-field-focus",
+        "system-dimensions"
+      ],
       "acceptance_evidence": [],
-      "remaining": "Implementation and acceptance evidence covering the entire stated requirement are required.",
+      "remaining": "Qualify real fonts across every state/modal, every GUI and the native editor across supported platforms, including independent HUD/world-surface scale policy. Normal SYSTEM Apply/reset/Discard and archived-setting restart/readback are a bounded increment, not acceptance of the full requirement. Dimension-field stress exposed Number controls taller than their scroll area at 640x480 with enlarged localized text. Focus reveal now prioritizes the editing viewport on oversized axes, uses the same projected bounds for visibility, and tracks viewport reflow while retaining manual scrolling. Bounded production-page and generic focus tests contribute partial evidence; complete text services, responsive screen/editor and platform qualification remain open.",
       "constraints": {
         "default_percent": 100,
         "min_percent": 100,
@@ -2848,10 +2908,12 @@
       "acceptance_evidence_needed": [
         "Cache/raster/draw-run tests plus fractional DPI/text/scale images; no fixed large-font-slot assumption."
       ],
-      "status": "pending",
-      "current_evidence": [],
+      "status": "partial",
+      "current_evidence": [
+        "output-size-fonts"
+      ],
       "acceptance_evidence": [],
-      "remaining": "Implementation and acceptance evidence covering the entire stated requirement are required."
+      "remaining": "Style/weight-aware face selection, largest animated transform raster density, projected surfaces, fractional-density/font-size animation and cross-platform/full-corpus qualification remain required. Separate shaping, kerning, fallback-font, bidi and grapheme/IME requirements remain open. Fixed budgets and explicit legacy fallback need whole-product performance qualification."
     },
     {
       "id": "TXT-003",
@@ -3277,10 +3339,11 @@
       "status": "partial",
       "current_evidence": [
         "interaction-foundation",
-        "presentation-alias-foundation"
+        "presentation-alias-foundation",
+        "masked-input-review"
       ],
       "acceptance_evidence": [],
-      "remaining": "Ancestor display/noevents eligibility is enforced before semantic or pointer input. Complete authored ergonomic regions, transformed clips, path/mask holes and partial clipping still require an independent render/input oracle and engine evidence."
+      "remaining": "Ancestor display/noevents eligibility is enforced before semantic or pointer input. The 17 September runtime query now evaluates actual ancestor masks in stacking order, including holes, positive gradient/stroke alpha and nested affine transforms, while preserving modal ownership, live popup visibility, scrolling and matched drag capture. Empty/transparent/degenerate masked subtrees cannot retain focus. Independent native point assertions and separate unchanged-renderer pixel oracles provide bounded evidence; they do not establish all render/input agreement. Complete authored ergonomic hit regions, transformed overflow clips, mask/control intersection for directional focus with a deliberate scroll-to-reveal policy, perspective surfaces, tiny quantized-alpha edge equivalence and the supported device/platform matrix remain required."
     },
     {
       "id": "INP-008",
@@ -5095,10 +5158,13 @@
         "exact-image-content-recovery",
         "authored-choice-scrollbars",
         "owned-image-recovery",
-        "image-owner-shutdown"
+        "image-owner-shutdown",
+        "masked-input-review",
+        "system-display-controls",
+        "system-dimensions"
       ],
       "acceptance_evidence": [],
-      "remaining": "The production page now includes source-derived preset and Auto-Detect controls with localized flowing labels, guarded proposals, actual shared draft expansion and bounded Runtime/gameplay validation. The source-backed 31-option/53-CVar contract retains its packaged opt-in SYSTEM route and precise Brightness/Ambient Brightness fields, localized validation and local draft barriers. Exact numeric recovery and bounded full-border focus reveal extend this implementation; neither accepts the translated page. Complete every actual setting and dependent popup, display capability/resolution catalogs, native numeric text entry, complete preset/Auto-Detect effect execution and persistence, remaining effects, Defaults, full Apply/Cancel/exit behavior, source-derived visuals/transitions and the native editor round trip. Qualify normal SP/MP entry/return/reopen, failure/cancellation, complete responsive/localized state galleries and every mapped resource; historical and current bounded captures do not accept the full requirement."
+      "remaining": "The production page now includes source-derived preset and Auto-Detect controls with localized flowing labels, guarded proposals, actual shared draft expansion and bounded Runtime/gameplay validation. The source-backed 31-option/53-CVar contract retains its packaged opt-in SYSTEM route and precise Brightness/Ambient Brightness fields, localized validation and local draft barriers. Exact numeric recovery and bounded full-border focus reveal extend this implementation; neither accepts the translated page. Complete every actual setting and dependent popup, display capability/resolution catalogs, native numeric text entry, complete preset/Auto-Detect effect execution and persistence, remaining effects, Defaults, full Apply/Cancel/exit behavior, source-derived visuals/transitions and the native editor round trip. Qualify normal SP/MP entry/return/reopen, failure/cancellation, complete responsive/localized state galleries and every mapped resource; historical and current bounded captures do not accept the full requirement. The 17 September audit repairs stale Ready, dirty, confirmation and error translation IDs, with every service status key checked against all shipped locales and bounded final SYSTEM gameplay captures. This repairs message presentation without accepting the remaining transaction or complete screen scope. The display-control increment adds fullscreen, borderless, fullscreen policy and MSAA to the owned draft/confirmation flow. Backend availability disables MSAA on the currently unsupported strict Vulkan display path and refuses changed nonzero requests before live writes; Vulkan scene MSAA remains separate. Complete dynamic catalogs, dependent-setting presentation, actual fullscreen/window-manager qualification and the full requirement remain open. The dimension-field increment adds window/custom fullscreen width and height with exact whole-pixel validation and dependent availability. Intrinsic draft validation permits intermediate pairs; Apply readiness, preparation and execution still require the complete current-capability request. Custom size and mode selection share one atomic patch. Complete dynamic display/resolution/refresh catalogs, visible fullscreen/platform behavior, native input, remaining effects and full screen/editor acceptance stay open."
     },
     {
       "id": "FLOW-003",

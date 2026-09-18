@@ -80,5 +80,8 @@ bool TessellatePath(const VectorPath& path, const VectorOptions& options,
 	VectorMesh& output, std::string& diagnostic);
 bool HitTestPath(const VectorPath& path, const VectorOptions& options,
 	VectorPoint outputPoint, bool& hit, std::string& diagnostic);
+// Sample geometric paint coverage, excluding transparent paint and degenerate
+// triangles. Use non-antialiased meshes so edge fringes do not enlarge targets.
+bool HitTestPaintedMesh(const VectorMesh& mesh, VectorPoint point);
 
 } // namespace openq4::ui

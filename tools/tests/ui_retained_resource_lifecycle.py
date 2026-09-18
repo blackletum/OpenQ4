@@ -34,7 +34,10 @@ static int nextId=0;
 static double PresentationTime();
 static void Record(const char* kind,int id=0,double time=-1) { events.push_back({kind,id,time}); }
 namespace openq4::ui {
-struct Viewport { int width=0,height=0; float displayScale=1,userScale=1,pixelDensityX=1,pixelDensityY=1,originX=0,originY=0; };
+struct Viewport { int width=0,height=0; float displayScale=1,userScale=1,pixelDensityX=1,pixelDensityY=1,originX=0,originY=0,textScale=1;
+    int fits=0;float minimumWidth=0,minimumHeight=0;
+    void FitToMinimum(float w,float h){++fits;minimumWidth=w;minimumHeight=h;}
+};
 struct Diagnostic { std::string pointer,message; int line=0,column=0; };
 struct Input {};
 struct ControlAction {};
@@ -121,7 +124,7 @@ struct CVar {
     float value;
     float GetFloat() const { return value; }
     bool GetBool() const { return value!=0; }
-} ui_retainedDensity{0},ui_retainedScale{1.5f},ui_retainedReducedMotion{0};
+} ui_retainedDensity{0},ui_retainedScale{1.5f},ui_retainedTextScale{1.75f},ui_retainedReducedMotion{0};
 static int codePageGeneration=1;
 static int LangDict_GetCodePageGeneration() { return codePageGeneration; }
 '''
@@ -227,6 +230,8 @@ int main() {
     assert(RetainedUI_DefaultViewport(viewport));
     assert(viewport.width==1920 && viewport.originX==80 && viewport.displayScale==1.25f && viewport.userScale==1.5f);
     assert(viewport.pixelDensityX==2);
+    assert(viewport.textScale==1.75f);
+    assert(viewport.fits==1 && viewport.minimumWidth==640 && viewport.minimumHeight==480);
     ui_retainedDensity.value=2.5f;
     assert(RetainedUI_DefaultViewport(viewport) && viewport.displayScale==2.5f);
     host.viewportWidth=777; host.viewportHeight=333;

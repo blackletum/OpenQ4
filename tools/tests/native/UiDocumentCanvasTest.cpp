@@ -183,8 +183,8 @@ static void IndependentMutations(){
 }
 static void PreparationFailures(){
     CanvasFixture f;auto source=f.history.PrepareEdit(f.history.Identity(),f.edits,f.diagnostics);
-    for(int fault=0;fault<10;++fault){auto options=f.options;const auto nan=std::numeric_limits<float>::quiet_NaN();
-        switch(fault){case 0:options.seconds=-1;break;case 1:options.viewport.width=0;break;case 2:options.viewport.height=-1;break;case 3:options.viewport.displayScale=nan;break;case 4:options.viewport.userScale=0;break;case 5:options.viewport.pixelDensityX=0;break;case 6:options.viewport.pixelDensityY=nan;break;case 7:options.viewport.originX=nan;break;case 8:options.viewport.originY=nan;break;case 9:options.seconds=std::numeric_limits<double>::infinity();break;}
+    for(int fault=0;fault<14;++fault){auto options=f.options;const auto nan=std::numeric_limits<float>::quiet_NaN();
+        switch(fault){case 0:options.seconds=-1;break;case 1:options.viewport.width=0;break;case 2:options.viewport.height=-1;break;case 3:options.viewport.displayScale=nan;break;case 4:options.viewport.userScale=0;break;case 5:options.viewport.pixelDensityX=0;break;case 6:options.viewport.pixelDensityY=nan;break;case 7:options.viewport.originX=nan;break;case 8:options.viewport.originY=nan;break;case 9:options.seconds=std::numeric_limits<double>::infinity();break;case 10:options.viewport.textScale=nan;break;case 11:options.viewport.textScale=0;break;case 12:options.viewport.fitScale=nan;break;case 13:options.viewport.fitScale=0;break;}
         const auto calls=f.host.calls;Check(!f.runtime.PrepareDocument(f.runtime.CanvasIdentity(),*source,options,f.diagnostics),"invalid viewport/time refused");Check(f.host.calls==calls,"invalid layout rejected before host work");
     }
     f.host.callback=[] { Rml::GetSystemInterface()->LogMessage(Rml::Log::LT_WARNING,"candidate-owned warning"); };

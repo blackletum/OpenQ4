@@ -1436,7 +1436,7 @@ static void CheckSettingsDrawBoundary() {
     modelTemplate.root.children.push_back(Node{});
     modelTemplate.root.children.back().id="settings_revert";
     modelTemplate.root.children.back().control=Control{};
-    modelTemplate.root.children.back().control->label="#str_229989";
+    modelTemplate.root.children.back().control->label="#str_230014";
     modelTemplate.root.children.back().control->action="dismiss";
     {
         idUserInterfaceRetained gui;
@@ -1451,7 +1451,7 @@ static void CheckSettingsDrawBoundary() {
         assert(registered.id==modelTemplate.id && registered.state.size()==modelTemplate.state.size());
         assert(registered.state.at("settings.request").initial==StateValue(std::string()));
         assert(registered.root.children.back().id=="settings_revert" &&
-               registered.root.children.back().control->label=="#str_229989");
+               registered.root.children.back().control->label=="#str_230014");
         service.requests[owner]="18446744073709551614";
         gui.Redraw(0); assert(service.draws.empty()); // Inactive owners cannot acknowledge a frame.
         gui.Activate(true,0);

@@ -997,4 +997,16 @@
 	"#str_230004"	"Introduce un número de 0.5 a 2."
 	"#str_230005"	"Introduce un número de 0 a 1."
 	"#str_230006"	"Confirma cada campo o descarta los cambios sin terminar."
+
+	// Retained SYSTEM interface-size preferences.
+	"#str_230015"	"Escala de interfaz"
+	"#str_230016"	"Tamaño del texto"
+	"#str_230017"	"Restablecer tamaños"
+	"#str_230018"	"Interfaz"
+	"#str_230019"	"Los tamaños grandes pueden reducirse para caber en la ventana."
+	"#str_230020"	"No;2x;4x;8x;16x"
+	"#str_230021"	"Introduce un número entero de 320 a 16384."
+	"#str_230022"	"Introduce un número entero de 240 a 16384."
+	"#str_230023"	"Elige una pantalla, un tamaño y una frecuencia compatibles antes de aplicar."
+	"#str_230024"	"El tamaño personalizado se usa en pantalla completa exclusiva. Al editarlo se selecciona la resolución personalizada."
 }

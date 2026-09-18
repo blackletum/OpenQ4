@@ -13,6 +13,9 @@ struct SettingsEffectField {
 	bool operator==(const SettingsEffectField&) const = default;
 };
 const std::map<std::string,SettingsEffectField>& SettingsEffectCatalogV1();
+// V1 stays immutable for recorded attempts. V2 adds independent UI/text size;
+// both are immediate settings and carry no device or preset effect bits.
+const std::map<std::string,SettingsEffectField>& SettingsEffectCatalogV2();
 
 enum class SettingsEffectCompletion { DisplayConfirmed, Automatic };
 enum class SettingsRendererStrategy { None, CoalescedDevice };

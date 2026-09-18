@@ -28,6 +28,8 @@ FIELDS = ('open', 'dirty', 'busy', 'canApply', 'phase', 'discardVisible',
           'draftBrightness', 'baselineBrightness', 'draftVSync', 'baselineVSync',
           'request', 'confirmationVisible', 'canConfirm', 'canRevert', 'canRetry', 'remaining')
 CONTROLS = ('settings_brightness', 'settings_vsync')
+SCROLL_FIELDS = set(('id open opening revision offsetDp available usable density viewport '
+                     'range offset track thumb position travel geometry').split())
 SCREENSHOTS = ('discard-dialog', 'continued', 'immediate-return', 'vsync-draft', 'confirmation',
                'reverted', 'keep-return', 'reopened')
 digest, key, activate = page.digest, page.key, page.activate
@@ -54,7 +56,7 @@ def stages():
     edit = [('edit', 1, 1)]
     brightness_edit = ['openq4_retainedGui focus "settings_brightness"'] + key('right')
     # Home then Accept selects the authored first option (0); no physical input.
-    vsync_edit = activate('settings_vsync') + key('home') + key('accept')
+    vsync_edit = page.open_choice('settings_vsync') + key('home') + ['wait 3'] + key('accept')
     add('open', ['openq4_system open'], brightness=1, baseline=1, live=1,
         opening=True, actions=begin, events=onactivate)
     add('discard_draft', brightness_edit, baseline=1, dirty=1, live=1, actions=edit)
@@ -177,7 +179,7 @@ PATTERNS = {
     'exit': r'UI_SETTINGS_EXIT owner=(\d+) request=(\d+) event=(armed|ready|consumed|canceled)',
     'adapter_exit': r'RETAINED_GUI_EXIT path=(\S+) owner=(\d+) source=applyExit',
     'event': r'RETAINED_GUI_EVENT name=(\w+) actions=(\d+) writes=(\d+)',
-    'operation': r'RETAINED_GUI_OPERATION (focus|menu) passed',
+    'operation': r'RETAINED_GUI_OPERATION (focus|menu|number) passed',
 }
 ROUTE_FIELDS = set('enabled active parent child guiTest menu map multiplayer menuSound canReturn'.split())
 WIDGET_FIELDS = set('id role type accepted pending proposed rejected token popup firstVisible'.split())
@@ -217,12 +219,12 @@ def qualify(log, mode, renderer):
     if completion != [COMPLETE]: errors.append('Missing, malformed or replayed completion')
     expected = stages()
     if [row['name'] for row in records] != [row['name'] for row in expected]: errors.append('Stage order/count differs')
-    owners, owner, display_reports, requests, devices = [], None, [], [], []
+    owners, owner, display_reports, requests, devices, choice_cache = [], None, [], [], [], None
     for record, stage in zip(records,expected):
         at, lines = stage['name'], record['lines']
         def fail(detail): errors.append(at+': '+detail)
         traces = {key:[] for key in PATTERNS}
-        routes, reads, widgets, reports, displays, sequence, loads, resources, route_ops, dismisses = [],[],[],[],[],[],[],[],[],[]
+        routes, reads, widgets, reports, displays, sequence, loads, resources, route_ops, dismisses, scrolls = [],[],[],[],[],[],[],[],[],[],[]
         for i,line in enumerate(lines):
             matched = False
             for kind,pattern in PATTERNS.items():
@@ -237,6 +239,8 @@ def qualify(log, mode, renderer):
                 reads.append(line[10:].split('=',1)); sequence.append('read')
             elif line.startswith('RETAINED_GUI_WIDGET '):
                 widgets.append(page._fields(line,'RETAINED_GUI_WIDGET ',WIDGET_FIELDS)); sequence.append('widget')
+            elif line.startswith('RETAINED_GUI_CHOICE_SCROLL '):
+                scrolls.append(page._fields(line,'RETAINED_GUI_CHOICE_SCROLL ',SCROLL_FIELDS)); sequence.append('scroll')
             elif line.startswith('RETAINED_GUI path='):
                 reports.append(page._fields(line,'RETAINED_GUI ',REPORT_FIELDS)); sequence.append('report')
             elif line.startswith('DISPLAY_PROBE '):
@@ -247,7 +251,7 @@ def qualify(log, mode, renderer):
                 dismisses.append(page._fields(line,'RETAINED_GUI_DISPATCH ',set('path operation value brightness shadows close'.split())))
             else: fail('Unexpected or malformed observation: '+line[:150])
         wanted_sequence = ['route']*(2 if stage['opening'] else 1)
-        if stage['child']: wanted_sequence += ['read']*len(FIELDS)+['widget']*2+['report']
+        if stage['child']: wanted_sequence += ['read']*len(FIELDS)+['widget']*2+['scroll','report']
         if sequence != wanted_sequence+['display']: fail('Settled route/readback/renderer observation order differs')
         if route_ops != (['OPENQ4_SYSTEM operation=open result=1'] if stage['opening'] else []): fail('Session open failed or replayed')
         if loads != (['RETAINED_GUI_LOADED '+PAGE] if stage['opening'] else []): fail('Unexpected page lifetime/load')
@@ -271,7 +275,7 @@ def qualify(log, mode, renderer):
         if [row[1:] for row in traces['event']] != [(name,str(count),str(writes)) for name,count,writes in stage['events']]:
             fail('Authored lifecycle/event replay or omission')
         if [row[1] for row in traces['operation']] != [line.split()[1] for line in stage['commands'] if line.startswith('openq4_retainedGui ')]:
-            fail('Semantic focus/menu operation failed or replayed')
+            fail('Semantic focus/menu/number operation failed or replayed')
         if stage['child']:
             if len(reads) != len(FIELDS): fail('Missing service readbacks')
             for row,field,value in zip(reads,FIELDS,stage['values']):
@@ -289,6 +293,27 @@ def qualify(log, mode, renderer):
                 if not widget or index>=2: fail('Malformed widget'); continue
                 fixed=dict(id=CONTROLS[index],role=str((2,3)[index]),type='0',pending='0',proposed='0',rejected='0',token='0',popup='0',firstVisible='0')
                 if any(widget[key]!=value for key,value in fixed.items()) or not page._number(widget['accepted'],stage['values'][6+index*2]): fail('Widget accepted/pending state differs')
+            expected_scroll={key:'0' for key in SCROLL_FIELDS}
+            expected_scroll.update(id='settings_vsync',density='1')
+            if at in ('display_draft','display_dialog','keep_draft','keep_dialog'):
+                # Closing a painted popup retains its measured scroll cache.
+                # The two-option VSync list fits, and the following dirty-exit
+                # modal must leave that exact closed cache untouched.
+                row=scrolls[0] if len(scrolls)==1 else None
+                fixed={key:'0' for key in ('open','opening','offsetDp','usable','range','offset','position','travel')}
+                fixed.update(id='settings_vsync',available='1')
+                if not row or any(row[key]!=value for key,value in fixed.items()): fail('Closed choice cache state differs')
+                else:
+                    try:
+                        numeric={key:float(row[key]) for key in ('density','viewport','track','thumb')}
+                        valid=all(math.isfinite(value) for value in numeric.values()) and 0<numeric['density']<=4 and 0<numeric['viewport']<=720
+                        valid=valid and numeric['track']==numeric['viewport'] and numeric['thumb']==numeric['track']
+                        valid=valid and uint(row['revision'],positive=True) is not None and uint(row['geometry'],positive=True) is not None
+                    except ValueError: valid=False
+                    if not valid: fail('Invalid fitting choice cache geometry')
+                    if at.endswith('_draft'): choice_cache=row
+                    elif row!=choice_cache: fail('Closed choice cache changed during the dirty-exit modal')
+            elif scrolls != [expected_scroll]: fail('Fresh or recreated choice retained unexpected geometry')
             for report in reports:
                 if not report or any(report[key]!=value for key,value in dict(path=PAGE,active='1',contexts='1',shadows='1').items()) or uint(report['revision']) is None or not page._number(report['brightness'],stage['live']): fail('Rendered owner/live brightness differs')
                 if report and stage['values'][5] and report['focus']!='discard_keep_editing': fail('Dirty modal lacks its safe initial focus')
@@ -301,8 +326,9 @@ def qualify(log, mode, renderer):
         else:
             row=displays[0]
             fixed=dict(operation='report',result='1',observed='1',ready='1',window='1',available='1',outcome='2',
-                       failures='0',native='0',logical='1280x720',pixel='1280x720',hidden='1',fullscreen='0',
-                       maximized='0',samples='0',interval=str(stage['interval']),valid='7' if renderer=='vulkan' else '3')
+                       failures='0',native='0',logical='x'.join(map(str,stage.get('size',(1280,720)))),
+                       pixel='x'.join(map(str,stage.get('size',(1280,720)))),hidden='1',fullscreen='0',
+                       maximized='0',samples=str(stage.get('samples',0)),interval=str(stage['interval']),valid='7' if renderer=='vulkan' else '3')
             if any(row[key]!=value for key,value in fixed.items()): fail('Actual renderer/window/interval success tuple differs')
             numeric={key:uint(row[key],positive=key in ('epoch','generation','display')) for key in ('epoch','generation','display','submitted','presented','restart')}
             if None in numeric.values() or (numeric['submitted'] is not None and numeric['presented'] is not None and numeric['submitted']<numeric['presented']): fail('Invalid renderer counter/identity')
@@ -326,7 +352,7 @@ def qualify(log, mode, renderer):
         if traces['device']:
             row=traces['device'][0]
             values=[uint(value) for value in row[1:]]
-            if None in values or values[0]!=int(display=='restore') or values[5:]!=[0,1280,720] or not values[1] or not values[2] or values[3]<values[4]: fail('Actual display device result differs')
+            if None in values or values[0]!=int(display=='restore') or values[5:]!=[0,*stage.get('size',(1280,720))] or not values[1] or not values[2] or values[3]<values[4]: fail('Actual display device result differs')
             else:
                 devices.append(values)
                 if display_reports and any(display_reports[-1][key]!=value for key,value in zip(('epoch','generation'),values[1:3])): fail('Device/report identity mismatch')
@@ -500,6 +526,8 @@ def persistence(game):
 
 def capture(args):
     output,runtime=args.output.resolve(),args.runtime.resolve()
+    timeout=getattr(args,'timeout',240)
+    if isinstance(timeout,bool) or not isinstance(timeout,int) or not 30<=timeout<=1800: raise ValueError('Timeout must be 30–1800 seconds')
     if output.exists(): raise ValueError('Use a new output directory to preserve evidence')
     if not output.is_relative_to((ROOT/'.tmp').resolve()): raise ValueError('Evidence must use a private repository .tmp directory')
     if (args.mode,args.renderer) not in (('sp','gl'),('mp','vulkan')): raise ValueError('Qualified profiles are SP/GL and MP/Vulkan')
@@ -513,7 +541,7 @@ def capture(args):
     game=output/'save/baseoq4'; game.mkdir(parents=True)
     cfg=game/'system-exit.cfg'; cfg.write_text(script(),encoding='utf-8')
     metadata=dict(status='running',mode=args.mode,renderer=args.renderer,profile=profile,command=command,cwd=str(runtime),
-        source=source,binaries=binaries,script_sha256=digest(cfg),density=args.density,windowed=True,hidden_window=True,
+        source=source,binaries=binaries,script_sha256=digest(cfg),density=args.density,windowed=True,hidden_window=True,timeout_seconds=timeout,
         host_input_injection=False,capture_method='engine screenshot after map gameplay',
         warning_baseline={'path':str(baseline),'sha256':digest(baseline)} if baseline else None)
     tool_paths=(Path(__file__).resolve(),Path(page.__file__).resolve())
@@ -528,7 +556,7 @@ def capture(args):
             options.update(startupinfo=startup,creationflags=subprocess.CREATE_NO_WINDOW)
         process=subprocess.Popen(command,cwd=runtime,stdout=process_log,stderr=subprocess.STDOUT,**options)
         print(f'SYSTEM exit {args.mode}/{args.renderer}: PID {process.pid}, hidden/windowed, no host input.',flush=True)
-        try: metadata['returncode']=process.wait(timeout=240)
+        try: metadata['returncode']=process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             process.terminate()
             try: process.wait(timeout=10)
@@ -543,17 +571,19 @@ def capture(args):
     metadata['warnings']=qualify_warnings(log,baseline_text,args.mode,args.renderer)
     metadata['persistence']=persistence(game)
     metadata['screenshots']=[]
+    screenshot_sizes={stage['shot']:stage.get('size',(1280,720)) for stage in stages() if stage['shot']}
     for name in SCREENSHOTS:
         path=game/f'screenshots/system-exit-{name}.tga'; row={'path':str(path.relative_to(output)),'passed':False}
         try:
             if path.is_symlink(): raise ValueError('Screenshot is a link')
-            raw=path.read_bytes(); size=page.tga_dimensions(raw)
-            if size!=(1280,720): raise ValueError('Incomplete or unexpected engine screenshot')
+            width,height=screenshot_sizes[name]
+            raw=path.read_bytes(); size=page.tga_dimensions(raw,(width,height))
+            if size!=(width,height): raise ValueError('Incomplete or unexpected engine screenshot')
             # Engine screenshot emits uncompressed pixels. Reject flat output;
             # image composition and text legibility still require visual review.
             channels=raw[16]//8; start=18+raw[0]
-            if raw[2]!=2 or len(raw)!=start+1280*720*channels: raise ValueError('Unexpected engine TGA encoding/payload')
-            colours={raw[start+i*channels:start+i*channels+3] for i in range(0,1280*720,113)}
+            if raw[2]!=2 or len(raw)!=start+width*height*channels: raise ValueError('Unexpected engine TGA encoding/payload')
+            colours={raw[start+i*channels:start+i*channels+3] for i in range(0,width*height,113)}
             if len(colours)<16: raise ValueError('Flat engine screenshot')
             row.update(passed=True,size=size,sha256=digest(path),sampled_colours=len(colours))
         except (OSError,ValueError) as error: row['error']=str(error)
@@ -587,6 +617,7 @@ def main():
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--density',type=float,choices=(1.25,2.0),default=1.25)
     parser.add_argument('--warning-baseline',type=Path)
+    parser.add_argument('--timeout',type=int,default=240,help='Whole gameplay/restart capture deadline, 30–1800 seconds')
     args=parser.parse_args()
     try: return capture(args)
     except (OSError,ValueError,StopIteration) as error:

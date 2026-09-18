@@ -87,10 +87,11 @@ def compose(document):
     ci['settings_preset-chevron']['properties'].pop('top', None)
     ci['settings_preset-chevron']['properties']['bottom'] = length(18)
     auto['properties'].pop('margin-right', None)
-    auto['properties'].update({'width': length(208), 'min-width': length(176),
+    auto['properties'].update({'width': length(13, 'em'), 'min-width': length(11, 'em'), 'max-width': length(100, '%'),
                               'flex-grow': number(1), 'flex-shrink': number(1)})
     auto['control'].update(label='#str_229978', event='autoDetect')
     nodes(auto)['settings_autodetect-label']['properties']['text'] = typed('text', '#str_229978')
+    nodes(auto)['settings_autodetect-label']['properties']['word-break'] = keyword('normal')
     band = {'id': 'performance-band', 'type': 'group', 'properties': {
         'position': keyword('relative'), 'display': keyword('flex'), 'box-sizing': keyword('border-box'),
         'opacity': number(1), 'width': length(100, '%'), 'flex-wrap': keyword('wrap'),

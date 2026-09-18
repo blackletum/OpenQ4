@@ -123,4 +123,17 @@ static void HorizontalAndProjection(){
         Check(!v.host.fontTimes.empty(),"focus update queried newly sized actual font");
         for(double observed:v.host.fontTimes)Check(observed==v.time,"focus-triggered Rml callbacks use this view's presentation clock");}
 }
-int main(int argc,char**){if(argc>1){View v(2);v.Focus();FullInset(v,"outer");return 0;}BasicAndNested();InputAndResize();LimitsAndHelper();HorizontalAndProjection();std::printf("PASS %u checks\n",checks);}
+static void LayoutReflow(){
+    for(float density:{1.f,1.25f,2.f}){
+        View v(density);Check(v.runtime.FocusControl("lower",v.time),"focus before a same-frame layout change");auto* body=v.Element("outer");
+        body->SetProperty("height","80dp");v.Frame();FullInset(v,"outer");
+        Check(v.runtime.FocusedControl()=="lower"&&v.runtime.TakeActions().empty(),"shrinking viewport reveals the same focus without activation");
+        v.Element("lower")->SetProperty("top","500dp");v.Frame();FullInset(v,"outer");
+        Check(v.runtime.TakeActions().empty(),"moving layout reveals focus without activation");
+        body->SetScrollTop(0);v.Frame();v.Frame();
+        Check(body->GetScrollTop()==0,"unchanged layout preserves deliberate user scroll after reflow");
+        body->SetProperty("height","90dp");v.Frame();
+        Check(body->GetScrollTop()==0,"later reflow cannot recover focus deliberately scrolled out of view");
+    }
+}
+int main(int argc,char**){if(argc>1){View v(2);v.Focus();FullInset(v,"outer");return 0;}BasicAndNested();InputAndResize();LimitsAndHelper();HorizontalAndProjection();LayoutReflow();std::printf("PASS %u checks\n",checks);}

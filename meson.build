@@ -821,6 +821,50 @@ if build_engine or get_option('build_native_tests')
       install: false,
     )
     test('openq4-ui-modal-runtime', openq4_ui_modal_runtime_test, timeout: 30)
+    openq4_ui_mask_input_test = executable('openq4-ui-mask-input-test',
+      files('tools/tests/native/UiMaskInputTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false)
+    test('openq4-ui-mask-input', openq4_ui_mask_input_test, timeout: 30)
+    openq4_ui_text_scale_test = executable('openq4-ui-text-scale-test',
+      files('tools/tests/native/UiTextScaleRuntimeTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false)
+    test('openq4-ui-text-scale', openq4_ui_text_scale_test, timeout: 30)
+    openq4_ui_font_cache_test = executable('openq4-ui-font-cache-test',
+      files('tools/tests/native/RetainedFontCacheTest.cpp', 'src/renderer/RetainedFontCache.cpp'),
+      include_directories: root_include_dir, install: false)
+    test('openq4-ui-font-cache', openq4_ui_font_cache_test, timeout: 60)
+    openq4_ui_system_text_scale_test = executable('openq4-ui-system-text-scale-test',
+      files('tools/tests/native/UiSystemTextScaleTest.cpp', 'src/framework/PerformancePreset.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false)
+    test('openq4-ui-system-text-scale', openq4_ui_system_text_scale_test,
+      args: [files('content/baseoq4/pak0/guis/menu/settings/system.q4ui'), meson.current_source_dir() / 'content/baseoq4/pak0/strings'], timeout: 1800)
+    openq4_ui_system_interface_settings_test = executable('openq4-ui-system-interface-settings-test',
+      files('tools/tests/native/UiSystemInterfaceSettingsTest.cpp', 'src/framework/PerformancePreset.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false)
+    test('openq4-ui-system-interface-settings', openq4_ui_system_interface_settings_test,
+      args: [files('content/baseoq4/pak0/guis/menu/settings/system.q4ui'), meson.current_source_dir() / 'content/baseoq4/pak0/strings'], timeout: 900)
+    openq4_ui_system_display_controls_test = executable('openq4-ui-system-display-controls-test',
+      files('tools/tests/native/UiSystemDisplayControlsTest.cpp', 'src/framework/PerformancePreset.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false)
+    test('openq4-ui-system-display-controls', openq4_ui_system_display_controls_test,
+      args: [files('content/baseoq4/pak0/guis/menu/settings/system.q4ui'), meson.current_source_dir() / 'content/baseoq4/pak0/strings'], timeout: 600)
+    openq4_ui_system_dimensions_test = executable('openq4-ui-system-dimensions-test',
+      files('tools/tests/native/UiSystemDimensionsTest.cpp', 'src/framework/PerformancePreset.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false)
+    test('openq4-ui-system-dimensions', openq4_ui_system_dimensions_test,
+      args: [files('content/baseoq4/pak0/guis/menu/settings/system.q4ui'), meson.current_source_dir() / 'content/baseoq4/pak0/strings'], timeout: 900)
     openq4_ui_value_runtime_test = executable(
       'openq4-ui-value-runtime-test',
       files('tools/tests/native/UiValueRuntimeTest.cpp'),

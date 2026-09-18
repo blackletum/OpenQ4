@@ -74,7 +74,10 @@ reprojected after viewport changes without requiring a new device event. RmlUi
 resolves transforms during rendering, so hit/navigation bounds are refreshed
 after the presented frame. Child artwork cannot enlarge a button's hit box;
 the hit is checked against its own projected border box as well as the layout
-library's hit result. Decorative alpha masks do not shrink this box.
+library's hit result. The [17 September update](masked-input-review.md) also
+constrains pointer targeting to positive geometric alpha from the control's own
+and ancestor masks. Empty or fully transparent masks remove their subtrees from
+focus; full control/mask intersection for directional focus remains unfinished.
 
 An activation requires a matching release on the armed, still-eligible control.
 Repeated accept-down/pointer-down events cannot duplicate activation. Dragging
@@ -98,6 +101,14 @@ and Back requests have distinct kinds. No action string is executed by this
 runtime. Requests are cleared on document replacement, bounded to 256 between
 drains, and overflow is diagnosed. Enabled state is an instance override; it does
 not rewrite authored source. Unknown control-state queries return an empty optional.
+
+The [independent text-scale increment](text-scale.md) also keeps previously
+visible focus in view after its layout or an ancestor viewport changes. Explicit
+focus records its layout immediately, so an edit before the next frame receives
+the same treatment. Relative layout geometry is tracked separately from scroll
+offsets. Deliberate scrolling can hide focus, and a later layout change preserves
+that choice until focus is explicitly revealed again.
+Density/snapshot restoration retains its authored-scroll preservation policy.
 
 ## Engine qualification without device control
 

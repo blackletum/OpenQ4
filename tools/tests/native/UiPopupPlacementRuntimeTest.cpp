@@ -59,7 +59,7 @@ static void TransformedBounds(TestHost& host) {
     }
 }
 static void ChangedBounds(TestHost& host) {
-    for(unsigned change=0;change<6;++change) {
+    for(unsigned change=0;change<7;++change) {
         auto source=BoundedChoice();
         if(change==5) {
             auto spacer=Box("flow-spacer",0,0,480,50);spacer["properties"]["position"]=Typed("keyword","relative");source["root"]["children"].insert(0,spacer);
@@ -74,6 +74,7 @@ static void ChangedBounds(TestHost& host) {
         if(change==3){view.viewport.displayScale=1.25f;view.Frame();}
         if(change==4)Check(Element("clipped-parent")->SetProperty("font-size","21px"),"inherited type changes after pointer down");
         if(change==5)Check(Element("flow-spacer")->SetProperty("height","80px"),"unrelated flow sibling changes before layout");
+        if(change==6)Check(Element("option-0-label")->SetProperty("word-break","break-all"),"row wrapping policy changes after pointer down");
         view.runtime.PointerButton(false,view.time);
         // Geometry that moved cancels the gesture: the press named rows that no
         // longer describe the screen, so the release selects nothing. Only a
