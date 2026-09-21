@@ -1047,12 +1047,18 @@ def test_vulkan_pbr_support_stays_narrow_and_fail_closed() -> None:
             '#include "pbr_direct.glsl"',
             "if (pc.d.x > 1.5)",
             "if (pc.d.x > 2.5)",
-            "outColor = vec4(0.0, 1.0, 0.0, 0.0);",
+            # Both debug views composite through the authored coverage: an
+            # ordered transparent draw states ownership at its own alpha, and
+            # an opaque one still writes the additive contract's zero.
+            "outColor = vec4(0.0, 1.0, 0.0, PBRTransparentAlpha(",
+            "outColor = vec4(0.0, 0.0, 0.0, PBRTransparentAlpha(",
         ):
             require(shader, token, f"Vulkan packed-PBR shader {relative_path}")
     shared = read(ROOT / "src/renderer/Vulkan/shaders/pbr_direct.glsl")
     for token in ("PBRFilteredRoughness(roughness", "dFdx(objectNormal)", "dFdy(objectNormal)",
-                  "SafeNormalize(vPBRTangent0) * localNormal.x", "SafeNormalize(vPBRNormal) * localNormal.z"):
+                  "SafeNormalize(vPBRTangent0) * localNormal.x", "SafeNormalize(vPBRNormal) * localNormal.z",
+                  # ordered transparency reads its coverage from the albedo alpha
+                  "float PBRTransparentAlpha(vec2 albedoTexCoord)", "if (pc.a.w <= 0.0)"):
         require(shared, token, "native final-normal specular filtering")
     if shared.index("dFdx(objectNormal)") > shared.index("if (ndotl <= 0.0"):
         raise AssertionError("native normal derivatives must precede per-fragment light rejection")

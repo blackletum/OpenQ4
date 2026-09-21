@@ -71,6 +71,14 @@ underwater effects, and debug views have already landed.
   retain the failures and isolate native presentation/CPU phases before any
   performance promotion. See `.tmp/pbr-audit/qualification-v69.json`.
 
+- v70 measured the OpenGL/Vulkan colour gap instead of assuming it. On the same
+  laboratory cameras, the lit frame differs by mean 8.149/255 with 17.69% of
+  channels changed; with environment lighting disabled on both backends it
+  falls to 1.002 and 4.33%, against 0.920 for the classic path with PBR off
+  entirely. Native direct lighting is therefore already at classic-level
+  agreement, and about seven eighths of the visible difference is the missing
+  environment consumer -- which is what the survey below should be sized
+  against.
 - v70 surveyed what native environment/probe lighting actually needs, so the
   next increment starts from facts rather than a guess:
   - `ModernSpecularProbeAtlas.cpp` is **not** in the Vulkan module's source set

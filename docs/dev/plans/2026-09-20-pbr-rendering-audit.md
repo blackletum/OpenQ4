@@ -753,6 +753,35 @@ independently evaluated filmic/sRGB references. It is a visual-design decision
 with a re-baselining cost, not a defect fix, so it is recorded here and left
 to the owner rather than changed under a parity task.
 
+### v70: the colour gap measured, and what it is
+
+"Vulkan scene/display colour parity is unqualified" was an assumption, never a
+number. Both backends capture the same laboratory cameras at frozen time, so
+the same captures answer it. Comparing the OpenGL and native Vulkan frames
+channel by channel:
+
+| Capture | Environment lighting | mean | p99 | max | channels differing by >1 |
+|---|---|---:|---:|---:|---:|
+| `master-off` | PBR disabled entirely | 0.920 | 2 | 104 | 7.77% |
+| `direct` | `r_pbrIBL 0`, probes off | 1.002 | 24 | 216 | 4.33% |
+| `lit` | on (OpenGL consumes it, Vulkan does not) | **8.149** | 126 | 255 | **17.69%** |
+| `emissive` | debug view | 0.305 | 2 | 3 | 1.16% |
+| `ownership` | debug view | 0.386 | 2 | 255 | 1.19% |
+
+The reading is unambiguous. With environment lighting off, native Vulkan PBR
+direct lighting agrees with OpenGL about as closely as the two classic
+renderers agree with each other (1.00 against 0.92). Turning it on multiplies
+the difference by eight, because OpenGL adds filtered environment specular and
+diffuse irradiance that Vulkan has no consumer for. The `ownership` row's max
+of 255 is expected: OpenGL paints unowned draws magenta in its modern path and
+Vulkan leaves them classic.
+
+So the remaining colour work is not a diffuse "linearization" problem to hunt.
+About seven eighths of the measured difference is one missing feature, and the
+residual mean of 1.0 is what scene/display composition alone contributes.
+Reports: `.tmp/pbr-audit/v70-backend-color-delta.json` and
+`v70-backend-color-direct.json`.
+
 ## Unrelated issues observed
 
 The earlier engine/game renderer-interface mismatch is reconciled, and its
