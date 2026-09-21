@@ -346,7 +346,12 @@ void idImageManager::CheckCvars() {
 
 	if ( reductionChanged ) {
 		common->Printf( "Texture reduction changed, reloading images...\n" );
-		ReloadImages( true );
+		// Only file-backed images are built from the reduction cvars. Reloading
+		// the rest reallocated every generated TTF glyph atlas with no texels,
+		// and nothing re-rasterises them without a vid_restart, so all menu and
+		// HUD text disappeared the moment a video quality preset moved
+		// image_downSize/image_downSizeBump/image_downSizeSpecular.
+		ReloadImages( true, true );
 		return;
 	}
 
@@ -991,13 +996,24 @@ void idImageManager::PurgeAllImages() {
 ReloadImages
 ===============
 */
-void idImageManager::ReloadImages( bool all ) {
+void idImageManager::ReloadImages( bool all, bool fileBackedOnly ) {
 	// a reload exists to observe files dropped since the last level load;
 	// never let it consult (or leave behind) memoized probe results
 	R_SetDDSProbeCacheActive( false );
 
 	for ( int i = 0 ; i < globalImages->images.Num() ; i++ ) {
-		globalImages->images[ i ]->Reload( all );
+		idImage *image = globalImages->images[ i ];
+		if ( image == NULL ) {
+			continue;
+		}
+		// Scratch pages and render targets are authored in memory, so there is
+		// nothing on disk to rebuild them from. idImage::Reload answers a
+		// persistent image by reallocating it with no data, which is correct
+		// after a device loss and destructive at any other time.
+		if ( fileBackedOnly && R_IsMutableRenderImage( image ) ) {
+			continue;
+		}
+		image->Reload( all );
 	}
 }
 

@@ -252,7 +252,19 @@ def test_reduction_changes_reload_images_without_a_restart():
         "image_downSizeBumpLimit",
     ):
         assert_true(f"&{cvar}" in image_manager, f"{cvar} changes should trigger an image reload")
-    assert_true("ReloadImages( true );" in image_manager, "a reduction change should force a full image reload")
+    assert_true(
+        "ReloadImages( true, true );" in image_manager,
+        "a reduction change should force a reload of every file-backed image",
+    )
+    assert_true(
+        "void idImageManager::ReloadImages( bool all, bool fileBackedOnly ) {" in image_manager,
+        "a reload should be able to restrict itself to images that have a file behind them",
+    )
+    assert_true(
+        "if ( fileBackedOnly && R_IsMutableRenderImage( image ) ) {" in image_manager,
+        "scratch pages and render targets have nothing to re-reduce, and reloading one "
+        "reallocates it with no texels - which empties the generated glyph atlases",
+    )
     assert_true(
         "if ( insideLevelLoad ) {" in image_manager,
         "a level load already touches every image, so the reload must not double up on it",

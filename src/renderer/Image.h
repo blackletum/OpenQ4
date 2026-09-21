@@ -384,7 +384,7 @@ public:
 	void				PurgeAllImages();
 
 	// reloads all apropriate images after a vid_restart
-	void				ReloadImages(bool all);
+	void				ReloadImages(bool all, bool fileBackedOnly = false);
 
 	// reloads every image when a texture reduction cvar changed this frame
 	void				CheckCvars();
