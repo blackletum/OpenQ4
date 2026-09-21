@@ -2654,6 +2654,41 @@
       "accessibility": "Slider with paired edit field."
     },
     {
+      "id": "game.controller.wheel_sensitivity",
+      "pane": "Game Options",
+      "section": "Controller",
+      "path": "Settings > Game Options > Controller > Wheel Sensitivity",
+      "source": "game",
+      "container": "set_game_controller_wheel_sensitivity",
+      "widgets": [
+        "set_game_controller_wheel_sensitivity_slider_bar",
+        "set_game_controller_wheel_sensitivity_value"
+      ],
+      "edit_fields": [
+        {
+          "name": "set_game_controller_wheel_sensitivity_value",
+          "maxchars": 4,
+          "numeric": true
+        }
+      ],
+      "widget_type": "slider_edit",
+      "label_key": "#str_42840",
+      "target_type": "cvar",
+      "target": "in_weaponWheelSensitivity",
+      "default": "4.0",
+      "ui_range": {
+        "low": "0.25",
+        "high": "16.0",
+        "step": "0.25"
+      },
+      "cvar_range": {
+        "low": "0.25",
+        "high": "16.0"
+      },
+      "restart_required": false,
+      "accessibility": "Slider with paired edit field."
+    },
+    {
       "id": "game.controller.look_curve",
       "pane": "Game Options",
       "section": "Controller",

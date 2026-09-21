@@ -44,6 +44,16 @@ Example:
 seta g_autoSkipCinematics 1
 ```
 
+## Turbo Mode
+
+Choose **Turbo Mode** on the single-player New Game page. The choice applies when
+you start the new game; selecting Off starts a normal campaign even after a turbo
+game or a multiplayer session. Turbo increases movement speeds and removes weapon
+reloads, including the shotgun pump after each shot. Shots still use ammunition.
+
+The console setting is `g_turboMode` (`0` off, `1` on). Enabling it during a reload
+cancels that reload; disabling it restores normal magazine and reload behavior.
+
 ## Difficulty
 
 During a single-player game the in-game menu has a **Difficulty** entry, between **Settings** and **Return to Game**. It opens the difficulty list from New Game with the difficulty you are playing selected. Pick one and choose **Restart Level**: the level starts again from its beginning at that difficulty, with the weapons, ammo, health and armor you had when you entered it. **Back** changes nothing.

@@ -3548,6 +3548,12 @@ static void Session_openQ4StartSingleplayer_f( const idCmdArgs &args ) {
 
 	const bool devmap = args.Argc() > 2 && atoi( args.Argv( 2 ) ) != 0;
 	const char *entityFilter = ( args.Argc() > 3 ) ? args.Argv( 3 ) : "";
+	// InitGame replays archived configuration and startup arguments during a
+	// module swap. Apply the new-game selection after that replay, before spawn.
+	if ( args.Argc() > 5 ) {
+		cvarSystem->SetCVarInteger( "g_skill", idMath::ClampInt( 0, 4, atoi( args.Argv( 4 ) ) ) );
+		cvarSystem->SetCVarBool( "g_turboMode", atoi( args.Argv( 5 ) ) != 0 );
+	}
 	sessLocal.StartNewGame( args.Argv( 1 ), devmap, entityFilter );
 }
 
@@ -5024,9 +5030,9 @@ void idSessionLocal::StartNewGame( const char *mapName, bool devmap, const char 
 		reloadArgs.AppendArg( "openq4_startSingleplayer" );
 		reloadArgs.AppendArg( normalizedMapName.c_str() );
 		reloadArgs.AppendArg( devmap ? "1" : "0" );
-		if ( normalizedEntityFilter.Length() > 0 ) {
-			reloadArgs.AppendArg( normalizedEntityFilter.c_str() );
-		}
+		reloadArgs.AppendArg( normalizedEntityFilter.c_str() );
+		reloadArgs.AppendArg( va( "%d", cvarSystem->GetCVarInteger( "g_skill" ) ) );
+		reloadArgs.AppendArg( cvarSystem->GetCVarBool( "g_turboMode" ) ? "1" : "0" );
 		cmdSystem->SetupReloadGameModule( reloadArgs );
 		return;
 	}

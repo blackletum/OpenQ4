@@ -59,11 +59,11 @@
 							} else if ( "gui::game_section_choice" == 2 ) {
 								set "gui::gui_set_game_scroll" "21" ;
 							} else if ( "gui::game_section_choice" == 3 ) {
-								set "gui::gui_set_game_scroll" "37" ;
+								set "gui::gui_set_game_scroll" "38" ;
 							} else if ( "gui::game_section_choice" == 4 ) {
-								set "gui::gui_set_game_scroll" "44" ;
+								set "gui::gui_set_game_scroll" "45" ;
 							} else {
-								set "gui::gui_set_game_scroll" "47" ;
+								set "gui::gui_set_game_scroll" "48" ;
 							}
 							set "cmd" "applySettingsScroll game" ;
 						}
@@ -76,7 +76,7 @@
 					noclip	0
 					windowDef set_game_content
 					{
-						rect	-24,-41,640,1452
+						rect	-24,-41,640,1476
 						visible	1
 
 	//--------------------------------------------------------------//
@@ -1420,6 +1420,69 @@
 						}
 					}
 				}
+				windowDef set_game_controller_wheel_sensitivity
+				{
+					rect	228,671,377,25
+					visible	1
+
+					windowDef set_game_controller_wheel_sensitivity_background
+					{
+						rect	0,0,377,25
+						visible	1
+						background	"gfx/guis/mainmenu/b3_light"
+						matcolor	0.545,0.588,0.294,0.4
+					}
+					windowDef set_game_controller_wheel_sensitivity_description
+					{
+						rect	31,3,210,18
+						visible	1
+						forecolor	1,1,1,0.8
+						text	"#str_42840"
+						textscale	0.24
+						textspacing	-1
+						font	"fonts/lowpixel"
+					}
+					windowDef set_game_controller_wheel_sensitivity_slider_bg
+					{
+						rect	244,8,128,16
+						background	"gfx/guis/mainmenu/slider_bg"
+						matcolor	1,0.745,0.137,0.8
+						noevents	1
+						visible	1
+					}
+					sliderDef set_game_controller_wheel_sensitivity_slider_bar
+					{
+						rect	244,9,71,8
+						forecolor	1,0.745,0.137,0.8
+						matcolor	1,0.745,0.137,0.8
+						low	0.25
+						high	16.0
+						step	0.25
+						thumbShader	"gfx/guis/mainmenu/slider_bar"
+						cvar	in_weaponWheelSensitivity
+						visible	1
+					}
+					editDef set_game_controller_wheel_sensitivity_value
+					{
+						rect	322,4,100,18
+						visible	1
+						cvar	in_weaponWheelSensitivity
+						textscale	0.24
+						textspacing	-1
+						maxchars	4
+						numeric	1
+						forecolor	1,0.745,0.137,0.8
+						font	"fonts/lowpixel"
+
+						onEnter {
+							setfocus "set_b_back" ;
+						}
+
+						onAction {
+							set "cmd" "play main_menu_selection" ;
+						}
+					}
+				}
 	//==============================================================//
 
 	//==============================================================//
@@ -1428,7 +1491,7 @@
 
 				windowDef set_game_controller_look_curve
 				{
-					rect	228,671,377,25
+					rect	228,695,377,25
 					visible	1
 
 					windowDef set_game_controller_look_curve_background
@@ -1495,7 +1558,7 @@
 
 				windowDef set_game_controller_invert
 				{
-					rect  228,695,377,25
+					rect  228,719,377,25
 					visible 1
 
 					windowDef set_game_controller_invert_background
@@ -1538,7 +1601,7 @@
 
 				windowDef set_game_controller_trigger
 				{
-					rect	228,719,377,25
+					rect	228,743,377,25
 					visible	1
 
 					windowDef set_game_controller_trigger_background
@@ -1605,7 +1668,7 @@
 
 				windowDef set_game_controller_rumble
 				{
-					rect  228,743,377,25
+					rect  228,767,377,25
 					visible 1
 
 					windowDef set_game_controller_rumble_background
@@ -1648,7 +1711,7 @@
 
 				windowDef set_game_controller_rumble_strength
 				{
-					rect	228,767,377,25
+					rect	228,791,377,25
 					visible	1
 
 					windowDef set_game_controller_rumble_strength_background
@@ -1715,7 +1778,7 @@
 
 				windowDef set_game_controller_gyro
 				{
-					rect  228,801,377,25
+					rect  228,825,377,25
 					visible 1
 
 					windowDef set_game_controller_gyro_background
@@ -1758,7 +1821,7 @@
 
 				windowDef set_game_controller_gyro_sensitivity
 				{
-					rect	228,825,377,25
+					rect	228,849,377,25
 					visible	1
 
 					windowDef set_game_controller_gyro_sensitivity_background
@@ -1825,7 +1888,7 @@
 
 				windowDef set_game_controller_touchpad_mode
 				{
-					rect  228,849,377,25
+					rect  228,873,377,25
 					visible 1
 
 					windowDef set_game_controller_touchpad_mode_background
@@ -1869,7 +1932,7 @@
 
 				windowDef set_game_controller_touchpad_sensitivity
 				{
-					rect	228,873,377,25
+					rect	228,897,377,25
 					visible	1
 
 					windowDef set_game_controller_touchpad_sensitivity_background
@@ -1936,7 +1999,7 @@
 
 				windowDef set_game_controller_touchscreen
 				{
-					rect  228,897,377,25
+					rect  228,921,377,25
 					visible 1
 
 					windowDef set_game_controller_touchscreen_background
@@ -1979,7 +2042,7 @@
 
 				windowDef set_game_controller_low_battery_rumble
 				{
-					rect	228,921,377,25
+					rect	228,945,377,25
 					visible	1
 
 					windowDef set_game_controller_low_battery_rumble_background
@@ -2046,7 +2109,7 @@
 
 				windowDef set_game_controller_low_battery_rumble_cap
 				{
-					rect	228,945,377,25
+					rect	228,969,377,25
 					visible	1
 
 					windowDef set_game_controller_low_battery_rumble_cap_background
@@ -2113,7 +2176,7 @@
 				
 				windowDef set_game_customxhair
 				{
-					rect  228,969,403,25
+					rect  228,993,403,25
 					visible 1
 											
 					windowDef set_game_customxhair_background
@@ -2174,7 +2237,7 @@
 			
 				windowDef set_game_previewxhair
 				{
-					rect	228,993,377,48
+					rect	228,1017,377,48
 					visible	1
 				
 					windowDef set_game_previewxhair_background
@@ -2237,7 +2300,7 @@
 
 				windowDef set_game_xhairsize
 				{
-					rect  228,1041,377,25
+					rect  228,1065,377,25
 					visible 1
 											
 					windowDef set_game_xhairsize_background
@@ -2294,7 +2357,7 @@
 
 				windowDef set_game_xhaircolor
 				{
-					rect  228,1066,377,25
+					rect  228,1090,377,25
 					visible 1
 											
 					windowDef set_game_xhaircolor_background
@@ -2438,7 +2501,7 @@
 
 				windowDef set_game_hitmarker
 				{
-					rect  228,1091,403,25
+					rect  228,1115,403,25
 					visible 1
 
 					windowDef set_game_hitmarker_background
@@ -2481,7 +2544,7 @@
 
 				windowDef set_game_corpsesink
 				{
-					rect  228,1115,377,25
+					rect  228,1139,377,25
 					visible 1
 
 					windowDef set_game_corpsesink_background
@@ -2525,7 +2588,7 @@
 
 				windowDef set_game_corpsetime
 				{
-					rect  228,1139,377,25
+					rect  228,1163,377,25
 					visible 1
 
 					windowDef set_game_corpsetime_background
@@ -2572,7 +2635,7 @@
 
 				windowDef set_game_language
 				{
-					rect  228,1163,377,25
+					rect  228,1187,377,25
 					visible 1
 											
 					windowDef set_game_language_background
@@ -2601,14 +2664,14 @@
 						cvar	sys_lang
 						choices	"#str_229908"
 						choiceType	1
-						values	"english;spanish;french;italian;polish;russian"
+						values	"english;spanish;french;italian;polish;russian;german"
 
 						onAction {
 							set "cmd" "play main_menu_selection" ;
 						}
 
 						onActionRelease {
-							set "cmd" "reloadLanguage ; reloadGuis ; CVarStrcmp sys_lang curr_lang English Spanish French Italian Polish Russian" ;
+							set "cmd" "reloadLanguage ; reloadGuis ; CVarStrcmp sys_lang curr_lang English Spanish French Italian Polish Russian German" ;
 						}
 					}
 				}
@@ -2620,7 +2683,7 @@
 
 				windowDef set_game_consoleaccess
 				{
-					rect  228,1187,377,25
+					rect  228,1211,377,25
 					visible 1
 
 					windowDef set_game_consoleaccess_background
@@ -2664,7 +2727,7 @@
 
 				windowDef set_game_autoskipcinematics
 				{
-					rect  228,1221,377,25
+					rect  228,1245,377,25
 					visible 1
 
 					windowDef set_game_autoskipcinematics_background
@@ -2707,7 +2770,7 @@
 
 				windowDef set_game_viewweapon
 				{
-					rect	259,1255,327,13
+					rect	259,1279,327,13
 					visible	1
 					forecolor	1,1,1,0.4
 					text	"#str_229952"
@@ -2723,7 +2786,7 @@
 
 				windowDef set_game_cl_gunfov
 				{
-					rect	228,1269,377,25
+					rect	228,1293,377,25
 					visible	1
 
 					windowDef set_game_cl_gunfov_background
@@ -2790,7 +2853,7 @@
 
 				windowDef set_game_cl_gunfov_adjust
 				{
-					rect  228,1293,377,25
+					rect  228,1317,377,25
 					visible 1
 
 					windowDef set_game_cl_gunfov_adjust_background
@@ -2834,7 +2897,7 @@
 
 				windowDef set_game_cl_gun_x
 				{
-					rect	228,1317,377,25
+					rect	228,1341,377,25
 					visible	1
 
 					windowDef set_game_cl_gun_x_background
@@ -2900,7 +2963,7 @@
 
 				windowDef set_game_cl_gun_y
 				{
-					rect	228,1341,377,25
+					rect	228,1365,377,25
 					visible	1
 
 					windowDef set_game_cl_gun_y_background
@@ -2966,7 +3029,7 @@
 
 				windowDef set_game_cl_gun_z
 				{
-					rect	228,1365,377,25
+					rect	228,1389,377,25
 					visible	1
 
 					windowDef set_game_cl_gun_z_background
@@ -3032,7 +3095,7 @@
 
 				windowDef set_game_weaponkick
 				{
-					rect	228,1389,403,25
+					rect	228,1413,403,25
 					visible	1
 
 					windowDef set_game_weaponkick_background
@@ -3079,7 +3142,7 @@
 					forecolor	1,1,1,0.8
 					matcolor	1,1,1,0.4
 					low	0
-					high	47
+					high	48
 					step	1
 					vertical	1
 					scrollbar	1

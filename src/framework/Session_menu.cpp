@@ -45,7 +45,7 @@ extern glconfig_t glConfig;
 idCVar	idSessionLocal::gui_configServerRate( "gui_configServerRate", "0", CVAR_GUI | CVAR_ARCHIVE | CVAR_ROM | CVAR_INTEGER, "" );
 idCVar gui_set_sys_scroll( "gui_set_sys_scroll", "0", CVAR_GUI | CVAR_INTEGER, "display menu scroll step", 0, 28 );
 idCVar gui_set_audio_scroll( "gui_set_audio_scroll", "0", CVAR_GUI | CVAR_INTEGER, "audio menu scroll step", 0.0f, 0.0f );
-idCVar gui_set_game_scroll( "gui_set_game_scroll", "0", CVAR_GUI | CVAR_INTEGER, "game menu scroll step", 0, 47 );
+idCVar gui_set_game_scroll( "gui_set_game_scroll", "0", CVAR_GUI | CVAR_INTEGER, "game menu scroll step", 0, 48 );
 
 static const int MENU_CONTROLLER_AXIS_THRESHOLD = 50;
 static const int MENU_CONTROLLER_REPEAT_INITIAL_MSEC = 320;
@@ -2396,7 +2396,7 @@ static int MainMenuGetNewGameOption( idUserInterface *gui, const char *desktopSt
 
 static void MainMenuApplyNewGameOptions( idUserInterface *gui ) {
 	const int skill = idMath::ClampInt( 0, 4, MainMenuGetNewGameOption( gui, "desktop::skill", "skill", cvarSystem->GetCVarInteger( "g_skill" ) ) );
-	const int turboMode = MainMenuGetNewGameOption( gui, "desktop::turboMode", "turboMode", cvarSystem->GetCVarInteger( "g_turboMode" ) ) != 0 ? 1 : 0;
+	const int turboMode = MainMenuGetNewGameOption( gui, "desktop::turboMode", "turboMode", 0 ) != 0 ? 1 : 0;
 
 	cvarSystem->SetCVarInteger( "g_skill", skill );
 	cvarSystem->SetCVarInteger( "g_turboMode", turboMode );
@@ -3431,10 +3431,10 @@ static const mainMenuSettingsScrollPage_t MAINMENU_SETTINGS_SCROLL_PAGES[] = {
 		"game_section_choice",
 		21,
 		0,
-		47,
+		48,
 		-24,
 		-41,
-		1452,
+		1476,
 		24.0f
 	}
 };
@@ -3476,13 +3476,13 @@ static int MainMenuSettingsSectionChoiceForScroll( const mainMenuSettingsScrollP
 		if ( scrollValue < 21 ) {
 			return 1;
 		}
-		if ( scrollValue < 37 ) {
+		if ( scrollValue < 38 ) {
 			return 2;
 		}
-		if ( scrollValue < 44 ) {
+		if ( scrollValue < 45 ) {
 			return 3;
 		}
-		if ( scrollValue < 46 ) {
+		if ( scrollValue < 47 ) {
 			return 4;
 		}
 		return 5;

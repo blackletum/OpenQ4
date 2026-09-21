@@ -96,6 +96,7 @@ Controller tuning lives in `Settings -> Game Options -> Controller`.
 | Stick Layout | `in_joystickSouthpaw` | Default | Use `Southpaw` to swap movement and look sticks. |
 | Stick Dead Zone | `in_joystickDeadZone` | `0.18` | Raises or lowers the center area ignored by analog sticks. |
 | Look Sensitivity | `in_joystickLookSensitivity` | `0.75` | Scales controller turn speed after stick deflection is normalized. |
+| Wheel Sensitivity | `in_weaponWheelSensitivity` | `4.0` | Speeds up the SP weapon-wheel cursor. Range `0.25–16.0`; higher is faster. Independent of aiming sensitivity, zoom, and run speed. |
 | Look Curve | `in_joystickLookCurve` | `1.35` | Higher values damp small aim movements; full-stick turn speed is controlled by Look Sensitivity. |
 | Invert Look | `in_joystickInvertLook` | Off | Flips vertical controller look. |
 | Trigger Press | `in_joystickTriggerThreshold` | `0.35` | Controls how far LT/RT must be pressed before they count as buttons. |

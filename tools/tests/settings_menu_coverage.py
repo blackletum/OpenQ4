@@ -526,6 +526,7 @@ def validate_value_entry_widgets(mainmenu: str, system_gui: str, audio_gui: str,
             "set_game_msenscap_value",
             "set_game_controller_deadzone_value",
             "set_game_controller_look_sensitivity_value",
+            "set_game_controller_wheel_sensitivity_value",
             "set_game_controller_look_curve_value",
             "set_game_controller_trigger_value",
             "set_game_controller_rumble_strength_value",
@@ -977,11 +978,11 @@ def main() -> None:
     for token in (
         "rect\t204,104,377,16",
         "rect\t0,128,640,256",
-        "rect\t-24,-41,640,1452",
+        "rect\t-24,-41,640,1476",
         "rect\t613,128,16,256",
-        "high\t47",
+        "high\t48",
         "cvar\tgui_set_game_scroll",
-        "640,1452",
+        "640,1476",
     ):
         require(game_gui + mainmenu, token, "Game Options scroll coverage")
     for token in (
@@ -993,9 +994,9 @@ def main() -> None:
         'set "gui::gui_set_game_scroll" "0"',
         'set "gui::gui_set_game_scroll" "11"',
         'set "gui::gui_set_game_scroll" "21"',
-        'set "gui::gui_set_game_scroll" "37"',
-        'set "gui::gui_set_game_scroll" "44"',
-        'set "gui::gui_set_game_scroll" "47"',
+        'set "gui::gui_set_game_scroll" "38"',
+        'set "gui::gui_set_game_scroll" "45"',
+        'set "gui::gui_set_game_scroll" "48"',
         'set "cmd" "applySettingsScroll game"',
         "set_game_section_choice::noevents",
     ):
@@ -1008,7 +1009,7 @@ def main() -> None:
     reject(audio_gui + mainmenu, "set gui_set_audio_scroll", "Audio scroll cvar command")
     for token in (
         'gui_set_sys_scroll( "gui_set_sys_scroll", "0", CVAR_GUI | CVAR_INTEGER, "display menu scroll step", 0, 28 )',
-        'gui_set_game_scroll( "gui_set_game_scroll", "0", CVAR_GUI | CVAR_INTEGER, "game menu scroll step", 0, 47 )',
+        'gui_set_game_scroll( "gui_set_game_scroll", "0", CVAR_GUI | CVAR_INTEGER, "game menu scroll step", 0, 48 )',
         "HandleMainMenuSettingsScrollInput( guiActive, event->evValue )",
         'MainMenuWindowStateEqualsInt( gui, "desktop::curr", page.expectedPage )',
         "MainMenuSettingsPopupIsVisible( gui )",

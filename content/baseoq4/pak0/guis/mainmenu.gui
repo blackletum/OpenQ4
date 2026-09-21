@@ -13268,7 +13268,7 @@ windowDef Desktop
 				// compare cvar 'sys_lang', store as gui variable 'curr_lang' and compare
 				// against languages. returns index value 0 for English, 1 Spanish, onward.
 				
-				set "cmd" "CVarStrcmp sys_lang curr_lang English Spanish French Italian Polish" ;
+				set "cmd" "CVarStrcmp sys_lang curr_lang English Spanish French Italian Polish Russian German" ;
 				
 				
 				if ("desktop::dest" == 4 || "desktop::dest" == 21 || "desktop::dest" == 22 || "desktop::dest" == 36 || "desktop::curr" == 16 || "desktop::curr" == 14 ) {
@@ -13650,7 +13650,6 @@ windowDef Desktop
 					set "new_t_bstart::text" "#str_229983" ;
 				} else {
 					consoleCMD "g_skill 1" ;
-					consoleCMD "g_turboMode 0" ;
 					set "desktop::skill" "1" ;
 					set "desktop::turboMode" "0" ;
 					set "t_new_title::text" "#str_200000" ;
@@ -16397,7 +16396,9 @@ windowDef Desktop
 			set "set_game_controller_deadzone::visible" "1" ;
 			set "set_game_controller_deadzone_hover::visible" "1" ;
 			set "set_game_controller_look_sensitivity::visible" "1" ;
+			set "set_game_controller_wheel_sensitivity::visible" "1" ;
 			set "set_game_controller_look_sensitivity_hover::visible" "1" ;
+			set "set_game_controller_wheel_sensitivity_hover::visible" "1" ;
 			set "set_game_controller_look_curve::visible" "1" ;
 			set "set_game_controller_look_curve_hover::visible" "1" ;
 			set "set_game_controller_invert::visible" "1" ;
@@ -16493,6 +16494,7 @@ windowDef Desktop
 			set "set_game_controller_layout::noevents" "0" ;
 			set "set_game_controller_deadzone::noevents" "0" ;
 			set "set_game_controller_look_sensitivity::noevents" "0" ;
+			set "set_game_controller_wheel_sensitivity::noevents" "0" ;
 			set "set_game_controller_look_curve::noevents" "0" ;
 			set "set_game_controller_invert::noevents" "0" ;
 			set "set_game_controller_trigger::noevents" "0" ;
@@ -16577,7 +16579,9 @@ windowDef Desktop
 			set "set_game_controller_deadzone::visible" "0" ;
 			set "set_game_controller_deadzone_hover::visible" "0" ;
 			set "set_game_controller_look_sensitivity::visible" "0" ;
+			set "set_game_controller_wheel_sensitivity::visible" "0" ;
 			set "set_game_controller_look_sensitivity_hover::visible" "0" ;
+			set "set_game_controller_wheel_sensitivity_hover::visible" "0" ;
 			set "set_game_controller_look_curve::visible" "0" ;
 			set "set_game_controller_look_curve_hover::visible" "0" ;
 			set "set_game_controller_invert::visible" "0" ;
@@ -16659,6 +16663,7 @@ windowDef Desktop
 			set "set_game_controller_layout::noevents" "1" ;
 			set "set_game_controller_deadzone::noevents" "1" ;
 			set "set_game_controller_look_sensitivity::noevents" "1" ;
+			set "set_game_controller_wheel_sensitivity::noevents" "1" ;
 			set "set_game_controller_look_curve::noevents" "1" ;
 			set "set_game_controller_invert::noevents" "1" ;
 			set "set_game_controller_trigger::noevents" "1" ;
@@ -18473,10 +18478,8 @@ windowDef Desktop
 			onAction {
 				if ("desktop::turboMode" == 0) {
 					set "desktop::turboMode" "1" ;
-					consoleCMD "g_turboMode 1" ;
 				} else {
 					set "desktop::turboMode" "0" ;
-					consoleCMD "g_turboMode 0" ;
 				}
 				namedevent "p_btns::turboCheck" ;
 				

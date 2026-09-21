@@ -36,6 +36,7 @@ static const float MOUSE_CPI_INCHES_PER_CM = 2.5399999618530273f;
 static const float MOUSE_CPI_VIEW_SCALE = 45.45454545454546f;
 static const int MOUSE_FILTER_SAMPLES = 32;
 static const float JOYSTICK_AXIS_LOOK_SCALE = 1.0f / 127.0f;
+static idCVar in_weaponWheelSensitivity( "in_weaponWheelSensitivity", "4.0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "controller weapon wheel cursor sensitivity (pixels per look degree)", 0.25f, 16.0f );
 
 /*
 ================
@@ -1086,12 +1087,20 @@ void idUsercmdGenLocal::JoystickMove( void ) {
 		joystickLookSensitivity = 1.0f;
 	}
 	joystickLookSensitivity = idMath::ClampFloat( 0.1f, 4.0f, joystickLookSensitivity ) * GetZoomLookSensitivityScale();
+	const bool weaponWheel = ( cmd.buttons & BUTTON_WEAPONWHEEL ) != 0 &&
+		idStr::Icmp( cvarSystem->GetCVarString( "com_activeGameModule" ), "game_sp" ) == 0;
+	if ( weaponWheel ) {
+		// Wheel navigation has its own sensitivity and must not inherit slow
+		// aiming, zoom or run modifiers. These deltas use the unscaled input tic.
+		anglespeed = usercmdSeconds;
+		joystickLookSensitivity = 1.0f;
+	}
 
 	if ( hasDedicatedLookAxis || !ButtonState( UB_STRAFE ) ) {
 		// positive axis values mean stick right/down; turning right decreases yaw and
 		// looking down increases pitch, matching the mouse and keyboard handling above
-		viewangles[YAW] -= anglespeed * in_yawSpeed.GetFloat() * joystickLookSensitivity * lookAxisX;
-		viewangles[PITCH] += anglespeed * in_pitchSpeed.GetFloat() * joystickLookSensitivity * lookAxisY;
+		viewangles[YAW] -= anglespeed * ( weaponWheel ? 140.0f : in_yawSpeed.GetFloat() ) * joystickLookSensitivity * lookAxisX;
+		viewangles[PITCH] += anglespeed * ( weaponWheel ? 140.0f : in_pitchSpeed.GetFloat() ) * joystickLookSensitivity * lookAxisY;
 	}
 
 	if ( hasDedicatedLookAxis ) {

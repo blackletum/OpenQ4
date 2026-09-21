@@ -88,7 +88,9 @@ def main() -> None:
     require(run_frame, "cvarSystem->GetCVarFloat( \"timescale\" ) * common->GetGameTimeScale()", "SP simulation scale")
 
     game_api = read(GAME_ROOT / "src/game/Game.h")
-    require(game_api, "const int GAME_API_VERSION\t\t= 46;", "updated engine/GameLib ABI")
+    api_version = re.search(r"const int GAME_API_VERSION\s*=\s*(\d+);", game_api)
+    if api_version is None or int(api_version.group(1)) < 46:
+        raise AssertionError("The transient time-scale API requires game ABI 46 or newer")
 
     print("single-player time-scale and walking CVar checks passed")
 
