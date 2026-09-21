@@ -94,6 +94,25 @@ underwater effects, and debug views have already landed.
     environment needs no atlas at all, so the cheapest honest first step is a
     native analytic IBL consumer, with authored probes following once an atlas
     exists on this backend.
+  - A route through the space constraint exists and is worth recording. The
+    analytic environment needs a world-space normal and reflection, so the
+    shader needs the object-to-world rotation per draw. The 256-byte uniform
+    slice is full (16 vec4) and so is the 128-byte push block -- but `pc.b`
+    carries the tangent-space ambient light direction, which a non-ambient PBR
+    draw never reads, and a rotation packs into those four floats as a
+    quaternion. The parallax enable in `pc.c.z` is likewise forced off for
+    native PBR and can carry the IBL intensity once its branch is guarded by
+    the PBR mode bit.
+  - The real cost is not the data, it is the draw. Environment light is owed
+    once per surface, not once per light, so it needs its own ambient-walk
+    draw the way emission has one -- except emission substitutes an authored
+    glow stage that a plain PBR material does not have. That pass also has to
+    agree with the existing light-grid indirect pass on which one supplies
+    diffuse (OpenGL's rule: baked replaces environment diffuse and keeps
+    environment specular), rebuild the bump/diffuse/specular texture matrices
+    the interaction path gets from `VK_SetDrawInteraction`, and feed the
+    transparency composite as well. That is a feature with its own admission,
+    ordering and controls, not a gap-fill.
   - The native interaction pipelines have six fixed 2D descriptor slots and PBR
     already uses four (normal, albedo, data, metallic). An atlas or LUT
     consumer needs its own set rather than a fifth slot.
