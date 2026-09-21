@@ -31,7 +31,7 @@ procedural data generated under `.tmp/`, never a new shipped asset dependency.
 | Direct BRDF | Numerically verified GGX/Smith/Schlick, bounded energy, stable grazing/degenerate cases, consistent GL and Vulkan equations. | Shared numerical kernel and v60 GL direct-light/shadow controls pass; Vulkan consumers remain narrower |
 | Environment lighting | Roughness-filtered specular, integrated BRDF response and diffuse irradiance; spatially stable probe orientation, blending and fallback. | Replaced with GGX prefilter, diffuse convolution and split-sum LUT; authored-probe negative control passes |
 | Image quality | Normal/specular aliasing control and correct normal-space transforms. | Numerical tests and v60 normal-encoding, CPU/GPU deformation and restart controls pass |
-| Render ownership | PBR replaces the intended draw exactly once, mixed classic/PBR scenes survive, and shadow/fog/post/transparent ordering is preserved. | Production admission, viewport edges, source alpha and static/dynamic/multiple-light shadows pass for PBR plus strict classic diffuse. Linear fog/blend composition passes on GL 4.5 and GL 3.3, including shared-native ownership, transparency and 4x MSAA controls. Baked PBR/IBL composition, GL 3.3/4.5, reloads, MSAA, normal encodings and combined fog/blend checks pass. Broader mixed materials remain |
+| Render ownership | PBR replaces the intended draw exactly once, mixed classic/PBR scenes survive, and shadow/fog/post/transparent ordering is preserved. | Production admission, viewport edges, source alpha and static/dynamic/multiple-light shadows pass for PBR plus strict classic diffuse. Linear fog/blend composition passes on GL 4.5 and GL 3.3, including shared-native ownership, transparency and 4x MSAA controls. Baked PBR/IBL composition, GL 3.3/4.5, reloads, MSAA, normal encodings and combined fog/blend checks pass. Native Vulkan full-map ownership now passes too, including ordered source alpha measured against its own emission control. Broader mixed materials remain |
 | HDR/presentation | Highlight range survives composition, exposure/tonemap applies once, UI is unaffected. | v60 GL 3.3/4.5 boundaries, independent filmic/sRGB references, extreme emission, bloom, auto-exposure and exposure-independent HUD controls pass; encoded previews are refused as linear captures |
 | Robust proof map | Multiple material stations, curved geometry, colored/projected lights, shadows, normal formats, transparency, emissive and probes with fixed camera captures and negative controls. | Implemented; moving/restored casters, three point lights plus a projector, unoccluded-wall acne and disabled-shadow controls pass |
 | Lifecycle/fallback | Reload/restart, disabled features, unsupported input and resource limits retain valid output. | Parser, resource, shader, pixel transfer, reload/restart, and budget/atlas/receiver fallback controls pass; final regression remains |
@@ -636,12 +636,122 @@ comparisons do not establish performance parity. A requested buffered-log
 control still fails at 403.171 ms; the already-open logger retains its original
 unbuffered file mode. More significantly, pacing-only execution disables
 periodic renderer diagnostics and still measures **415 ms presentation P99**
-(`vulkan-v69-stock-pacing`). The stalls therefore remain a Vulkan investigation
-requirement, not an accepted benchmark or a demonstrated regression from the
-new specular filter. Hidden-window presentation, driver and CPU phase attribution
-still need isolation. All four failure reports and their hashes are retained in
+(`vulkan-v69-stock-pacing`). The stalls were not an accepted benchmark, nor a demonstrated regression
+from the new specular filter; the v70 section below re-measures them on a
+quiet machine, where they do not reproduce. All four failure reports and their hashes are retained in
 `.tmp/pbr-audit/qualification-v69.json`; the concise human-readable checkpoint is
 `.tmp/pbr-audit/qualification-v69.md`.
+
+### v70: native ordered source-alpha transparency
+
+The retained v69 failure was not a missing shader feature. A translucent
+surface never reaches the depth fill, so classic ownership splits it across two
+passes: the light pass adds its lighting at depth LESS, and the authored
+source-alpha stage composites later, in the material walk's sort position. A
+native owner has to do both at once -- evaluate the whole BRDF per light and
+composite the sum through the authored alpha -- which neither half can express
+alone.
+
+The light pass now records an admitted translucent surface's draws instead of
+adding them, and the material walk replays them where the classic stage would
+have drawn: the first light composites with (SRC_ALPHA, ONE_MINUS_SRC_ALPHA)
+and the rest add with (SRC_ALPHA, ONE), so the frame receives
+`dst * (1 - a) + a * sum( Li )` -- the classic composite of the summed
+radiance. Admission mirrors the existing cutout contract: exactly one
+source-alpha blend stage naming the PBR albedo's own image, filter and repeat,
+with explicit untransformed coordinates, no vertex tint or alpha test, and a
+white colour whose alpha register scales the sampled coverage.
+
+Two findings are worth retaining:
+
+- **The replay inherits the walk's depth state.** Its first version drew
+  nothing, because the previous stage had left `DEPTH_COMPARE_OP = EQUAL`, the
+  opaque stage contract, which a surface absent from the depth fill can never
+  satisfy. The replay now sets the translucent contract (LESS_OR_EQUAL, no
+  depth write) itself, exactly as the light pass does for its translucent
+  chain.
+- **A single capture cannot measure transparency.** The harness asserted an
+  absolute `(0, 112, 0)` at the `source_alpha` station, which assumes a black
+  background; the OpenGL reference reads `(118.306, 213.367, 108.388)` there.
+  The check is now the same oracle OpenGL already used: the ownership marker
+  replaces the surface's radiance with constant green and the emission view
+  replaces it with black, both composited through the same alpha over the same
+  background, so their difference is the coverage alone. Both debug views now
+  carry that coverage on Vulkan, and the ownership marker composites once per
+  surface rather than once per light -- a constant is not a radiance, and
+  adding it per light would saturate the surface it is meant to measure.
+
+Result: the `lit,ownership,emissive,master-off` full-map check passes 4/4 with
+the measured difference exactly `(0.0, 112.0, 0.0)`. The native ownership
+capture `(118.735, 213.918, 108.347)` matches the OpenGL reference to within
+0.6/255, and `master-off` still reproduces the classic composite `(165, 222,
+255)` unchanged, so the fallback is intact.
+
+Scope kept deliberately narrow: every recorded draw has to be reproducible
+after its light is finished, and stencil shadow coverage is not -- it is
+written and reset per light. The view therefore declines native transparency
+whenever a shadowing light reaches a translucent receiver, rather than owning a
+surface for one light and returning it for the next. Shadow-mapped receivers
+are replayed from the persistent atlas and are admitted.
+
+### v70: the stock timing failures do not reproduce
+
+The v68/v69 CPU P99 failures (424.643/413.892 ms against the 28 ms budget)
+were re-measured on the current binary. Five runs pass:
+
+| Run | Configuration | frame p50 / p95 / p99 / max (ms) |
+|---|---|---:|
+| `v70-perf-novalidation` | 240 fps, hidden window | 7 / 8 / 9 / 17 |
+| `v70-perf-validation` | 240 fps, hidden window, `r_vkValidation 1` | 11 / 13 / 14 / 14 |
+| `v70-perf-v69match` | the exact v68/v69 case, validation on | 12 / 15 / 18 / 22 |
+| `v70-perf-trace1` | as above, per-frame CSV retained | CPU p50 12.8, p99 14.9, max 15.5 |
+| `v70-perf-trace2` | as above, per-frame CSV retained | CPU p50 12.9, p99 14.2, max 16.4 |
+
+Neither traced repeat has a single frame above 100 ms, and GPU time stays at
+4.9-5.2 ms throughout.
+
+The retained failures are not reinterpreted. Their own per-frame traces show
+what the percentiles hid: 2-6 isolated frames out of 256, with the time inside
+the present/swap call (`swapUs` 461,240 of 469,212 CPU microseconds in
+`stock-v49-upload-retirement`) or unattributed to any render phase, while the
+GPU reported 1.6-12 ms. The process was waiting, not rendering. What the
+machine was doing during those runs cannot be recovered; this box runs
+parallel sessions, which makes contention the most plausible explanation, but
+that remains a hypothesis. What is established is narrower and sufficient for
+the gate: in the same configuration, on a quiet machine, the renderer measures
+inside the 20/28 ms budget, repeatably.
+
+One measurement rule follows from the comparison: take performance evidence
+with validation **off**. The layer costs about 57% of steady-state CPU frame
+time here (7 ms to 11-12 ms p50). It is a correctness instrument, and the
+v68/v69 timing runs had it enabled.
+
+### v70: the highlight washout is the shared curve, not a backend gap
+
+The retained observation "SP automatic exposure still loses highlight detail"
+is reproducible from the source alone, and it is not a Vulkan parity problem:
+`content/baseoq4/pak0/glprogs/bloom.fs` and
+`src/renderer/Vulkan/shaders/post_bloom_composite.frag` carry the same curve,
+line for line.
+
+That curve is linear up to `shoulderStart = 0.98` and compresses everything
+from there to the exposed white point into the remaining 2% of display range.
+With the shipped defaults (`r_hdrWhitePoint 6.0`, `r_hdrExposure 1.0`) that is
+about 2.6 stops of highlight information mapped into 0.02 of output, which is
+a roll-off in form and a clip in effect. It has no toe, so it is not a filmic
+S-curve.
+
+Automatic exposure does not lose the detail; it reveals the property. The
+target exposure is `r_hdrKeyValue / averageLuminance`, so a dim scene
+(L = 0.05) selects exposure 3.6 and pushes everything above 0.27 scene-referred
+radiance past the shoulder.
+
+Fixing it means moving the shoulder down and giving the curve a real toe. That
+changes the appearance of every HDR frame on **both** backends and invalidates
+the byte-exact HDR image controls this audit retains, including the
+independently evaluated filmic/sRGB references. It is a visual-design decision
+with a re-baselining cost, not a defect fix, so it is recorded here and left
+to the owner rather than changed under a parity task.
 
 ## Unrelated issues observed
 

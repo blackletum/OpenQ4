@@ -50,6 +50,20 @@ underwater effects, and debug views have already landed.
   failure. Quantified temporal stability and the broader open requirements are
   unchanged; source-alpha and environment lighting need a native surface pass
   with complete resource admission before it replaces classic ownership.
+- v70 closes native source-alpha ownership. A translucent surface never reaches
+  the depth fill, so its lighting and its authored composite belong to two
+  different passes; the light pass now records the admitted draws instead of
+  adding them and the material walk replays them in the authored stage's sort
+  position, the first through the alpha and the rest adding through it. The
+  full-map check passes with the ownership/emission difference measured at
+  exactly (0, 112, 0), the same oracle the OpenGL reference satisfies, and the
+  two backends' ownership captures agree to within one byte
+  ((118.735, 213.918, 108.347) native against (118.306, 213.367, 108.388) GL).
+  A shadowing light over a translucent receiver declines the whole view rather
+  than owning a surface for one light and returning it for the next: stencil
+  coverage is reset with its light and cannot be replayed. Environment/probe
+  consumers, complete scene colour composition and the performance failures
+  below remain open.
 - Stock `game/storage1` timing exposes CPU/presentation stalls in both v68 and
   v69. GPU medians are 4.985/4.991 ms, but CPU P99 is 424.643/413.892 ms against
   the 28 ms budget. Disabling periodic renderer diagnostics still produces a
@@ -57,6 +71,43 @@ underwater effects, and debug views have already landed.
   retain the failures and isolate native presentation/CPU phases before any
   performance promotion. See `.tmp/pbr-audit/qualification-v69.json`.
 
+- v70 surveyed what native environment/probe lighting actually needs, so the
+  next increment starts from facts rather than a guess:
+  - `ModernSpecularProbeAtlas.cpp` is **not** in the Vulkan module's source set
+    (`tools/build/meson_sources.py --emit renderer_vk`), so there is no atlas
+    to sample from.
+  - `R_ModernLightImageAtlas_Acquire` is stubbed in `vk_Backend.cpp` and always
+    returns `MODERN_LIGHT_ATLAS_REJECT_UNAVAILABLE`, which is why the shared
+    clustered descriptors report `atlasReady = false` on this backend.
+  - `ModernClusteredLighting.cpp` **is** compiled into the module but has no
+    Vulkan consumer; its light descriptors already carry world origin, colour,
+    falloff plane, projection planes and atlas rectangles.
+  - `PBREnvironment.h` is header-only and backend-neutral. Its analytic
+    environment needs no atlas at all, so the cheapest honest first step is a
+    native analytic IBL consumer, with authored probes following once an atlas
+    exists on this backend.
+  - The native interaction pipelines have six fixed 2D descriptor slots and PBR
+    already uses four (normal, albedo, data, metallic). An atlas or LUT
+    consumer needs its own set rather than a fifth slot.
+- v70 re-measured the retained CPU/presentation stalls and **could not
+  reproduce them**. Five runs of `sp-storage1` on the current binary pass the
+  budget: 240 fps without validation (p50 7 ms, p99 9, max 17), 240 fps with
+  validation (p50 11, p99 14, max 14), and the exact v68/v69 configuration --
+  125 fps, hidden window, `r_vkValidation 1` -- three times (p50 12, p99 18,
+  max 22; then two traced repeats with **zero** frames above 100 ms, CPU max
+  15.5/16.4 ms and GPU max 5.2 ms).
+  The retained v68/v69 traces attribute those failures to 2-6 isolated frames
+  in 256, spent in the present/swap call or unattributed to any render phase,
+  while the GPU stayed at 1.6-12 ms -- the process was waiting, not rendering.
+  What the machine was doing then cannot be recovered, and this box runs
+  parallel sessions, so contention is the most plausible explanation; it is a
+  hypothesis, not a finding. What is established: the renderer measures inside
+  the 20/28 ms budget in the same configuration on a quiet machine, and the
+  failing reports stay retained rather than being reinterpreted.
+  Measure performance with validation off: it costs about 57% of steady-state
+  CPU frame time here (7 ms to 11-12 ms p50) and is a debugging instrument,
+  not a shipped path. Reports: `.tmp/pbr-audit/v70-perf-novalidation`,
+  `v70-perf-validation`, `v70-perf-v69match`, `v70-perf-trace1`, `v70-perf-trace2`.
 - 2026-09-20: audited the current tree. Push/PR workflows run Vulkan source
   contracts but omit the existing runtime cases. The default matrix also
   excludes Linux Vulkan regardless of a staged module. Explicit `--cases`
