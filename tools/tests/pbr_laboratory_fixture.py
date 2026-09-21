@@ -117,11 +117,17 @@ def test_differential_proof(root: Path) -> None:
         return {'case':case,'backend':'gl','tier':'gl45','image':{'stationRGB':{name:rgb}},'failures':[]}
     # A second legacy alpha pass changes the expected one-blend green response.
     good=[sample('ownership','source_alpha',[38,142,28]),sample('emissive','source_alpha',[38,30,28])]
-    runner.compare_material_captures(good)
+    runner.compare_transparency_captures(good)
     assert not good[0]['failures']
     good[0]['image']['stationRGB']['source_alpha'][1]=93
-    runner.compare_material_captures(good)
+    runner.compare_transparency_captures(good)
     assert good[0]['failures']
+    # Without its emission control the pair proves nothing, and the report has
+    # to say so rather than passing quietly.
+    lonely=[sample('ownership','source_alpha',[38,142,28])]
+    runner.compare_transparency_captures(lonely)
+    assert not lonely[0]['failures']
+    assert lonely[0]['materialComparisons']['emissive/source_alpha']['status']=='not measured'
     bad=[sample('lit','ao_zero',[0,0,0]),sample('direct','ao_zero',[100,100,100])]
     runner.compare_material_captures(bad)
     assert bad[0]['failures'], 'material AO must not multiply direct light'
