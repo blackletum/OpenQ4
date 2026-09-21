@@ -6,6 +6,9 @@
 #include "MaterialResourceTable.h"
 #include "ModernGLShaderLibrary.h"
 #include "ModernSpecularProbeAtlas.h"
+#include "ModernShadowMaps.h"
+#include "PBRMath.h"
+#include "ModernLightGridGLSL.h"
 
 static_assert( MODERN_SPECULAR_PROBE_ATLAS_SIZE == 2048,
 	"authored-probe GLSL atlas-size ABI drift" );
@@ -17,6 +20,10 @@ static_assert( MODERN_SPECULAR_PROBE_ATLAS_FACE_COUNT == 6,
 	"authored-probe GLSL face-count ABI drift" );
 static_assert( MODERN_SPECULAR_PROBE_ATLAS_MAX_ENTRIES == 8,
 	"authored-probe GLSL slot-count ABI drift" );
+static_assert( MODERN_SPECULAR_PROBE_ATLAS_MAX_MIP == 6 && MODERN_SPECULAR_PROBE_ANALYTIC_SLOT == 8
+	&& MODERN_SPECULAR_PROBE_DIFFUSE_FIRST_CELL == 54 && MODERN_SPECULAR_PROBE_DIFFUSE_SIZE == 32
+	&& MODERN_SPECULAR_PROBE_BRDF_CELL == 63 && MODERN_SPECULAR_PROBE_BRDF_SIZE == 128,
+	"filtered environment GLSL packing ABI drift" );
 static_assert( MODERN_SPECULAR_PROBE_FACE_POSITIVE_X == 0
 	&& MODERN_SPECULAR_PROBE_FACE_NEGATIVE_X == 1
 	&& MODERN_SPECULAR_PROBE_FACE_POSITIVE_Y == 2
@@ -278,6 +285,7 @@ static void R_ModernGLShaderLibrary_BuildVertexSource( int glslVersion, modernGL
 		"out vec3 vViewBitangent;\n"
 		"out vec3 vViewPosition;\n"
 		"flat out float vTangentSign;\n"
+		"invariant gl_Position;\n"
 		"vec3 ModernSafeNormalize(vec3 value, vec3 fallback) {\n"
 		"    float len2 = dot(value, value);\n"
 		"    return len2 > 0.00000001 ? value * inversesqrt(len2) : fallback;\n"
@@ -310,7 +318,7 @@ static void R_ModernGLShaderLibrary_BuildVertexSource( int glslVersion, modernGL
 		hasDrawRecords );
 }
 
-static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modernGLShaderProgramKind_t kind, char *buffer, int bufferSize ) {
+static void R_ModernGLShaderLibrary_BuildFragmentBody( int glslVersion, modernGLShaderProgramKind_t kind, char *buffer, int bufferSize ) {
 	const int hasShaderStorage = glslVersion >= 430 ? 1 : 0;
 	const int hasImageLoadStore = glslVersion >= 430 ? 1 : 0;
 	const int hasDrawRecords = glslVersion >= 430 && kind != MODERN_GL_SHADER_DEFERRED_LIGHT_RESOLVE ? 1 : 0;
@@ -382,8 +390,15 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 			"uniform vec4 uLocalParams;\n"
 			"#endif\n"
 			"%s"
+			"layout(location = 0) out vec4 out_DepthCoverage;\n"
 			"void main() {\n"
-			"    if (uLocalParams.y > 0.5 && ModernSampleMainTexture(vTexCoord).a < max(uLocalParams.x, 0.001)) { discard; }\n"
+			"    float coverage = 1.0;\n"
+			"    if (uLocalParams.y > 0.5) {\n"
+			"        float alpha = ModernSampleMainTexture(vTexCoord).a; float threshold = max(uLocalParams.x, 0.001);\n"
+			"        coverage = uLocalParams.z > 0.5 ? clamp((alpha - threshold) / max(fwidth(alpha), 0.0001) + 0.5, 0.0, 1.0) : step(threshold, alpha);\n"
+			"        if (coverage <= 0.0) discard;\n"
+			"    }\n"
+			"    out_DepthCoverage = vec4(1.0, 1.0, 1.0, coverage);\n"
 			"}\n",
 			glslVersion,
 			hasDrawRecords,
@@ -448,7 +463,7 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		"        int normalFormat = int(floor(uMaterialFlags.w - 9.0 + 0.5));\n"
 		"        if (normalFormat == 1) { vec2 xy = (bumpSample.rg * 2.0 - 1.0) * max(uLocalParams.w, 0.0); float z = sqrt(max(1.0 - dot(xy, xy), 0.0)); return ModernSafeNormal(vec3(xy, z)); }\n"
 		"        if (normalFormat == 2) { return ModernSafeNormal((bumpSample.rgb * 2.0 - 1.0) * vec3(max(uLocalParams.w, 0.0), max(uLocalParams.w, 0.0), 1.0)); }\n"
-		"        return ModernSafeNormal(ModernDecodeClassicNormal(bumpSample));\n"
+		"        return ModernSafeNormal(ModernDecodeClassicNormal(bumpSample) * vec3(max(uLocalParams.w, 0.0), max(uLocalParams.w, 0.0), 1.0));\n"
 		"    }\n"
 		"    return uMaterialEnhancement.x > 0.5 ? ModernDecodeEnhancedNormal(bumpSample) : ModernDecodeClassicNormal(bumpSample);\n"
 		"}\n"
@@ -457,9 +472,11 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		"    vec3 tangent = ModernSafeNormal(vViewTangent);\n"
 		"    vec3 bitangent = ModernSafeNormal(vViewBitangent);\n"
 		"    vec3 normal = ModernSafeNormal(vViewNormal);\n"
+		"    if (uMaterialFlags.w == 1.0) return mat3(tangent, bitangent, normal) * tangentNormal;\n"
 		"    return ModernSafeNormal(mat3(tangent, bitangent, normal) * tangentNormal);\n"
 		"}\n"
 		"float ModernSpecularStrength(void) {\n"
+		"    if (uMaterialFlags.w == 1.0) return 0.0;\n"
 		"    vec3 specular = uMaterialFlags.y > 0.5 ? ModernSampleSpecularTexture(vTexCoord).rgb : vec3(0.04);\n"
 		"    float boost = uMaterialEnhancement.x > 0.5 ? max(uMaterialEnhancement.z, 0.0) : 1.0;\n"
 		"    return clamp(dot(specular, vec3(0.333333)) * boost, 0.0, 4.0);\n"
@@ -471,27 +488,29 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		"    return uMaterialFlags.z > 0.5 ? ModernSampleEmissiveTexture(vTexCoord).rgb : vec3(0.0);\n"
 		"}\n"
 		"bool ModernIsPBRMaterial(void) { return uMaterialFlags.w >= 7.5; }\n"
-		"vec3 ModernPBRBaseColor(void) { return pow(max(ModernSampleMainTexture(vTexCoord).rgb, vec3(0.0)), vec3(2.2)); }\n"
+		"vec3 ModernPBRBaseColor(void) { return ModernSampleMainTexture(vTexCoord).rgb; }\n"
 		"vec3 ModernPBRMaterialData(void) {\n"
 		"    vec3 orm = uMaterialFlags.y > 0.5 ? ModernSampleSpecularTexture(vTexCoord).rgb : vec3(1.0);\n"
 		"    if (uMaterialFlags.y < -0.5) { orm = vec3(ModernSampleAOTexture(vTexCoord).r, ModernSampleRoughnessTexture(vTexCoord).r, ModernSampleMetallicTexture(vTexCoord).r); }\n"
-		"    return vec3(clamp(orm.b * uLocalParams.x, 0.0, 1.0), clamp(orm.g * uLocalParams.y, 0.02, 1.0), clamp(orm.r * uLocalParams.z, 0.0, 1.0));\n"
+		"    return vec3(clamp(orm.b * uLocalParams.x, 0.0, 1.0), PBRRoughness(orm.g * uLocalParams.y), clamp(orm.r * uLocalParams.z, 0.0, 1.0));\n"
 		"}\n"
 		"vec3 ModernPBREmissiveColor(void) {\n"
 		"    vec3 texel = uMaterialFlags.z > 0.5 ? ModernSampleEmissiveTexture(vTexCoord).rgb : vec3(0.0);\n"
-		"    return pow(max(texel, vec3(0.0)), vec3(2.2)) * max(uDebugColor.rgb, vec3(0.0));\n"
+		"    return texel * max(uDebugColor.rgb, vec3(0.0));\n"
 		"}\n"
 		"float ModernNormalLightScale(void) {\n"
 		"    vec3 lightDir = normalize(vec3(0.25, 0.35, 1.0));\n"
 		"    return clamp(dot(ModernMaterialNormal(), lightDir) * 0.5 + 0.5, 0.18, 1.0);\n"
-		"}\n"
-		"vec3 ModernSceneReferredColor(vec3 color) {\n"
-		"    return max(color, vec3(0.0));\n"
 		"}\n",
 		hasDrawRecords,
 		materialTextureHeader );
 
 	const char *clusterHeader =
+		// Bound only at storage, not within the BRDF or individual light sums.
+		// RGBA16F cannot represent radiance above 65504; Inf poisons post effects.
+		"vec3 ModernSceneReferredColor(vec3 color) {\n"
+		"    return mix(clamp(color, vec3(0.0), vec3(65504.0)), vec3(0.0), isnan(color));\n"
+		"}\n"
 		"#define MODERN_CLUSTER_UBO_MAX_LIGHTS 256\n"
 		"#define MODERN_CLUSTER_UBO_MAX_INDEX_RECORDS 1024\n"
 		"#define MODERN_CLUSTER_UBO_MAX_SHADOW_DESCRIPTORS 64\n"
@@ -556,16 +575,22 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		"uniform sampler2D uModernSpecularProbeAtlas;\n"
 		"uniform sampler2D uModernShadowAtlas;\n"
 		"uniform samplerCube uModernPointShadowAtlas;\n"
+		"uniform sampler2D uModernCurrentPointShadowAtlas;\n"
 		"uniform sampler2D uModernTranslucentShadowMoments[3];\n"
 		"uniform samplerCube uModernPointTranslucentShadowMoments[3];\n"
 		"uniform vec4 uModernShadowResourceState;\n"
 		"uniform vec4 uModernShadowSamplerState;\n"
 		"uniform vec4 uModernShadowMomentState;\n"
 		"uniform vec4 uModernShadowContractState;\n"
-		"// x=enabled, y=intensity. This is deliberately global rather than\n"
+		"// x=IBL enabled, y=intensity, z=linear scene, w=alpha coverage. Global rather than\n"
 		"// material data: it is a stable lighting environment shared by every\n"
 		"// explicitly admitted PBR record in the current view.\n"
 		"uniform vec4 uPBRIBL;\n"
+		"vec3 ModernClassicSceneColor(vec3 color) {\n"
+		"    if (uPBRIBL.z < 0.5) return color;\n"
+		"    vec3 c = max(color, vec3(0.0));\n"
+		"    return mix(c / 12.92, pow((c + vec3(0.055)) / 1.055, vec3(2.4)), step(vec3(0.04045), c));\n"
+		"}\n"
 		"#if MODERN_HAS_SHADER_STORAGE\n"
 		"layout(std430, binding = 6) readonly buffer ModernLightRecords {\n"
 		"    ModernClusterLightRecord lights[];\n"
@@ -720,8 +745,11 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		"    return rect.z > 0.0 && rect.w > 0.0;\n"
 		"}\n"
 		"vec3 ModernClusterSampleLightAtlas(vec4 rect, vec2 uv) {\n"
-		"    vec2 cellUV = clamp(uv, vec2(0.0), vec2(1.0));\n"
-		"    return texture(uModernLightImageAtlas, rect.xy + cellUV * rect.zw).rgb;\n"
+		"    // Clamp to source texel centres, as GL_CLAMP_TO_EDGE does. The\n"
+		"    // reserved atlas border is not part of the uploaded source image.\n"
+		"    vec2 halfTexel = vec2(0.5) / vec2(textureSize(uModernLightImageAtlas, 0));\n"
+		"    vec2 atlasUV = clamp(rect.xy + uv * rect.zw, rect.xy + halfTexel, rect.xy + rect.zw - halfTexel);\n"
+		"    return texture(uModernLightImageAtlas, atlasUV).rgb;\n"
 		"}\n"
 		"vec3 ModernClusterProjectionColor(ModernClusterLightRecord light, vec3 viewPosition) {\n"
 		"    vec4 p = vec4(viewPosition, 1.0);\n"
@@ -731,7 +759,10 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		"    vec2 inside = step(vec2(0.0), uv) * step(uv, vec2(1.0));\n"
 		"    float inFrustum = inside.x * inside.y;\n"
 		"    if (!ModernClusterAtlasRectValid(light.projectionRect)) { return vec3(inFrustum); }\n"
-		"    return ModernClusterSampleLightAtlas(light.projectionRect, uv) * inFrustum;\n"
+		"    // The authored image defines the projector border. A white/clamped\n"
+		"    // image remains white outside [0,1], as in the native texture lookup.\n"
+		"    // Multiplying by a geometric UV mask changes that material contract.\n"
+		"    return ModernClusterSampleLightAtlas(light.projectionRect, uv);\n"
 		"}\n"
 		"vec3 ModernClusterFalloffColor(ModernClusterLightRecord light, vec3 viewPosition, float radialFallback) {\n"
 		"    if (!ModernClusterAtlasRectValid(light.falloffRect)) { return vec3(radialFallback); }\n"
@@ -749,6 +780,8 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		"    return clamp(ModernClusterSampleLightAtlas(light.falloffRect, vec2(axis, 0.5)).r, 0.0, 1.0);\n"
 		"}\n"
 		"vec3 ModernClusterApplyFogAndBlend(vec3 color, uvec4 clusterRange, int clusterLightCount, vec3 viewPosition) {\n"
+		"    // The shared phase applies exact authored fog between opaque and transparency.\n"
+		"    if (uPBRIBL.z > 1.5) { return color; }\n"
 		"    for (int i = 0; i < clusterLightCount; ++i) {\n"
 		"        uint lightIndex = ModernClusterFetchLightIndex(clusterRange.x + uint(i));\n"
 		"        if (lightIndex == 0xffffffffu || lightIndex >= uint(max(uClusterGrid.counts.x, 0.0))) { continue; }\n"
@@ -780,14 +813,14 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		"    float radius = max(light.positionRadius.w, 1.0);\n"
 		"    float radial = clamp(1.0 - dist / radius, 0.0, 1.0);\n"
 		"    radial *= radial;\n"
-		"    float ndotl = clamp(dot(normal, lightDir), 0.0, 1.0);\n"
+		"    float ndotl = max(dot(normal, lightDir), 0.0);\n"
 		"    vec3 viewDir = length(viewPosition) > 0.0001 ? normalize(-viewPosition) : vec3(0.0, 0.0, -1.0);\n"
 		"    vec3 halfDir = normalize(lightDir + viewDir);\n"
 		"    float ndotv = clamp(dot(normal, viewDir), 0.0, 1.0);\n"
 		"    float fresnel = 1.0 + pow(1.0 - ndotv, 5.0) * 2.0 * clamp(fresnelStrength, 0.0, 1.0);\n"
 		"    float specBase = clamp(dot(normal, halfDir) * 4.0 - 3.0, 0.0, 1.0);\n"
 		"    float spec = specBase * specBase * 2.0 * specular * fresnel;\n"
-		"    vec3 projection = projected ? ModernClusterProjectionColor(light, viewPosition) : vec3(1.0);\n"
+		"    vec3 projection = (point || projected || ambient) ? ModernClusterProjectionColor(light, viewPosition) : vec3(1.0);\n"
 		"    vec3 shaped = projection * ModernClusterFalloffColor(light, viewPosition, radial);\n"
 		"    float supported = (point || projected || ambient) ? 1.0 : 0.0;\n"
 		"    float shading = ambient ? 1.0 : (ndotl + spec);\n"
@@ -800,33 +833,33 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		"    vec3 toLight = light.positionRadius.xyz - viewPosition; float dist = length(toLight);\n"
 		"    vec3 lightDir = dist > 0.0001 ? toLight / dist : vec3(0.0, 0.0, 1.0);\n"
 		"    float radius = max(light.positionRadius.w, 1.0); float radial = clamp(1.0 - dist / radius, 0.0, 1.0); radial *= radial;\n"
-		"    vec3 projection = projected ? ModernClusterProjectionColor(light, viewPosition) : vec3(1.0);\n"
+		"    vec3 projection = (point || projected || ambient) ? ModernClusterProjectionColor(light, viewPosition) : vec3(1.0);\n"
 		"    vec3 radiance = light.colorType.rgb * projection * ModernClusterFalloffColor(light, viewPosition, radial);\n"
-		"    if (ambient) { attenuation = max(max(radiance.r, radiance.g), radiance.b); return radiance * baseColor; }\n"
+		"    if (ambient) { attenuation = max(max(radiance.r, radiance.g), radiance.b); return radiance * baseColor * (1.0 - metallic) * (0.96 / 3.14159265); }\n"
 		"    if (!(point || projected)) { attenuation = 0.0; return vec3(0.0); }\n"
-		"    vec3 viewDir = length(viewPosition) > 0.0001 ? normalize(-viewPosition) : vec3(0.0, 0.0, -1.0); vec3 halfDir = normalize(lightDir + viewDir);\n"
+		"    vec3 viewDir = length(viewPosition) > 0.0001 ? normalize(-viewPosition) : vec3(0.0, 0.0, -1.0);\n"
 		"    float ndotl = max(dot(normal, lightDir), 0.0); float ndotv = max(dot(normal, viewDir), 0.0);\n"
+		"    vec3 halfVector = lightDir + viewDir; float halfLength2 = dot(halfVector, halfVector);\n"
+		"    if (ndotl <= 0.0 || ndotv <= 0.0 || halfLength2 <= 0.00000001) { attenuation = 0.0; return vec3(0.0); }\n"
+		"    vec3 halfDir = halfVector * inversesqrt(halfLength2);\n"
 		"    float ndoth = max(dot(normal, halfDir), 0.0); float vdoth = max(dot(viewDir, halfDir), 0.0);\n"
-		"    float alpha = max(roughness * roughness, 0.0004); float alpha2 = alpha * alpha;\n"
-		"    float denom = max(3.14159265 * pow(max(ndoth * ndoth * (alpha2 - 1.0) + 1.0, 0.0001), 2.0), 0.0001); float distribution = alpha2 / denom;\n"
-		"    float k = (roughness + 1.0); k = k * k * 0.125; float visibility = 1.0 / max((ndotv * (1.0 - k) + k) * (ndotl * (1.0 - k) + k), 0.0001);\n"
-		"    vec3 f0 = mix(vec3(0.04), baseColor, metallic); vec3 fresnel = f0 + (vec3(1.0) - f0) * pow(1.0 - vdoth, 5.0);\n"
+		"    float distribution = PBRDistributionGGX(ndoth, roughness);\n"
+		"    float visibility = PBRVisibilitySmithGGX(ndotv, ndotl, roughness);\n"
+		"    vec3 f0 = mix(vec3(0.04), baseColor, metallic); vec3 fresnel = f0 + (vec3(1.0) - f0) * PBRFresnelWeight(vdoth);\n"
 		"    vec3 specular = distribution * visibility * fresnel; vec3 diffuse = (vec3(1.0) - fresnel) * (1.0 - metallic) * baseColor * (1.0 / 3.14159265);\n"
 		"    attenuation = max(max(radiance.r, radiance.g), radiance.b) * ndotl; return (diffuse + specular) * radiance * ndotl;\n"
 		"}\n"
 		"vec3 ModernPBRAnalyticEnvironment(vec3 direction) {\n"
 		"    // A neutral, analytic studio hemisphere provides stable PBR indirect\n"
 		"    // light without requiring replacement cubemaps or a probe format.\n"
-		"    float up = smoothstep(-0.55, 0.70, normalize(direction).y);\n"
+		"    vec3 worldDirection = normalize(uClusterGrid.viewToWorldX.xyz * direction.x + uClusterGrid.viewToWorldY.xyz * direction.y + uClusterGrid.viewToWorldZ.xyz * direction.z);\n"
+		"    float up = smoothstep(-0.55, 0.70, worldDirection.z);\n"
 		"    vec3 ground = vec3(0.025, 0.022, 0.020);\n"
 		"    vec3 sky = vec3(0.46, 0.53, 0.68);\n"
 		"    vec3 environment = mix(ground, sky, up);\n"
-		"    vec3 keyDirection = normalize(vec3(-0.35, 0.62, 0.70));\n"
-		"    environment += vec3(1.30, 1.16, 0.96) * pow(max(dot(normalize(direction), keyDirection), 0.0), 48.0);\n"
-		"    // The current modern corridor is scene-referred and has no mandatory\n"
-		"    // tonemap handoff, so retain a calibrated HDR range here rather than\n"
-		"    // making default PBR metals disappear into the legacy black floor.\n"
-		"    return environment * 4.0;\n"
+		"    vec3 keyDirection = normalize(vec3(-0.35, 0.70, 0.62));\n"
+		"    environment += vec3(1.30, 1.16, 0.96) * pow(max(dot(worldDirection, keyDirection), 0.0), 48.0);\n"
+		"    return environment;\n"
 		"}\n"
 		"bool ModernSpecularProbeExactInteger(float value, float minimumValue, float maximumValue) {\n"
 		"    return !isnan(value) && !isinf(value) && value >= minimumValue && value <= maximumValue && value == floor(value);\n"
@@ -875,7 +908,7 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		"    return abs(dot(axisX, axisY)) < 0.01 && abs(dot(axisX, axisZ)) < 0.01\n"
 		"        && abs(dot(axisY, axisZ)) < 0.01 && abs(determinant) > 0.99;\n"
 		"}\n"
-		"vec3 ModernSpecularProbeSampleAtlas(int slot, vec3 direction) {\n"
+		"vec3 ModernSpecularProbeSampleLevel(int slot, vec3 direction, int level) {\n"
 		"    vec3 d = normalize(direction);\n"
 		"    vec3 ad = abs(d);\n"
 		"    int face = 0;\n"
@@ -897,13 +930,26 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		"    vec2 faceUV = clamp(faceCoordinate / max(majorAxis, 0.000001) * 0.5 + 0.5, vec2(0.0), vec2(1.0));\n"
 		"    int cell = slot * MODERN_SPECULAR_PROBE_FACE_COUNT + face;\n"
 		"    ivec2 cellIndex = ivec2(cell % MODERN_SPECULAR_PROBE_CELLS_PER_ROW, cell / MODERN_SPECULAR_PROBE_CELLS_PER_ROW);\n"
-		"    vec2 atlasTexel = vec2(cellIndex * MODERN_SPECULAR_PROBE_FACE_SIZE) + vec2(0.5)\n"
-		"        + faceUV * float(MODERN_SPECULAR_PROBE_FACE_SIZE - 1);\n"
-		"    vec2 atlasUV = atlasTexel / float(MODERN_SPECULAR_PROBE_ATLAS_SIZE);\n"
-		"    return pow(max(textureLod(uModernSpecularProbeAtlas, atlasUV, 0.0).rgb, vec3(0.0)), vec3(2.2));\n"
+		"    int faceSize = MODERN_SPECULAR_PROBE_FACE_SIZE >> level;\n"
+		"    vec2 atlasTexel = vec2(cellIndex * faceSize) + vec2(0.5) + faceUV * float(faceSize - 1);\n"
+		"    vec2 atlasUV = atlasTexel / float(MODERN_SPECULAR_PROBE_ATLAS_SIZE >> level);\n"
+		"    return textureLod(uModernSpecularProbeAtlas, atlasUV, float(level)).rgb;\n"
 		"}\n"
-		"bool ModernSpecularProbeContribution(uint probeIndex, uint probeCount, vec3 viewPosition, vec3 reflectionDirection, out vec3 radiance, out float weight) {\n"
-		"    radiance = vec3(0.0); weight = 0.0;\n"
+		"vec3 ModernSpecularProbeSampleAtlas(int slot, vec3 direction, float roughness) {\n"
+		"    float lod = clamp(roughness, 0.0, 1.0) * 6.0; int low = int(floor(lod)); int high = min(low + 1, 6);\n"
+		"    return mix(ModernSpecularProbeSampleLevel(slot, direction, low), ModernSpecularProbeSampleLevel(slot, direction, high), fract(lod));\n"
+		"}\n"
+		"vec3 ModernProbeTile(int cell, vec2 uv, float size) {\n"
+		"    vec2 origin = vec2(cell % 8, cell / 8) * 256.0 + vec2(0.5);\n"
+		"    return textureLod(uModernSpecularProbeAtlas, (origin + clamp(uv, vec2(0.0), vec2(1.0)) * (size - 1.0)) / 2048.0, 0.0).rgb;\n"
+		"}\n"
+		"vec3 ModernProbeDiffuse(int slot, vec3 direction) {\n"
+		"    vec3 n = direction / max(abs(direction.x) + abs(direction.y) + abs(direction.z), 0.000001);\n"
+		"    vec2 oct = n.xy; if (n.z < 0.0) { oct = (vec2(1.0) - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0); }\n"
+		"    return ModernProbeTile(54 + slot, oct * 0.5 + 0.5, 32.0);\n"
+		"}\n"
+		"bool ModernSpecularProbeContribution(uint probeIndex, uint probeCount, vec3 viewPosition, vec3 reflectionDirection, vec3 normal, float roughness, out vec3 radiance, out vec3 diffuse, out float weight) {\n"
+		"    radiance = vec3(0.0); diffuse = vec3(0.0); weight = 0.0;\n"
 		"    if (probeIndex == 0xffffffffu || probeIndex >= probeCount || probeIndex >= uint(MODERN_SPECULAR_PROBE_MAX_RECORDS)) { return false; }\n"
 		"    ModernSpecularProbeRecord probe = uModernSpecularProbes.probes[int(probeIndex)];\n"
 		"    if (!ModernSpecularProbeRecordReady(probe)) { return false; }\n"
@@ -919,46 +965,63 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		"        dot(reflectionDirection, normalize(probe.axisZSlot.xyz)));\n"
 		"    if (dot(localDirection, localDirection) <= 0.000001) { return false; }\n"
 		"    int slot = int(probe.axisZSlot.w);\n"
-		"    radiance = ModernSpecularProbeSampleAtlas(slot, localDirection) * probe.tintIntensity.rgb * probe.tintIntensity.w;\n"
+		"    vec3 localNormal = vec3(dot(normal, normalize(probe.axisXPriority.xyz)), dot(normal, normalize(probe.axisYBlend.xyz)), dot(normal, normalize(probe.axisZSlot.xyz)));\n"
+		"    vec3 tint = probe.tintIntensity.rgb * probe.tintIntensity.w;\n"
+		"    radiance = ModernSpecularProbeSampleAtlas(slot, localDirection, roughness) * tint;\n"
+		"    diffuse = ModernProbeDiffuse(slot, localNormal) * tint;\n"
 		"    return true;\n"
 		"}\n"
-		"bool ModernSpecularProbeEnvironment(uvec4 clusterRange, vec3 viewPosition, vec3 reflectionDirection, out vec3 environment, out float coverage) {\n"
-		"    environment = vec3(0.0); coverage = 0.0;\n"
+		"bool ModernSpecularProbeEnvironment(uvec4 clusterRange, vec3 viewPosition, vec3 reflectionDirection, vec3 normal, float roughness, out vec3 environment, out vec3 diffuse, out float coverage) {\n"
+		"    environment = vec3(0.0); diffuse = vec3(0.0); coverage = 0.0;\n"
 		"    uint probeCount = 0u;\n"
 		"    if (!ModernSpecularProbeAtlasReady() || !ModernSpecularProbeCount(probeCount)) { return false; }\n"
 		"    float totalWeight = 0.0;\n"
 		"    for (int candidate = 0; candidate < 2; ++candidate) {\n"
 		"        uint probeIndex = candidate == 0 ? clusterRange.z : clusterRange.w;\n"
 		"        if (candidate == 1 && probeIndex == clusterRange.z) { continue; }\n"
-		"        vec3 radiance = vec3(0.0); float weight = 0.0;\n"
-		"        if (!ModernSpecularProbeContribution(probeIndex, probeCount, viewPosition, reflectionDirection, radiance, weight)) { continue; }\n"
-		"        environment += radiance * weight; totalWeight += weight;\n"
+		"        vec3 radiance = vec3(0.0); vec3 irradiance = vec3(0.0); float weight = 0.0;\n"
+		"        if (!ModernSpecularProbeContribution(probeIndex, probeCount, viewPosition, reflectionDirection, normal, roughness, radiance, irradiance, weight)) { continue; }\n"
+		"        environment += radiance * weight; diffuse += irradiance * weight; totalWeight += weight;\n"
 		"    }\n"
 		"    if (totalWeight <= 0.000001) { environment = vec3(0.0); return false; }\n"
-		"    environment /= totalWeight;\n"
+		"    environment /= totalWeight; diffuse /= totalWeight;\n"
 		"    coverage = clamp(totalWeight, 0.0, 1.0);\n"
 		"    return true;\n"
 		"}\n"
-		"vec3 ModernPBRIndirect(vec3 viewPosition, vec3 normal, vec3 baseColor, float metallic, float roughness, float ao, uvec4 clusterRange) {\n"
+		"vec3 ModernPBRIndirectSource(vec3 viewPosition, vec3 normal, vec3 baseColor, float metallic, float roughness, float ao, uvec4 clusterRange, vec4 baked) {\n"
+		"    if (uPBRIBL.x < 0.5 && baked.x < 0.0) { return vec3(0.0); }\n"
 		"    vec3 n = normalize(normal);\n"
 		"    vec3 viewDir = length(viewPosition) > 0.0001 ? normalize(-viewPosition) : vec3(0.0, 0.0, -1.0);\n"
 		"    float ndotv = clamp(dot(n, viewDir), 0.0, 1.0);\n"
 		"    vec3 f0 = mix(vec3(0.04), baseColor, metallic);\n"
 		"    vec3 fresnel = f0 + (max(vec3(1.0 - roughness), f0) - f0) * pow(1.0 - ndotv, 5.0);\n"
-		"    vec3 legacyIndirect = baseColor * vec3(0.12) * ao * (1.0 - metallic);\n"
-		"    vec3 diffuse = (vec3(1.0) - fresnel) * (1.0 - metallic) * baseColor * ModernPBRAnalyticEnvironment(n);\n"
 		"    vec3 reflection = reflect(-viewDir, n);\n"
-		"    vec3 analyticPrefiltered = ModernPBRAnalyticEnvironment(normalize(mix(reflection, n, roughness * roughness)));\n"
-		"    vec3 prefiltered = analyticPrefiltered;\n"
-		"    vec3 probeEnvironment = vec3(0.0); float probeCoverage = 0.0;\n"
-		"    if (ModernSpecularProbeEnvironment(clusterRange, viewPosition, reflection, probeEnvironment, probeCoverage)) {\n"
-		"        vec3 analyticSharp = ModernPBRAnalyticEnvironment(normalize(reflection));\n"
-		"        vec3 edgeBlendedProbe = mix(analyticSharp, probeEnvironment, probeCoverage);\n"
-		"        prefiltered = mix(edgeBlendedProbe, analyticPrefiltered, clamp(roughness, 0.0, 1.0));\n"
+		"    vec3 prefiltered = ModernPBRAnalyticEnvironment(reflection);\n"
+		"    vec3 irradiance = ModernPBRAnalyticEnvironment(n);\n"
+		"    vec2 brdf = vec2(1.0, 0.0);\n"
+		"    if (ModernSpecularProbeAtlasReady()) {\n"
+		"        vec3 worldReflection = uClusterGrid.viewToWorldX.xyz * reflection.x + uClusterGrid.viewToWorldY.xyz * reflection.y + uClusterGrid.viewToWorldZ.xyz * reflection.z;\n"
+		"        vec3 worldNormal = uClusterGrid.viewToWorldX.xyz * n.x + uClusterGrid.viewToWorldY.xyz * n.y + uClusterGrid.viewToWorldZ.xyz * n.z;\n"
+		"        prefiltered = ModernSpecularProbeSampleAtlas(8, worldReflection, roughness);\n"
+		"        irradiance = ModernProbeDiffuse(8, worldNormal);\n"
+		"        brdf = ModernProbeTile(63, vec2(ndotv, roughness), 128.0).rg;\n"
 		"    }\n"
-		"    vec3 specular = prefiltered * fresnel * mix(1.0, 0.28, roughness);\n"
-		"    vec3 analyticIndirect = (diffuse + specular) * ao * max(uPBRIBL.y, 0.0);\n"
-		"    return mix(legacyIndirect, analyticIndirect, clamp(uPBRIBL.x, 0.0, 1.0));\n"
+		"    vec3 probeEnvironment = vec3(0.0); vec3 probeDiffuse = vec3(0.0); float probeCoverage = 0.0;\n"
+		"    if (ModernSpecularProbeEnvironment(clusterRange, viewPosition, reflection, n, roughness, probeEnvironment, probeDiffuse, probeCoverage)) {\n"
+		"        prefiltered = mix(prefiltered, probeEnvironment, probeCoverage);\n"
+		"        irradiance = mix(irradiance, probeDiffuse, probeCoverage);\n"
+		"    }\n"
+		"    vec3 diffuse = (vec3(1.0) - fresnel) * (1.0 - metallic) * baseColor * irradiance;\n"
+		"    vec3 specular = prefiltered * (f0 * brdf.x + vec3(brdf.y));\n"
+		"    if (baked.x >= 0.0) {\n"
+		"        diffuse = (vec3(1.0) - fresnel) * (1.0 - metallic) * baseColor * baked.rgb * ao;\n"
+		"        if (baked.w > 0.0) diffuse = min(diffuse, vec3(baked.w));\n"
+		"        return diffuse + (uPBRIBL.x >= 0.5 ? specular * ao * max(uPBRIBL.y, 0.0) : vec3(0.0));\n"
+		"    }\n"
+		"    return (diffuse + specular) * ao * max(uPBRIBL.y, 0.0);\n"
+		"}\n"
+		"vec3 ModernPBRIndirect(vec3 viewPosition, vec3 normal, vec3 baseColor, float metallic, float roughness, float ao, uvec4 clusterRange) {\n"
+		"    return ModernPBRIndirectSource(viewPosition, normal, baseColor, metallic, roughness, ao, clusterRange, vec4(-1.0, -1.0, -1.0, 0.0));\n"
 		"}\n";
 	const char *shadowPolicyHeader =
 		"#define MODERN_SHADOW_MAP_PROJECTED 1.0\n"
@@ -979,19 +1042,9 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		"#define MODERN_SHADOW_FLAG_PROJECTED_STATE_READY 16384\n"
 		"#define MODERN_SHADOW_FLAG_RECEIVER_PLANE_BIAS 65536\n"
 		"#define MODERN_SHADOW_FLAG_ATLAS_SLOT 131072\n"
+		"#define MODERN_SHADOW_FLAG_CURRENT_FRAME_MAP 262144\n"
 		"#define MODERN_SHADOW_BIAS_MIN_LIGHT_COS 0.20\n"
 		"#define MODERN_SHADOW_BIAS_MAX_SLOPE 4.0\n"
-		"vec4 ModernClusterShadowResourceProbe(void) {\n"
-		"    vec4 state = uModernShadowResourceState;\n"
-		"    state += vec4(uModernShadowSamplerState.xyz, 0.0) * 0.000001;\n"
-		"    state += uModernShadowMomentState * 0.000001;\n"
-		"    float projectedAtlas = texture(uModernShadowAtlas, vec2(0.5, 0.5)).r;\n"
-		"    float pointAtlas = texture(uModernPointShadowAtlas, vec3(1.0, 0.0, 0.0)).r;\n"
-		"    float projectedMoments = texture(uModernTranslucentShadowMoments[0], vec2(0.5, 0.5)).r + texture(uModernTranslucentShadowMoments[1], vec2(0.5, 0.5)).r + texture(uModernTranslucentShadowMoments[2], vec2(0.5, 0.5)).r;\n"
-		"    float pointMoments = texture(uModernPointTranslucentShadowMoments[0], vec3(1.0, 0.0, 0.0)).r + texture(uModernPointTranslucentShadowMoments[1], vec3(1.0, 0.0, 0.0)).r + texture(uModernPointTranslucentShadowMoments[2], vec3(1.0, 0.0, 0.0)).r;\n"
-		"    state += vec4(projectedAtlas, pointAtlas, projectedMoments, pointMoments) * 0.000001;\n"
-		"    return state;\n"
-		"}\n"
 		"bool ModernClusterShadowFlag(ModernClusterShadowDescriptor descriptor, int flag) {\n"
 		"    int flags = int(floor(descriptor.policy.z + 0.5));\n"
 		"    return (flags & flag) != 0;\n"
@@ -1069,6 +1122,9 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		"    return clamp(dot(t, vec3(0.333333)), 0.0, 1.0);\n"
 		"}\n"
 		"float ModernClusterSampleProjectedCascade(ModernClusterShadowDescriptor descriptor, int cascadeIndex, vec3 viewPosition, vec3 normal, vec3 lightDir) {\n"
+		"    float cosTheta = clamp(dot(normalize(normal), normalize(lightDir)), 0.0, 1.0);\n"
+		"    float offset = ModernClusterShadowComponent(descriptor.worldTexelSize, cascadeIndex) * descriptor.freshness.w * sqrt(max(1.0 - cosTheta * cosTheta, 0.0));\n"
+		"    viewPosition += normalize(normal) * offset;\n"
 		"    vec4 shadowCoord = ModernClusterShadowMatrix(descriptor, cascadeIndex) * vec4(viewPosition, 1.0);\n"
 		"    if (shadowCoord.w != shadowCoord.w || shadowCoord.w <= 0.00001 || shadowCoord.w > 65536.0) { return 1.0; }\n"
 		"    vec2 localUv = shadowCoord.xy / shadowCoord.w * 0.5 + 0.5;\n"
@@ -1124,8 +1180,8 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		"    return uClusterGrid.viewToWorldX.xyz * viewVector.x + uClusterGrid.viewToWorldY.xyz * viewVector.y + uClusterGrid.viewToWorldZ.xyz * viewVector.z;\n"
 		"}\n"
 		"float ModernClusterDecodePointDepth(vec4 encodedDepth, ModernClusterShadowDescriptor descriptor) {\n"
-		"    float compareMode = floor(descriptor.policy.w + 0.5);\n"
-		"    if (uModernShadowSamplerState.z > 0.5 || compareMode == MODERN_SHADOW_COMPARE_HARDWARE) { return encodedDepth.r; }\n"
+		"    // Modern receivers sample the color map, independently of the classic hardware-compare depth map.\n"
+		"    if (uModernShadowSamplerState.z > 0.5) { return encodedDepth.r; }\n"
 		"    return encodedDepth.r + encodedDepth.g * (1.0 / 255.0);\n"
 		"}\n"
 		"float ModernClusterPointReceiverBias(ModernClusterShadowDescriptor descriptor, vec3 normal, vec3 lightDir) {\n"
@@ -1135,11 +1191,40 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		"    float texelBias = max(descriptor.texelDepthBias.x, 0.0) * (1.0 + slopeBias);\n"
 		"    return max(max(descriptor.bias.x + descriptor.bias.y * sinTheta, 0.0), texelBias);\n"
 		"}\n"
+		"vec4 ModernClusterCurrentPointDepth(ModernClusterShadowDescriptor descriptor, inout vec3 direction) {\n"
+		"    vec3 a = abs(direction); vec2 uv; int face; float major;\n"
+		"    if (a.x >= a.y && a.x >= a.z) { major = a.x; face = direction.x >= 0.0 ? 0 : 1; uv = vec2(direction.x >= 0.0 ? -direction.z : direction.z, -direction.y); }\n"
+		"    else if (a.y >= a.z) { major = a.y; face = direction.y >= 0.0 ? 2 : 3; uv = vec2(direction.x, direction.y >= 0.0 ? direction.z : -direction.z); }\n"
+		"    else { major = a.z; face = direction.z >= 0.0 ? 4 : 5; uv = vec2(direction.z >= 0.0 ? direction.x : -direction.x, -direction.y); }\n"
+		"    uv = uv / max(major, 0.000001) * 0.5 + 0.5;\n"
+		"    int columns = max(int(descriptor.projection.w + 0.5), 1); int tile = int(descriptor.projection.z + 0.5) + face;\n"
+		"    ivec2 atlasSize = textureSize(uModernCurrentPointShadowAtlas, 0); int size = atlasSize.x / columns;\n"
+		"    ivec2 facePixel = clamp(ivec2(uv * float(size)), ivec2(0), ivec2(size - 1));\n"
+		"    ivec2 pixel = ivec2(tile % columns, tile / columns) * size + facePixel;\n"
+		"    // Return the ray through the texel actually read, not the unsnapped\n"
+		"    // PCF request, so the receiver-plane comparison includes quantization.\n"
+		"    vec2 p = (vec2(facePixel) + vec2(0.5)) / float(size) * 2.0 - 1.0;\n"
+		"    if (face == 0) direction = vec3(1.0, -p.y, -p.x); else if (face == 1) direction = vec3(-1.0, -p.y, p.x);\n"
+		"    else if (face == 2) direction = vec3(p.x, 1.0, p.y); else if (face == 3) direction = vec3(p.x, -1.0, -p.y);\n"
+		"    else if (face == 4) direction = vec3(p.x, -p.y, 1.0); else direction = vec3(-p.x, -p.y, -1.0);\n"
+		"    direction = normalize(direction);\n"
+		"    return texelFetch(uModernCurrentPointShadowAtlas, pixel, 0);\n"
+		"}\n"
 		"float ModernClusterComparePoint(ModernClusterShadowDescriptor descriptor, vec3 direction, float depth, vec3 normal, vec3 lightDir) {\n"
 		"    float compareMode = floor(descriptor.policy.w + 0.5);\n"
 		"    if (compareMode <= MODERN_SHADOW_COMPARE_NONE) { return 1.0; }\n"
 		"    float bias = ModernClusterPointReceiverBias(descriptor, normal, lightDir);\n"
-		"    float storedDepth = ModernClusterDecodePointDepth(texture(uModernPointShadowAtlas, direction), descriptor);\n"
+		"    vec4 encoded = ModernClusterShadowFlag(descriptor, MODERN_SHADOW_FLAG_CURRENT_FRAME_MAP) ? ModernClusterCurrentPointDepth(descriptor, direction) : texture(uModernPointShadowAtlas, direction);\n"
+		"    // PCF taps see a different distance on a sloped receiver. Intersect\n"
+		"    // each tap ray with its geometric tangent plane instead of comparing\n"
+		"    // every tap to the centre's radial depth (which causes striping).\n"
+		"    vec3 worldNormal = ModernClusterViewVectorToWorld(normalize(normal));\n"
+		"    float denominator = dot(worldNormal, direction);\n"
+		"    if (abs(denominator) > 0.05) {\n"
+		"        float planeDepth = dot(normalize(normal), -lightDir) / (denominator * max(descriptor.projection.x, 1.0));\n"
+		"        if (planeDepth > 0.0 && planeDepth < 1.0) { depth = planeDepth; }\n"
+		"    }\n"
+		"    float storedDepth = ModernClusterDecodePointDepth(encoded, descriptor);\n"
 		"    return (depth - bias <= storedDepth) ? 1.0 : 0.0;\n"
 		"}\n"
 		"float ModernClusterPointTranslucentVisibility(ModernClusterShadowDescriptor descriptor, vec3 direction, float depth) {\n"
@@ -1153,6 +1238,11 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		"float ModernClusterSamplePointShadow(ModernClusterShadowDescriptor descriptor, ModernClusterLightRecord light, vec3 viewPosition, vec3 normal) {\n"
 		"    float pointFar = max(descriptor.projection.x, 1.0);\n"
 		"    vec3 viewVector = viewPosition - light.positionRadius.xyz;\n"
+		"    float distanceToLight = length(viewVector);\n"
+		"    if (distanceToLight <= 0.00001 || distanceToLight >= pointFar) { return 1.0; }\n"
+		"    float cosTheta = clamp(dot(normalize(normal), normalize(-viewVector)), 0.0, 1.0);\n"
+		"    float offset = descriptor.projection.y * descriptor.freshness.w * length(viewVector) * sqrt(max(1.0 - cosTheta * cosTheta, 0.0));\n"
+		"    viewVector += normalize(normal) * offset;\n"
 		"    float depth = length(viewVector) / pointFar;\n"
 		"    if (depth <= 0.0 || depth >= 1.0) { return 1.0; }\n"
 		"    vec3 direction = normalize(ModernClusterViewVectorToWorld(viewVector));\n"
@@ -1164,7 +1254,7 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		"        vec3 tangent = normalize(cross(up, direction));\n"
 		"        vec3 bitangent = cross(direction, tangent);\n"
 		"        ivec2 atlasSize = textureSize(uModernPointShadowAtlas, 0);\n"
-		"        float texelScale = max(descriptor.projection.y, 2.0 / max(float(atlasSize.x), 1.0));\n"
+		"        float texelScale = ModernClusterShadowFlag(descriptor, MODERN_SHADOW_FLAG_CURRENT_FRAME_MAP) ? descriptor.projection.y : max(descriptor.projection.y, 2.0 / max(float(atlasSize.x), 1.0));\n"
 		"        float tap = texelScale * radius;\n"
 		"        shadow += ModernClusterComparePoint(descriptor, normalize(direction + (tangent * -0.5 + bitangent * -0.5) * tap), depth, normal, lightDir);\n"
 		"        shadow += ModernClusterComparePoint(descriptor, normalize(direction + (tangent *  0.5 + bitangent * -0.5) * tap), depth, normal, lightDir);\n"
@@ -1175,7 +1265,9 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		"    return shadow * ModernClusterPointTranslucentVisibility(descriptor, direction, depth);\n"
 		"}\n"
 		"float ModernClusterShadowAtlasReady(ModernClusterShadowDescriptor descriptor) {\n"
-		"    vec4 resources = ModernClusterShadowResourceProbe();\n"
+		// Readiness is metadata. Sampling inactive atlases as a reflection probe
+		// must not perturb visibility or leak resource history into scene radiance.
+		"    vec4 resources = uModernShadowResourceState;\n"
 		"    float mapType = floor(descriptor.identity.w + 0.5);\n"
 		"    if (mapType == MODERN_SHADOW_MAP_POINT) { return step(0.5, resources.y); }\n"
 		"    if (mapType == MODERN_SHADOW_MAP_PROJECTED || mapType == MODERN_SHADOW_MAP_CASCADE) { return step(0.5, resources.x); }\n"
@@ -1262,7 +1354,7 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 			"        int normalFormat = int(floor(uMaterialFlags.w - 9.0 + 0.5));\n"
 			"        if (normalFormat == 1) { vec2 xy = (bumpSample.rg * 2.0 - 1.0) * max(uLocalParams.w, 0.0); float z = sqrt(max(1.0 - dot(xy, xy), 0.0)); return ModernSafeNormal(vec3(xy, z)); }\n"
 			"        if (normalFormat == 2) { return ModernSafeNormal((bumpSample.rgb * 2.0 - 1.0) * vec3(max(uLocalParams.w, 0.0), max(uLocalParams.w, 0.0), 1.0)); }\n"
-			"        return ModernSafeNormal(ModernDecodeClassicNormal(bumpSample));\n"
+			"        return ModernSafeNormal(ModernDecodeClassicNormal(bumpSample) * vec3(max(uLocalParams.w, 0.0), max(uLocalParams.w, 0.0), 1.0));\n"
 			"    }\n"
 			"    return uMaterialEnhancement.x > 0.5 ? ModernDecodeEnhancedNormal(bumpSample) : ModernDecodeClassicNormal(bumpSample);\n"
 			"}\n"
@@ -1281,16 +1373,16 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 			"void main() {\n"
 			"    vec4 texel = ModernSampleMainTexture(vTexCoord);\n"
 			"    bool pbr = uMaterialFlags.w >= 7.5;\n"
-			"    vec3 baseColor = pbr ? pow(max(texel.rgb, vec3(0.0)), vec3(2.2)) : texel.rgb * max(uDebugColor.rgb, vec3(0.0));\n"
+			"    vec3 baseColor = pbr ? texel.rgb : texel.rgb * max(uDebugColor.rgb, vec3(0.0));\n"
 			"    vec3 normal = ModernMaterialNormal();\n"
 			"    float specular = ModernSpecularStrength();\n"
 			"    vec3 orm = uMaterialFlags.y > 0.5 ? ModernSampleSpecularTexture(vTexCoord).rgb : vec3(1.0);\n"
 			"    if (pbr && uMaterialFlags.y < -0.5) { orm = vec3(ModernSampleAOTexture(vTexCoord).r, ModernSampleRoughnessTexture(vTexCoord).r, ModernSampleMetallicTexture(vTexCoord).r); }\n"
 			"    float metallic = pbr ? clamp(orm.b * uLocalParams.x, 0.0, 1.0) : 0.04;\n"
-			"    float roughness = pbr ? clamp(orm.g * uLocalParams.y, 0.02, 1.0) : specular;\n"
+			"    float roughness = pbr ? PBRScreenRoughness(orm.g * uLocalParams.y, normal) : specular;\n"
 			"    float ao = pbr ? clamp(orm.r, 0.0, 1.0) * clamp(uLocalParams.z, 0.0, 1.0) : uLocalParams.z;\n"
 			"    vec3 emissive = uMaterialFlags.z > 0.5 ? ModernSampleEmissiveTexture(vTexCoord).rgb : vec3(0.0);\n"
-			"    if (pbr) { emissive = pow(max(emissive, vec3(0.0)), vec3(2.2)) * max(uDebugColor.rgb, vec3(0.0)); } else { emissive += vec3(uLocalParams.w); }\n"
+			"    if (pbr) { emissive = emissive * max(uDebugColor.rgb, vec3(0.0)); } else { emissive += vec3(uLocalParams.w); }\n"
 			"    out_Albedo = vec4(baseColor, 1.0);\n"
 			"    out_Normal = vec4(normal * 0.5 + 0.5, vTangentSign * 0.5 + 0.5);\n"
 			"    out_Material = pbr ? vec4(metallic, roughness, ao, 0.0) : vec4(0.04, specular, uLocalParams.z, ModernMaterialFresnel());\n"
@@ -1358,7 +1450,7 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 			"        int normalFormat = int(floor(uMaterialFlags.w - 9.0 + 0.5));\n"
 			"        if (normalFormat == 1) { vec2 xy = (bumpSample.rg * 2.0 - 1.0) * max(uLocalParams.w, 0.0); float z = sqrt(max(1.0 - dot(xy, xy), 0.0)); return ModernSafeNormal(vec3(xy, z)); }\n"
 			"        if (normalFormat == 2) { return ModernSafeNormal((bumpSample.rgb * 2.0 - 1.0) * vec3(max(uLocalParams.w, 0.0), max(uLocalParams.w, 0.0), 1.0)); }\n"
-			"        return ModernSafeNormal(ModernDecodeClassicNormal(bumpSample));\n"
+			"        return ModernSafeNormal(ModernDecodeClassicNormal(bumpSample) * vec3(max(uLocalParams.w, 0.0), max(uLocalParams.w, 0.0), 1.0));\n"
 			"    }\n"
 			"    return uMaterialEnhancement.x > 0.5 ? ModernDecodeEnhancedNormal(bumpSample) : ModernDecodeClassicNormal(bumpSample);\n"
 			"}\n"
@@ -1377,17 +1469,17 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 			"void main() {\n"
 			"    vec4 texel = ModernSampleMainTexture(vTexCoord);\n"
 			"    bool pbr = uMaterialFlags.w >= 7.5;\n"
-			"    if (texel.a < (pbr ? max(uMaterialEnhancement.w, 0.001) : max(uLocalParams.x, 0.001))) { discard; }\n"
 			"    vec3 normal = ModernMaterialNormal();\n"
 			"    float specular = ModernSpecularStrength();\n"
 			"    vec3 orm = uMaterialFlags.y > 0.5 ? ModernSampleSpecularTexture(vTexCoord).rgb : vec3(1.0);\n"
 			"    if (pbr && uMaterialFlags.y < -0.5) { orm = vec3(ModernSampleAOTexture(vTexCoord).r, ModernSampleRoughnessTexture(vTexCoord).r, ModernSampleMetallicTexture(vTexCoord).r); }\n"
 			"    float metallic = pbr ? clamp(orm.b * uLocalParams.x, 0.0, 1.0) : 0.04;\n"
-			"    float roughness = pbr ? clamp(orm.g * uLocalParams.y, 0.02, 1.0) : specular;\n"
+			"    float roughness = pbr ? PBRScreenRoughness(orm.g * uLocalParams.y, normal) : specular;\n"
+			"    if (texel.a < (pbr ? max(uMaterialEnhancement.w, 0.001) : max(uLocalParams.x, 0.001))) { discard; }\n"
 			"    float ao = pbr ? clamp(orm.r, 0.0, 1.0) * clamp(uLocalParams.z, 0.0, 1.0) : uLocalParams.z;\n"
 			"    vec3 emissive = uMaterialFlags.z > 0.5 ? ModernSampleEmissiveTexture(vTexCoord).rgb : vec3(0.0);\n"
-			"    if (pbr) { emissive = pow(max(emissive, vec3(0.0)), vec3(2.2)) * max(uDebugColor.rgb, vec3(0.0)); }\n"
-			"    out_Albedo = vec4(pbr ? pow(max(texel.rgb, vec3(0.0)), vec3(2.2)) : texel.rgb * max(uDebugColor.rgb, vec3(0.0)), 1.0);\n"
+			"    if (pbr) { emissive = emissive * max(uDebugColor.rgb, vec3(0.0)); }\n"
+			"    out_Albedo = vec4(pbr ? texel.rgb : texel.rgb * max(uDebugColor.rgb, vec3(0.0)), 1.0);\n"
 			"    out_Normal = vec4(normal * 0.5 + 0.5, vTangentSign * 0.5 + 0.5);\n"
 			"    out_Material = pbr ? vec4(metallic, roughness, ao, 0.0) : vec4(0.04, specular, uLocalParams.z, ModernMaterialFresnel());\n"
 			"    // Emissive alpha is an explicit layout tag; material alpha remains classic Fresnel data.\n"
@@ -1429,9 +1521,12 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 			"    float rawDepth = texture(uSceneDepth, vTexCoord).r;\n"
 			"    vec3 viewPosition = ModernClusterViewPositionFromDepth(vTexCoord, rawDepth);\n"
 			"    ModernClusterPrepareShadowDerivatives(viewPosition);\n"
+			"    vec3 geometricNormal = cross(gModernShadowPositionDx, gModernShadowPositionDy);\n"
+			"    geometricNormal = dot(geometricNormal, geometricNormal) > 0.00000001 ? normalize(geometricNormal) : normal;\n"
+			"    geometricNormal *= dot(geometricNormal, normal) < 0.0 ? -1.0 : 1.0;\n"
 			"    ivec3 grid = ivec3(max(uClusterGrid.grid.xyz, vec3(1.0)));\n"
 			"    int tileX = clamp(int(floor(vTexCoord.x * float(grid.x))), 0, grid.x - 1);\n"
-			"    int tileY = clamp(int(floor((1.0 - vTexCoord.y) * float(grid.y))), 0, grid.y - 1);\n"
+			"    int tileY = clamp(int(floor(vTexCoord.y * float(grid.y))), 0, grid.y - 1);\n"
 			"    int sliceZ = ModernClusterSliceForDepth(viewPosition.z);\n"
 			"    int clusterIndex = (sliceZ * grid.y + tileY) * grid.x + tileX;\n"
 			"    uvec4 clusterRange = ModernClusterFetchRange(clusterIndex);\n"
@@ -1447,9 +1542,9 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 			"        int type = int(floor(light.colorType.w + 0.5));\n"
 			"        bool supported = type == 0 || type == 1 || type == 3;\n"
 			"        vec2 pixel = gl_FragCoord.xy;\n"
-			"        float inX = step(light.scissorDepth.x, pixel.x) * step(pixel.x, light.scissorDepth.z);\n"
-			"        float inY = step(light.scissorDepth.y, pixel.y) * step(pixel.y, light.scissorDepth.w);\n"
-		"        float shadowVisibility = ModernClusterShadowVisibility(light, viewPosition, normal);\n"
+			"        float inX = step(light.scissorDepth.x, pixel.x) * step(pixel.x, light.scissorDepth.z + 1.0);\n"
+			"        float inY = step(light.scissorDepth.y, pixel.y) * step(pixel.y, light.scissorDepth.w + 1.0);\n"
+		"        float shadowVisibility = ModernClusterShadowVisibility(light, viewPosition, geometricNormal);\n"
 			"        float attenuation = 0.0;\n"
 			"        vec3 contribution = pbr ? ModernClusterEvaluatePBRLight(light, viewPosition, normal, albedo.rgb, material.r, material.g, attenuation) : ModernClusterEvaluateLight(light, viewPosition, normal, material.g, material.a, attenuation);\n"
 			"        attenuation = supported ? attenuation * inX * inY * shadowVisibility : 0.0;\n"
@@ -1460,10 +1555,9 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 			"    float exposure = max(uLocalParams.x, 0.25);\n"
 			"    float debugMode = floor(uLocalParams.y + 0.5);\n"
 			"    float overflowPressure = clamp(uLocalParams.w, 0.0, 1.0);\n"
-			"    float shadowBindingProbe = dot(ModernClusterShadowResourceProbe(), vec4(0.000001));\n"
 			"    vec3 pbrIndirect = ModernPBRIndirect(viewPosition, normal, albedo.rgb, material.r, material.g, material.b, clusterRange);\n"
 			"    vec3 lit = pbr ? pbrIndirect + lightAccum + emissive : albedo.rgb * (vec3(0.12) + lightGrid + lightAccum * (0.35 + material.g)) * max(uDebugColor.rgb, vec3(0.0)) * exposure;\n"
-			"    lit += vec3(shadowBindingProbe);\n"
+			"    if (!pbr) lit = ModernClassicSceneColor(lit);\n"
 			"    // fog and blend lights are compositing operations, not additive\n"
 			"    // contributions, so they are applied over the accumulated result\n"
 			"    lit = ModernClusterApplyFogAndBlend(lit, clusterRange, clusterLightCount, viewPosition);\n"
@@ -1487,6 +1581,7 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 			"    } else {\n"
 			"        out_Color = vec4(max(lit, vec3(0.0)), albedo.a);\n"
 			"    }\n"
+			"    out_Color.rgb = ModernSceneReferredColor(out_Color.rgb);\n"
 			"}\n",
 			glslVersion,
 			hasShaderStorage,
@@ -1504,11 +1599,12 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 			"%s"
 			"%s"
 			"%s"
+			"%s"
+			"uniform sampler2D uClassicLighting;\n"
 			"void main() {\n"
 			"    vec4 texel = ModernSampleMainTexture(vTexCoord);\n"
 			"    bool pbr = ModernIsPBRMaterial();\n"
 			"    ModernClusterPrepareShadowDerivatives(ModernClusterFromEyeSpace(vViewPosition));\n"
-			"    if (%d != 0 && texel.a < (pbr ? max(uMaterialEnhancement.w, 0.001) : max(uLocalParams.x, 0.001))) { discard; }\n"
 			"    // vViewPosition/normals are GL eye space; convert once so every\n"
 			"    // cluster consumer (slice, light math, shadows) shares the\n"
 			"    // cluster basis instead of mixing conventions (M2)\n"
@@ -1516,13 +1612,19 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 			"    vec3 materialNormal = ModernClusterFromEyeSpace(ModernMaterialNormal());\n"
 			"    float specular = ModernSpecularStrength();\n"
 			"    vec3 pbrData = ModernPBRMaterialData();\n"
+			"    float filteredRoughness = PBRScreenRoughness(pbrData.y, materialNormal);\n"
+			"    if (%d != 0) {\n"
+			"        float threshold = pbr ? max(uMaterialEnhancement.w, 0.001) : max(uLocalParams.x, 0.001);\n"
+			"        texel.a = uPBRIBL.w > 0.5 ? clamp((texel.a - threshold) / max(fwidth(texel.a), 0.0001) + 0.5, 0.0, 1.0) : step(threshold, texel.a);\n"
+			"        if (texel.a <= 0.0) discard;\n"
+			"    }\n"
 			"    vec3 baseColor = pbr ? ModernPBRBaseColor() : texel.rgb * max(uDebugColor.rgb, vec3(0.0));\n"
 			"    vec3 emissive = pbr ? ModernPBREmissiveColor() : ModernEmissiveColor();\n"
 			"    ivec3 grid = ivec3(max(uClusterGrid.grid.xyz, vec3(1.0)));\n"
 			"    vec2 viewport = max(uClusterGrid.viewport.xy, vec2(1.0));\n"
 			"    vec2 normalizedPixel = clamp(gl_FragCoord.xy / viewport, vec2(0.0), vec2(0.999));\n"
 			"    int tileX = clamp(int(floor(normalizedPixel.x * float(grid.x))), 0, grid.x - 1);\n"
-			"    int tileY = clamp(int(floor((1.0 - normalizedPixel.y) * float(grid.y))), 0, grid.y - 1);\n"
+			"    int tileY = clamp(int(floor(normalizedPixel.y * float(grid.y))), 0, grid.y - 1);\n"
 			"    int sliceZ = ModernClusterSliceForDepth(max(clusterPosition.z, ModernClusterLinearDepth(gl_FragCoord.z)));\n"
 			"    int clusterIndex = (sliceZ * grid.y + tileY) * grid.x + tileX;\n"
 			"    uvec4 clusterRange = ModernClusterFetchRange(clusterIndex);\n"
@@ -1536,26 +1638,32 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 			"        ModernClusterLightRecord light = ModernClusterFetchLight(lightIndex);\n"
 			"        int type = int(floor(light.colorType.w + 0.5));\n"
 			"        bool supported = type == 0 || type == 1 || type == 3;\n"
-			"        float inX = step(light.scissorDepth.x, gl_FragCoord.x) * step(gl_FragCoord.x, light.scissorDepth.z);\n"
-			"        float inY = step(light.scissorDepth.y, gl_FragCoord.y) * step(gl_FragCoord.y, light.scissorDepth.w);\n"
-		"        float shadowVisibility = ModernClusterShadowVisibility(light, clusterPosition, materialNormal);\n"
+			"        float inX = step(light.scissorDepth.x, gl_FragCoord.x) * step(gl_FragCoord.x, light.scissorDepth.z + 1.0);\n"
+			"        float inY = step(light.scissorDepth.y, gl_FragCoord.y) * step(gl_FragCoord.y, light.scissorDepth.w + 1.0);\n"
+		"        float shadowVisibility = ModernClusterShadowVisibility(light, clusterPosition, ModernClusterFromEyeSpace(ModernSafeNormal(vViewNormal)));\n"
 			"        float attenuation = 0.0;\n"
-			"        vec3 contribution = pbr ? ModernClusterEvaluatePBRLight(light, clusterPosition, materialNormal, baseColor, pbrData.x, pbrData.y, attenuation) : ModernClusterEvaluateLight(light, clusterPosition, materialNormal, specular, ModernMaterialFresnel(), attenuation);\n"
+			"        vec3 contribution = pbr ? ModernClusterEvaluatePBRLight(light, clusterPosition, materialNormal, baseColor, pbrData.x, filteredRoughness, attenuation) : ModernClusterEvaluateLight(light, clusterPosition, materialNormal, specular, ModernMaterialFresnel(), attenuation);\n"
 			"        lightAccum += supported ? contribution * inX * inY * shadowVisibility : vec3(0.0);\n"
 			"        scannedLights++;\n"
 			"    }\n"
 			"    float lightScale = clamp(0.18 + uLocalParams.y + float(scannedLights) * 0.02, 0.18, 2.5);\n"
-			"    float shadowBindingProbe = dot(ModernClusterShadowResourceProbe(), vec4(0.000001));\n"
-			"    vec3 lit = pbr ? ModernPBRIndirect(clusterPosition, materialNormal, baseColor, pbrData.x, pbrData.y, pbrData.z, clusterRange) + lightAccum + emissive : baseColor * (lightScale + lightAccum * (0.30 + specular * 0.25)) + emissive;\n"
+			"    vec4 baked = ModernBakedIrradiance(clusterPosition, materialNormal, pbr);\n"
+			"    vec3 lit = pbr ? ModernPBRIndirectSource(clusterPosition, materialNormal, baseColor, pbrData.x, filteredRoughness, pbrData.z, clusterRange, baked) + lightAccum + emissive : baseColor * (lightScale + lightAccum * (0.30 + specular * 0.25)) + emissive;\n"
+			"    if (!pbr && uMaterialFlags.w == 1.0) lit = baseColor * lightAccum;\n"
+			"    if (!pbr && uMaterialFlags.w == 2.0) lit = texelFetch(uClassicLighting, ivec2(gl_FragCoord.xy), 0).rgb;\n"
+			"    if (!pbr && baked.x >= 0.0) lit += ModernBakedClamp(baseColor * baked.rgb, baked.w);\n"
+			"    if (!pbr) lit = ModernClassicSceneColor(lit);\n"
+			"    if (pbr) lit = ModernClusterApplyFogAndBlend(lit, clusterRange, clusterLightCount, clusterPosition);\n"
 			"    int pbrDebug = int(floor(uDebugColor.a + 0.5));\n"
 			"    if (pbr && pbrDebug == 1) lit = baseColor; else if (pbr && pbrDebug == 2) lit = materialNormal * 0.5 + 0.5; else if (pbr && pbrDebug == 3) lit = vec3(pbrData.x); else if (pbr && pbrDebug == 4) lit = vec3(pbrData.y); else if (pbr && pbrDebug == 5) lit = vec3(pbrData.z); else if (pbr && pbrDebug == 6) lit = emissive; else if (pbrDebug == 7) lit = pbr ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 1.0);\n"
-			"    out_Color = vec4(ModernSceneReferredColor(lit + vec3(shadowBindingProbe)), texel.a);\n"
+			"    out_Color = vec4(ModernSceneReferredColor(lit), texel.a);\n"
 			"}\n",
 			glslVersion,
 			hasShaderStorage,
 			sharedHeader,
 			clusterHeader,
 			shadowPolicyHeader,
+			modernLightGridGLSL,
 			kind == MODERN_GL_SHADER_CLUSTERED_FORWARD_ALPHA_TEST ? 1 : 0 );
 		return;
 	}
@@ -1585,13 +1693,14 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 			"    vec3 materialNormal = ModernClusterFromEyeSpace(ModernMaterialNormal());\n"
 			"    float specular = ModernSpecularStrength();\n"
 			"    vec3 pbrData = ModernPBRMaterialData();\n"
+			"    float filteredRoughness = PBRScreenRoughness(pbrData.y, materialNormal);\n"
 			"    vec3 emissive = pbr ? ModernPBREmissiveColor() : ModernEmissiveColor();\n"
 			"    ivec3 grid = ivec3(max(uClusterGrid.grid.xyz, vec3(1.0)));\n"
 			"    int maxLights = int(max(uClusterGrid.grid.w, 1.0));\n"
 			"    vec2 viewport = max(uClusterGrid.viewport.xy, vec2(1.0));\n"
 			"    vec2 normalizedPixel = clamp(gl_FragCoord.xy / viewport, vec2(0.0), vec2(0.999));\n"
 			"    int tileX = clamp(int(floor(normalizedPixel.x * float(grid.x))), 0, grid.x - 1);\n"
-			"    int tileY = clamp(int(floor((1.0 - normalizedPixel.y) * float(grid.y))), 0, grid.y - 1);\n"
+			"    int tileY = clamp(int(floor(normalizedPixel.y * float(grid.y))), 0, grid.y - 1);\n"
 			"    int sliceZ = ModernClusterSliceForDepth(max(clusterPosition.z, ModernClusterLinearDepth(gl_FragCoord.z)));\n"
 			"    int clusterIndex = (sliceZ * grid.y + tileY) * grid.x + tileX;\n"
 			"    uvec4 clusterRange = ModernClusterFetchRange(clusterIndex);\n"
@@ -1602,13 +1711,13 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 			"        if (lightIndex == 0xffffffffu || lightIndex >= uint(max(uClusterGrid.counts.x, 0.0))) { continue; }\n"
 			"        ModernClusterLightRecord light = ModernClusterFetchLight(lightIndex);\n"
 			"        int type = int(floor(light.colorType.w + 0.5));\n"
-		"        float shadowVisibility = ModernClusterShadowVisibility(light, clusterPosition, materialNormal);\n"
+		"        float shadowVisibility = ModernClusterShadowVisibility(light, clusterPosition, ModernClusterFromEyeSpace(ModernSafeNormal(vViewNormal)));\n"
 			"        float attenuation = 0.0;\n"
-			"        vec3 contribution = pbr ? ModernClusterEvaluatePBRLight(light, clusterPosition, materialNormal, baseColor, pbrData.x, pbrData.y, attenuation) : ModernClusterEvaluateLight(light, clusterPosition, materialNormal, specular, ModernMaterialFresnel(), attenuation);\n"
+			"        vec3 contribution = pbr ? ModernClusterEvaluatePBRLight(light, clusterPosition, materialNormal, baseColor, pbrData.x, filteredRoughness, attenuation) : ModernClusterEvaluateLight(light, clusterPosition, materialNormal, specular, ModernMaterialFresnel(), attenuation);\n"
 			"        if (type == 0 || type == 1 || type == 3) { lightAccum += contribution * shadowVisibility; }\n"
 			"    }\n"
-			"    float shadowBindingProbe = dot(ModernClusterShadowResourceProbe(), vec4(0.000001));\n"
-			"    vec3 transparentColor = pbr ? ModernPBRIndirect(clusterPosition, materialNormal, baseColor, pbrData.x, pbrData.y, pbrData.z, clusterRange) + lightAccum + emissive + vec3(shadowBindingProbe) : baseColor + lightAccum + emissive + vec3(shadowBindingProbe);\n"
+			"    vec3 transparentColor = pbr ? ModernPBRIndirect(clusterPosition, materialNormal, baseColor, pbrData.x, filteredRoughness, pbrData.z, clusterRange) + lightAccum + emissive : baseColor + lightAccum + emissive;\n"
+			"    if (!pbr) transparentColor = ModernClassicSceneColor(transparentColor);\n"
 			"    transparentColor = ModernClusterApplyFogAndBlend(transparentColor, clusterRange, clusterLightCount, clusterPosition);\n"
 			"    int pbrDebug = int(floor(uDebugColor.a + 0.5));\n"
 			"    if (pbr && pbrDebug == 1) transparentColor = baseColor; else if (pbr && pbrDebug == 2) transparentColor = materialNormal * 0.5 + 0.5; else if (pbr && pbrDebug == 3) transparentColor = vec3(pbrData.x); else if (pbr && pbrDebug == 4) transparentColor = vec3(pbrData.y); else if (pbr && pbrDebug == 5) transparentColor = vec3(pbrData.z); else if (pbr && pbrDebug == 6) transparentColor = emissive; else if (pbrDebug == 7) transparentColor = pbr ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 1.0);\n"
@@ -1712,6 +1821,33 @@ static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modern
 		glslVersion );
 }
 
+static void R_ModernGLShaderLibrary_BuildFragmentSource( int glslVersion, modernGLShaderProgramKind_t kind, char *buffer, int bufferSize ) {
+	R_ModernGLShaderLibrary_BuildFragmentBody( glslVersion, kind, buffer, bufferSize );
+	// Embed the exact numerically tested scalar kernel. It must follow #version
+	// and precede every material/deferred entry point, including GLSL 3.30.
+	const char *body = strchr( buffer, '\n' );
+	if ( body == NULL ) {
+		buffer[0] = '\0';
+		return;
+	}
+	idStr source( buffer, 0, static_cast<int>( body - buffer + 1 ) );
+	source += OPENQ4_PBR_SCALAR_GLSL;
+	source += "\n// PBR colour samplers use sRGB storage: filtering and decode happen before shading.\n";
+	// Filter the NDF width by the pixel footprint of the final shading normal.
+	// Call before coverage discard, so helper-lane derivatives remain defined.
+	source += "float PBRScreenRoughness(float roughness, vec3 normal) {\n"
+		"    vec3 dx = dFdx(normal); vec3 dy = dFdy(normal);\n"
+		"    return PBRFilteredRoughness(roughness, 0.5 * (dot(dx, dx) + dot(dy, dy)));\n"
+		"}\n";
+	source += body + 1;
+	if ( source.Length() >= bufferSize ) {
+		common->Warning( "Modern GL PBR shader source exceeds its buffer" );
+		buffer[0] = '\0';
+		return;
+	}
+	idStr::Copynz( buffer, source.c_str(), bufferSize );
+}
+
 static void R_ModernGLShaderLibrary_PrintShaderLog( GLuint shader, const char *label ) {
 	char logBuffer[4096];
 	GLsizei length = 0;
@@ -1780,14 +1916,16 @@ static bool R_ModernGLShaderLibrary_KindUsesPBRMaterialData( modernGLShaderProgr
 		|| kind == MODERN_GL_SHADER_GBUFFER_ALPHA_TEST
 		|| kind == MODERN_GL_SHADER_CLUSTERED_FORWARD_OPAQUE
 		|| kind == MODERN_GL_SHADER_CLUSTERED_FORWARD_ALPHA_TEST
-		|| kind == MODERN_GL_SHADER_TRANSPARENT_FORWARD;
+		|| kind == MODERN_GL_SHADER_TRANSPARENT_FORWARD
+		|| kind == MODERN_GL_SHADER_FOG_BLEND;
 }
 
 static bool R_ModernGLShaderLibrary_KindUsesPBRIBL( modernGLShaderProgramKind_t kind ) {
 	return kind == MODERN_GL_SHADER_DEFERRED_LIGHT_RESOLVE
 		|| kind == MODERN_GL_SHADER_CLUSTERED_FORWARD_OPAQUE
 		|| kind == MODERN_GL_SHADER_CLUSTERED_FORWARD_ALPHA_TEST
-		|| kind == MODERN_GL_SHADER_TRANSPARENT_FORWARD;
+		|| kind == MODERN_GL_SHADER_TRANSPARENT_FORWARD
+		|| kind == MODERN_GL_SHADER_FOG_BLEND;
 }
 
 static bool R_ModernGLShaderLibrary_KindUsesMaterialTextureTable( modernGLShaderProgramKind_t kind ) {
@@ -1803,7 +1941,8 @@ static bool R_ModernGLShaderLibrary_KindUsesShadowTextures( modernGLShaderProgra
 	return kind == MODERN_GL_SHADER_DEFERRED_LIGHT_RESOLVE
 		|| kind == MODERN_GL_SHADER_CLUSTERED_FORWARD_OPAQUE
 		|| kind == MODERN_GL_SHADER_CLUSTERED_FORWARD_ALPHA_TEST
-		|| kind == MODERN_GL_SHADER_TRANSPARENT_FORWARD;
+		|| kind == MODERN_GL_SHADER_TRANSPARENT_FORWARD
+		|| kind == MODERN_GL_SHADER_FOG_BLEND;
 }
 
 static bool R_ModernGLShaderLibrary_KindUsesSpecularProbes( modernGLShaderProgramKind_t kind ) {
@@ -1912,6 +2051,7 @@ static bool R_ModernGLShaderLibrary_ReflectProgram( modernGLShaderProgramInfo_t 
 	info.reflection.debugColorLocation = glGetUniformLocation( info.program, "uDebugColor" );
 	info.reflection.localParamsLocation = glGetUniformLocation( info.program, "uLocalParams" );
 	info.reflection.pbrIBLLocation = glGetUniformLocation( info.program, "uPBRIBL" );
+	info.reflection.bakedGridLocation = glGetUniformLocation( info.program, "uBakedGrid[0]" );
 	info.reflection.mainTextureLocation = glGetUniformLocation( info.program, "uMainTexture" );
 	info.reflection.normalTextureLocation = glGetUniformLocation( info.program, "uNormalTexture" );
 	info.reflection.specularTextureLocation = glGetUniformLocation( info.program, "uSpecularTexture" );
@@ -1933,6 +2073,7 @@ static bool R_ModernGLShaderLibrary_ReflectProgram( modernGLShaderProgramInfo_t 
 		? -1 : static_cast<int>( specularProbeBlockIndex );
 	const GLint shadowAtlasLocation = glGetUniformLocation( info.program, "uModernShadowAtlas" );
 	const GLint pointShadowAtlasLocation = glGetUniformLocation( info.program, "uModernPointShadowAtlas" );
+	const GLint currentPointShadowAtlasLocation = glGetUniformLocation( info.program, "uModernCurrentPointShadowAtlas" );
 	const GLint translucentShadowMomentsLocation = glGetUniformLocation( info.program, "uModernTranslucentShadowMoments[0]" );
 	const GLint pointTranslucentShadowMomentsLocation = glGetUniformLocation( info.program, "uModernPointTranslucentShadowMoments[0]" );
 	const GLint shadowResourceStateLocation = glGetUniformLocation( info.program, "uModernShadowResourceState" );
@@ -2073,6 +2214,11 @@ static bool R_ModernGLShaderLibrary_ReflectProgram( modernGLShaderProgramInfo_t 
 			true,
 			pointShadowAtlasLocation >= 0 );
 		R_ModernGLShaderLibrary_AddReflectionRecord(
+			info.reflection.samplers, info.reflection.samplerCount,
+			"uModernCurrentPointShadowAtlas", MODERN_GL_SHADER_RESOURCE_SAMPLER,
+			-1, currentPointShadowAtlasLocation, MODERN_CURRENT_POINT_SHADOW_TEXTURE_UNIT,
+			1, GL_SAMPLER_2D, true, currentPointShadowAtlasLocation >= 0 );
+		R_ModernGLShaderLibrary_AddReflectionRecord(
 			info.reflection.samplers,
 			info.reflection.samplerCount,
 			"uModernTranslucentShadowMoments",
@@ -2188,6 +2334,21 @@ static bool R_ModernGLShaderLibrary_ReflectProgram( modernGLShaderProgramInfo_t 
 			R_ModernGLShaderLibrary_AddReflectionRecord( info.reflection.samplers, info.reflection.samplerCount, "uMetallicTexture", MODERN_GL_SHADER_RESOURCE_SAMPLER, -1, info.reflection.metallicTextureLocation, 4, 1, GL_SAMPLER_2D, true, info.reflection.metallicTextureLocation >= 0 );
 			R_ModernGLShaderLibrary_AddReflectionRecord( info.reflection.samplers, info.reflection.samplerCount, "uRoughnessTexture", MODERN_GL_SHADER_RESOURCE_SAMPLER, -1, info.reflection.roughnessTextureLocation, 5, 1, GL_SAMPLER_2D, true, info.reflection.roughnessTextureLocation >= 0 );
 			R_ModernGLShaderLibrary_AddReflectionRecord( info.reflection.samplers, info.reflection.samplerCount, "uAOTexture", MODERN_GL_SHADER_RESOURCE_SAMPLER, -1, info.reflection.aoTextureLocation, 6, 1, GL_SAMPLER_2D, true, info.reflection.aoTextureLocation >= 0 );
+		}
+	}
+	const bool usesBakedGrid = info.kind == MODERN_GL_SHADER_CLUSTERED_FORWARD_OPAQUE
+		|| info.kind == MODERN_GL_SHADER_CLUSTERED_FORWARD_ALPHA_TEST;
+	if ( usesBakedGrid ) {
+		const GLint classicLocation = glGetUniformLocation( info.program, "uClassicLighting" );
+		R_ModernGLShaderLibrary_AddReflectionRecord( info.reflection.samplers, info.reflection.samplerCount,
+			"uClassicLighting", MODERN_GL_SHADER_RESOURCE_SAMPLER, -1, classicLocation, 4, 1, GL_SAMPLER_2D, true, classicLocation >= 0 );
+		R_ModernGLShaderLibrary_AddReflectionRecord( info.reflection.uniforms, info.reflection.uniformCount,
+			"uBakedGrid[0]", MODERN_GL_SHADER_RESOURCE_UNIFORM, -1, info.reflection.bakedGridLocation, -1, 7, GL_FLOAT_VEC4, true, info.reflection.bakedGridLocation >= 0 );
+		const char *names[] = { "uBakedIrradiance", "uBakedVisibility", "uBakedRelocation" };
+		for ( int i = 0; i < 3; ++i ) {
+			const GLint location = glGetUniformLocation( info.program, names[i] );
+			R_ModernGLShaderLibrary_AddReflectionRecord( info.reflection.samplers, info.reflection.samplerCount,
+				names[i], MODERN_GL_SHADER_RESOURCE_SAMPLER, -1, location, 7 + i, 1, GL_SAMPLER_2D, true, location >= 0 );
 		}
 	}
 	if ( info.reflection.usesPBRIBL ) {
@@ -2432,6 +2593,7 @@ static bool R_ModernGLShaderLibrary_ReflectProgram( modernGLShaderProgramInfo_t 
 	info.debugColorLocation = info.reflection.debugColorLocation;
 	info.localParamsLocation = info.reflection.localParamsLocation;
 	info.pbrIBLLocation = info.reflection.pbrIBLLocation;
+	info.bakedGridLocation = info.reflection.bakedGridLocation;
 	info.mainTextureLocation = info.reflection.mainTextureLocation;
 	info.normalTextureLocation = info.reflection.normalTextureLocation;
 	info.specularTextureLocation = info.reflection.specularTextureLocation;
@@ -2449,6 +2611,10 @@ static bool R_ModernGLShaderLibrary_ReflectProgram( modernGLShaderProgramInfo_t 
 	info.sceneDepthTextureLocation = info.reflection.sceneDepthTextureLocation;
 	info.specularProbeAtlasLocation = info.reflection.specularProbeAtlasLocation;
 	info.specularProbeBlockIndex = info.reflection.specularProbeBlockIndex;
+	if ( usesBakedGrid && info.bakedGridLocation < 0 ) {
+		common->Warning( "Modern GL program '%s' is missing baked irradiance parameters", info.name );
+		return false;
+	}
 
 	if ( info.frameBlockIndex < 0 || info.modelViewProjectionLocation < 0 ) {
 		common->Warning( "Modern GL program '%s' is missing required reflected bindings", info.name );
@@ -2563,6 +2729,8 @@ static bool R_ModernGLShaderLibrary_ReflectProgram( modernGLShaderProgramInfo_t 
 		if ( info.reflection.usesShadowTextures ) {
 			glUniform1i( shadowAtlasLocation, MODERN_GL_SHADOW_TEXTURE_UNIT_PROJECTED_ATLAS );
 			glUniform1i( pointShadowAtlasLocation, MODERN_GL_SHADOW_TEXTURE_UNIT_POINT_ATLAS );
+			glUniform1i( currentPointShadowAtlasLocation, MODERN_CURRENT_POINT_SHADOW_TEXTURE_UNIT );
+			glUniform1i( glGetUniformLocation( info.program, "uModernLightImageAtlas" ), MODERN_GL_LIGHT_IMAGE_ATLAS_TEXTURE_UNIT );
 			if ( glUniform1iv != NULL ) {
 				GLint projectedMomentUnits[RENDERER_SHADOW_TEXTURE_MOMENT_COUNT];
 				GLint pointMomentUnits[RENDERER_SHADOW_TEXTURE_MOMENT_COUNT];
@@ -2580,6 +2748,13 @@ static bool R_ModernGLShaderLibrary_ReflectProgram( modernGLShaderProgramInfo_t 
 		if ( info.reflection.usesSpecularProbes ) {
 			glUniform1i( info.specularProbeAtlasLocation, MODERN_SPECULAR_PROBE_ATLAS_TEXTURE_UNIT );
 		}
+		if ( usesBakedGrid ) {
+			glUniform1i( glGetUniformLocation( info.program, "uClassicLighting" ), 4 );
+			glUniform1i( glGetUniformLocation( info.program, "uBakedIrradiance" ), 7 );
+			glUniform1i( glGetUniformLocation( info.program, "uBakedVisibility" ), 8 );
+			glUniform1i( glGetUniformLocation( info.program, "uBakedRelocation" ), 9 );
+		}
+
 		if ( info.reflection.usesMaterialTextureTable && glUniform1iv != NULL ) {
 			GLint tableUnits[MATERIAL_RESOURCE_TABLE_TEXTURE_ARRAY_CAPACITY];
 			for ( int i = 0; i < MATERIAL_RESOURCE_TABLE_TEXTURE_ARRAY_CAPACITY; ++i ) {
@@ -2694,6 +2869,7 @@ static bool R_ModernGLShaderLibrary_CreateProgram( int glslVersion, modernGLShad
 	info.debugColorLocation = -1;
 	info.localParamsLocation = -1;
 	info.pbrIBLLocation = -1;
+	info.bakedGridLocation = -1;
 	info.mainTextureLocation = -1;
 	info.normalTextureLocation = -1;
 	info.specularTextureLocation = -1;
@@ -2736,7 +2912,7 @@ static bool R_ModernGLShaderLibrary_CreateProgram( int glslVersion, modernGLShad
 		info.permutation.tier );
 
 	char vertexSource[16384];
-	char fragmentSource[65536];
+	char fragmentSource[73728];
 	R_ModernGLShaderLibrary_BuildVertexSource( glslVersion, kind, vertexSource, sizeof( vertexSource ) );
 	R_ModernGLShaderLibrary_BuildFragmentSource( glslVersion, kind, fragmentSource, sizeof( fragmentSource ) );
 
@@ -2962,6 +3138,43 @@ void R_ModernGLShaderLibrary_PrintGfxInfo( void ) {
 		rg_modernGLShaderLibraryStats.debugVisualizationProgramReady ? 1 : 0 );
 }
 
+// Inspect the linked program rather than the hand-maintained reflection flags:
+// omitting a flag must not hide a samplerCube left on sampler2D's default unit.
+static bool R_ModernGLShaderLibrary_SamplerTypesCompatible( GLuint program, bool report ) {
+	GLint uniformCount = 0, unitCount = 0;
+	glGetProgramiv( program, GL_ACTIVE_UNIFORMS, &uniformCount );
+	glGetIntegerv( GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &unitCount );
+	if ( unitCount <= 0 ) { return false; }
+	idList<GLenum> unitTypes;
+	unitTypes.SetNum( unitCount );
+	for ( int i = 0; i < unitCount; ++i ) { unitTypes[i] = 0; }
+	for ( int i = 0; i < uniformCount; ++i ) {
+		char name[256];
+		GLint size = 0;
+		GLenum type = 0;
+		glGetActiveUniform( program, i, sizeof( name ), NULL, &size, &type, name );
+		if ( type != GL_SAMPLER_2D && type != GL_SAMPLER_CUBE ) { continue; }
+		char *arraySuffix = strstr( name, "[0]" );
+		if ( arraySuffix != NULL ) { *arraySuffix = '\0'; }
+		for ( int element = 0; element < size; ++element ) {
+			char elementName[288];
+			idStr::snPrintf( elementName, sizeof( elementName ), arraySuffix ? "%s[%d]" : "%s", name, element );
+			const GLint location = glGetUniformLocation( program, elementName );
+			if ( location < 0 ) { continue; }
+			GLint unit = -1;
+			glGetUniformiv( program, location, &unit );
+			if ( unit < 0 || unit >= unitCount || ( unitTypes[unit] != 0 && unitTypes[unit] != type ) ) {
+				if ( report ) {
+					common->Printf( "RendererModernGLShaderLibrary self-test failed: sampler %s has incompatible unit %d (program=%u type=%x)\n", elementName, unit, program, type );
+				}
+				return false;
+			}
+			unitTypes[unit] = type;
+		}
+	}
+	return true;
+}
+
 bool RendererModernGLShaderLibrary_RunSelfTest( void ) {
 	const modernGLShaderLibraryStats_t &stats = R_ModernGLShaderLibrary_Stats();
 	if ( !stats.available ) {
@@ -3005,6 +3218,25 @@ bool RendererModernGLShaderLibrary_RunSelfTest( void ) {
 	}
 	if ( stats.highestGLSLVersion >= 430 && ( stats.reflectedShaderStorageBlockCount <= 0 || stats.reflectedImageCount <= 0 ) ) {
 		common->Printf( "RendererModernGLShaderLibrary self-test failed: GL430 resource reflection missing\n" );
+		return false;
+	}
+	for ( int i = 0; i < rg_modernGLShaderProgramCount; ++i ) {
+		if ( !R_ModernGLShaderLibrary_SamplerTypesCompatible( rg_modernGLShaderPrograms[i].program, true ) ) { return false; }
+	}
+	const modernGLShaderProgramInfo_t *fogProgram = R_ModernGLShaderLibrary_FindProgram( MODERN_GL_SHADER_FOG_BLEND, stats.highestGLSLVersion );
+	if ( fogProgram == NULL ) { return false; }
+	const GLint pointSampler = glGetUniformLocation( fogProgram->program, "uModernPointShadowAtlas" );
+	if ( pointSampler < 0 ) { return false; }
+	GLint savedProgram = 0, savedUnit = 0;
+	glGetIntegerv( GL_CURRENT_PROGRAM, &savedProgram );
+	glGetUniformiv( fogProgram->program, pointSampler, &savedUnit );
+	glUseProgram( fogProgram->program );
+	glUniform1i( pointSampler, 0 );
+	const bool rejectedAlias = !R_ModernGLShaderLibrary_SamplerTypesCompatible( fogProgram->program, false );
+	glUniform1i( pointSampler, savedUnit );
+	glUseProgram( savedProgram );
+	if ( !rejectedAlias ) {
+		common->Printf( "RendererModernGLShaderLibrary self-test failed: conflicting sampler negative control accepted\n" );
 		return false;
 	}
 
@@ -3052,6 +3284,7 @@ bool RendererModernGLShaderLibrary_RunSelfTest( void ) {
 			const char *shadowBindingUniforms[] = {
 				"uModernShadowAtlas",
 				"uModernPointShadowAtlas",
+				"uModernCurrentPointShadowAtlas",
 				"uModernTranslucentShadowMoments[0]",
 				"uModernPointTranslucentShadowMoments[0]",
 				"uModernShadowResourceState",
@@ -3107,7 +3340,7 @@ bool RendererModernGLShaderLibrary_RunSelfTest( void ) {
 	}
 
 	common->Printf(
-		"RendererModernGLShaderLibrary self-test passed (%d programs, %d kinds, %d permutations, GLSL %d, reflection ubo=%d ssbo=%d samplers=%d images=%d)\n",
+		"RendererModernGLShaderLibrary self-test passed (%d programs, %d kinds, %d permutations, GLSL %d, reflection ubo=%d ssbo=%d samplers=%d images=%d samplerTypes=%d negativeAlias=%d)\n",
 		stats.programCount,
 		stats.readyProgramKindCount,
 		stats.permutationCount,
@@ -3115,6 +3348,8 @@ bool RendererModernGLShaderLibrary_RunSelfTest( void ) {
 		stats.reflectedUniformBlockCount,
 		stats.reflectedShaderStorageBlockCount,
 		stats.reflectedSamplerCount,
-		stats.reflectedImageCount );
+		stats.reflectedImageCount,
+		rg_modernGLShaderProgramCount,
+		rejectedAlias ? 1 : 0 );
 	return true;
 }

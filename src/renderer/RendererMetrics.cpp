@@ -21,6 +21,8 @@ typedef struct rendererMetricsFrame_s {
 	int		submitMsec;
 	int		backEndMsec;
 	int		presentMsec;
+	unsigned long long presentPhaseMicroseconds[RENDERER_PRESENT_CPU_PHASE_COUNT];
+	unsigned long long uploadRetireMicroseconds;
 	unsigned long long cpuFrameMicroseconds;
 	int		gpuMsec;
 	int		draw3d;
@@ -707,6 +709,22 @@ static bool rg_gpuFullFrameEnabledLastFrame = false;
 static bool rg_gpuFullFrameEnableStateKnown = false;
 static int rg_gpuFullFrameContextGeneration = -1;
 typedef std::chrono::steady_clock rendererCpuFrameClock_t;
+unsigned long long R_RendererMetrics_CpuClock( void ) {
+	return static_cast<unsigned long long>( std::chrono::duration_cast<std::chrono::microseconds>(
+		rendererCpuFrameClock_t::now().time_since_epoch() ).count() );
+}
+
+void R_RendererMetrics_EndPresentPhase( rendererPresentCpuPhase_t phase, unsigned long long begin ) {
+	if ( phase < 0 || phase >= RENDERER_PRESENT_CPU_PHASE_COUNT ) { return; }
+	const unsigned long long end = R_RendererMetrics_CpuClock();
+	if ( end >= begin ) { rg_rendererMetrics.presentPhaseMicroseconds[phase] += end - begin; }
+}
+
+void R_RendererMetrics_EndUploadRetirement( unsigned long long begin ) {
+	const unsigned long long end = R_RendererMetrics_CpuClock();
+	if ( end >= begin ) { rg_rendererMetrics.uploadRetireMicroseconds += end - begin; }
+}
+
 static rendererCpuFrameClock_t::time_point rg_cpuFrameBeginTime;
 static bool rg_cpuFrameBeginValid = false;
 static bool rg_rendererMetricsCaptureEnabledLastFrame = false;
@@ -1857,6 +1875,7 @@ static void R_RendererMetrics_RecordBenchmarkCapture( void ) {
 	rendererBenchmarkFrameSample_t sample;
 	memset( &sample, 0, sizeof( sample ) );
 
+	sample.cpuFrameNumber = rg_rendererMetrics.frameCount;
 	sample.frameMsec = rg_rendererMetrics.frontEndMsec + rg_rendererMetrics.submitMsec;
 	if ( sample.frameMsec <= 0 ) {
 		sample.frameMsec = rg_rendererMetrics.frontEndMsec + rg_rendererMetrics.backEndMsec;
@@ -1868,6 +1887,8 @@ static void R_RendererMetrics_RecordBenchmarkCapture( void ) {
 	sample.submitMsec = rg_rendererMetrics.submitMsec;
 	sample.backEndMsec = rg_rendererMetrics.backEndMsec;
 	sample.presentMsec = rg_rendererMetrics.presentMsec;
+	memcpy( sample.presentPhaseMicroseconds, rg_rendererMetrics.presentPhaseMicroseconds, sizeof( sample.presentPhaseMicroseconds ) );
+	sample.uploadRetireMicroseconds = rg_rendererMetrics.uploadRetireMicroseconds;
 	sample.cpuFrameMicroseconds = rg_rendererMetrics.cpuFrameMicroseconds;
 	renderGpuFrameTiming_t gpuFrameTiming;
 	R_RendererMetrics_GetGpuFrameTiming( gpuFrameTiming );

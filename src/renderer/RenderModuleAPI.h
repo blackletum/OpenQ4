@@ -60,7 +60,11 @@
 // 12 - ResetRenderApiAfterDeviceFailure service: a module whose device cannot
 //      start after activation asks the loader to point the next launch at
 //      OpenGL
-#define RENDER_API_VERSION			12
+// 13 - Recoverable startup-device preparation. The engine may tear down its
+//      startup owners and retry the fallback renderer after this returns false.
+// 14 - Match the canonical game renderer interface: ETC2 capability field and
+//      explicit clear alpha. Reject old modules with a different C++ contract.
+#define RENDER_API_VERSION			14
 #define RENDER_API_ENTRY_POINT		"GetRenderAPI"
 
 class idSys;
@@ -107,9 +111,10 @@ typedef struct renderModuleServices_s {
 	// Phase B8 (docs/dev/plans/2026-07-16-vulkan-renderer-phase-b.md)
 
 	// --- version 12: the loader also owns the archived r_renderApi value. An
-	// active module whose device cannot start is past the in-process fallback
-	// ladder, so before its fatal error it asks the loader to select gl for the
-	// next launch; returns true when the saved config now selects gl ---
+	// active module whose device fails during a later vid_restart cannot be
+	// unloaded from its call stack, so before its fatal error it asks the loader
+	// to select gl for the next launch. Initial startup uses the recoverable
+	// version-13 export below. Returns true when the saved config selects gl ---
 	bool			( *ResetRenderApiAfterDeviceFailure )( void );
 } renderModuleServices_t;
 
@@ -321,6 +326,11 @@ typedef struct renderExport_s {
 	// releases module resources; must be safe to call before Sys_DLL_Unload
 	// whenever GetRenderAPI has been called
 	void			( *Shutdown )( void );
+	// Called after configuration and CPU renderer initialization, before input,
+	// UI/session/game initialization. Success retains the real device/resources
+	// for InitOpenGL; failure releases partial GPU/window state and returns to
+	// the engine before any renderer module can be unloaded. Optional for GL.
+	bool			( *PrepareStartupDevice )( char *outReason, int reasonLength );
 } renderExport_t;
 
 extern "C" {

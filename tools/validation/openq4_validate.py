@@ -523,6 +523,7 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "parallel_job_system.py",
         root / "tools" / "tests" / "pbr_orm_packer.py",
         root / "tools" / "tests" / "pbr_procedural_fixture.py",
+        root / "tools" / "tests" / "pbr_laboratory_fixture.py",
         root / "tools" / "tests" / "preprocessor_macro_safety.py",
         root / "tools" / "tests" / "posix_memory_management.py",
         root / "tools" / "tests" / "posix_monotonic_time.py",

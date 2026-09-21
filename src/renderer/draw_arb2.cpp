@@ -39,6 +39,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "ShadowMapProjected.h"
 #include "ShadowMapArb2Parity.h"
 #include "ModernShadowPlanner.h"
+#include "ModernShadowMaps.h"
+#include "GLPixelTransferScope.h"
 #include "ModernClusteredLighting.h"
 #include "ClassicInteractionDomain.h"
 #include "RendererMetrics.h"
@@ -4874,6 +4876,7 @@ static void RB_ShadowMapResetProgramStateNoGL( void ) {
 }
 
 void RB_ShutdownShadowMapResources( void ) {
+	RB_ModernShadowMapsShutdown();
 	if ( glConfig.isInitialized ) {
 		RB_ShadowMapFreeProgram();
 		RB_ShadowMapFreeCasterProgram();
@@ -8199,6 +8202,11 @@ static bool RB_RenderShadowMap( const drawSurf_t *primaryCasters, const drawSurf
 	// pass; per-surface rebinding is unnecessary. The slope-scale caster
 	// offset lives in the shader because shader-written depth ignores
 	// glPolygonOffset.
+	// Resource creation can leave a depth-comparison texture on unit zero.
+	// Alpha-disabled draws still require a valid non-shadow sampler binding.
+	GL_SelectTexture( 0 );
+	backEnd.glState.tmu[0].current2DMap = -1;
+	globalImages->whiteImage->Bind();
 	glUseProgramObjectARB( g_shadowMapCasterProgram.programObject );
 	glDisable( GL_VERTEX_PROGRAM_ARB );
 	glDisable( GL_FRAGMENT_PROGRAM_ARB );
@@ -8368,6 +8376,9 @@ static bool RB_RenderPointShadowMap( const drawSurf_t *primaryCasters, const dra
 		return false;
 	}
 
+	GL_SelectTexture( 0 );
+	backEnd.glState.tmu[0].current2DMap = -1;
+	globalImages->whiteImage->Bind();
 	glUseProgramObjectARB( g_pointShadowCasterProgram.programObject );
 	glDisable( GL_VERTEX_PROGRAM_ARB );
 	glDisable( GL_FRAGMENT_PROGRAM_ARB );
@@ -8480,6 +8491,257 @@ static bool RB_RenderPointShadowMap( const drawSurf_t *primaryCasters, const dra
 	// See the projected-light path above: mapped point lights must not treat an
 	// all-skipped legacy caster chain as a successful, empty shadow map.
 	return allCastersRendered;
+}
+
+namespace {
+struct modernReceiverAtlas_t {
+	idImage *image = NULL;
+	int size = 0;
+	int tileSize = 0;
+	int used = 0;
+	int published = 0;
+	std::uint64_t storageGeneration = 0;
+};
+modernReceiverAtlas_t modernPointReceiverAtlas;
+modernReceiverAtlas_t modernProjectedReceiverAtlas;
+const viewDef_t *modernShadowMapView = NULL;
+int modernShadowMapFrame = -1;
+
+bool ModernReceiverAtlasAllocate( modernReceiverAtlas_t &atlas,
+		const char *name, int tileSize, int tiles, bool point ) {
+	atlas.used = atlas.published = 0;
+	if ( tiles <= 0 ) { return true; }
+	if ( tileSize < 128 || tileSize > 2048 || tiles > 64 ) { return false; }
+	int size = tileSize;
+	const int maximum = Min( 4096, glConfig.maxTextureSize );
+	while ( size <= maximum && ( size / tileSize ) * ( size / tileSize ) < tiles ) { size *= 2; }
+	if ( size > maximum ) { return false; }
+	// Grow only; transient changes in visible lights must not recreate storage.
+	size = Max( size, atlas.size );
+	idImageOpts opts;
+	opts.textureType = TT_2D;
+	// Copy packed RG bytes without an fp16 conversion: half precision would
+	// discard low bits of R before the receiver recombines R + G / 255.
+	opts.format = point ? ( RB_PointShadowMapHighPrecisionEnabled() ? FMT_RGBA16F : FMT_RGBA8 ) : FMT_DEPTH;
+	opts.width = opts.height = size;
+	opts.numLevels = 1;
+	opts.isPersistant = true;
+	atlas.image = globalImages->ScratchImage( name, &opts, TF_NEAREST,
+		TR_CLAMP, point ? TD_DEFAULT : TD_DEPTH );
+	if ( atlas.image == NULL || !atlas.image->IsLoaded() || atlas.image->IsDefaulted() ) { return false; }
+	idGLPixelTransferScope transfer;
+	R_GLStateCache().BindTexture( 0, GL_TEXTURE_2D, atlas.image->GetDeviceHandle() );
+	GLint width = 0, height = 0;
+	glGetTexLevelParameteriv( GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width );
+	glGetTexLevelParameteriv( GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height );
+	if ( width != size || height != size ) { return false; }
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE );
+	atlas.size = size;
+	atlas.tileSize = tileSize;
+	atlas.storageGeneration = atlas.image->GetStorageGeneration();
+	return true;
+}
+
+bool ModernReceiverAtlasCurrent( const modernReceiverAtlas_t &atlas ) {
+	return modernShadowMapFrame == tr.frameCount && modernShadowMapView != NULL
+		&& atlas.image != NULL && atlas.image->IsLoaded()
+		&& atlas.image->GetStorageGeneration() == atlas.storageGeneration;
+}
+}
+
+void RB_ModernShadowMapsShutdown() {
+	// Image lifetime belongs to the image manager; release its GPU allocation,
+	// and never retain pointers across the renderer shutdown/restart boundary.
+	if ( modernPointReceiverAtlas.image != NULL ) { modernPointReceiverAtlas.image->PurgeImage(); }
+	if ( modernProjectedReceiverAtlas.image != NULL ) { modernProjectedReceiverAtlas.image->PurgeImage(); }
+	modernPointReceiverAtlas = modernReceiverAtlas_t();
+	modernProjectedReceiverAtlas = modernReceiverAtlas_t();
+	modernShadowMapView = NULL;
+	modernShadowMapFrame = -1;
+}
+
+bool RB_ModernShadowMapsBegin( const viewDef_t *view, int pointSize,
+		int pointFaces, int projectedSize, int projectedTiles ) {
+	modernShadowMapFrame = -1;
+	modernShadowMapView = NULL;
+	modernPointReceiverAtlas.published = modernProjectedReceiverAtlas.published = 0;
+	if ( view == NULL || view->renderWorld == NULL || view->viewEntitys == NULL
+			|| glConfig.maxTextureImageUnits <= MODERN_CURRENT_POINT_SHADOW_TEXTURE_UNIT ) { return false; }
+	if ( !ModernReceiverAtlasAllocate( modernPointReceiverAtlas,
+			"_modernPointReceiverAtlas", pointSize, pointFaces, true )
+			|| !ModernReceiverAtlasAllocate( modernProjectedReceiverAtlas,
+				"_modernProjectedReceiverAtlas", projectedSize, projectedTiles, false ) ) { return false; }
+	modernShadowMapView = view;
+	modernShadowMapFrame = tr.frameCount;
+	return true;
+}
+
+bool RB_ModernShadowMapRender( const viewDef_t *view, modernShadowLightDescriptor_t &descriptor ) {
+	const viewLight_t *light = descriptor.viewLight;
+	modernReceiverAtlas_t &atlas = descriptor.pointLight ? modernPointReceiverAtlas : modernProjectedReceiverAtlas;
+	const int tiles = descriptor.pointLight ? 6 : descriptor.cascadeCount;
+	if ( view != modernShadowMapView || light == NULL || !ModernReceiverAtlasCurrent( atlas )
+			|| descriptor.resolution != atlas.tileSize || tiles <= 0
+			|| atlas.used + tiles > ( atlas.size / atlas.tileSize ) * ( atlas.size / atlas.tileSize ) ) { return false; }
+	const int firstTile = atlas.used;
+	atlas.used += tiles;
+	const int columns = atlas.size / atlas.tileSize;
+
+	// The caster routines touch compatibility GL state and select scratch
+	// resources. Preserve the active view/cache identities as well as FBOs;
+	// this prepass never draws or clears the main framebuffer.
+	const viewDef_t *savedView = backEnd.viewDef;
+	const viewLight_t *savedLight = backEnd.vLight;
+	idRenderTexture *savedTarget = backEnd.renderTexture;
+	auto *savedProjectedCache = g_activeProjectedShadowMapCache;
+	auto *savedPointCache = g_activePointShadowMapCache;
+	idImage *savedProjectedDepth = g_shadowMapDepthImage;
+	idImage *savedPointColor = g_pointShadowMapColorImage;
+	idImage *savedPointDepth = g_pointShadowMapDepthImage;
+	idRenderTexture *savedProjectedTarget = g_shadowMapRenderTexture;
+	idRenderTexture *savedPointTarget = g_pointShadowMapRenderTexture;
+	const int savedOriginX = g_shadowMapActiveSlotOriginX, savedOriginY = g_shadowMapActiveSlotOriginY;
+	const shadowMapProjectedLightState_t savedProjection = g_projectedShadowMapState;
+	GLint readFbo = 0, drawFbo = 0, program = 0, matrixMode = 0;
+	glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &readFbo );
+	glGetIntegerv( GL_DRAW_FRAMEBUFFER_BINDING, &drawFbo );
+	glGetIntegerv( GL_CURRENT_PROGRAM, &program );
+	glGetIntegerv( GL_MATRIX_MODE, &matrixMode );
+	glPushAttrib( GL_ALL_ATTRIB_BITS );
+	glPushClientAttrib( GL_CLIENT_VERTEX_ARRAY_BIT );
+	idVertexCache::InvalidateBufferBindings();
+	glMatrixMode( GL_PROJECTION ); glPushMatrix();
+	glMatrixMode( GL_MODELVIEW ); glPushMatrix();
+	backEnd.viewDef = const_cast<viewDef_t *>( view );
+	backEnd.vLight = const_cast<viewLight_t *>( light );
+	backEnd.renderTexture = NULL;
+	backEnd.currentSpace = NULL;
+	glEnableClientState( GL_VERTEX_ARRAY );
+	glEnable( GL_SCISSOR_TEST );
+	glClearDepth( 1.0 );
+	GL_SelectTexture( 0 );
+	// This prepass precedes native depth fill, which normally establishes
+	// these client-array invariants. After a video restart an inherited UV
+	// array may still name a deleted buffer and turn its offset into a CPU
+	// pointer. Opaque caster programs need position only; perforated casters
+	// explicitly enable and supply their own UV array below. PopClientAttrib
+	// restores the caller's arrays when the prepass completes.
+	glClientActiveTextureARB( GL_TEXTURE0_ARB );
+	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
+	glDisableClientState( GL_COLOR_ARRAY );
+	glDisableClientState( GL_NORMAL_ARRAY );
+	globalImages->whiteImage->Bind();
+	RB_ShadowMapSelectProjectedScratchResources();
+	RB_ShadowMapSelectPointScratchResources();
+	bool complete = descriptor.pointLight
+		? RB_RenderPointShadowMap( light->globalShadowMapCasters, light->localShadowMapCasters,
+			light->globalShadowMapDynamicCasters, light->localShadowMapDynamicCasters )
+		: RB_RenderShadowMap( light->globalShadowMapCasters, light->localShadowMapCasters,
+			light->globalShadowMapDynamicCasters, light->localShadowMapDynamicCasters );
+	if ( !descriptor.pointLight && complete ) {
+		// Matrix provenance is as important as texture provenance. Never pair
+		// a freshly fitted cascade with the planner's different projection.
+		complete = g_projectedShadowMapState.valid
+			&& g_projectedShadowMapState.tileSize == descriptor.resolution
+			&& g_projectedShadowMapState.cascadeCount == descriptor.cascadeCount;
+		for ( int c = 0; complete && c < descriptor.cascadeCount; ++c ) {
+			for ( int p = 0; p < 4; ++p ) {
+				for ( int k = 0; k < 4; ++k ) {
+					if ( idMath::Fabs( descriptor.projectedClipPlanes[c][p][k]
+						- g_projectedShadowMapState.clipPlanes[c][p][k] ) > 0.00001f ) { complete = false; }
+				}
+			}
+		}
+	}
+	if ( complete ) {
+		R_GLStateCache_InvalidateAll( "current shadow copy" );
+		idGLPixelTransferScope transfer;
+		R_GLStateCache().BindTexture( 0, GL_TEXTURE_2D, atlas.image->GetDeviceHandle() );
+		for ( int face = 0; complete && face < tiles; ++face ) {
+			int srcX = 0, srcY = 0;
+			if ( descriptor.pointLight ) {
+				g_pointShadowMapRenderTexture->MakeCurrent( face );
+				glReadBuffer( GL_COLOR_ATTACHMENT0 );
+			} else {
+				g_shadowMapRenderTexture->MakeCurrent();
+				glReadBuffer( GL_NONE );
+				srcX = ( face % g_projectedShadowMapState.atlasDiv ) * atlas.tileSize;
+				srcY = ( face / g_projectedShadowMapState.atlasDiv ) * atlas.tileSize;
+			}
+			const int x = ( ( firstTile + face ) % columns ) * atlas.tileSize;
+			const int y = ( ( firstTile + face ) / columns ) * atlas.tileSize;
+			R_GLStateCache().BindTexture( 0, GL_TEXTURE_2D, atlas.image->GetDeviceHandle() );
+			R_GLStateCache().ActiveTextureUnit( 0 );
+			glCopyTexSubImage2D( GL_TEXTURE_2D, 0, x, y, srcX, srcY, atlas.tileSize, atlas.tileSize );
+			const GLenum error = glGetError();
+			if ( error != GL_NO_ERROR ) {
+				common->Warning( "Current shadow map copy failed (light=%d face=%d GL=0x%x)", descriptor.lightDefIndex, face, error );
+				complete = false;
+			}
+			if ( !descriptor.pointLight ) {
+				float *rect = descriptor.arb2AtlasCascadeRect[face];
+				rect[0] = float( x ) / atlas.size; rect[1] = float( y ) / atlas.size;
+				rect[2] = float( x + atlas.tileSize ) / atlas.size; rect[3] = float( y + atlas.tileSize ) / atlas.size;
+			}
+		}
+	}
+	glMatrixMode( GL_MODELVIEW ); glPopMatrix();
+	glMatrixMode( GL_PROJECTION ); glPopMatrix();
+	glMatrixMode( matrixMode );
+	// Attribute restoration includes draw/read-buffer selectors. They must be
+	// restored on their original FBO, not on a depth-only shadow framebuffer.
+	glBindFramebuffer( GL_READ_FRAMEBUFFER, readFbo );
+	glBindFramebuffer( GL_DRAW_FRAMEBUFFER, drawFbo );
+	glPopClientAttrib();
+	glPopAttrib();
+	// PopClientAttrib restores VBO/EBO bindings behind vertexCache's filter.
+	// Without invalidation the next light can skip a required bind, passing a
+	// buffer offset as a client pointer to DrawElements (including driver AVs).
+	idVertexCache::InvalidateBufferBindings();
+	glUseProgram( program );
+	backEnd.viewDef = const_cast<viewDef_t *>( savedView );
+	backEnd.vLight = const_cast<viewLight_t *>( savedLight );
+	backEnd.renderTexture = savedTarget;
+	g_activeProjectedShadowMapCache = savedProjectedCache;
+	g_activePointShadowMapCache = savedPointCache;
+	g_shadowMapDepthImage = savedProjectedDepth;
+	g_pointShadowMapColorImage = savedPointColor;
+	g_pointShadowMapDepthImage = savedPointDepth;
+	g_shadowMapRenderTexture = savedProjectedTarget;
+	g_pointShadowMapRenderTexture = savedPointTarget;
+	g_shadowMapActiveSlotOriginX = savedOriginX;
+	g_shadowMapActiveSlotOriginY = savedOriginY;
+	g_projectedShadowMapState = savedProjection;
+	backEnd.currentSpace = NULL;
+	backEnd.currentScissor.Clear();
+	backEnd.glState.faceCulling = -1;
+	backEnd.glState.currenttmu = -1;
+	GL_ClearStateDelta();
+	R_GLStateCache_InvalidateAll( "current shadow caster prepass" );
+	if ( !complete || !ModernReceiverAtlasCurrent( atlas ) ) { return false; }
+	atlas.published += tiles;
+	descriptor.currentFrameMapReady = true;
+	descriptor.currentPointFirstTile = firstTile;
+	descriptor.currentPointAtlasColumns = columns;
+	descriptor.arb2PointCubeReady = descriptor.pointLight;
+	descriptor.arb2AtlasSlotReady = !descriptor.pointLight;
+	descriptor.arb2PointCubeContentFrame = descriptor.arb2AtlasContentFrame = tr.frameCount;
+	descriptor.arb2AtlasStorageGeneration = atlas.storageGeneration;
+	return true;
+}
+
+bool RB_ModernShadowMapBindings( rendererShadowTextureBindings_t &bindings ) {
+	if ( modernShadowMapFrame != tr.frameCount || modernShadowMapView == NULL ) { return false; }
+	if ( ModernReceiverAtlasCurrent( modernPointReceiverAtlas ) && modernPointReceiverAtlas.published > 0 ) {
+		RB_ShadowMapFillTextureBinding( bindings.currentPointAtlas, modernPointReceiverAtlas.image,
+			GL_TEXTURE_2D, modernPointReceiverAtlas.size, modernPointReceiverAtlas.size, true );
+	}
+	if ( ModernReceiverAtlasCurrent( modernProjectedReceiverAtlas ) && modernProjectedReceiverAtlas.published > 0 ) {
+		RB_ShadowMapFillTextureBinding( bindings.projectedAtlas, modernProjectedReceiverAtlas.image,
+			GL_TEXTURE_2D, modernProjectedReceiverAtlas.size, modernProjectedReceiverAtlas.size, true );
+		bindings.projectedAtlasReady = bindings.projectedAtlas.ready;
+	}
+	return true;
 }
 
 static bool RB_RenderTranslucentShadowMap( const drawSurf_t *primaryCasters, const drawSurf_t *secondaryCasters ) {

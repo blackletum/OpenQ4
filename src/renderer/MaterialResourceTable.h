@@ -408,10 +408,18 @@ const materialResourceTableStats_t &R_MaterialResourceTable_Stats( void );
 const materialResourceTableRecord_t *R_MaterialResourceTable_RecordForIndex( int tableIndex );
 const materialResourceTableRecord_t *R_MaterialResourceTable_FindRecordForMaterial( const idMaterial *material );
 bool R_MaterialResourceTable_ClassicModernPathEligible( const materialResourceTableRecord_t &record );
+// The clustered owner has a single diffuse-lobe implementation for
+// this restricted classic contract. Other classic materials still need their
+// independently qualified lighting owner.
+bool R_MaterialResourceTable_ClassicDiffusePathEligible( const materialResourceTableRecord_t &record );
+bool R_MaterialResourceTable_ClassicFixedPathEligible( const materialResourceTableRecord_t &record );
+bool R_MaterialResourceTable_ClassicFixedMaterialEligible( const idMaterial *material );
+bool R_MaterialResourceTable_ClassicDiffuseMaterialEligible( const idMaterial *material );
 // PBR remains a separate ownership corridor: callers must never treat this as
 // permission to run the classic material shader path for a PBR record.
 bool R_MaterialResourceTable_PBRModernPathEligible( const materialResourceTableRecord_t &record );
 bool R_MaterialResourceTable_PBRTransparentPathEligible( const materialResourceTableRecord_t &record );
+bool R_MaterialResourceTable_PBREmissivePathEligible( const materialResourceTableRecord_t &record );
 const unsigned int *R_MaterialResourceTable_TextureArrayTable( int &count );
 int R_MaterialResourceTable_TextureArrayTableIndexForHandle( unsigned int textureHandle );
 const char *MaterialResourceBlendMode_Name( materialResourceBlendMode_t blendMode );

@@ -166,9 +166,10 @@ void RB_DrawElementsWithCounters( const srfTriangles_t *tri ) {
 						(int *)vertexCache.Position( tri->indexCache ) );
 		backEnd.pc.c_vboIndexes += tri->numIndexes;
 	} else {
-		if ( r_useIndexBuffers.GetBool() ) {
-			vertexCache.UnbindIndex();
-		}
+		// The modern renderer can leave an element buffer on the legacy VAO
+		// even when classic index uploads are disabled. A CPU index pointer is
+		// valid only with EBO zero; otherwise GL interprets it as an offset.
+		vertexCache.UnbindIndex();
 		glDrawElements( GL_TRIANGLES, 
 						r_singleTriangle.GetBool() ? 3 : tri->numIndexes,
 						GL_INDEX_TYPE,
@@ -202,9 +203,7 @@ void RB_DrawShadowElementsWithCounters( const drawSurf_t *surf, int numIndexes )
 						(int *)vertexCache.Position( tri->indexCache ) );
 		backEnd.pc.c_vboIndexes += numIndexes;
 	} else {
-		if ( r_useIndexBuffers.GetBool() ) {
-			vertexCache.UnbindIndex();
-		}
+		vertexCache.UnbindIndex();
 		glDrawElements( GL_TRIANGLES, 
 						r_singleTriangle.GetBool() ? 3 : numIndexes,
 						GL_INDEX_TYPE,

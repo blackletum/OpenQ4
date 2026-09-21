@@ -118,7 +118,8 @@ bool VK_GuiExecutor_EnsureFrameOpen( void );
 bool VK_GuiExecutor_EndFrameAndPresent( void );
 void VK_PostProcess_ApplyBackBuffer( void );
 bool VK_GuiExecutor_FrameIsOpen( void );
-bool VK_Exec_SetRenderTarget( idRenderTexture *renderTexture );
+idRenderTexture *VK_Exec_ActiveRenderTexture( void );
+bool VK_Exec_SetRenderTarget( idRenderTexture *renderTexture, int cubeFace = 0 );
 void VK_Exec_ClearRenderTarget( bool clearColor, bool clearDepth, float depthValue,
 		const float colorValue[ 4 ] );
 bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
@@ -222,9 +223,14 @@ engine window for a Vulkan surface, bring up the device + swapchain, fill
 glConfig, and hand input to the engine.
 ====================
 */
-bool VK_InitRenderDevice( void ) {
+static const char *vkStartupDeviceStage = "window system";
+void VK_ShutdownRenderDevice( void );
+bool VK_GuiExecutor_PrepareStartup( void );
+
+static bool VK_PrepareRenderDevice( void ) {
 	common->Printf( "----- VK_InitRenderDevice -----\n" );
 
+	vkStartupDeviceStage = "window system";
 	vkBackendServices = Sys_GetRenderWindowServices();
 	if ( vkBackendServices == NULL ) {
 		common->Warning( "Vulkan: no window services on this platform backend" );
@@ -237,9 +243,10 @@ bool VK_InitRenderDevice( void ) {
 
 	glimpParms_t parms;
 	memset( &parms, 0, sizeof( parms ) );
-	parms.fullScreen = r_fullscreen.GetBool();
+	parms.hiddenWindow = r_hiddenWindow.GetBool();
+	parms.fullScreen = !parms.hiddenWindow && r_fullscreen.GetBool();
 	R_GetInitialWindowSize( parms.fullScreen, &parms.width, &parms.height );
-	parms.borderless = !parms.fullScreen && r_borderless.GetBool();
+	parms.borderless = !parms.hiddenWindow && !parms.fullScreen && r_borderless.GetBool();
 	parms.displayHz = r_displayRefresh.GetInteger();
 	parms.multiSamples = 0;
 	parms.stereo = false;
@@ -250,7 +257,7 @@ bool VK_InitRenderDevice( void ) {
 	windowParms.height = parms.height;
 	windowParms.fullScreen = parms.fullScreen;
 	windowParms.borderless = parms.borderless;
-	windowParms.hiddenWindow = r_hiddenWindow.GetBool();
+	windowParms.hiddenWindow = parms.hiddenWindow;
 	windowParms.displayHz = parms.displayHz;
 
 	renderFramebufferDesc_t desc;
@@ -267,29 +274,66 @@ bool VK_InitRenderDevice( void ) {
 	renderModuleWindowInfo_t windowInfo;
 	memset( &windowInfo, 0, sizeof( windowInfo ) );
 	bool reusedPreserved = false;
-	if ( !vkBackendServices->CreateWindowForFramebuffer( &desc, &windowParms, &windowInfo, &reusedPreserved ) ) {
+	vkStartupDeviceStage = "window creation";
+	if ( VK_Device_InjectStartupFailure( 1 )
+			|| !vkBackendServices->CreateWindowForFramebuffer( &desc, &windowParms, &windowInfo, &reusedPreserved ) ) {
 		common->Warning( "Vulkan: window creation failed" );
 		return false;
 	}
 
+	vkStartupDeviceStage = "device, surface or swapchain creation";
 	const bool deviceReady = VK_Device_Init( vkBackendServices );
 	// the loader's gate probe kept its instance so the drivers stayed loaded
 	// for this one; it has served its purpose either way
 	VK_Bringup_ReleaseHeldInstance();
 	if ( !deviceReady ) {
-		vkBackendServices->DestroyAttemptWindow();
 		return false;
 	}
 
-	(void)vkBackendServices->ApplyScreenParms( &windowParms );
+	vkStartupDeviceStage = "screen parameters";
+	if ( !vkBackendServices->ApplyScreenParms( &windowParms ) ) {
+		return false;
+	}
 	vkBackendServices->RefreshNativeWindowHandles( &windowInfo );
 	if ( windowInfo.pixelWidth > 0 && windowInfo.pixelHeight > 0
 			&& ( (uint32_t)windowInfo.pixelWidth != vkCtx.swapchainExtent.width
 				|| (uint32_t)windowInfo.pixelHeight != vkCtx.swapchainExtent.height ) ) {
 		// fullscreen/mode application changed the drawable size
-		(void)VK_Device_RecreateSwapchain();
+		vkStartupDeviceStage = "resized swapchain creation";
+		if ( !VK_Device_RecreateSwapchain() ) {
+			return false;
+		}
 	}
 
+	vkStartupDeviceStage = "renderer resources";
+	return VK_GuiExecutor_PrepareStartup();
+}
+
+bool VK_PrepareStartupDevice( char *outReason, int reasonLength ) {
+	if ( outReason != NULL && reasonLength > 0 ) {
+		outReason[ 0 ] = '\0';
+	}
+	if ( vkCtx.initialized || VK_PrepareRenderDevice() ) {
+		return true;
+	}
+	if ( outReason != NULL && reasonLength > 0 ) {
+		idStr::snPrintf( outReason, reasonLength, "Vulkan startup failed during %s", vkStartupDeviceStage );
+	}
+	// The CPU renderer remains alive for normal engine owner teardown. Only
+	// partial GPU/window state is released here, before returning to its caller.
+	VK_Bringup_ReleaseHeldInstance();
+	VK_ShutdownRenderDevice();
+	return false;
+}
+
+bool VK_InitRenderDevice( void ) {
+	char reason[ 256 ];
+	if ( !VK_PrepareStartupDevice( reason, sizeof( reason ) ) ) {
+		common->Warning( "%s", reason );
+		return false;
+	}
+	renderModuleWindowInfo_t windowInfo = {};
+	vkBackendServices->RefreshNativeWindowHandles( &windowInfo );
 	VK_FillGLConfigFromDevice();
 	glConfig.uiViewportX = windowInfo.uiViewportX;
 	glConfig.uiViewportY = windowInfo.uiViewportY;
@@ -335,6 +379,14 @@ bool GLimp_SetScreenParms( glimpParms_t parms ) {
 	if ( vkBackendServices == NULL ) {
 		return false;
 	}
+	// Screenshot readback resumes recording on the acquired image so an
+	// ordinary frame can replace a save-preview crop. A following vid_restart
+	// can run in the same command batch, before that frame is presented.
+	// Submit it before changing the window or retiring its swapchain views;
+	// device-idle alone cannot retire an unsubmitted command buffer.
+	if ( VK_GuiExecutor_FrameIsOpen() && !VK_GuiExecutor_EndFrameAndPresent() ) {
+		return false;
+	}
 	renderWindowParms_t windowParms;
 	memset( &windowParms, 0, sizeof( windowParms ) );
 	windowParms.width = parms.width;
@@ -346,7 +398,9 @@ bool GLimp_SetScreenParms( glimpParms_t parms ) {
 	if ( !vkBackendServices->ApplyScreenParms( &windowParms ) ) {
 		return false;
 	}
-	(void)VK_Device_RecreateSwapchain();
+	if ( !VK_Device_RecreateSwapchain() ) {
+		return false;
+	}
 	glConfig.vidWidth = (int)vkCtx.swapchainExtent.width;
 	glConfig.vidHeight = (int)vkCtx.swapchainExtent.height;
 	glConfig.isFullscreen = parms.fullScreen;
@@ -761,13 +815,25 @@ idRenderTexture::~idRenderTexture() {
 }
 
 bool idRenderTexture::Resize( int width, int height ) {
-	if ( width <= 0 || height <= 0 || colorImages.Num() <= 0 ) {
+	if ( width <= 0 || height <= 0 || ( colorImages.Num() == 0 && depthImage == NULL ) ) {
+		return false;
+	}
+	// Validate every attachment before unbinding or resizing any of them.
+	// Cube-compatible Vulkan images must stay square.
+	for ( int i = 0; i < colorImages.Num(); i++ ) {
+		if ( colorImages[ i ] == NULL
+				|| ( width != height && colorImages[ i ]->GetOpts().textureType == TT_CUBIC ) ) {
+			return false;
+		}
+	}
+	if ( depthImage != NULL && width != height && depthImage->GetOpts().textureType == TT_CUBIC ) {
+		return false;
+	}
+	// End any rendering that references the old image before replacing it.
+	if ( VK_Exec_ActiveRenderTexture() == this && !VK_Exec_SetRenderTarget( NULL ) ) {
 		return false;
 	}
 	for ( int i = 0; i < colorImages.Num(); i++ ) {
-		if ( colorImages[ i ] == NULL ) {
-			return false;
-		}
 		colorImages[ i ]->Resize( width, height );
 	}
 	if ( depthImage != NULL ) {
@@ -793,15 +859,8 @@ bool idRenderTexture::MakeCurrent( void ) {
 }
 
 bool idRenderTexture::MakeCurrent( int cubeFace ) {
-	if ( cubeFace == 0 ) {
-		return MakeCurrent();
-	}
-	static bool warnedCubeTargets = false;
-	if ( !warnedCubeTargets ) {
-		warnedCubeTargets = true;
-		common->Warning( "Vulkan: cubemap render-target faces are not yet supported" );
-	}
-	return false;
+	return cubeFace >= 0 && cubeFace < 6 && EnsureDeviceHandle()
+		&& VK_Exec_SetRenderTarget( this, cubeFace );
 }
 
 void idRenderTexture::BindNull( void ) {
@@ -827,23 +886,8 @@ void idRenderTexture::AddRenderImage( idImage *image ) {
 }
 
 bool idRenderTexture::InitRenderTexture( void ) {
-	if ( !vkCtx.initialized || colorImages.Num() != 1 || colorImages[ 0 ] == NULL ) {
-		knownIncomplete = true;
-		incompleteGeneration = tr.glContextGeneration;
-		return false;
-	}
-
-	vkImageEntry_t *colorEntry = VK_Image_GetEntry( colorImages[ 0 ]->GetDeviceHandle() );
-	vkImageEntry_t *depthEntry = depthImage != NULL
-			? VK_Image_GetEntry( depthImage->GetDeviceHandle() ) : NULL;
-	if ( colorEntry == NULL || colorEntry->attachmentView == VK_NULL_HANDLE
-			|| ( colorEntry->usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT ) == 0
-			|| ( depthImage != NULL && ( depthEntry == NULL
-				|| depthEntry->attachmentView == VK_NULL_HANDLE
-				|| ( depthEntry->usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT ) == 0
-				|| depthEntry->width != colorEntry->width
-				|| depthEntry->height != colorEntry->height
-				|| depthEntry->samples != colorEntry->samples ) ) ) {
+	vkRenderTargetAttachments_t attachments;
+	if ( !VK_Image_GetRenderTargetAttachments( this, 0, attachments ) ) {
 		knownIncomplete = true;
 		incompleteGeneration = tr.glContextGeneration;
 		return false;
@@ -851,7 +895,7 @@ bool idRenderTexture::InitRenderTexture( void ) {
 
 	// The public handle remains an opaque non-zero token. Vulkan attachment
 	// objects live on idImage entries, so no framebuffer object is required.
-	deviceHandle = colorImages[ 0 ]->GetDeviceHandle() + 1;
+	deviceHandle = ( colorImages.Num() != 0 ? colorImages[ 0 ] : depthImage )->GetDeviceHandle() + 1;
 	deviceHandleGeneration = tr.glContextGeneration;
 	knownIncomplete = false;
 	incompleteGeneration = -1;
@@ -1268,6 +1312,11 @@ void RB_ShadowMapPointCubeMarkUsed( int lightDefIndex ) {
 	(void)lightDefIndex;
 }
 
+bool RB_ModernShadowMapsBegin( const viewDef_t *, int, int, int, int ) { return false; }
+bool RB_ModernShadowMapRender( const viewDef_t *, struct modernShadowLightDescriptor_s & ) { return false; }
+bool RB_ModernShadowMapBindings( rendererShadowTextureBindings_t & ) { return false; }
+void RB_ModernShadowMapsShutdown() {}
+
 bool RB_ShadowMapArb2ReceiverFallbackSelfTest( void ) {
 	// no ARB2 receiver path exists under the Vulkan backend yet
 	return true;
@@ -1352,9 +1401,10 @@ const rendererUploadStats_t &R_RendererUpload_Stats( void ) {
 ===============================================================================
 	Residual link surface (complete enumeration, link cycle 6).
 
-	R_InitOpenGL and the GL vid-restart flow stay compiled but unreachable
-	under the Vulkan seam; their callees plus the per-frame upload hooks,
-	GL self-test commands, and debug-tool entry points resolve here.
+	R_InitOpenGL stays compiled but unreachable; full vid_restart uses the
+	backend-dispatched idRenderSystemLocal::InitOpenGL seam.
+	The remaining GL callees, per-frame upload hooks and GL self-test commands
+	resolve here without creating an OpenGL context.
 ===============================================================================
 */
 
@@ -1527,9 +1577,17 @@ void R_ModernGLExecutor_InvalidatePlans( void ) {
 void R_ModernGLExecutor_PrintGfxInfo( void ) {
 }
 
+bool R_ModernGLExecutor_LinearScreenshot( const char *fileName ) {
+	(void)fileName;
+	common->Printf( "screenshot linear: modern GL HDR capture unavailable on this backend\n" );
+	return false;
+}
+
 bool R_ModernGLExecutor_ModernVisibleRequestedForPost( void ) {
 	return false;
 }
+
+bool R_ModernGLExecutor_PBRLinearSceneActive( void ) { return false; }
 
 const modernGLExecutorStats_t &R_ModernGLExecutor_Stats( void ) {
 	static modernGLExecutorStats_t stats;

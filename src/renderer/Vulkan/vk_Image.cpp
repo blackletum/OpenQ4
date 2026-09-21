@@ -103,6 +103,10 @@ static bool VK_Image_GetFormatInfo( const idImageOpts &opts,
 	info.expandRgb565 = false;
 
 	switch ( opts.format ) {
+		case FMT_SRGBA8:
+			info.format = VK_FORMAT_R8G8B8A8_SRGB;
+			info.bytesPerBlock = 4;
+			break;
 		case FMT_RGBA8:
 		case FMT_XRGB8:
 			info.format = VK_FORMAT_R8G8B8A8_UNORM;
@@ -559,11 +563,106 @@ Device-shutdown hook: destroys every live image and sampler immediately
 (the device is idle by contract when this runs).
 ====================
 */
+static void VK_Image_ReleaseCubeAttachmentViews( vkImageEntry_t &entry, bool defer ) {
+	for ( int face = 0; face < 6; face++ ) {
+		if ( entry.cubeAttachmentViews[ face ] == VK_NULL_HANDLE ) {
+			continue;
+		}
+		if ( defer ) {
+			VK_Device_DeferDestroy( VK_NULL_HANDLE, entry.cubeAttachmentViews[ face ],
+					VK_NULL_HANDLE, NULL );
+		} else {
+			vkDestroyImageView( vkCtx.device, entry.cubeAttachmentViews[ face ], NULL );
+		}
+		entry.cubeAttachmentViews[ face ] = VK_NULL_HANDLE;
+	}
+}
+
+VkImageView VK_Image_GetAttachmentView( vkImageEntry_t *entry, int cubeFace ) {
+	if ( entry == NULL || !entry->inUse || entry->image == VK_NULL_HANDLE
+			|| cubeFace < 0 || cubeFace >= 6 ) {
+		return VK_NULL_HANDLE;
+	}
+	if ( !entry->isCube ) {
+		return entry->attachmentView;
+	}
+	if ( entry->cubeAttachmentViews[ cubeFace ] == VK_NULL_HANDLE ) {
+		VkImageViewCreateInfo info;
+		memset( &info, 0, sizeof( info ) );
+		info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		info.image = entry->image;
+		info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		info.format = entry->format;
+		info.subresourceRange.aspectMask = entry->aspectMask;
+		info.subresourceRange.levelCount = 1;
+		info.subresourceRange.baseArrayLayer = (uint32_t)cubeFace;
+		info.subresourceRange.layerCount = 1;
+		if ( vkCreateImageView( vkCtx.device, &info, NULL,
+				&entry->cubeAttachmentViews[ cubeFace ] ) != VK_SUCCESS ) {
+			common->Warning( "Vulkan: cubemap attachment view creation failed (face %d)", cubeFace );
+			return VK_NULL_HANDLE;
+		}
+	}
+	return entry->cubeAttachmentViews[ cubeFace ];
+}
+
+bool VK_Image_GetRenderTargetAttachments( const idRenderTexture *target, int cubeFace,
+		vkRenderTargetAttachments_t &attachments ) {
+	memset( &attachments, 0, sizeof( attachments ) );
+	if ( !vkCtx.initialized || target == NULL || cubeFace < 0 || cubeFace >= 6
+			|| target->GetNumColorImages() > VK_MAX_COLOR_ATTACHMENTS
+			|| (uint32_t)target->GetNumColorImages() > vkCtx.deviceProperties.limits.maxColorAttachments
+			|| ( target->GetNumColorImages() == 0 && target->GetDepthImage() == NULL ) ) {
+		return false;
+	}
+	attachments.colorCount = (uint32_t)target->GetNumColorImages();
+	for ( uint32_t i = 0; i <= attachments.colorCount; i++ ) {
+		const bool isDepth = i == attachments.colorCount;
+		idImage *image = isDepth ? target->GetDepthImage() : target->GetColorImage( (int)i );
+		if ( isDepth && image == NULL ) {
+			continue;
+		}
+		vkImageEntry_t *entry = image != NULL ? VK_Image_GetEntry( image->GetDeviceHandle() ) : NULL;
+		const VkImageUsageFlags usage = isDepth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
+				: VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+		if ( entry == NULL || ( entry->usage & usage ) == 0 || entry->width <= 0 || entry->height <= 0 ) {
+			return false;
+		}
+		if ( i == 0 ) {
+			attachments.extent.width = (uint32_t)entry->width;
+			attachments.extent.height = (uint32_t)entry->height;
+			attachments.samples = entry->samples;
+		} else if ( attachments.extent.width != (uint32_t)entry->width
+				|| attachments.extent.height != (uint32_t)entry->height
+				|| attachments.samples != entry->samples ) {
+			return false;
+		}
+		for ( uint32_t previous = 0; previous < i; previous++ ) {
+			if ( attachments.colors[ previous ]->image == entry->image ) {
+				return false;
+			}
+		}
+		const VkImageView view = VK_Image_GetAttachmentView( entry, cubeFace );
+		if ( view == VK_NULL_HANDLE ) {
+			return false;
+		}
+		if ( isDepth ) {
+			attachments.depth = entry;
+			attachments.depthView = view;
+		} else {
+			attachments.colors[ i ] = entry;
+			attachments.colorViews[ i ] = view;
+		}
+	}
+	return true;
+}
+
 void VK_Image_ShutdownAll( void ) {
 	for ( int i = 0; i < VK_MAX_IMAGES; i++ ) {
 		if ( !vkImages[ i ].inUse ) {
 			continue;
 		}
+		VK_Image_ReleaseCubeAttachmentViews( vkImages[ i ], false );
 		if ( vkImages[ i ].view != VK_NULL_HANDLE ) {
 			vkDestroyImageView( vkCtx.device, vkImages[ i ].view, NULL );
 		}
@@ -593,6 +692,7 @@ void idImage::PurgeImage( void ) {
 	vkImageEntry_t *entry = VK_Image_GetEntry( texnum );
 	if ( entry != NULL ) {
 		// the image may still be referenced by an in-flight frame
+		VK_Image_ReleaseCubeAttachmentViews( *entry, true );
 		VK_Device_DeferDestroy( entry->image, entry->view, VK_NULL_HANDLE, entry->allocation,
 				entry->attachmentView != entry->view ? entry->attachmentView : VK_NULL_HANDLE );
 		memset( entry, 0, sizeof( *entry ) );
@@ -901,6 +1001,7 @@ bool VK_Image_MakeDepthCopyTarget( idImage *image, int width, int height,
 		return false;
 	}
 
+	VK_Image_ReleaseCubeAttachmentViews( *entry, true );
 	VK_Device_DeferDestroy( entry->image, entry->view, VK_NULL_HANDLE,
 			entry->allocation,
 			entry->attachmentView != entry->view ? entry->attachmentView : VK_NULL_HANDLE );

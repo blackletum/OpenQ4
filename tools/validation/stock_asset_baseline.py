@@ -656,6 +656,7 @@ def common_args(
     add_set(args, "developer", 1)
     add_set(args, "r_ignoreGLErrors", 0)
     add_set(args, "r_fullscreen", 0)
+    add_set(args, "in_mouse", 0)
     add_set(args, "r_borderless", 0)
     # Suppress the one-time legacy migration before the renderer starts.  A
     # queued r_borderless=0 alone is too late: the migration otherwise creates

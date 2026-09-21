@@ -22,9 +22,9 @@
 	drawing into (the swapchain, the game's own render texture or the scaled
 	scene target) and draws the result back over the view rectangle. The
 	intermediate targets (bloom levels, motion vectors) are RGBA16F like
-	OpenGL's. Vulkan never renders the scene itself into a float target, so
-	the chain sees colour already clamped to 0..1, as OpenGL does whenever the
-	game binds its own RGBA8 scene target.
+	OpenGL's. Explicit HDR tone mapping selects an RGBA16F scene target when
+	r_hdrSceneTarget is enabled. Luminance reduction precedes tone mapping;
+	the normal exposure readback retires behind the existing frame-slot fence.
 
 	Orientation: every sampled image is stored bottom-up like an OpenGL
 	texture (VK_Exec_CopyRender flips its captures, and the intermediate
@@ -47,6 +47,7 @@
 #include "../tr_local.h"
 #include "../CelShading.h"
 #include "../ScenePackets.h"
+#include "../HDRExposureCore.h"
 
 #undef snprintf
 #undef vsnprintf
@@ -57,6 +58,7 @@
 #include "VulkanDevice.h"
 #include "vk_ExecutorHooks.h"
 #include "shaders/post_shaders_spv.h"
+#include "shaders/hdr_luminance_spv.h"
 
 extern idCVar r_brightness;
 extern idCVar r_gamma;
@@ -93,6 +95,14 @@ extern idCVar r_hdrContrast;
 extern idCVar r_hdrHighlightDesaturation;
 extern idCVar r_hdrGamutCompression;
 extern idCVar r_hdrDebugView;
+extern idCVar r_hdrSceneTarget;
+extern idCVar r_hdrAutoExposure;
+extern idCVar r_hdrAutoExposureAsync;
+extern idCVar r_hdrKeyValue;
+extern idCVar r_hdrMinExposure;
+extern idCVar r_hdrMaxExposure;
+extern idCVar r_hdrAdaptUpSpeed;
+extern idCVar r_hdrAdaptDownSpeed;
 extern idCVar r_motionBlur;
 extern idCVar r_motionBlurStrength;
 extern idCVar r_motionBlurMaxPixels;
@@ -126,7 +136,8 @@ enum vkPostPassKind_t {
 	VK_POST_MOTION_VECTORS,
 	VK_POST_CEL_OUTLINE,
 	VK_POST_UNDERWATER,
-	VK_POST_DEBUG_VIEW
+	VK_POST_DEBUG_VIEW,
+	VK_POST_HDR_LUMINANCE
 };
 
 // scene shader modules, created the first time a pass needs one
@@ -142,6 +153,7 @@ enum vkPostSceneModule_t {
 	VK_POST_MODULE_CEL_OUTLINE,
 	VK_POST_MODULE_UNDERWATER,
 	VK_POST_MODULE_DEBUG_VIEW,
+	VK_POST_MODULE_HDR_LUMINANCE,
 	VK_POST_SCENE_MODULE_COUNT
 };
 
@@ -162,7 +174,8 @@ static const vkPostModuleSource_t vkPostSceneModuleSources[ VK_POST_SCENE_MODULE
 	{ vk_post_motionvectors_frag_spv, vk_post_motionvectors_frag_spv_size, "post motion vector fragment" },
 	{ vk_post_celoutline_frag_spv, vk_post_celoutline_frag_spv_size, "post cel outline fragment" },
 	{ vk_post_underwater_frag_spv, vk_post_underwater_frag_spv_size, "post underwater fragment" },
-	{ vk_post_debug_view_frag_spv, vk_post_debug_view_frag_spv_size, "post debug view fragment" }
+	{ vk_post_debug_view_frag_spv, vk_post_debug_view_frag_spv_size, "post debug view fragment" },
+	{ vk_post_hdr_luminance_frag_spv, vk_post_hdr_luminance_frag_spv_size, "HDR luminance reduction fragment" }
 };
 
 // RB_BLOOM_MAX_LEVELS and RB_BLOOM_BASE_WEIGHTS (draw_common.cpp)
@@ -228,6 +241,74 @@ typedef struct vkPostSceneState_s {
 } vkPostSceneState_t;
 
 static vkPostSceneState_t vkPostScene;
+static const int VK_HDR_MAX_LEVELS = 16;
+struct vkHDRExposure_t {
+	idImage *images[ VK_HDR_MAX_LEVELS ];
+	idRenderTexture *targets[ VK_HDR_MAX_LEVELS ];
+	hdrExposureState_t adaptation;
+	unsigned int generation;
+	const idRenderWorldLocal *renderWorld;
+	int videoRestartCount;
+	idVec3 viewOrigin;
+	idVec3 viewForward;
+	float viewTime;
+	float fovX;
+	float fovY;
+	bool cameraValid;
+	bool sceneFloat;
+	int sceneSamples;
+	int width;
+	int height;
+	int queuedFrame;
+	int completedFrame;
+	float logLuminance;
+	bool enabled;
+	bool haveSample;
+	unsigned int queuedSamples;
+	unsigned int completedSamples;
+};
+static vkHDRExposure_t vkHDR;
+static idStr vkHDRMapName;
+
+bool VK_PostProcess_HDRSceneRequested( void ) {
+	return !r_skipPostProcess.GetBool() && r_hdrSceneTarget.GetBool()
+		&& ( r_hdrToneMap.GetBool() || r_hdrDebugView.GetInteger() > 0 );
+}
+
+static void VK_Post_ResetHDRExposure( void ) {
+	++vkHDR.generation;
+	if ( vkHDR.generation == 0 ) {
+		++vkHDR.generation;
+	}
+	vkHDR.haveSample = false;
+	vkHDR.queuedFrame = vkHDR.completedFrame = -1;
+	HDRExposure_Reset( vkHDR.adaptation );
+}
+
+void VK_PostProcess_ConsumeHDRSample( unsigned int generation, int frame, float logLuminance ) {
+	if ( !vkHDR.enabled || generation != vkHDR.generation || frame <= vkHDR.completedFrame
+			|| !std::isfinite( logLuminance ) ) {
+		return;
+	}
+	vkHDR.logLuminance = logLuminance;
+	vkHDR.completedFrame = frame;
+	vkHDR.haveSample = true;
+	++vkHDR.completedSamples;
+}
+
+int VK_PostProcess_SceneSamples( void ) {
+	return vkHDR.sceneSamples;
+}
+
+void R_RendererVulkanHDRInfo_f( const idCmdArgs &args ) {
+	(void)args;
+	common->Printf( "Vulkan HDR: sceneRequested=%d sceneFormat=%s samples=%d autoExposure=%d initialized=%d generation=%u queued=%u completed=%u average=%g target=%g exposure=%g extent=%dx%d async=%d\n",
+		(int)VK_PostProcess_HDRSceneRequested(), vkHDR.sceneFloat ? "RGBA16F" : "LDR", vkHDR.sceneSamples,
+		(int)vkHDR.enabled, (int)vkHDR.adaptation.initialized,
+		vkHDR.generation, vkHDR.queuedSamples, vkHDR.completedSamples, vkHDR.adaptation.averageLuminance,
+		vkHDR.adaptation.targetExposure, vkHDR.adaptation.exposure, vkHDR.width, vkHDR.height,
+		(int)r_hdrAutoExposureAsync.GetBool() );
+}
 // why the last scene pass gave up, for the one-time warning
 static const char *vkPostFailReason = NULL;
 static vkPostMotionViewState_t vkPostMotionHistory;
@@ -327,6 +408,12 @@ image manager, which frees them on its own; the render textures are ours.
 void VK_PostProcess_Shutdown( void ) {
 	VK_SceneEffects_Shutdown();
 	VK_DebugTools_Shutdown();
+	for ( int i = 0; i < VK_HDR_MAX_LEVELS; ++i ) {
+		delete vkHDR.targets[ i ];
+	}
+	memset( &vkHDR, 0, sizeof( vkHDR ) );
+	vkHDRMapName.Clear();
+	VK_Post_ResetHDRExposure();
 	VK_Post_DestroyModule( vkPost.fullscreenVert );
 	VK_Post_DestroyModule( vkPost.colorMappingFrag );
 	VK_Post_DestroyModule( vkPost.crtFrag );
@@ -579,6 +666,46 @@ static int VK_Post_ViewWidth( const viewDef_t *viewDef ) {
 
 static int VK_Post_ViewHeight( const viewDef_t *viewDef ) {
 	return viewDef->viewport.y2 - viewDef->viewport.y1 + 1;
+}
+
+static void VK_Post_SynchronizeHDRExposure( const viewDef_t *viewDef ) {
+	if ( !VK_Post_IsMainSceneView( viewDef ) || tr.takingScreenshot || viewDef->temporalCaptureFrame ) {
+		return;
+	}
+	const bool requested = !r_skipPostProcess.GetBool() && r_hdrToneMap.GetBool() && r_hdrAutoExposure.GetBool();
+	const idRenderTexture *target = VK_Exec_ActiveRenderTexture();
+	const idImage *scene = target != NULL && target->GetNumColorImages() > 0 ? target->GetColorImage( 0 ) : NULL;
+	const bool sceneFloat = scene != NULL && scene->GetOpts().format == FMT_RGBA16F;
+	const int sceneSamples = scene != NULL ? scene->GetOpts().numMSAASamples : 0;
+	const int width = VK_Post_ViewWidth( viewDef );
+	const int height = VK_Post_ViewHeight( viewDef );
+	const char *mapName = viewDef->renderWorld != NULL ? viewDef->renderWorld->mapName.c_str() : "";
+	const bool cameraCut = vkHDR.cameraValid && ( viewDef->floatTime < vkHDR.viewTime
+		|| viewDef->floatTime - vkHDR.viewTime > 1.0f
+		|| ( viewDef->renderView.vieworg - vkHDR.viewOrigin ).LengthSqr() > 256.0f * 256.0f
+		|| viewDef->renderView.viewaxis[ 0 ] * vkHDR.viewForward < 0.70710678f
+		|| idMath::Fabs( viewDef->renderView.fov_x - vkHDR.fovX ) > 1.0f
+		|| idMath::Fabs( viewDef->renderView.fov_y - vkHDR.fovY ) > 1.0f );
+	if ( requested != vkHDR.enabled || width != vkHDR.width || height != vkHDR.height
+			|| sceneFloat != vkHDR.sceneFloat || sceneSamples != vkHDR.sceneSamples
+			|| vkHDR.renderWorld != viewDef->renderWorld || vkHDRMapName != mapName
+			|| vkHDR.videoRestartCount != tr.GetVideoRestartCount() || cameraCut ) {
+		VK_Post_ResetHDRExposure();
+	}
+	vkHDR.enabled = requested;
+	vkHDR.sceneFloat = sceneFloat;
+	vkHDR.sceneSamples = sceneSamples;
+	vkHDR.width = width;
+	vkHDR.height = height;
+	vkHDR.renderWorld = viewDef->renderWorld;
+	vkHDRMapName = mapName;
+	vkHDR.videoRestartCount = tr.GetVideoRestartCount();
+	vkHDR.viewOrigin = viewDef->renderView.vieworg;
+	vkHDR.viewForward = viewDef->renderView.viewaxis[ 0 ];
+	vkHDR.fovX = viewDef->renderView.fov_x;
+	vkHDR.fovY = viewDef->renderView.fov_y;
+	vkHDR.viewTime = viewDef->floatTime;
+	vkHDR.cameraValid = true;
 }
 
 // RB_SSAORequestedForCurrentView
@@ -1145,6 +1272,7 @@ to keep the material cull.
 */
 static bool VK_Post_RenderMotionVectors( const viewDef_t *viewDef, const vkPostMotionViewState_t &previous,
 		idImage *depthImage, idRenderTexture *sceneTarget ) {
+	const int sceneCubeFace = VK_Exec_ActiveCubeFace();
 	const int width = VK_Post_ViewWidth( viewDef );
 	const int height = VK_Post_ViewHeight( viewDef );
 	const VkShaderModule vertModule = VK_Post_SceneModule( VK_POST_MODULE_MOTION_VECTORS_VERT );
@@ -1156,7 +1284,7 @@ static bool VK_Post_RenderMotionVectors( const viewDef_t *viewDef, const vkPostM
 		return false;
 	}
 	if ( !VK_Exec_SetRenderTarget( vkPostScene.motionVectorTarget ) ) {
-		VK_Exec_SetRenderTarget( sceneTarget );
+		VK_Exec_SetRenderTarget( sceneTarget, sceneCubeFace );
 		return false;
 	}
 	const float clearColor[ 4 ] = { 0.0f, 0.0f, 0.0f, 0.0f };
@@ -1245,7 +1373,7 @@ static bool VK_Post_RenderMotionVectors( const viewDef_t *viewDef, const vkPostM
 		}
 		vkCmdSetFrontFace( cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
 	}
-	VK_Exec_SetRenderTarget( sceneTarget );
+	VK_Exec_SetRenderTarget( sceneTarget, sceneCubeFace );
 	return drew;
 }
 
@@ -1404,6 +1532,200 @@ static bool VK_Post_DrawBloomStep( idRenderTexture *target, int kind, int module
 		&& VK_Post_DrawTarget( pipeline, &sourceSet, 1, uniformOffset );
 }
 
+static void VK_Post_AdaptHDRExposure( float time ) {
+	if ( vkHDR.haveSample ) {
+		const hdrExposureSettings_t settings = { r_hdrKeyValue.GetFloat(), r_hdrMinExposure.GetFloat(),
+			r_hdrMaxExposure.GetFloat(), r_hdrAdaptUpSpeed.GetFloat(), r_hdrAdaptDownSpeed.GetFloat() };
+		(void)HDRExposure_Update( vkHDR.adaptation, vkHDR.logLuminance, time, settings );
+	}
+}
+
+static float VK_Post_UpdateHDRAutoExposure( const viewDef_t *viewDef, idImage *scene ) {
+	if ( !vkHDR.enabled || !r_hdrAutoExposure.GetBool() || !r_hdrToneMap.GetBool() ) {
+		return 1.0f;
+	}
+	// Captures use the already adapted exposure and never advance its history.
+	if ( tr.takingScreenshot || viewDef->temporalCaptureFrame || vkHDR.queuedFrame == backEnd.frameCount ) {
+		return vkHDR.adaptation.exposure;
+	}
+	const bool synchronous = !r_hdrAutoExposureAsync.GetBool();
+	if ( !synchronous ) {
+		VK_Post_AdaptHDRExposure( viewDef->floatTime );
+	}
+	idRenderTexture *savedTarget = VK_Exec_ActiveRenderTexture();
+	const int savedFace = VK_Exec_ActiveCubeFace();
+	idImage *source = scene;
+	int width = VK_Post_ViewWidth( viewDef );
+	int height = VK_Post_ViewHeight( viewDef );
+	bool queued = false;
+	for ( int level = 0; level < VK_HDR_MAX_LEVELS; ++level ) {
+		const int nextWidth = Max( 1, ( width + 1 ) / 2 );
+		const int nextHeight = Max( 1, ( height + 1 ) / 2 );
+		const float block[ 4 ] = { 1.0f / width, 1.0f / height, level == 0 ? 1.0f : 0.0f, 0.0f };
+		if ( !VK_Post_EnsureColorTarget( vkHDR.images[ level ], vkHDR.targets[ level ],
+				va( "_vkHDRLuminance%d", level ), nextWidth, nextHeight, TF_LINEAR, "Vulkan HDR luminance" )
+				|| !VK_Post_DrawBloomStep( vkHDR.targets[ level ], VK_POST_HDR_LUMINANCE,
+					VK_POST_MODULE_HDR_LUMINANCE, source, block, sizeof( block ) ) ) {
+			break;
+		}
+		source = vkHDR.images[ level ];
+		width = nextWidth;
+		height = nextHeight;
+		if ( width == 1 && height == 1 ) {
+			queued = VK_Exec_QueueHDRExposureReadback( source, vkHDR.generation, backEnd.frameCount, synchronous );
+			break;
+		}
+	}
+	(void)VK_Exec_SetRenderTarget( savedTarget, savedFace );
+	if ( queued ) {
+		vkHDR.queuedFrame = backEnd.frameCount;
+		++vkHDR.queuedSamples;
+		if ( synchronous ) {
+			VK_Post_AdaptHDRExposure( viewDef->floatTime );
+		}
+	} else {
+		static bool warned = false;
+		if ( !warned ) {
+			warned = true;
+			common->Warning( "Vulkan: HDR luminance sample unavailable; retaining current exposure" );
+		}
+	}
+	return vkHDR.adaptation.exposure;
+}
+
+// Drive the real scene capture, FP16 reduction and frame-fenced readback. A
+// constant radiance fixture has an independent analytic log-luminance result;
+// values above one catch an accidental UNORM scene or MSAA resolve immediately.
+static bool VK_Post_TestHDRCase( int width, int height, int samples, bool asynchronous,
+		const float color[ 4 ], viewDef_t &view ) {
+	idImageOpts options;
+	options.textureType = TT_2D;
+	options.format = FMT_RGBA16F;
+	options.width = width;
+	options.height = height;
+	options.numLevels = 1;
+	options.numMSAASamples = samples;
+	idImage *image = globalImages->ScratchImage( "_vkHDRTestScene", &options, TF_LINEAR, TR_CLAMP, TD_DEFAULT );
+	if ( image == NULL ) {
+		return false;
+	}
+	// ScratchImage can return an existing image. Reallocate deliberately to
+	// exercise format/extent/sample storage retirement across successive cases.
+	image->AllocImage( options, TF_LINEAR, TR_CLAMP );
+	idRenderTexture target( image, NULL );
+	target.SetDebugLabel( "Vulkan HDR numerical fixture" );
+	view.viewport.x1 = view.viewport.y1 = view.scissor.x1 = view.scissor.y1 = 0;
+	view.viewport.x2 = view.scissor.x2 = width - 1;
+	view.viewport.y2 = view.scissor.y2 = height - 1;
+	view.floatTime += 2.0f;
+	++backEnd.frameCount;
+	r_hdrAutoExposureAsync.SetBool( asynchronous );
+	bool passed = VK_GuiExecutor_BeginFrame() && target.MakeCurrent()
+		&& image->GetOpts().format == FMT_RGBA16F
+		&& ( samples <= 1 || image->GetOpts().numMSAASamples == samples );
+	if ( passed ) {
+		VK_Post_SynchronizeHDRExposure( &view );
+		VK_Post_ResetHDRExposure();
+		VK_Exec_ClearRenderTarget( true, false, 1.0f, color );
+		idImage *scene = VK_Post_CaptureScene( &view );
+		const unsigned int queuedBefore = vkHDR.queuedSamples;
+		if ( scene != NULL ) {
+			(void)VK_Post_UpdateHDRAutoExposure( &view, scene );
+		}
+		passed = scene != NULL && vkHDR.queuedSamples == queuedBefore + 1
+			&& ( asynchronous ? !vkHDR.haveSample : vkHDR.haveSample );
+	}
+	if ( VK_GuiExecutor_FrameIsOpen() ) {
+		passed = VK_Exec_SetRenderTarget( NULL ) && passed;
+		passed = VK_GuiExecutor_EndFrameAndPresent() && passed;
+	}
+	// Retire the normal ring; the consumer must publish this exact generation
+	// and frame only once. No readback-specific queue/device wait is inserted.
+	for ( int i = 0; i < VK_FRAMES_IN_FLIGHT && passed; ++i ) {
+		passed = VK_GuiExecutor_BeginFrame();
+		if ( VK_GuiExecutor_FrameIsOpen() ) {
+			passed = VK_GuiExecutor_EndFrameAndPresent() && passed;
+		}
+	}
+	const float expectedLuminance = Max( 0.0001f, color[ 0 ] * 0.2126f + color[ 1 ] * 0.7152f + color[ 2 ] * 0.0722f );
+	const float expectedLog = std::log( expectedLuminance );
+	VK_Post_AdaptHDRExposure( view.floatTime );
+	const float expectedExposure = idMath::ClampFloat( r_hdrMinExposure.GetFloat(), r_hdrMaxExposure.GetFloat(),
+		r_hdrKeyValue.GetFloat() / expectedLuminance );
+	passed = passed && vkHDR.haveSample && vkHDR.completedFrame == backEnd.frameCount
+		&& idMath::Fabs( vkHDR.logLuminance - expectedLog ) < 0.012f
+		&& vkHDR.adaptation.initialized
+		&& idMath::Fabs( vkHDR.adaptation.exposure - expectedExposure ) < Max( 0.002f, expectedExposure * 0.015f );
+	common->Printf( "Vulkan HDR fixture: extent=%dx%d samples=%d async=%d rgb=%g,%g,%g log=%g expected=%g exposure=%g expectedExposure=%g %s\n",
+		width, height, samples, (int)asynchronous, color[ 0 ], color[ 1 ], color[ 2 ], vkHDR.logLuminance,
+		expectedLog, vkHDR.adaptation.exposure, expectedExposure, passed ? "passed" : "FAILED" );
+	image->PurgeImage();
+	return passed;
+}
+
+void R_RendererVulkanHDRSelfTest_f( const idCmdArgs &args ) {
+	(void)args;
+	idCVar *settings[] = { &r_skipPostProcess, &r_hdrSceneTarget, &r_hdrToneMap, &r_hdrAutoExposure,
+		&r_hdrAutoExposureAsync, &r_hdrKeyValue, &r_hdrMinExposure, &r_hdrMaxExposure };
+	idStr previous[ sizeof( settings ) / sizeof( settings[ 0 ] ) ];
+	for ( unsigned int i = 0; i < sizeof( settings ) / sizeof( settings[ 0 ] ); ++i ) {
+		previous[ i ] = settings[ i ]->GetString();
+	}
+	const int previousFrame = backEnd.frameCount;
+	r_skipPostProcess.SetBool( false );
+	r_hdrSceneTarget.SetBool( true );
+	r_hdrToneMap.SetBool( true );
+	r_hdrAutoExposure.SetBool( true );
+	r_hdrKeyValue.SetFloat( 0.18f );
+	r_hdrMinExposure.SetFloat( 0.01f );
+	r_hdrMaxExposure.SetFloat( 8.0f );
+	viewDef_t view = {};
+	viewEntity_t entity = {};
+	view.viewEntitys = &entity;
+	view.renderView.viewaxis.Identity();
+	view.renderView.fov_x = 90.0f;
+	view.renderView.fov_y = 60.0f;
+	const float colors[ 3 ][ 4 ] = { { 4.0f, 4.0f, 4.0f, 1.0f },
+		{ 8.0f, 2.0f, 0.5f, 1.0f }, { 0.03125f, 0.03125f, 0.03125f, 1.0f } };
+	bool passed = vkCtx.initialized && VK_Post_EnsureModules();
+	int cases = 0;
+	for ( int asynchronous = 0; asynchronous < 2 && passed; ++asynchronous ) {
+		for ( int msaa = 0; msaa < 2 && passed; ++msaa ) {
+			for ( int size = 0; size < 2 && passed; ++size ) {
+				for ( int color = 0; color < 3 && passed; ++color ) {
+					passed = VK_Post_TestHDRCase( size == 0 ? 8 : 17, size == 0 ? 8 : 9,
+						msaa == 0 ? 0 : 4, asynchronous != 0, colors[ color ], view );
+					++cases;
+				}
+			}
+		}
+	}
+	// Completed stale generations, duplicate frames and disabled samples must
+	// never seed adaptation after a discontinuity.
+	const unsigned int oldGeneration = vkHDR.generation;
+	VK_Post_ResetHDRExposure();
+	VK_PostProcess_ConsumeHDRSample( oldGeneration, backEnd.frameCount + 1, 0.0f );
+	passed = passed && !vkHDR.haveSample;
+	VK_PostProcess_ConsumeHDRSample( vkHDR.generation, backEnd.frameCount + 1, 1.0f );
+	VK_PostProcess_ConsumeHDRSample( vkHDR.generation, backEnd.frameCount + 1, 2.0f );
+	passed = passed && vkHDR.haveSample && vkHDR.logLuminance == 1.0f;
+	vkHDR.enabled = false;
+	VK_Post_ResetHDRExposure();
+	VK_PostProcess_ConsumeHDRSample( vkHDR.generation, backEnd.frameCount + 2, 0.0f );
+	passed = passed && !vkHDR.haveSample;
+	for ( unsigned int i = 0; i < sizeof( settings ) / sizeof( settings[ 0 ] ); ++i ) {
+		settings[ i ]->SetString( previous[ i ] );
+	}
+	backEnd.frameCount = previousFrame;
+	vkHDR.cameraValid = false;
+	VK_Post_ResetHDRExposure();
+	if ( passed && cases == 24 ) {
+		common->Printf( "Vulkan HDR self-test passed (24 FP16/MSAA luminance fixtures, synchronous/asynchronous exposure, resize and stale-sample rejection)\n" );
+	} else {
+		common->Warning( "Vulkan HDR self-test failed after %d fixtures", cases );
+	}
+}
+
 // Builds the bloom pyramid; each level ends blurred in its P0 image. Leaves
 // the last level's target bound; the caller restores the scene target.
 static bool VK_Post_BuildBloomPyramid( const viewDef_t *viewDef, idImage *scene, int levelCount ) {
@@ -1462,6 +1784,7 @@ static bool VK_Post_BuildBloomPyramid( const viewDef_t *viewDef, idImage *scene,
 }
 
 static bool VK_Post_DrawBloom( const viewDef_t *viewDef, idRenderTexture *sceneTarget ) {
+	const int sceneCubeFace = VK_Exec_ActiveCubeFace();
 	const VkShaderModule fragModule = VK_Post_SceneModule( VK_POST_MODULE_BLOOM_COMPOSITE );
 	if ( fragModule == VK_NULL_HANDLE ) {
 		return false;
@@ -1471,6 +1794,7 @@ static bool VK_Post_DrawBloom( const viewDef_t *viewDef, idRenderTexture *sceneT
 		return false;
 	}
 	const bool bloomRequested = VK_Post_BloomRequested();
+	const float adaptedExposure = VK_Post_UpdateHDRAutoExposure( viewDef, scene );
 	const int levelCount = idMath::ClampInt( 1, VK_POST_BLOOM_MAX_LEVELS, r_bloomMipCount.GetInteger() );
 	idImage *bloomImages[ VK_POST_BLOOM_MAX_LEVELS ];
 	float weights[ VK_POST_BLOOM_MAX_LEVELS ] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
@@ -1493,7 +1817,7 @@ static bool VK_Post_DrawBloom( const viewDef_t *viewDef, idRenderTexture *sceneT
 				weights[ level ] = VK_POST_BLOOM_BASE_WEIGHTS[ level ] / weightSum;
 			}
 		}
-		if ( !VK_Exec_SetRenderTarget( sceneTarget ) ) {
+		if ( !VK_Exec_SetRenderTarget( sceneTarget, sceneCubeFace ) ) {
 			return false;
 		}
 	}
@@ -1504,9 +1828,7 @@ static bool VK_Post_DrawBloom( const viewDef_t *viewDef, idRenderTexture *sceneT
 	block.bloom[ 1 ] = bloomEnabled ? 1.0f : 0.0f;
 	block.bloom[ 2 ] = r_hdrToneMap.GetBool() ? 1.0f : 0.0f;
 	block.bloom[ 3 ] = (float)idMath::ClampInt( 0, 2, r_hdrDebugView.GetInteger() );
-	// auto exposure only runs on OpenGL's modern-visible path, never on the
-	// classic path this mirrors, so the adapted exposure is 1
-	block.exposure[ 0 ] = r_hdrExposure.GetFloat();
+	block.exposure[ 0 ] = r_hdrExposure.GetFloat() * adaptedExposure;
 	block.exposure[ 1 ] = r_hdrWhitePoint.GetFloat();
 	block.exposure[ 2 ] = r_hdrLift.GetFloat();
 	block.exposure[ 3 ] = r_hdrPostGamma.GetFloat();
@@ -1623,6 +1945,7 @@ bool VK_PostProcess_DrawSceneEffects( const viewDef_t *viewDef ) {
 		return false;
 	}
 	vkPostScene.viewSerial++;
+	VK_Post_SynchronizeHDRExposure( viewDef );
 	const bool ssao = VK_Post_SSAORequested( viewDef );
 	const bool bloomPass = VK_Post_BloomPassRequested( viewDef );
 	const bool celInk = VK_Post_CelInkRequested( viewDef );
@@ -1634,6 +1957,7 @@ bool VK_PostProcess_DrawSceneEffects( const viewDef_t *viewDef ) {
 		return false;
 	}
 	idRenderTexture *sceneTarget = VK_Exec_ActiveRenderTexture();
+	const int sceneCubeFace = VK_Exec_ActiveCubeFace();
 	bool drew = false;
 
 	static bool ssaoWarned = false;
@@ -1659,7 +1983,7 @@ bool VK_PostProcess_DrawSceneEffects( const viewDef_t *viewDef ) {
 		VK_Post_LogFirstDraw( motionBlurLogged, "motion blur",
 			vkPostScene.motionVectorValid ? " (with object vectors)" : " (camera only)" );
 	}
-	if ( VK_Exec_ActiveRenderTexture() != sceneTarget && !VK_Exec_SetRenderTarget( sceneTarget ) ) {
+	if ( !VK_Exec_SetRenderTarget( sceneTarget, sceneCubeFace ) ) {
 		VK_Post_WarnOnce( motionBlurWarned, "r_motionBlur" );
 		return drew;
 	}
@@ -1670,7 +1994,7 @@ bool VK_PostProcess_DrawSceneEffects( const viewDef_t *viewDef ) {
 		} else {
 			VK_Post_WarnOnce( bloomWarned, "r_bloom/r_hdrToneMap" );
 		}
-		if ( VK_Exec_ActiveRenderTexture() != sceneTarget && !VK_Exec_SetRenderTarget( sceneTarget ) ) {
+		if ( !VK_Exec_SetRenderTarget( sceneTarget, sceneCubeFace ) ) {
 			return drew;
 		}
 	}

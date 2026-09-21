@@ -140,14 +140,15 @@ debug views. On the development machine (an NVIDIA RTX 4060 laptop on
 Windows) it runs clean under the Vulkan validation layers. Runs recorded there
 before soft particles and alpha-to-coverage reached Vulkan had it faster than
 OpenGL; it has not been timed since. It stays experimental because it has been
-tried on very few GPUs and drivers, no automated test runs it on every change,
-and the gaps under [What Vulkan does not do yet](#what-vulkan-does-not-do-yet)
+tried on very few GPUs and drivers. Linux CI now selects software-Vulkan
+startup, render-target, and fallback checks, with hosted results still pending;
+physical GPU coverage and the gaps under [What Vulkan does not do yet](#what-vulkan-does-not-do-yet)
 remain. OpenGL remains the recommended renderer for normal play.
 
 | Setting | Default | What it does |
 |---|---:|---|
 | `r_renderApi` | `gl` | Renderer backend: `gl` (default, supported) or `vulkan` (**experimental**). `best` resolves to `gl` until the Vulkan backend clears its promotion evidence and sign-off. Takes effect on **engine restart**, not `vid_restart`. |
-| `r_actualRenderApi` | (read-only) | Reports the backend that actually initialized. If the Vulkan renderer module cannot be loaded or finds no usable Vulkan device, the engine **falls back to OpenGL** and this reports `gl`. |
+| `r_actualRenderApi` | (read-only) | Reports the backend that actually initialized. If loading or initializing Vulkan fails at startup, the engine **falls back to OpenGL** and this reports `gl`. |
 
 ### All `r_renderApi` values
 
@@ -171,13 +172,14 @@ Notes:
   `gfxInfo` gives the reason on its `Renderer API fallback reason` line, and
   `r_actualRenderApi` reports `gl`. Your `vulkan` selection is kept, so the next
   launch tries Vulkan again, for example after a driver update.
-- A failure that only appears later, while openQ4 creates the window, its
-  Vulkan surface, or the swapchain, still **stops openQ4 with "Vulkan renderer
-  device initialization failed"**: by then the engine has been set up around
-  the Vulkan renderer and cannot switch to OpenGL mid-start. Before stopping,
-  openQ4 sets `r_renderApi` back to `gl` in your saved config, so the next
-  launch starts on OpenGL. If you chose Vulkan with a `+set r_renderApi vulkan`
-  launch option, remove that option too.
+- Startup failures while creating the window, Vulkan surface, swapchain, or
+  mandatory renderer resources also recover to OpenGL in the same launch.
+  openQ4 releases the failed startup's renderer objects before loading OpenGL,
+  and keeps the failure reason in the log. Your Vulkan selection is preserved.
+- A device failure during a later full `vid_restart` still stops openQ4 and
+  saves `r_renderApi gl` for the next launch. Switching renderer modules during
+  gameplay requires a full engine restart. If you supplied
+  `+set r_renderApi vulkan`, remove that launch option to select OpenGL.
 - Vulkan reports are welcome. Check the list below first, then include
   `openq4.log`, `gfxInfo`, and your GPU and driver version.
 
@@ -190,6 +192,10 @@ Notes:
   `r_hdrSceneTarget`). OpenGL only uses them with its opt-in modern executor,
   which has no Vulkan version. The classic post-processing chain, which both
   renderers use by default, ignores them on either.
+- **Advanced renderer parity.** Vulkan's opt-in PBR path supports a narrower
+  material subset than OpenGL; authored reflection probes, clustered decals,
+  exact rigid-object TAA motion vectors, and translucent moment shadows remain
+  incomplete. These are separate from the stock effects listed above.
 - **Pixel readbacks in the debug views.** A Vulkan frame cannot stop halfway
   to read pixels back, so the overdraw averages that `r_showLightCount 3` and
   `r_showShadowCount 2` to `4` print arrive a frame or two late, and

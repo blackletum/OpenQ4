@@ -31,6 +31,20 @@ enum rendererModernExecutorMetricsMode_t {
 	RENDERER_MODERN_EXECUTOR_METRICS_LEGACY_FALLBACK
 };
 
+// CPU phases inside the GL present command. GPU timestamp spans can include
+// an idle queue while the CPU is blocked; keep the two clocks distinct.
+enum rendererPresentCpuPhase_t {
+	RENDERER_PRESENT_FINISH = 0,
+	RENDERER_PRESENT_FINAL_POST,
+	RENDERER_PRESENT_WINDOW_STATE,
+	RENDERER_PRESENT_CONTEXT,
+	RENDERER_PRESENT_SWAP,
+	RENDERER_PRESENT_CPU_PHASE_COUNT
+};
+unsigned long long R_RendererMetrics_CpuClock( void );
+void R_RendererMetrics_EndPresentPhase( rendererPresentCpuPhase_t phase, unsigned long long begin );
+void R_RendererMetrics_EndUploadRetirement( unsigned long long begin );
+
 void R_RendererMetrics_BeginFrame( int frameCount );
 void R_RendererMetrics_MarkCpuFrameBegin( void );
 void R_RendererMetrics_RecordSubmitMsec( int submitMsec );

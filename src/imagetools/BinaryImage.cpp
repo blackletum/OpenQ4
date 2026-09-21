@@ -297,7 +297,8 @@ void idBinaryImage::Load2DFromMemory( int width, int height, const byte * pic_co
 				img.data[ i * 2 + 1 ] = color & 0xFF;
 			}
 		} else {
-			fileData.format = textureFormat = FMT_RGBA8;
+			if ( textureFormat != FMT_SRGBA8 ) { textureFormat = FMT_RGBA8; }
+			fileData.format = textureFormat;
 			img.Alloc( scaledWidth * scaledHeight * 4 );
 			memcpy( img.data, uploadPic, img.dataSize );
 		}
@@ -315,7 +316,9 @@ void idBinaryImage::Load2DFromMemory( int width, int height, const byte * pic_co
 		// downsample for the next level; the final level has no next level to feed
 		if ( level + 1 < images.Num() ) {
 			byte * shrunk = NULL;
-			if ( gammaMips ) {
+			if ( textureFormat == FMT_SRGBA8 ) {
+				shrunk = R_MipMapWithSRGB( pic, scaledWidth, scaledHeight );
+			} else if ( gammaMips ) {
 				shrunk = R_MipMapWithGamma( pic, scaledWidth, scaledHeight );
 			} else {
 				shrunk = R_MipMap( pic, scaledWidth, scaledHeight );
@@ -450,7 +453,8 @@ void idBinaryImage::LoadCubeFromMemory( int width, const byte * pics[6], int num
 				idDxtEncoder dxt;
 				dxt.CompressImageDXT5Fast( padSrc, img.data, padSize, padSize );
 			} else {
-				fileData.format = textureFormat = FMT_RGBA8;
+				if ( textureFormat != FMT_SRGBA8 ) { textureFormat = FMT_RGBA8; }
+				fileData.format = textureFormat;
 				img.Alloc( padSize * padSize * 4 );
 				memcpy( img.data, pic, img.dataSize );
 			}
@@ -458,7 +462,9 @@ void idBinaryImage::LoadCubeFromMemory( int width, const byte * pics[6], int num
 			// downsample for the next level; the final level has no next level to feed
 			if ( level + 1 < fileData.numLevels ) {
 				byte * shrunk = NULL;
-				if ( gammaMips ) {
+				if ( textureFormat == FMT_SRGBA8 ) {
+					shrunk = R_MipMapWithSRGB( pic, scaledWidth, scaledWidth );
+				} else if ( gammaMips ) {
 					shrunk = R_MipMapWithGamma( pic, scaledWidth, scaledWidth );
 				} else {
 					shrunk = R_MipMap( pic, scaledWidth, scaledWidth );
@@ -684,7 +690,7 @@ bool idBinaryImage::LoadFromGeneratedFile( idFile * bFile, ID_TIME_T sourceFileT
 		Clear();
 		return false;
 	}
-	if ( fileData.format <= FMT_NONE || fileData.format > FMT_BC7 || BitsForFormat( (textureFormat_t)fileData.format ) <= 0 ) {
+	if ( fileData.format <= FMT_NONE || ( fileData.format > FMT_BC7 && fileData.format != FMT_SRGBA8 ) || BitsForFormat( (textureFormat_t)fileData.format ) <= 0 ) {
 		Clear();
 		return false;
 	}

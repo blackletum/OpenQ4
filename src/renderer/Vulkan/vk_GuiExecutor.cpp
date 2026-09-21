@@ -30,6 +30,7 @@
 #include "../tr_local.h"
 #include "../Model_local.h"
 #include "../RenderModuleAPI.h"
+#include "../HDRExposureCore.h"
 
 #undef snprintf
 #undef vsnprintf
@@ -67,6 +68,7 @@
 #include "vk_ExecutorHooks.h"
 #include "shaders/gui_shaders_spv.h"
 #include "shaders/temporal_resolve_spv.h"
+#include "shaders/target_test_spv.h"
 
 extern idCVar r_skipDynamicTextures;
 
@@ -97,6 +99,9 @@ bool VK_PostProcess_DrawUnderwater( const viewDef_t *viewDef );
 void VK_DebugTools_DrawView( const viewDef_t *viewDef );
 static void VK_Exec_ReleaseStencilReadbacks( void );
 static void VK_Exec_PrintStencilReadbacks( int slot );
+static void VK_Exec_ReleaseHDRReadbacks( void );
+static void VK_Exec_ConsumeHDRReadback( int slot );
+static void VK_Exec_DiscardHDRReadback( int slot );
 static bool VK_GuiExecutor_SubmitFrame( bool present );
 VkDescriptorSet VK_Exec_InteractionUniformSet( void );
 int VK_Exec_InteractionUniformAlloc( const void *data, int bytes );
@@ -158,7 +163,8 @@ typedef struct vkRing_s {
 } vkRing_t;
 
 typedef struct vkPipelineTarget_s {
-	VkFormat			colorFormat;
+	uint32_t			colorCount;
+	VkFormat			colorFormats[ VK_MAX_COLOR_ATTACHMENTS ];
 	VkFormat			depthFormat;
 	VkFormat			stencilFormat;
 	VkSampleCountFlagBits samples;
@@ -455,8 +461,10 @@ typedef struct vkGuiExecutor_s {
 	float				clearColor[ 4 ];
 	int					boundVertexOffset;	// binding-0 ring offset of the last VK_Exec_BindTriGeometry
 	idRenderTexture *	activeRenderTexture;
-	vkImageEntry_t *	activeColorEntry;
+	int					activeCubeFace;
+	vkImageEntry_t *	activeColorEntries[ VK_MAX_COLOR_ATTACHMENTS ];
 	vkImageEntry_t *	activeDepthEntry;
+	VkImageView			activeColorAttachmentViews[ VK_MAX_COLOR_ATTACHMENTS ];
 	VkImageView			activeDepthAttachmentView;
 	VkExtent2D			activeExtent;
 	vkPipelineTarget_t	activePipelineTarget;
@@ -467,6 +475,10 @@ typedef struct vkGuiExecutor_s {
 	idImage *			temporalSceneColorImage;
 	idImage *			temporalSceneDepthImage;
 	idRenderTexture *	temporalSceneRenderTexture;
+	idImage *			temporalSceneResolveColorImage;
+	idImage *			temporalSceneResolveDepthImage;
+	idRenderTexture *	temporalSceneResolveRenderTexture;
+	int					temporalSceneRequestedSamples;
 	int				temporalSceneWidth;
 	int				temporalSceneHeight;
 	int				temporalNativeWidth;
@@ -553,8 +565,9 @@ typedef struct vkSharedGeometryCheckpoint_s {
 static vkSharedGeometryCheckpoint_t vkSharedGeometryCheckpoint;
 
 static vkPipelineTarget_t VK_Exec_SwapchainPipelineTarget( void ) {
-	vkPipelineTarget_t target;
-	target.colorFormat = vkCtx.swapchainFormat;
+	vkPipelineTarget_t target = {};
+	target.colorCount = 1;
+	target.colorFormats[ 0 ] = vkCtx.swapchainFormat;
 	target.depthFormat = vkCtx.depthFormat;
 	target.stencilFormat = vkCtx.depthFormat;
 	target.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -562,7 +575,7 @@ static vkPipelineTarget_t VK_Exec_SwapchainPipelineTarget( void ) {
 }
 
 static const vkPipelineTarget_t &VK_Exec_CurrentPipelineTarget( void ) {
-	if ( vkExec.frameOpen && vkExec.activePipelineTarget.colorFormat != VK_FORMAT_UNDEFINED ) {
+	if ( vkExec.frameOpen ) {
 		return vkExec.activePipelineTarget;
 	}
 	static vkPipelineTarget_t swapchainTarget;
@@ -571,7 +584,8 @@ static const vkPipelineTarget_t &VK_Exec_CurrentPipelineTarget( void ) {
 }
 
 static bool VK_Exec_PipelineTargetsMatch( const vkPipelineTarget_t &a, const vkPipelineTarget_t &b ) {
-	return a.colorFormat == b.colorFormat
+	return a.colorCount == b.colorCount
+			&& memcmp( a.colorFormats, b.colorFormats, a.colorCount * sizeof( VkFormat ) ) == 0
 			&& a.depthFormat == b.depthFormat
 			&& a.stencilFormat == b.stencilFormat
 			&& a.samples == b.samples;
@@ -762,6 +776,7 @@ static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderMod
 		bool enableDepthClamp = false,
 		VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
 		bool alphaToCoverage = false ) {
+	const uint32_t colorCount = depthOnly ? 0 : target.colorCount;
 	VkPipelineShaderStageCreateInfo stages[ 2 ];
 	memset( stages, 0, sizeof( stages ) );
 	stages[ 0 ].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -832,8 +847,14 @@ static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderMod
 	VkPipelineColorBlendStateCreateInfo blendState;
 	memset( &blendState, 0, sizeof( blendState ) );
 	blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-	blendState.attachmentCount = depthOnly ? 0 : 1;
-	blendState.pAttachments = depthOnly ? NULL : &blendAttachment;
+	// Every draw buffer shares the public blend/mask state, as in OpenGL.
+	// Identical entries also avoid requiring the optional independentBlend feature.
+	VkPipelineColorBlendAttachmentState blendAttachments[ VK_MAX_COLOR_ATTACHMENTS ];
+	for ( uint32_t i = 0; i < colorCount; i++ ) {
+		blendAttachments[ i ] = blendAttachment;
+	}
+	blendState.attachmentCount = colorCount;
+	blendState.pAttachments = colorCount != 0 ? blendAttachments : NULL;
 
 	// depth/cull/bias are core-1.3 dynamic state, so one pipeline per blend
 	// combination serves 2D (depth off) and the world passes (per-stage
@@ -884,8 +905,8 @@ static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderMod
 	VkPipelineRenderingCreateInfo rendering;
 	memset( &rendering, 0, sizeof( rendering ) );
 	rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-	rendering.colorAttachmentCount = depthOnly ? 0 : 1;
-	rendering.pColorAttachmentFormats = depthOnly ? NULL : &target.colorFormat;
+	rendering.colorAttachmentCount = colorCount;
+	rendering.pColorAttachmentFormats = colorCount != 0 ? target.colorFormats : NULL;
 	rendering.depthAttachmentFormat = target.depthFormat;
 	rendering.stencilAttachmentFormat = target.stencilFormat;
 
@@ -1858,8 +1879,7 @@ VkPipeline VK_Exec_CasterPipeline( void ) {
 	VkPipelineVertexInputStateCreateInfo vertexInput;
 	VK_Exec_CasterVertexInput( binding, attrs, vertexInput );
 
-	vkPipelineTarget_t target;
-	target.colorFormat = VK_FORMAT_UNDEFINED;
+	vkPipelineTarget_t target = {};
 	target.depthFormat = vkCtx.shadowDepthFormat;
 	target.stencilFormat = vkCtx.shadowDepthHasStencil ? vkCtx.shadowDepthFormat : VK_FORMAT_UNDEFINED;
 	target.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -1885,8 +1905,7 @@ VkPipeline VK_Exec_PointCasterPipeline( void ) {
 	VkPipelineVertexInputStateCreateInfo vertexInput;
 	VK_Exec_CasterVertexInput( binding, attrs, vertexInput );
 
-	vkPipelineTarget_t target;
-	target.colorFormat = VK_FORMAT_UNDEFINED;
+	vkPipelineTarget_t target = {};
 	target.depthFormat = vkCtx.shadowDepthFormat;
 	target.stencilFormat = vkCtx.shadowDepthHasStencil ? vkCtx.shadowDepthFormat : VK_FORMAT_UNDEFINED;
 	target.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -2930,10 +2949,17 @@ static bool VK_GuiExecutor_Init( void ) {
 	vkExec.temporalSceneCompositeInvalidatedFrame = -1;
 	vkExec.temporalHistoryGenerationSeen =
 		R_TemporalPresentation_HistoryGeneration();
+	if ( VK_Device_InjectStartupFailure( 4 ) ) {
+		return false;
+	}
 	vkExec.initialized = true;
 	initGuard.Commit();
 	common->Printf( "Vulkan: GUI executor initialized\n" );
 	return true;
+}
+
+bool VK_GuiExecutor_PrepareStartup( void ) {
+	return vkCtx.initialized && VK_GuiExecutor_Init();
 }
 
 void VK_GuiExecutor_Shutdown( void ) {
@@ -2942,6 +2968,7 @@ void VK_GuiExecutor_Shutdown( void ) {
 	// (a pipeline outlives the modules it was built from)
 	VK_PostProcess_Shutdown();
 	VK_Exec_ReleaseStencilReadbacks();
+	VK_Exec_ReleaseHDRReadbacks();
 	for ( int i = 0; i < 2; ++i ) {
 		if ( vkExec.temporalDirectHistoryRenderTextures[i] != NULL ) {
 			delete vkExec.temporalDirectHistoryRenderTextures[i];
@@ -2961,6 +2988,10 @@ void VK_GuiExecutor_Shutdown( void ) {
 	}
 	vkExec.temporalSceneColorImage = NULL;
 	vkExec.temporalSceneDepthImage = NULL;
+	delete vkExec.temporalSceneResolveRenderTexture;
+	vkExec.temporalSceneResolveRenderTexture = NULL;
+	vkExec.temporalSceneResolveColorImage = NULL;
+	vkExec.temporalSceneResolveDepthImage = NULL;
 	if ( vkCtx.device == VK_NULL_HANDLE ) {
 		memset( &vkExec, 0, sizeof( vkExec ) );
 		return;
@@ -3217,7 +3248,7 @@ void VK_GuiExecutor_SetClearColor( const float color[ 4 ] ) {
 	vkExec.clearColor[ 3 ] = color[ 3 ];
 }
 
-static bool VK_GuiExecutor_BeginFrame( void ) {
+bool VK_GuiExecutor_BeginFrame( void ) {
 	static bool loggedNotInitialized = false;
 	static bool loggedInitFailed = false;
 	if ( vkExec.frameOpen ) {
@@ -3326,6 +3357,7 @@ static bool VK_GuiExecutor_BeginFrame( void ) {
 	}
 	// the debug tools' stencil copies from this slot's last frame are done
 	VK_Exec_PrintStencilReadbacks( slot );
+	VK_Exec_ConsumeHDRReadback( slot );
 	// retire the last upload batch (and, per fence submission-order scope,
 	// every earlier one) before deferred destroys can release images those
 	// batches referenced; near-free, since the batch was submitted before the
@@ -3421,8 +3453,11 @@ static bool VK_GuiExecutor_BeginFrame( void ) {
 	vkExec.swapImageIndex = imageIndex;
 	vkExec.cmd = cmd;
 	vkExec.activeRenderTexture = NULL;
-	vkExec.activeColorEntry = NULL;
+	vkExec.activeCubeFace = 0;
+	memset( vkExec.activeColorEntries, 0, sizeof( vkExec.activeColorEntries ) );
 	vkExec.activeDepthEntry = NULL;
+	memset( vkExec.activeColorAttachmentViews, 0, sizeof( vkExec.activeColorAttachmentViews ) );
+	vkExec.activeColorAttachmentViews[ 0 ] = vkCtx.swapchainViews[ imageIndex ];
 	vkExec.activeDepthAttachmentView = vkCtx.depthViews[ slot ];
 	vkExec.activeExtent = vkCtx.swapchainExtent;
 	vkExec.activePipelineTarget = VK_Exec_SwapchainPipelineTarget();
@@ -3458,57 +3493,48 @@ contents to survive the scope break.
 ====================
 */
 static void VK_Exec_BarrierActiveTargetForLoad( void ) {
-	VkImageMemoryBarrier2 barriers[ 2 ];
+	VkImageMemoryBarrier2 barriers[ VK_MAX_COLOR_ATTACHMENTS + 1 ];
 	memset( barriers, 0, sizeof( barriers ) );
-
-	barriers[ 0 ].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-	barriers[ 0 ].srcStageMask =
-			VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-	barriers[ 0 ].srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-	barriers[ 0 ].dstStageMask =
-			VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-	barriers[ 0 ].dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT
-			| VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-	barriers[ 0 ].oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-	barriers[ 0 ].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-	barriers[ 0 ].image = vkExec.activeColorEntry != NULL
-			? vkExec.activeColorEntry->image
-			: vkCtx.swapchainImages[ vkExec.swapImageIndex ];
-	barriers[ 0 ].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	barriers[ 0 ].subresourceRange.levelCount = 1;
-	barriers[ 0 ].subresourceRange.layerCount = 1;
-
-	barriers[ 1 ].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-	barriers[ 1 ].srcStageMask =
-			VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
-	barriers[ 1 ].srcAccessMask =
-			VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-	barriers[ 1 ].dstStageMask =
-			VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT;
-	barriers[ 1 ].dstAccessMask =
-			VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT
-			| VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-	barriers[ 1 ].oldLayout =
-			VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-	barriers[ 1 ].newLayout =
-			VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-	barriers[ 1 ].image = vkExec.activeDepthEntry != NULL
-			? vkExec.activeDepthEntry->image
-			: vkCtx.depthImages[ vkExec.frameSlot ];
-	barriers[ 1 ].subresourceRange.aspectMask =
-			vkExec.activeDepthEntry != NULL
-			? vkExec.activeDepthEntry->aspectMask
-			: VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
-	barriers[ 1 ].subresourceRange.levelCount = 1;
-	barriers[ 1 ].subresourceRange.layerCount = 1;
+	uint32_t count = vkExec.activePipelineTarget.colorCount;
+	for ( uint32_t i = 0; i < count; i++ ) {
+		const vkImageEntry_t *entry = vkExec.activeColorEntries[ i ];
+		VkImageMemoryBarrier2 &barrier = barriers[ i ];
+		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+		barrier.srcStageMask = barrier.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+		barrier.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+		barrier.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+		barrier.oldLayout = barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barrier.image = entry != NULL ? entry->image : vkCtx.swapchainImages[ vkExec.swapImageIndex ];
+		barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		barrier.subresourceRange.baseArrayLayer = entry != NULL && entry->isCube ? (uint32_t)vkExec.activeCubeFace : 0;
+		barrier.subresourceRange.levelCount = barrier.subresourceRange.layerCount = 1;
+	}
+	if ( vkExec.activeDepthAttachmentView != VK_NULL_HANDLE ) {
+		const vkImageEntry_t *entry = vkExec.activeDepthEntry;
+		VkImageMemoryBarrier2 &barrier = barriers[ count++ ];
+		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+		barrier.srcStageMask = barrier.dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT
+				| VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+		barrier.srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+		barrier.dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+		barrier.oldLayout = barrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+		barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barrier.image = entry != NULL ? entry->image : vkCtx.depthImages[ vkExec.frameSlot ];
+		barrier.subresourceRange.aspectMask = entry != NULL ? entry->aspectMask
+				: VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+		barrier.subresourceRange.baseArrayLayer = entry != NULL && entry->isCube ? (uint32_t)vkExec.activeCubeFace : 0;
+		barrier.subresourceRange.levelCount = barrier.subresourceRange.layerCount = 1;
+	}
 
 	VkDependencyInfo dependency;
 	memset( &dependency, 0, sizeof( dependency ) );
 	dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-	dependency.imageMemoryBarrierCount =
-			vkExec.activeDepthAttachmentView != VK_NULL_HANDLE ? 2 : 1;
+	dependency.imageMemoryBarrierCount = count;
 	dependency.pImageMemoryBarriers = barriers;
-	vkCmdPipelineBarrier2( vkExec.cmd, &dependency );
+	if ( dependency.imageMemoryBarrierCount != 0 ) {
+		vkCmdPipelineBarrier2( vkExec.cmd, &dependency );
+	}
 }
 
 bool VK_Exec_BeginMainRendering( bool clearColorDepth ) {
@@ -3523,19 +3549,16 @@ bool VK_Exec_BeginMainRendering( bool clearColorDepth ) {
 		VK_Exec_BarrierActiveTargetForLoad();
 	}
 
-	VkRenderingAttachmentInfo color;
-	memset( &color, 0, sizeof( color ) );
-	color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-	color.imageView = vkExec.activeColorEntry != NULL
-			? vkExec.activeColorEntry->attachmentView
-			: vkCtx.swapchainViews[ vkExec.swapImageIndex ];
-	color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-	color.loadOp = clearColorDepth ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-	color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-	color.clearValue.color.float32[ 0 ] = vkExec.clearColor[ 0 ];
-	color.clearValue.color.float32[ 1 ] = vkExec.clearColor[ 1 ];
-	color.clearValue.color.float32[ 2 ] = vkExec.clearColor[ 2 ];
-	color.clearValue.color.float32[ 3 ] = vkExec.clearColor[ 3 ];
+	VkRenderingAttachmentInfo colors[ VK_MAX_COLOR_ATTACHMENTS ] = {};
+	for ( uint32_t i = 0; i < vkExec.activePipelineTarget.colorCount; i++ ) {
+		VkRenderingAttachmentInfo &color = colors[ i ];
+		color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+		color.imageView = vkExec.activeColorAttachmentViews[ i ];
+		color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		color.loadOp = clearColorDepth ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+		color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		memcpy( color.clearValue.color.float32, vkExec.clearColor, sizeof( vkExec.clearColor ) );
+	}
 
 	// depth/stencil attach for the whole frame; contents are transient (the
 	// world passes re-clear per 3D view via vkCmdClearAttachments)
@@ -3558,8 +3581,8 @@ bool VK_Exec_BeginMainRendering( bool clearColorDepth ) {
 	ri.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
 	ri.renderArea.extent = vkExec.activeExtent;
 	ri.layerCount = 1;
-	ri.colorAttachmentCount = 1;
-	ri.pColorAttachments = &color;
+	ri.colorAttachmentCount = vkExec.activePipelineTarget.colorCount;
+	ri.pColorAttachments = ri.colorAttachmentCount != 0 ? colors : NULL;
 	if ( depth.imageView != VK_NULL_HANDLE ) {
 		ri.pDepthAttachment = &depth;
 		if ( vkExec.activePipelineTarget.stencilFormat != VK_FORMAT_UNDEFINED ) {
@@ -3737,31 +3760,16 @@ static bool VK_Exec_RenderTextureEntries( idRenderTexture *renderTexture,
 		vkImageEntry_t *&colorEntry, vkImageEntry_t *&depthEntry ) {
 	colorEntry = NULL;
 	depthEntry = NULL;
+	vkRenderTargetAttachments_t attachments;
+	// Spatial/temporal consumers of this helper intentionally accept a single
+	// scene color image. General target binding and resolves use the full set.
 	if ( renderTexture == NULL || !renderTexture->EnsureDeviceHandle()
-			|| renderTexture->GetNumColorImages() != 1 ) {
+			|| renderTexture->GetNumColorImages() > 1
+			|| !VK_Image_GetRenderTargetAttachments( renderTexture, 0, attachments ) ) {
 		return false;
 	}
-
-	idImage *colorImage = renderTexture->GetColorImage( 0 );
-	if ( colorImage == NULL ) {
-		return false;
-	}
-	colorEntry = VK_Image_GetEntry( colorImage->GetDeviceHandle() );
-	if ( colorEntry == NULL || colorEntry->attachmentView == VK_NULL_HANDLE
-			|| ( colorEntry->usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT ) == 0 ) {
-		return false;
-	}
-
-	idImage *depthImage = renderTexture->GetDepthImage();
-	if ( depthImage != NULL ) {
-		depthEntry = VK_Image_GetEntry( depthImage->GetDeviceHandle() );
-		if ( depthEntry == NULL || depthEntry->attachmentView == VK_NULL_HANDLE
-				|| ( depthEntry->usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT ) == 0
-				|| depthEntry->width != colorEntry->width || depthEntry->height != colorEntry->height
-				|| depthEntry->samples != colorEntry->samples ) {
-			return false;
-		}
-	}
+	colorEntry = attachments.colors[ 0 ];
+	depthEntry = attachments.depth;
 	return true;
 }
 
@@ -3769,7 +3777,9 @@ static void VK_Exec_TransitionActiveTargetToSampled( void ) {
 	if ( vkExec.activeRenderTexture == NULL ) {
 		return;
 	}
-	VK_Exec_TransitionImage( vkExec.activeColorEntry, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
+	for ( uint32_t i = 0; i < vkExec.activePipelineTarget.colorCount; i++ ) {
+		VK_Exec_TransitionImage( vkExec.activeColorEntries[ i ], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
+	}
 	VK_Exec_TransitionImage( vkExec.activeDepthEntry, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
 }
 
@@ -3777,15 +3787,39 @@ static void VK_Exec_TransitionActiveTargetToAttachments( void ) {
 	if ( vkExec.activeRenderTexture == NULL ) {
 		return;
 	}
-	VK_Exec_TransitionImage( vkExec.activeColorEntry, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
+	for ( uint32_t i = 0; i < vkExec.activePipelineTarget.colorCount; i++ ) {
+		VK_Exec_TransitionImage( vkExec.activeColorEntries[ i ], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
+	}
 	VK_Exec_TransitionImage( vkExec.activeDepthEntry, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL );
 }
 
-bool VK_Exec_SetRenderTarget( idRenderTexture *renderTexture ) {
+bool VK_Exec_SetRenderTarget( idRenderTexture *renderTexture, int cubeFace ) {
+	if ( cubeFace < 0 || cubeFace >= 6 || ( renderTexture == NULL && cubeFace != 0 ) ) {
+		return false;
+	}
 	if ( !VK_GuiExecutor_BeginFrame() ) {
 		return false;
 	}
-	if ( renderTexture == vkExec.activeRenderTexture ) {
+	vkRenderTargetAttachments_t attachments = {};
+	if ( renderTexture != NULL ) {
+		if ( !renderTexture->EnsureDeviceHandle()
+				|| !VK_Image_GetRenderTargetAttachments( renderTexture, cubeFace, attachments ) ) {
+			return false;
+		}
+	} else {
+		attachments.colorCount = 1;
+		attachments.colorViews[ 0 ] = vkCtx.swapchainViews[ vkExec.swapImageIndex ];
+		attachments.depthView = vkCtx.depthViews[ vkExec.frameSlot ];
+		attachments.extent = vkCtx.swapchainExtent;
+		attachments.samples = VK_SAMPLE_COUNT_1_BIT;
+	}
+	// A target object can gain attachments or have its images reallocated
+	// without changing its address. Validate the actual views before reusing it.
+	if ( renderTexture == vkExec.activeRenderTexture && cubeFace == vkExec.activeCubeFace
+			&& attachments.colorCount == vkExec.activePipelineTarget.colorCount
+			&& memcmp( attachments.colorViews, vkExec.activeColorAttachmentViews,
+					sizeof( attachments.colorViews ) ) == 0
+			&& attachments.depthView == vkExec.activeDepthAttachmentView ) {
 		if ( !vkExec.mainScopeOpen ) {
 			VK_Exec_TransitionActiveTargetToAttachments();
 			return VK_Exec_BeginMainRendering( false );
@@ -3793,31 +3827,30 @@ bool VK_Exec_SetRenderTarget( idRenderTexture *renderTexture ) {
 		return true;
 	}
 
-	vkImageEntry_t *colorEntry = NULL;
-	vkImageEntry_t *depthEntry = NULL;
-	if ( renderTexture != NULL && !VK_Exec_RenderTextureEntries( renderTexture, colorEntry, depthEntry ) ) {
-		return false;
-	}
-
 	VK_Exec_EndMainRendering();
 	VK_Exec_TransitionActiveTargetToSampled();
 
 	vkExec.activeRenderTexture = renderTexture;
-	vkExec.activeColorEntry = colorEntry;
+	vkExec.activeCubeFace = cubeFace;
+	memcpy( vkExec.activeColorEntries, attachments.colors, sizeof( attachments.colors ) );
+	memcpy( vkExec.activeColorAttachmentViews, attachments.colorViews, sizeof( attachments.colorViews ) );
+	vkImageEntry_t *depthEntry = attachments.depth;
 	vkExec.activeDepthEntry = depthEntry;
+	vkExec.activeDepthAttachmentView = attachments.depthView;
+	vkExec.activeExtent = attachments.extent;
 	if ( renderTexture != NULL ) {
-		VK_Exec_TransitionActiveTargetToAttachments();
-		vkExec.activeDepthAttachmentView = depthEntry != NULL ? depthEntry->attachmentView : VK_NULL_HANDLE;
-		vkExec.activeExtent.width = (uint32_t)colorEntry->width;
-		vkExec.activeExtent.height = (uint32_t)colorEntry->height;
-		vkExec.activePipelineTarget.colorFormat = colorEntry->format;
+		memset( &vkExec.activePipelineTarget, 0, sizeof( vkExec.activePipelineTarget ) );
+		vkExec.activePipelineTarget.colorCount = attachments.colorCount;
+		for ( uint32_t i = 0; i < attachments.colorCount; i++ ) {
+			vkExec.activePipelineTarget.colorFormats[ i ] = attachments.colors[ i ]->format;
+		}
 		vkExec.activePipelineTarget.depthFormat = depthEntry != NULL ? depthEntry->format : VK_FORMAT_UNDEFINED;
 		vkExec.activePipelineTarget.stencilFormat = depthEntry != NULL
 				&& ( depthEntry->aspectMask & VK_IMAGE_ASPECT_STENCIL_BIT ) != 0
 				? depthEntry->format : VK_FORMAT_UNDEFINED;
-		vkExec.activePipelineTarget.samples = colorEntry->samples;
+		vkExec.activePipelineTarget.samples = attachments.samples;
+		VK_Exec_TransitionActiveTargetToAttachments();
 	} else {
-		vkExec.activeDepthAttachmentView = vkCtx.depthViews[ vkExec.frameSlot ];
 		vkExec.activeExtent = vkCtx.swapchainExtent;
 		vkExec.activePipelineTarget = VK_Exec_SwapchainPipelineTarget();
 	}
@@ -3856,7 +3889,7 @@ bool VK_Exec_SharedInteractionTargetReady( void ) {
 	return vkExec.frameOpen && vkExec.mainScopeOpen
 		&& vkExec.cmd != VK_NULL_HANDLE
 		&& vkExec.activeRenderTexture == NULL
-		&& vkExec.activeColorEntry == NULL
+		&& vkExec.activeColorEntries[ 0 ] == NULL
 		&& vkExec.activeDepthEntry == NULL
 		&& vkExec.pendingSpecialEffectsView == NULL
 		&& vkExec.pendingSpecialEffectsMask == 0
@@ -3875,13 +3908,13 @@ void VK_Exec_ClearRenderTarget( bool clearColor, bool clearDepth, float depthVal
 		return;
 	}
 
-	VkClearAttachment attachments[ 2 ];
+	VkClearAttachment attachments[ VK_MAX_COLOR_ATTACHMENTS + 1 ];
 	memset( attachments, 0, sizeof( attachments ) );
 	int attachmentCount = 0;
-	if ( clearColor ) {
+	for ( uint32_t i = 0; clearColor && i < vkExec.activePipelineTarget.colorCount; i++ ) {
 		VkClearAttachment &attachment = attachments[ attachmentCount++ ];
 		attachment.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		attachment.colorAttachment = 0;
+		attachment.colorAttachment = i;
 		memcpy( attachment.clearValue.color.float32, colorValue, 4 * sizeof( float ) );
 	}
 	if ( clearDepth && vkExec.activeDepthAttachmentView != VK_NULL_HANDLE ) {
@@ -4020,7 +4053,8 @@ static bool VK_TemporalPresentation_BackendSceneRequested(
 	const bool temporalScene = presentation.temporalAARequested && !knownCapture;
 	const bool screenSpaceScene = AdvancedScreenSpaceCore_Requested(
 		presentation.advancedScreenSpace );
-	if ( !sceneScaled && !temporalScene && !screenSpaceScene ) {
+	if ( !sceneScaled && !temporalScene && !screenSpaceScene
+			&& !VK_PostProcess_HDRSceneRequested() && r_multiSamples.GetInteger() <= 1 ) {
 		return false;
 	}
 	// The spatial presentation shader is also the projection-jitter safety
@@ -4352,6 +4386,56 @@ static bool VK_Exec_DepthBlitSupported( VkFormat depthFormat ) {
 		&& ( properties.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT ) != 0;
 }
 
+static bool VK_TemporalPresentation_AllocateSceneTarget( idImage *&color, idImage *&depth,
+		idRenderTexture *&target, const char *colorName, const char *depthName,
+		textureFormat_t format, int width, int height, int samples ) {
+	idImageOpts colorOpts;
+	colorOpts.format = format;
+	colorOpts.colorFormat = CFM_DEFAULT;
+	colorOpts.numLevels = 1;
+	colorOpts.textureType = TT_2D;
+	colorOpts.isPersistant = true;
+	colorOpts.width = width;
+	colorOpts.height = height;
+	colorOpts.numMSAASamples = samples;
+	idImageOpts depthOpts = colorOpts;
+	depthOpts.format = FMT_DEPTH_STENCIL;
+	if ( color == NULL ) {
+		color = globalImages->ScratchImage( colorName, &colorOpts, TF_LINEAR, TR_CLAMP, TD_DEFAULT );
+	} else {
+		color->AllocImage( colorOpts, TF_LINEAR, TR_CLAMP );
+	}
+	if ( depth == NULL ) {
+		depth = globalImages->ScratchImage( depthName, &depthOpts, TF_NEAREST, TR_CLAMP, TD_DEPTH );
+	} else {
+		depth->AllocImage( depthOpts, TF_NEAREST, TR_CLAMP );
+	}
+	if ( color == NULL || depth == NULL || !color->IsLoaded() || !depth->IsLoaded() ) {
+		return false;
+	}
+	// Format-specific limits can differ from the device-wide intersection.
+	// Select the lower actual tier for both attachments before binding them.
+	const int commonSamples = Min( color->GetOpts().numMSAASamples, depth->GetOpts().numMSAASamples );
+	if ( color->GetOpts().numMSAASamples != commonSamples ) {
+		colorOpts.numMSAASamples = commonSamples;
+		color->AllocImage( colorOpts, TF_LINEAR, TR_CLAMP );
+	}
+	if ( depth->GetOpts().numMSAASamples != commonSamples ) {
+		depthOpts.numMSAASamples = commonSamples;
+		depth->AllocImage( depthOpts, TF_NEAREST, TR_CLAMP );
+	}
+	if ( target == NULL ) {
+		target = tr.CreateRenderTexture( color, depth );
+	}
+	return target != NULL && target->EnsureDeviceHandle();
+}
+
+static idRenderTexture *VK_TemporalPresentation_SampledSceneTarget( void ) {
+	return vkExec.temporalSceneColorImage != NULL
+			&& vkExec.temporalSceneColorImage->GetOpts().numMSAASamples > 1
+			? vkExec.temporalSceneResolveRenderTexture : vkExec.temporalSceneRenderTexture;
+}
+
 static bool VK_TemporalPresentation_EnsureSceneTarget( int width, int height ) {
 	const int maxDimension = Min( 32767,
 		static_cast<int>( vkCtx.deviceProperties.limits.maxImageDimension2D ) );
@@ -4366,36 +4450,30 @@ static bool VK_TemporalPresentation_EnsureSceneTarget( int width, int height ) {
 		return false;
 	}
 
+	const textureFormat_t sceneFormat = VK_PostProcess_HDRSceneRequested() ? FMT_RGBA16F : FMT_RGBA8;
+	const int requestedSamples = r_multiSamples.GetInteger() > 1 ? r_multiSamples.GetInteger() : 0;
+	const bool formatChanged = vkExec.temporalSceneColorImage != NULL
+		&& vkExec.temporalSceneColorImage->GetOpts().format != sceneFormat;
 	const bool sizeChanged = vkExec.temporalSceneWidth != width
-		|| vkExec.temporalSceneHeight != height;
-	if ( vkExec.temporalSceneRenderTexture == NULL ) {
-		idImageOpts colorOpts;
-		colorOpts.format = FMT_RGBA8;
-		colorOpts.colorFormat = CFM_DEFAULT;
-		colorOpts.numLevels = 1;
-		colorOpts.textureType = TT_2D;
-		colorOpts.isPersistant = true;
-		colorOpts.width = width;
-		colorOpts.height = height;
-		colorOpts.numMSAASamples = 0;
-		vkExec.temporalSceneColorImage = globalImages->ScratchImage(
-			"_vkTemporalSceneColor", &colorOpts, TF_LINEAR, TR_CLAMP, TD_DEFAULT );
-		idImageOpts depthOpts = colorOpts;
-		depthOpts.format = FMT_DEPTH_STENCIL;
-		vkExec.temporalSceneDepthImage = globalImages->ScratchImage(
-			"_vkTemporalSceneDepth", &depthOpts, TF_NEAREST, TR_CLAMP, TD_DEPTH );
-		if ( vkExec.temporalSceneColorImage != NULL
-				&& vkExec.temporalSceneDepthImage != NULL ) {
-			vkExec.temporalSceneRenderTexture = tr.CreateRenderTexture(
-				vkExec.temporalSceneColorImage, vkExec.temporalSceneDepthImage );
+		|| vkExec.temporalSceneHeight != height || formatChanged
+		|| vkExec.temporalSceneRequestedSamples != requestedSamples;
+	if ( sizeChanged || vkExec.temporalSceneRenderTexture == NULL ) {
+		if ( !VK_TemporalPresentation_AllocateSceneTarget(
+				vkExec.temporalSceneColorImage, vkExec.temporalSceneDepthImage,
+				vkExec.temporalSceneRenderTexture, "_vkTemporalSceneColor", "_vkTemporalSceneDepth",
+				sceneFormat, width, height, requestedSamples ) ) {
+			return false;
 		}
-		if ( vkExec.temporalSceneRenderTexture != NULL ) {
-			vkExec.temporalSceneRenderTexture->SetDebugLabel(
-				"Vulkan temporal presentation scene" );
+		if ( vkExec.temporalSceneColorImage->GetOpts().numMSAASamples > 1
+				&& !VK_TemporalPresentation_AllocateSceneTarget(
+					vkExec.temporalSceneResolveColorImage, vkExec.temporalSceneResolveDepthImage,
+					vkExec.temporalSceneResolveRenderTexture,
+					"_vkTemporalSceneResolveColor", "_vkTemporalSceneResolveDepth",
+					sceneFormat, width, height, 0 ) ) {
+			return false;
 		}
-	} else if ( sizeChanged ) {
-		(void)tr.ResizeRenderTexture( vkExec.temporalSceneRenderTexture,
-			width, height );
+		vkExec.temporalSceneRenderTexture->SetDebugLabel( "Vulkan temporal presentation scene" );
+		vkExec.temporalSceneRequestedSamples = requestedSamples;
 	}
 
 	if ( vkExec.temporalSceneRenderTexture == NULL
@@ -4563,8 +4641,8 @@ static bool VK_TemporalPresentation_ResolvePendingSceneTemporal(
 
 	resolveTemporalPresentationCommand_t command;
 	memset( &command, 0, sizeof( command ) );
-	command.sceneColorTarget = vkExec.temporalSceneRenderTexture;
-	command.sceneDepthTarget = vkExec.temporalSceneRenderTexture;
+	command.sceneColorTarget = VK_TemporalPresentation_SampledSceneTarget();
+	command.sceneDepthTarget = command.sceneColorTarget;
 	command.historyReadTarget = continuity
 		? vkExec.temporalDirectHistoryRenderTextures[readIndex] : NULL;
 	command.historyWriteTarget =
@@ -4629,9 +4707,23 @@ static bool VK_TemporalPresentation_CompositePendingScene( void ) {
 		return false;
 	}
 
+	idRenderTexture *sampledTarget = VK_TemporalPresentation_SampledSceneTarget();
+	if ( sampledTarget != vkExec.temporalSceneRenderTexture ) {
+		const bool depthComplete = VK_TemporalPresentation_DepthStampMatches(
+			vkExec.temporalSceneRenderTexture, vkExec.temporalSceneDepthImage,
+			R_TemporalPresentation_HistoryGeneration() );
+		if ( !VK_Exec_ResolveRenderTargets( vkExec.temporalSceneRenderTexture,
+				sampledTarget, depthComplete ) ) {
+			VK_TemporalPresentation_StampDepth( sampledTarget, false );
+			return false;
+		}
+		if ( !depthComplete ) {
+			VK_TemporalPresentation_StampDepth( sampledTarget, false );
+		}
+	}
 	vkImageEntry_t *sceneColor = NULL;
 	vkImageEntry_t *sceneDepth = NULL;
-	if ( !VK_Exec_RenderTextureEntries( vkExec.temporalSceneRenderTexture,
+	if ( !VK_Exec_RenderTextureEntries( sampledTarget,
 			sceneColor, sceneDepth ) || sceneColor == NULL
 			|| sceneColor->samples != VK_SAMPLE_COUNT_1_BIT
 			|| ( sceneColor->usage & VK_IMAGE_USAGE_SAMPLED_BIT ) == 0 ) {
@@ -4646,7 +4738,9 @@ static bool VK_TemporalPresentation_CompositePendingScene( void ) {
 	}
 	const viewDef_t *sceneRoot = vkExec.temporalSceneRoot;
 	const bool depthReady = sceneDepth != NULL
-		&& ( sceneDepth->usage & VK_IMAGE_USAGE_SAMPLED_BIT ) != 0;
+		&& ( sceneDepth->usage & VK_IMAGE_USAGE_SAMPLED_BIT ) != 0
+		&& VK_TemporalPresentation_DepthStampMatches( sampledTarget,
+			sampledTarget->GetDepthImage(), R_TemporalPresentation_HistoryGeneration() );
 	// Let the resolver validate the exact depth-success stamp. A missing or
 	// stale depth image is a spatial/no-write result that must advance the
 	// shared invalidation generation rather than silently bypassing ownership.
@@ -4654,8 +4748,8 @@ static bool VK_TemporalPresentation_CompositePendingScene( void ) {
 		VK_TemporalPresentation_ResolvePendingSceneTemporal( sceneRoot );
 	const bool presented = temporalPresented
 		|| VK_TemporalPresentation_DrawPendingSceneSpatial( sceneRoot,
-			vkExec.temporalSceneColorImage, sceneColor,
-			depthReady ? vkExec.temporalSceneDepthImage : NULL,
+			sampledTarget->GetColorImage( 0 ), sceneColor,
+			depthReady ? sampledTarget->GetDepthImage() : NULL,
 			depthReady ? sceneDepth : NULL );
 	if ( presented ) {
 		vkExec.temporalScenePendingComposite = false;
@@ -4821,9 +4915,8 @@ static void VK_TemporalPresentation_EndView( const viewDef_t *viewDef,
 		return;
 	}
 	if ( rootView ) {
-		// Backend-owned scene depth is single-sample, so a completed root view is
-		// the resolve seam. Stamp the exact frame, generation and storage owner;
-		// an aborted view must retire any earlier resident stamp before composite.
+		// Stamp the completed draw target. Composite propagates this proof only
+		// after a successful multisample depth resolve to the sampled target.
 		VK_TemporalPresentation_StampDepth(
 			vkExec.temporalSceneRenderTexture, depthComplete );
 		(void)VK_TemporalPresentation_CompositePendingScene();
@@ -4873,13 +4966,21 @@ bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
 	vkImageEntry_t *sourceEntry = NULL;
 	if ( copyDepth ) {
 		sourceEntry = vkExec.activeRenderTexture != NULL ? vkExec.activeDepthEntry : NULL;
+		if ( vkExec.activeRenderTexture != NULL && sourceEntry == NULL ) {
+			return false;
+		}
 		sourceImage = sourceEntry != NULL ? sourceEntry->image : vkCtx.depthImages[ vkExec.frameSlot ];
 		sourceFormat = sourceEntry != NULL ? sourceEntry->format : vkCtx.depthFormat;
 	} else {
-		sourceEntry = vkExec.activeRenderTexture != NULL ? vkExec.activeColorEntry : NULL;
+		sourceEntry = vkExec.activeRenderTexture != NULL ? vkExec.activeColorEntries[ 0 ] : NULL;
+		if ( vkExec.activeRenderTexture != NULL && sourceEntry == NULL ) {
+			return false;
+		}
 		sourceImage = sourceEntry != NULL ? sourceEntry->image : vkCtx.swapchainImages[ vkExec.swapImageIndex ];
 		sourceFormat = sourceEntry != NULL ? sourceEntry->format : vkCtx.swapchainFormat;
 	}
+	const uint32_t sourceLayer = sourceEntry != NULL && sourceEntry->isCube
+			? (uint32_t)vkExec.activeCubeFace : 0;
 	// Both multisampled sources are resolved below: colour with
 	// vkCmdResolveImage, depth with a render-pass resolve
 	// (VK_Exec_ResolveDepthImage), which only fails on a device offering no
@@ -4963,6 +5064,7 @@ bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
 	// it does at one sample (a resolve can neither flip nor convert, so both
 	// steps are needed).
 	VkImage blitSource = sourceImage;
+	uint32_t blitSourceLayer = sourceLayer;
 	if ( !copyDepth && sourceEntry != NULL
 			&& sourceEntry->samples != VK_SAMPLE_COUNT_1_BIT ) {
 		vkImageEntry_t *scratch = VK_Image_AcquireResolveScratch( sourceWidth,
@@ -4978,6 +5080,7 @@ bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
 		VkImageResolve resolveRegion;
 		memset( &resolveRegion, 0, sizeof( resolveRegion ) );
 		resolveRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		resolveRegion.srcSubresource.baseArrayLayer = sourceLayer;
 		resolveRegion.srcSubresource.layerCount = 1;
 		resolveRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		resolveRegion.dstSubresource.layerCount = 1;
@@ -4990,10 +5093,12 @@ bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
 		scratch->everUploaded = true;
 		VK_Exec_TransitionImage( scratch, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL );
 		blitSource = scratch->image;
+		blitSourceLayer = 0;
 	}
 
 	if ( copyDepth ) {
 		VkImage depthSource = sourceImage;
+		uint32_t depthSourceLayer = sourceLayer;
 		if ( resolveDepthSource ) {
 			vkImageEntry_t *scratch = VK_Image_AcquireDepthResolveScratch( sourceWidth,
 					sourceHeight, sourceFormat );
@@ -5006,6 +5111,7 @@ bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
 			}
 			VK_Exec_TransitionImage( scratch, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL );
 			depthSource = scratch->image;
+			depthSourceLayer = 0;
 		}
 		if ( VK_Exec_DepthBlitSupported( sourceFormat ) ) {
 			// One flipped NEAREST blit reproduces the per-row copy's GL
@@ -5015,6 +5121,7 @@ bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
 			VkImageBlit depthBlit;
 			memset( &depthBlit, 0, sizeof( depthBlit ) );
 			depthBlit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+			depthBlit.srcSubresource.baseArrayLayer = depthSourceLayer;
 			depthBlit.srcSubresource.layerCount = 1;
 			depthBlit.srcOffsets[ 0 ].x = x;
 			depthBlit.srcOffsets[ 0 ].y = sourceHeight - y;
@@ -5048,6 +5155,7 @@ bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
 			memset( rows, 0, height * sizeof( VkImageCopy ) );
 			for ( int row = 0; row < height; row++ ) {
 				rows[ row ].srcSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+				rows[ row ].srcSubresource.baseArrayLayer = depthSourceLayer;
 				rows[ row ].srcSubresource.layerCount = 1;
 				rows[ row ].srcOffset.x = x;
 				rows[ row ].srcOffset.y = sourceHeight - 1 - ( y + row );
@@ -5081,6 +5189,7 @@ bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
 	VkImageBlit region;
 	memset( &region, 0, sizeof( region ) );
 	region.srcSubresource.aspectMask = copyAspect;
+	region.srcSubresource.baseArrayLayer = blitSourceLayer;
 	region.srcSubresource.layerCount = 1;
 	region.srcOffsets[ 0 ].x = x;
 	region.srcOffsets[ 0 ].y = sourceHeight - y;
@@ -5351,12 +5460,27 @@ static void VK_Exec_DepthResolveBarrier( vkImageEntry_t *sourceDepth,
 	destinationDepth->layout = sourceDepth->layout;
 }
 
-static bool VK_Exec_ResolveDepthImage( vkImageEntry_t *sourceDepth,
-		vkImageEntry_t *destinationDepth, uint32_t width, uint32_t height ) {
+static bool VK_Exec_CanResolveDepthImage( const vkImageEntry_t *sourceDepth,
+		const vkImageEntry_t *destinationDepth, uint32_t width, uint32_t height ) {
 	if ( sourceDepth == NULL || destinationDepth == NULL
 			|| sourceDepth->format != destinationDepth->format
 			|| sourceDepth->image == destinationDepth->image
+			|| sourceDepth->numLayers != destinationDepth->numLayers
+			|| destinationDepth->samples != VK_SAMPLE_COUNT_1_BIT
 			|| width == 0 || height == 0 ) {
+		return false;
+	}
+	if ( sourceDepth->samples == VK_SAMPLE_COUNT_1_BIT ) {
+		return ( sourceDepth->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT ) != 0
+				&& ( destinationDepth->usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT ) != 0;
+	}
+	return sourceDepth->numLayers == 1 && VK_Exec_DepthResolveMode() != VK_RESOLVE_MODE_NONE
+			&& sourceDepth->attachmentView != VK_NULL_HANDLE && destinationDepth->attachmentView != VK_NULL_HANDLE;
+}
+
+static bool VK_Exec_ResolveDepthImage( vkImageEntry_t *sourceDepth,
+		vkImageEntry_t *destinationDepth, uint32_t width, uint32_t height ) {
+	if ( !VK_Exec_CanResolveDepthImage( sourceDepth, destinationDepth, width, height ) ) {
 		return false;
 	}
 
@@ -5372,9 +5496,9 @@ static bool VK_Exec_ResolveDepthImage( vkImageEntry_t *sourceDepth,
 		VkImageCopy region;
 		memset( &region, 0, sizeof( region ) );
 		region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-		region.srcSubresource.layerCount = 1;
+		region.srcSubresource.layerCount = (uint32_t)sourceDepth->numLayers;
 		region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-		region.dstSubresource.layerCount = 1;
+		region.dstSubresource.layerCount = (uint32_t)destinationDepth->numLayers;
 		region.extent.width = width;
 		region.extent.height = height;
 		region.extent.depth = 1;
@@ -5534,10 +5658,11 @@ static bool VK_Exec_ResolveStencilImage( vkImageEntry_t *sourceDepth,
 }
 
 static void VK_Exec_CopyStencilToBuffer( VkImage image, VkBuffer buffer,
-		uint32_t width, uint32_t height ) {
+		uint32_t width, uint32_t height, uint32_t layer = 0 ) {
 	VkBufferImageCopy copy;
 	memset( &copy, 0, sizeof( copy ) );
 	copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT;
+	copy.imageSubresource.baseArrayLayer = layer;
 	copy.imageSubresource.layerCount = 1;
 	copy.imageExtent.width = width;
 	copy.imageExtent.height = height;
@@ -5611,7 +5736,8 @@ bool VK_Exec_QueueStencilReadback( int mode ) {
 				VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL );
 	} else if ( depthEntry->samples == VK_SAMPLE_COUNT_1_BIT ) {
 		VK_Exec_TransitionImage( depthEntry, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL );
-		VK_Exec_CopyStencilToBuffer( depthEntry->image, readback->buffer, width, height );
+		VK_Exec_CopyStencilToBuffer( depthEntry->image, readback->buffer, width, height,
+				depthEntry->isCube ? (uint32_t)vkExec.activeCubeFace : 0 );
 	} else {
 		vkImageEntry_t *scratch = VK_Image_AcquireDepthResolveScratch( (int)width, (int)height,
 				depthEntry->format );
@@ -5660,65 +5786,86 @@ bool VK_Exec_ResolveRenderTargets( idRenderTexture *sourceRenderTexture,
 			|| destinationRenderTexture == NULL ) {
 		return false;
 	}
-	vkImageEntry_t *sourceColor = NULL;
-	vkImageEntry_t *sourceDepth = NULL;
-	vkImageEntry_t *destinationColor = NULL;
-	vkImageEntry_t *destinationDepth = NULL;
-	if ( !VK_Exec_RenderTextureEntries( sourceRenderTexture, sourceColor, sourceDepth )
-			|| !VK_Exec_RenderTextureEntries( destinationRenderTexture, destinationColor, destinationDepth )
-			|| sourceColor->format != destinationColor->format
-			|| sourceColor->image == destinationColor->image
-			|| ( sourceColor->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT ) == 0
-			|| ( destinationColor->usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT ) == 0 ) {
+	vkRenderTargetAttachments_t source, destination;
+	if ( !sourceRenderTexture->EnsureDeviceHandle() || !destinationRenderTexture->EnsureDeviceHandle()
+			|| !VK_Image_GetRenderTargetAttachments( sourceRenderTexture, 0, source )
+			|| !VK_Image_GetRenderTargetAttachments( destinationRenderTexture, 0, destination )
+			|| source.colorCount != destination.colorCount
+			|| destination.samples != VK_SAMPLE_COUNT_1_BIT
+			|| ( source.colorCount == 0 && !resolveDepth ) ) {
 		return false;
 	}
+	const uint32_t width = Min( source.extent.width, destination.extent.width );
+	const uint32_t height = Min( source.extent.height, destination.extent.height );
+	vkImageEntry_t *sourceDepth = source.depth;
+	vkImageEntry_t *destinationDepth = destination.depth;
+	if ( resolveDepth && !VK_Exec_CanResolveDepthImage( sourceDepth, destinationDepth, width, height ) ) {
+		return false;
+	}
+	// Validate the entire transaction before writing its first attachment.
+	// Cross-index aliases could overwrite a source still needed by a later copy.
+	for ( uint32_t i = 0; i < source.colorCount; i++ ) {
+		if ( source.colors[ i ]->format != destination.colors[ i ]->format
+				|| source.colors[ i ]->numLayers != destination.colors[ i ]->numLayers
+				|| ( source.colors[ i ]->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT ) == 0
+				|| ( destination.colors[ i ]->usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT ) == 0 ) {
+			return false;
+		}
+		for ( uint32_t j = 0; j < destination.colorCount; j++ ) {
+			if ( source.colors[ i ]->image == destination.colors[ j ]->image ) {
+				return false;
+			}
+		}
+	}
 
-	const uint32_t width = (uint32_t)Min( sourceColor->width, destinationColor->width );
-	const uint32_t height = (uint32_t)Min( sourceColor->height, destinationColor->height );
 	VK_Exec_EndMainRendering();
-	VK_Exec_TransitionImage( sourceColor, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL );
-	VK_Exec_TransitionImage( destinationColor, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL );
+	for ( uint32_t i = 0; i < source.colorCount; i++ ) {
+		vkImageEntry_t *sourceColor = source.colors[ i ];
+		vkImageEntry_t *destinationColor = destination.colors[ i ];
+		VK_Exec_TransitionImage( sourceColor, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL );
+		VK_Exec_TransitionImage( destinationColor, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL );
 
-	if ( sourceColor->samples != VK_SAMPLE_COUNT_1_BIT
-			&& destinationColor->samples == VK_SAMPLE_COUNT_1_BIT ) {
-		VkImageResolve region;
-		memset( &region, 0, sizeof( region ) );
-		region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		region.srcSubresource.layerCount = 1;
-		region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		region.dstSubresource.layerCount = 1;
-		region.extent.width = width;
-		region.extent.height = height;
-		region.extent.depth = 1;
-		vkCmdResolveImage( vkExec.cmd, sourceColor->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-				destinationColor->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region );
-	} else if ( sourceColor->samples == VK_SAMPLE_COUNT_1_BIT
-			&& destinationColor->samples == VK_SAMPLE_COUNT_1_BIT ) {
-		VkImageCopy region;
-		memset( &region, 0, sizeof( region ) );
-		region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		region.srcSubresource.layerCount = 1;
-		region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		region.dstSubresource.layerCount = 1;
-		region.extent.width = width;
-		region.extent.height = height;
-		region.extent.depth = 1;
-		vkCmdCopyImage( vkExec.cmd,
-				sourceColor->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-				destinationColor->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-				1, &region );
-	} else {
+		if ( sourceColor->samples != VK_SAMPLE_COUNT_1_BIT
+				&& destinationColor->samples == VK_SAMPLE_COUNT_1_BIT ) {
+			VkImageResolve region;
+			memset( &region, 0, sizeof( region ) );
+			region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			region.srcSubresource.layerCount = (uint32_t)sourceColor->numLayers;
+			region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			region.dstSubresource.layerCount = (uint32_t)destinationColor->numLayers;
+			region.extent.width = width;
+			region.extent.height = height;
+			region.extent.depth = 1;
+			vkCmdResolveImage( vkExec.cmd, sourceColor->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+					destinationColor->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region );
+		} else if ( sourceColor->samples == VK_SAMPLE_COUNT_1_BIT
+				&& destinationColor->samples == VK_SAMPLE_COUNT_1_BIT ) {
+			VkImageCopy region;
+			memset( &region, 0, sizeof( region ) );
+			region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			region.srcSubresource.layerCount = (uint32_t)sourceColor->numLayers;
+			region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			region.dstSubresource.layerCount = (uint32_t)destinationColor->numLayers;
+			region.extent.width = width;
+			region.extent.height = height;
+			region.extent.depth = 1;
+			vkCmdCopyImage( vkExec.cmd,
+					sourceColor->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+					destinationColor->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+					1, &region );
+		} else {
+			VK_Exec_TransitionImage( sourceColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
+			VK_Exec_TransitionImage( destinationColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
+			VK_Exec_TransitionActiveTargetToAttachments();
+			VK_Exec_BeginMainRendering( false );
+			return false;
+		}
+
+		sourceColor->everUploaded = true;
+		destinationColor->everUploaded = true;
 		VK_Exec_TransitionImage( sourceColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
 		VK_Exec_TransitionImage( destinationColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
-		VK_Exec_TransitionActiveTargetToAttachments();
-		VK_Exec_BeginMainRendering( false );
-		return false;
 	}
-
-	sourceColor->everUploaded = true;
-	destinationColor->everUploaded = true;
-	VK_Exec_TransitionImage( sourceColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
-	VK_Exec_TransitionImage( destinationColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
 
 	bool depthResolved = true;
 	if ( resolveDepth ) {
@@ -5978,6 +6125,7 @@ static bool VK_GuiExecutor_SubmitFrame( bool present ) {
 	si.pSignalSemaphoreInfos = present ? &signalInfo : NULL;
 	if ( vkQueueSubmit2( vkCtx.graphicsQueue, 1, &si, vkCtx.frameFences[ slot ] ) != VK_SUCCESS ) {
 		VK_GpuFrameTiming_SubmitFailed( slot );
+		VK_Exec_DiscardHDRReadback( slot );
 		// The slot fence was reset in BeginFrame; a failed submit never signals
 		// it, so a later vkWaitForFences on this slot (next BeginFrame, or a
 		// screenshot readback) would block forever. The failed submit enqueued
@@ -6994,6 +7142,10 @@ idRenderTexture *VK_Exec_ActiveRenderTexture( void ) {
 	return vkExec.activeRenderTexture;
 }
 
+int VK_Exec_ActiveCubeFace( void ) {
+	return vkExec.activeCubeFace;
+}
+
 bool VK_Exec_SetViewViewport( VkCommandBuffer cmd, const viewDef_t *viewDef, float maxDepth ) {
 	if ( cmd == VK_NULL_HANDLE || viewDef == NULL ) {
 		return false;
@@ -7041,6 +7193,132 @@ void VK_Exec_TransitionImageForSampling( idImage *image ) {
 	if ( entry != NULL ) {
 		VK_Exec_TransitionImage( entry, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
 	}
+}
+
+struct vkHDRReadback_t {
+	VkBuffer buffer;
+	VmaAllocation allocation;
+	void *mapped;
+	unsigned int generation;
+	int frame;
+	bool pending;
+};
+static vkHDRReadback_t vkHDRReadbacks[ VK_FRAMES_IN_FLIGHT ];
+
+static void VK_Exec_DiscardHDRReadback( int slot ) {
+	vkHDRReadbacks[ slot ].pending = false;
+}
+
+static void VK_Exec_ReleaseHDRReadbacks( void ) {
+	for ( int i = 0; i < VK_FRAMES_IN_FLIGHT; ++i ) {
+		if ( vkHDRReadbacks[ i ].buffer != VK_NULL_HANDLE && vkCtx.allocator != NULL ) {
+			vmaDestroyBuffer( vkCtx.allocator, vkHDRReadbacks[ i ].buffer, vkHDRReadbacks[ i ].allocation );
+		}
+		memset( &vkHDRReadbacks[ i ], 0, sizeof( vkHDRReadbacks[ i ] ) );
+	}
+}
+
+static void VK_Exec_ConsumeHDRReadback( int slot ) {
+	vkHDRReadback_t &readback = vkHDRReadbacks[ slot ];
+	if ( !readback.pending ) {
+		return;
+	}
+	float value = 0.0f;
+	if ( readback.mapped != NULL && vmaInvalidateAllocation( vkCtx.allocator,
+			readback.allocation, 0, VK_WHOLE_SIZE ) == VK_SUCCESS
+			&& HDRExposure_DecodeHalf( *(const unsigned short *)readback.mapped, value ) ) {
+		VK_PostProcess_ConsumeHDRSample( readback.generation, readback.frame, value );
+	}
+	readback.pending = false;
+}
+
+bool VK_Exec_QueueHDRExposureReadback( idImage *image, unsigned int generation, int frame, bool synchronous ) {
+	if ( !vkExec.frameOpen || image == NULL || vkExec.cmd == VK_NULL_HANDLE ) {
+		return false;
+	}
+	vkImageEntry_t *entry = VK_Image_GetEntry( image->GetDeviceHandle() );
+	if ( entry == NULL || entry->format != VK_FORMAT_R16G16B16A16_SFLOAT
+			|| entry->width != 1 || entry->height != 1 || entry->numLayers != 1
+			|| entry->samples != VK_SAMPLE_COUNT_1_BIT
+			|| ( entry->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT ) == 0 ) {
+		return false;
+	}
+	vkHDRReadback_t &readback = vkHDRReadbacks[ vkExec.frameSlot ];
+	if ( readback.pending ) {
+		return false;
+	}
+	if ( readback.buffer == VK_NULL_HANDLE ) {
+		VkBufferCreateInfo info = {};
+		info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		info.size = 8;
+		info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+		VmaAllocationCreateInfo allocation = {};
+		allocation.usage = VMA_MEMORY_USAGE_AUTO;
+		allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+		VmaAllocationInfo mapped = {};
+		if ( vmaCreateBuffer( vkCtx.allocator, &info, &allocation,
+				&readback.buffer, &readback.allocation, &mapped ) != VK_SUCCESS ) {
+			return false;
+		}
+		readback.mapped = mapped.pMappedData;
+	}
+	VK_Exec_EndMainRendering();
+	VK_Exec_TransitionImage( entry, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL );
+	VkBufferImageCopy copy = {};
+	copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	copy.imageSubresource.layerCount = 1;
+	copy.imageExtent.width = copy.imageExtent.height = copy.imageExtent.depth = 1;
+	vkCmdCopyImageToBuffer( vkExec.cmd, entry->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.buffer, 1, &copy );
+	VkBufferMemoryBarrier2 barrier = {};
+	barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+	barrier.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+	barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+	barrier.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+	barrier.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+	barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.buffer = readback.buffer;
+	barrier.size = VK_WHOLE_SIZE;
+	VkDependencyInfo dependency = {};
+	dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+	dependency.bufferMemoryBarrierCount = 1;
+	dependency.pBufferMemoryBarriers = &barrier;
+	vkCmdPipelineBarrier2( vkExec.cmd, &dependency );
+	VK_Exec_TransitionImage( entry, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
+	readback.generation = generation;
+	readback.frame = frame;
+	readback.pending = true;
+	if ( synchronous ) {
+		// The explicit diagnostic mode stalls on this submission, without
+		// presenting a partially tone-mapped frame or consuming acquire twice.
+		// Keep ring cursors and resource retirement attached to the same slot.
+		const int slot = vkExec.frameSlot;
+		R_RendererMetrics_ResetGpuFrameTiming( "Vulkan synchronous HDR exposure" );
+		if ( !VK_GuiExecutor_SubmitFrame( false ) ) {
+			return false;
+		}
+		const VkResult waited = vkWaitForFences( vkCtx.device, 1, &vkCtx.frameFences[ slot ], VK_TRUE, UINT64_MAX );
+		if ( waited != VK_SUCCESS ) {
+			VK_Exec_DiscardHDRReadback( slot );
+			common->Warning( "Vulkan: HDR exposure fence wait failed (%d)", (int)waited );
+			return false;
+		}
+		VK_Exec_ConsumeHDRReadback( slot );
+		VkCommandBufferBeginInfo begin = {};
+		begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+		// Reset the fence only after successful command-buffer initialization.
+		if ( vkResetCommandBuffer( vkExec.cmd, 0 ) != VK_SUCCESS
+				|| vkBeginCommandBuffer( vkExec.cmd, &begin ) != VK_SUCCESS
+				|| vkResetFences( vkCtx.device, 1, &vkCtx.frameFences[ slot ] ) != VK_SUCCESS ) {
+			common->Warning( "Vulkan: failed to resume rendering after HDR exposure" );
+			return false;
+		}
+		vkExec.frameOpen = true;
+		vkExec.mainScopeOpen = false;
+		// This split frame is deliberately excluded from whole-frame timing.
+		VK_Exec_TransitionActiveTargetToAttachments();
+	}
+	return VK_Exec_BeginMainRendering( false );
 }
 
 // Streams one ordinary interaction block into the frame's uniform ring.
@@ -9019,6 +9297,7 @@ void VK_GuiExecutor_DrawResolvedSpecialEffects(
 	}
 
 	idRenderTexture *savedRenderTexture = vkExec.activeRenderTexture;
+	const int savedCubeFace = vkExec.activeCubeFace;
 	idRenderTexture *savedBackEndRenderTexture = backEnd.renderTexture;
 	idRenderTexture *savedFeedbackRenderTexture =
 			backEnd.feedbackRenderTexture;
@@ -9041,7 +9320,7 @@ void VK_GuiExecutor_DrawResolvedSpecialEffects(
 	VK_Exec_DrawRVSpecialEffects( effectsView );
 	VK_TemporalPresentation_RestoreScale( sceneScaleState, effectsView );
 
-	(void)VK_Exec_SetRenderTarget( savedRenderTexture );
+	(void)VK_Exec_SetRenderTarget( savedRenderTexture, savedCubeFace );
 	backEnd.renderTexture = savedBackEndRenderTexture;
 	backEnd.feedbackRenderTexture = savedFeedbackRenderTexture;
 }
@@ -9446,6 +9725,10 @@ static void VK_Exec_DrawAmbientStages( const viewDef_t *viewDef, const drawSurf_
 		}
 
 		// skip stages that can't change the framebuffer
+		idImage *nativePBREmission = NULL;
+		if ( worldDepthState ) {
+			(void)VK_PBR_EmissionForStage( drawSurf, stageNum, nativePBREmission, color );
+		}
 		const int blendBits = pStage->drawStateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
 		if ( color[ 0 ] <= 0 && color[ 1 ] <= 0 && color[ 2 ] <= 0
 				&& blendBits == ( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE ) ) {
@@ -9525,7 +9808,9 @@ static void VK_Exec_DrawAmbientStages( const viewDef_t *viewDef, const drawSurf_
 				}
 			}
 		} else {
-			stageImage = pStage->texture.image;
+			// PBR color storage performs sRGB decode before filtering. The
+			// conventional glow stage is replaced, never replayed per light.
+			stageImage = nativePBREmission != NULL ? nativePBREmission : pStage->texture.image;
 		}
 		if ( stageImage == NULL ) {
 			continue;
@@ -9677,6 +9962,9 @@ static void VK_Exec_DrawAmbientStages( const viewDef_t *viewDef, const drawSurf_
 			case SVC_MODULATE:			push.params[ 0 ] = 1.0f; break;
 			case SVC_INVERSE_MODULATE:	push.params[ 0 ] = 2.0f; break;
 			default:					push.params[ 0 ] = 0.0f; break;
+		}
+		if ( nativePBREmission != NULL ) {
+			push.params[ 0 ] = 3.0f; // native emission, ignore vertex tint, finite radiance storage
 		}
 
 		// Material parsing keeps alpha-test state explicitly; GLS_ATEST_BITS
@@ -10293,7 +10581,7 @@ static bool VK_ClassicGui_DrawOwnedViewForScope( const viewDef_t *viewDef,
 			CLASSIC_GUI_DOMAIN_FAILURE_BACKEND_REJECTED,
 			VK_CLASSIC_GUI_REJECT_VIEW_MUTATION );
 	}
-	if ( vkExec.activeRenderTexture != NULL || vkExec.activeColorEntry != NULL
+	if ( vkExec.activeRenderTexture != NULL || vkExec.activeColorEntries[ 0 ] != NULL
 			|| vkExec.activeDepthEntry != NULL || backEnd.renderTexture != NULL
 			|| backEnd.feedbackRenderTexture != NULL ) {
 		return VK_ClassicGui_Fail( viewDef,
@@ -11083,7 +11371,20 @@ static bool VK_ClassicWorldAmbient_Preflight( const viewDef_t *viewDef ) {
 			CLASSIC_WORLD_AMBIENT_FAILURE_BACKEND_REJECTED,
 			VK_CLASSIC_WORLD_AMBIENT_REJECT_VIEW_MUTATION );
 	}
-	if ( vkExec.activeRenderTexture != NULL || vkExec.activeColorEntry != NULL
+	// The sealed classic stream retains encoded glow images. A native PBR
+	// emitter needs the stage replacement in the ordinary ambient walker,
+	// including a view with no direct lights at all.
+	if ( r_rendererModernQuality.GetBool() && r_pbrMaterials.GetBool() ) {
+		for ( int i = 0; i < viewDef->numDrawSurfs; ++i ) {
+			const idMaterial *material = viewDef->drawSurfs[i]->material;
+			if ( material != NULL && material->HasPBR() && material->GetPBRInfo().emissive.present ) {
+				return VK_ClassicWorldAmbient_Fail( viewDef,
+					CLASSIC_WORLD_AMBIENT_FAILURE_BACKEND_REJECTED,
+					VK_CLASSIC_WORLD_AMBIENT_REJECT_VIEW_MUTATION );
+			}
+		}
+	}
+	if ( vkExec.activeRenderTexture != NULL || vkExec.activeColorEntries[ 0 ] != NULL
 			|| vkExec.activeDepthEntry != NULL || backEnd.renderTexture != NULL
 			|| backEnd.feedbackRenderTexture != NULL ) {
 		return VK_ClassicWorldAmbient_Fail( viewDef,
@@ -12413,6 +12714,624 @@ void R_BackendGpuSkinning_PrintGfxInfo( void ) {
 			static_cast<unsigned long long>( vkExec.gpuSkinningValidationFallbacks ),
 			static_cast<unsigned long long>( vkExec.gpuSkinningRingFallbacks ),
 			static_cast<unsigned long long>( vkExec.gpuSkinningMemoFallbacks ) );
+}
+
+// Exercise the real attachment/capture path on the active device. The readback
+// belongs to this explicit diagnostic only; ordinary frames never wait here.
+static bool VK_Exec_CheckCubeCaptures( idImage *colorImage, idImage *depthImage,
+		int size, bool sharedDepth ) {
+	vkImageEntry_t *color = colorImage != NULL ? VK_Image_GetEntry( colorImage->GetDeviceHandle() ) : NULL;
+	vkImageEntry_t *depth = VK_Image_GetEntry( depthImage->GetDeviceHandle() );
+	if ( ( colorImage != NULL && ( color == NULL || color->format != VK_FORMAT_R8G8B8A8_UNORM ) )
+			|| depth == NULL
+			|| depth->format != VK_FORMAT_D32_SFLOAT ) {
+		return false;
+	}
+	const VkDeviceSize planeBytes = (VkDeviceSize)size * size * 4;
+	const VkDeviceSize colorBytes = color != NULL ? planeBytes * 6 : 0;
+	VkBufferCreateInfo bufferInfo = {};
+	bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	bufferInfo.size = colorBytes + planeBytes * 6;
+	bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+	VmaAllocationCreateInfo allocationCreate = {};
+	allocationCreate.usage = VMA_MEMORY_USAGE_AUTO;
+	allocationCreate.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT
+			| VMA_ALLOCATION_CREATE_MAPPED_BIT;
+	VkBuffer buffer = VK_NULL_HANDLE;
+	VmaAllocation allocation = NULL;
+	VmaAllocationInfo allocationInfo = {};
+	if ( vmaCreateBuffer( vkCtx.allocator, &bufferInfo, &allocationCreate,
+			&buffer, &allocation, &allocationInfo ) != VK_SUCCESS ) {
+		return false;
+	}
+	VK_Exec_EndMainRendering();
+	VK_Exec_TransitionImage( color, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL );
+	VK_Exec_TransitionImage( depth, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL );
+	VkBufferImageCopy copy = {};
+	copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	copy.imageSubresource.layerCount = 6;
+	copy.imageExtent.width = (uint32_t)size;
+	copy.imageExtent.height = (uint32_t)size;
+	copy.imageExtent.depth = 1;
+	if ( color != NULL ) {
+		vkCmdCopyImageToBuffer( vkExec.cmd, color->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				buffer, 1, &copy );
+	}
+	copy.bufferOffset = colorBytes;
+	copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+	vkCmdCopyImageToBuffer( vkExec.cmd, depth->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			buffer, 1, &copy );
+	VK_Exec_TransitionImage( color, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
+	VK_Exec_TransitionImage( depth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
+	VkBufferMemoryBarrier2 toHost = {};
+	toHost.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+	toHost.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+	toHost.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+	toHost.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+	toHost.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+	toHost.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	toHost.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	toHost.buffer = buffer;
+	toHost.size = VK_WHOLE_SIZE;
+	VkDependencyInfo dependency = {};
+	dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+	dependency.bufferMemoryBarrierCount = 1;
+	dependency.pBufferMemoryBarriers = &toHost;
+	vkCmdPipelineBarrier2( vkExec.cmd, &dependency );
+	const int slot = vkExec.frameSlot;
+	if ( !VK_Exec_SetRenderTarget( NULL ) || !VK_GuiExecutor_EndFrameAndPresent()
+			|| vkWaitForFences( vkCtx.device, 1, &vkCtx.frameFences[ slot ], VK_TRUE, UINT64_MAX ) != VK_SUCCESS ) {
+		VK_Device_DeferDestroy( VK_NULL_HANDLE, VK_NULL_HANDLE, buffer, allocation );
+		return false;
+	}
+	bool passed = vmaInvalidateAllocation( vkCtx.allocator, allocation, 0, VK_WHOLE_SIZE ) == VK_SUCCESS
+			&& allocationInfo.pMappedData != NULL;
+	if ( passed ) {
+		const byte *pixels = (const byte *)allocationInfo.pMappedData;
+		const float *depths = (const float *)( pixels + colorBytes );
+		for ( int face = 0; face < 6 && passed; face++ ) {
+			const float expectedDepth = (float)( sharedDepth ? 6 : face + 1 ) / 8.0f;
+			for ( int pixel = 0; pixel < size * size; pixel++ ) {
+				const int index = face * size * size + pixel;
+				for ( int component = 0; color != NULL && component < 4; component++ ) {
+					const int expected = component == 3 || ( face & ( 1 << component ) ) != 0 ? 255 : 0;
+					passed = passed && pixels[ index * 4 + component ] == expected;
+				}
+				passed = passed && depths[ index ] == expectedDepth;
+			}
+			if ( !passed ) {
+				common->Warning( "Vulkan render-target capture mismatch: size=%d face=%d sharedDepth=%d",
+						size, face, (int)sharedDepth );
+			}
+		}
+	}
+	vmaDestroyBuffer( vkCtx.allocator, buffer, allocation );
+	return passed;
+}
+
+static bool VK_Exec_TestDrawDepth( int size, float depth, VkPipeline &pipeline ) {
+	if ( pipeline == VK_NULL_HANDLE ) {
+		VkVertexInputBindingDescription binding;
+		VkVertexInputAttributeDescription attributes[ 2 ];
+		VkPipelineVertexInputStateCreateInfo vertexInput;
+		VK_Exec_CasterVertexInput( binding, attributes, vertexInput );
+		pipeline = VK_Exec_CreatePipeline( vkExec.casterVertModule, vkExec.casterFragModule,
+				&vertexInput, 0, vkExec.pipelineLayout, false, false, VK_Exec_CurrentPipelineTarget() );
+	}
+	const VkDescriptorSet white = VK_GuiExecutor_GetImageDescriptor( globalImages->whiteImage->GetDeviceHandle() );
+	if ( pipeline == VK_NULL_HANDLE || white == VK_NULL_HANDLE ) {
+		return false;
+	}
+	idDrawVert vertices[ 3 ];
+	memset( vertices, 0, sizeof( vertices ) );
+	vertices[ 0 ].xyz.Set( -1.0f, -1.0f, 0.5f );
+	vertices[ 1 ].xyz.Set( 3.0f, -1.0f, 0.5f );
+	vertices[ 2 ].xyz.Set( -1.0f, 3.0f, 0.5f );
+	const int offset = VK_Ring_Alloc( vkExec.vertexRings[ vkExec.frameSlot ], vertices, sizeof( vertices ), 16 );
+	if ( offset < 0 ) {
+		return false;
+	}
+	const VkDeviceSize vertexOffset = (VkDeviceSize)offset;
+	VkViewport viewport = { 0.0f, 0.0f, (float)size, (float)size, 0.0f, 1.0f };
+	VkRect2D scissor = { { 0, 0 }, { (uint32_t)size, (uint32_t)size } };
+	vkCmdSetViewport( vkExec.cmd, 0, 1, &viewport );
+	vkCmdSetScissor( vkExec.cmd, 0, 1, &scissor );
+	vkCmdSetDepthTestEnable( vkExec.cmd, VK_TRUE );
+	vkCmdSetDepthWriteEnable( vkExec.cmd, VK_TRUE );
+	vkCmdSetDepthCompareOp( vkExec.cmd, VK_COMPARE_OP_ALWAYS );
+	vkCmdBindPipeline( vkExec.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
+	vkCmdBindVertexBuffers( vkExec.cmd, 0, 1, &vkExec.vertexRings[ vkExec.frameSlot ].buffer, &vertexOffset );
+	vkCmdBindDescriptorSets( vkExec.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+			vkExec.pipelineLayout, 0, 1, &white, 0, NULL );
+	float push[ 32 ] = {};
+	push[ 0 ] = push[ 5 ] = push[ 10 ] = push[ 15 ] = 1.0f;
+	push[ 19 ] = depth;
+	vkCmdPushConstants( vkExec.cmd, vkExec.pipelineLayout,
+			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), push );
+	vkCmdDraw( vkExec.cmd, 3, 1, 0, 0 );
+	return true;
+}
+
+static bool VK_Exec_TestCubeTargets( bool sharedDepth, bool depthOnly, int samples = 0 ) {
+	idImageOpts colorOptions;
+	colorOptions.textureType = TT_CUBIC;
+	colorOptions.format = FMT_RGBA8;
+	colorOptions.width = colorOptions.height = 8;
+	colorOptions.numLevels = 1;
+	idImageOpts depthOptions = colorOptions;
+	depthOptions.format = FMT_DEPTH;
+	idImage *color = globalImages->ScratchImage( "_vkTestCubeColor", &colorOptions, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+	idImage *colorCapture = globalImages->ScratchImage( "_vkTestCubeColorCapture", &colorOptions, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+	idImage *depthCapture = globalImages->ScratchImage( "_vkTestCubeDepthCapture", &depthOptions, TF_NEAREST, TR_CLAMP, TD_DEPTH );
+	depthOptions.textureType = sharedDepth ? TT_2D : TT_CUBIC;
+	idImage *resolvedDepth = globalImages->ScratchImage( sharedDepth ? "_vkTestResolvedDepth2D" : "_vkTestResolvedDepthCube",
+			&depthOptions, TF_NEAREST, TR_CLAMP, TD_DEPTH );
+	depthOptions.numMSAASamples = samples;
+	idImage *depth = globalImages->ScratchImage( sharedDepth ? "_vkTestSharedDepth" : "_vkTestCubeDepth",
+			&depthOptions, TF_NEAREST, TR_CLAMP, TD_DEPTH );
+	if ( color == NULL || depth == NULL || colorCapture == NULL || depthCapture == NULL || resolvedDepth == NULL ) {
+		return false;
+	}
+	if ( samples > 1 ) {
+		common->Printf( "Vulkan render-target self-test: depth MSAA requested=%d effective=%d\n",
+				samples, depth->GetOpts().numMSAASamples );
+	}
+	idRenderTexture target( depthOnly ? NULL : color, depth );
+	idRenderTexture resolvedTarget( NULL, resolvedDepth );
+	VkPipeline depthPipeline = VK_NULL_HANDLE;
+	bool passed = true;
+	for ( int size = 8; size <= 16 && passed; size *= 2 ) {
+		passed = target.Resize( size, size );
+		// Clear every face first, then capture in reverse order. Clearing and
+		// immediately copying each face would conceal a face-zero alias bug.
+		for ( int face = 0; face < 6 && passed; face++ ) {
+			passed = target.MakeCurrent( face );
+			if ( passed ) {
+				const float value[ 4 ] = { (float)( face & 1 ), (float)( ( face >> 1 ) & 1 ),
+						(float)( ( face >> 2 ) & 1 ), 1.0f };
+				const float expectedDepth = (float)( face + 1 ) / 8.0f;
+				VK_Exec_ClearRenderTarget( true, true, depthOnly ? 1.0f : expectedDepth, value );
+				if ( depthOnly ) {
+					passed = VK_Exec_TestDrawDepth( size, expectedDepth, depthPipeline );
+				}
+			}
+		}
+		const int previousFace = vkExec.activeCubeFace;
+		passed = passed && !target.MakeCurrent( -1 ) && !target.MakeCurrent( 6 )
+				&& vkExec.activeRenderTexture == &target && vkExec.activeCubeFace == previousFace;
+		if ( passed && depthOnly ) {
+			passed = resolvedTarget.Resize( size, size )
+					&& !VK_Exec_ResolveRenderTargets( &target, &resolvedTarget, false )
+					&& VK_Exec_ResolveRenderTargets( &target, &resolvedTarget, true );
+		}
+		for ( int face = 5; face >= 0 && passed; face-- ) {
+			passed = ( depthOnly ? resolvedTarget : target ).MakeCurrent( face );
+			if ( passed ) {
+				const bool colorCopied = VK_Exec_CopyRender( colorCapture, 0, 0, size, size, face, false );
+				passed = colorCopied == !depthOnly
+						&& VK_Exec_CopyRender( depthCapture, 0, 0, size, size, face, true );
+			}
+		}
+		passed = passed && VK_Exec_CheckCubeCaptures( depthOnly ? NULL : colorCapture, depthCapture, size, sharedDepth );
+	}
+	if ( vkExec.frameOpen ) {
+		(void)VK_Exec_SetRenderTarget( NULL );
+		(void)VK_GuiExecutor_EndFrameAndPresent();
+	}
+	if ( depthPipeline != VK_NULL_HANDLE ) {
+		// Successful readback already waited for this diagnostic's frame; an
+		// early failure can still leave a submitted draw using the pipeline.
+		if ( !passed ) {
+			vkDeviceWaitIdle( vkCtx.device );
+		}
+		vkDestroyPipeline( vkCtx.device, depthPipeline, NULL );
+	}
+	color->PurgeImage();
+	depth->PurgeImage();
+	colorCapture->PurgeImage();
+	depthCapture->PurgeImage();
+	resolvedDepth->PurgeImage();
+	return passed;
+}
+
+static bool VK_Exec_TestTargetRetirement( void ) {
+	idImageOpts options;
+	options.textureType = TT_CUBIC;
+	options.format = FMT_RGBA8;
+	options.width = options.height = 8;
+	options.numLevels = 1;
+	idImage *color = globalImages->ScratchImage( "_vkTestRetireColor", &options, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+	idImage *colorCapture = globalImages->ScratchImage( "_vkTestRetireColorCapture", &options, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+	options.format = FMT_DEPTH;
+	idImage *depth = globalImages->ScratchImage( "_vkTestRetireDepth", &options, TF_NEAREST, TR_CLAMP, TD_DEPTH );
+	idImage *depthCapture = globalImages->ScratchImage( "_vkTestRetireDepthCapture", &options, TF_NEAREST, TR_CLAMP, TD_DEPTH );
+	if ( color == NULL || colorCapture == NULL || depth == NULL || depthCapture == NULL ) {
+		return false;
+	}
+	idRenderTexture target( color, depth );
+	bool passed = true;
+	int size = 8;
+	// Every resize retires fourteen image/view records while earlier clears
+	// are still unsubmitted. Exceed the fixed queue without ending the frame.
+	for ( int iteration = 0; iteration < VK_MAX_DEFERRED_DESTROYS / 14 + 4 && passed; iteration++ ) {
+		size = ( iteration & 1 ) != 0 ? 16 : 8;
+		passed = target.Resize( size, size );
+		for ( int face = 0; face < 6 && passed; face++ ) {
+			passed = target.MakeCurrent( face );
+			if ( passed ) {
+				const float value[ 4 ] = { (float)( face & 1 ), (float)( ( face >> 1 ) & 1 ),
+						(float)( ( face >> 2 ) & 1 ), 1.0f };
+				VK_Exec_ClearRenderTarget( true, true, (float)( face + 1 ) / 8.0f, value );
+			}
+		}
+	}
+	passed = passed && vkCtx.numDeferredDestroys[ vkExec.frameSlot ] == VK_MAX_DEFERRED_DESTROYS;
+	for ( int face = 5; face >= 0 && passed; face-- ) {
+		passed = target.MakeCurrent( face )
+				&& VK_Exec_CopyRender( colorCapture, 0, 0, size, size, face, false )
+				&& VK_Exec_CopyRender( depthCapture, 0, 0, size, size, face, true );
+	}
+	passed = passed && VK_Exec_CheckCubeCaptures( colorCapture, depthCapture, size, false );
+	if ( vkExec.frameOpen ) {
+		(void)VK_Exec_SetRenderTarget( NULL );
+		(void)VK_GuiExecutor_EndFrameAndPresent();
+	}
+	color->PurgeImage();
+	colorCapture->PurgeImage();
+	depth->PurgeImage();
+	depthCapture->PurgeImage();
+	return passed;
+}
+
+// Read the attachment storage directly so an RGBA8 capture cannot hide float
+// clamping, an unwritten draw buffer, or a resolve which only copied buffer 0.
+static bool VK_Exec_CheckMRT( idRenderTexture &target, int size, int layers,
+		const unsigned short *expectedEmission = NULL ) {
+	vkRenderTargetAttachments_t attachments;
+	if ( !VK_Image_GetRenderTargetAttachments( &target, 0, attachments ) ) {
+		return false;
+	}
+	VkDeviceSize offsets[ VK_MAX_COLOR_ATTACHMENTS + 1 ] = {};
+	vkImageEntry_t *entries[ VK_MAX_COLOR_ATTACHMENTS + 1 ] = {};
+	const uint32_t count = attachments.colorCount + ( attachments.depth != NULL ? 1 : 0 );
+	VkDeviceSize bytes = 0;
+	for ( uint32_t i = 0; i < count; i++ ) {
+		entries[ i ] = i < attachments.colorCount ? attachments.colors[ i ] : attachments.depth;
+		const VkFormat format = entries[ i ]->format;
+		if ( format != VK_FORMAT_R8G8B8A8_UNORM && format != VK_FORMAT_R16G16B16A16_SFLOAT
+				&& format != VK_FORMAT_D32_SFLOAT ) {
+			return false;
+		}
+		offsets[ i ] = bytes;
+		bytes += (VkDeviceSize)size * size * layers * ( format == VK_FORMAT_R16G16B16A16_SFLOAT ? 8 : 4 );
+	}
+	VkBufferCreateInfo info = {};
+	info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	info.size = bytes;
+	info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+	VmaAllocationCreateInfo create = {};
+	create.usage = VMA_MEMORY_USAGE_AUTO;
+	create.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+	VkBuffer buffer = VK_NULL_HANDLE;
+	VmaAllocation allocation = NULL;
+	VmaAllocationInfo allocationInfo = {};
+	if ( vmaCreateBuffer( vkCtx.allocator, &info, &create, &buffer, &allocation, &allocationInfo ) != VK_SUCCESS ) {
+		return false;
+	}
+	VK_Exec_EndMainRendering();
+	for ( uint32_t i = 0; i < count; i++ ) {
+		VK_Exec_TransitionImage( entries[ i ], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL );
+		VkBufferImageCopy copy = {};
+		copy.bufferOffset = offsets[ i ];
+		copy.imageSubresource.aspectMask = i < attachments.colorCount ? VK_IMAGE_ASPECT_COLOR_BIT : VK_IMAGE_ASPECT_DEPTH_BIT;
+		copy.imageSubresource.layerCount = (uint32_t)layers;
+		copy.imageExtent.width = copy.imageExtent.height = (uint32_t)size;
+		copy.imageExtent.depth = 1;
+		vkCmdCopyImageToBuffer( vkExec.cmd, entries[ i ]->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1, &copy );
+		VK_Exec_TransitionImage( entries[ i ], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
+	}
+	VkBufferMemoryBarrier2 barrier = {};
+	barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+	barrier.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+	barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+	barrier.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+	barrier.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+	barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.buffer = buffer;
+	barrier.size = VK_WHOLE_SIZE;
+	VkDependencyInfo dependency = {};
+	dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+	dependency.bufferMemoryBarrierCount = 1;
+	dependency.pBufferMemoryBarriers = &barrier;
+	vkCmdPipelineBarrier2( vkExec.cmd, &dependency );
+	const int slot = vkExec.frameSlot;
+	if ( !VK_Exec_SetRenderTarget( NULL ) || !VK_GuiExecutor_EndFrameAndPresent()
+			|| vkWaitForFences( vkCtx.device, 1, &vkCtx.frameFences[ slot ], VK_TRUE, UINT64_MAX ) != VK_SUCCESS ) {
+		VK_Device_DeferDestroy( VK_NULL_HANDLE, VK_NULL_HANDLE, buffer, allocation );
+		return false;
+	}
+	bool passed = allocationInfo.pMappedData != NULL
+			&& vmaInvalidateAllocation( vkCtx.allocator, allocation, 0, VK_WHOLE_SIZE ) == VK_SUCCESS;
+	for ( uint32_t i = 0; i < count && passed; i++ ) {
+		const byte *pixels = (const byte *)allocationInfo.pMappedData + offsets[ i ];
+		for ( int face = 0; face < layers && passed; face++ ) {
+			for ( int pixel = 0; pixel < size * size && passed; pixel++ ) {
+				const int index = face * size * size + pixel;
+				const bool drawn = pixel % size < size / 2;
+				if ( i == attachments.colorCount ) {
+					passed = ( (const float *)pixels )[ index ] == ( drawn ? 0.25f : 1.0f );
+				} else {
+					for ( int component = 0; component < 4; component++ ) {
+						const bool enabled = drawn && ( component == 3 || ( ( face + 1 + i ) & ( 1 << component ) ) != 0 );
+						if ( entries[ i ]->format == VK_FORMAT_R16G16B16A16_SFLOAT ) {
+							// First draw writes 2. Additive draw doubles G/B, masking R/A.
+							const unsigned short expected = expectedEmission != NULL
+								? ( drawn ? expectedEmission[component] : 0 )
+								: !enabled ? 0 : component == 3 ? 0x3c00 : component == 0 ? 0x4000 : 0x4400;
+							passed = passed && ( (const unsigned short *)pixels )[ index * 4 + component ] == expected;
+						} else {
+							passed = passed && pixels[ index * 4 + component ] == ( enabled ? 255 : 0 );
+						}
+					}
+				}
+				if ( !passed ) {
+					common->Warning( "Vulkan MRT capture mismatch: attachment=%u format=%d size=%d face=%d pixel=%d",
+							i, (int)entries[ i ]->format, size, face, pixel );
+				}
+			}
+		}
+	}
+	vmaDestroyBuffer( vkCtx.allocator, buffer, allocation );
+	return passed;
+}
+
+static bool VK_Exec_TestMRTCase( VkShaderModule vertex, VkShaderModule fragment,
+		int colorCount, bool cube, bool withDepth, int samples, bool reverseFormats ) {
+	idImageOpts options;
+	options.textureType = cube ? TT_CUBIC : TT_2D;
+	options.width = options.height = 8;
+	options.numLevels = 1;
+	idImage *colors[ VK_MAX_COLOR_ATTACHMENTS ] = {};
+	idImage *resolved[ VK_MAX_COLOR_ATTACHMENTS ] = {};
+	for ( int i = 0; i < colorCount; i++ ) {
+		options.format = ( ( i + (int)reverseFormats ) & 1 ) != 0 ? FMT_RGBA16F : FMT_RGBA8;
+		options.numMSAASamples = samples;
+		colors[ i ] = globalImages->ScratchImage( va( "_vkTestMRT_%d_%d_%d_%d_%d", colorCount, (int)cube, samples,
+				(int)reverseFormats, i ), &options, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+		options.numMSAASamples = 0;
+		resolved[ i ] = globalImages->ScratchImage( va( "_vkTestMRTResolve_%d_%d_%d_%d_%d", colorCount, (int)cube, samples,
+				(int)reverseFormats, i ), &options, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+		if ( colors[ i ] == NULL || resolved[ i ] == NULL ) {
+			return false;
+		}
+	}
+	options.format = FMT_DEPTH;
+	options.numMSAASamples = samples;
+	idImage *depth = withDepth ? globalImages->ScratchImage( va( "_vkTestMRTDepth_%d_%d_%d", colorCount, (int)cube, samples ),
+			&options, TF_NEAREST, TR_CLAMP, TD_DEPTH ) : NULL;
+	options.numMSAASamples = 0;
+	idImage *resolvedDepth = withDepth ? globalImages->ScratchImage( va( "_vkTestMRTDepthResolve_%d_%d_%d", colorCount, (int)cube, samples ),
+			&options, TF_NEAREST, TR_CLAMP, TD_DEPTH ) : NULL;
+	options.format = resolved[ colorCount - 1 ]->GetOpts().format == FMT_RGBA8 ? FMT_RGBA16F : FMT_RGBA8;
+	idImage *wrong = globalImages->ScratchImage( va( "_vkTestMRTWrong_%d_%d_%d_%d", colorCount, (int)cube, samples,
+			(int)reverseFormats ), &options, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+	if ( wrong == NULL || ( withDepth && ( depth == NULL || resolvedDepth == NULL ) ) ) {
+		return false;
+	}
+	idRenderTexture target( colors[ 0 ], depth );
+	idRenderTexture destination( resolved[ 0 ], resolvedDepth );
+	// Adding images to an already current object must refresh the scope.
+	bool passed = target.MakeCurrent();
+	for ( int i = 1; i < colorCount; i++ ) {
+		target.AddRenderImage( colors[ i ] );
+		destination.AddRenderImage( resolved[ i ] );
+	}
+	passed = passed && target.MakeCurrent() && vkExec.activePipelineTarget.colorCount == (uint32_t)colorCount;
+	const int layers = cube ? 6 : 1;
+	for ( int size = 8; size <= 16 && passed; size *= 2 ) {
+		passed = target.Resize( size, size ) && destination.Resize( size, size );
+		for ( int face = 0; face < layers && passed; face++ ) {
+			passed = target.MakeCurrent( face );
+			if ( !passed ) {
+				break;
+			}
+			const float clear[ 4 ] = {};
+			VK_Exec_ClearRenderTarget( true, true, 1.0f, clear );
+			for ( int pass = 0; pass < 2 && passed; pass++ ) {
+				const int state = pass == 0 ? 0 : GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_REDMASK | GLS_ALPHAMASK;
+				const VkPipeline pipeline = VK_Exec_ExtraPipeline( VK_EXTRA_KIND_EXECUTOR_BASE + colorCount,
+						vertex, fragment, state, VK_EXTRA_VERTEX_NONE, 0 );
+				if ( pipeline == VK_NULL_HANDLE ) {
+					passed = false;
+					break;
+				}
+				VkViewport viewport = { 0.0f, 0.0f, (float)size, (float)size, 0.0f, 1.0f };
+				VkRect2D scissor = { { 0, 0 }, { (uint32_t)size / 2, (uint32_t)size } };
+				vkCmdSetViewport( vkExec.cmd, 0, 1, &viewport );
+				vkCmdSetScissor( vkExec.cmd, 0, 1, &scissor );
+				vkCmdSetDepthTestEnable( vkExec.cmd, withDepth ? VK_TRUE : VK_FALSE );
+				vkCmdSetDepthWriteEnable( vkExec.cmd, withDepth ? VK_TRUE : VK_FALSE );
+				vkCmdSetDepthCompareOp( vkExec.cmd, VK_COMPARE_OP_ALWAYS );
+				vkCmdBindPipeline( vkExec.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
+				const float push[ 4 ] = { (float)( face + 1 ), 0.0f, 0.0f, 0.0f };
+				vkCmdPushConstants( vkExec.cmd, vkExec.interactionPipelineLayout,
+						VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), push );
+				vkCmdDraw( vkExec.cmd, 3, 1, 0, 0 );
+				VK_Exec_EndMainRendering();
+				passed = target.MakeCurrent( face );
+			}
+		}
+		const int previousFace = vkExec.activeCubeFace;
+		idRenderTexture duplicate( colors[ 0 ], depth );
+		duplicate.AddRenderImage( colors[ 0 ] );
+		idRenderTexture excessive( colors[ 0 ], depth );
+		for ( int i = 0; i < VK_MAX_COLOR_ATTACHMENTS; i++ ) {
+			excessive.AddRenderImage( colors[ 0 ] );
+		}
+		wrong->Resize( size / 2, size / 2 );
+		idRenderTexture wrongSize( colors[ 0 ], depth );
+		wrongSize.AddRenderImage( wrong );
+		passed = passed && !duplicate.MakeCurrent() && !excessive.MakeCurrent() && !wrongSize.MakeCurrent();
+		if ( cube ) {
+			passed = passed && !target.Resize( size / 2, size )
+					&& colors[ 0 ]->GetOpts().width == size && colors[ 1 ]->GetOpts().height == size;
+		}
+		wrong->Resize( size, size );
+		idRenderTexture wrongFormat( NULL, resolvedDepth );
+		for ( int i = 0; i < colorCount; i++ ) {
+			wrongFormat.AddRenderImage( i == colorCount - 1 ? wrong : resolved[ i ] );
+		}
+		passed = passed && !VK_Exec_ResolveRenderTargets( &target, &wrongFormat, withDepth )
+				&& !VK_Exec_ResolveRenderTargets( &target, &target, withDepth );
+		if ( samples == 0 ) {
+			idRenderTexture aliasSource( colors[ 0 ], NULL );
+			aliasSource.AddRenderImage( resolved[ 0 ] );
+			idRenderTexture aliasDestination( resolved[ 0 ], NULL );
+			aliasDestination.AddRenderImage( colors[ 0 ] );
+			passed = passed && !VK_Exec_ResolveRenderTargets( &aliasSource, &aliasDestination, false );
+		} else if ( colors[ 0 ]->GetOpts().numMSAASamples > 1 ) {
+			idRenderTexture wrongSamples( colors[ 0 ], NULL );
+			wrongSamples.AddRenderImage( resolved[ 1 ] );
+			passed = passed && !wrongSamples.MakeCurrent();
+		}
+		passed = passed && vkExec.activeRenderTexture == &target && vkExec.activeCubeFace == previousFace
+				&& vkExec.activePipelineTarget.colorCount == (uint32_t)colorCount && vkExec.mainScopeOpen
+				&& VK_Exec_ResolveRenderTargets( &target, &destination, withDepth )
+				&& VK_Exec_CheckMRT( destination, size, layers );
+	}
+	if ( vkExec.frameOpen ) {
+		(void)VK_Exec_SetRenderTarget( NULL );
+		(void)VK_GuiExecutor_EndFrameAndPresent();
+	}
+	common->Printf( "Vulkan MRT case: colors=%d cube=%d depth=%d reverseFormats=%d MSAA requested=%d effective=%d %s\n",
+			colorCount, (int)cube, (int)withDepth, (int)reverseFormats, samples,
+			colors[ 0 ]->GetOpts().numMSAASamples, passed ? "passed" : "FAILED" );
+	for ( int i = 0; i < colorCount; i++ ) {
+		colors[ i ]->PurgeImage();
+		resolved[ i ]->PurgeImage();
+	}
+	if ( depth != NULL ) {
+		depth->PurgeImage();
+		resolvedDepth->PurgeImage();
+	}
+	wrong->PurgeImage();
+	return passed;
+}
+
+static bool VK_Exec_TestMRT( void ) {
+	VkShaderModule modules[ 3 ] = {};
+	const unsigned char *code[ 3 ] = { vk_target_test_vert_spv, vk_target_test_frag_spv, vk_target_test_five_frag_spv };
+	const unsigned int sizes[ 3 ] = { vk_target_test_vert_spv_size, vk_target_test_frag_spv_size, vk_target_test_five_frag_spv_size };
+	bool passed = true;
+	const bool fiveColors = vkCtx.deviceProperties.limits.maxColorAttachments >= VK_MAX_COLOR_ATTACHMENTS;
+	for ( int i = 0; i < ( fiveColors ? 3 : 2 ) && passed; i++ ) {
+		VkShaderModuleCreateInfo info = {};
+		info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+		info.codeSize = sizes[ i ];
+		info.pCode = (const uint32_t *)code[ i ];
+		passed = vkCreateShaderModule( vkCtx.device, &info, NULL, &modules[ i ] ) == VK_SUCCESS;
+	}
+	passed = passed && VK_Exec_TestMRTCase( modules[ 0 ], modules[ 1 ], 2, false, false, 0, false )
+			&& VK_Exec_TestMRTCase( modules[ 0 ], modules[ 1 ], 2, false, false, 0, true )
+			&& VK_Exec_TestMRTCase( modules[ 0 ], modules[ 1 ], 2, true, true, 0, false )
+			&& VK_Exec_TestMRTCase( modules[ 0 ], modules[ 1 ], 2, false, true, 4, false )
+			&& ( !fiveColors || VK_Exec_TestMRTCase( modules[ 0 ], modules[ 2 ], 5, false, true, 4, false ) );
+	for ( int i = 0; i < 3; i++ ) {
+		if ( modules[ i ] != VK_NULL_HANDLE ) {
+			vkDestroyShaderModule( vkCtx.device, modules[ i ], NULL );
+		}
+	}
+	if ( passed ) {
+		common->Printf( "Vulkan MRT self-test passed (draws, mixed formats, blend masks, load, cube faces, MSAA resolves, resize and rejection)\n" );
+	}
+	return passed;
+}
+
+static bool VK_Exec_TestPBREmissionStorage( int samples ) {
+	const int size = 8;
+	idImageOpts options;
+	options.textureType = TT_2D;
+	options.format = FMT_RGBA16F;
+	options.width = options.height = 1;
+	options.numLevels = 1;
+	idImage *source = globalImages->ScratchImage( "_vkTestEmissionSource", &options, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+	options.width = options.height = size;
+	options.numMSAASamples = samples;
+	idImage *color = globalImages->ScratchImage( va( "_vkTestEmission%d", samples ), &options, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+	options.numMSAASamples = 0;
+	idImage *resolved = globalImages->ScratchImage( va( "_vkTestEmissionResolved%d", samples ), &options, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+	if ( source == NULL || color == NULL || resolved == NULL ) {
+		return false;
+	}
+	// Exact half inputs times 2^20: R remains 4096; G/B saturate at 65504.
+	// Reading the actual FP16 attachment rejects infinity and pre-modulation
+	// intensity clipping, neither of which an LDR screenshot can distinguish.
+	const unsigned short texel[4] = { 0x1c00, 0x3000, 0x3c00, 0x3c00 };
+	source->SubImageUpload( 0, 0, 0, 0, 1, 1, texel );
+	idRenderTexture target( color, NULL );
+	idRenderTexture destination( resolved, NULL );
+	bool passed = target.MakeCurrent() && color->GetOpts().numMSAASamples == samples;
+	const VkDescriptorSet image = VK_GuiExecutor_GetImageDescriptor( source->GetDeviceHandle() );
+	const VkPipeline pipeline = VK_GuiExecutor_GetPipeline( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE );
+	passed = passed && image != VK_NULL_HANDLE && pipeline != VK_NULL_HANDLE;
+	if ( passed ) {
+		const float clear[4] = {};
+		VK_Exec_ClearRenderTarget( true, false, 1.0f, clear );
+		idDrawVert vertices[3];
+		memset( vertices, 0, sizeof( vertices ) );
+		vertices[0].xyz.Set( -1.0f, -1.0f, 0.5f );
+		vertices[1].xyz.Set( 3.0f, -1.0f, 0.5f );
+		vertices[2].xyz.Set( -1.0f, 3.0f, 0.5f );
+		passed = VK_Exec_BindTransientVertices( vkExec.cmd, vertices, sizeof( vertices ) );
+		VkViewport viewport = { 0.0f, 0.0f, (float)size, (float)size, 0.0f, 1.0f };
+		VkRect2D scissor = { { 0, 0 }, { size / 2, size } };
+		vkCmdSetViewport( vkExec.cmd, 0, 1, &viewport );
+		vkCmdSetScissor( vkExec.cmd, 0, 1, &scissor );
+		vkCmdSetDepthTestEnable( vkExec.cmd, VK_FALSE );
+		vkCmdSetDepthWriteEnable( vkExec.cmd, VK_FALSE );
+		vkCmdSetCullMode( vkExec.cmd, VK_CULL_MODE_NONE );
+		vkCmdSetStencilTestEnable( vkExec.cmd, VK_FALSE );
+		vkCmdBindPipeline( vkExec.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
+		vkCmdBindDescriptorSets( vkExec.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+			vkExec.pipelineLayout, 0, 1, &image, 0, NULL );
+		vkGuiPushConstants_t push = {};
+		push.mvp[0] = push.mvp[5] = push.mvp[10] = push.mvp[15] = 1.0f;
+		push.stageColor[0] = push.stageColor[1] = push.stageColor[2] = 1048576.0f;
+		push.stageColor[3] = 1.0f;
+		push.params[0] = 3.0f;
+		vkCmdPushConstants( vkExec.cmd, vkExec.pipelineLayout,
+			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), &push );
+		if ( passed ) {
+			vkCmdDraw( vkExec.cmd, 3, 1, 0, 0 );
+		}
+		const unsigned short expected[4] = { 0x6c00, 0x7bff, 0x7bff, 0x3c00 };
+		passed = passed && VK_Exec_ResolveRenderTargets( &target, &destination, false )
+			&& VK_Exec_CheckMRT( destination, size, 1, expected );
+	}
+	if ( vkExec.frameOpen ) {
+		(void)VK_Exec_SetRenderTarget( NULL );
+		(void)VK_GuiExecutor_EndFrameAndPresent();
+	}
+	source->PurgeImage();
+	color->PurgeImage();
+	resolved->PurgeImage();
+	common->Printf( "Vulkan PBR emission storage: samples=%d finite=65504 unclippedRed=4096 %s\n",
+		samples, passed ? "passed" : "FAILED" );
+	return passed;
+}
+
+void R_RendererVulkanRenderTargetsSelfTest_f( const idCmdArgs &args ) {
+	(void)args;
+	const bool passed = vkCtx.initialized && VK_GuiExecutor_BeginFrame()
+			&& VK_Exec_TestCubeTargets( false, false ) && VK_Exec_TestCubeTargets( true, false )
+			&& VK_Exec_TestCubeTargets( false, true ) && VK_Exec_TestCubeTargets( true, true )
+			&& VK_Exec_TestCubeTargets( true, true, 4 ) && VK_Exec_TestTargetRetirement() && VK_Exec_TestMRT()
+			&& VK_Exec_TestPBREmissionStorage( 0 ) && VK_Exec_TestPBREmissionStorage( 4 );
+	if ( passed ) {
+		common->Printf( "Vulkan render-target self-test passed (66 face captures, color/depth and depth-only draws, resolve, resize, retirement and invalid-face checks)\n" );
+	} else {
+		common->Warning( "Vulkan render-target self-test failed" );
+	}
 }
 
 #endif /* OPENQ4_RENDERER_VK_MODULE */

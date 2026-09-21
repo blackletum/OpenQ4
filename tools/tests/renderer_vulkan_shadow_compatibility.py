@@ -2421,7 +2421,7 @@ def validate_point_receiver_world_bias_contract() -> None:
             "r_shadowMapPointBias.GetFloat()",
             "r_shadowMapPointNormalBias.GetFloat()",
             "r_shadowMapTexelBiasScale.GetFloat()",
-            "0.0f",
+            "r_shadowMapNormalOffsetScale.GetFloat()",
             "r_shadowMapPointMaxWorldBias.GetFloat()",
             "#ifndef OPENQ4_RENDERER_VK_MODULE",
             "R_ShadowMapPointStorageAdjustedReceiverSettings(",
@@ -2432,6 +2432,7 @@ def validate_point_receiver_world_bias_contract() -> None:
             "descriptor.bias[1] = pointReceiverSettings.normalBias;",
             "descriptor.texelDepthBias[0] =",
             "pointReceiverSettings.texelBiasScale",
+            "descriptor.normalOffsetScale = pointReceiverSettings.normalOffsetScale;",
         ),
         "modern bounded point receiver descriptor",
     )
@@ -6722,7 +6723,7 @@ def validate_projection_cache_precision_and_derivatives() -> None:
     if library.count("ModernClusterPrepareShadowDerivatives(ModernClusterFromEyeSpace(vViewPosition));") != 2:
         raise AssertionError("Opaque/alpha-test and transparent forward receivers both need derivatives")
     forward = library[library.index("if ( kind == MODERN_GL_SHADER_CLUSTERED_FORWARD_OPAQUE ||"):]
-    require_order(forward, ("ModernClusterPrepareShadowDerivatives(", "{ discard; }"),
+    require_order(forward, ("ModernClusterPrepareShadowDerivatives(", "if (texel.a <= 0.0) discard;"),
                   "forward derivatives precede alpha discard")
     require(library, "shadowMatrix * vec4(gModernShadowPositionDx, 0.0)",
             "directional derivative excludes depth-plane translation")

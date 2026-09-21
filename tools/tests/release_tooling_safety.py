@@ -1127,7 +1127,7 @@ def validate_manual_release_linux_runtime_gate() -> None:
         '["SDL3: graphics bridge: OpenGL"]',
         '["created OpenGL context"]',
         '["Shutting down OpenGL subsystem (SDL3 backend)"]',
-        "executable = find_client_executable(root)",
+        "executable = find_client_executable(runtime_dir)",
         'runtime_dir = Path(args.runtime_dir).resolve() if args.runtime_dir else root / ".install"',
         'savepath = Path(args.savepath).resolve() if args.savepath else output_dir / "savepath"',
         "cwd=str(runtime_dir)",

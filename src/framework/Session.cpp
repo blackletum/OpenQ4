@@ -3285,8 +3285,9 @@ static bool Session_BakeLightGridCurrentMap( const lightGridBakeOptions_t &optio
 		Session_RemoveLightGridBakeOutputsForMap( mapName );
 	}
 
-	const char *jobName = cvarSystem->GetCVarString( "si_map" );
-	return renderSystem->BakeCurrentLightGrids( options, ( jobName != NULL && jobName[ 0 ] != '\0' ) ? jobName : NULL );
+	// Console-loaded SP maps need not update the archived multiplayer si_map.
+	// Label the bake with the same active-world identity used for its outputs.
+	return renderSystem->BakeCurrentLightGrids( options, mapName.IsEmpty() ? NULL : mapName.c_str() );
 }
 
 static void Session_RunLightGridBake( const idCmdArgs &args ) {

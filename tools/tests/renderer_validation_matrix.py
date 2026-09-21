@@ -497,8 +497,8 @@ def host_arch() -> str:
     return machine
 
 
-def find_client_executable(root: Path) -> Path:
-    install_dir = root / ".install"
+def find_client_executable(runtime_dir: Path) -> Path:
+    install_dir = runtime_dir
     suffix = ".exe" if os.name == "nt" else ""
     candidate_prefixes = ("openQ4-client", "openQ4-client")
     for prefix in candidate_prefixes:
@@ -590,7 +590,7 @@ def common_args(
         str(savepath),
         "+set",
         "fs_devpath",
-        str(runtime_dir),
+        str(savepath),
         "+set",
         "fs_game",
         "baseoq4",
@@ -1504,7 +1504,7 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
         {
             "id": "renderer-vk-clear-startup",
             "category": "vulkan",
-            "description": "Phase D Vulkan module startup: device + swapchain + GUI executor bring-up with validation layers on and zero validation-layer messages.",
+            "description": "Vulkan module startup: device, swapchain, GUI executor, and shared contracts with confirmed validation layers/debug messenger and zero validation warnings.",
             "assetless": True,
             "requiresVulkanModule": True,
             "preservesConfig": True,
@@ -1524,6 +1524,7 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
                 "+rendererClassicFogBlendDomainSelfTest",
                 "+rendererClassicSubviewDomainSelfTest",
                 "+rendererClassicDeformDomainSelfTest",
+                "+rendererVulkanRenderTargetsSelfTest",
                 "+gfxInfo",
             ],
             "checks": [
@@ -1531,6 +1532,11 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
                 ["----- VK_InitRenderDevice -----"],
                 ["Vulkan: created swapchain"],
                 ["Vulkan: GUI executor initialized"],
+                ["Vulkan: validation enabled (VK_LAYER_KHRONOS_validation, debug messenger active)"],
+                ["Vulkan render-target self-test passed (66 face captures, color/depth and depth-only draws, resolve, resize, retirement and invalid-face checks)"],
+                ["Vulkan MRT self-test passed (draws, mixed formats, blend masks, load, cube faces, MSAA resolves, resize and rejection)"],
+                ["Vulkan PBR emission storage: samples=0 finite=65504 unclippedRed=4096 passed"],
+                ["Vulkan PBR emission storage: samples=4 finite=65504 unclippedRed=4096 passed"],
                 ["Vulkan renderer initialized"],
                 ["RendererContracts self-test passed"],
                 ["RendererGpuSkinning self-test passed"],
@@ -1542,6 +1548,27 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
                 ["RendererClassicSubviewDomain self-test passed"],
                 ["RendererClassicDeformDomain self-test passed"],
                 ["GPU skinning:"],
+            ],
+        },
+        {
+            "id": "renderer-vk-hdr-selftest",
+            "category": "vulkan",
+            "description": "Unclamped FP16 scene/MSAA capture and exposure before and after a full Vulkan device restart.",
+            "assetless": True,
+            "requiresVulkanModule": True,
+            "preservesConfig": True,
+            "args": ["+set", "r_renderApi", "vulkan", "+set", "r_vkValidation", "1",
+                     "+rendererVulkanHDRSelfTest", "+vid_restart", "+rendererVulkanHDRSelfTest", "+gfxInfo"],
+            "checks": [
+                ["Renderer API: requested=vulkan active=vulkan disposition=module"],
+                ["Vulkan: validation enabled (VK_LAYER_KHRONOS_validation, debug messenger active)"],
+                ["Vulkan HDR self-test passed (24 FP16/MSAA luminance fixtures, synchronous/asynchronous exposure, resize and stale-sample rejection)"],
+            ],
+            "absent": ["Vulkan HDR self-test failed", "Vulkan: HDR luminance sample unavailable"],
+            "orderedLogChecks": [
+                "Vulkan HDR self-test passed (24 FP16/MSAA luminance fixtures, synchronous/asynchronous exposure, resize and stale-sample rejection)",
+                "----- VK_InitRenderDevice -----",
+                "Vulkan HDR self-test passed (24 FP16/MSAA luminance fixtures, synchronous/asynchronous exposure, resize and stale-sample rejection)",
             ],
         },
         {
@@ -1599,6 +1626,41 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
             ],
         },
     ]
+
+    for stage, stage_name, injected_name in (
+        (1, "window", "window"),
+        (2, "surface", "surface"),
+        (3, "swapchain", "swapchain"),
+        (4, "resources", "renderer resources"),
+    ):
+        cases.append({
+            "id": f"renderer-vk-{stage_name}-recovery",
+            "category": "vulkan",
+            "description": f"Inject a Vulkan {stage_name} startup failure, release all startup owners, and initialize OpenGL in the same process.",
+            "assetless": True,
+            "requiresVulkanModule": True,
+            "preservesConfig": True,
+            "args": ["+set", "r_renderApi", "vulkan", "+set", "r_vkValidation", "1",
+                     "+set", "r_vkStartupFailure", str(stage), "+rendererModuleSelfTest", "+gfxInfo"],
+            "checks": [
+                [f"Vulkan startup failure injected: {injected_name}"],
+                ["Renderer startup recovery: device preparation failed"],
+                ["Renderer startup recovery: failed Vulkan module unloaded after owner teardown"],
+                ["Renderer startup recovery: OpenGL selected after complete owner teardown"],
+                ["Renderer API: requested=vulkan active=gl disposition=fallback"],
+                ["RendererModule self-test passed"],
+                ["created OpenGL context"],
+            ] + ([["Vulkan: validation enabled (VK_LAYER_KHRONOS_validation, debug messenger active)"]] if stage > 1 else []),
+            "absent": ["Vulkan renderer device initialization failed", "Vulkan renderer initialized:"],
+            "orderedLogChecks": [
+                f"Vulkan startup failure injected: {injected_name}",
+                "Renderer startup recovery: device preparation failed",
+                "Renderer startup recovery: failed Vulkan module unloaded after owner teardown",
+                "Renderer startup recovery: OpenGL selected after complete owner teardown",
+                "created OpenGL context",
+                "RendererModule self-test passed",
+            ],
+        })
 
     for shader_tier in SHADER_LIBRARY_TIER_MATRIX:
         tier = shader_tier["tier"]
@@ -1759,12 +1821,10 @@ def vk_module_path(runtime_dir: Path) -> Path:
 
 
 def filter_vulkan_module_cases(cases: list[dict[str, Any]], runtime_dir: Path) -> list[dict[str, Any]]:
-    # the Vulkan cases need a staged renderer-vk module and a live Vulkan
-    # driver. Headless Linux legs (Xvfb/WSL) offer neither, so they stay
-    # dropped there. Windows has a native driver; macOS runs the module on
-    # MoltenVK, which is bundled with the package, so both hosts qualify once
-    # the module is staged next to the executable.
-    if (os.name == "nt" or sys.platform == "darwin") and vk_module_path(runtime_dir).exists():
+    # Linux can run the actual Vulkan renderer under Xvfb using Mesa's
+    # lavapipe driver. A staged module is required on every host; CI selects
+    # its required cases explicitly, so missing modules never filter them out.
+    if sys.platform in ("win32", "linux", "darwin") and vk_module_path(runtime_dir).is_file():
         if sys.platform != "darwin":
             return cases
         # the empty-driver lever works on the Khronos loader's driver list;
@@ -1777,6 +1837,16 @@ def filter_vulkan_module_cases(cases: list[dict[str, Any]], runtime_dir: Path) -
     if dropped:
         print(f"note: skipping Vulkan module cases (module not staged or unsupported host): {', '.join(dropped)}")
     return [case for case in cases if not case.get("requiresVulkanModule")]
+
+
+def validate_case_prerequisites(cases: list[dict[str, Any]], runtime_dir: Path) -> None:
+    if not cases:
+        raise ValueError("no runnable renderer validation cases selected")
+    required = [case["id"] for case in cases if case.get("requiresVulkanModule")]
+    if required and not vk_module_path(runtime_dir).is_file():
+        raise ValueError(f"required Vulkan module is missing: {vk_module_path(runtime_dir)} ({', '.join(required)})")
+    if sys.platform == "darwin" and any(case.get("emptyVulkanDrivers") for case in cases):
+        raise ValueError("the empty Vulkan driver drill requires the Khronos loader; macOS loads MoltenVK directly")
 
 
 def find_log(savepath: Path, log_name: str) -> Path | None:
@@ -1859,6 +1929,17 @@ def evaluate_checks(
     return len(missing) == 0, missing
 
 
+def evaluate_ordered_log_checks(text: str, markers: list[str]) -> list[str]:
+    """Recovery evidence must survive, in order, in the engine's own log."""
+    position = 0
+    for marker in markers:
+        found = text.find(marker, position)
+        if found < 0:
+            return [f"missing or out-of-order engine log marker: {marker}"]
+        position = found + len(marker)
+    return []
+
+
 def extract_summary(text: str) -> dict[str, str]:
     summary: dict[str, str] = {}
     for key, pattern in {
@@ -1923,7 +2004,12 @@ def run_case(
     case_assetless = bool(case.get("assetless", False))
     case_basepath = "" if case_assetless else basepath
     case_skip_official_pak_validation = skip_official_pak_validation or case_assetless
-    args = common_args(runtime_dir, case_id, case_basepath, savepath, case_skip_official_pak_validation) + case["args"] + ["+quit"]
+    args = common_args(runtime_dir, case_id, case_basepath, savepath, case_skip_official_pak_validation)
+    if case.get("requiresVulkanModule"):
+        # Startup/fallback drills do not need focus or user input, including
+        # when a failed Vulkan candidate selects OpenGL in the same process.
+        args += ["+set", "r_hiddenWindow", "1", "+set", "in_mouse", "0", "+set", "in_joystick", "0"]
+    args += case["args"] + ["+quit"]
     startup_commands = sum(1 for arg in args if arg.startswith("+"))
     if startup_commands > ENGINE_MAX_STARTUP_COMMANDS:
         raise RuntimeError(
@@ -2005,7 +2091,8 @@ def run_case(
         case.get("absent"),
         case.get("allowedWarningSignatures"),
     )
-    ok = exit_code == 0 and not timed_out and log_path is not None and checks_ok
+    missing += evaluate_ordered_log_checks(log_text, case.get("orderedLogChecks", []))
+    ok = exit_code == 0 and not timed_out and log_path is not None and checks_ok and not missing
     return {
         "id": case_id,
         "category": case["category"],
@@ -2345,6 +2432,10 @@ def main(argv: list[str]) -> int:
             print(f"  {item['criterion']}: {item['required']}")
         return 0
 
+    runtime_dir = Path(args.runtime_dir).resolve() if args.runtime_dir else root / ".install"
+    if not runtime_dir.is_dir():
+        print(f"runtime directory does not exist: {runtime_dir}", file=sys.stderr)
+        return 2
     if args.executable:
         executable = Path(args.executable).resolve()
         if not executable.is_file():
@@ -2354,14 +2445,15 @@ def main(argv: list[str]) -> int:
             print(f"explicit client executable is not executable: {executable}", file=sys.stderr)
             return 2
     else:
-        executable = find_client_executable(root)
-    runtime_dir = Path(args.runtime_dir).resolve() if args.runtime_dir else root / ".install"
-    if not runtime_dir.is_dir():
-        print(f"runtime directory does not exist: {runtime_dir}", file=sys.stderr)
-        return 2
+        executable = find_client_executable(runtime_dir)
     if not requested_cases:
         safe_cases = filter_driver_specific_cases(safe_cases)
         safe_cases = filter_vulkan_module_cases(safe_cases, runtime_dir)
+    try:
+        validate_case_prerequisites(safe_cases, runtime_dir)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     output_dir = Path(args.output_dir).resolve() if args.output_dir else root / ".tmp" / "renderer-validation" / timestamp
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -58,8 +58,8 @@ int main() {
 	modernSpecularProbeAtlasPlacement_t smaller;
 	Check( ModernSpecularProbeAtlas_BuildPlacement( 0, 64, smaller )
 		&& smaller.faceRects[0][2]
-			== 63.0f / static_cast<float>( MODERN_SPECULAR_PROBE_ATLAS_SIZE ),
-		"smaller faces must retain texel-centre extents" );
+			== 255.0f / static_cast<float>( MODERN_SPECULAR_PROBE_ATLAS_SIZE ),
+		"smaller source cubes must occupy complete filtered atlas cells" );
 
 	modernSpecularProbeAtlasPlacement_t rejected;
 	rejected.valid = true;

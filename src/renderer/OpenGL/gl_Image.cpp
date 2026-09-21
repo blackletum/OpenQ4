@@ -354,13 +354,17 @@ void idImage::AllocImage() {
 	PurgeImage();
 	storageGeneration++;
 
-	// openQ4 still follows the stock Quake 4 renderer's legacy SDR lighting path.
-	// Enabling selective sRGB decode without a full renderer-wide linear workflow
-	// changes the baseline image significantly, so keep stock texture sampling
-	// behavior for now and reserve strict sRGB texture decode for future work.
+	// Stock formats retain Quake 4's encoded-value lighting contract. Authored
+	// PBR colour uses the explicit FMT_SRGBA8 case, isolated by image usage/cache
+	// identity, so its decode/filtering cannot change classic materials.
 	const bool useSRGBTextureDecode = false;
 
 	switch ( opts.format ) {
+	case FMT_SRGBA8:
+		internalFormat = GL_SRGB8_ALPHA8;
+		dataFormat = GL_RGBA;
+		dataType = GL_UNSIGNED_BYTE;
+		break;
 	case FMT_RGBA8:
 		internalFormat = useSRGBTextureDecode ? GL_SRGB8_ALPHA8 : GL_RGBA8;
 		dataFormat = GL_RGBA;

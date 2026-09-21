@@ -4,6 +4,7 @@
 #include "tr_local.h"
 #include "ScenePackets.h"
 #include "RendererBootstrap.h"
+#include "MaterialResourceTable.h"
 
 static idScenePacketFrame rg_frontEndScenePacketFrame;
 static bool rg_frontEndScenePacketFrameOpen = false;
@@ -1935,12 +1936,13 @@ static bool R_ScenePackets_DrawSurfAmbientEligible( const viewDef_t *viewDef, co
 		return false;
 	}
 	const idMaterial *material = drawSurf->material;
-	// Clustered PBR lighting uses the ambient packet as the one stable surface
-	// owner for the complete light list.  A valid PBR material is not required
-	// to author a legacy ambient stage, so retain it here even when HasAmbient()
-	// is false.  The modern draw plan still fail-closes on PBR readiness and the
-	// classic renderer remains authoritative whenever that admission fails.
-	if ( ( !material->HasAmbient() && !material->HasPBR() ) || material->IsPortalSky() || material->SuppressInSubview() ) {
+	// Clustered PBR and the qualified classic diffuse contract use one stable
+	// ambient packet to own the complete light list, even when the declaration
+	// contains no legacy ambient stage. The resource table and draw plan still
+	// validate the full contract; rejected views retain their native owner.
+	if ( ( !material->HasAmbient() && !material->HasPBR()
+			&& !R_MaterialResourceTable_ClassicFixedMaterialEligible( material ) )
+			|| material->IsPortalSky() || material->SuppressInSubview() ) {
 		return false;
 	}
 	if ( r_skipDecals.GetBool() && R_ScenePackets_DrawSurfIsDecalMaterialPass( drawSurf ) ) {

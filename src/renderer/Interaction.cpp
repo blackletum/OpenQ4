@@ -1920,6 +1920,12 @@ instantiate the dynamic model to find out
 ==================
 */
 void idInteraction::AddActiveInteraction( void ) {
+	// Probe lights are environment metadata, including interactions prepared
+	// at level load before R_AddLightSurfaces applies its per-view probe gate.
+	// Never publish those cached interactions into the classic fallback lists.
+	if ( lightDef->lightShader != NULL && lightDef->lightShader->HasSpecularProbe() ) {
+		return;
+	}
 	viewLight_t *	vLight;
 	viewEntity_t *	vEntity;
 	idScreenRect	shadowScissor;

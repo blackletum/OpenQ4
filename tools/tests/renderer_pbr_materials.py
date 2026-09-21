@@ -223,6 +223,11 @@ def test_texture_usage_and_lifecycle_contracts() -> None:
 
     image_load = read(ROOT / "src/renderer/Image_load.cpp")
     require(image_load, "case TD_PBR_COLOR:", "PBR color derivation")
+    require(image_load, "opts.format = FMT_SRGBA8;", "hardware sRGB filtering")
+    require(read(ROOT / 'src/renderer/OpenGL/gl_Image.cpp'), 'case FMT_SRGBA8:', 'GL sRGB storage')
+    require(read(ROOT / 'src/renderer/Vulkan/vk_Image.cpp'), 'VK_FORMAT_R8G8B8A8_SRGB', 'Vulkan sRGB storage')
+    require(read(ROOT / 'src/imagetools/BinaryImage.cpp'), 'R_MipMapWithSRGB', 'sRGB RGB and linear-alpha mip chain')
+    require(image_load, '_name += "s1";', 'PBR-only image cache revision')
     require(image_load, "opts.gammaMips = true;", "gamma-correct PBR color mips")
     require(image_load, "case TD_MATERIAL_DATA:", "linear material-data derivation")
     gamma_downsize = function_body(image_load, "static bool R_ImageUsageUsesGammaMips(")
@@ -482,14 +487,18 @@ def test_scene_packet_and_resource_table_drive_the_guarded_visible_path() -> Non
         "dot(reflectionDirection, normalize(probe.axisZSlot.xyz))",
         "weight = clamp((radius - distanceToProbe) / blendWidth, 0.0, 1.0)",
         "environment /= totalWeight",
-        "textureLod(uModernSpecularProbeAtlas, atlasUV, 0.0)",
-        "faceUV * float(MODERN_SPECULAR_PROBE_FACE_SIZE - 1)",
-        "prefiltered = mix(edgeBlendedProbe, analyticPrefiltered, clamp(roughness, 0.0, 1.0))",
+        "textureLod(uModernSpecularProbeAtlas, atlasUV, float(level))",
+        "faceUV * float(faceSize - 1)",
+        "prefiltered = mix(prefiltered, probeEnvironment, probeCoverage)",
+        "ModernProbeDiffuse(slot, localNormal)",
+        "f0 * brdf.x + vec3(brdf.y)",
+        "PBRDistributionGGX(ndoth, roughness)",
+        "PBRVisibilitySmithGGX(ndotv, ndotl, roughness)",
     ):
         require(shader_library, token, "authored specular-probe shader contract")
-    if shader_library.count("ModernPBRIndirect(") != 4:
+    if shader_library.count("ModernPBRIndirect(") != 3 or shader_library.count("ModernPBRIndirectSource(") != 3:
         raise AssertionError("every deferred/opaque-alpha/transparent PBR indirect call must carry clusterRange")
-    if shader_library.count("pbrData.z, clusterRange)") != 2:
+    if shader_library.count("pbrData.z, clusterRange)") != 1 or shader_library.count("pbrData.z, clusterRange, baked)") != 1:
         raise AssertionError("opaque-alpha and transparent PBR indirect calls must carry clusterRange")
     require(
         shader_library,
@@ -501,13 +510,13 @@ def test_scene_packet_and_resource_table_drive_the_guarded_visible_path() -> Non
         "MODERN_GL_CLUSTER_UBO_BINDING_SPECULAR_PROBES = 7",
         '"ModernSpecularProbeRecords", MODERN_GL_CLUSTER_UBO_BINDING_SPECULAR_PROBES',
         'glUniform1i( specularProbeAtlas, MODERN_SPECULAR_PROBE_ATLAS_TEXTURE_UNIT )',
-        "R_ModernGLExecutor_ShadowTextureUnitLimit() > MODERN_SPECULAR_PROBE_ATLAS_TEXTURE_UNIT",
+        "R_ModernGLExecutor_ShadowTextureUnitLimit() > MODERN_CURRENT_POINT_SHADOW_TEXTURE_UNIT",
         'glGetUniformBlockIndex( program->program, "ModernSpecularProbeRecords" )',
         "R_ModernClusteredLighting_ProbeUboBlockBytes()",
         "specular-probe UBO layout drift",
         "R_ModernSpecularProbeAtlas_Init( caps, features )",
         "R_ModernSpecularProbeAtlas_Shutdown()",
-        "R_ModernSpecularProbeAtlas_BeginFrame()",
+        "R_ModernSpecularProbeAtlas_BeginFrame( pbrEnvironmentRequested )",
         "R_ModernSpecularProbeAtlas_FlushUploads()",
         "R_ModernSpecularProbeAtlas_FrameReady()",
         "R_ModernGLExecutor_ShadowSlotPlaceholderTexture( GL_TEXTURE_2D )",
@@ -661,7 +670,7 @@ def test_controlled_fixture_gameplay_acceptance_gate() -> None:
         "rendererBenchmarkCapture",
         "map game/storage1",
         "devmap game/storage1",
-        "echo Vulkan: native packed PBR direct interactions active (9 draws)",
+        "echo Vulkan: native PBR direct interactions active (9 draws)",
         "say PBR material resources: records=9 resourceReady=9 modernReady=9",
         "god; r_pbrMaterials 0",
         "god\nr_pbrMaterials 0",
@@ -851,7 +860,7 @@ def test_controlled_fixture_gameplay_acceptance_gate() -> None:
         "\n".join(
             (
                 "PBR material resources: records=2 resourceReady=2 modernReady=2 packed=2 separate=0 fallback=0",
-                "Vulkan: native packed PBR direct interactions active (7 draws)",
+                "Vulkan: native PBR direct interactions active (7 draws)",
             )
         )
     )
@@ -862,7 +871,7 @@ def test_controlled_fixture_gameplay_acceptance_gate() -> None:
         raise AssertionError(f"complete Vulkan PBR fixture telemetry failed: {vk_failures!r}")
     if any(name in vk_evidence for name in ("modernVisible", "drawPlan", "forwardPlus")):
         raise AssertionError("Vulkan acceptance must not depend on Modern GL telemetry")
-    for marker in ("", "Vulkan: native packed PBR direct interactions active (0 draws)"):
+    for marker in ("", "Vulkan: native PBR direct interactions active (0 draws)"):
         broken_vk = dict(vk_summary)
         broken_vk["vulkanPackedPBR"] = marker
         broken_evidence, broken_failures = gameplay.evaluate_pbr_fixture_evidence(
@@ -874,8 +883,8 @@ def test_controlled_fixture_gameplay_acceptance_gate() -> None:
         "\n".join(
             (
                 vk_summary["pbrMaterialResources"],
-                "Vulkan: native packed PBR direct interactions active (7 draws)",
-                "Vulkan: native packed PBR direct interactions active (0 draws)",
+                "Vulkan: native PBR direct interactions active (7 draws)",
+                "Vulkan: native PBR direct interactions active (0 draws)",
             )
         )
     )
@@ -949,11 +958,11 @@ def test_vulkan_pbr_support_stays_narrow_and_fail_closed() -> None:
         )
     packed_admission = function_body(
         interactions,
-        "static bool VK_PackedPBRInteraction(",
+        "static bool VK_PBRDirectMaterial(",
     )
     require(
         packed_admission,
-        "!VK_PBRHasSingleClassicInteractionTopology( din->surf )",
+        "!VK_PBRHasSingleClassicInteractionTopology( surf )",
         "fail-closed Vulkan packed-PBR topology admission",
     )
     decomposition = function_body(
@@ -962,13 +971,13 @@ def test_vulkan_pbr_support_stays_narrow_and_fail_closed() -> None:
     )
     require(
         decomposition,
-        "const bool packedPBROwnerEligible = VK_PBRHasSingleClassicInteractionTopology( surf );",
+        "const bool pbrOwnerEligible = VK_PBRHasSingleClassicInteractionTopology( surf );",
         "stable Vulkan packed-PBR surface owner",
     )
     if decomposition.count("VK_SubmitInteraction( &inter, false );") != 3:
         raise AssertionError("every intermediate Vulkan interaction flush must stay classic")
     if decomposition.count(
-        "VK_SubmitInteraction( &inter, packedPBROwnerEligible );"
+        "VK_SubmitInteraction( &inter, pbrOwnerEligible );"
     ) != 1:
         raise AssertionError("only the final Vulkan interaction submit may own packed PBR")
     reject(
@@ -977,21 +986,54 @@ def test_vulkan_pbr_support_stays_narrow_and_fail_closed() -> None:
         "ungated Vulkan packed-PBR interaction submission",
     )
     for token in (
-        "VK_PackedPBRInteraction",
+        "VK_PBRDirectInteraction",
         "!r_rendererModernQuality.GetBool()",
         "PBR_WORKFLOW_METALLIC_ROUGHNESS",
         "PBR_NORMAL_TANGENT_XYZ",
-        "material->Coverage() != MC_OPAQUE",
+        "!VK_PBRHasMatchingDepthCoverage( surf )",
         "R_MaterialResourceTable_FindRecordForMaterial( material )",
         "R_MaterialResourceTable_PBRModernPathEligible( *resourceRecord )",
         "VK_PBRImageReady( info.albedo.image, TD_PBR_COLOR )",
         "VK_PBRImageReady( info.orm.image, TD_MATERIAL_DATA )",
+        "VK_PBRImageReady( info.metallic.image, TD_MATERIAL_DATA )",
+        "VK_PBRImageReady( info.roughness.image, TD_MATERIAL_DATA )",
+        "R_MaterialResourceTable_PBREmissivePathEligible( *resourceRecord )",
+        "VK_PBRImageReady( info.emissive.image, TD_PBR_COLOR )",
+        "out.normalFormat = info.normal.present ? (int)info.normalFormat + 1 : 0;",
+        "info.normalFormat == PBR_NORMAL_QUAKE4_AGB ? TD_BUMP : TD_MATERIAL_DATA",
+        "pbr.metallicImage->GetDeviceHandle()",
         "r_pbrDebug.GetInteger() == 7",
-        "native packed PBR direct interactions active",
+        "native PBR direct interactions active",
         "VK_DrawSingleInteractionMode( din, false, 0.0f, 0.0f, allowNativePBR )",
         "VK_DrawSingleInteractionMode( din, parallax, scaleBias[ 0 ], scaleBias[ 1 ], false )",
     ):
         require(interactions, token, "narrow Vulkan packed-PBR admission")
+    coverage = function_body(interactions, "static bool VK_PBRHasMatchingDepthCoverage(")
+    for token in (
+        "material->Coverage() == MC_OPAQUE", "material->Coverage() != MC_PERFORATED",
+        "++alphaStages != 1", "stage->lighting != SL_DIFFUSE",
+        "image->GetName(), albedo->GetName()", "image->GetFilter() != albedo->GetFilter()",
+        "image->GetRepeat() != albedo->GetRepeat()", "stage->texture.hasMatrix",
+        "stage->privatePolygonOffset != 0.0f", "stage->vertexColor != SVC_IGNORE",
+        "stage->alphaTestRegister, -1.0f", "return alphaStages == 1;",
+    ):
+        require(coverage, token, "native Vulkan perforated depth coverage contract")
+    emission = function_body(interactions, "bool VK_PBR_EmissionForStage(")
+    for token in ("!VK_PBRDirectMaterial( surf, material )", "fallback->stageIndex != stageIndex",
+                  "image = info.emissive.image", "info.emissiveColorRegisters[component]",
+                  "color[component] = Max( 0.0f", "r_pbrDebug.GetInteger() == 7"):
+        require(emission, token, "single native emission owner")
+    executor = read(ROOT / "src/renderer/Vulkan/vk_GuiExecutor.cpp")
+    for token in ("VK_PBR_EmissionForStage( drawSurf, stageNum, nativePBREmission, color )",
+                  "nativePBREmission != NULL ? nativePBREmission : pStage->texture.image"):
+        require(executor, token, "native emission replaces the classic ambient stage")
+    require(function_body(executor, "static bool VK_ClassicWorldAmbient_Preflight("),
+            "material->GetPBRInfo().emissive.present", "shared classic glow must yield to native emission")
+    reject(emission, "65504.0f", "do not clamp intensity before emission texture modulation")
+    require(executor, "push.params[ 0 ] = 3.0f", "native emission finite-storage mode")
+    fragment = read(ROOT / "src/renderer/Vulkan/shaders/gui.frag")
+    for token in ("if (pc.params.x > 2.5)", "vec3(65504.0)", "isnan(color.rgb)"):
+        require(fragment, token, "evaluated emission radiance storage")
     for relative_path in (
         "src/renderer/Vulkan/shaders/interaction.frag",
         "src/renderer/Vulkan/shaders/interaction_shadow.frag",
@@ -999,16 +1041,40 @@ def test_vulkan_pbr_support_stays_narrow_and_fail_closed() -> None:
     ):
         shader = read(ROOT / relative_path)
         for token in (
-            "EvaluatePackedPBR",
-            "pow(max(texture(diffuseMap, albedoTexCoord).rgb, vec3(0.0)), vec3(2.2))",
-            "vec3 orm = texture(specularMap, ormTexCoord).rgb;",
-            "float metallic = clamp(orm.b * pc.d.y, 0.0, 1.0);",
-            "float roughness = clamp(orm.g * pc.d.z, 0.045, 1.0);",
-            "vec3 diffuse = (vec3(1.0) - fresnel) * (1.0 - metallic)",
+            "EvaluatePBRDirect",
+            "PBRDirectNormal(bumpTexCoord)",
+            '#include "../../PBRMath.h"',
+            '#include "pbr_direct.glsl"',
             "if (pc.d.x > 1.5)",
+            "if (pc.d.x > 2.5)",
             "outColor = vec4(0.0, 1.0, 0.0, 0.0);",
         ):
             require(shader, token, f"Vulkan packed-PBR shader {relative_path}")
+    shared = read(ROOT / "src/renderer/Vulkan/shaders/pbr_direct.glsl")
+    for token in ("PBRFilteredRoughness(roughness", "dFdx(objectNormal)", "dFdy(objectNormal)",
+                  "SafeNormalize(vPBRTangent0) * localNormal.x", "SafeNormalize(vPBRNormal) * localNormal.z"):
+        require(shared, token, "native final-normal specular filtering")
+    if shared.index("dFdx(objectNormal)") > shared.index("if (ndotl <= 0.0"):
+        raise AssertionError("native normal derivatives must precede per-fragment light rejection")
+    require(interactions, "push.c[ 3 ] = r_vkPBRSpecularAA.GetBool() ? 1.0f : 0.0f;",
+            "native specular-AA comparison switch")
+    for stem in ("interaction", "interaction_shadow", "interaction_shadow_point"):
+        for suffix, qualifier in (("vert", "out"), ("frag", "in")):
+            source = read(ROOT / f"src/renderer/Vulkan/shaders/{stem}.{suffix}")
+            for location, component, name in ((12, 1, "vPBRTangent0"), (14, 1, "vPBRTangent1"), (15, 0, "vPBRNormal")):
+                layout = f"location = {location}" + (f", component = {component}" if component else "")
+                require(source, f"layout({layout}) {qualifier} vec3 {name};", "packed native shading basis")
+    for token in (
+        "PBRDistributionGGX(ndoth, roughness)",
+        "PBRVisibilitySmithGGX(ndotv, ndotl, roughness)",
+        "vec3 diffuse = (vec3(1.0) - fresnel) * (1.0 - metallic)",
+        "texture(specularMap, dataTexCoord).bg",
+        "texture(specularTableMap, dataTexCoord).r",
+        "texture(specularMap, dataTexCoord).r",
+        "value.agb",
+        "sqrt(max(1.0 - dot(xy, xy), 0.0))",
+    ):
+        require(shared, token, "shared Vulkan PBR direct material decoding")
 
 
 def main() -> int:

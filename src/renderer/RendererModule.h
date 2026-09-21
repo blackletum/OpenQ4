@@ -74,6 +74,12 @@ void	R_RendererModule_Boot( void );
 // command-line overrides before booting.
 void	R_RendererModule_BootEarly( void );
 
+// Startup-only two-phase recovery: preparation returns through the module;
+// after ShutdownGame has released every owner, retire the failed module and
+// permit one OpenGL activation during the next InitGame/BootEarly sequence.
+bool	R_RendererModule_PrepareStartupDevice( void );
+bool	R_RendererModule_RetryFailedStartup( void );
+
 // unloads any loaded renderer module; safe to call when none is loaded
 void	R_RendererModule_Shutdown( void );
 

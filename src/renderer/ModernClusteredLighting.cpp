@@ -765,6 +765,9 @@ static int R_ModernClusteredLighting_ShadowDescriptorFlags( const modernShadowLi
 	if ( shadow.arb2AtlasSlotReady || shadow.arb2PointCubeReady ) {
 		flags |= RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_ATLAS_SLOT;
 	}
+	if ( shadow.currentFrameMapReady ) {
+		flags |= RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_CURRENT_FRAME_MAP;
+	}
 	if ( shadow.stableCascadeReady ) {
 		flags |= RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_STABLE_CASCADE;
 	}
@@ -856,6 +859,10 @@ static void R_ModernClusteredLighting_CopyPlannerShadowDescriptor( rendererModer
 		dst.projection[1] = 2.0f / static_cast<float>( Max( 1, src.resolution ) );
 		dst.projection[2] = static_cast<float>( src.depthFormat );
 		dst.projection[3] = static_cast<float>( src.compareMode );
+		if ( src.currentFrameMapReady ) {
+			dst.projection[2] = static_cast<float>( src.currentPointFirstTile );
+			dst.projection[3] = static_cast<float>( src.currentPointAtlasColumns );
+		}
 	} else {
 		dst.projection[0] = src.projectionPad;
 		dst.projection[1] = src.projectionScale;
@@ -863,6 +870,7 @@ static void R_ModernClusteredLighting_CopyPlannerShadowDescriptor( rendererModer
 		dst.projection[3] = static_cast<float>( src.projectedFallbackReason );
 	}
 	memcpy( dst.bias, src.bias, sizeof( dst.bias ) );
+	dst.normalOffsetScale = src.normalOffsetScale;
 	memcpy( dst.projectedBaseClipPlanes, src.projectedBaseClipPlanes, sizeof( dst.projectedBaseClipPlanes ) );
 
 	const int cascadeCount = Min( RENDERER_MODERN_SHADOW_DESCRIPTOR_MAX_CASCADES, MODERN_SHADOW_DESCRIPTOR_MAX_CASCADES );
@@ -941,7 +949,8 @@ static void R_ModernClusteredLighting_FillShadowDescriptorGpuRecord( modernClust
 	dst.freshness[0] = static_cast<float>( src.updateFrame & 0xFFFFF );
 	dst.freshness[1] = src.atlasSlotValid ? 1.0f : 0.0f;
 	dst.freshness[2] = src.atlasSlotValid ? static_cast<float>( idMath::ClampInt( 0, 1 << 20, tr.frameCount - src.atlasContentFrame ) ) : -1.0f;
-	dst.freshness[3] = 0.0f;
+	// Previously reserved component; preserve the GPU record/block layout.
+	dst.freshness[3] = src.normalOffsetScale;
 	memcpy( dst.shadowMatrix, src.viewShadowMatrix, sizeof( dst.shadowMatrix ) );
 	memcpy( dst.cascadeSplitDepths, src.cascadeSplitDepths, sizeof( dst.cascadeSplitDepths ) );
 	memcpy( dst.cascadeBiasScale, src.cascadeBiasScale, sizeof( dst.cascadeBiasScale ) );
@@ -974,7 +983,7 @@ static void R_ModernClusteredLighting_ApplyShadowDescriptor( modernClusterLightR
 		|| shadow->policy == MODERN_SHADOW_POLICY_CACHE_REUSE;
 	bool projectedSlotReady = shadow->arb2AtlasSlotReady;
 	if ( !shadow->pointLight && mappedOrReused
-			&& shadow->modernReceiverSamplingReady && projectedSlotReady ) {
+			&& shadow->modernReceiverSamplingReady && projectedSlotReady && !shadow->currentFrameMapReady ) {
 		projectedSlotReady = RB_ShadowMapProjectedAtlasSlotMarkUsed(
 			shadow->lightDefIndex, shadow->arb2AtlasSignature,
 			shadow->arb2AtlasStorageGeneration,
@@ -1025,7 +1034,7 @@ static void R_ModernClusteredLighting_ApplyShadowDescriptor( modernClusterLightR
 		stats.shadowSkippedLights++;
 	}
 
-	if ( mappedShadowForModernReceiver && shadow->pointLight && shadow->arb2PointCubeReady ) {
+	if ( mappedShadowForModernReceiver && shadow->pointLight && shadow->arb2PointCubeReady && !shadow->currentFrameMapReady ) {
 		RB_ShadowMapPointCubeMarkUsed( shadow->lightDefIndex );
 	}
 
@@ -1939,7 +1948,7 @@ static void R_ModernClusteredLighting_LightProjectionForStage( const viewLight_t
 
 	lightProject[0] = vLight->lightProject[0];
 	lightProject[1] = vLight->lightProject[1];
-	lightProject[2] = vLight->lightProject[3];
+	lightProject[2] = vLight->lightProject[2];
 	if ( lightStage == NULL || !lightStage->texture.hasMatrix || vLight->shaderRegisters == NULL ) {
 		return;
 	}
@@ -2005,10 +2014,11 @@ static void R_ModernClusteredLighting_FillDescriptor( modernClusterLightRecord_t
 	descriptor.depthRange[1] = record.depthMax;
 	descriptor.depthRange[2] = grid.nearZ;
 	descriptor.depthRange[3] = grid.farZ;
-	descriptor.falloff[0] = record.falloffScale;
-	descriptor.falloff[1] = record.falloffBias;
-	descriptor.falloff[2] = record.fullDepthRange ? 1.0f : 0.0f;
-	descriptor.falloff[3] = 0.0f;
+	// The shader dots this against a cluster-space position. Radius/bias
+	// metadata is not a plane: using it here extinguished one side of a view.
+	// Quake 4's four-plane order is S, T, Q, falloff.
+	R_ModernClusteredLighting_ViewPlaneForLightProject( grid.viewDef, vLight->lightProject[3], descriptor.falloff );
+	R_ModernClusteredLighting_CopyPlane( descriptor.falloff, record.viewLightProject[3] );
 	idPlane stageLightProject[3];
 	R_ModernClusteredLighting_LightProjectionForStage( vLight, lightStage, stageLightProject );
 	R_ModernClusteredLighting_ViewPlaneForLightProject( grid.viewDef, stageLightProject[0], descriptor.projectS );
@@ -2016,7 +2026,7 @@ static void R_ModernClusteredLighting_FillDescriptor( modernClusterLightRecord_t
 	R_ModernClusteredLighting_ViewPlaneForLightProject( grid.viewDef, stageLightProject[2], descriptor.projectQ );
 	R_ModernClusteredLighting_CopyPlane( descriptor.projectS, record.viewLightProject[0] );
 	R_ModernClusteredLighting_CopyPlane( descriptor.projectT, record.viewLightProject[1] );
-	R_ModernClusteredLighting_CopyPlane( descriptor.projectQ, record.viewLightProject[3] );
+	R_ModernClusteredLighting_CopyPlane( descriptor.projectQ, record.viewLightProject[2] );
 
 	const idMaterial *lightShader = R_ModernClusteredLighting_LightShader( vLight );
 	const idImage *projectionImage = R_ModernClusteredLighting_ProjectionImageForStage( vLight, lightStage );
@@ -2063,6 +2073,15 @@ static bool R_ModernClusteredLighting_AppendLightRecord( modernClusterGridRecord
 	record.color = lightColor;
 	record.radius = R_ModernClusteredLighting_LightRadius( vLight );
 	record.scissor = scissor;
+	// Scissor is an optimization, not part of the authored light function.
+	// Match native interactions when it is disabled (including tiled captures).
+	// The descriptor and CPU/compute bins must agree, otherwise the shader
+	// still clips light even though the native path no longer does.
+	if ( !r_useScissor.GetBool() ) {
+		record.scissor.x1 = record.scissor.y1 = 0;
+		record.scissor.x2 = static_cast<short>( grid.width - 1 );
+		record.scissor.y2 = static_cast<short>( grid.height - 1 );
+	}
 	R_ModernClusteredLighting_CameraPoint( grid.viewDef, record.worldOrigin, record.cameraOrigin );
 	record.fullDepthRange = type == RENDERER_MODERN_LIGHT_FOG || type == RENDERER_MODERN_LIGHT_AMBIENT || type == RENDERER_MODERN_LIGHT_BLEND || type == RENDERER_MODERN_LIGHT_SPECIAL;
 	// cull on the raw extent only when the light is entirely behind the near plane; lights beyond
@@ -2291,7 +2310,7 @@ static bool R_ModernClusteredLighting_AppendSpecularProbe( modernClusterGridReco
 	if ( atlasReject != MODERN_SPECULAR_PROBE_ATLAS_REJECT_NONE
 			|| !placement.valid
 			|| placement.slot < 0 || placement.slot >= MODERN_SPECULAR_PROBE_ATLAS_MAX_ENTRIES
-			|| placement.faceSize != MODERN_SPECULAR_PROBE_ATLAS_FACE_SIZE
+			|| placement.faceSize <= 0 || placement.faceSize > MODERN_SPECULAR_PROBE_ATLAS_FACE_SIZE
 			|| placement.sourceStorageGeneration == 0
 			|| placement.residencyGeneration == 0 ) {
 		stats.probeRejectedAtlas++;
@@ -2332,8 +2351,10 @@ static void R_ModernClusteredLighting_ClusterCenter( const modernClusterGridReco
 	const float z = nearZ * std::exp( std::log( farZ / nearZ ) * sliceFraction );
 	const float ndcX = ( static_cast<float>( tileX ) + 0.5f )
 		/ static_cast<float>( Max( 1, grid.tileCountX ) ) * 2.0f - 1.0f;
-	const float ndcY = 1.0f - ( static_cast<float>( tileY ) + 0.5f )
-		/ static_cast<float>( Max( 1, grid.tileCountY ) ) * 2.0f;
+	// idScreenRect, GL fragment coordinates and both CSR builders all count
+	// rows from the bottom. Probe selection must use the same physical row.
+	const float ndcY = ( static_cast<float>( tileY ) + 0.5f )
+		/ static_cast<float>( Max( 1, grid.tileCountY ) ) * 2.0f - 1.0f;
 	center[0] = 0.0f;
 	center[1] = 0.0f;
 	center[2] = z;
@@ -2586,6 +2607,12 @@ static void R_ModernClusteredLighting_BuildFrame( const idScenePacketFrame &pack
 		if ( scene.viewDef == NULL ) {
 			continue;
 		}
+		// GUI and post views have no clustered receivers or lights. Reserving
+		// a full grid for each of them can exhaust the GL 3.3 UBO before the
+		// world's light indices are packed, particularly with HDR/MSAA post.
+		if ( scene.viewDef->viewEntitys == NULL && scene.viewDef->viewLights == NULL ) {
+			continue;
+		}
 		if ( rg_clusteredLightingFrame.gridCount >= MODERN_CLUSTER_MAX_GRIDS ) {
 			stats.overflow = true;
 			break;
@@ -2828,7 +2855,7 @@ static GLuint R_ModernClusteredLighting_CompileComputeBinningProgram( void ) {
 		"	int tileMaxX = clamp(int(floor(light.scissorDepth.z * float(grid.x) / viewport.x)), 0, grid.x - 1);\n"
 		"	int tileMinY = clamp(int(floor(light.scissorDepth.y * float(grid.y) / viewport.y)), 0, grid.y - 1);\n"
 		"	int tileMaxY = clamp(int(floor(light.scissorDepth.w * float(grid.y) / viewport.y)), 0, grid.y - 1);\n"
-		"	bool fullDepth = light.falloff.z > 0.5;\n"
+		"	bool fullDepth = (int(light.flags.x + 0.5) & 8) != 0;\n"
 		"	int sliceMinZ = fullDepth ? 0 : DepthSliceForZ(light.depthRange.x);\n"
 		"	int sliceMaxZ = fullDepth ? grid.z - 1 : DepthSliceForZ(light.depthRange.y);\n"
 		"	for (int z = sliceMinZ; z <= sliceMaxZ; ++z) {\n"
@@ -4202,6 +4229,28 @@ bool RendererClusterGrid_RunSelfTest( void ) {
 	viewLight_t lights[6];
 	idRenderLightLocal lightDefs[6];
 	R_ModernClusteredLighting_SetupSelfTestView( view, lights, lightDefs, 6 );
+	// Authored falloff coordinates must survive a translated, rotated camera.
+	// Exercise the same transform as the GPU producer against world-space dots.
+	const idPlane testFalloff( 0.013f, 0.017f, 0.029f, 0.43f );
+	view.renderView.vieworg.Set( 71.0f, -39.0f, 125.0f );
+	view.renderView.viewaxis = idAngles( 13.0f, 47.0f, 9.0f ).ToMat3();
+	float transformedFalloff[4];
+	R_ModernClusteredLighting_ViewPlaneForLightProject( &view, testFalloff, transformedFalloff );
+	for ( int i = 0; i < 5; ++i ) {
+		const idVec3 worldPoint( -80.0f + i * 47.0f, 135.0f - i * 29.0f, i * 61.0f );
+		idVec3 cameraPoint;
+		R_ModernClusteredLighting_CameraPoint( &view, worldPoint, cameraPoint );
+		const float sample = cameraPoint.x * transformedFalloff[0] + cameraPoint.y * transformedFalloff[1]
+			+ cameraPoint.z * transformedFalloff[2] + transformedFalloff[3];
+		if ( idMath::Fabs( sample - testFalloff.Distance( worldPoint ) ) > 0.00001f ) {
+			common->Printf( "RendererClusterGrid self-test failed: camera-dependent light falloff\n" );
+			return false;
+		}
+	}
+	view.renderView.vieworg.Zero();
+	view.renderView.viewaxis = mat3_identity;
+	lights[0].lightProject[3] = testFalloff;
+	lights[0].lightProject[2] = idPlane( 0.0f, 0.0f, 0.0f, 1.0f );
 
 	idScenePacketFrame packetFrame;
 	packetFrame.Clear();
@@ -4243,6 +4292,14 @@ bool RendererClusterGrid_RunSelfTest( void ) {
 		|| firstDescriptor->depthRange[1] <= firstDescriptor->depthRange[0] ) {
 		common->Printf( "RendererClusterGrid self-test failed: shared descriptor contract invalid\n" );
 		return false;
+	}
+	const float expectedFalloff[4] = { 0.017f, 0.029f, 0.013f, 0.43f };
+	for ( int i = 0; i < 4; ++i ) {
+		if ( firstDescriptor->falloff[i] != expectedFalloff[i]
+				|| firstDescriptor->projectQ[i] != ( i == 3 ? 1.0f : 0.0f ) ) {
+			common->Printf( "RendererClusterGrid self-test failed: authored falloff plane lost\n" );
+			return false;
+		}
 	}
 	const int sliceA = R_ModernClusteredLighting_DepthSliceForZ( rg_clusteredLightingFrame.grids[0], 32.0f );
 	const int sliceB = R_ModernClusteredLighting_DepthSliceForZ( rg_clusteredLightingFrame.grids[0], 512.0f );

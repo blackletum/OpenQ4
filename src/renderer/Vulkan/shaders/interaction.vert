@@ -60,6 +60,12 @@ layout(location = 6) out vec3 vHalfAngleVector;
 layout(location = 7) out vec3 vVertexColor;
 layout(location = 8) out vec3 vViewVector;
 
+// Pack the basis into unused components so the projected receiver remains
+// within Vulkan's minimum 16 varying locations (0..15).
+layout(location = 12, component = 1) out vec3 vPBRTangent0;
+layout(location = 14, component = 1) out vec3 vPBRTangent1;
+layout(location = 15) out vec3 vPBRNormal;
+
 vec3 TangentSpaceVector(vec3 objectVector) {
     return vec3(
         dot(inTangent0, objectVector),
@@ -77,6 +83,9 @@ void main() {
     vLightVector = TangentSpaceVector(toLight);
     vHalfAngleVector = TangentSpaceVector(normalize(toLight) + normalize(toView));
     vViewVector = TangentSpaceVector(toView);
+    vPBRTangent0 = inTangent0;
+    vPBRTangent1 = inTangent1;
+    vPBRNormal = inNormal;
 
     vBumpTexCoord = vec2(dot(texCoord, inter.bumpMatrixS), dot(texCoord, inter.bumpMatrixT));
     vDiffuseTexCoord = vec2(dot(texCoord, inter.diffuseMatrixS), dot(texCoord, inter.diffuseMatrixT));

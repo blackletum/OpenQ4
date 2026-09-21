@@ -869,6 +869,9 @@ public:
 	// will return a pointer to an internal table, and EvaluateRegisters will not need
 	// to be called.  If NULL is returned, EvaluateRegisters must be used.
 	const float* ConstantRegisters() const;
+	// Prove an individual literal/folded register independently of the optional
+	// whole-material cache and of unrelated animated material parameters.
+	bool GetConstantRegisterValue( int registerIndex, float &value ) const;
 
 	bool				SuppressInSubview() const { return suppressInSubview; };
 	bool				IsPortalSky() const { return portalSky; };

@@ -1261,8 +1261,13 @@ void idMD5Mesh::UpdateSurface( const struct renderEntity_s *ent, const idJointMa
 		tri->tangentsCalculated = false;
 	} else if ( scaledBaseVectors != NULL && weights != NULL ) {
 		if ( gpuSkinningContractAttached ) {
+			// scaledBaseVectors stores weighted joint-local positions, whereas
+			// entJoints is pose * inverseBind for the GPU's model-space bind
+			// vertices. The CPU still owns bounds, culling and stencil geometry:
+			// use the original absolute pose here, or the inverse bind is applied
+			// twice and the CPU scissor clips otherwise correct GPU vertices.
 			SIMDProcessor->TransformVertsNew( tri->verts, deformInfo->numOutputVerts, tri->bounds,
-				entJoints, scaledBaseVectors, weights, numWeights );
+				ent != NULL ? ent->joints : entJoints, scaledBaseVectors, weights, numWeights );
 			tri->tangentsCalculated = false;
 		} else if ( r_useNewSkinning.GetBool() && calculateTangents && baseVectors != NULL ) {
 			if ( r_useFastSkinning.GetBool() ) {

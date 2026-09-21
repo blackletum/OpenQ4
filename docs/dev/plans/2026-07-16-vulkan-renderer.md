@@ -1,9 +1,9 @@
 # Native Vulkan Renderer Plan
 
 Date: 2026-07-16
-Status: Phase A module/bootstrap scaffolding in progress; GL remains the shipping default renderer throughout
+Status: stock rendering implemented; remaining compatibility and release qualification tracked below. OpenGL remains the shipping default.
 
-Status update (2026-09-18): Phases A through G have landed, except Phase G's light-grid pass. Phase H is partial: render-texture commands, captures, readback, and MSAA resolve exist, but the gamma pass (H3), the post chain (H5), alpha-to-coverage, and soft particles do not. Phases I and J are open, and none of the promotion evidence in this plan exists yet. A Vulkan device-initialization failure is fatal rather than a fallback to GL. Vulkan remains experimental; the player-facing gap list is in `docs/user/display-settings.md`.
+Status update (2026-09-20): the stock light-grid, gamma/brightness, classic post-processing, alpha-to-coverage, soft-particle, and debug-view paths have landed alongside Phases A-G and the render-texture/capture/MSAA work. Floating-point scene rendering and automatic exposure remain open. Missing modules, failed device probes and window/surface/swapchain/mandatory-resource startup failures recover to OpenGL in the same launch; a later full vid_restart device failure still uses next-launch recovery. The remaining implementation and evidence requirements are tracked in [Vulkan gap closure](2026-09-20-vulkan-gap-closure.md). Vulkan remains experimental; the capability matrix and player-facing gap list in `docs/user/display-settings.md` describe the current scope. Historical phase descriptions below are design intent, not a current missing-feature checklist.
 
 ## Scope and architectural conclusion
 

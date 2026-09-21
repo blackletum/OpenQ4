@@ -4,14 +4,17 @@
 #include "tr_local.h"
 #include "ModernSpecularProbeAtlas.h"
 #include "GLStateCache.h"
+#include "PBREnvironment.h"
+#include "GLPixelTransferScope.h"
 
 /*
 ================================================================================
 
-	Authored reflection cubemaps are copied into a fixed 2D face atlas so the
-	future clustered path needs one portable sampler rather than bindless handles
-	or a sampler-cube array. Acquire is CPU-only. FlushUploads owns the bounded
-	readback/upload batch and never binds a framebuffer, program, VAO, or viewport.
+	Authored reflection cubemaps are convolved into a fixed HDR 2D face atlas,
+	with diffuse irradiance and a split-sum BRDF table in reserved cells. Acquire
+	is CPU-only. BeginFrame lazily creates the environment for PBR consumers;
+	FlushUploads owns the bounded authored-image readback/convolution batch.
+	Neither path binds a framebuffer, program, VAO, or viewport.
 
 	Residency is keyed by image identity, device handle, and image storage
 	generation. LRU selection uses frame generations with a stable slot-index tie
@@ -36,6 +39,7 @@ typedef struct modernSpecularProbeAtlasEntry_s {
 
 static bool rg_modernSpecularProbeAtlasAvailable = false;
 static bool rg_modernSpecularProbeAtlasInitialized = false;
+static bool rg_modernSpecularProbeAtlasAllocationAttempted = false;
 static GLuint rg_modernSpecularProbeAtlasTexture = 0;
 static modernSpecularProbeAtlasEntry_t
 	rg_modernSpecularProbeAtlasEntries[MODERN_SPECULAR_PROBE_ATLAS_MAX_ENTRIES];
@@ -256,6 +260,30 @@ static bool R_ModernSpecularProbeAtlas_FingerprintMatches(
 			== entry.sourceStorageGeneration;
 }
 
+static void R_ModernSpecularProbeAtlas_UploadTile( int cell, int level,
+		int size, const std::vector<float> &rgba ) {
+	const int stride = MODERN_SPECULAR_PROBE_ATLAS_FACE_SIZE >> level;
+	glTexSubImage2D( GL_TEXTURE_2D, level,
+		( cell % MODERN_SPECULAR_PROBE_ATLAS_CELLS_PER_ROW ) * stride,
+		( cell / MODERN_SPECULAR_PROBE_ATLAS_CELLS_PER_ROW ) * stride,
+		size, size, GL_RGBA, GL_FLOAT, rgba.data() );
+}
+
+template<class Sampler>
+static void R_ModernSpecularProbeAtlas_Filter( int slot, const Sampler &sample ) {
+	for ( int level = 0; level <= MODERN_SPECULAR_PROBE_ATLAS_MAX_MIP; ++level ) {
+		const int size = MODERN_SPECULAR_PROBE_ATLAS_FACE_SIZE >> level;
+		const float roughness = static_cast<float>( level ) / MODERN_SPECULAR_PROBE_ATLAS_MAX_MIP;
+		for ( int face = 0; face < MODERN_SPECULAR_PROBE_ATLAS_FACE_COUNT; ++face ) {
+			R_ModernSpecularProbeAtlas_UploadTile( slot * MODERN_SPECULAR_PROBE_ATLAS_FACE_COUNT + face,
+				level, size, openq4PBR::PrefilterFace( sample, face, size, roughness ) );
+		}
+	}
+	R_ModernSpecularProbeAtlas_UploadTile( MODERN_SPECULAR_PROBE_DIFFUSE_FIRST_CELL + slot,
+		0, MODERN_SPECULAR_PROBE_DIFFUSE_SIZE,
+		openq4PBR::DiffuseIrradiance( sample, MODERN_SPECULAR_PROBE_DIFFUSE_SIZE ) );
+}
+
 void R_ModernSpecularProbeAtlas_Init( const renderBackendCaps_t &caps,
 		const renderFeatureSet_t &features ) {
 	R_ModernSpecularProbeAtlas_Shutdown();
@@ -282,14 +310,18 @@ void R_ModernSpecularProbeAtlas_Init( const renderBackendCaps_t &caps,
 		R_ModernSpecularProbeAtlas_SetStatus( "capability-unavailable" );
 		return;
 	}
-	rg_modernSpecularProbeAtlasAvailable = true;
-
 	if ( glGenTextures == NULL || glDeleteTextures == NULL
 			|| glGetTexImage == NULL || glTexSubImage2D == NULL ) {
 		R_ModernSpecularProbeAtlas_SetStatus( "entry-points-missing" );
 		return;
 	}
+	rg_modernSpecularProbeAtlasAvailable = true;
+	R_ModernSpecularProbeAtlas_SetStatus( "standby" );
+}
 
+static void R_ModernSpecularProbeAtlas_Allocate( void ) {
+	idGLPixelTransferScope transfer;
+	rg_modernSpecularProbeAtlasAllocationAttempted = true;
 	glGenTextures( 1, &rg_modernSpecularProbeAtlasTexture );
 	if ( rg_modernSpecularProbeAtlasTexture != 0 ) {
 		R_GLStateCache().ActiveTextureUnit( 0 );
@@ -298,15 +330,48 @@ void R_ModernSpecularProbeAtlas_Init( const renderBackendCaps_t &caps,
 		byte *zeroed = static_cast<byte *>( Mem_ClearedAlloc(
 			MODERN_SPECULAR_PROBE_ATLAS_SIZE
 				* MODERN_SPECULAR_PROBE_ATLAS_SIZE * 4 ) );
-		glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA8,
-			MODERN_SPECULAR_PROBE_ATLAS_SIZE,
-			MODERN_SPECULAR_PROBE_ATLAS_SIZE, 0,
-			GL_RGBA, GL_UNSIGNED_BYTE, zeroed );
+		bool storageReady = true;
+		for ( int level = 0; level <= MODERN_SPECULAR_PROBE_ATLAS_MAX_MIP; ++level ) {
+			const int size = MODERN_SPECULAR_PROBE_ATLAS_SIZE >> level;
+			glTexImage2D( GL_TEXTURE_2D, level, GL_RGBA16F, size, size, 0,
+				GL_RGBA, GL_UNSIGNED_BYTE, zeroed );
+			GLint width = 0, height = 0, format = 0;
+			glGetTexLevelParameteriv( GL_TEXTURE_2D, level, GL_TEXTURE_WIDTH, &width );
+			glGetTexLevelParameteriv( GL_TEXTURE_2D, level, GL_TEXTURE_HEIGHT, &height );
+			glGetTexLevelParameteriv( GL_TEXTURE_2D, level, GL_TEXTURE_INTERNAL_FORMAT, &format );
+			storageReady = storageReady && width == size && height == size && format == GL_RGBA16F;
+		}
 		Mem_Free( zeroed );
-		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+		if ( !storageReady ) {
+			glDeleteTextures( 1, &rg_modernSpecularProbeAtlasTexture );
+			rg_modernSpecularProbeAtlasTexture = 0;
+			R_ModernSpecularProbeAtlas_SetStatus( "storage-allocation-failed" );
+			return;
+		}
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, MODERN_SPECULAR_PROBE_ATLAS_MAX_MIP );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR );
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+		// Bake the analytic source once before filtering; evaluating its lobe
+		// separately for every integration sample needlessly stalls debug builds.
+		openq4PBR::Cube analytic;
+		analytic.size = 64;
+		const openq4PBR::AnalyticEnvironment analyticSample;
+		for ( int face = 0; face < 6; ++face ) {
+			analytic.faces[face].resize( analytic.size * analytic.size );
+			for ( int y = 0; y < analytic.size; ++y ) {
+				for ( int x = 0; x < analytic.size; ++x ) {
+					analytic.faces[face][y * analytic.size + x] = analyticSample(
+						openq4PBR::FaceDirection( face, 2.0f * ( x + 0.5f ) / analytic.size - 1.0f,
+							2.0f * ( y + 0.5f ) / analytic.size - 1.0f ) );
+				}
+			}
+		}
+		R_ModernSpecularProbeAtlas_Filter( MODERN_SPECULAR_PROBE_ANALYTIC_SLOT, analytic );
+		R_ModernSpecularProbeAtlas_UploadTile( MODERN_SPECULAR_PROBE_BRDF_CELL,
+			0, MODERN_SPECULAR_PROBE_BRDF_SIZE,
+			openq4PBR::BRDFTable( MODERN_SPECULAR_PROBE_BRDF_SIZE ) );
 		rg_modernSpecularProbeAtlasStats.textureReady = true;
 	}
 
@@ -333,6 +398,7 @@ void R_ModernSpecularProbeAtlas_Shutdown( void ) {
 	rg_modernSpecularProbeAtlasTexture = 0;
 	rg_modernSpecularProbeAtlasAvailable = false;
 	rg_modernSpecularProbeAtlasInitialized = false;
+	rg_modernSpecularProbeAtlasAllocationAttempted = false;
 	rg_modernSpecularProbeAtlasGeneration = 0;
 	rg_modernSpecularProbeAtlasNextResidencyGeneration = 0;
 	rg_modernSpecularProbeAtlasFrame = 0;
@@ -344,7 +410,11 @@ void R_ModernSpecularProbeAtlas_Shutdown( void ) {
 	R_ModernSpecularProbeAtlas_SetStatus( "off" );
 }
 
-void R_ModernSpecularProbeAtlas_BeginFrame( void ) {
+void R_ModernSpecularProbeAtlas_BeginFrame( bool environmentRequested ) {
+	if ( environmentRequested && rg_modernSpecularProbeAtlasAvailable
+			&& !rg_modernSpecularProbeAtlasAllocationAttempted ) {
+		R_ModernSpecularProbeAtlas_Allocate();
+	}
 	R_ModernSpecularProbeAtlas_AdvanceGeneration(
 		rg_modernSpecularProbeAtlasFrame );
 	rg_modernSpecularProbeAtlasStats.frameGeneration =
@@ -489,9 +559,10 @@ void R_ModernSpecularProbeAtlas_FlushUploads( void ) {
 		return;
 	}
 
-	static byte scratch[
+	static float scratch[
 		MODERN_SPECULAR_PROBE_ATLAS_FACE_SIZE
 			* MODERN_SPECULAR_PROBE_ATLAS_FACE_SIZE * 4];
+	idGLPixelTransferScope transfer;
 	for ( int slot = 0; slot < MODERN_SPECULAR_PROBE_ATLAS_MAX_ENTRIES; ++slot ) {
 		modernSpecularProbeAtlasEntry_t &entry =
 			rg_modernSpecularProbeAtlasEntries[slot];
@@ -512,27 +583,41 @@ void R_ModernSpecularProbeAtlas_FlushUploads( void ) {
 			continue;
 		}
 
+		openq4PBR::Cube source;
+		source.size = entry.faceSize;
+		const bool linearHDR = entry.image->GetOpts().format == FMT_RGBA16F;
+		bool sourceValid = true;
 		for ( int face = 0;
 				face < MODERN_SPECULAR_PROBE_ATLAS_FACE_COUNT; ++face ) {
 			R_GLStateCache().ActiveTextureUnit( 0 );
 			R_GLStateCache().BindTexture( 0, GL_TEXTURE_CUBE_MAP,
 				entry.sourceHandle );
+			GLint width = 0, height = 0;
+			glGetTexLevelParameteriv( GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, GL_TEXTURE_WIDTH, &width );
+			glGetTexLevelParameteriv( GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, GL_TEXTURE_HEIGHT, &height );
+			if ( width != entry.faceSize || height != entry.faceSize ) { sourceValid = false; break; }
 			glGetTexImage( GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0,
-				GL_RGBA, GL_UNSIGNED_BYTE, scratch );
+				GL_RGBA, GL_FLOAT, scratch );
 
-			const int cell = entry.placement.faceCells[face];
-			const int destinationX =
-				( cell % MODERN_SPECULAR_PROBE_ATLAS_CELLS_PER_ROW )
-					* MODERN_SPECULAR_PROBE_ATLAS_FACE_SIZE;
-			const int destinationY =
-				( cell / MODERN_SPECULAR_PROBE_ATLAS_CELLS_PER_ROW )
-					* MODERN_SPECULAR_PROBE_ATLAS_FACE_SIZE;
-			R_GLStateCache().BindTexture( 0, GL_TEXTURE_2D,
-				rg_modernSpecularProbeAtlasTexture );
-			glTexSubImage2D( GL_TEXTURE_2D, 0,
-				destinationX, destinationY, entry.faceSize, entry.faceSize,
-				GL_RGBA, GL_UNSIGNED_BYTE, scratch );
+			source.faces[face].resize( entry.faceSize * entry.faceSize );
+			for ( int pixel = 0; pixel < entry.faceSize * entry.faceSize; ++pixel ) {
+				float color[3];
+				for ( int c = 0; c < 3; ++c ) {
+					const float value = scratch[pixel * 4 + c];
+					sourceValid = sourceValid && std::isfinite( value );
+					color[c] = linearHDR ? Max( 0.0f, value ) : openq4PBRMath::PBRSRGBToLinear( value );
+				}
+				source.faces[face][pixel] = {
+					color[0], color[1], color[2] };
+			}
 		}
+		if ( !sourceValid ) {
+			entry.resident = entry.pendingUpload = entry.uploaded = false;
+			R_ModernSpecularProbeAtlas_RecordReject( MODERN_SPECULAR_PROBE_ATLAS_REJECT_INVALID_STORAGE );
+			continue;
+		}
+		R_GLStateCache().BindTexture( 0, GL_TEXTURE_2D, rg_modernSpecularProbeAtlasTexture );
+		R_ModernSpecularProbeAtlas_Filter( slot, source );
 
 		if ( !R_ModernSpecularProbeAtlas_FingerprintMatches( entry ) ) {
 			entry.resident = false;
@@ -647,7 +732,54 @@ rectangles, disjoint bounded placements, stable LRU tie-breaking, and non-zero
 generation rollover. No image, renderer resource, or GL context is required.
 ===================
 */
+static bool R_ModernSpecularProbeAtlas_TransferSelfTest( void ) {
+	if ( !glConfig.backendCaps.contextCreated || !glConfig.renderFeatures.modernBaseline ) { return true; }
+	idGLPixelTransferScope restoreCaller;
+	GLuint texture = 0, buffers[2] = { 0, 0 };
+	glGenTextures( 1, &texture );
+	glGenBuffers( 2, buffers );
+	if ( texture == 0 || buffers[0] == 0 || buffers[1] == 0 ) {
+		glDeleteBuffers( 2, buffers );
+		glDeleteTextures( 1, &texture );
+		return false;
+	}
+	R_GLStateCache().BindBuffer( GL_PIXEL_PACK_BUFFER, buffers[0] );
+	R_GLStateCache().BindBuffer( GL_PIXEL_UNPACK_BUFFER, buffers[1] );
+	GLint poison[16];
+	for ( int i = 0; i < 16; ++i ) {
+		poison[i] = i % 8 == 0 ? 8 : ( i % 8 >= 6 ? 1 : 7 );
+		glPixelStorei( idGLPixelTransferScope::StoreName( i ), poison[i] );
+	}
+	R_GLStateCache().ActiveTextureUnit( 3 );
+	const float expected[16] = { 0.125f, 2, 4, 1, 0.25f, 3, 8, 1, 0.5f, 4, 16, 1, 1, 5, 32, 1 };
+	float actual[16] = {};
+	{
+		idGLPixelTransferScope transfer;
+		R_GLStateCache().BindTexture( 0, GL_TEXTURE_2D, texture );
+		glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA16F, 2, 2, 0, GL_RGBA, GL_FLOAT, expected );
+		glGetTexImage( GL_TEXTURE_2D, 0, GL_RGBA, GL_FLOAT, actual );
+	}
+	bool ok = true;
+	for ( int i = 0; i < 16; ++i ) {
+		GLint state = 0;
+		glGetIntegerv( idGLPixelTransferScope::StoreName( i ), &state );
+		ok = ok && state == poison[i] && actual[i] == expected[i];
+	}
+	GLint pack = 0, unpack = 0, active = 0;
+	glGetIntegerv( GL_PIXEL_PACK_BUFFER_BINDING, &pack );
+	glGetIntegerv( GL_PIXEL_UNPACK_BUFFER_BINDING, &unpack );
+	glGetIntegerv( GL_ACTIVE_TEXTURE, &active );
+	ok = ok && pack == buffers[0] && unpack == buffers[1] && active == GL_TEXTURE3;
+	R_GLStateCache().BindBuffer( GL_PIXEL_PACK_BUFFER, 0 );
+	R_GLStateCache().BindBuffer( GL_PIXEL_UNPACK_BUFFER, 0 );
+	glDeleteBuffers( 2, buffers );
+	glDeleteTextures( 1, &texture );
+	common->Printf( "RendererPixelTransfer self-test %s (HDR upload/readback, 16 poisoned pixel stores, 2 PBOs, active texture restored)\n", ok ? "passed" : "failed" );
+	return ok;
+}
+
 bool RendererSpecularProbeAtlas_RunSelfTest( void ) {
+	if ( !R_ModernSpecularProbeAtlas_TransferSelfTest() ) { return false; }
 	modernSpecularProbeAtlasPlacement_t placements[
 		MODERN_SPECULAR_PROBE_ATLAS_MAX_ENTRIES];
 	for ( int slot = 0; slot < MODERN_SPECULAR_PROBE_ATLAS_MAX_ENTRIES; ++slot ) {

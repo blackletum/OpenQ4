@@ -96,7 +96,10 @@ enum textureFormat_t {
 
 	FMT_RGBA16F,		// 64 bpp
 
-	FMT_BC7				// 8 bpp
+	FMT_BC7,			// 8 bpp
+	// 16..18 are reserved for the companion's ETC2/EAC format IDs. Keep
+	// serialized format values identical without enabling unsupported codecs.
+	FMT_SRGBA8 = 19		// 32 bpp, sRGB colour with linear alpha
 };
 
 int BitsForFormat( textureFormat_t format );

@@ -81,6 +81,7 @@ static const char* R_FramebufferStatusName( GLenum status ) {
 static const char* R_TextureFormatName( textureFormat_t format ) {
 	switch ( format ) {
 		case FMT_RGBA8: return "RGBA8";
+		case FMT_SRGBA8: return "SRGBA8";
 		case FMT_XRGB8: return "XRGB8";
 		case FMT_ALPHA: return "ALPHA";
 		case FMT_L8A8: return "L8A8";

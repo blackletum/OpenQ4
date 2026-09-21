@@ -460,6 +460,7 @@ GetRenderAPI
 void VK_ModuleBindServices( const renderModuleServices_t *services );
 const renderModuleDiagnostics_t *VK_GetModuleDiagnostics( void );
 void VK_Bringup_Shutdown( void );
+bool VK_PrepareStartupDevice( char *outReason, int reasonLength );
 #endif
 
 static void RGM_Shutdown( void ) {
@@ -532,6 +533,7 @@ renderExport_t *GetRenderAPI( renderImport_t *moduleImport ) {
 	// the Vulkan backend keeps its bring-up diagnostics surface for the
 	// on-demand rendererVkProbe flow
 	rgm_export.diagnostics = VK_GetModuleDiagnostics();
+	rgm_export.PrepareStartupDevice = VK_PrepareStartupDevice;
 #endif
 	return &rgm_export;
 }

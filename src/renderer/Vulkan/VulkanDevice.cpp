@@ -40,9 +40,14 @@
 #include "vk_mem_alloc.h"
 
 #include "VulkanDevice.h"
+#include "vk_ExecutorHooks.h"
 #include "../RendererMetrics.h"
 
 vkDeviceContext_t vkCtx;
+
+// Keep overflow outside the memset-reset device context. Resources referenced
+// by the command buffer still being recorded cannot be retired by wait-idle.
+static idList<vkDeferredDestroy_t> vkDeferredDestroyOverflow[ VK_FRAMES_IN_FLIGHT ];
 
 static const renderWindowServices_t *vkWindowServices = NULL;
 
@@ -800,7 +805,18 @@ bool VK_Device_RecreateSwapchain( void ) {
 	if ( !vkCtx.initialized ) {
 		return false;
 	}
-	vkDeviceWaitIdle( vkCtx.device );
+	// Waiting for the device only covers submitted work. Retiring attachment
+	// views while an executor scope is still recording invalidates that
+	// command buffer even when every queue is idle.
+	if ( VK_GuiExecutor_FrameIsOpen() ) {
+		common->Warning( "Vulkan: swapchain recreation requires a submitted frame" );
+		return false;
+	}
+	const VkResult idleResult = vkDeviceWaitIdle( vkCtx.device );
+	if ( idleResult != VK_SUCCESS ) {
+		common->Warning( "Vulkan: swapchain recreation device wait failed (%d)", (int)idleResult );
+		return false;
+	}
 	R_RendererMetrics_ResetGpuFrameTiming( "Vulkan swapchain recreation" );
 	return VK_Device_CreateSwapchain();
 }
@@ -810,6 +826,17 @@ bool VK_Device_RecreateSwapchain( void ) {
 VK_Device_Init
 ====================
 */
+bool VK_Device_InjectStartupFailure( int stage ) {
+	extern idCVar r_vkStartupFailure;
+	static const char *names[] = { "off", "window", "surface", "swapchain", "renderer resources" };
+	if ( stage <= 0 || stage >= (int)( sizeof( names ) / sizeof( names[ 0 ] ) )
+			|| r_vkStartupFailure.GetInteger() != stage ) {
+		return false;
+	}
+	common->Printf( "Vulkan startup failure injected: %s\n", names[ stage ] );
+	return true;
+}
+
 bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
 	memset( &vkCtx, 0, sizeof( vkCtx ) );
 	vkWindowServices = windowServices;
@@ -898,12 +925,23 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
 		dmci.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
 				| VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
 		dmci.pfnUserCallback = VK_DebugMessengerCallback;
-		vkCreateDebugUtilsMessengerEXT( vkCtx.instance, &dmci, NULL, &vkCtx.debugMessenger );
+		const VkResult debugResult = vkCreateDebugUtilsMessengerEXT( vkCtx.instance, &dmci, NULL, &vkCtx.debugMessenger );
+		if ( debugResult != VK_SUCCESS ) {
+			common->Warning( "Vulkan: validation debug messenger creation failed (%d)", (int)debugResult );
+		}
+	}
+	if ( wantValidation ) {
+		if ( ici.enabledLayerCount > 0 && vkCtx.debugMessenger != VK_NULL_HANDLE ) {
+			common->Printf( "Vulkan: validation enabled (VK_LAYER_KHRONOS_validation, debug messenger active)\n" );
+		} else {
+			common->Warning( "Vulkan: requested validation is not active" );
+		}
 	}
 
 	// surface through the engine's window services
 	unsigned long long surfaceHandle = 0;
-	if ( !windowServices->CreateVulkanSurface( (void *)vkCtx.instance, &surfaceHandle ) || surfaceHandle == 0 ) {
+	if ( VK_Device_InjectStartupFailure( 2 )
+			|| !windowServices->CreateVulkanSurface( (void *)vkCtx.instance, &surfaceHandle ) || surfaceHandle == 0 ) {
 		common->Warning( "Vulkan: surface creation through the window services failed" );
 		VK_Device_Shutdown();
 		return false;
@@ -1208,7 +1246,7 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
 	// not fatal if it fails: pipeline creation accepts VK_NULL_HANDLE
 	VK_Device_CreatePipelineCache();
 
-	if ( !VK_Device_CreateSwapchain() ) {
+	if ( VK_Device_InjectStartupFailure( 3 ) || !VK_Device_CreateSwapchain() ) {
 		VK_Device_Shutdown();
 		return false;
 	}
@@ -1560,29 +1598,26 @@ void VK_Device_DeferDestroy( VkImage image, VkImageView view, VkBuffer buffer, V
 		return;
 	}
 	const int slot = vkCtx.recordingSlot;
-	if ( vkCtx.numDeferredDestroys[ slot ] >= VK_MAX_DEFERRED_DESTROYS ) {
-		// queue full: block for safety rather than leak or free early. An open
-		// unsubmitted upload batch must be submitted first: destroying a
-		// resource its recorded commands reference would invalidate the
-		// command buffer, and wait-idle only retires submitted work.
-		VK_Device_FlushUploadBatch();
-		VK_Device_WaitUploadBatch();
-		vkDeviceWaitIdle( vkCtx.device );
-		for ( int i = 0; i < VK_FRAMES_IN_FLIGHT; i++ ) {
-			VK_Device_FlushDeferredDestroys( i );
-		}
-	}
-	vkDeferredDestroy_t &entry = vkCtx.deferredDestroys[ slot ][ vkCtx.numDeferredDestroys[ slot ]++ ];
+	vkDeferredDestroy_t entry;
 	entry.image = image;
 	entry.view = view;
 	entry.secondaryView = secondaryView;
 	entry.buffer = buffer;
 	entry.allocation = allocation;
+	if ( vkCtx.numDeferredDestroys[ slot ] < VK_MAX_DEFERRED_DESTROYS ) {
+		vkCtx.deferredDestroys[ slot ][ vkCtx.numDeferredDestroys[ slot ]++ ] = entry;
+	} else {
+		// Overflow follows the same slot fence as the fixed queue. Waiting for
+		// the device here would not submit or protect the current frame.
+		vkDeferredDestroyOverflow[ slot ].Append( entry );
+	}
 }
 
 void VK_Device_FlushDeferredDestroys( int slot ) {
-	for ( int i = 0; i < vkCtx.numDeferredDestroys[ slot ]; i++ ) {
-		vkDeferredDestroy_t &entry = vkCtx.deferredDestroys[ slot ][ i ];
+	const int fixedCount = vkCtx.numDeferredDestroys[ slot ];
+	for ( int i = 0; i < fixedCount + vkDeferredDestroyOverflow[ slot ].Num(); i++ ) {
+		const vkDeferredDestroy_t &entry = i < fixedCount
+				? vkCtx.deferredDestroys[ slot ][ i ] : vkDeferredDestroyOverflow[ slot ][ i - fixedCount ];
 		if ( entry.view != VK_NULL_HANDLE ) {
 			vkDestroyImageView( vkCtx.device, entry.view, NULL );
 		}
@@ -1596,6 +1631,7 @@ void VK_Device_FlushDeferredDestroys( int slot ) {
 		}
 	}
 	vkCtx.numDeferredDestroys[ slot ] = 0;
+	vkDeferredDestroyOverflow[ slot ].Clear();
 }
 
 #endif /* OPENQ4_RENDERER_VK_MODULE */

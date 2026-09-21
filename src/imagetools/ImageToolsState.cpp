@@ -90,6 +90,7 @@ int BitsForFormat( textureFormat_t format ) {
 	switch ( format ) {
 		case FMT_NONE:		return 0;
 		case FMT_RGBA8:		return 32;
+		case FMT_SRGBA8:		return 32;
 		case FMT_XRGB8:		return 32;
 		case FMT_RGBA16F:	return 64;
 		case FMT_RGB565:	return 16;

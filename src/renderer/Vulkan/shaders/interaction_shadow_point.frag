@@ -1,4 +1,6 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "../../PBRMath.h"
 
 // openQ4 Vulkan point-shadow-receiving interaction — fragment stage (Phase
 // F2b).
@@ -74,6 +76,12 @@ layout(location = 8) in vec3 vPointShadowVector;
 layout(location = 9) in float vShadowLightCos;
 layout(location = 10) in vec3 vViewVector;
 
+// Pack the basis into unused components so the projected receiver remains
+// within Vulkan's minimum 16 varying locations (0..15).
+layout(location = 12, component = 1) in vec3 vPBRTangent0;
+layout(location = 14, component = 1) in vec3 vPBRTangent1;
+layout(location = 15) in vec3 vPBRNormal;
+
 layout(location = 0) out vec4 outColor;
 
 // The point-cube subset of shadowMapDebugMode_t (tr_local.h), matching
@@ -119,37 +127,7 @@ vec3 ApplyFlatDiffuseSweep(vec3 diffuse, float localZ) {
     return mix(diffuse, vec3(1.0), inter.flatDiffuseParams.x * band);
 }
 
-vec3 EvaluatePackedPBR(vec3 localNormal, vec2 albedoTexCoord,
-        vec2 ormTexCoord, float shadowFactor) {
-    vec3 albedo = pow(max(texture(diffuseMap, albedoTexCoord).rgb, vec3(0.0)), vec3(2.2));
-    vec3 orm = texture(specularMap, ormTexCoord).rgb;
-    float metallic = clamp(orm.b * pc.d.y, 0.0, 1.0);
-    float roughness = clamp(orm.g * pc.d.z, 0.045, 1.0);
-    vec3 lightDir = (pc.a.z > 0.5) ? pc.b.xyz : SafeNormalize(vLightVector);
-    vec3 viewDir = SafeNormalize(vViewVector);
-    vec3 halfDir = SafeNormalize(lightDir + viewDir);
-    float ndotl = max(dot(localNormal, lightDir), 0.0);
-    float ndotv = max(dot(localNormal, viewDir), 0.0);
-    float ndoth = max(dot(localNormal, halfDir), 0.0);
-    float vdoth = max(dot(viewDir, halfDir), 0.0);
-    float alpha = roughness * roughness;
-    float alphaSquared = alpha * alpha;
-    float denom = max(ndoth * ndoth * (alphaSquared - 1.0) + 1.0, 1.0e-4);
-    float distribution = alphaSquared / (3.14159265 * denom * denom);
-    float k = (roughness + 1.0) * (roughness + 1.0) * 0.125;
-    float geometry = (ndotl / max(ndotl * (1.0 - k) + k, 1.0e-4))
-        * (ndotv / max(ndotv * (1.0 - k) + k, 1.0e-4));
-    vec3 f0 = mix(vec3(0.04), albedo, metallic);
-    vec3 fresnel = f0 + (vec3(1.0) - f0) * pow(1.0 - vdoth, 5.0);
-    vec3 specular = distribution * geometry * fresnel
-        / max(4.0 * ndotl * ndotv, 1.0e-4);
-    vec3 diffuse = (vec3(1.0) - fresnel) * (1.0 - metallic)
-        * albedo * (1.0 / 3.14159265);
-    vec3 radiance = textureProj(lightFalloffMap, vLightFalloffTexCoord).rgb
-        * textureProj(lightProjectionMap, vLightProjectionTexCoord).rgb
-        * inter.diffuseColor.rgb * shadowFactor;
-    return (diffuse + specular) * radiance * ndotl * vVertexColor;
-}
+#include "pbr_direct.glsl"
 
 float StableShadowHash(vec3 value) {
     return fract(sin(dot(value, vec3(12.9898, 78.233, 37.719)))
@@ -389,6 +367,11 @@ float CelSpecularTerm(float term) {
 }
 
 void main() {
+    if (pc.d.x > 2.5) {
+        // Emission is drawn once per surface in the ambient walk.
+        outColor = vec4(0.0);
+        return;
+    }
     if (pc.d.x > 1.5) {
         outColor = vec4(0.0, 1.0, 0.0, 0.0);
         return;
@@ -407,9 +390,8 @@ void main() {
 
     vec4 bumpSample = texture(bumpMap, bumpTexCoord);
     if (pc.d.x > 0.5) {
-        vec3 localNormal = bumpSample.rgb * 2.0 - 1.0;
-        localNormal.xy *= pc.d.w;
-        vec3 packed = EvaluatePackedPBR(SafeNormalize(localNormal),
+        vec3 localNormal = PBRDirectNormal(bumpTexCoord);
+        vec3 packed = EvaluatePBRDirect(localNormal,
             diffuseTexCoord, specularTexCoord, SampleShadowFactor());
         if (ShadowVisualDebugMode()) {
             outColor = PointShadowDebugOutput();

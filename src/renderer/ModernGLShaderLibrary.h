@@ -76,6 +76,7 @@ typedef struct modernGLShaderReflection_s {
 	int		debugColorLocation;
 	int		localParamsLocation;
 	int		pbrIBLLocation;
+	int							bakedGridLocation;
 	int		mainTextureLocation;
 	int		normalTextureLocation;
 	int		specularTextureLocation;
@@ -148,6 +149,7 @@ typedef struct modernGLShaderProgramInfo_s {
 	int							debugColorLocation;
 	int							localParamsLocation;
 	int							pbrIBLLocation;
+	int							bakedGridLocation;
 	int							mainTextureLocation;
 	int							sceneDepthTextureLocation;
 	int							normalTextureLocation;

@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "../renderer/Image.h"
 #include "ImageTools.h"
+#include "SRGB.h"
 
 /*
 ================
@@ -380,6 +381,13 @@ R_MipMapGamma
 Returns a new copy of the texture, quartered in size with gamma correction.
 ================
 */
+byte *R_MipMapWithSRGB( const byte *in, int width, int height ) {
+	if ( width < 1 || height < 1 || ( width == 1 && height == 1 ) ) { return NULL; }
+	byte *out = static_cast<byte *>( R_StaticAlloc( Max( 1, width / 2 ) * Max( 1, height / 2 ) * 4 ) );
+	openq4SRGB::Downsample( in, width, height, out );
+	return out;
+}
+
 byte * R_MipMapWithGamma( const byte *in, int width, int height ) {
 	int		i, j;
 	const byte	*in_p;

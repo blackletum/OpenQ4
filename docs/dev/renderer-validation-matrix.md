@@ -21,6 +21,27 @@ tools\build\meson_setup.ps1 compile -C builddir -- -j1
 tools\build\meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects
 ```
 
+## PBR Material Laboratory
+
+The [PBR authoring guide](../user/pbr-materials.md) includes a reproducible command
+for the original 24-station map. The generator and harness live in
+`tools/validation/generate_pbr_validation_map.py` and
+`tools/tests/renderer_pbr_laboratory.py`. Test content stays in an independent
+runtime under `.tmp/stock-runtime/`; it is not a shipped asset dependency.
+
+The [PBR audit](plans/2026-09-20-pbr-rendering-audit.md) records numerical BRDF and
+environment tests, rendered material/ownership controls, HDR float/display
+references, shadow and skinning motion, baked/fog/transparency composition,
+reloads, restarts and complete fallback. Every capture uses the engine command.
+Linear PFM proof requires a completed HDR frame; encoded-preview export must
+be refused. Reports retain binary, fixture, map and harness hashes.
+
+Keep MSAA sample counts fixed within each batch. Include shadow off/on/off
+controls before restart: restarting alone misses shadow-resource history leaks.
+Use the existing numerical and negative-image oracles; a clean log or plausible
+picture alone does not prove the feature. Final retail gameplay/performance and
+backend/platform promotion remain separate gates.
+
 ## Automated Safe Matrix
 
 The safe matrix starts the staged client, runs renderer self-tests or startup probes, prints `gfxInfo`, then quits. It does not launch maps.
@@ -47,8 +68,10 @@ Automated coverage:
 | Case | Coverage |
 |---|---|
 | `renderer-foundation-selftests` | context ladder, tier selector, tier workload contract, backend-neutral authored/evaluated pass/clip/layout/buffer contracts, exact four-weight GPU-animation contract, upload manager, GPU timer, scene packet, render graph, render graph resource owner, ordered material resource table, PBR/authored-probe material parsing, specular-probe atlas placement/slot/generation, transactional classic-GUI, classic cinematic/authored-post, render-demo/Raven special-frame, classic-world-ambient, classic-interaction, classic-fog/blend, and capture-backed classic-subview domains, geometry/instance resource records, GL state cache, Shader Library V2 pass-family/permutation/reflection coverage, draw plan, submit plan, modern executor, and shadow planner self-tests |
-| `renderer-vk-clear-startup` | Vulkan module startup plus the same mandatory backend-neutral renderer-contract, classic cinematic/authored-post, render-demo/Raven special-frame, classic-world-ambient, classic-interaction, classic-fog/blend, capture-backed classic-subview, and exact GPU-animation self-test markers used by OpenGL; device, swapchain, and GUI executor initialization run with validation layers enabled |
+| `renderer-vk-clear-startup` | Vulkan device, swapchain, GUI executor, and mandatory shared renderer contracts, with a positive marker proving that the validation layer and debug messenger are active. The on-device render-target self-test checks 66 face captures at two sizes with cube and shared 2D depth attachments, including real depth-only draws, exact color/depth readback, complete-layer resolve, MSAA depth resolve, resize, retirement beyond the fixed queue capacity, and invalid face selection. A second mandatory GPU test draws to two color attachments and, where supported, five. It checks mixed RGBA8/RGBA16F formats, unclamped float values, blend masks, scope-load preservation, cube faces, every color/depth resolve, resize, and invalid attachment/alias rejection. The log records effective sample counts so a device fallback is not mistaken for MSAA coverage. |
+| `renderer-vk-hdr-selftest` | Mandatory GPU HDR exercise: 24 unclamped RGBA16F scene/capture fixtures cover 0x and 4x MSAA, square and rectangular resize, bright/mixed/dark radiance, logarithmic luminance reduction, synchronous and frame-fenced asynchronous exposure, and stale/duplicate/disabled sample rejection. Active validation and the completed fixture marker are required. |
 | `renderer-vk-device-fallback-drill` | Vulkan device break drill: `VK_DRIVER_FILES` and `VK_ICD_FILENAMES` point at an empty manifest, so the module loads but no Vulkan driver exists. Requires `Renderer API: requested=vulkan active=gl disposition=fallback` with a `device probe failed:` reason, and fails if device bring-up (`VK_InitRenderDevice`) was reached. Skipped on macOS, which loads MoltenVK directly rather than through the loader's driver list. The companion `renderer-vk-fallback-drill` hides the module file instead. |
+| `renderer-vk-window-recovery`, `renderer-vk-surface-recovery`, `renderer-vk-swapchain-recovery`, `renderer-vk-resources-recovery` | Inject failure at each real startup stage using the non-archived `r_vkStartupFailure` diagnostic (1–4; normal operation is 0). Require ordered engine-log evidence of failure, owner teardown/module unload, fresh OpenGL selection/context, and module self-test success. Surface, swapchain and resource cases also require active Vulkan validation. They run hidden/windowed with isolated config and fail on Vulkan diagnostics or fatal startup. Linux push/PR Vulkan selections require all four cases. |
 | `renderer-visible-depth-selftest` | opt-in `r_rendererModernVisibleDepth` coverage for graph-backed scene depth, compatible shadow-depth resources, fallback accounting, depth-overlay readiness, and `gfxInfo` reporting |
 | `renderer-gbuffer-selftest` | opt-in `r_rendererModernOpaque` coverage for graph-backed G-buffer resources, MRT setup, opaque/alpha-test draw classification, diffuse texture binding, packing assumptions, fallback accounting, bandwidth metrics, attachment debug-overlay readiness, and `gfxInfo` reporting |
 | `renderer-cluster-grid-selftest` | opt-in modern clustered-light preparation coverage for point/projected/fog/ambient/special light classification, budgeted dynamic grid slicing, cluster reference packing, spill/overflow accounting, authored-probe top-two selection, and atomic clustered-decal prepare/seal ownership including malformed, stale, record-overflow, and reference-overflow zero-publication cases; GL 3.3 UBO fallback readiness, GL 4.3+ SSBO upload readiness, cluster debug-overlay texture generation, and `gfxInfo` reporting |
@@ -82,6 +105,21 @@ Automated coverage:
 | `present-vsync1-fps120` | 120 FPS capped presentation startup probe |
 
 The forced tier cases pass when startup succeeds and the selected tier is reported. If a machine cannot support the forced tier, the log must show the selected fallback tier and `Renderer tier contract:` must report `degraded=1`, `failClosed=1`, and a concise `missing=` reason.
+
+For stock-map validation after recovery, run the opt-in gameplay driver against
+a freshly staged runtime and an installed retail asset tree:
+
+```powershell
+python tools\tests\renderer_vulkan_recovery_gameplay.py --runtime-dir .install --basepath "E:\SteamLibrary\steamapps\common\Quake 4" --output-dir .tmp\vulkan-recovery-gameplay
+```
+
+Its default resource-failure case enters `game/airdefense1` and an auto-joined
+`mp/q4dm1` listen game after OpenGL recovery. `--stages 1 2 3 4` expands the
+failure coverage. Every case uses a separate save tree, hidden windowed output,
+disabled input, at least 120 measured gameplay frames, an engine-generated
+1280×720 screenshot and clean shutdown. The JSON report retains launch arguments,
+logs, image hashes and before/after package hashes. This qualifies recovery;
+it supplies neither performance budgets nor renderer-promotion evidence.
 
 Automated safe cases also fail if their logs contain renderer warning signatures such as `idStr::snPrintf` overflow, `WARNING: idStr`, shader compile/program link failures, or OpenGL error markers. The generated Markdown/JSON report records per-case warning-signature counts so the Phase 8 `warnings=0` promotion token cannot be inferred from expected-line checks alone.
 
@@ -147,7 +185,7 @@ The shader-library tier cases force `r_glTier gl33`, `gl41`, `gl43`, `gl45`, and
 
 The foundation self-test case also runs `rendererPBRMaterialSelfTest`, while `rendererScenePacketSelfTest` and `rendererMaterialResourceTableSelfTest` include the matching PBR packet/resource cases. Together these assetless contracts are expected to verify that opt-in `pbr {}` metadata leaves classic Quake 4 stages untouched, image usage and scalar registers survive parsing, explicit and approximate classic fallbacks are classified deterministically, packet records preserve PBR metadata, and packed, separate, scalar-only, unsupported-workflow, and missing-map resource records expose deterministic reasons. Packed ORM, separate metallic/roughness/AO, and scalar-only records may become `pbrModernReady`; the separate maps are bound through direct sampler units rather than the four-entry texture-table ABI. The material parser self-test also owns the namespaced authored light-material probe metadata contract without changing the public light/game/save/demo/network ABI.
 
-`renderer-pbr-visible-selftest` runs `rendererPBRVisibleSelfTest` for guarded opaque resource admission, linked G-buffer/deferred/forward programs, G-buffer command/input packing, scalar propagation, `r_rendererModernQuality 0` rollback, and clustered-forward surface-owner deduplication. It does not itself exercise source-alpha admission, analytic IBL, PBR debug routes, or authored-probe atlas/binding readiness. `renderer_pbr_materials.py` statically pins the GGX/Smith/Schlick source, explicit PBR eligibility marker, direct texture-unit contracts, analytic-IBL path, source-alpha admission, debug routes, probe shader ABI, and the narrow Vulkan packed-PBR contract. The foundation executor self-test owns probe atlas placement/slot/generation checks; the deferred and forward+ self-tests validate reflected probe sampler/UBO bindings; `rendererClusterGridSelfTest` owns producer-side probe selection and clustered-decal transactions. Vulkan admission additionally requires exactly one declared and active classic bump -> diffuse -> specular sequence, rejects duplicate/invalid/reordered or custom-lighting co-ownership, and replaces only the final interaction submit. It intentionally falls back for separate maps, non-RGB tangent normals, transparency, analytic IBL, authored probes, and clustered decals.
+`renderer-pbr-visible-selftest` runs `rendererPBRVisibleSelfTest` for guarded opaque resource admission, linked G-buffer/deferred/forward programs, G-buffer command/input packing, scalar propagation, `r_rendererModernQuality 0` rollback, and clustered-forward surface-owner deduplication. It does not itself exercise source-alpha admission, analytic IBL, PBR debug routes, or authored-probe atlas/binding readiness. `renderer_pbr_materials.py` statically pins the GGX/Smith/Schlick source, explicit PBR eligibility marker, direct texture-unit contracts, analytic-IBL path, source-alpha admission, debug routes, probe shader ABI, and the Vulkan direct-material contract. The foundation executor self-test owns probe atlas placement/slot/generation checks; the deferred and forward+ self-tests validate reflected probe sampler/UBO bindings; `rendererClusterGridSelfTest` owns producer-side probe selection and clustered-decal transactions. Vulkan admission additionally requires exactly one declared and active classic bump -> diffuse -> specular sequence, rejects duplicate/invalid/reordered or custom-lighting co-ownership, and replaces only the final interaction submit. The v69 native path supports scalar, packed/separate data, XYZ/RG/AGB normals, matching alpha-tested coverage and single additive emission. The laboratory passes 68 isolated Vulkan controls each at 0x and 4x MSAA, including specular footprint filtering and constant-normal/roughness-ceiling invariants, independent emission references, cutout alpha-to-coverage, mismatched-mask/glow fallback, restarts and point/projected shadows. Cross-report MSAA proof verifies binary/map identity and capture/log hashes. Raw FP16 emission tests at 0x/4x preserve a faint channel while bounding brighter channels after texture modulation. These tests do not qualify arbitrary multi-light overflow. The unchanged full-map ownership requirement still fails source-alpha transparency; native IBL, probes, temporal-shimmer qualification, clustered decals and complete scene color parity remain open.
 
 Milestone F adds three dependency-light contracts. `openq4-advanced-lighting-core-test` covers generation-bound bounded transactions, malformed/NaN input, capacity and reference overflow, deterministic priority/weight/stable-id top-two selection, probe blend weights, and complete master-disabled rejection. `openq4-specular-probe-atlas-packing-test` covers fixed six-face placement for eight cubemaps without needing a GL context. `rendererClusterGridSelfTest` covers the engine-side probe/decal integration, including the 32-probe record limit, top-two cluster indices, and atomic decal prepare/seal ownership capped at 1,024 records and 65,536 references. A rejected probe uses analytic PBR fallback; a rejected decal transaction publishes no modern ownership. These paths are OpenGL-only, and `MODERN_LIGHTING_PARITY_PROVEN_DOMAINS` remains `0`.
 

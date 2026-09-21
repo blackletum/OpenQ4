@@ -59,6 +59,8 @@ PFNWGLSETPBUFFERATTRIBARBPROC wglSetPbufferAttribARB = NULL;
 #endif
 #endif
 
+#include "../RendererMetrics.h"
+
 // opaque handles into the engine's video instance; every operation on them
 // crosses through renderWindowServices_t
 static void *s_glWindow = NULL;
@@ -561,6 +563,7 @@ void GLimp_Shutdown(void) {
 }
 
 void GLimp_SwapBuffers(void) {
+	const unsigned long long windowBegin = R_RendererMetrics_CpuClock();
 	if (r_swapInterval.IsModified()) {
 		r_swapInterval.ClearModified();
 		(void)SDL3_ApplySwapInterval();
@@ -582,8 +585,17 @@ void GLimp_SwapBuffers(void) {
 		glConfig.uiViewportHeight = windowInfo.uiViewportHeight;
 	}
 
-	if (SDL3_EnsureGLContextCurrent("swap buffers") && !s_glWindowServices->SwapGLWindow()) {
-		common->Printf("SDL3: failed to swap window buffers: %s\n", R_GLVideoError());
+	R_RendererMetrics_EndPresentPhase(RENDERER_PRESENT_WINDOW_STATE, windowBegin);
+	const unsigned long long contextBegin = R_RendererMetrics_CpuClock();
+	const bool contextCurrent = SDL3_EnsureGLContextCurrent("swap buffers");
+	R_RendererMetrics_EndPresentPhase(RENDERER_PRESENT_CONTEXT, contextBegin);
+	if (contextCurrent) {
+		const unsigned long long swapBegin = R_RendererMetrics_CpuClock();
+		const bool swapped = s_glWindowServices->SwapGLWindow();
+		R_RendererMetrics_EndPresentPhase(RENDERER_PRESENT_SWAP, swapBegin);
+		if (!swapped) {
+			common->Printf("SDL3: failed to swap window buffers: %s\n", R_GLVideoError());
+		}
 	}
 }
 

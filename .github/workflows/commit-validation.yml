@@ -92,6 +92,7 @@ jobs:
             tools/tests/mp_browser_smoke.py \
             tools/tests/mp_duel_queue_smoke.py \
             tools/tests/mp_match_flow_smoke.py \
+            tools/tests/mp_bot_gameplay_smoke.py \
             tools/tests/mp_roster_smoke.py \
             tools/tests/mp_round_remote_smoke.py \
             tools/tests/mp_tourney_smoke.py \
@@ -227,6 +228,7 @@ jobs:
             tools/tests/parallel_job_system.py \
             tools/tests/pbr_orm_packer.py \
             tools/tests/pbr_procedural_fixture.py \
+            tools/tests/pbr_laboratory_fixture.py \
             tools/tests/preprocessor_macro_safety.py \
             tools/tests/posix_memory_management.py \
             tools/tests/posix_monotonic_time.py \
@@ -413,6 +415,7 @@ jobs:
           python tools/tests/parallel_job_system.py
           python tools/tests/pbr_orm_packer.py
           python tools/tests/pbr_procedural_fixture.py
+          python tools/tests/pbr_laboratory_fixture.py
           python tools/tests/preprocessor_macro_safety.py
           python tools/tests/release_tooling_safety.py
           python tools/tests/posix_memory_management.py
@@ -609,6 +612,9 @@ jobs:
               libgl1-mesa-dri \
               libgl1-mesa-dev \
               libglx-mesa0 \
+              libvulkan1 \
+              mesa-vulkan-drivers \
+              vulkan-validationlayers \
               libibus-1.0-dev \
               libjack-dev \
               libopenal-dev \
@@ -646,10 +652,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          shopt -s nullglob
+          vulkan_icds=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+          [[ ${#vulkan_icds[@]} -eq 1 && -f "${vulkan_icds[0]}" ]]
+          export VK_DRIVER_FILES="${vulkan_icds[0]}"
+          export VK_ICD_FILENAMES="${vulkan_icds[0]}"
           env LIBGL_ALWAYS_SOFTWARE=1 SDL_VIDEO_DRIVER=x11 SDL_VIDEODRIVER=x11 xvfb-run -a bash tools/validation/validate_pr.sh \
             --fail-on-dirty \
             --runtime \
-            --runtime-cases renderer-foundation-selftests,renderer-pbr-visible-selftest,renderer-cluster-grid-selftest,renderer-default-safety-selftest,renderer-shadow-planner-selftest,renderer-shadow-projected-diagnostic,sdl3-x11-display-diagnostics \
+            --runtime-cases renderer-foundation-selftests,renderer-pbr-visible-selftest,renderer-cluster-grid-selftest,renderer-default-safety-selftest,renderer-shadow-planner-selftest,renderer-shadow-projected-diagnostic,sdl3-x11-display-diagnostics,renderer-vk-clear-startup,renderer-vk-hdr-selftest,renderer-vk-fallback-drill,renderer-vk-device-fallback-drill,renderer-vk-window-recovery,renderer-vk-surface-recovery,renderer-vk-swapchain-recovery,renderer-vk-resources-recovery \
             --runtime-tiers auto \
             --runtime-basepath "" \
             --runtime-skip-official-pak-validation

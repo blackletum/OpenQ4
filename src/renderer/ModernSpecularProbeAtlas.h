@@ -16,7 +16,8 @@ class idImage;
 	Bounded six-face residency for authored specular probes.
 
 	Each cubemap owns six consecutive 256x256 cells in a fixed 2048x2048
-	RGBA8 2D atlas. UV rectangles address texel centres, so bilinear filtering
+	linear RGBA16F 2D atlas with independently convolved GGX mip levels.
+	UV rectangles address texel centres at each level, so bilinear filtering
 	cannot cross into an adjacent face even though no gutter pixels are needed.
 	The fixed face order is +X, -X, +Y, -Y, +Z, -Z.
 
@@ -33,6 +34,23 @@ static const int MODERN_SPECULAR_PROBE_ATLAS_CELLS_PER_ROW = 8;
 static const int MODERN_SPECULAR_PROBE_ATLAS_FACE_COUNT = 6;
 static const int MODERN_SPECULAR_PROBE_ATLAS_MAX_ENTRIES = 8;
 static const int MODERN_SPECULAR_PROBE_ATLAS_TEXTURE_UNIT = 21;
+// Retain at least 4x4 samples per face. Adjacent edge samples then share
+// directions even at maximum roughness instead of becoming six flat colors.
+static const int MODERN_SPECULAR_PROBE_ATLAS_MAX_MIP = 6;
+static const int MODERN_SPECULAR_PROBE_ANALYTIC_SLOT = 8;
+static const int MODERN_SPECULAR_PROBE_DIFFUSE_FIRST_CELL = 54;
+static const int MODERN_SPECULAR_PROBE_DIFFUSE_SIZE = 32;
+static const int MODERN_SPECULAR_PROBE_BRDF_CELL = 63;
+static const int MODERN_SPECULAR_PROBE_BRDF_SIZE = 128;
+
+static_assert( MODERN_SPECULAR_PROBE_ANALYTIC_SLOT == MODERN_SPECULAR_PROBE_ATLAS_MAX_ENTRIES,
+	"analytic environment must follow authored probe slots" );
+static_assert( ( MODERN_SPECULAR_PROBE_ANALYTIC_SLOT + 1 ) * MODERN_SPECULAR_PROBE_ATLAS_FACE_COUNT == MODERN_SPECULAR_PROBE_DIFFUSE_FIRST_CELL,
+	"diffuse tiles must follow all specular cells" );
+static_assert( MODERN_SPECULAR_PROBE_DIFFUSE_FIRST_CELL + MODERN_SPECULAR_PROBE_ANALYTIC_SLOT + 1 == MODERN_SPECULAR_PROBE_BRDF_CELL,
+	"BRDF tile must follow all diffuse tiles" );
+static_assert( MODERN_SPECULAR_PROBE_BRDF_CELL + 1 == MODERN_SPECULAR_PROBE_ATLAS_CELLS_PER_ROW * MODERN_SPECULAR_PROBE_ATLAS_CELLS_PER_ROW,
+	"all atlas regions must fit without overlap" );
 
 typedef enum modernSpecularProbeAtlasFace_e {
 	MODERN_SPECULAR_PROBE_FACE_POSITIVE_X = 0,
@@ -92,9 +110,9 @@ inline bool ModernSpecularProbeAtlas_BuildPlacement( int slot, int faceSize,
 		placement.faceRects[face][1] =
 			( static_cast<float>( cellY ) + 0.5f ) * inverseAtlas;
 		placement.faceRects[face][2] =
-			static_cast<float>( faceSize - 1 ) * inverseAtlas;
+			static_cast<float>( MODERN_SPECULAR_PROBE_ATLAS_FACE_SIZE - 1 ) * inverseAtlas;
 		placement.faceRects[face][3] =
-			static_cast<float>( faceSize - 1 ) * inverseAtlas;
+			static_cast<float>( MODERN_SPECULAR_PROBE_ATLAS_FACE_SIZE - 1 ) * inverseAtlas;
 	}
 	placement.valid = true;
 	placement.slot = slot;
@@ -159,7 +177,9 @@ typedef struct modernSpecularProbeAtlasStats_s {
 void R_ModernSpecularProbeAtlas_Init( const renderBackendCaps_t &caps,
 	const renderFeatureSet_t &features );
 void R_ModernSpecularProbeAtlas_Shutdown( void );
-void R_ModernSpecularProbeAtlas_BeginFrame( void );
+// Allocate/filter only when an authored PBR environment consumer is present.
+// Disabled PBR and ordinary stock maps incur no allocation or convolution.
+void R_ModernSpecularProbeAtlas_BeginFrame( bool environmentRequested );
 
 // Acquire performs no GL transfer. It reserves or reuses six cells and fills a
 // generation-stamped placement. Every rejection clears the placement and

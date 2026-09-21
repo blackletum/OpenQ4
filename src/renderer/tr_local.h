@@ -862,7 +862,7 @@ public:
 	virtual void			SetRenderTextureDebugName(idRenderTexture* renderTexture, const char* label);
 	virtual void			BindRenderTexture(idRenderTexture* renderTexture, idRenderTexture* feedbackRenderTexture);
 	virtual void			ResolveMSAA(idRenderTexture* msaaRenderTexture, idRenderTexture* destRenderTexture, bool resolveDepth = false);
-	virtual void			ClearRenderTarget(bool clearColor, bool clearDepth, float depthValue, float red, float green, float blue);
+	virtual void			ClearRenderTarget(bool clearColor, bool clearDepth, float depthValue, float red, float green, float blue, float alpha = 1.0f);
 	virtual void			SetPostProcessSourceSize(int width, int height);
 	virtual void			SetPostProcessSourceColorSpace(const idVec4& colorSpace);
 	virtual void			SetPostProcessSMAAQuality(const idVec4& quality);
@@ -993,6 +993,10 @@ public:
 };
 
 extern backEndState_t		backEnd;
+
+// Exact authored fog/blend stages in a preflighted modern linear target.
+bool RB_ClassicFogBlend_PreflightLinearView( const viewDef_t *viewDef );
+bool RB_ClassicFogBlend_DrawLinearView( const viewDef_t *viewDef, GLuint vertexProgram, GLint mvpLocation, GLint fogLocation );
 extern idRenderSystemLocal	tr;
 extern glconfig_t			glConfig;		// outside of TR since it shouldn't be cleared during ref re-init
 extern bool					tr_levelshotProjectionShiftActive;
@@ -1629,6 +1633,7 @@ typedef struct rendererShadowTextureBindings_s {
 	// the texture shadowMapArb2AtlasSlot_t cell rects index into
 	rendererShadowTextureBinding_t	projectedPersistentAtlas;
 	rendererShadowTextureBinding_t	pointAtlas;
+	rendererShadowTextureBinding_t	currentPointAtlas;
 	rendererShadowTextureBinding_t	projectedMoments[RENDERER_SHADOW_TEXTURE_MOMENT_COUNT];
 	rendererShadowTextureBinding_t	pointMoments[RENDERER_SHADOW_TEXTURE_MOMENT_COUNT];
 	bool							projectedAtlasReady;
@@ -1910,6 +1915,9 @@ bool RB_FlatDiffuseSurfaceActive( const drawSurf_t *surf );
 // representability of a surface's baked indirect contribution for the modern
 // light-grid pipeline; sets *reason to a stable blocker token when false
 bool RB_LightGridSurfaceModernRepresentable( const drawSurf_t *surf, const viewDef_t *viewDef, const char **reason );
+// True with a null grid is an intentional native non-receiver, not missing work.
+class LightGrid;
+bool RB_PrepareModernLightGrid( const drawSurf_t *surf, const viewDef_t *viewDef, const LightGrid *&grid );
 bool RB_FlatDiffuseSweepActive( const drawSurf_t *surf );
 void RB_GetFlatDiffuseParams( const drawSurf_t *surf, idVec4 &params );
 void RB_ApplyFlatDiffuseStage( const drawSurf_t *surf, idImage **diffuseImage, float diffuseColor[4], idVec4 &params );
@@ -1929,6 +1937,7 @@ bool RB_UnderwaterViewAvailable( void );
 
 void RB_DetermineLightScale( void );
 void RB_STD_LightScale( void );
+void RB_HDRPrintGfxInfo( void );
 void RB_BeginDrawingView (void);
 
 /*

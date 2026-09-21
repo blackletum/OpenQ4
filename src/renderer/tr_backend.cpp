@@ -551,15 +551,19 @@ const void	RB_SwapBuffers( const void *data ) {
 
 	// force a gl sync if requested
 	if ( r_finish.GetBool() ) {
+		const unsigned long long begin = R_RendererMetrics_CpuClock();
 		glFinish();
+		R_RendererMetrics_EndPresentPhase( RENDERER_PRESENT_FINISH, begin );
 	}
 
 	RB_LogComment( "***************** RB_SwapBuffers *****************\n\n\n" );
 
 	if ( !r_frontBuffer.GetBool() ) {
+		const unsigned long long begin = R_RendererMetrics_CpuClock();
 		RB_ApplyResolutionScaleToBackBuffer();
 		RB_ApplyCRTToBackBuffer();
 		RB_ApplyColorMappingsToBackBuffer();
+		R_RendererMetrics_EndPresentPhase( RENDERER_PRESENT_FINAL_POST, begin );
 	}
 
 	// Screenshot readback consumes the fully post-processed back buffer below.

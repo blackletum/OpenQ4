@@ -3589,6 +3589,7 @@ enum rbBloomCompositeUniformIndex_t {
 	RB_BLOOM_COMPOSITE_UNIFORM_BLOOM_WEIGHT2,
 	RB_BLOOM_COMPOSITE_UNIFORM_BLOOM_WEIGHT3,
 	RB_BLOOM_COMPOSITE_UNIFORM_BLOOM_WEIGHT4,
+	RB_BLOOM_COMPOSITE_UNIFORM_LINEAR_SCENE,
 	RB_BLOOM_COMPOSITE_UNIFORM_COUNT
 };
 
@@ -3701,7 +3702,8 @@ static void RB_InitBloomStages( void ) {
 		{ "bloomWeight1", 1 },
 		{ "bloomWeight2", 1 },
 		{ "bloomWeight3", 1 },
-		{ "bloomWeight4", 1 }
+		{ "bloomWeight4", 1 },
+		{ "hdrLinearScene", 1 }
 	};
 
 	rbBloomCompositeStage.numShaderParms = RB_BLOOM_COMPOSITE_UNIFORM_COUNT;
@@ -3988,6 +3990,18 @@ static float RB_UpdateHDRAutoExposure( idImage *sceneImage, int viewportWidth, i
 	return rbHDRAdaptedExposure;
 }
 
+void RB_HDRPrintGfxInfo( void ) {
+	const bool automatic = RB_HDRAutoExposureEnabled();
+	common->Printf( "OpenGL HDR: linear=%d toneMap=%d auto=%d initialized=%d luminance=%.7f target=%.7f adapted=%.7f effective=%.7f levels=%d async=%d\n",
+		R_ModernGLExecutor_PBRLinearSceneActive() ? 1 : 0,
+		r_hdrToneMap.GetBool() ? 1 : 0, automatic ? 1 : 0,
+		rbHDRExposureInitialized ? 1 : 0, rbHDRLastAverageLuminance,
+		rbHDRLastTargetExposure, rbHDRAdaptedExposure,
+		r_hdrExposure.GetFloat() * ( automatic ? rbHDRAdaptedExposure : 1.0f ),
+		rbHDRExposureLevelCount,
+		( r_hdrAutoExposureAsync.GetBool() && glConfig.pixelBufferObjectAvailable ) ? 1 : 0 );
+}
+
 static void RB_STD_Bloom( void ) {
 	if ( r_skipPostProcess.GetBool() ) {
 		return;
@@ -4205,6 +4219,10 @@ static void RB_STD_Bloom( void ) {
 	}
 	if ( rbBloomCompositeStage.shaderParmLocations[RB_BLOOM_COMPOSITE_UNIFORM_TONEMAP_ENABLED] >= 0 ) {
 		glUniform1fARB( rbBloomCompositeStage.shaderParmLocations[RB_BLOOM_COMPOSITE_UNIFORM_TONEMAP_ENABLED], toneMapToggle );
+	}
+	if ( rbBloomCompositeStage.shaderParmLocations[RB_BLOOM_COMPOSITE_UNIFORM_LINEAR_SCENE] >= 0 ) {
+		glUniform1fARB( rbBloomCompositeStage.shaderParmLocations[RB_BLOOM_COMPOSITE_UNIFORM_LINEAR_SCENE],
+			R_ModernGLExecutor_PBRLinearSceneActive() ? 1.0f : 0.0f );
 	}
 	if ( rbBloomCompositeStage.shaderParmLocations[RB_BLOOM_COMPOSITE_UNIFORM_HDR_EXPOSURE] >= 0 ) {
 		glUniform1fARB( rbBloomCompositeStage.shaderParmLocations[RB_BLOOM_COMPOSITE_UNIFORM_HDR_EXPOSURE], hdrExposure );
@@ -12148,7 +12166,7 @@ static bool RB_ClassicFogBlend_GLGeometryValid(
 
 static bool RB_ClassicFogBlend_GLPreflight(
 		const viewDef_t *viewDef, const classicFogBlendDomainView_t &view,
-		int &failureDetail ) {
+		int &failureDetail, bool linearScene = false ) {
 	rbClassicFogBlendGLPreparedView_t &prepared =
 		rbClassicFogBlendGLPreparedView;
 	std::memset( &prepared, 0,
@@ -12191,8 +12209,8 @@ static bool RB_ClassicFogBlend_GLPreflight(
 			|| viewDef->renderView.viewID < 0
 			|| ( viewDef->renderFlags & ~allowedRenderFlags ) != 0
 			|| viewDef->renderView.globalMaterial != NULL
-			|| backEnd.renderTexture != NULL
-			|| backEnd.feedbackRenderTexture != NULL
+			|| ( !linearScene && backEnd.renderTexture != NULL )
+			|| ( !linearScene && backEnd.feedbackRenderTexture != NULL )
 			|| r_skipFogLights.GetBool() || r_showOverDraw.GetInteger() != 0
 			|| r_singleTriangle.GetBool() || r_skipRender.GetBool()
 			|| r_skipRenderContext.GetBool()
@@ -12693,21 +12711,22 @@ bool RB_ClassicFogBlend_PreflightView( const viewDef_t *viewDef ) {
 	return true;
 }
 
-void RB_ClassicFogBlend_DrawOwnedView( const viewDef_t *viewDef ) {
+static bool RB_ClassicFogBlend_GLDrawPreparedView( const viewDef_t *viewDef, bool recordOwnership,
+		GLuint vertexProgram = 0, GLint mvpLocation = -1, GLint fogLocation = -1 ) {
 	rbClassicFogBlendGLPreparedView_t &prepared =
 		rbClassicFogBlendGLPreparedView;
 	if ( !prepared.ready || prepared.view == NULL
 			|| prepared.viewDef != viewDef || prepared.view->viewDef != viewDef
 			|| prepared.hash != prepared.view->hash ) {
 		common->Warning( "RB_ClassicFogBlend_DrawOwnedView: committed view lost its prepared transaction" );
-		return;
+		return false;
 	}
 	// No operation below this line may return to RB_STD_FogAllLights. All
 	// fallible caches, resources, state mappings, and exact ranges are sealed.
 	prepared.committed = true;
 	RB_LogComment( "---------- RB_ClassicFogBlend_DrawOwnedView ----------\n" );
 	if ( glConfig.GLSLProgramAvailable ) {
-		glUseProgramObjectARB( 0 );
+		glUseProgramObjectARB( vertexProgram );
 	}
 	if ( glConfig.ARBVertexProgramAvailable ) {
 		glDisable( GL_VERTEX_PROGRAM_ARB );
@@ -12733,6 +12752,15 @@ void RB_ClassicFogBlend_DrawOwnedView( const viewDef_t *viewDef ) {
 		const classicFogBlendDomainPrimitive_t &primitive = *draw.primitive;
 		const classicFogBlendDomainLightStage_t &stage = *draw.stage->stage;
 		glLoadMatrixf( primitive.modelViewMatrix );
+		if ( vertexProgram != 0 ) {
+			// Use the same combined matrix and invariant GLSL transform as the
+			// modern depth producer. Fixed-function ftransform differs by an ULP
+			// on real drivers and leaves visible holes under GL_EQUAL.
+			float mvp[16];
+			myGlMultMatrix( primitive.modelViewMatrix, viewDef->projectionMatrix, mvp );
+			glUniformMatrix4fv( mvpLocation, 1, GL_FALSE, mvp );
+			glUniform1i( fogLocation, primitive.kind != CLASSIC_FOG_BLEND_PRIMITIVE_BLEND_RECEIVER ? 1 : 0 );
+		}
 		if ( prepared.view->useScissor ) {
 			backEnd.currentScissor.x1 = primitive.scissorX1;
 			backEnd.currentScissor.y1 = primitive.scissorY1;
@@ -12787,7 +12815,7 @@ void RB_ClassicFogBlend_DrawOwnedView( const viewDef_t *viewDef ) {
 	glEnable( GL_STENCIL_TEST );
 	backEnd.currentSpace = NULL;
 
-	const bool coverageRecorded = R_ClassicFogBlendDomain_RecordOwned(
+	const bool coverageRecorded = !recordOwnership || R_ClassicFogBlendDomain_RecordOwned(
 		viewDef, CLASSIC_FOG_BLEND_BACKEND_GL,
 		fogReceiverDraws, fogFrustumDraws, blendDraws,
 		prepared.noopPrimitives, prepared.noopStages, prepared.noopLights );
@@ -12798,6 +12826,37 @@ void RB_ClassicFogBlend_DrawOwnedView( const viewDef_t *viewDef ) {
 			prepared.noopPrimitives, prepared.noopStages, prepared.noopLights,
 			static_cast<unsigned long long>( prepared.hash ) );
 	}
+	return coverageRecorded;
+}
+
+void RB_ClassicFogBlend_DrawOwnedView( const viewDef_t *viewDef ) {
+	RB_ClassicFogBlend_GLDrawPreparedView( viewDef, true );
+}
+
+bool RB_ClassicFogBlend_PreflightLinearView( const viewDef_t *viewDef ) {
+	// The modern executor owns the target and its depth attachment. Validate
+	// the same sealed geometry/stage transaction without treating a previous
+	// frame's legacy target pointer as the target of this offscreen pass.
+	const classicFogBlendDomainView_t *view = R_ClassicFogBlendDomain_FindView( viewDef );
+	int failureDetail = 0;
+	return view != NULL && view->ready
+		&& RB_ClassicFogBlend_GLPreflight( viewDef, *view, failureDetail, true );
+}
+
+bool RB_ClassicFogBlend_DrawLinearView( const viewDef_t *viewDef, GLuint vertexProgram, GLint mvpLocation, GLint fogLocation ) {
+	const viewDef_t *savedView = backEnd.viewDef;
+	backEnd.viewDef = viewDef;
+	backEnd.currentSpace = NULL;
+	glMatrixMode( GL_PROJECTION );
+	glLoadMatrixf( viewDef->projectionMatrix );
+	glMatrixMode( GL_MODELVIEW );
+	// This is still an offscreen candidate. Do not commit the shared native
+	// owner's coverage: a later modern failure must retain atomic rollback.
+	const bool submitted = RB_ClassicFogBlend_GLDrawPreparedView( viewDef, false, vertexProgram, mvpLocation, fogLocation );
+	glUseProgramObjectARB( 0 );
+	backEnd.viewDef = savedView;
+	backEnd.currentSpace = NULL;
+	return submitted;
 }
 
 //=========================================================================================
@@ -13266,6 +13325,36 @@ bool RB_LightGridSurfaceModernRepresentable( const drawSurf_t *surf, const viewD
 		*reason = blockReason;
 	}
 	return blockReason == NULL;
+}
+
+bool RB_PrepareModernLightGrid( const drawSurf_t *surf, const viewDef_t *viewDef, const LightGrid *&grid ) {
+	grid = NULL;
+	if ( surf == NULL || surf->material == NULL || surf->space == NULL || surf->geo == NULL
+			|| viewDef == NULL || viewDef->renderWorld == NULL ) { return false; }
+	// The packet inventory is deliberately broader than the native receiver
+	// loop (it includes translucent albedo). Preserve that loop's exclusions.
+	if ( !RB_SurfaceCanReceiveLightGrid( surf ) ) { return true; }
+	if ( surf->space->weaponDepthHack || surf->space->modelDepthHack != 0.0f ) { return false; }
+	if ( !RB_SurfaceHasLightGrid( surf, grid ) ) { return true; }
+	if ( RB_LightGridSurfaceNearBlendingPortal( surf, viewDef )
+			|| !viewDef->renderWorld->EnsureLightGridAreaImages( grid->area ) ) { return false; }
+	idImage *images[] = { grid->irradianceImage, grid->visibilityImage, grid->probeImage };
+	for ( int i = 0; i < 3; ++i ) {
+		if ( images[i] == NULL ) { return false; }
+		if ( !images[i]->IsLoaded() ) { images[i]->ActuallyLoadImage( true ); }
+		if ( !images[i]->IsLoaded() || images[i]->IsDefaulted() || images[i]->GetOpts().textureType != TT_2D
+				|| images[i]->GetOpts().width <= 0 || images[i]->GetOpts().height <= 0 ) { return false; }
+		images[i]->SetSamplerState( TF_LINEAR, TR_CLAMP );
+	}
+	const int cellsX = grid->lightGridBounds[0] * grid->lightGridBounds[2];
+	const int cellsY = grid->lightGridBounds[1];
+	return grid->lightGridBounds[0] > 0 && grid->lightGridBounds[2] > 0 && cellsY > 0
+		&& grid->imageSingleProbeSize > grid->imageBorderSize && grid->imageBorderSize >= 0
+		&& images[0]->GetOpts().width == cellsX * grid->imageSingleProbeSize
+		&& images[0]->GetOpts().height == cellsY * grid->imageSingleProbeSize
+		&& images[1]->GetOpts().width == images[0]->GetOpts().width
+		&& images[1]->GetOpts().height == images[0]->GetOpts().height
+		&& images[2]->GetOpts().width == cellsX && images[2]->GetOpts().height == cellsY;
 }
 
 static bool RB_SurfaceHasViewWeaponLightGrid( const drawSurf_t *surf, const LightGrid *&lightGrid ) {
@@ -15511,13 +15600,14 @@ void	RB_STD_DrawView( void ) {
 	RB_RecordARB2InteractionBypassFramePhase( RENDERER_STARTUP_PHASE_ARB2_INTERACTION_BYPASS_FRAME_TAIL );
 
 	// fog and blend lights
-	const bool sharedFogBlendOwned = r_rendererSharedWorldFogBlend.GetBool()
+	const bool modernFogBlendOwned = R_ModernGLExecutor_LegacyPassCanSkipForView( RENDER_PASS_FOG_BLEND, backEnd.viewDef );
+	const bool sharedFogBlendOwned = !modernFogBlendOwned && r_rendererSharedWorldFogBlend.GetBool()
 		&& RB_ClassicFogBlend_PreflightView( backEnd.viewDef );
 	if ( sharedFogBlendOwned ) {
 		RB_ClassicFogBlend_DrawOwnedView( backEnd.viewDef );
 		backEnd.currentRenderCopied = false;
 		backEnd.currentDepthCopied = false;
-	} else if ( R_ModernGLExecutor_LegacyPassCanSkipForView( RENDER_PASS_FOG_BLEND, backEnd.viewDef ) ) {
+	} else if ( modernFogBlendOwned ) {
 		R_ModernGLExecutor_RecordLegacyPassSkipped( RENDER_PASS_FOG_BLEND );
 	} else {
 		RB_STD_FogAllLights();

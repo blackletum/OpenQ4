@@ -527,14 +527,10 @@ static bool R_MaterialResourceTable_BindingHasIdentityColor(
 	if ( record.material == NULL ) {
 		return false;
 	}
-	const float *constantRegisters = record.material->ConstantRegisters();
-	if ( constantRegisters == NULL ) {
-		return false;
-	}
 	for ( int component = 0; component < 4; ++component ) {
 		const int registerIndex = binding.colorRegisters[component];
-		if ( registerIndex < 0 || registerIndex >= record.material->GetNumRegisters()
-				|| constantRegisters[registerIndex] != 1.0f ) {
+		float value;
+		if ( !record.material->GetConstantRegisterValue( registerIndex, value ) || value != 1.0f ) {
 			return false;
 		}
 	}
@@ -599,6 +595,42 @@ static bool R_MaterialResourceTable_ColorRegistersMatch( const materialResourceT
 	return true;
 }
 
+static bool R_MaterialResourceTable_HasPBREmissiveContract( const materialResourceTableRecord_t &record ) {
+	// A single conventional glow stage is represented completely by authored
+	// PBR emissive data. Preserve arbitrary classic overlays by admitting only
+	// the matching image, color expression and unmodified additive stage.
+	if ( !record.hasPBR || !record.hasPBREmissive || record.material == NULL
+			|| record.additiveStageCount != 1 || record.blendStageCount != 0
+			|| record.filterStageCount != 0 ) {
+		return false;
+	}
+	const materialResourceTextureBinding_t *emissive = R_MaterialResourceTable_FindStageBinding( record, MATERIAL_RESOURCE_TEXTURE_EMISSIVE );
+	const materialResourceTextureBinding_t *pbr = R_MaterialResourceTable_TextureBindingForSemantic( record, MATERIAL_RESOURCE_TEXTURE_EMISSIVE_PBR );
+	if ( emissive == NULL || pbr == NULL
+			|| !R_MaterialResourceTable_IsAdditiveBlend( emissive->drawStateBits )
+			|| emissive->colorMasked || emissive->hasConditionRegister
+			|| emissive->hasAlphaTest || emissive->hasTextureMatrix
+			|| emissive->privatePolygonOffset != 0.0f
+			|| emissive->texgen != static_cast<int>( TG_EXPLICIT )
+			|| emissive->vertexColorMode != static_cast<int>( SVC_IGNORE )
+			|| !R_MaterialResourceTable_BindingsSampleSameImage( *emissive, *pbr ) ) {
+		return false;
+	}
+	for ( int component = 0; component < 3; ++component ) {
+		const int source = emissive->colorRegisters[component];
+		const int target = record.pbrEmissiveColorRegisters[component];
+		if ( source < 0 || target < 0 || source >= record.material->GetNumRegisters()
+				|| target >= record.material->GetNumRegisters() ) { return false; }
+		if ( source != target ) {
+			float sourceValue, targetValue;
+			if ( !record.material->GetConstantRegisterValue( source, sourceValue )
+					|| !record.material->GetConstantRegisterValue( target, targetValue )
+					|| sourceValue != targetValue ) { return false; }
+		}
+	}
+	return true;
+}
+
 static void R_MaterialResourceTable_AddStageColorFallback( materialResourceTableRecord_t &record ) {
 	const bool hadFallback = ( record.fallbackFlags & MATERIAL_RESOURCE_FALLBACK_FLAG_STAGE_COLOR ) != 0;
 	R_MaterialResourceTable_AddFallback( record, MATERIAL_RESOURCE_FALLBACK_STAGE_COLOR, MATERIAL_RESOURCE_FALLBACK_FLAG_STAGE_COLOR );
@@ -611,7 +643,8 @@ static void R_MaterialResourceTable_ValidateStageColorContract( materialResource
 	// The source-alpha PBR contract deliberately keeps its own alpha stage
 	// while the direct path samples the matching PBR albedo. Its distinct stage
 	// color registers are therefore expected, not an unsupported overlay.
-	if ( R_MaterialResourceTable_HasPBRSourceAlphaBlendContract( record ) ) {
+	if ( R_MaterialResourceTable_HasPBRSourceAlphaBlendContract( record )
+			|| R_MaterialResourceTable_HasPBREmissiveContract( record ) ) {
 		return;
 	}
 	const materialResourceTextureBinding_t *diffuse = R_MaterialResourceTable_FindStageBinding( record, MATERIAL_RESOURCE_TEXTURE_DIFFUSE );
@@ -649,7 +682,8 @@ static void R_MaterialResourceTable_ValidateAmbientOverlayContract( materialReso
 	// interaction plus an emissive-labelled alpha stage by the material parser.
 	// Their direct PBR owner consumes that alpha stage as ordered transparency;
 	// it is not a separate glow overlay.
-	if ( R_MaterialResourceTable_HasPBRSourceAlphaBlendContract( record ) ) {
+	if ( R_MaterialResourceTable_HasPBRSourceAlphaBlendContract( record )
+			|| R_MaterialResourceTable_HasPBREmissiveContract( record ) ) {
 		return;
 	}
 	if ( record.materialClass != RENDER_MATERIAL_OPAQUE && record.materialClass != RENDER_MATERIAL_PERFORATED ) {
@@ -1979,7 +2013,14 @@ static void R_MaterialResourceTable_FinalizePBRContract( materialResourceTableRe
 
 static void R_MaterialResourceTable_FinalizeShadowContract( materialResourceTableRecord_t &record ) {
 	record.shadowFallbackFlags |= record.fallbackFlags;
-	record.shadowCasterSupported = record.castsShadow && record.fallbackReason == MATERIAL_RESOURCE_FALLBACK_NONE;
+	// An opaque shadow pass writes geometry depth. RGB modulation in a skin or
+	// emissive stage cannot change that coverage; retain the lighting fallback
+	// while admitting the independent shadow caster. Perforated alpha still uses
+	// the strict full material contract below.
+	if ( record.materialClass == RENDER_MATERIAL_OPAQUE && !record.shadowAlphaTest ) {
+		record.shadowFallbackFlags &= ~MATERIAL_RESOURCE_FALLBACK_FLAG_STAGE_COLOR;
+	}
+	record.shadowCasterSupported = record.castsShadow && record.shadowFallbackFlags == 0;
 	if ( record.shadowAlphaTest && record.shadowAlphaBindingIndex < 0 ) {
 		record.shadowFallbackFlags |= MATERIAL_RESOURCE_FALLBACK_FLAG_MISSING_IMAGE;
 		record.shadowCasterSupported = false;
@@ -2465,6 +2506,66 @@ bool R_MaterialResourceTable_ClassicModernPathEligible( const materialResourceTa
 	return !record.hasPBR;
 }
 
+bool R_MaterialResourceTable_ClassicDiffusePathEligible( const materialResourceTableRecord_t &record ) {
+	if ( record.hasPBR || record.material == NULL || globalImages == NULL
+			|| record.fallbackReason != MATERIAL_RESOURCE_FALLBACK_NONE
+			|| record.materialClass != RENDER_MATERIAL_OPAQUE
+			|| record.blendMode != MATERIAL_RESOURCE_BLEND_OPAQUE
+			|| record.hasEmissive || record.alphaTest || record.hasTextureMatrix
+			|| record.hasVertexColor || record.hasConditionRegisters
+			|| record.hasCustomProgram || record.hasCustomGLSL
+			|| record.hasMaterialPolygonOffset || record.hasPrivatePolygonOffset ) {
+		return false;
+	}
+	return R_MaterialResourceTable_ClassicDiffuseMaterialEligible( record.material );
+}
+
+bool R_MaterialResourceTable_ClassicFixedPathEligible( const materialResourceTableRecord_t &record ) {
+	if ( record.hasPBR || record.material == NULL || globalImages == NULL
+			|| record.fallbackReason != MATERIAL_RESOURCE_FALLBACK_NONE
+			|| record.materialClass != RENDER_MATERIAL_OPAQUE
+			|| record.blendMode != MATERIAL_RESOURCE_BLEND_OPAQUE
+			|| record.hasEmissive || record.alphaTest || record.hasTextureMatrix
+			|| record.hasVertexColor || record.hasConditionRegisters
+			|| record.hasCustomProgram || record.hasCustomGLSL
+			|| record.hasMaterialPolygonOffset || record.hasPrivatePolygonOffset ) {
+		return false;
+	}
+	return R_MaterialResourceTable_ClassicFixedMaterialEligible( record.material );
+}
+
+bool R_MaterialResourceTable_ClassicFixedMaterialEligible( const idMaterial *material ) {
+	if ( material == NULL || material->HasPBR() || material->Coverage() != MC_OPAQUE ) { return false; }
+	int counts[3] = {};
+	for ( int i = 0; i < material->GetNumStages(); ++i ) {
+		const shaderStage_t *stage = material->GetStage( i );
+		if ( stage == NULL ) { return false; }
+		const int slot = stage->lighting == SL_BUMP ? 0 : stage->lighting == SL_DIFFUSE ? 1 : stage->lighting == SL_SPECULAR ? 2 : -1;
+		if ( slot < 0 || ++counts[slot] > 1 ) { return false; }
+	}
+	return counts[0] == 1 && counts[1] == 1;
+}
+
+bool R_MaterialResourceTable_ClassicDiffuseMaterialEligible( const idMaterial *material ) {
+	if ( material == NULL || material->HasPBR() || globalImages == NULL
+			|| material->Coverage() != MC_OPAQUE ) { return false; }
+	int diffuseStages = 0;
+	for ( int i = 0; i < material->GetNumStages(); ++i ) {
+		const shaderStage_t *stage = material->GetStage( i );
+		if ( stage == NULL ) { return false; }
+		if ( stage->lighting == SL_DIFFUSE ) {
+			diffuseStages++;
+		} else if ( stage->lighting == SL_BUMP ) {
+			if ( stage->texture.image != globalImages->flatNormalMap ) { return false; }
+		} else if ( stage->lighting == SL_SPECULAR ) {
+			if ( stage->texture.image != globalImages->blackImage ) { return false; }
+		} else {
+			return false;
+		}
+	}
+	return diffuseStages == 1;
+}
+
 bool R_MaterialResourceTable_PBRModernPathEligible( const materialResourceTableRecord_t &record ) {
 	return r_rendererModernQuality.GetBool()
 		&& record.hasPBR
@@ -2475,6 +2576,11 @@ bool R_MaterialResourceTable_PBRModernPathEligible( const materialResourceTableR
 bool R_MaterialResourceTable_PBRTransparentPathEligible( const materialResourceTableRecord_t &record ) {
 	return R_MaterialResourceTable_PBRModernPathEligible( record )
 		&& R_MaterialResourceTable_HasPBRSourceAlphaBlendContract( record );
+}
+
+bool R_MaterialResourceTable_PBREmissivePathEligible( const materialResourceTableRecord_t &record ) {
+	return R_MaterialResourceTable_PBRModernPathEligible( record )
+		&& R_MaterialResourceTable_HasPBREmissiveContract( record );
 }
 
 void R_MaterialResourceTable_DumpLatest( void ) {
@@ -2593,6 +2699,14 @@ void R_MaterialResourceTable_DumpLatest( void ) {
 				record.tableGeneration );
 		}
 		if ( record.hasPBR ) {
+			const materialResourceTextureBinding_t *alpha = R_MaterialResourceTable_FindOnlySourceAlphaStage( record );
+			if ( alpha != NULL ) {
+				const float *constants = record.material != NULL ? record.material->ConstantRegisters() : NULL;
+				common->Printf( "    pbrSourceAlpha contract=%d constants=%d identity=%d masked=%d rgba=%d/%d/%d/%d\n",
+					R_MaterialResourceTable_HasPBRSourceAlphaBlendContract( record ) ? 1 : 0,
+					constants != NULL ? 1 : 0, R_MaterialResourceTable_BindingHasIdentityColor( record, *alpha ) ? 1 : 0,
+					alpha->colorMasked ? 1 : 0, alpha->colorRegisters[0], alpha->colorRegisters[1], alpha->colorRegisters[2], alpha->colorRegisters[3] );
+			}
 			common->Printf(
 				"    pbr workflow=%d normalFormat=%d resourceReady=%d modernReady=%d fallback=%s packed=%d separate=%d maps=a%d n%d orm%d m%d r%d ao%d e%d authored=%d explicit=%d generated=%d approximate=%d missingFallback=%d regs=%d/%d/%d/%d emit=%d,%d,%d\n",
 				record.pbrWorkflow,
@@ -3133,6 +3247,23 @@ static bool R_MaterialResourceTable_RunGuiPassContractSelfTest( void ) {
 }
 
 static bool R_MaterialResourceTable_RunPBRContractSelfTest( void ) {
+	materialResourceTableRecord_t depthContract = {};
+	depthContract.castsShadow = true;
+	depthContract.materialClass = RENDER_MATERIAL_OPAQUE;
+	depthContract.fallbackReason = MATERIAL_RESOURCE_FALLBACK_STAGE_COLOR;
+	depthContract.fallbackFlags = MATERIAL_RESOURCE_FALLBACK_FLAG_STAGE_COLOR;
+	R_MaterialResourceTable_FinalizeShadowContract( depthContract );
+	if ( !depthContract.shadowCasterSupported || depthContract.fallbackReason != MATERIAL_RESOURCE_FALLBACK_STAGE_COLOR ) {
+		common->Printf( "RendererMaterialResourceTable self-test failed: RGB modulation changed opaque shadow coverage\n" );
+		return false;
+	}
+	depthContract.shadowAlphaTest = true;
+	depthContract.shadowAlphaBindingIndex = -1;
+	R_MaterialResourceTable_FinalizeShadowContract( depthContract );
+	if ( depthContract.shadowCasterSupported ) {
+		common->Printf( "RendererMaterialResourceTable self-test failed: missing alpha-test shadow input admitted\n" );
+		return false;
+	}
 	if ( globalImages == NULL ) {
 		common->Printf( "RendererMaterialResourceTable PBR self-test skipped: images unavailable\n" );
 		return true;
@@ -3323,6 +3454,10 @@ static bool R_MaterialResourceTable_RunPBRContractSelfTest( void ) {
 		memcpy( alphaStage.colorRegisters, identityStage->color.registers, sizeof( alphaStage.colorRegisters ) );
 	}
 	const bool sourceAlphaContractAccepted = R_MaterialResourceTable_PBRTransparentPathEligible( sourceAlphaContract ) == pbrEnabled;
+	const bool savedConstantMaterials = r_useConstantMaterials.GetBool();
+	r_useConstantMaterials.SetBool( false );
+	const bool sourceAlphaWithoutConstantCache = R_MaterialResourceTable_PBRTransparentPathEligible( sourceAlphaContract ) == pbrEnabled;
+	r_useConstantMaterials.SetBool( savedConstantMaterials );
 	materialResourceTableRecord_t complexSourceAlpha = sourceAlphaContract;
 	complexSourceAlpha.additiveStageCount = 1;
 	const bool sourceAlphaComplexBlendRejected = !R_MaterialResourceTable_PBRTransparentPathEligible( complexSourceAlpha );
@@ -3393,6 +3528,7 @@ static bool R_MaterialResourceTable_RunPBRContractSelfTest( void ) {
 		&& !R_MaterialResourceTable_PBRModernPathEligible( *transparentRecord )
 		&& transparentRecord->pbrFallbackReason == MATERIAL_RESOURCE_PBR_FALLBACK_CLASSIC_FEATURE
 		&& sourceAlphaContractAccepted
+		&& sourceAlphaWithoutConstantCache
 		&& sourceAlphaComplexBlendRejected
 		&& sourceAlphaMismatchedAlbedoRejected
 		&& sourceAlphaWrongPassRejected
@@ -3401,7 +3537,7 @@ static bool R_MaterialResourceTable_RunPBRContractSelfTest( void ) {
 		&& stats.pbrRecords == 10
 		&& stats.classicRecords == 0
 		&& stats.pbrResourceReadyRecords == 6
-		&& stats.pbrModernReadyRecords == ( pbrEnabled ? 5 : 0 )
+		&& stats.pbrModernReadyRecords == ( pbrEnabled ? 6 : 0 )
 		&& stats.pbrPackedMapRecords == 8
 		&& stats.pbrSeparateMapRecords == 1
 		&& stats.pbrAuthoredClassicFallbackRecords == 8
@@ -3419,7 +3555,7 @@ static bool R_MaterialResourceTable_RunPBRContractSelfTest( void ) {
 		&& stats.textureArrayTableDescriptors == 0;
 	if ( !ok ) {
 		common->Printf(
-			"RendererMaterialResourceTable self-test failed: PBR contract added=%d/%d/%d/%d/%d/%d/%d/%d/%d/%d sourceAlpha=%d/%d/%d/%d/%d record=%d resource=%d modern=%d fallback=%s records=%d packed=%d separate=%d missingFallback=%d mapsMissing=%d/%d/%d\n",
+			"RendererMaterialResourceTable self-test failed: PBR contract added=%d/%d/%d/%d/%d/%d/%d/%d/%d/%d sourceAlpha=%d/%d/%d/%d/%d/%d/%d record=%d resource=%d modern=%d fallback=%s records=%d packed=%d separate=%d missingFallback=%d mapsMissing=%d/%d/%d\n",
 			added ? 1 : 0,
 			separateAdded ? 1 : 0,
 			scalarAdded ? 1 : 0,
@@ -3431,6 +3567,7 @@ static bool R_MaterialResourceTable_RunPBRContractSelfTest( void ) {
 			redundantExplicitAdded ? 1 : 0,
 			transparentAdded ? 1 : 0,
 			sourceAlphaContractAccepted ? 1 : 0,
+			sourceAlphaWithoutConstantCache ? 1 : 0,
 			sourceAlphaComplexBlendRejected ? 1 : 0,
 			sourceAlphaMismatchedAlbedoRejected ? 1 : 0,
 			sourceAlphaWrongPassRejected ? 1 : 0,

@@ -27,6 +27,8 @@ typedef struct vkImageEntry_s {
 	// depth+stencil attachment view. Color and depth-only images alias this
 	// to view.
 	VkImageView		attachmentView;
+	// Cube sampling uses the full cube view; rendering attaches one 2D face.
+	VkImageView		cubeAttachmentViews[ 6 ];
 	VkSampler		sampler;
 	VkFormat		format;
 	VkImageUsageFlags usage;
@@ -44,8 +46,25 @@ typedef struct vkImageEntry_s {
 } vkImageEntry_t;
 
 static const int VK_MAX_IMAGES = 4096;
+// Match the five draw buffers exposed by idRenderTexture's OpenGL backend.
+// Admission also honors the physical device's (possibly lower) limit.
+static const int VK_MAX_COLOR_ATTACHMENTS = 5;
+
+struct vkRenderTargetAttachments_t {
+	uint32_t colorCount;
+	vkImageEntry_t *colors[ VK_MAX_COLOR_ATTACHMENTS ];
+	VkImageView colorViews[ VK_MAX_COLOR_ATTACHMENTS ];
+	vkImageEntry_t *depth;
+	VkImageView depthView;
+	VkExtent2D extent;
+	VkSampleCountFlagBits samples;
+};
 
 vkImageEntry_t *VK_Image_GetEntry( unsigned int texnum );
+VkImageView VK_Image_GetAttachmentView( vkImageEntry_t *entry, int cubeFace );
+// Does not call EnsureDeviceHandle: the backend uses this to initialize it.
+bool VK_Image_GetRenderTargetAttachments( const idRenderTexture *target, int cubeFace,
+		vkRenderTargetAttachments_t &attachments );
 // Re-backs an idImage with exact-format, single-sample depth storage suitable
 // for vkCmdCopyImage feedback captures while keeping the idImage's public
 // dimensions in sync with the copied region.

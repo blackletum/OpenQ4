@@ -795,7 +795,7 @@ def test_benchmark_replay(base: Path) -> None:
                 "Modern visible frame: cvar=1, req=1 exec=1 resources=1 program=1 source=1 hybrid=1 backBuffer=1 composed=1",
             ]
             if render_api == "gl"
-            else ["Vulkan: native packed PBR direct interactions active (7 draws)"]
+            else ["Vulkan: native PBR direct interactions active (7 draws)"]
         )
         fixture_log_text = "\n".join(
             [

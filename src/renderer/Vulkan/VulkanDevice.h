@@ -32,6 +32,9 @@ struct renderWindowServices_s;
 // per-slot frame synchronization (frames in flight)
 static const int VK_FRAMES_IN_FLIGHT = 2;
 
+// Explicit startup fault injection, inactive during normal rendering.
+bool VK_Device_InjectStartupFailure( int stage );
+
 // The widest pipeline layout the back end builds is the shadowed-interaction
 // one: six reused per-image sampler sets, the interaction UBO set, and the
 // shadow set. Metal-backed implementations cap maxBoundDescriptorSets at

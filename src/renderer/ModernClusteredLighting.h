@@ -128,7 +128,8 @@ enum rendererModernShadowDescriptorFlag_t {
 	// The descriptor references a signature-current, static-complete physical
 	// ARB2 resource: a persistent-atlas cell for projected lights or the exact
 	// singular cache cube currently bound for a point light.
-	RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_ATLAS_SLOT = 1 << 17
+	RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_ATLAS_SLOT = 1 << 17,
+	RENDERER_MODERN_SHADOW_DESCRIPTOR_FLAG_CURRENT_FRAME_MAP = 1 << 18
 };
 
 typedef struct rendererModernShadowDescriptor_s {
@@ -174,6 +175,7 @@ typedef struct rendererModernShadowDescriptor_s {
 	float	depthRange[RENDERER_MODERN_SHADOW_DESCRIPTOR_MAX_CASCADES];
 	float	clipZExtent[RENDERER_MODERN_SHADOW_DESCRIPTOR_MAX_CASCADES];
 	float	bias[4];
+	float	normalOffsetScale;
 	float	projectedBaseClipPlanes[4][4];
 	float	projectedClipPlanes[RENDERER_MODERN_SHADOW_DESCRIPTOR_MAX_CASCADES][4][4];
 	float	projectedAtlasRect[RENDERER_MODERN_SHADOW_DESCRIPTOR_MAX_CASCADES][4];
@@ -197,7 +199,7 @@ typedef struct rendererModernLightDescriptor_s {
 	float	color[4];
 	float	scissorDepth[4];
 	float	depthRange[4];
-	float	falloff[4];
+	float	falloff[4]; // Cluster-space plane for the authored 1D falloff texture.
 	float	projectS[4];
 	float	projectT[4];
 	float	projectQ[4];

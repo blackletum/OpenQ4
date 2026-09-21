@@ -1,0 +1,177 @@
+// Copyright (C) 2026 DarkMatter Productions
+// Original, deterministic CPU integration of the shared PBR equations.
+#ifndef OPENQ4_PBR_ENVIRONMENT_H
+#define OPENQ4_PBR_ENVIRONMENT_H
+
+#include "PBRMath.h"
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <vector>
+
+namespace openq4PBR {
+using namespace openq4PBRMath;
+struct Vector {
+    float x, y, z;
+    Vector operator+(Vector b) const { return {x + b.x, y + b.y, z + b.z}; }
+    Vector operator-(Vector b) const { return {x - b.x, y - b.y, z - b.z}; }
+    Vector operator*(float s) const { return {x * s, y * s, z * s}; }
+};
+inline float Dot(Vector a, Vector b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
+inline Vector Cross(Vector a, Vector b) { return {a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x}; }
+inline Vector Unit(Vector v) { return v * (1.0f / std::sqrt((std::max)(Dot(v, v), 1e-20f))); }
+inline Vector FaceDirection(int face, float u, float v) {
+    switch (face) {
+    case 0: return Unit({1, -v, -u});
+    case 1: return Unit({-1, -v, u});
+    case 2: return Unit({u, 1, v});
+    case 3: return Unit({u, -1, -v});
+    case 4: return Unit({u, -v, 1});
+    default:return Unit({-u, -v, -1});
+    }
+}
+inline int FaceCoordinates(Vector d, float &u, float &v) {
+    const float x = std::fabs(d.x), y = std::fabs(d.y), z = std::fabs(d.z);
+    if (x >= y && x >= z) { u = (d.x >= 0 ? -d.z : d.z) / x; v = -d.y / x; return d.x >= 0 ? 0 : 1; }
+    if (y >= z) { u = d.x / y; v = (d.y >= 0 ? d.z : -d.z) / y; return d.y >= 0 ? 2 : 3; }
+    u = (d.z >= 0 ? d.x : -d.x) / z; v = -d.y / z; return d.z >= 0 ? 4 : 5;
+}
+
+struct Cube {
+    int size = 0;
+    std::array<std::vector<Vector>, 6> faces;
+    Vector Nearest(Vector direction) const {
+        float u, v;
+        const int face = FaceCoordinates(direction, u, v);
+        const int x = (std::max)(0, (std::min)(size - 1, int((u * 0.5f + 0.5f) * size)));
+        const int y = (std::max)(0, (std::min)(size - 1, int((v * 0.5f + 0.5f) * size)));
+        return faces.data()[face].data()[y * size + x];
+    }
+    Vector Tap(int face, int x, int y) const {
+        if (x >= 0 && x < size && y >= 0 && y < size) { return faces.data()[face].data()[y * size + x]; }
+        // Filter across the actual neighbouring cube face, never another
+        // probe's atlas cell. All convolution samples see a continuous cube.
+        return Nearest(FaceDirection(face, 2.0f * (x + 0.5f) / size - 1.0f, 2.0f * (y + 0.5f) / size - 1.0f));
+    }
+    Vector operator()(Vector direction) const {
+        float u, v;
+        const int face = FaceCoordinates(direction, u, v);
+        const float px = (u * 0.5f + 0.5f) * size - 0.5f, py = (v * 0.5f + 0.5f) * size - 0.5f;
+        const int x = int(std::floor(px)), y = int(std::floor(py));
+        const float fx = px - x, fy = py - y;
+        return (Tap(face, x, y)*(1-fx) + Tap(face, x+1, y)*fx)*(1-fy)
+             + (Tap(face, x, y+1)*(1-fx) + Tap(face, x+1, y+1)*fx)*fy;
+    }
+};
+
+inline float RadicalInverse(std::uint32_t bits) {
+    bits = (bits << 16) | (bits >> 16);
+    bits = ((bits & 0x55555555u) << 1) | ((bits & 0xaaaaaaaau) >> 1);
+    bits = ((bits & 0x33333333u) << 2) | ((bits & 0xccccccccu) >> 2);
+    bits = ((bits & 0x0f0f0f0fu) << 4) | ((bits & 0xf0f0f0f0u) >> 4);
+    bits = ((bits & 0x00ff00ffu) << 8) | ((bits & 0xff00ff00u) >> 8);
+    return float(double(bits) / 4294967296.0);
+}
+inline Vector GGXHalfVector(int i, int count, float roughness) {
+    const float a = roughness * roughness, a2 = a * a;
+    const float u = (i + 0.5f) / count;
+    const float z = std::sqrt((1-u) / (1 + (a2-1)*u));
+    const float radius = std::sqrt((std::max)(0.0f, 1-z*z));
+    const float phi = 6.28318530718f * RadicalInverse(i);
+    return {radius * std::cos(phi), radius * std::sin(phi), z};
+}
+inline Vector Orient(Vector local, Vector normal) {
+    const Vector up = std::fabs(normal.z) < 0.999f ? Vector{0,0,1} : Vector{1,0,0};
+    const Vector tangent = Unit(Cross(up, normal));
+    return tangent*local.x + Cross(normal, tangent)*local.y + normal*local.z;
+}
+inline void Store(std::vector<float> &rgba, int pixel, Vector value) {
+    float *p = rgba.data() + pixel*4;
+    p[0] = value.x; p[1] = value.y; p[2] = value.z; p[3] = 1;
+}
+template<class Sampler>
+inline std::vector<float> PrefilterFace(const Sampler &sample, int face, int size, float roughness, int samples = 128) {
+    std::vector<Vector> directions;
+    if (roughness > 0) { for (int i = 0; i < samples; ++i) { directions.push_back(GGXHalfVector(i, samples, roughness)); } }
+    std::vector<float> rgba(size*size*4);
+    for (int y = 0; y < size; ++y) for (int x = 0; x < size; ++x) {
+        // Endpoints lie at face edges, matching the shader's centre-clamped
+        // coordinates at every mip. This avoids bilinear bleed between cells.
+        const Vector n = FaceDirection(face, size > 1 ? 2.0f*x/(size-1)-1 : 0, size > 1 ? 2.0f*y/(size-1)-1 : 0);
+        const Vector up = std::fabs(n.z) < 0.999f ? Vector{0,0,1} : Vector{1,0,0};
+        const Vector tangent = Unit(Cross(up, n)), bitangent = Cross(n, tangent);
+        Vector sum{0,0,0}; float weight = 0;
+        if (roughness <= 0) { sum = sample(n); weight = 1; }
+        else for (int i = 0; i < samples; ++i) {
+            const Vector h = directions.data()[i];
+            const Vector local = h * (2*h.z) - Vector{0,0,1};
+            const Vector l = tangent*local.x + bitangent*local.y + n*local.z;
+            const float NoL = (std::max)(0.0f, 2*h.z*h.z-1);
+            if (NoL > 0) { sum = sum + sample(l)*NoL; weight += NoL; }
+        }
+        Store(rgba, y*size+x, weight > 0 ? sum*(1/weight) : sample(n));
+    }
+    return rgba;
+}
+inline Vector OctahedralDirection(float x, float y) {
+    Vector n{x, y, 1-std::fabs(x)-std::fabs(y)};
+    if (n.z < 0) {
+        n.x = (1-std::fabs(y))*(x >= 0 ? 1 : -1);
+        n.y = (1-std::fabs(x))*(y >= 0 ? 1 : -1);
+    }
+    return Unit(n);
+}
+template<class Sampler>
+inline std::vector<float> DiffuseIrradiance(const Sampler &sample, int size, int samples = 256) {
+    std::vector<Vector> directions;
+    for (int i = 0; i < samples; ++i) {
+        const float radius = std::sqrt((i+0.5f)/samples), phi = 6.28318530718f*RadicalInverse(i);
+        directions.push_back({radius*std::cos(phi), radius*std::sin(phi), std::sqrt(1-radius*radius)});
+    }
+    std::vector<float> rgba(size*size*4);
+    for (int y = 0; y < size; ++y) for (int x = 0; x < size; ++x) {
+        const Vector n = OctahedralDirection(2.0f*x/(size-1)-1, 2.0f*y/(size-1)-1);
+        Vector sum{0,0,0};
+        for (Vector l : directions) { sum = sum + sample(Orient(l, n)); }
+        // Store irradiance / pi: the cosine-weighted estimator already
+        // includes Lambert's normalization when multiplied by diffuse color.
+        Store(rgba, y*size+x, sum*(1.0f/samples));
+    }
+    return rgba;
+}
+inline std::array<float, 2> IntegrateBRDF(float NoV, float roughness, int samples = 256) {
+    NoV = PBRClamp(NoV, 0.0001f, 1);
+    roughness = PBRRoughness(roughness);
+    const Vector v{std::sqrt(1-NoV*NoV), 0, NoV};
+    float a = 0, b = 0;
+    for (int i = 0; i < samples; ++i) {
+        const Vector h = GGXHalfVector(i, samples, roughness);
+        const float VoH = (std::max)(0.0f, Dot(v, h));
+        const float NoL = 2*VoH*h.z-NoV;
+        if (NoL <= 0) { continue; }
+        const float weight = 4*NoL*PBRVisibilitySmithGGX(NoV, NoL, roughness)*VoH/h.z;
+        const float fresnel = PBRFresnelWeight(VoH);
+        a += (1-fresnel)*weight; b += fresnel*weight;
+    }
+    return {{a/samples, b/samples}};
+}
+inline std::vector<float> BRDFTable(int size) {
+    std::vector<float> rgba(size*size*4);
+    for (int y = 0; y < size; ++y) for (int x = 0; x < size; ++x) {
+        const auto ab = IntegrateBRDF(float(x)/(size-1), float(y)/(size-1));
+        Store(rgba, y*size+x, {ab[0], ab[1], 0});
+    }
+    return rgba;
+}
+struct AnalyticEnvironment {
+    Vector operator()(Vector d) const {
+        d = Unit(d);
+        const float t = PBRClamp((d.z+0.55f)/1.25f, 0, 1);
+        const float up = t*t*(3-2*t);
+        const Vector sky = Vector{0.025f,0.022f,0.020f}*(1-up) + Vector{0.46f,0.53f,0.68f}*up;
+        const float key = std::pow((std::max)(0.0f, Dot(d, Unit({-0.35f,0.70f,0.62f}))), 48.0f);
+        return sky + Vector{1.30f,1.16f,0.96f}*key;
+    }
+};
+}
+#endif

@@ -807,6 +807,7 @@ bool idModernGLSubmitPlan::AddCommand( const modernGLDrawPlanEntry_t &entry ) {
 	command.debugColorLocation = entry.debugColorLocation;
 	command.localParamsLocation = entry.localParamsLocation;
 	command.pbrIBLLocation = entry.pbrIBLLocation;
+	command.bakedGridLocation = entry.bakedGridLocation;
 	command.mainTextureLocation = entry.mainTextureLocation;
 	command.normalTextureLocation = entry.normalTextureLocation;
 	command.specularTextureLocation = entry.specularTextureLocation;

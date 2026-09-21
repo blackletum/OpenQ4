@@ -137,6 +137,7 @@ typedef struct modernShadowLightDescriptor_s {
 	float				depthRange[MODERN_SHADOW_DESCRIPTOR_MAX_CASCADES];
 	float				clipZExtent[MODERN_SHADOW_DESCRIPTOR_MAX_CASCADES];
 	float				bias[4];
+	float				normalOffsetScale;
 	int					faceIndex;
 	int					cascadeIndex;
 	int					projectedFallbackCascade;
@@ -185,6 +186,12 @@ typedef struct modernShadowLightDescriptor_s {
 	// is separate from projected atlas placement because each cached point
 	// light owns a distinct cube and only the currently selected one is bound.
 	bool				arb2PointCubeReady;
+	// A complete map rendered/copied before this frame's clustered lighting.
+	// Point faces occupy consecutive tiles in a separate 2D atlas; projected
+	// maps use arb2AtlasCascadeRect with the current-frame depth atlas binding.
+	bool				currentFrameMapReady;
+	int					currentPointFirstTile;
+	int					currentPointAtlasColumns;
 	int					arb2PointCubeSignature;
 	int					arb2PointCubeContentFrame;
 	bool				atlasTileReady;
@@ -347,6 +354,7 @@ typedef struct modernShadowPlannerStats_s {
 void R_ModernShadowPlanner_Init( const renderBackendCaps_t &caps, const renderFeatureSet_t &features );
 void R_ModernShadowPlanner_Shutdown( void );
 void R_ModernShadowPlanner_PrepareFrame( const idScenePacketFrame &packetFrame, bool requested );
+void R_ModernShadowPlanner_PrepareReceiverMaps( const viewDef_t *viewDef );
 const modernShadowPlannerStats_t &R_ModernShadowPlanner_Stats( void );
 const modernShadowLightDescriptor_t *R_ModernShadowPlanner_DescriptorForLight( const viewLight_t *viewLight );
 const modernShadowLightDescriptor_t *R_ModernShadowPlanner_DescriptorByIndex( int index );

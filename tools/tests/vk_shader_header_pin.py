@@ -142,9 +142,20 @@ DEBUG_SHADERS = [
 
 # Headers embedded by a single translation unit each, with their own guards.
 EXTRA_HEADERS = [
+    (
+        REPO_ROOT / "src/renderer/Vulkan/shaders/hdr_luminance_spv.h",
+        [REPO_ROOT / "src/renderer/Vulkan/shaders/post_hdr_luminance.frag"],
+        "__VK_HDR_LUMINANCE_SPV_H__",
+    ),
     ( POST_COMMITTED, POST_SHADERS, POST_GUARD ),
     ( SCENE_COMMITTED, SCENE_SHADERS, SCENE_GUARD ),
     ( DEBUG_COMMITTED, DEBUG_SHADERS, DEBUG_GUARD ),
+    (
+        REPO_ROOT / "src/renderer/Vulkan/shaders/target_test_spv.h",
+        [REPO_ROOT / "src/renderer/Vulkan/shaders" / name for name in
+         ("target_test.vert", "target_test.frag", "target_test_five.frag")],
+        "__VK_TARGET_TEST_SPV_H__",
+    ),
 ]
 
 

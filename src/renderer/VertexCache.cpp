@@ -311,7 +311,13 @@ void idVertexCache::Init() {
 		// ARB_vertex_buffer_object.
 		BindArrayBuffer( 0 );
 		BindIndexBuffer( 0 );
+#ifdef OPENQ4_RENDERER_VK_MODULE
+		// Vulkan uploads this CPU cache through its own device-buffer rings.
+		// The OpenGL client-array fallback warning does not describe that path.
+		common->Printf( "using CPU vertex cache for Vulkan upload staging\n" );
+#else
 		common->Printf( "WARNING: vertex array range in virtual memory (SLOW)\n" );
+#endif
 	}
 
 	// initialize the cache memory blocks

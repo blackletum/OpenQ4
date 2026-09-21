@@ -121,7 +121,7 @@ PBR_EVIDENCE_MARKERS = (
     "Modern GL executor:",
     "Modern forward+:",
     "Modern visible frame:",
-    "Vulkan: native packed PBR direct interactions active (",
+    "Vulkan: native PBR direct interactions active (",
 )
 BENCHMARK_EVIDENCE_MARKERS = (
     *PBR_EVIDENCE_MARKERS,
@@ -1939,7 +1939,7 @@ def extract_summary(text: str) -> dict[str, str]:
         "modernForwardPlus": extract_last_line(text, "Modern forward+:"),
         "modernVisibleFrame": extract_last_line(text, "Modern visible frame:"),
         "vulkanPackedPBR": extract_last_line(
-            text, "Vulkan: native packed PBR direct interactions active ("
+            text, "Vulkan: native PBR direct interactions active ("
         ),
         "sharedInteraction": extract_last_line(text, "Renderer shared interaction:"),
         "sharedInteractionView": extract_last_line(
@@ -2244,7 +2244,7 @@ def evaluate_pbr_fixture_evidence(
     if render_api == "vk":
         marker = summary.get("vulkanPackedPBR", "")
         match = re.fullmatch(
-            r"Vulkan: native packed PBR direct interactions active \((\d+) draws\)",
+            r"Vulkan: native PBR direct interactions active \((\d+) draws\)",
             marker,
         )
         draws = int(match.group(1)) if match else None

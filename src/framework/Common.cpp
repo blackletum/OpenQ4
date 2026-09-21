@@ -134,6 +134,9 @@ idCVar com_timestampPrints( "com_timestampPrints", "0", CVAR_SYSTEM, "print time
 idCVar com_timescale( "timescale", "1", CVAR_SYSTEM | CVAR_FLOAT, "scales the time", 0.1f, 10.0f );
 idCVar com_logFile( "logFile", "0", CVAR_SYSTEM | CVAR_NOCHEAT, "1 = buffer log, 2 = flush after each print", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 idCVar com_logFileName( "logFileName", "qconsole.log", CVAR_SYSTEM | CVAR_NOCHEAT, "name of log file, if empty, qconsole.log will be used" );
+// A renderer-startup retry reopens the filesystem in this process. Keep the
+// original failure and owner teardown in the same diagnostic log.
+static bool com_preserveStartupRecoveryLog = false;
 idCVar com_autoScreenshot( "com_autoScreenshot", "0", CVAR_SYSTEM | CVAR_BOOL | CVAR_NOCHEAT, "take a one-shot screenshot after map load (diagnostic)" );
 idCVar com_makingBuild( "com_makingBuild", "0", CVAR_BOOL | CVAR_SYSTEM, "1 when making a build" );
 idCVar com_updateLoadSize( "com_updateLoadSize", "0", CVAR_BOOL | CVAR_SYSTEM | CVAR_NOCHEAT, "update the load size after loading a map" );
@@ -1062,7 +1065,9 @@ void idCommonLocal::VPrintf( const char *fmt, va_list args ) {
 			// fileSystem->OpenFileWrite can cause recursive prints into here
 			recursing = true;
 
-			logFile = fileSystem->OpenFileWrite( fileNameToOpen );
+			logFile = com_preserveStartupRecoveryLog
+					? fileSystem->OpenFileAppend( fileNameToOpen, false, "fs_savepath" )
+					: fileSystem->OpenFileWrite( fileNameToOpen );
 			if ( !logFile ) {
 				logFileFailed = true;
 				FatalError( "failed to open log file '%s'\n", fileNameToOpen );
@@ -6974,6 +6979,20 @@ void idCommonLocal::InitGame( void ) {
 	} else {
 		// init OpenGL, which will open a window and connect sound and input hardware
 		PrintLoadingMessage( common->GetLanguageDict()->GetString( "#str_104348" ) );
+		if ( !com_skipRenderer.GetBool() && !R_RendererModule_PrepareStartupDevice() ) {
+			// No UI, BSE runtime, game DLL or session has been initialized yet.
+			// The regular owner teardown releases renderer-allocated declarations
+			// and console materials while their module and idLib are still live.
+			com_preserveStartupRecoveryLog = logFile != NULL;
+			ShutdownGame( true );
+			if ( !R_RendererModule_RetryFailedStartup() ) {
+				FatalError( "renderer startup recovery could not retire the failed module" );
+				return;
+			}
+			InitGame();
+			com_preserveStartupRecoveryLog = false;
+			return;
+		}
 		InitRenderSystem();
 	}
 #endif

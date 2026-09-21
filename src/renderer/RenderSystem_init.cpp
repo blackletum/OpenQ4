@@ -233,6 +233,7 @@ idCVar r_multiSamples( "r_multiSamples", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVA
 idCVar r_postAA( "r_postAA", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "post AA mode: 0 = off, 1 = SMAA 1x medium, 2 = SMAA 1x high, 3 = SMAA 1x ultra, 4 = SMAA 1x colour-edge prototype", 0, 4, idCmdSystem::ArgCompletion_Integer<0,4> );
 idCVar r_postAAStatePoisonTest( "r_postAAStatePoisonTest", "0", CVAR_RENDERER | CVAR_BOOL, "intentionally dirty GL texture/client state before SMAA post-AA draws for validation" );
 idCVar r_pbrMaterials( "r_pbrMaterials", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "allow explicitly PBR-authored materials on supported modern renderer paths" );
+idCVar r_vkPBRSpecularAA( "r_vkPBRSpecularAA", "1", CVAR_RENDERER | CVAR_BOOL, "filter native Vulkan PBR roughness by shading-normal variance; disable only for comparison" );
 idCVar r_pbrGeneratedLegacyFallback( "r_pbrGeneratedLegacyFallback", "1", CVAR_RENDERER | CVAR_BOOL, "allow development-only classic fallback generation for PBR-only materials" );
 idCVar r_pbrDebug( "r_pbrDebug", "0", CVAR_RENDERER | CVAR_INTEGER, "PBR debug view: 0=off, 1=albedo, 2=normal, 3=metallic, 4=roughness, 5=AO, 6=emissive, 7=state marker (green=PBR, magenta=contract mismatch)", 0, 7, idCmdSystem::ArgCompletion_Integer<0,7> );
 idCVar r_pbrIBL( "r_pbrIBL", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable the analytic environment contribution for explicitly PBR-authored materials" );
@@ -471,6 +472,8 @@ idCVar r_renderer( "r_renderer", "best", CVAR_RENDERER | CVAR_ARCHIVE, "hardware
 idCVar r_actualRenderer( "r_actualRenderer", "UNINITIALIZED", CVAR_RENDERER | CVAR_ROM, "actual active renderer backend after request/fallback selection" );
 idCVar r_glTier( "r_glTier", "auto", CVAR_RENDERER | CVAR_ARCHIVE, "OpenGL renderer tier: auto, legacy, gl33, gl41, gl43, gl45, gl46", r_glTierArgs, idCmdSystem::ArgCompletion_String<r_glTierArgs> );
 idCVar r_vkValidation( "r_vkValidation", "0", CVAR_RENDERER | CVAR_BOOL, "enable Vulkan validation layers for the Vulkan renderer module and rendererVkProbe" );
+idCVar r_vkStartupFailure( "r_vkStartupFailure", "0", CVAR_RENDERER | CVAR_INTEGER,
+		"diagnostic Vulkan startup failure: 0 = off, 1 = window, 2 = surface, 3 = swapchain, 4 = renderer resources", 0, 4 );
 idCVar r_vkDevice( "r_vkDevice", "-1", CVAR_RENDERER | CVAR_INTEGER, "Vulkan physical-device index override, -1 = automatic selection", -1, 15 );
 idCVar r_vkShadowFallbackTest( "r_vkShadowFallbackTest", "0", CVAR_RENDERER | CVAR_BOOL, "diagnostic: make Vulkan shadow maps and stencil ownership unavailable to exercise unshadowed receiver fallback" );
 idCVar r_glDebugContext( "r_glDebugContext", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "request a debug OpenGL context when the platform backend supports it" );
@@ -792,9 +795,15 @@ static void R_RendererDefaultSafetySelfTest_f( const idCmdArgs &args ) {
 }
 
 static void R_RendererBenchmarkCapture_f( const idCmdArgs &args ) {
-	(void)args;
+	if ( args.Argc() > 2 ) {
+		common->Printf( "usage: rendererBenchmarkCapture [\"relative CSV path\"]\n" );
+		return;
+	}
 	RendererBenchmarks_PrintLatestCapture();
 	RendererBenchmarks_PrintTimingMarker();
+	if ( args.Argc() > 1 ) {
+		RendererBenchmarks_WriteTimingTrace( args.Argv( 1 ) );
+	}
 }
 
 static void R_RendererUploadSelfTest_f( const idCmdArgs &args ) {
@@ -2461,8 +2470,13 @@ void R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref =
 	tr.tiledViewport[0] = width;
 	tr.tiledViewport[1] = height;
 
-	// disable scissor, so we don't need to adjust all those rects
-	r_useScissor.SetBool( false );
+	// Only tiled captures need to disregard unadjusted light scissors. A
+	// window-sized screenshot must preserve the frame's rendering semantics;
+	// disabling scissors can extend clamped projectors beyond their viewport
+	// bounds and make the capture disagree with the displayed/linear frame.
+	if ( width > oldWidth || height > oldHeight ) {
+		r_useScissor.SetBool( false );
+	}
 
 	for ( int xo = 0 ; xo < width ; xo += oldWidth ) {
 		for ( int yo = 0 ; yo < height ; yo += oldHeight ) {
@@ -3502,6 +3516,14 @@ screenshot [width] [height] [samples]
 void R_ScreenShot_f( const idCmdArgs &args ) {
 	static int lastNumber = 0;
 	idStr checkname;
+	if ( args.Argc() >= 2 && !idStr::Icmp( args.Argv( 1 ), "linear" ) ) {
+		if ( args.Argc() != 3 ) {
+			common->Printf( "usage: screenshot linear screenshots/<name>.pfm\n" );
+		} else {
+			R_ModernGLExecutor_LinearScreenshot( args.Argv( 2 ) );
+		}
+		return;
+	}
 
 	int width = glConfig.vidWidth;
 	int height = glConfig.vidHeight;
@@ -4009,16 +4031,30 @@ static void R_GfxInfoPrintAAState( void ) {
 	const int requestedMSAA = Max( 0, r_multiSamples.GetInteger() );
 	const int screenFraction = idMath::ClampInt( 10, 200, r_screenFraction.GetInteger() );
 	const bool supersamplingActive = screenFraction > 100;
-	const bool modernVisiblePostSuppressesMSAA = R_ModernGLExecutor_ModernVisibleRequestedForPost();
+	// A rejected modern transaction leaves the native renderer in charge,
+	// including its multisample target and post AA. Report the frame that was
+	// actually presented, not the requested owner or its discarded sidecar.
+#ifndef OPENQ4_RENDERER_VK_MODULE
+	const bool modernVisiblePost = R_ModernGLExecutor_ModernVisibleRequestedForPost()
+		&& R_ModernGLExecutor_Stats().modernVisibleExecuted;
 	const bool textureMSAAAvailable = ( GLEW_ARB_texture_multisample || GLEW_VERSION_3_2 ) != 0;
+#endif
 
 	int effectiveMSAA = 0;
 	const char *msaaReason = "off";
 	if ( requestedMSAA > 1 ) {
+#ifdef OPENQ4_RENDERER_VK_MODULE
+		extern int VK_PostProcess_SceneSamples( void );
+		effectiveMSAA = VK_PostProcess_SceneSamples();
+		msaaReason = effectiveMSAA > 1 ? "vulkan-scene" : "vulkan-scene-single-sample";
+#else
 		if ( supersamplingActive ) {
 			msaaReason = "supersampling";
-		} else if ( modernVisiblePostSuppressesMSAA ) {
-			msaaReason = "modern-visible-post";
+		} else if ( modernVisiblePost ) {
+			const modernGLExecutorStats_t &modern = R_ModernGLExecutor_Stats();
+			effectiveMSAA = modern.modernVisibleExecuted && modern.sceneMSAAColorResolves > 0
+				&& modern.sceneMSAADepthResolves > 0 ? modern.sceneMSAASamples : 0;
+			msaaReason = effectiveMSAA > 1 ? "modern-forward-resolve" : "modern-scene-single-sample";
 		} else if ( !textureMSAAAvailable ) {
 			msaaReason = "texture-msaa-unavailable";
 		} else {
@@ -4033,6 +4069,7 @@ static void R_GfxInfoPrintAAState( void ) {
 				msaaReason = "gl-max-disabled";
 			}
 		}
+#endif
 	}
 
 	const int postAA = idMath::ClampInt( 0, 4, r_postAA.GetInteger() );
@@ -4777,6 +4814,9 @@ void GfxInfo_f( const idCmdArgs &args ) {
 		r_pbrInferFromLegacyMaterials.GetBool() ? 1 : 0,
 		r_pbrDebug.GetInteger() );
 	R_ModernGLExecutor_PrintGfxInfo();
+#ifndef OPENQ4_RENDERER_VK_MODULE
+	RB_HDRPrintGfxInfo();
+#endif
 	R_ModernClusteredLighting_PrintGfxInfo();
 	R_ModernShadowPlanner_PrintGfxInfo();
 	{
@@ -4936,11 +4976,19 @@ static void R_PerformFullVidRestart( bool forceWindow ) {
 		cvarSystem->SetCVarBool( "r_fullscreen", false );
 	}
 
+#ifdef OPENQ4_RENDERER_VK_MODULE
+	// Use the same backend initialization seam as the initial launch. Calling
+	// R_InitOpenGL directly enters the GL context ladder under a Vulkan module.
+	// The seam also rebuilds frame data, shared contracts and image residency.
+	tr.InitOpenGL();
+#else
 	R_InitOpenGL();
+#endif
 	cvarSystem->SetCVarBool( "r_fullscreen", latchedFullscreen );
 	R_ClearActiveRenderTextures();
-
+#ifndef OPENQ4_RENDERER_VK_MODULE
 	globalImages->ReloadImages( true );
+#endif
 
 	R_InitFreeType();
 	R_RefreshConsoleFontAtlas();
@@ -5204,10 +5252,21 @@ void R_InitCommands( void ) {
 	cmdSystem->AddCommand( "rendererBenchmarkSelfTest", R_RendererBenchmarkSelfTest_f, CMD_FL_RENDERER, "run renderer benchmark capture and percentile self tests" );
 	cmdSystem->AddCommand( "rendererDefaultPromotionSelfTest", R_RendererDefaultPromotionSelfTest_f, CMD_FL_RENDERER, "run renderer default-promotion gate self tests" );
 	cmdSystem->AddCommand( "rendererDefaultSafetySelfTest", R_RendererDefaultSafetySelfTest_f, CMD_FL_RENDERER, "run renderer conservative-default safety self tests" );
-	cmdSystem->AddCommand( "rendererBenchmarkCapture", R_RendererBenchmarkCapture_f, CMD_FL_RENDERER, "print the latest renderer benchmark capture summary" );
+	cmdSystem->AddCommand( "rendererBenchmarkCapture", R_RendererBenchmarkCapture_f, CMD_FL_RENDERER, "print renderer benchmark summary; optional relative CSV path writes retained frame timings" );
 	cmdSystem->AddCommand( "rendererUploadSelfTest", R_RendererUploadSelfTest_f, CMD_FL_RENDERER, "run renderer upload stream self tests" );
 	cmdSystem->AddCommand( "rendererGpuSkinningSelfTest", R_RendererGpuSkinningSelfTest_f, CMD_FL_RENDERER, "run renderer GPU skinning contract self tests" );
 	cmdSystem->AddCommand( "rendererContractsSelfTest", R_RendererContractsSelfTest_f, CMD_FL_RENDERER, "run renderer layout and buffer contract self tests" );
+#ifdef OPENQ4_RENDERER_VK_MODULE
+	extern void R_RendererVulkanRenderTargetsSelfTest_f( const idCmdArgs &args );
+	extern void R_RendererVulkanHDRInfo_f( const idCmdArgs &args );
+	extern void R_RendererVulkanHDRSelfTest_f( const idCmdArgs &args );
+	cmdSystem->AddCommand( "rendererVulkanHDRSelfTest", R_RendererVulkanHDRSelfTest_f,
+			CMD_FL_RENDERER, "test Vulkan floating-point scenes and exposure on the active GPU" );
+	cmdSystem->AddCommand( "rendererVulkanHDRInfo", R_RendererVulkanHDRInfo_f,
+			CMD_FL_RENDERER, "report Vulkan HDR luminance and exposure state" );
+	cmdSystem->AddCommand( "rendererVulkanRenderTargetsSelfTest", R_RendererVulkanRenderTargetsSelfTest_f,
+			CMD_FL_RENDERER, "validate Vulkan cubemap render targets and color/depth captures on the active device" );
+#endif
 	cmdSystem->AddCommand( "rendererGpuTimerSelfTest", R_RendererGpuTimerSelfTest_f, CMD_FL_RENDERER, "run renderer GPU timer query self tests" );
 	cmdSystem->AddCommand( "rendererTemporalPresentationStatus", R_TemporalPresentation_PrintStatus_f, CMD_FL_RENDERER, "report dynamic-resolution and temporal-history state" );
 	cmdSystem->AddCommand( "rendererScenePacketSelfTest", R_RendererScenePacketSelfTest_f, CMD_FL_RENDERER, "run renderer front-end scene-packet self tests" );
@@ -5519,11 +5578,10 @@ void idRenderSystemLocal::InitOpenGL( void ) {
 		// the window services; no GL ladder, caps probe, or program loads
 		extern bool VK_InitRenderDevice( void );
 		if ( !VK_InitRenderDevice() ) {
-			// The loader probed the device before activating this module, so
-			// what fails here is mostly window, surface or swapchain creation.
-			// The module already owns the decls and the render system, too late
-			// to fall back in-process, so keep the archived selection from
-			// stopping the next launch the same way.
+			// Initial startup uses the recoverable PrepareStartupDevice export
+			// before reaching this call. A failure here belongs to a later
+			// renderer restart, whose module is still on the call stack; preserve
+			// the next-launch recovery path for that runtime failure.
 			const bool nextLaunchUsesGL = R_RendererModule_ResetApiAfterDeviceFailure();
 			common->FatalError( "Vulkan renderer device initialization failed; %s",
 					nextLaunchUsesGL ? "r_renderApi has been reset to gl, so the next launch uses OpenGL"

@@ -399,6 +399,35 @@ void RendererBenchmarks_PrintTimingMarker( void ) {
 		gpu.count > 0 ? 1 : 0, gpu.count, gpuP50, gpuP95, gpuP99 );
 }
 
+bool RendererBenchmarks_WriteTimingTrace( const char *path ) {
+	idFile *file = fileSystem->OpenFileWrite( path );
+	if ( file == NULL ) {
+		common->Warning( "Cannot write renderer timing trace '%s'", path );
+		return false;
+	}
+	rendererBenchmarkFrameSample_t samples[RENDERER_BENCHMARK_HISTORY];
+	const int count = RendererBenchmarks_CopyOrderedSamples( samples, RENDERER_BENCHMARK_HISTORY );
+	// GPU results arrive asynchronously. Preserve their original frame and
+	// generation rather than attributing them to the CPU row that collected them.
+	file->Printf( "cpuFrame,cpuUs,frontEndMs,submitMs,backendMs,presentMs,gpuValid,gpuFrame,gpuGeneration,gpuUs,finishUs,finalPostUs,windowStateUs,contextUs,swapUs,uploadRetireUs\n" );
+	for ( int i = 0; i < count; ++i ) {
+		const rendererBenchmarkFrameSample_t &sample = samples[i];
+		file->Printf( "%d,%llu,%d,%d,%d,%d,%d,%d,%u,%llu,%llu,%llu,%llu,%llu,%llu,%llu\n",
+			sample.cpuFrameNumber, sample.cpuFrameMicroseconds,
+			sample.frontEndMsec, sample.submitMsec, sample.backEndMsec, sample.presentMsec,
+			sample.gpuFrameTimingValid ? 1 : 0, sample.gpuFrameNumber,
+			sample.gpuFrameGeneration, sample.gpuFrameMicroseconds,
+			sample.presentPhaseMicroseconds[RENDERER_PRESENT_FINISH],
+			sample.presentPhaseMicroseconds[RENDERER_PRESENT_FINAL_POST],
+			sample.presentPhaseMicroseconds[RENDERER_PRESENT_WINDOW_STATE],
+			sample.presentPhaseMicroseconds[RENDERER_PRESENT_CONTEXT],
+			sample.presentPhaseMicroseconds[RENDERER_PRESENT_SWAP], sample.uploadRetireMicroseconds );
+	}
+	fileSystem->CloseFile( file );
+	common->Printf( "Renderer timing trace: %d samples written to %s\n", count, path );
+	return true;
+}
+
 void RendererBenchmarks_PrintGfxInfo( void ) {
 	const rendererBenchmarkBudget_t &budget = RendererBenchmarks_CurrentBudget();
 	const rendererBenchmarkPercentiles_t percentiles = RendererBenchmarks_CurrentPercentiles();

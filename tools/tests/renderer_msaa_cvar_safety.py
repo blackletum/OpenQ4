@@ -62,7 +62,10 @@ def test_gfxinfo_reports_effective_aa_state():
     assert_true("R_GfxInfoGLMaxSamples" in init_cpp and "GL_MAX_SAMPLES" in init_cpp, "gfxInfo should report GL max MSAA samples")
     assert_true("R_GfxInfoPostAAName" in init_cpp, "gfxInfo should name post-AA modes")
     assert_true("SMAA1xMedium" in init_cpp and "SMAA1xUltra" in init_cpp and "SMAA1xColorPrototype" in init_cpp, "gfxInfo should use user-facing post-AA mode names")
-    assert_true("modern-visible-post" in init_cpp, "gfxInfo should explain modern-visible MSAA suppression")
+    assert_true("modern-forward-resolve" in init_cpp and "modern-scene-single-sample" in init_cpp,
+                "gfxInfo should distinguish an actual modern MSAA resolve from a single-sample frame")
+    assert_true("&& R_ModernGLExecutor_Stats().modernVisibleExecuted" in init_cpp,
+                "a rejected modern transaction must not suppress native AA reporting")
     assert_true("texture-msaa-unavailable" in init_cpp, "gfxInfo should explain unavailable texture MSAA")
     assert_true("gl-max-clamp" in init_cpp, "gfxInfo should report GL max sample clamping")
     assert_true(

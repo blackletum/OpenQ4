@@ -1673,6 +1673,29 @@ static void R_LoadImageInternal( const char *cname, byte **pic, int *width, int 
 		*height = 0;
 	}
 
+	// Image programs recurse through this CPU loader, bypassing the renderer's
+	// intrinsic image cache. Supply the same uncompressed source values here so
+	// heightmap(_white), smoothnormals(_flat), etc. have real inputs rather than
+	// silently becoming the missing-image checker. Usage-specific swizzling is
+	// still performed by the destination image after the program is evaluated.
+	const bool white = name.Icmp( "_white" ) == 0;
+	const bool black = name.Icmp( "_black" ) == 0;
+	const bool flat = name.Icmp( "_flat" ) == 0;
+	if ( white || black || flat ) {
+		if ( width ) { *width = 16; }
+		if ( height ) { *height = 16; }
+		if ( timestamp ) { *timestamp = 0; }
+		if ( pic ) {
+			*pic = static_cast<byte *>( R_StaticAlloc( 16 * 16 * 4 ) );
+			for ( int i = 0; i < 16 * 16; ++i ) {
+				(*pic)[i * 4] = (*pic)[i * 4 + 1] = white ? 255 : ( flat ? 128 : 0 );
+				(*pic)[i * 4 + 2] = black ? 0 : 255;
+				(*pic)[i * 4 + 3] = 255;
+			}
+		}
+		return;
+	}
+
 	name.DefaultFileExtension( ".tga" );
 
 	if (name.Length()<5) {

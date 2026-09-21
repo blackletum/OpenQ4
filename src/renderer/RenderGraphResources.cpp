@@ -42,6 +42,7 @@ static renderGraphPhysicalAllocation_t rg_renderGraphPhysicalAllocations[RENDER_
 static int rg_renderGraphResourceHandleCount = 0;
 static int rg_renderGraphResourcePassCount = 0;
 static bool rg_renderGraphResourceInitialized = false;
+static int rg_renderGraphMaxSceneSamples = 1;
 
 static void R_RenderGraphResources_FormatDebugLabel( char *dest, int destSize, const char *fmt, ... ) {
 	va_list argptr;
@@ -164,14 +165,15 @@ static int R_RenderGraphResources_ShadowResourceSize( void ) {
 }
 
 static bool R_RenderGraphResources_HDRColorFormatSupported( void ) {
-	return rg_renderGraphResourceFeatures.modernGL41
-		|| rg_renderGraphResourceFeatures.gpuDriven
-		|| rg_renderGraphResourceFeatures.lowOverhead;
+	// RGBA16F is a required color-renderable format in the GL 3.x baseline.
+	// Restricting it to 4.1 silently clipped the GL 3.3 PBR scene before post.
+	return rg_renderGraphResourceFeatures.modernBaseline;
 }
 
 static bool R_RenderGraphResources_IsHDRColorResource( const char *name ) {
 	return name != NULL
 		&& ( !idStr::Icmp( name, "sceneColor" )
+			|| !idStr::Icmp( name, "sceneColorMSAA" )
 			|| !idStr::Icmp( name, "deferredLight" )
 			|| !idStr::Icmp( name, "hybridSceneColor" )
 			|| !idStr::Icmp( name, "postA" )
@@ -502,7 +504,7 @@ static bool R_RenderGraphResources_InitHandleFromGraph( const idRenderGraph &gra
 	handle.graphResourceIndex = resourceIndex;
 	handle.width = R_RenderGraphResources_IsTextureResource( resource.type ) ? R_RenderGraphResources_FrameWidth( resource ) : 0;
 	handle.height = R_RenderGraphResources_IsTextureResource( resource.type ) ? R_RenderGraphResources_FrameHeight( resource ) : 0;
-	handle.samples = Max( 1, resource.samples );
+	handle.samples = Min( Max( 1, resource.samples ), rg_renderGraphMaxSceneSamples );
 	handle.imported = resource.imported;
 	handle.transient = resource.transient;
 	handle.presentable = resource.presentable;
@@ -892,6 +894,14 @@ void R_RenderGraphResources_Init( const renderBackendCaps_t &caps, const renderF
 	rg_renderGraphResourceStats.initialized = true;
 	rg_renderGraphResourceStats.supported = features.renderGraph && caps.hasFBO;
 	rg_renderGraphResourceStats.available = R_RenderGraphResources_CanUseGLObjects( caps, features );
+	rg_renderGraphMaxSceneSamples = 1;
+	if ( rg_renderGraphResourceStats.available && glTexImage2DMultisample != NULL
+			&& ( GLEW_VERSION_3_2 || GLEW_ARB_texture_multisample ) ) {
+		GLint colorSamples = 1, depthSamples = 1;
+		glGetIntegerv( GL_MAX_COLOR_TEXTURE_SAMPLES, &colorSamples );
+		glGetIntegerv( GL_MAX_DEPTH_TEXTURE_SAMPLES, &depthSamples );
+		rg_renderGraphMaxSceneSamples = Max( 1, Min( colorSamples, depthSamples ) );
+	}
 	R_RenderGraphResources_SetStatus( rg_renderGraphResourceStats.available ? "ready" : "unsupported or missing GL FBO functions" );
 }
 

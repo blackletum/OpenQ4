@@ -18,7 +18,7 @@ layout(push_constant) uniform GuiPushConstants {
     // 2x3 texture matrix as two row vectors: s' = dot((s,t,0,1), texMatrixS)
     vec4 texMatrixS;
     vec4 texMatrixT;
-    // x: vertex color mode (0 = ignore, 1 = modulate, 2 = inverse modulate)
+    // x: color mode (0 ignore, 1 modulate, 2 inverse, 3 native emission)
     // y: alpha-test enable, z: alpha-test reference, w: texture matrix enable
     vec4 params;
 } pc;
@@ -37,7 +37,7 @@ void main() {
     fragTexCoord = st;
 
     vec4 vertexColor = inColor;
-    if (pc.params.x < 0.5) {
+    if (pc.params.x < 0.5 || pc.params.x > 2.5) {
         vertexColor = vec4(1.0);
     } else if (pc.params.x > 1.5) {
         // GL's inverse-modulate combiner inverts only the RGB operand;

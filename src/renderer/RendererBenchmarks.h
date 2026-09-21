@@ -23,6 +23,7 @@ typedef struct rendererBenchmarkBudget_s {
 } rendererBenchmarkBudget_t;
 
 typedef struct rendererBenchmarkFrameSample_s {
+	int				cpuFrameNumber;
 	int				frameMsec;
 	int				frontEndMsec;
 	int				visibilityMsec;
@@ -31,6 +32,8 @@ typedef struct rendererBenchmarkFrameSample_s {
 	int				submitMsec;
 	int				backEndMsec;
 	int				presentMsec;
+	unsigned long long presentPhaseMicroseconds[RENDERER_PRESENT_CPU_PHASE_COUNT];
+	unsigned long long uploadRetireMicroseconds;
 	unsigned long long cpuFrameMicroseconds;
 	int				gpuMsec;
 	bool			gpuFrameTimingValid;
@@ -73,6 +76,7 @@ void RendererBenchmarks_ResetHistory( void );
 void RendererBenchmarks_RecordFrame( const rendererBenchmarkFrameSample_t &sample );
 void RendererBenchmarks_PrintLatestCapture( void );
 void RendererBenchmarks_PrintTimingMarker( void );
+bool RendererBenchmarks_WriteTimingTrace( const char *path );
 void RendererBenchmarks_PrintGfxInfo( void );
 bool RendererBenchmark_RunSelfTest( void );
 

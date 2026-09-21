@@ -9,7 +9,7 @@
 	The shared contract deliberately exposes no OpenGL object names.  This
 	adapter uploads one immutable bind-pose stream, the exact four-weight stream,
 	and the current joint palette into the renderer's bounded frame ring.  A
-	compute dispatch writes an ordinary idDrawVert stream, so every existing
+	compute dispatch writes a surface-owned idDrawVert cache, so every existing
 	ambient, interaction, subview, view-model, and shadow-map draw keeps using
 	the established vertex ABI.  Stencil volumes continue to use their CPU
 	shadow cache and never enter this path.
@@ -270,10 +270,20 @@ bool R_BackendGpuSkinning_PrepareAmbientCache( srfTriangles_t *tri, bool needsLi
 		return false;
 	}
 
-	vertCache_t *outputCache = vertexCache.AllocFrameTemp(
-			const_cast<idDrawVert *>( surface.bindPoseVerts ), sourceBytes );
+	// A dynamic model snapshot can survive many render frames when its pose
+	// stops changing (including pause, screenshots and animation LOD). Keeping
+	// a frame-ring allocation on that snapshot leaves a recycled header/buffer
+	// after EndFrame. Match the CPU skinning cache lifetime: the surface owns
+	// this result until its next pose update, purge, or model destruction.
+	vertexCache.Alloc( const_cast<idDrawVert *>( surface.bindPoseVerts ),
+		sourceBytes, &tri->ambientCache );
+	vertCache_t *outputCache = tri->ambientCache;
 	if ( outputCache == NULL || outputCache->vbo == 0 || outputCache->offset < 0
 			|| ( outputCache->offset & 3 ) != 0 ) {
+		if ( outputCache != NULL ) {
+			vertexCache.Free( outputCache );
+		}
+		tri->ambientCache = NULL;
 		R_GpuSkinning_RecordFallback( GPU_SKINNING_FALLBACK_PALETTE_ALLOCATION );
 		return false;
 	}
@@ -298,8 +308,7 @@ bool R_BackendGpuSkinning_PrepareAmbientCache( srfTriangles_t *tri, bool needsLi
 	}
 	R_GLStateCache().UseProgram( 0 );
 
-	tri->ambientCache = outputCache;
-	tri->tempAmbientCache = true;
+	tri->tempAmbientCache = false;
 	return true;
 }
 

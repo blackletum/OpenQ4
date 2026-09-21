@@ -431,13 +431,16 @@ def validate_backend_execution_and_cpu_invariants() -> None:
             "layout(std430, binding = 2) readonly buffer JointWords",
             "layout(std430, binding = 3) writeonly buffer OutputWords",
             "for (uint word = 0u; word < 16u; ++word)",
-            "vertexCache.AllocFrameTemp",
+            "vertexCache.Alloc( const_cast<idDrawVert *>( surface.bindPoseVerts )",
+            "sourceBytes, &tri->ambientCache",
+            "tri->tempAmbientCache = false",
             "glDispatchCompute",
             "GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT",
-            "tri->ambientCache = outputCache",
+            "vertCache_t *outputCache = tri->ambientCache",
         ),
         "OpenGL bounded compute corridor",
     )
+    reject(gl, "vertexCache.AllocFrameTemp", "cached skinning output outliving its frame ring")
     expected_store_offsets = ["0u", "4u", "8u", "11u"]
     gl_store_offsets = re.findall(
         r"StoreVec3\s*\(\s*outputBase\s*,\s*([0-9]+u)\s*,", gl

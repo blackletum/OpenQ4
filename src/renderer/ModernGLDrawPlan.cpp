@@ -254,10 +254,12 @@ static bool R_ModernGLDrawPlan_ShouldUseForwardPlus( const modernGLDrawPlanBuild
 		return false;
 	}
 	const bool pbrModernEligible = R_MaterialResourceTable_PBRModernPathEligible( materialRecord );
-	// A clustered PBR shader evaluates the complete light list. Per-light ARB2
+	const bool singleClusteredOwner = pbrModernEligible
+		|| R_MaterialResourceTable_ClassicFixedPathEligible( materialRecord );
+	// These clustered shaders evaluate the complete light list. Per-light ARB2
 	// packets are never shader owners; the one ambient packet keeps stable
-	// surface ordering, including source-alpha ordering.
-	if ( pbrModernEligible && draw.passCategory != RENDER_PASS_AMBIENT ) {
+	// surface ordering, including PBR source-alpha ordering.
+	if ( singleClusteredOwner && draw.passCategory != RENDER_PASS_AMBIENT ) {
 		return false;
 	}
 	if ( R_ModernGLDrawPlan_IsForwardPlusDecalDraw( draw, materialRecord ) ) {
@@ -346,6 +348,7 @@ bool idModernGLDrawPlan::AddEntry( const drawPacket_t &draw, int drawPacketIndex
 	entry.debugColorLocation = program.debugColorLocation;
 	entry.localParamsLocation = program.localParamsLocation;
 	entry.pbrIBLLocation = program.pbrIBLLocation;
+	entry.bakedGridLocation = program.bakedGridLocation;
 	entry.mainTextureLocation = program.mainTextureLocation;
 	entry.normalTextureLocation = program.normalTextureLocation;
 	entry.specularTextureLocation = program.specularTextureLocation;
@@ -505,23 +508,24 @@ bool idModernGLDrawPlan::Build( const idScenePacketFrame &packetFrame, const idR
 		}
 		const bool classicModernEligible = R_MaterialResourceTable_ClassicModernPathEligible( *materialRecord );
 		const bool pbrModernEligible = R_MaterialResourceTable_PBRModernPathEligible( *materialRecord );
-		if ( !classicModernEligible && !pbrModernEligible ) {
+		const bool shadowDepthEligible = draw.passCategory == RENDER_PASS_SHADOW_MAP && materialRecord->shadowCasterSupported;
+		if ( !classicModernEligible && !pbrModernEligible && !shadowDepthEligible ) {
 			stats.fallbackDraws++;
 			stats.materialFallbackDraws++;
 			continue;
 		}
-		if ( pbrModernEligible
+		if ( ( pbrModernEligible || R_MaterialResourceTable_ClassicFixedPathEligible( *materialRecord ) )
 				&& draw.passCategory == RENDER_PASS_ARB2_INTERACTION
 				&& R_ModernGLDrawPlan_PBRInteractionHasReadyClusteredOwner(
 					context, packetFrame, draw, *materialRecord ) ) {
 			// The ambient packet is the one complete clustered lighting owner for
 			// this stable surface. Consuming the per-light packet is intentional,
 			// not a legacy fallback.
-			stats.pbrClusteredConsumedInteractions++;
+			if ( pbrModernEligible ) { stats.pbrClusteredConsumedInteractions++; }
 			continue;
 		}
 		const bool forwardPlusCandidate = R_ModernGLDrawPlan_ShouldUseForwardPlus( context, draw, *materialRecord, pipeline, shaderKind );
-		if ( materialRecord->fallbackReason != MATERIAL_RESOURCE_FALLBACK_NONE
+		if ( !shadowDepthEligible && materialRecord->fallbackReason != MATERIAL_RESOURCE_FALLBACK_NONE
 			&& ( !forwardPlusCandidate || !R_ModernGLDrawPlan_MaterialFallbackAllowedForForwardPlus( draw, *materialRecord ) ) ) {
 			stats.fallbackDraws++;
 			stats.materialFallbackDraws++;

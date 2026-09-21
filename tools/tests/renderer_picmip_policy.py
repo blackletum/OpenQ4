@@ -207,7 +207,8 @@ def test_exact_halvings_reuse_the_mip_chain_filter():
         "the shrink path should detect an exact power-of-two reduction",
     )
     assert_true(
-        "byte *next = gammaMips ? R_MipMapWithGamma( source, level, levelHeight ) : R_MipMap( source, level, levelHeight );" in image_load,
+        "byte *next = srgbMips ? R_MipMapWithSRGB( source, level, levelHeight )" in image_load
+        and "gammaMips ? R_MipMapWithGamma( source, level, levelHeight ) : R_MipMap( source, level, levelHeight )" in image_load,
         "an exact reduction should use the same filter that builds the mip chain, so image_picmip N matches mip level N",
     )
     assert_true(

@@ -474,7 +474,9 @@ void idUploadManager::BeginFrame( int frameCount ) {
 
 	const int preferredFrameBuffer = frameCount % frameBufferCount;
 	currentFrameBuffer = preferredFrameBuffer;
+	const unsigned long long retirementBegin = R_RendererMetrics_CpuClock();
 	SelectFrameBufferForFrame( preferredFrameBuffer );
+	R_RendererMetrics_EndUploadRetirement( retirementBegin );
 	stats.frameBufferIndex = currentFrameBuffer;
 	frameBuffer_t &frame = frameBuffers[currentFrameBuffer];
 

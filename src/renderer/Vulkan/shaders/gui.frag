@@ -24,6 +24,12 @@ layout(location = 0) out vec4 outColor;
 
 void main() {
     vec4 color = texture(texSampler, fragTexCoord) * fragColor;
+    if (pc.params.x > 2.5) {
+        // Bound the evaluated radiance, never the authored intensity before
+        // texture modulation: a faint channel can remain in range at high gain.
+        color.rgb = mix(clamp(color.rgb, vec3(0.0), vec3(65504.0)),
+                        vec3(0.0), isnan(color.rgb));
+    }
     if (pc.params.y > 0.5) {
         if (pc.params.y > 1.5) {
             // Match fixed-function GL_EQUAL exactly. A tolerance admits

@@ -91,6 +91,7 @@ typedef struct modernGLExecutorStats_s {
 	bool	modernVisibleShadowReady;
 	bool	modernVisibleHDRTargetReady;
 	bool	modernVisibleSceneComposited;
+	bool	modernVisibleLinearScene;
 	bool	modernVisiblePostProcessHandoff;
 	bool	modernVisibleBlockedByLegacy;
 	bool	modernVisibleCompatibilityReady;
@@ -335,6 +336,9 @@ typedef struct modernGLExecutorStats_s {
 	int		visibleDepthMismatchDraws;
 	int		visibleDepthClearOps;
 	int		visibleDepthResolveOps;
+	int		sceneMSAASamples;
+	int		sceneMSAAColorResolves;
+	int		sceneMSAADepthResolves;
 	int		visibleDepthDebugOverlayDraws;
 	int		opaqueGBufferDraws;
 	int		opaqueGBufferFallbackDraws;
@@ -424,6 +428,7 @@ typedef struct modernGLExecutorStats_s {
 	// unrepresentable, and how many are held back only because the domain's
 	// parity contract has not been proven against the ARB2 bridge yet
 	int		modernVisibleLightingParityContract;
+	bool	modernVisibleMaterialLightingProven;
 	int		modernVisibleInteractionPasses;
 	int		modernVisibleFogBlendPasses;
 	int		modernVisibleLightingLights;
@@ -497,10 +502,12 @@ void R_ModernGLExecutor_ComposeVisibleFrame( void );
 const modernGLExecutorStats_t &R_ModernGLExecutor_Stats( void );
 bool R_ModernGLExecutor_ModernVisibleRequestedForPost( void );
 bool R_ModernGLExecutor_ModernVisiblePostProcessHandoffActive( void );
+bool R_ModernGLExecutor_PBRLinearSceneActive( void );
 bool R_ModernGLExecutor_LegacyPassCanSkip( renderPassCategory_t category );
 bool R_ModernGLExecutor_LegacyPassCanSkipForView( renderPassCategory_t category, const viewDef_t *viewDef );
 void R_ModernGLExecutor_RecordLegacyPassSkipped( renderPassCategory_t category );
 void R_ModernGLExecutor_PrintGfxInfo( void );
+bool R_ModernGLExecutor_LinearScreenshot( const char *fileName );
 bool RendererModernGLExecutor_RunSelfTest( void );
 bool RendererGpuDriven_RunSelfTest( void );
 bool RendererVisiblePath_RunSelfTest( void );

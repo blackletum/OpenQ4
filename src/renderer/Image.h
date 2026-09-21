@@ -496,6 +496,7 @@ byte* R_ResampleTexture(const byte* in, int inwidth, int inheight, int outwidth,
 byte* R_MipMapWithAlphaSpecularity(const byte* in, int width, int height);
 void R_ApplyFilterNeutralAlpha(byte* data, int pixelCount);
 byte* R_MipMapWithGamma(const byte* in, int width, int height);
+byte* R_MipMapWithSRGB(const byte* in, int width, int height);
 byte* R_MipMap(const byte* in, int width, int height);
 
 // these operate in-place on the provided pixels

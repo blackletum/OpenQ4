@@ -40,17 +40,22 @@ static const int VK_EXTRA_KIND_EXECUTOR_BASE = 96;
 VkCommandBuffer		VK_Exec_ActiveCmd( void );
 int					VK_Exec_ActiveFrameSlot( void );
 bool				VK_GuiExecutor_FrameIsOpen( void );
+bool				VK_GuiExecutor_BeginFrame( void );
+bool				VK_GuiExecutor_EndFrameAndPresent( void );
 bool				VK_Exec_MainRenderingScopeOpen( void );
 bool				VK_Exec_ActiveTargetHasStencil( void );
 bool				VK_Exec_ActiveTargetMultisampled( void );
 int					VK_Exec_ActiveFramebufferWidth( void );
 int					VK_Exec_ActiveFramebufferHeight( void );
 idRenderTexture *	VK_Exec_ActiveRenderTexture( void );
-bool				VK_Exec_SetRenderTarget( idRenderTexture *renderTexture );
+int					VK_Exec_ActiveCubeFace( void );
+bool				VK_Exec_SetRenderTarget( idRenderTexture *renderTexture, int cubeFace = 0 );
 void				VK_Exec_ClearRenderTarget( bool clearColor, bool clearDepth, float depthValue,
 							const float colorValue[ 4 ] );
 bool				VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
 							int cubeFace, bool copyDepth );
+bool				VK_Exec_ResolveRenderTargets( idRenderTexture *sourceRenderTexture,
+							idRenderTexture *destinationRenderTexture, bool resolveDepth );
 // _currentDepth for this view, captured once (backEnd.currentDepthCopied)
 bool				VK_Exec_CaptureViewDepth( const viewDef_t *viewDef );
 
@@ -63,6 +68,12 @@ VkPipeline			VK_Exec_PostPipeline( int kind, VkShaderModule vertModule,
 VkPipeline			VK_Exec_ExtraPipeline( int kind, VkShaderModule vertModule,
 							VkShaderModule fragModule, int stateBits, int vertexLayout, int flags );
 void				VK_Exec_TransitionImageForSampling( idImage *image );
+// Queue one compact luminance sample per slot. Completion is delivered only
+// after that slot's existing frame fence, without an extra GPU wait. The
+// diagnostic synchronous mode submits and resumes this frame without presenting.
+bool				VK_Exec_QueueHDRExposureReadback( idImage *image, unsigned int generation, int frame, bool synchronous );
+void				VK_PostProcess_ConsumeHDRSample( unsigned int generation, int frame, float logLuminance );
+bool				VK_PostProcess_HDRSceneRequested( void );
 
 bool				VK_Exec_BindTriGeometry( VkCommandBuffer cmd, int slot, const srfTriangles_t *tri );
 // streams vertices into the frame's vertex ring and binds them as binding 0
@@ -78,6 +89,11 @@ bool				VK_Exec_SetViewViewport( VkCommandBuffer cmd, const viewDef_t *viewDef, 
 // R_SetDrawInteraction (vk_Interactions.cpp)
 void				VK_Interactions_SetDrawInteraction( const shaderStage_t *surfaceStage,
 							const float *surfaceRegs, idImage **image, idVec4 matrix[ 2 ], float color[ 4 ] );
+
+// Native emission shares material admission with the direct-light owner and
+// replaces only the proven matching additive ambient stage, once per surface.
+bool VK_PBR_EmissionForStage( const drawSurf_t *surf, int stageIndex,
+		idImage *&image, float color[ 4 ] );
 
 // The debug tools' stencil prints (RB_CountStencilBuffer, RB_ScanStencilBuffer).
 // The executor copies the active target's stencil out and hands it to

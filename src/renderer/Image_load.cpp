@@ -244,7 +244,7 @@ ID_INLINE void idImage::DeriveOpts() {
 		case TD_PBR_COLOR:
 			opts.gammaMips = true;
 			opts.colorFormat = CFM_DEFAULT;
-			opts.format = FMT_RGBA8;
+			opts.format = FMT_SRGBA8;
 			break;
 		case TD_MATERIAL_DATA:
 			opts.gammaMips = false;
@@ -475,6 +475,11 @@ name contains GetName() upon entry
 	_name.StripFileExtension();
 
 	_name += va( "#__%02d%02d", (int)_usage, (int)_cube );
+	if ( _usage == TD_PBR_COLOR ) {
+		// Reject caches made with gamma-2.2 RGB/alpha filtering, including in
+		// production mode where source/derived-option checks are omitted.
+		_name += "s1";
+	}
 	if ( _cube != CF_2D ) {
 		// Cube faces are assembled on the CPU before they reach the generated
 		// file, so a change to that assembly invalidates every cached cube even
@@ -608,7 +613,7 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 		common->Printf( "Using DDS replacement %s for %s\n", preferredDDSName.c_str(), GetName() );
 	}
 	const bool selectedDDSImage = explicitDDSImage || preferredDDSImage;
-	const bool bypassGeneratedFile = explicitDDSImage || preferredDDSPrecompressed;
+	const bool bypassGeneratedFile = ( explicitDDSImage || preferredDDSPrecompressed ) && usage != TD_PBR_COLOR;
 	idStr selectedSourceName = GetName();
 	if ( preferredDDSImage ) {
 		selectedSourceName = preferredDDSName;
@@ -787,7 +792,10 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 			imageDownsizePolicy_t precompressedDownsizePolicy;
 			R_GetImageDownsizePolicy( GetName(), usage, allowDownSize, precompressedDownsizePolicy );
 			const bool usePrecompressedMipmaps = ( flags & IMAGEFLAG_NOMIPS ) == 0 && filter != TF_LINEAR && filter != TF_NEAREST;
-			const bool tryDirectDDSLoad = selectedDDSImage && ( explicitDDSImage || preferredDDSPrecompressed );
+			// PBR colour requires sRGB filtering. Decode DDS colour through the
+			// ordinary image path so its format and mip/alpha semantics agree with
+			// TGA/PNG sources; classic precompressed textures keep their path.
+			const bool tryDirectDDSLoad = usage != TD_PBR_COLOR && selectedDDSImage && ( explicitDDSImage || preferredDDSPrecompressed );
 
 			if ( tryDirectDDSLoad && R_LoadPrecompressedDDS( loadSourceName, im, &sourceFileTime, usage, precompressedDownsizePolicy, usePrecompressedMipmaps ) ) {
 				const bimageFile_t &header = im.GetFileHeader();
@@ -816,7 +824,7 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 				}
 			} else {
 				const char *fallbackLoadSourceName = loadSourceName;
-				if ( preferredDDSPrecompressed ) {
+				if ( preferredDDSPrecompressed && usage != TD_PBR_COLOR ) {
 					common->Warning( "Couldn't load preferred precompressed DDS replacement %s for %s; falling back to original source", loadSourceName, GetName() );
 					fallbackLoadSourceName = GetName();
 					selectedSourceName = GetName();
@@ -1060,7 +1068,7 @@ static int R_CountExactHalvings( int width, int height, int scaledWidth, int sca
 	return ( width == scaledWidth && height == scaledHeight ) ? halvings : -1;
 }
 
-static byte *R_ShrinkLoadedImageData( const byte *pic, int width, int height, int scaledWidth, int scaledHeight, bool gammaMips ) {
+static byte *R_ShrinkLoadedImageData( const byte *pic, int width, int height, int scaledWidth, int scaledHeight, bool gammaMips, bool srgbMips ) {
 	const int halvings = R_CountExactHalvings( width, height, scaledWidth, scaledHeight );
 	if ( halvings <= 0 ) {
 		return R_ResampleTexture( pic, width, height, scaledWidth, scaledHeight );
@@ -1071,7 +1079,8 @@ static byte *R_ShrinkLoadedImageData( const byte *pic, int width, int height, in
 	int levelHeight = height;
 	for ( int i = 0; i < halvings; i++ ) {
 		const byte *source = ( shrunk != NULL ) ? shrunk : pic;
-		byte *next = gammaMips ? R_MipMapWithGamma( source, level, levelHeight ) : R_MipMap( source, level, levelHeight );
+		byte *next = srgbMips ? R_MipMapWithSRGB( source, level, levelHeight )
+			: ( gammaMips ? R_MipMapWithGamma( source, level, levelHeight ) : R_MipMap( source, level, levelHeight ) );
 		if ( next == NULL ) {
 			break;
 		}
@@ -1109,7 +1118,7 @@ static void R_DownsizeLoadedImageData( const char *name, textureUsage_t usage, b
 		return;
 	}
 
-	byte *resampled = R_ShrinkLoadedImageData( pic, width, height, scaledWidth, scaledHeight, R_ImageUsageUsesGammaMips( usage ) );
+	byte *resampled = R_ShrinkLoadedImageData( pic, width, height, scaledWidth, scaledHeight, R_ImageUsageUsesGammaMips( usage ), usage == TD_PBR_COLOR );
 	if ( resampled == NULL ) {
 		return;
 	}
@@ -1140,7 +1149,7 @@ static void R_DownsizeLoadedCubeImageData( const char *name, textureUsage_t usag
 			continue;
 		}
 
-		byte *resampled = R_ShrinkLoadedImageData( pics[i], size, size, scaledSize, scaledSize, R_ImageUsageUsesGammaMips( usage ) );
+		byte *resampled = R_ShrinkLoadedImageData( pics[i], size, size, scaledSize, scaledSize, R_ImageUsageUsesGammaMips( usage ), usage == TD_PBR_COLOR );
 		if ( resampled == NULL ) {
 			continue;
 		}

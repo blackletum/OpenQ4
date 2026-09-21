@@ -22,7 +22,7 @@
 // every build shape, including module-only clients that shed the static
 // renderer sources
 static const char *r_renderApiArgs[] = { "best", "gl", "vulkan", "gl-module", NULL };
-idCVar r_renderApi( "r_renderApi", "gl", CVAR_RENDERER | CVAR_ARCHIVE, "rendering API: best = platform default (currently gl), gl = OpenGL renderer (loaded as the renderer-gl module on module-only builds, statically linked elsewhere), vulkan = experimental Vulkan renderer module (falls back to gl when the module cannot load or finds no usable Vulkan device; a device that fails later resets this to gl for the next launch), gl-module = alias that always selects the OpenGL module. Module selections take effect on engine restart.", r_renderApiArgs, idCmdSystem::ArgCompletion_String<r_renderApiArgs> );
+idCVar r_renderApi( "r_renderApi", "gl", CVAR_RENDERER | CVAR_ARCHIVE, "rendering API: best = platform default (currently gl), gl = OpenGL renderer (loaded as the renderer-gl module on module-only builds, statically linked elsewhere), vulkan = experimental Vulkan renderer module (falls back to gl when loading, device probing or startup device preparation fails; a later vid_restart device failure selects gl for the next launch), gl-module = alias that always selects the OpenGL module. Module selections take effect on engine restart.", r_renderApiArgs, idCmdSystem::ArgCompletion_String<r_renderApiArgs> );
 idCVar r_actualRenderApi( "r_actualRenderApi", "UNINITIALIZED", CVAR_RENDERER | CVAR_ROM, "rendering API actually active after request/fallback selection" );
 
 // engine-side homes for window/gui cvars referenced by both the platform
@@ -67,6 +67,8 @@ typedef struct rendererModuleState_s {
 	// to the active renderer instance
 	bool					activationAllowed;
 	bool					everBooted;
+	bool					startupDeviceFailed;
+	bool					startupRetryPending;
 	// cvar completion callbacks as they were before the loaded module's
 	// GetRenderAPI registered its static cvars; put back before it unloads
 	idCVarCompletionSnapshot	moduleCompletions;
@@ -473,12 +475,12 @@ static bool RM_ExportCanRender( const renderExport_t *moduleExport, const char *
 RM_ExportDeviceReady
 
 A module that exports a device self-test must pass it before it activates.
-Once active it owns the decls and the render system, so a device that cannot
-start is past the in-process ladder and ends in a fatal error. The Vulkan
+The Vulkan
 probe creates its own instance and device without touching a window, so it
 covers a missing loader or driver, no GPU, a device below the feature floor,
-and device creation; surface and swapchain creation only happen after
-activation. Shared with the self-test so the policy cannot silently drift.
+and device creation. Later surface/swapchain/resource failures return through
+PrepareStartupDevice; the engine releases all startup owners before retrying
+the fallback renderer. Shared with the self-test so the policy cannot drift.
 ====================
 */
 static bool RM_ExportDeviceReady( const renderExport_t *moduleExport, char *outSummary, int summaryLength ) {
@@ -617,7 +619,7 @@ static bool RM_TryLoadModuleApi( rendererModuleApi_t api, rendererModuleStatus_t
 		return false;
 	}
 
-	// the last point a device failure can still fall back: the probe costs
+	// The early device gate costs
 	// a throwaway instance and device on top of the renderer's own, so the
 	// log records how long it took
 	char deviceSummary[ 192 ];
@@ -664,13 +666,15 @@ void R_RendererModule_Boot( void ) {
 		return;
 	}
 
-	rm_state.activationAllowed = !rm_state.everBooted;
+	const bool retryStartup = rm_state.startupRetryPending;
+	const rendererModuleStatus_t failedStatus = status;
+	rm_state.activationAllowed = !rm_state.everBooted || retryStartup;
 	rm_state.everBooted = true;
 
 	RM_UnloadModule();
 	memset( &status, 0, sizeof( status ) );
 
-	const char *requestedValue = r_renderApi.GetString();
+	const char *requestedValue = retryStartup ? failedStatus.requestedValue : r_renderApi.GetString();
 	idStr::Copynz( status.requestedValue, requestedValue, sizeof( status.requestedValue ) );
 
 	rendererModuleApi_t requestedApi;
@@ -688,7 +692,16 @@ void R_RendererModule_Boot( void ) {
 	status.requestedApi = requestedApi;
 
 	rendererModuleApi_t ladder[ RENDER_MODULE_API_COUNT ];
-	const int numCandidates = R_RendererModule_BuildFallbackLadder( requestedApi, ladder, RENDER_MODULE_API_COUNT );
+	const int numCandidates = R_RendererModule_BuildFallbackLadder(
+			retryStartup ? RENDER_MODULE_API_GL : requestedApi, ladder, RENDER_MODULE_API_COUNT );
+	if ( retryStartup ) {
+		RM_AppendFallbackReason( status, failedStatus.fallbackReason );
+		// The retry flag is set only after unloading. Report it here, once
+		// the restarted filesystem can append to the original startup log.
+		common->Printf( "Renderer startup recovery: failed Vulkan module unloaded after owner teardown\n" );
+	}
+	// Consume the retry before loading: a failing GL tail cannot recurse.
+	rm_state.startupRetryPending = false;
 
 	bool activated = false;
 	for ( int i = 0; i < numCandidates; i++ ) {
@@ -717,6 +730,41 @@ void R_RendererModule_Boot( void ) {
 		common->Printf( "Renderer API: %s (%s)\n", R_RendererModule_ApiName( status.activeApi ),
 				status.disposition == RENDER_MODULE_DISPOSITION_MODULE ? "module" : "builtin" );
 	}
+	if ( retryStartup ) {
+		common->Printf( "Renderer startup recovery: OpenGL selected after complete owner teardown\n" );
+	}
+}
+
+bool R_RendererModule_PrepareStartupDevice( void ) {
+	if ( !rm_state.moduleExportValid || rm_state.moduleExport.PrepareStartupDevice == NULL ) {
+		return true;
+	}
+	char reason[ 256 ] = {};
+	if ( rm_state.moduleExport.PrepareStartupDevice( reason, sizeof( reason ) ) ) {
+		return true;
+	}
+	rm_state.startupDeviceFailed = rm_state.status.activeApi == RENDER_MODULE_API_VULKAN;
+	RM_AppendFallbackReason( rm_state.status,
+			reason[ 0 ] != '\0' ? reason : "renderer startup device preparation failed" );
+	common->Printf( "Renderer startup recovery: device preparation failed (%s); releasing startup owners\n",
+			rm_state.status.fallbackReason );
+	return false;
+}
+
+bool R_RendererModule_RetryFailedStartup( void ) {
+	if ( !rm_state.startupDeviceFailed || rm_state.status.activeApi != RENDER_MODULE_API_VULKAN
+			|| !rm_state.interfacesPublished ) {
+		return false;
+	}
+	// The caller has completed ShutdownGame, including renderer and decl
+	// destruction, and has returned from every module call. Retire console
+	// callbacks as well as cvar completions before unloading their code.
+	cmdSystem->RemoveFlaggedCommands( CMD_FL_RENDERER );
+	RM_UnloadModule();
+	rm_state.startupDeviceFailed = false;
+	rm_state.startupRetryPending = true;
+	r_actualRenderApi.SetString( "UNINITIALIZED" );
+	return true;
 }
 
 /*

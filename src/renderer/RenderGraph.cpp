@@ -75,7 +75,7 @@ bool idRenderGraph::AddPacketPass( renderPassCategory_t category, const char *na
 	return true;
 }
 
-int idRenderGraph::AddResource( const char *name, renderGraphResourceType_t type, bool imported, bool transient, bool presentable, int aliasGroup ) {
+int idRenderGraph::AddResource( const char *name, renderGraphResourceType_t type, bool imported, bool transient, bool presentable, int aliasGroup, int samples ) {
 	if ( numResources >= RENDER_GRAPH_MAX_RESOURCES ) {
 		stats.overflow = true;
 		return -1;
@@ -87,7 +87,7 @@ int idRenderGraph::AddResource( const char *name, renderGraphResourceType_t type
 	resource.type = type;
 	resource.widthScale = 1;
 	resource.heightScale = 1;
-	resource.samples = 1;
+	resource.samples = Max( 1, samples );
 	resource.imported = imported;
 	resource.transient = transient;
 	resource.presentable = presentable;
@@ -340,6 +340,20 @@ static int R_RenderGraph_EnsureSceneDepth( idRenderGraph &graph ) {
 	return R_RenderGraph_EnsureResource( graph, "sceneDepth", RENDER_GRAPH_RESOURCE_DEPTH_STENCIL, false, true, false, 2 );
 }
 
+// Keep sampled post/deferred inputs single-sample. Forward geometry and its
+// depth prepass share a separate multisample pair and explicitly resolve it.
+static int R_RenderGraph_EnsureMultisampleScene( idRenderGraph &graph, bool depth ) {
+	if ( !( r_rendererModernVisible.GetBool() || r_rendererForwardPlus.GetBool() )
+			|| r_multiSamples.GetInteger() <= 1 || r_screenFraction.GetInteger() > 100 ) {
+		return -1;
+	}
+	const char *name = depth ? "sceneDepthMSAA" : "sceneColorMSAA";
+	const int existing = graph.FindResource( name );
+	return existing >= 0 ? existing : graph.AddResource( name,
+		depth ? RENDER_GRAPH_RESOURCE_DEPTH_STENCIL : RENDER_GRAPH_RESOURCE_COLOR,
+		false, true, false, 0, r_multiSamples.GetInteger() );
+}
+
 static int R_RenderGraph_EnsureSceneHiZ( idRenderGraph &graph ) {
 	return R_RenderGraph_EnsureResource( graph, "sceneHiZ", RENDER_GRAPH_RESOURCE_DEPTH, false, true, false, 7 );
 }
@@ -502,6 +516,11 @@ static void R_RenderGraph_AddForwardPlusPass( idRenderGraph &graph ) {
 		"forward-plus-cascade-shadow-read",
 		"forward-plus-translucent-shadow-read" );
 	R_RenderGraph_AddSceneColorReadWrite( graph, passIndex, "forward-plus-scene-color" );
+	R_RenderGraph_AddAccess( graph, passIndex, R_RenderGraph_EnsureMultisampleScene( graph, true ),
+		RENDER_GRAPH_ACCESS_READ, "forward-plus-msaa-depth" );
+	R_RenderGraph_AddAccess( graph, passIndex, R_RenderGraph_EnsureMultisampleScene( graph, false ),
+		RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR | RENDER_GRAPH_ACCESS_READ | RENDER_GRAPH_ACCESS_RESOLVE,
+		"forward-plus-msaa-color-resolve" );
 }
 
 static void R_RenderGraph_AddSceneColorWrite( idRenderGraph &graph, int passIndex, const char *usage ) {
@@ -527,6 +546,9 @@ static void R_RenderGraph_AddPassResources( idRenderGraph &graph, int passIndex,
 	case RENDER_PASS_DEPTH: {
 		const int sceneDepth = R_RenderGraph_EnsureSceneDepth( graph );
 		R_RenderGraph_AddAccess( graph, passIndex, sceneDepth, RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR, "depth-write" );
+		R_RenderGraph_AddAccess( graph, passIndex, R_RenderGraph_EnsureMultisampleScene( graph, true ),
+			RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR | RENDER_GRAPH_ACCESS_READ | RENDER_GRAPH_ACCESS_RESOLVE,
+			"msaa-depth-resolve" );
 		if ( R_RenderGraph_ShouldModelHiZ() ) {
 			const int sceneHiZ = R_RenderGraph_EnsureSceneHiZ( graph );
 			R_RenderGraph_AddAccess( graph, passIndex, sceneHiZ, RENDER_GRAPH_ACCESS_WRITE | RENDER_GRAPH_ACCESS_CLEAR, "depth-hiz-write" );

@@ -2886,6 +2886,18 @@ bool idMaterial::ParsePBRBlock( idLexer &src, const textureRepeat_t trpDefault )
 		return false;
 	}
 
+	if ( pbrInfo.normal.present && pbrInfo.normal.image != NULL
+			&& pbrInfo.normalFormat != PBR_NORMAL_QUAKE4_AGB ) {
+		// RG/XYZ describe raw linear channels. TD_BUMP repacks X into alpha
+		// for Quake 4's RXGB convention, corrupting these other encodings.
+		// Resolve after the block so normalFormat may precede or follow the map.
+		const pbrMaterialTexture_t &normal = pbrInfo.normal;
+		const unsigned int normalFlags = normal.noMips ? R_ApplyMaterialNoMipFlags( 0 ) : 0;
+		pbrInfo.normal.image = R_LoadMaterialImage( normal.image->GetName(),
+			static_cast<textureFilter_t>( normal.filter ), static_cast<textureRepeat_t>( normal.repeat ),
+			TD_MATERIAL_DATA, CF_2D, normal.allowPicmip, normalFlags );
+	}
+
 	pbrInfo.hasExplicitLegacyFallback = pbrInfo.legacyBump.present ||
 		pbrInfo.legacyDiffuse.present || pbrInfo.legacySpecular.present ||
 		pbrInfo.legacyEmissive.present;
@@ -4641,6 +4653,23 @@ const float *idMaterial::ConstantRegisters() const {
 	return constantRegisters;
 }
 
+bool idMaterial::GetConstantRegisterValue( int registerIndex, float &value ) const {
+	value = 0.0f;
+	if ( expressionRegisters == NULL || registerIndex < EXP_REG_NUM_PREDEFINED
+			|| registerIndex >= numRegisters ) {
+		return false;
+	}
+
+	// Expression folding already turns constant arithmetic into literals.
+	// A destination of a remaining operation must be evaluated for the view;
+	// reading its parse-time value would incorrectly admit dynamic colors.
+	for ( int i = 0; i < numOps; ++i ) {
+		if ( ops[i].c == registerIndex ) { return false; }
+	}
+	value = expressionRegisters[registerIndex];
+	return true;
+}
+
 /*
 ==================
 idMaterial::CheckForConstantRegisters
@@ -5064,7 +5093,7 @@ bool R_PBRMaterialParserSelfTest( void ) {
 		" pbr {\n"
 		"  workflow metallicRoughness\n"
 		"  albedoMap heightmap( _white, 1 )\n"
-		"  normalMap _flat\n"
+		"  normalMap smoothnormals( _flat )\n"
 		"  normalFormat tangentRG\n"
 		"  ormMap smoothnormals( _flat )\n"
 		"  emissiveMap _white\n"
@@ -5114,6 +5143,7 @@ bool R_PBRMaterialParserSelfTest( void ) {
 			&& info.normalFormat == PBR_NORMAL_TANGENT_RG
 			&& info.albedo.present && info.normal.present && info.orm.present
 			&& info.albedo.image->GetUsage() == TD_PBR_COLOR
+			&& info.normal.image->GetUsage() == TD_MATERIAL_DATA
 			&& info.orm.image->GetUsage() == TD_MATERIAL_DATA
 			&& sameAlbedo == info.albedo.image
 			&& sameORM == info.orm.image
@@ -5154,6 +5184,30 @@ bool R_PBRMaterialParserSelfTest( void ) {
 	}
 	DeclManager_FreeAllocatedDecl( dualDecl );
 	if ( !ok ) {
+		return false;
+	}
+	// An unrelated time expression must not prevent proving a literal stage
+	// colour, while registers written by an expression are never constants.
+	static const char mixedRegisters[] =
+		"material _pbr_selftest_mixed_registers {\n"
+		" bumpmap _flat\n diffusemap _white\n"
+		" pbr {\n workflow metallicRoughness\n albedoMap _white\n metallic time * 0.1\n roughness 0.25 + 0.25\n }\n}\n";
+	idDecl *mixedDecl = declManager->AllocateDecl( DECL_MATERIAL );
+	if ( mixedDecl == NULL ) { return false; }
+	idMaterial *mixed = static_cast<idMaterial *>( mixedDecl );
+	ok = mixed->Parse( mixedRegisters, sizeof( mixedRegisters ) - 1 );
+	float literalValue = 0.0f;
+	const pbrMaterialInfo_t &mixedInfo = mixed->GetPBRInfo();
+	ok = ok && mixed->ConstantRegisters() == NULL
+		&& mixed->GetConstantRegisterValue( mixedInfo.roughnessRegister, literalValue )
+		&& idMath::Fabs( literalValue - 0.5f ) < 0.00001f
+		&& !mixed->GetConstantRegisterValue( mixedInfo.metallicRegister, literalValue )
+		&& !mixed->GetConstantRegisterValue( EXP_REG_TIME, literalValue )
+		&& !mixed->GetConstantRegisterValue( -1, literalValue )
+		&& !mixed->GetConstantRegisterValue( mixed->GetNumRegisters(), literalValue );
+	DeclManager_FreeAllocatedDecl( mixedDecl );
+	if ( !ok ) {
+		common->Printf( "RendererPBRMaterial parser self-test: individual constant-register proof failed\n" );
 		return false;
 	}
 

@@ -3,6 +3,7 @@
 
 #include "tr_local.h"
 #include "ModernShadowPlanner.h"
+#include "ModernShadowMaps.h"
 #include "RendererBenchmarks.h"
 #include "RendererMetrics.h"
 #include "ShadowMapClassification.h"
@@ -958,7 +959,7 @@ static void R_ModernShadowPlanner_InitDescriptorContract( modernShadowLightDescr
 				r_shadowMapPointBias.GetFloat(),
 				r_shadowMapPointNormalBias.GetFloat(),
 				r_shadowMapTexelBiasScale.GetFloat(),
-				0.0f,
+				r_shadowMapNormalOffsetScale.GetFloat(),
 				r_shadowMapPointMaxWorldBias.GetFloat() );
 		shadowMapPointReceiverSettings_t pointReceiverSettings =
 			basePointReceiverSettings;
@@ -979,11 +980,11 @@ static void R_ModernShadowPlanner_InitDescriptorContract( modernShadowLightDescr
 		descriptor.texelDepthBias[0] =
 			pointReceiverSettings.texelBiasScale
 				/ static_cast<float>( Max( 1, descriptor.resolution ) );
-		// The modern point receiver does not yet apply geometric normal offset;
-		// its bounded depth-only contract above keeps that limitation explicit.
+		descriptor.normalOffsetScale = pointReceiverSettings.normalOffsetScale;
 	} else {
 		descriptor.bias[0] = r_shadowMapBias.GetFloat();
 		descriptor.bias[1] = r_shadowMapNormalBias.GetFloat();
+		descriptor.normalOffsetScale = Max( 0.0f, r_shadowMapNormalOffsetScale.GetFloat() );
 	}
 	descriptor.bias[2] = r_shadowMapPolygonFactor.GetFloat();
 	descriptor.bias[3] = r_shadowMapPolygonOffset.GetFloat();
@@ -1196,8 +1197,8 @@ static void R_ModernShadowPlanner_InitDescriptor( modernShadowLightDescriptor_t 
 	descriptor.requestedCascadeCount = classification.cascadeCount;
 	descriptor.atlasDiv = classification.atlasDiv;
 	descriptor.updateModulo = Max( 1, RendererBenchmarks_CurrentBudget().shadowUpdateRate );
-	descriptor.localCasterCount = vLight != NULL ? R_ModernShadowPlanner_CountDrawSurfChain( vLight->localShadowMapCasters ) + R_ModernShadowPlanner_CountDrawSurfChain( vLight->localShadows ) : 0;
-	descriptor.globalCasterCount = vLight != NULL ? R_ModernShadowPlanner_CountDrawSurfChain( vLight->globalShadowMapCasters ) + R_ModernShadowPlanner_CountDrawSurfChain( vLight->globalShadows ) : 0;
+	descriptor.localCasterCount = vLight != NULL ? R_ModernShadowPlanner_CountDrawSurfChain( vLight->localShadowMapCasters ) + R_ModernShadowPlanner_CountDrawSurfChain( vLight->localShadowMapDynamicCasters ) + R_ModernShadowPlanner_CountDrawSurfChain( vLight->localShadows ) : 0;
+	descriptor.globalCasterCount = vLight != NULL ? R_ModernShadowPlanner_CountDrawSurfChain( vLight->globalShadowMapCasters ) + R_ModernShadowPlanner_CountDrawSurfChain( vLight->globalShadowMapDynamicCasters ) + R_ModernShadowPlanner_CountDrawSurfChain( vLight->globalShadows ) : 0;
 	descriptor.translucentCasterCount = vLight != NULL ? R_ModernShadowPlanner_CountDrawSurfChain( vLight->localTranslucentShadowMapCasters ) + R_ModernShadowPlanner_CountDrawSurfChain( vLight->globalTranslucentShadowMapCasters ) : 0;
 	descriptor.localReceiverCount = vLight != NULL ? R_ModernShadowPlanner_CountDrawSurfChain( vLight->localInteractions ) : 0;
 	descriptor.globalReceiverCount = vLight != NULL ? R_ModernShadowPlanner_CountDrawSurfChain( vLight->globalInteractions ) : 0;
@@ -1981,6 +1982,35 @@ void R_ModernShadowPlanner_PrepareFrame( const idScenePacketFrame &packetFrame, 
 	}
 }
 
+void R_ModernShadowPlanner_PrepareReceiverMaps( const viewDef_t *viewDef ) {
+	int pointFaces = 0, projectedTiles = 0, pointSize = 128, projectedSize = 128;
+	const auto belongsToView = [viewDef]( const viewLight_t *light ) {
+		if ( viewDef == NULL ) { return false; }
+		for ( const viewLight_t *cursor = viewDef->viewLights; cursor != NULL; cursor = cursor->next ) {
+			if ( cursor == light ) { return true; }
+		}
+		return false;
+	};
+	for ( int i = 0; i < rg_modernShadowPlannerDescriptors.Num(); ++i ) {
+		modernShadowLightDescriptor_t &d = rg_modernShadowPlannerDescriptors[i];
+		if ( d.policy != MODERN_SHADOW_POLICY_MAPPED && d.policy != MODERN_SHADOW_POLICY_CACHE_REUSE ) { continue; }
+		// One binding must never mix old cache cells with current-frame cells.
+		d.arb2PointCubeReady = d.arb2AtlasSlotReady = d.currentFrameMapReady = false;
+		if ( !belongsToView( d.viewLight ) ) { continue; }
+		if ( d.pointLight ) { pointFaces += 6; pointSize = Max( pointSize, d.resolution ); }
+		else { projectedTiles += d.cascadeCount; projectedSize = Max( projectedSize, d.resolution ); }
+	}
+	if ( !RB_ModernShadowMapsBegin( viewDef, pointSize, pointFaces, projectedSize, projectedTiles ) ) { return; }
+	for ( int i = 0; i < rg_modernShadowPlannerDescriptors.Num(); ++i ) {
+		modernShadowLightDescriptor_t &d = rg_modernShadowPlannerDescriptors[i];
+		if ( ( d.policy != MODERN_SHADOW_POLICY_MAPPED && d.policy != MODERN_SHADOW_POLICY_CACHE_REUSE )
+				|| !belongsToView( d.viewLight ) || !d.modernReceiverSamplingReady
+				|| !R_ModernShadowPlanner_Arb2SingleResourceComplete( d.viewLight )
+				|| d.translucentCasterCount != 0 ) { continue; }
+		RB_ModernShadowMapRender( viewDef, d );
+	}
+}
+
 const modernShadowPlannerStats_t &R_ModernShadowPlanner_Stats( void ) {
 	return rg_modernShadowPlannerStats;
 }
@@ -2014,6 +2044,17 @@ int R_ModernShadowPlanner_NumDescriptors( void ) {
 }
 
 void R_ModernShadowPlanner_PrintGfxInfo( void ) {
+	for ( int i = 0; i < rg_modernShadowPlannerDescriptors.Num(); ++i ) {
+		const modernShadowLightDescriptor_t &d = rg_modernShadowPlannerDescriptors[i];
+		if ( d.policy != MODERN_SHADOW_POLICY_MAPPED && d.policy != MODERN_SHADOW_POLICY_CACHE_REUSE ) { continue; }
+		common->Printf( "Modern current shadow map: light=%d point=%d ready=%d frame=%d dynamic=%d casters=%d complete=%d firstTile=%d columns=%d\n",
+			d.lightDefIndex, d.pointLight ? 1 : 0, d.currentFrameMapReady ? 1 : 0,
+			d.pointLight ? d.arb2PointCubeContentFrame : d.arb2AtlasContentFrame,
+			d.viewLight != NULL ? d.viewLight->shadowMapDynamicCasterCount : 0,
+			d.viewLight != NULL ? d.viewLight->shadowMapCasterCount : 0,
+			R_ModernShadowPlanner_Arb2SingleResourceComplete( d.viewLight ) ? 1 : 0,
+			d.currentPointFirstTile, d.currentPointAtlasColumns );
+	}
 	common->Printf(
 		"Modern shadow plan: %s, requested=%d valid=%d scenes=%d lights=%d descriptors=%d mapped=%d fallback=%d skipped=%d projected=%d ordinary=%d point=%d csm=%d/%d projectedCSM=%d/%d/%d/%d casters(local=%d global=%d translucent=%d visibility=%d/%d saved=%d receiverCull=%d noQueryStall=%d lod(tests=%d rejected=%d alpha=%d translucent=%d lights=%d budget=%d unmapped=%d)) receivers(local=%d global=%d translucent=%d guarded=%d sampling=%d blocked=%d cutout=%d) budget(lights=%d class=%d/%d/%d atlasTiles=%d/%d classTiles=%d/%d/%d quotas=%d/%d/%d pixels=%d size=%d update=%d used=%d throttled=%d classThrottle=%d/%d/%d reasonMask=0x%02x reasons(class=%d/%d/%d global=%d/%d/%d) miss(fallback=%d stencil=%d cache=%d skipped=%d)) fairness(tracked=%d aged=%d boosted=%d mapped=%d maxAge=%d maxBoost=%d) throttleHistory(tracked=%d repeated=%d recovered=%d maxStreak=%d maxTotal=%d maxLight=%d lastMiss=%d lastReason=0x%02x lastClass=%d) cvars(shadows=%d shadowMap=%d csm=%d projectedCSM=%d translucent=%d/%d debug=%d report=%d) invariants=%d mask=0x%08x build=%dms\n",
 		rg_modernShadowPlannerStats.available ? "available" : "unavailable",

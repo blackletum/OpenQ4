@@ -245,13 +245,11 @@ def validate_posix_fatal_signal_report() -> None:
 
 
 def validate_renderer_failure_entry_points() -> None:
-    """Both backends reach FatalError from the same point in startup.
+    """Startup retries Vulkan failures; later restarts retain durable recovery.
 
-    A Vulkan device is probed before its module activates, so most device
-    failures fall back to OpenGL without reaching this point. What still fails
-    here (window, surface, swapchain) is past the in-process fallback, and the
-    archived r_renderApi would stop every later launch the same way, so the
-    loader resets it to gl before the fatal error says so.
+    The ordinary InitGame owner teardown must finish while the failed module
+    remains loaded. Only then may the loader remove its callbacks and code.
+    A later vid_restart still cannot unload the module on its own call stack.
     """
     renderer = read("src/renderer/RenderSystem_init.cpp")
 
@@ -274,6 +272,24 @@ def validate_renderer_failure_entry_points() -> None:
     )
 
     loader = read("src/renderer/RendererModule.cpp")
+    common = read("src/framework/Common.cpp")
+    startup = function_body(common, "void idCommonLocal::InitGame( void ) {")
+    require_ordered(startup, (
+        "!R_RendererModule_PrepareStartupDevice()",
+        "ShutdownGame( true );",
+        "!R_RendererModule_RetryFailedStartup()",
+        "InitGame();",
+        "InitRenderSystem();",
+        "uiManager->Init();",
+        "LoadGameDLL();",
+    ), "startup recovery returns through module code before owner teardown")
+    retry = function_body(loader, "bool R_RendererModule_RetryFailedStartup( void ) {")
+    require_ordered(retry, (
+        "!rm_state.startupDeviceFailed",
+        "cmdSystem->RemoveFlaggedCommands( CMD_FL_RENDERER );",
+        "RM_UnloadModule();",
+        "rm_state.startupRetryPending = true;",
+    ), "failed startup retires command callbacks before unloading")
     try_load = function_body(
         loader,
         "static bool RM_TryLoadModuleApi( rendererModuleApi_t api, rendererModuleStatus_t &status ) {",
