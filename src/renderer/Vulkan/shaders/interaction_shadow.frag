@@ -710,12 +710,14 @@ void main() {
     }
 
     if (pc.d.x > 2.5) {
-        // Emission is drawn once per surface in the ambient walk.
-        outColor = vec4(0.0);
+        // Emission is drawn once per surface in the ambient walk. An ordered
+        // transparent draw still owes the frame its coverage, so it composites
+        // black through the authored alpha instead of contributing nothing.
+        outColor = vec4(0.0, 0.0, 0.0, PBRTransparentAlpha(vDiffuseTexCoord));
         return;
     }
     if (pc.d.x > 1.5) {
-        outColor = vec4(0.0, 1.0, 0.0, 0.0);
+        outColor = vec4(0.0, 1.0, 0.0, PBRTransparentAlpha(vDiffuseTexCoord));
         return;
     }
 
@@ -740,7 +742,7 @@ void main() {
             outColor = ShadowDebugOutput();
             return;
         }
-        outColor = vec4(packed, 0.0);
+        outColor = vec4(packed, PBRTransparentAlpha(diffuseTexCoord));
         return;
     }
     vec3 localNormal = vec3(bumpSample.a, bumpSample.g, bumpSample.b) * 2.0 - 1.0;

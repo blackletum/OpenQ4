@@ -60,6 +60,9 @@ bool				VK_Exec_ResolveRenderTargets( idRenderTexture *sourceRenderTexture,
 bool				VK_Exec_CaptureViewDepth( const viewDef_t *viewDef );
 
 VkPipelineLayout	VK_Exec_InteractionPipelineLayout( void );
+// Source-alpha variants of the interaction pipelines; shadowMode is
+// 0 unshadowed, 1 projected, 2 point, matching vkInterPass_t::shadowMode.
+VkPipeline			VK_Exec_TransparentInteractionPipeline( int shadowMode, bool composite );
 VkDescriptorSet		VK_Exec_ImageDescriptor( unsigned int texnum, bool require2D );
 VkDescriptorSet		VK_Exec_InteractionUniformSet( void );
 int					VK_Exec_InteractionUniformAlloc( const void *data, int bytes );
@@ -94,6 +97,13 @@ void				VK_Interactions_SetDrawInteraction( const shaderStage_t *surfaceStage,
 // replaces only the proven matching additive ambient stage, once per surface.
 bool VK_PBR_EmissionForStage( const drawSurf_t *surf, int stageIndex,
 		idImage *&image, float color[ 4 ] );
+
+// Native ordered transparency. Returns true when the light pass recorded this
+// surface's draws for the named source-alpha stage and has now composited
+// them; the classic stage draw is then the replaced work, not extra work.
+bool VK_PBR_DrawTransparentStage( VkCommandBuffer cmd, const viewDef_t *viewDef,
+		const drawSurf_t *drawSurf, const srfTriangles_t *tri, const float mvp[ 16 ],
+		int stageIndex, float alphaScale );
 
 // The debug tools' stencil prints (RB_CountStencilBuffer, RB_ScanStencilBuffer).
 // The executor copies the active target's stencil out and hands it to

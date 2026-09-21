@@ -56,8 +56,11 @@ shading, with normal-variance filtering on OpenGL and native Vulkan PBR. AO
 attenuates indirect lighting, not direct lights.
 
 For a cutout, author the classic diffuse stage's `alphaTest` threshold. A
-conventional `translucent` material with a single `blend blend` stage can use OpenGL
-ordered PBR source-alpha transparency. Keep its alpha in the albedo texture.
+conventional `translucent` material with a single `blend blend` stage can use
+ordered PBR source-alpha transparency on OpenGL and on native Vulkan. Keep its
+alpha in the albedo texture: both backends read the coverage from the albedo
+image and scale it by the stage's own alpha register, so the blend stage must
+name that same image with untransformed coordinates and no vertex tint.
 Unusual blend expressions and custom material programs keep classic ownership.
 
 ## Preview and fallback
@@ -103,22 +106,38 @@ python tools/tests/renderer_pbr_laboratory.py --runtime-root .tmp/pbr-native --o
 ```
 
 The suite currently has 68 controls per sample count. Run the separate
-`--cases lit,ownership,master-off` full-map check to expose unsupported
-ownership; it still fails native source-alpha transparency.
+`--cases lit,ownership,emissive,master-off` full-map check to expose
+unsupported ownership. The emission control is required: transparency is
+proven by the difference between the two debug captures, which is the authored
+coverage alone, because a single capture also carries the background behind
+the surface.
 
-Vulkan currently implements opaque and matching alpha-tested direct lighting with scalar,
-packed ORM or separate metallic/roughness maps and all three documented normal
-encodings (or no normal map). It requires one active classic bump/diffuse/specular
-sequence. A cutout must use the same image, sampling and untransformed UVs for
-classic diffuse coverage and PBR albedo. Emission requires one matching classic
-additive glow stage; its native replacement emits once, including without any
-direct lights. Mismatched masks/glows, source-alpha transparency and unsupported
-stage combinations keep classic ownership. Vulkan does not yet consume PBR
-environment/probe data. Native diagnostics implement emission (6) and ownership
-(7); material-channel modes 1–5 require OpenGL. The native laboratory separately
-checks equivalent layouts, mapped shadows, emission, cutout coverage, rollback
+Vulkan currently implements opaque, matching alpha-tested and source-alpha
+direct lighting with scalar, packed ORM or separate metallic/roughness maps and
+all three documented normal encodings (or no normal map). It requires one
+active classic bump/diffuse/specular sequence. A cutout must use the same
+image, sampling and untransformed UVs for classic diffuse coverage and PBR
+albedo. Emission requires one matching classic additive glow stage; its native
+replacement emits once, including without any direct lights.
+
+Source-alpha transparency is ordered: a translucent surface is absent from the
+depth fill, so the light pass records its admitted draws instead of adding
+them and the material walk composites them where the authored stage would have
+drawn. The first recorded light composites through the alpha and the rest add
+through it, which is the classic composite of the summed radiance. The whole
+view returns to classic ownership when a shadowing light reaches a translucent
+receiver, because stencil shadow coverage is reset with its light and cannot
+be replayed afterwards.
+
+Mismatched masks/glows and unsupported stage combinations keep classic
+ownership. Vulkan does not yet consume PBR environment/probe data. Native
+diagnostics implement emission (6) and ownership (7); material-channel modes
+1–5 require OpenGL. Both markers keep a transparent surface's coverage, so the
+ownership view composites the marker through the authored alpha rather than
+replacing the pixel. The native laboratory separately checks equivalent
+layouts, mapped shadows, emission, cutout and source-alpha coverage, rollback
 and restart. Its green marker proves the admitted native surface path, not
-complete environment lighting or full-map PBR acceptance.
+complete environment lighting.
 Vulkan filters both surface curvature and normal-map variation with the same
 bounded roughness kernel. `r_vkPBRSpecularAA 0` disables this filtering for
 diagnostic comparisons; it defaults to 1 and is not archived.

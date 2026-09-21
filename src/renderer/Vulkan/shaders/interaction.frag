@@ -147,12 +147,14 @@ void main() {
     vec2 diffuseTexCoord = vDiffuseTexCoord;
     vec2 specularTexCoord = vSpecularTexCoord;
     if (pc.d.x > 2.5) {
-        // Emission is drawn once per surface in the ambient walk.
-        outColor = vec4(0.0);
+        // Emission is drawn once per surface in the ambient walk. An ordered
+        // transparent draw still owes the frame its coverage, so it composites
+        // black through the authored alpha instead of contributing nothing.
+        outColor = vec4(0.0, 0.0, 0.0, PBRTransparentAlpha(diffuseTexCoord));
         return;
     }
     if (pc.d.x > 1.5) {
-        outColor = vec4(0.0, 1.0, 0.0, 0.0);
+        outColor = vec4(0.0, 1.0, 0.0, PBRTransparentAlpha(diffuseTexCoord));
         return;
     }
     if (pc.c.z > 0.5) {
@@ -167,7 +169,8 @@ void main() {
     if (pc.d.x > 0.5) {
         vec3 localNormal = PBRDirectNormal(bumpTexCoord);
         outColor = vec4(EvaluatePBRDirect(localNormal,
-            diffuseTexCoord, specularTexCoord, 1.0), 0.0);
+            diffuseTexCoord, specularTexCoord, 1.0),
+            PBRTransparentAlpha(diffuseTexCoord));
         return;
     }
     vec3 localNormal = vec3(bumpSample.a, bumpSample.g, bumpSample.b) * 2.0 - 1.0;

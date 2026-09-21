@@ -449,6 +449,17 @@ def compare_vulkan_direct_captures(results: list[dict]) -> None:
             row['nativeDirectProof']={'greenFraction':green}
             if green<0.999:
                 row['failures'].append('native direct material did not own the specimen')
+        elif name=='alpha-fallback':
+            # Ordered transparency composites the ownership marker through the
+            # authored alpha instead of replacing the pixel, so every specimen
+            # pixel must be tinted green without any of them becoming the flat
+            # marker. A surface left to the classic stage shows neither.
+            pixels=[patch[i:i+3] for i in range(0,len(patch),3)]
+            tinted=sum(p[1]>p[0]+8 and p[1]>p[2]+8 for p in pixels)/len(pixels)
+            solid=sum(p==bytes((0,255,0)) for p in pixels)/len(pixels)
+            row['nativeDirectProof']={'greenTintedFraction':tinted,'solidGreenFraction':solid}
+            if tinted<0.999 or solid>0.001:
+                row['failures'].append('native source alpha must composite the marker through its coverage')
         elif not name.endswith(('-native','-fallback')) and name not in ('shadow-point','shadow-projected','emission-dark','emission-extreme'):
             mean=sum(patch)/len(patch)
             clipped=sum(v>=254 for v in patch)/len(patch)
@@ -468,7 +479,6 @@ def compare_vulkan_direct_captures(results: list[dict]) -> None:
         ('emission-half','emission-shared',0),
         ('emission-mismatch-fallback','emission-mismatch-native',0),
         ('cutout-mismatch-fallback','cutout-mismatch-native',0),
-        ('alpha-fallback','alpha-native',0),
         ('cutout-lit','cutout-restored',0), ('cutout-lit','cutout-partial-restart',0),
         ('cutout-lit','cutout-full-restart',0),
         ('shadow-point-off','shadow-point-restored',0),
@@ -480,6 +490,7 @@ def compare_vulkan_direct_captures(results: list[dict]) -> None:
         if error>limit:
             by_case[right]['failures'].append(f'native direct equivalence failed against {left}: {error:.3f}')
     for left,right in (('normal-xyz','flat'),('rough-low','rough-high'),('scalar','master-off'),
+                       ('alpha-native','alpha-fallback'),
                        ('shadow-point-off','shadow-point'),('shadow-projected-off','shadow-projected'),
                        ('cutout-lit','cutout-legacy'),('emission-half','emission-legacy'),
                        ('emission-half','emission-dark')):
@@ -655,6 +666,41 @@ def compare_skinning_captures(results: list[dict]) -> None:
             by_case[case]['failures'].append('video restart changed the frozen skinned reference image')
 
 
+def compare_transparency_captures(results: list[dict]) -> None:
+    """Prove ordered transparency with the pair of captures that isolates it.
+
+    The ownership marker replaces the surface's radiance with a constant green
+    and the emission view replaces it with black. Both composite through the
+    same authored alpha over the same background, so their difference is the
+    coverage and nothing else -- 112/255 of green here. One capture cannot do
+    this: its value also carries whatever is behind the surface, which is why
+    the OpenGL reference reads (118, 213, 108) rather than a bare (0, 112, 0).
+    A classic-owned surface keeps its lit texture in both captures and cannot
+    produce the difference at all.
+    """
+    for backend in sorted({r['backend'] for r in results}):
+        rows = {r['case']: r for r in results if r['backend'] == backend and r['tier'] != 'legacy'}
+        owned = rows.get('ownership')
+        if owned is None:
+            continue
+        def station(row: dict | None) -> list[float] | None:
+            return (row or {}).get('image', {}).get('stationRGB', {}).get('source_alpha')
+        marker, emissive = station(owned), station(rows.get('emissive'))
+        if marker is None:
+            continue
+        if emissive is None:
+            # Recorded, not assumed: a run without the emission control simply
+            # does not measure transparency, and its report has to say so.
+            owned.setdefault('materialComparisons', {})['emissive/source_alpha'] = {
+                'status': 'not measured', 'reason': 'the emissive control was not captured'}
+            continue
+        delta = [round(x - y, 3) for x, y in zip(marker, emissive)]
+        owned.setdefault('materialComparisons', {})['emissive/source_alpha'] = {
+            'deltaRGB': delta, 'expectedRGB': [0, 112, 0], 'tolerance': 1}
+        if any(abs(x - y) > 1 for x, y in zip(delta, (0, 112, 0))):
+            owned['failures'].append(f'native PBR source-alpha ownership missing {delta}')
+
+
 def compare_material_captures(results: list[dict]) -> None:
     """Use changed controls as an oracle, including controls that must do nothing."""
     by_case = {r['case']: r for r in results if r['backend'] == 'gl' and r['tier'] != 'legacy'}
@@ -664,8 +710,9 @@ def compare_material_captures(results: list[dict]) -> None:
             if baked is not None: by_case.setdefault(kind+'-pbr'+suffix,baked)
     def station(case: str, name: str) -> list[float] | None:
         return by_case.get(case, {}).get('image', {}).get('stationRGB', {}).get(name)
+    # source_alpha belongs to compare_transparency_captures, which runs the
+    # same oracle for every backend.
     for left, right, name, expected, limit in (
-        ('ownership', 'emissive', 'source_alpha', (0,112,0), 1),
         ('lit', 'direct', 'ao_zero', (0,0,0), 1),
     ):
         a,b = station(left,name), station(right,name)
@@ -1400,13 +1447,10 @@ def inspect_capture(args: argparse.Namespace, case: str, text: str, shot: Path) 
                         for station, rgb in samples.items():
                             if station not in ('cutout','source_alpha') and (rgb[0] > 2 or rgb[1] < 253 or rgb[2] > 2):
                                 failures.append(f'PBR ownership missing at {station}')
-                        if args.backend=='vk':
-                            # The original alpha texture has 112/255 coverage
-                            # over the classic backplate. A lit classic sphere
-                            # cannot qualify the ordered native PBR owner.
-                            alpha=samples.get('source_alpha',[])
-                            if len(alpha)!=3 or max(abs(a-b) for a,b in zip(alpha,(0,112,0)))>2:
-                                failures.append('native PBR source-alpha ownership missing')
+                        # Source alpha is checked against its own emission
+                        # control instead, by compare_transparency_captures: a
+                        # single capture cannot separate the surface's coverage
+                        # from the background it composites over.
                     expected = {'albedo':128, 'metallic':102, 'roughness':128, 'ao':192}
                     if active_pbr and case in expected:
                         for station in ('data_scalar','data_packed','data_separate'):
@@ -1717,6 +1761,7 @@ def main() -> int:
     compare_sampler_captures(results)
     compare_skinning_captures(results)
     compare_material_captures(results)
+    compare_transparency_captures(results)
     compare_post_captures(results)
     compare_msaa_captures(results)
     compare_shadow_captures(results)

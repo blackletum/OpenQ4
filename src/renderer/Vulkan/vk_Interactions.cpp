@@ -110,6 +110,8 @@ VkPipelineLayout VK_Exec_InteractionPipelineLayout( void );
 VkPipeline VK_Exec_ShadowInteractionPipeline( void );
 VkPipeline VK_Exec_PointShadowInteractionPipeline( void );
 VkPipelineLayout VK_Exec_ShadowInteractionPipelineLayout( void );
+// source-alpha variants of the three above, for native ordered transparency
+VkPipeline VK_Exec_TransparentInteractionPipeline( int shadowMode, bool composite );
 VkPipeline VK_Exec_StencilShadowPipeline( void );
 VkPipelineLayout VK_Exec_BasePipelineLayout( void );
 VkPipeline VK_Exec_FogPipeline( void );
@@ -257,6 +259,10 @@ typedef struct vkInterPass_s {
 	int					nativePBRDrawCount;
 	VkDescriptorSet		lastImageSets[ 6 ];	// sets 0-5 as last bound by VK_DrawSingleInteractionMode
 	bool				imageSetsValid;		// lastImageSets mirror live bindings on cmd
+
+	// Native ordered PBR transparency owns a translucent surface for the whole
+	// view or not at all; see VK_PBRTransparentViewAdmits.
+	bool				transparentAdmitted;
 
 	// Phase F2a/F2b shadow-map receivers
 	bool				shadowPassPrepared;	// shadow maps rendered for this view
@@ -2168,6 +2174,78 @@ static float VK_PBRRegisterValue( const drawSurf_t *surf, int registerIndex, flo
 	return std::isfinite( value ) ? value : fallback;
 }
 
+/*
+====================
+VK_PBRTransparentStage
+
+Source alpha is the one coverage mode the depth fill never resolves, so a
+native owner may replace the authored stage only when that stage is provably
+the PBR albedo itself: exactly one source-alpha blend stage, the same image,
+filter and repeat as the albedo, untransformed explicit coordinates, no
+vertex tint or alpha test, and an untinted white color whose alpha register
+supplies the coverage scale. Any other ambient stage would compose beside the
+owner, so its presence returns the whole material to the classic path.
+====================
+*/
+static bool VK_PBRTransparentStage( const drawSurf_t *surf, int *stageIndexOut,
+		float *alphaScaleOut ) {
+	if ( surf == NULL || surf->material == NULL || surf->shaderRegisters == NULL ) {
+		return false;
+	}
+	const idMaterial *material = surf->material;
+	if ( material->Coverage() != MC_TRANSLUCENT ) {
+		return false;
+	}
+	const idImage *albedo = material->GetPBRInfo().albedo.image;
+	if ( albedo == NULL ) {
+		return false;
+	}
+
+	int found = -1;
+	float alphaScale = 0.0f;
+	for ( int i = 0 ; i < material->GetNumStages() ; i++ ) {
+		const shaderStage_t *stage = material->GetStage( i );
+		if ( stage->lighting != SL_AMBIENT ) {
+			continue;	// the bump/diffuse/specular sequence the BRDF replaces
+		}
+		const int blendBits = stage->drawStateBits
+				& ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
+		const idImage *image = stage->texture.image;
+		if ( found >= 0
+				|| blendBits != ( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA )
+				|| stage->newStage != NULL || image == NULL
+				|| idStr::Icmp( image->GetName(), albedo->GetName() ) != 0
+				|| image->GetFilter() != albedo->GetFilter()
+				|| image->GetRepeat() != albedo->GetRepeat()
+				|| stage->texture.texgen != TG_EXPLICIT || stage->texture.hasMatrix
+				|| stage->vertexColor != SVC_IGNORE || stage->hasAlphaTest
+				|| stage->privatePolygonOffset != 0.0f
+				|| VK_PBRRegisterValue( surf, stage->conditionRegister, 0.0f ) == 0.0f ) {
+			return false;
+		}
+		for ( int c = 0 ; c < 3 ; c++ ) {
+			if ( VK_PBRRegisterValue( surf, stage->color.registers[ c ], 0.0f ) != 1.0f ) {
+				return false;
+			}
+		}
+		alphaScale = VK_PBRRegisterValue( surf, stage->color.registers[ 3 ], -1.0f );
+		if ( !( alphaScale > 0.0f ) || alphaScale > 1.0f ) {
+			return false;
+		}
+		found = i;
+	}
+	if ( found < 0 ) {
+		return false;
+	}
+	if ( stageIndexOut != NULL ) {
+		*stageIndexOut = found;
+	}
+	if ( alphaScaleOut != NULL ) {
+		*alphaScaleOut = alphaScale;
+	}
+	return true;
+}
+
 static bool VK_PBRImageReady( idImage *image, textureUsage_t expectedUsage ) {
 	return image != NULL && image->GetUsage() == expectedUsage
 		&& image->IsLoaded() && !image->IsDefaulted()
@@ -2245,6 +2323,15 @@ static bool VK_PBRHasMatchingDepthCoverage( const drawSurf_t *surf ) {
 	const idMaterial *material = surf->material;
 	if ( material->Coverage() == MC_OPAQUE ) {
 		return true;
+	}
+	if ( material->Coverage() == MC_TRANSLUCENT ) {
+		// A translucent surface is absent from the depth fill entirely, so its
+		// admission is the authored source-alpha stage contract instead, and its
+		// draws composite in the material walk rather than adding here. A view
+		// that cannot own that composite must not take the BRDF either, or the
+		// surface would be lit natively and composited classically.
+		return interPass.transparentAdmitted
+			&& VK_PBRTransparentStage( surf, NULL, NULL );
 	}
 	if ( material->Coverage() != MC_PERFORATED ) {
 		return false;
@@ -2386,6 +2473,285 @@ block into the uniform ring, binds the six cached image sets + the ring
 set, pushes the 128B block, and draws the bound light-tris geometry.
 ====================
 */
+// ---------------------------------------------------------------------------
+// Native ordered PBR transparency
+//
+// A translucent surface never reaches the depth fill, so classic ownership is
+// split in two: the light pass adds its lighting at depth LESS, and the
+// authored source-alpha stage composites later, in the material walk's sort
+// position. A native owner has to do both at once -- evaluate the whole BRDF
+// per light AND composite the sum through the authored alpha -- which neither
+// half can express on its own.
+//
+// So the light pass records the admitted draws instead of adding them, and the
+// material walk replays them where the classic stage would have drawn: the
+// first replay composites with ( SRC_ALPHA, ONE_MINUS_SRC_ALPHA ) and the rest
+// add with ( SRC_ALPHA, ONE ), giving dst * ( 1 - a ) + a * sum( Li ) -- the
+// classic composite of the summed radiance.
+//
+// Every recorded draw has to be reproducible once its light is gone. Stencil
+// shadow coverage is not: it is written and reset per light. The view-level
+// admission below therefore declines the whole view as soon as a shadowing
+// light reaches a translucent receiver, so a surface is never half owned.
+// ---------------------------------------------------------------------------
+static const int VK_PBR_TRANSPARENT_MAX_DRAWS = 256;
+
+typedef struct vkPBRTransparentDraw_s {
+	const viewDef_t *		viewDef;	// the view that recorded it
+	const srfTriangles_t *	ambientGeo;	// identity shared with the material walk
+	const srfTriangles_t *	geo;		// the light's own, possibly clipped, triangles
+	VkDescriptorSet			sets[ 8 ];
+	int					setCount;
+	uint32_t				dynamicOffsets[ 2 ];
+	int					dynamicCount;
+	vkInteractionPush_t		push;
+	int					shadowMode;
+	bool					rejected;	// replayed additively; the classic stage owns it
+} vkPBRTransparentDraw_t;
+
+static vkPBRTransparentDraw_t	vkPBRTransparentDraws[ VK_PBR_TRANSPARENT_MAX_DRAWS ];
+static int						vkPBRTransparentDrawCount;
+static int						vkPBRTransparentCompositeCount;
+static int						vkPBRTransparentSurfaceCount;
+static int						vkPBRTransparentRejectCount;
+
+// R_CreateLightTris can hand a light a clipped copy of the surface; both it
+// and the ambient surface the material walk draws name the same original.
+static const srfTriangles_t *VK_PBRTransparentIdentity( const drawSurf_t *surf ) {
+	if ( surf == NULL || surf->geo == NULL ) {
+		return NULL;
+	}
+	return surf->geo->ambientSurface != NULL ? surf->geo->ambientSurface : surf->geo;
+}
+
+/*
+====================
+VK_PBRTransparentViewAdmits
+
+Mirrors the light loop's own shadowingEnabled test, one view ahead of it. A
+shadowing light over a translucent receiver takes the stencil path whenever
+shadow maps are off or incomplete, and stencil coverage cannot be replayed
+after its light is finished -- so the view declines rather than owning a
+surface for one light and returning it for the next.
+====================
+*/
+static bool VK_PBRTransparentViewAdmits( const viewDef_t *viewDef ) {
+	if ( viewDef == NULL ) {
+		return false;
+	}
+	for ( const viewLight_t *vLight = viewDef->viewLights ; vLight != NULL ; vLight = vLight->next ) {
+		if ( vLight->translucentInteractions == NULL || vLight->lightShader == NULL ) {
+			continue;
+		}
+		const bool hasCasters = vLight->globalShadows != NULL
+				|| vLight->globalShadowMapCasters != NULL
+				|| vLight->globalShadowMapDynamicCasters != NULL
+				|| vLight->localShadows != NULL
+				|| vLight->localShadowMapCasters != NULL
+				|| vLight->localShadowMapDynamicCasters != NULL;
+		if ( r_shadows.GetBool() && vLight->lightShader->LightCastsShadows()
+				&& ( vLight->lightDef == NULL || !vLight->lightDef->parms.noShadows )
+				&& hasCasters ) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// viewDef NULL simply disarms the table.
+static void VK_PBRTransparentResetView( const viewDef_t *viewDef ) {
+	vkPBRTransparentDrawCount = 0;
+	vkPBRTransparentCompositeCount = 0;
+	vkPBRTransparentSurfaceCount = 0;
+	vkPBRTransparentRejectCount = 0;
+	interPass.transparentAdmitted = VK_PBRTransparentViewAdmits( viewDef );
+}
+
+// Replays one recorded draw. An alpha scale of zero restores the additive
+// contract the light pass would have used.
+static void VK_PBRTransparentReplay( VkCommandBuffer cmd,
+		const vkPBRTransparentDraw_t &draw, VkPipeline pipeline, VkPipelineLayout layout,
+		const float mvp[ 16 ], float alphaScale ) {
+	if ( cmd == VK_NULL_HANDLE || pipeline == VK_NULL_HANDLE || layout == VK_NULL_HANDLE
+			|| draw.geo == NULL ) {
+		return;
+	}
+	if ( !VK_Exec_BindTriGeometry( cmd, VK_Exec_ActiveFrameSlot(), draw.geo ) ) {
+		return;
+	}
+	vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
+	vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout,
+			0, 6, draw.sets, 0, NULL );
+	vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout,
+			6, (uint32_t)( draw.setCount - 6 ), draw.sets + 6,
+			(uint32_t)draw.dynamicCount, draw.dynamicOffsets );
+
+	vkInteractionPush_t push = draw.push;
+	if ( mvp != NULL ) {
+		memcpy( push.mvp, mvp, sizeof( push.mvp ) );
+	}
+	push.a[ 3 ] = alphaScale;
+	vkCmdPushConstants( cmd, layout,
+			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), &push );
+	// The walk owns cull, scissor and viewport for this same surface, but its
+	// depth state belongs to whichever stage drew last. A translucent surface
+	// is absent from the depth fill, so EQUAL -- the opaque stage contract --
+	// would reject every fragment. This is the same LESS_OR_EQUAL, no-write
+	// state the light pass used for its translucent chain.
+	vkCmdSetDepthTestEnable( cmd, VK_TRUE );
+	vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_LESS_OR_EQUAL );
+	vkCmdSetDepthWriteEnable( cmd, VK_FALSE );
+	VK_Device_CountDrawIndexed( draw.geo->numIndexes, draw.geo->numVerts );
+	vkCmdDrawIndexed( cmd, (uint32_t)draw.geo->numIndexes, 1, 0, 0, 0 );
+}
+
+/*
+====================
+VK_PBRTransparentRejectSurface
+
+The record table is bounded, so a surface can run out of room mid-view. Its
+already recorded draws still have to reach the frame: they replay additively
+right here, where the light pass would have added them, and the surface is
+marked so the material walk keeps the authored classic stage.
+====================
+*/
+static void VK_PBRTransparentRejectSurface( const srfTriangles_t *identity ) {
+	bool replayed = false;
+	for ( int i = 0 ; i < vkPBRTransparentDrawCount ; i++ ) {
+		vkPBRTransparentDraw_t &draw = vkPBRTransparentDraws[ i ];
+		if ( draw.ambientGeo != identity || draw.rejected ) {
+			continue;
+		}
+		draw.rejected = true;
+		const VkPipeline pipeline = draw.shadowMode == 1 ? interPass.pipelineShadowed
+				: draw.shadowMode == 2 ? interPass.pipelinePointShadowed
+				: interPass.pipelineUnshadowed;
+		const VkPipelineLayout layout = draw.shadowMode != 0
+				? interPass.layoutShadowed : interPass.layout;
+		VK_PBRTransparentReplay( interPass.cmd, draw, pipeline, layout, NULL, 0.0f );
+		replayed = true;
+	}
+	if ( !replayed ) {
+		return;
+	}
+	vkPBRTransparentRejectCount++;
+	// The replay bound its own pipeline and image sets mid-chain; put the pass
+	// back on the pipeline its selector believes is live.
+	const VkPipeline restore = interPass.shadowMode == 1 ? interPass.pipelineShadowed
+			: interPass.shadowMode == 2 ? interPass.pipelinePointShadowed
+			: interPass.pipelineUnshadowed;
+	if ( restore != VK_NULL_HANDLE ) {
+		vkCmdBindPipeline( interPass.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, restore );
+	}
+	interPass.imageSetsValid = false;
+}
+
+// Returns false when the draw must proceed additively after all.
+static bool VK_PBRTransparentRecord( const drawSurf_t *surf, const VkDescriptorSet *sets,
+		int setCount, const uint32_t *dynamicOffsets, int dynamicCount,
+		const vkInteractionPush_t &push ) {
+	const srfTriangles_t *identity = VK_PBRTransparentIdentity( surf );
+	if ( identity == NULL || surf->geo == NULL || setCount < 7 || setCount > 8 ) {
+		return false;
+	}
+	for ( int i = 0 ; i < vkPBRTransparentDrawCount ; i++ ) {
+		if ( vkPBRTransparentDraws[ i ].ambientGeo == identity
+				&& vkPBRTransparentDraws[ i ].rejected ) {
+			return false;	// this surface already returned to the classic stage
+		}
+	}
+	if ( vkPBRTransparentDrawCount >= VK_PBR_TRANSPARENT_MAX_DRAWS ) {
+		VK_PBRTransparentRejectSurface( identity );
+		return false;
+	}
+
+	vkPBRTransparentDraw_t &draw = vkPBRTransparentDraws[ vkPBRTransparentDrawCount++ ];
+	memset( &draw, 0, sizeof( draw ) );
+	draw.viewDef = interPass.viewDef;
+	draw.ambientGeo = identity;
+	draw.geo = surf->geo;
+	memcpy( draw.sets, sets, sizeof( VkDescriptorSet ) * (size_t)setCount );
+	draw.setCount = setCount;
+	draw.dynamicCount = dynamicCount;
+	for ( int i = 0 ; i < dynamicCount && i < 2 ; i++ ) {
+		draw.dynamicOffsets[ i ] = dynamicOffsets[ i ];
+	}
+	draw.push = push;
+	draw.shadowMode = interPass.shadowActive ? interPass.shadowMode : 0;
+	return true;
+}
+
+/*
+====================
+VK_PBR_DrawTransparentStage
+
+The material walk's side of the contract: composite the lights this surface
+recorded, in the authored stage's sort position, and report that the stage is
+owned. A surface with no records -- an unadmitted view, a light that never
+reached it, or a rejected surface -- keeps the classic stage.
+====================
+*/
+bool VK_PBR_DrawTransparentStage( VkCommandBuffer cmd, const viewDef_t *viewDef,
+		const drawSurf_t *drawSurf, const srfTriangles_t *tri, const float mvp[ 16 ],
+		int stageIndex, float alphaScale ) {
+	// Every world stage asks; keep the material scan behind the one test that
+	// rejects all but the surfaces this can possibly own.
+	if ( cmd == VK_NULL_HANDLE || vkPBRTransparentDrawCount == 0 || drawSurf == NULL
+			|| drawSurf->material == NULL
+			|| drawSurf->material->Coverage() != MC_TRANSLUCENT
+			|| !( alphaScale > 0.0f ) ) {
+		return false;
+	}
+	int ownedStage = -1;
+	const bool ownedMaterial = VK_PBRTransparentStage( drawSurf, &ownedStage, NULL );
+	const srfTriangles_t *identity = VK_PBRTransparentIdentity( drawSurf );
+	if ( !ownedMaterial || ownedStage != stageIndex || identity == NULL ) {
+		return false;
+	}
+
+	bool composited = false;
+	for ( int i = 0 ; i < vkPBRTransparentDrawCount ; i++ ) {
+		const vkPBRTransparentDraw_t &draw = vkPBRTransparentDraws[ i ];
+		if ( draw.ambientGeo != identity || draw.viewDef != viewDef ) {
+			continue;
+		}
+		if ( draw.rejected ) {
+			return false;
+		}
+		const VkPipeline pipeline =
+				VK_Exec_TransparentInteractionPipeline( draw.shadowMode, !composited );
+		const VkPipelineLayout layout = draw.shadowMode != 0
+				? VK_Exec_ShadowInteractionPipelineLayout()
+				: VK_Exec_InteractionPipelineLayout();
+		if ( pipeline == VK_NULL_HANDLE || layout == VK_NULL_HANDLE ) {
+			// A pipeline that cannot be built drops its own light. The composite
+			// itself stays well formed: whichever light draws first replaces the
+			// destination through the alpha, and the rest add through it.
+			continue;
+		}
+		VK_PBRTransparentReplay( cmd, draw, pipeline, layout, mvp, alphaScale );
+		vkPBRTransparentCompositeCount++;
+		composited = true;
+		if ( r_pbrDebug.GetInteger() == 7 ) {
+			// The ownership marker is a constant, not a radiance: adding it
+			// once per light would saturate the surface and hide the authored
+			// coverage the composite is there to prove. One draw states it,
+			// exactly as the emission marker does in the ambient walk.
+			break;
+		}
+	}
+	if ( !composited ) {
+		return false;
+	}
+	vkPBRTransparentSurfaceCount++;
+	// The walk keeps drawing this surface's remaining stages with its own
+	// geometry binding.
+	if ( tri != NULL ) {
+		(void)VK_Exec_BindTriGeometry( cmd, VK_Exec_ActiveFrameSlot(), tri );
+	}
+	return true;
+}
+
 static void VK_DrawSingleInteractionMode( const drawInteraction_t *din,
 									  bool parallax,
 									  float parallaxScale,
@@ -2496,6 +2862,18 @@ static void VK_DrawSingleInteractionMode( const drawInteraction_t *din,
 	uint32_t dynamicOffsets[ 2 ];
 	dynamicOffsets[ 0 ] = (uint32_t)uboOffset;
 	dynamicOffsets[ 1 ] = (uint32_t)interPass.shadowSliceOffset;
+
+	// Native ordered transparency: record the admitted draw instead of adding
+	// it. The material walk composites the recorded lights through the authored
+	// source alpha, in that stage's own sort position.
+	if ( nativePBR && interPass.transparentAdmitted
+			&& VK_PBRTransparentStage( din->surf, NULL, NULL )
+			&& VK_PBRTransparentRecord( din->surf, sets, setCount, dynamicOffsets,
+				shadowDraw ? 2 : 1, push ) ) {
+		interPass.nativePBRDrawCount++;
+		return;
+	}
+
 	// Sets 0-5 are pass/material-constant image sets. The interaction and
 	// shadow-interaction pipeline layouts are built from the same set layouts
 	// for sets 0..6 and the same push range (vk_GuiExecutor.cpp), so they are
@@ -3724,6 +4102,9 @@ ambient walks; exits with depth bias off and the depth-range baseline
 ====================
 */
 void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
+	// Before any early return: a view that draws no lights must not leave the
+	// previous view's recorded transparency for its own material walk to find.
+	VK_PBRTransparentResetView( NULL );
 	if ( viewDef == NULL || viewDef->viewLights == NULL ) {
 		return;
 	}
@@ -3748,6 +4129,7 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 	interPass.fbHeight = VK_Exec_ActiveFramebufferHeight();
 	interPass.layout = VK_Exec_InteractionPipelineLayout();
 	interPass.pipelineUnshadowed = pipeline;
+	VK_PBRTransparentResetView( viewDef );
 	interPass.shadowSliceOffset = -1;
 
 	// Phase G1: the stencil volume pipeline serves every shadow-casting
@@ -4318,6 +4700,12 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 		loggedFirstNativePBRPass = true;
 		common->Printf( "Vulkan: native PBR direct interactions active (%d draws)\n",
 				interPass.nativePBRDrawCount );
+	}
+	static bool loggedFirstTransparentPass = false;
+	if ( !loggedFirstTransparentPass && vkPBRTransparentDrawCount > 0 ) {
+		loggedFirstTransparentPass = true;
+		common->Printf( "Vulkan: native PBR ordered transparency recorded %d draws (%d rejected)\n",
+				vkPBRTransparentDrawCount, vkPBRTransparentRejectCount );
 	}
 
 	// one-shot bring-up evidence that shadow-receiving interactions drew

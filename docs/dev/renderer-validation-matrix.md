@@ -39,7 +39,11 @@ be refused. Reports retain binary, fixture, map and harness hashes.
 Keep MSAA sample counts fixed within each batch. Include shadow off/on/off
 controls before restart: restarting alone misses shadow-resource history leaks.
 Use the existing numerical and negative-image oracles; a clean log or plausible
-picture alone does not prove the feature. Final retail gameplay/performance and
+picture alone does not prove the feature. Transparency needs a pair of
+captures, not one: run `--cases lit,ownership,emissive,master-off` so the
+ownership marker and the emission view can be differenced. A single capture
+of a blended surface also carries the background behind it, which is why an
+absolute expectation there was wrong for both backends. Final retail gameplay/performance and
 backend/platform promotion remain separate gates.
 
 ## Automated Safe Matrix

@@ -4,6 +4,17 @@
 // pc.c.xyw carries the data-layout bits, normal encoding and specular-AA switch.
 // The classic specular-table sampler is unused by PBR and carries metallic.
 
+// Native ordered transparency: pc.a.w carries the authored blend stage's
+// alpha register, and the albedo image supplies the per-texel coverage the
+// classic stage would have sampled. Every other interaction draw is additive
+// and keeps the zero-alpha contract.
+float PBRTransparentAlpha(vec2 albedoTexCoord) {
+    if (pc.a.w <= 0.0) {
+        return 0.0;
+    }
+    return clamp(texture(diffuseMap, albedoTexCoord).a * pc.a.w, 0.0, 1.0);
+}
+
 vec3 PBRDirectNormal(vec2 texCoord) {
     int encoding = int(pc.c.y + 0.5);
     if (encoding == 0) {

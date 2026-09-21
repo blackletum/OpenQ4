@@ -134,7 +134,7 @@ static const int VK_MAX_CUBE_PIPELINES = 32;
 static const int VK_MAX_ENV_PIPELINES = 32;
 static const int VK_MAX_PROGRAM_PIPELINES = 128;
 static const int VK_MAX_BLEND_LIGHT_PIPELINES = 32;
-static const int VK_MAX_SPECIAL_PIPELINES = 64;
+static const int VK_MAX_SPECIAL_PIPELINES = 96;
 static const int VK_MAX_TEMPORAL_RESOLVE_PIPELINES = 8;
 static const int VK_MAX_POST_PIPELINES = 128;
 static const int VK_MAX_DESCRIPTOR_SETS = 4096;
@@ -212,6 +212,15 @@ enum vkSpecialPipelineKind_t {
 	VK_SPECIAL_INTERACTION,
 	VK_SPECIAL_SHADOW_INTERACTION,
 	VK_SPECIAL_POINT_SHADOW_INTERACTION,
+	// Native ordered PBR transparency replays admitted interaction draws in
+	// the material walk's sort position: the first composites through the
+	// authored source alpha, the rest add through the same alpha.
+	VK_SPECIAL_PBR_TRANSPARENT_COMPOSITE,
+	VK_SPECIAL_PBR_TRANSPARENT_ADD,
+	VK_SPECIAL_SHADOW_PBR_TRANSPARENT_COMPOSITE,
+	VK_SPECIAL_SHADOW_PBR_TRANSPARENT_ADD,
+	VK_SPECIAL_POINT_SHADOW_PBR_TRANSPARENT_COMPOSITE,
+	VK_SPECIAL_POINT_SHADOW_PBR_TRANSPARENT_ADD,
 	VK_SPECIAL_STENCIL_SHADOW,
 	VK_SPECIAL_FOG,
 	VK_SPECIAL_SHADOW_OVERLAY_PANEL,
@@ -1475,6 +1484,74 @@ VkPipeline VK_Exec_ShadowInteractionPipeline( void ) {
 
 VkPipelineLayout VK_Exec_ShadowInteractionPipelineLayout( void ) {
 	return vkExec.shadowInteractionPipelineLayout;
+}
+
+/*
+====================
+VK_Exec_TransparentInteractionPipeline
+
+The interaction shaders with a source-alpha blend instead of the additive
+one. A translucent surface's summed radiance has to reach the target through
+the authored alpha exactly once, so the first replayed light composites with
+( SRC_ALPHA, ONE_MINUS_SRC_ALPHA ) and every later light adds with
+( SRC_ALPHA, ONE ):
+
+  dst * ( 1 - a ) + a * L0  then  + a * L1 ...  =  dst * ( 1 - a ) + a * sum( Li )
+
+Same modules, vertex input and layouts as the additive variants, so the
+shadowed and point-shadowed receivers keep their set 7 bindings.
+====================
+*/
+VkPipeline VK_Exec_TransparentInteractionPipeline( int shadowMode, bool composite ) {
+	const vkPipelineTarget_t target = VK_Exec_CurrentPipelineTarget();
+	vkSpecialPipelineKind_t kind;
+	VkShaderModule vertModule;
+	VkShaderModule fragModule;
+	VkPipelineLayout layout;
+	switch ( shadowMode ) {
+		case 1:
+			kind = composite ? VK_SPECIAL_SHADOW_PBR_TRANSPARENT_COMPOSITE
+					: VK_SPECIAL_SHADOW_PBR_TRANSPARENT_ADD;
+			vertModule = vkExec.interactionShadowVertModule;
+			fragModule = vkExec.interactionShadowFragModule;
+			layout = vkExec.shadowInteractionPipelineLayout;
+			break;
+		case 2:
+			kind = composite ? VK_SPECIAL_POINT_SHADOW_PBR_TRANSPARENT_COMPOSITE
+					: VK_SPECIAL_POINT_SHADOW_PBR_TRANSPARENT_ADD;
+			vertModule = vkExec.interactionShadowPointVertModule;
+			fragModule = vkExec.interactionShadowPointFragModule;
+			layout = vkExec.shadowInteractionPipelineLayout;
+			break;
+		default:
+			kind = composite ? VK_SPECIAL_PBR_TRANSPARENT_COMPOSITE
+					: VK_SPECIAL_PBR_TRANSPARENT_ADD;
+			vertModule = vkExec.interactionVertModule;
+			fragModule = vkExec.interactionFragModule;
+			layout = vkExec.interactionPipelineLayout;
+			break;
+	}
+
+	VkPipeline cached = VK_Exec_FindSpecialPipeline( kind, target );
+	if ( cached != VK_NULL_HANDLE ) {
+		return cached;
+	}
+	if ( vertModule == VK_NULL_HANDLE || fragModule == VK_NULL_HANDLE
+			|| layout == VK_NULL_HANDLE ) {
+		return VK_NULL_HANDLE;
+	}
+
+	VkVertexInputBindingDescription binding;
+	VkVertexInputAttributeDescription attrs[ 6 ];
+	VkPipelineVertexInputStateCreateInfo vertexInput;
+	VK_Exec_InteractionVertexInput( binding, attrs, vertexInput );
+
+	const int blendBits = composite
+			? ( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA )
+			: ( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE );
+	return VK_Exec_StoreSpecialPipeline( kind, target,
+			VK_Exec_CreatePipeline( vertModule, fragModule,
+				&vertexInput, blendBits, layout, false, false, target ) );
 }
 
 // point-shadow-receiving interaction variant (Phase F2b): identical to the
@@ -9735,6 +9812,14 @@ static void VK_Exec_DrawAmbientStages( const viewDef_t *viewDef, const drawSurf_
 			continue;
 		}
 		if ( color[ 3 ] <= 0 && blendBits == ( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA ) ) {
+			continue;
+		}
+
+		// Native ordered PBR transparency: the light pass recorded this
+		// surface's admitted draws instead of adding them, so they composite
+		// here, in the authored stage's own sort position.
+		if ( worldDepthState && VK_PBR_DrawTransparentStage( cmd, viewDef, drawSurf,
+				tri, mvp, stageNum, color[ 3 ] ) ) {
 			continue;
 		}
 
