@@ -179,6 +179,58 @@ tables were consulted. `Common_AppendLanguagesWithStringTables` unions in
 languages that have `strings/*.lang`, so a text-only language is selectable
 (English audio, translated text).
 
+## German localization
+
+Select **Deutsch** under Settings > Game Options > Language, or launch with
+`+set sys_lang german`. First-run OS language detection already maps German
+locales to `german`. Text-only installations are selectable through the string
+table discovery path, without requiring a German voice archive.
+
+The five `german_{code,guis,maps,mappack,openq4}.lang` tables cover all 3,196
+entries in their English counterparts: menus, settings, HUD and multiplayer
+messages, objectives, in-world terminals, Arena Campaign and demo playback.
+Multiplayer map names, character names, command tokens and technical identifiers
+retain their original spelling. German uses the existing Windows-1252 legacy
+decoder and Latin-1 font glyphs, including umlauts and sharp s.
+
+Campaign dialogue is supplied by the player's retail installation. There is no
+bundled `german_lips.lang` override: installed German subtitles and dialogue
+timing remain available, and German voice samples take priority when present.
+Without German dialogue assets, the existing English subtitle/voice fallback
+applies. Install the complete retail `q4base/zpak_german.pk4` and its applicable
+patch archives for German dialogue; numbered patch archives alone are not a
+complete voice pack. Restart after installing dialogue assets or changing
+language to refresh already cached voices.
+
+The language chooser appends German to preserve existing language indices.
+Its GUI reload forces a reparse after command dispatch: translating labels
+does not change the GUI file timestamps, and a timestamp-only reload would
+leave the previous language visible. Active GUIs rerun their activation scripts
+after reparsing so the menu fade-in and visibility are restored.
+`tools/tests/lang_table_encoding.py` checks German key coverage and order,
+printf arguments, GUI icon/color escapes, line breaks, choice counts, chooser
+indices and font coverage. The competitive localization, Match Control,
+server-browser and difficulty-restart contracts also include German.
+
+`tools/tests/german_localization_smoke.py` checks the staged runtime with retail
+assets and Pillow. It follows the mode-specific launch configuration, uses a
+hidden window with mouse/controller input disabled, and captures only through
+the engine's `screenshot` command. The SP case enters `game/airdefense1`, runs
+the real language-chooser callback from a temporary GUI timeline, and verifies
+German-to-English-to-German labels plus nonblank menu captures. Its fixture uses
+independent copies of staged files. The MP case enters `mp/q4dm1` and verifies
+the translated Match Control view. For example, from the repository root:
+
+```powershell
+python tools/tests/german_localization_smoke.py --mode SP --renderer gl --basepath "E:\SteamLibrary\steamapps\common\Quake 4"
+python tools/tests/german_localization_smoke.py --mode MP --renderer vulkan --basepath "E:\SteamLibrary\steamapps\common\Quake 4"
+```
+
+Logs, scripts and engine captures go under `.tmp/german-localization-smoke/` by
+default. Windows x64 SP/OpenGL and MP/Vulkan have been validated with English
+retail dialogue fallback. A complete German retail voice pack was unavailable
+on the validation machine, so German voice playback itself was not qualified.
+
 ## What is not covered
 
 - **Text input above ASCII.** `idEditField` and the win32/SDL scan tables are

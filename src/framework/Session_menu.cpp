@@ -2444,7 +2444,9 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 		}
 
 		if ( !idStr::Icmp( cmd, "reloadGuis" ) ) {
-			cmdSystem->BufferCommandText( CMD_EXEC_NOW, "reloadGuis\n" );
+			// Language changes do not change GUI file timestamps. Reparse all
+			// cached labels after this GUI command has finished using its windows.
+			cmdSystem->BufferCommandText( CMD_EXEC_INSERT, "reloadGuis all\n" );
 			continue;
 		}
 

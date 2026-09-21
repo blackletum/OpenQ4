@@ -68,7 +68,7 @@
 	"#str_229905"	"AJUSTES - PANTALLA"
 	"#str_229906"	"AJUSTES - AUDIO"
 	"#str_229907"	"Idioma"
-	"#str_229908"	"Inglés;Español;Francés;Italiano;Polaco;Ruso"
+	"#str_229908"	"Inglés;Español;Francés;Italiano;Polaco;Ruso;Alemán"
 	"#str_229909"	"Ventana sin Bordes"
 	"#str_229910"	"Politica Pant. Completa"
 	"#str_229911"	"Escritorio;Exclusivo"
@@ -952,4 +952,6 @@
 	"#str_42832"	"Tab: canal | RePág/AvPág: historial"
 	"#str_42833"	"Historial | Ctrl+Fin: últimos mensajes"
 	"#str_42834"	"RePág/AvPág: historial | Arriba/Abajo: recuperar"
+
+	"#str_42840"	"Sensibilidad de rueda"
 }

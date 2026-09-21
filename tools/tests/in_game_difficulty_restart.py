@@ -22,7 +22,7 @@ SESSION_MENU = "src/framework/Session_menu.cpp"
 SESSION_LOCAL = "src/framework/Session_local.h"
 MAIN_MENU = "content/baseoq4/pak0/guis/mainmenu.gui"
 RESTART_LEVEL_STRING = "#str_229983"
-LANGUAGES = ("english", "french", "italian", "polish", "russian", "spanish")
+LANGUAGES = ("english", "german", "french", "italian", "polish", "russian", "spanish")
 START_LABEL_MAX_CHARS = 16  # new_t_bstart is 198px wide at textscale .33
 
 

@@ -16,6 +16,7 @@ GAME_ROOT = Path(
 STRINGS_ROOT = ROOT / "content" / "baseoq4" / "pak0" / "strings"
 LANGUAGE_FILES = (
     "english_openq4.lang",
+    "german_openq4.lang",
     "french_openq4.lang",
     "italian_openq4.lang",
     "spanish_openq4.lang",

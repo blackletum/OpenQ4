@@ -178,6 +178,11 @@ void idUserInterfaceManagerLocal::Reload( bool all ) {
 		}
 
 		guis[i]->InitFromFile( guis[i]->GetSourceFile() );
+		if ( guis[i]->Active() ) {
+			// Rebuilding loses the active window's onActivate setup (including
+			// menu fade-in timelines). Restore it so a language reload stays visible.
+			guis[i]->Activate( true, common->GetPresentationTime() );
+		}
 		common->Printf( "reloading %s.\n", guis[i]->GetSourceFile() );
 	}
 }

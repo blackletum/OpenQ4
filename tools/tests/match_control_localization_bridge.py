@@ -27,6 +27,7 @@ STRINGS_ROOT = ROOT / "content/baseoq4/pak0/strings"
 MATCH_CONTROL_GUI = ROOT / "content/baseoq4/pak0/guis/matchcontrol.gui"
 LANGUAGE_FILES = (
     "english_openq4.lang",
+    "german_openq4.lang",
     "french_openq4.lang",
     "italian_openq4.lang",
     "spanish_openq4.lang",

@@ -25,6 +25,7 @@ SERIES_SOURCE = GAME_ROOT / "src" / "mpgame" / "mp" / "match" / "MatchSeries.cpp
 MULTIPLAYER_SOURCE = GAME_ROOT / "src" / "mpgame" / "MultiplayerGame.cpp"
 LANGUAGES = (
     "english_openq4.lang",
+    "german_openq4.lang",
     "french_openq4.lang",
     "italian_openq4.lang",
     "spanish_openq4.lang",

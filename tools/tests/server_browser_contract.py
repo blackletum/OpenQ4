@@ -302,7 +302,7 @@ def main() -> None:
         raise AssertionError("Truncated infoResponse reaches the visible browser")
     # Every new display lookup must exist in each shipped language table.
     labels = set(re.findall(r'"(#str_\d+)"', scan))
-    for language in ("english", "french", "italian", "spanish", "polish", "russian"):
+    for language in ("english", "german", "french", "italian", "spanish", "polish", "russian"):
         tables = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in (ROOT / "content/baseoq4/pak0/strings").glob(language + "_*.lang"))
         missing = labels - set(re.findall(r'"(#str_\d+)"', tables))
         if missing:

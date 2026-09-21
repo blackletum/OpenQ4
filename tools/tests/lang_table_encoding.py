@@ -480,6 +480,58 @@ def validate_language_menu() -> None:
             )
 
 
+def validate_german_tables() -> None:
+    """Catch English fallbacks, unsafe printf arguments and broken GUI lists."""
+    entry = re.compile(r'^\s*"(#str_\w+)"\s+"((?:\\.|[^"\\])*)"\s*$', re.MULTILINE)
+    formats = re.compile(r'%(?:[-+0#]*\d*(?:\.\d+)?(?:hh|ll|[hljztL])?[diuoxXfFeEgGaAcsp]|%)')
+    icons = re.compile(r'\^(?:i[kI]?[0-9a-fA-F]{2}|[0-9])')
+    english = {}
+    german = {}
+    for category in ("code", "guis", "maps", "mappack", "openq4"):
+        source_path = STRINGS_DIR / f"english_{category}.lang"
+        target_path = STRINGS_DIR / f"german_{category}.lang"
+        source = entry.findall(source_path.read_text(encoding="utf-8"))
+        target = entry.findall(target_path.read_text(encoding="utf-8"))
+        source_keys = [key for key, _ in source]
+        target_keys = [key for key, _ in target]
+        assert source_keys and source_keys == target_keys, f"{target_path.name}: English key/order mismatch"
+        assert len(target_keys) == len(set(target_keys)), f"{target_path.name}: duplicate keys"
+        for (key, original), (_, translated) in zip(source, target):
+            label = f"{target_path.name}: {key}"
+            assert bool(original.strip()) == bool(translated.strip()), f"{label}: empty translation"
+            assert formats.findall(original) == formats.findall(translated), f"{label}: printf arguments changed"
+            assert icons.findall(original) == icons.findall(translated), f"{label}: GUI escapes changed"
+            assert re.findall(r'\\[nrt]', original) == re.findall(r'\\[nrt]', translated), f"{label}: layout escapes changed"
+        english.update(source)
+        german.update(target)
+
+    gui_root = ROOT / "content/baseoq4/pak0/guis"
+    for path in gui_root.rglob("*.gui"):
+        # Retail GUI comments can still be CP1252. These tokens are ASCII.
+        for token in re.findall(rb'\bchoices\s+"(#str_\w+)"', path.read_bytes()):
+            key = token.decode("ascii")
+            if key in english:
+                assert english[key].count(";") == german[key].count(";"), f"{key}: German choice count changed"
+
+    # Spanish/French layout fixes depend on the existing language indices.
+    game_gui = read("content/baseoq4/pak0/guis/menu/settings/game.gui")
+    chooser = game_gui[game_gui.index("choiceDef set_game_language_value"):]
+    values = re.search(r'values\s+"([a-z;]+)"', chooser).group(1).split(";")
+    assert values[-1] == "german", "German must append without shifting existing language indices"
+    assert german["#str_229908"].split(";")[values.index("german")] == "Deutsch"
+    for path in ("guis/mainmenu.gui", "guis/menu/settings/game.gui"):
+        commands = re.findall(r'CVarStrcmp sys_lang curr_lang ([A-Za-z ]+)"', read("content/baseoq4/pak0/" + path))
+        assert commands, f"{path}: missing language-index command"
+        for command in commands:
+            assert command.lower().split() == values, f"{path}: language indices differ from chooser"
+
+    # German needs the Latin-1 base glyphs, not an additional Unicode page.
+    assert set("ÄÖÜäöüß") <= set("".join(german.values()))
+    for font in FONTS_DIR.glob("*.ttf"):
+        if font.stem not in LATIN_ONLY_FACES:
+            assert set(map(ord, "ÄÖÜäöüß")) <= font_code_points(font), f"{font.name}: missing German glyphs"
+
+
 def validate_ci_smoke() -> None:
     push = read(".github/workflows/push-verification.yml")
     commit = read(".github/workflows/commit-validation.yml")
@@ -501,6 +553,7 @@ def main() -> None:
     validate_bitmap_font_policy()
     validate_codepage_selection()
     validate_language_menu()
+    validate_german_tables()
     validate_ci_smoke()
     print("lang_table_encoding: ok")
 

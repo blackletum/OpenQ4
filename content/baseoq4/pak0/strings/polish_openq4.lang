@@ -77,7 +77,7 @@
 	"#str_229905"	"USTAWIENIA - OBRAZ"
 	"#str_229906"	"USTAWIENIA - DŹWIĘK"
 	"#str_229907"	"Język"
-	"#str_229908"	"Angielski;Hiszpański;Francuski;Włoski;Polski;Rosyjski"
+	"#str_229908"	"Angielski;Hiszpański;Francuski;Włoski;Polski;Rosyjski;Niemiecki"
 	"#str_229909"	"Okno bez ramki"
 	"#str_229910"	"Tryb pełnoekranowy"
 	"#str_229911"	"Pulpit;Wyłączny"
@@ -961,4 +961,6 @@
 	"#str_42832"	"Tab: kanał | PgUp/PgDn: historia"
 	"#str_42833"	"Historia | Ctrl+End: najnowsze"
 	"#str_42834"	"PgUp/PgDn: historia | Góra/Dół: przywołaj"
+
+	"#str_42840"	"Czułość koła"
 }
