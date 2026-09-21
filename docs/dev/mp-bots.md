@@ -102,6 +102,12 @@ packet would have delivered. Everything downstream - movement physics, weapons,
 damage, scoring, the scoreboard, game type rules, team logic - therefore treats
 it as an ordinary player with no special cases.
 
+Bot slots are excluded from outgoing unreliable-message queues and recipient
+PVS checks because they have no network connection or snapshots to drain those
+queues. The message's subject may still be a bot: human spectators following
+it receive their feedback, and demo/repeater recording remains intact. The
+documented `clientNum == -1` broadcast also reaches remote human recipients.
+
 In team games, a newly allocated bot reserves the least-populated side before
 its player entity exists. Pending players who intend to join count toward the
 server's ordinary auto-balance check, so several `addbot` commands issued in
@@ -116,6 +122,26 @@ wounded bot can withdraw toward health without becoming harmless. Short goal
 commitments and a material switch margin prevent equivalent choices from
 chattering every quarter-second; an urgent rule change, such as a dropped flag
 or enemy carrier, can still replace the route immediately.
+
+Replacement routes are built in scratch state and committed together with their
+goal identity only after a successful search. An unreachable challenger leaves
+the current valid commitment intact. Repairing the same goal retains its progress
+history and give-up deadline; only actual progress extends the deadline. A new
+roam gets its own distance baseline, and exhausting every route clears stale
+movement before off-mesh recovery takes over. Pickup commitments are rechecked
+against the current inventory on each decision tick. A bot collecting its own
+item does not queue an item-denial reaction.
+
+Perception skips visibility traces for opponents that cannot improve either the
+nearest or best visible choice, while always checking the current target for
+continuity. Item selection rejects out-of-range pickups before inventory work
+and probes navigation only for candidates that can enter the ten-item shortlist.
+These filters preserve target ordering, directed route proof and team claims.
+Once an enemy leaves sight, chase prediction and weapon choice use the last
+observed position; combat strafing no longer follows the enemy's hidden live
+position. Projectile threat rejection includes the larger of direct-hit clearance
+and explosion radius, so nearby resting explosives and distant splash impacts
+remain eligible for the detailed trajectory check.
 
 *How well* and *in what manner* a bot executes those decisions - how far it
 notices you, how long it takes to react, how steadily it holds an aim, how close
@@ -956,3 +982,33 @@ Freeze Tag round and confirm a bot holds the rescue radius; then verify that a
 DeadZone carrier enters and remains in its valid control zone. Keep
 `bot_debug 2` enabled so objective ownership, route progress and fallback
 decisions remain visible in the log.
+
+`tools/tests/mp_bot_regressions.py` in the companion game repository compiles
+the production decision functions against deterministic world fixtures. It
+exercises failed goal replacement, repeated stalled-route repairs, inventory
+changes, pickup ownership and explosion reach. It compares perception against
+exhaustive visible-target selection across 240 cases and checks that an ordered
+80-item fixture needs 11 navigation snap queries instead of 81. The game
+repository runs this and the existing bot contracts in its CI jobs.
+
+The same fixture checks that thousands of bot-directed messages leave bot
+queues empty, while human spectators, broadcasts, demo recording and repeater
+forwarding retain their intended delivery.
+
+For repeatable stock gameplay, run `tools/tests/mp_bot_gameplay_smoke.py` in the
+engine repository with `--basepath <retail-install>` and `--gametype DM`,
+`--gametype "Team DM"` or `--gametype CTF`. The driver uses a hidden, windowed
+listen server with input disabled and an untargetable local participant because
+public matches require an active human. It checks live-match admission, bot
+movement, firing, damage/scoring and CTF objective decisions, and retains the
+engine log plus a JSON report under the selected `--output-dir`.
+Bot message-queue overflow is a test failure.
+
+The September 2026 audit passed Windows x64 build/staging, all eight existing
+bot contracts and the native regression fixture. Stock `mp/q4dm1` ran with four
+bots; `mp/q4ctf1` ran with six and observed fetch, defend, escort, capture and
+return goals. The final CTF run recorded 198 firing events without bot message
+queue overflows. These short runs establish gameplay coverage, not sustained
+performance or complete navigation coverage of every multiplayer map. Existing
+stock AAS, sound, material, non-precached declaration and embedded-pickup
+warnings remain in the logs.
