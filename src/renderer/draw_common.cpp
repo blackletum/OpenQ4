@@ -8028,6 +8028,12 @@ static void RB_DisplaySpecialEffects( const viewEntity_t *viewEnts, bool prePass
 	if ( backEnd.viewDef == NULL || !glConfig.GLSLProgramAvailable ) {
 		return;
 	}
+	// R_AddSpecialEffects issues no command once every effect is off, so the
+	// mask and captures RB_DrawSpecialEffects left behind belong to an earlier
+	// frame; honouring them keeps compositing that frame's blur indefinitely.
+	if ( rbRVSpecialCommandFrame != backEnd.frameCount ) {
+		return;
+	}
 
 	if ( prePass ) {
 		// Legacy blur is authored as a fullscreen 2D overlay. The 3D pass only captures
