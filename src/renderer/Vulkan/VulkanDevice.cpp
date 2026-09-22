@@ -1614,6 +1614,14 @@ void VK_Device_DeferDestroy( VkImage image, VkImageView view, VkBuffer buffer, V
 }
 
 void VK_Device_FlushDeferredDestroys( int slot ) {
+	// an upload batch that is still open has recorded copies into images this
+	// slot may be about to release; the slot fence does not cover it, because
+	// it is only submitted with the next frame. Submit and retire it first.
+	if ( vkCtx.uploadBatchOpen && ( vkCtx.numDeferredDestroys[ slot ] > 0
+			|| vkDeferredDestroyOverflow[ slot ].Num() > 0 ) ) {
+		VK_Device_FlushUploadBatch();
+		VK_Device_WaitUploadBatch();
+	}
 	const int fixedCount = vkCtx.numDeferredDestroys[ slot ];
 	for ( int i = 0; i < fixedCount + vkDeferredDestroyOverflow[ slot ].Num(); i++ ) {
 		const vkDeferredDestroy_t &entry = i < fixedCount
