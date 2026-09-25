@@ -774,17 +774,17 @@ const int MAX_GUI_SURFACES	= 1024;		// default size of the drawSurfs list for gu
 typedef enum {
 	BE_ARB2,
 	// The programmable path standing on its own, with no ARB2 bridge beneath
-	// it. Selected only on a profile that cannot have ARB2 (desktop core,
-	// OpenGL ES); every compatibility context keeps BE_ARB2 with the modern
-	// executor layered over it as before. Passes the modern executor does not
-	// own simply do not render under this backend -- there is nothing to hand
-	// them back to.
+	// it. Selected automatically for desktop core profiles without ARB2;
+	// compatibility contexts keep BE_ARB2 with the modern executor layered
+	// over it. ES contexts use BE_GLES_D3 because the modern shaders target
+	// desktop GLSL. Passes the modern executor does not own simply do not
+	// render under this backend -- there is nothing to hand them back to.
 	BE_MODERN,
 	// Doom 3-shaped GLES 3.0 backend: its own depth / interaction / ambient /
 	// fog passes written directly against ES 3.0, rather than the modern
-	// executor's cluster-forward architecture. Opt-in with `r_renderer glesd3`
-	// on the renderer-gles module only; never selected automatically, so
-	// BE_MODERN remains the default ES path.
+	// executor's cluster-forward architecture. The renderer-gles module selects
+	// it automatically for ES contexts; it can also be requested explicitly
+	// with `r_renderer glesd3` in that module.
 	BE_GLES_D3,
 	BE_BAD
 } backEndName_t;

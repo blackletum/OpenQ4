@@ -145,17 +145,17 @@ RENDERER_VK_EXCLUDED_SOURCES = (
 # renderer sources for the renderer-gles dynamic module: the shared front-end
 # plus renderer/GLES/*, minus the loader and the fixed-function draw paths.
 #
-# Differs from renderer_vk in two ways that are the whole point of the module:
-#   - the ModernGL translation units are KEPT, not replaced. GLES is still GL,
-#     so ModernGLExecutor, the shader library, the state cache, the upload
-#     manager and the render-graph resources are reused as-is.
+# The GLES module retains shared GL infrastructure alongside its ES backend:
+#   - the ModernGL translation units remain compiled alongside the state cache,
+#     upload manager and render-graph resources. The modern shader library
+#     targets desktop GLSL and is not currently GLSL ES-compatible.
 #   - tr_backend.cpp is KEPT. The symbols it still references from the dropped
 #     TUs are supplied by renderer/GLES/gles_Backend.cpp, so the module reuses
 #     the real frame loop instead of writing its own.
-#   - renderer/GLES_D3/* is the second backend in this module: a Doom
-#     3-shaped ES 3.0 path (BE_GLES_D3, `r_renderer glesd3`) that renders the
-#     view itself instead of deferring to the ModernGL executor. Opt-in, so
-#     BE_MODERN remains the default ES backend.
+#   - renderer/GLES_D3/* supplies the Doom 3-shaped ES 3.0 path (BE_GLES_D3),
+#     selected automatically for ES contexts by R_PickBestBackEndRenderer.
+#     It renders the view itself and can also be requested explicitly with
+#     `r_renderer glesd3` in the renderer-gles module.
 RENDERER_GLES_SOURCE_GLOBS = [
     "renderer/*.cpp",
     "renderer/OpenGL/*.cpp",
